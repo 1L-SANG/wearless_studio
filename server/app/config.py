@@ -165,6 +165,8 @@ class Settings:
     # ---- 검색 증강 (retrieval_upgrade_prd) — 결정적 스택 ----
     # 벡터/임베딩(vector·refimages)은 보류(ADR D2) — 재진입 시 flag·enum·모델설정 함께 복원.
     retrieval_matching: str = "tags"  # off | tags (styleTags 친화도 v1)
+    # 스타일 정규화 점수와 색 조화 점수의 결합 가중치. 0 = 색 랭킹 즉시 롤백.
+    matching_color_weight: float = 0.3
     retrieval_knowledge: str = "off"  # off | static (정적 지식 블록)
     # ---- Phase 3 재진입(ADR D2 해제, 2026-07-22): 레퍼런스 컷 검색 → 마네킹 STYLE REFERENCE 첨부 ----
     # off면 기존 생성 경로 무변화(행위 변화 0). 임베딩은 자체 호스팅 로컬 모델(ADR D2 v1.3),
@@ -343,6 +345,7 @@ def load_settings() -> Settings:
         credit_cost_storyboard_per_cut=int(os.getenv("CREDIT_COST_STORYBOARD_PER_CUT", "1")),
         credit_cost_editor_image=int(os.getenv("CREDIT_COST_EDITOR_IMAGE", "1")),
         retrieval_matching=_flag("RETRIEVAL_MATCHING", "tags", {"off", "tags"}),
+        matching_color_weight=float(os.getenv("MATCHING_COLOR_WEIGHT", "0.3")),
         retrieval_knowledge=_flag("RETRIEVAL_KNOWLEDGE", "off", {"off", "static"}),
         retrieval_refimages=_flag("RETRIEVAL_REFIMAGES", "off", {"off", "on"}),
         ref_images_topk=int(os.getenv("REF_IMAGES_TOPK", "2")),

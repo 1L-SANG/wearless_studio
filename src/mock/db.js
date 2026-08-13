@@ -190,6 +190,7 @@ const matchClothing = toLegacyMatchClothing(recommendMatchingItems({
   clothingType: 'top',
   targetGenders: ['women'],
   styleTags: ['basic', 'daily', 'clean'],
+  productColor: 'black',
 }));
 
 /* ---- Generation job steps (stable, PRD §9.2) ---- */
@@ -390,7 +391,7 @@ function buildDraft() {
     uploadComplete: false, measurementsUnknown: false,
     colors: [
       {
-        id: 'col1', name: '블랙', isBase: true, isMain: true, monotone: true,
+        id: 'col1', name: '블랙', swatchId: 'black', isBase: true, isMain: true, monotone: true,
         images: [
           { id: uid('img'), slot: 'Front', label: 'Front', src: P.photo('c1f', 'horizon', 300, 400) },
           { id: uid('img'), slot: 'Back', label: 'Back', src: P.photo('c1b', 'horizon', 300, 400) },
@@ -399,7 +400,7 @@ function buildDraft() {
         ],
       },
       {
-        id: 'col2', name: '아이보리', isBase: false, monotone: true,
+        id: 'col2', name: '아이보리', swatchId: 'ivory', isBase: false, monotone: true,
         images: [{ id: uid('img'), slot: 'Front', label: '정면', src: P.photo('c2f', 'horizon', 300, 400) }],
       },
     ],

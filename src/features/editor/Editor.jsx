@@ -27,6 +27,13 @@ import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, fillFeatureCopy, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
+import { findImageDropSlot, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
+import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage } from '@/features/editor/editorLibrary.js';
+import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
+import { resizePolicyForElement, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
+import { mergeEditorImagesIntoWardrobe } from '@/features/editor/editorWardrobe.js';
+import { isEditorDeleteKey, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, selectionIdsForElement, shouldClearEditorSelection, shouldPreserveMultiSelectionOnPointerDown } from '@/features/editor/editorSelection.js';
+import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from '@/lib/imageTranscode.js';
 import { CONTENT_ROLES, SECTION_ROLES, hasDetailSource, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
 import { withStoryboardSpaceSetExamples } from '@/lib/storyboardSpaceSetCatalog.js';
 
@@ -48,6 +55,28 @@ async function tryGetReceipt(jobId) {
   return null;
 }
 const wonFmt = (n) => `₩${Number(n || 0).toLocaleString('ko-KR')}`;
+
+function pickEditorImageFile() {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*,.heic,.heif,.hif';
+    input.onchange = () => resolve(input.files?.[0] || null);
+    input.oncancel = () => resolve(null);
+    input.click();
+  });
+}
+
+function readImageDimensions(file) {
+  return new Promise((resolve) => {
+    const src = URL.createObjectURL(file);
+    const image = new Image();
+    const finish = (dimensions) => { URL.revokeObjectURL(src); resolve(dimensions); };
+    image.onload = () => finish({ width: image.naturalWidth, height: image.naturalHeight });
+    image.onerror = () => finish({ width: null, height: null });
+    image.src = src;
+  });
+}
 
 async function getFinalEditorBlocks(projectId) {
   let lastError;
@@ -94,16 +123,41 @@ function LicenseVerifyEl({ el, base }) {
   );
 }
 
+function editableText(node) {
+  return String(node?.innerText ?? node?.textContent ?? '').replace(/\n$/, '');
+}
+
+function naturalTextWidth(node, value) {
+  const doc = node?.ownerDocument;
+  if (!doc) return 0;
+  const canvas = doc.createElement('canvas');
+  const context = canvas.getContext('2d');
+  if (!context) return node.scrollWidth || 0;
+  const computed = doc.defaultView.getComputedStyle(node);
+  context.font = computed.font;
+  const tracking = Number.parseFloat(computed.letterSpacing) || 0;
+  return Math.max(0, ...String(value || '').split('\n').map((line) => (
+    context.measureText(line || ' ').width + Math.max(0, line.length - 1) * tracking
+  )));
+}
+
 /* render-only element (selection + inline text edit). Manipulation handled by
    the single <Moveable> in the Editor (targets the selected element node). */
-function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelect, onSelectBlock, onPatch, onAddImage, onEdit, onCropStart }) {
+function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPatch, onTextCommit, onMultiDragStart, onAddImage, onDropImage, onEdit, onCropStart }) {
   const ref = useRef(null);
+  const textRef = useRef(null);
+  const deferredPick = useRef(false);
+  const pendingBubbleFit = useRef(null);
+  const [imageDropOver, setImageDropOver] = useState(false);
   if (el.hidden) return null;
 
   /* 글자 위를 눌렀는지, 상자 안 빈 곳을 눌렀는지 가른다 — 판정은 pointMissesTextLines.
      이미 고른/편집 중인 요소는 상자 전체를 살려 둔다(여백을 잡고 끌 수 있어야 한다). */
   const missesGlyphs = (e) => {
-    if (el.type !== 'text' || selected || editing) return false;
+    if (el.type !== 'text' || el.shape === 'bubble' || selected || editing) return false;
+    // Composite objects use the entire text box as their hit target. Exact-glyph
+    // hit testing made speech-bubble text look selectable while dropping the group.
+    if (el.groupId) return false;
     const node = ref.current;
     if (!node) return false;
     const range = document.createRange();
@@ -121,7 +175,46 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
       return;
     }
     e.stopPropagation();
+    deferredPick.current = shouldPreserveMultiSelectionOnPointerDown({
+      selected,
+      selectionCount,
+      additive: e.shiftKey,
+    });
+    if (deferredPick.current) {
+      onMultiDragStart?.(e);
+      return;
+    }
     onSelect(el, e.shiftKey);
+  };
+
+  const finishClick = (e) => {
+    e.stopPropagation();
+    if (!deferredPick.current) return;
+    deferredPick.current = false;
+    onSelect(el, false);
+  };
+
+  const previewBubbleSize = (node) => {
+    if (!node || !isSpeechBubbleElement(el)) return null;
+    const value = editableText(node);
+    const naturalWidth = naturalTextWidth(node, value);
+    const width = bubbleTextWidth(el, naturalWidth);
+    node.style.width = width + 'px';
+    node.style.height = 'auto';
+    const fit = fitBubbleToText(el, {
+      naturalWidth,
+      renderedHeight: node.scrollHeight,
+    });
+    if (!fit) return null;
+    if (ref.current) {
+      ref.current.style.left = fit.elementPatch.x + 'px';
+      ref.current.style.top = fit.elementPatch.y + 'px';
+      ref.current.style.width = fit.elementPatch.w + 'px';
+      ref.current.style.height = fit.elementPatch.h + 'px';
+    }
+    node.style.width = fit.textWidth + 'px';
+    pendingBubbleFit.current = fit;
+    return fit;
   };
 
   const base = {
@@ -130,7 +223,22 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
     pointerEvents: el.locked ? 'none' : undefined,
   };
   const cls = (extra) => `el${extra ? ' ' + extra : ''}${selected ? ' on' : ''}`;
-  const common = { ref, 'data-elid': el.id, onPointerDown: pick, onClick: (e) => e.stopPropagation() };
+  const common = { ref, 'data-elid': el.id, onPointerDown: pick, onClick: finishClick };
+  const imageDropProps = preview || el.type !== 'image' ? {} : {
+    onDragOver: (e) => {
+      if (!e.dataTransfer.types.includes(WARDROBE_IMAGE_MIME)) return;
+      e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; setImageDropOver(true);
+    },
+    onDragLeave: (e) => {
+      if (e.currentTarget.contains(e.relatedTarget)) return;
+      setImageDropOver(false);
+    },
+    onDrop: (e) => {
+      const image = decodeWardrobeImage(e.dataTransfer.getData(WARDROBE_IMAGE_MIME));
+      if (!image) return;
+      e.preventDefault(); e.stopPropagation(); setImageDropOver(false); onDropImage?.(image);
+    },
+  };
 
   if (el.type === 'image') {
     if (!el.src && el.genPending) {
@@ -156,7 +264,7 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
       const slotBase = { ...base, borderRadius: el.radius };
       if (preview) return <div className="el el-slot" style={slotBase} />;
       return (
-        <div {...common} className={cls('el-slot')} style={slotBase}>
+        <div {...common} {...imageDropProps} className={cls(`el-slot${imageDropOver ? ' image-drop-over' : ''}`)} style={slotBase}>
           <button className="slot-add" style={{ transform: `scale(${inv})` }}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); onAddImage && onAddImage(el); }}>
@@ -166,7 +274,7 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
       );
     }
     return (
-      <div {...common} className={cls()} style={base}
+      <div {...common} {...imageDropProps} className={cls(imageDropOver ? 'image-drop-over' : '')} style={base}
         onDoubleClick={preview ? undefined : (e) => { e.stopPropagation(); onCropStart && onCropStart(el); }}>
         {el.crop ? (
           /* 커밋된 인라인 크롭: 프레임(overflow hidden) 안에 원본을 -ox,-oy 오프셋으로 */
@@ -181,10 +289,58 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
   }
   if (el.type === 'text') {
     const s = el.style || {};
+    const isBubbleText = isSpeechBubbleElement(el);
     const lines = (el.text || '').split('\n');
     const display = (!s.list || s.list === 'none') ? el.text
       : lines.map((ln, i) => (s.list === 'ordered' ? `${i + 1}. ` : '• ') + ln).join('\n');
     const hasBg = s.bg && s.bg !== 'none';
+    if (isBubbleText) {
+      const fit = speechBubbleFitOptions(el);
+      const fill = colorWithOpacity(el.fill || '#ffffff', el.fillOpacity ?? 1);
+      const stroke = el.stroke === 'none' ? 'none' : (el.stroke || DEFAULT_BUBBLE_STROKE);
+      const strokeWidth = stroke === 'none' ? 0 : (el.strokeWidth ?? DEFAULT_BUBBLE_STROKE_WIDTH);
+      const radius = el.radius ?? DEFAULT_BUBBLE_RADIUS;
+      const bubblePath = speechBubblePath({ width: el.w, height: el.h, radius });
+      return (
+        <div {...common} className={cls(`el-speech-bubble${editing ? ' editing' : ''}`)} style={{ ...base, overflow: 'visible' }}
+          onDoubleClick={preview ? undefined : (e) => {
+            e.stopPropagation(); pendingBubbleFit.current = null; onEdit(el.id);
+            setTimeout(() => textRef.current && textRef.current.focus(), 0);
+          }}>
+          <svg width="100%" height="100%" viewBox={`0 0 ${Math.max(1, el.w)} ${Math.max(1, el.h)}`} preserveAspectRatio="none"
+            aria-hidden="true" style={{ position: 'absolute', inset: 0, display: 'block', overflow: 'visible', pointerEvents: 'none' }}>
+            <path d={bubblePath} fill={fill} stroke={stroke} strokeWidth={strokeWidth} strokeLinejoin="round" vectorEffect="non-scaling-stroke"
+              transform={el.flipX ? `translate(${el.w} 0) scale(-1 1)` : undefined} />
+          </svg>
+          <div ref={textRef} className="el-speech-bubble-copy" style={{
+            position: 'absolute', left: fit.padX, top: fit.padTop,
+            width: Math.max(1, el.w - fit.padX * 2), height: 'auto',
+            fontFamily: FONT_MAP[s.font] || 'var(--font-body)', fontSize: s.size, fontWeight: s.weight || 400,
+            color: s.color || '#0e0d14', letterSpacing: s.tracking, textAlign: s.align || 'left',
+            lineHeight: s.lineHeight ? s.lineHeight + 'px' : 1.4, whiteSpace: 'pre-wrap',
+            overflowWrap: 'anywhere', opacity: s.opacity ?? 1,
+            background: hasBg ? s.bg : undefined, padding: hasBg ? '2px 8px' : undefined,
+            borderRadius: hasBg ? 4 : undefined, fontStyle: s.italic ? 'italic' : 'normal',
+            textDecoration: [s.underline && 'underline', s.strike && 'line-through'].filter(Boolean).join(' ') || 'none',
+            outline: 'none', pointerEvents: editing ? 'auto' : 'none',
+          }}
+          contentEditable={editing} suppressContentEditableWarning
+          onPointerDown={(e) => { if (editing) e.stopPropagation(); }}
+          onClick={(e) => e.stopPropagation()}
+          onInput={(e) => { if (editing) previewBubbleSize(e.currentTarget); }}
+          onBlur={(e) => {
+            const value = editableText(e.currentTarget);
+            const nextFit = pendingBubbleFit.current || previewBubbleSize(e.currentTarget);
+            pendingBubbleFit.current = null;
+            onEdit(null);
+            if (nextFit && onTextCommit) onTextCommit(blockId, el.id, value, nextFit.elementPatch);
+            else onPatch(blockId, el.id, { text: value });
+          }}>
+            {editing ? el.text : display}
+          </div>
+        </div>
+      );
+    }
     return (
       <div ref={ref} data-elid={el.id} className={`el el-text${selected ? ' on' : ''}${editing ? ' editing' : ''}`} style={{ ...base, height: 'auto',
         fontFamily: FONT_MAP[s.font] || 'var(--font-body)', fontSize: s.size, fontWeight: s.weight || 400,
@@ -196,10 +352,14 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
         onPointerDown={(e) => { if (!editing) pick(e); }}
         /* pick 이 이미 요소든 블록이든 골라 놨다 — 어느 쪽이든 이 클릭은 캔버스 바닥까지
            가면 안 된다. 거기 onClick 이 선택을 지운다. */
-        onClick={(e) => e.stopPropagation()}
-        onDoubleClick={(e) => { e.stopPropagation(); onEdit(el.id); setTimeout(() => ref.current && ref.current.focus(), 0); }}
+        onClick={finishClick}
+        onDoubleClick={(e) => { e.stopPropagation(); pendingBubbleFit.current = null; onEdit(el.id); setTimeout(() => ref.current && ref.current.focus(), 0); }}
         contentEditable={editing} suppressContentEditableWarning
-        onBlur={(e) => { onEdit(null); onPatch(blockId, el.id, { text: e.currentTarget.textContent }); }}>
+        onBlur={(e) => {
+          const value = editableText(e.currentTarget);
+          onEdit(null);
+          onPatch(blockId, el.id, { text: value });
+        }}>
         {editing ? el.text : display}</div>
     );
   }
@@ -220,7 +380,8 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
   );
   else if (SHAPE_D[el.shape]) inner = (
     <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ display: 'block', overflow: 'visible' }}>
-      <path d={SHAPE_D[el.shape]} fill={fill} stroke={sc || 'none'} strokeWidth={sw} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+      <path d={SHAPE_D[el.shape]} fill={fill} stroke={sc || 'none'} strokeWidth={sw} strokeLinejoin="round" vectorEffect="non-scaling-stroke"
+        transform={el.flipX ? 'translate(100 0) scale(-1 1)' : undefined} />
     </svg>
   );
   else {
@@ -238,7 +399,39 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
   return <div {...common} className={cls()} style={base}>{inner}</div>;
 }
 
-function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onAddImage, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropReset, idx }) {
+const IMAGE_IMPORT_COPY = {
+  preparing: ['이미지를 불러오고 있어요', '사진을 편집기에 맞게 준비 중이에요'],
+  uploading: ['이미지를 불러오고 있어요', '사진을 안전하게 업로드하고 있어요'],
+  placing: ['이미지를 배치하고 있어요', '거의 다 됐어요. 잠시만 기다려 주세요'],
+  done: ['이미지를 불러왔어요', '드롭한 위치에 배치했어요'],
+  error: ['이미지를 불러오지 못했어요', '파일을 확인하고 다시 끌어 놓아 주세요'],
+};
+
+function ImageImportWait({ item, scale }) {
+  const phase = IMAGE_IMPORT_COPY[item.phase] ? item.phase : 'preparing';
+  const [title, detail] = IMAGE_IMPORT_COPY[phase];
+  const inv = Math.min(2.5, 1 / (scale || 1));
+  const contentWidth = Math.max(84, Math.min(240, (item.w - 36) / inv));
+  const iconName = phase === 'done' ? 'check' : phase === 'error' ? 'x' : 'loader';
+
+  return (
+    <div className={`ed-uploadwait ${phase}`} role="status" aria-live="polite" aria-label={title}
+      style={{ left: item.x, top: item.y, width: item.w, height: item.h, borderRadius: item.radius || 12 }}
+      onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+      onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+      onDrop={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+      <span className="ed-uploadwait-shim" aria-hidden="true" />
+      <div className="ed-uploadwait-content" style={{ width: contentWidth, transform: `scale(${inv})` }}>
+        <span className="ed-uploadwait-icon"><Icon name={iconName} size={20} className={phase === 'preparing' || phase === 'uploading' || phase === 'placing' ? 'spin' : ''} /></span>
+        <strong>{title}</strong>
+        <span>{detail}</span>
+        {phase !== 'done' && phase !== 'error' && <span className="ed-uploadwait-track" aria-hidden="true"><i /></span>}
+      </div>
+    </div>
+  );
+}
+
+function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onTextCommit, onMultiDragStart, onAddImage, onDropImage, onDropBlockImage, onDropImageFiles, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropCancel, onCropReset, idx }) {
   // 블록 높이는 콘텐츠보다 작아지지 않는다 — 이미지를 블록보다 크게 리사이즈하면 블록도 따라 커져 클립 방지.
   // (기존: block.h 있으면 고정 → 이미지 키워도 block-clip 이 잘라 "안 커보이던" 버그)
   const blockH = getBlockRenderHeight(block);
@@ -280,21 +473,38 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
         e.stopPropagation();
         onSelectBlock(block.id);
       }}
-      style={{ background: block.bg, height: blockH, '--inv': 1 / (scale || 1) }}
-      onDragOver={(e) => { if (e.dataTransfer.types.includes('text/object')) { e.preventDefault(); setObjOver(true); } }}
-      onDragLeave={() => setObjOver(false)}
-      onDrop={(e) => { const d = e.dataTransfer.getData('text/object'); if (d) { e.preventDefault(); setObjOver(false); const [type, id] = d.split(':'); onObjectDrop(block.id, type, id, e); } }}>
+      style={{ background: colorWithOpacity(block.bg, block.bgOpacity), height: blockH, '--inv': 1 / (scale || 1) }}
+      onDragOver={(e) => {
+        const types = [...e.dataTransfer.types];
+        if (!types.some((type) => type === 'text/object' || type === WARDROBE_IMAGE_MIME || type === 'Files')) return;
+        e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setObjOver(true);
+      }}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setObjOver(false); }}
+      onDrop={(e) => {
+        const draggedImage = decodeWardrobeImage(e.dataTransfer.getData(WARDROBE_IMAGE_MIME));
+        const files = [...(e.dataTransfer.files || [])];
+        const objectData = e.dataTransfer.getData('text/object');
+        if (!draggedImage && !files.length && !objectData) return;
+        e.preventDefault(); setObjOver(false);
+        const rect = e.currentTarget.getBoundingClientRect();
+        const point = viewportPointToBlock({ clientX: e.clientX, clientY: e.clientY, blockLeft: rect.left, blockTop: rect.top, scale });
+        if (draggedImage) onDropBlockImage(block.id, draggedImage, point);
+        else if (files.length) onDropImageFiles(block.id, files, point);
+        else { const [type, id] = objectData.split(':'); onObjectDrop(block.id, type, id, e); }
+      }}>
       <div className="block-clip">
         {block.elements.map((el) => (
           (crop && crop.elId === el.id) ? null : (
             <CanvasElement key={el.id} el={el} blockId={block.id} scale={scale} preview={false}
-              selected={selEls && selEls.includes(el.id)} editing={editEl === el.id}
+              selected={selEls && selEls.includes(el.id)} selectionCount={selEls?.length || 0} editing={editEl === el.id}
               onSelect={(e, additive) => onSelectEl(block.id, e, additive)}
-              onSelectBlock={() => onSelectBlock(block.id)} onPatch={onElPatch}
+              onSelectBlock={() => onSelectBlock(block.id)} onPatch={onElPatch} onTextCommit={onTextCommit} onMultiDragStart={onMultiDragStart}
               onAddImage={(elm) => onAddImage(block.id, elm)} onEdit={onEdit}
+              onDropImage={(image) => onDropImage(block.id, el.id, image)}
               onCropStart={(elm) => onCropStart && onCropStart(block.id, elm)} />
           )
         ))}
+        {(imageImports || []).map((item) => <ImageImportWait key={item.id} item={item} scale={scale} />)}
         {/* 인라인 크롭 오버레이 — 고스트(원본 전체) + 밝은 프레임(8핸들), 밖은 딤.
             딤 영역(레이어 자신) 클릭 = "빈 곳 클릭" → 크롭 확정 */}
         {crop && (
@@ -322,14 +532,16 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
               <rect className="crop-ant ant-w" x={0} y={0} width={crop.fw} height={crop.fh} />
               <rect className="crop-ant ant-b" x={0} y={0} width={crop.fw} height={crop.fh} />
             </svg>
-            <div className="crop-bar" style={{ left: crop.fx, top: crop.fy + crop.fh }} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-              <button className="crop-reset" onClick={(e) => { e.stopPropagation(); onCropReset && onCropReset(); }}>원본</button>
-              <span className="crop-hint">안쪽 드래그 사진 이동 · 휠 확대 · 모서리 영역 조절</span>
-              <span className="crop-hint quiet">Enter 확정 · Esc 취소</span>
-            </div>
           </div>
         )}
       </div>
+      {crop && (
+        <div className="crop-bar" style={{ left: crop.fx, top: crop.fy + crop.fh }} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+          <button className="crop-reset" onClick={(e) => { e.stopPropagation(); onCropReset && onCropReset(); }}>원본</button>
+          <button type="button" className="crop-apply" aria-label="크롭 적용" title="크롭 적용" onClick={(e) => { e.stopPropagation(); onCropCommit && onCropCommit(); }}><Icon name="check" size={15} /></button>
+          <button type="button" className="crop-cancel" aria-label="크롭 취소" title="크롭 취소" onClick={(e) => { e.stopPropagation(); onCropCancel && onCropCancel(); }}><Icon name="x" size={15} /></button>
+        </div>
+      )}
       {blockSelected && (
         <>
           {/* 손잡이를 눌렀다 뗀 클릭도 캔버스 바닥으로 새면 방금 잡은 블록이 풀린다 */}
@@ -372,7 +584,7 @@ function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
             onDragEnd={end}
             onDragOver={(e) => { if (dragId) { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setLineAt(e.clientY > r.top + r.height / 2 ? i + 1 : i); } }}
             onDrop={(e) => { e.preventDefault(); if (!dragId) return; const from = blocks.findIndex((x) => x.id === dragId); let to = lineAt == null ? i : lineAt; if (from < to) to--; to = Math.max(0, Math.min(blocks.length - 1, to)); if (from > -1 && from !== to) onReorder(from, to); end(); }}>
-            <div className="mini-canvas" style={{ background: b.bg, aspectRatio: `1000 / ${blockH}` }} title={b.name}
+            <div className="mini-canvas" style={{ background: colorWithOpacity(b.bg, b.bgOpacity), aspectRatio: `1000 / ${blockH}` }} title={b.name}
               ref={i === 0 ? measureRef : undefined}>
               {/* 실제 내용 축소 렌더 — 1000px 블록을 그대로 그려 scale 로 줄인다.
                   글자·표·도형이 캔버스와 동일하게 보인다 (CanvasElement preview 재사용, hidden 자동 제외) */}
@@ -442,11 +654,12 @@ export function Editor() {
   const latestBlocks = useRef(null);
   const pendingGenerationDraft = useRef(false);
   const setBlocks = useCallback((u) => setBlocksState((prev) => {
-    const next = expandBlockHeights(typeof u === 'function' ? u(prev) : u);
+    const next = normalizeEditorSelectionGroups(expandBlockHeights(typeof u === 'function' ? u(prev) : u));
     latestBlocks.current = next;
     return next;
   }), []);
   const [wardrobe, setWardrobe] = useState(null);
+  const wardrobeContext = useRef({ storyboard: [], colorIds: [], fallbackColorId: null });
   const [varyTarget, setVaryTarget] = useState(null); // 의류 탭 'AI 편집'으로 지정한 변형 대상 { id } — 캔버스 선택이 바뀌면 해제
   const [catalogs, setCatalogs] = useState(null);
   const [fmModels, setFmModels] = useState(null); // FaceMarket 검증 모델(실존) — http 모드에서만 로드, 실패=null(가상 폴백)
@@ -489,6 +702,7 @@ export function Editor() {
   const [frameOver, setFrameOver] = useState(null);
   const [frameDragging, setFrameDragging] = useState(false);
   const [pendingSlot, setPendingSlot] = useState(null);
+  const [imageImports, setImageImports] = useState([]);
   const [hoverGray, setHoverGray] = useState(false);
   const [layerFloat, setLayerFloat] = useState(null);
   const [layerPos, setLayerPos] = useState(null);
@@ -500,6 +714,7 @@ export function Editor() {
   const [mvTargets, setMvTargets] = useState([]);  // DOM nodes for react-moveable
   const [mvGuides, setMvGuides] = useState([]);    // Phase0 스파이크: elementGuidelines 소스(형제 요소+센티넬), effect-수집(identity 안정)
   const dragSnap = useRef(null);                   // start coords during a moveable gesture
+  const dragBlockHeight = useRef(null);            // 시작 시 부모 하단 — 요소가 닿으면 더 내려가지 않는다
   const gesturing = useRef(false);                 // moveable 제스처 진행 중 — 상태 커밋/updateRect 금지
   const liveRef = useRef({});                      // elId → 라이브 적용값 (gesture end에 한 번 커밋)
   const toast = useToast();
@@ -535,6 +750,11 @@ export function Editor() {
         let withH = b.map((blk) => normalizeEditorBlockRole(blk));
         const allColorOpts = (p.colors || []).map((col) => ({ id: col.id, label: col.name || '색상', hex: hexForCol(col) }));
         const opts = allColorOpts.filter((_option, index) => (p.colors[index].images || []).length || p.colors[index].isBase);
+        wardrobeContext.current = {
+          storyboard: sb || [],
+          colorIds: allColorOpts.map((option) => option.id),
+          fallbackColorId: opts[0]?.id || allColorOpts[0]?.id || null,
+        };
         // 생성 직후 기본 문서(옛 자동 size/care 블록만 있고 info 블록 없음)면
         // 기본 정보 템플릿을 자동으로 구성한다 — 수동 '템플릿 추가' 버튼 대체(2026-07-29 결정).
         const dj = useAppStore.getState().detailPageJob;
@@ -563,7 +783,10 @@ export function Editor() {
           toast.push('기본 정보 템플릿으로 구성했어요 — 사이즈·케어·고시 내용을 채워주세요', { icon: 'check' });
         }
         if (!genMode && savedDraft) withH = mergeServerBlocks(savedDraft, withH);
-        setBlocks(withH); setWardrobe(w); setCatalogs(hydratedCatalogs); setFmModels(fm); setSelBlock(withH[0]?.id);
+        withH = stripPhotoBlockTextElements(withH);
+        setBlocks(withH);
+        setWardrobe(mergeEditorImagesIntoWardrobe({ wardrobe: w, blocks: withH, ...wardrobeContext.current }));
+        setCatalogs(hydratedCatalogs); setFmModels(fm); setSelBlock(withH[0]?.id);
         setProductName(p.name || '제목 없는 상세페이지');
         setClothingType(p.clothingType || 'top');
         setHasDetailImage(hasDetailSource(p));
@@ -572,6 +795,19 @@ export function Editor() {
         setColorOpts(opts.length ? opts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
       });
   }, []);
+
+  // 상세페이지 생성 사진은 editor_blocks 안에만 저장되는 경로도 있다. 블록이 생성·복원될
+  // 때마다 서버 의류함과 합쳐 누락 없이 색상별로 보여주고, 직접 업로드 출처는 기타로 모은다.
+  useEffect(() => {
+    if (!blocks || !wardrobe) return;
+    setWardrobe((current) => mergeEditorImagesIntoWardrobe({
+      wardrobe: current,
+      blocks,
+      ...wardrobeContext.current,
+    }));
+    // wardrobe 는 이 effect가 갱신하므로 의존성에서 제외한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blocks]);
 
   /* 생성 이벤트 → 캔버스 채움. 셀러가 손댄 것(src 있는 슬롯·genAutoText 와 달라진 텍스트)은
      fillGenBlocks 가 건드리지 않는다(셀러 편집 승리). history 는 쌓지 않는다(자동 채움은
@@ -605,13 +841,13 @@ export function Editor() {
         for (;;) {
           const current = latestBlocks.current || [];
           restoredServerLayout ||= !canSafelyMergeServerBlocks(current, server);
-          let merged = mergeServerBlocks(current, server);
+          let merged = stripPhotoBlockTextElements(mergeServerBlocks(current, server));
           if (needsDefaultTemplate(merged)) {
             // 이 이펙트의 클로저가 붙든 analysis 는 여전히 마운트 스냅샷이라 위에서 다시 읽은 값을 쓴다.
             const ctx = buildInfoCtx({ productName, clothingType, catalogs, product, analysis: freshAnalysis || analysis, colorOpts, fmModels });
             merged = applyInfoTemplate(merged, ctx).blocks;
           }
-          merged = expandBlockHeights(merged);
+          merged = normalizeEditorSelectionGroups(expandBlockHeights(stripPhotoBlockTextElements(merged)));
           latestBlocks.current = merged;
           setBlocksState(merged);
           await api.saveEditorBlocks(projectId, merged);
@@ -678,16 +914,23 @@ export function Editor() {
     else api.saveEditorBlocks(projectId, latestBlocks.current);
   }, [projectId]);
 
-  // delete key removes selection
+  // Delete/Backspace removes the most specific selection: selected elements
+  // first, or the whole top-level block when the block itself is selected.
   useEffect(() => {
     const h = (e) => {
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selEls.length) {
-        const t = e.target;
-        if (/input|textarea/i.test(t.tagName) || t.isContentEditable) return;
+      const deleteElements = selEls.length > 0;
+      const deleteBlockSelection = !deleteElements && blockFocused && Boolean(selBlock);
+      if (isEditorDeleteKey(e) && (deleteElements || deleteBlockSelection)) {
         e.preventDefault();
-        setBlocks((bs) => bs.map((b) => ({ ...b, elements: b.elements.filter((el) => !selEls.includes(el.id)) })));
-        setSelEl(null); setSelEls([]);
-        toast.push(`${selEls.length > 1 ? selEls.length + '개 요소를' : '요소를'} 삭제했어요`, { icon: 'trash' });
+        if (deleteElements) {
+          setBlocks((bs) => removeSelectedElements(bs, selEls));
+          setSelEl(null); setSelEls([]); setBlockFocused(false);
+          toast.push(`${selEls.length > 1 ? selEls.length + '개 요소를' : '요소를'} 삭제했어요`, { icon: 'trash' });
+        } else {
+          setBlocks((bs) => removeSelectedBlock(bs, selBlock));
+          setSelEl(null); setSelEls([]); setSelBlock(null); setBlockFocused(false);
+          toast.push('블록 전체를 삭제했어요', { icon: 'trash' });
+        }
       }
       // 방향키 nudge — 1px, Shift=10px. 타이핑/크롭 중 제외. drag 와 동일 clamp([0,1000-w]·y≥0). 연타는 350ms 히스토리 창으로 1 undo.
       if (selEls.length && e.key.startsWith('Arrow')) {
@@ -699,15 +942,16 @@ export function Editor() {
         if (!dx && !dy) return;
         e.preventDefault();
         setBlocks((bs) => {
-          const snapshot = Object.fromEntries(bs.flatMap((b) => b.elements.filter((el) => selEls.includes(el.id)).map((el) => [el.id, el])));
-          const [moveX, moveY] = clampDragDelta(snapshot, [dx, dy]);
+          const selectedBlock = bs.find((block) => block.elements.some((el) => selEls.includes(el.id)));
+          const snapshot = Object.fromEntries((selectedBlock?.elements || []).filter((el) => selEls.includes(el.id)).map((el) => [el.id, el]));
+          const [moveX, moveY] = clampDragDelta(snapshot, [dx, dy], selectedBlock ? getBlockRenderHeight(selectedBlock) : undefined);
           return bs.map((b) => ({ ...b, elements: b.elements.map((el) => (selEls.includes(el.id)
             ? { ...el, x: (el.x || 0) + moveX, y: (el.y || 0) + moveY } : el)) }));
         });
       }
     };
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
-  }, [selEls]);
+  }, [selEls, selBlock, blockFocused]);
 
   const kb = useRef({});
   useEffect(() => {
@@ -851,13 +1095,29 @@ export function Editor() {
     // 요소를 고르는 것도 그 블록을 잡은 것이다 — 이걸 안 켜면 블록 테두리·빠른 도구가
     // 안 뜨고, 블록 배경을 정확히 눌러야만 보이는 상태로 돌아간다.
     setSelBlock(blockId); setBlockFocused(true); setSelEl(el.id);
-    setSelEls((cur) => additive ? (cur.includes(el.id) ? cur.filter((x) => x !== el.id) : [...cur, el.id]) : [el.id]);
+    const block = blocks.find((item) => item.id === blockId);
+    const pickedIds = selectionIdsForElement(block?.elements, el);
+    setSelEls((cur) => {
+      if (!additive) return pickedIds;
+      const allPicked = pickedIds.every((id) => cur.includes(id));
+      return allPicked ? cur.filter((id) => !pickedIds.includes(id)) : [...new Set([...cur, ...pickedIds])];
+    });
     if (!keepTab) setTab(el.type === 'text' ? 'text' : 'image');
   };
   const clearSel = () => { setSelEl(null); setSelEls([]); setVaryTarget(null); };
   const patchEl = (patch) => setBlocks((bs) => bs.map((b) => ({ ...b, elements: b.elements.map((e) => e.id === selEl ? { ...e, ...patch } : e) })));
+  const patchBubbleAppearance = (patch) => setBlocks((bs) => patchSelectedBubbleAppearance(bs, selEls.length ? selEls : [selEl], patch));
   const patchElById = (blockId, elId, patch) => setBlocks((bs) => bs.map((b) => b.id === blockId ? { ...b, elements: b.elements.map((e) => e.id === elId ? { ...e, ...patch } : e) } : b));
-  const changeBg = (blockId, color) => setBlocks((bs) => bs.map((b) => b.id === blockId ? { ...b, bg: color } : b));
+  const commitBubbleText = (blockId, elementId, value, elementPatch) => setBlocks((bs) => bs.map((b) => {
+    if (b.id !== blockId) return b;
+    return {
+      ...b,
+      elements: b.elements.map((element) => element.id === elementId
+        ? { ...element, text: value, ...elementPatch }
+        : element),
+    };
+  }));
+  const changeBg = (blockId, patch) => setBlocks((bs) => bs.map((b) => b.id === blockId ? { ...b, ...(typeof patch === 'string' ? { bg: patch } : patch) } : b));
   const reshapeBlock = (blockId, { h, shiftEls }) => setBlocks((bs) => bs.map((b) => {
     if (b.id !== blockId) return b;
     const els = shiftEls ? b.elements.map((e) => shiftEls[e.id] != null ? { ...e, y: shiftEls[e.id] } : e) : b.elements;
@@ -885,42 +1145,199 @@ export function Editor() {
   const addEmpty = (idx) => setBlocks((bs) => { const n = [...bs]; const nb = { id: uid('b'), name: '직접 구성', kind: SECTION_ROLES.STYLING, contentRole: CONTENT_ROLES.CUSTOM, bg: '#ffffff', h: 300, elements: [] }; n.splice(idx + 1, 0, nb); return n; });
   const deleteBlock = (id) => { setBlocks((bs) => bs.filter((b) => b.id !== id)); toast.push('블록을 삭제했어요'); };
   const addFrame = (f, idx) => {
-    const nb = { id: uid('b'), name: f.label, kind: SECTION_ROLES.STYLING, contentRole: CONTENT_ROLES.CUSTOM, bg: '#ffffff', h: 580, elements:
-      Array.from({ length: f.cols }).map((_, i) => ({ id: uid('el'), type: 'image', x: 40 + i * (920 / f.cols), y: 60, w: 920 / f.cols - 20, h: 460, radius: 10 })) };
+    const nb = buildFrameBlock(f, uid);
     setBlocks((bs) => { const n = [...bs]; n.splice(idx == null ? n.length : idx, 0, nb); return n; });
+    setSelBlock(nb.id); setBlockFocused(true); setSelEl(null); setSelEls([]);
     toast.push(`${f.label} 프레임을 새 블록으로 추가했어요`);
   };
-  const onFrameDrop = (e, idx) => {
+  const addImageBlock = (image, idx) => {
+    const nb = buildImageBlock(image, uid);
+    setBlocks((bs) => { const n = [...bs]; n.splice(idx == null ? n.length : idx, 0, nb); return n; });
+    const element = nb.elements[0];
+    setSelBlock(nb.id); setBlockFocused(true); setSelEl(element.id); setSelEls([element.id]); setTab('image');
+    toast.push('이미지를 새 블록으로 추가했어요', { icon: 'image' });
+  };
+  const onCanvasInsertDrop = (e, idx) => {
     e.preventDefault(); setFrameOver(null); setFrameDragging(false);
+    const image = decodeWardrobeImage(e.dataTransfer.getData(WARDROBE_IMAGE_MIME));
+    if (image) { addImageBlock(image, idx); return; }
     const id = e.dataTransfer.getData('text/frame'); if (!id) return;
-    const f = catalogs.frames.find((x) => x.id === id); if (f) addFrame(f, idx);
+    const f = FRAME_LIBRARY_ITEMS.find((x) => x.id === id); if (f) addFrame(f, idx);
   };
   const addShape = (type, shapeId, bId, dropEvent) => {
     const target = bId || visibleBlock();
-    let x = type === 'line' ? 380 : 430, y = type === 'line' ? 300 : 250;
+    let x = type === 'line' ? 380 : type === 'preset' ? 185 : 430;
+    let y = type === 'line' ? 300 : type === 'preset' ? 220 : 250;
     if (dropEvent && wrapRef.current) {
       const blockEl = wrapRef.current.querySelectorAll('.canvas-block')[blocks.findIndex((b) => b.id === target)];
-      if (blockEl) { const r = blockEl.getBoundingClientRect(); x = Math.round((dropEvent.clientX - r.left) / scale - (type === 'line' ? 120 : 70)); y = Math.round((dropEvent.clientY - r.top) / scale - (type === 'line' ? 12 : 70)); }
+      if (blockEl) {
+        const r = blockEl.getBoundingClientRect();
+        x = Math.round((dropEvent.clientX - r.left) / scale - (type === 'line' ? 120 : type === 'preset' ? 250 : 70));
+        y = Math.round((dropEvent.clientY - r.top) / scale - (type === 'line' ? 12 : type === 'preset' ? 80 : 70));
+      }
+    }
+    if (type === 'preset') {
+      const elements = buildObjectPreset(shapeId, { x: Math.max(0, x), y: Math.max(0, y), idFn: uid });
+      setBlocks((bs) => bs.map((b) => b.id === target ? { ...b, elements: [...b.elements, ...elements] } : b));
+      setSelBlock(target); setBlockFocused(true); setSelEl(elements.find((el) => el.type === 'text')?.id || elements[0].id); setSelEls(elements.map((el) => el.id));
+      toast.push('추천 오브젝트를 묶음으로 추가했어요');
+      return;
     }
     const el = type === 'line'
       ? { id: uid('el'), type: 'line', shape: shapeId, x, y, w: 240, h: 24 }
-      : { id: uid('el'), type: 'shape', shape: shapeId, x, y, w: 140, h: 140 };
+      : shapeId === 'bubble'
+        ? {
+          id: uid('el'), type: 'text', shape: 'bubble', x, y, w: 320, h: 100,
+          text: '내용을 입력하세요', style: { size: 20, weight: 500, color: '#0e0d14', lineHeight: 29 },
+          fill: '#ffffff', stroke: DEFAULT_BUBBLE_STROKE, strokeWidth: DEFAULT_BUBBLE_STROKE_WIDTH, radius: DEFAULT_BUBBLE_RADIUS,
+          bubbleFit: { minWidth: 120, maxWidth: 560, padX: 24, padTop: 20, padBottom: 38, anchor: 'left' },
+        }
+      : { id: uid('el'), type: 'shape', shape: shapeId, x, y, w: 140, h: 140,
+      };
     setBlocks((bs) => bs.map((b) => b.id === target ? { ...b, elements: [...b.elements, el] } : b));
     selectEl(target, el); toast.push('오브젝트를 추가했어요');
   };
-  const insertImage = (im) => {
-    const bId = visibleBlock();
-    const el = { id: uid('el'), type: 'image', x: 250, y: 80, w: 500, h: 560, src: im.src, radius: 12, ...(im.cutType ? { cutType: im.cutType } : {}) };
-    setBlocks((bs) => bs.map((b) => b.id === bId ? { ...b, elements: [...b.elements, el] } : b));
+  const setSlotImage = (blockId, elId, image) => {
+    setBlocks((bs) => bs.map((b) => (b.id === blockId ? applySlotFillToInfo(b, elId, image || { src: null, cutType: null }) : b)));
+  };
+  const insertImage = (im, { blockId, point } = {}) => {
+    const target = blockId || visibleBlock();
+    const targetBlock = (latestBlocks.current || blocks).find((block) => block.id === target);
+    if (!targetBlock || !im?.src) return;
+
+    const slot = findImageDropSlot(targetBlock.elements, point);
+    if (slot) {
+      const filled = {
+        ...slot,
+        src: im.src,
+        cutType: im.cutType || null,
+        ...(im.userUploaded ? { userUploaded: true } : {}),
+        ...(im.wardrobeGroup ? { wardrobeGroup: im.wardrobeGroup } : {}),
+      };
+      setSlotImage(target, slot.id, filled);
+      selectEl(target, filled);
+      toast.push('프레임에 이미지를 넣었어요', { icon: 'image' });
+      return;
+    }
+
+    const geometry = placeImageInBlock({
+      blockHeight: getBlockRenderHeight(targetBlock),
+      imageWidth: im.width || im.w,
+      imageHeight: im.height || im.h,
+      dropX: point?.x,
+      dropY: point?.y,
+    });
+    const el = {
+      id: uid('el'), type: 'image', ...geometry, src: im.src, radius: 12,
+      ...(im.cutType ? { cutType: im.cutType } : {}),
+      ...(im.userUploaded ? { userUploaded: true } : {}),
+      ...(im.wardrobeGroup ? { wardrobeGroup: im.wardrobeGroup } : {}),
+    };
+    setBlocks((bs) => bs.map((block) => block.id === target ? { ...block, elements: [...block.elements, el] } : block));
+    selectEl(target, el);
     toast.push('이미지를 캔버스에 삽입했어요');
   };
   const requestSlotImage = (blockId, el) => { setPendingSlot({ blockId, elId: el.id }); setTab('wardrobe'); };
+  const dropSlotImage = (blockId, elId, image) => {
+    setSlotImage(blockId, elId, image);
+    toast.push('프레임에 이미지를 넣었어요', { icon: 'image' });
+  };
   const wardrobeInsert = (im) => {
     if (pendingSlot) {
       // 정보 블록 슬롯이면 info(폼 정본)에도 동기화 — 재생성 때 사진-포인트 연결 유지
-      setBlocks((bs) => bs.map((b) => (b.id === pendingSlot.blockId ? applySlotFillToInfo(b, pendingSlot.elId, { src: im.src, cutType: im.cutType || null }) : b)));
+      setSlotImage(pendingSlot.blockId, pendingSlot.elId, {
+        src: im.src,
+        cutType: im.cutType || null,
+        userUploaded: Boolean(im.userUploaded),
+        wardrobeGroup: im.wardrobeGroup || null,
+      });
       setPendingSlot(null); setTab('image'); toast.push('빈 칸에 이미지를 넣었어요');
     } else insertImage(im);
+  };
+  const patchImageImport = (id, patch) => {
+    if (!id) return;
+    setImageImports((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
+  };
+  const finishImageImport = (id, delay) => {
+    if (!id) return;
+    window.setTimeout(() => setImageImports((current) => current.filter((item) => item.id !== id)), delay);
+  };
+  const uploadEditorImage = async (file, placement, importId = null) => {
+    if (!looksLikeImageFile(file)) {
+      toast.push('JPG, PNG, WebP 또는 HEIC 사진을 선택해 주세요.', { icon: 'x' });
+      return;
+    }
+    try {
+      const prepared = await toUploadableImage(file);
+      const validation = getUploadValidationError(prepared);
+      if (validation === 'file_too_large') throw new Error('사진은 25MB 이하만 업로드할 수 있어요.');
+      if (validation) throw new Error('지원하지 않는 이미지 형식이에요.');
+      const dimensions = await readImageDimensions(prepared);
+      if (importId) {
+        const targetBlock = (latestBlocks.current || blocks).find((block) => block.id === placement?.blockId);
+        const nextRect = !placement?.slotId && targetBlock ? placeImageInBlock({
+          blockHeight: getBlockRenderHeight(targetBlock),
+          imageWidth: dimensions.width,
+          imageHeight: dimensions.height,
+          dropX: placement?.point?.x,
+          dropY: placement?.point?.y,
+        }) : null;
+        patchImageImport(importId, { phase: 'uploading', ...(nextRect || {}) });
+      }
+      const uploaded = await api.uploadPhoto(projectId, {
+        filename: prepared.name || file.name || 'editor-image.jpg',
+        mime: prepared.type || 'image/jpeg',
+        blob: prepared,
+      });
+      const image = {
+        id: uploaded.assetId || uid('w'),
+        src: uploaded.url,
+        ...dimensions,
+        userUploaded: true,
+        wardrobeGroup: 'misc',
+      };
+      setWardrobe((current) => ({ ...current, misc: [...(current.misc || []), image] }));
+      patchImageImport(importId, { phase: 'placing' });
+      if (placement?.blockId) insertImage(image, placement);
+      else wardrobeInsert(image);
+      patchImageImport(importId, { phase: 'done' });
+      finishImageImport(importId, 420);
+    } catch (error) {
+      patchImageImport(importId, { phase: 'error' });
+      finishImageImport(importId, 1600);
+      toast.push(error?.message || '사진을 업로드하지 못했어요. 다시 시도해 주세요.', { icon: 'x' });
+    }
+  };
+  const dropImageFiles = (blockId, files, point) => {
+    const file = files.find(looksLikeImageFile);
+    if (!file) {
+      toast.push('이미지 파일을 끌어 놓아 주세요.', { icon: 'x' });
+      return;
+    }
+    const targetBlock = (latestBlocks.current || blocks).find((block) => block.id === blockId);
+    if (!targetBlock) return;
+    const target = pendingImageImportTarget({
+      elements: targetBlock.elements,
+      blockHeight: getBlockRenderHeight(targetBlock),
+      point,
+    });
+    if (target.slotId && imageImports.some((item) => item.blockId === blockId && item.slotId === target.slotId)) {
+      toast.push('이 프레임에서 이미 이미지를 불러오고 있어요.', { icon: 'image' });
+      return;
+    }
+    const importId = uid('upload');
+    setImageImports((current) => [...current, {
+      id: importId,
+      blockId,
+      name: file.name || '이미지',
+      phase: 'preparing',
+      ...target,
+    }]);
+    void uploadEditorImage(file, { blockId, point, slotId: target.slotId }, importId);
+  };
+  const pickAndInsertImage = async () => {
+    const file = await pickEditorImageFile();
+    if (file) await uploadEditorImage(file);
   };
   // fresh = 새로 생성된 컷의 4색 glow 하이라이트 — 사용자가 본 뒤(애니메이션 종료) 해제
   const freshSeen = (id) => setWardrobe((w) => { const nw = {}; for (const [g, arr] of Object.entries(w)) nw[g] = arr.map((x) => x.id === id && x.fresh ? { ...x, fresh: false } : x); return nw; });
@@ -936,7 +1353,7 @@ export function Editor() {
     genCount.current += 1; setGenDot('busy'); toast.push('이미지를 생성하는 중이에요', { icon: 'sparkles' });
     try {
       const { data: img, credits } = await api.generateImage(projectId, { mode: 'new', ...req, colorId: group });
-      setWardrobe((w) => ({ ...w, [group]: w[group].map((x) => x.id === loadingId ? { ...img, fresh: true } : x) }));
+      setWardrobe((w) => ({ ...w, [group]: w[group].map((x) => x.id === loadingId ? { ...img, wardrobeGroup: group, fresh: true } : x) }));
       toast.push('이미지 생성을 완료했어요', { icon: 'check' });
       syncCredits(credits);                          // 차감은 서버 책임 — 봉투 잔액만 반영 (계약 §6)
     } catch (e) {
@@ -947,32 +1364,33 @@ export function Editor() {
       genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done');
     }
   };
-  // 현재 이미지 수정 — 누적된 변경(chips)을 적용해 생성. 생성 즉시 의류 탭으로 이동해
-  // '기타' 그룹의 로딩 셀을 보여준다 (PRD §10.8: 새 이미지는 의류 탭에 추가).
+  // 현재 이미지 수정 — 누적된 변경(chips)을 적용해 생성. 원본의 색상 그룹을 그대로
+  // 이어 받아 의류 탭에서 같은 상품 컬러끼리 모여 보이게 한다.
   const varyGenerate = async ({ source, changes, refBg, refBgAssetId }) => {
+    const group = varyTarget?.group || source?.wardrobeGroup || 'misc';
     const loadingId = uid('w');
-    setWardrobe((w) => ({ ...w, misc: [...(w.misc || []), { id: loadingId, loading: true }] }));
+    setWardrobe((w) => ({ ...w, [group]: [...(w[group] || []), { id: loadingId, loading: true }] }));
     setTab('wardrobe');
     genCount.current += 1; setGenDot('busy');
     toast.push(changes.length ? `${changes.length}개 변경을 적용한 컷을 생성하는 중이에요` : '비슷한 컷을 생성하는 중이에요', { icon: 'sparkles' });
     const { data: img, credits } = await api.generateImage(projectId, { mode: 'vary', source, changes, refBg, refBgAssetId });
-    setWardrobe((w) => ({ ...w, misc: w.misc.map((x) => x.id === loadingId ? { ...img, fresh: true } : x) }));
+    setWardrobe((w) => ({ ...w, [group]: w[group].map((x) => x.id === loadingId ? { ...img, wardrobeGroup: group, fresh: true } : x) }));
     genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done'); toast.push('이미지 생성을 완료했어요', { icon: 'check' });
     syncCredits(credits);
     return img;
   };
   const varyImage = (im) => {
-    setVaryTarget(im?.id ? { id: im.id } : null); // 클릭한 의류 이미지가 변형 대상 — 이미지별 독립 상태
+    setVaryTarget(im?.id ? { id: im.id, group: im.wardrobeGroup || 'misc' } : null); // 클릭한 의류 이미지가 변형 대상 — 이미지별 독립 상태
     setTab('ai'); toast.push('현재 이미지 수정으로 이동했어요', { icon: 'wand' });
   };
   // 변형 대상 결정 — 'AI 편집' 지정이 있으면 그 의류 이미지, 없으면 선택된 캔버스 이미지
   const varySource = (() => {
     if (varyTarget) {
       const im = Object.values(wardrobe || {}).flat().find((x) => x.id === varyTarget.id);
-      return im ? { id: im.id, src: im.src, cutType: im.cutType || null } : null;
+      return im ? { id: im.id, src: im.src, cutType: im.cutType || null, wardrobeGroup: im.wardrobeGroup || varyTarget.group } : null;
     }
     return selectedElObj && selectedElObj.type === 'image'
-      ? { id: selectedElObj.id, src: selectedElObj.src, cutType: selectedElObj.cutType || null }
+      ? { id: selectedElObj.id, src: selectedElObj.src, cutType: selectedElObj.cutType || null, wardrobeGroup: selectedElObj.wardrobeGroup || null }
       : null;
   })();
   const setVaryCutType = (t) => {
@@ -1136,19 +1554,31 @@ export function Editor() {
       return next;
     }) })));
   };
-  const onMvDragStart = () => { gesturing.current = true; liveRef.current = {}; const o = {}; selEls.forEach((id) => { const e = elById(id); if (e) o[id] = { x: e.x, y: e.y, w: e.w }; }); dragSnap.current = o; };
-  const onMvGestureEnd = () => { gesturing.current = false; commitLive(); };
+  const onMvDragStart = () => {
+    gesturing.current = true; liveRef.current = {};
+    const selectedBlock = blocks.find((block) => block.elements.some((element) => selEls.includes(element.id)));
+    dragBlockHeight.current = selectedBlock ? getBlockRenderHeight(selectedBlock) : null;
+    const o = {};
+    selEls.forEach((id) => { const e = elById(id); if (e) o[id] = { x: e.x, y: e.y, w: e.w, h: e.h }; });
+    dragSnap.current = o;
+  };
+  const onMvGestureEnd = () => { gesturing.current = false; commitLive(); dragBlockHeight.current = null; };
   const liveDrag = (target, beforeTranslate) => {
     const elId = target.dataset.elid;
     const st = dragSnap.current && dragSnap.current[elId]; if (!st) return;
-    const [dx, dy] = clampDragDelta(dragSnap.current, beforeTranslate);
+    const [dx, dy] = clampDragDelta(dragSnap.current, beforeTranslate, dragBlockHeight.current);
     const nx = st.x + dx; const ny = st.y + dy;  // moveable 내장 스냅으로 beforeTranslate 는 이미 스냅된 값
     // 캔버스 밖으로 넘어가지 않게 clamp — 왼쪽 끝에서 x=0 flush(overshoot 방지), 오른쪽은 1000-w, 위(y<0)도 막음.
     // block-clip 이 어차피 넘친 부분을 자르므로 손실 없음. ("맨 왼쪽 끌면 몇 px 더 넘어가던" 문제 해결)
     target.style.left = nx + 'px'; target.style.top = ny + 'px';
     liveRef.current[elId] = { x: Math.round(nx), y: Math.round(ny) };
   };
-  const onMvResizeStart = () => { gesturing.current = true; liveRef.current = {}; const id = selEls[0]; const e = elById(id); dragSnap.current = e ? { [id]: { x: e.x, y: e.y, w: e.w, h: e.h } } : null; };
+  const onMvResizeStart = () => { gesturing.current = true; liveRef.current = {}; dragBlockHeight.current = null; const id = selEls[0]; const e = elById(id); dragSnap.current = e ? { [id]: { x: e.x, y: e.y, w: e.w, h: e.h } } : null; };
+  const startSelectedGroupDrag = (event) => {
+    const instance = moveableRef.current;
+    const dragElement = instance?.getDragElement?.();
+    if (instance && dragElement) instance.dragStart(event.nativeEvent, dragElement);
+  };
   const liveResize = (target, width, height, drag) => {
     const elId = target.dataset.elid;
     const st = dragSnap.current && dragSnap.current[elId]; if (!st) return;
@@ -1258,18 +1688,23 @@ export function Editor() {
   const renderPanel = () => {
     switch (tab) {
       case 'ai': return <AIPanel catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} hasDetailImage={hasDetailImage} varySource={varySource} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickRef={() => api.pickRefImage(projectId)} onPickMoodRef={() => api.pickRefImage(projectId)} onSetCutType={setVaryCutType} />;
-      case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={colorOpts} pendingSlot={pendingSlot} onInsert={wardrobeInsert} onDeleteSelected={deleteWardrobeImages} onUpload={async () => { const src = await api.pickAnyImage(); setWardrobe((w) => ({ ...w, misc: [...(w.misc || []), { id: uid('w'), src }] })); toast.push('이미지를 업로드했어요'); }} onVaryImage={varyImage} onFreshSeen={freshSeen} />;
-      case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio} onCrop={(el) => startCrop(blockIdOf(el.id), el)} onVary={varyImage} />;
+      case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={detailColorOpts} pendingSlot={pendingSlot} onInsert={wardrobeInsert} onDeleteSelected={deleteWardrobeImages} onUpload={pickAndInsertImage} onVaryImage={varyImage} onFreshSeen={freshSeen}
+        onImageDragStart={() => setFrameDragging(true)} onImageDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />;
+      case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio}
+        onCrop={(el) => startCrop(blockIdOf(el.id), el)} onCropReset={() => patchEl({ crop: undefined })}
+        onReplace={(el) => requestSlotImage(blockIdOf(el.id), el)}
+        onRemove={(el) => { setSlotImage(blockIdOf(el.id), el.id, { src: null, cutType: null }); toast.push('이미지를 프레임에서 빼냈어요'); }}
+        onVary={varyImage} />;
       case 'frame': return (
         <>
-          <FramePanel catalogs={catalogs} onAdd={addFrame} onDragStart={() => setFrameDragging(true)} onDragEnd={() => setFrameDragging(false)} />
+          <FramePanel onAdd={addFrame} onDragStart={() => setFrameDragging(true)} onDragEnd={() => setFrameDragging(false)} />
           {/* 내용 프리셋 — 프레임 탭에 통합 (별도 탭 없음). 기본 템플릿은 로드 시 자동 구성 */}
           <div style={{ marginTop: 22 }}>
             <ContentPanel recommendGender={recommendGender} onPick={openInfoPreset} />
           </div>
         </>
       );
-      case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onLayer={layerEl} onAddText={() => addText()} onAddGarmentText={() => addText(undefined, 'garment')} />;
+      case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onBubbleAppearanceChange={patchBubbleAppearance} onLayer={layerEl} onAddText={() => addText()} onAddGarmentText={() => addText(undefined, 'garment')} />;
       case 'shape': return <ShapePanel catalogs={catalogs} onAdd={addShape} block={(selEls.length === 0 && selBlock) ? blocks.find((b) => b.id === selBlock) : null} onBgChange={changeBg} />;
       default: return null;
     }
@@ -1287,6 +1722,7 @@ export function Editor() {
   const fitToScreen = () => { const wrap = wrapRef.current; if (!wrap) return; setScale(Math.min(2, Math.max(0.1, +((wrap.clientWidth - 80) / 1000).toFixed(2)))); };
   const single = selEls.length === 1 && !editEl;
   const group = selEls.length > 1 && !editEl;
+  const resizePolicy = resizePolicyForElement(selectedElObj, lockRatio);
   // 정렬·분배(Phase 3b) — 다중선택이 "한 블록"일 때만(좌표가 블록-상대라 cross-block 정렬 무의미).
   const groupBlockId = (() => {
     if (!group) return null;
@@ -1451,7 +1887,7 @@ export function Editor() {
 
         <div className={`ed-canvas-wrap${spaceDown ? ' panning' : ''}`} ref={wrapRef}
           onPointerDown={(e) => { if (spaceDown) startPan(e); }}
-          onClick={(e) => { if (spaceDown) return; if (e.target.closest && e.target.closest('.moveable-control-box')) return; if (cropping) { commitCrop(); return; } clearSel(); setBlockFocused(false); }}
+          onClick={(e) => { if (spaceDown || !shouldClearEditorSelection(e.target)) return; if (cropping) { commitCrop(); return; } clearSel(); setBlockFocused(false); }}
           onScroll={() => moveableRef.current?.updateRect()}
           onMouseMove={(e) => { const g = !e.target.closest('.canvas-block'); setHoverGray((v) => v === g ? v : g); }}
           onMouseLeave={() => setHoverGray(false)}>
@@ -1484,26 +1920,29 @@ export function Editor() {
               space, so a spacer reserves the SCALED dimensions for scrolling. */}
           <div style={{ position: 'relative', width: 1000 * scale, height: canvasH * scale, margin: '40px auto' }}>
           <div className={`ed-canvas${frameDragging ? ' frame-dragging' : ''}${stitched ? ' stitched' : ''}`} ref={canvasRef}
-            style={{ transform: `scale(${scale})`, transformOrigin: 'top left', position: 'absolute', top: 0, left: 0, margin: 0 }}>
+            style={{ transform: `scale(${scale})`, transformOrigin: 'top left', position: 'absolute', top: 0, left: 0, margin: 0, '--canvas-inv': 1 / (scale || 1) }}>
             {blocks.map((b, i) => (
               <div key={b.id} style={{ display: 'contents' }}>
-                <div className="canvas-droprow" onDragOver={(e) => { if (e.dataTransfer.types.includes('text/frame')) { e.preventDefault(); setFrameOver(i); } }}
-                  onDragLeave={() => setFrameOver((o) => o === i ? null : o)} onDrop={(e) => onFrameDrop(e, i)}>
+                <div className="canvas-droprow" onDragOver={(e) => { if (e.dataTransfer.types.includes('text/frame') || e.dataTransfer.types.includes(WARDROBE_IMAGE_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setFrameOver(i); } }}
+                  onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setFrameOver((o) => o === i ? null : o); }} onDrop={(e) => onCanvasInsertDrop(e, i)}>
                   <div className={`canvas-dropline${frameOver === i ? ' on' : ''}`} />
                 </div>
-                <CanvasBlock block={b} scale={scale} idx={i}
+                <CanvasBlock block={b} scale={scale} idx={i} imageImports={imageImports.filter((item) => item.blockId === b.id)}
                   selectedBlockId={blockFocused ? selBlock : null} selEls={selEls} editEl={editEl} onEdit={setEditEl}
                   crop={cropping && cropping.blockId === b.id ? cropping : null}
-                  onCropDrag={cropDrag} onCropStart={startCrop} onCropCommit={commitCrop} onCropReset={resetCrop}
+                  onCropDrag={cropDrag} onCropStart={startCrop} onCropCommit={commitCrop} onCropCancel={cancelCrop} onCropReset={resetCrop}
                   onSelectBlock={(id) => { setSelBlock(id); setBlockFocused(true); clearSel(); setTab('shape'); }} onSelectEl={selectEl}
-                  onElPatch={patchElById} onAddImage={requestSlotImage} onOpenLayers={(id) => { setLayerFloat(id); setLayerPos(null); }}
+                  onElPatch={patchElById} onTextCommit={commitBubbleText} onMultiDragStart={startSelectedGroupDrag}
+                  onAddImage={requestSlotImage} onDropImage={dropSlotImage}
+                  onDropBlockImage={(blockId, image, point) => insertImage(image, { blockId, point })} onDropImageFiles={dropImageFiles}
+                  onOpenLayers={(id) => { setLayerFloat(id); setLayerPos(null); }}
                   onObjectDrop={(bid, type, id, ev) => addShape(type, id, bid, ev)} onReshape={reshapeBlock}
                   onMove={moveBlock} onAddEmpty={addEmpty} onDelete={deleteBlock} onEditInfo={openInfoEdit}
                   onDownload={() => toast.push('이 블록을 PNG로 저장했어요', { icon: 'download' })} />
               </div>
             ))}
-            <div className="canvas-droprow" onDragOver={(e) => { if (e.dataTransfer.types.includes('text/frame')) { e.preventDefault(); setFrameOver(blocks.length); } }}
-              onDragLeave={() => setFrameOver((o) => o === blocks.length ? null : o)} onDrop={(e) => onFrameDrop(e, blocks.length)}>
+            <div className="canvas-droprow" onDragOver={(e) => { if (e.dataTransfer.types.includes('text/frame') || e.dataTransfer.types.includes(WARDROBE_IMAGE_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setFrameOver(blocks.length); } }}
+              onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setFrameOver((o) => o === blocks.length ? null : o); }} onDrop={(e) => onCanvasInsertDrop(e, blocks.length)}>
               <div className={`canvas-dropline${frameOver === blocks.length ? ' on' : ''}`} />
             </div>
             {/* Phase0 스파이크: 캔버스 세로 센티넬(좌40/중앙500/우960) — elementGuidelines 소스.
@@ -1524,10 +1963,15 @@ export function Editor() {
               ref={moveableRef}
               target={mvTargets}
               rootContainer={wrapRef.current}
+              // Group Moveable renders a transparent drag area above every child.
+              // Let pointer events reach the actual layer so a selected composite's
+              // background can be picked (and deleted) independently.
+              passDragArea={group}
+              preventClickEventOnDrag
               draggable
               resizable={single}
               rotatable={single}
-              keepRatio={lockRatio}
+              keepRatio={resizePolicy.keepRatio}
               {...(SNAP_SPIKE ? {
                 snappable: true,
                 elementGuidelines: mvGuides,
@@ -1538,7 +1982,7 @@ export function Editor() {
                 snapVerticalThreshold: 8,
                 isDisplaySnapDigit: false,   // 스냅 거리 숫자(px) 표시 안 함 — 가이드선만
               } : {})}
-              renderDirections={lockRatio ? ['nw', 'ne', 'sw', 'se'] : ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se']}
+              renderDirections={resizePolicy.directions}
               origin={false}
               throttleDrag={0}
               throttleResize={0}
@@ -1581,7 +2025,7 @@ export function Editor() {
           <div className="preview-close"><IconButton name="x" onClick={() => setPreview(false)} /></div>
           <div className="preview-sheet">
             {blocks.map((b) => (
-              <div key={b.id} style={{ position: 'relative', height: getBlockRenderHeight(b), background: b.bg, overflow: 'hidden', boxSizing: 'border-box' }}>
+              <div key={b.id} style={{ position: 'relative', height: getBlockRenderHeight(b), background: colorWithOpacity(b.bg, b.bgOpacity), overflow: 'hidden', boxSizing: 'border-box' }}>
                 {b.elements.map((el) => <CanvasElement key={el.id} el={el} preview selected={false} onSelect={() => {}} onEdit={() => {}} />)}
               </div>
             ))}

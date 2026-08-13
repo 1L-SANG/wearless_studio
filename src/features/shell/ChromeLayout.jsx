@@ -3,12 +3,67 @@
    Background orb/aurora (verbatim from prototype app.jsx) + TopNav +
    main outlet, with the dots Stepper on create-flow steps.
    ============================================================= */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Icon } from '@/components/ui.jsx';
+import { Icon, useToast } from '@/components/ui.jsx';
 import { TopNav } from '@/features/shell/shell.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
+import { api } from '@/lib/api/index.js';
+import { thumbUrl } from '@/lib/imageCdn.js';
+import {
+  advanceMannequinCompletion,
+  createMannequinCompletionState,
+} from '@/features/mannequin/completionToastCore.js';
+
+const mannequinCuts = (envelope) => {
+  if (Array.isArray(envelope)) return envelope;
+  if (Array.isArray(envelope?.cuts)) return envelope.cuts;
+  if (Array.isArray(envelope?.data?.cuts)) return envelope.data.cuts;
+  return [];
+};
+
+function MannequinCompletionToast() {
+  const navigate = useNavigate();
+  const { push: pushToast } = useToast();
+  const { pathname } = useLocation();
+  const job = useAppStore((s) => s.mannequinJob);
+  const transitionRef = useRef(createMannequinCompletionState(job));
+  const pathnameRef = useRef(pathname);
+  const mountedRef = useRef(false);
+  pathnameRef.current = pathname;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  useEffect(() => {
+    const transition = advanceMannequinCompletion(transitionRef.current, job, pathnameRef.current);
+    transitionRef.current = transition.state;
+    if (!transition.completedProjectId) return;
+
+    const projectId = transition.completedProjectId;
+    void (async () => {
+      let thumb = '';
+      try {
+        const cuts = mannequinCuts(await api.getMannequins(projectId));
+        const firstImage = cuts[0]?.imageUrl || cuts[0]?.src || '';
+        thumb = thumbUrl(firstImage, 120);
+      } catch { /* 목록 조회 실패여도 완료 알림은 텍스트로 보여준다. */ }
+
+      if (!mountedRef.current || pathnameRef.current === '/create/mannequin') return;
+      if (useAppStore.getState().projectId !== projectId) return;
+      pushToast('마네킹컷이 완성됐어요', {
+        thumb,
+        duration: 4000,
+        onClick: () => navigate('/create/mannequin'),
+      });
+    })();
+  }, [job, navigate, pushToast]);
+
+  return null;
+}
 
 function MannequinJobRibbon() {
   const { pathname } = useLocation();
@@ -129,6 +184,7 @@ export function ChromeLayout() {
         <div className="orb-bg"><div className="l1" /><div className="l2" /><div className="l3" /><div className="hi" /></div>
       </div>
       <TopNav />
+      <MannequinCompletionToast />
       {pathname === '/create/storyboard' && location.state?.showMannequinTransition && (
         <StoryboardTransitionOverlay key={location.key} />
       )}

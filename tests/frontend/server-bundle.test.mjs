@@ -2,7 +2,14 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-import { diversifyTopTwo } from '../../src/mock/matchingRecommendation.js';
+import {
+  COLOR_HARMONY,
+  colorHarmonyScore,
+  diversifyTopTwo,
+  productColorFrom,
+  recommendMatchingItems,
+} from '../../src/mock/matchingRecommendation.js';
+import { seedMatchingItems } from '../../src/mock/seedMatchingItems.js';
 import { analyzePublicDraft } from '../../src/lib/api/publicAnalysis.js';
 
 const read = (path) => readFile(new URL(`../../${path}`, import.meta.url), 'utf8');
@@ -55,4 +62,48 @@ test('mock matching diversifies the second candidate deterministically', () => {
     diversifyTopTwo(ranked.map((item) => ({ ...item, colorGroup: 'black' }))).map((item) => item.id),
     ['a', 'b', 'c', 'd'],
   );
+});
+
+test('mock color harmony mirrors the server map and symmetric neutral fallback', () => {
+  assert.equal(COLOR_HARMONY.size, 91);
+  assert.equal(colorHarmonyScore('navy', 'beige'), 0.92);
+  assert.equal(colorHarmonyScore('beige', 'navy'), 0.92);
+  assert.equal(colorHarmonyScore('ultraviolet', 'khaki'), 0.5);
+  assert.equal(colorHarmonyScore('navy', null), 0.5);
+  assert.equal(productColorFrom(
+    { colors: [{ isBase: true }] },
+    { swatchSuggestions: [{ swatchId: 'ivory' }, { swatchId: 'red' }] },
+  ), 'ivory');
+});
+
+test('mock combines normalized style affinity with product color and supports weight-zero rollback', () => {
+  const items = [
+    {
+      id: 'black', clothingType: 'bottom', gender: 'women', isActive: true,
+      styleTags: ['daily'], colorGroup: 'black', colorBrightness: 0, sortOrder: 1,
+    },
+    {
+      id: 'beige', clothingType: 'bottom', gender: 'women', isActive: true,
+      styleTags: ['minimal'], colorGroup: 'beige', colorBrightness: 80, sortOrder: 2,
+    },
+  ];
+  const colorRanked = recommendMatchingItems({
+    clothingType: 'top', targetGenders: ['women'], styleTags: ['basic'],
+    productColor: 'navy', items,
+  });
+  const styleOnly = recommendMatchingItems({
+    clothingType: 'top', targetGenders: ['women'], styleTags: ['basic'],
+    productColor: 'navy', colorWeight: 0, items,
+  });
+  assert.deepEqual(colorRanked.map((item) => item.id), ['beige', 'black']);
+  assert.deepEqual(styleOnly.map((item) => item.id), ['black', 'beige']);
+});
+
+test('mock matching seed keeps the server retagging inputs in parity', async () => {
+  const serverSeed = JSON.parse(await read('server/seed/matching_items.json'));
+  const serverTags = new Map(serverSeed.map((item) => [item.id, item.styleTags]));
+  assert.equal(seedMatchingItems.length, serverSeed.length);
+  for (const item of seedMatchingItems) {
+    assert.deepEqual(item.styleTags, serverTags.get(item.id), item.id);
+  }
 });

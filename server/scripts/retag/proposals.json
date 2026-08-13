@@ -1,0 +1,917 @@
+[
+  {
+    "id": "match_men_bottom_01",
+    "name": "베이지 치노팬츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "basic",
+      "casual",
+      "preppy",
+      "classic"
+    ],
+    "reason": "단정한 베이지 색상과 레귤러 핏의 치노팬츠는 클래식하고 프레피한 무드부터 편안한 캐주얼 룩까지 다양하게 활용하기 좋은 기본 아이템입니다."
+  },
+  {
+    "id": "match_men_bottom_02",
+    "name": "샌드베이지 버뮤다쇼츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "casual",
+      "minimal",
+      "trendy"
+    ],
+    "reason": "차분한 샌드베이지 컬러와 군더더기 없는 레귤러 핏의 버뮤다쇼츠로, 미니멀하면서도 트렌디한 캐주얼 룩을 연출하기 좋습니다."
+  },
+  {
+    "id": "match_men_bottom_03",
+    "name": "베이지 쇼츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "casual",
+      "daily",
+      "cozy",
+      "athleisure"
+    ],
+    "reason": "차분한 베이지 색상과 편안한 밴딩 디테일의 레귤러 핏 쇼츠로, 일상적인 캐주얼 룩이나 가벼운 아웃도어 활동을 위한 애슬레저 스타일링에 잘 어울립니다."
+  },
+  {
+    "id": "match_men_bottom_04",
+    "name": "워시드카키 팬츠",
+    "current_tags": [
+      "trendy",
+      "daily",
+      "워시드",
+      "오버 다이드",
+      "페인터"
+    ],
+    "proposed_tags": [
+      "workwear",
+      "vintage",
+      "casual",
+      "street"
+    ],
+    "reason": "워시드카키 컬러의 빈티지한 워싱감과 튼튼한 스티치 디테일이 돋보이는 레귤러 핏 팬츠로, 워크웨어 무드나 캐주얼한 스트리트 룩에 연출하기 좋습니다."
+  },
+  {
+    "id": "match_men_bottom_05",
+    "name": "아이스블루 데님팬츠",
+    "current_tags": [
+      "basic",
+      "daily",
+      "워시드"
+    ],
+    "proposed_tags": [
+      "casual",
+      "vintage",
+      "street"
+    ],
+    "reason": "밝은 아이스블루 컬러에 은은한 옐로우 워싱 디테일이 더해져 빈티지하면서도 트렌디한 스트리트 캐주얼 룩을 연출하기 좋습니다."
+  },
+  {
+    "id": "match_men_bottom_06",
+    "name": "워시드블루 데님팬츠",
+    "current_tags": [
+      "basic",
+      "daily",
+      "워시드",
+      "엔지니어"
+    ],
+    "proposed_tags": [
+      "casual",
+      "vintage",
+      "street",
+      "y2k"
+    ],
+    "reason": "자연스러운 워싱과 독특한 절개 라인이 돋보이는 워시드 블루 데님으로 빈티지하면서도 트렌디한 스트리트 룩을 연출하기 좋습니다."
+  },
+  {
+    "id": "match_men_bottom_07",
+    "name": "네이비 치노팬츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "basic",
+      "casual",
+      "preppy",
+      "classic"
+    ],
+    "reason": "단정한 네이비 컬러와 레귤러 핏의 치노팬츠는 캐주얼한 일상 룩부터 셔츠와 매치한 프레피 및 클래식 룩까지 다양하게 활용하기 좋은 기본 아이템입니다."
+  },
+  {
+    "id": "match_men_bottom_08",
+    "name": "네이비 쇼츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "casual",
+      "preppy",
+      "minimal"
+    ],
+    "reason": "단정한 턱 디테일과 차분한 네이비 컬러가 돋보이는 레귤러 핏 쇼츠로, 캐주얼하면서도 깔끔한 프레피 룩이나 미니멀 룩에 연출하기 좋습니다."
+  },
+  {
+    "id": "match_men_bottom_09",
+    "name": "차콜그레이 팬츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "cozy",
+      "casual",
+      "daily"
+    ],
+    "reason": "차콜그레이 컬러의 이지 핏 팬츠로 허리 스트링과 여유로운 실루엣이 편안하고 자연스러운 데일리 룩에 잘 어울립니다."
+  },
+  {
+    "id": "match_men_bottom_10",
+    "name": "그레이 팬츠",
+    "current_tags": [
+      "basic",
+      "daily",
+      "플리츠"
+    ],
+    "proposed_tags": [
+      "minimal",
+      "sophisticated",
+      "modern"
+    ],
+    "reason": "차분한 그레이 컬러에 핀턱 디테일과 와이드 핏이 더해져 세련되면서도 간결한 미니멀 룩을 연출하기 좋습니다."
+  },
+  {
+    "id": "match_men_bottom_11",
+    "name": "워시드그레이 데님팬츠",
+    "current_tags": [
+      "trendy",
+      "daily",
+      "워시드",
+      "컷오프"
+    ],
+    "proposed_tags": [
+      "casual",
+      "street",
+      "vintage",
+      "y2k"
+    ],
+    "reason": "워시드그레이 컬러의 빈티지한 워싱과 트렌디한 플레어 핏이 어우러져 스트리트하고 캐주얼한 Y2K 감성의 코디에 잘 어울립니다."
+  },
+  {
+    "id": "match_men_bottom_12",
+    "name": "블랙 팬츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "basic",
+      "minimal",
+      "formal",
+      "sophisticated"
+    ],
+    "reason": "깔끔한 블랙 컬러와 단정한 테이퍼드 핏의 슬랙스로, 군더더기 없는 미니멀한 룩부터 격식 있는 포멀 룩까지 세련되게 연출하기 좋습니다."
+  },
+  {
+    "id": "match_men_bottom_13",
+    "name": "워시드블랙 팬츠",
+    "current_tags": [
+      "trendy",
+      "daily",
+      "워시드",
+      "오버 다이드",
+      "페인터"
+    ],
+    "proposed_tags": [
+      "casual",
+      "workwear",
+      "vintage",
+      "street"
+    ],
+    "reason": "워시드블랙 컬러의 빈티지한 색감과 튼튼한 캔버스 느낌의 디테일이 더해진 레귤러 핏 팬츠로, 워크웨어나 스트리트 캐주얼 스타일에 잘 어울립니다."
+  },
+  {
+    "id": "match_men_bottom_14",
+    "name": "워시드블랙 데님팬츠",
+    "current_tags": [
+      "basic",
+      "daily",
+      "워시드",
+      "엔지니어"
+    ],
+    "proposed_tags": [
+      "street",
+      "vintage",
+      "casual"
+    ],
+    "reason": "빈티지한 워싱이 돋보이는 워시드 블랙 데님 팬츠로, 입체적인 절개 라인과 여유로운 실루엣이 스트리트하고 캐주얼한 무드를 연출하기에 좋습니다."
+  },
+  {
+    "id": "match_men_bottom_15",
+    "name": "블랙 쇼츠",
+    "current_tags": [
+      "basic",
+      "daily",
+      "워시드"
+    ],
+    "proposed_tags": [
+      "casual",
+      "sporty",
+      "athleisure",
+      "daily"
+    ],
+    "reason": "허리 스트링 디테일과 편안한 나일론 소재의 블랙 쇼츠로 가벼운 운동이나 일상적인 캐주얼 룩에 매치하기 좋습니다."
+  },
+  {
+    "id": "match_women_bottom_02",
+    "name": "라이트블루 데님팬츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "casual",
+      "daily",
+      "vintage"
+    ],
+    "reason": "자연스러운 워싱이 돋보이는 라이트블루 컬러의 레귤러 핏 데님팬츠로, 편안한 캐주얼 룩이나 빈티지한 일상 코디에 활용하기 좋습니다."
+  },
+  {
+    "id": "match_women_bottom_03",
+    "name": "워시드블루 데님팬츠",
+    "current_tags": [
+      "basic",
+      "daily",
+      "워시드"
+    ],
+    "proposed_tags": [
+      "casual",
+      "daily",
+      "vintage"
+    ],
+    "reason": "자연스러운 워싱이 돋보이는 워시드블루 컬러의 스트레이트 데님팬츠로, 편안한 캐주얼 룩이나 빈티지한 일상 코디에 활용하기 좋습니다."
+  },
+  {
+    "id": "match_women_bottom_04",
+    "name": "블루 쇼츠",
+    "current_tags": [
+      "basic",
+      "daily",
+      "플리츠"
+    ],
+    "proposed_tags": [
+      "casual",
+      "daily",
+      "vintage"
+    ],
+    "reason": "자연스러운 워싱이 돋보이는 블루 데님 쇼츠로, 편안한 데일리 룩이나 빈티지한 캐주얼 스타일링에 활용하기 좋습니다."
+  },
+  {
+    "id": "match_women_bottom_05",
+    "name": "그레이 트라우저",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "minimal",
+      "sophisticated",
+      "modern",
+      "classic"
+    ],
+    "reason": "차분한 그레이 톤에 핀턱 디테일과 릴랙스드 핏이 더해져 세련되면서도 간결한 미니멀 룩이나 클래식한 포멀 룩에 잘 어울립니다."
+  },
+  {
+    "id": "match_women_bottom_06",
+    "name": "워시드그레이 데님팬츠",
+    "current_tags": [
+      "basic",
+      "daily",
+      "워시드"
+    ],
+    "proposed_tags": [
+      "casual",
+      "street",
+      "vintage"
+    ],
+    "reason": "워시드그레이 컬러의 빈티지한 색감과 여유로운 루즈핏 실루엣이 어우러져 캐주얼하면서도 트렌디한 스트리트 룩을 연출하기 좋습니다."
+  },
+  {
+    "id": "match_women_bottom_07",
+    "name": "라이트그레이 팬츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "minimal",
+      "casual",
+      "cozy"
+    ],
+    "reason": "차분한 라이트그레이 컬러와 여유로운 와이드레그 핏이 어우러져 편안하면서도 간결한 미니멀 캐주얼 룩을 연출하기 좋습니다."
+  },
+  {
+    "id": "match_women_bottom_08",
+    "name": "블랙 스웨트팬츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "casual",
+      "athleisure",
+      "cozy",
+      "daily"
+    ],
+    "reason": "심플한 블랙 컬러와 여유로운 와이드 핏의 스웨트팬츠로 편안한 데일리 캐주얼 룩이나 스포티한 애슬레저 스타일링에 적합합니다."
+  },
+  {
+    "id": "match_women_bottom_09",
+    "name": "블랙 트라우저",
+    "current_tags": [
+      "basic",
+      "daily",
+      "턴업"
+    ],
+    "proposed_tags": [
+      "minimal",
+      "sophisticated",
+      "modern",
+      "casual"
+    ],
+    "reason": "깔끔한 핀턱 디테일과 턴업 밑단이 돋보이는 블랙 와이드 트라우저로, 미니멀하고 세련된 룩부터 편안한 캐주얼 룩까지 다양하게 연출하기 좋습니다."
+  },
+  {
+    "id": "match_women_bottom_10",
+    "name": "워시드블랙 데님팬츠",
+    "current_tags": [
+      "basic",
+      "daily",
+      "워시드"
+    ],
+    "proposed_tags": [
+      "casual",
+      "street",
+      "vintage"
+    ],
+    "reason": "자연스러운 워싱이 돋보이는 워시드블랙 컬러의 스트레이트 데님팬츠로, 빈티지하면서도 캐주얼한 스트리트 룩을 연출하기에 좋습니다."
+  },
+  {
+    "id": "match_women_bottom_11",
+    "name": "블랙 버뮤다쇼츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "minimal",
+      "casual",
+      "trendy"
+    ],
+    "reason": "깔끔한 블랙 컬러와 레귤러 핏의 버뮤다쇼츠로, 군더더기 없는 미니멀한 디자인 덕분에 트렌디하면서도 편안한 캐주얼 룩에 다양하게 매치하기 좋습니다."
+  },
+  {
+    "id": "match_women_bottom_12",
+    "name": "블랙 스커트",
+    "current_tags": [
+      "skirt",
+      "daily",
+      "랩"
+    ],
+    "proposed_tags": [
+      "minimal",
+      "chic",
+      "sophisticated",
+      "formal"
+    ],
+    "reason": "깔끔한 랩 스타일의 블랙 미니 스커트로, 군더더기 없는 실루엣이 세련되고 시크한 오피스룩이나 격식 있는 자리에 잘 어울립니다."
+  },
+  {
+    "id": "match_women_bottom_13",
+    "name": "블랙 팬츠",
+    "current_tags": [
+      "basic",
+      "daily",
+      "플리츠",
+      "벨티드"
+    ],
+    "proposed_tags": [
+      "casual",
+      "cozy",
+      "vintage"
+    ],
+    "reason": "따뜻한 질감이 느껴지는 멜란지 블랙 톤의 와이드 팬츠로 벨트 디테일이 더해져 편안하면서도 빈티지한 캐주얼 룩을 연출하기 좋습니다."
+  },
+  {
+    "id": "match_women_bottom_14",
+    "name": "아이보리 스커트",
+    "current_tags": [
+      "skirt",
+      "daily",
+      "밴딩"
+    ],
+    "proposed_tags": [
+      "cozy",
+      "casual",
+      "minimal"
+    ],
+    "reason": "허리 스트링 디테일과 편안한 실루엣의 아이보리 롱 스커트로, 내추럴하고 포근한 데일리 룩이나 미니멀한 캐주얼 스타일에 잘 어울립니다."
+  },
+  {
+    "id": "match_women_bottom_15",
+    "name": "그레이 스커트",
+    "current_tags": [
+      "skirt",
+      "daily",
+      "플리츠",
+      "랩"
+    ],
+    "proposed_tags": [
+      "preppy",
+      "lovely",
+      "casual"
+    ],
+    "reason": "차분한 그레이 컬러에 랩 스타일과 플리츠 주름, 리본 디테일이 더해져 단정하면서도 발랄한 프레피 룩이나 러블리한 캐주얼 코디에 잘 어울립니다."
+  },
+  {
+    "id": "match_women_bottom_16",
+    "name": "블랙 스커트",
+    "current_tags": [
+      "skirt",
+      "daily",
+      "랩",
+      "버클"
+    ],
+    "proposed_tags": [
+      "chic",
+      "modern",
+      "sophisticated",
+      "classic"
+    ],
+    "reason": "버클 디테일과 비대칭 랩 스타일의 플리츠가 돋보이는 블랙 롱 스커트로, 세련되면서도 모던하고 시크한 분위기를 연출하기에 좋습니다."
+  },
+  {
+    "id": "match_men_top_01",
+    "name": "화이트 슬리브리스",
+    "current_tags": [
+      "trendy",
+      "daily",
+      "디스트레스드"
+    ],
+    "proposed_tags": [
+      "basic",
+      "daily",
+      "minimal",
+      "casual"
+    ],
+    "reason": "깔끔한 화이트 컬러와 군더더기 없는 레귤러 핏의 슬리브리스로, 단독 착용은 물론 다양한 아우터 안에 이너로 매치하여 미니멀하고 캐주얼한 데일리 룩을 연출하기 좋습니다."
+  },
+  {
+    "id": "match_men_top_02",
+    "name": "화이트 티셔츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "basic",
+      "daily",
+      "minimal",
+      "casual"
+    ],
+    "reason": "깔끔한 화이트 컬러와 군더더기 없는 레귤러 핏의 긴팔 티셔츠로, 단독 착용은 물론 다양한 아우터 안에 이너로 매치하기 좋은 가장 기본적인 데일리 아이템입니다."
+  },
+  {
+    "id": "match_men_top_03",
+    "name": "화이트 티셔츠",
+    "current_tags": [
+      "basic",
+      "daily",
+      "U넥"
+    ],
+    "proposed_tags": [
+      "basic",
+      "daily",
+      "casual",
+      "minimal"
+    ],
+    "reason": "깔끔한 화이트 컬러에 가슴 포켓 디테일이 더해진 세미오버핏 티셔츠로, 군더더기 없는 디자인 덕분에 일상적인 캐주얼 룩이나 미니멀한 코디에 기본 아이템으로 활용하기 좋습니다."
+  },
+  {
+    "id": "match_men_top_04",
+    "name": "화이트 티셔츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "basic",
+      "daily",
+      "minimal",
+      "casual"
+    ],
+    "reason": "아무런 장식이나 그래픽이 없는 깔끔한 화이트 컬러의 레귤러 핏 반팔 티셔츠로, 일상적인 캐주얼 룩부터 미니멀한 스타일까지 다양하게 레이어드하기 좋은 기본 아이템입니다."
+  },
+  {
+    "id": "match_men_top_05",
+    "name": "화이트 셔츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "basic",
+      "daily",
+      "minimal",
+      "casual"
+    ],
+    "reason": "깔끔한 화이트 컬러와 레귤러 핏의 반소매 셔츠로, 군더더기 없는 디자인 덕분에 일상적인 캐주얼 룩부터 미니멀한 스타일까지 다양하게 활용하기 좋습니다."
+  },
+  {
+    "id": "match_men_top_06",
+    "name": "브라운 폴로셔츠",
+    "current_tags": [
+      "polo",
+      "daily"
+    ],
+    "proposed_tags": [
+      "classic",
+      "minimal",
+      "casual",
+      "preppy"
+    ],
+    "reason": "차분한 브라운 컬러와 정갈한 레귤러 핏의 폴로셔츠로, 군더더기 없는 미니멀한 디자인 덕분에 클래식하고 단정한 프레피 룩이나 편안한 캐주얼 스타일링에 모두 잘 어울립니다."
+  },
+  {
+    "id": "match_men_top_07",
+    "name": "블루 폴로셔츠",
+    "current_tags": [
+      "polo",
+      "daily",
+      "핀 스트라이프"
+    ],
+    "proposed_tags": [
+      "casual",
+      "preppy",
+      "retro"
+    ],
+    "reason": "단정한 네이비 칼라와 촘촘한 스트라이프 패턴이 어우러진 레귤러 핏 폴로셔츠로, 캐주얼하면서도 클래식한 프레피 룩이나 레트로한 무드를 연출하기에 좋습니다."
+  },
+  {
+    "id": "match_men_top_08",
+    "name": "라이트그레이 헨리넥 티셔츠",
+    "current_tags": [
+      "basic",
+      "daily",
+      "와플"
+    ],
+    "proposed_tags": [
+      "casual",
+      "cozy",
+      "daily"
+    ],
+    "reason": "부드러운 와플 텍스처와 라이트그레이 컬러의 헨리넥 디자인이 어우러져 편안하고 내추럴한 데일리 캐주얼 룩에 잘 어울립니다."
+  },
+  {
+    "id": "match_men_top_10",
+    "name": "멜란지그레이 티셔츠",
+    "current_tags": [
+      "basic",
+      "daily",
+      "링거"
+    ],
+    "proposed_tags": [
+      "casual",
+      "retro",
+      "daily"
+    ],
+    "reason": "넥라인과 소매 끝단에 배색 링거 디테일이 들어간 멜란지그레이 티셔츠로, 캐주얼하면서도 레트로한 무드의 일상 룩을 연출하기 좋습니다."
+  },
+  {
+    "id": "match_men_top_11",
+    "name": "그레이 폴로셔츠",
+    "current_tags": [
+      "polo",
+      "daily"
+    ],
+    "proposed_tags": [
+      "minimal",
+      "casual",
+      "classic",
+      "preppy"
+    ],
+    "reason": "차분한 그레이 컬러와 군더더기 없는 레귤러 핏의 폴로셔츠로, 단정한 프레피 룩부터 간결한 미니멀 캐주얼 스타일까지 다양하게 연출하기 좋습니다."
+  },
+  {
+    "id": "match_men_top_12",
+    "name": "블랙 슬리브리스",
+    "current_tags": [
+      "trendy",
+      "daily",
+      "디스트레스드"
+    ],
+    "proposed_tags": [
+      "basic",
+      "minimal",
+      "casual"
+    ],
+    "reason": "깔끔한 라운드 넥 라인과 군더더기 없는 블랙 컬러의 레귤러 핏 슬리브리스로, 단독 혹은 레이어드로 활용하기 좋은 미니멀하고 캐주얼한 기본 아이템입니다."
+  },
+  {
+    "id": "match_men_top_13",
+    "name": "블랙 헨리넥 티셔츠",
+    "current_tags": [
+      "basic",
+      "daily",
+      "와플"
+    ],
+    "proposed_tags": [
+      "casual",
+      "cozy",
+      "daily"
+    ],
+    "reason": "단정한 헨리넥 디테일과 편안한 와플 텍스처가 돋보이는 블랙 컬러의 티셔츠로, 일상에서 편안하고 아늑한 캐주얼 룩을 연출하기에 좋습니다."
+  },
+  {
+    "id": "match_men_top_14",
+    "name": "블랙 티셔츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "basic",
+      "daily",
+      "minimal",
+      "casual"
+    ],
+    "reason": "깔끔한 라운드넥 디자인과 정갈한 블랙 컬러의 레귤러 핏 긴팔 티셔츠로, 군더더기 없는 미니멀한 일상 룩이나 캐주얼한 기본 이너웨어로 활용하기 좋습니다."
+  },
+  {
+    "id": "match_men_top_15",
+    "name": "블랙 티셔츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "basic",
+      "daily",
+      "minimal",
+      "casual"
+    ],
+    "reason": "가슴 부분의 심플한 포켓 디테일과 깔끔한 블랙 컬러의 레귤러 핏이 어우러져 일상에서 편안하고 미니멀하게 매치하기 좋은 기본 티셔츠입니다."
+  },
+  {
+    "id": "match_men_top_16",
+    "name": "블랙 티셔츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "basic",
+      "daily",
+      "minimal",
+      "casual"
+    ],
+    "reason": "깔끔한 라운드넥 디자인과 정갈한 레귤러 핏의 블랙 티셔츠로, 군더더기 없는 미니멀한 룩부터 편안한 데일리 캐주얼까지 폭넓게 활용하기 좋습니다."
+  },
+  {
+    "id": "match_women_top_01",
+    "name": "화이트 헨리넥 티셔츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "casual",
+      "cozy",
+      "vintage"
+    ],
+    "reason": "자연스러운 슬럽 텍스처와 따뜻한 톤의 화이트 컬러가 돋보이는 헨리넥 티셔츠로, 편안한 캐주얼 룩이나 아늑하고 빈티지한 무드의 데일리 코디에 잘 어울립니다."
+  },
+  {
+    "id": "match_women_top_02",
+    "name": "화이트 티셔츠",
+    "current_tags": [
+      "basic",
+      "daily",
+      "스트라이프"
+    ],
+    "proposed_tags": [
+      "casual",
+      "daily",
+      "classic",
+      "preppy"
+    ],
+    "reason": "클래식한 가로 스트라이프 패턴과 레귤러 핏의 화이트 긴팔 티셔츠로, 데님이나 치노 팬츠와 매치하여 단정하고 캐주얼한 데일리 룩을 연출하기 좋습니다."
+  },
+  {
+    "id": "match_women_top_03",
+    "name": "화이트 티셔츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "basic",
+      "daily",
+      "casual",
+      "minimal"
+    ],
+    "reason": "깔끔한 화이트 컬러와 여유로운 오버핏 실루엣의 무지 티셔츠로, 군더더기 없는 디자인 덕분에 일상적인 캐주얼 룩부터 미니멀한 스타일까지 다양하게 매치하기 좋습니다."
+  },
+  {
+    "id": "match_women_top_04",
+    "name": "화이트 셔츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "basic",
+      "minimal",
+      "casual",
+      "preppy"
+    ],
+    "reason": "깔끔한 화이트 컬러와 레귤러 핏에 가슴 포켓 디테일이 더해져 단정한 프레피 룩부터 군더더기 없는 미니멀 캐주얼 룩까지 다양하게 활용하기 좋은 기본 셔츠입니다."
+  },
+  {
+    "id": "match_women_top_05",
+    "name": "블루체크 셔츠",
+    "current_tags": [
+      "trendy",
+      "daily",
+      "깅엄 체크",
+      "오픈 카라"
+    ],
+    "proposed_tags": [
+      "casual",
+      "cozy",
+      "vintage"
+    ],
+    "reason": "차분한 톤의 깅엄 체크 패턴과 오픈 칼라 디자인이 어우러져 편안하면서도 빈티지한 캐주얼 룩을 연출하기 좋습니다."
+  },
+  {
+    "id": "match_women_top_06",
+    "name": "멜란지그레이 헨리넥 티셔츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "basic",
+      "daily",
+      "casual",
+      "cozy"
+    ],
+    "reason": "멜란지그레이 색상의 레귤러핏 헨리넥 티셔츠로, 단추 디테일이 주는 편안하고 포근한 무드 덕분에 일상적인 캐주얼 룩이나 이지웨어 코디에 잘 어울립니다."
+  },
+  {
+    "id": "match_women_top_07",
+    "name": "차콜그레이 티셔츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "basic",
+      "daily",
+      "casual",
+      "minimal"
+    ],
+    "reason": "차콜그레이 컬러의 레귤러 핏 포켓 티셔츠로 군더더기 없는 디자인 덕분에 일상적인 캐주얼 룩이나 미니멀한 코디에 기본 아이템으로 활용하기 좋습니다."
+  },
+  {
+    "id": "match_women_top_08",
+    "name": "블루그레이 티셔츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "basic",
+      "daily",
+      "minimal",
+      "casual"
+    ],
+    "reason": "차분한 블루그레이 컬러와 군더더기 없는 세미오버핏 디자인으로 제작되어 일상에서 편안하고 미니멀하게 매치하기 좋은 기본 티셔츠입니다."
+  },
+  {
+    "id": "match_women_top_09",
+    "name": "샌드그레이 티셔츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "basic",
+      "daily",
+      "minimal",
+      "cozy"
+    ],
+    "reason": "차분한 샌드그레이 컬러와 여유로운 오버핏 실루엣이 어우러져 편안하면서도 깔끔한 데일리 미니멀 룩을 연출하기 좋습니다."
+  },
+  {
+    "id": "match_women_top_10",
+    "name": "라이트그레이 폴로셔츠",
+    "current_tags": [
+      "polo",
+      "daily"
+    ],
+    "proposed_tags": [
+      "minimal",
+      "classic",
+      "sophisticated",
+      "casual"
+    ],
+    "reason": "차분한 라이트그레이 컬러와 정갈한 니트 짜임의 레귤러 핏 폴로셔츠로, 군더더기 없는 미니멀하고 세련된 캐주얼 룩이나 클래식한 스타일링에 잘 어울립니다."
+  },
+  {
+    "id": "match_women_top_11",
+    "name": "블랙 티셔츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "basic",
+      "daily",
+      "minimal",
+      "casual"
+    ],
+    "reason": "디테일이 배제된 깔끔한 블랙 컬러와 여유로운 오버핏 실루엣으로 일상에서 편안하고 미니멀하게 매치하기 좋은 기본 티셔츠입니다."
+  },
+  {
+    "id": "match_women_top_13",
+    "name": "아이보리 니트",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "cozy",
+      "feminine",
+      "daily",
+      "minimal"
+    ],
+    "reason": "부드러운 아이보리 컬러와 포근한 텍스처의 반소매 니트로, 넓게 파인 넥라인이 여성스러우면서도 편안한 데일리 룩에 잘 어울립니다."
+  },
+  {
+    "id": "match_women_top_14",
+    "name": "블랙 슬리브리스",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "minimal",
+      "chic",
+      "modern",
+      "basic"
+    ],
+    "reason": "깔끔한 스퀘어 넥라인과 얇은 어깨끈이 돋보이는 블랙 슬리브리스로, 군더더기 없는 실루엣 덕분에 미니멀하고 시크한 룩에 이너나 단독으로 매치하기 좋습니다."
+  },
+  {
+    "id": "match_women_top_15",
+    "name": "블랙 블라우스",
+    "current_tags": [
+      "basic",
+      "daily",
+      "텍스처"
+    ],
+    "proposed_tags": [
+      "chic",
+      "feminine",
+      "modern"
+    ],
+    "reason": "독특한 셔링 텍스처와 보트넥 라인이 돋보이는 블랙 블라우스로, 슬림한 실루엣이 시크하면서도 페미닌한 무드를 연출하기에 좋습니다."
+  },
+  {
+    "id": "match_women_top_16",
+    "name": "화이트 셔츠",
+    "current_tags": [
+      "basic",
+      "daily"
+    ],
+    "proposed_tags": [
+      "basic",
+      "minimal",
+      "daily",
+      "casual"
+    ],
+    "reason": "깔끔한 화이트 컬러와 군더더기 없는 레귤러 핏의 반소매 셔츠로, 단정하고 미니멀한 데일리 캐주얼 룩에 기본 아이템으로 활용하기 좋습니다."
+  }
+]

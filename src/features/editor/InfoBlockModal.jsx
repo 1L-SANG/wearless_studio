@@ -6,7 +6,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { Button, Icon, IconButton, Modal } from '@/components/ui.jsx';
 import { thumbUrl } from '@/lib/imageCdn.js';
-import { CARE_COPY_LIBRARY, CARE_LABEL_SENTENCE, FEATURE_ITEMS_MAX, FEATURE_ITEMS_MIN, FEATURE_LAYOUTS, INFO_PRESET_TYPES, careFamilyFor, resolveFeatureLayout } from '@/features/editor/presets/infoPresets.js';
+import { CARE_COPY_LIBRARY, CARE_LABEL_SENTENCE, FAQ_ITEMS_MAX, FAQ_ITEMS_MIN, FEATURE_ITEMS_MAX, FEATURE_ITEMS_MIN, FEATURE_LAYOUTS, INFO_PRESET_TYPES, careFamilyFor, resolveFeatureLayout } from '@/features/editor/presets/infoPresets.js';
 
 const inp = { width: '100%', boxSizing: 'border-box', padding: '8px 10px', border: '1px solid #e5e5e3', borderRadius: 8, fontSize: 14, background: '#fff', color: '#0e0d14' };
 const inpSm = { ...inp, padding: '6px 8px', fontSize: 13 };
@@ -240,6 +240,59 @@ function PolicyForm({ info, setInfo }) {
   );
 }
 
+function FaqForm({ info, setInfo }) {
+  const setItem = (i, patch) => setInfo((current) => ({
+    ...current,
+    items: current.items.map((item, index) => (index === i ? { ...item, ...patch } : item)),
+  }));
+  return (
+    <>
+      <Field label="레이아웃" hint="카드형은 정보가 또렷하고, 말풍선형은 질문과 답변의 흐름이 자연스러워요.">
+        <div style={{ display: 'flex', gap: 6 }}>
+          <Chip on={info.layout === 'cards'} onClick={() => setInfo((f) => ({ ...f, layout: 'cards' }))}>카드형</Chip>
+          <Chip on={info.layout === 'chat'} onClick={() => setInfo((f) => ({ ...f, layout: 'chat' }))}>말풍선형</Chip>
+        </div>
+      </Field>
+      <Field label="제목">
+        <input style={inp} maxLength={30} value={info.title} placeholder="FAQ"
+          onChange={(e) => setInfo((f) => ({ ...f, title: e.target.value }))} />
+      </Field>
+      <Field label={`질문과 답변 (${FAQ_ITEMS_MIN}~${FAQ_ITEMS_MAX}개)`}
+        hint="구매 결정 전에 자주 확인하는 사이즈·세탁·색상·배송 질문부터 넣는 것을 권장해요.">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {info.items.map((item, i) => (
+            <div key={i} style={{ border: '1px solid #eee', borderRadius: 10, padding: 10 }}>
+              <div style={{ ...rowGap, marginBottom: 7 }}>
+                <span style={{ width: 20, flexShrink: 0, fontSize: 12, fontWeight: 700, color: '#4a4a45' }}>Q</span>
+                <input style={inpSm} maxLength={80} value={item.question} placeholder="질문을 입력하세요"
+                  onChange={(e) => setItem(i, { question: e.target.value })} />
+                <IconButton name="trash" size="sm"
+                  title={info.items.length <= FAQ_ITEMS_MIN ? `최소 ${FAQ_ITEMS_MIN}개` : '삭제'}
+                  onClick={() => {
+                    if (info.items.length <= FAQ_ITEMS_MIN) return;
+                    setInfo((f) => ({ ...f, items: f.items.filter((_item, index) => index !== i) }));
+                  }} />
+              </div>
+              <div style={{ ...rowGap, alignItems: 'flex-start' }}>
+                <span style={{ width: 20, flexShrink: 0, paddingTop: 7, fontSize: 12, fontWeight: 700, color: '#4f88c9' }}>A</span>
+                <textarea style={{ ...inpSm, minHeight: 66, resize: 'vertical', lineHeight: 1.55 }} maxLength={240}
+                  value={item.answer} placeholder="답변을 입력하세요"
+                  onChange={(e) => setItem(i, { answer: e.target.value })} />
+              </div>
+            </div>
+          ))}
+        </div>
+        {info.items.length < FAQ_ITEMS_MAX && (
+          <Button variant="ghost" size="sm" icon="plus" style={{ marginTop: 8 }}
+            onClick={() => setInfo((f) => ({ ...f, items: [...f.items, { question: '', answer: '' }] }))}>
+            질문 추가
+          </Button>
+        )}
+      </Field>
+    </>
+  );
+}
+
 function HeaderForm({ info, setInfo }) {
   return (
     <>
@@ -440,6 +493,7 @@ const FORMS = {
   required_notice: NoticeForm,
   care: CareForm,
   policy: PolicyForm,
+  faq: FaqForm,
   header: HeaderForm,
   feature_icons: FeatureIconsForm,
   fit_guide: FitGuideForm,
@@ -454,6 +508,12 @@ function normalizeFormInfo(type, info) {
     const items = (info.items || []).slice(0, FEATURE_ITEMS_MAX).map((it) => ({ title: it.title || '', desc: it.desc || '', src: it.src || null }));
     while (items.length < FEATURE_ITEMS_MIN) items.push({ title: '', desc: '', src: null });
     return { ...info, items };
+  }
+  if (type === 'faq') {
+    const items = (info.items || []).slice(0, FAQ_ITEMS_MAX)
+      .map((item) => ({ question: item.question || '', answer: item.answer || '' }));
+    while (items.length < FAQ_ITEMS_MIN) items.push({ question: '', answer: '' });
+    return { ...info, layout: info.layout === 'chat' ? 'chat' : 'cards', title: info.title || 'FAQ', items };
   }
   return info;
 }

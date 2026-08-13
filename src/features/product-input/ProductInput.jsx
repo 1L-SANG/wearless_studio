@@ -364,17 +364,31 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
   );
 }
 
-function EditingRightsLock({ meta, onReclaim }) {
+function EditingRightsLock({ meta, onReclaim, onRestartLocal, onDiscard }) {
+  const gone = meta?.state === 'gone';
   return (
     <div className="draft-slot-lock" role="alertdialog" aria-modal="true">
       <div className="draft-slot-lock-card">
         <Icon name="lock" size={28} />
-        <h3>다른 기기에서 이어서 작업을 시작했어요</h3>
-        <p>
-          {formatDraftRelativeTime(meta?.updatedAt)} · {meta?.deviceLabel || '다른 기기'}
-          <br />이 화면에서는 편집할 수 없어요.
-        </p>
-        <Button variant="primary" onClick={onReclaim}>여기서 다시 이어받기</Button>
+        {gone ? (
+          <>
+            <h3>임시저장이 다른 곳에서 마무리됐어요</h3>
+            <p>이 탭에 남아 있는 입력은 자동으로 다시 저장하지 않았어요.<br />이어갈 내용을 직접 골라주세요.</p>
+            <div className="modal-actions">
+              <Button variant="ghost" onClick={onDiscard}>이 내용 버리고 새로 시작</Button>
+              <Button variant="primary" onClick={onRestartLocal}>이 탭 내용으로 다시 저장</Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h3>다른 탭 또는 기기에서 이어서 작업 중이에요</h3>
+            <p>
+              {formatDraftRelativeTime(meta?.updatedAt)} · {meta?.deviceLabel || '다른 탭 또는 기기'}
+              <br />내용이 섞이지 않도록 이 화면의 저장을 멈췄어요.
+            </p>
+            <Button variant="primary" onClick={onReclaim}>이 탭에서 계속하기</Button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -411,7 +425,6 @@ export function ProductInput() {
   ));
   const [slotLock, setSlotLock] = useState(null);
   const [reclaimChoiceOpen, setReclaimChoiceOpen] = useState(false);
-  const [slotPhotosPending, setSlotPhotosPending] = useState(false);
   const [promotionLocked, setPromotionLocked] = useState(false);
   const { session, loading: authLoading, openLogin } = useAuth();
   const slotEnabled = Boolean(session) || isMockMode;
@@ -435,6 +448,15 @@ export function ProductInput() {
     });
   }
 
+  useEffect(() => draftSlot.onConflict((meta) => {
+    setSlotLock(meta);
+    if (!meta) setReclaimChoiceOpen(false);
+  }), []);
+
+  useEffect(() => {
+    if (slotEnabled) draftSlot.activate();
+  }, [slotEnabled]);
+
   useEffect(() => {
     if (!product) return;
     const localUpdatedAt = new Date().toISOString();
@@ -444,9 +466,6 @@ export function ProductInput() {
       draftSlot.queue({ product, analysis, composeMode, localUpdatedAt });
     }
   }, [analysis, composeMode, product, slotEnabled]);
-
-  useEffect(() => draftSlot.onConflict((meta) => setSlotLock(meta || {})), []);
-  useEffect(() => draftSlot.onPhotosPending(setSlotPhotosPending), []);
 
   useEffect(() => {
     if (!slotEnabled) return;
@@ -751,7 +770,7 @@ export function ProductInput() {
     }
   };
 
-  const applyDraftPayload = (payload, meta = null) => {
+  const applyDraftPayload = (payload) => {
     if (!payload?.product) return false;
     const restored = restoreDraftProduct(payload);
     persistedColorsRef.current = restored.colors || [];
@@ -760,7 +779,6 @@ export function ProductInput() {
     useAppStore.getState().restoreComposeMode(payload.composeMode);
     setAnalysisProjectId(null);
     setPhase(payload.analysis && hasRequiredDraftPhotos(restored) ? 'done' : 'input');
-    setSlotPhotosPending(Boolean(meta?.photosPending));
     return true;
   };
 
@@ -768,7 +786,7 @@ export function ProductInput() {
     try {
       const takeover = await draftSlot.takeover();
       if (!takeover?.payload) throw new Error('다른 기기의 임시저장을 불러오지 못했어요.');
-      applyDraftPayload(takeover.payload, takeover.meta);
+      applyDraftPayload(takeover.payload);
       setReclaimChoiceOpen(false);
       setSlotLock(null);
     } catch (error) {
@@ -799,6 +817,43 @@ export function ProductInput() {
     void chooseRemoteContent();
   };
 
+  const restartGoneWithLocal = async () => {
+    try {
+      if (!draftSlot.restartAfterGone()) return;
+      setSlotLock(null);
+      if (product) {
+        const localUpdatedAt = latestLocalUpdatedAtRef.current || new Date().toISOString();
+        draftSlot.queue({ product, analysis, composeMode, localUpdatedAt });
+        await draftSlot.flush();
+      }
+    } catch (error) {
+      toast.push(error?.message || '이 탭의 내용을 다시 저장하지 못했어요.', { icon: 'alert' });
+    }
+  };
+
+  const startOver = async () => {
+    setConsistencyOpen(false);
+    if (slotEnabled) {
+      try {
+        await draftSlot.removeForNewFlow();
+      } catch (error) {
+        toast.push(error?.message || '임시저장을 정리하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+        return;
+      }
+    }
+    await useAppStore.getState().beginProject();
+    navigate('/create/input', { replace: true });
+  };
+
+  const editingRightsLock = slotLock && (
+    <EditingRightsLock
+      meta={slotLock}
+      onReclaim={reclaimEditingRights}
+      onRestartLocal={restartGoneWithLocal}
+      onDiscard={startOver}
+    />
+  );
+
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -815,7 +870,7 @@ export function ProductInput() {
       if (!alive) return;
       setCatalogs(c);
       const staged = draftSlot.consumeStaged();
-      if (staged?.payload && applyDraftPayload(staged.payload, staged.meta)) return;
+      if (staged?.payload && applyDraftPayload(staged.payload)) return;
       persistedColorsRef.current = p.colors || [];
       const analysisWasRunning = editingProjectId && isAnalysisRunning(editingProjectId);
 
@@ -911,7 +966,7 @@ export function ProductInput() {
 
   if (loadError) return (
     <div className="wizard">
-      {slotLock && <EditingRightsLock meta={slotLock} onReclaim={reclaimEditingRights} />}
+      {editingRightsLock}
       {doneBlocked && <DoneGuardModal />}
       <div className="surface">
         <ErrorState desc={loadError} onRetry={() => setLoadAttempt((n) => n + 1)} />
@@ -920,7 +975,7 @@ export function ProductInput() {
   );
   if (!product || !catalogs) return (
     <div className="wizard">
-      {slotLock && <EditingRightsLock meta={slotLock} onReclaim={reclaimEditingRights} />}
+      {editingRightsLock}
       {doneBlocked && <DoneGuardModal />}
       <div className="surface"><Skeleton h={420} /></div>
     </div>
@@ -981,20 +1036,6 @@ export function ProductInput() {
           ? '로그인 상태를 확인하고 있어요.'
           : '';
   const locked = phase !== 'input';
-  const startOver = async () => {
-    setConsistencyOpen(false);
-    if (slotEnabled) {
-      try {
-        await draftSlot.removeForNewFlow();
-      } catch (error) {
-        toast.push(error?.message || '임시저장을 정리하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
-        return;
-      }
-    }
-    await useAppStore.getState().beginProject();
-    navigate('/create/input', { replace: true });
-  };
-
   // AI 분석하기 → analyze inline (skeleton below) → fill analysis form below
   const submit = async () => {
     if (authLoading) return;
@@ -1114,7 +1155,7 @@ export function ProductInput() {
           </div>
         </div>
       ), document.body)}
-      {slotLock && <EditingRightsLock meta={slotLock} onReclaim={reclaimEditingRights} />}
+      {editingRightsLock}
       {reclaimChoiceOpen && slotLock && (
         <Modal onClose={() => setReclaimChoiceOpen(false)}>
           <h3>어느 내용을 이어갈까요?</h3>
@@ -1183,12 +1224,6 @@ export function ProductInput() {
         title="의류 이미지를 올려주세요"
         sub={<>사진 몇장만으로 경험해보세요.<br />부족한 정보는 AI 분석 후 직접 확인하고 보정할 수 있어요.</>}
       />
-
-      {slotPhotosPending && (
-        <div className="draft-slot-pending" role="status">
-          일부 사진은 아직 동기화 중이에요. 이 기기의 로컬 초안은 안전하게 유지되고 있어요.
-        </div>
-      )}
 
       {phase === 'input' ? inputSection : summaryCard}
 
