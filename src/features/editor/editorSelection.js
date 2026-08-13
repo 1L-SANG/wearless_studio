@@ -13,33 +13,16 @@ const LEGACY_LIBRARY_GROUP_SIZE = {
 
 export function selectionIdsForElement(elements, element) {
   if (!element?.id) return [];
-  // A background/line is a real top-level layer: clicking it must keep that
-  // parent individually selectable (and therefore individually deletable).
-  // Text is the convenient composite hit target and selects its whole object.
-  if (element.type !== 'text') return [element.id];
+  // Every primitive remains individually selectable. In particular, dragging
+  // copy must never pull its grouped background/line along with it. A unified
+  // speech bubble is itself the visible object; only those explicit bubble
+  // groups retain their whole-object selection behaviour.
+  if (element.type !== 'text' || element.shape !== 'bubble') return [element.id];
   if (element.groupId) {
     const grouped = (elements || [])
       .filter((candidate) => candidate.groupId === element.groupId)
       .map((candidate) => candidate.id);
     return grouped.length ? grouped : [element.id];
-  }
-  // Object-library items saved before groupId shipped still retain their item
-  // marker. Normalize usually repairs them on load; this fallback also makes a
-  // partially restored document safe during the first render.
-  if (element.libraryItemId) {
-    const all = elements || [];
-    const index = all.findIndex((candidate) => candidate.id === element.id);
-    const size = LEGACY_LIBRARY_GROUP_SIZE[element.libraryItemId] || 1;
-    if (index >= 0 && size > 1) {
-      let start = index;
-      while (start > 0 && all[start - 1].libraryItemId === element.libraryItemId && !all[start - 1].groupId) start -= 1;
-      const offset = index - start;
-      const chunkStart = start + Math.floor(offset / size) * size;
-      const grouped = all.slice(chunkStart, chunkStart + size)
-        .filter((candidate) => candidate.libraryItemId === element.libraryItemId)
-        .map((candidate) => candidate.id);
-      if (grouped.length > 1) return grouped;
-    }
   }
   return [element.id];
 }
@@ -117,6 +100,10 @@ export function isEditorGrayWorkspaceTarget(target) {
 
 export function shouldPreserveMultiSelectionOnPointerDown({ selected, selectionCount, additive }) {
   return Boolean(selected && selectionCount > 1 && !additive);
+}
+
+export function shouldStartTextOnlyDrag(element, additive) {
+  return Boolean(!additive && element?.type === 'text' && element?.shape !== 'bubble');
 }
 
 export function shouldPassGroupDragArea(elements) {

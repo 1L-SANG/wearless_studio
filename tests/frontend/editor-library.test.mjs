@@ -23,6 +23,7 @@ import {
   shouldClearEditorSelection,
   shouldPassGroupDragArea,
   shouldPreserveMultiSelectionOnPointerDown,
+  shouldStartTextOnlyDrag,
 } from '../../src/features/editor/editorSelection.js';
 
 const seqId = () => { let n = 0; return (prefix) => `${prefix}${++n}`; };
@@ -79,7 +80,7 @@ test('a wardrobe image dropped between blocks becomes its own padded image block
   });
 });
 
-test('object presets materialize existing primitives as one selectable group', () => {
+test('object presets retain one metadata group for layout and migration', () => {
   for (const item of OBJECT_LIBRARY_ITEMS) {
     const elements = buildObjectPreset(item.id, { x: 100, y: 80, idFn: seqId() });
     assert.ok(elements.length > 0, item.id);
@@ -87,6 +88,23 @@ test('object presets materialize existing primitives as one selectable group', (
     assert.ok(elements.every((element) => ['text', 'shape', 'line'].includes(element.type)));
     assert.ok(elements.every((element) => element.libraryItemId === item.id));
   }
+});
+
+test('dragging normal text always selects only the text layer, even inside a grouped object', () => {
+  for (const itemId of ['text-box', 'arrow-callout', 'label-badge']) {
+    const elements = buildObjectPreset(itemId, { x: 100, y: 80, idFn: seqId() });
+    const copy = elements.find((element) => element.type === 'text');
+    assert.ok(copy, `${itemId}: text layer`);
+    assert.deepEqual(selectionIdsForElement(elements, copy), [copy.id]);
+  }
+});
+
+test('normal text starts a text-only drag regardless of the current group selection', () => {
+  assert.equal(shouldStartTextOnlyDrag({ type: 'text' }, false), true);
+  assert.equal(shouldStartTextOnlyDrag({ type: 'text', groupId: 'object' }, false), true);
+  assert.equal(shouldStartTextOnlyDrag({ type: 'text', shape: 'bubble' }, false), false);
+  assert.equal(shouldStartTextOnlyDrag({ type: 'shape' }, false), false);
+  assert.equal(shouldStartTextOnlyDrag({ type: 'text' }, true), false, 'shift remains additive selection');
 });
 
 test('object presets stay inside the 1000px canvas when dropped near an edge', () => {
@@ -139,8 +157,8 @@ test('selected speech-bubble groups keep Moveable drag capture enabled', () => {
 test('marquee selection includes intersecting elements, expands groups, and skips locked layers', () => {
   const elements = [
     { id: 'free', type: 'shape' },
-    { id: 'group-a', type: 'text', groupId: 'group' },
-    { id: 'group-b', type: 'text', groupId: 'group' },
+    { id: 'group-a', type: 'text', shape: 'bubble', groupId: 'group' },
+    { id: 'group-b', type: 'text', shape: 'bubble', groupId: 'group' },
     { id: 'partial', type: 'shape' },
     { id: 'locked', type: 'shape', locked: true },
     { id: 'hidden', type: 'shape', hidden: true },
@@ -200,7 +218,7 @@ test('Delete and macOS Backspace can remove a selected top-level block with all 
   assert.equal(removeSelectedBlock(blocks, null), blocks);
 });
 
-test('legacy object and FAQ composites recover text-group selection without hiding their parent layer', () => {
+test('legacy object and FAQ composites keep recovered metadata without forcing text to drag its parent', () => {
   const legacyObject = { id: 'object', elements: [
     { id: 'box', type: 'shape', libraryItemId: 'text-box', x: 10, y: 10, w: 200, h: 100 },
     { id: 'copy', type: 'text', libraryItemId: 'text-box', x: 20, y: 30, w: 180, h: 40 },
@@ -210,10 +228,12 @@ test('legacy object and FAQ composites recover text-group selection without hidi
     { id: 'answer', type: 'text', x: 30, y: 30, w: 260, h: 30 },
   ] };
   const normalized = normalizeEditorSelectionGroups([legacyObject, legacyFaq]);
-  assert.deepEqual(selectionIdsForElement(normalized[0].elements, normalized[0].elements[1]), ['box', 'copy']);
+  assert.deepEqual(selectionIdsForElement(normalized[0].elements, normalized[0].elements[1]), ['copy']);
   assert.deepEqual(selectionIdsForElement(normalized[0].elements, normalized[0].elements[0]), ['box']);
-  assert.deepEqual(selectionIdsForElement(normalized[1].elements, normalized[1].elements[1]), ['bubble', 'answer']);
+  assert.deepEqual(selectionIdsForElement(normalized[1].elements, normalized[1].elements[1]), ['answer']);
   assert.deepEqual(selectionIdsForElement(normalized[1].elements, normalized[1].elements[0]), ['bubble']);
+  assert.equal(normalized[0].elements[0].groupId, normalized[0].elements[1].groupId);
+  assert.equal(normalized[1].elements[0].groupId, normalized[1].elements[1].groupId);
 });
 
 test('legacy speech-bubble layers normalize into one selectable and deletable element', () => {
