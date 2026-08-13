@@ -49,14 +49,15 @@ function MannequinCompletionToast() {
       try {
         const cuts = mannequinCuts(await api.getMannequins(projectId));
         const firstImage = cuts[0]?.imageUrl || cuts[0]?.src || '';
-        thumb = thumbUrl(firstImage, 120);
+        thumb = thumbUrl(firstImage, 400);
       } catch { /* 목록 조회 실패여도 완료 알림은 텍스트로 보여준다. */ }
 
       if (!mountedRef.current || pathnameRef.current === '/create/mannequin') return;
       if (useAppStore.getState().projectId !== projectId) return;
-      pushToast('마네킹컷이 완성됐어요', {
+      pushToast('마네킹컷이 만들어졌어요', {
         thumb,
-        duration: 4000,
+        duration: 5000,
+        variant: 'mannequinCompletion',
         onClick: () => navigate('/create/mannequin'),
       });
     })();
