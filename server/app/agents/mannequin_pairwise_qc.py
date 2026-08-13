@@ -31,7 +31,7 @@ _ORDINAL = {
     ("skirt", "length"): {"mini": 0, "midi": 1, "long": 2},
     ("dress", "length"): {"mini": 0, "midi": 1, "long": 2},
     ("top", "fit"): {"slim": 0, "regular": 1, "semi_over": 2, "over": 3},
-    ("top", "sleeve"): {"sleeveless": 0, "short": 1},
+    ("top", "sleeve"): {"sleeveless": 0, "cap": 1, "short": 2, "elbow": 3, "three_qtr": 4},
     ("outer", "fit"): {"slim": 0, "regular": 1, "semi_over": 2, "over": 3},
     ("pants", "cut"): {  # '다리/밑단 폭' 근사
         "skinny": 0, "slim": 1, "tapered": 2, "straight": 2,

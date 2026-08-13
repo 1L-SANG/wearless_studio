@@ -842,17 +842,17 @@ def test_untuck_instruction_survives_undeclared_length_axis(f):
 def test_sleeve_axis_mirrors_the_frontend_vocabulary():
     for gender in ("women", "men"):
         entries = FIT_AXES["top"]["sleeve"][gender]
-        assert [e["value"] for e in entries] == ["sleeveless", "short"]
-        assert [e["label"] for e in entries] == ["민소매", "반팔"]
+        assert [e["value"] for e in entries] == ["sleeveless", "cap", "short", "elbow", "three_qtr"]
+        assert [e["label"] for e in entries] == ["민소매", "캡", "반팔", "5부", "7부"]
         assert all(e["promptEn"] for e in entries)
     assert list(FIT_AXES["top"]) == ["fit", "length", "sleeve"]
 
 
 def test_normalize_keeps_valid_sleeve_and_drops_unknown_values():
     kept = normalize_fit_profile(
-        {"category": "top", "gender": "women", "axes": {"fit": "regular", "sleeve": "short"}}
+        {"category": "top", "gender": "women", "axes": {"fit": "regular", "sleeve": "elbow"}}
     )
-    assert kept["axes"]["sleeve"] == "short"
+    assert kept["axes"]["sleeve"] == "elbow"
 
     dropped = normalize_fit_profile(
         {"category": "top", "gender": "women", "axes": {"fit": "regular", "sleeve": "long"}}

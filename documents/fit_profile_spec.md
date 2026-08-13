@@ -37,7 +37,7 @@ FitProfile = {
 |---|---|---|
 | top.fit | tight/slim/regular/semi_over/over (타이트/슬림/레귤러/세미오버/오버) | slim/regular/semi_over/over |
 | top.length | ultra_crop/crop/basic/long (울트라크롭/크롭/기본/롱) | crop/basic/long |
-| top.sleeve | sleeveless/short (민소매/반팔) | 동일 |
+| top.sleeve | sleeveless/cap/short/elbow/three_qtr (민소매/캡/반팔/5부/7부) | 동일 |
 | pants.cut | skinny/slim/straight/bootcut/wide (스키니/슬림/일자/부츠컷/와이드) | slim/straight/tapered/relaxed/semi_wide/wide (슬림/일자/테이퍼드/릴렉스/세미와이드/와이드) |
 | pants.length | above_ankle/ankle/below_ankle (발목 위/발목/발목 덮음) | 동일 |
 | skirt.length | mini/midi/long (미니/미디/롱) | (남성 미노출) |

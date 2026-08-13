@@ -73,9 +73,9 @@ def test_all_pairs_men_drops_skirt_and_dress():
     assert len(pairs) == 7                                   # top3 + pants2 + outer2
 
 
-def test_sleeve_extreme_pair_runs_sleeveless_to_short():
-    assert FM.extreme_pair("top", "sleeve", "women") == ("sleeveless", "short")
-    assert FM.extreme_pair("top", "sleeve", "men") == ("sleeveless", "short")
+def test_sleeve_extreme_pair_runs_sleeveless_to_three_qtr():
+    assert FM.extreme_pair("top", "sleeve", "women") == ("sleeveless", "three_qtr")
+    assert FM.extreme_pair("top", "sleeve", "men") == ("sleeveless", "three_qtr")
 
 
 # ─────────────── cut_labels (교차 생성 순서) ───────────────

@@ -27,10 +27,11 @@ test('current analysis values keep their object identity', () => {
   assert.equal(normalizeAnalysisFit(current), current);
 });
 
-test('상의 소매 기장 축은 민소매·반팔 두 값이고 남녀가 같다', () => {
+test('상의 소매 기장 축은 소매 끝 지점 5단계이고 남녀가 같다', () => {
   const values = (gender) => axesFor('top', gender).sleeve.map(({ value }) => value);
-  assert.deepEqual(values('women'), ['sleeveless', 'short']);
-  assert.deepEqual(values('men'), ['sleeveless', 'short']);
+  const expected = ['sleeveless', 'cap', 'short', 'elbow', 'three_qtr'];
+  assert.deepEqual(values('women'), expected);
+  assert.deepEqual(values('men'), expected);
 });
 
 test('소매 기장 축은 fit·length 뒤에 온다 — 카탈로그 순서가 UI 스텝 순서다', () => {
