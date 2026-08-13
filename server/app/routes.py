@@ -1647,9 +1647,10 @@ async def complete_upload(
 def _cut_to_api(c: dict) -> dict:
     """mannequin_cuts row → MannequinCut. src=안정 앱 URL `/v1/assets/{id}/file` (만료 없음, §3).
     finalize_mannequin_success가 만드는 result/SSE done의 shape와 동일하게 유지."""
+    display_asset_id = c.get("active_asset_id") or c["asset_id"]
     return {
         "id": f"{c['candidate']}-{c['version']}",
-        "src": f"/v1/assets/{c['asset_id']}/file",
+        "src": f"/v1/assets/{display_asset_id}/file",
         "candidate": c["candidate"],
         "version": c["version"],
         "baseFit": c["base_fit"],

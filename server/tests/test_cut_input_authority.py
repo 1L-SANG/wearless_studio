@@ -148,7 +148,12 @@ def test_detail_non_base_color_prunes_base_color_mannequin(monkeypatch):
         return {}
 
     async def fake_mannequins(conn, uid, pid):
-        return [{"candidate": "A", "version": 1, "asset_id": "mannequin"}]
+        return [{
+            "candidate": "A",
+            "version": 1,
+            "asset_id": "mannequin",
+            "active_asset_id": "tone-mannequin",
+        }]
 
     async def fake_asset(conn, uid, asset_id):
         return {"id": asset_id, "r2_key": f"k/{asset_id}", "mime_type": "image/png"}
@@ -169,7 +174,7 @@ def test_detail_non_base_color_prunes_base_color_mannequin(monkeypatch):
 
     prepared = _prepared_by_id(captured)
     assert [image.data for image in prepared["base"][1]] == [
-        b"k/mannequin", b"k/base-product",
+        b"k/tone-mannequin", b"k/base-product",
     ]
     assert [image.data for image in prepared["other"][1]] == [b"k/other-product"]
     assert "mannequin" in prepared["base"][2].lower()
@@ -401,12 +406,17 @@ def _patch_editor_common(monkeypatch, captured):
     monkeypatch.setattr(eij, "_emit", fake_emit)
 
 
-def _patch_editor_selected_mannequin(monkeypatch):
+def _patch_editor_selected_mannequin(monkeypatch, *, active_asset_id=None):
     async def fake_project(conn, uid, pid):
         return {"selected_mannequin_id": "A-1"}
 
     async def fake_mannequins(conn, uid, pid):
-        return [{"candidate": "A", "version": 1, "asset_id": "mannequin"}]
+        return [{
+            "candidate": "A",
+            "version": 1,
+            "asset_id": "mannequin",
+            "active_asset_id": active_asset_id,
+        }]
 
     monkeypatch.setattr(eij.repo, "get_project", fake_project)
     monkeypatch.setattr(eij.repo, "list_mannequin_cuts", fake_mannequins)
@@ -415,7 +425,7 @@ def _patch_editor_selected_mannequin(monkeypatch):
 def test_editor_base_color_worn_cut_puts_selected_mannequin_first(monkeypatch):
     captured = {}
     _patch_editor_common(monkeypatch, captured)
-    _patch_editor_selected_mannequin(monkeypatch)
+    _patch_editor_selected_mannequin(monkeypatch, active_asset_id="tone-mannequin")
 
     async def fake_product(conn, pid):
         return {
@@ -450,7 +460,7 @@ def test_editor_base_color_worn_cut_puts_selected_mannequin_first(monkeypatch):
 
     generated = captured["generations"][0]
     assert generated["images"] == [
-        b"k/mannequin", b"model-face", b"model-body", b"k/product",
+        b"k/tone-mannequin", b"model-face", b"model-body", b"k/product",
     ]
     lines = generated["manifest"].splitlines()
     assert "garment worn on a mannequin" in lines[0]

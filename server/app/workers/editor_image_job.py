@@ -174,8 +174,9 @@ async def run_editor_image_job(app, job: dict) -> None:
                             candidate_id == selected_mannequin_id
                             and candidate.get("asset_id")
                         ):
+                            asset_id = candidate.get("active_asset_id") or candidate["asset_id"]
                             mannequin_asset = await repo.get_asset_for_user(
-                                conn, user_id, str(candidate["asset_id"])
+                                conn, user_id, str(asset_id)
                             )
                             break
                 # 일반 컷은 선택 색상을 엄격히 쓴다. 디테일만 목표 색상에 Detail이 없을 때

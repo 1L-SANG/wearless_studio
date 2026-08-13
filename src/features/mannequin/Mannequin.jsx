@@ -474,6 +474,7 @@ function MineColumn({
   cuts,
   selectedCutId,
   onSelect,
+  onToneApplied,
   projectId,
   toneEditorEnabled,
   arrival,
@@ -544,6 +545,7 @@ function MineColumn({
           cutId={selected.id}
           enabled={toneEditorEnabled}
           overlayRef={mineImgRef}
+          onApplied={onToneApplied}
         />
       )}
       {(cuts.length > 1 || waitTile) && (
@@ -935,6 +937,17 @@ export function Mannequin() {
     setCuts((prev) => prev.map((cut) => ({ ...cut, isSelected: cut.id === cutId })));
     selectMannequin(cutId);
   };
+
+  const applyToneRenderToSelectedCut = useCallback((state) => {
+    if (!state?.cutId) return;
+    const assetId = state.renderAssetId || state.sourceAssetId;
+    if (!assetId) return;
+    setCuts((prev) => prev.map((cut) => (
+      cut.id === state.cutId
+        ? { ...cut, src: `/v1/assets/${assetId}/file`, imageUrl: `/v1/assets/${assetId}/file` }
+        : cut
+    )));
+  }, []);
 
   // draft + 사용자가 고른 값으로 재생성용 FitProfile v2 구성.
   // 매칭 축은 현재 메인 의류 id에 바인딩하고 legacy matchCut은 반환하지 않는다.
@@ -1404,6 +1417,7 @@ export function Mannequin() {
           cuts={cuts}
           selectedCutId={selectedCutId}
           onSelect={chooseCut}
+          onToneApplied={applyToneRenderToSelectedCut}
           projectId={projectId}
           toneEditorEnabled
           arrival={arrival}
