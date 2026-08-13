@@ -1,3 +1,29 @@
+# Editor Notion-style Drop Guide QA
+
+## Evidence
+
+- User interaction reference: `/Users/nojeong-un/Downloads/화면 기록 2026-08-12 오후 8.36.29.mov` and the final direction to match Notion's drag guide.
+- Public pattern reference: Notion uses a thin blue placement guide while dragging blocks and keeps its add control separate.
+- Browser comparison was intentionally not run because the user retained browser QA.
+
+## Design decision
+
+- The active guide is one `#2383E2` blue line with no center plus, halo, shadow, fade, or motion effect.
+- Its source height is counter-scaled against the editor zoom so it remains visually 2px on screen instead of becoming too thin or thick at different canvas zoom levels.
+- The generous 128px drop target and 56px vertical hit padding remain, so the simpler appearance does not reduce usability.
+- Image-card padding remains at its original geometry; only the insertion guide changed.
+
+## Verification
+
+- Targeted drop-guide regression: passed.
+- Frontend tests: 430 passed.
+- Production build: passed with only the repository's existing Rollup chunk/import warnings.
+- Visual and interaction comparison remains deferred to user QA.
+
+final result: blocked
+
+---
+
 # Mannequin Continue CTA Design QA
 
 ## Evidence
@@ -36,3 +62,200 @@
 - The smoke ended with no Vite error overlay.
 
 final result: passed
+
+# Editor Native Color and Bubble Border Design QA
+
+## Evidence
+
+- Source visual truth: `/var/folders/3b/rzpkxc4j431b13dp6k16_vg40000gn/T/TemporaryItems/NSIRD_screencaptureui_L5mVV7/스크린샷 2026-08-12 오후 6.22.22.png` (836×548) and `/var/folders/3b/rzpkxc4j431b13dp6k16_vg40000gn/T/TemporaryItems/NSIRD_screencaptureui_MXYlOo/스크린샷 2026-08-12 오후 6.22.53.png` (236×244).
+- Browser implementation: `/tmp/wearless-color-border-implementation.png` at a 1280×720 CSS-pixel viewport, density 1.
+- Focused inspector capture: `/tmp/wearless-color-border-inspector.png` (320×660).
+- Focused rendered bubble capture: `/tmp/wearless-bubble-render-only.png` (152×42).
+- Combined comparison input opened for review: `/tmp/wearless-color-border-comparison.png` (1800×1110).
+- State: first editor block selected, the grouped Q&A question/answer bubbles selected, Text inspector scrolled to fill and border controls.
+
+## Findings
+
+- Color interaction: the visible color chip is a direct native `input[type=color]`, so clicking it delegates the full color panel to macOS/browser instead of imitating the system panel in application CSS. HEX and opacity remain visible beside/below it for precise editing.
+- Bubble border: new chat and FAQ bubbles use a subtle `#B9B9BE` 1px outline, matching the low-contrast edge in the source without creating a heavy card border.
+- Border controls: border color, remove/restore action, 0.5–12px slider, and numeric pixel input are grouped under `말풍선 테두리`.
+- Group behavior: browser interaction changed both selected Q&A bubbles from 1px to 3.5px and from `#B9B9BE` to `#FF3B30`; both SVG paths updated together, then were restored to the default.
+- Layout and hierarchy: the existing inspector width, section rhythm, type scale, and token system are preserved. No unintended horizontal overflow was found.
+- Platform-owned surface: the system color panel itself is not pixel-compared inside the browser capture because macOS owns that modal; the implementation comparison verifies the native trigger and the application-side controls around it.
+- P0/P1/P2: none.
+
+## Verification
+
+- Frontend regression suite: 410 passed, 0 failed.
+- Production build: passed; only the repository's existing Rollup chunk/import warnings remain.
+- Browser smoke: native color inputs present, border width control present, grouped appearance updates verified, default state restored.
+
+final result: passed
+
+# Editor Speech-Bubble Visual QA
+
+## Evidence
+
+- Reference: `스크린샷 2026-08-12 오후 2.55.42.png`, `스크린샷 2026-08-12 오후 2.55.47.png`
+- Surface: local editor at 40% canvas zoom
+- Verified: paired chat bubbles, left/right tail direction, default outline, grouped selection, integrated HEX/color/opacity control
+- Verified: text click selects the composite, parent-background click stays on one layer across repeated clicks, and parent-only Backspace deletion preserves its text child
+- Verified: canvas click-away cannot clear a selection originating inside an element, block, or Moveable control
+- P0/P1/P2: none
+- P3: group selection intentionally shows each member outline in edit mode; export output remains clean
+
+final result: passed
+
+---
+
+# Editor HEX Palette, Text Resize, and Bubble Radius Design QA
+
+## Evidence
+
+- Reference color UI: `/var/folders/3b/rzpkxc4j431b13dp6k16_vg40000gn/T/TemporaryItems/NSIRD_screencaptureui_L5mVV7/스크린샷 2026-08-12 오후 6.22.22.png`.
+- Reference bubble rounding: `/var/folders/3b/rzpkxc4j431b13dp6k16_vg40000gn/T/TemporaryItems/NSIRD_screencaptureui_MXYlOo/스크린샷 2026-08-12 오후 6.22.53.png`.
+- Browser comparison was intentionally not run because the user retained browser QA for this iteration.
+
+## Implementation review
+
+- Color controls now use an application-owned default palette plus one `HEX 색상` text entry; the native RGB-capable color input is removed.
+- Text elements ignore the global aspect-ratio lock and expose all eight resize directions, including left and right width handles.
+- New and migrated speech bubbles store a 45px default radius; the left inspector exposes a 0–100px radius slider and numeric field.
+- Generated photo blocks remove their text layers during editor hydration and generation-result merging while FAQ, information, and custom frame blocks retain their copy.
+
+## Verification
+
+- Pure behavior regressions cover HEX presets, absence of native color inputs, generated-photo copy removal, free text resizing, and pixel-based bubble radius rendering.
+- Frontend tests and production build passed.
+- Visual and interaction comparison remains deferred to user QA.
+
+final result: blocked
+
+---
+
+# Editor Between-Block Drop Guide Polish QA
+
+## Evidence
+
+- Interaction reference: `/Users/nojeong-un/Downloads/화면 기록 2026-08-12 오후 8.28.40.mov`.
+- The extracted interaction frames showed that the 2px canvas line collapsed to a sub-pixel-looking guide at the current editor zoom and that the active gap needed a larger visual landing area.
+- Browser comparison was intentionally not run because the user retained browser QA.
+
+## Implementation review
+
+- The insertion guide grows from 2px to 8px, using a near-black line, matching halo, and a larger 40px center action.
+- The active drop row now provides 56px vertical padding on each side while preserving document layout with matching negative margins.
+- The guide fades and thickens in while the center action springs into place; reduced-motion users receive the final state without animation.
+- Newly created image blocks retain their original 60px horizontal and 50px vertical inset; the added space belongs only to the insertion guide.
+
+## Verification
+
+- Regression coverage verifies guide thickness, padded hit area, both animations, reduced-motion handling, and updated image-card geometry.
+- Frontend tests: 430 passed.
+- Production build: passed with only the repository's existing Rollup chunk/import warnings.
+- Visual and interaction comparison remains deferred to user QA.
+
+final result: blocked
+
+---
+
+# Editor Between-Block Image Drop and Crop Toolbar QA
+
+## Evidence
+
+- Drag interaction reference: `/var/folders/3b/rzpkxc4j431b13dp6k16_vg40000gn/T/TemporaryItems/NSIRD_screencaptureui_dQzfTg/화면 기록 2026-08-12 오후 7.24.58.mov`.
+- Clipped crop toolbar reference: `/var/folders/3b/rzpkxc4j431b13dp6k16_vg40000gn/T/TemporaryItems/NSIRD_screencaptureui_9j6Ct5/스크린샷 2026-08-12 오후 7.24.24.png`.
+- Resulting image-block reference: `/var/folders/3b/rzpkxc4j431b13dp6k16_vg40000gn/T/TemporaryItems/NSIRD_screencaptureui_YC8a8W/스크린샷 2026-08-12 오후 7.26.07.png`.
+- Browser comparison was intentionally not run because the user retained browser QA.
+
+## Implementation review
+
+- The crop action bar is rendered as a direct child of the top-level canvas block, outside `.block-clip`, so `원본`, confirm, and cancel remain visible at a photo's lower edge.
+- Wardrobe image drags activate the existing forgiving between-block drop rows and show a full-width insertion line with a centered plus marker.
+- Dropping on that marker creates a dedicated white image block with 60px horizontal and 50px vertical inset, preserves the source aspect ratio, and keeps upload provenance.
+- Moving across the plus marker no longer clears the active insertion state through a child `dragleave`.
+
+## Verification
+
+- Regression coverage verifies unclipped toolbar placement, wardrobe drag activation, stable plus-marker hover, and portrait block geometry.
+- Frontend tests: 429 passed.
+- Production build: passed with only the repository's existing Rollup chunk/import warnings.
+- Visual and interaction comparison remains deferred to user QA.
+
+final result: blocked
+
+---
+
+# Editor Wardrobe and Crop Controls Design QA
+
+## Evidence
+
+- Wardrobe reference: `/Users/nojeong-un/Downloads/WhatsApp Image 2026-08-12 at 19.06.03.jpeg`.
+- Crop-control reference: `/var/folders/3b/rzpkxc4j431b13dp6k16_vg40000gn/T/TemporaryItems/NSIRD_screencaptureui_hteZtJ/스크린샷 2026-08-12 오후 7.08.36.png`.
+- Browser comparison was intentionally not run because the user retained browser QA for this iteration.
+
+## Implementation review
+
+- Generated detail-page photos are merged from editor blocks into the wardrobe and ordered by the product color list; user-supplied storyboard photos and editor uploads are grouped under `기타`.
+- Upload provenance follows the image through click insertion, drag-and-drop, and frame filling so a saved canvas can reconstruct the `기타` group.
+- The crop footer keeps `원본`, removes both explanatory pills, and adds compact mouse-accessible confirm and cancel controls with accessible labels.
+
+## Verification
+
+- New regressions cover color grouping, generated-photo deduplication, direct-upload classification, drag payload provenance, and crop-control source wiring.
+- Frontend tests: 423 passed.
+- Production build: passed with only the repository's existing Rollup chunk/import warnings.
+- Visual and interaction comparison remains deferred to user QA.
+
+final result: blocked
+
+---
+
+# Editor Combined Presets and Custom Palette QA
+
+## Evidence
+
+- Bubble outline reference: `/var/folders/3b/rzpkxc4j431b13dp6k16_vg40000gn/T/TemporaryItems/NSIRD_screencaptureui_M4uLnP/스크린샷 2026-08-12 오후 6.54.47.png`.
+- Color-picker direction continues to use the earlier Photoshop-style reference while retaining the user's HEX-only input constraint.
+- Browser comparison was intentionally not run because the user retained browser QA.
+
+## Implementation review
+
+- The same popover now keeps the default color grid visible and adds a continuous saturation/value palette plus a hue slider underneath it.
+- Direct palette interaction updates the existing HEX field and never exposes RGB inputs.
+- The neutral rectangular `.el` outline is suppressed only for unselected speech bubbles; their actual bubble stroke and editor selection controls remain intact.
+
+## Verification
+
+- Regression coverage verifies both color surfaces, HSV/HEX conversion, and the speech-bubble outline override.
+- Frontend tests: 419 passed.
+- Production build: passed with only existing bundle-size/import warnings.
+- Visual and interaction comparison remains deferred to user QA.
+
+final result: blocked
+
+---
+
+# Editor Parent-Bottom Drag Clamp Design QA
+
+## Evidence
+
+- Reference states: `/Users/nojeong-un/Downloads/스크린샷 2026-08-12 오후 7.16.16.png` and `/Users/nojeong-un/Downloads/스크린샷 2026-08-12 오후 7.16.20.png`.
+- Browser comparison was intentionally not run because the user retained browser QA for this iteration.
+
+## Implementation review
+
+- Element and grouped-element movement now consumes only the remaining space inside the current parent block and stops when the lowest selected edge meets the block bottom.
+- Keyboard down-arrow movement follows the same boundary as pointer dragging.
+- Height normalization adds its 50px safety margin only when content actually overflows; an element already flush with the parent bottom no longer triggers another incremental growth step.
+- Image resizing can still expand the block when the resized content genuinely exceeds the current block height.
+
+## Verification
+
+- The deterministic geometry regression reproduces the former 80px overshoot into 50px of remaining space and now clamps it to 50px.
+- Repeated height normalization of a flush photo remains idempotent at the same parent height.
+- Frontend tests: 425 passed.
+- Production build: passed with only the repository's existing Rollup chunk/import warnings.
+- Visual and interaction comparison remains deferred to user QA.
+
+final result: blocked

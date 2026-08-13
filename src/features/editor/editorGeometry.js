@@ -3,14 +3,17 @@ export function getBlockRenderHeight(block) {
     (bottom, element) => Math.max(bottom, (element.y || 0) + (element.h || 40)),
     0,
   );
-  return Math.max(block.h || 220, contentBottom + 50);
+  const blockHeight = block.h || 220;
+  // 이미 부모 안에 들어온 요소에는 여백을 다시 더하지 않는다. 요소가 실제로 넘친
+  // 경우에만 한 번 50px 안전 여백과 함께 확장해야, 하단에 딱 맞춘 뒤 높이가 반복 증가하지 않는다.
+  return contentBottom > blockHeight ? contentBottom + 50 : blockHeight;
 }
 
 export function expandBlockHeights(blocks) {
   return blocks.map((block) => ({ ...block, h: getBlockRenderHeight(block) }));
 }
 
-export function clampDragDelta(snapshot, [dx, dy]) {
+export function clampDragDelta(snapshot, [dx, dy], blockHeight) {
   const elements = Object.values(snapshot || {});
   if (!elements.length) return [dx, dy];
 
@@ -18,10 +21,16 @@ export function clampDragDelta(snapshot, [dx, dy]) {
   const right = Math.max(...elements.map((element) => element.x + (element.w || 0)));
   const minDx = -left;
   const maxDx = Math.max(minDx, 1000 - right);
+  const top = Math.min(...elements.map((element) => element.y));
+  const bottom = Math.max(...elements.map((element) => element.y + (element.h || 0)));
+  const minDy = -top;
+  const maxDy = Number.isFinite(blockHeight)
+    ? Math.max(minDy, blockHeight - bottom)
+    : Number.POSITIVE_INFINITY;
 
   return [
     Math.max(minDx, Math.min(maxDx, dx)),
-    Math.max(-Math.min(...elements.map((element) => element.y)), dy),
+    Math.max(minDy, Math.min(maxDy, dy)),
   ];
 }
 

@@ -1301,12 +1301,15 @@
    near-black 2px 는 흰 블록의 기본 그림자와 구분이 안 돼 선택했는지 알 수 없었다. */
 .canvas-block.on { box-shadow: 0 0 0 2px var(--link), 0 0 0 6px rgba(0, 153, 255, .16), var(--elev-card); }
 .canvas-block .blk-label { position: absolute; left: 0; bottom: 100%; transform: scale(var(--inv, 1)); transform-origin: bottom left; margin-bottom: 6px; font-size: 13px; color: var(--fg-2); font-weight: 600; white-space: nowrap; }
-.canvas-block .quick { position: absolute; left: 100%; top: 0; transform: scale(var(--inv, 1)); transform-origin: top left;
-  margin-left: 14px; display: flex; flex-direction: column; gap: 8px; opacity: 0; transition: opacity .14s;
+.canvas-block .quick { --quick-gap: 14px; position: absolute; left: 100%; top: 0; transform: scale(var(--inv, 1)); transform-origin: top left;
+  margin-left: var(--quick-gap); display: flex; flex-direction: column; gap: 8px; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .14s;
   padding: 8px; background: #fff; border-radius: var(--r-5); box-shadow: var(--elev-card); }
-.canvas-block:hover .quick, .canvas-block.on .quick { opacity: 1; }
+.canvas-block .quick::before { content: ''; position: absolute; right: 100%; top: 0; width: var(--quick-gap); height: 100%; }
+.canvas-block:hover .quick { opacity: 1; visibility: visible; pointer-events: auto; transition-delay: 0s; }
 .el { position: absolute; cursor: pointer; outline: 1px solid rgba(14,13,20,.16); outline-offset: 0; }
 .el:hover { outline-color: rgba(14,13,20,.34); }
+.el-speech-bubble:not(.on) { outline: none; }
+.el-speech-bubble:not(.on):hover { outline: none; }
 /* selected element bounding box = Sky/accent, doubled weight + handles (#8, #9) */
 /* 선택 표시는 react-moveable 컨트롤박스(바깥 테두리+핸들) 하나로 통합 — 요소 자체
    아웃라인까지 겹치면 이중 테두리가 된다. (텍스트 인라인 편집은 .el-text.editing 이 담당) */
@@ -1347,13 +1350,14 @@
 .block-bg-sw:hover { box-shadow: 0 0 0 1px var(--ring-strong); color: var(--fg-1); }
 .block-bg-sw.on { box-shadow: 0 0 0 2px var(--fg-1); color: var(--fg-1); font-weight: 500; }
 .block-bg-sw .bg-chip { width: 28px; height: 28px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(34,42,53,.14); }
-/* frame drag-insert drop rows between canvas blocks (PRD §11.13) */
-.canvas-droprow { width: 1000px; height: 16px; position: relative; }
-.canvas-dropline { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); height: 2px; border-radius: 2px; background: transparent; transition: all .12s; }
-.canvas-dropline.on { height: 6px; background: var(--link); box-shadow: 0 0 0 3px rgba(0,153,255,.16); }
+/* Notion-style drag guide: a single screen-consistent blue placement line. */
+.canvas-droprow { width: 1000px; height: 16px; position: relative; box-sizing: border-box; }
+.canvas-dropline { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); height: calc(2px * var(--canvas-inv, 1)); border-radius: 1px;
+  background: transparent; opacity: 0; }
+.canvas-dropline.on { opacity: 1; background: #2383e2; box-shadow: none; animation: none; }
 /* while a frame is being dragged, the drop rows grow into a forgiving catch zone that
    overlaps the neighbouring blocks (net layout unchanged thanks to negative margins) */
-.ed-canvas.frame-dragging .canvas-droprow { height: 80px; margin: -32px 0; z-index: 4; }
+.ed-canvas.frame-dragging .canvas-droprow { height: 128px; margin: -56px 0; padding: 56px 0; z-index: 4; }
 .mini-block.over { box-shadow: 0 0 0 2px var(--link); }
 .mini-block.dragging { opacity: .45; }
 /* insertion line between mini blocks (drag-reorder, #21) */
@@ -1422,21 +1426,52 @@
 .line-style.on { box-shadow: inset 0 0 0 1.5px var(--link); color: var(--link); }
 /* Figma fill/stroke swatch row */
 .swatchfield { position: relative; }
-.sf-main { display: flex; align-items: center; gap: 8px; background: #fff; border-radius: var(--r-3); box-shadow: 0 0 0 1px var(--ring); height: 36px; padding: 0 8px; }
-.sf-swatch { width: 20px; height: 20px; border-radius: 4px; flex: none; cursor: pointer; padding: 0; border: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); display: grid; place-items: center; }
+.sf-main { display: flex; align-items: center; gap: 8px; background: #fff; border-radius: var(--r-3); box-shadow: 0 0 0 1px var(--ring); height: 36px; padding: 0 8px; transition: box-shadow .14s; }
+.sf-main:focus-within { box-shadow: 0 0 0 1.5px var(--link); }
+.sf-swatch { position: relative; overflow: hidden; width: 20px; height: 20px; border-radius: 4px; flex: none; cursor: pointer; padding: 0; border: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); display: grid; place-items: center; background-color: #fff; background-image: conic-gradient(#e2e5e9 25%, #fff 0 50%, #e2e5e9 0 75%, #fff 0); background-size: 8px 8px; }
+.sf-swatch-color { position: absolute; inset: 0; pointer-events: none; }
 .sf-swatch.none { background: #fff; color: var(--fg-3); box-shadow: inset 0 0 0 1px var(--ring-strong); }
 .sf-swatch.sf-thumb { overflow: hidden; cursor: default; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
 .sf-swatch.sf-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.sf-hex { flex: 1; font-size: 12.5px; font-family: var(--font-mono); color: var(--fg-1); letter-spacing: .2px; }
+.sf-hex, .sf-hex-label { flex: 1; min-width: 0; font-size: 12.5px; font-family: var(--font-mono); color: var(--fg-1); letter-spacing: .2px; }
+.sf-hex { border: 0; outline: 0; background: transparent; padding: 4px 2px; text-transform: uppercase; }
 .sf-op { display: inline-flex; align-items: center; gap: 1px; padding-left: 8px; box-shadow: inset 1px 0 0 0 var(--ring); }
-.sf-op input { width: 58px; border: 0; outline: 0; background: transparent; text-align: right; font-size: 12.5px; color: var(--fg-1); font-family: var(--font-body); }
+.sf-op input { width: 34px; border: 0; outline: 0; background: transparent; text-align: right; font-size: 12.5px; color: var(--fg-1); font-family: var(--font-body); }
 .sf-op i { color: var(--fg-3); font-size: 11px; font-style: normal; }
-.sf-eye { width: 26px; height: 26px; border: 0; background: transparent; color: var(--fg-2); border-radius: 5px; cursor: pointer; display: grid; place-items: center; flex: none; }
-.sf-eye:hover { color: var(--fg-1); }
-.sf-pop { position: absolute; top: 42px; left: 0; z-index: 20; display: flex; flex-wrap: wrap; gap: 7px; width: 100%; padding: 11px; background: #fff; border-radius: var(--r-4); box-shadow: var(--elev-card); }
-.sf-po { width: 26px; height: 26px; border-radius: 6px; border: 0; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); padding: 0; }
-.sf-po.on { box-shadow: 0 0 0 2px var(--link); }
-.sf-po.none { background: #fff; display: grid; place-items: center; color: var(--accent-error); box-shadow: inset 0 0 0 1px var(--ring-strong); }
+.sf-opacity { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 9px; margin-top: 9px; color: var(--fg-3); font-size: 11.5px; }
+.sf-opacity input[type='range'] { width: 100%; accent-color: var(--fg-1); cursor: pointer; }
+.sf-none-action, .sf-eye { width: 26px; height: 26px; border: 0; background: transparent; color: var(--fg-2); border-radius: 5px; cursor: pointer; display: grid; place-items: center; flex: none; }
+.sf-none-action:hover, .sf-eye:hover { color: var(--fg-1); background: var(--bg-2); }
+.sf-color-popover { position: absolute; z-index: 70; left: 0; top: calc(100% + 8px); width: 286px; padding: 12px; border-radius: 12px; background: #fff; box-shadow: 0 12px 34px rgba(14,13,20,.18), 0 0 0 1px var(--ring); }
+.sf-color-popover-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.sf-color-popover-head strong { font-size: 12px; font-weight: 650; color: var(--fg-1); }
+.sf-color-popover-head span { font: 10px var(--font-mono); color: var(--fg-3); letter-spacing: .8px; }
+.sf-preset-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 7px; }
+.sf-preset { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(14,13,20,.12); transition: transform .12s, box-shadow .12s; }
+.sf-preset:hover { transform: translateY(-1px); box-shadow: inset 0 0 0 1px rgba(14,13,20,.24), 0 4px 10px rgba(14,13,20,.12); }
+.sf-preset.on { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--link); }
+.sf-color-divider { height: 1px; margin: 13px 0 11px; background: var(--ring); }
+.sf-color-palette { position: relative; height: 142px; overflow: hidden; border-radius: 8px; cursor: crosshair; touch-action: none;
+  background-image: linear-gradient(to bottom, transparent, #000), linear-gradient(to right, #fff, transparent);
+  box-shadow: inset 0 0 0 1px rgba(14,13,20,.16); }
+.sf-color-palette:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+.sf-color-palette-cursor { position: absolute; width: 13px; height: 13px; border-radius: 50%; pointer-events: none;
+  transform: translate(-50%, -50%); box-shadow: 0 0 0 2px #fff, 0 0 0 3px rgba(14,13,20,.72); }
+.sf-hue-control { display: grid; grid-template-columns: 34px 1fr; align-items: center; gap: 8px; margin-top: 10px; color: var(--fg-3); font-size: 11px; }
+.sf-hue-control input[type='range'] { width: 100%; height: 12px; margin: 0; appearance: none; border-radius: 999px; cursor: pointer;
+  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); }
+.sf-hue-control input[type='range']::-webkit-slider-thumb { width: 16px; height: 16px; appearance: none; border: 2px solid #fff; border-radius: 50%; background: transparent; box-shadow: 0 0 0 1px rgba(14,13,20,.42), 0 2px 5px rgba(14,13,20,.24); }
+.sf-hue-control input[type='range']::-moz-range-thumb { width: 12px; height: 12px; border: 2px solid #fff; border-radius: 50%; background: transparent; box-shadow: 0 0 0 1px rgba(14,13,20,.42), 0 2px 5px rgba(14,13,20,.24); }
+.bubble-border-controls { display: flex; flex-direction: column; gap: 12px; }
+.range-number-control { display: flex; flex-direction: column; gap: 7px; }
+.range-number-head { display: flex; align-items: center; justify-content: space-between; color: var(--fg-3); font-size: 11.5px; }
+.range-number-head strong { color: var(--fg-1); font: 600 11.5px var(--font-mono); }
+.range-number-row { display: grid; grid-template-columns: minmax(0, 1fr) 64px; align-items: center; gap: 8px; }
+.range-number-row > input { width: 100%; accent-color: var(--fg-1); cursor: pointer; }
+.range-number-row > label { height: 32px; display: flex; align-items: center; gap: 2px; padding: 0 7px; border-radius: var(--r-3); box-shadow: 0 0 0 1px var(--ring); background: #fff; }
+.range-number-row > label:focus-within { box-shadow: 0 0 0 1.5px var(--link); }
+.range-number-row > label input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; text-align: right; color: var(--fg-1); font: 12px var(--font-mono); }
+.range-number-row > label span { color: var(--fg-3); font-size: 10px; }
 /* text panel tool rows (align/decorate/list) */
 .text-tool-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
 .ed-grouplbl { display: block; font-size: 11px; font-weight: 600; letter-spacing: .3px; text-transform: uppercase; color: var(--fg-3); margin: 4px 0 12px; }
@@ -1544,7 +1579,21 @@
 .frame-item:hover { box-shadow: var(--elev-card); }
 .frame-prev { height: 56px; border-radius: var(--r-3); background: var(--bg-2); margin-bottom: 9px; display: grid; gap: 4px; padding: 8px; }
 .frame-prev > i { background: #fff; border-radius: 2px; box-shadow: 0 0 0 1px var(--ring); }
-.frame-item .fl { font-size: 12.5px; font-weight: 500; color: var(--fg-1); }
+.frame-layout-prev { position: relative; display: block; padding: 0; overflow: hidden; }
+.frame-layout-prev > i { position: absolute; min-width: 3px; min-height: 3px; }
+.frame-item .fl { display: flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 500; color: var(--fg-1); }
+.frame-rec { margin-left: auto; padding: 1px 5px; border-radius: 5px; background: #eef4fb; color: #4f88c9; font-size: 9.5px; font-weight: 700; }
+.frame-image-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.object-preset-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 18px; }
+.object-preset-cell { min-height: 86px; padding: 10px 8px; border: 0; border-radius: var(--r-3); background: var(--bg-2); color: var(--fg-2); cursor: grab;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; font-size: 11.5px; line-height: 1.2; text-align: center; transition: background .14s, color .14s, box-shadow .14s; }
+.object-preset-cell:hover { background: var(--bg-1); color: var(--fg-1); box-shadow: 0 0 0 1px var(--ring-strong); }
+.object-preset-cell:active { cursor: grabbing; }
+.object-preset-glyph { min-width: 52px; min-height: 24px; padding: 4px 8px; border-radius: 7px; background: #0e0d14; color: #fff; display: grid; place-items: center; font-size: 10px; font-weight: 700; letter-spacing: .4px; }
+.object-preset-glyph.qa-bubbles { background: #dcecff; color: #0e0d14; border-radius: 999px; }
+.object-preset-glyph.divider { min-width: 62px; padding: 0; background: transparent; color: #0e0d14; font-size: 22px; }
+.object-preset-glyph.arrow-callout { background: transparent; color: #0e0d14; padding: 0; }
+.object-preset-glyph.label-badge { border-radius: 999px; }
 /* 오브젝트 탭 — 플랫 타일 + 큰 글리프 (4열, Figma/Canva 류 패널 관례) */
 .shape-list { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .shape-cell { aspect-ratio: 1; border-radius: var(--r-3); background: var(--bg-2); display: grid; place-items: center; cursor: grab;
@@ -1572,9 +1621,42 @@
 
 /* empty frame image slot — '이미지 추가' button → 의류 탭 (item 3) */
 .el-slot { background: #f3f3f5; box-shadow: inset 0 0 0 1.5px var(--ring-strong); display: grid; place-items: center; }
+.el.image-drop-over, .el-slot.image-drop-over { box-shadow: inset 0 0 0 4px var(--link), 0 0 0 4px rgba(0,153,255,.16); }
 .el-slot .slot-add { transform-origin: center; display: inline-flex; flex-direction: column; align-items: center; gap: 6px;
   border: 0; background: transparent; color: var(--fg-2); font-size: 14px; font-weight: 500; cursor: pointer; }
 .el-slot .slot-add:hover { color: var(--link); }
+
+/* External file import feedback stays at the exact drop target. It is local to
+   the frame/block so the rest of the editor remains usable during conversion. */
+.ed-uploadwait { position: absolute; z-index: 7; display: grid; place-items: center; overflow: hidden;
+  background: rgba(247,248,249,.96); color: var(--fg-1); cursor: wait;
+  box-shadow: inset 0 0 0 2px rgba(45,127,196,.72), 0 8px 24px rgba(14,13,20,.08);
+  transition: left .2s ease, top .2s ease, width .2s ease, height .2s ease, background .18s ease, box-shadow .18s ease; }
+.ed-uploadwait.done { background: rgba(242,249,245,.97); cursor: default;
+  box-shadow: inset 0 0 0 2px rgba(59,125,94,.65), 0 8px 24px rgba(14,13,20,.06); }
+.ed-uploadwait.error { background: rgba(251,244,245,.97); cursor: default;
+  box-shadow: inset 0 0 0 2px rgba(180,70,85,.58), 0 8px 24px rgba(14,13,20,.06); }
+.ed-uploadwait-shim { position: absolute; top: -25%; bottom: -25%; left: -60%; width: 46%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.9), transparent);
+  transform: translateX(-130%) rotate(8deg); animation: upload-placeholder-shimmer 1.35s ease-in-out infinite; }
+.ed-uploadwait.done .ed-uploadwait-shim, .ed-uploadwait.error .ed-uploadwait-shim { display: none; }
+.ed-uploadwait-content { position: relative; z-index: 1; transform-origin: center; display: flex; flex-direction: column;
+  align-items: center; gap: 7px; text-align: center; line-height: 1.35; pointer-events: none; }
+.ed-uploadwait-icon { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+  background: #fff; color: #2d7fc4; box-shadow: 0 0 0 1px rgba(45,127,196,.18), 0 5px 16px rgba(14,13,20,.08); }
+.ed-uploadwait.done .ed-uploadwait-icon { color: #3b7d5e; box-shadow: 0 0 0 1px rgba(59,125,94,.2); }
+.ed-uploadwait.error .ed-uploadwait-icon { color: #b44655; box-shadow: 0 0 0 1px rgba(180,70,85,.2); }
+.ed-uploadwait-content strong { font-size: 17px; font-weight: 700; letter-spacing: -.02em; }
+.ed-uploadwait-content > span:not(.ed-uploadwait-icon):not(.ed-uploadwait-track) { font-size: 12px; color: var(--fg-2); }
+.ed-uploadwait-track { width: min(150px, 100%); height: 3px; margin-top: 3px; overflow: hidden;
+  border-radius: 999px; background: rgba(45,127,196,.14); }
+.ed-uploadwait-track i { display: block; width: 42%; height: 100%; border-radius: inherit; background: #2d7fc4;
+  animation: ed-uploadwait-progress 1.1s ease-in-out infinite; }
+@keyframes ed-uploadwait-progress { 0% { transform: translateX(-110%); } 100% { transform: translateX(250%); } }
+@media (prefers-reduced-motion: reduce) {
+  .ed-uploadwait-shim, .ed-uploadwait-track i { animation: none !important; }
+  .ed-uploadwait-track i { width: 100%; opacity: .45; }
+}
 
 /* zoom pill floating at top-right of the gray canvas, only while hovering empty gray (item 4) */
 .zoom-float { position: sticky; top: 14px; height: 0; display: flex; justify-content: flex-end; padding-right: 18px; z-index: 6;
@@ -1657,11 +1739,9 @@
 .crop-ant.ant-b { stroke: #0e0d14; stroke-width: 1.5px; stroke-dasharray: 5 5; animation: crop-march .55s linear infinite; }
 @keyframes crop-march { to { stroke-dashoffset: -10; } }
 @media (prefers-reduced-motion: reduce) { .crop-ant.ant-b { animation: none; } }
-/* 크롭 하단 바 — 원본(리셋) 버튼 + Enter/Esc 힌트. --inv 역스케일로 줌 무관 일정 크기. */
+/* 크롭 하단 바 — 원본(리셋) + 마우스 확정/취소. --inv 역스케일로 줌 무관 일정 크기. */
 .crop-bar { position: absolute; display: inline-flex; align-items: center; gap: 8px; padding-top: 8px;
-  transform: scale(var(--inv, 1)); transform-origin: top left; z-index: 4; white-space: nowrap; pointer-events: auto; }
-.crop-hint { font-size: 12px; color: #fff; background: rgba(14, 13, 20, .72); padding: 4px 9px; border-radius: 6px; font-weight: 500; }
-.crop-hint.quiet { background: rgba(14, 13, 20, .45); font-weight: 400; }
+  transform: scale(var(--inv, 1)); transform-origin: top left; z-index: 8; white-space: nowrap; pointer-events: auto; }
 /* 크롭 진입을 부드럽게 — 딤·프레임이 튀지 않고 페이드로 이어진다 */
 .crop-layer { animation: crop-in .16s ease-out; }
 @keyframes crop-in { from { opacity: 0; } to { opacity: 1; } }
@@ -1669,6 +1749,12 @@
 .crop-frame:active { cursor: grabbing; }
 .crop-reset { font-size: 12px; font-weight: 600; color: #0e0d14; background: #fff; border: 0; padding: 5px 11px; border-radius: 6px; cursor: pointer; box-shadow: 0 1px 4px rgba(14, 13, 20, .25); }
 .crop-reset:hover { background: #f0f0f2; }
+.crop-apply, .crop-cancel { width: 28px; height: 28px; border: 0; border-radius: 50%; cursor: pointer;
+  display: grid; place-items: center; color: #fff; box-shadow: 0 1px 4px rgba(14, 13, 20, .25); }
+.crop-apply { background: #16a34a; }
+.crop-apply:hover { background: #15803d; }
+.crop-cancel { background: rgba(14, 13, 20, .82); }
+.crop-cancel:hover { background: #0e0d14; }
 /* 다중선택 정렬·분배 바 (Phase 3b) — 캔버스 상단 중앙 floating */
 .align-bar { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 6;
   display: inline-flex; align-items: center; gap: 2px; padding: 5px; background: #fff; border-radius: 10px;

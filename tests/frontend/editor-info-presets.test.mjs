@@ -4,6 +4,8 @@ import test from 'node:test';
 import {
   CARE_LABEL_SENTENCE,
   DEFAULT_INFO_TEMPLATE,
+  FAQ_ITEMS_MAX,
+  FAQ_ITEMS_MIN,
   FEATURE_ITEMS_MAX,
   FEATURE_LAYOUTS,
   INFO_PRESET_TYPES,
@@ -106,6 +108,37 @@ test('care block always contains the care-label sentence', () => {
   assert.ok(fromDefault.elements.some((e) => e.type === 'text' && e.text.includes(CARE_LABEL_SENTENCE)));
   assert.equal(fromDefault.kind, 'care');
   assert.equal(fromDefault.auto, true);
+});
+
+test('FAQ supports card and chat layouts and clamps the question count', () => {
+  const defaults = defaultInfoFor('faq', CTX);
+  const cards = buildInfoBlock('faq', defaults, CTX, seqId());
+  const chat = buildInfoBlock('faq', { ...defaults, layout: 'chat' }, CTX, seqId());
+  assert.equal(cards.infoType, 'faq');
+  assert.equal(cards.info.layout, 'cards');
+  assert.equal(chat.info.layout, 'chat');
+  assert.ok(cards.elements.some((element) => element.type === 'text' && String(element.text).startsWith('Q. ')));
+  assert.ok(chat.elements.some((element) => element.type === 'text' && element.shape === 'bubble' && element.fill === '#dcecff'));
+  const chatBubbles = chat.elements.filter((element) => element.type === 'text' && element.shape === 'bubble');
+  assert.ok(chatBubbles.every((element) => element.radius === 45));
+  assert.equal(chatBubbles.length, chat.info.items.length * 2, 'each question and answer has a tail');
+  assert.ok(chatBubbles.every((element) => element.stroke === '#b9b9be' && element.strokeWidth === 1), 'bubbles have a subtle editable default border');
+  const grouped = chat.elements.filter((element) => element.groupId);
+  const groups = Map.groupBy(grouped, (element) => element.groupId);
+  assert.ok([...groups.values()].every((elements) => elements.length === 1 && elements[0].type === 'text' && elements[0].shape === 'bubble'), 'bubble and text are one canvas element');
+  assert.ok(chatBubbles.every((element) => element.text && element.style && element.bubbleFit && !element.bubblePairId), 'each chat bubble keeps copy and responsive sizing metadata on itself');
+  const cardGroups = Map.groupBy(cards.elements.filter((element) => element.groupId), (element) => element.groupId);
+  assert.equal(cardGroups.size, cards.info.items.length);
+  assert.ok([...cardGroups.values()].every((elements) => elements.length === 3
+    && elements.filter((element) => element.type === 'text').length === 2
+    && elements.some((element) => element.type === 'shape')), 'each card parent and its two text layers share one selection group');
+  const tooMany = buildInfoBlock('faq', {
+    layout: 'cards',
+    items: Array.from({ length: FAQ_ITEMS_MAX + 2 }, (_item, index) => ({ question: `Q${index}`, answer: `A${index}` })),
+  }, CTX, seqId());
+  assert.equal(tooMany.info.items.length, FAQ_ITEMS_MAX);
+  const one = buildInfoBlock('faq', { layout: 'chat', items: [{ question: '하나', answer: '답변' }] }, CTX, seqId());
+  assert.equal(one.info.items.length, FAQ_ITEMS_MIN);
 });
 
 test('presetTypeOf round-trips every built preset back to its type', () => {
@@ -258,6 +291,16 @@ test('applySlotFillToInfo writes slot photos into info so rebuilds restore them 
   assert.ok(!off.elements.some((e) => e.type === 'image'), 'diagram slot removed while off');
   const backOn = buildInfoBlock('size_table', { ...off.info, withDiagram: true }, CTX, seqId());
   assert.equal(backOn.elements.find((e) => e.type === 'image').src, '/diagram.png', 'photo survives off→on round trip');
+
+  const cropped = { ...synced, elements: synced.elements.map((e) => (e.id === imgIds[2]
+    ? { ...e, crop: { ox: 10, oy: 20, iw: 300, ih: 400 } }
+    : e)) };
+  const cleared = applySlotFillToInfo(cropped, imgIds[2], { src: null, cutType: null });
+  const clearedSlot = cleared.elements.find((e) => e.id === imgIds[2]);
+  assert.equal(clearedSlot.src, null);
+  assert.equal(clearedSlot.cutType, null);
+  assert.equal('crop' in clearedSlot, false, 'removing a frame image resets stale crop data');
+  assert.equal(cleared.info.items[2].src, null, 'form source stays synchronized after removal');
 });
 
 test('model info prefills from the model actually used by the project', () => {

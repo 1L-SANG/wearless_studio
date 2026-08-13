@@ -24,6 +24,23 @@ test('editor geometry keeps derived heights and selections inside the canvas', (
   assert.deepEqual(clampElementRect(950, 20, 100, 40), { x: 950, y: 20, w: 50, h: 40 });
 });
 
+test('dragging a photo down stops exactly at the current parent block bottom', () => {
+  const photo = { photo: { x: 0, y: 50, w: 1000, h: 500 } };
+
+  assert.deepEqual(clampDragDelta(photo, [0, 80], 600), [0, 50], 'remaining bottom space is consumed once');
+  assert.deepEqual(clampDragDelta(photo, [0, 120], 550), [0, 0], 'once flush, further downward drag is stopped');
+  assert.deepEqual(clampDragDelta(photo, [0, -30], 550), [0, -30], 'the photo can still move back up');
+});
+
+test('a photo flush with the parent bottom does not add another padding step', () => {
+  const flush = [{ h: 550, elements: [{ id: 'photo', type: 'image', y: 50, h: 500 }] }];
+  const once = expandBlockHeights(flush);
+  const twice = expandBlockHeights(once);
+
+  assert.equal(once[0].h, 550);
+  assert.equal(twice[0].h, 550, 'normalization stays idempotent after the edges meet');
+});
+
 test('pointMissesTextLines treats the empty width beside a short line as not-the-text', () => {
   // 880 폭 상자 안에 실제로는 260px 짜리 한 줄만 그려진 경우
   const line = [{ left: 60, right: 320, top: 700, bottom: 728 }];
