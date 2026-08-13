@@ -1310,6 +1310,10 @@
 .canvas-block:hover .quick { opacity: 1; visibility: visible; pointer-events: auto; transition-delay: 0s; }
 .el { position: absolute; cursor: pointer; outline: 1px solid rgba(14,13,20,.16); outline-offset: 0; }
 .el:hover { outline-color: rgba(14,13,20,.34); }
+/* 자동 높이 텍스트는 축소 시 실제 DOM 높이도 한 자릿수 px까지 작아진다. 보이지 않는
+   viewport 3px 여유를 위아래에 두되, 촘촘한 표의 인접 구분선 중심은 덮지 않는다. */
+.el-text:not(.editing)::before { content: ''; position: absolute; left: 0; right: 0;
+  top: calc(-3px * var(--canvas-inv, 1)); bottom: calc(-3px * var(--canvas-inv, 1)); }
 .el-speech-bubble:not(.on) { outline: none; }
 .el-speech-bubble:not(.on):hover { outline: none; }
 /* selected element bounding box = Sky/accent, doubled weight + handles (#8, #9) */

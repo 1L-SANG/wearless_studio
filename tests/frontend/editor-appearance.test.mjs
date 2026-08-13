@@ -8,7 +8,9 @@ import * as editorAppearance from '../../src/features/editor/editorAppearance.js
 const {
   DEFAULT_EDITOR_COLOR_PRESETS,
   imageResizeRect,
+  lineHitStrokeWidth,
   resizePolicyForElement,
+  shouldShowRotationHandle,
   speechBubblePath,
   stripPhotoBlockTextElements,
 } = editorAppearance;
@@ -94,11 +96,44 @@ test('row photo blocks are recognized by source-linked images even without conte
   assert.deepEqual(output[0].elements.map((element) => element.id), ['image']);
 });
 
-test('text boxes always expose horizontal resize handles without aspect-ratio lock', () => {
+test('auto-height text exposes only useful side handles so controls do not cover short copy', () => {
   assert.deepEqual(resizePolicyForElement({ type: 'text' }, true), {
+    keepRatio: false,
+    directions: ['w', 'e'],
+  });
+});
+
+test('speech bubbles retain free resize handles while thin rules keep only their endpoints', () => {
+  assert.deepEqual(resizePolicyForElement({ type: 'text', shape: 'bubble' }, true), {
     keepRatio: false,
     directions: ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'],
   });
+  assert.deepEqual(resizePolicyForElement({ type: 'line' }, true), {
+    keepRatio: false,
+    directions: ['w', 'e'],
+  });
+});
+
+test('thin rules keep a minimum twelve-pixel pointer target at every editor zoom', () => {
+  assert.equal(lineHitStrokeWidth(2, 1), 12);
+  assert.equal(lineHitStrokeWidth(2, 0.4), 30);
+  assert.equal(lineHitStrokeWidth(16, 1), 16);
+  assert.match(editorSource, /stroke="transparent" strokeWidth=\{hitWidth\}/);
+});
+
+test('dense text and rules do not place a detached rotation control over neighbouring elements', () => {
+  assert.equal(shouldShowRotationHandle({ type: 'text' }), false);
+  assert.equal(shouldShowRotationHandle({ type: 'line' }), false);
+  assert.equal(shouldShowRotationHandle({ type: 'text', shape: 'bubble' }), true);
+  assert.equal(shouldShowRotationHandle({ type: 'image' }), true);
+  assert.match(editorPanelsSource, /labelText="회전" value=\{el\.rotate \|\| 0\}/);
+  assert.match(editorSource, /rotatable=\{showRotationHandle\}/);
+});
+
+test('auto-height text expands its pointer target without covering adjacent table rules', () => {
+  assert.match(editorStylesSource, /\.el-text:not\(\.editing\)::before/);
+  assert.match(editorStylesSource, /top: calc\(-3px \* var\(--canvas-inv, 1\)\)/);
+  assert.match(editorStylesSource, /bottom: calc\(-3px \* var\(--canvas-inv, 1\)\)/);
 });
 
 test('text numeric controls allow an empty editing draft and commit the finished number', () => {

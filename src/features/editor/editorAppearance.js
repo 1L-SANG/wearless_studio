@@ -89,15 +89,36 @@ export function stripPhotoBlockTextElements(blocks) {
 
 const FREE_DIRECTIONS = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'];
 const RATIO_DIRECTIONS = ['nw', 'ne', 'sw', 'se'];
+const HORIZONTAL_DIRECTIONS = ['w', 'e'];
 
-/** Text boxes must always expose side handles so their wrapping width can be
- * edited. Images and shapes keep the user's existing aspect-ratio preference. */
+/** Auto-height text and horizontal rules only have a meaningful width resize.
+ * Keeping north/south/corner handles on them covers most of a short element at
+ * reduced zoom and turns ordinary clicks into zero-distance resize gestures. */
 export function resizePolicyForElement(element, lockRatio) {
+  const horizontalOnly = element?.type === 'line'
+    || (element?.type === 'text' && element?.shape !== 'bubble');
+  if (horizontalOnly) return { keepRatio: false, directions: [...HORIZONTAL_DIRECTIONS] };
   const keepRatio = element?.type === 'text' ? false : Boolean(lockRatio);
   return {
     keepRatio,
     directions: keepRatio ? [...RATIO_DIRECTIONS] : [...FREE_DIRECTIONS],
   };
+}
+
+/** Keep thin rules at least this wide in screen pixels for pointer hit testing.
+ * The visible stroke remains unchanged; only the transparent SVG hit stroke uses
+ * this width. */
+export function lineHitStrokeWidth(strokeWidth, scale, minimumScreenWidth = 12) {
+  const safeScale = Math.max(0.01, Number(scale) || 1);
+  return Math.max(Number(strokeWidth) || 0, minimumScreenWidth / safeScale);
+}
+
+/** The detached rotation knob sits above the target and can cover a neighbouring
+ * element. Dense auto-height text and rules use their numeric inspector instead;
+ * larger visual objects keep direct canvas rotation. */
+export function shouldShowRotationHandle(element) {
+  if (element?.type === 'line') return false;
+  return !(element?.type === 'text' && element?.shape !== 'bubble');
 }
 
 /** Resolve the live rectangle for an image resize gesture. Moveable owns the

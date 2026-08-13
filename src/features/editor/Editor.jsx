@@ -30,7 +30,7 @@ import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHei
 import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, findImageDropSlot, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage } from '@/features/editor/editorLibrary.js';
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
-import { imageResizeRect, resizePolicyForElement, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
+import { imageResizeRect, lineHitStrokeWidth, resizePolicyForElement, shouldShowRotationHandle, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
 import { mergeEditorImagesIntoWardrobe } from '@/features/editor/editorWardrobe.js';
 import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPassGroupDragArea, shouldPreserveMultiSelectionOnPointerDown } from '@/features/editor/editorSelection.js';
 import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from '@/lib/imageTranscode.js';
@@ -150,8 +150,8 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
   const pendingBubbleFit = useRef(null);
   const [imageDropOver, setImageDropOver] = useState(false);
 
-  /* 글자 위를 눌렀는지, 상자 안 빈 곳을 눌렀는지 가른다 — 판정은 pointMissesTextLines.
-     이미 고른/편집 중인 요소는 상자 전체를 살려 둔다(여백을 잡고 끌 수 있어야 한다). */
+  /* 글자 근처를 눌렀는지, 상자 안의 먼 빈 곳을 눌렀는지 가른다 — 판정은 viewport
+     좌표의 최소 hit 여유를 포함한다. 이미 고른/편집 중인 요소는 상자 전체를 살려 둔다. */
   const missesGlyphs = (e) => {
     if (el.type !== 'text' || el.shape === 'bubble' || selected || editing) return false;
     // Composite objects use the entire text box as their hit target. Exact-glyph
@@ -406,10 +406,13 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
   );
   else {
     const my = el.h / 2; const lc = el.stroke && el.stroke !== 'none' ? el.stroke : (el.fill || '#0e0d14'); const lw = el.strokeWidth || 2.5;
+    const hitWidth = lineHitStrokeWidth(lw, scale);
     const dashMap = { dotted: '3 5', dashed: '12 9', solid: '' };
     const da = dashMap[el.dash || 'solid'] || undefined;
     inner = (
       <svg width="100%" height="100%" viewBox={`0 0 ${el.w} ${el.h}`} style={{ overflow: 'visible', display: 'block' }}>
+        <line x1={0} y1={my} x2={el.w} y2={my} stroke="transparent" strokeWidth={hitWidth}
+          strokeLinecap="round" pointerEvents="stroke" />
         <line x1={el.shape === 'arrow-l' ? 12 : 0} y1={my} x2={el.shape === 'arrow-r' ? el.w - 12 : el.w} y2={my} stroke={lc} strokeWidth={lw} strokeLinecap="round" strokeDasharray={da} />
         {el.shape === 'arrow-l' && <polyline points={`14,${my - 8} 2,${my} 14,${my + 8}`} fill="none" stroke={lc} strokeWidth={lw} strokeLinecap="round" strokeLinejoin="round" />}
         {el.shape === 'arrow-r' && <polyline points={`${el.w - 14},${my - 8} ${el.w - 2},${my} ${el.w - 14},${my + 8}`} fill="none" stroke={lc} strokeWidth={lw} strokeLinecap="round" strokeLinejoin="round" />}
@@ -1957,6 +1960,7 @@ export function Editor() {
   const group = selEls.length > 1 && !editEl;
   const passGroupDragArea = group && shouldPassGroupDragArea(selEls.map((id) => elById(id)));
   const resizePolicy = resizePolicyForElement(selectedElObj, lockRatio);
+  const showRotationHandle = single && shouldShowRotationHandle(selectedElObj);
   // 정렬·분배(Phase 3b) — 다중선택이 "한 블록"일 때만(좌표가 블록-상대라 cross-block 정렬 무의미).
   const groupBlockId = (() => {
     if (!group) return null;
@@ -2206,7 +2210,7 @@ export function Editor() {
               preventClickEventOnDrag
               draggable
               resizable={single}
-              rotatable={single}
+              rotatable={showRotationHandle}
               keepRatio={resizePolicy.keepRatio}
               {...(SNAP_SPIKE ? {
                 snappable: true,
