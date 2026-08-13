@@ -300,7 +300,7 @@ function buildFaq(info, ctx, idFn) {
       els.push({
         ...bubble(60, y, 720, qH + 24, question,
           { size: 20, weight: 600, color: '#0e0d14', lineHeight: 29 }, '#ffffff',
-          { minWidth: 220, maxWidth: 664, padX: 28, padTop: 18, padBottom: 34, anchor: 'left' }),
+          { maxWidth: 664, padX: 28, padTop: 18, padBottom: 34, anchor: 'left' }),
         groupId: qGroupId,
       });
       y += qH + 34;
@@ -310,7 +310,7 @@ function buildFaq(info, ctx, idFn) {
       els.push({
         ...bubble(220, y, 720, aH + 24, answer,
           { size: 18, weight: 500, color: '#0e0d14', lineHeight: 28 }, '#dcecff',
-          { minWidth: 240, maxWidth: 660, padX: 30, padTop: 18, padBottom: 34, anchor: 'right' }, true),
+          { maxWidth: 660, padX: 30, padTop: 18, padBottom: 34, anchor: 'right' }, true),
         groupId: aGroupId,
       });
       y += aH + 44;
@@ -668,6 +668,15 @@ export function needsDefaultTemplate(blocks) {
   if (!Array.isArray(blocks) || !blocks.length) return false;
   if (blocks.some((b) => b && b.kind === 'info')) return false;
   return blocks.some((b) => b && (b.kind === 'size' || b.kind === 'care') && !b.info);
+}
+
+// 배송·교환·반품 안내는 다른 기본 정보 블록의 편집 여부와 무관한 필수 마감 프레임이다.
+// 전체 템플릿 게이트를 다시 열면 사용자가 일부만 구성한 문서에 헤더/특징 블록까지 추가되므로,
+// 이 한 블록만 별도로 보강한다. 이미 있으면 위치·내용을 그대로 보존한다.
+export function ensureShippingReturnsBlock(blocks, ctx = {}, idFn = uid) {
+  if (!Array.isArray(blocks) || !blocks.length) return blocks;
+  if (blocks.some((block) => block?.kind === 'info' && block.infoType === 'shipping_returns')) return blocks;
+  return [...blocks, buildInfoBlock('policy', defaultInfoFor('policy', ctx), ctx, idFn)];
 }
 
 export function applyInfoTemplate(blocks, ctx = {}, idFn = uid) {

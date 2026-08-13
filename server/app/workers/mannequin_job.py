@@ -45,14 +45,13 @@ from ..agents.prompts import (
     render_mannequin_prompt,
 )
 from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
-from ..services import canonical_reference, qc, sam_fallback
+from ..services import canonical_reference, editor_garment_mask, qc, sam_fallback
 from ..services import generation_input_strategy as gis
 from ._common import emit_job_event as _emit  # 공용 헬퍼 (analyze_job과 공유)
 
-#: 톤 에디터 마스크 알고리즘 신원. 이미지 서비스의 `worn_garment.ALGORITHM_VERSION` 과 같은
-#: 값이며, 여기서 문자열 리터럴로 갖는 이유는 `app/` 이 torch 를 끌고 오는 모듈을 임포트하지
-#: 않기 위해서다. **멱등키에만** 쓰인다 — 이 워커는 마스크를 만들지 않고 큐에 넣기만 한다.
-EDITOR_MASK_VERSION = "editor-worn-garment-sam2-v1"
+#: 톤 에디터 마스크 알고리즘 신원. torch 없는 경량 서비스 모듈에서 공유하며,
+#: **멱등키에만** 쓰인다 — 이 워커는 마스크를 만들지 않고 큐에 넣기만 한다.
+EDITOR_MASK_VERSION = editor_garment_mask.ALGORITHM_VERSION
 
 _EXT_FALLBACK = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 

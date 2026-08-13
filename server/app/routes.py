@@ -1787,6 +1787,34 @@ async def _tone_state(conn, r2, *, user_id: str, project_id: str, cut_id: str) -
     }
 
 
+async def _enqueue_missing_tone_mask(conn, *, user_id: str, project_id: str,
+                                     cut_id: str, state: dict) -> bool:
+    """플래그를 켜기 전에 만들어진 컷의 마스크를 첫 조회에서 무과금으로 준비한다.
+
+    생성 직후 큐잉과 같은 멱등키를 써서 새 컷·기존 컷·중복 폴링이 한 잡으로 합류한다.
+    보조 마스크 큐 실패가 컷 조회를 500으로 만들면 안 되므로 실패는 rollback 후 삼킨다.
+    """
+    if state.get("status") != "processing":
+        return False
+    try:
+        _job, created = await repo.create_job(
+            conn, user_id=user_id, project_id=project_id,
+            kind="editor_garment_mask", payload={"cutId": cut_id},
+            idempotency_key=(
+                f"{project_id}:editor_garment_mask:{cut_id}:"
+                f"{editor_garment_mask.ALGORITHM_VERSION}"
+            ),
+            credits_reserved=0, metadata={})
+        await conn.commit()
+        return created
+    except Exception:  # noqa: BLE001 - 톤 마스크 실패가 기존 컷 조회를 막지 않는다
+        with contextlib.suppress(Exception):
+            await conn.rollback()
+        logger.warning("tone mask lazy enqueue failed project=%s cut=%s",
+                       project_id, cut_id, exc_info=True)
+        return False
+
+
 @router.get(
     "/projects/{project_id}/mannequins/{cut_id}/tone-editor",
     response_model=ToneEditorState,
@@ -1807,8 +1835,13 @@ async def get_tone_editor(request: Request, project_id: str, cut_id: str,
             raise _not_found()
         if not _tone_editor_enabled(request):
             return {"cutId": cut_id, "status": "disabled"}
-        return await _tone_state(conn, _r2(request), user_id=user_id,
-                                 project_id=project_id, cut_id=cut_id)
+        state = await _tone_state(conn, _r2(request), user_id=user_id,
+                                  project_id=project_id, cut_id=cut_id)
+        created = await _enqueue_missing_tone_mask(
+            conn, user_id=user_id, project_id=project_id, cut_id=cut_id, state=state)
+    if created:
+        _wake_dispatcher(request)
+    return state
 
 
 async def _tone_bytes(request: Request, project_id: str, cut_id: str, user_id: str,

@@ -101,6 +101,9 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 미설정이면 sam_client 가 비활성 → sam_preprocess 는 skipped, 생성은 RAW 그대로 — 이 서비스가
   # 죽어도 업로드·분석·마네킹 생성은 전부 그대로 돈다.
   SAM_SERVICE_URL: http://sam2:8080
+  # 마네킹컷 의류 영역의 색감·밝기 조정. 생성 직후 SAM 마스크를 비동기로 준비한다.
+  # 미선언 시 config 기본 off 로 조용히 숨겨지므로 프로덕션 의도를 명시한다.
+  MANNEQUIN_TONE_EDITOR: "on"
   MODEL_ROUTING_TEXT_GEMINI: gemini-3.1-pro-preview
   # '배경만' 생성예시는 빈 장소 플레이트 편집 + 장소 일치 QC/재시도 방식으로 검증했다.
   # 프론트 VITE_GENEXAMPLE_BG_ENABLED와 함께 켜야 하며, 2026-07-21부터 프로덕션 공개.

@@ -16,6 +16,7 @@ import {
   careFamilyFor,
   carrySlotImages,
   defaultInfoFor,
+  ensureShippingReturnsBlock,
   fillFeatureCopy,
   isRepeatablePreset,
   needsDefaultTemplate,
@@ -175,6 +176,19 @@ test('needsDefaultTemplate gates auto-apply to untouched assembler docs only', (
   // 빈 문서/size·care 없는 문서 → 금지
   assert.equal(needsDefaultTemplate([]), false);
   assert.equal(needsDefaultTemplate([baseDoc()[0], baseDoc()[3]]), false);
+});
+
+test('a partially templated saved document still gets the required shipping/returns frame at the bottom', () => {
+  const header = buildInfoBlock('header', defaultInfoFor('header', CTX), CTX, seqId());
+  const partial = [header, ...baseDoc()];
+  assert.equal(needsDefaultTemplate(partial), false, 'another info block keeps the full template gate closed');
+
+  const completed = ensureShippingReturnsBlock(partial, CTX, seqId());
+
+  assert.equal(completed.length, partial.length + 1);
+  assert.equal(completed.at(-1).kind, 'info');
+  assert.equal(completed.at(-1).infoType, 'shipping_returns');
+  assert.equal(completed[0], header, 'existing edited blocks are preserved');
 });
 
 test('default template keeps the header first and appends shipping/returns at the very bottom', () => {

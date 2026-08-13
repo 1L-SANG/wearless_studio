@@ -1294,6 +1294,8 @@
 .ed-left { background: #fff; box-shadow: 1px 0 0 0 var(--ring); overflow-y: auto; padding: 18px; }
 .ed-left.hidden, .ed-right.hidden { display: none; }
 .ed-canvas-wrap { overflow: auto; position: relative; background: #F8F8F8; }
+.selection-marquee { position: absolute; z-index: 30; pointer-events: none; border: 1px solid #4f9ee8;
+  background: rgba(79, 158, 232, .14); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.55); }
 .ed-canvas { width: 1000px; transform-origin: top center; margin: 40px auto; }
 .canvas-block { width: 1000px; position: relative; background: #fff; box-shadow: var(--elev-card); margin-bottom: 8px;
   padding: 50px 0; }
@@ -1591,6 +1593,12 @@
 .object-preset-cell:hover { background: var(--bg-1); color: var(--fg-1); box-shadow: 0 0 0 1px var(--ring-strong); }
 .object-preset-cell:active { cursor: grabbing; }
 .object-preset-glyph { min-width: 52px; min-height: 24px; padding: 4px 8px; border-radius: 7px; background: #0e0d14; color: #fff; display: grid; place-items: center; font-size: 10px; font-weight: 700; letter-spacing: .4px; }
+.object-preset-glyph.single-bubble { position: relative; min-width: 64px; min-height: 28px; margin-bottom: 5px; padding: 5px 10px 7px;
+  border: 1px solid #000; border-radius: 11px; background: #fff; color: #000; box-sizing: border-box; letter-spacing: 0; }
+.object-preset-glyph.single-bubble::before,
+.object-preset-glyph.single-bubble::after { content: ''; position: absolute; left: 12px; width: 0; height: 0; }
+.object-preset-glyph.single-bubble::before { bottom: -8px; border-top: 8px solid #000; border-right: 11px solid transparent; }
+.object-preset-glyph.single-bubble::after { left: 13px; bottom: -6px; border-top: 7px solid #fff; border-right: 9px solid transparent; }
 .object-preset-glyph.qa-bubbles { background: #dcecff; color: #0e0d14; border-radius: 999px; }
 .object-preset-glyph.divider { min-width: 62px; padding: 0; background: transparent; color: #0e0d14; font-size: 22px; }
 .object-preset-glyph.arrow-callout { background: transparent; color: #0e0d14; padding: 0; }

@@ -1,0 +1,119 @@
+name: deploy-sam2
+
+# SAM2 모델 런타임 전용 CI/CD. torch·transformers·가중치를 굽는 무거운 이미지는
+# 메인 API 배포와 완전히 분리하고, 이 서비스의 실제 런타임 입력이 바뀔 때만 실행한다.
+# 두 워크플로는 병렬로 실행될 수 있으므로 내부 HTTP 계약 변경은 기존 API/SAM 중 어느 쪽이
+# 먼저 배포돼도 동작하는 2단계 하위 호환 변경으로 낸다.
+on:
+    push:
+        branches: [main]
+        paths:
+            - "server/sam_service/**/*.py"
+            - "server/sam_service/requirements.txt"
+            - "server/sam_service/Dockerfile"
+            - "server/sam_service/Dockerfile.dockerignore"
+            - "server/tests/test_sam_service_api.py"
+            - "server/tests/test_sam_service_segmentation.py"
+            - "server/tests/test_worn_garment_segmentation.py"
+            - "server/tests/test_canonical_pipeline.py"
+            - "server/tests/test_deploy_manifest_qc_flags.py"
+            - "copilot/sam2/manifest.yml"
+            - ".github/workflows/deploy-sam2.yml"
+    pull_request:
+        branches: [main]
+        paths:
+            - "server/sam_service/**/*.py"
+            - "server/sam_service/requirements.txt"
+            - "server/sam_service/Dockerfile"
+            - "server/sam_service/Dockerfile.dockerignore"
+            - "server/tests/test_sam_service_api.py"
+            - "server/tests/test_sam_service_segmentation.py"
+            - "server/tests/test_worn_garment_segmentation.py"
+            - "server/tests/test_canonical_pipeline.py"
+            - "server/tests/test_deploy_manifest_qc_flags.py"
+            - "copilot/sam2/manifest.yml"
+            - ".github/workflows/deploy-sam2.yml"
+    workflow_dispatch: {} # SAM2만 수동 재배포
+
+concurrency:
+    group: deploy-sam2
+    cancel-in-progress: false
+
+permissions:
+    id-token: write
+    contents: read
+
+env:
+    AWS_REGION: ap-northeast-2
+    COPILOT_APP: wearless
+    COPILOT_ENV: prod
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+        defaults:
+            run:
+                working-directory: server
+        steps:
+            - uses: actions/checkout@v5
+            - uses: astral-sh/setup-uv@v5
+            - run: uv sync --frozen
+            - name: SAM2 서비스·API 경계 테스트
+              run: |
+                  uv run pytest -q \
+                    tests/test_sam_service_api.py \
+                    tests/test_sam_service_segmentation.py \
+                    tests/test_worn_garment_segmentation.py \
+                    tests/test_canonical_pipeline.py \
+                    tests/test_deploy_manifest_qc_flags.py
+
+    # 테스트 파일만 바뀐 push 는 CI만 수행한다. 모델 코드·의존성·이미지·매니페스트처럼
+    # 실제 SAM2 태스크 정의를 바꾸는 입력만 ECS 재배포로 이어진다.
+    changes:
+        needs: test
+        if: github.event_name != 'pull_request'
+        runs-on: ubuntu-latest
+        outputs:
+            sam2: ${{ steps.filter.outputs.sam2 }}
+        steps:
+            - uses: actions/checkout@v5
+            - uses: dorny/paths-filter@v3
+              id: filter
+              with:
+                  filters: |
+                      sam2:
+                        - 'server/sam_service/**/*.py'
+                        - 'server/sam_service/requirements.txt'
+                        - 'server/sam_service/Dockerfile'
+                        - 'server/sam_service/Dockerfile.dockerignore'
+                        - 'copilot/sam2/manifest.yml'
+                        - '.github/workflows/deploy-sam2.yml'
+
+    deploy-sam2:
+        needs: changes
+        if: |
+            github.event_name != 'pull_request'
+            && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.sam2 == 'true')
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v5
+
+            - name: AWS 자격증명 (OIDC)
+              uses: aws-actions/configure-aws-credentials@v6
+              with:
+                  role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+                  aws-region: ${{ env.AWS_REGION }}
+
+            - name: Copilot CLI 설치
+              run: |
+                  curl -Lo /usr/local/bin/copilot \
+                    https://github.com/aws/copilot-cli/releases/latest/download/copilot-linux
+                  chmod +x /usr/local/bin/copilot
+
+            - name: SAM2 서비스 배포
+              run: |
+                  copilot svc deploy \
+                    --app "$COPILOT_APP" \
+                    --name sam2 \
+                    --env "$COPILOT_ENV" \
+                    --tag "$GITHUB_SHA"

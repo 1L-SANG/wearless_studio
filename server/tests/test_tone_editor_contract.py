@@ -7,13 +7,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import pathlib
 import re
 
 import pytest
 
-from app.routes import _cut_to_api
+from app.routes import _cut_to_api, _enqueue_missing_tone_mask
 from app.services import editor_garment_mask as egm
 from app.services import mannequin_tone_render as tone
 from app.workers import editor_garment_mask_job as job
@@ -94,6 +95,46 @@ def test_mask_idempotency_binds_cut_and_algorithm_version():
     key = re.search(r"idempotency_key=f\"([^\"]+)\"", src)
     assert key, "멱등키가 없다"
     assert "{cut_id}" in key.group(1) and "{EDITOR_MASK_VERSION}" in key.group(1)
+
+
+def test_existing_cut_lazily_enqueues_the_same_free_mask_job(monkeypatch):
+    """플래그 활성화 전에 생성된 컷도 첫 톤 상태 조회에서 준비를 시작한다."""
+    captured = {}
+
+    async def create_job(_conn, **kwargs):
+        captured.update(kwargs)
+        return {"id": "mask-job"}, True
+
+    class Conn:
+        committed = False
+
+        async def commit(self):
+            self.committed = True
+
+        async def rollback(self):
+            raise AssertionError("성공 경로에서 rollback 하면 안 된다")
+
+    monkeypatch.setattr("app.routes.repo.create_job", create_job)
+    conn = Conn()
+    created = asyncio.run(_enqueue_missing_tone_mask(
+        conn, user_id="u1", project_id="p1", cut_id="A-1",
+        state={"status": "processing"}))
+
+    assert created is True and conn.committed is True
+    assert captured["kind"] == "editor_garment_mask"
+    assert captured["payload"] == {"cutId": "A-1"}
+    assert captured["credits_reserved"] == 0
+    assert egm.ALGORITHM_VERSION in captured["idempotency_key"]
+
+
+def test_ready_cut_does_not_enqueue_another_mask(monkeypatch):
+    async def unexpected(*_args, **_kwargs):
+        raise AssertionError("ready 컷은 큐잉하면 안 된다")
+
+    monkeypatch.setattr("app.routes.repo.create_job", unexpected)
+    assert asyncio.run(_enqueue_missing_tone_mask(
+        object(), user_id="u1", project_id="p1", cut_id="A-1",
+        state={"status": "ready"})) is False
 
 
 def test_mask_metadata_carries_provenance():

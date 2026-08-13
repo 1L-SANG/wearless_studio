@@ -14,11 +14,14 @@ import {
 } from '../../src/features/editor/editorLibrary.js';
 import {
   isEditorDeleteKey,
+  isEditorGrayWorkspaceTarget,
   normalizeEditorSelectionGroups,
   removeSelectedBlock,
   removeSelectedElements,
   selectionIdsForElement,
+  selectionIdsInsideMarquee,
   shouldClearEditorSelection,
+  shouldPassGroupDragArea,
   shouldPreserveMultiSelectionOnPointerDown,
 } from '../../src/features/editor/editorSelection.js';
 
@@ -107,6 +110,69 @@ test('Q&A bubbles are two unified text+bubble elements with grouped movement', (
   assert.deepEqual(selectionIdsForElement(elements, bubbles[0]), elements.map((element) => element.id));
 });
 
+test('the object library offers one standalone responsive speech bubble', () => {
+  const item = OBJECT_LIBRARY_ITEMS.find((candidate) => candidate.id === 'single-bubble');
+  assert.deepEqual(item, { id: 'single-bubble', label: '말풍선', preview: '말풍선' });
+
+  const elements = buildObjectPreset('single-bubble', { x: 100, y: 80, idFn: seqId() });
+  assert.equal(elements.length, 1);
+  assert.equal(elements[0].type, 'text');
+  assert.equal(elements[0].shape, 'bubble');
+  assert.equal(elements[0].text, '내용을 입력하세요');
+  assert.equal(elements[0].fill, '#FFFFFF');
+  assert.equal(elements[0].style.color, '#000000');
+  assert.equal(elements[0].stroke, '#000000');
+  assert.equal(elements[0].strokeWidth, 2);
+  assert.equal(elements[0].radius, 28);
+  assert.ok(elements[0].bubbleFit);
+  assert.deepEqual(selectionIdsForElement(elements, elements[0]), [elements[0].id]);
+});
+
+test('selected speech-bubble groups keep Moveable drag capture enabled', () => {
+  const bubbles = buildObjectPreset('qa-bubbles', { x: 100, y: 80, idFn: seqId() });
+  const textBox = buildObjectPreset('text-box', { x: 100, y: 80, idFn: seqId() });
+
+  assert.equal(shouldPassGroupDragArea(bubbles), false, 'the drag area must capture Q&A bubble drags');
+  assert.equal(shouldPassGroupDragArea(textBox), true, 'other composite children remain directly selectable');
+});
+
+test('marquee selection includes intersecting elements, expands groups, and skips locked layers', () => {
+  const elements = [
+    { id: 'free', type: 'shape' },
+    { id: 'group-a', type: 'text', groupId: 'group' },
+    { id: 'group-b', type: 'text', groupId: 'group' },
+    { id: 'partial', type: 'shape' },
+    { id: 'locked', type: 'shape', locked: true },
+    { id: 'hidden', type: 'shape', hidden: true },
+  ];
+  const rects = new Map([
+    ['free', { left: 20, top: 20, right: 40, bottom: 40 }],
+    ['group-a', { left: 50, top: 50, right: 70, bottom: 70 }],
+    ['group-b', { left: 140, top: 140, right: 160, bottom: 160 }],
+    ['partial', { left: 90, top: 90, right: 120, bottom: 120 }],
+    ['locked', { left: 30, top: 30, right: 50, bottom: 50 }],
+    ['hidden', { left: 35, top: 35, right: 55, bottom: 55 }],
+  ]);
+
+  assert.deepEqual(selectionIdsInsideMarquee(elements, rects, {
+    left: 10, top: 10, right: 100, bottom: 100,
+  }), ['free', 'group-a', 'group-b', 'partial']);
+});
+
+test('marquee selection reacts symmetrically when entering an element from either side', () => {
+  const elements = [{ id: 'target', type: 'shape' }];
+  const rects = new Map([
+    ['target', { left: 100, top: 100, right: 200, bottom: 200 }],
+  ]);
+
+  assert.deepEqual(selectionIdsInsideMarquee(elements, rects, {
+    left: 90, top: 120, right: 101, bottom: 180,
+  }), ['target']);
+  assert.deepEqual(selectionIdsInsideMarquee(elements, rects, {
+    left: 199, top: 120, right: 210, bottom: 180,
+  }), ['target']);
+});
+
 test('Delete and macOS Backspace remove every selected element while preserving other blocks', () => {
   assert.equal(isEditorDeleteKey({ key: 'Delete', target: { tagName: 'DIV', isContentEditable: false } }), true);
   assert.equal(isEditorDeleteKey({ key: 'Backspace', target: { tagName: 'DIV', isContentEditable: false } }), true);
@@ -170,6 +236,15 @@ test('canvas click-away never clears a selection for an element, block, or Movea
   assert.equal(shouldClearEditorSelection(target('.canvas-block')), false);
   assert.equal(shouldClearEditorSelection(target('.moveable-control-box')), false);
   assert.equal(shouldClearEditorSelection({ closest: () => null }), true);
+});
+
+test('Moveable controls are canvas content, not gray workspace that reveals zoom controls', () => {
+  const target = (match) => ({ closest: (selector) => selector.includes(match) ? {} : null });
+
+  assert.equal(isEditorGrayWorkspaceTarget(target('.canvas-block')), false);
+  assert.equal(isEditorGrayWorkspaceTarget(target('.moveable-control-box')), false);
+  assert.equal(isEditorGrayWorkspaceTarget({ closest: () => null }), true);
+  assert.equal(isEditorGrayWorkspaceTarget(null), false);
 });
 
 test('pressing an already selected child preserves a multi-selection for group dragging', () => {

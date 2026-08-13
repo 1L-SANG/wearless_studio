@@ -234,7 +234,7 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {number} [opacity]          0~1
    @property {string} [groupId]          composite object selection group
    @property {string} [bubblePairId]     legacy matching speech-bubble shape/text pair; normalized away on load
-   @property {{minWidth:number,maxWidth:number,padX:number,padTop:number,padBottom:number,anchor:'left'|'right'}} [bubbleFit] unified text+bubble responsive sizing
+   @property {{minWidth?:number,maxWidth:number,padX:number,padTop:number,padBottom:number,anchor:'left'|'right'}} [bubbleFit] unified text+bubble responsive sizing; legacy minWidth is ignored
    @property {boolean} [flipX]           horizontally mirror shape geometry
    @property {boolean} [hidden]
    @property {boolean} [locked]
