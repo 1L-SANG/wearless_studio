@@ -138,7 +138,7 @@ function exampleGenderFromAnalysis(analysis, catalogs, clothingType) {
   return targets.length === 1 ? targets[0] : null;
 }
 
-function OuterClosureIcon({ state }) {
+export function OuterClosureIcon({ state }) {
   const edge = state === 'closed'
     ? <path d="M24 18v32" />
     : state === 'partial'
