@@ -651,11 +651,13 @@ export function presetTypeOf(block) {
    분기 제거, 하나로 통합). 시퀀스는 5개 플랫폼 분석의 공통 코어. 핏가이드·추천
    사이즈·모델 정보는 개별 프리셋으로 추가한다.
    컷 블록은 절대 건드리지 않는다. size/care 는 제자리 강화(교체), 이미 있는
-   infoType 은 중복 삽입 대신 스킵. 상단(top) 항목은 문서 맨 앞에 순서대로. ---- */
+   infoType 은 중복 삽입 대신 스킵. 상단(top)은 문서 맨 앞, 하단(bottom)은 문서
+   맨 끝에 순서대로 둔다. ---- */
 export const DEFAULT_INFO_TEMPLATE = {
   label: '기본',
-  top: ['policy', 'header'],
+  top: ['header'],
   flow: ['feature_icons', 'size_table', 'care', 'required_notice'],
+  bottom: ['policy'],
 };
 
 /* 아직 정보 템플릿이 적용된 적 없는 "생성 직후 기본 문서"인지 판별 —
@@ -741,6 +743,15 @@ export function applyInfoTemplate(blocks, ctx = {}, idFn = uid) {
     const at = noticeIdx >= 0 ? noticeIdx : next.length;
     next = insertAt(next, at, pending);
   }
+
+  // 배송·교환 안내처럼 상세페이지를 마무리하는 고정 안내는 첫 생성부터 맨 아래에 둔다.
+  // bottom 타입도 중복을 만들지 않되, 기존 문서의 사용자 배치는 재적용 시 건드리지 않는다.
+  (tpl.bottom || []).forEach((type) => {
+    if (isDup(type)) { skipped.push(labelOf(type)); return; }
+    const b = buildInfoBlock(type, defaultInfoFor(type, ctx), ctx, idFn);
+    next.push(b); inserted.push(labelOf(type));
+    if (b.kind === 'info' && b.infoType) presentInfoTypes.add(b.infoType);
+  });
 
   return { blocks: next, inserted, skipped };
 }

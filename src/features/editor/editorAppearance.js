@@ -1,12 +1,12 @@
 export const DEFAULT_EDITOR_COLOR_PRESETS = [
-  '#000000', '#333333', '#666666', '#999999', '#CCCCCC', '#E5E5E5', '#FFFFFF',
-  '#B42318', '#D92D20', '#F04438', '#F97066', '#FDA29B',
-  '#B54708', '#DC6803', '#F79009', '#FDB022', '#FEC84B',
-  '#667085', '#475467', '#344054', '#1D2939', '#101828',
-  '#067647', '#079455', '#12B76A', '#32D583', '#75E0A7',
-  '#175CD3', '#1570EF', '#2E90FA', '#53B1FD', '#84CAFF',
-  '#5925DC', '#6938EF', '#7F56D9', '#9E77ED', '#B692F6',
-  '#C11574', '#DD2590', '#EE46BC', '#F670C7', '#FAA7E0',
+  '#000000', '#3C3C3C', '#5B5B5B', '#8E8E8E', '#C5C5C5', '#EBEBEB', '#F1F1F1', '#FFFFFF',
+  '#F20011', '#FD0083', '#FF00E8', '#0F00E7', '#00EFFE', '#00F035', '#7FFA38', '#EDFF3B',
+  '#F4C5C5', '#FDE7D3', '#FFF0C8', '#D3E7CE', '#C9DCDF', '#C8DEF0', '#D4CCE4', '#E8CAD7',
+  '#E98D8F', '#FAC495', '#FFE194', '#ACD2A1', '#96BDC1', '#93BEE2', '#AB9CCE', '#D19BB4',
+  '#DF595C', '#F7A866', '#FFD466', '#86BD76', '#699BA5', '#619ED4', '#8370B8', '#BC6E94',
+  '#BB000D', '#E5853A', '#F1BA3D', '#5C9F4C', '#397682', '#317ABB', '#5D439A', '#9E426C',
+  '#87000A', '#AD5318', '#B9851F', '#2E6B23', '#0F4651', '#024986', '#2F1967', '#6B173D',
+  '#570606', '#6E3710', '#755514', '#214518', '#0C2E35', '#063056', '#1E1242', '#44112A',
 ];
 
 const clampPercent = (value) => Math.min(100, Math.max(0, Number(value) || 0));
@@ -97,6 +97,25 @@ export function resizePolicyForElement(element, lockRatio) {
   return {
     keepRatio,
     directions: keepRatio ? [...RATIO_DIRECTIONS] : [...FREE_DIRECTIONS],
+  };
+}
+
+/** Resolve the live rectangle for an image resize gesture. Moveable owns the
+ * ratio constraint and reports dimensions based on the element's current box.
+ * Reapplying the source-file ratio here would make filled frames jump back to
+ * the original photo proportions on their first resize. */
+export function imageResizeRect({
+  start,
+  width,
+  height,
+  beforeTranslate = [0, 0],
+}) {
+  const [dx = 0, dy = 0] = beforeTranslate || [];
+  return {
+    x: start.x + dx,
+    y: start.y + dy,
+    w: width,
+    h: height,
   };
 }
 

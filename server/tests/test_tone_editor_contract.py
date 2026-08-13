@@ -13,6 +13,7 @@ import re
 
 import pytest
 
+from app.routes import _cut_to_api
 from app.services import editor_garment_mask as egm
 from app.services import mannequin_tone_render as tone
 from app.workers import editor_garment_mask_job as job
@@ -181,3 +182,74 @@ def test_tone_routes_do_not_redirect_to_the_cdn():
     block = src[src.index("async def _tone_bytes"):src.index("async def apply_tone_editor")]
     assert "RedirectResponse" not in block
     assert "Response(content=data" in block
+
+
+def test_mannequin_list_displays_the_active_tone_render():
+    """GET /mannequins 는 원본 컷 신원은 유지하되 화면 src 는 조정본으로 해석해야 한다."""
+    repo_src = (SERVER / "app" / "repo.py").read_text(encoding="utf-8")
+    list_block = repo_src[repo_src.index("async def list_mannequin_cuts"):
+                          repo_src.index("async def get_mannequin_edit_parent")]
+    assert "active_asset_id" in list_block
+    assert "metadata->>'type' = 'mannequinToneAdjusted'" in list_block
+    assert "metadata->>'sourceCutId'" in list_block
+
+    routes_src = (SERVER / "app" / "routes.py").read_text(encoding="utf-8")
+    api_block = routes_src[routes_src.index("def _cut_to_api"):
+                           routes_src.index("@router.post", routes_src.index("def _cut_to_api"))]
+    assert 'display_asset_id = c.get("active_asset_id") or c["asset_id"]' in api_block
+    assert 'f"/v1/assets/{display_asset_id}/file"' in api_block
+
+
+def _mannequin_cut_row(**overrides):
+    row = {
+        "candidate": "A",
+        "version": 1,
+        "asset_id": "original-asset",
+        "active_asset_id": None,
+        "base_fit": "regular",
+        "fit_adjust": 0,
+        "length_adjust": 0,
+        "match_adjust": 0,
+        "qc_scores": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def test_cut_api_prefers_the_active_tone_asset():
+    cut = _cut_to_api(_mannequin_cut_row(active_asset_id="tone-asset"))
+    assert cut["id"] == "A-1"
+    assert cut["src"] == "/v1/assets/tone-asset/file"
+
+
+def test_cut_api_falls_back_to_the_original_asset_without_a_tone_render():
+    cut = _cut_to_api(_mannequin_cut_row())
+    assert cut["src"] == "/v1/assets/original-asset/file"
+
+
+def test_detail_page_generation_uses_the_active_tone_render():
+    """상세페이지 생성의 선택 마네킹 참조도 조정본을 우선해야 적용 후 원본으로 되돌지 않는다."""
+    src = (SERVER / "app" / "workers" / "detail_page_job.py").read_text(encoding="utf-8")
+    block = src[src.index("mannequin_asset = None"):
+                src.index("color_assets: dict", src.index("mannequin_asset = None"))]
+    assert 'asset_id = c.get("active_asset_id") or c["asset_id"]' in block
+    assert "repo.get_asset_for_user(conn, user_id, str(asset_id))" in block
+
+
+def test_editor_new_image_generation_uses_the_active_tone_render():
+    """에디터 AI 탭의 새 이미지 생성도 선택 마네킹 조정본을 기준 이미지로 써야 한다."""
+    src = (SERVER / "app" / "workers" / "editor_image_job.py").read_text(encoding="utf-8")
+    block = src[src.index("selected_mannequin_id ="):
+                src.index("# 일반 컷은 선택 색상을 엄격히 쓴다", src.index("selected_mannequin_id ="))]
+    assert 'asset_id = candidate.get("active_asset_id") or candidate["asset_id"]' in block
+    assert "repo.get_asset_for_user(" in block and "str(asset_id)" in block
+
+
+def test_frontend_replaces_the_selected_cut_src_after_tone_apply():
+    """적용 직후 부모 컷 상태가 바뀌어야 오버레이가 사라져도 원본 이미지로 되돌지 않는다."""
+    src = (SERVER.parent / "src" / "features" / "mannequin" / "Mannequin.jsx").read_text(
+        encoding="utf-8")
+    assert "onApplied={onToneApplied}" in src
+    assert "const assetId = state.renderAssetId || state.sourceAssetId;" in src
+    assert "setCuts((prev) => prev.map((cut) => (" in src
+    assert "cut.id === state.cutId" in src

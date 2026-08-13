@@ -832,10 +832,20 @@ async def list_mannequin_cuts(conn: AsyncConnection, user_id: str, project_id: s
             """
             select mc.candidate, mc.version, mc.base_fit, mc.fit_adjust,
                    mc.length_adjust, mc.match_adjust, mc.qc_scores,
-                   a.id::text as asset_id, a.r2_key
+                   a.id::text as asset_id, a.r2_key,
+                   tone.id::text as active_asset_id, tone.r2_key as active_r2_key
             from mannequin_cuts mc
             join projects pr on pr.id = mc.project_id
             join assets a on a.id = mc.asset_id
+            left join lateral (
+                select ta.id, ta.r2_key
+                from assets ta
+                where ta.project_id = mc.project_id and ta.deleted_at is null
+                  and ta.metadata->>'type' = 'mannequinToneAdjusted'
+                  and ta.metadata->>'sourceCutId' = mc.candidate || '-' || mc.version::text
+                order by ta.created_at desc
+                limit 1
+            ) tone on true
             where mc.project_id = %s and pr.user_id = %s and pr.deleted_at is null
             order by mc.candidate, mc.version
             """,

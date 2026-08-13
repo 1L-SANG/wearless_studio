@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
+  EDITOR_INFO_PRESET_DRAG_TYPE,
   EDITOR_IMAGE_DRAG_TYPE,
+  acceptsEditorBlockInsert,
   decodeEditorImageDrag,
   encodeEditorImageDrag,
   findImageDropSlot,
@@ -14,6 +16,7 @@ import {
 
 const editorSource = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
 const panelSource = readFileSync(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url), 'utf8');
+const contentPanelSource = readFileSync(new URL('../../src/features/editor/ContentPanel.jsx', import.meta.url), 'utf8');
 const stylesSource = readFileSync(new URL('../../src/styles/features.css', import.meta.url), 'utf8');
 
 test('wardrobe image drag payload keeps only the data needed by the canvas', () => {
@@ -33,6 +36,16 @@ test('wardrobe image drag payload keeps only the data needed by the canvas', () 
   });
   assert.equal(decodeEditorImageDrag('not json'), null);
   assert.equal(decodeEditorImageDrag(JSON.stringify({ id: 'missing-src' })), null);
+});
+
+test('content presets participate in the same between-block drag contract', () => {
+  assert.equal(EDITOR_INFO_PRESET_DRAG_TYPE, 'application/x-wearless-info-preset');
+  assert.equal(acceptsEditorBlockInsert(['text/plain']), false);
+  assert.equal(acceptsEditorBlockInsert([EDITOR_INFO_PRESET_DRAG_TYPE]), true);
+  assert.match(contentPanelSource, /draggable/);
+  assert.match(contentPanelSource, /setData\(EDITOR_INFO_PRESET_DRAG_TYPE,\s*p\.type\)/);
+  assert.match(editorSource, /EDITOR_INFO_PRESET_DRAG_TYPE/);
+  assert.match(editorSource, /addInfoPresetBlock/);
 });
 
 test('viewport drop coordinates are converted through the current canvas zoom', () => {
@@ -122,23 +135,24 @@ test('quick toolbar has a pointer bridge across its visual gap', () => {
 test('wardrobe image drags activate the same between-block insertion rows as frames', () => {
   assert.match(panelSource, /onImageDragStart/);
   assert.match(panelSource, /onImageDragEnd/);
-  assert.match(editorSource, /WARDROBE_IMAGE_MIME[\s\S]{0,500}setFrameOver/);
+  assert.equal(acceptsEditorBlockInsert([EDITOR_IMAGE_DRAG_TYPE]), true);
+  assert.match(editorSource, /acceptsEditorBlockInsert\(e\.dataTransfer\.types\)[\s\S]{0,180}setFrameOver/);
   assert.match(editorSource, /buildImageBlock/);
 });
 
-test('the active between-block drop target is a simple full-width line', () => {
+test('the active between-block drop target is a full-width placement band', () => {
   assert.doesNotMatch(editorSource, /canvas-dropplus/);
   assert.doesNotMatch(stylesSource, /\.canvas-dropplus\s*\{/);
   assert.match(editorSource, /canvas-droprow[\s\S]{0,700}currentTarget\.contains\(e\.relatedTarget\)/);
 });
 
-test('the insertion guide matches Notion with a zoom-invariant thin blue line', () => {
+test('the insertion guide matches the reference with a zoom-invariant blue drop band', () => {
   const activeLineRule = stylesSource.match(/\.canvas-dropline\.on\s*\{[^}]*\}/s)?.[0] || '';
   const lineRule = stylesSource.match(/\.canvas-dropline\s*\{[^}]*\}/s)?.[0] || '';
   assert.match(editorSource, /'--canvas-inv':\s*1\s*\/\s*\(scale\s*\|\|\s*1\)/);
-  assert.match(lineRule, /height:\s*calc\(2px\s*\*\s*var\(--canvas-inv,\s*1\)\)/);
-  assert.match(activeLineRule, /background:\s*#2383e2/);
-  assert.match(activeLineRule, /box-shadow:\s*none/);
+  assert.match(lineRule, /height:\s*calc\(12px\s*\*\s*var\(--canvas-inv,\s*1\)\)/);
+  assert.match(activeLineRule, /background:\s*rgba\(35,\s*131,\s*226,\s*\.1\)/);
+  assert.match(activeLineRule, /box-shadow:\s*inset/);
   assert.match(activeLineRule, /animation:\s*none/);
   assert.match(stylesSource, /\.ed-canvas\.frame-dragging \.canvas-droprow\s*\{[^}]*height:\s*128px[^}]*margin:\s*-56px 0[^}]*padding:\s*56px 0/s);
   assert.doesNotMatch(stylesSource, /@keyframes canvas-drop-/);

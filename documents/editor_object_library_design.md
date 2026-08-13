@@ -47,6 +47,11 @@ insertLibraryItem({ blocks, itemId, target, context, input, idFn })
 
 `FramePanel`은 `text/frame` payload를 만들고 각 블록 사이의 dropline이 drop을 받아 새 블록을 삽입한다.
 
+2026-08-13 증분 구현: `ContentPanel`의 내용 프리셋도 같은 블록 사이 dropline을 사용한다.
+프리셋 drag payload는 `application/x-wearless-info-preset`이고, drop 시 `block.info`와
+`elements`를 가진 완성 정보 블록을 해당 위치에 바로 삽입한다. `size`/`care`처럼
+문서당 하나만 허용되는 블록은 중복 삽입 대신 기존 블록으로 이동한다.
+
 ### 3.3 다중 선택 이동
 
 `Editor.jsx`는 선택된 element DOM node 배열을 `react-moveable` target으로 넘긴다. 같은 블록 안의 여러 요소는 이미 함께 이동하고 정렬·분배할 수 있다. 현재 그룹 resize는 막혀 있고 단일 element만 resize할 수 있다.
@@ -279,6 +284,10 @@ EditorBlock {
 ```text
 application/x-wearless-library-item = <itemId>
 ```
+
+현행 증분 구현은 통합 MIME 전 단계다. 블록 사이 삽입은 `text/frame`,
+`application/x-wearless-info-preset`, wardrobe image payload를 모두 허용하고,
+최종 Library Module 도입 때 위 단일 MIME으로 정리한다.
 
 클릭도 같은 `InsertTarget`으로 normalize한다.
 

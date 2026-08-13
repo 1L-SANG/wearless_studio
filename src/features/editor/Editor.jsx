@@ -27,10 +27,10 @@ import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, fillFeatureCopy, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
-import { findImageDropSlot, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
+import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, findImageDropSlot, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage } from '@/features/editor/editorLibrary.js';
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
-import { resizePolicyForElement, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
+import { imageResizeRect, resizePolicyForElement, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
 import { mergeEditorImagesIntoWardrobe } from '@/features/editor/editorWardrobe.js';
 import { isEditorDeleteKey, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, selectionIdsForElement, shouldClearEditorSelection, shouldPreserveMultiSelectionOnPointerDown } from '@/features/editor/editorSelection.js';
 import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from '@/lib/imageTranscode.js';
@@ -1161,7 +1161,9 @@ export function Editor() {
     e.preventDefault(); setFrameOver(null); setFrameDragging(false);
     const image = decodeWardrobeImage(e.dataTransfer.getData(WARDROBE_IMAGE_MIME));
     if (image) { addImageBlock(image, idx); return; }
-    const id = e.dataTransfer.getData('text/frame'); if (!id) return;
+    const presetType = e.dataTransfer.getData(EDITOR_INFO_PRESET_DRAG_TYPE);
+    if (presetType) { addInfoPresetBlock(presetType, idx); return; }
+    const id = e.dataTransfer.getData(EDITOR_FRAME_DRAG_TYPE); if (!id) return;
     const f = FRAME_LIBRARY_ITEMS.find((x) => x.id === id); if (f) addFrame(f, idx);
   };
   const addShape = (type, shapeId, bId, dropEvent) => {
@@ -1458,6 +1460,27 @@ export function Editor() {
     const left = all.filter((p) => !used.has(p));
     return left.length ? left : all;   // 다 썼으면 처음부터 — 빈 폼을 주는 것보다 낫다
   };
+  const addInfoPresetBlock = (type, idx) => {
+    const kind = type === 'size_table' ? 'size' : type === 'care' ? 'care' : null;
+    const existing = isRepeatablePreset(type) ? null
+      : (kind ? blocks.find((block) => block.kind === kind) : blocks.find((block) => presetTypeOf(block) === type));
+    if (existing) {
+      jumpTo(existing.id);
+      toast.push(`${existing.name} 블록은 이미 있어요`, { icon: 'check' });
+      return;
+    }
+    const ctx = (isRepeatablePreset(type) && type === 'feature_icons')
+      ? { ...infoCtx, sellingPoints: unusedSellingPoints() }
+      : infoCtx;
+    const built = buildInfoBlock(type, seedInfo(type, defaultInfoFor(type, ctx)), ctx);
+    setBlocks((current) => {
+      const next = [...current];
+      next.splice(idx == null ? next.length : idx, 0, built);
+      return next;
+    });
+    setSelBlock(built.id); setBlockFocused(true); setSelEl(null); setSelEls([]);
+    toast.push(`${built.name} 블록을 바로 추가했어요`, { icon: 'check' });
+  };
   const openInfoEdit = (block) => {
     const type = presetTypeOf(block);
     if (!type) return;
@@ -1582,17 +1605,15 @@ export function Editor() {
   const liveResize = (target, width, height, drag) => {
     const elId = target.dataset.elid;
     const st = dragSnap.current && dragSnap.current[elId]; if (!st) return;
-    let nx = st.x + (drag?.beforeTranslate?.[0] || 0);
-    let ny = st.y + (drag?.beforeTranslate?.[1] || 0);
-    let nw = width, nh = height;
-    // 이미지(크롭 안 한 것)는 원본 사진 비율을 따라간다 — 리사이즈로 잘리거나 늘어나지 않게.
-    // 위쪽 핸들로 끌 땐 아래 변을 고정해 높이 보정이 튀지 않도록 y 를 되맞춘다.
     const elNow = elById(elId);
     const imgNode = target.querySelector('img');
-    if (elNow && elNow.type === 'image' && !elNow.crop && imgNode && imgNode.naturalWidth && imgNode.naturalHeight) {
-      nh = Math.max(24, Math.round(nw * imgNode.naturalHeight / imgNode.naturalWidth));
-      if ((drag?.beforeTranslate?.[1] || 0) !== 0) ny = st.y + st.h - nh;
-    }
+    const proposed = imageResizeRect({
+      start: st,
+      width,
+      height,
+      beforeTranslate: drag?.beforeTranslate,
+    });
+    const { x: nx, y: ny, w: nw, h: nh } = proposed;
     const rect = clampElementRect(nx, ny, nw, nh);
     target.style.left = rect.x + 'px'; target.style.top = rect.y + 'px';
     target.style.width = rect.w + 'px'; target.style.height = rect.h + 'px';
@@ -1697,10 +1718,11 @@ export function Editor() {
         onVary={varyImage} />;
       case 'frame': return (
         <>
-          <FramePanel onAdd={addFrame} onDragStart={() => setFrameDragging(true)} onDragEnd={() => setFrameDragging(false)} />
+          <FramePanel onAdd={addFrame} onDragStart={() => setFrameDragging(true)} onDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />
           {/* 내용 프리셋 — 프레임 탭에 통합 (별도 탭 없음). 기본 템플릿은 로드 시 자동 구성 */}
           <div style={{ marginTop: 22 }}>
-            <ContentPanel recommendGender={recommendGender} onPick={openInfoPreset} />
+            <ContentPanel recommendGender={recommendGender} onPick={openInfoPreset}
+              onDragStart={() => setFrameDragging(true)} onDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />
           </div>
         </>
       );
@@ -1923,7 +1945,7 @@ export function Editor() {
             style={{ transform: `scale(${scale})`, transformOrigin: 'top left', position: 'absolute', top: 0, left: 0, margin: 0, '--canvas-inv': 1 / (scale || 1) }}>
             {blocks.map((b, i) => (
               <div key={b.id} style={{ display: 'contents' }}>
-                <div className="canvas-droprow" onDragOver={(e) => { if (e.dataTransfer.types.includes('text/frame') || e.dataTransfer.types.includes(WARDROBE_IMAGE_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setFrameOver(i); } }}
+                <div className="canvas-droprow" onDragOver={(e) => { if (acceptsEditorBlockInsert(e.dataTransfer.types)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setFrameOver(i); } }}
                   onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setFrameOver((o) => o === i ? null : o); }} onDrop={(e) => onCanvasInsertDrop(e, i)}>
                   <div className={`canvas-dropline${frameOver === i ? ' on' : ''}`} />
                 </div>
@@ -1941,7 +1963,7 @@ export function Editor() {
                   onDownload={() => toast.push('이 블록을 PNG로 저장했어요', { icon: 'download' })} />
               </div>
             ))}
-            <div className="canvas-droprow" onDragOver={(e) => { if (e.dataTransfer.types.includes('text/frame') || e.dataTransfer.types.includes(WARDROBE_IMAGE_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setFrameOver(blocks.length); } }}
+            <div className="canvas-droprow" onDragOver={(e) => { if (acceptsEditorBlockInsert(e.dataTransfer.types)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setFrameOver(blocks.length); } }}
               onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setFrameOver((o) => o === blocks.length ? null : o); }} onDrop={(e) => onCanvasInsertDrop(e, blocks.length)}>
               <div className={`canvas-dropline${frameOver === blocks.length ? ' on' : ''}`} />
             </div>

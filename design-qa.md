@@ -24,6 +24,47 @@ final result: blocked
 
 ---
 
+# Editing Page Palette and Block Insertion QA
+
+## Visual truth
+
+- Palette reference: `/var/folders/3b/rzpkxc4j431b13dp6k16_vg40000gn/T/TemporaryItems/NSIRD_screencaptureui_cKTRY8/스크린샷 2026-08-13 오전 11.56.01.png`
+- Drag-placement reference: `/var/folders/3b/rzpkxc4j431b13dp6k16_vg40000gn/T/TemporaryItems/NSIRD_screencaptureui_LMO2Tm/화면 기록 2026-08-13 오전 11.56.45.mov`
+- Extracted video contact sheet: `/tmp/wearless-editor-ref.v38kjA/contact-sheet.png`
+- Extracted placement-band detail: `/tmp/wearless-editor-ref.v38kjA/drop-line-detail.png`
+
+## Implementation captures
+
+- Full editor: `/tmp/wearless-editor-qa/editor-full.jpg`
+- Palette open: `/tmp/wearless-editor-qa/palette-full-final.jpg`
+- Palette focus crop: `/tmp/wearless-editor-qa/palette-implementation.png`
+- Side-by-side palette comparison: `/tmp/wearless-editor-qa/palette-comparison.png`
+- Content cards and document order: `/tmp/wearless-editor-qa/content-drag-and-order.jpg`
+
+## Capture conditions
+
+- Browser: Codex in-app Browser, mock API mode.
+- Viewport: 1920 × 1080 CSS px; device pixel ratio 1.
+- Full captures: 1920 × 1080 px.
+- Palette reference: 190 × 198 px.
+- Palette implementation focus crop: 190 × 198 px, matching the reference pixel dimensions.
+- Editor state: seeded 12-block document, 40% canvas zoom. Palette capture selected the product-name text layer. Content capture opened the Frame panel and scrolled its left rail to show “판매에 도움”.
+
+## Findings and comparison history
+
+1. Initial palette pass matched the 8-column geometry and reference colors, but component-specific quick colors appended five extra swatches. Severity: P1 because the visible grid no longer matched the supplied 8 × 8 reference.
+2. The preset source was fixed to the reference's exact 64 colors. Browser recomputation then reported 64 rendered `.sf-preset` nodes, a 190 px popover, and the expected 8-column grid. The equal-size source/implementation crops were opened together in `palette-comparison.png`. Result: passed.
+3. The shipping/returns block rendered as the last `.canvas-block` in the seeded document. Result: passed.
+4. The Frame panel rendered all “내용 추가” sections in one scroll surface, including “판매에 도움”; all 17 frame/info cards exposed `draggable="true"`. Result: passed.
+5. The reference video's insertion indicator is a full-width pale-blue band, not a thin Notion line. The implementation uses a screen-invariant 12 px band with subtle top/bottom edges and the expanded 128 px drag hit area. The browser's atomic drag command could not pause mid-drag for a stable screenshot, so this state is covered by the computed CSS inspection and frontend regression test. Result: passed.
+6. Browser console contained only the project's pre-existing React Router v7 future-flag warnings; no runtime error was recorded during the editor checks.
+
+## Final result
+
+Passed. No open P0/P1 visual discrepancy remains for the requested palette, placement band, content-card visibility, or initial shipping/returns order.
+
+---
+
 # Mannequin Continue CTA Design QA
 
 ## Evidence
