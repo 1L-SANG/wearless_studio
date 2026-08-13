@@ -149,3 +149,9 @@ Codex 리뷰 → 반영 → 오너 보고.
 - **B5 구현 순서**: 순수 helper → 이동 경로 → addzone 통합(StoryboardInsertControl 단일화,
   terminal addzone 명시 표시) → renderSpaceRun → 메뉴/CSS 삭제. undo 확대 없음(묶음 풀기 undo 는
   메뉴와 함께 소멸).
+
+## G. 추가 오너 결정 (2026-08-13 오후)
+
+- **N11 [수정]** 컷 카드 캡션(방향·샷·색상 라벨 — "앞면 · 고스트샷 · 아이보리")의 글자 크기를
+  약간 키운다: .sb-canvas-caption 11px → 13px, 색상 라벨(.sb-caption-color)도 동일 비율,
+  캡션 줄바꿈·카드 폭 침범 없는지 확인. (오너: "블록 밑에 써진 것들 크기를 약간만 키우면 좋겠어")
