@@ -288,7 +288,7 @@ def _analysis_without_custom(payload: dict, item_id: str) -> dict:
     selected = sorted(
         (m for m in remaining if m.get("selected")),
         key=lambda m: m.get("selOrder") or 99,
-    )[:2]
+    )[:1]
     order_by_id = {m.get("id"): index for index, m in enumerate(selected, start=1)}
     normalized = []
     for item in remaining:

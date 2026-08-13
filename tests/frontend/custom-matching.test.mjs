@@ -227,3 +227,19 @@ test('analysis matching UI replaces the previous choice instead of adding a sub 
   assert.match(analysis, /1개 선택/);
   assert.doesNotMatch(analysis, /최대 2개|subMatchId|>서브</);
 });
+
+test('HTTP custom-match add and remove responses normalize legacy two-item selections', () => {
+  const adapter = readFileSync(
+    new URL('../../src/lib/api/httpAdapter.js', import.meta.url), 'utf8',
+  );
+  const customMutationSection = adapter.slice(
+    adapter.indexOf('async addCustomMatchItem'),
+    adapter.indexOf('async refreshMatchClothing'),
+  );
+  assert.equal(
+    (customMutationSection.match(/normalizeMatchClothingSelection/g) || []).length,
+    2,
+  );
+  assert.match(customMutationSection, /return \{ \.\.\.result, analysis \}/);
+  assert.match(customMutationSection, /return \{ analysis \}/);
+});

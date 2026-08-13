@@ -637,12 +637,20 @@ export const httpAdapter = {
       method: 'POST', body: { assetIds }, signal,
     });
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-    analysisCache = { projectId, analysis: result.analysis };
-    return result;
+    const analysis = {
+      ...result.analysis,
+      matchClothing: normalizeMatchClothingSelection(result.analysis?.matchClothing),
+    };
+    analysisCache = { projectId, analysis };
+    return { ...result, analysis };
   },
   async removeCustomMatchItem(projectId) {
     await http(`/v1/projects/${projectId}/analysis/custom-match-item`, { method: 'DELETE' });
-    const analysis = await http(`/v1/projects/${projectId}/analysis`);
+    const saved = await http(`/v1/projects/${projectId}/analysis`);
+    const analysis = {
+      ...saved,
+      matchClothing: normalizeMatchClothingSelection(saved.matchClothing),
+    };
     analysisCache = { projectId, analysis };
     return { analysis };
   },
