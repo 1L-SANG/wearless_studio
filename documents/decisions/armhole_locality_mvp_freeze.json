@@ -1,0 +1,136 @@
+{
+  "decision_id": "armhole-locality-mvp-freeze",
+  "status": "ACCEPTED_FOR_MVP_FREEZE",
+  "decision": {
+    "production_wiring": false,
+    "mvp_uses_existing_hybrid_path": true,
+    "experimental_modules_preserved": true,
+    "new_upstream_segmentation_deferred": true
+  },
+  "validated": {
+    "offline_locality_primitive": true,
+    "offline_local_qc_fallback": true,
+    "valid_sleeve_evidence_confirmed": true,
+    "production_integration_point_identified": true
+  },
+  "not_ready": {
+    "production_part_segmentation": true,
+    "constrained_sleeve_producer": true,
+    "armhole_roi_producer": true,
+    "canonical_prompt_producer": true,
+    "shadow_runtime": true,
+    "enforce_runtime": true
+  },
+  "runtime_inputs": {
+    "required": 14,
+    "available": 1,
+    "missing": 13,
+    "available_names": ["garment_mask"],
+    "missing_names": [
+      "pre_stage_sleeve_left",
+      "pre_stage_sleeve_right",
+      "constrained_sleeve_left",
+      "constrained_sleeve_right",
+      "armhole_roi_left",
+      "armhole_roi_right",
+      "positive_points_left",
+      "positive_points_right",
+      "shoulder_anchor_left",
+      "shoulder_anchor_right",
+      "underarm_anchor_left",
+      "underarm_anchor_right",
+      "torso_center_band"
+    ],
+    "source": "server/ab_out/frame_lock/stripe-projection-protected-v1/artifacts/diagnostic_production_armhole_integration_design_v16/runtime_input_availability.json",
+    "note": "the v16 chat summary stated missing=12; the generated JSON has always carried 13 and 14 = 1 + 13 holds"
+  },
+  "production_impact": {
+    "runtime_files_modified": [],
+    "dependencies_modified": [],
+    "db_change": false,
+    "api_change": false,
+    "schema_change": false,
+    "deployment": false
+  },
+  "runtime_import_check": {
+    "scope": "server/app/",
+    "symbols": [
+      "armhole_locality_merge_v13",
+      "select_local_armhole_candidate",
+      "merge_sleeve_inside_roi"
+    ],
+    "runtime_import_count": 0
+  },
+  "experimental_source_hashes": {
+    "server/scripts/armhole_locality_merge_v13.py": "19a4de2458a900ba4fcdcd163147f7245abe8e1beba010ee1ff0df34e9042444",
+    "server/tests/test_armhole_locality_merge_v13.py": "0d98a897c0e9cb037fd7fcc7efa0c64cb7f5203781dded66fb02f36d98b22c7c"
+  },
+  "evidence": {
+    "v13_artifact_directory": "server/ab_out/frame_lock/stripe-projection-protected-v1/artifacts/diagnostic_armhole_locality_primitive_v13/",
+    "v13_execution_meta_sha256": "96992049f00b783a63184e8aa54d4f211eb1dd0a7cd7effebd08ae6b1b47f385",
+    "v14_artifact_directory": "server/ab_out/frame_lock/stripe-projection-protected-v1/artifacts/diagnostic_armhole_local_qc_fallback_v14/",
+    "v14_execution_meta_sha256": "e42fa2fbc1b1f98b3bd0ae41a4bb35e098152d2d158bfc7f25c96570e198e4a5",
+    "v14_selector_decisions_sha256": "cf0f43bd166bc26fb621695def8cd1170a1902a0a074307da388a4d1534d340c",
+    "v15_artifact_directory": "server/ab_out/frame_lock/stripe-projection-protected-v1/artifacts/diagnostic_left_armhole_lost_prompt_v15/",
+    "v15_verdict_sha256": "44ba72a54b7306fc1c4abd99ed1b7a0783ed619ed1f3223dd5d0533e4979a6e4",
+    "v16_artifact_directory": "server/ab_out/frame_lock/stripe-projection-protected-v1/artifacts/diagnostic_production_armhole_integration_design_v16/",
+    "v16_readiness_assessment_sha256": "47d5c843a728567d30642675d3e5d72ebe423406db303347f54669f7e6b3dd6f",
+    "note": "artifact directories are gitignored local-only; only key JSON hashes are recorded, never a whole-directory hash"
+  },
+  "test_result": {
+    "command": "cd server && pytest tests/test_armhole_locality_merge_v13.py -q",
+    "return_code": 0,
+    "passed": 33,
+    "failed": 0,
+    "skipped": 0,
+    "canonical_replay_executed": true,
+    "canonical_replay_nodes": [
+      "test_i_replay_matches_v11_variant_b[sleeve_left-left]",
+      "test_i_replay_matches_v11_variant_b[sleeve_right-right]",
+      "test_i_replay_has_no_left_right_conflict_and_matches_v11_torso",
+      "test_j_canonical_replay_left_constrained_rejected_for_prompt_loss",
+      "test_j_canonical_replay_right_decision_and_partition"
+    ],
+    "stdout_tail": "33 passed, 1 warning in 0.88s"
+  },
+  "validated_contracts": {
+    "outside_roi_bitwise_preservation": true,
+    "inside_roi_constrained_identity": true,
+    "deterministic_fallback": true,
+    "no_arbitrary_conflict_split": true,
+    "baseline_not_worse_safety_gates": true,
+    "torso_safety_checks": true
+  },
+  "future_integration_point": {
+    "file": "server/app/workers/mannequin_job.py",
+    "function": "_apply_hybrid_composite",
+    "position": "after panel-map success and before composite_stripe",
+    "currently_implemented": false
+  },
+  "deferred_rnd": [
+    "production-grade per-part sleeve/torso segmentation",
+    "shoulder/underarm anchor detection",
+    "armhole ROI generation",
+    "constrained sleeve producer",
+    "multi-garment validation",
+    "production shadow mode",
+    "production enforce mode"
+  ],
+  "unfreeze_criteria": [
+    "armhole part separation becomes a required feature for real product quality, not a nice-to-have",
+    "the current panel-map approach fails repeatedly on a representative sample",
+    "the fallback or manual-review rate exceeds the product target",
+    "at least 10 representative carriers plus an agreed evaluation rubric are available",
+    "an upstream producer has a named owner and a committed implementation schedule"
+  ],
+  "unfreeze_non_criteria": [
+    "having spare time",
+    "an expectation that it would probably look better"
+  ],
+  "rollback": {
+    "rollback_required": false,
+    "reason": "no production change was made",
+    "future_requirement": "any future wiring must return to the existing path with the mode flag set to OFF"
+  },
+  "verdict": "ARMHOLE_BRANCH_FROZEN_FOR_MVP"
+}

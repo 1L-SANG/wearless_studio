@@ -2,6 +2,24 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "api",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-lc",
+        "cd server && set -a && . ./.env && set +a && exec .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8081 --reload --reload-dir app"
+      ],
+      "port": 8081
+    },
+    {
+      "name": "api-qa",
+      "runtimeArgs": [
+        "-lc",
+        "cd server && set -a && . ./.env && set +a && HYBRID_COMPOSITE_ARTIFACT_DIR=/tmp/wearless-qa-20260807-131902 JOB_WORKER_ID=qa-local exec .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8081"
+      ],
+      "runtimeExecutable": "bash",
+      "port": 8081
+    },
+    {
       "name": "web",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["dev"],

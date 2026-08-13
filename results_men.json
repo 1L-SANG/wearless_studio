@@ -1,0 +1,3151 @@
+{
+  "garments": [
+    {
+      "garment_id": "sheer-tee",
+      "garment_name": "여성용 시어 반팔",
+      "category": "top",
+      "sourceFolder": "상의",
+      "genderEvidence": "여성",
+      "available_views": [
+        "Front",
+        "Back",
+        "Detail"
+      ],
+      "missing_views": [],
+      "chosen_views": [
+        "Front",
+        "Back",
+        "Detail"
+      ],
+      "cutoutViews": [
+        "Front",
+        "Back"
+      ],
+      "cutoutPicks": {
+        "Front": 0,
+        "Back": 0
+      },
+      "baseGender": "men",
+      "genderBasis": "base mannequin forced to men for this run; filename gender evidence: 여성",
+      "generationModel": "gemini-3-pro-image",
+      "imageSize": "1K",
+      "viewAuthority": {
+        "Front": "PRIMARY FRONT GEOMETRY",
+        "Back": "PRIMARY REAR GEOMETRY",
+        "Detail": "MATERIAL / PATTERN / COMPONENT ONLY"
+      },
+      "sourceFiles": {
+        "Front": "ab_out/qa6/sources/sheer-tee/Front.jpg",
+        "Back": "ab_out/qa6/sources/sheer-tee/Back.jpg",
+        "Detail": "ab_out/qa6/sources/sheer-tee/Detail.jpg"
+      },
+      "cutoutFiles": {
+        "Front": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs/sheer-tee/cutout_Front.png",
+        "Back": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs/sheer-tee/cutout_Back.png"
+      },
+      "method_results": {
+        "baseline": {
+          "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/sheer-tee/baseline.png",
+          "latencyMs": 16964,
+          "promptSha256": "7d16491d0996a41d73d4c67b3cfc43f6ef50b3dae11f2afcda0c78cb2fe0f4da",
+          "imageCalls": 1,
+          "qc": {
+            "errored": false,
+            "provider": "gemini",
+            "outcome": "PASS",
+            "allowed": true,
+            "modelDecision": "PASS",
+            "modelAgreed": true,
+            "failedChecks": [],
+            "unverifiableChecks": [],
+            "failureReasons": [],
+            "confidence": 0.85,
+            "sampleDecisions": [
+              "PASS",
+              "PASS",
+              "PASS"
+            ],
+            "checks": {
+              "garmentIdentity": {
+                "status": "PASS",
+                "evidence": "The generated image accurately reproduces the pinkish-beige henley t-shirt with its front pocket and button placket.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "category": {
+                "status": "PASS",
+                "evidence": "Both source and generated images show a short-sleeve t-shirt.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "baseColor": {
+                "status": "PASS",
+                "evidence": "The dusty pink/beige color is consistent between the source and generated images.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "silhouette": {
+                "status": "PASS",
+                "evidence": "Both show a slim-fit short-sleeve silhouette.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "neckline": {
+                "status": "PASS",
+                "evidence": "Both feature a round neckline with a central henley placket.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "sleeveConstruction": {
+                "status": "PASS",
+                "evidence": "Both show standard set-in short sleeves.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "majorConstruction": {
+                "status": "PASS",
+                "evidence": "The henley placket and the lower-left pocket with flap are present in both.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "protectedComponents": {
+                "status": "PASS",
+                "evidence": "The button placket and the buttoned pocket flap are correctly reproduced in the generated image.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternType": {
+                "status": "PASS",
+                "evidence": "Both show a solid color pattern.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternLayout": {
+                "status": "PASS",
+                "evidence": "Both are solid with no pattern layout discrepancies.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "materialAppearance": {
+                "status": "PASS",
+                "evidence": "Both show a soft, fine-knit jersey fabric texture.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "lengthAndProportion": {
+                "status": "PASS",
+                "evidence": "The hem length and pocket proportions match the source.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "generationArtifacts": {
+                "status": "PASS",
+                "evidence": "The generated garment is clean and physically coherent on the mannequin.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              }
+            },
+            "qcPromptVersion": "garment_fidelity_qc_v1",
+            "correctionInstruction": ""
+          },
+          "pillow": {
+            "verdict": "retry",
+            "reasons": [
+              "ghost_or_artifact"
+            ]
+          },
+          "inputs": [
+            "base",
+            "Front",
+            "Back",
+            "Detail"
+          ]
+        },
+        "sam2": {
+          "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/sheer-tee/sam2.png",
+          "latencyMs": 24788,
+          "promptSha256": "fc424dd0ae1e8213c0664b5a89c29a44635396db367b5d4ed5ddc65d4c00e89b",
+          "imageCalls": 1,
+          "qc": {
+            "errored": false,
+            "provider": "gemini",
+            "outcome": "FAIL",
+            "allowed": false,
+            "modelDecision": "FAIL",
+            "modelAgreed": true,
+            "failedChecks": [
+              "garmentIdentity",
+              "silhouette",
+              "sleeveConstruction",
+              "protectedComponents",
+              "lengthAndProportion"
+            ],
+            "unverifiableChecks": [],
+            "failureReasons": [
+              "silhouette changed from fitted women's cut to loose men's cut",
+              "sleeve construction changed from cap sleeves to standard short sleeves",
+              "protected components altered with fewer buttons on the placket",
+              "silhouette changed from fitted to boxy",
+              "sleeve length changed from cap sleeves to standard short sleeves",
+              "protectedComponents placket button count reduced",
+              "length changed from waist-length to hip-length"
+            ],
+            "confidence": 0.75,
+            "sampleDecisions": [
+              "FAIL",
+              "FAIL",
+              "FAIL"
+            ],
+            "checks": {
+              "garmentIdentity": {
+                "status": "FAIL",
+                "evidence": "Source is a fitted women's tee with cap sleeves; generated is a loose men's t-shirt.",
+                "sampleStatuses": [
+                  "FAIL",
+                  "FAIL",
+                  "FAIL"
+                ]
+              },
+              "category": {
+                "status": "PASS",
+                "evidence": "Both are short-sleeved knit tops.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "baseColor": {
+                "status": "PASS",
+                "evidence": "Both feature a matching dusty rose pink color.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "silhouette": {
+                "status": "FAIL",
+                "evidence": "Source is slim-fit with a curved waist; generated is straight-cut and loose.",
+                "sampleStatuses": [
+                  "FAIL",
+                  "FAIL",
+                  "FAIL"
+                ]
+              },
+              "neckline": {
+                "status": "PASS",
+                "evidence": "Both have a simple round neckline.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "sleeveConstruction": {
+                "status": "FAIL",
+                "evidence": "Source has short cap sleeves; generated has longer, wider standard short sleeves.",
+                "sampleStatuses": [
+                  "FAIL",
+                  "FAIL",
+                  "FAIL"
+                ]
+              },
+              "majorConstruction": {
+                "status": "PASS",
+                "evidence": "Both have standard side seams and clean hems.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "protectedComponents": {
+                "status": "FAIL",
+                "evidence": "Source has a 6-button henley placket; generated has a placket with fewer, less-defined buttons.",
+                "sampleStatuses": [
+                  "FAIL",
+                  "FAIL",
+                  "FAIL"
+                ]
+              },
+              "patternType": {
+                "status": "PASS",
+                "evidence": "Both are solid-colored.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternLayout": {
+                "status": "PASS",
+                "evidence": "No pattern on either garment.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "materialAppearance": {
+                "status": "PASS",
+                "evidence": "Both show a lightweight jersey knit texture.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "lengthAndProportion": {
+                "status": "FAIL",
+                "evidence": "Source is a cropped/short women's cut; generated is a longer men's length.",
+                "sampleStatuses": [
+                  "FAIL",
+                  "FAIL",
+                  "FAIL"
+                ]
+              },
+              "generationArtifacts": {
+                "status": "PASS",
+                "evidence": "The generated garment is physically coherent on the mannequin.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              }
+            },
+            "qcPromptVersion": "garment_fidelity_qc_v1",
+            "correctionInstruction": "Preserve the mannequin, the pose, the camera, the framing, the background and the lighting exactly as they are in image 1.\n\nThe garment in image 1 differs from the source product. Required corrections:\n- restore the source garment's identity — this must be the same individual product (Source is a fitted women's tee with cap sleeves; generated is a loose men's t-shirt.)\n- restore the source silhouette and fit class (Source is slim-fit with a curved waist; generated is straight-cut and loose.)\n- restore the source sleeve length class and sleeve construction (Source has short cap sleeves; generated has longer, wider standard short sleeves.)\n- restore the source buttons, placket, pockets, collar, cuffs and trims, and remove any component that the source does not have (Source has a 6-button henley placket; generated has a placket with fewer, less-defined buttons.)\n- restore the source hem length and body proportions (Source is a cropped/short women's cut; generated is a longer men's length.)\n\nThese properties are already correct — do not alter them: category, baseColor, neckline, majorConstruction, patternType, patternLayout, materialAppearance, generationArtifacts.\n\nObserved detail: Modify the garment to be a fitted women's t-shirt. Shorten the overall length to waist-level and shorten the sleeves to cap-sleeve length. Increase the placket length to feature 6 buttons as shown in the source. Retain the dusty rose color, knit fabric, and pocket detail."
+          },
+          "pillow": {
+            "verdict": "retry",
+            "reasons": [
+              "ghost_or_artifact"
+            ]
+          },
+          "inputs": [
+            "base",
+            "Front",
+            "Back",
+            "Detail",
+            "cutout:Front",
+            "cutout:Back"
+          ]
+        },
+        "stage3d": {
+          "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/sheer-tee/stage3d.png",
+          "latencyMs": 18871,
+          "promptSha256": "7d865aca3ec97c2cbd9b50e46b85e9c9984ed81718cfa5c4fd3f5d8ee06aac6a",
+          "imageCalls": 2,
+          "qc": {
+            "errored": false,
+            "provider": "gemini",
+            "outcome": "FAIL",
+            "allowed": false,
+            "modelDecision": "FAIL",
+            "modelAgreed": true,
+            "failedChecks": [
+              "garmentIdentity",
+              "protectedComponents"
+            ],
+            "unverifiableChecks": [],
+            "failureReasons": [
+              "protectedComponents: pocket moved from lower hem to chest and placket shortened with fewer buttons"
+            ],
+            "confidence": 0.8,
+            "sampleDecisions": [
+              "FAIL",
+              "FAIL",
+              "FAIL"
+            ],
+            "checks": {
+              "garmentIdentity": {
+                "status": "FAIL",
+                "evidence": "Source shows a pocket near the lower hem and a 6-button placket; generated image has the pocket on the chest and a shorter placket.",
+                "sampleStatuses": [
+                  "FAIL",
+                  "FAIL",
+                  "FAIL"
+                ]
+              },
+              "category": {
+                "status": "PASS",
+                "evidence": "Both are short-sleeve henley t-shirts.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "baseColor": {
+                "status": "PASS",
+                "evidence": "Both feature a matching dusty rose/pinkish-beige color.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "silhouette": {
+                "status": "PASS",
+                "evidence": "Both show a fitted, classic t-shirt silhouette.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "neckline": {
+                "status": "PASS",
+                "evidence": "Both have a scoop/round neckline with a central placket.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "sleeveConstruction": {
+                "status": "PASS",
+                "evidence": "Both have short, set-in sleeves.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "majorConstruction": {
+                "status": "PASS",
+                "evidence": "Both have standard side seams and hem construction.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "protectedComponents": {
+                "status": "FAIL",
+                "evidence": "Source has a pocket near the bottom hem and 6 buttons on the placket; generated image moves the pocket to the chest and reduces the button count.",
+                "sampleStatuses": [
+                  "FAIL",
+                  "FAIL",
+                  "FAIL"
+                ]
+              },
+              "patternType": {
+                "status": "PASS",
+                "evidence": "Both are solid colored.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternLayout": {
+                "status": "PASS",
+                "evidence": "Both are solid with no pattern.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "materialAppearance": {
+                "status": "PASS",
+                "evidence": "Both show a soft, fine-knit jersey fabric.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "lengthAndProportion": {
+                "status": "PASS",
+                "evidence": "Both are hip-length t-shirts.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "generationArtifacts": {
+                "status": "PASS",
+                "evidence": "The generated garment is clean and physically coherent.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              }
+            },
+            "qcPromptVersion": "garment_fidelity_qc_v1",
+            "correctionInstruction": "Preserve the mannequin, the pose, the camera, the framing, the background and the lighting exactly as they are in image 1.\n\nThe garment in image 1 differs from the source product. Required corrections:\n- restore the source garment's identity — this must be the same individual product (Source shows a pocket near the lower hem and a 6-button placket; generated image has the pocket on the chest and a shorter placket.)\n- restore the source buttons, placket, pockets, collar, cuffs and trims, and remove any component that the source does not have (Source has a pocket near the bottom hem and 6 buttons on the placket; generated image moves the pocket to the chest and reduces the button count.)\n\nThese properties are already correct — do not alter them: category, baseColor, silhouette, neckline, sleeveConstruction, majorConstruction, patternType, patternLayout, materialAppearance, lengthAndProportion, generationArtifacts.\n\nObserved detail: Move the flap pocket from the chest to the lower left side near the hem, and lengthen the front placket to include 6 buttons as shown in the source, while keeping the dusty rose color, knit fabric, and short-sleeve silhouette unchanged."
+          },
+          "pillow": {
+            "verdict": "retry",
+            "reasons": [
+              "ghost_or_artifact"
+            ]
+          },
+          "stage1": {
+            "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/sheer-tee/stage3d_board.png",
+            "latencyMs": 27029,
+            "promptSha256": "ba135ad5d7bcb801cae5653a2d21532f84e7d62be1661e685fa794c921077076",
+            "imageCalls": 1
+          },
+          "inputs": [
+            "base",
+            "Front",
+            "Back",
+            "Detail",
+            "stage1Board"
+          ]
+        }
+      }
+    },
+    {
+      "garment_id": "grey-knit",
+      "garment_name": "얇은 회색 니트",
+      "category": "top",
+      "sourceFolder": "상의",
+      "genderEvidence": null,
+      "available_views": [
+        "Front",
+        "Back"
+      ],
+      "missing_views": [
+        "Detail"
+      ],
+      "chosen_views": [
+        "Front",
+        "Back"
+      ],
+      "cutoutViews": [
+        "Front",
+        "Back"
+      ],
+      "cutoutPicks": {
+        "Front": 2,
+        "Back": 1
+      },
+      "baseGender": "men",
+      "genderBasis": "base mannequin forced to men for this run; filename gender evidence: none",
+      "generationModel": "gemini-3-pro-image",
+      "imageSize": "1K",
+      "viewAuthority": {
+        "Front": "PRIMARY FRONT GEOMETRY",
+        "Back": "PRIMARY REAR GEOMETRY"
+      },
+      "sourceFiles": {
+        "Front": "ab_out/qa6/sources/grey-knit/Front.jpg",
+        "Back": "ab_out/qa6/sources/grey-knit/Back.jpg"
+      },
+      "cutoutFiles": {
+        "Front": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs/grey-knit/cutout_Front.png",
+        "Back": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs/grey-knit/cutout_Back.png"
+      },
+      "method_results": {
+        "baseline": {
+          "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/grey-knit/baseline.png",
+          "latencyMs": 23677,
+          "promptSha256": "26ac6c3ed0f22dc611f90dec71f9be9570dcbe6f514a4bd9c52dad4a4fde4c96",
+          "imageCalls": 1,
+          "qc": {
+            "errored": false,
+            "provider": "gemini",
+            "outcome": "PASS",
+            "allowed": true,
+            "modelDecision": "PASS",
+            "modelAgreed": true,
+            "failedChecks": [],
+            "unverifiableChecks": [],
+            "failureReasons": [],
+            "confidence": 0.85,
+            "sampleDecisions": [
+              "PASS",
+              "PASS",
+              "PASS"
+            ],
+            "checks": {
+              "garmentIdentity": {
+                "status": "PASS",
+                "evidence": "The source shows a light grey crewneck knit sweater with ribbed trims and an inner neck label; the generated image displays the identical sweater on a mannequin.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "category": {
+                "status": "PASS",
+                "evidence": "Both source and generated images show a long-sleeve knit sweater.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "baseColor": {
+                "status": "PASS",
+                "evidence": "Both source and generated images feature a matching heather grey color.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "silhouette": {
+                "status": "PASS",
+                "evidence": "Both show a relaxed-fit, classic pullover silhouette.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "neckline": {
+                "status": "PASS",
+                "evidence": "Both show a crew neckline with a medium-width ribbed band.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "sleeveConstruction": {
+                "status": "PASS",
+                "evidence": "Both show set-in long sleeves ending in ribbed cuffs.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "majorConstruction": {
+                "status": "PASS",
+                "evidence": "Both feature standard side seams and set-in sleeve construction.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "protectedComponents": {
+                "status": "PASS",
+                "evidence": "The white rectangular brand label is present inside the back collar in both images.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternType": {
+                "status": "PASS",
+                "evidence": "Both show a solid heathered knit pattern.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternLayout": {
+                "status": "PASS",
+                "evidence": "The heathered texture is uniformly distributed across the garment in both images.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "materialAppearance": {
+                "status": "PASS",
+                "evidence": "Both show a soft, fine-gauge knit fabric texture.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "lengthAndProportion": {
+                "status": "PASS",
+                "evidence": "Both show a standard hip-length hem with matching proportions.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "generationArtifacts": {
+                "status": "PASS",
+                "evidence": "The generated image is clean and free of physical anomalies or rendering errors.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              }
+            },
+            "qcPromptVersion": "garment_fidelity_qc_v1",
+            "correctionInstruction": ""
+          },
+          "pillow": {
+            "verdict": "retry",
+            "reasons": [
+              "ghost_or_artifact"
+            ]
+          },
+          "inputs": [
+            "base",
+            "Front",
+            "Back"
+          ]
+        },
+        "sam2": {
+          "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/grey-knit/sam2.png",
+          "latencyMs": 22034,
+          "promptSha256": "3c4dc421d49020275489960dfacc39ac6c164a45b5803bd66e396aa291392422",
+          "imageCalls": 1,
+          "qc": {
+            "errored": false,
+            "provider": "gemini",
+            "outcome": "PASS",
+            "allowed": true,
+            "modelDecision": "PASS",
+            "modelAgreed": true,
+            "failedChecks": [],
+            "unverifiableChecks": [],
+            "failureReasons": [],
+            "confidence": 0.85,
+            "sampleDecisions": [
+              "PASS",
+              "PASS",
+              "PASS"
+            ],
+            "checks": {
+              "garmentIdentity": {
+                "status": "PASS",
+                "evidence": "The source shows a heather grey crewneck knit sweater with a white neck label; the generated image shows the identical sweater on a mannequin.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "category": {
+                "status": "PASS",
+                "evidence": "Both source and generated images show a long-sleeve knit sweater.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "baseColor": {
+                "status": "PASS",
+                "evidence": "Both source and generated images feature the same light heather grey color.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "silhouette": {
+                "status": "PASS",
+                "evidence": "Both show a standard regular-fit silhouette with ribbed hem and cuffs.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "neckline": {
+                "status": "PASS",
+                "evidence": "Both show a classic ribbed crewneck design.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "sleeveConstruction": {
+                "status": "PASS",
+                "evidence": "Both show set-in long sleeves ending in ribbed cuffs.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "majorConstruction": {
+                "status": "PASS",
+                "evidence": "Both show standard shoulder seams and side seams with a wide ribbed waistband.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "protectedComponents": {
+                "status": "PASS",
+                "evidence": "The white neck label from the source is preserved in the generated image.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternType": {
+                "status": "PASS",
+                "evidence": "Both show a solid heathered knit pattern.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternLayout": {
+                "status": "PASS",
+                "evidence": "The heathered texture is consistently distributed across both garments.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "materialAppearance": {
+                "status": "PASS",
+                "evidence": "Both show a soft, fine-gauge knit fabric texture.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "lengthAndProportion": {
+                "status": "PASS",
+                "evidence": "Both show a standard hip-length cut with matching rib proportions.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "generationArtifacts": {
+                "status": "PASS",
+                "evidence": "The generated image is clean and free of physical anomalies or rendering errors.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              }
+            },
+            "qcPromptVersion": "garment_fidelity_qc_v1",
+            "correctionInstruction": ""
+          },
+          "pillow": {
+            "verdict": "retry",
+            "reasons": [
+              "ghost_or_artifact"
+            ]
+          },
+          "inputs": [
+            "base",
+            "Front",
+            "Back",
+            "cutout:Front",
+            "cutout:Back"
+          ]
+        },
+        "stage3d": {
+          "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/grey-knit/stage3d.png",
+          "latencyMs": 22931,
+          "promptSha256": "4ada0e5ef01844292914b1e90db1bf552daaabdb973e42fa8b00596b4ae9a149",
+          "imageCalls": 2,
+          "qc": {
+            "errored": false,
+            "provider": "gemini",
+            "outcome": "PASS",
+            "allowed": true,
+            "modelDecision": "PASS",
+            "modelAgreed": true,
+            "failedChecks": [],
+            "unverifiableChecks": [],
+            "failureReasons": [],
+            "confidence": 0.85,
+            "sampleDecisions": [
+              "PASS",
+              "PASS",
+              "PASS"
+            ],
+            "checks": {
+              "garmentIdentity": {
+                "status": "PASS",
+                "evidence": "The source shows a grey crewneck knit sweater, which matches the generated image on the mannequin.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "category": {
+                "status": "PASS",
+                "evidence": "Both source and generated images show a knit sweater.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "baseColor": {
+                "status": "PASS",
+                "evidence": "Both images feature the same heathered grey color.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "silhouette": {
+                "status": "PASS",
+                "evidence": "Both show a standard regular-fit silhouette.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "neckline": {
+                "status": "PASS",
+                "evidence": "Both show a ribbed crew neckline.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "sleeveConstruction": {
+                "status": "PASS",
+                "evidence": "Both show set-in long sleeves with ribbed cuffs.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "majorConstruction": {
+                "status": "PASS",
+                "evidence": "Both feature standard shoulder and side seams with ribbed hem construction.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "protectedComponents": {
+                "status": "PASS",
+                "evidence": "The white neck label is visible in both the source and generated images.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternType": {
+                "status": "PASS",
+                "evidence": "Both show a solid heathered pattern.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternLayout": {
+                "status": "PASS",
+                "evidence": "Both show a uniform solid layout.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "materialAppearance": {
+                "status": "PASS",
+                "evidence": "Both show a fine knit fabric texture.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "lengthAndProportion": {
+                "status": "PASS",
+                "evidence": "Both show a standard hip-length hem and proportional sleeves.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "generationArtifacts": {
+                "status": "PASS",
+                "evidence": "The generated image is clean and free of physical anomalies.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              }
+            },
+            "qcPromptVersion": "garment_fidelity_qc_v1",
+            "correctionInstruction": ""
+          },
+          "pillow": {
+            "verdict": "retry",
+            "reasons": [
+              "ghost_or_artifact"
+            ]
+          },
+          "stage1": {
+            "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/grey-knit/stage3d_board.png",
+            "latencyMs": 27643,
+            "promptSha256": "b79ba2417838ad7eb9d57e74c5ff39d940c2587c3c1a75c85fbf3d5f113d94eb",
+            "imageCalls": 1
+          },
+          "inputs": [
+            "base",
+            "Front",
+            "Back",
+            "stage1Board"
+          ]
+        }
+      }
+    },
+    {
+      "garment_id": "brown-pants",
+      "garment_name": "갈색 면바지",
+      "category": "bottom",
+      "sourceFolder": "하의",
+      "genderEvidence": null,
+      "available_views": [
+        "Front",
+        "Back",
+        "Detail"
+      ],
+      "missing_views": [],
+      "chosen_views": [
+        "Front",
+        "Back",
+        "Detail"
+      ],
+      "cutoutViews": [
+        "Back"
+      ],
+      "cutoutPicks": {
+        "Back": 0
+      },
+      "baseGender": "men",
+      "genderBasis": "base mannequin forced to men for this run; filename gender evidence: none",
+      "generationModel": "gemini-3-pro-image",
+      "imageSize": "1K",
+      "viewAuthority": {
+        "Front": "PRIMARY FRONT GEOMETRY",
+        "Back": "PRIMARY REAR GEOMETRY",
+        "Detail": "MATERIAL / PATTERN / COMPONENT ONLY"
+      },
+      "sourceFiles": {
+        "Front": "ab_out/qa6/sources/brown-pants/Front.jpg",
+        "Back": "ab_out/qa6/sources/brown-pants/Back.jpg",
+        "Detail": "ab_out/qa6/sources/brown-pants/Detail.jpg"
+      },
+      "cutoutFiles": {
+        "Back": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs/brown-pants/cutout_Back.png"
+      },
+      "method_results": {
+        "baseline": {
+          "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/brown-pants/baseline.png",
+          "latencyMs": 20115,
+          "promptSha256": "bfc8f1109a0b7fc17b7f65fc99ece6260f6df4ab76ab5d7e3b1228bbf0212745",
+          "imageCalls": 1,
+          "qc": {
+            "errored": false,
+            "provider": "gemini",
+            "outcome": "FAIL",
+            "allowed": false,
+            "modelDecision": "FAIL",
+            "modelAgreed": true,
+            "failedChecks": [
+              "garmentIdentity",
+              "silhouette",
+              "lengthAndProportion"
+            ],
+            "unverifiableChecks": [
+              "neckline",
+              "sleeveConstruction"
+            ],
+            "failureReasons": [
+              "silhouette changed from wide-leg to straight-leg",
+              "lengthAndProportion leg width is too narrow",
+              "lengthAndProportion changed to a narrower leg width"
+            ],
+            "confidence": 0.9,
+            "sampleDecisions": [
+              "FAIL",
+              "FAIL",
+              "FAIL"
+            ],
+            "checks": {
+              "garmentIdentity": {
+                "status": "FAIL",
+                "evidence": "Source shows wide-leg pants with a relaxed, voluminous cut; generated image shows straight-leg pants with a much narrower fit.",
+                "sampleStatuses": [
+                  "FAIL",
+                  "FAIL",
+                  "FAIL"
+                ]
+              },
+              "category": {
+                "status": "PASS",
+                "evidence": "Both source and generated images show pants.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "baseColor": {
+                "status": "PASS",
+                "evidence": "Both source and generated images show a matching medium brown color.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "silhouette": {
+                "status": "FAIL",
+                "evidence": "Source has a wide-leg silhouette; generated image has a straight-leg, narrower silhouette.",
+                "sampleStatuses": [
+                  "FAIL",
+                  "FAIL",
+                  "FAIL"
+                ]
+              },
+              "neckline": {
+                "status": "UNVERIFIABLE",
+                "evidence": "Not applicable for pants.",
+                "sampleStatuses": [
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE"
+                ]
+              },
+              "sleeveConstruction": {
+                "status": "UNVERIFIABLE",
+                "evidence": "Not applicable for pants.",
+                "sampleStatuses": [
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE"
+                ]
+              },
+              "majorConstruction": {
+                "status": "PASS",
+                "evidence": "Both show the prominent vertical seams running down the front of each leg.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "protectedComponents": {
+                "status": "PASS",
+                "evidence": "Both show the front curved pockets, belt loops, and central button closure.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternType": {
+                "status": "PASS",
+                "evidence": "Both source and generated images are solid-colored.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternLayout": {
+                "status": "PASS",
+                "evidence": "Both source and generated images are solid-colored.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "materialAppearance": {
+                "status": "PASS",
+                "evidence": "Both show a smooth, slightly structured woven fabric.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "lengthAndProportion": {
+                "status": "FAIL",
+                "evidence": "Source has wide, voluminous leg proportions; generated image has narrower, straight-cut leg proportions.",
+                "sampleStatuses": [
+                  "FAIL",
+                  "FAIL",
+                  "FAIL"
+                ]
+              },
+              "generationArtifacts": {
+                "status": "PASS",
+                "evidence": "The generated garment is clean and physically coherent on the mannequin.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              }
+            },
+            "qcPromptVersion": "garment_fidelity_qc_v1",
+            "correctionInstruction": "Preserve the mannequin, the pose, the camera, the framing, the background and the lighting exactly as they are in image 1.\n\nThe garment in image 1 differs from the source product. Required corrections:\n- restore the source garment's identity — this must be the same individual product (Source shows wide-leg pants with a relaxed, voluminous cut; generated image shows straight-leg pants with a much narrower fit.)\n- restore the source silhouette and fit class (Source has a wide-leg silhouette; generated image has a straight-leg, narrower silhouette.)\n- restore the source hem length and body proportions (Source has wide, voluminous leg proportions; generated image has narrower, straight-cut leg proportions.)\n\nThe garment in image 1 could not be verified against the source product. Re-render these properties so they are clearly visible and match the source:\n- restore the source neckline shape and finish\n- restore the source sleeve length class and sleeve construction\n\nThese properties are already correct — do not alter them: category, baseColor, majorConstruction, protectedComponents, patternType, patternLayout, materialAppearance, generationArtifacts.\n\nObserved detail: Modify the silhouette of the pants to be much wider and more relaxed, matching the wide-leg flared proportion shown in the source images. Keep the brown color, fabric texture, front vertical seams, and pocket details as they are."
+          },
+          "pillow": {
+            "verdict": "pass",
+            "reasons": []
+          },
+          "inputs": [
+            "base",
+            "Front",
+            "Back",
+            "Detail"
+          ]
+        },
+        "sam2": {
+          "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/brown-pants/sam2.png",
+          "latencyMs": 25271,
+          "promptSha256": "545dd40fed6b011df81c895683951ea47706bec8637989e036747c27d772d147",
+          "imageCalls": 1,
+          "qc": {
+            "errored": false,
+            "provider": "gemini",
+            "outcome": "UNVERIFIABLE",
+            "allowed": false,
+            "modelDecision": "UNVERIFIABLE",
+            "modelAgreed": true,
+            "failedChecks": [],
+            "unverifiableChecks": [
+              "neckline",
+              "sleeveConstruction"
+            ],
+            "failureReasons": [],
+            "confidence": 0.85,
+            "sampleDecisions": [
+              "UNVERIFIABLE",
+              "UNVERIFIABLE",
+              "UNVERIFIABLE"
+            ],
+            "checks": {
+              "garmentIdentity": {
+                "status": "PASS",
+                "evidence": "Source shows brown wide-leg pants with front vertical seams; generated image shows the same brown wide-leg pants with front vertical seams.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "category": {
+                "status": "PASS",
+                "evidence": "Source shows pants; generated image shows pants.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "baseColor": {
+                "status": "PASS",
+                "evidence": "Source shows brown; generated image shows brown.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "silhouette": {
+                "status": "PASS",
+                "evidence": "Source shows wide-leg relaxed fit; generated image shows wide-leg relaxed fit.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "neckline": {
+                "status": "UNVERIFIABLE",
+                "evidence": "Not applicable for pants.",
+                "sampleStatuses": [
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE"
+                ]
+              },
+              "sleeveConstruction": {
+                "status": "UNVERIFIABLE",
+                "evidence": "Not applicable for pants.",
+                "sampleStatuses": [
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE"
+                ]
+              },
+              "majorConstruction": {
+                "status": "PASS",
+                "evidence": "Source shows vertical seams down the front of each leg and curved front pockets; generated image shows the same vertical seams and curved pockets.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "protectedComponents": {
+                "status": "PASS",
+                "evidence": "Source shows a metal button and belt loops; generated image shows a metal button and belt loops.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternType": {
+                "status": "PASS",
+                "evidence": "Source shows solid brown; generated image shows solid brown.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternLayout": {
+                "status": "PASS",
+                "evidence": "Source shows solid brown; generated image shows solid brown.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "materialAppearance": {
+                "status": "PASS",
+                "evidence": "Source shows a smooth, slightly structured woven fabric; generated image shows the same fabric appearance.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "lengthAndProportion": {
+                "status": "PASS",
+                "evidence": "Source shows ankle-length wide-leg pants; generated image shows ankle-length wide-leg pants.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "generationArtifacts": {
+                "status": "PASS",
+                "evidence": "Generated image is clean with no physical anomalies or fusion.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              }
+            },
+            "qcPromptVersion": "garment_fidelity_qc_v1",
+            "correctionInstruction": "Preserve the mannequin, the pose, the camera, the framing, the background and the lighting exactly as they are in image 1.\n\nThe garment in image 1 could not be verified against the source product. Re-render these properties so they are clearly visible and match the source:\n- restore the source neckline shape and finish\n- restore the source sleeve length class and sleeve construction\n\nThese properties are already correct — do not alter them: garmentIdentity, category, baseColor, silhouette, majorConstruction, protectedComponents, patternType, patternLayout, materialAppearance, lengthAndProportion, generationArtifacts."
+          },
+          "pillow": {
+            "verdict": "pass",
+            "reasons": []
+          },
+          "inputs": [
+            "base",
+            "Front",
+            "Back",
+            "Detail",
+            "cutout:Back"
+          ]
+        },
+        "stage3d": {
+          "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/brown-pants/stage3d.png",
+          "latencyMs": 23214,
+          "promptSha256": "7d865aca3ec97c2cbd9b50e46b85e9c9984ed81718cfa5c4fd3f5d8ee06aac6a",
+          "imageCalls": 2,
+          "qc": {
+            "errored": false,
+            "provider": "gemini",
+            "outcome": "FAIL",
+            "allowed": false,
+            "modelDecision": "FAIL",
+            "modelAgreed": true,
+            "failedChecks": [
+              "garmentIdentity",
+              "baseColor",
+              "silhouette",
+              "materialAppearance",
+              "lengthAndProportion"
+            ],
+            "unverifiableChecks": [
+              "neckline",
+              "sleeveConstruction"
+            ],
+            "failureReasons": [
+              "baseColor changed from cool dark taupe to warm reddish-brown",
+              "silhouette changed from wide-leg to straight-leg",
+              "materialAppearance changed from semi-shiny synthetic to matte cotton",
+              "lengthAndProportion leg width is too narrow"
+            ],
+            "confidence": 0.9,
+            "sampleDecisions": [
+              "FAIL",
+              "FAIL",
+              "FAIL"
+            ],
+            "checks": {
+              "garmentIdentity": {
+                "status": "FAIL",
+                "evidence": "The source shows wide-leg, cool-toned dark brown pants with a slight sheen. The generated image shows straight-leg, warm reddish-brown matte pants.",
+                "sampleStatuses": [
+                  "FAIL",
+                  "FAIL",
+                  "FAIL"
+                ]
+              },
+              "category": {
+                "status": "PASS",
+                "evidence": "Both source and generated images show pants.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "baseColor": {
+                "status": "FAIL",
+                "evidence": "Source shows a cool-toned dark taupe/brown, while the generated pants are a warmer, reddish-brown.",
+                "sampleStatuses": [
+                  "FAIL",
+                  "FAIL",
+                  "FAIL"
+                ]
+              },
+              "silhouette": {
+                "status": "FAIL",
+                "evidence": "Source pants have an oversized, wide-leg silhouette, whereas the generated pants are straight-leg and slimmer.",
+                "sampleStatuses": [
+                  "FAIL",
+                  "FAIL",
+                  "FAIL"
+                ]
+              },
+              "neckline": {
+                "status": "UNVERIFIABLE",
+                "evidence": "Not applicable for pants.",
+                "sampleStatuses": [
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE"
+                ]
+              },
+              "sleeveConstruction": {
+                "status": "UNVERIFIABLE",
+                "evidence": "Not applicable for pants.",
+                "sampleStatuses": [
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE"
+                ]
+              },
+              "majorConstruction": {
+                "status": "PASS",
+                "evidence": "Both show the distinct vertical seam running down the front of each leg and curved front pockets.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "protectedComponents": {
+                "status": "PASS",
+                "evidence": "Both feature a waistband with belt loops and a central button closure.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternType": {
+                "status": "PASS",
+                "evidence": "Both source and generated garments are solid-colored.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternLayout": {
+                "status": "PASS",
+                "evidence": "Both are solid-colored with no pattern layout differences.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "materialAppearance": {
+                "status": "FAIL",
+                "evidence": "Source fabric has a smooth, slightly shiny synthetic sheen, while the generated fabric appears as a flat, matte cotton twill.",
+                "sampleStatuses": [
+                  "FAIL",
+                  "FAIL",
+                  "FAIL"
+                ]
+              },
+              "lengthAndProportion": {
+                "status": "FAIL",
+                "evidence": "The leg width in the generated image is significantly narrower and lacks the wide-leg proportions of the source.",
+                "sampleStatuses": [
+                  "FAIL",
+                  "FAIL",
+                  "FAIL"
+                ]
+              },
+              "generationArtifacts": {
+                "status": "PASS",
+                "evidence": "The generated garment is physically coherent with no rendering errors.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              }
+            },
+            "qcPromptVersion": "garment_fidelity_qc_v1",
+            "correctionInstruction": "Preserve the mannequin, the pose, the camera, the framing, the background and the lighting exactly as they are in image 1.\n\nThe garment in image 1 differs from the source product. Required corrections:\n- restore the source garment's identity — this must be the same individual product (The source shows wide-leg, cool-toned dark brown pants with a slight sheen. The generated image shows straight-leg, warm reddish-brown matte pants.)\n- restore the source base colour of the garment body (Source shows a cool-toned dark taupe/brown, while the generated pants are a warmer, reddish-brown.)\n- restore the source silhouette and fit class (Source pants have an oversized, wide-leg silhouette, whereas the generated pants are straight-leg and slimmer.)\n- restore the source fabric appearance (Source fabric has a smooth, slightly shiny synthetic sheen, while the generated fabric appears as a flat, matte cotton twill.)\n- restore the source hem length and body proportions (The leg width in the generated image is significantly narrower and lacks the wide-leg proportions of the source.)\n\nThe garment in image 1 could not be verified against the source product. Re-render these properties so they are clearly visible and match the source:\n- restore the source neckline shape and finish\n- restore the source sleeve length class and sleeve construction\n\nThese properties are already correct — do not alter them: category, majorConstruction, protectedComponents, patternType, patternLayout, generationArtifacts.\n\nObserved detail: Modify the pants to have a much wider, oversized leg silhouette matching the source. Change the color to a cooler, dark taupe brown and add a subtle synthetic sheen to the fabric texture. Keep the vertical front seams, curved pockets, and waistband construction as they are."
+          },
+          "pillow": {
+            "verdict": "retry",
+            "reasons": [
+              "missing_lower_body"
+            ]
+          },
+          "stage1": {
+            "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/brown-pants/stage3d_board.png",
+            "latencyMs": 26065,
+            "promptSha256": "ecf714e7b34412b84e70fa24b388fec5eccd68394d39845ce4aba62b9b2f2f8f",
+            "imageCalls": 1
+          },
+          "inputs": [
+            "base",
+            "Front",
+            "Back",
+            "Detail",
+            "stage1Board"
+          ]
+        }
+      }
+    },
+    {
+      "garment_id": "brown-skirt2",
+      "garment_name": "갈색 치마 2",
+      "category": "bottom",
+      "sourceFolder": "하의",
+      "genderEvidence": null,
+      "available_views": [
+        "Front",
+        "Back",
+        "Detail"
+      ],
+      "missing_views": [],
+      "chosen_views": [
+        "Front",
+        "Back",
+        "Detail"
+      ],
+      "cutoutViews": [
+        "Front",
+        "Back"
+      ],
+      "cutoutPicks": {
+        "Front": 1,
+        "Back": 1
+      },
+      "baseGender": "men",
+      "genderBasis": "base mannequin forced to men for this run; filename gender evidence: none",
+      "generationModel": "gemini-3-pro-image",
+      "imageSize": "1K",
+      "viewAuthority": {
+        "Front": "PRIMARY FRONT GEOMETRY",
+        "Back": "PRIMARY REAR GEOMETRY",
+        "Detail": "MATERIAL / PATTERN / COMPONENT ONLY"
+      },
+      "sourceFiles": {
+        "Front": "ab_out/qa6/sources/brown-skirt2/Front.jpg",
+        "Back": "ab_out/qa6/sources/brown-skirt2/Back.jpg",
+        "Detail": "ab_out/qa6/sources/brown-skirt2/Detail.jpg"
+      },
+      "cutoutFiles": {
+        "Front": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs/brown-skirt2/cutout_Front.png",
+        "Back": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs/brown-skirt2/cutout_Back.png"
+      },
+      "method_results": {
+        "baseline": {
+          "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/brown-skirt2/baseline.png",
+          "latencyMs": 24917,
+          "promptSha256": "52711acf499451b5c5b25b018435b8c097c3b2c2ae143f681d3197c7a70efa81",
+          "imageCalls": 1,
+          "qc": {
+            "errored": false,
+            "provider": "gemini",
+            "outcome": "UNVERIFIABLE",
+            "allowed": false,
+            "modelDecision": "UNVERIFIABLE",
+            "modelAgreed": true,
+            "failedChecks": [],
+            "unverifiableChecks": [
+              "neckline",
+              "sleeveConstruction"
+            ],
+            "failureReasons": [],
+            "confidence": 0.85,
+            "sampleDecisions": [
+              "UNVERIFIABLE",
+              "UNVERIFIABLE",
+              "UNVERIFIABLE"
+            ],
+            "checks": {
+              "garmentIdentity": {
+                "status": "PASS",
+                "evidence": "The source shows a brown suede skort with a front flap and side slit; the generated image shows the same brown suede skort with identical construction.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "category": {
+                "status": "PASS",
+                "evidence": "Both source and generated images show a skort/skirt-shorts hybrid.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "baseColor": {
+                "status": "PASS",
+                "evidence": "Both source and generated images feature the same medium brown color.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "silhouette": {
+                "status": "PASS",
+                "evidence": "Both show a structured, slightly A-line mini-length silhouette.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "neckline": {
+                "status": "UNVERIFIABLE",
+                "evidence": "This is a lower-body garment and has no neckline.",
+                "sampleStatuses": [
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE"
+                ]
+              },
+              "sleeveConstruction": {
+                "status": "UNVERIFIABLE",
+                "evidence": "This is a lower-body garment and has no sleeves.",
+                "sampleStatuses": [
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE"
+                ]
+              },
+              "majorConstruction": {
+                "status": "PASS",
+                "evidence": "The horizontal seam below the waistband and the side flap opening are identical in both.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "protectedComponents": {
+                "status": "PASS",
+                "evidence": "The side zipper placement and the dark inner lining of the flap match the source.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternType": {
+                "status": "PASS",
+                "evidence": "Both source and generated garments are solid-colored.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternLayout": {
+                "status": "PASS",
+                "evidence": "Both garments are solid with no pattern layout to compare.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "materialAppearance": {
+                "status": "PASS",
+                "evidence": "Both show a matte, soft suede fabric texture.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "lengthAndProportion": {
+                "status": "PASS",
+                "evidence": "Both show a high-waisted mini length that ends mid-thigh.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "generationArtifacts": {
+                "status": "PASS",
+                "evidence": "The generated garment is clean with no physical anomalies or fusion.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              }
+            },
+            "qcPromptVersion": "garment_fidelity_qc_v1",
+            "correctionInstruction": "Preserve the mannequin, the pose, the camera, the framing, the background and the lighting exactly as they are in image 1.\n\nThe garment in image 1 could not be verified against the source product. Re-render these properties so they are clearly visible and match the source:\n- restore the source neckline shape and finish\n- restore the source sleeve length class and sleeve construction\n\nThese properties are already correct — do not alter them: garmentIdentity, category, baseColor, silhouette, majorConstruction, protectedComponents, patternType, patternLayout, materialAppearance, lengthAndProportion, generationArtifacts."
+          },
+          "pillow": {
+            "verdict": "retry",
+            "reasons": [
+              "ghost_or_artifact"
+            ]
+          },
+          "inputs": [
+            "base",
+            "Front",
+            "Back",
+            "Detail"
+          ]
+        },
+        "sam2": {
+          "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/brown-skirt2/sam2.png",
+          "latencyMs": 24260,
+          "promptSha256": "a42bc0c5a6a5ce07f094b06220a63b49c7404063a92e360bcada9e676fa03061",
+          "imageCalls": 1,
+          "qc": {
+            "errored": false,
+            "provider": "gemini",
+            "outcome": "UNVERIFIABLE",
+            "allowed": false,
+            "modelDecision": "UNVERIFIABLE",
+            "modelAgreed": true,
+            "failedChecks": [],
+            "unverifiableChecks": [
+              "neckline",
+              "sleeveConstruction"
+            ],
+            "failureReasons": [],
+            "confidence": 0.85,
+            "sampleDecisions": [
+              "UNVERIFIABLE",
+              "UNVERIFIABLE",
+              "UNVERIFIABLE"
+            ],
+            "checks": {
+              "garmentIdentity": {
+                "status": "PASS",
+                "evidence": "The source shows a brown faux-suede skort with a wide waistband and wrap front; the generated image shows the same brown skort on the mannequin.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "category": {
+                "status": "PASS",
+                "evidence": "Both source and generated images show a skort/mini skirt garment.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "baseColor": {
+                "status": "PASS",
+                "evidence": "Both source and generated images show a matching medium brown color.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "silhouette": {
+                "status": "PASS",
+                "evidence": "Both show a short, slightly A-line silhouette with a flat front panel.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "neckline": {
+                "status": "UNVERIFIABLE",
+                "evidence": "This is a lower-body garment; neckline is not applicable.",
+                "sampleStatuses": [
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE"
+                ]
+              },
+              "sleeveConstruction": {
+                "status": "UNVERIFIABLE",
+                "evidence": "This is a lower-body garment; sleeves are not applicable.",
+                "sampleStatuses": [
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE"
+                ]
+              },
+              "majorConstruction": {
+                "status": "PASS",
+                "evidence": "The wide waistband with a horizontal seam and the overlapping front panel are present in both.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "protectedComponents": {
+                "status": "PASS",
+                "evidence": "The clean side closure and seamless front panel are preserved in both.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternType": {
+                "status": "PASS",
+                "evidence": "Both source and generated garments are solid-colored.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternLayout": {
+                "status": "PASS",
+                "evidence": "Both source and generated garments are solid with no pattern.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "materialAppearance": {
+                "status": "PASS",
+                "evidence": "Both show a soft, matte faux-suede fabric texture.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "lengthAndProportion": {
+                "status": "PASS",
+                "evidence": "Both show a mini-length cut sitting at the upper thigh.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "generationArtifacts": {
+                "status": "PASS",
+                "evidence": "The generated garment is clean and physically coherent on the mannequin.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              }
+            },
+            "qcPromptVersion": "garment_fidelity_qc_v1",
+            "correctionInstruction": "Preserve the mannequin, the pose, the camera, the framing, the background and the lighting exactly as they are in image 1.\n\nThe garment in image 1 could not be verified against the source product. Re-render these properties so they are clearly visible and match the source:\n- restore the source neckline shape and finish\n- restore the source sleeve length class and sleeve construction\n\nThese properties are already correct — do not alter them: garmentIdentity, category, baseColor, silhouette, majorConstruction, protectedComponents, patternType, patternLayout, materialAppearance, lengthAndProportion, generationArtifacts."
+          },
+          "pillow": {
+            "verdict": "retry",
+            "reasons": [
+              "ghost_or_artifact"
+            ]
+          },
+          "inputs": [
+            "base",
+            "Front",
+            "Back",
+            "Detail",
+            "cutout:Front",
+            "cutout:Back"
+          ]
+        },
+        "stage3d": {
+          "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/brown-skirt2/stage3d.png",
+          "latencyMs": 26314,
+          "promptSha256": "7d865aca3ec97c2cbd9b50e46b85e9c9984ed81718cfa5c4fd3f5d8ee06aac6a",
+          "imageCalls": 2,
+          "qc": {
+            "errored": false,
+            "provider": "gemini",
+            "outcome": "UNVERIFIABLE",
+            "allowed": false,
+            "modelDecision": "UNVERIFIABLE",
+            "modelAgreed": true,
+            "failedChecks": [],
+            "unverifiableChecks": [
+              "neckline",
+              "sleeveConstruction"
+            ],
+            "failureReasons": [],
+            "confidence": 0.95,
+            "sampleDecisions": [
+              "UNVERIFIABLE",
+              "UNVERIFIABLE",
+              "UNVERIFIABLE"
+            ],
+            "checks": {
+              "garmentIdentity": {
+                "status": "PASS",
+                "evidence": "The generated image correctly depicts the brown suede skort from the source images, maintaining its unique wrap design and paneling.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "category": {
+                "status": "PASS",
+                "evidence": "Both source and generated images show a skort (shorts with a skirt overlay).",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "baseColor": {
+                "status": "PASS",
+                "evidence": "The brown color is consistent between the source and generated images.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "silhouette": {
+                "status": "PASS",
+                "evidence": "The A-line, slightly flared silhouette of the skort is preserved.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "neckline": {
+                "status": "UNVERIFIABLE",
+                "evidence": "This is a bottom garment; neckline is not applicable.",
+                "sampleStatuses": [
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE"
+                ]
+              },
+              "sleeveConstruction": {
+                "status": "UNVERIFIABLE",
+                "evidence": "This is a bottom garment; sleeves are not applicable.",
+                "sampleStatuses": [
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE",
+                  "UNVERIFIABLE"
+                ]
+              },
+              "majorConstruction": {
+                "status": "PASS",
+                "evidence": "The horizontal seam below the waistband and the overlapping front panel are present in both.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "protectedComponents": {
+                "status": "PASS",
+                "evidence": "The side opening and clean waistband design match the source.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternType": {
+                "status": "PASS",
+                "evidence": "Both source and generated garments are solid-colored.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternLayout": {
+                "status": "PASS",
+                "evidence": "Both are solid with no pattern layout to compare.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "materialAppearance": {
+                "status": "PASS",
+                "evidence": "The soft, matte suede texture is successfully replicated in the generated image.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "lengthAndProportion": {
+                "status": "PASS",
+                "evidence": "The mini length of the skort matches the source proportions.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "generationArtifacts": {
+                "status": "PASS",
+                "evidence": "The garment is cleanly rendered on the mannequin with no physical anomalies.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              }
+            },
+            "qcPromptVersion": "garment_fidelity_qc_v1",
+            "correctionInstruction": "Preserve the mannequin, the pose, the camera, the framing, the background and the lighting exactly as they are in image 1.\n\nThe garment in image 1 could not be verified against the source product. Re-render these properties so they are clearly visible and match the source:\n- restore the source neckline shape and finish\n- restore the source sleeve length class and sleeve construction\n\nThese properties are already correct — do not alter them: garmentIdentity, category, baseColor, silhouette, majorConstruction, protectedComponents, patternType, patternLayout, materialAppearance, lengthAndProportion, generationArtifacts."
+          },
+          "pillow": {
+            "verdict": "retry",
+            "reasons": [
+              "ghost_or_artifact"
+            ]
+          },
+          "stage1": {
+            "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/brown-skirt2/stage3d_board.png",
+            "latencyMs": 29874,
+            "promptSha256": "ba135ad5d7bcb801cae5653a2d21532f84e7d62be1661e685fa794c921077076",
+            "imageCalls": 1
+          },
+          "inputs": [
+            "base",
+            "Front",
+            "Back",
+            "Detail",
+            "stage1Board"
+          ]
+        }
+      }
+    },
+    {
+      "garment_id": "red-cardigan",
+      "garment_name": "빨간 가디건",
+      "category": "outer",
+      "sourceFolder": "아우터",
+      "genderEvidence": null,
+      "available_views": [
+        "Front",
+        "Back"
+      ],
+      "missing_views": [
+        "Detail"
+      ],
+      "chosen_views": [
+        "Front",
+        "Back"
+      ],
+      "cutoutViews": [
+        "Front",
+        "Back"
+      ],
+      "cutoutPicks": {
+        "Front": 3,
+        "Back": 4
+      },
+      "baseGender": "men",
+      "genderBasis": "base mannequin forced to men for this run; filename gender evidence: none",
+      "generationModel": "gemini-3-pro-image",
+      "imageSize": "1K",
+      "viewAuthority": {
+        "Front": "PRIMARY FRONT GEOMETRY",
+        "Back": "PRIMARY REAR GEOMETRY"
+      },
+      "sourceFiles": {
+        "Front": "ab_out/qa6/sources/red-cardigan/Front.jpg",
+        "Back": "ab_out/qa6/sources/red-cardigan/Back.jpg"
+      },
+      "cutoutFiles": {
+        "Front": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs/red-cardigan/cutout_Front.png",
+        "Back": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs/red-cardigan/cutout_Back.png"
+      },
+      "method_results": {
+        "baseline": {
+          "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/red-cardigan/baseline.png",
+          "latencyMs": 21877,
+          "promptSha256": "de6ad82c0eeeaf3233625a0f7b83232f09b1cef0094b8183e2ae7c93b702b401",
+          "imageCalls": 1,
+          "qc": {
+            "errored": false,
+            "provider": "gemini",
+            "outcome": "PASS",
+            "allowed": true,
+            "modelDecision": "PASS",
+            "modelAgreed": true,
+            "failedChecks": [],
+            "unverifiableChecks": [],
+            "failureReasons": [],
+            "confidence": 0.8,
+            "sampleDecisions": [
+              "PASS",
+              "PASS"
+            ],
+            "checks": {
+              "garmentIdentity": {
+                "status": "PASS",
+                "evidence": "Both source and generated images show the same red V-neck knit cardigan.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "category": {
+                "status": "PASS",
+                "evidence": "Both images show a button-up cardigan.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "baseColor": {
+                "status": "PASS",
+                "evidence": "Both source and generated garments are matching red.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "silhouette": {
+                "status": "PASS",
+                "evidence": "Both show a standard-fit knit cardigan silhouette.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "neckline": {
+                "status": "PASS",
+                "evidence": "Both feature a matching V-neckline design.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "sleeveConstruction": {
+                "status": "PASS",
+                "evidence": "Both show long set-in sleeves with ribbed cuffs.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "majorConstruction": {
+                "status": "PASS",
+                "evidence": "Both feature a central button placket and ribbed hem.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "protectedComponents": {
+                "status": "PASS",
+                "evidence": "Both show five buttons on the front placket.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternType": {
+                "status": "PASS",
+                "evidence": "Both are solid red with no pattern.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternLayout": {
+                "status": "PASS",
+                "evidence": "Both are solid color garments.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "materialAppearance": {
+                "status": "PASS",
+                "evidence": "Both show a fine knit fabric texture.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "lengthAndProportion": {
+                "status": "PASS",
+                "evidence": "Both show a standard hip-length fit.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "generationArtifacts": {
+                "status": "PASS",
+                "evidence": "The generated garment is clean and physically coherent.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS"
+                ]
+              }
+            },
+            "qcPromptVersion": "garment_fidelity_qc_v1",
+            "correctionInstruction": ""
+          },
+          "pillow": {
+            "verdict": "pass",
+            "reasons": []
+          },
+          "inputs": [
+            "base",
+            "Front",
+            "Back"
+          ]
+        },
+        "sam2": {
+          "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/red-cardigan/sam2.png",
+          "latencyMs": 23082,
+          "promptSha256": "b865bb1009432796376f5ea53c4489025e198a17ab4a650d2da1b951b4405af5",
+          "imageCalls": 1,
+          "qc": {
+            "errored": false,
+            "provider": "gemini",
+            "outcome": "PASS",
+            "allowed": true,
+            "modelDecision": "PASS",
+            "modelAgreed": true,
+            "failedChecks": [],
+            "unverifiableChecks": [],
+            "failureReasons": [],
+            "confidence": 0.8,
+            "sampleDecisions": [
+              "PASS",
+              "PASS",
+              "PASS"
+            ],
+            "checks": {
+              "garmentIdentity": {
+                "status": "PASS",
+                "evidence": "Both source and generated images show the same red V-neck knit cardigan with five buttons.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "category": {
+                "status": "PASS",
+                "evidence": "Both images show a cardigan.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "baseColor": {
+                "status": "PASS",
+                "evidence": "Both show a matching vibrant red color.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "silhouette": {
+                "status": "PASS",
+                "evidence": "Both show a standard-fit cardigan silhouette.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "neckline": {
+                "status": "PASS",
+                "evidence": "Both feature a V-neckline design.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "sleeveConstruction": {
+                "status": "PASS",
+                "evidence": "Both show long set-in sleeves with ribbed cuffs.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "majorConstruction": {
+                "status": "PASS",
+                "evidence": "Both feature a central button placket and ribbed hem.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "protectedComponents": {
+                "status": "PASS",
+                "evidence": "Both feature exactly five buttons on the front placket.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternType": {
+                "status": "PASS",
+                "evidence": "Both are solid red with no pattern.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternLayout": {
+                "status": "PASS",
+                "evidence": "Both are solid red throughout.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "materialAppearance": {
+                "status": "PASS",
+                "evidence": "Both show a fine knit fabric texture.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "lengthAndProportion": {
+                "status": "PASS",
+                "evidence": "Both show a standard hip-length cut.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "generationArtifacts": {
+                "status": "PASS",
+                "evidence": "The generated image is clean and free of physical anomalies.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              }
+            },
+            "qcPromptVersion": "garment_fidelity_qc_v1",
+            "correctionInstruction": ""
+          },
+          "pillow": {
+            "verdict": "pass",
+            "reasons": []
+          },
+          "inputs": [
+            "base",
+            "Front",
+            "Back",
+            "cutout:Front",
+            "cutout:Back"
+          ]
+        },
+        "stage3d": {
+          "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/red-cardigan/stage3d.png",
+          "latencyMs": 18788,
+          "promptSha256": "4ada0e5ef01844292914b1e90db1bf552daaabdb973e42fa8b00596b4ae9a149",
+          "imageCalls": 2,
+          "qc": {
+            "errored": false,
+            "provider": "gemini",
+            "outcome": "PASS",
+            "allowed": true,
+            "modelDecision": "PASS",
+            "modelAgreed": true,
+            "failedChecks": [],
+            "unverifiableChecks": [],
+            "failureReasons": [],
+            "confidence": 0.85,
+            "sampleDecisions": [
+              "PASS",
+              "PASS",
+              "PASS"
+            ],
+            "checks": {
+              "garmentIdentity": {
+                "status": "PASS",
+                "evidence": "The source shows a red V-neck cardigan with five buttons and ribbed trim; the generated image shows the identical red cardigan on a mannequin.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "category": {
+                "status": "PASS",
+                "evidence": "Both source and generated images show a knit cardigan.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "baseColor": {
+                "status": "PASS",
+                "evidence": "Both source and generated images feature the same vibrant red color.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "silhouette": {
+                "status": "PASS",
+                "evidence": "Both show a standard-fit, waist-length knit cardigan.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "neckline": {
+                "status": "PASS",
+                "evidence": "Both source and generated images feature a V-neckline.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "sleeveConstruction": {
+                "status": "PASS",
+                "evidence": "Both show long set-in sleeves with ribbed cuffs.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "majorConstruction": {
+                "status": "PASS",
+                "evidence": "Both feature a central button placket and ribbed hem construction.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "protectedComponents": {
+                "status": "PASS",
+                "evidence": "Both show five front buttons and a white rectangular label inside the back collar.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternType": {
+                "status": "PASS",
+                "evidence": "Both source and generated garments are solid red.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternLayout": {
+                "status": "PASS",
+                "evidence": "Both garments are solid with no pattern.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "materialAppearance": {
+                "status": "PASS",
+                "evidence": "Both show a fine, flat knit fabric texture.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "lengthAndProportion": {
+                "status": "PASS",
+                "evidence": "Both show a waist-length hemline with proportional sleeve lengths.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "generationArtifacts": {
+                "status": "PASS",
+                "evidence": "The generated garment is clean and physically coherent on the mannequin.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              }
+            },
+            "qcPromptVersion": "garment_fidelity_qc_v1",
+            "correctionInstruction": ""
+          },
+          "pillow": {
+            "verdict": "pass",
+            "reasons": []
+          },
+          "stage1": {
+            "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/red-cardigan/stage3d_board.png",
+            "latencyMs": 24803,
+            "promptSha256": "b79ba2417838ad7eb9d57e74c5ff39d940c2587c3c1a75c85fbf3d5f113d94eb",
+            "imageCalls": 1
+          },
+          "inputs": [
+            "base",
+            "Front",
+            "Back",
+            "stage1Board"
+          ]
+        }
+      }
+    },
+    {
+      "garment_id": "beige-cardigan",
+      "garment_name": "베이지색 가디건",
+      "category": "outer",
+      "sourceFolder": "아우터",
+      "genderEvidence": null,
+      "available_views": [
+        "Front",
+        "Detail"
+      ],
+      "missing_views": [
+        "Back"
+      ],
+      "chosen_views": [
+        "Front",
+        "Detail"
+      ],
+      "cutoutViews": [
+        "Front"
+      ],
+      "cutoutPicks": {
+        "Front": 2
+      },
+      "baseGender": "men",
+      "genderBasis": "base mannequin forced to men for this run; filename gender evidence: none",
+      "generationModel": "gemini-3-pro-image",
+      "imageSize": "1K",
+      "viewAuthority": {
+        "Front": "PRIMARY FRONT GEOMETRY",
+        "Detail": "MATERIAL / PATTERN / COMPONENT ONLY"
+      },
+      "sourceFiles": {
+        "Front": "ab_out/qa6/sources/beige-cardigan/Front.jpg",
+        "Detail": "ab_out/qa6/sources/beige-cardigan/Detail.jpg"
+      },
+      "cutoutFiles": {
+        "Front": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs/beige-cardigan/cutout_Front.png"
+      },
+      "method_results": {
+        "baseline": {
+          "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/beige-cardigan/baseline.png",
+          "latencyMs": 23163,
+          "promptSha256": "ff21ae630377cabda9a28736773d16340f90ba48a7350f074d50eb543e2558db",
+          "imageCalls": 1,
+          "qc": {
+            "errored": false,
+            "provider": "gemini",
+            "outcome": "PASS",
+            "allowed": true,
+            "modelDecision": "PASS",
+            "modelAgreed": true,
+            "failedChecks": [],
+            "unverifiableChecks": [],
+            "failureReasons": [],
+            "confidence": 0.8,
+            "sampleDecisions": [
+              "PASS",
+              "PASS",
+              "PASS"
+            ],
+            "checks": {
+              "garmentIdentity": {
+                "status": "PASS",
+                "evidence": "The source and generated images both show the same beige knit cardigan with identical button placement and ribbed trim.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "category": {
+                "status": "PASS",
+                "evidence": "Both images show a long-sleeve knit cardigan.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "baseColor": {
+                "status": "PASS",
+                "evidence": "Both images feature a matching taupe/beige color.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "silhouette": {
+                "status": "PASS",
+                "evidence": "Both show a standard-fit, relaxed cardigan silhouette.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "neckline": {
+                "status": "PASS",
+                "evidence": "Both show a classic V-neckline design.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "sleeveConstruction": {
+                "status": "PASS",
+                "evidence": "Both feature set-in long sleeves with ribbed cuffs.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "majorConstruction": {
+                "status": "PASS",
+                "evidence": "Both have a central button placket and a wide ribbed hem.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "protectedComponents": {
+                "status": "PASS",
+                "evidence": "Both feature five dark buttons aligned along the front placket.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternType": {
+                "status": "PASS",
+                "evidence": "Both are solid-colored with no pattern.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternLayout": {
+                "status": "PASS",
+                "evidence": "Both are solid-colored throughout.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "materialAppearance": {
+                "status": "PASS",
+                "evidence": "Both show a fine, flat knit texture.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "lengthAndProportion": {
+                "status": "PASS",
+                "evidence": "Both show a hip-length hemline.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "generationArtifacts": {
+                "status": "PASS",
+                "evidence": "The generated garment is clean and physically coherent on the mannequin.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              }
+            },
+            "qcPromptVersion": "garment_fidelity_qc_v1",
+            "correctionInstruction": ""
+          },
+          "pillow": {
+            "verdict": "retry",
+            "reasons": [
+              "ghost_or_artifact"
+            ]
+          },
+          "inputs": [
+            "base",
+            "Front",
+            "Detail"
+          ]
+        },
+        "sam2": {
+          "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/beige-cardigan/sam2.png",
+          "latencyMs": 18198,
+          "promptSha256": "0ed4ebc1640eb257cb8cf4227e3c834123347e84a7c0a373df9afbfced9e7b85",
+          "imageCalls": 1,
+          "qc": {
+            "errored": false,
+            "provider": "gemini",
+            "outcome": "PASS",
+            "allowed": true,
+            "modelDecision": "PASS",
+            "modelAgreed": true,
+            "failedChecks": [],
+            "unverifiableChecks": [],
+            "failureReasons": [],
+            "confidence": 0.85,
+            "sampleDecisions": [
+              "PASS",
+              "PASS",
+              "PASS"
+            ],
+            "checks": {
+              "garmentIdentity": {
+                "status": "PASS",
+                "evidence": "The source shows a taupe V-neck knit cardigan with five buttons and ribbed trims; the generated image shows the identical cardigan on a mannequin.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "category": {
+                "status": "PASS",
+                "evidence": "Both source and generated images show a button-up cardigan.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "baseColor": {
+                "status": "PASS",
+                "evidence": "Both source and generated images feature the same taupe/beige color.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "silhouette": {
+                "status": "PASS",
+                "evidence": "Both show a standard-fit, long-sleeve cardigan silhouette.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "neckline": {
+                "status": "PASS",
+                "evidence": "Both source and generated images feature a clean V-neckline.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "sleeveConstruction": {
+                "status": "PASS",
+                "evidence": "Both show set-in long sleeves with ribbed cuffs.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "majorConstruction": {
+                "status": "PASS",
+                "evidence": "Both feature a central button placket and a ribbed bottom hem.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "protectedComponents": {
+                "status": "PASS",
+                "evidence": "The five dark buttons on the front placket are identical in placement and count.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternType": {
+                "status": "PASS",
+                "evidence": "Both source and generated garments are solid-colored.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternLayout": {
+                "status": "PASS",
+                "evidence": "Both garments are solid with no pattern.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "materialAppearance": {
+                "status": "PASS",
+                "evidence": "Both show a fine, flat knit texture.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "lengthAndProportion": {
+                "status": "PASS",
+                "evidence": "Both show a hip-length hemline with proportional ribbing.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "generationArtifacts": {
+                "status": "PASS",
+                "evidence": "The generated garment is clean and physically coherent on the mannequin.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              }
+            },
+            "qcPromptVersion": "garment_fidelity_qc_v1",
+            "correctionInstruction": ""
+          },
+          "pillow": {
+            "verdict": "retry",
+            "reasons": [
+              "ghost_or_artifact"
+            ]
+          },
+          "inputs": [
+            "base",
+            "Front",
+            "Detail",
+            "cutout:Front"
+          ]
+        },
+        "stage3d": {
+          "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/beige-cardigan/stage3d.png",
+          "latencyMs": 19618,
+          "promptSha256": "c33210a5626f2e62b9e43a5ab30987e23e8511835973941484ea9af7727226bf",
+          "imageCalls": 2,
+          "qc": {
+            "errored": false,
+            "provider": "gemini",
+            "outcome": "PASS",
+            "allowed": true,
+            "modelDecision": "PASS",
+            "modelAgreed": true,
+            "failedChecks": [],
+            "unverifiableChecks": [],
+            "failureReasons": [],
+            "confidence": 0.85,
+            "sampleDecisions": [
+              "PASS",
+              "PASS",
+              "PASS"
+            ],
+            "checks": {
+              "garmentIdentity": {
+                "status": "PASS",
+                "evidence": "The generated image accurately reproduces the beige knit cardigan from the source images, maintaining the same design, color, and texture.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "category": {
+                "status": "PASS",
+                "evidence": "Both source and generated images show a button-up knit cardigan.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "baseColor": {
+                "status": "PASS",
+                "evidence": "The taupe/beige color is consistent between the source and the generated image.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "silhouette": {
+                "status": "PASS",
+                "evidence": "The relaxed, slightly fitted silhouette of the cardigan is preserved on the mannequin.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "neckline": {
+                "status": "PASS",
+                "evidence": "Both show a deep V-neckline with a clean knit edge.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "sleeveConstruction": {
+                "status": "PASS",
+                "evidence": "Both show long, set-in sleeves with ribbed cuffs.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "majorConstruction": {
+                "status": "PASS",
+                "evidence": "The central button placket and ribbed hem are identical in construction.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "protectedComponents": {
+                "status": "PASS",
+                "evidence": "The five dark buttons and the white inner neck label are correctly depicted in both.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternType": {
+                "status": "PASS",
+                "evidence": "Both show a solid, unpatterned knit fabric.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "patternLayout": {
+                "status": "PASS",
+                "evidence": "The solid color layout is consistent across both images.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "materialAppearance": {
+                "status": "PASS",
+                "evidence": "The fine-gauge knit texture from the source detail is well-represented in the generated image.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "lengthAndProportion": {
+                "status": "PASS",
+                "evidence": "The waist-length hem and sleeve proportions match the source garment.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              },
+              "generationArtifacts": {
+                "status": "PASS",
+                "evidence": "The generated image is clean and free of physical anomalies or rendering errors.",
+                "sampleStatuses": [
+                  "PASS",
+                  "PASS",
+                  "PASS"
+                ]
+              }
+            },
+            "qcPromptVersion": "garment_fidelity_qc_v1",
+            "correctionInstruction": ""
+          },
+          "pillow": {
+            "verdict": "retry",
+            "reasons": [
+              "ghost_or_artifact"
+            ]
+          },
+          "stage1": {
+            "file": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/qa6/runs_men/beige-cardigan/stage3d_board.png",
+            "latencyMs": 23239,
+            "promptSha256": "735f910f5117991f3e864d249c2fa9e939ebd2df4d56d45c9536f244246c5abe",
+            "imageCalls": 1
+          },
+          "inputs": [
+            "base",
+            "Front",
+            "Detail",
+            "stage1Board"
+          ]
+        }
+      }
+    }
+  ]
+}
