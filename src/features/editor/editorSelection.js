@@ -13,18 +13,17 @@ const LEGACY_LIBRARY_GROUP_SIZE = {
 
 export function selectionIdsForElement(elements, element) {
   if (!element?.id) return [];
-  // Every primitive remains individually selectable. In particular, dragging
-  // copy must never pull its grouped background/line along with it. A unified
-  // speech bubble is itself the visible object; only those explicit bubble
-  // groups retain their whole-object selection behaviour.
-  if (element.type !== 'text' || element.shape !== 'bubble') return [element.id];
-  if (element.groupId) {
-    const grouped = (elements || [])
-      .filter((candidate) => candidate.groupId === element.groupId)
-      .map((candidate) => candidate.id);
-    return grouped.length ? grouped : [element.id];
-  }
-  return [element.id];
+  // Object-library presets and speech-bubble pairs are complete visual
+  // objects. Picking any of their primitives selects the whole saved group;
+  // unrelated user-created elements may still carry group metadata without
+  // losing their individual text-drag behaviour.
+  const selectsWholeGroup = Boolean(element.groupId
+    && (element.libraryItemId || (element.type === 'text' && element.shape === 'bubble')));
+  if (!selectsWholeGroup) return [element.id];
+  const grouped = (elements || [])
+    .filter((candidate) => candidate.groupId === element.groupId)
+    .map((candidate) => candidate.id);
+  return grouped.length ? grouped : [element.id];
 }
 
 function boxContainsCenter(parent, child) {
@@ -103,7 +102,9 @@ export function shouldPreserveMultiSelectionOnPointerDown({ selected, selectionC
 }
 
 export function shouldStartTextOnlyDrag(element, additive) {
-  return Boolean(!additive && element?.type === 'text' && element?.shape !== 'bubble');
+  const isObjectLibraryGroup = Boolean(element?.groupId && element?.libraryItemId);
+  return Boolean(!additive && element?.type === 'text'
+    && element?.shape !== 'bubble' && !isObjectLibraryGroup);
 }
 
 export function shouldPassGroupDragArea(elements) {

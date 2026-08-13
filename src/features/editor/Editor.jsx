@@ -143,7 +143,7 @@ function naturalTextWidth(node, value) {
 
 /* render-only element (selection + inline text edit). Manipulation handled by
    the single <Moveable> in the Editor (targets the selected element node). */
-function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPatch, onTextCommit, onMultiDragStart, onTextDragStart, onBubbleGroupDragStart, onAddImage, onDropImage, onEdit, onCropStart }) {
+function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPatch, onTextCommit, onMultiDragStart, onTextDragStart, onObjectGroupDragStart, onAddImage, onDropImage, onEdit, onCropStart }) {
   const ref = useRef(null);
   const textRef = useRef(null);
   const deferredPick = useRef(false);
@@ -174,18 +174,18 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       return;
     }
     e.stopPropagation();
-    // 일반 글자는 오브젝트 추가 직후나 마퀴 다중선택 상태여도 항상 자기 레이어만 잡는다.
-    // 선택을 한 개로 줄인 뒤 같은 첫 포인터 제스처를 직접 이동 경로에 넘겨 두 번째 클릭을 없앤다.
+    // 직접 만든 일반 글자는 마퀴 다중선택 상태여도 자기 레이어만 잡는다.
+    // 오브젝트 라이브러리의 글자는 아래 완성형 그룹 이동 경로를 사용한다.
     if (shouldStartTextOnlyDrag(el, e.shiftKey)) {
       deferredPick.current = false;
       onSelect(el, false);
       onTextDragStart?.(e, el);
       return;
     }
-    // 처음 누른 Q&A도 같은 포인터 제스처로 바로 움직여야 한다. 아직 선택되지 않은
-    // 요소에는 Moveable이 붙어 있지 않으므로, 선택만 하고 끝내면 사용자가 한 번 더
-    // 눌러야 드래그된다. 첫 제스처만 캔버스가 이어 받아 그룹을 이동한다.
-    if (!selected && !e.shiftKey && onBubbleGroupDragStart?.(e, el)) {
+    // 처음 누른 완성형 오브젝트도 같은 포인터 제스처로 바로 움직여야 한다. 아직
+    // 선택되지 않은 요소에는 Moveable이 붙어 있지 않으므로 첫 제스처를 캔버스가
+    // 이어 받아 프리셋의 배경·선·글자를 함께 이동한다.
+    if (!selected && !e.shiftKey && onObjectGroupDragStart?.(e, el)) {
       deferredPick.current = false;
       onSelect(el, false);
       return;
@@ -462,7 +462,7 @@ function ImageImportWait({ item, scale }) {
   );
 }
 
-function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onTextCommit, onMultiDragStart, onTextDragStart, onBubbleGroupDragStart, shouldSuppressBlankClick, onAddImage, onDropImage, onDropBlockImage, onDropImageFiles, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropCancel, onCropReset, idx }) {
+function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onTextCommit, onMultiDragStart, onTextDragStart, onObjectGroupDragStart, shouldSuppressBlankClick, onAddImage, onDropImage, onDropBlockImage, onDropImageFiles, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropCancel, onCropReset, idx }) {
   // 블록 높이는 콘텐츠보다 작아지지 않는다 — 이미지를 블록보다 크게 리사이즈하면 블록도 따라 커져 클립 방지.
   // (기존: block.h 있으면 고정 → 이미지 키워도 block-clip 이 잘라 "안 커보이던" 버그)
   const blockH = getBlockRenderHeight(block);
@@ -532,7 +532,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
               onSelectBlock={() => onSelectBlock(block.id)} onPatch={onElPatch} onTextCommit={onTextCommit}
               onMultiDragStart={(event, onDragStarted) => onMultiDragStart?.(block.id, event, onDragStarted)}
               onTextDragStart={(event, element) => onTextDragStart?.(block.id, element, event)}
-              onBubbleGroupDragStart={(event, element) => onBubbleGroupDragStart?.(block.id, element, event)}
+              onObjectGroupDragStart={(event, element) => onObjectGroupDragStart?.(block.id, element, event)}
               onAddImage={(elm) => onAddImage(block.id, elm)} onEdit={onEdit}
               onDropImage={(image) => onDropImage(block.id, el.id, image)}
               onCropStart={(elm) => onCropStart && onCropStart(block.id, elm)} />
@@ -1726,12 +1726,12 @@ export function Editor() {
     if (!block || element?.type !== 'text' || element?.shape === 'bubble') return false;
     return startPointerSelectionDrag(block, [element.id], event, { threshold: 4 });
   };
-  const startUnselectedBubbleGroupDrag = (blockId, element, event) => {
+  const startUnselectedObjectGroupDrag = (blockId, element, event) => {
     const block = blocks.find((item) => item.id === blockId);
-    if (!block || element?.type !== 'text' || element?.shape !== 'bubble') return false;
+    if (!block) return false;
     const ids = selectionIdsForElement(block.elements, element);
     const selected = block.elements.filter((candidate) => ids.includes(candidate.id));
-    if (selected.length < 2 || !selected.every((candidate) => candidate.type === 'text' && candidate.shape === 'bubble')) return false;
+    if (selected.length < 2) return false;
     return startPointerSelectionDrag(block, ids, event);
   };
   const liveResize = (target, width, height, drag) => {
@@ -2187,7 +2187,7 @@ export function Editor() {
                   onSelectBlock={(id) => { setSelBlock(id); setBlockFocused(true); clearSel(); setTab('shape'); }} onSelectEl={selectEl}
                   onElPatch={patchElById} onTextCommit={commitBubbleText} onMultiDragStart={startSelectedGroupDrag}
                   onTextDragStart={startTextOnlyDrag}
-                  onBubbleGroupDragStart={startUnselectedBubbleGroupDrag}
+                  onObjectGroupDragStart={startUnselectedObjectGroupDrag}
                   shouldSuppressBlankClick={consumeMarqueeClick}
                   onAddImage={requestSlotImage} onDropImage={dropSlotImage}
                   onDropBlockImage={(blockId, image, point) => insertImage(image, { blockId, point })} onDropImageFiles={dropImageFiles}

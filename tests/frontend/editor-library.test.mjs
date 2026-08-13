@@ -80,28 +80,32 @@ test('a wardrobe image dropped between blocks becomes its own padded image block
   });
 });
 
-test('object presets retain one metadata group for layout and migration', () => {
+test('object presets materialize as one selectable group', () => {
   for (const item of OBJECT_LIBRARY_ITEMS) {
     const elements = buildObjectPreset(item.id, { x: 100, y: 80, idFn: seqId() });
     assert.ok(elements.length > 0, item.id);
     assert.equal(new Set(elements.map((element) => element.groupId)).size, 1, `${item.id}: one group`);
     assert.ok(elements.every((element) => ['text', 'shape', 'line'].includes(element.type)));
     assert.ok(elements.every((element) => element.libraryItemId === item.id));
+    for (const element of elements) {
+      assert.deepEqual(selectionIdsForElement(elements, element), elements.map((candidate) => candidate.id), `${item.id}: ${element.type}`);
+    }
   }
 });
 
-test('dragging normal text always selects only the text layer, even inside a grouped object', () => {
+test('text inside an object preset selects its background or line with it', () => {
   for (const itemId of ['text-box', 'arrow-callout', 'label-badge']) {
     const elements = buildObjectPreset(itemId, { x: 100, y: 80, idFn: seqId() });
     const copy = elements.find((element) => element.type === 'text');
     assert.ok(copy, `${itemId}: text layer`);
-    assert.deepEqual(selectionIdsForElement(elements, copy), [copy.id]);
+    assert.deepEqual(selectionIdsForElement(elements, copy), elements.map((element) => element.id));
   }
 });
 
-test('normal text starts a text-only drag regardless of the current group selection', () => {
+test('only standalone text starts a text-only drag', () => {
   assert.equal(shouldStartTextOnlyDrag({ type: 'text' }, false), true);
   assert.equal(shouldStartTextOnlyDrag({ type: 'text', groupId: 'object' }, false), true);
+  assert.equal(shouldStartTextOnlyDrag({ type: 'text', groupId: 'object', libraryItemId: 'text-box' }, false), false);
   assert.equal(shouldStartTextOnlyDrag({ type: 'text', shape: 'bubble' }, false), false);
   assert.equal(shouldStartTextOnlyDrag({ type: 'shape' }, false), false);
   assert.equal(shouldStartTextOnlyDrag({ type: 'text' }, true), false, 'shift remains additive selection');
@@ -218,7 +222,7 @@ test('Delete and macOS Backspace can remove a selected top-level block with all 
   assert.equal(removeSelectedBlock(blocks, null), blocks);
 });
 
-test('legacy object and FAQ composites keep recovered metadata without forcing text to drag its parent', () => {
+test('legacy object composites recover whole-object selection while FAQ text stays independently draggable', () => {
   const legacyObject = { id: 'object', elements: [
     { id: 'box', type: 'shape', libraryItemId: 'text-box', x: 10, y: 10, w: 200, h: 100 },
     { id: 'copy', type: 'text', libraryItemId: 'text-box', x: 20, y: 30, w: 180, h: 40 },
@@ -228,8 +232,8 @@ test('legacy object and FAQ composites keep recovered metadata without forcing t
     { id: 'answer', type: 'text', x: 30, y: 30, w: 260, h: 30 },
   ] };
   const normalized = normalizeEditorSelectionGroups([legacyObject, legacyFaq]);
-  assert.deepEqual(selectionIdsForElement(normalized[0].elements, normalized[0].elements[1]), ['copy']);
-  assert.deepEqual(selectionIdsForElement(normalized[0].elements, normalized[0].elements[0]), ['box']);
+  assert.deepEqual(selectionIdsForElement(normalized[0].elements, normalized[0].elements[1]), ['box', 'copy']);
+  assert.deepEqual(selectionIdsForElement(normalized[0].elements, normalized[0].elements[0]), ['box', 'copy']);
   assert.deepEqual(selectionIdsForElement(normalized[1].elements, normalized[1].elements[1]), ['answer']);
   assert.deepEqual(selectionIdsForElement(normalized[1].elements, normalized[1].elements[0]), ['bubble']);
   assert.equal(normalized[0].elements[0].groupId, normalized[0].elements[1].groupId);
