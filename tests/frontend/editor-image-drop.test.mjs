@@ -89,6 +89,15 @@ test('a drop inside an empty image frame fills that frame instead of creating a 
   assert.equal(findImageDropSlot(elements)?.id, 'empty', 'click insert uses the first empty frame');
 });
 
+test('image frames show an explicit placement guide only while a wardrobe image is over them', () => {
+  assert.match(editorSource, /imageDropOver && <ImageDropGuide scale=\{scale\} filled=\{false\}/);
+  assert.match(editorSource, /imageDropOver && <ImageDropGuide scale=\{scale\} filled \/>/);
+  assert.match(editorSource, /여기에 놓아 이미지 \{filled \? '교체' : '넣기'\}/);
+  assert.match(stylesSource, /\.image-drop-guide\s*\{[^}]*pointer-events:\s*none/s);
+  assert.match(stylesSource, /\.image-drop-guide\s*\{[^}]*background-image:\s*linear-gradient/s);
+  assert.match(stylesSource, /\.image-drop-guide-content\s*\{[^}]*scale\(var\(--drop-inv/s);
+});
+
 test('an image import placeholder immediately occupies the exact target frame', () => {
   const elements = [
     { id: 'empty', type: 'image', src: null, frameSlot: true, x: 360, y: 40, w: 300, h: 220, radius: 18 },

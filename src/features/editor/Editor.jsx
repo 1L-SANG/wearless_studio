@@ -141,6 +141,18 @@ function naturalTextWidth(node, value) {
   )));
 }
 
+function ImageDropGuide({ scale, filled }) {
+  return (
+    <div className="image-drop-guide" style={{ '--drop-inv': 1 / (scale || 1) }} aria-hidden="true">
+      <div className="image-drop-guide-content">
+        <span className="image-drop-guide-icon"><Icon name="imagePlus" size={28} /></span>
+        <strong>여기에 놓아 이미지 {filled ? '교체' : '넣기'}</strong>
+        <span>프레임 크기는 그대로 유지돼요</span>
+      </div>
+    </div>
+  );
+}
+
 /* render-only element (selection + inline text edit). Manipulation handled by
    the single <Moveable> in the Editor (targets the selected element node). */
 function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPatch, onTextCommit, onMultiDragStart, onTextDragStart, onObjectGroupDragStart, onAddImage, onDropImage, onEdit, onCropStart }) {
@@ -298,6 +310,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
             onClick={(e) => { e.stopPropagation(); onAddImage && onAddImage(el); }}>
             <Icon name="plus" size={20} /><span>이미지 추가</span>
           </button>
+          {imageDropOver && <ImageDropGuide scale={scale} filled={false} />}
         </div>
       );
     }
@@ -312,6 +325,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
         ) : (
           <img src={el.src} alt="" style={{ borderRadius: el.radius }} draggable={false} />
         )}
+        {imageDropOver && <ImageDropGuide scale={scale} filled />}
       </div>
     );
   }

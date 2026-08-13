@@ -1636,7 +1636,24 @@
 
 /* empty frame image slot — '이미지 추가' button → 의류 탭 (item 3) */
 .el-slot { background: #f3f3f5; box-shadow: inset 0 0 0 1.5px var(--ring-strong); display: grid; place-items: center; }
-.el.image-drop-over, .el-slot.image-drop-over { box-shadow: inset 0 0 0 4px var(--link), 0 0 0 4px rgba(0,153,255,.16); }
+.el.image-drop-over, .el-slot.image-drop-over { box-shadow: inset 0 0 0 calc(3px * var(--inv, 1)) var(--link), 0 0 0 calc(4px * var(--inv, 1)) rgba(0,153,255,.16); }
+.image-drop-guide { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; overflow: hidden;
+  border-radius: inherit; pointer-events: none; color: #1f6fb2;
+  background-color: rgba(250,252,254,.9);
+  background-image: linear-gradient(45deg, rgba(65,119,164,.08) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(65,119,164,.08) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(65,119,164,.08) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(65,119,164,.08) 75%);
+  background-size: calc(28px * var(--drop-inv, 1)) calc(28px * var(--drop-inv, 1));
+  background-position: 0 0, 0 calc(14px * var(--drop-inv, 1)), calc(14px * var(--drop-inv, 1)) calc(-14px * var(--drop-inv, 1)), calc(-14px * var(--drop-inv, 1)) 0; }
+.image-drop-guide-content { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 190px;
+  padding: 14px 18px; border-radius: 14px; text-align: center; background: rgba(255,255,255,.94);
+  box-shadow: 0 8px 24px rgba(23,76,120,.13), inset 0 0 0 1px rgba(47,127,196,.16);
+  transform: scale(var(--drop-inv, 1)); transform-origin: center; }
+.image-drop-guide-icon { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 13px;
+  background: #eaf5ff; box-shadow: inset 0 0 0 1px rgba(47,127,196,.16); }
+.image-drop-guide-content strong { font-size: 15px; line-height: 1.3; letter-spacing: -.02em; }
+.image-drop-guide-content > span:last-child { font-size: 11px; line-height: 1.35; color: #667887; }
 .el-slot .slot-add { transform-origin: center; display: inline-flex; flex-direction: column; align-items: center; gap: 6px;
   border: 0; background: transparent; color: var(--fg-2); font-size: 14px; font-weight: 500; cursor: pointer; }
 .el-slot .slot-add:hover { color: var(--link); }
