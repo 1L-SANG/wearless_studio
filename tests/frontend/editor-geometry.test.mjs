@@ -2,12 +2,19 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  blockHeightFromBottom,
   clampDragDelta,
   clampElementRect,
   expandBlockHeights,
   getBlockRenderHeight,
   pointMissesTextLines,
 } from '../../src/features/editor/editorGeometry.js';
+
+test('block height resizing keeps the top anchored and follows only the bottom edge', () => {
+  assert.equal(blockHeightFromBottom(600, 40, 0.4), 700);
+  assert.equal(blockHeightFromBottom(600, -80, 0.4), 400);
+  assert.equal(blockHeightFromBottom(180, -40, 0.4), 120, 'the minimum block height is preserved');
+});
 
 test('editor geometry keeps derived heights and selections inside the canvas', () => {
   assert.equal(getBlockRenderHeight({ h: 660, elements: [{ y: 640, h: 120 }] }), 810);

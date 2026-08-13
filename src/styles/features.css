@@ -1624,11 +1624,10 @@
 .obj-prev svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .obj-glyph { display: block; width: 27px; height: 27px; }
 
-/* block height resize pills — top & bottom center, shown when a block is selected (#11).
+/* block height resize pill — bottom center only, so the block top stays anchored.
    counter-scaled by --inv so they stay a constant on-screen size at any zoom. */
-.blk-resize { position: absolute; left: 50%; top: 0; z-index: 6; cursor: ns-resize; padding: 5px 0;
-  transform: translate(-50%, -50%) scale(var(--inv, 1)); transform-origin: center; }
-.blk-resize.bottom { top: auto; bottom: 0; transform: translate(-50%, 50%) scale(var(--inv, 1)); }
+.blk-resize { position: absolute; left: 50%; bottom: 0; z-index: 6; cursor: ns-resize; padding: 5px 0;
+  transform: translate(-50%, 50%) scale(var(--inv, 1)); transform-origin: center; }
 .blk-resize .pill-bar { display: block; width: 26px; height: 9px; border-radius: 9999px; background: #fff;
   box-shadow: 0 0 0 1px var(--link), var(--elev-soft); }
 .blk-resize:hover .pill-bar { background: var(--link); }

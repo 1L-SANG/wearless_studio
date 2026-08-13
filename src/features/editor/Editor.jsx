@@ -26,7 +26,7 @@ import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
-import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
+import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
 import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, findImageDropSlot, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage, objectPresetInitialSelectionIds } from '@/features/editor/editorLibrary.js';
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
@@ -472,21 +472,12 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
   const blockSelected = blockActive && (!selEls || selEls.length === 0);
   const [objOver, setObjOver] = useState(false);
 
-  const resize = (e, side) => {
+  const resizeFromBottom = (e) => {
     e.stopPropagation(); e.preventDefault();
     if (e.button != null && e.button !== 0) return;
     const sy = e.clientY, startH = blockH;
-    const startEls = block.elements.map((el) => ({ id: el.id, y: el.y }));
     const move = (ev) => {
-      const dy = (ev.clientY - sy) / (scale || 1);
-      if (side === 'bottom') { onReshape(block.id, { h: Math.max(120, Math.round(startH + dy)) }); }
-      else {
-        const nh = Math.max(120, Math.round(startH - dy));
-        const delta = nh - startH;
-        const shiftEls = {};
-        startEls.forEach((s) => { shiftEls[s.id] = Math.round(s.y + delta); });
-        onReshape(block.id, { h: nh, shiftEls });
-      }
+      onReshape(block.id, { h: blockHeightFromBottom(startH, ev.clientY - sy, scale) });
     };
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); document.body.style.userSelect = ''; };
     document.body.style.userSelect = 'none';
@@ -577,11 +568,8 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
         </div>
       )}
       {blockSelected && (
-        <>
-          {/* 손잡이를 눌렀다 뗀 클릭도 캔버스 바닥으로 새면 방금 잡은 블록이 풀린다 */}
-          <span className="blk-resize top" onPointerDown={(e) => resize(e, 'top')} onClick={(e) => e.stopPropagation()} title="위로 높이 조절"><span className="pill-bar" /></span>
-          <span className="blk-resize bottom" onPointerDown={(e) => resize(e, 'bottom')} onClick={(e) => e.stopPropagation()} title="아래로 높이 조절"><span className="pill-bar" /></span>
-        </>
+        /* 손잡이를 눌렀다 뗀 클릭도 캔버스 바닥으로 새면 방금 잡은 블록이 풀린다 */
+        <span className="blk-resize" onPointerDown={resizeFromBottom} onClick={(e) => e.stopPropagation()} title="아래로 높이 조절"><span className="pill-bar" /></span>
       )}
       <div className="quick" onClick={(e) => e.stopPropagation()}>
         <IconButton name="chevUp" onClick={() => onMove(idx, -1)} title="위로" />

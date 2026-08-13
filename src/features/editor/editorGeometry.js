@@ -13,6 +13,11 @@ export function expandBlockHeights(blocks) {
   return blocks.map((block) => ({ ...block, h: getBlockRenderHeight(block) }));
 }
 
+export function blockHeightFromBottom(startHeight, screenDeltaY, scale = 1) {
+  const zoom = Number(scale) > 0 ? Number(scale) : 1;
+  return Math.max(120, Math.round(Number(startHeight) + Number(screenDeltaY) / zoom));
+}
+
 export function clampDragDelta(snapshot, [dx, dy], blockHeight) {
   const elements = Object.values(snapshot || {});
   if (!elements.length) return [dx, dy];
