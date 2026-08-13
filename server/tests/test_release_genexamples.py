@@ -606,6 +606,19 @@ def test_validate_rejects_catalog_registry_id_mismatch():
         release._validate_release_documents(catalog, _valid_registry(), label="테스트")
 
 
+def test_validate_accepts_null_observation_direction():
+    catalog = [_catalog_item(direction=None)]
+    registry = _valid_registry()
+    registry["assets"]["ex_a"]["direction"] = None
+    release._validate_release_documents(catalog, registry, label="테스트")
+
+
+def test_validate_rejects_unknown_observation_direction():
+    catalog = [_catalog_item(direction="diagonal")]
+    with pytest.raises(RuntimeError, match="direction_invalid"):
+        release._validate_release_documents(catalog, _valid_registry(), label="테스트")
+
+
 def test_validate_rejects_thumb_url_mismatch_between_files():
     registry = _valid_registry()
     registry["assets"]["ex_a"]["thumb"] = "https://images.example.test/thumb/ex_other.webp"

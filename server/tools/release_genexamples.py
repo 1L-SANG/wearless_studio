@@ -770,7 +770,13 @@ _CATALOG_REQUIRED_FIELDS = {
     "rank",
     "variants",
 }
-_CATALOG_NULLABLE_FIELDS = {"gender", "mood", "detailSubject", "presentationMethod"}
+_CATALOG_NULLABLE_FIELDS = {
+    "gender",
+    "direction",
+    "mood",
+    "detailSubject",
+    "presentationMethod",
+}
 _VARIANT_FIELDS = {"all", "thumb", "pose", "bg"}
 
 
@@ -821,11 +827,18 @@ def _validate_catalog_document(value: object, *, label: str) -> list[dict]:
                 raise RuntimeError(
                     f"{label} {example_id}.{field} 가 비어있거나 문자열 배열이 아닙니다: {field}_invalid"
                 )
-        for field in ("cutType", "shot", "direction", "clothingType"):
+        for field in ("cutType", "shot", "clothingType"):
             if not isinstance(item[field], str) or not item[field]:
                 raise RuntimeError(
                     f"{label} {example_id}.{field} 가 문자열이 아닙니다: {field}_invalid"
                 )
+        direction = item["direction"]
+        if direction is not None and (
+            not isinstance(direction, str) or direction not in _DIRECTIONS
+        ):
+            raise RuntimeError(
+                f"{label} {example_id}.direction 이 허용값이 아닙니다: direction_invalid"
+            )
     return list(value)
 
 
