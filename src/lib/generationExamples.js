@@ -197,6 +197,7 @@ export function assignGenerationExamples(blocks, { catalog, product, gender, onl
   const next = blocks.map((block) => {
     if (!block || block.source !== 'ai') return block;
     if (only && !only.has(block.id)) return block;
+    if (block.exampleChoice === 'manual') return block;
     const colorwayKey = block.colorwayGroupId ? usageKey(block, product, gender) : null;
     const colorwayTemplate = colorwayKey ? colorwayTemplates.get(colorwayKey) : null;
     if (block.exampleId) {

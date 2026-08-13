@@ -17,10 +17,12 @@ import { Placeholder } from '@/mock/placeholders.js';
 import {
   addCustomMatchToAnalysis,
   getComplementaryMatchingType,
+  productColorFrom,
   recommendLegacyMatchClothing,
   removeCustomMatchFromAnalysis,
 } from '@/mock/matchingRecommendation.js';
 import { CREDIT_COSTS, LIMITS } from '@/lib/limits.js';
+import { normalizeMatchClothingSelection } from '@/lib/api/matchingItems.js';
 import { uid } from '@/lib/ids.js';
 import { shouldMarkStoryboardDirty } from '@/lib/generationExamples.js';
 import { normalizeTargetGendersForClothingType } from '@/lib/productGender.js';
@@ -29,6 +31,7 @@ import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 import {
   applyOpeningRow, hasOpeningRow, migrateLegacyEntryStylingRuns,
 } from '@/lib/storyboardEntryPlacement.js';
+import { createDraftSlotMemory } from './draftSlotMemory.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -48,6 +51,7 @@ const settleMockMannequinCharge = (job) => {
 };
 // 에디터 대기 이벤트 시뮬 상태 (startDetailPage) — 페이지 새로고침 = 모듈 재실행 = 초기화(재데모 가능)
 let ewSim = null;
+const mockDraftSlot = createDraftSlotMemory({ tokenFactory: () => uid('draft-token') });
 const shouldRefreshMatchClothing = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => key in patch);
 const customMatchUploads = new Map();
 const mockCheckoutOrders = new Map();
@@ -133,6 +137,11 @@ export const api = {
     reseedDraft();
     inflight.analyze = null; inflight.mannequins = null; inflight.detailPage = null;
     await wait(80); return clone(DB.project);
+  },
+  async resetInputDraft() {
+    reseedDraft();
+    inflight.analyze = null; inflight.mannequins = null; inflight.detailPage = null;
+    await wait(20);
   },
   async getProject(/* projectId */) { await wait(60); return clone(DB.project); },
   async patchProject(_projectId, patch) {
@@ -256,6 +265,36 @@ export const api = {
     customMatchUploads.set(assetId, { filename, mime, blob, purpose, url });
     return { assetId, url };
   },
+  async uploadDraftSlotPhoto(photo, options) {
+    return this.uploadPhoto(null, { ...photo, purpose: 'draft_slot' }, options);
+  },
+
+  /* ---- hidden draft slot ---- */
+  async getDraftSlot(token, { full = false } = {}) {
+    await wait(20);
+    return mockDraftSlot.get(token, { full });
+  },
+  async putDraftSlot(body) {
+    await wait(20);
+    return mockDraftSlot.put(body);
+  },
+  async takeoverDraftSlot() {
+    await wait(20);
+    return mockDraftSlot.takeover();
+  },
+  async deleteDraftSlot(token) {
+    await wait(20);
+    mockDraftSlot.remove(token);
+  },
+  async discardDraftSlotPhoto(assetId) {
+    await wait(10);
+    const upload = customMatchUploads.get(assetId);
+    if (upload?.url) URL.revokeObjectURL(upload.url);
+    customMatchUploads.delete(assetId);
+  },
+  simulateDraftSlotConflict(options) {
+    return mockDraftSlot.simulateConflict(options);
+  },
 
   /* ---- AI analysis (PRD §6) — 30s-feel progress, can fail ---- */
   async analyzeProduct(_projectId, { onProgress, forceError = false } = {}) {
@@ -265,6 +304,7 @@ export const api = {
     }).then(() => {
       if (forceError) throw new Error('분석 서버에 일시적인 문제가 발생했어요.');
       const a = normalizeAnalysisFit(clone(DB.analysis));
+      a.matchClothing = normalizeMatchClothingSelection(a.matchClothing);
       // 실측은 AI가 추정하지 않는다 — 사용자가 직접 입력하도록 빈칸으로 둔다.
       a.measurements = createMeasurementFields(a.clothingType);
       return a;
@@ -272,7 +312,11 @@ export const api = {
     if (onProgress) job.listeners.push(onProgress);
     return clone(await job.promise);
   },
-  async getAnalysis(/* projectId */) { await wait(120); return normalizeAnalysisFit(clone(DB.analysis)); },
+  async getAnalysis(/* projectId */) {
+    await wait(120);
+    const analysis = normalizeAnalysisFit(clone(DB.analysis));
+    return { ...analysis, matchClothing: normalizeMatchClothingSelection(analysis.matchClothing) };
+  },
   async saveAnalysis(_projectId, patch) {
     await wait(180);
     // 매칭 후보 목록은 서버(추천)가 소유 — matchClothing patch 는 통째로 덮지 않고
@@ -290,6 +334,7 @@ export const api = {
         clothingType: DB.analysis.clothingType,
         targetGenders: DB.analysis.targetGenders,
         styleTags: DB.analysis.styleTags,
+        productColor: productColorFrom(DB.product, DB.analysis),
         current: DB.analysis.matchClothing,
       });
     }
@@ -318,7 +363,8 @@ export const api = {
     const owned = {};
     ['clothingType', 'measurements', 'measurementsUnknown'].forEach((k) => { if (k in patch) owned[k] = patch[k]; });
     if (Object.keys(owned).length) Object.assign(DB.product, clone(owned));
-    return normalizeAnalysisFit(clone(DB.analysis));
+    const analysis = normalizeAnalysisFit(clone(DB.analysis));
+    return { ...analysis, matchClothing: normalizeMatchClothingSelection(analysis.matchClothing) };
   },
   async draftWashCare(/* projectId */) {
     await wait(900);
@@ -333,7 +379,9 @@ export const api = {
   /* ---- mannequin (PRD §7) ---- */
   async getMatchClothing(/* projectId */) {
     await wait(120);
-    return clone((DB.analysis?.matchClothing?.length ? DB.analysis.matchClothing : DB.matchClothing));
+    return normalizeMatchClothingSelection(
+      clone((DB.analysis?.matchClothing?.length ? DB.analysis.matchClothing : DB.matchClothing)),
+    );
   },
   async addCustomMatchItem(_projectId, { assetIds }, { signal } = {}) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -389,6 +437,7 @@ export const api = {
       clothingType: DB.analysis.clothingType,
       targetGenders: DB.analysis.targetGenders,
       styleTags: DB.analysis.styleTags,
+      productColor: productColorFrom(DB.product, DB.analysis),
       current: DB.analysis.matchClothing,
       defaultSelection: false,
     });
@@ -468,7 +517,7 @@ export const api = {
     if (migrated.changed) DB.storyboard = migrated.blocks;
     return clone(DB.storyboard);
   },
-  async saveStoryboard(_projectId, blocks, { autoAssignment = false } = {}) {
+  async saveStoryboard(_projectId, blocks, { autoAssignment = false, keepalive: _keepalive = false } = {}) {
     await wait(150);
     DB.storyboard = clone(blocks);
     // 자동 예시 배정은 기본 콘티의 일부다. 이미 생긴 사용자 dirty는 유지한다.

@@ -27,6 +27,9 @@ Mannequin
  ├─ PageHead ("의류 재현성 높이기" / "실제 의류와 비슷해지게끔 조정해보세요.")
  └─ .fit-stage (flex 가운데; changing이면 [이미지 | 예시열] 한 쌍)
      ├─ <MineColumn>       큰 컷 + <FitHotspots> + 버전 스트립 + 비용 CTA
+     │                     핫존은 몸 위 부위에 얹는다: 상의 = 왼쪽 겨드랑이(몸통 핏)·오른쪽 겨드랑이(소매 기장)·밑단.
+     │                     소매 기장은 상의 전용 축(민소매/캡/반팔/5부/7부 — 미선택=원본). 하의 계열(아우터 밑단·바지 통·스커트 실루엣)은
+     │                     힙 주변에서 서로 48px 이상 벌려 겹침을 막는다(테스트 mannequin-fit-hotspots).
      └─ (changing 시) .fit-ex-col   헤더 + 선택값/취소 + <ExampleTiles>
           · 콘텐츠 폭 ≥1100: 페이지 우측 absolute 패널(제목 높이부터, 2열 그리드) — 마네킹 불이동
           · 그 미만: 이미지 옆 인라인 세로 스크롤 박스 (720 이하는 가로 스택)
@@ -49,8 +52,8 @@ Mannequin
 
 ## 4. 에셋 현황 (fitExampleImages.js와 일치)
 
-있음 36장: top(여 fit5·len4 / 남 fit3) · pants(여 cut5 / 남 cut4 / 공용 len3) · skirt sil3 · dress sil3·len2 · outer fit2·len2.
-**갭(텍스트 폴백으로 동작, 추가 생성 백로그)**: top-men semi_over · pants-men slim/straight · skirt length 전부 · dress a_line/midi · outer regular/semi_over/basic.
+있음 60장: top 26장(여 fit4·len5 / 남 fit4·len5·sleeve4 / 여성용 공용 sleeve4) · pants 14장(여 cut5 / 남 cut6 / 공용 len3) · skirt 6장 · dress 7장 · outer 7장.
+현재 카탈로그 전 값에 이미지가 있으며, `top.sleeve` 4단계는 여성에게 `top-any-sleeve-*`, 남성에게 `top-men-sleeve-*` 이미지를 노출한다.
 
 ## 5. 생성 대기 화면 (2026-07-13 확정 — 의류 인포그래픽 롱 시퀀스)
 

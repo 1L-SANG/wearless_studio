@@ -29,25 +29,22 @@ export const SECTION_TITLES = Object.freeze(Object.fromEntries(
   SECTION_ROLE_OPTIONS.map((option) => [option.value, option.label]),
 ));
 
+const CUT_TYPE_OPTIONS = Object.freeze([
+  Object.freeze({ value: 'styling', label: '스타일링컷' }),
+  Object.freeze({ value: 'horizon', label: '호리존컷' }),
+  Object.freeze({ value: 'mirror', label: '거울샷' }),
+  Object.freeze({ value: 'product', label: '제품컷' }),
+]);
+
 const CUT_TYPE_OPTIONS_BY_SECTION = Object.freeze({
-  [SECTION_ROLES.HOOKING]: Object.freeze([
-    Object.freeze({ value: 'styling', label: '스타일링컷' }),
-    Object.freeze({ value: 'horizon', label: '호리존컷' }),
-  ]),
-  [SECTION_ROLES.STYLING]: Object.freeze([
-    Object.freeze({ value: 'styling', label: '스타일링컷' }),
-    Object.freeze({ value: 'mirror', label: '거울샷' }),
-  ]),
-  [SECTION_ROLES.STUDIO]: Object.freeze([
-    Object.freeze({ value: 'horizon', label: '호리존컷' }),
-  ]),
-  [SECTION_ROLES.PRODUCT]: Object.freeze([
-    Object.freeze({ value: 'product', label: '제품컷' }),
-  ]),
+  [SECTION_ROLES.HOOKING]: CUT_TYPE_OPTIONS,
+  [SECTION_ROLES.STYLING]: CUT_TYPE_OPTIONS,
+  [SECTION_ROLES.STUDIO]: CUT_TYPE_OPTIONS,
+  [SECTION_ROLES.PRODUCT]: CUT_TYPE_OPTIONS,
 });
 
 export const cutTypeOptionsForSection = (sectionRole) => (
-  CUT_TYPE_OPTIONS_BY_SECTION[sectionRole] || Object.freeze([])
+  CUT_TYPE_OPTIONS_BY_SECTION[sectionRole] || CUT_TYPE_OPTIONS
 );
 
 // 섹션 개념이 없는 화면(에디터 '새 이미지 추가')용 — 섹션별 목록의 중복 없는 합집합.

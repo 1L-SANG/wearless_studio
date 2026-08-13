@@ -35,13 +35,14 @@ import {
   updateMannequinJob,
 } from './generationRunner.js';
 import { fitHotspotsFor } from './fitHotspots.js';
+import { ToneEditor } from './ToneEditor.jsx';
 import {
   resolveInitialGenerationCuts,
   runGenerationRelevantEditsRefresh,
 } from './generationRunnerCore.js';
 import './Mannequin.css';
 
-const AXIS_LABELS = { fit: '핏', length: '기장', cut: '핏', silhouette: '실루엣' };
+const AXIS_LABELS = { fit: '핏', length: '기장', cut: '핏', silhouette: '실루엣', sleeve: '소매 기장' };
 const MATCH_KEY = '__match';
 const MATCH_NAME = '매칭 의류 핏';
 const MATCH_SKIRT_NAME = '매칭 스커트 실루엣';
@@ -473,6 +474,9 @@ function MineColumn({
   cuts,
   selectedCutId,
   onSelect,
+  onToneApplied,
+  projectId,
+  toneEditorEnabled,
   arrival,
   waitTile,
   showWaitPanel,
@@ -491,6 +495,8 @@ function MineColumn({
   continueDisabled,
 }) {
   const waitSlotRef = useRef(null);
+  // 톤 에디터 오버레이 캔버스가 포털로 꽂히는 컨테이너 — 미리보기를 메인 컷 위에 그린다.
+  const mineImgRef = useRef(null);
 
   useEffect(() => {
     if (waitTile !== 'pending') return;
@@ -506,7 +512,7 @@ function MineColumn({
 
   return (
     <div className="fit-mine-col">
-      <div className="fit-mine-img">
+      <div className="fit-mine-img" ref={mineImgRef}>
         {arrival ? (
           <>
             {arrival.from && (
@@ -533,6 +539,15 @@ function MineColumn({
           />
         )}
       </div>
+      {selected && projectId && (
+        <ToneEditor
+          projectId={projectId}
+          cutId={selected.id}
+          enabled={toneEditorEnabled}
+          overlayRef={mineImgRef}
+          onApplied={onToneApplied}
+        />
+      )}
       {(cuts.length > 1 || waitTile) && (
         <div className="fit-strip" role="group" aria-label="버전 목록">
           {cuts.map((cut) => (
@@ -922,6 +937,17 @@ export function Mannequin() {
     setCuts((prev) => prev.map((cut) => ({ ...cut, isSelected: cut.id === cutId })));
     selectMannequin(cutId);
   };
+
+  const applyToneRenderToSelectedCut = useCallback((state) => {
+    if (!state?.cutId) return;
+    const assetId = state.renderAssetId || state.sourceAssetId;
+    if (!assetId) return;
+    setCuts((prev) => prev.map((cut) => (
+      cut.id === state.cutId
+        ? { ...cut, src: `/v1/assets/${assetId}/file`, imageUrl: `/v1/assets/${assetId}/file` }
+        : cut
+    )));
+  }, []);
 
   // draft + 사용자가 고른 값으로 재생성용 FitProfile v2 구성.
   // 매칭 축은 현재 메인 의류 id에 바인딩하고 legacy matchCut은 반환하지 않는다.
@@ -1391,6 +1417,9 @@ export function Mannequin() {
           cuts={cuts}
           selectedCutId={selectedCutId}
           onSelect={chooseCut}
+          onToneApplied={applyToneRenderToSelectedCut}
+          projectId={projectId}
+          toneEditorEnabled
           arrival={arrival}
           waitTile={waitTile}
           showWaitPanel={showWaitPanel}

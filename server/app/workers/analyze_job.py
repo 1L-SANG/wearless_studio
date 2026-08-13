@@ -107,9 +107,11 @@ async def analyze_image_bytes(
         consistency = consistency_res
 
     analysis_payload = distributed["analysis"]
-    # tags 기본 랭킹은 재진입/새로고침 후 GET /analysis에서도 같은 값을 읽어야 한다.
-    # AG-01 distribute 단계에서는 intermediate이지만, 서버 추천 입력으로 쓰이므로 저장 payload에 승격한다.
+    # tags·swatch 기본 랭킹은 분석 완료 직후 match-candidates 요청과 재진입/새로고침 후
+    # GET /analysis에서도 같은 값을 읽어야 한다. AG-01 distribute 단계에서는
+    # intermediate이지만 서버 추천 입력으로 쓰이므로 저장 payload에 승격한다.
     analysis_payload["styleTags"] = distributed["intermediate"]["styleTags"]
+    analysis_payload["swatchSuggestions"] = distributed["intermediate"]["swatchSuggestions"]
     if (
         consistency
         and settings.input_consistency == "warn"

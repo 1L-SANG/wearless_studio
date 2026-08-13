@@ -1256,15 +1256,20 @@ def test_fabric_pass_sends_product_photos_with_the_cut():
                for e in sent["events"])
 
 
-def test_untuck_pass_gate_and_single_task_call():
-    """untuck 패스 — top/outer + 매칭 하의 첨부에서만, 생성본 1장·과제 1개로 호출된다.
+def test_untuck_postpass_gate_and_single_task_call(monkeypatch):
+    """untuck post-pass — top/outer + 매칭 하의 첨부에서만, 생성본 1장·과제 1개로 호출된다.
 
     프롬프트 5회 강화와 QC 재생성이 모두 소진된 뒤의 구조 변경(2026-08-01). QC 검출이
     불안정해(같은 유형을 잡기도 02:05, 놓치기도 04:57) 게이트로 쓰지 않고 항상 1회 돈다.
     bust v3 안에 untuck 이 부차 지시로 있을 땐 실패했다 — 단일 과제 분리가 변수다.
+
+    2026-08-12: 편집 체인 맨 앞 → 저장 직전 전용 post-pass 로 이동(예산 분리). 시그니처가
+    calls_spent 를 **받지 않는 것 자체가 계약**이다 — 일반 예산과 결합할 방법이 없어야 한다.
     """
     import asyncio
+    import inspect
     from app.agents import mannequin_untuck
+    from app.services.qc import QcResult
     from app.workers import mannequin_job as mj
 
     # 게이트
@@ -1274,6 +1279,11 @@ def test_untuck_pass_gate_and_single_task_call():
     assert not mannequin_untuck.should_apply("on", "bottom", True), "하의 상품은 방향이 다르다(WS4)"
     assert not mannequin_untuck.should_apply("on", "dress", True), "원피스는 매칭 하의가 없다"
     assert not mannequin_untuck.should_apply("on", "top", False), "하의가 화면에 없으면 tuck 이 없다"
+
+    # 일반 예산과의 결합 자체가 불가능한 시그니처 — calls_spent 가 되살아나면 여기서 잡힌다.
+    params = set(inspect.signature(mj._apply_untuck_postpass).parameters)
+    assert "calls_spent" not in params
+    assert "generation_attempts" in params
 
     sent = {}
 
@@ -1286,25 +1296,30 @@ def test_untuck_pass_gate_and_single_task_call():
         sent.setdefault("events", []).append(payload)
 
     s = types.SimpleNamespace(
-        mannequin_untuck_pass="on", mannequin_max_attempts=5, mannequin_image_size="2K",
+        mannequin_untuck_pass="on", mannequin_max_attempts=2, mannequin_image_size="2K",
         mannequin_aspect_ratio="2:3", model_image_high="gemini-3-pro-image",
         model_image_light="gemini-3.1-flash-image", model_text="gpt-5.4-mini")
-    mj._emit = fake_emit
+    monkeypatch.setattr(mj, "_emit", fake_emit)
+    monkeypatch.setattr(mj.qc, "evaluate_canvas_alpha_qc", lambda data: QcResult("pass"))
     res = types.SimpleNamespace(image=b"cut", mime="image/png")
     match = mj.InlineImage("image/png", b"bottom")
 
-    out, spent = asyncio.run(mj._apply_untuck_pass(
-        pool=None, gemini=_Gemini(), s=s, job_id="j1", candidate="A", attempt=1,
-        res=res, match_img=match, calls_spent=0, clothing_type="top", image_size="4K"))
+    out = asyncio.run(mj._apply_untuck_postpass(
+        pool=None, gemini=_Gemini(), s=s, job_id="j1", candidate="A",
+        generation_attempts=2, res=res, match_img=match, clothing_type="top",
+        image_size="4K"))
 
-    assert spent is True and out.image == b"untucked"
+    assert out.image == b"untucked"
     assert len(sent["images"]) == 1 and sent["images"][0].data == b"cut", \
         "이미지 1장·과제 1개 — 매칭/상품 사진을 섞으면 과제가 흐려진다"
     assert sent["size"] == "4K", "승급 해상도를 편집에서도 유지"
     assert "unbroken visible line" in sent["prompt"], "관측 가능한 목표가 있어야 한다"
     assert "return it unchanged" in sent["prompt"], "이미 빠져 있으면 무변경 — no-op 계약"
-    assert any(e.get("status") == "untuck_pass" and e.get("outcome") == "applied"
-               for e in sent["events"])
+    done = [e for e in sent["events"] if e.get("status") == "untuck_pass"]
+    assert len(done) == 1
+    assert done[0]["untuck_outcome"] == "applied"
+    assert done[0]["untuck_calls"] == 1 and done[0]["untuck_attempted"] is True
+    assert done[0]["generation_attempts"] == 2, "일반 attempt 2회 소진과 무관하게 돌았다"
 
 
 def test_bottom_product_manifest_and_prompt_keep_the_product_visible():

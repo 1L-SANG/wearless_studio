@@ -77,6 +77,202 @@ async def get_account(conn: AsyncConnection, user_id: str) -> dict | None:
         return await cur.fetchone()
 
 
+async def lock_draft_slot(conn: AsyncConnection, user_id: str) -> dict | None:
+    """Serialize every mutation for one account and return its current slot."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select pg_advisory_xact_lock(hashtext(%s))",
+            (f"draft_slot:{user_id}",),
+        )
+        await cur.execute(
+            """
+            select user_id::text as user_id, payload, active_token::text as active_token,
+                   device_label, photos_pending, updated_at, expires_at
+            from draft_slots
+            where user_id = %s
+            for update
+            """,
+            (user_id,),
+        )
+        return await cur.fetchone()
+
+
+async def create_draft_slot(
+    conn: AsyncConnection,
+    *,
+    user_id: str,
+    payload: dict,
+    active_token: str,
+    device_label: str | None,
+    photos_pending: bool,
+) -> dict:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            insert into draft_slots
+              (user_id, payload, active_token, device_label, photos_pending, expires_at)
+            values (%s, %s, %s, %s, %s, now() + interval '7 days')
+            returning user_id::text as user_id, payload,
+                      active_token::text as active_token, device_label,
+                      photos_pending, updated_at, expires_at
+            """,
+            (user_id, Json(payload), active_token, device_label, photos_pending),
+        )
+        return await cur.fetchone()
+
+
+async def update_draft_slot(
+    conn: AsyncConnection,
+    *,
+    user_id: str,
+    payload: dict,
+    device_label: str | None,
+    photos_pending: bool,
+) -> dict:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            update draft_slots
+            set payload = %s, device_label = %s, photos_pending = %s,
+                updated_at = now(), expires_at = now() + interval '7 days'
+            where user_id = %s
+            returning user_id::text as user_id, payload,
+                      active_token::text as active_token, device_label,
+                      photos_pending, updated_at, expires_at
+            """,
+            (Json(payload), device_label, photos_pending, user_id),
+        )
+        return await cur.fetchone()
+
+
+async def takeover_draft_slot(
+    conn: AsyncConnection, user_id: str, active_token: str
+) -> dict:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            update draft_slots
+            set active_token = %s
+            where user_id = %s
+            returning user_id::text as user_id, payload,
+                      active_token::text as active_token, device_label,
+                      photos_pending, updated_at, expires_at
+            """,
+            (active_token, user_id),
+        )
+        return await cur.fetchone()
+
+
+async def delete_draft_slot(conn: AsyncConnection, user_id: str) -> None:
+    async with conn.cursor() as cur:
+        await cur.execute("delete from draft_slots where user_id = %s", (user_id,))
+
+
+async def soft_delete_unreferenced_draft_assets(
+    conn: AsyncConnection, user_id: str, asset_ids: list[str]
+) -> list[dict]:
+    """Soft-delete removed draft uploads only when no durable product/FK consumer uses them."""
+    if not asset_ids:
+        return []
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            update assets a set deleted_at = now()
+            where a.id = any(%s::uuid[]) and a.user_id = %s
+              and a.metadata->>'purpose' = 'draft_slot'
+              and not exists (select 1 from matching_items mi
+                              where mi.image_asset_id = a.id or mi.thumbnail_asset_id = a.id)
+              and not exists (select 1 from mannequin_cuts mc where mc.asset_id = a.id)
+              and not exists (select 1 from wardrobe_images wi where wi.asset_id = a.id)
+              and not exists (select 1 from exports e where e.asset_id = a.id)
+              and not exists (select 1 from projects pr where pr.cover_asset_id = a.id)
+              and not exists (select 1 from profiles pf where pf.avatar_asset_id = a.id)
+              and not exists (
+                select 1 from draft_slots ds
+                cross join lateral jsonb_array_elements(
+                  case
+                    when jsonb_typeof(
+                      (case when jsonb_typeof(ds.payload->'product') = 'object'
+                            then ds.payload->'product' else ds.payload end) -> 'colors'
+                    ) = 'array'
+                    then (case when jsonb_typeof(ds.payload->'product') = 'object'
+                               then ds.payload->'product' else ds.payload end) -> 'colors'
+                    else '[]'::jsonb
+                  end
+                ) color
+                cross join lateral jsonb_array_elements(
+                  case when jsonb_typeof(color->'images') = 'array'
+                       then color->'images' else '[]'::jsonb end
+                ) image
+                where ds.user_id = a.user_id and image->>'id' = a.id::text
+              )
+              and not exists (
+                select 1 from products prod
+                cross join lateral jsonb_array_elements(
+                  case when jsonb_typeof(prod.colors) = 'array' then prod.colors else '[]'::jsonb end
+                ) color
+                cross join lateral jsonb_array_elements(
+                  case when jsonb_typeof(color->'images') = 'array' then color->'images' else '[]'::jsonb end
+                ) image
+                where image->>'id' = a.id::text
+              )
+            returning a.id::text as id, a.r2_bucket, a.r2_key
+            """,
+            (asset_ids, user_id),
+        )
+        return await cur.fetchall()
+
+
+async def reclaim_stale_unreferenced_draft_assets(
+    conn: AsyncConnection, *, older_than_minutes: int = 60, limit: int = 200
+) -> list[dict]:
+    """Reclaim completed draft uploads that never reached a slot/product payload."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            with stale as (
+              select a.id
+              from assets a
+              where a.deleted_at is null
+                and a.metadata->>'purpose' = 'draft_slot'
+                and a.created_at < now() - (%s * interval '1 minute')
+                and not exists (
+                  select 1 from draft_slots ds
+                  cross join lateral jsonb_array_elements(
+                    case when jsonb_typeof(ds.payload->'product'->'colors') = 'array'
+                         then ds.payload->'product'->'colors' else '[]'::jsonb end
+                  ) color
+                  cross join lateral jsonb_array_elements(
+                    case when jsonb_typeof(color->'images') = 'array'
+                         then color->'images' else '[]'::jsonb end
+                  ) image
+                  where image->>'id' = a.id::text
+                )
+                and not exists (
+                  select 1 from products prod
+                  cross join lateral jsonb_array_elements(
+                    case when jsonb_typeof(prod.colors) = 'array'
+                         then prod.colors else '[]'::jsonb end
+                  ) color
+                  cross join lateral jsonb_array_elements(
+                    case when jsonb_typeof(color->'images') = 'array'
+                         then color->'images' else '[]'::jsonb end
+                  ) image
+                  where image->>'id' = a.id::text
+                )
+              order by a.created_at
+              for update skip locked
+              limit %s
+            )
+            update assets a set deleted_at = now()
+            from stale where a.id = stale.id
+            returning a.id::text as id, a.r2_bucket, a.r2_key
+            """,
+            (older_than_minutes, limit),
+        )
+        return await cur.fetchall()
+
+
 async def list_library(conn: AsyncConnection, user_id: str) -> list[dict]:
     async with conn.cursor() as cur:
         await cur.execute(
@@ -183,7 +379,7 @@ async def create_asset(
     *,
     asset_id: str,
     user_id: str,
-    project_id: str,
+    project_id: str | None,
     source: str,
     bucket: str,
     key: str,
@@ -636,10 +832,20 @@ async def list_mannequin_cuts(conn: AsyncConnection, user_id: str, project_id: s
             """
             select mc.candidate, mc.version, mc.base_fit, mc.fit_adjust,
                    mc.length_adjust, mc.match_adjust, mc.qc_scores,
-                   a.id::text as asset_id, a.r2_key
+                   a.id::text as asset_id, a.r2_key,
+                   tone.id::text as active_asset_id, tone.r2_key as active_r2_key
             from mannequin_cuts mc
             join projects pr on pr.id = mc.project_id
             join assets a on a.id = mc.asset_id
+            left join lateral (
+                select ta.id, ta.r2_key
+                from assets ta
+                where ta.project_id = mc.project_id and ta.deleted_at is null
+                  and ta.metadata->>'type' = 'mannequinToneAdjusted'
+                  and ta.metadata->>'sourceCutId' = mc.candidate || '-' || mc.version::text
+                order by ta.created_at desc
+                limit 1
+            ) tone on true
             where mc.project_id = %s and pr.user_id = %s and pr.deleted_at is null
             order by mc.candidate, mc.version
             """,
@@ -1507,6 +1713,41 @@ async def finalize_mannequin_adjust_failure(
 # ---------- 분석(AG-01) 종결 (무과금·원자·lease 펜스) ----------
 # 마네킹과 동일한 lease 펜스 패턴이되 크레딧 경로 없음(분석은 무과금 — ai_agent_modules §3).
 # clothingType 은 Product 단일 소유(계약 §3.1)라 products 에, 나머지 분석은 analyses.payload 에 쓴다.
+
+
+async def finalize_uncharged_job(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    lease_token: str,
+    status: str,
+    result: dict,
+) -> bool:
+    """무과금 잡의 종결(원자·lease 펜스). False = lease 상실 → 아무것도 쓰지 않는다.
+
+    크레딧을 전혀 건드리지 않는 잡(현재 sam_preprocess)의 공용 종결자다. 예약이 없으니
+    해제할 것도 없고, 남는 건 jobs 행 갱신과 종결 이벤트뿐이다. lease 를 확인하는 이유는
+    다른 finalize 들과 같다 — 복구 sweep 이 재클레임한 잡에 옛 워커가 뒤늦게 덮어쓰는 것을
+    막는다.
+    """
+    event = "done" if status == "done" else "error"
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
+            (job_id, lease_token),
+        )
+        if await cur.fetchone() is None:
+            return False  # lease 빼앗김 — 부수효과 0
+        await cur.execute(
+            "update jobs set status = %s, result = %s, progress = 100, "
+            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
+            (status, Json(result), job_id),
+        )
+        await cur.execute(
+            "insert into job_events (job_id, event_type, payload) values (%s, %s, %s)",
+            (job_id, event, Json(result)),
+        )
+    return True
 
 
 async def finalize_analyze_success(

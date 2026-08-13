@@ -1,18 +1,35 @@
 name: deploy-server
 
-# server/ 변경 시에만 배포. 프론트는 Vercel 담당(별개).
+# 메인 FastAPI 서비스 전용 CI/CD. SAM2 모델 서비스는 deploy-sam2.yml 이 독립 소유한다.
+# 프론트는 Vercel 담당(별개).
 on:
     push:
         branches: [main]
         paths:
-            - "server/**"
-            - "copilot/**"
+            - "server/app/**"
+            - "server/prompts/**"
+            - "server/tests/**"
+            - "server/scripts/**"
+            - "server/pyproject.toml"
+            - "server/uv.lock"
+            - "server/Dockerfile"
+            - "server/.dockerignore"
+            - "supabase/migrations/**"
+            - "copilot/api/manifest.yml"
             - ".github/workflows/deploy-server.yml"
     pull_request:
         branches: [main]
         paths:
-            - "server/**"
-            - "copilot/**"
+            - "server/app/**"
+            - "server/prompts/**"
+            - "server/tests/**"
+            - "server/scripts/**"
+            - "server/pyproject.toml"
+            - "server/uv.lock"
+            - "server/Dockerfile"
+            - "server/.dockerignore"
+            - "supabase/migrations/**"
+            - "copilot/api/manifest.yml"
             - ".github/workflows/deploy-server.yml"
     workflow_dispatch: {} # 수동 배포 버튼
 
@@ -50,9 +67,36 @@ jobs:
             - run: uv sync --frozen
             - run: uv run pytest -q
 
-    deploy:
+    # 테스트·스크립트만 바뀐 push 는 CI만 돌고 ECS를 교체하지 않는다. API 이미지가 실제로
+    # COPY하거나 배포 단계가 소비하는 입력만 여기서 배포 변경으로 판정한다.
+    changes:
         needs: test
         if: github.event_name != 'pull_request'
+        runs-on: ubuntu-latest
+        outputs:
+            api: ${{ steps.filter.outputs.api }}
+        steps:
+            - uses: actions/checkout@v5
+            - uses: dorny/paths-filter@v3
+              id: filter
+              with:
+                  filters: |
+                      api:
+                        - 'server/app/**'
+                        - 'server/prompts/**'
+                        - 'server/pyproject.toml'
+                        - 'server/uv.lock'
+                        - 'server/Dockerfile'
+                        - 'server/.dockerignore'
+                        - 'copilot/api/manifest.yml'
+                        - 'supabase/migrations/**'
+                        - '.github/workflows/deploy-server.yml'
+
+    deploy-api:
+        needs: changes
+        if: |
+            github.event_name != 'pull_request'
+            && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.api == 'true')
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v5
@@ -63,11 +107,35 @@ jobs:
                   role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
                   aws-region: ${{ env.AWS_REGION }}
 
+
             - name: Copilot CLI 설치
               run: |
                   curl -Lo /usr/local/bin/copilot \
                     https://github.com/aws/copilot-cli/releases/latest/download/copilot-linux
                   chmod +x /usr/local/bin/copilot
+
+            # DB 마이그레이션이 **가장 먼저**다. 새 job kind 는 코드(워커·라우트)와 DB
+            # 제약(jobs_kind_check) 양쪽에 있어야 동작한다. 코드가 먼저 뜨면 잡 INSERT 가
+            # CheckViolation 으로 죽는데, 그 실패는 삼켜지도록 짜여 있어서 **에러 없이
+            # 기능만 조용히 사라진다** — sam_preprocess·base_fidelity_observe 둘 다 그렇다.
+            # 순서를 코드로 못박는 이유가 그거다.
+
+            - uses: supabase/setup-cli@v2
+              with:
+                  version: 2.109.1
+                  github-token: ${{ github.token }}
+
+
+            - name: DB 마이그레이션 적용 (prod)
+              env:
+                  SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+              run: |
+                  if [ -z "$SUPABASE_DB_URL" ]; then
+                    echo "::error::SUPABASE_DB_URL 시크릿이 없습니다. 마이그레이션 없이 배포하면"
+                    echo "::error::새 job kind 가 DB 제약에 없어 해당 기능이 조용히 죽습니다."
+                    exit 1
+                  fi
+                  supabase db push --db-url "$SUPABASE_DB_URL"
 
             - name: 배포 (이미지 빌드→ECR→ECS 롤링)
               run: |
@@ -76,6 +144,7 @@ jobs:
                     --name "$COPILOT_SVC" \
                     --env "$COPILOT_ENV" \
                     --tag "$GITHUB_SHA"
+
 
             - name: 브라우저 API·R2 CORS 회귀 게이트
               shell: bash
@@ -145,6 +214,7 @@ jobs:
 
                   check_origin 'https://ai.wearless.kr'
                   check_origin 'http://localhost:5173'
+
 
             - name: 다음 배포용 Docker 레이어 캐시 갱신
               shell: bash

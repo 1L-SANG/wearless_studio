@@ -81,6 +81,43 @@ def test_public_analyze_rate_limit_returns_429(client, monkeypatch):
     assert response.json()["error"]["message"] == "잠시 후 다시 시도해주세요."
 
 
+def test_public_analyze_valid_bearer_skips_ip_rate_limit(
+    client, make_token, monkeypatch
+):
+    class DenyLimiter:
+        def allow(self, key):
+            raise AssertionError("authenticated analysis must not call the IP limiter")
+
+    async def fake_analyze(settings, source_images, **kwargs):
+        return _analysis_result()
+
+    client.app.state.public_analysis_limiter = DenyLimiter()
+    monkeypatch.setattr(public_routes, "analyze_image_bytes", fake_analyze)
+    response = client.post(
+        "/v1/public/analyze",
+        headers={"Authorization": f"Bearer {make_token()}"},
+        files=[("images", ("front.jpg", JPEG, "image/jpeg"))],
+    )
+
+    assert response.status_code == 200
+
+
+def test_public_analyze_invalid_bearer_stays_anonymous(client, monkeypatch):
+    class DenyLimiter:
+        def allow(self, key):
+            return False
+
+    client.app.state.public_analysis_limiter = DenyLimiter()
+    response = client.post(
+        "/v1/public/analyze",
+        headers={"Authorization": "Bearer invalid"},
+        files=[("images", ("front.jpg", JPEG, "image/jpeg"))],
+    )
+
+    assert response.status_code == 429
+    assert response.json()["error"]["code"] == "rate_limited"
+
+
 def test_public_analyze_accepts_25mb_and_rejects_one_byte_over(client, monkeypatch):
     async def fake_analyze(settings, source_images, **kwargs):
         return _analysis_result()

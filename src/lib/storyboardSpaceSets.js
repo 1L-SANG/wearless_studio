@@ -1,3 +1,5 @@
+import { spaceSetIdFromGroupId } from './storyboardSpaceSetCatalog.js';
+
 const defaultBlock = (item) => item;
 
 const clearLayoutRow = (block) => {
@@ -5,18 +7,15 @@ const clearLayoutRow = (block) => {
   return single;
 };
 
-const clearExample = (block) => ({
-  ...block,
-  exampleId: null,
-  exampleSelectionOrigin: null,
-  thumb: block.baseThumb || block.thumb,
-  baseThumb: null,
-});
-
-const clearSpace = (block) => {
-  const { spaceGroupId: _spaceGroupId, spaceVariation: _spaceVariation, ...single } = block;
-  return single;
-};
+export function detachSpaceMembership(block) {
+  const {
+    spaceGroupId: _spaceGroupId,
+    spaceVariation: _spaceVariation,
+    spaceSetMemberOrder: _spaceSetMemberOrder,
+    ...single
+  } = block;
+  return { ...single, refScope: 'all' };
+}
 
 function roleForSetMember(sectionRole, cutType, previousRole) {
   if (sectionRole === 'styling') {
@@ -49,6 +48,37 @@ export function groupConsecutiveSpaceRuns(items, getBlock = defaultBlock) {
     index = end;
   }
   return groups;
+}
+
+export function rekeySeparatedSpaceRuns(blocks, nextGroupId) {
+  if (!Array.isArray(blocks) || !blocks.length) return blocks;
+  const seen = new Set();
+  const replacements = new Map();
+  for (const run of groupConsecutiveSpaceRuns(blocks)) {
+    if (run.kind !== 'space') continue;
+    const originalGroupId = run.spaceGroupId;
+    if (!seen.has(originalGroupId)) {
+      seen.add(originalGroupId);
+      continue;
+    }
+    if (typeof nextGroupId !== 'function') {
+      throw new TypeError('nextGroupId is required to rekey a separated space run');
+    }
+    const setId = spaceSetIdFromGroupId(originalGroupId);
+    if (!setId) continue;
+    const replacementGroupId = nextGroupId(setId, run, originalGroupId);
+    if (spaceSetIdFromGroupId(replacementGroupId) !== setId || seen.has(replacementGroupId)) {
+      throw new Error('nextGroupId must return a unique instance id for the same space set');
+    }
+    seen.add(replacementGroupId);
+    for (let index = run.start; index < run.end; index += 1) {
+      replacements.set(index, replacementGroupId);
+    }
+  }
+  if (!replacements.size) return blocks;
+  return blocks.map((block, index) => replacements.has(index)
+    ? { ...block, spaceGroupId: replacements.get(index) }
+    : block);
 }
 
 export function nextUnusedSpaceSetMember(set, blocks) {
@@ -87,7 +117,7 @@ export function dissolveSingletonSpaceRuns(blocks) {
     if (run.items.length !== 1 || !block?.spaceGroupId) continue;
     const index = next.findIndex((candidate) => candidate.id === block.id);
     if (index < 0) continue;
-    next[index] = clearSpace(next[index]);
+    next[index] = detachSpaceMembership(next[index]);
     changed = true;
   }
   return changed ? next : blocks;
@@ -98,7 +128,7 @@ export function dissolveSpaceSet(blocks, spaceGroupId) {
   const next = blocks.map((block) => {
     if (block.spaceGroupId !== spaceGroupId) return block;
     changed = true;
-    return clearSpace(block);
+    return detachSpaceMembership(block);
   });
   return changed ? next : blocks;
 }
@@ -107,29 +137,27 @@ export function moveBlockWithSpaceMembership(
   blocks,
   blockId,
   targetIndex,
-  { targetSpaceGroupId = null, isPoseCompatible = () => true } = {},
+  { targetSpaceGroupId = null, nextGroupId = null } = {},
 ) {
   const from = blocks.findIndex((block) => block.id === blockId);
   if (from < 0) return blocks;
   const next = [...blocks];
   let [moving] = next.splice(from, 1);
-  const enteringSpace = !!targetSpaceGroupId && moving.source !== 'mine';
-  if (enteringSpace) {
-    const targetMember = next.find((block) => block.spaceGroupId === targetSpaceGroupId);
+  const staysInCurrentSpace = moving.source !== 'mine'
+    && !!moving.spaceGroupId
+    && moving.spaceGroupId === targetSpaceGroupId;
+  if (staysInCurrentSpace) {
     moving = {
       ...clearLayoutRow(moving),
-      spaceGroupId: targetSpaceGroupId,
-      spaceVariation: targetMember?.spaceVariation || 'subtle',
       refScope: 'pose',
     };
-    if (moving.exampleId && !isPoseCompatible(moving)) moving = clearExample(moving);
   } else {
-    moving = clearSpace(clearLayoutRow(moving));
+    moving = detachSpaceMembership(clearLayoutRow(moving));
   }
   const adjustedTarget = from < targetIndex ? targetIndex - 1 : targetIndex;
   next.splice(Math.max(0, Math.min(adjustedTarget, next.length)), 0, moving);
   // 남은 멤버가 1개여도 세트를 풀지 않는다 — 세트 유지는 오너 확정(2026-07-29)
-  return next;
+  return rekeySeparatedSpaceRuns(next, nextGroupId);
 }
 
 export function moveSpaceSetRun(blocks, spaceGroupId, targetIndex) {

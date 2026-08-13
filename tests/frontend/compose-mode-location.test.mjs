@@ -6,24 +6,40 @@ import {
   estimateComposeModeCredits,
   selectAnalysisComposeMode,
 } from '../../src/features/analysis/composeModeSelection.js';
+import { applyStoryboardComposeMode } from '../../src/features/storyboard/storyboardComposeMode.js';
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const analysisSource = read('../../src/features/analysis/AnalysisForm.jsx');
+const analysisStyles = read('../../src/styles/features.css');
 const selectionSource = read('../../src/features/analysis/composeModeSelection.js');
 const storyboardSource = read('../../src/features/storyboard/Storyboard.jsx');
 
-test('the analysis confirmation CTA owns catalog-backed stacked compose cards', () => {
+test('the analysis confirmation CTA owns the catalog-backed split compose menu', () => {
   const ctaSource = analysisSource.slice(
     analysisSource.indexOf('const cta ='),
     analysisSource.indexOf('if (inline)'),
   );
 
   assert.match(analysisSource, /const composeModes = catalogs\?\.composeModes \|\| \[\]/);
-  assert.match(analysisSource, /label: `\$\{mode\.label\} · \$\{mode\.count\}컷`/);
-  assert.match(ctaSource, /className="af-vol" role="radiogroup"[\s\S]*?className=\{`af-vol-card/);
-  assert.match(ctaSource, /다음 화면인 상세페이지 구성으로 이동하고[\s\S]*?composeModeCredits/);
-  assert.doesNotMatch(ctaSource, /콘티 컷 수/);
-  assert.match(analysisSource, /CREDIT_COSTS\.storyboardPerCut/);
+  assert.match(analysisSource, /selectedComposeModeLabel = selectedComposeMode[\s\S]*?selectedComposeMode\.count/);
+  assert.match(ctaSource, /className=\{`af-cta-split\$\{composeModeOpen \? ' open' : ''\}`\}/);
+  assert.match(ctaSource, /aria-haspopup="listbox" aria-expanded=\{composeModeOpen\}/);
+  assert.match(ctaSource, /role="listbox"[\s\S]*?role="option" aria-selected=\{composeMode === mode\.value\}/);
+  assert.match(ctaSource, /\{mode\.desc\} · \{mode\.count\}컷/);
+  // 열리면 '선택된' 옵션부터 포커스하고 화살표로 이동한다 (리뷰 P2 반영, 2026-08-12)
+  assert.match(analysisSource, /aria-selected'\) === 'true'\) \|\| options\(\)\[0\]\)\?\.focus\(\)/);
+  assert.match(analysisSource, /ArrowDown' && event\.key !== 'ArrowUp'/);
+  // 옵션 선택으로 닫힐 때도 트리거로 포커스 복귀 — 닫힌 aria-hidden 안에 포커스가 남지 않게
+  assert.match(analysisSource, /setComposeModeOpen\(false\);\s*\n\s*composeModeTriggerRef\.current\?\.focus\(\);\s*\n\s*changeComposeMode\(mode\.value\)/);
+  assert.match(analysisSource, /event\.key === 'Escape'[\s\S]*?composeModeTriggerRef\.current\?\.focus\(\)/);
+  assert.match(analysisSource, /document\.addEventListener\('pointerdown', closeOnOutsideClick\)/);
+  assert.doesNotMatch(analysisSource, /composeModeCredits|CREDIT_COSTS\.storyboardPerCut/);
+  assert.doesNotMatch(ctaSource, /af-vol|af-cta-note|af-cta-actions/);
+  assert.doesNotMatch(analysisStyles, /\.af-vol|\.af-cta-note|\.af-cta-actions/);
+  assert.match(analysisStyles, /\.af-compose-popover \{[\s\S]*?left: 0;[\s\S]*?bottom: calc\(100% \+ 8px\)/);
+  // 팝오버는 왼칸 위에만 머문다 — 폭 상한이 없으면 확정 버튼 위까지 뻗는다 (2026-08-12)
+  assert.match(analysisStyles, /\.af-compose-popover \{[\s\S]*?min-width: 240px; max-width: 264px/);
+  assert.match(analysisStyles, /opacity: 0; transform: translateY\(6px\); pointer-events: none/);
   assert.match(analysisSource, /await composeModeSaveRef\.current;[\s\S]*?await onNext\(\);/);
   assert.match(ctaSource, /disabled=\{composeModeSaving \|\| confirming\}[\s\S]*?onClick=\{confirmAnalysis\}/);
 });
@@ -117,41 +133,42 @@ test('compose-mode credit estimates scale both ends of the catalog count', () =>
   assert.equal(estimateComposeModeCredits('14~33', 2), '28~66');
 });
 
-test('the storyboard shows a summary and blocks applying a mode to an edited board', () => {
+test('the storyboard shows one segmented basic/extended picker and blocks changes on an edited board', () => {
   assert.doesNotMatch(storyboardSource, /ComposeModePicker/);
   assert.equal(
     existsSync(new URL('../../src/features/storyboard/ComposeModePicker.jsx', import.meta.url)),
     false,
   );
-  assert.match(
-    storyboardSource,
-    /사진 양 <strong>\{currentMode\.label\}<\/strong> · 예상 \{currentMode\.count\}컷/,
-  );
+  assert.doesNotMatch(storyboardSource, /사진 양 <strong>|예상 \{currentMode\.count\}컷|>변경<\/button>/);
+  assert.match(storyboardSource, /className="sb-compose-segment" role="group" aria-label="사진 양"/);
+  assert.match(storyboardSource, /aria-pressed=\{selected\}/);
   assert.match(storyboardSource, /직접 수정한 콘티에는 적용되지 않아요/);
-  assert.match(storyboardSource, /disabled=\{!canApply \|\| draftMode === value \|\| applying\}/);
+  assert.match(storyboardSource, /disabled=\{applying \|\| \(!selected && !canApply\)\}/);
   assert.match(storyboardSource, /isDefaultStoryboardForMode\([\s\S]*?composeModeSeed\.colors[\s\S]*?targetGenders: composeModeSeed\.targetGenders[\s\S]*?matchClothing: composeModeSeed\.matchClothing/);
-  assert.match(storyboardSource, /await setComposeMode\(nextMode\);[\s\S]*?await onComposeModeChange\(nextMode\);/);
+  assert.match(storyboardSource, /await onApply\(nextMode\)/);
+  assert.match(storyboardSource, /onApply=\{onComposeModeApply\}/);
 });
 
 const storeSource = read('../../src/store/useAppStore.js');
 
-test('guest compose picks stay local until the project gets its server identity', () => {
-  // 분석 페이지는 공개라 비로그인(projectId=null)에서도 칩이 눌린다. 가드가 없으면
-  // /v1/projects/null 로 PATCH 가 나간다 — 콘티보드(로그인 전용)에 있던 시절엔 불가능했던 경로.
+test('pre-confirmation compose picks stay local and promotion owns the first server write', () => {
+  // 분석 페이지는 공개라 로그인 여부와 무관하게 확정 전에는 PATCH를 보내지 않는다.
   const setter = storeSource.slice(
     storeSource.indexOf('setComposeMode(composeMode)'),
     storeSource.indexOf('setCopywriting'),
   );
-  assert.match(setter, /if \(!projectId\) return composeModePatchChain;/);
+  assert.match(setter, /if \(!projectId \|\| !get\(\)\.productInfoConfirmed\) return composeModePatchChain;/);
 
-  // 로그인 채택(같은 작업의 연속)이 initialFlow 스프레드로 선택을 basic 으로 되돌리면
-  // 게스트의 확장형 선택이 조용히 사라진다 — 보존 + 서버 수렴 둘 다 있어야 한다.
+  // 승격 함수가 product/analysis와 함께 composeMode를 저장하므로 adoptProject는 선택만 보존하고
+  // 별도의 중복 PATCH를 만들지 않는다.
   const adopt = storeSource.slice(
     storeSource.indexOf('adoptProject(projectId'),
     storeSource.indexOf('setResumePath'),
   );
   assert.match(adopt, /composeMode: sameWorkContinuation \? current\.composeMode/);
-  assert.match(adopt, /patchProject\(projectId, \{ composeMode: adoptedComposeMode \}\)/);
+  assert.doesNotMatch(adopt, /adoptedComposeMode/);
+  const promotion = read('../../src/lib/draftSync.js');
+  assert.match(promotion, /api\.patchProject\(projectId, \{[\s\S]*?composeMode: draft\.composeMode/);
 });
 
 test('the storyboard opens at the top of the page', () => {

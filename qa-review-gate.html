@@ -1,0 +1,22 @@
+<!doctype html>
+<!--
+  Phase 3 P0-C 9/N — 검수 게이트 브라우저 QA 하네스 (dev 전용).
+
+  vite 는 index.html 하나만 빌드 엔트리로 쓰므로 이 페이지는 `npm run dev` 에서만 뜨고
+  프로덕션 번들에는 들어가지 않는다. 실제 컴포넌트(WardrobePanel · VaryReviewModal ·
+  InfoBlockModal)와 실제 reviewGate 를 그대로 마운트한다 — 단위 테스트가 못 보는
+  렌더·z-index·focus·ESC·이미지 로드·좁은 화면을 실 DOM 에서 확인하기 위한 것이다.
+
+  외부 호출 0: 이미지는 인라인 SVG data URI, 검수 API 는 페이지 안의 fake 다.
+-->
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>QA — 검수 게이트</title>
+  </head>
+  <body>
+    <div id="qa-root"></div>
+    <script type="module" src="/qa/reviewGateHarness.jsx"></script>
+  </body>
+</html>

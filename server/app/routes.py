@@ -7,6 +7,7 @@
 import asyncio
 import hashlib
 import json
+import contextlib
 import logging
 import time
 import uuid
@@ -18,18 +19,21 @@ from psycopg import errors
 
 from . import facemarket, repo
 from .agents import (
+    color_harmony,
     content_roles,
     cut_generator,
     feature_copy,
     fit_axes,
     mannequin,
+    mannequin_base_fidelity_qc,
     product_analyst,
     space_set_assets,
     style_affinity,
 )
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
-from .services import garment_grid, input_qc, matching, retrieval
+from .services import (editor_garment_mask, garment_grid, input_qc,
+                       mannequin_tone_render, matching, retrieval)
 from .auth import require_user
 from .db import get_conn
 from .models import (
@@ -39,6 +43,7 @@ from .models import (
     CreditHistoryEntry,
     CreditSource,
     CustomMatchItemRequest,
+    DraftSlotPutRequest,
     ErrorResponse,
     JobView,
     MannequinCut,
@@ -52,6 +57,8 @@ from .models import (
     TopupPurchaseBody,
     UploadUrlRequest,
     UploadUrlResponse,
+    ToneApplyRequest,
+    ToneEditorState,
 )
 from .r2 import IMMUTABLE_CACHE, R2Client, derived_key, ext_for_mime, upload_key
 
@@ -63,6 +70,7 @@ router = APIRouter(prefix="/v1")
 # 실제 업로드는 변환 단계에서 긴 변 4000px 로 줄여 3MB 안팎이라 이 값은 상한 가드다.
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25MB
 UPLOAD_URL_TTL = 300  # presigned PUT 만료(초)
+DRAFT_SLOT_STORAGE_KEY = "draft-slot"
 
 COMMON_RESPONSES = {
     401: {"model": ErrorResponse, "description": "인증 실패 (토큰 누락, 만료 또는 위변조)"},
@@ -246,6 +254,36 @@ def _matching_item_to_api(r2: R2Client, item: dict, *, compatible: bool = True) 
     }
 
 
+def _matching_product_color(product: dict | None, analysis: dict | None = None) -> str | None:
+    """서버 소유 상품색을 매칭 랭킹용 단일 스와치로 결정한다.
+
+    기준 색 그룹(`isBase`, 레거시는 첫 그룹)의 swatchId가 정본이다. 없을 때만
+    분석의 첫 swatchSuggestions를 사용한다. 새 색 문자열은 여기서 버리지 않고
+    조화 조회부의 중립 0.5 폴백으로 보낸다.
+    """
+    colors = product.get("colors") if isinstance(product, dict) else None
+    colors = colors if isinstance(colors, list) else []
+    base = next(
+        (color for color in colors if isinstance(color, dict) and color.get("isBase")),
+        colors[0] if colors and isinstance(colors[0], dict) else None,
+    )
+    swatch_id = base.get("swatchId") if isinstance(base, dict) else None
+    if isinstance(swatch_id, str) and swatch_id.strip():
+        return swatch_id.strip()
+
+    suggestions = analysis.get("swatchSuggestions") if isinstance(analysis, dict) else None
+    suggestions = [s for s in suggestions if isinstance(s, dict)] if isinstance(suggestions, list) else []
+    # 다색 상품에서 첫 제안이 기준 색이라는 보장이 없다 — 기준 색 그룹(colorGroupId)과
+    # 연결된 제안을 먼저 찾고, 없을 때만 첫 제안으로 폴백한다(2026-08-12 리뷰 반영).
+    base_group_id = base.get("id") if isinstance(base, dict) else None
+    preferred = next(
+        (s for s in suggestions if base_group_id and s.get("colorGroupId") == base_group_id),
+        suggestions[0] if suggestions else None,
+    )
+    fallback = preferred.get("swatchId") if isinstance(preferred, dict) else None
+    return fallback.strip() if isinstance(fallback, str) and fallback.strip() else None
+
+
 def _analysis_with_added_custom(payload: dict, item: dict) -> dict:
     existing = [m for m in (payload.get("matchClothing") or []) if m.get("id") != item["id"]]
     return {**payload, "matchClothing": [{**item, "selected": False}, *existing]}
@@ -256,7 +294,7 @@ def _analysis_without_custom(payload: dict, item_id: str) -> dict:
     selected = sorted(
         (m for m in remaining if m.get("selected")),
         key=lambda m: m.get("selOrder") or 99,
-    )[:2]
+    )[:1]
     order_by_id = {m.get("id"): index for index, m in enumerate(selected, start=1)}
     normalized = []
     for item in remaining:
@@ -293,6 +331,75 @@ async def _cleanup_custom_match_r2(r2: R2Client, assets: list[dict]) -> None:
                     )
                 else:
                     await asyncio.sleep(0.25 * (attempt + 1))
+
+
+async def _cleanup_draft_slot_r2(r2: R2Client, assets: list[dict]) -> None:
+    """Best-effort R2 cleanup after the draft asset rows have been soft-deleted."""
+    for asset in assets:
+        for attempt in range(3):
+            try:
+                await asyncio.to_thread(r2.delete, asset["r2_key"])
+                break
+            except Exception:
+                if attempt == 2:
+                    logger.warning(
+                        "draft_slot_r2_cleanup_failed",
+                        extra={"asset_id": asset.get("id")},
+                        exc_info=True,
+                    )
+                else:
+                    await asyncio.sleep(0.25 * (attempt + 1))
+
+
+def _draft_slot_images(payload: dict) -> list[dict]:
+    product = payload.get("product") if isinstance(payload.get("product"), dict) else payload
+    colors = product.get("colors") if isinstance(product, dict) else None
+    if not isinstance(colors, list):
+        return []
+    return [
+        image
+        for color in colors
+        if isinstance(color, dict) and isinstance(color.get("images"), list)
+        for image in color["images"]
+        if isinstance(image, dict)
+    ]
+
+
+def _draft_slot_asset_ids(payload: dict) -> set[str]:
+    asset_ids: set[str] = set()
+    for image in _draft_slot_images(payload):
+        try:
+            asset_ids.add(str(uuid.UUID(str(image.get("id")))))
+        except (ValueError, TypeError, AttributeError):
+            continue
+    return asset_ids
+
+
+def _draft_slot_meta(row: dict) -> dict:
+    updated_at = row["updated_at"]
+    if isinstance(updated_at, datetime):
+        updated_at = updated_at.isoformat()
+    return {
+        "updatedAt": updated_at,
+        "deviceLabel": row.get("device_label"),
+        "photoCount": len(_draft_slot_images(row.get("payload") or {})),
+        "photosPending": bool(row.get("photos_pending")),
+    }
+
+
+def _draft_slot_expired(row: dict) -> bool:
+    expires_at = row.get("expires_at")
+    return isinstance(expires_at, datetime) and expires_at <= datetime.now(timezone.utc)
+
+
+async def _remove_draft_slot(
+    conn, user_id: str, row: dict, *, keep_asset_ids: set[str] | None = None
+) -> list[dict]:
+    asset_ids = _draft_slot_asset_ids(row.get("payload") or {}) - (keep_asset_ids or set())
+    await repo.delete_draft_slot(conn, user_id)
+    return await repo.soft_delete_unreferenced_draft_assets(
+        conn, user_id, sorted(asset_ids)
+    )
 
 
 def _require_bg_examples_enabled(request: Request, value) -> None:
@@ -857,6 +964,28 @@ async def analyze_product(
             payload={"mode": "analyze"}, idempotency_key=scoped_key,
             credits_reserved=0, metadata={})
         await conn.commit()
+        # 캐노니컬 컷아웃 전처리도 같이 띄운다. 분석과 독립적으로 돌고(소스 사진만 있으면 된다),
+        # 무과금이다. 여기서 거는 이유는 이 시점이 소스 사진이 확정된 첫 지점이고, 마네킹
+        # 생성이 시작되기 전에 끝나 있을 가능성이 가장 높아서다.
+        # 프로젝트당 1회 멱등(같은 키 재요청은 기존 잡에 합류) — create_job 이 원자 처리한다.
+        #
+        # **분석 커밋 뒤, 별도 트랜잭션에서, 예외를 삼키고** 건다. 한 트랜잭션에 묶었더니
+        # 전처리 잡 INSERT 가 실패하는 순간 분석 잡까지 롤백돼 POST /analyze 가 통째로 500 이
+        # 됐다(2026-08-12 로컬 QA — jobs_kind_check 에 sam_preprocess 가 없던 시점). 보조
+        # 인프라가 본 기능을 죽이지 않는다는 건 주석이 아니라 트랜잭션 경계로 지켜야 한다.
+        try:
+            await repo.create_job(
+                conn, user_id=user_id, project_id=project_id, kind="sam_preprocess",
+                payload={"mode": "canonical_cutout"},
+                idempotency_key=f"{project_id}:sam_preprocess",
+                credits_reserved=0, metadata={})
+            await conn.commit()
+        except Exception:  # noqa: BLE001 - 전처리 큐잉 실패가 분석을 막지 않는다
+            # 정리 코드가 다시 터져서 500 이 되면 위 보장이 무의미하다. rollback 실패까지 삼킨다.
+            with contextlib.suppress(Exception):
+                await conn.rollback()
+            logger.warning("sam_preprocess enqueue failed for project %s", project_id,
+                           exc_info=True)
     _wake_dispatcher(request)
     return JSONResponse(status_code=202, content={"jobId": job["id"]})
 
@@ -931,23 +1060,58 @@ async def match_candidates(
             "code": "r2_public_base_missing",
             "message": "이미지 서버 설정이 누락됐어요. 잠시 후 다시 시도해 주세요."})
     r2 = _r2(request)
+    settings = request.app.state.settings
+    product_tags = [t.strip() for part in styleTags for t in part.split(",") if t.strip()]
+    # 색은 태그 랭킹 경로(recommend_v1)에서만 쓰인다 — 그 경로가 아닐 때(off·태그 없음·
+    # 가중치 0·보완타입 없음)는 상품/분석 조회를 아예 하지 않아 왕복을 늘리지 않는다(리뷰 반영).
+    color_needed = (
+        matching.complementary_type(clothingType) is not None
+        and settings.retrieval_matching == "tags"
+        and bool(product_tags)
+        and settings.matching_color_weight > 0
+    )
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
         items = await repo.list_active_matching_items(conn, user_id, project_id)
+        # 색은 상품/분석에 이미 저장된 구조화 값만 읽는다. 요청 중 모델 호출 없음.
+        # 후보 조회를 먼저 끝내 두어 부가적인 상품색 조회가 실패해도 추천 자체는 살린다.
+        product_color = None
+        if color_needed:
+            try:
+                product = await repo.get_product(conn, project_id)
+            except Exception:  # noqa: BLE001 - 색 조회 실패는 기존 스타일 랭킹으로 조용히 폴백
+                logger.warning("matching product color lookup failed", exc_info=True)
+            else:
+                product_color = _matching_product_color(product)
+                if product_color is None:
+                    try:
+                        analysis = await repo.get_analysis(conn, project_id)
+                    except Exception:  # noqa: BLE001 - 분석 폴백도 추천 API를 막지 않는다
+                        logger.warning("matching analysis color fallback failed", exc_info=True)
+                    else:
+                        product_color = _matching_product_color(product, analysis)
     genders = (
         ["women"]
         if clothingType == "dress"
         else [g.strip() for part in gender for g in part.split(",") if g.strip()]
     )
-    product_tags = [t.strip() for part in styleTags for t in part.split(",") if t.strip()]
     custom_items = [item for item in items if item.get("is_custom")]
     curated_items = [item for item in items if not item.get("is_custom")]
     if matching.complementary_type(clothingType) is None:
         return JSONResponse([])
     if request.app.state.settings.retrieval_matching == "tags" and product_tags:
         ranked = retrieval.recommend_v1(
-            curated_items, clothingType, genders, product_tags, style_affinity.affinity_map(), limit)
+            curated_items,
+            clothingType,
+            genders,
+            product_tags,
+            style_affinity.affinity_map(),
+            limit,
+            product_color=product_color,
+            harmony=color_harmony.harmony_map(),
+            color_weight=request.app.state.settings.matching_color_weight,
+        )
     else:
         ranked = matching.recommend(curated_items, clothingType, genders, limit)
     expected_type = matching.complementary_type(clothingType)
@@ -1140,6 +1304,218 @@ async def remove_custom_match_item(
     return Response(status_code=204)
 
 
+# ---------- 숨은 임시저장 슬롯 ----------
+
+
+@router.get(
+    "/draft-slot",
+    responses={**COMMON_RESPONSES, 204: {"description": "저장된 슬롯 없음"}},
+    tags=["Draft Slot"],
+    summary="숨은 임시저장 슬롯 메타 조회",
+)
+async def get_draft_slot(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    full: bool = Query(False),
+    x_draft_token: str | None = Header(default=None, alias="X-Draft-Token"),
+    user_id: str = Depends(require_user),
+):
+    cleanup_assets: list[dict] = []
+    async with get_conn(request) as conn:
+        row = await repo.lock_draft_slot(conn, user_id)
+        if row and _draft_slot_expired(row):
+            cleanup_assets = await _remove_draft_slot(conn, user_id, row)
+            await conn.commit()
+            row = None
+    if cleanup_assets:
+        background_tasks.add_task(_cleanup_draft_slot_r2, _r2(request), cleanup_assets)
+    if row is None:
+        return Response(status_code=204)
+    result = {
+        "meta": _draft_slot_meta(row),
+        "holdsToken": bool(x_draft_token) and x_draft_token == row["active_token"],
+    }
+    if full:
+        result["payload"] = row["payload"]
+    return result
+
+
+@router.put(
+    "/draft-slot",
+    responses={**COMMON_RESPONSES, 409: {"model": ErrorResponse}},
+    tags=["Draft Slot"],
+    summary="숨은 임시저장 슬롯 생성 또는 갱신",
+)
+async def put_draft_slot(
+    request: Request,
+    body: DraftSlotPutRequest,
+    background_tasks: BackgroundTasks,
+    user_id: str = Depends(require_user),
+):
+    cleanup_assets: list[dict] = []
+    incoming_asset_ids = _draft_slot_asset_ids(body.payload)
+    token = str(body.token) if body.token is not None else None
+    consumed_token_conflict = False
+    async with get_conn(request) as conn:
+        row = await repo.lock_draft_slot(conn, user_id)
+        if row and _draft_slot_expired(row):
+            cleanup_assets = await _remove_draft_slot(
+                conn, user_id, row, keep_asset_ids=incoming_asset_ids
+            )
+            row = None
+
+        if row is None and token is not None:
+            # 삭제·만료로 소비된 작업권은 다시 슬롯을 만들 수 없다. 새 슬롯 생성은 token=null인
+            # 최초 저장만 허용한다(오래된 PUT이 삭제 뒤 도착해 슬롯을 부활시키는 레이스 차단).
+            # 만료 슬롯을 같은 트랜잭션에서 발견한 경우에는 삭제를 먼저 커밋한 뒤 409를 반환한다.
+            await conn.commit()
+            consumed_token_conflict = True
+        elif row is None:
+            token = str(uuid.uuid4())
+            saved = await repo.create_draft_slot(
+                conn,
+                user_id=user_id,
+                payload=body.payload,
+                active_token=token,
+                device_label=body.device_label,
+                photos_pending=body.photos_pending,
+            )
+            status_code = 201
+        else:
+            if token != row["active_token"]:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "token_mismatch",
+                        "message": "다른 기기에서 이어서 작업을 시작했어요.",
+                        "meta": _draft_slot_meta(row),
+                    },
+                )
+            removed_ids = _draft_slot_asset_ids(row.get("payload") or {}) - incoming_asset_ids
+            saved = await repo.update_draft_slot(
+                conn,
+                user_id=user_id,
+                payload=body.payload,
+                device_label=body.device_label,
+                photos_pending=body.photos_pending,
+            )
+            cleanup_assets.extend(await repo.soft_delete_unreferenced_draft_assets(
+                conn, user_id, sorted(removed_ids)
+            ))
+            status_code = 200
+        if not consumed_token_conflict:
+            await conn.commit()
+    if cleanup_assets:
+        background_tasks.add_task(_cleanup_draft_slot_r2, _r2(request), cleanup_assets)
+    if consumed_token_conflict:
+        return JSONResponse(
+            status_code=409,
+            content={"error": {
+                "code": "token_mismatch",
+                "message": "이 기기의 임시저장 작업권이 만료됐어요.",
+                "meta": None,
+            }},
+        )
+    return JSONResponse(
+        status_code=status_code,
+        content={"token": saved["active_token"], "meta": _draft_slot_meta(saved)},
+    )
+
+
+@router.post(
+    "/draft-slot:takeover",
+    responses={**COMMON_RESPONSES, 204: {"description": "저장된 슬롯 없음"}},
+    tags=["Draft Slot"],
+    summary="숨은 임시저장 슬롯 작업권 이어받기",
+)
+async def takeover_draft_slot(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    user_id: str = Depends(require_user),
+):
+    cleanup_assets: list[dict] = []
+    async with get_conn(request) as conn:
+        row = await repo.lock_draft_slot(conn, user_id)
+        if row and _draft_slot_expired(row):
+            cleanup_assets = await _remove_draft_slot(conn, user_id, row)
+            await conn.commit()
+            row = None
+        if row:
+            token = str(uuid.uuid4())
+            row = await repo.takeover_draft_slot(conn, user_id, token)
+            await conn.commit()
+    if cleanup_assets:
+        background_tasks.add_task(_cleanup_draft_slot_r2, _r2(request), cleanup_assets)
+    if row is None:
+        return Response(status_code=204)
+    return {"token": row["active_token"], "payload": row["payload"], "meta": _draft_slot_meta(row)}
+
+
+@router.delete(
+    "/draft-slot",
+    status_code=204,
+    responses={
+        **COMMON_RESPONSES,
+        204: {"description": "삭제 완료 또는 이미 없음"},
+        409: {"model": ErrorResponse},
+    },
+    tags=["Draft Slot"],
+    summary="숨은 임시저장 슬롯 삭제",
+)
+async def delete_draft_slot(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    x_draft_token: str | None = Header(default=None, alias="X-Draft-Token"),
+    user_id: str = Depends(require_user),
+):
+    cleanup_assets: list[dict] = []
+    async with get_conn(request) as conn:
+        row = await repo.lock_draft_slot(conn, user_id)
+        if row:
+            if x_draft_token != row["active_token"]:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "token_mismatch",
+                        "message": "다른 기기에서 이어서 작업을 시작했어요.",
+                        "meta": _draft_slot_meta(row),
+                    },
+                )
+            # advisory/row lock을 잡은 이 트랜잭션 안에서 active token을 소비한다.
+            cleanup_assets = await _remove_draft_slot(conn, user_id, row)
+        await conn.commit()
+    if cleanup_assets:
+        background_tasks.add_task(_cleanup_draft_slot_r2, _r2(request), cleanup_assets)
+    return Response(status_code=204)
+
+
+@router.delete(
+    "/draft-slot/assets/{asset_id}",
+    status_code=204,
+    responses={**COMMON_RESPONSES, 204: {"description": "미참조 임시 자산 폐기 완료"}},
+    tags=["Draft Slot"],
+    summary="슬롯에 반영되지 않은 임시 사진 폐기",
+)
+async def discard_draft_slot_asset(
+    request: Request,
+    asset_id: str,
+    background_tasks: BackgroundTasks,
+    user_id: str = Depends(require_user),
+):
+    try:
+        normalized_id = str(uuid.UUID(asset_id))
+    except (ValueError, TypeError):
+        return Response(status_code=204)
+    async with get_conn(request) as conn:
+        cleanup_assets = await repo.soft_delete_unreferenced_draft_assets(
+            conn, user_id, [normalized_id]
+        )
+        await conn.commit()
+    if cleanup_assets:
+        background_tasks.add_task(_cleanup_draft_slot_r2, _r2(request), cleanup_assets)
+    return Response(status_code=204)
+
+
 # ---------- 자산 업로드 (§3 presigned + finalize) ----------
 
 
@@ -1167,13 +1543,15 @@ async def create_upload_url(
     if body.size <= 0 or body.size > MAX_UPLOAD_BYTES:
         raise _bad_request("file_too_large", "파일 크기가 허용 범위를 벗어났습니다.")
 
-    # 프로젝트 소유권 확인 — 타인 프로젝트 경로로 업로드 URL 발급 차단
-    async with get_conn(request) as conn:
-        if await repo.get_project(conn, user_id, body.project_id) is None:
-            raise _not_found()
+    # draft_slot은 프로젝트 생성 전 백업이므로 project_id 없이 계정 전용 경로를 쓴다.
+    if body.purpose != "draft_slot":
+        async with get_conn(request) as conn:
+            if await repo.get_project(conn, user_id, body.project_id) is None:
+                raise _not_found()
 
     asset_id = str(uuid.uuid4())
-    key = upload_key(user_id, body.project_id, asset_id, ext)
+    storage_scope = DRAFT_SLOT_STORAGE_KEY if body.purpose == "draft_slot" else body.project_id
+    key = upload_key(user_id, storage_scope, asset_id, ext)
     upload_url = _r2(request).presigned_put(key, body.mime)  # 서명만 — 블로킹 아님
     return {
         "assetId": asset_id,
@@ -1207,12 +1585,14 @@ async def complete_upload(
     if ext is None:
         raise _bad_request("unsupported_type", "지원하지 않는 이미지 형식입니다.")
 
-    async with get_conn(request) as conn:
-        if await repo.get_project(conn, user_id, body.project_id) is None:
-            raise _not_found()
+    if body.purpose != "draft_slot":
+        async with get_conn(request) as conn:
+            if await repo.get_project(conn, user_id, body.project_id) is None:
+                raise _not_found()
 
     # 키는 클라가 아니라 서버가 (user_id, projectId, assetId, ext)로 재유도 — 위변조 차단.
-    key = upload_key(user_id, body.project_id, asset_id, ext)
+    storage_scope = DRAFT_SLOT_STORAGE_KEY if body.purpose == "draft_slot" else body.project_id
+    key = upload_key(user_id, storage_scope, asset_id, ext)
     r2 = _r2(request)
     meta = await asyncio.to_thread(r2.head, key)  # 네트워크 → 스레드 격리 (§5)
     if meta is None:
@@ -1246,7 +1626,7 @@ async def complete_upload(
             conn,
             asset_id=asset_id,
             user_id=user_id,
-            project_id=body.project_id,
+            project_id=None if body.purpose == "draft_slot" else body.project_id,
             source="upload",
             bucket=request.app.state.settings.r2_bucket,
             key=key,
@@ -1270,9 +1650,10 @@ async def complete_upload(
 def _cut_to_api(c: dict) -> dict:
     """mannequin_cuts row → MannequinCut. src=안정 앱 URL `/v1/assets/{id}/file` (만료 없음, §3).
     finalize_mannequin_success가 만드는 result/SSE done의 shape와 동일하게 유지."""
+    display_asset_id = c.get("active_asset_id") or c["asset_id"]
     return {
         "id": f"{c['candidate']}-{c['version']}",
-        "src": f"/v1/assets/{c['asset_id']}/file",
+        "src": f"/v1/assets/{display_asset_id}/file",
         "candidate": c["candidate"],
         "version": c["version"],
         "baseFit": c["base_fit"],
@@ -1376,6 +1757,210 @@ async def get_mannequins(
     return [_cut_to_api(c) for c in cuts]
 
 
+# ---------- 톤 에디터 (색감·밝기) ----------
+#
+# 마스크는 생성 직후 비동기로 준비된다. 여기서는 **읽기와 붙이기만** 한다 — SAM 호출도,
+# 이미지 생성도, 크레딧 이동도 없다.
+
+
+def _tone_editor_enabled(request: Request) -> bool:
+    return getattr(request.app.state.settings, "mannequin_tone_editor", "off") == "on"
+
+
+async def _tone_state(conn, r2, *, user_id: str, project_id: str, cut_id: str) -> dict:
+    """컷 하나의 톤 에디터 상태. 마스크가 없으면 processing — 오류가 아니다."""
+    cut = await repo.get_mannequin_cut_asset(conn, user_id, project_id, cut_id)
+    if cut is None:
+        raise _not_found()
+    source_asset_id = str(cut.get("id") or "")
+    mask = await editor_garment_mask.find_for_cut(conn, project_id=project_id, cut_id=cut_id)
+    render = await mannequin_tone_render.active_for_cut(
+        conn, project_id=project_id, cut_id=cut_id)
+    meta = (render or {}).get("metadata") or {}
+    mask_meta = (mask or {}).get("metadata") or {}
+    return {
+        "cutId": cut_id,
+        "status": "ready" if mask else "processing",
+        "maskAssetId": (mask or {}).get("id"),
+        "maskAlgorithmVersion": mask_meta.get("algorithmVersion"),
+        "sourceAssetId": source_asset_id,
+        "adjustment": {"saturation": int(meta.get("saturation") or 0),
+                       "exposure": int(meta.get("exposure") or 0)},
+        "renderAssetId": (render or {}).get("id"),
+    }
+
+
+async def _enqueue_missing_tone_mask(conn, *, user_id: str, project_id: str,
+                                     cut_id: str, state: dict) -> bool:
+    """플래그를 켜기 전에 만들어진 컷의 마스크를 첫 조회에서 무과금으로 준비한다.
+
+    생성 직후 큐잉과 같은 멱등키를 써서 새 컷·기존 컷·중복 폴링이 한 잡으로 합류한다.
+    보조 마스크 큐 실패가 컷 조회를 500으로 만들면 안 되므로 실패는 rollback 후 삼킨다.
+    """
+    if state.get("status") != "processing":
+        return False
+    try:
+        _job, created = await repo.create_job(
+            conn, user_id=user_id, project_id=project_id,
+            kind="editor_garment_mask", payload={"cutId": cut_id},
+            idempotency_key=(
+                f"{project_id}:editor_garment_mask:{cut_id}:"
+                f"{editor_garment_mask.ALGORITHM_VERSION}"
+            ),
+            credits_reserved=0, metadata={})
+        await conn.commit()
+        return created
+    except Exception:  # noqa: BLE001 - 톤 마스크 실패가 기존 컷 조회를 막지 않는다
+        with contextlib.suppress(Exception):
+            await conn.rollback()
+        logger.warning("tone mask lazy enqueue failed project=%s cut=%s",
+                       project_id, cut_id, exc_info=True)
+        return False
+
+
+@router.get(
+    "/projects/{project_id}/mannequins/{cut_id}/tone-editor",
+    response_model=ToneEditorState,
+    responses={**COMMON_RESPONSES},
+    tags=["Mannequins (AI)"],
+    summary="톤 에디터 상태 조회",
+)
+async def get_tone_editor(request: Request, project_id: str, cut_id: str,
+                          user_id: str = Depends(require_user)):
+    """색감·밝기 조정이 가능한지와, 저장된 조정값을 돌려준다.
+
+    - `processing`: 마스크 전처리가 아직 안 끝났다. 다른 기능은 그대로 쓸 수 있다.
+    - `ready`: 슬라이더를 열어도 된다.
+    - `disabled`: 기능 플래그가 꺼져 있다.
+    """
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        if not _tone_editor_enabled(request):
+            return {"cutId": cut_id, "status": "disabled"}
+        state = await _tone_state(conn, _r2(request), user_id=user_id,
+                                  project_id=project_id, cut_id=cut_id)
+        created = await _enqueue_missing_tone_mask(
+            conn, user_id=user_id, project_id=project_id, cut_id=cut_id, state=state)
+    if created:
+        _wake_dispatcher(request)
+    return state
+
+
+async def _tone_bytes(request: Request, project_id: str, cut_id: str, user_id: str,
+                      which: str) -> Response:
+    """편집에 필요한 픽셀을 **API 가 직접** 실어 보낸다 (302 리다이렉트가 아니라).
+
+    `/assets/{id}/file` 은 R2 공개 도메인으로 302 를 준다. 브라우저는 그 응답의 CORS 헤더를
+    R2 쪽에서 받게 되는데, 캔버스로 픽셀을 **읽으려면**(getImageData) 그쪽이 반드시
+    Access-Control-Allow-Origin 을 줘야 한다. 인프라를 바꾸지 않고 그 조건을 만족시키는
+    가장 작은 방법이 이 라우트다 — FastAPI 의 CORS 설정이 그대로 적용된다.
+
+    에디터를 열 때 원본 1장 + 마스크 1장, 슬라이더를 움직이는 동안은 0장이다.
+    """
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        cut = await repo.get_mannequin_cut_asset(conn, user_id, project_id, cut_id)
+        if cut is None or not cut.get("r2_key"):
+            raise _not_found()
+        if which == "source":
+            key, mime = cut["r2_key"], cut.get("mime_type") or "image/png"
+        else:
+            mask = await editor_garment_mask.find_for_cut(
+                conn, project_id=project_id, cut_id=cut_id)
+            if mask is None or not mask.get("r2_key"):
+                raise _not_found()
+            key, mime = mask["r2_key"], "image/png"
+    try:
+        data = await asyncio.to_thread(_r2(request).get_bytes, key)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail={
+            "code": "asset_unavailable",
+            "message": "이미지를 불러오지 못했어요. 잠시 후 다시 시도해 주세요."}) from exc
+    return Response(content=data, media_type=mime, headers={"Cache-Control": IMMUTABLE_CACHE})
+
+
+@router.get(
+    "/projects/{project_id}/mannequins/{cut_id}/tone-editor/source",
+    responses={**COMMON_RESPONSES},
+    tags=["Mannequins (AI)"],
+    summary="톤 에디터 원본 픽셀 (CORS 안전)",
+)
+async def get_tone_editor_source(request: Request, project_id: str, cut_id: str,
+                                 user_id: str = Depends(require_user)):
+    return await _tone_bytes(request, project_id, cut_id, user_id, "source")
+
+
+@router.get(
+    "/projects/{project_id}/mannequins/{cut_id}/tone-editor/mask",
+    responses={**COMMON_RESPONSES},
+    tags=["Mannequins (AI)"],
+    summary="톤 에디터 의류 마스크 (CORS 안전)",
+)
+async def get_tone_editor_mask(request: Request, project_id: str, cut_id: str,
+                               user_id: str = Depends(require_user)):
+    return await _tone_bytes(request, project_id, cut_id, user_id, "mask")
+
+
+@router.post(
+    "/projects/{project_id}/mannequins/{cut_id}/tone-editor:apply",
+    response_model=ToneEditorState,
+    responses={**COMMON_RESPONSES, 400: {"model": ErrorResponse}},
+    tags=["Mannequins (AI)"],
+    summary="톤 조정 적용",
+)
+async def apply_tone_editor(request: Request, project_id: str, cut_id: str,
+                            body: ToneApplyRequest, user_id: str = Depends(require_user)):
+    """클라이언트가 원본 해상도로 렌더한 조정본을 이 컷에 붙인다.
+
+    원본 컷은 건드리지 않는다. 조정본은 **별도 파생 자산**이고, 다시 편집할 때는 이 PNG 가
+    아니라 원본 + 저장된 파라미터로 재구성한다(반복 편집 시 열화 방지).
+
+    조정값이 0/0 이면 붙이지 않고 기존 조정본을 내린다 — 그게 곧 "초기화"다.
+    """
+    if not _tone_editor_enabled(request):
+        raise _bad_request("tone_editor_disabled", "지금은 색감 조정을 쓸 수 없어요.")
+    saturation, exposure = mannequin_tone_render.clamp_params(body.saturation, body.exposure)
+
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        cut = await repo.get_mannequin_cut_asset(conn, user_id, project_id, cut_id)
+        if cut is None:
+            raise _not_found()
+        mask = await editor_garment_mask.find_for_cut(
+            conn, project_id=project_id, cut_id=cut_id)
+        if mask is None:
+            raise _bad_request("mask_not_ready", "색감 조정 준비가 아직 끝나지 않았어요.")
+
+        if mannequin_tone_render.is_neutral(saturation, exposure):
+            await mannequin_tone_render.clear_for_cut(
+                conn, project_id=project_id, cut_id=cut_id)
+            await conn.commit()
+            return await _tone_state(conn, _r2(request), user_id=user_id,
+                                     project_id=project_id, cut_id=cut_id)
+
+        # 올라온 자산이 **이 사용자·이 프로젝트**의 것인지 확인한다. 메타데이터의 주장만 믿고
+        # 다른 프로젝트의 이미지를 결과로 붙이는 일이 없어야 한다.
+        rendered = await repo.get_asset_for_user(conn, user_id, str(body.asset_id))
+        if rendered is None or str(rendered.get("project_id") or project_id) != project_id:
+            raise _not_found()
+
+        await mannequin_tone_render.clear_for_cut(
+            conn, project_id=project_id, cut_id=cut_id)
+        await mannequin_tone_render.record(
+            conn, user_id=user_id, project_id=project_id, asset_id=str(body.asset_id),
+            cut_id=cut_id, source_asset_id=str(cut.get("id") or ""),
+            source_hash=(mask.get("metadata") or {}).get("sourceHash"),
+            mask_asset_id=mask.get("id"),
+            mask_algorithm_version=(mask.get("metadata") or {}).get("algorithmVersion"),
+            saturation=saturation, exposure=exposure)
+        await conn.commit()
+        return await _tone_state(conn, _r2(request), user_id=user_id,
+                                 project_id=project_id, cut_id=cut_id)
+
+
 @router.post(
     "/projects/{project_id}/mannequins:cancel",
     responses={**COMMON_RESPONSES},
@@ -1430,6 +2015,42 @@ async def adjust_mannequin(
         status_code=410,
         detail={"code": "deprecated_endpoint",
                 "message": "마네킹 조정은 종료된 기능이에요. 핏 수정 후 재생성을 이용해 주세요."})
+
+
+async def _enqueue_base_fidelity_observation(conn, *, user_id, project_id):
+    """거부된 컷의 베이스 충실도 관측 잡을 건다 (무과금·이미지 생성 없음).
+
+    **재생성을 절대 막지 않는다.** 판정은 6~17초가 걸리므로 요청 경로에서 돌리지 않고, 잡 하나로
+    떼어 비동기로 보낸다. 큐잉 자체가 실패해도 삼킨다 — 관측 때문에 셀러의 재생성이 실패하면
+    본말전도다(2026-08-12 sam_preprocess 에서 같은 실수를 이미 한 번 했다).
+
+    멱등키에 거부된 컷 id 와 판정기 버전을 넣는다. 같은 컷을 같은 판정기로 두 번 보는 것은
+    표본이 아니라 중복이고, 판정기가 바뀌면 다시 볼 가치가 있다.
+    """
+    try:
+        # 거부된 컷의 신원을 **여기서** 붙잡는다. 재생성 잡은 방금 큐에 들어갔을 뿐이라 아직
+        # 새 컷이 없고, 지금의 "선택된 또는 최신 컷"이 곧 셀러가 거부한 그 컷이다.
+        #
+        # 커밋 **뒤**에 조회하는 이유: 같은 트랜잭션 안에서 돌렸더니 조회가 실패하는 순간
+        # 재생성 요청이 통째로 500 이 됐다(2026-08-12 테스트에서 검출). 관측을 위해 본
+        # 기능을 위험에 빠뜨리지 않는다.
+        rejected = await repo.get_mannequin_edit_parent(conn, user_id, project_id)
+        if not rejected or not rejected.get("id"):
+            return  # 거부할 이전 컷이 없다(첫 생성 재시도 등) — 관측 대상 아님
+        cut_id = rejected["id"]
+        await repo.create_job(
+            conn, user_id=user_id, project_id=project_id, kind="base_fidelity_observe",
+            payload={"rejectedCutId": cut_id,
+                     "cutMetadata": rejected.get("generation_metadata")},
+            idempotency_key=(f"{project_id}:base_fidelity_observe:{cut_id}:"
+                             f"{mannequin_base_fidelity_qc.QC_VERSION}"),
+            credits_reserved=0, metadata={})
+        await conn.commit()
+    except Exception:  # noqa: BLE001 - 관측 큐잉 실패가 재생성을 막지 않는다
+        with contextlib.suppress(Exception):
+            await conn.rollback()
+        logger.warning("base fidelity observation enqueue failed for project %s",
+                       project_id, exc_info=True)
 
 
 @router.post(
@@ -1505,6 +2126,9 @@ async def regenerate_mannequins(
                     analysis["fitProfile"] = fit_profile
                     await repo.save_analysis(conn, project_id, analysis)
         await conn.commit()
+        if created:
+            await _enqueue_base_fidelity_observation(
+                conn, user_id=user_id, project_id=project_id)
     _wake_dispatcher(request)
     return JSONResponse(status_code=202, content={"jobId": job["id"]})
 

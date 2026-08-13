@@ -22,6 +22,12 @@ class Settings:
     # FaceMarket 얼굴 라이선스 = 생체 PII → 공개 도메인 미연결 전용 비공개 버킷.
     # 미설정이면 메인 버킷 폴백(개발). 게이트 라우트가 바이트 스트림 → public_url 미사용.
     r2_face_bucket: str | None = None
+    # 내부 SAM2 세그멘테이션 서비스. 미설정이면 캐노니컬 전처리는 그냥 비활성 —
+    # 없다고 업로드·분석·생성이 막히면 안 되는 보조 인프라다.
+    sam_service_url: str | None = None
+    sam_internal_token: str | None = None
+    # Front+Back 실측 ~49s(warm, x86_64 Fargate). 90s 는 그 위의 여유다.
+    sam_request_timeout_s: float = 90.0
     # 생성예시 레지스트리의 상대 URL 기준. prod 상대경로는 명시 필수, dev만 dummy 기본값 허용.
     example_asset_base_url: str | None = None
     # 배경-only 생성예시는 파일럿 실측 성공률이 안정화될 때까지 명시적 opt-in에서만 허용.
@@ -67,7 +73,10 @@ class Settings:
     mannequin_image_size: str = "1K"  # 1K | 2K | 4K (2K 서버경로 저하 시 1K)
     # 전신 세로 고정 → 컷 간 비율 일관 (gemini-3-pro-image 지원: 16:9·9:16·1:1·5:4·4:5·3:2·2:3)
     mannequin_aspect_ratio: str = "2:3"
-    mannequin_max_attempts: int = 2  # QC 게이팅 시 재시도 상한 (shadow면 실질 1회)
+    #: 일반 generation/QC 호출 총 상한 — 최초 생성 포함 2회 고정(최초 + 재시도 1회).
+    #: untuck 은 이 예산 밖의 전용 post-pass 슬롯 1회다(2026-08-12 분리 — 공유 시절
+    #: attempt 소진 잡이 tuck 교정을 못 받았다). 3·5 등으로 올리지 않는다.
+    mannequin_max_attempts: int = 2
     # 상세페이지 컷 동시 생성 상한. 0 = 제한 없음(콘티 컷 수만큼 동시 — 13컷이면 13개).
     # 구 상수 3은 429 실측이 아니라 보수적 추정이었다(2026-08-03 오너 결정: 전부 병렬 +
     # 제출 간격으로 버스트 완화 + 429 백오프 재시도가 안전망). 문제 시 env 로 되돌린다.
@@ -118,6 +127,16 @@ class Settings:
     # off | shadow(판정·이벤트만) | enforce(편집 재시도 발화). enforce는 코드 레벨 가드
     # (_MANNEQUIN_AXIS_QC_ENFORCEMENT_READY)가 풀리기 전까지 shadow로 강등(G9 규율).
     mannequin_axis_qc: str = "off"
+    # 베이스 마네킹 대비 포즈·프레임 이탈 + 착장 형상 중복/돌출 판정 (off|shadow|enforce).
+    # 기본 off — 관측 데이터가 쌓이기 전에는 어떤 환경에서도 조용히 켜지지 않아야 한다.
+    mannequin_base_fidelity_qc: str = "off"
+    # 셀러가 컷을 거부하고 재생성할 때, **거부된 컷**만 골라 베이스 충실도 관측 잡을 띄운다
+    # (on|off, 기본 off). 위 플래그와 분리한 이유: 저건 생성 경로 전체에 판정을 붙이는
+    # 스위치고, 이건 오류 표본만 모으는 스위치다. 하나로 묶으면 표본을 모으려는 순간
+    # 전 생성에 6~17초가 붙는다.
+    mannequin_base_fidelity_observe_regenerations: str = "off"
+    #: 톤 에디터(색감·밝기). off = 마스크 전처리도, 에디터 API 도 열리지 않는다.
+    mannequin_tone_editor: str = "off"
     mannequin_prompt_file: str | None = None  # 없으면 server/prompts/mannequin_generate_v1.txt
     mannequin_prompt_version: str = "v1"
     # 여성 기본 가슴 볼륨 2패스 (2026-07-30 스파이크). 생성된 컷에 "가슴만 바꿔라"를 단독 과제로
@@ -146,6 +165,8 @@ class Settings:
     # ---- 검색 증강 (retrieval_upgrade_prd) — 결정적 스택 ----
     # 벡터/임베딩(vector·refimages)은 보류(ADR D2) — 재진입 시 flag·enum·모델설정 함께 복원.
     retrieval_matching: str = "tags"  # off | tags (styleTags 친화도 v1)
+    # 스타일 정규화 점수와 색 조화 점수의 결합 가중치. 0 = 색 랭킹 즉시 롤백.
+    matching_color_weight: float = 0.3
     retrieval_knowledge: str = "off"  # off | static (정적 지식 블록)
     # ---- Phase 3 재진입(ADR D2 해제, 2026-07-22): 레퍼런스 컷 검색 → 마네킹 STYLE REFERENCE 첨부 ----
     # off면 기존 생성 경로 무변화(행위 변화 0). 임베딩은 자체 호스팅 로컬 모델(ADR D2 v1.3),
@@ -276,6 +297,9 @@ def load_settings() -> Settings:
         r2_endpoint=(os.getenv("R2_ENDPOINT") or "").rstrip("/") or None,
         r2_public_base=(os.getenv("R2_PUBLIC_BASE") or "").rstrip("/") or None,
         r2_face_bucket=os.getenv("R2_FACE_BUCKET") or None,
+        sam_service_url=(os.getenv("SAM_SERVICE_URL") or "").rstrip("/") or None,
+        sam_internal_token=os.getenv("SAM_INTERNAL_TOKEN") or None,
+        sam_request_timeout_s=float(os.getenv("SAM_REQUEST_TIMEOUT_S") or 90.0),
         example_asset_base_url=(os.getenv("EXAMPLE_ASSET_BASE_URL") or "").rstrip("/") or None,
         genexample_bg_enabled=(
             os.getenv("GENEXAMPLE_BG_ENABLED", "false").lower() == "true"
@@ -321,6 +345,7 @@ def load_settings() -> Settings:
         credit_cost_storyboard_per_cut=int(os.getenv("CREDIT_COST_STORYBOARD_PER_CUT", "1")),
         credit_cost_editor_image=int(os.getenv("CREDIT_COST_EDITOR_IMAGE", "1")),
         retrieval_matching=_flag("RETRIEVAL_MATCHING", "tags", {"off", "tags"}),
+        matching_color_weight=float(os.getenv("MATCHING_COLOR_WEIGHT", "0.3")),
         retrieval_knowledge=_flag("RETRIEVAL_KNOWLEDGE", "off", {"off", "static"}),
         retrieval_refimages=_flag("RETRIEVAL_REFIMAGES", "off", {"off", "on"}),
         ref_images_topk=int(os.getenv("REF_IMAGES_TOPK", "2")),
@@ -354,6 +379,11 @@ def load_settings() -> Settings:
         cut_output_qc_mode=_flag("CUT_OUTPUT_QC_MODE", "off", {"off", "shadow"}),
         page_output_qc_mode=_flag("PAGE_OUTPUT_QC_MODE", "off", {"off", "shadow"}),
         mannequin_axis_qc=_flag("MANNEQUIN_AXIS_QC", "off", {"off", "shadow", "enforce"}),
+        mannequin_base_fidelity_qc=_flag(
+            "MANNEQUIN_BASE_FIDELITY_QC", "off", {"off", "shadow", "enforce"}),
+        mannequin_tone_editor=_flag("MANNEQUIN_TONE_EDITOR", "off", {"off", "on"}),
+        mannequin_base_fidelity_observe_regenerations=_flag(
+            "MANNEQUIN_BASE_FIDELITY_OBSERVE_REGENERATIONS", "off", {"off", "on"}),
         facemarket_enabled=(os.getenv("FACEMARKET_ENABLED", "false").lower() == "true"),
         detailpage_fallback_model_id=os.getenv("DETAILPAGE_FALLBACK_MODEL_ID", "mB"),
         personalization_enabled=(

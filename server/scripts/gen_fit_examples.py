@@ -63,9 +63,15 @@ COMBOS = [
     ("top-men-length-crop", "men",
      "a plain black short-sleeve t-shirt with a small chest pocket, cropped length — short hem "
      "ending around the high waist, clearly above the hip"),
+    ("top-men-length-semi_crop", "men",
+     "a plain black short-sleeve t-shirt, semi-cropped length — straight hem ending around the "
+     "lower abdomen below the navel, longer than crop and shorter than standard length"),
     ("top-men-length-basic", "men",
      "a plain black short-sleeve t-shirt with a small chest pocket, standard length — hem ends "
      "around the hip line"),
+    ("top-men-length-semi_long", "men",
+     "a plain black short-sleeve t-shirt, semi-long length — straight hem extending just below "
+     "the crotch to fully cover the front Y-zone, shorter than a longline or t-shirt dress"),
     ("top-men-length-long", "men",
      "a plain black short-sleeve t-shirt with a small chest pocket, long length — hem extends "
      "clearly below the hips"),

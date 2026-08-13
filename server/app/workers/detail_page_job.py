@@ -637,7 +637,8 @@ async def run_detail_page_job(app, job: dict) -> None:
             if sel:
                 for c in await repo.list_mannequin_cuts(conn, user_id, project_id):
                     if f"{c.get('candidate')}-{c.get('version')}" == sel and c.get("asset_id"):
-                        mannequin_asset = await repo.get_asset_for_user(conn, user_id, str(c["asset_id"]))
+                        asset_id = c.get("active_asset_id") or c["asset_id"]
+                        mannequin_asset = await repo.get_asset_for_user(conn, user_id, str(asset_id))
                         break
             color_assets: dict = {}   # (colorId, detail 여부) → [asset(slot 포함)] — 블록 간 재사용
             detail_color_transfers: dict = {}  # 위 키 → 타색 Detail의 목표색 전환 정보|None

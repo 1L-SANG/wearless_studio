@@ -1,0 +1,1161 @@
+{
+  "total": 30,
+  "samplesByPipeline": {
+    "mannequin_edit": 0,
+    "editor_vary": 30,
+    "unknown": 0
+  },
+  "unknownPipelineSamples": [],
+  "pipelines": {
+    "mannequin_edit": {
+      "samples": 0,
+      "byMachineDecision": {},
+      "byWorkflowStatus": {},
+      "byUserDecision": {},
+      "byVisionStatus": {},
+      "byPatternOrLogo": {},
+      "decisionRates": {
+        "n": 0,
+        "counts": {
+          "pass": 0,
+          "review_required": 0,
+          "reject": 0,
+          "failed": 0
+        },
+        "rates": {},
+        "sufficient": false
+      },
+      "userReview": {
+        "reviewRequired": 0,
+        "reviewed": 0,
+        "unreviewed": 0,
+        "counts": {
+          "accepted": 0,
+          "rejected": 0
+        },
+        "acceptedRate": null,
+        "sufficient": false
+      },
+      "humanLabels": {
+        "passSamples": 0,
+        "passLabeled": 0,
+        "passCoverage": null,
+        "labeledTotal": 0,
+        "sufficient": false
+      },
+      "confusion": {
+        "matrix": {
+          "pass": {
+            "accepted": 0,
+            "rejected": 0
+          },
+          "review_required": {
+            "accepted": 0,
+            "rejected": 0
+          },
+          "reject": {
+            "accepted": 0,
+            "rejected": 0
+          },
+          "failed": {
+            "accepted": 0,
+            "rejected": 0
+          }
+        },
+        "graded": 0,
+        "falsePassCandidates": 0,
+        "overReview": 0,
+        "sufficient": false
+      },
+      "calibrationConfusion": {
+        "matrix": {
+          "pass": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 0
+          },
+          "review_required": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 0
+          },
+          "reject": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 0
+          },
+          "failed": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 0
+          }
+        },
+        "graded": 0,
+        "labelCoverageByDecision": {
+          "pass": null,
+          "review_required": null,
+          "reject": null,
+          "failed": null
+        },
+        "falsePass": null,
+        "falsePassMeasured": false,
+        "passConfirmed": 0,
+        "overReviewCandidates": 0,
+        "falseRejectCandidates": 0,
+        "sufficient": false
+      },
+      "metricDistributions": {},
+      "visionConfidence": {
+        "n": 0,
+        "sufficient": false
+      },
+      "violations": {
+        "n": 0,
+        "lockedInvariantViolations": {},
+        "unexpectedChanges": {}
+      },
+      "measurementVisionConflict": {
+        "considered": 0,
+        "conflicts": 0,
+        "rate": null,
+        "sufficient": false
+      },
+      "visionAvailability": {
+        "n": 0,
+        "counts": {},
+        "unavailableRate": null,
+        "sufficient": false
+      },
+      "latencySeconds": {
+        "n": 0,
+        "sufficient": false
+      },
+      "provider": {
+        "imageCalls": 0,
+        "visionCalls": 0,
+        "estimatedUsd": 0.0,
+        "unitPricesProvided": true
+      },
+      "byEditType": {},
+      "byEditTypeDetail": {},
+      "enforceEligibleSamples": 0,
+      "verdict": {
+        "enforceReady": false,
+        "blockers": [
+          "표본 부족: 0 < 30",
+          "blinded 라벨 표본 부족: 0 < 30",
+          "pass 표본 0건 — false pass 를 측정할 대상이 없다"
+        ],
+        "status": "insufficient_data",
+        "basis": "calibration_confusion"
+      }
+    },
+    "editor_vary": {
+      "samples": 30,
+      "byMachineDecision": {
+        "reject": 15,
+        "review_required": 15
+      },
+      "byWorkflowStatus": {
+        "reject": 15,
+        "review_required": 15
+      },
+      "byUserDecision": {
+        "None": 30
+      },
+      "byVisionStatus": {
+        "ok": 30
+      },
+      "byPatternOrLogo": {
+        "unknown": 30
+      },
+      "decisionRates": {
+        "n": 30,
+        "counts": {
+          "pass": 0,
+          "review_required": 15,
+          "reject": 15,
+          "failed": 0
+        },
+        "rates": {
+          "pass": 0.0,
+          "review_required": 0.5,
+          "reject": 0.5,
+          "failed": 0.0
+        },
+        "sufficient": true
+      },
+      "userReview": {
+        "reviewRequired": 15,
+        "reviewed": 0,
+        "unreviewed": 15,
+        "counts": {
+          "accepted": 0,
+          "rejected": 0
+        },
+        "acceptedRate": null,
+        "sufficient": false
+      },
+      "humanLabels": {
+        "passSamples": 0,
+        "passLabeled": 0,
+        "passCoverage": null,
+        "labeledTotal": 0,
+        "sufficient": false
+      },
+      "confusion": {
+        "matrix": {
+          "pass": {
+            "accepted": 0,
+            "rejected": 0
+          },
+          "review_required": {
+            "accepted": 0,
+            "rejected": 0
+          },
+          "reject": {
+            "accepted": 0,
+            "rejected": 0
+          },
+          "failed": {
+            "accepted": 0,
+            "rejected": 0
+          }
+        },
+        "graded": 0,
+        "falsePassCandidates": 0,
+        "overReview": 0,
+        "sufficient": false
+      },
+      "calibrationConfusion": {
+        "matrix": {
+          "pass": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 0
+          },
+          "review_required": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 15
+          },
+          "reject": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 15
+          },
+          "failed": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 0
+          }
+        },
+        "graded": 0,
+        "labelCoverageByDecision": {
+          "pass": null,
+          "review_required": 0.0,
+          "reject": 0.0,
+          "failed": null
+        },
+        "falsePass": null,
+        "falsePassMeasured": false,
+        "passConfirmed": 0,
+        "overReviewCandidates": 0,
+        "falseRejectCandidates": 0,
+        "sufficient": false
+      },
+      "metricDistributions": {
+        "bodyWidth": {
+          "n": 30,
+          "min": -0.6776,
+          "p05": -0.5227,
+          "p50": 0.006,
+          "p95": 5.9323,
+          "max": 7.6232,
+          "mean": 0.6004400000000001,
+          "sufficient": true
+        },
+        "centerX": {
+          "n": 30,
+          "min": -0.2651,
+          "p05": -0.2057,
+          "p50": -0.0118,
+          "p95": 0.0499,
+          "max": 0.0551,
+          "mean": -0.03609333333333333,
+          "sufficient": true
+        },
+        "centerY": {
+          "n": 30,
+          "min": 0.0014,
+          "p05": 0.002,
+          "p50": 0.0072,
+          "p95": 0.0689,
+          "max": 0.0693,
+          "mean": 0.01722,
+          "sufficient": true
+        },
+        "cuffY": {
+          "n": 30,
+          "min": -0.0193,
+          "p05": -0.0182,
+          "p50": 0.0215,
+          "p95": 0.4004,
+          "max": 0.4146,
+          "mean": 0.07918,
+          "sufficient": true
+        },
+        "hemY": {
+          "n": 30,
+          "min": 0.0067,
+          "p05": 0.0088,
+          "p50": 0.0133,
+          "p95": 0.0845,
+          "max": 0.0845,
+          "mean": 0.027486666666666666,
+          "sufficient": true
+        },
+        "shoulderWidth": {
+          "n": 30,
+          "min": -0.4664,
+          "p05": -0.4352,
+          "p50": -0.0697,
+          "p95": 2.0197,
+          "max": 8.8648,
+          "mean": 0.38638333333333336,
+          "sufficient": true
+        },
+        "subjectHeight": {
+          "n": 30,
+          "min": 0.0127,
+          "p05": 0.0154,
+          "p50": 0.0203,
+          "p95": 0.1149,
+          "max": 0.1636,
+          "mean": 0.03927666666666666,
+          "sufficient": true
+        }
+      },
+      "visionConfidence": {
+        "n": 30,
+        "min": 0.8,
+        "p05": 0.8,
+        "p50": 0.85,
+        "p95": 0.95,
+        "max": 0.95,
+        "mean": 0.8733333333333333,
+        "sufficient": true
+      },
+      "violations": {
+        "n": 30,
+        "lockedInvariantViolations": {
+          "camera": {
+            "count": 10,
+            "rate": 0.3333333333333333
+          },
+          "framing": {
+            "count": 9,
+            "rate": 0.3
+          },
+          "pose": {
+            "count": 6,
+            "rate": 0.2
+          },
+          "lighting": {
+            "count": 4,
+            "rate": 0.13333333333333333
+          },
+          "background": {
+            "count": 2,
+            "rate": 0.06666666666666667
+          }
+        },
+        "unexpectedChanges": {
+          "camera": {
+            "count": 10,
+            "rate": 0.3333333333333333
+          },
+          "framing": {
+            "count": 9,
+            "rate": 0.3
+          },
+          "shoulderWidth": {
+            "count": 6,
+            "rate": 0.2
+          },
+          "pose": {
+            "count": 6,
+            "rate": 0.2
+          },
+          "cuffY": {
+            "count": 6,
+            "rate": 0.2
+          },
+          "hemY": {
+            "count": 6,
+            "rate": 0.2
+          },
+          "lighting": {
+            "count": 4,
+            "rate": 0.13333333333333333
+          },
+          "bodyWidth": {
+            "count": 3,
+            "rate": 0.1
+          },
+          "background": {
+            "count": 2,
+            "rate": 0.06666666666666667
+          },
+          "centerY": {
+            "count": 2,
+            "rate": 0.06666666666666667
+          },
+          "subjectHeight": {
+            "count": 2,
+            "rate": 0.06666666666666667
+          }
+        }
+      },
+      "measurementVisionConflict": {
+        "considered": 30,
+        "conflicts": 0,
+        "rate": 0.0,
+        "sufficient": true
+      },
+      "visionAvailability": {
+        "n": 30,
+        "counts": {
+          "ok": 30
+        },
+        "unavailableRate": 0.0,
+        "sufficient": true
+      },
+      "latencySeconds": {
+        "n": 30,
+        "min": 23.723847,
+        "p05": 23.842425,
+        "p50": 26.356376,
+        "p95": 29.029911,
+        "max": 29.837636,
+        "mean": 26.565771400000003,
+        "sufficient": true
+      },
+      "provider": {
+        "imageCalls": 30,
+        "visionCalls": 30,
+        "estimatedUsd": 4.59,
+        "unitPricesProvided": true
+      },
+      "byEditType": {
+        "BACKGROUND_ONLY": 6,
+        "CUSTOM_REVIEW_REQUIRED": 24
+      },
+      "byEditTypeDetail": {
+        "BACKGROUND_ONLY": {
+          "samples": 6,
+          "byMachineDecision": {
+            "review_required": 6
+          },
+          "byWorkflowStatus": {
+            "review_required": 6
+          },
+          "byUserDecision": {
+            "None": 6
+          },
+          "byVisionStatus": {
+            "ok": 6
+          },
+          "byPatternOrLogo": {
+            "unknown": 6
+          },
+          "decisionRates": {
+            "n": 6,
+            "counts": {
+              "pass": 0,
+              "review_required": 6,
+              "reject": 0,
+              "failed": 0
+            },
+            "rates": {
+              "pass": 0.0,
+              "review_required": 1.0,
+              "reject": 0.0,
+              "failed": 0.0
+            },
+            "sufficient": false
+          },
+          "userReview": {
+            "reviewRequired": 6,
+            "reviewed": 0,
+            "unreviewed": 6,
+            "counts": {
+              "accepted": 0,
+              "rejected": 0
+            },
+            "acceptedRate": null,
+            "sufficient": false
+          },
+          "humanLabels": {
+            "passSamples": 0,
+            "passLabeled": 0,
+            "passCoverage": null,
+            "labeledTotal": 0,
+            "sufficient": false
+          },
+          "confusion": {
+            "matrix": {
+              "pass": {
+                "accepted": 0,
+                "rejected": 0
+              },
+              "review_required": {
+                "accepted": 0,
+                "rejected": 0
+              },
+              "reject": {
+                "accepted": 0,
+                "rejected": 0
+              },
+              "failed": {
+                "accepted": 0,
+                "rejected": 0
+              }
+            },
+            "graded": 0,
+            "falsePassCandidates": 0,
+            "overReview": 0,
+            "sufficient": false
+          },
+          "calibrationConfusion": {
+            "matrix": {
+              "pass": {
+                "fidelity_pass": 0,
+                "fidelity_fail": 0,
+                "unlabeled": 0
+              },
+              "review_required": {
+                "fidelity_pass": 0,
+                "fidelity_fail": 0,
+                "unlabeled": 6
+              },
+              "reject": {
+                "fidelity_pass": 0,
+                "fidelity_fail": 0,
+                "unlabeled": 0
+              },
+              "failed": {
+                "fidelity_pass": 0,
+                "fidelity_fail": 0,
+                "unlabeled": 0
+              }
+            },
+            "graded": 0,
+            "labelCoverageByDecision": {
+              "pass": null,
+              "review_required": 0.0,
+              "reject": null,
+              "failed": null
+            },
+            "falsePass": null,
+            "falsePassMeasured": false,
+            "passConfirmed": 0,
+            "overReviewCandidates": 0,
+            "falseRejectCandidates": 0,
+            "sufficient": false
+          },
+          "metricDistributions": {
+            "bodyWidth": {
+              "n": 6,
+              "min": -0.0209,
+              "p05": -0.0209,
+              "p50": 0.0177,
+              "p95": 0.1467,
+              "max": 0.1467,
+              "mean": 0.04393333333333333,
+              "sufficient": false
+            },
+            "centerX": {
+              "n": 6,
+              "min": -0.0118,
+              "p05": -0.0118,
+              "p50": 0.0013,
+              "p95": 0.0029,
+              "max": 0.0029,
+              "mean": -0.0020333333333333336,
+              "sufficient": false
+            },
+            "centerY": {
+              "n": 6,
+              "min": 0.0029,
+              "p05": 0.0029,
+              "p50": 0.0068,
+              "p95": 0.0104,
+              "max": 0.0104,
+              "mean": 0.0065,
+              "sufficient": false
+            },
+            "cuffY": {
+              "n": 6,
+              "min": -0.0113,
+              "p05": -0.0113,
+              "p50": 0.0051,
+              "p95": 0.0249,
+              "max": 0.0249,
+              "mean": 0.006883333333333334,
+              "sufficient": false
+            },
+            "hemY": {
+              "n": 6,
+              "min": 0.0091,
+              "p05": 0.0091,
+              "p50": 0.0108,
+              "p95": 0.0133,
+              "max": 0.0133,
+              "mean": 0.0117,
+              "sufficient": false
+            },
+            "shoulderWidth": {
+              "n": 6,
+              "min": -0.1964,
+              "p05": -0.1964,
+              "p50": -0.1335,
+              "p95": -0.0751,
+              "max": -0.0751,
+              "mean": -0.12596666666666667,
+              "sufficient": false
+            },
+            "subjectHeight": {
+              "n": 6,
+              "min": 0.0154,
+              "p05": 0.0154,
+              "p50": 0.0166,
+              "p95": 0.0203,
+              "max": 0.0203,
+              "mean": 0.017666666666666667,
+              "sufficient": false
+            }
+          },
+          "visionConfidence": {
+            "n": 6,
+            "min": 0.8,
+            "p05": 0.8,
+            "p50": 0.85,
+            "p95": 0.9,
+            "max": 0.9,
+            "mean": 0.85,
+            "sufficient": false
+          },
+          "violations": {
+            "n": 6,
+            "lockedInvariantViolations": {},
+            "unexpectedChanges": {
+              "shoulderWidth": {
+                "count": 6,
+                "rate": 1.0
+              },
+              "bodyWidth": {
+                "count": 3,
+                "rate": 0.5
+              }
+            }
+          },
+          "measurementVisionConflict": {
+            "considered": 6,
+            "conflicts": 0,
+            "rate": 0.0,
+            "sufficient": false
+          },
+          "visionAvailability": {
+            "n": 6,
+            "counts": {
+              "ok": 6
+            },
+            "unavailableRate": 0.0,
+            "sufficient": false
+          },
+          "latencySeconds": {
+            "n": 6,
+            "min": 23.842425,
+            "p05": 23.842425,
+            "p50": 25.885595,
+            "p95": 28.402653,
+            "max": 28.402653,
+            "mean": 26.176890666666665,
+            "sufficient": false
+          },
+          "provider": {
+            "imageCalls": 6,
+            "visionCalls": 6,
+            "estimatedUsd": 0.918,
+            "unitPricesProvided": true
+          },
+          "enforceEligible": true,
+          "verdict": {
+            "enforceReady": false,
+            "blockers": [
+              "표본 부족: 6 < 30",
+              "blinded 라벨 표본 부족: 0 < 30",
+              "pass 표본 0건 — false pass 를 측정할 대상이 없다"
+            ],
+            "status": "insufficient_data",
+            "basis": "calibration_confusion"
+          }
+        },
+        "CUSTOM_REVIEW_REQUIRED": {
+          "samples": 24,
+          "byMachineDecision": {
+            "reject": 15,
+            "review_required": 9
+          },
+          "byWorkflowStatus": {
+            "reject": 15,
+            "review_required": 9
+          },
+          "byUserDecision": {
+            "None": 24
+          },
+          "byVisionStatus": {
+            "ok": 24
+          },
+          "byPatternOrLogo": {
+            "unknown": 24
+          },
+          "decisionRates": {
+            "n": 24,
+            "counts": {
+              "pass": 0,
+              "review_required": 9,
+              "reject": 15,
+              "failed": 0
+            },
+            "rates": {
+              "pass": 0.0,
+              "review_required": 0.375,
+              "reject": 0.625,
+              "failed": 0.0
+            },
+            "sufficient": false
+          },
+          "userReview": {
+            "reviewRequired": 9,
+            "reviewed": 0,
+            "unreviewed": 9,
+            "counts": {
+              "accepted": 0,
+              "rejected": 0
+            },
+            "acceptedRate": null,
+            "sufficient": false
+          },
+          "humanLabels": {
+            "passSamples": 0,
+            "passLabeled": 0,
+            "passCoverage": null,
+            "labeledTotal": 0,
+            "sufficient": false
+          },
+          "confusion": {
+            "matrix": {
+              "pass": {
+                "accepted": 0,
+                "rejected": 0
+              },
+              "review_required": {
+                "accepted": 0,
+                "rejected": 0
+              },
+              "reject": {
+                "accepted": 0,
+                "rejected": 0
+              },
+              "failed": {
+                "accepted": 0,
+                "rejected": 0
+              }
+            },
+            "graded": 0,
+            "falsePassCandidates": 0,
+            "overReview": 0,
+            "sufficient": false
+          },
+          "calibrationConfusion": {
+            "matrix": {
+              "pass": {
+                "fidelity_pass": 0,
+                "fidelity_fail": 0,
+                "unlabeled": 0
+              },
+              "review_required": {
+                "fidelity_pass": 0,
+                "fidelity_fail": 0,
+                "unlabeled": 9
+              },
+              "reject": {
+                "fidelity_pass": 0,
+                "fidelity_fail": 0,
+                "unlabeled": 15
+              },
+              "failed": {
+                "fidelity_pass": 0,
+                "fidelity_fail": 0,
+                "unlabeled": 0
+              }
+            },
+            "graded": 0,
+            "labelCoverageByDecision": {
+              "pass": null,
+              "review_required": 0.0,
+              "reject": 0.0,
+              "failed": null
+            },
+            "falsePass": null,
+            "falsePassMeasured": false,
+            "passConfirmed": 0,
+            "overReviewCandidates": 0,
+            "falseRejectCandidates": 0,
+            "sufficient": false
+          },
+          "metricDistributions": {
+            "bodyWidth": {
+              "n": 24,
+              "min": -0.6776,
+              "p05": -0.5227,
+              "p50": -0.0145,
+              "p95": 5.9323,
+              "max": 7.6232,
+              "mean": 0.7395666666666667,
+              "sufficient": false
+            },
+            "centerX": {
+              "n": 24,
+              "min": -0.2651,
+              "p05": -0.2057,
+              "p50": -0.0176,
+              "p95": 0.0499,
+              "max": 0.0551,
+              "mean": -0.04460833333333333,
+              "sufficient": false
+            },
+            "centerY": {
+              "n": 24,
+              "min": 0.0014,
+              "p05": 0.002,
+              "p50": 0.0073,
+              "p95": 0.0689,
+              "max": 0.0693,
+              "mean": 0.019899999999999998,
+              "sufficient": false
+            },
+            "cuffY": {
+              "n": 24,
+              "min": -0.0193,
+              "p05": -0.0182,
+              "p50": 0.0222,
+              "p95": 0.4004,
+              "max": 0.4146,
+              "mean": 0.09725416666666666,
+              "sufficient": false
+            },
+            "hemY": {
+              "n": 24,
+              "min": 0.0067,
+              "p05": 0.0088,
+              "p50": 0.0133,
+              "p95": 0.0845,
+              "max": 0.0845,
+              "mean": 0.031433333333333334,
+              "sufficient": false
+            },
+            "shoulderWidth": {
+              "n": 24,
+              "min": -0.4664,
+              "p05": -0.4352,
+              "p50": 0.0163,
+              "p95": 2.0197,
+              "max": 8.8648,
+              "mean": 0.5144708333333333,
+              "sufficient": false
+            },
+            "subjectHeight": {
+              "n": 24,
+              "min": 0.0127,
+              "p05": 0.0166,
+              "p50": 0.0212,
+              "p95": 0.1149,
+              "max": 0.1636,
+              "mean": 0.044679166666666666,
+              "sufficient": false
+            }
+          },
+          "visionConfidence": {
+            "n": 24,
+            "min": 0.8,
+            "p05": 0.8,
+            "p50": 0.9,
+            "p95": 0.95,
+            "max": 0.95,
+            "mean": 0.8791666666666668,
+            "sufficient": false
+          },
+          "violations": {
+            "n": 24,
+            "lockedInvariantViolations": {
+              "camera": {
+                "count": 10,
+                "rate": 0.4166666666666667
+              },
+              "framing": {
+                "count": 9,
+                "rate": 0.375
+              },
+              "pose": {
+                "count": 6,
+                "rate": 0.25
+              },
+              "lighting": {
+                "count": 4,
+                "rate": 0.16666666666666666
+              },
+              "background": {
+                "count": 2,
+                "rate": 0.08333333333333333
+              }
+            },
+            "unexpectedChanges": {
+              "camera": {
+                "count": 10,
+                "rate": 0.4166666666666667
+              },
+              "framing": {
+                "count": 9,
+                "rate": 0.375
+              },
+              "pose": {
+                "count": 6,
+                "rate": 0.25
+              },
+              "cuffY": {
+                "count": 6,
+                "rate": 0.25
+              },
+              "hemY": {
+                "count": 6,
+                "rate": 0.25
+              },
+              "lighting": {
+                "count": 4,
+                "rate": 0.16666666666666666
+              },
+              "background": {
+                "count": 2,
+                "rate": 0.08333333333333333
+              },
+              "centerY": {
+                "count": 2,
+                "rate": 0.08333333333333333
+              },
+              "subjectHeight": {
+                "count": 2,
+                "rate": 0.08333333333333333
+              }
+            }
+          },
+          "measurementVisionConflict": {
+            "considered": 24,
+            "conflicts": 0,
+            "rate": 0.0,
+            "sufficient": false
+          },
+          "visionAvailability": {
+            "n": 24,
+            "counts": {
+              "ok": 24
+            },
+            "unavailableRate": 0.0,
+            "sufficient": false
+          },
+          "latencySeconds": {
+            "n": 24,
+            "min": 23.723847,
+            "p05": 25.156394,
+            "p50": 26.356376,
+            "p95": 29.029911,
+            "max": 29.837636,
+            "mean": 26.662991583333334,
+            "sufficient": false
+          },
+          "provider": {
+            "imageCalls": 24,
+            "visionCalls": 24,
+            "estimatedUsd": 3.672,
+            "unitPricesProvided": true
+          },
+          "enforceEligible": false,
+          "verdict": {
+            "enforceReady": false,
+            "blockers": [
+              "정책상 자동 통과 대상이 아닌 edit type (enforce 후보 제외)",
+              "표본 부족: 24 < 30",
+              "blinded 라벨 표본 부족: 0 < 30",
+              "pass 표본 0건 — false pass 를 측정할 대상이 없다"
+            ],
+            "status": "insufficient_data",
+            "basis": "calibration_confusion"
+          }
+        }
+      },
+      "enforceEligibleSamples": 6,
+      "verdict": {
+        "enforceReady": false,
+        "blockers": [
+          "표본 부족: 6 < 30",
+          "blinded 라벨 표본 부족: 0 < 30",
+          "pass 표본 0건 — false pass 를 측정할 대상이 없다"
+        ],
+        "status": "insufficient_data",
+        "basis": "calibration_confusion"
+      }
+    },
+    "unknown": {
+      "samples": 0,
+      "byMachineDecision": {},
+      "byWorkflowStatus": {},
+      "byUserDecision": {},
+      "byVisionStatus": {},
+      "byPatternOrLogo": {},
+      "decisionRates": {
+        "n": 0,
+        "counts": {
+          "pass": 0,
+          "review_required": 0,
+          "reject": 0,
+          "failed": 0
+        },
+        "rates": {},
+        "sufficient": false
+      },
+      "userReview": {
+        "reviewRequired": 0,
+        "reviewed": 0,
+        "unreviewed": 0,
+        "counts": {
+          "accepted": 0,
+          "rejected": 0
+        },
+        "acceptedRate": null,
+        "sufficient": false
+      },
+      "humanLabels": {
+        "passSamples": 0,
+        "passLabeled": 0,
+        "passCoverage": null,
+        "labeledTotal": 0,
+        "sufficient": false
+      },
+      "confusion": {
+        "matrix": {
+          "pass": {
+            "accepted": 0,
+            "rejected": 0
+          },
+          "review_required": {
+            "accepted": 0,
+            "rejected": 0
+          },
+          "reject": {
+            "accepted": 0,
+            "rejected": 0
+          },
+          "failed": {
+            "accepted": 0,
+            "rejected": 0
+          }
+        },
+        "graded": 0,
+        "falsePassCandidates": 0,
+        "overReview": 0,
+        "sufficient": false
+      },
+      "calibrationConfusion": {
+        "matrix": {
+          "pass": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 0
+          },
+          "review_required": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 0
+          },
+          "reject": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 0
+          },
+          "failed": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 0
+          }
+        },
+        "graded": 0,
+        "labelCoverageByDecision": {
+          "pass": null,
+          "review_required": null,
+          "reject": null,
+          "failed": null
+        },
+        "falsePass": null,
+        "falsePassMeasured": false,
+        "passConfirmed": 0,
+        "overReviewCandidates": 0,
+        "falseRejectCandidates": 0,
+        "sufficient": false
+      },
+      "metricDistributions": {},
+      "visionConfidence": {
+        "n": 0,
+        "sufficient": false
+      },
+      "violations": {
+        "n": 0,
+        "lockedInvariantViolations": {},
+        "unexpectedChanges": {}
+      },
+      "measurementVisionConflict": {
+        "considered": 0,
+        "conflicts": 0,
+        "rate": null,
+        "sufficient": false
+      },
+      "visionAvailability": {
+        "n": 0,
+        "counts": {},
+        "unavailableRate": null,
+        "sufficient": false
+      },
+      "latencySeconds": {
+        "n": 0,
+        "sufficient": false
+      },
+      "provider": {
+        "imageCalls": 0,
+        "visionCalls": 0,
+        "estimatedUsd": 0.0,
+        "unitPricesProvided": true
+      },
+      "byEditType": {},
+      "byEditTypeDetail": {},
+      "enforceEligibleSamples": 0,
+      "verdict": {
+        "enforceReady": false,
+        "status": "insufficient_data",
+        "blockers": [
+          "source_kind 미상 — 어느 파이프라인인지 모른다"
+        ]
+      }
+    }
+  }
+}

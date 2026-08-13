@@ -12,7 +12,8 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase.js';
 import { LoginGate } from './Login.jsx';
-import { clearDraft } from '@/lib/draftStore.js';
+import { draftSlot } from '@/lib/draftSlot.js';
+import { useAppStore } from '@/store/useAppStore.js';
 
 const AuthCtx = createContext(null);
 let oauthExchangeCode = null;
@@ -41,6 +42,7 @@ export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loginOpen, setLoginOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
     let alive = true; // StrictMode 이중 마운트: cleanup 이후 state 갱신 방지
@@ -78,7 +80,17 @@ export function AuthProvider({ children }) {
     });
 
   // 로그아웃 시 미동기화 draft 도 정리 — 공용 브라우저에서 다음 사용자에게 입력이 복원되지 않게.
-  const signOut = () => { sessionStorage.removeItem('wl_postLogin'); clearDraft(); return supabase.auth.signOut(); };
+  const signOut = async () => {
+    sessionStorage.removeItem('wl_postLogin');
+    setSigningOut(true);
+    try {
+      draftSlot.resetIdentity();
+      await useAppStore.getState().beginProject().catch(() => {});
+      return await supabase.auth.signOut();
+    } finally {
+      setSigningOut(false);
+    }
+  };
 
   // redirect: 로그인 성공 후 복귀할 앱 내 경로(예: '/create/mannequin'). 없으면 origin 유지.
   // 복귀 플래그는 여기서 단일 관리한다 — 이번 로그인 시도의 의도대로 set/clear 해서,
@@ -92,7 +104,7 @@ export function AuthProvider({ children }) {
   const closeLogin = () => setLoginOpen(false);
 
   return (
-    <AuthCtx.Provider value={{ session, user: session?.user ?? null, loading, signIn, signOut, openLogin, closeLogin }}>
+    <AuthCtx.Provider value={{ session, user: session?.user ?? null, loading, signingOut, signIn, signOut, openLogin, closeLogin }}>
       {children}
       {loginOpen && <LoginGate />}
     </AuthCtx.Provider>

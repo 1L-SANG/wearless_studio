@@ -1,0 +1,1603 @@
+{
+  "mode": "isolated-qa-no-db-writes",
+  "frozenArtifactQc": {
+    "expectedPass": 5,
+    "expectedFail": 5,
+    "correctlyAccepted": 4,
+    "correctlyRejected": 5,
+    "falseRejections": [
+      "faithful-henley-pocket-tee"
+    ],
+    "falseAcceptances": [],
+    "errors": [],
+    "negativeControlRejected": true
+  },
+  "candidates": [
+    {
+      "productId": "cf92b7b0-9eec-4bae-9527-d6b5e066236a",
+      "productKey": "4ff2132f",
+      "projectId": "4ff2132f-039b-49a4-a34e-8703df85f0df",
+      "sourceAssetIds": [
+        "e7f27f75-697a-4f86-8987-d0449a36ecdf",
+        "e33ae7e6-0164-41dc-8e25-4ec40aa6118f",
+        "dc5e215f-265b-4d5b-b1b7-ad959283f013",
+        "279b1370-a593-407c-840d-19fe9d8ea901",
+        "041b7097-10ee-4587-b402-08e6890844c5"
+      ],
+      "generatedAssetId": null,
+      "generatedFile": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/llm_qc/live/4ff2132f/C0.png",
+      "generatedSha256": "21ea813329c627b1789f4820e72a98dfa8584d87dc3d2861ff93d356138e6b3d",
+      "generationModel": "gemini-3-pro-image",
+      "generationPromptSha256": "053e287b1d54dd08138fa640edd2ba9bc415d5c6c57c4994040ecd54ae5e1677",
+      "generationPromptVersion": "frame_lock_v2",
+      "qcModel": "gemini-3.5-flash",
+      "qcPromptVersion": "garment_fidelity_qc_v1",
+      "qcSamples": 3,
+      "qcSampleDecisions": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "requiredGates": null,
+      "gateStatuses": null,
+      "failedGates": null,
+      "gateResults": null,
+      "decision": "PASS",
+      "modelSelfDecision": "PASS",
+      "checks": {
+        "garmentIdentity": {
+          "status": "PASS",
+          "evidence": "The generated image accurately reproduces the unique design, color, and texture of the source top.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "category": {
+          "status": "PASS",
+          "evidence": "Both source and generated images show a short-sleeved knit top.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "baseColor": {
+          "status": "PASS",
+          "evidence": "The dusty rose/brownish-mauve color is consistent between the source and generated images.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "silhouette": {
+          "status": "PASS",
+          "evidence": "Both show a fitted, feminine silhouette with slightly puffed short sleeves.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "neckline": {
+          "status": "PASS",
+          "evidence": "The wide scoop neckline with a curved yoke panel is identical in both.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "sleeveConstruction": {
+          "status": "PASS",
+          "evidence": "Both feature short, gathered cap sleeves with elasticated shoulders.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "majorConstruction": {
+          "status": "PASS",
+          "evidence": "The curved front yoke seam with gathers below is correctly rendered in the generated image.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "protectedComponents": {
+          "status": "PASS",
+          "evidence": "No missing or added components; the clean hem and neckline finish match the source.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "patternType": {
+          "status": "PASS",
+          "evidence": "The vertical pointelle knit pattern is visible in both the source and generated images.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "patternLayout": {
+          "status": "PASS",
+          "evidence": "The vertical alignment of the pointelle stripes matches the source layout.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "materialAppearance": {
+          "status": "PASS",
+          "evidence": "The lightweight, textured pointelle knit fabric appearance is well-preserved.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "lengthAndProportion": {
+          "status": "PASS",
+          "evidence": "The hip-length hemline and overall proportions match the source garment.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "generationArtifacts": {
+          "status": "PASS",
+          "evidence": "The generated image is clean, with no physical anomalies or blending issues.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        }
+      },
+      "failureReasons": [],
+      "correctionInstruction": "",
+      "confidence": 0.8,
+      "technicalValidation": {
+        "decodable": true,
+        "width": 848,
+        "height": 1264,
+        "bytes": 414311,
+        "mime": "image/jpeg",
+        "aspectRatioOk": true,
+        "errors": []
+      },
+      "imageBudget": {
+        "baseCalls": 1,
+        "targetedCalls": 0,
+        "fullRegenCalls": 0,
+        "imageCalls": 1,
+        "maxTotal": 3,
+        "budgetRemaining": 2
+      },
+      "visionCallCount": 3,
+      "authorityAllowed": true,
+      "authorityReason": null,
+      "wouldChargeCredit": 2,
+      "finalCandidate": "C0",
+      "isFinalCandidate": true
+    },
+    {
+      "productId": "9de8b909-9965-4548-bc03-f1b3f09ac893",
+      "productKey": "stripe",
+      "projectId": "c7f00166-92a1-4be2-8d47-338808fc4eca",
+      "sourceAssetIds": [
+        "991b1d6b-08c4-4da1-b2ef-ad98ed3c2239",
+        "3c95891e-0be4-459a-86ec-ba8bdfa9a707",
+        "ab4d8d92-3434-49a3-916a-056fc8ef67a6"
+      ],
+      "generatedAssetId": null,
+      "generatedFile": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/llm_qc/live_stripe_v2/stripe/C0.png",
+      "generatedSha256": "df0184b0128cab0b393f24cdd87922cd20ed98de9823f471c806d59df9f22fcb",
+      "generationModel": "gemini-3-pro-image",
+      "generationPromptSha256": "066eb6973198db7c4831344c7bd4d74aab43953afa36eed18695bac0c1bbbd55",
+      "generationPromptVersion": "frame_lock_v2",
+      "qcModel": "gemini-3.5-flash",
+      "qcPromptVersion": "garment_fidelity_qc_v1",
+      "qcSamples": 3,
+      "qcSampleDecisions": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ],
+      "requiredGates": [
+        "stripeFidelity"
+      ],
+      "gateStatuses": {
+        "stripeFidelity": "FAIL"
+      },
+      "failedGates": [
+        "stripeFidelity"
+      ],
+      "gateResults": {
+        "stripeFidelity": {
+          "status": "FAIL",
+          "sampleStatuses": [
+            "FAIL",
+            "FAIL",
+            "PASS"
+          ],
+          "judge": "stripe",
+          "provider": "gemini",
+          "confidence": 0.75,
+          "evidence": "The source features extremely pale, low-contrast dusty blue and light taupe pinstripes. The generated garment has much more saturated, darker blue and warmer beige stripes, resulting in a significantly higher-contrast appearance. | The source features extremely pale, low-contrast dusty blue and light taupe pinstripes. The generated garment has much more saturated, darker blue and warmer beige stripes, resulting in a significantly higher-contrast appearance. | Both garments feature a highly dense, finely spaced vertical stripe pattern consisting of alternating blue and beige lines on a white background. The scale, spacing, and overall character match perfectly.",
+          "correctionInstruction": "Reduce the color saturation of the blue and beige stripes to match the pale, muted pastel tones of the source, and slightly thin the stripe widths to restore the delicate pinstripe character.",
+          "properties": {
+            "presence": {
+              "status": "PASS",
+              "sourceObservation": "Clear vertical stripes present.",
+              "generatedObservation": "Clear vertical stripes present.",
+              "sampleStatuses": [
+                "PASS",
+                "PASS",
+                "PASS"
+              ]
+            },
+            "orientation": {
+              "status": "PASS",
+              "sourceObservation": "Vertical orientation.",
+              "generatedObservation": "Vertical orientation.",
+              "sampleStatuses": [
+                "PASS",
+                "PASS",
+                "PASS"
+              ]
+            },
+            "density": {
+              "status": "PASS",
+              "sourceObservation": "High density, approximately 45-50 stripe pairs across the chest.",
+              "generatedObservation": "High density, approximately 40-45 stripe pairs across the chest.",
+              "sampleStatuses": [
+                "PASS",
+                "PASS",
+                "PASS"
+              ]
+            },
+            "spacing": {
+              "status": "PASS",
+              "sourceObservation": "Even spacing between alternating blue and beige lines.",
+              "generatedObservation": "Even spacing between alternating blue and beige lines.",
+              "sampleStatuses": [
+                "PASS",
+                "PASS",
+                "PASS"
+              ]
+            },
+            "relativeWidth": {
+              "status": "PASS",
+              "sourceObservation": "Alternating thin blue and beige lines of equal width.",
+              "generatedObservation": "Alternating thin blue and beige lines of equal width.",
+              "sampleStatuses": [
+                "PASS",
+                "PASS",
+                "PASS"
+              ]
+            },
+            "dominantColors": {
+              "status": "FAIL",
+              "sourceObservation": "Very pale, muted sky blue and light taupe on white.",
+              "generatedObservation": "Saturated medium blue and warm beige on white, creating higher contrast.",
+              "sampleStatuses": [
+                "FAIL",
+                "FAIL",
+                "PASS"
+              ]
+            },
+            "repeatScale": {
+              "status": "PASS",
+              "sourceObservation": "Fine repeat scale, each repeat is very narrow.",
+              "generatedObservation": "Fine repeat scale, slightly wider than source but very close.",
+              "sampleStatuses": [
+                "PASS",
+                "PASS",
+                "PASS"
+              ]
+            },
+            "character": {
+              "status": "FAIL",
+              "sourceObservation": "Extremely fine, low-contrast delicate pinstripe.",
+              "generatedObservation": "Medium-fine, higher-contrast distinct stripe.",
+              "sampleStatuses": [
+                "FAIL",
+                "FAIL",
+                "PASS"
+              ]
+            },
+            "consistency": {
+              "status": "PASS",
+              "sourceObservation": "Consistent pattern across the entire garment.",
+              "generatedObservation": "Consistent pattern across the entire garment.",
+              "sampleStatuses": [
+                "PASS",
+                "PASS",
+                "PASS"
+              ]
+            },
+            "perceivedAsSameDesign": {
+              "status": "FAIL",
+              "sourceObservation": "Delicate, low-contrast pastel stripe.",
+              "generatedObservation": "Bolder, higher-contrast blue and beige stripe.",
+              "sampleStatuses": [
+                "FAIL",
+                "FAIL",
+                "PASS"
+              ]
+            }
+          },
+          "promptVersion": "pattern_fidelity_qc_v1",
+          "evidenceCrops": [
+            {
+              "name": "generated_garment_crop",
+              "width": 1629,
+              "height": 1668,
+              "rect": [
+                0.26,
+                0.13,
+                0.74,
+                0.46
+              ],
+              "sourceSize": [
+                3392,
+                5056
+              ],
+              "bytes": 788354
+            },
+            {
+              "name": "generated_torso_detail_crop",
+              "width": 882,
+              "height": 758,
+              "rect": [
+                0.36,
+                0.2,
+                0.62,
+                0.35
+              ],
+              "sourceSize": [
+                3392,
+                5056
+              ],
+              "bytes": 321893
+            },
+            {
+              "name": "source_detail_crop",
+              "width": 2399,
+              "height": 1799,
+              "rect": [
+                0.29000000000000004,
+                0.29000000000000004,
+                0.71,
+                0.71
+              ],
+              "sourceSize": [
+                5712,
+                4284
+              ],
+              "bytes": 1093961
+            }
+          ]
+        }
+      },
+      "decision": "FAIL",
+      "modelSelfDecision": "FAIL",
+      "checks": {
+        "garmentIdentity": {
+          "status": "FAIL",
+          "evidence": "Source is a cropped shirt; generated is a standard long shirt.",
+          "sampleStatuses": [
+            "FAIL",
+            "FAIL",
+            "FAIL"
+          ]
+        },
+        "category": {
+          "status": "PASS",
+          "evidence": "Both are long-sleeved button-up shirts.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "baseColor": {
+          "status": "PASS",
+          "evidence": "Both feature a cream base with blue and brown stripes.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "silhouette": {
+          "status": "FAIL",
+          "evidence": "Source has a short, boxy cropped fit; generated has a long, straight fit.",
+          "sampleStatuses": [
+            "FAIL",
+            "FAIL",
+            "FAIL"
+          ]
+        },
+        "neckline": {
+          "status": "PASS",
+          "evidence": "Both feature a classic pointed shirt collar.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "sleeveConstruction": {
+          "status": "PASS",
+          "evidence": "Both have set-in long sleeves with cuffs.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "majorConstruction": {
+          "status": "PASS",
+          "evidence": "Both have standard button plackets and back panels.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "protectedComponents": {
+          "status": "FAIL",
+          "evidence": "Source has fewer buttons on a shorter placket; generated has more buttons on a longer placket.",
+          "sampleStatuses": [
+            "FAIL",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "patternType": {
+          "status": "PASS",
+          "evidence": "Both show vertical multi-colored stripes.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "patternLayout": {
+          "status": "PASS",
+          "evidence": "Both have vertical stripe alignment throughout.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "materialAppearance": {
+          "status": "PASS",
+          "evidence": "Both appear to be lightweight woven cotton.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "lengthAndProportion": {
+          "status": "FAIL",
+          "evidence": "Source is cropped at the waist; generated extends past the hips.",
+          "sampleStatuses": [
+            "FAIL",
+            "FAIL",
+            "FAIL"
+          ]
+        },
+        "generationArtifacts": {
+          "status": "PASS",
+          "evidence": "The generated garment is clean and physically coherent.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        }
+      },
+      "failureReasons": [
+        "lengthAndProportion changed from cropped to hip-length",
+        "silhouette changed from cropped boxy to long straight",
+        "protectedComponents button count increased due to length change",
+        "lengthAndProportion changed from cropped waist-length to long hip-length",
+        "silhouette changed from boxy cropped to slim-fit elongated",
+        "stripeFidelity: fail"
+      ],
+      "correctionInstruction": "Preserve the mannequin, the pose, the camera, the framing, the background and the lighting exactly as they are in image 1.\n\nThe garment in image 1 differs from the source product. Required corrections:\n- restore the source garment's identity — this must be the same individual product (Source is a cropped shirt; generated is a standard long shirt.)\n- restore the source silhouette and fit class (Source has a short, boxy cropped fit; generated has a long, straight fit.)\n- restore the source buttons, placket, pockets, collar, cuffs and trims, and remove any component that the source does not have (Source has fewer buttons on a shorter placket; generated has more buttons on a longer placket.)\n- restore the source hem length and body proportions (Source is cropped at the waist; generated extends past the hips.)\n- restore the source stripe design — its stripe widths, spacing, grouping, repeat density and stripe colours (Reduce the color saturation of the blue and beige stripes to match the pale, muted pastel tones of the source, and slightly thin the stripe widths to restore the delicate pinstripe character.)\n\nThese properties are already correct — do not alter them: category, baseColor, neckline, sleeveConstruction, majorConstruction, patternType, patternLayout, materialAppearance, generationArtifacts.\n\nObserved detail: Shorten the shirt length to match the cropped waist-level hem of the source. Adjust the silhouette to be boxier and reduce the number of buttons on the placket accordingly, while keeping the striped pattern and collar style.",
+      "confidence": 0.8,
+      "technicalValidation": {
+        "decodable": true,
+        "width": 3392,
+        "height": 5056,
+        "bytes": 6546365,
+        "mime": "image/jpeg",
+        "aspectRatioOk": true,
+        "errors": []
+      },
+      "imageBudget": {
+        "baseCalls": 1,
+        "targetedCalls": 1,
+        "fullRegenCalls": 0,
+        "imageCalls": 2,
+        "maxTotal": 3,
+        "budgetRemaining": 1
+      },
+      "visionCallCount": 12,
+      "authorityAllowed": false,
+      "authorityReason": "garment_fidelity_failed",
+      "wouldChargeCredit": 0,
+      "finalCandidate": null,
+      "isFinalCandidate": false
+    },
+    {
+      "productId": "9de8b909-9965-4548-bc03-f1b3f09ac893",
+      "productKey": "stripe",
+      "projectId": "c7f00166-92a1-4be2-8d47-338808fc4eca",
+      "sourceAssetIds": [
+        "991b1d6b-08c4-4da1-b2ef-ad98ed3c2239",
+        "3c95891e-0be4-459a-86ec-ba8bdfa9a707",
+        "ab4d8d92-3434-49a3-916a-056fc8ef67a6"
+      ],
+      "generatedAssetId": null,
+      "generatedFile": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/llm_qc/live_stripe_v2/stripe/C1.png",
+      "generatedSha256": "4ef761757c5865d5e168f260b2db3580c13116d822dcd962fc2f89278fe0f897",
+      "generationModel": "gemini-3-pro-image",
+      "generationPromptSha256": "066eb6973198db7c4831344c7bd4d74aab43953afa36eed18695bac0c1bbbd55",
+      "generationPromptVersion": "frame_lock_v2",
+      "qcModel": "gemini-3.5-flash",
+      "qcPromptVersion": "garment_fidelity_qc_v1",
+      "qcSamples": 3,
+      "qcSampleDecisions": [
+        "PASS",
+        "PASS",
+        "FAIL"
+      ],
+      "requiredGates": [
+        "stripeFidelity"
+      ],
+      "gateStatuses": {
+        "stripeFidelity": "PASS"
+      },
+      "failedGates": [],
+      "gateResults": {
+        "stripeFidelity": {
+          "status": "PASS",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ],
+          "judge": "stripe",
+          "provider": "gemini",
+          "confidence": 0.85,
+          "evidence": "The generated garment perfectly replicates the source's fine vertical pinstripe pattern. Both feature alternating light blue and taupe stripes of identical thin width, spacing, and density (approx. 22-25 repeats across the chest) on an off-white ground. | The generated garment perfectly replicates the source's fine vertical pinstripe pattern. Both feature alternating light blue and taupe stripes of identical thin width, spacing, and density (approx. 22-25 repeats across the chest) on an off-white ground. | The generated garment perfectly replicates the source's stripe pattern, including the alternating light blue and beige colors, the fine scale, the high density, and the vertical orientation.",
+          "correctionInstruction": "None required. The pattern match is excellent.",
+          "properties": {
+            "presence": {
+              "status": "PASS",
+              "sourceObservation": "Clear vertical stripes are present across the entire garment.",
+              "generatedObservation": "Clear vertical stripes are present across the entire garment.",
+              "sampleStatuses": [
+                "PASS",
+                "PASS",
+                "PASS"
+              ]
+            },
+            "orientation": {
+              "status": "PASS",
+              "sourceObservation": "Stripes run vertically on the body and sleeves.",
+              "generatedObservation": "Stripes run vertically on the body and sleeves.",
+              "sampleStatuses": [
+                "PASS",
+                "PASS",
+                "PASS"
+              ]
+            },
+            "density": {
+              "status": "PASS",
+              "sourceObservation": "High density with approximately 22-25 stripe repeats across the chest panel.",
+              "generatedObservation": "High density with approximately 22-25 stripe repeats across the chest panel.",
+              "sampleStatuses": [
+                "PASS",
+                "PASS",
+                "PASS"
+              ]
+            },
+            "spacing": {
+              "status": "PASS",
+              "sourceObservation": "Evenly spaced alternating blue and brown stripes with narrow white gaps.",
+              "generatedObservation": "Evenly spaced alternating blue and brown stripes with narrow white gaps.",
+              "sampleStatuses": [
+                "PASS",
+                "PASS",
+                "PASS"
+              ]
+            },
+            "relativeWidth": {
+              "status": "PASS",
+              "sourceObservation": "Stripes are of uniform, very thin width.",
+              "generatedObservation": "Stripes are of uniform, very thin width.",
+              "sampleStatuses": [
+                "PASS",
+                "PASS",
+                "PASS"
+              ]
+            },
+            "dominantColors": {
+              "status": "PASS",
+              "sourceObservation": "Light blue and taupe/brown stripes on an off-white ground.",
+              "generatedObservation": "Light blue and taupe/brown stripes on an off-white ground.",
+              "sampleStatuses": [
+                "PASS",
+                "PASS",
+                "PASS"
+              ]
+            },
+            "repeatScale": {
+              "status": "PASS",
+              "sourceObservation": "Very small, fine repeat scale relative to the garment size.",
+              "generatedObservation": "Very small, fine repeat scale matching the source garment.",
+              "sampleStatuses": [
+                "PASS",
+                "PASS",
+                "PASS"
+              ]
+            },
+            "character": {
+              "status": "PASS",
+              "sourceObservation": "Fine, multi-colored pinstripe character.",
+              "generatedObservation": "Fine, multi-colored pinstripe character.",
+              "sampleStatuses": [
+                "PASS",
+                "PASS",
+                "PASS"
+              ]
+            },
+            "consistency": {
+              "status": "PASS",
+              "sourceObservation": "Pattern is perfectly consistent across all panels.",
+              "generatedObservation": "Pattern remains consistent and clear across the torso and sleeves.",
+              "sampleStatuses": [
+                "PASS",
+                "PASS",
+                "PASS"
+              ]
+            },
+            "perceivedAsSameDesign": {
+              "status": "PASS",
+              "sourceObservation": "Fine blue and brown pinstripe fabric.",
+              "generatedObservation": "Identical fine blue and brown pinstripe fabric.",
+              "sampleStatuses": [
+                "PASS",
+                "PASS",
+                "PASS"
+              ]
+            }
+          },
+          "promptVersion": "pattern_fidelity_qc_v1",
+          "evidenceCrops": [
+            {
+              "name": "generated_garment_crop",
+              "width": 1629,
+              "height": 1668,
+              "rect": [
+                0.26,
+                0.13,
+                0.74,
+                0.46
+              ],
+              "sourceSize": [
+                3392,
+                5056
+              ],
+              "bytes": 599223
+            },
+            {
+              "name": "generated_torso_detail_crop",
+              "width": 882,
+              "height": 758,
+              "rect": [
+                0.36,
+                0.2,
+                0.62,
+                0.35
+              ],
+              "sourceSize": [
+                3392,
+                5056
+              ],
+              "bytes": 229890
+            },
+            {
+              "name": "source_detail_crop",
+              "width": 2399,
+              "height": 1799,
+              "rect": [
+                0.29000000000000004,
+                0.29000000000000004,
+                0.71,
+                0.71
+              ],
+              "sourceSize": [
+                5712,
+                4284
+              ],
+              "bytes": 1093961
+            }
+          ]
+        }
+      },
+      "decision": "FAIL",
+      "modelSelfDecision": "FAIL",
+      "checks": {
+        "garmentIdentity": {
+          "status": "FAIL",
+          "evidence": "Source shows front buttons; generated image lacks buttons on the placket.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "FAIL"
+          ]
+        },
+        "category": {
+          "status": "PASS",
+          "evidence": "Both source and generated images show a long-sleeve button-up shirt.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "baseColor": {
+          "status": "PASS",
+          "evidence": "Both show an off-white base color with light blue and beige stripes.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "silhouette": {
+          "status": "PASS",
+          "evidence": "Both show a slightly cropped, straight-cut silhouette.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "neckline": {
+          "status": "PASS",
+          "evidence": "Both feature a classic pointed shirt collar.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "sleeveConstruction": {
+          "status": "PASS",
+          "evidence": "Both have set-in long sleeves ending in cuffs.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "majorConstruction": {
+          "status": "PASS",
+          "evidence": "Both feature a central button placket and standard shirt seams.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "protectedComponents": {
+          "status": "FAIL",
+          "evidence": "Source has visible white buttons on the placket; generated image has none.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "FAIL"
+          ]
+        },
+        "patternType": {
+          "status": "PASS",
+          "evidence": "Both feature a vertical stripe pattern.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "patternLayout": {
+          "status": "PASS",
+          "evidence": "The stripe spacing, colors, and vertical orientation match perfectly.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "materialAppearance": {
+          "status": "PASS",
+          "evidence": "Both show a lightweight woven shirt fabric.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "lengthAndProportion": {
+          "status": "PASS",
+          "evidence": "Both show a cropped waist-length hem.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "generationArtifacts": {
+          "status": "PASS",
+          "evidence": "The generated image is clean and free of physical anomalies.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        }
+      },
+      "failureReasons": [
+        "protectedComponents: front buttons are missing on the placket"
+      ],
+      "correctionInstruction": "Preserve the mannequin, the pose, the camera, the framing, the background and the lighting exactly as they are in image 1.\n\nThe garment in image 1 differs from the source product. Required corrections:\n- restore the source garment's identity — this must be the same individual product (Source shows front buttons; generated image lacks buttons on the placket.)\n- restore the source buttons, placket, pockets, collar, cuffs and trims, and remove any component that the source does not have (Source has visible white buttons on the placket; generated image has none.)\n\nThese properties are already correct — do not alter them: category, baseColor, silhouette, neckline, sleeveConstruction, majorConstruction, patternType, patternLayout, materialAppearance, lengthAndProportion, generationArtifacts.\n\nObserved detail: Add the white buttons along the front placket as shown in the source. Retain the stripe pattern, collar, and cropped fit.",
+      "confidence": 0.8,
+      "technicalValidation": {
+        "decodable": true,
+        "width": 3392,
+        "height": 5056,
+        "bytes": 6119456,
+        "mime": "image/jpeg",
+        "aspectRatioOk": true,
+        "errors": []
+      },
+      "imageBudget": {
+        "baseCalls": 1,
+        "targetedCalls": 1,
+        "fullRegenCalls": 0,
+        "imageCalls": 2,
+        "maxTotal": 3,
+        "budgetRemaining": 1
+      },
+      "visionCallCount": 12,
+      "authorityAllowed": false,
+      "authorityReason": "garment_fidelity_failed",
+      "wouldChargeCredit": 0,
+      "finalCandidate": null,
+      "isFinalCandidate": false
+    },
+    {
+      "productId": "9de8b909-9965-4548-bc03-f1b3f09ac893",
+      "productKey": "stripe",
+      "projectId": "c7f00166-92a1-4be2-8d47-338808fc4eca",
+      "sourceAssetIds": [
+        "991b1d6b-08c4-4da1-b2ef-ad98ed3c2239",
+        "3c95891e-0be4-459a-86ec-ba8bdfa9a707",
+        "ab4d8d92-3434-49a3-916a-056fc8ef67a6"
+      ],
+      "generatedAssetId": null,
+      "generatedFile": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/llm_qc/live_hard/stripe/C0.png",
+      "generatedSha256": "0e261fd116760ffd2017f6db9a1c28ad6a94d8cfd3a9403dc467983a467af2f2",
+      "generationModel": "gemini-3-pro-image",
+      "generationPromptSha256": "066eb6973198db7c4831344c7bd4d74aab43953afa36eed18695bac0c1bbbd55",
+      "generationPromptVersion": "frame_lock_v2",
+      "qcModel": "gemini-3.5-flash",
+      "qcPromptVersion": "garment_fidelity_qc_v1",
+      "qcSamples": 3,
+      "qcSampleDecisions": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "requiredGates": null,
+      "gateStatuses": null,
+      "failedGates": null,
+      "gateResults": null,
+      "decision": "PASS",
+      "modelSelfDecision": "PASS",
+      "checks": {
+        "garmentIdentity": {
+          "status": "PASS",
+          "evidence": "The source shows a striped long-sleeve button-up shirt, which matches the shirt shown in the generated image.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "category": {
+          "status": "PASS",
+          "evidence": "Both source and generated images show a button-up shirt.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "baseColor": {
+          "status": "PASS",
+          "evidence": "Both show an off-white base color with blue and beige stripes.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "silhouette": {
+          "status": "PASS",
+          "evidence": "Both show a fitted, classic shirt silhouette.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "neckline": {
+          "status": "PASS",
+          "evidence": "Both feature a pointed shirt collar.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "sleeveConstruction": {
+          "status": "PASS",
+          "evidence": "Both show set-in long sleeves with cuffs.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "majorConstruction": {
+          "status": "PASS",
+          "evidence": "Both feature a central button placket and standard shirt seams.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "protectedComponents": {
+          "status": "PASS",
+          "evidence": "Both show matching white buttons and a classic collar.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "patternType": {
+          "status": "PASS",
+          "evidence": "Both show a vertical stripe pattern.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "patternLayout": {
+          "status": "PASS",
+          "evidence": "Both show vertical stripes aligned along the body and sleeves.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "materialAppearance": {
+          "status": "PASS",
+          "evidence": "Both show a lightweight woven fabric.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "lengthAndProportion": {
+          "status": "PASS",
+          "evidence": "Both show a standard hip-length hem.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "generationArtifacts": {
+          "status": "PASS",
+          "evidence": "The generated image is clean with no visible rendering errors.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        }
+      },
+      "failureReasons": [],
+      "correctionInstruction": "",
+      "confidence": 0.8,
+      "technicalValidation": {
+        "decodable": true,
+        "width": 3392,
+        "height": 5056,
+        "bytes": 6168144,
+        "mime": "image/jpeg",
+        "aspectRatioOk": true,
+        "errors": []
+      },
+      "imageBudget": {
+        "baseCalls": 1,
+        "targetedCalls": 0,
+        "fullRegenCalls": 0,
+        "imageCalls": 1,
+        "maxTotal": 3,
+        "budgetRemaining": 2
+      },
+      "visionCallCount": 3,
+      "authorityAllowed": true,
+      "authorityReason": null,
+      "wouldChargeCredit": 2,
+      "finalCandidate": "C0",
+      "isFinalCandidate": true
+    },
+    {
+      "productId": "9c648097-a793-42c6-9ec3-b30e4f32a96e",
+      "productKey": "check",
+      "projectId": "96610dbd-7bb5-4133-a703-3630276fa66e",
+      "sourceAssetIds": [
+        "1410f858-5999-4d44-a700-ffa9585746a4",
+        "2bd094b9-7562-4ec6-8a16-cd3585b990dd",
+        "128e5152-fb9a-45a6-9e19-8ef20a4f41a1"
+      ],
+      "generatedAssetId": null,
+      "generatedFile": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/llm_qc/live_hard/check/C0.png",
+      "generatedSha256": "9cb0e454591f6dd6c2e95963cf8fac69eedc4c965925a0da838dbf13a9790d2a",
+      "generationModel": "gemini-3-pro-image",
+      "generationPromptSha256": "6e27b4ba16e55682f49b42157c5013a230888890ec2ef1a8870c192b10c78f96",
+      "generationPromptVersion": "frame_lock_v2",
+      "qcModel": "gemini-3.5-flash",
+      "qcPromptVersion": "garment_fidelity_qc_v1",
+      "qcSamples": 3,
+      "qcSampleDecisions": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ],
+      "requiredGates": null,
+      "gateStatuses": null,
+      "failedGates": null,
+      "gateResults": null,
+      "decision": "FAIL",
+      "modelSelfDecision": "FAIL",
+      "checks": {
+        "garmentIdentity": {
+          "status": "FAIL",
+          "evidence": "The source garment has a highly distinct puckered, crinkled texture and a fine grid pattern, whereas the generated garment is flat and has a different check pattern scale.",
+          "sampleStatuses": [
+            "FAIL",
+            "FAIL",
+            "FAIL"
+          ]
+        },
+        "category": {
+          "status": "PASS",
+          "evidence": "Both the source and generated images show a long-sleeve button-up shirt.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "baseColor": {
+          "status": "PASS",
+          "evidence": "Both show a white and grey base color.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "silhouette": {
+          "status": "PASS",
+          "evidence": "Both show a relaxed, slightly oversized shirt silhouette.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "neckline": {
+          "status": "PASS",
+          "evidence": "Both feature a standard pointed shirt collar.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "sleeveConstruction": {
+          "status": "PASS",
+          "evidence": "Both have long sleeves with standard cuffs.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "majorConstruction": {
+          "status": "PASS",
+          "evidence": "Both feature a front button placket and a left chest pocket.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "protectedComponents": {
+          "status": "PASS",
+          "evidence": "The collar, buttons, and chest pocket are present in both.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "patternType": {
+          "status": "PASS",
+          "evidence": "Both feature a grid/check pattern.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "patternLayout": {
+          "status": "FAIL",
+          "evidence": "The source has a very fine, thin-lined grid pattern, while the generated image shows a thicker, more standard check pattern.",
+          "sampleStatuses": [
+            "FAIL",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "materialAppearance": {
+          "status": "FAIL",
+          "evidence": "The source fabric is heavily puckered and crinkled, whereas the generated fabric is flat and smooth.",
+          "sampleStatuses": [
+            "FAIL",
+            "FAIL",
+            "FAIL"
+          ]
+        },
+        "lengthAndProportion": {
+          "status": "PASS",
+          "evidence": "Both show a hip-length hemline.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "generationArtifacts": {
+          "status": "PASS",
+          "evidence": "The generated image is clean and free of physical anomalies.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        }
+      },
+      "failureReasons": [
+        "materialAppearance changed from puckered/crinkled to flat and smooth",
+        "patternLayout changed from a fine grid to a thicker check pattern",
+        "materialAppearance changed from puckered/crinkled texture to flat/smooth fabric"
+      ],
+      "correctionInstruction": "Preserve the mannequin, the pose, the camera, the framing, the background and the lighting exactly as they are in image 1.\n\nThe garment in image 1 differs from the source product. Required corrections:\n- restore the source garment's identity — this must be the same individual product (The source garment has a highly distinct puckered, crinkled texture and a fine grid pattern, whereas the generated garment is flat and has a different check pattern scale.)\n- restore the source fabric appearance (The source fabric is heavily puckered and crinkled, whereas the generated fabric is flat and smooth.)\n\nThese properties are already correct — do not alter them: category, baseColor, silhouette, neckline, sleeveConstruction, majorConstruction, protectedComponents, patternType, lengthAndProportion, generationArtifacts.\n\nObserved detail: Modify the fabric texture to restore the distinct puckered, crinkled seersucker-like appearance of the source garment. Adjust the pattern to match the fine, thin-lined grid scale of the reference. Keep the overall silhouette, collar, and pocket placement as they are.",
+      "confidence": 0.75,
+      "technicalValidation": {
+        "decodable": true,
+        "width": 848,
+        "height": 1264,
+        "bytes": 432850,
+        "mime": "image/jpeg",
+        "aspectRatioOk": true,
+        "errors": []
+      },
+      "imageBudget": {
+        "baseCalls": 1,
+        "targetedCalls": 1,
+        "fullRegenCalls": 0,
+        "imageCalls": 2,
+        "maxTotal": 3,
+        "budgetRemaining": 1
+      },
+      "visionCallCount": 6,
+      "authorityAllowed": false,
+      "authorityReason": "garment_fidelity_failed",
+      "wouldChargeCredit": 0,
+      "finalCandidate": null,
+      "isFinalCandidate": false
+    },
+    {
+      "productId": "9c648097-a793-42c6-9ec3-b30e4f32a96e",
+      "productKey": "check",
+      "projectId": "96610dbd-7bb5-4133-a703-3630276fa66e",
+      "sourceAssetIds": [
+        "1410f858-5999-4d44-a700-ffa9585746a4",
+        "2bd094b9-7562-4ec6-8a16-cd3585b990dd",
+        "128e5152-fb9a-45a6-9e19-8ef20a4f41a1"
+      ],
+      "generatedAssetId": null,
+      "generatedFile": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/llm_qc/live_hard/check/C1.png",
+      "generatedSha256": "28a14b70f72a0f77e7d2d160453ac2d1e97efcf309c0c0685994967bf28bf6d0",
+      "generationModel": "gemini-3-pro-image",
+      "generationPromptSha256": "6e27b4ba16e55682f49b42157c5013a230888890ec2ef1a8870c192b10c78f96",
+      "generationPromptVersion": "frame_lock_v2",
+      "qcModel": "gemini-3.5-flash",
+      "qcPromptVersion": "garment_fidelity_qc_v1",
+      "qcSamples": 3,
+      "qcSampleDecisions": [
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ],
+      "requiredGates": null,
+      "gateStatuses": null,
+      "failedGates": null,
+      "gateResults": null,
+      "decision": "FAIL",
+      "modelSelfDecision": "FAIL",
+      "checks": {
+        "garmentIdentity": {
+          "status": "FAIL",
+          "evidence": "The source garment features a highly distinctive puckered, bubbly texture throughout, whereas the generated garment is made of a flat, smooth fabric.",
+          "sampleStatuses": [
+            "FAIL",
+            "FAIL",
+            "FAIL"
+          ]
+        },
+        "category": {
+          "status": "PASS",
+          "evidence": "Both source and generated images show a long-sleeve button-up shirt.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "baseColor": {
+          "status": "PASS",
+          "evidence": "Both show a light grey/white base color with dark grid lines.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "silhouette": {
+          "status": "PASS",
+          "evidence": "Both show a relaxed, slightly oversized shirt silhouette.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "neckline": {
+          "status": "PASS",
+          "evidence": "Both feature a standard pointed shirt collar.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "sleeveConstruction": {
+          "status": "PASS",
+          "evidence": "Both show long set-in sleeves with standard cuffs.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "majorConstruction": {
+          "status": "PASS",
+          "evidence": "Both feature a front button placket and a left chest pocket.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "protectedComponents": {
+          "status": "PASS",
+          "evidence": "The collar, buttons, placket, and chest pocket are present in both.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "patternType": {
+          "status": "PASS",
+          "evidence": "Both show a fine grid check pattern.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "patternLayout": {
+          "status": "PASS",
+          "evidence": "The scale and orientation of the grid pattern match between source and generated images.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "materialAppearance": {
+          "status": "FAIL",
+          "evidence": "The source fabric has a prominent puckered, seersucker-like texture, while the generated fabric appears completely flat and smooth.",
+          "sampleStatuses": [
+            "FAIL",
+            "FAIL",
+            "FAIL"
+          ]
+        },
+        "lengthAndProportion": {
+          "status": "PASS",
+          "evidence": "Both show a hip-length hemline with similar proportions.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "generationArtifacts": {
+          "status": "PASS",
+          "evidence": "The generated image is clean and free of physical anomalies or mannequin fusion.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        }
+      },
+      "failureReasons": [
+        "materialAppearance changed from puckered/textured to flat woven"
+      ],
+      "correctionInstruction": "Preserve the mannequin, the pose, the camera, the framing, the background and the lighting exactly as they are in image 1.\n\nThe garment in image 1 differs from the source product. Required corrections:\n- restore the source garment's identity — this must be the same individual product (The source garment features a highly distinctive puckered, bubbly texture throughout, whereas the generated garment is made of a flat, smooth fabric.)\n- restore the source fabric appearance (The source fabric has a prominent puckered, seersucker-like texture, while the generated fabric appears completely flat and smooth.)\n\nThese properties are already correct — do not alter them: category, baseColor, silhouette, neckline, sleeveConstruction, majorConstruction, protectedComponents, patternType, patternLayout, lengthAndProportion, generationArtifacts.\n\nObserved detail: Modify the fabric texture of the generated shirt to match the prominent puckered, bubbly seersucker texture shown in the source images. Keep the grid pattern, collar, pocket, and overall silhouette unchanged.",
+      "confidence": 0.85,
+      "technicalValidation": {
+        "decodable": true,
+        "width": 848,
+        "height": 1264,
+        "bytes": 514422,
+        "mime": "image/jpeg",
+        "aspectRatioOk": true,
+        "errors": []
+      },
+      "imageBudget": {
+        "baseCalls": 1,
+        "targetedCalls": 1,
+        "fullRegenCalls": 0,
+        "imageCalls": 2,
+        "maxTotal": 3,
+        "budgetRemaining": 1
+      },
+      "visionCallCount": 6,
+      "authorityAllowed": false,
+      "authorityReason": "garment_fidelity_failed",
+      "wouldChargeCredit": 0,
+      "finalCandidate": null,
+      "isFinalCandidate": false
+    },
+    {
+      "productId": "5bf52f14-25f1-44d8-b3d6-2ad5a2f653a4",
+      "productKey": "structural",
+      "projectId": "0db50de3-ab1f-490c-8cc2-c0dff8686a3e",
+      "sourceAssetIds": [
+        "3a997cad-40c7-47b4-a28a-a22b053782bd",
+        "412e58f2-8f3a-40eb-a17f-fa996c7b5593",
+        "7960bc69-f9eb-4748-8f41-c4744752851b"
+      ],
+      "generatedAssetId": null,
+      "generatedFile": "/Users/nojeong-un/devs/wearless_studio/server/ab_out/llm_qc/live_hard/structural/C0.png",
+      "generatedSha256": "42ae60378d898888766026907981274960afe067b6f857674c9a2923f7bcc88d",
+      "generationModel": "gemini-3-pro-image",
+      "generationPromptSha256": "7399eff1047c765418052c7842e4e94427533c6bee91b14e72394b3eb2d02e27",
+      "generationPromptVersion": "frame_lock_v2",
+      "qcModel": "gemini-3.5-flash",
+      "qcPromptVersion": "garment_fidelity_qc_v1",
+      "qcSamples": 3,
+      "qcSampleDecisions": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "requiredGates": null,
+      "gateStatuses": null,
+      "failedGates": null,
+      "gateResults": null,
+      "decision": "PASS",
+      "modelSelfDecision": "PASS",
+      "checks": {
+        "garmentIdentity": {
+          "status": "PASS",
+          "evidence": "The generated image accurately reproduces the light pink long-sleeve top with the underbust bow detail and lettuce-edge trims seen in the source.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "category": {
+          "status": "PASS",
+          "evidence": "Both source and generated images show a long-sleeve top.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "baseColor": {
+          "status": "PASS",
+          "evidence": "Both source and generated images feature the same light pink color.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "silhouette": {
+          "status": "PASS",
+          "evidence": "Both source and generated images show a fitted silhouette.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "neckline": {
+          "status": "PASS",
+          "evidence": "The wide scoop neckline with a ruffled lettuce edge is identical in both source and generated images.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "sleeveConstruction": {
+          "status": "PASS",
+          "evidence": "Both show set-in long sleeves with lettuce-edge cuffs.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "majorConstruction": {
+          "status": "PASS",
+          "evidence": "The underbust seam line is present and correctly positioned in both.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "protectedComponents": {
+          "status": "PASS",
+          "evidence": "The delicate lace-like underbust trim and central mini bow are correctly rendered in the generated image.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "patternType": {
+          "status": "PASS",
+          "evidence": "Both source and generated garments are solid-colored.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "patternLayout": {
+          "status": "PASS",
+          "evidence": "Both garments are solid with no pattern layout discrepancies.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "materialAppearance": {
+          "status": "PASS",
+          "evidence": "Both show a soft, fine rib-knit fabric texture.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "lengthAndProportion": {
+          "status": "PASS",
+          "evidence": "The hip-length hemline matches perfectly between the source and generated images.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        },
+        "generationArtifacts": {
+          "status": "PASS",
+          "evidence": "The generated image is clean and free of physical or structural anomalies.",
+          "sampleStatuses": [
+            "PASS",
+            "PASS",
+            "PASS"
+          ]
+        }
+      },
+      "failureReasons": [],
+      "correctionInstruction": "",
+      "confidence": 0.85,
+      "technicalValidation": {
+        "decodable": true,
+        "width": 848,
+        "height": 1264,
+        "bytes": 388477,
+        "mime": "image/jpeg",
+        "aspectRatioOk": true,
+        "errors": []
+      },
+      "imageBudget": {
+        "baseCalls": 1,
+        "targetedCalls": 0,
+        "fullRegenCalls": 0,
+        "imageCalls": 1,
+        "maxTotal": 3,
+        "budgetRemaining": 2
+      },
+      "visionCallCount": 3,
+      "authorityAllowed": true,
+      "authorityReason": null,
+      "wouldChargeCredit": 2,
+      "finalCandidate": "C0",
+      "isFinalCandidate": true
+    }
+  ]
+}

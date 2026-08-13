@@ -136,7 +136,7 @@ MannequinCut {
   id: string                       // `${candidate}-${version}`
   candidate: 'A' | 'B'             // @deprecated 단일컷 전환 후 legacy id/API 호환용 — 항상 'A'
   version: number
-  src: string
+  src: string                       // 화면/생성 입력용 resolved asset URL. 톤 조정본이 있으면 최신 mannequinToneAdjusted asset, 없으면 원본 컷 asset
   baseFit: Fit                     // 생성 시 핏 (구 fitLabel '정핏'/'슬림핏')
   fitAdjust: AdjustFit | null      // @deprecated — FitProfile로 대체
   lengthAdjust: AdjustLength | null // @deprecated — FitProfile로 대체
@@ -149,6 +149,11 @@ MannequinCut {
 // 폐기: selected (선택은 project.selectedMannequinId가 소유),
 //       fitLabel / lengthLabel / matchName / matchFit / matchLength / matchLabel (전부 파생)
 ```
+
+`MannequinCut.id`는 원본 컷 신원이다. 톤 에디터가 적용된 뒤에도 `selectedMannequinId`는
+같은 컷 id를 유지하고, 서버는 `assets.metadata.type='mannequinToneAdjusted'`와
+`metadata.sourceCutId=MannequinCut.id`가 일치하는 최신 자산을 `src`로 해석한다.
+상세페이지 생성과 에디터 새 이미지 생성도 이 resolved asset을 기준 마네킹 이미지로 사용한다.
 
 ### 3.4 StoryboardBlock — 콘티보드 블록
 
@@ -170,7 +175,7 @@ StoryboardBlock {
   outerClosureState?: OuterClosureState | null       // 아우터 착용컷(styling·horizon·mirror) 전용. 누락 기본 open
   colorId?: string                 // ColorGroup.id (단수 — 컬러별 컷은 블록을 색상마다 분리)
   pose: PoseId                     // 기본 'auto' (구 _pose)
-  matchIds: string[]               // 매칭 의류 후보 id
+  matchIds: string[]               // 매칭 의류 후보 id (UI는 최대 1개, 배열 shape은 구 저장분 호환용)
   faceExposure: FaceExposure       // 기본 'same'
   angle: CameraAngle               // 기본 'same'
   refImages: string[]              // '내 레퍼런스' 업로드 (생성 입력에 포함) — 프로젝트 한정, 전역 저장 없음 (ADR-0004)
@@ -228,6 +233,7 @@ EditorBlockBase {
   id: string
   name: string                     // 표시명
   bg: string                       // hex
+  bgOpacity?: number               // 0~1, 생략 시 1. 배경에만 적용(자식 요소 불투명도와 독립)
   h: number                        // 고정 높이(px, 기준 폭 1000)
   elements: Element[]              // 배열 순서 = z-order (뒤가 위)
 }
@@ -254,12 +260,15 @@ Element (공통) {
   x: number  y: number  w: number  h: number    // 블록 좌표계 (기준 폭 1000)
   rotate?: number                  // (-180, 180]
   opacity?: number                 // 0~1
+  groupId?: string                 // 복합 오브젝트 선택·이동 묶음 ID
+  libraryItemId?: string           // 배치한 추천 오브젝트 정의 ID(선택 메타데이터)
   hidden?: boolean
   locked?: boolean
 }
 Element (type='image') + {
   src: string | null               // null = 빈 슬롯 (프레임)
   radius?: number
+  frameSlot?: boolean              // true = drag/drop 교체·자르기·빼내기를 지원하는 이미지 슬롯
   cutType: CutType | null          // 생성 시 기록. null = 직접 업로드(미상)
   crop?: { ox: number, oy: number, iw: number, ih: number }   // 프레임 기준 원본 오프셋/크기
 }
@@ -308,7 +317,8 @@ infoType별 info shape (frontend `src/features/editor/presets/infoPresets.js`가
 | `required_notice` | `{ fields: [{key, label, value}] }` — 빈 value는 `정보 입력 필요`로 렌더 |
 | `shipping_returns` | `{ sections: [{title, body}] }` |
 | `header` | `{ nameKo, nameEn, eyebrow }` |
-| `benefit_copy` | `{ items: [{title, desc, src}] }` (2~5개, src = 원형 사진 슬롯 이월값) |
+| `benefit_copy` | `{ items: [{title, desc, src}] }` (2~8개, src = 원형 사진 슬롯 이월값) |
+| `faq` | `{ layout: 'cards'\|'chat', title, items: [{question, answer}] }` (2~6개) |
 | `fit_guide` | `{ fits: Fit[], current: Fit\|null }` |
 | `size_matrix` | `{ heights: string[], weights: string[], cells: string[][], note }` |
 | `model_info` | `{ models: [{name, height, size, src}] }` (최대 3) — 기본값은 프로젝트가 실제 사용 중인 모델(선택 가상모델 또는 FaceMarket 실존 모델)의 이름·사진으로 프리필 |
@@ -321,6 +331,10 @@ infoType별 info shape (frontend `src/features/editor/presets/infoPresets.js`가
 서수(ordinal) = info 배열 인덱스. elements 재생성 시 사진은 info 에서 복원되고,
 info 동기화 이전에 채워진 레거시 블록은 같은 서수끼리만 이월한다(`carrySlotImages`,
 압축 채움 금지 — 사진이 다른 포인트로 이사하면 안 된다).
+
+기본 정보 템플릿의 최초 삽입 순서는 `header` → 컷 흐름 사이의 `benefit_copy`/`size`/`care`/
+`required_notice` → 문서 맨 아래 `shipping_returns`다. `shipping_returns`는 구매 결정을
+마무리하는 안내이므로 새 상세페이지 첫 생성에서 상단 공지가 아니라 마지막 블록으로 둔다.
 
 ### 3.6 Wardrobe — 에디터 의류 탭
 
@@ -490,12 +504,14 @@ NewCutRequest {                    // AI 탭 '새 이미지 추가'
   mode: 'new'
   colorId: string                  // 구 group('색상 1') 대체
   sectionRole?: StoryboardSectionRole  // 향후 섹션에 바로 삽입하는 경로용. 현재 UI는 의류 탭에 먼저 추가하므로 생략
-  contentRole: ContentRole          // 에디터 새 이미지 추가의 목적값. 콘티보드 내부 자동값과 UI 범위가 다름
-  cutType: CutType                 // 에디터 새 이미지 추가에서는 contentRole에서 파생. 이 흐름의 UI에서 직접 선택하지 않음
+  contentRole: ContentRole          // inferContentRole(cutType, shot)로 내부 자동 결정 — UI 선택 아님(콘티보드와 동일 규칙).
+                                    // '첫 장면(hero)·핵심 장점(benefit)' 목적은 에디터 신규 생성에서 제거(2026-08-13 오너 결정)
+  cutType: CutType                 // 에디터도 콘티보드처럼 컷 종류를 UI에서 직접 선택(2026-08-13 개편). 발행 예시 없는 컷 종류는 비활성
   direction: Direction | ProductDirection | null   // mirror는 null — 방향 없음 (ADR-0004)
   shot: ShotType | ProductShotType
   modelId: string
-  outerClosureState?: OuterClosureState | null  // 아우터 착용 이미지 전용. 현재 에디터 UI 미노출 시 open 기본값
+  outerClosureState?: OuterClosureState | null  // 아우터 착용 이미지 전용 — 에디터 UI에 노출(2026-08-13), 기본값 open
+  matchIds?: string[]              // 매칭 의류 — UI는 최대 1개(matchClothingMax, PRD §6.8), 착용컷 전용(제품컷은 빈 배열)
   exampleId?: string | null        // 촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
   refImages?: string[]
 }

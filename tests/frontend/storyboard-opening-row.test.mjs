@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { after, before, test } from 'node:test';
 
@@ -15,7 +16,8 @@ const PRODUCT = {
 };
 const COLORS = [{ id: 'base', isBase: true, images: [] }];
 const SERVER_DIR = fileURLToPath(new URL('../../server/', import.meta.url));
-const PYTHON = fileURLToPath(new URL('../../server/.venv/bin/python', import.meta.url));
+const VENV_PYTHON = fileURLToPath(new URL('../../server/.venv/bin/python', import.meta.url));
+const PYTHON = existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3';
 
 let vite;
 let buildEditorBlocksFromStoryboard;

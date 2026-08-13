@@ -13,6 +13,9 @@ import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { WIZARD_STEPS, STEP_INDEX } from '@/lib/wizardSteps.js';
 import { flushProductDraftSave } from '@/lib/draftStore.js';
 import { recordCreditReturn } from '@/lib/creditReturn.js';
+import { draftSlot } from '@/lib/draftSlot.js';
+
+draftSlot.configure(api);
 
 export { WIZARD_STEPS, STEP_INDEX } from '@/lib/wizardSteps.js';
 
@@ -25,21 +28,35 @@ export function TopNav() {
   const toast = useToast();
   const account = useAppStore((s) => s.account) || { name: '…', avatar: '', credits: 0, plan: '' };
   const beginProject = useAppStore((s) => s.beginProject);
+  const inputPromotionLocked = useAppStore((s) => s.inputPromotionLocked);
   const [resumeAsk, setResumeAsk] = useState(false);
   // create 흐름일 때만 'create' 활성 — /pricing·/credits 등은 어느 탭도 활성 아님(폴백 active 버그 수정)
   const route = pathname.startsWith('/library') ? 'library'
     : pathname.startsWith('/create') ? 'create' : null;
-  // '새로 만들기' = 로컬 플로우 초기화 후 입력 화면. 서버 project(보관함 행)는 AI 분석 시작 때 생성(빈 프로젝트 양산 방지).
-  const startNew = async () => { setResumeAsk(false); await beginProject(); navigate('/create/input'); };
+  // '새로 만들기' = 숨은 슬롯과 로컬 플로우를 비운 뒤 입력 화면. 보관함 project는 확정 때 생성한다.
+  const startNew = async () => {
+    if (inputPromotionLocked) return;
+    setResumeAsk(false);
+    try {
+      await draftSlot.removeForNewFlow();
+    } catch (error) {
+      toast.push(error?.message || '임시저장을 정리하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+      return;
+    }
+    await beginProject();
+    navigate('/create/input');
+  };
   // '이어서 작업' = 마지막으로 머문 create/editor 경로로 복귀(없으면 콘티 단계). 생성이 도는 동안
   // 사용자가 있어야 할 곳도 콘티라 강제 이동 없이 이 폴백 하나로 자연스럽게 돌아간다.
   const resumeWork = () => { setResumeAsk(false); navigate(useAppStore.getState().resumePath || '/create/storyboard'); };
   const onNav = async (r) => {
+    if (inputPromotionLocked) return;
     if (r === 'create') {
+      if (pathname === '/create/input') return;
       // 진행 중 프로젝트가 있으면 '이어서/새로' 를 물어 매번 새로 초기화돼 작업이 버려지던 문제를 막는다.
       const { projectId, projectPersisted } = useAppStore.getState();
       if (projectPersisted && projectId) { setResumeAsk(true); return; }
-      await startNew();
+      navigate('/create/input');
       return;
     }
     navigate('/library');
@@ -68,8 +85,8 @@ export function TopNav() {
       </span>
       <div className="nav-links">
         {/* 비로그인 숨김: 보관함/제작 탭은 로그인 사용자용. 비로그인 입력·분석은 '/' 공개 진입. */}
-        {session && <button className={`nav-link${route === 'create' ? ' active' : ''}`} onClick={() => onNav('create')}>상세페이지 제작</button>}
-        {session && <button className={`nav-link${route === 'library' ? ' active' : ''}`} onClick={() => onNav('library')}>보관함</button>}
+        {session && <button disabled={inputPromotionLocked} className={`nav-link${route === 'create' ? ' active' : ''}`} onClick={() => onNav('create')}>상세페이지 제작</button>}
+        {session && <button disabled={inputPromotionLocked} className={`nav-link${route === 'library' ? ' active' : ''}`} onClick={() => onNav('library')}>보관함</button>}
       </div>
       {STEPPER_STEPS.includes(step) && <div className="nav-stepper"><Stepper current={step} /></div>}
       <div className="nav-right">
@@ -91,7 +108,28 @@ export function TopNav() {
 
 /* 진행 중 상세페이지 제작이 있을 때 '상세페이지 제작' 재진입 시 — 이어서 작업 / 새로 만들기 선택.
    과거엔 무조건 새로 초기화돼 진행 중 작업이 버려졌다(이어서 재개 경로 없음). */
-export function ResumeChoiceModal({ onResume, onNew, onClose }) {
+export function ResumeChoiceModal({ onResume, onNew, onClose, sources = null, onChoose }) {
+  if (sources?.length) {
+    return (
+      <Modal onClose={onClose}>
+        <h3>이어서 작업할까요?</h3>
+        <p>저장된 작업을 이어서 열거나 새로 만들 수 있어요.</p>
+        <div className="draft-entry-sources">
+          {sources.map((source) => (
+            <button type="button" className="draft-entry-source" key={source.id}
+              onClick={() => onChoose(source.id)}>
+              <span>{source.title}</span>
+              <small>{source.description}</small>
+              {source.photosPending && <em>사진 저장이 끝나지 않아 일부 사진이 빠질 수 있어요.</em>}
+            </button>
+          ))}
+        </div>
+        <div className="modal-actions">
+          <Button variant="ghost" onClick={onNew}>새로 만들기</Button>
+        </div>
+      </Modal>
+    );
+  }
   return (
     <Modal onClose={onClose}>
       <h3>이어서 작업할까요?</h3>

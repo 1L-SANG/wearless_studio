@@ -7,6 +7,7 @@
    각 항목은 프레임 카드와 같은 문법의 스키매틱 썸네일로 내용을 식별한다.
    ============================================================= */
 import { INFO_PRESET_TYPES } from '@/features/editor/presets/infoPresets.js';
+import { EDITOR_INFO_PRESET_DRAG_TYPE } from '@/features/editor/editorImageDrop.js';
 
 const TIERS = [
   { id: 'must', label: '반드시 확인' },
@@ -60,6 +61,13 @@ function PresetThumb({ type }) {
       <rect x="8" y="29" width="30" height="3.5" rx="1" fill={D} opacity=".7" />
       <rect x="8" y="35" width="72" height="2.6" rx="1" fill={F} stroke={G} strokeWidth="0.3" />
     </>);
+    case 'faq': return svg(<>
+      <rect x="8" y="5" width="22" height="4" rx="1" fill={D} />
+      <rect x="8" y="12" width="70" height="9" rx="4.5" fill="#fff" stroke={G} strokeWidth="0.6" />
+      <rect x="13" y="15" width="48" height="2.8" rx="1" fill={G} opacity=".65" />
+      <rect x="22" y="24" width="70" height="11" rx="5.5" fill="#dcecff" stroke={G} strokeWidth="0.4" />
+      <rect x="28" y="27" width="56" height="2.8" rx="1" fill={D} opacity=".6" />
+    </>);
     case 'fit_guide': return svg(<>
       {[10, 32, 54, 76].map((x, i) => <g key={x}>
         <rect x={x} y="8" width="16" height="20" rx="2.5" fill={i === 1 ? D : F} />
@@ -85,7 +93,7 @@ function PresetThumb({ type }) {
   }
 }
 
-export function ContentPanel({ recommendGender, onPick }) {
+export function ContentPanel({ recommendGender, onPick, onDragStart, onDragEnd }) {
   return (
     <div>
       <div className="lbl" style={{ marginBottom: 6 }}>내용 추가</div>
@@ -104,7 +112,12 @@ export function ContentPanel({ recommendGender, onPick }) {
               {items.map((p) => {
                 const rec = recommendGender && p.recommend === recommendGender;
                 return (
-                  <div key={p.type} className="frame-item" style={{ cursor: 'pointer' }} onClick={() => onPick(p.type)} title={p.desc}>
+                  <div key={p.type} className="frame-item" onClick={() => onPick(p.type)} title={`${p.desc} · 끌어서 바로 추가`}
+                    draggable onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = 'copy';
+                      event.dataTransfer.setData(EDITOR_INFO_PRESET_DRAG_TYPE, p.type);
+                      onDragStart?.();
+                    }} onDragEnd={() => onDragEnd?.()}>
                     <div className="frame-prev" style={{ display: 'block', padding: 4 }}>
                       <PresetThumb type={p.type} />
                     </div>

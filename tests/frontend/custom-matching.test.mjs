@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import {
+  normalizeMatchClothingSelection,
+  normalizeMatchIds,
   reconcileMatchCompatibility,
   toMatchItem,
 } from '../../src/lib/api/matchingItems.js';
@@ -162,7 +164,7 @@ test('upload modal revives aliveRef in effect setup, not only in cleanup', () =>
   assert.doesNotMatch(source, /useEffect\(\(\) => \(\) => \{\s*\n\s*aliveRef\.current = false;/);
 });
 
-test('target-gender chips disable deselection, photo-volume cards stay exclusive, and modal shares abort signal', () => {
+test('target-gender chips disable deselection, photo-volume options stay exclusive, and modal shares abort signal', () => {
   const ui = readFileSync(new URL('../../src/components/ui.jsx', import.meta.url), 'utf8');
   const analysis = readFileSync(
     new URL('../../src/features/analysis/AnalysisForm.jsx', import.meta.url), 'utf8',
@@ -170,8 +172,8 @@ test('target-gender chips disable deselection, photo-volume cards stay exclusive
   assert.match(ui, /allowDeselect = true/);
   assert.match(ui, /v === value && allowDeselect \? null : v/);
   assert.equal((analysis.match(/allowDeselect=\{false\}/g) || []).length, 3);
-  assert.match(analysis, /className="af-vol" role="radiogroup"/);
-  assert.match(analysis, /role="radio" aria-checked=\{composeMode === option\.value\}/);
+  assert.match(analysis, /role="listbox" aria-label="상세페이지 사진 양"/);
+  assert.match(analysis, /role="option" aria-selected=\{composeMode === mode\.value\}/);
   assert.match(analysis, /controllerRef\.current\.abort\(\)/);
   assert.match(analysis, /purpose: 'custom_match_source'/);
   assert.match(analysis, /\{ signal: controller\.signal \}/);
@@ -202,15 +204,45 @@ test('type changes synchronously deselect and disable stale incompatible matches
   assert.match(adapter, /mergeMatchSelection\(\s*base\.matchClothing \|\| \[\], matchPatch, base\.clothingType/);
 });
 
-test('type compatibility reconciliation preserves explicit main and sub order', () => {
+test('matching selection keeps only the earliest explicit choice', () => {
   const items = [
     { id: 'array-first', clothingType: 'bottom', selected: true, selOrder: 2 },
     { id: 'array-last-main', clothingType: 'bottom', selected: true, selOrder: 1 },
     { id: 'wrong-type', clothingType: 'top', selected: true, selOrder: 3 },
   ];
   const reconciled = reconcileMatchCompatibility(items, 'outer');
-  assert.equal(reconciled[0].selOrder, 2);
+  assert.equal(reconciled[0].selected, false);
   assert.equal(reconciled[1].selOrder, 1);
   assert.equal(reconciled[2].selected, false);
   assert.equal(reconciled[2].isCompatible, false);
+
+  const normalized = normalizeMatchClothingSelection(items);
+  assert.deepEqual(normalized.filter((item) => item.selected).map((item) => item.id), ['array-last-main']);
+  assert.deepEqual(normalizeMatchIds(['array-last-main', 'array-first']), ['array-last-main']);
+});
+
+test('analysis matching UI replaces the previous choice instead of adding a sub item', () => {
+  const analysis = readFileSync(
+    new URL('../../src/features/analysis/AnalysisForm.jsx', import.meta.url), 'utf8',
+  );
+  assert.match(analysis, /selected: true, selOrder: 1/);
+  assert.match(analysis, /selected: false, selOrder: undefined/);
+  assert.match(analysis, /1개 선택/);
+  assert.doesNotMatch(analysis, /최대 2개|subMatchId|>서브</);
+});
+
+test('HTTP custom-match add and remove responses normalize legacy two-item selections', () => {
+  const adapter = readFileSync(
+    new URL('../../src/lib/api/httpAdapter.js', import.meta.url), 'utf8',
+  );
+  const customMutationSection = adapter.slice(
+    adapter.indexOf('async addCustomMatchItem'),
+    adapter.indexOf('async refreshMatchClothing'),
+  );
+  assert.equal(
+    (customMutationSection.match(/normalizeMatchClothingSelection/g) || []).length,
+    2,
+  );
+  assert.match(customMutationSection, /return \{ \.\.\.result, analysis \}/);
+  assert.match(customMutationSection, /return \{ analysis \}/);
 });

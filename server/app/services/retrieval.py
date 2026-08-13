@@ -39,17 +39,40 @@ def rank_by_style_affinity(
     정렬: score 내림차순, 동점이면 `item[tie_break]`(기본 "id") 오름차순 —
     이 두 키 외의 다른 기준으로는 절대 재정렬하지 않는다(NFR-1 결정성).
     """
-    def _score(item: dict) -> float:
-        tags = item.get("style_tags") or []
-        total = 0.0
-        for pt in product_tags:
-            for it in tags:
-                total += affinity_map.get((pt, it), affinity_map.get((it, pt), 0))
-        return total
-
-    scored = [(item, _score(item)) for item in items]
+    scored = [
+        (item, _quantize(_style_affinity_score(item, product_tags, affinity_map)))
+        for item in items
+    ]
     scored.sort(key=lambda pair: (-pair[1], pair[0][tie_break]))
     return [item for item, _ in scored]
+
+
+def _quantize(score: float) -> float:
+    """합산 순서가 만든 1e-16 부동소수점 노이즈를 지운다 — 같은 태그 집합은 같은 점수여야
+    id tie-break(NFR-1)가 작동하고, 부분합으로 계산하는 mock 과도 순서가 일치한다."""
+    return round(score, 9)
+
+
+def _style_affinity_score(item: dict, product_tags: list[str], affinity_map: dict) -> float:
+    """한 후보의 스타일 친화도 합. 단독·결합 랭킹이 같은 계산을 공유한다."""
+    total = 0.0
+    for product_tag in product_tags:
+        for item_tag in item.get("style_tags") or []:
+            total += affinity_map.get(
+                (product_tag, item_tag),
+                affinity_map.get((item_tag, product_tag), 0),
+            )
+    return total
+
+
+def _color_harmony_score(product_color: str, item_color: str | None, harmony: dict) -> float:
+    """색 조화 대칭 조회. 미등재·미상 색은 중립 0.5로 안전하게 폴백한다."""
+    if not item_color:
+        return 0.5
+    return harmony.get(
+        (product_color, item_color),
+        harmony.get((item_color, product_color), 0.5),
+    )
 
 
 def recommend_v1(
@@ -59,20 +82,52 @@ def recommend_v1(
     product_tags: list[str],
     affinity_map: dict,
     limit: int | None = None,
+    product_color: str | None = None,
+    harmony: dict | None = None,
+    color_weight: float = 0.3,
 ) -> list[dict]:
-    """매칭 후보 추천 v1 — 프리필터(matching.py 승계) + 태그 친화도 랭킹 (FR-A1/FR-A2).
+    """매칭 후보 추천 v1 — 프리필터 + 스타일·색 조화 결합 랭킹.
 
     프리필터는 `matching.recommend()`와 완전히 동일한 조건이다(같은 소스에서
     `complementary_type`을 import해 재사용) — 보완타입(top/outer/dress→bottom,
     그 외→top) + is_active + 성별(unisex는 항상 포함). 이 단계에서 절대
     보완타입이 아닌 항목(예: clothing_type="top" 입력에 top 항목)이 살아남지 않는다.
 
-    그 다음 살아남은 풀만 `rank_by_style_affinity`로 재정렬한다 — 랭킹은
-    프리필터 통과 풀 내부에서만 일어난다(FR-A2 "벡터든 태그든 랭킹은 프리필터
-    통과 풀 내부에서만").
+    상품색이 있으면 스타일 합을 풀의 최댓값으로 나눈 뒤 색 조화와 결합한다:
+    ``(1-w) * style_norm + w * color_score``. 상품색이 없거나 ``w=0``이면
+    기존 `rank_by_style_affinity` 경로를 그대로 사용해 순서 회귀를 막는다.
+
+    랭킹은 프리필터 통과 풀 내부에서만 일어나며, 결합 뒤에도 동점은 id 오름차순이다.
+    `diversify_top_two`는 최종 결합 정렬 뒤에 기존대로 적용한다.
     """
     pool = prefilter(items, clothing_type, genders)
-    ranked = diversify_top_two(rank_by_style_affinity(pool, product_tags, affinity_map))
+    # 색 정보 없음과 운영 롤백 스위치(0)는 계산식의 우연에 기대지 않고 기존 경로를
+    # 그대로 탄다. 음수 설정도 안전하게 0으로 취급한다.
+    if product_color is None or color_weight <= 0:
+        ranked = rank_by_style_affinity(pool, product_tags, affinity_map)
+    else:
+        style_scored = [
+            (item, _style_affinity_score(item, product_tags, affinity_map))
+            for item in pool
+        ]
+        max_style = max((score for _, score in style_scored), default=0.0)
+        weight = min(color_weight, 1.0)
+        harmony_scores = harmony or {}
+        combined = [
+            (
+                item,
+                _quantize(
+                    (1 - weight) * (style_score / max_style if max_style > 0 else 0.0)
+                    + weight * _color_harmony_score(
+                        product_color, item.get("color_group"), harmony_scores
+                    )
+                ),
+            )
+            for item, style_score in style_scored
+        ]
+        combined.sort(key=lambda pair: (-pair[1], pair[0]["id"]))
+        ranked = [item for item, _ in combined]
+    ranked = diversify_top_two(ranked)
     return ranked[:limit] if limit is not None else ranked  # limit=0 → 빈 결과(0은 falsy 방지)
 
 

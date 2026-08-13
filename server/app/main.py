@@ -22,6 +22,7 @@ from . import image_usage
 from .r2 import R2Client
 from .routes import router as v1_router, COMMON_RESPONSES
 from .workers.dispatcher import JobDispatcher
+from .workers.draft_asset_reclaimer import DraftAssetReclaimer
 
 DEFAULT_ERROR_CODES = {
     401: "unauthorized",
@@ -85,8 +86,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         dispatcher = None
+        draft_asset_reclaimer = None
         if pool is not None:
             await pool.open()
+            if app.state.r2 is not None:
+                draft_asset_reclaimer = DraftAssetReclaimer(app)
+                await draft_asset_reclaimer.start()
             # job dispatcher (§5) — DB·R2 + 최소 1개 AI provider(마네킹=Gemini, 분석=Gemini/OpenAI)
             # 가 있고 활성화일 때만 기동. provider 없는 job 은 워커가 실패 봉투로 종결.
             if (
@@ -98,6 +103,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await dispatcher.start()
                 app.state.dispatcher = dispatcher
         yield
+        if draft_asset_reclaimer is not None:
+            await draft_asset_reclaimer.stop()
         if dispatcher is not None:
             await dispatcher.stop()
         if pool is not None:
@@ -139,6 +146,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # 이미지 실비 계측 — 풀이 없으면(테스트·DB 미설정) 자동으로 로그 전용이 된다.
     image_usage.configure(pool=pool, persist=settings.image_usage_persist)
     app.state.dispatcher = None
+    # 캐노니컬 컷아웃 조회기. 마네킹 워커가 이걸 통해 준비된 컷아웃을 읽는다 —
+    # 없으면 None 을 돌려주고 베이스라인 경로가 그대로 돈다(보조 인프라).
+    from .services.canonical_reference import load as _canonical_load
+
+    app.state.canonical_reference_loader = _canonical_load
     # 공개 분석 리미터는 프로세스 로컬 안전밸브다(public_routes 주석의 다중 인스턴스 한계 참조).
     from .public_routes import PublicAnalysisRateLimiter
 
@@ -172,7 +184,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-        allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
+        allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Draft-Token"],
     )
 
     @app.exception_handler(HTTPException)

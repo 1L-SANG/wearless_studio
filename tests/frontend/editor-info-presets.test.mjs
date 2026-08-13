@@ -4,6 +4,8 @@ import test from 'node:test';
 import {
   CARE_LABEL_SENTENCE,
   DEFAULT_INFO_TEMPLATE,
+  FAQ_ITEMS_MAX,
+  FAQ_ITEMS_MIN,
   FEATURE_ITEMS_MAX,
   FEATURE_LAYOUTS,
   INFO_PRESET_TYPES,
@@ -14,6 +16,7 @@ import {
   careFamilyFor,
   carrySlotImages,
   defaultInfoFor,
+  ensureShippingReturnsBlock,
   fillFeatureCopy,
   isRepeatablePreset,
   needsDefaultTemplate,
@@ -108,6 +111,37 @@ test('care block always contains the care-label sentence', () => {
   assert.equal(fromDefault.auto, true);
 });
 
+test('FAQ supports card and chat layouts and clamps the question count', () => {
+  const defaults = defaultInfoFor('faq', CTX);
+  const cards = buildInfoBlock('faq', defaults, CTX, seqId());
+  const chat = buildInfoBlock('faq', { ...defaults, layout: 'chat' }, CTX, seqId());
+  assert.equal(cards.infoType, 'faq');
+  assert.equal(cards.info.layout, 'cards');
+  assert.equal(chat.info.layout, 'chat');
+  assert.ok(cards.elements.some((element) => element.type === 'text' && String(element.text).startsWith('Q. ')));
+  assert.ok(chat.elements.some((element) => element.type === 'text' && element.shape === 'bubble' && element.fill === '#dcecff'));
+  const chatBubbles = chat.elements.filter((element) => element.type === 'text' && element.shape === 'bubble');
+  assert.ok(chatBubbles.every((element) => element.radius === 45));
+  assert.equal(chatBubbles.length, chat.info.items.length * 2, 'each question and answer has a tail');
+  assert.ok(chatBubbles.every((element) => element.stroke === '#b9b9be' && element.strokeWidth === 1), 'bubbles have a subtle editable default border');
+  const grouped = chat.elements.filter((element) => element.groupId);
+  const groups = Map.groupBy(grouped, (element) => element.groupId);
+  assert.ok([...groups.values()].every((elements) => elements.length === 1 && elements[0].type === 'text' && elements[0].shape === 'bubble'), 'bubble and text are one canvas element');
+  assert.ok(chatBubbles.every((element) => element.text && element.style && element.bubbleFit && !element.bubblePairId), 'each chat bubble keeps copy and responsive sizing metadata on itself');
+  const cardGroups = Map.groupBy(cards.elements.filter((element) => element.groupId), (element) => element.groupId);
+  assert.equal(cardGroups.size, cards.info.items.length);
+  assert.ok([...cardGroups.values()].every((elements) => elements.length === 3
+    && elements.filter((element) => element.type === 'text').length === 2
+    && elements.some((element) => element.type === 'shape')), 'each card parent and its two text layers share one selection group');
+  const tooMany = buildInfoBlock('faq', {
+    layout: 'cards',
+    items: Array.from({ length: FAQ_ITEMS_MAX + 2 }, (_item, index) => ({ question: `Q${index}`, answer: `A${index}` })),
+  }, CTX, seqId());
+  assert.equal(tooMany.info.items.length, FAQ_ITEMS_MAX);
+  const one = buildInfoBlock('faq', { layout: 'chat', items: [{ question: '하나', answer: '답변' }] }, CTX, seqId());
+  assert.equal(one.info.items.length, FAQ_ITEMS_MIN);
+});
+
 test('presetTypeOf round-trips every built preset back to its type', () => {
   for (const preset of INFO_PRESET_TYPES) {
     const block = buildInfoBlock(preset.type, defaultInfoFor(preset.type, CTX), CTX, seqId());
@@ -144,19 +178,33 @@ test('needsDefaultTemplate gates auto-apply to untouched assembler docs only', (
   assert.equal(needsDefaultTemplate([baseDoc()[0], baseDoc()[3]]), false);
 });
 
-test('default template inserts top blocks first, flows before anchors, replaces size/care in place', () => {
+test('a partially templated saved document still gets the required shipping/returns frame at the bottom', () => {
+  const header = buildInfoBlock('header', defaultInfoFor('header', CTX), CTX, seqId());
+  const partial = [header, ...baseDoc()];
+  assert.equal(needsDefaultTemplate(partial), false, 'another info block keeps the full template gate closed');
+
+  const completed = ensureShippingReturnsBlock(partial, CTX, seqId());
+
+  assert.equal(completed.length, partial.length + 1);
+  assert.equal(completed.at(-1).kind, 'info');
+  assert.equal(completed.at(-1).infoType, 'shipping_returns');
+  assert.equal(completed[0], header, 'existing edited blocks are preserved');
+});
+
+test('default template keeps the header first and appends shipping/returns at the very bottom', () => {
   const doc = baseDoc();
   const { blocks, inserted, skipped } = applyInfoTemplate(doc, CTX, seqId());
   assert.equal(skipped.length, 0);
-  assert.equal(inserted.length, DEFAULT_INFO_TEMPLATE.top.length + DEFAULT_INFO_TEMPLATE.flow.length);
+  assert.equal(inserted.length, DEFAULT_INFO_TEMPLATE.top.length + DEFAULT_INFO_TEMPLATE.flow.length + DEFAULT_INFO_TEMPLATE.bottom.length);
   const kinds = blocks.map((b) => `${b.kind}${b.infoType ? ':' + b.infoType : ''}`);
   assert.deepEqual(kinds, [
-    'info:shipping_returns', 'info:header',            // top: 공지 → 헤더
+    'info:header',                                     // top: 상품명 헤더
     'benefit',                                          // 컷 블록 (그대로)
     'info:benefit_copy',                                // size 앵커 앞 플러시
     'size', 'care',                                     // 제자리 강화
     'info:required_notice',                             // care 뒤
     'ai-notice',
+    'info:shipping_returns',                           // 배송·교환 안내는 최초 생성 시 맨 아래
   ]);
   // 컷 블록 불변 — 같은 참조
   assert.equal(blocks.find((b) => b.kind === 'benefit'), doc[0]);
@@ -193,11 +241,12 @@ test('care anchor above size does not scramble flow order (cursor never moves ba
   const { blocks } = applyInfoTemplate(doc, CTX, seqId());
   const kinds = blocks.map((b) => `${b.kind}${b.infoType ? ':' + b.infoType : ''}`);
   assert.deepEqual(kinds, [
-    'info:shipping_returns', 'info:header',
+    'info:header',
     'benefit',
     'care',                                       // 사용자가 올려둔 위치 유지 (제자리 강화)
     'info:benefit_copy', 'size', 'info:required_notice',
     'ai-notice',
+    'info:shipping_returns',
   ]);
 });
 
@@ -258,6 +307,16 @@ test('applySlotFillToInfo writes slot photos into info so rebuilds restore them 
   assert.ok(!off.elements.some((e) => e.type === 'image'), 'diagram slot removed while off');
   const backOn = buildInfoBlock('size_table', { ...off.info, withDiagram: true }, CTX, seqId());
   assert.equal(backOn.elements.find((e) => e.type === 'image').src, '/diagram.png', 'photo survives off→on round trip');
+
+  const cropped = { ...synced, elements: synced.elements.map((e) => (e.id === imgIds[2]
+    ? { ...e, crop: { ox: 10, oy: 20, iw: 300, ih: 400 } }
+    : e)) };
+  const cleared = applySlotFillToInfo(cropped, imgIds[2], { src: null, cutType: null });
+  const clearedSlot = cleared.elements.find((e) => e.id === imgIds[2]);
+  assert.equal(clearedSlot.src, null);
+  assert.equal(clearedSlot.cutType, null);
+  assert.equal('crop' in clearedSlot, false, 'removing a frame image resets stale crop data');
+  assert.equal(cleared.info.items[2].src, null, 'form source stays synchronized after removal');
 });
 
 test('model info prefills from the model actually used by the project', () => {
@@ -288,10 +347,11 @@ test('template on a doc without anchors appends the flow before ai-notice in ord
   const { blocks } = applyInfoTemplate(doc, CTX, seqId());
   const kinds = blocks.map((b) => `${b.kind}${b.infoType ? ':' + b.infoType : ''}`);
   assert.deepEqual(kinds, [
-    'info:shipping_returns', 'info:header',
+    'info:header',
     'benefit',
     'info:benefit_copy', 'size', 'care', 'info:required_notice',
     'ai-notice',
+    'info:shipping_returns',
   ]);
 });
 

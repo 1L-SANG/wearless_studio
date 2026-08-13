@@ -7,7 +7,7 @@
 import { supabase } from '@/lib/supabase.js';
 import { LIMITS } from '@/lib/limits.js';
 import { defaultAnalysisShape, defaultStoryboard, isDefaultStoryboardForMode } from '@/lib/api/shapes.js';
-import { toMatchItem } from '@/lib/api/matchingItems.js';
+import { normalizeMatchClothingSelection, toMatchItem } from '@/lib/api/matchingItems.js';
 import { applyOpeningRow, hasOpeningRow } from '@/lib/storyboardEntryPlacement.js';
 import { selectPublicAnalysisPhotos } from '@/lib/publicAnalysisPhotos.js';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
@@ -57,7 +57,9 @@ function absolutizeAssetUrls(v) {
 
 // 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).
 // 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
-export async function http(path, { method = 'GET', body, signal, headers: requestHeaders } = {}) {
+export async function http(path, {
+  method = 'GET', body, signal, keepalive, headers: requestHeaders,
+} = {}) {
   let data;
   try {
     ({ data } = await supabase.auth.getSession());
@@ -97,6 +99,7 @@ export async function http(path, { method = 'GET', body, signal, headers: reques
       },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
+      keepalive,
     });
   } catch (cause) {
     if (cause?.name === 'AbortError') throw cause;
@@ -112,10 +115,12 @@ export async function http(path, { method = 'GET', body, signal, headers: reques
     // 계약 §6: 사용자에게 그대로 보여줄 한국어 message. envelope 없으면 한국어 기본값.
     let message = '요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.';
     let code;
+    let meta;
     try {
       const payload = await res.json();
       if (payload?.error?.message) message = payload.error.message;
       if (payload?.error?.code) code = payload.error.code;
+      if (payload?.error?.meta) meta = payload.error.meta;
     } catch { /* 비 JSON 응답 — 기본 메시지 유지 */ }
     console.error(`API ${res.status} ${path}`); // 기술 세부는 콘솔로만
     // status·code 를 에러에 실어 호출부가 분기할 수 있게 한다(예: 409 라이선스 차단 → 블로킹 패널,
@@ -123,17 +128,51 @@ export async function http(path, { method = 'GET', body, signal, headers: reques
     const err = new Error(message);
     err.status = res.status;
     if (code) err.code = code;
+    if (meta) err.meta = meta;
     throw err;
   }
   if (res.status === 204) return null;
   return absolutizeAssetUrls(await res.json());
 }
 
-// 인증 전 공개 체험 전용 multipart 요청. Supabase 세션을 조회하거나 Bearer를 붙이지 않는다.
+/* 톤 에디터 전용 바이트 취득.
+
+   `/assets/{id}/file` 은 R2 공개 도메인으로 302 를 준다. 캔버스로 픽셀을 **읽으려면**
+   그 최종 응답에 CORS 헤더가 있어야 하는데 그건 CDN 설정이라 앱이 보장할 수 없다. 그래서
+   편집 소스만 API 가 직접 실어 보내는 라우트를 쓴다 — 여기 CORS 는 우리 것이다.
+   에디터를 열 때 원본 1장 + 마스크 1장이고, 슬라이더를 움직이는 동안엔 0장이다. */
+export async function httpBlob(path, { signal } = {}) {
+  const { data } = await supabase.auth.getSession();
+  const token = data?.session?.access_token;
+  if (!token) throw new Error('로그인이 필요해요. 로그인 후 다시 시도해 주세요.');
+  const res = await fetch(`${BASE_URL}${path}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal,
+  });
+  if (!res.ok) {
+    const err = new Error('이미지를 불러오지 못했어요.');
+    err.status = res.status;
+    throw err;
+  }
+  return res.blob();
+}
+
+// 공개 체험용 multipart 요청. 로그인 사용자는 optional_user가 유효 Bearer를 보고 IP 제한을
+// 건너뛸 수 있게 토큰을 선호해서 붙이고, 세션 조회 실패·비로그인은 그대로 공개 경로를 쓴다.
 async function publicHttp(path, formData, { signal } = {}) {
+  let token;
+  try {
+    const { data } = await supabase.auth.getSession();
+    token = data?.session?.access_token;
+  } catch { /* 공개 분석은 인증 bootstrap 실패에도 익명으로 계속 가능 */ }
   let res;
   try {
-    res = await fetch(`${BASE_URL}${path}`, { method: 'POST', body: formData, signal });
+    res = await fetch(`${BASE_URL}${path}`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      body: formData,
+      signal,
+    });
   } catch (cause) {
     if (cause?.name === 'AbortError') throw cause;
     throw networkError(
@@ -241,6 +280,26 @@ export async function uploadPhoto(
   return { assetId, url: asset.url };
 }
 
+// 브라우저 이미지 picker의 단일 경로 — 콘티의 내 이미지와 에디터 무드 레퍼런스가
+// 모두 실제 업로드를 거쳐 같은 {assetId, url} 계약을 받는다. 취소/빈 선택은 업로드하지 않는다.
+async function pickAndUploadImage(projectId) {
+  const file = await new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = () => resolve(input.files?.[0] || null);
+    input.oncancel = () => resolve(null);
+    input.click();
+  });
+  if (!file) return null;
+  const { assetId, url } = await uploadPhoto(projectId, {
+    filename: file.name,
+    mime: file.type || 'image/jpeg',
+    blob: file,
+  });
+  return { assetId, url };
+}
+
 // ---- 매칭 의류 / analysis (US-4) --------------------------------------------
 // 서버는 GET /analysis 라우트가 없고 PATCH 가 REPLACE(payload=excluded.payload) 라, 전체 analysis 를
 // 이 모듈에 캐시해 delta 를 머지한 full payload 로 저장한다(delta 만 보내면 다른 필드가 유실됨).
@@ -339,6 +398,29 @@ function mergeMatchSelection(currentMatch, matchPatch, clothingType) {
 
 export const httpAdapter = {
   uploadPhoto,
+  async uploadDraftSlotPhoto(photo, options) {
+    return uploadPhoto(null, { ...photo, purpose: 'draft_slot' }, options);
+  },
+  async getDraftSlot(token, { full = false } = {}) {
+    return http(`/v1/draft-slot${full ? '?full=1' : ''}`, {
+      headers: token ? { 'X-Draft-Token': token } : undefined,
+    });
+  },
+  async putDraftSlot(body) {
+    return http('/v1/draft-slot', { method: 'PUT', body });
+  },
+  async takeoverDraftSlot() {
+    return http('/v1/draft-slot:takeover', { method: 'POST' });
+  },
+  async deleteDraftSlot(token) {
+    return http('/v1/draft-slot', {
+      method: 'DELETE',
+      headers: token ? { 'X-Draft-Token': token } : undefined,
+    });
+  },
+  async discardDraftSlotPhoto(assetId) {
+    return http(`/v1/draft-slot/assets/${assetId}`, { method: 'DELETE' });
+  },
   async publicAnalyze(product, { onProgress, signal } = {}) {
     const colors = product?.colors || [];
     const baseColor = colors.find((color) => color.isBase) || colors[0];
@@ -436,8 +518,8 @@ export const httpAdapter = {
     // 첫 진입/재시드는 화면의 자동 예시 배정 뒤 한 번만 PUT한다.
     return applyOpeningRow(defaultStoryboard(colors, mode, storyboardContext));
   },
-  async saveStoryboard(projectId, blocks, _options = {}) {
-    return http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: blocks });
+  async saveStoryboard(projectId, blocks, options = {}) {
+    return http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: blocks, ...options });
   },
   async getEditorBlocks(projectId) {
     return http(`/v1/projects/${projectId}/editor-blocks`);
@@ -533,7 +615,10 @@ export const httpAdapter = {
   },
   // 저장된 분석 payload 조회 (계약 §3.2) — 하드 새로고침 후 매칭 선택 등 복원용. {projectId, ...payload}.
   async getAnalysis(projectId) {
-    return normalizeAnalysisFit(await http(`/v1/projects/${projectId}/analysis`));
+    const analysis = normalizeAnalysisFit(await http(`/v1/projects/${projectId}/analysis`));
+    const normalized = { ...analysis, matchClothing: normalizeMatchClothingSelection(analysis.matchClothing) };
+    analysisCache = { projectId, analysis: normalized };
+    return normalized;
   },
   // 세탁 관리법 AI 초안 (동기·무과금) — 서버가 상품 종류·소재로 짧은 문구 생성. bare string 반환(mock 동일).
   // projectId 없으면(비로그인) 서버 project 가 없으니 클라 기본 문구로 폴백.
@@ -556,11 +641,11 @@ export const httpAdapter = {
     if (!cached && projectId) {
       const saved = await http(`/v1/projects/${projectId}/analysis`);
       if (saved && Object.keys(saved).length > 1) {   // {projectId} 만 있으면 미저장 — 스킵
-        analysisCache = { projectId, analysis: saved };
-        cached = saved;
+        cached = { ...saved, matchClothing: normalizeMatchClothingSelection(saved.matchClothing) };
+        analysisCache = { projectId, analysis: cached };
       }
     }
-    if (cached?.matchClothing?.length) return cached.matchClothing;
+    if (cached?.matchClothing?.length) return normalizeMatchClothingSelection(cached.matchClothing);
     if (!projectId) return [];
     const items = await fetchMatchCandidates(projectId, cached);
     const defaultIds = items.filter((it) => it.isCompatible !== false && it.isCustom !== true)
@@ -575,12 +660,20 @@ export const httpAdapter = {
       method: 'POST', body: { assetIds }, signal,
     });
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-    analysisCache = { projectId, analysis: result.analysis };
-    return result;
+    const analysis = {
+      ...result.analysis,
+      matchClothing: normalizeMatchClothingSelection(result.analysis?.matchClothing),
+    };
+    analysisCache = { projectId, analysis };
+    return { ...result, analysis };
   },
   async removeCustomMatchItem(projectId) {
     await http(`/v1/projects/${projectId}/analysis/custom-match-item`, { method: 'DELETE' });
-    const analysis = await http(`/v1/projects/${projectId}/analysis`);
+    const saved = await http(`/v1/projects/${projectId}/analysis`);
+    const analysis = {
+      ...saved,
+      matchClothing: normalizeMatchClothingSelection(saved.matchClothing),
+    };
     analysisCache = { projectId, analysis };
     return { analysis };
   },
@@ -632,6 +725,21 @@ export const httpAdapter = {
     if (!projectId) return [];
     return http(`/v1/projects/${projectId}/mannequins`);
   },
+  getToneEditor(projectId, cutId) {
+    return http(`/v1/projects/${projectId}/mannequins/${encodeURIComponent(cutId)}/tone-editor`);
+  },
+  toneEditorSource(projectId, cutId, opts) {
+    return httpBlob(`/v1/projects/${projectId}/mannequins/${encodeURIComponent(cutId)}/tone-editor/source`, opts);
+  },
+  toneEditorMask(projectId, cutId, opts) {
+    return httpBlob(`/v1/projects/${projectId}/mannequins/${encodeURIComponent(cutId)}/tone-editor/mask`, opts);
+  },
+  applyToneEditor(projectId, cutId, { assetId, saturation, exposure }) {
+    return http(`/v1/projects/${projectId}/mannequins/${encodeURIComponent(cutId)}/tone-editor:apply`, {
+      method: 'POST', body: { assetId, saturation, exposure },
+    });
+  },
+
   // 최초 A/B 후보 생성 — 202{jobId}→폴링, 또는 완료 존재 시 200{data,credits}(무차감 재호출).
   // 크레딧: mannequinGenerate. 진행 중 재호출은 서버가 활성 job 에 합류(1회만 차감).
   //
@@ -694,22 +802,14 @@ export const httpAdapter = {
   async getWardrobe(projectId) {
     return http(`/v1/projects/${projectId}/wardrobe`);
   },
+  // 콘티 '내 이미지' — 파일 선택 → R2 업로드 → {assetId, url}. 취소 시 null.
+  async pickAnyImage(projectId) {
+    return pickAndUploadImage(projectId);
+  },
   // '내 사진' 무드 레퍼런스 — 파일 선택 → R2 업로드 → {assetId, url}. 취소 시 null.
   // 서버 컷 생성이 assetId 로 이미지를 첨부하므로(refAssetIds), objectURL 이 아니라 업로드가 필수.
   async pickRefImage(projectId) {
-    const file = await new Promise((resolve) => {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/*';
-      input.onchange = () => resolve(input.files && input.files[0] ? input.files[0] : null);
-      input.oncancel = () => resolve(null);
-      input.click();
-    });
-    if (!file) return null;
-    const { assetId, url } = await uploadPhoto(projectId, {
-      filename: file.name, mime: file.type || 'image/jpeg', blob: file,
-    });
-    return { assetId, url };
+    return pickAndUploadImage(projectId);
   },
   // AG-06(mode:'new')/AG-07(mode:'vary') — req = NewCutRequest | VaryRequest (계약 §6).
   // 완료 재호출 없음(매 호출이 새 이미지 생성, mock과 동일 계약) — onProgress는 body에서 제외.

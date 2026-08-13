@@ -12,20 +12,52 @@ import {
   ALL_CUT_TYPE_OPTIONS,
   inferContentRole,
 } from '@/lib/storyboardTaxonomy.js';
+import { selectGenerationExamples } from '@/lib/generationExamples.js';
 import { detailDirectionFromExample } from '@/lib/storyboardExampleSelection.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
+import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, OBJECT_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, colorWithOpacity, encodeWardrobeImage, normalizeHexColor } from '@/features/editor/editorLibrary.js';
+import { DEFAULT_EDITOR_COLOR_PRESETS, commitNumberDraft, hexToHsv, hsvToHex } from '@/features/editor/editorAppearance.js';
 
 function PanelHead({ title, sub }) {
   return <><div className="panel-h">{title}</div>{sub && <div className="panel-sub">{sub}</div>}</>;
 }
 
 /* ---------- shared input atoms (used by 이미지 / 텍스트 props) ---------- */
+function DraftNumberInput({ value, min = -Infinity, max = Infinity, onCommit, ariaLabel }) {
+  const [draft, setDraft] = useState(String(value ?? ''));
+  const focusedRef = useRef(false);
+  const cancelRef = useRef(false);
+  useEffect(() => {
+    if (!focusedRef.current) setDraft(String(value ?? ''));
+  }, [value]);
+  const commit = () => {
+    focusedRef.current = false;
+    if (cancelRef.current) {
+      cancelRef.current = false;
+      setDraft(String(value ?? ''));
+      return;
+    }
+    const next = commitNumberDraft(draft, { min, max, fallback: value });
+    setDraft(String(next));
+    onCommit(next);
+  };
+  return (
+    <input value={draft} inputMode="decimal" aria-label={ariaLabel}
+      onFocus={(event) => { focusedRef.current = true; event.currentTarget.select(); }}
+      onChange={(event) => setDraft(event.target.value)} onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') event.currentTarget.blur();
+        if (event.key === 'Escape') { cancelRef.current = true; event.currentTarget.blur(); }
+      }} />
+  );
+}
+
 function NumStepper({ value, min = 0, max = 9999, step = 1, onChange }) {
   const clamp = (v) => Math.min(max, Math.max(min, v));
   return (
     <div className="num-stepper">
       <button type="button" onClick={() => onChange(clamp(+(value - step).toFixed(2)))}><Icon name="minus" size={15} /></button>
-      <input value={value} onChange={(e) => { const v = parseFloat(e.target.value); if (!isNaN(v)) onChange(clamp(v)); }} />
+      <DraftNumberInput value={value} min={min} max={max} step={step} onCommit={onChange} ariaLabel="숫자 입력" />
       <button type="button" onClick={() => onChange(clamp(+(value + step).toFixed(2)))}><Icon name="plus" size={15} /></button>
     </div>
   );
@@ -35,7 +67,7 @@ function NumField({ icon, iconText, labelText, value, min = -9999, max = 9999, o
     <label className="numfield" title={labelText || undefined}>
       <span className="nf-ico">{iconText || <Icon name={icon} size={15} />}</span>
       {labelText && <span className="nf-label">{labelText}</span>}
-      <input value={value} onChange={(e) => { const v = parseFloat(e.target.value); if (!isNaN(v)) onChange(Math.min(max, Math.max(min, v))); }} />
+      <DraftNumberInput value={value} min={min} max={max} onCommit={onChange} ariaLabel={labelText || iconText || '숫자 입력'} />
       {suffix && <span className="nf-suf">{suffix}</span>}
     </label>
   );
@@ -58,23 +90,6 @@ function MiniSelect({ value, options, onChange }) {
     </div>
   );
 }
-function ColorField({ value, opacity = 100, palette, allowNone, onColor, onOpacity }) {
-  const isNone = allowNone && (!value || value === 'none');
-  return (
-    <div className="colorfield">
-      <div className="cf-swatches">
-        {allowNone && (
-          <button type="button" className={`cf-sw cf-none${isNone ? ' on' : ''}`} title="없음" onClick={() => onColor('none')}><Icon name="ban" size={15} /></button>
-        )}
-        {palette.map((c) => (
-          <button type="button" key={c} className={`cf-sw${value === c ? ' on' : ''}`} style={{ background: c }} onClick={() => onColor(c)} />
-        ))}
-      </div>
-      {onOpacity && <NumField iconText="%" value={opacity} min={0} max={100} onChange={onOpacity} />}
-    </div>
-  );
-}
-
 /* ---------- Figma-style sectioned inspector atoms ---------- */
 function PanelSection({ title, actions, first, children }) {
   return (
@@ -84,39 +99,139 @@ function PanelSection({ title, actions, first, children }) {
     </div>
   );
 }
-function SwatchField({ value, palette, opacity, allowNone, thumb, onColor, onOpacity, visible = true, onToggleVisible }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
+function SwatchField({ value, opacity, allowNone, thumb, onColor, onOpacity, visible = true, onToggleVisible }) {
+  const normalized = normalizeHexColor(value);
+  const [hexDraft, setHexDraft] = useState(normalized || '#000000');
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteHsv, setPaletteHsv] = useState(() => hexToHsv(normalized || '#000000'));
+  const fieldRef = useRef(null);
+  const alpha = Math.min(100, Math.max(0, Math.round(opacity ?? 100)));
   useEffect(() => {
-    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    window.addEventListener('mousedown', h); return () => window.removeEventListener('mousedown', h);
+    if (!normalized) return;
+    setHexDraft(normalized);
+    setPaletteHsv(hexToHsv(normalized));
+  }, [normalized]);
+  useEffect(() => {
+    const close = (event) => { if (fieldRef.current && !fieldRef.current.contains(event.target)) setPaletteOpen(false); };
+    window.addEventListener('mousedown', close);
+    return () => window.removeEventListener('mousedown', close);
   }, []);
   const isNone = allowNone && (!value || value === 'none');
-  const hex = thumb ? '이미지' : isNone ? '없음' : (value || '').replace('#', '').toUpperCase();
+  const colorPresets = DEFAULT_EDITOR_COLOR_PRESETS;
+  const commitHex = () => {
+    const next = normalizeHexColor(hexDraft);
+    if (next && onColor) onColor(next);
+    setHexDraft(next || normalized || '#000000');
+  };
+  const setColor = (color) => {
+    const next = normalizeHexColor(color);
+    if (!next || !onColor) return;
+    setHexDraft(next); onColor(next); setPaletteOpen(false);
+  };
+  const setCustomColor = (nextHsv) => {
+    const next = {
+      h: Math.min(359, Math.max(0, Number(nextHsv.h) || 0)),
+      s: Math.min(100, Math.max(0, Number(nextHsv.s) || 0)),
+      v: Math.min(100, Math.max(0, Number(nextHsv.v) || 0)),
+    };
+    const hex = hsvToHex(next);
+    setPaletteHsv(next); setHexDraft(hex); onColor(hex);
+  };
+  const pickPalette = (event) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const s = ((event.clientX - rect.left) / rect.width) * 100;
+    const v = (1 - (event.clientY - rect.top) / rect.height) * 100;
+    setCustomColor({ ...paletteHsv, s, v });
+  };
+  const renderedColor = normalized ? colorWithOpacity(normalized, alpha / 100) : (value || '#000000');
   return (
-    <div className="swatchfield" ref={ref}>
+    <div className="swatchfield" ref={fieldRef}>
       <div className="sf-main">
         {thumb ? (
           <span className="sf-swatch sf-thumb"><img src={thumb} alt="" /></span>
         ) : (
-          <button type="button" className={`sf-swatch${isNone ? ' none' : ''}`} style={isNone ? undefined : { background: value }} onClick={() => setOpen((o) => !o)} title="색상 선택">
-            {isNone && <Icon name="ban" size={13} />}
+          <button type="button" className={`sf-swatch${isNone ? ' none' : ''}`} title="기본 색상 열기"
+            onClick={() => setPaletteOpen((open) => !open)} aria-expanded={paletteOpen}>
+            {isNone ? <Icon name="ban" size={13} /> : <span className="sf-swatch-color" style={{ background: renderedColor }} />}
           </button>
         )}
-        <span className="sf-hex">{hex}</span>
-        {onOpacity && !isNone && <span className="sf-op"><input value={Math.round(opacity)} onChange={(e) => { const v = parseFloat(e.target.value); if (!isNaN(v)) onOpacity(Math.min(100, Math.max(0, v))); }} /><i>%</i></span>}
+        {thumb || isNone ? <span className="sf-hex-label">{thumb ? '이미지' : '없음'}</span> : (
+          <input className="sf-hex" aria-label="HEX 색상" value={hexDraft}
+            onFocus={(e) => e.currentTarget.select()} onChange={(e) => setHexDraft(e.target.value.toUpperCase())}
+            onBlur={commitHex} onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur();
+              if (e.key === 'Escape') { setHexDraft(normalized || '#000000'); e.currentTarget.blur(); }
+            }} />
+        )}
+        {onOpacity && !isNone && <span className="sf-op"><input aria-label="불투명도" value={alpha} onChange={(e) => { const v = parseFloat(e.target.value); if (!isNaN(v)) onOpacity(Math.min(100, Math.max(0, v))); }} /><i>%</i></span>}
+        {allowNone && !isNone && onColor && <button type="button" className="sf-none-action" onClick={() => onColor('none')} title="색상 없음"><Icon name="ban" size={14} /></button>}
         {onToggleVisible && <button type="button" className="sf-eye" onClick={onToggleVisible} title={visible ? '숨기기' : '표시'}><Icon name={visible ? 'eye' : 'eyeOff'} size={15} /></button>}
       </div>
-      {open && !thumb && (
-        <div className="sf-pop">
-          {allowNone && <button type="button" className={`sf-po none${isNone ? ' on' : ''}`} title="없음" onClick={() => { onColor('none'); setOpen(false); }}><Icon name="ban" size={14} /></button>}
-          {palette.map((c) => (
-            <button type="button" key={c} className={`sf-po${value === c ? ' on' : ''}`} style={{ background: c }} onClick={() => { onColor(c); setOpen(false); }} />
-          ))}
+      {paletteOpen && !thumb && onColor && (
+        <div className="sf-color-popover">
+          <div className="sf-preset-grid" aria-label="기본 색상">
+            {colorPresets.map((color) => (
+              <button type="button" key={color} className={`sf-preset${normalized === color ? ' on' : ''}`}
+                style={{ background: color }} title={color} aria-label={`${color} 색상`} onClick={() => setColor(color)} />
+            ))}
+          </div>
+          <div className="sf-color-divider" />
+          <div className="sf-color-popover-head"><strong>직접 색상</strong><span>{hexDraft}</span></div>
+          <div className="sf-color-palette" role="slider" tabIndex="0" aria-label="채도와 명도"
+            aria-valuetext={hexDraft}
+            style={{ backgroundColor: hsvToHex({ h: paletteHsv.h, s: 100, v: 100 }) }}
+            onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); pickPalette(event); }}
+            onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) pickPalette(event); }}
+            onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}
+            onKeyDown={(event) => {
+              const delta = event.shiftKey ? 10 : 1;
+              const patch = event.key === 'ArrowLeft' ? { s: paletteHsv.s - delta }
+                : event.key === 'ArrowRight' ? { s: paletteHsv.s + delta }
+                  : event.key === 'ArrowUp' ? { v: paletteHsv.v + delta }
+                    : event.key === 'ArrowDown' ? { v: paletteHsv.v - delta }
+                      : null;
+              if (patch) { event.preventDefault(); setCustomColor({ ...paletteHsv, ...patch }); }
+            }}>
+            <span className="sf-color-palette-cursor" style={{ left: `${paletteHsv.s}%`, top: `${100 - paletteHsv.v}%` }} />
+          </div>
+          <label className="sf-hue-control">
+            <span>색조</span>
+            <input type="range" min="0" max="359" step="1" value={Math.round(paletteHsv.h)} aria-label="색조"
+              onChange={(event) => setCustomColor({ ...paletteHsv, h: Number(event.target.value) })} />
+          </label>
         </div>
+      )}
+      {onOpacity && !isNone && (
+        <label className="sf-opacity">
+          <span>투명도</span>
+          <input type="range" min="0" max="100" step="1" value={alpha}
+            onChange={(e) => onOpacity(Number(e.target.value))} />
+        </label>
       )}
     </div>
   );
+}
+
+function RangeNumberControl({ label, value, onChange, min = 0, max = 100, step = 1 }) {
+  const width = Number.isFinite(Number(value)) ? Number(value) : min;
+  const commit = (next) => {
+    const number = Number(next);
+    if (Number.isFinite(number)) onChange(Math.min(max, Math.max(min, number)));
+  };
+  return (
+    <div className="range-number-control">
+      <div className="range-number-head"><span>{label}</span><strong>{width}px</strong></div>
+      <div className="range-number-row">
+        <input type="range" min={min} max={max} step={step} value={width} aria-label={label}
+          onChange={(e) => commit(e.target.value)} />
+        <label><DraftNumberInput value={width} min={min} max={max} step={step} onCommit={commit} ariaLabel={`${label} 숫자 입력`} /><span>px</span></label>
+      </div>
+    </div>
+  );
+}
+
+function StrokeWidthControl(props) {
+  return <RangeNumberControl label="테두리 굵기" min={0.5} max={12} step={0.5} {...props} />;
 }
 
 /* ---------- AI · 현재 이미지 수정 — 예시 카드 선택 + 누적 트레이 ---------- */
@@ -279,7 +394,7 @@ function VaryPanel({ catalogs, source, onPickRef, onGenerate, onSetCutType }) {
 
 /* ---------- AI ---------- */
 const NEW_CUT_DEFAULT_SHOT = { styling: 'full', horizon: 'full', mirror: 'full', product: 'ghost' };
-export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], varySource, onGenerate, onVaryGenerate, onPickRef, onPickMoodRef, onSetCutType }) {
+export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, varySource, onGenerate, onVaryGenerate, onPickRef, onPickMoodRef, onSetCutType }) {
   const [tab, setTab] = useState('vary');
   // 콘티보드와 같은 규칙 — 사용자는 컷 종류(촬영 방식)만 고르고, 사진 목적(contentRole)은 내부 자동 결정.
   const [cutType, setCutType] = useState('styling');
@@ -304,10 +419,6 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
   const [matchOpen, setMatchOpen] = useState(false);
   const isProduct = cutType === 'product';
   const isMirror = cutType === 'mirror'; // mirror 레시피(ADR-0004): 방향 없음, 샷 full/medium만
-  const isDetail = isProduct && shot === 'detail';
-  const activeColorOpts = isDetail ? detailColorOpts : colorOpts;
-  const colorVal = activeColorOpts.some((option) => option.id === color)
-    ? color : activeColorOpts[0]?.id || null;   // wardrobe 그룹 키 = colorId (계약 §3.6)
   const [modelOpen, setModelOpen] = useState(false);
   const modelRef = useRef(null);
   const smoothScroll = (p, to, dur = 300) => {
@@ -332,19 +443,48 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
   const shotOpts = isProduct ? catalogs.productShotTypes : catalogs.shotTypes;
   const dirVal = dirOpts.some((o) => o.value === dir) ? dir : dirOpts[0].value;
   const shotVal = shotOpts.some((o) => o.value === shot) ? shot : shotOpts[0].value;
-  const modelGender = (catalogs.models || []).find((item) => item.id === model)?.gender || null;
+  // isDetail 은 검증된 shotVal 기준 — raw shot 을 읽으면 카탈로그 폴백 시 UI와 전송값이 어긋난다.
+  const isDetail = isProduct && shotVal === 'detail';
+  const activeColorOpts = isDetail ? detailColorOpts : colorOpts;
+  const colorVal = activeColorOpts.some((option) => option.id === color)
+    ? color : activeColorOpts[0]?.id || null;   // wardrobe 그룹 키 = colorId (계약 §3.6)
+  // 갤러리·게이트용 성별 — 고른 모델(가상·실존)의 성별 우선, 못 찾으면 분석 기반(콘티보드 exampleGender 규칙).
+  // 실존 모델은 catalogs.models 에 없어서 이 폴백이 없으면 null 이 되고, null 이면 착용컷 예시가 전부 닫힌다.
+  const modelGender = [...(catalogs.models || []), ...fmList].find((item) => item.id === model)?.gender
+    || exampleGender || null;
   const closureOptions = catalogs.outerClosureStates || [];
   const showOuterClosure = clothingType === 'outer' && !isProduct;
   const showMatchClothing = !isProduct && Array.isArray(matchClothing) && matchClothing.length > 0;
+  // 콘티보드와 같은 게이트 — 발행 예시가 하나도 없는 컷 종류는 비활성(예시가 추가되면 자동 활성).
+  const hasSelectableExamples = (cut, shotValue) => selectGenerationExamples(catalogs.genExamples, {
+    cutType: cut, shot: shotValue, clothingType, gender: modelGender,
+    appendSetOnly: cut !== 'product',
+  }).length > 0;
+  const cutTypeOptions = ALL_CUT_TYPE_OPTIONS.map((option) => {
+    const shots = option.value === 'product' ? catalogs.productShotTypes : catalogs.shotTypes;
+    return { ...option, disabled: !shots.some((item) => hasSelectableExamples(option.value, item.value)) };
+  });
+  // 콘티보드 settingsReset(storyboardExampleSelection.js)과 같은 규칙 — 이전 레시피의
+  // 매칭 의류·아우터 열림·내 레퍼런스가 새 레시피에 숨은 채 전송되지 않게 전면 리셋.
+  const resetRecipeSettings = () => {
+    setMatchIds([]); setMatchOpen(false); setOuterClosure('open'); setRefImages([]);
+  };
   const selectCutType = (value) => {
     if (value === cutType) return;
-    setCutType(value); setDir('front'); setShot(NEW_CUT_DEFAULT_SHOT[value] || 'full');
+    const nextShotOpts = value === 'product' ? catalogs.productShotTypes : catalogs.shotTypes;
+    const preferred = NEW_CUT_DEFAULT_SHOT[value] || 'full';
+    // 기본 샷에 발행 예시가 없으면 예시가 있는 샷으로 — 빈 갤러리로 시작하지 않는다(콘티보드 동일).
+    const nextShot = hasSelectableExamples(value, preferred) ? preferred
+      : nextShotOpts.find((option) => hasSelectableExamples(value, option.value))?.value || preferred;
+    setCutType(value); setDir('front'); setShot(nextShot);
     setExampleId(null); setRefScope('all');
-    if (value === 'product') { setMatchIds([]); setMatchOpen(false); }
+    resetRecipeSettings();
   };
   const selectExample = (value) => {
+    const replacing = !!exampleId && !!value && exampleId !== value;
     setExampleId(value);
     if (!value) setRefScope('all');
+    if (replacing) resetRecipeSettings();
     // 디테일 컷의 방향은 예시에 내재 — 뒷면 디테일 예시를 고르면 back 을 내부 전송해
     // 서버가 BackDetail 사진을 근거로 쓴다(2026-08-07 오너 결정).
     if (isDetail) {
@@ -362,13 +502,17 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
         <div>
           {/* 콘티보드와 같은 첫 선택 — 컷 종류(촬영 방식). 사진 목적은 inferContentRole 로 내부 결정 */}
           <div className="insp-sec"><label className="lbl">컷 종류</label>
-            <UnderlineTabs options={ALL_CUT_TYPE_OPTIONS} value={cutType} onChange={selectCutType} />
+            <UnderlineTabs options={cutTypeOptions} value={cutType} onChange={selectCutType} />
           </div>
 
           {/* 분위기 예시가 주인공 — 샷 종류는 갤러리의 아이콘 필터 (B+C안, ADR-0004) */}
           <MoodGuide catalogs={catalogs} cut={cutType} direction={isMirror ? null : dirVal} shot={shotVal}
             shotOptions={isProduct ? shotOpts : null}
-            onShotChange={(v) => { setShot(v); setExampleId(null); setRefScope('all'); }} clothingType={clothingType} gender={modelGender}
+            onShotChange={(v) => {
+              setShot(v); setExampleId(null); setRefScope('all');
+              // 고스트→디테일 전환 시 이전 '뒷면'이 숨은 채 BackDetail 근거로 새지 않게 — 콘티보드 동일 가드(Codex 리뷰 P1).
+              if (isProduct) setDir('front');
+            }} clothingType={clothingType} gender={modelGender}
             exampleId={exampleId} onExampleChange={selectExample}
             refScope={refScope} onRefScopeChange={setRefScope}
             refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
@@ -411,8 +555,8 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
                     {matchClothing.map((m) => {
                       const on = matchIds.includes(m.id);
                       return (
-                        <button key={m.id} className={`match-cell${on ? ' on' : ''}`} onClick={() =>
-                          setMatchIds((cur) => on ? cur.filter((id) => id !== m.id) : [...cur, m.id])
+                        <button key={m.id} className={`match-cell${on ? ' on' : ''}`} aria-pressed={on} onClick={() =>
+                          setMatchIds(on ? [] : [m.id]) // 단일 선택 — matchClothingMax=1 (PRD §6.8, 콘티보드 동일)
                         }><img src={m.thumb} alt={m.name} /><span className="ml">{m.name}{on && <Icon name="check" size={12} />}</span></button>
                       );
                     })}
@@ -460,7 +604,7 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
 }
 
 /* ---------- 의류 (wardrobe library) ---------- */
-export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, onInsert, onUpload, onVaryImage, onDeleteSelected, onFreshSeen }) {
+export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, onInsert, onUpload, onVaryImage, onDeleteSelected, onFreshSeen, onImageDragStart, onImageDragEnd }) {
   // wardrobe 그룹 키 = colorId | 'misc' — 표시명은 colorOpts 에서 파생 (계약 §3.6)
   const colorFor = (group) => {
     if (group === 'misc') return { hex: '#d4d4d8', name: '기타', neutral: true };
@@ -494,7 +638,9 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, onInsert,
                 {imgs.map((im) => im.loading ? (
                   <div className="ward-cell loading" key={im.id}><Icon name="loader" size={18} className="spin" style={{ color: 'var(--fg-3)' }} /></div>
                 ) : (
-                  <div className={`ward-cell${sel.has(im.id) ? ' checked' : ''}${im.fresh ? ' fresh' : ''}`} key={im.id} onClick={() => onInsert(im)} title="클릭하면 캔버스에 삽입"
+                  <div className={`ward-cell${sel.has(im.id) ? ' checked' : ''}${im.fresh ? ' fresh' : ''}`} key={im.id} onClick={() => onInsert(im)} title="클릭하거나 프레임으로 끌어 넣기"
+                    draggable onDragStart={(e) => { const image = e.currentTarget.querySelector('img'); e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData(WARDROBE_IMAGE_MIME, encodeWardrobeImage(im, { width: image?.naturalWidth, height: image?.naturalHeight })); onImageDragStart?.(); }}
+                    onDragEnd={() => onImageDragEnd?.()}
                     onAnimationEnd={im.fresh ? () => onFreshSeen && onFreshSeen(im.id) : undefined}>
                     <img src={thumbUrl(im.src, 240)} alt="" loading="lazy" decoding="async" />
                     <button className="ward-check" onClick={(e) => { e.stopPropagation(); toggleSel(im.id); }} title="선택">
@@ -540,7 +686,7 @@ const LINE_DASH = [
 function LabeledField({ label, children }) {
   return <div className="ff"><span className="ff-lbl">{label}</span>{children}</div>;
 }
-export function ImagePanel({ el, onChange, onLayer, onCrop, onVary, lock = true, onLock }) {
+export function ImagePanel({ el, onChange, onLayer, onCrop, onCropReset, onReplace, onRemove, onVary, lock = true, onLock }) {
   // 비율 잠금은 에디터가 소유 — moveable keepRatio와 연동 (자물쇠 = keepRatio)
   const setLock = onLock || (() => {});
   if (!el || !['image', 'shape', 'line'].includes(el.type)) return <EmptyState icon="image" title="요소를 선택하세요" desc="캔버스에서 이미지·오브젝트를 클릭하면 속성이 여기에 나와요." />;
@@ -556,7 +702,17 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, onVary, lock = true,
       {isImg && onVary && (
         <Button variant="ghost" block icon="wand" className="vary-jump" onClick={onVary} style={{ marginBottom: 16 }}>AI로 컷 변형하기</Button>
       )}
-      <PanelSection title={isLine ? '선 크기' : '이미지 크기'} first>
+      {isImg && el.frameSlot && (
+        <PanelSection title="프레임 이미지" first>
+          <div className="frame-image-actions">
+            <Button variant="quiet" size="sm" icon="refresh" onClick={() => onReplace?.(el)}>교체</Button>
+            <Button variant="quiet" size="sm" icon="crop" disabled={!el.src} onClick={() => onCrop?.(el)}>자르기</Button>
+            <Button variant="quiet" size="sm" icon="undo" disabled={!el.crop} onClick={() => onCropReset?.(el)}>초기화</Button>
+            <Button variant="quiet" size="sm" icon="trash" disabled={!el.src} onClick={() => onRemove?.(el)}>빼내기</Button>
+          </div>
+        </PanelSection>
+      )}
+      <PanelSection title={isLine ? '선 크기' : '이미지 크기'} first={!isImg || !el.frameSlot}>
         <div className="size-row">
           <NumField iconText="가로" value={Math.round(el.w)} min={20} max={2000} onChange={setW} />
           <NumField iconText="세로" value={Math.round(el.h)} min={20} max={2000} onChange={setH} />
@@ -630,10 +786,15 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, onVary, lock = true,
 const TEXT_PALETTE = ['#0e0d14', '#898989', '#ffffff', '#4f88c9', '#d92d20', '#067647'];
 const HL_PALETTE = ['#fef3c7', '#dbeafe', '#dcfce7', '#fee2e2', '#f3f4f6', '#0e0d14'];
 const WEIGHTS = [{ value: 300, label: 'Light' }, { value: 400, label: 'Regular' }, { value: 500, label: 'Medium' }, { value: 600, label: 'SemiBold' }, { value: 700, label: 'Bold' }];
-export function TextPanel({ el, catalogs, onChange, onLayer, onAddText, onAddGarmentText }) {
+export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, onLayer, onAddText, onAddGarmentText }) {
   const has = el && el.type === 'text';
+  const isBubble = has && el.shape === 'bubble';
   const s = (has && el.style) || {};
   const setS = (p) => onChange({ style: { ...s, ...p } });
+  const changeBubbleAppearance = onBubbleAppearanceChange || onChange;
+  const bubbleStroke = isBubble && el.stroke !== 'none' ? (el.stroke || DEFAULT_BUBBLE_STROKE) : 'none';
+  const bubbleStrokeWidth = Number.isFinite(Number(el?.strokeWidth)) ? Number(el.strokeWidth) : DEFAULT_BUBBLE_STROKE_WIDTH;
+  const hasBubbleStroke = isBubble && bubbleStroke !== 'none';
   return (
     <div className="fig-panel">
       <button type="button" className="add-text-btn" onClick={onAddText}><Icon name="type" size={17} />텍스트 추가</button>
@@ -647,7 +808,15 @@ export function TextPanel({ el, catalogs, onChange, onLayer, onAddText, onAddGar
         <div className="panel-sub" style={{ marginTop: 18 }}>위 버튼으로 텍스트를 추가하거나, 캔버스에서 텍스트를 클릭해 편집해요.</div>
       ) : (
         <>
-          <PanelSection title="타이포그래피" first>
+          <PanelSection title="텍스트 박스" first>
+            <div className="field-2up">
+              <NumField iconText="가로" value={Math.round(el.w || 120)} min={1} max={10000} onChange={(w) => onChange({ w })} />
+              <span />
+            </div>
+            <div className="panel-sub" style={{ marginTop: 8 }}>텍스트는 비율 잠금 없이 좌우 가장자리로 폭을 조절할 수 있어요.</div>
+          </PanelSection>
+
+          <PanelSection title="타이포그래피">
             <MiniSelect value={s.font || 'Pretendard'} options={catalogs.fonts} onChange={(v) => setS({ font: v })} />
             <div className="field-2up" style={{ marginTop: 8 }}>
               <MiniSelect value={s.weight || 400} options={WEIGHTS} onChange={(v) => setS({ weight: v })} />
@@ -683,6 +852,35 @@ export function TextPanel({ el, catalogs, onChange, onLayer, onAddText, onAddGar
               onColor={(c) => setS({ color: c })} onOpacity={(v) => setS({ opacity: v / 100 })} />
           </PanelSection>
 
+          {isBubble && (
+            <>
+              <PanelSection title="말풍선 배경">
+                <SwatchField value={el.fill || '#ffffff'} opacity={Math.round((el.fillOpacity ?? 1) * 100)} palette={SHAPE_PALETTE}
+                  onColor={(fill) => changeBubbleAppearance({ fill })} onOpacity={(value) => changeBubbleAppearance({ fillOpacity: value / 100 })} />
+              </PanelSection>
+              <PanelSection title="말풍선 모양">
+                <RangeNumberControl label="둥근 모서리" value={el.radius ?? DEFAULT_BUBBLE_RADIUS} min={0} max={100}
+                  onChange={(radius) => changeBubbleAppearance({ radius })} />
+              </PanelSection>
+              <PanelSection title="말풍선 테두리" actions={
+                <button type="button" className="psec-act" title={hasBubbleStroke ? '테두리 제거' : '테두리 추가'}
+                  onClick={() => changeBubbleAppearance({
+                    stroke: hasBubbleStroke ? 'none' : DEFAULT_BUBBLE_STROKE,
+                    strokeWidth: hasBubbleStroke ? bubbleStrokeWidth : Math.max(DEFAULT_BUBBLE_STROKE_WIDTH, bubbleStrokeWidth),
+                  })}>
+                  <Icon name={hasBubbleStroke ? 'minus' : 'plus'} size={15} />
+                </button>
+              }>
+                {hasBubbleStroke ? (
+                  <div className="bubble-border-controls">
+                    <SwatchField value={bubbleStroke} palette={SHAPE_PALETTE} allowNone onColor={(stroke) => changeBubbleAppearance({ stroke })} />
+                    <StrokeWidthControl value={bubbleStrokeWidth} onChange={(strokeWidth) => changeBubbleAppearance({ strokeWidth })} />
+                  </div>
+                ) : <div className="psec-empty">테두리 없음</div>}
+              </PanelSection>
+            </>
+          )}
+
           <PanelSection title="하이라이트">
             <SwatchField value={s.bg || 'none'} palette={HL_PALETTE} allowNone onColor={(c) => setS({ bg: c })} />
           </PanelSection>
@@ -693,19 +891,20 @@ export function TextPanel({ el, catalogs, onChange, onLayer, onAddText, onAddGar
 }
 
 /* ---------- 프레임 ---------- */
-export function FramePanel({ catalogs, onAdd, onDragStart, onDragEnd }) {
+export function FramePanel({ onAdd, onDragStart, onDragEnd }) {
+  const frames = FRAME_LIBRARY_ITEMS;
   return (
     <div>
       <PanelHead title="프레임" sub="새 블록으로 추가돼요. 끌어 놓거나 클릭하세요." />
       <div className="frame-list">
-        {catalogs.frames.map((f) => (
+        {frames.map((f) => (
           <div className="frame-item" key={f.id} onClick={() => onAdd(f)} draggable
             onDragStart={(e) => { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/frame', f.id); onDragStart && onDragStart(); }}
             onDragEnd={() => onDragEnd && onDragEnd()}>
-            <div className="frame-prev" style={{ gridTemplateColumns: `repeat(${f.cols}, 1fr)` }}>
-              {Array.from({ length: f.cols }).map((_, i) => <i key={i} />)}
+            <div className="frame-prev frame-layout-prev">
+              {f.slots.map((slot, i) => <i key={i} style={{ left: `${slot.x / 10}%`, top: `${slot.y / f.h * 100}%`, width: `${slot.w / 10}%`, height: `${slot.h / f.h * 100}%` }} />)}
             </div>
-            <div className="fl">{f.label}</div>
+            <div className="fl">{f.label}{f.recommended && <span className="frame-rec">추천</span>}</div>
           </div>
         ))}
       </div>
@@ -731,20 +930,22 @@ export function ShapePanel({ catalogs, onAdd, block, onBgChange }) {
       {block && onBgChange && (
         <div style={{ marginBottom: 20 }}>
           <label className="lbl" style={{ marginBottom: 9 }}>블록 배경</label>
-          <div className="block-bg-row">
-            {BLOCK_BG_OPTS.map((o) => {
-              const on = (block.bg || '#ffffff').toLowerCase() === o.c;
-              return (
-                <button key={o.c} className={`block-bg-sw${on ? ' on' : ''}`} onClick={() => onBgChange(block.id, o.c)}>
-                  <span className="bg-chip" style={{ background: o.c }} />{o.label}
-                </button>
-              );
-            })}
-          </div>
-          <p className="hint" style={{ marginTop: 8 }}>선택한 블록(<b style={{ color: 'var(--fg-1)' }}>{block.name}</b>)의 배경색이에요.</p>
+          <SwatchField value={block.bg || '#ffffff'} palette={BLOCK_BG_OPTS.map((o) => o.c)} opacity={Math.round((block.bgOpacity ?? 1) * 100)}
+            onColor={(bg) => onBgChange(block.id, { bg })} onOpacity={(value) => onBgChange(block.id, { bgOpacity: value / 100 })} />
+          <p className="hint" style={{ marginTop: 8 }}>배경만 투명해져요. 블록 안의 사진과 글자는 흐려지지 않아요.</p>
         </div>
       )}
       <PanelHead title="오브젝트" sub="클릭하면 블록 중앙에, 드래그하면 원하는 블록에 추가돼요." />
+      <label className="lbl" style={{ marginBottom: 9 }}>추천 오브젝트</label>
+      <div className="object-preset-list">
+        {OBJECT_LIBRARY_ITEMS.map((item) => (
+          <button className="object-preset-cell" key={item.id} draggable title={item.label}
+            onClick={() => onAdd('preset', item.id)} onDragStart={(e) => dragStart(e, 'preset', item.id)}>
+            <span className={`object-preset-glyph ${item.id}`}>{item.preview}</span>
+            <span>{item.label}</span>
+          </button>
+        ))}
+      </div>
       <label className="lbl" style={{ marginBottom: 9 }}>기본 도형</label>
       <div className="shape-list" style={{ marginBottom: 18 }}>
         {catalogs.shapes.map((s) => (

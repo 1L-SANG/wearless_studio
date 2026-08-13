@@ -69,7 +69,7 @@ prep(기준 색상 이미지·분석 속성·매칭 하의 이미지·fitProfile
 
 ### PL-4 상세페이지 생성 — `generateDetailPage(projectId)` ★핵심
 
-입력은 전부 서버 상태에서 읽는다: 저장된 `storyboard` + `project(copywriting, selectedMannequinId)` + `product`/`analysis`. 클라이언트가 들고 있는 값을 믿지 않는다 (frontend_state_model §5). 워커는 생성 전에 콘티를 공식 네 섹션의 `taxonomyVersion: 3`으로 정규화하며, `contentRole`을 우선하고 예전 `kind`·`cutType`은 빠진 역할을 복원하거나 v2 저장본을 승격할 때만 읽는다. `selectedMannequinId`의 마네킹컷은 기준색으로 만든 자산이므로 기준색 착용컷에만 첨부하고, 다른 색을 고른 블록은 그 색상의 셀러 상품 사진을 색상 정본으로 쓴다.
+입력은 전부 서버 상태에서 읽는다: 저장된 `storyboard` + `project(copywriting, selectedMannequinId)` + `product`/`analysis`. 클라이언트가 들고 있는 값을 믿지 않는다 (frontend_state_model §5). 워커는 생성 전에 콘티를 공식 네 섹션의 `taxonomyVersion: 3`으로 정규화하며, `contentRole`을 우선하고 예전 `kind`·`cutType`은 빠진 역할을 복원하거나 v2 저장본을 승격할 때만 읽는다. `selectedMannequinId`의 마네킹컷은 기준색으로 만든 자산이므로 기준색 착용컷에만 첨부하고, 다른 색을 고른 블록은 그 색상의 셀러 상품 사진을 색상 정본으로 쓴다. 해당 컷에 톤 에디터 적용본이 있으면 원본 컷 asset이 아니라 최신 `mannequinToneAdjusted` asset을 기준 이미지로 쓴다.
 
 ```
 info     상품·분석·콘티 데이터 수집/검증 (비AI)
@@ -102,6 +102,7 @@ PL-6 (mode:'vary'): VaryRequest 검증 → AG-07 1콜 → WardrobeImage('misc' �
 ```
 - 단건 job(수 초). 동시 다발 호출 허용 — 에디터 UI가 로딩 셀·busy 점으로 표현(기존 동작).
 - 원본 이미지는 항상 보존, 결과는 의류 탭에 추가 (PRD §10.8).
+- 기준색 착용컷 생성처럼 선택 마네킹을 입력에 넣는 PL-5 경로는 `selectedMannequinId`의 resolved asset을 사용한다. 톤 조정본이 있으면 최신 조정본, 없으면 원본 컷이다.
 - `mode:'new'`의 생성예시는 PL-4와 같은 레지스트리 v2 적용성·발행 variant 검증과 범위별 원본 첨부 규칙을 사용한다. 부적합/미발행 예시는 해당 참고만 생략하고 job metadata에 경고를 남긴다.
 - `mode:'new'`의 AG-06 결과는 PL-4와 같은 독립 컷 QC를 `shadow`로 실행할 수 있다. `mode:'vary'`(AG-07)는 아직 새 QC 범위 밖이다. shadow 판정은 결과를 차단하거나 재생성하지 않는다.
 
