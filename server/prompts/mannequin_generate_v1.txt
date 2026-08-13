@@ -52,6 +52,7 @@ GARMENT-BODY CONTACT (mandatory)
 - The attached product photos are the ground truth for garment identity — color, pattern, fabric, construction, seams, neckline, trims, hardware, logos, and prints. The only exceptions to their fit, length, cut, or silhouette are declared FIT PROFILE axes, and only where visual evidence conflicts with the declaration; PRODUCT CONTEXT must NEVER override what the photos clearly show.
 - The mannequin's bust and hip volume from image 1 are preserved exactly — the garment drapes over them and never flattens them.
 - The main product is NEVER tucked into the matching bottom and is never hidden by it.
+- Inner care/brand labels stitched inside the garment (inner neckline, inner hem, side seams) are visible in the flat-lay photos only because the garment lies open; on the worn mannequin they sit against the body and are NOT visible — never render a label peeking above the collar or hem. Exterior branding (chest prints, logo graphics, outside patches) remains part of the garment identity and stays.
 - No part of the matching bottom's waistband, drawstring or fastening is drawn over the main product.
 - A repeating pattern keeps the product's own repeat spacing, stripe widths and background colour — never simplified into fewer, thicker bands or inverted into a coloured ground.
 - When the main product is a bottom, the matching top never hides the product's waistband, closure or belt loops.
