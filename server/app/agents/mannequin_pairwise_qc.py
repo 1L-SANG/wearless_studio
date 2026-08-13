@@ -19,6 +19,7 @@ _COMPARATIVE = {
     "fit": "the garment is LOOSER / more oversized, with more ease around the body",
     "cut": "the legs/hem are WIDER (more volume around the legs)",
     "silhouette": "the outline FLARES OUT more toward the hem",
+    "sleeve": "the sleeves cover MORE of the arm (i.e. they are longer)",
 }
 
 # ── (category, axis) → 값의 비교속성 오름차순 서열 (파일럿 근사) ──────────────
@@ -30,6 +31,7 @@ _ORDINAL = {
     ("skirt", "length"): {"mini": 0, "midi": 1, "long": 2},
     ("dress", "length"): {"mini": 0, "midi": 1, "long": 2},
     ("top", "fit"): {"slim": 0, "regular": 1, "semi_over": 2, "over": 3},
+    ("top", "sleeve"): {"sleeveless": 0, "short": 1},
     ("outer", "fit"): {"slim": 0, "regular": 1, "semi_over": 2, "over": 3},
     ("pants", "cut"): {  # '다리/밑단 폭' 근사
         "skinny": 0, "slim": 1, "tapered": 2, "straight": 2,

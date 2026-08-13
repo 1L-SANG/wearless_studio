@@ -32,6 +32,16 @@ export const FIT_AXES = Object.freeze({
         { value: 'long', label: '롱', promptEn: 'long hem extending below the hips' },
       ],
     },
+    sleeve: {
+      women: [
+        { value: 'sleeveless', label: '민소매', promptEn: 'a sleeveless version of the same top; if the photographed garment has sleeves, visibly re-tailor only its sleeves by removing them completely and finishing clean armholes at the shoulder points, leaving the neckline, body width and hem length unchanged; if it is already sleeveless, preserve those proportions' },
+        { value: 'short', label: '반팔', promptEn: 'a short-sleeve version of the same top; if the photographed garment has long or three-quarter sleeves, visibly re-tailor only its sleeves by shortening them to end around the mid-upper-arm, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions' },
+      ],
+      men: [
+        { value: 'sleeveless', label: '민소매', promptEn: 'a sleeveless version of the same top; if the photographed garment has sleeves, visibly re-tailor only its sleeves by removing them completely and finishing clean armholes at the shoulder points, leaving the neckline, body width and hem length unchanged; if it is already sleeveless, preserve those proportions' },
+        { value: 'short', label: '반팔', promptEn: 'a short-sleeve version of the same top; if the photographed garment has long or three-quarter sleeves, visibly re-tailor only its sleeves by shortening them to end around the mid-upper-arm, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions' },
+      ],
+    },
   },
   pants: {
     cut: {

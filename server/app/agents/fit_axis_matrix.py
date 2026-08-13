@@ -17,9 +17,9 @@ codex 2라운드 반영:
 from .fit_axes import FIT_AXES
 from .mannequin_pairwise_qc import _ORDINAL
 
-# 측정 대상 (카테고리, 축) — FIT_AXES 실사 기준 10쌍.
+# 측정 대상 (카테고리, 축) — FIT_AXES 실사 기준 11쌍.
 AXIS_PAIRS: tuple[tuple[str, str], ...] = (
-    ("top", "fit"), ("top", "length"),
+    ("top", "fit"), ("top", "length"), ("top", "sleeve"),
     ("pants", "cut"), ("pants", "length"),
     ("skirt", "length"), ("skirt", "silhouette"),
     ("dress", "length"), ("dress", "silhouette"),

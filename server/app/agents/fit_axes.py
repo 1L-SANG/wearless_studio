@@ -33,6 +33,16 @@ FIT_AXES = {
                 {"value": "long", "label": "롱", "promptEn": "long hem extending below the hips"},
             ],
         },
+        "sleeve": {
+            "women": [
+                {"value": "sleeveless", "label": "민소매", "promptEn": "a sleeveless version of the same top; if the photographed garment has sleeves, visibly re-tailor only its sleeves by removing them completely and finishing clean armholes at the shoulder points, leaving the neckline, body width and hem length unchanged; if it is already sleeveless, preserve those proportions"},
+                {"value": "short", "label": "반팔", "promptEn": "a short-sleeve version of the same top; if the photographed garment has long or three-quarter sleeves, visibly re-tailor only its sleeves by shortening them to end around the mid-upper-arm, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions"},
+            ],
+            "men": [
+                {"value": "sleeveless", "label": "민소매", "promptEn": "a sleeveless version of the same top; if the photographed garment has sleeves, visibly re-tailor only its sleeves by removing them completely and finishing clean armholes at the shoulder points, leaving the neckline, body width and hem length unchanged; if it is already sleeveless, preserve those proportions"},
+                {"value": "short", "label": "반팔", "promptEn": "a short-sleeve version of the same top; if the photographed garment has long or three-quarter sleeves, visibly re-tailor only its sleeves by shortening them to end around the mid-upper-arm, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions"},
+            ],
+        },
     },
     "pants": {
         "cut": {
@@ -146,6 +156,8 @@ AXIS_OBSERVABLES = {
     ("top", "length", "crop"): "entire untucked hem at the high waist and visible above any matching bottom",
     ("top", "length", "basic"): "entire untucked hem at the hip line and not covered by any matching bottom",
     ("top", "length", "long"): "entire untucked hem below the hips and neither tucked into nor covered by any matching bottom",
+    ("top", "sleeve", "sleeveless"): "both shoulders bare with clean finished armholes and no sleeve fabric on the upper arms",
+    ("top", "sleeve", "short"): "both sleeve hems end on the upper arm above the elbow, with the forearms fully bare",
     ("outer", "fit", "slim"): "visible shoulder-seam placement at or near the natural shoulder point, no dropped shoulder or boxy body, and minimal layering ease through body and sleeves",
     ("outer", "fit", "regular"): "natural shoulder line with moderate layering room",
     ("outer", "fit", "semi_over"): "mildly dropped shoulder with extra room through body and sleeves",
