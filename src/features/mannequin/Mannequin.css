@@ -141,7 +141,8 @@
 .fit-hotspot:hover:not(:disabled) span, .fit-hotspot:focus-visible span { opacity: 1; }
 .fit-hotspot:disabled { cursor: default; }
 .fit-hotspot:disabled::before { transform: translate(-50%, -50%); opacity: .72; }
-.fit-hotspot-top-fit { left: 60%; top: 24%; }
+.fit-hotspot-top-fit { left: 40%; top: 25%; }
+.fit-hotspot-top-sleeve { left: 61%; top: 24%; }
 .fit-hotspot-top-hem { left: 52%; top: 41%; }
 .fit-hotspot-outer-fit { left: 58%; top: 32%; }
 .fit-hotspot-outer-hem { left: 46%; top: 50%; }

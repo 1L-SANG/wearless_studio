@@ -8,7 +8,7 @@ import { fitHotspotsFor } from '../../src/features/mannequin/fitHotspots.js';
 
 test('every guided fit axis resolves to a visible mannequin adjustment hotspot', () => {
   const expected = {
-    top: ['fit', 'length'],
+    top: ['fit', 'length', 'sleeve'],
     outer: ['fit', 'length'],
     pants: ['cut', 'length'],
     skirt: ['silhouette', 'length'],
@@ -31,6 +31,13 @@ test('unsupported category and axis pairs do not expose misleading hotspots', ()
   assert.deepEqual(fitHotspotsFor('pants', 'fit'), []);
   assert.deepEqual(fitHotspotsFor('top', 'silhouette'), []);
   assert.deepEqual(fitHotspotsFor(null, 'length'), []);
+});
+
+test('소매 기장은 자체 핫존을 갖고, 몸통 핏 라벨은 소매를 더는 주장하지 않는다', () => {
+  assert.deepEqual(fitHotspotsFor('top', 'sleeve'), [{ id: 'top-sleeve', label: '소매 기장' }]);
+  assert.deepEqual(fitHotspotsFor('top', 'fit'), [{ id: 'top-fit', label: '몸통 핏' }]);
+  // 아우터는 소매 축이 없어 기존 라벨을 유지한다
+  assert.deepEqual(fitHotspotsFor('outer', 'fit'), [{ id: 'outer-fit', label: '몸통·소매 핏' }]);
 });
 
 test('adjustment hotspots are immediately available without the old question card', () => {
@@ -67,7 +74,8 @@ test('adjustment hotspots are immediately available without the old question car
     styles,
     /\.fit-hotspot::before \{[^}]*width: 16px;[^}]*height: 16px;[^}]*border: 2px solid/s,
   );
-  assert.match(styles, /\.fit-hotspot-top-fit \{ left: 60%; top: 24%; \}/);
+  assert.match(styles, /\.fit-hotspot-top-fit \{ left: 40%; top: 25%; \}/);
+  assert.match(styles, /\.fit-hotspot-top-sleeve \{ left: 61%; top: 24%; \}/);
   assert.match(styles, /\.fit-hotspot-top-hem \{ left: 52%; top: 41%; \}/);
   assert.match(styles, /\.fit-hotspot-pants-cut \{ left: 60%; top: 62%; \}/);
   assert.match(styles, /\.fit-continue \{ margin-top: var\(--sp-24\); \}/);

@@ -42,7 +42,7 @@ import {
 } from './generationRunnerCore.js';
 import './Mannequin.css';
 
-const AXIS_LABELS = { fit: '핏', length: '기장', cut: '핏', silhouette: '실루엣' };
+const AXIS_LABELS = { fit: '핏', length: '기장', cut: '핏', silhouette: '실루엣', sleeve: '소매 기장' };
 const MATCH_KEY = '__match';
 const MATCH_NAME = '매칭 의류 핏';
 const MATCH_SKIRT_NAME = '매칭 스커트 실루엣';
