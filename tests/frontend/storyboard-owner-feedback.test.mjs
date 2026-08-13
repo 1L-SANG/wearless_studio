@@ -31,7 +31,7 @@ test('replacing a generation example resets per-cut settings but preserves its s
     ...result.patch,
   }, {
     sectionRole: 'styling', contentRole: 'coordination', cutType: 'styling', shot: 'medium',
-    exampleId: 'new', exampleSelectionOrigin: 'user', refScope: 'pose',
+    exampleId: 'new', exampleChoice: null, exampleSelectionOrigin: 'user', refScope: 'pose',
     direction: 'front', colorId: 'base', colorIds: [], pose: 'auto', poseLabel: 'AI 자동',
     angle: 'same', matchIds: [], refImages: [], refAssetIds: [], faceExposure: 'same',
     outerClosureState: 'open',
@@ -90,8 +90,8 @@ test('the storyboard undo window groups every active change, pauses on hover, an
   assert.match(storyboardSource, /\{undoEntry\.operationCount\}건 되돌리기/);
 });
 
-test('owner cleanup keeps one place dissolve action and removes obsolete inspector copy and stack counts', () => {
-  assert.equal((storyboardSource.match(/장소 세트 묶음 풀기/g) || []).length, 1);
+test('owner cleanup removes place dissolve and obsolete inspector copy and stack counts', () => {
+  assert.doesNotMatch(storyboardSource, /장소 세트 묶음 풀기|dissolveSpaceGroup/);
   assert.doesNotMatch(storyboardSource, /새 컷의 예시를 먼저 골라주세요/);
   assert.doesNotMatch(storyboardSource, /sb-stack-count/);
   assert.match(storyboardSource, /cutRangeLabel\(group\.items\)/);
@@ -121,7 +121,8 @@ test('my images live only in the shot tab flow', () => {
   assert.doesNotMatch(storyboardSource, /내 이미지 추가|mine-add-solo|onImgDrag|dragMine|insertMineAt/);
   assert.doesNotMatch(storyboardSource, /MINE_SHOT_OPTION, disabled: inSpace/);
   assert.doesNotMatch(storyboardSource, /if \(isMine\) \{\s*return/);
-  assert.match(storyboardSource, /applied\.source === 'mine' && current\.spaceGroupId[^]*moveBlockWithSpaceMembership\(next, id, spaceRun\.end\)/);
+  assert.match(storyboardSource, /applied\.source === 'mine'[^]*detachSpaceMembership\(withoutLayoutRow\(updated\)\)/);
+  assert.match(storyboardSource, /next = ensureContiguousSpaceRuns\(next\)/);
 });
 
 test('uploading from the my-image tab commits the chosen image instead of saving an AI reference first', () => {
@@ -132,19 +133,19 @@ test('uploading from the my-image tab commits the chosen image instead of saving
   assert.match(mineTab, /if \(onChoose\)[^]*onChoose\(picked\);[^]*return;[^]*onImagesChange/);
 });
 
-test('a place-set member must be dissolved before it can cross official sections', () => {
+test('a place-set member can cross official sections and detaches through the shared move path', () => {
   const moveHandler = storyboardSource.slice(
     storyboardSource.indexOf('const applySingleMove'),
     storyboardSource.indexOf('const nudgeBlock'),
   );
-  assert.match(moveHandler, /moving\?\.spaceGroupId && crossedRenderGroup[^]*장소 세트 묶음을 푼 뒤 다른 섹션으로 옮겨주세요/);
-  assert.match(storyboardSource, /draggedSetMemberGroupKey[^]*draggedSetMemberGroupKey === group\.key/);
+  assert.doesNotMatch(moveHandler, /장소 세트 묶음을 푼 뒤/);
+  assert.match(moveHandler, /moveBlockWithSpaceMembership\(current, id, targetSectionEnd/);
 });
 
 test('between-cut controls are centered only in a measured same-row gap', () => {
   assert.match(storyboardSource, /Math\.abs\(next\.offsetTop - unit\.offsetTop\) < 2 \? 'row' : 'end'/);
   assert.match(featureStyles, /\.sb-addzone \{[^}]*right: -18px;[^}]*width: 18px/);
-  assert.match(featureStyles, /\.sb-addzone\.end \{ display: none; \}/);
+  assert.match(featureStyles, /\.sb-addzone\.end \{[^}]*display: grid;[^}]*right: -24px;[^}]*width: 24px/);
 });
 
 test('card captions are one-line right aligned without reference popovers', () => {

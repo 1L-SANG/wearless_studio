@@ -6,6 +6,7 @@ import {
   estimateComposeModeCredits,
   selectAnalysisComposeMode,
 } from '../../src/features/analysis/composeModeSelection.js';
+import { applyStoryboardComposeMode } from '../../src/features/storyboard/storyboardComposeMode.js';
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const analysisSource = read('../../src/features/analysis/AnalysisForm.jsx');
@@ -145,7 +146,43 @@ test('the storyboard shows a summary and blocks applying a mode to an edited boa
   assert.match(storyboardSource, /직접 수정한 콘티에는 적용되지 않아요/);
   assert.match(storyboardSource, /disabled=\{!canApply \|\| draftMode === value \|\| applying\}/);
   assert.match(storyboardSource, /isDefaultStoryboardForMode\([\s\S]*?composeModeSeed\.colors[\s\S]*?targetGenders: composeModeSeed\.targetGenders/);
-  assert.match(storyboardSource, /await setComposeMode\(nextMode\);[\s\S]*?await onComposeModeChange\(nextMode\);/);
+  assert.match(storyboardSource, /const applied = await onApply\(draftMode\);\s*\n\s*if \(applied === true\) setOpen\(false\)/);
+  assert.match(storyboardSource, /onApply=\{onComposeModeApply\}/);
+});
+
+test('storyboard compose changes flush, patch, then reload in that exact order', async () => {
+  const calls = [];
+  const changed = await applyStoryboardComposeMode({
+    currentMode: 'basic',
+    nextMode: 'extended',
+    projectId: 'project-1',
+    flushBoard: async () => calls.push('flush'),
+    setComposeMode: async () => calls.push('patch'),
+    restoreComposeMode: () => calls.push('restore'),
+    invalidateStoryboardPrefetch: () => calls.push('invalidate'),
+    reloadStoryboard: async () => calls.push('reload'),
+  });
+
+  assert.equal(changed, true);
+  assert.deepEqual(calls, ['flush', 'invalidate', 'patch', 'reload']);
+});
+
+test('a flush failure keeps the compose modal retryable and skips patch and reload', async () => {
+  const calls = [];
+  const changed = await applyStoryboardComposeMode({
+    currentMode: 'basic',
+    nextMode: 'extended',
+    projectId: 'project-1',
+    flushBoard: async () => { calls.push('flush'); throw new Error('offline'); },
+    setComposeMode: async () => calls.push('patch'),
+    restoreComposeMode: () => calls.push('restore'),
+    invalidateStoryboardPrefetch: () => calls.push('invalidate'),
+    reloadStoryboard: async () => calls.push('reload'),
+    onFlushFailure: () => calls.push('flush-error'),
+  });
+
+  assert.equal(changed, false);
+  assert.deepEqual(calls, ['flush', 'flush-error']);
 });
 
 const storeSource = read('../../src/store/useAppStore.js');

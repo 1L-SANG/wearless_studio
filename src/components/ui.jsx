@@ -173,8 +173,17 @@ export function TagInput({ tags, onChange, max = 5, placeholder = '내용을 입
   );
 }
 
-export function Toggle({ on, onChange }) {
-  return <div className={`tg${on ? ' on' : ''}`} onClick={() => onChange(!on)} role="switch" aria-checked={on}></div>;
+export function Toggle({ on, onChange, label = '토글' }) {
+  return (
+    <button
+      type="button"
+      className={`tg${on ? ' on' : ''}`}
+      onClick={() => onChange(!on)}
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+    />
+  );
 }
 
 export function ProgressBar({ value, label, sub }) {

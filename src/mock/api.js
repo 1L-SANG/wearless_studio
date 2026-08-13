@@ -506,7 +506,7 @@ export const api = {
     if (migrated.changed) DB.storyboard = migrated.blocks;
     return clone(DB.storyboard);
   },
-  async saveStoryboard(_projectId, blocks, { autoAssignment = false } = {}) {
+  async saveStoryboard(_projectId, blocks, { autoAssignment = false, keepalive: _keepalive = false } = {}) {
     await wait(150);
     DB.storyboard = clone(blocks);
     // 자동 예시 배정은 기본 콘티의 일부다. 이미 생긴 사용자 dirty는 유지한다.

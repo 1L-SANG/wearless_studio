@@ -177,6 +177,7 @@ export function assignGenerationExamples(blocks, { catalog, product, gender, onl
   const next = blocks.map((block) => {
     if (!block || block.source !== 'ai') return block;
     if (only && !only.has(block.id)) return block;
+    if (block.exampleChoice === 'manual') return block;
     if (block.exampleId) {
       if (block.exampleSelectionOrigin === 'auto' || block.exampleSelectionOrigin === 'user') return block;
       changed = true;

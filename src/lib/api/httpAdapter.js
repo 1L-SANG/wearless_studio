@@ -57,7 +57,9 @@ function absolutizeAssetUrls(v) {
 
 // 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).
 // 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
-export async function http(path, { method = 'GET', body, signal, headers: requestHeaders } = {}) {
+export async function http(path, {
+  method = 'GET', body, signal, keepalive, headers: requestHeaders,
+} = {}) {
   let data;
   try {
     ({ data } = await supabase.auth.getSession());
@@ -97,6 +99,7 @@ export async function http(path, { method = 'GET', body, signal, headers: reques
       },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
+      keepalive,
     });
   } catch (cause) {
     if (cause?.name === 'AbortError') throw cause;
@@ -253,6 +256,26 @@ export async function uploadPhoto(
     method: 'POST', body: { projectId, mime, filename, purpose }, signal,
   });
   return { assetId, url: asset.url };
+}
+
+// 브라우저 이미지 picker의 단일 경로 — 콘티의 내 이미지와 에디터 무드 레퍼런스가
+// 모두 실제 업로드를 거쳐 같은 {assetId, url} 계약을 받는다. 취소/빈 선택은 업로드하지 않는다.
+async function pickAndUploadImage(projectId) {
+  const file = await new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = () => resolve(input.files?.[0] || null);
+    input.oncancel = () => resolve(null);
+    input.click();
+  });
+  if (!file) return null;
+  const { assetId, url } = await uploadPhoto(projectId, {
+    filename: file.name,
+    mime: file.type || 'image/jpeg',
+    blob: file,
+  });
+  return { assetId, url };
 }
 
 // ---- 매칭 의류 / analysis (US-4) --------------------------------------------
@@ -472,8 +495,8 @@ export const httpAdapter = {
     // 첫 진입/재시드는 화면의 자동 예시 배정 뒤 한 번만 PUT한다.
     return applyOpeningRow(defaultStoryboard(colors, mode, storyboardContext));
   },
-  async saveStoryboard(projectId, blocks, _options = {}) {
-    return http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: blocks });
+  async saveStoryboard(projectId, blocks, options = {}) {
+    return http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: blocks, ...options });
   },
   async getEditorBlocks(projectId) {
     return http(`/v1/projects/${projectId}/editor-blocks`);
@@ -730,22 +753,14 @@ export const httpAdapter = {
   async getWardrobe(projectId) {
     return http(`/v1/projects/${projectId}/wardrobe`);
   },
+  // 콘티 '내 이미지' — 파일 선택 → R2 업로드 → {assetId, url}. 취소 시 null.
+  async pickAnyImage(projectId) {
+    return pickAndUploadImage(projectId);
+  },
   // '내 사진' 무드 레퍼런스 — 파일 선택 → R2 업로드 → {assetId, url}. 취소 시 null.
   // 서버 컷 생성이 assetId 로 이미지를 첨부하므로(refAssetIds), objectURL 이 아니라 업로드가 필수.
   async pickRefImage(projectId) {
-    const file = await new Promise((resolve) => {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/*';
-      input.onchange = () => resolve(input.files && input.files[0] ? input.files[0] : null);
-      input.oncancel = () => resolve(null);
-      input.click();
-    });
-    if (!file) return null;
-    const { assetId, url } = await uploadPhoto(projectId, {
-      filename: file.name, mime: file.type || 'image/jpeg', blob: file,
-    });
-    return { assetId, url };
+    return pickAndUploadImage(projectId);
   },
   // AG-06(mode:'new')/AG-07(mode:'vary') — req = NewCutRequest | VaryRequest (계약 §6).
   // 완료 재호출 없음(매 호출이 새 이미지 생성, mock과 동일 계약) — onProgress는 body에서 제외.
