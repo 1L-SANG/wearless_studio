@@ -7,6 +7,7 @@
    각 항목은 프레임 카드와 같은 문법의 스키매틱 썸네일로 내용을 식별한다.
    ============================================================= */
 import { INFO_PRESET_TYPES } from '@/features/editor/presets/infoPresets.js';
+import { EDITOR_INFO_PRESET_DRAG_TYPE } from '@/features/editor/editorImageDrop.js';
 
 const TIERS = [
   { id: 'must', label: '반드시 확인' },
@@ -92,7 +93,7 @@ function PresetThumb({ type }) {
   }
 }
 
-export function ContentPanel({ recommendGender, onPick }) {
+export function ContentPanel({ recommendGender, onPick, onDragStart, onDragEnd }) {
   return (
     <div>
       <div className="lbl" style={{ marginBottom: 6 }}>내용 추가</div>
@@ -111,7 +112,12 @@ export function ContentPanel({ recommendGender, onPick }) {
               {items.map((p) => {
                 const rec = recommendGender && p.recommend === recommendGender;
                 return (
-                  <div key={p.type} className="frame-item" style={{ cursor: 'pointer' }} onClick={() => onPick(p.type)} title={p.desc}>
+                  <div key={p.type} className="frame-item" onClick={() => onPick(p.type)} title={`${p.desc} · 끌어서 바로 추가`}
+                    draggable onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = 'copy';
+                      event.dataTransfer.setData(EDITOR_INFO_PRESET_DRAG_TYPE, p.type);
+                      onDragStart?.();
+                    }} onDragEnd={() => onDragEnd?.()}>
                     <div className="frame-prev" style={{ display: 'block', padding: 4 }}>
                       <PresetThumb type={p.type} />
                     </div>

@@ -1350,11 +1350,12 @@
 .block-bg-sw:hover { box-shadow: 0 0 0 1px var(--ring-strong); color: var(--fg-1); }
 .block-bg-sw.on { box-shadow: 0 0 0 2px var(--fg-1); color: var(--fg-1); font-weight: 500; }
 .block-bg-sw .bg-chip { width: 28px; height: 28px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(34,42,53,.14); }
-/* Notion-style drag guide: a single screen-consistent blue placement line. */
+/* Reference drag guide: a screen-consistent, full-width pale-blue placement band. */
 .canvas-droprow { width: 1000px; height: 16px; position: relative; box-sizing: border-box; }
-.canvas-dropline { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); height: calc(2px * var(--canvas-inv, 1)); border-radius: 1px;
+.canvas-dropline { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); height: calc(12px * var(--canvas-inv, 1));
   background: transparent; opacity: 0; }
-.canvas-dropline.on { opacity: 1; background: #2383e2; box-shadow: none; animation: none; }
+.canvas-dropline.on { opacity: 1; background: rgba(35, 131, 226, .1);
+  box-shadow: inset 0 calc(1px * var(--canvas-inv, 1)) 0 rgba(35, 131, 226, .42), inset 0 calc(-1px * var(--canvas-inv, 1)) 0 rgba(35, 131, 226, .18); animation: none; }
 /* while a frame is being dragged, the drop rows grow into a forgiving catch zone that
    overlaps the neighbouring blocks (net layout unchanged thanks to negative margins) */
 .ed-canvas.frame-dragging .canvas-droprow { height: 128px; margin: -56px 0; padding: 56px 0; z-index: 4; }
@@ -1442,12 +1443,12 @@
 .sf-opacity input[type='range'] { width: 100%; accent-color: var(--fg-1); cursor: pointer; }
 .sf-none-action, .sf-eye { width: 26px; height: 26px; border: 0; background: transparent; color: var(--fg-2); border-radius: 5px; cursor: pointer; display: grid; place-items: center; flex: none; }
 .sf-none-action:hover, .sf-eye:hover { color: var(--fg-1); background: var(--bg-2); }
-.sf-color-popover { position: absolute; z-index: 70; left: 0; top: calc(100% + 8px); width: 286px; padding: 12px; border-radius: 12px; background: #fff; box-shadow: 0 12px 34px rgba(14,13,20,.18), 0 0 0 1px var(--ring); }
+.sf-color-popover { position: absolute; z-index: 70; left: 0; top: calc(100% + 8px); width: 190px; padding: 10px; border-radius: 8px; background: #fff; box-shadow: 0 12px 34px rgba(14,13,20,.18), 0 0 0 1px var(--ring); }
 .sf-color-popover-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .sf-color-popover-head strong { font-size: 12px; font-weight: 650; color: var(--fg-1); }
 .sf-color-popover-head span { font: 10px var(--font-mono); color: var(--fg-3); letter-spacing: .8px; }
-.sf-preset-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 7px; }
-.sf-preset { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(14,13,20,.12); transition: transform .12s, box-shadow .12s; }
+.sf-preset-grid { display: grid; grid-template-columns: repeat(8, 16px); gap: 6px; }
+.sf-preset { width: 16px; height: 16px; padding: 0; border: 0; border-radius: 3px; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(14,13,20,.08); transition: transform .12s, box-shadow .12s; }
 .sf-preset:hover { transform: translateY(-1px); box-shadow: inset 0 0 0 1px rgba(14,13,20,.24), 0 4px 10px rgba(14,13,20,.12); }
 .sf-preset.on { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--link); }
 .sf-color-divider { height: 1px; margin: 13px 0 11px; background: var(--ring); }

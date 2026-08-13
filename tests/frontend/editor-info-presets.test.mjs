@@ -177,19 +177,20 @@ test('needsDefaultTemplate gates auto-apply to untouched assembler docs only', (
   assert.equal(needsDefaultTemplate([baseDoc()[0], baseDoc()[3]]), false);
 });
 
-test('default template inserts top blocks first, flows before anchors, replaces size/care in place', () => {
+test('default template keeps the header first and appends shipping/returns at the very bottom', () => {
   const doc = baseDoc();
   const { blocks, inserted, skipped } = applyInfoTemplate(doc, CTX, seqId());
   assert.equal(skipped.length, 0);
-  assert.equal(inserted.length, DEFAULT_INFO_TEMPLATE.top.length + DEFAULT_INFO_TEMPLATE.flow.length);
+  assert.equal(inserted.length, DEFAULT_INFO_TEMPLATE.top.length + DEFAULT_INFO_TEMPLATE.flow.length + DEFAULT_INFO_TEMPLATE.bottom.length);
   const kinds = blocks.map((b) => `${b.kind}${b.infoType ? ':' + b.infoType : ''}`);
   assert.deepEqual(kinds, [
-    'info:shipping_returns', 'info:header',            // top: 공지 → 헤더
+    'info:header',                                     // top: 상품명 헤더
     'benefit',                                          // 컷 블록 (그대로)
     'info:benefit_copy',                                // size 앵커 앞 플러시
     'size', 'care',                                     // 제자리 강화
     'info:required_notice',                             // care 뒤
     'ai-notice',
+    'info:shipping_returns',                           // 배송·교환 안내는 최초 생성 시 맨 아래
   ]);
   // 컷 블록 불변 — 같은 참조
   assert.equal(blocks.find((b) => b.kind === 'benefit'), doc[0]);
@@ -226,11 +227,12 @@ test('care anchor above size does not scramble flow order (cursor never moves ba
   const { blocks } = applyInfoTemplate(doc, CTX, seqId());
   const kinds = blocks.map((b) => `${b.kind}${b.infoType ? ':' + b.infoType : ''}`);
   assert.deepEqual(kinds, [
-    'info:shipping_returns', 'info:header',
+    'info:header',
     'benefit',
     'care',                                       // 사용자가 올려둔 위치 유지 (제자리 강화)
     'info:benefit_copy', 'size', 'info:required_notice',
     'ai-notice',
+    'info:shipping_returns',
   ]);
 });
 
@@ -331,10 +333,11 @@ test('template on a doc without anchors appends the flow before ai-notice in ord
   const { blocks } = applyInfoTemplate(doc, CTX, seqId());
   const kinds = blocks.map((b) => `${b.kind}${b.infoType ? ':' + b.infoType : ''}`);
   assert.deepEqual(kinds, [
-    'info:shipping_returns', 'info:header',
+    'info:header',
     'benefit',
     'info:benefit_copy', 'size', 'care', 'info:required_notice',
     'ai-notice',
+    'info:shipping_returns',
   ]);
 });
 

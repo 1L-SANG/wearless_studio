@@ -5,8 +5,16 @@ import {
 } from './editorLibrary.js';
 
 export const EDITOR_IMAGE_DRAG_TYPE = WARDROBE_IMAGE_MIME;
+export const EDITOR_FRAME_DRAG_TYPE = 'text/frame';
+export const EDITOR_INFO_PRESET_DRAG_TYPE = 'application/x-wearless-info-preset';
 export const encodeEditorImageDrag = encodeWardrobeImage;
 export const decodeEditorImageDrag = decodeWardrobeImage;
+
+export function acceptsEditorBlockInsert(types) {
+  const available = Array.from(types || []);
+  return [EDITOR_IMAGE_DRAG_TYPE, EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE]
+    .some((type) => available.includes(type));
+}
 
 export function viewportPointToBlock({ clientX, clientY, blockLeft, blockTop, scale = 1 }) {
   const safeScale = Number(scale) > 0 ? Number(scale) : 1;

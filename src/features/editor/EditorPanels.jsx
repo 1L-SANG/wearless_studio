@@ -99,7 +99,7 @@ function PanelSection({ title, actions, first, children }) {
     </div>
   );
 }
-function SwatchField({ value, opacity, palette, allowNone, thumb, onColor, onOpacity, visible = true, onToggleVisible }) {
+function SwatchField({ value, opacity, allowNone, thumb, onColor, onOpacity, visible = true, onToggleVisible }) {
   const normalized = normalizeHexColor(value);
   const [hexDraft, setHexDraft] = useState(normalized || '#000000');
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -117,8 +117,7 @@ function SwatchField({ value, opacity, palette, allowNone, thumb, onColor, onOpa
     return () => window.removeEventListener('mousedown', close);
   }, []);
   const isNone = allowNone && (!value || value === 'none');
-  const colorPresets = [...new Set([...DEFAULT_EDITOR_COLOR_PRESETS, ...(palette || [])]
-    .map((color) => normalizeHexColor(color)).filter(Boolean))];
+  const colorPresets = DEFAULT_EDITOR_COLOR_PRESETS;
   const commitHex = () => {
     const next = normalizeHexColor(hexDraft);
     if (next && onColor) onColor(next);
@@ -170,8 +169,7 @@ function SwatchField({ value, opacity, palette, allowNone, thumb, onColor, onOpa
       </div>
       {paletteOpen && !thumb && onColor && (
         <div className="sf-color-popover">
-          <div className="sf-color-popover-head"><strong>기본 색상</strong><span>HEX</span></div>
-          <div className="sf-preset-grid">
+          <div className="sf-preset-grid" aria-label="기본 색상">
             {colorPresets.map((color) => (
               <button type="button" key={color} className={`sf-preset${normalized === color ? ' on' : ''}`}
                 style={{ background: color }} title={color} aria-label={`${color} 색상`} onClick={() => setColor(color)} />
