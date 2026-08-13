@@ -25,8 +25,8 @@ def test_catalog_values_empty_for_skirt_dress_men():
 def test_extreme_pair_top():
     assert FM.extreme_pair("top", "fit", "women") == ("slim", "over")
     assert FM.extreme_pair("top", "fit", "men") == ("slim", "over")
-    assert FM.extreme_pair("top", "length", "women") == ("ultra_crop", "long")
-    assert FM.extreme_pair("top", "length", "men") == ("crop", "long")    # men 엔 ultra_crop 없음
+    assert FM.extreme_pair("top", "length", "women") == ("crop", "long")
+    assert FM.extreme_pair("top", "length", "men") == ("crop", "long")
 
 
 def test_extreme_pair_pants():
@@ -57,9 +57,9 @@ def test_extreme_pair_none_for_unknown_axis():
 
 # ─────────────── all_pairs ───────────────
 
-def test_all_pairs_women_covers_ten():
+def test_all_pairs_women_covers_eleven():
     pairs = FM.all_pairs("women")
-    assert len(pairs) == 10                                  # 10개 (카테고리,축)
+    assert len(pairs) == 11                                  # 11개 (카테고리,축)
     keys = {(p["category"], p["axis"]) for p in pairs}
     assert keys == set(FM.AXIS_PAIRS)
     assert all(p["low"] != p["high"] for p in pairs)
@@ -70,7 +70,12 @@ def test_all_pairs_men_drops_skirt_and_dress():
     keys = {(p["category"], p["axis"]) for p in pairs}
     assert ("skirt", "length") not in keys and ("dress", "silhouette") not in keys
     assert ("top", "fit") in keys and ("pants", "cut") in keys and ("outer", "length") in keys
-    assert len(pairs) == 6                                   # top2 + pants2 + outer2
+    assert len(pairs) == 7                                   # top3 + pants2 + outer2
+
+
+def test_sleeve_extreme_pair_runs_cap_to_elbow():
+    assert FM.extreme_pair("top", "sleeve", "women") == ("cap", "elbow")
+    assert FM.extreme_pair("top", "sleeve", "men") == ("cap", "elbow")
 
 
 # ─────────────── cut_labels (교차 생성 순서) ───────────────

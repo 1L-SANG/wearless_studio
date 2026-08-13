@@ -37,6 +37,8 @@ _EDIT_TEMPLATES = {
                        "seams and add or remove body and sleeve ease until {observable}."),
     ("top", "length"): ("Re-tailor only the top's body length in this photo until {observable}; "
                         "keep the entire hem untucked and visible."),
+    ("top", "sleeve"): ("Re-tailor only the top's sleeves in this photo until {observable}; "
+                        "keep the neckline, body width and hem length unchanged."),
     ("outer", "length"): ("Proportionally re-tailor only the outerwear's front and back body-panel "
                           "length until {observable}; keep the entire hem untucked and unobscured "
                           "by any matching bottom."),

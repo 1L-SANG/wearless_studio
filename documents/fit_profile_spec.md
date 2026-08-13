@@ -36,7 +36,8 @@ FitProfile = {
 | category.axis | women | men |
 |---|---|---|
 | top.fit | tight/slim/regular/semi_over/over (타이트/슬림/레귤러/세미오버/오버) | slim/regular/semi_over/over |
-| top.length | ultra_crop/crop/basic/long (울트라크롭/크롭/기본/롱) | crop/basic/long |
+| top.length | crop/semi_crop/basic/semi_long/long (크롭/세미크롭/기본/세미롱/롱) | 동일 |
+| top.sleeve | cap/cap_short/short/elbow (캡/캡~반팔/반팔/5부) | 동일 |
 | pants.cut | skinny/slim/straight/bootcut/wide (스키니/슬림/일자/부츠컷/와이드) | slim/straight/tapered/relaxed/semi_wide/wide (슬림/일자/테이퍼드/릴렉스/세미와이드/와이드) |
 | pants.length | above_ankle/ankle/below_ankle (발목 위/발목/발목 덮음) | 동일 |
 | skirt.length | mini/midi/long (미니/미디/롱) | (남성 미노출) |
@@ -47,6 +48,8 @@ FitProfile = {
 | outer.length | crop_short/basic/long (크롭·숏/기본/롱) | 동일 |
 
 promptEn은 검증 생성에 쓴 구절 그대로 (예: pants.cut.wide = "a full, voluminous wide-leg silhouette; broad swinging columns, hem covering most of the shoes"). ⚠️ outer·dress는 생성 미검증(게이트) — 카탈로그엔 넣되 스펙에 🧪 표시.
+
+`top.sleeve`는 상의 전용이다. 축을 고르지 않으면 사진 그대로(긴팔이면 긴팔)이며, 카탈로그에 '긴팔' 값은 없다 — 한 번 저장한 뒤의 복귀는 이전 버전 선택으로만 가능하다.
 
 ## 3. 프롬프트 (백엔드)
 

@@ -37,7 +37,7 @@ def test_validated_expected_more_side_checks_catalog_and_gender():
             "pants", "women", "length", "crop", "long")
     with pytest.raises(ValueError, match="미지원 값"):
         PQ.validated_expected_more_side(
-            "top", "men", "length", "ultra_crop", "long")
+            "top", "men", "length", "invalid_length", "long")
     with pytest.raises(ValueError, match="방향 없음"):
         PQ.validated_expected_more_side(
             "top", "women", "length", "crop", "crop")

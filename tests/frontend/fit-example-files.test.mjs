@@ -27,9 +27,22 @@ test('남성 바지 cut 6값 전부 이미지 타일이 뜬다 — WS3 의 직�
 });
 
 test('매칭 상의 조정 스텝(WS2)이 쓰는 top length 예시가 남녀 모두 뜬다', () => {
-  for (const v of ['crop', 'basic', 'long']) {
+  for (const v of ['crop', 'semi_crop', 'basic', 'semi_long', 'long']) {
     assert.ok(fitExampleImage('top', 'men', 'length', v), `top-men length ${v}`);
     assert.ok(fitExampleImage('top', 'women', 'length', v), `top-women length ${v}`);
+  }
+});
+
+test('상의 소매 기장 4단계는 여성 공용·남성 전용 이미지 타일이 뜬다', () => {
+  for (const v of ['cap', 'cap_short', 'short', 'elbow']) {
+    assert.equal(
+      fitExampleImage('top', 'women', 'sleeve', v),
+      `/assets/fit-examples/top-any-sleeve-${v}.jpg`,
+    );
+    assert.equal(
+      fitExampleImage('top', 'men', 'sleeve', v),
+      `/assets/fit-examples/top-men-sleeve-${v}.jpg`,
+    );
   }
 });
 

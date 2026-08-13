@@ -141,13 +141,14 @@
 .fit-hotspot:hover:not(:disabled) span, .fit-hotspot:focus-visible span { opacity: 1; }
 .fit-hotspot:disabled { cursor: default; }
 .fit-hotspot:disabled::before { transform: translate(-50%, -50%); opacity: .72; }
-.fit-hotspot-top-fit { left: 60%; top: 24%; }
+.fit-hotspot-top-fit { left: 40%; top: 25%; }
+.fit-hotspot-top-sleeve { left: 61%; top: 24%; }
 .fit-hotspot-top-hem { left: 52%; top: 41%; }
 .fit-hotspot-outer-fit { left: 58%; top: 32%; }
-.fit-hotspot-outer-hem { left: 55%; top: 55%; }
-.fit-hotspot-pants-cut { left: 56%; top: 55%; }
+.fit-hotspot-outer-hem { left: 46%; top: 50%; }
+.fit-hotspot-pants-cut { left: 60%; top: 62%; }
 .fit-hotspot-pants-hem { left: 57%; top: 84%; }
-.fit-hotspot-skirt-shape { left: 58%; top: 58%; }
+.fit-hotspot-skirt-shape { left: 62%; top: 60%; }
 .fit-hotspot-skirt-hem { left: 56%; top: 73%; }
 .fit-hotspot-dress-shape { left: 58%; top: 49%; }
 .fit-hotspot-dress-hem { left: 56%; top: 76%; }
@@ -199,11 +200,26 @@
   .fit-stage.comparing .fit-mine-col { width: 340px; }
   .fit-ex-col {
     position: absolute; top: 90px; right: 0; z-index: 2;
-    width: 332px; max-height: calc(100% - 114px);
-    padding: 14px 10px 14px 14px;
+    width: 332px; max-height: none;
+    padding: 14px;
   }
   .fit-ex-head { font-size: 14px; }
-  .fit-ex-track { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-content: start; }
+  .fit-ex-track {
+    flex: none;
+    min-height: auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    align-content: start;
+    overflow: visible;
+    padding-right: 0;
+    scroll-snap-type: none;
+  }
+  .fit-ex-track .fit-tile:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+    justify-self: center;
+    width: calc((100% - 10px) / 2);
+  }
 }
 
 @media (max-width: 720px) {

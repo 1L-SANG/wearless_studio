@@ -835,3 +835,62 @@ def test_untuck_instruction_survives_undeclared_length_axis(f):
         # 조건부 분기가 남아 있으면 실패시킨다
         assert "적절한 레이어링·턱·비율" not in prompt
         assert "절대 평평하게 만들지 않는다" in prompt
+
+
+# ---------- 소매 기장 축 ----------
+
+def test_top_length_axis_mirrors_the_frontend_vocabulary():
+    for gender in ("women", "men"):
+        entries = FIT_AXES["top"]["length"][gender]
+        assert [e["value"] for e in entries] == ["crop", "semi_crop", "basic", "semi_long", "long"]
+        assert [e["label"] for e in entries] == ["크롭", "세미크롭", "기본", "세미롱", "롱"]
+        assert all(e["promptEn"] for e in entries)
+
+
+def test_legacy_top_length_values_normalize_to_the_semi_names():
+    primary = normalize_fit_profile({
+        "category": "top",
+        "gender": "women",
+        "axes": {"length": "basic_long"},
+    })
+    assert primary["axes"]["length"] == "semi_long"
+
+    matching = normalize_fit_profile({
+        "category": "pants",
+        "gender": "women",
+        "axes": {"cut": "straight"},
+        "version": 2,
+        "matchingFit": {
+            "clothingId": "top-1",
+            "fitCategory": "top",
+            "axes": {"length": "crop_basic"},
+        },
+    })
+    assert matching["matchingFit"]["axes"]["length"] == "semi_crop"
+
+
+def test_sleeve_axis_mirrors_the_frontend_vocabulary():
+    for gender in ("women", "men"):
+        entries = FIT_AXES["top"]["sleeve"][gender]
+        assert [e["value"] for e in entries] == ["cap", "cap_short", "short", "elbow"]
+        assert [e["label"] for e in entries] == ["캡", "캡~반팔", "반팔", "5부"]
+        assert all(e["promptEn"] for e in entries)
+    assert list(FIT_AXES["top"]) == ["fit", "length", "sleeve"]
+
+
+def test_normalize_keeps_valid_sleeve_and_drops_unknown_values():
+    kept = normalize_fit_profile(
+        {"category": "top", "gender": "women", "axes": {"fit": "regular", "sleeve": "elbow"}}
+    )
+    assert kept["axes"]["sleeve"] == "elbow"
+
+    dropped = normalize_fit_profile(
+        {"category": "top", "gender": "women", "axes": {"fit": "regular", "sleeve": "long"}}
+    )
+    assert "sleeve" not in dropped["axes"]
+
+    # 소매 축은 상의 전용 — 아우터 프로필에 실려 와도 통과시키지 않는다
+    outer = normalize_fit_profile(
+        {"category": "outer", "gender": "women", "axes": {"fit": "regular", "sleeve": "short"}}
+    )
+    assert "sleeve" not in outer["axes"]

@@ -1,7 +1,8 @@
 const FIT_HOTSPOTS = Object.freeze({
   top: Object.freeze({
-    fit: Object.freeze([{ id: 'top-fit', label: '몸통·소매 핏' }]),
+    fit: Object.freeze([{ id: 'top-fit', label: '몸통 핏' }]),
     length: Object.freeze([{ id: 'top-hem', label: '상의 밑단' }]),
+    sleeve: Object.freeze([{ id: 'top-sleeve', label: '소매 기장' }]),
   }),
   outer: Object.freeze({
     fit: Object.freeze([{ id: 'outer-fit', label: '몸통·소매 핏' }]),
