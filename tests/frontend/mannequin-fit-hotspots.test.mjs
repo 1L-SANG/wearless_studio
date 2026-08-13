@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
+import { axesFor } from '../../src/lib/fitAxes.js';
+import { matchingFitDefinition } from '../../src/lib/matchingFit.js';
 import { fitHotspotsFor } from '../../src/features/mannequin/fitHotspots.js';
 
 test('every guided fit axis resolves to a visible mannequin adjustment hotspot', () => {
@@ -67,7 +69,7 @@ test('adjustment hotspots are immediately available without the old question car
   );
   assert.match(styles, /\.fit-hotspot-top-fit \{ left: 60%; top: 24%; \}/);
   assert.match(styles, /\.fit-hotspot-top-hem \{ left: 52%; top: 41%; \}/);
-  assert.match(styles, /\.fit-hotspot-pants-cut \{ left: 56%; top: 55%; \}/);
+  assert.match(styles, /\.fit-hotspot-pants-cut \{ left: 60%; top: 62%; \}/);
   assert.match(styles, /\.fit-continue \{ margin-top: var\(--sp-24\); \}/);
 });
 
@@ -104,4 +106,77 @@ test('picked adjustments stay visible, can be cleared, and lock while proceeding
     styles,
     /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.fit-hotspot::before, \.fit-hotspot span \{ transition: none; \}/,
   );
+});
+
+// .fit-mine-img 는 예시 패널이 열린 comparing 상태에서 가장 좁다 (Mannequin.css: width 300px, aspect-ratio 3/4).
+const FRAME_W = 300;
+const FRAME_H = 400;
+// .fit-hotspot 히트박스가 44×44px 이라, 중심이 이보다 가까우면 두 버튼이 겹쳐 뒤엣것이 클릭을 가로챈다.
+const MIN_GAP_PX = 48;
+
+function hotspotCoords() {
+  const css = readFileSync(
+    new URL('../../src/features/mannequin/Mannequin.css', import.meta.url),
+    'utf8',
+  );
+  const coords = new Map();
+  const rule = /\.fit-hotspot-([a-z-]+)\s*\{\s*left:\s*([\d.]+)%;\s*top:\s*([\d.]+)%;\s*\}/g;
+  let match = rule.exec(css);
+  while (match !== null) {
+    coords.set(match[1], { left: Number(match[2]), top: Number(match[3]) });
+    match = rule.exec(css);
+  }
+  return coords;
+}
+
+// 한 화면에 동시에 뜨는 점 = 주상품 축들 + 메인 매칭 의류 축 1개.
+// 매칭 가능한 조합은 server/app/services/matching.py 의 보완타입 규칙 미러다:
+// top·outer → 하의(pants|skirt), pants·skirt → 상의(top), dress → 매칭 없음.
+const SCREEN_COMBOS = [
+  ['top', ['pants', 'skirt', null]],
+  ['outer', ['pants', 'skirt', null]],
+  ['pants', ['top', null]],
+  ['skirt', ['top', null]],
+  ['dress', [null]],
+];
+
+function hotspotIdsOnScreen(category, gender, matchCategory) {
+  const ids = Object.keys(axesFor(category, gender))
+    .flatMap((axis) => fitHotspotsFor(category, axis).map(({ id }) => id));
+  if (matchCategory) {
+    const def = matchingFitDefinition({ id: 'match-1', fitCategory: matchCategory }, gender);
+    if (def) ids.push(...fitHotspotsFor(def.fitCategory, def.axisKey).map(({ id }) => id));
+  }
+  return ids;
+}
+
+test('한 화면에 함께 뜨는 핫존은 서로 겹치지 않는다', () => {
+  const coords = hotspotCoords();
+  const failures = [];
+
+  for (const [category, matchCategories] of SCREEN_COMBOS) {
+    for (const gender of ['women', 'men']) {
+      for (const matchCategory of matchCategories) {
+        const label = `${category}/${gender}${matchCategory ? `+${matchCategory}` : ''}`;
+        const ids = hotspotIdsOnScreen(category, gender, matchCategory);
+        assert.deepEqual([...new Set(ids)], ids, `${label}: 같은 핫존이 두 번 뜬다`);
+        ids.forEach((id) => assert.ok(coords.has(id), `${label}: 좌표 없음 .fit-hotspot-${id}`));
+
+        for (let i = 0; i < ids.length; i += 1) {
+          for (let j = i + 1; j < ids.length; j += 1) {
+            const a = coords.get(ids[i]);
+            const b = coords.get(ids[j]);
+            const dx = ((a.left - b.left) / 100) * FRAME_W;
+            const dy = ((a.top - b.top) / 100) * FRAME_H;
+            const gap = Math.hypot(dx, dy);
+            if (gap < MIN_GAP_PX) {
+              failures.push(`${label}: ${ids[i]} ↔ ${ids[j]} = ${gap.toFixed(1)}px`);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  assert.deepEqual(failures, [], `핫존 간격 ${MIN_GAP_PX}px 미만:\n${failures.join('\n')}`);
 });
