@@ -98,6 +98,20 @@ test('N8 selecting A then B stores only B, and selecting B again clears the arra
   assert.match(inspector, /aria-pressed=\{on\}/, 'native buttons expose their selected state to keyboards and assistive tech');
 });
 
+test('legacy storyboard blocks keep only their first matching garment on entry', () => {
+  const entry = storyboardSource.slice(
+    storyboardSource.indexOf('function prepareStoryboardEntry'),
+    storyboardSource.indexOf('function ComposeModeSummary'),
+  );
+  assert.match(entry, /block\.matchIds\.length > 1/);
+  assert.match(entry, /matchIds: normalizeMatchIds\(block\.matchIds\)/);
+});
+
+test('locked space-set tabs do not show the removed ungroup instruction', () => {
+  assert.doesNotMatch(storyboardSource, /묶음을 푼 뒤 바꿀 수 있어요/);
+  assert.match(storyboardSource, /disabledReason: false/);
+});
+
 test('N8 matching list scrolls horizontally inside the independently vertical inspector', () => {
   assert.match(
     featureStyles,

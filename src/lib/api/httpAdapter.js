@@ -7,7 +7,7 @@
 import { supabase } from '@/lib/supabase.js';
 import { LIMITS } from '@/lib/limits.js';
 import { defaultAnalysisShape, defaultStoryboard, isDefaultStoryboardForMode } from '@/lib/api/shapes.js';
-import { toMatchItem } from '@/lib/api/matchingItems.js';
+import { normalizeMatchClothingSelection, toMatchItem } from '@/lib/api/matchingItems.js';
 import { applyOpeningRow, hasOpeningRow } from '@/lib/storyboardEntryPlacement.js';
 import { selectPublicAnalysisPhotos } from '@/lib/publicAnalysisPhotos.js';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
@@ -592,7 +592,10 @@ export const httpAdapter = {
   },
   // 저장된 분석 payload 조회 (계약 §3.2) — 하드 새로고침 후 매칭 선택 등 복원용. {projectId, ...payload}.
   async getAnalysis(projectId) {
-    return normalizeAnalysisFit(await http(`/v1/projects/${projectId}/analysis`));
+    const analysis = normalizeAnalysisFit(await http(`/v1/projects/${projectId}/analysis`));
+    const normalized = { ...analysis, matchClothing: normalizeMatchClothingSelection(analysis.matchClothing) };
+    analysisCache = { projectId, analysis: normalized };
+    return normalized;
   },
   // 세탁 관리법 AI 초안 (동기·무과금) — 서버가 상품 종류·소재로 짧은 문구 생성. bare string 반환(mock 동일).
   // projectId 없으면(비로그인) 서버 project 가 없으니 클라 기본 문구로 폴백.
@@ -615,11 +618,11 @@ export const httpAdapter = {
     if (!cached && projectId) {
       const saved = await http(`/v1/projects/${projectId}/analysis`);
       if (saved && Object.keys(saved).length > 1) {   // {projectId} 만 있으면 미저장 — 스킵
-        analysisCache = { projectId, analysis: saved };
-        cached = saved;
+        cached = { ...saved, matchClothing: normalizeMatchClothingSelection(saved.matchClothing) };
+        analysisCache = { projectId, analysis: cached };
       }
     }
-    if (cached?.matchClothing?.length) return cached.matchClothing;
+    if (cached?.matchClothing?.length) return normalizeMatchClothingSelection(cached.matchClothing);
     if (!projectId) return [];
     const items = await fetchMatchCandidates(projectId, cached);
     const defaultIds = items.filter((it) => it.isCompatible !== false && it.isCustom !== true)

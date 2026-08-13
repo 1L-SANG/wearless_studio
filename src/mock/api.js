@@ -22,6 +22,7 @@ import {
   removeCustomMatchFromAnalysis,
 } from '@/mock/matchingRecommendation.js';
 import { CREDIT_COSTS, LIMITS } from '@/lib/limits.js';
+import { normalizeMatchClothingSelection } from '@/lib/api/matchingItems.js';
 import { uid } from '@/lib/ids.js';
 import { shouldMarkStoryboardDirty } from '@/lib/generationExamples.js';
 import { normalizeTargetGendersForClothingType } from '@/lib/productGender.js';
@@ -301,6 +302,7 @@ export const api = {
     }).then(() => {
       if (forceError) throw new Error('분석 서버에 일시적인 문제가 발생했어요.');
       const a = normalizeAnalysisFit(clone(DB.analysis));
+      a.matchClothing = normalizeMatchClothingSelection(a.matchClothing);
       // 실측은 AI가 추정하지 않는다 — 사용자가 직접 입력하도록 빈칸으로 둔다.
       a.measurements = createMeasurementFields(a.clothingType);
       return a;
@@ -308,7 +310,11 @@ export const api = {
     if (onProgress) job.listeners.push(onProgress);
     return clone(await job.promise);
   },
-  async getAnalysis(/* projectId */) { await wait(120); return normalizeAnalysisFit(clone(DB.analysis)); },
+  async getAnalysis(/* projectId */) {
+    await wait(120);
+    const analysis = normalizeAnalysisFit(clone(DB.analysis));
+    return { ...analysis, matchClothing: normalizeMatchClothingSelection(analysis.matchClothing) };
+  },
   async saveAnalysis(_projectId, patch) {
     await wait(180);
     // 매칭 후보 목록은 서버(추천)가 소유 — matchClothing patch 는 통째로 덮지 않고
@@ -355,7 +361,8 @@ export const api = {
     const owned = {};
     ['clothingType', 'measurements', 'measurementsUnknown'].forEach((k) => { if (k in patch) owned[k] = patch[k]; });
     if (Object.keys(owned).length) Object.assign(DB.product, clone(owned));
-    return normalizeAnalysisFit(clone(DB.analysis));
+    const analysis = normalizeAnalysisFit(clone(DB.analysis));
+    return { ...analysis, matchClothing: normalizeMatchClothingSelection(analysis.matchClothing) };
   },
   async draftWashCare(/* projectId */) {
     await wait(900);
@@ -370,7 +377,9 @@ export const api = {
   /* ---- mannequin (PRD §7) ---- */
   async getMatchClothing(/* projectId */) {
     await wait(120);
-    return clone((DB.analysis?.matchClothing?.length ? DB.analysis.matchClothing : DB.matchClothing));
+    return normalizeMatchClothingSelection(
+      clone((DB.analysis?.matchClothing?.length ? DB.analysis.matchClothing : DB.matchClothing)),
+    );
   },
   async addCustomMatchItem(_projectId, { assetIds }, { signal } = {}) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');

@@ -170,7 +170,7 @@ StoryboardBlock {
   outerClosureState?: OuterClosureState | null       // 아우터 착용컷(styling·horizon·mirror) 전용. 누락 기본 open
   colorId?: string                 // ColorGroup.id (단수 — 컬러별 컷은 블록을 색상마다 분리)
   pose: PoseId                     // 기본 'auto' (구 _pose)
-  matchIds: string[]               // 매칭 의류 후보 id
+  matchIds: string[]               // 매칭 의류 후보 id (UI는 최대 1개, 배열 shape은 구 저장분 호환용)
   faceExposure: FaceExposure       // 기본 'same'
   angle: CameraAngle               // 기본 'same'
   refImages: string[]              // '내 레퍼런스' 업로드 (생성 입력에 포함) — 프로젝트 한정, 전역 저장 없음 (ADR-0004)

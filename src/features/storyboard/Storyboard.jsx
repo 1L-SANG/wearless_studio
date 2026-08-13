@@ -17,6 +17,7 @@ import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, IconButton, Button, Chips, EmptyState, Modal, Toggle, useToast } from '@/components/ui.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { isDefaultStoryboardForMode } from '@/lib/api/shapes.js';
+import { normalizeMatchIds } from '@/lib/api/matchingItems.js';
 import { ensureSections, deriveSections, adoptSection, patchSection, normalizeRows, normalizeBoard } from '@/lib/sections.js';
 import {
   CONTENT_ROLES,
@@ -600,7 +601,8 @@ export function UnderlineTabs({ options, value, onChange }) {
   return (
     <div className="utabs" ref={ref} style={{ '--ul-left': line.left + 'px', '--ul-width': line.width + 'px' }}>
       {options.map((o) => (
-        <button key={o.value} disabled={o.disabled} title={o.disabled ? (o.disabledReason || '이 조건은 아직 서비스에 공개되지 않았어요') : undefined}
+        <button key={o.value} disabled={o.disabled}
+          title={o.disabled ? (o.disabledReason === false ? undefined : (o.disabledReason || '이 조건은 아직 서비스에 공개되지 않았어요')) : undefined}
           className={`utab${value === o.value ? ' on' : ''}`} onClick={() => onChange(o.value)}>{o.label}</button>
       ))}
     </div>
@@ -1296,7 +1298,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         <div className="sb-cut-label-row"><label className="lbl">컷 종류</label></div>
         <UnderlineTabs
           options={spaceContext ? cutTypeOptions.map((option) => ({
-            ...option, disabled: true, disabledReason: '장소 세트 묶음을 푼 뒤 바꿀 수 있어요',
+            ...option, disabled: true, disabledReason: false,
           })) : cutTypeOptions}
           value={pendingRecipe?.cutType || block.cutType}
           onChange={spaceContext ? () => {} : onCutTypeChange} />
@@ -1501,7 +1503,14 @@ function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, ana
     gender: boundGender,
     clothingType,
   });
-  const normalizedBlocks = ensureContiguousSpaceRuns(exampleRepairedBlocks);
+  // 구 저장분에는 매칭 의류가 두 벌 들어 있을 수 있다. 현재 단일 선택 계약에 맞춰
+  // 첫 선택만 남겨, 콘티에서 다시 고르지 않아도 이후 편집·저장이 같은 규칙을 쓰게 한다.
+  const matchRepairedBlocks = exampleRepairedBlocks.map((block) => (
+    Array.isArray(block.matchIds) && block.matchIds.length > 1
+      ? { ...block, matchIds: normalizeMatchIds(block.matchIds) }
+      : block
+  ));
+  const normalizedBlocks = ensureContiguousSpaceRuns(matchRepairedBlocks);
   const normalized = sbStable(normalizedBlocks) !== sbStable(sourceBlocks);
   // 방금 바인딩/예시를 뗀 카드만 boundGender(서버가 실제로 검증하는 성별)로 먼저 채운다.
   // 일반 자동배정(exampleGender, 바로 아래)은 실존 모델 픽처럼 targetGenders 와 일부러
@@ -1557,27 +1566,15 @@ function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, ana
   };
 }
 
-function ComposeModeSummary({ modes, value, canApply, onApply, onError }) {
-  const [open, setOpen] = useState(false);
-  const [draftMode, setDraftMode] = useState(value);
+function ComposeModeSegment({ modes, value, canApply, onApply, onError }) {
   const [applying, setApplying] = useState(false);
-  const currentMode = modes?.find((mode) => mode.value === value) || modes?.[0];
-  const modeOptions = (modes || []).map((mode) => ({
-    value: mode.value,
-    label: `${mode.label} · ${mode.count}컷`,
-  }));
+  if (!modes?.length) return null;
 
-  if (!currentMode) return null;
-
-  const close = () => {
-    if (!applying) setOpen(false);
-  };
-  const apply = async () => {
-    if (!canApply || !draftMode || draftMode === value || applying) return;
+  const selectMode = async (nextMode) => {
+    if (!canApply || !nextMode || nextMode === value || applying) return;
     setApplying(true);
     try {
-      const applied = await onApply(draftMode);
-      if (applied === true) setOpen(false);
+      await onApply(nextMode);
     } catch {
       onError();
     } finally {
@@ -1586,40 +1583,20 @@ function ComposeModeSummary({ modes, value, canApply, onApply, onError }) {
   };
 
   return (
-    <>
-      <div className="sb-compose-summary">
-        <span>사진 양 <strong>{currentMode.label}</strong> · 예상 {currentMode.count}컷</span>
-        <button type="button" onClick={() => { setDraftMode(value); setOpen(true); }}>변경</button>
-      </div>
-      {open && (
-        <Modal onClose={close} narrow>
-          <div className="sb-compose-modal" role="dialog" aria-modal="true"
-            aria-labelledby="sb-compose-title">
-            <h3 id="sb-compose-title">사진 양 변경</h3>
-            <Chips
-              className="sb-compose-chips"
-              options={modeOptions}
-              value={draftMode}
-              allowDeselect={false}
-              onChange={setDraftMode}
-            />
-            <p className={canApply ? '' : 'sb-compose-warning'}>
-              {canApply
-                ? '손대지 않은 기본 콘티는 선택한 사진 양에 맞춰 다시 구성돼요.'
-                : '직접 수정한 콘티에는 적용되지 않아요'}
-            </p>
-            <div className="modal-actions">
-              <Button variant="ghost" onClick={close} disabled={applying}>닫기</Button>
-              <Button
-                variant="primary"
-                onClick={apply}
-                disabled={!canApply || draftMode === value || applying}
-              >{applying ? '적용 중…' : '적용'}</Button>
-            </div>
-          </div>
-        </Modal>
-      )}
-    </>
+    <div className="sb-compose-segment" role="group" aria-label="사진 양" aria-busy={applying || undefined}>
+      {modes.map((mode) => {
+        const selected = mode.value === value;
+        return (
+          <button key={mode.value} type="button" className={selected ? 'on' : ''}
+            aria-pressed={selected}
+            disabled={applying || (!selected && !canApply)}
+            title={!selected && !canApply ? '직접 수정한 콘티에는 적용되지 않아요' : undefined}
+            onClick={() => selectMode(mode.value)}>
+            {mode.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -2640,6 +2617,13 @@ export function Storyboard() {
   const list = (
     <div className="sb-canvas-board">
       <div className="sb-board-tools">
+        <ComposeModeSegment
+          modes={catalogs?.composeModes || []}
+          value={composeMode}
+          canApply={composeModeApplies}
+          onApply={onComposeModeApply}
+          onError={onComposeModeError}
+        />
         <button
           type="button"
           className="sb-board-tool"
@@ -2768,26 +2752,28 @@ export function Storyboard() {
       setAtomicSaving(false);
     }
   }
-  const onComposeModeError = () => {
+  function onComposeModeError() {
     toast.push('사진 양 선택을 저장하지 못했어요. 다시 선택해 주세요.');
-  };
+  }
   // 사진 양 변경 계약: 현재 보드 flush → composeMode PATCH → 성공 시에만 reload.
-  // helper가 false를 반환하면 ComposeModeSummary가 모달을 유지해 같은 값을 다시 시도할 수 있다.
-  const onComposeModeApply = (nextMode) => applyStoryboardComposeMode({
-    currentMode: composeMode,
-    nextMode,
-    projectId,
-    flushBoard: () => saveNow(projectId),
-    setComposeMode,
-    restoreComposeMode,
-    invalidateStoryboardPrefetch: invalidateStoryboardEntryPrefetch,
-    selectionState: composeModeSelectionRef,
-    reloadStoryboard: () => {
-      setLoadRetry((n) => n + 1);
-    },
-    onFlushFailure: onComposeModeError,
-    onPatchFailure: onComposeModeError,
-  });
+  // helper가 false를 반환하면 현재 분할 선택 상태를 그대로 유지한다.
+  function onComposeModeApply(nextMode) {
+    return applyStoryboardComposeMode({
+      currentMode: composeMode,
+      nextMode,
+      projectId,
+      flushBoard: () => saveNow(projectId),
+      setComposeMode,
+      restoreComposeMode,
+      invalidateStoryboardPrefetch: invalidateStoryboardEntryPrefetch,
+      selectionState: composeModeSelectionRef,
+      reloadStoryboard: () => {
+        setLoadRetry((n) => n + 1);
+      },
+      onFlushFailure: onComposeModeError,
+      onPatchFailure: onComposeModeError,
+    });
+  }
   const onCopywritingChange = (nextValue) => {
     void selectStoryboardCopywriting({
       currentValue: useAppStore.getState().copywriting,
@@ -2821,13 +2807,6 @@ export function Storyboard() {
       <div className="sb-count-head">
         구성컷: <strong>{cutCount}</strong>개
       </div>
-      <ComposeModeSummary
-        modes={catalogs?.composeModes || []}
-        value={composeMode}
-        canApply={composeModeApplies}
-        onApply={onComposeModeApply}
-        onError={onComposeModeError}
-      />
       {undoEntry && (
         <div className={`sb-undo-bar${undoExiting ? ' exiting' : ''}`} role="status" aria-live="polite"
           style={{ top: `${inspectorTop}px` }}

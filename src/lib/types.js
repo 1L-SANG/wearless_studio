@@ -173,7 +173,7 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {string} [length]
    @property {'pants'|'skirt'|null} [fitCategory]  서버(목업은 구조화 메타데이터)가 유도
    @property {boolean} selected
-   @property {number} [selOrder]         1=메인, 2=서브
+   @property {number} [selOrder]         1=선택 (2는 구 저장분 호환용)
 
    @typedef {Object} MannequinCut
    @property {string} id                 `${candidate}-${version}`

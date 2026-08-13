@@ -133,20 +133,19 @@ test('compose-mode credit estimates scale both ends of the catalog count', () =>
   assert.equal(estimateComposeModeCredits('14~33', 2), '28~66');
 });
 
-test('the storyboard shows a summary and blocks applying a mode to an edited board', () => {
+test('the storyboard shows one segmented basic/extended picker and blocks changes on an edited board', () => {
   assert.doesNotMatch(storyboardSource, /ComposeModePicker/);
   assert.equal(
     existsSync(new URL('../../src/features/storyboard/ComposeModePicker.jsx', import.meta.url)),
     false,
   );
-  assert.match(
-    storyboardSource,
-    /사진 양 <strong>\{currentMode\.label\}<\/strong> · 예상 \{currentMode\.count\}컷/,
-  );
+  assert.doesNotMatch(storyboardSource, /사진 양 <strong>|예상 \{currentMode\.count\}컷|>변경<\/button>/);
+  assert.match(storyboardSource, /className="sb-compose-segment" role="group" aria-label="사진 양"/);
+  assert.match(storyboardSource, /aria-pressed=\{selected\}/);
   assert.match(storyboardSource, /직접 수정한 콘티에는 적용되지 않아요/);
-  assert.match(storyboardSource, /disabled=\{!canApply \|\| draftMode === value \|\| applying\}/);
+  assert.match(storyboardSource, /disabled=\{applying \|\| \(!selected && !canApply\)\}/);
   assert.match(storyboardSource, /isDefaultStoryboardForMode\([\s\S]*?composeModeSeed\.colors[\s\S]*?targetGenders: composeModeSeed\.targetGenders/);
-  assert.match(storyboardSource, /const applied = await onApply\(draftMode\);\s*\n\s*if \(applied === true\) setOpen\(false\)/);
+  assert.match(storyboardSource, /await onApply\(nextMode\)/);
   assert.match(storyboardSource, /onApply=\{onComposeModeApply\}/);
 });
 

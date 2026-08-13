@@ -22,7 +22,7 @@ export const LIMITS = Object.freeze({
   additionalColorMaxImages: 3, // 추가 색상당 이미지 상한 (PRD §5.3)
   sellingPointMax: 5, // 강조 특징 상한 (PRD §6.6)
   aiSuggestedPointMax: 2, // AI 추천 특징 상한 (types.js)
-  matchClothingMax: 2, // 매칭 의류 선택 상한 (PRD §6.8)
+  matchClothingMax: 1, // 매칭 의류 선택 상한 (PRD §6.8)
   mannequinAdjustMax: undefined, // @deprecated P2: 횟수 제한 없음
 });
 
