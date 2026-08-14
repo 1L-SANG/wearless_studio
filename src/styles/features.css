@@ -1639,6 +1639,12 @@
 .blk-resize:hover .pill-bar { background: var(--link); }
 /* clip elements that spill past the block frame; block height is fixed, not content-driven (#10) */
 .block-clip { position: absolute; inset: 0; overflow: hidden; }
+.editor-snap-guide { position: absolute; z-index: 10000; display: none; pointer-events: none;
+  background: #168ff2; box-shadow: 0 0 calc(2px * var(--inv, 1)) rgba(22,143,242,.38); }
+.editor-snap-guide.vertical { top: 0; bottom: 0; width: calc(1px * var(--inv, 1));
+  transform: translateX(-50%); }
+.editor-snap-guide.horizontal { left: 0; right: 0; height: calc(1px * var(--inv, 1));
+  transform: translateY(-50%); }
 
 /* empty frame image slot — '이미지 추가' button → 의류 탭 (item 3) */
 .el-slot { background: #f3f3f5; box-shadow: inset 0 0 0 1.5px var(--ring-strong); display: grid; place-items: center; overflow: hidden; }

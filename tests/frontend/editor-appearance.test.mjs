@@ -165,24 +165,56 @@ test('auto-height text expands its pointer target without covering adjacent tabl
   assert.match(editorStylesSource, /bottom: calc\(-3px \* var\(--canvas-inv, 1\)\)/);
 });
 
-test('canvas blocks native image ranges without cancelling ordinary element pointer gestures', () => {
+test('canvas routes every movable element through one pointer drag without native text ranges', () => {
   const elementPick = editorSource.slice(
     editorSource.indexOf('const pick = (e) => {'),
     editorSource.indexOf('const finishClick = (e) => {'),
   );
-  const beforeTextDrag = elementPick.slice(0, elementPick.indexOf('if (shouldStartTextOnlyDrag(el, e.shiftKey))'));
+  const beforeTextDrag = elementPick.slice(0, elementPick.indexOf('if (isolateText)'));
   const textDragPick = elementPick.slice(
-    elementPick.indexOf('if (shouldStartTextOnlyDrag(el, e.shiftKey))'),
-    elementPick.indexOf('// 처음 누른 완성형 오브젝트'),
+    elementPick.indexOf('if (isolateText)'),
+    elementPick.indexOf('const preserveSelection'),
   );
 
   assert.doesNotMatch(beforeTextDrag, /e\.preventDefault\(\)/);
   assert.match(textDragPick, /e\.preventDefault\(\)/);
-  assert.match(textDragPick, /window\.getSelection\?\.\(\)\?\.removeAllRanges\(\)/);
+  assert.match(elementPick, /window\.getSelection\?\.\(\)\?\.removeAllRanges\(\)/);
+  assert.match(elementPick, /onElementDragStart\?\.\(e, el, \{ isolateText, preserveSelection \}/);
+  assert.doesNotMatch(editorSource, /onMultiDragStart|onTextDragStart|onObjectGroupDragStart/);
+  assert.match(editorSource, /draggable=\{false\}/);
+  assert.match(editorSource, /data-editor-snap-guide="vertical"/);
+  assert.match(editorSource, /data-editor-snap-guide="horizontal"/);
+  assert.match(editorStylesSource, /\.editor-snap-guide\.vertical/);
+  assert.match(editorStylesSource, /\.editor-snap-guide\.horizontal/);
   assert.match(editorStylesSource, /\.ed-canvas\s*\{[^}]*user-select:\s*none[^}]*-webkit-user-select:\s*none/s);
   assert.match(editorStylesSource, /\.el-text:not\(\.editing\)\s*\{[^}]*user-select:\s*none[^}]*touch-action:\s*none/s);
   assert.match(editorStylesSource, /\.el-text\.editing\s*\{[^}]*user-select:\s*text[^}]*touch-action:\s*auto/s);
   assert.match(editorSource, /onDoubleClick=\{\(e\) => \{ e\.stopPropagation\(\); pendingBubbleFit\.current = null; onEdit\(el\.id\)/);
+});
+
+test('shared pointer drag covers frame controls, movable group members, rotation bounds, and cleanup', () => {
+  const slotButtonStart = editorSource.indexOf('<button className={`slot-add');
+  const slotButton = editorSource.slice(slotButtonStart, editorSource.indexOf('</button>', slotButtonStart));
+  const pointerDrag = editorSource.slice(
+    editorSource.indexOf('const startPointerSelectionDrag ='),
+    editorSource.indexOf('const startElementDrag ='),
+  );
+
+  assert.doesNotMatch(slotButton, /onPointerDown=/);
+  assert.match(slotButton, /if \(draggedPointer\.current\) return/);
+  assert.match(pointerDrag, /!candidate\.hidden/);
+  assert.match(pointerDrag, /!candidate\.locked/);
+  assert.match(pointerDrag, /nodeById\[candidate\.id\]/);
+  assert.match(pointerDrag, /getBoundingClientRect\(\)/);
+  assert.match(pointerDrag, /activePointerDragCleanup\.current = cleanup/);
+  assert.match(editorSource, /activePointerDragCleanup\.current\?\.\(\)/);
+});
+
+test('editor copy and paste shortcuts duplicate canvas selections without stealing typing shortcuts', () => {
+  assert.match(editorSource, /mod && !typing && !kb\.current\.croppingOn && copyKey && kb\.current\.copy\?\.\(\)/);
+  assert.match(editorSource, /mod && !typing && !kb\.current\.croppingOn && pasteKey && kb\.current\.paste\?\.\(\)/);
+  assert.match(editorSource, /copy:\s*copySelectedElements, paste:\s*pasteCopiedElements/);
+  assert.match(editorSource, /setSelEls\(pasted\.selectedIds\)/);
 });
 
 test('text numeric controls allow an empty editing draft and commit the finished number', () => {
