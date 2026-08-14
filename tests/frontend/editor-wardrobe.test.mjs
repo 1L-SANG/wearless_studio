@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { mergeEditorImagesIntoWardrobe } from '../../src/features/editor/editorWardrobe.js';
 
 const editorSource = readFileSync(fileURLToPath(new URL('../../src/features/editor/Editor.jsx', import.meta.url)), 'utf8');
+const panelSource = readFileSync(fileURLToPath(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url)), 'utf8');
 
 test('generated editor photos are merged into their product color groups', () => {
   const wardrobe = {
@@ -105,6 +106,26 @@ test('direct uploads are collected under misc without treating arbitrary placed 
   });
 
   assert.deepEqual(merged.misc.map((image) => image.src), ['/mine.png', '/mine-from-storyboard.png', '/uploaded-into-frame.png']);
+});
+
+test('direct wardrobe uploads keep the wardrobe tab and expose their loading state', () => {
+  const insertImage = editorSource.slice(
+    editorSource.indexOf('const insertImage ='),
+    editorSource.indexOf('const requestSlotImage ='),
+  );
+  const uploadEditorImage = editorSource.slice(
+    editorSource.indexOf('const uploadEditorImage ='),
+    editorSource.indexOf('const dropImageFiles ='),
+  );
+
+  assert.match(insertImage, /keepTab = false/);
+  assert.match(insertImage, /selectEl\(target, el, false, keepTab\)/);
+  assert.match(uploadEditorImage, /const isWardrobeUpload = !placement\?\.blockId && !importId/);
+  assert.match(uploadEditorImage, /setWardrobeUploadLoading\(true\)/);
+  assert.match(uploadEditorImage, /wardrobeInsert\(image, \{ keepTab: true \}\)/);
+  assert.match(uploadEditorImage, /finally \{\s*if \(isWardrobeUpload\) setWardrobeUploadLoading\(false\)/);
+  assert.match(panelSource, /role="status" aria-live="polite"/);
+  assert.match(panelSource, /의류 이미지를 불러오는 중이에요/);
 });
 
 test('crop controls keep original and expose mouse confirm/cancel without instruction pills', () => {

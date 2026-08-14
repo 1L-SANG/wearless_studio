@@ -605,7 +605,7 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
 }
 
 /* ---------- 의류 (wardrobe library) ---------- */
-export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, onInsert, onUpload, onVaryImage, onDeleteSelected, onFreshSeen, onImageDragStart, onImageDragEnd }) {
+export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading = false, onInsert, onUpload, onVaryImage, onDeleteSelected, onFreshSeen, onImageDragStart, onImageDragEnd }) {
   // wardrobe 그룹 키 = colorId | 'misc' — 표시명은 colorOpts 에서 파생 (계약 §3.6)
   const colorFor = (group) => {
     if (group === 'misc') return { hex: '#d4d4d8', name: '기타', neutral: true };
@@ -620,7 +620,13 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, onInsert,
   return (
     <div className="ward-panel">
       {pendingSlot && <div className="ward-fill-banner"><Icon name="image" size={15} />빈 칸에 넣을 의류를 선택하세요</div>}
-      <Button variant="ghost" block icon="upload" onClick={onUpload} style={{ marginBottom: 16 }}>직접 이미지 업로드하기</Button>
+      <Button variant="ghost" block icon="upload" onClick={onUpload} disabled={uploading} style={{ marginBottom: uploading ? 8 : 16 }}>직접 이미지 업로드하기</Button>
+      {uploading && (
+        <div className="ward-upload-status" role="status" aria-live="polite">
+          <Icon name="loader" size={16} className="spin" />
+          <span>의류 이미지를 불러오는 중이에요</span>
+        </div>
+      )}
       {Object.entries(wardrobe).map(([group, imgs]) => {
         const c = colorFor(group);
         const open = !collapsed[group];

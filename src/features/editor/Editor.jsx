@@ -825,6 +825,7 @@ export function Editor() {
   const [frameDragging, setFrameDragging] = useState(false);
   const [pendingSlot, setPendingSlot] = useState(null);
   const [imageImports, setImageImports] = useState([]);
+  const [wardrobeUploadLoading, setWardrobeUploadLoading] = useState(false);
   const [hoverGray, setHoverGray] = useState(false);
   const [layerFloat, setLayerFloat] = useState(null);
   const [layerPos, setLayerPos] = useState(null);
@@ -1346,7 +1347,7 @@ export function Editor() {
   const setSlotImage = (blockId, elId, image) => {
     setBlocks((bs) => bs.map((b) => (b.id === blockId ? applySlotFillToInfo(b, elId, image || { src: null, cutType: null }) : b)));
   };
-  const insertImage = (im, { blockId, point, slotId } = {}) => {
+  const insertImage = (im, { blockId, point, slotId, keepTab = false } = {}) => {
     const target = blockId || visibleBlock();
     const targetBlock = (latestBlocks.current || blocks).find((block) => block.id === target);
     if (!targetBlock || !im?.src) return;
@@ -1363,7 +1364,7 @@ export function Editor() {
         ...(im.wardrobeGroup ? { wardrobeGroup: im.wardrobeGroup } : {}),
       };
       setSlotImage(target, slot.id, filled);
-      selectEl(target, filled);
+      selectEl(target, filled, false, keepTab);
       toast.push('프레임에 이미지를 넣었어요', { icon: 'image' });
       return;
     }
@@ -1382,7 +1383,7 @@ export function Editor() {
       ...(im.wardrobeGroup ? { wardrobeGroup: im.wardrobeGroup } : {}),
     };
     setBlocks((bs) => bs.map((block) => block.id === target ? { ...block, elements: [...block.elements, el] } : block));
-    selectEl(target, el);
+    selectEl(target, el, false, keepTab);
     toast.push('이미지를 캔버스에 삽입했어요');
   };
   const requestSlotImage = (blockId, el) => { setPendingSlot({ blockId, elId: el.id }); setTab('wardrobe'); };
@@ -1390,7 +1391,7 @@ export function Editor() {
     setSlotImage(blockId, elId, image);
     toast.push('프레임에 이미지를 넣었어요', { icon: 'image' });
   };
-  const wardrobeInsert = (im) => {
+  const wardrobeInsert = (im, { keepTab = false } = {}) => {
     if (pendingSlot) {
       // 정보 블록 슬롯이면 info(폼 정본)에도 동기화 — 재생성 때 사진-포인트 연결 유지
       setSlotImage(pendingSlot.blockId, pendingSlot.elId, {
@@ -1399,8 +1400,10 @@ export function Editor() {
         userUploaded: Boolean(im.userUploaded),
         wardrobeGroup: im.wardrobeGroup || null,
       });
-      setPendingSlot(null); setTab('image'); toast.push('빈 칸에 이미지를 넣었어요');
-    } else insertImage(im);
+      setPendingSlot(null);
+      if (!keepTab) setTab('image');
+      toast.push('빈 칸에 이미지를 넣었어요');
+    } else insertImage(im, { keepTab });
   };
   const patchImageImport = (id, patch) => {
     if (!id) return;
@@ -1415,6 +1418,8 @@ export function Editor() {
       toast.push('JPG, PNG, WebP 또는 HEIC 사진을 선택해 주세요.', { icon: 'x' });
       return;
     }
+    const isWardrobeUpload = !placement?.blockId && !importId;
+    if (isWardrobeUpload) setWardrobeUploadLoading(true);
     try {
       const prepared = await toUploadableImage(file);
       const validation = getUploadValidationError(prepared);
@@ -1448,13 +1453,15 @@ export function Editor() {
       await waitForImageSource(uploaded.url);
       setWardrobe((current) => ({ ...current, misc: [...(current.misc || []), image] }));
       if (placement?.blockId) insertImage(image, placement);
-      else wardrobeInsert(image);
+      else wardrobeInsert(image, { keepTab: true });
       patchImageImport(importId, { phase: 'done' });
       finishImageImport(importId, 420);
     } catch (error) {
       patchImageImport(importId, { phase: 'error' });
       finishImageImport(importId, 1600);
       toast.push(error?.message || '사진을 업로드하지 못했어요. 다시 시도해 주세요.', { icon: 'x' });
+    } finally {
+      if (isWardrobeUpload) setWardrobeUploadLoading(false);
     }
   };
   const dropImageFiles = (blockId, files, point, slotId = null) => {
@@ -1937,7 +1944,7 @@ export function Editor() {
   const renderPanel = () => {
     switch (tab) {
       case 'ai': return <AIPanel catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} matchClothing={matchClothing} exampleGender={exampleGenderFromAnalysis(analysis, catalogs, clothingType)} varySource={varySource} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickRef={() => api.pickRefImage(projectId)} onPickMoodRef={() => api.pickRefImage(projectId)} onSetCutType={setVaryCutType} />;
-      case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={detailColorOpts} pendingSlot={pendingSlot} onInsert={wardrobeInsert} onDeleteSelected={deleteWardrobeImages} onUpload={pickAndInsertImage} onVaryImage={varyImage} onFreshSeen={freshSeen}
+      case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={detailColorOpts} pendingSlot={pendingSlot} uploading={wardrobeUploadLoading} onInsert={wardrobeInsert} onDeleteSelected={deleteWardrobeImages} onUpload={pickAndInsertImage} onVaryImage={varyImage} onFreshSeen={freshSeen}
         onImageDragStart={() => setFrameDragging(true)} onImageDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />;
       case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio}
         onCrop={(el) => startCrop(blockIdOf(el.id), el)} onCropReset={() => patchEl({ crop: undefined })}
