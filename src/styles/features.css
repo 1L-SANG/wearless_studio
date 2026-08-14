@@ -190,7 +190,7 @@
 .upload-strip { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; padding-top: 16px; box-shadow: 0 -1px 0 0 var(--ring); }
 .up-thumb { width: 56px; height: 72px; border-radius: var(--r-3); overflow: hidden; background: var(--bg-2); box-shadow: 0 0 0 1px var(--ring); flex: none; }
 .up-thumb img { width: 100%; height: 100%; object-fit: cover; }
-.req-star { color: var(--link); margin-left: 3px; font-weight: 800; font-size: 1.25em; line-height: 0; vertical-align: -0.08em; }  /* 파랑·확대 (2026-08-14) */
+.req-star { color: var(--link); margin-left: 3px; font-weight: 800; font-size: 1.4em; line-height: 0; vertical-align: -0.1em; }  /* 파랑·확대 1.25→1.4em (2026-08-14) */
 
 /* E — 2×2 angle wells: all four angles at a glance, images stack inside each */
 .slot-wells { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
