@@ -41,9 +41,11 @@ function autoSetRuns(blocks, sectionId) {
 }
 
 /* rotation: 같은 섹션에서 셔플을 연타할 때 세트 후보를 순환시키는 정수(횟수 카운터).
-   uid: 새 세트 run 의 spaceGroupId 인스턴스 키 생성기(주입 — 테스트 결정성). */
+   uid: 새 세트 run 의 spaceGroupId 인스턴스 키 생성기(주입 — 테스트 결정성).
+   onlySpaceGroupId: 지정하면 그 세트 run 하나만 교체한다(세트별 셔플 버튼, 2026-08-15 —
+   낱개 컷 재추첨은 건너뛴다). */
 export function shuffleSectionExamples(blocks, {
-  sectionId, catalog, product, gender, rotation = 0, uid = null,
+  sectionId, catalog, product, gender, rotation = 0, uid = null, onlySpaceGroupId = null,
 }) {
   const list = Array.isArray(blocks) ? blocks : [];
   if (!sectionId) return list;
@@ -51,6 +53,7 @@ export function shuffleSectionExamples(blocks, {
 
   // ① 공간 세트 — 세트 단위 교체(같은 성별·의류 종류·세트 타입의 다른 발행 세트로).
   for (const run of autoSetRuns(next, sectionId)) {
+    if (onlySpaceGroupId && run.spaceGroupId !== onlySpaceGroupId) continue;
     const current = inferStoryboardSpaceSet(run.spaceGroupId);
     if (!current) continue;
     const candidates = storyboardSpaceSetsFor({ gender, clothingType: product?.clothingType })
@@ -67,6 +70,7 @@ export function shuffleSectionExamples(blocks, {
 
   // ② 낱개 컷 — 선택을 비우고 기존 배정기로 재추첨(직전 예시는 회피).
   // 바꿀 것이 없으면 배열 참조를 보존한다(호출부의 "무변경" 판정 근거).
+  if (onlySpaceGroupId) return next;
   const avoidByBlockId = {};
   for (const block of next) {
     if (isRerollableFlat(block, sectionId)) avoidByBlockId[block.id] = block.exampleId;

@@ -113,9 +113,12 @@ test('legacy storyboard blocks keep only their first matching garment on entry',
   assert.match(entry, /matchIds: normalizeMatchIds\(block\.matchIds\)/);
 });
 
-test('locked space-set tabs do not show the removed ungroup instruction', () => {
+test('set members hide the cut-type tabs and matching editor entirely', () => {
+  // 2026-08-15 오너: 세트 멤버 인스펙터에는 잠금 표시 대신 컷 종류·매칭 편집을 아예 숨긴다.
   assert.doesNotMatch(storyboardSource, /묶음을 푼 뒤 바꿀 수 있어요/);
-  assert.match(storyboardSource, /disabledReason: false/);
+  assert.doesNotMatch(storyboardSource, /장소 세트로 묶인 동안 고정돼요/);
+  assert.match(storyboardSource, /\{!spaceContext && \(\s*<div className="insp-sec">\s*<div className="sb-cut-label-row">/);
+  assert.match(storyboardSource, /WORN_CUT_TYPES\.has\(block\.cutType\) && !block\.spaceGroupId/);
 });
 
 test('N8 matching list scrolls horizontally inside the independently vertical inspector', () => {

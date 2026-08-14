@@ -488,7 +488,8 @@ test('space runs use continuity-aware units, stable composite keys, and no disso
   assert.match(storyboardSource, /kind: 'spaceRun'/);
   assert.match(storyboardSource, /unit\.kind === 'spaceRun' \? renderSpaceRun/);
   assert.match(storyboardSource, /key=\{'spaceRun:' \+ unit\.spaceGroupId \+ ':' \+ unit\.items\[0\]\.block\.id\}/);
-  assert.match(storyboardSource, /sb-tray-label[^]*spaceSetDisplayName\(set\)/);
+  // 세트 이름 라벨('햇살 드는 시장 골목' 등)은 표시하지 않는다(2026-08-15 오너).
+  assert.doesNotMatch(storyboardSource, /sb-tray-label/);
   assert.match(storyboardSource, /className="sb-tray-swap"[^]*장소 세트 변경/);
   assert.doesNotMatch(storyboardSource, /장소 세트 묶음 풀기|dissolveSpaceGroup|sb-tray-more/);
 });

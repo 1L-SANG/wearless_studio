@@ -249,7 +249,8 @@ test('N4 general add is manual-empty, dropped examples are not, and the inspecto
   assert.match(addBlock, /\.\.\.\(!droppedExample \? \{ exampleChoice: 'manual' \} : \{\}\)/);
   assert.match(addBlock, /assignGenerationExamples\(out,[\s\S]*onlyBlockIds: \[nb\.id\]/);
   assert.match(addBlock, /setSelectedId\(nb\.id\); setSplitOpen\(true\)/);
-  assert.match(storyboardSource, /예시를 골라주세요 — 컷 설정에 맞는 생성예시를 직접 선택해 주세요/);
+  // 2026-08-15 오너: 빈 컷 안내는 짧게 — "분위기 예시를 골라주세요."
+  assert.match(storyboardSource, /분위기 예시를 골라주세요\./);
   assert.match(storyboardSource, /이 조합의 예시를 준비하지 못했어요 — 컷 설정을 바꾸거나 직접 예시를 골라주세요/);
   assert.match(featureStyles, /\.sb-cutcard\.manual-empty, \.sb-frame-half\.manual-empty \{[^}]*border-style: dashed;[^}]*background: #f7fafc/);
 });

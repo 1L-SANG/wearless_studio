@@ -350,7 +350,7 @@ function StoryboardMedia({
         <span className={`sb-missing-body${manualEmpty ? ' manual-empty' : ''}`}>
           <span className="upload-placeholder-logo" aria-hidden="true" />
           <i>{manualEmpty
-            ? '예시를 골라주세요 — 컷 설정에 맞는 생성예시를 직접 선택해 주세요'
+            ? '분위기 예시를 골라주세요.'
             : '이 조합의 예시를 준비하지 못했어요 — 컷 설정을 바꾸거나 직접 예시를 골라주세요'}</i>
         </span>
       ) : (
@@ -484,10 +484,11 @@ function StoryboardFrame({
   return (
     <div className={'sb-frame' + (colorway ? ' colorway-set' : '')}>
       <div className="sb-frame-media">
-        {/* '첫 화면 · 두컷 프레임' 같은 후킹 라벨은 붙이지 않는다(2026-08-14 오너). */}
-        <span className="sb-frame-tag">
-          {colorway ? `색상 세트 · ${colorwayName} · 풀샷 + 미디움샷` : '한 프레임 구성 · 2컷'}
-        </span>
+        {/* 프레임 라벨은 색상 세트만 남긴다 — '한 프레임 구성'류 일반 라벨은 전부 제거
+            (2026-08-15 오너: "이런 거 다 빼라"). */}
+        {colorway && (
+          <span className="sb-frame-tag">{`색상 세트 · ${colorwayName} · 풀샷 + 미디움샷`}</span>
+        )}
         <div className="sb-frame-box">
           {items.map((item) => {
             const missing = item.block.source !== 'mine' && !item.block.exampleId;
@@ -1360,13 +1361,12 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         ...(current.spaceGroupId ? { refScope: 'pose' } : {}),
       };
     }
+    // 방향이 예시 포즈와 안 맞아도 생성예시는 유지한다(2026-08-15 오너 — 예시를 비워
+    // "준비하지 못했어요" 빈 카드를 만들지 않는다). 캡션의 방향 표시만 바뀌고,
+    // 서버는 방향 비호환 시 포즈 권한만 내려놓고 생성한다(reference_direction_compatible).
     return {
       direction,
-      refScope: current.spaceGroupId ? 'pose' : 'all',
-      exampleId: null,
-      exampleSelectionOrigin: null,
-      thumb: current.baseThumb || current.thumb,
-      baseThumb: null,
+      ...(current.spaceGroupId ? {} : { refScope: 'all' }),
     };
   });
   const showOuterClosure = clothingType === 'outer' && block.source === 'ai' && WORN_CUT_TYPES.has(block.cutType);
@@ -1403,18 +1403,16 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         </>
       ) : (
         <>
-      <div className={`insp-sec${spaceContext ? ' sb-cut-locked' : ''}`}>
-        <div className="sb-cut-label-row"><label className="lbl">컷 종류</label></div>
-        <UnderlineTabs
-          options={spaceContext ? cutTypeOptions.map((option) => ({
-            ...option, disabled: true, disabledReason: false,
-          })) : cutTypeOptions}
-          value={pendingRecipe?.cutType || block.cutType}
-          onChange={spaceContext ? () => {} : onCutTypeChange} />
-        {spaceContext && (
-          <div className="sb-lock-note"><Icon name="lock" size={13} />장소 세트로 묶인 동안 고정돼요.</div>
-        )}
-      </div>
+      {/* 세트 멤버는 컷 종류가 세트에 고정 — 잠금 표시 대신 아예 숨긴다(2026-08-15 오너). */}
+      {!spaceContext && (
+        <div className="insp-sec">
+          <div className="sb-cut-label-row"><label className="lbl">컷 종류</label></div>
+          <UnderlineTabs
+            options={cutTypeOptions}
+            value={pendingRecipe?.cutType || block.cutType}
+            onChange={onCutTypeChange} />
+        </div>
+      )}
 
       {pendingRecipe ? (
         <div className="sb-pending-recipe">
@@ -1509,8 +1507,10 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         <ColorDots colorOpts={isDetail ? detailColorOpts : colorOpts}
           value={block.colorId} onChange={(v) => onChange({ colorId: v })} /></div>
 
-      {/* 매칭 의류가 없으면 편집 패널이 빈 화면이 되므로 진입 자체를 막는다 */}
-      {WORN_CUT_TYPES.has(block.cutType) && Array.isArray(matchClothing) && matchClothing.length > 0 && (
+      {/* 매칭 의류가 없으면 편집 패널이 빈 화면이 되므로 진입 자체를 막는다.
+          세트 멤버(spaceGroupId)는 세트 연출이 정본이라 매칭 편집도 숨긴다(2026-08-15 오너). */}
+      {WORN_CUT_TYPES.has(block.cutType) && !block.spaceGroupId
+        && Array.isArray(matchClothing) && matchClothing.length > 0 && (
         <>
           <button className={`insp-detail-btn${matchOpen ? ' open' : ''}`} onClick={() => setMatchOpen((v) => !v)}>
             <Icon name="settings" size={17} />매칭 의류 바꾸기
@@ -1783,7 +1783,7 @@ function HookStyleSection({
             className={'sb-hookpanel-card' + (style === frame.style ? ' on' : '')}
             aria-pressed={style === frame.style}
             disabled={saving}
-            onClick={() => onSelectStyle(style)}
+            onClick={() => { onSelectStyle(style); setOpen(false); }}   /* 고르면 목록 접힘(2026-08-15 오너) */
           >
             <span className={`sb-hookpanel-thumb style-${style}`}>
               {thumbFor(style).map((src, index) => (
@@ -2785,8 +2785,9 @@ export function Storyboard() {
     }
   }
 
-  // 예시 셔플(스펙 §4) — 섹션 단위, 고정 제외. 저장은 기존 자동 저장 흐름을 탄다.
-  const shuffleSection = (group) => {
+  // 예시 셔플(스펙 §4, 2026-08-15 축소) — 후킹 섹션(재추첨)과 장소세트(세트 교체)에만.
+  // 저장은 기존 자동 저장 흐름을 탄다.
+  const runShuffle = (group, options = {}) => {
     if (locked || !catalogs) return;
     const section = sectionForGroup(group);
     const previous = blocks;
@@ -2798,6 +2799,7 @@ export function Storyboard() {
       gender: boundGenderNow,
       rotation: shuffleTickRef.current,
       uid,
+      ...options,
     });
     if (next === previous) {
       toast.push('바꿀 수 있는 예시가 없어요 — 모두 직접 고른 컷이에요');
@@ -2810,19 +2812,8 @@ export function Storyboard() {
       label: '예시 셔플',
     });
   };
-
-  const sectionShuffleRow = (group, { stack = false } = {}) => (
-    <div className={'sb-shuffle-row' + (stack ? ' under-stack' : '')}>
-      <button
-        type="button"
-        className="sb-shuffle-btn"
-        disabled={locked}
-        onClick={(event) => { event.stopPropagation(); shuffleSection(group); }}
-      >
-        {ShuffleIcon}예시 셔플
-      </button>
-    </div>
-  );
+  const shuffleSection = (group) => runShuffle(group);
+  const shuffleSpaceSet = (group, spaceGroupId) => runShuffle(group, { onlySpaceGroupId: spaceGroupId });
 
   const insertControl = (
     idx,
@@ -2976,7 +2967,7 @@ export function Storyboard() {
           onDragStart={onSpaceDragStart(unit.spaceGroupId)}
           onDragEnd={onDragEnd}
         >
-          <span className="sb-tray-label">{spaceSetDisplayName(set)}</span>
+          {/* 세트 이름('햇살 드는 시장 골목' 등) 라벨은 표시하지 않는다(2026-08-15 오너). */}
           <button type="button" className="sb-tray-swap" onClick={(event) => {
             event.stopPropagation();
             const first = unit.items[0].block;
@@ -2988,23 +2979,37 @@ export function Storyboard() {
           {frameUnits(unit.items).map((spaceUnit) => (
             renderUnit(spaceUnit, group, unit.spaceGroupId, reservation)
           ))}
-          {/* 구버전(7월 보드) '이 공간에 컷 추가' 라벨 필 복원 — 예비 멤버가 남았을 때만
-              보이고, 소진되면 세트 안 추가 수단 자체가 사라진다(2026-08-14 오너 확정). */}
+          {/* 예비 멤버 카드(구 UI 복원, 2026-08-15 오너 스크린샷) — 다음 세트 컷을 희미한
+              실제 사진으로 보여주고 눌러서 추가. 예비 소진 시 세트 안 추가 수단은 사라진다. */}
           {reservation && (
-            <div className="sb-grid-unit sb-addunit">
+            <div className="sb-grid-unit">
               <button
                 type="button"
-                className="sb-addpill in-space"
+                className="sb-reserve-card"
                 disabled={locked}
                 onClick={() => {
                   const section = sectionForGroup(group);
                   addBlock(lastItem.index, section.id, section.role, unit.spaceGroupId, group.key, reservation);
                 }}
               >
-                <Icon name="plus" size={15} />이 공간에 컷 추가
+                {reservation.member?.thumb && (
+                  <img src={reservation.member.thumb} alt="" loading="lazy" decoding="async" />
+                )}
+                <span className="sb-reserve-label"><b>＋</b>이 컷 추가</span>
               </button>
             </div>
           )}
+        </div>
+        {/* 예시 셔플 — 장소세트 단위(이 세트만 교체), 마지막 카드 우측 아래(2026-08-15 오너). */}
+        <div className="sb-shuffle-row end">
+          <button
+            type="button"
+            className="sb-shuffle-btn"
+            disabled={locked}
+            onClick={(event) => { event.stopPropagation(); shuffleSpaceSet(group, unit.spaceGroupId); }}
+          >
+            {ShuffleIcon}예시 셔플
+          </button>
         </div>
         {insertControl(lastItem.index, group, null, null, 'end')}
       </div>
@@ -3096,9 +3101,6 @@ export function Storyboard() {
                       onOpen={() => openRenderGroup(group.key)} />
                   );
                 })()}
-                {group.items.length > 0 && sectionShuffleRow(group, {
-                  stack: !(hookFrame && groupSection.role === SECTION_ROLES.HOOKING),
-                })}
               </div>
             </div>
             <div className="sb-deck-collapse">
@@ -3109,12 +3111,13 @@ export function Storyboard() {
                     unit.kind === 'spaceRun' ? renderSpaceRun(unit, group) : renderUnit(unit, group)
                   ))}
                   {!group.items.length && insertControl(groupSection.start, group, null, null, 'empty')}
-                  {/* 구버전 '개별 컷 추가' 라벨 필 — 호버 존과 병행하는 상시 노출 추가 수단. */}
-                  {group.items.length > 0 && (
-                    <div className="sb-grid-unit sb-addunit">
+                  {/* 개별 컷 추가 — 점선 카드(구 UI, 2026-08-15 오너 스크린샷). 후킹 섹션은
+                      스타일이 컷 구성을 지배하므로 여기서 컷을 추가하지 않는다. */}
+                  {group.items.length > 0 && groupSection.role !== SECTION_ROLES.HOOKING && (
+                    <div className="sb-grid-unit">
                       <button
                         type="button"
-                        className="sb-addpill"
+                        className="sb-addcard"
                         disabled={locked}
                         onClick={() => addBlock(
                           group.items[group.items.length - 1].index,
@@ -3124,12 +3127,25 @@ export function Storyboard() {
                           group.key,
                         )}
                       >
-                        <Icon name="plus" size={15} />개별 컷 추가
+                        ＋ 컷 추가
                       </button>
                     </div>
                   )}
                 </div>
-                {group.items.length > 0 && sectionShuffleRow(group)}
+                {/* 예시 셔플 — 섹션1(후킹)에만, 마지막 카드 우측 아래(2026-08-15 오너).
+                    장소세트는 renderSpaceRun 안에서 세트 단위로 붙는다. */}
+                {group.items.length > 0 && groupSection.role === SECTION_ROLES.HOOKING && (
+                  <div className="sb-shuffle-row end">
+                    <button
+                      type="button"
+                      className="sb-shuffle-btn"
+                      disabled={locked}
+                      onClick={(event) => { event.stopPropagation(); shuffleSection(group); }}
+                    >
+                      {ShuffleIcon}예시 셔플
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </section>
