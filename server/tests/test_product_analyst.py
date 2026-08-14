@@ -337,11 +337,9 @@ def test_build_prompt_declares_clothing_type_decision_order():
 
     # 규칙 **본문**의 위치를 비교한다. 라벨("1) dress")끼리 비교하면 그 안에 순서가 이미
     # 들어 있어 항상 통과한다 — 본문을 통째로 맞바꾼 완전 역전 프롬프트도 잡지 못한다.
-    dress_body = "covers the torso and keeps going past the hips"
-    if dress_body not in p:  # 문장이 개정되면 여기서 알아채도록
-        dress_body = "worn with no separate bottom"
+    dress_body = "worn with no separate bottom"
     shirt_body = "shirt-type garment"
-    assert dress_body in p, "dress 판정 본문을 못 찾았다 — 갱신 필요"
+    assert dress_body in p, "dress 판정 본문을 못 찾았다 — 프롬프트 개정 시 이 문구를 갱신하라"
     assert shirt_body in p, "셔츠형은 outer (오너 결정 2026-08-14)"
     assert p.index(dress_body) < p.index(shirt_body), (
         "dress 판정 본문이 shirt→outer 본문보다 먼저 와야 한다 — 순서가 뒤집히면 "
