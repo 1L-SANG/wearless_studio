@@ -192,6 +192,12 @@ test('canvas routes every movable element through one pointer drag without nativ
   assert.match(editorSource, /onDoubleClick=\{\(e\) => \{ e\.stopPropagation\(\); pendingBubbleFit\.current = null; onEdit\(el\.id\)/);
 });
 
+test('entering text edit places the caret at the end for normal text and speech bubbles', () => {
+  assert.match(editorSource, /range\.selectNodeContents\(node\);\s*range\.collapse\(false\);/s);
+  assert.match(editorSource, /focusEditableAtEnd\(isSpeechBubbleElement\(el\) \? textRef\.current : ref\.current\)/);
+  assert.doesNotMatch(editorSource, /setTimeout\(\(\) => (?:textRef|ref)\.current/);
+});
+
 test('shared pointer drag covers frame controls, movable group members, rotation bounds, and cleanup', () => {
   const slotButtonStart = editorSource.indexOf('<button className={`slot-add');
   const slotButton = editorSource.slice(slotButtonStart, editorSource.indexOf('</button>', slotButtonStart));

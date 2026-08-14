@@ -153,6 +153,19 @@ function editableText(node) {
   return String(node?.innerText ?? node?.textContent ?? '').replace(/\n$/, '');
 }
 
+function focusEditableAtEnd(node) {
+  if (!node) return;
+  node.focus({ preventScroll: true });
+  const doc = node.ownerDocument;
+  const selection = doc?.getSelection?.();
+  const range = doc?.createRange?.();
+  if (!selection || !range) return;
+  range.selectNodeContents(node);
+  range.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
 function naturalTextWidth(node, value) {
   const doc = node?.ownerDocument;
   if (!doc) return 0;
@@ -295,6 +308,13 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     if (changed) onPatch(blockId, el.id, patch);
   }, [blockId, editing, el, onPatch, preview, previewBubbleSize]);
 
+  // contentEditable 이 실제 DOM에 반영된 직후 포커스와 캐럿을 문장 끝으로 보낸다.
+  // 더블클릭 좌표에 남아 있던 브라우저 기본 selection 때문에 중간 글자가 덮이는 것을 막는다.
+  useLayoutEffect(() => {
+    if (!editing || preview || el.hidden || el.type !== 'text') return;
+    focusEditableAtEnd(isSpeechBubbleElement(el) ? textRef.current : ref.current);
+  }, [editing, el.hidden, el.id, el.shape, el.type, preview]);
+
   if (el.hidden) return null;
 
   const base = {
@@ -410,7 +430,6 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
         <div {...common} className={cls(`el-speech-bubble${editing ? ' editing' : ''}`)} style={{ ...base, overflow: 'visible' }}
           onDoubleClick={preview ? undefined : (e) => {
             e.stopPropagation(); pendingBubbleFit.current = null; onEdit(el.id);
-            setTimeout(() => textRef.current && textRef.current.focus(), 0);
           }}>
           <svg width="100%" height="100%" viewBox={`0 0 ${Math.max(1, el.w)} ${Math.max(1, el.h)}`} preserveAspectRatio="none"
             aria-hidden="true" style={{ position: 'absolute', inset: 0, display: 'block', overflow: 'visible', pointerEvents: 'none' }}>
@@ -458,7 +477,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
         /* pick 이 이미 요소든 블록이든 골라 놨다 — 어느 쪽이든 이 클릭은 캔버스 바닥까지
            가면 안 된다. 거기 onClick 이 선택을 지운다. */
         onClick={finishClick}
-        onDoubleClick={(e) => { e.stopPropagation(); pendingBubbleFit.current = null; onEdit(el.id); setTimeout(() => ref.current && ref.current.focus(), 0); }}
+        onDoubleClick={(e) => { e.stopPropagation(); pendingBubbleFit.current = null; onEdit(el.id); }}
         contentEditable={editing} suppressContentEditableWarning
         onBlur={(e) => {
           const value = editableText(e.currentTarget);
