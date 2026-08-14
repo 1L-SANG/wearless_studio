@@ -55,6 +55,20 @@ test('every frame builds replaceable image slots inside the 1000px canvas', () =
   }
 });
 
+test('blank frames default to square photo corners and size every slot from the source ratio', () => {
+  const blankFrames = FRAME_LIBRARY_ITEMS.filter((frame) => !frame.template);
+
+  for (const frame of blankFrames) {
+    const block = buildFrameBlock(frame.id, seqId());
+    const imageSlots = block.elements.filter((element) => element.type === 'image' && element.frameSlot);
+    assert.ok(imageSlots.every((element) => element.imageSizing === 'natural-height'), frame.id);
+    assert.ok(imageSlots.every((element) => element.radius === 0), `${frame.id}: blank slots start square`);
+  }
+
+  const split = buildFrameBlock('split2', seqId());
+  assert.deepEqual(split.elements.filter((element) => element.frameSlot).map((element) => element.radius), [0, 0]);
+});
+
 test('the image description frame exposes three photo slots and editable native copy', () => {
   const frame = FRAME_LIBRARY_ITEMS.find((item) => item.id === 'image-description-3');
   const block = buildFrameBlock(frame, seqId());

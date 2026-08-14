@@ -577,7 +577,7 @@ function ImageImportWait({ item, scale }) {
 
   return (
     <div className={`ed-uploadwait ${phase}`} role="status" aria-live="polite" aria-label={compact ? compactTitle : title}
-      style={{ left: item.x, top: item.y, width: item.w, height: item.h, borderRadius: item.radius || 12, transform: item.rotate ? `rotate(${item.rotate}deg)` : undefined, '--upload-counter-rotate': `${-(item.rotate || 0)}deg` }}
+      style={{ left: item.x, top: item.y, width: item.w, height: item.h, borderRadius: item.radius ?? 12, transform: item.rotate ? `rotate(${item.rotate}deg)` : undefined, '--upload-counter-rotate': `${-(item.rotate || 0)}deg` }}
       onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
       onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
       onDrop={(e) => { e.preventDefault(); e.stopPropagation(); }}>
