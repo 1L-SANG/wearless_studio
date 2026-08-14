@@ -33,7 +33,7 @@ from .agents import (
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
 from .services import (editor_garment_mask, garment_grid, input_qc,
-                       mannequin_tone_render, matching, retrieval)
+                       mannequin_tone_render, matching, matching_cutout, retrieval)
 from .auth import require_user
 from .db import get_conn
 from .models import (
@@ -1121,6 +1121,29 @@ async def match_candidates(
     ])
 
 
+async def _enqueue_matching_cutout(conn, *, user_id, project_id, matching_item_id,
+                                   source_asset_ids, source_keys):
+    """커스텀 매칭 의류 누끼 잡을 건다. 절대 등록을 막지 않는다.
+
+    커밋 뒤에 별도로 돈다 — 큐잉 실패가 방금 성공한 매칭 등록을 되돌리면 본말전도다
+    (2026-08-12 sam_preprocess·tone editor 에서 같은 규율).
+    """
+    try:
+        await repo.create_job(
+            conn, user_id=user_id, project_id=project_id, kind="matching_cutout",
+            payload={"matchingItemId": matching_item_id,
+                     "sourceAssetIds": source_asset_ids, "sourceKeys": source_keys},
+            idempotency_key=(f"{project_id}:matching_cutout:{matching_item_id}:"
+                             f"{matching_cutout.ALGORITHM_VERSION}"),
+            credits_reserved=0, metadata={})
+        await conn.commit()
+    except Exception:  # noqa: BLE001 - 큐잉 실패가 매칭 등록을 되돌리지 않는다
+        with contextlib.suppress(Exception):
+            await conn.rollback()
+        logger.warning("matching_cutout enqueue failed project=%s item=%s",
+                       project_id, matching_item_id, exc_info=True)
+
+
 @router.post(
     "/projects/{project_id}/analysis/custom-match-item",
     responses={**COMMON_RESPONSES, 400: {"model": ErrorResponse},
@@ -1253,10 +1276,19 @@ async def add_custom_match_item(
             )
             saved = await repo.save_analysis(conn, project_id, payload)
             await conn.commit()
+            await _enqueue_matching_cutout(
+                conn,
+                user_id=user_id,
+                project_id=project_id,
+                matching_item_id=row["id"],
+                source_asset_ids=asset_ids,
+                source_keys=[a["r2_key"] for a in assets],
+            )
     except errors.UniqueViolation as exc:
         raise _custom_match_error(
             409, "custom_match_item_exists", "이미 내 옷이 있어요. 지우고 다시 올려주세요."
         ) from exc
+    _wake_dispatcher(request)
     return {
         "item": item,
         "analysis": {"projectId": saved["project_id"], **(saved["payload"] or {})},
