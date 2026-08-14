@@ -60,7 +60,9 @@ export function staleExampleReason(block, catalog, { gender, clothingType } = {}
 // exampleId 선택만 제거 — 카드·순서·셀러 이미지는 그대로 둔다. baseThumb 로 썸네일을
 // 되돌리고, refScope 도 함께 비운다(exampleId 없이 refScope='pose'가 남으면 화면이
 // "포즈 필수"로 잘못 읽는다 — 공간 세트 쪽과 같은 이유).
-function clearExampleSelection(block) {
+// (후킹 프레임 전환 등 "컷의 틀이 바뀌어 예시가 더는 안 맞는" 자리에서도 같은 규칙을
+// 쓰도록 export — 선택 제거 방식이 두 갈래로 갈라지지 않게 한다.)
+export function clearExampleSelection(block) {
   return {
     ...block,
     exampleId: null,
