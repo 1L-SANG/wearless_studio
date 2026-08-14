@@ -42,6 +42,14 @@ function ResultImage({ uri }) {
   );
 }
 
+/* 진행 갱신은 프레임마다 온다. 훅을 페이지 컴포넌트에 두면 그 리렌더가 프로젝트·이미지
+   목록 전체를 매번 재조정한다(Codex Minor 3). 이 작은 컴포넌트가 훅을 소유해 격리한다. */
+function GeneratingProgress({ progress }) {
+  // 폴링이 조용한 동안에도 바가 계속 차오르게 — 서버값은 바닥으로만 쓴다.
+  const shown = useSmoothProgress(progress, { expectedMs: EXPECTED_MS.default });
+  return <ProgressBar value={shown} label="생성하고 있어요" />;
+}
+
 export function ModelGenerate() {
   const { push } = useToast();
   const [phase, setPhase] = useState('loading'); // loading|blocked|ready|error
@@ -52,10 +60,6 @@ export function ModelGenerate() {
   const [selected, setSelected] = useState([]);    // asset id[]
   const [progress, setProgress] = useState(0);
   const [generating, setGenerating] = useState(false);
-  // 폴링이 조용한 동안에도 바가 계속 차오르게 — 서버값은 바닥으로만 쓴다.
-  const shownProgress = useSmoothProgress(progress, {
-    active: generating, expectedMs: EXPECTED_MS.default,
-  });
   const [results, setResults] = useState(null);    // 게이트 URI[]
 
   const load = useCallback(async () => {
@@ -162,7 +166,7 @@ export function ModelGenerate() {
           onClick={onGenerate} disabled={generating || !selected.length}>
           {generating ? '생성 중…' : '내 모델로 생성하기'}
         </Button>
-        {generating && <ProgressBar value={shownProgress} label="생성하고 있어요" />}
+        {generating && <GeneratingProgress progress={progress} />}
       </div>
 
       {results && (

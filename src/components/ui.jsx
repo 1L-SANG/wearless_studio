@@ -192,10 +192,11 @@ export function ProgressBar({ value, label, sub }) {
       {(label || value != null) && (
         <div className="progress-label">
           <span className="caption" style={{ color: 'var(--fg-1)', fontWeight: 500 }}>{label}</span>
-          <span className="pct">{value == null ? '' : Math.round(value)}%</span>
+          {/* 값이 없으면 '%' 기호도 남기지 않는다 — 라벨만 준 호출부에서 '%' 만 떠 있던 것. */}
+          {value != null && <span className="pct">{Math.round(value)}%</span>}
         </div>
       )}
-      <div className="progress"><i style={{ width: value + '%' }}></i></div>
+      <div className="progress"><i style={{ width: `${Math.max(0, Math.min(100, Number(value) || 0))}%` }}></i></div>
       {sub && <p className="hint" style={{ marginTop: 9 }}>{sub}</p>}
     </div>
   );

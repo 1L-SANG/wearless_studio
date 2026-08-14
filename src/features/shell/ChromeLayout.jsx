@@ -78,10 +78,14 @@ function MannequinJobRibbon() {
     && !pathname.startsWith('/create/mannequin')
     && !(job.projectId && projectId && job.projectId !== projectId)
     && job.status !== 'idle';
-  // 훅은 early-return 위에 (훅 개수 불변). mannequinJob 엔 시작시각이 없어 훅이
-  // running 으로 바뀐 순간을 시작점으로 잡는다.
+  /* 훅은 early-return 위에 (훅 개수 불변).
+     visible 은 active 가 아니라 paused 로 넘긴다 — 마네킹 화면에 들렀다 나오면 리본이
+     0% 부터 다시 시작하던 회귀(Codex Major 1). 숨은 동안 루프만 멈추고 값은 남는다. */
   const progress = useSmoothProgress(Math.max(0, Math.min(100, Number(job?.progress) || 0)), {
-    active: visible && job?.status === 'running',
+    active: job?.status === 'running',
+    paused: !visible,
+    jobKey: job?.projectId || '',
+    startedAt: job?.startedAt,
     expectedMs: EXPECTED_MS.mannequin,
   });
   if (!visible) return null;
@@ -155,8 +159,11 @@ function DetailPageJobRibbon() {
     && !pathname.startsWith('/create/generating');
   // 훅은 early-return 위에. startedAt 은 새로고침 복원 시에도 살아 있어(detailPageJobMarker)
   // 되돌아온 뒤에도 바가 처음부터 다시 기지 않는다.
+  // visible 은 paused 로 — 자세한 이유는 마네킹 리본 주석 참고.
   const progress = useSmoothProgress(Math.max(0, Math.min(100, Number(job?.progress) || 0)), {
-    active: visible && job?.status === 'running',
+    active: job?.status === 'running',
+    paused: !visible,
+    jobKey: job?.jobId || job?.projectId || '',
     startedAt: job?.startedAt,
     expectedMs: EXPECTED_MS.detailPage,
   });
@@ -165,8 +172,11 @@ function DetailPageJobRibbon() {
 
   const isError = job.status === 'error';
   const label = isError ? '상세페이지 생성에 실패했어요' : '상세페이지를 만들고 있어요';
+  /* cutsTotal 은 첫 cut 진행 이벤트에서야 채워진다(useAppStore.applyDetailJobEvents). 그 전엔
+     추정값밖에 없는데, 그걸 퍼센트로 내보내면 aria-live 로 보조기기까지 추정 숫자를 사실처럼
+     읽어 준다(Codex Minor 2). 실제 컷 수가 생기기 전에는 문구만 쓴다. */
   const detail = isError ? (job.errorMessage || '다시 시도할 수 있어요.')
-    : job.cutsTotal ? `${job.cutsDone}/${job.cutsTotal}컷` : `${Math.round(progress)}%`;
+    : job.cutsTotal ? `${job.cutsDone}/${job.cutsTotal}컷` : '준비하고 있어요';
 
   return (
     <div className={`job-ribbon${isError ? ' error' : ''}`} role={isError ? 'alert' : 'status'} aria-live="polite">

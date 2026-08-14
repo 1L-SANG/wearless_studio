@@ -2419,6 +2419,7 @@ export function Editor() {
             <SmoothProgressTrack
               tag="span" className="ed-genbar-track"
               value={dpJob.progress} done={dpJob.status === 'done'}
+              jobKey={dpJob.jobId || dpJob.projectId || ''}
               startedAt={dpJob.startedAt} expectedMs={EXPECTED_MS.detailPage}
             />
           )}

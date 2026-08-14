@@ -261,3 +261,46 @@ test('결과가 일찍 와도 바는 후퇴하지 않는다', () => {
       `${samples[i].t}ms 에서 ${samples[i - 1].value} → ${samples[i].value} 로 되돌아갔다`);
   }
 });
+
+/* ── 숨김/재표시 (Codex 리뷰 2026-08-15 Major 1) ───────────────────────────
+   리본은 화면을 옮기면 null 을 그린다. 그동안 프레임 루프는 멈춰야 하지만(헛 리렌더 방지)
+   진행값은 살아 있어야 한다. 훅의 상태 보존을 리듀서 수준에서 재현해 검증한다. */
+test('숨겨 있는 동안 루프가 멈춰도 값과 앵커는 살아남는다', () => {
+  const expectedMs = DETAIL;
+  let state = initialProgressState(0);
+  // 0~20초: 보이는 상태로 진행(서버는 계속 0)
+  for (let t = 0; t <= 20000; t += FRAME) {
+    state = advanceProgress(state, { serverProgress: 0, now: t, expectedMs });
+  }
+  const beforeHide = state.displayed;
+  assert.ok(beforeHide > 5, `전제 확인: 숨기기 전에 이미 차 있어야 한다 (${beforeHide})`);
+
+  // 20~50초: 숨김 — advanceProgress 를 호출하지 않는다(루프 정지). 상태는 그대로 보관.
+  const hidden = { ...state };
+
+  // 50초에 다시 표시 — 보관한 상태에서 이어간다
+  let resumed = advanceProgress(hidden, { serverProgress: 0, now: 50000, expectedMs });
+  assert.ok(resumed.displayed >= beforeHide,
+    `재표시 때 후퇴했다: ${beforeHide} → ${resumed.displayed}`);
+  // 앵커가 절대시각이라 숨은 30초분의 creep 도 반영돼야 한다
+  assert.ok(resumed.displayed > beforeHide,
+    `숨은 동안의 진행이 사라졌다: ${beforeHide} → ${resumed.displayed}`);
+
+  for (let t = 50000 + FRAME; t <= 60000; t += FRAME) {
+    resumed = advanceProgress(resumed, { serverProgress: 0, now: t, expectedMs });
+  }
+  assert.ok(resumed.displayed < PROGRESS_CEILING);
+});
+
+test('상태를 버리고 다시 시작하면(새 잡) 0 부터다', () => {
+  let state = initialProgressState(0);
+  for (let t = 0; t <= 20000; t += FRAME) {
+    state = advanceProgress(state, { serverProgress: 0, now: t, expectedMs: DETAIL });
+  }
+  assert.ok(state.displayed > 5);
+  // 새 잡 = initialProgressState 로 갈아끼움
+  const fresh = advanceProgress(initialProgressState(0), {
+    serverProgress: 0, now: 20000, expectedMs: DETAIL,
+  });
+  assert.equal(fresh.displayed, 0, '새 잡은 0 에서 출발해야 한다');
+});
