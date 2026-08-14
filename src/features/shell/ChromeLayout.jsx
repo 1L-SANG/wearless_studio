@@ -6,6 +6,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Icon, useToast } from '@/components/ui.jsx';
+import { useSmoothProgress } from '@/components/SmoothProgress.jsx';
+import { EXPECTED_MS } from '@/lib/smoothProgress.js';
 import { TopNav } from '@/features/shell/shell.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
@@ -70,14 +72,19 @@ function MannequinJobRibbon() {
   const { pathname } = useLocation();
   const projectId = useAppStore((s) => s.projectId);
   const job = useAppStore((s) => s.mannequinJob);
+  // 훅은 early-return 위에 (훅 개수 불변). mannequinJob 엔 시작시각이 없어 훅이
+  // running 으로 바뀐 순간을 시작점으로 잡는다.
+  const progress = useSmoothProgress(Math.max(0, Math.min(100, Number(job?.progress) || 0)), {
+    active: job?.status === 'running',
+    expectedMs: EXPECTED_MS.mannequin,
+  });
   if (!job || pathname.startsWith('/create/mannequin')) return null;
   if (job.projectId && projectId && job.projectId !== projectId) return null;
   if (job.status === 'idle') return null;
 
   const isError = job.status === 'error';
-  const progress = Math.max(0, Math.min(100, Number(job.progress) || 0));
   const label = isError ? '마네킹컷 생성에 실패했어요' : '마네킹컷을 만들고 있어요';
-  const detail = isError ? (job.errorMessage || '다시 시도할 수 있어요.') : `${progress}%`;
+  const detail = isError ? (job.errorMessage || '다시 시도할 수 있어요.') : `${Math.round(progress)}%`;
 
   return (
     <div className={`job-ribbon${isError ? ' error' : ''}`} role={isError ? 'alert' : 'status'} aria-live="polite">
@@ -134,14 +141,21 @@ function DetailPageJobRibbon() {
     }
   }, [job?.projectId, job?.status]);
 
+  // 훅은 early-return 위에. startedAt 은 새로고침 복원 시에도 살아 있어(detailPageJobMarker)
+  // 되돌아온 뒤에도 바가 처음부터 다시 기지 않는다.
+  const progress = useSmoothProgress(Math.max(0, Math.min(100, Number(job?.progress) || 0)), {
+    active: job?.status === 'running',
+    startedAt: job?.startedAt,
+    expectedMs: EXPECTED_MS.detailPage,
+  });
+
   if (!job || job.status === 'idle' || job.status === 'done' || job.status === 'blocked') return null;
   if (pathname.startsWith('/create/generating')) return null;
 
   const isError = job.status === 'error';
-  const progress = Math.max(0, Math.min(100, Number(job.progress) || 0));
   const label = isError ? '상세페이지 생성에 실패했어요' : '상세페이지를 만들고 있어요';
   const detail = isError ? (job.errorMessage || '다시 시도할 수 있어요.')
-    : job.cutsTotal ? `${job.cutsDone}/${job.cutsTotal}컷` : `${progress}%`;
+    : job.cutsTotal ? `${job.cutsDone}/${job.cutsTotal}컷` : `${Math.round(progress)}%`;
 
   return (
     <div className={`job-ribbon${isError ? ' error' : ''}`} role={isError ? 'alert' : 'status'} aria-live="polite">

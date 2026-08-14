@@ -9,6 +9,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { Button, ErrorState, Icon, ProgressBar, useToast } from '@/components/ui.jsx';
+import { useSmoothProgress } from '@/components/SmoothProgress.jsx';
+import { EXPECTED_MS } from '@/lib/smoothProgress.js';
 import { fetchGenerationResultUrl, getStatus, startGeneration } from '@/lib/api/personalization.js';
 import s from './ModelPersonalization.module.css';
 
@@ -50,6 +52,10 @@ export function ModelGenerate() {
   const [selected, setSelected] = useState([]);    // asset id[]
   const [progress, setProgress] = useState(0);
   const [generating, setGenerating] = useState(false);
+  // 폴링이 조용한 동안에도 바가 계속 차오르게 — 서버값은 바닥으로만 쓴다.
+  const shownProgress = useSmoothProgress(progress, {
+    active: generating, expectedMs: EXPECTED_MS.default,
+  });
   const [results, setResults] = useState(null);    // 게이트 URI[]
 
   const load = useCallback(async () => {
@@ -156,7 +162,7 @@ export function ModelGenerate() {
           onClick={onGenerate} disabled={generating || !selected.length}>
           {generating ? '생성 중…' : '내 모델로 생성하기'}
         </Button>
-        {generating && <ProgressBar value={progress} label="생성하고 있어요" />}
+        {generating && <ProgressBar value={shownProgress} label="생성하고 있어요" />}
       </div>
 
       {results && (

@@ -10,6 +10,7 @@ import { listModels, fetchLicenseFaceUrl, verifyLicensePublic } from '@/lib/api/
 import QRCode from 'qrcode';
 import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppStore.js';
 import { Icon, Chips, Button, Skeleton, ErrorState, Modal, useToast } from '@/components/ui.jsx';
+import { useSteppedProgress } from '@/components/SmoothProgress.jsx';
 import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import {
@@ -143,14 +144,22 @@ import {
 export const isMatchRecommendationPatch = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => key in patch);
 
 // ── 분석 대기 연출 (A안 · 단계 체크리스트 — 2026-07-13 확정, mockups/analysis-waiting-concepts.html) ──
-// 앞 4단계 자연 페이스는 실측 체감 시간에 맞춘다. 2026-07-16 prod 실측(의류 5종·사진 1~3장
-// 7회 벤치): 클릭→완료 = 업로드 3.5~11s + 서버 준비 1~4s + AI 4~8s + 폴링 ~1s ≈ 12~22s.
-// 이 애니메이션은 클릭 직후(업로드 포함) 시작하므로 앞 4단계 합 10초로 — p50(~13s)에서
-// 마지막 단계 대기가 짧게 남는다. 결과 선착 시 잔여 단계를 순차(320ms)로 훑어 완주한 뒤
-// onFinished — 애니메이션 끝과 화면 전환이 맞물린다. 분석이 늦으면 마지막 단계 스피너로 은은히
-// 대기(멈춘 느낌 방지). 퍼센트 숫자 금지(마네킹 대기화면과 동일 결정).
+// 2026-07-16 prod 실측(의류 5종·사진 1~3장 7회 벤치): 클릭→완료 = 업로드 3.5~11s +
+// 서버 준비 1~4s + AI 4~8s + 폴링 ~1s ≈ 12~22s. 이 애니메이션은 클릭 직후(업로드 포함)
+// 시작하므로 앞 4단계 합을 10초로 잡는다 — p50(~13s)에서 마지막 단계 대기가 짧게 남는다.
+//
+// 앞 4단계는 2.5초씩 균등(오너 결정 2026-08-14). 처음엔 단계마다 길이를 달리 줘 "자연스러운
+// 페이스" 를 노렸는데, 진행바가 단계마다 같은 몫(20%)을 가져가는 이상 그 차이가 곧 속도 차로
+// 보인다. 대신 변동은 전부 마지막 단계가 흡수한다 — 결과가 안 오면 거기서 더 기다린다.
+//
+// 결과 선착 시 잔여 단계를 순차(320ms)로 훑어 완주한 뒤 onFinished — 애니메이션 끝과 화면
+// 전환이 맞물린다. 분석이 늦으면 마지막 단계 스피너로 은은히 대기(멈춘 느낌 방지).
+// 퍼센트 숫자 금지(마네킹 대기화면과 동일 결정).
 const ANALYZE_STEPS = ['사진 확인', '종류·핏 판별', '소재 추정', '특징 발굴', '매칭 의류 선정'];
-const STEP_DUR = [2400, 2800, 2600, 2200, 1000];   // 앞 4개 합 10000ms (실측 p50 기반)
+const STEP_MS = 2500;                                    // 앞 4개 합 10000ms (실측 p50 기반)
+// 마지막 항목은 실제로 쓰이지 않는다(그 단계는 타이머 없이 결과를 기다린다). 인덱스가
+// ANALYZE_STEPS 와 어긋나지 않도록 같은 길이로 채워 둔다.
+const STEP_DUR = ANALYZE_STEPS.map(() => STEP_MS);
 const FAST_DUR = 320;                               // 결과 선착 시 잔여 단계 순차 훑기(스냅 방지)
 
 const SLOW_NOTICE_MS = 20000; // 이 시간까지 결과가 없으면 안내 문구 전환(R2 지연 등 꼬리 케이스 방어)
@@ -181,6 +190,20 @@ export function AnalysisProgress({ photoSrc, done, onFinished }) {
     return () => clearTimeout(t);
   }, [doneCount, done]);
 
+  /* 지금 단계가 시작된 시각. 렌더 중에 갱신해야 단계가 바뀐 바로 그 프레임부터 새 칸을
+     채우기 시작한다(effect 로 미루면 한 프레임 늦게 출발해 경계에서 미세하게 튄다). */
+  const stepRef = useRef({ index: 0, at: Date.now() });
+  if (stepRef.current.index !== doneCount) stepRef.current = { index: doneCount, at: Date.now() };
+
+  // 마지막 단계는 타이머 없이 결과를 기다린다 — 예정 시간이 없다는 뜻으로 null 을 넘긴다.
+  const waitingForResult = !done && doneCount === ANALYZE_STEPS.length - 1;
+  const barPercent = useSteppedProgress({
+    stepIndex: doneCount,
+    stepCount: ANALYZE_STEPS.length,
+    stepStartedAt: stepRef.current.at,
+    plannedMs: waitingForResult ? null : (done ? FAST_DUR : STEP_DUR[doneCount]),
+  });
+
   return (
     <div className="ap-stage surface">
       {photoSrc && <img className="ap-photo" src={photoSrc} alt="" />}
@@ -193,7 +216,9 @@ export function AnalysisProgress({ photoSrc, done, onFinished }) {
             <span className="ap-dot" />{s}
           </div>
         ))}
-        <div className="ap-bar"><i style={{ width: `${(doneCount / ANALYZE_STEPS.length) * 100}%` }} /></div>
+        {/* 단계마다 같은 몫을 그 단계의 예정 시간 동안 균등하게 채운다(steppedProgress).
+            숫자는 여전히 안 쓴다 — 마네킹 대기화면과 동일 결정. */}
+        <div className="ap-bar"><i style={{ width: `${barPercent}%` }} /></div>
       </div>
     </div>
   );
