@@ -280,9 +280,13 @@ def test_prompt_noun_follows_the_items_clothing_type(monkeypatch):
     assert top.calls[0]["prompt"] == mf.build_prompt("top")
     assert "pair of pants" not in top.calls[0]["prompt"]
 
-    tail = "Direct overhead top-down view"
-    assert (bottom.calls[0]["prompt"][bottom.calls[0]["prompt"].index(tail):]
-            == top.calls[0]["prompt"][top.calls[0]["prompt"].index(tail):])
+    # 공통 몸통(연출 지시)은 명사와 무관하게 동일 — 정체성 절(2026-08-15)은 명사가 들어가므로
+    # "no distortion." 까지만 비교한다.
+    tail, end = "Direct overhead top-down view", "no distortion."
+    bp, tp = bottom.calls[0]["prompt"], top.calls[0]["prompt"]
+    assert (bp[bp.index(tail):bp.index(end) + len(end)]
+            == tp[tp.index(tail):tp.index(end) + len(end)])
+    assert "identity is fixed" in bp and "identity is fixed" in tp
 
 
 def test_clothing_type_lookup_failure_still_renders_with_the_neutral_prompt(monkeypatch):

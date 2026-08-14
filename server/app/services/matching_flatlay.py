@@ -11,8 +11,11 @@
   거긴 배경 오염이 이미 해결됐고, 원본 1~4장을 재렌더하면 비용이 그만큼 곱해진다.
 - 무과금 잡 안에서 돈다. 실비는 `image_usage` 로만 드러난다(stage=`matching_flatlay`).
 - 어떤 실패도 None 으로 흡수한다. 호출자는 누끼 썸네일(그 폴백이 셀러 원본)을 그대로 쓴다.
-- 프롬프트는 스파이크 승자 문자열이다. 의류 명사와 그에 맞춘 동사(is/are) 말고는
-  한 바이트도 바꾸지 않는다. 배경색은 누끼가 실제로 까는 회색 상수에서 뽑아 쓴다.
+- 프롬프트는 스파이크 승자 문자열 + **정체성 고정 절**(2026-08-15 오너 결정 — 실물 비교에서
+  pro 티어+정체성 강조가 배럴 실루엣·커브 절개선·광택 재현 최상). 그 외에는 의류 명사와
+  동사(is/are) 말고 바꾸지 않는다. 배경색은 누끼가 실제로 까는 회색 상수에서 뽑아 쓴다.
+- 모델 티어는 settings.matching_flatlay_tier (기본 image_light — 비용, QA/프로덕션 판단에
+  따라 image_high 로 올린다).
 """
 from __future__ import annotations
 
@@ -52,6 +55,13 @@ _PROMPT = (
     "commercial studio lighting with minimal subtle shadow directly beneath. Completely "
     "remove any hangers, clips, floor seams, or background clutter. High resolution, "
     "crisp details, no distortion."
+    # 정체성 고정 절 — 재렌더가 옷을 "다시 디자인"하지 않게 못박는다(2026-08-15 오너 결정,
+    # 실물 비교로 검증). 자세만 바꾸고 옷은 그대로가 이 단계의 전부다.
+    " This must remain the EXACT same {short} as in the photo — identity is fixed. "
+    "Preserve the original colour and fabric sheen, the silhouette and proportions, "
+    "every seam, stitch, pocket, waistband, closure, label and construction detail "
+    "exactly as photographed. Do not redesign, simplify, restyle, or substitute any "
+    "part; only change the pose of the {short} to a flat, front-facing lay."
 )
 
 #: clothing_type → (명사, 두 번째 문장의 명사, 그에 맞는 동사). 상의는 중립형을 쓴다 —
@@ -144,7 +154,8 @@ async def render_thumbnail(gemini, *, settings, cutout_png: bytes,
     try:
         # 모델 해석도 try 안에 둔다 — 라우팅 설정이 비어 있으면 여기서 터지는데, 밖에
         # 두면 그 예외가 워커의 광의 except 로 올라가 성공한 누끼까지 폐기된다(리뷰 I1).
-        model = resolve_model(settings, "image_light")
+        model = resolve_model(
+            settings, getattr(settings, "matching_flatlay_tier", "image_light"))
         # 실비 귀속: 디스패처가 건 잡 문맥(job/user)은 두고 stage 만 이 단계로 덮는다.
         with image_usage.job_scope(stage=STAGE):
             res = await gemini.generate_content_image(

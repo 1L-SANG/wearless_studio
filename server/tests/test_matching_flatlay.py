@@ -12,7 +12,18 @@ from PIL import Image
 from app.services import matching_cutout as mc
 from app.services import matching_flatlay as mf
 
-# 스파이크 승자 프롬프트(하의). 이 리터럴이 정본이다.
+# 정체성 고정 절(2026-08-15 오너 결정) — 명사만 갈아끼운다. 프롬프트 핀의 일부다.
+def _identity(short):
+    return (
+        f" This must remain the EXACT same {short} as in the photo — identity is fixed. "
+        "Preserve the original colour and fabric sheen, the silhouette and proportions, "
+        "every seam, stitch, pocket, waistband, closure, label and construction detail "
+        "exactly as photographed. Do not redesign, simplify, restyle, or substitute any "
+        f"part; only change the pose of the {short} to a flat, front-facing lay."
+    )
+
+
+# 스파이크 승자 프롬프트(하의) + 정체성 고정 절. 이 리터럴이 정본이다.
 BOTTOM_PROMPT = (
     "A clean, commercial e-commerce studio flat-lay product photograph of this exact "
     "pair of pants. The pants are laid completely flat and neatly arranged on a solid "
@@ -20,7 +31,7 @@ BOTTOM_PROMPT = (
     "(bird's-eye perspective), centered in frame with balanced margins. Even, soft "
     "commercial studio lighting with minimal subtle shadow directly beneath. Completely "
     "remove any hangers, clips, floor seams, or background clutter. High resolution, "
-    "crisp details, no distortion."
+    "crisp details, no distortion." + _identity("pants")
 )
 # 상의는 명사만 중립형으로 바꾸고 단복수(is/are)를 맞춘다. 나머지는 위와 동일.
 TOP_PROMPT = (
@@ -30,7 +41,7 @@ TOP_PROMPT = (
     "(bird's-eye perspective), centered in frame with balanced margins. Even, soft "
     "commercial studio lighting with minimal subtle shadow directly beneath. Completely "
     "remove any hangers, clips, floor seams, or background clutter. High resolution, "
-    "crisp details, no distortion."
+    "crisp details, no distortion." + _identity("garment")
 )
 
 _TAIL = "Direct overhead top-down view"
@@ -42,9 +53,12 @@ def test_bottom_prompt_is_the_spike_string_byte_for_byte():
 
 def test_top_prompt_swaps_only_the_noun_and_keeps_singular_grammar():
     assert mf.build_prompt("top") == TOP_PROMPT
-    # 두 프롬프트가 다른 건 앞 두 문장의 명사·동사뿐이다.
-    assert (BOTTOM_PROMPT[BOTTOM_PROMPT.index(_TAIL):]
-            == TOP_PROMPT[TOP_PROMPT.index(_TAIL):])
+    # 두 프롬프트가 다른 건 명사·동사뿐이다 — 공통 몸통(연출 지시)은 바이트 동일해야 한다.
+    _END = "no distortion."
+    assert (BOTTOM_PROMPT[BOTTOM_PROMPT.index(_TAIL):BOTTOM_PROMPT.index(_END) + len(_END)]
+            == TOP_PROMPT[TOP_PROMPT.index(_TAIL):TOP_PROMPT.index(_END) + len(_END)])
+    # 정체성 절도 명사만 다르고 구조는 같다.
+    assert "identity is fixed" in BOTTOM_PROMPT and "identity is fixed" in TOP_PROMPT
     assert "The garment is laid" in TOP_PROMPT, "단수엔 is"
     assert "The pants are laid" in BOTTOM_PROMPT, "복수엔 are"
     # "top-down view" 와 부딪히지 않게 상의 명사는 중립형을 쓴다.
@@ -148,3 +162,21 @@ def test_enabled_reads_the_flag_defensively():
     assert mf.enabled(types.SimpleNamespace(matching_flatlay="on")) is True
     assert mf.enabled(types.SimpleNamespace(matching_flatlay="off")) is False
     assert mf.enabled(types.SimpleNamespace()) is False, "미설정이면 off"
+
+
+def test_prompt_carries_identity_lock():
+    """정체성 고정 절(2026-08-15 오너 결정) — 재렌더가 옷을 다시 디자인하지 못하게 명문화."""
+    p = mf.build_prompt("bottom")
+    assert "identity is fixed" in p
+    assert "Do not redesign" in p
+    assert "only change the pose" in p
+
+
+def test_model_tier_knob_switches_to_pro(monkeypatch):
+    """MATCHING_FLATLAY_TIER=image_high 면 pro 모델로 렌더한다. 기본은 image_light(비용)."""
+    from conftest import make_settings
+    light = make_settings()
+    assert getattr(light, "matching_flatlay_tier", "image_light") == "image_light"
+    high = make_settings(matching_flatlay_tier="image_high")
+    from app.agents.model_routing import resolve_model
+    assert resolve_model(high, high.matching_flatlay_tier) == high.model_image_high
