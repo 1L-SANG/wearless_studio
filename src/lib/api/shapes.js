@@ -123,16 +123,15 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
     projectId: context.projectId,
     stylingCount: mode === 'extended' ? 3 : 2,
   });
-  // 후킹 첫 화면 스타일(2026-08-14 확정, 디폴트 = 시그니처 컷): 확대 미디움샷 슬롯이
-  // 섹션 선두(첫 카드 = hero 규칙)이고, 기존 풀샷은 구성 미사용 일반 컷으로 뒤에 남는다.
-  // 순서가 바뀌어 구(hero 풀샷 선두) 기본 시드는 지문이 어긋나 "편집본"으로 남는다 —
-  // 2026-08-07 개편과 같은 선례(기존 프로젝트 마이그레이션 없음, 오프닝 행만 pair 승격).
+  // 후킹 첫 화면 스타일(2026-08-14 확정, 디폴트 = 시그니처 컷): 후킹 섹션은 스타일이
+  // 필요로 하는 컷만 둔다 — 시그니처 = 확대 미디움샷 1컷(구 2컷 배치 폐기, 오너 확정).
+  // 구(2컷) 기본 시드는 지문이 어긋나 "편집본"으로 남는다 — 2026-08-07 개편과 같은
+  // 선례(기존 프로젝트 마이그레이션 없음, 구 오프닝 행만 pair 승격).
   const hookFrameId = `hookframe__${uid('hf')}`;
   const blocks = [
     sb(SECTION_ROLES.HOOKING, CONTENT_ROLES.HERO, 'horizon', 'front', 'medium', base, {
       hookFrameId, hookStyle: 'signature', hookFrameVersion: 1, hookTitleOverlay: true, hookSlotRole: 'signature',
     }),
-    sb(SECTION_ROLES.HOOKING, CONTENT_ROLES.BENEFIT, 'styling', 'front', 'full', base),
   ];
 
   for (const set of stylingSets) {
@@ -257,6 +256,26 @@ function storyboardTemplateFingerprint(blocks) {
   })));
 }
 
+/* 시드 보드에 두컷 프레임을 적용한다 — 후킹 시드가 시그니처 1컷이라 오른칸은 여기서
+   만든다. 이 팩토리는 UI 전환(applyHookStyleChoice의 createBlock)과 지문 필드
+   (storyboardTemplateFingerprint)가 일치해야 한다 — 어긋나면 pair 로 바꾼 기본 보드가
+   사진 양 변경 재시드에서 "편집본"으로 오판된다. */
+export function applySeededHookStyle(seeded, style, colors) {
+  if (style !== 'pair') return seeded;
+  const template = seeded.find((block) => (
+    block.sectionRole === SECTION_ROLES.HOOKING && block.source !== 'mine'
+  ));
+  if (!template) return seeded;
+  const createBlock = (slot) => ({
+    ...sb(SECTION_ROLES.HOOKING, CONTENT_ROLES.BENEFIT, slot.cutType, 'front', slot.shot,
+      slot.colorId || template.colorId),
+    matchIds: [...(template.matchIds || [])],
+    poseThumb: template.poseThumb,
+    thumb: template.thumb,
+  });
+  return applyHookStyle(seeded, 'pair', { colors: colors || [], createBlock });
+}
+
 export function isDefaultStoryboardForMode(blocks, colors, mode, product = {}) {
   if (!Array.isArray(blocks) || !blocks.length) return false;
   // 현재 역할 분류 계약을 충족하지 않는 보드는 기본 시드로 간주해 교체하지 않는다.
@@ -269,7 +288,7 @@ export function isDefaultStoryboardForMode(blocks, colors, mode, product = {}) {
   // 두 번째 지문: 첫 화면 스타일만 두컷 프레임으로 바꾼 기본 보드도 기본 시드로 인정 —
   // 사진 양 변경 시 재시드가 스타일 선택을 존중하며 계속 동작하게 한다.
   return fingerprint === storyboardTemplateFingerprint(seeded)
-    || fingerprint === storyboardTemplateFingerprint(applyHookStyle(seeded, 'pair', { colors: colors || [] }));
+    || fingerprint === storyboardTemplateFingerprint(applySeededHookStyle(seeded, 'pair', colors));
 }
 
 // analyzeProduct 의 shape 뼈대 — AnalysisForm 이 무가드로 읽는 필드 전부 포함(계약 §6).

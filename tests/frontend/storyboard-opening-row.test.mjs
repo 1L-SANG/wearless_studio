@@ -37,11 +37,25 @@ after(async () => {
 });
 
 function openingStoryboard() {
-  return applyOpeningRow(defaultStoryboard(COLORS, 'basic', {
+  // 구(레거시) 보드 재현 — 시드는 시그니처 1컷이므로(2026-08-14 확정) 옛 2컷 배치
+  // (hero+benefit)를 직접 복원해, 저장돼 있던 구 보드의 오프닝 행 조립 경로를 검증한다.
+  const [hero, ...rest] = defaultStoryboard(COLORS, 'basic', {
     projectId: 'opening-row-test',
     clothingType: 'top',
     targetGenders: ['women'],
-  }));
+  });
+  const legacyHero = {
+    ...hero,
+    hookFrameId: undefined,
+    hookStyle: undefined,
+    hookFrameVersion: undefined,
+    hookTitleOverlay: undefined,
+    hookSlotRole: undefined,
+  };
+  const legacyBenefit = {
+    ...legacyHero, id: `${hero.id}_benefit`, contentRole: 'benefit', cutType: 'styling', shot: 'full',
+  };
+  return applyOpeningRow([legacyHero, legacyBenefit, ...rest]);
 }
 
 function openingMockBlock(storyboard) {

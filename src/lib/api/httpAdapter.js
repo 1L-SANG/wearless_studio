@@ -6,9 +6,9 @@
    ============================================================= */
 import { supabase } from '@/lib/supabase.js';
 import { LIMITS } from '@/lib/limits.js';
-import { defaultAnalysisShape, defaultStoryboard, isDefaultStoryboardForMode } from '@/lib/api/shapes.js';
+import { applySeededHookStyle, defaultAnalysisShape, defaultStoryboard, isDefaultStoryboardForMode } from '@/lib/api/shapes.js';
 import { normalizeMatchClothingSelection, toMatchItem } from '@/lib/api/matchingItems.js';
-import { applyHookStyle, deriveHookFrame } from '@/lib/storyboardHookFrame.js';
+import { deriveHookFrame } from '@/lib/storyboardHookFrame.js';
 import { selectPublicAnalysisPhotos } from '@/lib/publicAnalysisPhotos.js';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 
@@ -514,7 +514,7 @@ export const httpAdapter = {
       // 첫 화면 스타일 선택은 사진 양을 바꿔도 유지한다 — pair 만 기본 지문에 들어올 수
       // 있고(네컷 프레임은 컷이 늘어 애초에 기본이 아님), 그 외는 시드 기본(시그니처).
       return deriveHookFrame(saved)?.style === 'pair'
-        ? applyHookStyle(seeded, 'pair', { colors })
+        ? applySeededHookStyle(seeded, 'pair', colors)
         : seeded;
     }
     // 첫 진입/재시드는 화면의 자동 예시 배정 뒤 한 번만 PUT한다. 첫 화면 스타일은

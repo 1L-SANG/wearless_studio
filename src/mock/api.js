@@ -29,7 +29,8 @@ import { normalizeTargetGendersForClothingType } from '@/lib/productGender.js';
 import { createMeasurementFields } from '@/lib/measurementSchema.js';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 import { migrateLegacyEntryStylingRuns } from '@/lib/storyboardEntryPlacement.js';
-import { applyHookStyle, deriveHookFrame } from '@/lib/storyboardHookFrame.js';
+import { deriveHookFrame } from '@/lib/storyboardHookFrame.js';
+import { applySeededHookStyle } from '@/lib/api/shapes.js';
 import { createDraftSlotMemory } from './draftSlotMemory.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -162,7 +163,7 @@ export const api = {
         matchClothing: DB.analysis.matchClothing,
         previewProductName: DB.product.name,
       });
-      DB.storyboard = keepPairFrame ? applyHookStyle(seeded, 'pair', { colors: DB.product.colors }) : seeded;
+      DB.storyboard = keepPairFrame ? applySeededHookStyle(seeded, 'pair', DB.product.colors) : seeded;
     }
     return clone(DB.project);
   },
