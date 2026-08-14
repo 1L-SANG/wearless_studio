@@ -13,7 +13,12 @@ const templateExample = (id, variant = null) => (
 );
 const templatePreview = (id) => `/assets/editor/kiwi-templates/kiwi-${id}-preview.jpg`;
 
-const slot = (x, y, w, h, radius = 10) => ({ x, y, w, h, radius });
+const slot = (x, y, w, h, radius = 0) => ({ x, y, w, h, radius });
+const naturalSlot = (x, y, w, h, radius = 0, layout = {}) => ({
+  ...slot(x, y, w, h, radius),
+  imageSizing: 'natural-height',
+  ...layout,
+});
 
 const templatePhoto = (x, y, w, h, options = {}) => ({
   type: 'image', x, y, w, h, src: options.example || null, frameSlot: true, checkerboard: true,
@@ -76,36 +81,45 @@ const imageDescriptionSlots = [70, 365, 660].map((x, index) => ({
 export const FRAME_LIBRARY_ITEMS = [
   {
     id: 'single', label: '1컷 풀폭', recommended: true, h: 600,
-    slots: [slot(40, 40, 920, 520)],
+    slots: [naturalSlot(40, 40, 920, 520)],
   },
   {
     id: 'split2', label: '2분할', recommended: true, h: 580,
     // 단순 2열 프레임은 칸의 가로 폭만 정한다. 사진을 넣으면 원본 비율에 맞는
     // 세로 길이를 계산해, 세로 사진이 짧은 카드 안에서 잘리지 않게 한다.
     slots: [
-      { ...slot(40, 60, 450, 460), imageSizing: 'natural-height' },
-      { ...slot(510, 60, 450, 460), imageSizing: 'natural-height' },
+      naturalSlot(40, 60, 450, 460),
+      naturalSlot(510, 60, 450, 460),
     ],
   },
   {
     id: 'grid3', label: '3컷 구성', recommended: true, h: 580,
-    slots: [slot(40, 60, 293, 460), slot(353, 60, 294, 460), slot(667, 60, 293, 460)],
+    slots: [naturalSlot(40, 60, 293, 460), naturalSlot(353, 60, 294, 460), naturalSlot(667, 60, 293, 460)],
   },
   {
     id: 'grid4', label: '2 × 2', recommended: true, h: 640,
-    slots: [slot(40, 40, 450, 270), slot(510, 40, 450, 270), slot(40, 330, 450, 270), slot(510, 330, 450, 270)],
+    slots: [
+      naturalSlot(40, 40, 450, 270, 0, { imageRowFlowGroup: 'grid4', imageRowFlowRow: 0, imageRowFlowGap: 20 }),
+      naturalSlot(510, 40, 450, 270, 0, { imageRowFlowGroup: 'grid4', imageRowFlowRow: 0, imageRowFlowGap: 20 }),
+      naturalSlot(40, 330, 450, 270, 0, { imageRowFlowGroup: 'grid4', imageRowFlowRow: 1, imageRowFlowGap: 20 }),
+      naturalSlot(510, 330, 450, 270, 0, { imageRowFlowGroup: 'grid4', imageRowFlowRow: 1, imageRowFlowGap: 20 }),
+    ],
   },
   {
     id: 'hero2', label: '큰 사진 + 2장', recommended: true, h: 600,
-    slots: [slot(40, 50, 580, 500), slot(640, 50, 320, 240), slot(640, 310, 320, 240)],
+    slots: [
+      naturalSlot(40, 50, 580, 500),
+      naturalSlot(640, 50, 320, 240, 0, { imageRowFlowGroup: 'hero2-side', imageRowFlowRow: 0, imageRowFlowGap: 20 }),
+      naturalSlot(640, 310, 320, 240, 0, { imageRowFlowGroup: 'hero2-side', imageRowFlowRow: 1, imageRowFlowGap: 20 }),
+    ],
   },
   {
     id: 'colorcmp', label: '컬러 비교', recommended: true, h: 580,
-    slots: [slot(40, 60, 293, 460, 16), slot(353, 60, 294, 460, 16), slot(667, 60, 293, 460, 16)],
+    slots: [naturalSlot(40, 60, 293, 460), naturalSlot(353, 60, 294, 460), naturalSlot(667, 60, 293, 460)],
   },
   {
     id: 'ba', label: 'Before / After', recommended: false, h: 580,
-    slots: [slot(40, 60, 450, 460), slot(510, 60, 450, 460)],
+    slots: [naturalSlot(40, 60, 450, 460), naturalSlot(510, 60, 450, 460)],
   },
   {
     id: 'image-description-3', label: '이미지 설명 3단', recommended: false, h: 570, bg: '#ffffff',
@@ -455,7 +469,7 @@ export function buildFrameBlock(frameOrId, idFn) {
         h: item.h,
         ...(item.type === 'image' ? {
           src: item.src || null,
-          radius: item.radius ?? 10,
+          radius: item.radius ?? 0,
           frameSlot: Boolean(item.frameSlot),
         } : {}),
       };

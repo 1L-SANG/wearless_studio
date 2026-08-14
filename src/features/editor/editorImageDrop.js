@@ -65,14 +65,41 @@ export function fitImageToFrameSlot(slot, image) {
   return { h: Math.max(24, Math.round(frameWidth * sourceHeight / sourceWidth)) };
 }
 
+function reflowImageRows(elements, groupId) {
+  if (!groupId) return elements;
+  const members = elements.filter((element) => element.imageRowFlowGroup === groupId);
+  if (members.length < 2) return elements;
+
+  const rowNumbers = [...new Set(members.map((element) => Number(element.imageRowFlowRow) || 0))]
+    .sort((a, b) => a - b);
+  const firstRow = members.filter((element) => (Number(element.imageRowFlowRow) || 0) === rowNumbers[0]);
+  let rowTop = Math.min(...firstRow.map((element) => Number(element.y) || 0));
+  const positions = new Map();
+
+  rowNumbers.forEach((rowNumber, rowIndex) => {
+    const row = members.filter((element) => (Number(element.imageRowFlowRow) || 0) === rowNumber);
+    row.forEach((element) => positions.set(element.id, rowTop));
+    const rowHeight = Math.max(...row.map((element) => Number(element.h) || 0));
+    const rowGap = rowIndex < rowNumbers.length - 1
+      ? Math.max(...row.map((element) => Number(element.imageRowFlowGap) || 20))
+      : 0;
+    rowTop += rowHeight + rowGap;
+  });
+
+  return elements.map((element) => (
+    positions.has(element.id) ? { ...element, y: positions.get(element.id) } : element
+  ));
+}
+
 export function fitImageToFrameBlock(block, slotId, image) {
   const slot = block?.elements?.find((element) => element.id === slotId);
   const geometry = fitImageToFrameSlot(slot, image);
   if (!Object.keys(geometry).length) return block;
 
-  const resizedElements = block.elements.map((element) => (
+  let resizedElements = block.elements.map((element) => (
     element.id === slotId ? { ...element, ...geometry } : element
   ));
+  resizedElements = reflowImageRows(resizedElements, slot.imageRowFlowGroup);
   if (!slot.imageFlowGroup) return { ...block, elements: resizedElements };
 
   const resizedSlot = resizedElements.find((element) => element.id === slotId);
@@ -118,7 +145,7 @@ export function pendingImageImportTarget({ elements, blockHeight, point, slotId 
       y: slot.y,
       w: slot.w,
       h: slot.h,
-      radius: slot.radius || 10,
+      radius: slot.radius ?? 0,
       ...(slot.rotate ? { rotate: slot.rotate } : {}),
     };
   }

@@ -110,6 +110,19 @@ test('the image-description frame grows each photo box to its source ratio and m
   assert.deepEqual(firstCopy.map((element) => element.y), [415, 458]);
 });
 
+test('a multi-row blank frame keeps the next row below the tallest resized photo', () => {
+  let sequence = 0;
+  const block = buildFrameBlock('grid4', (prefix) => `${prefix}${++sequence}`);
+  const slots = block.elements.filter((element) => element.type === 'image');
+
+  const fitted = fitImageToFrameBlock(block, slots[0].id, { width: 450, height: 900 });
+  const fittedSlots = fitted.elements.filter((element) => element.type === 'image');
+
+  assert.equal(fittedSlots[0].h, 900);
+  assert.deepEqual(fittedSlots.slice(0, 2).map((element) => element.y), [40, 40]);
+  assert.deepEqual(fittedSlots.slice(2).map((element) => element.y), [960, 960]);
+});
+
 test('image placement clamps edge drops without escaping the block frame', () => {
   assert.deepEqual(placeImageInBlock({
     blockHeight: 300,
@@ -206,6 +219,19 @@ test('an image import placeholder immediately occupies the exact target frame', 
     blockHeight: 300,
     point: { x: 500, y: 150 },
   }), { slotId: 'empty', x: 360, y: 40, w: 300, h: 220, radius: 18 });
+});
+
+test('an image import placeholder preserves a square blank-frame corner', () => {
+  const elements = [
+    { id: 'empty', type: 'image', src: null, frameSlot: true, x: 40, y: 40, w: 300, h: 220, radius: 0 },
+  ];
+
+  assert.deepEqual(pendingImageImportTarget({
+    elements,
+    blockHeight: 300,
+    point: { x: 100, y: 100 },
+  }), { slotId: 'empty', x: 40, y: 40, w: 300, h: 220, radius: 0 });
+  assert.match(editorSource, /borderRadius:\s*item\.radius \?\? 12/);
 });
 
 test('an image import placeholder uses a stable portrait tile outside a frame', () => {
