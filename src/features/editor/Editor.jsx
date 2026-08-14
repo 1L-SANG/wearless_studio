@@ -26,6 +26,7 @@ import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
+import { exportBlockPng, exportBlocksZip, exportLongPng } from '@/features/editor/editorExport.js';
 import { snapEditorDragDelta } from '@/features/editor/editorSnap.js';
 import { copyEditorElements, pasteEditorElements } from '@/features/editor/editorClipboard.js';
 import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, findImageDropSlot, fitImageToFrameBlock, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
@@ -861,6 +862,7 @@ export function Editor() {
   // 블록 강조 표시 여부 — 캔버스 빈 곳을 클릭하면 꺼진다. selBlock 자체는 삽입 대상으로 계속 쓰므로 건드리지 않는다.
   const [blockFocused, setBlockFocused] = useState(false);
   const [download, setDownload] = useState(false);
+  const [dlBusy, setDlBusy] = useState(false); // 내보내기 진행 중 — 모달 버튼 잠금
   /* ---- 에디터 통합 대기(editor_wait_dev_spec v2) — 생성이 도는 동안 같은 캔버스에서 편집.
      잡 수명·이벤트는 store.detailPageJob 소유, 여기는 구독·채움·완료 병합만. ---- */
   const dpJob = useAppStore((s) => s.detailPageJob);
@@ -1390,6 +1392,34 @@ export function Editor() {
     return { ...b, h, elements: els };
   }));
   const reorderBlock = (from, to) => setBlocks((bs) => { const n = [...bs]; const [it] = n.splice(from, 1); n.splice(to, 0, it); return n; });
+
+  /* ---- 다운로드 — 화면의 블록 DOM 을 그대로 PNG 캡처 (editorExport.js) ---- */
+  const downloadBlock = async (block) => {
+    const node = canvasRef.current?.querySelector(`.canvas-block[data-blockid="${block.id}"]`);
+    if (!node) { toast.push('블록을 찾지 못했어요. 다시 시도해 주세요.', { icon: 'x' }); return; }
+    try {
+      await exportBlockPng(node, productName, Math.max(0, blocks.findIndex((b) => b.id === block.id)));
+      toast.push('이 블록을 PNG로 저장했어요', { icon: 'download' });
+    } catch (e) {
+      toast.push(e?.message || '블록 저장에 실패했어요. 다시 시도해 주세요.', { icon: 'x' });
+    }
+  };
+  const runDownload = async () => {
+    if (dlBusy) return;
+    const nodes = [...(canvasRef.current?.querySelectorAll('.canvas-block') || [])];
+    if (!nodes.length) { toast.push('저장할 블록이 없어요.', { icon: 'x' }); return; }
+    setDlBusy(true);
+    try {
+      if (dlFormat === 'zip') await exportBlocksZip(nodes, productName);
+      else await exportLongPng(nodes, productName);
+      setDownload(false);
+      toast.push(dlFormat === 'zip' ? '블록별 PNG를 ZIP으로 저장했어요' : '전체 상세페이지를 PNG로 저장했어요', { icon: 'download' });
+    } catch (e) {
+      toast.push(e?.message || '다운로드에 실패했어요. 잠시 후 다시 시도해 주세요.', { icon: 'x' });
+    } finally {
+      setDlBusy(false);
+    }
+  };
   const layerEl = (dir) => setBlocks((bs) => bs.map((b) => {
     const i = b.elements.findIndex((e) => e.id === selEl); if (i < 0) return b;
     const els = [...b.elements]; const [it] = els.splice(i, 1);
@@ -2488,7 +2518,7 @@ export function Editor() {
                   onOpenLayers={(id) => { setLayerFloat(id); setLayerPos(null); }}
                   onObjectDrop={(bid, type, id, ev) => addShape(type, id, bid, ev)} onReshape={reshapeBlock}
                   onMove={moveBlock} onAddEmpty={addEmpty} onDelete={deleteBlock} onEditInfo={openInfoEdit}
-                  onDownload={() => toast.push('이 블록을 PNG로 저장했어요', { icon: 'download' })} />
+                  onDownload={downloadBlock} />
               </div>
             ))}
             <div className="canvas-droprow" onDragOver={(e) => { if (acceptsEditorBlockInsert(e.dataTransfer.types)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setFrameOver(blocks.length); } }}
@@ -2602,8 +2632,8 @@ export function Editor() {
               })}
             </div>
             <div className="dl-foot">
-              <Button variant="quiet" onClick={() => setDownload(false)}>취소</Button>
-              <Button variant="primary" icon="download" onClick={() => { setDownload(false); toast.push('다운로드를 시작했어요', { icon: 'download' }); }}>다운로드</Button>
+              <Button variant="quiet" onClick={() => setDownload(false)} disabled={dlBusy}>취소</Button>
+              <Button variant="primary" icon="download" onClick={runDownload} disabled={dlBusy}>{dlBusy ? '만드는 중…' : '다운로드'}</Button>
             </div>
           </div>
         </Modal>
