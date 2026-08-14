@@ -50,6 +50,15 @@ test('content presets participate in the same between-block drag contract', () =
   assert.match(editorSource, /addInfoPresetBlock/);
 });
 
+test('the frame panel separates blank, example, and guide frames', () => {
+  assert.match(panelSource, /value: 'blank', label: '빈 프레임'/);
+  assert.match(panelSource, /value: 'example', label: '예시 프레임'/);
+  assert.match(panelSource, /value: 'guide', label: '안내 프레임'/);
+  assert.match(panelSource, /category === 'blank' \? !frame\.template : frame\.template/);
+  assert.match(panelSource, /category === 'guide' \? \(/);
+  assert.match(panelSource, /<ContentPanel[^>]*showIntro=\{false\}/s);
+});
+
 test('viewport drop coordinates are converted through the current canvas zoom', () => {
   assert.deepEqual(viewportPointToBlock({
     clientX: 340,

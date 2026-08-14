@@ -1584,6 +1584,7 @@
 .ward-del { display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 16px; border: 0; border-radius: var(--r-3);
   background: var(--fg-1); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; box-shadow: var(--elev-soft); }
 .ward-del:hover { opacity: .82; }
+.frame-category-tabs { margin-bottom: 16px; }
 .frame-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
 .frame-item { border-radius: var(--r-4); background: #fff; box-shadow: 0 0 0 1px var(--ring); padding: 12px; cursor: grab; transition: box-shadow .14s; }
 .frame-item:hover { box-shadow: var(--elev-card); }

@@ -125,10 +125,10 @@ test('row photo blocks are recognized by source-linked images even without conte
   assert.deepEqual(output[0].elements.map((element) => element.id), ['image']);
 });
 
-test('auto-height text exposes only useful side handles so controls do not cover short copy', () => {
+test('ordinary text restores the complete editable box around its saved bounds', () => {
   assert.deepEqual(resizePolicyForElement({ type: 'text' }, true), {
     keepRatio: false,
-    directions: ['w', 'e'],
+    directions: ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'],
   });
 });
 
@@ -150,8 +150,8 @@ test('thin rules keep a minimum twelve-pixel pointer target at every editor zoom
   assert.match(editorSource, /stroke="transparent" strokeWidth=\{hitWidth\}/);
 });
 
-test('dense text and rules do not place a detached rotation control over neighbouring elements', () => {
-  assert.equal(shouldShowRotationHandle({ type: 'text' }), false);
+test('text restores direct rotation while thin rules keep the numeric control', () => {
+  assert.equal(shouldShowRotationHandle({ type: 'text' }), true);
   assert.equal(shouldShowRotationHandle({ type: 'line' }), false);
   assert.equal(shouldShowRotationHandle({ type: 'text', shape: 'bubble' }), true);
   assert.equal(shouldShowRotationHandle({ type: 'image' }), true);

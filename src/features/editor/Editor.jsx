@@ -22,7 +22,6 @@ import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, IconButton, Button, Modal, EmptyState, useToast } from '@/components/ui.jsx';
 import { exampleGenderFromAnalysis, hexFor } from '@/features/storyboard/Storyboard.jsx';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
-import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
@@ -1946,14 +1945,8 @@ export function Editor() {
         onRemove={(el) => { setSlotImage(blockIdOf(el.id), el.id, { src: null, cutType: null }); toast.push('이미지를 프레임에서 빼냈어요'); }}
         onVary={varyImage} />;
       case 'frame': return (
-        <>
-          <FramePanel onAdd={addFrame} onDragStart={() => setFrameDragging(true)} onDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />
-          {/* 내용 프리셋 — 프레임 탭에 통합 (별도 탭 없음). 기본 템플릿은 로드 시 자동 구성 */}
-          <div style={{ marginTop: 22 }}>
-            <ContentPanel recommendGender={recommendGender} onPick={openInfoPreset}
-              onDragStart={() => setFrameDragging(true)} onDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />
-          </div>
-        </>
+        <FramePanel onAdd={addFrame} recommendGender={recommendGender} onPickInfo={openInfoPreset}
+          onDragStart={() => setFrameDragging(true)} onDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />
       );
       case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onBubbleAppearanceChange={patchBubbleAppearance} onLayer={layerEl} onAddText={() => addText()} onAddGarmentText={() => addText(undefined, 'garment')} />;
       case 'shape': return <ShapePanel catalogs={catalogs} onAdd={addShape} block={(selEls.length === 0 && selBlock) ? blocks.find((b) => b.id === selBlock) : null} onBgChange={changeBg} />;
