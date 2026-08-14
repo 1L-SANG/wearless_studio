@@ -779,6 +779,21 @@ async def insert_custom_matching_item(
         return (await cur.fetchone())["id"]
 
 
+async def swap_matching_item_assets(
+    conn: AsyncConnection, *, matching_item_id: str, project_id: str,
+    thumbnail_asset_id: str, image_asset_id: str,
+) -> None:
+    """커스텀 매칭 아이템의 표시·생성입력 asset 을 누끼본으로 교체한다.
+
+    project_id 로 한 번 더 스코프해 다른 프로젝트의 아이템을 건드리지 않는다.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update matching_items set thumbnail_asset_id = %s, image_asset_id = %s "
+            "where id = %s and project_id = %s and owner_user_id is not null",
+            (thumbnail_asset_id, image_asset_id, matching_item_id, project_id))
+
+
 async def delete_custom_matching_item(
     conn: AsyncConnection, user_id: str, project_id: str
 ) -> None:
