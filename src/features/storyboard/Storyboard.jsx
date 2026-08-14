@@ -2983,6 +2983,26 @@ export function Storyboard() {
           {frameUnits(unit.items).map((spaceUnit) => (
             renderUnit(spaceUnit, group, unit.spaceGroupId, reservation)
           ))}
+          {/* 예비 멤버 카드 — 준비된 다음 컷을 눈에 보이는 칸으로(사진 미리보기 + 추가).
+              예비가 소진되면 표시하지 않는다(세트 안 자유 추가 없음 — 2026-08-14 오너 결정). */}
+          {reservation && (
+            <div className="sb-grid-unit">
+              <button
+                type="button"
+                className="sb-reserve-card"
+                disabled={locked}
+                onClick={() => {
+                  const section = sectionForGroup(group);
+                  addBlock(lastItem.index, section.id, section.role, unit.spaceGroupId, group.key, reservation);
+                }}
+              >
+                {reservation.member?.thumb && (
+                  <img src={reservation.member.thumb} alt="" loading="lazy" decoding="async" />
+                )}
+                <span className="sb-reserve-overlay"><b>＋</b>준비된 컷 추가</span>
+              </button>
+            </div>
+          )}
         </div>
         {insertControl(lastItem.index, group, null, null, 'end')}
       </div>
@@ -3081,6 +3101,25 @@ export function Storyboard() {
                     unit.kind === 'spaceRun' ? renderSpaceRun(unit, group) : renderUnit(unit, group)
                   ))}
                   {!group.items.length && insertControl(groupSection.start, group, null, null, 'empty')}
+                  {/* 섹션 끝 '+ 컷 추가' — 새 개별 컷을 눈에 보이는 칸으로 추가(호버 존과 병행). */}
+                  {group.items.length > 0 && (
+                    <div className="sb-grid-unit">
+                      <button
+                        type="button"
+                        className="sb-addcard"
+                        disabled={locked}
+                        onClick={() => addBlock(
+                          group.items[group.items.length - 1].index,
+                          groupSection.id,
+                          groupSection.role,
+                          null,
+                          group.key,
+                        )}
+                      >
+                        <b>＋</b>컷 추가
+                      </button>
+                    </div>
+                  )}
                 </div>
                 {group.items.length > 0 && sectionShuffleRow(group)}
               </div>
