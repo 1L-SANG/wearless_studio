@@ -20,6 +20,7 @@ export function generationExampleSelectionPatch(block, example, {
   const isDetail = block?.cutType === 'product' && block?.shot === 'detail';
   const patch = {
     exampleId,
+    exampleChoice: null,
     exampleSelectionOrigin: exampleId ? 'user' : null,
     refScope: scope,
     ...(isDetail && exampleId ? { direction: detailDirectionFromExample(example) } : {}),

@@ -157,8 +157,8 @@ OPENAI_API_KEY=   # 예비 — text tier를 OpenAI 계열로 재배정할 때만
 - **구현**: FastAPI 라이브 (`server/app/services/matching.py`). 엔드포인트: `GET /projects/{id}/analysis/match-candidates?clothingType=&gender=&limit=`. 시드 60개 (`server/seed/matching_items.json`, `matching_items` 테이블 + R2).
 - **입력**: `clothingType`, `gender`(단수), `limit?` — HTTP 쿼리 파라미터. styleTags 입력 미사용(현행 알고리즘에서 제거됨).
 - **로직**: 보완 타입 필터(top/outer/dress→bottom, 나머지→top) → 성별 필터(is_active + type + gender, unisex 항상 포함) → `-color_brightness` 내림차순 후 sort_order. 결정적·비용 0.
-- **출력**: `MatchingItem[]` → `analysis.matchCandidates`(후보) + `matchSelections`(상위 2개 메인/서브 기본 선택).
-- **호출 시점**: PL-1에서 AG-01 직후 → `analysis.matchCandidates`(후보) + `matchSelections`(상위 2개 메인/서브 기본 선택)으로 응답에 포함 (계약 §3.2).
+- **출력**: `MatchingItem[]` → `analysis.matchCandidates`(후보) + `matchSelections`(상위 1개 기본 선택).
+- **호출 시점**: PL-1에서 AG-01 직후 → `analysis.matchCandidates`(후보) + `matchSelections`(상위 1개 기본 선택)으로 응답에 포함 (계약 §3.2).
 
 ### M-02 page-assembler — 상세페이지 조립 (결정적 템플릿 엔진, 사용자 결정)
 

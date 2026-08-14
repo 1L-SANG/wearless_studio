@@ -6,6 +6,7 @@ import {
   estimateComposeModeCredits,
   selectAnalysisComposeMode,
 } from '../../src/features/analysis/composeModeSelection.js';
+import { applyStoryboardComposeMode } from '../../src/features/storyboard/storyboardComposeMode.js';
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const analysisSource = read('../../src/features/analysis/AnalysisForm.jsx');
@@ -132,20 +133,55 @@ test('compose-mode credit estimates scale both ends of the catalog count', () =>
   assert.equal(estimateComposeModeCredits('14~33', 2), '28~66');
 });
 
-test('the storyboard shows a summary and blocks applying a mode to an edited board', () => {
+test('the storyboard shows one segmented basic/extended picker and blocks changes on an edited board', () => {
   assert.doesNotMatch(storyboardSource, /ComposeModePicker/);
   assert.equal(
     existsSync(new URL('../../src/features/storyboard/ComposeModePicker.jsx', import.meta.url)),
     false,
   );
-  assert.match(
-    storyboardSource,
-    /사진 양 <strong>\{currentMode\.label\}<\/strong> · 예상 \{currentMode\.count\}컷/,
-  );
+  assert.doesNotMatch(storyboardSource, /사진 양 <strong>|예상 \{currentMode\.count\}컷|>변경<\/button>/);
+  assert.match(storyboardSource, /className="sb-compose-segment" role="group" aria-label="사진 양"/);
+  assert.match(storyboardSource, /aria-pressed=\{selected\}/);
   assert.match(storyboardSource, /직접 수정한 콘티에는 적용되지 않아요/);
-  assert.match(storyboardSource, /disabled=\{!canApply \|\| draftMode === value \|\| applying\}/);
+  assert.match(storyboardSource, /disabled=\{applying \|\| \(!selected && !canApply\)\}/);
   assert.match(storyboardSource, /isDefaultStoryboardForMode\([\s\S]*?composeModeSeed\.colors[\s\S]*?targetGenders: composeModeSeed\.targetGenders/);
-  assert.match(storyboardSource, /await setComposeMode\(nextMode\);[\s\S]*?await onComposeModeChange\(nextMode\);/);
+  assert.match(storyboardSource, /await onApply\(nextMode\)/);
+  assert.match(storyboardSource, /onApply=\{onComposeModeApply\}/);
+});
+
+test('storyboard compose changes flush, patch, then reload in that exact order', async () => {
+  const calls = [];
+  const changed = await applyStoryboardComposeMode({
+    currentMode: 'basic',
+    nextMode: 'extended',
+    projectId: 'project-1',
+    flushBoard: async () => calls.push('flush'),
+    setComposeMode: async () => calls.push('patch'),
+    restoreComposeMode: () => calls.push('restore'),
+    invalidateStoryboardPrefetch: () => calls.push('invalidate'),
+    reloadStoryboard: async () => calls.push('reload'),
+  });
+
+  assert.equal(changed, true);
+  assert.deepEqual(calls, ['flush', 'invalidate', 'patch', 'reload']);
+});
+
+test('a flush failure keeps the compose modal retryable and skips patch and reload', async () => {
+  const calls = [];
+  const changed = await applyStoryboardComposeMode({
+    currentMode: 'basic',
+    nextMode: 'extended',
+    projectId: 'project-1',
+    flushBoard: async () => { calls.push('flush'); throw new Error('offline'); },
+    setComposeMode: async () => calls.push('patch'),
+    restoreComposeMode: () => calls.push('restore'),
+    invalidateStoryboardPrefetch: () => calls.push('invalidate'),
+    reloadStoryboard: async () => calls.push('reload'),
+    onFlushFailure: () => calls.push('flush-error'),
+  });
+
+  assert.equal(changed, false);
+  assert.deepEqual(calls, ['flush', 'flush-error']);
 });
 
 const storeSource = read('../../src/store/useAppStore.js');

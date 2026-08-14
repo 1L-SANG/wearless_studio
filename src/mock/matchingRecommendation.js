@@ -4,6 +4,7 @@
    shape mapping separate from mock/db.js.
    ============================================================= */
 import { seedMatchingItems } from './seedMatchingItems.js';
+import { LIMITS } from '../lib/limits.js';
 
 const DEFAULT_STYLE_TAGS = ['basic', 'daily', 'clean'];
 const TOP_SIDE_TYPES = ['top', 'outer'];
@@ -338,7 +339,7 @@ export function recommendMatchingItems({
   return [...custom, ...(limit == null ? sorted : sorted.slice(0, limit))];
 }
 
-export function toLegacyMatchClothing(items, { selectedCount = 2 } = {}) {
+export function toLegacyMatchClothing(items, { selectedCount = LIMITS.matchClothingMax } = {}) {
   return (items || []).map((item, index) => {
     const selected = index < selectedCount;
     return toLegacyMatchItem(item, selected, index + 1);
@@ -375,11 +376,12 @@ export function recommendLegacyMatchClothing({
     .sort((a, b) => (a.selOrder || 0) - (b.selOrder || 0))
     .map((item) => item.id);
   const selectable = candidates.filter((item) => item.isCompatible !== false);
-  const validSelected = selectedIds.filter((id) => selectable.some((item) => item.id === id)).slice(0, 2);
+  const validSelected = selectedIds.filter((id) => selectable.some((item) => item.id === id))
+    .slice(0, LIMITS.matchClothingMax);
   // 이전 선택이 새 후보군에서 전부 사라지면(예: 상의→하의 전환으로 보완 타입이 바뀜)
-  // 첫 로드(toLegacyMatchClothing)와 같은 계약대로 상위 2개를 메인/서브 기본 선택한다.
+  // 첫 로드(toLegacyMatchClothing)와 같은 계약대로 상위 항목 하나를 기본 선택한다.
   const fallback = defaultSelection
-    ? selectable.filter((item) => item.isCustom !== true).slice(0, 2)
+    ? selectable.filter((item) => item.isCustom !== true).slice(0, LIMITS.matchClothingMax)
     : [];
   const effectiveSelected = validSelected.length ? validSelected : fallback.map((item) => item.id);
 
@@ -404,7 +406,8 @@ export function removeCustomMatchFromAnalysis(analysis) {
   if (!custom) return { ...analysis };
   const remaining = analysis.matchClothing.filter((item) => item.id !== custom.id);
   const selected = remaining.filter((item) => item.selected)
-    .sort((a, b) => (a.selOrder || 99) - (b.selOrder || 99)).slice(0, 2);
+    .sort((a, b) => (a.selOrder || 99) - (b.selOrder || 99))
+    .slice(0, LIMITS.matchClothingMax);
   const orderById = new Map(selected.map((item, index) => [item.id, index + 1]));
   const matchClothing = remaining.map((item) => orderById.has(item.id)
     ? { ...item, selected: true, selOrder: orderById.get(item.id) }

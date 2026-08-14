@@ -794,7 +794,6 @@ export function AnalysisForm({
   const subCats = catalogs.subCategories[a.clothingType] || [];
   const selMatch = (a.matchClothing || []).filter((c) => c.selected).sort((x, y) => (x.selOrder || 0) - (y.selOrder || 0));
   const mainMatchId = selMatch[0]?.id;
-  const subMatchId = selMatch[1]?.id;
   const isMatchCompatible = (item, clothingType = a.clothingType) => {
     const expectedType = expectedMatchingType(clothingType);
     return expectedType !== null
@@ -841,9 +840,9 @@ export function AnalysisForm({
       const next = cur.map((c) => c.id === id ? { ...c, selected: false, selOrder: undefined } : c);
       onChange(withMatchSelection(next));
     } else {
-      if (selMatch.length >= 2) { toast.push('매칭 의류는 최대 2개까지 선택할 수 있어요'); return; }
-      const maxOrder = Math.max(0, ...cur.map((c) => c.selOrder || 0));
-      const next = cur.map((c) => c.id === id ? { ...c, selected: true, selOrder: maxOrder + 1 } : c);
+      const next = cur.map((c) => c.id === id
+        ? { ...c, selected: true, selOrder: 1 }
+        : { ...c, selected: false, selOrder: undefined });
       onChange(withMatchSelection(next));
     }
   };
@@ -1228,7 +1227,7 @@ export function AnalysisForm({
       {/* 6. match clothing — full width */}
       {expectedMatchingType(a.clothingType) && <div className="surface">
         <div className="sec-title" style={{ marginBottom: 6 }}>매칭 의류</div>
-        <div className="sec-sub" style={{ marginBottom: 16 }}>핏·코디 이미지 생성에 쓰여요 · 메인 최대 2개</div>
+        <div className="sec-sub" style={{ marginBottom: 16 }}>핏·코디 이미지 생성에 쓰여요 · 1개 선택</div>
         <div className="model-grid custom-match-grid">
           {a.matchClothing.map((m) => {
             const compatible = isMatchCompatible(m);
@@ -1246,8 +1245,7 @@ export function AnalysisForm({
                       className={customMatchDeleting ? 'spin' : ''} size={14} />
                   </button>
                 )}
-                {m.id === mainMatchId && <span className="match-role main">메인</span>}
-                {m.id === subMatchId && <span className="match-role sub">서브</span>}
+                {m.id === mainMatchId && <span className="match-role main">선택</span>}
                 <div className="nm">
                   <span>{m.name}{!compatible && <small>현재 상품과 종류가 맞지 않아요</small>}</span>
                   {m.selected && <Icon name="check" size={13} className="star" />}

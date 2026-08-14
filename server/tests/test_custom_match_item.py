@@ -421,3 +421,20 @@ def test_custom_match_delete_is_locked_atomic_and_idempotent(
     assert remaining == [{"id": "curated-2", "selected": True, "selOrder": 1}]
     assert "matchingFit" not in state["payload"]["fitProfile"]
     assert r2.deletes == ["derived/grid.jpg"]
+
+
+def test_custom_match_delete_collapses_legacy_two_item_selection():
+    payload = {
+        "matchClothing": [
+            {"id": "custom_test_item", "selected": False},
+            {"id": "curated-main", "selected": True, "selOrder": 1},
+            {"id": "curated-sub", "selected": True, "selOrder": 2},
+        ]
+    }
+
+    normalized = routes._analysis_without_custom(payload, "custom_test_item")
+
+    assert normalized["matchClothing"] == [
+        {"id": "curated-main", "selected": True, "selOrder": 1},
+        {"id": "curated-sub", "selected": False},
+    ]

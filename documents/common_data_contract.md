@@ -175,7 +175,7 @@ StoryboardBlock {
   outerClosureState?: OuterClosureState | null       // 아우터 착용컷(styling·horizon·mirror) 전용. 누락 기본 open
   colorId?: string                 // ColorGroup.id (단수 — 컬러별 컷은 블록을 색상마다 분리)
   pose: PoseId                     // 기본 'auto' (구 _pose)
-  matchIds: string[]               // 매칭 의류 후보 id
+  matchIds: string[]               // 매칭 의류 후보 id (UI는 최대 1개, 배열 shape은 구 저장분 호환용)
   faceExposure: FaceExposure       // 기본 'same'
   angle: CameraAngle               // 기본 'same'
   refImages: string[]              // '내 레퍼런스' 업로드 (생성 입력에 포함) — 프로젝트 한정, 전역 저장 없음 (ADR-0004)
@@ -504,12 +504,14 @@ NewCutRequest {                    // AI 탭 '새 이미지 추가'
   mode: 'new'
   colorId: string                  // 구 group('색상 1') 대체
   sectionRole?: StoryboardSectionRole  // 향후 섹션에 바로 삽입하는 경로용. 현재 UI는 의류 탭에 먼저 추가하므로 생략
-  contentRole: ContentRole          // 에디터 새 이미지 추가의 목적값. 콘티보드 내부 자동값과 UI 범위가 다름
-  cutType: CutType                 // 에디터 새 이미지 추가에서는 contentRole에서 파생. 이 흐름의 UI에서 직접 선택하지 않음
+  contentRole: ContentRole          // inferContentRole(cutType, shot)로 내부 자동 결정 — UI 선택 아님(콘티보드와 동일 규칙).
+                                    // '첫 장면(hero)·핵심 장점(benefit)' 목적은 에디터 신규 생성에서 제거(2026-08-13 오너 결정)
+  cutType: CutType                 // 에디터도 콘티보드처럼 컷 종류를 UI에서 직접 선택(2026-08-13 개편). 발행 예시 없는 컷 종류는 비활성
   direction: Direction | ProductDirection | null   // mirror는 null — 방향 없음 (ADR-0004)
   shot: ShotType | ProductShotType
   modelId: string
-  outerClosureState?: OuterClosureState | null  // 아우터 착용 이미지 전용. 현재 에디터 UI 미노출 시 open 기본값
+  outerClosureState?: OuterClosureState | null  // 아우터 착용 이미지 전용 — 에디터 UI에 노출(2026-08-13), 기본값 open
+  matchIds?: string[]              // 매칭 의류 — UI는 최대 1개(matchClothingMax, PRD §6.8), 착용컷 전용(제품컷은 빈 배열)
   exampleId?: string | null        // 촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
   refImages?: string[]
 }

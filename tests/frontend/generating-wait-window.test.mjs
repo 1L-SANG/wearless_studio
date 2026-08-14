@@ -154,7 +154,7 @@ test('완료 병합은 기본 정보 템플릿을 같은 방문에서 적용한�
 
 test('저장된 문서를 여는 경로도 누락된 배송·교환·반품 프레임을 복구한다', () => {
   const initialization = editor.slice(
-    editor.indexOf('.then(([b, w, c, _a, p, fm, an, sb]) => {'),
+    editor.indexOf('.then(([b, w, c, _a, p, fm, an, sb, mc]) => {'),
     editor.indexOf('setWardrobe(mergeEditorImagesIntoWardrobe'),
   );
   assert.match(initialization, /ensureShippingReturnsBlock\(withH, ctx\)/);

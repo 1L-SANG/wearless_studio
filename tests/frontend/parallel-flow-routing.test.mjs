@@ -119,12 +119,13 @@ test('login return lands on the storyboard', () => {
 
 test('the storyboard hands off to the mannequin without reopening confirmed input', () => {
   assert.match(storyboardSource, /const goToMannequin = async \(\) => \{/);
-  // 저장 실패는 조용히 삼켜지지 않는다 — catch 가 서버 메시지를 보여주고 navigate 를 건너뛴다
+  // 저장 실패는 조용히 삼켜지지 않는다 — 공용 handoff helper가 서버 메시지를 toast로 보여주고
+  // navigate 를 건너뛴다
   // (2026-08 QA: 콘티 재배치로 저장 실패가 실제로 도달 가능해져, '다음'이 아무 반응 없이
   // 죽는 문제가 생겼다). 성공 시에만 saveNow 뒤에 마네킹으로 이동한다.
   assert.match(
     storyboardSource,
-    /await saveNow\(projectId\);\s*\n\s*\} catch \(error\) \{[\s\S]*?navigate\('\/create\/mannequin'\)/,
+    /await continueAfterStoryboardFlush\(\{[\s\S]*?flush: \(\) => saveNow\(projectId\),[\s\S]*?navigate: \(\) => navigate\('\/create\/mannequin'\),[\s\S]*?onFailure: \(message\) => toast\.push\(message\)/,
   );
   assert.doesNotMatch(storyboardSource, /이전<\/button>/);
   assert.doesNotMatch(storyboardSource, /navigate\('\/create\/input'\)/);
