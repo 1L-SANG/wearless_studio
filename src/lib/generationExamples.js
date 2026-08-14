@@ -155,6 +155,40 @@ function usageKey(block, product, gender) {
   });
 }
 
+/* 서버의 sectionId + exampleId 반복 판정과 같은 화면 전용 파생값이다.
+   저장하지 않고 현재 콘티 순서에서 두 번째 eligible 사용부터 표시한다. */
+export function repeatedAllExampleVariationIds(blocks, catalog = []) {
+  if (!Array.isArray(blocks)) return new Set();
+  const examplesById = new Map((catalog || []).map((example) => [example.id, example]));
+  const counts = new Map();
+  const variationIds = new Set();
+
+  for (const block of blocks) {
+    const example = examplesById.get(block?.exampleId);
+    if (
+      block?.source !== 'ai'
+      || !block.id
+      || !example
+      || !['styling', 'horizon', 'mirror'].includes(block.cutType)
+      || block.spaceGroupId
+      || (block.refScope || 'all') !== 'all'
+      || (block.pose || 'auto') !== 'auto'
+      || !poseExampleDirectionCompatible(example, {
+        cutType: block.cutType,
+        direction: block.direction,
+      })
+    ) continue;
+
+    const section = block.sectionId || `role:${block.sectionRole || 'unknown'}`;
+    const key = `${section}\u0000${block.exampleId}`;
+    const repeatIndex = counts.get(key) || 0;
+    if (repeatIndex >= 1) variationIds.add(block.id);
+    counts.set(key, repeatIndex + 1);
+  }
+
+  return variationIds;
+}
+
 export function assignGenerationExamples(blocks, { catalog, product, gender, onlyBlockIds = null }) {
   if (!Array.isArray(blocks)) return { blocks, changed: false, assignedIds: [], protectedIds: [], missingIds: [] };
   const only = onlyBlockIds == null ? null : new Set(onlyBlockIds);

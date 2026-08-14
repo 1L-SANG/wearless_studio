@@ -381,6 +381,11 @@ def normalize_plan(plan: Any) -> dict:
     if continuity_raw is not None and continuity is None:
         errors.append("invalid_space_set_continuity")
 
+    repeat_raw = source.get("exampleRepeatIndex", 0)
+    example_repeat_index = repeat_raw if type(repeat_raw) is int and repeat_raw >= 0 else 0
+    if type(repeat_raw) is not int or repeat_raw < 0:
+        errors.append("invalid_example_repeat_index")
+
     declared_axes = source.get("declaredFitAxes") or []
     declared_axis_count = len(declared_axes) if isinstance(declared_axes, (list, tuple)) else 0
     return {
@@ -404,6 +409,7 @@ def normalize_plan(plan: Any) -> dict:
         "attributeOwners": dict(sorted(owners.items())),
         "referenceAllowedAttributes": reference_attributes,
         "declaredFitAxisCount": declared_axis_count,
+        "exampleRepeatIndex": example_repeat_index,
         "spaceSetContinuity": continuity,
         "precedence": precedence_contract,
         "contractErrors": sorted(set(errors)),

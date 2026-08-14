@@ -2309,6 +2309,25 @@
   font-size: 10px;
   font-weight: 700;
 }
+.sb-pose-variation-note {
+  position: absolute;
+  z-index: 4;
+  left: 10px;
+  right: 10px;
+  bottom: 8px;
+  padding: 10px 11px;
+  border-radius: 9px;
+  background: rgba(17, 19, 24, .78);
+  backdrop-filter: blur(6px);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: -.01em;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+}
 /* 카드 전체가 드래그 표면이고, 액션은 이동·복제·삭제의 명확한 공용 아이콘만 쓴다. */
 .sb-canvas-actions {
   position: absolute;

@@ -45,6 +45,63 @@ def _prepared_by_id(captured):
     return {item[0]["id"]: item for item in captured["prepared"]}
 
 
+def test_example_repeat_indexes_are_section_local_and_ignore_client_runtime_value(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        dpj.cut_generator,
+        "load_example_asset_registry",
+        lambda: (None, {}),
+    )
+    blocks = [
+        {"id": "a1", "source": "ai", "sectionId": "section-a", "sectionRole": "studio",
+         "cutType": "horizon", "shot": "full", "direction": "front", "pose": "auto",
+         "exampleId": "same", "refScope": "all", "_exampleRepeatIndex": 99},
+        {"id": "a2", "source": "ai", "sectionId": "section-a", "sectionRole": "studio",
+         "cutType": "horizon", "shot": "medium", "direction": "front", "pose": "auto",
+         "exampleId": "same", "refScope": "all"},
+        {"id": "other-example", "source": "ai", "sectionId": "section-a",
+         "sectionRole": "studio", "cutType": "horizon", "shot": "full",
+         "direction": "front", "pose": "auto", "exampleId": "other", "refScope": "all"},
+        {"id": "other-section", "source": "ai", "sectionId": "section-b",
+         "sectionRole": "studio", "cutType": "horizon", "shot": "full",
+         "direction": "front", "pose": "auto", "exampleId": "same", "refScope": "all"},
+        {"id": "explicit", "source": "ai", "sectionId": "section-a", "sectionRole": "studio",
+         "cutType": "horizon", "shot": "full", "direction": "front", "pose": "walking",
+         "exampleId": "same", "refScope": "all"},
+        {"id": "pose-scope", "source": "ai", "sectionId": "section-a", "sectionRole": "studio",
+         "cutType": "horizon", "shot": "full", "direction": "front", "pose": "auto",
+         "exampleId": "same", "refScope": "pose"},
+        {"id": "space-set", "source": "ai", "sectionId": "section-a", "sectionRole": "studio",
+         "cutType": "horizon", "shot": "full", "direction": "front", "pose": "auto",
+         "exampleId": "same", "spaceGroupId": "set", "refScope": "all"},
+    ]
+
+    assert dpj._example_repeat_indexes(blocks, "top") == [
+        0, 1, 0, 0, None, None, None,
+    ]
+
+
+def test_example_repeat_indexes_exclude_direction_incompatible_reference(monkeypatch):
+    monkeypatch.setattr(
+        dpj.cut_generator,
+        "load_example_asset_registry",
+        lambda: (None, {"front-example": {
+            "all": "unused.png", "cutType": "horizon", "direction": "front",
+        }}),
+    )
+    blocks = [
+        {"id": "side", "source": "ai", "sectionId": "section-a", "sectionRole": "studio",
+         "cutType": "horizon", "shot": "full", "direction": "side", "pose": "auto",
+         "exampleId": "front-example", "refScope": "all"},
+        {"id": "front", "source": "ai", "sectionId": "section-a", "sectionRole": "studio",
+         "cutType": "horizon", "shot": "full", "direction": "front", "pose": "auto",
+         "exampleId": "front-example", "refScope": "all"},
+    ]
+
+    assert dpj._example_repeat_indexes(blocks, "top") == [None, 0]
+
+
 def test_detail_product_prunes_mannequin_model_matching_and_owned_mood(monkeypatch):
     captured = {}
 

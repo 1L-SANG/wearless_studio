@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
   assignGenerationExamples, directionBadgeLabel, exampleSelectionFingerprintFields,
   isGenerationCombinationPublic, selectGenerationExamples, shouldMarkStoryboardDirty,
-  storedExampleConditionStatus,
+  storedExampleConditionStatus, repeatedAllExampleVariationIds,
 } from '../../src/lib/generationExamples.js';
 import { defaultStoryboard, isDefaultStoryboardForMode } from '../../src/lib/api/shapes.js';
 import { entryStylingMembers, pickEntrySets } from '../../src/lib/storyboardEntryPlacement.js';
@@ -28,6 +28,25 @@ const block = (id, extra = {}) => ({
   id, source: 'ai', cutType: 'styling', shot: 'full', direction: 'back',
   sectionId: 'section-a', sectionLayout: 'twoColumn', layoutRowId: 'row-a',
   spaceGroupId: null, thumb: `placeholder:${id}`, matchIds: ['ignored'], ...extra,
+});
+
+test('repeated all-scope examples mark only eligible uses after the first in each section', () => {
+  const shared = example('shared', { direction: 'front' });
+  const blocks = [
+    block('first', { direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'auto' }),
+    block('second', { direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'auto' }),
+    block('explicit', { direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'walking' }),
+    block('pose-scope', { direction: 'front', exampleId: 'shared', refScope: 'pose', pose: 'auto' }),
+    block('space-set', { direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'auto', spaceGroupId: 'set-a' }),
+    block('direction-mismatch', { direction: 'back', exampleId: 'shared', refScope: 'all', pose: 'auto' }),
+    block('third', { direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'auto' }),
+    block('other-section', { sectionId: 'section-b', direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'auto' }),
+  ];
+
+  assert.deepEqual(
+    [...repeatedAllExampleVariationIds(blocks, [shared])],
+    ['second', 'third'],
+  );
 });
 const product = { clothingType: 'outer' };
 const releasedStylingSet = storyboardSpaceSetsFor({

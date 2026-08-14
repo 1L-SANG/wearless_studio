@@ -115,6 +115,12 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
     raw_color_id = raw.get("colorId")
     if raw_color_id is None:
         raw_color_id = raw.get("color_id")
+    raw_repeat_index = raw.get("_exampleRepeatIndex", 0)
+    example_repeat_index = (
+        raw_repeat_index
+        if type(raw_repeat_index) is int and raw_repeat_index >= 0
+        else 0
+    )
     if _is_outer(clothing_type) and cut in _WORN_CUTS:
         closure = closure if closure in _OUTER_CLOSURE_STATES else "open"
     else:
@@ -158,6 +164,9 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
             if raw.get("_referenceFaceVisibility") in ("hidden", "visible")
             else None
         ),
+        # 같은 섹션에서 같은 all 예시를 다시 쓰는 순서. 워커가 현재 콘티 순서로만
+        # 계산하는 런타임 값이며 저장 계약이나 클라이언트 입력의 정본이 아니다.
+        "_exampleRepeatIndex": example_repeat_index,
     }
     # 제품컷은 '배경만/포즈만'이 성립하지 않는다(사람·포즈 없음) — 예시는 통째 참조만 허용.
     if cut == "product" and spec["refScope"] != "all":
@@ -730,6 +739,23 @@ def render_cut_prompt(
             )
         if scope_line not in example_line:
             example_line = "\n".join(part for part in (example_line, scope_line) if part)
+    example_repeat_line = ""
+    repeat_index = spec.get("_exampleRepeatIndex", 0)
+    if (
+        has_resolved_example
+        and cut in _WORN_CUTS
+        and spec.get("refScope") == "all"
+        and spec.get("pose") == "auto"
+        and not spec.get("spaceGroupId")
+        and spec.get("_referenceDirectionCompatible") is not False
+        and type(repeat_index) is int
+        and repeat_index >= 1
+    ):
+        variant = (repeat_index - 1) % 3
+        example_repeat_line = "\n".join((
+            need("EXREPEAT:guard"),
+            need(f"EXREPEAT:{variant}"),
+        ))
     space_line = ""
     if spec.get("spaceGroupId") and spec.get("_spaceSetContinuity", True):
         space_line = need("SPACE").replace("${spaceVariation}", spec["spaceVariation"])
@@ -776,6 +802,7 @@ def render_cut_prompt(
         .replace("${faceLine}", face_line)
         .replace("${poseLine}", pose_line)
         .replace("${exampleLine}", example_line)
+        .replace("${exampleRepeatLine}", example_repeat_line)
         .replace("${outerwearInnerLine}", outerwear_inner_line)
         .replace("${outerClosureLine}", outer_closure_line)
         .replace("${spaceLine}", space_line)
