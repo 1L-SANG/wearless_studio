@@ -280,3 +280,61 @@ def test_analysis_schema_shape():
         assert k in s["properties"]
         assert k in s["required"]
     assert "measurements" not in s["properties"]
+
+
+def test_analyze_uses_analysis_tier_model(monkeypatch):
+    """AG-01 만 분석 전용 모델로 분기 — 게이팅 QC 가 쓰는 정본(model_text_gemini)과 분리한다.
+
+    이 축이 없으면 '분석만 flash 로' 가 불가능하다(오너 결정 2026-08-14). 실측 근거는
+    documents/research/analysis_thinking_ab_20260814.jsonl.
+    """
+    import asyncio
+    from types import SimpleNamespace
+
+    seen = {}
+
+    async def fake(settings, prompt, images, schema, thinking_level=None, models=None):
+        seen["models"] = models
+        return {"clothingType": "top", "subCategory": "knit", "fit": "regular"}, "gemini"
+
+    monkeypatch.setattr(pa, "analyze_with_fallback", fake)
+    settings = SimpleNamespace(model_text_gemini_analysis="gemini-3.7-flash")
+    dist, provider = asyncio.run(pa.analyze(settings, {}, []))
+    assert provider == "gemini"
+    assert dist["product"]["clothingType"] == "top"
+    assert seen["models"] == {"gemini": "gemini-3.7-flash"}
+
+
+def test_analyze_without_analysis_tier_falls_back_to_default_model(monkeypatch):
+    """미설정이면 models=None → vision_llm 이 정본 모델을 쓴다 (AG-08 분기와 같은 규약)."""
+    import asyncio
+    from types import SimpleNamespace
+
+    seen = {}
+
+    async def fake(settings, prompt, images, schema, thinking_level=None, models=None):
+        seen["models"] = models
+        return {"clothingType": "top"}, "gemini"
+
+    monkeypatch.setattr(pa, "analyze_with_fallback", fake)
+    asyncio.run(pa.analyze(SimpleNamespace(model_text_gemini_analysis=""), {}, []))
+    assert seen["models"] is None
+
+
+def test_build_prompt_declares_clothing_type_decision_order():
+    """clothingType 선택 규칙 — 없으면 모델이 자기 사전지식으로 메운다.
+
+    2026-08-14 실측(26벌): 규칙이 없을 때 5개 모델·thinking 조합이 **전부 똑같이** 셔츠형
+    아우터를 top 으로, 원피스를 top 으로 분류했다. 모델 문제가 아니라 프롬프트 공백이었다.
+    규칙 추가 후 종류 정확도 73% → 96%.
+
+    순서가 계약이다 — dress 판정이 shirt→outer 보다 먼저 걸려야 셔츠 원피스가 outer 로
+    새지 않는다. 그리고 top↔dress 동점은 dress 로 기운다: 원피스를 top 으로 보면 매칭
+    하의가 붙어 옷을 가린다(2026-08-01 셀러 보고, matching._NO_MATCH 주석).
+    """
+    p = pa.build_prompt({"name": "테스트", "clothing_type": "top"})
+    assert "decide with these tests IN ORDER" in p
+    dress_at, outer_at = p.index("1) dress"), p.index("3) outer")
+    assert dress_at < outer_at, "dress 판정이 shirt→outer 보다 먼저여야 한다"
+    assert "CHOOSE\n     DRESS" in p or "CHOOSE DRESS" in p, "top↔dress 동점 타이브레이크"
+    assert "is outer" in p, "셔츠형은 outer (오너 결정 2026-08-14)"

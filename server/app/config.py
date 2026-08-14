@@ -44,10 +44,19 @@ class Settings:
     # AG-01 상품 분석 (text tier, 멀티모달 입력) — ai_agent_modules §1·§3
     openai_api_key: str | None = None  # sk-… (서버 전용, secret). GPT 경로 키
     model_text: str = "gpt-5.4-mini"  # GPT 폴백 provider 의 text/vision 모델 (openai key 있을 때만)
-    model_text_gemini: str = "gemini-3.5-flash"  # text tier 정본 모델 (2026-07-02 결정 — ai_agent_modules §1)
+    # text tier 정본 모델 (2026-07-02 결정 — ai_agent_modules §1).
+    # 2026-08-14 사용자 결정: 3.5/3.6 flash 사용처를 전부 gemini-3.7-flash 로 통일.
+    model_text_gemini: str = "gemini-3.7-flash"
     # AG-08 특징 발굴만 상위 tier 로 분기 (2026-08-01 사용자 결정 — 마네킹 regenerate tier 분기와 같은 패턴).
     # 분류(AG-01)는 결정성·속도 우선이라 정본 tier 유지. 미설정이면 model_text_gemini 로 폴백.
-    model_text_gemini_features: str = "gemini-3.6-flash"
+    model_text_gemini_features: str = "gemini-3.7-flash"
+    # AG-01 상품 분석만 별도 분기 (2026-08-14 사용자 결정). model_text_gemini 는 게이팅 QC
+    # (IMAGE_QC·MANNEQUIN_AXIS_QC·BASE_FIDELITY_QC = enforce)까지 같이 쓰는 값이라, 분석만
+    # 내리려면 축이 따로 있어야 한다 — AG-08 분기와 같은 패턴. 미설정이면 model_text_gemini 폴백.
+    # 근거(실측 26벌 × 5조합, documents/research/analysis_thinking_ab_20260814.jsonl):
+    # 3.7 flash·low 가 prod(3.1 pro·low) 대비 비용 0.42배·지연 -1.8s, 종류 정확도 동률(73%),
+    # 성별 26/26(pro 94%), 특징 2개 온전 26/26(pro 25/26). thinking 승급은 이득 없음(§ 아래).
+    model_text_gemini_analysis: str = "gemini-3.7-flash"
     analysis_model_order: str = "gemini,gpt"  # 폴백 순서(기본=Gemini-first, 2026-07-02 결정). 'gpt,gemini' 등
     analysis_spike: str = "off"  # off | on — 동기 관측 하니스(임시). production 은 job
     analysis_timeout_seconds: float = 60.0  # provider 1콜 상한(폴백 트리거)
@@ -311,9 +320,11 @@ def load_settings() -> Settings:
         model_image_high=os.getenv("MODEL_ROUTING_IMAGE_HIGH", "gemini-3-pro-image"),
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         model_text=os.getenv("MODEL_ROUTING_TEXT", "gpt-5.4-mini"),
-        model_text_gemini=os.getenv("MODEL_ROUTING_TEXT_GEMINI", "gemini-3.5-flash"),
+        model_text_gemini=os.getenv("MODEL_ROUTING_TEXT_GEMINI", "gemini-3.7-flash"),
         model_text_gemini_features=os.getenv(
-            "MODEL_ROUTING_TEXT_GEMINI_FEATURES", "gemini-3.6-flash"),
+            "MODEL_ROUTING_TEXT_GEMINI_FEATURES", "gemini-3.7-flash"),
+        model_text_gemini_analysis=os.getenv(
+            "MODEL_ROUTING_TEXT_GEMINI_ANALYSIS", "gemini-3.7-flash"),
         analysis_model_order=os.getenv("ANALYSIS_MODEL_ORDER", "gemini,gpt"),
         analysis_spike=_flag("ANALYSIS_SPIKE", "off", {"off", "on"}),
         analysis_timeout_seconds=float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "60")),

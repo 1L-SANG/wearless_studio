@@ -27,6 +27,23 @@ HARD RULES (a violation makes the output invalid):
   Bad: "깔끔한 흰색", "심플한 디자인", "데일리 아이템",
   "가슴 중앙의 심플한 브랜드 로고 프린팅" (sentence-like/too long).
   Zero or one strong point beats two fillers; an empty list is a valid answer.
+- clothingType — decide with these tests IN ORDER and stop at the first match. Without
+  this order a shirt-dress ends up as a shirt and a strap dress as a sleeveless top.
+  1) dress — ONE piece meant to be worn with no separate bottom: the body panel runs
+     uninterrupted from the shoulders/straps down past the hips (shirt dress, strap or
+     bustier dress, jumper dress, drop-waist dress). Judge by structure, not by a length
+     ratio: a waist/empire/drop-waist seam with a skirt panel continuing below it means
+     dress, wherever that seam sits. Photos are usually flat-lays where length is hard to
+     read — so when a women's garment could be either a long top or a dress, CHOOSE
+     DRESS. Calling a dress a top is the costlier mistake: the studio then dresses the
+     mannequin in matching bottoms that cover the garment.
+  2) bottom — covers only the lower body (pants, skirt).
+  3) outer — a layering piece worn over something else: full-length front opening with
+     buttons or zip, jackets, cardigans, coats, padding. EVERY shirt-type garment
+     (dress shirt, check shirt, denim shirt, overshirt) is outer, even one that could be
+     worn on its own — seller decision 2026-08-14.
+  4) top — everything else on the upper body (tshirt, sweatshirt, knit, sleeveless,
+     blouse or pullover without a full front opening).
 - subCategory must match clothingType's group; for a dress, subCategory is null.
 - When clothingType is dress, targetGenders MUST be exactly ["women"]. There is no
   men's dress category in this service.

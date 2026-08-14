@@ -62,7 +62,7 @@
 
 | tier | 모델 | 근거 |
 |---|---|---|
-| `text` | **`gemini-3.5-flash`** | 사용자 결정 2026-07-02 "Gemini 3 Flash". GA 안정판 id는 `gemini-3.5-flash`(구 `gemini-3-flash-preview`의 정식판, 2026-07 Google 모델 목록에서 stable 확인). 교체는 env 한 줄(`MODEL_ROUTING_TEXT`). |
+| `text` | **`gemini-3.7-flash`** | 사용자 결정 2026-07-02 "Gemini 3 Flash"(당시 id `gemini-3.5-flash`). 2026-08-14 사용자 결정으로 3.5/3.6 flash 사용처를 `gemini-3.7-flash` 로 통일 — AI Studio 모델 목록 stable + responseSchema·thinkingLevel(low/medium) 200 실측 확인. 교체는 env 한 줄(`MODEL_ROUTING_TEXT`). |
 
 - `ai_agent_modules.md` §1 라우팅 테이블의 text 행을 이 값으로 갱신한다(한 줄 수정 원칙). AG-02/03(카피)도 같은 tier를 쓰게 되며, 카피 단계 착수 때 재평가.
 - **OPENAI_API_KEY는 PL-1에 불필요** — 기존 `GEMINI_API_KEY` 재사용(이미 마네킹이 사용 중, Vertex 분기 포함).
@@ -92,7 +92,7 @@
 
 ```bash
 # FastAPI 서버 전용 (.env) — 기존 GEMINI_API_KEY 재사용
-MODEL_ROUTING_TEXT=gemini-3.5-flash   # tier 'text' (교체는 여기서만)
+MODEL_ROUTING_TEXT_GEMINI=gemini-3.7-flash   # tier 'text' 정본 (교체는 여기서만)
 ANALYSIS_THINKING_LEVEL=low           # low | medium | high (품질 미달 시 승격)
 ANALYSIS_MAX_ATTEMPTS=2
 ANALYSIS_TIMEOUT_SECONDS=60
@@ -557,7 +557,7 @@ server/
 Settings에 추가 (마네킹 블록 아래, 기본값 필수 — frozen dataclass 관례 유지):
 
 ```python
-model_text: str = "gemini-3.5-flash"          # tier 'text' (ai_agent_modules §1)
+model_text: str = "gemini-3.7-flash"          # tier 'text' (ai_agent_modules §1)
 analysis_thinking_level: str = "low"          # low | medium | high
 analysis_max_attempts: int = 2
 analysis_timeout_seconds: float = 60.0
@@ -1102,7 +1102,7 @@ async saveAnalysis(projectId, patch) {
 `jobs.metadata`에 finalize 시 병합 (성공·실패 공통):
 
 ```jsonc
-{ "agentId": "AG-01", "tier": "text", "model": "gemini-3.5-flash",
+{ "agentId": "AG-01", "tier": "text", "model": "gemini-3.7-flash",
   "promptVersion": "v1", "fingerprint": "…",
   "latencyMs": 4200, "usage": { /* usageMetadata — 토큰 수 */ },
   "attempts": 1, "styleTags": ["basic", "daily"] }
@@ -1195,6 +1195,6 @@ async saveAnalysis(projectId, patch) {
 | 문서 | 변경 | 상태 |
 |---|---|---|
 | `ai_agent_modules.md` §1 | text tier 행: GPT-5.4 mini → **Gemini 3 Flash (`gemini-3.5-flash`)**, OPENAI_API_KEY 주석 조정 (2026-07-02 결정). | ✅ 갱신 완료 (이 문서와 같은 세션) |
-| `ai_pipeline_spec.md` §6 | `MODEL_ROUTING_TEXT=gemini-3.5-flash`. | ✅ 갱신 완료 (〃) |
+| `ai_pipeline_spec.md` §6 | `MODEL_ROUTING_TEXT=gemini-3.7-flash`. | ✅ 갱신 완료 (〃) |
 | `common_data_contract.md` §6 | `uploadAsset(file, { projectId })` 시그니처 반영. | 구현 PR에 포함 |
 | `TODO.md` §1 | submit 순서 교정(§7.2)·legacy shape 어댑터(§7.4)·mock uploadAsset 구현을 갭 항목으로 기록. | 구현 PR에 포함 |

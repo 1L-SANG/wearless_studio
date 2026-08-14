@@ -415,7 +415,12 @@ def distribute(validated: dict) -> dict:
 async def analyze(settings: Settings, product: dict, images: list[InlineImage]) -> tuple[dict, str]:
     """프롬프트 → vision_llm(폴백) → 검증 → 분배. (분배 결과, provider) 반환. 실패 시 VisionError."""
     prompt = build_prompt(product or {})
-    raw, provider = await analyze_with_fallback(settings, prompt, images, analysis_schema())
+    # 분석 전용 모델 분기 (2026-08-14) — 게이팅 QC 가 쓰는 model_text_gemini 와 분리한다.
+    # 미설정이면 None → vision_llm 이 정본 모델을 쓴다(AG-08 분기와 같은 규약).
+    models = ({"gemini": settings.model_text_gemini_analysis}
+              if settings.model_text_gemini_analysis else None)
+    raw, provider = await analyze_with_fallback(
+        settings, prompt, images, analysis_schema(), models=models)
     return distribute(validate(raw)), provider
 
 
