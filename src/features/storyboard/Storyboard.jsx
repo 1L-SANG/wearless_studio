@@ -129,9 +129,13 @@ const withoutLayoutRow = (block) => {
 
 // 첫 화면 슬롯의 틀(컷 종류·샷·색상)을 직접 바꾸면 그 컷은 프레임에서 이탈한다 —
 // 스타일이 틀을 정한다는 계약(스펙 §1)과 저장 표식이 어긋나지 않게 (Codex 리뷰 #5).
+// 프레임 이탈은 틀이 "실제로 바뀔 때"만 — 같은 값 재클릭(예: 선택된 색상 점 다시 누르기)이
+// 프레임을 해체하면 지문에 안 잡혀 훼손 보드가 기본 보드로 오판된다(Codex 리뷰 2차 #1).
 const detachHookSlotOnReshape = (current, applied, merged) => (
   current.hookFrameId
-  && ('cutType' in applied || 'shot' in applied || 'colorId' in applied)
+  && (('cutType' in applied && applied.cutType !== current.cutType)
+    || ('shot' in applied && applied.shot !== current.shot)
+    || ('colorId' in applied && applied.colorId !== current.colorId))
     ? withoutLayoutRow(stripHookFrameFields(merged))
     : merged
 );
@@ -2706,15 +2710,25 @@ export function Storyboard() {
   const boundGenderNow = exampleGender
     || genderForClothingType(clothingType, composeModeSeed.targetGenders);
   // 발행된 조합만 슬롯으로 — 닫힌 조합으로 컷을 만들면 예시가 배정되지 않아 빈 칸이 된다
-  // (2026-08-14 '이미지 사라짐' 원인). 인스펙터의 hasSelectableExamples 와 같은 판정.
+  // (2026-08-14 '이미지 사라짐' 원인). 판정은 **자동 배정기(candidatesForBlock)와 동일**해야
+  // 한다 — appendSetOnly 를 켜면 세트 전용 조합(예: 남성 호리존 미디움)을 가용으로 오판해
+  // 배정기가 못 채우는 빈 컷이 생긴다(Codex 리뷰 2차 #2).
   const hookCutAvailable = (cutType, shot) => selectGenerationExamples(
     catalogs?.genExamples || [],
-    { cutType, shot, clothingType, gender: boundGenderNow, appendSetOnly: cutType !== 'product' },
+    { cutType, shot, clothingType, gender: boundGenderNow },
   ).length > 0;
 
   // 스타일 전환(스펙 §2 전환 엔진) — 컷 재사용·부족분 생성·잔여 AI 컷 삭제·예시 재배정 후 즉시 저장.
   async function applyHookStyleChoice(style) {
-    if (locked || hookStyleSaving || !hookFrame || style === hookFrame.style) return;
+    if (locked || hookStyleSaving || !hookFrame) return;
+    // 같은 스타일 재선택은 프레임이 온전할 때만 무시한다 — 슬롯 컷을 삭제해 프레임이
+    // 모자라진 보드는 재적용으로 복구한다(Codex 리뷰 2차 #5: 카드 삭제 후 복구 불가).
+    if (style === hookFrame.style) {
+      const planLength = hookSlotPlan(style, {
+        colors: composeModeSeed.colors || [], isCutAvailable: hookCutAvailable,
+      }).length;
+      if (hookFrame.slotIds.length >= planLength) return;
+    }
     const previous = blocks;
     const template = previous.find((block) => block.id === hookFrame.slotIds[0])
       || previous.find((block) => block.sectionRole === SECTION_ROLES.HOOKING && block.source !== 'mine');

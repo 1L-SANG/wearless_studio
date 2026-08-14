@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   DEFAULT_HOOK_STYLE,
@@ -112,6 +113,17 @@ test('slot plans skip unpublished combos via isCutAvailable (empty-tile preventi
 
 test('unknown style throws instead of guessing', () => {
   assert.throws(() => hookSlotPlan('carousel'), /unknown_hook_style/);
+});
+
+test('frame detach requires an actual value change, and availability matches the assigner', () => {
+  const source = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
+  // 같은 색상 점 재클릭이 프레임을 해체하면 지문에 안 잡혀 기본 보드로 오판된다(Codex 2차 #1).
+  assert.match(source, /applied\.cutType !== current\.cutType/);
+  assert.match(source, /applied\.shot !== current\.shot/);
+  assert.match(source, /applied\.colorId !== current\.colorId/);
+  // 가용성 판정은 자동 배정기와 동일해야 한다 — appendSetOnly 금지(Codex 2차 #2).
+  const availability = source.slice(source.indexOf('const hookCutAvailable'), source.indexOf('async function applyHookStyleChoice'));
+  assert.doesNotMatch(availability, /appendSetOnly/);
 });
 
 /* ---------- P2: 스타일 전환 엔진 ---------- */

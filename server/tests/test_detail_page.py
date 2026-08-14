@@ -39,9 +39,14 @@ def test_detail_creates_job_and_reserves(client, make_token, monkeypatch):
         seen["reserved"] = amount
         return 100
 
+    async def fake_product(conn, pid):
+        # 크레딧 견적의 복제 접기(_duplicate_source_indexes)가 clothing_type을 읽는다.
+        return {"clothing_type": "top"}
+
     monkeypatch.setattr(routes.repo, "get_project", fake_gp)
     monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_eb)
     monkeypatch.setattr(routes.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(routes.repo, "get_product", fake_product)
     monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
     patch_route_db(monkeypatch, routes)

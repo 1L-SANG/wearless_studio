@@ -2410,7 +2410,16 @@ async def generate_detail_page(
             return JSONResponse({"data": existing, "credits": (account or {}).get("credits", 0)})
         storyboard = await repo.get_storyboard(conn, project_id)
         _require_bg_examples_enabled(request, storyboard)
-        ai_count = sum(1 for b in storyboard if isinstance(b, dict) and b.get("source") == "ai")
+        # 크레딧 견적은 실제 생성 수 기준 — 생성 계약이 완전히 같은 복제 컷은 1장만
+        # 생성해 복사하므로(ADR-0011, _duplicate_source_indexes) 예약에서도 접는다.
+        # 그대로 두면 복제가 많은 보드가 사전검사(402)에서 과도하게 거절된다(Codex 2차 #3).
+        from .workers.detail_page_job import _duplicate_source_indexes
+        product_row = await repo.get_product(conn, project_id)
+        clothing_type = ((product_row or {}).get("clothing_type")
+                         or (product_row or {}).get("clothingType") or "top")
+        ai_blocks = [b for b in storyboard if isinstance(b, dict) and b.get("source") == "ai"]
+        dup_sources = _duplicate_source_indexes(ai_blocks, clothing_type)
+        ai_count = sum(1 for source in dup_sources if source is None)
         cost = ai_count * s.credit_cost_storyboard_per_cut
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="detail_page",
