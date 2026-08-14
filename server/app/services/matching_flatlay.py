@@ -126,8 +126,10 @@ async def render_thumbnail(gemini, *, settings, cutout_png: bytes,
     if gemini is None:  # GEMINI_API_KEY 미설정 → main 이 클라이언트를 아예 안 만든다
         log.info("matching_flatlay skipped: no gemini client")
         return None
-    model = resolve_model(settings, "image_light")
     try:
+        # 모델 해석도 try 안에 둔다 — 라우팅 설정이 비어 있으면 여기서 터지는데, 밖에
+        # 두면 그 예외가 워커의 광의 except 로 올라가 성공한 누끼까지 폐기된다(리뷰 I1).
+        model = resolve_model(settings, "image_light")
         # 실비 귀속: 디스패처가 건 잡 문맥(job/user)은 두고 stage 만 이 단계로 덮는다.
         with image_usage.job_scope(stage=STAGE):
             res = await gemini.generate_content_image(
