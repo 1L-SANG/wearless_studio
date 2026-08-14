@@ -19,6 +19,7 @@ const editorSource = readFileSync(new URL('../../src/features/editor/Editor.jsx'
 const panelSource = readFileSync(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url), 'utf8');
 const contentPanelSource = readFileSync(new URL('../../src/features/editor/ContentPanel.jsx', import.meta.url), 'utf8');
 const stylesSource = readFileSync(new URL('../../src/styles/features.css', import.meta.url), 'utf8');
+const httpAdapterSource = readFileSync(new URL('../../src/lib/api/httpAdapter.js', import.meta.url), 'utf8');
 
 test('wardrobe image drag payload keeps only the data needed by the canvas', () => {
   assert.equal(EDITOR_IMAGE_DRAG_TYPE, 'application/x-wearless-image');
@@ -109,13 +110,16 @@ test('detail callout drops target the circular photos above the background', () 
   assert.equal(findImageDropSlot(block.elements, { x: 678, y: 908 })?.w, 315);
 });
 
-test('image frames show an explicit placement guide only while a wardrobe image is over them', () => {
-  assert.match(editorSource, /imageDropOver && <ImageDropGuide scale=\{scale\} filled=\{false\}/);
-  assert.match(editorSource, /imageDropOver && <ImageDropGuide scale=\{scale\} filled \/>/);
-  assert.match(editorSource, /여기에 놓아 이미지 \{filled \? '교체' : '넣기'\}/);
+test('image frames show an exact placement guide for wardrobe and external file drags', () => {
+  assert.match(editorSource, /types\.includes\('Files'\)/);
+  assert.match(editorSource, /onDropImageFiles\?\.\(files\)/);
+  assert.match(editorSource, /onDropImageFiles=\{\(files\) => onDropImageFiles\(block\.id, files, null, el\.id\)\}/);
+  assert.match(editorSource, /imageDropOver && <ImageDropGuide scale=\{scale\} filled=\{false\} width=\{el\.w\} height=\{el\.h\} rotate=\{el\.rotate\}/);
+  assert.match(editorSource, /이 프레임에 \{filled \? '교체' : '넣기'\}/);
   assert.match(stylesSource, /\.image-drop-guide\s*\{[^}]*pointer-events:\s*none/s);
   assert.match(stylesSource, /\.image-drop-guide\s*\{[^}]*background-image:\s*linear-gradient/s);
-  assert.match(stylesSource, /\.image-drop-guide-content\s*\{[^}]*scale\(var\(--drop-inv/s);
+  assert.match(stylesSource, /\.image-drop-guide-content\s*\{[^}]*rotate\(var\(--drop-counter-rotate\)\) scale\(var\(--drop-inv/s);
+  assert.match(stylesSource, /animation:\s*image-drop-target-pulse/);
 });
 
 test('an image import placeholder immediately occupies the exact target frame', () => {
@@ -136,6 +140,27 @@ test('an image import placeholder uses a stable portrait tile outside a frame', 
     blockHeight: 300,
     point: { x: 500, y: 150 },
   }), { slotId: null, x: 412, y: 40, w: 176, h: 220, radius: 12 });
+});
+
+test('an explicit rotated frame remains the exact external upload target', () => {
+  const elements = [
+    { id: 'background', type: 'image', src: null, frameSlot: true, x: 0, y: 0, w: 1000, h: 1508 },
+    { id: 'polaroid', type: 'image', src: null, frameSlot: true, x: 575, y: 550, w: 270, h: 365, radius: 2, rotate: -14 },
+  ];
+
+  assert.deepEqual(pendingImageImportTarget({
+    elements,
+    blockHeight: 1508,
+    point: null,
+    slotId: 'polaroid',
+  }), { slotId: 'polaroid', x: 575, y: 550, w: 270, h: 365, radius: 2, rotate: -14 });
+  assert.match(editorSource, /transform:\s*item\.rotate \? `rotate\(\$\{item\.rotate\}deg\)`/);
+});
+
+test('uploaded editor images wait for a renderable stable asset URL before showing success', () => {
+  assert.match(httpAdapterSource, /url:\s*absolutizeAssetUrls\(`\/v1\/assets\/\$\{assetId\}\/file`\)/);
+  assert.match(editorSource, /await waitForImageSource\(uploaded\.url\)/);
+  assert.match(editorSource, /const slot = slotId[\s\S]{0,240}element\.id === slotId/);
 });
 
 test('hidden quick toolbars cannot intercept the canvas and selection alone does not reveal them', () => {

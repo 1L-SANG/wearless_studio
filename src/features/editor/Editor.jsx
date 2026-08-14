@@ -78,6 +78,31 @@ function readImageDimensions(file) {
   });
 }
 
+function waitForImageSource(src, timeoutMs = 12000) {
+  return new Promise((resolve, reject) => {
+    if (!src) {
+      reject(new Error('업로드한 이미지 주소를 확인하지 못했어요.'));
+      return;
+    }
+    const image = new Image();
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      image.onload = null;
+      image.onerror = null;
+      if (error) reject(error);
+      else resolve();
+    };
+    const timer = window.setTimeout(() => finish(new Error('이미지를 불러오는 데 시간이 오래 걸리고 있어요. 다시 시도해 주세요.')), timeoutMs);
+    image.onload = () => finish();
+    image.onerror = () => finish(new Error('업로드한 이미지를 불러오지 못했어요. 다시 시도해 주세요.'));
+    image.src = src;
+    if (image.complete && image.naturalWidth > 0) finish();
+  });
+}
+
 async function getFinalEditorBlocks(projectId) {
   let lastError;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -141,13 +166,17 @@ function naturalTextWidth(node, value) {
   )));
 }
 
-function ImageDropGuide({ scale, filled }) {
+function ImageDropGuide({ scale, filled, width, height, rotate = 0 }) {
+  const safeScale = scale || 1;
+  const badgeWidth = Math.max(76, Math.min(148, (Number(width) || 240) * safeScale - 16));
+  const compact = Math.min((Number(width) || 240) * safeScale, (Number(height) || 240) * safeScale) < 132;
   return (
-    <div className="image-drop-guide" style={{ '--drop-inv': 1 / (scale || 1) }} aria-hidden="true">
-      <div className="image-drop-guide-content">
-        <span className="image-drop-guide-icon"><Icon name="imagePlus" size={28} /></span>
-        <strong>여기에 놓아 이미지 {filled ? '교체' : '넣기'}</strong>
-        <span>프레임 크기는 그대로 유지돼요</span>
+    <div className="image-drop-guide" style={{ '--drop-inv': 1 / safeScale, '--drop-counter-rotate': `${-rotate}deg` }} aria-hidden="true">
+      <span className="image-drop-guide-arrow">↓</span>
+      <div className={`image-drop-guide-content${compact ? ' compact' : ''}`} style={{ width: badgeWidth }}>
+        <span className="image-drop-guide-icon"><Icon name="imagePlus" size={compact ? 18 : 22} /></span>
+        <strong>이 프레임에 {filled ? '교체' : '넣기'}</strong>
+        {!compact && <span>여기에 사진이 들어가요</span>}
       </div>
     </div>
   );
@@ -155,7 +184,7 @@ function ImageDropGuide({ scale, filled }) {
 
 /* render-only element (selection + inline text edit). Manipulation handled by
    the single <Moveable> in the Editor (targets the selected element node). */
-function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPickBelowText, onPatch, onTextCommit, onMultiDragStart, onTextDragStart, onObjectGroupDragStart, onAddImage, onDropImage, onEdit, onCropStart }) {
+function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPickBelowText, onPatch, onTextCommit, onMultiDragStart, onTextDragStart, onObjectGroupDragStart, onAddImage, onDropImage, onDropImageFiles, onEdit, onCropStart }) {
   const ref = useRef(null);
   const textRef = useRef(null);
   const deferredPick = useRef(false);
@@ -271,7 +300,8 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
   const common = { ref, 'data-elid': el.id, onPointerDown: pick, onClick: finishClick };
   const imageDropProps = preview || el.type !== 'image' ? {} : {
     onDragOver: (e) => {
-      if (!e.dataTransfer.types.includes(WARDROBE_IMAGE_MIME)) return;
+      const types = [...e.dataTransfer.types];
+      if (!types.includes(WARDROBE_IMAGE_MIME) && !types.includes('Files')) return;
       e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; setImageDropOver(true);
     },
     onDragLeave: (e) => {
@@ -280,8 +310,11 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     },
     onDrop: (e) => {
       const image = decodeWardrobeImage(e.dataTransfer.getData(WARDROBE_IMAGE_MIME));
-      if (!image) return;
-      e.preventDefault(); e.stopPropagation(); setImageDropOver(false); onDropImage?.(image);
+      const files = [...(e.dataTransfer.files || [])];
+      if (!image && !files.length) return;
+      e.preventDefault(); e.stopPropagation(); setImageDropOver(false);
+      if (image) onDropImage?.(image);
+      else onDropImageFiles?.(files);
     },
   };
 
@@ -328,7 +361,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
             onClick={(e) => { e.stopPropagation(); onAddImage && onAddImage(el); }}>
             <Icon name="plus" size={20} /><span>이미지 추가</span>
           </button>
-          {imageDropOver && <ImageDropGuide scale={scale} filled={false} />}
+          {imageDropOver && <ImageDropGuide scale={scale} filled={false} width={el.w} height={el.h} rotate={el.rotate} />}
         </div>
       );
     }
@@ -343,7 +376,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
         ) : (
           <img src={el.src} alt="" style={{ borderRadius: el.radius, objectFit: el.fit || 'cover' }} draggable={false} />
         )}
-        {imageDropOver && <ImageDropGuide scale={scale} filled />}
+        {imageDropOver && <ImageDropGuide scale={scale} filled width={el.w} height={el.h} rotate={el.rotate} />}
       </div>
     );
   }
@@ -474,20 +507,28 @@ function ImageImportWait({ item, scale }) {
   const phase = IMAGE_IMPORT_COPY[item.phase] ? item.phase : 'preparing';
   const [title, detail] = IMAGE_IMPORT_COPY[phase];
   const inv = Math.min(2.5, 1 / (scale || 1));
-  const contentWidth = Math.max(84, Math.min(240, (item.w - 36) / inv));
+  const contentWidth = Math.max(76, Math.min(156, item.w * (scale || 1) - 16));
+  const compact = Math.min(item.w * (scale || 1), item.h * (scale || 1)) < 132;
+  const compactTitle = {
+    preparing: '사진 준비 중',
+    uploading: '업로드 중',
+    placing: '프레임 적용 중',
+    done: '완료',
+    error: '불러오기 실패',
+  }[phase];
   const iconName = phase === 'done' ? 'check' : phase === 'error' ? 'x' : 'loader';
 
   return (
-    <div className={`ed-uploadwait ${phase}`} role="status" aria-live="polite" aria-label={title}
-      style={{ left: item.x, top: item.y, width: item.w, height: item.h, borderRadius: item.radius || 12 }}
+    <div className={`ed-uploadwait ${phase}`} role="status" aria-live="polite" aria-label={compact ? compactTitle : title}
+      style={{ left: item.x, top: item.y, width: item.w, height: item.h, borderRadius: item.radius || 12, transform: item.rotate ? `rotate(${item.rotate}deg)` : undefined, '--upload-counter-rotate': `${-(item.rotate || 0)}deg` }}
       onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
       onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
       onDrop={(e) => { e.preventDefault(); e.stopPropagation(); }}>
       <span className="ed-uploadwait-shim" aria-hidden="true" />
-      <div className="ed-uploadwait-content" style={{ width: contentWidth, transform: `scale(${inv})` }}>
+      <div className={`ed-uploadwait-content${compact ? ' compact' : ''}`} style={{ width: contentWidth, transform: `rotate(var(--upload-counter-rotate)) scale(${inv})` }}>
         <span className="ed-uploadwait-icon"><Icon name={iconName} size={20} className={phase === 'preparing' || phase === 'uploading' || phase === 'placing' ? 'spin' : ''} /></span>
-        <strong>{title}</strong>
-        <span>{detail}</span>
+        <strong>{compact ? compactTitle : title}</strong>
+        {!compact && <span>{detail}</span>}
         {phase !== 'done' && phase !== 'error' && <span className="ed-uploadwait-track" aria-hidden="true"><i /></span>}
       </div>
     </div>
@@ -579,6 +620,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
               onObjectGroupDragStart={(event, element) => onObjectGroupDragStart?.(block.id, element, event)}
               onAddImage={(elm) => onAddImage(block.id, elm)} onEdit={onEdit}
               onDropImage={(image) => onDropImage(block.id, el.id, image)}
+              onDropImageFiles={(files) => onDropImageFiles(block.id, files, null, el.id)}
               onCropStart={(elm) => onCropStart && onCropStart(block.id, elm)} />
           )
         ))}
@@ -1300,12 +1342,14 @@ export function Editor() {
   const setSlotImage = (blockId, elId, image) => {
     setBlocks((bs) => bs.map((b) => (b.id === blockId ? applySlotFillToInfo(b, elId, image || { src: null, cutType: null }) : b)));
   };
-  const insertImage = (im, { blockId, point } = {}) => {
+  const insertImage = (im, { blockId, point, slotId } = {}) => {
     const target = blockId || visibleBlock();
     const targetBlock = (latestBlocks.current || blocks).find((block) => block.id === target);
     if (!targetBlock || !im?.src) return;
 
-    const slot = findImageDropSlot(targetBlock.elements, point);
+    const slot = slotId
+      ? targetBlock.elements.find((element) => element.id === slotId && element.type === 'image' && element.frameSlot)
+      : findImageDropSlot(targetBlock.elements, point);
     if (slot) {
       const filled = {
         ...slot,
@@ -1396,8 +1440,9 @@ export function Editor() {
         userUploaded: true,
         wardrobeGroup: 'misc',
       };
-      setWardrobe((current) => ({ ...current, misc: [...(current.misc || []), image] }));
       patchImageImport(importId, { phase: 'placing' });
+      await waitForImageSource(uploaded.url);
+      setWardrobe((current) => ({ ...current, misc: [...(current.misc || []), image] }));
       if (placement?.blockId) insertImage(image, placement);
       else wardrobeInsert(image);
       patchImageImport(importId, { phase: 'done' });
@@ -1408,7 +1453,7 @@ export function Editor() {
       toast.push(error?.message || '사진을 업로드하지 못했어요. 다시 시도해 주세요.', { icon: 'x' });
     }
   };
-  const dropImageFiles = (blockId, files, point) => {
+  const dropImageFiles = (blockId, files, point, slotId = null) => {
     const file = files.find(looksLikeImageFile);
     if (!file) {
       toast.push('이미지 파일을 끌어 놓아 주세요.', { icon: 'x' });
@@ -1420,6 +1465,7 @@ export function Editor() {
       elements: targetBlock.elements,
       blockHeight: getBlockRenderHeight(targetBlock),
       point,
+      slotId,
     });
     if (target.slotId && imageImports.some((item) => item.blockId === blockId && item.slotId === target.slotId)) {
       toast.push('이 프레임에서 이미 이미지를 불러오고 있어요.', { icon: 'image' });

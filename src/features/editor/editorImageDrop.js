@@ -74,8 +74,12 @@ export function findImageDropSlot(elements, point) {
     .sort((a, b) => (a.w * a.h) - (b.w * b.h))[0] || null;
 }
 
-export function pendingImageImportTarget({ elements, blockHeight, point }) {
-  const slot = findImageDropSlot(elements, point);
+export function pendingImageImportTarget({ elements, blockHeight, point, slotId = null }) {
+  const slot = slotId
+    ? (elements || []).find((element) => (
+      element.id === slotId && element.type === 'image' && element.frameSlot
+    )) || null
+    : findImageDropSlot(elements, point);
   if (slot) {
     return {
       slotId: slot.id,
@@ -84,6 +88,7 @@ export function pendingImageImportTarget({ elements, blockHeight, point }) {
       w: slot.w,
       h: slot.h,
       radius: slot.radius || 10,
+      ...(slot.rotate ? { rotate: slot.rotate } : {}),
     };
   }
 

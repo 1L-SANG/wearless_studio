@@ -1646,7 +1646,8 @@
 .el-slot.checkerboard { background-color: #f7f7f8; background-image: linear-gradient(45deg, #dedee1 25%, transparent 25%), linear-gradient(-45deg, #dedee1 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #dedee1 75%), linear-gradient(-45deg, transparent 75%, #dedee1 75%); background-size: 56px 56px; background-position: 0 0, 0 28px, 28px -28px, -28px 0; }
 .el-template-overlay { pointer-events: none; overflow: hidden; }
 .el-template-overlay img { display: block; width: 100%; height: 100%; object-fit: fill; user-select: none; }
-.el.image-drop-over, .el-slot.image-drop-over { box-shadow: inset 0 0 0 calc(3px * var(--inv, 1)) var(--link), 0 0 0 calc(4px * var(--inv, 1)) rgba(0,153,255,.16); }
+.el.image-drop-over, .el-slot.image-drop-over { box-shadow: inset 0 0 0 calc(3px * var(--inv, 1)) var(--link), 0 0 0 calc(4px * var(--inv, 1)) rgba(0,153,255,.16);
+  animation: image-drop-target-pulse .8s ease-in-out infinite alternate; }
 .image-drop-guide { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; overflow: hidden;
   border-radius: inherit; pointer-events: none; color: #1f6fb2;
   background-color: rgba(250,252,254,.9);
@@ -1656,21 +1657,28 @@
     linear-gradient(-45deg, transparent 75%, rgba(65,119,164,.08) 75%);
   background-size: calc(28px * var(--drop-inv, 1)) calc(28px * var(--drop-inv, 1));
   background-position: 0 0, 0 calc(14px * var(--drop-inv, 1)), calc(14px * var(--drop-inv, 1)) calc(-14px * var(--drop-inv, 1)), calc(-14px * var(--drop-inv, 1)) 0; }
-.image-drop-guide-content { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 190px;
-  padding: 14px 18px; border-radius: 14px; text-align: center; background: rgba(255,255,255,.94);
+.image-drop-guide-arrow { position: absolute; top: 10%; z-index: 1; font-size: 24px; font-weight: 800;
+  transform: rotate(var(--drop-counter-rotate)) scale(var(--drop-inv, 1)); transform-origin: center;
+  animation: image-drop-arrow .65s ease-in-out infinite alternate; }
+.image-drop-guide-content { display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 9px 10px; border-radius: 12px; text-align: center; background: rgba(255,255,255,.96); box-sizing: border-box;
   box-shadow: 0 8px 24px rgba(23,76,120,.13), inset 0 0 0 1px rgba(47,127,196,.16);
-  transform: scale(var(--drop-inv, 1)); transform-origin: center; }
-.image-drop-guide-icon { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 13px;
+  transform: rotate(var(--drop-counter-rotate)) scale(var(--drop-inv, 1)); transform-origin: center; }
+.image-drop-guide-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px;
   background: #eaf5ff; box-shadow: inset 0 0 0 1px rgba(47,127,196,.16); }
-.image-drop-guide-content strong { font-size: 15px; line-height: 1.3; letter-spacing: -.02em; }
+.image-drop-guide-content strong { font-size: 13px; line-height: 1.25; letter-spacing: -.02em; }
 .image-drop-guide-content > span:last-child { font-size: 11px; line-height: 1.35; color: #667887; }
+.image-drop-guide-content.compact { flex-direction: row; justify-content: center; padding: 7px 8px; }
+.image-drop-guide-content.compact .image-drop-guide-icon { width: 26px; height: 26px; border-radius: 8px; flex: none; }
+@keyframes image-drop-target-pulse { from { filter: brightness(1); } to { filter: brightness(1.04); } }
+@keyframes image-drop-arrow { from { translate: 0 -3px; opacity: .65; } to { translate: 0 3px; opacity: 1; } }
 .el-slot .slot-add { transform-origin: center; display: inline-flex; flex-direction: column; align-items: center; gap: 6px;
   border: 0; background: transparent; color: var(--fg-2); font-size: 14px; font-weight: 500; cursor: pointer; }
 .el-slot .slot-add:hover { color: var(--link); }
 
 /* External file import feedback stays at the exact drop target. It is local to
    the frame/block so the rest of the editor remains usable during conversion. */
-.ed-uploadwait { position: absolute; z-index: 7; display: grid; place-items: center; overflow: hidden;
+.ed-uploadwait { position: absolute; z-index: 7; display: grid; place-items: center; overflow: hidden; transform-origin: center;
   background: rgba(247,248,249,.96); color: var(--fg-1); cursor: wait;
   box-shadow: inset 0 0 0 2px rgba(45,127,196,.72), 0 8px 24px rgba(14,13,20,.08);
   transition: left .2s ease, top .2s ease, width .2s ease, height .2s ease, background .18s ease, box-shadow .18s ease; }
@@ -1690,13 +1698,16 @@
 .ed-uploadwait.error .ed-uploadwait-icon { color: #b44655; box-shadow: 0 0 0 1px rgba(180,70,85,.2); }
 .ed-uploadwait-content strong { font-size: 17px; font-weight: 700; letter-spacing: -.02em; }
 .ed-uploadwait-content > span:not(.ed-uploadwait-icon):not(.ed-uploadwait-track) { font-size: 12px; color: var(--fg-2); }
+.ed-uploadwait-content.compact { gap: 5px; }
+.ed-uploadwait-content.compact .ed-uploadwait-icon { width: 30px; height: 30px; }
+.ed-uploadwait-content.compact strong { font-size: 13px; line-height: 1.25; }
 .ed-uploadwait-track { width: min(150px, 100%); height: 3px; margin-top: 3px; overflow: hidden;
   border-radius: 999px; background: rgba(45,127,196,.14); }
 .ed-uploadwait-track i { display: block; width: 42%; height: 100%; border-radius: inherit; background: #2d7fc4;
   animation: ed-uploadwait-progress 1.1s ease-in-out infinite; }
 @keyframes ed-uploadwait-progress { 0% { transform: translateX(-110%); } 100% { transform: translateX(250%); } }
 @media (prefers-reduced-motion: reduce) {
-  .ed-uploadwait-shim, .ed-uploadwait-track i { animation: none !important; }
+  .el.image-drop-over, .el-slot.image-drop-over, .image-drop-guide-arrow, .ed-uploadwait-shim, .ed-uploadwait-track i { animation: none !important; }
   .ed-uploadwait-track i { width: 100%; opacity: .45; }
 }
 

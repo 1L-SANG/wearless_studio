@@ -271,10 +271,12 @@ export async function uploadPhoto(
     error.status = put.status;
     throw error;
   }
-  const asset = await http(`/v1/assets/${assetId}/complete`, {
+  await http(`/v1/assets/${assetId}/complete`, {
     method: 'POST', body: { projectId, mime, filename, purpose }, signal,
   });
-  return { assetId, url: asset.url };
+  // complete 응답의 R2 URL은 배포 설정에 따라 만료되는 서명 URL일 수 있다. 에디터 문서에는
+  // 현재 R2 위치로 매번 리다이렉트하는 앱의 안정 에셋 경로를 저장해야 재접속 후에도 보인다.
+  return { assetId, url: absolutizeAssetUrls(`/v1/assets/${assetId}/file`) };
 }
 
 // ---- 매칭 의류 / analysis (US-4) --------------------------------------------
