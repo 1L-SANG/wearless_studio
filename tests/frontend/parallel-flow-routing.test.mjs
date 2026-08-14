@@ -158,9 +158,10 @@ test('the mannequin CTA cannot mistake a failed storyboard fetch for zero AI cut
   // 소비 직전 CTA 가 '0 크레딧'(=무료로 읽힘)을 보여줄 수 있다. null 로 남겨 구분한다.
   assert.doesNotMatch(mannequinSource, /getStoryboard\(pid\)\.catch\(\(\) => \[\]\)/);
   assert.match(mannequinSource, /getStoryboard\(pid\)\.catch\(\(\) => null\)/);
+  // 크레딧 견적은 실제 생성 수(복제 접기) — 실패는 여전히 null 로 구분한다(ADR-0011).
   assert.match(
     mannequinSource,
-    /setAiCutCount\(Array\.isArray\(nextStoryboard\) \? nextStoryboard\.filter\(\(b\) => b\.source !== 'mine'\)\.length : null\)/,
+    /setAiCutCount\(Array\.isArray\(nextStoryboard\) \? uniqueGenerationCutCount\(nextStoryboard\) : null\)/,
   );
   // 조회 실패를 0원으로 표시하지 않으면서, 정상 조회된 컷 수에는 단가를 곱해 CTA에 보여준다.
   assert.match(

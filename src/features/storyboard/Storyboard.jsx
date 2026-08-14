@@ -63,6 +63,7 @@ import {
   stripHookFrameFields,
 } from '@/lib/storyboardHookFrame.js';
 import { shuffleSectionExamples } from '@/lib/storyboardExampleShuffle.js';
+import { uniqueGenerationCutCount } from '@/lib/generationCutCount.js';
 import { genderForClothingType } from '@/lib/productGender.js';
 import {
   detachSpaceMembership,
@@ -3344,7 +3345,7 @@ export function Storyboard() {
           <div className="sb-ab-count">
             AI 생성 {aiCount}컷 · 셀러 사진 {mineCount}컷
           </div>
-          <span className="sb-ab-cost">생성 {aiCount * (catalogs.creditCosts?.storyboardPerCut ?? 1)} 크레딧</span>
+          <span className="sb-ab-cost">생성 {uniqueGenerationCutCount(blocks) * (catalogs.creditCosts?.storyboardPerCut ?? 1)} 크레딧</span>
           <div className="sb-ab-copy">
             <Toggle on={copyOn} onChange={onCopywritingChange} label="카피라이팅" />
             <div><div className="sec-title" style={{ fontSize: 14 }}>카피라이팅 {copyOn ? 'ON' : 'OFF'}</div>

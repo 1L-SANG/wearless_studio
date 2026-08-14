@@ -31,6 +31,7 @@ import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 import { migrateLegacyEntryStylingRuns } from '@/lib/storyboardEntryPlacement.js';
 import { deriveHookFrame } from '@/lib/storyboardHookFrame.js';
 import { applySeededHookStyle } from '@/lib/api/shapes.js';
+import { uniqueGenerationCutCount } from '@/lib/generationCutCount.js';
 import { createDraftSlotMemory } from './draftSlotMemory.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -617,7 +618,8 @@ export const api = {
       if (DB.project.id !== ownerId) return { data: [], credits: DB.account.credits };
       DB.editorBlocks = buildEditorBlocksFromStoryboard(DB.storyboard, DB.product, DB.project.copywriting, DB.analysis);
       DB.project.status = 'done'; touch();
-      const aiCuts = DB.storyboard.filter((b) => b.source !== 'mine').length;
+      // 실서버와 동일: 동일 설정 복제 컷은 1장만 생성 — 청구도 실제 생성 수 기준(ADR-0011).
+      const aiCuts = uniqueGenerationCutCount(DB.storyboard);
       return { data: clone(DB.editorBlocks), credits: spend(CREDIT_COSTS.storyboardPerCut * aiCuts) };
     })());
     job.listeners.push({ onProgress, onStep });

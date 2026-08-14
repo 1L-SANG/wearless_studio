@@ -8,6 +8,7 @@
    ============================================================= */
 
 import { assignGenerationExamples } from './generationExamples.js';
+import { entryStylingMembers } from './storyboardEntryPlacement.js';
 import { clearExampleSelection } from './storyboardExampleStaleness.js';
 import { groupConsecutiveSpaceRuns, replaceSpaceSetRun } from './storyboardSpaceSets.js';
 import {
@@ -52,6 +53,15 @@ export function shuffleSectionExamples(blocks, {
   let next = list;
 
   // ① 공간 세트 — 세트 단위 교체(같은 성별·의류 종류·세트 타입의 다른 발행 세트로).
+  // 교체는 **기존 run 크기를 유지**한다: 엔트리 시드가 스타일링 세트를 2멤버만 깔았는데
+  // 카탈로그 멤버 전부(3+)를 넣으면 셔플 한 번에 컷·크레딧이 늘어난다(Codex PR#142 리뷰).
+  const replacementMembers = (set, count) => {
+    const ordered = [...(set.members || [])].sort((left, right) => left.order - right.order);
+    if (set.setType !== 'styling') return ordered.slice(0, count);
+    const entry = entryStylingMembers(set);
+    const rest = ordered.filter((member) => !entry.includes(member));
+    return [...entry, ...rest].slice(0, count);
+  };
   for (const run of autoSetRuns(next, sectionId)) {
     if (onlySpaceGroupId && run.spaceGroupId !== onlySpaceGroupId) continue;
     const current = inferStoryboardSpaceSet(run.spaceGroupId);
@@ -65,6 +75,7 @@ export function shuffleSectionExamples(blocks, {
     next = replaceSpaceSetRun(next, run.spaceGroupId, set, {
       spaceGroupId: spaceSetGroupId(set.id, uid ? uid('sg') : `shuffle-${rotation}`),
       setSelectionOrigin: 'auto',
+      members: replacementMembers(set, run.items.length),
     });
   }
 
