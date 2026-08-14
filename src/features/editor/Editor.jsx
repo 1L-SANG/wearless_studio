@@ -218,11 +218,6 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       onSelectBlock();
       return;
     }
-    // 캔버스 요소를 누른 채 포인터를 옮길 때 브라우저가 이미지 DOM 자체를
-    // 범위 선택하면, 에디터 선택과 무관하게 여러 사진에 파란 오버레이가 남는다.
-    // 인라인 글자 편집은 이 경로를 타지 않으므로 캔버스 선택의 기본 동작만 막는다.
-    e.preventDefault();
-    window.getSelection?.()?.removeAllRanges();
     e.stopPropagation();
     // 직접 만든 일반 글자는 마퀴 다중선택 상태여도 자기 레이어만 잡는다.
     // 오브젝트 라이브러리의 글자는 아래 완성형 그룹 이동 경로를 사용한다.
@@ -230,6 +225,8 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       // 드래그 임계값(4px)에 도달하기 전에 브라우저의 네이티브 글자 선택이 먼저
       // 시작되면 같은 동작이 될 때도, 안 될 때도 있었다. 편집 진입은 더블클릭이
       // 담당하므로 일반 선택 상태에서는 기본 글자 선택을 즉시 막는다.
+      e.preventDefault();
+      window.getSelection?.()?.removeAllRanges();
       deferredPick.current = false;
       onSelect(el, false);
       onTextDragStart?.(e, el);
@@ -1506,9 +1503,9 @@ export function Editor() {
   };
   // fresh = 새로 생성된 컷의 4색 glow 하이라이트 — 사용자가 본 뒤(애니메이션 종료) 해제
   const freshSeen = (id) => setWardrobe((w) => { const nw = {}; for (const [g, arr] of Object.entries(w)) nw[g] = arr.map((x) => x.id === id && x.fresh ? { ...x, fresh: false } : x); return nw; });
-  const wardrobeImageInUse = useCallback((image) => (
+  const wardrobeImageInUse = (image) => (
     isWardrobeImageUsed(latestBlocks.current || blocks, image)
-  ), [blocks]);
+  );
   const deleteWardrobeImage = (image) => {
     if (wardrobeImageInUse(image)) {
       toast.push('현재 에디팅에 사용 중인 사진은 삭제할 수 없어요', { icon: 'alertTri' });

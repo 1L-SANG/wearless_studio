@@ -165,14 +165,20 @@ test('auto-height text expands its pointer target without covering adjacent tabl
   assert.match(editorStylesSource, /bottom: calc\(-3px \* var\(--canvas-inv, 1\)\)/);
 });
 
-test('canvas element drags cannot fall through to native browser image or text selection', () => {
+test('canvas blocks native image ranges without cancelling ordinary element pointer gestures', () => {
   const elementPick = editorSource.slice(
     editorSource.indexOf('const pick = (e) => {'),
     editorSource.indexOf('const finishClick = (e) => {'),
   );
+  const beforeTextDrag = elementPick.slice(0, elementPick.indexOf('if (shouldStartTextOnlyDrag(el, e.shiftKey))'));
+  const textDragPick = elementPick.slice(
+    elementPick.indexOf('if (shouldStartTextOnlyDrag(el, e.shiftKey))'),
+    elementPick.indexOf('// 처음 누른 완성형 오브젝트'),
+  );
 
-  assert.match(elementPick, /e\.preventDefault\(\)/);
-  assert.match(elementPick, /window\.getSelection\?\.\(\)\?\.removeAllRanges\(\)/);
+  assert.doesNotMatch(beforeTextDrag, /e\.preventDefault\(\)/);
+  assert.match(textDragPick, /e\.preventDefault\(\)/);
+  assert.match(textDragPick, /window\.getSelection\?\.\(\)\?\.removeAllRanges\(\)/);
   assert.match(editorStylesSource, /\.ed-canvas\s*\{[^}]*user-select:\s*none[^}]*-webkit-user-select:\s*none/s);
   assert.match(editorStylesSource, /\.el-text:not\(\.editing\)\s*\{[^}]*user-select:\s*none[^}]*touch-action:\s*none/s);
   assert.match(editorStylesSource, /\.el-text\.editing\s*\{[^}]*user-select:\s*text[^}]*touch-action:\s*auto/s);

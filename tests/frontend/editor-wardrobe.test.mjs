@@ -137,6 +137,15 @@ test('wardrobe uses direct trash actions and blocks deletion for photos used in 
   assert.match(editorSource, /현재 에디팅에 사용 중인 사진은 삭제할 수 없어요/);
 });
 
+test('editor loading renders never gain an extra hook after data arrives', () => {
+  const loadingReturn = editorSource.indexOf('if (!blocks || !catalogs) return');
+  assert.ok(loadingReturn > 0);
+  assert.doesNotMatch(
+    editorSource.slice(loadingReturn),
+    /\buse(?:State|Effect|LayoutEffect|Memo|Callback|Ref|Context|Reducer)\s*\(/,
+  );
+});
+
 test('direct wardrobe uploads keep the wardrobe tab and expose their loading state', () => {
   const insertImage = editorSource.slice(
     editorSource.indexOf('const insertImage ='),
