@@ -1084,6 +1084,7 @@ export function ProductInput() {
       <div className="sec-head">
         <div><div className="sec-title">상품명</div></div>
       </div>
+      <div className="sec-sub" style={{ marginTop: -6, marginBottom: 12 }}>안 쓰시면 AI가 알아서 작성해요.</div>
       <input className="field" value={product.name} placeholder="예: 소프트 골지 라운드 니트"
         disabled={phase === 'analyzing'} onChange={(e) => {
           const name = e.target.value;
