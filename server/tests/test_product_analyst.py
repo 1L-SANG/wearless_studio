@@ -338,3 +338,18 @@ def test_build_prompt_declares_clothing_type_decision_order():
     assert dress_at < outer_at, "dress 판정이 shirt→outer 보다 먼저여야 한다"
     assert "CHOOSE\n     DRESS" in p or "CHOOSE DRESS" in p, "top↔dress 동점 타이브레이크"
     assert "is outer" in p, "셔츠형은 outer (오너 결정 2026-08-14)"
+
+
+def test_shirt_material_presets_agree_across_top_and_outer():
+    """셔츠 원단 후보는 종류 판정과 무관해야 한다.
+
+    materialPresetIndex 는 **행 상대값**이라, 같은 셔츠가 top 이냐 outer 냐에 따라 같은 번호가
+    다른 조성으로 풀린다. 2026-08-14 실측: 셔츠류를 outer 로 고정하자 체크셔츠의 조성이
+    면60/폴리40 → 폴리100, 면55/린넨45 → 면100 으로 바뀌었다(같은 사진, 규칙만 다름).
+    두 행의 앞부분을 같게 두면 종류가 흔들려도 조성은 안 흔들린다.
+    """
+    top = pa.MATERIAL_PRESETS[("top", "shirt")]
+    outer = pa.MATERIAL_PRESETS[("outer", "shirt")]
+    assert len(outer) >= len(top)
+    for i, (t, o) in enumerate(zip(top, outer)):
+        assert t["mix"] == o["mix"], f"셔츠 프리셋 {i}번이 top/outer 에서 다르다"
