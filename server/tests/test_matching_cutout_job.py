@@ -43,13 +43,25 @@ def _run(app, job_dict):
     return asyncio.run(job.run_matching_cutout_job(app, job_dict))
 
 
-def test_worker_cutouts_each_source_and_swaps_assets(monkeypatch):
+def _cut_png(size=(30, 40)):
     import io
     from PIL import Image
-    # 투명 컷아웃 PNG 하나를 SAM 결과 R2 객체로 돌려준다
-    rgba = Image.new("RGBA", (30, 40), (10, 120, 200, 255))
-    buf = io.BytesIO(); rgba.save(buf, "PNG"); cut_png = buf.getvalue()
+    rgba = Image.new("RGBA", size, (10, 120, 200, 255))
+    buf = io.BytesIO(); rgba.save(buf, "PNG"); return buf.getvalue()
 
+
+class _Conn:
+    async def __aenter__(self): return self
+    async def __aexit__(self, *a): return False
+    async def commit(self): pass
+
+
+class _Pool:
+    def connection(self): return _Conn()
+
+
+def _wire_worker(monkeypatch, *, r2=None, cut_png=None):
+    """워커의 DB·SAM 경계를 전부 가짜로 잡고 호출 기록을 돌려준다."""
     calls = {"segment": [], "swap": None, "finalize": None, "assets": []}
 
     async def fake_segment(settings, views):
@@ -78,37 +90,105 @@ def test_worker_cutouts_each_source_and_swaps_assets(monkeypatch):
     monkeypatch.setattr(job.repo, "create_asset", fake_create_asset)
 
     async def fake_finalize(conn, *, job_id, lease_token, status, result):
-        calls["finalize"] = (status, result.get("state"))
+        calls["finalize"] = (status, result)
 
     monkeypatch.setattr(job.repo, "finalize_uncharged_job", fake_finalize)
 
-    # DB 커넥션·이벤트는 no-op
-    class _Conn:
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def commit(self): pass
-    class _Pool:
-        def connection(self): return _Conn()
-    r2 = _FakeR2(cut_png)
+    r2 = r2 or _FakeR2(cut_png if cut_png is not None else _cut_png())
     app = types.SimpleNamespace(state=types.SimpleNamespace(
         settings=_settings(), pool=_Pool(), r2=r2))
-    job_dict = {"id": "j1", "project_id": "p1", "user_id": "u1", "lease_token": "lt",
-                "payload": {"matchingItemId": "custom_x",
-                            "sourceAssetIds": ["a1", "a2"],
-                            "sourceKeys": ["users/u/projects/p/uploads/a1.jpg",
-                                           "users/u/projects/p/uploads/a2.jpg"]}}
-    _run(app, job_dict)
+    return app, r2, calls
+
+
+def _job_dict(**payload_over):
+    payload = {"matchingItemId": "custom_x",
+               "sourceAssetIds": ["a1", "a2"],
+               "gridAssetId": "old-grid",
+               "sourceKeys": ["users/u/projects/p/uploads/a1.jpg",
+                              "users/u/projects/p/uploads/a2.jpg"]}
+    payload.update(payload_over)
+    return {"id": "j1", "project_id": "p1", "user_id": "u1", "lease_token": "lt",
+            "payload": payload}
+
+
+def test_worker_cutouts_each_source_and_swaps_assets(monkeypatch):
+    app, r2, calls = _wire_worker(monkeypatch)
+    _run(app, _job_dict())
 
     assert len(calls["segment"]) == 2, "원본 2장 각각 누끼"
     assert all("Front" in v for v in calls["segment"]), "view=Front 로 우회"
     assert calls["swap"] is not None, "asset 스왑됨"
-    assert calls["finalize"][0] == "done" and calls["finalize"][1] == "ready"
-    # 회색배경 합성본 + grid = R2 put 최소 3회(장2 + grid1)
-    assert len(r2.puts) >= 3
+    assert calls["finalize"][0] == "done" and calls["finalize"][1]["state"] == "ready"
+    # 저장하는 건 카드용 썸네일 + grid 둘뿐이다 — 원본 해상도 컷은 grid 입력으로만 쓴다(I6).
+    assert [mime for _key, _data, mime in r2.puts] == ["image/jpeg", "image/jpeg"]
+    thumb_asset_id, grid_asset_id = calls["swap"][1], calls["swap"][2]
+    meta = {a["asset_id"]: a["metadata"] for a in calls["assets"]}
+    assert set(meta) == {thumb_asset_id, grid_asset_id}
     # grid(=image_asset_id) 는 매칭 컷아웃 메타데이터가 붙어야 Task 5 가 ready 를 읽는다
-    grid_asset_id = calls["swap"][2]
-    grid_meta = next(a["metadata"] for a in calls["assets"] if a["asset_id"] == grid_asset_id)
-    assert grid_meta is not None and grid_meta.get("type") == "matchingCutout"
+    assert meta[grid_asset_id].get("type") == "matchingCutout"
+    # I4 — 삭제 경로가 읽는 정리 손잡이(purpose + 원본 id 이월)
+    assert meta[grid_asset_id]["purpose"] == "custom_match_grid"
+    assert meta[grid_asset_id]["sourceAssetIds"] == ["a1", "a2", "old-grid"]
+    assert meta[thumb_asset_id]["purpose"] == "custom_match_cutout"
+    # I5 — provenance 가 비어 있지 않고 자기 자신을 가리키지 않는다
+    assert meta[grid_asset_id]["sourceHash"]
+    assert meta[grid_asset_id]["sourceAssetId"] != grid_asset_id
+
+
+def test_worker_derived_identity_is_stable_across_reruns(monkeypatch):
+    # 리뷰 I5 — stale lease 회수로 같은 잡이 다시 돌아도 R2 객체·asset 행이 늘지 않는다.
+    first_app, first_r2, first_calls = _wire_worker(monkeypatch)
+    _run(first_app, _job_dict())
+    second_app, second_r2, second_calls = _wire_worker(monkeypatch)
+    _run(second_app, _job_dict())
+
+    assert first_calls["swap"] == second_calls["swap"]
+    assert [key for key, _d, _m in first_r2.puts] == [key for key, _d, _m in second_r2.puts]
+    assert len({a["asset_id"] for a in first_calls["assets"]}) == 2
+
+
+def test_worker_fails_open_on_any_unexpected_error(monkeypatch):
+    # 리뷰 I2 — SamUnavailable 아닌 예외(R2·PIL·DB)도 잡을 종결시켜야 한다. 안 그러면
+    # 잡이 running 으로 고착돼 카드가 최대 30분 스켈레톤에 갇힌다.
+    class _BoomR2(_FakeR2):
+        def get_bytes(self, key):
+            raise RuntimeError("r2 down")
+
+    app, _r2, calls = _wire_worker(monkeypatch, r2=_BoomR2(_cut_png()))
+    _run(app, _job_dict())
+
+    assert calls["swap"] is None, "실패 시 스왑 안 함 = 원본 유지"
+    assert calls["finalize"][0] == "done", "잡은 반드시 종결된다"
+    assert calls["finalize"][1]["state"] == "failed"
+    assert calls["finalize"][1]["error"] == "RuntimeError"
+
+
+def test_worker_fails_open_when_asset_swap_raises(monkeypatch):
+    app, _r2, calls = _wire_worker(monkeypatch)
+
+    async def boom_swap(conn, **kwargs):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(job.repo, "swap_matching_item_assets", boom_swap)
+    _run(app, _job_dict())
+
+    assert calls["finalize"][0] == "done"
+    assert calls["finalize"][1]["state"] == "failed"
+
+
+def test_worker_marks_failed_when_sam_has_no_cutout(monkeypatch):
+    app, _r2, calls = _wire_worker(monkeypatch)
+
+    async def not_ready(settings, views):
+        (v, _k), = views.items()
+        return {v: SamViewResult(view=v, ready=False)}
+
+    monkeypatch.setattr(job.sam_client, "segment_garment", not_ready)
+    _run(app, _job_dict())
+
+    assert calls["swap"] is None
+    assert calls["finalize"] == ("done", {"state": "failed", "reason": "no_cutout",
+                                          "matchingItemId": "custom_x"})
 
 
 def test_worker_skips_when_flag_off(monkeypatch):
