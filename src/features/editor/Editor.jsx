@@ -351,15 +351,18 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     }
     if (!el.src) {
       const inv = 1 / (scale || 1);
+      const compactSlot = Math.min(el.w * (scale || 1), el.h * (scale || 1)) < 120;
       // 빈 슬롯도 radius 를 따른다 — 특징 포인트의 원형 사진 슬롯이 원으로 보이게
       const slotBase = { ...base, borderRadius: el.radius, ...imageFrameStyle };
       if (preview) return <div className="el el-slot" style={slotBase} />;
       return (
         <div {...common} {...imageDropProps} className={cls(`el-slot${el.checkerboard ? ' checkerboard' : ''}${imageDropOver ? ' image-drop-over' : ''}`)} style={slotBase}>
-          <button className="slot-add" style={{ transform: `scale(${inv})` }}
+          <button className={`slot-add${compactSlot ? ' compact' : ''}`} style={{ transform: `scale(${inv})` }}
+            aria-label="이 프레임에 사진 넣기" title="이 프레임에 사진 넣기"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); onAddImage && onAddImage(el); }}>
-            <Icon name="plus" size={20} /><span>이미지 추가</span>
+            <Icon name="imagePlus" size={compactSlot ? 22 : 28} />
+            {!compactSlot && <span>여기에 사진 넣기</span>}
           </button>
           {imageDropOver && <ImageDropGuide scale={scale} filled={false} width={el.w} height={el.h} rotate={el.rotate} />}
         </div>

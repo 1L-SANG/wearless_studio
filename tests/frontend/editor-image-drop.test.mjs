@@ -122,6 +122,13 @@ test('image frames show an exact placement guide for wardrobe and external file 
   assert.match(stylesSource, /animation:\s*image-drop-target-pulse/);
 });
 
+test('empty template frames always label the exact place where a photo goes', () => {
+  assert.match(editorSource, /aria-label="이 프레임에 사진 넣기"/);
+  assert.match(editorSource, /<Icon name="imagePlus" size=\{compactSlot \? 22 : 28\}/);
+  assert.match(editorSource, /!compactSlot && <span>여기에 사진 넣기<\/span>/);
+  assert.match(stylesSource, /\.el-slot\.checkerboard\s*\{[^}]*background-image:\s*linear-gradient/s);
+});
+
 test('an image import placeholder immediately occupies the exact target frame', () => {
   const elements = [
     { id: 'empty', type: 'image', src: null, frameSlot: true, x: 360, y: 40, w: 300, h: 220, radius: 18 },

@@ -24,6 +24,12 @@ const templatePhoto = (x, y, w, h, options = {}) => ({
   ...(options.rotate ? { rotate: options.rotate } : {}),
   ...(options.fit ? { fit: options.fit } : {}),
 });
+const templateArtwork = (x, y, w, h, src, options = {}) => ({
+  type: 'image', x, y, w, h, src, frameSlot: false, checkerboard: false,
+  radius: options.radius || 0,
+  ...(options.rotate ? { rotate: options.rotate } : {}),
+  ...(options.fit ? { fit: options.fit } : { fit: 'contain' }),
+});
 const templateText = (x, y, w, h, value, style = {}) => ({
   type: 'text', x, y, w, h, text: value, fullTextHitArea: true,
   style: {
@@ -190,7 +196,7 @@ export const FRAME_LIBRARY_ITEMS = [
       templateText(280, 190, 440, 55, '사이즈 안내', { size: 34, color: '#78afe8', align: 'center' }),
       templateShape(260, 320, 480, 74, '#000000', { radius: 37 }),
       templateText(305, 338, 390, 40, '안내 내용을 적어주세요.', { size: 28, weight: 700, color: '#ffffff', align: 'center' }),
-      templatePhoto(300, 450, 400, 500, { example: templateExample(7), fit: 'contain' }),
+      templateArtwork(300, 450, 400, 500, templateExample(7)),
       ...[1050, 1125, 1200, 1275, 1350].map((y) => templateLine(105, y, 790, { stroke: '#111111', strokeWidth: 2 })),
       ...['사이즈', '엉덩이 단면', '허리 단면', '밑위 길이', '총기장'].map((label, index) => (
         templateText(90 + index * 180, 1005, 180, 40, label, { size: 23, weight: 700, align: 'center' })
@@ -207,7 +213,7 @@ export const FRAME_LIBRARY_ITEMS = [
       templateText(280, 185, 440, 55, '사이즈 안내', { size: 34, color: '#78afe8', align: 'center' }),
       templateShape(250, 315, 500, 74, '#000000', { radius: 37 }),
       templateText(305, 333, 390, 40, '안내 내용을 적어주세요.', { size: 28, weight: 700, color: '#ffffff', align: 'center' }),
-      templatePhoto(285, 445, 430, 510, { example: templateExample(8), fit: 'contain' }),
+      templateArtwork(285, 445, 430, 510, templateExample(8)),
       templateText(145, 1000, 710, 82, '윗가슴둘레와 밑가슴둘레를 수평으로 측정해 주세요.\n컵 사이즈 = 윗가슴둘레 - 밑가슴둘레', { size: 24, lineHeight: 38, align: 'center' }),
       templateShape(95, 1120, 810, 78, '#f8f8f8'),
       templateText(170, 1140, 660, 40, '컵 사이즈 = 윗가슴 둘레 - 밑가슴 둘레', { size: 29, weight: 700, color: '#78afe8', align: 'center' }),
@@ -332,16 +338,16 @@ export const FRAME_LIBRARY_ITEMS = [
   }),
   kiwiTemplate({
     id: '17', label: '픽셀 할인 쿠폰', h: 782, bg: '#fff51d', preview: templatePreview(17), elements: [
-      templateText(290, 130, 420, 54, '구매고객 전용', { size: 42, align: 'center' }),
+      templateText(290, 132, 420, 54, '구매고객 전용', { size: 42, align: 'center' }),
       templateText(210, 195, 580, 82, '10% 할인 쿠폰', { size: 64, weight: 700, align: 'center' }),
-      templateShape(205, 337, 590, 285, '#000000'),
-      templateShape(180, 365, 50, 80, '#000000'),
-      templateShape(770, 365, 50, 80, '#000000'),
-      templateShape(205, 470, 50, 84, '#000000'),
-      templateShape(745, 470, 50, 84, '#000000'),
-      templateText(315, 395, 390, 135, '10%', { size: 116, weight: 700, color: '#ffffff', align: 'center' }),
-      templateShape(695, 500, 180, 180, '#fff51d', { shape: 'circle', stroke: '#000000', strokeWidth: 6 }),
-      templateText(730, 535, 110, 100, 'P', { size: 88, weight: 700, align: 'center' }),
+      templateShape(220, 307, 570, 313, '#000000'),
+      templateShape(182, 337, 638, 82, '#000000'),
+      templateShape(205, 419, 590, 51, '#000000'),
+      templateShape(182, 470, 638, 124, '#000000'),
+      templateText(305, 395, 310, 130, '30', { font: 'Roboto Mono', size: 120, weight: 900, color: '#ffffff', align: 'center' }),
+      templateText(590, 438, 105, 82, '%', { font: 'Roboto Mono', size: 68, weight: 900, color: '#ffffff', align: 'center' }),
+      templateShape(695, 470, 190, 190, '#fff51d', { shape: 'circle', stroke: '#000000', strokeWidth: 7 }),
+      templateText(735, 512, 110, 108, 'P', { font: 'Roboto Mono', size: 92, weight: 700, align: 'center' }),
     ],
   }),
   kiwiTemplate({
@@ -453,19 +459,24 @@ export function buildFrameBlock(frameOrId, idFn) {
     bg: definition.bg || '#ffffff',
     bgOpacity: 1,
     h: definition.h,
-    elements: sourceElements.map((item) => ({
-      id: idFn('el'),
-      ...item,
-      x: item.x,
-      y: item.y,
-      w: item.w,
-      h: item.h,
-      ...(item.type === 'image' ? {
-        src: item.src || null,
-        radius: item.radius ?? 10,
-        frameSlot: Boolean(item.frameSlot),
-      } : {}),
-    })),
+    elements: sourceElements.map((item) => {
+      const element = {
+        id: idFn('el'),
+        ...item,
+        x: item.x,
+        y: item.y,
+        w: item.w,
+        h: item.h,
+        ...(item.type === 'image' ? {
+          src: item.src || null,
+          radius: item.radius ?? 10,
+          frameSlot: Boolean(item.frameSlot),
+        } : {}),
+      };
+      if (!definition.template || element.type !== 'image' || !element.frameSlot) return element;
+      const { exampleImage: _exampleImage, ...emptyFrame } = element;
+      return { ...emptyFrame, src: null };
+    }),
   };
 }
 

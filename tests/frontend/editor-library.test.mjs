@@ -40,13 +40,13 @@ test('the recommended frame catalog contains the six common layouts', () => {
 test('every frame builds replaceable image slots inside the 1000px canvas', () => {
   for (const frame of FRAME_LIBRARY_ITEMS) {
     const block = buildFrameBlock(frame.id, seqId());
-    const imageSlots = block.elements.filter((element) => element.type === 'image');
+    const imageSlots = block.elements.filter((element) => element.type === 'image' && element.frameSlot);
     assert.equal(imageSlots.length, frame.slots.length, frame.id);
     assert.equal(block.bgOpacity, 1);
     for (const element of imageSlots) {
       assert.equal(element.type, 'image');
-      if (element.exampleImage) assert.match(element.src, /^\//);
-      else assert.equal(element.src, null);
+      assert.equal(element.src, null, `${frame.id}: inserted frames start empty`);
+      assert.equal(element.exampleImage, undefined, `${frame.id}: catalog examples never flatten into the canvas`);
       assert.equal(element.frameSlot, true);
       assert.ok(element.x >= 0 && element.y >= 0);
       assert.ok(element.x + element.w <= 1000, `${frame.id}: slot fits horizontally`);
@@ -62,17 +62,17 @@ test('kiwi templates rebuild the references with native editable elements', () =
     'kiwi-10', 'kiwi-11', 'kiwi-12', 'kiwi-13', 'kiwi-14', 'kiwi-15',
     'kiwi-16', 'kiwi-17', 'kiwi-18', 'kiwi-19', 'kiwi-20',
   ]);
-  assert.equal(kiwiFrames.reduce((count, frame) => count + frame.slots.length, 0), 36);
+  assert.equal(kiwiFrames.reduce((count, frame) => count + frame.slots.length, 0), 34);
   const expectedExampleCounts = {
     'kiwi-1': 4, 'kiwi-2': 4, 'kiwi-3': 2, 'kiwi-4': 3, 'kiwi-5': 4,
-    'kiwi-6': 3, 'kiwi-7': 1, 'kiwi-8': 1, 'kiwi-9': 0,
+    'kiwi-6': 3, 'kiwi-7': 0, 'kiwi-8': 0, 'kiwi-9': 0,
     'kiwi-10': 2, 'kiwi-11': 0, 'kiwi-12': 2, 'kiwi-13': 1, 'kiwi-14': 4, 'kiwi-15': 2,
     'kiwi-16': 0, 'kiwi-17': 0, 'kiwi-18': 0, 'kiwi-19': 0, 'kiwi-20': 0,
   };
 
   for (const frame of kiwiFrames) {
     const block = buildFrameBlock(frame, seqId());
-    const imageSlots = block.elements.filter((element) => element.type === 'image');
+    const imageSlots = block.elements.filter((element) => element.type === 'image' && element.frameSlot);
     const overlays = block.elements.filter((element) => element.type === 'template-overlay');
     const editableCopy = block.elements.filter((element) => element.type === 'text');
     assert.equal(overlays.length, 0, `${frame.id}: reference art must not be inserted`);
@@ -83,13 +83,24 @@ test('kiwi templates rebuild the references with native editable elements', () =
     assert.ok(editableCopy.every((element) => element.fullTextHitArea), `${frame.id}: template copy owns its click box`);
     assert.equal(frame.preview, `/assets/editor/kiwi-templates/${frame.id}-preview.jpg`, `${frame.id}: catalog uses its completed JPEG reference`);
     assert.ok(existsSync(new URL(`../../public${frame.preview}`, import.meta.url)), `${frame.id}: catalog preview exists`);
-    const examples = imageSlots.filter((element) => element.exampleImage);
+    assert.ok(imageSlots.every((element) => element.src === null), `${frame.id}: canvas exposes every photo position as an empty frame`);
+    const examples = frame.slots.filter((element) => element.exampleImage);
     assert.equal(examples.length, expectedExampleCounts[frame.id], `${frame.id}: every available JPEG photo is prefilled`);
     const expectedExampleId = frame.id.replace('kiwi-', '');
     for (const example of examples) {
       assert.match(example.src, new RegExp(`/kiwi-${expectedExampleId}(?:-|\\.)`));
       assert.ok(existsSync(new URL(`../../public${example.src}`, import.meta.url)), `${frame.id}: ${example.src} exists`);
     }
+  }
+});
+
+test('size-guide diagrams stay visible artwork instead of pretending to be photo frames', () => {
+  for (const frameId of ['kiwi-7', 'kiwi-8']) {
+    const block = buildFrameBlock(frameId, seqId());
+    const artwork = block.elements.filter((element) => element.type === 'image' && !element.frameSlot);
+    assert.equal(artwork.length, 1, frameId);
+    assert.match(artwork[0].src, new RegExp(`${frameId.replace('kiwi-', 'kiwi-')}\\.jpg$`));
+    assert.equal(artwork[0].fit, 'contain');
   }
 });
 
@@ -100,11 +111,23 @@ test('detail callout circles are native replaceable image slots', () => {
   ));
 
   assert.equal(circles.length, 2);
-  assert.equal(circles.filter((element) => element.exampleImage).length, 2);
-  assert.match(circles[0].src, /kiwi-15\.jpg$/);
-  assert.match(circles[1].src, /kiwi-15-2\.jpg$/);
+  assert.ok(circles.every((element) => element.src === null));
+  assert.ok(circles.every((element) => element.exampleImage === undefined));
   assert.ok(circles.every((element) => element.stroke === '#ffffff'));
   assert.ok(circles.every((element) => element.strokeWidth === 5 && element.dash === 'dashed'));
+});
+
+test('pixel coupon keeps the reference ticket silhouette and editable 30 percent copy', () => {
+  const block = buildFrameBlock('kiwi-17', seqId());
+  const text = block.elements.filter((element) => element.type === 'text');
+  const blackTicketPieces = block.elements.filter((element) => element.type === 'shape' && element.fill === '#000000');
+  const badge = block.elements.find((element) => element.type === 'shape' && element.shape === 'circle');
+
+  assert.equal(blackTicketPieces.length, 4);
+  assert.ok(text.some((element) => element.text === '30' && element.style.font === 'Roboto Mono'));
+  assert.ok(text.some((element) => element.text === '%' && element.style.font === 'Roboto Mono'));
+  assert.ok(text.some((element) => element.text === 'P' && element.style.font === 'Roboto Mono'));
+  assert.deepEqual({ x: badge.x, y: badge.y, w: badge.w, h: badge.h }, { x: 695, y: 470, w: 190, h: 190 });
 });
 
 test('legacy locked Kiwi artwork upgrades to editable elements and keeps filled photos', () => {
