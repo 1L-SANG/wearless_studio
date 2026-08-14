@@ -45,7 +45,9 @@ def _custom_row():
         "thumbnail_asset_id": "00000000-0000-0000-0000-000000000001",
         "image_key": "derived/grid.jpg",
         "thumb_key": "upload/first.png",
-        "image_metadata": {
+        # repo.get_custom_matching_item 이 실제로 돌려주는 키 이름(= 목록 조회와 같은 것).
+        # _matching_item_to_api 와 삭제 정리가 같은 키를 읽어야 한다(2026-08-13 리뷰 M7).
+        "image_meta": {
             "purpose": "custom_match_grid",
             "sourceAssetIds": _asset_ids(2),
         },
@@ -216,6 +218,30 @@ def test_custom_match_post_accepts_one_to_four_images(
     assert body["item"]["fitCategory"] is None
     assert len(r2.puts) == 1
     assert r2.puts[0][2] == "image/jpeg"
+
+
+# 2026-08-13 리뷰 M7 — 등록 응답의 cutoutStatus 가 저장 payload 에 그대로 굳는다.
+# 키 이름이 어긋나 있으면 누끼가 곧 돌 상황에서도 항상 "failed" 로 박혀 버렸다.
+@pytest.mark.parametrize(("flag", "expected"), [("on", "processing"), ("off", "failed")])
+def test_custom_match_post_reports_the_cutout_status_it_is_about_to_start(
+    client, make_token, monkeypatch, flag, expected
+):
+    import dataclasses
+
+    asset_ids = _asset_ids(1)
+    _, state, _ = _patch_post(monkeypatch, asset_ids)
+    client.app.state.settings = dataclasses.replace(
+        client.app.state.settings, matching_cutout=flag
+    )
+
+    response = client.post(
+        "/v1/projects/p1/analysis/custom-match-item",
+        headers=_auth(make_token), json={"assetIds": asset_ids},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["item"]["cutoutStatus"] == expected
+    assert state["payload"]["matchClothing"][0]["cutoutStatus"] == expected
 
 
 def test_custom_match_post_runs_mandatory_qc_in_parallel_threads(
@@ -421,6 +447,66 @@ def test_custom_match_delete_is_locked_atomic_and_idempotent(
     assert remaining == [{"id": "curated-2", "selected": True, "selOrder": 1}]
     assert "matchingFit" not in state["payload"]["fitProfile"]
     assert r2.deletes == ["derived/grid.jpg"]
+
+
+# 2026-08-13 리뷰 I4 — 누끼 스왑 뒤 삭제하면 원본 업로드·원본 grid·파생 컷이 전부
+# 회수돼야 한다. 정리 대상은 오직 "현재 image asset 의 metadata"에서 나온다.
+def test_custom_match_delete_reclaims_originals_after_a_cutout_swap(
+    client, make_token, monkeypatch
+):
+    from app.services import matching_cutout
+
+    uploads = _asset_ids(2)
+    swapped = _custom_row()
+    swapped["image_asset_id"] = "cutout-grid"
+    swapped["thumbnail_asset_id"] = "cutout-thumb"
+    swapped["image_meta"] = matching_cutout.metadata_for(
+        source_hash="fingerprint", source_asset_id="old-grid",
+        matching_item_id=swapped["id"], purpose=matching_cutout.GRID_PURPOSE,
+        source_asset_ids=[*uploads, "old-grid"],
+    )
+    seen = {}
+
+    @contextlib.asynccontextmanager
+    async def fake_conn(_request):
+        yield _Conn([])
+
+    async def lock(conn, user_id, project_id):
+        return True
+
+    async def get_custom(conn, user_id, project_id):
+        return swapped
+
+    async def get_analysis(conn, project_id):
+        return {"matchClothing": []}
+
+    async def noop(*args, **kwargs):
+        return None
+
+    async def save_analysis(conn, project_id, payload):
+        return {"project_id": project_id, "payload": payload}
+
+    async def soft_delete(conn, user_id, project_id, asset_ids):
+        seen["asset_ids"] = asset_ids
+        return []
+
+    monkeypatch.setattr(routes, "get_conn", fake_conn)
+    monkeypatch.setattr(routes, "_r2", lambda request: _R2({}))
+    monkeypatch.setattr(routes.repo, "lock_custom_match_project", lock)
+    monkeypatch.setattr(routes.repo, "get_custom_matching_item", get_custom)
+    monkeypatch.setattr(routes.repo, "get_analysis", get_analysis)
+    monkeypatch.setattr(routes.repo, "delete_custom_matching_item", noop)
+    monkeypatch.setattr(routes.repo, "save_analysis", save_analysis)
+    monkeypatch.setattr(routes.repo, "soft_delete_unreferenced_custom_assets", soft_delete)
+
+    response = client.delete(
+        "/v1/projects/p1/analysis/custom-match-item", headers=_auth(make_token)
+    )
+
+    assert response.status_code == 204
+    assert set(seen["asset_ids"]) == {
+        "cutout-grid", "cutout-thumb", *uploads, "old-grid",
+    }
 
 
 def test_custom_match_delete_collapses_legacy_two_item_selection():

@@ -1141,18 +1141,26 @@ async def match_candidates(
     ])
 
 
-async def _enqueue_matching_cutout(conn, *, user_id, project_id, matching_item_id,
-                                   source_asset_ids, source_keys):
+async def _enqueue_matching_cutout(conn, *, settings, user_id, project_id, matching_item_id,
+                                   source_asset_ids, source_keys, grid_asset_id=None):
     """커스텀 매칭 의류 누끼 잡을 건다. 절대 등록을 막지 않는다.
 
     커밋 뒤에 별도로 돈다 — 큐잉 실패가 방금 성공한 매칭 등록을 되돌리면 본말전도다
     (2026-08-12 sam_preprocess·tone editor 에서 같은 규율).
+
+    플래그가 off 면 완전 no-op 이다. 워커가 어차피 skip 할 잡 행을 쌓지 않고, enqueue 와
+    skip 사이에 match-candidates 가 'processing' 을 돌려 셀러 이미지를 스켈레톤으로
+    가리는 일도 없다(2026-08-13 리뷰 I3). 워커 쪽 플래그 가드는 그대로 둔다 —
+    잡이 큐에 있는 동안 플래그가 내려가는 경우가 남는다.
     """
+    if getattr(settings, "matching_cutout", "off") != "on":
+        return
     try:
         await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="matching_cutout",
             payload={"matchingItemId": matching_item_id,
-                     "sourceAssetIds": source_asset_ids, "sourceKeys": source_keys},
+                     "sourceAssetIds": source_asset_ids, "sourceKeys": source_keys,
+                     "gridAssetId": grid_asset_id},
             idempotency_key=(f"{project_id}:matching_cutout:{matching_item_id}:"
                              f"{matching_cutout.ALGORITHM_VERSION}"),
             credits_reserved=0, metadata={})
@@ -1290,7 +1298,12 @@ async def add_custom_match_item(
                 thumbnail_asset_id=asset_ids[0],
             )
             row = await repo.get_custom_matching_item(conn, user_id, project_id)
-            item = _matching_item_to_api(r2, row, compatible=True)
+            # 커밋 직후 누끼 잡을 건다(아래) — 그래서 이 응답·저장 payload 의
+            # cutoutStatus 는 "곧 도는 잡"을 반영해야 한다. 플래그가 off 면 잡이 아예
+            # 없으므로 조회 경로와 같은 값(원본 표시)으로 굳는다.
+            cutout_enabled = request.app.state.settings.matching_cutout == "on"
+            item = _matching_item_to_api(r2, row, compatible=True,
+                                         has_active_cutout_job=cutout_enabled)
             payload = _analysis_with_added_custom(
                 await repo.get_analysis(conn, project_id) or {}, item
             )
@@ -1298,11 +1311,13 @@ async def add_custom_match_item(
             await conn.commit()
             await _enqueue_matching_cutout(
                 conn,
+                settings=request.app.state.settings,
                 user_id=user_id,
                 project_id=project_id,
                 matching_item_id=row["id"],
                 source_asset_ids=asset_ids,
                 source_keys=[a["r2_key"] for a in assets],
+                grid_asset_id=grid_asset_id,
             )
     except errors.UniqueViolation as exc:
         raise _custom_match_error(
@@ -1334,7 +1349,9 @@ async def remove_custom_match_item(
             raise _not_found()
         item = await repo.get_custom_matching_item(conn, user_id, project_id)
         if item:
-            source_asset_ids = list((item.get("image_metadata") or {}).get("sourceAssetIds") or [])
+            # 누끼 스왑 뒤엔 image asset 이 워커가 만든 파생 grid 다. 그 metadata 가
+            # 원본 업로드·원본 grid id 를 이월해 주므로 정리 대상은 여기서 다 모인다.
+            source_asset_ids = list((item.get("image_meta") or {}).get("sourceAssetIds") or [])
             asset_ids = list(dict.fromkeys([
                 item.get("image_asset_id"), item.get("thumbnail_asset_id"), *source_asset_ids,
             ]))
