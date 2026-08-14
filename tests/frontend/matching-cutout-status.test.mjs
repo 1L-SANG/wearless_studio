@@ -37,6 +37,25 @@ test('폴링 응답이 비정상이면 아무것도 바꾸지 않는다', () => 
   assert.equal(mergeMatchClothing(null, { matchClothing: [] }), null);
 });
 
+// 2026-08-14 재리뷰 I-A — React 상태만 고쳐선 절반이다. refreshMatchClothing 이 모듈
+// 캐시를 서버 응답으로 덮으면, 그 캐시로 full REPLACE payload 를 만드는 saveAnalysis 가
+// 다음 저장에서 서버 값을 옛것으로 되돌린다(폴링 왕복이 자기 GET 보다 늦게 착지한다).
+test('폴링 갱신은 캐시를 베이스로 삼아 저장된 편집을 지운다', () => {
+  const adapter = readFileSync(
+    new URL('../../src/lib/api/httpAdapter.js', import.meta.url), 'utf8',
+  );
+  const fn = adapter.slice(
+    adapter.indexOf('async refreshMatchClothing'),
+    adapter.indexOf('async getAccount'),
+  );
+  assert.match(fn, /const prev = cachedAnalysisFor\(projectId\)/);
+  assert.match(fn, /const analysis = \{ \.\.\.\(prev \|\| saved\), matchClothing \}/);
+  // 서버 응답을 통째로 캐시 베이스로 쓰던 형태가 되살아나지 않게
+  assert.doesNotMatch(fn, /const analysis = \{ \.\.\.saved, matchClothing \}/);
+  // 캐시는 두 왕복이 끝난 뒤에 읽어야 한다 — 먼저 읽으면 같은 창이 다시 열린다
+  assert.ok(fn.indexOf('cachedAnalysisFor') > fn.indexOf('recommendMatchHttp'));
+});
+
 test('누끼 폴링 경로는 전체 치환(applyAnalysisReplacement)을 쓰지 않는다', () => {
   const source = readFileSync(
     new URL('../../src/features/analysis/AnalysisForm.jsx', import.meta.url), 'utf8',
