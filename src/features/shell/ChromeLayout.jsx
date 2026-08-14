@@ -101,7 +101,7 @@ function StoryboardTransitionOverlay() {
   const [visible, setVisible] = useState(true);
 
   useEffect(() => {
-    const timer = setTimeout(() => setVisible(false), 2500);
+    const timer = setTimeout(() => setVisible(false), 4725);  // CSS 5.25s − 음수딜레이 0.525s 와 동기
     return () => clearTimeout(timer);
   }, []);
 
@@ -110,8 +110,9 @@ function StoryboardTransitionOverlay() {
     <button type="button" className="storyboard-transition-overlay"
       aria-label="전환 안내 닫기" onClick={() => setVisible(false)}>
       <span className="storyboard-transition-copy" role="status" aria-live="polite">
-        <strong>마네킹컷을 먼저 만들고 있어요</strong>
-        <small>상세페이지를 구성하는 동안 뒤에서 계속 준비할게요.</small>
+        <img className="transition-brand-logo" src="/assets/brand/logo.svg" alt="" />
+        <strong>의류 구현 진행중<span className="transition-dots" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span></strong>
+        <small>의류의 재현성을 높이기 위해 마네킹 이미지를 생성중이에요.<br />그동안 예시이미지들을 바탕으로 원하는 상세페이지를 구성해보세요.</small>
       </span>
     </button>
   );
@@ -166,7 +167,18 @@ function DetailPageJobRibbon() {
 export function ChromeLayout() {
   const { session } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const { pathname } = location;
+  // 도착 전환은 state 로 한 번만 — 래치에 옮겨 담고 history state 는 즉시 소비한다.
+  // 오버레이 마운트를 state 에 직접 걸면 소비 순간 언마운트되고, 소비를 안 하면
+  // 뒤로가기 재진입마다 4.7초 오버레이가 재생된다(리뷰 P2).
+  const [transitionKey, setTransitionKey] = useState(null);
+  useEffect(() => {
+    if (pathname === '/create/storyboard' && location.state?.showMannequinTransition) {
+      setTransitionKey(location.key);
+      navigate(pathname, { replace: true, state: null });
+    }
+  }, [pathname, location.state, location.key, navigate]);
   const storyboardOwnsEntrance = pathname === '/create/storyboard';
   const loadAccount = useAppStore((s) => s.loadAccount);
   const loadCatalogs = useAppStore((s) => s.loadCatalogs);
@@ -186,8 +198,8 @@ export function ChromeLayout() {
       </div>
       <TopNav />
       <MannequinCompletionToast />
-      {pathname === '/create/storyboard' && location.state?.showMannequinTransition && (
-        <StoryboardTransitionOverlay key={location.key} />
+      {pathname === '/create/storyboard' && transitionKey && (
+        <StoryboardTransitionOverlay key={transitionKey} />
       )}
       {/* 두 잡 리본이 동시에 뜰 수 있다(마네킹+상세페이지) — 각자 sticky top:60px 이면
           서로 겹치므로 스택 컨테이너가 sticky 를 소유하고 리본은 static 으로 쌓는다(codex F8). */}

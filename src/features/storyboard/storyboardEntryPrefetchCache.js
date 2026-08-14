@@ -1,5 +1,4 @@
 export const STORYBOARD_ENTRY_TTL_MS = 60_000;
-export const shouldRenderStoryboardLoadingFrame = (blocks, catalogs) => !blocks || !catalogs;
 
 export function createStoryboardEntryPrefetchCache({
   ttlMs = STORYBOARD_ENTRY_TTL_MS,

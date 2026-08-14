@@ -117,9 +117,10 @@ test('1-12 classifies 404 separately from retryable network errors', () => {
     kind: 'network', message: '생성예시 카탈로그를 불러오지 못했어요',
   });
 
+  const loadErrorStart = storyboardSource.indexOf('if (loadError) return');
   const loadErrorView = storyboardSource.slice(
-    storyboardSource.indexOf('if (loadError) return'),
-    storyboardSource.indexOf('if (shouldRenderStoryboardLoadingFrame'),
+    loadErrorStart,
+    storyboardSource.indexOf('if (!blocks || !catalogs)', loadErrorStart),
   );
   assert.match(loadErrorView, /loadError\.kind === 'notFound'[\s\S]*?보관함으로 이동[\s\S]*?: \([\s\S]*?다시 시도/);
 });

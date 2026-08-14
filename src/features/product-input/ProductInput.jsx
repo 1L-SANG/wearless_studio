@@ -519,7 +519,19 @@ export function ProductInput() {
     if (!promotionLocked) return undefined;
     const blockUnload = (event) => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', blockUnload);
-    return () => window.removeEventListener('beforeunload', blockUnload);
+    // 베일은 포인터만 막는다 — Shift+Tab 으로 뒤 폼 편집·헤더 Enter 로 SPA 이탈이 가능했다(P1).
+    // #root 만 잠그면 body 로 포털된 모달(커스텀 의류 등)이 살아남아 승격 스냅샷 밖 편집이
+    // 가능하다(P1 후속) — 베일·토스트를 뺀 body 직계 전부를 inert 로 잠근다.
+    const spared = (el) => el.classList?.contains('input-promotion-transition')
+      || el.classList?.contains('toast-host');
+    const locked = [...document.body.children].filter(
+      (el) => !spared(el) && !el.hasAttribute('inert'),
+    );
+    locked.forEach((el) => el.setAttribute('inert', ''));
+    return () => {
+      window.removeEventListener('beforeunload', blockUnload);
+      locked.forEach((el) => el.removeAttribute('inert'));
+    };
   }, [promotionLocked]);
 
   const setFlowPromotionLocked = (locked) => {
@@ -649,7 +661,8 @@ export function ProductInput() {
         latestSnapshot.localUpdatedAt,
       );
       const { failed = 0 } = await flushProductDraftSave() || {};
-      if (failed) toast.push(`일부 사진(${failed}장)을 임시 저장하지 못했어요.`, { icon: 'alertTri' });
+      // 유실 경고는 전환 오버레이(3.5s)보다 오래 살아남아야 한다 — 도착 후에도 읽히게 6s.
+      if (failed) toast.push(`일부 사진(${failed}장)을 임시 저장하지 못했어요.`, { icon: 'alertTri', duration: 6000 });
       if (session || isMockMode) {
         const draft = await loadDraft();
         if (!draft?.product) throw new Error('저장된 입력 내용을 다시 불러오지 못했어요. 다시 시도해 주세요.');
@@ -1145,13 +1158,17 @@ export function ProductInput() {
 
   return (
     <div className={`wizard${wide ? ' wide' : ''}`}>
+      {/* 확정 대기는 '잠금 경고'가 아니라 '이미 시작된 페이지 전환'으로 보여준다(2026-08-14 사용자
+          지적 — 흰 잠금 카드 → 콘티보드의 어두운 전환 오버레이가 연달아 떠 이질적이었다).
+          도착 화면(ChromeLayout 의 storyboard-transition-overlay)과 같은 시각 언어라 확정→도착이
+          한 번의 전환으로 읽힌다. 입력 차단(전체 덮음)·beforeunload 가드는 종전과 동일하다. */}
+      {/* 확정 대기는 어두운 베일만 — 로고·문구는 도착 화면에서 한 번에 나타난다(2026-08-14 사용자
+          결정: 로고가 대기·도착에 두 번 뜨면 끊겨 보인다). 베일이 도착 오버레이와 같은 톤이라
+          화면이 바뀌어도 배경은 이어진 것처럼 읽힌다. 낭독은 aria-label 로 유지. */}
       {promotionLocked && createPortal((
-        <div className="input-promotion-lock" role="status" aria-live="polite">
-          <div className="input-promotion-lock-card">
-            <Icon name="loader" className="spin" size={24} />
-            <strong>최신 입력 내용을 안전하게 확정하고 있어요</strong>
-            <span>완료될 때까지 이 화면을 그대로 두세요.</span>
-          </div>
+        <div className="input-promotion-transition" role="status" aria-live="polite">
+          {/* 일부 스크린리더는 status 의 aria-label 을 무시한다 — 숨긴 텍스트 노드가 호환성이 높다 */}
+          <span className="sr-only">상세페이지 구성으로 넘어가고 있어요</span>
         </div>
       ), document.body)}
       {editingRightsLock}

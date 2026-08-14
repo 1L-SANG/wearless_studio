@@ -375,7 +375,7 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
 .dl-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 26px; }
 
 /* ====================== TOAST ====================== */
-.toast-host { position: fixed; right: 22px; top: 72px; z-index: 90; display: flex; flex-direction: column; gap: 10px; }
+.toast-host { position: fixed; right: 22px; top: 72px; z-index: 130;  /* 전환 오버레이(120) 위 — 유실 경고가 가려지면 안 된다 */ display: flex; flex-direction: column; gap: 10px; }
 /* glow 4색을 약하게 두른 테두리 (흰 배경 위, 천천히 순환) */
 .toast { display: flex; align-items: center; gap: 11px; color: var(--fg-1); padding: 12px 16px;
   border-radius: var(--r-4); font-size: 14px; font-weight: 500; border: 1.5px solid transparent;
