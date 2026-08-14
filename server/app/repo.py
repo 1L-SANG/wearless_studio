@@ -813,16 +813,22 @@ async def insert_custom_matching_item(
 async def swap_matching_item_assets(
     conn: AsyncConnection, *, matching_item_id: str, project_id: str,
     thumbnail_asset_id: str, image_asset_id: str,
-) -> None:
-    """커스텀 매칭 아이템의 표시·생성입력 asset 을 누끼본으로 교체한다.
+) -> int:
+    """커스텀 매칭 아이템의 표시·생성입력 asset 을 누끼본으로 교체한다. 갱신 행 수 반환.
 
     project_id 로 한 번 더 스코프해 다른 프로젝트의 아이템을 건드리지 않는다.
+
+    0행은 실패다 — 누끼가 도는 사이 셀러가 "내 옷"을 지우면 아이템은 없는데 파생
+    asset 2개는 커밋된다. 삭제 경로는 **현재 아이템의** metadata 만 훑으므로 그 둘은
+    아무도 도달할 수 없는 고아가 된다. 호출자가 0을 보고 트랜잭션을 버려야 한다
+    (2026-08-14 재리뷰 M-4).
     """
     async with conn.cursor() as cur:
         await cur.execute(
             "update matching_items set thumbnail_asset_id = %s, image_asset_id = %s "
             "where id = %s and project_id = %s and owner_user_id is not null",
             (thumbnail_asset_id, image_asset_id, matching_item_id, project_id))
+        return cur.rowcount
 
 
 async def delete_custom_matching_item(

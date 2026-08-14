@@ -104,6 +104,13 @@ async def run_matching_cutout_job(app, job: dict) -> None:
         await asyncio.to_thread(r2.put_bytes, grid_key, grid_bytes, "image/jpeg")
 
         # 4) asset 행 생성 + 매칭 아이템 스왑 (원자적)
+        if not origin_grid_asset_id:
+            # 이 변경 이전에 큐잉된 잡의 payload 에는 gridAssetId 가 없다. 그때의 원본
+            # grid 는 아이템의 현재 image_asset_id 다(스왑 전이므로) — 이월하지 않으면
+            # "내 옷 삭제" 가 그 grid 행과 R2 객체를 영구히 남긴다(재리뷰 M-3).
+            async with pool.connection() as conn:
+                origin_grid_asset_id = await repo.get_matching_item_asset(
+                    conn, matching_item_id, user_id, project_id)
         cleanup_ids = [*source_asset_ids]
         if origin_grid_asset_id and origin_grid_asset_id not in cleanup_ids:
             cleanup_ids.append(origin_grid_asset_id)
@@ -130,9 +137,14 @@ async def run_matching_cutout_job(app, job: dict) -> None:
                     matching_item_id=matching_item_id,
                     purpose=matching_cutout.GRID_PURPOSE,
                     source_asset_ids=cleanup_ids))
-            await repo.swap_matching_item_assets(
+            swapped = await repo.swap_matching_item_assets(
                 conn, matching_item_id=matching_item_id, project_id=project_id,
                 thumbnail_asset_id=thumb_asset_id, image_asset_id=grid_asset_id)
+            if not swapped:
+                # 누끼가 도는 사이 셀러가 "내 옷"을 지웠다. 그대로 커밋하면 아무도
+                # 도달할 수 없는 파생 asset 2개가 남는다(재리뷰 M-4) — 커밋 전에
+                # 트랜잭션째 버린다(예외가 커넥션 컨텍스트를 나가며 롤백).
+                raise _CutoutFailed("item_gone")
             await conn.commit()
     except sam_client.SamUnavailable as exc:
         await finish("error", {"state": "unavailable", "reason": str(exc),

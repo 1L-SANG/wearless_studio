@@ -5,9 +5,10 @@ from app import repo
 
 
 class _Cursor:
-    def __init__(self, *, row=None, rows=None):
+    def __init__(self, *, row=None, rows=None, rowcount=1):
         self.row = row
         self.rows = rows or []
+        self.rowcount = rowcount
         self.calls = []
         self.raw_calls = []
 
@@ -137,6 +138,22 @@ def test_list_active_matching_items_uses_two_explicit_security_arms():
     assert "thb.source in ('upload', 'derived')" in sql.lower()
     assert "img.source = 'derived'" in sql.lower()
     assert params == ("owner-1", "owner-1", "project-1")
+
+
+# 2026-08-14 재리뷰 M-4 — 워커가 "아이템이 사라졌다"를 알 수 있는 유일한 신호가 행 수다.
+def test_asset_swap_reports_how_many_rows_it_actually_updated():
+    gone = _Cursor(rowcount=0)
+    updated = asyncio.run(repo.swap_matching_item_assets(
+        _Conn(gone), matching_item_id="custom_x", project_id="project-1",
+        thumbnail_asset_id="thumb", image_asset_id="grid"))
+
+    sql, params = gone.calls[0]
+    assert updated == 0
+    assert "owner_user_id is not null" in sql.lower(), "커스텀만 스왑"
+    assert params == ("thumb", "grid", "custom_x", "project-1")
+    assert asyncio.run(repo.swap_matching_item_assets(
+        _Conn(_Cursor(rowcount=1)), matching_item_id="custom_x", project_id="project-1",
+        thumbnail_asset_id="thumb", image_asset_id="grid")) == 1
 
 
 def test_matching_asset_owner_gate_hides_other_custom_scope():

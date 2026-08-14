@@ -60,9 +60,11 @@ class _Pool:
     def connection(self): return _Conn()
 
 
-def _wire_worker(monkeypatch, *, r2=None, cut_png=None):
+def _wire_worker(monkeypatch, *, r2=None, cut_png=None, swap_rows=1,
+                 current_image_asset_id="live-grid"):
     """워커의 DB·SAM 경계를 전부 가짜로 잡고 호출 기록을 돌려준다."""
-    calls = {"segment": [], "swap": None, "finalize": None, "assets": []}
+    calls = {"segment": [], "swap": None, "finalize": None, "assets": [],
+             "commits": 0, "item_asset_lookups": []}
 
     async def fake_segment(settings, views):
         calls["segment"].append(views)
@@ -75,8 +77,15 @@ def _wire_worker(monkeypatch, *, r2=None, cut_png=None):
 
     async def fake_swap(conn, *, matching_item_id, project_id, thumbnail_asset_id, image_asset_id):
         calls["swap"] = (matching_item_id, thumbnail_asset_id, image_asset_id)
+        return swap_rows  # 실 repo 는 갱신 행 수를 돌려준다(재리뷰 M-4)
 
     monkeypatch.setattr(job.repo, "swap_matching_item_assets", fake_swap)
+
+    async def fake_item_asset(conn, item_id, user_id, project_id):
+        calls["item_asset_lookups"].append((item_id, user_id, project_id))
+        return current_image_asset_id
+
+    monkeypatch.setattr(job.repo, "get_matching_item_asset", fake_item_asset)
 
     # 실 repo.create_asset 은 DB 커넥션(cursor)이 필요 — 이 테스트는 no-op _Conn 을 쓰므로
     # 가짜로 대체한다(브리프 원본 테스트엔 없었지만, create_asset 이 실제 인터페이스라
@@ -94,9 +103,17 @@ def _wire_worker(monkeypatch, *, r2=None, cut_png=None):
 
     monkeypatch.setattr(job.repo, "finalize_uncharged_job", fake_finalize)
 
+    class _CountingConn(_Conn):
+        async def commit(self):
+            calls["commits"] += 1
+
+    class _CountingPool:
+        def connection(self):
+            return _CountingConn()
+
     r2 = r2 or _FakeR2(cut_png if cut_png is not None else _cut_png())
     app = types.SimpleNamespace(state=types.SimpleNamespace(
-        settings=_settings(), pool=_Pool(), r2=r2))
+        settings=_settings(), pool=_CountingPool(), r2=r2))
     return app, r2, calls
 
 
@@ -118,6 +135,8 @@ def test_worker_cutouts_each_source_and_swaps_assets(monkeypatch):
     assert len(calls["segment"]) == 2, "원본 2장 각각 누끼"
     assert all("Front" in v for v in calls["segment"]), "view=Front 로 우회"
     assert calls["swap"] is not None, "asset 스왑됨"
+    assert calls["commits"] == 2, "파생 asset 트랜잭션 + 종결"
+    assert calls["item_asset_lookups"] == [], "payload 에 gridAssetId 가 있으면 조회 안 함"
     assert calls["finalize"][0] == "done" and calls["finalize"][1]["state"] == "ready"
     # 저장하는 건 카드용 썸네일 + grid 둘뿐이다 — 원본 해상도 컷은 grid 입력으로만 쓴다(I6).
     assert [mime for _key, _data, mime in r2.puts] == ["image/jpeg", "image/jpeg"]
@@ -133,6 +152,31 @@ def test_worker_cutouts_each_source_and_swaps_assets(monkeypatch):
     # I5 — provenance 가 비어 있지 않고 자기 자신을 가리키지 않는다
     assert meta[grid_asset_id]["sourceHash"]
     assert meta[grid_asset_id]["sourceAssetId"] != grid_asset_id
+
+
+# 2026-08-14 재리뷰 M-3 — 이 변경 이전에 큐잉된 잡에는 gridAssetId 가 없다. 원본 grid 를
+# 이월하지 못하면 "내 옷 삭제" 가 그 grid 행과 R2 객체를 영구히 남긴다.
+def test_worker_falls_back_to_the_items_current_image_asset_for_legacy_payloads(monkeypatch):
+    app, _r2, calls = _wire_worker(monkeypatch, current_image_asset_id="live-grid")
+    _run(app, _job_dict(gridAssetId=None))
+
+    assert calls["item_asset_lookups"] == [("custom_x", "u1", "p1")]
+    grid_asset_id = calls["swap"][2]
+    meta = {a["asset_id"]: a["metadata"] for a in calls["assets"]}
+    assert meta[grid_asset_id]["sourceAssetIds"] == ["a1", "a2", "live-grid"]
+    assert meta[grid_asset_id]["sourceAssetId"] == "live-grid"
+
+
+# 2026-08-14 재리뷰 M-4 — 누끼 도중 셀러가 "내 옷"을 지우면 스왑이 0행이다. 그대로
+# 커밋하면 삭제 경로가 영원히 도달할 수 없는 파생 asset 2개가 남는다.
+def test_worker_discards_derived_assets_when_the_item_vanished_mid_job(monkeypatch):
+    app, _r2, calls = _wire_worker(monkeypatch, swap_rows=0)
+    _run(app, _job_dict())
+
+    assert calls["swap"] is not None, "시도는 했다"
+    assert calls["commits"] == 1, "종결 커밋 1회뿐 — 파생 asset 트랜잭션은 버려졌다"
+    assert calls["finalize"] == ("done", {"state": "failed", "reason": "item_gone",
+                                          "matchingItemId": "custom_x"})
 
 
 def test_worker_derived_identity_is_stable_across_reruns(monkeypatch):
