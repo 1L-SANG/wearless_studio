@@ -306,6 +306,13 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     // sourceBlockId/copyRole = 서버 조립기와 같은 추적 필드(editor_wait_dev_spec §2-3) —
     // 에디터 대기 화면의 컷 채움·셀러 카피 오버라이드 매칭 키. mock-서버 패리티 유지.
     const els = [Object.assign(IMG(60, 50, 880, 560, generatedImageFor(b, 880, 560), 12, b.cutType || undefined), { sourceBlockId: b.id })];
+    // 시그니처 컷 계약(스펙 2026-08-14 §1): 제품명을 이미지 중앙에 흰색으로 — 카피 토글과 무관.
+    if (b.hookTitleOverlay && (product.name || '').trim()) {
+      els.push(Object.assign(
+        T(60, 300, 880, 60, product.name.trim(), { size: 34, weight: 650, color: '#ffffff', align: 'center' }),
+        { sourceBlockId: b.id, copyRole: 'hookTitle' },
+      ));
+    }
     if (copywriting && contentRole === CONTENT_ROLES.HERO) {
       els.push(Object.assign(T(120, 110, 600, 80, `${product.name || '상품'}와 함께하는 하루`, { size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14' }), { sourceBlockId: b.id, copyRole: 'headline' }));
     }

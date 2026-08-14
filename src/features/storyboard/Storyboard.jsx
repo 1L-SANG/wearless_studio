@@ -58,6 +58,7 @@ import {
   deriveHookFrame,
   hookSlotPlan,
   moodGridContent,
+  stripHookFrameFields,
 } from '@/lib/storyboardHookFrame.js';
 import { shuffleSectionExamples } from '@/lib/storyboardExampleShuffle.js';
 import { genderForClothingType } from '@/lib/productGender.js';
@@ -125,6 +126,15 @@ const withoutLayoutRow = (block) => {
   const { layoutRowId: _layoutRowId, ...single } = block;
   return single;
 };
+
+// 첫 화면 슬롯의 틀(컷 종류·샷·색상)을 직접 바꾸면 그 컷은 프레임에서 이탈한다 —
+// 스타일이 틀을 정한다는 계약(스펙 §1)과 저장 표식이 어긋나지 않게 (Codex 리뷰 #5).
+const detachHookSlotOnReshape = (current, applied, merged) => (
+  current.hookFrameId
+  && ('cutType' in applied || 'shot' in applied || 'colorId' in applied)
+    ? withoutLayoutRow(stripHookFrameFields(merged))
+    : merged
+);
 
 const WORN_CUT_TYPES = new Set(['styling', 'horizon', 'mirror']);
 const WORN_ROLE_BY_CUT_TYPE = Object.freeze({
@@ -315,7 +325,7 @@ function StoryboardCardActions({ onDuplicate, onDelete, onNudge, canNudgeUp, can
 }
 
 function StoryboardMedia({
-  block, catalogs, index, total, showPoseVariation = false, hookFrameActive = false,
+  block, catalogs, colorOpts = [], index, total, showPoseVariation = false, hookFrameActive = false,
   onDuplicate, onDelete, onNudge, canNudgeUp, canNudgeDown,
 }) {
   const missing = block.source !== 'mine' && !block.exampleId && !block.previewThumb;
@@ -346,7 +356,7 @@ function StoryboardMedia({
       )}
       {/* 첫 화면 슬롯 배지 — 프레임이 있는 보드의 후킹 컷에만 (스펙 §3 펼침 규칙) */}
       {block.hookFrameId ? (
-        <span className="sb-slot-badge">{hookSlotBadgeLabel(block)}</span>
+        <span className="sb-slot-badge">{hookSlotBadgeLabel(block, colorOpts)}</span>
       ) : hookFrameActive && block.sectionRole === 'hooking' && block.source !== 'mine' ? (
         <span className="sb-slot-badge none">구성 미사용</span>
       ) : null}
@@ -429,6 +439,7 @@ function StoryboardCard({
           <StoryboardMedia
             block={block}
             catalogs={catalogs}
+            colorOpts={colorOpts}
             index={index}
             total={total}
             showPoseVariation={microVariationIds?.has(block.id)}
@@ -486,6 +497,7 @@ function StoryboardFrame({
                 <StoryboardMedia
                   block={item.block}
                   catalogs={catalogs}
+                  colorOpts={colorOpts}
                   index={item.index}
                   total={total}
                   showPoseVariation={microVariationIds?.has(item.block.id)}
@@ -547,15 +559,19 @@ const blockPreviewSrc = (block, catalogs) => {
   return block.previewThumb || image?.src || block.thumb || block.ownImages?.[0];
 };
 
-const hookSlotBadgeLabel = (block) => (
-  block.hookSlotRole === 'left' ? '첫 화면 왼쪽'
-    : block.hookSlotRole === 'right' ? '첫 화면 오른쪽'
-      : '첫 화면'
-);
+const hookSlotBadgeLabel = (block, colorOpts) => {
+  if (block.hookSlotRole === 'left') return '첫 화면 왼쪽';
+  if (block.hookSlotRole === 'right') return '첫 화면 오른쪽';
+  if (typeof block.hookSlotRole === 'string' && block.hookSlotRole.startsWith('color:')) {
+    const label = (colorOpts || []).find((option) => option.id === block.colorId)?.label;
+    return label ? `첫 화면 · ${label}` : '첫 화면';
+  }
+  return '첫 화면';
+};
 
 /* 후킹 접힘 예외(스펙 2026-08-14 §3) — 스택 대신 흰 페이지 시트 위에 첫 화면 실형태.
    클릭 = '스타일 선택' 패널 열기(접힘 유지). 펼침은 섹션 헤더/패널의 '펼쳐서 컷 편집'. */
-function StoryboardHookSheet({ frame, slots, total, catalogs, colorOpts, productName, onOpenPanel }) {
+function StoryboardHookSheet({ frame, slots, total, catalogs, colorOpts, productName, baseColorId, onOpenPanel }) {
   return (
     <div className="sb-hooksheet-wrap">
       <button
@@ -576,6 +592,10 @@ function StoryboardHookSheet({ frame, slots, total, catalogs, colorOpts, product
                 )}
                 {frame.style === 'moodGrid' && color && (
                   <span className="sb-hooksheet-color"><i style={{ background: color.hex }} />{color.label}</span>
+                )}
+                {frame.style === 'moodGrid' && baseColorId && block.colorId
+                  && block.colorId !== baseColorId && (
+                  <span className="sb-hooksheet-gen">자동 생성</span>
                 )}
               </span>
             );
@@ -1713,7 +1733,7 @@ const hookStyleDescription = (style, colors) => (
 );
 
 function HookStylePanel({
-  frame, blocks, catalogs, colors, productName, saving, error,
+  frame, blocks, catalogs, colors, productName, expanded = false, saving, error,
   onSelectStyle, onExpandEdit,
 }) {
   const slots = frame.slotIds
@@ -1730,7 +1750,7 @@ function HookStylePanel({
     <div className="inspector sb-hookpanel">
       <div className="sb-hookpanel-head">
         <b>스타일 선택</b>
-        <span>첫 페이지에 배치될 이미지의 스타일을 골라주세요.</span>
+        <span>{expanded ? '컷을 눌러 생성예시를 바꿔보세요.' : '첫 페이지에 배치될 이미지의 스타일을 골라주세요.'}</span>
       </div>
       <div className="sb-hookpanel-live">
         <span className={`sb-hookpanel-sheet style-${frame.style}`}>
@@ -1748,6 +1768,7 @@ function HookStylePanel({
           <span>{hookStyleDescription(frame.style, colors)}</span>
         </div>
       </div>
+      {!expanded && (
       <div className="sb-hookpanel-cards" role="group" aria-label="첫 화면 스타일">
         {HOOK_STYLES.map((style) => (
           <button
@@ -1767,10 +1788,13 @@ function HookStylePanel({
           </button>
         ))}
       </div>
+      )}
       {error && <div className="sb-save-error">{error}</div>}
-      <button type="button" className="sb-hookpanel-expand" onClick={onExpandEdit}>
-        펼쳐서 컷 편집 — 생성예시 바꾸기
-      </button>
+      {!expanded && (
+        <button type="button" className="sb-hookpanel-expand" onClick={onExpandEdit}>
+          펼쳐서 컷 편집 — 생성예시 바꾸기
+        </button>
+      )}
     </div>
   );
 }
@@ -1801,6 +1825,9 @@ export function Storyboard() {
   const [productName, setProductName] = useState(() => initialEntry?.productName || '');
   const [hookStyleSaving, setHookStyleSaving] = useState(false);
   const [hookStyleError, setHookStyleError] = useState(null);
+  // 펼친 상태에서도 '스타일 선택' 패널(프리뷰·설명)을 유지할지 — 컷을 클릭하면 해제되어
+  // 기존 컷 인스펙터로 넘어간다(스펙 §3, Codex 리뷰 #7).
+  const [hookPanelFocus, setHookPanelFocus] = useState(true);
   const shuffleTickRef = useRef(0);
   const [composeModeSeed, setComposeModeSeed] = useState(() => initialEntry?.composeModeSeed || ({
     colors: [],
@@ -2165,7 +2192,7 @@ export function Storyboard() {
     const oldRowId = current.layoutRowId;
     let next = previous.map((block) => {
       if (block.id === id) {
-        const updated = { ...block, ...applied };
+        const updated = detachHookSlotOnReshape(current, applied, { ...block, ...applied });
         return applied.source === 'mine'
           ? detachSpaceMembership(withoutLayoutRow(updated))
           : updated;
@@ -2201,7 +2228,9 @@ export function Storyboard() {
       }
     }
     const next = normalizeStoryboardMutation(staged.map((block) => (
-      block.id === id ? { ...block, ...changes } : block
+      block.id === id
+        ? detachHookSlotOnReshape(block, changes, { ...block, ...changes })
+        : block
     )));
     showUndo(previous, next, { blockId: id, label: undoLabel || undoLabelForPatch(changes) });
     directSaveSnapshots.current.add(next);
@@ -2256,6 +2285,7 @@ export function Storyboard() {
   const selectCard = (id) => {
     if (atomicSavingRef.current) return;
     setSetPicker(null); setSetPickerError(null);
+    setHookPanelFocus(false);   // 컷 클릭 = 생성예시 편집 모드 — 스타일 패널 대신 컷 인스펙터
     if (selectedId === id) { finishEdit(); return; }      // click again → deselect
     setPendingSectionMove(null);
     setSelectedId(id); setSplitOpen(true);
@@ -2265,7 +2295,9 @@ export function Storyboard() {
     setBlocks((bs) => {
       const i = bs.findIndex((b) => b.id === id); if (i < 0) return bs;
       const group = dragGroupFor(bs, id);
-      const copy = { ...withoutLayoutRow(bs[i]), id: uid('blk') };
+      // 첫 화면 프레임 슬롯의 복제본은 표식 없이 '구성 미사용' 일반 컷이 된다
+      // (슬롯 수는 스타일이 정한다 — 스펙 §1, Codex 리뷰 #4).
+      const copy = { ...stripHookFrameFields(withoutLayoutRow(bs[i])), id: uid('blk') };
       const n = [...bs];
       // 행 안에 복제본을 끼워 넣어 기존 행의 연속성을 깨지 않도록 행 바로 뒤에 단일 컷으로 둔다.
       n.splice((group?.indexes[group.indexes.length - 1] ?? i) + 1, 0, copy);
@@ -2686,8 +2718,11 @@ export function Storyboard() {
   const openHookPanel = () => {
     if (!hookFrame?.slotIds.length) return;
     setHookStyleError(null);
+    setHookPanelFocus(true);
     setSelectedId(hookFrame.slotIds[0]);
     setSplitOpen(true);
+    // 스펙 §3: 시트 클릭 = 펼침 — 패널(프리뷰·설명)은 유지되고 스타일 카드만 숨는다.
+    if (hookingGroup) openRenderGroup(hookingGroup.key);
   };
 
   // 스타일 전환(스펙 §2 전환 엔진) — 컷 재사용·부족분 생성·예시 재배정 후 즉시 저장.
@@ -3024,6 +3059,8 @@ export function Storyboard() {
                       catalogs={catalogs}
                       colorOpts={colorOpts}
                       productName={productName}
+                      baseColorId={(composeModeSeed.colors.find((color) => color.isBase)
+                        || composeModeSeed.colors[0])?.id || null}
                       onOpenPanel={openHookPanel}
                     />
                   ) : (
@@ -3065,8 +3102,8 @@ export function Storyboard() {
   } : null;
   const hookPanelActive = !setPicker
     && hookFrame
-    && !hookingOpen
-    && selected?.hookFrameId === hookFrame.frameId;
+    && selected?.hookFrameId === hookFrame.frameId
+    && (!hookingOpen || hookPanelFocus);
   const inspector = setPicker ? (
     <SpaceSetGallery mode={setPicker.mode} error={setPickerError} onChoose={chooseSpaceSet}
       gender={exampleGender} clothingType={clothingType}
@@ -3078,6 +3115,7 @@ export function Storyboard() {
       catalogs={catalogs}
       colors={composeModeSeed.colors}
       productName={productName}
+      expanded={hookingOpen}
       saving={hookStyleSaving}
       error={hookStyleError}
       onSelectStyle={applyHookStyleChoice}

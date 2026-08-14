@@ -208,3 +208,41 @@ test('board normalization keeps hook-frame rows regardless of section cut counts
   assert.ok(slots.every((block) => block.sectionLayout === 'twoColumn'));
   assert.equal(new Set(slots.map((block) => block.layoutRowId)).size, 2);   // 2행 유지
 });
+
+test('style transition keeps user-pinned examples in matching slots (Codex review #2)', () => {
+  const board = [
+    aiBlock('hero', { contentRole: 'hero', cutType: 'horizon', shot: 'medium', colorId: 'base', exampleId: 'ex-user', exampleSelectionOrigin: 'user', refScope: 'all' }),
+    aiBlock('benefit', { contentRole: 'benefit', cutType: 'styling', shot: 'full', colorId: 'base', exampleId: 'ex-auto', exampleSelectionOrigin: 'auto', refScope: 'all' }),
+  ];
+  // pair 의 오른쪽 슬롯(호리존 미디움)은 고정 컷과 틀이 같다 — 고정 선택이 그대로 살아남아야 한다.
+  const next = applyHookStyle(board, 'pair', { colors: [{ id: 'base', isBase: true }], frameId: 'hookframe__t' });
+  const right = next.find((block) => block.hookSlotRole === 'right');
+  assert.equal(right.id, 'hero');
+  assert.equal(right.exampleId, 'ex-user');
+  assert.equal(right.exampleSelectionOrigin, 'user');
+  // 틀 전환이 필요한 왼쪽 슬롯은 auto 컷이 소모된다(고정 보호).
+  const left = next.find((block) => block.hookSlotRole === 'left');
+  assert.equal(left.id, 'benefit');
+});
+
+test('section shuffle skips space sets holding a user-pinned member (Codex review #3)', async () => {
+  const { shuffleSectionExamples } = await import('../../src/lib/storyboardExampleShuffle.js');
+  const { STORYBOARD_SPACE_SET_EXAMPLES } = await import('../../src/lib/storyboardSpaceSetCatalog.js');
+  const member = STORYBOARD_SPACE_SET_EXAMPLES.find((item) => item.gender === 'women');
+  const setBlocks = [0, 1].map((index) => ({
+    id: `set-${index}`, sectionId: 'sec-style', sectionRole: 'styling', source: 'ai',
+    cutType: member.cutType, shot: 'full',
+    spaceGroupId: 'ssg1__someset__i1', spaceSetMemberOrder: index + 1,
+    setSelectionOrigin: 'auto', refScope: 'pose',
+    exampleId: member.id,
+    exampleSelectionOrigin: index === 0 ? 'user' : 'auto',   // 멤버 한 컷 고정
+  }));
+  const next = shuffleSectionExamples(setBlocks, {
+    sectionId: 'sec-style',
+    catalog: [],
+    product: { clothingType: member.applicableClothingTypes[0] },
+    gender: 'women',
+    rotation: 1,
+  });
+  assert.equal(next, setBlocks);   // 고정 멤버 보유 세트는 통째로 제외 — 무변경
+});

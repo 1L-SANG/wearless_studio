@@ -27,12 +27,16 @@ const isRerollableFlat = (block, sectionId) => (
   && !!block.exampleId
 );
 
-// 섹션 안의 자동 선택 세트 run — 사용자가 고른 세트(setSelectionOrigin 'user')는 고정.
+// 섹션 안의 자동 선택 세트 run — 사용자가 고른 세트(setSelectionOrigin 'user')는 물론,
+// 멤버 한 컷이라도 예시를 직접 고정(origin 'user')했으면 그 세트도 교체하지 않는다
+// (스펙 §4 "고정 컷 제외", Codex 리뷰 #3).
 function autoSetRuns(blocks, sectionId) {
   return groupConsecutiveSpaceRuns(blocks).filter((run) => (
     run.kind === 'space'
     && run.items[0]?.sectionId === sectionId
-    && run.items.every((block) => block.setSelectionOrigin !== 'user')
+    && run.items.every((block) => (
+      block.setSelectionOrigin !== 'user' && block.exampleSelectionOrigin !== 'user'
+    ))
   ));
 }
 
@@ -62,18 +66,20 @@ export function shuffleSectionExamples(blocks, {
   }
 
   // ② 낱개 컷 — 선택을 비우고 기존 배정기로 재추첨(직전 예시는 회피).
+  // 바꿀 것이 없으면 배열 참조를 보존한다(호출부의 "무변경" 판정 근거).
   const avoidByBlockId = {};
-  let flatChanged = false;
-  next = next.map((block) => {
-    if (!isRerollableFlat(block, sectionId)) return block;
-    avoidByBlockId[block.id] = block.exampleId;
-    flatChanged = true;
-    return { ...clearExampleSelection(block), exampleSelectionOrigin: null };
-  });
-  if (flatChanged) {
+  for (const block of next) {
+    if (isRerollableFlat(block, sectionId)) avoidByBlockId[block.id] = block.exampleId;
+  }
+  if (Object.keys(avoidByBlockId).length) {
+    next = next.map((block) => (
+      avoidByBlockId[block.id] === undefined
+        ? block
+        : { ...clearExampleSelection(block), exampleSelectionOrigin: null }
+    ));
     next = assignGenerationExamples(next, {
       catalog, product, gender, avoidByBlockId,
     }).blocks;
   }
-  return next === list && !flatChanged ? list : next;
+  return next;
 }

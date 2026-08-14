@@ -117,6 +117,14 @@ export function unslottedHookBlocks(blocks, frame) {
 
 const HOOK_FIELDS = ['hookFrameId', 'hookStyle', 'hookFrameVersion', 'hookTitleOverlay', 'hookSlotRole'];
 
+// 프레임 표식만 걷어낸 사본 — 컷 복제(복제본=구성 미사용)와 슬롯 이탈(컷 종류·샷·색 변경)이 쓴다.
+export function stripHookFrameFields(block) {
+  if (!block || !HOOK_FIELDS.some((field) => field in block)) return block;
+  const next = { ...block };
+  for (const field of HOOK_FIELDS) delete next[field];
+  return next;
+}
+
 const isHookingAiBlock = (block) => (
   !!block && block.sectionRole === 'hooking' && block.source !== 'mine'
 );
@@ -173,18 +181,25 @@ export function applyHookStyle(blocks, style, {
 
   const pool = section.filter(isHookingAiBlock);
   const used = new Set();
-  const pick = (predicate) => {
-    const found = pool.find((block) => !used.has(block.id) && predicate(block));
-    if (found) used.add(found.id);
-    return found || null;
+  // 사용자가 직접 고른 예시(origin 'user')는 계약상 고정이다 — 틀이 같은 슬롯에는 그 컷을
+  // 우선 배치해 선택을 보존하고, 틀을 바꿔야 하는 자리에는 auto 컷을 먼저 소모해
+  // 고정 선택이 불가피할 때만 초기화되게 한다(스펙 §2 핀 규칙, Codex 리뷰 #2).
+  const pick = (predicate, { preferPinned }) => {
+    const candidates = pool.filter((block) => !used.has(block.id) && predicate(block));
+    if (!candidates.length) return null;
+    const pinned = candidates.find((block) => block.exampleSelectionOrigin === 'user');
+    const auto = candidates.find((block) => block.exampleSelectionOrigin !== 'user');
+    const found = (preferPinned ? (pinned || auto) : (auto || pinned)) || candidates[0];
+    used.add(found.id);
+    return found;
   };
   const slotBlocks = plan.map((slot) => {
     const base = pick((block) => (
       block.cutType === slot.cutType && block.shot === slot.shot
       && (slot.colorId == null || block.colorId === slot.colorId)
-    ))
-      || pick((block) => block.cutType === slot.cutType)
-      || pick(() => true)
+    ), { preferPinned: true })
+      || pick((block) => block.cutType === slot.cutType, { preferPinned: false })
+      || pick(() => true, { preferPinned: false })
       || (createBlock ? createBlock({ cutType: slot.cutType, shot: slot.shot, colorId: slot.colorId }) : null);
     if (!base) throw new Error('hook_frame_slot_underflow');
     const fitted = fitBlockToSlot(base, slot);
