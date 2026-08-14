@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -57,10 +58,17 @@ test('every frame builds replaceable image slots inside the 1000px canvas', () =
 test('kiwi templates rebuild the references with native editable elements', () => {
   const kiwiFrames = FRAME_LIBRARY_ITEMS.filter((item) => item.template);
   assert.deepEqual(kiwiFrames.map((item) => item.id), [
-    'kiwi-1', 'kiwi-2', 'kiwi-3', 'kiwi-4', 'kiwi-5',
+    'kiwi-1', 'kiwi-2', 'kiwi-3', 'kiwi-4', 'kiwi-5', 'kiwi-6', 'kiwi-7', 'kiwi-8', 'kiwi-9',
     'kiwi-10', 'kiwi-11', 'kiwi-12', 'kiwi-13', 'kiwi-14', 'kiwi-15',
+    'kiwi-16', 'kiwi-17', 'kiwi-18', 'kiwi-19', 'kiwi-20',
   ]);
-  assert.equal(kiwiFrames.reduce((count, frame) => count + frame.slots.length, 0), 31);
+  assert.equal(kiwiFrames.reduce((count, frame) => count + frame.slots.length, 0), 36);
+  const expectedExampleCounts = {
+    'kiwi-1': 4, 'kiwi-2': 4, 'kiwi-3': 2, 'kiwi-4': 3, 'kiwi-5': 4,
+    'kiwi-6': 3, 'kiwi-7': 1, 'kiwi-8': 1, 'kiwi-9': 0,
+    'kiwi-10': 2, 'kiwi-11': 0, 'kiwi-12': 2, 'kiwi-13': 1, 'kiwi-14': 4, 'kiwi-15': 2,
+    'kiwi-16': 0, 'kiwi-17': 0, 'kiwi-18': 0, 'kiwi-19': 0, 'kiwi-20': 0,
+  };
 
   for (const frame of kiwiFrames) {
     const block = buildFrameBlock(frame, seqId());
@@ -73,11 +81,13 @@ test('kiwi templates rebuild the references with native editable elements', () =
     assert.ok(block.elements.every((element) => !element.locked && !element.system), frame.id);
     assert.ok(imageSlots.every((element) => element.checkerboard), frame.id);
     assert.ok(editableCopy.every((element) => element.fullTextHitArea), `${frame.id}: template copy owns its click box`);
+    assert.ok(existsSync(new URL(`../../public${frame.preview}`, import.meta.url)), `${frame.id}: catalog preview exists`);
     const examples = imageSlots.filter((element) => element.exampleImage);
-    const expectedExampleId = frame.id === 'kiwi-11' ? null : frame.id.replace('kiwi-', '');
-    assert.equal(examples.length, expectedExampleId ? 1 : 0, `${frame.id}: only matching JPEG references supply examples`);
-    if (expectedExampleId) {
-      assert.equal(examples[0].src, `/assets/editor/kiwi-examples/kiwi-${expectedExampleId}.jpg`);
+    assert.equal(examples.length, expectedExampleCounts[frame.id], `${frame.id}: every available JPEG photo is prefilled`);
+    const expectedExampleId = frame.id.replace('kiwi-', '');
+    for (const example of examples) {
+      assert.match(example.src, new RegExp(`/kiwi-${expectedExampleId}(?:-|\\.)`));
+      assert.ok(existsSync(new URL(`../../public${example.src}`, import.meta.url)), `${frame.id}: ${example.src} exists`);
     }
   }
 });
@@ -89,9 +99,9 @@ test('detail callout circles are native replaceable image slots', () => {
   ));
 
   assert.equal(circles.length, 2);
-  assert.equal(circles.filter((element) => element.exampleImage).length, 1);
+  assert.equal(circles.filter((element) => element.exampleImage).length, 2);
   assert.match(circles[0].src, /kiwi-15\.jpg$/);
-  assert.equal(circles[1].src, null);
+  assert.match(circles[1].src, /kiwi-15-2\.jpg$/);
   assert.ok(circles.every((element) => element.stroke === '#ffffff'));
   assert.ok(circles.every((element) => element.strokeWidth === 5 && element.dash === 'dashed'));
 });

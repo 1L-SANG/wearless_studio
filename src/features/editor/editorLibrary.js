@@ -8,7 +8,10 @@ export const DEFAULT_BUBBLE_STROKE = '#b9b9be';
 export const DEFAULT_BUBBLE_STROKE_WIDTH = 1;
 export const DEFAULT_BUBBLE_RADIUS = 45;
 
-const templateExample = (id) => `/assets/editor/kiwi-examples/kiwi-${id}.jpg`;
+const templateExample = (id, variant = null) => (
+  `/assets/editor/kiwi-examples/kiwi-${id}${variant ? `-${variant}` : ''}.jpg`
+);
+const templatePreview = (id) => `/assets/editor/kiwi-templates/kiwi-${id}-preview.jpg`;
 
 const slot = (x, y, w, h, radius = 10) => ({ x, y, w, h, radius });
 
@@ -29,6 +32,13 @@ const templateText = (x, y, w, h, value, style = {}) => ({
     align: style.align || 'left', tracking: style.tracking || 0,
   },
 });
+const templateBubble = (x, y, w, h, value, options = {}) => ({
+  ...templateText(x, y, w, h, value, options.style || {}),
+  shape: 'bubble', fill: options.fill || '#ffffff', stroke: options.stroke || '#777777',
+  strokeWidth: options.strokeWidth || 2, dash: options.dash || 'dashed', radius: options.radius || 32,
+  bubbleFit: options.bubbleFit || { maxWidth: w, padX: 30, padTop: 24, padBottom: 44, anchor: 'left' },
+  ...(options.flipX ? { flipX: true } : {}),
+});
 const templateShape = (x, y, w, h, fill, options = {}) => ({
   type: 'shape', shape: options.shape || 'rect', x, y, w, h, fill,
   radius: options.radius || 0, opacity: options.opacity ?? 1,
@@ -41,7 +51,7 @@ const templateLine = (x, y, w, options = {}) => ({
   stroke: options.stroke || '#0e0d14', strokeWidth: options.strokeWidth || 2,
   dash: options.dash || 'solid', ...(options.rotate ? { rotate: options.rotate } : {}),
 });
-const kiwiTemplate = ({ id, label, h, bg, elements }) => ({
+const kiwiTemplate = ({ id, label, h, bg, elements, preview }) => ({
   id: `kiwi-${id}`,
   label,
   recommended: false,
@@ -51,7 +61,7 @@ const kiwiTemplate = ({ id, label, h, bg, elements }) => ({
   elements,
   slots: elements.filter((element) => element.type === 'image' && element.frameSlot),
   // The supplied artwork is a catalog thumbnail only. Inserted blocks are native elements.
-  preview: `/assets/editor/kiwi-templates/kiwi-${id}-overlay.png`,
+  preview: preview || `/assets/editor/kiwi-templates/kiwi-${id}-overlay.png`,
 });
 
 export const FRAME_LIBRARY_ITEMS = [
@@ -93,9 +103,9 @@ export const FRAME_LIBRARY_ITEMS = [
         [525, 570, 2, '허리 밴딩이 편안해서\n데일리룩으로 딱이에요.'],
         [82, 955, 2, '체형에 자연스럽게 어울리고\n편하게 움직일 수 있어요.'],
         [525, 955, -2, '세탁 후에도 변형이 적어서\n관리하기 쉬웠어요.'],
-      ].flatMap(([x, y, rotate, copy]) => [
+      ].flatMap(([x, y, rotate, copy], index) => [
         templateShape(x, y, 390, 320, '#ffffff', { radius: 8, rotate }),
-        templatePhoto(x + 48, y - 36, 126, 126, { radius: 'pill', ...(x === 82 && y === 570 ? { example: templateExample(1) } : {}) }),
+        templatePhoto(x + 48, y - 36, 126, 126, { radius: 'pill', example: templateExample(1, index ? index + 1 : null) }),
         templateText(x + 48, y + 125, 300, 130, copy, { size: 23, lineHeight: 35 }),
       ]),
     ],
@@ -109,9 +119,9 @@ export const FRAME_LIBRARY_ITEMS = [
       templatePhoto(180, 563, 466, 609, { example: templateExample(2) }),
       templateShape(533, 625, 200, 180, '#f57d9c', { radius: 4, rotate: 2 }),
       templateText(560, 665, 150, 95, 'Daily\nLook', { font: 'Cormorant', size: 36, lineHeight: 43, align: 'center' }),
-      templatePhoto(0, 1010, 258, 488, { fit: 'contain' }),
-      templatePhoto(258, 1010, 364, 488, { fit: 'contain' }),
-      templatePhoto(622, 850, 378, 648, { fit: 'contain' }),
+      templatePhoto(0, 1010, 258, 488, { fit: 'contain', example: templateExample(2, 2) }),
+      templatePhoto(258, 1010, 364, 488, { fit: 'contain', example: templateExample(2, 3) }),
+      templatePhoto(622, 850, 378, 648, { fit: 'contain', example: templateExample(2, 4) }),
     ],
   }),
   kiwiTemplate({
@@ -124,7 +134,7 @@ export const FRAME_LIBRARY_ITEMS = [
       templateShape(744, 650, 205, 185, '#eafa72', { radius: 3, rotate: 1 }),
       templateText(775, 705, 150, 90, 'Daily\nLook', { font: 'Cormorant', size: 35, lineHeight: 42, align: 'center' }),
       templateShape(76, 1168, 388, 215, '#2a1c12', { radius: 4, rotate: -7 }),
-      templatePhoto(103, 1186, 346, 174, { rotate: -7 }),
+      templatePhoto(103, 1186, 346, 174, { rotate: -7, example: templateExample(3, 2) }),
     ],
   }),
   kiwiTemplate({
@@ -132,10 +142,10 @@ export const FRAME_LIBRARY_ITEMS = [
       templateText(300, 12, 400, 45, 'SUMMER', { size: 26, weight: 500, tracking: 5, align: 'center' }),
       templateText(235, 54, 530, 95, 'EVENT', { font: 'Cormorant', size: 82, weight: 700, align: 'center' }),
       templateShape(90, 225, 780, 1020, '#ffffff', { radius: 38 }),
-      templatePhoto(125, 266, 85, 85, { radius: 'pill' }),
+      templatePhoto(125, 266, 85, 85, { radius: 'pill', example: templateExample(4, 'profile') }),
       templateText(225, 280, 260, 45, '브랜드 이름', { size: 28, weight: 700 }),
       templatePhoto(127, 371, 744, 736, { example: templateExample(4) }),
-      templatePhoto(597, 905, 323, 325),
+      templatePhoto(597, 905, 323, 325, { example: templateExample(4, 2) }),
       templateText(125, 1130, 500, 45, '♥  ○  △', { size: 34 }),
       templateText(125, 1190, 700, 45, '#여름패션  #퀄리티보장', { size: 26 }),
       templateText(145, 1345, 710, 70, '상품 리뷰 추첨 이벤트!', { size: 46, weight: 700, align: 'center' }),
@@ -148,16 +158,84 @@ export const FRAME_LIBRARY_ITEMS = [
       ...['#ffffff', '#328cca', '#3c4f8b', '#111111'].map((fill, index) => templateShape(385 + index * 62, 190, 50, 50, fill, { shape: 'circle', stroke: '#dddddd', strokeWidth: 1 })),
       ...[
         [100, 310, 'WHITE'], [525, 310, 'BEIGE'], [100, 797, 'KHAKI'], [525, 797, 'BLACK'],
-      ].flatMap(([x, y, label]) => [
+      ].flatMap(([x, y, label], index) => [
         templateShape(x, y, 375, 438, '#ffffff', { radius: 4 }),
-        templatePhoto(x + 24, y + 28, 328, 328, { fit: 'contain', ...(x === 100 && y === 310 ? { example: templateExample(5) } : {}) }),
+        templatePhoto(x + 24, y + 28, 328, 328, { fit: 'contain', example: templateExample(5, index ? index + 1 : null) }),
         templateText(x + 40, y + 382, 295, 40, label, { size: 28, align: 'center' }),
       ]),
     ],
   }),
   kiwiTemplate({
+    id: '6', label: '체크 포인트 리스트', h: 1400, bg: '#f3f3f3', preview: templatePreview(6), elements: [
+      templateText(78, 112, 620, 78, 'CHECK POINT', { size: 60, weight: 700 }),
+      templateText(80, 220, 760, 86, '브랜드와 상품의 핵심 포인트를\n최대 2줄로 소개해 주세요.', { size: 28, lineHeight: 40 }),
+      ...[382, 700, 1018].flatMap((y, index) => [
+        templateShape(68, y, 864, 277, '#ffffff'),
+        templatePhoto(68, y, 277, 277, { example: templateExample(6) }),
+        templateShape(80, y + 14, 38, 38, '#1ce765', { radius: 5, stroke: '#111111', strokeWidth: 2 }),
+        templateText(85, y + 13, 28, 32, '✓', { size: 25, weight: 700, align: 'center' }),
+        templateText(400, y + 50, 465, 165,
+          index === 0 ? '가볍고 편안한 소재로\n매일 손이 가는 아이템입니다.'
+            : index === 1 ? '섬세한 디테일과 안정적인 핏으로\n완성도를 높였습니다.'
+              : '관리하기 쉬운 소재와 실용적인 구성으로\n오래 입을 수 있습니다.',
+          { size: 32, lineHeight: 48 }),
+      ]),
+    ],
+  }),
+  kiwiTemplate({
+    id: '7', label: '팬티 사이즈 가이드', h: 1447, bg: '#ffffff', preview: templatePreview(7), elements: [
+      templateText(220, 92, 560, 78, 'Panty Guide', { size: 62, weight: 700, align: 'center' }),
+      templateText(280, 190, 440, 55, '사이즈 안내', { size: 34, color: '#78afe8', align: 'center' }),
+      templateShape(260, 320, 480, 74, '#000000', { radius: 37 }),
+      templateText(305, 338, 390, 40, '안내 내용을 적어주세요.', { size: 28, weight: 700, color: '#ffffff', align: 'center' }),
+      templatePhoto(300, 450, 400, 500, { example: templateExample(7), fit: 'contain' }),
+      ...[1050, 1125, 1200, 1275, 1350].map((y) => templateLine(105, y, 790, { stroke: '#111111', strokeWidth: 2 })),
+      ...['사이즈', '엉덩이 단면', '허리 단면', '밑위 길이', '총기장'].map((label, index) => (
+        templateText(90 + index * 180, 1005, 180, 40, label, { size: 23, weight: 700, align: 'center' })
+      )),
+      ...['S', 'M', 'L'].flatMap((size, row) => [
+        templateText(90, 1070 + row * 75, 180, 38, size, { size: 26, weight: 700, color: '#78afe8', align: 'center' }),
+        ...[1, 2, 3, 4].map((column) => templateText(90 + column * 180, 1070 + row * 75, 180, 38, size, { size: 25, align: 'center' })),
+      ]),
+    ],
+  }),
+  kiwiTemplate({
+    id: '8', label: '브라 사이즈 가이드', h: 1629, bg: '#ffffff', preview: templatePreview(8), elements: [
+      templateText(190, 85, 620, 78, 'Bra Size Guide', { size: 60, weight: 700, align: 'center' }),
+      templateText(280, 185, 440, 55, '사이즈 안내', { size: 34, color: '#78afe8', align: 'center' }),
+      templateShape(250, 315, 500, 74, '#000000', { radius: 37 }),
+      templateText(305, 333, 390, 40, '안내 내용을 적어주세요.', { size: 28, weight: 700, color: '#ffffff', align: 'center' }),
+      templatePhoto(285, 445, 430, 510, { example: templateExample(8), fit: 'contain' }),
+      templateText(145, 1000, 710, 82, '윗가슴둘레와 밑가슴둘레를 수평으로 측정해 주세요.\n컵 사이즈 = 윗가슴둘레 - 밑가슴둘레', { size: 24, lineHeight: 38, align: 'center' }),
+      templateShape(95, 1120, 810, 78, '#f8f8f8'),
+      templateText(170, 1140, 660, 40, '컵 사이즈 = 윗가슴 둘레 - 밑가슴 둘레', { size: 29, weight: 700, color: '#78afe8', align: 'center' }),
+      ...[1285, 1375, 1465, 1555].map((y) => templateLine(100, y, 800, { stroke: '#111111', strokeWidth: 2 })),
+      templateText(105, 1235, 230, 42, '사이즈', { size: 25, weight: 700, align: 'center' }),
+      templateText(360, 1235, 535, 42, '사이즈에 맞는 내용을 적어주세요.', { size: 25, weight: 700, align: 'center' }),
+      ...['A', 'B', 'C'].flatMap((size, row) => [
+        templateText(105, 1305 + row * 90, 230, 42, size, { size: 27, weight: 700, color: '#78afe8', align: 'center' }),
+        templateText(360, 1305 + row * 90, 535, 42, '사이즈에 맞는 내용을 적어주세요.', { size: 24, color: '#78afe8', align: 'center' }),
+      ]),
+    ],
+  }),
+  kiwiTemplate({
+    id: '9', label: '배송·교환·반품 안내', h: 1940, bg: '#fdf8ef', preview: templatePreview(9), elements: [
+      templateText(390, 70, 220, 60, 'Info', { font: 'Cormorant', size: 46, weight: 600, color: '#7abbd1', align: 'center' }),
+      ...[
+        [50, 220, 950, 455, '결제 및 입금', '• 주문자명과 실제 입금자명을 확인해 주세요.\n• 주문 후 7일 이내 입금이 완료되어야 합니다.\n• 카드 결제 취소는 고객센터로 문의해 주세요.'],
+        [50, 720, 950, 500, '배송 및 배송비', '• 기본 배송사를 적어주세요.\n• 무료배송 기준과 기본 배송비를 안내해 주세요.\n• 상품 준비 및 배송 기간을 적어주세요.\n• 지연 시 안내 방법을 적어주세요.'],
+        [50, 1265, 950, 370, '교환 및 반품', '• 교환 및 반품 가능 기준을 적어주세요.\n• 상품 훼손 및 택 제거 시 제한 사항을 안내해 주세요.\n• 세탁과 수선 이후의 정책을 적어주세요.'],
+        [50, 1680, 950, 215, '고객문의', '02 - 1234 - 1234\n평일 10:00 ~ 17:00 / 점심 12:00 ~ 13:00'],
+      ].flatMap(([x, y, w, h, title, copy]) => [
+        templateShape(x, y, w, h, '#ffffff'),
+        templateText(x + 52, y + 45, w - 104, 52, title, { size: 31, weight: 700 }),
+        templateText(x + 52, y + 115, w - 104, h - 145, copy, { size: 24, color: '#55505a', lineHeight: 42 }),
+      ]),
+    ],
+  }),
+  kiwiTemplate({
     id: '10', label: 'SNS 상품 카드', h: 1510, bg: '#d5d5d5', elements: [
-      templatePhoto(0, 0, 1000, 1510),
+      templatePhoto(0, 0, 1000, 1510, { example: templateExample(10) }),
       templateShape(0, 0, 1000, 285, '#111111', { opacity: 0.42 }),
       templateText(320, 45, 360, 58, 'Product Name', { font: 'Cormorant', size: 46, weight: 700, color: '#ffffff', align: 'center' }),
       templateText(360, 120, 280, 80, 'Information\nInformation', { size: 26, color: '#ffffff', lineHeight: 38, align: 'center' }),
@@ -197,7 +275,7 @@ export const FRAME_LIBRARY_ITEMS = [
       templateText(55, 210, 650, 80, 'KIWI TREND', { size: 66, weight: 700, color: '#ffffff' }),
       templateText(55, 285, 700, 85, 'HOT SUMMER', { size: 66, weight: 700, color: '#70e978' }),
       templatePhoto(55, 435, 428, 651, { radius: 'pill', example: templateExample(12) }),
-      templatePhoto(508, 435, 430, 651, { radius: 'pill' }),
+      templatePhoto(508, 435, 430, 651, { radius: 'pill', example: templateExample(12, 2) }),
       templateText(55, 1185, 300, 75, '23 SS', { size: 70, weight: 700, color: '#ffffff' }),
       templateText(650, 1215, 300, 45, "BRAND'S PICK", { size: 34, color: '#ffffff', align: 'right' }),
     ],
@@ -213,13 +291,13 @@ export const FRAME_LIBRARY_ITEMS = [
   }),
   kiwiTemplate({
     id: '14', label: '패션 폴라로이드', h: 1508, bg: '#222222', elements: [
-      templatePhoto(0, 0, 1000, 1508),
+      templatePhoto(0, 0, 1000, 1508, { example: templateExample(14, 'bg') }),
       templateShape(615, 120, 310, 350, '#ffffff', { radius: 3, rotate: 20 }),
       templatePhoto(645, 155, 260, 278, { rotate: 20, example: templateExample(14) }),
       templateShape(535, 510, 335, 430, '#ffffff', { radius: 3, rotate: -14 }),
-      templatePhoto(575, 550, 270, 365, { rotate: -14 }),
+      templatePhoto(575, 550, 270, 365, { rotate: -14, example: templateExample(14, 2) }),
       templateShape(685, 980, 285, 380, '#ffffff', { radius: 3, rotate: 14 }),
-      templatePhoto(725, 1020, 232, 324, { rotate: 14 }),
+      templatePhoto(725, 1020, 232, 324, { rotate: 14, example: templateExample(14, 3) }),
       templateText(65, 70, 540, 80, 'Brand Fashion', { size: 58, weight: 700, color: '#ffffff' }),
       templateText(55, 1030, 470, 250, 'Modern\nChic', { font: 'Cormorant', size: 92, weight: 700, color: '#ffffff', lineHeight: 90 }),
     ],
@@ -231,9 +309,84 @@ export const FRAME_LIBRARY_ITEMS = [
       templatePhoto(150, 265, 245, 245, { radius: 'pill', stroke: '#ffffff', strokeWidth: 5, dash: 'dashed', example: templateExample(15) }),
       templateShape(405, 366, 375, 66, '#fff7f4', { radius: 2 }),
       templateText(425, 382, 335, 42, '어깨라인이 살아있는 디자인', { size: 24, align: 'center' }),
-      templatePhoto(520, 750, 315, 315, { radius: 'pill', stroke: '#ffffff', strokeWidth: 5, dash: 'dashed' }),
+      templatePhoto(520, 750, 315, 315, { radius: 'pill', stroke: '#ffffff', strokeWidth: 5, dash: 'dashed', example: templateExample(15, 2) }),
       templateShape(485, 1085, 365, 66, '#fff7f4', { radius: 2 }),
       templateText(505, 1101, 325, 42, '허리라인 위로 핀턱 디테일', { size: 24, align: 'center' }),
+    ],
+  }),
+  kiwiTemplate({
+    id: '16', label: '고객 안내문', h: 982, bg: '#eeeeee', preview: templatePreview(16), elements: [
+      templateShape(0, 692, 1000, 290, '#222222'),
+      templateShape(88, 72, 824, 798, '#ffffff', { stroke: '#222222', strokeWidth: 1 }),
+      templateShape(745, 116, 126, 126, '#d8d8d8', { shape: 'circle' }),
+      templateText(766, 163, 84, 38, 'logo', { font: 'Cormorant', size: 26, weight: 700, color: '#ffffff', align: 'center' }),
+      templateText(420, 168, 160, 115, '!', { size: 90, weight: 700, align: 'center' }),
+      templateLine(205, 353, 590, { stroke: '#c9c0bd', strokeWidth: 1 }),
+      templateText(260, 420, 480, 55, '안녕하세요. 브랜드 이름입니다.', { size: 28, color: '#49454a', align: 'center' }),
+      templateText(250, 505, 500, 118, '현재 문의량이 많아\n실시간 상담과 전화 연결이\n다소 어렵습니다.', { size: 27, color: '#49454a', lineHeight: 40, align: 'center' }),
+      templateText(220, 660, 560, 122, 'Q&A 게시판을 이용해주시면\n더욱 빠른 답변을 도와드리겠습니다.\n이용에 불편을 드려 죄송합니다.', { size: 27, color: '#49454a', lineHeight: 40, align: 'center' }),
+      ...Array.from({ length: 15 }, (_, index) => templateLine(index * 72 - 20, 930, 95, { stroke: '#ffffff', strokeWidth: 4, rotate: -45 })),
+    ],
+  }),
+  kiwiTemplate({
+    id: '17', label: '픽셀 할인 쿠폰', h: 782, bg: '#fff51d', preview: templatePreview(17), elements: [
+      templateText(290, 130, 420, 54, '구매고객 전용', { size: 42, align: 'center' }),
+      templateText(210, 195, 580, 82, '10% 할인 쿠폰', { size: 64, weight: 700, align: 'center' }),
+      templateShape(205, 337, 590, 285, '#000000'),
+      templateShape(180, 365, 50, 80, '#000000'),
+      templateShape(770, 365, 50, 80, '#000000'),
+      templateShape(205, 470, 50, 84, '#000000'),
+      templateShape(745, 470, 50, 84, '#000000'),
+      templateText(315, 395, 390, 135, '10%', { size: 116, weight: 700, color: '#ffffff', align: 'center' }),
+      templateShape(695, 500, 180, 180, '#fff51d', { shape: 'circle', stroke: '#000000', strokeWidth: 6 }),
+      templateText(730, 535, 110, 100, 'P', { size: 88, weight: 700, align: 'center' }),
+    ],
+  }),
+  kiwiTemplate({
+    id: '18', label: '플라워 쿠폰', h: 1090, bg: '#fff0eb', preview: templatePreview(18), elements: [
+      ...[
+        [85, 50, 170], [225, 35, 110], [795, 48, 140], [55, 835, 130], [825, 850, 150],
+      ].flatMap(([x, y, size]) => [
+        templateShape(x, y, size, size, '#f8b8b9', { shape: 'circle', opacity: 0.55 }),
+        templateShape(x + size * 0.25, y + size * 0.25, size * 0.5, size * 0.5, '#fff0eb', { shape: 'circle', opacity: 0.8 }),
+      ]),
+      templateShape(275, 160, 420, 80, '#b4a48b'),
+      templateText(315, 183, 340, 42, '즉시 사용 가능한', { size: 34, weight: 600, color: '#ffffff', align: 'center' }),
+      templateText(220, 260, 560, 100, 'COUPON', { size: 86, weight: 700, color: '#4a2831', align: 'center' }),
+      templateShape(82, 432, 664, 370, '#e76e96', { radius: 12 }),
+      templateShape(744, 432, 174, 370, '#e76e96', { radius: 42 }),
+      templateLine(744, 475, 300, { stroke: '#ffffff', strokeWidth: 2, rotate: 90 }),
+      templateText(170, 500, 500, 60, '한꺼번에 다운받기', { size: 43, color: '#ffffff', align: 'center' }),
+      templateText(190, 585, 450, 120, '~20%', { size: 112, weight: 600, color: '#ffffff', align: 'center' }),
+      templateText(775, 560, 110, 100, '↓', { size: 82, color: '#ffffff', align: 'center' }),
+      templateText(225, 900, 550, 58, '사용기한 : 2026.12.31', { size: 39, align: 'center' }),
+    ],
+  }),
+  kiwiTemplate({
+    id: '19', label: '리뷰 말풍선', h: 1241, bg: '#f7f7f7', preview: templatePreview(19), elements: [
+      templateText(285, 65, 430, 55, 'REVIEWS', { size: 45, weight: 700, color: '#777777', align: 'center' }),
+      templateText(340, 145, 320, 70, '4.8 / 5', { size: 62, weight: 700, align: 'center' }),
+      templateText(200, 242, 600, 84, '누적고객 00명, 수많은 후기가 증명하는\n브랜드 리뷰', { size: 31, lineHeight: 42, align: 'center' }),
+      templateBubble(325, 355, 585, 245, '★★★★★\n상품의 만족도와 착용감을\n간결하게 적어주세요.', {
+        style: { size: 24, color: '#666666', lineHeight: 38 }, fill: '#ffffff', radius: 26,
+      }),
+      templateBubble(75, 600, 585, 245, '★★★★★\n실제 고객의 후기를\n3줄 이내로 적어주세요.', {
+        style: { size: 24, color: '#666666', lineHeight: 38 }, fill: '#ffffff', radius: 26, flipX: true,
+      }),
+      templateBubble(360, 845, 555, 210, '★★★★★\n제품의 장점을 담은\n리뷰를 적어주세요.', {
+        style: { size: 24, color: '#666666', lineHeight: 38 }, fill: '#ffffff', radius: 26,
+      }),
+      templateText(460, 1125, 80, 65, '•••', { size: 44, weight: 700, color: '#bbbbbb', align: 'center' }),
+    ],
+  }),
+  kiwiTemplate({
+    id: '20', label: '신규회원 쿠폰', h: 1100, bg: '#f5ead1', preview: templatePreview(20), elements: [
+      templateText(265, 108, 470, 58, '신규 회원가입시', { size: 42, color: '#c97838', align: 'center' }),
+      templateText(235, 195, 530, 82, '쿠폰팩 지급!', { size: 64, weight: 700, color: '#c97838', align: 'center' }),
+      ...[0, 18, 36, 54].map((offset) => templateShape(75 + offset, 380 - offset * 0.45, 735, 360, '#ffffff', { stroke: '#2b2020', strokeWidth: 4 })),
+      templateText(300, 505, 400, 45, 'C O U P O N', { size: 28, tracking: 8, align: 'center' }),
+      templateText(235, 585, 530, 135, '20%', { size: 126, weight: 700, align: 'center' }),
+      templateText(110, 945, 780, 55, '회원님께 제공해드리는 다양한 혜택을 받아보세요!', { size: 30, color: '#777777', align: 'center' }),
     ],
   }),
 ];
@@ -278,7 +431,9 @@ export function buildFrameBlock(frameOrId, idFn) {
   const definition = typeof frameOrId === 'string'
     ? FRAME_LIBRARY_ITEMS.find((item) => item.id === frameOrId)
     : frameOrId;
-  if (!definition || !Array.isArray(definition.slots) || !definition.slots.length) {
+  const hasNativeElements = Array.isArray(definition?.elements) && definition.elements.length > 0;
+  const hasPhotoSlots = Array.isArray(definition?.slots) && definition.slots.length > 0;
+  if (!definition || (!hasNativeElements && !hasPhotoSlots)) {
     throw new Error(`[editorLibrary] unknown frame: ${typeof frameOrId === 'string' ? frameOrId : frameOrId?.id}`);
   }
   const sourceElements = definition.elements || definition.slots.map((item) => ({
