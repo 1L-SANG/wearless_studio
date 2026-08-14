@@ -7,6 +7,10 @@
 
 SAM 서비스는 view 를 Front/Back 으로 강제하므로, 각 매칭 원본을 `"Front"` 로 순차
 호출해 우회한다(뷰 이름은 SAM 캐시 키의 일부일 뿐, 매칭에선 의미 없다).
+
+MATCHING_FLATLAY 가 켜져 있으면 누끼 성공 뒤에 카드 썸네일 한 장만 정면 flat-lay 로
+재렌더한다(matching_flatlay). 이미지 호출이 1회 붙지만 과금 정책은 그대로 무과금이고,
+재렌더가 어떤 이유로든 실패하면 누끼 썸네일이 그대로 남는다.
 """
 from __future__ import annotations
 
@@ -14,7 +18,7 @@ import asyncio
 import logging
 
 from app import repo
-from app.services import garment_grid, matching_cutout, sam_client
+from app.services import garment_grid, matching_cutout, matching_flatlay, sam_client
 from app.r2 import derived_key
 
 log = logging.getLogger("wearless.matching_cutout")
@@ -26,6 +30,24 @@ SKIP_NO_SOURCES = "no_source_assets"
 
 class _CutoutFailed(Exception):
     """누끼 산출물이 없다. 원본을 그대로 두고 조용히 종결하기 위한 내부 신호."""
+
+
+async def _clothing_type(pool, *, matching_item_id: str, user_id: str,
+                         project_id: str) -> str | None:
+    """플랫레이 프롬프트가 쓸 의류 종류(top|bottom). 조회 실패는 중립 명사로 흘린다.
+
+    잡 payload 에 싣지 않고 여기서 읽는다 — 이 조회는 플래그가 켜졌을 때만 일어나므로
+    off 경로는 쿼리 한 줄 늘지 않고, 플래그 이전에 큐잉된 잡도 그대로 처리된다.
+    """
+    try:
+        async with pool.connection() as conn:
+            row = await repo.get_matching_item_metadata(
+                conn, matching_item_id, user_id, project_id)
+        return (row or {}).get("clothing_type")
+    except Exception:  # noqa: BLE001 - 명사 하나 때문에 재렌더를 포기하지 않는다
+        log.warning("matching_flatlay clothing_type lookup failed item=%s",
+                    matching_item_id, exc_info=True)
+        return None
 
 
 async def run_matching_cutout_job(app, job: dict) -> None:
@@ -87,23 +109,50 @@ async def run_matching_cutout_job(app, job: dict) -> None:
         # 2) 파생 신원은 소스 지문 + 알고리즘 버전으로 결정론적으로 만든다 —
         #    재실행(스테일 리스 회수)이 같은 행·같은 R2 키로 수렴한다.
         fingerprint = matching_cutout.source_fingerprint(source_hashes)
-        thumb_asset_id = matching_cutout.derived_asset_id(
-            role="thumb", matching_item_id=matching_item_id, source_hash=fingerprint)
         grid_asset_id = matching_cutout.derived_asset_id(
             role="grid", matching_item_id=matching_item_id, source_hash=fingerprint)
-        thumb_key = derived_key(user_id, project_id, thumb_asset_id, "jpg")
         grid_key = derived_key(user_id, project_id, grid_asset_id, "jpg")
+        first_source_id = source_asset_ids[0] if source_asset_ids else None
 
-        # 3) 카드용 축소 JPEG + 누끼본 grid 재합성(마네킹 생성 입력).
+        # 3) 카드 썸네일. 플래그가 켜져 있으면 누끼본을 정면 flat-lay 로 다시 렌더해
+        #    카드 이미지로 쓴다 — 누끼는 배경만 지우고 옷걸이 각도는 남기기 때문이다.
+        #    생성은 커스텀 아이템당 1회고, 실패하면 flat 이 None 이라 아래 누끼 썸네일이
+        #    그대로 남는다(그 폴백은 다시 셀러 원본이다).
+        flat = None
+        flatlay_enabled = matching_flatlay.enabled(s)
+        if flatlay_enabled:
+            flat = await matching_flatlay.render_thumbnail(
+                getattr(app.state, "gemini", None), settings=s, cutout_png=cut_pngs[0],
+                clothing_type=await _clothing_type(
+                    pool, matching_item_id=matching_item_id, user_id=user_id,
+                    project_id=project_id))
+        if flat is not None:
+            thumb_asset_id = matching_flatlay.derived_asset_id(
+                matching_item_id=matching_item_id, source_hash=fingerprint)
+            thumb_bytes = flat.image
+            thumb_meta = matching_flatlay.metadata_for(
+                source_hash=fingerprint, source_asset_id=first_source_id,
+                matching_item_id=matching_item_id, model=flat.model)
+        else:
+            thumb_asset_id = matching_cutout.derived_asset_id(
+                role="thumb", matching_item_id=matching_item_id, source_hash=fingerprint)
+            thumb_bytes = await asyncio.to_thread(
+                matching_cutout.encode_thumbnail, cut_pngs[0])
+            thumb_meta = matching_cutout.metadata_for(
+                source_hash=fingerprint, source_asset_id=first_source_id,
+                matching_item_id=matching_item_id,
+                purpose=matching_cutout.CUTOUT_PURPOSE)
+        thumb_key = derived_key(user_id, project_id, thumb_asset_id, "jpg")
+
+        # 4) 누끼본 grid 재합성(마네킹 생성 입력). 재렌더가 붙어도 여긴 누끼 합성본
+        #    그대로다 — 배경 오염은 이미 해결됐고, 원본 1~4장 재렌더는 비용만 곱한다.
         #    원본 해상도 컷은 grid 입력으로만 쓰고 저장하지 않는다 — 130px 카드에
         #    2048px 무압축 PNG 를 내려보내지 않는다(리뷰 I6).
-        thumb_bytes = await asyncio.to_thread(
-            matching_cutout.encode_thumbnail, cut_pngs[0])
         grid_bytes = await asyncio.to_thread(garment_grid.compose_garment_grid, cut_pngs)
         await asyncio.to_thread(r2.put_bytes, thumb_key, thumb_bytes, "image/jpeg")
         await asyncio.to_thread(r2.put_bytes, grid_key, grid_bytes, "image/jpeg")
 
-        # 4) asset 행 생성 + 매칭 아이템 스왑 (원자적)
+        # 5) asset 행 생성 + 매칭 아이템 스왑 (원자적)
         if not origin_grid_asset_id:
             # 이 변경 이전에 큐잉된 잡의 payload 에는 gridAssetId 가 없다. 그때의 원본
             # grid 는 아이템의 현재 image_asset_id 다(스왑 전이므로) — 이월하지 않으면
@@ -114,16 +163,11 @@ async def run_matching_cutout_job(app, job: dict) -> None:
         cleanup_ids = [*source_asset_ids]
         if origin_grid_asset_id and origin_grid_asset_id not in cleanup_ids:
             cleanup_ids.append(origin_grid_asset_id)
-        first_source_id = source_asset_ids[0] if source_asset_ids else None
         async with pool.connection() as conn:
             await repo.create_asset(
                 conn, asset_id=thumb_asset_id, user_id=user_id, project_id=project_id,
                 source="derived", bucket=s.r2_bucket, key=thumb_key, mime="image/jpeg",
-                size=len(thumb_bytes), original_filename=None,
-                metadata=matching_cutout.metadata_for(
-                    source_hash=fingerprint, source_asset_id=first_source_id,
-                    matching_item_id=matching_item_id,
-                    purpose=matching_cutout.CUTOUT_PURPOSE))
+                size=len(thumb_bytes), original_filename=None, metadata=thumb_meta)
             # grid(=image_asset_id) 는 마네킹 생성 입력이자 Task 5 가 상태를 판정하는 asset —
             # metadata.type == "matchingCutout" 이 없으면 상태가 계속 미완료로 보인다.
             # sourceAssetIds 는 삭제 경로가 원본을 회수하는 유일한 통로다.
@@ -162,5 +206,9 @@ async def run_matching_cutout_job(app, job: dict) -> None:
                               "matchingItemId": matching_item_id})
         return
 
-    await finish("done", {"state": "ready", "matchingItemId": matching_item_id,
-                          "thumbnailAssetId": thumb_asset_id, "imageAssetId": grid_asset_id})
+    detail = {"state": "ready", "matchingItemId": matching_item_id,
+              "thumbnailAssetId": thumb_asset_id, "imageAssetId": grid_asset_id}
+    if flatlay_enabled:
+        # 플래그가 켜진 동안만 적는다 — off 인 프로덕션의 결과 payload 는 오늘 그대로다.
+        detail["flatlay"] = flat is not None
+    await finish("done", detail)
