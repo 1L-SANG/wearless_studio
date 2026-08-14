@@ -20,7 +20,6 @@ import argparse
 import asyncio
 import json
 import pathlib
-import re
 import sys
 import time
 
@@ -67,7 +66,6 @@ def _eligible(cat: str) -> list[dict]:
         gender = "women" if name.startswith("여성)") else "men" if name.startswith("남성)") else None
         out.append({
             "id": f"{cat}/{name}",
-            "category": cat,
             "expectedType": _CATEGORY_TYPE[cat],
             "expectedGender": gender,
             "photos": [str(p) for p in photos[:4]],  # prod 는 기준색 슬롯 최대 4장
@@ -110,9 +108,14 @@ async def _call(key: str, model: str, level: str, prompt: str,
     body = {"contents": [{"role": "user", "parts": [{"text": prompt}, *image_parts]}],
             "generationConfig": gen}
     t0 = time.monotonic()
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        res = await client.post(_URL.format(model=model), json=body,
-                                headers={"x-goog-api-key": key})
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            res = await client.post(_URL.format(model=model), json=body,
+                                    headers={"x-goog-api-key": key})
+    except (httpx.HTTPError, OSError) as e:
+        # 한 콜의 네트워크 오류로 유료 런 전체(130콜·16분)를 잃지 않는다 — 행으로 남기고 계속.
+        return {"ok": False, "latencyS": time.monotonic() - t0,
+                "error": f"{type(e).__name__}: {str(e)[:200]}"}
     elapsed = time.monotonic() - t0
     if res.status_code != 200:
         return {"ok": False, "latencyS": elapsed, "error": f"{res.status_code}: {res.text[:300]}"}
@@ -144,6 +147,24 @@ async def main() -> None:
     if not key:
         raise SystemExit("GEMINI_API_KEY 미설정 (server/.env)")
 
+    out_path = pathlib.Path(args.out)
+    # ① `--exclude runs.jsonl --out runs.jsonl` (=이어달리기)는 done-set 을 읽은 **뒤** "w" 로
+    #    열려 이미 결제한 행을 통째로 날린다. 실제로 재현됨 — 같은 파일이면 append 를 요구한다.
+    for other, flag in ((args.exclude, "--exclude"), (args.only, "--only")):
+        if other and pathlib.Path(other).resolve() == out_path.resolve() and not args.append:
+            raise SystemExit(
+                f"{flag} 와 --out 이 같은 파일입니다. --append 없이 열면 이미 결제한 결과가 "
+                f"지워집니다. --append 를 붙이거나 --out 을 다른 파일로 주세요.")
+    if out_path.exists() and out_path.stat().st_size and not args.append:
+        raise SystemExit(
+            f"{out_path} 에 이미 결과가 있습니다. 덮어쓰려면 파일을 먼저 지우고, "
+            f"이어붙이려면 --append 를 주세요.")
+    # ② --only 는 "이 상품들을 다시 돌린다"(프롬프트 수정 전후 비교), --exclude 는 "이미 돌린 건
+    #    건너뛴다" — 의도가 정면으로 충돌한다. 같이 주면 --only 가 --exclude 를 조용히 무시하고
+    #    같은 상품을 두 번 결제한다. 재현됨 → 함께 못 쓰게 막는다.
+    if args.only and args.exclude:
+        raise SystemExit("--only 와 --exclude 는 함께 쓸 수 없습니다 (의도가 충돌 — 중복 결제).")
+
     done: set[str] = set()
     if args.exclude:
         for line in pathlib.Path(args.exclude).read_text(encoding="utf-8").splitlines():
@@ -159,8 +180,13 @@ async def main() -> None:
     arms = [a for a in ARMS if not args.arms or a[0] in args.arms.split(",")]
     prompt = build_prompt({})
     schema = analysis_schema()
-    out = pathlib.Path(args.out)
+    out = out_path
     out.parent.mkdir(parents=True, exist_ok=True)
+
+    if not items or not arms:
+        raise SystemExit(
+            f"실행할 게 없습니다 (상품 {len(items)}개 · arm {len(arms)}개). "
+            f"--arms 이름 오타나 --only/--exclude 조합을 확인하세요 — 출력 파일은 건드리지 않았습니다.")
 
     print(f"표본 {len(items)}개 × arm {len(arms)} × rep {args.reps} "
           f"= {len(items) * len(arms) * args.reps} 콜", flush=True)

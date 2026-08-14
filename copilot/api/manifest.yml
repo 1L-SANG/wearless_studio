@@ -110,9 +110,9 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 판정이 무뎌지면 다른 옷 컷이 그대로 상세페이지로 나간다 — 오너 결정 2026-08-14 "pro 유지".
   MODEL_ROUTING_TEXT_GEMINI: gemini-3.1-pro-preview
   # AG-01 상품 분석만 flash 로 분리 (오너 결정 2026-08-14). 실측 26벌×5조합 근거:
-  # documents/research/analysis_thinking_ab_20260814.jsonl — 비용 0.42배·지연 -1.8s,
+  # documents/research/analysis_model_ab_20260814.md — 비용 0.47배·지연 -1.3s(배포 프롬프트 기준),
   # 옷 종류 정확도 동률(73%, 오답 7벌은 5조합 전부 동일 = 프롬프트 이슈지 모델 이슈 아님),
-  # 성별 26/26(pro 24/26). thinking 승급은 이득 없음(종류 판정 25/26 동일, 특징 온전도만 하락)
+  # 성별 18/18(pro 17/18 — 성별 라벨 표본은 26벌 중 18벌). thinking 승급은 이득 없음
   # 이라 ANALYSIS_THINKING_LEVEL 은 low 유지.
   MODEL_ROUTING_TEXT_GEMINI_ANALYSIS: gemini-3.7-flash
   # '배경만' 생성예시는 빈 장소 플레이트 편집 + 장소 일치 QC/재시도 방식으로 검증했다.

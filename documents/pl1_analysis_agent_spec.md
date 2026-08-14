@@ -96,7 +96,8 @@ MODEL_ROUTING_TEXT_GEMINI=gemini-3.7-flash   # tier 'text' 정본 (교체는 여
 ANALYSIS_THINKING_LEVEL=low           # low | medium | high (품질 미달 시 승격)
 ANALYSIS_MAX_ATTEMPTS=2
 ANALYSIS_TIMEOUT_SECONDS=60
-ANALYSIS_PROMPT_FILE=                 # 비우면 server/prompts/analysis_v1.txt
+ANALYSIS_PROMPT_FILE=                 # ⚠️ 미구현 — 실제 프롬프트는 server/prompts/product_analyst_v1.txt
+                                      #    (product_analyst._PROMPT_FILE 고정). analysis_v1.txt 는 미사용 초안.
 ANALYSIS_PROMPT_VERSION=v1
 ```
 
@@ -557,7 +558,8 @@ server/
 Settings에 추가 (마네킹 블록 아래, 기본값 필수 — frozen dataclass 관례 유지):
 
 ```python
-model_text: str = "gemini-3.7-flash"          # tier 'text' (ai_agent_modules §1)
+model_text_gemini: str = "gemini-3.7-flash"   # tier 'text' 정본 (ai_agent_modules §1)
+# 주의: model_text/MODEL_ROUTING_TEXT 는 GPT 폴백 provider 전용이다(gpt-5.4-mini).
 analysis_thinking_level: str = "low"          # low | medium | high
 analysis_max_attempts: int = 2
 analysis_timeout_seconds: float = 60.0
@@ -1195,6 +1197,6 @@ async saveAnalysis(projectId, patch) {
 | 문서 | 변경 | 상태 |
 |---|---|---|
 | `ai_agent_modules.md` §1 | text tier 행: GPT-5.4 mini → **Gemini 3 Flash (`gemini-3.5-flash`)**, OPENAI_API_KEY 주석 조정 (2026-07-02 결정). | ✅ 갱신 완료 (이 문서와 같은 세션) |
-| `ai_pipeline_spec.md` §6 | `MODEL_ROUTING_TEXT=gemini-3.7-flash`. | ✅ 갱신 완료 (〃) |
+| `ai_pipeline_spec.md` §6 | `MODEL_ROUTING_TEXT_GEMINI=gemini-3.7-flash`. | ✅ 갱신 완료 (〃) |
 | `common_data_contract.md` §6 | `uploadAsset(file, { projectId })` 시그니처 반영. | 구현 PR에 포함 |
 | `TODO.md` §1 | submit 순서 교정(§7.2)·legacy shape 어댑터(§7.4)·mock uploadAsset 구현을 갭 항목으로 기록. | 구현 PR에 포함 |

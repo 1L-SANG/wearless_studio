@@ -74,7 +74,7 @@ def main() -> None:
         pts = [p for r in recs for p in (r["out"]["analysis"]["aiSuggestedPoints"] or [])]
         summary[arm] = {
             "n": len(recs), "median": statistics.median(lat), "p90": p90, "think": think,
-            "cost": cost, "typeOk": type_ok, "genderOk": gender_ok, "genderN": len(g_recs),
+            "cost": cost,
             "points": len(pts) / len(recs), "chars": statistics.mean(len(p) for p in pts) if pts else 0,
         }
         s = summary[arm]
@@ -108,7 +108,7 @@ def _write_html(ok: list[dict], summary: dict, out: pathlib.Path) -> None:
             return "<td class='miss'>—</td>"
         a, p = r["out"]["analysis"], r["out"]["product"]
         pts = "".join(f"<li>{html.escape(x)}</li>" for x in (a["aiSuggestedPoints"] or []))
-        tags = " ".join(a and r["out"]["intermediate"]["styleTags"] or [])
+        tags = " ".join(r["out"]["intermediate"]["styleTags"] or [])
         okmark = "ok" if p["clothingType"] == r["expectedType"] else "bad"
         return (f"<td><div class='meta'><b class='{okmark}'>{p['clothingType']}"
                 f"{'/' + a['subCategory'] if a['subCategory'] else ''}</b> · {a['fit']} · "
