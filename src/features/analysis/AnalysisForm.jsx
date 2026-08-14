@@ -761,6 +761,20 @@ export function AnalysisForm({
     }
   }, [applyAnalysisReplacement, customMatchDeleting, projectId, toast]);
 
+  // 커스텀 매칭 누끼는 백그라운드에서 ~25s 처리된다(Task 5). processing 인 아이템이 하나라도
+  // 있는 동안만 기존 refreshMatchClothing 을 5s 간격으로 폴링해 ready/failed 로 교체한다 —
+  // 새 API 는 만들지 않는다. 더 이상 processing 이 없으면 인터벌을 정리해 폴링을 멈춘다.
+  const hasPendingCutout = (a.matchClothing || []).some((item) => item.cutoutStatus === 'processing');
+  useEffect(() => {
+    if (!hasPendingCutout || !projectId) return undefined;
+    const interval = setInterval(() => {
+      api.refreshMatchClothing(projectId)
+        .then((actual) => applyAnalysisReplacement(actual))
+        .catch(() => { /* 다음 tick 에서 재시도 — 사용자에게 토스트 스팸 없음 */ });
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [hasPendingCutout, projectId, applyAnalysisReplacement]);
+
   const commitSp = () => {
     const t = spDraft.trim();
     if (!t) { setSpAdding(false); setSpDraft(''); return; }
@@ -1235,7 +1249,14 @@ export function AnalysisForm({
               <div key={m.id}
                 className={`model-card custom-match-card${m.selected ? ' on' : ''}${compatible ? '' : ' incompatible'}`}
                 onClick={() => toggleMatch(m.id)}>
-                <img src={m.thumb} alt={m.name} />
+                {m.cutoutStatus === 'processing' ? (
+                  <div className="custom-match-cutout-pending">
+                    <Icon name="loader" className="spin" size={16} />
+                    <span>이미지 업로드됐어요! 지금 배경 정리 중이에요</span>
+                  </div>
+                ) : (
+                  <img src={m.thumb} alt={m.name} />
+                )}
                 {m.isCustom && <span className="custom-match-badge">내 옷</span>}
                 {m.isCustom && (
                   <button className="custom-match-delete" disabled={customMatchDeleting}

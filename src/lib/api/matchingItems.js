@@ -16,6 +16,7 @@ export const toMatchItem = (item, selOrder) => ({
   fitCategory: item.fitCategory ?? null,
   isCustom: item.isCustom === true,
   isCompatible: item.isCompatible !== false,
+  cutoutStatus: item.cutoutStatus ?? null,
   selected: selOrder != null,
   ...(selOrder != null ? { selOrder } : {}),
 });
