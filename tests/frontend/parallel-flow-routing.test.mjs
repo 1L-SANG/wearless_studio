@@ -196,7 +196,7 @@ test('the transition overlay replaces the duplicate completion badge and the rib
   assert.doesNotMatch(mannequinRibbonSource, /마네킹컷 준비 완료/);
   assert.doesNotMatch(chromeSource, /DONE_BADGE_MS/);
   assert.match(chromeSource, /마네킹컷을 먼저 만들고 있어요/);
-  assert.match(chromeSource, /setTimeout\(\(\) => setVisible\(false\), 2500\)/);
+  assert.match(chromeSource, /setTimeout\(\(\) => setVisible\(false\), 3500\)/);
   assert.doesNotMatch(mannequinRibbonSource, /마네킹 화면 보기/);
   assert.doesNotMatch(mannequinRibbonSource, /job-ribbon-btn/);
   assert.match(detailPageRibbonSource, /job-ribbon-btn/);
