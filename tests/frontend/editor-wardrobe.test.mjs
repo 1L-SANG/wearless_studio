@@ -3,9 +3,10 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { mergeEditorImagesIntoWardrobe } from '../../src/features/editor/editorWardrobe.js';
+import { isWardrobeImageUsed, mergeEditorImagesIntoWardrobe } from '../../src/features/editor/editorWardrobe.js';
 
 const editorSource = readFileSync(fileURLToPath(new URL('../../src/features/editor/Editor.jsx', import.meta.url)), 'utf8');
+const panelSource = readFileSync(fileURLToPath(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url)), 'utf8');
 
 test('generated editor photos are merged into their product color groups', () => {
   const wardrobe = {
@@ -105,6 +106,64 @@ test('direct uploads are collected under misc without treating arbitrary placed 
   });
 
   assert.deepEqual(merged.misc.map((image) => image.src), ['/mine.png', '/mine-from-storyboard.png', '/uploaded-into-frame.png']);
+});
+
+test('wardrobe images are protected when the canvas uses the same id or source URL', () => {
+  const blocks = [{
+    id: 'block',
+    elements: [
+      { id: 'same-id', type: 'image', src: '/different-source.png' },
+      { id: 'copied-element', type: 'image', src: '/same-source.png' },
+      { id: 'text', type: 'text', text: '/same-source.png' },
+    ],
+  }];
+
+  assert.equal(isWardrobeImageUsed(blocks, { id: 'same-id', src: '/unused.png' }), true);
+  assert.equal(isWardrobeImageUsed(blocks, { id: 'wardrobe-source', src: '/same-source.png' }), true);
+  assert.equal(isWardrobeImageUsed(blocks, { id: 'unused', src: '/unused.png' }), false);
+});
+
+test('wardrobe uses direct trash actions and blocks deletion for photos used in the editor', () => {
+  const wardrobePanel = panelSource.slice(
+    panelSource.indexOf('export function WardrobePanel'),
+    panelSource.indexOf('/* ---------- 이미지 props'),
+  );
+
+  assert.match(wardrobePanel, /className=\{`ward-trash\$\{used \? ' disabled' : ''\}`\}/);
+  assert.match(wardrobePanel, /aria-disabled=\{used\}/);
+  assert.match(wardrobePanel, /onDeleteImage\(im\)/);
+  assert.doesNotMatch(wardrobePanel, /ward-check|onDeleteSelected|toggleSel|ward-delbar/);
+  assert.match(editorSource, /isWardrobeImageUsed\(latestBlocks\.current \|\| blocks, image\)/);
+  assert.match(editorSource, /현재 에디팅에 사용 중인 사진은 삭제할 수 없어요/);
+});
+
+test('editor loading renders never gain an extra hook after data arrives', () => {
+  const loadingReturn = editorSource.indexOf('if (!blocks || !catalogs) return');
+  assert.ok(loadingReturn > 0);
+  assert.doesNotMatch(
+    editorSource.slice(loadingReturn),
+    /\buse(?:State|Effect|LayoutEffect|Memo|Callback|Ref|Context|Reducer)\s*\(/,
+  );
+});
+
+test('direct wardrobe uploads keep the wardrobe tab and expose their loading state', () => {
+  const insertImage = editorSource.slice(
+    editorSource.indexOf('const insertImage ='),
+    editorSource.indexOf('const requestSlotImage ='),
+  );
+  const uploadEditorImage = editorSource.slice(
+    editorSource.indexOf('const uploadEditorImage ='),
+    editorSource.indexOf('const dropImageFiles ='),
+  );
+
+  assert.match(insertImage, /keepTab = false/);
+  assert.match(insertImage, /selectEl\(target, el, false, keepTab\)/);
+  assert.match(uploadEditorImage, /const isWardrobeUpload = !placement\?\.blockId && !importId/);
+  assert.match(uploadEditorImage, /setWardrobeUploadLoading\(true\)/);
+  assert.match(uploadEditorImage, /wardrobeInsert\(image, \{ keepTab: true \}\)/);
+  assert.match(uploadEditorImage, /finally \{\s*if \(isWardrobeUpload\) setWardrobeUploadLoading\(false\)/);
+  assert.match(panelSource, /role="status" aria-live="polite"/);
+  assert.match(panelSource, /의류 이미지를 불러오는 중이에요/);
 });
 
 test('crop controls keep original and expose mouse confirm/cancel without instruction pills', () => {

@@ -24,6 +24,7 @@ import {
   SECTION_ROLES,
   SECTION_ROLE_OPTIONS,
   STORYBOARD_TAXONOMY_VERSION,
+  allowedCutTypeOptionsForSection,
   blockPatchForContentRole,
   cutTypeOptionsForSection,
   defaultContentRoleForSection,
@@ -36,6 +37,7 @@ import {
 import {
   assignGenerationExamples,
   generationExampleImageSources,
+  hasSelectableGenerationExamples,
   isGenerationCombinationPublic,
   paginateGenerationGalleryItems,
   repeatedAllExampleVariationIds,
@@ -77,7 +79,6 @@ import {
   invalidateStoryboardEntryPrefetch,
   loadStoryboardEntry,
   peekStoryboardEntry,
-  shouldRenderStoryboardLoadingFrame,
 } from './storyboardEntryPrefetch.js';
 import {
   sbLastSaved,
@@ -90,7 +91,11 @@ import {
 import { renderGroups } from '@/lib/storyboardRenderGroups.js';
 import { prewarmImages } from '@/lib/imagePrewarm.js';
 import { spaceSetDisplayName } from '@/lib/spaceSetDisplayNames.js';
-import { detailDirectionFromExample, generationExampleSelectionPatch } from '@/lib/storyboardExampleSelection.js';
+import {
+  detailDirectionFromExample,
+  generationExampleSelectionPatch,
+  generationExampleStructuralRecipePatch,
+} from '@/lib/storyboardExampleSelection.js';
 import { mineImageUrl, normalizeMineImages, promoteMineImage } from '@/lib/storyboardMineImages.js';
 import { requestMannequinGeneration } from '@/features/mannequin/generationRunner.js';
 import { waitForAnalysisEditSave } from '@/features/product-input/saveRouting.js';
@@ -100,6 +105,10 @@ import { classifyStoryboardLoadError, storyboardNotFoundError } from './storyboa
 import { continueAfterStoryboardFlush } from './storyboardNavigation.js';
 import { storyboardOverlayTop } from './storyboardOverlayTop.js';
 import { bindStoryboardExitFlush, scheduleStoryboardAutosave } from './storyboardSaveLifecycle.js';
+import {
+  collectInitialRevealThumbnailUrls,
+  waitForInitialReveal,
+} from './initialRevealGate.js';
 
 
 const COLOR_HEX = {
@@ -203,6 +212,14 @@ const prefersReducedMotion = () => (
   typeof window !== 'undefined'
   && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 );
+
+const initialRevealThumbnailFor = (block, catalogs) => {
+  if (block.source === 'mine') return block.thumb || block.ownImages?.[0];
+  const example = block.exampleId
+    ? (catalogs?.genExamples || []).find((candidate) => candidate.id === block.exampleId)
+    : null;
+  return (example ? generationExampleImageSources(example).src : null) || block.thumb;
+};
 
 const cutNumber = (index, total) => String(index).padStart(2, '0') + '/' + String(total).padStart(2, '0');
 const cutRangeLabel = (items) => {
@@ -958,22 +975,25 @@ export function shouldRenderGenerationExampleGuide(block) {
    · 내 사진(refImages) = 샷 종류의 '내 이미지' 탭에서 업로드·선택
    · 카드가 사이드/뒷면이어도 선택한 예시의 전체 연출을 참고하되, 카드의 촬영 방향은 유지
    refs/exampleId 는 제어형 — 콘티는 블록이, 에디터 AI 패널은 패널 상태가 소유 (계약 §3.4/§6). */
-export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onExampleDrag = null, refs = [], onRefsChange, onPickRef, refScope = 'all', onUseMine = null }) {
+export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onExampleDrag = null, refs = [], onRefsChange, onPickRef, refScope = 'all', onUseMine = null, includeMirrorExamples = false }) {
+  const galleryCut = cut === 'mirror' ? 'styling' : cut;
   const shotOpts = shotOptions || (cut === 'product' ? catalogs.productShotTypes
     : catalogs.shotTypes);
   const shotVal = shotOpts.some((s) => s.value === shot) ? shot : shotOpts[0].value;
   const examples = React.useMemo(() => selectGenerationExamples(catalogs.genExamples, {
-    cutType: cut,
+    cutType: galleryCut,
     shot: shotVal,
     clothingType,
     gender,
     direction,
     appendSetOnly: cut !== 'product',
-  }), [catalogs.genExamples, cut, shotVal, clothingType, gender, direction]);
+    appendMirror: includeMirrorExamples && galleryCut === 'styling',
+  }), [catalogs.genExamples, cut, galleryCut, shotVal, clothingType, gender, direction, includeMirrorExamples]);
   const selectedExample = (catalogs.genExamples || []).find((example) => example.id === exampleId) || null;
   const moodOnly = (cut === 'styling' || cut === 'horizon') && !!direction && direction !== 'front';
   const conditionStatus = !exampleId ? null : storedExampleConditionStatus(selectedExample, {
-    cutType: cut, clothingType, gender,
+    cutType: galleryCut, blockCutType, clothingType, gender,
+    includeMirror: includeMirrorExamples && galleryCut === 'styling',
   });
   const selectedPoseCompatible = (selectedExample?.variants || []).includes('pose')
     && poseExampleDirectionCompatible(selectedExample, {
@@ -1082,17 +1102,18 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
             else { setMineTab(false); onShotChange(value); }
           }}
             cut={cut} clothingType={clothingType} gender={gender}
-            isOptionPublished={cut !== 'product' ? (candidateShot) => candidateShot === 'mine' || selectGenerationExamples(
+            isOptionPublished={cut !== 'product' ? (candidateShot) => candidateShot === 'mine' || hasSelectableGenerationExamples(
               catalogs.genExamples,
               {
-                cutType: cut,
+                cutType: galleryCut,
                 shot: candidateShot,
                 clothingType,
                 gender,
                 direction,
                 appendSetOnly: true,
+                appendMirror: includeMirrorExamples && galleryCut === 'styling',
               },
-            ).length > 0 : null} />
+            ) : null} />
           : <span className="sb-exhint">내 사진은 이 프로젝트에서만</span>}
       </div>
       {mineTab ? (
@@ -1207,7 +1228,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   const pendingInSpace = !!block.spaceGroupId && !requestedRecipe;
   // 디테일 샷 상시 제공(2026-08-07 개편) — 디테일 사진이 없어도 서버가 원본 구조 확대로 생성
   const productShotOptions = catalogs.productShotTypes;
-  const hasSelectableExamples = (cutType, shot) => selectGenerationExamples(
+  const hasSelectableExamples = (cutType, shot) => hasSelectableGenerationExamples(
     catalogs.genExamples,
     {
       cutType,
@@ -1216,7 +1237,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       gender: exampleGender,
       appendSetOnly: cutType !== 'product',
     },
-  ).length > 0;
+  );
   const cutTypeOptions = cutTypeOptionsForSection(effectiveSectionRole).map((option) => {
     const shots = option.value === 'product'
       ? productShotOptions.map((item) => item.value)
@@ -1266,20 +1287,24 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         ? WORN_ROLE_BY_CUT_TYPE[pendingRecipe.cutType]
         : [CONTENT_ROLES.HERO, CONTENT_ROLES.BENEFIT].includes(current.contentRole)
           ? current.contentRole : defaultContentRoleForSection(effectiveSectionRole);
-    const recipePatch = normalizedRecipePatch({
+    const baseRecipePatch = normalizedRecipePatch({
       ...current,
       source: 'ai',
       sectionRole: effectiveSectionRole,
       cutType: pendingRecipe.cutType,
       shot: pendingRecipe.shot,
     }, nextRole, { hasDetailImage });
+    const recipePatch = {
+      ...baseRecipePatch,
+      ...generationExampleStructuralRecipePatch({ ...current, ...baseRecipePatch }, example),
+    };
     const nextColorOpts = nextRole === CONTENT_ROLES.DETAIL ? detailColorOpts : colorOpts;
     const colorId = nextColorOpts.some((color) => color.id === current.colorId)
       ? current.colorId : nextColorOpts[0]?.id;
     const changes = referenceFeedbackPatch(current, {
       ...recipePatch,
       source: 'ai',
-      shot: pendingRecipe.shot,
+      shot: recipePatch.shot,
       colorId,
       pose: 'auto',
       poseLabel: 'AI 자동',
@@ -1288,14 +1313,14 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       baseThumb: current.baseThumb ?? current.thumb,
       exampleSelectionOrigin: 'user',
       refScope: pendingInSpace ? 'pose' : 'all',
-      outerClosureState: clothingType === 'outer' && WORN_CUT_TYPES.has(pendingRecipe.cutType)
+      outerClosureState: clothingType === 'outer' && WORN_CUT_TYPES.has(recipePatch.cutType)
         ? (closureOptions.some((option) => option.value === current.outerClosureState)
           ? current.outerClosureState : 'open')
         : null,
-      ...(pendingRecipe.cutType === 'product' ? { matchIds: [], faceExposure: null } : {}),
+      ...(recipePatch.cutType === 'product' ? { matchIds: [], faceExposure: null } : {}),
       // 샷 전환 확정도 공통 규칙 적용 — 뒷면 고스트→디테일 전환 시 이전 back 이
       // 숨은 상태로 남아 BackDetail 근거로 새어 나가는 것을 막는다(Codex 리뷰 P1).
-      ...(pendingRecipe.cutType === 'product' && pendingRecipe.shot === 'detail'
+      ...(recipePatch.cutType === 'product' && recipePatch.shot === 'detail'
         ? { direction: detailDirectionFromExample(example) } : {}),
     }, catalogs);
     setPendingChoice(exampleId);
@@ -1409,7 +1434,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
           <div className="sb-cut-label-row"><label className="lbl">컷 종류</label></div>
           <UnderlineTabs
             options={cutTypeOptions}
-            value={pendingRecipe?.cutType || block.cutType}
+            value={pendingRecipe?.cutType || (isMirror ? 'styling' : block.cutType)}
             onChange={onCutTypeChange} />
         </div>
       )}
@@ -1421,11 +1446,12 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
             onCancelRequestedRecipe?.();
           }}>섹션 이동 취소</button>}
           {shouldRenderGenerationExamples && (
-            <MoodGuide catalogs={catalogs} cut={pendingRecipe.cutType}
+            <MoodGuide catalogs={catalogs} cut={pendingRecipe.cutType} blockCutType={block.cutType}
               direction={pendingRecipe.cutType === 'mirror' ? null : block.direction} shot={pendingRecipe.shot}
               shotOptions={pendingRecipe.cutType === 'product' ? productShotOptions : null}
               onShotChange={(shot) => setPendingRecipe((current) => ({ ...current, shot }))}
               clothingType={clothingType} gender={exampleGender}
+              includeMirrorExamples={effectiveSectionRole === SECTION_ROLES.STYLING || isMirror}
               exampleId={pendingChoice} onExampleChange={commitPendingRecipe} onExampleDrag={onExampleDrag}
               refScope={pendingInSpace ? 'pose' : 'all'} />
           )}
@@ -1443,10 +1469,11 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
               exampleId: null, exampleSelectionOrigin: null, refScope: null,
               refImages: [], refAssetIds: [],
               spaceGroupId: null, spaceVariation: null,
-            })} catalogs={catalogs} cut={block.cutType}
+            })} catalogs={catalogs} cut={block.cutType} blockCutType={block.cutType}
               direction={block.direction} shot={block.shot}
               shotOptions={isProduct ? productShotOptions : null}
               onShotChange={onShotChange} clothingType={clothingType} gender={exampleGender}
+              includeMirrorExamples={effectiveSectionRole === SECTION_ROLES.STYLING || isMirror}
               exampleId={block.exampleId || null}
               onExampleChange={onGenerationExampleChange}
               onExampleDrag={onExampleDrag}
@@ -1543,41 +1570,11 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   );
 }
 
-function StoryboardLoadingFrame({ doneBlocked }) {
+function StoryboardLoadingState() {
+  // 빈 div 의 aria-label 은 낭독되지 않을 수 있다 — 숨긴 텍스트 + status 로 알린다(리뷰 반영)
   return (
-    <div className="wizard wide sb-page sb-loading-page" aria-busy="true" aria-label="콘티보드를 불러오는 중이에요">
-      {doneBlocked && <DoneGuardModal />}
-      <PageHead title="상세페이지 초안 구성" sub="지금 보이는 이미지들은 예시입니다. 느낌만을 보고 필요한 컷은 수정하며 상세페이지를 생성해보세요." />
-      <div className="sb-count-head sb-loading-count" aria-hidden="true">
-        <span className="sb-loading-count-mark" />
-      </div>
-      <div className="storyboard-solo-layout sb-loading-layout" aria-hidden="true">
-        <aside className="sb-preview-rail sb-loading-preview">
-          <div className="sb-loading-preview-head" />
-          <div className="sb-loading-preview-page">
-            {Array.from({ length: 6 }, (_, index) => <span key={index} />)}
-          </div>
-        </aside>
-        <div className="sb-solo">
-          <div className="sb-cards sb-loading-board">
-            {Array.from({ length: 3 }, (_, index) => (
-              <div className="sb-loading-section" key={index}>
-                <span className="sb-loading-section-media" />
-                <span className="sb-loading-section-copy" />
-              </div>
-            ))}
-          </div>
-          <div className="sb-loading-upload" />
-        </div>
-      </div>
-      <div className="sb-actionbar" aria-hidden="true">
-        <div className="sb-ab-inner sb-loading-actions">
-          <span className="sb-loading-action-back" />
-          <span className="sb-loading-action-count" />
-          <span className="sb-loading-action-copy" />
-          <span className="sb-loading-action-go" />
-        </div>
-      </div>
+    <div role="status" aria-busy="true">
+      <span className="sr-only">콘티보드를 불러오는 중이에요</span>
     </div>
   );
 }
@@ -1850,6 +1847,7 @@ export function Storyboard() {
   const [undoEntry, setUndoEntry] = useState(null);
   const [undoExiting, setUndoExiting] = useState(false);
   const [inspectorTop, setInspectorTop] = useState(70);
+  const [initialBoardRevealed, setInitialBoardRevealed] = useState(() => prefersReducedMotion());
   const microVariationIds = repeatedAllExampleVariationIds(
     blocks,
     catalogs?.genExamples,
@@ -1923,6 +1921,25 @@ export function Storyboard() {
     window.scrollTo({ top: setPickerScrollY.current, behavior: 'instant' });
     setPickerScrollY.current = null;
   }, [setPicker]);
+
+  const initialRevealReady = blocks !== null && catalogs !== null;
+  useEffect(() => {
+    if (!initialRevealReady) return undefined;
+    if (prefersReducedMotion()) {
+      setInitialBoardRevealed(true);
+      return undefined;
+    }
+
+    let active = true;
+    const urls = collectInitialRevealThumbnailUrls(
+      renderGroups(blocks),
+      (block) => initialRevealThumbnailFor(block, catalogs),
+    );
+    void waitForInitialReveal(urls).then(() => {
+      if (active) setInitialBoardRevealed(true);
+    });
+    return () => { active = false; };
+  }, [initialRevealReady]);
 
   useEffect(() => {
     (async () => {
@@ -2117,7 +2134,7 @@ export function Storyboard() {
       )}
     </div></div>
   );
-  if (shouldRenderStoryboardLoadingFrame(blocks, catalogs)) return <StoryboardLoadingFrame doneBlocked={doneBlocked} />;
+  if (!blocks || !catalogs) return <StoryboardLoadingState />;
 
   const composeModeApplies = isDefaultStoryboardForMode(
     blocks,
@@ -2360,7 +2377,11 @@ export function Storyboard() {
       return;
     }
     const droppedCutType = droppedExample?.cutType;
-    if (droppedCutType && !cutTypeOptionsForSection(sectionRole).some((option) => option.value === droppedCutType)) {
+    if (!reservation && droppedCutType === 'mirror' && sectionRole !== SECTION_ROLES.STYLING) {
+      toast.push('거울컷은 스타일링 섹션에만 추가할 수 있어요');
+      return;
+    }
+    if (droppedCutType && !allowedCutTypeOptionsForSection(sectionRole).some((option) => option.value === droppedCutType)) {
       toast.push('이 섹션에는 해당 생성예시를 추가할 수 없어요');
       return;
     }
@@ -2512,7 +2533,7 @@ export function Storyboard() {
         return;
       }
       const memberIds = new Set(members.map((member) => member.id));
-      const allAllowed = !targetRole || members.every((block) => cutTypeOptionsForSection(targetRole)
+      const allAllowed = !targetRole || members.every((block) => allowedCutTypeOptionsForSection(targetRole)
         .some((option) => option.value === block.cutType));
       if (!allAllowed) { toast.push('이 섹션에는 장소 세트 구성을 그대로 옮길 수 없어요'); return; }
       setBlocks((current) => {
@@ -2555,7 +2576,7 @@ export function Storyboard() {
       ? blockPatchForContentRole(moving, targetContentRole, { clothingType })
       : null;
     const cutAllowed = !targetRole || moving?.source === 'mine'
-      || cutTypeOptionsForSection(targetRole).some((option) => option.value === moving?.cutType);
+      || allowedCutTypeOptionsForSection(targetRole).some((option) => option.value === moving?.cutType);
     if (moving && (!cutAllowed || (renderGroupRecipe && renderGroupRecipe.cutType !== moving.cutType))) {
       const fallbackRole = targetContentRole || defaultContentRoleForSection(targetRole);
       const targetRecipe = renderGroupRecipe || blockPatchForContentRole(moving, fallbackRole, { clothingType });
@@ -3043,7 +3064,7 @@ export function Storyboard() {
           {allOpen ? '전체 접기' : '전체 펼치기'}
         </button>
       </div>
-      {boardGroups.map((group) => {
+      {boardGroups.map((group, groupIndex) => {
         const open = openGroupKeys.includes(group.key);
         const range = cutRangeLabel(group.items);
         const groupSection = sectionForGroup(group);
@@ -3051,6 +3072,7 @@ export function Storyboard() {
           <section
             key={group.key}
             className={'sb-deck' + (open ? ' open' : '') + (dragOverSec === groupSection.id ? ' hot' : '')}
+            style={{ '--reveal-order': Math.min(groupIndex, 6) }}
             onPointerEnter={() => {
               if (open || !catalogs) return;   // 펼치기 직전 신호 — 아직 안 데운 것만 앞당겨 받는다
               prewarmImages(group.items.flatMap(({ block }) => [
@@ -3282,10 +3304,11 @@ export function Storyboard() {
     });
   };
   return (
-    <div className={`wizard wide sb-page sb-content-enter${atomicSaving ? ' is-atomic-saving' : ''}`}
-      aria-busy={atomicSaving || undefined}
+    <div className={`wizard wide sb-page sb-content-enter sb-initial-reveal${initialBoardRevealed ? ' is-revealed' : ''}${atomicSaving ? ' is-atomic-saving' : ''}`}
+      aria-busy={!initialBoardRevealed || atomicSaving || undefined}
       onClickCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}
       onDragStartCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}>
+      {/* 완료 가드는 게이트를 기다리지 않는다 — 기다리면 잠금 없이 보드가 활성화되는 창이 생긴다(리뷰 P1) */}
       {doneBlocked && <DoneGuardModal />}
       <PageHead title="상세페이지 초안 구성" sub="지금 보이는 이미지들은 예시입니다. 느낌만을 보고 필요한 컷은 수정하며 상세페이지를 생성해보세요." />
       {undoEntry && (

@@ -45,6 +45,26 @@ function whenVisible(fn) {
   return () => document.removeEventListener('visibilitychange', on);
 }
 
+/** 이미지 한 장을 받아 decode까지 끝낸다. 선캐싱과 초기 reveal 게이트가 같은 경로를 쓴다. */
+export function loadAndDecodeImage(url, {
+  ImageCtor = typeof Image === 'undefined' ? null : Image,
+  fetchPriority,
+} = {}) {
+  if (!ImageCtor) return Promise.reject(new Error('image_constructor_unavailable'));
+  return new Promise((resolve, reject) => {
+    const img = new ImageCtor();
+    img.decoding = 'async';
+    if (fetchPriority && 'fetchPriority' in img) img.fetchPriority = fetchPriority;
+    img.onload = () => {
+      const decoded = typeof img.decode === 'function' ? img.decode() : Promise.resolve();
+      // decode() 미지원/실패여도 load가 끝난 이미지는 화면에 표시할 수 있다.
+      decoded.catch(() => {}).then(resolve);
+    };
+    img.onerror = () => reject(new Error('image_load_failed'));
+    img.src = url;
+  });
+}
+
 /** URL 목록을 유휴 시간에 미리 받아 캐시를 데운다. 반환값을 호출하면 남은 작업을 취소한다. */
 export function prewarmImages(urls, { concurrency = 3 } = {}) {
   if (typeof window === 'undefined' || typeof Image === 'undefined') return () => {};
@@ -64,21 +84,15 @@ export function prewarmImages(urls, { concurrency = 3 } = {}) {
     if (cancelled) return;
     const url = queue.shift();
     if (!url) return;
-    const img = new Image();
-    img.decoding = 'async';
-    if ('fetchPriority' in img) img.fetchPriority = 'low';
     const next = () => {
       if (cancelled) return;
       // 다음 장으로 넘어가기 전에도 탭 가시성을 다시 확인한다(작업 중 다른 탭으로 이동한 경우).
       unwatch = whenVisible(() => runIdle(pump));
     };
-    img.onload = () => {
-      // decode()까지 마쳐야 펼칠 때 디코드 비용도 남지 않는다(미지원 브라우저는 그냥 넘어간다).
-      const decoded = typeof img.decode === 'function' ? img.decode() : Promise.resolve();
-      decoded.catch(() => {}).then(next);
-    };
-    img.onerror = () => { warmed.delete(url); next(); };
-    img.src = url;
+    loadAndDecodeImage(url, { fetchPriority: 'low' }).then(next, () => {
+      warmed.delete(url);
+      next();
+    });
   };
 
   unwatch = whenVisible(() => runIdle(() => {

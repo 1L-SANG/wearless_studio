@@ -8,13 +8,17 @@ import * as editorAppearance from '../../src/features/editor/editorAppearance.js
 const {
   DEFAULT_EDITOR_COLOR_PRESETS,
   imageResizeRect,
+  lineHitStrokeWidth,
   resizePolicyForElement,
+  shouldShowRotationHandle,
   speechBubblePath,
   stripPhotoBlockTextElements,
 } = editorAppearance;
 
 const editorPanelsSource = readFileSync(fileURLToPath(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url)), 'utf8');
 const editorStylesSource = readFileSync(fileURLToPath(new URL('../../src/styles/features.css', import.meta.url)), 'utf8');
+const moveableStylesSource = readFileSync(fileURLToPath(new URL('../../src/styles/moveable.css', import.meta.url)), 'utf8');
+const editorSource = readFileSync(fileURLToPath(new URL('../../src/features/editor/Editor.jsx', import.meta.url)), 'utf8');
 
 test('editor colors expose a practical preset palette made only of HEX values', () => {
   assert.deepEqual(DEFAULT_EDITOR_COLOR_PRESETS, [
@@ -45,10 +49,49 @@ test('editor color popover shows both default presets and a functional custom pa
   assert.equal(editorAppearance.hsvToHex({ h: 210, s: 100, v: 100 }), '#0080FF');
 });
 
-test('preset colors use the compact eight-column reference grid', () => {
-  assert.match(editorStylesSource, /\.sf-color-popover\s*\{[^}]*width:\s*190px/s);
-  assert.match(editorStylesSource, /\.sf-preset-grid\s*\{[^}]*grid-template-columns:\s*repeat\(8,\s*16px\)[^}]*gap:\s*6px/s);
-  assert.match(editorStylesSource, /\.sf-preset\s*\{[^}]*width:\s*16px[^}]*height:\s*16px[^}]*border-radius:\s*3px/s);
+test('element selection does not paint the parent block as selected', () => {
+  assert.match(editorSource, /className=\{`canvas-block\$\{blockSelected \? ' on' : ''\}/);
+  assert.doesNotMatch(editorSource, /className=\{`canvas-block\$\{blockActive \? ' on' : ''\}/);
+});
+
+test('multi-selection keeps every member and its Moveable bounds visibly in sync while dragging', () => {
+  assert.match(editorSource, /selectionCount > 1 \? ' multi-selected' : ''/);
+  assert.match(editorSource, /syncPointerGroupSelectionBounds\(\);/);
+  assert.match(editorStylesSource, /\.el\.on\.multi-selected \{[^}]*outline:/);
+});
+
+test('template catalog shows readable completed references instead of checkerboards', () => {
+  assert.match(editorStylesSource, /\.frame-layout-prev\.template \{[^}]*aspect-ratio:\s*3\s*\/\s*4/s);
+  assert.match(editorStylesSource, /\.frame-layout-prev\.template > img \{[^}]*object-fit:\s*contain[^}]*background:\s*#fff/s);
+  assert.doesNotMatch(editorStylesSource, /\.frame-layout-prev\.template \{[^}]*linear-gradient/s);
+});
+
+test('preset colors keep eight columns with practical pointer targets', () => {
+  assert.match(editorStylesSource, /\.sf-color-popover\s*\{[^}]*width:\s*244px/s);
+  assert.match(editorStylesSource, /\.sf-preset-grid\s*\{[^}]*grid-template-columns:\s*repeat\(8,\s*24px\)[^}]*gap:\s*4px/s);
+  assert.match(editorStylesSource, /\.sf-preset\s*\{[^}]*width:\s*24px[^}]*height:\s*24px[^}]*border-radius:\s*4px/s);
+  assert.match(editorStylesSource, /\.sf-preset::after\s*\{[^}]*inset:\s*-2px/s);
+});
+
+test('compact Moveable controls expose a larger invisible hit surface', () => {
+  assert.match(moveableStylesSource, /\.moveable-control::after\s*\{[^}]*inset:\s*-7px/s);
+});
+
+test('auto-height text keeps side controls attached to the selection border', () => {
+  assert.match(editorSource, /className=\{autoHeightTextTarget \? 'moveable-auto-text' : undefined\}/);
+  assert.doesNotMatch(moveableStylesSource, /\.moveable-auto-text \.moveable-[we]\s*\{[^}]*margin-left:/s);
+  assert.match(moveableStylesSource, /\.moveable-control\s*\{[^}]*margin-left:\s*-6px/s);
+  assert.match(moveableStylesSource, /\.moveable-auto-text \.moveable-control::after\s*\{[^}]*inset:\s*-2px/s);
+});
+
+test('crop image clipping does not clip the outside half of resize hit targets', () => {
+  assert.match(editorSource, /className="crop-frame-image"/);
+  assert.match(editorStylesSource, /\.crop-layer\s*\{[^}]*z-index:\s*7[^}]*pointer-events:\s*none/s);
+  assert.match(editorStylesSource, /\.crop-frame\s*\{[^}]*overflow:\s*visible/s);
+  assert.match(editorStylesSource, /\.crop-frame-image\s*\{[^}]*overflow:\s*hidden[^}]*pointer-events:\s*none/s);
+  assert.match(editorStylesSource, /\.crop-h::after\s*\{[^}]*inset:\s*-6px/s);
+  assert.match(editorStylesSource, /\.crop-bar\s*\{[^}]*pointer-events:\s*none/s);
+  assert.match(editorStylesSource, /\.crop-bar button\s*\{[^}]*pointer-events:\s*auto/s);
 });
 
 test('speech bubbles hide the neutral editor outline outside the actual bubble border', () => {
@@ -82,11 +125,130 @@ test('row photo blocks are recognized by source-linked images even without conte
   assert.deepEqual(output[0].elements.map((element) => element.id), ['image']);
 });
 
-test('text boxes always expose horizontal resize handles without aspect-ratio lock', () => {
+test('ordinary text restores the complete editable box around its saved bounds', () => {
   assert.deepEqual(resizePolicyForElement({ type: 'text' }, true), {
     keepRatio: false,
     directions: ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'],
   });
+});
+
+test('speech bubbles retain free resize handles while thin rules keep only their endpoints', () => {
+  assert.deepEqual(resizePolicyForElement({ type: 'text', shape: 'bubble' }, true), {
+    keepRatio: false,
+    directions: ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'],
+  });
+  assert.deepEqual(resizePolicyForElement({ type: 'line' }, true), {
+    keepRatio: false,
+    directions: ['w', 'e'],
+  });
+});
+
+test('thin rules keep a minimum twelve-pixel pointer target at every editor zoom', () => {
+  assert.equal(lineHitStrokeWidth(2, 1), 12);
+  assert.equal(lineHitStrokeWidth(2, 0.4), 30);
+  assert.equal(lineHitStrokeWidth(16, 1), 16);
+  assert.match(editorSource, /stroke="transparent" strokeWidth=\{hitWidth\}/);
+});
+
+test('text restores direct rotation while thin rules keep the numeric control', () => {
+  assert.equal(shouldShowRotationHandle({ type: 'text' }), true);
+  assert.equal(shouldShowRotationHandle({ type: 'line' }), false);
+  assert.equal(shouldShowRotationHandle({ type: 'text', shape: 'bubble' }), true);
+  assert.equal(shouldShowRotationHandle({ type: 'image' }), true);
+  assert.match(editorPanelsSource, /labelText="회전" value=\{el\.rotate \|\| 0\}/);
+  assert.match(editorSource, /rotatable=\{showRotationHandle\}/);
+});
+
+test('auto-height text expands its pointer target without covering adjacent table rules', () => {
+  assert.match(editorStylesSource, /\.el-text:not\(\.editing\)::before/);
+  assert.match(editorStylesSource, /top: calc\(-3px \* var\(--canvas-inv, 1\)\)/);
+  assert.match(editorStylesSource, /bottom: calc\(-3px \* var\(--canvas-inv, 1\)\)/);
+});
+
+test('canvas routes every movable element through one pointer drag without native text ranges', () => {
+  const elementPick = editorSource.slice(
+    editorSource.indexOf('const pick = (e) => {'),
+    editorSource.indexOf('const finishClick = (e) => {'),
+  );
+  const beforeTextDrag = elementPick.slice(0, elementPick.indexOf('if (isolateText)'));
+  const textDragPick = elementPick.slice(
+    elementPick.indexOf('if (isolateText)'),
+    elementPick.indexOf('const preserveSelection'),
+  );
+
+  assert.doesNotMatch(beforeTextDrag, /e\.preventDefault\(\)/);
+  assert.match(textDragPick, /e\.preventDefault\(\)/);
+  assert.match(elementPick, /window\.getSelection\?\.\(\)\?\.removeAllRanges\(\)/);
+  assert.match(elementPick, /onElementDragStart\?\.\(e, el, \{ isolateText, preserveSelection \}/);
+  assert.doesNotMatch(editorSource, /onMultiDragStart|onTextDragStart|onObjectGroupDragStart/);
+  assert.match(editorSource, /draggable=\{false\}/);
+  assert.match(editorSource, /data-editor-snap-guide="vertical"/);
+  assert.match(editorSource, /data-editor-snap-guide="horizontal"/);
+  assert.match(editorStylesSource, /\.editor-snap-guide\.vertical/);
+  assert.match(editorStylesSource, /\.editor-snap-guide\.horizontal/);
+  assert.match(editorStylesSource, /\.editor-snap-guide\.vertical\s*\{[^}]*width:\s*calc\(1px \* var\(--inv, 1\)\)/s);
+  assert.match(editorStylesSource, /\.editor-snap-guide\.horizontal\s*\{[^}]*height:\s*calc\(1px \* var\(--inv, 1\)\)/s);
+  assert.match(editorStylesSource, /\.ed-canvas\s*\{[^}]*user-select:\s*none[^}]*-webkit-user-select:\s*none/s);
+  assert.match(editorStylesSource, /\.el-text:not\(\.editing\)\s*\{[^}]*user-select:\s*none[^}]*touch-action:\s*none/s);
+  assert.match(editorStylesSource, /\.el-text\.editing\s*\{[^}]*user-select:\s*text[^}]*touch-action:\s*auto/s);
+  assert.match(editorSource, /onDoubleClick=\{preview \? undefined : \(e\) => \{\s*e\.stopPropagation\(\); pendingBubbleFit\.current = null; onEdit\(el\.id\)/s);
+  assert.match(editorSource, /onDoubleClick=\{\(e\) => \{ e\.stopPropagation\(\); pendingTextSize\.current = null; onEdit\(el\.id\)/);
+});
+
+test('entering text edit places the caret at the end for normal text and speech bubbles', () => {
+  assert.match(editorSource, /range\.selectNodeContents\(node\);\s*range\.collapse\(false\);/s);
+  assert.match(editorSource, /focusEditableAtEnd\(isSpeechBubbleElement\(el\) \? textRef\.current : ref\.current\)/);
+  assert.doesNotMatch(editorSource, /setTimeout\(\(\) => (?:textRef|ref)\.current/);
+});
+
+test('new ordinary text starts as an immediately editable Figma-style point text box', () => {
+  const addTextSource = editorSource.slice(
+    editorSource.indexOf('const addText ='),
+    editorSource.indexOf('/* ---- 정보 블록', editorSource.indexOf('const addText =')),
+  );
+
+  assert.match(addTextSource, /w:\s*12, h:\s*45, text:\s*'', textSizing:\s*'auto'/);
+  assert.match(addTextSource, /setEditEl\(el\.id\)/);
+  assert.match(editorSource, /const previewAutoTextSize = useCallback/);
+  assert.match(editorSource, /naturalTextWidth\(node, value\)/);
+  assert.match(editorSource, /h:\s*Math\.max\(1, Math\.ceil\(node\.scrollHeight\)\)/);
+  assert.match(editorSource, /onInput=\{\(e\) => \{ if \(editing\) previewAutoTextSize\(e\.currentTarget\); \}\}/);
+  assert.match(editorSource, /if \(nextSize && onTextCommit\) onTextCommit\(blockId, el\.id, value, nextSize\)/);
+});
+
+test('manually resizing point text converts it into a fixed text box', () => {
+  assert.match(editorSource, /elNow\?\.type === 'text' && elNow\.shape !== 'bubble' && elNow\.textSizing === 'auto' \? \{ textSizing: 'fixed' \} : \{\}/);
+  assert.match(editorSource, /height: el\.textSizing === 'fixed' \? el\.h : 'auto'/);
+  assert.match(editorPanelsSource, /onChange\(\{ w, \.\.\.\(!isBubble && el\.textSizing === 'auto' \? \{ textSizing: 'fixed' \} : \{\}\) \}\)/);
+});
+
+test('block quick actions stay visible while the top-level block is selected', () => {
+  assert.match(editorStylesSource, /\.canvas-block:hover \.quick, \.canvas-block\.on \.quick\s*\{[^}]*opacity:\s*1[^}]*visibility:\s*visible[^}]*pointer-events:\s*auto/s);
+});
+
+test('shared pointer drag covers frame controls, movable group members, rotation bounds, and cleanup', () => {
+  const slotButtonStart = editorSource.indexOf('<button className={`slot-add');
+  const slotButton = editorSource.slice(slotButtonStart, editorSource.indexOf('</button>', slotButtonStart));
+  const pointerDrag = editorSource.slice(
+    editorSource.indexOf('const startPointerSelectionDrag ='),
+    editorSource.indexOf('const startElementDrag ='),
+  );
+
+  assert.match(slotButton, /onPointerDown=\{\(e\) => e\.stopPropagation\(\)\}/);
+  assert.doesNotMatch(slotButton, /if \(draggedPointer\.current\) return/);
+  assert.match(pointerDrag, /!candidate\.hidden/);
+  assert.match(pointerDrag, /!candidate\.locked/);
+  assert.match(pointerDrag, /nodeById\[candidate\.id\]/);
+  assert.match(pointerDrag, /getBoundingClientRect\(\)/);
+  assert.match(pointerDrag, /activePointerDragCleanup\.current = cleanup/);
+  assert.match(editorSource, /activePointerDragCleanup\.current\?\.\(\)/);
+});
+
+test('editor copy and paste shortcuts duplicate canvas selections without stealing typing shortcuts', () => {
+  assert.match(editorSource, /mod && !typing && !kb\.current\.croppingOn && copyKey && kb\.current\.copy\?\.\(\)/);
+  assert.match(editorSource, /mod && !typing && !kb\.current\.croppingOn && pasteKey && kb\.current\.paste\?\.\(\)/);
+  assert.match(editorSource, /copy:\s*copySelectedElements, paste:\s*pasteCopiedElements/);
+  assert.match(editorSource, /setSelEls\(pasted\.selectedIds\)/);
 });
 
 test('text numeric controls allow an empty editing draft and commit the finished number', () => {

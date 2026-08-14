@@ -9,6 +9,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { Button, ErrorState, Icon, ProgressBar, useToast } from '@/components/ui.jsx';
+import { useSmoothProgress } from '@/components/SmoothProgress.jsx';
+import { EXPECTED_MS } from '@/lib/smoothProgress.js';
 import { fetchGenerationResultUrl, getStatus, startGeneration } from '@/lib/api/personalization.js';
 import s from './ModelPersonalization.module.css';
 
@@ -38,6 +40,14 @@ function ResultImage({ uri }) {
       {url ? <img src={url} alt="생성 결과" /> : <p className="hint" style={{ padding: 20 }}>불러오는 중…</p>}
     </div>
   );
+}
+
+/* 진행 갱신은 프레임마다 온다. 훅을 페이지 컴포넌트에 두면 그 리렌더가 프로젝트·이미지
+   목록 전체를 매번 재조정한다(Codex Minor 3). 이 작은 컴포넌트가 훅을 소유해 격리한다. */
+function GeneratingProgress({ progress }) {
+  // 폴링이 조용한 동안에도 바가 계속 차오르게 — 서버값은 바닥으로만 쓴다.
+  const shown = useSmoothProgress(progress, { expectedMs: EXPECTED_MS.default });
+  return <ProgressBar value={shown} label="생성하고 있어요" />;
 }
 
 export function ModelGenerate() {
@@ -156,7 +166,7 @@ export function ModelGenerate() {
           onClick={onGenerate} disabled={generating || !selected.length}>
           {generating ? '생성 중…' : '내 모델로 생성하기'}
         </Button>
-        {generating && <ProgressBar value={progress} label="생성하고 있어요" />}
+        {generating && <GeneratingProgress progress={progress} />}
       </div>
 
       {results && (

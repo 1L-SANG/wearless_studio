@@ -91,6 +91,7 @@ const initialMannequinJob = () => ({
   projectId: null,
   progress: 0,
   errorMessage: '',
+  startedAt: 0,   // 진행바 앵커 — 리본이 언마운트됐다 돌아와도 처음부터 다시 기지 않게
 });
 
 /* 상세페이지 생성 잡 — 에디터 대기 화면의 단일 소스(editor_wait_dev_spec §3).
@@ -436,7 +437,13 @@ export const useAppStore = create((set, get) => ({
   /** 서버 응답(조정/재생성 결과) 반영용 — 화면이 임의 계산해 넣지 않는다. */
   setAdjustCount(adjustCount) { set({ adjustCount }); persistFlow(get()); },
   setMannequinJob(patch) {
-    set((s) => ({ mannequinJob: { ...s.mannequinJob, ...patch } }));
+    set((s) => {
+      const next = { ...s.mannequinJob, ...patch };
+      // running 으로 처음 넘어가는 순간만 시작시각을 찍는다(진행 보고마다 갱신하면 앵커가 계속 밀린다).
+      if (next.status === 'running' && s.mannequinJob.status !== 'running') next.startedAt = Date.now();
+      if (next.status !== 'running') next.startedAt = 0;
+      return { mannequinJob: next };
+    });
   },
 
   /* ---- 상세페이지 생성 잡 (editor_wait_dev_spec §3) ----

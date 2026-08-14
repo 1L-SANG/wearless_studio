@@ -280,3 +280,88 @@ def test_analysis_schema_shape():
         assert k in s["properties"]
         assert k in s["required"]
     assert "measurements" not in s["properties"]
+
+
+def test_analyze_uses_analysis_tier_model(monkeypatch):
+    """AG-01 만 분석 전용 모델로 분기 — 게이팅 QC 가 쓰는 정본(model_text_gemini)과 분리한다.
+
+    이 축이 없으면 '분석만 flash 로' 가 불가능하다(오너 결정 2026-08-14). 실측 근거는
+    documents/research/analysis_thinking_ab_20260814.jsonl.
+    """
+    import asyncio
+    from types import SimpleNamespace
+
+    seen = {}
+
+    async def fake(settings, prompt, images, schema, thinking_level=None, models=None):
+        seen["models"] = models
+        return {"clothingType": "top", "subCategory": "knit", "fit": "regular"}, "gemini"
+
+    monkeypatch.setattr(pa, "analyze_with_fallback", fake)
+    settings = SimpleNamespace(model_text_gemini_analysis="gemini-3.7-flash")
+    dist, provider = asyncio.run(pa.analyze(settings, {}, []))
+    assert provider == "gemini"
+    assert dist["product"]["clothingType"] == "top"
+    assert seen["models"] == {"gemini": "gemini-3.7-flash"}
+
+
+def test_analyze_without_analysis_tier_falls_back_to_default_model(monkeypatch):
+    """미설정이면 models=None → vision_llm 이 정본 모델을 쓴다 (AG-08 분기와 같은 규약)."""
+    import asyncio
+    from types import SimpleNamespace
+
+    seen = {}
+
+    async def fake(settings, prompt, images, schema, thinking_level=None, models=None):
+        seen["models"] = models
+        return {"clothingType": "top"}, "gemini"
+
+    monkeypatch.setattr(pa, "analyze_with_fallback", fake)
+    asyncio.run(pa.analyze(SimpleNamespace(model_text_gemini_analysis=""), {}, []))
+    assert seen["models"] is None
+
+
+def test_build_prompt_declares_clothing_type_decision_order():
+    """clothingType 선택 규칙 — 없으면 모델이 자기 사전지식으로 메운다.
+
+    2026-08-14 실측(26벌): 규칙이 없을 때 5개 모델·thinking 조합이 **전부 똑같이** 셔츠형
+    아우터를 top 으로, 원피스를 top 으로 분류했다. 모델 문제가 아니라 프롬프트 공백이었다.
+    규칙 추가 후 종류 정확도 73% → 96%.
+
+    순서가 계약이다 — dress 판정이 shirt→outer 보다 먼저 걸려야 셔츠 원피스가 outer 로
+    새지 않는다. 그리고 top↔dress 동점은 dress 로 기운다: 원피스를 top 으로 보면 매칭
+    하의가 붙어 옷을 가린다(2026-08-01 셀러 보고, matching._NO_MATCH 주석).
+    """
+    p = pa.build_prompt({"name": "테스트", "clothing_type": "top"})
+    assert "decide with these tests IN ORDER" in p
+
+    # 규칙 **본문**의 위치를 비교한다. 라벨("1) dress")끼리 비교하면 그 안에 순서가 이미
+    # 들어 있어 항상 통과한다 — 본문을 통째로 맞바꾼 완전 역전 프롬프트도 잡지 못한다.
+    dress_body = "worn with no separate bottom"
+    shirt_body = "shirt-type garment"
+    assert dress_body in p, "dress 판정 본문을 못 찾았다 — 프롬프트 개정 시 이 문구를 갱신하라"
+    assert shirt_body in p, "셔츠형은 outer (오너 결정 2026-08-14)"
+    assert p.index(dress_body) < p.index(shirt_body), (
+        "dress 판정 본문이 shirt→outer 본문보다 먼저 와야 한다 — 순서가 뒤집히면 "
+        "셔츠 원피스가 dress 가 아니라 outer 로 샌다"
+    )
+
+    # 타이브레이크는 줄바꿈 위치에 의존하지 않게 공백을 접어서 확인한다.
+    flat = " ".join(p.split())
+    assert "CHOOSE DRESS" in flat, "top↔dress 동점 타이브레이크"
+    assert "never an escape from a clear top" in flat, "타이브레이크 남용 경계"
+
+
+def test_shirt_material_presets_agree_across_top_and_outer():
+    """셔츠 원단 후보는 종류 판정과 무관해야 한다.
+
+    materialPresetIndex 는 **행 상대값**이라, 같은 셔츠가 top 이냐 outer 냐에 따라 같은 번호가
+    다른 조성으로 풀린다. 2026-08-14 실측: 셔츠류를 outer 로 고정하자 체크셔츠의 조성이
+    면60/폴리40 → 폴리100, 면55/린넨45 → 면100 으로 바뀌었다(같은 사진, 규칙만 다름).
+    두 행의 앞부분을 같게 두면 종류가 흔들려도 조성은 안 흔들린다.
+    """
+    top = pa.MATERIAL_PRESETS[("top", "shirt")]
+    outer = pa.MATERIAL_PRESETS[("outer", "shirt")]
+    assert len(outer) >= len(top)
+    for i, (t, o) in enumerate(zip(top, outer)):
+        assert t["mix"] == o["mix"], f"셔츠 프리셋 {i}번이 top/outer 에서 다르다"

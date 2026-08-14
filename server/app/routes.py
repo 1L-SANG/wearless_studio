@@ -2455,6 +2455,17 @@ async def get_asset_file(request: Request, asset_id: str):
     - **에지 케이스**:
       - `404 Not Found`: 자산이 존재하지 않거나 id 형식이 잘못된 경우
     """
+    asset = await _public_asset_or_404(request, asset_id)
+    return RedirectResponse(
+        _r2(request).public_url(asset["r2_key"]),
+        status_code=302,
+        headers={"Cache-Control": IMMUTABLE_CACHE},
+    )
+
+
+async def _public_asset_or_404(request: Request, asset_id: str) -> dict:
+    """`/file`·`/bytes` 공용 capability URL 해석 — 정책 변경이 두 라우트에 같이 걸리게
+    한 곳에 둔다(리뷰 반영: 복붙 두 벌이면 한쪽만 고쳐져 계약이 어긋난다)."""
     try:
         uuid.UUID(asset_id)  # 공개 라우트 — 쓰레기 입력은 DB 전에 404로 컷
     except ValueError:
@@ -2462,12 +2473,40 @@ async def get_asset_file(request: Request, asset_id: str):
             status_code=404, detail={"code": "not_found", "message": "자산을 찾을 수 없습니다."})
     async with get_conn(request) as conn:
         asset = await repo.get_asset_public(conn, asset_id)
-    if asset is None:
+    if asset is None or not asset.get("r2_key"):
         raise HTTPException(
             status_code=404, detail={"code": "not_found", "message": "자산을 찾을 수 없습니다."})
-    return RedirectResponse(
-        _r2(request).public_url(asset["r2_key"]),
-        status_code=302,
+    return asset
+
+
+@router.get(
+    "/assets/{asset_id}/bytes",
+    responses={**COMMON_RESPONSES, 200: {"description": "에셋 바이트 직접 서빙 (API CORS 적용)"},
+               503: {"description": "스토리지 일시 장애 — 재시도 대상 (asset_unavailable)"}},
+    tags=["Assets & Uploads"],
+    summary="에셋 바이트 직접 서빙 (다운로드·캔버스 픽셀 읽기용)",
+)
+async def get_asset_bytes(request: Request, asset_id: str):
+    """`/assets/{id}/file`(302→R2)과 같은 capability URL 계약이지만, API가 바이트를 직접
+    실어 보냅니다. 에디터 다운로드가 블록을 캔버스로 그릴 때 이미지 픽셀을 읽어야 하는데
+    (toBlob), R2 공개 도메인의 CORS 헤더는 인프라 설정이라 앱이 보장할 수 없습니다.
+    `_tone_bytes`와 같은 이유·같은 패턴 — 여기 CORS는 FastAPI 것이 그대로 적용됩니다.
+    스토리지 장애 응답도 `_tone_bytes`와 같은 503 asset_unavailable 로 통일(리뷰 반영).
+
+    - **인증 없음 (capability URL)**: `/file`과 동일 근거 — id(UUIDv4)가 능력 토큰,
+      R2 객체는 public base로 이미 공개라 새 노출 없음.
+    - 호출 빈도: 다운로드 버튼을 누른 순간 블록당 이미지 수만큼 — 평시 0회.
+    """
+    asset = await _public_asset_or_404(request, asset_id)
+    try:
+        data = await asyncio.to_thread(_r2(request).get_bytes, asset["r2_key"])
+    except Exception as exc:  # noqa: BLE001 — 스토리지 일시 장애는 404가 아니라 503
+        raise HTTPException(status_code=503, detail={
+            "code": "asset_unavailable",
+            "message": "이미지를 불러오지 못했어요. 잠시 후 다시 시도해 주세요."}) from exc
+    return Response(
+        content=data,
+        media_type=asset.get("mime_type") or "application/octet-stream",
         headers={"Cache-Control": IMMUTABLE_CACHE},
     )
 

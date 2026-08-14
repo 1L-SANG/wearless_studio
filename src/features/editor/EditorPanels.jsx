@@ -12,11 +12,15 @@ import {
   ALL_CUT_TYPE_OPTIONS,
   inferContentRole,
 } from '@/lib/storyboardTaxonomy.js';
-import { selectGenerationExamples } from '@/lib/generationExamples.js';
-import { detailDirectionFromExample } from '@/lib/storyboardExampleSelection.js';
+import { hasSelectableGenerationExamples } from '@/lib/generationExamples.js';
+import {
+  detailDirectionFromExample,
+  generationExampleStructuralRecipePatch,
+} from '@/lib/storyboardExampleSelection.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, OBJECT_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, colorWithOpacity, encodeWardrobeImage, normalizeHexColor } from '@/features/editor/editorLibrary.js';
 import { DEFAULT_EDITOR_COLOR_PRESETS, commitNumberDraft, hexToHsv, hsvToHex } from '@/features/editor/editorAppearance.js';
+import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 
 function PanelHead({ title, sub }) {
   return <><div className="panel-h">{title}</div>{sub && <div className="panel-sub">{sub}</div>}</>;
@@ -417,8 +421,37 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
   const [outerClosure, setOuterClosure] = useState('open');
   const [matchIds, setMatchIds] = useState([]);
   const [matchOpen, setMatchOpen] = useState(false);
-  const isProduct = cutType === 'product';
-  const isMirror = cutType === 'mirror'; // mirror 레시피(ADR-0004): 방향 없음, 샷 full/medium만
+  // 컷 탭의 선택은 원래 레시피로 유지한다. 거울 예시는 구조 패치만 파생해 얹으므로
+  // 일반 예시를 다시 고르면 별도 상태 복구 없이 탭이 가리키던 레시피로 돌아간다.
+  const selectedExample = (catalogs.genExamples || []).find((example) => example.id === exampleId) || null;
+  const galleryCutType = cutType;
+  const galleryIsProduct = galleryCutType === 'product';
+  const galleryDirectionOptions = galleryIsProduct ? catalogs.productDirections : catalogs.directions;
+  const galleryShotOptions = galleryIsProduct ? catalogs.productShotTypes : catalogs.shotTypes;
+  const galleryDirectionVal = galleryDirectionOptions.some((option) => option.value === dir)
+    ? dir : galleryDirectionOptions[0].value;
+  const galleryShotVal = galleryShotOptions.some((option) => option.value === shot)
+    ? shot : galleryShotOptions[0].value;
+  const baseRecipe = {
+    source: 'ai',
+    contentRole: inferContentRole({ source: 'ai', cutType: galleryCutType, shot: galleryShotVal }),
+    cutType: galleryCutType,
+    direction: galleryDirectionVal,
+    shot: galleryShotVal,
+  };
+  const effectiveRecipe = {
+    ...baseRecipe,
+    ...generationExampleStructuralRecipePatch(baseRecipe, selectedExample),
+  };
+  const effectiveCutType = effectiveRecipe.cutType;
+  const isProduct = effectiveCutType === 'product';
+  const isMirror = effectiveCutType === 'mirror'; // mirror 레시피(ADR-0004): 방향 없음, 샷 full/medium만
+  const effectiveDirectionOptions = isProduct ? catalogs.productDirections : catalogs.directions;
+  const effectiveShotOptions = isProduct ? catalogs.productShotTypes : catalogs.shotTypes;
+  const effectiveDirectionVal = effectiveDirectionOptions.some((option) => option.value === effectiveRecipe.direction)
+    ? effectiveRecipe.direction : effectiveDirectionOptions[0].value;
+  const effectiveShotVal = effectiveShotOptions.some((option) => option.value === effectiveRecipe.shot)
+    ? effectiveRecipe.shot : effectiveShotOptions[0].value;
   const [modelOpen, setModelOpen] = useState(false);
   const modelRef = useRef(null);
   const smoothScroll = (p, to, dur = 300) => {
@@ -438,13 +471,8 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
       }
     }
   };
-  const dirOpts = isProduct ? catalogs.productDirections : catalogs.directions;
-  // 제품컷 샷(고스트·디테일)은 콘티보드처럼 MoodGuide 안의 샷 탭에서 고른다 — 디테일 상시 제공(2026-08-07 개편).
-  const shotOpts = isProduct ? catalogs.productShotTypes : catalogs.shotTypes;
-  const dirVal = dirOpts.some((o) => o.value === dir) ? dir : dirOpts[0].value;
-  const shotVal = shotOpts.some((o) => o.value === shot) ? shot : shotOpts[0].value;
-  // isDetail 은 검증된 shotVal 기준 — raw shot 을 읽으면 카탈로그 폴백 시 UI와 전송값이 어긋난다.
-  const isDetail = isProduct && shotVal === 'detail';
+  // isDetail 은 검증된 effectiveShotVal 기준 — raw shot 을 읽으면 카탈로그 폴백 시 UI와 전송값이 어긋난다.
+  const isDetail = isProduct && effectiveShotVal === 'detail';
   const activeColorOpts = isDetail ? detailColorOpts : colorOpts;
   const colorVal = activeColorOpts.some((option) => option.id === color)
     ? color : activeColorOpts[0]?.id || null;   // wardrobe 그룹 키 = colorId (계약 §3.6)
@@ -456,10 +484,11 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
   const showOuterClosure = clothingType === 'outer' && !isProduct;
   const showMatchClothing = !isProduct && Array.isArray(matchClothing) && matchClothing.length > 0;
   // 콘티보드와 같은 게이트 — 발행 예시가 하나도 없는 컷 종류는 비활성(예시가 추가되면 자동 활성).
-  const hasSelectableExamples = (cut, shotValue) => selectGenerationExamples(catalogs.genExamples, {
+  const hasSelectableExamples = (cut, shotValue) => hasSelectableGenerationExamples(catalogs.genExamples, {
     cutType: cut, shot: shotValue, clothingType, gender: modelGender,
     appendSetOnly: cut !== 'product',
-  }).length > 0;
+    appendMirror: cut === 'styling',
+  });
   const cutTypeOptions = ALL_CUT_TYPE_OPTIONS.map((option) => {
     const shots = option.value === 'product' ? catalogs.productShotTypes : catalogs.shotTypes;
     return { ...option, disabled: !shots.some((item) => hasSelectableExamples(option.value, item.value)) };
@@ -506,18 +535,20 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
           </div>
 
           {/* 분위기 예시가 주인공 — 샷 종류는 갤러리의 아이콘 필터 (B+C안, ADR-0004) */}
-          <MoodGuide catalogs={catalogs} cut={cutType} direction={isMirror ? null : dirVal} shot={shotVal}
-            shotOptions={isProduct ? shotOpts : null}
+          <MoodGuide catalogs={catalogs} cut={galleryCutType} blockCutType={effectiveCutType}
+            direction={galleryDirectionVal} shot={galleryShotVal}
+            shotOptions={galleryIsProduct ? galleryShotOptions : null}
             onShotChange={(v) => {
               setShot(v); setExampleId(null); setRefScope('all');
               // 고스트→디테일 전환 시 이전 '뒷면'이 숨은 채 BackDetail 근거로 새지 않게 — 콘티보드 동일 가드(Codex 리뷰 P1).
               if (isProduct) setDir('front');
             }} clothingType={clothingType} gender={modelGender}
+            includeMirrorExamples={galleryCutType === 'styling'}
             exampleId={exampleId} onExampleChange={selectExample}
             refScope={refScope} onRefScopeChange={setRefScope}
             refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
           {/* 디테일 컷은 방향 UI 없음 — 선택한 생성예시의 direction 라벨이 내부 결정 (selectExample) */}
-          {!isMirror && !isDetail && <div className="insp-sec"><label className="lbl">방향</label><Chips className="oneline" options={dirOpts} value={dirVal} onChange={setDir} /></div>}
+          {!isMirror && !isDetail && <div className="insp-sec"><label className="lbl">방향</label><Chips className="oneline" options={effectiveDirectionOptions} value={effectiveDirectionVal} onChange={setDir} /></div>}
 
           {showOuterClosure && (
             <div className="insp-sec outer-closure-field">
@@ -587,8 +618,8 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
           </details>}
 
           <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={() => onGenerate({
-            contentRole: inferContentRole({ source: 'ai', cutType, shot: shotVal }),
-            colorId: colorVal, cutType, direction: isMirror ? null : dirVal, shot: shotVal, modelId: model, exampleId, refScope,
+            contentRole: effectiveRecipe.contentRole,
+            colorId: colorVal, cutType: effectiveCutType, direction: isMirror ? null : effectiveDirectionVal, shot: effectiveShotVal, modelId: model, exampleId, refScope,
             outerClosureState: showOuterClosure ? outerClosure : null,
             matchIds: isProduct ? [] : matchIds,
             refImages: refImages.map((r) => r?.url || r),                  // 표시용 URL (mock 계약 유지)
@@ -604,7 +635,7 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
 }
 
 /* ---------- 의류 (wardrobe library) ---------- */
-export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, onInsert, onUpload, onVaryImage, onDeleteSelected, onFreshSeen, onImageDragStart, onImageDragEnd }) {
+export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading = false, onInsert, onUpload, onVaryImage, onDeleteImage, isImageUsed, onFreshSeen, onImageDragStart, onImageDragEnd }) {
   // wardrobe 그룹 키 = colorId | 'misc' — 표시명은 colorOpts 에서 파생 (계약 §3.6)
   const colorFor = (group) => {
     if (group === 'misc') return { hex: '#d4d4d8', name: '기타', neutral: true };
@@ -614,12 +645,24 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, onInsert,
   };
   const [collapsed, setCollapsed] = useState({});
   const toggle = (group) => setCollapsed((c) => ({ ...c, [group]: !c[group] }));
-  const [sel, setSel] = useState(() => new Set());
-  const toggleSel = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   return (
     <div className="ward-panel">
-      {pendingSlot && <div className="ward-fill-banner"><Icon name="image" size={15} />빈 칸에 넣을 의류를 선택하세요</div>}
-      <Button variant="ghost" block icon="upload" onClick={onUpload} style={{ marginBottom: 16 }}>직접 이미지 업로드하기</Button>
+      {pendingSlot && (
+        <div className="ward-fill-banner" role="status" aria-live="polite">
+          <span className="ward-fill-banner-icon"><Icon name="imagePlus" size={18} /></span>
+          <span>
+            <strong>프레임에 넣을 사진을 선택하세요</strong>
+            <small>아래 사진을 한 번 누르면 바로 들어가요.</small>
+          </span>
+        </div>
+      )}
+      <Button variant="ghost" block icon="upload" onClick={onUpload} disabled={uploading} style={{ marginBottom: uploading ? 8 : 16 }}>직접 이미지 업로드하기</Button>
+      {uploading && (
+        <div className="ward-upload-status" role="status" aria-live="polite">
+          <Icon name="loader" size={16} className="spin" />
+          <span>의류 이미지를 불러오는 중이에요</span>
+        </div>
+      )}
       {Object.entries(wardrobe).map(([group, imgs]) => {
         const c = colorFor(group);
         const open = !collapsed[group];
@@ -635,32 +678,34 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, onInsert,
             </button>
             {open && (
               <div className="wardrobe-grid">
-                {imgs.map((im) => im.loading ? (
-                  <div className="ward-cell loading" key={im.id}><Icon name="loader" size={18} className="spin" style={{ color: 'var(--fg-3)' }} /></div>
-                ) : (
-                  <div className={`ward-cell${sel.has(im.id) ? ' checked' : ''}${im.fresh ? ' fresh' : ''}`} key={im.id} onClick={() => onInsert(im)} title="클릭하거나 프레임으로 끌어 넣기"
-                    draggable onDragStart={(e) => { const image = e.currentTarget.querySelector('img'); e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData(WARDROBE_IMAGE_MIME, encodeWardrobeImage(im, { width: image?.naturalWidth, height: image?.naturalHeight })); onImageDragStart?.(); }}
-                    onDragEnd={() => onImageDragEnd?.()}
-                    onAnimationEnd={im.fresh ? () => onFreshSeen && onFreshSeen(im.id) : undefined}>
-                    <img src={thumbUrl(im.src, 240)} alt="" loading="lazy" decoding="async" />
-                    <button className="ward-check" onClick={(e) => { e.stopPropagation(); toggleSel(im.id); }} title="선택">
-                      {sel.has(im.id) && <Icon name="check" size={13} />}
-                    </button>
-                    <button className="ai-flag" onClick={(e) => { e.stopPropagation(); onVaryImage(im); }} title="AI로 편집"><Icon name="wand" size={12} /><span>AI 편집</span></button>
-                  </div>
-                ))}
+                {imgs.map((im) => {
+                  if (im.loading) return (
+                    <div className="ward-cell loading" key={im.id}><Icon name="loader" size={18} className="spin" style={{ color: 'var(--fg-3)' }} /></div>
+                  );
+                  const used = Boolean(isImageUsed?.(im));
+                  return (
+                    <div className={`ward-cell${im.fresh ? ' fresh' : ''}${pendingSlot ? ' select-target' : ''}`} key={im.id} onClick={(e) => { const image = e.currentTarget.querySelector('img'); onInsert({ ...im, width: image?.naturalWidth || im.width, height: image?.naturalHeight || im.height }); }} title={pendingSlot ? '이 사진을 프레임에 넣기' : '클릭하거나 프레임으로 끌어 넣기'}
+                      draggable onDragStart={(e) => { const image = e.currentTarget.querySelector('img'); e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData(WARDROBE_IMAGE_MIME, encodeWardrobeImage(im, { width: image?.naturalWidth, height: image?.naturalHeight })); onImageDragStart?.(); }}
+                      onDragEnd={() => onImageDragEnd?.()}
+                      onAnimationEnd={im.fresh ? () => onFreshSeen && onFreshSeen(im.id) : undefined}>
+                      <img src={thumbUrl(im.src, 240)} alt="" loading="lazy" decoding="async" />
+                      {pendingSlot && <span className="ward-pick-check" aria-hidden="true"><Icon name="check" size={15} /></span>}
+                      <button type="button" className={`ward-trash${used ? ' disabled' : ''}`} draggable={false}
+                        aria-label={used ? '현재 에디팅에 사용 중인 사진' : '의류 사진 삭제'} aria-disabled={used}
+                        title={used ? '현재 에디팅에 사용 중이라 삭제할 수 없어요' : '사진 삭제'}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => { e.stopPropagation(); onDeleteImage(im); }}>
+                        <Icon name="trash" size={13} />
+                      </button>
+                      <button className="ai-flag" onClick={(e) => { e.stopPropagation(); onVaryImage(im); }} title="AI로 편집"><Icon name="wand" size={12} /><span>AI 편집</span></button>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
         );
       })}
-      {sel.size > 0 && (
-        <div className="ward-delbar">
-          <button type="button" className="ward-del" onClick={() => { onDeleteSelected([...sel]); setSel(new Set()); }}>
-            <Icon name="trash" size={15} />삭제 ({sel.size})
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -786,7 +831,7 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, onCropReset, onRepla
 const TEXT_PALETTE = ['#0e0d14', '#898989', '#ffffff', '#4f88c9', '#d92d20', '#067647'];
 const HL_PALETTE = ['#fef3c7', '#dbeafe', '#dcfce7', '#fee2e2', '#f3f4f6', '#0e0d14'];
 const WEIGHTS = [{ value: 300, label: 'Light' }, { value: 400, label: 'Regular' }, { value: 500, label: 'Medium' }, { value: 600, label: 'SemiBold' }, { value: 700, label: 'Bold' }];
-export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, onLayer, onAddText, onAddGarmentText }) {
+export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, onLayer, onAddText }) {
   const has = el && el.type === 'text';
   const isBubble = has && el.shape === 'bubble';
   const s = (has && el.style) || {};
@@ -798,22 +843,17 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
   return (
     <div className="fig-panel">
       <button type="button" className="add-text-btn" onClick={onAddText}><Icon name="type" size={17} />텍스트 추가</button>
-      {onAddGarmentText && (
-        <>
-          <button type="button" className="add-text-btn" onClick={onAddGarmentText} style={{ marginTop: 8 }}><Icon name="type" size={17} />옷 글자 덮기</button>
-          <div className="panel-sub" style={{ marginTop: 8 }}>AI 컷의 뭉갠 글자 위에 정확한 글자를 얹어요. 정면·평평한 프린트에 잘 맞아요.</div>
-        </>
-      )}
       {!has ? (
         <div className="panel-sub" style={{ marginTop: 18 }}>위 버튼으로 텍스트를 추가하거나, 캔버스에서 텍스트를 클릭해 편집해요.</div>
       ) : (
         <>
           <PanelSection title="텍스트 박스" first>
             <div className="field-2up">
-              <NumField iconText="가로" value={Math.round(el.w || 120)} min={1} max={10000} onChange={(w) => onChange({ w })} />
-              <span />
+              <NumField iconText="가로" value={Math.round(el.w || 120)} min={1} max={10000}
+                onChange={(w) => onChange({ w, ...(!isBubble && el.textSizing === 'auto' ? { textSizing: 'fixed' } : {}) })} />
+              <NumField icon="rotate" labelText="회전" value={el.rotate || 0} min={-180} max={180} suffix="°" onChange={(rotate) => onChange({ rotate })} />
             </div>
-            <div className="panel-sub" style={{ marginTop: 8 }}>텍스트는 비율 잠금 없이 좌우 가장자리로 폭을 조절할 수 있어요.</div>
+            <div className="panel-sub" style={{ marginTop: 8 }}>텍스트는 좌우 가장자리로 폭을 조절하고, 회전은 여기서 정확히 입력할 수 있어요.</div>
           </PanelSection>
 
           <PanelSection title="타이포그래피">
@@ -891,23 +931,64 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
 }
 
 /* ---------- 프레임 ---------- */
-export function FramePanel({ onAdd, onDragStart, onDragEnd }) {
-  const frames = FRAME_LIBRARY_ITEMS;
+const FRAME_LIBRARY_TABS = [
+  { value: 'blank', label: '빈 프레임' },
+  { value: 'example', label: '예시 프레임' },
+  { value: 'guide', label: '안내 프레임' },
+];
+
+export function FramePanel({ onAdd, onDragStart, onDragEnd, recommendGender, onPickInfo }) {
+  const [category, setCategory] = useState('blank');
+  const frames = FRAME_LIBRARY_ITEMS.filter((frame) => (
+    category === 'blank' ? !frame.template : frame.template
+  ));
   return (
     <div>
-      <PanelHead title="프레임" sub="새 블록으로 추가돼요. 끌어 놓거나 클릭하세요." />
-      <div className="frame-list">
-        {frames.map((f) => (
-          <div className="frame-item" key={f.id} onClick={() => onAdd(f)} draggable
-            onDragStart={(e) => { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/frame', f.id); onDragStart && onDragStart(); }}
-            onDragEnd={() => onDragEnd && onDragEnd()}>
-            <div className="frame-prev frame-layout-prev">
-              {f.slots.map((slot, i) => <i key={i} style={{ left: `${slot.x / 10}%`, top: `${slot.y / f.h * 100}%`, width: `${slot.w / 10}%`, height: `${slot.h / f.h * 100}%` }} />)}
-            </div>
-            <div className="fl">{f.label}{f.recommended && <span className="frame-rec">추천</span>}</div>
-          </div>
-        ))}
+      <PanelHead title="프레임" sub="종류를 고른 뒤 끌어 놓거나 클릭해 추가하세요." />
+      <div className="frame-category-tabs">
+        <UnderlineTabs options={FRAME_LIBRARY_TABS} value={category} onChange={setCategory} />
       </div>
+      {category === 'guide' ? (
+        <ContentPanel recommendGender={recommendGender} onPick={onPickInfo} showIntro={false}
+          onDragStart={onDragStart} onDragEnd={onDragEnd} />
+      ) : (
+        <div className="frame-list">
+          {frames.map((f) => (
+            <div className="frame-item" key={f.id} onClick={() => onAdd(f)} draggable
+              onDragStart={(e) => { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/frame', f.id); onDragStart && onDragStart(); }}
+              onDragEnd={() => onDragEnd && onDragEnd()}>
+              <div className={`frame-prev frame-layout-prev${f.preview ? ' template' : ''}`}>
+                {f.slots.map((slot, i) => (
+                  <i key={i} style={{
+                    left: `${slot.x / 10}%`,
+                    top: `${slot.y / f.h * 100}%`,
+                    width: `${slot.w / 10}%`,
+                    height: `${slot.h / f.h * 100}%`,
+                    borderRadius: slot.radius ? `${Math.min(50, slot.radius / Math.min(slot.w, slot.h) * 100)}%` : undefined,
+                    border: slot.stroke ? `${slot.strokeWidth || 2}px ${slot.dash || 'solid'} ${slot.stroke}` : undefined,
+                    transform: slot.rotate ? `rotate(${slot.rotate}deg)` : undefined,
+                  }}>
+                    {slot.src && <img src={slot.src} alt="" loading="lazy" draggable={false} />}
+                  </i>
+                ))}
+                {!f.preview && (f.elements || []).filter((element) => element.type === 'text').map((element, index) => (
+                  <b className="frame-native-copy" key={`${element.text}-${index}`} style={{
+                    left: `${element.x / 10}%`,
+                    top: `${element.y / f.h * 100}%`,
+                    width: `${element.w / 10}%`,
+                    height: `${element.h / f.h * 100}%`,
+                    fontSize: `${Math.max(3, (element.style?.size || 20) / 8)}px`,
+                    fontWeight: element.style?.weight || 400,
+                    textAlign: element.style?.align || 'left',
+                  }}>{element.text}</b>
+                ))}
+                {f.preview && <img src={f.preview} alt="" loading="lazy" draggable={false} />}
+              </div>
+              <div className="fl">{f.label}{f.recommended && <span className="frame-rec">추천</span>}</div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -986,7 +1067,7 @@ export function LayerPanel({ block, selEls = [], embedded, onSelect, onReorder, 
   const [dragId, setDragId] = useState(null);
   const [overId, setOverId] = useState(null);
   if (!block) return <EmptyState icon="layers" title="블록을 선택하세요" desc="블록을 클릭하면 그 안의 레이어가 순서대로 나와요." />;
-  const rows = block.elements.map((el, idx) => ({ el, idx })).reverse(); // 위가 최상단(맨 앞)
+  const rows = block.elements.map((el, idx) => ({ el, idx })).filter(({ el }) => !el.system).reverse(); // 위가 최상단(맨 앞)
   return (
     <div>
       {!embedded && <PanelHead title="레이어" sub="위가 가장 앞이에요. 드래그로 순서를, 아이콘으로 표시·잠금을 바꿔요." />}

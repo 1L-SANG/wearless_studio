@@ -195,8 +195,8 @@ const detailPageRibbonSource = chromeSource.slice(detailPageRibbonStart, chromeL
 test('the transition overlay replaces the duplicate completion badge and the ribbon stops steering', () => {
   assert.doesNotMatch(mannequinRibbonSource, /마네킹컷 준비 완료/);
   assert.doesNotMatch(chromeSource, /DONE_BADGE_MS/);
-  assert.match(chromeSource, /마네킹컷을 먼저 만들고 있어요/);
-  assert.match(chromeSource, /setTimeout\(\(\) => setVisible\(false\), 2500\)/);
+  assert.match(chromeSource, /의류 구현 진행중/);
+  assert.match(chromeSource, /setTimeout\(\(\) => setVisible\(false\), 4725\)/);
   assert.doesNotMatch(mannequinRibbonSource, /마네킹 화면 보기/);
   assert.doesNotMatch(mannequinRibbonSource, /job-ribbon-btn/);
   assert.match(detailPageRibbonSource, /job-ribbon-btn/);
@@ -206,5 +206,8 @@ test('the transition overlay replaces the duplicate completion badge and the rib
 test('the removed completion badge leaves no stale running-state tracker behind', () => {
   assert.doesNotMatch(chromeSource, /wasRunningRef/);
   assert.doesNotMatch(chromeSource, /runningProjectIdRef/);
-  assert.match(mannequinRibbonSource, /if \(job\.status === 'idle'\) return null/);
+  // idle 이면 리본이 남지 않아야 한다는 게 요지. 진행바 작업에서 표시 조건을 visible 로
+  // 모으면서 문장 형태만 바뀌었고(rAF 루프를 숨김 상태에서 멈추려고), 불변식은 그대로다.
+  assert.match(mannequinRibbonSource, /job\.status !== 'idle'/);
+  assert.match(mannequinRibbonSource, /if \(!visible\) return null/);
 });

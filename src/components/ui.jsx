@@ -192,10 +192,11 @@ export function ProgressBar({ value, label, sub }) {
       {(label || value != null) && (
         <div className="progress-label">
           <span className="caption" style={{ color: 'var(--fg-1)', fontWeight: 500 }}>{label}</span>
-          <span className="pct">{value}%</span>
+          {/* 값이 없으면 '%' 기호도 남기지 않는다 — 라벨만 준 호출부에서 '%' 만 떠 있던 것. */}
+          {value != null && <span className="pct">{Math.round(value)}%</span>}
         </div>
       )}
-      <div className="progress"><i style={{ width: value + '%' }}></i></div>
+      <div className="progress"><i style={{ width: `${Math.max(0, Math.min(100, Number(value) || 0))}%` }}></i></div>
       {sub && <p className="hint" style={{ marginTop: 9 }}>{sub}</p>}
     </div>
   );
@@ -340,7 +341,9 @@ export function ToastProvider({ children }) {
   return (
     <ToastCtx.Provider value={{ push, dismiss }}>
       {children}
-      <div className="toast-host">
+      {/* body 포털: 확정 잠금이 #root 를 inert 로 만들어도 토스트(유실 경고 등)는
+          접근성 트리에 남아 낭독·표시된다 (2026-08-14 리뷰 P2). */}
+      {createPortal(<div className="toast-host">
         {list.map((t) => {
           const activate = () => {
             if (!t.onClick) return;
@@ -367,7 +370,7 @@ export function ToastProvider({ children }) {
             </div>
           );
         })}
-      </div>
+      </div>, document.body)}
     </ToastCtx.Provider>
   );
 }

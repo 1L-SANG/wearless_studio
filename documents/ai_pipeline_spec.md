@@ -152,7 +152,13 @@ GEMINI_API_KEY=
 OPENAI_API_KEY=
 MODEL_ROUTING_IMAGE_HIGH=gemini-3-pro-image        # 2026-06-12 공식 문서로 실재 확인(Nano Banana Pro, stable) — 교체는 여기서만
 MODEL_ROUTING_IMAGE_LIGHT=gemini-3.1-flash-image
-MODEL_ROUTING_TEXT=gemini-3.5-flash                 # 2026-07-02 결정 (Gemini 3 Flash GA) — 상세 pl1_analysis_agent_spec §2
+MODEL_ROUTING_TEXT_GEMINI=gemini-3.7-flash          # text tier 정본(Gemini). 2026-08-14 3.5 flash → 3.7 flash — 상세 pl1_analysis_agent_spec §2
+MODEL_ROUTING_TEXT_GEMINI_ANALYSIS=gemini-3.7-flash # AG-01 상품분석만 분기 (2026-08-14 실측 결정)
+MODEL_ROUTING_TEXT_GEMINI_FEATURES=gemini-3.7-flash # AG-08 특징 발굴만 분기. 2026-08-14 3.6 flash → 3.7 flash
+MODEL_ROUTING_TEXT=gpt-5.4-mini                     # GPT 폴백 provider 전용(OPENAI_API_KEY 있을 때만 시도)
+# ⚠️ 프로드(copilot/api/manifest.yml)는 MODEL_ROUTING_TEXT_GEMINI 를 gemini-3.1-pro-preview 로 덮어쓴다.
+#    정본이 게이팅 QC(IMAGE_QC·MANNEQUIN_AXIS_QC·BASE_FIDELITY_QC=enforce)까지 커버하기 때문 —
+#    분석만 flash 로 내리려고 _ANALYSIS 축을 뗐다(오너 결정 2026-08-14).
 PIPELINE_CUT_CONCURRENCY=3                          # PL-4 그룹 내 병렬 상한
 ```
 

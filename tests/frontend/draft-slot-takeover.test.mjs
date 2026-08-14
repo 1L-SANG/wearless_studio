@@ -593,6 +593,13 @@ test('resume choice dismissal cannot silently choose or take over a draft', () =
   assert.doesNotMatch(routeChoice, /chooseSource/);
 });
 
+test('input entry transition leaves the persistent header and background unobstructed', () => {
+  const app = read('../../src/App.jsx');
+  const inputRoute = app.slice(app.indexOf('function ProductInputRoute()'), app.indexOf('function RootRedirect()'));
+  assert.match(inputRoute, /if \(entryDecision !== 'continue'\) return null/);
+  assert.doesNotMatch(inputRoute, /이동하고 있어요/);
+});
+
 test('logout clears slot identity and remounts input for the next user', () => {
   const app = read('../../src/App.jsx');
   const auth = read('../../src/features/auth/AuthProvider.jsx');
@@ -625,7 +632,8 @@ test('mock UI confirmation locks editing and flow navigation before asynchronous
   assert.match(confirmAction, /finally \{[\s\S]*?onConfirmingChange\?\.\(false\)/);
   assert.ok(promotion.indexOf('setFlowPromotionLocked(true)') < promotion.indexOf('colorSaveSchedulerRef.current.flush()'));
   assert.match(promotion, /latestProductRef\.current[\s\S]*?latestAnalysisRef\.current[\s\S]*?latestComposeModeRef\.current/);
-  assert.match(input, /promotionLocked && createPortal\(\([\s\S]*?className="input-promotion-lock"[\s\S]*?document\.body/);
+  // 확정 대기는 도착 오버레이와 같은 전환 화면으로 표시된다 (2026-08-14 사용자 결정)
+  assert.match(input, /promotionLocked && createPortal\(\([\s\S]*?className="input-promotion-transition"[\s\S]*?document\.body/);
   assert.match(shell, /disabled=\{inputPromotionLocked\}/);
   assert.match(shell, /if \(inputPromotionLocked\) return/);
 });

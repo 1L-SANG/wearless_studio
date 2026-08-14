@@ -8,6 +8,23 @@ function isDirectUploadSource(source) {
   return USER_IMAGE_SOURCES.has(String(source || '').toLowerCase());
 }
 
+/**
+ * Wardrobe tiles keep their source id, but canvas insertions receive a new element id.
+ * Compare both id and source URL so copies and frame fills cannot delete their source
+ * out from under the document that is currently being edited.
+ */
+export function isWardrobeImageUsed(blocks = [], image = null) {
+  const imageId = String(image?.id || '').trim();
+  const imageSrc = normalizedSrc(image?.src);
+  if (!imageId && !imageSrc) return false;
+
+  return (blocks || []).some((block) => (block?.elements || []).some((element) => (
+    element?.type === 'image'
+    && ((imageId && String(element.id || '').trim() === imageId)
+      || (imageSrc && normalizedSrc(element.src) === imageSrc))
+  )));
+}
+
 function wardrobeImageFromElement(element, group) {
   return {
     id: element.id || `editor-image-${group}-${normalizedSrc(element.src)}`,

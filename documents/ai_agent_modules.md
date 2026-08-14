@@ -14,7 +14,7 @@
 |---|---|---|
 | `image_high` | **Gemini 3 Pro Image** (`gemini-3-pro-image`) | 최종 산출물에 들어가는 모든 이미지 — 의류 동일성·핏 재현이 핵심인 고작업 |
 | `image_light` | **Gemini 3.1 Flash Image** (`gemini-3.1-flash-image`) | 미리보기·예시성 이미지. **현재 MVP 배정 에이전트 없음** — 분위기 예시는 운영자 시드 데이터로 대체(§5 참고). 저난도 생성 수요가 생기면 이 tier에 배정 |
-| `text` | **Gemini 3 Flash** (`gemini-3.5-flash`) | 이미지 생성이 아닌 모든 작업 — 분석(비전 입력 포함)·카피·검수. 2026-07-02 사용자 결정(구 GPT-5.4 mini 잠정 배정 대체) — 생성 파라미터는 `pl1_analysis_agent_spec.md` §2 |
+| `text` | **Gemini 3.7 Flash** (`gemini-3.7-flash`) — 단 **프로드 정본은 `gemini-3.1-pro-preview`** (카피·검수·게이팅 QC가 함께 쓰는 값이라 유지, 오너 결정 2026-08-14; 분석만 `MODEL_ROUTING_TEXT_GEMINI_ANALYSIS`로 flash 분기) | 이미지 생성이 아닌 모든 작업 — 분석(비전 입력 포함)·카피·검수. 2026-07-02 사용자 결정(구 GPT-5.4 mini 잠정 배정 대체) — 생성 파라미터는 `pl1_analysis_agent_spec.md` §2 |
 
 **API 키 (.env — FastAPI 서버 전용, 추후 추가)**
 
