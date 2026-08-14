@@ -231,7 +231,11 @@ def test_mannequin_outerwear_inner_rule_is_category_scoped(clothing_type, has_ru
     )
 
     assert ("OUTERWEAR INNER" in prompt) is has_rule
-    assert ("Choose only white or black" in prompt) is has_rule
+    # 이너는 흰색이 기본, 검정은 예외 (오너 결정 2026-08-14). 대칭 대비 규칙("명도 대비가 큰 쪽")
+    # 이던 시절엔 어두운 아우터마다 검정 이너가 뽑혔다 — 그 규칙으로 되돌아가면 여기서 걸린다.
+    assert ("DEFAULT TO WHITE" in prompt) is has_rule
+    assert ("Choose black ONLY when white would" in prompt) is has_rule
+    assert "Choose only white or black" not in prompt
     assert ("no logo, pattern, print, or graphic" in prompt) is has_rule
     assert "${outerwearInnerLine}" not in prompt
 
@@ -257,8 +261,9 @@ def test_mannequin_outerwear_inner_rule_has_korean_template_parity():
     )
 
     assert "무지 솔리드 크루넥 티셔츠 한 장만" in prompt
-    assert "흰색과 검정 중" in prompt
-    assert "명도 대비가 더 큰 하나" in prompt
+    assert "기본은 흰색이다" in prompt
+    assert "검정은 흰색이 실제로 실패할 때만" in prompt
+    assert "명도 대비가 더 큰 하나" not in prompt  # 구 대칭 대비 규칙 잔존 금지
     assert "로고·패턴·프린트·그래픽이 없는" in prompt
     assert "과한 크롭이나 터틀넥은 금지" in prompt
 
