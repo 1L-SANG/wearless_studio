@@ -908,6 +908,10 @@ export function Editor() {
   const fromHistory = useRef(false);
   const lastPush = useRef(0);
 
+  useEffect(() => {
+    if (pendingSlot && tab !== 'wardrobe') setPendingSlot(null);
+  }, [pendingSlot, tab]);
+
   const syncPointerGroupSelectionBounds = useCallback(() => {
     if (pointerGroupRectFrame.current != null) return;
     pointerGroupRectFrame.current = window.requestAnimationFrame(() => {
@@ -1328,6 +1332,7 @@ export function Editor() {
 
   const selectEl = (blockId, el, additive, keepTab) => {
     if (cropping) commitCrop();   // 크롭 중 다른 요소 클릭 → 크롭 확정 후 선택 (런타임 호출이라 TDZ 무관)
+    setPendingSlot(null);         // 다른 요소를 고르면 프레임 사진 선택 모드를 끝낸다.
     setVaryTarget(null);          // 캔버스 선택이 바뀌면 'AI 편집' 지정 대상은 해제
     // 요소를 고르는 것도 그 블록을 잡은 것이다 — 이걸 안 켜면 블록 테두리·빠른 도구가
     // 안 뜨고, 블록 배경을 정확히 눌러야만 보이는 상태로 돌아간다.
@@ -1341,7 +1346,7 @@ export function Editor() {
     });
     if (!keepTab) setTab(el.type === 'text' ? 'text' : 'image');
   };
-  const clearSel = () => { setSelEl(null); setSelEls([]); setVaryTarget(null); };
+  const clearSel = () => { setSelEl(null); setSelEls([]); setVaryTarget(null); setPendingSlot(null); };
   const copySelectedElements = () => {
     const copied = copyEditorElements(latestBlocks.current || blocks, selEls);
     if (!copied) return false;
@@ -1507,7 +1512,11 @@ export function Editor() {
     selectEl(target, el, false, keepTab);
     toast.push('이미지를 캔버스에 삽입했어요');
   };
-  const requestSlotImage = (blockId, el) => { setPendingSlot({ blockId, elId: el.id }); setTab('wardrobe'); };
+  const requestSlotImage = (blockId, el) => {
+    selectEl(blockId, el, false, true);
+    setPendingSlot({ blockId, elId: el.id });
+    setTab('wardrobe');
+  };
   const dropSlotImage = (blockId, elId, image) => {
     setSlotImage(blockId, elId, image);
     toast.push('프레임에 이미지를 넣었어요', { icon: 'image' });

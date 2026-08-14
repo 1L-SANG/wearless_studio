@@ -166,9 +166,25 @@ test('image frames show an exact placement guide for wardrobe and external file 
 test('frame images show the full source and a wardrobe click fills the pending slot immediately', () => {
   assert.match(editorSource, /objectFit: el\.fit \|\| 'cover'/);
   assert.match(editorSource, /return fitImageToFrameBlock\(nextBlock, elId, image\)/);
-  assert.match(editorSource, /const requestSlotImage = \(blockId, el\) => \{ setPendingSlot\(\{ blockId, elId: el\.id \}\); setTab\('wardrobe'\); \}/);
+  assert.match(editorSource, /const requestSlotImage = \(blockId, el\) => \{[\s\S]*selectEl\(blockId, el, false, true\);[\s\S]*setPendingSlot\(\{ blockId, elId: el\.id \}\);[\s\S]*setTab\('wardrobe'\);[\s\S]*\}/);
   assert.match(editorSource, /if \(pendingSlot\) \{[\s\S]*setSlotImage\(pendingSlot\.blockId, pendingSlot\.elId,[\s\S]*setPendingSlot\(null\);[\s\S]*setTab\('image'\);[\s\S]*return;/);
   assert.match(panelSource, /onClick=\{\(e\) => \{ const image = e\.currentTarget\.querySelector\('img'\); onInsert\(\{ \.\.\.im, width: image\?\.naturalWidth \|\| im\.width, height: image\?\.naturalHeight \|\| im\.height \}\); \}\}/);
+});
+
+test('pending frame placement clearly invites one-click selection in the wardrobe', () => {
+  assert.match(panelSource, /프레임에 넣을 사진을 선택하세요/);
+  assert.match(panelSource, /아래 사진을 한 번 누르면 바로 들어가요\./);
+  assert.match(panelSource, /pendingSlot \? ' select-target' : ''/);
+  assert.match(panelSource, /pendingSlot && <span className="ward-pick-check" aria-hidden="true"><Icon name="check" size=\{15\} \/><\/span>/);
+  assert.match(stylesSource, /\.ward-cell\.select-target:hover\s*\{[^}]*box-shadow:\s*0 0 0 2px var\(--link\)/s);
+  assert.match(stylesSource, /\.ward-pick-check\s*\{[^}]*opacity:\s*0[^}]*pointer-events:\s*none/s);
+  assert.match(stylesSource, /\.ward-cell\.select-target:hover \.ward-pick-check,[\s\S]*opacity:\s*1/);
+});
+
+test('pending frame placement is cancelled when the user selects something else', () => {
+  assert.match(editorSource, /if \(pendingSlot && tab !== 'wardrobe'\) setPendingSlot\(null\)/);
+  assert.match(editorSource, /const selectEl = \(blockId, el, additive, keepTab\) => \{[\s\S]*setPendingSlot\(null\);/);
+  assert.match(editorSource, /const clearSel = \(\) => \{[^}]*setPendingSlot\(null\);[^}]*\}/);
 });
 
 test('empty template frames always label the exact place where a photo goes', () => {
@@ -176,7 +192,7 @@ test('empty template frames always label the exact place where a photo goes', ()
   assert.match(editorSource, /<Icon name="imagePlus" size=\{compactSlot \? 22 : 28\}/);
   assert.match(editorSource, /!compactSlot && <span>여기에 사진 넣기<\/span>/);
   assert.match(editorSource, /onPointerDown=\{\(e\) => e\.stopPropagation\(\)\}/);
-  assert.match(editorSource, /const requestSlotImage = \(blockId, el\) => \{ setPendingSlot\(\{ blockId, elId: el\.id \}\); setTab\('wardrobe'\); \}/);
+  assert.match(editorSource, /const requestSlotImage = \(blockId, el\) => \{[\s\S]*selectEl\(blockId, el, false, true\);[\s\S]*setPendingSlot\(\{ blockId, elId: el\.id \}\);[\s\S]*setTab\('wardrobe'\);[\s\S]*\}/);
   assert.match(stylesSource, /\.el-slot\.checkerboard\s*\{[^}]*background-image:\s*linear-gradient/s);
 });
 

@@ -617,7 +617,15 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading
   const toggle = (group) => setCollapsed((c) => ({ ...c, [group]: !c[group] }));
   return (
     <div className="ward-panel">
-      {pendingSlot && <div className="ward-fill-banner"><Icon name="image" size={15} />빈 칸에 넣을 의류를 선택하세요</div>}
+      {pendingSlot && (
+        <div className="ward-fill-banner" role="status" aria-live="polite">
+          <span className="ward-fill-banner-icon"><Icon name="imagePlus" size={18} /></span>
+          <span>
+            <strong>프레임에 넣을 사진을 선택하세요</strong>
+            <small>아래 사진을 한 번 누르면 바로 들어가요.</small>
+          </span>
+        </div>
+      )}
       <Button variant="ghost" block icon="upload" onClick={onUpload} disabled={uploading} style={{ marginBottom: uploading ? 8 : 16 }}>직접 이미지 업로드하기</Button>
       {uploading && (
         <div className="ward-upload-status" role="status" aria-live="polite">
@@ -646,11 +654,12 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading
                   );
                   const used = Boolean(isImageUsed?.(im));
                   return (
-                    <div className={`ward-cell${im.fresh ? ' fresh' : ''}`} key={im.id} onClick={(e) => { const image = e.currentTarget.querySelector('img'); onInsert({ ...im, width: image?.naturalWidth || im.width, height: image?.naturalHeight || im.height }); }} title="클릭하거나 프레임으로 끌어 넣기"
+                    <div className={`ward-cell${im.fresh ? ' fresh' : ''}${pendingSlot ? ' select-target' : ''}`} key={im.id} onClick={(e) => { const image = e.currentTarget.querySelector('img'); onInsert({ ...im, width: image?.naturalWidth || im.width, height: image?.naturalHeight || im.height }); }} title={pendingSlot ? '이 사진을 프레임에 넣기' : '클릭하거나 프레임으로 끌어 넣기'}
                       draggable onDragStart={(e) => { const image = e.currentTarget.querySelector('img'); e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData(WARDROBE_IMAGE_MIME, encodeWardrobeImage(im, { width: image?.naturalWidth, height: image?.naturalHeight })); onImageDragStart?.(); }}
                       onDragEnd={() => onImageDragEnd?.()}
                       onAnimationEnd={im.fresh ? () => onFreshSeen && onFreshSeen(im.id) : undefined}>
                       <img src={thumbUrl(im.src, 240)} alt="" loading="lazy" decoding="async" />
+                      {pendingSlot && <span className="ward-pick-check" aria-hidden="true"><Icon name="check" size={15} /></span>}
                       <button type="button" className={`ward-trash${used ? ' disabled' : ''}`} draggable={false}
                         aria-label={used ? '현재 에디팅에 사용 중인 사진' : '의류 사진 삭제'} aria-disabled={used}
                         title={used ? '현재 에디팅에 사용 중이라 삭제할 수 없어요' : '사진 삭제'}

@@ -1583,8 +1583,20 @@
 .ward-upload-status { min-height: 36px; display: flex; align-items: center; justify-content: center; gap: 7px; margin-bottom: 12px;
   border-radius: var(--r-3); background: var(--bg-2); color: var(--fg-2); font-size: 12.5px; font-weight: 500; }
 .ward-upload-status svg { flex: none; color: var(--fg-3); }
-.ward-fill-banner { display: flex; align-items: center; gap: 7px; padding: 9px 12px; margin-bottom: 14px; border-radius: var(--r-3);
-  background: rgba(0,153,255,.08); color: var(--link); font-size: 12.5px; font-weight: 500; }
+.ward-fill-banner { display: flex; align-items: center; gap: 10px; padding: 12px; margin-bottom: 14px; border-radius: var(--r-4);
+  background: rgba(0,153,255,.09); color: var(--fg-1); box-shadow: inset 0 0 0 1px rgba(0,135,230,.18); }
+.ward-fill-banner-icon { width: 34px; height: 34px; display: grid; place-items: center; flex: none; border-radius: 10px;
+  background: #fff; color: var(--link); box-shadow: 0 2px 8px rgba(0,105,180,.12); }
+.ward-fill-banner > span:last-child { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.ward-fill-banner strong { font-size: 12.5px; line-height: 1.4; font-weight: 700; }
+.ward-fill-banner small { color: var(--fg-2); font-size: 11.5px; line-height: 1.4; }
+.ward-cell.select-target { transition: box-shadow .14s, transform .14s; }
+.ward-cell.select-target:hover { z-index: 1; transform: translateY(-2px); box-shadow: 0 0 0 2px var(--link), 0 8px 18px rgba(0,105,180,.18); }
+.ward-pick-check { position: absolute; top: 7px; right: 7px; width: 28px; height: 28px; display: grid; place-items: center;
+  border-radius: 50%; background: var(--link); color: #fff; box-shadow: 0 2px 8px rgba(0,105,180,.28); opacity: 0; transform: scale(.88);
+  transition: opacity .14s, transform .14s; pointer-events: none; }
+.ward-cell.select-target:hover .ward-pick-check,
+.ward-cell.select-target:focus-within .ward-pick-check { opacity: 1; transform: scale(1); }
 .frame-category-tabs { margin-bottom: 16px; }
 .frame-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
 .frame-item { border-radius: var(--r-4); background: #fff; box-shadow: 0 0 0 1px var(--ring); padding: 12px; cursor: grab; transition: box-shadow .14s; }
