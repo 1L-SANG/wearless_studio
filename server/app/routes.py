@@ -232,7 +232,8 @@ def _custom_match_metadata(expected_type: str) -> dict:
     }
 
 
-def _matching_item_to_api(r2: R2Client, item: dict, *, compatible: bool = True) -> dict:
+def _matching_item_to_api(r2: R2Client, item: dict, *, compatible: bool = True,
+                          has_active_cutout_job: bool = False) -> dict:
     return {
         "id": item["id"],
         "name": item["name"],
@@ -248,6 +249,11 @@ def _matching_item_to_api(r2: R2Client, item: dict, *, compatible: bool = True) 
         "selected": False,
         "isCustom": bool(item.get("is_custom")),
         "isCompatible": compatible,
+        "cutoutStatus": matching_cutout.cutout_status_for(
+            is_custom=bool(item.get("is_custom")),
+            image_meta=item.get("image_meta"),
+            has_active_job=has_active_cutout_job,
+        ),
     }
 
 
@@ -1071,6 +1077,19 @@ async def match_candidates(
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
         items = await repo.list_active_matching_items(conn, user_id, project_id)
+        # 커스텀 아이템은 프로젝트당 하나라 활성 누끼 잡 여부도 bool 하나면 모든
+        # 커스텀 아이템에 공유할 수 있다(리스트 전체를 다시 조회하지 않는다). 커스텀
+        # 아이템이 없으면 조회 자체를 생략한다. 조회가 실패해도 매칭 응답은 살린다 —
+        # 실패 시 cutoutStatus 는 "failed" 쪽으로 폴백해 화면은 원본을 그대로 보여준다.
+        has_active_cutout_job = False
+        if any(item.get("is_custom") for item in items):
+            try:
+                has_active_cutout_job = await repo.has_active_matching_cutout_job(
+                    conn, project_id
+                )
+            except Exception:  # noqa: BLE001 - 잡 상태 조회 실패가 매칭 응답을 막지 않는다
+                logger.warning("matching_cutout active-job lookup failed project=%s",
+                               project_id, exc_info=True)
         # 색은 상품/분석에 이미 저장된 구조화 값만 읽는다. 요청 중 모델 호출 없음.
         # 후보 조회를 먼저 끝내 두어 부가적인 상품색 조회가 실패해도 추천 자체는 살린다.
         product_color = None
@@ -1116,7 +1135,8 @@ async def match_candidates(
         (item, item.get("clothing_type") == expected_type) for item in custom_items
     ] + [(item, True) for item in ranked]
     return JSONResponse([
-        _matching_item_to_api(r2, item, compatible=compatible)
+        _matching_item_to_api(r2, item, compatible=compatible,
+                              has_active_cutout_job=has_active_cutout_job)
         for item, compatible in ordered if item.get("thumb_key")
     ])
 

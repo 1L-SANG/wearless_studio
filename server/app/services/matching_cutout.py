@@ -29,6 +29,21 @@ def flatten_on_bg(rgba_png: bytes) -> bytes:
     return out.getvalue()
 
 
+def cutout_status_for(*, is_custom: bool, image_meta: dict | None,
+                      has_active_job: bool) -> str | None:
+    """커스텀 매칭 아이템의 누끼 상태. 시드는 항상 None.
+
+    - ready: 현재 생성입력 asset 이 이미 누끼 파생이다(스왑 완료).
+    - processing: 아직 원본인데 누끼 잡이 돌고 있다.
+    - failed: 잡이 끝났는데 여전히 원본이다(SAM 실패 등). 화면은 원본을 그대로 보여준다.
+    """
+    if not is_custom:
+        return None
+    if isinstance(image_meta, dict) and image_meta.get("type") == CUTOUT_KIND:
+        return "ready"
+    return "processing" if has_active_job else "failed"
+
+
 def metadata_for(*, source_hash: str | None, source_asset_id: str,
                  matching_item_id: str) -> dict:
     """누끼 파생 asset 의 provenance."""

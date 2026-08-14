@@ -602,7 +602,8 @@ async def list_active_matching_items(
                    false as is_custom,
                    img.id::text as image_asset_id, img.r2_key as image_key,
                    thb.id::text as thumbnail_asset_id, thb.r2_key as thumb_key,
-                   img.r2_bucket as image_bucket, thb.r2_bucket as thumb_bucket
+                   img.r2_bucket as image_bucket, thb.r2_bucket as thumb_bucket,
+                   img.metadata as image_meta
             from matching_items mi
             -- 썸네일은 표시 필수 → seed/public 자산만 inner join (비-seed·비공개·삭제 키 노출 차단,
             -- limit 정확도 보장). 본 이미지는 동일 조건 left join(선택).
@@ -620,7 +621,8 @@ async def list_active_matching_items(
                    true as is_custom,
                    img.id::text as image_asset_id, img.r2_key as image_key,
                    thb.id::text as thumbnail_asset_id, thb.r2_key as thumb_key,
-                   img.r2_bucket as image_bucket, thb.r2_bucket as thumb_bucket
+                   img.r2_bucket as image_bucket, thb.r2_bucket as thumb_bucket,
+                   img.metadata as image_meta
             from matching_items mi
             join projects p on p.id = mi.project_id
               and p.user_id = %s and p.deleted_at is null
@@ -635,6 +637,18 @@ async def list_active_matching_items(
             (user_id, user_id, project_id),
         )
         return await cur.fetchall()
+
+
+async def has_active_matching_cutout_job(conn: AsyncConnection, project_id: str) -> bool:
+    """프로젝트에 진행 중인 커스텀 매칭 누끼 잡이 있는지. 프로젝트당 커스텀 1개라 bool 하나로 충분."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select exists (select 1 from jobs where project_id = %s "
+            "and kind = 'matching_cutout' and status in ('pending', 'running')) as active",
+            (project_id,),
+        )
+        row = await cur.fetchone()
+    return bool(row and row["active"])
 
 
 async def get_uploaded_assets_for_project(
