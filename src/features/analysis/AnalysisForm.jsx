@@ -190,18 +190,26 @@ export function AnalysisProgress({ photoSrc, done, onFinished }) {
     return () => clearTimeout(t);
   }, [doneCount, done]);
 
-  /* 지금 단계가 시작된 시각. 렌더 중에 갱신해야 단계가 바뀐 바로 그 프레임부터 새 칸을
-     채우기 시작한다(effect 로 미루면 한 프레임 늦게 출발해 경계에서 미세하게 튄다). */
-  const stepRef = useRef({ index: 0, at: Date.now() });
-  if (stepRef.current.index !== doneCount) stepRef.current = { index: doneCount, at: Date.now() };
-
   // 마지막 단계는 타이머 없이 결과를 기다린다 — 예정 시간이 없다는 뜻으로 null 을 넘긴다.
   const waitingForResult = !done && doneCount === ANALYZE_STEPS.length - 1;
+  const plannedMs = waitingForResult ? null : (done ? FAST_DUR : STEP_DUR[doneCount]);
+
+  /* 지금 칸의 시계가 언제 시작됐는지. 렌더 중에 갱신해야 단계가 바뀐 바로 그 프레임부터
+     새 칸을 채우기 시작한다(effect 로 미루면 한 프레임 늦게 출발해 경계에서 튄다).
+
+     단계 번호뿐 아니라 **예정 시간이 바뀔 때도** 시계를 다시 건다. 결과가 도착하면
+     예정 시간이 2500ms→320ms 로 줄어드는데, 경과시간을 그대로 두면 elapsed/planned 가
+     즉시 1 을 넘겨 칸 끝까지 한 프레임에 튄다(실측 9~17%p — 이 작업이 없애려던 바로
+     그 증상이 다른 트리거로 남아 있었다). */
+  const stepRef = useRef({ key: '', at: Date.now() });
+  const stepKey = `${doneCount}:${plannedMs}`;
+  if (stepRef.current.key !== stepKey) stepRef.current = { key: stepKey, at: Date.now() };
+
   const barPercent = useSteppedProgress({
     stepIndex: doneCount,
     stepCount: ANALYZE_STEPS.length,
     stepStartedAt: stepRef.current.at,
-    plannedMs: waitingForResult ? null : (done ? FAST_DUR : STEP_DUR[doneCount]),
+    plannedMs,
   });
 
   return (

@@ -206,5 +206,8 @@ test('the transition overlay replaces the duplicate completion badge and the rib
 test('the removed completion badge leaves no stale running-state tracker behind', () => {
   assert.doesNotMatch(chromeSource, /wasRunningRef/);
   assert.doesNotMatch(chromeSource, /runningProjectIdRef/);
-  assert.match(mannequinRibbonSource, /if \(job\.status === 'idle'\) return null/);
+  // idle 이면 리본이 남지 않아야 한다는 게 요지. 진행바 작업에서 표시 조건을 visible 로
+  // 모으면서 문장 형태만 바뀌었고(rAF 루프를 숨김 상태에서 멈추려고), 불변식은 그대로다.
+  assert.match(mannequinRibbonSource, /job\.status !== 'idle'/);
+  assert.match(mannequinRibbonSource, /if \(!visible\) return null/);
 });

@@ -2412,9 +2412,13 @@ export function Editor() {
           {!genFailed && (
             /* 훅을 이 작은 컴포넌트가 소유한다 — 초당 여러 번의 진행 갱신이 에디터 전체
                트리를 다시 그리지 않게 격리. */
+            /* active 를 status==='running' 에 묶으면 안 된다 — 잡이 done 이 된 뒤에도
+               마무리(완성본 병합·저장)가 끝날 때까지 이 리본은 몇 초 더 떠 있고, 그 사이
+               바가 0 으로 비어 버린다. 리본이 떠 있는 동안은 계속 살아 있고, done 이면
+               100 을 채운다. */
             <SmoothProgressTrack
               tag="span" className="ed-genbar-track"
-              value={dpJob.progress} active={dpJob.status === 'running'}
+              value={dpJob.progress} done={dpJob.status === 'done'}
               startedAt={dpJob.startedAt} expectedMs={EXPECTED_MS.detailPage}
             />
           )}

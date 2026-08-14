@@ -2,7 +2,7 @@
    서버 보고(계단)와 경과시간(연속)을 합친 값을 requestAnimationFrame 으로 흘려보낸다. */
 import { useEffect, useRef, useState } from 'react';
 import {
-  EXPECTED_MS, advanceProgress, initialProgressState, steppedProgress,
+  EXPECTED_MS, advanceProgress, initialProgressState, steppedProgress, timeOr,
 } from '@/lib/smoothProgress.js';
 
 /* 이 폭 이상 움직였을 때만 리렌더한다. 280px 바에서 0.14px — 눈에는 연속으로 보이면서
@@ -78,10 +78,12 @@ export function useSteppedProgress({
     let peak = 0;      // 절대 후퇴하지 않는다
     const tick = () => {
       const a = argsRef.current;
+      const now = Date.now();
       peak = Math.max(peak, steppedProgress({
         stepIndex: a.stepIndex,
         stepCount: a.stepCount,
-        stepElapsedMs: Date.now() - (a.stepStartedAt || Date.now()),
+        // timeOr — 시각 0 을 falsy 로 삼키면 dt 가 늘 0 이 되어 바가 통째로 멈춘다.
+        stepElapsedMs: now - timeOr(a.stepStartedAt, now),
         plannedMs: a.plannedMs,
         waitExpectedMs: a.waitExpectedMs,
       }));

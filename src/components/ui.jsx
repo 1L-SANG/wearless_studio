@@ -192,7 +192,7 @@ export function ProgressBar({ value, label, sub }) {
       {(label || value != null) && (
         <div className="progress-label">
           <span className="caption" style={{ color: 'var(--fg-1)', fontWeight: 500 }}>{label}</span>
-          <span className="pct">{Math.round(value)}%</span>
+          <span className="pct">{value == null ? '' : Math.round(value)}%</span>
         </div>
       )}
       <div className="progress"><i style={{ width: value + '%' }}></i></div>

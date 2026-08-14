@@ -72,19 +72,26 @@ function MannequinJobRibbon() {
   const { pathname } = useLocation();
   const projectId = useAppStore((s) => s.projectId);
   const job = useAppStore((s) => s.mannequinJob);
+  // 보이는 조건을 먼저 정하고 그걸 active 로 넘긴다 — 리본이 null 을 그리는 동안에도
+  // 프레임 루프가 돌면 4~5분짜리 잡 내내 보이지도 않는 컴포넌트를 계속 리렌더한다.
+  const visible = Boolean(job)
+    && !pathname.startsWith('/create/mannequin')
+    && !(job.projectId && projectId && job.projectId !== projectId)
+    && job.status !== 'idle';
   // 훅은 early-return 위에 (훅 개수 불변). mannequinJob 엔 시작시각이 없어 훅이
   // running 으로 바뀐 순간을 시작점으로 잡는다.
   const progress = useSmoothProgress(Math.max(0, Math.min(100, Number(job?.progress) || 0)), {
-    active: job?.status === 'running',
+    active: visible && job?.status === 'running',
     expectedMs: EXPECTED_MS.mannequin,
   });
-  if (!job || pathname.startsWith('/create/mannequin')) return null;
-  if (job.projectId && projectId && job.projectId !== projectId) return null;
-  if (job.status === 'idle') return null;
+  if (!visible) return null;
 
   const isError = job.status === 'error';
   const label = isError ? '마네킹컷 생성에 실패했어요' : '마네킹컷을 만들고 있어요';
-  const detail = isError ? (job.errorMessage || '다시 시도할 수 있어요.') : `${Math.round(progress)}%`;
+  /* 진행 중엔 퍼센트 숫자를 쓰지 않는다. 바 폭은 시간 추정이어도 되지만 정수 퍼센트는
+     검증 가능한 주장이라, 추정이 서버보다 앞서면 그대로 거짓말이 된다. 마네킹 대기화면이
+     퍼센트를 걷어낸 결정(Mannequin.jsx MannequinLoading)과도 어긋난다. */
+  const detail = isError ? (job.errorMessage || '다시 시도할 수 있어요.') : '완성되면 알려드릴게요';
 
   return (
     <div className={`job-ribbon${isError ? ' error' : ''}`} role={isError ? 'alert' : 'status'} aria-live="polite">
@@ -141,16 +148,20 @@ function DetailPageJobRibbon() {
     }
   }, [job?.projectId, job?.status]);
 
+  // 보이는 조건을 먼저 정해 active 로 넘긴다 — 대기 화면(/create/generating)에 머무는
+  // 4~5분 동안 리본은 null 을 그리는데, 프레임 루프는 계속 돌아 헛 리렌더가 쌓인다.
+  const visible = Boolean(job)
+    && !['idle', 'done', 'blocked'].includes(job.status)
+    && !pathname.startsWith('/create/generating');
   // 훅은 early-return 위에. startedAt 은 새로고침 복원 시에도 살아 있어(detailPageJobMarker)
   // 되돌아온 뒤에도 바가 처음부터 다시 기지 않는다.
   const progress = useSmoothProgress(Math.max(0, Math.min(100, Number(job?.progress) || 0)), {
-    active: job?.status === 'running',
+    active: visible && job?.status === 'running',
     startedAt: job?.startedAt,
     expectedMs: EXPECTED_MS.detailPage,
   });
 
-  if (!job || job.status === 'idle' || job.status === 'done' || job.status === 'blocked') return null;
-  if (pathname.startsWith('/create/generating')) return null;
+  if (!visible) return null;
 
   const isError = job.status === 'error';
   const label = isError ? '상세페이지 생성에 실패했어요' : '상세페이지를 만들고 있어요';

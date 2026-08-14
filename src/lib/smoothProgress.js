@@ -72,7 +72,7 @@ export function nextDisplayProgress({
 
 /* 시각 필드는 "아직 없음" 을 null 로 둔다 — 0 을 falsy 로 삼키면 시각 0(테스트·가짜 타이머)이
    매 프레임 "미설정" 으로 읽혀 dt 가 늘 0 이 되고 바가 통째로 멈춘다. */
-const timeOr = (value, fallback) => (value == null ? fallback : value);
+export const timeOr = (value, fallback) => (value == null ? fallback : value);
 
 /** @param startedAt 시작 시각. 서버 첫 보고 전까지의 앵커로 쓰인다(새로고침 복원용). */
 export function initialProgressState(startedAt = 0) {

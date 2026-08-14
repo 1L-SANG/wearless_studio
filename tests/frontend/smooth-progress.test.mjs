@@ -135,29 +135,40 @@ const FAST_DUR = 320;
 
 /* 분석 화면 타임라인을 프레임 단위로 재현한다 — AnalysisProgress 의 단계 진행 규칙
    (마지막 단계는 결과가 와야 넘어가고, 결과가 오면 남은 단계를 320ms 로 훑는다) 그대로. */
+/* AnalysisProgress 의 규칙을 그대로 모사한다.
+   - 단계 타이머는 (doneCount, done) 이 바뀔 때마다 재장전된다(그 useEffect 의 deps).
+   - 칸 시계(stepRef)도 같은 순간에 다시 걸린다.
+   결과가 도착하면 남은 단계가 320ms 간격으로 훑여 나간다. */
+const plannedFor = (index, done) => ((!done && index === STEPS - 1) ? null
+  : (done ? FAST_DUR : STEP_DUR[index]));
+
 function runAnalysis({ ms, resultAtMs = Infinity }) {
   let index = 0;
+  let stepKey = '';
   let stepAt = 0;
   let peak = 0;
   const samples = [];
   for (let t = 0; t <= ms; t += FRAME) {
     const done = t >= resultAtMs;
-    // 예정 시간이 없는 단계 = 결과를 기다리는 마지막 단계
-    const plannedMs = (!done && index === STEPS - 1) ? null
-      : (done ? FAST_DUR : STEP_DUR[index]);
-    if (index < STEPS && plannedMs !== null && t - stepAt >= plannedMs) {
-      index += 1;
-      stepAt = t;
-      continue;   // 단계가 넘어간 프레임은 다음 루프에서 새 칸으로 계산
+    for (;;) {
+      const planned = plannedFor(index, done);
+      const key = `${index}:${planned}`;
+      if (key !== stepKey) { stepKey = key; stepAt = t; }   // 타이머·칸 시계 동시 재장전
+      if (index < STEPS && planned !== null && t - stepAt >= planned) { index += 1; continue; }
+      break;
     }
     peak = Math.max(peak, steppedProgress({
       stepIndex: index, stepCount: STEPS, stepElapsedMs: t - stepAt,
-      plannedMs, waitExpectedMs: EXPECTED_MS.analysisWait,
+      plannedMs: plannedFor(index, done), waitExpectedMs: EXPECTED_MS.analysisWait,
     }));
     samples.push({ t, value: peak, index });
   }
   return samples;
 }
+
+const biggestFrameJump = (samples) => samples
+  .slice(1)
+  .reduce((worst, s, i) => Math.max(worst, s.value - samples[i].value), 0);
 
 test('단계마다 같은 몫(20%)을 차지한다', () => {
   for (let i = 0; i < STEPS; i += 1) {
@@ -191,12 +202,8 @@ test('칸 경계에서 튀지 않는다 (앞 칸 끝 = 다음 칸 시작)', () =
 });
 
 test('단계가 넘어갈 때 따라잡기 점프가 없다 — 오너 피드백의 핵심', () => {
-  const samples = runAnalysis({ ms: 10000 });
-  let biggestJump = 0;
-  for (let i = 1; i < samples.length; i += 1) {
-    biggestJump = Math.max(biggestJump, samples[i].value - samples[i - 1].value);
-  }
-  // 한 프레임(16ms)에 이동할 수 있는 최대치는 가장 짧은 단계 기준 20% × 16/2200 ≈ 0.15%
+  const biggestJump = biggestFrameJump(runAnalysis({ ms: 10000 }));
+  // 한 프레임(16ms)에 이동할 수 있는 최대치는 20% × 16/2500 ≈ 0.13%
   assert.ok(biggestJump < 0.3, `프레임 하나에 ${biggestJump.toFixed(2)}% 점프 — 계단이 남아 있다`);
 });
 
@@ -231,4 +238,26 @@ test('전 단계 완료면 100%', () => {
   assert.equal(steppedProgress({
     stepIndex: STEPS, stepCount: STEPS, stepElapsedMs: 0, plannedMs: 320,
   }), 100);
+});
+
+test('결과가 일찍 도착해도 튀지 않는다 — 리뷰가 잡은 누락 경로', () => {
+  /* 결과가 오면 남은 단계를 320ms 로 훑는다. 칸 시계를 다시 걸지 않으면 경과시간이
+     새 예정 시간을 즉시 초과해 칸 끝까지 한 프레임에 튄다(수정 전 실측 9~17%p).
+     실측 p50(13초)과 그보다 이른 경우들을 모두 덮는다. */
+  for (const resultAtMs of [3000, 6000, 9000, 13000]) {
+    const samples = runAnalysis({ ms: 20000, resultAtMs });
+    const jump = biggestFrameJump(samples);
+    // 훑기 구간의 한 프레임 최대치 = 20% × 16/320 = 1%
+    assert.ok(jump < 1.5,
+      `결과 ${resultAtMs / 1000}초 도착 시 한 프레임에 ${jump.toFixed(1)}%p 튄다`);
+    assert.equal(samples[samples.length - 1].value, 100, '훑기가 끝나면 100% 여야 한다');
+  }
+});
+
+test('결과가 일찍 와도 바는 후퇴하지 않는다', () => {
+  const samples = runAnalysis({ ms: 20000, resultAtMs: 3000 });
+  for (let i = 1; i < samples.length; i += 1) {
+    assert.ok(samples[i].value >= samples[i - 1].value,
+      `${samples[i].t}ms 에서 ${samples[i - 1].value} → ${samples[i].value} 로 되돌아갔다`);
+  }
 });
