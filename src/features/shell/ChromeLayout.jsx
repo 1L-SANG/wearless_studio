@@ -111,8 +111,8 @@ function StoryboardTransitionOverlay() {
       aria-label="전환 안내 닫기" onClick={() => setVisible(false)}>
       <span className="storyboard-transition-copy" role="status" aria-live="polite">
         <img className="transition-brand-logo" src="/assets/brand/logo.svg" alt="" />
-        <strong>의류 구현 진행중</strong>
-        <small>백그라운드에서 의류핏을 조정하게끔 작업을 진행중이에요.<br />그동안 상세페이지를 원하는대로 구성해보세요.</small>
+        <strong>의류 구현 진행중<span className="transition-dots" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span></strong>
+        <small>의류의 재현성을 높이기 위해 마네킹 이미지를 생성중이에요.<br />그동안 예시이미지들을 바탕으로 원하는 상세페이지를 구성해보세요.</small>
       </span>
     </button>
   );

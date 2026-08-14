@@ -65,7 +65,6 @@ import {
   invalidateStoryboardEntryPrefetch,
   loadStoryboardEntry,
   peekStoryboardEntry,
-  shouldRenderStoryboardLoadingFrame,
 } from './storyboardEntryPrefetch.js';
 import {
   sbLastSaved,
@@ -1445,43 +1444,8 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   );
 }
 
-function StoryboardLoadingFrame({ doneBlocked }) {
-  return (
-    <div className="wizard wide sb-page sb-loading-page" aria-busy="true" aria-label="콘티보드를 불러오는 중이에요">
-      {doneBlocked && <DoneGuardModal />}
-      <PageHead title="상세페이지 초안 구성" sub="지금 보이는 이미지들은 예시입니다. 느낌만을 보고 필요한 컷은 수정하며 상세페이지를 생성해보세요." />
-      <div className="sb-count-head sb-loading-count" aria-hidden="true">
-        <span className="sb-loading-count-mark" />
-      </div>
-      <div className="storyboard-solo-layout sb-loading-layout" aria-hidden="true">
-        <aside className="sb-preview-rail sb-loading-preview">
-          <div className="sb-loading-preview-head" />
-          <div className="sb-loading-preview-page">
-            {Array.from({ length: 6 }, (_, index) => <span key={index} />)}
-          </div>
-        </aside>
-        <div className="sb-solo">
-          <div className="sb-cards sb-loading-board">
-            {Array.from({ length: 3 }, (_, index) => (
-              <div className="sb-loading-section" key={index}>
-                <span className="sb-loading-section-media" />
-                <span className="sb-loading-section-copy" />
-              </div>
-            ))}
-          </div>
-          <div className="sb-loading-upload" />
-        </div>
-      </div>
-      <div className="sb-actionbar" aria-hidden="true">
-        <div className="sb-ab-inner sb-loading-actions">
-          <span className="sb-loading-action-back" />
-          <span className="sb-loading-action-count" />
-          <span className="sb-loading-action-copy" />
-          <span className="sb-loading-action-go" />
-        </div>
-      </div>
-    </div>
-  );
+function StoryboardLoadingState() {
+  return <div aria-busy="true" aria-label="콘티보드를 불러오는 중이에요" />;
 }
 
 function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, analysis], sourceBlocks = board) {
@@ -1899,7 +1863,7 @@ export function Storyboard() {
       )}
     </div></div>
   );
-  if (shouldRenderStoryboardLoadingFrame(blocks, catalogs)) return <StoryboardLoadingFrame doneBlocked={doneBlocked} />;
+  if (!blocks || !catalogs) return <StoryboardLoadingState />;
 
   const composeModeApplies = isDefaultStoryboardForMode(
     blocks,
@@ -2664,7 +2628,7 @@ export function Storyboard() {
           {allOpen ? '전체 접기' : '전체 펼치기'}
         </button>
       </div>
-      {boardGroups.map((group) => {
+      {boardGroups.map((group, groupIndex) => {
         const open = openGroupKeys.includes(group.key);
         const range = cutRangeLabel(group.items);
         const groupSection = sectionForGroup(group);
@@ -2672,6 +2636,7 @@ export function Storyboard() {
           <section
             key={group.key}
             className={'sb-deck' + (open ? ' open' : '') + (dragOverSec === groupSection.id ? ' hot' : '')}
+            style={{ '--reveal-order': Math.min(groupIndex, 6) }}
             onPointerEnter={() => {
               if (open || !catalogs) return;   // 펼치기 직전 신호 — 아직 안 데운 것만 앞당겨 받는다
               prewarmImages(group.items.flatMap(({ block }) => [
@@ -2747,9 +2712,7 @@ export function Storyboard() {
 
   const cutCount = blocks.length;
   const body = (
-    <div className={'sb-canvas-shell sb-initial-reveal'
-      + (initialBoardRevealed ? ' is-revealed' : '')
-      + (splitOpen ? ' inspector-open' : '')}
+    <div className={'sb-canvas-shell' + (splitOpen ? ' inspector-open' : '')}
       style={{ '--sb-inspector-top': `${inspectorTop}px` }}>
       <div className="sb-canvas-main">
         {list}
@@ -2831,13 +2794,12 @@ export function Storyboard() {
     });
   };
   return (
-    <div className={`wizard wide sb-page sb-content-enter${atomicSaving ? ' is-atomic-saving' : ''}`}
-      aria-busy={atomicSaving || undefined}
+    <div className={`wizard wide sb-page sb-content-enter sb-initial-reveal${initialBoardRevealed ? ' is-revealed' : ''}${atomicSaving ? ' is-atomic-saving' : ''}`}
+      aria-busy={!initialBoardRevealed || atomicSaving || undefined}
       onClickCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}
       onDragStartCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}>
-      {doneBlocked && <DoneGuardModal />}
+      {initialBoardRevealed && doneBlocked && <DoneGuardModal />}
       <PageHead title="상세페이지 초안 구성" sub="지금 보이는 이미지들은 예시입니다. 느낌만을 보고 필요한 컷은 수정하며 상세페이지를 생성해보세요." />
-      {/* 페이지 직계 자식이어야 진입 스태거(.sb-content-enter > .sb-count-head)가 걸린다. */}
       <div className="sb-count-head">
         구성컷: <strong>{cutCount}</strong>개
       </div>

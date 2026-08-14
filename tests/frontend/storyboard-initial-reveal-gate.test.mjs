@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -6,6 +7,15 @@ import {
   collectInitialRevealThumbnailUrls,
   waitForInitialReveal,
 } from '../../src/features/storyboard/initialRevealGate.js';
+
+const storyboardSource = readFileSync(
+  new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url),
+  'utf8',
+);
+const featureStyles = readFileSync(
+  new URL('../../src/styles/features.css', import.meta.url),
+  'utf8',
+);
 
 test('all initial thumbnails loaded releases the gate immediately', async () => {
   const loaded = [];
@@ -89,4 +99,27 @@ test('thumbnail collection follows rendered section and preview order', () => {
       '/s3-1.webp', '/s3-2.webp', '/s3-3.webp',
     ],
   );
+});
+
+test('the released gate reveals board chrome immediately and sections in capped 90ms steps', () => {
+  assert.match(
+    storyboardSource,
+    /boardGroups\.map\(\(group, groupIndex\)[\s\S]*?style=\{\{ '--reveal-order': Math\.min\(groupIndex, 6\) \}\}/,
+  );
+  assert.match(
+    storyboardSource,
+    /sb-page sb-content-enter sb-initial-reveal\$\{initialBoardRevealed \? ' is-revealed' : ''\}/,
+  );
+
+  const revealStyles = featureStyles.slice(
+    featureStyles.indexOf('/* 첫 화면 썸네일 게이트 중에도'),
+    featureStyles.indexOf('.sb-page.is-atomic-saving'),
+  );
+  assert.match(revealStyles, /\.sb-initial-reveal > \.page-head/);
+  assert.match(revealStyles, /\.sb-initial-reveal \.sb-board-tools/);
+  assert.match(revealStyles, /\.sb-initial-reveal \.sb-deck/);
+  assert.match(revealStyles, /transform: translate3d\(0, 8px, 0\)/);
+  assert.match(revealStyles, /transition: opacity \.45s ease, transform \.45s ease/);
+  assert.match(revealStyles, /transition-delay: calc\(var\(--reveal-order, 0\) \* 90ms\)/);
+  assert.match(revealStyles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?transition: none;[\s\S]*?transition-delay: 0s/);
 });

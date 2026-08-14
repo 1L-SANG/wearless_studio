@@ -2,10 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import {
-  createStoryboardEntryPrefetchCache,
-  shouldRenderStoryboardLoadingFrame,
-} from '../../src/features/storyboard/storyboardEntryPrefetchCache.js';
+import { createStoryboardEntryPrefetchCache } from '../../src/features/storyboard/storyboardEntryPrefetchCache.js';
 
 const storyboardSource = readFileSync(
   new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url),
@@ -66,31 +63,28 @@ test('edits that touch the storyboard seed invalidate the warmed prefetch', () =
   );
 });
 
-test('a ready cache hit initializes content and skips the loading-frame branch', async () => {
+test('a ready cache hit initializes content and skips the empty loading state', async () => {
   const cache = createStoryboardEntryPrefetchCache({ ttlMs: 1_000 });
   const data = [[{ id: 'board-1' }], { genExamples: [] }, [], { colors: [] }, {}];
   await cache.prefetch('project-1', async () => data);
 
   const prefetched = cache.peek('project-1');
   assert.ok(prefetched);
-  assert.equal(shouldRenderStoryboardLoadingFrame(prefetched[0], prefetched[1]), false);
   assert.match(storyboardSource, /const initialEntry = initialEntryRef\.current\?\.prepared/);
   assert.match(storyboardSource, /useState\(\(\) => initialEntry\?\.blocks \|\| null\)/);
   assert.match(storyboardSource, /useState\(\(\) => initialEntry\?\.catalogs \|\| null\)/);
-  assert.match(storyboardSource, /if \(shouldRenderStoryboardLoadingFrame\(blocks, catalogs\)\) return <StoryboardLoadingFrame/);
+  assert.match(storyboardSource, /if \(!blocks \|\| !catalogs\) return <StoryboardLoadingState \/>/);
 });
 
-test('missing, stale, invalidated, and failed entries take the loading fallback', async () => {
+test('missing, stale, invalidated, and failed entries stay unavailable for the empty loading state', async () => {
   let clock = 0;
   const cache = createStoryboardEntryPrefetchCache({ ttlMs: 10, now: () => clock });
   assert.equal(cache.peek('missing'), null);
-  assert.equal(shouldRenderStoryboardLoadingFrame(null, null), true);
 
   let finishSlow;
   const slowLoad = new Promise((resolve) => { finishSlow = resolve; });
   const slow = cache.prefetch('slow', () => slowLoad);
   assert.equal(cache.peek('slow'), null);
-  assert.equal(shouldRenderStoryboardLoadingFrame(null, null), true);
   finishSlow([[{}], {}, [], {}, {}]);
   await slow;
 
@@ -110,6 +104,13 @@ test('missing, stale, invalidated, and failed entries take the loading fallback'
   assert.equal(await cache.prefetch('failed', failed), null);
   assert.equal(await cache.consume('failed'), null);
   assert.equal(failedLoads, 1);
+
+  const loadingState = storyboardSource.slice(
+    storyboardSource.indexOf('function StoryboardLoadingState()'),
+    storyboardSource.indexOf('function prepareStoryboardEntry'),
+  );
+  assert.match(loadingState, /return <div aria-busy="true" aria-label="콘티보드를 불러오는 중이에요" \/>/);
+  assert.doesNotMatch(loadingState, /PageHead|sb-loading-|StoryboardLoadingFrame/);
 });
 
 test('project changes discard the previous project cache', async () => {
