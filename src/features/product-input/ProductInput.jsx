@@ -1229,20 +1229,18 @@ export function ProductInput() {
       {/* 경고를 CTA 모달에만 걸면 그 버튼을 누르기 전까지 화면에 아무 흔적이 없어, 셀러 눈에는
           "다른 옷을 넣었는데 아무 일도 안 일어난" 것으로 보인다(2026-07-31 실측). 분석 직후
           바로 보이는 배너를 함께 둔다 — 모달은 진행 직전 마지막 확인용으로 남긴다. */}
+      {/* 판정 근거(슬롯별 상세)는 배너에서 뺀다 — 셀러에게 필요한 건 "무엇을 하면 되는가"뿐
+          (2026-08-14 사용자 결정). 상세 근거는 진행 직전 확인 모달에만 남긴다. */}
       {inputConsistency && (
         <div className="surface" style={{ marginTop: 12, borderColor: '#f0b429', background: '#fffaf0' }}>
           <div className="sec-title" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 15 }}>
             <Icon name="alertTri" size={17} /> 다른 옷이 섞인 것 같아요
           </div>
-          <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>
-            {inputConsistency.offending.map((o) => (
-              <li key={o.index} style={{ marginTop: 4 }}>
-                <b>{(catalogs.angleLabels && catalogs.angleLabels[o.slot]) || o.slot}</b> 사진 — {o.reason}
-              </li>
-            ))}
-          </ul>
-          <p className="hint" style={{ marginTop: 8 }}>
-            잘못 올린 사진이면 처음부터 다시 시작해주세요. 맞다면 그대로 진행해도 괜찮아요.
+          <p style={{ margin: '8px 0 0', fontSize: 13.5, color: 'var(--fg-2)' }}>
+            의류를 잘못 올렸다면 처음부터 시작해주세요. 맞다면 그대로 진행해도 괜찮아요.
+          </p>
+          <p style={{ margin: '6px 0 0', fontSize: 14.5, fontWeight: 650, color: '#8a6116' }}>
+            지금 상태에선 의류구현이 제대로 안될 수 있습니다.
           </p>
         </div>
       )}
