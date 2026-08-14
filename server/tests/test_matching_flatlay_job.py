@@ -79,6 +79,12 @@ def _wire_flatlay(monkeypatch, *, gemini, flag="on", clothing_type="bottom",
     return app, r2, calls
 
 
+def _fingerprint():
+    """_wire_worker 의 가짜 SAM 이 내는 소스 해시로 만든 파생 지문."""
+    return mc.source_fingerprint(
+        ["h" + k for k in _job_dict()["payload"]["sourceKeys"]])
+
+
 def _thumb_put(r2):
     return r2.puts[0]
 
@@ -386,3 +392,62 @@ def test_worker_never_touches_credits():
     for banned in ("reserve_credits", "charge_credits", "release_credits",
                    "credits_reserved"):
         assert banned not in src, f"무과금 잡이 {banned} 를 부르면 안 된다"
+
+
+def test_model_routing_failure_does_not_discard_a_successful_cutout(monkeypatch):
+    """라우팅 설정이 비어도 누끼 결과는 살아남는다 (리뷰 I1).
+
+    resolve_model 이 fail-open try 밖에 있으면 그 예외가 워커의 광의 except 로 올라가
+    성공한 컷아웃까지 폐기된다 — R2 put 0, 스왑 0, 잡은 failed. 재렌더 실패는
+    누끼 썸네일로 떨어지는 것이지 누끼 자체를 버리는 게 아니다.
+    """
+    gemini = _FakeGemini(image=_gen_png())
+    app, r2, calls = _wire_flatlay(monkeypatch, gemini=gemini)
+    app.state.settings.model_image_light = ""  # 라우팅 미설정
+
+    _run(app, _job_dict())
+
+    assert gemini.calls == [], "모델을 못 고르면 생성 호출 자체가 없다"
+    assert calls["finalize"][0] == "done"
+    assert calls["finalize"][1]["state"] == "ready", "누끼는 성공했다"
+    assert calls["finalize"][1]["flatlay"] is False
+    assert calls["swap"] is not None, "스왑이 일어나야 한다"
+    assert calls["swap"][1] == mc.derived_asset_id(
+        role="thumb", matching_item_id="custom_x",
+        source_hash=_fingerprint()), "누끼 썸네일로 폴백"
+    assert len(r2.puts) == 2, "썸네일 + grid 가 그대로 올라간다"
+
+
+def test_both_thumbnail_candidates_stay_reclaimable_by_delete(monkeypatch):
+    """재실행이 다른 분기를 타도 이전 썸네일이 삭제 경로에서 사라지지 않는다 (리뷰 I2).
+
+    삭제 라우트는 현재 thumbnail_asset_id 와 grid metadata 의 sourceAssetIds 만 훑는다
+    (routes.py:1379-1381). 썸네일 신원이 재렌더 성패로 갈리므로 두 후보를 모두
+    실어 두지 않으면, 성공 → 실패(또는 그 반대) 재실행 뒤 한쪽이 영구 고아가 된다.
+    """
+    fp = _fingerprint()
+    flat_id = mf.derived_asset_id(matching_item_id="custom_x", source_hash=fp)
+    cut_id = mc.derived_asset_id(role="thumb", matching_item_id="custom_x", source_hash=fp)
+
+    for gemini, live, orphan in ((_FakeGemini(image=_gen_png()), flat_id, cut_id),
+                                 (_FakeGemini(error=gemini_image.GeminiError("boom")),
+                                  cut_id, flat_id)):
+        app, _r2, calls = _wire_flatlay(monkeypatch, gemini=gemini)
+        _run(app, _job_dict())
+
+        assert calls["swap"][1] == live
+        grid_meta = {a["asset_id"]: a["metadata"] for a in calls["assets"]}[calls["swap"][2]]
+        reachable = set(grid_meta["sourceAssetIds"]) | {calls["swap"][1], calls["swap"][2]}
+        assert orphan in reachable, "다른 분기 썸네일도 회수 대상이어야 한다"
+        assert live in reachable
+
+
+def test_flag_off_does_not_widen_the_cleanup_list(monkeypatch):
+    """플래그 off 면 정리 목록도 부모 PR 그대로다 — 존재하지 않는 id 를 싣지 않는다."""
+    app, _r2, calls = _wire_flatlay(monkeypatch, gemini=_ExplodingGemini(), flag="off")
+    _run(app, _job_dict())
+
+    grid_meta = {a["asset_id"]: a["metadata"] for a in calls["assets"]}[calls["swap"][2]]
+    fp = _fingerprint()
+    assert mf.derived_asset_id(
+        matching_item_id="custom_x", source_hash=fp) not in grid_meta["sourceAssetIds"]

@@ -163,6 +163,20 @@ async def run_matching_cutout_job(app, job: dict) -> None:
         cleanup_ids = [*source_asset_ids]
         if origin_grid_asset_id and origin_grid_asset_id not in cleanup_ids:
             cleanup_ids.append(origin_grid_asset_id)
+        if flatlay_enabled:
+            # 썸네일 신원이 재렌더 성패로 갈리므로, 재실행이 다른 분기를 타면 이전 실행의
+            # 썸네일은 아이템에서 떨어져 나간다. 삭제 경로는 현재 thumbnail_asset_id 와
+            # 이 목록만 훑으므로(routes.py:1379-1381), 두 후보를 모두 실어 둬야 어느 쪽이
+            # 남더라도 "내 옷 삭제" 가 회수한다(리뷰 I2).
+            for candidate in (
+                matching_flatlay.derived_asset_id(
+                    matching_item_id=matching_item_id, source_hash=fingerprint),
+                matching_cutout.derived_asset_id(
+                    role="thumb", matching_item_id=matching_item_id,
+                    source_hash=fingerprint),
+            ):
+                if candidate not in cleanup_ids:
+                    cleanup_ids.append(candidate)
         async with pool.connection() as conn:
             await repo.create_asset(
                 conn, asset_id=thumb_asset_id, user_id=user_id, project_id=project_id,
