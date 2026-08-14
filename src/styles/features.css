@@ -1293,7 +1293,8 @@
 .ed-canvas-wrap { overflow: auto; position: relative; background: #F8F8F8; }
 .selection-marquee { position: absolute; z-index: 30; pointer-events: none; border: 1px solid #4f9ee8;
   background: rgba(79, 158, 232, .14); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.55); }
-.ed-canvas { width: 1000px; transform-origin: top center; margin: 40px auto; }
+.ed-canvas { width: 1000px; transform-origin: top center; margin: 40px auto;
+  user-select: none; -webkit-user-select: none; }
 .canvas-block { width: 1000px; position: relative; background: #fff; box-shadow: var(--elev-card); margin-bottom: 8px;
   padding: 50px 0; }
 /* 선택 링은 파랑(--link) — 요소 핸들·드래그오버와 같은 색이라 "지금 잡힌 것"이 한 눈에 읽힌다.
