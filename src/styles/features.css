@@ -275,7 +275,7 @@
 /* 왼칸은 흰 바탕으로 반전 — 오른쪽 검정 확정 버튼과 역할이 다름을 색으로 말한다 (2026-08-12 사용자 결정) */
 .af-compose-trigger { display: inline-flex; align-items: center; gap: 7px; border: 0; cursor: pointer;
   font: inherit; background: #fff; color: var(--fg-1); border-radius: var(--r-5) 0 0 var(--r-5);
-  padding: 0 16px 0 18px; box-shadow: inset 0 0 0 1px var(--ring-strong); white-space: nowrap;
+  padding: 0 16px 0 18px; box-shadow: inset 0 0 0 1.5px var(--fg-1); white-space: nowrap;
   transition: background .14s; }
 .af-compose-trigger:hover:not([aria-disabled="true"]) { background: var(--bg-2); }
 .af-compose-trigger-copy { display: grid; gap: 1px; text-align: left; }
