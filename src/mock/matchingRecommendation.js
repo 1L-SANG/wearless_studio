@@ -302,6 +302,9 @@ function toLegacyMatchItem(item, selected, selOrder) {
     fitCategory: item.fitCategory ?? fitCategoryFromMatchingMetadata(item),
     isCustom: item.isCustom === true,
     isCompatible: item.isCompatible !== false,
+    // 승격 키 — draft 내 옷의 원본 업로드 id. 이 화이트리스트가 떨어뜨리면 확정 승격이
+    // 조용히 무산된다(2026-08-14 전수조사: 모달 자동 refresh 가 확정 전에 키를 지웠음).
+    ...(item.sourceAssetIds ? { sourceAssetIds: [...item.sourceAssetIds] } : {}),
     selected,
     ...(selected ? { selOrder } : {}),
   };

@@ -13,6 +13,9 @@
    반영한다. 차감은 여기(서버 역할)가 책임지고, 프론트 선차감 금지.
    ============================================================= */
 import { DB, reseedDraft, buildEditorBlocksFromStoryboard, buildStoryboard } from '@/mock/db.js';
+import {
+  rememberCustomMatchDraft, clearCustomMatchDraft, readCustomMatchDraft,
+} from '@/mock/customMatchDraftStore.js';
 import { Placeholder } from '@/mock/placeholders.js';
 import {
   addCustomMatchToAnalysis,
@@ -424,6 +427,9 @@ export const api = {
     };
     const result = addCustomMatchToAnalysis(DB.analysis, item);
     DB.analysis.matchClothing = result.analysis.matchClothing;
+    // 승격 키는 목록 밖 전용 저장소에 둔다 — 목록은 화이트리스트 재구성(toLegacyMatchItem)
+    // 을 수시로 지나므로 아이템에 실은 키는 확정 전에 소멸한다(2026-08-14 전수조사).
+    rememberCustomMatchDraft({ assetIds });
     return clone({ item: result.item, analysis: DB.analysis });
   },
   async removeCustomMatchItem(/* projectId */) {
@@ -431,19 +437,23 @@ export const api = {
     const analysis = removeCustomMatchFromAnalysis(DB.analysis);
     DB.analysis.matchClothing = analysis.matchClothing;
     if (analysis.fitProfile) DB.analysis.fitProfile = analysis.fitProfile;
+    clearCustomMatchDraft();
     return { analysis: clone(DB.analysis) };
   },
   // draft(비프로젝트) 단계에서 추가한 내 옷의 원본 blob 묶음 — 확정 승격(draftSync)이
   // 실서버 업로드+등록에 쓴다. 커스텀이 없거나 blob 이 유실됐으면 null.
   getCustomMatchDraft() {
     const item = (DB.analysis.matchClothing || []).find((m) => m.isCustom);
-    if (!item || !Array.isArray(item.sourceAssetIds)) return null;
-    const uploads = item.sourceAssetIds
+    // 정본은 전용 저장소. 목록 재구성에서 살아남은 sourceAssetIds 는 폴백일 뿐이다.
+    const assetIds = readCustomMatchDraft()?.assetIds
+      ?? (Array.isArray(item?.sourceAssetIds) ? item.sourceAssetIds : null);
+    if (!assetIds) return null;
+    const uploads = assetIds
       .map((id) => customMatchUploads.get(id))
       .filter(Boolean)
       .map(({ filename, mime, blob }) => ({ filename, mime, blob }));
     if (!uploads.length) return null;
-    return { uploads, selected: !!item.selected, localId: item.id };
+    return { uploads, selected: !!item?.selected, localId: item?.id ?? null };
   },
   async refreshMatchClothing(/* projectId */) {
     DB.analysis.matchClothing = recommendLegacyMatchClothing({
