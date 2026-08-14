@@ -418,7 +418,9 @@ function ProductInputRoute() {
       />
     );
   }
-  if (entryDecision !== 'continue') return <div className="route-loading">이동하고 있어요…</div>;
+  // ChromeLayout이 이미 상단 헤더와 배경을 렌더한다. 짧은 진입 판정 동안에는
+  // 본문을 비워 두어 별도의 흰 로딩 화면이나 전환 문구가 배경을 가리지 않게 한다.
+  if (entryDecision !== 'continue') return null;
   return <ProductInput key={`${generation}:${session?.user?.id || 'guest'}`} />;
 }
 
