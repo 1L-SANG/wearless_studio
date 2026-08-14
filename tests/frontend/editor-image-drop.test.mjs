@@ -13,6 +13,7 @@ import {
   placeImageInBlock,
   viewportPointToBlock,
 } from '../../src/features/editor/editorImageDrop.js';
+import { buildFrameBlock } from '../../src/features/editor/editorLibrary.js';
 
 const editorSource = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
 const panelSource = readFileSync(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url), 'utf8');
@@ -85,6 +86,7 @@ test('a drop inside an empty image frame fills that frame instead of creating a 
   ];
 
   assert.equal(findImageDropSlot(elements, { x: 500, y: 150 })?.id, 'empty');
+  assert.equal(findImageDropSlot(elements, { x: 200, y: 150 })?.id, 'filled', 'dropping on a filled frame replaces it');
   assert.equal(findImageDropSlot(elements, { x: 900, y: 150 }), null);
   assert.equal(findImageDropSlot(elements)?.id, 'empty', 'click insert uses the first empty frame');
 });
@@ -97,6 +99,14 @@ test('overlapping template slots prefer the smallest foreground target', () => {
 
   assert.equal(findImageDropSlot(elements, { x: 500, y: 700 })?.id, 'card');
   assert.equal(findImageDropSlot(elements, { x: 50, y: 50 })?.id, 'background');
+});
+
+test('detail callout drops target the circular photos above the background', () => {
+  let sequence = 0;
+  const block = buildFrameBlock('kiwi-15', (prefix) => `${prefix}${++sequence}`);
+
+  assert.equal(findImageDropSlot(block.elements, { x: 270, y: 385 })?.w, 245);
+  assert.equal(findImageDropSlot(block.elements, { x: 678, y: 908 })?.w, 315);
 });
 
 test('image frames show an explicit placement guide only while a wardrobe image is over them', () => {

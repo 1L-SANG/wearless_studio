@@ -294,6 +294,11 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
   }
 
   if (el.type === 'image') {
+    const imageFrameStyle = el.stroke && el.stroke !== 'none' ? {
+      border: `${el.strokeWidth || 2}px ${el.dash || 'solid'} ${el.stroke}`,
+      boxSizing: 'border-box',
+      overflow: 'hidden',
+    } : {};
     if (!el.src && el.genPending) {
       // 생성 대기/진행/실패 타일 — 입력 페이지 자리표시 언어(회색+로고). 선택·조작 불가
       // (이미지 내용 잠금), 호버 시 콘티에서 고른 예시가 잠깐 비친다(상시 노출 금지 결정).
@@ -314,7 +319,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     if (!el.src) {
       const inv = 1 / (scale || 1);
       // 빈 슬롯도 radius 를 따른다 — 특징 포인트의 원형 사진 슬롯이 원으로 보이게
-      const slotBase = { ...base, borderRadius: el.radius };
+      const slotBase = { ...base, borderRadius: el.radius, ...imageFrameStyle };
       if (preview) return <div className="el el-slot" style={slotBase} />;
       return (
         <div {...common} {...imageDropProps} className={cls(`el-slot${el.checkerboard ? ' checkerboard' : ''}${imageDropOver ? ' image-drop-over' : ''}`)} style={slotBase}>
@@ -328,7 +333,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       );
     }
     return (
-      <div {...common} {...imageDropProps} className={cls(imageDropOver ? 'image-drop-over' : '')} style={base}
+      <div {...common} {...imageDropProps} className={cls(imageDropOver ? 'image-drop-over' : '')} style={{ ...base, borderRadius: el.radius, ...imageFrameStyle }}
         onDoubleClick={preview ? undefined : (e) => { e.stopPropagation(); onCropStart && onCropStart(el); }}>
         {el.crop ? (
           /* 커밋된 인라인 크롭: 프레임(overflow hidden) 안에 원본을 -ox,-oy 오프셋으로 */

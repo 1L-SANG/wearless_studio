@@ -57,14 +57,14 @@ export function placeImageInBlock({
 }
 
 export function findImageDropSlot(elements, point) {
-  const emptySlots = (elements || []).filter((element) => (
-    element.type === 'image' && element.frameSlot && !element.src
+  const frameSlots = (elements || []).filter((element) => (
+    element.type === 'image' && element.frameSlot
   ));
-  if (!point) return emptySlots[0] || null;
+  if (!point) return frameSlots.find((element) => !element.src) || null;
   // Full-canvas template backgrounds sit behind smaller foreground slots. A drop over a
   // decorative card should prefer the smallest matching slot, but a drop anywhere else
   // still needs to fill the background rather than creating an unrelated loose image.
-  return emptySlots
+  return frameSlots
     .filter((element) => (
       point.x >= element.x
       && point.x <= element.x + element.w

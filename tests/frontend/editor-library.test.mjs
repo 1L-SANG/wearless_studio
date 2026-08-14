@@ -36,7 +36,7 @@ test('the recommended frame catalog contains the six common layouts', () => {
   assert.deepEqual(ids, ['single', 'split2', 'grid3', 'grid4', 'hero2', 'colorcmp']);
 });
 
-test('every frame builds empty image slots inside the 1000px canvas', () => {
+test('every frame builds replaceable image slots inside the 1000px canvas', () => {
   for (const frame of FRAME_LIBRARY_ITEMS) {
     const block = buildFrameBlock(frame.id, seqId());
     const imageSlots = block.elements.filter((element) => element.type === 'image');
@@ -44,7 +44,8 @@ test('every frame builds empty image slots inside the 1000px canvas', () => {
     assert.equal(block.bgOpacity, 1);
     for (const element of imageSlots) {
       assert.equal(element.type, 'image');
-      assert.equal(element.src, null);
+      if (element.exampleImage) assert.match(element.src, /^\//);
+      else assert.equal(element.src, null);
       assert.equal(element.frameSlot, true);
       assert.ok(element.x >= 0 && element.y >= 0);
       assert.ok(element.x + element.w <= 1000, `${frame.id}: slot fits horizontally`);
@@ -59,7 +60,7 @@ test('kiwi templates rebuild the references with native editable elements', () =
     'kiwi-1', 'kiwi-2', 'kiwi-3', 'kiwi-4', 'kiwi-5',
     'kiwi-10', 'kiwi-11', 'kiwi-12', 'kiwi-13', 'kiwi-14', 'kiwi-15',
   ]);
-  assert.equal(kiwiFrames.reduce((count, frame) => count + frame.slots.length, 0), 29);
+  assert.equal(kiwiFrames.reduce((count, frame) => count + frame.slots.length, 0), 31);
 
   for (const frame of kiwiFrames) {
     const block = buildFrameBlock(frame, seqId());
@@ -71,7 +72,24 @@ test('kiwi templates rebuild the references with native editable elements', () =
     assert.ok(editableCopy.length >= 2, `${frame.id}: copy is editable text`);
     assert.ok(block.elements.every((element) => !element.locked && !element.system), frame.id);
     assert.ok(imageSlots.every((element) => element.checkerboard), frame.id);
+    const examples = imageSlots.filter((element) => element.exampleImage);
+    assert.equal(examples.length, 1, `${frame.id}: one photo includes an example`);
+    assert.match(examples[0].src, /^\/assets\/editor\/kiwi-examples\/kiwi-\d+\.jpg$/);
   }
+});
+
+test('detail callout circles are native replaceable image slots', () => {
+  const block = buildFrameBlock('kiwi-15', seqId());
+  const circles = block.elements.filter((element) => (
+    element.type === 'image' && element.frameSlot && element.radius === Math.round(element.w / 2)
+  ));
+
+  assert.equal(circles.length, 2);
+  assert.equal(circles.filter((element) => element.exampleImage).length, 1);
+  assert.match(circles[0].src, /kiwi-15\.jpg$/);
+  assert.equal(circles[1].src, null);
+  assert.ok(circles.every((element) => element.stroke === '#ffffff'));
+  assert.ok(circles.every((element) => element.strokeWidth === 5 && element.dash === 'dashed'));
 });
 
 test('legacy locked Kiwi artwork upgrades to editable elements and keeps filled photos', () => {

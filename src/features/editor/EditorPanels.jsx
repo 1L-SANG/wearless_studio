@@ -824,14 +824,19 @@ export function FramePanel({ onAdd, onDragStart, onDragEnd }) {
             onDragStart={(e) => { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/frame', f.id); onDragStart && onDragStart(); }}
             onDragEnd={() => onDragEnd && onDragEnd()}>
             <div className={`frame-prev frame-layout-prev${f.preview ? ' template' : ''}`}>
-              {f.slots.map((slot, i) => <i key={i} style={{
-                left: `${slot.x / 10}%`,
-                top: `${slot.y / f.h * 100}%`,
-                width: `${slot.w / 10}%`,
-                height: `${slot.h / f.h * 100}%`,
-                borderRadius: slot.radius ? `${Math.min(50, slot.radius / Math.min(slot.w, slot.h) * 100)}%` : undefined,
-                transform: slot.rotate ? `rotate(${slot.rotate}deg)` : undefined,
-              }} />)}
+              {f.slots.map((slot, i) => (
+                <i key={i} style={{
+                  left: `${slot.x / 10}%`,
+                  top: `${slot.y / f.h * 100}%`,
+                  width: `${slot.w / 10}%`,
+                  height: `${slot.h / f.h * 100}%`,
+                  borderRadius: slot.radius ? `${Math.min(50, slot.radius / Math.min(slot.w, slot.h) * 100)}%` : undefined,
+                  border: slot.stroke ? `${slot.strokeWidth || 2}px ${slot.dash || 'solid'} ${slot.stroke}` : undefined,
+                  transform: slot.rotate ? `rotate(${slot.rotate}deg)` : undefined,
+                }}>
+                  {slot.src && <img src={slot.src} alt="" loading="lazy" draggable={false} />}
+                </i>
+              ))}
               {f.preview && <img src={f.preview} alt="" loading="lazy" draggable={false} />}
             </div>
             <div className="fl">{f.label}{f.recommended && <span className="frame-rec">추천</span>}</div>

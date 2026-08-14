@@ -8,11 +8,16 @@ export const DEFAULT_BUBBLE_STROKE = '#b9b9be';
 export const DEFAULT_BUBBLE_STROKE_WIDTH = 1;
 export const DEFAULT_BUBBLE_RADIUS = 45;
 
+const templateExample = (id) => `/assets/editor/kiwi-examples/kiwi-${id}.jpg`;
+
 const slot = (x, y, w, h, radius = 10) => ({ x, y, w, h, radius });
 
 const templatePhoto = (x, y, w, h, options = {}) => ({
-  type: 'image', x, y, w, h, src: null, frameSlot: true, checkerboard: true,
+  type: 'image', x, y, w, h, src: options.example || null, frameSlot: true, checkerboard: true,
   radius: options.radius === 'pill' ? Math.round(Math.min(w, h) / 2) : (options.radius || 0),
+  ...(options.example ? { exampleImage: true } : {}),
+  ...(options.stroke ? { stroke: options.stroke, strokeWidth: options.strokeWidth || 2 } : {}),
+  ...(options.dash ? { dash: options.dash } : {}),
   ...(options.rotate ? { rotate: options.rotate } : {}),
   ...(options.fit ? { fit: options.fit } : {}),
 });
@@ -90,7 +95,7 @@ export const FRAME_LIBRARY_ITEMS = [
         [525, 955, -2, '세탁 후에도 변형이 적어서\n관리하기 쉬웠어요.'],
       ].flatMap(([x, y, rotate, copy]) => [
         templateShape(x, y, 390, 320, '#ffffff', { radius: 8, rotate }),
-        templatePhoto(x + 48, y - 36, 126, 126, { radius: 'pill' }),
+        templatePhoto(x + 48, y - 36, 126, 126, { radius: 'pill', ...(x === 82 && y === 570 ? { example: templateExample(1) } : {}) }),
         templateText(x + 48, y + 125, 300, 130, copy, { size: 23, lineHeight: 35 }),
       ]),
     ],
@@ -101,7 +106,7 @@ export const FRAME_LIBRARY_ITEMS = [
       templateText(220, 220, 560, 115, '#Look01', { font: 'Cormorant', size: 88, weight: 700, align: 'center' }),
       templateText(135, 370, 730, 92, '하루를 특별하게 만드는 데일리 스타일을\n한 장의 룩북으로 만나보세요.', { size: 30, color: '#666666', lineHeight: 42, align: 'center' }),
       templateShape(164, 540, 500, 650, '#ffffff', { radius: 6 }),
-      templatePhoto(180, 563, 466, 609),
+      templatePhoto(180, 563, 466, 609, { example: templateExample(2) }),
       templateShape(533, 625, 200, 180, '#f57d9c', { radius: 4, rotate: 2 }),
       templateText(560, 665, 150, 95, 'Daily\nLook', { font: 'Cormorant', size: 36, lineHeight: 43, align: 'center' }),
       templatePhoto(0, 1010, 258, 488, { fit: 'contain' }),
@@ -115,7 +120,7 @@ export const FRAME_LIBRARY_ITEMS = [
       templateText(180, 170, 640, 110, 'Style Note', { font: 'Cormorant', size: 86, weight: 700, align: 'center' }),
       templateText(175, 320, 650, 55, '하루를 특별하게 만들어주는 스타일링', { size: 30, color: '#666666', align: 'center' }),
       templateShape(145, 460, 725, 910, '#ffffff', { radius: 4, rotate: -2 }),
-      templatePhoto(166, 489, 683, 851),
+      templatePhoto(166, 489, 683, 851, { example: templateExample(3) }),
       templateShape(744, 650, 205, 185, '#eafa72', { radius: 3, rotate: 1 }),
       templateText(775, 705, 150, 90, 'Daily\nLook', { font: 'Cormorant', size: 35, lineHeight: 42, align: 'center' }),
       templateShape(76, 1168, 388, 215, '#2a1c12', { radius: 4, rotate: -7 }),
@@ -129,7 +134,7 @@ export const FRAME_LIBRARY_ITEMS = [
       templateShape(90, 225, 780, 1020, '#ffffff', { radius: 38 }),
       templatePhoto(125, 266, 85, 85, { radius: 'pill' }),
       templateText(225, 280, 260, 45, '브랜드 이름', { size: 28, weight: 700 }),
-      templatePhoto(127, 371, 744, 736),
+      templatePhoto(127, 371, 744, 736, { example: templateExample(4) }),
       templatePhoto(597, 905, 323, 325),
       templateText(125, 1130, 500, 45, '♥  ○  △', { size: 34 }),
       templateText(125, 1190, 700, 45, '#여름패션  #퀄리티보장', { size: 26 }),
@@ -145,7 +150,7 @@ export const FRAME_LIBRARY_ITEMS = [
         [100, 310, 'WHITE'], [525, 310, 'BEIGE'], [100, 797, 'KHAKI'], [525, 797, 'BLACK'],
       ].flatMap(([x, y, label]) => [
         templateShape(x, y, 375, 438, '#ffffff', { radius: 4 }),
-        templatePhoto(x + 24, y + 28, 328, 328, { fit: 'contain' }),
+        templatePhoto(x + 24, y + 28, 328, 328, { fit: 'contain', ...(x === 100 && y === 310 ? { example: templateExample(5) } : {}) }),
         templateText(x + 40, y + 382, 295, 40, label, { size: 28, align: 'center' }),
       ]),
     ],
@@ -161,7 +166,7 @@ export const FRAME_LIBRARY_ITEMS = [
       templateText(310, 343, 360, 40, 'Product Name', { size: 27, weight: 700 }),
       templateText(310, 386, 360, 35, 'Product Information', { size: 22, color: '#aaaaaa' }),
       templateText(765, 354, 55, 30, '•••', { size: 30, weight: 700, align: 'center' }),
-      templatePhoto(175, 444, 680, 710),
+      templatePhoto(175, 444, 680, 710, { example: templateExample(10) }),
       templateText(175, 1185, 650, 40, '♥   ○   △                                      ▮', { size: 30 }),
       templateText(175, 1240, 650, 38, '2,860,606 likes.', { size: 24, weight: 600 }),
       templateText(175, 1280, 650, 70, 'Product Name  데일리하게 입기 좋은 아이템!', { size: 23, lineHeight: 34 }),
@@ -171,7 +176,7 @@ export const FRAME_LIBRARY_ITEMS = [
   kiwiTemplate({
     id: '11', label: '체크 포인트', h: 1248, bg: '#dcc4be', elements: [
       templateText(275, 45, 450, 60, 'CHECK POINT', { font: 'Cormorant', size: 48, weight: 700, color: '#ffffff', align: 'center' }),
-      templatePhoto(120, 110, 768, 1018, { radius: 'pill' }),
+      templatePhoto(120, 110, 768, 1018, { radius: 'pill', example: templateExample(2) }),
       templateShape(675, 345, 300, 92, '#ffffff', { radius: 24 }),
       templateText(700, 366, 245, 58, '상품의 특징을 2줄 이내로\n적어주세요.', { size: 21, lineHeight: 28 }),
       templateShape(118, 655, 305, 92, '#ffffff', { radius: 24 }),
@@ -191,7 +196,7 @@ export const FRAME_LIBRARY_ITEMS = [
       templateLine(0, 145, 1000, { stroke: '#dddddd', strokeWidth: 1 }),
       templateText(55, 210, 650, 80, 'KIWI TREND', { size: 66, weight: 700, color: '#ffffff' }),
       templateText(55, 285, 700, 85, 'HOT SUMMER', { size: 66, weight: 700, color: '#70e978' }),
-      templatePhoto(55, 435, 428, 651, { radius: 'pill' }),
+      templatePhoto(55, 435, 428, 651, { radius: 'pill', example: templateExample(12) }),
       templatePhoto(508, 435, 430, 651, { radius: 'pill' }),
       templateText(55, 1185, 300, 75, '23 SS', { size: 70, weight: 700, color: '#ffffff' }),
       templateText(650, 1215, 300, 45, "BRAND'S PICK", { size: 34, color: '#ffffff', align: 'right' }),
@@ -201,7 +206,7 @@ export const FRAME_LIBRARY_ITEMS = [
     id: '13', label: '빅 세일 이벤트', h: 1647, bg: '#fbf9e9', elements: [
       templateText(285, 205, 430, 62, 'Summer', { font: 'Cormorant', size: 52, weight: 600, color: '#45744b', align: 'center' }),
       templateText(150, 270, 700, 180, 'BIG SALE\nEVENT', { font: 'Cormorant', size: 92, weight: 700, color: '#45744b', lineHeight: 95, align: 'center' }),
-      templatePhoto(98, 425, 814, 890, { radius: 'pill' }),
+      templatePhoto(98, 425, 814, 890, { radius: 'pill', example: templateExample(13) }),
       templateShape(0, 1290, 1000, 357, '#9be5df', { opacity: 0.9 }),
       templateText(195, 1510, 610, 55, '여름 시즌 특별 할인 이벤트', { size: 34, weight: 600, color: '#356b54', align: 'center' }),
     ],
@@ -210,7 +215,7 @@ export const FRAME_LIBRARY_ITEMS = [
     id: '14', label: '패션 폴라로이드', h: 1508, bg: '#222222', elements: [
       templatePhoto(0, 0, 1000, 1508),
       templateShape(615, 120, 310, 350, '#ffffff', { radius: 3, rotate: 20 }),
-      templatePhoto(645, 155, 260, 278, { rotate: 20 }),
+      templatePhoto(645, 155, 260, 278, { rotate: 20, example: templateExample(14) }),
       templateShape(535, 510, 335, 430, '#ffffff', { radius: 3, rotate: -14 }),
       templatePhoto(575, 550, 270, 365, { rotate: -14 }),
       templateShape(685, 980, 285, 380, '#ffffff', { radius: 3, rotate: 14 }),
@@ -223,12 +228,12 @@ export const FRAME_LIBRARY_ITEMS = [
     id: '15', label: '디테일 콜아웃', h: 1336, bg: '#eeeeee', elements: [
       templatePhoto(0, 0, 1000, 1336),
       templateText(55, 45, 430, 72, 'CHECK POINT', { font: 'Cormorant', size: 48, weight: 700, color: '#ffffff' }),
+      templatePhoto(150, 265, 245, 245, { radius: 'pill', stroke: '#ffffff', strokeWidth: 5, dash: 'dashed', example: templateExample(15) }),
       templateShape(405, 366, 375, 66, '#fff7f4', { radius: 2 }),
       templateText(425, 382, 335, 42, '어깨라인이 살아있는 디자인', { size: 24, align: 'center' }),
+      templatePhoto(520, 750, 315, 315, { radius: 'pill', stroke: '#ffffff', strokeWidth: 5, dash: 'dashed' }),
       templateShape(485, 1085, 365, 66, '#fff7f4', { radius: 2 }),
       templateText(505, 1101, 325, 42, '허리라인 위로 핀턱 디테일', { size: 24, align: 'center' }),
-      templateShape(150, 265, 245, 245, 'transparent', { shape: 'circle', stroke: '#ffffff', strokeWidth: 5 }),
-      templateShape(520, 750, 315, 315, 'transparent', { shape: 'circle', stroke: '#ffffff', strokeWidth: 5 }),
     ],
   }),
 ];
@@ -310,7 +315,7 @@ export function buildFrameBlock(frameOrId, idFn) {
 const LEGACY_KIWI_OVERLAY = /\/kiwi-(\d+)-overlay\.png(?:\?.*)?$/;
 
 function copyLegacySlotSource(slot, legacySlot) {
-  if (!legacySlot?.src) return slot;
+  if (!legacySlot?.src) return slot.exampleImage ? { ...slot, src: null } : slot;
   const crop = legacySlot.crop && legacySlot.w && legacySlot.h ? {
     ox: Math.round(legacySlot.crop.ox * slot.w / legacySlot.w),
     oy: Math.round(legacySlot.crop.oy * slot.h / legacySlot.h),
