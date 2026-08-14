@@ -1145,13 +1145,16 @@ export function ProductInput() {
 
   return (
     <div className={`wizard${wide ? ' wide' : ''}`}>
+      {/* 확정 대기는 '잠금 경고'가 아니라 '이미 시작된 페이지 전환'으로 보여준다(2026-08-14 사용자
+          지적 — 흰 잠금 카드 → 콘티보드의 어두운 전환 오버레이가 연달아 떠 이질적이었다).
+          도착 화면(ChromeLayout 의 storyboard-transition-overlay)과 같은 시각 언어라 확정→도착이
+          한 번의 전환으로 읽힌다. 입력 차단(전체 덮음)·beforeunload 가드는 종전과 동일하다. */}
       {promotionLocked && createPortal((
-        <div className="input-promotion-lock" role="status" aria-live="polite">
-          <div className="input-promotion-lock-card">
-            <Icon name="loader" className="spin" size={24} />
-            <strong>최신 입력 내용을 안전하게 확정하고 있어요</strong>
-            <span>완료될 때까지 이 화면을 그대로 두세요.</span>
-          </div>
+        <div className="input-promotion-transition" role="status" aria-live="polite">
+          <span className="storyboard-transition-copy">
+            <strong>상세페이지 구성으로 넘어가고 있어요</strong>
+            <small>입력한 내용을 안전하게 저장하는 중이에요.</small>
+          </span>
         </div>
       ), document.body)}
       {editingRightsLock}

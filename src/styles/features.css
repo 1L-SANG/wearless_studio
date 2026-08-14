@@ -52,19 +52,17 @@
 .draft-slot-lock-card p { margin: 10px 0 22px; color: var(--fg-2); line-height: 1.6; }
 .draft-source-options { display: grid; gap: 10px; margin-top: 22px; }
 .draft-source-options .btn { width: 100%; justify-content: center; }
-.input-promotion-lock { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 24px;
-  background: rgba(255, 255, 255, .86); backdrop-filter: blur(8px); cursor: wait;
-  animation: inputPromotionLockReveal .12s ease-out .6s both; }
-.input-promotion-lock-card { display: grid; justify-items: center; gap: 10px; width: min(100%, 420px); padding: 30px 24px;
-  border-radius: var(--r-6); color: var(--fg-1); background: var(--bg-1); box-shadow: var(--elev-lift), 0 0 0 1px var(--ring); }
-.input-promotion-lock-card strong { font-size: 16px; }
-.input-promotion-lock-card span { color: var(--fg-2); font-size: 13px; }
-@keyframes inputPromotionLockReveal {
+/* 확정 전환 — 콘티보드 도착 오버레이(.storyboard-transition-overlay)와 같은 시각 언어.
+   즉시 나타난다: 잠금이 아니라 클릭에 대한 전환 반응이라 지연을 두지 않는다(2026-08-14). */
+.input-promotion-transition { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center;
+  padding: 24px; background: rgba(18, 20, 25, .68); color: #fff; cursor: wait;
+  animation: inputPromotionFadeIn .18s ease-out both; }
+@keyframes inputPromotionFadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .input-promotion-lock { animation-duration: .001ms; animation-delay: .6s; }
+  .input-promotion-transition { animation: none; }
 }
 .draft-entry-sources { display: grid; gap: 10px; margin-top: 20px; }
 .draft-entry-source { display: grid; gap: 4px; width: 100%; padding: 14px 16px; text-align: left; cursor: pointer;
