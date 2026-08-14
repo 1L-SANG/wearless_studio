@@ -833,7 +833,6 @@ export function FramePanel({ onAdd, onDragStart, onDragEnd }) {
                 transform: slot.rotate ? `rotate(${slot.rotate}deg)` : undefined,
               }} />)}
               {f.preview && <img src={f.preview} alt="" loading="lazy" draggable={false} />}
-              {f.foreground && <img src={f.foreground} alt="" loading="lazy" draggable={false} />}
             </div>
             <div className="fl">{f.label}{f.recommended && <span className="frame-rec">추천</span>}</div>
           </div>

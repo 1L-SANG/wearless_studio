@@ -12,6 +12,7 @@ import {
   encodeWardrobeImage,
   normalizeHexColor,
   objectPresetInitialSelectionIds,
+  upgradeLegacyKiwiTemplateBlocks,
 } from '../../src/features/editor/editorLibrary.js';
 import {
   isEditorDeleteKey,
@@ -52,7 +53,7 @@ test('every frame builds empty image slots inside the 1000px canvas', () => {
   }
 });
 
-test('kiwi templates expose every checkerboard as a photo slot below a locked overlay', () => {
+test('kiwi templates rebuild the references with native editable elements', () => {
   const kiwiFrames = FRAME_LIBRARY_ITEMS.filter((item) => item.template);
   assert.deepEqual(kiwiFrames.map((item) => item.id), [
     'kiwi-1', 'kiwi-2', 'kiwi-3', 'kiwi-4', 'kiwi-5',
@@ -64,11 +65,37 @@ test('kiwi templates expose every checkerboard as a photo slot below a locked ov
     const block = buildFrameBlock(frame, seqId());
     const imageSlots = block.elements.filter((element) => element.type === 'image');
     const overlays = block.elements.filter((element) => element.type === 'template-overlay');
-    assert.ok(overlays.length >= 1, frame.id);
-    assert.ok(overlays.every((overlay) => overlay.locked && overlay.system), frame.id);
-    assert.ok(overlays.every((overlay) => overlay.w === 1000 && overlay.h === block.h), frame.id);
+    const editableCopy = block.elements.filter((element) => element.type === 'text');
+    assert.equal(overlays.length, 0, `${frame.id}: reference art must not be inserted`);
+    assert.ok(block.elements.every((element) => ['image', 'text', 'shape', 'line'].includes(element.type)), frame.id);
+    assert.ok(editableCopy.length >= 2, `${frame.id}: copy is editable text`);
+    assert.ok(block.elements.every((element) => !element.locked && !element.system), frame.id);
     assert.ok(imageSlots.every((element) => element.checkerboard), frame.id);
   }
+});
+
+test('legacy locked Kiwi artwork upgrades to editable elements and keeps filled photos', () => {
+  const legacy = [{
+    id: 'legacy-block',
+    name: '리뷰 카드',
+    h: 1460,
+    elements: [
+      { id: 'photo-a', type: 'image', frameSlot: true, src: '/uploads/a.webp', cutType: 'full', w: 100, h: 100, crop: { ox: 10, oy: 20, iw: 120, ih: 140 } },
+      { id: 'photo-b', type: 'image', frameSlot: true, src: null },
+      { id: 'overlay', type: 'template-overlay', src: '/assets/editor/kiwi-templates/kiwi-1-overlay.png', locked: true, system: true },
+    ],
+  }];
+
+  const [upgraded] = upgradeLegacyKiwiTemplateBlocks(legacy, seqId());
+  const photoSlots = upgraded.elements.filter((element) => element.type === 'image');
+  assert.equal(upgraded.id, 'legacy-block');
+  assert.equal(upgraded.templateId, 'kiwi-1');
+  assert.equal(upgraded.elements.some((element) => element.type === 'template-overlay'), false);
+  assert.ok(upgraded.elements.filter((element) => element.type === 'text').length >= 2);
+  assert.equal(photoSlots[0].src, '/uploads/a.webp');
+  assert.equal(photoSlots[0].cutType, 'full');
+  assert.deepEqual(photoSlots[0].crop, { ox: 13, oy: 25, iw: 151, ih: 176 });
+  assert.equal(photoSlots[1].src, null);
 });
 
 test('a wardrobe image dropped between blocks becomes its own padded image block', () => {

@@ -28,7 +28,7 @@ import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
 import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, findImageDropSlot, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
-import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage, objectPresetInitialSelectionIds } from '@/features/editor/editorLibrary.js';
+import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage, objectPresetInitialSelectionIds, upgradeLegacyKiwiTemplateBlocks } from '@/features/editor/editorLibrary.js';
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { imageResizeRect, lineHitStrokeWidth, resizePolicyForElement, shouldShowRotationHandle, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
 import { mergeEditorImagesIntoWardrobe } from '@/features/editor/editorWardrobe.js';
@@ -726,7 +726,8 @@ export function Editor() {
   const latestBlocks = useRef(null);
   const pendingGenerationDraft = useRef(false);
   const setBlocks = useCallback((u) => setBlocksState((prev) => {
-    const next = normalizeEditorSelectionGroups(expandBlockHeights(typeof u === 'function' ? u(prev) : u));
+    const source = typeof u === 'function' ? u(prev) : u;
+    const next = normalizeEditorSelectionGroups(expandBlockHeights(upgradeLegacyKiwiTemplateBlocks(source, uid)));
     latestBlocks.current = next;
     return next;
   }), []);
@@ -873,7 +874,7 @@ export function Editor() {
           if (savedDraft) withH = mergeServerBlocks(savedDraft, withH);
           withH = ensureShippingReturnsBlock(withH, ctx);
         }
-        withH = stripPhotoBlockTextElements(withH);
+        withH = upgradeLegacyKiwiTemplateBlocks(stripPhotoBlockTextElements(withH), uid);
         setBlocks(withH);
         setWardrobe(mergeEditorImagesIntoWardrobe({ wardrobe: w, blocks: withH, ...wardrobeContext.current }));
         setCatalogs(hydratedCatalogs); setFmModels(fm); setSelBlock(withH[0]?.id);
@@ -938,7 +939,7 @@ export function Editor() {
             merged = applyInfoTemplate(merged, ctx).blocks;
           }
           merged = ensureShippingReturnsBlock(merged, ctx);
-          merged = normalizeEditorSelectionGroups(expandBlockHeights(stripPhotoBlockTextElements(merged)));
+          merged = normalizeEditorSelectionGroups(expandBlockHeights(upgradeLegacyKiwiTemplateBlocks(stripPhotoBlockTextElements(merged), uid)));
           latestBlocks.current = merged;
           setBlocksState(merged);
           await api.saveEditorBlocks(projectId, merged);
