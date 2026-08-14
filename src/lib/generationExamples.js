@@ -189,7 +189,11 @@ export function repeatedAllExampleVariationIds(blocks, catalog = []) {
   return variationIds;
 }
 
-export function assignGenerationExamples(blocks, { catalog, product, gender, onlyBlockIds = null }) {
+// avoidByBlockId: { [blockId]: exampleId } — 예시 셔플이 "직전과 같은 예시"를 피하도록
+// 블록별 회피 대상을 넘긴다. 후보가 그것뿐이면 회피를 포기하고 그대로 쓴다(빈 배정 방지).
+export function assignGenerationExamples(blocks, {
+  catalog, product, gender, onlyBlockIds = null, avoidByBlockId = null,
+}) {
   if (!Array.isArray(blocks)) return { blocks, changed: false, assignedIds: [], protectedIds: [], missingIds: [] };
   const only = onlyBlockIds == null ? null : new Set(onlyBlockIds);
   const usage = new Map();
@@ -267,8 +271,14 @@ export function assignGenerationExamples(blocks, { catalog, product, gender, onl
     const counts = usage.get(key);
     let example = colorwayTemplate;
     if (!example) {
-      let slot = 0;
-      for (let index = 1; index < pool.length; index += 1) {
+      const avoidId = avoidByBlockId ? avoidByBlockId[block.id] : null;
+      const eligible = [];
+      for (let index = 0; index < pool.length; index += 1) {
+        if (!avoidId || pool[index].id !== avoidId) eligible.push(index);
+      }
+      const candidates = eligible.length ? eligible : pool.map((_item, index) => index);
+      let slot = candidates[0];
+      for (const index of candidates) {
         if (counts[index] < counts[slot]) slot = index;
       }
       example = pool[slot];

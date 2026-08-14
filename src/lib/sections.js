@@ -298,6 +298,9 @@ export function normalizeSectionLayouts(blocks) {
   const out = blocks.map((b) => {
     const lay = b.sectionLayout;
     if (!lay || lay === 'stack' || lay === 'colorCompare') return b;
+    // 첫 화면 프레임(후킹)의 행은 프레임이 소유한다 — 섹션 컷 수 배타 규칙의 대상이 아니다
+    // (스펙 2026-08-14 §2: pair 1행·moodGrid 2행은 구성 미사용 컷 수와 무관하게 유지).
+    if (b.hookFrameId) return b;
     if (gridLayoutForCount(counts.get(b.sectionId) || 0) === lay) return b;
     changed = true;
     const { layoutRowId: _drop, ...rest } = b;

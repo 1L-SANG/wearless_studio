@@ -115,7 +115,7 @@ export function unslottedHookBlocks(blocks, frame) {
 
 /* ---------- P2: 스타일 전환 엔진 ---------- */
 
-const HOOK_FIELDS = ['hookFrameId', 'hookStyle', 'hookFrameVersion', 'hookTitleOverlay'];
+const HOOK_FIELDS = ['hookFrameId', 'hookStyle', 'hookFrameVersion', 'hookTitleOverlay', 'hookSlotRole'];
 
 const isHookingAiBlock = (block) => (
   !!block && block.sectionRole === 'hooking' && block.source !== 'mine'
@@ -193,6 +193,7 @@ export function applyHookStyle(blocks, style, {
       hookFrameId: nextFrameId,
       hookStyle: style,
       hookFrameVersion: HOOK_FRAME_VERSION,
+      hookSlotRole: slot.role,
     };
     if (slot.titleOverlay) framed.hookTitleOverlay = true;
     else delete framed.hookTitleOverlay;
@@ -234,8 +235,8 @@ export function adoptHookFrame(blocks) {
   if (!openingPair) return { blocks: list, changed: false };
   const frameId = `hookframe__${first.layoutRowId}`;
   const stamped = new Map([
-    [first.id, { ...first, hookFrameId: frameId, hookStyle: 'pair', hookFrameVersion: HOOK_FRAME_VERSION }],
-    [second.id, { ...second, hookFrameId: frameId, hookStyle: 'pair', hookFrameVersion: HOOK_FRAME_VERSION }],
+    [first.id, { ...first, hookFrameId: frameId, hookStyle: 'pair', hookFrameVersion: HOOK_FRAME_VERSION, hookSlotRole: 'left' }],
+    [second.id, { ...second, hookFrameId: frameId, hookStyle: 'pair', hookFrameVersion: HOOK_FRAME_VERSION, hookSlotRole: 'right' }],
   ]);
   return {
     blocks: list.map((block) => stamped.get(block?.id) || block),

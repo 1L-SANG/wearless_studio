@@ -186,3 +186,25 @@ test('adoptHookFrame promotes a legacy opening row to a pair frame, leaves other
   const legacyVertical = seedBoard();                   // 오프닝 행 없는 구형 세로 보드
   assert.equal(adoptHookFrame(legacyVertical).changed, false);
 });
+
+test('board normalization keeps hook-frame rows regardless of section cut counts', async () => {
+  const { normalizeBoard, ensureSections } = await import('../../src/lib/sections.js');
+  let n = 0;
+  const mk = (id, extra = {}) => ({
+    id, sectionId: 'sec-hook', sectionRole: 'hooking', source: 'ai',
+    cutType: 'horizon', shot: 'medium', colorId: 'base', taxonomyVersion: 3, contentRole: 'benefit', ...extra,
+  });
+  const board = [
+    mk('h1', { contentRole: 'hero', hookFrameId: 'hf', hookStyle: 'signature', hookFrameVersion: 1, hookTitleOverlay: true, hookSlotRole: 'signature' }),
+    mk('h2', { cutType: 'styling', shot: 'full' }),
+  ];
+  const colors = [{ id: 'base', isBase: true }, { id: 'c2' }, { id: 'c3' }, { id: 'c4' }];
+  const grid = applyHookStyle(board, 'moodGrid', {
+    colors, createBlock: (slot) => mk(`new-${n += 1}`, slot), frameId: 'hf2',
+  });
+  const normalized = normalizeBoard(ensureSections(grid));
+  const slots = normalized.filter((block) => block.hookFrameId === 'hf2');
+  assert.equal(slots.length, 4);
+  assert.ok(slots.every((block) => block.sectionLayout === 'twoColumn'));
+  assert.equal(new Set(slots.map((block) => block.layoutRowId)).size, 2);   // 2행 유지
+});
