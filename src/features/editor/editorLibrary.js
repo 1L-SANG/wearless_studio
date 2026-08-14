@@ -66,6 +66,12 @@ const kiwiTemplate = ({ id, label, h, bg, elements, preview }) => ({
   preview: preview || templatePreview(id),
 });
 
+const imageDescriptionSlots = [
+  templatePhoto(70, 175, 270, 220),
+  templatePhoto(365, 175, 270, 220),
+  templatePhoto(660, 175, 270, 220),
+];
+
 export const FRAME_LIBRARY_ITEMS = [
   {
     id: 'single', label: '1컷 풀폭', recommended: true, h: 600,
@@ -73,7 +79,12 @@ export const FRAME_LIBRARY_ITEMS = [
   },
   {
     id: 'split2', label: '2분할', recommended: true, h: 580,
-    slots: [slot(40, 60, 450, 460), slot(510, 60, 450, 460)],
+    // 단순 2열 프레임은 칸의 가로 폭만 정한다. 사진을 넣으면 원본 비율에 맞는
+    // 세로 길이를 계산해, 세로 사진이 짧은 카드 안에서 잘리지 않게 한다.
+    slots: [
+      { ...slot(40, 60, 450, 460), imageSizing: 'natural-height' },
+      { ...slot(510, 60, 450, 460), imageSizing: 'natural-height' },
+    ],
   },
   {
     id: 'grid3', label: '3컷 구성', recommended: true, h: 580,
@@ -94,6 +105,22 @@ export const FRAME_LIBRARY_ITEMS = [
   {
     id: 'ba', label: 'Before / After', recommended: false, h: 580,
     slots: [slot(40, 60, 450, 460), slot(510, 60, 450, 460)],
+  },
+  {
+    id: 'image-description-3', label: '이미지 설명 3단', recommended: false, h: 570, bg: '#ffffff',
+    slots: imageDescriptionSlots,
+    elements: [
+      templateText(70, 70, 860, 48, '이미지와 설명', { size: 30, weight: 700 }),
+      ...imageDescriptionSlots,
+      ...[
+        [70, '첫 번째 포인트', '첫 번째 특징을 이해하기 쉽게 설명해 주세요.'],
+        [365, '두 번째 포인트', '두 번째 특징과 고객이 얻는 장점을 적어주세요.'],
+        [660, '세 번째 포인트', '마지막 특징이나 활용 방법을 간결하게 적어주세요.'],
+      ].flatMap(([x, title, description]) => [
+        templateText(x, 415, 270, 34, title, { size: 21, weight: 700 }),
+        templateText(x, 458, 270, 68, description, { size: 16, lineHeight: 23 }),
+      ]),
+    ],
   },
   kiwiTemplate({
     id: '1', label: '리뷰 카드', h: 1460, bg: '#f3f1ee', elements: [

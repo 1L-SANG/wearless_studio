@@ -55,6 +55,20 @@ test('every frame builds replaceable image slots inside the 1000px canvas', () =
   }
 });
 
+test('the image description frame exposes three photo slots and editable native copy', () => {
+  const frame = FRAME_LIBRARY_ITEMS.find((item) => item.id === 'image-description-3');
+  const block = buildFrameBlock(frame, seqId());
+  const slots = block.elements.filter((element) => element.type === 'image' && element.frameSlot);
+  const copy = block.elements.filter((element) => element.type === 'text');
+
+  assert.equal(frame.template, undefined);
+  assert.equal(slots.length, 3);
+  assert.equal(copy.length, 7);
+  assert.ok(copy.every((element) => element.fullTextHitArea));
+  assert.ok(copy.some((element) => element.text === '이미지와 설명'));
+  assert.deepEqual(slots.map(({ w, h }) => ({ w, h })), Array(3).fill({ w: 270, h: 220 }));
+});
+
 test('kiwi templates rebuild the references with native editable elements', () => {
   const kiwiFrames = FRAME_LIBRARY_ITEMS.filter((item) => item.template);
   assert.deepEqual(kiwiFrames.map((item) => item.id), [

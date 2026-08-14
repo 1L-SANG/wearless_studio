@@ -9,6 +9,7 @@ import {
   decodeEditorImageDrag,
   encodeEditorImageDrag,
   findImageDropSlot,
+  fitImageToFrameSlot,
   pendingImageImportTarget,
   placeImageInBlock,
   viewportPointToBlock,
@@ -77,6 +78,16 @@ test('a dropped portrait image is contained inside the target block and centered
     dropX: 500,
     dropY: 150,
   }), { x: 418, y: 40, w: 165, h: 220 });
+});
+
+test('the two-column frame keeps its width and derives the exact portrait height from the source', () => {
+  let sequence = 0;
+  const block = buildFrameBlock('split2', (prefix) => `${prefix}${++sequence}`);
+  const [slot] = block.elements.filter((element) => element.type === 'image');
+
+  assert.equal(slot.w, 450);
+  assert.deepEqual(fitImageToFrameSlot(slot, { width: 900, height: 1460 }), { h: 730 });
+  assert.deepEqual(fitImageToFrameSlot({ ...slot, imageSizing: undefined }, { width: 900, height: 1460 }), {});
 });
 
 test('image placement clamps edge drops without escaping the block frame', () => {

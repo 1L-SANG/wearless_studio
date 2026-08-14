@@ -56,6 +56,15 @@ export function placeImageInBlock({
   return { x, y, w, h };
 }
 
+export function fitImageToFrameSlot(slot, image) {
+  if (!slot || slot.imageSizing !== 'natural-height') return {};
+  const sourceWidth = Number(image?.width || image?.w);
+  const sourceHeight = Number(image?.height || image?.h);
+  const frameWidth = Number(slot.w);
+  if (!(sourceWidth > 0) || !(sourceHeight > 0) || !(frameWidth > 0)) return {};
+  return { h: Math.max(24, Math.round(frameWidth * sourceHeight / sourceWidth)) };
+}
+
 export function findImageDropSlot(elements, point) {
   const frameSlots = (elements || []).filter((element) => (
     element.type === 'image' && element.frameSlot

@@ -28,7 +28,7 @@ import { SHAPE_D } from '@/features/editor/shapes.js';
 import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
 import { snapEditorDragDelta } from '@/features/editor/editorSnap.js';
 import { copyEditorElements, pasteEditorElements } from '@/features/editor/editorClipboard.js';
-import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, findImageDropSlot, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
+import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, findImageDropSlot, fitImageToFrameSlot, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage, objectPresetInitialSelectionIds, upgradeLegacyKiwiTemplateBlocks } from '@/features/editor/editorLibrary.js';
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { imageResizeRect, lineHitStrokeWidth, resizePolicyForElement, shouldShowRotationHandle, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
@@ -1466,7 +1466,17 @@ export function Editor() {
     selectEl(target, el); toast.push('오브젝트를 추가했어요');
   };
   const setSlotImage = (blockId, elId, image) => {
-    setBlocks((bs) => bs.map((b) => (b.id === blockId ? applySlotFillToInfo(b, elId, image || { src: null, cutType: null }) : b)));
+    setBlocks((bs) => bs.map((b) => {
+      if (b.id !== blockId) return b;
+      const slot = b.elements.find((element) => element.id === elId);
+      const nextBlock = applySlotFillToInfo(b, elId, image || { src: null, cutType: null });
+      const geometry = fitImageToFrameSlot(slot, image);
+      if (!Object.keys(geometry).length) return nextBlock;
+      return {
+        ...nextBlock,
+        elements: nextBlock.elements.map((element) => element.id === elId ? { ...element, ...geometry } : element),
+      };
+    }));
   };
   const insertImage = (im, { blockId, point, slotId, keepTab = false } = {}) => {
     const target = blockId || visibleBlock();

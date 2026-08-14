@@ -938,6 +938,17 @@ export function FramePanel({ onAdd, onDragStart, onDragEnd, recommendGender, onP
                     {slot.src && <img src={slot.src} alt="" loading="lazy" draggable={false} />}
                   </i>
                 ))}
+                {!f.preview && (f.elements || []).filter((element) => element.type === 'text').map((element, index) => (
+                  <b className="frame-native-copy" key={`${element.text}-${index}`} style={{
+                    left: `${element.x / 10}%`,
+                    top: `${element.y / f.h * 100}%`,
+                    width: `${element.w / 10}%`,
+                    height: `${element.h / f.h * 100}%`,
+                    fontSize: `${Math.max(3, (element.style?.size || 20) / 8)}px`,
+                    fontWeight: element.style?.weight || 400,
+                    textAlign: element.style?.align || 'left',
+                  }}>{element.text}</b>
+                ))}
                 {f.preview && <img src={f.preview} alt="" loading="lazy" draggable={false} />}
               </div>
               <div className="fl">{f.label}{f.recommended && <span className="frame-rec">추천</span>}</div>
