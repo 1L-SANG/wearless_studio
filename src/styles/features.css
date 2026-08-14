@@ -1668,35 +1668,32 @@
 .frame-item .fl { display: flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 500; color: var(--fg-1); }
 .frame-rec { margin-left: auto; padding: 1px 5px; border-radius: 5px; background: #eef4fb; color: #4f88c9; font-size: 9.5px; font-weight: 700; }
 .frame-image-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-.object-preset-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 18px; }
-.object-preset-cell { min-height: 86px; padding: 10px 8px; border: 0; border-radius: var(--r-3); background: var(--bg-2); color: var(--fg-2); cursor: grab;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; font-size: 11.5px; line-height: 1.2; text-align: center; transition: background .14s, color .14s, box-shadow .14s; }
-.object-preset-cell:hover { background: var(--bg-1); color: var(--fg-1); box-shadow: 0 0 0 1px var(--ring-strong); }
+/* 추천 오브젝트 — 선화(line-art) 썸네일 한 언어 (2026-08-14 개편, 텍스트 알약 글리프 폐기) */
+.object-preset-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-bottom: 18px; }
+.object-preset-cell { border: 0; border-radius: var(--r-3); background: var(--bg-2); cursor: grab; padding: 0 0 9px; overflow: hidden;
+  display: flex; flex-direction: column; align-items: stretch; transition: background .14s, box-shadow .14s; }
+.object-preset-cell:hover { background: var(--bg-1); box-shadow: 0 0 0 1px var(--ring-strong), 0 4px 14px -4px rgba(14,13,20,.12); }
+.object-preset-cell:hover .object-preset-thumb svg { color: var(--fg-1); }
 .object-preset-cell:active { cursor: grabbing; }
-.object-preset-glyph { min-width: 52px; min-height: 24px; padding: 4px 8px; border-radius: 7px; background: #0e0d14; color: #fff; display: grid; place-items: center; font-size: 10px; font-weight: 700; letter-spacing: .4px; }
-.object-preset-glyph.single-bubble { position: relative; min-width: 64px; min-height: 28px; margin-bottom: 5px; padding: 5px 10px 7px;
-  border: 1px solid #000; border-radius: 11px; background: #fff; color: #000; box-sizing: border-box; letter-spacing: 0; }
-.object-preset-glyph.single-bubble::before,
-.object-preset-glyph.single-bubble::after { content: ''; position: absolute; left: 12px; width: 0; height: 0; }
-.object-preset-glyph.single-bubble::before { bottom: -8px; border-top: 8px solid #000; border-right: 11px solid transparent; }
-.object-preset-glyph.single-bubble::after { left: 13px; bottom: -6px; border-top: 7px solid #fff; border-right: 9px solid transparent; }
-.object-preset-glyph.qa-bubbles { background: #dcecff; color: #0e0d14; border-radius: 999px; }
-.object-preset-glyph.divider { min-width: 62px; padding: 0; background: transparent; color: #0e0d14; font-size: 22px; }
-.object-preset-glyph.arrow-callout { background: transparent; color: #0e0d14; padding: 0; }
-.object-preset-glyph.label-badge { border-radius: 999px; }
+.object-preset-thumb { height: 58px; display: grid; place-items: center; }
+.object-preset-thumb svg { width: 80px; height: 42px; color: #4a4e57; transition: color .14s; }
+.object-preset-name { display: block; text-align: center; font-size: 11.5px; font-weight: 600; color: var(--fg-1); line-height: 1.2; }
 /* 오브젝트 탭 — 플랫 타일 + 큰 글리프 (4열, Figma/Canva 류 패널 관례) */
 .shape-list { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-.shape-cell { aspect-ratio: 1; border-radius: var(--r-3); background: var(--bg-2); display: grid; place-items: center; cursor: grab;
-  color: var(--fg-3); transition: background .14s, color .14s, box-shadow .14s; }
+.shape-cell { aspect-ratio: 1; border: 0; border-radius: var(--r-3); background: var(--bg-2); display: grid; place-items: center; cursor: grab;
+  color: #565b66; transition: background .14s, color .14s, box-shadow .14s; }
 .shape-cell:hover { background: var(--bg-1); box-shadow: 0 0 0 1px var(--ring-strong); color: var(--fg-1); }
 .shape-cell:active { cursor: grabbing; }
-/* object previews — flat gray fill, NO border, halved size (item 9) */
-.obj-prev { background: currentColor; box-shadow: none; }
-.obj-prev.square { width: 25px; height: 25px; border-radius: 5px; }
-.obj-prev.circle { width: 25px; height: 25px; border-radius: 50%; }
+/* 선 3종은 3열 전용 줄 — 4열 그리드의 빈 칸을 없앤다 */
+.shape-list.line3 { grid-template-columns: repeat(3, 1fr); }
+.shape-list.line3 .shape-cell { aspect-ratio: auto; height: 46px; }
+/* object previews — 도형은 생성 기본값(흰 채움+잉크 테두리)과 같은 선화 미리보기 */
 .obj-prev.line { width: 30px; height: 13px; background: transparent; box-shadow: none; }
 .obj-prev svg { display: block; width: 100%; height: 100%; overflow: visible; }
-.obj-glyph { display: block; width: 27px; height: 27px; }
+.obj-glyph { display: block; width: 28px; height: 28px; }
+/* 블록 배경 — 패널 맨 아래, 구분선으로 분리된 블록 속성 구역 */
+.obj-bg-sect { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--ring); }
+.obj-bg-scope { font-size: 10.5px; font-weight: 500; color: var(--fg-3); margin-left: 5px; }
 
 /* block height resize pill — bottom center only, so the block top stays anchored.
    counter-scaled by --inv so they stay a constant on-screen size at any zoom. */
