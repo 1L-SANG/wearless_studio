@@ -206,6 +206,66 @@ def test_generation_input_is_the_cutout_and_the_grid_is_untouched(monkeypatch):
     assert calls["swap"][2] == baseline_calls["swap"][2]
 
 
+def test_full_mode_puts_the_flatlay_raw_in_the_grid_front_cell(monkeypatch):
+    """full: 생성 입력 grid 의 front 칸 = flat-lay **1K 원본**(카드용 512 아님). 나머지 칸은 누끼본.
+
+    접힌 채 찍힌 하의가 착장 생성에서 실루엣을 잃는 문제의 해법이 이 배선이다 — front
+    한 칸만 바꾸고 호출은 늘지 않는다(썸네일용 flat 재사용, 생성 1회 그대로).
+    """
+    captured = {}
+    real_compose = job.garment_grid.compose_garment_grid
+
+    def spy_compose(images):
+        captured["inputs"] = list(images)
+        return real_compose(images)
+
+    monkeypatch.setattr(job.garment_grid, "compose_garment_grid", spy_compose)
+    gemini = _FakeGemini(image=_gen_png())
+    app, r2, calls = _wire_flatlay(monkeypatch, gemini=gemini, flag="full")
+    _run(app, _job_dict())
+
+    assert len(gemini.calls) == 1, "full 이어도 생성은 아이템당 1회"
+    assert captured["inputs"][0] == _gen_png(), "front 칸 = 재렌더 1K 원본 바이트"
+    assert captured["inputs"][1:] == [
+        mc.flatten_on_bg(_cut_png())] * (len(captured["inputs"]) - 1), "나머지 칸 = 누끼본"
+    # 썸네일도 여전히 재렌더본(512 카드 계약)이다.
+    _k, thumb_bytes, _m = _thumb_put(r2)
+    assert _close(_avg_color(thumb_bytes), GEN_COLOR)
+    meta = {a["asset_id"]: a["metadata"] for a in calls["assets"]}
+    grid_meta = meta[calls["swap"][2]]
+    assert grid_meta["flatlayFront"] is True, "provenance — 생성이 뭘 봤는지 asset 이 말해야"
+    assert grid_meta["flatlayModel"] == "gemini-3.1-flash-image"
+    assert calls["finalize"][1]["flatlayGrid"] is True
+
+
+def test_full_mode_falls_back_to_cutout_grid_when_render_fails(monkeypatch):
+    """full 인데 재렌더 실패 → grid 는 기존 누끼 합성본 그대로(fail-open, #131 규율 유지)."""
+    gemini = _FakeGemini(error=gemini_image.GeminiError("boom"))
+    app, r2, calls = _wire_flatlay(monkeypatch, gemini=gemini, flag="full")
+    _run(app, _job_dict())
+
+    baseline_app, baseline_r2, _bc = _wire_flatlay(
+        monkeypatch, gemini=_ExplodingGemini(), flag="off")
+    _run(baseline_app, _job_dict())
+    assert _grid_put(r2) == _grid_put(baseline_r2), "실패 시 grid 는 누끼본과 동일"
+    meta = {a["asset_id"]: a["metadata"] for a in calls["assets"]}
+    assert "flatlayFront" not in meta[calls["swap"][2]]
+    assert calls["finalize"][1]["flatlay"] is False
+    assert calls["finalize"][1]["flatlayGrid"] is False
+
+
+def test_on_mode_grid_contract_is_byte_identical_to_131(monkeypatch):
+    """on 은 #131 계약 그대로 — full 이 추가돼도 grid 는 한 바이트도 안 바뀐다."""
+    gemini = _FakeGemini(image=_gen_png())
+    app, r2, calls = _wire_flatlay(monkeypatch, gemini=gemini, flag="on")
+    _run(app, _job_dict())
+    baseline_app, baseline_r2, _bc = _wire_flatlay(
+        monkeypatch, gemini=_ExplodingGemini(), flag="off")
+    _run(baseline_app, _job_dict())
+    assert _grid_put(r2) == _grid_put(baseline_r2)
+    assert calls["finalize"][1]["flatlayGrid"] is False
+
+
 def test_prompt_noun_follows_the_items_clothing_type(monkeypatch):
     bottom = _FakeGemini(image=_gen_png())
     app, _r2, calls = _wire_flatlay(monkeypatch, gemini=bottom, clothing_type="bottom")

@@ -65,15 +65,30 @@ _NEUTRAL = _NOUNS["top"]
 
 @dataclass(frozen=True)
 class FlatlayThumbnail:
-    """재렌더 성공분. `image` 는 이미 카드 계약(512px JPEG)으로 인코딩돼 있다."""
+    """재렌더 성공분. `image` 는 이미 카드 계약(512px JPEG)으로 인코딩돼 있다.
+
+    `raw` 는 인코딩 전 1K 생성 원본 — full 모드에서 생성 입력 grid 의 front 칸이 된다.
+    카드용 512px 를 grid 에 넣으면 착장 생성이 디테일을 잃으므로 원본을 따로 든다.
+    """
     image: bytes
+    raw: bytes
     model: str
     latency_ms: int
 
 
 def enabled(settings) -> bool:
     """플래그. 미설정·off 면 이 모듈은 아무것도 하지 않는다."""
-    return getattr(settings, "matching_flatlay", "off") == "on"
+    return getattr(settings, "matching_flatlay", "off") in ("on", "full")
+
+
+def grid_enabled(settings) -> bool:
+    """full 모드 — flat-lay 를 카드 말고 **생성 입력 grid 의 front 칸**에도 쓴다.
+
+    접힌 채 찍힌 하의는 실루엣·기장·광택 정보가 없어 착장 생성이 옷을 지어낸다
+    (2026-08-14 실측: 접힌 갈색 배럴팬츠 → 갈색 청바지, 펼친 front 로 교체하니 회복).
+    이미 만든 flat-lay 1장을 재사용하므로 이미지 호출은 늘지 않는다.
+    """
+    return getattr(settings, "matching_flatlay", "off") == "full"
 
 
 def build_prompt(clothing_type: str | None) -> str:
@@ -138,7 +153,7 @@ async def render_thumbnail(gemini, *, settings, cutout_png: bytes,
                 aspect_ratio=ASPECT_RATIO, timeout=TIMEOUT_S)
         # 빈·깨진 바이트는 여기서 PIL 이 터뜨린다 — 저장 전에 걸러진다.
         image = await asyncio.to_thread(encode_thumbnail, res.image)
-        return FlatlayThumbnail(image=image, model=model,
+        return FlatlayThumbnail(image=image, raw=res.image, model=model,
                                 latency_ms=getattr(res, "latency_ms", 0))
     except Exception:  # noqa: BLE001 - 재렌더 실패가 누끼 결과를 되돌리지 않는다
         log.warning("matching_flatlay render failed; keeping cutout thumbnail",

@@ -144,11 +144,18 @@ async def run_matching_cutout_job(app, job: dict) -> None:
                 purpose=matching_cutout.CUTOUT_PURPOSE)
         thumb_key = derived_key(user_id, project_id, thumb_asset_id, "jpg")
 
-        # 4) 누끼본 grid 재합성(마네킹 생성 입력). 재렌더가 붙어도 여긴 누끼 합성본
-        #    그대로다 — 배경 오염은 이미 해결됐고, 원본 1~4장 재렌더는 비용만 곱한다.
-        #    원본 해상도 컷은 grid 입력으로만 쓰고 저장하지 않는다 — 130px 카드에
-        #    2048px 무압축 PNG 를 내려보내지 않는다(리뷰 I6).
-        grid_bytes = await asyncio.to_thread(garment_grid.compose_garment_grid, cut_pngs)
+        # 4) grid 재합성(마네킹 생성 입력). 기본은 누끼 합성본 그대로 — 배경 오염은
+        #    이미 해결됐고, 원본 1~4장 재렌더는 비용만 곱한다. 원본 해상도 컷은 grid
+        #    입력으로만 쓰고 저장하지 않는다 — 130px 카드에 2048px 무압축 PNG 를
+        #    내려보내지 않는다(리뷰 I6).
+        #    full 모드 + 재렌더 성공이면 **front 칸만** flat-lay 1K 원본으로 바꾼다.
+        #    접힌 채 찍힌 하의는 실루엣·기장·광택 정보가 없어 착장 생성이 옷을 지어내는데
+        #    (실측: 접힌 배럴팬츠 → 청바지), 펼친 front 한 칸이면 회복된다. 뒤/디테일
+        #    칸은 누끼본 유지 — 재렌더는 생성물이라 칸을 늘릴수록 왜곡 표면만 커진다.
+        #    호출은 늘지 않는다(썸네일용 flat 재사용). 실패 시 기존 누끼 grid 그대로.
+        grid_flatlay = flat is not None and matching_flatlay.grid_enabled(s)
+        grid_inputs = [flat.raw, *cut_pngs[1:]] if grid_flatlay else cut_pngs
+        grid_bytes = await asyncio.to_thread(garment_grid.compose_garment_grid, grid_inputs)
         await asyncio.to_thread(r2.put_bytes, thumb_key, thumb_bytes, "image/jpeg")
         await asyncio.to_thread(r2.put_bytes, grid_key, grid_bytes, "image/jpeg")
 
@@ -185,16 +192,22 @@ async def run_matching_cutout_job(app, job: dict) -> None:
             # grid(=image_asset_id) 는 마네킹 생성 입력이자 Task 5 가 상태를 판정하는 asset —
             # metadata.type == "matchingCutout" 이 없으면 상태가 계속 미완료로 보인다.
             # sourceAssetIds 는 삭제 경로가 원본을 회수하는 유일한 통로다.
+            grid_meta = matching_cutout.metadata_for(
+                source_hash=fingerprint,
+                source_asset_id=origin_grid_asset_id or first_source_id,
+                matching_item_id=matching_item_id,
+                purpose=matching_cutout.GRID_PURPOSE,
+                source_asset_ids=cleanup_ids)
+            if grid_flatlay:
+                # front 칸이 재렌더본임을 provenance 로 남긴다 — 착장 결과를 조사할 때
+                # "생성이 뭘 보고 그렸나"를 asset 만 보고 답할 수 있어야 한다.
+                grid_meta["flatlayFront"] = True
+                grid_meta["flatlayModel"] = flat.model
             await repo.create_asset(
                 conn, asset_id=grid_asset_id, user_id=user_id, project_id=project_id,
                 source="derived", bucket=s.r2_bucket, key=grid_key, mime="image/jpeg",
                 size=len(grid_bytes), original_filename=None,
-                metadata=matching_cutout.metadata_for(
-                    source_hash=fingerprint,
-                    source_asset_id=origin_grid_asset_id or first_source_id,
-                    matching_item_id=matching_item_id,
-                    purpose=matching_cutout.GRID_PURPOSE,
-                    source_asset_ids=cleanup_ids))
+                metadata=grid_meta)
             swapped = await repo.swap_matching_item_assets(
                 conn, matching_item_id=matching_item_id, project_id=project_id,
                 thumbnail_asset_id=thumb_asset_id, image_asset_id=grid_asset_id)
@@ -225,4 +238,5 @@ async def run_matching_cutout_job(app, job: dict) -> None:
     if flatlay_enabled:
         # 플래그가 켜진 동안만 적는다 — off 인 프로덕션의 결과 payload 는 오늘 그대로다.
         detail["flatlay"] = flat is not None
+        detail["flatlayGrid"] = grid_flatlay
     await finish("done", detail)
