@@ -1641,10 +1641,10 @@
 /* clip elements that spill past the block frame; block height is fixed, not content-driven (#10) */
 .block-clip { position: absolute; inset: 0; overflow: hidden; }
 .editor-snap-guide { position: absolute; z-index: 10000; display: none; pointer-events: none;
-  background: #168ff2; box-shadow: 0 0 calc(2px * var(--inv, 1)) rgba(22,143,242,.38); }
-.editor-snap-guide.vertical { top: 0; bottom: 0; width: calc(1px * var(--inv, 1));
+  background: rgba(22,143,242,.78); }
+.editor-snap-guide.vertical { top: 0; bottom: 0; width: calc(.5px * var(--inv, 1));
   transform: translateX(-50%); }
-.editor-snap-guide.horizontal { left: 0; right: 0; height: calc(1px * var(--inv, 1));
+.editor-snap-guide.horizontal { left: 0; right: 0; height: calc(.5px * var(--inv, 1));
   transform: translateY(-50%); }
 
 /* empty frame image slot — '이미지 추가' button → 의류 탭 (item 3) */
@@ -1663,21 +1663,15 @@
     linear-gradient(-45deg, transparent 75%, rgba(65,119,164,.08) 75%);
   background-size: calc(28px * var(--drop-inv, 1)) calc(28px * var(--drop-inv, 1));
   background-position: 0 0, 0 calc(14px * var(--drop-inv, 1)), calc(14px * var(--drop-inv, 1)) calc(-14px * var(--drop-inv, 1)), calc(-14px * var(--drop-inv, 1)) 0; }
-.image-drop-guide-arrow { position: absolute; top: 10%; z-index: 1; font-size: 24px; font-weight: 800;
-  transform: rotate(var(--drop-counter-rotate)) scale(var(--drop-inv, 1)); transform-origin: center;
-  animation: image-drop-arrow .65s ease-in-out infinite alternate; }
 .image-drop-guide-content { display: flex; flex-direction: column; align-items: center; gap: 4px;
-  padding: 9px 10px; border-radius: 12px; text-align: center; background: rgba(255,255,255,.96); box-sizing: border-box;
+  padding: 8px; border-radius: 12px; text-align: center; background: rgba(255,255,255,.96); box-sizing: border-box;
   box-shadow: 0 8px 24px rgba(23,76,120,.13), inset 0 0 0 1px rgba(47,127,196,.16);
   transform: rotate(var(--drop-counter-rotate)) scale(var(--drop-inv, 1)); transform-origin: center; }
 .image-drop-guide-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px;
   background: #eaf5ff; box-shadow: inset 0 0 0 1px rgba(47,127,196,.16); }
-.image-drop-guide-content strong { font-size: 13px; line-height: 1.25; letter-spacing: -.02em; }
-.image-drop-guide-content > span:last-child { font-size: 11px; line-height: 1.35; color: #667887; }
-.image-drop-guide-content.compact { flex-direction: row; justify-content: center; padding: 7px 8px; }
+.image-drop-guide-content.compact { padding: 7px; }
 .image-drop-guide-content.compact .image-drop-guide-icon { width: 26px; height: 26px; border-radius: 8px; flex: none; }
 @keyframes image-drop-target-pulse { from { filter: brightness(1); } to { filter: brightness(1.04); } }
-@keyframes image-drop-arrow { from { translate: 0 -3px; opacity: .65; } to { translate: 0 3px; opacity: 1; } }
 .el-slot .slot-add { transform-origin: center; display: inline-flex; flex-direction: column; align-items: center; gap: 6px;
   border: 0; background: transparent; color: var(--fg-2); font-size: 14px; font-weight: 500; cursor: pointer; }
 .el-slot .slot-add.compact { gap: 0; }

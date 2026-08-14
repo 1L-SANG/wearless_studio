@@ -28,7 +28,7 @@ import { SHAPE_D } from '@/features/editor/shapes.js';
 import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
 import { snapEditorDragDelta } from '@/features/editor/editorSnap.js';
 import { copyEditorElements, pasteEditorElements } from '@/features/editor/editorClipboard.js';
-import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, findImageDropSlot, fitImageToFrameSlot, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
+import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, findImageDropSlot, fitImageToFrameBlock, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage, objectPresetInitialSelectionIds, upgradeLegacyKiwiTemplateBlocks } from '@/features/editor/editorLibrary.js';
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { imageResizeRect, lineHitStrokeWidth, resizePolicyForElement, shouldShowRotationHandle, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
@@ -180,17 +180,13 @@ function naturalTextWidth(node, value) {
   )));
 }
 
-function ImageDropGuide({ scale, filled, width, height, rotate = 0 }) {
+function ImageDropGuide({ scale, width, height, rotate = 0 }) {
   const safeScale = scale || 1;
-  const badgeWidth = Math.max(76, Math.min(148, (Number(width) || 240) * safeScale - 16));
   const compact = Math.min((Number(width) || 240) * safeScale, (Number(height) || 240) * safeScale) < 132;
   return (
     <div className="image-drop-guide" style={{ '--drop-inv': 1 / safeScale, '--drop-counter-rotate': `${-rotate}deg` }} aria-hidden="true">
-      <span className="image-drop-guide-arrow">↓</span>
-      <div className={`image-drop-guide-content${compact ? ' compact' : ''}`} style={{ width: badgeWidth }}>
+      <div className={`image-drop-guide-content${compact ? ' compact' : ''}`}>
         <span className="image-drop-guide-icon"><Icon name="imagePlus" size={compact ? 18 : 22} /></span>
-        <strong>이 프레임에 {filled ? '교체' : '넣기'}</strong>
-        {!compact && <span>여기에 사진이 들어가요</span>}
       </div>
     </div>
   );
@@ -411,15 +407,15 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
         <div {...common} {...imageDropProps} className={cls(`el-slot${el.checkerboard ? ' checkerboard' : ''}${imageDropOver ? ' image-drop-over' : ''}`)} style={slotBase}>
           <button className={`slot-add${compactSlot ? ' compact' : ''}`} style={{ transform: `scale(${inv})` }}
             aria-label="이 프레임에 사진 넣기" title="이 프레임에 사진 넣기"
+            onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
-              if (draggedPointer.current) return;
               onAddImage && onAddImage(el);
             }}>
             <Icon name="imagePlus" size={compactSlot ? 22 : 28} />
             {!compactSlot && <span>여기에 사진 넣기</span>}
           </button>
-          {imageDropOver && <ImageDropGuide scale={scale} filled={false} width={el.w} height={el.h} rotate={el.rotate} />}
+          {imageDropOver && <ImageDropGuide scale={scale} width={el.w} height={el.h} rotate={el.rotate} />}
         </div>
       );
     }
@@ -434,7 +430,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
         ) : (
           <img src={el.src} alt="" style={{ borderRadius: el.radius, objectFit: el.fit || 'cover' }} draggable={false} />
         )}
-        {imageDropOver && <ImageDropGuide scale={scale} filled width={el.w} height={el.h} rotate={el.rotate} />}
+        {imageDropOver && <ImageDropGuide scale={scale} width={el.w} height={el.h} rotate={el.rotate} />}
       </div>
     );
   }
@@ -1468,14 +1464,8 @@ export function Editor() {
   const setSlotImage = (blockId, elId, image) => {
     setBlocks((bs) => bs.map((b) => {
       if (b.id !== blockId) return b;
-      const slot = b.elements.find((element) => element.id === elId);
       const nextBlock = applySlotFillToInfo(b, elId, image || { src: null, cutType: null });
-      const geometry = fitImageToFrameSlot(slot, image);
-      if (!Object.keys(geometry).length) return nextBlock;
-      return {
-        ...nextBlock,
-        elements: nextBlock.elements.map((element) => element.id === elId ? { ...element, ...geometry } : element),
-      };
+      return fitImageToFrameBlock(nextBlock, elId, image);
     }));
   };
   const insertImage = (im, { blockId, point, slotId, keepTab = false } = {}) => {
@@ -1528,6 +1518,8 @@ export function Editor() {
       setSlotImage(pendingSlot.blockId, pendingSlot.elId, {
         src: im.src,
         cutType: im.cutType || null,
+        width: im.width,
+        height: im.height,
         userUploaded: Boolean(im.userUploaded),
         wardrobeGroup: im.wardrobeGroup || null,
       });
@@ -1707,18 +1699,13 @@ export function Editor() {
     const wrap = wrapRef.current; if (!wrap) return;
     const target = wrap.querySelectorAll('.canvas-block')[idx];
     if (target) { const wr = wrap.getBoundingClientRect(); const tr = target.getBoundingClientRect(); wrap.scrollTo({ top: wrap.scrollTop + (tr.top - wr.top) - 40, behavior: 'smooth' }); } };
-  const addText = (bId, preset) => {
+  const addText = (bId) => {
     const id = bId || visibleBlock();
-    // preset 'garment' = AI 컷의 뭉갠 프린트 글자를 정확한 글자로 덮는 오버레이. 프린트는 보통
-    // 크고 굵고 가운데라 기본값을 다르게 준다(색은 셀러가 원본 프린트에 맞게 조절).
-    const garment = preset === 'garment';
-    const el = garment
-      ? { id: uid('el'), type: 'text', x: 90, y: 70, w: 480, h: 60, text: '옷 글자 입력', style: { font: 'Pretendard', size: 44, weight: 700, color: '#0e0d14', align: 'center' } }
-      : { id: uid('el'), type: 'text', x: 120, y: 80, w: 12, h: 45, text: '', textSizing: 'auto', style: { font: 'Pretendard', size: 32, weight: 500, color: '#0e0d14' } };
+    const el = { id: uid('el'), type: 'text', x: 120, y: 80, w: 12, h: 45, text: '', textSizing: 'auto', style: { font: 'Pretendard', size: 32, weight: 500, color: '#0e0d14' } };
     setBlocks((bs) => bs.map((b) => b.id === id ? { ...b, elements: [...b.elements, el] } : b));
     selectEl(id, el); setTab('text');
-    if (!garment) setEditEl(el.id);
-    toast.push(garment ? '옷 글자를 추가했어요 — 뭉갠 글자 위로 옮겨 덮으세요' : '텍스트를 추가했어요');
+    setEditEl(el.id);
+    toast.push('텍스트를 추가했어요');
   };
   /* ---- 정보 블록 (PRD §10.14 `내용 추가`) — infoPresets 빌더로 폼→블록 생성 ---- */
   const targetGenders = (analysis && analysis.targetGenders) || [];
@@ -2158,7 +2145,7 @@ export function Editor() {
         <FramePanel onAdd={addFrame} recommendGender={recommendGender} onPickInfo={openInfoPreset}
           onDragStart={() => setFrameDragging(true)} onDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />
       );
-      case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onBubbleAppearanceChange={patchBubbleAppearance} onLayer={layerEl} onAddText={() => addText()} onAddGarmentText={() => addText(undefined, 'garment')} />;
+      case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onBubbleAppearanceChange={patchBubbleAppearance} onLayer={layerEl} onAddText={() => addText()} />;
       case 'shape': return <ShapePanel catalogs={catalogs} onAdd={addShape} block={(selEls.length === 0 && selBlock) ? blocks.find((b) => b.id === selBlock) : null} onBgChange={changeBg} />;
       default: return null;
     }

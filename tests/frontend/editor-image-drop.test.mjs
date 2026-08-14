@@ -9,6 +9,7 @@ import {
   decodeEditorImageDrag,
   encodeEditorImageDrag,
   findImageDropSlot,
+  fitImageToFrameBlock,
   fitImageToFrameSlot,
   pendingImageImportTarget,
   placeImageInBlock,
@@ -90,6 +91,25 @@ test('the two-column frame keeps its width and derives the exact portrait height
   assert.deepEqual(fitImageToFrameSlot({ ...slot, imageSizing: undefined }, { width: 900, height: 1460 }), {});
 });
 
+test('the image-description frame grows each photo box to its source ratio and moves its own copy below it', () => {
+  let sequence = 0;
+  const block = buildFrameBlock('image-description-3', (prefix) => `${prefix}${++sequence}`);
+  const slots = block.elements.filter((element) => element.type === 'image');
+  const firstSlot = slots[0];
+  const firstCopy = block.elements.filter((element) => element.imageFlowGroup === firstSlot.imageFlowGroup && element.type === 'text');
+  const otherCopy = block.elements.filter((element) => element.imageFlowGroup === slots[1].imageFlowGroup && element.type === 'text');
+
+  const fitted = fitImageToFrameBlock(block, firstSlot.id, { width: 900, height: 1500 });
+  const fittedSlot = fitted.elements.find((element) => element.id === firstSlot.id);
+  const fittedFirstCopy = fitted.elements.filter((element) => element.imageFlowGroup === firstSlot.imageFlowGroup && element.type === 'text');
+  const fittedOtherCopy = fitted.elements.filter((element) => element.imageFlowGroup === slots[1].imageFlowGroup && element.type === 'text');
+
+  assert.equal(fittedSlot.h, 450);
+  assert.deepEqual(fittedFirstCopy.map((element) => element.y), [645, 688]);
+  assert.deepEqual(fittedOtherCopy.map((element) => element.y), otherCopy.map((element) => element.y));
+  assert.deepEqual(firstCopy.map((element) => element.y), [415, 458]);
+});
+
 test('image placement clamps edge drops without escaping the block frame', () => {
   assert.deepEqual(placeImageInBlock({
     blockHeight: 300,
@@ -134,18 +154,29 @@ test('image frames show an exact placement guide for wardrobe and external file 
   assert.match(editorSource, /types\.includes\('Files'\)/);
   assert.match(editorSource, /onDropImageFiles\?\.\(files\)/);
   assert.match(editorSource, /onDropImageFiles=\{\(files\) => onDropImageFiles\(block\.id, files, null, el\.id\)\}/);
-  assert.match(editorSource, /imageDropOver && <ImageDropGuide scale=\{scale\} filled=\{false\} width=\{el\.w\} height=\{el\.h\} rotate=\{el\.rotate\}/);
-  assert.match(editorSource, /이 프레임에 \{filled \? '교체' : '넣기'\}/);
+  assert.match(editorSource, /imageDropOver && <ImageDropGuide scale=\{scale\} width=\{el\.w\} height=\{el\.h\} rotate=\{el\.rotate\}/);
+  assert.doesNotMatch(editorSource, /이 프레임에 \{filled \? '교체' : '넣기'\}/);
+  assert.doesNotMatch(editorSource, /여기에 사진이 들어가요/);
   assert.match(stylesSource, /\.image-drop-guide\s*\{[^}]*pointer-events:\s*none/s);
   assert.match(stylesSource, /\.image-drop-guide\s*\{[^}]*background-image:\s*linear-gradient/s);
   assert.match(stylesSource, /\.image-drop-guide-content\s*\{[^}]*rotate\(var\(--drop-counter-rotate\)\) scale\(var\(--drop-inv/s);
   assert.match(stylesSource, /animation:\s*image-drop-target-pulse/);
 });
 
+test('frame images show the full source and a wardrobe click fills the pending slot immediately', () => {
+  assert.match(editorSource, /objectFit: el\.fit \|\| 'cover'/);
+  assert.match(editorSource, /return fitImageToFrameBlock\(nextBlock, elId, image\)/);
+  assert.match(editorSource, /const requestSlotImage = \(blockId, el\) => \{ setPendingSlot\(\{ blockId, elId: el\.id \}\); setTab\('wardrobe'\); \}/);
+  assert.match(editorSource, /if \(pendingSlot\) \{[\s\S]*setSlotImage\(pendingSlot\.blockId, pendingSlot\.elId,[\s\S]*setPendingSlot\(null\);[\s\S]*setTab\('image'\);[\s\S]*return;/);
+  assert.match(panelSource, /onClick=\{\(e\) => \{ const image = e\.currentTarget\.querySelector\('img'\); onInsert\(\{ \.\.\.im, width: image\?\.naturalWidth \|\| im\.width, height: image\?\.naturalHeight \|\| im\.height \}\); \}\}/);
+});
+
 test('empty template frames always label the exact place where a photo goes', () => {
   assert.match(editorSource, /aria-label="이 프레임에 사진 넣기"/);
   assert.match(editorSource, /<Icon name="imagePlus" size=\{compactSlot \? 22 : 28\}/);
   assert.match(editorSource, /!compactSlot && <span>여기에 사진 넣기<\/span>/);
+  assert.match(editorSource, /onPointerDown=\{\(e\) => e\.stopPropagation\(\)\}/);
+  assert.match(editorSource, /const requestSlotImage = \(blockId, el\) => \{ setPendingSlot\(\{ blockId, elId: el\.id \}\); setTab\('wardrobe'\); \}/);
   assert.match(stylesSource, /\.el-slot\.checkerboard\s*\{[^}]*background-image:\s*linear-gradient/s);
 });
 

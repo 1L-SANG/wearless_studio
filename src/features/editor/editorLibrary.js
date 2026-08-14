@@ -66,11 +66,12 @@ const kiwiTemplate = ({ id, label, h, bg, elements, preview }) => ({
   preview: preview || templatePreview(id),
 });
 
-const imageDescriptionSlots = [
-  templatePhoto(70, 175, 270, 220),
-  templatePhoto(365, 175, 270, 220),
-  templatePhoto(660, 175, 270, 220),
-];
+const imageDescriptionSlots = [70, 365, 660].map((x, index) => ({
+  ...templatePhoto(x, 175, 270, 220),
+  imageSizing: 'natural-height',
+  imageFlowGroup: `image-description-${index + 1}`,
+  imageFlowGap: 20,
+}));
 
 export const FRAME_LIBRARY_ITEMS = [
   {
@@ -116,9 +117,9 @@ export const FRAME_LIBRARY_ITEMS = [
         [70, '첫 번째 포인트', '첫 번째 특징을 이해하기 쉽게 설명해 주세요.'],
         [365, '두 번째 포인트', '두 번째 특징과 고객이 얻는 장점을 적어주세요.'],
         [660, '세 번째 포인트', '마지막 특징이나 활용 방법을 간결하게 적어주세요.'],
-      ].flatMap(([x, title, description]) => [
-        templateText(x, 415, 270, 34, title, { size: 21, weight: 700 }),
-        templateText(x, 458, 270, 68, description, { size: 16, lineHeight: 23 }),
+      ].flatMap(([x, title, description], index) => [
+        { ...templateText(x, 415, 270, 34, title, { size: 21, weight: 700 }), imageFlowGroup: `image-description-${index + 1}`, imageFlowOffset: 0 },
+        { ...templateText(x, 458, 270, 68, description, { size: 16, lineHeight: 23 }), imageFlowGroup: `image-description-${index + 1}`, imageFlowOffset: 43 },
       ]),
     ],
   },

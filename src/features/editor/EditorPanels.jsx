@@ -646,7 +646,7 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading
                   );
                   const used = Boolean(isImageUsed?.(im));
                   return (
-                    <div className={`ward-cell${im.fresh ? ' fresh' : ''}`} key={im.id} onClick={() => onInsert(im)} title="클릭하거나 프레임으로 끌어 넣기"
+                    <div className={`ward-cell${im.fresh ? ' fresh' : ''}`} key={im.id} onClick={(e) => { const image = e.currentTarget.querySelector('img'); onInsert({ ...im, width: image?.naturalWidth || im.width, height: image?.naturalHeight || im.height }); }} title="클릭하거나 프레임으로 끌어 넣기"
                       draggable onDragStart={(e) => { const image = e.currentTarget.querySelector('img'); e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData(WARDROBE_IMAGE_MIME, encodeWardrobeImage(im, { width: image?.naturalWidth, height: image?.naturalHeight })); onImageDragStart?.(); }}
                       onDragEnd={() => onImageDragEnd?.()}
                       onAnimationEnd={im.fresh ? () => onFreshSeen && onFreshSeen(im.id) : undefined}>
@@ -792,7 +792,7 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, onCropReset, onRepla
 const TEXT_PALETTE = ['#0e0d14', '#898989', '#ffffff', '#4f88c9', '#d92d20', '#067647'];
 const HL_PALETTE = ['#fef3c7', '#dbeafe', '#dcfce7', '#fee2e2', '#f3f4f6', '#0e0d14'];
 const WEIGHTS = [{ value: 300, label: 'Light' }, { value: 400, label: 'Regular' }, { value: 500, label: 'Medium' }, { value: 600, label: 'SemiBold' }, { value: 700, label: 'Bold' }];
-export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, onLayer, onAddText, onAddGarmentText }) {
+export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, onLayer, onAddText }) {
   const has = el && el.type === 'text';
   const isBubble = has && el.shape === 'bubble';
   const s = (has && el.style) || {};
@@ -804,12 +804,6 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
   return (
     <div className="fig-panel">
       <button type="button" className="add-text-btn" onClick={onAddText}><Icon name="type" size={17} />텍스트 추가</button>
-      {onAddGarmentText && (
-        <>
-          <button type="button" className="add-text-btn" onClick={onAddGarmentText} style={{ marginTop: 8 }}><Icon name="type" size={17} />옷 글자 덮기</button>
-          <div className="panel-sub" style={{ marginTop: 8 }}>AI 컷의 뭉갠 글자 위에 정확한 글자를 얹어요. 정면·평평한 프린트에 잘 맞아요.</div>
-        </>
-      )}
       {!has ? (
         <div className="panel-sub" style={{ marginTop: 18 }}>위 버튼으로 텍스트를 추가하거나, 캔버스에서 텍스트를 클릭해 편집해요.</div>
       ) : (

@@ -186,6 +186,8 @@ test('canvas routes every movable element through one pointer drag without nativ
   assert.match(editorSource, /data-editor-snap-guide="horizontal"/);
   assert.match(editorStylesSource, /\.editor-snap-guide\.vertical/);
   assert.match(editorStylesSource, /\.editor-snap-guide\.horizontal/);
+  assert.match(editorStylesSource, /\.editor-snap-guide\.vertical\s*\{[^}]*width:\s*calc\(\.5px \* var\(--inv, 1\)\)/s);
+  assert.match(editorStylesSource, /\.editor-snap-guide\.horizontal\s*\{[^}]*height:\s*calc\(\.5px \* var\(--inv, 1\)\)/s);
   assert.match(editorStylesSource, /\.ed-canvas\s*\{[^}]*user-select:\s*none[^}]*-webkit-user-select:\s*none/s);
   assert.match(editorStylesSource, /\.el-text:not\(\.editing\)\s*\{[^}]*user-select:\s*none[^}]*touch-action:\s*none/s);
   assert.match(editorStylesSource, /\.el-text\.editing\s*\{[^}]*user-select:\s*text[^}]*touch-action:\s*auto/s);
@@ -206,7 +208,7 @@ test('new ordinary text starts as an immediately editable Figma-style point text
   );
 
   assert.match(addTextSource, /w:\s*12, h:\s*45, text:\s*'', textSizing:\s*'auto'/);
-  assert.match(addTextSource, /if \(!garment\) setEditEl\(el\.id\)/);
+  assert.match(addTextSource, /setEditEl\(el\.id\)/);
   assert.match(editorSource, /const previewAutoTextSize = useCallback/);
   assert.match(editorSource, /naturalTextWidth\(node, value\)/);
   assert.match(editorSource, /h:\s*Math\.max\(1, Math\.ceil\(node\.scrollHeight\)\)/);
@@ -232,8 +234,8 @@ test('shared pointer drag covers frame controls, movable group members, rotation
     editorSource.indexOf('const startElementDrag ='),
   );
 
-  assert.doesNotMatch(slotButton, /onPointerDown=/);
-  assert.match(slotButton, /if \(draggedPointer\.current\) return/);
+  assert.match(slotButton, /onPointerDown=\{\(e\) => e\.stopPropagation\(\)\}/);
+  assert.doesNotMatch(slotButton, /if \(draggedPointer\.current\) return/);
   assert.match(pointerDrag, /!candidate\.hidden/);
   assert.match(pointerDrag, /!candidate\.locked/);
   assert.match(pointerDrag, /nodeById\[candidate\.id\]/);
