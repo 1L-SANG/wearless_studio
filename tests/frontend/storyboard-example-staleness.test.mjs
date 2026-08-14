@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   EXAMPLE_STALE_REASONS,
   staleExampleReason,
+  stripExampleSelectionsById,
   stripStaleExampleSelections,
 } from '../../src/lib/storyboardExampleStaleness.js';
 import { STORYBOARD_SPACE_SET_EXAMPLES } from '../../src/lib/storyboardSpaceSetCatalog.js';
@@ -164,4 +165,23 @@ test('mixed board: only the stale block is stripped, valid/product/grouped block
   assert.equal(result[2], product);
   assert.equal(result[3], grouped);
   assert.equal(result[4], plain);
+});
+
+test('stripExampleSelectionsById clears only matching flat selections (server-rejected id)', () => {
+  // 발행 회전 직후 클라이언트 카탈로그로는 유효해 보여도 서버가 meta.exampleId 로 지목한
+  // 선택만 걷어낸다 — 세트 그룹 소속과 다른 예시는 그대로.
+  const blocks = [
+    block('flat-poisoned', { exampleId: 'ex_removed', refScope: 'all', baseThumb: 'base.png' }),
+    block('set-member', { exampleId: 'ex_removed', spaceGroupId: 'ssg1__set__g1', refScope: 'pose' }),
+    block('flat-healthy', { exampleId: 'ex_keep', refScope: 'all' }),
+  ];
+  const next = stripExampleSelectionsById(blocks, 'ex_removed');
+  assert.notEqual(next, blocks);
+  assert.equal(next[0].exampleId, null);
+  assert.equal(next[0].refScope, null);
+  assert.equal(next[0].thumb, 'base.png');
+  assert.equal(next[1].exampleId, 'ex_removed');
+  assert.equal(next[2].exampleId, 'ex_keep');
+  assert.equal(stripExampleSelectionsById(blocks, 'ex_absent'), blocks);
+  assert.equal(stripExampleSelectionsById(blocks, null), blocks);
 });

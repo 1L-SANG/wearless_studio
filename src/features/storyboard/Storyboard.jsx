@@ -49,7 +49,7 @@ import {
   withStoryboardSpaceSetExamples,
 } from '@/lib/storyboardSpaceSetCatalog.js';
 import { stripStaleSpaceSetBindings } from '@/lib/storyboardSpaceSetStaleness.js';
-import { stripStaleExampleSelections } from '@/lib/storyboardExampleStaleness.js';
+import { stripExampleSelectionsById, stripStaleExampleSelections } from '@/lib/storyboardExampleStaleness.js';
 import { genderForClothingType } from '@/lib/productGender.js';
 import {
   detachSpaceMembership,
@@ -73,6 +73,7 @@ import {
   sbPending,
   sbSaveIdle,
   sbSaveNow,
+  sbSetSaveRepair,
   sbStable,
 } from './storyboardPersistence.js';
 import { renderGroups } from '@/lib/storyboardRenderGroups.js';
@@ -1860,6 +1861,46 @@ export function Storyboard() {
     getProjectId: () => pidRef.current,
     flushLatest,
   }), []);
+  // 저장이 4xx로 거절되면 persistence가 이 훅으로 스냅샷 복구를 요청한다 — 진입 정규화와
+  // 같은 낡은 선택 제거에 더해, 서버가 meta.exampleId 로 지목한 선택(발행 회전 직후
+  // 클라이언트 카탈로그로는 유효해 보이는 스큐 케이스)을 걷어내고 재배정해 즉시 재저장한다.
+  // 같은 스냅샷을 그대로 다시 보내는 맹목 재시도는 4xx에선 영원히 같은 답이라 하지 않는다.
+  const saveRepairContext = useRef(null);
+  useEffect(() => {
+    saveRepairContext.current = {
+      catalogs,
+      clothingType,
+      targetGenders: composeModeSeed.targetGenders,
+    };
+  }, [catalogs, clothingType, composeModeSeed]);
+  useEffect(() => {
+    sbSetSaveRepair((pid, snapshot, error) => {
+      const ctx = saveRepairContext.current;
+      if (pid !== pidRef.current || !ctx?.catalogs || !Array.isArray(snapshot)) return null;
+      const staleFamily = new Set([
+        'unknown_example_id', 'example_not_applicable', 'example_cut_mismatch', 'example_gender_mismatch',
+      ]);
+      if (!staleFamily.has(error?.code)) return null;
+      const gender = genderForClothingType(ctx.clothingType, ctx.targetGenders);
+      let next = stripStaleSpaceSetBindings(snapshot, { gender, clothingType: ctx.clothingType });
+      next = stripStaleExampleSelections(next, ctx.catalogs.genExamples, { gender, clothingType: ctx.clothingType });
+      const rejectedId = error?.meta?.exampleId;
+      if (rejectedId) next = stripExampleSelectionsById(next, rejectedId);
+      if (next === snapshot) return null;   // 고칠 것을 못 찾음 — 무한 재저장 방지
+      next = assignGenerationExamples(next, {
+        catalog: ctx.catalogs.genExamples,
+        product: { clothingType: ctx.clothingType },
+        gender,
+      }).blocks;
+      // 화면도 복구본으로 교체 — 이후 편집·자동 저장이 오염본을 다시 보내지 않게.
+      if (latestBlocks.current === snapshot) {
+        directSaveSnapshots.current.add(next);
+        setBlocks(next);
+      }
+      return next;
+    });
+    return () => sbSetSaveRepair(null);
+  }, []);
   // 컬러 비교 자격 상실(색 통일·시리즈 편입 등) 시 즉시 세로로 강등 — 무효 레이아웃이 저장·조립에 남지 않게.
   // 주의: 훅은 아래 로딩 early-return 위에 있어야 한다 (훅 개수 불변 규칙).
   // autoDemoteTrail: 이 effect 가 만든 배열 → 원본 계보. 삭제-undo 의 "변경 없음" 판정이

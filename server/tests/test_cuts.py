@@ -358,6 +358,8 @@ def test_server_example_validation_rejects_id_applicability_cut_and_gender_but_a
             assets=assets, clothing_type="top", gender="women",
         )
         assert error[0] == expected
+        # 카탈로그 회전 복구용 — 클라이언트가 정확히 그 선택만 걷어낼 수 있게 meta에 실어 준다.
+        assert error[2] == {"exampleId": example_id}
 
 
 def test_normalize_cut_type_only_request_uses_defensive_inference():

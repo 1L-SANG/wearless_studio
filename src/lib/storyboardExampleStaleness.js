@@ -71,6 +71,21 @@ function clearExampleSelection(block) {
   };
 }
 
+// 서버가 저장을 400으로 거절하며 meta.exampleId 로 지목한 선택만 떼어낸다.
+// 클라이언트 카탈로그 기준으론 유효해 보여도(발행 회전 직후의 구/신 카탈로그 스큐)
+// 서버 레지스트리가 정본이므로, 지목된 낱개 선택을 걷어내고 재배정할 수 있게 한다.
+// 세트 그룹 소속 블록은 여기서도 건드리지 않는다(세트 검증은 별도 코드로 온다).
+export function stripExampleSelectionsById(blocks, exampleId) {
+  if (!Array.isArray(blocks) || !exampleId) return blocks;
+  let changed = false;
+  const next = blocks.map((block) => {
+    if (!block || block.exampleId !== exampleId || block.spaceGroupId) return block;
+    changed = true;
+    return clearExampleSelection(block);
+  });
+  return changed ? next : blocks;
+}
+
 // 보드 전체를 훑어 낡은 낱개 예시 선택만 떼어낸 새 배열을 돌려준다. 뗄 것이 없으면 원본
 // 참조를 그대로 돌려준다. 뒤이어 assignGenerationExamples 가 exampleId=null·
 // exampleSelectionOrigin=null 인 블록을 "미배정"으로 보고 현재 성별에 맞는 예시를 다시

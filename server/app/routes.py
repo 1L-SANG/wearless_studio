@@ -172,8 +172,11 @@ async def _fit_profile_snapshot(
     return {"version": 1, "profile": profile, "adjustedAxes": adjusted}
 
 
-def _bad_request(code: str, message: str) -> HTTPException:
-    return HTTPException(status_code=400, detail={"code": code, "message": message})
+def _bad_request(code: str, message: str, meta: dict | None = None) -> HTTPException:
+    detail = {"code": code, "message": message}
+    if meta:
+        detail["meta"] = meta
+    return HTTPException(status_code=400, detail=detail)
 
 
 def _mannequin_payload_matches(job: dict, requested_payload: dict) -> bool:
