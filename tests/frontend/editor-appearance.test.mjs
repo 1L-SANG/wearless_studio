@@ -60,6 +60,12 @@ test('multi-selection keeps every member and its Moveable bounds visibly in sync
   assert.match(editorStylesSource, /\.el\.on\.multi-selected \{[^}]*outline:/);
 });
 
+test('template catalog shows readable completed references instead of checkerboards', () => {
+  assert.match(editorStylesSource, /\.frame-layout-prev\.template \{[^}]*aspect-ratio:\s*3\s*\/\s*4/s);
+  assert.match(editorStylesSource, /\.frame-layout-prev\.template > img \{[^}]*object-fit:\s*contain[^}]*background:\s*#fff/s);
+  assert.doesNotMatch(editorStylesSource, /\.frame-layout-prev\.template \{[^}]*linear-gradient/s);
+});
+
 test('preset colors keep eight columns with practical pointer targets', () => {
   assert.match(editorStylesSource, /\.sf-color-popover\s*\{[^}]*width:\s*244px/s);
   assert.match(editorStylesSource, /\.sf-preset-grid\s*\{[^}]*grid-template-columns:\s*repeat\(8,\s*24px\)[^}]*gap:\s*4px/s);

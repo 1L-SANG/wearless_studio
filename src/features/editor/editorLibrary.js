@@ -61,7 +61,9 @@ const kiwiTemplate = ({ id, label, h, bg, elements, preview }) => ({
   elements,
   slots: elements.filter((element) => element.type === 'image' && element.frameSlot),
   // The supplied artwork is a catalog thumbnail only. Inserted blocks are native elements.
-  preview: preview || `/assets/editor/kiwi-templates/kiwi-${id}-overlay.png`,
+  // Catalog cards show the completed JPEG reference. The block itself still
+  // inserts the native editable elements and replaceable photo slots above.
+  preview: preview || templatePreview(id),
 });
 
 export const FRAME_LIBRARY_ITEMS = [

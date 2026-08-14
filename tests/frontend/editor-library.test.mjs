@@ -81,6 +81,7 @@ test('kiwi templates rebuild the references with native editable elements', () =
     assert.ok(block.elements.every((element) => !element.locked && !element.system), frame.id);
     assert.ok(imageSlots.every((element) => element.checkerboard), frame.id);
     assert.ok(editableCopy.every((element) => element.fullTextHitArea), `${frame.id}: template copy owns its click box`);
+    assert.equal(frame.preview, `/assets/editor/kiwi-templates/${frame.id}-preview.jpg`, `${frame.id}: catalog uses its completed JPEG reference`);
     assert.ok(existsSync(new URL(`../../public${frame.preview}`, import.meta.url)), `${frame.id}: catalog preview exists`);
     const examples = imageSlots.filter((element) => element.exampleImage);
     assert.equal(examples.length, expectedExampleCounts[frame.id], `${frame.id}: every available JPEG photo is prefilled`);
