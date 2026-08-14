@@ -258,6 +258,9 @@
 .af-skeleton > .surface { margin-top: 18px; }
 .af-skel-head { display: flex; align-items: center; gap: 10px; margin-top: 26px; font-size: 14.5px; font-weight: 600; color: var(--fg-1); }
 
+/* '색상 추가' — quiet 톤이 너무 옅다는 지적(2026-08-14) → 이 버튼만 잉크색·굵게 */
+.pi-add-color.btn { color: var(--fg-1); font-weight: 650; }
+
 /* ── 분석 대기 연출 A안: 단계 체크리스트 (mockups/analysis-waiting-concepts.html) ── */
 .ap-stage { display: flex; gap: 22px; align-items: center; margin-top: 26px; }
 .ap-photo { flex: 0 0 132px; height: 164px; object-fit: cover; border-radius: 10px;

@@ -358,7 +358,7 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
         <ColorSwatchPicker swatchColors={swatchColors} value={group.swatchId} onChange={onPickColor} />
       )}
 
-      {base && <p className="cap-note">앞면·뒷면 필수 · 현재 {used}장 / 최대 6장</p>}
+      {/* 개수 안내는 '상품 이미지' 제목 옆 pill 로 옮겼다(2026-08-14 사용자 결정) — base 중복 제거 */}
       {!base && <p className="cap-note">정면 사진 필수 · 색상당 최대 3장 · 현재 {used}장</p>}
     </div>
   );
@@ -1088,7 +1088,7 @@ export function ProductInput() {
   const nameCard = (
     <div className="surface">
       <div className="sec-head">
-        <div><div className="sec-title">상품명 <span className="pi-optional-label">(선택 — 비우면 AI가 지어드려요)</span></div></div>
+        <div><div className="sec-title">상품명</div></div>
       </div>
       <input className="field" value={product.name} placeholder="예: 소프트 골지 라운드 니트"
         disabled={phase === 'analyzing'} onChange={(e) => {
@@ -1106,10 +1106,10 @@ export function ProductInput() {
       <div className="sec-head">
         <div className="ttl" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div className="sec-title" style={{ whiteSpace: 'nowrap' }}>상품 이미지</div>
-          <span className="pill pill-soft">{imgCount}장</span>
+          <span className="pill pill-soft">현재 {imgCount}장 / 최대 6장</span>
         </div>
       </div>
-      <div className="sec-sub" style={{ marginTop: -6, marginBottom: 16 }}>각도별로 한 장 이상 올리면 더 정확한 상세페이지가 만들어져요. 앞면·뒷면은 필수예요 — 뒷면이 없으면 뒷모습 컷을 만들 수 없어요.</div>
+      <div className="sec-sub" style={{ marginTop: -6, marginBottom: 16 }}>앞면, 뒷면은 필수에요. 강조할 부분은 디테일쪽에 앞,뒤 구분해서 업로드해주시면 정확도가 훨씬 올라가요.</div>
       {product.colors.map((c) => (
         <ColorImageGroup key={c.id} group={c} catalogs={catalogs} swatchColors={catalogs.swatchColors}
           onAddFiles={(slot, metas) => addImageFiles(c.id, slot, metas)} onRemove={(id) => removeImage(c.id, id)}
@@ -1119,7 +1119,7 @@ export function ProductInput() {
       ))}
       {!locked && (
         <div style={{ marginTop: 16 }}>
-          <Button variant="quiet" icon="plus" onClick={addColor} disabled={product.colors.length >= 3}>색상 추가</Button>
+          <Button variant="quiet" icon="plus" className="pi-add-color" onClick={addColor} disabled={product.colors.length >= 3}>색상 추가</Button>
           {product.colors.length >= 3 && <p className="hint" style={{ marginTop: 8 }}>색상은 최대 3개까지 추가할 수 있어요.</p>}
         </div>
       )}
