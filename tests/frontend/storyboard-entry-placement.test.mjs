@@ -208,7 +208,8 @@ test('category filters stay server-consistent for styling and horizon pools', ()
   }).stylingSets.every((set) => set === null));
 });
 
-test('women receive a mirror, men receive the styling fallback, unknown defaults to women like the server', () => {
+test('no gender receives an auto-placed mirror; every gender gets the extra styling cut', () => {
+  // 2026-08-14 오너 결정: 거울샷 자동 배치 제거 — 거울샷은 수동 선택지로만 남는다.
   const women = defaultStoryboard(baseColors, 'basic', context('women', 'bottom', 'women'));
   const men = defaultStoryboard(baseColors, 'basic', context('men', 'bottom', 'men'));
   const unknown = defaultStoryboard(baseColors, 'basic', context('unknown', 'bottom', null));
@@ -219,12 +220,12 @@ test('women receive a mirror, men receive the styling fallback, unknown defaults
     && !block.spaceGroupId
   ));
 
-  assert.equal(women.filter((block) => block.cutType === 'mirror').length, 1);
-  assert.equal(women.find((block) => block.cutType === 'mirror').faceExposure, 'hide');
-  assert.equal(men.some((block) => block.cutType === 'mirror'), false);
-  assert.equal(standaloneStyling(men).at(-1).direction, 'back');
-  // 성별 미상은 서버(select_base_gender)와 동일하게 women 기본 — 세트·거울 모두 정상 배치.
-  assert.equal(unknown.filter((block) => block.cutType === 'mirror').length, 1);
+  for (const blocks of [women, men, unknown]) {
+    assert.equal(blocks.some((block) => block.cutType === 'mirror'), false);
+    // 거울샷 자리는 낱장 스타일링컷으로 대체 — 하의는 뒷면 방향.
+    assert.equal(standaloneStyling(blocks).at(-1).direction, 'back');
+  }
+  // 성별 미상은 서버(select_base_gender)와 동일하게 women 기본 — 세트 배치는 그대로.
   assert.equal(unknown.some((block) => block.spaceGroupId), true);
 });
 

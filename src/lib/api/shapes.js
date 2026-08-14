@@ -86,18 +86,9 @@ function horizonRotationFallback(colorId) {
   ));
 }
 
-function realWearBlock(colorId, gender, clothingType) {
-  if (gender === 'women') {
-    return sb(
-      SECTION_ROLES.STYLING,
-      CONTENT_ROLES.REAL_WEAR,
-      'mirror',
-      null,
-      'full',
-      colorId,
-      { faceExposure: 'hide' },
-    );
-  }
+// 2026-08-14 오너 결정: 거울샷 자동 배치 제거 — 기본 구성은 전 성별 공통으로
+// 낱장 스타일링컷을 배치한다. 거울샷은 스타일링 섹션의 수동 선택지로만 남는다.
+function extraStylingBlock(colorId, clothingType) {
   return sb(
     SECTION_ROLES.STYLING,
     CONTENT_ROLES.COORDINATION,
@@ -143,7 +134,7 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
   }
 
   if (mode === 'extended') {
-    blocks.push(realWearBlock(base, gender, clothingType));
+    blocks.push(extraStylingBlock(base, clothingType));
     const horizonSet = sequenceSet || rotationSet;
     blocks.push(...(horizonSet
       ? setMemberBlocks(horizonSet, base, SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT)
@@ -190,7 +181,7 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
       sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor),
     );
   } else {
-    blocks.push(realWearBlock(base, gender, clothingType));
+    blocks.push(extraStylingBlock(base, clothingType));
     blocks.push(...(rotationSet
       ? setMemberBlocks(rotationSet, base, SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT)
       : horizonRotationFallback(base)));
