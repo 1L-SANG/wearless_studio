@@ -2545,7 +2545,11 @@ export function Storyboard() {
   const renderUnit = (unit, group, targetSpaceGroupId = null, reservation = null) => {
     const section = sectionForGroup(group);
     const lastItem = unit.items[unit.items.length - 1];
-    const addControl = insertControl(lastItem.index, group, targetSpaceGroupId, reservation);
+    // 세트 안 추가는 예약된 예비 멤버가 남아 있을 때만 — 예비 소진 뒤 일반 컷을 세트에
+    // 넣는 추가 존은 제공하지 않는다(섹션 추가와 중복, 2026-08-14 오너 결정).
+    const addControl = targetSpaceGroupId && !reservation
+      ? null
+      : insertControl(lastItem.index, group, targetSpaceGroupId, reservation);
     if (unit.kind === 'frame') {
       return (
         <div

@@ -405,7 +405,7 @@ test('creating or replacing a space set never inherits block-local mood photos',
   }
 });
 
-test('a set-internal addzone preserves reservation order and falls back after exhaustion', () => {
+test('a set-internal addzone preserves reservation order and reservation empties after exhaustion', () => {
   const set = {
     members: [
       { exampleId: 'full', order: 1, cutType: 'styling', shot: 'full', direction: 'front' },
@@ -460,6 +460,8 @@ test('one insert control handles empty, terminal, and set-internal additions', (
   const cssSource = readFileSync(new URL('../../src/styles/features.css', import.meta.url), 'utf8');
   assert.match(storyboardSource, /nextSpaceSetMemberReservation\(set, unit\.items\.map/);
   assert.equal((storyboardSource.match(/<StoryboardInsertControl/g) || []).length, 1);
+  // 세트 안 추가 존은 예비 멤버가 남아 있을 때만 — 소진 뒤 일반 컷 추가는 섹션 존이 담당(2026-08-14 오너 결정).
+  assert.match(storyboardSource, /targetSpaceGroupId && !reservation\s*\?\s*null/);
   assert.match(storyboardSource, /renderUnit\(spaceUnit, group, unit\.spaceGroupId, reservation\)/);
   assert.match(storyboardSource, /insertControl\(lastItem\.index, group, null, null, 'end'\)/);
   assert.match(storyboardSource, /!group\.items\.length && insertControl\(groupSection\.start, group, null, null, 'empty'\)/);
