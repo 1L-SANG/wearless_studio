@@ -61,10 +61,21 @@ null, dress 면 성별 women)이었다. `shirt` 는 top·outer 양쪽 그룹에 
 - 원피스→top: `matching.complementary_type` 이 None 대신 bottom 을 돌려줘 **매칭 하의가 붙는다**
   — 2026-08-01 셀러 보고 사고(`matching._NO_MATCH` 주석)의 재현. untuck 패스도 헛돌고,
   마네킹 성별 여성 강제도 풀린다. **심각.**
-- 셔츠형 아우터→top: 매칭(`_TOP_SIDE` 가 top·outer 동일)·untuck(`_TUCKABLE` 동일)·성별 전부 무영향.
-  유일한 차이는 `prompts.py` 의 `${outerwearInnerLine}`(이너 받쳐입기 지시)과 생성예시 카탈로그.
-  **경미**, 게다가 모델은 customCategory 에 "데님 셔츠"라고 정확히 적었다 — 사진으로는 결정 불가한
-  판매 의도의 문제다. → 오너 결정 2026-08-14: **셔츠형은 outer 로 고정.**
+- 셔츠형 아우터→top: 매칭(`_TOP_SIDE` 가 top·outer 동일)·untuck(`_TUCKABLE` 동일)·성별은 무영향.
+  모델은 customCategory 에 "데님 셔츠"라고 정확히 적었다 — 사진으로는 결정 불가한 판매 의도의
+  문제다. → 오너 결정 2026-08-14: **셔츠형은 outer 로 고정.**
+
+  ⚠️ **정정(코드리뷰 2026-08-14)**: 초안에 "유일한 차이는 이너 라인과 생성예시 카탈로그"라고
+  적었으나 사실이 아니다. outer 로 넘어가면 파급이 셋이다.
+  1. `${outerwearInnerLine}` — 착용컷에 이너 받쳐입기 지시가 붙는다(`cut_generator.py`).
+  2. **앞섬 상태가 기본 `open`** — `cut_generator.py` 의 `outer_closure_line` 이 outer + 착용컷에서
+     `spec.outerClosureState` 미지정이면 `"open"` 으로 떨어진다. 즉 셔츠가 단추 잠근 주인공 옷이
+     아니라 **앞을 열어젖힌 겉옷**으로 렌더된다.
+  3. **소매 길이 조정 축 상실** — `fit_axes.py` 의 `top` 에는 `sleeve` 축(캡·반팔·5부…)이 있고
+     `outer` 에는 없다(`src/lib/fitAxes.js` 미러도 동일). 셔츠 상품은 마네킹 핏 조정에서 소매
+     길이 스텝을 잃는다.
+
+  셋 다 26벌 A/B 에서 **측정하지 않았다**(A/B 는 분류 정확도만 봤다). 오너에게 재확인 필요.
 
 **수정.** 프롬프트에 순서 있는 clothingType 판정 블록 추가.
 dress → bottom → outer → top 순으로 stop-at-first-match, dress 판정이 shirt→outer 보다 **먼저**
@@ -99,6 +110,15 @@ dress → bottom → outer → top 순으로 stop-at-first-match, dress 판정�
 - prod(`copilot/api/manifest.yml`)는 `MODEL_ROUTING_TEXT_GEMINI=gemini-3.1-pro-preview` **유지**.
   이 값은 게이팅 QC(IMAGE_QC·MANNEQUIN_AXIS_QC·MANNEQUIN_BASE_FIDELITY_QC = enforce)가 함께 쓰기 때문 —
   판정이 무뎌지면 다른 옷 컷이 출고된다. 오너 결정 2026-08-14.
+
+## 알려진 갭 (코드리뷰 2026-08-14)
+
+- **AG-08(`model_text_gemini_features`) 3.6 → 3.7 은 측정 없이 바뀐다.** prod manifest 에 이 env 가
+  없어 코드 기본값이 곧 프로덕션 실값이다. AG-08 은 셀러가 실제로 보는 특징 문구의 생산자인데
+  (analyze_job 이 AG-01 의 aiSuggestedPoints 를 덮어쓴다) 이번 A/B 는 AG-01 만 쟀다. 3.6·3.7 은
+  단가도 같아($0.75/$3.75) 비용 근거도 없다 — 오너의 "3.5/3.6 flash 전부 3.7 로" 지시에 따른
+  변경이며, 품질 등가는 **미검증**이다.
+- 셔츠→outer 의 파급 3건(위 ⚠️) 중 앞섬 open·소매 축 상실은 미측정.
 
 ## 한계
 

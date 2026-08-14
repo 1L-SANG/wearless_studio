@@ -62,7 +62,7 @@
 
 | tier | 모델 | 근거 |
 |---|---|---|
-| `text` | **`gemini-3.7-flash`** | 사용자 결정 2026-07-02 "Gemini 3 Flash"(당시 id `gemini-3.5-flash`). 2026-08-14 사용자 결정으로 3.5/3.6 flash 사용처를 `gemini-3.7-flash` 로 통일 — AI Studio 모델 목록 stable + responseSchema·thinkingLevel(low/medium) 200 실측 확인. 교체는 env 한 줄(`MODEL_ROUTING_TEXT`). |
+| `text` | **`gemini-3.7-flash`** | 사용자 결정 2026-07-02 "Gemini 3 Flash"(당시 id `gemini-3.5-flash`). 2026-08-14 사용자 결정으로 3.5/3.6 flash 사용처를 `gemini-3.7-flash` 로 통일 — AI Studio 모델 목록 stable + responseSchema·thinkingLevel(low/medium) 200 실측 확인. 교체는 env 한 줄(`MODEL_ROUTING_TEXT_GEMINI`). `MODEL_ROUTING_TEXT` 는 GPT 폴백 provider 전용이라 여기가 아니다. |
 
 - `ai_agent_modules.md` §1 라우팅 테이블의 text 행을 이 값으로 갱신한다(한 줄 수정 원칙). AG-02/03(카피)도 같은 tier를 쓰게 되며, 카피 단계 착수 때 재평가.
 - **OPENAI_API_KEY는 PL-1에 불필요** — 기존 `GEMINI_API_KEY` 재사용(이미 마네킹이 사용 중, Vertex 분기 포함).

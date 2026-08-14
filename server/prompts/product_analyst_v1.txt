@@ -34,9 +34,12 @@ HARD RULES (a violation makes the output invalid):
      bustier dress, jumper dress, drop-waist dress). Judge by structure, not by a length
      ratio: a waist/empire/drop-waist seam with a skirt panel continuing below it means
      dress, wherever that seam sits. Photos are usually flat-lays where length is hard to
-     read — so when a women's garment could be either a long top or a dress, CHOOSE
-     DRESS. Calling a dress a top is the costlier mistake: the studio then dresses the
-     mannequin in matching bottoms that cover the garment.
+     read — so when a women's garment could genuinely be either a long top or a dress,
+     CHOOSE DRESS. Calling a dress a top is the costlier mistake: the studio then dresses
+     the mannequin in matching bottoms that cover the garment. This tie-break is only for
+     real ambiguity, never an escape from a clear top: choosing dress also forces
+     targetGenders to ["women"], drops subCategory to null and removes the matching step,
+     so a garment that plainly ends at the hip stays top.
   2) bottom — covers only the lower body (pants, skirt).
   3) outer — a layering piece worn over something else: full-length front opening with
      buttons or zip, jackets, cardigans, coats, padding. EVERY shirt-type garment
