@@ -22,17 +22,16 @@ import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, IconButton, Button, Modal, EmptyState, useToast } from '@/components/ui.jsx';
 import { exampleGenderFromAnalysis, hexFor } from '@/features/storyboard/Storyboard.jsx';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
-import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
-import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
+import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
 import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, findImageDropSlot, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
-import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage } from '@/features/editor/editorLibrary.js';
+import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage, objectPresetInitialSelectionIds, upgradeLegacyKiwiTemplateBlocks } from '@/features/editor/editorLibrary.js';
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
-import { imageResizeRect, resizePolicyForElement, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
+import { imageResizeRect, lineHitStrokeWidth, resizePolicyForElement, shouldShowRotationHandle, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
 import { mergeEditorImagesIntoWardrobe } from '@/features/editor/editorWardrobe.js';
-import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPassGroupDragArea, shouldPreserveMultiSelectionOnPointerDown } from '@/features/editor/editorSelection.js';
+import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, selectableElementBelowBlankText, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPassGroupDragArea, shouldPreserveMultiSelectionOnPointerDown, shouldStartTextOnlyDrag } from '@/features/editor/editorSelection.js';
 import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from '@/lib/imageTranscode.js';
 import { CONTENT_ROLES, SECTION_ROLES, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
 import { withStoryboardSpaceSetExamples } from '@/lib/storyboardSpaceSetCatalog.js';
@@ -75,6 +74,31 @@ function readImageDimensions(file) {
     image.onload = () => finish({ width: image.naturalWidth, height: image.naturalHeight });
     image.onerror = () => finish({ width: null, height: null });
     image.src = src;
+  });
+}
+
+function waitForImageSource(src, timeoutMs = 12000) {
+  return new Promise((resolve, reject) => {
+    if (!src) {
+      reject(new Error('업로드한 이미지 주소를 확인하지 못했어요.'));
+      return;
+    }
+    const image = new Image();
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      image.onload = null;
+      image.onerror = null;
+      if (error) reject(error);
+      else resolve();
+    };
+    const timer = window.setTimeout(() => finish(new Error('이미지를 불러오는 데 시간이 오래 걸리고 있어요. 다시 시도해 주세요.')), timeoutMs);
+    image.onload = () => finish();
+    image.onerror = () => finish(new Error('업로드한 이미지를 불러오지 못했어요. 다시 시도해 주세요.'));
+    image.src = src;
+    if (image.complete && image.naturalWidth > 0) finish();
   });
 }
 
@@ -141,22 +165,38 @@ function naturalTextWidth(node, value) {
   )));
 }
 
+function ImageDropGuide({ scale, filled, width, height, rotate = 0 }) {
+  const safeScale = scale || 1;
+  const badgeWidth = Math.max(76, Math.min(148, (Number(width) || 240) * safeScale - 16));
+  const compact = Math.min((Number(width) || 240) * safeScale, (Number(height) || 240) * safeScale) < 132;
+  return (
+    <div className="image-drop-guide" style={{ '--drop-inv': 1 / safeScale, '--drop-counter-rotate': `${-rotate}deg` }} aria-hidden="true">
+      <span className="image-drop-guide-arrow">↓</span>
+      <div className={`image-drop-guide-content${compact ? ' compact' : ''}`} style={{ width: badgeWidth }}>
+        <span className="image-drop-guide-icon"><Icon name="imagePlus" size={compact ? 18 : 22} /></span>
+        <strong>이 프레임에 {filled ? '교체' : '넣기'}</strong>
+        {!compact && <span>여기에 사진이 들어가요</span>}
+      </div>
+    </div>
+  );
+}
+
 /* render-only element (selection + inline text edit). Manipulation handled by
    the single <Moveable> in the Editor (targets the selected element node). */
-function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPatch, onTextCommit, onMultiDragStart, onBubbleGroupDragStart, onAddImage, onDropImage, onEdit, onCropStart }) {
+function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPickBelowText, onPatch, onTextCommit, onMultiDragStart, onTextDragStart, onObjectGroupDragStart, onAddImage, onDropImage, onDropImageFiles, onEdit, onCropStart }) {
   const ref = useRef(null);
   const textRef = useRef(null);
   const deferredPick = useRef(false);
   const pendingBubbleFit = useRef(null);
   const [imageDropOver, setImageDropOver] = useState(false);
 
-  /* 글자 위를 눌렀는지, 상자 안 빈 곳을 눌렀는지 가른다 — 판정은 pointMissesTextLines.
-     이미 고른/편집 중인 요소는 상자 전체를 살려 둔다(여백을 잡고 끌 수 있어야 한다). */
+  /* 글자 근처를 눌렀는지, 상자 안의 먼 빈 곳을 눌렀는지 가른다 — 판정은 viewport
+     좌표의 최소 hit 여유를 포함한다. 편집 중이거나 라이브러리 완성형인 요소는 상자 전체를 살려 둔다. */
   const missesGlyphs = (e) => {
-    if (el.type !== 'text' || el.shape === 'bubble' || selected || editing) return false;
+    if (el.type !== 'text' || el.shape === 'bubble' || el.fullTextHitArea || editing) return false;
     // Composite objects use the entire text box as their hit target. Exact-glyph
     // hit testing made speech-bubble text look selectable while dropping the group.
-    if (el.groupId) return false;
+    if (el.groupId && el.libraryItemId) return false;
     const node = ref.current;
     if (!node) return false;
     const range = document.createRange();
@@ -168,16 +208,29 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     if (preview) return;
     if (el.locked) return;
     if (missesGlyphs(e)) {
-      if (!onSelectBlock) return;
       e.stopPropagation();
+      const elementBelow = onPickBelowText?.(e, el);
+      if (elementBelow) {
+        onSelect(elementBelow, e.shiftKey);
+        return;
+      }
+      if (!onSelectBlock) return;
       onSelectBlock();
       return;
     }
     e.stopPropagation();
-    // 처음 누른 Q&A도 같은 포인터 제스처로 바로 움직여야 한다. 아직 선택되지 않은
-    // 요소에는 Moveable이 붙어 있지 않으므로, 선택만 하고 끝내면 사용자가 한 번 더
-    // 눌러야 드래그된다. 첫 제스처만 캔버스가 이어 받아 그룹을 이동한다.
-    if (!selected && !e.shiftKey && onBubbleGroupDragStart?.(e, el)) {
+    // 직접 만든 일반 글자는 마퀴 다중선택 상태여도 자기 레이어만 잡는다.
+    // 오브젝트 라이브러리의 글자는 아래 완성형 그룹 이동 경로를 사용한다.
+    if (shouldStartTextOnlyDrag(el, e.shiftKey)) {
+      deferredPick.current = false;
+      onSelect(el, false);
+      onTextDragStart?.(e, el);
+      return;
+    }
+    // 처음 누른 완성형 오브젝트도 같은 포인터 제스처로 바로 움직여야 한다. 아직
+    // 선택되지 않은 요소에는 Moveable이 붙어 있지 않으므로 첫 제스처를 캔버스가
+    // 이어 받아 프리셋의 배경·선·글자를 함께 이동한다.
+    if (!selected && !e.shiftKey && onObjectGroupDragStart?.(e, el)) {
       deferredPick.current = false;
       onSelect(el, false);
       return;
@@ -242,11 +295,12 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     transform: el.rotate ? `rotate(${el.rotate}deg)` : undefined, opacity: el.opacity ?? 1,
     pointerEvents: el.locked ? 'none' : undefined,
   };
-  const cls = (extra) => `el${extra ? ' ' + extra : ''}${selected ? ' on' : ''}`;
+  const cls = (extra) => `el${extra ? ' ' + extra : ''}${selected ? ' on' : ''}${selected && selectionCount > 1 ? ' multi-selected' : ''}`;
   const common = { ref, 'data-elid': el.id, onPointerDown: pick, onClick: finishClick };
   const imageDropProps = preview || el.type !== 'image' ? {} : {
     onDragOver: (e) => {
-      if (!e.dataTransfer.types.includes(WARDROBE_IMAGE_MIME)) return;
+      const types = [...e.dataTransfer.types];
+      if (!types.includes(WARDROBE_IMAGE_MIME) && !types.includes('Files')) return;
       e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; setImageDropOver(true);
     },
     onDragLeave: (e) => {
@@ -255,12 +309,28 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     },
     onDrop: (e) => {
       const image = decodeWardrobeImage(e.dataTransfer.getData(WARDROBE_IMAGE_MIME));
-      if (!image) return;
-      e.preventDefault(); e.stopPropagation(); setImageDropOver(false); onDropImage?.(image);
+      const files = [...(e.dataTransfer.files || [])];
+      if (!image && !files.length) return;
+      e.preventDefault(); e.stopPropagation(); setImageDropOver(false);
+      if (image) onDropImage?.(image);
+      else onDropImageFiles?.(files);
     },
   };
 
+  if (el.type === 'template-overlay') {
+    return (
+      <div className="el el-template-overlay" style={base} aria-hidden="true">
+        <img src={el.src} alt="" draggable={false} />
+      </div>
+    );
+  }
+
   if (el.type === 'image') {
+    const imageFrameStyle = el.stroke && el.stroke !== 'none' ? {
+      border: `${el.strokeWidth || 2}px ${el.dash || 'solid'} ${el.stroke}`,
+      boxSizing: 'border-box',
+      overflow: 'hidden',
+    } : {};
     if (!el.src && el.genPending) {
       // 생성 대기/진행/실패 타일 — 입력 페이지 자리표시 언어(회색+로고). 선택·조작 불가
       // (이미지 내용 잠금), 호버 시 콘티에서 고른 예시가 잠깐 비친다(상시 노출 금지 결정).
@@ -280,21 +350,25 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     }
     if (!el.src) {
       const inv = 1 / (scale || 1);
+      const compactSlot = Math.min(el.w * (scale || 1), el.h * (scale || 1)) < 120;
       // 빈 슬롯도 radius 를 따른다 — 특징 포인트의 원형 사진 슬롯이 원으로 보이게
-      const slotBase = { ...base, borderRadius: el.radius };
+      const slotBase = { ...base, borderRadius: el.radius, ...imageFrameStyle };
       if (preview) return <div className="el el-slot" style={slotBase} />;
       return (
-        <div {...common} {...imageDropProps} className={cls(`el-slot${imageDropOver ? ' image-drop-over' : ''}`)} style={slotBase}>
-          <button className="slot-add" style={{ transform: `scale(${inv})` }}
+        <div {...common} {...imageDropProps} className={cls(`el-slot${el.checkerboard ? ' checkerboard' : ''}${imageDropOver ? ' image-drop-over' : ''}`)} style={slotBase}>
+          <button className={`slot-add${compactSlot ? ' compact' : ''}`} style={{ transform: `scale(${inv})` }}
+            aria-label="이 프레임에 사진 넣기" title="이 프레임에 사진 넣기"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); onAddImage && onAddImage(el); }}>
-            <Icon name="plus" size={20} /><span>이미지 추가</span>
+            <Icon name="imagePlus" size={compactSlot ? 22 : 28} />
+            {!compactSlot && <span>여기에 사진 넣기</span>}
           </button>
+          {imageDropOver && <ImageDropGuide scale={scale} filled={false} width={el.w} height={el.h} rotate={el.rotate} />}
         </div>
       );
     }
     return (
-      <div {...common} {...imageDropProps} className={cls(imageDropOver ? 'image-drop-over' : '')} style={base}
+      <div {...common} {...imageDropProps} className={cls(imageDropOver ? 'image-drop-over' : '')} style={{ ...base, borderRadius: el.radius, ...imageFrameStyle }}
         onDoubleClick={preview ? undefined : (e) => { e.stopPropagation(); onCropStart && onCropStart(el); }}>
         {el.crop ? (
           /* 커밋된 인라인 크롭: 프레임(overflow hidden) 안에 원본을 -ox,-oy 오프셋으로 */
@@ -302,8 +376,9 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
             <img src={el.src} alt="" draggable={false} style={{ left: -el.crop.ox, top: -el.crop.oy, width: el.crop.iw, height: el.crop.ih }} />
           </div>
         ) : (
-          <img src={el.src} alt="" style={{ borderRadius: el.radius }} draggable={false} />
+          <img src={el.src} alt="" style={{ borderRadius: el.radius, objectFit: el.fit || 'cover' }} draggable={false} />
         )}
+        {imageDropOver && <ImageDropGuide scale={scale} filled width={el.w} height={el.h} rotate={el.rotate} />}
       </div>
     );
   }
@@ -362,7 +437,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       );
     }
     return (
-      <div ref={ref} data-elid={el.id} className={`el el-text${selected ? ' on' : ''}${editing ? ' editing' : ''}`} style={{ ...base, height: 'auto',
+      <div ref={ref} data-elid={el.id} className={cls(`el-text${editing ? ' editing' : ''}`)} style={{ ...base, height: 'auto',
         fontFamily: FONT_MAP[s.font] || 'var(--font-body)', fontSize: s.size, fontWeight: s.weight || 400,
         color: s.color || '#0e0d14', letterSpacing: s.tracking, textAlign: s.align || 'left',
         lineHeight: s.lineHeight ? s.lineHeight + 'px' : 1.4, whiteSpace: 'pre-wrap', opacity: (el.opacity ?? 1) * (s.opacity ?? 1),
@@ -406,10 +481,13 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
   );
   else {
     const my = el.h / 2; const lc = el.stroke && el.stroke !== 'none' ? el.stroke : (el.fill || '#0e0d14'); const lw = el.strokeWidth || 2.5;
+    const hitWidth = lineHitStrokeWidth(lw, scale);
     const dashMap = { dotted: '3 5', dashed: '12 9', solid: '' };
     const da = dashMap[el.dash || 'solid'] || undefined;
     inner = (
       <svg width="100%" height="100%" viewBox={`0 0 ${el.w} ${el.h}`} style={{ overflow: 'visible', display: 'block' }}>
+        <line x1={0} y1={my} x2={el.w} y2={my} stroke="transparent" strokeWidth={hitWidth}
+          strokeLinecap="round" pointerEvents="stroke" />
         <line x1={el.shape === 'arrow-l' ? 12 : 0} y1={my} x2={el.shape === 'arrow-r' ? el.w - 12 : el.w} y2={my} stroke={lc} strokeWidth={lw} strokeLinecap="round" strokeDasharray={da} />
         {el.shape === 'arrow-l' && <polyline points={`14,${my - 8} 2,${my} 14,${my + 8}`} fill="none" stroke={lc} strokeWidth={lw} strokeLinecap="round" strokeLinejoin="round" />}
         {el.shape === 'arrow-r' && <polyline points={`${el.w - 14},${my - 8} ${el.w - 2},${my} ${el.w - 14},${my + 8}`} fill="none" stroke={lc} strokeWidth={lw} strokeLinecap="round" strokeLinejoin="round" />}
@@ -431,53 +509,70 @@ function ImageImportWait({ item, scale }) {
   const phase = IMAGE_IMPORT_COPY[item.phase] ? item.phase : 'preparing';
   const [title, detail] = IMAGE_IMPORT_COPY[phase];
   const inv = Math.min(2.5, 1 / (scale || 1));
-  const contentWidth = Math.max(84, Math.min(240, (item.w - 36) / inv));
+  const contentWidth = Math.max(76, Math.min(156, item.w * (scale || 1) - 16));
+  const compact = Math.min(item.w * (scale || 1), item.h * (scale || 1)) < 132;
+  const compactTitle = {
+    preparing: '사진 준비 중',
+    uploading: '업로드 중',
+    placing: '프레임 적용 중',
+    done: '완료',
+    error: '불러오기 실패',
+  }[phase];
   const iconName = phase === 'done' ? 'check' : phase === 'error' ? 'x' : 'loader';
 
   return (
-    <div className={`ed-uploadwait ${phase}`} role="status" aria-live="polite" aria-label={title}
-      style={{ left: item.x, top: item.y, width: item.w, height: item.h, borderRadius: item.radius || 12 }}
+    <div className={`ed-uploadwait ${phase}`} role="status" aria-live="polite" aria-label={compact ? compactTitle : title}
+      style={{ left: item.x, top: item.y, width: item.w, height: item.h, borderRadius: item.radius || 12, transform: item.rotate ? `rotate(${item.rotate}deg)` : undefined, '--upload-counter-rotate': `${-(item.rotate || 0)}deg` }}
       onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
       onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
       onDrop={(e) => { e.preventDefault(); e.stopPropagation(); }}>
       <span className="ed-uploadwait-shim" aria-hidden="true" />
-      <div className="ed-uploadwait-content" style={{ width: contentWidth, transform: `scale(${inv})` }}>
+      <div className={`ed-uploadwait-content${compact ? ' compact' : ''}`} style={{ width: contentWidth, transform: `rotate(var(--upload-counter-rotate)) scale(${inv})` }}>
         <span className="ed-uploadwait-icon"><Icon name={iconName} size={20} className={phase === 'preparing' || phase === 'uploading' || phase === 'placing' ? 'spin' : ''} /></span>
-        <strong>{title}</strong>
-        <span>{detail}</span>
+        <strong>{compact ? compactTitle : title}</strong>
+        {!compact && <span>{detail}</span>}
         {phase !== 'done' && phase !== 'error' && <span className="ed-uploadwait-track" aria-hidden="true"><i /></span>}
       </div>
     </div>
   );
 }
 
-function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onTextCommit, onMultiDragStart, onBubbleGroupDragStart, shouldSuppressBlankClick, onAddImage, onDropImage, onDropBlockImage, onDropImageFiles, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropCancel, onCropReset, idx }) {
+function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onTextCommit, onMultiDragStart, onTextDragStart, onObjectGroupDragStart, shouldSuppressBlankClick, onAddImage, onDropImage, onDropBlockImage, onDropImageFiles, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropCancel, onCropReset, idx }) {
   // 블록 높이는 콘텐츠보다 작아지지 않는다 — 이미지를 블록보다 크게 리사이즈하면 블록도 따라 커져 클립 방지.
   // (기존: block.h 있으면 고정 → 이미지 키워도 block-clip 이 잘라 "안 커보이던" 버그)
   const blockH = getBlockRenderHeight(block);
-  // 블록 강조(테두리·빠른 도구)는 그 블록이 지금 다루는 블록이면 켠다 — 안의 요소를 고른
-  // 상태도 포함이다. 블록은 사진·글이 거의 다 덮고 있어서, 배경 여백을 정확히 맞춰 눌러야만
-  // 켜지던 이전 조건으로는 캔버스에서 블록을 잡았다는 표시를 사실상 볼 수 없었다.
+  // 블록은 요소 선택의 좌표계로 계속 활성 상태를 유지하되, 파란 선택 링과 높이 손잡이는
+  // 블록 자체만 고른 경우에만 보인다. 다중 요소 선택을 부모 블록 선택처럼 보이게 하지 않는다.
   const blockActive = selectedBlockId === block.id;
-  // 높이 조절 손잡이는 블록 자체를 고른 때만 — 요소를 옮기는 중에 같이 뜨면 서로 걸린다.
   const blockSelected = blockActive && (!selEls || selEls.length === 0);
   const [objOver, setObjOver] = useState(false);
 
-  const resize = (e, side) => {
+  const pickBelowBlankText = (event, currentElement) => {
+    const candidateIds = [];
+    const glyphHitIds = [];
+    const seen = new Set();
+    for (const hit of document.elementsFromPoint(event.clientX, event.clientY)) {
+      const node = hit.closest?.('[data-elid]');
+      const id = node?.dataset.elid;
+      if (!id || seen.has(id)) continue;
+      seen.add(id); candidateIds.push(id);
+      const candidate = block.elements.find((element) => element.id === id);
+      const normalText = candidate?.type === 'text' && candidate.shape !== 'bubble' && !candidate.fullTextHitArea
+        && !(candidate.groupId && candidate.libraryItemId);
+      if (!normalText) continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      if (!pointMissesTextLines([...range.getClientRects()], event.clientX, event.clientY)) glyphHitIds.push(id);
+    }
+    return selectableElementBelowBlankText(block.elements, currentElement.id, candidateIds, glyphHitIds);
+  };
+
+  const resizeFromBottom = (e) => {
     e.stopPropagation(); e.preventDefault();
     if (e.button != null && e.button !== 0) return;
     const sy = e.clientY, startH = blockH;
-    const startEls = block.elements.map((el) => ({ id: el.id, y: el.y }));
     const move = (ev) => {
-      const dy = (ev.clientY - sy) / (scale || 1);
-      if (side === 'bottom') { onReshape(block.id, { h: Math.max(120, Math.round(startH + dy)) }); }
-      else {
-        const nh = Math.max(120, Math.round(startH - dy));
-        const delta = nh - startH;
-        const shiftEls = {};
-        startEls.forEach((s) => { shiftEls[s.id] = Math.round(s.y + delta); });
-        onReshape(block.id, { h: nh, shiftEls });
-      }
+      onReshape(block.id, { h: blockHeightFromBottom(startH, ev.clientY - sy, scale) });
     };
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); document.body.style.userSelect = ''; };
     document.body.style.userSelect = 'none';
@@ -485,7 +580,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
   };
 
   return (
-    <div className={`canvas-block${blockActive ? ' on' : ''}${objOver ? ' obj-over' : ''}`}
+    <div className={`canvas-block${blockSelected ? ' on' : ''}${objOver ? ' obj-over' : ''}`}
       data-blockid={block.id}
       /* 고른 뒤 전파를 멈춘다 — 캔버스 바닥의 onClick 이 매 클릭마다 선택을 지우므로,
          멈추지 않으면 누르는 동안만 잡혔다가 손을 떼는 순간 풀린다. */
@@ -520,11 +615,14 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
             <CanvasElement key={el.id} el={el} blockId={block.id} scale={scale} preview={false}
               selected={selEls && selEls.includes(el.id)} selectionCount={selEls?.length || 0} editing={editEl === el.id}
               onSelect={(e, additive) => onSelectEl(block.id, e, additive)}
-              onSelectBlock={() => onSelectBlock(block.id)} onPatch={onElPatch} onTextCommit={onTextCommit}
+              onSelectBlock={() => onSelectBlock(block.id)} onPickBelowText={pickBelowBlankText}
+              onPatch={onElPatch} onTextCommit={onTextCommit}
               onMultiDragStart={(event, onDragStarted) => onMultiDragStart?.(block.id, event, onDragStarted)}
-              onBubbleGroupDragStart={(event, element) => onBubbleGroupDragStart?.(block.id, element, event)}
+              onTextDragStart={(event, element) => onTextDragStart?.(block.id, element, event)}
+              onObjectGroupDragStart={(event, element) => onObjectGroupDragStart?.(block.id, element, event)}
               onAddImage={(elm) => onAddImage(block.id, elm)} onEdit={onEdit}
               onDropImage={(image) => onDropImage(block.id, el.id, image)}
+              onDropImageFiles={(files) => onDropImageFiles(block.id, files, null, el.id)}
               onCropStart={(elm) => onCropStart && onCropStart(block.id, elm)} />
           )
         ))}
@@ -539,7 +637,9 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
             </div>
             <div className="crop-frame" style={{ left: crop.fx, top: crop.fy, width: crop.fw, height: crop.fh, borderRadius: crop.radius }}
               onPointerDown={(e) => onCropDrag(e, 'img')}>
-              <img src={crop.src} alt="" draggable={false} style={{ left: -crop.ox, top: -crop.oy, width: crop.iw, height: crop.ih }} />
+              <div className="crop-frame-image">
+                <img src={crop.src} alt="" draggable={false} style={{ left: -crop.ox, top: -crop.oy, width: crop.iw, height: crop.ih }} />
+              </div>
               {['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'].map((d) => (
                 <span key={d} className={`crop-h ch-${d}`} onPointerDown={(e) => onCropDrag(e, 'frame', d)} />
               ))}
@@ -567,11 +667,8 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
         </div>
       )}
       {blockSelected && (
-        <>
-          {/* 손잡이를 눌렀다 뗀 클릭도 캔버스 바닥으로 새면 방금 잡은 블록이 풀린다 */}
-          <span className="blk-resize top" onPointerDown={(e) => resize(e, 'top')} onClick={(e) => e.stopPropagation()} title="위로 높이 조절"><span className="pill-bar" /></span>
-          <span className="blk-resize bottom" onPointerDown={(e) => resize(e, 'bottom')} onClick={(e) => e.stopPropagation()} title="아래로 높이 조절"><span className="pill-bar" /></span>
-        </>
+        /* 손잡이를 눌렀다 뗀 클릭도 캔버스 바닥으로 새면 방금 잡은 블록이 풀린다 */
+        <span className="blk-resize" onPointerDown={resizeFromBottom} onClick={(e) => e.stopPropagation()} title="아래로 높이 조절"><span className="pill-bar" /></span>
       )}
       <div className="quick" onClick={(e) => e.stopPropagation()}>
         <IconButton name="chevUp" onClick={() => onMove(idx, -1)} title="위로" />
@@ -678,7 +775,8 @@ export function Editor() {
   const latestBlocks = useRef(null);
   const pendingGenerationDraft = useRef(false);
   const setBlocks = useCallback((u) => setBlocksState((prev) => {
-    const next = normalizeEditorSelectionGroups(expandBlockHeights(typeof u === 'function' ? u(prev) : u));
+    const source = typeof u === 'function' ? u(prev) : u;
+    const next = normalizeEditorSelectionGroups(expandBlockHeights(upgradeLegacyKiwiTemplateBlocks(source, uid)));
     latestBlocks.current = next;
     return next;
   }), []);
@@ -746,12 +844,25 @@ export function Editor() {
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);                  // unscaled-layout canvas (transform: scale)
   const moveableRef = useRef(null);                // for updateRect() on selection/layout change
+  const pointerGroupRectFrame = useRef(null);      // direct child drag 중 Moveable 그룹 박스 동기화 RAF
   const suppressMarqueeClick = useRef(false);      // pointerup 직후 합성 click이 블록 선택으로 덮는 것 방지
   const [canvasH, setCanvasH] = useState(0);       // unscaled canvas height → scaled spacer
   const hist = useRef({ past: [], future: [] });
   const prevBlocks = useRef(null);
   const fromHistory = useRef(false);
   const lastPush = useRef(0);
+
+  const syncPointerGroupSelectionBounds = useCallback(() => {
+    if (pointerGroupRectFrame.current != null) return;
+    pointerGroupRectFrame.current = window.requestAnimationFrame(() => {
+      pointerGroupRectFrame.current = null;
+      moveableRef.current?.updateRect();
+    });
+  }, []);
+
+  useEffect(() => () => {
+    if (pointerGroupRectFrame.current != null) window.cancelAnimationFrame(pointerGroupRectFrame.current);
+  }, []);
 
   useEffect(() => { genActiveRef.current = genActive; }, [genActive]);
 
@@ -814,7 +925,7 @@ export function Editor() {
           if (savedDraft) withH = mergeServerBlocks(savedDraft, withH);
           withH = ensureShippingReturnsBlock(withH, ctx);
         }
-        withH = stripPhotoBlockTextElements(withH);
+        withH = upgradeLegacyKiwiTemplateBlocks(stripPhotoBlockTextElements(withH), uid);
         setBlocks(withH);
         setWardrobe(mergeEditorImagesIntoWardrobe({ wardrobe: w, blocks: withH, ...wardrobeContext.current }));
         setCatalogs(hydratedCatalogs); setFmModels(fm); setSelBlock(withH[0]?.id);
@@ -879,7 +990,7 @@ export function Editor() {
             merged = applyInfoTemplate(merged, ctx).blocks;
           }
           merged = ensureShippingReturnsBlock(merged, ctx);
-          merged = normalizeEditorSelectionGroups(expandBlockHeights(stripPhotoBlockTextElements(merged)));
+          merged = normalizeEditorSelectionGroups(expandBlockHeights(upgradeLegacyKiwiTemplateBlocks(stripPhotoBlockTextElements(merged), uid)));
           latestBlocks.current = merged;
           setBlocksState(merged);
           await api.saveEditorBlocks(projectId, merged);
@@ -1212,9 +1323,10 @@ export function Editor() {
     }
     if (type === 'preset') {
       const elements = buildObjectPreset(shapeId, { x: Math.max(0, x), y: Math.max(0, y), idFn: uid });
+      const initialSelection = objectPresetInitialSelectionIds(shapeId, elements);
       setBlocks((bs) => bs.map((b) => b.id === target ? { ...b, elements: [...b.elements, ...elements] } : b));
-      setSelBlock(target); setBlockFocused(true); setSelEl(elements.find((el) => el.type === 'text')?.id || elements[0].id); setSelEls(elements.map((el) => el.id));
-      toast.push('추천 오브젝트를 묶음으로 추가했어요');
+      setSelBlock(target); setBlockFocused(true); setSelEl(initialSelection[0]); setSelEls(initialSelection);
+      toast.push(shapeId === 'qa-bubbles' ? '독립된 말풍선 두 개를 추가했어요' : '추천 오브젝트를 묶음으로 추가했어요');
       return;
     }
     const el = type === 'line'
@@ -1234,12 +1346,14 @@ export function Editor() {
   const setSlotImage = (blockId, elId, image) => {
     setBlocks((bs) => bs.map((b) => (b.id === blockId ? applySlotFillToInfo(b, elId, image || { src: null, cutType: null }) : b)));
   };
-  const insertImage = (im, { blockId, point } = {}) => {
+  const insertImage = (im, { blockId, point, slotId } = {}) => {
     const target = blockId || visibleBlock();
     const targetBlock = (latestBlocks.current || blocks).find((block) => block.id === target);
     if (!targetBlock || !im?.src) return;
 
-    const slot = findImageDropSlot(targetBlock.elements, point);
+    const slot = slotId
+      ? targetBlock.elements.find((element) => element.id === slotId && element.type === 'image' && element.frameSlot)
+      : findImageDropSlot(targetBlock.elements, point);
     if (slot) {
       const filled = {
         ...slot,
@@ -1330,8 +1444,9 @@ export function Editor() {
         userUploaded: true,
         wardrobeGroup: 'misc',
       };
-      setWardrobe((current) => ({ ...current, misc: [...(current.misc || []), image] }));
       patchImageImport(importId, { phase: 'placing' });
+      await waitForImageSource(uploaded.url);
+      setWardrobe((current) => ({ ...current, misc: [...(current.misc || []), image] }));
       if (placement?.blockId) insertImage(image, placement);
       else wardrobeInsert(image);
       patchImageImport(importId, { phase: 'done' });
@@ -1342,7 +1457,7 @@ export function Editor() {
       toast.push(error?.message || '사진을 업로드하지 못했어요. 다시 시도해 주세요.', { icon: 'x' });
     }
   };
-  const dropImageFiles = (blockId, files, point) => {
+  const dropImageFiles = (blockId, files, point, slotId = null) => {
     const file = files.find(looksLikeImageFile);
     if (!file) {
       toast.push('이미지 파일을 끌어 놓아 주세요.', { icon: 'x' });
@@ -1354,6 +1469,7 @@ export function Editor() {
       elements: targetBlock.elements,
       blockHeight: getBlockRenderHeight(targetBlock),
       point,
+      slotId,
     });
     if (target.slotId && imageImports.some((item) => item.blockId === blockId && item.slotId === target.slotId)) {
       toast.push('이 프레임에서 이미 이미지를 불러오고 있어요.', { icon: 'image' });
@@ -1629,9 +1745,9 @@ export function Editor() {
     liveRef.current[elId] = { x: Math.round(nx), y: Math.round(ny) };
   };
   const onMvResizeStart = () => { gesturing.current = true; liveRef.current = {}; dragBlockHeight.current = null; const id = selEls[0]; const e = elById(id); dragSnap.current = e ? { [id]: { x: e.x, y: e.y, w: e.w, h: e.h } } : null; };
-  const startPointerGroupDrag = (block, ids, event, { threshold = 0, onDragStarted } = {}) => {
+  const startPointerSelectionDrag = (block, ids, event, { threshold = 0, onDragStarted } = {}) => {
     const selected = block.elements.filter((candidate) => ids.includes(candidate.id));
-    if (selected.length < 2) return false;
+    if (selected.length < 1) return false;
     const start = Object.fromEntries(selected.map((candidate) => [candidate.id, {
       x: candidate.x, y: candidate.y, w: candidate.w, h: candidate.h,
     }]));
@@ -1652,7 +1768,9 @@ export function Editor() {
       if (!active) {
         active = true;
         onDragStarted?.();
+        document.body.style.userSelect = 'none';
       }
+      pointerEvent.preventDefault();
       const [dx, dy] = clampDragDelta(start, [clientDx / (scale || 1), clientDy / (scale || 1)], blockHeight);
       latest = Object.fromEntries(ids.map((id) => [id, {
         x: Math.round(start[id].x + dx),
@@ -1664,12 +1782,20 @@ export function Editor() {
         node.style.left = latest[id].x + 'px';
         node.style.top = latest[id].y + 'px';
       });
+      // 직접 선택 요소를 잡아 끄는 경로는 Moveable 이벤트를 거치지 않는다. DOM 요소만
+      // 이동시키면 바깥 그룹 박스가 출발점에 남으므로, 같은 프레임에 함께 갱신한다.
+      syncPointerGroupSelectionBounds();
     };
     const end = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', end);
       window.removeEventListener('pointercancel', end);
       if (pointerTarget?.hasPointerCapture?.(pointerId)) pointerTarget.releasePointerCapture(pointerId);
+      document.body.style.userSelect = '';
+      if (pointerGroupRectFrame.current != null) {
+        window.cancelAnimationFrame(pointerGroupRectFrame.current);
+        pointerGroupRectFrame.current = null;
+      }
       if (!active || !latest) return;
       setBlocks((current) => current.map((item) => item.id === block.id ? {
         ...item,
@@ -1688,15 +1814,21 @@ export function Editor() {
     if (!block) return false;
     const blockIds = new Set(block.elements.map((element) => element.id));
     const ids = selEls.filter((id) => blockIds.has(id));
-    return startPointerGroupDrag(block, ids, event, { threshold: 4, onDragStarted });
+    return startPointerSelectionDrag(block, ids, event, { threshold: 4, onDragStarted });
   };
-  const startUnselectedBubbleGroupDrag = (blockId, element, event) => {
+  const startTextOnlyDrag = (blockId, element, event) => {
     const block = blocks.find((item) => item.id === blockId);
-    if (!block || element?.type !== 'text' || element?.shape !== 'bubble') return false;
+    if (!block || element?.type !== 'text' || element?.shape === 'bubble') return false;
+    return startPointerSelectionDrag(block, [element.id], event, { threshold: 4 });
+  };
+  const startUnselectedObjectGroupDrag = (blockId, element, event) => {
+    const block = blocks.find((item) => item.id === blockId);
+    if (!block) return false;
     const ids = selectionIdsForElement(block.elements, element);
     const selected = block.elements.filter((candidate) => ids.includes(candidate.id));
-    if (selected.length < 2 || !selected.every((candidate) => candidate.type === 'text' && candidate.shape === 'bubble')) return false;
-    return startPointerGroupDrag(block, ids, event);
+    const isUnifiedBubble = element?.type === 'text' && element?.shape === 'bubble';
+    if (selected.length < 2 && !isUnifiedBubble) return false;
+    return startPointerSelectionDrag(block, ids, event);
   };
   const liveResize = (target, width, height, drag) => {
     const elId = target.dataset.elid;
@@ -1813,14 +1945,8 @@ export function Editor() {
         onRemove={(el) => { setSlotImage(blockIdOf(el.id), el.id, { src: null, cutType: null }); toast.push('이미지를 프레임에서 빼냈어요'); }}
         onVary={varyImage} />;
       case 'frame': return (
-        <>
-          <FramePanel onAdd={addFrame} onDragStart={() => setFrameDragging(true)} onDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />
-          {/* 내용 프리셋 — 프레임 탭에 통합 (별도 탭 없음). 기본 템플릿은 로드 시 자동 구성 */}
-          <div style={{ marginTop: 22 }}>
-            <ContentPanel recommendGender={recommendGender} onPick={openInfoPreset}
-              onDragStart={() => setFrameDragging(true)} onDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />
-          </div>
-        </>
+        <FramePanel onAdd={addFrame} recommendGender={recommendGender} onPickInfo={openInfoPreset}
+          onDragStart={() => setFrameDragging(true)} onDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />
       );
       case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onBubbleAppearanceChange={patchBubbleAppearance} onLayer={layerEl} onAddText={() => addText()} onAddGarmentText={() => addText(undefined, 'garment')} />;
       case 'shape': return <ShapePanel catalogs={catalogs} onAdd={addShape} block={(selEls.length === 0 && selBlock) ? blocks.find((b) => b.id === selBlock) : null} onBgChange={changeBg} />;
@@ -1938,6 +2064,8 @@ export function Editor() {
   const group = selEls.length > 1 && !editEl;
   const passGroupDragArea = group && shouldPassGroupDragArea(selEls.map((id) => elById(id)));
   const resizePolicy = resizePolicyForElement(selectedElObj, lockRatio);
+  const showRotationHandle = single && shouldShowRotationHandle(selectedElObj);
+  const autoHeightTextTarget = single && selectedElObj?.type === 'text' && selectedElObj.shape !== 'bubble';
   // 정렬·분배(Phase 3b) — 다중선택이 "한 블록"일 때만(좌표가 블록-상대라 cross-block 정렬 무의미).
   const groupBlockId = (() => {
     if (!group) return null;
@@ -2149,7 +2277,8 @@ export function Editor() {
                   onCropDrag={cropDrag} onCropStart={startCrop} onCropCommit={commitCrop} onCropCancel={cancelCrop} onCropReset={resetCrop}
                   onSelectBlock={(id) => { setSelBlock(id); setBlockFocused(true); clearSel(); setTab('shape'); }} onSelectEl={selectEl}
                   onElPatch={patchElById} onTextCommit={commitBubbleText} onMultiDragStart={startSelectedGroupDrag}
-                  onBubbleGroupDragStart={startUnselectedBubbleGroupDrag}
+                  onTextDragStart={startTextOnlyDrag}
+                  onObjectGroupDragStart={startUnselectedObjectGroupDrag}
                   shouldSuppressBlankClick={consumeMarqueeClick}
                   onAddImage={requestSlotImage} onDropImage={dropSlotImage}
                   onDropBlockImage={(blockId, image, point) => insertImage(image, { blockId, point })} onDropImageFiles={dropImageFiles}
@@ -2179,6 +2308,7 @@ export function Editor() {
           {mvTargets.length > 0 && (
             <Moveable
               ref={moveableRef}
+              className={autoHeightTextTarget ? 'moveable-auto-text' : undefined}
               target={mvTargets}
               rootContainer={wrapRef.current}
               // 일반 합성 오브젝트는 자식 레이어 선택을 위해 투과한다. 완성된 말풍선끼리의
@@ -2187,7 +2317,7 @@ export function Editor() {
               preventClickEventOnDrag
               draggable
               resizable={single}
-              rotatable={single}
+              rotatable={showRotationHandle}
               keepRatio={resizePolicy.keepRatio}
               {...(SNAP_SPIKE ? {
                 snappable: true,

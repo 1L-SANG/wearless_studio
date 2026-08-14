@@ -13,11 +13,13 @@ import {
   placeImageInBlock,
   viewportPointToBlock,
 } from '../../src/features/editor/editorImageDrop.js';
+import { buildFrameBlock } from '../../src/features/editor/editorLibrary.js';
 
 const editorSource = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
 const panelSource = readFileSync(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url), 'utf8');
 const contentPanelSource = readFileSync(new URL('../../src/features/editor/ContentPanel.jsx', import.meta.url), 'utf8');
 const stylesSource = readFileSync(new URL('../../src/styles/features.css', import.meta.url), 'utf8');
+const httpAdapterSource = readFileSync(new URL('../../src/lib/api/httpAdapter.js', import.meta.url), 'utf8');
 
 test('wardrobe image drag payload keeps only the data needed by the canvas', () => {
   assert.equal(EDITOR_IMAGE_DRAG_TYPE, 'application/x-wearless-image');
@@ -46,6 +48,15 @@ test('content presets participate in the same between-block drag contract', () =
   assert.match(contentPanelSource, /setData\(EDITOR_INFO_PRESET_DRAG_TYPE,\s*p\.type\)/);
   assert.match(editorSource, /EDITOR_INFO_PRESET_DRAG_TYPE/);
   assert.match(editorSource, /addInfoPresetBlock/);
+});
+
+test('the frame panel separates blank, example, and guide frames', () => {
+  assert.match(panelSource, /value: 'blank', label: '빈 프레임'/);
+  assert.match(panelSource, /value: 'example', label: '예시 프레임'/);
+  assert.match(panelSource, /value: 'guide', label: '안내 프레임'/);
+  assert.match(panelSource, /category === 'blank' \? !frame\.template : frame\.template/);
+  assert.match(panelSource, /category === 'guide' \? \(/);
+  assert.match(panelSource, /<ContentPanel[^>]*showIntro=\{false\}/s);
 });
 
 test('viewport drop coordinates are converted through the current canvas zoom', () => {
@@ -85,8 +96,46 @@ test('a drop inside an empty image frame fills that frame instead of creating a 
   ];
 
   assert.equal(findImageDropSlot(elements, { x: 500, y: 150 })?.id, 'empty');
+  assert.equal(findImageDropSlot(elements, { x: 200, y: 150 })?.id, 'filled', 'dropping on a filled frame replaces it');
   assert.equal(findImageDropSlot(elements, { x: 900, y: 150 }), null);
   assert.equal(findImageDropSlot(elements)?.id, 'empty', 'click insert uses the first empty frame');
+});
+
+test('overlapping template slots prefer the smallest foreground target', () => {
+  const elements = [
+    { id: 'background', type: 'image', src: null, frameSlot: true, x: 0, y: 0, w: 1000, h: 1500 },
+    { id: 'card', type: 'image', src: null, frameSlot: true, x: 170, y: 440, w: 680, h: 700 },
+  ];
+
+  assert.equal(findImageDropSlot(elements, { x: 500, y: 700 })?.id, 'card');
+  assert.equal(findImageDropSlot(elements, { x: 50, y: 50 })?.id, 'background');
+});
+
+test('detail callout drops target the circular photos above the background', () => {
+  let sequence = 0;
+  const block = buildFrameBlock('kiwi-15', (prefix) => `${prefix}${++sequence}`);
+
+  assert.equal(findImageDropSlot(block.elements, { x: 270, y: 385 })?.w, 245);
+  assert.equal(findImageDropSlot(block.elements, { x: 678, y: 908 })?.w, 315);
+});
+
+test('image frames show an exact placement guide for wardrobe and external file drags', () => {
+  assert.match(editorSource, /types\.includes\('Files'\)/);
+  assert.match(editorSource, /onDropImageFiles\?\.\(files\)/);
+  assert.match(editorSource, /onDropImageFiles=\{\(files\) => onDropImageFiles\(block\.id, files, null, el\.id\)\}/);
+  assert.match(editorSource, /imageDropOver && <ImageDropGuide scale=\{scale\} filled=\{false\} width=\{el\.w\} height=\{el\.h\} rotate=\{el\.rotate\}/);
+  assert.match(editorSource, /이 프레임에 \{filled \? '교체' : '넣기'\}/);
+  assert.match(stylesSource, /\.image-drop-guide\s*\{[^}]*pointer-events:\s*none/s);
+  assert.match(stylesSource, /\.image-drop-guide\s*\{[^}]*background-image:\s*linear-gradient/s);
+  assert.match(stylesSource, /\.image-drop-guide-content\s*\{[^}]*rotate\(var\(--drop-counter-rotate\)\) scale\(var\(--drop-inv/s);
+  assert.match(stylesSource, /animation:\s*image-drop-target-pulse/);
+});
+
+test('empty template frames always label the exact place where a photo goes', () => {
+  assert.match(editorSource, /aria-label="이 프레임에 사진 넣기"/);
+  assert.match(editorSource, /<Icon name="imagePlus" size=\{compactSlot \? 22 : 28\}/);
+  assert.match(editorSource, /!compactSlot && <span>여기에 사진 넣기<\/span>/);
+  assert.match(stylesSource, /\.el-slot\.checkerboard\s*\{[^}]*background-image:\s*linear-gradient/s);
 });
 
 test('an image import placeholder immediately occupies the exact target frame', () => {
@@ -107,6 +156,27 @@ test('an image import placeholder uses a stable portrait tile outside a frame', 
     blockHeight: 300,
     point: { x: 500, y: 150 },
   }), { slotId: null, x: 412, y: 40, w: 176, h: 220, radius: 12 });
+});
+
+test('an explicit rotated frame remains the exact external upload target', () => {
+  const elements = [
+    { id: 'background', type: 'image', src: null, frameSlot: true, x: 0, y: 0, w: 1000, h: 1508 },
+    { id: 'polaroid', type: 'image', src: null, frameSlot: true, x: 575, y: 550, w: 270, h: 365, radius: 2, rotate: -14 },
+  ];
+
+  assert.deepEqual(pendingImageImportTarget({
+    elements,
+    blockHeight: 1508,
+    point: null,
+    slotId: 'polaroid',
+  }), { slotId: 'polaroid', x: 575, y: 550, w: 270, h: 365, radius: 2, rotate: -14 });
+  assert.match(editorSource, /transform:\s*item\.rotate \? `rotate\(\$\{item\.rotate\}deg\)`/);
+});
+
+test('uploaded editor images wait for a renderable stable asset URL before showing success', () => {
+  assert.match(httpAdapterSource, /url:\s*absolutizeAssetUrls\(`\/v1\/assets\/\$\{assetId\}\/file`\)/);
+  assert.match(editorSource, /await waitForImageSource\(uploaded\.url\)/);
+  assert.match(editorSource, /const slot = slotId[\s\S]{0,240}element\.id === slotId/);
 });
 
 test('hidden quick toolbars cannot intercept the canvas and selection alone does not reveal them', () => {

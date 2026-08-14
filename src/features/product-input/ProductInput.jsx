@@ -39,7 +39,7 @@ import {
   formatDraftClock,
   formatDraftRelativeTime,
 } from '@/lib/draftSlot.js';
-import { Icon, Button, IconButton, ErrorState, Skeleton, Modal, useToast } from '@/components/ui.jsx';
+import { Icon, Button, IconButton, ErrorState, Modal, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { AnalysisForm, AnalysisSkeleton, AnalysisProgress, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
 import {
@@ -974,10 +974,9 @@ export function ProductInput() {
     </div>
   );
   if (!product || !catalogs) return (
-    <div className="wizard">
+    <div className="wizard" aria-busy="true" aria-label="입력 화면 불러오는 중">
       {editingRightsLock}
       {doneBlocked && <DoneGuardModal />}
-      <div className="surface"><Skeleton h={420} /></div>
     </div>
   );
 

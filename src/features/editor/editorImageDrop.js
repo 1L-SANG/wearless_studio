@@ -57,20 +57,29 @@ export function placeImageInBlock({
 }
 
 export function findImageDropSlot(elements, point) {
-  const emptySlots = (elements || []).filter((element) => (
-    element.type === 'image' && element.frameSlot && !element.src
+  const frameSlots = (elements || []).filter((element) => (
+    element.type === 'image' && element.frameSlot
   ));
-  if (!point) return emptySlots[0] || null;
-  return emptySlots.find((element) => (
-    point.x >= element.x
-    && point.x <= element.x + element.w
-    && point.y >= element.y
-    && point.y <= element.y + element.h
-  )) || null;
+  if (!point) return frameSlots.find((element) => !element.src) || null;
+  // Full-canvas template backgrounds sit behind smaller foreground slots. A drop over a
+  // decorative card should prefer the smallest matching slot, but a drop anywhere else
+  // still needs to fill the background rather than creating an unrelated loose image.
+  return frameSlots
+    .filter((element) => (
+      point.x >= element.x
+      && point.x <= element.x + element.w
+      && point.y >= element.y
+      && point.y <= element.y + element.h
+    ))
+    .sort((a, b) => (a.w * a.h) - (b.w * b.h))[0] || null;
 }
 
-export function pendingImageImportTarget({ elements, blockHeight, point }) {
-  const slot = findImageDropSlot(elements, point);
+export function pendingImageImportTarget({ elements, blockHeight, point, slotId = null }) {
+  const slot = slotId
+    ? (elements || []).find((element) => (
+      element.id === slotId && element.type === 'image' && element.frameSlot
+    )) || null
+    : findImageDropSlot(elements, point);
   if (slot) {
     return {
       slotId: slot.id,
@@ -79,6 +88,7 @@ export function pendingImageImportTarget({ elements, blockHeight, point }) {
       w: slot.w,
       h: slot.h,
       radius: slot.radius || 10,
+      ...(slot.rotate ? { rotate: slot.rotate } : {}),
     };
   }
 

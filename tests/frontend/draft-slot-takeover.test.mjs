@@ -593,6 +593,13 @@ test('resume choice dismissal cannot silently choose or take over a draft', () =
   assert.doesNotMatch(routeChoice, /chooseSource/);
 });
 
+test('input entry transition leaves the persistent header and background unobstructed', () => {
+  const app = read('../../src/App.jsx');
+  const inputRoute = app.slice(app.indexOf('function ProductInputRoute()'), app.indexOf('function RootRedirect()'));
+  assert.match(inputRoute, /if \(entryDecision !== 'continue'\) return null/);
+  assert.doesNotMatch(inputRoute, /이동하고 있어요/);
+});
+
 test('logout clears slot identity and remounts input for the next user', () => {
   const app = read('../../src/App.jsx');
   const auth = read('../../src/features/auth/AuthProvider.jsx');

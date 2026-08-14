@@ -33,6 +33,13 @@ test('비활성 분석 버튼 이유와 선택 상품명 안내가 sticky CTA �
   assert.match(productInput, /선택 — 비우면 AI가 지어드려요/);
 });
 
+test('새 기기 첫 진입 로딩은 빈 카드형 스켈레톤을 노출하지 않는다', () => {
+  const loadingBranch = productInput.match(/if \(!product \|\| !catalogs\) return \(([\s\S]*?)\n  \);/)?.[1];
+  assert.ok(loadingBranch);
+  assert.match(loadingBranch, /aria-busy="true"/);
+  assert.doesNotMatch(loadingBranch, /className="surface"|<Skeleton/);
+});
+
 test('특징 삭제 버튼은 시각 아이콘을 유지한 44px 터치 영역이며 편집 mousedown과 분리된다', () => {
   assert.match(featureStyles, /\.sp-chip-x[^}]*width: 44px; height: 44px;[^}]*margin: -12px;/);
   assert.match(featureStyles, /\.sp-chipwrap[^}]*gap: 24px;/);

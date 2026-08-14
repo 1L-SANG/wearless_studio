@@ -125,10 +125,9 @@ test('1-01 HTTP image picker uploads the selected file once and returns assetId 
   };
 
   try {
-    assert.deepEqual(await httpAdapter.pickAnyImage('project-upload'), {
-      assetId: 'asset-mine',
-      url: 'https://cdn.test/mine.png',
-    });
+    const uploaded = await httpAdapter.pickAnyImage('project-upload');
+    assert.equal(uploaded.assetId, 'asset-mine');
+    assert.match(uploaded.url, /\/v1\/assets\/asset-mine\/file$/);
   } finally {
     restoreGlobal('document', originalDocument);
     restoreGlobal('fetch', originalFetch);

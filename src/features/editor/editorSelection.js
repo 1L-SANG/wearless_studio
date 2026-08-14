@@ -5,7 +5,7 @@ import { mergeSpeechBubbleElements } from './editorBubbleFit.js';
 const LEGACY_LIBRARY_GROUP_SIZE = {
   'text-box': 2,
   'single-bubble': 1,
-  'qa-bubbles': 2,
+  'qa-bubbles': 1,
   divider: 1,
   'arrow-callout': 2,
   'label-badge': 2,
@@ -13,35 +13,17 @@ const LEGACY_LIBRARY_GROUP_SIZE = {
 
 export function selectionIdsForElement(elements, element) {
   if (!element?.id) return [];
-  // A background/line is a real top-level layer: clicking it must keep that
-  // parent individually selectable (and therefore individually deletable).
-  // Text is the convenient composite hit target and selects its whole object.
-  if (element.type !== 'text') return [element.id];
-  if (element.groupId) {
-    const grouped = (elements || [])
-      .filter((candidate) => candidate.groupId === element.groupId)
-      .map((candidate) => candidate.id);
-    return grouped.length ? grouped : [element.id];
-  }
-  // Object-library items saved before groupId shipped still retain their item
-  // marker. Normalize usually repairs them on load; this fallback also makes a
-  // partially restored document safe during the first render.
-  if (element.libraryItemId) {
-    const all = elements || [];
-    const index = all.findIndex((candidate) => candidate.id === element.id);
-    const size = LEGACY_LIBRARY_GROUP_SIZE[element.libraryItemId] || 1;
-    if (index >= 0 && size > 1) {
-      let start = index;
-      while (start > 0 && all[start - 1].libraryItemId === element.libraryItemId && !all[start - 1].groupId) start -= 1;
-      const offset = index - start;
-      const chunkStart = start + Math.floor(offset / size) * size;
-      const grouped = all.slice(chunkStart, chunkStart + size)
-        .filter((candidate) => candidate.libraryItemId === element.libraryItemId)
-        .map((candidate) => candidate.id);
-      if (grouped.length > 1) return grouped;
-    }
-  }
-  return [element.id];
+  // Object-library presets and speech-bubble pairs are complete visual
+  // objects. Picking any of their primitives selects the whole saved group;
+  // unrelated user-created elements may still carry group metadata without
+  // losing their individual text-drag behaviour.
+  const selectsWholeGroup = Boolean(element.groupId
+    && (element.libraryItemId || (element.type === 'text' && element.shape === 'bubble')));
+  if (!selectsWholeGroup) return [element.id];
+  const grouped = (elements || [])
+    .filter((candidate) => candidate.groupId === element.groupId)
+    .map((candidate) => candidate.id);
+  return grouped.length ? grouped : [element.id];
 }
 
 function boxContainsCenter(parent, child) {
@@ -55,8 +37,20 @@ export function normalizeEditorSelectionGroups(blocks) {
   let changed = false;
   const normalized = (blocks || []).map((block) => {
     const originalElements = block.elements || [];
-    const elements = mergeSpeechBubbleElements(originalElements);
+    let elements = mergeSpeechBubbleElements(originalElements);
     if (elements !== originalElements) changed = true;
+    const qaGroupCounts = new Map();
+    elements.forEach((element) => {
+      if (element.libraryItemId !== 'qa-bubbles' || !element.groupId) return;
+      qaGroupCounts.set(element.groupId, (qaGroupCounts.get(element.groupId) || 0) + 1);
+    });
+    if ([...qaGroupCounts.values()].some((count) => count > 1)) {
+      elements = elements.map((element) => element.libraryItemId === 'qa-bubbles'
+        && qaGroupCounts.get(element.groupId) > 1
+        ? { ...element, groupId: `qa-bubble:${block.id}:${element.id}` }
+        : element);
+      changed = true;
+    }
     const groupById = new Map();
 
     for (let index = 0; index < elements.length;) {
@@ -117,6 +111,29 @@ export function isEditorGrayWorkspaceTarget(target) {
 
 export function shouldPreserveMultiSelectionOnPointerDown({ selected, selectionCount, additive }) {
   return Boolean(selected && selectionCount > 1 && !additive);
+}
+
+export function shouldStartTextOnlyDrag(element, additive) {
+  const isObjectLibraryGroup = Boolean(element?.groupId && element?.libraryItemId);
+  return Boolean(!additive && element?.type === 'text'
+    && element?.shape !== 'bubble' && !isObjectLibraryGroup);
+}
+
+/** Pick the first real element exposed below a blank part of a wide text box.
+ * Normal text only qualifies when the pointer is on one of its rendered glyph
+ * lines; visual objects and composite text use their full visible bounds. */
+export function selectableElementBelowBlankText(elements, currentId, candidateIds, glyphHitIds = []) {
+  const byId = new Map((elements || []).map((element) => [element.id, element]));
+  const glyphHits = new Set(glyphHitIds || []);
+  for (const id of candidateIds || []) {
+    const element = byId.get(id);
+    if (!element || element.id === currentId || element.hidden || element.locked) continue;
+    const normalText = element.type === 'text' && element.shape !== 'bubble' && !element.fullTextHitArea
+      && !(element.groupId && element.libraryItemId);
+    if (normalText && !glyphHits.has(element.id)) continue;
+    return element;
+  }
+  return null;
 }
 
 export function shouldPassGroupDragArea(elements) {

@@ -17,6 +17,7 @@ import { detailDirectionFromExample } from '@/lib/storyboardExampleSelection.js'
 import { thumbUrl } from '@/lib/imageCdn.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, OBJECT_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, colorWithOpacity, encodeWardrobeImage, normalizeHexColor } from '@/features/editor/editorLibrary.js';
 import { DEFAULT_EDITOR_COLOR_PRESETS, commitNumberDraft, hexToHsv, hsvToHex } from '@/features/editor/editorAppearance.js';
+import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 
 function PanelHead({ title, sub }) {
   return <><div className="panel-h">{title}</div>{sub && <div className="panel-sub">{sub}</div>}</>;
@@ -811,9 +812,9 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
           <PanelSection title="텍스트 박스" first>
             <div className="field-2up">
               <NumField iconText="가로" value={Math.round(el.w || 120)} min={1} max={10000} onChange={(w) => onChange({ w })} />
-              <span />
+              <NumField icon="rotate" labelText="회전" value={el.rotate || 0} min={-180} max={180} suffix="°" onChange={(rotate) => onChange({ rotate })} />
             </div>
-            <div className="panel-sub" style={{ marginTop: 8 }}>텍스트는 비율 잠금 없이 좌우 가장자리로 폭을 조절할 수 있어요.</div>
+            <div className="panel-sub" style={{ marginTop: 8 }}>텍스트는 좌우 가장자리로 폭을 조절하고, 회전은 여기서 정확히 입력할 수 있어요.</div>
           </PanelSection>
 
           <PanelSection title="타이포그래피">
@@ -891,23 +892,53 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
 }
 
 /* ---------- 프레임 ---------- */
-export function FramePanel({ onAdd, onDragStart, onDragEnd }) {
-  const frames = FRAME_LIBRARY_ITEMS;
+const FRAME_LIBRARY_TABS = [
+  { value: 'blank', label: '빈 프레임' },
+  { value: 'example', label: '예시 프레임' },
+  { value: 'guide', label: '안내 프레임' },
+];
+
+export function FramePanel({ onAdd, onDragStart, onDragEnd, recommendGender, onPickInfo }) {
+  const [category, setCategory] = useState('blank');
+  const frames = FRAME_LIBRARY_ITEMS.filter((frame) => (
+    category === 'blank' ? !frame.template : frame.template
+  ));
   return (
     <div>
-      <PanelHead title="프레임" sub="새 블록으로 추가돼요. 끌어 놓거나 클릭하세요." />
-      <div className="frame-list">
-        {frames.map((f) => (
-          <div className="frame-item" key={f.id} onClick={() => onAdd(f)} draggable
-            onDragStart={(e) => { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/frame', f.id); onDragStart && onDragStart(); }}
-            onDragEnd={() => onDragEnd && onDragEnd()}>
-            <div className="frame-prev frame-layout-prev">
-              {f.slots.map((slot, i) => <i key={i} style={{ left: `${slot.x / 10}%`, top: `${slot.y / f.h * 100}%`, width: `${slot.w / 10}%`, height: `${slot.h / f.h * 100}%` }} />)}
-            </div>
-            <div className="fl">{f.label}{f.recommended && <span className="frame-rec">추천</span>}</div>
-          </div>
-        ))}
+      <PanelHead title="프레임" sub="종류를 고른 뒤 끌어 놓거나 클릭해 추가하세요." />
+      <div className="frame-category-tabs">
+        <UnderlineTabs options={FRAME_LIBRARY_TABS} value={category} onChange={setCategory} />
       </div>
+      {category === 'guide' ? (
+        <ContentPanel recommendGender={recommendGender} onPick={onPickInfo} showIntro={false}
+          onDragStart={onDragStart} onDragEnd={onDragEnd} />
+      ) : (
+        <div className="frame-list">
+          {frames.map((f) => (
+            <div className="frame-item" key={f.id} onClick={() => onAdd(f)} draggable
+              onDragStart={(e) => { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/frame', f.id); onDragStart && onDragStart(); }}
+              onDragEnd={() => onDragEnd && onDragEnd()}>
+              <div className={`frame-prev frame-layout-prev${f.preview ? ' template' : ''}`}>
+                {f.slots.map((slot, i) => (
+                  <i key={i} style={{
+                    left: `${slot.x / 10}%`,
+                    top: `${slot.y / f.h * 100}%`,
+                    width: `${slot.w / 10}%`,
+                    height: `${slot.h / f.h * 100}%`,
+                    borderRadius: slot.radius ? `${Math.min(50, slot.radius / Math.min(slot.w, slot.h) * 100)}%` : undefined,
+                    border: slot.stroke ? `${slot.strokeWidth || 2}px ${slot.dash || 'solid'} ${slot.stroke}` : undefined,
+                    transform: slot.rotate ? `rotate(${slot.rotate}deg)` : undefined,
+                  }}>
+                    {slot.src && <img src={slot.src} alt="" loading="lazy" draggable={false} />}
+                  </i>
+                ))}
+                {f.preview && <img src={f.preview} alt="" loading="lazy" draggable={false} />}
+              </div>
+              <div className="fl">{f.label}{f.recommended && <span className="frame-rec">추천</span>}</div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -986,7 +1017,7 @@ export function LayerPanel({ block, selEls = [], embedded, onSelect, onReorder, 
   const [dragId, setDragId] = useState(null);
   const [overId, setOverId] = useState(null);
   if (!block) return <EmptyState icon="layers" title="블록을 선택하세요" desc="블록을 클릭하면 그 안의 레이어가 순서대로 나와요." />;
-  const rows = block.elements.map((el, idx) => ({ el, idx })).reverse(); // 위가 최상단(맨 앞)
+  const rows = block.elements.map((el, idx) => ({ el, idx })).filter(({ el }) => !el.system).reverse(); // 위가 최상단(맨 앞)
   return (
     <div>
       {!embedded && <PanelHead title="레이어" sub="위가 가장 앞이에요. 드래그로 순서를, 아이콘으로 표시·잠금을 바꿔요." />}

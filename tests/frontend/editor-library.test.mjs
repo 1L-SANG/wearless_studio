@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -11,6 +12,8 @@ import {
   decodeWardrobeImage,
   encodeWardrobeImage,
   normalizeHexColor,
+  objectPresetInitialSelectionIds,
+  upgradeLegacyKiwiTemplateBlocks,
 } from '../../src/features/editor/editorLibrary.js';
 import {
   isEditorDeleteKey,
@@ -18,11 +21,13 @@ import {
   normalizeEditorSelectionGroups,
   removeSelectedBlock,
   removeSelectedElements,
+  selectableElementBelowBlankText,
   selectionIdsForElement,
   selectionIdsInsideMarquee,
   shouldClearEditorSelection,
   shouldPassGroupDragArea,
   shouldPreserveMultiSelectionOnPointerDown,
+  shouldStartTextOnlyDrag,
 } from '../../src/features/editor/editorSelection.js';
 
 const seqId = () => { let n = 0; return (prefix) => `${prefix}${++n}`; };
@@ -32,20 +37,118 @@ test('the recommended frame catalog contains the six common layouts', () => {
   assert.deepEqual(ids, ['single', 'split2', 'grid3', 'grid4', 'hero2', 'colorcmp']);
 });
 
-test('every frame builds empty image slots inside the 1000px canvas', () => {
+test('every frame builds replaceable image slots inside the 1000px canvas', () => {
   for (const frame of FRAME_LIBRARY_ITEMS) {
     const block = buildFrameBlock(frame.id, seqId());
-    assert.equal(block.elements.length, frame.slots.length, frame.id);
+    const imageSlots = block.elements.filter((element) => element.type === 'image' && element.frameSlot);
+    assert.equal(imageSlots.length, frame.slots.length, frame.id);
     assert.equal(block.bgOpacity, 1);
-    for (const element of block.elements) {
+    for (const element of imageSlots) {
       assert.equal(element.type, 'image');
-      assert.equal(element.src, null);
+      assert.equal(element.src, null, `${frame.id}: inserted frames start empty`);
+      assert.equal(element.exampleImage, undefined, `${frame.id}: catalog examples never flatten into the canvas`);
       assert.equal(element.frameSlot, true);
       assert.ok(element.x >= 0 && element.y >= 0);
       assert.ok(element.x + element.w <= 1000, `${frame.id}: slot fits horizontally`);
       assert.ok(element.y + element.h <= block.h, `${frame.id}: slot fits vertically`);
     }
   }
+});
+
+test('kiwi templates rebuild the references with native editable elements', () => {
+  const kiwiFrames = FRAME_LIBRARY_ITEMS.filter((item) => item.template);
+  assert.deepEqual(kiwiFrames.map((item) => item.id), [
+    'kiwi-1', 'kiwi-2', 'kiwi-3', 'kiwi-4', 'kiwi-5', 'kiwi-6', 'kiwi-9',
+    'kiwi-10', 'kiwi-11', 'kiwi-12', 'kiwi-13', 'kiwi-14', 'kiwi-15',
+    'kiwi-16', 'kiwi-17', 'kiwi-18', 'kiwi-19', 'kiwi-20',
+  ]);
+  assert.equal(kiwiFrames.reduce((count, frame) => count + frame.slots.length, 0), 34);
+  const expectedExampleCounts = {
+    'kiwi-1': 4, 'kiwi-2': 4, 'kiwi-3': 2, 'kiwi-4': 3, 'kiwi-5': 4,
+    'kiwi-6': 3, 'kiwi-9': 0,
+    'kiwi-10': 2, 'kiwi-11': 0, 'kiwi-12': 2, 'kiwi-13': 1, 'kiwi-14': 4, 'kiwi-15': 2,
+    'kiwi-16': 0, 'kiwi-17': 0, 'kiwi-18': 0, 'kiwi-19': 0, 'kiwi-20': 0,
+  };
+
+  for (const frame of kiwiFrames) {
+    const block = buildFrameBlock(frame, seqId());
+    const imageSlots = block.elements.filter((element) => element.type === 'image' && element.frameSlot);
+    const overlays = block.elements.filter((element) => element.type === 'template-overlay');
+    const editableCopy = block.elements.filter((element) => element.type === 'text');
+    assert.equal(overlays.length, 0, `${frame.id}: reference art must not be inserted`);
+    assert.ok(block.elements.every((element) => ['image', 'text', 'shape', 'line'].includes(element.type)), frame.id);
+    assert.ok(editableCopy.length >= 2, `${frame.id}: copy is editable text`);
+    assert.ok(block.elements.every((element) => !element.locked && !element.system), frame.id);
+    assert.ok(imageSlots.every((element) => element.checkerboard), frame.id);
+    assert.ok(editableCopy.every((element) => element.fullTextHitArea), `${frame.id}: template copy owns its click box`);
+    assert.equal(frame.preview, `/assets/editor/kiwi-templates/${frame.id}-preview.jpg`, `${frame.id}: catalog uses its completed JPEG reference`);
+    assert.ok(existsSync(new URL(`../../public${frame.preview}`, import.meta.url)), `${frame.id}: catalog preview exists`);
+    assert.ok(imageSlots.every((element) => element.src === null), `${frame.id}: canvas exposes every photo position as an empty frame`);
+    const examples = frame.slots.filter((element) => element.exampleImage);
+    assert.equal(examples.length, expectedExampleCounts[frame.id], `${frame.id}: every available JPEG photo is prefilled`);
+    const expectedExampleId = frame.id.replace('kiwi-', '');
+    for (const example of examples) {
+      assert.match(example.src, new RegExp(`/kiwi-${expectedExampleId}(?:-|\\.)`));
+      assert.ok(existsSync(new URL(`../../public${example.src}`, import.meta.url)), `${frame.id}: ${example.src} exists`);
+    }
+  }
+});
+
+test('underwear-specific size guides are not offered as reusable frames', () => {
+  const ids = FRAME_LIBRARY_ITEMS.map((item) => item.id);
+  assert.equal(ids.includes('kiwi-7'), false);
+  assert.equal(ids.includes('kiwi-8'), false);
+  assert.equal(FRAME_LIBRARY_ITEMS.some((item) => /팬티|브라/.test(item.label)), false);
+});
+
+test('detail callout circles are native replaceable image slots', () => {
+  const block = buildFrameBlock('kiwi-15', seqId());
+  const circles = block.elements.filter((element) => (
+    element.type === 'image' && element.frameSlot && element.radius === Math.round(element.w / 2)
+  ));
+
+  assert.equal(circles.length, 2);
+  assert.ok(circles.every((element) => element.src === null));
+  assert.ok(circles.every((element) => element.exampleImage === undefined));
+  assert.ok(circles.every((element) => element.stroke === '#ffffff'));
+  assert.ok(circles.every((element) => element.strokeWidth === 5 && element.dash === 'dashed'));
+});
+
+test('pixel coupon keeps the reference ticket silhouette and editable 30 percent copy', () => {
+  const block = buildFrameBlock('kiwi-17', seqId());
+  const text = block.elements.filter((element) => element.type === 'text');
+  const blackTicketPieces = block.elements.filter((element) => element.type === 'shape' && element.fill === '#000000');
+  const badge = block.elements.find((element) => element.type === 'shape' && element.shape === 'circle');
+
+  assert.equal(blackTicketPieces.length, 4);
+  assert.ok(text.some((element) => element.text === '30' && element.style.font === 'Roboto Mono'));
+  assert.ok(text.some((element) => element.text === '%' && element.style.font === 'Roboto Mono'));
+  assert.ok(text.some((element) => element.text === 'P' && element.style.font === 'Roboto Mono'));
+  assert.deepEqual({ x: badge.x, y: badge.y, w: badge.w, h: badge.h }, { x: 695, y: 470, w: 190, h: 190 });
+});
+
+test('legacy locked Kiwi artwork upgrades to editable elements and keeps filled photos', () => {
+  const legacy = [{
+    id: 'legacy-block',
+    name: '리뷰 카드',
+    h: 1460,
+    elements: [
+      { id: 'photo-a', type: 'image', frameSlot: true, src: '/uploads/a.webp', cutType: 'full', w: 100, h: 100, crop: { ox: 10, oy: 20, iw: 120, ih: 140 } },
+      { id: 'photo-b', type: 'image', frameSlot: true, src: null },
+      { id: 'overlay', type: 'template-overlay', src: '/assets/editor/kiwi-templates/kiwi-1-overlay.png', locked: true, system: true },
+    ],
+  }];
+
+  const [upgraded] = upgradeLegacyKiwiTemplateBlocks(legacy, seqId());
+  const photoSlots = upgraded.elements.filter((element) => element.type === 'image');
+  assert.equal(upgraded.id, 'legacy-block');
+  assert.equal(upgraded.templateId, 'kiwi-1');
+  assert.equal(upgraded.elements.some((element) => element.type === 'template-overlay'), false);
+  assert.ok(upgraded.elements.filter((element) => element.type === 'text').length >= 2);
+  assert.equal(photoSlots[0].src, '/uploads/a.webp');
+  assert.equal(photoSlots[0].cutType, 'full');
+  assert.deepEqual(photoSlots[0].crop, { ox: 13, oy: 25, iw: 151, ih: 176 });
+  assert.equal(photoSlots[1].src, null);
 });
 
 test('a wardrobe image dropped between blocks becomes its own padded image block', () => {
@@ -79,14 +182,35 @@ test('a wardrobe image dropped between blocks becomes its own padded image block
   });
 });
 
-test('object presets materialize existing primitives as one selectable group', () => {
-  for (const item of OBJECT_LIBRARY_ITEMS) {
+test('object presets materialize as one selectable group', () => {
+  for (const item of OBJECT_LIBRARY_ITEMS.filter((candidate) => candidate.id !== 'qa-bubbles')) {
     const elements = buildObjectPreset(item.id, { x: 100, y: 80, idFn: seqId() });
     assert.ok(elements.length > 0, item.id);
     assert.equal(new Set(elements.map((element) => element.groupId)).size, 1, `${item.id}: one group`);
     assert.ok(elements.every((element) => ['text', 'shape', 'line'].includes(element.type)));
     assert.ok(elements.every((element) => element.libraryItemId === item.id));
+    for (const element of elements) {
+      assert.deepEqual(selectionIdsForElement(elements, element), elements.map((candidate) => candidate.id), `${item.id}: ${element.type}`);
+    }
   }
+});
+
+test('text inside an object preset selects its background or line with it', () => {
+  for (const itemId of ['text-box', 'arrow-callout', 'label-badge']) {
+    const elements = buildObjectPreset(itemId, { x: 100, y: 80, idFn: seqId() });
+    const copy = elements.find((element) => element.type === 'text');
+    assert.ok(copy, `${itemId}: text layer`);
+    assert.deepEqual(selectionIdsForElement(elements, copy), elements.map((element) => element.id));
+  }
+});
+
+test('only standalone text starts a text-only drag', () => {
+  assert.equal(shouldStartTextOnlyDrag({ type: 'text' }, false), true);
+  assert.equal(shouldStartTextOnlyDrag({ type: 'text', groupId: 'object' }, false), true);
+  assert.equal(shouldStartTextOnlyDrag({ type: 'text', groupId: 'object', libraryItemId: 'text-box' }, false), false);
+  assert.equal(shouldStartTextOnlyDrag({ type: 'text', shape: 'bubble' }, false), false);
+  assert.equal(shouldStartTextOnlyDrag({ type: 'shape' }, false), false);
+  assert.equal(shouldStartTextOnlyDrag({ type: 'text' }, true), false, 'shift remains additive selection');
 });
 
 test('object presets stay inside the 1000px canvas when dropped near an edge', () => {
@@ -95,7 +219,7 @@ test('object presets stay inside the 1000px canvas when dropped near an edge', (
   assert.ok(elements.every((element) => element.y >= 0));
 });
 
-test('Q&A bubbles are two unified text+bubble elements with grouped movement', () => {
+test('Q&A bubbles are two independent unified text+bubble objects', () => {
   const elements = buildObjectPreset('qa-bubbles', { x: 100, y: 80, idFn: seqId() });
   const bubbles = elements.filter((element) => element.type === 'text' && element.shape === 'bubble');
   assert.equal(bubbles.length, 2);
@@ -106,8 +230,15 @@ test('Q&A bubbles are two unified text+bubble elements with grouped movement', (
   assert.equal(bubbles[1].flipX, true);
   assert.ok(bubbles.every((element) => element.text && element.style && element.bubbleFit));
   assert.ok(bubbles.every((element) => !element.bubblePairId));
+  assert.equal(new Set(bubbles.map((element) => element.groupId)).size, 2);
+  assert.deepEqual(selectionIdsForElement(elements, bubbles[0]), [bubbles[0].id]);
+  assert.deepEqual(selectionIdsForElement(elements, bubbles[1]), [bubbles[1].id]);
+  assert.deepEqual(objectPresetInitialSelectionIds('qa-bubbles', elements), [bubbles[0].id]);
+});
 
-  assert.deepEqual(selectionIdsForElement(elements, bubbles[0]), elements.map((element) => element.id));
+test('ordinary composite presets still select every member when they are added', () => {
+  const elements = buildObjectPreset('text-box', { x: 100, y: 80, idFn: seqId() });
+  assert.deepEqual(objectPresetInitialSelectionIds('text-box', elements), elements.map((element) => element.id));
 });
 
 test('the object library offers one standalone responsive speech bubble', () => {
@@ -128,19 +259,19 @@ test('the object library offers one standalone responsive speech bubble', () => 
   assert.deepEqual(selectionIdsForElement(elements, elements[0]), [elements[0].id]);
 });
 
-test('selected speech-bubble groups keep Moveable drag capture enabled', () => {
+test('a selected unified speech bubble keeps Moveable drag capture enabled', () => {
   const bubbles = buildObjectPreset('qa-bubbles', { x: 100, y: 80, idFn: seqId() });
   const textBox = buildObjectPreset('text-box', { x: 100, y: 80, idFn: seqId() });
 
-  assert.equal(shouldPassGroupDragArea(bubbles), false, 'the drag area must capture Q&A bubble drags');
+  assert.equal(shouldPassGroupDragArea([bubbles[0]]), false, 'the drag area must capture one Q&A bubble drag');
   assert.equal(shouldPassGroupDragArea(textBox), true, 'other composite children remain directly selectable');
 });
 
 test('marquee selection includes intersecting elements, expands groups, and skips locked layers', () => {
   const elements = [
     { id: 'free', type: 'shape' },
-    { id: 'group-a', type: 'text', groupId: 'group' },
-    { id: 'group-b', type: 'text', groupId: 'group' },
+    { id: 'group-a', type: 'text', shape: 'bubble', groupId: 'group' },
+    { id: 'group-b', type: 'text', shape: 'bubble', groupId: 'group' },
     { id: 'partial', type: 'shape' },
     { id: 'locked', type: 'shape', locked: true },
     { id: 'hidden', type: 'shape', hidden: true },
@@ -200,7 +331,7 @@ test('Delete and macOS Backspace can remove a selected top-level block with all 
   assert.equal(removeSelectedBlock(blocks, null), blocks);
 });
 
-test('legacy object and FAQ composites recover text-group selection without hiding their parent layer', () => {
+test('legacy object composites recover whole-object selection while FAQ text stays independently draggable', () => {
   const legacyObject = { id: 'object', elements: [
     { id: 'box', type: 'shape', libraryItemId: 'text-box', x: 10, y: 10, w: 200, h: 100 },
     { id: 'copy', type: 'text', libraryItemId: 'text-box', x: 20, y: 30, w: 180, h: 40 },
@@ -211,9 +342,21 @@ test('legacy object and FAQ composites recover text-group selection without hidi
   ] };
   const normalized = normalizeEditorSelectionGroups([legacyObject, legacyFaq]);
   assert.deepEqual(selectionIdsForElement(normalized[0].elements, normalized[0].elements[1]), ['box', 'copy']);
-  assert.deepEqual(selectionIdsForElement(normalized[0].elements, normalized[0].elements[0]), ['box']);
-  assert.deepEqual(selectionIdsForElement(normalized[1].elements, normalized[1].elements[1]), ['bubble', 'answer']);
+  assert.deepEqual(selectionIdsForElement(normalized[0].elements, normalized[0].elements[0]), ['box', 'copy']);
+  assert.deepEqual(selectionIdsForElement(normalized[1].elements, normalized[1].elements[1]), ['answer']);
   assert.deepEqual(selectionIdsForElement(normalized[1].elements, normalized[1].elements[0]), ['bubble']);
+  assert.equal(normalized[0].elements[0].groupId, normalized[0].elements[1].groupId);
+  assert.equal(normalized[1].elements[0].groupId, normalized[1].elements[1].groupId);
+});
+
+test('saved Q&A bubbles that shared one group migrate into independent objects', () => {
+  const elements = buildObjectPreset('qa-bubbles', { x: 100, y: 80, idFn: seqId() })
+    .map((element) => ({ ...element, groupId: 'legacy-shared-qa' }));
+  const [normalized] = normalizeEditorSelectionGroups([{ id: 'qa-block', elements }]);
+
+  assert.equal(new Set(normalized.elements.map((element) => element.groupId)).size, 2);
+  assert.deepEqual(selectionIdsForElement(normalized.elements, normalized.elements[0]), [normalized.elements[0].id]);
+  assert.deepEqual(selectionIdsForElement(normalized.elements, normalized.elements[1]), [normalized.elements[1].id]);
 });
 
 test('legacy speech-bubble layers normalize into one selectable and deletable element', () => {
@@ -252,6 +395,36 @@ test('pressing an already selected child preserves a multi-selection for group d
   assert.equal(shouldPreserveMultiSelectionOnPointerDown({ selected: true, selectionCount: 1, additive: false }), false);
   assert.equal(shouldPreserveMultiSelectionOnPointerDown({ selected: false, selectionCount: 4, additive: false }), false);
   assert.equal(shouldPreserveMultiSelectionOnPointerDown({ selected: true, selectionCount: 4, additive: true }), false);
+});
+
+test('blank space in a wide text box yields to the first visible element underneath', () => {
+  const elements = [
+    { id: 'image', type: 'image', src: '/product.png' },
+    { id: 'rule', type: 'line', shape: 'line' },
+    { id: 'blank-copy', type: 'text', text: '짧은 문구' },
+  ];
+  assert.equal(selectableElementBelowBlankText(elements, 'blank-copy', ['blank-copy', 'rule', 'image'], []).id, 'rule');
+  assert.equal(selectableElementBelowBlankText(elements, 'blank-copy', ['blank-copy', 'image'], []).id, 'image');
+});
+
+test('click-through skips another normal text box unless its rendered glyph line is hit', () => {
+  const elements = [
+    { id: 'image', type: 'image', src: '/product.png' },
+    { id: 'object-copy', type: 'text', text: '완성형 오브젝트', groupId: 'object', libraryItemId: 'text-box' },
+    { id: 'faq-copy', type: 'text', text: '독립 FAQ 문구', groupId: 'faq-card' },
+    { id: 'other-copy', type: 'text', text: '다른 문구' },
+    { id: 'current-copy', type: 'text', text: '현재 문구' },
+  ];
+  assert.equal(selectableElementBelowBlankText(elements, 'current-copy', ['current-copy', 'other-copy', 'image'], []).id, 'image');
+  assert.equal(selectableElementBelowBlankText(elements, 'current-copy', ['current-copy', 'other-copy', 'image'], ['other-copy']).id, 'other-copy');
+  assert.equal(selectableElementBelowBlankText(elements, 'current-copy', ['current-copy', 'faq-copy', 'image'], []).id, 'image');
+  assert.equal(selectableElementBelowBlankText(elements, 'current-copy', ['current-copy', 'object-copy', 'image'], []).id, 'object-copy');
+  assert.equal(selectableElementBelowBlankText([
+    { id: 'image', type: 'image', src: '/product.png' },
+    { id: 'template-copy', type: 'text', text: '템플릿 문구', fullTextHitArea: true },
+    { id: 'current-copy', type: 'text', text: '현재 문구' },
+  ], 'current-copy', ['current-copy', 'template-copy', 'image'], []).id, 'template-copy');
+  assert.equal(selectableElementBelowBlankText([{ id: 'locked', type: 'line', locked: true }], 'copy', ['locked'], []), null);
 });
 
 test('background opacity changes only the rendered color alpha', () => {
