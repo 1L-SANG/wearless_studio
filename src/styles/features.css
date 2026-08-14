@@ -346,14 +346,14 @@
 /* '의류 구현 진행중' 뒤 점 3개가 . → .. → ... 로 차오른다 — 진행되는 느낌(2026-08-14 사용자 결정).
    글자폭을 미리 차지해(레이아웃 고정) 점만 순차 등장, 1.6s 주기 반복. */
 .transition-dots { display: inline-block; text-align: left; }
-.transition-dots i { font-style: normal; opacity: 0; animation: transitionDot 1.6s steps(1) infinite; }
-.transition-dots i:nth-child(2) { animation-delay: .4s; }
-.transition-dots i:nth-child(3) { animation-delay: .8s; }
-@keyframes transitionDot {
-  0%, 24% { opacity: 0; }
-  25%, 75% { opacity: 1; }
-  76%, 100% { opacity: 0; }
-}
+.transition-dots i { font-style: normal; opacity: 0; animation: 1.6s steps(1) infinite; }
+/* 켜지는 시점만 다르고, 켜진 점은 주기 끝까지 유지 → '' → . → .. → ... 누적 */
+.transition-dots i:nth-child(1) { animation-name: transitionDot1; }
+.transition-dots i:nth-child(2) { animation-name: transitionDot2; }
+.transition-dots i:nth-child(3) { animation-name: transitionDot3; }
+@keyframes transitionDot1 { 0%, 24% { opacity: 0; } 25%, 100% { opacity: 1; } }
+@keyframes transitionDot2 { 0%, 49% { opacity: 0; } 50%, 100% { opacity: 1; } }
+@keyframes transitionDot3 { 0%, 74% { opacity: 0; } 75%, 100% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
   .transition-dots i { animation: none; opacity: 1; }
 }
@@ -1213,6 +1213,10 @@
 .sb-initial-reveal > .sb-actionbar {
   opacity: 0;
   transform: translate3d(0, 8px, 0);
+  /* 숨김 동안 상호작용·포커스·낭독까지 차단 — opacity 0 만으론 보이지 않는 버튼이 눌렸다(리뷰 P1).
+     visibility 는 이미지 로딩을 막지 않는다. */
+  visibility: hidden;
+  pointer-events: none;
 }
 .sb-initial-reveal.is-revealed > .page-head,
 .sb-initial-reveal.is-revealed > .sb-count-head,
@@ -1221,8 +1225,12 @@
 .sb-initial-reveal.is-revealed > .sb-actionbar {
   opacity: 1;
   transform: none;
-  transition: opacity .45s ease, transform .45s ease;
-  transition-delay: calc(var(--reveal-order, 0) * 90ms);
+  visibility: visible;
+  pointer-events: auto;
+  --reveal-delay: calc(var(--reveal-order, 0) * 90ms);
+  transition: opacity .45s ease, transform .45s ease, visibility 0s;
+  /* visibility 도 같은 지연으로 — 제 박자 전까지는 투명+비활성 상태를 유지 */
+  transition-delay: var(--reveal-delay), var(--reveal-delay), var(--reveal-delay);
 }
 @media (prefers-reduced-motion: reduce) {
   .sb-initial-reveal > .page-head,

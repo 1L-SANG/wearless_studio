@@ -1445,7 +1445,12 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
 }
 
 function StoryboardLoadingState() {
-  return <div aria-busy="true" aria-label="콘티보드를 불러오는 중이에요" />;
+  // 빈 div 의 aria-label 은 낭독되지 않을 수 있다 — 숨긴 텍스트 + status 로 알린다(리뷰 반영)
+  return (
+    <div role="status" aria-busy="true">
+      <span className="sr-only">콘티보드를 불러오는 중이에요</span>
+    </div>
+  );
 }
 
 function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, analysis], sourceBlocks = board) {
@@ -2798,7 +2803,8 @@ export function Storyboard() {
       aria-busy={!initialBoardRevealed || atomicSaving || undefined}
       onClickCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}
       onDragStartCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}>
-      {initialBoardRevealed && doneBlocked && <DoneGuardModal />}
+      {/* 완료 가드는 게이트를 기다리지 않는다 — 기다리면 잠금 없이 보드가 활성화되는 창이 생긴다(리뷰 P1) */}
+      {doneBlocked && <DoneGuardModal />}
       <PageHead title="상세페이지 초안 구성" sub="지금 보이는 이미지들은 예시입니다. 느낌만을 보고 필요한 컷은 수정하며 상세페이지를 생성해보세요." />
       <div className="sb-count-head">
         구성컷: <strong>{cutCount}</strong>개

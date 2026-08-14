@@ -340,7 +340,9 @@ export function ToastProvider({ children }) {
   return (
     <ToastCtx.Provider value={{ push, dismiss }}>
       {children}
-      <div className="toast-host">
+      {/* body 포털: 확정 잠금이 #root 를 inert 로 만들어도 토스트(유실 경고 등)는
+          접근성 트리에 남아 낭독·표시된다 (2026-08-14 리뷰 P2). */}
+      {createPortal(<div className="toast-host">
         {list.map((t) => {
           const activate = () => {
             if (!t.onClick) return;
@@ -367,7 +369,7 @@ export function ToastProvider({ children }) {
             </div>
           );
         })}
-      </div>
+      </div>, document.body)}
     </ToastCtx.Provider>
   );
 }

@@ -120,6 +120,6 @@ test('the released gate reveals board chrome immediately and sections in capped 
   assert.match(revealStyles, /\.sb-initial-reveal \.sb-deck/);
   assert.match(revealStyles, /transform: translate3d\(0, 8px, 0\)/);
   assert.match(revealStyles, /transition: opacity \.45s ease, transform \.45s ease/);
-  assert.match(revealStyles, /transition-delay: calc\(var\(--reveal-order, 0\) \* 90ms\)/);
+  assert.match(revealStyles, /--reveal-delay: calc\(var\(--reveal-order, 0\) \* 90ms\)/);
   assert.match(revealStyles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?transition: none;[\s\S]*?transition-delay: 0s/);
 });

@@ -167,7 +167,18 @@ function DetailPageJobRibbon() {
 export function ChromeLayout() {
   const { session } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const { pathname } = location;
+  // 도착 전환은 state 로 한 번만 — 래치에 옮겨 담고 history state 는 즉시 소비한다.
+  // 오버레이 마운트를 state 에 직접 걸면 소비 순간 언마운트되고, 소비를 안 하면
+  // 뒤로가기 재진입마다 4.7초 오버레이가 재생된다(리뷰 P2).
+  const [transitionKey, setTransitionKey] = useState(null);
+  useEffect(() => {
+    if (pathname === '/create/storyboard' && location.state?.showMannequinTransition) {
+      setTransitionKey(location.key);
+      navigate(pathname, { replace: true, state: null });
+    }
+  }, [pathname, location.state, location.key, navigate]);
   const storyboardOwnsEntrance = pathname === '/create/storyboard';
   const loadAccount = useAppStore((s) => s.loadAccount);
   const loadCatalogs = useAppStore((s) => s.loadCatalogs);
@@ -187,8 +198,8 @@ export function ChromeLayout() {
       </div>
       <TopNav />
       <MannequinCompletionToast />
-      {pathname === '/create/storyboard' && location.state?.showMannequinTransition && (
-        <StoryboardTransitionOverlay key={location.key} />
+      {pathname === '/create/storyboard' && transitionKey && (
+        <StoryboardTransitionOverlay key={transitionKey} />
       )}
       {/* 두 잡 리본이 동시에 뜰 수 있다(마네킹+상세페이지) — 각자 sticky top:60px 이면
           서로 겹치므로 스택 컨테이너가 sticky 를 소유하고 리본은 static 으로 쌓는다(codex F8). */}

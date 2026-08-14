@@ -109,7 +109,7 @@ test('missing, stale, invalidated, and failed entries stay unavailable for the e
     storyboardSource.indexOf('function StoryboardLoadingState()'),
     storyboardSource.indexOf('function prepareStoryboardEntry'),
   );
-  assert.match(loadingState, /return <div aria-busy="true" aria-label="콘티보드를 불러오는 중이에요" \/>/);
+  assert.match(loadingState, /role="status" aria-busy="true"[\s\S]*?콘티보드를 불러오는 중이에요/);
   assert.doesNotMatch(loadingState, /PageHead|sb-loading-|StoryboardLoadingFrame/);
 });
 

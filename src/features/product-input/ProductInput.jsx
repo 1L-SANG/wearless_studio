@@ -519,14 +519,18 @@ export function ProductInput() {
     if (!promotionLocked) return undefined;
     const blockUnload = (event) => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', blockUnload);
-    // 베일은 포인터만 막는다 — Shift+Tab 으로 뒤 폼에 들어가 승격 스냅샷 밖의 편집을 하거나,
-    // 헤더 버튼 Enter 로 SPA 이탈이 가능했다(P1 리뷰). 앱 루트를 inert 로 잠가 키보드·포커스까지
-    // 차단한다. 오버레이는 body 포털이라 inert 밖에 남는다.
-    const appRoot = document.getElementById('root');
-    appRoot?.setAttribute('inert', '');
+    // 베일은 포인터만 막는다 — Shift+Tab 으로 뒤 폼 편집·헤더 Enter 로 SPA 이탈이 가능했다(P1).
+    // #root 만 잠그면 body 로 포털된 모달(커스텀 의류 등)이 살아남아 승격 스냅샷 밖 편집이
+    // 가능하다(P1 후속) — 베일·토스트를 뺀 body 직계 전부를 inert 로 잠근다.
+    const spared = (el) => el.classList?.contains('input-promotion-transition')
+      || el.classList?.contains('toast-host');
+    const locked = [...document.body.children].filter(
+      (el) => !spared(el) && !el.hasAttribute('inert'),
+    );
+    locked.forEach((el) => el.setAttribute('inert', ''));
     return () => {
       window.removeEventListener('beforeunload', blockUnload);
-      appRoot?.removeAttribute('inert');
+      locked.forEach((el) => el.removeAttribute('inert'));
     };
   }, [promotionLocked]);
 
