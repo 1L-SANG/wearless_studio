@@ -21,6 +21,15 @@ export const toMatchItem = (item, selOrder) => ({
   ...(selOrder != null ? { selOrder } : {}),
 });
 
+// 누끼 상태 폴링은 분석을 통째로 치환하면 안 된다 — 저장 왕복 중에 5초 틱이 끼면
+// 편집 중이던 값이 한 틱 되돌아간다. 폴링이 새로 가져오는 정보는 매칭 목록뿐이라
+// 그것만 얹는다. 목록이 비정상(배열 아님)이면 아무것도 바꾸지 않는다.
+export const mergeMatchClothing = (prev, nextAnalysis) => {
+  const next = nextAnalysis?.matchClothing;
+  if (!prev || !Array.isArray(next)) return prev;
+  return { ...prev, matchClothing: next };
+};
+
 export const normalizeMatchClothingSelection = (items) => {
   const selectedOrder = new Map(
     (items || []).filter((item) => item.selected)
