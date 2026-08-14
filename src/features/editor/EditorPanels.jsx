@@ -635,7 +635,7 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
 }
 
 /* ---------- 의류 (wardrobe library) ---------- */
-export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, onInsert, onUpload, onVaryImage, onDeleteSelected, onFreshSeen, onImageDragStart, onImageDragEnd }) {
+export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading = false, onInsert, onUpload, onVaryImage, onDeleteImage, isImageUsed, onFreshSeen, onImageDragStart, onImageDragEnd }) {
   // wardrobe 그룹 키 = colorId | 'misc' — 표시명은 colorOpts 에서 파생 (계약 §3.6)
   const colorFor = (group) => {
     if (group === 'misc') return { hex: '#d4d4d8', name: '기타', neutral: true };
@@ -645,12 +645,24 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, onInsert,
   };
   const [collapsed, setCollapsed] = useState({});
   const toggle = (group) => setCollapsed((c) => ({ ...c, [group]: !c[group] }));
-  const [sel, setSel] = useState(() => new Set());
-  const toggleSel = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   return (
     <div className="ward-panel">
-      {pendingSlot && <div className="ward-fill-banner"><Icon name="image" size={15} />빈 칸에 넣을 의류를 선택하세요</div>}
-      <Button variant="ghost" block icon="upload" onClick={onUpload} style={{ marginBottom: 16 }}>직접 이미지 업로드하기</Button>
+      {pendingSlot && (
+        <div className="ward-fill-banner" role="status" aria-live="polite">
+          <span className="ward-fill-banner-icon"><Icon name="imagePlus" size={18} /></span>
+          <span>
+            <strong>프레임에 넣을 사진을 선택하세요</strong>
+            <small>아래 사진을 한 번 누르면 바로 들어가요.</small>
+          </span>
+        </div>
+      )}
+      <Button variant="ghost" block icon="upload" onClick={onUpload} disabled={uploading} style={{ marginBottom: uploading ? 8 : 16 }}>직접 이미지 업로드하기</Button>
+      {uploading && (
+        <div className="ward-upload-status" role="status" aria-live="polite">
+          <Icon name="loader" size={16} className="spin" />
+          <span>의류 이미지를 불러오는 중이에요</span>
+        </div>
+      )}
       {Object.entries(wardrobe).map(([group, imgs]) => {
         const c = colorFor(group);
         const open = !collapsed[group];
@@ -666,32 +678,34 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, onInsert,
             </button>
             {open && (
               <div className="wardrobe-grid">
-                {imgs.map((im) => im.loading ? (
-                  <div className="ward-cell loading" key={im.id}><Icon name="loader" size={18} className="spin" style={{ color: 'var(--fg-3)' }} /></div>
-                ) : (
-                  <div className={`ward-cell${sel.has(im.id) ? ' checked' : ''}${im.fresh ? ' fresh' : ''}`} key={im.id} onClick={() => onInsert(im)} title="클릭하거나 프레임으로 끌어 넣기"
-                    draggable onDragStart={(e) => { const image = e.currentTarget.querySelector('img'); e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData(WARDROBE_IMAGE_MIME, encodeWardrobeImage(im, { width: image?.naturalWidth, height: image?.naturalHeight })); onImageDragStart?.(); }}
-                    onDragEnd={() => onImageDragEnd?.()}
-                    onAnimationEnd={im.fresh ? () => onFreshSeen && onFreshSeen(im.id) : undefined}>
-                    <img src={thumbUrl(im.src, 240)} alt="" loading="lazy" decoding="async" />
-                    <button className="ward-check" onClick={(e) => { e.stopPropagation(); toggleSel(im.id); }} title="선택">
-                      {sel.has(im.id) && <Icon name="check" size={13} />}
-                    </button>
-                    <button className="ai-flag" onClick={(e) => { e.stopPropagation(); onVaryImage(im); }} title="AI로 편집"><Icon name="wand" size={12} /><span>AI 편집</span></button>
-                  </div>
-                ))}
+                {imgs.map((im) => {
+                  if (im.loading) return (
+                    <div className="ward-cell loading" key={im.id}><Icon name="loader" size={18} className="spin" style={{ color: 'var(--fg-3)' }} /></div>
+                  );
+                  const used = Boolean(isImageUsed?.(im));
+                  return (
+                    <div className={`ward-cell${im.fresh ? ' fresh' : ''}${pendingSlot ? ' select-target' : ''}`} key={im.id} onClick={(e) => { const image = e.currentTarget.querySelector('img'); onInsert({ ...im, width: image?.naturalWidth || im.width, height: image?.naturalHeight || im.height }); }} title={pendingSlot ? '이 사진을 프레임에 넣기' : '클릭하거나 프레임으로 끌어 넣기'}
+                      draggable onDragStart={(e) => { const image = e.currentTarget.querySelector('img'); e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData(WARDROBE_IMAGE_MIME, encodeWardrobeImage(im, { width: image?.naturalWidth, height: image?.naturalHeight })); onImageDragStart?.(); }}
+                      onDragEnd={() => onImageDragEnd?.()}
+                      onAnimationEnd={im.fresh ? () => onFreshSeen && onFreshSeen(im.id) : undefined}>
+                      <img src={thumbUrl(im.src, 240)} alt="" loading="lazy" decoding="async" />
+                      {pendingSlot && <span className="ward-pick-check" aria-hidden="true"><Icon name="check" size={15} /></span>}
+                      <button type="button" className={`ward-trash${used ? ' disabled' : ''}`} draggable={false}
+                        aria-label={used ? '현재 에디팅에 사용 중인 사진' : '의류 사진 삭제'} aria-disabled={used}
+                        title={used ? '현재 에디팅에 사용 중이라 삭제할 수 없어요' : '사진 삭제'}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => { e.stopPropagation(); onDeleteImage(im); }}>
+                        <Icon name="trash" size={13} />
+                      </button>
+                      <button className="ai-flag" onClick={(e) => { e.stopPropagation(); onVaryImage(im); }} title="AI로 편집"><Icon name="wand" size={12} /><span>AI 편집</span></button>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
         );
       })}
-      {sel.size > 0 && (
-        <div className="ward-delbar">
-          <button type="button" className="ward-del" onClick={() => { onDeleteSelected([...sel]); setSel(new Set()); }}>
-            <Icon name="trash" size={15} />삭제 ({sel.size})
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -817,7 +831,7 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, onCropReset, onRepla
 const TEXT_PALETTE = ['#0e0d14', '#898989', '#ffffff', '#4f88c9', '#d92d20', '#067647'];
 const HL_PALETTE = ['#fef3c7', '#dbeafe', '#dcfce7', '#fee2e2', '#f3f4f6', '#0e0d14'];
 const WEIGHTS = [{ value: 300, label: 'Light' }, { value: 400, label: 'Regular' }, { value: 500, label: 'Medium' }, { value: 600, label: 'SemiBold' }, { value: 700, label: 'Bold' }];
-export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, onLayer, onAddText, onAddGarmentText }) {
+export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, onLayer, onAddText }) {
   const has = el && el.type === 'text';
   const isBubble = has && el.shape === 'bubble';
   const s = (has && el.style) || {};
@@ -829,19 +843,14 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
   return (
     <div className="fig-panel">
       <button type="button" className="add-text-btn" onClick={onAddText}><Icon name="type" size={17} />텍스트 추가</button>
-      {onAddGarmentText && (
-        <>
-          <button type="button" className="add-text-btn" onClick={onAddGarmentText} style={{ marginTop: 8 }}><Icon name="type" size={17} />옷 글자 덮기</button>
-          <div className="panel-sub" style={{ marginTop: 8 }}>AI 컷의 뭉갠 글자 위에 정확한 글자를 얹어요. 정면·평평한 프린트에 잘 맞아요.</div>
-        </>
-      )}
       {!has ? (
         <div className="panel-sub" style={{ marginTop: 18 }}>위 버튼으로 텍스트를 추가하거나, 캔버스에서 텍스트를 클릭해 편집해요.</div>
       ) : (
         <>
           <PanelSection title="텍스트 박스" first>
             <div className="field-2up">
-              <NumField iconText="가로" value={Math.round(el.w || 120)} min={1} max={10000} onChange={(w) => onChange({ w })} />
+              <NumField iconText="가로" value={Math.round(el.w || 120)} min={1} max={10000}
+                onChange={(w) => onChange({ w, ...(!isBubble && el.textSizing === 'auto' ? { textSizing: 'fixed' } : {}) })} />
               <NumField icon="rotate" labelText="회전" value={el.rotate || 0} min={-180} max={180} suffix="°" onChange={(rotate) => onChange({ rotate })} />
             </div>
             <div className="panel-sub" style={{ marginTop: 8 }}>텍스트는 좌우 가장자리로 폭을 조절하고, 회전은 여기서 정확히 입력할 수 있어요.</div>
@@ -961,6 +970,17 @@ export function FramePanel({ onAdd, onDragStart, onDragEnd, recommendGender, onP
                   }}>
                     {slot.src && <img src={slot.src} alt="" loading="lazy" draggable={false} />}
                   </i>
+                ))}
+                {!f.preview && (f.elements || []).filter((element) => element.type === 'text').map((element, index) => (
+                  <b className="frame-native-copy" key={`${element.text}-${index}`} style={{
+                    left: `${element.x / 10}%`,
+                    top: `${element.y / f.h * 100}%`,
+                    width: `${element.w / 10}%`,
+                    height: `${element.h / f.h * 100}%`,
+                    fontSize: `${Math.max(3, (element.style?.size || 20) / 8)}px`,
+                    fontWeight: element.style?.weight || 400,
+                    textAlign: element.style?.align || 'left',
+                  }}>{element.text}</b>
                 ))}
                 {f.preview && <img src={f.preview} alt="" loading="lazy" draggable={false} />}
               </div>

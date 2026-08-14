@@ -9,6 +9,8 @@ import {
   decodeEditorImageDrag,
   encodeEditorImageDrag,
   findImageDropSlot,
+  fitImageToFrameBlock,
+  fitImageToFrameSlot,
   pendingImageImportTarget,
   placeImageInBlock,
   viewportPointToBlock,
@@ -79,6 +81,35 @@ test('a dropped portrait image is contained inside the target block and centered
   }), { x: 418, y: 40, w: 165, h: 220 });
 });
 
+test('the two-column frame keeps its width and derives the exact portrait height from the source', () => {
+  let sequence = 0;
+  const block = buildFrameBlock('split2', (prefix) => `${prefix}${++sequence}`);
+  const [slot] = block.elements.filter((element) => element.type === 'image');
+
+  assert.equal(slot.w, 450);
+  assert.deepEqual(fitImageToFrameSlot(slot, { width: 900, height: 1460 }), { h: 730 });
+  assert.deepEqual(fitImageToFrameSlot({ ...slot, imageSizing: undefined }, { width: 900, height: 1460 }), {});
+});
+
+test('the image-description frame grows each photo box to its source ratio and moves its own copy below it', () => {
+  let sequence = 0;
+  const block = buildFrameBlock('image-description-3', (prefix) => `${prefix}${++sequence}`);
+  const slots = block.elements.filter((element) => element.type === 'image');
+  const firstSlot = slots[0];
+  const firstCopy = block.elements.filter((element) => element.imageFlowGroup === firstSlot.imageFlowGroup && element.type === 'text');
+  const otherCopy = block.elements.filter((element) => element.imageFlowGroup === slots[1].imageFlowGroup && element.type === 'text');
+
+  const fitted = fitImageToFrameBlock(block, firstSlot.id, { width: 900, height: 1500 });
+  const fittedSlot = fitted.elements.find((element) => element.id === firstSlot.id);
+  const fittedFirstCopy = fitted.elements.filter((element) => element.imageFlowGroup === firstSlot.imageFlowGroup && element.type === 'text');
+  const fittedOtherCopy = fitted.elements.filter((element) => element.imageFlowGroup === slots[1].imageFlowGroup && element.type === 'text');
+
+  assert.equal(fittedSlot.h, 450);
+  assert.deepEqual(fittedFirstCopy.map((element) => element.y), [645, 688]);
+  assert.deepEqual(fittedOtherCopy.map((element) => element.y), otherCopy.map((element) => element.y));
+  assert.deepEqual(firstCopy.map((element) => element.y), [415, 458]);
+});
+
 test('image placement clamps edge drops without escaping the block frame', () => {
   assert.deepEqual(placeImageInBlock({
     blockHeight: 300,
@@ -123,18 +154,45 @@ test('image frames show an exact placement guide for wardrobe and external file 
   assert.match(editorSource, /types\.includes\('Files'\)/);
   assert.match(editorSource, /onDropImageFiles\?\.\(files\)/);
   assert.match(editorSource, /onDropImageFiles=\{\(files\) => onDropImageFiles\(block\.id, files, null, el\.id\)\}/);
-  assert.match(editorSource, /imageDropOver && <ImageDropGuide scale=\{scale\} filled=\{false\} width=\{el\.w\} height=\{el\.h\} rotate=\{el\.rotate\}/);
-  assert.match(editorSource, /이 프레임에 \{filled \? '교체' : '넣기'\}/);
+  assert.match(editorSource, /imageDropOver && <ImageDropGuide scale=\{scale\} width=\{el\.w\} height=\{el\.h\} rotate=\{el\.rotate\}/);
+  assert.doesNotMatch(editorSource, /이 프레임에 \{filled \? '교체' : '넣기'\}/);
+  assert.doesNotMatch(editorSource, /여기에 사진이 들어가요/);
   assert.match(stylesSource, /\.image-drop-guide\s*\{[^}]*pointer-events:\s*none/s);
   assert.match(stylesSource, /\.image-drop-guide\s*\{[^}]*background-image:\s*linear-gradient/s);
   assert.match(stylesSource, /\.image-drop-guide-content\s*\{[^}]*rotate\(var\(--drop-counter-rotate\)\) scale\(var\(--drop-inv/s);
   assert.match(stylesSource, /animation:\s*image-drop-target-pulse/);
 });
 
+test('frame images show the full source and a wardrobe click fills the pending slot immediately', () => {
+  assert.match(editorSource, /objectFit: el\.fit \|\| 'cover'/);
+  assert.match(editorSource, /return fitImageToFrameBlock\(nextBlock, elId, image\)/);
+  assert.match(editorSource, /const requestSlotImage = \(blockId, el\) => \{[\s\S]*selectEl\(blockId, el, false, true\);[\s\S]*setPendingSlot\(\{ blockId, elId: el\.id \}\);[\s\S]*setTab\('wardrobe'\);[\s\S]*\}/);
+  assert.match(editorSource, /if \(pendingSlot\) \{[\s\S]*setSlotImage\(pendingSlot\.blockId, pendingSlot\.elId,[\s\S]*setPendingSlot\(null\);[\s\S]*setTab\('image'\);[\s\S]*return;/);
+  assert.match(panelSource, /onClick=\{\(e\) => \{ const image = e\.currentTarget\.querySelector\('img'\); onInsert\(\{ \.\.\.im, width: image\?\.naturalWidth \|\| im\.width, height: image\?\.naturalHeight \|\| im\.height \}\); \}\}/);
+});
+
+test('pending frame placement clearly invites one-click selection in the wardrobe', () => {
+  assert.match(panelSource, /프레임에 넣을 사진을 선택하세요/);
+  assert.match(panelSource, /아래 사진을 한 번 누르면 바로 들어가요\./);
+  assert.match(panelSource, /pendingSlot \? ' select-target' : ''/);
+  assert.match(panelSource, /pendingSlot && <span className="ward-pick-check" aria-hidden="true"><Icon name="check" size=\{15\} \/><\/span>/);
+  assert.match(stylesSource, /\.ward-cell\.select-target:hover\s*\{[^}]*box-shadow:\s*0 0 0 2px var\(--link\)/s);
+  assert.match(stylesSource, /\.ward-pick-check\s*\{[^}]*opacity:\s*0[^}]*pointer-events:\s*none/s);
+  assert.match(stylesSource, /\.ward-cell\.select-target:hover \.ward-pick-check,[\s\S]*opacity:\s*1/);
+});
+
+test('pending frame placement is cancelled when the user selects something else', () => {
+  assert.match(editorSource, /if \(pendingSlot && tab !== 'wardrobe'\) setPendingSlot\(null\)/);
+  assert.match(editorSource, /const selectEl = \(blockId, el, additive, keepTab\) => \{[\s\S]*setPendingSlot\(null\);/);
+  assert.match(editorSource, /const clearSel = \(\) => \{[^}]*setPendingSlot\(null\);[^}]*\}/);
+});
+
 test('empty template frames always label the exact place where a photo goes', () => {
   assert.match(editorSource, /aria-label="이 프레임에 사진 넣기"/);
   assert.match(editorSource, /<Icon name="imagePlus" size=\{compactSlot \? 22 : 28\}/);
   assert.match(editorSource, /!compactSlot && <span>여기에 사진 넣기<\/span>/);
+  assert.match(editorSource, /onPointerDown=\{\(e\) => e\.stopPropagation\(\)\}/);
+  assert.match(editorSource, /const requestSlotImage = \(blockId, el\) => \{[\s\S]*selectEl\(blockId, el, false, true\);[\s\S]*setPendingSlot\(\{ blockId, elId: el\.id \}\);[\s\S]*setTab\('wardrobe'\);[\s\S]*\}/);
   assert.match(stylesSource, /\.el-slot\.checkerboard\s*\{[^}]*background-image:\s*linear-gradient/s);
 });
 
@@ -179,14 +237,13 @@ test('uploaded editor images wait for a renderable stable asset URL before showi
   assert.match(editorSource, /const slot = slotId[\s\S]{0,240}element\.id === slotId/);
 });
 
-test('hidden quick toolbars cannot intercept the canvas and selection alone does not reveal them', () => {
+test('quick toolbars stay non-interactive by default and remain open for the selected block', () => {
   const styles = readFileSync(new URL('../../src/styles/features.css', import.meta.url), 'utf8');
   const quickRule = styles.match(/\.canvas-block \.quick \{[^}]+\}/s)?.[0] || '';
 
   assert.match(quickRule, /pointer-events:\s*none/);
   assert.match(quickRule, /visibility:\s*hidden/);
-  assert.match(styles, /\.canvas-block:hover \.quick \{[^}]*visibility:\s*visible[^}]*pointer-events:\s*auto/s);
-  assert.doesNotMatch(styles, /\.canvas-block\.on \.quick/);
+  assert.match(styles, /\.canvas-block:hover \.quick, \.canvas-block\.on \.quick \{[^}]*visibility:\s*visible[^}]*pointer-events:\s*auto/s);
 });
 
 test('quick toolbar has a pointer bridge across its visual gap', () => {

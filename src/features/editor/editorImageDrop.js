@@ -56,6 +56,37 @@ export function placeImageInBlock({
   return { x, y, w, h };
 }
 
+export function fitImageToFrameSlot(slot, image) {
+  if (!slot || slot.imageSizing !== 'natural-height') return {};
+  const sourceWidth = Number(image?.width || image?.w);
+  const sourceHeight = Number(image?.height || image?.h);
+  const frameWidth = Number(slot.w);
+  if (!(sourceWidth > 0) || !(sourceHeight > 0) || !(frameWidth > 0)) return {};
+  return { h: Math.max(24, Math.round(frameWidth * sourceHeight / sourceWidth)) };
+}
+
+export function fitImageToFrameBlock(block, slotId, image) {
+  const slot = block?.elements?.find((element) => element.id === slotId);
+  const geometry = fitImageToFrameSlot(slot, image);
+  if (!Object.keys(geometry).length) return block;
+
+  const resizedElements = block.elements.map((element) => (
+    element.id === slotId ? { ...element, ...geometry } : element
+  ));
+  if (!slot.imageFlowGroup) return { ...block, elements: resizedElements };
+
+  const resizedSlot = resizedElements.find((element) => element.id === slotId);
+  const flowTop = resizedSlot.y + resizedSlot.h + (Number(slot.imageFlowGap) || 20);
+  return {
+    ...block,
+    elements: resizedElements.map((element) => (
+      element.id !== slotId && element.imageFlowGroup === slot.imageFlowGroup
+        ? { ...element, y: flowTop + (Number(element.imageFlowOffset) || 0) }
+        : element
+    )),
+  };
+}
+
 export function findImageDropSlot(elements, point) {
   const frameSlots = (elements || []).filter((element) => (
     element.type === 'image' && element.frameSlot

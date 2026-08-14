@@ -165,6 +165,92 @@ test('auto-height text expands its pointer target without covering adjacent tabl
   assert.match(editorStylesSource, /bottom: calc\(-3px \* var\(--canvas-inv, 1\)\)/);
 });
 
+test('canvas routes every movable element through one pointer drag without native text ranges', () => {
+  const elementPick = editorSource.slice(
+    editorSource.indexOf('const pick = (e) => {'),
+    editorSource.indexOf('const finishClick = (e) => {'),
+  );
+  const beforeTextDrag = elementPick.slice(0, elementPick.indexOf('if (isolateText)'));
+  const textDragPick = elementPick.slice(
+    elementPick.indexOf('if (isolateText)'),
+    elementPick.indexOf('const preserveSelection'),
+  );
+
+  assert.doesNotMatch(beforeTextDrag, /e\.preventDefault\(\)/);
+  assert.match(textDragPick, /e\.preventDefault\(\)/);
+  assert.match(elementPick, /window\.getSelection\?\.\(\)\?\.removeAllRanges\(\)/);
+  assert.match(elementPick, /onElementDragStart\?\.\(e, el, \{ isolateText, preserveSelection \}/);
+  assert.doesNotMatch(editorSource, /onMultiDragStart|onTextDragStart|onObjectGroupDragStart/);
+  assert.match(editorSource, /draggable=\{false\}/);
+  assert.match(editorSource, /data-editor-snap-guide="vertical"/);
+  assert.match(editorSource, /data-editor-snap-guide="horizontal"/);
+  assert.match(editorStylesSource, /\.editor-snap-guide\.vertical/);
+  assert.match(editorStylesSource, /\.editor-snap-guide\.horizontal/);
+  assert.match(editorStylesSource, /\.editor-snap-guide\.vertical\s*\{[^}]*width:\s*calc\(\.5px \* var\(--inv, 1\)\)/s);
+  assert.match(editorStylesSource, /\.editor-snap-guide\.horizontal\s*\{[^}]*height:\s*calc\(\.5px \* var\(--inv, 1\)\)/s);
+  assert.match(editorStylesSource, /\.ed-canvas\s*\{[^}]*user-select:\s*none[^}]*-webkit-user-select:\s*none/s);
+  assert.match(editorStylesSource, /\.el-text:not\(\.editing\)\s*\{[^}]*user-select:\s*none[^}]*touch-action:\s*none/s);
+  assert.match(editorStylesSource, /\.el-text\.editing\s*\{[^}]*user-select:\s*text[^}]*touch-action:\s*auto/s);
+  assert.match(editorSource, /onDoubleClick=\{preview \? undefined : \(e\) => \{\s*e\.stopPropagation\(\); pendingBubbleFit\.current = null; onEdit\(el\.id\)/s);
+  assert.match(editorSource, /onDoubleClick=\{\(e\) => \{ e\.stopPropagation\(\); pendingTextSize\.current = null; onEdit\(el\.id\)/);
+});
+
+test('entering text edit places the caret at the end for normal text and speech bubbles', () => {
+  assert.match(editorSource, /range\.selectNodeContents\(node\);\s*range\.collapse\(false\);/s);
+  assert.match(editorSource, /focusEditableAtEnd\(isSpeechBubbleElement\(el\) \? textRef\.current : ref\.current\)/);
+  assert.doesNotMatch(editorSource, /setTimeout\(\(\) => (?:textRef|ref)\.current/);
+});
+
+test('new ordinary text starts as an immediately editable Figma-style point text box', () => {
+  const addTextSource = editorSource.slice(
+    editorSource.indexOf('const addText ='),
+    editorSource.indexOf('/* ---- 정보 블록', editorSource.indexOf('const addText =')),
+  );
+
+  assert.match(addTextSource, /w:\s*12, h:\s*45, text:\s*'', textSizing:\s*'auto'/);
+  assert.match(addTextSource, /setEditEl\(el\.id\)/);
+  assert.match(editorSource, /const previewAutoTextSize = useCallback/);
+  assert.match(editorSource, /naturalTextWidth\(node, value\)/);
+  assert.match(editorSource, /h:\s*Math\.max\(1, Math\.ceil\(node\.scrollHeight\)\)/);
+  assert.match(editorSource, /onInput=\{\(e\) => \{ if \(editing\) previewAutoTextSize\(e\.currentTarget\); \}\}/);
+  assert.match(editorSource, /if \(nextSize && onTextCommit\) onTextCommit\(blockId, el\.id, value, nextSize\)/);
+});
+
+test('manually resizing point text converts it into a fixed text box', () => {
+  assert.match(editorSource, /elNow\?\.type === 'text' && elNow\.shape !== 'bubble' && elNow\.textSizing === 'auto' \? \{ textSizing: 'fixed' \} : \{\}/);
+  assert.match(editorSource, /height: el\.textSizing === 'fixed' \? el\.h : 'auto'/);
+  assert.match(editorPanelsSource, /onChange\(\{ w, \.\.\.\(!isBubble && el\.textSizing === 'auto' \? \{ textSizing: 'fixed' \} : \{\}\) \}\)/);
+});
+
+test('block quick actions stay visible while the top-level block is selected', () => {
+  assert.match(editorStylesSource, /\.canvas-block:hover \.quick, \.canvas-block\.on \.quick\s*\{[^}]*opacity:\s*1[^}]*visibility:\s*visible[^}]*pointer-events:\s*auto/s);
+});
+
+test('shared pointer drag covers frame controls, movable group members, rotation bounds, and cleanup', () => {
+  const slotButtonStart = editorSource.indexOf('<button className={`slot-add');
+  const slotButton = editorSource.slice(slotButtonStart, editorSource.indexOf('</button>', slotButtonStart));
+  const pointerDrag = editorSource.slice(
+    editorSource.indexOf('const startPointerSelectionDrag ='),
+    editorSource.indexOf('const startElementDrag ='),
+  );
+
+  assert.match(slotButton, /onPointerDown=\{\(e\) => e\.stopPropagation\(\)\}/);
+  assert.doesNotMatch(slotButton, /if \(draggedPointer\.current\) return/);
+  assert.match(pointerDrag, /!candidate\.hidden/);
+  assert.match(pointerDrag, /!candidate\.locked/);
+  assert.match(pointerDrag, /nodeById\[candidate\.id\]/);
+  assert.match(pointerDrag, /getBoundingClientRect\(\)/);
+  assert.match(pointerDrag, /activePointerDragCleanup\.current = cleanup/);
+  assert.match(editorSource, /activePointerDragCleanup\.current\?\.\(\)/);
+});
+
+test('editor copy and paste shortcuts duplicate canvas selections without stealing typing shortcuts', () => {
+  assert.match(editorSource, /mod && !typing && !kb\.current\.croppingOn && copyKey && kb\.current\.copy\?\.\(\)/);
+  assert.match(editorSource, /mod && !typing && !kb\.current\.croppingOn && pasteKey && kb\.current\.paste\?\.\(\)/);
+  assert.match(editorSource, /copy:\s*copySelectedElements, paste:\s*pasteCopiedElements/);
+  assert.match(editorSource, /setSelEls\(pasted\.selectedIds\)/);
+});
+
 test('text numeric controls allow an empty editing draft and commit the finished number', () => {
   assert.equal(typeof editorAppearance.commitNumberDraft, 'function');
   assert.equal(editorAppearance.commitNumberDraft('', { min: 1, max: 10000, fallback: 24 }), 24);
