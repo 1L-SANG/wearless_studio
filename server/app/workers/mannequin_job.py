@@ -740,6 +740,45 @@ def gate_decision(s, pillow_verdict_str: str, p2) -> tuple[bool, bool]:
     return pillow_reject, isinstance(p2, dict) and p2.get("verdict") == "retry"
 
 
+# ── 매칭 하의(코디 바지) 정체성 게이트 (순수) ──────────────────────────────────
+# 바지 판정은 주상품 QC 와 **같은 1콜** 안에서 나온다(image_qc.verdict 에 match_image 첨부).
+# 여기 함수들은 그 결과(p2)를 읽어 재롤/드롭만 정한다 — AI 콜을 새로 만들지 않는다.
+
+def _pants_qc_ref(s, match_img):
+    """AG-P2 verdict 에 넘길 바지 참조. 플래그 off 거나 매칭 없으면 None(요청 불변).
+
+    None 을 주면 image_qc.verdict 가 기존과 바이트 단위로 동일하게 돈다(매칭 필드·이미지 없음).
+    """
+    if match_img is None or getattr(s, "mannequin_pants_qc", "off") == "off":
+        return None
+    return match_img
+
+
+def pants_gate(s, p2) -> bool:
+    """enforce 且 바지 하드 게이트(matching_critical_errors) 위반 → 이 컷 출고 불가.
+
+    matching_fidelity 점수는 보지 않는다 — 주름·미세광택은 점수만 기록하고 막지 않는다(요구 3).
+    하드 게이트 4개(색·종류·통·구조)만 재롤/드롭 사유다.
+    """
+    return (getattr(s, "mannequin_pants_qc", "off") == "enforce"
+            and isinstance(p2, dict) and bool(p2.get("matching_critical_errors")))
+
+
+def _pants_shippable(s, p2) -> bool:
+    """구제 풀 admission 가드 — 바지 하드 게이트 걸린 후보는 salvage 금지(요구 6).
+
+    shadow/off 는 항상 True(관측만) — 무엇도 드롭하지 않는다.
+    """
+    return not pants_gate(s, p2)
+
+
+def _pants_region_mode(s, match_img) -> str:
+    """편집 전후 바지영역 픽셀 비교 모드: 'off'|'shadow'|'enforce'. 매칭 없으면 항상 off."""
+    if match_img is None:
+        return "off"
+    return getattr(s, "mannequin_pants_qc", "off")
+
+
 #: enforce 에서 **실제로 게이트하는** 축. wearGeometry 는 아직 여기 없다 — 보정이
 #: 통과하지 못했다(2026-08-12: 전체 프레임·크롭 컴포지트 양쪽에서 진양성 2건을 모두
 #: pass 로 판정). 축을 추가하는 것은 그 게이트를 통과시킨 뒤의 별도 변경이다.
@@ -906,6 +945,18 @@ async def _apply_untuck_postpass(
         await _emit(pool, job_id, "step", {
             **summary, "untuck_outcome": "failed", "reason": broken})
         return res
+    # 매칭 하의 보존: untuck 은 상의 밑단(허리 위)만 빼야 한다. 바지 영역(엉덩이 아래)이 색·폭·
+    # 구조로 바뀌었으면 untuck 결과를 버리고 pre-untuck 을 유지한다 — AI 콜 없이 로컬 비교(요구 5).
+    pants_mode = _pants_region_mode(s, match_img)
+    if pants_mode != "off":
+        pr = qc.compare_pants_region(res.image, out.image)
+        await _emit(pool, job_id, "step", {
+            **summary, "status": "pants_region", "phase": "untuck", "mode": pants_mode,
+            "pants_verdict": pr.verdict, "pants_reasons": pr.reasons, "pants_metrics": pr.metrics})
+        if pants_mode == "enforce" and pr.verdict == "pants_regressed":
+            await _emit(pool, job_id, "step", {
+                **summary, "untuck_outcome": "reverted_pants", "pants_reasons": pr.reasons})
+            return res
     await _emit(pool, job_id, "step", {
         **summary, "untuck_outcome": "applied",
         "result_hash": hashlib.sha256(out.image).hexdigest()[:12]})
@@ -1026,6 +1077,24 @@ async def _apply_edits(
             },
         })
         return pre_res, pre_p2, calls_spent
+    # 매칭 하의 보존: 편집(axis·bust·fabric)은 상의/가슴만 손봐야 한다. 그런데 전체를 다시
+    # 렌더하므로 하체 바지가 색·폭·구조로 조용히 드리프트할 수 있다. 편집 전(pre_res)과 픽셀로
+    # 대보고 크게 바뀌었으면 편집 전으로 되돌린다 — AI 콜 없이 로컬 비교(요구 5). 바지만 고치는
+    # 새 편집 슬롯을 만들지 않고 net 결과를 통째로 버리는 선에서 끝낸다(요구 6, 예산 불변).
+    pants_mode = _pants_region_mode(s, match_img)
+    if pants_mode != "off" and hashlib.sha256(res.image).hexdigest() != pre_hash:
+        pr = qc.compare_pants_region(pre_res.image, res.image)
+        await _emit(pool, job_id, "step", {
+            "candidate": candidate, "attempt": attempt, "status": "pants_region",
+            "phase": "edits", "mode": pants_mode, "pants_verdict": pr.verdict,
+            "pants_reasons": pr.reasons, "pants_metrics": pr.metrics})
+        if pants_mode == "enforce" and pr.verdict == "pants_regressed":
+            await _emit(pool, job_id, "step", {
+                "candidate": candidate, "attempt": attempt, "status": "edit_reverted",
+                "reason": "pants_regressed", "pants_reasons": pr.reasons,
+                "from_image_hash": hashlib.sha256(res.image).hexdigest(),
+                "to_image_hash": pre_hash})
+            return pre_res, pre_p2, calls_spent
     # A~C 점수는 **편집 전** 원본에 매긴 것이다. 편집이 이미지를 바꿨다면 저장되는 점수가
     # 실제 출고본의 점수가 아니게 된다(검수자가 다른 이미지의 숫자를 보고 판단하게 됨).
     # 이미지가 실제로 바뀐 경우에만 재판정한다 — 안 바뀌었으면 vision 콜 낭비다.
@@ -1034,7 +1103,8 @@ async def _apply_edits(
         return res, p2, calls_spent
     try:
         p2 = await image_qc.verdict(
-            s, prod_imgs, InlineImage(res.mime, res.image), scored=True, fit_profile=fit_profile)
+            s, prod_imgs, InlineImage(res.mime, res.image), scored=True, fit_profile=fit_profile,
+            match_image=_pants_qc_ref(s, match_img))
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "attempt": attempt,
             "status": "image_qc_rescored", "imageQc": p2})
@@ -1050,7 +1120,7 @@ async def _apply_edits(
         axis_hash = hashlib.sha256(post_axis_res.image).hexdigest()
         res, p2 = await _rollback_edits(
             pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
-            prod_imgs=prod_imgs, pre_res=pre_res, pre_p2=pre_p2,
+            prod_imgs=prod_imgs, match_img=match_img, pre_res=pre_res, pre_p2=pre_p2,
             post_axis_res=post_axis_res, post_p2=p2,
             axis_changed=axis_hash != pre_hash,
             bust_changed=hashlib.sha256(res.image).hexdigest() != axis_hash,
@@ -1082,7 +1152,7 @@ async def _save_cut(
 
 
 async def _rollback_edits(
-    *, pool, s, job_id, candidate, attempt, prod_imgs,
+    *, pool, s, job_id, candidate, attempt, prod_imgs, match_img=None,
     pre_res, pre_p2, post_axis_res, post_p2, axis_changed, bust_changed, fit_profile=None,
 ):
     """회귀한 편집을 되돌린다. → (선택 이미지, 그 이미지의 판정)
@@ -1112,7 +1182,7 @@ async def _rollback_edits(
     try:
         mid_p2 = await image_qc.verdict(
             s, prod_imgs, InlineImage(post_axis_res.mime, post_axis_res.image), scored=True,
-            fit_profile=fit_profile)
+            fit_profile=fit_profile, match_image=_pants_qc_ref(s, match_img))
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "attempt": attempt,
             "status": "image_qc_post_axis", "imageQc": mid_p2})
@@ -1261,7 +1331,7 @@ async def _run_candidate(
             try:
                 p2 = await image_qc.verdict(
                     s, prod_imgs, InlineImage(res.mime, res.image), scored=True,
-                    fit_profile=fit_profile)
+                    fit_profile=fit_profile, match_image=_pants_qc_ref(s, match_img))
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "image_qc", "imageQc": p2})
             except Exception as e:
@@ -1288,7 +1358,10 @@ async def _run_candidate(
             # 두 번째 요소는 **항상 merge 된 shape** 으로 통일한다. 경로마다 p2(verdict·
             # mismatches 포함)와 qc_scores 가 섞이면, 구제 시 API 계약에 없는 키가 저장된다.
             pre_scores = merge_qc_scores(p2, None)
-            if _is_better_candidate(s, pre_scores, pre_reject[1] if pre_reject else None):
+            # 바지 하드 게이트 걸린 후보는 구제 풀에 넣지 않는다(요구 6) — 잘못된 바지가
+            # salvage 로 출고되면 안 된다. 재롤은 아래 needs_retry 가 예산 내에서 담당한다.
+            if _pants_shippable(s, p2) and _is_better_candidate(
+                    s, pre_scores, pre_reject[1] if pre_reject else None):
                 pre_reject = (res, pre_scores, None, p2)
             if not has_budget_for_retry(s, calls_spent=calls_spent):
                 # 재생성 여력이 없으면 여기서 끝이다. attempt 번호가 아니라 **남은 호출**로
@@ -1297,14 +1370,26 @@ async def _run_candidate(
                 # 구제 대상은 **두 풀을 통틀어 최선**이어야 한다. 이전 attempt 에서 편집·D축까지
                 # 통과했다가 최종 게이트에서 걸린 후보(final_reject)가 더 좋으면 그걸 쓴다 —
                 # 사전 게이트 후보만 보면 60점 검증본을 두고 20점을 내보낸다(codex 2026-07-31).
-                if final_reject and _is_better_candidate(s, final_reject[1], pre_reject[1]):
+                # 두 풀 다 바지 하드 게이트를 제외하고 admit 한다(_pants_shippable). 그래서
+                # enforce 에서 바지-critical 만 나온 잡은 pre_reject 가 None 일 수 있다 — 그때
+                # pre_reject[1] 을 만지면 크래시다. None 을 명시적으로 다뤄 **드롭**으로 끝낸다.
+                use_final = final_reject is not None and (
+                    pre_reject is None or _is_better_candidate(s, final_reject[1], pre_reject[1]))
+                if use_final:
                     # 이미 편집·재판정·D축을 다 거친 출고 준비본이다. 본 경로를 다시 태우면
                     # bust 가 두 번 적용되고 D축 스냅샷이 덮어써진다(codex 7차 MEDIUM).
                     res, salvaged_scores, salvaged_series, p2 = final_reject
                     reprocess = False
-                else:
+                elif pre_reject is not None:
                     res, salvaged_scores, salvaged_series, p2 = pre_reject
                     # 사전 게이트 후보는 편집·D축을 안 거쳤다 → 아래 본 경로가 그걸 수행한다.
+                else:
+                    # 구제할 깨끗한 후보가 없다(바지-critical 만) → 이 후보 드롭(요구 6).
+                    await _emit(pool, job_id, "step", {
+                        "candidate": candidate, "attempt": attempt, "status": "candidate_dropped",
+                        "reason": "matching_identity",
+                        "matchingCriticalErrors": (p2 or {}).get("matching_critical_errors", [])})
+                    return None
                 p2_reject, salvaged = False, True
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "qc_salvaged",
@@ -1334,7 +1419,10 @@ async def _run_candidate(
             # 베이스 충실도는 **재시도 사유를 하나 더 대는 것**이지 별도 루프가 아니다.
             # 기존 판정과 OR 로 합류하고, 예산·구제·SAM 폴백은 아래 분기가 그대로 소유한다.
             bf_axes = base_fidelity_retry_axes(s, base_fidelity)
-            needs_retry = final_decision(s, qc_scores) == "retry" or bool(bf_axes)
+            # 매칭 하의 하드 게이트도 재롤 사유에 OR 합류 — 단 **기존 예산 안에서만**
+            # (budget_left 그대로). 바지만으로 전신 재생성 슬롯을 새로 만들지 않는다(요구 6).
+            needs_retry = (final_decision(s, qc_scores) == "retry" or bool(bf_axes)
+                           or pants_gate(s, p2))
             # **R2 저장 전에** 분기한다: 저장 후 continue 하면 재생성마다 고아 객체가 쌓인다.
             if needs_retry and budget_left and not salvaged:
                 await _emit(pool, job_id, "step", {
@@ -1344,7 +1432,9 @@ async def _run_candidate(
                     "baseFidelityRetryAxes": bf_axes,
                     "seriesConsistency": (series or {}).get("consistency")})
                 # 편집 완료 이미지 + A~D 전체 스냅샷 — 최종 단계 후보 풀에만 담는다.
-                if _is_better_candidate(s, qc_scores, final_reject[1] if final_reject else None):
+                # 바지 하드 게이트 걸린 컷은 제외 — 예산 소진 시 이 컷으로 salvage 되면 안 된다(요구 6).
+                if _pants_shippable(s, p2) and _is_better_candidate(
+                        s, qc_scores, final_reject[1] if final_reject else None):
                     final_reject = (res, qc_scores, series, p2)
                 feedback = _build_retry_feedback(qc_scores, series, p2)
                 # 추가 예산을 만들지 않는다 — 이미 승인된 재생성의 **입력만** 바꾼다.
@@ -1360,6 +1450,25 @@ async def _run_candidate(
                     images, base_prompt = augmented
                     sam_fallback_used = True
                 continue
+            # 매칭 하의 최종 방어(enforce): 출고 직전 res 에 바지 하드 게이트가 남아 있으면 이
+            # 컷은 못 나간다. **salvaged 여부와 무관하게** 본다 — 구제본을 재편집(_apply_edits)하면
+            # 재판정에서 바지-critical 이 새로 생길 수 있고, 그때도 출고돼선 안 된다(리뷰 HIGH).
+            # 깨끗한 final_reject(바지-critical 이미 제외)로 구제하고, 없으면 드롭한다(요구 6).
+            if pants_gate(s, p2):
+                if final_reject:
+                    res, qc_scores, series, p2 = final_reject
+                    qc_scores = {**(qc_scores or {}), "salvaged": True}
+                    salvaged = True
+                    await _emit(pool, job_id, "step", {
+                        "candidate": candidate, "attempt": attempt, "status": "qc_salvaged",
+                        "reason": "matching_identity_dropped",
+                        "outcome": score_outcome(s, qc_scores)})
+                else:
+                    await _emit(pool, job_id, "step", {
+                        "candidate": candidate, "attempt": attempt, "status": "candidate_dropped",
+                        "reason": "matching_identity",
+                        "matchingCriticalErrors": (p2 or {}).get("matching_critical_errors", [])})
+                    return None
             # 예산 소진인데 최종 판정이 retry 라면 최선본으로 되돌려 구제 출고한다.
             # **final_reject 만** 쓴다 — pre_reject 는 편집·재판정·D축을 안 거친 원본이라
             # 그대로 저장하면 검증 안 된 이미지가 출고된다(codex HIGH).
@@ -1426,6 +1535,14 @@ async def _run_candidate(
                 candidate=candidate, attempt=s.mannequin_max_attempts, res=res)
             qc_scores = merge_qc_scores(
                 p2, series, thresholds=(s.qc_score_auto_pass, s.qc_score_review))
+        # 매칭 하의 최종 방어(loop-exhaust, enforce): pre_reject 재편집이 바지-critical 을
+        # 되살렸으면 출고 불가 → 드롭(요구 6). final_reject 는 admission 에서 제외돼 깨끗하다(무해).
+        if pants_gate(s, p2):
+            await _emit(pool, job_id, "step", {
+                "candidate": candidate, "status": "candidate_dropped",
+                "reason": "matching_identity",
+                "matchingCriticalErrors": (p2 or {}).get("matching_critical_errors", [])})
+            return None
         qc_scores = {**(qc_scores or {}), "salvaged": True}
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "status": "qc_salvaged",

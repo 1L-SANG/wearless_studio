@@ -160,6 +160,10 @@ class Settings:
     # QC 재생성이 모두 소진된 뒤의 구조 변경(2026-08-01). QC 검출이 불안정해 게이트로 쓰지
     # 않고 매칭 하의가 붙는 top/outer 잡마다 1회 돈다(이미 빠져 있으면 무변경 반환 지시).
     mannequin_untuck_pass: str = "off"  # off | on
+    # 매칭 하의(코디 바지) 정체성 QC — 매칭 하의가 붙는 잡에서만 활성. off|shadow|enforce.
+    # shadow=매칭 점수·하드게이트·바지영역 픽셀 메트릭 계측만, enforce=재롤/드롭·편집 롤백.
+    # AI 콜 증가 0(기존 AG-P2 1콜에 바지 원본 1장·필드만 얹음). 다크 출고를 위해 기본 off.
+    mannequin_pants_qc: str = "off"  # off | shadow | enforce
     base_mannequin_women_asset_id: str | None = None  # R2 seed asset (startup 검증)
     base_mannequin_men_asset_id: str | None = None
     job_dispatcher_enabled: bool = True  # §5
@@ -342,6 +346,7 @@ def load_settings() -> Settings:
         mannequin_bust_pass=_bust_pass(),
         mannequin_fabric_pass=_flag("MANNEQUIN_FABRIC_PASS", "off", {"off", "on"}),
         mannequin_untuck_pass=_flag("MANNEQUIN_UNTUCK_PASS", "off", {"off", "on"}),
+        mannequin_pants_qc=_flag("MANNEQUIN_PANTS_QC", "off", {"off", "shadow", "enforce"}),
         base_mannequin_women_asset_id=os.getenv("MANNEQUIN_BASE_WOMEN_ASSET_ID") or None,
         base_mannequin_men_asset_id=os.getenv("MANNEQUIN_BASE_MEN_ASSET_ID") or None,
         job_dispatcher_enabled=(os.getenv("JOB_DISPATCHER_ENABLED", "true").lower() != "false"),

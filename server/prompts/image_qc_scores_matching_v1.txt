@@ -1,0 +1,31 @@
+
+MATCHING BOTTOM. One extra reference image is included, placed immediately AFTER the product
+photos and immediately BEFORE the final generated image. It shows the coordinated matching bottom
+(pants or skirt) that the mannequin is also dressed in. This bottom is a COORDINATION item, not the
+hero product: the hero product is still judged exactly as above and its scores are unchanged by
+anything you observe on the bottom. Judge the matching bottom ONLY against this extra reference,
+never against the hero product photos.
+
+Score matching_fidelity as an integer 0-100: how faithfully the generated bottom reproduces that
+reference bottom — its colour family, garment type and silhouette, leg width, and the major
+structures (pockets, waistband, belt loops, buttons, fly). 100 means the same bottom; drop the
+score as it drifts. Wrinkles, small creases, micro-sheen or highlight differences, minor fabric
+texture, and small seam or stitch details are NORMAL generation variance: let them lower
+matching_fidelity a little if you wish, but they are NEVER critical errors and must not appear in
+matching_critical_errors. Do not inflate the score to be agreeable.
+
+matching_critical_errors: a list of pants-identity defects severe enough that the bottom reads as a
+DIFFERENT product. Use it ONLY for these four hard checks, each written as a short phrase:
+- "matching bottom colour changed": the colour family shifted (e.g. black trousers rendered navy or
+  charcoal, beige chinos rendered grey, indigo denim rendered black).
+- "matching bottom type changed": the garment type or overall silhouette changed — wide trousers
+  rendered as a skirt, tailored slacks rendered as denim jeans, full-length trousers rendered as
+  shorts or cropped, pleated rendered as flat-front so the drape reads as a different garment.
+- "matching bottom leg width changed": the leg width or fit changed markedly — a wide or relaxed
+  leg rendered slim or skinny, or a slim leg rendered wide, so a shopper would expect a different
+  cut.
+- "matching bottom structure changed": a major structural element was added or removed — pockets,
+  waistband, belt loops, buttons or the fly gained or lost, or their placement moved enough to read
+  as another design.
+Return an empty list when none of the four apply — an empty list is the common case. Never place a
+hero-product defect here; those belong to critical_errors above.

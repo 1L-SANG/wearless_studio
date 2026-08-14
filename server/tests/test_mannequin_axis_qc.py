@@ -91,7 +91,7 @@ def _run(monkeypatch, *, mode, verdicts, guard=False, max_attempts=2, gemini=Non
     if guard:
         monkeypatch.setattr(mannequin_job, "_MANNEQUIN_AXIS_QC_ENFORCEMENT_READY", True)
     if p2 is not None:
-        async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
+        async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
             assert scored, "마네킹 경로는 4축 점수를 받아야 한다(scored=True)"
             return p2
         monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_p2)

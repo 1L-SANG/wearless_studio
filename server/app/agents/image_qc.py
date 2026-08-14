@@ -25,14 +25,24 @@ _PICK_PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "garment_pick_v1.txt")
 SCORE_KEYS = ("product_fidelity", "physical_naturalness", "image_quality", "series_consistency")
 _SCORE_PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "image_qc_scores_v1.txt")
 
+# 매칭 하의(코디 바지) 정체성. 주상품(SCORE_KEYS)과 **분리**한다 — matching_fidelity 는
+# score_outcome/_worst_score 에 절대 들어가면 안 된다(주름·미세광택이 상품 등급을 깎으면
+# 오탐·비용). 하드 게이트는 matching_critical_errors 4개뿐이고, 그건 워커가 별도로 본다.
+MATCHING_KEYS = ("matching_fidelity",)
+_SCORE_MATCHING_PROMPT_FILE = os.path.join(
+    _SERVER_DIR, "prompts", "image_qc_scores_matching_v1.txt")
 
-def qc_schema(*, scored: bool = False) -> dict:
+
+def qc_schema(*, scored: bool = False, matching: bool = False) -> dict:
     """동일성 판정 스키마. scored=True 면 4축 점수 + critical_errors 를 얹는다.
 
     **기본값은 반드시 3필드로 유지한다.** 이 스키마를 `scene_verdict`(장소 일치)와
     `best_of`(상세페이지·에디터 garment QC)가 공유하는데, 발행 공간세트 경로는 scene QC 가
     fail-closed 라(2026-07-30 PR#62) 스키마 오류가 경고 강등이 아니라 **셀러 컷 전멸**로
     이어진다. 점수는 장소 판정에 쓰이지도 않으므로 확장을 마네킹 경로 opt-in 으로 가둔다.
+
+    matching=True(마네킹 + 매칭 하의 첨부)면 코디 바지 전용 필드(matching_fidelity +
+    matching_critical_errors)를 얹는다 — scored 위에만 겹치고, 매칭 없는 경로는 불변이다.
     """
     props = {
         "verdict": {"type": "string", "enum": list(VERDICTS)},
@@ -45,6 +55,10 @@ def qc_schema(*, scored: bool = False) -> dict:
         for key in SCORE_KEYS:
             props[key] = {"type": ["integer", "null"]}
         props["critical_errors"] = {"type": "array", "items": {"type": "string"}}
+        if matching:
+            for key in MATCHING_KEYS:
+                props[key] = {"type": ["integer", "null"]}
+            props["matching_critical_errors"] = {"type": "array", "items": {"type": "string"}}
     return {
         "type": "object",
         "additionalProperties": False,
@@ -87,7 +101,10 @@ def build_declared_fit_block(fit_profile: dict | None) -> str:
     )
 
 
-def build_prompt(product_count: int, *, scored: bool = False, fit_profile: dict | None = None) -> str:
+def build_prompt(
+    product_count: int, *, scored: bool = False, fit_profile: dict | None = None,
+    matching: bool = False,
+) -> str:
     with open(_PROMPT_FILE, encoding="utf-8") as f:
         template = f.read()
     prompt = template.replace("${productCount}", str(max(1, product_count)))
@@ -95,6 +112,11 @@ def build_prompt(product_count: int, *, scored: bool = False, fit_profile: dict 
         # 스키마만 바꾸면 근거 없는 숫자가 나온다 — 채점 기준을 프롬프트로 준다.
         with open(_SCORE_PROMPT_FILE, encoding="utf-8") as f:
             prompt = f"{prompt}\n{f.read()}"
+        # 매칭 하의 블록은 **scored 위에만** 얹는다. 매칭 없는 경로(scene·best_of·매칭無
+        # 마네킹)는 이 토큰이 새면 안 되므로 matching 게이트 안에서만 붙인다.
+        if matching:
+            with open(_SCORE_MATCHING_PROMPT_FILE, encoding="utf-8") as f:
+                prompt = f"{prompt}\n{f.read()}"
         # 선언 핏은 **scored 경로 전용** — 다른 호출부(scene·best_of)의 요청은 불변이어야 한다.
         prompt += build_declared_fit_block(fit_profile)
     return prompt
@@ -107,11 +129,14 @@ def _score(value) -> int | None:
     return max(0, min(100, int(value)))
 
 
-def validate(raw: dict, *, scored: bool = False) -> dict:
+def validate(raw: dict, *, scored: bool = False, matching: bool = False) -> dict:
     """verdict∈enum(밖이면 pass), mismatches 정리, correctionPrompt 정리(retry일 때만 의미).
 
     scored=True 면 4축 점수(클램핑)와 critical_errors 를 **보존**한다. 기본 경로의 반환
     shape 은 3키 그대로 — scene/best_of 소비처가 키 추가를 전제하지 않는다.
+
+    matching=True 면 코디 바지 필드(matching_fidelity 클램핑 + matching_critical_errors)를
+    얹는다. matching_fidelity 는 SCORE_KEYS 밖이라 score_outcome/등급에 절대 안 섞인다.
     """
     raw = raw or {}
     verdict = raw.get("verdict") if raw.get("verdict") in VERDICTS else "pass"
@@ -128,23 +153,37 @@ def validate(raw: dict, *, scored: bool = False) -> dict:
         out["critical_errors"] = [
             c for c in (clean_text(x, 200) for x in (raw.get("critical_errors") or [])) if c
         ]
+        if matching:
+            out.update({k: _score(raw.get(k)) for k in MATCHING_KEYS})
+            # 바지 하드 게이트도 pass 판정과 무관하게 남긴다(주상품 critical_errors 와 같은 규율).
+            out["matching_critical_errors"] = [
+                c for c in (clean_text(x, 200) for x in (raw.get("matching_critical_errors") or []))
+                if c
+            ]
     return out
 
 
 async def verdict(
     settings: Settings, product_images: list[InlineImage], generated_image: InlineImage,
     *, scored: bool = False, fit_profile: dict | None = None,
+    match_image: InlineImage | None = None,
 ) -> dict:
-    """상품사진들 + 생성이미지(맨 뒤)를 vision LLM에 넣어 동일성 판정. 실패 시 VisionError.
+    """상품사진들 (+ 매칭 하의) + 생성이미지(맨 뒤)를 vision LLM에 넣어 동일성 판정.
 
     scored=True(마네킹 경로)면 4축 점수를 함께 받는다. 다른 호출부(best_of 경유
     상세페이지·에디터)는 기본값 그대로라 요청·응답이 바이트 단위로 불변이다.
+
+    match_image 가 있으면 상품 뒤·생성 앞에 끼워 **같은 1콜 안에서** 코디 바지 정체성을
+    함께 판정한다(AI 콜 증가 0). 첨부 순서·프롬프트 블록·스키마 필드가 이 한 장을 전제한다.
+    실패 시 VisionError.
     """
-    images = [*product_images, generated_image]  # bytes — 마지막이 생성 결과
-    prompt = build_prompt(len(product_images), scored=scored, fit_profile=fit_profile)
+    matching = match_image is not None
+    images = [*product_images] + ([match_image] if matching else []) + [generated_image]
+    prompt = build_prompt(
+        len(product_images), scored=scored, fit_profile=fit_profile, matching=matching)
     raw, _provider = await analyze_with_fallback(
-        settings, prompt, images, qc_schema(scored=scored))
-    return validate(raw, scored=scored)
+        settings, prompt, images, qc_schema(scored=scored, matching=matching))
+    return validate(raw, scored=scored, matching=matching)
 
 
 def pick_schema(candidate_count: int) -> dict:
