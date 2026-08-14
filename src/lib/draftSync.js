@@ -71,6 +71,17 @@ async function runDraftSync(draft, { projectId: existing } = {}) {
       }
     }
 
+    // draft 커스텀 매칭(내 옷)은 로컬 blob 아이템이라 analysis payload 로는 승격이 안 된다 —
+    // objectURL·로컬 id 가 서버에 박히면 죽은 링크가 되고, 누끼(matching_cutout) 잡도 서버
+    // asset 이 있어야 돈다. payload 에서 빼고 아래에서 실서버 등록으로 따로 승격한다.
+    const customDraft = api.getCustomMatchDraft?.() ?? null;
+    if (analysis && Array.isArray(analysis.matchClothing)) {
+      analysis = {
+        ...analysis,
+        matchClothing: analysis.matchClothing.filter((m) => !m.isCustom),
+      };
+    }
+
     await api.saveProduct(projectId, product);
     if (analysis) {
       await api.saveAnalysis(projectId, analysis);
@@ -78,6 +89,40 @@ async function runDraftSync(draft, { projectId: existing } = {}) {
     await api.patchProject(projectId, {
       composeMode: draft.composeMode === 'extended' ? 'extended' : 'basic',
     });
+
+    // 내 옷 승격: blob 재업로드 → custom-match-item 등록(서버가 analysis 에 정식 아이템을
+    // 넣고 누끼 잡을 건다). 실패해도 확정 흐름은 살린다 — 내 옷 없이도 프로젝트는 유효하고,
+    // 분석 화면에서 다시 추가할 수 있다. 서버 409(이미 있음)는 재시도 합류이므로 무해.
+    if (customDraft?.uploads?.length) {
+      try {
+        const assetIds = [];
+        for (const up of customDraft.uploads) {
+          const uploaded = await api.uploadPhoto(projectId, {
+            filename: up.filename, mime: up.mime, blob: up.blob,
+            purpose: 'custom_match_source',
+          });
+          assetIds.push(uploaded.assetId);
+        }
+        const result = await api.addCustomMatchItem(projectId, { assetIds });
+        // draft 에서 선택돼 있었으면 승격본(새 서버 id)도 선택 상태로 저장한다 —
+        // 아니면 "선택했는데 확정하니 풀려 있음"이 된다.
+        const promoted = (result?.analysis?.matchClothing || []).find((m) => m.isCustom);
+        if (customDraft.selected && promoted) {
+          await api.saveAnalysis(projectId, {
+            ...result.analysis,
+            matchClothing: result.analysis.matchClothing.map((m) => (
+              m.id === promoted.id
+                ? { ...m, selected: true, selOrder: 1 }
+                : { ...m, selected: false, selOrder: undefined }
+            )),
+          });
+        }
+      } catch (err) {
+        if (err?.status !== 409) {
+          console.warn('custom match promotion failed (확정은 유지)', err);
+        }
+      }
+    }
 
     return { projectId };
   } catch (err) {

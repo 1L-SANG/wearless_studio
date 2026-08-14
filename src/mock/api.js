@@ -418,6 +418,9 @@ export const api = {
       isCustom: true,
       isCompatible: true,
       selected: false,
+      // draft 승격용(mock 전용) — 확정 시 이 업로드 blob 들을 실서버에 재업로드해
+      // custom-match-item 으로 등록한다(draftSync). 서버 응답 shape 에는 없는 필드.
+      sourceAssetIds: [...assetIds],
     };
     const result = addCustomMatchToAnalysis(DB.analysis, item);
     DB.analysis.matchClothing = result.analysis.matchClothing;
@@ -429,6 +432,18 @@ export const api = {
     DB.analysis.matchClothing = analysis.matchClothing;
     if (analysis.fitProfile) DB.analysis.fitProfile = analysis.fitProfile;
     return { analysis: clone(DB.analysis) };
+  },
+  // draft(비프로젝트) 단계에서 추가한 내 옷의 원본 blob 묶음 — 확정 승격(draftSync)이
+  // 실서버 업로드+등록에 쓴다. 커스텀이 없거나 blob 이 유실됐으면 null.
+  getCustomMatchDraft() {
+    const item = (DB.analysis.matchClothing || []).find((m) => m.isCustom);
+    if (!item || !Array.isArray(item.sourceAssetIds)) return null;
+    const uploads = item.sourceAssetIds
+      .map((id) => customMatchUploads.get(id))
+      .filter(Boolean)
+      .map(({ filename, mime, blob }) => ({ filename, mime, blob }));
+    if (!uploads.length) return null;
+    return { uploads, selected: !!item.selected, localId: item.id };
   },
   async refreshMatchClothing(/* projectId */) {
     DB.analysis.matchClothing = recommendLegacyMatchClothing({

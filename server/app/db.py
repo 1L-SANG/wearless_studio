@@ -10,6 +10,8 @@ RLS는 운영 실수·미래 직접 조회에 대한 2차 방어선(§2).
 
 from contextlib import asynccontextmanager
 
+import os
+
 from fastapi import HTTPException, Request
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool, PoolTimeout
@@ -21,10 +23,14 @@ def create_pool(database_url: str) -> AsyncConnectionPool:
     # open=False → lifespan에서 명시적 open (psycopg_pool 권장).
     # timeout/connect_timeout: DB 불가 시 기본 30s 대기 대신 ~10s 안에 빨리 실패
     # (정상 연결은 <1s라 false-positive 없음 — 오설정·DB 다운만 잡힌다).
+    # max_size env 오버라이드 — Supabase session pooler 는 프로젝트 전체 상한이 15라,
+    # 로컬 QA 인스턴스(기본 10)가 prod 인스턴스(10)와 같은 풀을 나누면 양쪽 다 고갈된다
+    # (2026-08-14 실측: EMAXCONNSESSION 플러드 → 로컬 API 가 5분간 DB 미획득). 로컬은
+    # DB_POOL_MAX_SIZE=3 으로 줄여 prod 몫을 남긴다. 미설정이면 기존 10 그대로.
     return AsyncConnectionPool(
         conninfo=database_url,
         min_size=1,
-        max_size=10,
+        max_size=int(os.getenv("DB_POOL_MAX_SIZE", "10")),
         timeout=10,  # pool.connection() 연결 획득 최대 대기 (기본 30)
         kwargs={"row_factory": dict_row, "connect_timeout": 10},  # 각 연결 시도 상한(초)
         open=False,
