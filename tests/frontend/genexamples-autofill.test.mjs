@@ -30,22 +30,25 @@ const block = (id, extra = {}) => ({
   spaceGroupId: null, thumb: `placeholder:${id}`, matchIds: ['ignored'], ...extra,
 });
 
-test('repeated all-scope examples mark only eligible uses after the first in each section', () => {
+test('repeated all-scope examples mark only different-color repeats in each section', () => {
+  // 2026-08-14 오너 규칙: 포즈 변주는 같은 예시 + **다른 색상** 반복에만.
+  // 같은 색 반복(복제)은 변주 없이 서버가 1장만 생성해 복제 위치에 복사한다.
   const shared = example('shared', { direction: 'front' });
   const blocks = [
     block('first', { direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'auto' }),
-    block('second', { direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'auto' }),
-    block('explicit', { direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'walking' }),
-    block('pose-scope', { direction: 'front', exampleId: 'shared', refScope: 'pose', pose: 'auto' }),
-    block('space-set', { direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'auto', spaceGroupId: 'set-a' }),
-    block('direction-mismatch', { direction: 'back', exampleId: 'shared', refScope: 'all', pose: 'auto' }),
-    block('third', { direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'auto' }),
-    block('other-section', { sectionId: 'section-b', direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'auto' }),
+    block('same-color-copy', { direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'auto' }),
+    block('ivory', { direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'auto', colorId: 'ivory' }),
+    block('explicit', { direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'walking', colorId: 'sky' }),
+    block('pose-scope', { direction: 'front', exampleId: 'shared', refScope: 'pose', pose: 'auto', colorId: 'sky' }),
+    block('space-set', { direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'auto', spaceGroupId: 'set-a', colorId: 'sky' }),
+    block('direction-mismatch', { direction: 'back', exampleId: 'shared', refScope: 'all', pose: 'auto', colorId: 'sky' }),
+    block('sky', { direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'auto', colorId: 'sky' }),
+    block('other-section', { sectionId: 'section-b', direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'auto', colorId: 'ivory' }),
   ];
 
   assert.deepEqual(
     [...repeatedAllExampleVariationIds(blocks, [shared])],
-    ['second', 'third'],
+    ['ivory', 'sky'],
   );
 });
 const product = { clothingType: 'outer' };

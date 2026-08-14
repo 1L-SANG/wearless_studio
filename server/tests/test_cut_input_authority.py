@@ -53,13 +53,25 @@ def test_example_repeat_indexes_are_section_local_and_ignore_client_runtime_valu
         "load_example_asset_registry",
         lambda: (None, {}),
     )
+    # 2026-08-14 오너 규칙: 변주 지수는 색상 단위 — 같은 색 반복(복제)은 0으로 유지되고
+    # 다른 색상으로 반복할 때만 1, 2, …로 오른다.
     blocks = [
         {"id": "a1", "source": "ai", "sectionId": "section-a", "sectionRole": "studio",
          "cutType": "horizon", "shot": "full", "direction": "front", "pose": "auto",
          "exampleId": "same", "refScope": "all", "_exampleRepeatIndex": 99},
-        {"id": "a2", "source": "ai", "sectionId": "section-a", "sectionRole": "studio",
-         "cutType": "horizon", "shot": "medium", "direction": "front", "pose": "auto",
-         "exampleId": "same", "refScope": "all"},
+        {"id": "a2-same-color", "source": "ai", "sectionId": "section-a",
+         "sectionRole": "studio", "cutType": "horizon", "shot": "medium",
+         "direction": "front", "pose": "auto", "exampleId": "same", "refScope": "all"},
+        {"id": "a3-ivory", "source": "ai", "sectionId": "section-a", "sectionRole": "studio",
+         "cutType": "horizon", "shot": "full", "direction": "front", "pose": "auto",
+         "exampleId": "same", "colorId": "ivory", "refScope": "all"},
+        {"id": "a4-sky", "source": "ai", "sectionId": "section-a", "sectionRole": "studio",
+         "cutType": "horizon", "shot": "full", "direction": "front", "pose": "auto",
+         "exampleId": "same", "colorId": "sky", "refScope": "all"},
+        {"id": "a5-ivory-again", "source": "ai", "sectionId": "section-a",
+         "sectionRole": "studio", "cutType": "horizon", "shot": "full",
+         "direction": "front", "pose": "auto", "exampleId": "same", "colorId": "ivory",
+         "refScope": "all"},
         {"id": "other-example", "source": "ai", "sectionId": "section-a",
          "sectionRole": "studio", "cutType": "horizon", "shot": "full",
          "direction": "front", "pose": "auto", "exampleId": "other", "refScope": "all"},
@@ -78,7 +90,33 @@ def test_example_repeat_indexes_are_section_local_and_ignore_client_runtime_valu
     ]
 
     assert dpj._example_repeat_indexes(blocks, "top") == [
-        0, 1, 0, 0, None, None, None,
+        0, 0, 1, 2, 1, 0, 0, None, None, None,
+    ]
+
+
+def test_duplicate_source_indexes_fold_identical_specs_only(monkeypatch):
+    monkeypatch.setattr(
+        dpj.cut_generator,
+        "load_example_asset_registry",
+        lambda: (None, {}),
+    )
+    base = {"source": "ai", "sectionId": "section-a", "sectionRole": "studio",
+            "cutType": "horizon", "shot": "full", "direction": "front", "pose": "auto",
+            "exampleId": "same", "refScope": "all"}
+    blocks = [
+        {**base, "id": "original"},
+        # 같은 설정 복제(색상까지 동일) → 원본 0번을 가리킨다: 1장만 생성해 복사.
+        {**base, "id": "copy"},
+        # 색상이 다르면 복제가 아니다 — 별도 생성(변주 대상).
+        {**base, "id": "ivory", "colorId": "ivory"},
+        # 샷이 다르면 다른 컷이다.
+        {**base, "id": "medium", "shot": "medium"},
+        # 공간 세트 멤버는 접지 않는다.
+        {**base, "id": "in-set", "spaceGroupId": "set"},
+    ]
+
+    assert dpj._duplicate_source_indexes(blocks, "top") == [
+        None, 0, None, None, None,
     ]
 
 

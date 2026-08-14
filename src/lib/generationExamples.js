@@ -155,12 +155,15 @@ function usageKey(block, product, gender) {
   });
 }
 
-/* 서버의 sectionId + exampleId 반복 판정과 같은 화면 전용 파생값이다.
-   저장하지 않고 현재 콘티 순서에서 두 번째 eligible 사용부터 표시한다. */
+/* 서버(detail_page_job._example_repeat_indexes)와 같은 화면 전용 파생값. 저장하지 않는다.
+   반복 규칙(2026-08-14 오너 확정):
+   - 포즈 변주는 **같은 생성예시를 다른 색상으로 반복**할 때만 적용한다(컬러웨이 반복).
+   - 같은 예시·같은 색상 반복(컷 복제)은 변주 없이 1장만 생성해 복제 위치에 그대로 복사
+     — 생성 회피는 서버가 하고, 화면은 배지를 붙이지 않는 것으로 같은 규칙을 표현한다. */
 export function repeatedAllExampleVariationIds(blocks, catalog = []) {
   if (!Array.isArray(blocks)) return new Set();
   const examplesById = new Map((catalog || []).map((example) => [example.id, example]));
-  const counts = new Map();
+  const firstColorByKey = new Map();
   const variationIds = new Set();
 
   for (const block of blocks) {
@@ -181,9 +184,12 @@ export function repeatedAllExampleVariationIds(blocks, catalog = []) {
 
     const section = block.sectionId || `role:${block.sectionRole || 'unknown'}`;
     const key = `${section}\u0000${block.exampleId}`;
-    const repeatIndex = counts.get(key) || 0;
-    if (repeatIndex >= 1) variationIds.add(block.id);
-    counts.set(key, repeatIndex + 1);
+    const color = block.colorId ?? null;
+    if (!firstColorByKey.has(key)) {
+      firstColorByKey.set(key, color);
+      continue;
+    }
+    if (firstColorByKey.get(key) !== color) variationIds.add(block.id);
   }
 
   return variationIds;
