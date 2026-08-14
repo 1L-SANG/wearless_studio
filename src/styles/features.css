@@ -64,6 +64,18 @@
 @media (prefers-reduced-motion: reduce) {
   .input-promotion-transition { animation: none; }
 }
+/* 전환 화면 공용 브랜드 로고 — 확정 대기(로고만)와 도착 안내(로고+문구)가 같은 위치·리듬을
+   공유해 하나의 전환으로 읽힌다. 숨쉬기는 은은하게(스피너·퍼센트 금지 관례). */
+.transition-brand-logo { width: 56px; height: 56px; margin-bottom: 2px;
+  filter: drop-shadow(0 2px 10px rgba(0,0,0,.35));
+  animation: transitionLogoBreath 2.2s ease-in-out infinite; }
+@keyframes transitionLogoBreath {
+  0%, 100% { transform: scale(1); opacity: .92; }
+  50% { transform: scale(1.06); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .transition-brand-logo { animation: none; }
+}
 .draft-entry-sources { display: grid; gap: 10px; margin-top: 20px; }
 .draft-entry-source { display: grid; gap: 4px; width: 100%; padding: 14px 16px; text-align: left; cursor: pointer;
   border: 0; border-radius: var(--r-4); color: var(--fg-1); background: var(--bg-1);

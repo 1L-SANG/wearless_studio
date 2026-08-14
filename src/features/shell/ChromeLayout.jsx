@@ -110,6 +110,7 @@ function StoryboardTransitionOverlay() {
     <button type="button" className="storyboard-transition-overlay"
       aria-label="전환 안내 닫기" onClick={() => setVisible(false)}>
       <span className="storyboard-transition-copy" role="status" aria-live="polite">
+        <img className="transition-brand-logo" src="/assets/brand/logo.svg" alt="" />
         <strong>마네킹컷을 먼저 만들고 있어요</strong>
         <small>상세페이지를 구성하는 동안 뒤에서 계속 준비할게요.</small>
       </span>

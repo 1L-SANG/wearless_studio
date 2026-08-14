@@ -1149,12 +1149,12 @@ export function ProductInput() {
           지적 — 흰 잠금 카드 → 콘티보드의 어두운 전환 오버레이가 연달아 떠 이질적이었다).
           도착 화면(ChromeLayout 의 storyboard-transition-overlay)과 같은 시각 언어라 확정→도착이
           한 번의 전환으로 읽힌다. 입력 차단(전체 덮음)·beforeunload 가드는 종전과 동일하다. */}
+      {/* 문구는 도착 화면(콘티보드 안내)이 맡는다 — 여기선 로고만 숨쉬게 두어(2026-08-14 사용자
+          결정) 확정→도착 내내 로고가 한 축으로 이어진다. 낭독은 aria-label 로 유지. */}
       {promotionLocked && createPortal((
-        <div className="input-promotion-transition" role="status" aria-live="polite">
-          <span className="storyboard-transition-copy">
-            <strong>상세페이지 구성으로 넘어가고 있어요</strong>
-            <small>입력한 내용을 안전하게 저장하는 중이에요.</small>
-          </span>
+        <div className="input-promotion-transition" role="status" aria-live="polite"
+          aria-label="상세페이지 구성으로 넘어가는 중">
+          <img className="transition-brand-logo" src="/assets/brand/logo.svg" alt="" />
         </div>
       ), document.body)}
       {editingRightsLock}
