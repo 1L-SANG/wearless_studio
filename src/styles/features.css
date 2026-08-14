@@ -1665,9 +1665,9 @@
 .block-clip { position: absolute; inset: 0; overflow: hidden; }
 .editor-snap-guide { position: absolute; z-index: 10000; display: none; pointer-events: none;
   background: rgba(22,143,242,.78); }
-.editor-snap-guide.vertical { top: 0; bottom: 0; width: calc(.5px * var(--inv, 1));
+.editor-snap-guide.vertical { top: 0; bottom: 0; width: calc(1px * var(--inv, 1));
   transform: translateX(-50%); }
-.editor-snap-guide.horizontal { left: 0; right: 0; height: calc(.5px * var(--inv, 1));
+.editor-snap-guide.horizontal { left: 0; right: 0; height: calc(1px * var(--inv, 1));
   transform: translateY(-50%); }
 
 /* empty frame image slot — '이미지 추가' button → 의류 탭 (item 3) */

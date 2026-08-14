@@ -186,8 +186,8 @@ test('canvas routes every movable element through one pointer drag without nativ
   assert.match(editorSource, /data-editor-snap-guide="horizontal"/);
   assert.match(editorStylesSource, /\.editor-snap-guide\.vertical/);
   assert.match(editorStylesSource, /\.editor-snap-guide\.horizontal/);
-  assert.match(editorStylesSource, /\.editor-snap-guide\.vertical\s*\{[^}]*width:\s*calc\(\.5px \* var\(--inv, 1\)\)/s);
-  assert.match(editorStylesSource, /\.editor-snap-guide\.horizontal\s*\{[^}]*height:\s*calc\(\.5px \* var\(--inv, 1\)\)/s);
+  assert.match(editorStylesSource, /\.editor-snap-guide\.vertical\s*\{[^}]*width:\s*calc\(1px \* var\(--inv, 1\)\)/s);
+  assert.match(editorStylesSource, /\.editor-snap-guide\.horizontal\s*\{[^}]*height:\s*calc\(1px \* var\(--inv, 1\)\)/s);
   assert.match(editorStylesSource, /\.ed-canvas\s*\{[^}]*user-select:\s*none[^}]*-webkit-user-select:\s*none/s);
   assert.match(editorStylesSource, /\.el-text:not\(\.editing\)\s*\{[^}]*user-select:\s*none[^}]*touch-action:\s*none/s);
   assert.match(editorStylesSource, /\.el-text\.editing\s*\{[^}]*user-select:\s*text[^}]*touch-action:\s*auto/s);
