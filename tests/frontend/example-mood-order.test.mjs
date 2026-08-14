@@ -15,7 +15,7 @@ const bucket = (mood, detailSubject = null, id = 'example') => (
 test('free-text example moods enter the owner-confirmed place buckets by keyword', () => {
   assert.equal(bucket('cafe-exterior phone-snapshot'), 'cafe');
   assert.equal(bucket('home'), 'indoor');
-  assert.equal(bucket('handheld urban night travel snapshot'), 'city');
+  assert.equal(bucket('handheld urban night travel snapshot'), 'resort');
   assert.equal(bucket('sunny riverside park close phone snap'), 'nature');
   assert.equal(bucket('bright-coastal-stairway-travel-candid'), 'resort');
   assert.equal(bucket('warm-autumn-heritage-walk-candid'), 'heritage');
@@ -26,6 +26,17 @@ test('the first matching place bucket wins and detailSubject/id participate', ()
   assert.equal(bucket('cafe beside an urban street'), 'cafe');
   assert.equal(bucket(null, 'coffee neckline detail'), 'cafe');
   assert.equal(bucket(null, null, 'ex_horizon_women_top_medium_01'), 'indoor');
+});
+
+test('released heritage examples beat broad plaza and wall keywords', () => {
+  const ids = [
+    'ex_styling_men_top_full_snapshot_01',
+    'ex_styling_men_top_medium_snapshot_01',
+    'ex_styling_women_top_medium_snapshot_04',
+  ];
+  assert.deepEqual(ids.map((id) => exampleMoodBucket(
+    genExamples.find((example) => example.id === id),
+  ).id), ['heritage', 'heritage', 'heritage']);
 });
 
 test('mood ordering is deterministic by bucket, then rank, then id', () => {

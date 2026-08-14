@@ -50,9 +50,9 @@ test('컷 종류 전환·예시 교체는 매칭 의류·아우터 열림·내 �
   assert.match(selectExample, /if \(replacing\) resetRecipeSettings\(\)/);
 });
 
-test('isDetail 은 검증된 shotVal 을 읽는다 — raw shot 은 카탈로그 폴백과 어긋난다', () => {
+test('isDetail 은 검증된 effectiveShotVal 을 읽는다 — raw shot 은 카탈로그 폴백과 어긋난다', () => {
   const aiPanel = panelSource.slice(panelSource.indexOf('export function AIPanel'));
-  assert.match(aiPanel, /const isDetail = isProduct && shotVal === 'detail'/);
+  assert.match(aiPanel, /const isDetail = isProduct && effectiveShotVal === 'detail'/);
 });
 
 test('갤러리·게이트 성별은 실존 모델 선택 시에도 비지 않는다 — 분석 기반 exampleGender 폴백', () => {
@@ -64,9 +64,14 @@ test('갤러리·게이트 성별은 실존 모델 선택 시에도 비지 않�
 test('거울 예시는 파생 유효 레시피로 화면과 생성 페이로드를 함께 전환한다', () => {
   const aiPanel = panelSource.slice(panelSource.indexOf('export function AIPanel'));
   assert.match(aiPanel, /const effectiveRecipe = \{[\s\S]*generationExampleStructuralRecipePatch\(baseRecipe, selectedExample\)/);
-  assert.match(aiPanel, /<MoodGuide catalogs=\{catalogs\} cut=\{effectiveCutType\}/);
-  assert.match(aiPanel, /includeMirrorExamples=\{effectiveCutType === 'styling' \|\| isMirror\}/);
+  assert.match(aiPanel, /const galleryCutType = cutType/);
+  assert.match(aiPanel, /const galleryShotVal = galleryShotOptions\.some/);
+  assert.match(aiPanel, /contentRole: inferContentRole\(\{ source: 'ai', cutType: galleryCutType, shot: galleryShotVal \}\)/);
+  assert.match(aiPanel, /<MoodGuide catalogs=\{catalogs\} cut=\{galleryCutType\} blockCutType=\{effectiveCutType\}/);
+  assert.match(aiPanel, /direction=\{galleryDirectionVal\} shot=\{galleryShotVal\}/);
+  assert.match(aiPanel, /includeMirrorExamples=\{galleryCutType === 'styling'\}/);
   assert.match(aiPanel, /contentRole: effectiveRecipe\.contentRole/);
-  assert.match(aiPanel, /cutType: effectiveCutType, direction: isMirror \? null : dirVal, shot: shotVal/);
+  assert.match(aiPanel, /cutType: effectiveCutType, direction: isMirror \? null : effectiveDirectionVal, shot: effectiveShotVal/);
+  assert.match(aiPanel, /appendMirror: cut === 'styling'/);
   assert.doesNotMatch(aiPanel, /setCutType\('mirror'\)/, '거울 선택은 원래 컷 탭 상태를 덮어쓰지 않는다');
 });

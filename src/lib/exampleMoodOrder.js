@@ -47,35 +47,52 @@ export const EXAMPLE_MOOD_BUCKETS = Object.freeze([
 ]);
 
 const BUCKET_INDEX = new Map(EXAMPLE_MOOD_BUCKETS.map((bucket, index) => [bucket.id, index]));
+const CLASSIFICATION_PRIORITY = Object.freeze([
+  'heritage', 'resort', 'nature', 'cafe', 'indoor', 'city', 'other',
+]);
 
-const searchableExampleText = (example) => (
+const normalizeSearchText = (value) => String(value || '')
+  .normalize('NFKD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLocaleLowerCase('en');
+
+const NORMALIZED_KEYWORDS = new Map(EXAMPLE_MOOD_BUCKETS.map((bucket) => [
+  bucket.id,
+  Object.freeze(bucket.keywords.map(normalizeSearchText)),
+]));
+const CLASSIFICATION_BUCKETS = Object.freeze(CLASSIFICATION_PRIORITY.map((id) => (
+  EXAMPLE_MOOD_BUCKETS.find((bucket) => bucket.id === id)
+)));
+
+const searchableExampleText = (example) => normalizeSearchText(
   [example?.mood, example?.detailSubject, example?.id]
     .filter((value) => typeof value === 'string' && value.trim())
-    .join(' ')
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLocaleLowerCase('en')
+    .join(' '),
 );
 
 export function exampleMoodBucket(example) {
   const haystack = searchableExampleText(example);
-  return EXAMPLE_MOOD_BUCKETS.find((bucket) => (
-    bucket.keywords.some((keyword) => haystack.includes(
-      keyword.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('en'),
-    ))
+  // night/travel/outdoor 같은 비장소 토큰도 현 카탈로그 분류에 쓰인다. 새 키워드는
+  // 넓은 버킷의 오탐을 늘릴 수 있으므로 판정 우선순위와 실데이터 회귀를 함께 확인한다.
+  return CLASSIFICATION_BUCKETS.find((bucket) => (
+    NORMALIZED_KEYWORDS.get(bucket.id).some((keyword) => haystack.includes(keyword))
   )) || EXAMPLE_MOOD_BUCKETS[EXAMPLE_MOOD_BUCKETS.length - 1];
 }
 
 const compareText = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
 
-export function compareGenerationExamplesByMood(left, right) {
-  const leftBucket = exampleMoodBucket(left);
-  const rightBucket = exampleMoodBucket(right);
-  return BUCKET_INDEX.get(leftBucket.id) - BUCKET_INDEX.get(rightBucket.id)
-    || (Number(left?.rank) || 0) - (Number(right?.rank) || 0)
-    || compareText(String(left?.id), String(right?.id));
-}
-
 export function orderExamplesByMood(examples) {
-  return [...(Array.isArray(examples) ? examples : [])].sort(compareGenerationExamplesByMood);
+  return (Array.isArray(examples) ? examples : [])
+    .map((example, originalIndex) => ({
+      example,
+      bucketIndex: BUCKET_INDEX.get(exampleMoodBucket(example).id),
+      rank: Number(example?.rank) || 0,
+      id: String(example?.id),
+      originalIndex,
+    }))
+    .sort((left, right) => left.bucketIndex - right.bucketIndex
+      || left.rank - right.rank
+      || compareText(left.id, right.id)
+      || left.originalIndex - right.originalIndex)
+    .map(({ example }) => example);
 }

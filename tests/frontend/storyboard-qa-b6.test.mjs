@@ -21,6 +21,8 @@ test('N12 addBlock accepts cut types that older section-specific gates rejected'
   assert.equal(acceptsDrop('hooking', 'product'), true);
   assert.equal(acceptsDrop('studio', 'mirror'), true);
   assert.equal(acceptsDrop('product', 'styling'), true);
+  assert.match(addBlockSource, /!reservation && droppedCutType === 'mirror' && sectionRole !== SECTION_ROLES\.STYLING/);
+  assert.match(addBlockSource, /거울컷은 스타일링 섹션에만 추가할 수 있어요/);
 });
 
 test('N12 product conversion still clears worn-only matching fields', () => {
@@ -29,11 +31,11 @@ test('N12 product conversion still clears worn-only matching fields', () => {
   const commitSource = storyboardSource.slice(commitStart, commitEnd);
   assert.match(
     commitSource,
-    /pendingRecipe\.cutType === 'product' \? \{ matchIds: \[\], faceExposure: null \} : \{\}/,
+    /recipePatch\.cutType === 'product' \? \{ matchIds: \[\], faceExposure: null \} : \{\}/,
   );
   assert.match(
     commitSource,
-    /WORN_CUT_TYPES\.has\(pendingRecipe\.cutType\)[\s\S]*?: null/,
+    /WORN_CUT_TYPES\.has\(recipePatch\.cutType\)[\s\S]*?: null/,
   );
 });
 

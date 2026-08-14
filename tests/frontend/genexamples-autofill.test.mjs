@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   assignGenerationExamples, directionBadgeLabel, exampleSelectionFingerprintFields,
-  isGenerationCombinationPublic, selectGenerationExamples, shouldMarkStoryboardDirty,
+  hasSelectableGenerationExamples, isGenerationCombinationPublic, selectGenerationExamples, shouldMarkStoryboardDirty,
   storedExampleConditionStatus,
 } from '../../src/lib/generationExamples.js';
 import { defaultStoryboard, isDefaultStoryboardForMode } from '../../src/lib/api/shapes.js';
@@ -78,6 +78,16 @@ test('eligibility uses cut, shot, clothing, gender and all publication, not dire
   assert.equal(selectGenerationExamples(products, {
     cutType: 'product', shot: 'ghost', clothingType: 'top', gender: 'women',
   })[0].id, 'product-ok');
+});
+
+test('existence checks share selection eligibility without requiring an ordered result', () => {
+  const catalog = [example('wrong', { gender: 'men' }), example('right')];
+  const options = {
+    cutType: 'styling', shot: 'full', clothingType: 'outer', gender: 'women',
+  };
+  assert.equal(hasSelectableGenerationExamples(catalog, options), true);
+  assert.equal(hasSelectableGenerationExamples(catalog, { ...options, clothingType: 'bottom' }), false);
+  assert.match(storyboardSource, /isOptionPublished=\{cut !== 'product' \? \(candidateShot\) => candidateShot === 'mine' \|\| hasSelectableGenerationExamples/);
 });
 
 test('space-set-only examples stay out of the default selector and autofill pool', () => {
@@ -164,23 +174,41 @@ test('space-set-only poses enter only the in-space compatible pose pool', () => 
   assert.deepEqual(inSpace.map((item) => item.id), ['generic-back', 'set-back']);
 });
 
-test('gallery mood ordering still supplies the quality top three for deterministic autofill', () => {
+test('styling gallery keeps mood buckets grouped while autofill mixes one top item per bucket', () => {
   const catalog = [
-    example('a1', { mood: 'a', rank: 1 }), example('a2', { mood: 'a', rank: 2 }),
-    example('a3', { mood: 'a', rank: 3 }), example('b1', { mood: 'b', rank: 1 }),
-    example('b2', { mood: 'b', rank: 2 }), example('b3', { mood: 'b', rank: 3 }),
+    example('cafe-1', { mood: 'sunny cafe', rank: 1 }),
+    example('cafe-2', { mood: 'coffee shop', rank: 2 }),
+    example('cafe-3', { mood: 'bakery', rank: 3 }),
+    example('home-1', { mood: 'cozy home', rank: 1 }),
+    example('home-2', { mood: 'bedroom', rank: 2 }),
+    example('street-1', { mood: 'urban street', rank: 1 }),
   ];
   assert.deepEqual(selectGenerationExamples(catalog, {
     cutType: 'styling', shot: 'full', clothingType: 'outer', gender: 'women',
-  }).map((item) => item.id), ['a1', 'b1', 'a2', 'b2', 'a3', 'b3']);
+  }).map((item) => item.id), ['cafe-1', 'cafe-2', 'cafe-3', 'home-1', 'home-2', 'street-1']);
   const result = assignGenerationExamples(Array.from({ length: 6 }, (_, i) => block(`b${i}`)), {
     catalog, product, gender: 'women',
   });
-  assert.deepEqual(result.blocks.map((item) => item.exampleId), ['a1', 'b1', 'a2', 'a1', 'b1', 'a2']);
+  assert.deepEqual(result.blocks.map((item) => item.exampleId), [
+    'cafe-1', 'home-1', 'street-1', 'cafe-1', 'home-1', 'street-1',
+  ]);
   assert.ok(result.blocks.every((item) => item.exampleSelectionOrigin === 'auto'));
 });
 
-test('styling gallery appends shot-independent mirror examples after ordinary and set examples', () => {
+test('product detail gallery round-robins detailSubject instead of applying mood buckets', () => {
+  const catalog = [
+    example('back-1', { cutType: 'product', shot: 'detail', gender: null, detailSubject: 'back', rank: 1 }),
+    example('back-2', { cutType: 'product', shot: 'detail', gender: null, detailSubject: 'back', rank: 2 }),
+    example('front-1', { cutType: 'product', shot: 'detail', gender: null, detailSubject: 'front', rank: 1 }),
+    example('front-2', { cutType: 'product', shot: 'detail', gender: null, detailSubject: 'front', rank: 2 }),
+    example('texture-1', { cutType: 'product', shot: 'detail', gender: null, detailSubject: 'texture', rank: 1 }),
+  ];
+  assert.deepEqual(selectGenerationExamples(catalog, {
+    cutType: 'product', shot: 'detail', clothingType: 'outer', gender: 'women',
+  }).map((item) => item.id), ['back-1', 'front-1', 'texture-1', 'back-2', 'front-2']);
+});
+
+test('styling gallery does not append mirror examples outside the public combination table', () => {
   const catalog = [
     example('ordinary-street', { mood: 'urban street', rank: 2 }),
     example('ordinary-cafe', { mood: 'sunny cafe', rank: 4 }),
@@ -199,9 +227,9 @@ test('styling gallery appends shot-independent mirror examples after ordinary an
     appendSetOnly: true, appendMirror: true,
   });
   assert.deepEqual(selected.map((item) => item.id), [
-    'ordinary-cafe', 'ordinary-street', 'set-member', 'mirror-full', 'mirror-medium',
+    'ordinary-cafe', 'ordinary-street', 'set-member',
   ]);
-  assert.deepEqual(selected.slice(-2).map((item) => item.shot), ['full', 'medium']);
+  assert.equal(selected.some((item) => item.cutType === 'mirror'), false);
   assert.equal(selectGenerationExamples(catalog, {
     cutType: 'styling', shot: 'full', clothingType: 'outer', gender: 'women',
     appendSetOnly: true,
@@ -291,6 +319,16 @@ test('stored selections ignore shot/direction drift, while cut/product condition
   const stored = example('stored');
   assert.equal(storedExampleConditionStatus(stored, { cutType: 'styling', shot: 'medium', direction: 'back', clothingType: 'outer', gender: 'women' }), 'valid');
   assert.equal(storedExampleConditionStatus(stored, { cutType: 'horizon', clothingType: 'outer', gender: 'women' }), 'changed');
+  const mirror = example('mirror', { cutType: 'mirror' });
+  assert.equal(storedExampleConditionStatus(mirror, {
+    cutType: 'styling', blockCutType: 'mirror', clothingType: 'outer', gender: 'women',
+  }), 'valid');
+  assert.equal(storedExampleConditionStatus(mirror, {
+    cutType: 'styling', blockCutType: 'styling', clothingType: 'outer', gender: 'women',
+  }), 'changed');
+  assert.equal(storedExampleConditionStatus(mirror, {
+    cutType: 'styling', blockCutType: 'styling', clothingType: 'outer', gender: 'women', includeMirror: true,
+  }), 'valid');
 });
 
 test('auto examples are fingerprint-neutral and auto saves are mock-dirty neutral', () => {
@@ -398,6 +436,8 @@ test('storyboard preserves an in-space pose across shot changes and remains atom
   assert.match(storyboardSource, /latestBlocks\.current !== atomicRetry\.previous/);
   assert.match(storyboardSource, /const copy = \{ \.\.\.withoutLayoutRow\(bs\[i\]\), id: uid\('blk'\) \}/);
   assert.match(storyboardSource, /새 섹션에 맞는 컷 예시를 먼저 골라주세요/);
+  assert.match(storyboardSource, /generationExampleStructuralRecipePatch\(\{ \.\.\.current, \.\.\.baseRecipePatch \}, example\)/);
+  assert.match(storyboardSource, /includeMirrorExamples=\{effectiveSectionRole === SECTION_ROLES\.STYLING \|\| isMirror\}/);
 });
 
 test('storyboard exposes honest retry copy and never labels assignment as an automatic pose', () => {

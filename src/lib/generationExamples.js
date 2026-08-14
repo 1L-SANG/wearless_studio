@@ -1,7 +1,11 @@
 import publicCombinationTable from '../../data/genexamples_public_combinations.json' with { type: 'json' };
 import { poseExampleDirectionCompatible } from './storyboardTaxonomy.js';
 import { detailDirectionFromExample } from './storyboardExampleSelection.js';
-import { compareGenerationExamplesByMood } from './exampleMoodOrder.js';
+import {
+  exampleMoodBucket,
+  EXAMPLE_MOOD_BUCKETS,
+  orderExamplesByMood,
+} from './exampleMoodOrder.js';
 
 const PUBLIC_COMBINATIONS = Object.freeze(publicCombinationTable.combinations.map(Object.freeze));
 const PUBLIC_KEYS = new Set(PUBLIC_COMBINATIONS.map((combination) => combinationKey(combination)));
@@ -29,6 +33,7 @@ export function hasPublicGenerationExamplesForCut({ cutType, clothingType, gende
 }
 
 const compareText = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
+const MOOD_BUCKET_ORDER = new Map(EXAMPLE_MOOD_BUCKETS.map((bucket, index) => [bucket.id, index]));
 const byRankThenId = (left, right) => (
   (Number(left.rank) || 0) - (Number(right.rank) || 0)
   || compareText(String(left.id), String(right.id))
@@ -73,25 +78,34 @@ function matchesProductAndGender(example, { clothingType, gender }) {
     && (example.cutType === 'product' ? example.gender == null : example.gender === gender);
 }
 
+function matchesSharedEligibility(example, { clothingType, gender, allowSetOnly = false }) {
+  return (!example?.setOnly || allowSetOnly)
+    && isPublishedAll(example)
+    && matchesProductAndGender(example, { clothingType, gender });
+}
+
 function orderGenerationExamples(matched, {
   cutType, shot, limit = 6, groupByMood = ['styling', 'horizon'].includes(cutType),
+  mixAxis = cutType === 'product' && shot === 'detail' ? 'detailSubject' : null,
 }) {
   const maxItems = Math.min(matched.length, limit);
-  if (groupByMood) {
-    return [...matched].sort(compareGenerationExamplesByMood).slice(0, maxItems);
+  if (!mixAxis) {
+    const ordered = groupByMood ? orderExamplesByMood(matched) : [...matched].sort(byRankThenId);
+    return ordered.slice(0, maxItems);
   }
-  const mixAxis = cutType === 'product' && shot === 'detail' ? 'detailSubject'
-      : null;
-  if (!mixAxis) return [...matched].sort(byRankThenId).slice(0, maxItems);
 
   const buckets = new Map();
   for (const example of matched) {
-    const key = String(example[mixAxis] || '');
+    const key = mixAxis === 'moodBucket'
+      ? exampleMoodBucket(example).id
+      : String(example[mixAxis] || '');
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key).push(example);
   }
   const orderedBuckets = [...buckets.entries()]
-    .sort(([left], [right]) => compareText(left, right))
+    .sort(([left], [right]) => mixAxis === 'moodBucket'
+      ? MOOD_BUCKET_ORDER.get(left) - MOOD_BUCKET_ORDER.get(right)
+      : compareText(left, right))
     .map(([, examples]) => examples.sort(byRankThenId));
   const mixed = [];
   for (let rankIndex = 0; mixed.length < maxItems; rankIndex += 1) {
@@ -108,37 +122,81 @@ function orderGenerationExamples(matched, {
   return mixed;
 }
 
-export function selectGenerationExamples(catalog, {
-  cutType, shot, clothingType, gender, spaceGroupId = null, direction = null,
-  includeSetOnly = false, appendSetOnly = false, appendMirror = false,
-}) {
-  const flatCombinationPublished = isGenerationCombinationPublic({
-    cutType, shot, clothingType, gender,
-  });
-  if (!flatCombinationPublished && !includeSetOnly && !appendSetOnly) return [];
-  const matched = (catalog || []).filter((example) => (
-    (!example?.setOnly || includeSetOnly || appendSetOnly)
+function flatCombinationIsPublished({ cutType, shot, clothingType, gender }) {
+  return isGenerationCombinationPublic({ cutType, shot, clothingType, gender });
+}
+
+function matchesMainSelection(example, options, flatCombinationPublished) {
+  const {
+    cutType, shot, clothingType, gender, spaceGroupId, direction,
+    includeSetOnly, appendSetOnly,
+  } = options;
+  return matchesSharedEligibility(example, {
+    clothingType, gender, allowSetOnly: includeSetOnly || appendSetOnly,
+  })
     && (example?.setOnly || flatCombinationPublished)
-    &&
-    isPublishedAll(example)
     && example?.cutType === cutType
     && example?.shot === shot
-    && matchesProductAndGender(example, { clothingType, gender })
     && (!spaceGroupId || (
       example.variants.includes('pose')
       && poseExampleDirectionCompatible(example, { cutType, direction })
-    ))
+    ));
+}
+
+function matchesMirrorSelection(example, { clothingType, gender }) {
+  return matchesSharedEligibility(example, { clothingType, gender })
+    && example?.cutType === 'mirror'
+    && isGenerationCombinationPublic({
+      cutType: 'mirror', shot: example.shot, clothingType, gender,
+    });
+}
+
+export function hasSelectableGenerationExamples(catalog, rawOptions) {
+  const options = {
+    spaceGroupId: null,
+    direction: null,
+    includeSetOnly: false,
+    appendSetOnly: false,
+    appendMirror: false,
+    ...rawOptions,
+  };
+  const flatCombinationPublished = flatCombinationIsPublished(options);
+  if (!flatCombinationPublished && !options.includeSetOnly && !options.appendSetOnly) return false;
+  const source = Array.isArray(catalog) ? catalog : [];
+  if (source.some((example) => matchesMainSelection(example, options, flatCombinationPublished))) {
+    return true;
+  }
+  return options.appendSetOnly && options.appendMirror && options.cutType === 'styling'
+    && source.some((example) => matchesMirrorSelection(example, options));
+}
+
+export function selectGenerationExamples(catalog, rawOptions) {
+  const options = {
+    spaceGroupId: null,
+    direction: null,
+    includeSetOnly: false,
+    appendSetOnly: false,
+    appendMirror: false,
+    mixMoodBuckets: false,
+    ...rawOptions,
+  };
+  const {
+    cutType, shot, clothingType, gender, includeSetOnly, appendSetOnly,
+    appendMirror, mixMoodBuckets,
+  } = options;
+  const flatCombinationPublished = flatCombinationIsPublished(options);
+  if (!flatCombinationPublished && !includeSetOnly && !appendSetOnly) return [];
+  const source = Array.isArray(catalog) ? catalog : [];
+  const matched = source.filter((example) => (
+    matchesMainSelection(example, options, flatCombinationPublished)
   ));
   if (appendSetOnly) {
     const ordinary = matched.filter((example) => !example.setOnly);
     const setMembers = matched.filter((example) => example.setOnly);
     const mirrorExamples = appendMirror && cutType === 'styling'
-      ? (catalog || []).filter((example) => (
-        !example?.setOnly
-        && isPublishedAll(example)
-        && example?.cutType === 'mirror'
+      ? source.filter((example) => (
+        matchesMirrorSelection(example, options)
         // 거울 예시는 소수이므로 현재 full/medium 탭과 무관하게 모두 마지막에 둔다.
-        && matchesProductAndGender(example, { clothingType, gender })
       )).sort(byRankThenId)
       : [];
     return [
@@ -150,7 +208,7 @@ export function selectGenerationExamples(catalog, {
     ];
   }
   return orderGenerationExamples(matched, {
-    cutType, shot, groupByMood: !includeSetOnly,
+    cutType, shot, mixAxis: mixMoodBuckets ? 'moodBucket' : undefined,
   });
 }
 
@@ -162,6 +220,7 @@ function candidatesForBlock(block, catalog, product, gender) {
     gender,
     spaceGroupId: block.spaceGroupId,
     direction: block.direction,
+    mixMoodBuckets: block.cutType === 'styling',
   });
 }
 
@@ -237,12 +296,13 @@ export function assignGenerationExamples(blocks, { catalog, product, gender, onl
 }
 
 export function storedExampleConditionStatus(example, {
-  cutType, clothingType, gender, includeMirror = false,
+  cutType, blockCutType = cutType, clothingType, gender, includeMirror = false,
 }) {
   if (!example) return 'unknown';
   if (!isPublishedAll(example)) return 'unknown';
   if (example.cutType !== cutType
-    && !(includeMirror && cutType === 'styling' && example.cutType === 'mirror')) return 'changed';
+    && !(cutType === 'styling' && example.cutType === 'mirror'
+      && (blockCutType === 'mirror' || includeMirror))) return 'changed';
   return matchesProductAndGender(example, { clothingType, gender }) ? 'valid' : 'changed';
 }
 
