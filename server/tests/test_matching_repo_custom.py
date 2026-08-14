@@ -73,6 +73,10 @@ def test_custom_arm_thumbnail_join_survives_cutout_asset_swap():
     assert "'upload'" in custom_thumb, "등록 직후 원본 썸네일"
     assert "'derived'" in custom_thumb, "누끼 스왑 뒤 파생 썸네일"
     assert "source = 'upload'" not in custom_thumb, "파생을 배제하는 옛 등호 조건 금지"
+    # source 완화가 소유자 스코프까지 느슨하게 만들지 않았는지 — 이 세 술어가 "남의
+    # 프로젝트 asset 을 내 카드로 끌어오지 못한다"는 보장 전부다(2026-08-14 재리뷰 M-7).
+    assert "thb.user_id = mi.owner_user_id" in custom_thumb, "소유자 스코프는 유지"
+    assert "thb.project_id = mi.project_id" in custom_thumb, "프로젝트 스코프는 유지"
     assert "thb.visibility = 'private'" in custom_thumb, "소유자 스코프는 유지"
     assert "thb.deleted_at is null" in custom_thumb
 
