@@ -46,8 +46,13 @@ const CUT_TYPE_OPTIONS_BY_SECTION = Object.freeze({
   ]),
 });
 
-export const cutTypeOptionsForSection = (sectionRole) => (
+export const allowedCutTypeOptionsForSection = (sectionRole) => (
   CUT_TYPE_OPTIONS_BY_SECTION[sectionRole] || Object.freeze([])
+);
+
+// 거울은 스타일링 갤러리의 예시로 고른다. 저장·이동·드래그 허용 규칙에는 계속 남긴다.
+export const cutTypeOptionsForSection = (sectionRole) => (
+  allowedCutTypeOptionsForSection(sectionRole).filter((option) => option.value !== 'mirror')
 );
 
 export const CONTENT_ROLES = Object.freeze({

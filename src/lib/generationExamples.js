@@ -1,5 +1,6 @@
 import publicCombinationTable from '../../data/genexamples_public_combinations.json' with { type: 'json' };
 import { poseExampleDirectionCompatible } from './storyboardTaxonomy.js';
+import { compareGenerationExamplesByMood } from './exampleMoodOrder.js';
 
 const PUBLIC_COMBINATIONS = Object.freeze(publicCombinationTable.combinations.map(Object.freeze));
 const PUBLIC_KEYS = new Set(PUBLIC_COMBINATIONS.map((combination) => combinationKey(combination)));
@@ -71,10 +72,14 @@ function matchesProductAndGender(example, { clothingType, gender }) {
     && (example.cutType === 'product' ? example.gender == null : example.gender === gender);
 }
 
-function orderGenerationExamples(matched, { cutType, shot, limit = 6 }) {
+function orderGenerationExamples(matched, {
+  cutType, shot, limit = 6, groupByMood = ['styling', 'horizon'].includes(cutType),
+}) {
   const maxItems = Math.min(matched.length, limit);
-  const mixAxis = cutType === 'styling' ? 'mood'
-    : cutType === 'product' && shot === 'detail' ? 'detailSubject'
+  if (groupByMood) {
+    return [...matched].sort(compareGenerationExamplesByMood).slice(0, maxItems);
+  }
+  const mixAxis = cutType === 'product' && shot === 'detail' ? 'detailSubject'
       : null;
   if (!mixAxis) return [...matched].sort(byRankThenId).slice(0, maxItems);
 
@@ -104,7 +109,7 @@ function orderGenerationExamples(matched, { cutType, shot, limit = 6 }) {
 
 export function selectGenerationExamples(catalog, {
   cutType, shot, clothingType, gender, spaceGroupId = null, direction = null,
-  includeSetOnly = false, appendSetOnly = false,
+  includeSetOnly = false, appendSetOnly = false, appendMirror = false,
 }) {
   const flatCombinationPublished = isGenerationCombinationPublic({
     cutType, shot, clothingType, gender,
@@ -126,12 +131,26 @@ export function selectGenerationExamples(catalog, {
   if (appendSetOnly) {
     const ordinary = matched.filter((example) => !example.setOnly);
     const setMembers = matched.filter((example) => example.setOnly);
+    const mirrorExamples = appendMirror && cutType === 'styling'
+      ? (catalog || []).filter((example) => (
+        !example?.setOnly
+        && isPublishedAll(example)
+        && example?.cutType === 'mirror'
+        // 거울 예시는 소수이므로 현재 full/medium 탭과 무관하게 모두 마지막에 둔다.
+        && matchesProductAndGender(example, { clothingType, gender })
+      )).sort(byRankThenId)
+      : [];
     return [
       ...orderGenerationExamples(ordinary, { cutType, shot }),
-      ...orderGenerationExamples(setMembers, { cutType, shot, limit: setMembers.length }),
+      ...orderGenerationExamples(setMembers, {
+        cutType, shot, limit: setMembers.length, groupByMood: false,
+      }),
+      ...mirrorExamples,
     ];
   }
-  return orderGenerationExamples(matched, { cutType, shot });
+  return orderGenerationExamples(matched, {
+    cutType, shot, groupByMood: !includeSetOnly,
+  });
 }
 
 function candidatesForBlock(block, catalog, product, gender) {
@@ -212,10 +231,13 @@ export function assignGenerationExamples(blocks, { catalog, product, gender, onl
   return { blocks: changed ? next : blocks, changed, assignedIds, protectedIds, missingIds };
 }
 
-export function storedExampleConditionStatus(example, { cutType, clothingType, gender }) {
+export function storedExampleConditionStatus(example, {
+  cutType, clothingType, gender, includeMirror = false,
+}) {
   if (!example) return 'unknown';
   if (!isPublishedAll(example)) return 'unknown';
-  if (example.cutType !== cutType) return 'changed';
+  if (example.cutType !== cutType
+    && !(includeMirror && cutType === 'styling' && example.cutType === 'mirror')) return 'changed';
   return matchesProductAndGender(example, { clothingType, gender }) ? 'valid' : 'changed';
 }
 
