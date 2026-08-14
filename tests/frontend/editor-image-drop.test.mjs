@@ -179,14 +179,13 @@ test('uploaded editor images wait for a renderable stable asset URL before showi
   assert.match(editorSource, /const slot = slotId[\s\S]{0,240}element\.id === slotId/);
 });
 
-test('hidden quick toolbars cannot intercept the canvas and selection alone does not reveal them', () => {
+test('quick toolbars stay non-interactive by default and remain open for the selected block', () => {
   const styles = readFileSync(new URL('../../src/styles/features.css', import.meta.url), 'utf8');
   const quickRule = styles.match(/\.canvas-block \.quick \{[^}]+\}/s)?.[0] || '';
 
   assert.match(quickRule, /pointer-events:\s*none/);
   assert.match(quickRule, /visibility:\s*hidden/);
-  assert.match(styles, /\.canvas-block:hover \.quick \{[^}]*visibility:\s*visible[^}]*pointer-events:\s*auto/s);
-  assert.doesNotMatch(styles, /\.canvas-block\.on \.quick/);
+  assert.match(styles, /\.canvas-block:hover \.quick, \.canvas-block\.on \.quick \{[^}]*visibility:\s*visible[^}]*pointer-events:\s*auto/s);
 });
 
 test('quick toolbar has a pointer bridge across its visual gap', () => {

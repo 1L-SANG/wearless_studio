@@ -189,13 +189,39 @@ test('canvas routes every movable element through one pointer drag without nativ
   assert.match(editorStylesSource, /\.ed-canvas\s*\{[^}]*user-select:\s*none[^}]*-webkit-user-select:\s*none/s);
   assert.match(editorStylesSource, /\.el-text:not\(\.editing\)\s*\{[^}]*user-select:\s*none[^}]*touch-action:\s*none/s);
   assert.match(editorStylesSource, /\.el-text\.editing\s*\{[^}]*user-select:\s*text[^}]*touch-action:\s*auto/s);
-  assert.match(editorSource, /onDoubleClick=\{\(e\) => \{ e\.stopPropagation\(\); pendingBubbleFit\.current = null; onEdit\(el\.id\)/);
+  assert.match(editorSource, /onDoubleClick=\{preview \? undefined : \(e\) => \{\s*e\.stopPropagation\(\); pendingBubbleFit\.current = null; onEdit\(el\.id\)/s);
+  assert.match(editorSource, /onDoubleClick=\{\(e\) => \{ e\.stopPropagation\(\); pendingTextSize\.current = null; onEdit\(el\.id\)/);
 });
 
 test('entering text edit places the caret at the end for normal text and speech bubbles', () => {
   assert.match(editorSource, /range\.selectNodeContents\(node\);\s*range\.collapse\(false\);/s);
   assert.match(editorSource, /focusEditableAtEnd\(isSpeechBubbleElement\(el\) \? textRef\.current : ref\.current\)/);
   assert.doesNotMatch(editorSource, /setTimeout\(\(\) => (?:textRef|ref)\.current/);
+});
+
+test('new ordinary text starts as an immediately editable Figma-style point text box', () => {
+  const addTextSource = editorSource.slice(
+    editorSource.indexOf('const addText ='),
+    editorSource.indexOf('/* ---- 정보 블록', editorSource.indexOf('const addText =')),
+  );
+
+  assert.match(addTextSource, /w:\s*12, h:\s*45, text:\s*'', textSizing:\s*'auto'/);
+  assert.match(addTextSource, /if \(!garment\) setEditEl\(el\.id\)/);
+  assert.match(editorSource, /const previewAutoTextSize = useCallback/);
+  assert.match(editorSource, /naturalTextWidth\(node, value\)/);
+  assert.match(editorSource, /h:\s*Math\.max\(1, Math\.ceil\(node\.scrollHeight\)\)/);
+  assert.match(editorSource, /onInput=\{\(e\) => \{ if \(editing\) previewAutoTextSize\(e\.currentTarget\); \}\}/);
+  assert.match(editorSource, /if \(nextSize && onTextCommit\) onTextCommit\(blockId, el\.id, value, nextSize\)/);
+});
+
+test('manually resizing point text converts it into a fixed text box', () => {
+  assert.match(editorSource, /elNow\?\.type === 'text' && elNow\.shape !== 'bubble' && elNow\.textSizing === 'auto' \? \{ textSizing: 'fixed' \} : \{\}/);
+  assert.match(editorSource, /height: el\.textSizing === 'fixed' \? el\.h : 'auto'/);
+  assert.match(editorPanelsSource, /onChange\(\{ w, \.\.\.\(!isBubble && el\.textSizing === 'auto' \? \{ textSizing: 'fixed' \} : \{\}\) \}\)/);
+});
+
+test('block quick actions stay visible while the top-level block is selected', () => {
+  assert.match(editorStylesSource, /\.canvas-block:hover \.quick, \.canvas-block\.on \.quick\s*\{[^}]*opacity:\s*1[^}]*visibility:\s*visible[^}]*pointer-events:\s*auto/s);
 });
 
 test('shared pointer drag covers frame controls, movable group members, rotation bounds, and cleanup', () => {

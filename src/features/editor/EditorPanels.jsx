@@ -816,7 +816,8 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
         <>
           <PanelSection title="텍스트 박스" first>
             <div className="field-2up">
-              <NumField iconText="가로" value={Math.round(el.w || 120)} min={1} max={10000} onChange={(w) => onChange({ w })} />
+              <NumField iconText="가로" value={Math.round(el.w || 120)} min={1} max={10000}
+                onChange={(w) => onChange({ w, ...(!isBubble && el.textSizing === 'auto' ? { textSizing: 'fixed' } : {}) })} />
               <NumField icon="rotate" labelText="회전" value={el.rotate || 0} min={-180} max={180} suffix="°" onChange={(rotate) => onChange({ rotate })} />
             </div>
             <div className="panel-sub" style={{ marginTop: 8 }}>텍스트는 좌우 가장자리로 폭을 조절하고, 회전은 여기서 정확히 입력할 수 있어요.</div>

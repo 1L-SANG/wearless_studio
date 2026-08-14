@@ -204,6 +204,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
   const deferredPick = useRef(false);
   const draggedPointer = useRef(false);
   const pendingBubbleFit = useRef(null);
+  const pendingTextSize = useRef(null);
   const [imageDropOver, setImageDropOver] = useState(false);
 
   /* 글자 근처를 눌렀는지, 상자 안의 먼 빈 곳을 눌렀는지 가른다 — 판정은 viewport
@@ -297,6 +298,21 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     return fit;
   }, [el]);
 
+  const previewAutoTextSize = useCallback((node) => {
+    if (!node || el.type !== 'text' || el.shape === 'bubble' || el.textSizing !== 'auto') return null;
+    const value = editableText(node);
+    const computed = node.ownerDocument.defaultView.getComputedStyle(node);
+    const horizontalPadding = (Number.parseFloat(computed.paddingLeft) || 0) + (Number.parseFloat(computed.paddingRight) || 0);
+    // Figma의 포인트 텍스트처럼 줄바꿈 전에는 가장 긴 줄을 따라 가로로 자라고,
+    // Enter를 누른 뒤에는 사용자가 만든 줄만큼 세로로 자란다.
+    const width = Math.max(12, Math.ceil(naturalTextWidth(node, value) + horizontalPadding + 2));
+    node.style.width = width + 'px';
+    node.style.height = 'auto';
+    const size = { w: width, h: Math.max(1, Math.ceil(node.scrollHeight)) };
+    pendingTextSize.current = size;
+    return size;
+  }, [el.shape, el.textSizing, el.type]);
+
   // 프리셋의 임시 w/h 를 한 프레임 먼저 보여 주면 말풍선이 뒤늦게 커지거나 줄어든다.
   // 첫 paint 전 실제 글자 폭·줄바꿈 높이를 재서 캔버스 정본까지 한 번에 맞춘다.
   useLayoutEffect(() => {
@@ -307,6 +323,16 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     const changed = ['x', 'y', 'w', 'h'].some((key) => Math.round(Number(el[key] || 0)) !== patch[key]);
     if (changed) onPatch(blockId, el.id, patch);
   }, [blockId, editing, el, onPatch, preview, previewBubbleSize]);
+
+  // 글꼴·크기·자간을 패널에서 바꿔도 포인트 텍스트의 저장 폭/높이가 실제 글자와
+  // 어긋나지 않게 첫 paint 전에 다시 맞춘다. 템플릿 문구는 명시적 auto 플래그가 없어 제외한다.
+  useLayoutEffect(() => {
+    if (el.hidden || editing || preview || el.type !== 'text' || el.shape === 'bubble' || el.textSizing !== 'auto') return;
+    const size = previewAutoTextSize(ref.current);
+    if (!size || !onPatch) return;
+    const changed = Math.round(Number(el.w || 0)) !== size.w || Math.round(Number(el.h || 0)) !== size.h;
+    if (changed) onPatch(blockId, el.id, size);
+  }, [blockId, editing, el, onPatch, preview, previewAutoTextSize]);
 
   // contentEditable 이 실제 DOM에 반영된 직후 포커스와 캐럿을 문장 끝으로 보낸다.
   // 더블클릭 좌표에 남아 있던 브라우저 기본 selection 때문에 중간 글자가 덮이는 것을 막는다.
@@ -466,7 +492,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       );
     }
     return (
-      <div ref={ref} data-elid={el.id} className={cls(`el-text${editing ? ' editing' : ''}`)} style={{ ...base, height: 'auto',
+      <div ref={ref} data-elid={el.id} className={cls(`el-text${editing ? ' editing' : ''}`)} style={{ ...base, height: el.textSizing === 'fixed' ? el.h : 'auto',
         fontFamily: FONT_MAP[s.font] || 'var(--font-body)', fontSize: s.size, fontWeight: s.weight || 400,
         color: s.color || '#0e0d14', letterSpacing: s.tracking, textAlign: s.align || 'left',
         lineHeight: s.lineHeight ? s.lineHeight + 'px' : 1.4, whiteSpace: 'pre-wrap', opacity: (el.opacity ?? 1) * (s.opacity ?? 1),
@@ -477,12 +503,16 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
         /* pick 이 이미 요소든 블록이든 골라 놨다 — 어느 쪽이든 이 클릭은 캔버스 바닥까지
            가면 안 된다. 거기 onClick 이 선택을 지운다. */
         onClick={finishClick}
-        onDoubleClick={(e) => { e.stopPropagation(); pendingBubbleFit.current = null; onEdit(el.id); }}
+        onDoubleClick={(e) => { e.stopPropagation(); pendingTextSize.current = null; onEdit(el.id); }}
         contentEditable={editing} suppressContentEditableWarning
+        onInput={(e) => { if (editing) previewAutoTextSize(e.currentTarget); }}
         onBlur={(e) => {
           const value = editableText(e.currentTarget);
+          const nextSize = pendingTextSize.current || previewAutoTextSize(e.currentTarget);
+          pendingTextSize.current = null;
           onEdit(null);
-          onPatch(blockId, el.id, { text: value });
+          if (nextSize && onTextCommit) onTextCommit(blockId, el.id, value, nextSize);
+          else onPatch(blockId, el.id, { text: value });
         }}>
         {editing ? el.text : display}</div>
     );
@@ -1674,9 +1704,10 @@ export function Editor() {
     const garment = preset === 'garment';
     const el = garment
       ? { id: uid('el'), type: 'text', x: 90, y: 70, w: 480, h: 60, text: '옷 글자 입력', style: { font: 'Pretendard', size: 44, weight: 700, color: '#0e0d14', align: 'center' } }
-      : { id: uid('el'), type: 'text', x: 120, y: 80, w: 420, h: 60, text: '텍스트를 입력하세요', style: { font: 'Pretendard', size: 32, weight: 500, color: '#0e0d14' } };
+      : { id: uid('el'), type: 'text', x: 120, y: 80, w: 12, h: 45, text: '', textSizing: 'auto', style: { font: 'Pretendard', size: 32, weight: 500, color: '#0e0d14' } };
     setBlocks((bs) => bs.map((b) => b.id === id ? { ...b, elements: [...b.elements, el] } : b));
     selectEl(id, el); setTab('text');
+    if (!garment) setEditEl(el.id);
     toast.push(garment ? '옷 글자를 추가했어요 — 뭉갠 글자 위로 옮겨 덮으세요' : '텍스트를 추가했어요');
   };
   /* ---- 정보 블록 (PRD §10.14 `내용 추가`) — infoPresets 빌더로 폼→블록 생성 ---- */
@@ -1791,8 +1822,14 @@ export function Editor() {
     if (editEl && wrapRef.current && bs) {
       const node = wrapRef.current.querySelector(`[data-elid="${editEl}"]`);
       if (node) {
-        const text = node.textContent;
-        bs = bs.map((b) => ({ ...b, elements: b.elements.map((el) => el.id === editEl ? { ...el, text } : el) }));
+        const text = editableText(node);
+        bs = bs.map((b) => ({ ...b, elements: b.elements.map((el) => {
+          if (el.id !== editEl) return el;
+          const textSize = el.type === 'text' && el.shape !== 'bubble' && el.textSizing === 'auto'
+            ? { w: Math.max(1, Math.round(node.offsetWidth)), h: Math.max(1, Math.round(node.offsetHeight)) }
+            : {};
+          return { ...el, text, ...textSize };
+        }) }));
         latestBlocks.current = bs;
       }
     }
@@ -2015,7 +2052,10 @@ export function Editor() {
       imgNode.style.left = (-elNow.crop.ox * kx) + 'px';
       imgNode.style.top = (-elNow.crop.oy * ky) + 'px';
     }
-    liveRef.current[elId] = { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.w), h: Math.round(rect.h) };
+    liveRef.current[elId] = {
+      x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.w), h: Math.round(rect.h),
+      ...(elNow?.type === 'text' && elNow.shape !== 'bubble' && elNow.textSizing === 'auto' ? { textSizing: 'fixed' } : {}),
+    };
   };
   const liveRotate = (target, rotation) => {
     const elId = target.dataset.elid;
@@ -2224,7 +2264,7 @@ export function Editor() {
   const group = selEls.length > 1 && !editEl;
   const resizePolicy = resizePolicyForElement(selectedElObj, lockRatio);
   const showRotationHandle = single && shouldShowRotationHandle(selectedElObj);
-  const autoHeightTextTarget = single && selectedElObj?.type === 'text' && selectedElObj.shape !== 'bubble';
+  const autoHeightTextTarget = single && selectedElObj?.type === 'text' && selectedElObj.shape !== 'bubble' && selectedElObj.textSizing !== 'fixed';
   // 정렬·분배(Phase 3b) — 다중선택이 "한 블록"일 때만(좌표가 블록-상대라 cross-block 정렬 무의미).
   const groupBlockId = (() => {
     if (!group) return null;
