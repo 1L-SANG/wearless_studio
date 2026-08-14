@@ -41,6 +41,12 @@ AUTHORITY RULES
   override; never restore or score omitted attributes. For pose, judge only allowed pose kinematics and
   left/right. For bg, judge the exact plate scene while storyboard controls person/framing. A space-set
   plate owns continuity, not cut-specific pose/camera.
+  When exampleRepeatIndex is 1 or greater, the repeated all-scope example intentionally receives a
+  bounded natural micro-variation. Allow small changes to hand/finger placement, one arm bend, head angle,
+  stance width, shoulder/pelvis line, weight distribution on the SAME support side, and gaze target within
+  the same gaze meaning. Do not fail solely for those authorized changes. Still fail a changed action,
+  body-direction family, support-side reversal, defining contact/support function, broad limb role, gaze
+  meaning, or intended asymmetry.
 
 HARD GATES — return each exactly once in this order:
 1. fileValidity — one complete, decodable output; no blank, corrupt, truncated, tiled, or accidental collage.

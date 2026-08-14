@@ -84,6 +84,7 @@ class CutPlan:
     space_set_continuity: bool | None = None
     reference_direction_compatible: bool = True
     reference_face_visibility: Literal["hidden", "visible"] | None = None
+    example_repeat_index: int = 0
 
     def uses_styling_all_location_recomposition(self) -> bool:
         """Whether ``all`` is a styling inspiration, not an exact location plate."""
@@ -113,6 +114,7 @@ class CutPlan:
             "attributeOwners": dict(self.attribute_owners),
             "referenceAllowedAttributes": list(self.reference_attributes),
             "declaredFitAxes": list(self.declared_fit_axes),
+            "exampleRepeatIndex": self.example_repeat_index,
             "conflictResolution": {
                 "productTruthControlsOnly": list(_PRODUCT_TRUTH_ATTRIBUTES),
                 "fitProfileControlsOnly": [f"fit.{axis}" for axis in self.declared_fit_axes],
@@ -130,6 +132,12 @@ class CutPlan:
                 ),
                 "spaceSetCameraAndPoseRemainCutSpecific": (
                     self.space_set_continuity is not None
+                ),
+                "repeatedExampleMicroVariationApplied": (
+                    self.example_repeat_index >= 1
+                    and self.reference_mode == "all"
+                    and self.space_set_continuity is None
+                    and self.attribute_owners["pose"] == "reference"
                 ),
             },
         }
@@ -289,6 +297,9 @@ def compile_cut_plan(
     reference_face_visibility = spec.get("_referenceFaceVisibility")
     if reference_face_visibility not in {None, "hidden", "visible"}:
         raise CutPlanError("invalid_reference_face_visibility")
+    example_repeat_index = spec.get("_exampleRepeatIndex", 0)
+    if type(example_repeat_index) is not int or example_repeat_index < 0:
+        raise CutPlanError("invalid_example_repeat_index")
 
     raw_pose = spec.get("pose", "auto")
     if not isinstance(raw_pose, str) or not raw_pose.strip():
@@ -330,6 +341,18 @@ def compile_cut_plan(
     if explicit_pose and "pose" in reference_attributes:
         reference_attributes.remove("pose")
 
+    effective_repeat_index = (
+        example_repeat_index
+        if (
+            recipe_family in {"styling", "horizon"}
+            and reference_mode == "all"
+            and space_set_continuity is None
+            and reference_direction_compatible
+            and not explicit_pose
+        )
+        else 0
+    )
+
     owners: dict[str, AttributeOwner] = {
         attribute: "productTruth" for attribute in _PRODUCT_TRUTH_ATTRIBUTES
     }
@@ -369,6 +392,7 @@ def compile_cut_plan(
         space_set_continuity=space_set_continuity,
         reference_direction_compatible=reference_direction_compatible,
         reference_face_visibility=reference_face_visibility,
+        example_repeat_index=effective_repeat_index,
         declared_fit_axes=declared_fit_axes,
         reference_attributes=tuple(reference_attributes),
         attribute_owners=MappingProxyType(owners),

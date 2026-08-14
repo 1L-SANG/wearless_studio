@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wearless · 반복 예시 변주 표시 프로토타입</title>
+  <style>
+    :root {
+      --bg: #f4f4f1;
+      --paper: #fff;
+      --ink: #161719;
+      --muted: #72757b;
+      --hair: #dfe1e2;
+      --sky: #91c6ec;
+      --sky-weak: #edf7fd;
+      --shadow: 0 10px 30px rgba(22, 23, 25, .08);
+      --radius: 16px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button { font: inherit; }
+    .topbar {
+      height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 34px;
+      background: rgba(255,255,255,.92);
+      border-bottom: 1px solid var(--hair);
+      backdrop-filter: blur(14px);
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+    .topbar img { width: 108px; height: auto; display: block; }
+    .prototype-label { font-size: 12px; color: var(--muted); letter-spacing: .02em; }
+    main { max-width: 1420px; margin: 0 auto; padding: 34px; }
+    .intro { margin-bottom: 30px; }
+    h1 { margin: 0 0 9px; font-size: clamp(25px, 3vw, 38px); letter-spacing: -.045em; }
+    .intro p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
+    .workspace { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 26px; align-items: start; }
+    .board, .inspector {
+      background: rgba(255,255,255,.72);
+      border: 1px solid rgba(255,255,255,.95);
+      border-radius: 20px;
+      box-shadow: var(--shadow);
+    }
+    .board { padding: 26px; min-width: 0; }
+    .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 23px; }
+    .section-title { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 800; }
+    .section-index {
+      width: 28px; height: 28px; display: grid; place-items: center;
+      border-radius: 9px; background: var(--ink); color: #fff; font-size: 11px;
+    }
+    .section-note { color: var(--muted); font-size: 12px; }
+    .repeat-explainer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin: -5px 0 27px;
+      padding: 14px 16px;
+      border: 1px solid #cee6f6;
+      border-radius: 13px;
+      background: var(--sky-weak);
+    }
+    .repeat-explainer strong { display: block; margin-bottom: 4px; font-size: 13px; }
+    .repeat-explainer p { margin: 0; color: #526977; font-size: 11.5px; line-height: 1.5; }
+    .repeat-count {
+      flex: none;
+      padding: 7px 10px;
+      border-radius: 8px;
+      background: #d9edf9;
+      color: #31566d;
+      font-size: 10.5px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .frame-grid { display: grid; grid-template-columns: repeat(2, minmax(260px, 1fr)); gap: 30px 22px; }
+    .frame { position: relative; min-width: 0; }
+    .frame-tag {
+      position: absolute;
+      top: -10px;
+      right: 9px;
+      z-index: 8;
+      padding: 3px 10px;
+      border: 1px solid var(--hair);
+      border-radius: 999px;
+      background: #fff;
+      font-size: 10px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .frame-box {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2px;
+      overflow: hidden;
+      border: 1px solid var(--hair);
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 7px 22px rgba(22,23,25,.09);
+    }
+    .cut {
+      position: relative;
+      aspect-ratio: 3 / 4;
+      overflow: hidden;
+      background: #ecece9;
+      cursor: pointer;
+      outline: none;
+    }
+    .cut > img { width: 100%; height: 100%; display: block; object-fit: cover; }
+    .cut.selected::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: 6;
+      box-shadow: inset 0 0 0 3px var(--sky);
+      pointer-events: none;
+    }
+    .cut-number {
+      position: absolute;
+      z-index: 7;
+      top: 8px;
+      left: 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 24px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(17,19,24,.68);
+      color: #fff;
+      font-size: 10.5px;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      backdrop-filter: blur(5px);
+    }
+    .pose-plan {
+      position: absolute;
+      z-index: 7;
+      left: 10px;
+      right: 10px;
+      bottom: 8px;
+      width: auto;
+      max-width: none;
+      padding: 10px 11px;
+      border-radius: 9px;
+      background: rgba(17,19,24,.78);
+      color: #fff;
+      backdrop-filter: blur(6px);
+      text-align: center;
+      white-space: nowrap;
+    }
+    .pose-plan strong { display: block; font-size: 11px; line-height: 1.35; letter-spacing: -.01em; }
+    .cut-actions {
+      position: absolute;
+      z-index: 9;
+      right: 7px;
+      top: 7px;
+      display: flex;
+      gap: 4px;
+      opacity: 0;
+      transition: opacity .14s ease;
+    }
+    .cut:hover .cut-actions, .cut:focus-within .cut-actions { opacity: 1; }
+    .cut-actions button {
+      border: 0;
+      border-radius: 7px;
+      padding: 5px 7px;
+      background: rgba(255,255,255,.94);
+      color: var(--ink);
+      font-size: 9.5px;
+      font-weight: 800;
+      box-shadow: 0 2px 7px rgba(0,0,0,.14);
+      cursor: pointer;
+    }
+    .cut.deleted { display: none; }
+    .frame-captions { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
+    .caption {
+      min-width: 0;
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 5px;
+      padding: 8px 4px 0;
+      font-size: 12px;
+      color: #42454a;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+    .match-thumb { width: 20px; height: 20px; border: 1px solid #111; border-radius: 6px; object-fit: cover; }
+    .swatch { width: 10px; height: 10px; flex: none; border: 1px solid rgba(0,0,0,.1); border-radius: 999px; }
+    .inspector { position: sticky; top: 94px; padding: 23px; }
+    .inspector-eyebrow { color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    .inspector h2 { margin: 9px 0 8px; font-size: 20px; letter-spacing: -.025em; }
+    .inspector-summary { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.65; }
+    .inspector-card {
+      margin-top: 20px;
+      padding: 16px;
+      border: 1px solid #cee6f6;
+      border-radius: 13px;
+      background: var(--sky-weak);
+    }
+    .inspector-card strong { display: block; margin-bottom: 7px; font-size: 13px; }
+    .inspector-card p { margin: 0; color: #3d5667; font-size: 12px; line-height: 1.65; }
+    .inspector-card small { display: block; margin-top: 10px; color: #708390; line-height: 1.5; }
+    .spec-list { margin: 20px 0 0; padding: 0; list-style: none; border-top: 1px solid var(--hair); }
+    .spec-list li { display: flex; justify-content: space-between; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--hair); font-size: 12px; }
+    .spec-list span { color: var(--muted); }
+    .toast {
+      position: fixed;
+      z-index: 40;
+      left: 50%;
+      bottom: 24px;
+      transform: translate(-50%, 18px);
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      max-width: calc(100vw - 32px);
+      padding: 12px 14px 12px 17px;
+      border-radius: 12px;
+      background: #18191c;
+      color: #fff;
+      box-shadow: 0 14px 40px rgba(0,0,0,.26);
+      font-size: 12px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .18s ease, transform .18s ease;
+    }
+    .toast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+    .toast button { border: 0; border-radius: 8px; padding: 7px 10px; background: #fff; color: #111; font-size: 11px; font-weight: 800; cursor: pointer; }
+    @media (max-width: 980px) {
+      main { padding: 24px 18px 90px; }
+      .workspace { grid-template-columns: 1fr; }
+      .inspector { position: static; }
+    }
+    @media (max-width: 700px) {
+      .topbar { padding: 0 18px; }
+      .frame-grid { grid-template-columns: 1fr; }
+      .section-note { display: none; }
+      .repeat-explainer { align-items: flex-start; flex-direction: column; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <img src="../public/assets/brand/wordmark.png" alt="Wearless" />
+    <span class="prototype-label">표시 방식 프로토타입</span>
+  </header>
+
+  <main>
+    <section class="intro">
+      <div>
+        <h1>같은 예시를 공유해도, 결과 컷은 자연스럽게 다르게</h1>
+        <p>이미지가 같은 것은 중복이 아니라 의도된 예시 공유입니다.<br />추가 색상 컷에는 약간 다른 포즈가 적용된다는 점만 간단히 표시합니다.</p>
+      </div>
+    </section>
+
+    <div class="workspace">
+      <section class="board" aria-label="콘티보드 예시">
+        <div class="section-head">
+          <div class="section-title"><span class="section-index">03</span> 의류 핏 확인</div>
+          <span class="section-note">확장형 · 같은 생성예시 반복</span>
+        </div>
+
+        <div class="repeat-explainer">
+          <div>
+            <strong>동일 생성예시를 3개 색상 세트가 함께 사용합니다</strong>
+            <p>썸네일은 같아도 정상이에요. 추가 색상 컷에는 약간 다른 포즈가 적용됩니다.</p>
+          </div>
+          <span class="repeat-count">확장형 자동 적용</span>
+        </div>
+
+        <div class="frame-grid">
+          <article class="frame">
+            <span class="frame-tag">색상 세트 · 블랙 · 풀샷 + 미디움샷</span>
+            <div class="frame-box">
+              <div class="cut selected" tabindex="0" role="button" data-cut="03" data-variation="false" data-color="블랙" data-shot="풀샷" data-pose="기준 포즈">
+                <img src="../public/assets/colorway/soft-rib-knit-ivory-western-male-full-v2.png" alt="블랙 색상 풀샷 생성예시" />
+                <span class="cut-number">03/10</span>
+                <div class="cut-actions"><button type="button" data-delete>삭제</button></div>
+              </div>
+              <div class="cut" tabindex="0" role="button" data-cut="04" data-variation="false" data-color="블랙" data-shot="미디움샷" data-pose="기준 포즈">
+                <img src="../public/assets/colorway/soft-rib-knit-ivory-western-male-medium-v2.png" alt="블랙 색상 미디움샷 생성예시" />
+                <span class="cut-number">04/10</span>
+                <div class="cut-actions"><button type="button" data-delete>삭제</button></div>
+              </div>
+            </div>
+            <div class="frame-captions">
+              <div class="caption"><img class="match-thumb" src="../public/assets/fit-examples/pants-men-cut-wide.jpg" alt="" /> 정면 · 풀샷 <span class="swatch" style="background:#171717"></span></div>
+              <div class="caption">정면 · 미디움 <span class="swatch" style="background:#171717"></span></div>
+            </div>
+          </article>
+
+          <article class="frame">
+            <span class="frame-tag">색상 세트 · 스카이블루 · 풀샷 + 미디움샷</span>
+            <div class="frame-box">
+              <div class="cut variation" tabindex="0" role="button" data-cut="05" data-variation="true" data-repeat="2" data-color="스카이블루" data-shot="풀샷" data-pose="약간 다른 포즈 적용">
+                <img src="../public/assets/colorway/soft-rib-knit-ivory-western-male-full-v2.png" alt="스카이블루 색상 풀샷 생성예시" />
+                <span class="cut-number">05/10</span>
+                <span class="pose-plan"><strong>약간 다른 포즈 적용</strong></span>
+                <div class="cut-actions"><button type="button" data-delete>삭제</button></div>
+              </div>
+              <div class="cut variation" tabindex="0" role="button" data-cut="06" data-variation="true" data-repeat="2" data-color="스카이블루" data-shot="미디움샷" data-pose="약간 다른 포즈 적용">
+                <img src="../public/assets/colorway/soft-rib-knit-ivory-western-male-medium-v2.png" alt="스카이블루 색상 미디움샷 생성예시" />
+                <span class="cut-number">06/10</span>
+                <span class="pose-plan"><strong>약간 다른 포즈 적용</strong></span>
+                <div class="cut-actions"><button type="button" data-delete>삭제</button></div>
+              </div>
+            </div>
+            <div class="frame-captions">
+              <div class="caption"><img class="match-thumb" src="../public/assets/fit-examples/pants-men-cut-wide.jpg" alt="" /> 정면 · 풀샷 <span class="swatch" style="background:#a9cfe7"></span></div>
+              <div class="caption">정면 · 미디움 <span class="swatch" style="background:#a9cfe7"></span></div>
+            </div>
+          </article>
+
+          <article class="frame">
+            <span class="frame-tag">색상 세트 · 아이보리 · 풀샷 + 미디움샷</span>
+            <div class="frame-box">
+              <div class="cut variation" tabindex="0" role="button" data-cut="07" data-variation="true" data-repeat="3" data-color="아이보리" data-shot="풀샷" data-pose="약간 다른 포즈 적용">
+                <img src="../public/assets/colorway/soft-rib-knit-ivory-western-male-full-v2.png" alt="아이보리 색상 풀샷 생성예시" />
+                <span class="cut-number">07/10</span>
+                <span class="pose-plan"><strong>약간 다른 포즈 적용</strong></span>
+                <div class="cut-actions"><button type="button" data-delete>삭제</button></div>
+              </div>
+              <div class="cut variation" tabindex="0" role="button" data-cut="08" data-variation="true" data-repeat="3" data-color="아이보리" data-shot="미디움샷" data-pose="약간 다른 포즈 적용">
+                <img src="../public/assets/colorway/soft-rib-knit-ivory-western-male-medium-v2.png" alt="아이보리 색상 미디움샷 생성예시" />
+                <span class="cut-number">08/10</span>
+                <span class="pose-plan"><strong>약간 다른 포즈 적용</strong></span>
+                <div class="cut-actions"><button type="button" data-delete>삭제</button></div>
+              </div>
+            </div>
+            <div class="frame-captions">
+              <div class="caption"><img class="match-thumb" src="../public/assets/fit-examples/pants-men-cut-wide.jpg" alt="" /> 정면 · 풀샷 <span class="swatch" style="background:#efe8d8"></span></div>
+              <div class="caption">정면 · 미디움 <span class="swatch" style="background:#efe8d8"></span></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <aside class="inspector" aria-live="polite">
+        <span class="inspector-eyebrow">선택한 컷</span>
+        <h2 id="inspector-title">컷 03 · 블랙 풀샷</h2>
+        <p class="inspector-summary">생성예시를 기준으로 의류와 촬영 구성을 확인하는 컷입니다.</p>
+        <div class="inspector-card" id="variation-info" hidden>
+          <strong id="variation-title">약간 다른 포즈 적용</strong>
+          <p>같은 생성예시를 사용하지만 별도의 컷으로 생성됩니다.</p>
+          <small>실제 변화의 정도는 생성 후 확인할 수 있어요.</small>
+        </div>
+        <ul class="spec-list">
+          <li><span>촬영 방향</span><b>정면</b></li>
+          <li><span>포즈</span><b id="pose-value">기준 포즈</b></li>
+          <li><span>생성예시</span><b id="example-value">공유 예시 · 기준</b></li>
+        </ul>
+      </aside>
+    </div>
+  </main>
+
+  <div class="toast" role="status" aria-live="polite">
+    <span id="delete-copy">컷을 삭제했어요.</span>
+    <button type="button" id="undo-button">되돌리기</button>
+  </div>
+
+  <script>
+    const cuts = [...document.querySelectorAll('.cut')];
+    const inspectorTitle = document.getElementById('inspector-title');
+    const variationInfo = document.getElementById('variation-info');
+    const variationTitle = document.getElementById('variation-title');
+    const poseValue = document.getElementById('pose-value');
+    const exampleValue = document.getElementById('example-value');
+    const deleteCopy = document.getElementById('delete-copy');
+    const toast = document.querySelector('.toast');
+    const undoButton = document.getElementById('undo-button');
+    let deletedCut = null;
+    let toastTimer = null;
+
+    function selectCut(cut) {
+      cuts.forEach((candidate) => candidate.classList.toggle('selected', candidate === cut));
+      inspectorTitle.textContent = `컷 ${cut.dataset.cut} · ${cut.dataset.color} ${cut.dataset.shot}`;
+      const isVariation = cut.dataset.variation === 'true';
+      variationInfo.hidden = !isVariation;
+      poseValue.textContent = cut.dataset.pose;
+      exampleValue.textContent = isVariation ? '공유 예시 · 의도된 반복' : '공유 예시 · 기준';
+      if (isVariation) {
+        variationTitle.textContent = '약간 다른 포즈 적용';
+      }
+    }
+
+    cuts.forEach((cut) => {
+      cut.addEventListener('click', (event) => {
+        if (event.target.closest('[data-delete]')) return;
+        selectCut(cut);
+      });
+      cut.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          selectCut(cut);
+        }
+      });
+    });
+
+    document.querySelectorAll('[data-delete]').forEach((button) => button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      deletedCut = button.closest('.cut');
+      deleteCopy.textContent = `컷 ${deletedCut.dataset.cut}를 삭제했어요 — “${deletedCut.dataset.pose}” 지시도 함께 사라집니다.`;
+      deletedCut.classList.add('deleted');
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 6000);
+    }));
+
+    undoButton.addEventListener('click', () => {
+      if (deletedCut) deletedCut.classList.remove('deleted');
+      toast.classList.remove('show');
+      deletedCut = null;
+      clearTimeout(toastTimer);
+    });
+  </script>
+</body>
+</html>

@@ -38,6 +38,7 @@ import {
   generationExampleImageSources,
   isGenerationCombinationPublic,
   paginateGenerationGalleryItems,
+  repeatedAllExampleVariationIds,
   selectGenerationExamples,
   storedExampleConditionStatus,
 } from '@/lib/generationExamples.js';
@@ -302,7 +303,10 @@ function StoryboardCardActions({ onDuplicate, onDelete, onNudge, canNudgeUp, can
   );
 }
 
-function StoryboardMedia({ block, catalogs, index, total, onDuplicate, onDelete, onNudge, canNudgeUp, canNudgeDown }) {
+function StoryboardMedia({
+  block, catalogs, index, total, showPoseVariation = false,
+  onDuplicate, onDelete, onNudge, canNudgeUp, canNudgeDown,
+}) {
   const missing = block.source !== 'mine' && !block.exampleId && !block.previewThumb;
   const manualEmpty = missing && block.exampleChoice === 'manual';
   const example = block.exampleId
@@ -325,6 +329,9 @@ function StoryboardMedia({ block, catalogs, index, total, onDuplicate, onDelete,
         </span>
       ) : (
         <img src={src} srcSet={image?.srcSet} alt="" loading="lazy" decoding="async" />
+      )}
+      {showPoseVariation && (
+        <span className="sb-pose-variation-note">약간 다른 포즈 적용</span>
       )}
       <StoryboardCardActions
         onDuplicate={onDuplicate} onDelete={onDelete}
@@ -389,7 +396,7 @@ function CardDragSurface({ className, dragProps, onSelect, children }) {
 function StoryboardCard({
   item, total, catalogs, colorOpts, matchClothing, clothingType,
   selected, locked, cardDrag, onSelect, onDuplicate, onDelete, addControl,
-  onNudge, canNudgeUp, canNudgeDown,
+  onNudge, canNudgeUp, canNudgeDown, microVariationIds,
 }) {
   const { block, index } = item;
   const missing = block.source !== 'mine' && !block.exampleId;
@@ -407,6 +414,7 @@ function StoryboardCard({
             catalogs={catalogs}
             index={index}
             total={total}
+            showPoseVariation={microVariationIds?.has(block.id)}
             onDuplicate={onDuplicate}
             onDelete={onDelete}
             onNudge={onNudge}
@@ -431,6 +439,7 @@ function StoryboardCard({
 function StoryboardFrame({
   items, total, catalogs, colorOpts, matchClothing, clothingType,
   selectedId, locked, dragFor, onSelect, onDuplicate, onDelete, addControl,
+  microVariationIds,
 }) {
   const colorway = items.every((item) => (
     item.block.colorwayGroupId
@@ -441,7 +450,7 @@ function StoryboardFrame({
     <div className={'sb-frame' + (colorway ? ' colorway-set' : '')}>
       <div className="sb-frame-media">
         <span className="sb-frame-tag">
-          {colorway ? `색상 세트 · ${colorwayName} · 공통 예시 · 포즈 자동 변주` : '한 프레임 구성 · 2컷'}
+          {colorway ? `색상 세트 · ${colorwayName} · 풀샷 + 미디움샷` : '한 프레임 구성 · 2컷'}
         </span>
         <div className="sb-frame-box">
           {items.map((item) => {
@@ -459,6 +468,7 @@ function StoryboardFrame({
                   catalogs={catalogs}
                   index={item.index}
                   total={total}
+                  showPoseVariation={microVariationIds?.has(item.block.id)}
                   onDuplicate={() => onDuplicate(item.block.id)}
                   onDelete={() => onDelete(item.block.id)}
                 />
@@ -1654,6 +1664,10 @@ export function Storyboard() {
   const [undoEntry, setUndoEntry] = useState(null);
   const [undoExiting, setUndoExiting] = useState(false);
   const [inspectorTop, setInspectorTop] = useState(70);
+  const microVariationIds = repeatedAllExampleVariationIds(
+    blocks,
+    catalogs?.genExamples,
+  );
   const atomicSavingRef = useRef(false);
   const atomicRetryRef = useRef(null);
   const directSaveSnapshots = useRef(new WeakSet());
@@ -2553,6 +2567,7 @@ export function Storyboard() {
             onDuplicate={duplicate}
             onDelete={remove}
             addControl={addControl}
+            microVariationIds={microVariationIds}
           />
         </div>
       );
@@ -2586,6 +2601,7 @@ export function Storyboard() {
           onNudge={inGroup ? ((delta) => nudgeBlock(block.id, delta)) : undefined}
           canNudgeUp={inGroup && groupPos > 0}
           canNudgeDown={inGroup && groupPos < group.items.length - 1}
+          microVariationIds={microVariationIds}
         />
       </div>
     );

@@ -10,12 +10,12 @@ const MATCHES = [
     isCompatible: true, colorName: '아이보리', colorGroup: 'ivory', colorBrightness: 93,
   },
   {
-    id: 'match-dark', name: '블랙 셔츠', selected: true, selOrder: 2,
+    id: 'match-dark', name: '블랙 셔츠', selected: false,
     isCompatible: true, colorName: '블랙', colorGroup: 'black', colorBrightness: 4,
   },
 ];
 
-test('base color keeps the main matching garment and extra colors choose the stronger contrast', () => {
+test('base color keeps the selected main garment and extra colors use compatible unselected candidates', () => {
   assert.equal(
     matchingItemForColor({ name: '블랙', swatchId: 'black' }, MATCHES, { preferMain: true }).id,
     'match-light',
@@ -32,10 +32,15 @@ test('base color keeps the main matching garment and extra colors choose the str
 
 test('unknown color, a single selection, and incompatible selections fall back safely', () => {
   assert.equal(matchingItemForColor({ name: '미정' }, MATCHES).id, 'match-light');
-  assert.equal(matchingItemForColor({ swatchId: 'ivory' }, [MATCHES[1]]).id, 'match-dark');
+  assert.equal(matchingItemForColor({ swatchId: 'ivory' }, [{ ...MATCHES[1], selected: true }]).id, 'match-dark');
   assert.equal(matchingItemForColor({ swatchId: 'ivory' }, [
     { ...MATCHES[0], isCompatible: false },
   ]), null);
+});
+
+test('Korean color aliases also receive a contrasting compatible garment', () => {
+  assert.equal(matchingItemForColor({ name: '스카이 블루' }, MATCHES).id, 'match-dark');
+  assert.equal(matchingItemForColor({ name: '크림 아이보리' }, MATCHES).id, 'match-dark');
 });
 
 test('extended seed gives each extra color one full-medium pair with one matching garment', () => {
@@ -56,6 +61,28 @@ test('extended seed gives each extra color one full-medium pair with one matchin
   assert.deepEqual(pair.map((block) => block.shot), ['full', 'medium']);
   assert.ok(pair.every((block) => block.matchIds.join() === 'match-dark'));
   assert.equal(new Set(pair.map((block) => block.layoutRowId)).size, 1);
+});
+
+test('extended entry assigns each color once and shares that match across its full-medium pair', () => {
+  const colors = [
+    { id: 'base', name: '블랙', swatchId: 'black', isBase: true, images: [] },
+    { id: 'ivory', name: '아이보리', swatchId: 'ivory', images: [] },
+    { id: 'navy', name: '네이비', swatchId: 'navy', images: [] },
+  ];
+  const blocks = defaultStoryboard(colors, 'extended', {
+    projectId: 'colorway-entry-matches', clothingType: 'top', targetGenders: ['women'],
+    matchClothing: MATCHES,
+  });
+  const worn = blocks.filter((block) => ['styling', 'horizon', 'mirror'].includes(block.cutType));
+  const byColor = Map.groupBy(worn, (block) => block.colorId);
+
+  assert.ok(byColor.get('base').every((block) => block.matchIds.join() === 'match-light'));
+  assert.deepEqual(byColor.get('ivory').map((block) => block.matchIds), [
+    ['match-dark'], ['match-dark'],
+  ]);
+  assert.deepEqual(byColor.get('navy').map((block) => block.matchIds), [
+    ['match-light'], ['match-light'],
+  ]);
 });
 
 test('colorway cuts keep pose automatic so one shared example can vary naturally', () => {

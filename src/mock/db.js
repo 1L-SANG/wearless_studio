@@ -514,11 +514,11 @@ function buildDraft() {
         images: [{ id: uid('img'), slot: 'Front', label: '정면', src: P.photo('c2f', 'horizon', 300, 400) }],
       },
       {
-        id: 'col3', name: '스카이블루', isBase: false, monotone: true,
+        id: 'col3', name: '스카이블루', swatchId: 'blue', isBase: false, monotone: true,
         images: [{ id: uid('img'), slot: 'Front', label: '정면', src: P.photo('c3f', 'horizon', 300, 400) }],
       },
       {
-        id: 'col4', name: '그레이', isBase: false, monotone: true,
+        id: 'col4', name: '그레이', swatchId: 'gray', isBase: false, monotone: true,
         images: [{ id: uid('img'), slot: 'Front', label: '정면', src: P.photo('c4f', 'horizon', 300, 400) }],
       },
     ],

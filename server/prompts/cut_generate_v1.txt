@@ -38,6 +38,7 @@ ${directionLine}
 ${faceLine}
 ${poseLine}
 ${exampleLine}
+${exampleRepeatLine}
 ${outerClosureLine}
 ${spaceLine}
 ${identityRefLine}
@@ -214,6 +215,30 @@ garment supports. Do not turn an open-front garment into a closable garment.
 [[EXNUANCE:0]]Composition nuance (from the seller's chosen style example): straight-on, centered and calm — minimal body angle, balanced negative space.
 [[EXNUANCE:1]]Composition nuance (from the seller's chosen style example): the body turned slightly (about 15–30°) with a relaxed stance — still reads as a front-family cut.
 [[EXNUANCE:2]]Composition nuance (from the seller's chosen style example): weight shifted onto one leg, one hand relaxed (in a pocket or at the side) — candid, unposed energy.
+
+[[EXREPEAT:guard]]REPEATED ALL-SCOPE EXAMPLE — BOUNDED NATURAL VARIATION:
+- This is another cut in the same section using the same art-direction example. Make it visibly but
+  subtly different through the variation below, while preserving the example pose's semantic backbone.
+- NEVER change the action, body-direction family, weight-bearing/support side, important contact or
+  support-object function, broad limb roles, gaze meaning, or intended asymmetry. Never neutralize the
+  pose into a centered mannequin, reverse the support side, or introduce a new action.
+- Keep the selected MODEL identity and body proportions unchanged. PRODUCT and MATCHING remain the only
+  garment truth; the variation must create physically plausible tension, folds, contacts and shadows.
+
+[[EXREPEAT:0]]SECOND-USE MICRO-POSE:
+- Adjust hand and finger placement and one relaxed arm bend; add a small head-angle change. Also make one
+  restrained whole-body micro-adjustment—slightly change stance width, shoulder/pelvis offset, or weight
+  distribution WITHOUT reversing the original support side. Keep the same action and gaze meaning.
+
+[[EXREPEAT:1]]THIRD-USE MICRO-POSE:
+- Slightly redistribute weight on the SAME support side and make a small shoulder/pelvis-line adjustment.
+  Refine the free hand or elbow position and head angle without changing any defining contact, limb role,
+  action, body-direction family, or gaze meaning.
+
+[[EXREPEAT:2]]FOURTH-USE MICRO-POSE:
+- Make a small stance-width or foot-angle adjustment while retaining the SAME support side, then vary the
+  relaxed hand placement and gaze target within the same gaze meaning. Preserve all defining contacts,
+  broad limb roles, action, body direction and intended asymmetry.
 
 [[REFSCOPE:all_scene_only]]REFERENCE SCOPE — DIRECTION-CHANGED STYLING/MIRROR SCENE TRANSFER:
 - The current CUT SPEC direction differs from the attached EXAMPLE REFERENCE. Use the example ONLY

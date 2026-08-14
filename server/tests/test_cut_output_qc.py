@@ -184,6 +184,27 @@ def test_normalize_plan_keeps_authority_but_drops_free_text_and_ids():
     assert contract["contractErrors"] == []
 
 
+def test_normalize_plan_keeps_bounded_repeat_index_for_qc():
+    contract = qc.normalize_plan(_plan(exampleRepeatIndex=2))
+
+    assert contract["exampleRepeatIndex"] == 2
+    assert contract["contractErrors"] == []
+    prompt = qc.build_prompt(contract, [
+        qc.LabeledReference("product", _img(b"PRODUCT")),
+        qc.LabeledReference("example", _img(b"EXAMPLE")),
+    ])
+    assert "bounded natural micro-variation" in prompt
+    assert "support-side reversal" in prompt
+
+
+@pytest.mark.parametrize("value", [-1, "2", True])
+def test_normalize_plan_rejects_invalid_repeat_index(value):
+    contract = qc.normalize_plan(_plan(exampleRepeatIndex=value))
+
+    assert contract["exampleRepeatIndex"] == 0
+    assert "invalid_example_repeat_index" in contract["contractErrors"]
+
+
 def test_normalize_plan_accepts_cut_plan_like_object_and_legacy_mirror():
     class Plan:
         def to_dict(self):

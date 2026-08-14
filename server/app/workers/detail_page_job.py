@@ -43,6 +43,55 @@ _GEN_CONCURRENCY = 3
 _WORN_CUT_TYPES = ("styling", "horizon", "mirror")
 
 
+def _example_repeat_indexes(
+    blocks: list[dict], clothing_type: str,
+) -> list[int | None]:
+    """같은 섹션의 같은 all 예시 사용 순서를 저장값 없이 결정적으로 계산한다.
+
+    ``None``은 반복 변주 대상이 아닌 블록, ``0``은 첫 사용, 1 이상은 후속 사용이다.
+    클라이언트가 보낸 런타임 필드는 읽지 않고 정규화된 컷 계약만 판정한다.
+    """
+
+    counts: dict[tuple[str, str], int] = {}
+    indexes: list[int | None] = []
+    for block in blocks:
+        repeat_index = None
+        if isinstance(block, dict) and block.get("source") == "ai":
+            safe_block = dict(block)
+            for runtime_field in (
+                "_exampleRepeatIndex",
+                "_referenceDirectionCompatible",
+                "_spaceSetContinuity",
+                "_detailColorTransfer",
+            ):
+                safe_block.pop(runtime_field, None)
+            try:
+                spec = cut_generator.normalize_spec(
+                    safe_block, clothing_type=clothing_type
+                )
+                spec = cut_generator.apply_reference_compatibility(spec)
+            except ValueError:
+                spec = None
+            if (
+                spec is not None
+                and spec.get("cutType") in _WORN_CUT_TYPES
+                and spec.get("exampleId")
+                and not spec.get("spaceGroupId")
+                and spec.get("refScope") == "all"
+                and spec.get("pose") == "auto"
+                and spec.get("_referenceDirectionCompatible") is not False
+            ):
+                section = block.get("sectionId") or block.get("section_id")
+                if not section:
+                    role = block.get("sectionRole") or block.get("section_role") or "unknown"
+                    section = f"role:{role}"
+                key = (str(section), str(spec["exampleId"]))
+                repeat_index = counts.get(key, 0)
+                counts[key] = repeat_index + 1
+        indexes.append(repeat_index)
+    return indexes
+
+
 def _dims(data: bytes):
     try:
         im = Image.open(BytesIO(data))
@@ -599,6 +648,9 @@ async def run_detail_page_job(app, job: dict) -> None:
                 for b in storyboard
                 if isinstance(b, dict) and b.get("source") == "ai"
             ]
+            example_repeat_indexes = _example_repeat_indexes(
+                ai_blocks, clothing_type
+            )
             # StoryboardBlock에는 modelId가 없다(계약 §3.4). 상세페이지의 프로젝트 단위 선택값은
             # Analysis.selectedModelId가 정본이며, 아래 prep에서 저장 블록을 바꾸지 않고 런타임 주입한다.
             selected_model_id = analysis.get("selectedModelId") or analysis.get("selected_model_id")
@@ -823,13 +875,16 @@ async def run_detail_page_job(app, job: dict) -> None:
                     "AG-06 virtual model manifest unavailable; skipping fallback substitution "
                     "for job %s: %r", job_id, e)
         _fallback_warned = False
-        for b in ai_blocks:
+        for b, example_repeat_index in zip(ai_blocks, example_repeat_indexes):
             cut_spec = dict(b)
             space_binding = space_set_bindings.get(id(b))
             # 저장/클라이언트가 런타임 전용 지시를 주입하지 못하게 매번 실제 선택 결과로 재구성한다.
             cut_spec.pop("_detailColorTransfer", None)
             cut_spec.pop("_spaceSetContinuity", None)
             cut_spec.pop("_referenceDirectionCompatible", None)
+            cut_spec.pop("_exampleRepeatIndex", None)
+            if example_repeat_index is not None:
+                cut_spec["_exampleRepeatIndex"] = example_repeat_index
             if space_binding is not None:
                 # 공간 세트의 pose/범위/변주 강도는 저장 payload가 아니라 발행 레지스트리가
                 # 정본이다. 오래된 값이나 우회 클라이언트가 전용 pose·plate 계약을 바꾸지 못한다.

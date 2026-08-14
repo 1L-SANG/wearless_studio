@@ -360,6 +360,94 @@ def test_all_scope_explicit_pose_and_direction_override_example():
     assert "POSE FROM EXAMPLE" not in prompt
 
 
+def test_repeated_all_example_second_use_adds_bounded_whole_body_micro_pose():
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False,
+        mood_count=0, example_scope="all",
+    )
+    prompt = cg.build_prompt(
+        {
+            "cutType": "horizon", "direction": "front", "shot": "full",
+            "pose": "auto", "refScope": "all", "exampleId": "same-example",
+            "_exampleRepeatIndex": 1,
+        },
+        PRODUCT_TOP,
+        manifest=manifest,
+    )
+
+    assert "REPEATED ALL-SCOPE EXAMPLE" in prompt
+    assert "SECOND-USE MICRO-POSE" in prompt
+    assert "hand and finger placement" in prompt
+    assert "stance width, shoulder/pelvis offset, or weight" in prompt
+    assert "WITHOUT reversing the original support side" in prompt
+    assert "NEVER change the action, body-direction family" in prompt
+    assert "${" not in prompt and "[[" not in prompt
+
+
+@pytest.mark.parametrize(
+    ("spec", "manifest_kwargs"),
+    [
+        ({
+            "cutType": "horizon", "direction": "front", "shot": "full",
+            "pose": "auto", "refScope": "all", "exampleId": "same-example",
+            "_exampleRepeatIndex": 0,
+        }, {"example_scope": "all"}),
+        ({
+            "cutType": "horizon", "direction": "front", "shot": "full",
+            "pose": "walking", "refScope": "all", "exampleId": "same-example",
+            "_exampleRepeatIndex": 1,
+        }, {"example_scope": "all"}),
+        ({
+            "cutType": "horizon", "direction": "front", "shot": "full",
+            "pose": "auto", "refScope": "pose", "exampleId": "same-example",
+            "_exampleRepeatIndex": 1,
+        }, {"example_scope": "pose"}),
+        ({
+            "cutType": "product", "direction": "front", "shot": "ghost",
+            "refScope": "all", "exampleId": "same-example",
+            "_exampleRepeatIndex": 1,
+        }, {"example_scope": "all", "example_is_product": True}),
+        ({
+            "cutType": "horizon", "direction": "side", "shot": "full",
+            "pose": "auto", "refScope": "all", "exampleId": "same-example",
+            "_referenceDirectionCompatible": False,
+            "_exampleRepeatIndex": 1,
+        }, {"example_scope": "all", "reference_direction_compatible": False}),
+    ],
+)
+def test_repeated_example_micro_pose_is_absent_outside_eligible_contract(
+    spec, manifest_kwargs,
+):
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False,
+        mood_count=0, **manifest_kwargs,
+    )
+    prompt = cg.build_prompt(spec, PRODUCT_TOP, manifest=manifest)
+
+    assert "REPEATED ALL-SCOPE EXAMPLE" not in prompt
+    assert "SECOND-USE MICRO-POSE" not in prompt
+
+
+def test_repeated_all_example_mirror_cut_uses_the_common_rule():
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False,
+        mood_count=0, example_scope="all",
+    )
+    prompt = cg.build_prompt(
+        {
+            "cutType": "mirror", "shot": "full", "faceExposure": "hide",
+            "refScope": "all", "exampleId": "mirror-example",
+            "_exampleRepeatIndex": 2,
+        },
+        PRODUCT_TOP,
+        manifest=manifest,
+    )
+
+    assert "REPEATED ALL-SCOPE EXAMPLE" in prompt
+    assert "THIRD-USE MICRO-POSE" in prompt
+    assert "SAME support side" in prompt
+
+
 def test_all_scope_changed_direction_removes_example_pose_and_camera(monkeypatch):
     monkeypatch.setattr(
         cg,
