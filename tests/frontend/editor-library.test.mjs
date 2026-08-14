@@ -73,8 +73,11 @@ test('kiwi templates rebuild the references with native editable elements', () =
     assert.ok(block.elements.every((element) => !element.locked && !element.system), frame.id);
     assert.ok(imageSlots.every((element) => element.checkerboard), frame.id);
     const examples = imageSlots.filter((element) => element.exampleImage);
-    assert.equal(examples.length, 1, `${frame.id}: one photo includes an example`);
-    assert.match(examples[0].src, /^\/assets\/editor\/kiwi-examples\/kiwi-\d+\.jpg$/);
+    const expectedExampleId = frame.id === 'kiwi-11' ? null : frame.id.replace('kiwi-', '');
+    assert.equal(examples.length, expectedExampleId ? 1 : 0, `${frame.id}: only matching JPEG references supply examples`);
+    if (expectedExampleId) {
+      assert.equal(examples[0].src, `/assets/editor/kiwi-examples/kiwi-${expectedExampleId}.jpg`);
+    }
   }
 });
 

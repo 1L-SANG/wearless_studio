@@ -176,7 +176,7 @@ export const FRAME_LIBRARY_ITEMS = [
   kiwiTemplate({
     id: '11', label: '체크 포인트', h: 1248, bg: '#dcc4be', elements: [
       templateText(275, 45, 450, 60, 'CHECK POINT', { font: 'Cormorant', size: 48, weight: 700, color: '#ffffff', align: 'center' }),
-      templatePhoto(120, 110, 768, 1018, { radius: 'pill', example: templateExample(2) }),
+      templatePhoto(120, 110, 768, 1018, { radius: 'pill' }),
       templateShape(675, 345, 300, 92, '#ffffff', { radius: 24 }),
       templateText(700, 366, 245, 58, '상품의 특징을 2줄 이내로\n적어주세요.', { size: 21, lineHeight: 28 }),
       templateShape(118, 655, 305, 92, '#ffffff', { radius: 24 }),
