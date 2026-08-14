@@ -519,7 +519,15 @@ export function ProductInput() {
     if (!promotionLocked) return undefined;
     const blockUnload = (event) => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', blockUnload);
-    return () => window.removeEventListener('beforeunload', blockUnload);
+    // 베일은 포인터만 막는다 — Shift+Tab 으로 뒤 폼에 들어가 승격 스냅샷 밖의 편집을 하거나,
+    // 헤더 버튼 Enter 로 SPA 이탈이 가능했다(P1 리뷰). 앱 루트를 inert 로 잠가 키보드·포커스까지
+    // 차단한다. 오버레이는 body 포털이라 inert 밖에 남는다.
+    const appRoot = document.getElementById('root');
+    appRoot?.setAttribute('inert', '');
+    return () => {
+      window.removeEventListener('beforeunload', blockUnload);
+      appRoot?.removeAttribute('inert');
+    };
   }, [promotionLocked]);
 
   const setFlowPromotionLocked = (locked) => {
@@ -649,7 +657,8 @@ export function ProductInput() {
         latestSnapshot.localUpdatedAt,
       );
       const { failed = 0 } = await flushProductDraftSave() || {};
-      if (failed) toast.push(`일부 사진(${failed}장)을 임시 저장하지 못했어요.`, { icon: 'alertTri' });
+      // 유실 경고는 전환 오버레이(3.5s)보다 오래 살아남아야 한다 — 도착 후에도 읽히게 6s.
+      if (failed) toast.push(`일부 사진(${failed}장)을 임시 저장하지 못했어요.`, { icon: 'alertTri', duration: 6000 });
       if (session || isMockMode) {
         const draft = await loadDraft();
         if (!draft?.product) throw new Error('저장된 입력 내용을 다시 불러오지 못했어요. 다시 시도해 주세요.');
@@ -1153,8 +1162,10 @@ export function ProductInput() {
           결정: 로고가 대기·도착에 두 번 뜨면 끊겨 보인다). 베일이 도착 오버레이와 같은 톤이라
           화면이 바뀌어도 배경은 이어진 것처럼 읽힌다. 낭독은 aria-label 로 유지. */}
       {promotionLocked && createPortal((
-        <div className="input-promotion-transition" role="status" aria-live="polite"
-          aria-label="상세페이지 구성으로 넘어가는 중" />
+        <div className="input-promotion-transition" role="status" aria-live="polite">
+          {/* 일부 스크린리더는 status 의 aria-label 을 무시한다 — 숨긴 텍스트 노드가 호환성이 높다 */}
+          <span className="sr-only">상세페이지 구성으로 넘어가고 있어요</span>
+        </div>
       ), document.body)}
       {editingRightsLock}
       {reclaimChoiceOpen && slotLock && (

@@ -101,7 +101,7 @@ function StoryboardTransitionOverlay() {
   const [visible, setVisible] = useState(true);
 
   useEffect(() => {
-    const timer = setTimeout(() => setVisible(false), 3500);  // CSS 애니메이션 3.5s 와 동기
+    const timer = setTimeout(() => setVisible(false), 3150);  // CSS 3.5s − 음수딜레이 0.35s 와 동기
     return () => clearTimeout(timer);
   }, []);
 
