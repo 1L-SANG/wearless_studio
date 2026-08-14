@@ -58,14 +58,14 @@ test('every frame builds replaceable image slots inside the 1000px canvas', () =
 test('kiwi templates rebuild the references with native editable elements', () => {
   const kiwiFrames = FRAME_LIBRARY_ITEMS.filter((item) => item.template);
   assert.deepEqual(kiwiFrames.map((item) => item.id), [
-    'kiwi-1', 'kiwi-2', 'kiwi-3', 'kiwi-4', 'kiwi-5', 'kiwi-6', 'kiwi-7', 'kiwi-8', 'kiwi-9',
+    'kiwi-1', 'kiwi-2', 'kiwi-3', 'kiwi-4', 'kiwi-5', 'kiwi-6', 'kiwi-9',
     'kiwi-10', 'kiwi-11', 'kiwi-12', 'kiwi-13', 'kiwi-14', 'kiwi-15',
     'kiwi-16', 'kiwi-17', 'kiwi-18', 'kiwi-19', 'kiwi-20',
   ]);
   assert.equal(kiwiFrames.reduce((count, frame) => count + frame.slots.length, 0), 34);
   const expectedExampleCounts = {
     'kiwi-1': 4, 'kiwi-2': 4, 'kiwi-3': 2, 'kiwi-4': 3, 'kiwi-5': 4,
-    'kiwi-6': 3, 'kiwi-7': 0, 'kiwi-8': 0, 'kiwi-9': 0,
+    'kiwi-6': 3, 'kiwi-9': 0,
     'kiwi-10': 2, 'kiwi-11': 0, 'kiwi-12': 2, 'kiwi-13': 1, 'kiwi-14': 4, 'kiwi-15': 2,
     'kiwi-16': 0, 'kiwi-17': 0, 'kiwi-18': 0, 'kiwi-19': 0, 'kiwi-20': 0,
   };
@@ -94,14 +94,11 @@ test('kiwi templates rebuild the references with native editable elements', () =
   }
 });
 
-test('size-guide diagrams stay visible artwork instead of pretending to be photo frames', () => {
-  for (const frameId of ['kiwi-7', 'kiwi-8']) {
-    const block = buildFrameBlock(frameId, seqId());
-    const artwork = block.elements.filter((element) => element.type === 'image' && !element.frameSlot);
-    assert.equal(artwork.length, 1, frameId);
-    assert.match(artwork[0].src, new RegExp(`${frameId.replace('kiwi-', 'kiwi-')}\\.jpg$`));
-    assert.equal(artwork[0].fit, 'contain');
-  }
+test('underwear-specific size guides are not offered as reusable frames', () => {
+  const ids = FRAME_LIBRARY_ITEMS.map((item) => item.id);
+  assert.equal(ids.includes('kiwi-7'), false);
+  assert.equal(ids.includes('kiwi-8'), false);
+  assert.equal(FRAME_LIBRARY_ITEMS.some((item) => /팬티|브라/.test(item.label)), false);
 });
 
 test('detail callout circles are native replaceable image slots', () => {

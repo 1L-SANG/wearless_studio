@@ -24,12 +24,6 @@ const templatePhoto = (x, y, w, h, options = {}) => ({
   ...(options.rotate ? { rotate: options.rotate } : {}),
   ...(options.fit ? { fit: options.fit } : {}),
 });
-const templateArtwork = (x, y, w, h, src, options = {}) => ({
-  type: 'image', x, y, w, h, src, frameSlot: false, checkerboard: false,
-  radius: options.radius || 0,
-  ...(options.rotate ? { rotate: options.rotate } : {}),
-  ...(options.fit ? { fit: options.fit } : { fit: 'contain' }),
-});
 const templateText = (x, y, w, h, value, style = {}) => ({
   type: 'text', x, y, w, h, text: value, fullTextHitArea: true,
   style: {
@@ -187,42 +181,6 @@ export const FRAME_LIBRARY_ITEMS = [
             : index === 1 ? '섬세한 디테일과 안정적인 핏으로\n완성도를 높였습니다.'
               : '관리하기 쉬운 소재와 실용적인 구성으로\n오래 입을 수 있습니다.',
           { size: 32, lineHeight: 48 }),
-      ]),
-    ],
-  }),
-  kiwiTemplate({
-    id: '7', label: '팬티 사이즈 가이드', h: 1447, bg: '#ffffff', preview: templatePreview(7), elements: [
-      templateText(220, 92, 560, 78, 'Panty Guide', { size: 62, weight: 700, align: 'center' }),
-      templateText(280, 190, 440, 55, '사이즈 안내', { size: 34, color: '#78afe8', align: 'center' }),
-      templateShape(260, 320, 480, 74, '#000000', { radius: 37 }),
-      templateText(305, 338, 390, 40, '안내 내용을 적어주세요.', { size: 28, weight: 700, color: '#ffffff', align: 'center' }),
-      templateArtwork(300, 450, 400, 500, templateExample(7)),
-      ...[1050, 1125, 1200, 1275, 1350].map((y) => templateLine(105, y, 790, { stroke: '#111111', strokeWidth: 2 })),
-      ...['사이즈', '엉덩이 단면', '허리 단면', '밑위 길이', '총기장'].map((label, index) => (
-        templateText(90 + index * 180, 1005, 180, 40, label, { size: 23, weight: 700, align: 'center' })
-      )),
-      ...['S', 'M', 'L'].flatMap((size, row) => [
-        templateText(90, 1070 + row * 75, 180, 38, size, { size: 26, weight: 700, color: '#78afe8', align: 'center' }),
-        ...[1, 2, 3, 4].map((column) => templateText(90 + column * 180, 1070 + row * 75, 180, 38, size, { size: 25, align: 'center' })),
-      ]),
-    ],
-  }),
-  kiwiTemplate({
-    id: '8', label: '브라 사이즈 가이드', h: 1629, bg: '#ffffff', preview: templatePreview(8), elements: [
-      templateText(190, 85, 620, 78, 'Bra Size Guide', { size: 60, weight: 700, align: 'center' }),
-      templateText(280, 185, 440, 55, '사이즈 안내', { size: 34, color: '#78afe8', align: 'center' }),
-      templateShape(250, 315, 500, 74, '#000000', { radius: 37 }),
-      templateText(305, 333, 390, 40, '안내 내용을 적어주세요.', { size: 28, weight: 700, color: '#ffffff', align: 'center' }),
-      templateArtwork(285, 445, 430, 510, templateExample(8)),
-      templateText(145, 1000, 710, 82, '윗가슴둘레와 밑가슴둘레를 수평으로 측정해 주세요.\n컵 사이즈 = 윗가슴둘레 - 밑가슴둘레', { size: 24, lineHeight: 38, align: 'center' }),
-      templateShape(95, 1120, 810, 78, '#f8f8f8'),
-      templateText(170, 1140, 660, 40, '컵 사이즈 = 윗가슴 둘레 - 밑가슴 둘레', { size: 29, weight: 700, color: '#78afe8', align: 'center' }),
-      ...[1285, 1375, 1465, 1555].map((y) => templateLine(100, y, 800, { stroke: '#111111', strokeWidth: 2 })),
-      templateText(105, 1235, 230, 42, '사이즈', { size: 25, weight: 700, align: 'center' }),
-      templateText(360, 1235, 535, 42, '사이즈에 맞는 내용을 적어주세요.', { size: 25, weight: 700, align: 'center' }),
-      ...['A', 'B', 'C'].flatMap((size, row) => [
-        templateText(105, 1305 + row * 90, 230, 42, size, { size: 27, weight: 700, color: '#78afe8', align: 'center' }),
-        templateText(360, 1305 + row * 90, 535, 42, '사이즈에 맞는 내용을 적어주세요.', { size: 24, color: '#78afe8', align: 'center' }),
       ]),
     ],
   }),
