@@ -13,6 +13,7 @@ import {
   allAiContentTemplates,
   blockPatchForContentRole,
 } from '@/lib/storyboardTaxonomy.js';
+import { generationExampleStructuralRecipePatch } from '@/lib/storyboardExampleSelection.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
 
 function PanelHead({ title, sub }) {
@@ -299,7 +300,13 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
   const [refScope, setRefScope] = useState('all');
   const purposeOptions = allAiContentTemplates({ hasDetailImage });
   const purposePatch = blockPatchForContentRole(null, purpose, { clothingType });
-  const cut = purposePatch.cutType;
+  const selectedExample = (catalogs.genExamples || []).find((example) => example.id === exampleId) || null;
+  const purposeRecipe = { ...purposePatch, direction: dir, shot };
+  const effectiveRecipe = {
+    ...purposeRecipe,
+    ...generationExampleStructuralRecipePatch(purposeRecipe, selectedExample),
+  };
+  const cut = effectiveRecipe.cutType;
   const isProduct = cut === 'product';
   const isMirror = cut === 'mirror'; // mirror 레시피(ADR-0004): 방향 없음, 샷 full/medium만
   const isDetail = purpose === CONTENT_ROLES.DETAIL;
@@ -329,8 +336,8 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
   const shotOpts = isDetail ? catalogs.productShotTypes.filter((option) => option.value === 'detail')
     : isProduct ? catalogs.productShotTypes.filter((option) => option.value !== 'detail')
     : catalogs.shotTypes;
-  const dirVal = dirOpts.some((o) => o.value === dir) ? dir : dirOpts[0].value;
-  const shotVal = shotOpts.some((o) => o.value === shot) ? shot : shotOpts[0].value;
+  const dirVal = dirOpts.some((o) => o.value === effectiveRecipe.direction) ? effectiveRecipe.direction : dirOpts[0].value;
+  const shotVal = shotOpts.some((o) => o.value === effectiveRecipe.shot) ? effectiveRecipe.shot : shotOpts[0].value;
   const modelGender = (catalogs.models || []).find((item) => item.id === model)?.gender || null;
   const selectPurpose = (value) => {
     if (!value) return; // 사진 목적은 필수 단일 선택이다.
@@ -359,6 +366,7 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
           <MoodGuide catalogs={catalogs} cut={cut} direction={isMirror ? null : dirVal} shot={shotVal}
             shotOptions={isProduct ? shotOpts : null}
             onShotChange={(v) => { setShot(v); setExampleId(null); setRefScope('all'); }} clothingType={clothingType} gender={modelGender}
+            includeMirrorExamples={cut === 'styling' || isMirror}
             exampleId={exampleId} onExampleChange={selectExample}
             refScope={refScope} onRefScopeChange={setRefScope}
             refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
@@ -390,7 +398,7 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
           </details>}
 
           <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={() => onGenerate({
-            contentRole: purpose, colorId: colorVal, cutType: cut, direction: isMirror ? null : dirVal, shot: shotVal, modelId: model, exampleId, refScope,
+            contentRole: effectiveRecipe.contentRole, colorId: colorVal, cutType: cut, direction: isMirror ? null : dirVal, shot: shotVal, modelId: model, exampleId, refScope,
             refImages: refImages.map((r) => r?.url || r),                  // 표시용 URL (mock 계약 유지)
             refAssetIds: refImages.map((r) => r?.assetId).filter(Boolean), // 서버 첨부용 asset id (계약 §6)
           })}>새 이미지 생성 · {catalogs.creditCosts?.editorImage ?? 1} 크레딧</Button>

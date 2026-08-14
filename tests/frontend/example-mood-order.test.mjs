@@ -41,11 +41,26 @@ test('mood ordering is deterministic by bucket, then rank, then id', () => {
   assert.deepEqual(orderExamplesByMood([...input].reverse()).map((item) => item.id), expected);
 });
 
-test('all 71 released free-text moods are exercised and ordinary other coverage stays below 15%', () => {
+test('all 71 released free-text moods are exercised', () => {
   const moods = new Set(genExamples.map((example) => example.mood).filter(Boolean));
   assert.equal(moods.size, 71);
-  const ordinary = genExamples.filter((example) => ['styling', 'horizon'].includes(example.cutType));
+});
+
+test('runtime styling and horizon examples keep ordinary other coverage at or below 15%', () => {
+  // 문서 정본: documents/genexamples_release_contract.md §7 갤러리 나열 규칙.
+  const ordinary = genExamples.filter((example) => (
+    ['styling', 'horizon'].includes(example.cutType) && !example.setOnly
+  ));
   const otherId = EXAMPLE_MOOD_BUCKETS.at(-1).id;
-  const otherCount = ordinary.filter((example) => exampleMoodBucket(example).id === otherId).length;
-  assert.ok(otherCount / ordinary.length <= 0.15);
+  const classified = ordinary.map((example) => ({
+    id: example.id,
+    bucketId: exampleMoodBucket(example).id,
+  }));
+  const otherIds = classified.filter((example) => example.bucketId === otherId).map((example) => example.id);
+  const otherRatio = otherIds.length / classified.length;
+
+  assert.ok(
+    otherRatio <= 0.15,
+    `‘기타’ 비율 ${(otherRatio * 100).toFixed(1)}% (${otherIds.length}/${classified.length}) > 15%; ids: ${otherIds.join(', ') || '(없음)'}`,
+  );
 });
