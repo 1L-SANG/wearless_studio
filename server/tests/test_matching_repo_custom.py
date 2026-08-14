@@ -93,6 +93,22 @@ def test_custom_matching_item_exposes_image_metadata_under_the_shared_key():
     assert "as image_metadata" not in sql
 
 
+# 2026-08-14 재리뷰 I-B — 디스패처는 프로세스당 직렬이고 recover_stale_leases 는 running 만
+# 건드린다. 나이 상한이 없으면 앞선 잡에 밀린 pending 하나가 카드를 무기한 스켈레톤에 가둔다.
+def test_active_cutout_job_query_bounds_stuck_pending_jobs_by_age():
+    cursor = _Cursor(row={"active": True})
+    active = asyncio.run(repo.has_active_matching_cutout_job(_Conn(cursor), "project-1"))
+
+    sql, params = cursor.calls[0]
+    lowered = sql.lower()
+    assert active is True
+    assert "kind = 'matching_cutout'" in lowered
+    assert "status in ('pending', 'running')" in lowered
+    assert "created_at > now() - (%s * interval '1 minute')" in lowered
+    assert params == ("project-1", repo.MATCHING_CUTOUT_ACTIVE_WINDOW_MINUTES)
+    assert repo.MATCHING_CUTOUT_ACTIVE_WINDOW_MINUTES == 10
+
+
 def test_custom_asset_cleanup_covers_worker_derived_cutouts():
     # 리뷰 I4 — 누끼 파생 컷도 "내 옷 삭제" 한 번에 회수돼야 한다.
     cursor = _Cursor(rows=[])

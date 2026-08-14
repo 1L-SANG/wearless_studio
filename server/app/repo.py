@@ -643,13 +643,26 @@ async def list_active_matching_items(
         return await cur.fetchall()
 
 
+#: 누끼 잡을 "진행 중"으로 인정하는 최대 나이(분). 디스패처는 프로세스당 완전 직렬이라
+#: 앞선 마네킹 잡이 길면 pending 이 그만큼 대기하고, recover_stale_leases 는 running 만
+#: 건드리므로 pending 은 스스로 타임아웃되지 않는다 — 나이 상한이 없으면 카드가 셀러의
+#: 업로드 대신 스켈레톤에 무기한 갇힌다(2026-08-14 재리뷰 I-B).
+MATCHING_CUTOUT_ACTIVE_WINDOW_MINUTES = 10
+
+
 async def has_active_matching_cutout_job(conn: AsyncConnection, project_id: str) -> bool:
-    """프로젝트에 진행 중인 커스텀 매칭 누끼 잡이 있는지. 프로젝트당 커스텀 1개라 bool 하나로 충분."""
+    """프로젝트에 진행 중인 커스텀 매칭 누끼 잡이 있는지. 프로젝트당 커스텀 1개라 bool 하나로 충분.
+
+    나이 상한을 넘긴 잡은 없는 것으로 본다. 상한을 넘겨도 잡 자체는 계속 살아 있고,
+    나중에 성공하면 스왑된 파생 asset 이 상태를 ready 로 만든다 — 상한은 화면이 원본을
+    보여줄지 스켈레톤을 보여줄지만 가른다(fail-open).
+    """
     async with conn.cursor() as cur:
         await cur.execute(
             "select exists (select 1 from jobs where project_id = %s "
-            "and kind = 'matching_cutout' and status in ('pending', 'running')) as active",
-            (project_id,),
+            "and kind = 'matching_cutout' and status in ('pending', 'running') "
+            "and created_at > now() - (%s * interval '1 minute')) as active",
+            (project_id, MATCHING_CUTOUT_ACTIVE_WINDOW_MINUTES),
         )
         row = await cur.fetchone()
     return bool(row and row["active"])
