@@ -1727,18 +1727,24 @@ const hookStyleDescription = (style, colors) => (
 
 function HookStyleSection({
   frame, blocks, catalogs, colors, productName, saving, error, onSelectStyle,
+  clothingType, gender, isCutAvailable,
 }) {
   const [open, setOpen] = useState(false);
   const slots = frame.slotIds
     .map((slotId) => blocks.find((block) => block.id === slotId))
     .filter(Boolean);
   const previewSrc = slots.map((block) => blockPreviewSrc(block, catalogs));
-  const fallback = previewSrc[0];
-  const thumbFor = (style) => (
-    style === 'signature' ? [fallback]
-      : style === 'pair' ? [fallback, previewSrc[1] || fallback]
-        : [fallback, previewSrc[1] || fallback, previewSrc[2] || fallback, previewSrc[3] || fallback]
-  );
+  // 스타일 카드 3종의 대표 이미지 = 발행 카탈로그에서 스타일 슬롯 사양대로 고정 선정
+  // (2026-08-14 오너: 현재 보드 컷 대신 스타일 차이가 잘 보이는 고정 이미지).
+  // 카탈로그 순위 1번을 쓰므로 발행이 갈리지 않는 한 항상 같은 그림이다.
+  const representativeThumb = (cutType, shot) => {
+    const example = selectGenerationExamples(catalogs?.genExamples || [], {
+      cutType, shot, clothingType, gender, appendSetOnly: cutType !== 'product',
+    })[0];
+    return example ? generationExampleImageSources(example).src : previewSrc[0];
+  };
+  const thumbFor = (style) => hookSlotPlan(style, { colors, isCutAvailable })
+    .map((slot) => representativeThumb(slot.cutType, slot.shot));
   return (
     <div className="insp-sec sb-hookpanel">
       <label className="lbl">첫 화면 스타일</label>
@@ -2699,8 +2705,14 @@ export function Storyboard() {
   const hookFrame = deriveHookFrame(blocks || []);
   const boundGenderNow = exampleGender
     || genderForClothingType(clothingType, composeModeSeed.targetGenders);
+  // 발행된 조합만 슬롯으로 — 닫힌 조합으로 컷을 만들면 예시가 배정되지 않아 빈 칸이 된다
+  // (2026-08-14 '이미지 사라짐' 원인). 인스펙터의 hasSelectableExamples 와 같은 판정.
+  const hookCutAvailable = (cutType, shot) => selectGenerationExamples(
+    catalogs?.genExamples || [],
+    { cutType, shot, clothingType, gender: boundGenderNow, appendSetOnly: cutType !== 'product' },
+  ).length > 0;
 
-  // 스타일 전환(스펙 §2 전환 엔진) — 컷 재사용·부족분 생성·예시 재배정 후 즉시 저장.
+  // 스타일 전환(스펙 §2 전환 엔진) — 컷 재사용·부족분 생성·잔여 AI 컷 삭제·예시 재배정 후 즉시 저장.
   async function applyHookStyleChoice(style) {
     if (locked || hookStyleSaving || !hookFrame || style === hookFrame.style) return;
     const previous = blocks;
@@ -2718,7 +2730,7 @@ export function Storyboard() {
       title: template.title,
       source: 'ai',
       cutType: slot.cutType,
-      direction: 'front',
+      direction: slot.direction || 'front',
       shot: slot.shot,
       colorId: slot.colorId || baseColorId,
       pose: 'auto',
@@ -2733,7 +2745,9 @@ export function Storyboard() {
     setHookStyleSaving(true);
     setHookStyleError(null);
     try {
-      let next = applyHookStyle(previous, style, { colors, createBlock });
+      let next = applyHookStyle(previous, style, {
+        colors, createBlock, isCutAvailable: hookCutAvailable,
+      });
       next = normalizeStoryboardMutation(next);
       next = assignGenerationExamples(next, {
         catalog: catalogs.genExamples,
@@ -2960,6 +2974,23 @@ export function Storyboard() {
           {frameUnits(unit.items).map((spaceUnit) => (
             renderUnit(spaceUnit, group, unit.spaceGroupId, reservation)
           ))}
+          {/* 구버전(7월 보드) '이 공간에 컷 추가' 라벨 필 복원 — 예비 멤버가 남았을 때만
+              보이고, 소진되면 세트 안 추가 수단 자체가 사라진다(2026-08-14 오너 확정). */}
+          {reservation && (
+            <div className="sb-grid-unit sb-addunit">
+              <button
+                type="button"
+                className="sb-addpill in-space"
+                disabled={locked}
+                onClick={() => {
+                  const section = sectionForGroup(group);
+                  addBlock(lastItem.index, section.id, section.role, unit.spaceGroupId, group.key, reservation);
+                }}
+              >
+                <Icon name="plus" size={15} />이 공간에 컷 추가
+              </button>
+            </div>
+          )}
         </div>
         {insertControl(lastItem.index, group, null, null, 'end')}
       </div>
@@ -3064,6 +3095,25 @@ export function Storyboard() {
                     unit.kind === 'spaceRun' ? renderSpaceRun(unit, group) : renderUnit(unit, group)
                   ))}
                   {!group.items.length && insertControl(groupSection.start, group, null, null, 'empty')}
+                  {/* 구버전 '개별 컷 추가' 라벨 필 — 호버 존과 병행하는 상시 노출 추가 수단. */}
+                  {group.items.length > 0 && (
+                    <div className="sb-grid-unit sb-addunit">
+                      <button
+                        type="button"
+                        className="sb-addpill"
+                        disabled={locked}
+                        onClick={() => addBlock(
+                          group.items[group.items.length - 1].index,
+                          groupSection.id,
+                          groupSection.role,
+                          null,
+                          group.key,
+                        )}
+                      >
+                        <Icon name="plus" size={15} />개별 컷 추가
+                      </button>
+                    </div>
+                  )}
                 </div>
                 {group.items.length > 0 && sectionShuffleRow(group)}
               </div>
@@ -3095,6 +3145,9 @@ export function Storyboard() {
       saving: hookStyleSaving,
       error: hookStyleError,
       onSelectStyle: applyHookStyleChoice,
+      clothingType,
+      gender: boundGenderNow,
+      isCutAvailable: hookCutAvailable,
     } : null;
   const inspector = setPicker ? (
     <SpaceSetGallery mode={setPicker.mode} error={setPickerError} onChoose={chooseSpaceSet}

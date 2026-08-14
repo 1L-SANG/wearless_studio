@@ -9,7 +9,6 @@ import {
   deriveHookFrame,
   hookSlotPlan,
   moodGridContent,
-  unslottedHookBlocks,
 } from '../../src/lib/storyboardHookFrame.js';
 
 const block = (id, extra = {}) => ({ id, sectionRole: 'hooking', cutType: 'styling', ...extra });
@@ -88,18 +87,31 @@ test('mood grid plan: single color falls back to four distinct cuts of the same 
   assert.equal(plan.length, 4);
   assert.ok(plan.every((slot) => ['styling', 'horizon'].includes(slot.cutType)));
   assert.ok(plan.every((slot) => slot.colorId === undefined));   // 색상은 기준색 그대로
-  assert.equal(new Set(plan.map((slot) => `${slot.cutType}/${slot.shot}`)).size, 4);
+  // 서로 다른 네 컷 — 방향 변형까지 포함해 겹치지 않는다.
+  assert.equal(new Set(plan.map((slot) => `${slot.cutType}/${slot.shot}/${slot.direction || 'front'}`)).size, 4);
+});
+
+test('slot plans skip unpublished combos via isCutAvailable (empty-tile prevention)', () => {
+  // 여성 낱장은 호리존 미디움만 열려 있는 카탈로그를 흉내 — 호리존 풀샷 금지.
+  const isCutAvailable = (cutType, shot) => !(cutType === 'horizon' && shot === 'full');
+  const plan = hookSlotPlan('moodGrid', { colors: [{ id: 'only' }], isCutAvailable });
+  assert.equal(plan.length, 4);
+  assert.ok(plan.every((slot) => isCutAvailable(slot.cutType, slot.shot)), '닫힌 조합은 슬롯이 되면 안 된다');
+
+  // 호리존이 전부 닫히면 시그니처도 스타일링 미디움으로 폴백한다.
+  const noHorizon = (cutType) => cutType !== 'horizon';
+  assert.deepEqual(
+    hookSlotPlan('signature', { isCutAvailable: noHorizon })
+      .map((slot) => [slot.cutType, slot.shot]),
+    [['styling', 'medium']],
+  );
+
+  // 전 조합이 닫힌 극단에서는 원래 후보로 돌아가 빈 계획을 만들지 않는다.
+  assert.equal(hookSlotPlan('pair', { isCutAvailable: () => false }).length, 2);
 });
 
 test('unknown style throws instead of guessing', () => {
   assert.throws(() => hookSlotPlan('carousel'), /unknown_hook_style/);
-});
-
-test('unslotted hooking blocks stay as ordinary cuts after the frame', () => {
-  const blocks = [frameBlock('left'), frameBlock('right'), block('unused')];
-  const frame = deriveHookFrame(blocks);
-  assert.deepEqual(unslottedHookBlocks(blocks, frame).map((item) => item.id), ['unused']);
-  assert.deepEqual(unslottedHookBlocks(blocks, null), blocks);
 });
 
 /* ---------- P2: 스타일 전환 엔진 ---------- */
@@ -119,16 +131,25 @@ const makeFactory = () => {
   return (slot) => ({ id: `new-${n += 1}`, source: 'ai', sectionId: 'sec-hook', sectionRole: 'hooking', colorId: 'base', ...slot });
 };
 
-test('applyHookStyle(signature): benefit leads with the frame, hero stays as an ordinary cut', () => {
+test('applyHookStyle(signature): benefit leads with the frame, surplus AI cut is removed', () => {
   const next = applyHookStyle(seedBoard(), 'signature', { colors: [{ id: 'base', isBase: true }], frameId: 'hookframe__t' });
-  assert.deepEqual(next.map((block) => block.id), ['benefit', 'hero', 'styling-1']);
-  const [slot, unused] = next;
+  // 스타일 = 정확한 컷 구성(2026-08-14 오너 정정): 슬롯에 안 쓰인 후킹 AI 컷은 삭제된다.
+  assert.deepEqual(next.map((block) => block.id), ['benefit', 'styling-1']);
+  const [slot] = next;
   assert.equal(slot.hookStyle, 'signature');
   assert.equal(slot.hookTitleOverlay, true);
   assert.equal(slot.exampleId, 'ex-benefit');          // 틀 그대로 → 예시 보존
-  assert.equal(unused.hookFrameId, undefined);
-  assert.equal(unused.layoutRowId, undefined);
-  assert.equal(next[2].sectionRole, 'styling');        // 다른 섹션은 그대로
+  assert.equal(next[1].sectionRole, 'styling');        // 다른 섹션은 그대로
+});
+
+test('applyHookStyle keeps seller-uploaded mine cuts in the hooking section', () => {
+  const board = [
+    ...seedBoard(),
+  ];
+  board.splice(2, 0, { id: 'mine-1', source: 'mine', sectionId: 'sec-hook', sectionRole: 'hooking', ownImages: ['m.png'] });
+  const next = applyHookStyle(board, 'signature', { colors: [{ id: 'base', isBase: true }], frameId: 'hookframe__t' });
+  // AI 잔여(hero)는 삭제되지만 셀러 업로드(mine)는 프레임 뒤에 남는다(오너 확정).
+  assert.deepEqual(next.map((block) => block.id), ['benefit', 'mine-1', 'styling-1']);
 });
 
 test('applyHookStyle(pair): two medium slots, hero converts shot and drops its stale example', () => {
@@ -159,15 +180,17 @@ test('applyHookStyle(moodGrid, 4 colors): four color slots in two rows, missing 
   assert.ok(next.some((block) => block.id === 'styling-1' && !block.hookFrameId));
 });
 
-test('applyHookStyle round-trip back to signature clears frame/row fields from ex-slots', () => {
+test('applyHookStyle round-trip back to signature leaves exactly the style cut count', () => {
   const colors = [{ id: 'base', isBase: true }, { id: 'c2' }];
   const grid = applyHookStyle(seedBoard(), 'moodGrid', { colors, createBlock: makeFactory(), frameId: 'hookframe__g' });
+  assert.equal(grid.filter((block) => block.sectionRole === 'hooking').length, 4);
   const back = applyHookStyle(grid, 'signature', { colors, frameId: 'hookframe__s' });
   const slots = back.filter((block) => block.hookFrameId === 'hookframe__s');
   assert.equal(slots.length, 1);
-  const exSlots = back.filter((block) => block.sectionRole === 'hooking' && !block.hookFrameId);
-  assert.ok(exSlots.length >= 3);                       // 빠진 컷은 보관(삭제 없음)
-  assert.ok(exSlots.every((block) => !block.layoutRowId && !block.hookStyle));
+  // 줄어드는 전환에서 남는 AI 컷은 삭제 — 후킹 섹션은 항상 스타일의 컷 구성·개수만 갖는다
+  // (2026-08-14 오너: "잔여 컷 남기지 말고 그때그때 다르게 배치").
+  assert.equal(back.filter((block) => block.sectionRole === 'hooking').length, 1);
+  assert.ok(!slots[0].layoutRowId);
 });
 
 test('adoptHookFrame promotes a legacy opening row to a pair frame, leaves others alone', () => {

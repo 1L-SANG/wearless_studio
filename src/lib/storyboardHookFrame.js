@@ -61,18 +61,51 @@ export function deriveHookFrame(blocks) {
   };
 }
 
-/* 스타일별 슬롯 사양 — 틀만 정한다. cutType/shot 은 후킹 섹션 허용 컷(스타일링·호리존) 안.
-   signature 는 기본 구성의 benefit(호리존 미디움)을, pair 는 hero(스타일링 풀)+benefit 을
-   그대로 재사용하도록 사양을 맞춰 컷 수·크레딧을 바꾸지 않는다(스펙 §2). */
-export function hookSlotPlan(style, { colors } = {}) {
+/* 후보 목록에서 "발행된 조합"만 골라 원하는 수만큼 서로 다른 컷을 뽑는다.
+   isCutAvailable(cutType, shot)가 없으면 후보 순서 그대로(시드·지문 경로 — 결정적).
+   전 조합이 닫힌 극단에서만 원래 후보로 돌아가고, 그래도 모자라면 중복을 허용한다
+   (빈 칸을 만드는 것보다 낫다 — 2026-08-14 '이미지 사라짐' 사고의 원인 방지). */
+const slotCutKey = (cut) => `${cut.cutType}|${cut.shot}|${cut.direction || 'front'}`;
+function resolveSlotCuts(candidates, count, isCutAvailable) {
+  const available = typeof isCutAvailable === 'function'
+    ? candidates.filter((cut) => isCutAvailable(cut.cutType, cut.shot))
+    : candidates;
+  const pool = available.length ? available : candidates;
+  const picked = [];
+  const seen = new Set();
+  for (const cut of pool) {
+    if (picked.length >= count) break;
+    if (seen.has(slotCutKey(cut))) continue;
+    seen.add(slotCutKey(cut));
+    picked.push(cut);
+  }
+  for (let index = 0; picked.length < count; index += 1) {
+    picked.push(pool[index % pool.length]);
+  }
+  return picked;
+}
+
+/* 스타일별 슬롯 사양 — 틀만 정한다. cutType/shot(/direction) 은 후킹 섹션 허용 컷
+   (스타일링·호리존) 안에서, 발행된 조합을 우선 선택한다(isCutAvailable 폴백 체인). */
+export function hookSlotPlan(style, { colors, isCutAvailable } = {}) {
   if (style === 'signature') {
-    return [{ role: 'signature', cutType: 'horizon', shot: 'medium', titleOverlay: true }];
+    const [cut] = resolveSlotCuts([
+      { cutType: 'horizon', shot: 'medium' },
+      { cutType: 'styling', shot: 'medium' },
+    ], 1, isCutAvailable);
+    return [{ role: 'signature', ...cut, titleOverlay: true }];
   }
   if (style === 'pair') {
-    // '두컷 프레임' = 의류 위주 미디움샷 2장(오너 카피 확정) — hero는 샷만 미디움으로 전환해 재사용.
+    // '두컷 프레임' = 의류 위주 미디움샷 2장(오너 카피 확정) — 기본 왼쪽 스타일링·오른쪽 호리존.
+    const cuts = resolveSlotCuts([
+      { cutType: 'styling', shot: 'medium' },
+      { cutType: 'horizon', shot: 'medium' },
+      { cutType: 'styling', shot: 'full' },
+      { cutType: 'styling', shot: 'medium', direction: 'back' },
+    ], 2, isCutAvailable);
     return [
-      { role: 'left', cutType: 'styling', shot: 'medium' },
-      { role: 'right', cutType: 'horizon', shot: 'medium' },
+      { role: 'left', ...cuts[0] },
+      { role: 'right', ...cuts[1] },
     ];
   }
   if (style === 'moodGrid') {
@@ -81,36 +114,35 @@ export function hookSlotPlan(style, { colors } = {}) {
       // 등록 색상이 1번씩(같은 컷 종류·샷 — 비교 가능성 유지, 컬러웨이 페어와 동일 원리),
       // 색상이 2~3개면 남는 칸은 기준색 추가 컷으로 채운다(2026-08-14 확정).
       const base = colors.find((color) => color.isBase) || colors[0];
+      const [colorCut] = resolveSlotCuts([
+        { cutType: 'horizon', shot: 'medium' },
+        { cutType: 'styling', shot: 'medium' },
+      ], 1, isCutAvailable);
       const colorSlots = colors.slice(0, 4).map((color) => ({
-        role: `color:${color.id}`, cutType: 'horizon', shot: 'medium', colorId: color.id,
+        role: `color:${color.id}`, ...colorCut, colorId: color.id,
       }));
-      const fillCuts = [
+      const fills = resolveSlotCuts([
         { cutType: 'styling', shot: 'full' },
         { cutType: 'styling', shot: 'medium' },
-        { cutType: 'horizon', shot: 'full' },
-      ];
-      const fills = fillCuts.slice(0, 4 - colorSlots.length).map((cut, index) => ({
+        { cutType: 'styling', shot: 'full', direction: 'back' },
+      ], 4 - colorSlots.length, isCutAvailable).map((cut, index) => ({
         role: `fill:${index + 1}`, ...cut, colorId: base.id,
       }));
       return [...colorSlots, ...fills];
     }
-    // 단색 4컷 — 같은 색, 다른 네 컷(후킹 허용 컷 안에서 실루엣·디테일 커버)
-    return [
-      { role: 'grid:1', cutType: 'styling', shot: 'full' },
-      { role: 'grid:2', cutType: 'horizon', shot: 'medium' },
-      { role: 'grid:3', cutType: 'styling', shot: 'medium' },
-      { role: 'grid:4', cutType: 'horizon', shot: 'full' },
-    ];
+    // 단색 4컷 — 같은 색, 서로 다른 네 컷(후킹 허용 컷 안에서 실루엣·디테일 커버).
+    // 호리존 풀샷은 낱장 발행이 닫힌 카테고리가 많아 후보 뒤로 미룬다 — 발행 조합 우선.
+    return resolveSlotCuts([
+      { cutType: 'styling', shot: 'full' },
+      { cutType: 'horizon', shot: 'medium' },
+      { cutType: 'styling', shot: 'medium' },
+      { cutType: 'styling', shot: 'full', direction: 'back' },
+      { cutType: 'horizon', shot: 'medium', direction: 'back' },
+      { cutType: 'styling', shot: 'medium', direction: 'back' },
+      { cutType: 'horizon', shot: 'full' },
+    ], 4, isCutAvailable).map((cut, index) => ({ role: `grid:${index + 1}`, ...cut }));
   }
   throw new Error(`unknown_hook_style:${style}`);
-}
-
-// 프레임 밖 후킹 컷(구성 미사용) — 삭제하지 않고 프레임 뒤에 일반 컷으로 이어진다(스펙 §2).
-export function unslottedHookBlocks(blocks, frame) {
-  const list = Array.isArray(blocks) ? blocks : [];
-  if (!frame) return list;
-  const slotted = new Set(frame.slotIds);
-  return list.filter((block) => block && !slotted.has(block.id));
 }
 
 /* ---------- P2: 스타일 전환 엔진 ---------- */
@@ -142,17 +174,19 @@ function clearFrameOwnership(block) {
   return next;
 }
 
-// 슬롯 사양에 맞춰 컷의 틀(컷 종류·샷·색상)을 조정한 사본. 틀이 바뀌면 물고 있던
+// 슬롯 사양에 맞춰 컷의 틀(컷 종류·샷·방향·색상)을 조정한 사본. 틀이 바뀌면 물고 있던
 // 생성예시 선택은 더는 유효하지 않으므로 함께 걷어낸다(재배정기가 새로 채운다).
 function fitBlockToSlot(block, slot) {
   const reshaped = block.cutType !== slot.cutType
     || block.shot !== slot.shot
+    || (slot.direction != null && block.direction !== slot.direction)
     || (slot.colorId != null && block.colorId !== slot.colorId);
   let next = { ...block, cutType: slot.cutType, shot: slot.shot };
+  if (slot.direction != null) next.direction = slot.direction;
   if (slot.colorId != null) next.colorId = slot.colorId;
   if (reshaped && next.exampleId) next = clearExampleSelection(next);
   if (reshaped) {
-    // 방향·포즈 등 세부는 보수적으로 초기화하지 않는다 — 보드 정규화가 역할을 재산출하고,
+    // 방향 외 포즈 등 세부는 보수적으로 초기화하지 않는다 — 보드 정규화가 역할을 재산출하고,
     // 컷 종류가 바뀐 경우의 잔여 설정은 인스펙터 규칙이 이미 흡수한다.
     next.exampleSelectionOrigin = next.exampleId ? next.exampleSelectionOrigin : null;
   }
@@ -162,10 +196,12 @@ function fitBlockToSlot(block, slot) {
 /* 후킹 섹션에 스타일을 적용해 새 보드를 돌려준다 — 저장 정본은 개별 컷이므로
    합성은 없고, 슬롯 선발·틀 조정·프레임/행 표식·순서 재배치만 한다.
    - 슬롯 선발: ① 컷 종류+샷(+색상) 정확 일치 → ② 컷 종류 일치(샷 전환) → ③ 아무 컷(틀 전환).
-   - 부족분은 createBlock({ cutType, shot, colorId }) 팩토리로 만든다(moodGrid 전용).
-   - 슬롯에서 빠진 컷은 삭제하지 않고 프레임 뒤에 일반 컷으로 남긴다(오너 확정). */
+   - 부족분은 createBlock({ cutType, shot, direction, colorId }) 팩토리로 만든다.
+   - 슬롯에서 빠진 AI 컷은 **삭제**한다 — 후킹 섹션은 항상 그 스타일에 맞는 컷 구성·개수만
+     갖는다(2026-08-14 오너 정정: "잔여 컷 남기지 말고 그때그때 다르게 배치").
+     셀러가 직접 올린 '내 사진'만 프레임 뒤에 남긴다(오너 확정 — 업로드 자산 보호). */
 export function applyHookStyle(blocks, style, {
-  colors = [], createBlock = null, frameId = null,
+  colors = [], createBlock = null, frameId = null, isCutAvailable = null,
 } = {}) {
   if (!HOOK_STYLES.includes(style)) throw new Error(`unknown_hook_style:${style}`);
   const list = Array.isArray(blocks) ? blocks : [];
@@ -176,7 +212,7 @@ export function applyHookStyle(blocks, style, {
 
   const previous = deriveHookFrame(list.slice(start, end));
   const section = list.slice(start, end).map(clearFrameOwnership);
-  const plan = hookSlotPlan(style, { colors });
+  const plan = hookSlotPlan(style, { colors, isCutAvailable });
   const nextFrameId = frameId || previous?.frameId || `hookframe__${uid('hf')}`;
 
   const pool = section.filter(isHookingAiBlock);
@@ -196,11 +232,14 @@ export function applyHookStyle(blocks, style, {
   const slotBlocks = plan.map((slot) => {
     const base = pick((block) => (
       block.cutType === slot.cutType && block.shot === slot.shot
+      && (slot.direction == null || block.direction === slot.direction)
       && (slot.colorId == null || block.colorId === slot.colorId)
     ), { preferPinned: true })
       || pick((block) => block.cutType === slot.cutType, { preferPinned: false })
       || pick(() => true, { preferPinned: false })
-      || (createBlock ? createBlock({ cutType: slot.cutType, shot: slot.shot, colorId: slot.colorId }) : null);
+      || (createBlock ? createBlock({
+        cutType: slot.cutType, shot: slot.shot, direction: slot.direction, colorId: slot.colorId,
+      }) : null);
     if (!base) throw new Error('hook_frame_slot_underflow');
     const fitted = fitBlockToSlot(base, slot);
     const framed = {
@@ -224,7 +263,8 @@ export function applyHookStyle(blocks, style, {
     });
   }
 
-  const rest = section.filter((block) => !used.has(block.id));
+  // 슬롯에 안 쓰인 AI 컷은 버린다(스타일 = 정확한 컷 구성). 내 사진만 뒤에 남긴다.
+  const rest = section.filter((block) => !used.has(block.id) && !isHookingAiBlock(block));
   return [
     ...list.slice(0, start),
     ...slotBlocks,
