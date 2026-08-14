@@ -21,6 +21,14 @@ const tokenMismatch = (meta) => {
   return error;
 };
 
+async function waitFor(check, timeoutMs = 1500) {
+  const startedAt = Date.now();
+  while (!check()) {
+    if (Date.now() - startedAt > timeoutMs) throw new Error('waitFor timeout');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 function fakeTimers() {
   let nextId = 1;
   const timers = new Map();
@@ -326,7 +334,7 @@ test('ownership check reports a deleted remote slot as an explicit gone state', 
   assert.deepEqual(conflicts, [{ state: 'gone' }]);
 });
 
-test('only one browser tab can claim the local writer role', () => {
+test('only one browser tab can claim the local writer role', async () => {
   const storage = new MapStorage();
   const first = createDraftSlotSync({ storage, documentId: 'tab-a' });
   const second = createDraftSlotSync({ storage, documentId: 'tab-b' });
@@ -336,10 +344,45 @@ test('only one browser tab can claim the local writer role', () => {
   assert.equal(first.activate(), true);
   assert.equal(second.activate(), false);
   assert.equal(second.isLocked(), true);
+  // 화면 잠금 안내는 소유 탭이 살아있다고 응답(ping→alive)한 뒤에야 알린다
+  await waitFor(() => conflicts.length > 0);
   assert.equal(conflicts[0].state, 'other-tab');
 
   first.dispose();
   second.dispose();
+});
+
+test('a probe timeout quietly reclaims a crashed tab owner without a lock screen', () => {
+  const timers = fakeTimers();
+  const storage = new MapStorage([['wl_draftSlotOwnerTab', 'dead-tab']]);
+  const conflicts = [];
+  const sync = createDraftSlotSync({
+    storage, documentId: 'tab-live', setTimer: timers.setTimer, clearTimer: timers.clearTimer,
+  });
+  sync.onConflict((meta) => conflicts.push(meta));
+
+  assert.equal(sync.activate(), false);
+  assert.equal(sync.isLocked(), true);                 // 확인하는 동안 슬롯 쓰기만 멈춘다
+  assert.equal(conflicts.filter(Boolean).length, 0);   // 잠금 화면 안내는 아직 없다
+  assert.equal(timers.runLatest(), 450);               // 응답 없음 — 죽은 탭의 잔재
+  assert.equal(sync.isLocked(), false);
+  assert.equal(storage.getItem('wl_draftSlotOwnerTab'), 'tab-live');
+  assert.equal(conflicts.filter(Boolean).length, 0);
+  sync.dispose();
+});
+
+test('an owner release event dissolves an other-tab lock without user action', () => {
+  const storage = new EventedStorage([['wl_draftSlotOwnerTab', 'tab-a']]);
+  const conflicts = [];
+  const sync = createDraftSlotSync({ storage, documentId: 'tab-b' });
+  sync.onConflict((meta) => conflicts.push(meta));
+
+  storage.dispatch('wl_draftSlotOwnerTab', 'tab-a2');  // 다른 탭이 소유권을 새로 씀 → 잠금
+  assert.equal(sync.isLocked(), true);
+  storage.dispatch('wl_draftSlotOwnerTab', null);      // 그 탭이 정상 종료(pagehide)
+  assert.equal(sync.isLocked(), false);
+  assert.equal(storage.getItem('wl_draftSlotOwnerTab'), 'tab-b');
+  sync.dispose();
 });
 
 test('storage events refresh both local and server sync timestamps', () => {
@@ -540,6 +583,101 @@ test('an explicit new flow can discard after the previous PUT was rejected', asy
   assert.deepEqual(calls, ['takeover', 'delete:active-token']);
 });
 
+test('a takeover with no server slot clears the stale token so the next PUT creates fresh', async () => {
+  const tokens = [];
+  const storage = new MapStorage([['wl_draftSlotToken', 'stale-token']]);
+  const sync = createDraftSlotSync({
+    debounceMs: 0,
+    storage,
+    adapter: {
+      async takeoverDraftSlot() { return null; },   // 서버 204 — 슬롯 없음
+      async putDraftSlot(body) {
+        tokens.push(body.token);
+        return { token: 'fresh', meta: { updatedAt: 'server-1' } };
+      },
+    },
+  });
+
+  assert.equal(await sync.takeover(), null);
+  assert.equal(sync.getToken(), null);
+  assert.equal(storage.getItem('wl_draftSlotToken'), null);
+
+  sync.queue({ product: product('fresh'), localUpdatedAt: 'local-1' });
+  await sync.flush();
+  assert.deepEqual(tokens, [null]);   // 옛 토큰으로 409(gone 오발)를 만들지 않는다
+  assert.equal(sync.getToken(), 'fresh');
+});
+
+test('a failed new-flow delete defers removal instead of blocking, then settles before the next PUT', async () => {
+  const calls = [];
+  const storage = new MapStorage([['wl_draftSlotToken', 'stale-token']]);
+  let serverDown = true;
+  const sync = createDraftSlotSync({
+    debounceMs: 0,
+    storage,
+    adapter: {
+      async takeoverDraftSlot() {
+        if (serverDown) throw new Error('network down');
+        calls.push('takeover');
+        return { token: 'grabbed', payload: {}, meta: { updatedAt: '2026-08-14T00:00:00Z' } };
+      },
+      async getDraftSlot() {
+        calls.push('get');
+        return { meta: { updatedAt: '2026-08-01T00:00:00Z' } };
+      },
+      async deleteDraftSlot(token) { calls.push(`delete:${token}`); },
+      async putDraftSlot(body) {
+        calls.push(`put:${body.token}`);
+        return { token: 'fresh', meta: { updatedAt: 'server-1' } };
+      },
+    },
+  });
+
+  assert.equal(await sync.removeForNewFlow(), false);   // 새로 시작을 막지 않는다
+  assert.equal(sync.getToken(), null);
+  assert.ok(storage.getItem('wl_draftSlotPendingRemove'));
+
+  serverDown = false;
+  sync.queue({ product: product('fresh'), localUpdatedAt: 'local-1' });
+  await sync.flush();
+  assert.deepEqual(calls, ['get', 'takeover', 'delete:grabbed', 'put:null']);
+  assert.equal(storage.getItem('wl_draftSlotPendingRemove'), null);
+});
+
+test('a deferred removal is abandoned when another device rewrote the slot after the decision', async () => {
+  const calls = [];
+  const storage = new MapStorage([['wl_draftSlotPendingRemove', '2026-08-01T00:00:00Z']]);
+  const sync = createDraftSlotSync({
+    storage,
+    adapter: {
+      async getDraftSlot() { calls.push('get'); return { meta: { updatedAt: '2026-08-02T00:00:00Z' } }; },
+      async takeoverDraftSlot() { calls.push('takeover'); return { token: 'grabbed' }; },
+      async deleteDraftSlot(token) { calls.push(`delete:${token}`); },
+    },
+  });
+
+  await sync.retryPendingRemoval();
+  assert.deepEqual(calls, ['get']);   // 결정 이후의 새 작업을 지우지 않는다
+  assert.equal(storage.getItem('wl_draftSlotPendingRemove'), null);
+});
+
+test('a new flow treats an already-gone slot as removed instead of locking', async () => {
+  const storage = new MapStorage([['wl_draftSlotToken', 'stale-token']]);
+  const conflicts = [];
+  const sync = createDraftSlotSync({
+    storage,
+    adapter: {
+      async takeoverDraftSlot() { return { token: 'grabbed', payload: {}, meta: {} }; },
+      async deleteDraftSlot() { throw tokenMismatch(null); },
+    },
+  });
+  sync.onConflict((meta) => conflicts.push(meta));
+
+  assert.equal(await sync.removeForNewFlow(), true);
+  assert.equal(sync.isLocked(), false);
+  assert.equal(sync.getToken(), null);
+});
+
 test('logout invalidates an in-flight failure so it cannot schedule an old-draft retry', async () => {
   const timers = fakeTimers();
   let rejectPut;
@@ -572,7 +710,22 @@ test('logged-in and mock entry use one priority-4 modal with local and remote ti
   assert.match(app, /id: 'remote'[\s\S]*?formatDraftRelativeTime\(slot\.meta\?\.updatedAt\)/);
   assert.match(app, /slot\.meta\?\.updatedAt !== draftSlot\.getServerSyncedAt\(\)/);
   assert.match(app, /draftSlot\.takeover\(\)[\s\S]*?draftSlot\.stage/);
-  assert.match(shell, /sources\.map\(\(source\)[\s\S]*?새로 만들기/);
+  assert.match(shell, /sources\.map\(\(source\)[\s\S]*?새로 시작하기/);
+});
+
+test('a device-local draft opens without waiting for the server, and phantom slots stay hidden', () => {
+  const app = read('../../src/App.jsx');
+  const input = read('../../src/features/product-input/ProductInput.jsx');
+  // 로컬 카드 열기: 복원을 먼저 확정하고 작업권 인수는 뒤에서 — 서버 장애가 복원을 막지 않는다
+  assert.match(app, /draftSlot\.stage\(\{ payload: draft, meta: source\.meta \}\);\s*\n\s*void draftSlot\.takeover\(\)\.catch/);
+  // 사진·이름·분석이 전무한 슬롯(팬텀)과 지연 삭제 중인 슬롯은 이어가기 카드로 권하지 않는다
+  assert.match(app, /slot\.meta\?\.hasContent !== false/);
+  assert.match(app, /draftSlot\.hasPendingRemoval\(\)/);
+  // 같은 기기의 더 새로운 로컬 저장이 있으면 카드 두 장을 한 장으로 합친다
+  assert.match(app, /sameDeviceNewerLocal/);
+  // 빈 화면은 임시저장을 만들지 않고, 빈 화면 위의 gone 잠금은 조용히 스스로 풀린다
+  assert.match(input, /if \(!hasContent && !draftHadContentRef\.current\) return/);
+  assert.match(input, /draftSlot\.restartAfterGone\(\);\s*\n\s*return;/);
 });
 
 test('photo pending is hidden while editing but warned when a remote draft may omit photos', () => {
@@ -583,7 +736,7 @@ test('photo pending is hidden while editing but warned when a remote draft may o
   assert.match(slot, /photosPending/);
   assert.match(app, /photosPending: Boolean\(slot\.meta\?\.photosPending\)/);
   assert.doesNotMatch(input, /일부 사진은 아직 동기화 중/);
-  assert.match(shell, /사진 저장이 끝나지 않아 일부 사진이 빠질 수 있어요/);
+  assert.match(shell, /사진 몇 장은 아직 저장 중이라 빠져 있을 수 있어요/);
 });
 
 test('resume choice dismissal cannot silently choose or take over a draft', () => {

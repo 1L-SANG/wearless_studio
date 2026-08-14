@@ -2,9 +2,15 @@ const TOKEN_KEY = 'wl_draftSlotToken';
 const SYNCED_AT_KEY = 'wl_draftSlotSyncedAt';
 const SERVER_SYNCED_AT_KEY = 'wl_draftSlotServerSyncedAt';
 const TAB_OWNER_KEY = 'wl_draftSlotOwnerTab';
+// '새로 시작' 시 서버 슬롯 삭제가 서버 장애로 실패하면 결정 시각을 남기고 나중에 정리한다.
+const PENDING_REMOVE_KEY = 'wl_draftSlotPendingRemove';
+const TAB_CHANNEL_NAME = 'wl_draftSlotTabs';
 const DEFAULT_DEBOUNCE_MS = 500;
 const PHOTO_RETRY_MS = 2000;
 const PUT_RETRY_MAX_MS = 30000;
+// 다른 탭 생존 확인(ping) 응답 대기 — 크래시로 pagehide 없이 죽은 탭의 소유권이
+// localStorage 에 남아 방문마다 잠금이 뜨는 것을 막는다.
+const TAB_PROBE_WAIT_MS = 450;
 
 function safeStorage(storage) {
   return storage || globalThis.localStorage || null;
@@ -115,6 +121,8 @@ export function createDraftSlotSync({
   let requestEpoch = 0;
   let removeStorageListener = () => {};
   let removePagehideListener = () => {};
+  let tabChannel = null;
+  let probeTimer = null;
   const uploads = new Map();
 
   const setToken = (value) => {
@@ -129,6 +137,28 @@ export function createDraftSlotSync({
     serverSyncedAt = value || null;
     writeStorage(storage, SERVER_SYNCED_AT_KEY, serverSyncedAt);
   };
+  const getPendingRemoval = () => readStorage(storage, PENDING_REMOVE_KEY);
+  const setPendingRemoval = (value) => writeStorage(storage, PENDING_REMOVE_KEY, value);
+  // '새로 시작' 때 못 지운 옛 슬롯을 마저 정리한다. 결정 이후 다른 기기가 슬롯을 새로 썼다면
+  // 그쪽 작업이 우선 — 지연 삭제를 포기한다(오래된 삭제 의사가 남의 새 작업을 지우면 안 된다).
+  const resolvePendingRemoval = async () => {
+    const decidedAtRaw = getPendingRemoval();
+    if (!decidedAtRaw || !api?.deleteDraftSlot) return;
+    const slot = await api.getDraftSlot?.(token);
+    if (!slot) {
+      setPendingRemoval(null);
+      return;
+    }
+    const slotUpdatedAt = Date.parse(slot.meta?.updatedAt || '');
+    const decidedAt = Date.parse(decidedAtRaw);
+    if (Number.isFinite(slotUpdatedAt) && Number.isFinite(decidedAt) && slotUpdatedAt > decidedAt) {
+      setPendingRemoval(null);
+      return;
+    }
+    const grabbed = await api.takeoverDraftSlot?.();
+    if (grabbed?.token) await api.deleteDraftSlot(grabbed.token);
+    setPendingRemoval(null);
+  };
   const stopScheduledWrites = () => {
     clearTimer(timer);
     clearTimer(putRetryTimer);
@@ -139,14 +169,21 @@ export function createDraftSlotSync({
     lockMeta = meta;
     conflictHandler?.(meta);
   };
-  const lockForConflict = (meta) => {
+  const stopProbe = () => {
+    clearTimer(probeTimer);
+    probeTimer = null;
+  };
+  // silent: 잠금(쓰기 차단)은 즉시 걸되 화면 안내는 미룬다 — 상대 탭 생존 확인 중에 쓴다.
+  const lockForConflict = (meta, { silent = false } = {}) => {
     requestEpoch += 1;
     locked = true;
     conflictLocked = true;
     goneLocked = false;
     suspended = false;
+    stopProbe();
     stopScheduledWrites();
-    notifyLock(meta || { deviceLabel: '다른 탭 또는 기기' });
+    if (silent) lockMeta = meta || { deviceLabel: '다른 탭 또는 기기' };
+    else notifyLock(meta || { deviceLabel: '다른 탭 또는 기기' });
   };
   const lockForGoneSlot = () => {
     requestEpoch += 1;
@@ -154,6 +191,7 @@ export function createDraftSlotSync({
     conflictLocked = false;
     goneLocked = true;
     suspended = false;
+    stopProbe();
     stopScheduledWrites();
     notifyLock({ state: 'gone' });
   };
@@ -163,6 +201,7 @@ export function createDraftSlotSync({
     goneLocked = false;
     suspended = false;
     lockMeta = null;
+    stopProbe();
     conflictHandler?.(null);
   };
   const ownsTab = () => readStorage(storage, TAB_OWNER_KEY) === documentId;
@@ -201,6 +240,10 @@ export function createDraftSlotSync({
     if (event.key === TAB_OWNER_KEY) {
       if (event.newValue && event.newValue !== documentId) {
         lockForConflict({ state: 'other-tab', deviceLabel: '이 브라우저의 다른 탭' });
+      } else if (!event.newValue && conflictLocked && lockMeta?.state === 'other-tab') {
+        // 상대 탭이 정상 종료(pagehide)로 소유권을 놓았다 — 조용히 이어받아 잠금을 걷는다.
+        claimTab({ force: true });
+        clearLock();
       }
       return;
     }
@@ -224,6 +267,28 @@ export function createDraftSlotSync({
       removePagehideListener = () => globalThis.removeEventListener?.('pagehide', release);
     }
   } catch { /* pagehide 미지원 환경은 명시적 이어받기로 stale owner를 교체 */ }
+  try {
+    // 같은 브라우저 탭끼리의 생존 확인 채널. 크래시로 죽은 탭은 응답하지 못하므로
+    // 소유권만 남은 유령 잠금을 activate()의 ping/timeout 으로 걷어낸다.
+    if (typeof BroadcastChannel === 'function') {
+      tabChannel = new BroadcastChannel(TAB_CHANNEL_NAME);
+      tabChannel.onmessage = (event) => {
+        const message = event?.data;
+        if (!message || message.from === documentId) return;
+        // ping 은 '지금 소유자로 기록된 탭'을 지목해 묻는다 — 지목된 탭만 응답한다.
+        if (message.t === 'ping' && message.owner === documentId && ownsTab() && !locked) {
+          tabChannel.postMessage({ t: 'alive', from: documentId });
+          return;
+        }
+        if (message.t === 'alive' && probeTimer != null && conflictLocked) {
+          // 상대 탭이 실제로 살아 있다 — 이제서야 화면에 잠금을 알린다.
+          stopProbe();
+          notifyLock(lockMeta || { state: 'other-tab', deviceLabel: '이 브라우저의 다른 탭' });
+        }
+      };
+      tabChannel.unref?.();
+    }
+  } catch { tabChannel = null; }
   const notifyPhotosPending = () => {
     const pending = slotWritePending || Boolean(pendingSnapshot)
       || [...uploads.values()].some((upload) => upload.status !== 'synced');
@@ -353,10 +418,12 @@ export function createDraftSlotSync({
     const { payload, photosPending, includedUploadIds } = payloadFor(snapshot);
     slotWritePending = true;
     notifyPhotosPending();
-    const requestToken = token;
     const epoch = requestEpoch;
     try {
       try {
+        // '새로 시작' 때 서버 장애로 못 지운 옛 슬롯이 있으면 새 저장 전에 마저 정리한다.
+        if (getPendingRemoval()) await resolvePendingRemoval();
+        const requestToken = token;
         const result = await api.putDraftSlot({
           payload,
           token: requestToken,
@@ -426,7 +493,22 @@ export function createDraftSlotSync({
 
   return {
     configure(nextAdapter) { api = nextAdapter; },
-    activate() { return claimTab(); },
+    activate() {
+      const owner = readStorage(storage, TAB_OWNER_KEY);
+      if (owner && owner !== documentId && tabChannel) {
+        // 다른 탭 소유권 발견 — 쓰기는 즉시 멈추되, 그 탭이 진짜 살아 있는지 먼저 물어본다.
+        // 응답이 오면 그때 잠금 화면을 알리고, 없으면(크래시·강제종료 잔재) 조용히 이어받는다.
+        lockForConflict({ state: 'other-tab', deviceLabel: '이 브라우저의 다른 탭' }, { silent: true });
+        probeTimer = setTimer(() => {
+          probeTimer = null;
+          claimTab({ force: true });
+          clearLock();
+        }, TAB_PROBE_WAIT_MS);
+        try { tabChannel.postMessage({ t: 'ping', from: documentId, owner }); } catch { /* 응답 없음 → timeout 경로 */ }
+        return false;
+      }
+      return claimTab();
+    },
     queue,
     syncPhotos,
     async flush() { await commit(); return putChain; },
@@ -462,12 +544,15 @@ export function createDraftSlotSync({
     onPhotosPending(handler) { photosPendingHandler = handler; notifyPhotosPending(); return () => { if (photosPendingHandler === handler) photosPendingHandler = null; }; },
     dispose() {
       requestEpoch += 1;
+      stopProbe();
       stopScheduledWrites();
       putChain = putChain.catch(() => null);
       removeStorageListener();
       removeStorageListener = () => {};
       removePagehideListener();
       removePagehideListener = () => {};
+      try { tabChannel?.close(); } catch { /* 이미 닫힘 */ }
+      tabChannel = null;
       releaseTab();
     },
     async get({ full = false } = {}) {
@@ -487,10 +572,19 @@ export function createDraftSlotSync({
     },
     async takeover() {
       const result = await api?.takeoverDraftSlot?.();
-      if (!result) return null;
       requestEpoch += 1;
       putChain = putChain.catch(() => null);
       claimTab({ force: true });
+      // 이어서 쓰기로 한 슬롯이다 — 과거의 '새로 시작' 지연 삭제 의사는 여기서 무효가 된다.
+      setPendingRemoval(null);
+      if (!result) {
+        // 서버에 슬롯이 없다(204). 낡은 토큰을 남겨두면 다음 저장이 옛 토큰으로 409를 맞아
+        // '다른 곳에서 정리됐어요' 잠금이 오발된다 — 비워서 새 슬롯 생성(token=null)으로 가게 한다.
+        setToken(null);
+        setServerSyncedAt(null);
+        clearLock();
+        return null;
+      }
       setToken(result.token);
       setServerSyncedAt(result.meta?.updatedAt);
       clearLock();
@@ -508,15 +602,27 @@ export function createDraftSlotSync({
     async removeForNewFlow() {
       // 새 제작/처음부터 다시는 사용자의 명시적 폐기 의사다. 먼저 작업권을 인수한 뒤 같은
       // 토큰으로 DELETE한다. 확정 승격은 이 메서드를 쓰지 않아 작업권 상실을 우회하지 않는다.
-      const takeover = await this.takeover();
-      if (!takeover) {
-        requestEpoch += 1;
-        putChain = putChain.catch(() => null);
-        setToken(null);
-        claimTab({ force: true });
-        clearLock();
+      try {
+        await this.takeover();
+        await this.remove();
+        setPendingRemoval(null);
+        return true;
+      } catch (error) {
+        if (error?.status === 409 && error?.code === 'token_mismatch' && error?.meta == null) {
+          // 슬롯이 이미 사라졌다 — 새로 시작 관점에선 이미 정리된 것과 같다.
+          setToken(null);
+          setPendingRemoval(null);
+          clearLock();
+          return true;
+        }
+        if (error?.status === 409) throw error; // 다른 기기가 방금 이어받음 — 사용자에게 알린다
+        // 서버·네트워크 장애로 삭제하지 못했다 — 새로 시작 자체를 막지 않는다.
+        // 결정 시각을 남겨 두고(지연 삭제) 서버가 돌아오면 다음 저장 전에 마저 정리한다.
+        // resetIdentity 가 플래그도 함께 지우므로(로그아웃 교차계정 보호) 초기화 뒤에 남긴다.
+        this.resetIdentity();
+        setPendingRemoval(new Date().toISOString());
+        return false;
       }
-      return this.remove();
     },
     async remove() {
       const resumeSnapshot = latestSnapshot;
@@ -573,6 +679,8 @@ export function createDraftSlotSync({
       setToken(null);
       setSyncedAt(null);
       setServerSyncedAt(null);
+      // 로그아웃 등 신원 초기화 시 지연 삭제 의사도 버린다 — 다음 계정의 슬롯을 지우면 안 된다.
+      setPendingRemoval(null);
       clearLock();
       releaseTab();
       notifyPhotosPending();
@@ -584,6 +692,10 @@ export function createDraftSlotSync({
       return payload;
     },
     hasUnsyncedChanges(localUpdatedAt) { return Boolean(localUpdatedAt && localUpdatedAt !== syncedAt); },
+    hasPendingRemoval() { return Boolean(getPendingRemoval()); },
+    async retryPendingRemoval() {
+      try { await resolvePendingRemoval(); } catch { /* 서버 복구 뒤 다음 저장 전에 재시도 */ }
+    },
     getToken() { return token; },
     getSyncedAt() { return syncedAt; },
     getServerSyncedAt() { return serverSyncedAt; },

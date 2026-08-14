@@ -54,6 +54,7 @@ import { ResumeChoiceModal } from '@/features/shell/shell.jsx';
 import {
   draftSlot,
   formatDraftRelativeTime,
+  getDraftSlotDeviceLabel,
   localDraftMeta,
 } from '@/lib/draftSlot.js';
 
@@ -231,6 +232,17 @@ function ResumeTracker() {
   return null;
 }
 
+/* 재개 카드에 보여줄 화면 이름 — 셀러에게 라우트 경로(/create/…)를 그대로 노출하지 않는다. */
+const FLOW_SCREEN_NAMES = [
+  ['/create/storyboard', '콘티 화면'],
+  ['/create/mannequin', '마네킹 화면'],
+  ['/editor', '에디터 화면'],
+  ['/create/input', '입력 화면'],
+];
+function flowScreenName(path) {
+  return FLOW_SCREEN_NAMES.find(([prefix]) => path?.startsWith(prefix))?.[1] || '진행하던 화면';
+}
+
 /* '새 제작'(startProject → projectGeneration++)이면 같은 /create/input 라우트라도 ProductInput 을
    remount 해 폼·복원상태를 초기화한다 — 복구로 복원된 묵은 입력이 새 제작에 남지 않게. */
 function ProductInputRoute() {
@@ -278,32 +290,47 @@ function ProductInputRoute() {
       if (flowDecision === 'ask') {
         sources.push({
           id: 'flow',
-          title: '진행 중인 보관함 작업',
-          description: resumePath ? `마지막 화면 · ${resumePath}` : '진행 중인 상세페이지 제작',
+          title: '만들던 상세페이지',
+          description: resumePath ? `${flowScreenName(resumePath)}까지 진행했어요` : '진행하던 작업이 있어요',
         });
       }
+      // '새로 시작'을 이미 결정했는데 서버 장애로 못 지운 슬롯은 다시 권하지 않는다(지연 삭제 중).
+      const pendingRemoval = draftSlot.hasPendingRemoval();
+      if (pendingRemoval) void draftSlot.retryPendingRemoval();
+      // 사진·상품명·분석이 하나도 없는 빈 슬롯(과거 버그로 생긴 팬텀 포함)은 이어갈 것이 없다.
+      const slotVisible = Boolean(slot) && slot.meta?.hasContent !== false && !pendingRemoval;
       const localMeta = localDraftMeta(localDraft);
-      const localDiffers = localDraft && (
-        !slot
+      const localDiffers = Boolean(localMeta) && (
+        !slotVisible
         || localDraft.updatedAt !== draftSlot.getSyncedAt()
         || slot.meta?.updatedAt !== draftSlot.getServerSyncedAt()
       );
+      // 같은 기기에서 마지막 저장만 서버에 못 닿은 경우 — 사실상 같은 작업이므로
+      // '이 기기/다른 기기' 카드 두 장 대신 더 새로운 이 기기 내용 한 장으로 합친다.
+      const sameDeviceNewerLocal = localDiffers && slotVisible
+        && slot.meta?.deviceLabel === getDraftSlotDeviceLabel()
+        && Date.parse(localDraft.updatedAt || 0) >= Date.parse(slot.meta?.updatedAt || 0);
+      const splitCards = localDiffers && slotVisible && !sameDeviceNewerLocal;
       if (localDiffers) {
         sources.push({
           id: 'local',
-          title: '이 기기 임시저장',
-          description: `${formatDraftRelativeTime(localMeta.updatedAt)} · ${localMeta.deviceLabel} · 사진 ${localMeta.photoCount}장`,
+          title: splitCards ? '이 기기에서 입력하던 내용' : '입력하던 상품 정보',
+          description: `${formatDraftRelativeTime(localMeta.updatedAt)}에 저장 · 사진 ${localMeta.photoCount}장`,
           meta: localMeta,
           draft: localDraft,
         });
       }
-      if (slot) {
+      if (slotVisible && !sameDeviceNewerLocal) {
+        // 로컬이 서버 슬롯과 완전히 같은 상태면(마지막 저장까지 동기화됨) 복원은 로컬 사본으로
+        // 한다 — 서버가 잠시 응답하지 않아도 이어서 열기가 실패하지 않는다.
+        const localMatchesSlot = Boolean(localMeta) && !localDiffers;
         sources.push({
           id: 'remote',
-          title: localDiffers ? '다른 기기 임시저장' : '임시저장',
-          description: `${formatDraftRelativeTime(slot.meta?.updatedAt)} · ${slot.meta?.deviceLabel || '다른 기기'} · 사진 ${slot.meta?.photoCount || 0}장`,
+          title: splitCards ? '다른 기기에서 입력하던 내용' : '입력하던 상품 정보',
+          description: `${formatDraftRelativeTime(slot.meta?.updatedAt)}에 저장 · ${slot.meta?.deviceLabel || '다른 기기'} · 사진 ${slot.meta?.photoCount || 0}장`,
           meta: slot.meta,
           photosPending: Boolean(slot.meta?.photosPending),
+          localFallback: localMatchesSlot ? localDraft : null,
         });
       }
       setEntrySources(sources);
@@ -375,7 +402,7 @@ function ProductInputRoute() {
       try {
         await draftSlot.removeForNewFlow();
       } catch (error) {
-        pushToast(error?.message || '임시저장을 정리하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+        pushToast(error?.message || '이전 작업을 정리하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
         return;
       }
     }
@@ -391,21 +418,33 @@ function ProductInputRoute() {
       resume();
       return;
     }
-    try {
-      const takeover = await draftSlot.takeover();
-      const { projectId, projectPersisted } = useAppStore.getState();
-      if (projectId && projectPersisted) await beginProject();
-      if (sourceId === 'remote') {
-        if (!takeover?.payload) throw new Error('임시저장을 불러오지 못했어요.');
+    const { projectId, projectPersisted } = useAppStore.getState();
+    if (sourceId === 'remote' && !source.localFallback) {
+      // 내용이 서버에만 있다 — 가져와야 열 수 있다.
+      try {
+        const takeover = await draftSlot.takeover();
+        if (!takeover?.payload) {
+          pushToast('저장돼 있던 내용이 다른 곳에서 이미 정리됐어요.', { icon: 'alertTri' });
+          setEntrySources([]);
+          setEntryDecision('checking');
+          return;
+        }
+        if (projectId && projectPersisted) await beginProject();
         draftSlot.stage(takeover);
-      } else {
-        draftSlot.stage({ payload: source.draft, meta: source.meta });
+      } catch (error) {
+        pushToast(error?.message || '저장된 내용을 열지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+        return;
       }
-      flowRouteSeenThisSession = true;
-      setEntryDecision('continue');
-    } catch (error) {
-      pushToast(error?.message || '임시저장을 이어서 열지 못했어요.', { icon: 'alert' });
+    } else {
+      // 내용이 이 기기에 있다 — 서버를 기다리지 않고 바로 연다. 이어쓰기 권한(작업권)은
+      // 뒤에서 확보하고, 실패해도 저장 재시도 경로가 처리한다(복원 자체를 막지 않는다).
+      const draft = source.draft || source.localFallback;
+      if (projectId && projectPersisted) await beginProject();
+      draftSlot.stage({ payload: draft, meta: source.meta });
+      void draftSlot.takeover().catch(() => {});
     }
+    flowRouteSeenThisSession = true;
+    setEntryDecision('continue');
   };
 
   if (signingOut) return <div className="route-loading">로그아웃하고 있어요…</div>;

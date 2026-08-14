@@ -184,6 +184,7 @@ def test_draft_slot_crud_and_get_token_metadata(client, make_token, monkeypatch)
             "deviceLabel": "Mac Chrome",
             "photoCount": 1,
             "photosPending": True,
+            "hasContent": True,
         },
         "holdsToken": False,
     }
@@ -556,3 +557,21 @@ def test_draft_slot_migration_declares_exact_table_and_owner_rls():
     assert "expires_at timestamptz not null" in sql
     assert "alter table public.draft_slots enable row level security" in sql
     assert "user_id = auth.uid()" in sql
+
+
+def test_draft_slot_meta_marks_contentless_payload(client, make_token, monkeypatch):
+    """사진·상품명·분석이 전무한 슬롯은 hasContent=False — 프론트가 진입 카드에서 숨긴다."""
+    _patch_slot_repo(monkeypatch)
+    headers = _auth(make_token)
+    empty = {
+        "product": {"name": "  ", "colors": [{"id": "base", "isBase": True, "images": []}]},
+        "analysis": None,
+        "composeMode": "basic",
+    }
+    created = _put(client, headers, empty)
+    assert created.status_code == 201, created.text
+    assert created.json()["meta"]["hasContent"] is False
+
+    fetched = client.get("/v1/draft-slot", headers=headers)
+    assert fetched.status_code == 200
+    assert fetched.json()["meta"]["hasContent"] is False

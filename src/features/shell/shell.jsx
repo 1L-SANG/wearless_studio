@@ -40,7 +40,7 @@ export function TopNav() {
     try {
       await draftSlot.removeForNewFlow();
     } catch (error) {
-      toast.push(error?.message || '임시저장을 정리하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+      toast.push(error?.message || '이전 작업을 정리하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
       return;
     }
     await beginProject();
@@ -72,7 +72,7 @@ export function TopNav() {
       await flushProductDraftSave();
       openLogin(pathname === '/create/input' ? pathname : '/create/input');
     } catch (error) {
-      toast.push(error?.message || '입력 내용을 임시 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+      toast.push(error?.message || '입력한 내용을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     }
   };
 
@@ -112,20 +112,20 @@ export function ResumeChoiceModal({ onResume, onNew, onClose, sources = null, on
   if (sources?.length) {
     return (
       <Modal onClose={onClose}>
-        <h3>이어서 작업할까요?</h3>
-        <p>저장된 작업을 이어서 열거나 새로 만들 수 있어요.</p>
+        <h3>하던 작업이 있어요</h3>
+        <p>이어서 열 내용을 고르거나, 새로 시작할 수 있어요.</p>
         <div className="draft-entry-sources">
           {sources.map((source) => (
             <button type="button" className="draft-entry-source" key={source.id}
               onClick={() => onChoose(source.id)}>
               <span>{source.title}</span>
               <small>{source.description}</small>
-              {source.photosPending && <em>사진 저장이 끝나지 않아 일부 사진이 빠질 수 있어요.</em>}
+              {source.photosPending && <em>사진 몇 장은 아직 저장 중이라 빠져 있을 수 있어요.</em>}
             </button>
           ))}
         </div>
         <div className="modal-actions">
-          <Button variant="ghost" onClick={onNew}>새로 만들기</Button>
+          <Button variant="ghost" onClick={onNew}>새로 시작하기</Button>
         </div>
       </Modal>
     );
@@ -133,10 +133,10 @@ export function ResumeChoiceModal({ onResume, onNew, onClose, sources = null, on
   return (
     <Modal onClose={onClose}>
       <h3>이어서 작업할까요?</h3>
-      <p>진행 중인 상세페이지 제작이 있어요. 이어서 작업하거나 새로 만들 수 있어요.</p>
+      <p>만들던 상세페이지가 있어요. 이어서 하거나 새로 시작할 수 있어요.</p>
       <div className="modal-actions">
-        <Button variant="ghost" onClick={onNew}>새로 만들기</Button>
-        <Button variant="primary" onClick={onResume}>이어서 작업하기</Button>
+        <Button variant="ghost" onClick={onNew}>새로 시작하기</Button>
+        <Button variant="primary" onClick={onResume}>이어서 하기</Button>
       </div>
     </Modal>
   );

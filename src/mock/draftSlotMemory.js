@@ -6,15 +6,24 @@ export function createDraftSlotMemory({
 } = {}) {
   let slot = null;
 
-  const metaFor = (payload, deviceLabel, photosPending) => ({
-    updatedAt: now(),
-    deviceLabel,
-    photoCount: (payload?.product?.colors || []).reduce(
+  const metaFor = (payload, deviceLabel, photosPending) => {
+    const photoCount = (payload?.product?.colors || []).reduce(
       (count, color) => count + (color.images || []).length,
       0,
-    ),
-    photosPending: Boolean(photosPending),
-  });
+    );
+    return {
+      updatedAt: now(),
+      deviceLabel,
+      photoCount,
+      photosPending: Boolean(photosPending),
+      // 서버 _draft_slot_meta 와 같은 기준 — 빈 슬롯(팬텀)은 진입 카드에서 숨긴다.
+      hasContent: Boolean(
+        photoCount > 0
+        || (payload?.product?.name || '').trim()
+        || payload?.analysis,
+      ),
+    };
+  };
 
   return {
     get(token, { full = false } = {}) {
@@ -28,7 +37,7 @@ export function createDraftSlotMemory({
     },
     put({ payload, token, deviceLabel, photosPending }) {
       if (!slot && token) {
-        const error = new Error('이 기기의 임시저장 작업권이 만료됐어요.');
+        const error = new Error('저장해 둔 내용이 다른 곳에서 정리돼 이 화면의 저장을 멈췄어요.');
         error.status = 409;
         error.code = 'token_mismatch';
         error.meta = null;

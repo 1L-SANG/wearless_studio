@@ -376,11 +376,20 @@ def _draft_slot_meta(row: dict) -> dict:
     updated_at = row["updated_at"]
     if isinstance(updated_at, datetime):
         updated_at = updated_at.isoformat()
+    payload = row.get("payload") or {}
+    product = payload.get("product") or {}
     return {
         "updatedAt": updated_at,
         "deviceLabel": row.get("device_label"),
-        "photoCount": len(_draft_slot_images(row.get("payload") or {})),
+        "photoCount": len(_draft_slot_images(payload)),
         "photosPending": bool(row.get("photos_pending")),
+        # 사진·상품명·분석이 전무한 빈 슬롯은 이어갈 내용이 없다 — 프론트 진입 카드가
+        # 이 값으로 팬텀 슬롯(빈 화면이 만든 임시저장)을 숨긴다.
+        "hasContent": bool(
+            _draft_slot_images(payload)
+            or str(product.get("name") or "").strip()
+            or payload.get("analysis")
+        ),
     }
 
 
@@ -1409,7 +1418,7 @@ async def put_draft_slot(
             status_code=409,
             content={"error": {
                 "code": "token_mismatch",
-                "message": "이 기기의 임시저장 작업권이 만료됐어요.",
+                "message": "저장해 둔 내용이 다른 곳에서 정리돼 이 화면의 저장을 멈췄어요.",
                 "meta": None,
             }},
         )
