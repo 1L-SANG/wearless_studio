@@ -588,7 +588,7 @@ function StoryboardHookSheet({ frame, slots, total, catalogs, colorOpts, product
                 <span className="sb-canvas-number">{cutNumber(index, total)}</span>
                 <img src={blockPreviewSrc(block, catalogs)} alt="" loading="lazy" decoding="async" />
                 {frame.style === 'signature' && block.hookTitleOverlay && productName && (
-                  <span className="sb-hooksheet-title">{productName}</span>
+                  <span className="sb-hooksheet-title"><i>{productName}</i></span>
                 )}
                 {frame.style === 'moodGrid' && color && (
                   <span className="sb-hooksheet-color"><i style={{ background: color.hex }} />{color.label}</span>
@@ -1758,7 +1758,7 @@ function HookStylePanel({
             <span key={block.id} className="sb-hookpanel-tile">
               <img src={previewSrc[index]} alt="" loading="lazy" decoding="async" />
               {frame.style === 'signature' && productName && (
-                <span className="sb-hooksheet-title small">{productName}</span>
+                <span className="sb-hooksheet-title small"><i>{productName}</i></span>
               )}
             </span>
           ))}

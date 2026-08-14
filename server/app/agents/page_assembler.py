@@ -408,9 +408,10 @@ def assemble(
         if b.get("hookTitleOverlay") and str(product.get("name") or "").strip():
             # 시그니처 컷 계약(스펙 2026-08-14 §1): 제품명을 이미지 중앙에 흰색으로 얹는다 —
             # 카피라이팅 토글과 무관한 첫 화면 구성 요소이며, 셀러는 에디터에서 자유 수정한다.
-            els.append(_text_el(block_i, el_j, _IMG_X, _IMG_Y + img_h // 2 - 30, img_w, 60,
+            els.append(_text_el(block_i, el_j, _IMG_X, _IMG_Y + img_h // 2 - 55, img_w, 110,
                                  str(product.get("name")).strip(),
-                                 {"size": 34, "weight": 650, "color": "#ffffff", "align": "center"},
+                                 {"font": "Pretendard", "size": 34, "weight": 700,
+                                  "color": "#ffffff", "align": "center"},
                                  source_block_id=b.get("id"), copy_role="hookTitle"))
             el_j += 1
 

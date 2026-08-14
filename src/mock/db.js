@@ -309,7 +309,8 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     // 시그니처 컷 계약(스펙 2026-08-14 §1): 제품명을 이미지 중앙에 흰색으로 — 카피 토글과 무관.
     if (b.hookTitleOverlay && (product.name || '').trim()) {
       els.push(Object.assign(
-        T(60, 300, 880, 60, product.name.trim(), { size: 34, weight: 650, color: '#ffffff', align: 'center' }),
+        T(60, 275, 880, 110, product.name.trim(),
+          { font: 'Pretendard', size: 34, weight: 700, color: '#ffffff', align: 'center' }),
         { sourceBlockId: b.id, copyRole: 'hookTitle' },
       ));
     }

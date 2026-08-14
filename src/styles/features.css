@@ -2209,12 +2209,22 @@
 .sb-hooksheet-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .sb-hooksheet.style-signature .sb-hooksheet-tile img { transform: scale(1.35); transform-origin: 50% 24%; }
 .sb-hooksheet-title {
-  position: absolute; inset: 0; display: grid; place-items: center;
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   padding: 12px; text-align: center;
-  color: #fff; font-size: 13px; font-weight: 650; letter-spacing: .12em; line-height: 1.6;
+  /* Pretendard Bold, 단어 단위 줄바꿈으로 최대 2줄 (오너 확정 2026-08-14) */
+  font-family: var(--font-body);
+  color: #fff; font-size: 13px; font-weight: 700; letter-spacing: .1em; line-height: 1.55;
+  word-break: keep-all; overflow-wrap: break-word;
   text-shadow: 0 1px 14px rgba(0, 0, 0, .35), 0 0 2px rgba(0, 0, 0, .2);
 }
-.sb-hooksheet-title.small { font-size: 8.5px; letter-spacing: .08em; }
+.sb-hooksheet-title i {
+  font-style: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;               /* 길면 단어 단위로 끊어 최대 2줄 */
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.sb-hooksheet-title.small { font-size: 8.5px; letter-spacing: .06em; }
 .sb-hooksheet-color {
   position: absolute; left: 7px; bottom: 7px; z-index: 3;
   display: inline-flex; align-items: center; gap: 5px;
