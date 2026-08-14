@@ -28,9 +28,8 @@ import { shouldMarkStoryboardDirty } from '@/lib/generationExamples.js';
 import { normalizeTargetGendersForClothingType } from '@/lib/productGender.js';
 import { createMeasurementFields } from '@/lib/measurementSchema.js';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
-import {
-  applyOpeningRow, hasOpeningRow, migrateLegacyEntryStylingRuns,
-} from '@/lib/storyboardEntryPlacement.js';
+import { migrateLegacyEntryStylingRuns } from '@/lib/storyboardEntryPlacement.js';
+import { applyHookStyle, deriveHookFrame } from '@/lib/storyboardHookFrame.js';
 import { createDraftSlotMemory } from './draftSlotMemory.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -155,7 +154,7 @@ export const api = {
     if ('fitProfile' in patch) DB.analysis.fitProfile = clone(patch.fitProfile);
     // 사진 양 변경 시, 사용자가 콘티를 손대기 전이면 기본 콘티를 새 모드로 재구성 (PRD §7.7)
     if (modeChanged && !DB.storyboardDirty) {
-      const keepOpeningRow = hasOpeningRow(DB.storyboard);
+      const keepPairFrame = deriveHookFrame(DB.storyboard)?.style === 'pair';
       const seeded = buildStoryboard(DB.project.composeMode, DB.product.colors, {
         projectId: DB.project.id,
         clothingType: DB.product.clothingType,
@@ -163,7 +162,7 @@ export const api = {
         matchClothing: DB.analysis.matchClothing,
         previewProductName: DB.product.name,
       });
-      DB.storyboard = keepOpeningRow ? applyOpeningRow(seeded) : seeded;
+      DB.storyboard = keepPairFrame ? applyHookStyle(seeded, 'pair', { colors: DB.product.colors }) : seeded;
     }
     return clone(DB.project);
   },

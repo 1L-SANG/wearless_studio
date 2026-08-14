@@ -25,7 +25,6 @@ import {
 } from '@/lib/measurementSchema.js';
 import { defaultStoryboard } from '@/lib/api/shapes.js';
 import { colorDisplayName } from '@/lib/colorwayMatching.js';
-import { applyOpeningRow } from '@/lib/storyboardEntryPlacement.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import { recommendMatchingItems, toLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
 import { ensureSections, rowSizeFor } from '@/lib/sections.js';
@@ -554,14 +553,15 @@ function buildDraft() {
      마네킹 페이지 진입 시 api.generateMannequins 가 수행한다 (미리 채우면 우회됨). */
   const mannequins = [];
 
-  /* ---- Storyboard blocks — 모드별 기본 콘티는 buildStoryboard() (PRD §8, ADR-0003·0004) ---- */
-  const storyboard = applyOpeningRow(buildStoryboard(project.composeMode, product.colors, {
+  /* ---- Storyboard blocks — 모드별 기본 콘티는 buildStoryboard() (PRD §8, ADR-0003·0004).
+     첫 화면 스타일은 시드가 시그니처 컷 프레임을 이미 포함한다(2026-08-14). ---- */
+  const storyboard = buildStoryboard(project.composeMode, product.colors, {
     projectId: project.id,
     clothingType: product.clothingType,
     targetGenders: analysis.targetGenders,
     matchClothing: analysis.matchClothing,
     previewProductName: product.name,
-  }));
+  });
 
   /* ---- Editor blocks: 5 prefilled demo + auto info blocks (PRD §10.14) ----
      (직접 /editor 진입용 데모. 생성 플로우는 generateDetailPage 가

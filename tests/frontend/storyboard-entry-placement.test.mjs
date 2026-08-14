@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import { defaultStoryboard, isDefaultStoryboardForMode } from '../../src/lib/api/shapes.js';
+import { applyHookStyle } from '../../src/lib/storyboardHookFrame.js';
 import {
   applyOpeningRow,
   entryStylingMembers,
@@ -85,21 +86,33 @@ test('seeded boards round-trip as defaults and mode changes re-seed only the mat
   assert.equal(isDefaultStoryboardForMode(relabeled, baseColors, 'basic', seedContext), true);
 });
 
-test('entry placement combines the untouched opening seed into one medium two-column row', () => {
+test('default seed leads with the signature frame; a pair-switched default is still default', () => {
+  // 2026-08-14 첫 화면 스타일: 시드 = 시그니처 컷(확대 미디움 슬롯 선두 + 제품명 오버레이),
+  // 기존 풀샷은 구성 미사용 일반 컷으로 뒤에 남는다.
   const seeded = defaultStoryboard(baseColors, 'basic', context('opening-row'));
-  assert.deepEqual(seeded.slice(0, 2).map((block) => block.shot), ['full', 'medium']);
+  const [slot, unused] = seeded;
+  assert.deepEqual([slot.cutType, slot.shot], ['horizon', 'medium']);
+  assert.equal(slot.hookStyle, 'signature');
+  assert.equal(slot.hookTitleOverlay, true);
+  assert.ok(slot.hookFrameId);
+  assert.deepEqual([unused.cutType, unused.shot], ['styling', 'full']);
+  assert.equal(unused.hookFrameId, undefined);
+  assert.equal(isDefaultStoryboardForMode(seeded, baseColors, 'basic', context('opening-row')), true);
 
-  const placed = applyOpeningRow(seeded);
-  const [hero, benefit] = placed;
-  assert.equal(hasOpeningRow(placed), true);
-  assert.deepEqual([hero.shot, benefit.shot], ['medium', 'medium']);
-  assert.equal(hero.sectionId, benefit.sectionId);
-  assert.equal(hero.sectionLayout, 'twoColumn');
-  assert.equal(benefit.sectionLayout, 'twoColumn');
-  assert.equal(hero.layoutRowId, benefit.layoutRowId);
-  assert.equal(hero.layoutRowVersion, 1);
-  assert.equal(benefit.layoutRowVersion, 1);
-  assert.equal(isDefaultStoryboardForMode(placed, baseColors, 'basic', context('opening-row')), true);
+  // 스타일만 두컷 프레임으로 바꾼 기본 보드도 기본 시드로 인정 — 사진 양 변경 재시드가
+  // 스타일 선택을 존중하며 계속 동작한다(어댑터가 pair 로 재적용).
+  const pairSwitched = applyHookStyle(seeded, 'pair', { colors: baseColors });
+  assert.equal(isDefaultStoryboardForMode(pairSwitched, baseColors, 'basic', context('opening-row')), true);
+
+  // 구 '오프닝 2단 행'(hero 스타일링 선두) 보드는 지문이 어긋나 편집본으로 남고,
+  // 진입 승격(adoptHookFrame)이 두컷 프레임으로 흡수한다.
+  const legacyOpening = applyOpeningRow([
+    { ...unused, contentRole: 'hero' },
+    { ...slot, hookFrameId: undefined, hookStyle: undefined, hookFrameVersion: undefined, hookTitleOverlay: undefined, contentRole: 'benefit' },
+    ...seeded.slice(2),
+  ]);
+  assert.equal(hasOpeningRow(legacyOpening), true);
+  assert.equal(isDefaultStoryboardForMode(legacyOpening, baseColors, 'basic', context('opening-row')), false);
 });
 
 test('styling sets use distinct normalized place types in basic and extended modes', () => {

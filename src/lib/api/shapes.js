@@ -18,7 +18,8 @@ import { ensureSections } from '../sections.js';
 import { exampleSelectionFingerprintFields } from '../generationExamples.js';
 import { genderForClothingType } from '../productGender.js';
 import { spaceSetGroupId } from '../storyboardSpaceSetCatalog.js';
-import { applyOpeningRow, entryStylingMembers, pickEntrySets } from '../storyboardEntryPlacement.js';
+import { entryStylingMembers, pickEntrySets } from '../storyboardEntryPlacement.js';
+import { applyHookStyle } from '../storyboardHookFrame.js';
 import { createMeasurementFields } from '../measurementSchema.js';
 import { matchingIdsForColor } from '../colorwayMatching.js';
 import {
@@ -122,9 +123,16 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
     projectId: context.projectId,
     stylingCount: mode === 'extended' ? 3 : 2,
   });
+  // 후킹 첫 화면 스타일(2026-08-14 확정, 디폴트 = 시그니처 컷): 확대 미디움샷 슬롯이
+  // 섹션 선두(첫 카드 = hero 규칙)이고, 기존 풀샷은 구성 미사용 일반 컷으로 뒤에 남는다.
+  // 순서가 바뀌어 구(hero 풀샷 선두) 기본 시드는 지문이 어긋나 "편집본"으로 남는다 —
+  // 2026-08-07 개편과 같은 선례(기존 프로젝트 마이그레이션 없음, 오프닝 행만 pair 승격).
+  const hookFrameId = `hookframe__${uid('hf')}`;
   const blocks = [
-    sb(SECTION_ROLES.HOOKING, CONTENT_ROLES.HERO, 'styling', 'front', 'full', base),
-    sb(SECTION_ROLES.HOOKING, CONTENT_ROLES.BENEFIT, 'horizon', 'front', 'medium', base),
+    sb(SECTION_ROLES.HOOKING, CONTENT_ROLES.HERO, 'horizon', 'front', 'medium', base, {
+      hookFrameId, hookStyle: 'signature', hookFrameVersion: 1, hookTitleOverlay: true, hookSlotRole: 'signature',
+    }),
+    sb(SECTION_ROLES.HOOKING, CONTENT_ROLES.BENEFIT, 'styling', 'front', 'full', base),
   ];
 
   for (const set of stylingSets) {
@@ -255,10 +263,13 @@ export function isDefaultStoryboardForMode(blocks, colors, mode, product = {}) {
   if (blocks.some((block) => block.taxonomyVersion !== STORYBOARD_TAXONOMY_VERSION)) return false;
   const seeded = defaultStoryboard(colors, mode, product);
   const fingerprint = storyboardTemplateFingerprint(blocks);
-  // 2026-08-07 개편 전 기본 시드(디테일 없음→ghost 대체)는 지문이 어긋나 "편집본"으로
-  // 남는다 — 기존 프로젝트가 전부 테스트용이라 마이그레이션하지 않기로 함(오너 결정).
+  // 2026-08-07 개편 전 기본 시드(디테일 없음→ghost 대체)와 구 오프닝 행 시드는 지문이
+  // 어긋나 "편집본"으로 남는다 — 기존 프로젝트가 전부 테스트용이라 마이그레이션하지
+  // 않기로 한 선례(오너 결정)를 따르고, 구 오프닝 행은 진입 승격(adoptHookFrame)이 흡수한다.
+  // 두 번째 지문: 첫 화면 스타일만 두컷 프레임으로 바꾼 기본 보드도 기본 시드로 인정 —
+  // 사진 양 변경 시 재시드가 스타일 선택을 존중하며 계속 동작하게 한다.
   return fingerprint === storyboardTemplateFingerprint(seeded)
-    || fingerprint === storyboardTemplateFingerprint(applyOpeningRow(seeded));
+    || fingerprint === storyboardTemplateFingerprint(applyHookStyle(seeded, 'pair', { colors: colors || [] }));
 }
 
 // analyzeProduct 의 shape 뼈대 — AnalysisForm 이 무가드로 읽는 필드 전부 포함(계약 §6).

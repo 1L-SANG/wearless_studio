@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase.js';
 import { LIMITS } from '@/lib/limits.js';
 import { defaultAnalysisShape, defaultStoryboard, isDefaultStoryboardForMode } from '@/lib/api/shapes.js';
 import { normalizeMatchClothingSelection, toMatchItem } from '@/lib/api/matchingItems.js';
-import { applyOpeningRow, hasOpeningRow } from '@/lib/storyboardEntryPlacement.js';
+import { applyHookStyle, deriveHookFrame } from '@/lib/storyboardHookFrame.js';
 import { selectPublicAnalysisPhotos } from '@/lib/publicAnalysisPhotos.js';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 
@@ -508,15 +508,18 @@ export const httpAdapter = {
     if (Array.isArray(saved) && saved.length) {
       const previousMode = mode === 'extended' ? 'basic' : 'extended';
       // 이전 모드의 기본 시드 그대로일 때만 사진 양 변경을 반영한다.
-      // 사용자가 옵션·순서·레이아웃 중 하나라도 바꾼 콘티는 교체하지 않는다.
+      // 사용자가 옵션·순서·레이아웃 하나라도 바꾼 콘티는 교체하지 않는다.
       if (!isDefaultStoryboardForMode(saved, colors, previousMode, storyboardContext)) return saved;
       const seeded = defaultStoryboard(colors, mode, storyboardContext);
-      // 구형 저장 보드는 사진 양을 바꿔도 기존 세로 오프닝을 유지한다. 신규 행 표식이
-      // 있는 프로젝트만 새 모드에서도 같은 오프닝 행을 이어가 기존 프로젝트를 재시드하지 않는다.
-      return hasOpeningRow(saved) ? applyOpeningRow(seeded) : seeded;
+      // 첫 화면 스타일 선택은 사진 양을 바꿔도 유지한다 — pair 만 기본 지문에 들어올 수
+      // 있고(네컷 프레임은 컷이 늘어 애초에 기본이 아님), 그 외는 시드 기본(시그니처).
+      return deriveHookFrame(saved)?.style === 'pair'
+        ? applyHookStyle(seeded, 'pair', { colors })
+        : seeded;
     }
-    // 첫 진입/재시드는 화면의 자동 예시 배정 뒤 한 번만 PUT한다.
-    return applyOpeningRow(defaultStoryboard(colors, mode, storyboardContext));
+    // 첫 진입/재시드는 화면의 자동 예시 배정 뒤 한 번만 PUT한다. 첫 화면 스타일은
+    // defaultStoryboard 가 시그니처 컷으로 시드한다(2026-08-14 확정).
+    return defaultStoryboard(colors, mode, storyboardContext);
   },
   async saveStoryboard(projectId, blocks, options = {}) {
     return http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: blocks, ...options });
