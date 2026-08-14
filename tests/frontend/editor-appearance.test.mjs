@@ -77,10 +77,10 @@ test('compact Moveable controls expose a larger invisible hit surface', () => {
   assert.match(moveableStylesSource, /\.moveable-control::after\s*\{[^}]*inset:\s*-7px/s);
 });
 
-test('auto-height text keeps width controls outside glyphs so double-click reaches the copy', () => {
+test('auto-height text keeps side controls attached to the selection border', () => {
   assert.match(editorSource, /className=\{autoHeightTextTarget \? 'moveable-auto-text' : undefined\}/);
-  assert.match(moveableStylesSource, /\.moveable-auto-text \.moveable-w\s*\{[^}]*margin-left:\s*-14px/s);
-  assert.match(moveableStylesSource, /\.moveable-auto-text \.moveable-e\s*\{[^}]*margin-left:\s*2px/s);
+  assert.doesNotMatch(moveableStylesSource, /\.moveable-auto-text \.moveable-[we]\s*\{[^}]*margin-left:/s);
+  assert.match(moveableStylesSource, /\.moveable-control\s*\{[^}]*margin-left:\s*-6px/s);
   assert.match(moveableStylesSource, /\.moveable-auto-text \.moveable-control::after\s*\{[^}]*inset:\s*-2px/s);
 });
 

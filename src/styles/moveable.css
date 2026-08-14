@@ -20,12 +20,9 @@
 .moveable-control::after {
   content: ''; position: absolute; inset: -7px;
 }
-/* Auto-height text starts at its left glyph edge. If the west/east controls
-   sit directly on the bound, the second click of a double-click lands on the
-   newly mounted control instead of the text. Keep both controls just outside
-   the copy while preserving their generous invisible hit surface. */
-.moveable-auto-text .moveable-w { margin-left: -14px !important; }
-.moveable-auto-text .moveable-e { margin-left: 2px !important; }
+/* Text controls keep a tighter invisible hit surface so glyph double-clicks
+   remain reachable. Their visible centers use the shared control offset above,
+   keeping west/east handles attached to the selection border like all others. */
 .moveable-auto-text .moveable-control::after { inset: -2px; }
 .moveable-rotation .moveable-rotation-line { background: #8fbfee !important; }
 /* 회전 노브 — 회전 아이콘을 상시 표시해 역할을 분명히 하고(살짝 키움),
