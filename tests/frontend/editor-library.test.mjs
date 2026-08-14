@@ -72,6 +72,7 @@ test('kiwi templates rebuild the references with native editable elements', () =
     assert.ok(editableCopy.length >= 2, `${frame.id}: copy is editable text`);
     assert.ok(block.elements.every((element) => !element.locked && !element.system), frame.id);
     assert.ok(imageSlots.every((element) => element.checkerboard), frame.id);
+    assert.ok(editableCopy.every((element) => element.fullTextHitArea), `${frame.id}: template copy owns its click box`);
     const examples = imageSlots.filter((element) => element.exampleImage);
     const expectedExampleId = frame.id === 'kiwi-11' ? null : frame.id.replace('kiwi-', '');
     assert.equal(examples.length, expectedExampleId ? 1 : 0, `${frame.id}: only matching JPEG references supply examples`);
@@ -387,6 +388,11 @@ test('click-through skips another normal text box unless its rendered glyph line
   assert.equal(selectableElementBelowBlankText(elements, 'current-copy', ['current-copy', 'other-copy', 'image'], ['other-copy']).id, 'other-copy');
   assert.equal(selectableElementBelowBlankText(elements, 'current-copy', ['current-copy', 'faq-copy', 'image'], []).id, 'image');
   assert.equal(selectableElementBelowBlankText(elements, 'current-copy', ['current-copy', 'object-copy', 'image'], []).id, 'object-copy');
+  assert.equal(selectableElementBelowBlankText([
+    { id: 'image', type: 'image', src: '/product.png' },
+    { id: 'template-copy', type: 'text', text: '템플릿 문구', fullTextHitArea: true },
+    { id: 'current-copy', type: 'text', text: '현재 문구' },
+  ], 'current-copy', ['current-copy', 'template-copy', 'image'], []).id, 'template-copy');
   assert.equal(selectableElementBelowBlankText([{ id: 'locked', type: 'line', locked: true }], 'copy', ['locked'], []), null);
 });
 

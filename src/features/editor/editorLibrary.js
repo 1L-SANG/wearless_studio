@@ -22,7 +22,7 @@ const templatePhoto = (x, y, w, h, options = {}) => ({
   ...(options.fit ? { fit: options.fit } : {}),
 });
 const templateText = (x, y, w, h, value, style = {}) => ({
-  type: 'text', x, y, w, h, text: value,
+  type: 'text', x, y, w, h, text: value, fullTextHitArea: true,
   style: {
     font: style.font || 'Pretendard', size: style.size || 28, weight: style.weight || 400,
     color: style.color || '#0e0d14', lineHeight: style.lineHeight || Math.round((style.size || 28) * 1.4),

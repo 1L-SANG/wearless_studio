@@ -128,7 +128,7 @@ export function selectableElementBelowBlankText(elements, currentId, candidateId
   for (const id of candidateIds || []) {
     const element = byId.get(id);
     if (!element || element.id === currentId || element.hidden || element.locked) continue;
-    const normalText = element.type === 'text' && element.shape !== 'bubble'
+    const normalText = element.type === 'text' && element.shape !== 'bubble' && !element.fullTextHitArea
       && !(element.groupId && element.libraryItemId);
     if (normalText && !glyphHits.has(element.id)) continue;
     return element;

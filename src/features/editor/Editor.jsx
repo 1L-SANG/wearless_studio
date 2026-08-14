@@ -165,7 +165,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
   /* 글자 근처를 눌렀는지, 상자 안의 먼 빈 곳을 눌렀는지 가른다 — 판정은 viewport
      좌표의 최소 hit 여유를 포함한다. 편집 중이거나 라이브러리 완성형인 요소는 상자 전체를 살려 둔다. */
   const missesGlyphs = (e) => {
-    if (el.type !== 'text' || el.shape === 'bubble' || editing) return false;
+    if (el.type !== 'text' || el.shape === 'bubble' || el.fullTextHitArea || editing) return false;
     // Composite objects use the entire text box as their hit target. Exact-glyph
     // hit testing made speech-bubble text look selectable while dropping the group.
     if (el.groupId && el.libraryItemId) return false;
@@ -514,7 +514,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
       if (!id || seen.has(id)) continue;
       seen.add(id); candidateIds.push(id);
       const candidate = block.elements.find((element) => element.id === id);
-      const normalText = candidate?.type === 'text' && candidate.shape !== 'bubble'
+      const normalText = candidate?.type === 'text' && candidate.shape !== 'bubble' && !candidate.fullTextHitArea
         && !(candidate.groupId && candidate.libraryItemId);
       if (!normalText) continue;
       const range = document.createRange();
