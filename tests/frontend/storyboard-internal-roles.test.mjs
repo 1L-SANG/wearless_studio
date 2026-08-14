@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   CONTENT_ROLES,
   STORYBOARD_TAXONOMY_VERSION,
+  allowedCutTypeOptionsForSection,
   assignInternalContentRoles,
   cutTypeOptionsForSection,
   normalizedRecipePatch,
@@ -56,7 +57,7 @@ test('the inspector offers cut types by the four official sections without expos
     'styling', 'horizon',
   ]);
   assert.deepEqual(cutTypeOptionsForSection('styling').map((option) => option.value), [
-    'styling', 'mirror',
+    'styling',
   ]);
   assert.deepEqual(cutTypeOptionsForSection('studio').map((option) => option.value), [
     'horizon',
@@ -64,6 +65,15 @@ test('the inspector offers cut types by the four official sections without expos
   assert.deepEqual(cutTypeOptionsForSection('product').map((option) => option.value), [
     'product',
   ]);
+  assert.deepEqual(
+    [...new Set(['hooking', 'styling', 'studio', 'product'].flatMap((section) => (
+      cutTypeOptionsForSection(section).map((option) => option.value)
+    )))],
+    ['styling', 'horizon', 'product'],
+  );
+  assert.deepEqual(allowedCutTypeOptionsForSection('styling').map((option) => option.value), [
+    'styling', 'mirror',
+  ], 'drag and section gates still accept saved mirror cuts');
 });
 
 test('a selected worn cut realigns the hidden role instead of being overwritten by it', () => {

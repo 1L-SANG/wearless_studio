@@ -164,7 +164,7 @@ test('space-set-only poses enter only the in-space compatible pose pool', () => 
   assert.deepEqual(inSpace.map((item) => item.id), ['generic-back', 'set-back']);
 });
 
-test('gallery mood round-robin supplies the quality top three and six cards cycle 1,2,3', () => {
+test('gallery mood ordering still supplies the quality top three for deterministic autofill', () => {
   const catalog = [
     example('a1', { mood: 'a', rank: 1 }), example('a2', { mood: 'a', rank: 2 }),
     example('a3', { mood: 'a', rank: 3 }), example('b1', { mood: 'b', rank: 1 }),
@@ -178,6 +178,34 @@ test('gallery mood round-robin supplies the quality top three and six cards cycl
   });
   assert.deepEqual(result.blocks.map((item) => item.exampleId), ['a1', 'b1', 'a2', 'a1', 'b1', 'a2']);
   assert.ok(result.blocks.every((item) => item.exampleSelectionOrigin === 'auto'));
+});
+
+test('styling gallery appends shot-independent mirror examples after ordinary and set examples', () => {
+  const catalog = [
+    example('ordinary-street', { mood: 'urban street', rank: 2 }),
+    example('ordinary-cafe', { mood: 'sunny cafe', rank: 4 }),
+    example('set-member', {
+      setOnly: true, spaceSetId: 'released-set', variants: ['all', 'pose'], rank: 1,
+    }),
+    example('mirror-medium', {
+      cutType: 'mirror', shot: 'medium', direction: 'front', mood: 'home', rank: 2,
+    }),
+    example('mirror-full', {
+      cutType: 'mirror', shot: 'full', direction: 'front', mood: 'home', rank: 1,
+    }),
+  ];
+  const selected = selectGenerationExamples(catalog, {
+    cutType: 'styling', shot: 'full', clothingType: 'outer', gender: 'women',
+    appendSetOnly: true, appendMirror: true,
+  });
+  assert.deepEqual(selected.map((item) => item.id), [
+    'ordinary-cafe', 'ordinary-street', 'set-member', 'mirror-full', 'mirror-medium',
+  ]);
+  assert.deepEqual(selected.slice(-2).map((item) => item.shot), ['full', 'medium']);
+  assert.equal(selectGenerationExamples(catalog, {
+    cutType: 'styling', shot: 'full', clothingType: 'outer', gender: 'women',
+    appendSetOnly: true,
+  }).some((item) => item.cutType === 'mirror'), false, 'non-gallery and my-image paths do not opt in');
 });
 
 test('existing auto usage counts, keys stay independent, and one/two-item pools cycle', () => {
