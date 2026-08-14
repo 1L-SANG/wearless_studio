@@ -129,6 +129,7 @@ def _patch_slot_repo(monkeypatch):
 
     async def takeover_slot(conn, user_id, active_token):
         state["slot"]["active_token"] = active_token
+        state["slot"]["updated_at"] = datetime.now(timezone.utc)  # 실제 SQL과 동일하게 갱신
         return state["slot"]
 
     async def delete_slot(conn, user_id):

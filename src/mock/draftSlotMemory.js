@@ -61,6 +61,8 @@ export function createDraftSlotMemory({
     takeover() {
       if (!slot) return null;
       slot.token = tokenFactory();
+      // 서버와 동일: 이어받기는 슬롯을 계속 쓰겠다는 의사 — updatedAt 갱신으로 지연 삭제에서 보호
+      slot.meta = { ...slot.meta, updatedAt: now() };
       return clone({ token: slot.token, payload: slot.payload, meta: slot.meta });
     },
     remove(token) {

@@ -661,6 +661,57 @@ test('a deferred removal is abandoned when another device rewrote the slot after
   assert.equal(storage.getItem('wl_draftSlotPendingRemove'), null);
 });
 
+test('an identity reset aborts an in-flight deferred removal before it can delete', async () => {
+  const calls = [];
+  let releaseGet;
+  const storage = new MapStorage([['wl_draftSlotPendingRemove', '2026-08-01T00:00:00Z']]);
+  const sync = createDraftSlotSync({
+    storage,
+    adapter: {
+      getDraftSlot: () => new Promise((resolve) => { releaseGet = resolve; }),
+      async takeoverDraftSlot() { calls.push('takeover'); return { token: 'grabbed' }; },
+      async deleteDraftSlot(token) { calls.push(`delete:${token}`); },
+    },
+  });
+
+  const retrying = sync.retryPendingRemoval();
+  await new Promise(setImmediate);
+  sync.resetIdentity();               // 로그아웃 — 이 뒤의 삭제는 다음 계정 슬롯을 지우게 된다
+  releaseGet({ meta: { updatedAt: '2026-07-01T00:00:00Z' } });
+  await retrying;
+
+  assert.deepEqual(calls, []);        // takeover/delete 모두 실행되면 안 된다
+});
+
+test('an edit made during a dead-tab probe is requeued after the quiet reclaim', async () => {
+  const timers = fakeTimers();
+  const puts = [];
+  const storage = new MapStorage([['wl_draftSlotOwnerTab', 'dead-tab']]);
+  const sync = createDraftSlotSync({
+    storage,
+    documentId: 'tab-live',
+    debounceMs: 0,
+    setTimer: timers.setTimer,
+    clearTimer: timers.clearTimer,
+    adapter: {
+      async putDraftSlot(body) {
+        puts.push(body.payload.product.name);
+        return { token: 'owned', meta: { updatedAt: 'server-1' } };
+      },
+    },
+  });
+
+  assert.equal(sync.activate(), false);
+  sync.queue({ product: product('first-edit'), localUpdatedAt: 'local-1' });   // 생존 확인 중의 첫 편집
+  assert.equal(timers.runLatest(), 450);   // 응답 없음 — 조용한 인수 + 드롭된 편집 재큐잉
+  assert.equal(sync.isLocked(), false);
+  assert.equal(timers.runLatest(), 0);     // 재큐잉된 스냅샷의 디바운스 발화
+  await sync.flush();
+
+  assert.deepEqual(puts, ['first-edit']);
+  sync.dispose();
+});
+
 test('a new flow treats an already-gone slot as removed instead of locking', async () => {
   const storage = new MapStorage([['wl_draftSlotToken', 'stale-token']]);
   const conflicts = [];
@@ -721,8 +772,14 @@ test('a device-local draft opens without waiting for the server, and phantom slo
   // 사진·이름·분석이 전무한 슬롯(팬텀)과 지연 삭제 중인 슬롯은 이어가기 카드로 권하지 않는다
   assert.match(app, /slot\.meta\?\.hasContent !== false/);
   assert.match(app, /draftSlot\.hasPendingRemoval\(\)/);
-  // 같은 기기의 더 새로운 로컬 저장이 있으면 카드 두 장을 한 장으로 합친다
+  // 지연 삭제는 슬롯 조회 전에 결론을 기다린다 — 포기됐다면 그 슬롯 카드를 정상적으로 권한다
+  assert.match(app, /await draftSlot\.retryPendingRemoval\(\)/);
+  // 내용을 전부 지운 로컬 임시저장도 카드로 권하지 않는다(서버 hasContent 와 같은 기준)
+  assert.match(app, /localHasContent/);
+  // 같은 브라우저의 더 새로운 로컬 저장이 있으면 카드 두 장을 한 장으로 합친다 —
+  // 판정은 UA 라벨이 아니라 슬롯의 마지막 쓰기 주체(serverSyncedAt 일치)로 한다
   assert.match(app, /sameDeviceNewerLocal/);
+  assert.match(app, /slot\.meta\?\.updatedAt === draftSlot\.getServerSyncedAt\(\)/);
   // 빈 화면은 임시저장을 만들지 않고, 빈 화면 위의 gone 잠금은 조용히 스스로 풀린다
   assert.match(input, /if \(!hasContent && !draftHadContentRef\.current\) return/);
   assert.match(input, /draftSlot\.restartAfterGone\(\);\s*\n\s*return;/);

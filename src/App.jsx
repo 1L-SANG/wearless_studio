@@ -54,7 +54,6 @@ import { ResumeChoiceModal } from '@/features/shell/shell.jsx';
 import {
   draftSlot,
   formatDraftRelativeTime,
-  getDraftSlotDeviceLabel,
   localDraftMeta,
 } from '@/lib/draftSlot.js';
 
@@ -281,6 +280,10 @@ function ProductInputRoute() {
         if (alive) setEntryDecision(flowDecision);
         return;
       }
+      // '새로 시작'을 결정했는데 서버 장애로 못 지운 슬롯은 조회 전에 정리를 먼저 끝낸다 —
+      // 정리가 포기됐다면(그 뒤 다른 기기가 슬롯을 새로 씀) 그 카드를 정상적으로 권해야 한다.
+      if (draftSlot.hasPendingRemoval()) await draftSlot.retryPendingRemoval();
+      const pendingRemoval = draftSlot.hasPendingRemoval();
       const [slot, localDraft] = await Promise.all([
         draftSlot.get().catch(() => null),
         hasPendingDraft() ? loadDraft().catch(() => null) : Promise.resolve(null),
@@ -294,21 +297,26 @@ function ProductInputRoute() {
           description: resumePath ? `${flowScreenName(resumePath)}까지 진행했어요` : '진행하던 작업이 있어요',
         });
       }
-      // '새로 시작'을 이미 결정했는데 서버 장애로 못 지운 슬롯은 다시 권하지 않는다(지연 삭제 중).
-      const pendingRemoval = draftSlot.hasPendingRemoval();
-      if (pendingRemoval) void draftSlot.retryPendingRemoval();
       // 사진·상품명·분석이 하나도 없는 빈 슬롯(과거 버그로 생긴 팬텀 포함)은 이어갈 것이 없다.
       const slotVisible = Boolean(slot) && slot.meta?.hasContent !== false && !pendingRemoval;
       const localMeta = localDraftMeta(localDraft);
-      const localDiffers = Boolean(localMeta) && (
+      // 내용을 전부 지운 로컬 임시저장도 서버 hasContent 와 같은 기준으로 권하지 않는다.
+      const localHasContent = Boolean(localMeta) && Boolean(
+        localMeta.photoCount > 0
+        || (localDraft.product?.name || '').trim()
+        || localDraft.analysis,
+      );
+      const localDiffers = localHasContent && (
         !slotVisible
         || localDraft.updatedAt !== draftSlot.getSyncedAt()
         || slot.meta?.updatedAt !== draftSlot.getServerSyncedAt()
       );
-      // 같은 기기에서 마지막 저장만 서버에 못 닿은 경우 — 사실상 같은 작업이므로
-      // '이 기기/다른 기기' 카드 두 장 대신 더 새로운 이 기기 내용 한 장으로 합친다.
+      // 마지막 저장만 서버에 못 닿은 경우 — 사실상 같은 작업이므로 '이 기기/다른 기기' 카드
+      // 두 장 대신 더 새로운 이 기기 내용 한 장으로 합친다. 같은 브라우저 판정은 UA 라벨이
+      // 아니라 "슬롯의 마지막 쓰기가 이 브라우저였는가"(serverSyncedAt 일치)로 한다 —
+      // 같은 기종 두 대(Mac Chrome ×2)가 서로의 카드를 가리면 안 된다.
       const sameDeviceNewerLocal = localDiffers && slotVisible
-        && slot.meta?.deviceLabel === getDraftSlotDeviceLabel()
+        && slot.meta?.updatedAt === draftSlot.getServerSyncedAt()
         && Date.parse(localDraft.updatedAt || 0) >= Date.parse(slot.meta?.updatedAt || 0);
       const splitCards = localDiffers && slotVisible && !sameDeviceNewerLocal;
       if (localDiffers) {

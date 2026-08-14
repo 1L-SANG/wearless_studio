@@ -123,6 +123,9 @@ export function createDraftSlotSync({
   let removePagehideListener = () => {};
   let tabChannel = null;
   let probeTimer = null;
+  // 생존 확인(450ms) 동안 들어온 편집 — 죽은 탭이었다면 인수 직후 되살려 첫 편집이
+  // 서버 슬롯에서 영영 빠지는 일을 막는다. 산 탭이 확인되면 버리는 게 맞다(단일 작성자).
+  let probeDroppedSnapshot = null;
   const uploads = new Map();
 
   const setToken = (value) => {
@@ -144,7 +147,13 @@ export function createDraftSlotSync({
   const resolvePendingRemoval = async () => {
     const decidedAtRaw = getPendingRemoval();
     if (!decidedAtRaw || !api?.deleteDraftSlot) return;
+    // 로그아웃(resetIdentity) 등으로 신원이 바뀌면 요청 사이에 epoch 이 올라간다.
+    // 각 응답 후 재검증해, Alice 의 삭제 결정이 Bob 세션으로 이어져 Bob 슬롯을
+    // 지우는 교차 계정 사고를 막는다. 플래그가 지워졌으면 결정 자체가 철회된 것.
+    const epoch = requestEpoch;
+    const stillValid = () => requestEpoch === epoch && getPendingRemoval() === decidedAtRaw;
     const slot = await api.getDraftSlot?.(token);
+    if (!stillValid()) return;
     if (!slot) {
       setPendingRemoval(null);
       return;
@@ -156,8 +165,9 @@ export function createDraftSlotSync({
       return;
     }
     const grabbed = await api.takeoverDraftSlot?.();
+    if (!stillValid()) return;
     if (grabbed?.token) await api.deleteDraftSlot(grabbed.token);
-    setPendingRemoval(null);
+    if (stillValid()) setPendingRemoval(null);
   };
   const stopScheduledWrites = () => {
     clearTimer(timer);
@@ -283,6 +293,7 @@ export function createDraftSlotSync({
         if (message.t === 'alive' && probeTimer != null && conflictLocked) {
           // 상대 탭이 실제로 살아 있다 — 이제서야 화면에 잠금을 알린다.
           stopProbe();
+          probeDroppedSnapshot = null;
           notifyLock(lockMeta || { state: 'other-tab', deviceLabel: '이 브라우저의 다른 탭' });
         }
       };
@@ -477,7 +488,11 @@ export function createDraftSlotSync({
   };
 
   function queue(snapshot) {
-    if (!snapshot?.product || locked) return;
+    if (!snapshot?.product) return;
+    if (locked) {
+      if (probeTimer != null) probeDroppedSnapshot = snapshot;
+      return;
+    }
     latestSnapshot = snapshot;
     pendingSnapshot = snapshot;
     syncPhotos(snapshot.product);
@@ -503,6 +518,11 @@ export function createDraftSlotSync({
           probeTimer = null;
           claimTab({ force: true });
           clearLock();
+          if (probeDroppedSnapshot) {
+            const snapshot = probeDroppedSnapshot;
+            probeDroppedSnapshot = null;
+            queue(snapshot);
+          }
         }, TAB_PROBE_WAIT_MS);
         try { tabChannel.postMessage({ t: 'ping', from: documentId, owner }); } catch { /* 응답 없음 → timeout 경로 */ }
         return false;
