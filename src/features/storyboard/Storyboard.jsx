@@ -252,7 +252,7 @@ function cardLabels(block, catalogs) {
   return { direction, shot, isProduct };
 }
 
-function StoryboardCaption({ block, catalogs, colorOpts, matchClothing, clothingType }) {
+function StoryboardCaption({ block, catalogs, colorOpts, clothingType }) {
   if (block.source === 'mine') return <div className="sb-canvas-caption mine">내 사진</div>;
 
   const colors = ((block.colorIds && block.colorIds.length) ? block.colorIds : [block.colorId])
@@ -262,10 +262,7 @@ function StoryboardCaption({ block, catalogs, colorOpts, matchClothing, clothing
     ? (catalogs.genExamples || []).find((item) => item.id === block.exampleId)
     : null;
   const scope = block.spaceGroupId ? 'pose' : (block.refScope || 'all');
-  const match = Array.isArray(block.matchIds) && block.matchIds.length
-    ? (matchClothing || []).find((item) => item.id === block.matchIds[0])
-    : null;
-  const { direction, shot, isProduct } = cardLabels(block, catalogs);
+  const { direction, shot } = cardLabels(block, catalogs);
   const scopeAll = !block.spaceGroupId && scope === 'all';
   const directionDiffers = scopeAll && !!example?.direction && !!block.direction && example.direction !== block.direction;
   const shotDiffers = scopeAll && !!example?.shot && !!block.shot && example.shot !== block.shot;
@@ -275,11 +272,8 @@ function StoryboardCaption({ block, catalogs, colorOpts, matchClothing, clothing
 
   return (
     <div className="sb-canvas-caption">
-      {!isProduct && match?.thumb && (
-        <span className="sb-match-chip" title="매칭 의류 착용">
-          <img src={match.thumb} alt="" /><span>매칭</span>
-        </span>
-      )}
+      {/* 매칭 의류 표시는 이미지 위 오버레이(StoryboardMedia)로 옮겼다 —
+          셀러가 직접 바꾼 컷에만 뜬다(2026-08-14 오너 확정). */}
       <span className="sb-caption-values">
         {block.cutType !== 'mirror' && (
           <span className={directionDiffers ? 'sb-val-changed' : undefined}>{direction}</span>
@@ -325,7 +319,8 @@ function StoryboardCardActions({ onDuplicate, onDelete, onNudge, canNudgeUp, can
 }
 
 function StoryboardMedia({
-  block, catalogs, colorOpts = [], index, total, showPoseVariation = false, hookFrameActive = false,
+  block, catalogs, matchClothing = null, index, total,
+  showPoseVariation = false,
   onDuplicate, onDelete, onNudge, canNudgeUp, canNudgeDown,
 }) {
   const missing = block.source !== 'mine' && !block.exampleId && !block.previewThumb;
@@ -337,6 +332,12 @@ function StoryboardMedia({
   const src = block.source === 'mine'
     ? (block.thumb || block.ownImages?.[0])
     : (block.previewThumb || image?.src || block.thumb);
+  // 매칭 의류 표시는 셀러가 인스펙터에서 직접 바꾼 컷에만(자동 배정 컷은 조용히) —
+  // 이미지 우측 하단 오버레이(2026-08-14 오너 확정).
+  const userMatch = block.source !== 'mine' && block.cutType !== 'product'
+    && block.matchIdsOrigin === 'user' && Array.isArray(block.matchIds) && block.matchIds.length
+    ? (matchClothing || []).find((item) => item.id === block.matchIds[0])
+    : null;
   return (
     <>
       <span className="sb-canvas-number">{cutNumber(index, total)}</span>
@@ -354,12 +355,13 @@ function StoryboardMedia({
       {showPoseVariation && (
         <span className="sb-pose-variation-note">약간 다른 포즈 적용</span>
       )}
-      {/* 첫 화면 슬롯 배지 — 프레임이 있는 보드의 후킹 컷에만 (스펙 §3 펼침 규칙) */}
-      {block.hookFrameId ? (
-        <span className="sb-slot-badge">{hookSlotBadgeLabel(block, colorOpts)}</span>
-      ) : hookFrameActive && block.sectionRole === 'hooking' && block.source !== 'mine' ? (
-        <span className="sb-slot-badge none">구성 미사용</span>
-      ) : null}
+      {/* 첫 화면 슬롯·미사용 배지는 제거 — 라벨 없이 컷 자체로 보여준다(2026-08-14 오너). */}
+      {userMatch?.thumb && (
+        <span className="sb-match-overlay" title={`매칭 의류 · ${userMatch.name || ''}`}>
+          <img src={userMatch.thumb} alt="" loading="lazy" decoding="async" />
+          <i>매칭</i>
+        </span>
+      )}
       <StoryboardCardActions
         onDuplicate={onDuplicate} onDelete={onDelete}
         onNudge={onNudge} canNudgeUp={canNudgeUp} canNudgeDown={canNudgeDown}
@@ -423,7 +425,7 @@ function CardDragSurface({ className, dragProps, onSelect, children }) {
 function StoryboardCard({
   item, total, catalogs, colorOpts, matchClothing, clothingType,
   selected, locked, cardDrag, onSelect, onDuplicate, onDelete, addControl,
-  onNudge, canNudgeUp, canNudgeDown, microVariationIds, hookFrameActive = false,
+  onNudge, canNudgeUp, canNudgeDown, microVariationIds,
 }) {
   const { block, index } = item;
   const missing = block.source !== 'mine' && !block.exampleId;
@@ -440,10 +442,10 @@ function StoryboardCard({
             block={block}
             catalogs={catalogs}
             colorOpts={colorOpts}
+            matchClothing={matchClothing}
             index={index}
             total={total}
             showPoseVariation={microVariationIds?.has(block.id)}
-            hookFrameActive={hookFrameActive}
             onDuplicate={onDuplicate}
             onDelete={onDelete}
             onNudge={onNudge}
@@ -468,20 +470,19 @@ function StoryboardCard({
 function StoryboardFrame({
   items, total, catalogs, colorOpts, matchClothing, clothingType,
   selectedId, locked, dragFor, onSelect, onDuplicate, onDelete, addControl,
-  microVariationIds, hookFrameActive = false,
+  microVariationIds,
 }) {
   const colorway = items.every((item) => (
     item.block.colorwayGroupId
     && item.block.colorwayGroupId === items[0].block.colorwayGroupId
   ));
-  const hookStyle = items.every((item) => item.block.hookFrameId) ? items[0].block.hookStyle : null;
   const colorwayName = colorOpts.find((color) => color.id === items[0].block.colorId)?.label || '색상';
   return (
     <div className={'sb-frame' + (colorway ? ' colorway-set' : '')}>
       <div className="sb-frame-media">
+        {/* '첫 화면 · 두컷 프레임' 같은 후킹 라벨은 붙이지 않는다(2026-08-14 오너). */}
         <span className="sb-frame-tag">
-          {hookStyle ? `첫 화면 · ${HOOK_STYLE_LABELS[hookStyle]}`
-            : colorway ? `색상 세트 · ${colorwayName} · 풀샷 + 미디움샷` : '한 프레임 구성 · 2컷'}
+          {colorway ? `색상 세트 · ${colorwayName} · 풀샷 + 미디움샷` : '한 프레임 구성 · 2컷'}
         </span>
         <div className="sb-frame-box">
           {items.map((item) => {
@@ -498,11 +499,11 @@ function StoryboardFrame({
                   block={item.block}
                   catalogs={catalogs}
                   colorOpts={colorOpts}
+                  matchClothing={matchClothing}
                   index={item.index}
                   total={total}
                   showPoseVariation={microVariationIds?.has(item.block.id)}
-                  hookFrameActive={hookFrameActive}
-                  onDuplicate={() => onDuplicate(item.block.id)}
+                        onDuplicate={() => onDuplicate(item.block.id)}
                   onDelete={() => onDelete(item.block.id)}
                 />
                 {item.block.id === selectedId && <SelectionRing />}
@@ -559,26 +560,16 @@ const blockPreviewSrc = (block, catalogs) => {
   return block.previewThumb || image?.src || block.thumb || block.ownImages?.[0];
 };
 
-const hookSlotBadgeLabel = (block, colorOpts) => {
-  if (block.hookSlotRole === 'left') return '첫 화면 왼쪽';
-  if (block.hookSlotRole === 'right') return '첫 화면 오른쪽';
-  if (typeof block.hookSlotRole === 'string' && block.hookSlotRole.startsWith('color:')) {
-    const label = (colorOpts || []).find((option) => option.id === block.colorId)?.label;
-    return label ? `첫 화면 · ${label}` : '첫 화면';
-  }
-  return '첫 화면';
-};
-
 /* 후킹 접힘 예외(스펙 2026-08-14 §3) — 스택 대신 흰 페이지 시트 위에 첫 화면 실형태.
-   클릭 = '스타일 선택' 패널 열기(접힘 유지). 펼침은 섹션 헤더/패널의 '펼쳐서 컷 편집'. */
-function StoryboardHookSheet({ frame, slots, total, catalogs, colorOpts, productName, baseColorId, onOpenPanel }) {
+   클릭 = 섹션 펼침. 스타일 변경은 펼친 뒤 컷 인스펙터 상단에서. */
+function StoryboardHookSheet({ frame, slots, total, catalogs, colorOpts, productName, baseColorId, onOpen }) {
   return (
     <div className="sb-hooksheet-wrap">
       <button
         type="button"
         className={`sb-hooksheet style-${frame.style}`}
-        onClick={onOpenPanel}
-        aria-label="첫 화면 스타일 선택 열기"
+        onClick={onOpen}
+        aria-label="후킹 섹션 펼치기"
       >
         <span className="sb-hooksheet-box">
           {slots.map(({ block, index }) => {
@@ -1161,7 +1152,7 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
   );
 }
 
-function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, hasDetailImage, projectId, onChange, onAtomicChange, onRetryAtomicSave, requestedRecipe, onCancelRequestedRecipe, matchClothing, spaceContext, onChangeSpaceSet, onAddMine, onExampleDrag }) {
+function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, hasDetailImage, projectId, onChange, onAtomicChange, onRetryAtomicSave, requestedRecipe, onCancelRequestedRecipe, matchClothing, spaceContext, onChangeSpaceSet, onAddMine, onExampleDrag, hookStyle = null }) {
   const [matchOpen, setMatchOpen] = useState(false);
   const [pendingRecipe, setPendingRecipe] = useState(null);
   const [pendingChoice, setPendingChoice] = useState(null);
@@ -1378,6 +1369,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   const outerClosureState = closureOptions.some((option) => option.value === block.outerClosureState) ? block.outerClosureState : 'open';
   return (
     <div className="surface inspector">
+      {hookStyle && <HookStyleSection {...hookStyle} />}
       {isMine && !block.spaceGroupId ? (
         <>
           <div className="sb-exhead">
@@ -1526,7 +1518,8 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
                   const on = (block.matchIds || []).includes(m.id);
                   return (
                     <button key={m.id} className={`match-cell${on ? ' on' : ''}`} aria-pressed={on}
-                      onClick={() => onChange({ matchIds: on ? [] : [m.id] })}>
+                      /* origin 'user' = 셀러가 직접 바꾼 매칭 — 카드 우측 하단 오버레이 표시 조건 */
+                      onClick={() => onChange({ matchIds: on ? [] : [m.id], matchIdsOrigin: 'user' })}>
                       <img src={m.thumb} alt={m.name} /><span className="ml">{m.name}{on && <Icon name="check" size={12} />}</span>
                     </button>
                   );
@@ -1718,8 +1711,8 @@ function ComposeModeSegment({ modes, value, canApply, onApply, onError }) {
   );
 }
 
-/* '스타일 선택' 패널(스펙 §3) — 후킹 프레임 슬롯이 선택되고 덱이 접혀 있을 때 컷 인스펙터를
-   대체한다. 펼치면 기존 컷 인스펙터(생성예시 선택)가 그대로 뜬다. */
+/* '첫 화면 스타일'(스펙 §3, 2026-08-14 오너 확정) — 상시 우측 패널이 아니라 후킹 섹션
+   컷을 클릭했을 때 그 컷 인스펙터의 맨 위에 뜬다. 미리보기를 누르면 스타일 3종이 펼쳐진다. */
 const HOOK_STYLE_DESCRIPTIONS = {
   signature: '의류 위주로 확대한 이미지 중간에 제품명을 강조해서 넣었어요.',
   pair: '의류 위주로 표현된 미디움샷 이미지 2개를 붙여서 보여줘요.',
@@ -1732,10 +1725,10 @@ const hookStyleDescription = (style, colors) => (
     : HOOK_STYLE_DESCRIPTIONS[style]
 );
 
-function HookStylePanel({
-  frame, blocks, catalogs, colors, productName, expanded = false, saving, error,
-  onSelectStyle, onExpandEdit,
+function HookStyleSection({
+  frame, blocks, catalogs, colors, productName, saving, error, onSelectStyle,
 }) {
+  const [open, setOpen] = useState(false);
   const slots = frame.slotIds
     .map((slotId) => blocks.find((block) => block.id === slotId))
     .filter(Boolean);
@@ -1747,12 +1740,14 @@ function HookStylePanel({
         : [fallback, previewSrc[1] || fallback, previewSrc[2] || fallback, previewSrc[3] || fallback]
   );
   return (
-    <div className="inspector sb-hookpanel">
-      <div className="sb-hookpanel-head">
-        <b>스타일 선택</b>
-        <span>{expanded ? '컷을 눌러 생성예시를 바꿔보세요.' : '첫 페이지에 배치될 이미지의 스타일을 골라주세요.'}</span>
-      </div>
-      <div className="sb-hookpanel-live">
+    <div className="insp-sec sb-hookpanel">
+      <label className="lbl">첫 화면 스타일</label>
+      <button
+        type="button"
+        className="sb-hookpanel-live"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
         <span className={`sb-hookpanel-sheet style-${frame.style}`}>
           {slots.map((block, index) => (
             <span key={block.id} className="sb-hookpanel-tile">
@@ -1763,12 +1758,13 @@ function HookStylePanel({
             </span>
           ))}
         </span>
-        <div className="sb-hookpanel-desc">
+        <span className="sb-hookpanel-desc">
           <b>{HOOK_STYLE_LABELS[frame.style]}</b>
           <span>{hookStyleDescription(frame.style, colors)}</span>
-        </div>
-      </div>
-      {!expanded && (
+          <em>{open ? '스타일 목록 접기' : '미리보기를 눌러 스타일 바꾸기'}</em>
+        </span>
+      </button>
+      {open && (
       <div className="sb-hookpanel-cards" role="group" aria-label="첫 화면 스타일">
         {HOOK_STYLES.map((style) => (
           <button
@@ -1790,11 +1786,6 @@ function HookStylePanel({
       </div>
       )}
       {error && <div className="sb-save-error">{error}</div>}
-      {!expanded && (
-        <button type="button" className="sb-hookpanel-expand" onClick={onExpandEdit}>
-          펼쳐서 컷 편집 — 생성예시 바꾸기
-        </button>
-      )}
     </div>
   );
 }
@@ -1825,9 +1816,6 @@ export function Storyboard() {
   const [productName, setProductName] = useState(() => initialEntry?.productName || '');
   const [hookStyleSaving, setHookStyleSaving] = useState(false);
   const [hookStyleError, setHookStyleError] = useState(null);
-  // 펼친 상태에서도 '스타일 선택' 패널(프리뷰·설명)을 유지할지 — 컷을 클릭하면 해제되어
-  // 기존 컷 인스펙터로 넘어간다(스펙 §3, Codex 리뷰 #7).
-  const [hookPanelFocus, setHookPanelFocus] = useState(true);
   const shuffleTickRef = useRef(0);
   const [composeModeSeed, setComposeModeSeed] = useState(() => initialEntry?.composeModeSeed || ({
     colors: [],
@@ -2285,7 +2273,6 @@ export function Storyboard() {
   const selectCard = (id) => {
     if (atomicSavingRef.current) return;
     setSetPicker(null); setSetPickerError(null);
-    setHookPanelFocus(false);   // 컷 클릭 = 생성예시 편집 모드 — 스타일 패널 대신 컷 인스펙터
     if (selectedId === id) { finishEdit(); return; }      // click again → deselect
     setPendingSectionMove(null);
     setSelectedId(id); setSplitOpen(true);
@@ -2710,20 +2697,8 @@ export function Storyboard() {
   // 첫 화면 프레임(후킹) — 스타일 패널·접힘 시트·슬롯 배지가 같은 파생을 본다.
   // 주의: 이 지점은 로딩 early-return 아래라 훅 사용 금지(훅 개수 불변 규칙) — 순수 파생만.
   const hookFrame = deriveHookFrame(blocks || []);
-  const hookingGroup = boardGroups.find((group) => sectionForGroup(group).role === SECTION_ROLES.HOOKING);
-  const hookingOpen = !!hookingGroup && openGroupKeys.includes(hookingGroup.key);
   const boundGenderNow = exampleGender
     || genderForClothingType(clothingType, composeModeSeed.targetGenders);
-
-  const openHookPanel = () => {
-    if (!hookFrame?.slotIds.length) return;
-    setHookStyleError(null);
-    setHookPanelFocus(true);
-    setSelectedId(hookFrame.slotIds[0]);
-    setSplitOpen(true);
-    // 스펙 §3: 시트 클릭 = 펼침 — 패널(프리뷰·설명)은 유지되고 스타일 카드만 숨는다.
-    if (hookingGroup) openRenderGroup(hookingGroup.key);
-  };
 
   // 스타일 전환(스펙 §2 전환 엔진) — 컷 재사용·부족분 생성·예시 재배정 후 즉시 저장.
   async function applyHookStyleChoice(style) {
@@ -2768,7 +2743,11 @@ export function Storyboard() {
       directSaveSnapshots.current.add(next);
       setBlocks(next);
       const nextFrame = deriveHookFrame(next);
-      if (nextFrame?.slotIds[0]) setSelectedId(nextFrame.slotIds[0]);
+      // 선택 컷은 전환 후에도 유지한다(인스펙터·스타일 목록이 그대로 남게) —
+      // 보드에서 사라진 경우에만 첫 슬롯으로 넘어간다.
+      setSelectedId((current) => (
+        next.some((block) => block.id === current) ? current : (nextFrame?.slotIds[0] ?? null)
+      ));
       await sbSaveNow(pidRef.current, () => next);
       if (sbPending.get(pidRef.current) === next) sbPending.delete(pidRef.current);
     } catch {
@@ -2917,7 +2896,6 @@ export function Storyboard() {
             onDelete={remove}
             addControl={addControl}
             microVariationIds={microVariationIds}
-            hookFrameActive={!!hookFrame}
           />
         </div>
       );
@@ -2952,7 +2930,6 @@ export function Storyboard() {
           canNudgeUp={inGroup && groupPos > 0}
           canNudgeDown={inGroup && groupPos < group.items.length - 1}
           microVariationIds={microVariationIds}
-          hookFrameActive={!!hookFrame}
           microVariationIds={microVariationIds}
         />
       </div>
@@ -2995,13 +2972,19 @@ export function Storyboard() {
   const list = (
     <div className="sb-canvas-board">
       <div className="sb-board-tools">
-        <ComposeModeSegment
-          modes={catalogs?.composeModes || []}
-          value={composeMode}
-          canApply={composeModeApplies}
-          onApply={onComposeModeApply}
-          onError={onComposeModeError}
-        />
+        {/* 구성컷 수는 사진 양(기본형/확장형) 바로 위 — 같은 결정의 맥락으로 묶는다(2026-08-14 오너). */}
+        <div className="sb-board-lead">
+          <div className="sb-count-head">
+            구성컷: <strong>{blocks.length}</strong>개
+          </div>
+          <ComposeModeSegment
+            modes={catalogs?.composeModes || []}
+            value={composeMode}
+            canApply={composeModeApplies}
+            onApply={onComposeModeApply}
+            onError={onComposeModeError}
+          />
+        </div>
         <button
           type="button"
           className="sb-board-tool"
@@ -3061,7 +3044,7 @@ export function Storyboard() {
                       productName={productName}
                       baseColorId={(composeModeSeed.colors.find((color) => color.isBase)
                         || composeModeSeed.colors[0])?.id || null}
-                      onOpenPanel={openHookPanel}
+                      onOpen={() => openRenderGroup(group.key)}
                     />
                   ) : (
                     <StoryboardStack group={group} total={blocks.length} catalogs={catalogs}
@@ -3100,28 +3083,25 @@ export function Storyboard() {
     siblings: selectedSpaceSiblings,
     set: inferStoryboardSpaceSet(selectedSpaceRun.spaceGroupId),
   } : null;
-  const hookPanelActive = !setPicker
-    && hookFrame
-    && selected?.hookFrameId === hookFrame.frameId
-    && (!hookingOpen || hookPanelFocus);
+  // '첫 화면 스타일'은 후킹 섹션 AI 컷의 인스펙터에만 얹는다(상시 패널 없음 — 오너 확정).
+  const hookStyleSection = hookFrame && selected
+    && selected.sectionRole === SECTION_ROLES.HOOKING && selected.source !== 'mine'
+    ? {
+      frame: hookFrame,
+      blocks,
+      catalogs,
+      colors: composeModeSeed.colors,
+      productName,
+      saving: hookStyleSaving,
+      error: hookStyleError,
+      onSelectStyle: applyHookStyleChoice,
+    } : null;
   const inspector = setPicker ? (
     <SpaceSetGallery mode={setPicker.mode} error={setPickerError} onChoose={chooseSpaceSet}
       gender={exampleGender} clothingType={clothingType}
       onClose={() => { setSetPicker(null); setSetPickerError(null); }} />
-  ) : hookPanelActive ? (
-    <HookStylePanel
-      frame={hookFrame}
-      blocks={blocks}
-      catalogs={catalogs}
-      colors={composeModeSeed.colors}
-      productName={productName}
-      expanded={hookingOpen}
-      saving={hookStyleSaving}
-      error={hookStyleError}
-      onSelectStyle={applyHookStyleChoice}
-      onExpandEdit={() => hookingGroup && openRenderGroup(hookingGroup.key)}
-    />
   ) : <Inspector key={selectedId} block={selected} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} exampleGender={exampleGender} hasDetailImage={hasDetailImage} projectId={projectId}
+    hookStyle={hookStyleSection}
     onChange={(p, options) => patch(selectedId, p, options)} onAtomicChange={(p, options) => atomicPatch(selectedId, p, options)} onRetryAtomicSave={retryAtomicSave} requestedRecipe={pendingSectionMove}
     onCancelRequestedRecipe={() => setPendingSectionMove(null)} matchClothing={matchClothing}
     spaceContext={selectedSpaceContext}
@@ -3225,10 +3205,6 @@ export function Storyboard() {
       onDragStartCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}>
       {doneBlocked && <DoneGuardModal />}
       <PageHead title="상세페이지 초안 구성" sub="지금 보이는 이미지들은 예시입니다. 느낌만을 보고 필요한 컷은 수정하며 상세페이지를 생성해보세요." />
-      {/* 페이지 직계 자식이어야 진입 스태거(.sb-content-enter > .sb-count-head)가 걸린다. */}
-      <div className="sb-count-head">
-        구성컷: <strong>{cutCount}</strong>개
-      </div>
       {undoEntry && (
         <div className={`sb-undo-bar${undoExiting ? ' exiting' : ''}`} role="status" aria-live="polite"
           style={{ top: `${inspectorTop}px` }}

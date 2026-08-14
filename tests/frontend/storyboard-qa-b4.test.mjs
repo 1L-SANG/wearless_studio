@@ -11,25 +11,30 @@ const featureStyles = readFileSync(
   'utf8',
 );
 
-test('N6 matching chip precedes caption values whenever a match is selected', () => {
+test('N6 matching badge overlays the image only when the seller changed it in the inspector', () => {
+  // 2026-08-14 오너 확정: 캡션 줄 상시 칩 폐기 → 이미지 우측 하단 오버레이,
+  // 셀러가 인스펙터에서 직접 바꾼 컷(matchIdsOrigin 'user')에만 뜬다.
+  const media = storyboardSource.slice(
+    storyboardSource.indexOf('function StoryboardMedia'),
+    storyboardSource.indexOf('function CardDragSurface'),
+  );
+  assert.match(media, /block\.matchIdsOrigin === 'user'/, 'the overlay must gate on the user-change marker');
+  assert.match(media, /className="sb-match-overlay"/, 'the badge renders on the image, not in the caption');
+
   const caption = storyboardSource.slice(
     storyboardSource.indexOf('function StoryboardCaption'),
     storyboardSource.indexOf('function StoryboardCardActions'),
   );
-  const chipIndex = caption.indexOf('className="sb-match-chip"');
-  const valuesIndex = caption.indexOf('className="sb-caption-values"');
-
-  assert.ok(chipIndex >= 0, 'selected matching clothing must render its chip');
-  assert.ok(valuesIndex >= 0, 'caption values must remain rendered without a match');
-  assert.ok(chipIndex < valuesIndex, 'the conditional chip must be the leftmost caption child');
+  assert.doesNotMatch(caption, /sb-match-chip/, 'the always-on caption chip is retired');
+  assert.ok(caption.includes('className="sb-caption-values"'), 'caption values must remain rendered');
 });
 
-test('N6 matching chip uses a white background with black border and text', () => {
+test('N6 matching badge sits at the image bottom-right corner', () => {
   assert.match(
     featureStyles,
-    /\.sb-match-chip \{[^}]*background: #fff;[^}]*border: 1px solid #111;[^}]*color: #111;/,
+    /\.sb-match-overlay \{[^}]*position: absolute;[^}]*right: 7px;[^}]*bottom: 7px;/,
   );
-  assert.doesNotMatch(featureStyles, /\.sb-match-chip \{[^}]*#f6f2ea/);
+  assert.doesNotMatch(featureStyles, /\.sb-match-chip/);
 });
 
 test('N7 swatch labels win, then trimmed names, then numbered fallbacks for mock and HTTP shapes', () => {
@@ -75,8 +80,9 @@ test('N8 selecting A then B stores only B, and selecting B again clears the arra
     storyboardSource.indexOf('function Inspector'),
     storyboardSource.indexOf('function prepareStoryboardEntry'),
   );
-  const expression = inspector.match(/onChange\(\{ matchIds: ([^}]+) \}\)/)?.[1];
-  assert.ok(expression, 'matching selection must update the matchIds array');
+  // 셀러 변경은 matchIdsOrigin 'user' 로 함께 기록된다(카드 오버레이 표시 조건).
+  const expression = inspector.match(/onChange\(\{ matchIds: (.+?), matchIdsOrigin: 'user' \}\)/)?.[1];
+  assert.ok(expression, 'matching selection must update the matchIds array and stamp the user origin');
   const nextMatchIds = new Function('on', 'm', `return ${expression}`);
 
   let matchIds = [];
@@ -127,7 +133,6 @@ test('N11 caption typography is 13px and long matched captions stay inside one l
   assert.match(featureStyles, /\.sb-canvas-caption \{[^}]*font-size: 13px/);
   assert.match(featureStyles, /\.sb-caption-color \{[^}]*max-width: 64px;[^}]*font-size: 13px/);
   assert.match(featureStyles, /\.sb-caption-dot \{[^}]*width: 11px;[^}]*height: 11px/);
-  assert.match(featureStyles, /\.sb-match-chip \{[^}]*font-size: 12px/);
   assert.match(
     featureStyles,
     /\.sb-canvas-caption \{[^}]*width: 100%;[^}]*max-width: 100%;[^}]*overflow: hidden;[^}]*white-space: nowrap;[^}]*box-sizing: border-box/,
@@ -135,6 +140,6 @@ test('N11 caption typography is 13px and long matched captions stay inside one l
   assert.match(
     featureStyles,
     /\.sb-caption-values \{[^}]*min-width: 0;[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap/,
-    '사이드 · 미디움샷 · 라이트그레이와 matching chip 조합은 줄바꿈 대신 말줄임되어야 한다',
+    '사이드 · 미디움샷 · 라이트그레이 조합은 줄바꿈 대신 말줄임되어야 한다',
   );
 });
