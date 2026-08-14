@@ -165,6 +165,19 @@ test('auto-height text expands its pointer target without covering adjacent tabl
   assert.match(editorStylesSource, /bottom: calc\(-3px \* var\(--canvas-inv, 1\)\)/);
 });
 
+test('standalone text drags cannot fall through to native browser text selection', () => {
+  const textDragPick = editorSource.slice(
+    editorSource.indexOf('if (shouldStartTextOnlyDrag(el, e.shiftKey))'),
+    editorSource.indexOf('// 처음 누른 완성형 오브젝트'),
+  );
+
+  assert.match(textDragPick, /e\.preventDefault\(\)/);
+  assert.match(textDragPick, /window\.getSelection\?\.\(\)\?\.removeAllRanges\(\)/);
+  assert.match(editorStylesSource, /\.el-text:not\(\.editing\)\s*\{[^}]*user-select:\s*none[^}]*touch-action:\s*none/s);
+  assert.match(editorStylesSource, /\.el-text\.editing\s*\{[^}]*user-select:\s*text[^}]*touch-action:\s*auto/s);
+  assert.match(editorSource, /onDoubleClick=\{\(e\) => \{ e\.stopPropagation\(\); pendingBubbleFit\.current = null; onEdit\(el\.id\)/);
+});
+
 test('text numeric controls allow an empty editing draft and commit the finished number', () => {
   assert.equal(typeof editorAppearance.commitNumberDraft, 'function');
   assert.equal(editorAppearance.commitNumberDraft('', { min: 1, max: 10000, fallback: 24 }), 24);

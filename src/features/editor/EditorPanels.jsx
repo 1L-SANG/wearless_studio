@@ -605,7 +605,7 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
 }
 
 /* ---------- 의류 (wardrobe library) ---------- */
-export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading = false, onInsert, onUpload, onVaryImage, onDeleteSelected, onFreshSeen, onImageDragStart, onImageDragEnd }) {
+export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading = false, onInsert, onUpload, onVaryImage, onDeleteImage, isImageUsed, onFreshSeen, onImageDragStart, onImageDragEnd }) {
   // wardrobe 그룹 키 = colorId | 'misc' — 표시명은 colorOpts 에서 파생 (계약 §3.6)
   const colorFor = (group) => {
     if (group === 'misc') return { hex: '#d4d4d8', name: '기타', neutral: true };
@@ -615,8 +615,6 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading
   };
   const [collapsed, setCollapsed] = useState({});
   const toggle = (group) => setCollapsed((c) => ({ ...c, [group]: !c[group] }));
-  const [sel, setSel] = useState(() => new Set());
-  const toggleSel = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   return (
     <div className="ward-panel">
       {pendingSlot && <div className="ward-fill-banner"><Icon name="image" size={15} />빈 칸에 넣을 의류를 선택하세요</div>}
@@ -642,32 +640,33 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading
             </button>
             {open && (
               <div className="wardrobe-grid">
-                {imgs.map((im) => im.loading ? (
-                  <div className="ward-cell loading" key={im.id}><Icon name="loader" size={18} className="spin" style={{ color: 'var(--fg-3)' }} /></div>
-                ) : (
-                  <div className={`ward-cell${sel.has(im.id) ? ' checked' : ''}${im.fresh ? ' fresh' : ''}`} key={im.id} onClick={() => onInsert(im)} title="클릭하거나 프레임으로 끌어 넣기"
-                    draggable onDragStart={(e) => { const image = e.currentTarget.querySelector('img'); e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData(WARDROBE_IMAGE_MIME, encodeWardrobeImage(im, { width: image?.naturalWidth, height: image?.naturalHeight })); onImageDragStart?.(); }}
-                    onDragEnd={() => onImageDragEnd?.()}
-                    onAnimationEnd={im.fresh ? () => onFreshSeen && onFreshSeen(im.id) : undefined}>
-                    <img src={thumbUrl(im.src, 240)} alt="" loading="lazy" decoding="async" />
-                    <button className="ward-check" onClick={(e) => { e.stopPropagation(); toggleSel(im.id); }} title="선택">
-                      {sel.has(im.id) && <Icon name="check" size={13} />}
-                    </button>
-                    <button className="ai-flag" onClick={(e) => { e.stopPropagation(); onVaryImage(im); }} title="AI로 편집"><Icon name="wand" size={12} /><span>AI 편집</span></button>
-                  </div>
-                ))}
+                {imgs.map((im) => {
+                  if (im.loading) return (
+                    <div className="ward-cell loading" key={im.id}><Icon name="loader" size={18} className="spin" style={{ color: 'var(--fg-3)' }} /></div>
+                  );
+                  const used = Boolean(isImageUsed?.(im));
+                  return (
+                    <div className={`ward-cell${im.fresh ? ' fresh' : ''}`} key={im.id} onClick={() => onInsert(im)} title="클릭하거나 프레임으로 끌어 넣기"
+                      draggable onDragStart={(e) => { const image = e.currentTarget.querySelector('img'); e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData(WARDROBE_IMAGE_MIME, encodeWardrobeImage(im, { width: image?.naturalWidth, height: image?.naturalHeight })); onImageDragStart?.(); }}
+                      onDragEnd={() => onImageDragEnd?.()}
+                      onAnimationEnd={im.fresh ? () => onFreshSeen && onFreshSeen(im.id) : undefined}>
+                      <img src={thumbUrl(im.src, 240)} alt="" loading="lazy" decoding="async" />
+                      <button type="button" className={`ward-trash${used ? ' disabled' : ''}`} draggable={false}
+                        aria-label={used ? '현재 에디팅에 사용 중인 사진' : '의류 사진 삭제'} aria-disabled={used}
+                        title={used ? '현재 에디팅에 사용 중이라 삭제할 수 없어요' : '사진 삭제'}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => { e.stopPropagation(); onDeleteImage(im); }}>
+                        <Icon name="trash" size={13} />
+                      </button>
+                      <button className="ai-flag" onClick={(e) => { e.stopPropagation(); onVaryImage(im); }} title="AI로 편집"><Icon name="wand" size={12} /><span>AI 편집</span></button>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
         );
       })}
-      {sel.size > 0 && (
-        <div className="ward-delbar">
-          <button type="button" className="ward-del" onClick={() => { onDeleteSelected([...sel]); setSel(new Set()); }}>
-            <Icon name="trash" size={15} />삭제 ({sel.size})
-          </button>
-        </div>
-      )}
     </div>
   );
 }
