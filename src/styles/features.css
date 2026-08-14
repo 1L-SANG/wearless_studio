@@ -190,7 +190,7 @@
 .upload-strip { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; padding-top: 16px; box-shadow: 0 -1px 0 0 var(--ring); }
 .up-thumb { width: 56px; height: 72px; border-radius: var(--r-3); overflow: hidden; background: var(--bg-2); box-shadow: 0 0 0 1px var(--ring); flex: none; }
 .up-thumb img { width: 100%; height: 100%; object-fit: cover; }
-.req-star { color: #e8833a; margin-left: 2px; font-weight: 700; }
+.req-star { color: var(--link); margin-left: 3px; font-weight: 800; font-size: 1.25em; line-height: 0; vertical-align: -0.08em; }  /* 파랑·확대 (2026-08-14) */
 
 /* E — 2×2 angle wells: all four angles at a glance, images stack inside each */
 .slot-wells { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -258,8 +258,14 @@
 .af-skeleton > .surface { margin-top: 18px; }
 .af-skel-head { display: flex; align-items: center; gap: 10px; margin-top: 26px; font-size: 14.5px; font-weight: 600; color: var(--fg-1); }
 
-/* '색상 추가' — quiet 톤이 너무 옅다는 지적(2026-08-14) → 이 버튼만 잉크색·굵게 */
-.pi-add-color.btn { color: var(--fg-1); font-weight: 650; }
+/* '색상 추가' — 옅음(quiet)과 순검정 사이의 진회색 + 호버 시 4색 밑줄이 좌→우로 차오른다.
+   background-size 전환만 쓰는 순수 CSS 라 렌더 비용은 사실상 0 (2026-08-14 사용자 결정). */
+.pi-add-color.btn { color: #3a3a44; font-weight: 650;
+  background-image: linear-gradient(90deg, var(--glow-sky), var(--glow-sage), var(--glow-sun), var(--glow-mauve));
+  background-repeat: no-repeat; background-position: 12px calc(100% - 6px);
+  background-size: 0% 2px; transition: background-size .32s cubic-bezier(.3,.7,.3,1), color .15s; }
+.pi-add-color.btn:hover:not([disabled]) { color: var(--fg-1); background-size: calc(100% - 24px) 2px; }
+@media (prefers-reduced-motion: reduce) { .pi-add-color.btn { transition: none; } }
 
 /* ── 분석 대기 연출 A안: 단계 체크리스트 (mockups/analysis-waiting-concepts.html) ── */
 .ap-stage { display: flex; gap: 22px; align-items: center; margin-top: 26px; }

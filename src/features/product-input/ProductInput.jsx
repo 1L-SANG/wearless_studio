@@ -1038,15 +1038,9 @@ export function ProductInput() {
   const hasBack = !!baseColor?.images.some((im) => im.slot === 'Back');
   const hasName = !!(product.name && product.name.trim());
   const canDone = hasFront && hasBack && phase === 'input' && !authLoading && !slotLock;
-  const disabledReason = !hasFront && !hasBack
-    ? '앞면·뒷면 사진이 각 1장 필요해요'
-    : !hasFront
-      ? '앞면 사진이 필요해요'
-      : !hasBack
-        ? '뒷면 사진이 필요해요'
-        : authLoading
-          ? '로그인 상태를 확인하고 있어요.'
-          : '';
+  // 사진 요구 문구는 CTA 옆에 두지 않는다(2026-08-14 사용자 결정) — 필수 표시는
+  // 슬롯의 파란 별과 상단 안내문이 맡고, 버튼은 조용히 비활성. 로그인 확인만 일시 안내.
+  const disabledReason = authLoading ? '로그인 상태를 확인하고 있어요.' : '';
   const locked = phase !== 'input';
   // AI 분석하기 → analyze inline (skeleton below) → fill analysis form below
   const submit = async () => {
@@ -1109,7 +1103,7 @@ export function ProductInput() {
           <span className="pill pill-soft">현재 {imgCount}장 / 최대 6장</span>
         </div>
       </div>
-      <div className="sec-sub" style={{ marginTop: -6, marginBottom: 16 }}>앞면, 뒷면은 필수에요. 강조할 부분은 디테일쪽에 앞,뒤 구분해서 업로드해주시면 정확도가 훨씬 올라가요.</div>
+      <div className="sec-sub" style={{ marginTop: -6, marginBottom: 16 }}>앞면, 뒷면은 필수에요.<br />강조할 부분은 디테일쪽에 앞,뒤 구분해서 업로드해주시면 정확도가 훨씬 올라가요.</div>
       {product.colors.map((c) => (
         <ColorImageGroup key={c.id} group={c} catalogs={catalogs} swatchColors={catalogs.swatchColors}
           onAddFiles={(slot, metas) => addImageFiles(c.id, slot, metas)} onRemove={(id) => removeImage(c.id, id)}
