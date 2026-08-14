@@ -11,12 +11,15 @@ import {
 
 const AID = '123e4567-e89b-42d3-a456-426614174000';
 
-test('toBytesUrl: /file 자산 URL만 /bytes로 바꾼다 (상대·절대)', () => {
+test('toBytesUrl: /file 자산 URL을 /bytes로 바꾼다 (상대·절대·비uuid id — id 검증은 서버 몫)', () => {
   assert.equal(toBytesUrl(`/v1/assets/${AID}/file`), `/v1/assets/${AID}/bytes`);
   assert.equal(
     toBytesUrl(`https://api.wearless.app/v1/assets/${AID}/file`),
     `https://api.wearless.app/v1/assets/${AID}/bytes`,
   );
+  // 프론트가 서버보다 엄격하면 어긋난다 — id 모양은 경로 수준만 본다 (리뷰 반영)
+  assert.equal(toBytesUrl('/v1/assets/stable-1/file'), '/v1/assets/stable-1/bytes');
+  assert.equal(toBytesUrl(`/v1/assets/${AID}/file?v=2`), `/v1/assets/${AID}/bytes`);
 });
 
 test('toBytesUrl: blob·data·외부·비자산 URL은 그대로 둔다', () => {
@@ -25,7 +28,6 @@ test('toBytesUrl: blob·data·외부·비자산 URL은 그대로 둔다', () => 
     'data:image/png;base64,xyz',
     'https://cdn.example.com/img.png',
     '/assets/brand/logo.svg',
-    `/v1/assets/not-a-uuid/file`,
     '',
     null,
   ]) {
@@ -44,11 +46,11 @@ test('stitchLayout: 세로 오프셋 누적 + 최대 폭', () => {
   assert.deepEqual(offsets, [0, 800, 2000]);
 });
 
-test('fitPixelRatio: 캔버스 한계 안에서는 2 유지, 넘으면 낮추되 1 밑으로는 안 내려간다', () => {
-  assert.equal(fitPixelRatio(5000), 2);        // 5000*2=10000 < 30000
-  assert.ok(fitPixelRatio(20000) < 2);          // 20000*2=40000 > 30000 → 축소
+test('fitPixelRatio: 한계 안에서 2 유지, 넘치면 축소, 한 장이 불가능하면 null(ZIP 안내)', () => {
+  assert.equal(fitPixelRatio(5000), 2);         // 5000*2=10000 < 30000
+  assert.ok(fitPixelRatio(20000) < 2);           // 20000*2=40000 > 30000 → 축소
   assert.ok(fitPixelRatio(20000) >= 1);
-  assert.equal(fitPixelRatio(100000), 1);       // 아무리 길어도 1 보장(브라우저가 최종 방어)
+  assert.equal(fitPixelRatio(30001), null);      // 배율 1로도 못 담음 → 호출부가 ZIP 안내
   assert.equal(fitPixelRatio(0), 2);
 });
 
@@ -56,6 +58,6 @@ test('exportFileName: 금지문자 제거·빈 값 기본, 캡처 폭 계약 고
   assert.equal(exportFileName('아이보리 니트 셋업'), '아이보리 니트 셋업.png');
   assert.equal(exportFileName('a/b:c*d?e"f<g>h|i'), 'a b c d e f g h i.png');
   assert.equal(exportFileName(''), '상세페이지.png');
-  assert.equal(exportFileName('니트', '블록1'), '니트_블록1.png');
+  assert.equal(exportFileName('니트', '블록01'), '니트_블록01.png');
   assert.equal(EXPORT_WIDTH, 1000); // .ed-canvas 설계 폭과 같아야 한다 (features.css .ed-canvas)
 });
