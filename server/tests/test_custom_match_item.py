@@ -61,6 +61,9 @@ class _Conn:
     async def commit(self):
         self.events.append("commit")
 
+    async def rollback(self):
+        self.events.append("rollback")
+
 
 class _R2:
     def __init__(self, source_bytes, *, read_error=False, put_error=False):
@@ -98,11 +101,12 @@ def _patch_post(
     read_error=False,
     put_error=False,
     delete_wins_precheck=False,
+    queue_error=False,
 ):
     events = []
     state = {"item": _custom_row() if existing else None, "delete_applied": False, "metadata": None, "payload": {
         "matchClothing": [{"id": "curated-1", "selected": True, "selOrder": 1}],
-    }}
+    }, "jobs": []}
     source_bytes = source_bytes or {f"source/{asset_id}.png": _png() for asset_id in asset_ids}
     r2 = _R2(source_bytes, read_error=read_error, put_error=put_error)
 
@@ -169,6 +173,16 @@ def _patch_post(
         state["payload"] = payload
         return {"project_id": project_id, "payload": payload}
 
+    # 실 repo.create_job 은 커넥션의 cursor 가 필요하다. 가짜로 잡지 않으면 enqueue 가
+    # AttributeError 로 터지고 라우트의 광의 except 가 그걸 삼켜, "잡이 없는데 processing"
+    # 이라는 바로 그 버그를 테스트가 정답으로 고정한다(2026-08-14 재리뷰 I-C).
+    async def create_job(conn, **kwargs):
+        events.append("create-job")
+        if queue_error:
+            raise RuntimeError("queue down")
+        state["jobs"].append(kwargs)
+        return {"id": f"job-{len(state['jobs'])}"}, True
+
     monkeypatch.setattr(routes, "get_conn", fake_conn)
     monkeypatch.setattr(routes, "_r2", lambda request: r2)
     monkeypatch.setattr(routes.repo, "get_project", get_project)
@@ -182,6 +196,7 @@ def _patch_post(
     monkeypatch.setattr(routes.repo, "insert_custom_matching_item", insert_item)
     monkeypatch.setattr(routes.repo, "get_analysis", get_analysis)
     monkeypatch.setattr(routes.repo, "save_analysis", save_analysis)
+    monkeypatch.setattr(routes.repo, "create_job", create_job)
     return events, state, r2
 
 
@@ -222,9 +237,11 @@ def test_custom_match_post_accepts_one_to_four_images(
 
 # 2026-08-13 리뷰 M7 — 등록 응답의 cutoutStatus 가 저장 payload 에 그대로 굳는다.
 # 키 이름이 어긋나 있으면 누끼가 곧 돌 상황에서도 항상 "failed" 로 박혀 버렸다.
-@pytest.mark.parametrize(("flag", "expected"), [("on", "processing"), ("off", "failed")])
+# 2026-08-14 재리뷰 I-C — "processing" 은 플래그가 아니라 **실제 잡 행**에 근거해야 한다.
+# enqueue 를 진짜로 실행시키고(create_job 가짜로 기록) 잡 개수·무과금까지 단언한다.
+@pytest.mark.parametrize(("flag", "expected", "jobs"), [("on", "processing", 1), ("off", "failed", 0)])
 def test_custom_match_post_reports_the_cutout_status_it_is_about_to_start(
-    client, make_token, monkeypatch, flag, expected
+    client, make_token, monkeypatch, flag, expected, jobs
 ):
     import dataclasses
 
@@ -242,6 +259,36 @@ def test_custom_match_post_reports_the_cutout_status_it_is_about_to_start(
     assert response.status_code == 200, response.text
     assert response.json()["item"]["cutoutStatus"] == expected
     assert state["payload"]["matchClothing"][0]["cutoutStatus"] == expected
+    assert len(state["jobs"]) == jobs, "processing 은 실제로 걸린 잡에 근거해야 한다"
+    if jobs:
+        assert state["jobs"][0]["kind"] == "matching_cutout"
+        assert state["jobs"][0]["credits_reserved"] == 0, "무과금"
+
+
+# 2026-08-14 재리뷰 I-B — 큐잉이 조용히 실패하면 잡이 없다. 그때도 "처리 중"을 돌려주면
+# 카드는 아무도 끝내 줄 수 없는 스켈레톤에 갇힌다. 응답·저장 payload 둘 다 정정돼야 한다.
+def test_custom_match_post_does_not_claim_processing_when_the_queue_is_down(
+    client, make_token, monkeypatch
+):
+    import dataclasses
+
+    asset_ids = _asset_ids(1)
+    events, state, _ = _patch_post(monkeypatch, asset_ids, queue_error=True)
+    client.app.state.settings = dataclasses.replace(
+        client.app.state.settings, matching_cutout="on"
+    )
+
+    response = client.post(
+        "/v1/projects/p1/analysis/custom-match-item",
+        headers=_auth(make_token), json={"assetIds": asset_ids},
+    )
+
+    # 등록은 큐잉 실패에 걸리지 않는다
+    assert response.status_code == 200, response.text
+    assert "create-job" in events and state["jobs"] == []
+    assert response.json()["item"]["cutoutStatus"] == "failed"
+    assert state["payload"]["matchClothing"][0]["cutoutStatus"] == "failed"
+    assert response.json()["analysis"]["matchClothing"][0]["cutoutStatus"] == "failed"
 
 
 def test_custom_match_post_runs_mandatory_qc_in_parallel_threads(

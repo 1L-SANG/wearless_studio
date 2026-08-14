@@ -1142,7 +1142,7 @@ async def match_candidates(
 
 
 async def _enqueue_matching_cutout(conn, *, settings, user_id, project_id, matching_item_id,
-                                   source_asset_ids, source_keys, grid_asset_id=None):
+                                   source_asset_ids, source_keys, grid_asset_id=None) -> bool:
     """커스텀 매칭 의류 누끼 잡을 건다. 절대 등록을 막지 않는다.
 
     커밋 뒤에 별도로 돈다 — 큐잉 실패가 방금 성공한 매칭 등록을 되돌리면 본말전도다
@@ -1152,11 +1152,16 @@ async def _enqueue_matching_cutout(conn, *, settings, user_id, project_id, match
     skip 사이에 match-candidates 가 'processing' 을 돌려 셀러 이미지를 스켈레톤으로
     가리는 일도 없다(2026-08-13 리뷰 I3). 워커 쪽 플래그 가드는 그대로 둔다 —
     잡이 큐에 있는 동안 플래그가 내려가는 경우가 남는다.
+
+    **잡 행이 실제로 생겼는지**를 돌려준다(2026-08-14 재리뷰 I-B). 예외를 삼키는 건
+    그대로지만, 삼킨 사실을 호출자가 알아야 "처리 중"이라는 반증 불가능한 거짓을
+    응답·저장 payload 에 굳히지 않는다. 활성 잡 합류(created=False)도 잡은 있는
+    것이므로 True 다.
     """
     if getattr(settings, "matching_cutout", "off") != "on":
-        return
+        return False
     try:
-        await repo.create_job(
+        job, _created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="matching_cutout",
             payload={"matchingItemId": matching_item_id,
                      "sourceAssetIds": source_asset_ids, "sourceKeys": source_keys,
@@ -1170,6 +1175,8 @@ async def _enqueue_matching_cutout(conn, *, settings, user_id, project_id, match
             await conn.rollback()
         logger.warning("matching_cutout enqueue failed project=%s item=%s",
                        project_id, matching_item_id, exc_info=True)
+        return False
+    return job is not None
 
 
 @router.post(
@@ -1309,7 +1316,7 @@ async def add_custom_match_item(
             )
             saved = await repo.save_analysis(conn, project_id, payload)
             await conn.commit()
-            await _enqueue_matching_cutout(
+            queued = await _enqueue_matching_cutout(
                 conn,
                 settings=request.app.state.settings,
                 user_id=user_id,
@@ -1319,6 +1326,24 @@ async def add_custom_match_item(
                 source_keys=[a["r2_key"] for a in assets],
                 grid_asset_id=grid_asset_id,
             )
+            if cutout_enabled and not queued:
+                # 큐잉이 조용히 실패했다 — 잡 없는 "처리 중"은 아무도 반증할 수 없고
+                # 셀러는 방금 올린 사진 대신 스켈레톤만 본다(2026-08-14 재리뷰 I-B).
+                # 등록은 이미 커밋됐으므로 되돌리지 않고, 응답·저장 payload 만 조회
+                # 경로와 같은 값(원본 표시)으로 정정한다. 정정 저장이 또 실패해도
+                # 응답은 이미 참이다 — 등록을 500 으로 뒤엎지 않는다.
+                item = _matching_item_to_api(r2, row, compatible=True,
+                                             has_active_cutout_job=False)
+                try:
+                    saved = await repo.save_analysis(
+                        conn, project_id,
+                        _analysis_with_added_custom(saved["payload"] or {}, item))
+                    await conn.commit()
+                except Exception:  # noqa: BLE001 - 등록은 이미 성공했다
+                    with contextlib.suppress(Exception):
+                        await conn.rollback()
+                    logger.warning("matching_cutout status repair failed project=%s item=%s",
+                                   project_id, row["id"], exc_info=True)
     except errors.UniqueViolation as exc:
         raise _custom_match_error(
             409, "custom_match_item_exists", "이미 내 옷이 있어요. 지우고 다시 올려주세요."

@@ -29,14 +29,17 @@ class _Conn:
 def _enqueue(monkeypatch, flag, *, boom=False):
     created = []
 
+    # 실 create_job 은 (row, created) 튜플을 돌려준다 — 호출자가 "잡이 실제로 생겼는지"를
+    # 그 row 로 판정하므로 가짜도 같은 모양이어야 한다(2026-08-14 재리뷰 I-B).
     async def fake_create_job(conn, **kwargs):
         created.append(kwargs)
         if boom:
             raise RuntimeError("queue down")
+        return {"id": "job-1"}, True
 
     monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
     conn = _Conn()
-    asyncio.run(routes._enqueue_matching_cutout(
+    queued = asyncio.run(routes._enqueue_matching_cutout(
         conn,
         settings=types.SimpleNamespace(matching_cutout=flag),
         user_id="u1", project_id="p1", matching_item_id="custom_x",
@@ -45,6 +48,7 @@ def _enqueue(monkeypatch, flag, *, boom=False):
                      "users/u1/projects/p1/uploads/a2.jpg"],
         grid_asset_id="grid-1",
     ))
+    conn.queued = queued
     return created, conn
 
 
@@ -52,6 +56,7 @@ def test_enqueue_is_uncharged_and_carries_cleanup_handles(monkeypatch):
     created, conn = _enqueue(monkeypatch, "on")
 
     assert len(created) == 1
+    assert conn.queued is True, "잡이 실제로 걸렸음을 호출자에게 알린다"
     job = created[0]
     assert job["kind"] == "matching_cutout"
     assert job["credits_reserved"] == 0, "무과금"
@@ -73,6 +78,7 @@ def test_enqueue_is_a_complete_no_op_when_flag_is_off(monkeypatch):
     created, conn = _enqueue(monkeypatch, "off")
     assert created == []
     assert (conn.commits, conn.rollbacks) == (0, 0)
+    assert conn.queued is False, "잡이 없으니 processing 을 주장할 근거도 없다"
 
     missing_flag, _ = _enqueue(monkeypatch, None)
     assert missing_flag == []
@@ -82,6 +88,8 @@ def test_enqueue_failure_never_reaches_the_caller(monkeypatch):
     created, conn = _enqueue(monkeypatch, "on", boom=True)
     assert len(created) == 1, "시도는 했다"
     assert conn.rollbacks == 1, "실패한 트랜잭션은 되돌린다"
+    # 삼키되 숨기지는 않는다 — 호출자는 잡이 없다는 걸 알아야 한다(재리뷰 I-B)
+    assert conn.queued is False
 
 
 def test_enqueue_call_site_is_after_the_registration_commit():
