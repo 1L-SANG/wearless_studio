@@ -268,20 +268,31 @@
 /* 분석 확정 바 B안 — 사진 양 선택과 확정을 한 덩어리의 분할 CTA로 묶는다. */
 .wizard-cta-analysis { padding: 14px 0 16px; }
 .af-cta-split { position: relative; display: inline-flex; align-items: stretch; height: 54px;
-  border-radius: var(--r-5); overflow: visible; }
+  border-radius: var(--r-5); overflow: visible;
+  /* 미세한 떠 있음 — 크게 번지지 않는 짧은 그림자 한 겹 (2026-08-12 사용자 결정: "진짜 미세하게") */
+  box-shadow: 0 2px 6px -2px rgba(19,19,22,.18), 0 1px 2px rgba(19,19,22,.08); }
 .af-compose-menu { position: relative; display: inline-flex; align-items: stretch; min-width: 0; }
+/* 왼칸은 흰 바탕으로 반전 — 오른쪽 검정 확정 버튼과 역할이 다름을 색으로 말한다 (2026-08-12 사용자 결정) */
 .af-compose-trigger { display: inline-flex; align-items: center; gap: 7px; border: 0; cursor: pointer;
-  font: inherit; background: #26242e; color: #fff; border-radius: var(--r-5) 0 0 var(--r-5);
-  padding: 0 16px 0 18px; box-shadow: inset 0 2px 0 rgba(255,255,255,.1); white-space: nowrap; }
+  font: inherit; background: #fff; color: var(--fg-1); border-radius: var(--r-5) 0 0 var(--r-5);
+  padding: 0 16px 0 18px; box-shadow: inset 0 0 0 1.5px var(--fg-1); white-space: nowrap;
+  transition: background .14s; }
+.af-compose-trigger:hover:not([aria-disabled="true"]) { background: var(--bg-2); }
 .af-compose-trigger-copy { display: grid; gap: 1px; text-align: left; }
 .af-compose-trigger small { font-size: 10.5px; line-height: 1.15; font-weight: 600;
-  color: rgba(255,255,255,.55); letter-spacing: .02em; }
+  /* 흰 바탕에선 --fg-3(2.07:1)가 WCAG 4.5:1 미달 — #63636a = 5.96:1(호버 f5f5f5 위 5.47:1) */
+  color: #63636a; letter-spacing: .02em; }
 .af-compose-trigger b { font-size: 13.5px; line-height: 1.2; font-weight: 650; letter-spacing: -.01em; }
-.af-compose-chevron { flex: none; color: rgba(255,255,255,.65); transition: transform .18s; }
+.af-compose-chevron { flex: none; color: #63636a; transition: transform .18s; }  /* 상태 아이콘 3:1 충족 */
 .af-cta-split.open .af-compose-chevron { transform: rotate(180deg); }
-.af-compose-trigger:disabled, .af-compose-trigger[aria-disabled="true"] { opacity: .42; cursor: not-allowed; }
+/* 흰 바탕에서 전체 opacity 는 라벨을 1.32:1 까지 지워버린다 — 명시적 저채도로 "잠김"을 말하되 읽히게 */
+.af-compose-trigger:disabled, .af-compose-trigger[aria-disabled="true"] { cursor: not-allowed;
+  background: var(--bg-2); color: var(--fg-2); box-shadow: inset 0 0 0 1.5px var(--ring-strong); }
+.af-compose-trigger:disabled small, .af-compose-trigger[aria-disabled="true"] small,
+.af-compose-trigger:disabled .af-compose-chevron, .af-compose-trigger[aria-disabled="true"] .af-compose-chevron { color: var(--fg-3); }
 .af-compose-trigger:focus-visible { outline: none;
-  box-shadow: inset 0 2px 0 rgba(255,255,255,.1), inset 0 0 0 2px rgba(255,255,255,.72); }
+  /* 평시 1.5px 잉크 테두리와 구분되는 포커스 — 흰 간극 2px + 바깥 잉크 링 2px 할로(WCAG 2.4.13) */
+  box-shadow: inset 0 0 0 1.5px var(--fg-1), 0 0 0 2px #fff, 0 0 0 4px var(--fg-1); }
 .af-compose-popover { position: absolute; z-index: 2; left: 0; bottom: calc(100% + 8px); width: max-content;
   /* 왼칸("사진 양") 위에만 머물게 — 폭이 넓어져 확정 버튼 위까지 뻗지 않게 상한을 둔다 */
   min-width: 240px; max-width: 264px;
@@ -303,7 +314,7 @@
 .af-cta-confirm.btn { flex: 0 0 auto; height: 54px; min-height: 54px; padding: 0 22px;
   justify-content: center; background: var(--fg-1); color: #fff; border-radius: 0 var(--r-5) var(--r-5) 0;
   font-size: 15px; font-weight: 600; letter-spacing: -.01em;
-  box-shadow: inset 0 2px 0 rgba(255,255,255,.14), inset 1px 0 0 rgba(255,255,255,.13);
+  box-shadow: inset 0 2px 0 rgba(255,255,255,.14);  /* 왼칸이 흰색이 되어 밝은 구분선은 불필요 */
   transition: transform .12s, opacity .15s; }
 .af-cta-confirm.btn-primary:hover:not([disabled]) { background: var(--fg-1); opacity: .92; }
 .af-cta-confirm.btn:active:not([disabled]) { transform: translateY(1px); }
