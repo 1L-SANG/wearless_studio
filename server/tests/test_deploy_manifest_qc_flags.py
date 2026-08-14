@@ -289,3 +289,49 @@ def test_migration_step_uses_the_pinned_cli_version():
                 for s in doc["jobs"][j]["steps"]
                 if str(s.get("uses", "")).startswith("supabase/setup-cli")}
     assert len(versions) == 1, versions
+
+
+# ── 모델 라우팅 계약 (2026-08-14) ─────────────────────────────────────────────
+#
+# QC 플래그와 같은 사고 경로다. 다만 방향이 둘이라 둘 다 잠근다:
+#  - `MODEL_ROUTING_TEXT_GEMINI` 가 사라지면 정본이 코드 기본값(flash)으로 떨어져
+#    **게이팅 QC**(IMAGE_QC·MANNEQUIN_AXIS_QC·BASE_FIDELITY_QC = enforce)가 조용히 무뎌진다.
+#    판정이 헐거워지면 다른 옷 컷이 그대로 상세페이지로 나간다.
+#  - `MODEL_ROUTING_TEXT_GEMINI_ANALYSIS` 가 사라지거나 이름이 틀리면 분석이 정본(pro)으로
+#    되돌아간다 — 비용 2.4배, 이 PR 의 목적이 통째로 무효인데 **테스트는 전부 초록불**이다.
+MODEL_ROUTING_VARS = [
+    ("MODEL_ROUTING_TEXT_GEMINI", "model_text_gemini"),
+    ("MODEL_ROUTING_TEXT_GEMINI_ANALYSIS", "model_text_gemini_analysis"),
+]
+
+
+def test_model_routing_vars_are_declared(manifest_vars):
+    """모델 라우팅은 매니페스트 명시 선언이다 — 기본값 의존은 조용한 회귀 경로."""
+    missing = [name for name, _ in MODEL_ROUTING_VARS if name not in manifest_vars]
+    assert not missing, f"매니페스트에 모델 라우팅 미선언: {missing}"
+
+
+@pytest.mark.parametrize("env_name,attr", MODEL_ROUTING_VARS)
+def test_manifest_model_value_survives_loader(env_name, attr, manifest_vars, monkeypatch):
+    """매니페스트 값이 로더를 통과해 그대로 살아남는가.
+
+    로더 쪽 키 오타(`os.getenv("...ANALYSSIS", "")`)는 예외가 아니라 조용한 폴백이다 —
+    배포도 성공하고 앱도 뜨는데 분석만 옛 모델로 돈다. 왕복을 확인해 그걸 잡는다.
+    """
+    raw = str(manifest_vars[env_name])
+    monkeypatch.setenv(env_name, raw)
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    loaded = getattr(load_settings(), attr)
+    assert loaded == raw, (
+        f"{env_name}={raw!r} 가 로더를 통과하지 못하고 {loaded!r} 로 폴백됐다 — "
+        f"로더의 env 키 이름을 확인하라."
+    )
+
+
+def test_analysis_model_is_split_from_the_gating_qc_model(manifest_vars):
+    """분석과 게이팅 QC 는 서로 다른 모델을 쓴다 — 축을 뗀 이유 그 자체(오너 결정 2026-08-14).
+
+    한 값으로 합쳐지면 둘 중 하나는 의도와 다르게 돈다: 분석을 pro 로 되돌리거나(비용),
+    QC 를 flash 로 내리거나(판정이 무뎌져 다른 옷 컷 출고).
+    """
+    assert manifest_vars["MODEL_ROUTING_TEXT_GEMINI_ANALYSIS"] != manifest_vars["MODEL_ROUTING_TEXT_GEMINI"]

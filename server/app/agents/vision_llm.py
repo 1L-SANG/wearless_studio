@@ -127,7 +127,8 @@ async def _call_gemini(settings: Settings, model: str, prompt: str,
         "responseSchema": _to_gemini_schema(schema),
     }
     # 분류·추출 작업엔 low 로 충분 — 미지정 시 모델 기본(깊은 추론)이 수 초를 낭비한다
-    # (2026-07-07 속도 개선, 실측: gemini-3.5-flash v1beta 가 thinkingLevel 수용 확인).
+    # (2026-07-07 속도 개선, 실측: gemini-3.5-flash v1beta 가 thinkingLevel 수용 확인.
+    #  2026-08-14 gemini-3.7-flash 로 교체하며 low/medium 둘 다 200 재확인).
     # 콜별 오버라이드(thinking_level 인자) > 전역 설정 — AG-08 특징 발굴은 medium (후보 선별).
     level = thinking_level or settings.analysis_thinking_level
     if level != "off":
@@ -169,7 +170,7 @@ async def analyze_with_fallback(
     키 미설정 provider 는 skip. 각 provider 는 timeout(analysis_timeout_seconds) 상한;
     실패/비순응/타임아웃이면 다음으로 폴백. `images` 는 bytes(InlineImage).
     thinking_level 은 콜별 오버라이드(미지정 시 settings.analysis_thinking_level).
-    models 는 provider 별 모델 오버라이드({'gemini': 'gemini-3.6-flash'}) — 에이전트별 tier
+    models 는 provider 별 모델 오버라이드({'gemini': 'gemini-3.7-flash'}) — 에이전트별 tier
     분기용(AG-08). 미지정 provider 는 settings 의 정본 모델을 그대로 쓴다."""
     timeout = settings.analysis_timeout_seconds
     attempts: list[str] = []

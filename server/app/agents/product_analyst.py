@@ -115,10 +115,16 @@ MATERIAL_PRESETS: dict[tuple[str, str | None], list[dict]] = {
         _p("코튼 스커트", ("면", 100)),
         _p("나일론 카고·셔링", ("나일론", 100)),
     ],
+    # 셔츠는 종류가 outer 로 분류돼도 원단은 셔츠 원단이다 (2026-08-14 오너 결정으로
+    # 모든 셔츠류가 outer 가 되면서, 자켓용 조성만 있던 이 행이 셔츠의 실제 후보를 못 담게 됐다).
+    # top/shirt 와 같은 후보 + 셔켓(오버셔츠) 계열을 뒤에 덧붙인다. 프리셋 index 는 행 상대값이라
+    # 두 행의 앞부분이 같으면 종류 판정이 흔들려도 같은 조성으로 풀린다.
     ("outer", "shirt"): [
-        _p("코튼 셔켓(기본)", ("면", 100)),
-        _p("폴리 오버셔츠", ("폴리에스터", 100)),
-        _p("드레이프 혼방", ("폴리에스터", 65), ("레이온", 35)),
+        _p("코튼 셔츠(기본)", ("면", 100)),
+        _p("구김 적은 혼방", ("면", 60), ("폴리에스터", 40)),
+        _p("여름 린넨 혼방", ("면", 55), ("린넨", 45)),
+        _p("드레이프 오버셔츠", ("폴리에스터", 100)),
+        _p("폴리 셔켓", ("폴리에스터", 65), ("레이온", 35)),
     ],
     ("outer", "jacket"): [
         _p("일반 재킷(기본)", ("폴리에스터", 100)),
@@ -415,7 +421,12 @@ def distribute(validated: dict) -> dict:
 async def analyze(settings: Settings, product: dict, images: list[InlineImage]) -> tuple[dict, str]:
     """프롬프트 → vision_llm(폴백) → 검증 → 분배. (분배 결과, provider) 반환. 실패 시 VisionError."""
     prompt = build_prompt(product or {})
-    raw, provider = await analyze_with_fallback(settings, prompt, images, analysis_schema())
+    # 분석 전용 모델 분기 (2026-08-14) — 게이팅 QC 가 쓰는 model_text_gemini 와 분리한다.
+    # 미설정이면 None → vision_llm 이 정본 모델을 쓴다(AG-08 분기와 같은 규약).
+    models = ({"gemini": settings.model_text_gemini_analysis}
+              if settings.model_text_gemini_analysis else None)
+    raw, provider = await analyze_with_fallback(
+        settings, prompt, images, analysis_schema(), models=models)
     return distribute(validate(raw)), provider
 
 
