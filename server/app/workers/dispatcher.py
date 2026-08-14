@@ -21,6 +21,7 @@ from .personalization_purge_job import run_personalization_purge_job
 from .base_fidelity_observe_job import run_base_fidelity_observe_job
 from .editor_garment_mask_job import run_editor_garment_mask_job
 from .sam_preprocess_job import run_sam_preprocess_job
+from .matching_cutout_job import run_matching_cutout_job
 
 log = logging.getLogger("wearless.dispatcher")
 
@@ -39,6 +40,8 @@ _WORKERS = {
     "base_fidelity_observe": run_base_fidelity_observe_job,
     # 톤 에디터용 착장 마스크 전처리(무과금). 컷이 이미 화면에 뜬 뒤에 돈다.
     "editor_garment_mask": run_editor_garment_mask_job,
+    # 커스텀 매칭 의류 누끼(무과금·이미지 생성 없음). 커스텀 매칭 등록 후 백그라운드로 돈다.
+    "matching_cutout": run_matching_cutout_job,
     "fm_model_asset_build": run_fm_model_asset_job,  # 실존 모델 자산 빌드(합성+QC, handoff fork)
 }
 _KINDS = tuple(_WORKERS)
