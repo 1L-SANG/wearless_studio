@@ -13,7 +13,10 @@ import {
   inferContentRole,
 } from '@/lib/storyboardTaxonomy.js';
 import { selectGenerationExamples } from '@/lib/generationExamples.js';
-import { detailDirectionFromExample } from '@/lib/storyboardExampleSelection.js';
+import {
+  detailDirectionFromExample,
+  generationExampleStructuralRecipePatch,
+} from '@/lib/storyboardExampleSelection.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, OBJECT_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, colorWithOpacity, encodeWardrobeImage, normalizeHexColor } from '@/features/editor/editorLibrary.js';
 import { DEFAULT_EDITOR_COLOR_PRESETS, commitNumberDraft, hexToHsv, hsvToHex } from '@/features/editor/editorAppearance.js';
@@ -418,8 +421,23 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
   const [outerClosure, setOuterClosure] = useState('open');
   const [matchIds, setMatchIds] = useState([]);
   const [matchOpen, setMatchOpen] = useState(false);
-  const isProduct = cutType === 'product';
-  const isMirror = cutType === 'mirror'; // mirror 레시피(ADR-0004): 방향 없음, 샷 full/medium만
+  // 컷 탭의 선택은 원래 레시피로 유지한다. 거울 예시는 구조 패치만 파생해 얹으므로
+  // 일반 예시를 다시 고르면 별도 상태 복구 없이 탭이 가리키던 레시피로 돌아간다.
+  const selectedExample = (catalogs.genExamples || []).find((example) => example.id === exampleId) || null;
+  const baseRecipe = {
+    source: 'ai',
+    contentRole: inferContentRole({ source: 'ai', cutType, shot }),
+    cutType,
+    direction: dir,
+    shot,
+  };
+  const effectiveRecipe = {
+    ...baseRecipe,
+    ...generationExampleStructuralRecipePatch(baseRecipe, selectedExample),
+  };
+  const effectiveCutType = effectiveRecipe.cutType;
+  const isProduct = effectiveCutType === 'product';
+  const isMirror = effectiveCutType === 'mirror'; // mirror 레시피(ADR-0004): 방향 없음, 샷 full/medium만
   const [modelOpen, setModelOpen] = useState(false);
   const modelRef = useRef(null);
   const smoothScroll = (p, to, dur = 300) => {
@@ -442,8 +460,10 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
   const dirOpts = isProduct ? catalogs.productDirections : catalogs.directions;
   // 제품컷 샷(고스트·디테일)은 콘티보드처럼 MoodGuide 안의 샷 탭에서 고른다 — 디테일 상시 제공(2026-08-07 개편).
   const shotOpts = isProduct ? catalogs.productShotTypes : catalogs.shotTypes;
-  const dirVal = dirOpts.some((o) => o.value === dir) ? dir : dirOpts[0].value;
-  const shotVal = shotOpts.some((o) => o.value === shot) ? shot : shotOpts[0].value;
+  const dirVal = dirOpts.some((o) => o.value === effectiveRecipe.direction)
+    ? effectiveRecipe.direction : dirOpts[0].value;
+  const shotVal = shotOpts.some((o) => o.value === effectiveRecipe.shot)
+    ? effectiveRecipe.shot : shotOpts[0].value;
   // isDetail 은 검증된 shotVal 기준 — raw shot 을 읽으면 카탈로그 폴백 시 UI와 전송값이 어긋난다.
   const isDetail = isProduct && shotVal === 'detail';
   const activeColorOpts = isDetail ? detailColorOpts : colorOpts;
@@ -507,13 +527,14 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
           </div>
 
           {/* 분위기 예시가 주인공 — 샷 종류는 갤러리의 아이콘 필터 (B+C안, ADR-0004) */}
-          <MoodGuide catalogs={catalogs} cut={cutType} direction={isMirror ? null : dirVal} shot={shotVal}
+          <MoodGuide catalogs={catalogs} cut={effectiveCutType} direction={isMirror ? null : dirVal} shot={shotVal}
             shotOptions={isProduct ? shotOpts : null}
             onShotChange={(v) => {
               setShot(v); setExampleId(null); setRefScope('all');
               // 고스트→디테일 전환 시 이전 '뒷면'이 숨은 채 BackDetail 근거로 새지 않게 — 콘티보드 동일 가드(Codex 리뷰 P1).
               if (isProduct) setDir('front');
             }} clothingType={clothingType} gender={modelGender}
+            includeMirrorExamples={effectiveCutType === 'styling' || isMirror}
             exampleId={exampleId} onExampleChange={selectExample}
             refScope={refScope} onRefScopeChange={setRefScope}
             refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
@@ -588,8 +609,8 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
           </details>}
 
           <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={() => onGenerate({
-            contentRole: inferContentRole({ source: 'ai', cutType, shot: shotVal }),
-            colorId: colorVal, cutType, direction: isMirror ? null : dirVal, shot: shotVal, modelId: model, exampleId, refScope,
+            contentRole: effectiveRecipe.contentRole,
+            colorId: colorVal, cutType: effectiveCutType, direction: isMirror ? null : dirVal, shot: shotVal, modelId: model, exampleId, refScope,
             outerClosureState: showOuterClosure ? outerClosure : null,
             matchIds: isProduct ? [] : matchIds,
             refImages: refImages.map((r) => r?.url || r),                  // 표시용 URL (mock 계약 유지)

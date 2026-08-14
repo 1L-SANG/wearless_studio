@@ -5,7 +5,10 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import react from '@vitejs/plugin-react';
 
-import { generationExampleSelectionPatch } from '../../src/lib/storyboardExampleSelection.js';
+import {
+  generationExampleSelectionPatch,
+  generationExampleStructuralRecipePatch,
+} from '../../src/lib/storyboardExampleSelection.js';
 
 const storyboardSource = readFileSync(new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url), 'utf8');
 const featureStyles = readFileSync(new URL('../../src/styles/features.css', import.meta.url), 'utf8');
@@ -36,6 +39,56 @@ test('replacing a generation example resets per-cut settings but preserves its s
     angle: 'same', matchIds: [], refImages: [], refAssetIds: [], faceExposure: 'same',
     outerClosureState: 'open',
   });
+});
+
+test('selecting a mirror example reuses the mirror recipe and changes shot, direction and face handling', () => {
+  const result = generationExampleSelectionPatch({
+    id: 'cut-1', source: 'ai', sectionRole: 'styling', contentRole: 'coordination',
+    cutType: 'styling', shot: 'full', direction: 'back', faceExposure: 'same',
+    exampleId: 'old', colorId: 'red', refScope: 'all',
+  }, {
+    id: 'mirror-medium', cutType: 'mirror', shot: 'medium', direction: 'front',
+  }, { clothingType: 'outer', defaultColorId: 'base', refScope: 'all' });
+
+  assert.equal(result.settingsReset, true);
+  assert.deepEqual({
+    contentRole: result.patch.contentRole,
+    cutType: result.patch.cutType,
+    shot: result.patch.shot,
+    direction: result.patch.direction,
+    faceExposure: result.patch.faceExposure,
+    exampleId: result.patch.exampleId,
+  }, {
+    contentRole: 'realWear', cutType: 'mirror', shot: 'medium', direction: null,
+    faceExposure: 'hide', exampleId: 'mirror-medium',
+  });
+});
+
+test('selecting an ordinary example after mirror restores the original styling recipe', () => {
+  const baseRecipe = {
+    source: 'ai', contentRole: 'coordination', cutType: 'styling', shot: 'full', direction: 'back',
+  };
+  const mirrorRecipe = {
+    ...baseRecipe,
+    ...generationExampleStructuralRecipePatch(baseRecipe, {
+      id: 'mirror-medium', cutType: 'mirror', shot: 'medium', direction: 'front',
+    }),
+  };
+  const restoredRecipe = {
+    ...baseRecipe,
+    ...generationExampleStructuralRecipePatch(baseRecipe, {
+      id: 'ordinary-full', cutType: 'styling', shot: 'full', direction: 'front',
+    }),
+  };
+
+  assert.deepEqual(
+    [mirrorRecipe.contentRole, mirrorRecipe.cutType, mirrorRecipe.shot, mirrorRecipe.direction],
+    ['realWear', 'mirror', 'medium', null],
+  );
+  assert.deepEqual(
+    [restoredRecipe.contentRole, restoredRecipe.cutType, restoredRecipe.shot, restoredRecipe.direction],
+    ['coordination', 'styling', 'full', 'back'],
+  );
 });
 
 test('the mock API runtime migrates an HMR-stale three-member styling seed on read', async (t) => {
@@ -123,6 +176,13 @@ test('my images live only in the shot tab flow', () => {
   assert.doesNotMatch(storyboardSource, /if \(isMine\) \{\s*return/);
   assert.match(storyboardSource, /applied\.source === 'mine'[^]*detachSpaceMembership\(withoutLayoutRow\(updated\)\)/);
   assert.match(storyboardSource, /next = ensureContiguousSpaceRuns\(next\)/);
+});
+
+test('saved mirror blocks use the styling gallery while keeping mirror cards selectable at its end', () => {
+  assert.match(storyboardSource, /const galleryCut = cut === 'mirror' \? 'styling' : cut/);
+  assert.match(storyboardSource, /value=\{pendingRecipe\?\.cutType \|\| \(isMirror \? 'styling' : block\.cutType\)\}/);
+  assert.match(storyboardSource, /appendMirror: includeMirrorExamples && galleryCut === 'styling'/);
+  assert.match(storyboardSource, /mineTab \? \([\s\S]*<MineImageTab[\s\S]*\) : <>/);
 });
 
 test('uploading from the my-image tab commits the chosen image instead of saving an AI reference first', () => {

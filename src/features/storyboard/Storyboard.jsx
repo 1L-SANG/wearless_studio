@@ -24,6 +24,7 @@ import {
   SECTION_ROLES,
   SECTION_ROLE_OPTIONS,
   STORYBOARD_TAXONOMY_VERSION,
+  allowedCutTypeOptionsForSection,
   blockPatchForContentRole,
   cutTypeOptionsForSection,
   defaultContentRoleForSection,
@@ -849,22 +850,25 @@ export function shouldRenderGenerationExampleGuide(block) {
    · 내 사진(refImages) = 샷 종류의 '내 이미지' 탭에서 업로드·선택
    · 카드가 사이드/뒷면이어도 선택한 예시의 전체 연출을 참고하되, 카드의 촬영 방향은 유지
    refs/exampleId 는 제어형 — 콘티는 블록이, 에디터 AI 패널은 패널 상태가 소유 (계약 §3.4/§6). */
-export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onExampleDrag = null, refs = [], onRefsChange, onPickRef, refScope = 'all', onUseMine = null }) {
+export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onExampleDrag = null, refs = [], onRefsChange, onPickRef, refScope = 'all', onUseMine = null, includeMirrorExamples = false }) {
+  const galleryCut = cut === 'mirror' ? 'styling' : cut;
   const shotOpts = shotOptions || (cut === 'product' ? catalogs.productShotTypes
     : catalogs.shotTypes);
   const shotVal = shotOpts.some((s) => s.value === shot) ? shot : shotOpts[0].value;
   const examples = React.useMemo(() => selectGenerationExamples(catalogs.genExamples, {
-    cutType: cut,
+    cutType: galleryCut,
     shot: shotVal,
     clothingType,
     gender,
     direction,
     appendSetOnly: cut !== 'product',
-  }), [catalogs.genExamples, cut, shotVal, clothingType, gender, direction]);
+    appendMirror: includeMirrorExamples && galleryCut === 'styling',
+  }), [catalogs.genExamples, cut, galleryCut, shotVal, clothingType, gender, direction, includeMirrorExamples]);
   const selectedExample = (catalogs.genExamples || []).find((example) => example.id === exampleId) || null;
   const moodOnly = (cut === 'styling' || cut === 'horizon') && !!direction && direction !== 'front';
   const conditionStatus = !exampleId ? null : storedExampleConditionStatus(selectedExample, {
-    cutType: cut, clothingType, gender,
+    cutType: galleryCut, clothingType, gender,
+    includeMirror: includeMirrorExamples && galleryCut === 'styling',
   });
   const selectedPoseCompatible = (selectedExample?.variants || []).includes('pose')
     && poseExampleDirectionCompatible(selectedExample, {
@@ -976,12 +980,13 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
             isOptionPublished={cut !== 'product' ? (candidateShot) => candidateShot === 'mine' || selectGenerationExamples(
               catalogs.genExamples,
               {
-                cutType: cut,
+                cutType: galleryCut,
                 shot: candidateShot,
                 clothingType,
                 gender,
                 direction,
                 appendSetOnly: true,
+                appendMirror: includeMirrorExamples && galleryCut === 'styling',
               },
             ).length > 0 : null} />
           : <span className="sb-exhint">내 사진은 이 프로젝트에서만</span>}
@@ -1300,7 +1305,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
           options={spaceContext ? cutTypeOptions.map((option) => ({
             ...option, disabled: true, disabledReason: false,
           })) : cutTypeOptions}
-          value={pendingRecipe?.cutType || block.cutType}
+          value={pendingRecipe?.cutType || (isMirror ? 'styling' : block.cutType)}
           onChange={spaceContext ? () => {} : onCutTypeChange} />
         {spaceContext && (
           <div className="sb-lock-note"><Icon name="lock" size={13} />장소 세트로 묶인 동안 고정돼요.</div>
@@ -1319,6 +1324,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
               shotOptions={pendingRecipe.cutType === 'product' ? productShotOptions : null}
               onShotChange={(shot) => setPendingRecipe((current) => ({ ...current, shot }))}
               clothingType={clothingType} gender={exampleGender}
+              includeMirrorExamples={effectiveSectionRole === SECTION_ROLES.STYLING}
               exampleId={pendingChoice} onExampleChange={commitPendingRecipe} onExampleDrag={onExampleDrag}
               refScope={pendingInSpace ? 'pose' : 'all'} />
           )}
@@ -1340,6 +1346,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
               direction={block.direction} shot={block.shot}
               shotOptions={isProduct ? productShotOptions : null}
               onShotChange={onShotChange} clothingType={clothingType} gender={exampleGender}
+              includeMirrorExamples={effectiveSectionRole === SECTION_ROLES.STYLING}
               exampleId={block.exampleId || null}
               onExampleChange={onGenerationExampleChange}
               onExampleDrag={onExampleDrag}
@@ -2105,7 +2112,7 @@ export function Storyboard() {
       return;
     }
     const droppedCutType = droppedExample?.cutType;
-    if (droppedCutType && !cutTypeOptionsForSection(sectionRole).some((option) => option.value === droppedCutType)) {
+    if (droppedCutType && !allowedCutTypeOptionsForSection(sectionRole).some((option) => option.value === droppedCutType)) {
       toast.push('이 섹션에는 해당 생성예시를 추가할 수 없어요');
       return;
     }
@@ -2257,7 +2264,7 @@ export function Storyboard() {
         return;
       }
       const memberIds = new Set(members.map((member) => member.id));
-      const allAllowed = !targetRole || members.every((block) => cutTypeOptionsForSection(targetRole)
+      const allAllowed = !targetRole || members.every((block) => allowedCutTypeOptionsForSection(targetRole)
         .some((option) => option.value === block.cutType));
       if (!allAllowed) { toast.push('이 섹션에는 장소 세트 구성을 그대로 옮길 수 없어요'); return; }
       setBlocks((current) => {
@@ -2300,7 +2307,7 @@ export function Storyboard() {
       ? blockPatchForContentRole(moving, targetContentRole, { clothingType })
       : null;
     const cutAllowed = !targetRole || moving?.source === 'mine'
-      || cutTypeOptionsForSection(targetRole).some((option) => option.value === moving?.cutType);
+      || allowedCutTypeOptionsForSection(targetRole).some((option) => option.value === moving?.cutType);
     if (moving && (!cutAllowed || (renderGroupRecipe && renderGroupRecipe.cutType !== moving.cutType))) {
       const fallbackRole = targetContentRole || defaultContentRoleForSection(targetRole);
       const targetRecipe = renderGroupRecipe || blockPatchForContentRole(moving, fallbackRole, { clothingType });

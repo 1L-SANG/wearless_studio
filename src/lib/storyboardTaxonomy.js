@@ -43,13 +43,19 @@ const CUT_TYPE_OPTIONS_BY_SECTION = Object.freeze({
   [SECTION_ROLES.PRODUCT]: CUT_TYPE_OPTIONS,
 });
 
-export const cutTypeOptionsForSection = (sectionRole) => (
+export const allowedCutTypeOptionsForSection = (sectionRole) => (
   CUT_TYPE_OPTIONS_BY_SECTION[sectionRole] || CUT_TYPE_OPTIONS
+);
+
+// 거울은 스타일링 갤러리의 예시로 고른다. 저장·이동·드래그 허용 규칙에는 계속 남긴다.
+export const cutTypeOptionsForSection = (sectionRole) => (
+  allowedCutTypeOptionsForSection(sectionRole).filter((option) => option.value !== 'mirror')
 );
 
 // 섹션 개념이 없는 화면(에디터 '새 이미지 추가')용 — 섹션별 목록의 중복 없는 합집합.
 export const ALL_CUT_TYPE_OPTIONS = Object.freeze([...new Map(
-  Object.values(CUT_TYPE_OPTIONS_BY_SECTION).flat().map((option) => [option.value, option]),
+  Object.keys(CUT_TYPE_OPTIONS_BY_SECTION).flatMap(cutTypeOptionsForSection)
+    .map((option) => [option.value, option]),
 ).values()]);
 
 export const CONTENT_ROLES = Object.freeze({

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { cutTypeOptionsForSection } from '../../src/lib/storyboardTaxonomy.js';
+import { allowedCutTypeOptionsForSection } from '../../src/lib/storyboardTaxonomy.js';
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const storyboardSource = read('../../src/features/storyboard/Storyboard.jsx');
@@ -14,9 +14,9 @@ test('N12 addBlock accepts cut types that older section-specific gates rejected'
   const addBlockStart = storyboardSource.indexOf('const addBlock = async');
   const addBlockEnd = storyboardSource.indexOf('// drag-to-reorder blocks', addBlockStart);
   const addBlockSource = storyboardSource.slice(addBlockStart, addBlockEnd);
-  assert.match(addBlockSource, /cutTypeOptionsForSection\(sectionRole\)\.some/);
+  assert.match(addBlockSource, /allowedCutTypeOptionsForSection\(sectionRole\)\.some/);
 
-  const acceptsDrop = (sectionRole, cutType) => cutTypeOptionsForSection(sectionRole)
+  const acceptsDrop = (sectionRole, cutType) => allowedCutTypeOptionsForSection(sectionRole)
     .some((option) => option.value === cutType);
   assert.equal(acceptsDrop('hooking', 'product'), true);
   assert.equal(acceptsDrop('studio', 'mirror'), true);
