@@ -1506,7 +1506,10 @@ export function Editor() {
           fill: '#FFFFFF', stroke: '#000000', strokeWidth: 2, radius: 28,
           bubbleFit: { maxWidth: 560, padX: 24, padTop: 20, padBottom: 38, anchor: 'left' },
         }
+      /* 도형 기본값: 흰 채움 + 잉크 테두리 — 검정 통면은 상세페이지에서 너무 무겁고,
+         흰 블록 위에서 테두리 없이는 안 보인다 (2026-08-14 오너 확정). */
       : { id: uid('el'), type: 'shape', shape: shapeId, x, y, w: 140, h: 140,
+        fill: '#FFFFFF', stroke: '#0e0d14', strokeWidth: 2,
       };
     setBlocks((bs) => bs.map((b) => b.id === target ? { ...b, elements: [...b.elements, el] } : b));
     selectEl(target, el); toast.push('오브젝트를 추가했어요');
