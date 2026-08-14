@@ -101,7 +101,7 @@ function StoryboardTransitionOverlay() {
   const [visible, setVisible] = useState(true);
 
   useEffect(() => {
-    const timer = setTimeout(() => setVisible(false), 3150);  // CSS 3.5s − 음수딜레이 0.35s 와 동기
+    const timer = setTimeout(() => setVisible(false), 4725);  // CSS 5.25s − 음수딜레이 0.525s 와 동기
     return () => clearTimeout(timer);
   }, []);
 
@@ -111,8 +111,8 @@ function StoryboardTransitionOverlay() {
       aria-label="전환 안내 닫기" onClick={() => setVisible(false)}>
       <span className="storyboard-transition-copy" role="status" aria-live="polite">
         <img className="transition-brand-logo" src="/assets/brand/logo.svg" alt="" />
-        <strong>마네킹컷을 먼저 만들고 있어요</strong>
-        <small>상세페이지를 구성하는 동안 뒤에서 계속 준비할게요.</small>
+        <strong>의류 구현 진행중</strong>
+        <small>백그라운드에서 의류핏을 조정하게끔 작업을 진행중이에요.<br />그동안 상세페이지를 원하는대로 구성해보세요.</small>
       </span>
     </button>
   );

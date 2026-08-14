@@ -195,8 +195,8 @@ const detailPageRibbonSource = chromeSource.slice(detailPageRibbonStart, chromeL
 test('the transition overlay replaces the duplicate completion badge and the ribbon stops steering', () => {
   assert.doesNotMatch(mannequinRibbonSource, /마네킹컷 준비 완료/);
   assert.doesNotMatch(chromeSource, /DONE_BADGE_MS/);
-  assert.match(chromeSource, /마네킹컷을 먼저 만들고 있어요/);
-  assert.match(chromeSource, /setTimeout\(\(\) => setVisible\(false\), 3150\)/);
+  assert.match(chromeSource, /의류 구현 진행중/);
+  assert.match(chromeSource, /setTimeout\(\(\) => setVisible\(false\), 4725\)/);
   assert.doesNotMatch(mannequinRibbonSource, /마네킹 화면 보기/);
   assert.doesNotMatch(mannequinRibbonSource, /job-ribbon-btn/);
   assert.match(detailPageRibbonSource, /job-ribbon-btn/);

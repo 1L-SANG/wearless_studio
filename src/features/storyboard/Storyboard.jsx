@@ -87,6 +87,10 @@ import { classifyStoryboardLoadError, storyboardNotFoundError } from './storyboa
 import { continueAfterStoryboardFlush } from './storyboardNavigation.js';
 import { storyboardOverlayTop } from './storyboardOverlayTop.js';
 import { bindStoryboardExitFlush, scheduleStoryboardAutosave } from './storyboardSaveLifecycle.js';
+import {
+  collectInitialRevealThumbnailUrls,
+  waitForInitialReveal,
+} from './initialRevealGate.js';
 
 
 const COLOR_HEX = {
@@ -177,6 +181,14 @@ const prefersReducedMotion = () => (
   typeof window !== 'undefined'
   && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 );
+
+const initialRevealThumbnailFor = (block, catalogs) => {
+  if (block.source === 'mine') return block.thumb || block.ownImages?.[0];
+  const example = block.exampleId
+    ? (catalogs?.genExamples || []).find((candidate) => candidate.id === block.exampleId)
+    : null;
+  return (example ? generationExampleImageSources(example).src : null) || block.thumb;
+};
 
 const cutNumber = (index, total) => String(index).padStart(2, '0') + '/' + String(total).padStart(2, '0');
 const cutRangeLabel = (items) => {
@@ -1645,6 +1657,7 @@ export function Storyboard() {
   const [undoEntry, setUndoEntry] = useState(null);
   const [undoExiting, setUndoExiting] = useState(false);
   const [inspectorTop, setInspectorTop] = useState(70);
+  const [initialBoardRevealed, setInitialBoardRevealed] = useState(() => prefersReducedMotion());
   const atomicSavingRef = useRef(false);
   const atomicRetryRef = useRef(null);
   const directSaveSnapshots = useRef(new WeakSet());
@@ -1714,6 +1727,25 @@ export function Storyboard() {
     window.scrollTo({ top: setPickerScrollY.current, behavior: 'instant' });
     setPickerScrollY.current = null;
   }, [setPicker]);
+
+  const initialRevealReady = blocks !== null && catalogs !== null;
+  useEffect(() => {
+    if (!initialRevealReady) return undefined;
+    if (prefersReducedMotion()) {
+      setInitialBoardRevealed(true);
+      return undefined;
+    }
+
+    let active = true;
+    const urls = collectInitialRevealThumbnailUrls(
+      renderGroups(blocks),
+      (block) => initialRevealThumbnailFor(block, catalogs),
+    );
+    void waitForInitialReveal(urls).then(() => {
+      if (active) setInitialBoardRevealed(true);
+    });
+    return () => { active = false; };
+  }, [initialRevealReady]);
 
   useEffect(() => {
     (async () => {
@@ -2715,7 +2747,9 @@ export function Storyboard() {
 
   const cutCount = blocks.length;
   const body = (
-    <div className={'sb-canvas-shell' + (splitOpen ? ' inspector-open' : '')}
+    <div className={'sb-canvas-shell sb-initial-reveal'
+      + (initialBoardRevealed ? ' is-revealed' : '')
+      + (splitOpen ? ' inspector-open' : '')}
       style={{ '--sb-inspector-top': `${inspectorTop}px` }}>
       <div className="sb-canvas-main">
         {list}

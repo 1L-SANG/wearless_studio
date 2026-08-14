@@ -70,10 +70,13 @@
    공유해 하나의 전환으로 읽힌다. 숨쉬기는 은은하게(스피너·퍼센트 금지 관례). */
 .transition-brand-logo { width: 56px; height: 56px; margin-bottom: 2px;
   filter: drop-shadow(0 2px 10px rgba(0,0,0,.35));
-  animation: transitionLogoBreath 2.2s ease-in-out infinite; }
-@keyframes transitionLogoBreath {
-  0%, 100% { transform: scale(1); opacity: .92; }
-  50% { transform: scale(1.06); opacity: 1; }
+  /* 심장 박동(럽-덥) — 3회만 뛰고 멈춘다(2026-08-14 사용자 결정: 많이는 말고) */
+  animation: transitionLogoHeartbeat 1.3s ease-in-out 3 both; }
+@keyframes transitionLogoHeartbeat {
+  0%, 60%, 100% { transform: scale(1); }
+  14% { transform: scale(1.11); }
+  28% { transform: scale(1); }
+  42% { transform: scale(1.15); }
 }
 @media (prefers-reduced-motion: reduce) {
   .transition-brand-logo { animation: none; }
@@ -334,9 +337,9 @@
 
 .storyboard-transition-overlay { position: fixed; inset: 0; z-index: 120; border: 0; padding: 24px;
   display: grid; place-items: center; background: rgba(18, 20, 25, .68); color: #fff; cursor: pointer;
-  animation: storyboardTransitionLife 3.5s ease -0.35s both; }
-  /* 3.5s(2026-08-14 사용자 결정). -0.35s = 페이드인 구간 생략 — 확정 베일에서 넘어올 때
-     opacity 0 재시작으로 화면이 한 번 밝게 튀는 이중 펄스를 없앤다(P2 리뷰). */
+  animation: storyboardTransitionLife 5.25s ease -0.525s both; }
+  /* 3.5s→5.25s(1.5배, 2026-08-14 사용자 결정). 음수 딜레이 = 페이드인 구간 생략 — 확정
+     베일에서 넘어올 때 opacity 0 재시작으로 화면이 밝게 튀는 이중 펄스를 없앤다(P2 리뷰). */
 .storyboard-transition-copy { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
 .storyboard-transition-copy strong { font-family: var(--font-display); font-size: clamp(22px, 4vw, 32px); font-weight: 650; }
 .storyboard-transition-copy small { font-size: 14px; line-height: 1.5; color: rgba(255, 255, 255, .78); }
@@ -1225,7 +1228,24 @@
 .fx-pagefade .sb-page.sb-content-enter > .storyboard-layout { animation-delay: .12s; }
 .fx-pagefade .sb-page.sb-content-enter > .sb-actionbar { animation-delay: .18s; }
 @keyframes sbContentIn { from { opacity: 0; transform: translateY(10px); } }
+/* 첫 화면 썸네일이 준비될 때까지 보드 DOM은 배치한 채 합성 레이어만 숨긴다. */
+.fx-pagefade .sb-page.sb-content-enter > .sb-canvas-shell.sb-initial-reveal { animation: none; }
+.sb-initial-reveal {
+  opacity: 0;
+  transform: translate3d(0, 8px, 0);
+}
+.sb-initial-reveal.is-revealed {
+  opacity: 1;
+  transform: none;
+  transition: opacity .45s ease, transform .45s ease;
+}
 @media (prefers-reduced-motion: reduce) {
+  .sb-initial-reveal,
+  .sb-initial-reveal.is-revealed {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
   .fx-pagefade .sb-page.sb-content-enter > .sb-count-head,
   .fx-pagefade .sb-page.sb-content-enter > .storyboard-solo-layout,
   .fx-pagefade .sb-page.sb-content-enter > .storyboard-layout,
