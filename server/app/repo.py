@@ -626,9 +626,13 @@ async def list_active_matching_items(
             from matching_items mi
             join projects p on p.id = mi.project_id
               and p.user_id = %s and p.deleted_at is null
+            -- 썸네일은 등록 직후엔 업로드 원본이지만, 누끼(matching_cutout) 워커가
+            -- 파생 컷으로 갈아끼운다. 'upload' 만 허용하면 누끼 성공 순간 조인이 깨져
+            -- 커스텀 아이템이 목록에서 통째로 사라진다(2026-08-13 리뷰 C1).
             join assets thb on thb.id = mi.thumbnail_asset_id
               and thb.user_id = mi.owner_user_id and thb.project_id = mi.project_id
-              and thb.source = 'upload' and thb.visibility = 'private' and thb.deleted_at is null
+              and thb.source in ('upload', 'derived')
+              and thb.visibility = 'private' and thb.deleted_at is null
             join assets img on img.id = mi.image_asset_id
               and img.user_id = mi.owner_user_id and img.project_id = mi.project_id
               and img.source = 'derived' and img.visibility = 'private' and img.deleted_at is null
@@ -695,7 +699,7 @@ async def get_custom_matching_item(
                    mi.color_brightness, mi.sort_order, mi.is_active,
                    true as is_custom,
                    img.id::text as image_asset_id, img.r2_key as image_key,
-                   img.r2_bucket as image_bucket, img.metadata as image_metadata,
+                   img.r2_bucket as image_bucket, img.metadata as image_meta,
                    thb.id::text as thumbnail_asset_id, thb.r2_key as thumb_key,
                    thb.r2_bucket as thumb_bucket
             from matching_items mi
@@ -821,7 +825,11 @@ async def delete_custom_matching_item(
 async def soft_delete_unreferenced_custom_assets(
     conn: AsyncConnection, user_id: str, project_id: str, asset_ids: list[str]
 ) -> list[dict]:
-    """Soft-delete custom source/grid assets only when no known product or FK consumer uses them."""
+    """Soft-delete custom source/grid/cutout assets only when no product or FK consumer uses them.
+
+    `custom_match_cutout` 은 누끼 워커가 만든 파생 컷(썸네일)이다. 원본 업로드·원본 grid 와
+    같은 생명주기라 "내 옷 삭제" 한 번에 같이 회수되어야 한다(2026-08-13 리뷰 I4).
+    """
     if not asset_ids:
         return []
     async with conn.cursor() as cur:
@@ -829,7 +837,8 @@ async def soft_delete_unreferenced_custom_assets(
             """
             update assets a set deleted_at = now()
             where a.id = any(%s::uuid[]) and a.user_id = %s and a.project_id = %s
-              and a.metadata->>'purpose' in ('custom_match_source', 'custom_match_grid')
+              and a.metadata->>'purpose' in ('custom_match_source', 'custom_match_grid',
+                                            'custom_match_cutout')
               and not exists (select 1 from matching_items mi
                               where mi.image_asset_id = a.id or mi.thumbnail_asset_id = a.id)
               and not exists (select 1 from mannequin_cuts mc where mc.asset_id = a.id)
