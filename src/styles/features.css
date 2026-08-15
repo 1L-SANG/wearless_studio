@@ -121,8 +121,15 @@
 .color-pick { margin-top: 16px; padding-top: 16px; box-shadow: 0 -1px 0 0 var(--ring); }
 .color-pick-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .color-pick-head .lbl { margin: 0; }
-.swatch-grid { display: grid; grid-template-columns: repeat(6, max-content); gap: 10px; }
-@media (max-width: 720px) { .swatch-grid { grid-template-columns: repeat(3, max-content); } }
+/* 7열 × 2행 = 13색 + '직접 입력' 14칸이 딱 맞는다(2026-08-15 사용자 결정):
+   첫 줄 맨 오른쪽 = 퍼플, 둘째 줄 맨 오른쪽(핑크 옆) = 직접 입력.
+   justify-items:start 가 핵심 — 6열이던 옛 배치에선 입력칸이 1열 트랙을 밀어 같은 열의
+   화이트·레드까지 같이 늘어났다(실측 90.5→103.5px). 칩을 트랙에 늘리지 않으면 입력칸이
+   길어져도 다른 칩 폭은 그대로다. */
+.swatch-grid { display: grid; grid-template-columns: repeat(7, max-content); gap: 10px;
+  align-items: center; justify-items: start; }
+@media (max-width: 860px) { .swatch-grid { grid-template-columns: repeat(4, max-content); } }
+@media (max-width: 560px) { .swatch-grid { grid-template-columns: repeat(3, max-content); } }
 .swatch { display: inline-flex; align-items: center; gap: 8px; padding: 7px 13px 7px 8px; border-radius: var(--r-pill);
   background: #fff; box-shadow: 0 0 0 1px var(--ring); cursor: pointer; transition: box-shadow .14s; font-size: 13px; font-weight: 500; color: var(--fg-1); border: 0; }
 .swatch:hover { box-shadow: 0 0 0 1px var(--ring-strong); }
@@ -130,7 +137,7 @@
 .swatch-dot { width: 18px; height: 18px; border-radius: 50%; flex: none; box-shadow: inset 0 0 0 1px rgba(34,42,53,.14); }
 .swatch .check { margin-left: 1px; color: var(--fg-1); }
 .swatch:disabled, .color-name-input:disabled { cursor: default; opacity: .62; }
-.color-name-input-wrap { align-self: center; }
+.color-name-input-wrap { align-self: center; flex: 0 0 auto; }  /* 남는 공간을 먹지 않게 */
 .color-name-input { max-width: 220px; padding-top: 7px; padding-bottom: 7px; font-size: 13px; }
 
 /* collapsed product summary (shown above the inline analysis) */

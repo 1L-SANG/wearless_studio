@@ -31,13 +31,14 @@ SUBCATEGORIES = (
 FITS = ("slim", "regular", "semi_over", "over")
 GENDERS = ("women", "men")
 SWATCH_IDS = (
-    "white", "gray", "black", "ivory", "beige", "brown",
+    "white", "gray", "black", "ivory", "beige", "brown", "purple",
     "red", "yellow", "green", "blue", "navy", "pink",
 )
 SWATCH_LABELS = {
     "white": "화이트", "gray": "그레이", "black": "블랙", "ivory": "아이보리",
     "beige": "베이지", "brown": "브라운", "red": "레드", "yellow": "옐로우",
     "green": "그린", "blue": "블루", "navy": "네이비", "pink": "핑크",
+    "purple": "퍼플",
 }
 MAX_SELLING_POINTS = 2
 

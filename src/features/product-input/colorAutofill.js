@@ -11,6 +11,7 @@ const DEFAULT_SWATCH_LABELS = Object.freeze({
   blue: '블루',
   navy: '네이비',
   pink: '핑크',
+  purple: '퍼플',
 });
 
 const hasText = (value) => typeof value === 'string' && value.trim().length > 0;
