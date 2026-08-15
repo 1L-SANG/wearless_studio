@@ -25,6 +25,7 @@ from dataclasses import dataclass
 
 import cv2
 import numpy as np
+from PIL import Image, ImageOps
 
 #: Pinned. The cutout cache key includes this, so changing it invalidates every stored cutout
 #: rather than silently mixing two models' output.
@@ -42,7 +43,13 @@ MODEL_VERSION = f"{MODEL_ID}@grid8"
 #:
 #: v2: encode-once + solidity selection + mask-distance pruning (was: per-prompt encoding,
 #:     largest-area selection, bbox-distance pruning).
-ALGORITHM_VERSION = "sam2-grid8-v2"
+#: v3: EXIF-orientation-aware decode. cv2.imdecode ignores the Orientation tag, so portrait
+#:     phone photos entered inference sideways — the centre-touch gate then landed between a
+#:     bootcut's legs and selected the white backdrop wedge instead of the garment
+#:     (2026-08-15, verified with a full candidate dump: the garment mask existed at
+#:     areaFrac 0.5 and was rejected as "not centred"). Cached sideways cutouts must not
+#:     survive, hence the version bump.
+ALGORITHM_VERSION = "sam2-grid8-v3"
 
 #: Point-grid prompting, unchanged from the validated spike: 8x8 = 64 prompts, enough to catch
 #: sleeves and torso separately while staying practical on CPU.
@@ -348,6 +355,24 @@ def select_garment_mask(masks: list[np.ndarray]) -> tuple[np.ndarray | None, dic
                   "primarySolidity": solidity, **st, "prune": prune}
 
 
+def decode_source_bgr(image_bytes: bytes) -> np.ndarray | None:
+    """소스 바이트 → EXIF 회전 적용된 BGR 배열. 디코드 불가면 None.
+
+    폰 세로 사진은 픽셀이 누운 채 Orientation 태그로만 서 있다. cv2.imdecode 는 태그를
+    무시해 SAM 이 누운 프레임을 봤고, select_garment_mask 의 '중앙 접촉' 게이트가 옷
+    (areaFrac 0.5)을 버리고 다리 사이 흰 배경 조각을 골랐다(2026-08-15 실사고 — 그
+    조각이 flat-lay 재렌더로 흘러가 칼이 그려졌다). 브라우저·garment_grid 는 태그를
+    적용하므로 사람 눈과 파이프라인이 같은 방향을 봐야 한다.
+    """
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as im:
+            upright = ImageOps.exif_transpose(im)
+            rgb = np.array(upright.convert("RGB"))
+        return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    except Exception:  # noqa: BLE001 - 디코드 실패는 호출부가 None 으로 판정한다
+        return None
+
+
 def to_cutout_png(bgr: np.ndarray, mask: np.ndarray, *,
                   max_px: int = CUTOUT_MAX_PX) -> bytes:
     """Original pixels + alpha. No redraw, no recolour, no resize.
@@ -492,7 +517,7 @@ class Sam2Segmenter:
         took 94s on MPS, which is minutes per garment for no benefit — mask boundaries at this
         scale are smooth enough that the downscale costs nothing visible.
         """
-        bgr = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+        bgr = decode_source_bgr(image_bytes)
         if bgr is None:
             raise SegmentationUnavailable("source image failed to decode")
         h, w = bgr.shape[:2]
