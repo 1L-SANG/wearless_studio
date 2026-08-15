@@ -682,12 +682,18 @@ export const httpAdapter = {
     analysisCache = { projectId, analysis };
     return { analysis };
   },
+  // 이 함수가 새로 아는 건 matchClothing 뿐이다. 왕복 두 번(GET /analysis → match-candidates)
+  // 뒤에 착지하므로, 서버 응답을 통째로 캐시 베이스로 쓰면 그 사이 저장된 편집이 캐시에서
+  // 사라진다 — 그리고 saveAnalysis 는 이 캐시로 full REPLACE payload 를 만들기 때문에
+  // 다음 저장이 서버 값을 옛것으로 되돌린다(2026-08-14 재리뷰 I-A). 베이스는 항상
+  // "지금 캐시"(없을 때만 서버 응답)로 잡고, 캐시는 왕복이 끝난 뒤에 읽는다.
   async refreshMatchClothing(projectId) {
     const saved = await http(`/v1/projects/${projectId}/analysis`);
     const matchClothing = await recommendMatchHttp(
       projectId, saved, saved.matchClothing || [], { defaultSelection: false },
     );
-    const analysis = { ...saved, matchClothing };
+    const prev = cachedAnalysisFor(projectId);
+    const analysis = { ...(prev || saved), matchClothing };
     analysisCache = { projectId, analysis };
     return analysis;
   },

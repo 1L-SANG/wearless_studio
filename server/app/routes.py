@@ -33,7 +33,7 @@ from .agents import (
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
 from .services import (editor_garment_mask, garment_grid, input_qc,
-                       mannequin_tone_render, matching, retrieval)
+                       mannequin_tone_render, matching, matching_cutout, retrieval)
 from .auth import require_user
 from .db import get_conn
 from .models import (
@@ -235,7 +235,8 @@ def _custom_match_metadata(expected_type: str) -> dict:
     }
 
 
-def _matching_item_to_api(r2: R2Client, item: dict, *, compatible: bool = True) -> dict:
+def _matching_item_to_api(r2: R2Client, item: dict, *, compatible: bool = True,
+                          has_active_cutout_job: bool = False) -> dict:
     return {
         "id": item["id"],
         "name": item["name"],
@@ -254,6 +255,11 @@ def _matching_item_to_api(r2: R2Client, item: dict, *, compatible: bool = True) 
         "selected": False,
         "isCustom": bool(item.get("is_custom")),
         "isCompatible": compatible,
+        "cutoutStatus": matching_cutout.cutout_status_for(
+            is_custom=bool(item.get("is_custom")),
+            image_meta=item.get("image_meta"),
+            has_active_job=has_active_cutout_job,
+        ),
     }
 
 
@@ -1086,6 +1092,19 @@ async def match_candidates(
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
         items = await repo.list_active_matching_items(conn, user_id, project_id)
+        # 커스텀 아이템은 프로젝트당 하나라 활성 누끼 잡 여부도 bool 하나면 모든
+        # 커스텀 아이템에 공유할 수 있다(리스트 전체를 다시 조회하지 않는다). 커스텀
+        # 아이템이 없으면 조회 자체를 생략한다. 조회가 실패해도 매칭 응답은 살린다 —
+        # 실패 시 cutoutStatus 는 "failed" 쪽으로 폴백해 화면은 원본을 그대로 보여준다.
+        has_active_cutout_job = False
+        if any(item.get("is_custom") for item in items):
+            try:
+                has_active_cutout_job = await repo.has_active_matching_cutout_job(
+                    conn, project_id
+                )
+            except Exception:  # noqa: BLE001 - 잡 상태 조회 실패가 매칭 응답을 막지 않는다
+                logger.warning("matching_cutout active-job lookup failed project=%s",
+                               project_id, exc_info=True)
         # 색은 상품/분석에 이미 저장된 구조화 값만 읽는다. 요청 중 모델 호출 없음.
         # 후보 조회를 먼저 끝내 두어 부가적인 상품색 조회가 실패해도 추천 자체는 살린다.
         product_color = None
@@ -1131,9 +1150,48 @@ async def match_candidates(
         (item, item.get("clothing_type") == expected_type) for item in custom_items
     ] + [(item, True) for item in ranked]
     return JSONResponse([
-        _matching_item_to_api(r2, item, compatible=compatible)
+        _matching_item_to_api(r2, item, compatible=compatible,
+                              has_active_cutout_job=has_active_cutout_job)
         for item, compatible in ordered if item.get("thumb_key")
     ])
+
+
+async def _enqueue_matching_cutout(conn, *, settings, user_id, project_id, matching_item_id,
+                                   source_asset_ids, source_keys, grid_asset_id=None) -> bool:
+    """커스텀 매칭 의류 누끼 잡을 건다. 절대 등록을 막지 않는다.
+
+    커밋 뒤에 별도로 돈다 — 큐잉 실패가 방금 성공한 매칭 등록을 되돌리면 본말전도다
+    (2026-08-12 sam_preprocess·tone editor 에서 같은 규율).
+
+    플래그가 off 면 완전 no-op 이다. 워커가 어차피 skip 할 잡 행을 쌓지 않고, enqueue 와
+    skip 사이에 match-candidates 가 'processing' 을 돌려 셀러 이미지를 스켈레톤으로
+    가리는 일도 없다(2026-08-13 리뷰 I3). 워커 쪽 플래그 가드는 그대로 둔다 —
+    잡이 큐에 있는 동안 플래그가 내려가는 경우가 남는다.
+
+    **잡 행이 실제로 생겼는지**를 돌려준다(2026-08-14 재리뷰 I-B). 예외를 삼키는 건
+    그대로지만, 삼킨 사실을 호출자가 알아야 "처리 중"이라는 반증 불가능한 거짓을
+    응답·저장 payload 에 굳히지 않는다. 활성 잡 합류(created=False)도 잡은 있는
+    것이므로 True 다.
+    """
+    if getattr(settings, "matching_cutout", "off") != "on":
+        return False
+    try:
+        job, _created = await repo.create_job(
+            conn, user_id=user_id, project_id=project_id, kind="matching_cutout",
+            payload={"matchingItemId": matching_item_id,
+                     "sourceAssetIds": source_asset_ids, "sourceKeys": source_keys,
+                     "gridAssetId": grid_asset_id},
+            idempotency_key=(f"{project_id}:matching_cutout:{matching_item_id}:"
+                             f"{matching_cutout.ALGORITHM_VERSION}"),
+            credits_reserved=0, metadata={})
+        await conn.commit()
+    except Exception:  # noqa: BLE001 - 큐잉 실패가 매칭 등록을 되돌리지 않는다
+        with contextlib.suppress(Exception):
+            await conn.rollback()
+        logger.warning("matching_cutout enqueue failed project=%s item=%s",
+                       project_id, matching_item_id, exc_info=True)
+        return False
+    return job is not None
 
 
 @router.post(
@@ -1262,16 +1320,50 @@ async def add_custom_match_item(
                 thumbnail_asset_id=asset_ids[0],
             )
             row = await repo.get_custom_matching_item(conn, user_id, project_id)
-            item = _matching_item_to_api(r2, row, compatible=True)
+            # 커밋 직후 누끼 잡을 건다(아래) — 그래서 이 응답·저장 payload 의
+            # cutoutStatus 는 "곧 도는 잡"을 반영해야 한다. 플래그가 off 면 잡이 아예
+            # 없으므로 조회 경로와 같은 값(원본 표시)으로 굳는다.
+            cutout_enabled = request.app.state.settings.matching_cutout == "on"
+            item = _matching_item_to_api(r2, row, compatible=True,
+                                         has_active_cutout_job=cutout_enabled)
             payload = _analysis_with_added_custom(
                 await repo.get_analysis(conn, project_id) or {}, item
             )
             saved = await repo.save_analysis(conn, project_id, payload)
             await conn.commit()
+            queued = await _enqueue_matching_cutout(
+                conn,
+                settings=request.app.state.settings,
+                user_id=user_id,
+                project_id=project_id,
+                matching_item_id=row["id"],
+                source_asset_ids=asset_ids,
+                source_keys=[a["r2_key"] for a in assets],
+                grid_asset_id=grid_asset_id,
+            )
+            if cutout_enabled and not queued:
+                # 큐잉이 조용히 실패했다 — 잡 없는 "처리 중"은 아무도 반증할 수 없고
+                # 셀러는 방금 올린 사진 대신 스켈레톤만 본다(2026-08-14 재리뷰 I-B).
+                # 등록은 이미 커밋됐으므로 되돌리지 않고, 응답·저장 payload 만 조회
+                # 경로와 같은 값(원본 표시)으로 정정한다. 정정 저장이 또 실패해도
+                # 응답은 이미 참이다 — 등록을 500 으로 뒤엎지 않는다.
+                item = _matching_item_to_api(r2, row, compatible=True,
+                                             has_active_cutout_job=False)
+                try:
+                    saved = await repo.save_analysis(
+                        conn, project_id,
+                        _analysis_with_added_custom(saved["payload"] or {}, item))
+                    await conn.commit()
+                except Exception:  # noqa: BLE001 - 등록은 이미 성공했다
+                    with contextlib.suppress(Exception):
+                        await conn.rollback()
+                    logger.warning("matching_cutout status repair failed project=%s item=%s",
+                                   project_id, row["id"], exc_info=True)
     except errors.UniqueViolation as exc:
         raise _custom_match_error(
             409, "custom_match_item_exists", "이미 내 옷이 있어요. 지우고 다시 올려주세요."
         ) from exc
+    _wake_dispatcher(request)
     return {
         "item": item,
         "analysis": {"projectId": saved["project_id"], **(saved["payload"] or {})},
@@ -1297,7 +1389,9 @@ async def remove_custom_match_item(
             raise _not_found()
         item = await repo.get_custom_matching_item(conn, user_id, project_id)
         if item:
-            source_asset_ids = list((item.get("image_metadata") or {}).get("sourceAssetIds") or [])
+            # 누끼 스왑 뒤엔 image asset 이 워커가 만든 파생 grid 다. 그 metadata 가
+            # 원본 업로드·원본 grid id 를 이월해 주므로 정리 대상은 여기서 다 모인다.
+            source_asset_ids = list((item.get("image_meta") or {}).get("sourceAssetIds") or [])
             asset_ids = list(dict.fromkeys([
                 item.get("image_asset_id"), item.get("thumbnail_asset_id"), *source_asset_ids,
             ]))

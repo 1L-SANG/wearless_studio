@@ -27,7 +27,7 @@ const custom = {
   imageUrl: 'https://img.test/grid.jpg',
   thumbnailUrl: 'https://img.test/source-1.png',
   clothingType: 'bottom', category: '스커트', fit: 'regular', length: 'midi',
-  fitCategory: 'skirt', isCustom: true, isCompatible: true,
+  fitCategory: 'skirt', isCustom: true, isCompatible: true, cutoutStatus: null,
 };
 
 test('http match mapper preserves custom and compatibility fields', () => {

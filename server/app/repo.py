@@ -605,7 +605,8 @@ async def list_active_matching_items(
                    false as is_custom,
                    img.id::text as image_asset_id, img.r2_key as image_key,
                    thb.id::text as thumbnail_asset_id, thb.r2_key as thumb_key,
-                   img.r2_bucket as image_bucket, thb.r2_bucket as thumb_bucket
+                   img.r2_bucket as image_bucket, thb.r2_bucket as thumb_bucket,
+                   img.metadata as image_meta
             from matching_items mi
             -- 썸네일은 표시 필수 → seed/public 자산만 inner join (비-seed·비공개·삭제 키 노출 차단,
             -- limit 정확도 보장). 본 이미지는 동일 조건 left join(선택).
@@ -623,13 +624,18 @@ async def list_active_matching_items(
                    true as is_custom,
                    img.id::text as image_asset_id, img.r2_key as image_key,
                    thb.id::text as thumbnail_asset_id, thb.r2_key as thumb_key,
-                   img.r2_bucket as image_bucket, thb.r2_bucket as thumb_bucket
+                   img.r2_bucket as image_bucket, thb.r2_bucket as thumb_bucket,
+                   img.metadata as image_meta
             from matching_items mi
             join projects p on p.id = mi.project_id
               and p.user_id = %s and p.deleted_at is null
+            -- 썸네일은 등록 직후엔 업로드 원본이지만, 누끼(matching_cutout) 워커가
+            -- 파생 컷으로 갈아끼운다. 'upload' 만 허용하면 누끼 성공 순간 조인이 깨져
+            -- 커스텀 아이템이 목록에서 통째로 사라진다(2026-08-13 리뷰 C1).
             join assets thb on thb.id = mi.thumbnail_asset_id
               and thb.user_id = mi.owner_user_id and thb.project_id = mi.project_id
-              and thb.source = 'upload' and thb.visibility = 'private' and thb.deleted_at is null
+              and thb.source in ('upload', 'derived')
+              and thb.visibility = 'private' and thb.deleted_at is null
             join assets img on img.id = mi.image_asset_id
               and img.user_id = mi.owner_user_id and img.project_id = mi.project_id
               and img.source = 'derived' and img.visibility = 'private' and img.deleted_at is null
@@ -638,6 +644,31 @@ async def list_active_matching_items(
             (user_id, user_id, project_id),
         )
         return await cur.fetchall()
+
+
+#: 누끼 잡을 "진행 중"으로 인정하는 최대 나이(분). 디스패처는 프로세스당 완전 직렬이라
+#: 앞선 마네킹 잡이 길면 pending 이 그만큼 대기하고, recover_stale_leases 는 running 만
+#: 건드리므로 pending 은 스스로 타임아웃되지 않는다 — 나이 상한이 없으면 카드가 셀러의
+#: 업로드 대신 스켈레톤에 무기한 갇힌다(2026-08-14 재리뷰 I-B).
+MATCHING_CUTOUT_ACTIVE_WINDOW_MINUTES = 10
+
+
+async def has_active_matching_cutout_job(conn: AsyncConnection, project_id: str) -> bool:
+    """프로젝트에 진행 중인 커스텀 매칭 누끼 잡이 있는지. 프로젝트당 커스텀 1개라 bool 하나로 충분.
+
+    나이 상한을 넘긴 잡은 없는 것으로 본다. 상한을 넘겨도 잡 자체는 계속 살아 있고,
+    나중에 성공하면 스왑된 파생 asset 이 상태를 ready 로 만든다 — 상한은 화면이 원본을
+    보여줄지 스켈레톤을 보여줄지만 가른다(fail-open).
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select exists (select 1 from jobs where project_id = %s "
+            "and kind = 'matching_cutout' and status in ('pending', 'running') "
+            "and created_at > now() - (%s * interval '1 minute')) as active",
+            (project_id, MATCHING_CUTOUT_ACTIVE_WINDOW_MINUTES),
+        )
+        row = await cur.fetchone()
+    return bool(row and row["active"])
 
 
 async def get_uploaded_assets_for_project(
@@ -684,7 +715,7 @@ async def get_custom_matching_item(
                    mi.color_brightness, mi.sort_order, mi.is_active,
                    true as is_custom,
                    img.id::text as image_asset_id, img.r2_key as image_key,
-                   img.r2_bucket as image_bucket, img.metadata as image_metadata,
+                   img.r2_bucket as image_bucket, img.metadata as image_meta,
                    thb.id::text as thumbnail_asset_id, thb.r2_key as thumb_key,
                    thb.r2_bucket as thumb_bucket
             from matching_items mi
@@ -782,6 +813,27 @@ async def insert_custom_matching_item(
         return (await cur.fetchone())["id"]
 
 
+async def swap_matching_item_assets(
+    conn: AsyncConnection, *, matching_item_id: str, project_id: str,
+    thumbnail_asset_id: str, image_asset_id: str,
+) -> int:
+    """커스텀 매칭 아이템의 표시·생성입력 asset 을 누끼본으로 교체한다. 갱신 행 수 반환.
+
+    project_id 로 한 번 더 스코프해 다른 프로젝트의 아이템을 건드리지 않는다.
+
+    0행은 실패다 — 누끼가 도는 사이 셀러가 "내 옷"을 지우면 아이템은 없는데 파생
+    asset 2개는 커밋된다. 삭제 경로는 **현재 아이템의** metadata 만 훑으므로 그 둘은
+    아무도 도달할 수 없는 고아가 된다. 호출자가 0을 보고 트랜잭션을 버려야 한다
+    (2026-08-14 재리뷰 M-4).
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update matching_items set thumbnail_asset_id = %s, image_asset_id = %s "
+            "where id = %s and project_id = %s and owner_user_id is not null",
+            (thumbnail_asset_id, image_asset_id, matching_item_id, project_id))
+        return cur.rowcount
+
+
 async def delete_custom_matching_item(
     conn: AsyncConnection, user_id: str, project_id: str
 ) -> None:
@@ -795,7 +847,11 @@ async def delete_custom_matching_item(
 async def soft_delete_unreferenced_custom_assets(
     conn: AsyncConnection, user_id: str, project_id: str, asset_ids: list[str]
 ) -> list[dict]:
-    """Soft-delete custom source/grid assets only when no known product or FK consumer uses them."""
+    """Soft-delete custom source/grid/cutout assets only when no product or FK consumer uses them.
+
+    `custom_match_cutout` 은 누끼 워커가 만든 파생 컷(썸네일)이다. 원본 업로드·원본 grid 와
+    같은 생명주기라 "내 옷 삭제" 한 번에 같이 회수되어야 한다(2026-08-13 리뷰 I4).
+    """
     if not asset_ids:
         return []
     async with conn.cursor() as cur:
@@ -803,7 +859,8 @@ async def soft_delete_unreferenced_custom_assets(
             """
             update assets a set deleted_at = now()
             where a.id = any(%s::uuid[]) and a.user_id = %s and a.project_id = %s
-              and a.metadata->>'purpose' in ('custom_match_source', 'custom_match_grid')
+              and a.metadata->>'purpose' in ('custom_match_source', 'custom_match_grid',
+                                            'custom_match_cutout')
               and not exists (select 1 from matching_items mi
                               where mi.image_asset_id = a.id or mi.thumbnail_asset_id = a.id)
               and not exists (select 1 from mannequin_cuts mc where mc.asset_id = a.id)

@@ -151,6 +151,7 @@ class Settings:
     mannequin_base_fidelity_observe_regenerations: str = "off"
     #: 톤 에디터(색감·밝기). off = 마스크 전처리도, 에디터 API 도 열리지 않는다.
     mannequin_tone_editor: str = "off"
+    matching_cutout: str = "off"  # 커스텀 매칭 의류 누끼(배경 제거). off면 잡 안 돎.
     mannequin_prompt_file: str | None = None  # 없으면 server/prompts/mannequin_generate_v1.txt
     mannequin_prompt_version: str = "v1"
     # 여성 기본 가슴 볼륨 2패스 (2026-07-30 스파이크). 생성된 컷에 "가슴만 바꿔라"를 단독 과제로
@@ -400,6 +401,7 @@ def load_settings() -> Settings:
         mannequin_tone_editor=_flag("MANNEQUIN_TONE_EDITOR", "off", {"off", "on"}),
         mannequin_base_fidelity_observe_regenerations=_flag(
             "MANNEQUIN_BASE_FIDELITY_OBSERVE_REGENERATIONS", "off", {"off", "on"}),
+        matching_cutout=_flag("MATCHING_CUTOUT", "off", {"off", "on"}),
         facemarket_enabled=(os.getenv("FACEMARKET_ENABLED", "false").lower() == "true"),
         detailpage_fallback_model_id=os.getenv("DETAILPAGE_FALLBACK_MODEL_ID", "mB"),
         personalization_enabled=(

@@ -1,13 +1,16 @@
 import asyncio
+import re
 
 from app import repo
 
 
 class _Cursor:
-    def __init__(self, *, row=None, rows=None):
+    def __init__(self, *, row=None, rows=None, rowcount=1):
         self.row = row
         self.rows = rows or []
+        self.rowcount = rowcount
         self.calls = []
+        self.raw_calls = []
 
     async def __aenter__(self):
         return self
@@ -17,6 +20,7 @@ class _Cursor:
 
     async def execute(self, sql, params=None):
         self.calls.append((" ".join(sql.split()), params))
+        self.raw_calls.append((sql, params))
 
     async def fetchone(self):
         return self.row
@@ -31,6 +35,93 @@ class _Conn:
 
     def cursor(self):
         return self._cursor
+
+
+def _sql_without_comments(sql: str) -> str:
+    """`-- 주석` 을 제거하고 공백을 정규화한다. 주석 문구가 조건절로 오인되지 않게."""
+    return " ".join(re.sub(r"--[^\n]*", " ", sql).split()).lower()
+
+
+def _arm(sql: str, index: int) -> str:
+    arms = _sql_without_comments(sql).split("union all")
+    assert len(arms) == 2, "curated/custom 두 arm"
+    return arms[index]
+
+
+def _join_conditions(arm: str, alias: str) -> str:
+    """`join assets <alias> on ...` 의 조건부만 잘라낸다(다음 join/where 직전까지).
+
+    SQL 전체 문자열 검색이 아니라 해당 조인의 조건만 본다 — 다른 arm·다른 별칭의
+    조건이 섞여 통과하는 일이 없게.
+    """
+    head = f"join assets {alias} on "
+    start = arm.index(head) + len(head)
+    tail = arm[start:]
+    stops = [m.start() for m in re.finditer(r"\b(?:left join|join|where)\b", tail)]
+    return tail[: (stops[0] if stops else len(tail))]
+
+
+# 2026-08-13 리뷰 C1 회귀 — 누끼 워커가 thumbnail_asset_id 를 source='derived' 파생 컷으로
+# 갈아끼운다. 커스텀 arm 썸네일 조인이 'upload' 만 받으면 누끼 성공 순간 조인이 깨져
+# "내 옷" 카드가 목록에서 통째로 사라진다(카드 소멸 + 선택 해제).
+def test_custom_arm_thumbnail_join_survives_cutout_asset_swap():
+    cursor = _Cursor(rows=[])
+    asyncio.run(repo.list_active_matching_items(_Conn(cursor), "owner-1", "project-1"))
+    raw_sql = cursor.raw_calls[0][0]
+
+    custom_thumb = _join_conditions(_arm(raw_sql, 1), "thb")
+    assert "'upload'" in custom_thumb, "등록 직후 원본 썸네일"
+    assert "'derived'" in custom_thumb, "누끼 스왑 뒤 파생 썸네일"
+    assert "source = 'upload'" not in custom_thumb, "파생을 배제하는 옛 등호 조건 금지"
+    # source 완화가 소유자 스코프까지 느슨하게 만들지 않았는지 — 이 세 술어가 "남의
+    # 프로젝트 asset 을 내 카드로 끌어오지 못한다"는 보장 전부다(2026-08-14 재리뷰 M-7).
+    assert "thb.user_id = mi.owner_user_id" in custom_thumb, "소유자 스코프는 유지"
+    assert "thb.project_id = mi.project_id" in custom_thumb, "프로젝트 스코프는 유지"
+    assert "thb.visibility = 'private'" in custom_thumb, "소유자 스코프는 유지"
+    assert "thb.deleted_at is null" in custom_thumb
+
+    custom_image = _join_conditions(_arm(raw_sql, 1), "img")
+    assert "'derived'" in custom_image
+
+    # 큐레이션 arm 은 여전히 seed/public 만 — 커스텀 완화가 새어 나가지 않았는지.
+    curated_thumb = _join_conditions(_arm(raw_sql, 0), "thb")
+    assert "thb.source = 'seed'" in curated_thumb
+    assert "'derived'" not in curated_thumb
+
+
+def test_custom_matching_item_exposes_image_metadata_under_the_shared_key():
+    # _matching_item_to_api 와 삭제 경로가 함께 읽는 키 이름이 하나여야 한다(리뷰 M7).
+    cursor = _Cursor(row=None)
+    asyncio.run(repo.get_custom_matching_item(_Conn(cursor), "owner-1", "project-1"))
+    sql = _sql_without_comments(cursor.raw_calls[0][0])
+    assert "img.metadata as image_meta" in sql
+    assert "as image_metadata" not in sql
+
+
+# 2026-08-14 재리뷰 I-B — 디스패처는 프로세스당 직렬이고 recover_stale_leases 는 running 만
+# 건드린다. 나이 상한이 없으면 앞선 잡에 밀린 pending 하나가 카드를 무기한 스켈레톤에 가둔다.
+def test_active_cutout_job_query_bounds_stuck_pending_jobs_by_age():
+    cursor = _Cursor(row={"active": True})
+    active = asyncio.run(repo.has_active_matching_cutout_job(_Conn(cursor), "project-1"))
+
+    sql, params = cursor.calls[0]
+    lowered = sql.lower()
+    assert active is True
+    assert "kind = 'matching_cutout'" in lowered
+    assert "status in ('pending', 'running')" in lowered
+    assert "created_at > now() - (%s * interval '1 minute')" in lowered
+    assert params == ("project-1", repo.MATCHING_CUTOUT_ACTIVE_WINDOW_MINUTES)
+    assert repo.MATCHING_CUTOUT_ACTIVE_WINDOW_MINUTES == 10
+
+
+def test_custom_asset_cleanup_covers_worker_derived_cutouts():
+    # 리뷰 I4 — 누끼 파생 컷도 "내 옷 삭제" 한 번에 회수돼야 한다.
+    cursor = _Cursor(rows=[])
+    asyncio.run(repo.soft_delete_unreferenced_custom_assets(
+        _Conn(cursor), "owner-1", "project-1", ["asset-1"]))
+    sql = _sql_without_comments(cursor.raw_calls[0][0])
+    for purpose in ("custom_match_source", "custom_match_grid", "custom_match_cutout"):
+        assert f"'{purpose}'" in sql
 
 
 def test_list_active_matching_items_uses_two_explicit_security_arms():
@@ -48,9 +139,25 @@ def test_list_active_matching_items_uses_two_explicit_security_arms():
     assert "thb.visibility = 'public'" in sql.lower()
     assert "p.user_id = %s" in sql.lower()
     assert "mi.owner_user_id = %s and mi.project_id = %s" in sql.lower()
-    assert "thb.source = 'upload'" in sql.lower()
+    assert "thb.source in ('upload', 'derived')" in sql.lower()
     assert "img.source = 'derived'" in sql.lower()
     assert params == ("owner-1", "owner-1", "project-1")
+
+
+# 2026-08-14 재리뷰 M-4 — 워커가 "아이템이 사라졌다"를 알 수 있는 유일한 신호가 행 수다.
+def test_asset_swap_reports_how_many_rows_it_actually_updated():
+    gone = _Cursor(rowcount=0)
+    updated = asyncio.run(repo.swap_matching_item_assets(
+        _Conn(gone), matching_item_id="custom_x", project_id="project-1",
+        thumbnail_asset_id="thumb", image_asset_id="grid"))
+
+    sql, params = gone.calls[0]
+    assert updated == 0
+    assert "owner_user_id is not null" in sql.lower(), "커스텀만 스왑"
+    assert params == ("thumb", "grid", "custom_x", "project-1")
+    assert asyncio.run(repo.swap_matching_item_assets(
+        _Conn(_Cursor(rowcount=1)), matching_item_id="custom_x", project_id="project-1",
+        thumbnail_asset_id="thumb", image_asset_id="grid")) == 1
 
 
 def test_matching_asset_owner_gate_hides_other_custom_scope():
