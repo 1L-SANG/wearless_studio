@@ -60,7 +60,9 @@ export function staleExampleReason(block, catalog, { gender, clothingType } = {}
 // exampleId 선택만 제거 — 카드·순서·셀러 이미지는 그대로 둔다. baseThumb 로 썸네일을
 // 되돌리고, refScope 도 함께 비운다(exampleId 없이 refScope='pose'가 남으면 화면이
 // "포즈 필수"로 잘못 읽는다 — 공간 세트 쪽과 같은 이유).
-function clearExampleSelection(block) {
+// (후킹 프레임 전환 등 "컷의 틀이 바뀌어 예시가 더는 안 맞는" 자리에서도 같은 규칙을
+// 쓰도록 export — 선택 제거 방식이 두 갈래로 갈라지지 않게 한다.)
+export function clearExampleSelection(block) {
   return {
     ...block,
     exampleId: null,
@@ -69,6 +71,21 @@ function clearExampleSelection(block) {
     thumb: block.baseThumb || block.thumb,
     baseThumb: null,
   };
+}
+
+// 서버가 저장을 400으로 거절하며 meta.exampleId 로 지목한 선택만 떼어낸다.
+// 클라이언트 카탈로그 기준으론 유효해 보여도(발행 회전 직후의 구/신 카탈로그 스큐)
+// 서버 레지스트리가 정본이므로, 지목된 낱개 선택을 걷어내고 재배정할 수 있게 한다.
+// 세트 그룹 소속 블록은 여기서도 건드리지 않는다(세트 검증은 별도 코드로 온다).
+export function stripExampleSelectionsById(blocks, exampleId) {
+  if (!Array.isArray(blocks) || !exampleId) return blocks;
+  let changed = false;
+  const next = blocks.map((block) => {
+    if (!block || block.exampleId !== exampleId || block.spaceGroupId) return block;
+    changed = true;
+    return clearExampleSelection(block);
+  });
+  return changed ? next : blocks;
 }
 
 // 보드 전체를 훑어 낡은 낱개 예시 선택만 떼어낸 새 배열을 돌려준다. 뗄 것이 없으면 원본

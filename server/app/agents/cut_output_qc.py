@@ -44,9 +44,12 @@ GATES = (
     "lightingShadowReflectionDrape",
 )
 STATUSES = ("PASS", "FAIL", "NA", "UNJUDGEABLE")
-REFERENCE_ROLES = ("product", "modelFace", "modelBody", "matching", "example", "plate")
+REFERENCE_ROLES = (
+    "product", "mannequin", "modelFace", "modelBody", "matching", "example", "plate",
+)
 _REFERENCE_ROLE_LABELS = {
     "product": "PRODUCT",
+    "mannequin": "MANNEQUIN (coarse worn-geometry prior only)",
     "modelFace": "MODEL FACE",
     "modelBody": "MODEL FULL BODY",
     "matching": "MATCHING",
@@ -138,8 +141,9 @@ _CORRECTIONS = MappingProxyType({
         "class without leakage."
     ),
     "relatedSceneDifferentPlace": (
-        "Keep the EXAMPLE-owned scene relationship but build a different specific place, changing "
-        "at least one structural element and two furniture, sign, or prop placements."
+        "Keep the EXAMPLE scene relationship but make a coherent different place in the same "
+        "visual family. Remove near-copying or unrelated drift. Do not use change quotas or force "
+        "added, moved, duplicated, or awkwardly staged objects."
     ),
     "lightingShadowReflectionDrape": (
         "Restore pose-driven tension, compression and asymmetric folds plus coherent self, "
@@ -186,8 +190,10 @@ def references_from_manifest(
             raise VisionError(f"cut_output_qc: invalid manifest image {expected_number}")
         label = match.group(2)
         role: str | None
-        if label.startswith(("PRODUCT ", "PRODUCT —", "MANNEQUIN ", "MANNEQUIN —")):
+        if label.startswith(("PRODUCT ", "PRODUCT —")):
             role = "product"
+        elif label.startswith(("MANNEQUIN ", "MANNEQUIN —")):
+            role = "mannequin"
         elif label.startswith(("MODEL FULL BODY ", "MODEL FULL BODY —")):
             role = "modelBody"
         elif label.startswith(("MODEL FACE ", "MODEL FACE —", "MODEL SHEET ",
@@ -375,6 +381,11 @@ def normalize_plan(plan: Any) -> dict:
     if continuity_raw is not None and continuity is None:
         errors.append("invalid_space_set_continuity")
 
+    repeat_raw = source.get("exampleRepeatIndex", 0)
+    example_repeat_index = repeat_raw if type(repeat_raw) is int and repeat_raw >= 0 else 0
+    if type(repeat_raw) is not int or repeat_raw < 0:
+        errors.append("invalid_example_repeat_index")
+
     declared_axes = source.get("declaredFitAxes") or []
     declared_axis_count = len(declared_axes) if isinstance(declared_axes, (list, tuple)) else 0
     return {
@@ -398,6 +409,7 @@ def normalize_plan(plan: Any) -> dict:
         "attributeOwners": dict(sorted(owners.items())),
         "referenceAllowedAttributes": reference_attributes,
         "declaredFitAxisCount": declared_axis_count,
+        "exampleRepeatIndex": example_repeat_index,
         "spaceSetContinuity": continuity,
         "precedence": precedence_contract,
         "contractErrors": sorted(set(errors)),

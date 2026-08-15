@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
   assignGenerationExamples, directionBadgeLabel, exampleSelectionFingerprintFields,
   hasSelectableGenerationExamples, isGenerationCombinationPublic, selectGenerationExamples, shouldMarkStoryboardDirty,
-  storedExampleConditionStatus,
+  storedExampleConditionStatus, repeatedAllExampleVariationIds,
 } from '../../src/lib/generationExamples.js';
 import { defaultStoryboard, isDefaultStoryboardForMode } from '../../src/lib/api/shapes.js';
 import { entryStylingMembers, pickEntrySets } from '../../src/lib/storyboardEntryPlacement.js';
@@ -28,6 +28,28 @@ const block = (id, extra = {}) => ({
   id, source: 'ai', cutType: 'styling', shot: 'full', direction: 'back',
   sectionId: 'section-a', sectionLayout: 'twoColumn', layoutRowId: 'row-a',
   spaceGroupId: null, thumb: `placeholder:${id}`, matchIds: ['ignored'], ...extra,
+});
+
+test('repeated all-scope examples mark only different-color repeats in each section', () => {
+  // 2026-08-14 오너 규칙: 포즈 변주는 같은 예시 + **다른 색상** 반복에만.
+  // 같은 색 반복(복제)은 변주 없이 서버가 1장만 생성해 복제 위치에 복사한다.
+  const shared = example('shared', { direction: 'front' });
+  const blocks = [
+    block('first', { direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'auto' }),
+    block('same-color-copy', { direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'auto' }),
+    block('ivory', { direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'auto', colorId: 'ivory' }),
+    block('explicit', { direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'walking', colorId: 'sky' }),
+    block('pose-scope', { direction: 'front', exampleId: 'shared', refScope: 'pose', pose: 'auto', colorId: 'sky' }),
+    block('space-set', { direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'auto', spaceGroupId: 'set-a', colorId: 'sky' }),
+    block('direction-mismatch', { direction: 'back', exampleId: 'shared', refScope: 'all', pose: 'auto', colorId: 'sky' }),
+    block('sky', { direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'auto', colorId: 'sky' }),
+    block('other-section', { sectionId: 'section-b', direction: 'front', exampleId: 'shared', refScope: 'all', pose: 'auto', colorId: 'ivory' }),
+  ];
+
+  assert.deepEqual(
+    [...repeatedAllExampleVariationIds(blocks, [shared])],
+    ['ivory', 'sky'],
+  );
 });
 const product = { clothingType: 'outer' };
 const releasedStylingSet = storyboardSpaceSetsFor({
@@ -245,6 +267,26 @@ test('existing auto usage counts, keys stay independent, and one/two-item pools 
   assert.deepEqual(result.blocks.map((item) => item.exampleId), ['full-2', 'full-1', 'full-1', 'medium-1', 'medium-1']);
 });
 
+test('colorway rows share one full and one medium generation example across colors', () => {
+  const catalog = [
+    example('full-1'), example('full-2', { rank: 2 }),
+    example('medium-1', { shot: 'medium' }), example('medium-2', { shot: 'medium', rank: 2 }),
+  ];
+  const colorways = ['ivory', 'sky', 'gray'].flatMap((colorId) => [
+    block(`${colorId}-full`, {
+      direction: 'front', colorId, shot: 'full', colorwayGroupId: `colorway__${colorId}`,
+    }),
+    block(`${colorId}-medium`, {
+      direction: 'front', colorId, shot: 'medium', colorwayGroupId: `colorway__${colorId}`,
+    }),
+  ]);
+  const result = assignGenerationExamples(colorways, { catalog, product, gender: 'women' });
+
+  assert.deepEqual(result.blocks.map((item) => item.exampleId), [
+    'full-1', 'medium-1', 'full-1', 'medium-1', 'full-1', 'medium-1',
+  ]);
+});
+
 test('legacy and user choices are protected and only requested new blocks are assigned', () => {
   const result = assignGenerationExamples([
     block('legacy', { exampleId: 'legacy-choice' }),
@@ -370,7 +412,8 @@ test('every supported gender and clothing category seeds styling and horizon set
     const horizonMembers = setMembers.filter((item) => item.cutType === 'horizon');
 
     // 회전 세트는 별도 세트 범위로 성별 내 모든 지원 의류에 배치된다.
-    assert.equal(basic.length, 12, `${gender}/${clothingType} basic`);
+    // 후킹은 시그니처 1컷(2026-08-14 확정) — 총 11컷.
+    assert.equal(basic.length, 11, `${gender}/${clothingType} basic`);
     assert.equal(stylingMembers.length, 4, `${gender}/${clothingType} styling members`);
     assert.equal(horizonMembers.length, 3, `${gender}/${clothingType} rotation members`);
     assert.equal(new Set(setMembers.map((item) => item.spaceGroupId)).size, 3);
@@ -391,7 +434,7 @@ test('every supported gender and clothing category seeds styling and horizon set
     const horizonCuts = (picked.sequenceSet || picked.rotationSet)?.members.length ?? 3;
     assert.equal(
       defaultStoryboard(fourColorsWithDetail, 'extended', context).length,
-      2 + stylingCuts + horizonCuts + 1 + 12 + 4,
+      1 + stylingCuts + horizonCuts + 1 + 9 + 4,
       `${gender}/${clothingType} extended`,
     );
   }
@@ -434,7 +477,8 @@ test('storyboard preserves an in-space pose across shot changes and remains atom
   assert.match(storyboardSource, /await onAtomicChange\(changes, \{ pickerOwnsError: true \}\)/);
   assert.match(storyboardSource, /retryAtomic: true,[^}]*undoLabel:/);
   assert.match(storyboardSource, /latestBlocks\.current !== atomicRetry\.previous/);
-  assert.match(storyboardSource, /const copy = \{ \.\.\.withoutLayoutRow\(bs\[i\]\), id: uid\('blk'\) \}/);
+  // 2026-08-14: 첫 화면 프레임 슬롯의 복제본은 표식 없이 일반 컷 — stripHookFrameFields 경유.
+  assert.match(storyboardSource, /const copy = \{ \.\.\.stripHookFrameFields\(withoutLayoutRow\(bs\[i\]\)\), id: uid\('blk'\) \}/);
   assert.match(storyboardSource, /새 섹션에 맞는 컷 예시를 먼저 골라주세요/);
   assert.match(storyboardSource, /generationExampleStructuralRecipePatch\(\{ \.\.\.current, \.\.\.baseRecipePatch \}, example\)/);
   assert.match(storyboardSource, /includeMirrorExamples=\{effectiveSectionRole === SECTION_ROLES\.STYLING \|\| isMirror\}/);

@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { defaultStoryboard, isDefaultStoryboardForMode } from '../../src/lib/api/shapes.js';
+import { applySeededHookStyle, defaultStoryboard, isDefaultStoryboardForMode } from '../../src/lib/api/shapes.js';
+import { applyHookStyle } from '../../src/lib/storyboardHookFrame.js';
 import {
   applyOpeningRow,
   entryStylingMembers,
@@ -85,21 +86,47 @@ test('seeded boards round-trip as defaults and mode changes re-seed only the mat
   assert.equal(isDefaultStoryboardForMode(relabeled, baseColors, 'basic', seedContext), true);
 });
 
-test('entry placement combines the untouched opening seed into one medium two-column row', () => {
+test('default seed leads with the signature frame; a pair-switched default is still default', () => {
+  // 2026-08-14 첫 화면 스타일(2차 확정): 후킹 섹션은 스타일이 필요로 하는 컷만 —
+  // 시그니처 = 확대 미디움샷 1컷(구 2컷 배치 폐기).
   const seeded = defaultStoryboard(baseColors, 'basic', context('opening-row'));
-  assert.deepEqual(seeded.slice(0, 2).map((block) => block.shot), ['full', 'medium']);
+  const [slot] = seeded;
+  assert.deepEqual([slot.cutType, slot.shot], ['horizon', 'medium']);
+  assert.equal(slot.hookStyle, 'signature');
+  assert.equal(slot.hookTitleOverlay, true);
+  assert.ok(slot.hookFrameId);
+  assert.equal(seeded.filter((block) => block.sectionRole === 'hooking').length, 1);
+  assert.equal(isDefaultStoryboardForMode(seeded, baseColors, 'basic', context('opening-row')), true);
 
-  const placed = applyOpeningRow(seeded);
-  const [hero, benefit] = placed;
-  assert.equal(hasOpeningRow(placed), true);
-  assert.deepEqual([hero.shot, benefit.shot], ['medium', 'medium']);
-  assert.equal(hero.sectionId, benefit.sectionId);
-  assert.equal(hero.sectionLayout, 'twoColumn');
-  assert.equal(benefit.sectionLayout, 'twoColumn');
-  assert.equal(hero.layoutRowId, benefit.layoutRowId);
-  assert.equal(hero.layoutRowVersion, 1);
-  assert.equal(benefit.layoutRowVersion, 1);
-  assert.equal(isDefaultStoryboardForMode(placed, baseColors, 'basic', context('opening-row')), true);
+  // 스타일만 두컷 프레임으로 바꾼 기본 보드도 기본 시드로 인정 — 사진 양 변경 재시드가
+  // 스타일 선택을 존중하며 계속 동작한다(시드 경로는 applySeededHookStyle 이 오른칸을 만든다).
+  const pairSwitched = applySeededHookStyle(seeded, 'pair', baseColors);
+  assert.equal(pairSwitched.filter((block) => block.sectionRole === 'hooking').length, 2);
+  assert.equal(isDefaultStoryboardForMode(pairSwitched, baseColors, 'basic', context('opening-row')), true);
+
+  // UI 전환 경로(Storyboard.jsx applyHookStyleChoice 의 createBlock)와 지문이 어긋나면
+  // pair 보드가 재시드에서 "편집본"으로 오판된다 — 팩토리 동등성 회귀 가드.
+  const uiCreateBlock = (slotSpec) => ({
+    id: 'blk_ui', sectionId: slot.sectionId, sectionRole: 'hooking', contentRole: 'benefit',
+    taxonomyVersion: slot.taxonomyVersion, title: slot.title, source: 'ai',
+    cutType: slotSpec.cutType, direction: 'front', shot: slotSpec.shot,
+    colorId: slotSpec.colorId || slot.colorId, pose: 'auto', poseLabel: 'AI 자동',
+    poseThumb: slot.poseThumb, matchIds: [...(slot.matchIds || [])],
+    faceExposure: 'same', angle: 'same', refImages: [], thumb: slot.thumb,
+  });
+  const uiSwitched = applyHookStyle(seeded, 'pair', { colors: baseColors, createBlock: uiCreateBlock });
+  assert.equal(isDefaultStoryboardForMode(uiSwitched, baseColors, 'basic', context('opening-row')), true);
+
+  // 구 '오프닝 2단 행'은 pair 전환 기본 보드와 구조가 같다(hero+benefit 미디움 2장,
+  // 한 행) — 진입 승격(adoptHookFrame)이 pair 프레임으로 흡수하므로, 손대지 않은 구
+  // 오프닝 보드는 기본(pair 변형)으로 인정되어 사진 양 변경 시 pair 로 재시드된다.
+  const legacyOpening = applyOpeningRow([
+    { ...slot, hookFrameId: undefined, hookStyle: undefined, hookFrameVersion: undefined, hookTitleOverlay: undefined, hookSlotRole: undefined, contentRole: 'hero', cutType: 'styling', shot: 'medium' },
+    { ...slot, id: 'blk_legacy', hookFrameId: undefined, hookStyle: undefined, hookFrameVersion: undefined, hookTitleOverlay: undefined, hookSlotRole: undefined, contentRole: 'benefit' },
+    ...seeded.slice(1),
+  ]);
+  assert.equal(hasOpeningRow(legacyOpening), true);
+  assert.equal(isDefaultStoryboardForMode(legacyOpening, baseColors, 'basic', context('opening-row')), true);
 });
 
 test('styling sets use distinct normalized place types in basic and extended modes', () => {
@@ -208,7 +235,8 @@ test('category filters stay server-consistent for styling and horizon pools', ()
   }).stylingSets.every((set) => set === null));
 });
 
-test('women receive a mirror, men receive the styling fallback, unknown defaults to women like the server', () => {
+test('no gender receives an auto-placed mirror; every gender gets the extra styling cut', () => {
+  // 2026-08-14 오너 결정: 거울샷 자동 배치 제거 — 거울샷은 수동 선택지로만 남는다.
   const women = defaultStoryboard(baseColors, 'basic', context('women', 'bottom', 'women'));
   const men = defaultStoryboard(baseColors, 'basic', context('men', 'bottom', 'men'));
   const unknown = defaultStoryboard(baseColors, 'basic', context('unknown', 'bottom', null));
@@ -219,12 +247,12 @@ test('women receive a mirror, men receive the styling fallback, unknown defaults
     && !block.spaceGroupId
   ));
 
-  assert.equal(women.filter((block) => block.cutType === 'mirror').length, 1);
-  assert.equal(women.find((block) => block.cutType === 'mirror').faceExposure, 'hide');
-  assert.equal(men.some((block) => block.cutType === 'mirror'), false);
-  assert.equal(standaloneStyling(men).at(-1).direction, 'back');
-  // 성별 미상은 서버(select_base_gender)와 동일하게 women 기본 — 세트·거울 모두 정상 배치.
-  assert.equal(unknown.filter((block) => block.cutType === 'mirror').length, 1);
+  for (const blocks of [women, men, unknown]) {
+    assert.equal(blocks.some((block) => block.cutType === 'mirror'), false);
+    // 거울샷 자리는 낱장 스타일링컷으로 대체 — 하의는 뒷면 방향.
+    assert.equal(standaloneStyling(blocks).at(-1).direction, 'back');
+  }
+  // 성별 미상은 서버(select_base_gender)와 동일하게 women 기본 — 세트 배치는 그대로.
   assert.equal(unknown.some((block) => block.spaceGroupId), true);
 });
 
@@ -246,8 +274,15 @@ test('multi-color basic and extended seeds follow product and studio repetition 
   for (const colorId of ['blue', 'red']) {
     const horizon = extended.filter((block) => block.cutType === 'horizon' && block.colorId === colorId);
     assert.deepEqual(horizon.map((block) => [block.direction, block.shot]), [
-      ['front', 'medium'], ['front', 'full'], ['back', 'full'],
+      ['front', 'full'], ['front', 'medium'],
     ]);
+    assert.equal(new Set(horizon.map((block) => block.colorwayGroupId)).size, 1);
+    assert.equal(new Set(horizon.map((block) => block.layoutRowId)).size, 1);
+    assert.ok(horizon.every((block) => (
+      block.colorwayPairVersion === 1
+      && block.layoutRowVersion === 1
+      && block.sectionLayout === 'twoColumn'
+    )));
     assert.equal(extended.filter((block) => (
       block.cutType === 'product'
       && block.direction === 'front'
@@ -261,7 +296,7 @@ test('multi-color basic and extended seeds follow product and studio repetition 
 
 test('cut counts include normal ranges and a forced one-slot styling fallback', () => {
   const basic = defaultStoryboard(baseColors, 'basic', context('counts', 'top', 'women'));
-  assert.equal(basic.length, 12);
+  assert.equal(basic.length, 11);
   // 확장형 기대치는 실제 추첨(pickEntrySets)에서 유도 — 카탈로그가 자라도 테스트가 낡지 않게.
   for (const [pid, clothing, gender] of [
     ['counts-a', 'bottom', 'women'], ['counts-b', 'bottom', 'men'], ['counts-c', 'top', 'women'],
@@ -271,7 +306,7 @@ test('cut counts include normal ranges and a forced one-slot styling fallback', 
     const horizonCuts = (picked.sequenceSet || picked.rotationSet)?.members.length ?? 3;
     assert.equal(
       defaultStoryboard(baseColors, 'extended', context(pid, clothing, gender)).length,
-      2 + stylingCuts + horizonCuts + 1 + 4,
+      1 + stylingCuts + horizonCuts + 1 + 4,
       `${gender}/${clothing} extended`,
     );
   }
@@ -284,7 +319,7 @@ test('cut counts include normal ranges and a forced one-slot styling fallback', 
   const fallback = defaultStoryboard(baseColors, 'basic', forced);
   const fStyling = fPicked.stylingSets.reduce((s, set) => s + (set ? entryStylingMembers(set).length : 2), 0);
   const fHorizon = fPicked.rotationSet?.members.length ?? 3;
-  assert.equal(fallback.length, 2 + fStyling + fHorizon + 1 + 2);
+  assert.equal(fallback.length, 1 + fStyling + fHorizon + 1 + 2);
   assert.equal(
     new Set(fallback.filter((block) => block.spaceGroupId).map((block) => block.spaceGroupId)).size,
     fPicked.stylingSets.filter(Boolean).length + (fPicked.rotationSet ? 1 : 0),
@@ -321,7 +356,7 @@ test('HTTP and mock entry paths pass project ids and share the default builder',
   assert.match(httpSource, /const storyboardContext = \{\s*projectId,/);
   assert.match(mockApiSource, /projectId: DB\.project\.id/);
   assert.match(mockDbSource, /projectId: project\.id/);
-  assert.match(mockDbSource, /return defaultStoryboard\(colors, mode, context\)/);
+  assert.match(mockDbSource, /const blocks = defaultStoryboard\(colors, mode, context\)/);
 });
 
 // ---------- 2026-08-07 슬롯 개편: 디테일 컷 상시 제공 ----------

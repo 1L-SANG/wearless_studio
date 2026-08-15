@@ -846,9 +846,9 @@
 .storyboard-layout.tight { grid-template-columns: 570px 360px; justify-content: center; gap: 12px; }
 @media (max-width: 1024px) { .storyboard-layout.tight { grid-template-columns: 1fr; justify-content: stretch; } }
 @media (max-width: 1024px) { .storyboard-layout { grid-template-columns: 1fr; } }
-/* 보드가 지금 몇 컷인지 — 페이지 제목 바로 아래 가운데. */
-.sb-count-head { margin: -18px 0 14px; display: flex; justify-content: center; gap: 4px;
-  font-size: 16px; font-weight: 500; color: var(--fg-2); }
+/* 보드가 지금 몇 컷인지 — 보드 도구줄 안, 기본형/확장형 바로 위(2026-08-14 오너). */
+.sb-count-head { display: flex; align-items: baseline; gap: 4px;
+  font-size: 14.5px; font-weight: 500; color: var(--fg-2); }
 .sb-count-head strong { color: var(--fg-1); font-weight: 750; }
 /* solo view (no selection): one centered white panel of cards */
 .sb-solo { max-width: 570px; margin-inline: auto; }
@@ -2301,8 +2301,178 @@
 }
 .sb-stack-empty { position: absolute; inset: 0; display: grid; place-items: center; font-size: 13px; }
 
-/* 보드 상단 도구줄 — 좌측 구성 종류와 우측 전체 펼치기/접기. */
-.sb-board-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 10px 6px; }
+/* ---- 후킹 첫 화면 스타일 (스펙 2026-08-14) ---- */
+/* 접힘 예외: 스택 대신 흰 페이지 시트 위 실형태 — 타일 완전 밀착, 여백 얇게 */
+.sb-hooksheet-wrap { min-height: 286px; }
+.sb-hooksheet {
+  display: block;
+  width: fit-content;
+  margin: 6px 10px 6px;
+  padding: 13px;
+  border: 0;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: var(--sb-card-shadow);
+  cursor: pointer;
+  transition: transform .22s var(--sb-ease), box-shadow .22s;
+}
+.sb-hooksheet:hover { transform: translateY(-4px); box-shadow: var(--sb-pop-shadow); }
+.sb-hooksheet:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.sb-hooksheet-box { display: grid; gap: 0; }
+/* 시그니처 접힘 이미지는 스택 낱장과 같은 크기(2026-08-15 오너 — 1.15배 확대 폐기). */
+.sb-hooksheet.style-signature .sb-hooksheet-box { grid-template-columns: var(--sb-card-w); }
+.sb-hooksheet.style-pair .sb-hooksheet-box,
+.sb-hooksheet.style-moodGrid .sb-hooksheet-box { grid-template-columns: var(--sb-card-w) var(--sb-card-w); }
+.sb-hooksheet-tile { position: relative; aspect-ratio: 3 / 4; overflow: hidden; background: var(--bg-2); }
+.sb-hooksheet-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.sb-hooksheet.style-signature .sb-hooksheet-tile img { transform: scale(1.35); transform-origin: 50% 24%; }
+.sb-hooksheet-title {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  padding: 12px; text-align: center;
+  /* Pretendard Bold, 단어 단위 줄바꿈으로 최대 2줄 (오너 확정 2026-08-14) */
+  font-family: var(--font-body);
+  color: #fff; font-size: 13px; font-weight: 700; letter-spacing: .1em; line-height: 1.55;
+  word-break: keep-all; overflow-wrap: break-word;
+  text-shadow: 0 1px 14px rgba(0, 0, 0, .35), 0 0 2px rgba(0, 0, 0, .2);
+}
+.sb-hooksheet-title i {
+  font-style: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;               /* 길면 단어 단위로 끊어 최대 2줄 */
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.sb-hooksheet-title.small { font-size: 8.5px; letter-spacing: .06em; }
+.sb-hooksheet-color {
+  position: absolute; left: 7px; bottom: 7px; z-index: 3;
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 8px 3px 4px; border-radius: 999px;
+  background: rgba(255, 255, 255, .92); box-shadow: 0 0 0 1px var(--sb-hair);
+  font-size: 10px; font-weight: 700; color: var(--sb-ink-2);
+}
+.sb-hooksheet-color i { width: 11px; height: 11px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(34, 42, 53, .18); }
+.sb-hooksheet-gen {
+  position: absolute; right: 7px; bottom: 7px; z-index: 3;
+  padding: 3px 8px; border-radius: 999px;
+  background: rgba(23, 25, 31, .72); color: #fff;
+  font-size: 9.5px; font-weight: 700; letter-spacing: .02em;
+}
+
+/* 구 UI 복원(2026-08-15 오너 스크린샷) —
+   세트 예비 컷: 다음 멤버 사진을 희미하게 깔고 '＋ 이 컷 추가'를 얹은 카드.
+   개별 컷 추가: 점선 빈 카드 + '＋ 컷 추가'. */
+.sb-reserve-card {
+  position: relative; width: 100%; aspect-ratio: 3 / 4; overflow: hidden;
+  border: 0; border-radius: 10px; padding: 0;
+  background: #fff; box-shadow: var(--sb-card-shadow);
+  display: grid; place-items: center; cursor: pointer;
+  transition: transform .22s var(--sb-ease), box-shadow .22s;
+}
+.sb-reserve-card img {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; opacity: .38; transition: opacity .18s;
+}
+.sb-reserve-card:hover:not(:disabled) { transform: translateY(-3px); box-shadow: var(--sb-pop-shadow); }
+.sb-reserve-card:hover:not(:disabled) img { opacity: .55; }
+.sb-reserve-card:disabled { cursor: default; opacity: .6; }
+.sb-reserve-card:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.sb-reserve-label {
+  position: relative; display: grid; justify-items: center; gap: 3px;
+  color: var(--sb-ink); font-size: 13.5px; font-weight: 700;
+  text-shadow: 0 0 6px rgba(255, 255, 255, .9);
+}
+.sb-reserve-label b { font-size: 21px; font-weight: 600; line-height: 1; }
+.sb-addcard {
+  width: 100%; aspect-ratio: 3 / 4;
+  border: 1.5px dashed var(--sb-hair-2); border-radius: 10px;
+  background: rgba(255, 255, 255, .45);
+  display: grid; place-items: center;
+  color: var(--sb-ink-3); font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: color .16s, border-color .16s, background .16s;
+}
+.sb-addcard:hover:not(:disabled) { color: var(--sb-ink); border-color: var(--sb-ink-3); background: rgba(255, 255, 255, .8); }
+.sb-addcard:disabled { opacity: .45; cursor: default; }
+.sb-addcard:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* 예시 셔플 — 후킹 섹션·장소세트에만, 마지막 카드 우측 아래(2026-08-15 오너). */
+.sb-shuffle-row { display: flex; align-items: center; gap: 10px; padding: 0 10px 16px; }
+.sb-shuffle-row.end { justify-content: flex-end; padding: 10px 4px 4px; }
+.sb-shuffle-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 16px 8px 13px;
+  border: 0; border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--sb-hair), 0 1px 2px rgba(23, 25, 31, .06), 0 4px 12px -4px rgba(23, 25, 31, .10);
+  color: var(--sb-ink); font-size: 12.5px; font-weight: 650;
+  cursor: pointer;
+  transition: transform .18s var(--sb-ease), box-shadow .18s;
+}
+.sb-shuffle-btn:hover:not(:disabled) {
+  transform: translateY(-1.5px);
+  box-shadow: 0 0 0 1px var(--sb-hair-2), 0 2px 4px rgba(23, 25, 31, .08), 0 10px 22px -8px rgba(23, 25, 31, .16);
+}
+.sb-shuffle-btn:disabled { opacity: .45; cursor: default; }
+.sb-shuffle-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.sb-shuffle-btn svg { color: var(--sb-ink); transition: transform .3s var(--sb-ease); }
+.sb-shuffle-btn:hover:not(:disabled) svg { transform: rotate(-14deg) scale(1.08); }
+
+/* '첫 화면 스타일' — 후킹 컷 인스펙터 상단 섹션(상시 패널 폐기, 2026-08-14 오너).
+   미리보기 버튼을 누르면 아래로 스타일 3종 카드가 펼쳐진다. */
+.sb-hookpanel { margin-bottom: 4px; }
+.sb-hookpanel-live {
+  width: 100%;
+  border: 0; cursor: pointer;
+  border-radius: 12px; background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--ring);
+  padding: 14px; display: grid; justify-items: center; gap: 10px;
+  margin-bottom: 10px;
+  transition: background .14s, box-shadow .14s;
+}
+.sb-hookpanel-live:hover { background: var(--bg-1); box-shadow: inset 0 0 0 1px var(--ring-strong); }
+.sb-hookpanel-live:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.sb-hookpanel-sheet {
+  display: grid; gap: 0; width: fit-content;
+  padding: 8px; border-radius: 8px; background: #fff;
+  box-shadow: var(--elev-card);
+}
+.sb-hookpanel-sheet.style-signature { grid-template-columns: 118px; }
+.sb-hookpanel-sheet.style-pair { grid-template-columns: 96px 96px; }
+.sb-hookpanel-sheet.style-moodGrid { grid-template-columns: 96px 96px; }
+.sb-hookpanel-tile { position: relative; aspect-ratio: 3 / 4; overflow: hidden; background: var(--bg-2); }
+.sb-hookpanel-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.sb-hookpanel-sheet.style-signature .sb-hookpanel-tile img { transform: scale(1.35); transform-origin: 50% 24%; }
+.sb-hookpanel-desc { display: grid; gap: 3px; text-align: center; max-width: 250px; }
+.sb-hookpanel-desc b { font-size: 12.5px; font-weight: 700; }
+.sb-hookpanel-desc span { font-size: 11.5px; color: var(--fg-2); line-height: 1.6; }
+.sb-hookpanel-desc em { font-style: normal; font-size: 10.5px; font-weight: 650; color: var(--fg-3); margin-top: 2px; }
+.sb-hookpanel-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+.sb-hookpanel-card {
+  border: 0; padding: 8px 8px 10px;
+  border-radius: 12px; background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--ring);
+  text-align: center; cursor: pointer;
+  transition: box-shadow .14s, background .14s;
+}
+.sb-hookpanel-card:hover:not(:disabled) { background: var(--bg-1); }
+.sb-hookpanel-card:disabled { opacity: .55; cursor: default; }
+.sb-hookpanel-card.on { background: #fff; box-shadow: inset 0 0 0 1.5px var(--sb-accent-ink), var(--elev-card); }
+.sb-hookpanel-card:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.sb-hookpanel-thumb {
+  display: grid; gap: 1px; width: 100%; aspect-ratio: 4 / 3.4;
+  border-radius: 7px; overflow: hidden;
+  padding: 4px; background: #fff; box-shadow: inset 0 0 0 1px var(--ring);
+  margin-bottom: 7px;
+}
+.sb-hookpanel-thumb.style-signature { grid-template-columns: 1fr; padding: 4px 15px; }
+.sb-hookpanel-thumb.style-pair { grid-template-columns: 1fr 1fr; }
+.sb-hookpanel-thumb.style-moodGrid { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.sb-hookpanel-thumb i { display: block; background-size: cover; background-position: top center; background-color: var(--bg-2); }
+.sb-hookpanel-name { display: block; font-size: 11.5px; font-weight: 700; letter-spacing: -.01em; }
+
+/* 보드 상단 도구줄 — 좌측(구성컷 수 + 사진 양)과 우측 전체 펼치기/접기.
+   우측 버튼은 좌측 pill 줄과 아랫선을 맞춘다. */
+.sb-board-tools { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 0 10px 8px; }
+.sb-board-lead { display: grid; gap: 8px; justify-items: start; }
 .sb-compose-segment {
   display: inline-flex;
   overflow: hidden;
@@ -2310,14 +2480,15 @@
   border-radius: 999px;
   background: #fff;
 }
+/* 기본형/확장형과 '전체 펼치기'는 같은 크기의 pill (2026-08-14 오너 — 살짝 키움) */
 .sb-compose-segment button {
-  min-width: 58px;
+  min-width: 64px;
   border: 0;
   border-left: 1px solid var(--sb-hair);
-  padding: 4px 11px;
+  padding: 6px 14px;
   background: transparent;
   color: var(--sb-ink-3);
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
 }
 .sb-compose-segment button:first-child { border-left: 0; }
@@ -2326,10 +2497,10 @@
 .sb-board-tool {
   border: 1px solid var(--sb-hair);
   border-radius: 999px;
-  padding: 4px 12px;
+  padding: 6px 14px;
   background: #fff;
   color: var(--sb-ink-2);
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
 }
 .sb-board-tool:hover { border-color: var(--sb-hair-2); background: #f7f7f8; }
@@ -2426,6 +2597,25 @@
   font-size: 10px;
   font-weight: 700;
 }
+.sb-pose-variation-note {
+  position: absolute;
+  z-index: 4;
+  left: 10px;
+  right: 10px;
+  bottom: 8px;
+  padding: 10px 11px;
+  border-radius: 9px;
+  background: rgba(17, 19, 24, .78);
+  backdrop-filter: blur(6px);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: -.01em;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+}
 /* 카드 전체가 드래그 표면이고, 액션은 이동·복제·삭제의 명확한 공용 아이콘만 쓴다. */
 .sb-canvas-actions {
   position: absolute;
@@ -2492,7 +2682,8 @@
   text-align: center;
 }
 .sb-missing-body i { display: block; color: var(--sb-accent-ink); font-size: 11px; font-style: normal; }
-.sb-missing-body.manual-empty i { color: var(--sb-ink-2); font-weight: 700; }
+/* 빈 컷 안내는 짧고 담백하게 — 살짝 크게, 가늘게, 연하게(2026-08-15 오너). */
+.sb-missing-body.manual-empty i { color: var(--sb-ink-3); font-size: 12.5px; font-weight: 600; }
 .upload-placeholder-logo {
   position: relative;
   z-index: 2;
@@ -2548,20 +2739,23 @@
   border-radius: 999px;
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .08);
 }
-.sb-match-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex: none;
-  padding: 2px 7px 2px 2px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 700;
+/* 매칭 의류 오버레이 — 셀러가 인스펙터에서 직접 바꾼 컷에만, 이미지 우측 하단
+   (캡션 줄 상시 칩은 폐기, 2026-08-14 오너 확정). */
+.sb-match-overlay {
+  position: absolute; right: 7px; bottom: 7px; z-index: 3;
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 8px 3px 3px; border-radius: 999px;
+  background: rgba(255, 255, 255, .93);
+  box-shadow: 0 0 0 1px var(--sb-hair), 0 2px 6px rgba(23, 25, 31, .16);
+  color: var(--sb-ink-2); font-size: 10px; font-weight: 700;
 }
-.sb-match-chip { background: #fff; border: 1px solid #111; color: #111; }
-.sb-match-chip img { width: 20px; height: 20px; border-radius: 6px; object-fit: cover; }
+/* 작은 매칭 썸네일이 사진 위에서 묻히지 않게 검정 테두리(2026-08-15 오너). */
+.sb-match-overlay img { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; display: block; box-shadow: 0 0 0 1.5px #111; }
+.sb-match-overlay i { font-style: normal; letter-spacing: .02em; }
 @container (max-width: 175px) {
-  .sb-caption-color, .sb-match-chip span { display: none; }
+  .sb-caption-color { display: none; }
+  .sb-match-overlay i { display: none; }
+  .sb-match-overlay { padding: 2px; }
 }
 
 .sb-addzone {
@@ -2650,18 +2844,19 @@
   cursor: grab;
 }
 .sb-tray-head:active { cursor: grabbing; }
-.sb-tray-label, .sb-tray-swap {
-  padding: 2px 9px;
+/* 세트 이름 라벨은 제거(2026-08-15 오너) — '장소 세트 변경'만 남기고 크기를 키운다. */
+.sb-tray-swap {
+  padding: 5px 13px;
   border: 0;
   border-radius: 999px;
   background: #fff;
   box-shadow: 0 0 0 1px var(--sb-hair);
   color: inherit;
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 600;
+  margin-left: 0;
+  cursor: pointer;
 }
-.sb-tray-label { cursor: grab; }
-.sb-tray-swap { margin-left: 0; cursor: pointer; }
 .sb-tray-swap:hover { background: #f4f4f6; }
 .sb-tray-grid { display: grid; grid-template-columns: repeat(3, var(--sb-tray-card-w)); justify-content: flex-start; gap: 14px 18px; min-width: 0; }
 
@@ -2693,9 +2888,10 @@
   font-size: 10px;
   font-weight: 700;
 }
+.sb-frame.colorway-set .sb-frame-box { box-shadow: 0 0 0 1px var(--sb-hair), var(--sb-card-shadow); }
+.sb-frame.colorway-set .sb-frame-tag { color: var(--fg-1); }
 .sb-frame-captions { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
 .sb-frame-captions .sb-canvas-caption { min-width: 0; }
-.sb-frame-captions .sb-match-chip { display: none; }
 /* 프레임 반쪽은 폭이 절반(≈99px) — 색상 이름 텍스트는 빼고 점만 남겨 넘침을 막는다.
    전체 색상 이름은 점의 title(툴팁)로 계속 확인할 수 있다. */
 .sb-frame-captions .sb-caption-color { display: none; }
@@ -2738,7 +2934,6 @@
   .sb-tray { padding-inline: 7px; }
   .sb-tray-grid { gap: 12px 10px; }
   .sb-canvas-caption { gap: 3px; }
-  .sb-match-chip span { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .sb-stack-collapse, .sb-deck-collapse, .sb-stack-cut, .sb-cutcard, .sb-frame-box,

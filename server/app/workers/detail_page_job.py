@@ -43,6 +43,97 @@ _GEN_CONCURRENCY = 3
 _WORN_CUT_TYPES = ("styling", "horizon", "mirror")
 
 
+def _example_repeat_indexes(
+    blocks: list[dict], clothing_type: str,
+) -> list[int | None]:
+    """같은 섹션·같은 all 예시의 반복 변주 지수를 저장값 없이 결정적으로 계산한다.
+
+    반복 규칙(2026-08-14 오너 확정): 포즈 변주는 **같은 예시를 다른 색상으로 반복**할
+    때만 적용한다(컬러웨이 반복 컷). ``None``은 대상 아님, ``0``은 변주 없음(첫 색상),
+    1 이상은 n번째 다른 색상. 같은 예시·같은 색상의 반복(컷 복제)은 0 — 변주 없이
+    ``_duplicate_source_indexes`` 가 생성 자체를 1장으로 접는다.
+    클라이언트가 보낸 런타임 필드는 읽지 않고 정규화된 컷 계약만 판정한다.
+    """
+
+    color_orders: dict[tuple[str, str], dict[str, int]] = {}
+    indexes: list[int | None] = []
+    for block in blocks:
+        repeat_index = None
+        if isinstance(block, dict) and block.get("source") == "ai":
+            safe_block = dict(block)
+            for runtime_field in (
+                "_exampleRepeatIndex",
+                "_referenceDirectionCompatible",
+                "_spaceSetContinuity",
+                "_detailColorTransfer",
+            ):
+                safe_block.pop(runtime_field, None)
+            try:
+                spec = cut_generator.normalize_spec(
+                    safe_block, clothing_type=clothing_type
+                )
+                spec = cut_generator.apply_reference_compatibility(spec)
+            except ValueError:
+                spec = None
+            if (
+                spec is not None
+                and spec.get("cutType") in _WORN_CUT_TYPES
+                and spec.get("exampleId")
+                and not spec.get("spaceGroupId")
+                and spec.get("refScope") == "all"
+                and spec.get("pose") == "auto"
+                and spec.get("_referenceDirectionCompatible") is not False
+            ):
+                section = block.get("sectionId") or block.get("section_id")
+                if not section:
+                    role = block.get("sectionRole") or block.get("section_role") or "unknown"
+                    section = f"role:{role}"
+                key = (str(section), str(spec["exampleId"]))
+                color = str(spec.get("colorId") or "")
+                orders = color_orders.setdefault(key, {})
+                if color not in orders:
+                    orders[color] = len(orders)
+                repeat_index = orders[color]
+        indexes.append(repeat_index)
+    return indexes
+
+
+def _duplicate_source_indexes(
+    blocks: list[dict], clothing_type: str,
+) -> list[int | None]:
+    """생성 계약이 완전히 같은 뒤쪽 블록 → 앞쪽 원본 인덱스 매핑.
+
+    같은 컷을 복제해 넣은 경우(같은 예시·같은 색상·같은 설정) 이미지 생성을 1번만
+    하고 결과를 복제 위치에 그대로 복사한다(2026-08-14 오너 확정). 판정은 정규화된
+    컷 계약 전체(주입된 ``_exampleRepeatIndex`` 포함)로 하므로, 색상이 다른 반복은
+    변주 지수부터 달라 복제로 접히지 않는다. ``None`` = 원본(직접 생성).
+    """
+
+    first_by_key: dict[str, int] = {}
+    sources: list[int | None] = []
+    for index, block in enumerate(blocks):
+        source = None
+        if isinstance(block, dict) and block.get("source") == "ai":
+            try:
+                spec = cut_generator.normalize_spec(
+                    dict(block), clothing_type=clothing_type
+                )
+                spec = cut_generator.apply_reference_compatibility(spec)
+            except ValueError:
+                spec = None
+            if spec is not None and not spec.get("spaceGroupId"):
+                key = json.dumps(
+                    {k: v for k, v in spec.items() if k not in {"id", "blockId"}},
+                    sort_keys=True, ensure_ascii=False, default=str,
+                )
+                if key in first_by_key:
+                    source = first_by_key[key]
+                else:
+                    first_by_key[key] = index
+        sources.append(source)
+    return sources
+
+
 def _dims(data: bytes):
     try:
         im = Image.open(BytesIO(data))
@@ -380,10 +471,17 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                 chosen if s.page_output_qc_mode == "shadow" else None,
             )
 
+    # 같은 설정 복제 컷은 생성에서 접는다 — 원본만 생성하고 결과를 복제 위치에 복사
+    # (2026-08-14 오너 확정: "같은 컷 복제는 1장만 생성"). 진행 분모도 실제 생성 수.
+    dup_sources = _duplicate_source_indexes(
+        [item[0] for item in prepared], clothing_type
+    )
+    original_indexes = [i for i in range(len(prepared)) if dup_sources[i] is None]
+
     # 컷 1개가 끝날 때마다(성공·실패 무관) 진행 이벤트 — 대기 화면의 정직한 진행 근거.
     # 10분 잡에서 65%에 몇 분씩 멈춰 보이던 체크포인트 방식을 대체한다(editor_wait_dev_spec §2-1).
     _done_counter = {"n": 0}
-    _total_cuts = max(1, len(prepared))
+    _total_cuts = max(1, len(original_indexes))
     _stagger_s = max(0, getattr(s, "detail_cut_stagger_ms", 0)) / 1000
 
     async def _one(idx, item):
@@ -397,10 +495,43 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                      "phase": "cut", "done": _done_counter["n"], "total": _total_cuts})
         return r
 
-    # gather 는 입력 순서를 보존 — 콘티 블록 순서대로 컷을 배열한다.
+    # gather 는 입력 순서를 보존 — 원본 컷만 생성한 뒤 복제 컷 자리에 결과를 복사한다.
     cut_results, cut_assets, face_cuts = [], [], 0
     garment_qcs, cut_qcs, garment_warnings = [], [], []
-    outcomes = await asyncio.gather(*[_one(i, item) for i, item in enumerate(prepared)])
+    gathered = await asyncio.gather(*[
+        _one(pos, prepared[i]) for pos, i in enumerate(original_indexes)
+    ])
+    outcome_by_index = dict(zip(original_indexes, gathered))
+    outcomes = []
+    for i in range(len(prepared)):
+        src = dup_sources[i]
+        if src is None:
+            outcomes.append(outcome_by_index[i])
+            continue
+        base = outcome_by_index.get(src)
+        block = prepared[i][0]
+        if base is None:
+            # 원본 생성 실패 → 복제 컷도 같은 빈 슬롯 처리(조립이 흡수).
+            await _emit(app.state.pool, job_id, "step",
+                        {"blockId": block.get("id"), "status": "cut_failed"})
+            outcomes.append(None)
+            continue
+        step = {"blockId": block.get("id"), "status": "cut_done",
+                "width": base[0].get("width"), "height": base[0].get("height")}
+        if base[1] is not None:
+            step["previewUrl"] = r2.preview_url(base[1]["key"])
+        await _emit(app.state.pool, job_id, "step", step)
+        outcomes.append((
+            # 같은 이미지 참조를 복제 블록 자리에 그대로 — 새 asset 없음(과금 없음),
+            # 얼굴 컷 수·QC 는 원본에서 1회만 센다.
+            {**base[0], "blockId": str(block.get("id"))},
+            None,
+            False,
+            None,
+            None,
+            [],
+            base[6],
+        ))
     for r in outcomes:
         if r:
             cut_results.append(r[0])
@@ -599,6 +730,9 @@ async def run_detail_page_job(app, job: dict) -> None:
                 for b in storyboard
                 if isinstance(b, dict) and b.get("source") == "ai"
             ]
+            example_repeat_indexes = _example_repeat_indexes(
+                ai_blocks, clothing_type
+            )
             # StoryboardBlock에는 modelId가 없다(계약 §3.4). 상세페이지의 프로젝트 단위 선택값은
             # Analysis.selectedModelId가 정본이며, 아래 prep에서 저장 블록을 바꾸지 않고 런타임 주입한다.
             selected_model_id = analysis.get("selectedModelId") or analysis.get("selected_model_id")
@@ -823,13 +957,16 @@ async def run_detail_page_job(app, job: dict) -> None:
                     "AG-06 virtual model manifest unavailable; skipping fallback substitution "
                     "for job %s: %r", job_id, e)
         _fallback_warned = False
-        for b in ai_blocks:
+        for b, example_repeat_index in zip(ai_blocks, example_repeat_indexes):
             cut_spec = dict(b)
             space_binding = space_set_bindings.get(id(b))
             # 저장/클라이언트가 런타임 전용 지시를 주입하지 못하게 매번 실제 선택 결과로 재구성한다.
             cut_spec.pop("_detailColorTransfer", None)
             cut_spec.pop("_spaceSetContinuity", None)
             cut_spec.pop("_referenceDirectionCompatible", None)
+            cut_spec.pop("_exampleRepeatIndex", None)
+            if example_repeat_index is not None:
+                cut_spec["_exampleRepeatIndex"] = example_repeat_index
             if space_binding is not None:
                 # 공간 세트의 pose/범위/변주 강도는 저장 payload가 아니라 발행 레지스트리가
                 # 정본이다. 오래된 값이나 우회 클라이언트가 전용 pose·plate 계약을 바꾸지 못한다.
@@ -1238,8 +1375,16 @@ async def run_detail_page_job(app, job: dict) -> None:
                               "faceCuts": face_cuts,
                               "totalCuts": len(cut_assets)}
         assemble_kwargs = {"license_notice": license_notice} if license_notice is not None else {}
+        assembly_product = {
+            **product,
+            "_matchClothing": (
+                analysis.get("matchClothing")
+                or analysis.get("matchCandidates")
+                or []
+            ),
+        }
         editor_blocks = page_assembler.assemble(
-            storyboard, cut_results, copy_results, product, copywriting, **assemble_kwargs)
+            storyboard, cut_results, copy_results, assembly_product, copywriting, **assemble_kwargs)
 
         # 5) 성공 종결 (원자·lease 펜스). charge = 성공 컷 수 × **예약 시점 단가 스냅샷**
         # (job.metadata.perCutCost — routes.py가 예약과 같은 tx에서 기록). 실행 시점 설정을 쓰면

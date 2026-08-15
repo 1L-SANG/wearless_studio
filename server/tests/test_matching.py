@@ -190,6 +190,9 @@ def test_match_candidates_shape_and_public_url(client, make_token, monkeypatch):
     assert body[0]["id"] == "match_test_bottom_neutral"
     assert body[0]["clothingType"] == "bottom"
     assert body[0]["category"] == "트라우저"
+    assert body[0]["colorName"] == "블랙"
+    assert body[0]["colorGroup"] == "black"
+    assert body[0]["colorBrightness"] == 0
     assert body[0]["fit"] == "regular"
     assert body[0]["length"] == "full"
     assert body[0]["fitCategory"] == "pants"

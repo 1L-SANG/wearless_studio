@@ -36,6 +36,21 @@ def test_build_prompt_manifest_fallback_no_images():
     assert "product photos" in p.lower()
 
 
+@pytest.mark.parametrize("clothing_type", ["top", "bottom"])
+def test_medium_prompt_requires_a_separate_pose_and_camera_not_a_full_shot_crop(clothing_type):
+    prompt = cg.build_prompt(
+        {"cutType": "horizon", "direction": "front", "shot": "medium", "pose": "lean"},
+        {"name": "컬러 상품", "clothingType": clothing_type, "colors": []},
+    )
+
+    assert "separately photographed exposure" in prompt
+    assert "NEVER make it by digitally cropping, zooming, or reframing a full-body render" in prompt
+    assert "use the distinct pose requested by the current CUT SPEC" in prompt
+    assert "purpose-shot upper-garment photograph" in prompt
+    assert "separate lower camera around hip-to-upper-thigh height" in prompt
+    assert "must not share the full shot's exact body pose or perspective" in prompt
+
+
 def test_build_prompt_product_detail_falls_back_to_original_zoom_mode():
     # 2026-08-07 개편: 디테일 사진이 없어도 같은 방향 원본이 있으면 구조 확대 모드로 생성한다.
     product = {"name": "니트", "colors": [
@@ -241,7 +256,7 @@ def test_build_prompt_respects_given_manifest():
     product = {"name": "니트", "colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
     manifest = cg.build_manifest([{"slot": "Front"}], has_mannequin=True, has_match=True, mood_count=1)
     p = cg.build_prompt({"cutType": "styling"}, product, manifest=manifest)
-    assert "worn on a mannequin" in p and "MATCH" in p and "MOOD" in p
+    assert "MANNEQUIN" in p and "MATCH" in p and "MOOD" in p
 
 
 def test_pose_medium_prompt_keeps_requested_crop_authoritative():
@@ -343,6 +358,94 @@ def test_all_scope_explicit_pose_and_direction_override_example():
     assert "USER DIRECTION OVERRIDE" in prompt
     assert "direction (back)" in prompt
     assert "POSE FROM EXAMPLE" not in prompt
+
+
+def test_repeated_all_example_second_use_adds_bounded_whole_body_micro_pose():
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False,
+        mood_count=0, example_scope="all",
+    )
+    prompt = cg.build_prompt(
+        {
+            "cutType": "horizon", "direction": "front", "shot": "full",
+            "pose": "auto", "refScope": "all", "exampleId": "same-example",
+            "_exampleRepeatIndex": 1,
+        },
+        PRODUCT_TOP,
+        manifest=manifest,
+    )
+
+    assert "REPEATED ALL-SCOPE EXAMPLE" in prompt
+    assert "SECOND-USE MICRO-POSE" in prompt
+    assert "hand and finger placement" in prompt
+    assert "stance width, shoulder/pelvis offset, or weight" in prompt
+    assert "WITHOUT reversing the original support side" in prompt
+    assert "NEVER change the action, body-direction family" in prompt
+    assert "${" not in prompt and "[[" not in prompt
+
+
+@pytest.mark.parametrize(
+    ("spec", "manifest_kwargs"),
+    [
+        ({
+            "cutType": "horizon", "direction": "front", "shot": "full",
+            "pose": "auto", "refScope": "all", "exampleId": "same-example",
+            "_exampleRepeatIndex": 0,
+        }, {"example_scope": "all"}),
+        ({
+            "cutType": "horizon", "direction": "front", "shot": "full",
+            "pose": "walking", "refScope": "all", "exampleId": "same-example",
+            "_exampleRepeatIndex": 1,
+        }, {"example_scope": "all"}),
+        ({
+            "cutType": "horizon", "direction": "front", "shot": "full",
+            "pose": "auto", "refScope": "pose", "exampleId": "same-example",
+            "_exampleRepeatIndex": 1,
+        }, {"example_scope": "pose"}),
+        ({
+            "cutType": "product", "direction": "front", "shot": "ghost",
+            "refScope": "all", "exampleId": "same-example",
+            "_exampleRepeatIndex": 1,
+        }, {"example_scope": "all", "example_is_product": True}),
+        ({
+            "cutType": "horizon", "direction": "side", "shot": "full",
+            "pose": "auto", "refScope": "all", "exampleId": "same-example",
+            "_referenceDirectionCompatible": False,
+            "_exampleRepeatIndex": 1,
+        }, {"example_scope": "all", "reference_direction_compatible": False}),
+    ],
+)
+def test_repeated_example_micro_pose_is_absent_outside_eligible_contract(
+    spec, manifest_kwargs,
+):
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False,
+        mood_count=0, **manifest_kwargs,
+    )
+    prompt = cg.build_prompt(spec, PRODUCT_TOP, manifest=manifest)
+
+    assert "REPEATED ALL-SCOPE EXAMPLE" not in prompt
+    assert "SECOND-USE MICRO-POSE" not in prompt
+
+
+def test_repeated_all_example_mirror_cut_uses_the_common_rule():
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False,
+        mood_count=0, example_scope="all",
+    )
+    prompt = cg.build_prompt(
+        {
+            "cutType": "mirror", "shot": "full", "faceExposure": "hide",
+            "refScope": "all", "exampleId": "mirror-example",
+            "_exampleRepeatIndex": 2,
+        },
+        PRODUCT_TOP,
+        manifest=manifest,
+    )
+
+    assert "REPEATED ALL-SCOPE EXAMPLE" in prompt
+    assert "THIRD-USE MICRO-POSE" in prompt
+    assert "SAME support side" in prompt
 
 
 def test_all_scope_changed_direction_removes_example_pose_and_camera(monkeypatch):
@@ -597,7 +700,7 @@ def test_build_manifest_places_exact_virtual_model_labels_after_mannequin():
         [{"slot": "Front"}], has_mannequin=True, has_match=True, mood_count=1,
         has_model_face=True, has_model_full_body=True)
     assert manifest.splitlines() == [
-        "1. PRODUCT — the garment worn on a mannequin (verified colors, fit and length — follow this)",
+        "1. MANNEQUIN — coarse worn-geometry prior only where seller PRODUCT pixels support it; ZERO authority to resolve uncertain color, material, construction, fit or length",
         "2. MODEL FACE — facial identity authority for the selected model ONLY: preserve facial identity and facial features; ZERO authority over height, head-to-body ratio, shoulders, torso, waist, pelvis, limb proportions, body shape, pose, framing or clothing",
         "3. MODEL FULL BODY — full-body proportion authority for the selected model ONLY: preserve height, head-to-body ratio, shoulder width and slope, torso length and build, waist, pelvis and hip width, and arm and leg proportions; ZERO authority over facial identity, facial features, hair, pose, framing or clothing",
         "4. PRODUCT — front view of the garment",
@@ -801,7 +904,7 @@ def test_build_manifest_places_face_after_garment_truth_before_mood():
                           mood_count=1, has_face=True)
     lines = m.split("\n")
     assert len(lines) == 5
-    assert "mannequin" in lines[0] and lines[0].startswith("1.")
+    assert "MANNEQUIN" in lines[0] and lines[0].startswith("1.")
     assert "front view of the garment" in lines[1]
     assert lines[2].startswith("3. MATCH")
     assert lines[3].startswith("4. MODEL FACE")

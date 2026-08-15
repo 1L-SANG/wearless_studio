@@ -28,9 +28,10 @@ import { shouldMarkStoryboardDirty } from '@/lib/generationExamples.js';
 import { normalizeTargetGendersForClothingType } from '@/lib/productGender.js';
 import { createMeasurementFields } from '@/lib/measurementSchema.js';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
-import {
-  applyOpeningRow, hasOpeningRow, migrateLegacyEntryStylingRuns,
-} from '@/lib/storyboardEntryPlacement.js';
+import { migrateLegacyEntryStylingRuns } from '@/lib/storyboardEntryPlacement.js';
+import { deriveHookFrame } from '@/lib/storyboardHookFrame.js';
+import { applySeededHookStyle } from '@/lib/api/shapes.js';
+import { uniqueGenerationCutCount } from '@/lib/generationCutCount.js';
 import { createDraftSlotMemory } from './draftSlotMemory.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -155,13 +156,15 @@ export const api = {
     if ('fitProfile' in patch) DB.analysis.fitProfile = clone(patch.fitProfile);
     // 사진 양 변경 시, 사용자가 콘티를 손대기 전이면 기본 콘티를 새 모드로 재구성 (PRD §7.7)
     if (modeChanged && !DB.storyboardDirty) {
-      const keepOpeningRow = hasOpeningRow(DB.storyboard);
+      const keepPairFrame = deriveHookFrame(DB.storyboard)?.style === 'pair';
       const seeded = buildStoryboard(DB.project.composeMode, DB.product.colors, {
         projectId: DB.project.id,
         clothingType: DB.product.clothingType,
         targetGenders: DB.analysis.targetGenders,
+        matchClothing: DB.analysis.matchClothing,
+        previewProductName: DB.product.name,
       });
-      DB.storyboard = keepOpeningRow ? applyOpeningRow(seeded) : seeded;
+      DB.storyboard = keepPairFrame ? applySeededHookStyle(seeded, 'pair', DB.product.colors) : seeded;
     }
     return clone(DB.project);
   },
@@ -545,7 +548,7 @@ export const api = {
       if (type === 'progress') ewSim.progress = payload.progress;
     };
     (async () => {
-      const blocks = buildEditorBlocksFromStoryboard(DB.storyboard, DB.product, DB.project.copywriting);
+      const blocks = buildEditorBlocksFromStoryboard(DB.storyboard, DB.product, DB.project.copywriting, DB.analysis);
       const imgs = []; const copies = new Map();
       for (const b of blocks) {
         for (const el of (b.elements || [])) {
@@ -613,9 +616,10 @@ export const api = {
       }
       emitProgress(100);
       if (DB.project.id !== ownerId) return { data: [], credits: DB.account.credits };
-      DB.editorBlocks = buildEditorBlocksFromStoryboard(DB.storyboard, DB.product, DB.project.copywriting);
+      DB.editorBlocks = buildEditorBlocksFromStoryboard(DB.storyboard, DB.product, DB.project.copywriting, DB.analysis);
       DB.project.status = 'done'; touch();
-      const aiCuts = DB.storyboard.filter((b) => b.source !== 'mine').length;
+      // 실서버와 동일: 동일 설정 복제 컷은 1장만 생성 — 청구도 실제 생성 수 기준(ADR-0011).
+      const aiCuts = uniqueGenerationCutCount(DB.storyboard);
       return { data: clone(DB.editorBlocks), credits: spend(CREDIT_COSTS.storyboardPerCut * aiCuts) };
     })());
     job.listeners.push({ onProgress, onStep });

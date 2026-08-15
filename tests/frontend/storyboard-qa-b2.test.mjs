@@ -326,3 +326,84 @@ test('next-step flush failure blocks navigation and reports a toast message', as
   assert.match(storyboardSource, /pickerSaveError && <div className="sb-save-error">/);
   assert.match(storyboardSource, /setSetPickerError\('장소 세트를 저장하지 못했어요\. 다시 시도해주세요\.'/);
 });
+
+test('a deterministic 4xx asks the repair hook once and saves the repaired snapshot', async () => {
+  // 카탈로그 발행 회전 뒤 저장 보드가 unknown_example_id 로 거절되는 클래스 —
+  // 같은 스냅샷 맹목 재시도는 영원히 같은 답이라 하지 않고, 복구본을 즉시 저장한다.
+  const clock = fakeClock();
+  const calls = [];
+  const repairs = [];
+  const persistence = createStoryboardPersistence({
+    invalidate: () => {},
+    onlineTarget: null,
+    retryDelays: [1_000],
+    setTimer: clock.setTimer,
+    clearTimer: clock.clearTimer,
+    saveStoryboard: async (_projectId, snapshot) => {
+      calls.push(snapshot.id);
+      if (snapshot.id === 'poisoned') {
+        const error = new Error('저장된 생성예시를 찾을 수 없어요.');
+        error.status = 400;
+        error.code = 'unknown_example_id';
+        error.meta = { exampleId: 'ex_removed' };
+        throw error;
+      }
+    },
+  });
+  const poisoned = { id: 'poisoned' };
+  const repaired = { id: 'repaired' };
+  persistence.setRepairRejected((projectId, snapshot, error) => {
+    repairs.push([projectId, snapshot.id, error.code, error.meta?.exampleId]);
+    return repaired;
+  });
+
+  await assert.rejects(persistence.saveNow('p1', () => poisoned), /생성예시/);
+  assert.equal(clock.count(), 0);                       // 4xx엔 맹목 재시도 타이머 없음
+  await new Promise(setImmediate);
+  await persistence.saveIdle();
+  await new Promise(setImmediate);
+  await persistence.saveIdle();
+
+  assert.deepEqual(repairs, [['p1', 'poisoned', 'unknown_example_id', 'ex_removed']]);
+  assert.deepEqual(calls, ['poisoned', 'repaired']);
+  assert.equal(persistence.pending.has('p1'), false);
+  persistence.dispose();
+});
+
+test('a 4xx with no effective repair keeps pending without a retry storm', async () => {
+  const clock = fakeClock();
+  let calls = 0;
+  let repairs = 0;
+  const persistence = createStoryboardPersistence({
+    invalidate: () => {},
+    onlineTarget: null,
+    retryDelays: [1_000],
+    setTimer: clock.setTimer,
+    clearTimer: clock.clearTimer,
+    saveStoryboard: async () => {
+      calls += 1;
+      const error = new Error('컷 종류에 맞지 않는 생성예시예요.');
+      error.status = 400;
+      error.code = 'example_cut_mismatch';
+      throw error;
+    },
+  });
+  const snapshot = { id: 'stuck' };
+  persistence.setRepairRejected(() => { repairs += 1; return null; });
+
+  await assert.rejects(persistence.saveNow('p2', () => snapshot), /생성예시/);
+  await new Promise(setImmediate);
+  await persistence.saveIdle();
+  assert.equal(clock.count(), 0);
+  assert.equal(calls, 1);
+  assert.equal(repairs, 1);
+  assert.equal(persistence.pending.get('p2'), snapshot);   // 다음 진입 복원이 이어받는다
+
+  // 같은 스냅샷을 다시 저장해도 복구 훅은 스냅샷당 1회만
+  await assert.rejects(persistence.saveNow('p2', () => snapshot), /생성예시/);
+  await new Promise(setImmediate);
+  await persistence.saveIdle();
+  assert.equal(calls, 2);
+  assert.equal(repairs, 1);
+  persistence.dispose();
+});

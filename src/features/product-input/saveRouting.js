@@ -25,7 +25,7 @@ export async function waitForAnalysisEditSave(projectId) {
 
 // 콘티 시드(httpAdapter.getStoryboard → shapes.defaultStoryboard)가 실제로 읽는 필드.
 // 이 중 하나라도 이 화면에서 다시 저장되면, 이미 데워둔 콘티 프리페치는 스테일해진다.
-const STORYBOARD_SEED_PATCH_KEYS = new Set(['colors', 'clothingType', 'targetGenders']);
+const STORYBOARD_SEED_PATCH_KEYS = new Set(['colors', 'clothingType', 'targetGenders', 'matchClothing']);
 
 const PRODUCT_PATCH_KEYS = new Set([
   'name',

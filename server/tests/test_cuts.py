@@ -358,6 +358,8 @@ def test_server_example_validation_rejects_id_applicability_cut_and_gender_but_a
             assets=assets, clothing_type="top", gender="women",
         )
         assert error[0] == expected
+        # 카탈로그 회전 복구용 — 클라이언트가 정확히 그 선택만 걷어낼 수 있게 meta에 실어 준다.
+        assert error[2] == {"exampleId": example_id}
 
 
 def test_normalize_cut_type_only_request_uses_defensive_inference():
@@ -769,6 +771,13 @@ def test_resolved_example_manifest_and_prompt_apply_all_scope():
     assert "garments, shoes, accessories" in p
     assert "PRODUCT and MATCHING are the ONLY product-specific garment identity" in p
     assert "camera direction" in p and "remain fixed requirements" in p
+    assert "POSE FROM EXAMPLE: preserve the semantic backbone" in p
+    assert "small natural changes in joint angles" in p
+    assert "coherent different specific place" in p
+    assert "do not use a structural/prop change quota" in p
+    assert "Never add, move, duplicate or awkwardly stage" in p
+    assert "environmental text or signage is not automatically erased" in p
+    assert "at least two placements" not in p
     assert "Pose: natural and unforced" not in p
 
 
