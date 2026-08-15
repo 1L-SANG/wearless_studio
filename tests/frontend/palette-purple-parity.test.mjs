@@ -21,6 +21,7 @@ test('퍼플이 색 관련 모든 지점에 등록돼 있다', () => {
     ['../../src/features/product-input/colorAutofill.js', 'purple'],
     ['../../src/lib/colorwayMatching.js', 'purple'],
     ['../../src/mock/matchingRecommendation.js', "'purple'"],
+    ['../../src/features/storyboard/Storyboard.jsx', "purple: '#7d5ba6'"],
   ]) assert.match(read(path), new RegExp(needle), `${path} 에 퍼플 누락`);
 });
 
