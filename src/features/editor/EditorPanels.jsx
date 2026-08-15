@@ -244,8 +244,8 @@ function StrokeWidthControl(props) {
   return <RangeNumberControl label="테두리 굵기" min={0.5} max={12} step={0.5} {...props} />;
 }
 
-/* ---------- AI · 이 컷에서 한 장 더 — 자리·포즈·표정만 바꿔 같은 장소에서 한 장 더 ---------- */
-/* 이 컷에서 한 장 더 — 옷·모델·장소는 그대로 두고 '자리·포즈·표정'만 바꾼다(오너 8/16).
+/* ---------- AI · 같은 장소 이미지 생성 — 자리·포즈·표정만 바꿔 같은 장소에서 한 장 더 ---------- */
+/* 같은 장소 이미지 생성 — 옷·모델·장소는 그대로 두고 '자리·포즈·표정'만 바꾼다(오너 8/16).
    배경 변경은 뺐다: 장면을 통째로 다시 그리는 유일한 항목이라 옷 정체성이 흔들릴 위험이
    가장 큰데 이 경로에는 품질 검사(QC)가 없고, 프리셋 배경은 셀러가 콘티에서 고른 연출과
    무관해 페이지의 장소 일관성도 깨뜨린다. 배경을 안 건드리면 프롬프트의 freeze 계약
@@ -495,7 +495,7 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
     <div>
       <div className="seg" data-idx={tab === 'vary' ? 1 : 0}>
         <button className={tab === 'new' ? 'on' : ''} onClick={() => setTab('new')}>새 이미지 추가</button>
-        <button className={tab === 'vary' ? 'on' : ''} onClick={() => setTab('vary')}>이 컷에서 한 장 더</button>
+        <button className={tab === 'vary' ? 'on' : ''} onClick={() => setTab('vary')}>같은 장소 이미지 생성</button>
       </div>
       {tab === 'new' ? (
         <div>
