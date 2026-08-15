@@ -278,3 +278,35 @@ def test_worker_keeps_original_when_sam_fails(monkeypatch):
     assert calls["swap"] is False, "실패 시 스왑 안 함 = 원본 유지"
     assert calls["finalize"][0] in ("error", "done")
     assert calls["finalize"][1] in ("unavailable", "failed")
+
+
+def test_wrong_color_cutout_falls_back_to_original(monkeypatch):
+    """SAM 이 배경 조각을 딴 경우(2026-08-15 실사고: 흰 문틈 → flat-lay 가 칼을 그림) —
+    색 게이트가 누끼 전체를 버리고 원본을 유지한다. 스왑·asset 생성·재렌더 전부 없음."""
+    import io as _io
+    from PIL import Image as _Image
+
+    def _png(mode_color, rgba=False):
+        im = _Image.new("RGBA" if rgba else "RGB", (30, 40), mode_color)
+        b = _io.BytesIO(); im.save(b, "PNG"); return b.getvalue()
+
+    class _SplitR2:
+        def __init__(self):
+            self.puts = []
+        def get_bytes(self, key):
+            if key.startswith("cut/"):
+                return _png((246, 246, 244, 255), rgba=True)  # 누끼 = 흰 덩어리
+            return _png((24, 26, 30))                          # 원본 = 검정 데님
+        def put_bytes(self, key, data, mime, cache=None):
+            self.puts.append(key)
+
+    app, r2, calls = _wire_worker(monkeypatch, r2=_SplitR2())
+    _run(app, _job_dict())
+
+    status, result = calls["finalize"]
+    assert status == "done"
+    assert result["state"] == "failed"
+    assert result["reason"] == "cutout_color_mismatch"
+    assert calls["swap"] is None, "원본 유지 — 스왑 없음"
+    assert calls["assets"] == [], "파생 asset 도 만들지 않는다"
+    assert r2.puts == [], "R2 에 아무것도 안 올린다"

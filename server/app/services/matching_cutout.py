@@ -42,6 +42,47 @@ def flatten_on_bg(rgba_png: bytes) -> bytes:
     return out.getvalue()
 
 
+#: 누끼 색 일치 게이트 임계 — 전경 평균색이 원본 중앙부와 채널당 이 이상 벌어지면
+#: "다른 것을 땄다"로 본다. 실측 근거(2026-08-15): 부츠컷 청바지에서 SAM 이 다리 사이
+#: 흰 문틈을 땄다(areaFrac 0.31 — 넓이로는 정상 범위). 원본 중앙부(검정 데님)와 누끼
+#: 전경(흰색)의 밝기 차가 100 이상이라 색 비교 한 번이면 걸린다. 같은 옷의 조명 차는
+#: 실측 30 안쪽. 판정 불가(디코드 실패 등)는 통과 — 이 게이트가 새 실패원이 되면 안 된다.
+CUTOUT_COLOR_DELTA_MAX = 70
+
+
+def cutout_color_agrees(original_bytes: bytes, flattened_png: bytes) -> tuple[bool, dict]:
+    """누끼 전경색이 원본 옷 색과 같은 계열인지 (결정론, AI 아님). → (일치 여부, 메트릭).
+
+    원본 기준색 = 중앙 50% 크롭 평균(옷이 프레임 중앙을 차지한다는 업로드 관례).
+    누끼 전경 = 회색 배경(MATCHING_CUTOUT_BG)과 다른 픽셀들의 평균.
+    """
+    try:
+        with Image.open(io.BytesIO(original_bytes)) as o:
+            orig = o.convert("RGB")
+            w, h = orig.size
+            center = orig.crop((w // 4, h // 4, w * 3 // 4, h * 3 // 4))
+            center.thumbnail((64, 64), Image.LANCZOS)
+            px = list(center.getdata())
+            ref = tuple(sum(c[i] for c in px) // len(px) for i in range(3))
+        with Image.open(io.BytesIO(flattened_png)) as f:
+            cut = f.convert("RGB")
+            cut.thumbnail((128, 128), Image.LANCZOS)
+            bg = MATCHING_CUTOUT_BG
+            # flatten_on_bg 배경은 무손실 PNG 상수라 임계를 낮게 잡아도 안전하다 —
+            # 높게 잡으면 배경과 15 안팎 차이인 흰 오탐 덩어리가 전경에서 빠져
+            # no_foreground 로만 걸리고 색 델타 근거가 안 남는다.
+            fg = [p for p in cut.getdata()
+                  if max(abs(p[i] - bg[i]) for i in range(3)) > 8]
+            if len(fg) < 32:  # 전경이 사실상 없음 — 빈 누끼도 불일치다
+                return False, {"reason": "no_foreground", "fgCount": len(fg)}
+            got = tuple(sum(c[i] for c in fg) // len(fg) for i in range(3))
+        delta = max(abs(ref[i] - got[i]) for i in range(3))
+        return delta <= CUTOUT_COLOR_DELTA_MAX, {
+            "refColor": ref, "cutoutColor": got, "delta": delta}
+    except Exception:  # noqa: BLE001 - 게이트 자체가 실패원이 되면 안 된다
+        return True, {"reason": "gate_error_fail_open"}
+
+
 def encode_thumbnail(image_bytes: bytes, *, max_px: int = THUMBNAIL_MAX_PX) -> bytes:
     """카드 표시용 축소 JPEG. 배경이 이미 불투명이라 알파를 잃을 게 없다."""
     with Image.open(io.BytesIO(image_bytes)) as opened:

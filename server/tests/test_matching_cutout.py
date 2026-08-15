@@ -89,3 +89,46 @@ def test_source_fingerprint_is_stable_and_order_sensitive():
     assert mc.source_fingerprint(["a", "b"]) == mc.source_fingerprint(["a", "b"])
     assert mc.source_fingerprint(["a", "b"]) != mc.source_fingerprint(["b", "a"])
     assert mc.source_fingerprint([None]) == mc.source_fingerprint([""])  # 해시 결측 허용
+
+
+# ── 누끼 색 일치 게이트 (2026-08-15 — SAM 이 옷 대신 배경 조각을 딴 실사고) ──────
+
+def _rgb_png(color, size=(60, 80)):
+    buf = io.BytesIO()
+    Image.new("RGB", size, color).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _flat_png(fg_color, size=(60, 80), fg_box=(15, 20, 45, 60)):
+    im = Image.new("RGB", size, mc.MATCHING_CUTOUT_BG)
+    if fg_color is not None:
+        from PIL import ImageDraw
+        ImageDraw.Draw(im).rectangle(fg_box, fill=fg_color)
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def test_color_gate_rejects_background_grab():
+    """검정 데님 원본인데 누끼 전경이 흰색 — 부츠컷 다리 사이 문틈을 딴 실사고 재현."""
+    ok, m = mc.cutout_color_agrees(_rgb_png((24, 26, 30)), _flat_png((246, 246, 244)))
+    assert ok is False
+    assert m["delta"] > mc.CUTOUT_COLOR_DELTA_MAX
+
+
+def test_color_gate_accepts_same_garment_and_lighting_shift():
+    dark = (24, 26, 30)
+    assert mc.cutout_color_agrees(_rgb_png(dark), _flat_png(dark))[0] is True
+    lit = (54, 56, 60)  # 조명 차 +30 — 같은 옷으로 본다
+    assert mc.cutout_color_agrees(_rgb_png(dark), _flat_png(lit))[0] is True
+
+
+def test_color_gate_rejects_empty_foreground():
+    ok, m = mc.cutout_color_agrees(_rgb_png((24, 26, 30)), _flat_png(None))
+    assert ok is False and m["reason"] == "no_foreground"
+
+
+def test_color_gate_fails_open_on_undecodable_input():
+    """게이트 자체가 새 실패원이 되면 안 된다 — 판정 불가는 통과."""
+    ok, m = mc.cutout_color_agrees(b"not-an-image", _flat_png((10, 10, 10)))
+    assert ok is True and m["reason"] == "gate_error_fail_open"

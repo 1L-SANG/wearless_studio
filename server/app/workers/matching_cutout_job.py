@@ -103,8 +103,20 @@ async def run_matching_cutout_job(app, job: dict) -> None:
             # 신원의 뿌리는 소스다 — SAM 이 준 소스 해시, 없으면 소스 키.
             source_hashes.append(view.source_hash or key)
             cutout_bytes = await asyncio.to_thread(r2.get_bytes, view.cutout_key)
-            cut_pngs.append(await asyncio.to_thread(
-                matching_cutout.flatten_on_bg, cutout_bytes))
+            flattened = await asyncio.to_thread(
+                matching_cutout.flatten_on_bg, cutout_bytes)
+            # 색 일치 게이트 — SAM 이 옷 대신 배경 조각을 딴 케이스(2026-08-15 실측:
+            # 부츠컷 다리 사이 흰 문틈 → flat-lay 가 칼을 그림). 마스크 넓이로는 못
+            # 거르고, 전경색이 원본 옷과 계열이 다르면 누끼 전체를 버리고 원본을
+            # 유지한다(기존 fail-open 폴백 그대로 — 어떤 경우에도 등록은 살아 있다).
+            original = await asyncio.to_thread(r2.get_bytes, key)
+            agrees, color_metrics = await asyncio.to_thread(
+                matching_cutout.cutout_color_agrees, original, flattened)
+            if not agrees:
+                log.warning("matching_cutout color gate rejected item=%s key=%s %s",
+                            matching_item_id, key, color_metrics)
+                raise _CutoutFailed("cutout_color_mismatch")
+            cut_pngs.append(flattened)
 
         # 2) 파생 신원은 소스 지문 + 알고리즘 버전으로 결정론적으로 만든다 —
         #    재실행(스테일 리스 회수)이 같은 행·같은 R2 키로 수렴한다.
