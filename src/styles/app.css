@@ -337,11 +337,13 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
 }
 @keyframes ink-sheen { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
 
+/* 움직임을 줄이는 사용자에게는 빛 자체를 없앤다. animation:none 만 걸면 의사요소가
+   transform 없이 그대로 남아 검정 막대 한가운데 흰 띠가 영구히 박힌다(리뷰 지적). */
 @media (prefers-reduced-motion: reduce) {
   .progress > i::after,
   .job-ribbon-fill::after,
   .ed-genbar-track i::after,
-  .ap-bar i::after { animation: none; }
+  .ap-bar i::after { display: none; }
 }
 
 /* step checklist */

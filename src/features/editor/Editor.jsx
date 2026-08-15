@@ -20,6 +20,8 @@ import { listModels } from '@/lib/api/facemarket.js';
 import { uid } from '@/lib/ids.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, IconButton, Button, Modal, EmptyState, useToast } from '@/components/ui.jsx';
+import { SmoothProgressTrack } from '@/components/SmoothProgress.jsx';
+import { EXPECTED_MS } from '@/lib/smoothProgress.js';
 import { exampleGenderFromAnalysis, hexFor } from '@/features/storyboard/Storyboard.jsx';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
@@ -1506,7 +1508,10 @@ export function Editor() {
           fill: '#FFFFFF', stroke: '#000000', strokeWidth: 2, radius: 28,
           bubbleFit: { maxWidth: 560, padX: 24, padTop: 20, padBottom: 38, anchor: 'left' },
         }
+      /* 도형 기본값: 흰 채움 + 잉크 테두리 — 검정 통면은 상세페이지에서 너무 무겁고,
+         흰 블록 위에서 테두리 없이는 안 보인다 (2026-08-14 오너 확정). */
       : { id: uid('el'), type: 'shape', shape: shapeId, x, y, w: 140, h: 140,
+        fill: '#FFFFFF', stroke: '#0e0d14', strokeWidth: 2,
       };
     setBlocks((bs) => bs.map((b) => b.id === target ? { ...b, elements: [...b.elements, el] } : b));
     selectEl(target, el); toast.push('오브젝트를 추가했어요');
@@ -2408,7 +2413,18 @@ export function Editor() {
                 : '상세페이지를 만들고 있어요'}
           </span>
           {!genFailed && (
-            <span className="ed-genbar-track" aria-hidden="true"><i style={{ width: `${dpJob.progress}%` }} /></span>
+            /* 훅을 이 작은 컴포넌트가 소유한다 — 초당 여러 번의 진행 갱신이 에디터 전체
+               트리를 다시 그리지 않게 격리. */
+            /* active 를 status==='running' 에 묶으면 안 된다 — 잡이 done 이 된 뒤에도
+               마무리(완성본 병합·저장)가 끝날 때까지 이 리본은 몇 초 더 떠 있고, 그 사이
+               바가 0 으로 비어 버린다. 리본이 떠 있는 동안은 계속 살아 있고, done 이면
+               100 을 채운다. */
+            <SmoothProgressTrack
+              tag="span" className="ed-genbar-track"
+              value={dpJob.progress} done={dpJob.status === 'done'}
+              jobKey={dpJob.jobId || dpJob.projectId || ''}
+              startedAt={dpJob.startedAt} expectedMs={EXPECTED_MS.detailPage}
+            />
           )}
           <span className="ed-genbar-side">
             {genFailed ? (

@@ -993,64 +993,116 @@ export function FramePanel({ onAdd, onDragStart, onDragEnd, recommendGender, onP
   );
 }
 
-/* ---------- 오브젝트 (도형/선 추가 + 블록 배경) ---------- */
-// 글리프는 캔버스 렌더와 같은 path(shapes.js)를 currentColor 로 그려 미리보기-실물 일치
+/* ---------- 오브젝트 (추천 프리셋 / 도형·선 탭 + 블록 배경) ----------
+   2026-08-14 개편: 제목이 맨 위, 추가할 것은 언더라인 탭 두 갈래(추천/도형·선),
+   블록 배경은 구분선 아래 맨 밑. 미리보기는 전부 같은 굵기의 선화(line-art) 한 언어. */
+// 글리프는 캔버스 렌더와 같은 path(shapes.js) — 생성 기본값(흰 채움+잉크 테두리)과 같은 모습
 function ShapeGlyph({ id }) {
-  if (id === 'circle') return <span className="obj-prev circle" />;
-  if (id === 'rect') return <span className="obj-prev square" />;
+  if (id === 'circle') return <svg className="obj-glyph" viewBox="0 0 100 100"><circle cx="50" cy="50" r="44" fill="#fff" stroke="currentColor" strokeWidth="6" /></svg>;
+  if (id === 'rect') return <svg className="obj-glyph" viewBox="0 0 100 100"><rect x="8" y="8" width="84" height="84" rx="14" fill="#fff" stroke="currentColor" strokeWidth="6" /></svg>;
   const d = id === 'triangle' ? 'M50 8 L96 92 L4 92 Z' : SHAPE_D[id];
-  return <svg className="obj-glyph" viewBox="0 0 100 100"><path d={d} fill="currentColor" /></svg>;
+  return <svg className="obj-glyph" viewBox="0 0 100 100"><path d={d} fill="#fff" stroke="currentColor" strokeWidth="6" strokeLinejoin="round" /></svg>;
 }
+/* 추천 오브젝트 미리보기 — 캔버스 결과물을 같은 선 굵기로 축약한 아이콘 (84×44) */
+const presetIconProps = { viewBox: '0 0 84 44', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' };
+const PRESET_ICONS = {
+  'text-box': (
+    <svg {...presetIconProps}>
+      <rect x="10" y="8" width="64" height="28" rx="6" fill="currentColor" fillOpacity=".9" stroke="none" />
+      <path d="M22 19h40M22 26h26" stroke="#fff" strokeWidth="2.4" />
+    </svg>
+  ),
+  'single-bubble': (
+    <svg {...presetIconProps}>
+      <path d="M16 8h52a6 6 0 0 1 6 6v12a6 6 0 0 1-6 6H34l-9 8v-8h-9a6 6 0 0 1-6-6V14a6 6 0 0 1 6-6Z" />
+      <path d="M26 20h32" opacity=".55" />
+    </svg>
+  ),
+  'qa-bubbles': (
+    <svg {...presetIconProps}>
+      <path d="M10 6h34a5 5 0 0 1 5 5v6a5 5 0 0 1-5 5H24l-7 6v-6h-7a5 5 0 0 1-5-5v-6a5 5 0 0 1 5-5Z" />
+      <path d="M72 21H42a5 5 0 0 0-5 5v6a5 5 0 0 0 5 5h16l7 6v-6h7a5 5 0 0 0 5-5v-6a5 5 0 0 0-5-5Z" opacity=".55" />
+    </svg>
+  ),
+  divider: (
+    <svg {...presetIconProps}>
+      <path d="M10 22h64" />
+      <circle cx="42" cy="22" r="3.4" fill="currentColor" stroke="none" />
+    </svg>
+  ),
+  'arrow-callout': (
+    <svg {...presetIconProps}>
+      <path d="M12 14h34M12 22h24" />
+      <path d="M48 30h22m0 0-6-5m6 5-6 5" />
+    </svg>
+  ),
+  'label-badge': (
+    <svg {...presetIconProps}>
+      <rect x="20" y="12" width="44" height="20" rx="10" />
+      <path d="M32 22h20" opacity=".55" />
+    </svg>
+  ),
+};
+const OBJECT_PANEL_TABS = [
+  { value: 'preset', label: '추천 오브젝트' },
+  { value: 'shape', label: '도형·선' },
+];
 const BLOCK_BG_OPTS = [
   { c: '#ffffff', label: '흰색' }, { c: '#f5f5f5', label: '연회색' }, { c: '#0e0d14', label: '잉크' },
 ];
 export function ShapePanel({ catalogs, onAdd, block, onBgChange }) {
+  const [tab, setTab] = useState('preset');
   const dragStart = (e, type, id) => { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/object', `${type}:${id}`); };
   return (
     <div>
-      {block && onBgChange && (
-        <div style={{ marginBottom: 20 }}>
-          <label className="lbl" style={{ marginBottom: 9 }}>블록 배경</label>
-          <SwatchField value={block.bg || '#ffffff'} palette={BLOCK_BG_OPTS.map((o) => o.c)} opacity={Math.round((block.bgOpacity ?? 1) * 100)}
-            onColor={(bg) => onBgChange(block.id, { bg })} onOpacity={(value) => onBgChange(block.id, { bgOpacity: value / 100 })} />
-          <p className="hint" style={{ marginTop: 8 }}>배경만 투명해져요. 블록 안의 사진과 글자는 흐려지지 않아요.</p>
+      <PanelHead title="오브젝트" sub="클릭하면 블록 중앙에, 드래그하면 원하는 자리에 놓여요." />
+      <UnderlineTabs options={OBJECT_PANEL_TABS} value={tab} onChange={setTab} />
+      {tab === 'preset' ? (
+        <div className="object-preset-list" style={{ marginTop: 16 }}>
+          {OBJECT_LIBRARY_ITEMS.map((item) => (
+            <button className="object-preset-cell" key={item.id} draggable title={item.label}
+              onClick={() => onAdd('preset', item.id)} onDragStart={(e) => dragStart(e, 'preset', item.id)}>
+              <span className="object-preset-thumb">{PRESET_ICONS[item.id] || item.preview}</span>
+              <span className="object-preset-name">{item.label}</span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div style={{ marginTop: 16 }}>
+          <label className="lbl" style={{ marginBottom: 9 }}>기본 도형</label>
+          <div className="shape-list" style={{ marginBottom: 18 }}>
+            {catalogs.shapes.map((s) => (
+              <button className="shape-cell" key={s.id} title={s.label} draggable
+                onClick={() => onAdd('shape', s.id)} onDragStart={(e) => dragStart(e, 'shape', s.id)}>
+                <ShapeGlyph id={s.id} />
+              </button>
+            ))}
+          </div>
+          <label className="lbl" style={{ marginBottom: 9 }}>선</label>
+          <div className="shape-list line3">
+            {catalogs.lines.map((l) => (
+              <button className="shape-cell" key={l.id} title={l.label} draggable
+                onClick={() => onAdd('line', l.id)} onDragStart={(e) => dragStart(e, 'line', l.id)}>
+                <span className="obj-prev line">
+                  <svg viewBox="0 0 38 16">
+                    <line x1={l.id === 'arrow-l' ? 7 : 1} y1="8" x2={l.id === 'arrow-r' ? 31 : 37} y2="8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    {l.id === 'arrow-l' && <polyline points="8,3 2,8 8,13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />}
+                    {l.id === 'arrow-r' && <polyline points="30,3 36,8 30,13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />}
+                  </svg>
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
-      <PanelHead title="오브젝트" sub="클릭하면 블록 중앙에, 드래그하면 원하는 블록에 추가돼요." />
-      <label className="lbl" style={{ marginBottom: 9 }}>추천 오브젝트</label>
-      <div className="object-preset-list">
-        {OBJECT_LIBRARY_ITEMS.map((item) => (
-          <button className="object-preset-cell" key={item.id} draggable title={item.label}
-            onClick={() => onAdd('preset', item.id)} onDragStart={(e) => dragStart(e, 'preset', item.id)}>
-            <span className={`object-preset-glyph ${item.id}`}>{item.preview}</span>
-            <span>{item.label}</span>
-          </button>
-        ))}
-      </div>
-      <label className="lbl" style={{ marginBottom: 9 }}>기본 도형</label>
-      <div className="shape-list" style={{ marginBottom: 18 }}>
-        {catalogs.shapes.map((s) => (
-          <button className="shape-cell" key={s.id} title={s.label} draggable
-            onClick={() => onAdd('shape', s.id)} onDragStart={(e) => dragStart(e, 'shape', s.id)}>
-            <ShapeGlyph id={s.id} />
-          </button>
-        ))}
-      </div>
-      <label className="lbl" style={{ marginBottom: 9 }}>선</label>
-      <div className="shape-list">
-        {catalogs.lines.map((l) => (
-          <button className="shape-cell" key={l.id} title={l.label} draggable
-            onClick={() => onAdd('line', l.id)} onDragStart={(e) => dragStart(e, 'line', l.id)}>
-            <span className="obj-prev line">
-              <svg viewBox="0 0 38 16">
-                <line x1={l.id === 'arrow-l' ? 7 : 1} y1="8" x2={l.id === 'arrow-r' ? 31 : 37} y2="8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                {l.id === 'arrow-l' && <polyline points="8,3 2,8 8,13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />}
-                {l.id === 'arrow-r' && <polyline points="30,3 36,8 30,13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />}
-              </svg>
-            </span>
-          </button>
-        ))}
-      </div>
+      {block && onBgChange && (
+        <div className="obj-bg-sect">
+          <label className="lbl" style={{ marginBottom: 9 }}>블록 배경 <span className="obj-bg-scope">선택한 블록에만 적용</span></label>
+          <SwatchField value={block.bg || '#ffffff'} palette={BLOCK_BG_OPTS.map((o) => o.c)} opacity={Math.round((block.bgOpacity ?? 1) * 100)}
+            onColor={(bg) => onBgChange(block.id, { bg })} onOpacity={(value) => onBgChange(block.id, { bgOpacity: value / 100 })} />
+          <p className="hint" style={{ marginTop: 8 }}>배경만 투명해져요 — 사진과 글자는 그대로.</p>
+        </div>
+      )}
     </div>
   );
 }
