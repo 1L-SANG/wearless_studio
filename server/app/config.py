@@ -155,7 +155,11 @@ class Settings:
     # 누끼 성공본을 시드 카탈로그와 같은 정면 flat-lay 로 재렌더(카드 썸네일 1장, 무과금
     # 잡 안에서 이미지 호출 1회). off면 생성 자체가 없다. matching_cutout 이 켜져 있고
     # 누끼가 성공한 경우에만 의미가 있다.
-    matching_flatlay: str = "off"
+    # on   = 카드 썸네일만 재렌더(#131 계약 그대로).
+    # full = 썸네일 + **생성 입력 grid 의 front 칸**도 flat-lay 로. 접힌 채 찍힌 하의가
+    #        착장 생성에서 실루엣·원단을 잃는 문제(2026-08-14 실측: 접힌 갈색 배럴팬츠 →
+    #        갈색 청바지)의 해법 — 이미 만든 flat-lay 1장을 재사용하므로 호출 증가 0.
+    matching_flatlay: str = "off"  # off | on | full
     mannequin_prompt_file: str | None = None  # 없으면 server/prompts/mannequin_generate_v1.txt
     mannequin_prompt_version: str = "v1"
     # 여성 기본 가슴 볼륨 2패스 (2026-07-30 스파이크). 생성된 컷에 "가슴만 바꿔라"를 단독 과제로
@@ -170,6 +174,17 @@ class Settings:
     # QC 재생성이 모두 소진된 뒤의 구조 변경(2026-08-01). QC 검출이 불안정해 게이트로 쓰지
     # 않고 매칭 하의가 붙는 top/outer 잡마다 1회 돈다(이미 빠져 있으면 무변경 반환 지시).
     mannequin_untuck_pass: str = "off"  # off | on
+    # 매칭 하의(코디 바지) 정체성 QC — 매칭 하의가 붙는 잡에서만 활성. off|shadow|enforce.
+    # shadow=매칭 점수·하드게이트·바지영역 픽셀 메트릭 계측만, enforce=재롤/드롭·편집 롤백.
+    # AI 콜 증가 0(기존 AG-P2 1콜에 바지 원본 1장·필드만 얹음). 다크 출고를 위해 기본 off.
+    mannequin_pants_qc: str = "off"  # off | shadow | enforce
+    # flat-lay 재렌더 모델 티어. 프롬프트는 스파이크 전략 B(정체성 고정) 원문 고정이고,
+    # 모델만 이 노브로 고른다.
+    # **사실관계**: 리포트(flatlay-spike-inputs/out/report.html)는 두 모델의 정체성 보존을
+    # 동률(4/4 PASS)로 보고 **Flash 를 추천**했다 — 속도 ~9s vs ~19s, 실비 $0.068 vs $0.139.
+    # 그럼에도 기본을 Pro 로 두는 것은 **오너 판단**이다(2026-08-15 지시: 디테일 우선).
+    # 비용을 줄이려면 MATCHING_FLATLAY_TIER=image_light 로 내린다 — 아이템당 실비 절반.
+    matching_flatlay_tier: str = "image_high"  # image_high | image_light
     base_mannequin_women_asset_id: str | None = None  # R2 seed asset (startup 검증)
     base_mannequin_men_asset_id: str | None = None
     job_dispatcher_enabled: bool = True  # §5
@@ -354,6 +369,9 @@ def load_settings() -> Settings:
         mannequin_bust_pass=_bust_pass(),
         mannequin_fabric_pass=_flag("MANNEQUIN_FABRIC_PASS", "off", {"off", "on"}),
         mannequin_untuck_pass=_flag("MANNEQUIN_UNTUCK_PASS", "off", {"off", "on"}),
+        mannequin_pants_qc=_flag("MANNEQUIN_PANTS_QC", "off", {"off", "shadow", "enforce"}),
+        matching_flatlay_tier=_flag(
+            "MATCHING_FLATLAY_TIER", "image_high", {"image_light", "image_high"}),
         base_mannequin_women_asset_id=os.getenv("MANNEQUIN_BASE_WOMEN_ASSET_ID") or None,
         base_mannequin_men_asset_id=os.getenv("MANNEQUIN_BASE_MEN_ASSET_ID") or None,
         job_dispatcher_enabled=(os.getenv("JOB_DISPATCHER_ENABLED", "true").lower() != "false"),
@@ -406,7 +424,7 @@ def load_settings() -> Settings:
         mannequin_base_fidelity_observe_regenerations=_flag(
             "MANNEQUIN_BASE_FIDELITY_OBSERVE_REGENERATIONS", "off", {"off", "on"}),
         matching_cutout=_flag("MATCHING_CUTOUT", "off", {"off", "on"}),
-        matching_flatlay=_flag("MATCHING_FLATLAY", "off", {"off", "on"}),
+        matching_flatlay=_flag("MATCHING_FLATLAY", "off", {"off", "on", "full"}),
         facemarket_enabled=(os.getenv("FACEMARKET_ENABLED", "false").lower() == "true"),
         detailpage_fallback_model_id=os.getenv("DETAILPAGE_FALLBACK_MODEL_ID", "mB"),
         personalization_enabled=(

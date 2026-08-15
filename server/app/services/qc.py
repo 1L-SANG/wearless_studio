@@ -169,3 +169,110 @@ def format_qc_feedback(result: QcResult) -> str:
     if not seen:
         return ""
     return "CORRECTION (highest priority — the previous attempt failed): " + " ".join(seen)
+
+
+# --- 매칭 하의(코디 바지) 보존 — 편집 전후 로컬 픽셀 비교 (AI 아님, API 비용 0) ---
+# bust·untuck 같은 편집은 상의/가슴만 손봐야 한다. 그런데 전체를 다시 렌더하므로 하체
+# 바지가 조용히 다른 색·폭·구조로 드리프트할 수 있다. 편집 전후 같은 컷을 픽셀로 대보고
+# 바지 영역이 크게 바뀌면 그 편집을 버리게 한다. 원본 상품과 대조가 아니라 **편집 전후**
+# 대조라 정체성 판정(AG-P2)과 무관하고, 결정론적이라 vision 콜이 필요 없다.
+#
+# 국소화는 **고정 세로 밴드**다 — 랜드마크는 이 파이프라인에서 오탐 상수(missing_lower_body).
+# 허리 전이대(밴드 상단)를 살짝 비워 두어 상의 밑단·untuck 변화가 바지 판정으로 새지 않게 한다.
+PANTS_BAND_TOP = 0.60      # 프레임 높이의 이 지점부터(엉덩이 아래) — 허리 경계 소폭 허용
+#: untuck post-pass 전용 밴드 상단. untuck 은 상의 밑단을 허리 아래로 내리는 편집이라
+#: 기본 밴드가 그 밑단을 품는다 — 정상 untuck 이 "바지 색이 변했다"로 롤백되던 지점.
+#: 무릎 아래만 보면 상의가 닿을 수 없다(2026-08-15 리뷰).
+PANTS_BAND_TOP_UNTUCK = 0.75
+PANTS_BAND_BOTTOM = 0.97   # 밑단까지. 발/바닥(맨 아래 3%)은 제외
+PANTS_FG_MIN_RATIO = 0.02  # 밴드 전경 최소 질량 — 미만이면 색 판정을 건너뛴다(노이즈 방지)
+PANTS_COLOR_DELTA_MAX = 40    # 전경 평균색 최대 채널 이동(0-255) — 색 계열 변화
+PANTS_WIDTH_DELTA_MAX = 0.18  # 바지 폭(밴드 너비 대비 분율) 변화 — 와이드↔슬림
+# 엣지맵 평균 차이(0-1) — 포켓·허리단·버튼 구조 변화. 실측 스케일(합성): 주름 노이즈≈0.002,
+# 굵은 구조 추가≈0.05. 노이즈의 ~20배로 두어 gross 드리프트만 잡고 미세 텍스처는 흘린다.
+# 절대 임계는 실사진 캘리브레이션 대상 — shadow 로 edgeDelta 를 모아 조정한다. 포켓 단위
+# 미세 변화는 AG-P2 재판정(matching_critical_errors)이 별도로 잡으므로 여기선 보수적으로 둔다.
+PANTS_EDGE_DELTA_MAX = 0.04
+
+
+def _pants_band_mask(band: Image.Image, bg: tuple[int, int, int]) -> tuple[Image.Image, int]:
+    """밴드에서 배경과 다른 전경 마스크('L', 0/255)와 전경 픽셀 수를 만든다."""
+    diff = ImageChops.difference(band, Image.new("RGB", band.size, bg)).convert("L")
+    mask = diff.point(lambda v: 255 if v > FG_THRESHOLD else 0)
+    return mask, mask.histogram()[255]
+
+
+def compare_pants_region(
+    before_bytes: bytes, after_bytes: bytes, *,
+    band_top: float = PANTS_BAND_TOP, band_bottom: float = PANTS_BAND_BOTTOM,
+    color_thresh: int = PANTS_COLOR_DELTA_MAX, width_thresh: float = PANTS_WIDTH_DELTA_MAX,
+    edge_thresh: float = PANTS_EDGE_DELTA_MAX,
+) -> QcResult:
+    """편집 전(before)·후(after) 바지 영역을 대조한다. → QcResult.
+
+    verdict: 'pants_regressed'(색·폭·구조 중 하나라도 크게 변함) | 'pants_stable' |
+    'pants_unknown'(디코드 실패 — **fail-open**, 호출측은 회귀 아님으로 취급).
+
+    주름·미세 광택·작은 봉제선은 세 지표 어디에도 크게 걸리지 않아 통과한다(요구 3). 임계값은
+    추정치라 shadow 로 메트릭을 모아 캘리브레이션한 뒤 enforce 한다(services/qc.py 관례).
+    """
+    try:
+        before = Image.open(BytesIO(before_bytes)).convert("RGB")
+        before.load()
+        after = Image.open(BytesIO(after_bytes)).convert("RGB")
+        after.load()
+    except Exception:
+        return QcResult("pants_unknown", ["decode_failed"])
+    if after.size != before.size:
+        after = after.resize(before.size, Image.LANCZOS)
+
+    w, h = before.size
+    top, bottom = int(h * band_top), int(h * band_bottom)
+    if bottom <= top or w < 4:
+        return QcResult("pants_unknown", ["band_degenerate"])
+    box = (0, top, w, bottom)
+    band_b, band_a = before.crop(box), after.crop(box)
+    band_w, band_h = band_b.size
+    band_area = band_w * band_h
+    bg = _bg_color(before)
+
+    mask_b, count_b = _pants_band_mask(band_b, bg)
+    mask_a, count_a = _pants_band_mask(band_a, bg)
+
+    # 색: 전경 평균색 채널 이동. 전경이 너무 적으면(짧은 하의·거의 배경) 판정 불가로 0.
+    color_delta = 0.0
+    if count_b >= band_area * PANTS_FG_MIN_RATIO and count_a >= band_area * PANTS_FG_MIN_RATIO:
+        mean_b = ImageStat.Stat(band_b, mask_b).mean
+        mean_a = ImageStat.Stat(band_a, mask_a).mean
+        color_delta = max(abs(mean_b[i] - mean_a[i]) for i in range(3))
+
+    # 폭: 전경 bbox 너비(밴드 너비 대비). 와이드↔슬림 실루엣 변화를 잡는다. getbbox 는 최외곽
+    # 단일 픽셀에 좌우되므로, 재렌더 아티팩트 한 점이 폭을 부풀려 멀쩡한 편집을 되돌릴 수 있다.
+    # evaluate_mannequin_qc 와 동일하게 MinFilter(3)로 stray 단일 픽셀을 침식하고 bbox 를 잰다.
+    def _width_frac(mask):
+        bbox = mask.filter(ImageFilter.MinFilter(3)).getbbox()
+        return (bbox[2] - bbox[0]) / band_w if bbox else 0.0
+    width_delta = abs(_width_frac(mask_b) - _width_frac(mask_a))
+
+    # 구조: 엣지맵 평균 차이. 포켓·허리단·버튼·플라이 생성/소실을 잡는다. FIND_EDGES 의
+    # 테두리 아티팩트는 1px 크롭으로 뺀다.
+    def _edges(band):
+        e = band.convert("L").filter(ImageFilter.FIND_EDGES)
+        return e.crop((1, 1, band_w - 1, band_h - 1)) if band_w > 2 and band_h > 2 else e
+    edge_delta = ImageStat.Stat(ImageChops.difference(_edges(band_b), _edges(band_a))).mean[0] / 255.0
+
+    reasons = []
+    if color_delta > color_thresh:
+        reasons.append("matching_bottom_colour_shift")
+    if width_delta > width_thresh:
+        reasons.append("matching_bottom_width_shift")
+    if edge_delta > edge_thresh:
+        reasons.append("matching_bottom_structure_shift")
+    metrics = {
+        "colorDelta": round(color_delta, 2),
+        "widthDelta": round(width_delta, 4),
+        "edgeDelta": round(edge_delta, 4),
+        "fgRatioBefore": round(count_b / band_area, 4),
+        "fgRatioAfter": round(count_a / band_area, 4),
+    }
+    return QcResult("pants_regressed" if reasons else "pants_stable", reasons, metrics)

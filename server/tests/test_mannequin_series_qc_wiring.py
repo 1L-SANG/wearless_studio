@@ -377,7 +377,7 @@ def test_final_salvage_never_uses_unedited_pre_gate_candidate(monkeypatch):
     ]
     seq = list(p2_seq)
 
-    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
         return seq.pop(0) if len(seq) > 1 else seq[0]
 
     monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
@@ -411,7 +411,7 @@ def test_salvage_picks_best_across_both_pools(monkeypatch):
     ]
     seq = list(p2_seq)
 
-    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
         return seq.pop(0) if len(seq) > 1 else seq[0]
 
     async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
@@ -444,7 +444,7 @@ def test_scores_rescored_when_edit_changed_the_image(monkeypatch):
     ]
     calls = {"n": 0}
 
-    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
         calls["n"] += 1
         return seq[min(calls["n"] - 1, len(seq) - 1)]
 
@@ -527,7 +527,7 @@ def test_regressive_edit_is_reverted_to_pre_edit_image(monkeypatch):
 
     seq, calls = [_p2(90), _p2(30)], {"n": 0}
 
-    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
         calls["n"] += 1
         return seq[min(calls["n"] - 1, len(seq) - 1)]
 
@@ -720,7 +720,7 @@ def test_pre_gate_reject_respects_budget(monkeypatch):
     n = {"i": 0}
     edits = {"n": 0}
 
-    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
         n["i"] += 1
         return seq[min(n["i"] - 1, len(seq) - 1)]
 
@@ -819,7 +819,7 @@ def test_rollback_keeps_axis_fix_when_only_bust_regressed(monkeypatch):
     seq = [_p2c(90), _p2c(30, critical=["garment shape broken"]), _p2c(88)]
     n = {"i": 0}
 
-    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
         n["i"] += 1
         return seq[min(n["i"] - 1, len(seq) - 1)]
 
@@ -850,7 +850,7 @@ def test_rollback_goes_all_the_way_when_axis_is_also_at_fault(monkeypatch):
     seq = [_p2c(90), _p2c(30, critical=["broken"]), _p2c(30, critical=["broken"])]
     n = {"i": 0}
 
-    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
         n["i"] += 1
         return seq[min(n["i"] - 1, len(seq) - 1)]
 
@@ -889,7 +889,7 @@ def test_failed_bust_does_not_fake_a_second_checkpoint(monkeypatch):
     seq = [_p2c(90), _p2c(20, critical=["garment shape broken"]), _p2c(95)]
     n = {"i": 0}
 
-    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
         n["i"] += 1
         return seq[min(n["i"] - 1, len(seq) - 1)]
 
@@ -1054,7 +1054,7 @@ def test_final_salvage_is_not_reprocessed(monkeypatch):
     seq = [_p2c(95), _p2c(95), _p2c(20, critical=["logo altered"])]
     calls = {"p2": 0, "series": 0, "axis": 0}
 
-    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
         calls["p2"] += 1
         return seq[min(calls["p2"] - 1, len(seq) - 1)]
 
@@ -1121,7 +1121,7 @@ def test_worker_passes_declared_fit_to_image_qc(monkeypatch):
 
     seen = []
 
-    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None, match_image=None):
         seen.append(fit_profile)
         return _p2c(90)
 

@@ -8,6 +8,8 @@ import { supabase } from '@/lib/supabase.js';
 import { LIMITS } from '@/lib/limits.js';
 import { applySeededHookStyle, defaultAnalysisShape, defaultStoryboard, isDefaultStoryboardForMode } from '@/lib/api/shapes.js';
 import { normalizeMatchClothingSelection, toMatchItem } from '@/lib/api/matchingItems.js';
+import { mergeMatchSelection } from '@/lib/api/matchSelection.js';
+import { applyOpeningRow, hasOpeningRow } from '@/lib/storyboardEntryPlacement.js';
 import { deriveHookFrame } from '@/lib/storyboardHookFrame.js';
 import { selectPublicAnalysisPhotos } from '@/lib/publicAnalysisPhotos.js';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
@@ -377,26 +379,6 @@ async function recommendMatchHttp(projectId, analysis, current, { defaultSelecti
 }
 
 // 선택 토글 머지 — id 단위 selected/selOrder 반영 후 1..max 재부여(mock 정규화와 동일 규칙).
-function mergeMatchSelection(currentMatch, matchPatch, clothingType) {
-  const expectedType = clothingType === 'dress'
-    ? null
-    : (clothingType === 'bottom' ? 'top' : 'bottom');
-  const patchById = new Map(matchPatch.map((m) => [m.id, m]));
-  const merged = (currentMatch || []).map((m) => {
-    const p = patchById.get(m.id);
-    if (!p) return m;
-    return { ...m, selected: !!p.selected, selOrder: p.selected ? p.selOrder : undefined };
-  });
-  const ranked = merged.filter((m) => m.selected
-      && m.isCompatible !== false
-      && expectedType !== null
-      && (m.clothingType == null || m.clothingType === expectedType))
-    .sort((a, b) => (a.selOrder || 99) - (b.selOrder || 99)).slice(0, LIMITS.matchClothingMax);
-  const orderById = new Map(ranked.map((m, i) => [m.id, i + 1]));
-  return merged.map((m) => orderById.has(m.id)
-    ? { ...m, selected: true, selOrder: orderById.get(m.id) }
-    : { ...m, selected: false, selOrder: undefined });
-}
 
 export const httpAdapter = {
   uploadPhoto,

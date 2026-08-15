@@ -621,3 +621,35 @@ def test_segmentation_module_imports_without_torch_installed():
                  if re.match(r"^(import|from)\s+(torch|transformers)\b", ln)]
     assert not top_level, f"torch imported at module scope: {top_level}"
     assert seg.MODEL_ID == "facebook/sam2.1-hiera-tiny"
+
+
+# ── EXIF 회전 디코드 (2026-08-15 실사고: 누운 프레임 → 옷 대신 배경 조각 선택) ────
+
+def test_decode_source_applies_exif_orientation():
+    """Orientation=6 인 세로 폰 사진은 픽셀이 누워 저장된다 — 디코드가 세워서 돌려줘야
+    '중앙 접촉' 게이트가 사람이 보는 그 프레임에서 동작한다."""
+    import io as _io
+    from PIL import Image as _Image
+    from sam_service import segmentation as seg
+
+    # 가로(400x200)로 저장 + Orientation 6(90도 CW 필요) → 적용하면 세로(200x400)
+    im = _Image.new("RGB", (400, 200), (10, 20, 30))
+    exif = _Image.Exif()
+    exif[274] = 6
+    buf = _io.BytesIO()
+    im.save(buf, "JPEG", exif=exif)
+
+    bgr = seg.decode_source_bgr(buf.getvalue())
+    assert bgr is not None
+    assert bgr.shape[:2] == (400, 200), "H=400, W=200 — 세워진 프레임"
+
+
+def test_decode_source_returns_none_on_garbage():
+    from sam_service import segmentation as seg
+    assert seg.decode_source_bgr(b"not an image") is None
+
+
+def test_algorithm_version_bumped_for_exif_decode():
+    """캐시 키가 알고리즘 버전을 포함한다 — 누운 채 잘린 캐시가 살아남으면 안 된다."""
+    from sam_service import segmentation as seg
+    assert seg.ALGORITHM_VERSION == "sam2-grid8-v3"

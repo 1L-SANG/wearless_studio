@@ -39,6 +39,9 @@ class GeminiImageClient:
 
     def __init__(self, settings: Settings):
         self._key = settings.gemini_api_key
+        # getattr — 테스트·부분 설정 객체가 openai 키를 안 가질 수 있다. 없으면 gpt-image
+        # 모델을 호출할 때에만 GeminiError 로 드러난다(기존 gemini 경로는 영향 0).
+        self._openai_key = getattr(settings, "openai_api_key", None)
         self._vertex_project = settings.vertex_project
         self._vertex_location = settings.vertex_location
 
@@ -90,6 +93,10 @@ class GeminiImageClient:
         aspect_ratio: str | None = None,
         timeout: float = 180.0,
     ) -> GeminiImageResult:
+        # 모델 id 로 provider 분기. gpt-image* 는 OpenAI images/edits(멀티 레퍼런스), 그 외는 Gemini.
+        # 같은 시그니처·같은 GeminiImageResult 반환이라 9개 콜사이트는 무변경이다.
+        if model.startswith("gpt-image"):
+            return await self._openai_generate(model, prompt, images, aspect_ratio, timeout)
         if not self._key:
             raise GeminiError("GEMINI_API_KEY 미설정")
         body = self._body(prompt, images, image_size, temperature, aspect_ratio)
@@ -162,3 +169,56 @@ class GeminiImageClient:
             latency_ms=latency_ms,
             usage=usage,
         )
+
+    #: aspect_ratio → OpenAI 고정 사이즈. OpenAI 이미지 모델은 임의 해상도를 못 받는다
+    #: (Gemini 의 848×1264 같은 값 불가) — 세로/가로/정사각으로 접는다. 후단(에디터 지오메트리)이
+    #: 특정 dim 을 기대하면 리사이즈가 별도로 필요하다(정식 배선 시 처리).
+    _OPENAI_SIZE = {"2:3": "1024x1536", "9:16": "1024x1536", "3:4": "1024x1536",
+                    "3:2": "1536x1024", "16:9": "1536x1024", "4:3": "1536x1024",
+                    "1:1": "1024x1024"}
+
+    async def _openai_generate(
+        self, model: str, prompt: str, images: list[InlineImage],
+        aspect_ratio: str | None, timeout: float,
+    ) -> GeminiImageResult:
+        """OpenAI images/edits — 멀티 레퍼런스 편집 생성. Gemini 와 동일 반환 계약.
+
+        Gemini generateContent 와 의미가 다르다(캔버스 편집 vs 조건부 생성) — 동등 품질 보장 아님.
+        키·엔드포인트·multipart·응답(b64_json) 전부 Gemini 와 다르므로 별도 경로다.
+        """
+        if not self._openai_key:
+            raise GeminiError("OPENAI_API_KEY 미설정")
+        size = self._OPENAI_SIZE.get(aspect_ratio or "", "1024x1536")
+        _ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+        files = [
+            ("image[]", (f"ref{i}.{_ext.get(im.mime, 'png')}", im.data, im.mime))
+            for i, im in enumerate(images)
+        ]
+        data = {"model": model, "prompt": prompt, "size": size, "n": "1"}
+        t0 = time.perf_counter()
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                res = await client.post(
+                    "https://api.openai.com/v1/images/edits",
+                    headers={"Authorization": f"Bearer {self._openai_key}"},
+                    data=data, files=files)
+        except httpx.RequestError as exc:
+            raise GeminiError(f"OpenAI request failed: {type(exc).__name__}: {exc}") from exc
+        latency_ms = int((time.perf_counter() - t0) * 1000)
+        if res.status_code != 200:
+            raise GeminiError(f"OpenAI {res.status_code}: {res.text[:500]}")
+        try:
+            payload = res.json()
+            b64 = ((payload.get("data") or [{}])[0]).get("b64_json")
+            if not b64:
+                raise ValueError("no b64_json in response")
+        except (TypeError, ValueError, KeyError) as exc:
+            raise GeminiError(f"OpenAI 200 응답 형식 오류: {exc}") from exc
+        img = base64.b64decode(b64)
+        try:  # 계량은 best-effort — OpenAI usage shape 가 달라도 생성을 죽이지 않는다.
+            image_usage.record(model=model, image_size=size, usage=payload.get("usage"),
+                               latency_ms=latency_ms, has_image=True)
+        except Exception:
+            pass
+        return GeminiImageResult(image=img, mime="image/png", latency_ms=latency_ms,
+                                 usage=payload.get("usage"))

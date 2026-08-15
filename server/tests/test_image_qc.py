@@ -291,6 +291,111 @@ def test_pick_best_orchestrates_product_then_candidates(monkeypatch):
     assert out == {"chosenIndex": 1, "reason": "logo is closest"}
 
 
+
+# ---------- 매칭 하의(코디 바지) 정체성 — 같은 1콜 안 ----------
+
+def test_matching_schema_adds_fields_only_on_scored_and_matching():
+    """matching 필드는 scored 위에, matching=True 일 때만. 그 밖 경로는 불변."""
+    s = iq.qc_schema(scored=True, matching=True)
+    assert s["properties"]["matching_fidelity"] == {"type": ["integer", "null"]}
+    assert s["properties"]["matching_critical_errors"]["type"] == "array"
+    # GPT strict: 전 키가 required 여야 400 이 안 난다.
+    assert set(s["required"]) == set(s["properties"])
+    # scored 인데 matching 아니면 필드가 없어야 한다(매칭 하의 없는 마네킹 컷).
+    scored_only = iq.qc_schema(scored=True)
+    assert "matching_fidelity" not in scored_only["properties"]
+    assert "matching_critical_errors" not in scored_only["properties"]
+    # matching 만 켜도 scored 아니면 아무 것도 안 붙는다(scene/best_of 보호).
+    assert set(iq.qc_schema(matching=True)["properties"]) == {
+        "verdict", "mismatches", "correctionPrompt"}
+
+
+def test_matching_fidelity_is_not_a_product_score_key():
+    """matching_fidelity 는 SCORE_KEYS 밖 — score_outcome/등급에 절대 안 섞인다(오탐·비용 방지)."""
+    assert "matching_fidelity" not in iq.SCORE_KEYS
+    assert iq.MATCHING_KEYS == ("matching_fidelity",)
+
+
+def test_matching_prompt_block_gated_on_matching():
+    """MATCHING BOTTOM 블록·하드 게이트 어휘는 matching 일 때만. scored-only 엔 안 샌다."""
+    p = iq.build_prompt(2, scored=True, matching=True)
+    assert "MATCHING BOTTOM" in p
+    for token in ("matching bottom colour changed", "matching bottom type changed",
+                  "matching bottom leg width changed", "matching bottom structure changed"):
+        assert token in p, token
+    # 주름·미세광택은 점수만, critical 아님이 명시돼야 한다(요구 3).
+    assert "NEVER critical errors" in p
+    # 격리: matching 없는 scored 프롬프트엔 이 블록이 없어야 한다.
+    assert "MATCHING BOTTOM" not in iq.build_prompt(2, scored=True)
+    # 미채점 경로(scene/best_of)는 더더욱 불변.
+    assert "MATCHING BOTTOM" not in iq.build_prompt(2)
+
+
+def test_validate_matching_clamps_and_keeps_hard_errors():
+    out = iq.validate({
+        "verdict": "pass",
+        "product_fidelity": 90, "physical_naturalness": 88,
+        "image_quality": 84, "series_consistency": None, "critical_errors": [],
+        "matching_fidelity": 130, "matching_critical_errors": ["matching bottom colour changed", " "],
+    }, scored=True, matching=True)
+    assert out["matching_fidelity"] == 100                       # 클램핑
+    assert out["matching_critical_errors"] == ["matching bottom colour changed"]
+    # pass 판정이어도 바지 하드 게이트는 살린다(주상품 critical_errors 와 같은 규율).
+    assert out["verdict"] == "pass"
+
+
+def test_validate_matching_absent_when_not_matching():
+    """매칭 없는 scored 응답엔 matching 키가 없어야 한다 — 주상품 판정과 분리."""
+    out = iq.validate({"verdict": "pass", "product_fidelity": 90,
+                       "matching_fidelity": 50}, scored=True)
+    assert "matching_fidelity" not in out
+    assert "matching_critical_errors" not in out
+
+
+def test_verdict_inserts_match_between_products_and_generated(monkeypatch):
+    """첨부 순서 계약: [상품…, 매칭 하의, 생성]. 스키마·validate 도 matching 경로여야 한다."""
+    captured = {}
+
+    async def fake_fallback(settings, prompt, images, schema):
+        captured["images"] = [i.data for i in images]
+        captured["schema"] = schema
+        assert "MATCHING BOTTOM" in prompt
+        return ({"verdict": "pass", "product_fidelity": 92, "physical_naturalness": 90,
+                 "image_quality": 88, "series_consistency": None, "critical_errors": [],
+                 "matching_fidelity": 84,
+                 "matching_critical_errors": ["matching bottom leg width changed"]}, "gemini")
+
+    monkeypatch.setattr(iq, "analyze_with_fallback", fake_fallback)
+    gen = InlineImage("image/png", b"GEN")
+    match = InlineImage("image/png", b"MATCH")
+    out = run(iq.verdict(make_settings(gemini_api_key="x"), [_img(), _img()], gen,
+                         scored=True, match_image=match))
+    assert captured["images"] == [b"\x89PNG", b"\x89PNG", b"MATCH", b"GEN"]
+    assert "matching_fidelity" in captured["schema"]["properties"]
+    assert out["matching_fidelity"] == 84
+    assert out["matching_critical_errors"] == ["matching bottom leg width changed"]
+    assert out["product_fidelity"] == 92
+
+
+def test_verdict_without_match_is_byte_identical_to_baseline(monkeypatch):
+    """match_image 없으면 요청(이미지 수·프롬프트)·응답 shape 이 기존과 완전히 같다."""
+    captured = {}
+
+    async def fake_fallback(settings, prompt, images, schema):
+        captured["n"] = len(images)
+        captured["matching_in_prompt"] = "MATCHING BOTTOM" in prompt
+        captured["matching_in_schema"] = "matching_fidelity" in schema["properties"]
+        return ({"verdict": "pass", "product_fidelity": 90, "physical_naturalness": 90,
+                 "image_quality": 90, "series_consistency": None, "critical_errors": []}, "gemini")
+
+    monkeypatch.setattr(iq, "analyze_with_fallback", fake_fallback)
+    out = run(iq.verdict(make_settings(gemini_api_key="x"), [_img(), _img()],
+                         InlineImage("image/png", b"GEN"), scored=True))
+    assert captured["n"] == 3 and not captured["matching_in_prompt"]
+    assert not captured["matching_in_schema"]
+    assert "matching_fidelity" not in out and "matching_critical_errors" not in out
+
+
 def test_every_catalog_axis_value_has_an_observable():
     """선언 축 커버리지에 구멍이 생기면 **핏 조정 버그가 조용히 재발한다**.
 

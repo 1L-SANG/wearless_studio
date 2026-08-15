@@ -13,6 +13,11 @@
    반영한다. 차감은 여기(서버 역할)가 책임지고, 프론트 선차감 금지.
    ============================================================= */
 import { DB, reseedDraft, buildEditorBlocksFromStoryboard, buildStoryboard } from '@/mock/db.js';
+import {
+  rememberCustomMatchDraft,
+  clearCustomMatchDraft as forgetCustomMatchDraft,
+  readCustomMatchDraft,
+} from '@/mock/customMatchDraftStore.js';
 import { Placeholder } from '@/mock/placeholders.js';
 import {
   addCustomMatchToAnalysis,
@@ -421,9 +426,15 @@ export const api = {
       isCustom: true,
       isCompatible: true,
       selected: false,
+      // draft 승격용(mock 전용) — 확정 시 이 업로드 blob 들을 실서버에 재업로드해
+      // custom-match-item 으로 등록한다(draftSync). 서버 응답 shape 에는 없는 필드.
+      sourceAssetIds: [...assetIds],
     };
     const result = addCustomMatchToAnalysis(DB.analysis, item);
     DB.analysis.matchClothing = result.analysis.matchClothing;
+    // 승격 키는 목록 밖 전용 저장소에 둔다 — 목록은 화이트리스트 재구성(toLegacyMatchItem)
+    // 을 수시로 지나므로 아이템에 실은 키는 확정 전에 소멸한다(2026-08-14 전수조사).
+    rememberCustomMatchDraft({ assetIds });
     return clone({ item: result.item, analysis: DB.analysis });
   },
   async removeCustomMatchItem(/* projectId */) {
@@ -431,7 +442,34 @@ export const api = {
     const analysis = removeCustomMatchFromAnalysis(DB.analysis);
     DB.analysis.matchClothing = analysis.matchClothing;
     if (analysis.fitProfile) DB.analysis.fitProfile = analysis.fitProfile;
+    forgetCustomMatchDraft();
     return { analysis: clone(DB.analysis) };
+  },
+  // draft(비프로젝트) 단계에서 추가한 내 옷의 원본 blob 묶음 — 확정 승격(draftSync)이
+  // 실서버 업로드+등록에 쓴다. 커스텀이 없거나 blob 이 유실됐으면 null.
+  getCustomMatchDraft() {
+    const item = (DB.analysis.matchClothing || []).find((m) => m.isCustom);
+    // 정본은 전용 저장소. 목록 재구성에서 살아남은 sourceAssetIds 는 폴백일 뿐이다.
+    const assetIds = readCustomMatchDraft()?.assetIds
+      ?? (Array.isArray(item?.sourceAssetIds) ? item.sourceAssetIds : null);
+    if (!assetIds) return null;
+    const uploads = assetIds
+      .map((id) => customMatchUploads.get(id))
+      .filter(Boolean)
+      .map(({ filename, mime, blob }) => ({ filename, mime, blob }));
+    if (!uploads.length) return null;
+    return { uploads, selected: !!item?.selected, localId: item?.id ?? null };
+  },
+  // 승격이 끝난(성공·실패 무관) draft 의 키·blob 을 버린다. 모듈 스코프라 탭이 살아 있는
+  // 동안 남으므로, 비우지 않으면 다음 프로젝트가 이전 프로젝트의 옷을 등록한다.
+  clearCustomMatchDraft() {
+    const held = readCustomMatchDraft()?.assetIds || [];
+    held.forEach((id) => {
+      const up = customMatchUploads.get(id);
+      if (up?.url) URL.revokeObjectURL(up.url);
+      customMatchUploads.delete(id);
+    });
+    forgetCustomMatchDraft();
   },
   async refreshMatchClothing(/* projectId */) {
     DB.analysis.matchClothing = recommendLegacyMatchClothing({

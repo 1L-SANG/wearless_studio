@@ -42,6 +42,52 @@ def flatten_on_bg(rgba_png: bytes) -> bytes:
     return out.getvalue()
 
 
+#: 배경 오채취 판정 임계 — 누끼 전경 평균색이 원본 **배경(테두리)** 색과 채널당 이 값
+#: 이내로 붙으면 "옷이 아니라 배경을 땄다"로 본다. 실측 근거(2026-08-15): 부츠컷 청바지에서
+#: SAM 이 다리 사이 흰 문틈을 땄고(areaFrac 0.31 — 넓이로는 정상), 그 전경색이 흰 문 배경과
+#: 사실상 동일했다. 반대로 정상 누끼는 배경과 뚜렷이 다르다(실측 Δ 100+).
+#: 판정 불가(디코드 실패 등)는 통과 — 이 게이트가 새 실패원이 되면 안 된다.
+CUTOUT_BG_DELTA_MIN = 40
+
+
+def cutout_color_agrees(original_bytes: bytes, flattened_png: bytes) -> tuple[bool, dict]:
+    """누끼가 옷이 아니라 **배경**을 딴 것인지 (결정론, AI 아님). → (통과 여부, 메트릭).
+
+    기준은 원본의 **테두리 밴드 색(=배경)** 이다. 중앙 평균을 기준으로 삼으면 "옷이 프레임
+    중앙을 채운다"는 구도 가정에 기대게 되고, 옷이 작게 찍힌 정상 업로드에서 기준색에
+    배경이 섞여 멀쩡한 누끼가 거절된다(2026-08-15 리뷰). 실제 실패 모드는 하나다 —
+    SAM 이 배경 조각을 땄다. 그러면 누끼 전경색이 원본 배경색과 거의 같아진다.
+    """
+    try:
+        with Image.open(io.BytesIO(original_bytes)) as o:
+            orig = o.convert("RGB")
+            orig.thumbnail((160, 160), Image.LANCZOS)
+            w, h = orig.size
+            b = max(2, min(w, h) // 12)
+            edges = [orig.crop((0, 0, w, b)), orig.crop((0, h - b, w, h)),
+                     orig.crop((0, 0, b, h)), orig.crop((w - b, 0, w, h))]
+            epx = [p for e in edges for p in e.getdata()]
+            ref = tuple(sum(c[i] for c in epx) // len(epx) for i in range(3))
+        with Image.open(io.BytesIO(flattened_png)) as f:
+            cut = f.convert("RGB")
+            cut.thumbnail((128, 128), Image.LANCZOS)
+            bg = MATCHING_CUTOUT_BG
+            # flatten_on_bg 배경은 무손실 PNG 상수라 임계를 낮게 잡아도 안전하다 —
+            # 높게 잡으면 배경과 15 안팎 차이인 흰 오탐 덩어리가 전경에서 빠져
+            # no_foreground 로만 걸리고 색 델타 근거가 안 남는다.
+            fg = [p for p in cut.getdata()
+                  if max(abs(p[i] - bg[i]) for i in range(3)) > 8]
+            if len(fg) < 32:  # 전경이 사실상 없음 — 빈 누끼도 불일치다
+                return False, {"reason": "no_foreground", "fgCount": len(fg)}
+            got = tuple(sum(c[i] for c in fg) // len(fg) for i in range(3))
+        delta = max(abs(ref[i] - got[i]) for i in range(3))
+        # 배경과 충분히 다르면 옷을 딴 것 — 통과.
+        return delta >= CUTOUT_BG_DELTA_MIN, {
+            "bgColor": ref, "cutoutColor": got, "delta": delta}
+    except Exception:  # noqa: BLE001 - 게이트 자체가 실패원이 되면 안 된다
+        return True, {"reason": "gate_error_fail_open"}
+
+
 def encode_thumbnail(image_bytes: bytes, *, max_px: int = THUMBNAIL_MAX_PX) -> bytes:
     """카드 표시용 축소 JPEG. 배경이 이미 불투명이라 알파를 잃을 게 없다."""
     with Image.open(io.BytesIO(image_bytes)) as opened:

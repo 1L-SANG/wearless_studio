@@ -19,6 +19,7 @@
 import { api } from '@/lib/api/index.js';
 import { createDraftSyncSingleFlight } from '@/lib/draftSyncSingleFlight.js';
 import { draftPromotionSession } from '@/lib/draftPromotionSession.js';
+import { promoteCustomMatch, stripLocalCustomMatch } from '@/lib/customMatchPromotion.js';
 
 // product.colors[].images[] 의 id·src 를 업로드 결과로 치환 (원본 imageId 매칭).
 // **id 를 서버 asset id 로 바꾼다** — 서버(mannequin.base_color_images·분석 워커)가 이미지를
@@ -71,6 +72,14 @@ async function runDraftSync(draft, { projectId: existing } = {}) {
       }
     }
 
+    // draft 커스텀 매칭(내 옷)은 로컬 blob 아이템이라 analysis payload 로는 승격이 안 된다 —
+    // payload 에선 걷어내고(죽은 objectURL 방지) 아래에서 실서버 등록으로 따로 승격한다.
+    // 같은 탭이면 메모리 저장소가 정본이고, OAuth 리다이렉트로 돌아온 경우엔 그게 비어 있어
+    // IndexedDB draft 에 실려 온 blob 이 유일한 소스다(2026-08-15 전수조사 — 비로그인 셀러의
+    // 내 옷이 확정에서 조용히 사라지던 경로).
+    const customDraft = api.getCustomMatchDraft?.() ?? draft.customMatch ?? null;
+    if (analysis) analysis = stripLocalCustomMatch(analysis);
+
     await api.saveProduct(projectId, product);
     if (analysis) {
       await api.saveAnalysis(projectId, analysis);
@@ -79,7 +88,12 @@ async function runDraftSync(draft, { projectId: existing } = {}) {
       composeMode: draft.composeMode === 'extended' ? 'extended' : 'basic',
     });
 
-    return { projectId };
+    // 내 옷 승격 — blob 재업로드 → custom-match-item 등록(서버가 누끼 잡을 건다).
+    // 결과를 위로 돌려준다: 셀러는 확정 직전까지 '내 옷' 카드를 보고 있었으므로, 등록만
+    // 실패했다면 화면이 그 사실을 알려야 한다(확정 자체는 막지 않는다 — fail-open 유지).
+    const customMatch = await promoteCustomMatch(api, projectId, customDraft);
+
+    return { projectId, customMatch };
   } catch (err) {
     err.projectId = projectId; // 재시도 시 이 projectId로 호출 → 프로젝트 중복 방지
     throw err;

@@ -26,9 +26,26 @@ from app.services.sam_client import SamViewResult
 from app.workers import matching_cutout_job as job
 
 
+def _source_png(size=(60, 80)):
+    """원본 사진 — 밝은 배경 위 어두운 옷. 색 게이트가 배경 오채취를 판별할 근거."""
+    import io as _io
+    from PIL import Image as _Image, ImageDraw as _ImageDraw
+    im = _Image.new("RGB", size, (245, 245, 243))
+    _ImageDraw.Draw(im).rectangle((15, 20, 45, 60), fill=(10, 120, 200))
+    buf = _io.BytesIO(); im.save(buf, "PNG"); return buf.getvalue()
+
+
 class _FakeR2:
-    def __init__(self, cut_png): self._cut = cut_png; self.puts = []
-    def get_bytes(self, key): return self._cut  # 컷아웃 PNG 반환
+    """키로 소스/컷아웃을 가른다 — 색 게이트가 둘을 비교하므로 같은 바이트면 안 된다."""
+
+    def __init__(self, cut_png, src_png=None):
+        self._cut = cut_png
+        self._src = src_png if src_png is not None else _source_png()
+        self.puts = []
+
+    def get_bytes(self, key):
+        return self._cut if str(key).startswith("cut/") else self._src
+
     def put_bytes(self, key, data, mime, cache=None): self.puts.append((key, data, mime))
 
 
@@ -278,3 +295,45 @@ def test_worker_keeps_original_when_sam_fails(monkeypatch):
     assert calls["swap"] is False, "실패 시 스왑 안 함 = 원본 유지"
     assert calls["finalize"][0] in ("error", "done")
     assert calls["finalize"][1] in ("unavailable", "failed")
+
+
+def _source_png_with(*, bg, garment, size=(60, 80)):
+    import io as _io
+    from PIL import Image as _Image, ImageDraw as _ImageDraw
+    im = _Image.new("RGB", size, bg)
+    _ImageDraw.Draw(im).rectangle((15, 20, 45, 60), fill=garment)
+    buf = _io.BytesIO(); im.save(buf, "PNG"); return buf.getvalue()
+
+
+def test_wrong_color_cutout_falls_back_to_original(monkeypatch):
+    """SAM 이 배경 조각을 딴 경우(2026-08-15 실사고: 흰 문틈 → flat-lay 가 칼을 그림) —
+    색 게이트가 누끼 전체를 버리고 원본을 유지한다. 스왑·asset 생성·재렌더 전부 없음."""
+    import io as _io
+    from PIL import Image as _Image
+
+    def _png(mode_color, rgba=False):
+        im = _Image.new("RGBA" if rgba else "RGB", (30, 40), mode_color)
+        b = _io.BytesIO(); im.save(b, "PNG"); return b.getvalue()
+
+    class _SplitR2:
+        """원본 = 흰 배경 위 검정 데님, 누끼 = 흰 덩어리(=배경을 딴 것)."""
+
+        def __init__(self):
+            self.puts = []
+        def get_bytes(self, key):
+            if str(key).startswith("cut/"):
+                return _png((246, 246, 244, 255), rgba=True)   # 누끼 = 배경색
+            return _source_png_with(bg=(246, 246, 244), garment=(24, 26, 30))
+        def put_bytes(self, key, data, mime, cache=None):
+            self.puts.append(key)
+
+    app, r2, calls = _wire_worker(monkeypatch, r2=_SplitR2())
+    _run(app, _job_dict())
+
+    status, result = calls["finalize"]
+    assert status == "done"
+    assert result["state"] == "failed"
+    assert result["reason"] == "cutout_color_mismatch"
+    assert calls["swap"] is None, "원본 유지 — 스왑 없음"
+    assert calls["assets"] == [], "파생 asset 도 만들지 않는다"
+    assert r2.puts == [], "R2 에 아무것도 안 올린다"
