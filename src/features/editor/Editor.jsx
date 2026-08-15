@@ -41,7 +41,7 @@ import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WID
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { imageResizeRect, lineHitStrokeWidth, resizePolicyForElement, shouldShowRotationHandle, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
 import { isWardrobeImageUsed, mergeEditorImagesIntoWardrobe } from '@/features/editor/editorWardrobe.js';
-import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, selectableElementBelowBlankText, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPreserveMultiSelectionOnPointerDown, shouldStartTextOnlyDrag } from '@/features/editor/editorSelection.js';
+import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, reorderElements, selectableElementBelowBlankText, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPreserveMultiSelectionOnPointerDown, shouldStartTextOnlyDrag } from '@/features/editor/editorSelection.js';
 import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from '@/lib/imageTranscode.js';
 import { CONTENT_ROLES, SECTION_ROLES, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
 import { withStoryboardSpaceSetExamples } from '@/lib/storyboardSpaceSetCatalog.js';
@@ -635,7 +635,7 @@ function ImageImportWait({ item, scale }) {
   );
 }
 
-function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onTextCommit, onElementDragStart, shouldSuppressBlankClick, onAddImage, onDropImage, onDropBlockImage, onDropImageFiles, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropCancel, onCropReset, idx }) {
+function CanvasBlock({ block, scale, inView = false, imageImports, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onTextCommit, onElementDragStart, shouldSuppressBlankClick, onAddImage, onDropImage, onDropBlockImage, onDropImageFiles, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropCancel, onCropReset, idx }) {
   // 블록 높이는 콘텐츠보다 작아지지 않는다 — 이미지를 블록보다 크게 리사이즈하면 블록도 따라 커져 클립 방지.
   // (기존: block.h 있으면 고정 → 이미지 키워도 block-clip 이 잘라 "안 커보이던" 버그)
   const blockH = getBlockRenderHeight(block);
@@ -678,7 +678,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
   };
 
   return (
-    <div className={`canvas-block${blockSelected ? ' on' : ''}${objOver ? ' obj-over' : ''}`}
+    <div className={`canvas-block${blockSelected ? ' on' : ''}${inView ? ' in-view' : ''}${objOver ? ' obj-over' : ''}`}
       data-blockid={block.id}
       /* 고른 뒤 전파를 멈춘다 — 캔버스 바닥의 onClick 이 매 클릭마다 선택을 지우므로,
          멈추지 않으면 누르는 동안만 잡혔다가 손을 떼는 순간 풀린다. */
@@ -972,6 +972,10 @@ export function Editor() {
   const [imageImports, setImageImports] = useState([]);
   const [wardrobeUploadLoading, setWardrobeUploadLoading] = useState(false);
   const [hoverGray, setHoverGray] = useState(false);
+  /* 화면에 가장 많이 들어온 블록 — 그 블록의 퀵액션은 마우스와 무관하게 고정 노출한다
+     (오너 8/16). 예전에는 hover 로만 떠서, 버튼을 누르러 블록 밖으로 나가는 순간
+     사라지는 것처럼 보였다. */
+  const [inViewBlock, setInViewBlock] = useState(null);
   const [layerFloat, setLayerFloat] = useState(null);
   const [layerPos, setLayerPos] = useState(null);
   const [editEl, setEditEl] = useState(null);     // text element being inline-edited
@@ -1003,6 +1007,33 @@ export function Editor() {
   const activePointerDragCleanup = useRef(null);   // 화면 이탈/언마운트에도 window 포인터 리스너 정리
   const suppressMarqueeClick = useRef(false);      // pointerup 직후 합성 click이 블록 선택으로 덮는 것 방지
   const [canvasH, setCanvasH] = useState(0);       // unscaled canvas height → scaled spacer
+  // 스크롤·확대에 따라 '지금 보고 있는 블록'을 갱신한다. rAF 로 묶어 프레임당 한 번만 잰다.
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return undefined;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const wr = wrap.getBoundingClientRect();
+      let bestId = null;
+      let bestVisible = 0;
+      for (const node of wrap.querySelectorAll('.canvas-block')) {
+        const r = node.getBoundingClientRect();
+        const visible = Math.min(r.bottom, wr.bottom) - Math.max(r.top, wr.top);
+        if (visible > bestVisible) { bestVisible = visible; bestId = node.dataset.blockid; }
+      }
+      setInViewBlock((current) => (current === bestId ? current : bestId));
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
+    schedule();
+    wrap.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule);
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      wrap.removeEventListener('scroll', schedule);
+      window.removeEventListener('resize', schedule);
+    };
+  }, [blocks, scale, stitched]);
   const hist = useRef({ past: [], future: [] });
   const prevBlocks = useRef(null);
   const fromHistory = useRef(false);
@@ -1622,12 +1653,8 @@ export function Editor() {
   }));
   const reorderLayer = (blockId, fromId, toId) => setBlocks((bs) => bs.map((b) => {
     if (b.id !== blockId) return b;
-    const els = [...b.elements];
-    const fi = els.findIndex((e) => e.id === fromId); if (fi < 0) return b;
-    const [it] = els.splice(fi, 1);
-    const ti = els.findIndex((e) => e.id === toId); if (ti < 0) return b;
-    els.splice(fi < ti ? ti + 1 : ti, 0, it);
-    return { ...b, elements: els };
+    const els = reorderElements(b.elements, fromId, toId);
+    return els === b.elements ? b : { ...b, elements: els };
   }));
   const toggleElField = (blockId, elId, field) => setBlocks((bs) => bs.map((b) => b.id === blockId
     ? { ...b, elements: b.elements.map((e) => e.id === elId ? { ...e, [field]: !e[field] } : e) } : b));
@@ -2844,7 +2871,7 @@ export function Editor() {
                   onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setFrameOver((o) => o === i ? null : o); }} onDrop={(e) => onCanvasInsertDrop(e, i)}>
                   <div className={`canvas-dropline${frameOver === i ? ' on' : ''}`} />
                 </div>
-                <CanvasBlock block={b} scale={scale} idx={i} imageImports={imageImports.filter((item) => item.blockId === b.id)}
+                <CanvasBlock block={b} scale={scale} idx={i} inView={inViewBlock === b.id} imageImports={imageImports.filter((item) => item.blockId === b.id)}
                   selectedBlockId={blockFocused ? selBlock : null} selEls={selEls} editEl={editEl} onEdit={setEditEl}
                   crop={cropping && cropping.blockId === b.id ? cropping : null}
                   onCropDrag={cropDrag} onCropStart={startCrop} onCropCommit={commitCrop} onCropCancel={cancelCrop} onCropReset={resetCrop}

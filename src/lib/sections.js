@@ -313,5 +313,7 @@ export function normalizeSectionLayouts(blocks) {
 export const normalizeBoard = (blocks) => normalizeSectionLayouts(normalizeRows(assignInternalContentRoles(blocks)));
 
 /* ---- 섹션 레이아웃 행 크기 — 보드 행 모델과 mock 조립기가 공유하는 단일 소스 ---- */
-export const LAYOUT_ROW = { stack: 1, twoColumn: 2, threeColumn: 3, grid2x2: 2, colorCompare: 3 };   // 행당 컷 수
+/* 한 묶음(=에디터에서 블록 하나)에 들어가는 컷 수. grid2x2 는 2열×2행이라 4컷이 한 묶음이다 —
+   2로 두면 4컷이 블록 두 개로 쪼개져 사이에 카피가 끼고 격자가 한 덩어리로 안 보인다(오너 8/16). */
+export const LAYOUT_ROW = { stack: 1, twoColumn: 2, threeColumn: 3, grid2x2: 4, colorCompare: 3 };
 export const rowSizeFor = (layout) => LAYOUT_ROW[layout] || 1;

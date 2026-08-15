@@ -1102,13 +1102,10 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, shot, 
             event.preventDefault(); scrollToGalleryPage(galleryPage + 1);
           }
         }}>
+        {/* 세로 휠은 갤러리가 먹지 않는다 — 인스펙터 세로 스크롤이 그대로 이어진다.
+            페이지 넘김은 가로 스크롤·넘김 버튼·←→ 키만 (2026-08-16 오너). */}
         <div ref={galleryRef} className="sb-exgrid"
-          onScroll={updateGalleryPageFromScroll}
-          onWheel={(event) => {
-            if (galleryPageCount <= 1 || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
-            event.preventDefault();
-            scrollToGalleryPage(galleryPage + (event.deltaY > 0 ? 1 : -1));
-          }}>
+          onScroll={updateGalleryPageFromScroll}>
           {galleryPages.map((pageItems, pageIndex) => (
             <div className="sb-expage" key={`page:${pageIndex}`}>
               {pageItems}

@@ -354,6 +354,48 @@ def test_copywriting_on_but_no_matching_copy_result_omits_text():
 
 
 # ── 영속 행 조립 + 오프닝 카피 ───────────────────────────────────────────────
+def test_four_cut_grid_merges_into_one_block_with_copy_above_the_images():
+    """2×2 격자는 사진 넷이 딱 붙은 한 덩어리 — 카피는 격자 위(오너 2026-08-16).
+    간격이 있거나 카피가 아래에 있으면 격자가 두 묶음처럼 읽힌다."""
+    storyboard = [
+        {
+            "id": f"hook-{index}", "sectionRole": "benefit",
+            "contentRole": "hero" if index == 1 else "benefit",
+            "source": "ai", "cutType": "styling", "shot": "medium",
+            "sectionId": "hook", "sectionLayout": "grid2x2", "layoutRowId": "row-hook",
+        }
+        for index in range(1, 5)
+    ]
+    cut_results = [
+        {"blockId": f"hook-{index}", "imageUrl": f"https://cdn.example.com/{index}.png"}
+        for index in range(1, 5)
+    ]
+    copy_results = [
+        {"blockId": "hook-1", "texts": [{"role": "headline", "text": "겨울을 부드럽게"}]},
+        {"blockId": "hook-2", "texts": [{"role": "body", "text": "골지 짜임의 포인트"}]},
+    ]
+
+    blocks = assemble(storyboard, cut_results, copy_results, PRODUCT, True)
+
+    assert len(blocks) == 4  # 격자 한 덩어리 1 + 자동 블록 3 — 두 블록으로 쪼개지지 않는다
+    grid = blocks[0]
+    assert grid["kind"] == "grid2x2"
+    images = [element for element in grid["elements"] if element["type"] == "image"]
+    # 카피(제목+본문)가 위에 있으니 사진은 190부터. 칸끼리 간격 0, 모서리도 각지게(radius 0).
+    assert [(image["x"], image["y"], image["w"], image["h"]) for image in images] == [
+        (60, 190, 440, 560),
+        (500, 190, 440, 560),
+        (60, 750, 440, 560),
+        (500, 750, 440, 560),
+    ]
+    assert all(image["radius"] == 0 for image in images)
+
+    headline, subtitle = [element for element in grid["elements"] if element["type"] == "text"]
+    assert headline["y"] == 60 and subtitle["y"] == 128, "카피는 격자 위"
+    assert headline["text"] == "겨울을 부드럽게"
+    assert subtitle["text"] == "골지 짜임의 포인트"
+
+
 def test_two_column_opening_row_merges_and_keeps_copy_below_images():
     storyboard = [
         {

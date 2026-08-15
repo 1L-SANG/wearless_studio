@@ -444,47 +444,52 @@ def assemble(
         block_i = len(blocks)
         row_layout = _ROW_LAYOUTS[layout]
         count = len(chunk)
-        width = (880 - (count - 1) * 20) // count
+        # 2×2 격자는 사진 넷이 딱 붙어 한 덩어리로 보여야 한다(오너 2026-08-16). 칸 사이 간격을
+        # 두지 않고 카피는 격자 **위**에 놓는다 — 아래에 두면 격자와 다음 블록 사이에 글이 끼어
+        # 넷이 한 묶음으로 안 읽힌다. 클라이언트 조립기(src/mock/db.js pushRow)와 같은 규칙.
+        grid = layout == "grid2x2" and count == 4
+        width = 440 if grid else (880 - (count - 1) * 20) // count
+        height = 560 if grid else 500
+        hero = next((row_block for row_block in chunk
+                     if resolve_content_role(row_block) == "hero"), None) if copywriting else None
+        subtitle_block = next((row_block for row_block in chunk
+                               if resolve_content_role(row_block) == "benefit"), None)
+        headline = _text_for_role(copy_by_block.get(hero.get("id"), []), "headline") if hero else None
+        subtitle = _text_for_role(
+            copy_by_block.get(subtitle_block.get("id"), []) if subtitle_block else [], "body",
+        ) if hero else None
+        has_copy = bool(hero and (headline or subtitle))
+        img_top = (190 if subtitle else 150) if (grid and has_copy) else 50
         els: list[dict] = []
         for column, row_block in enumerate(chunk):
             meta = cut_meta_by_block.get(row_block.get("id")) or {}
             els.append(_image_el(
                 block_i,
                 column,
-                60 + column * (width + 20),
-                50,
+                60 + (column % 2) * width if grid else 60 + column * (width + 20),
+                img_top + (column // 2) * height if grid else img_top,
                 width,
-                500,
+                height,
                 meta.get("imageUrl"),
-                12,
+                0 if grid else 12,
                 row_block.get("cutType") or None,
                 source_block_id=row_block.get("id"),
             ))
 
-        if copywriting:
-            hero = next((row_block for row_block in chunk
-                         if resolve_content_role(row_block) == "hero"), None)
-            if hero:
-                headline = _text_for_role(copy_by_block.get(hero.get("id"), []), "headline")
-                if headline:
-                    els.append(_text_el(
-                        block_i, len(els), 60, 582, 880, 56, headline,
-                        {"size": 40, "weight": 600, "font": "Cal Sans", "color": "#0e0d14"},
-                        source_block_id=hero.get("id"), copy_role="headline",
-                    ))
-                subtitle_block = next((row_block for row_block in chunk
-                                       if resolve_content_role(row_block) == "benefit"), None)
-                subtitle = _text_for_role(
-                    copy_by_block.get(subtitle_block.get("id"), []) if subtitle_block else [],
-                    "body",
-                )
-                if subtitle:
-                    els.append(_text_el(
-                        block_i, len(els), 60, 650, 880, 34, subtitle,
-                        {"size": 17, "color": "#6b6b73", "lineHeight": 26},
-                        source_block_id=subtitle_block.get("id") if subtitle_block else None,
-                        copy_role="body",
-                    ))
+        if hero:
+            if headline:
+                els.append(_text_el(
+                    block_i, len(els), 60, 60 if grid else 582, 880, 56, headline,
+                    {"size": 40, "weight": 600, "font": "Cal Sans", "color": "#0e0d14"},
+                    source_block_id=hero.get("id"), copy_role="headline",
+                ))
+            if subtitle:
+                els.append(_text_el(
+                    block_i, len(els), 60, 128 if grid else 650, 880, 34, subtitle,
+                    {"size": 17, "color": "#6b6b73", "lineHeight": 26},
+                    source_block_id=subtitle_block.get("id") if subtitle_block else None,
+                    copy_role="body",
+                ))
 
         blocks.append({
             "id": _block_id(block_i),

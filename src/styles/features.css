@@ -1372,7 +1372,9 @@
   margin-left: var(--quick-gap); display: flex; flex-direction: column; gap: 8px; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .14s;
   padding: 8px; background: #fff; border-radius: var(--r-5); box-shadow: var(--elev-card); }
 .canvas-block .quick::before { content: ''; position: absolute; right: 100%; top: 0; width: var(--quick-gap); height: 100%; }
-.canvas-block:hover .quick, .canvas-block.on .quick { opacity: 1; visibility: visible; pointer-events: auto; transition-delay: 0s; }
+/* .in-view = 지금 화면을 가장 많이 차지한 블록 — 마우스를 떼도 퀵액션이 고정으로 남는다.
+   hover 로만 띄우면 버튼을 누르러 블록 밖으로 나가는 동안 사라지는 것처럼 보인다(오너 8/16). */
+.canvas-block:hover .quick, .canvas-block.on .quick, .canvas-block.in-view .quick { opacity: 1; visibility: visible; pointer-events: auto; transition-delay: 0s; }
 .el { position: absolute; cursor: pointer; outline: 1px solid rgba(14,13,20,.16); outline-offset: 0; }
 .el:hover { outline-color: rgba(14,13,20,.34); }
 /* 도형·선은 자체 형태(채움·획)가 이미 보인다 — 원이나 사선 둘레의 사각 회색 상자는

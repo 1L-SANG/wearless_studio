@@ -179,6 +179,21 @@ export function removeSelectedElements(blocks, selectedIds) {
   }));
 }
 
+/** 레이어 창 드래그로 요소 순서 바꾸기 — 끌어 놓은 요소를 대상 자리로 옮긴 elements 배열.
+    두 인덱스를 **꺼내기 전에** 모두 구해야 한다. 먼저 꺼내면 제거로 뒤 인덱스가 하나씩
+    당겨져, 바로 위 칸에 놓는 경우(가장 흔한 조작) 목표가 출발 자리와 같아져 제자리에
+    도로 꽂혔다 — "위로 옮기기"가 통째로 먹통이던 원인(오너 2026-08-16). */
+export function reorderElements(elements, fromId, toId) {
+  const next = [...(elements || [])];
+  const from = next.findIndex((element) => element.id === fromId);
+  const to = next.findIndex((element) => element.id === toId);
+  if (from < 0 || to < 0 || from === to) return elements;
+  const [moved] = next.splice(from, 1);
+  const adjusted = to > from ? to - 1 : to;   // 꺼낸 만큼 목표 인덱스 보정
+  next.splice(to > from ? adjusted + 1 : adjusted, 0, moved);  // 뒤로 끌면 대상 뒷자리
+  return next;
+}
+
 export function removeSelectedBlock(blocks, selectedBlockId) {
   if (!selectedBlockId) return blocks;
   return (blocks || []).filter((block) => block.id !== selectedBlockId);

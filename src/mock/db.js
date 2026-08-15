@@ -325,19 +325,29 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
   const pushRow = (chunk, layout) => {
     const rowLayout = ROW_LAYOUTS[layout];
     const n = chunk.length;
-    const w = Math.floor((880 - (n - 1) * 20) / n);
+    /* 2×2 격자는 사진 넷이 딱 붙어 한 덩어리로 보여야 한다(오너 8/16). 그래서 칸 사이
+       간격을 두지 않고, 카피는 격자 아래가 아니라 **위**에 놓는다 — 아래에 두면 격자와
+       다음 블록 사이에 글이 끼어 넷이 한 묶음으로 안 읽힌다. */
+    const grid = layout === 'grid2x2' && n === 4;
+    const w = grid ? 440 : Math.floor((880 - (n - 1) * 20) / n);
+    const h = grid ? 560 : 500;
+    const hero = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.HERO);
+    const subtitle = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.BENEFIT);
+    const hasCopy = Boolean(copywriting && hero);
+    // 격자는 카피가 위에 오므로 사진 시작 y 를 그만큼 내린다.
+    const imgTop = grid ? (hasCopy ? (subtitle ? 190 : 150) : 50) : 50;
     const els = chunk.map((rb, c) => Object.assign(
-      IMG(60 + c * (w + 20), 50, w, 500, generatedImageFor(rb, w, 500), 12, rb.cutType || undefined),
+      grid
+        ? IMG(60 + (c % 2) * w, imgTop + Math.floor(c / 2) * h, w, h, generatedImageFor(rb, w, h), 0, rb.cutType || undefined)
+        : IMG(60 + c * (w + 20), imgTop, w, h, generatedImageFor(rb, w, h), 12, rb.cutType || undefined),
       { sourceBlockId: rb.id },
     ));
-    const hero = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.HERO);
-    if (copywriting && hero) {
-      els.push(Object.assign(T(60, 582, 880, 56, `${product.name || '상품'}와 함께하는 하루`, {
+    if (hasCopy) {
+      els.push(Object.assign(T(60, grid ? 60 : 582, 880, 56, `${product.name || '상품'}와 함께하는 하루`, {
         size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14',
       }), { sourceBlockId: hero.id, copyRole: 'headline' }));
-      const subtitle = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.BENEFIT);
       if (subtitle) {
-        els.push(Object.assign(T(60, 650, 880, 34, '강조 포인트를 살린 카피가 들어가는 자리예요.', {
+        els.push(Object.assign(T(60, grid ? 128 : 650, 880, 34, '강조 포인트를 살린 카피가 들어가는 자리예요.', {
           size: 17, color: '#6b6b73', lineHeight: 26,
         }), { sourceBlockId: subtitle.id, copyRole: 'body' }));
       }

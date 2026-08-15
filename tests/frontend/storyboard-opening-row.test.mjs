@@ -229,3 +229,64 @@ test('mock and server assemblers emit the same opening-row block structure', () 
   assert.equal(python.status, 0, python.stderr);
   assert.deepEqual(withoutIds(JSON.parse(python.stdout)), withoutIds(mockOpening));
 });
+
+/* 후킹 섹션 4컷 = 2×2 격자 한 덩어리. 사진 넷이 붙고 카피는 격자 위에 온다(오너 2026-08-16).
+   목·서버 조립기가 같은 결과를 내야 실서버 생성과 대기 화면이 어긋나지 않는다. */
+const gridStoryboard = () => [1, 2, 3, 4].map((index) => ({
+  id: `hook-${index}`,
+  source: 'ai',
+  sectionRole: 'benefit',
+  contentRole: index === 1 ? 'hero' : 'benefit',
+  cutType: 'styling',
+  shot: 'medium',
+  sectionId: 'hook',
+  sectionLayout: 'grid2x2',
+  layoutRowId: 'row-hook',
+}));
+
+test('mock 4컷 격자는 한 블록에 사진 넷이 붙고 카피가 위에 온다', () => {
+  const blocks = buildEditorBlocksFromStoryboard(gridStoryboard(), { ...PRODUCT, colors: COLORS }, true);
+  const grid = blocks[0];
+  assert.equal(grid.kind, 'grid2x2');
+  const images = grid.elements.filter((element) => element.type === 'image');
+  assert.equal(images.length, 4, '넷이 한 블록에 모인다(두 블록으로 쪼개지지 않는다)');
+  assert.deepEqual(images.map((i) => [i.x, i.y, i.w, i.h]), [
+    [60, 190, 440, 560],
+    [500, 190, 440, 560],
+    [60, 750, 440, 560],
+    [500, 750, 440, 560],
+  ]);
+  assert.ok(images.every((i) => !i.radius), '붙은 격자는 모서리를 각지게 둔다');
+  const texts = grid.elements.filter((element) => element.type === 'text');
+  assert.deepEqual(texts.map((t) => t.y), [60, 128], '카피는 격자 위');
+});
+
+test('mock and server assemblers emit the same 4-cut grid block structure', () => {
+  const storyboard = gridStoryboard();
+  const mockGrid = buildEditorBlocksFromStoryboard(storyboard, { ...PRODUCT, colors: COLORS }, true)[0];
+  const mockImages = mockGrid.elements.filter((element) => element.type === 'image');
+  const payload = {
+    storyboard,
+    cut_results: storyboard.map((block, index) => ({ blockId: block.id, imageUrl: mockImages[index].src })),
+    copy_results: [
+      { blockId: storyboard[0].id, texts: [{ role: 'headline', text: `${PRODUCT.name}와 함께하는 하루` }] },
+      { blockId: storyboard[1].id, texts: [{ role: 'body', text: '강조 포인트를 살린 카피가 들어가는 자리예요.' }] },
+    ],
+    product: PRODUCT,
+  };
+  const python = spawnSync(PYTHON, ['-c', [
+    'import json, sys',
+    'from app.agents.page_assembler import assemble',
+    'payload = json.load(sys.stdin)',
+    'block = assemble(payload["storyboard"], payload["cut_results"], payload["copy_results"], payload["product"], True)[0]',
+    'print(json.dumps(block, ensure_ascii=False))',
+  ].join('\n')], {
+    cwd: SERVER_DIR,
+    encoding: 'utf8',
+    env: { ...process.env, PYTHONPATH: '.' },
+    input: JSON.stringify(payload),
+  });
+
+  assert.equal(python.status, 0, python.stderr);
+  assert.deepEqual(withoutIds(JSON.parse(python.stdout)), withoutIds(mockGrid));
+});

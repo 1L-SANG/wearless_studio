@@ -7,6 +7,7 @@ import { DEFAULT_READ_RETRY_DELAYS, isRetryableReadError, retryRead } from '../.
 import { buildColorOpts, colorLabelOf, visibleColorOpts } from '../../src/lib/colorOpts.js';
 import { classifyEditorLoadError } from '../../src/features/editor/editorLoadError.js';
 import { mergeServerBlocks } from '../../src/lib/editorWaitSkeleton.js';
+import { reorderElements } from '../../src/features/editor/editorSelection.js';
 
 /* ---------- 3-14 콘티 조회 자동 재시도 ---------- */
 
@@ -111,4 +112,29 @@ test('완료 병합: 실패 목록을 안 넘기면 예전과 똑같이 동작�
   const merged = mergeServerBlocks(waitBlocks, serverBlocks);
   assert.equal(merged[0].elements[1].src, null);
   assert.ok(!merged[0].elements[1].genFailed);
+});
+
+/* ---------- 레이어 창 드래그로 순서 바꾸기 ---------- */
+
+const layers = () => ['A', 'B', 'C', 'D'].map((id) => ({ id }));
+const ids = (list) => list.map((e) => e.id).join('');
+
+test('레이어 순서 — 바로 위 칸에 놓기가 제자리로 돌아오지 않는다(오너 8/16 먹통 신고)', () => {
+  // 예전 구현은 요소를 먼저 꺼낸 뒤 목표 인덱스를 찾아서, 한 칸 위로 끄는 경우
+  // 목표가 출발 자리와 같아져 아무 변화가 없었다 — '위로 옮기기'가 통째로 안 됐다.
+  assert.equal(ids(reorderElements(layers(), 'A', 'B')), 'BACD');
+  assert.equal(ids(reorderElements(layers(), 'B', 'C')), 'ACBD');
+});
+
+test('레이어 순서 — 아래로·맨 끝으로도 정확히 옮긴다', () => {
+  assert.equal(ids(reorderElements(layers(), 'C', 'B')), 'ACBD');
+  assert.equal(ids(reorderElements(layers(), 'A', 'D')), 'BCDA');
+  assert.equal(ids(reorderElements(layers(), 'D', 'A')), 'DABC');
+});
+
+test('레이어 순서 — 제자리·없는 id 는 원본을 그대로 돌려준다(불필요한 리렌더 방지)', () => {
+  const list = layers();
+  assert.equal(reorderElements(list, 'A', 'A'), list);
+  assert.equal(reorderElements(list, 'A', 'Z'), list);
+  assert.equal(reorderElements(list, 'Z', 'A'), list);
 });
