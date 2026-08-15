@@ -10,6 +10,7 @@ const SWATCH_BRIGHTNESS = Object.freeze({
   pink: 72,
   gray: 58,
   blue: 50,
+  purple: 44,
   green: 42,
   red: 40,
   brown: 30,
@@ -25,6 +26,7 @@ const SWATCH_BY_LABEL = Object.freeze({
   핑크: 'pink',
   그레이: 'gray',
   블루: 'blue',
+  퍼플: 'purple',
   그린: 'green',
   레드: 'red',
   브라운: 'brown',
@@ -41,6 +43,7 @@ const SWATCH_ALIASES = Object.freeze([
   ['네이비', 'navy'], ['남색', 'navy'],
   ['그린', 'green'], ['초록', 'green'], ['카키', 'green'],
   ['레드', 'red'], ['빨강', 'red'], ['핑크', 'pink'], ['옐로우', 'yellow'],
+  ['퍼플', 'purple'], ['보라', 'purple'], ['바이올렛', 'purple'], ['라벤더', 'purple'],
   ['블랙', 'black'], ['검정', 'black'],
 ]);
 
