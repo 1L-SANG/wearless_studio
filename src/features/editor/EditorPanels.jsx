@@ -1146,8 +1146,20 @@ export function LayerPanel({ block, selEls = [], embedded, onSelect, onReorder, 
                 draggable
                 onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/layer', el.id); setDragId(el.id); }}
                 onDragEnd={() => { setDragId(null); setOverId(null); }}
-                onDragOver={(e) => { if (dragId) { e.preventDefault(); setOverId(el.id); } }}
-                onDrop={(e) => { e.preventDefault(); if (dragId && dragId !== el.id) onReorder(block.id, dragId, el.id); setDragId(null); setOverId(null); }}
+                /* 드롭 허용 판정은 React 상태(dragId)가 아니라 드래그 데이터로 한다 —
+                   상태가 아직 커밋되기 전이면 preventDefault 를 건너뛰어 drop 자체가
+                   막히고, 끌어다 놔도 아무 일이 없는 것처럼 보인다. */
+                onDragOver={(e) => {
+                  if (![...e.dataTransfer.types].includes('text/layer')) return;
+                  e.preventDefault();
+                  setOverId(el.id);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const fromId = e.dataTransfer.getData('text/layer') || dragId;
+                  if (fromId && fromId !== el.id) onReorder(block.id, fromId, el.id);
+                  setDragId(null); setOverId(null);
+                }}
                 onClick={() => onSelect(block.id, el)}>
                 <span className="lr-grip"><Icon name="gripV" size={15} /></span>
                 <span className="lr-ico">{m.thumb ? <img src={m.thumb} alt="" /> : <Icon name={m.icon} size={15} />}</span>

@@ -978,6 +978,7 @@ export function Editor() {
   const [inViewBlock, setInViewBlock] = useState(null);
   const [layerFloat, setLayerFloat] = useState(null);
   const [layerPos, setLayerPos] = useState(null);
+  const layerFloatRef = useRef(null);
   const [editEl, setEditEl] = useState(null);     // text element being inline-edited
   // 편집이 어떤 경로로 끝나든(blur 커밋·패널 클릭·다른 요소 편집 시작) 빈 텍스트를 정리한다 —
   // blur만 믿으면 포커스를 안 거친 종료 경로가 유령 요소를 남긴다. pruneEmptyTextEl 은
@@ -1541,6 +1542,35 @@ export function Editor() {
       return allPicked ? cur.filter((id) => !pickedIds.includes(id)) : [...new Set([...cur, ...pickedIds])];
     });
     if (!keepTab) setTab(el.type === 'text' ? 'text' : 'image');
+  };
+  /* 레이어 창 옮기기 — 머리말을 잡고 끈다. 창은 캔버스 영역(.ed-body) 기준 absolute 라
+     그 컨테이너 좌표로 환산하고, 화면 밖으로 나가 못 잡게 되는 일이 없도록 가둔다. */
+  const startLayerFloatDrag = (event) => {
+    if (event.button !== 0 || event.target.closest('button')) return;
+    const panel = layerFloatRef.current;
+    const parent = panel?.offsetParent;
+    if (!panel || !parent) return;
+    event.preventDefault();
+    const panelRect = panel.getBoundingClientRect();
+    const parentRect = parent.getBoundingClientRect();
+    const grabX = event.clientX - panelRect.left;
+    const grabY = event.clientY - panelRect.top;
+    const move = (e) => {
+      const x = e.clientX - parentRect.left - grabX;
+      const y = e.clientY - parentRect.top - grabY;
+      setLayerPos({
+        x: Math.max(0, Math.min(x, parentRect.width - panelRect.width)),
+        y: Math.max(0, Math.min(y, parentRect.height - panelRect.height)),
+      });
+    };
+    const end = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
   };
   const clearSel = () => { setSelEl(null); setSelEls([]); setVaryTarget(null); setPendingSlot(null); };
   const copySelectedElements = () => {
@@ -2945,8 +2975,12 @@ export function Editor() {
         {!rightHidden && <MiniPreview blocks={blocks} selectedBlockId={selBlock} onJump={jumpTo} onReorder={reorderBlock} />}
 
         {layerFloat && blocks.find((b) => b.id === layerFloat) && (
-          <div className="layer-float" style={layerPos ? { left: layerPos.x, top: layerPos.y, right: 'auto' } : undefined}>
-            <div className="lf-head">
+          <div className="layer-float" ref={layerFloatRef}
+            style={layerPos ? { left: layerPos.x, top: layerPos.y, right: 'auto' } : undefined}>
+            {/* 손잡이를 잡아 창을 옮긴다. 여태 커서만 grab 이고 실제로 옮기는 코드가 없어
+                "레이어 창이 안 움직인다"는 신고가 나왔다(오너 8/16). 목록 행의 순서 드래그와
+                섞이지 않게 머리말에서만 시작한다. */}
+            <div className="lf-head" onPointerDown={startLayerFloatDrag}>
               <Icon name="gripV" size={14} className="lf-grip" /><Icon name="layers" size={15} /><span>레이어</span>
               <IconButton name="x" size="sm" onClick={() => setLayerFloat(null)} />
             </div>
