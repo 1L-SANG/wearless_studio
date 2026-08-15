@@ -14,7 +14,7 @@ from fastapi import HTTPException, Request
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool, PoolTimeout
 
-_DB_UNAVAILABLE = {"code": "db_unavailable", "message": "데이터베이스에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요."}
+_DB_UNAVAILABLE = {"code": "db_unavailable", "message": "서버가 잠시 응답하지 않아요. 잠시 후 다시 시도해 주세요."}
 
 
 def create_pool(database_url: str) -> AsyncConnectionPool:

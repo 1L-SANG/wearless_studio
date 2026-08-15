@@ -151,6 +151,19 @@ function hasRequiredDraftPhotos(product) {
   );
 }
 
+/* 입력 화면을 열기만 한 상태(빈 템플릿)인지, 실제로 지킬 입력이 있는지 판정.
+   빈 상태를 임시저장하면 '임시저장 · 사진 0장' 팬텀 카드·잠금이 아무때나 뜬다.
+   서버(_draft_slot_meta.hasContent)·mock 도 같은 기준을 쓴다. */
+function draftHasContent(product, analysis) {
+  return Boolean(
+    analysis
+    || (product && (
+      (product.name || '').trim()
+      || (product.colors || []).some((color) => (color.images || []).length > 0)
+    )),
+  );
+}
+
 // small file-meta caption shown over an uploaded image (name · size · type) — requested feature
 function MetaCap({ im }) {
   return (
@@ -372,21 +385,21 @@ function EditingRightsLock({ meta, onReclaim, onRestartLocal, onDiscard }) {
         <Icon name="lock" size={28} />
         {gone ? (
           <>
-            <h3>임시저장이 다른 곳에서 마무리됐어요</h3>
-            <p>이 탭에 남아 있는 입력은 자동으로 다시 저장하지 않았어요.<br />이어갈 내용을 직접 골라주세요.</p>
+            <h3>다른 곳에서 이 작업을 끝내거나 새로 시작했어요</h3>
+            <p>지금 화면에 남아 있는 내용을 계속 쓸지 골라주세요.</p>
             <div className="modal-actions">
-              <Button variant="ghost" onClick={onDiscard}>이 내용 버리고 새로 시작</Button>
-              <Button variant="primary" onClick={onRestartLocal}>이 탭 내용으로 다시 저장</Button>
+              <Button variant="ghost" onClick={onDiscard}>지우고 새로 시작</Button>
+              <Button variant="primary" onClick={onRestartLocal}>이 내용 계속 쓰기</Button>
             </div>
           </>
         ) : (
           <>
-            <h3>다른 탭 또는 기기에서 이어서 작업 중이에요</h3>
+            <h3>다른 곳에서 같은 작업을 하고 있어요</h3>
             <p>
-              {formatDraftRelativeTime(meta?.updatedAt)} · {meta?.deviceLabel || '다른 탭 또는 기기'}
-              <br />내용이 섞이지 않도록 이 화면의 저장을 멈췄어요.
+              {formatDraftRelativeTime(meta?.updatedAt)} · {meta?.deviceLabel || '다른 탭 또는 기기'}에서 저장했어요.
+              <br />내용이 서로 엉키지 않게 이 화면의 자동 저장을 잠시 멈췄어요.
             </p>
-            <Button variant="primary" onClick={onReclaim}>이 탭에서 계속하기</Button>
+            <Button variant="primary" onClick={onReclaim}>이 화면에서 이어서 하기</Button>
           </>
         )}
       </div>
@@ -434,6 +447,7 @@ export function ProductInput() {
   const [, refreshPhotoPreviews] = useState(0);
   const photoPreviewRegistryRef = useRef(null);
   const latestLocalUpdatedAtRef = useRef(null);
+  const draftHadContentRef = useRef(false);   // 이 화면에서 실제 입력이 있었는지 — 빈 템플릿 임시저장 방지
   const latestProductRef = useRef(product);
   const latestAnalysisRef = useRef(analysis);
   const latestComposeModeRef = useRef(composeMode);
@@ -449,6 +463,12 @@ export function ProductInput() {
   }
 
   useEffect(() => draftSlot.onConflict((meta) => {
+    if (meta?.state === 'gone'
+        && !draftHasContent(latestProductRef.current, latestAnalysisRef.current)) {
+      // 이 화면에 지킬 입력이 없다 — 고를 것도 없으니 잠금 화면 대신 조용히 새 저장 상태로 되돌린다.
+      draftSlot.restartAfterGone();
+      return;
+    }
     setSlotLock(meta);
     if (!meta) setReclaimChoiceOpen(false);
   }), []);
@@ -459,6 +479,11 @@ export function ProductInput() {
 
   useEffect(() => {
     if (!product) return;
+    const hasContent = draftHasContent(product, analysis);
+    // 구경만 한 빈 화면은 임시저장을 만들지 않는다. 단 내용이 있다가 다 지워진 상태는
+    // '비움'도 최신 상태이므로 계속 저장한다(안 하면 지운 사진이 복원에서 되살아난다).
+    if (!hasContent && !draftHadContentRef.current) return;
+    draftHadContentRef.current = draftHadContentRef.current || hasContent;
     const localUpdatedAt = new Date().toISOString();
     latestLocalUpdatedAtRef.current = localUpdatedAt;
     queueProductDraftSave(product, analysis, composeMode, localUpdatedAt);
@@ -662,7 +687,7 @@ export function ProductInput() {
       );
       const { failed = 0 } = await flushProductDraftSave() || {};
       // 유실 경고는 전환 오버레이(3.5s)보다 오래 살아남아야 한다 — 도착 후에도 읽히게 6s.
-      if (failed) toast.push(`일부 사진(${failed}장)을 임시 저장하지 못했어요.`, { icon: 'alertTri', duration: 6000 });
+      if (failed) toast.push(`사진 ${failed}장은 저장되지 않았어요. 다음 화면에서 확인해 주세요.`, { icon: 'alertTri', duration: 6000 });
       if (session || isMockMode) {
         const draft = await loadDraft();
         if (!draft?.product) throw new Error('저장된 입력 내용을 다시 불러오지 못했어요. 다시 시도해 주세요.');
@@ -798,12 +823,12 @@ export function ProductInput() {
   const chooseRemoteContent = async () => {
     try {
       const takeover = await draftSlot.takeover();
-      if (!takeover?.payload) throw new Error('다른 기기의 임시저장을 불러오지 못했어요.');
+      if (!takeover?.payload) throw new Error('다른 기기에서 저장한 내용을 불러오지 못했어요.');
       applyDraftPayload(takeover.payload);
       setReclaimChoiceOpen(false);
       setSlotLock(null);
     } catch (error) {
-      toast.push(error?.message || '작업을 이어받지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+      toast.push(error?.message || '내용을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     }
   };
 
@@ -818,7 +843,7 @@ export function ProductInput() {
         await draftSlot.flush();
       }
     } catch (error) {
-      toast.push(error?.message || '이 기기의 작업을 이어받지 못했어요.', { icon: 'alert' });
+      toast.push(error?.message || '이 화면의 내용으로 이어가지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     }
   };
 
@@ -840,7 +865,7 @@ export function ProductInput() {
         await draftSlot.flush();
       }
     } catch (error) {
-      toast.push(error?.message || '이 탭의 내용을 다시 저장하지 못했어요.', { icon: 'alert' });
+      toast.push(error?.message || '내용을 다시 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     }
   };
 
@@ -850,7 +875,7 @@ export function ProductInput() {
       try {
         await draftSlot.removeForNewFlow();
       } catch (error) {
-        toast.push(error?.message || '임시저장을 정리하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+        toast.push(error?.message || '이전 작업을 정리하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
         return;
       }
     }
@@ -1169,14 +1194,14 @@ export function ProductInput() {
       {editingRightsLock}
       {reclaimChoiceOpen && slotLock && (
         <Modal onClose={() => setReclaimChoiceOpen(false)}>
-          <h3>어느 내용을 이어갈까요?</h3>
-          <p>두 기기의 저장 시각을 확인하고 기준으로 사용할 내용을 골라주세요.</p>
+          <h3>어느 내용으로 이어갈까요?</h3>
+          <p>저장 시간을 보고 이어갈 내용을 골라주세요. 고르지 않은 쪽은 덮어써요.</p>
           <div className="draft-source-options">
             <Button variant="ghost" onClick={chooseLocalContent}>
-              이 기기 내용 ({formatDraftClock(latestLocalUpdatedAtRef.current)})
+              이 화면의 내용 ({formatDraftClock(latestLocalUpdatedAtRef.current)} 저장)
             </Button>
             <Button variant="primary" onClick={chooseRemoteContent}>
-              다른 기기 내용 ({formatDraftClock(slotLock.updatedAt)})
+              다른 기기의 내용 ({formatDraftClock(slotLock.updatedAt)} 저장)
             </Button>
           </div>
         </Modal>

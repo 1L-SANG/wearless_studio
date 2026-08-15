@@ -234,6 +234,11 @@ input, textarea, select { font-family: inherit; }
 .btn-sm.btn-primary { min-height: 0; }
 .btn-lg { padding: 13px 22px; font-size: 16px; }
 .btn-block { width: 100%; justify-content: center; }
+/* 모달·선택지처럼 버튼이 짝으로 놓이는 곳은 모양을 통일한다 — 색(주=검정 채움, 보조=흰색)만
+   다르고 형태는 같은 알약. 기본 .btn(8px 라운드)과 primary(pill)가 나란히 서면
+   '하나는 네모, 하나는 동그라미'로 보여 짝 선택지가 아니라 다른 종류의 버튼처럼 읽힌다. */
+.modal-actions .btn, .draft-source-options .btn {
+  border-radius: var(--cta-radius); min-height: var(--cta-height); justify-content: center; }
 
 .iconbtn { width: 34px; height: 34px; border-radius: var(--r-4); background: #fff; border: 0;
   box-shadow: 0 0 0 1px var(--ring); color: var(--fg-2); cursor: pointer; display: grid; place-items: center;
