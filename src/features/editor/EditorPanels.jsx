@@ -841,30 +841,40 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
   const bubbleStroke = isBubble && el.stroke !== 'none' ? (el.stroke || DEFAULT_BUBBLE_STROKE) : 'none';
   const bubbleStrokeWidth = Number.isFinite(Number(el?.strokeWidth)) ? Number(el.strokeWidth) : DEFAULT_BUBBLE_STROKE_WIDTH;
   const hasBubbleStroke = isBubble && bubbleStroke !== 'none';
+  // 선택 중에는 추가 목록을 숨긴다 — 같은 4개 이름이 "추가"와 "스타일 전환" 두 의미로
+  // 동시에 보이면 스타일을 바꾸려다 빈 요소를 새로 만드는 오클릭이 난다(리뷰 반영).
+  const activePresetKey = has ? activeTextPreset(s) : null;
   return (
     <div className="fig-panel">
-      <div className="text-preset-list">
-        {TEXT_PRESETS.map((p) => (
-          <button key={p.key} type="button" className={`text-preset-item tpk-${p.key}`} onClick={() => onAddText(p.key)}>
-            <span className="tp-sample">{p.sample}</span>
-            <span className="tp-meta">{p.style.size}px<br />{p.hint}</span>
-          </button>
-        ))}
-      </div>
       {!has ? (
-        <div className="panel-sub" style={{ marginTop: 14 }}>원하는 종류를 누르면 그 스타일로 바로 입력할 수 있어요. 캔버스의 텍스트를 클릭하면 편집해요.</div>
+        <>
+          <div className="text-preset-list">
+            {TEXT_PRESETS.map((p) => (
+              <button key={p.key} type="button" className="text-preset-item" aria-label={`${p.label} 추가`} title={`${p.label} 추가`}
+                onClick={() => onAddText?.(p.key)}>
+                {/* 축소판 스타일은 프리셋 데이터에서 직접 그린다 — CSS에 복제하면 값이 갈라진다 */}
+                <span className="tp-sample" style={{ fontSize: p.previewSize, fontWeight: p.style.weight, color: p.style.color, letterSpacing: p.style.tracking }}>{p.sample || p.label}</span>
+                <span className="tp-meta">{p.style.size}px<br />{p.hint}</span>
+              </button>
+            ))}
+          </div>
+          <div className="panel-sub" style={{ marginTop: 14 }}>원하는 종류를 누르면 그 스타일로 바로 입력할 수 있어요. 캔버스의 텍스트를 클릭하면 편집해요.</div>
+        </>
       ) : (
         <>
-          <PanelSection title="빠른 스타일" first>
-            <div className="text-style-chips">
-              {TEXT_PRESETS.map((p) => (
-                <button key={p.key} type="button" className={`text-style-chip${activeTextPreset(s) === p.key ? ' active' : ''}`}
-                  onClick={() => setS(quickStylePatch(p.key))}>{p.label}</button>
-              ))}
-            </div>
-            <div className="panel-sub" style={{ marginTop: 8, marginBottom: 0 }}>내용은 그대로, 크기·굵기·색만 한 번에 바뀌어요.</div>
-          </PanelSection>
-          <PanelSection title="텍스트 박스">
+          {/* 말풍선은 제외 — 자체 튜닝된 행간·색을 칩이 덮으면 짝 말풍선과 어긋난다 */}
+          {!isBubble && (
+            <PanelSection title="빠른 스타일" first>
+              <div className="text-style-chips">
+                {TEXT_PRESETS.map((p) => (
+                  <button key={p.key} type="button" className={`text-style-chip${activePresetKey === p.key ? ' active' : ''}`}
+                    onClick={() => { if (activePresetKey !== p.key) setS(quickStylePatch(p.key)); }}>{p.label}</button>
+                ))}
+              </div>
+              <div className="panel-sub" style={{ marginTop: 8, marginBottom: 0 }}>내용은 그대로, 크기·굵기·색만 한 번에 바뀌어요.</div>
+            </PanelSection>
+          )}
+          <PanelSection title="텍스트 박스" first={isBubble}>
             <div className="field-2up">
               <NumField iconText="가로" value={Math.round(el.w || 120)} min={1} max={10000}
                 onChange={(w) => onChange({ w, ...(!isBubble && el.textSizing === 'auto' ? { textSizing: 'fixed' } : {}) })} />

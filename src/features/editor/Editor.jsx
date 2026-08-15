@@ -26,7 +26,7 @@ import { exampleGenderFromAnalysis, hexFor } from '@/features/storyboard/Storybo
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
-import { TEXT_PRESETS, buildTextPresetElement } from '@/features/editor/presets/textPresets.js';
+import { buildTextPresetElement, textPresetOf } from '@/features/editor/presets/textPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
 import { exportBlockPng, exportBlocksZip, exportLongPng } from '@/features/editor/editorExport.js';
@@ -1759,16 +1759,15 @@ export function Editor() {
     const wrap = wrapRef.current; if (!wrap) return;
     const target = wrap.querySelectorAll('.canvas-block')[idx];
     if (target) { const wr = wrap.getBoundingClientRect(); const tr = target.getBoundingClientRect(); wrap.scrollTo({ top: wrap.scrollTop + (tr.top - wr.top) - 40, behavior: 'smooth' }); } };
-  const addText = (bId, preset) => {
-    const id = bId || visibleBlock();
+  const addText = (preset) => {
+    const id = visibleBlock();
     // preset = 텍스트 프리셋 키(큰 제목·소제목·설명글·꼬리표). 미지정(T 단축키)이면 소제목.
+    // 라벨도 같은 textPresetOf 폴백을 타야 만든 요소와 토스트가 안 갈라진다.
     const el = buildTextPresetElement(preset);
     setBlocks((bs) => bs.map((b) => b.id === id ? { ...b, elements: [...b.elements, el] } : b));
     selectEl(id, el); setTab('text');
     setEditEl(el.id);
-    const label = TEXT_PRESETS.find((p) => p.key === preset)?.label || '텍스트';
-    const eul = (label.charCodeAt(label.length - 1) - 0xac00) % 28 ? '을' : '를';
-    toast.push(`${label}${eul} 추가했어요 — 바로 입력하세요`);
+    toast.push(`${textPresetOf(preset).label} 추가 — 바로 입력하세요`);
   };
   /* ---- 정보 블록 (PRD §10.14 `내용 추가`) — infoPresets 빌더로 폼→블록 생성 ---- */
   const targetGenders = (analysis && analysis.targetGenders) || [];
@@ -2208,7 +2207,7 @@ export function Editor() {
         <FramePanel onAdd={addFrame} recommendGender={recommendGender} onPickInfo={openInfoPreset}
           onDragStart={() => setFrameDragging(true)} onDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />
       );
-      case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onBubbleAppearanceChange={patchBubbleAppearance} onLayer={layerEl} onAddText={(key) => addText(undefined, key)} />;
+      case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onBubbleAppearanceChange={patchBubbleAppearance} onLayer={layerEl} onAddText={addText} />;
       case 'shape': return <ShapePanel catalogs={catalogs} onAdd={addShape} block={(selEls.length === 0 && selBlock) ? blocks.find((b) => b.id === selBlock) : null} onBgChange={changeBg} />;
       default: return null;
     }
