@@ -54,6 +54,7 @@ import {
 } from './saveRouting.js';
 import { getBaseSlotUploadRoom, getPendingTileCount, PENDING_TILE_DELAY_MS } from './pendingTiles.js';
 import { createProductPhotoPreviewRegistry } from './productPhotoPreviewRegistry.js';
+import { autofillColorGroups } from './colorAutofill.js';
 import {
   invalidateStoryboardEntryPrefetch,
   prefetchStoryboardEntry,
@@ -65,24 +66,53 @@ draftSlot.configure(api);
 // human-readable file size
 const fmtSize = (b) => b == null ? '' : b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(1) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
 
-function ColorSwatchPicker({ swatchColors, value, onChange }) {
+const chipWidth = (value) => [...value].reduce(
+  (width, character) => width + (/[\uAC00-\uD7A3]/.test(character) ? 1 : 0.55),
+  0,
+).toFixed(1);
+
+function ColorSwatchPicker({ swatchColors, value, name, onChange, onNameChange, disabled = false }) {
+  const [nameDraft, setNameDraft] = useState(name || '');
+  const [nameFocused, setNameFocused] = useState(false);
+  useEffect(() => { setNameDraft(name || ''); }, [name]);
+
   return (
     <div className="color-pick">
       <div className="color-pick-head">
         <label className="lbl">색상 선택</label>
-        <span className="hint">이 색상의 이름을 골라주세요</span>
+        <span className="hint">색 계열을 골라주세요 · 세부 색 이름(연청 등)은 직접 입력</span>
       </div>
       <div className="swatch-grid">
         {swatchColors.map((s) => {
           const on = value === s.id;
           return (
-            <button key={s.id} className={`swatch${on ? ' on' : ''}`} onClick={() => onChange(s.id)}>
+            <button type="button" key={s.id} className={`swatch${on ? ' on' : ''}`}
+              disabled={disabled} onClick={() => onChange(s.id)}>
               <span className="swatch-dot" style={{ background: s.hex }} />
               {s.label}
               {on && <Icon name="check" size={13} className="check" />}
             </button>
           );
         })}
+        <span className="chip-input-wrap color-name-input-wrap">
+          <input
+            className={`chip chip-input color-name-input${nameFocused || name ? ' on' : ''}`}
+            value={nameDraft}
+            placeholder="직접 입력"
+            disabled={disabled}
+            aria-label="세부 색 이름 직접 입력"
+            style={{ width: `calc(${chipWidth(nameDraft || '직접 입력')}em + 32px)` }}
+            onChange={(event) => setNameDraft(event.target.value)}
+            onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }}
+            onFocus={() => setNameFocused(true)}
+            onBlur={() => {
+              setNameFocused(false);
+              const nextName = nameDraft.trim();
+              if (nextName === (name || '')) return;
+              setNameDraft(nextName);
+              onNameChange(nextName);
+            }} />
+        </span>
       </div>
     </div>
   );
@@ -279,11 +309,12 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
     });
   };
   const chosen = (swatchColors || []).find((s) => s.id === group.swatchId);
-  // color indicator (dot + label); gray "색상 미정" until a swatch is picked
+  const colorLabel = group.name?.trim() || chosen?.label || '색상 미정';
+  // 점은 스와치 계열만 반영한다. 세부 이름만 있으면 회색 '색상 미정' 상태를 유지한다.
   const colorInd = (
-    <span className="color-ind" title={chosen ? chosen.label : '색상 미정'}>
+    <span className="color-ind" title={colorLabel}>
       <span className={`color-ind-dot${chosen ? '' : ' undecided'}`} style={{ background: chosen ? chosen.hex : '#d4d4d8' }} />
-      <span className={`color-ind-label${chosen ? '' : ' undecided'}`}>{chosen ? chosen.label : '색상 미정'}</span>
+      <span className={`color-ind-label${colorLabel === '색상 미정' ? ' undecided' : ''}`}>{colorLabel}</span>
     </span>
   );
   const slotLabel = (s) => (catalogs.angleLabels && catalogs.angleLabels[s]) || s;
@@ -333,7 +364,7 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
         <div className="color-group-head">
           <div className="ttl">
             <span className="color-swatch" style={{ background: chosen ? chosen.hex : '#e9e7ec' }} />
-            <div className="sec-title" style={{ fontSize: 15 }}>{chosen ? chosen.label : group.name || '색상'}</div>
+            <div className="sec-title" style={{ fontSize: 15 }}>{colorLabel}</div>
           </div>
           {!photosLocked && <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <IconButton name="trash" size="sm" onClick={onRemoveGroup} title="색상 삭제" />
@@ -368,7 +399,8 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
       )}
 
       {used > 0 && (
-        <ColorSwatchPicker swatchColors={swatchColors} value={group.swatchId} onChange={onPickColor} />
+        <ColorSwatchPicker swatchColors={swatchColors} value={group.swatchId} name={group.name}
+          onChange={onPickColor} onNameChange={onRename} />
       )}
 
       {/* 개수 안내는 '상품 이미지' 제목 옆 pill 로 옮겼다(2026-08-14 사용자 결정) — base 중복 제거 */}
@@ -759,6 +791,23 @@ export function ProductInput() {
   };
   analysisPatchQueueRef.current = queueAnalysisPatch;
 
+  // AG-01은 제안만 한다. 실제 Product 반영은 셀러가 비워 둔 필드만
+  // 채우고, 일반 색상 편집과 같은 trailing scheduler를 통해 저장한다.
+  const withAutofilledColors = (sourceProduct, analyzed) => {
+    const nextColors = autofillColorGroups(
+      sourceProduct?.colors || [],
+      analyzed?.swatchSuggestions || [],
+      catalogs?.swatchColors || [],
+    );
+    if (nextColors === sourceProduct?.colors) return sourceProduct;
+    const persistedColors = mergeColorMetadataWithPersistedImages(
+      persistedColorsRef.current,
+      nextColors,
+    );
+    colorSaveSchedulerRef.current.schedule({ colors: persistedColors });
+    return { ...sourceProduct, colors: nextColors };
+  };
+
   // 분석 폼의 편집 하나를 실제로 화면·서버에 반영한다. 생성 관련 필드(성별·의류 종류 등)를
   // 바꿀 때 기존 작업이 있으면 이 함수를 곧장 부르지 않고 경고 모달의 확정을 거친다 — 취소하면
   // 아예 호출되지 않으므로 화면·서버 어디에도 흔적이 남지 않는다.
@@ -924,8 +973,10 @@ export function ProductInput() {
       if (editingProjectId && existingAnalysis && Object.keys(existingAnalysis).length > 1
           && (!analysisWasRunning || !isMockMode)) {
         setAnalysisRunning(editingProjectId, false);
-        setProduct(p);
-        setAnalysis(mergeProductOwnedAnalysisFields(existingAnalysis, p));
+        const nextProduct = withAutofilledColors(p, existingAnalysis);
+        persistedColorsRef.current = nextProduct.colors || [];
+        setProduct(nextProduct);
+        setAnalysis(mergeProductOwnedAnalysisFields(existingAnalysis, nextProduct));
         // 저장분에서 경고를 복원한다 — 이게 없으면 새로고침·재진입한 탭에서만 게이트가
         // 사라져 그대로 통과한다(분석 직후 탭에서는 멀쩡히 뜨므로 재현이 헷갈린다).
         setInputConsistency(existingAnalysis.inputConsistency || null);
@@ -950,8 +1001,14 @@ export function ProductInput() {
           const a = await api.analyzeProduct(editingProjectId, {});
           if (!alive) return;
           const analyzedProductPatch = splitAnalysisEditPatch(a).productPatch;
-          const finalName = (recoveredProduct.name && recoveredProduct.name.trim()) || a.suggestedName || '새 상품';
-          const nextProduct = { ...recoveredProduct, name: finalName, ...analyzedProductPatch };
+          // 분석 대기 중에 입력된 셀러 값도 시작 스냅샷으로 되돌리지 않게
+          // 가장 최신 Product를 기준으로 빈칸만 채운다.
+          const currentProduct = latestProductRef.current || recoveredProduct;
+          const finalName = (currentProduct.name && currentProduct.name.trim()) || a.suggestedName || '새 상품';
+          const nextProduct = withAutofilledColors(
+            { ...currentProduct, name: finalName, ...analyzedProductPatch },
+            a,
+          );
           if (hasPatchFields(analyzedProductPatch)) {
             await api.saveProduct(editingProjectId, analyzedProductPatch);
           }
@@ -999,7 +1056,11 @@ export function ProductInput() {
         return;
       }
 
-      const fresh = { ...p, name: '', colors: [{ ...p.colors[0], swatchId: undefined, images: [] }] };
+      const fresh = {
+        ...p,
+        name: '',
+        colors: [{ ...p.colors[0], name: '', swatchId: undefined, images: [] }],
+      };
       setProduct(fresh);
     })().catch((error) => {
       if (alive) setLoadError(error?.message || '입력 화면을 불러오지 못했어요. 다시 시도해 주세요.');
@@ -1088,12 +1149,13 @@ export function ProductInput() {
       const a = await api.analyzeProduct(null, { product });
       const analyzedProductPatch = splitAnalysisEditPatch(a).productPatch;
       // 상품명이 비어 있으면 AI가 임의로 지어준다 → 요약 카드에 표시됨 + 서버에도 반영
+      const currentProduct = latestProductRef.current || product;
       const finalName = enteredName || a.suggestedName || '새 상품';
-      const nextProduct = {
-        ...product,
+      const nextProduct = withAutofilledColors({
+        ...currentProduct,
         name: finalName,
         ...analyzedProductPatch,
-      };
+      }, a);
       persistedColorsRef.current = nextProduct.colors || [];
       setProduct(nextProduct);
       setAnalysis(mergeProductOwnedAnalysisFields(a, nextProduct));

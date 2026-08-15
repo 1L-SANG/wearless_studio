@@ -65,8 +65,12 @@ test('mock matching diversifies the second candidate deterministically', () => {
 });
 
 test('mock color harmony mirrors the server map and symmetric neutral fallback', () => {
-  assert.equal(COLOR_HARMONY.size, 91);
+  // 14색 완비(14*15/2) — 서버 test_retrieval 의 105 와 같은 수를 양쪽에서 고정한다.
+  // 이 테스트는 서버 파일을 읽지 못하므로(파이썬), 값 표본까지 함께 못박아 드리프트를 잡는다.
+  assert.equal(COLOR_HARMONY.size, 105);
   assert.equal(colorHarmonyScore('navy', 'beige'), 0.92);
+  assert.equal(colorHarmonyScore('black', 'purple'), 0.82);   // 퍼플 추가분 표본
+  assert.equal(colorHarmonyScore('purple', 'red'), 0.3);
   assert.equal(colorHarmonyScore('beige', 'navy'), 0.92);
   assert.equal(colorHarmonyScore('ultraviolet', 'khaki'), 0.5);
   assert.equal(colorHarmonyScore('navy', null), 0.5);

@@ -85,7 +85,7 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
 
    @typedef {Object} ColorGroup
    @property {string} id
-   @property {string|null} swatchId      정체성 = 12색 팔레트. null = '색상 미정'
+   @property {string|null} swatchId      정체성 = 13색 팔레트(계열). null = '색상 미정' — 세부 색 이름은 name
    @property {boolean} isBase            기준 색상 여부
    @property {ImageAsset[]} images
    (파생: name·hex ← swatchId, monotone ← MONOTONE 스와치 포함 여부)

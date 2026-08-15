@@ -183,6 +183,21 @@ export const COLOR_HARMONY = pairMap([
   ['blue', 'navy', 0.60],
   ['blue', 'pink', 0.35],
   ['navy', 'pink', 0.68],
+  // 퍼플(2026-08-15 팔레트 추가) — 서버 color_harmony.HARMONY 와 같은 값이어야 순서가 일치한다
+  ['purple', 'purple', 0.55],
+  ['white', 'purple', 0.84],
+  ['ivory', 'purple', 0.8],
+  ['gray', 'purple', 0.8],
+  ['black', 'purple', 0.82],
+  ['beige', 'purple', 0.7],
+  ['brown', 'purple', 0.52],
+  ['khaki', 'purple', 0.4],
+  ['navy', 'purple', 0.62],
+  ['blue', 'purple', 0.6],
+  ['pink', 'purple', 0.58],
+  ['red', 'purple', 0.3],
+  ['yellow', 'purple', 0.32],
+  ['green', 'purple', 0.34],
 ]);
 
 const unique = (items) => [...new Set((items || []).filter(Boolean))];
