@@ -94,6 +94,8 @@ class Settings:
     # 상세페이지 컷 생성 재시도 횟수(1 = 재시도 없음). 일시적 실패로 빈 슬롯이 나는 것을
     # 줄인다 — 실패 컷은 미차감이라 재시도 비용은 성공했을 때만 발생한다.
     detail_cut_max_attempts: int = 2
+    # 재시도 사이 대기(초). 테스트는 0 으로 두어 실시간을 먹지 않게 한다.
+    detail_cut_retry_delay_seconds: float = 2.0
     # 상세페이지 컷 동시 생성 상한. 0 = 제한 없음(콘티 컷 수만큼 동시 — 13컷이면 13개).
     # 구 상수 3은 429 실측이 아니라 보수적 추정이었다(2026-08-03 오너 결정: 전부 병렬 +
     # 제출 간격으로 버스트 완화 + 429 백오프 재시도가 안전망). 문제 시 env 로 되돌린다.
@@ -364,6 +366,7 @@ def load_settings() -> Settings:
         mannequin_aspect_ratio=os.getenv("MANNEQUIN_ASPECT_RATIO", "2:3"),
         mannequin_max_attempts=int(os.getenv("MANNEQUIN_MAX_ATTEMPTS", "2")),
         detail_cut_max_attempts=int(os.getenv("DETAIL_CUT_MAX_ATTEMPTS", "2")),
+        detail_cut_retry_delay_seconds=float(os.getenv("DETAIL_CUT_RETRY_DELAY_SECONDS", "2")),
         detail_cut_concurrency=int(os.getenv("DETAIL_CUT_CONCURRENCY", "0")),
         detail_cut_stagger_ms=int(os.getenv("DETAIL_CUT_STAGGER_MS", "3000")),
         bg_scene_qc_attempts=int(os.getenv("BG_SCENE_QC_ATTEMPTS", "3")),

@@ -436,6 +436,70 @@ def test_run_detail_page_job_partial_success(monkeypatch):
     assert captured["product_name"] == "미니멀 코튼 셔츠"  # copywriting OFF도 무호출 작명
 
 
+def test_run_detail_page_job_retries_transient_cut_failures(monkeypatch):
+    """컷 생성은 일시 실패에 한 번 더 시도한다 — 빈 슬롯은 셀러에겐 그냥 못 만든 페이지다.
+    단 ValueError(입력 계약 위반)는 다시 불러도 같은 답이라 재시도하지 않는다."""
+    captured = {}
+    attempts = {"transient": 0, "deterministic": 0}
+
+    async def fake_gp(conn, uid, pid):
+        return {"copywriting": False}
+
+    async def fake_sb(conn, pid):
+        return [{"id": "b1", "source": "ai", "cutType": "styling"},
+                {"id": "b2", "source": "ai", "cutType": "product"}]
+
+    async def fake_prod(conn, pid):
+        return {"colors": [{"isBase": True, "images": [
+            {"slot": "Front", "id": "a1"}, {"slot": "Detail", "id": "a2"},
+        ]}]}
+
+    async def fake_analysis(conn, pid):
+        return {"suggestedName": "미니멀 코튼 셔츠"}
+
+    async def fake_asset(conn, uid, aid):
+        return {"mime_type": "image/png", "r2_key": "k/a1"}
+
+    async def fake_gen(settings, gemini, cut_spec, product, images, **_kw):
+        if cut_spec.get("id") == "b1":          # 첫 시도 실패 → 재시도에서 성공
+            attempts["transient"] += 1
+            if attempts["transient"] == 1:
+                raise RuntimeError("provider hiccup")
+            return b"IMG", "image/png"
+        attempts["deterministic"] += 1          # 결정적 실패 → 재시도 없음
+        raise ValueError("unknown cutType")
+
+    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
+        captured["cut_results"] = cut_results
+        return [{"id": "b0", "kind": "benefit", "contentRole": "hero", "elements": []}]
+
+    async def fake_finalize(conn, **kw):
+        captured.update(kw)
+        return {"editor_blocks": kw["editor_blocks"], "available": 99}
+
+    async def fake_emit(pool, job_id, et, payload):
+        captured.setdefault("steps", []).append(payload.get("status"))
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=2)))
+
+    assert attempts["transient"] == 2, "일시 실패는 한 번 더 시도한다"
+    assert attempts["deterministic"] == 1, "ValueError 는 재시도하지 않는다"
+    assert len(captured["cut_results"]) == 1      # 재시도로 살아난 b1만
+    assert captured["charge"] == 1                # 실패 컷은 여전히 미차감
+    assert captured["steps"].count("cut_failed") == 1
+
+
 def test_run_detail_page_job_attaches_matching_garment_to_horizon(monkeypatch):
     captured = {"matching_item_ids": [], "loaded_asset_ids": []}
 

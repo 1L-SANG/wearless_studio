@@ -337,7 +337,8 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                         return None
                     log.info("AG-06 cut retry %d for job %s block %s: %r",
                              attempt, job_id, b.get("id"), e)
-                    await asyncio.sleep(2)
+                    if s.detail_cut_retry_delay_seconds > 0:
+                        await asyncio.sleep(s.detail_cut_retry_delay_seconds)
             plate = space_set_plate
             # bg 편집 컷은 첫 첨부, 공간 세트는 별도 전달된 대표 plate를 같은 장소 QC 기준으로 쓴다.
             if (
