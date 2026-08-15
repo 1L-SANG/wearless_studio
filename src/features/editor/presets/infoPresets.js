@@ -40,6 +40,13 @@ const HEAD = { font: 'Cal Sans', weight: 600, color: '#0e0d14' };
 const MUTED = TEXT_MUTED;
 const FAINT = TEXT_FAINT;
 export const NEEDS_INPUT = '정보 입력 필요';
+
+/* 요소가 시스템에 의해 통째로 재생성·교체되는 블록 — 정보(info: 폼 재적용 시 rebuild),
+   사이즈·세탁(자동 블록), AI 고지(생성 병합 시 서버판으로 통째 교체). 셀러 요소를 여기
+   넣으면 다음 재생성 때 사라지므로, 삽입·정리 로직은 이 블록들을 피해 간다. */
+export function isAutoManagedBlock(block) {
+  return Boolean(block?.info) || block?.kind === 'size' || block?.kind === 'care' || block?.kind === 'ai-notice';
+}
 export const CARE_LABEL_SENTENCE = '세탁 전 실제 상품의 케어라벨을 반드시 확인해주세요.';
 
 /* ---- 케어 문구 라이브러리 — 소재 패밀리별 규칙 기반 초안(PRD §10.14: AI가 사실을

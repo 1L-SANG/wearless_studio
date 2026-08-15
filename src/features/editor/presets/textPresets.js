@@ -51,16 +51,17 @@ export function textPresetOf(key) {
     빈 상자가 넓게 그려진다. */
 export function buildTextPresetElement(key) {
   const p = textPresetOf(key);
-  const h = p.style.lineHeight ?? Math.round(p.style.size * 1.4);
+  const h = p.style.lineHeight || Math.round(p.style.size * 1.4);
   return { id: uid('el'), type: 'text', x: 60, y: 80, w: 12, h, text: '', textSizing: 'auto', style: { font: 'Pretendard', ...p.style } };
 }
 
-/** 선택된 텍스트에 프리셋을 입히는 스타일 패치. 행간·자간은 프리셋에 없으면 0으로
-    리셋한다 — 설명글(행간 26)에서 큰 제목(40px)으로 바꿀 때 행간이 남으면 글줄이
-    겹친다. 렌더러는 lineHeight 0(falsy)을 자동 1.4배로 처리한다(Editor.jsx). */
+/** 선택된 텍스트에 프리셋을 입히는 스타일 패치. 행간·자간은 프리셋에 없으면
+    undefined로 리셋한다 — 설명글(행간 26)에서 큰 제목(40px)으로 바꿀 때 행간이 남으면
+    글줄이 겹친다. 0이 아니라 undefined인 이유: 0을 쓰면 "명시적 0"과 "미설정"이 저장
+    문서에서 구분 불가능해지고, JSON 직렬화는 undefined를 자연스럽게 떨군다. */
 export function quickStylePatch(key) {
   const p = textPresetOf(key);
-  return Object.fromEntries(HIERARCHY_PROPS.map((prop) => [prop, p.style[prop] ?? 0]));
+  return Object.fromEntries(HIERARCHY_PROPS.map((prop) => [prop, p.style[prop]]));
 }
 
 /* 실효값 비교 — 렌더러(Editor.jsx)의 기본값과 색상 UI의 대문자 저장
@@ -68,7 +69,7 @@ export function quickStylePatch(key) {
    행간 0(자동)과 명시된 size×1.4, '#0e0d14'와 '#0E0D14'는 같은 상태다. */
 const effectiveOf = (style, prop) => {
   if (prop === 'weight') return style.weight || 400;
-  if (prop === 'color') return String(style.color || '#0e0d14').toLowerCase();
+  if (prop === 'color') return String(style.color || TEXT_INK).toLowerCase();
   if (prop === 'lineHeight') return style.lineHeight || Math.round((style.size || 18) * 1.4);
   if (prop === 'tracking') return style.tracking || 0;
   return style[prop];

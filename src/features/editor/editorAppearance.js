@@ -95,6 +95,11 @@ const HORIZONTAL_DIRECTIONS = ['w', 'e'];
  * remain visible and directly editable. Thin rules only need their endpoints. */
 export function resizePolicyForElement(element, lockRatio) {
   if (element?.type === 'line') return { keepRatio: false, directions: [...HORIZONTAL_DIRECTIONS] };
+  // 일반 텍스트의 높이는 내용에서 파생된다(렌더 height:auto) — 세로 핸들을 주면
+  // 드래그 순간만 커졌다가 놓는 즉시 되돌아가는 죽은 컨트롤이 된다. 폭만 조절한다.
+  if (element?.type === 'text' && element?.shape !== 'bubble') {
+    return { keepRatio: false, directions: [...HORIZONTAL_DIRECTIONS] };
+  }
   const keepRatio = element?.type === 'text' ? false : Boolean(lockRatio);
   return {
     keepRatio,

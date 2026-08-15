@@ -3,6 +3,7 @@
    콘티 → 스켈레톤 블록(서버 조립 규칙 정렬) → 생성 이벤트 채움 → 완료 병합.
    전부 순수 함수 — Editor/Generating 어디서든 재사용, node 테스트 가능.
    ============================================================= */
+import { TEXT_MUTED } from '../features/editor/presets/textPresets.js';
 
 /* mock 조립기는 구조(블록·행 분할·자동 블록)의 정본이지만, 단일 AI 컷의 지오메트리가
    서버 조립기와 다르다 — 서버는 이미지 비율(미상 시 2:3 폴백=880×1320)로 높이를 잡고
@@ -21,7 +22,7 @@ export function alignSkeletonToServer(blocks, copywriting) {
     const isHero = b.contentRole === 'hero';
     if (copywriting && !isHero && !out.some((e) => e.type === 'text' && e.copyRole === 'body')) {
       out.push({ id: `${b.id}-ewbody`, type: 'text', x: 120, y: IMG_Y + IMG_H - MARGIN, w: 760, h: 40,
-        text: '', style: { size: 17, color: '#6b6b73', lineHeight: 26 }, sourceBlockId: img.sourceBlockId, copyRole: 'body' });
+        text: '', style: { size: 17, color: TEXT_MUTED, lineHeight: 26 }, sourceBlockId: img.sourceBlockId, copyRole: 'body' });
     }
     const bottom = Math.max(...out.map((e) => (e.y || 0) + (e.h || 0)));
     return { ...b, elements: out, h: bottom + MARGIN };

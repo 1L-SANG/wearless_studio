@@ -64,11 +64,13 @@ test('빠른 스타일 전환 — 위계 속성만 바꾸고 셀러의 폰트·�
   assert.ok(!('align' in patch), '정렬은 건드리지 않는다');
 });
 
-test('빠른 스타일 전환 — 행간·자간은 프리셋에 없으면 0으로 리셋된다', () => {
+test('빠른 스타일 전환 — 행간·자간은 프리셋에 없으면 undefined로 리셋된다', () => {
   // 설명글(행간 26) → 큰 제목으로 바꿀 때 행간 26이 남으면 40px 글줄이 겹친다.
+  // 0이 아니라 undefined인 이유: 명시적 0과 미설정이 저장 문서에서 구분돼야 하고,
+  // 스프레드 병합에서 undefined가 기존 값을 덮어 리셋 효과는 동일하다.
   const toHeadline = quickStylePatch('headline');
-  assert.equal(toHeadline.lineHeight, 0, '행간 리셋(0 = 자동 1.4배)');
-  assert.equal(toHeadline.tracking, 0, '자간 리셋');
+  assert.ok('lineHeight' in toHeadline && toHeadline.lineHeight === undefined, '행간 리셋(undefined = 자동 1.4배)');
+  assert.ok('tracking' in toHeadline && toHeadline.tracking === undefined, '자간 리셋');
   assert.equal(quickStylePatch('body').lineHeight, SPEC.body.lineHeight);
   assert.equal(quickStylePatch('tag').tracking, SPEC.tag.tracking);
 });

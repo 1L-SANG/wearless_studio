@@ -842,23 +842,27 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
   const bubbleStroke = isBubble && el.stroke !== 'none' ? (el.stroke || DEFAULT_BUBBLE_STROKE) : 'none';
   const bubbleStrokeWidth = Number.isFinite(Number(el?.strokeWidth)) ? Number(el.strokeWidth) : DEFAULT_BUBBLE_STROKE_WIDTH;
   const hasBubbleStroke = isBubble && bubbleStroke !== 'none';
-  // 선택 중에는 추가 목록을 숨긴다 — 같은 4개 이름이 "추가"와 "스타일 전환" 두 의미로
-  // 동시에 보이면 스타일을 바꾸려다 빈 요소를 새로 만드는 오클릭이 난다(리뷰 반영).
+  // 선택 중에는 추가 목록을 맨 위에 두지 않는다 — 같은 4개 이름이 "추가"와 "스타일 전환"
+  // 두 의미로 나란히 보이면 스타일을 바꾸려다 빈 요소를 새로 만드는 오클릭이 난다(리뷰 반영).
+  // 대신 아래쪽 "새로 추가" 섹션으로 내려 추가 수단 자체는 항상 남긴다.
   const activePresetKey = has ? activeTextPreset(s) : null;
+  const presetList = (
+    <div className="text-preset-list">
+      {TEXT_PRESETS.map((p) => (
+        <button key={p.key} type="button" className="text-preset-item" aria-label={`${p.label} 추가`} title={`${p.label} 추가`}
+          onClick={() => onAddText?.(p.key)}>
+          {/* 축소판 스타일은 프리셋 데이터에서 직접 그린다 — CSS에 복제하면 값이 갈라진다 */}
+          <span className="tp-sample" style={{ fontSize: p.previewSize, fontWeight: p.style.weight, color: p.style.color, letterSpacing: p.style.tracking }}>{p.sample || p.label}</span>
+          <span className="tp-meta">{p.style.size}px<br />{p.hint}</span>
+        </button>
+      ))}
+    </div>
+  );
   return (
     <div className="fig-panel">
       {!has ? (
         <>
-          <div className="text-preset-list">
-            {TEXT_PRESETS.map((p) => (
-              <button key={p.key} type="button" className="text-preset-item" aria-label={`${p.label} 추가`} title={`${p.label} 추가`}
-                onClick={() => onAddText?.(p.key)}>
-                {/* 축소판 스타일은 프리셋 데이터에서 직접 그린다 — CSS에 복제하면 값이 갈라진다 */}
-                <span className="tp-sample" style={{ fontSize: p.previewSize, fontWeight: p.style.weight, color: p.style.color, letterSpacing: p.style.tracking }}>{p.sample || p.label}</span>
-                <span className="tp-meta">{p.style.size}px<br />{p.hint}</span>
-              </button>
-            ))}
-          </div>
+          {presetList}
           <div className="panel-sub" style={{ marginTop: 14 }}>원하는 종류를 누르면 그 스타일로 바로 입력할 수 있어요. 캔버스의 텍스트를 클릭하면 편집해요.</div>
         </>
       ) : (
@@ -950,6 +954,12 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
 
           <PanelSection title="하이라이트">
             <SwatchField value={s.bg || 'none'} palette={HL_PALETTE} allowNone onColor={(c) => setS({ bg: c })} />
+          </PanelSection>
+
+          {/* 추가 수단은 선택 중에도 남긴다 — 없애면 소제목을 쓴 직후 설명글을 붙일 방법이
+              "빈 곳을 클릭해 선택 해제"뿐이라 발견 불가능하다(리뷰 반영). 제목으로 칩과 구분. */}
+          <PanelSection title="새로 추가">
+            {presetList}
           </PanelSection>
         </>
       )}
