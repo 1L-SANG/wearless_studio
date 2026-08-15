@@ -16,6 +16,9 @@ ${changeInstructions}
   applied.
 - Freeze everything else not explicitly requested above (background, framing, pose, expression)
   unless a requested change says otherwise.
+- Keep the SAME place. The room/location, the set, the props and the light stay exactly as they
+  are. If a requested change moves the camera (direction or framing), show a DIFFERENT PART of
+  THAT SAME place — never a different place, and never a rebuilt or re-imagined version of it.
 </instruction>
 
 <output format>

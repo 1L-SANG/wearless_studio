@@ -164,10 +164,10 @@ const catalogs = {
       { id: 'home', label: '집 거실', thumb: P.scene('v-home', 240, 240) },
       { id: 'night', label: '야경 거리', thumb: P.scene('v-night', 240, 240) },
     ],
+    // '뒷모습'은 포즈가 아니라 방향이다 — '자리 · 방향'에 같은 게 있어 두 벌이었다(오너 8/16).
     pose: [
       { id: 'stand', label: '정면 스탠딩', thumb: P.pose('v-stand', 240, 240) },
       { id: 'walk', label: '걷는 모습', thumb: P.pose('v-walk', 240, 240) },
-      { id: 'back', label: '뒷모습', thumb: P.pose('v-back', 240, 240) },
       { id: 'lean', label: '벽에 기대기', thumb: P.pose('v-lean', 240, 240) },
       { id: 'sit', label: '앉은 포즈', thumb: P.pose('v-sit', 240, 240) },
       { id: 'turn', label: '돌아보기', thumb: P.pose('v-turn', 240, 240) },

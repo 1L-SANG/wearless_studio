@@ -244,55 +244,56 @@ function StrokeWidthControl(props) {
   return <RangeNumberControl label="테두리 굵기" min={0.5} max={12} step={0.5} {...props} />;
 }
 
-/* ---------- AI · 현재 이미지 수정 — 예시 카드 선택 + 누적 트레이 ---------- */
+/* ---------- AI · 이 컷에서 한 장 더 — 자리·포즈·표정만 바꿔 같은 장소에서 한 장 더 ---------- */
+/* 이 컷에서 한 장 더 — 옷·모델·장소는 그대로 두고 '자리·포즈·표정'만 바꾼다(오너 8/16).
+   배경 변경은 뺐다: 장면을 통째로 다시 그리는 유일한 항목이라 옷 정체성이 흔들릴 위험이
+   가장 큰데 이 경로에는 품질 검사(QC)가 없고, 프리셋 배경은 셀러가 콘티에서 고른 연출과
+   무관해 페이지의 장소 일관성도 깨뜨린다. 배경을 안 건드리면 프롬프트의 freeze 계약
+   (cut_vary_v1.txt)이 장소를 그대로 유지해 준다 = "같은 장소, 다른 위치". */
 const VARY_CATS = [
-  { id: 'cut', label: '컷 변경' }, { id: 'bg', label: '배경' },
-  { id: 'pose', label: '포즈' }, { id: 'face', label: '표정' },
+  { id: 'cut', label: '자리' },
+  { id: 'pose', label: '포즈' },
+  { id: 'face', label: '표정' },
 ];
-function VaryPanel({ catalogs, source, onPickRef, onGenerate, onSetCutType }) {
+function VaryPanel({ catalogs, source, onGenerate }) {
   const opts = catalogs.varyOptions || {};
   const [cat, setCat] = useState('cut');
   const [sel, setSel] = useState({});
-  const [refBg, setRefBg] = useState(null); // 레퍼런스 배경 src — bg 프리셋 카드와 상호 배타
-  const [cutDir, setCutDir] = useState('keep'); // 컷 변경 · 방향 — 'keep' = 현재 유지
-  const [cutShot, setCutShot] = useState('keep'); // 컷 변경 · 샷 종류
+  const [cutDir, setCutDir] = useState('keep'); // 자리 · 방향 — 'keep' = 현재 유지
+  const [cutShot, setCutShot] = useState('keep'); // 자리 · 거리(샷)
   const busyRef = useRef(false); // 같은 틱 더블클릭으로 생성이 2번 나가는 것 방지
   if (!source) {
-    return <EmptyState icon="image" title="변형할 컷을 선택하세요" desc="캔버스나 의류 탭에서 이미지를 먼저 선택해주세요." />;
+    return <EmptyState icon="image" title="수정할 컷을 골라주세요" desc="캔버스나 의류 탭에서 이미지를 먼저 골라주세요." />;
   }
-  // 소스 컷 종류 — AI 생성 컷은 생성 시 기록된 cutType 으로 알고, 직접 업로드는 미상(null).
-  // 미상이면 '모델 착용 컷'으로 가정하고(B안), 질문 카드로 제품 사진 전환만 받는다.
+  // 소스 컷 종류 — AI 생성 컷은 생성 시 기록된 cutType 으로 안다. 직접 업로드는 미상이고,
+  // 그때는 사람컷 대표값(styling)으로 가정한다. 셀러에게 되묻지 않는다(오너 8/16):
+  // 아무것도 하기 전에 사진 분류부터 시키는 질문 카드였고, 답도 대개 이미 알고 있다.
   const srcType = source.cutType || null;
   const isProduct = srcType === 'product';
   // mirror 레시피 소스(ADR-0004): 방향 변경 없음, 샷 full/medium만, 포즈는 셀피 구도 자동이라 변형 대상 아님
   const isMirror = srcType === 'mirror';
   const dirOpts = isProduct ? catalogs.productDirections : catalogs.directions;
-  // 현재 이미지 수정은 색상별 Detail 근거를 안전하게 연결할 수 없으므로 디테일샷을 제공하지 않는다.
+  // 이 경로는 색상별 Detail 근거를 안전하게 연결할 수 없으므로 디테일샷을 제공하지 않는다.
   const shotOpts = isProduct ? catalogs.productShotTypes.filter((option) => option.value !== 'detail')
     : catalogs.shotTypes;
-  const cats = isProduct ? VARY_CATS.filter((c) => c.id === 'cut' || c.id === 'bg')
+  // 제품컷엔 사람이 없다 — 포즈·표정은 성립하지 않는다. 거울컷은 셀피 구도가 고정이라 포즈 제외.
+  const cats = isProduct ? VARY_CATS.filter((c) => c.id === 'cut')
     : isMirror ? VARY_CATS.filter((c) => c.id !== 'pose')
     : VARY_CATS;
   const safeCat = cats.some((c) => c.id === cat) ? cat : 'cut';
   const optLabel = (c, id) => (opts[c] || []).find((o) => o.id === id)?.label || id;
   const valLabel = (list, v) => (list || []).find((o) => o.value === v)?.label || v;
-  // 칩/payload 순서 = 적용 우선순위 계약: 구도(방향·샷)가 기준 → 포즈·표정 → 배경(레퍼런스 포함)이 구도에 맞춰 따라온다
+  // 칩/payload 순서 = 적용 우선순위 계약: 자리(방향·거리)가 기준 → 포즈 → 표정이 그 위에 얹힌다
   const chips = [];
   if (cutDir && cutDir !== 'keep') chips.push({ key: 'dir', cat: '방향', type: 'direction', value: cutDir, label: valLabel(dirOpts, cutDir), clear: () => setCutDir('keep') });
-  if (cutShot && cutShot !== 'keep') chips.push({ key: 'shot', cat: '샷 종류', type: 'shot', value: cutShot, label: valLabel(shotOpts, cutShot), clear: () => setCutShot('keep') });
+  if (cutShot && cutShot !== 'keep') chips.push({ key: 'shot', cat: '거리', type: 'shot', value: cutShot, label: valLabel(shotOpts, cutShot), clear: () => setCutShot('keep') });
   if (sel.pose) chips.push({ key: 'pose', cat: '포즈', type: 'pose', value: sel.pose, label: optLabel('pose', sel.pose), clear: () => setSel((s) => ({ ...s, pose: null })) });
   if (sel.face) chips.push({ key: 'face', cat: '표정', type: 'face', value: sel.face, label: optLabel('face', sel.face), clear: () => setSel((s) => ({ ...s, face: null })) });
-  if (sel.bg || refBg) chips.push({ key: 'bg', cat: '배경', type: 'bg', value: sel.bg || 'ref',
-    label: sel.bg ? optLabel('bg', sel.bg) : '레퍼런스 이미지', clear: () => { setSel((s) => ({ ...s, bg: null })); setRefBg(null); } });
   const n = chips.length;
-  const hasChange = { bg: !!(sel.bg || refBg), pose: !!sel.pose, face: !!sel.face, cut: (cutDir && cutDir !== 'keep') || (cutShot && cutShot !== 'keep') };
+  const hasChange = { pose: !!sel.pose, face: !!sel.face, cut: (cutDir && cutDir !== 'keep') || (cutShot && cutShot !== 'keep') };
   const cost = catalogs.creditCosts?.editorImage ?? 1;
-  const pickCard = (oid) => { if (safeCat === 'bg') setRefBg(null); setSel((s) => ({ ...s, [safeCat]: s[safeCat] === oid ? null : oid })); };
-  const clearAll = () => { setSel({}); setRefBg(null); setCutDir('keep'); setCutShot('keep'); };
-  // 기준 전환 — 요소에 영구 저장(이미지당 1번만 답하면 됨). 옵션 세트가 바뀌므로 선택은 초기화.
-  // '모델 착용 컷' 전환은 사람컷 대표값 styling 으로 기록한다 (ADR-0003).
-  const setKind = (t) => { onSetCutType(t); clearAll(); setCat('cut'); };
-  const pickRef = async () => { const picked = await onPickRef(); if (picked) { setRefBg(picked); setSel((s) => ({ ...s, bg: null })); } };
+  const pickCard = (oid) => setSel((s) => ({ ...s, [safeCat]: s[safeCat] === oid ? null : oid }));
+  const clearAll = () => { setSel({}); setCutDir('keep'); setCutShot('keep'); };
   const generate = () => {
     if (busyRef.current) return;
     busyRef.current = true; // 곧 의류 탭으로 전환되며 패널이 언마운트 — 같은 틱 더블클릭만 방어
@@ -301,26 +302,15 @@ function VaryPanel({ catalogs, source, onPickRef, onGenerate, onSetCutType }) {
       source: { id: source.id, src: source.src, cutType: srcType || 'styling' },
       // 변경 0개(빈 트레이) = '비슷한 컷 만들기' (PRD §10.8) — 빈 배열이 그 계약
       changes: chips.map((c) => ({ type: c.type, value: c.value, label: c.label })),
-      refBg: refBg ? (refBg.url || refBg) : null,             // 표시용 URL (mock 계약 유지)
-      refBgAssetId: refBg?.assetId || null,                   // 서버 첨부용 asset id (계약 §6)
+      // refBg 는 배경 변경을 뺀 뒤로 보내지 않는다 — 서버 계약(§6)은 그대로라 생략만 하면 된다.
     });
   };
   const catLabel = VARY_CATS.find((c) => c.id === safeCat).label;
   return (
     <div>
-      {!srcType ? (
-        <div className="vary-kind">
-          <p className="vk-txt">모델 착용 컷 기준 옵션이에요. 제품만 나온 사진이면 알려주세요.</p>
-          <button type="button" className="vk-btn" onClick={() => setKind('product')}>제품만 나온 사진이에요</button>
-        </div>
-      ) : (
-        <div className="vary-kind compact">
-          <span className="vk-txt">{isProduct ? '제품 사진 기준의 옵션이에요.' : '모델 착용 컷 기준의 옵션이에요.'}</span>
-          <button type="button" className="vk-link" onClick={() => setKind(isProduct ? 'styling' : 'product')}>
-            {isProduct ? '모델 착용 컷으로 전환' : '제품 사진으로 전환'}
-          </button>
-        </div>
-      )}
+      {/* 옵션을 고르기 전에 사진 종류부터 되묻지 않는다(오너 8/16). 대신 이 기능이 지키는
+          약속을 먼저 말한다 — 무엇이 그대로인지 알아야 마음 놓고 고른다. */}
+      <p className="vary-promise"><Icon name="check" size={13} />옷·모델·장소는 그대로 두고 바꿔요</p>
       <div className="vary-tabs">
         <UnderlineTabs value={safeCat} onChange={setCat}
           options={cats.map((c) => ({ value: c.id, label: <>{c.label}{hasChange[c.id] && <span className="vary-dot" />}</> }))} />
@@ -328,14 +318,14 @@ function VaryPanel({ catalogs, source, onPickRef, onGenerate, onSetCutType }) {
       {safeCat === 'cut' ? (
         <>
           {/* Chips 는 선택된 칩 재클릭 시 null 을 보냄 → '변경 없음'(keep) 으로 복귀시킨다 */}
-          {!isMirror && <div className="insp-sec"><label className="lbl">방향</label>
+          {!isMirror && <div className="insp-sec"><label className="lbl">보는 방향</label>
             <Chips options={[{ value: 'keep', label: '변경 없음' }, ...dirOpts]} value={cutDir} onChange={(v) => setCutDir(v || 'keep')} /></div>}
-          <div className="insp-sec"><label className="lbl">샷 종류</label>
+          <div className="insp-sec"><label className="lbl">가까이·멀리</label>
             <Chips options={[{ value: 'keep', label: '변경 없음' }, ...shotOpts]} value={cutShot} onChange={(v) => setCutShot(v || 'keep')} /></div>
         </>
       ) : (
         <div className="insp-sec">
-          <label className="lbl">{catLabel} 카드 선택</label>
+          <label className="lbl">{catLabel} 고르기</label>
           <div className="vary-grid">
             {(opts[safeCat] || []).map((o) => {
               const on = sel[safeCat] === o.id;
@@ -349,32 +339,6 @@ function VaryPanel({ catalogs, source, onPickRef, onGenerate, onSetCutType }) {
             })}
           </div>
         </div>
-      )}
-      {safeCat === 'bg' && (
-        <details className="insp-extra vary-ref">
-          <summary><Icon name="chevRight" size={15} />레퍼런스로 배경 지정{refBg && <span className="vr-badge">사용 중</span>}</summary>
-          <div className="vary-ref-body">
-            {refBg ? (
-              <>
-                {/* 업로드한 레퍼런스는 배경 카드와 같은 크기의 카드로 표시 */}
-                <div className="vary-grid">
-                  <span className="vary-card on vr-cardprev">
-                    <span className="vc-check"><Icon name="check" size={12} /></span>
-                    <img src={refBg?.url || refBg} alt="" />
-                    <span className="vc-label">레퍼런스</span>
-                  </span>
-                </div>
-                <Button variant="ghost" size="sm" icon="trash" onClick={() => setRefBg(null)} style={{ marginTop: 10 }}>해제</Button>
-                <p className="hint" style={{ marginTop: 8 }}>배경은 선택한 컷 구도에 맞춰 적용돼요.</p>
-              </>
-            ) : (
-              <>
-                <Button variant="ghost" size="sm" block icon="upload" onClick={pickRef}>배경 레퍼런스 업로드</Button>
-                <p className="hint" style={{ marginTop: 8 }}>원하는 배경 사진을 올리면 카드 대신 그 분위기로 배경을 바꿔요. 배경은 선택한 컷 구도에 맞춰 적용돼요.</p>
-              </>
-            )}
-          </div>
-        </details>
       )}
       {n > 0 && (
         <div className="vary-tray">
@@ -404,7 +368,7 @@ function VaryPanel({ catalogs, source, onPickRef, onGenerate, onSetCutType }) {
 
 /* ---------- AI ---------- */
 const NEW_CUT_DEFAULT_SHOT = { styling: 'full', horizon: 'full', mirror: 'full', product: 'ghost' };
-export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, varySource, onGenerate, onVaryGenerate, onPickRef, onPickMoodRef, onSetCutType }) {
+export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, varySource, onGenerate, onVaryGenerate, onPickMoodRef }) {
   const [tab, setTab] = useState('vary');
   // 콘티보드와 같은 규칙 — 사용자는 컷 종류(촬영 방식)만 고르고, 사진 목적(contentRole)은 내부 자동 결정.
   const [cutType, setCutType] = useState('styling');
@@ -531,7 +495,7 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
     <div>
       <div className="seg" data-idx={tab === 'vary' ? 1 : 0}>
         <button className={tab === 'new' ? 'on' : ''} onClick={() => setTab('new')}>새 이미지 추가</button>
-        <button className={tab === 'vary' ? 'on' : ''} onClick={() => setTab('vary')}>현재 이미지 수정</button>
+        <button className={tab === 'vary' ? 'on' : ''} onClick={() => setTab('vary')}>이 컷에서 한 장 더</button>
       </div>
       {tab === 'new' ? (
         <div>
@@ -634,7 +598,7 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
         </div>
       ) : (
         /* key=소스 id — 변형 대상이 바뀌면 패널 상태(선택/트레이/결과)를 통째로 초기화해 이미지 간 누수를 차단 */
-        <VaryPanel key={varySource ? varySource.id : 'none'} catalogs={catalogs} source={varySource} onPickRef={onPickRef} onGenerate={onVaryGenerate} onSetCutType={onSetCutType} />
+        <VaryPanel key={varySource ? varySource.id : 'none'} catalogs={catalogs} source={varySource} onGenerate={onVaryGenerate} />
       )}
     </div>
   );
