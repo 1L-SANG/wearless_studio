@@ -6,9 +6,18 @@ import {
   clampDragDelta,
   clampElementRect,
   expandBlockHeights,
+  getBlockContentBottom,
   getBlockRenderHeight,
   pointMissesTextLines,
 } from '../../src/features/editor/editorGeometry.js';
+
+test('콘텐츠 아래 끝 — 새 텍스트를 기존 콘텐츠 밑에 붙일 때의 기준', () => {
+  // 표준 컷 블록: 이미지 (60,50,880,560) → 아래 끝 610, 새 텍스트는 610+32=642(스펙 §3-A).
+  assert.equal(getBlockContentBottom({ h: 660, elements: [{ y: 50, h: 560 }] }), 610);
+  assert.equal(getBlockContentBottom({ h: 660, elements: [] }), 0, '빈 블록은 0 — 호출부가 상단 기본값을 쓴다');
+  assert.equal(getBlockContentBottom({ h: 660, elements: [{ y: 50, h: 560 }, { y: 900, h: 40, system: true }] }), 610,
+    '시스템 요소는 콘텐츠가 아니다');
+});
 
 test('block height resizing keeps the top anchored and follows only the bottom edge', () => {
   assert.equal(blockHeightFromBottom(600, 40, 0.4), 700);

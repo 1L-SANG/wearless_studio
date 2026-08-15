@@ -397,7 +397,7 @@ def test_two_column_opening_row_merges_and_keeps_copy_below_images():
     assert headline["style"]["size"] == 40 and headline["style"]["weight"] == 600
     assert (subtitle["x"], subtitle["y"], subtitle["w"], subtitle["h"]) == (60, 650, 880, 34)
     assert subtitle["text"] == "골지 짜임의 포인트"
-    assert subtitle["style"] == {"size": 18, "color": "#6b6b73"}
+    assert subtitle["style"] == {"size": 17, "color": "#6b6b73", "lineHeight": 26}
     assert headline["y"] >= max(image["y"] + image["h"] for image in images)
 
 

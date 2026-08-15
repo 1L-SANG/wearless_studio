@@ -215,13 +215,32 @@ test('new ordinary text starts as an immediately editable Figma-style point text
   assert.match(editorSource, /naturalTextWidth\(node, value\)/);
   assert.match(editorSource, /h:\s*Math\.max\(1, Math\.ceil\(node\.scrollHeight\)\)/);
   assert.match(editorSource, /onInput=\{\(e\) => \{ if \(editing\) previewAutoTextSize\(e\.currentTarget\); \}\}/);
-  assert.match(editorSource, /if \(nextSize && onTextCommit\) onTextCommit\(blockId, el\.id, value, nextSize\)/);
+  // 텍스트 커밋은 항상 onTextCommit(commitText)으로, 빈 텍스트 정리는 편집 종료 감시가 맡는다 —
+  // blur를 안 타는 종료 경로(패널 클릭 등)에서도 유령 요소가 남지 않아야 한다.
+  assert.match(editorSource, /if \(onTextCommit\) onTextCommit\(blockId, el\.id, value, nextSize \|\| undefined\)/);
+  assert.match(editorSource, /const pruneEmptyTextEl = \(elId\)/);
+  assert.match(editorSource, /if \(prev && prev !== editEl && blocks && catalogs\) pruneEmptyTextEl\(prev\)/);
 });
 
 test('manually resizing point text converts it into a fixed text box', () => {
   assert.match(editorSource, /elNow\?\.type === 'text' && elNow\.shape !== 'bubble' && elNow\.textSizing === 'auto' \? \{ textSizing: 'fixed' \} : \{\}/);
-  assert.match(editorSource, /height: el\.textSizing === 'fixed' \? el\.h : 'auto'/);
+  // 렌더 높이는 항상 auto — 고정폭 텍스트도 크기를 키우면 상자가 따라 자라고,
+  // 저장되는 el.h는 h 동기화 효과(offsetHeight)가 맞춘다. 고정되는 건 폭뿐이다.
+  assert.match(editorSource, /style=\{\{ \.\.\.base, height: 'auto',/);
+  assert.match(editorSource, /const h = Math\.max\(1, Math\.ceil\(node\.offsetHeight\)\)/);
   assert.match(editorPanelsSource, /onChange\(\{ w, \.\.\.\(!isBubble && el\.textSizing === 'auto' \? \{ textSizing: 'fixed' \} : \{\}\) \}\)/);
+});
+
+test('도형·선에는 사각 회색 외곽선을 긋지 않는다 — 원·사선 둘레의 상자가 모양을 왜곡한다(오너 8/15)', () => {
+  assert.match(editorSource, /className=\{cls\(el\.type === 'line' \? 'el-line' : 'el-shape'\)\}/);
+  assert.match(editorStylesSource, /\.el\.el-shape, \.el\.el-line, \.el\.el-shape:hover, \.el\.el-line:hover \{ outline: none; \}/);
+});
+
+test('새 텍스트는 템플릿 블록(정보·사이즈·세탁)을 피해 가장 가까운 일반 블록에 붙는다', () => {
+  // 템플릿 블록 요소는 폼 재적용 때 통째로 재생성돼 셀러 텍스트가 사라진다.
+  assert.match(editorSource, /const isTemplateBlock = \(b\) => Boolean\(b\.info\) \|\| b\.kind === 'size' \|\| b\.kind === 'care'/);
+  assert.match(editorSource, /getBlockContentBottom\(block\)/);
+  assert.match(editorSource, /y: contentBottom > 0 \? contentBottom \+ 32 : 80/);
 });
 
 test('block quick actions stay visible while the top-level block is selected', () => {

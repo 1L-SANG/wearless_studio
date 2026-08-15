@@ -14,6 +14,7 @@
    ============================================================= */
 import { uid } from '../../../lib/ids.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH } from '../editorLibrary.js';
+import { TEXT_FAINT, TEXT_MUTED } from './textPresets.js';
 
 /* ---- 요소 헬퍼 — mock/db.js 의 T/IMG 문법과 동일한 shape ---- */
 const T = (idFn) => (x, y, w, h, text, style) => ({ id: idFn('el'), type: 'text', x, y, w, h, text, style: style || {} });
@@ -34,8 +35,10 @@ export const FAQ_ITEMS_MIN = 2;
 export const FAQ_ITEMS_MAX = 6;
 
 const HEAD = { font: 'Cal Sans', weight: 600, color: '#0e0d14' };
-const MUTED = '#4a4a45';
-const FAINT = '#898989';
+// 회색은 텍스트 프리셋과 같은 정본을 쓴다 — 한 페이지에서 자동 블록과 셀러 텍스트의
+// 회색이 두 벌로 갈라지지 않게(2026-08-15 통일, 구 값 #4a4a45/#898989).
+const MUTED = TEXT_MUTED;
+const FAINT = TEXT_FAINT;
 export const NEEDS_INPUT = '정보 입력 필요';
 export const CARE_LABEL_SENTENCE = '세탁 전 실제 상품의 케어라벨을 반드시 확인해주세요.';
 

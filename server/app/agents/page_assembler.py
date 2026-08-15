@@ -270,7 +270,7 @@ def build_auto_blocks(product: dict, start_index: int = 0, *,
         _text_el(i, 0, 60, 56, 500, 44, "사이즈 안내",
                  {"size": 28, "weight": 600, "font": "Cal Sans", "color": "#0e0d14"}),
         _text_el(i, 1, 60, 104, 760, 24, "단위: cm · 측정 위치에 따라 1~3cm 오차가 있을 수 있어요",
-                 {"size": 14, "color": "#4a4a45"}),
+                 {"size": 14, "color": "#6b6b73"}),
     ]
     j = 2
     for idx, m in enumerate((product.get("measurements") or [])[:4]):
@@ -278,7 +278,7 @@ def build_auto_blocks(product: dict, start_index: int = 0, *,
         key = m.get("key") if isinstance(m, dict) else None
         value = m.get("value") if isinstance(m, dict) else None
         els.append(_text_el(i, j, x, 168, 200, 24, measurement_labels.get(key, key),
-                             {"size": 14, "color": "#4a4a45"}))
+                             {"size": 14, "color": "#6b6b73"}))
         j += 1
         els.append(_text_el(i, j, x, 194, 200, 48, (f"{value} cm" if value is not None else "—"),
                              {"size": 32, "weight": 600, "font": "Cal Sans", "color": "#0e0d14"}))
@@ -323,7 +323,7 @@ def build_auto_blocks(product: dict, start_index: int = 0, *,
         "bg": "#ffffff",
         "elements": [
             _text_el(i, 0, 60, 48, 880, notice_h, notice_text,
-                     {"size": 13, "color": "#4a4a45", "align": "center"}),
+                     {"size": 13, "color": "#6b6b73", "align": "center"}),
         ],
     }
 
@@ -429,7 +429,7 @@ def assemble(
                 if body:
                     # 이미지 하단 근처(구 레이아웃의 시각 관계) — 이미지 높이에서 유도한다.
                     els.append(_text_el(block_i, el_j, 120, _IMG_Y + img_h - _BODY_INSET_B, 760, 40, body,
-                                         {"size": 18, "color": "#4a4a45"},
+                                         {"size": 17, "color": "#6b6b73", "lineHeight": 26},
                                          source_block_id=b.get("id"), copy_role="body"))
                     el_j += 1
 
@@ -481,7 +481,7 @@ def assemble(
                 if subtitle:
                     els.append(_text_el(
                         block_i, len(els), 60, 650, 880, 34, subtitle,
-                        {"size": 18, "color": "#6b6b73"},
+                        {"size": 17, "color": "#6b6b73", "lineHeight": 26},
                         source_block_id=subtitle_block.get("id") if subtitle_block else None,
                         copy_role="body",
                     ))
@@ -523,7 +523,7 @@ def assemble(
         label_y = image_bottom + 14
         els.append(_text_el(
             block_i, len(els), 60, label_y, 880, 24, product_label,
-            {"size": 14, "weight": 400, "color": "#4a4a45", "align": "center", "tracking": 0.2},
+            {"size": 14, "weight": 400, "color": "#6b6b73", "align": "center", "tracking": 0.2},
         ))
         if matching_label:
             els.append(_text_el(

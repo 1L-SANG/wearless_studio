@@ -28,7 +28,7 @@ import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { buildTextPresetElement } from '@/features/editor/presets/textPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
-import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
+import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockContentBottom, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
 import { exportBlockPng, exportBlocksZip, exportLongPng } from '@/features/editor/editorExport.js';
 import { snapEditorDragDelta } from '@/features/editor/editorSnap.js';
 import { copyEditorElements, pasteEditorElements } from '@/features/editor/editorClipboard.js';
@@ -334,6 +334,17 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     if (changed) onPatch(blockId, el.id, size);
   }, [blockId, editing, el, onPatch, preview, previewAutoTextSize]);
 
+  // 고정폭·템플릿 텍스트의 h 동기화 — 텍스트 높이는 언제나 내용에서 파생된다(텍스트에는
+  // 수동 높이 조절이 없다). 폭은 셀러 배치이므로 두고 높이만 실제 렌더에 맞춘다. h가
+  // 낡으면 블록 높이(getBlockRenderHeight)가 안 자라 캔버스·내보내기에서 글자가 잘린다.
+  useLayoutEffect(() => {
+    if (el.hidden || editing || preview || el.type !== 'text' || el.shape === 'bubble' || el.textSizing === 'auto') return;
+    const node = ref.current;
+    if (!node || !onPatch) return;
+    const h = Math.max(1, Math.ceil(node.offsetHeight));
+    if (Math.round(Number(el.h || 0)) !== h) onPatch(blockId, el.id, { h });
+  }, [blockId, editing, el, onPatch, preview]);
+
   // contentEditable 이 실제 DOM에 반영된 직후 포커스와 캐럿을 문장 끝으로 보낸다.
   // 더블클릭 좌표에 남아 있던 브라우저 기본 selection 때문에 중간 글자가 덮이는 것을 막는다.
   useLayoutEffect(() => {
@@ -492,7 +503,9 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       );
     }
     return (
-      <div ref={ref} data-elid={el.id} className={cls(`el-text${editing ? ' editing' : ''}`)} style={{ ...base, height: el.textSizing === 'fixed' ? el.h : 'auto',
+      /* 높이는 항상 auto — 고정폭 텍스트도 크기를 키우면 상자가 따라 자라야 하고,
+         저장되는 el.h는 위의 h 동기화 효과가 실제 렌더 높이로 맞춘다. */
+      <div ref={ref} data-elid={el.id} className={cls(`el-text${editing ? ' editing' : ''}`)} style={{ ...base, height: 'auto',
         fontFamily: FONT_MAP[s.font] || 'var(--font-body)', fontSize: s.size, fontWeight: s.weight || 400,
         color: s.color || '#0e0d14', letterSpacing: s.tracking, textAlign: s.align || 'left',
         lineHeight: s.lineHeight ? s.lineHeight + 'px' : 1.4, whiteSpace: 'pre-wrap', opacity: (el.opacity ?? 1) * (s.opacity ?? 1),
@@ -511,7 +524,8 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
           const nextSize = pendingTextSize.current || previewAutoTextSize(e.currentTarget);
           pendingTextSize.current = null;
           onEdit(null);
-          if (nextSize && onTextCommit) onTextCommit(blockId, el.id, value, nextSize);
+          // 텍스트 커밋은 항상 onTextCommit(commitText) 경로로 — 빈 텍스트 정리가 거기 있다.
+          if (onTextCommit) onTextCommit(blockId, el.id, value, nextSize || undefined);
           else onPatch(blockId, el.id, { text: value });
         }}>
         {editing ? el.text : display}</div>
@@ -553,7 +567,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       </svg>
     );
   }
-  return <div {...common} className={cls()} style={base}>{inner}</div>;
+  return <div {...common} className={cls(el.type === 'line' ? 'el-line' : 'el-shape')} style={base}>{inner}</div>;
 }
 
 const IMAGE_IMPORT_COPY = {
@@ -891,6 +905,16 @@ export function Editor() {
   const [layerFloat, setLayerFloat] = useState(null);
   const [layerPos, setLayerPos] = useState(null);
   const [editEl, setEditEl] = useState(null);     // text element being inline-edited
+  // 편집이 어떤 경로로 끝나든(blur 커밋·패널 클릭·다른 요소 편집 시작) 빈 텍스트를 정리한다 —
+  // blur만 믿으면 포커스를 안 거친 종료 경로가 유령 요소를 남긴다. pruneEmptyTextEl 은
+  // 로딩 early-return 아래에서 정의되므로 blocks 가드가 로딩 중 호출을 막는다(훅 개수 불변).
+  const prevEditEl = useRef(null);
+  useEffect(() => {
+    const prev = prevEditEl.current;
+    prevEditEl.current = editEl;
+    if (prev && prev !== editEl && blocks && catalogs) pruneEmptyTextEl(prev);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editEl, blocks, catalogs]);
   // inline crop mode (Figma식): { blockId, elId, src, radius, fx,fy,fw,fh, ox,oy,iw,ih }
   // frame = 보이는 창(fx..fh, 블록 좌표), image drawn at frame-relative -ox,-oy size iw×ih
   const [cropping, setCropping] = useState(null);
@@ -1379,7 +1403,7 @@ export function Editor() {
   const patchEl = (patch) => setBlocks((bs) => bs.map((b) => ({ ...b, elements: b.elements.map((e) => e.id === selEl ? { ...e, ...patch } : e) })));
   const patchBubbleAppearance = (patch) => setBlocks((bs) => patchSelectedBubbleAppearance(bs, selEls.length ? selEls : [selEl], patch));
   const patchElById = (blockId, elId, patch) => setBlocks((bs) => bs.map((b) => b.id === blockId ? { ...b, elements: b.elements.map((e) => e.id === elId ? { ...e, ...patch } : e) } : b));
-  const commitBubbleText = (blockId, elementId, value, elementPatch) => setBlocks((bs) => bs.map((b) => {
+  const commitText = (blockId, elementId, value, elementPatch) => setBlocks((bs) => bs.map((b) => {
     if (b.id !== blockId) return b;
     return {
       ...b,
@@ -1388,6 +1412,21 @@ export function Editor() {
         : element),
     };
   }));
+  // 내용이 빈 일반 텍스트는 요소째 지운다 — 안 그러면 보이지 않는 빈 상자가 페이지·
+  // 레이어 목록에 쌓이고 그 자리의 클릭을 가로챈다(유령 요소). 말풍선은 모양 자체가
+  // 보이는 요소라 남기고, 정보·사이즈·세탁 블록은 요소가 폼 정본(info)에서 재생성되는
+  // 템플릿이라 지우면 폼과 캔버스가 어긋나므로 손대지 않는다.
+  const pruneEmptyTextEl = (elId) => {
+    const block = blocks.find((b) => b.elements.some((element) => element.id === elId));
+    const target = block?.elements.find((element) => element.id === elId);
+    if (!block || !target) return;
+    const templateBlock = Boolean(block.info) || block.kind === 'size' || block.kind === 'care';
+    if (templateBlock || target.type !== 'text' || target.shape === 'bubble' || String(target.text ?? '').trim()) return;
+    setBlocks((bs) => bs.map((b) => b.id === block.id
+      ? { ...b, elements: b.elements.filter((element) => element.id !== elId) }
+      : b));
+    if (selEl === elId) { setSelEl(null); setSelEls([]); }
+  };
   const changeBg = (blockId, patch) => setBlocks((bs) => bs.map((b) => b.id === blockId ? { ...b, ...(typeof patch === 'string' ? { bg: patch } : patch) } : b));
   const reshapeBlock = (blockId, { h, shiftEls }) => setBlocks((bs) => bs.map((b) => {
     if (b.id !== blockId) return b;
@@ -1755,11 +1794,27 @@ export function Editor() {
   // 띄우면 편집 집중을 깬다(2026-08-15 오너 결정). 토스트는 화면으로 알 수 없는 것
   // (오류·저장·생성 진행·복사)과 파괴적 동작(삭제)에만 쓴다.
   const addText = (preset) => {
-    const id = visibleBlock();
+    // 템플릿 블록(정보·사이즈·세탁)은 피한다 — 요소가 폼 정본(info)에서 통째로 재생성되는
+    // 블록이라 셀러가 거기 넣은 텍스트는 재적용 때 사라진다. 화면의 블록이 템플릿이면
+    // 가장 가까운 일반 블록으로 내려/올라간다.
+    const isTemplateBlock = (b) => Boolean(b.info) || b.kind === 'size' || b.kind === 'care';
+    const visibleId = visibleBlock();
+    const idx = blocks.findIndex((b) => b.id === visibleId);
+    let block = idx >= 0 && !isTemplateBlock(blocks[idx]) ? blocks[idx] : null;
+    for (let d = 1; !block && d < blocks.length; d += 1) {
+      if (blocks[idx - d] && !isTemplateBlock(blocks[idx - d])) block = blocks[idx - d];
+      else if (blocks[idx + d] && !isTemplateBlock(blocks[idx + d])) block = blocks[idx + d];
+    }
+    if (!block) block = blocks[idx] || blocks[0];
+    if (!block) return;
     // preset = 텍스트 프리셋 키(큰 제목·소제목·설명글·꼬리표). 미지정(T 단축키)이면 소제목.
-    const el = buildTextPresetElement(preset);
-    setBlocks((bs) => bs.map((b) => b.id === id ? { ...b, elements: [...b.elements, el] } : b));
-    selectEl(id, el); setTab('text');
+    // 위치는 블록의 기존 콘텐츠 아래(간격 32 — 스펙 §3-A의 사진↔캡션 간격) — 사진 위에
+    // 떨어지면 연회색 꼬리표는 보이지도 않고, 연속 추가가 같은 자리에 쌓인다. 블록이
+    // 늘어나는 건 getBlockRenderHeight가 처리한다.
+    const contentBottom = getBlockContentBottom(block);
+    const el = { ...buildTextPresetElement(preset), y: contentBottom > 0 ? contentBottom + 32 : 80 };
+    setBlocks((bs) => bs.map((b) => b.id === block.id ? { ...b, elements: [...b.elements, el] } : b));
+    selectEl(block.id, el); setTab('text');
     setEditEl(el.id);
   };
   /* ---- 정보 블록 (PRD §10.14 `내용 추가`) — infoPresets 빌더로 폼→블록 생성 ---- */
@@ -2538,7 +2593,7 @@ export function Editor() {
                   crop={cropping && cropping.blockId === b.id ? cropping : null}
                   onCropDrag={cropDrag} onCropStart={startCrop} onCropCommit={commitCrop} onCropCancel={cancelCrop} onCropReset={resetCrop}
                   onSelectBlock={(id) => { setSelBlock(id); setBlockFocused(true); clearSel(); setTab('shape'); }} onSelectEl={selectEl}
-                  onElPatch={patchElById} onTextCommit={commitBubbleText} onElementDragStart={startElementDrag}
+                  onElPatch={patchElById} onTextCommit={commitText} onElementDragStart={startElementDrag}
                   shouldSuppressBlankClick={consumeMarqueeClick}
                   onAddImage={requestSlotImage} onDropImage={dropSlotImage}
                   onDropBlockImage={(blockId, image, point) => insertImage(image, { blockId, point })} onDropImageFiles={dropImageFiles}

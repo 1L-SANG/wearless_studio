@@ -246,11 +246,11 @@ function buildAutoBlocks(product) {
     {
       id: uid('b'), name: '사이즈 안내', kind: 'size', auto: true, bg: '#ffffff', elements: [
         T(60, 56, 500, 44, '사이즈 안내', { size: 28, weight: 600, font: 'Cal Sans', color: '#0e0d14' }),
-        T(60, 104, 760, 24, '단위: cm · 측정 위치에 따라 1~3cm 오차가 있을 수 있어요', { size: 14, color: '#4a4a45' }),
+        T(60, 104, 760, 24, '단위: cm · 측정 위치에 따라 1~3cm 오차가 있을 수 있어요', { size: 14, color: '#6b6b73' }),
         ...(product.measurements || []).slice(0, 4).flatMap((m, i) => {
           const x = 60 + i * 232;
           return [
-            T(x, 168, 200, 24, catalogs.measurementLabels[m.key] || m.key, { size: 14, color: '#4a4a45' }),
+            T(x, 168, 200, 24, catalogs.measurementLabels[m.key] || m.key, { size: 14, color: '#6b6b73' }),
             T(x, 194, 200, 48, (m.value != null ? m.value + ' cm' : '—'), { size: 32, weight: 600, font: 'Cal Sans', color: '#0e0d14' }),
           ];
         }),
@@ -264,7 +264,7 @@ function buildAutoBlocks(product) {
     },
     {
       id: uid('b'), name: 'AI 생성 안내', kind: 'ai-notice', auto: true, bg: '#ffffff', elements: [
-        T(60, 48, 880, 60, '본 상세페이지의 일부 이미지는 AI를 활용해 생성되었습니다. 실제 상품의 색상과 핏은 촬영 환경 및 화면 설정에 따라 다르게 보일 수 있습니다.', { size: 13, color: '#4a4a45', align: 'center' }),
+        T(60, 48, 880, 60, '본 상세페이지의 일부 이미지는 AI를 활용해 생성되었습니다. 실제 상품의 색상과 핏은 촬영 환경 및 화면 설정에 따라 다르게 보일 수 있습니다.', { size: 13, color: '#6b6b73', align: 'center' }),
       ],
     },
   ];
@@ -318,7 +318,7 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
       els.push(Object.assign(T(120, 110, 600, 80, `${product.name || '상품'}와 함께하는 하루`, { size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14' }), { sourceBlockId: b.id, copyRole: 'headline' }));
     }
     if (copywriting && contentRole === CONTENT_ROLES.BENEFIT) {
-      els.push(Object.assign(T(120, 560, 760, 40, '강조 포인트를 살린 카피가 들어가는 자리예요.', { size: 18, color: '#4a4a45' }), { sourceBlockId: b.id, copyRole: 'body' }));
+      els.push(Object.assign(T(120, 560, 760, 40, '강조 포인트를 살린 카피가 들어가는 자리예요.', { size: 17, color: '#6b6b73', lineHeight: 26 }), { sourceBlockId: b.id, copyRole: 'body' }));
     }
     blocks.push({ id: uid('b'), name, kind: sectionRole, contentRole, bg, h: 660, elements: els });
   };
@@ -338,7 +338,7 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
       const subtitle = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.BENEFIT);
       if (subtitle) {
         els.push(Object.assign(T(60, 650, 880, 34, '강조 포인트를 살린 카피가 들어가는 자리예요.', {
-          size: 18, color: '#6b6b73',
+          size: 17, color: '#6b6b73', lineHeight: 26,
         }), { sourceBlockId: subtitle.id, copyRole: 'body' }));
       }
     }
@@ -397,7 +397,7 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     ));
     const [productLabel, matchingLabel] = colorwayLabels(ordered);
     els.push(T(60, 683, 880, 24, productLabel, {
-      size: 14, weight: 400, color: '#4a4a45', align: 'center', tracking: 0.2,
+      size: 14, weight: 400, color: '#6b6b73', align: 'center', tracking: 0.2,
     }));
     if (matchingLabel) {
       els.push(T(60, 705, 880, 26, matchingLabel, {
@@ -586,7 +586,7 @@ function buildDraft() {
       id: uid('b'), name: '핵심 장점', kind: SECTION_ROLES.HOOKING, contentRole: CONTENT_ROLES.BENEFIT, bg: '#f5f5f5', elements: [
         IMG(60, 50, 420, 540, P.detail('ed_sell', 420, 540), 12, 'product'),
         T(540, 150, 380, 40, '부드러운 촉감', { size: 28, weight: 600, font: 'Cal Sans', color: '#0e0d14' }),
-        T(540, 210, 380, 80, '코튼 혼방으로 자연스럽게 떨어지는 결, 피부에 닿는 감촉이 부담 없습니다.', { size: 17, color: '#4a4a45' }),
+        T(540, 210, 380, 80, '코튼 혼방으로 자연스럽게 떨어지는 결, 피부에 닿는 감촉이 부담 없습니다.', { size: 17, color: '#6b6b73' }),
       ],
     },
     {

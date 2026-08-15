@@ -1,10 +1,15 @@
-export function getBlockRenderHeight(block) {
-  const contentBottom = block.elements.reduce(
+/** 시스템 요소를 뺀 콘텐츠의 아래 끝. 새 텍스트를 "기존 콘텐츠 아래"에 붙일 때도 쓴다. */
+export function getBlockContentBottom(block) {
+  return block.elements.reduce(
     (bottom, element) => element.system
       ? bottom
       : Math.max(bottom, (element.y || 0) + (element.h || 40)),
     0,
   );
+}
+
+export function getBlockRenderHeight(block) {
+  const contentBottom = getBlockContentBottom(block);
   const blockHeight = block.h || 220;
   // 이미 부모 안에 들어온 요소에는 여백을 다시 더하지 않는다. 요소가 실제로 넘친
   // 경우에만 한 번 50px 안전 여백과 함께 확장해야, 하단에 딱 맞춘 뒤 높이가 반복 증가하지 않는다.

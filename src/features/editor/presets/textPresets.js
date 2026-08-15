@@ -17,17 +17,24 @@ import { uid } from '../../../lib/ids.js';
    빠른 스타일 전환에서도 건드리지 않는다. */
 const HIERARCHY_PROPS = ['size', 'weight', 'color', 'lineHeight', 'tracking'];
 
+/* 에디터 텍스트 회색의 정본 — 자동 배치 카피(mock/db.js·editorWaitSkeleton.js·
+   server/page_assembler.py)와 정보 블록(infoPresets.js)도 같은 값을 쓴다.
+   서버는 JS를 import할 수 없어 값을 복사해 두므로, 바꿀 땐 함께 바꾼다. */
+export const TEXT_INK = '#0e0d14';
+export const TEXT_MUTED = '#6b6b73';
+export const TEXT_FAINT = '#9a9aa2';
+
 /* previewSize는 패널 축소판 크기 — 실제 크기 순서(40>26>19>17)를 보존해야
    목록에서 "꼬리표가 설명글보다 크다"는 사실이 왜곡되지 않는다. */
 export const TEXT_PRESETS = [
   { key: 'headline', label: '큰 제목', hint: '첫 화면 한 방 문구', previewSize: 22,
-    style: { size: 40, weight: 600, color: '#0e0d14' } },
+    style: { size: 40, weight: 600, color: TEXT_INK } },
   { key: 'subtitle', label: '소제목', hint: '사진 아래 한 줄', previewSize: 17,
-    style: { size: 26, weight: 600, color: '#0e0d14' } },
+    style: { size: 26, weight: 600, color: TEXT_INK } },
   { key: 'tag', label: '꼬리표', hint: '짧은 라벨', sample: 'POINT 01', previewSize: 14,
-    style: { size: 19, weight: 700, color: '#9a9aa2', tracking: 3 } },
+    style: { size: 19, weight: 700, color: TEXT_FAINT, tracking: 3 } },
   { key: 'body', label: '설명글', hint: '긴 설명 문단', previewSize: 13,
-    style: { size: 17, weight: 400, color: '#6b6b73', lineHeight: 26 } },
+    style: { size: 17, weight: 400, color: TEXT_MUTED, lineHeight: 26 } },
 ];
 
 /* 소제목이 기본 — 실측에서 셀러 텍스트의 65.5%가 한 줄 소제목이었다(중앙값 17자). */

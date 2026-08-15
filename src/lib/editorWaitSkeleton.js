@@ -21,7 +21,7 @@ export function alignSkeletonToServer(blocks, copywriting) {
     const isHero = b.contentRole === 'hero';
     if (copywriting && !isHero && !out.some((e) => e.type === 'text' && e.copyRole === 'body')) {
       out.push({ id: `${b.id}-ewbody`, type: 'text', x: 120, y: IMG_Y + IMG_H - MARGIN, w: 760, h: 40,
-        text: '', style: { size: 18, color: '#4a4a45' }, sourceBlockId: img.sourceBlockId, copyRole: 'body' });
+        text: '', style: { size: 17, color: '#6b6b73', lineHeight: 26 }, sourceBlockId: img.sourceBlockId, copyRole: 'body' });
     }
     const bottom = Math.max(...out.map((e) => (e.y || 0) + (e.h || 0)));
     return { ...b, elements: out, h: bottom + MARGIN };

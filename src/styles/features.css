@@ -1372,6 +1372,9 @@
 .canvas-block:hover .quick, .canvas-block.on .quick { opacity: 1; visibility: visible; pointer-events: auto; transition-delay: 0s; }
 .el { position: absolute; cursor: pointer; outline: 1px solid rgba(14,13,20,.16); outline-offset: 0; }
 .el:hover { outline-color: rgba(14,13,20,.34); }
+/* 도형·선은 자체 형태(채움·획)가 이미 보인다 — 원이나 사선 둘레의 사각 회색 상자는
+   요소 모양을 왜곡해 보이게 해서 긋지 않는다(오너 지적 2026-08-15). 선택 시 핸들은 그대로. */
+.el.el-shape, .el.el-line, .el.el-shape:hover, .el.el-line:hover { outline: none; }
 /* 자동 높이 텍스트는 축소 시 실제 DOM 높이도 한 자릿수 px까지 작아진다. 보이지 않는
    viewport 3px 여유를 위아래에 두되, 촘촘한 표의 인접 구분선 중심은 덮지 않는다. */
 .el-text:not(.editing)::before { content: ''; position: absolute; left: 0; right: 0;
@@ -1610,12 +1613,9 @@
 .text-preset-item:hover { box-shadow: var(--elev-lift); }
 .text-preset-item .tp-sample { white-space: nowrap; }
 .text-preset-item .tp-meta { font-size: 11px; color: var(--fg-3); text-align: right; line-height: 1.5; flex: none; }
-/* 빠른 스타일 칩 — 선택된 텍스트의 위계를 한 번에 전환 */
-.text-style-chips { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.text-style-chip { height: 34px; border: 0; border-radius: 8px; background: var(--bg-2); font-size: 12.5px; font-weight: 600;
-  color: var(--fg-2); cursor: pointer; font-family: inherit; transition: background .12s, color .12s; }
-.text-style-chip:hover { color: var(--fg-1); }
-.text-style-chip.active { background: var(--fg-1); color: #fff; }
+/* 빠른 스타일 — 공용 .chip 시각(app.css)에 2×2 그리드 배치만 얹는다 */
+.quad-chips { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.quad-chips .chip { justify-content: center; }
 /* wardrobe group head: color circle + name + count */
 .wg-color { display: inline-flex; align-items: center; gap: 8px; }
 .wg-dot { width: 16px; height: 16px; border-radius: 50%; flex: none; box-shadow: inset 0 0 0 1px rgba(34,42,53,.18); }

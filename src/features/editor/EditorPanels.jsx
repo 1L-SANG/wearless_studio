@@ -20,7 +20,7 @@ import {
 import { thumbUrl } from '@/lib/imageCdn.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, OBJECT_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, colorWithOpacity, encodeWardrobeImage, normalizeHexColor } from '@/features/editor/editorLibrary.js';
 import { DEFAULT_EDITOR_COLOR_PRESETS, commitNumberDraft, hexToHsv, hsvToHex } from '@/features/editor/editorAppearance.js';
-import { TEXT_PRESETS, activeTextPreset, quickStylePatch } from '@/features/editor/presets/textPresets.js';
+import { TEXT_MUTED, TEXT_PRESETS, activeTextPreset, quickStylePatch } from '@/features/editor/presets/textPresets.js';
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 
 function PanelHead({ title, sub }) {
@@ -829,7 +829,8 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, onCropReset, onRepla
 }
 
 /* ---------- 텍스트 props ---------- */
-const TEXT_PALETTE = ['#0e0d14', '#898989', '#ffffff', '#4f88c9', '#d92d20', '#067647'];
+/* 회색 스와치는 프리셋 회색과 같은 값 — 다르면 "같은 회색으로 되돌릴" 길이 없다. */
+const TEXT_PALETTE = ['#0e0d14', TEXT_MUTED, '#ffffff', '#4f88c9', '#d92d20', '#067647'];
 const HL_PALETTE = ['#fef3c7', '#dbeafe', '#dcfce7', '#fee2e2', '#f3f4f6', '#0e0d14'];
 const WEIGHTS = [{ value: 300, label: 'Light' }, { value: 400, label: 'Regular' }, { value: 500, label: 'Medium' }, { value: 600, label: 'SemiBold' }, { value: 700, label: 'Bold' }];
 export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, onLayer, onAddText }) {
@@ -862,15 +863,14 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
         </>
       ) : (
         <>
-          {/* 말풍선은 제외 — 자체 튜닝된 행간·색을 칩이 덮으면 짝 말풍선과 어긋난다 */}
+          {/* 말풍선은 제외 — 자체 튜닝된 행간·색을 칩이 덮으면 짝 말풍선과 어긋난다.
+              칩 시각은 앱 공용 Chips — 활성 칩 재클릭은 가드로 무시(불필요한 히스토리 방지). */}
           {!isBubble && (
             <PanelSection title="빠른 스타일" first>
-              <div className="text-style-chips">
-                {TEXT_PRESETS.map((p) => (
-                  <button key={p.key} type="button" className={`text-style-chip${activePresetKey === p.key ? ' active' : ''}`}
-                    onClick={() => { if (activePresetKey !== p.key) setS(quickStylePatch(p.key)); }}>{p.label}</button>
-                ))}
-              </div>
+              <Chips className="quad-chips" allowDeselect={false}
+                options={TEXT_PRESETS.map((p) => ({ value: p.key, label: p.label }))}
+                value={activePresetKey}
+                onChange={(key) => { if (key && key !== activePresetKey) setS(quickStylePatch(key)); }} />
               <div className="panel-sub" style={{ marginTop: 8, marginBottom: 0 }}>내용은 그대로, 크기·굵기·색만 한 번에 바뀌어요.</div>
             </PanelSection>
           )}
