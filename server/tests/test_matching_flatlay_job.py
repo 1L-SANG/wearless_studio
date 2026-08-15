@@ -280,10 +280,14 @@ def test_prompt_noun_follows_the_items_clothing_type(monkeypatch):
     assert top.calls[0]["prompt"] == mf.build_prompt("top")
     assert "pants completely flat" not in top.calls[0]["prompt"]
 
-    # 전략 B 문구는 의류와 무관하게 동일 — 명사 한 군데만 다르다.
+    # 전략 B 문구는 의류와 무관하게 동일 — 명사·실루엣 항목 두 군데만 다르다.
     bp, tp = bottom.calls[0]["prompt"], top.calls[0]["prompt"]
-    assert (bp.replace("pants completely flat", "X")
-            == tp.replace("garment completely flat", "X"))
+    norm = lambda p: (p.replace("pants completely flat", "X")
+                       .replace("garment completely flat", "X")
+                       .replace(mf._BOTTOM_SILHOUETTE, "S")
+                       .replace(mf._TOP_SILHOUETTE, "S"))
+    assert norm(bp) == norm(tp)
+    assert "leg cut" in bp and "leg cut" not in tp, "다리 지시는 하의에만"
     assert "CRITICAL IDENTITY LOCK" in bp and "CRITICAL IDENTITY LOCK" in tp
 
 

@@ -197,8 +197,13 @@ test('type changes synchronously deselect and disable stale incompatible matches
   );
   assert.match(analysis, /reconcileMatchCompatibility\(a\.matchClothing, t\)/);
   assert.match(analysis, /if \(!item \|\| !isMatchCompatible\(item\)\) return/);
-  assert.match(adapter, /m\.clothingType === expectedType/);
+  // 선택 머지는 matchSelection.js 로 분리됐다(node --test 가 직접 실행 검증하려고).
+  // 어댑터는 그 함수에 clothingType 을 넘기는 배선만 유지한다.
   assert.match(adapter, /mergeMatchSelection\(\s*base\.matchClothing \|\| \[\], matchPatch, base\.clothingType/);
+  const selection = readFileSync(
+    new URL('../../src/lib/api/matchSelection.js', import.meta.url), 'utf8',
+  );
+  assert.match(selection, /m\.clothingType === expectedType/);
 });
 
 test('matching selection keeps only the earliest explicit choice', () => {

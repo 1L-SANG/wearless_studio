@@ -61,7 +61,7 @@ _PROMPT = (
     "fading/whiskering, distressing, and material texture.\n"
     "2. Construction Details: Maintain the exact pocket shape and placement, belt loops, "
     "waistband, button/rivet hardware, and topstitching color.\n"
-    "3. Silhouette: Maintain the exact leg cut (wide leg / straight fit) and hem finish.\n\n"
+    "3. Silhouette: {silhouette}\n\n"
     "TRANSFORMATION INSTRUCTIONS:\n"
     "- Lay the {short} completely flat and neatly spread out on a seamless uniform light "
     "grey studio background (RGB: {r}, {g}, {b}, #E8E8E6).\n"
@@ -72,11 +72,15 @@ _PROMPT = (
     "catalog image."
 )
 
-#: clothing_type → (명사, 두 번째 문장의 명사, 그에 맞는 동사). 상의는 중립형을 쓴다 —
-#: 프롬프트 뒤쪽에 "top-down view" 가 있어 "this exact top" 은 시점 지시와 부딪힌다.
+#: clothing_type → (지시문 명사, 실루엣 항목 문장).
+#: 하의는 스파이크 원문 그대로. 상의는 그 문장의 "leg cut" 이 의미가 없으므로 같은 층위의
+#: 중립 문장으로 바꾼다 — 안 그러면 상의 재렌더에 다리 지시가 그대로 흘러간다(2026-08-15
+#: 전수조사). 상의 표본은 스파이크에 없으므로 이 문장은 검증 대상이다.
+_BOTTOM_SILHOUETTE = "Maintain the exact leg cut (wide leg / straight fit) and hem finish."
+_TOP_SILHOUETTE = ("Maintain the exact cut, length, sleeve shape, neckline and hem finish.")
 _NOUNS = {
-    "bottom": ("pair of pants", "pants", "are"),
-    "top": ("garment", "garment", "is"),
+    "bottom": ("pants", _BOTTOM_SILHOUETTE),
+    "top": ("garment", _TOP_SILHOUETTE),
 }
 _NEUTRAL = _NOUNS["top"]
 
@@ -110,10 +114,13 @@ def grid_enabled(settings) -> bool:
 
 
 def build_prompt(clothing_type: str | None) -> str:
-    """의류 명사만 끼운 스파이크 전략 B 프롬프트(그 외 문구는 원문 고정)."""
-    noun, short, verb = _NOUNS.get((clothing_type or "").strip().lower(), _NEUTRAL)
+    """의류 명사·실루엣 항목만 끼운 스파이크 전략 B 프롬프트(그 외 문구는 원문 고정).
+
+    하의는 리포트 원문과 바이트 동일하다(테스트로 고정).
+    """
+    short, silhouette = _NOUNS.get((clothing_type or "").strip().lower(), _NEUTRAL)
     r, g, b = matching_cutout.MATCHING_CUTOUT_BG
-    return _PROMPT.format(noun=noun, short=short, verb=verb, r=r, g=g, b=b)
+    return _PROMPT.format(short=short, silhouette=silhouette, r=r, g=g, b=b)
 
 
 def flatlay_fingerprint(source_hash: str) -> str:

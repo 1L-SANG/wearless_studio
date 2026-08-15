@@ -38,11 +38,20 @@ def test_prompt_is_the_identity_lock_strategy():
 
 
 
-def test_top_prompt_swaps_only_the_noun():
+def test_top_prompt_swaps_noun_and_silhouette_line():
+    """상의엔 'leg cut' 이 가면 안 된다 — 스파이크는 하의 2벌만 검증했고, 그 문장을 그대로
+    상의에 보내면 다리 지시가 재렌더에 흘러간다(2026-08-15 전수조사)."""
     top, bottom = mf.build_prompt("top"), mf.build_prompt("bottom")
     assert "garment completely flat" in top and "pants completely flat" in bottom
-    # 명사 한 군데 말고는 동일해야 한다 — 전략 문구를 의류별로 갈라 쓰지 않는다.
-    assert top.replace("garment completely flat", "X") == bottom.replace("pants completely flat", "X")
+    assert "leg cut" in bottom, "하의는 스파이크 원문 유지"
+    assert "leg cut" not in top, "상의엔 다리 지시 누수 금지"
+    assert "sleeve shape" in top and "neckline" in top
+    # 그 두 군데(명사·실루엣) 말고는 동일해야 한다 — 전략 문구를 의류별로 갈라 쓰지 않는다.
+    norm = lambda p: (p.replace("garment completely flat", "X")
+                       .replace("pants completely flat", "X")
+                       .replace(mf._TOP_SILHOUETTE, "S")
+                       .replace(mf._BOTTOM_SILHOUETTE, "S"))
+    assert norm(top) == norm(bottom)
 
 
 

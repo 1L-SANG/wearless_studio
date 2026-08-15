@@ -11,7 +11,7 @@
    ============================================================= */
 
 export async function promoteCustomMatch(api, projectId, customDraft) {
-  if (!customDraft?.uploads?.length) return { promoted: false };
+  if (!customDraft?.uploads?.length) return { promoted: false, attempted: false };
   try {
     const assetIds = [];
     for (const up of customDraft.uploads) {
@@ -35,12 +35,13 @@ export async function promoteCustomMatch(api, projectId, customDraft) {
         matchClothing: [{ id: promoted.id, selected: true, selOrder: 1 }],
       });
     }
-    return { promoted: true, itemId: promoted?.id ?? null };
+    return { promoted: true, attempted: true, itemId: promoted?.id ?? null };
   } catch (err) {
     if (err?.status !== 409) {
       console.warn('custom match promotion failed (확정은 유지)', err);
     }
-    return { promoted: false, error: err };
+    // 409(이미 등록됨)는 재시도 합류라 실패가 아니다 — 경고를 띄우지 않는다.
+    return { promoted: err?.status === 409, attempted: true, error: err };
   } finally {
     // 성공·실패·409 어느 경로든 이 draft 의 승격 키는 소비됐다. 남겨 두면 같은 탭에서
     // 다음 프로젝트를 만들 때 이전 프로젝트의 blob 이 다시 등록된다(리뷰 확정 결함 —

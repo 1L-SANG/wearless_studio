@@ -88,8 +88,10 @@ test('선택 안 된 draft 는 등록만 하고 선택 저장을 만들지 않�
 
 test('draft 없음·빈 업로드는 아무 호출도 만들지 않는다', async () => {
   const api = fakeApi();
-  assert.deepEqual(await promoteCustomMatch(api, 'p', null), { promoted: false });
-  assert.deepEqual(await promoteCustomMatch(api, 'p', { uploads: [] }), { promoted: false });
+  assert.deepEqual(await promoteCustomMatch(api, 'p', null),
+                   { promoted: false, attempted: false });
+  assert.deepEqual(await promoteCustomMatch(api, 'p', { uploads: [] }),
+                   { promoted: false, attempted: false });
   assert.equal(api.calls.uploads.length, 0);
 });
 
@@ -101,10 +103,18 @@ test('등록 실패는 fail-open — 예외를 밖으로 던지지 않는다(확
   assert.equal(out.error, boom);
 });
 
-test('409(이미 등록됨)는 재시도 합류 — 조용히 넘어간다', async () => {
+test('409(이미 등록됨)는 재시도 합류 — 실패로 치지 않는다(경고 없음)', async () => {
   const dup = Object.assign(new Error('exists'), { status: 409 });
   const api = fakeApi({ addError: dup });
   const out = await promoteCustomMatch(api, 'p', DRAFT);
+  assert.equal(out.promoted, true, '이미 등록돼 있으므로 성공으로 간주 — 토스트 안 띄운다');
+  assert.equal(out.attempted, true);
+});
+
+test('시도했는데 진짜 실패면 attempted+promoted=false 로 화면이 경고할 수 있다', async () => {
+  const boom = Object.assign(new Error('down'), { status: 500 });
+  const out = await promoteCustomMatch(fakeApi({ addError: boom }), 'p', DRAFT);
+  assert.equal(out.attempted, true);
   assert.equal(out.promoted, false);
 });
 
@@ -119,4 +129,50 @@ test('stripLocalCustomMatch 는 로컬 커스텀만 걷어내고 시드는 남�
   assert.deepEqual(a.matchClothing.map((m) => m.id), ['seed_1']);
   assert.equal(a.other, 'x');
   assert.equal(stripLocalCustomMatch(null), null);
+});
+
+// ── 하의 상품 + 매칭 상의 (2026-08-15 전수조사 확정 결함) ─────────────────────
+import { mergeMatchSelection } from '../../src/lib/api/matchSelection.js';
+
+const CUSTOM_TOP = { id: 'custom_srv', isCustom: true, clothingType: 'top', isCompatible: true };
+const SEED_TOP = { id: 'seed_top', isCustom: false, clothingType: 'top', isCompatible: true };
+
+test('clothingType 불명이면 타입 필터를 생략한다 — 승격 직후 선택이 살아남는다', () => {
+  // 승격 직후 캐시엔 clothingType 이 없다(draftSync 가 product 로 미러하며 제거).
+  // 예전엔 없으면 'bottom' 으로 굳어 매칭 상의가 전부 탈락했다.
+  const out = mergeMatchSelection(
+    [CUSTOM_TOP, SEED_TOP],
+    [{ id: 'custom_srv', selected: true, selOrder: 1 }],
+    undefined,
+  );
+  const custom = out.find((m) => m.id === 'custom_srv');
+  assert.equal(custom.selected, true, '타입 불명이어도 선택이 유지된다');
+  assert.equal(custom.selOrder, 1);
+});
+
+test('하의 상품이면 매칭 상의가 정상 선택된다', () => {
+  const out = mergeMatchSelection(
+    [CUSTOM_TOP, SEED_TOP],
+    [{ id: 'custom_srv', selected: true, selOrder: 1 }],
+    'bottom',
+  );
+  assert.equal(out.find((m) => m.id === 'custom_srv').selected, true);
+});
+
+test('원피스는 매칭 선택이 없다 (기존 의미 보존)', () => {
+  const out = mergeMatchSelection(
+    [CUSTOM_TOP],
+    [{ id: 'custom_srv', selected: true, selOrder: 1 }],
+    'dress',
+  );
+  assert.equal(out.find((m) => m.id === 'custom_srv').selected, false);
+});
+
+test('상의 상품이면 매칭 상의는 타입 불일치로 탈락한다', () => {
+  const out = mergeMatchSelection(
+    [CUSTOM_TOP],
+    [{ id: 'custom_srv', selected: true, selOrder: 1 }],
+    'top',
+  );
+  assert.equal(out.find((m) => m.id === 'custom_srv').selected, false);
 });
