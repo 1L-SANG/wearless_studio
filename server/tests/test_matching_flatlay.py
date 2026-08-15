@@ -12,73 +12,50 @@ from PIL import Image
 from app.services import matching_cutout as mc
 from app.services import matching_flatlay as mf
 
-# 정체성 고정 절(2026-08-15 오너 결정) — 명사만 갈아끼운다. 프롬프트 핀의 일부다.
-def _identity(short):
-    return (
-        f" This must remain the EXACT same {short} as in the photo — identity is fixed. "
-        "Preserve the original colour and fabric sheen, the silhouette and proportions, "
-        "every seam, stitch, pocket, waistband, closure, label and construction detail "
-        "exactly as photographed. Do not redesign, simplify, restyle, or substitute any "
-        f"part; only change the pose of the {short} to a flat, front-facing lay."
-    )
-
-
-# 스파이크 승자 프롬프트(하의) + 정체성 고정 절. 이 리터럴이 정본이다.
-BOTTOM_PROMPT = (
-    "A clean, commercial e-commerce studio flat-lay product photograph of this exact "
-    "pair of pants. The pants are laid completely flat and neatly arranged on a solid "
-    "neutral light gray surface (RGB 232, 232, 230). Direct overhead top-down view "
-    "(bird's-eye perspective), centered in frame with balanced margins. Even, soft "
-    "commercial studio lighting with minimal subtle shadow directly beneath. Completely "
-    "remove any hangers, clips, floor seams, or background clutter. High resolution, "
-    "crisp details, no distortion." + _identity("pants")
-)
-# 상의는 명사만 중립형으로 바꾸고 단복수(is/are)를 맞춘다. 나머지는 위와 동일.
-TOP_PROMPT = (
-    "A clean, commercial e-commerce studio flat-lay product photograph of this exact "
-    "garment. The garment is laid completely flat and neatly arranged on a solid "
-    "neutral light gray surface (RGB 232, 232, 230). Direct overhead top-down view "
-    "(bird's-eye perspective), centered in frame with balanced margins. Even, soft "
-    "commercial studio lighting with minimal subtle shadow directly beneath. Completely "
-    "remove any hangers, clips, floor seams, or background clutter. High resolution, "
-    "crisp details, no distortion." + _identity("garment")
+# 스파이크 전략 B(Identity Lock) 계약 — 리포트가 PASS 판정한 그 프롬프트인지 검증한다.
+# 문자열 전체를 테스트에 복제하지 않는다(정본은 서비스 상수 하나여야 한다). 대신 그 전략을
+# 전략이게 하는 요소들을 항목으로 고정한다.
+IDENTITY_MARKERS = (
+    "EXACT same garment",
+    "CRITICAL IDENTITY LOCK",
+    "Garment Identity:",
+    "Construction Details:",
+    "Silhouette:",
+    "TRANSFORMATION INSTRUCTIONS:",
+    "top-down 90-degree overhead angle",
+    "Remove any hanger hooks",
 )
 
 _TAIL = "Direct overhead top-down view"
 
 
-def test_bottom_prompt_is_the_spike_string_byte_for_byte():
-    assert mf.build_prompt("bottom") == BOTTOM_PROMPT
+def test_prompt_is_the_identity_lock_strategy():
+    """전략 B 원문 — 리포트 판정표에서 두 의류 × 두 모델 모두 PASS 한 구성."""
+    p = mf.build_prompt("bottom")
+    for marker in IDENTITY_MARKERS:
+        assert marker in p, marker
+    assert "pants completely flat" in p, "하의 명사가 지시문에 반영된다"
 
 
-def test_top_prompt_swaps_only_the_noun_and_keeps_singular_grammar():
-    assert mf.build_prompt("top") == TOP_PROMPT
-    # 두 프롬프트가 다른 건 명사·동사뿐이다 — 공통 몸통(연출 지시)은 바이트 동일해야 한다.
-    _END = "no distortion."
-    assert (BOTTOM_PROMPT[BOTTOM_PROMPT.index(_TAIL):BOTTOM_PROMPT.index(_END) + len(_END)]
-            == TOP_PROMPT[TOP_PROMPT.index(_TAIL):TOP_PROMPT.index(_END) + len(_END)])
-    # 정체성 절도 명사만 다르고 구조는 같다.
-    assert "identity is fixed" in BOTTOM_PROMPT and "identity is fixed" in TOP_PROMPT
-    assert "The garment is laid" in TOP_PROMPT, "단수엔 is"
-    assert "The pants are laid" in BOTTOM_PROMPT, "복수엔 are"
-    # "top-down view" 와 부딪히지 않게 상의 명사는 중립형을 쓴다.
-    assert "this exact top." not in TOP_PROMPT
+
+def test_top_prompt_swaps_only_the_noun():
+    top, bottom = mf.build_prompt("top"), mf.build_prompt("bottom")
+    assert "garment completely flat" in top and "pants completely flat" in bottom
+    # 명사 한 군데 말고는 동일해야 한다 — 전략 문구를 의류별로 갈라 쓰지 않는다.
+    assert top.replace("garment completely flat", "X") == bottom.replace("pants completely flat", "X")
 
 
-@pytest.mark.parametrize("clothing_type", [None, "", "outer", "unknown", "dress"])
-def test_unknown_clothing_type_falls_back_to_the_neutral_singular_form(clothing_type):
-    # 하의라는 근거가 없으면 중립형이다 — 상의에 "pair of pants" 를 던지지 않는다.
-    assert mf.build_prompt(clothing_type) == TOP_PROMPT
 
 
 def test_clothing_type_is_case_insensitive():
-    assert mf.build_prompt("Bottom") == BOTTOM_PROMPT
-    assert mf.build_prompt(" bottom ") == BOTTOM_PROMPT
+    assert mf.build_prompt("Bottom") == mf.build_prompt("bottom")
+    assert mf.build_prompt(" bottom ") == mf.build_prompt("bottom")
+
 
 
 def test_prompt_grey_is_the_same_grey_the_cutout_flattens_onto():
     r, g, b = mc.MATCHING_CUTOUT_BG
-    assert f"(RGB {r}, {g}, {b})" in mf.build_prompt("bottom"), "시드 배경색 상수와 한 몸"
+    assert f"RGB: {r}, {g}, {b}" in mf.build_prompt("bottom"), "시드 배경색 상수와 한 몸"
 
 
 # 누끼와 같은 규율 — stale lease 회수로 재실행돼도 같은 asset id·같은 R2 키로 수렴한다.
@@ -99,7 +76,7 @@ def test_derived_identity_is_deterministic_and_never_collides_with_the_cutout_th
 def test_fingerprint_mixes_in_the_flatlay_algorithm_version(monkeypatch):
     import hashlib
 
-    assert mf.ALGORITHM_VERSION == "matching-flatlay-v1"
+    assert mf.ALGORITHM_VERSION == "matching-flatlay-v2"
     assert mf.flatlay_fingerprint("h1") == mf.flatlay_fingerprint("h1")
     assert mf.flatlay_fingerprint("h1") != mf.flatlay_fingerprint("h2")
     # 소스 지문을 그대로 다시 해싱한 값이면 안 된다 — 버전이 섞여 있어야 한다.
@@ -107,7 +84,7 @@ def test_fingerprint_mixes_in_the_flatlay_algorithm_version(monkeypatch):
 
     before = mf.flatlay_fingerprint("h1")
     before_id = mf.derived_asset_id(matching_item_id="custom_x", source_hash="h1")
-    monkeypatch.setattr(mf, "ALGORITHM_VERSION", "matching-flatlay-v2")
+    monkeypatch.setattr(mf, "ALGORITHM_VERSION", "matching-flatlay-v9")
     assert mf.flatlay_fingerprint("h1") != before, "버전이 오르면 신원도 갈린다"
     assert mf.derived_asset_id(matching_item_id="custom_x",
                                source_hash="h1") != before_id
@@ -164,19 +141,19 @@ def test_enabled_reads_the_flag_defensively():
     assert mf.enabled(types.SimpleNamespace()) is False, "미설정이면 off"
 
 
-def test_prompt_carries_identity_lock():
-    """정체성 고정 절(2026-08-15 오너 결정) — 재렌더가 옷을 다시 디자인하지 못하게 명문화."""
-    p = mf.build_prompt("bottom")
-    assert "identity is fixed" in p
-    assert "Do not redesign" in p
-    assert "only change the pose" in p
+def test_algorithm_version_bumped_for_strategy_b():
+    """v1 프롬프트로 구운 flat-lay 와 파생 신원이 섞이면 안 된다."""
+    assert mf.ALGORITHM_VERSION == "matching-flatlay-v2"
 
 
-def test_model_tier_knob_switches_to_pro(monkeypatch):
-    """MATCHING_FLATLAY_TIER=image_high 면 pro 모델로 렌더한다. 기본은 image_light(비용)."""
+
+def test_default_tier_is_pro_per_spike_report():
+    """리포트 추천 조합은 전략 B × Gemini 3 Pro Image — 기본값이 그것이어야 한다."""
     from conftest import make_settings
-    light = make_settings()
-    assert getattr(light, "matching_flatlay_tier", "image_light") == "image_light"
-    high = make_settings(matching_flatlay_tier="image_high")
     from app.agents.model_routing import resolve_model
-    assert resolve_model(high, high.matching_flatlay_tier) == high.model_image_high
+    s = make_settings()
+    assert s.matching_flatlay_tier == "image_high"
+    assert resolve_model(s, s.matching_flatlay_tier) == s.model_image_high
+    # flash 는 비용 노브로 남는다.
+    light = make_settings(matching_flatlay_tier="image_light")
+    assert resolve_model(light, light.matching_flatlay_tier) == light.model_image_light

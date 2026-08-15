@@ -180,7 +180,7 @@ def test_generated_flatlay_becomes_the_card_thumbnail(monkeypatch):
     meta = {a["asset_id"]: a["metadata"] for a in calls["assets"]}
     assert meta[flat_id]["purpose"] == mc.CUTOUT_PURPOSE, "삭제 경로가 회수할 수 있어야"
     assert meta[flat_id]["algorithmVersion"] == mf.ALGORITHM_VERSION
-    assert meta[flat_id]["model"] == "gemini-3.1-flash-image"
+    assert meta[flat_id]["model"] == "gemini-3-pro-image", "리포트 추천 = Pro"
     assert calls["finalize"][0] == "done"
     assert calls["finalize"][1]["state"] == "ready"
     assert calls["finalize"][1]["flatlay"] is True
@@ -192,7 +192,7 @@ def test_generation_input_is_the_cutout_and_the_grid_is_untouched(monkeypatch):
     _run(app, _job_dict())
 
     call = gemini.calls[0]
-    assert call["model"] == "gemini-3.1-flash-image", "settings.model_image_light"
+    assert call["model"] == "gemini-3-pro-image", "settings.model_image_high (전략 B 추천 조합)"
     assert (call["image_size"], call["aspect_ratio"]) == (mf.IMAGE_SIZE, mf.ASPECT_RATIO)
     assert len(call["images"]) == 1, "레퍼런스 이미지 없음 — 스파이크 승자 구성"
     assert call["images"][0].mime == "image/png"
@@ -234,7 +234,7 @@ def test_full_mode_puts_the_flatlay_raw_in_the_grid_front_cell(monkeypatch):
     meta = {a["asset_id"]: a["metadata"] for a in calls["assets"]}
     grid_meta = meta[calls["swap"][2]]
     assert grid_meta["flatlayFront"] is True, "provenance — 생성이 뭘 봤는지 asset 이 말해야"
-    assert grid_meta["flatlayModel"] == "gemini-3.1-flash-image"
+    assert grid_meta["flatlayModel"] == "gemini-3-pro-image"
     assert calls["finalize"][1]["flatlayGrid"] is True
 
 
@@ -272,21 +272,19 @@ def test_prompt_noun_follows_the_items_clothing_type(monkeypatch):
     _run(app, _job_dict())
     assert calls["meta_lookups"] == [("custom_x", "u1", "p1")]
     assert bottom.calls[0]["prompt"] == mf.build_prompt("bottom")
-    assert "pair of pants" in bottom.calls[0]["prompt"]
+    assert "pants completely flat" in bottom.calls[0]["prompt"]
 
     top = _FakeGemini(image=_gen_png())
     app2, _r2b, _c2 = _wire_flatlay(monkeypatch, gemini=top, clothing_type="top")
     _run(app2, _job_dict())
     assert top.calls[0]["prompt"] == mf.build_prompt("top")
-    assert "pair of pants" not in top.calls[0]["prompt"]
+    assert "pants completely flat" not in top.calls[0]["prompt"]
 
-    # 공통 몸통(연출 지시)은 명사와 무관하게 동일 — 정체성 절(2026-08-15)은 명사가 들어가므로
-    # "no distortion." 까지만 비교한다.
-    tail, end = "Direct overhead top-down view", "no distortion."
+    # 전략 B 문구는 의류와 무관하게 동일 — 명사 한 군데만 다르다.
     bp, tp = bottom.calls[0]["prompt"], top.calls[0]["prompt"]
-    assert (bp[bp.index(tail):bp.index(end) + len(end)]
-            == tp[tp.index(tail):tp.index(end) + len(end)])
-    assert "identity is fixed" in bp and "identity is fixed" in tp
+    assert (bp.replace("pants completely flat", "X")
+            == tp.replace("garment completely flat", "X"))
+    assert "CRITICAL IDENTITY LOCK" in bp and "CRITICAL IDENTITY LOCK" in tp
 
 
 def test_clothing_type_lookup_failure_still_renders_with_the_neutral_prompt(monkeypatch):
@@ -406,7 +404,7 @@ def test_generation_spend_is_recorded_under_the_flatlay_stage(monkeypatch):
         _run(app, _job_dict())
 
     assert len(recorded) == 1
-    assert recorded[0]["model"] == "gemini-3.1-flash-image"
+    assert recorded[0]["model"] == "gemini-3-pro-image"
     assert recorded[0]["image_size"] == "1K"
     assert recorded[0]["usage"] == {"promptTokenCount": 369, "candidatesTokenCount": 1483}
     assert recorded[0]["has_image"] is True
@@ -467,7 +465,7 @@ def test_model_routing_failure_does_not_discard_a_successful_cutout(monkeypatch)
     """
     gemini = _FakeGemini(image=_gen_png())
     app, r2, calls = _wire_flatlay(monkeypatch, gemini=gemini)
-    app.state.settings.model_image_light = ""  # 라우팅 미설정
+    app.state.settings.model_image_high = ""   # 라우팅 미설정(기본 티어 = image_high)
 
     _run(app, _job_dict())
 

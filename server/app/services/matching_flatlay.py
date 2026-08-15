@@ -11,11 +11,11 @@
   거긴 배경 오염이 이미 해결됐고, 원본 1~4장을 재렌더하면 비용이 그만큼 곱해진다.
 - 무과금 잡 안에서 돈다. 실비는 `image_usage` 로만 드러난다(stage=`matching_flatlay`).
 - 어떤 실패도 None 으로 흡수한다. 호출자는 누끼 썸네일(그 폴백이 셀러 원본)을 그대로 쓴다.
-- 프롬프트는 스파이크 승자 문자열 + **정체성 고정 절**(2026-08-15 오너 결정 — 실물 비교에서
-  pro 티어+정체성 강조가 배럴 실루엣·커브 절개선·광택 재현 최상). 그 외에는 의류 명사와
-  동사(is/are) 말고 바꾸지 않는다. 배경색은 누끼가 실제로 까는 회색 상수에서 뽑아 쓴다.
-- 모델 티어는 settings.matching_flatlay_tier (기본 image_light — 비용, QA/프로덕션 판단에
-  따라 image_high 로 올린다).
+- 프롬프트는 스파이크 **전략 B(Identity Lock)** 원문이다(flatlay-spike-inputs/out/report.html
+  판정표: 두 의류 × 두 모델 모두 PASS, "추천 설정"). 의류 명사·배경 RGB 말고는 바꾸지 않는다.
+  전략 C(시드 이미지 첨부)는 금지 — 시드 실루엣·색이 셀러 옷을 덮어쓴다(리포트 FAIL).
+- 모델 티어는 settings.matching_flatlay_tier, **기본 image_high(Gemini 3 Pro Image)** —
+  리포트의 추천 조합. flash 는 비용·속도 노브로 남는다.
 """
 from __future__ import annotations
 
@@ -32,7 +32,9 @@ from . import matching_cutout
 log = logging.getLogger("wearless.matching_flatlay")
 
 #: 플랫레이 파생 asset 의 알고리즘 신원. 누끼 지문에 섞여 썸네일 신원을 분리한다.
-ALGORITHM_VERSION = "matching-flatlay-v1"
+#: v2: 스파이크 전략 B(Identity Lock) 원문 프롬프트 + Pro 티어 기본. v1 시절 프롬프트로
+#: 구운 flat-lay 는 다른 산출물이므로 파생 신원을 갈라 캐시가 섞이지 않게 한다.
+ALGORITHM_VERSION = "matching-flatlay-v2"
 PRODUCER = "gemini-matching-flatlay"
 #: 실비 귀속 라벨. 디스패처가 걸어 둔 잡 문맥 위에 stage 만 덮어쓴다.
 STAGE = "matching_flatlay"
@@ -47,21 +49,27 @@ TIMEOUT_S = 60.0
 #: 이 단계가 저장하는 것도 결국 같은 카드 이미지다.
 encode_thumbnail = matching_cutout.encode_thumbnail
 
+#: 스파이크 **전략 B(Identity Lock)** 승자 프롬프트 원문 — flatlay-spike-inputs/out/report.html
+#: 판정표에서 두 의류 × 두 모델 모두 PASS, "정체성 보존도 최상급, 추천 설정".
+#: 명사(pants/garment)만 갈아끼우고 그 외에는 한 바이트도 바꾸지 않는다. 시드 이미지를
+#: 참조로 첨부하는 전략 C 는 **금지** — 시드 실루엣·색이 셀러 옷을 덮어쓴다(리포트 FAIL).
 _PROMPT = (
-    "A clean, commercial e-commerce studio flat-lay product photograph of this exact "
-    "{noun}. The {short} {verb} laid completely flat and neatly arranged on a solid "
-    "neutral light gray surface (RGB {r}, {g}, {b}). Direct overhead top-down view "
-    "(bird's-eye perspective), centered in frame with balanced margins. Even, soft "
-    "commercial studio lighting with minimal subtle shadow directly beneath. Completely "
-    "remove any hangers, clips, floor seams, or background clutter. High resolution, "
-    "crisp details, no distortion."
-    # 정체성 고정 절 — 재렌더가 옷을 "다시 디자인"하지 않게 못박는다(2026-08-15 오너 결정,
-    # 실물 비교로 검증). 자세만 바꾸고 옷은 그대로가 이 단계의 전부다.
-    " This must remain the EXACT same {short} as in the photo — identity is fixed. "
-    "Preserve the original colour and fabric sheen, the silhouette and proportions, "
-    "every seam, stitch, pocket, waistband, closure, label and construction detail "
-    "exactly as photographed. Do not redesign, simplify, restyle, or substitute any "
-    "part; only change the pose of the {short} to a flat, front-facing lay."
+    "Professional studio flat-lay product catalog photograph of the EXACT same garment "
+    "shown in the reference image.\n\n"
+    "CRITICAL IDENTITY LOCK - DO NOT ALTER THE GARMENT'S FEATURES:\n"
+    "1. Garment Identity: Preserve the exact color shade, fabric wash pattern, "
+    "fading/whiskering, distressing, and material texture.\n"
+    "2. Construction Details: Maintain the exact pocket shape and placement, belt loops, "
+    "waistband, button/rivet hardware, and topstitching color.\n"
+    "3. Silhouette: Maintain the exact leg cut (wide leg / straight fit) and hem finish.\n\n"
+    "TRANSFORMATION INSTRUCTIONS:\n"
+    "- Lay the {short} completely flat and neatly spread out on a seamless uniform light "
+    "grey studio background (RGB: {r}, {g}, {b}, #E8E8E6).\n"
+    "- Pure direct top-down 90-degree overhead angle (bird's eye view), perfectly straight "
+    "vertical orientation.\n"
+    "- Remove any hanger hooks, clothes clips, wall/floor artifacts, or background debris.\n"
+    "- Soft diffused studio lighting, sharp focus on all fabric details, clean product "
+    "catalog image."
 )
 
 #: clothing_type → (명사, 두 번째 문장의 명사, 그에 맞는 동사). 상의는 중립형을 쓴다 —
@@ -102,7 +110,7 @@ def grid_enabled(settings) -> bool:
 
 
 def build_prompt(clothing_type: str | None) -> str:
-    """의류 종류에 맞는 명사·동사만 끼운 스파이크 프롬프트."""
+    """의류 명사만 끼운 스파이크 전략 B 프롬프트(그 외 문구는 원문 고정)."""
     noun, short, verb = _NOUNS.get((clothing_type or "").strip().lower(), _NEUTRAL)
     r, g, b = matching_cutout.MATCHING_CUTOUT_BG
     return _PROMPT.format(noun=noun, short=short, verb=verb, r=r, g=g, b=b)
@@ -155,7 +163,7 @@ async def render_thumbnail(gemini, *, settings, cutout_png: bytes,
         # 모델 해석도 try 안에 둔다 — 라우팅 설정이 비어 있으면 여기서 터지는데, 밖에
         # 두면 그 예외가 워커의 광의 except 로 올라가 성공한 누끼까지 폐기된다(리뷰 I1).
         model = resolve_model(
-            settings, getattr(settings, "matching_flatlay_tier", "image_light"))
+            settings, getattr(settings, "matching_flatlay_tier", "image_high"))
         # 실비 귀속: 디스패처가 건 잡 문맥(job/user)은 두고 stage 만 이 단계로 덮는다.
         with image_usage.job_scope(stage=STAGE):
             res = await gemini.generate_content_image(

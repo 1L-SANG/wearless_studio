@@ -164,9 +164,11 @@ class Settings:
     # shadow=매칭 점수·하드게이트·바지영역 픽셀 메트릭 계측만, enforce=재롤/드롭·편집 롤백.
     # AI 콜 증가 0(기존 AG-P2 1콜에 바지 원본 1장·필드만 얹음). 다크 출고를 위해 기본 off.
     mannequin_pants_qc: str = "off"  # off | shadow | enforce
-    # flat-lay 재렌더 모델 티어. 기본 image_light(flash — 스파이크 승자·저비용). 2026-08-15
-    # 실물 비교(접힌 배럴팬츠)에서 image_high(pro)+정체성 강조가 디테일 재현 최상 — 오너 결정.
-    matching_flatlay_tier: str = "image_light"  # image_light | image_high
+    # flat-lay 재렌더 모델 티어. **image_high(Gemini 3 Pro Image) 가 정본** — 스파이크
+    # 리포트(flatlay-spike-inputs/out/report.html) 전략 B(정체성 고정) × Pro 조합이
+    # "고해상도 원단 디테일과 안정적인 정체성 유지"로 판정된 추천 설정이다. flash 는
+    # 비용·속도 이점이 있어 노브로 남기지만 기본값은 아니다(2026-08-15 오너 지시).
+    matching_flatlay_tier: str = "image_high"  # image_high | image_light
     base_mannequin_women_asset_id: str | None = None  # R2 seed asset (startup 검증)
     base_mannequin_men_asset_id: str | None = None
     job_dispatcher_enabled: bool = True  # §5
@@ -351,7 +353,7 @@ def load_settings() -> Settings:
         mannequin_untuck_pass=_flag("MANNEQUIN_UNTUCK_PASS", "off", {"off", "on"}),
         mannequin_pants_qc=_flag("MANNEQUIN_PANTS_QC", "off", {"off", "shadow", "enforce"}),
         matching_flatlay_tier=_flag(
-            "MATCHING_FLATLAY_TIER", "image_light", {"image_light", "image_high"}),
+            "MATCHING_FLATLAY_TIER", "image_high", {"image_light", "image_high"}),
         base_mannequin_women_asset_id=os.getenv("MANNEQUIN_BASE_WOMEN_ASSET_ID") or None,
         base_mannequin_men_asset_id=os.getenv("MANNEQUIN_BASE_MEN_ASSET_ID") or None,
         job_dispatcher_enabled=(os.getenv("JOB_DISPATCHER_ENABLED", "true").lower() != "false"),
