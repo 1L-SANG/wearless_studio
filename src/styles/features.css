@@ -1601,11 +1601,25 @@
 .cf-none { background: #fff; display: grid; place-items: center; color: var(--accent-error); }
 .cf-none.on { box-shadow: 0 0 0 2px var(--fg-1); }
 .colorfield .numfield { min-width: 64px; }
-/* add-text button (text tab top) */
-.add-text-btn { width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; height: 46px; border: 0; cursor: pointer;
-  border-radius: var(--r-4); background: var(--bg-1); color: var(--fg-1); font-size: 14px; font-weight: 600;
-  box-shadow: var(--elev-card); transition: box-shadow .14s; }
-.add-text-btn:hover { box-shadow: var(--elev-lift); }
+/* 텍스트 프리셋 목록 (text tab top) — 각 항목이 실제 스타일의 축소판. 글자색은
+   캔버스에 찍히는 값 그대로라 테마 토큰이 아니라 하드코딩이 맞다(textPresets.js 참조). */
+.text-preset-list { display: flex; flex-direction: column; gap: 8px; }
+.text-preset-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 13px;
+  border: 0; border-radius: var(--r-4); background: var(--bg-1); box-shadow: var(--elev-card);
+  cursor: pointer; text-align: left; font-family: inherit; transition: box-shadow .14s; }
+.text-preset-item:hover { box-shadow: var(--elev-lift); }
+.text-preset-item .tp-sample { color: var(--fg-1); white-space: nowrap; }
+.text-preset-item .tp-meta { font-size: 11px; color: var(--fg-3); text-align: right; line-height: 1.5; flex: none; }
+.tpk-headline .tp-sample { font-size: 22px; font-weight: 600; }
+.tpk-subtitle .tp-sample { font-size: 17px; font-weight: 600; }
+.tpk-body .tp-sample { font-size: 13px; font-weight: 400; color: #6b6b73; }
+.tpk-tag .tp-sample { font-size: 12px; font-weight: 700; letter-spacing: 3px; color: #9a9aa2; }
+/* 빠른 스타일 칩 — 선택된 텍스트의 위계를 한 번에 전환 */
+.text-style-chips { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.text-style-chip { height: 34px; border: 0; border-radius: 8px; background: var(--bg-2); font-size: 12.5px; font-weight: 600;
+  color: var(--fg-2); cursor: pointer; font-family: inherit; transition: background .12s, color .12s; }
+.text-style-chip:hover { color: var(--fg-1); }
+.text-style-chip.active { background: var(--fg-1); color: #fff; }
 /* wardrobe group head: color circle + name + count */
 .wg-color { display: inline-flex; align-items: center; gap: 8px; }
 .wg-dot { width: 16px; height: 16px; border-radius: 50%; flex: none; box-shadow: inset 0 0 0 1px rgba(34,42,53,.18); }

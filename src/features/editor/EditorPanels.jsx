@@ -20,6 +20,7 @@ import {
 import { thumbUrl } from '@/lib/imageCdn.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, OBJECT_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, colorWithOpacity, encodeWardrobeImage, normalizeHexColor } from '@/features/editor/editorLibrary.js';
 import { DEFAULT_EDITOR_COLOR_PRESETS, commitNumberDraft, hexToHsv, hsvToHex } from '@/features/editor/editorAppearance.js';
+import { TEXT_PRESETS, activeTextPreset, quickStylePatch } from '@/features/editor/presets/textPresets.js';
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 
 function PanelHead({ title, sub }) {
@@ -842,12 +843,28 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
   const hasBubbleStroke = isBubble && bubbleStroke !== 'none';
   return (
     <div className="fig-panel">
-      <button type="button" className="add-text-btn" onClick={onAddText}><Icon name="type" size={17} />텍스트 추가</button>
+      <div className="text-preset-list">
+        {TEXT_PRESETS.map((p) => (
+          <button key={p.key} type="button" className={`text-preset-item tpk-${p.key}`} onClick={() => onAddText(p.key)}>
+            <span className="tp-sample">{p.sample}</span>
+            <span className="tp-meta">{p.style.size}px<br />{p.hint}</span>
+          </button>
+        ))}
+      </div>
       {!has ? (
-        <div className="panel-sub" style={{ marginTop: 18 }}>위 버튼으로 텍스트를 추가하거나, 캔버스에서 텍스트를 클릭해 편집해요.</div>
+        <div className="panel-sub" style={{ marginTop: 14 }}>원하는 종류를 누르면 그 스타일로 바로 입력할 수 있어요. 캔버스의 텍스트를 클릭하면 편집해요.</div>
       ) : (
         <>
-          <PanelSection title="텍스트 박스" first>
+          <PanelSection title="빠른 스타일" first>
+            <div className="text-style-chips">
+              {TEXT_PRESETS.map((p) => (
+                <button key={p.key} type="button" className={`text-style-chip${activeTextPreset(s) === p.key ? ' active' : ''}`}
+                  onClick={() => setS(quickStylePatch(p.key))}>{p.label}</button>
+              ))}
+            </div>
+            <div className="panel-sub" style={{ marginTop: 8, marginBottom: 0 }}>내용은 그대로, 크기·굵기·색만 한 번에 바뀌어요.</div>
+          </PanelSection>
+          <PanelSection title="텍스트 박스">
             <div className="field-2up">
               <NumField iconText="가로" value={Math.round(el.w || 120)} min={1} max={10000}
                 onChange={(w) => onChange({ w, ...(!isBubble && el.textSizing === 'auto' ? { textSizing: 'fixed' } : {}) })} />

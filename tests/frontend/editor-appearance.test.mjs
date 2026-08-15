@@ -207,7 +207,9 @@ test('new ordinary text starts as an immediately editable Figma-style point text
     editorSource.indexOf('/* ---- 정보 블록', editorSource.indexOf('const addText =')),
   );
 
-  assert.match(addTextSource, /w:\s*12, h:\s*45, text:\s*'', textSizing:\s*'auto'/);
+  // 요소 생성은 textPresets.js 로 이동 — 빈 텍스트+auto 계약은 text-presets.test.mjs 가
+  // 동작 수준으로 고정한다. 여기서는 addText 가 그 빌더를 쓰고 즉시 편집에 들어가는지만 본다.
+  assert.match(addTextSource, /buildTextPresetElement\(preset\)/);
   assert.match(addTextSource, /setEditEl\(el\.id\)/);
   assert.match(editorSource, /const previewAutoTextSize = useCallback/);
   assert.match(editorSource, /naturalTextWidth\(node, value\)/);
