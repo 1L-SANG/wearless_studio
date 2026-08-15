@@ -1,5 +1,6 @@
 /* 마네킹컷 위의 핏·기장 핫존을 바로 노출하고, 변경이 없으면 다음 단계로 진행한다. */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { uniqueGenerationCutCount } from '@/lib/generationCutCount.js';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api, isMockMode } from '@/lib/api/index.js';
 import { listModels } from '@/lib/api/facemarket.js';
@@ -759,7 +760,8 @@ export function Mannequin() {
       setAnalysis(nextAnalysis);
       setCatalogs(nextCatalogs);
       setRealModels(Array.isArray(nextRealModels) ? nextRealModels : []);
-      setAiCutCount(Array.isArray(nextStoryboard) ? nextStoryboard.filter((b) => b.source !== 'mine').length : null);
+      // 크레딧 견적은 실제 생성 수 — 동일 설정 복제 컷은 서버가 1장만 생성한다(ADR-0011).
+      setAiCutCount(Array.isArray(nextStoryboard) ? uniqueGenerationCutCount(nextStoryboard) : null);
       const nextMainMatchingItem = resolveMainMatchingItem(nextAnalysis);
       const draft = createFitProfileDraft(nextProduct, nextAnalysis, nextMainMatchingItem);
       setFitProfileDraft(draft);

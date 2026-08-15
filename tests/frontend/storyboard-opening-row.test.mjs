@@ -21,6 +21,7 @@ const PYTHON = existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3';
 
 let vite;
 let buildEditorBlocksFromStoryboard;
+let buildStoryboard;
 
 before(async () => {
   vite = await createServer({
@@ -28,7 +29,7 @@ before(async () => {
     logLevel: 'silent',
     server: { middlewareMode: true },
   });
-  ({ buildEditorBlocksFromStoryboard } = await vite.ssrLoadModule('/src/mock/db.js'));
+  ({ buildEditorBlocksFromStoryboard, buildStoryboard } = await vite.ssrLoadModule('/src/mock/db.js'));
 });
 
 after(async () => {
@@ -36,11 +37,25 @@ after(async () => {
 });
 
 function openingStoryboard() {
-  return applyOpeningRow(defaultStoryboard(COLORS, 'basic', {
+  // 구(레거시) 보드 재현 — 시드는 시그니처 1컷이므로(2026-08-14 확정) 옛 2컷 배치
+  // (hero+benefit)를 직접 복원해, 저장돼 있던 구 보드의 오프닝 행 조립 경로를 검증한다.
+  const [hero, ...rest] = defaultStoryboard(COLORS, 'basic', {
     projectId: 'opening-row-test',
     clothingType: 'top',
     targetGenders: ['women'],
-  }));
+  });
+  const legacyHero = {
+    ...hero,
+    hookFrameId: undefined,
+    hookStyle: undefined,
+    hookFrameVersion: undefined,
+    hookTitleOverlay: undefined,
+    hookSlotRole: undefined,
+  };
+  const legacyBenefit = {
+    ...legacyHero, id: `${hero.id}_benefit`, contentRole: 'benefit', cutType: 'styling', shot: 'full',
+  };
+  return applyOpeningRow([legacyHero, legacyBenefit, ...rest]);
 }
 
 function openingMockBlock(storyboard) {
@@ -80,6 +95,100 @@ test('mock opening renders as one medium two-column row with copy below the imag
     { x: 60, y: 650, w: 880, h: 34 },
   );
   assert.equal(getBlockRenderHeight(opening), 734);
+});
+
+test('mock colorway assembly renders a full-medium pair with product and matching labels', () => {
+  const matches = [
+    {
+      id: 'match-light', name: '아이보리 셔츠', selected: true, selOrder: 1,
+      isCompatible: true, colorName: '아이보리', colorGroup: 'ivory', colorBrightness: 93,
+    },
+    {
+      id: 'match-dark', name: '블랙 셔츠', selected: true, selOrder: 2,
+      isCompatible: true, colorName: '블랙', colorGroup: 'black', colorBrightness: 4,
+    },
+  ];
+  const product = {
+    ...PRODUCT,
+    clothingType: 'top',
+    colors: [
+      { id: 'base', name: '블랙', swatchId: 'black', isBase: true, images: [] },
+      { id: 'ivory', name: '', swatchId: 'ivory', images: [] },
+    ],
+  };
+  const pair = defaultStoryboard(product.colors, 'extended', {
+    projectId: 'mock-colorway', clothingType: 'top', targetGenders: ['women'], matchClothing: matches,
+  }).filter((block) => block.colorwayGroupId);
+  const blocks = buildEditorBlocksFromStoryboard(pair, product, false, { matchClothing: matches });
+
+  assert.equal(blocks.length, 4);
+  assert.equal(blocks[0].layoutType, 'colorwayPair');
+  const images = blocks[0].elements.filter((element) => element.type === 'image');
+  assert.deepEqual(images.map((image) => [image.x, image.y, image.w, image.h, image.radius]), [
+    [60, 24, 430, 645, 0],
+    [510, 24, 430, 645, 0],
+  ]);
+  assert.deepEqual(
+    blocks[0].elements.filter((element) => element.type === 'text').map((element) => element.text),
+    ['소프트 골지 라운드 니트 [아이보리]', '블랙 셔츠 [블랙]'],
+  );
+  assert.equal(blocks[0].h, 781);
+});
+
+test('mock colorway preview selects category-specific top and bottom framing assets', () => {
+  const colors = [
+    { id: 'col1', name: '블랙', isBase: true, images: [] },
+    { id: 'col2', name: '추가 색상', images: [] },
+  ];
+  const topPair = buildStoryboard('extended', colors, {
+    projectId: 'mock-preview-assets', clothingType: 'top', targetGenders: ['women'],
+    previewProductName: '소프트 골지 라운드 니트',
+  }).filter((block) => block.colorwayGroupId);
+  const bottomPair = buildStoryboard('extended', colors, {
+    projectId: 'mock-preview-assets', clothingType: 'bottom', targetGenders: ['men'],
+    previewProductName: '세미 와이드 치노 팬츠',
+  }).filter((block) => block.colorwayGroupId);
+
+  assert.deepEqual(topPair.map((block) => block.previewThumb), [
+    '/assets/colorway/soft-rib-knit-ivory-western-male-full-v2.png',
+    '/assets/colorway/soft-rib-knit-ivory-western-male-medium-v2.png',
+  ]);
+  assert.deepEqual(bottomPair.map((block) => block.previewThumb), [
+    '/assets/colorway/semi-wide-chino-beige-western-male-full-v1.png',
+    '/assets/colorway/semi-wide-chino-beige-western-male-medium-v2.png',
+  ]);
+
+  const bottomEditor = buildEditorBlocksFromStoryboard(bottomPair, {
+    ...PRODUCT,
+    name: '세미 와이드 치노 팬츠',
+    clothingType: 'bottom',
+    colors,
+  }, false);
+  assert.deepEqual(
+    bottomEditor[0].elements.filter((element) => element.type === 'image').map((element) => element.src),
+    [
+      '/assets/colorway/semi-wide-chino-beige-western-male-full-v1.png',
+      '/assets/colorway/semi-wide-chino-beige-western-male-medium-v2.png',
+    ],
+  );
+
+  const allTopPairs = buildStoryboard('extended', [
+    { id: 'col1', name: '블랙', isBase: true, images: [] },
+    { id: 'col2', name: '아이보리', images: [] },
+    { id: 'col3', name: '스카이블루', images: [] },
+    { id: 'col4', name: '그레이', images: [] },
+  ], {
+    projectId: 'mock-three-preview-assets', clothingType: 'top', targetGenders: ['men'],
+    previewProductName: '소프트 골지 라운드 니트',
+  }).filter((block) => block.colorwayGroupId);
+  assert.deepEqual(allTopPairs.map((block) => block.previewThumb), [
+    '/assets/colorway/soft-rib-knit-ivory-western-male-full-v2.png',
+    '/assets/colorway/soft-rib-knit-ivory-western-male-medium-v2.png',
+    '/assets/colorway/soft-rib-knit-ivory-western-male-full-v2.png',
+    '/assets/colorway/soft-rib-knit-ivory-western-male-medium-v2.png',
+    '/assets/colorway/soft-rib-knit-ivory-western-male-full-v2.png',
+    '/assets/colorway/soft-rib-knit-ivory-western-male-medium-v2.png',
+  ]);
 });
 
 test('mock and server assemblers emit the same opening-row block structure', () => {

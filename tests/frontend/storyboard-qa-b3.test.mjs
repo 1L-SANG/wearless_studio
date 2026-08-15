@@ -125,10 +125,9 @@ test('1-01 HTTP image picker uploads the selected file once and returns assetId 
   };
 
   try {
-    assert.deepEqual(await httpAdapter.pickAnyImage('project-upload'), {
-      assetId: 'asset-mine',
-      url: 'https://cdn.test/mine.png',
-    });
+    const uploaded = await httpAdapter.pickAnyImage('project-upload');
+    assert.equal(uploaded.assetId, 'asset-mine');
+    assert.match(uploaded.url, /\/v1\/assets\/asset-mine\/file$/);
   } finally {
     restoreGlobal('document', originalDocument);
     restoreGlobal('fetch', originalFetch);
@@ -249,7 +248,8 @@ test('N4 general add is manual-empty, dropped examples are not, and the inspecto
   assert.match(addBlock, /\.\.\.\(!droppedExample \? \{ exampleChoice: 'manual' \} : \{\}\)/);
   assert.match(addBlock, /assignGenerationExamples\(out,[\s\S]*onlyBlockIds: \[nb\.id\]/);
   assert.match(addBlock, /setSelectedId\(nb\.id\); setSplitOpen\(true\)/);
-  assert.match(storyboardSource, /예시를 골라주세요 — 컷 설정에 맞는 생성예시를 직접 선택해 주세요/);
+  // 2026-08-15 오너: 빈 컷 안내는 짧게 — "분위기 예시를 골라주세요."
+  assert.match(storyboardSource, /분위기 예시를 골라주세요\./);
   assert.match(storyboardSource, /이 조합의 예시를 준비하지 못했어요 — 컷 설정을 바꾸거나 직접 예시를 골라주세요/);
   assert.match(featureStyles, /\.sb-cutcard\.manual-empty, \.sb-frame-half\.manual-empty \{[^}]*border-style: dashed;[^}]*background: #f7fafc/);
 });
@@ -278,7 +278,8 @@ test('N5 generation-example dataTransfer reaches an addzone and inserts after th
   assert.match(storyboardSource, /event\.dataTransfer\.setData\('text\/example-id', example\.id\)/);
   assert.match(storyboardSource, /const exampleId = e\.dataTransfer\.getData\('text\/example-id'\) \|\| dragExampleId/);
   assert.match(storyboardSource, /addBlock\(idx, targetSid, targetRole, targetSpaceGroupId, targetGroupKey, exampleId\)/);
-  assert.match(storyboardSource, /const addControl = insertControl\(lastItem\.index, group, targetSpaceGroupId, reservation\)/);
+  // 2026-08-14: 세트 안 추가 존은 예비 멤버가 남아 있을 때만 — 소진 시 null로 숨긴다.
+  assert.match(storyboardSource, /const addControl = targetSpaceGroupId && !reservation\s*\?\s*null\s*:\s*insertControl\(lastItem\.index, group, targetSpaceGroupId, reservation\)/);
   assert.match(storyboardSource, /const m = \[\.\.\.blocks\]; m\.splice\(idx, 0, nb\)/);
 });
 

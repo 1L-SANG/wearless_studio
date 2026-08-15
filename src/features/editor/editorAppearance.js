@@ -89,15 +89,31 @@ export function stripPhotoBlockTextElements(blocks) {
 
 const FREE_DIRECTIONS = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'];
 const RATIO_DIRECTIONS = ['nw', 'ne', 'sw', 'se'];
+const HORIZONTAL_DIRECTIONS = ['w', 'e'];
 
-/** Text boxes must always expose side handles so their wrapping width can be
- * edited. Images and shapes keep the user's existing aspect-ratio preference. */
+/** Text boxes keep the complete Figma-style control box so their saved bounds
+ * remain visible and directly editable. Thin rules only need their endpoints. */
 export function resizePolicyForElement(element, lockRatio) {
+  if (element?.type === 'line') return { keepRatio: false, directions: [...HORIZONTAL_DIRECTIONS] };
   const keepRatio = element?.type === 'text' ? false : Boolean(lockRatio);
   return {
     keepRatio,
     directions: keepRatio ? [...RATIO_DIRECTIONS] : [...FREE_DIRECTIONS],
   };
+}
+
+/** Keep thin rules at least this wide in screen pixels for pointer hit testing.
+ * The visible stroke remains unchanged; only the transparent SVG hit stroke uses
+ * this width. */
+export function lineHitStrokeWidth(strokeWidth, scale, minimumScreenWidth = 12) {
+  const safeScale = Math.max(0.01, Number(scale) || 1);
+  return Math.max(Number(strokeWidth) || 0, minimumScreenWidth / safeScale);
+}
+
+/** Thin rules use the numeric rotation field; every box-like object, including
+ * ordinary text, keeps the direct canvas rotation handle. */
+export function shouldShowRotationHandle(element) {
+  return element?.type !== 'line';
 }
 
 /** Resolve the live rectangle for an image resize gesture. Moveable owns the

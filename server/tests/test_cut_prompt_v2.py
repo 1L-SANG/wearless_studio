@@ -39,8 +39,20 @@ def _spec(**changes):
     return spec
 
 
+def _historical_candidate_manifest(product_assets, **kwargs):
+    # This suite preserves the historical experiment-only candidate's original
+    # MANNEQUIN authority.  The live renderer now labels the same first image as
+    # a coarse geometry prior, so do not silently feed that newer role into this
+    # frozen candidate contract.
+    manifest = build_manifest(product_assets, **kwargs)
+    lines = manifest.splitlines()
+    if kwargs.get("has_mannequin"):
+        lines[0] = "1. PRODUCT — the garment worn on a mannequin"
+    return "\n".join(lines)
+
+
 def _manifest(*, matching=True):
-    return build_manifest(
+    return _historical_candidate_manifest(
         [{"slot": "Front"}],
         has_mannequin=True,
         has_model_face=True,
@@ -293,7 +305,7 @@ def test_duplicate_all_scope_example_and_mood_are_rejected():
             _spec(), _product(), analysis={}, manifest=duplicate
         )
 
-    mood_manifest = build_manifest(
+    mood_manifest = _historical_candidate_manifest(
         [{"slot": "Front"}],
         has_mannequin=True,
         has_model_face=True,
@@ -311,7 +323,7 @@ def test_duplicate_all_scope_example_and_mood_are_rejected():
 
 
 def test_matching_fit_is_removed_when_neither_matching_nor_mannequin_is_attached():
-    manifest = build_manifest(
+    manifest = _historical_candidate_manifest(
         [{"slot": "Front"}],
         has_mannequin=False,
         has_model_face=True,
@@ -347,7 +359,7 @@ def test_matching_contract_fails_closed_when_matching_image_is_missing():
 
 
 def test_selected_model_contract_fails_closed_when_identity_image_is_missing():
-    manifest = build_manifest(
+    manifest = _historical_candidate_manifest(
         [{"slot": "Front"}],
         has_mannequin=True,
         has_model_face=False,
@@ -370,7 +382,7 @@ def test_selected_model_contract_fails_closed_when_identity_image_is_missing():
 def test_identity_manifest_requires_exact_face_and_full_body_pair(
     has_model_face, has_model_full_body
 ):
-    single_model_input = build_manifest(
+    single_model_input = _historical_candidate_manifest(
         [{"slot": "Front"}],
         has_mannequin=True,
         has_model_face=has_model_face,
@@ -394,7 +406,7 @@ def test_selected_model_rejects_missing_identity_pair():
             _spec(),
             _product(),
             analysis={},
-            manifest=build_manifest(
+            manifest=_historical_candidate_manifest(
                 [{"slot": "Front"}],
                 has_mannequin=True,
                 has_model_face=False,

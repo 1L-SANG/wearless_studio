@@ -18,8 +18,10 @@ import { ensureSections } from '../sections.js';
 import { exampleSelectionFingerprintFields } from '../generationExamples.js';
 import { genderForClothingType } from '../productGender.js';
 import { spaceSetGroupId } from '../storyboardSpaceSetCatalog.js';
-import { applyOpeningRow, entryStylingMembers, pickEntrySets } from '../storyboardEntryPlacement.js';
+import { entryStylingMembers, pickEntrySets } from '../storyboardEntryPlacement.js';
+import { applyHookStyle } from '../storyboardHookFrame.js';
 import { createMeasurementFields } from '../measurementSchema.js';
+import { matchingIdsForColor } from '../colorwayMatching.js';
 import {
   CONTENT_ROLES,
   SECTION_ROLES,
@@ -85,18 +87,9 @@ function horizonRotationFallback(colorId) {
   ));
 }
 
-function realWearBlock(colorId, gender, clothingType) {
-  if (gender === 'women') {
-    return sb(
-      SECTION_ROLES.STYLING,
-      CONTENT_ROLES.REAL_WEAR,
-      'mirror',
-      null,
-      'full',
-      colorId,
-      { faceExposure: 'hide' },
-    );
-  }
+// 2026-08-14 오너 결정: 거울샷 자동 배치 제거 — 기본 구성은 전 성별 공통으로
+// 낱장 스타일링컷을 배치한다. 거울샷은 스타일링 섹션의 수동 선택지로만 남는다.
+function extraStylingBlock(colorId, clothingType) {
   return sb(
     SECTION_ROLES.STYLING,
     CONTENT_ROLES.COORDINATION,
@@ -115,6 +108,13 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
   // (서버가 원본 구조 확대로 폴백, 2026-08-07 개편).
   const detailColor = list.find((color) => (color.images || []).some((image) => image.slot === 'Detail'))?.id || base;
   const clothingType = context.clothingType || 'top';
+  const matchClothing = context.matchClothing || [];
+  const colorById = new Map(list.map((color) => [color.id, color]));
+  const matchIdsFor = (colorId) => matchingIdsForColor(
+    colorById.get(colorId),
+    matchClothing,
+    { preferMain: colorId === base },
+  );
   // 서버(select_base_gender)와 동일 의미론: 남성 단독일 때만 men, 혼합·미상은 women.
   const gender = genderForClothingType(clothingType, context.targetGenders);
   const { stylingSets, rotationSet, sequenceSet } = pickEntrySets({
@@ -123,9 +123,15 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
     projectId: context.projectId,
     stylingCount: mode === 'extended' ? 3 : 2,
   });
+  // 후킹 첫 화면 스타일(2026-08-14 확정, 디폴트 = 시그니처 컷): 후킹 섹션은 스타일이
+  // 필요로 하는 컷만 둔다 — 시그니처 = 확대 미디움샷 1컷(구 2컷 배치 폐기, 오너 확정).
+  // 구(2컷) 기본 시드는 지문이 어긋나 "편집본"으로 남는다 — 2026-08-07 개편과 같은
+  // 선례(기존 프로젝트 마이그레이션 없음, 구 오프닝 행만 pair 승격).
+  const hookFrameId = `hookframe__${uid('hf')}`;
   const blocks = [
-    sb(SECTION_ROLES.HOOKING, CONTENT_ROLES.HERO, 'styling', 'front', 'full', base),
-    sb(SECTION_ROLES.HOOKING, CONTENT_ROLES.BENEFIT, 'horizon', 'front', 'medium', base),
+    sb(SECTION_ROLES.HOOKING, CONTENT_ROLES.HERO, 'horizon', 'front', 'medium', base, {
+      hookFrameId, hookStyle: 'signature', hookFrameVersion: 1, hookTitleOverlay: true, hookSlotRole: 'signature',
+    }),
   ];
 
   for (const set of stylingSets) {
@@ -135,18 +141,31 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
   }
 
   if (mode === 'extended') {
-    blocks.push(realWearBlock(base, gender, clothingType));
+    blocks.push(extraStylingBlock(base, clothingType));
     const horizonSet = sequenceSet || rotationSet;
     blocks.push(...(horizonSet
       ? setMemberBlocks(horizonSet, base, SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT)
       : horizonRotationFallback(base)));
 
-    const additionalColors = list.slice(1, 4);
+    const additionalColors = list.filter((color) => color.id !== base).slice(0, 3);
     for (const color of additionalColors) {
+      const colorwayGroupId = `colorway__${color.id}`;
+      const layoutRowId = `row__colorway__${color.id}`;
       blocks.push(
-        sb(SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', color.id),
-        sb(SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT, 'horizon', 'front', 'full', color.id),
-        sb(SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT, 'horizon', 'back', 'full', color.id),
+        sb(SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT, 'horizon', 'front', 'full', color.id, {
+          colorwayGroupId,
+          colorwayPairVersion: 1,
+          sectionLayout: 'twoColumn',
+          layoutRowId,
+          layoutRowVersion: 1,
+        }),
+        sb(SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', color.id, {
+          colorwayGroupId,
+          colorwayPairVersion: 1,
+          sectionLayout: 'twoColumn',
+          layoutRowId,
+          layoutRowVersion: 1,
+        }),
       );
     }
 
@@ -169,7 +188,7 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
       sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor),
     );
   } else {
-    blocks.push(realWearBlock(base, gender, clothingType));
+    blocks.push(extraStylingBlock(base, clothingType));
     blocks.push(...(rotationSet
       ? setMemberBlocks(rotationSet, base, SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT)
       : horizonRotationFallback(base)));
@@ -188,7 +207,11 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
     }
     blocks.push(sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor));
   }
-  return ensureSections(blocks);
+  return ensureSections(blocks.map((block) => (
+    ['styling', 'horizon', 'mirror'].includes(block.cutType)
+      ? { ...block, matchIds: matchIdsFor(block.colorId) }
+      : block
+  )));
 }
 
 /* id·썸네일처럼 시드할 때마다 바뀌는 표시 필드를 빼고, 사용자가
@@ -197,6 +220,7 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
 function storyboardTemplateFingerprint(blocks) {
   const spaceIds = new Map();
   const rowIds = new Map();
+  const colorwayIds = new Map();
   const ordinal = (map, value) => {
     if (!value) return null;
     if (!map.has(value)) map.set(value, map.size + 1);
@@ -227,7 +251,29 @@ function storyboardTemplateFingerprint(blocks) {
     sectionCustom: !!block.sectionCustom,
     layoutRow: ordinal(rowIds, block.layoutRowId),
     layoutRowVersion: block.layoutRowVersion ?? null,
+    colorwayGroup: ordinal(colorwayIds, block.colorwayGroupId),
+    colorwayPairVersion: block.colorwayPairVersion ?? null,
   })));
+}
+
+/* 시드 보드에 두컷 프레임을 적용한다 — 후킹 시드가 시그니처 1컷이라 오른칸은 여기서
+   만든다. 이 팩토리는 UI 전환(applyHookStyleChoice의 createBlock)과 지문 필드
+   (storyboardTemplateFingerprint)가 일치해야 한다 — 어긋나면 pair 로 바꾼 기본 보드가
+   사진 양 변경 재시드에서 "편집본"으로 오판된다. */
+export function applySeededHookStyle(seeded, style, colors) {
+  if (style !== 'pair') return seeded;
+  const template = seeded.find((block) => (
+    block.sectionRole === SECTION_ROLES.HOOKING && block.source !== 'mine'
+  ));
+  if (!template) return seeded;
+  const createBlock = (slot) => ({
+    ...sb(SECTION_ROLES.HOOKING, CONTENT_ROLES.BENEFIT, slot.cutType, 'front', slot.shot,
+      slot.colorId || template.colorId),
+    matchIds: [...(template.matchIds || [])],
+    poseThumb: template.poseThumb,
+    thumb: template.thumb,
+  });
+  return applyHookStyle(seeded, 'pair', { colors: colors || [], createBlock });
 }
 
 export function isDefaultStoryboardForMode(blocks, colors, mode, product = {}) {
@@ -236,10 +282,13 @@ export function isDefaultStoryboardForMode(blocks, colors, mode, product = {}) {
   if (blocks.some((block) => block.taxonomyVersion !== STORYBOARD_TAXONOMY_VERSION)) return false;
   const seeded = defaultStoryboard(colors, mode, product);
   const fingerprint = storyboardTemplateFingerprint(blocks);
-  // 2026-08-07 개편 전 기본 시드(디테일 없음→ghost 대체)는 지문이 어긋나 "편집본"으로
-  // 남는다 — 기존 프로젝트가 전부 테스트용이라 마이그레이션하지 않기로 함(오너 결정).
+  // 2026-08-07 개편 전 기본 시드(디테일 없음→ghost 대체)와 구 오프닝 행 시드는 지문이
+  // 어긋나 "편집본"으로 남는다 — 기존 프로젝트가 전부 테스트용이라 마이그레이션하지
+  // 않기로 한 선례(오너 결정)를 따르고, 구 오프닝 행은 진입 승격(adoptHookFrame)이 흡수한다.
+  // 두 번째 지문: 첫 화면 스타일만 두컷 프레임으로 바꾼 기본 보드도 기본 시드로 인정 —
+  // 사진 양 변경 시 재시드가 스타일 선택을 존중하며 계속 동작하게 한다.
   return fingerprint === storyboardTemplateFingerprint(seeded)
-    || fingerprint === storyboardTemplateFingerprint(applyOpeningRow(seeded));
+    || fingerprint === storyboardTemplateFingerprint(applySeededHookStyle(seeded, 'pair', colors));
 }
 
 // analyzeProduct 의 shape 뼈대 — AnalysisForm 이 무가드로 읽는 필드 전부 포함(계약 §6).

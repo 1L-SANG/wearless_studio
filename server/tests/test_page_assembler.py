@@ -401,6 +401,74 @@ def test_two_column_opening_row_merges_and_keeps_copy_below_images():
     assert headline["y"] >= max(image["y"] + image["h"] for image in images)
 
 
+def _colorway_pair(match_ids=None):
+    shared = {
+        "sectionRole": "studio", "contentRole": "fit", "source": "ai",
+        "cutType": "horizon", "direction": "front", "colorId": "ivory",
+        "matchIds": match_ids if match_ids is not None else ["match-dark"],
+        "sectionLayout": "twoColumn", "layoutRowId": "row-colorway-ivory",
+        "layoutRowVersion": 1, "colorwayGroupId": "colorway-ivory",
+        "colorwayPairVersion": 1,
+    }
+    # 입력 순서가 뒤집혀도 조립 결과는 풀샷 왼쪽·미디움샷 오른쪽이어야 한다.
+    return [
+        {**shared, "id": "ivory-medium", "shot": "medium"},
+        {**shared, "id": "ivory-full", "shot": "full"},
+    ]
+
+
+def _colorway_product():
+    return {
+        **PRODUCT,
+        "colors": [{"id": "ivory", "name": "", "swatchId": "ivory"}],
+        "_matchClothing": [{
+            "id": "match-dark", "name": "세미 와이드 치노 팬츠", "colorName": "블랙",
+        }],
+    }
+
+
+def test_extended_colorway_pair_assembles_full_left_medium_right_with_labels():
+    storyboard = _colorway_pair()
+    cut_results = [
+        {"blockId": "ivory-medium", "imageUrl": "medium.png", "width": 860, "height": 1290},
+        {"blockId": "ivory-full", "imageUrl": "full.png", "width": 860, "height": 1290},
+    ]
+
+    blocks = assemble(storyboard, cut_results, [], _colorway_product(), False)
+
+    assert len(blocks) == 4  # 컬러웨이 1블록 + 자동 블록 3
+    colorway = blocks[0]
+    assert colorway["kind"] == "twocol"
+    assert colorway["layoutType"] == "colorwayPair"
+    assert colorway["name"] == "컬러 룩 · 아이보리"
+    images = [element for element in colorway["elements"] if element["type"] == "image"]
+    assert [
+        (image["src"], image["x"], image["y"], image["w"], image["h"], image["radius"])
+        for image in images
+    ] == [
+        ("full.png", 60, 24, 430, 645, 0),
+        ("medium.png", 510, 24, 430, 645, 0),
+    ]
+    assert [image["sourceBlockId"] for image in images] == ["ivory-full", "ivory-medium"]
+    labels = [element for element in colorway["elements"] if element["type"] == "text"]
+    assert [label["text"] for label in labels] == [
+        "소프트 골지 라운드 니트 [아이보리]",
+        "세미 와이드 치노 팬츠 [블랙]",
+    ]
+    assert labels[0]["style"]["align"] == labels[1]["style"]["align"] == "center"
+    assert labels[1]["style"]["weight"] == 700
+    assert colorway["h"] == 781
+
+
+def test_colorway_pair_falls_back_to_separate_blocks_when_matching_garments_diverge():
+    first, second = _colorway_pair()
+    second = {**second, "matchIds": ["another-match"]}
+    blocks = assemble([first, second], [], [], _colorway_product(), False)
+
+    assert len(blocks) == 5  # 개별 컷 2 + 자동 블록 3
+    assert all(block.get("layoutType") != "colorwayPair" for block in blocks[:2])
+
+
 # ── 빈 슬롯 폴백 (컷 생성 실패) ───────────────────────────────────────────────
 def test_missing_cut_result_renders_empty_slot_without_crash():
     storyboard = [_storyboard()[0]]  # blk1, no cut_results entry for it

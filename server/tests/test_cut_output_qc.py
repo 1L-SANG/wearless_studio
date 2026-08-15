@@ -121,7 +121,24 @@ def test_references_from_manifest_maps_roles_in_order_and_omits_mood():
 
 def test_references_from_manifest_accepts_explicit_mannequin_label():
     out = qc.references_from_manifest("1. MANNEQUIN — verified garment", [_img(b"M")])
-    assert [(reference.role, reference.image.data) for reference in out] == [("product", b"M")]
+    assert [(reference.role, reference.image.data) for reference in out] == [("mannequin", b"M")]
+
+
+def test_mannequin_cannot_satisfy_missing_product_truth_preflight():
+    contract = qc.normalize_plan(_plan())
+    forced = qc._forced_preflight(
+        contract,
+        [
+            qc.LabeledReference("mannequin", _img(b"MANNEQUIN")),
+            qc.LabeledReference("modelFace", _img(b"FACE")),
+            qc.LabeledReference("modelBody", _img(b"BODY")),
+            qc.LabeledReference("example", _img(b"EXAMPLE")),
+        ],
+        _img(b"GENERATED"),
+    )
+
+    assert all(forced[gate]["status"] == "UNJUDGEABLE" for gate in qc._GARMENT_GATES)
+    assert all("No PRODUCT reference" in forced[gate]["evidence"] for gate in qc._GARMENT_GATES)
 
 
 def test_references_from_manifest_maps_full_body_model_to_model_authority():
@@ -167,6 +184,27 @@ def test_normalize_plan_keeps_authority_but_drops_free_text_and_ids():
     assert contract["contractErrors"] == []
 
 
+def test_normalize_plan_keeps_bounded_repeat_index_for_qc():
+    contract = qc.normalize_plan(_plan(exampleRepeatIndex=2))
+
+    assert contract["exampleRepeatIndex"] == 2
+    assert contract["contractErrors"] == []
+    prompt = qc.build_prompt(contract, [
+        qc.LabeledReference("product", _img(b"PRODUCT")),
+        qc.LabeledReference("example", _img(b"EXAMPLE")),
+    ])
+    assert "bounded natural micro-variation" in prompt
+    assert "support-side reversal" in prompt
+
+
+@pytest.mark.parametrize("value", [-1, "2", True])
+def test_normalize_plan_rejects_invalid_repeat_index(value):
+    contract = qc.normalize_plan(_plan(exampleRepeatIndex=value))
+
+    assert contract["exampleRepeatIndex"] == 0
+    assert "invalid_example_repeat_index" in contract["contractErrors"]
+
+
 def test_normalize_plan_accepts_cut_plan_like_object_and_legacy_mirror():
     class Plan:
         def to_dict(self):
@@ -208,8 +246,11 @@ def test_prompt_preserves_reference_order_and_contains_no_source_plan_text():
     assert "missing, garbled, invented or reversed marks that should be readable" in flat_prompt
     assert "MODEL FACE and legacy MODEL/MODEL SHEET images own only selected facial identity" in flat_prompt
     assert "MODEL FULL BODY alone owns selected stature and body proportions" in flat_prompt
-    assert "Never borrow body shape from MODEL FACE/SHEET, PRODUCT/MANNEQUIN" in flat_prompt
-    assert "At least one structural element and at least two placements" in flat_prompt
+    assert "Never borrow body shape from MODEL FACE/SHEET, PRODUCT, MANNEQUIN" in flat_prompt
+    assert "MANNEQUIN is only a coarse worn-geometry prior" in flat_prompt
+    assert "Do not require a count of changed structures or props" in flat_prompt
+    assert "added, moved, duplicated or awkwardly staged" in flat_prompt
+    assert "At least one structural element" not in flat_prompt
     assert "crinkle, weave/knit/open holes, edge" in flat_prompt
     assert "flat, pasted-on 2-D garment" in flat_prompt
     assert "fine lettering is unreadable in BOTH PRODUCT and candidate" in flat_prompt

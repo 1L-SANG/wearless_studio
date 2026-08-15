@@ -44,10 +44,24 @@ class Settings:
     # AG-01 상품 분석 (text tier, 멀티모달 입력) — ai_agent_modules §1·§3
     openai_api_key: str | None = None  # sk-… (서버 전용, secret). GPT 경로 키
     model_text: str = "gpt-5.4-mini"  # GPT 폴백 provider 의 text/vision 모델 (openai key 있을 때만)
-    model_text_gemini: str = "gemini-3.5-flash"  # text tier 정본 모델 (2026-07-02 결정 — ai_agent_modules §1)
+    # text tier 정본 모델 (2026-07-02 결정 — ai_agent_modules §1).
+    # 2026-08-14 사용자 결정: 3.5/3.6 flash 사용처를 전부 gemini-3.7-flash 로 통일.
+    model_text_gemini: str = "gemini-3.7-flash"
     # AG-08 특징 발굴만 상위 tier 로 분기 (2026-08-01 사용자 결정 — 마네킹 regenerate tier 분기와 같은 패턴).
     # 분류(AG-01)는 결정성·속도 우선이라 정본 tier 유지. 미설정이면 model_text_gemini 로 폴백.
-    model_text_gemini_features: str = "gemini-3.6-flash"
+    model_text_gemini_features: str = "gemini-3.7-flash"
+    # AG-01 상품 분석만 별도 분기 (2026-08-14 사용자 결정). model_text_gemini 는 게이팅 QC
+    # (IMAGE_QC·MANNEQUIN_AXIS_QC·BASE_FIDELITY_QC = enforce)까지 같이 쓰는 값이라, 분석만
+    # 내리려면 축이 따로 있어야 한다 — AG-08 분기와 같은 패턴. 미설정이면 model_text_gemini 폴백.
+    # 근거(실측 26벌 × 5조합, documents/research/analysis_thinking_ab_20260814.jsonl):
+    # 3.7 flash·low 가 prod(3.1 pro·low) 대비 비용 0.47배·지연 -1.3s, 종류 정확도 동률(73%),
+    # 성별 18/18(pro 17/18 — 성별 라벨이 있는 표본이 26벌 중 18벌), 특징 2개 온전 25/26(pro 25/26).
+    # thinking 승급은 이득 없음(§ 아래). 비용·지연은 **배포되는 프롬프트 기준**이다 — 분류 규칙
+    # 블록이 들어가며 프롬프트가 커져 초안 측정치(0.42배)보다 조금 올랐다.
+    # **기본값은 빈 문자열**이다 — 그래야 manifest 의 env 한 줄을 지우는 것이 실제 롤백
+    # (정본=pro 복귀)이 된다. 하드 기본값을 박아두면 "지우면 되돌아간다"가 거짓말이 되고,
+    # 품질 사고로 급히 되돌릴 때 아무 일도 일어나지 않는다.
+    model_text_gemini_analysis: str = ""
     analysis_model_order: str = "gemini,gpt"  # 폴백 순서(기본=Gemini-first, 2026-07-02 결정). 'gpt,gemini' 등
     analysis_spike: str = "off"  # off | on — 동기 관측 하니스(임시). production 은 job
     analysis_timeout_seconds: float = 60.0  # provider 1콜 상한(폴백 트리거)
@@ -331,9 +345,11 @@ def load_settings() -> Settings:
         model_image_high=os.getenv("MODEL_ROUTING_IMAGE_HIGH", "gemini-3-pro-image"),
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         model_text=os.getenv("MODEL_ROUTING_TEXT", "gpt-5.4-mini"),
-        model_text_gemini=os.getenv("MODEL_ROUTING_TEXT_GEMINI", "gemini-3.5-flash"),
+        model_text_gemini=os.getenv("MODEL_ROUTING_TEXT_GEMINI", "gemini-3.7-flash"),
         model_text_gemini_features=os.getenv(
-            "MODEL_ROUTING_TEXT_GEMINI_FEATURES", "gemini-3.6-flash"),
+            "MODEL_ROUTING_TEXT_GEMINI_FEATURES", "gemini-3.7-flash"),
+        # 기본값 없음(빈 문자열=정본 폴백) — env 를 지우는 것이 진짜 롤백이 되게 한다.
+        model_text_gemini_analysis=os.getenv("MODEL_ROUTING_TEXT_GEMINI_ANALYSIS", ""),
         analysis_model_order=os.getenv("ANALYSIS_MODEL_ORDER", "gemini,gpt"),
         analysis_spike=_flag("ANALYSIS_SPIKE", "off", {"off", "on"}),
         analysis_timeout_seconds=float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "60")),

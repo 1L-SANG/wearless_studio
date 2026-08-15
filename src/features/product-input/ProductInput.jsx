@@ -39,7 +39,7 @@ import {
   formatDraftClock,
   formatDraftRelativeTime,
 } from '@/lib/draftSlot.js';
-import { Icon, Button, IconButton, ErrorState, Skeleton, Modal, useToast } from '@/components/ui.jsx';
+import { Icon, Button, IconButton, ErrorState, Modal, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { AnalysisForm, AnalysisSkeleton, AnalysisProgress, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
 import {
@@ -148,6 +148,19 @@ function hasRequiredDraftPhotos(product) {
   return Boolean(
     base?.images?.some((image) => image.slot === 'Front')
     && base.images.some((image) => image.slot === 'Back'),
+  );
+}
+
+/* 입력 화면을 열기만 한 상태(빈 템플릿)인지, 실제로 지킬 입력이 있는지 판정.
+   빈 상태를 임시저장하면 '임시저장 · 사진 0장' 팬텀 카드·잠금이 아무때나 뜬다.
+   서버(_draft_slot_meta.hasContent)·mock 도 같은 기준을 쓴다. */
+function draftHasContent(product, analysis) {
+  return Boolean(
+    analysis
+    || (product && (
+      (product.name || '').trim()
+      || (product.colors || []).some((color) => (color.images || []).length > 0)
+    )),
   );
 }
 
@@ -358,7 +371,7 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
         <ColorSwatchPicker swatchColors={swatchColors} value={group.swatchId} onChange={onPickColor} />
       )}
 
-      {base && <p className="cap-note">앞면·뒷면 필수 · 현재 {used}장 / 최대 6장</p>}
+      {/* 개수 안내는 '상품 이미지' 제목 옆 pill 로 옮겼다(2026-08-14 사용자 결정) — base 중복 제거 */}
       {!base && <p className="cap-note">정면 사진 필수 · 색상당 최대 3장 · 현재 {used}장</p>}
     </div>
   );
@@ -372,21 +385,21 @@ function EditingRightsLock({ meta, onReclaim, onRestartLocal, onDiscard }) {
         <Icon name="lock" size={28} />
         {gone ? (
           <>
-            <h3>임시저장이 다른 곳에서 마무리됐어요</h3>
-            <p>이 탭에 남아 있는 입력은 자동으로 다시 저장하지 않았어요.<br />이어갈 내용을 직접 골라주세요.</p>
+            <h3>다른 곳에서 이 작업을 끝내거나 새로 시작했어요</h3>
+            <p>지금 화면에 남아 있는 내용을 계속 쓸지 골라주세요.</p>
             <div className="modal-actions">
-              <Button variant="ghost" onClick={onDiscard}>이 내용 버리고 새로 시작</Button>
-              <Button variant="primary" onClick={onRestartLocal}>이 탭 내용으로 다시 저장</Button>
+              <Button variant="ghost" onClick={onDiscard}>지우고 새로 시작</Button>
+              <Button variant="primary" onClick={onRestartLocal}>이 내용 계속 쓰기</Button>
             </div>
           </>
         ) : (
           <>
-            <h3>다른 탭 또는 기기에서 이어서 작업 중이에요</h3>
+            <h3>다른 곳에서 같은 작업을 하고 있어요</h3>
             <p>
-              {formatDraftRelativeTime(meta?.updatedAt)} · {meta?.deviceLabel || '다른 탭 또는 기기'}
-              <br />내용이 섞이지 않도록 이 화면의 저장을 멈췄어요.
+              {formatDraftRelativeTime(meta?.updatedAt)} · {meta?.deviceLabel || '다른 탭 또는 기기'}에서 저장했어요.
+              <br />내용이 서로 엉키지 않게 이 화면의 자동 저장을 잠시 멈췄어요.
             </p>
-            <Button variant="primary" onClick={onReclaim}>이 탭에서 계속하기</Button>
+            <Button variant="primary" onClick={onReclaim}>이 화면에서 이어서 하기</Button>
           </>
         )}
       </div>
@@ -434,6 +447,7 @@ export function ProductInput() {
   const [, refreshPhotoPreviews] = useState(0);
   const photoPreviewRegistryRef = useRef(null);
   const latestLocalUpdatedAtRef = useRef(null);
+  const draftHadContentRef = useRef(false);   // 이 화면에서 실제 입력이 있었는지 — 빈 템플릿 임시저장 방지
   const latestProductRef = useRef(product);
   const latestAnalysisRef = useRef(analysis);
   const latestComposeModeRef = useRef(composeMode);
@@ -449,6 +463,12 @@ export function ProductInput() {
   }
 
   useEffect(() => draftSlot.onConflict((meta) => {
+    if (meta?.state === 'gone'
+        && !draftHasContent(latestProductRef.current, latestAnalysisRef.current)) {
+      // 이 화면에 지킬 입력이 없다 — 고를 것도 없으니 잠금 화면 대신 조용히 새 저장 상태로 되돌린다.
+      draftSlot.restartAfterGone();
+      return;
+    }
     setSlotLock(meta);
     if (!meta) setReclaimChoiceOpen(false);
   }), []);
@@ -459,6 +479,11 @@ export function ProductInput() {
 
   useEffect(() => {
     if (!product) return;
+    const hasContent = draftHasContent(product, analysis);
+    // 구경만 한 빈 화면은 임시저장을 만들지 않는다. 단 내용이 있다가 다 지워진 상태는
+    // '비움'도 최신 상태이므로 계속 저장한다(안 하면 지운 사진이 복원에서 되살아난다).
+    if (!hasContent && !draftHadContentRef.current) return;
+    draftHadContentRef.current = draftHadContentRef.current || hasContent;
     const localUpdatedAt = new Date().toISOString();
     latestLocalUpdatedAtRef.current = localUpdatedAt;
     queueProductDraftSave(product, analysis, composeMode, localUpdatedAt);
@@ -519,7 +544,19 @@ export function ProductInput() {
     if (!promotionLocked) return undefined;
     const blockUnload = (event) => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', blockUnload);
-    return () => window.removeEventListener('beforeunload', blockUnload);
+    // 베일은 포인터만 막는다 — Shift+Tab 으로 뒤 폼 편집·헤더 Enter 로 SPA 이탈이 가능했다(P1).
+    // #root 만 잠그면 body 로 포털된 모달(커스텀 의류 등)이 살아남아 승격 스냅샷 밖 편집이
+    // 가능하다(P1 후속) — 베일·토스트를 뺀 body 직계 전부를 inert 로 잠근다.
+    const spared = (el) => el.classList?.contains('input-promotion-transition')
+      || el.classList?.contains('toast-host');
+    const locked = [...document.body.children].filter(
+      (el) => !spared(el) && !el.hasAttribute('inert'),
+    );
+    locked.forEach((el) => el.setAttribute('inert', ''));
+    return () => {
+      window.removeEventListener('beforeunload', blockUnload);
+      locked.forEach((el) => el.removeAttribute('inert'));
+    };
   }, [promotionLocked]);
 
   const setFlowPromotionLocked = (locked) => {
@@ -649,7 +686,8 @@ export function ProductInput() {
         latestSnapshot.localUpdatedAt,
       );
       const { failed = 0 } = await flushProductDraftSave() || {};
-      if (failed) toast.push(`일부 사진(${failed}장)을 임시 저장하지 못했어요.`, { icon: 'alertTri' });
+      // 유실 경고는 전환 오버레이(3.5s)보다 오래 살아남아야 한다 — 도착 후에도 읽히게 6s.
+      if (failed) toast.push(`사진 ${failed}장은 저장되지 않았어요. 다음 화면에서 확인해 주세요.`, { icon: 'alertTri', duration: 6000 });
       if (session || isMockMode) {
         const draft = await loadDraft();
         if (!draft?.product) throw new Error('저장된 입력 내용을 다시 불러오지 못했어요. 다시 시도해 주세요.');
@@ -790,12 +828,12 @@ export function ProductInput() {
   const chooseRemoteContent = async () => {
     try {
       const takeover = await draftSlot.takeover();
-      if (!takeover?.payload) throw new Error('다른 기기의 임시저장을 불러오지 못했어요.');
+      if (!takeover?.payload) throw new Error('다른 기기에서 저장한 내용을 불러오지 못했어요.');
       applyDraftPayload(takeover.payload);
       setReclaimChoiceOpen(false);
       setSlotLock(null);
     } catch (error) {
-      toast.push(error?.message || '작업을 이어받지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+      toast.push(error?.message || '내용을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     }
   };
 
@@ -810,7 +848,7 @@ export function ProductInput() {
         await draftSlot.flush();
       }
     } catch (error) {
-      toast.push(error?.message || '이 기기의 작업을 이어받지 못했어요.', { icon: 'alert' });
+      toast.push(error?.message || '이 화면의 내용으로 이어가지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     }
   };
 
@@ -832,7 +870,7 @@ export function ProductInput() {
         await draftSlot.flush();
       }
     } catch (error) {
-      toast.push(error?.message || '이 탭의 내용을 다시 저장하지 못했어요.', { icon: 'alert' });
+      toast.push(error?.message || '내용을 다시 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     }
   };
 
@@ -842,7 +880,7 @@ export function ProductInput() {
       try {
         await draftSlot.removeForNewFlow();
       } catch (error) {
-        toast.push(error?.message || '임시저장을 정리하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+        toast.push(error?.message || '이전 작업을 정리하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
         return;
       }
     }
@@ -979,10 +1017,9 @@ export function ProductInput() {
     </div>
   );
   if (!product || !catalogs) return (
-    <div className="wizard">
+    <div className="wizard" aria-busy="true" aria-label="입력 화면 불러오는 중">
       {editingRightsLock}
       {doneBlocked && <DoneGuardModal />}
-      <div className="surface"><Skeleton h={420} /></div>
     </div>
   );
 
@@ -1031,15 +1068,9 @@ export function ProductInput() {
   const hasBack = !!baseColor?.images.some((im) => im.slot === 'Back');
   const hasName = !!(product.name && product.name.trim());
   const canDone = hasFront && hasBack && phase === 'input' && !authLoading && !slotLock;
-  const disabledReason = !hasFront && !hasBack
-    ? '앞면·뒷면 사진이 각 1장 필요해요'
-    : !hasFront
-      ? '앞면 사진이 필요해요'
-      : !hasBack
-        ? '뒷면 사진이 필요해요'
-        : authLoading
-          ? '로그인 상태를 확인하고 있어요.'
-          : '';
+  // 사진 요구 문구는 CTA 옆에 두지 않는다(2026-08-14 사용자 결정) — 필수 표시는
+  // 슬롯의 파란 별과 상단 안내문이 맡고, 버튼은 조용히 비활성. 로그인 확인만 일시 안내.
+  const disabledReason = authLoading ? '로그인 상태를 확인하고 있어요.' : '';
   const locked = phase !== 'input';
   // AI 분석하기 → analyze inline (skeleton below) → fill analysis form below
   const submit = async () => {
@@ -1081,8 +1112,9 @@ export function ProductInput() {
   const nameCard = (
     <div className="surface">
       <div className="sec-head">
-        <div><div className="sec-title">상품명 <span className="pi-optional-label">(선택 — 비우면 AI가 지어드려요)</span></div></div>
+        <div><div className="sec-title">상품명</div></div>
       </div>
+      <div className="sec-sub" style={{ marginTop: -6, marginBottom: 12 }}>안 쓰시면 AI가 알아서 작성해요.</div>
       <input className="field" value={product.name} placeholder="예: 소프트 골지 라운드 니트"
         disabled={phase === 'analyzing'} onChange={(e) => {
           const name = e.target.value;
@@ -1099,10 +1131,10 @@ export function ProductInput() {
       <div className="sec-head">
         <div className="ttl" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div className="sec-title" style={{ whiteSpace: 'nowrap' }}>상품 이미지</div>
-          <span className="pill pill-soft">{imgCount}장</span>
+          <span className="pill pill-soft">현재 {imgCount}장 / 최대 6장</span>
         </div>
       </div>
-      <div className="sec-sub" style={{ marginTop: -6, marginBottom: 16 }}>각도별로 한 장 이상 올리면 더 정확한 상세페이지가 만들어져요. 앞면·뒷면은 필수예요 — 뒷면이 없으면 뒷모습 컷을 만들 수 없어요.</div>
+      <div className="sec-sub" style={{ marginTop: -6, marginBottom: 16, lineHeight: 1.75 }}>앞면, 뒷면은 필수에요.<br />디테일란에 의류의 특징적인 부분들을 찍어서 업로드해주시면 훨씬 정확해져요.</div>
       {product.colors.map((c) => (
         <ColorImageGroup key={c.id} group={c} catalogs={catalogs} swatchColors={catalogs.swatchColors}
           onAddFiles={(slot, metas) => addImageFiles(c.id, slot, metas)} onRemove={(id) => removeImage(c.id, id)}
@@ -1112,7 +1144,7 @@ export function ProductInput() {
       ))}
       {!locked && (
         <div style={{ marginTop: 16 }}>
-          <Button variant="quiet" icon="plus" onClick={addColor} disabled={product.colors.length >= 3}>색상 추가</Button>
+          <Button variant="quiet" icon="plus" className="pi-add-color" onClick={addColor} disabled={product.colors.length >= 3}>색상 추가</Button>
           {product.colors.length >= 3 && <p className="hint" style={{ marginTop: 8 }}>색상은 최대 3개까지 추가할 수 있어요.</p>}
         </div>
       )}
@@ -1151,26 +1183,30 @@ export function ProductInput() {
 
   return (
     <div className={`wizard${wide ? ' wide' : ''}`}>
+      {/* 확정 대기는 '잠금 경고'가 아니라 '이미 시작된 페이지 전환'으로 보여준다(2026-08-14 사용자
+          지적 — 흰 잠금 카드 → 콘티보드의 어두운 전환 오버레이가 연달아 떠 이질적이었다).
+          도착 화면(ChromeLayout 의 storyboard-transition-overlay)과 같은 시각 언어라 확정→도착이
+          한 번의 전환으로 읽힌다. 입력 차단(전체 덮음)·beforeunload 가드는 종전과 동일하다. */}
+      {/* 확정 대기는 어두운 베일만 — 로고·문구는 도착 화면에서 한 번에 나타난다(2026-08-14 사용자
+          결정: 로고가 대기·도착에 두 번 뜨면 끊겨 보인다). 베일이 도착 오버레이와 같은 톤이라
+          화면이 바뀌어도 배경은 이어진 것처럼 읽힌다. 낭독은 aria-label 로 유지. */}
       {promotionLocked && createPortal((
-        <div className="input-promotion-lock" role="status" aria-live="polite">
-          <div className="input-promotion-lock-card">
-            <Icon name="loader" className="spin" size={24} />
-            <strong>최신 입력 내용을 안전하게 확정하고 있어요</strong>
-            <span>완료될 때까지 이 화면을 그대로 두세요.</span>
-          </div>
+        <div className="input-promotion-transition" role="status" aria-live="polite">
+          {/* 일부 스크린리더는 status 의 aria-label 을 무시한다 — 숨긴 텍스트 노드가 호환성이 높다 */}
+          <span className="sr-only">상세페이지 구성으로 넘어가고 있어요</span>
         </div>
       ), document.body)}
       {editingRightsLock}
       {reclaimChoiceOpen && slotLock && (
         <Modal onClose={() => setReclaimChoiceOpen(false)}>
-          <h3>어느 내용을 이어갈까요?</h3>
-          <p>두 기기의 저장 시각을 확인하고 기준으로 사용할 내용을 골라주세요.</p>
+          <h3>어느 내용으로 이어갈까요?</h3>
+          <p>저장 시간을 보고 이어갈 내용을 골라주세요. 고르지 않은 쪽은 덮어써요.</p>
           <div className="draft-source-options">
             <Button variant="ghost" onClick={chooseLocalContent}>
-              이 기기 내용 ({formatDraftClock(latestLocalUpdatedAtRef.current)})
+              이 화면의 내용 ({formatDraftClock(latestLocalUpdatedAtRef.current)} 저장)
             </Button>
             <Button variant="primary" onClick={chooseRemoteContent}>
-              다른 기기 내용 ({formatDraftClock(slotLock.updatedAt)})
+              다른 기기의 내용 ({formatDraftClock(slotLock.updatedAt)} 저장)
             </Button>
           </div>
         </Modal>
@@ -1235,20 +1271,18 @@ export function ProductInput() {
       {/* 경고를 CTA 모달에만 걸면 그 버튼을 누르기 전까지 화면에 아무 흔적이 없어, 셀러 눈에는
           "다른 옷을 넣었는데 아무 일도 안 일어난" 것으로 보인다(2026-07-31 실측). 분석 직후
           바로 보이는 배너를 함께 둔다 — 모달은 진행 직전 마지막 확인용으로 남긴다. */}
+      {/* 판정 근거(슬롯별 상세)는 배너에서 뺀다 — 셀러에게 필요한 건 "무엇을 하면 되는가"뿐
+          (2026-08-14 사용자 결정). 상세 근거는 진행 직전 확인 모달에만 남긴다. */}
       {inputConsistency && (
         <div className="surface" style={{ marginTop: 12, borderColor: '#f0b429', background: '#fffaf0' }}>
           <div className="sec-title" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 15 }}>
             <Icon name="alertTri" size={17} /> 다른 옷이 섞인 것 같아요
           </div>
-          <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>
-            {inputConsistency.offending.map((o) => (
-              <li key={o.index} style={{ marginTop: 4 }}>
-                <b>{(catalogs.angleLabels && catalogs.angleLabels[o.slot]) || o.slot}</b> 사진 — {o.reason}
-              </li>
-            ))}
-          </ul>
-          <p className="hint" style={{ marginTop: 8 }}>
-            잘못 올린 사진이면 처음부터 다시 시작해주세요. 맞다면 그대로 진행해도 괜찮아요.
+          <p style={{ margin: '8px 0 0', fontSize: 13.5, color: 'var(--fg-2)' }}>
+            의류를 잘못 올렸다면 처음부터 시작해주세요. 맞다면 그대로 진행해도 괜찮아요.
+          </p>
+          <p style={{ margin: '6px 0 0', fontSize: 14.5, fontWeight: 650, color: '#8a6116' }}>
+            지금 상태에선 의류구현이 제대로 안될 수 있습니다.
           </p>
         </div>
       )}

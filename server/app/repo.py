@@ -150,9 +150,12 @@ async def takeover_draft_slot(
 ) -> dict:
     async with conn.cursor() as cur:
         await cur.execute(
+            # updated_at 도 갱신한다 — 이어받기(takeover)는 "이 슬롯을 계속 쓰겠다"는 의사라,
+            # 클라이언트의 지연 삭제(새로 시작 때 못 지운 슬롯 정리)가 결정 시각과 비교할 때
+            # 이어받은 슬롯을 '오래된 것'으로 보고 지우지 않게 막는 근거가 된다.
             """
             update draft_slots
-            set active_token = %s
+            set active_token = %s, updated_at = now()
             where user_id = %s
             returning user_id::text as user_id, payload,
                       active_token::text as active_token, device_label,

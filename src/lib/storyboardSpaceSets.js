@@ -177,9 +177,12 @@ export function createSpaceSetMembers(set, template, {
   makeId = (_member, index) => `${spaceGroupId}-${index + 1}`,
   previousMembers = [],
   setSelectionOrigin = 'user',
+  // 교체 시 넣을 멤버 목록 오버라이드 — 셔플이 기존 run 크기(예: 엔트리 2멤버)를
+  // 유지할 때 쓴다. 없으면 카탈로그 멤버 전부(갤러리 세트 추가 = 통째 배치).
+  members = null,
 } = {}) {
   if (!set || !spaceGroupId) return [];
-  return set.members.map((member, index) => {
+  return (members || set.members).map((member, index) => {
     const previous = previousMembers[index] || template || {};
     const base = clearLayoutRow({
       ...template,

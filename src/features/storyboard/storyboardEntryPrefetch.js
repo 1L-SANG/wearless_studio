@@ -1,5 +1,4 @@
 import { createStoryboardEntryPrefetchCache } from './storyboardEntryPrefetchCache.js';
-export { shouldRenderStoryboardLoadingFrame } from './storyboardEntryPrefetchCache.js';
 
 // api 를 모듈 top-level 에서 정적 import 하지 않는다 — lib/api/index.js 는 mock/http 두
 // 어댑터를 모두 물어 `@/` 별칭 경로로 끌어오는데, 이 파일은 (invalidate 등 캐시 조작

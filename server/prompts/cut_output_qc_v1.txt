@@ -23,12 +23,13 @@ STATUS CONTRACT
 
 AUTHORITY RULES
 - PRODUCT images alone own the target garment's construction, material, pattern, hardware and garment
-  text/logo; a MANNEQUIN label is PRODUCT evidence, not model-body evidence. The storyboard owns selected
+  text/logo. MANNEQUIN is only a coarse worn-geometry prior for PRODUCT-supported fit, length, silhouette
+  and drape; it cannot settle uncertain color, material, construction, fit or length. The storyboard owns selected
   color, direction, shot, face handling, model, matching apparel, closure, and any explicit pose. Declared
   fit axes may change only the fit dimensions owned by fitProfile.
 - MODEL FACE and legacy MODEL/MODEL SHEET images own only selected facial identity, hair and skin.
   MODEL FULL BODY alone owns selected stature and body proportions. Never let either model role own
-  clothing, pose, framing, scene or light, and never use EXAMPLE or PRODUCT/MANNEQUIN body evidence.
+  clothing, pose, framing, scene or light, and never use EXAMPLE, PRODUCT or MANNEQUIN body evidence.
 - EXAMPLE and PLATE pixels have authority only over referenceAllowedAttributes. Never copy their garment,
   footwear, accessory design, person identity or body, text, logo, or watermark. A storyboard value always
   beats a conflicting example pixel. Do not restore an overridden pose, direction, crop, face state, or closure.
@@ -40,6 +41,12 @@ AUTHORITY RULES
   override; never restore or score omitted attributes. For pose, judge only allowed pose kinematics and
   left/right. For bg, judge the exact plate scene while storyboard controls person/framing. A space-set
   plate owns continuity, not cut-specific pose/camera.
+  When exampleRepeatIndex is 1 or greater, the repeated all-scope example intentionally receives a
+  bounded natural micro-variation. Allow small changes to hand/finger placement, one arm bend, head angle,
+  stance width, shoulder/pelvis line, weight distribution on the SAME support side, and gaze target within
+  the same gaze meaning. Do not fail solely for those authorized changes. Still fail a changed action,
+  body-direction family, support-side reversal, defining contact/support function, broad limb role, gaze
+  meaning, or intended asymmetry.
 
 HARD GATES — return each exactly once in this order:
 1. fileValidity — one complete, decodable output; no blank, corrupt, truncated, tiled, or accidental collage.
@@ -74,7 +81,7 @@ HARD GATES — return each exactly once in this order:
     and head-to-body, shoulder-width, torso, waist, hip, arm and leg proportions. Hidden-face, back-view and
     intended headless/cropped worn cuts remain applicable: use only MODEL FULL BODY as the baseline and judge
     every proportion visible in the requested crop without changing framing or pose. Never borrow body shape
-    from MODEL FACE/SHEET, PRODUCT/MANNEQUIN, MATCHING, EXAMPLE or PLATE. Missing full-body evidence is
+    from MODEL FACE/SHEET, PRODUCT, MANNEQUIN, MATCHING, EXAMPLE or PLATE. Missing full-body evidence is
     UNJUDGEABLE, not NA.
 13. anatomyPerspectiveAsymmetry — plausible hands, limbs, joints, body support, contacts, camera perspective,
     scale and intended asymmetric pose; no mirroring, duplication, fusion, cutout, or unsupported body.
@@ -82,9 +89,11 @@ HARD GATES — return each exactly once in this order:
     requested ordinary commerce snapshot, clean studio, mirror selfie, product ghost, or product detail.
 15. relatedSceneDifferentPlace — required only for styling + lifestyle/mirrorSelfie + all with no space-set.
     Keep the EXAMPLE-owned place type, ordinary non-editorial mood, palette, time of day, lighting logic and
-    allowlisted camera relationship, while making the exact recognizable place and layout different. At least
-    one structural element and at least two placements among furniture, signage and props must visibly change.
-    A recrop/repaint of the same place or an unrelated scene FAILS. For bg, space-set PLATE, horizon/studio and
+    allowlisted camera relationship, while making the exact recognizable place and layout naturally different.
+    A recrop/repaint of the same place or an unrelated scene FAILS. Do not require a count of changed structures
+    or props, and do not reward furniture, plants, signs, fixtures or props added, moved, duplicated or awkwardly
+    staged merely to prove difference. Natural environmental text/signage is not itself a failure; exact copied
+    third-party branding or conspicuous invented/garbled text is. For bg, space-set PLATE, horizon/studio and
     product cuts this gate is NA per applicability; storyboard overrides still win.
 16. lightingShadowReflectionDrape — one coherent physical solution for key light and pose-driven tension,
     compression and asymmetric folds. Inspect fabric self-shadow, reflection/reflected-light response, contact

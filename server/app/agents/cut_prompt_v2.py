@@ -4,6 +4,10 @@ This module deliberately has no production caller.  It consumes the same normali
 spec and :mod:`cut_plan` authority compiler as the live renderer, then renders a
 short XML prompt for controlled experiments.  The candidate rejects unsupported
 families/scopes instead of silently weakening their contracts.
+
+Its scene-delta and pose wording predates ADR-0011 and is preserved only to reproduce
+that historical arm.  It must not seed a new experiment or production prompt without
+replacing those clauses with the current natural-variation contract.
 """
 
 from __future__ import annotations

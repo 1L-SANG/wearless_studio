@@ -147,7 +147,7 @@ input, textarea, select { font-family: inherit; }
   font-size: 12.5px; font-weight: 600; color: var(--fg-2); }
 .job-ribbon-track { flex: 1; min-width: 90px; max-width: 280px; height: 6px; border-radius: var(--r-pill);
   background: var(--bg-2); box-shadow: var(--elev-inset); overflow: hidden; }
-.job-ribbon-fill { display: block; height: 100%; border-radius: inherit; background: var(--fg-1); transition: width .2s ease; }
+.job-ribbon-fill { display: block; height: 100%; border-radius: inherit; }
 .job-ribbon.error .job-ribbon-label, .job-ribbon.error .job-ribbon-detail { color: var(--accent-error); }
 .job-ribbon.done .job-ribbon-label { color: var(--accent-success); }
 
@@ -234,6 +234,11 @@ input, textarea, select { font-family: inherit; }
 .btn-sm.btn-primary { min-height: 0; }
 .btn-lg { padding: 13px 22px; font-size: 16px; }
 .btn-block { width: 100%; justify-content: center; }
+/* 모달·선택지처럼 버튼이 짝으로 놓이는 곳은 모양을 통일한다 — 색(주=검정 채움, 보조=흰색)만
+   다르고 형태는 같은 알약. 기본 .btn(8px 라운드)과 primary(pill)가 나란히 서면
+   '하나는 네모, 하나는 동그라미'로 보여 짝 선택지가 아니라 다른 종류의 버튼처럼 읽힌다. */
+.modal-actions .btn, .draft-source-options .btn {
+  border-radius: var(--cta-radius); min-height: var(--cta-height); justify-content: center; }
 
 .iconbtn { width: 34px; height: 34px; border-radius: var(--r-4); background: #fff; border: 0;
   box-shadow: 0 0 0 1px var(--ring); color: var(--fg-2); cursor: pointer; display: grid; place-items: center;
@@ -307,9 +312,39 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
 
 /* ====================== PROGRESS ====================== */
 .progress { height: 8px; border-radius: var(--r-pill); background: var(--bg-2); overflow: hidden; box-shadow: var(--elev-inset); }
-.progress > i { display: block; height: 100%; background: var(--fg-1); border-radius: var(--r-pill); transition: width .2s ease; }
+.progress > i { display: block; height: 100%; background: var(--fg-1); border-radius: var(--r-pill); }
 .progress-label { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
 .progress-label .pct { font-family: var(--font-display); font-size: 14px; color: var(--fg-1); }
+
+/* ── 잉크 + 쉬인 (시안: mockups/progressbar-gallery.html ⑤) ───────────────────
+   검정 잉크는 그대로 두고 흰 빛만 주기적으로 훑고 지나간다. 모노 스킨을 깨지 않으면서
+   "살아 있음" 을 보여주는 절충안 — 서버 보고가 끊긴 구간에서도 바가 죽지 않는다.
+   폭은 useSmoothProgress 가 rAF 로 직접 흘려보내므로 width transition 은 두지 않는다
+   (CSS 전환과 훅의 이징이 겹치면 따라잡기가 두 번 걸려 굼떠 보인다).
+   여기서 앱의 모든 진행바 채움을 한 번에 정의한다 — 나중에 색을 바꾸면 전부 따라온다. */
+.progress > i,
+.job-ribbon-fill,
+.ed-genbar-track i,
+.ap-bar i { position: relative; overflow: hidden; background: var(--fg-1); }
+
+.progress > i::after,
+.job-ribbon-fill::after,
+.ed-genbar-track i::after,
+.ap-bar i::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,.55) 50%, transparent 80%);
+  animation: ink-sheen 2.1s cubic-bezier(.4, 0, .2, 1) infinite;
+}
+@keyframes ink-sheen { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+
+/* 움직임을 줄이는 사용자에게는 빛 자체를 없앤다. animation:none 만 걸면 의사요소가
+   transform 없이 그대로 남아 검정 막대 한가운데 흰 띠가 영구히 박힌다(리뷰 지적). */
+@media (prefers-reduced-motion: reduce) {
+  .progress > i::after,
+  .job-ribbon-fill::after,
+  .ed-genbar-track i::after,
+  .ap-bar i::after { display: none; }
+}
 
 /* step checklist */
 .checklist { display: flex; flex-direction: column; gap: 2px; }
@@ -375,7 +410,7 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
 .dl-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 26px; }
 
 /* ====================== TOAST ====================== */
-.toast-host { position: fixed; right: 22px; top: 72px; z-index: 90; display: flex; flex-direction: column; gap: 10px; }
+.toast-host { position: fixed; right: 22px; top: 72px; z-index: 130;  /* 전환 오버레이(120) 위 — 유실 경고가 가려지면 안 된다 */ display: flex; flex-direction: column; gap: 10px; }
 /* glow 4색을 약하게 두른 테두리 (흰 배경 위, 천천히 순환) */
 .toast { display: flex; align-items: center; gap: 11px; color: var(--fg-1); padding: 12px 16px;
   border-radius: var(--r-4); font-size: 14px; font-weight: 500; border: 1.5px solid transparent;

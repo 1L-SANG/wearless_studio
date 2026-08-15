@@ -14,7 +14,7 @@
 |---|---|---|
 | `image_high` | **Gemini 3 Pro Image** (`gemini-3-pro-image`) | 최종 산출물에 들어가는 모든 이미지 — 의류 동일성·핏 재현이 핵심인 고작업 |
 | `image_light` | **Gemini 3.1 Flash Image** (`gemini-3.1-flash-image`) | 미리보기·예시성 이미지. **현재 MVP 배정 에이전트 없음** — 분위기 예시는 운영자 시드 데이터로 대체(§5 참고). 저난도 생성 수요가 생기면 이 tier에 배정 |
-| `text` | **Gemini 3 Flash** (`gemini-3.5-flash`) | 이미지 생성이 아닌 모든 작업 — 분석(비전 입력 포함)·카피·검수. 2026-07-02 사용자 결정(구 GPT-5.4 mini 잠정 배정 대체) — 생성 파라미터는 `pl1_analysis_agent_spec.md` §2 |
+| `text` | **Gemini 3.7 Flash** (`gemini-3.7-flash`) — 단 **프로드 정본은 `gemini-3.1-pro-preview`** (카피·검수·게이팅 QC가 함께 쓰는 값이라 유지, 오너 결정 2026-08-14; 분석만 `MODEL_ROUTING_TEXT_GEMINI_ANALYSIS`로 flash 분기) | 이미지 생성이 아닌 모든 작업 — 분석(비전 입력 포함)·카피·검수. 2026-07-02 사용자 결정(구 GPT-5.4 mini 잠정 배정 대체) — 생성 파라미터는 `pl1_analysis_agent_spec.md` §2 |
 
 **API 키 (.env — FastAPI 서버 전용, 추후 추가)**
 
@@ -129,7 +129,9 @@ OPENAI_API_KEY=   # 예비 — text tier를 OpenAI 계열로 재배정할 때만
 
 > **구현 구조 (2026-06-20 결정 → 2026-08 개정)**: 프롬프트는 **단일 섹션 템플릿** `server/prompts/cut_generate_v1.txt`의 하위 실행 섹션으로 통합 — 구 `prompts/cuts/*` 컷별 파일은 삭제됐다. `server/app/agents/cut_plan.py`가 저장 호환용 mirror까지 읽어 세 상위 계열과 항목별 정본을 먼저 확정하고, `cut_generator.py`는 활성 하위 섹션만 렌더한다. 입출력 계약·R2 입출력·재시도·로깅 등 **배관은 공통 1벌**(컷마다 복붙 금지). tier(모델)는 전 컷 `image_high` 공유 — **컷별 모델 분리는 보류**. `styling` = 일상/룩북 컷(별도 '일상' cutType 신설 안 함 — 라벨만).
 > **다양성은 AG-06의 책임이 아니다**: AG-06은 주어진 1개 spec(direction/shot/pose/angle)을 충실히 렌더할 뿐, 같은 사진 목적 안의 구도 변주는 **콘티(shot-list) 구성 단계**가 정한다 — §5 '컷 다양성' 참조.
-> **가상모델 아이덴티티·체형 레퍼런스 계약 (2026-08-04 개정 — C방식 3장)**: 사람컷(styling·horizon·mirror)에서 `modelId`가 지정되면 해당 가상모델의 **face_front 원본 베이스컷 1장 + 세드카드 그리드(2x2 멀티앵글, 자르지 않은 통짜) 1장 + body_front 전신 정면 1장**을 첨부한다 — shot·표정·포즈 무관 동일 규칙, product 컷은 첨부 없음. 얼굴 2장의 근거는 v3 매트릭스(5조합×4포즈×3모델=60컷) + C 스트레스(표정3·비정형포즈4×2모델=16컷): ① 원본 1장 단독은 **버즈컷 표본 착시** — 헤어 있는 모델(m1·w1)에서 컷마다 헤어스타일이 변해 컷 간 일관성 실패 ② 그리드가 각도·헤어 정보를 공급해 헤어 고정 + 질감(주근깨) 최고 보존 ③ 표정 변화·착석·뒷모습(그리드 사각지대)까지 16/16 아이덴티티 유지 ④ 그리드 레이아웃이 출력에 새어나온 사례 0/28. **원본이 얼굴 질감의 정본, 그리드는 각도·헤어의 정본, body_front는 키 인상·어깨·몸통·팔다리 비율과 자연스러운 체형의 정본**이다. body_front의 의상·배경·포즈·신발·프레이밍은 복사 금지 라벨로 격리한다(2026-08-04 사용자 결정).
+> **현재 배선과 연구 경계 (2026-08-13)**: 아래 `C방식 3장`은 2026-08-04 연구 결과이며 현재 운영 입력을 설명하는 문장이 아니다. 커밋된 운영 VIRTUAL 착용컷은 방향·얼굴 노출과 무관하게 `face_front + body_front` 두 장을 붙인다. Round 2 로컬 실험 기준선은 사용자가 중복 정면 얼굴 입력을 거부한 뒤 `face direction sheet + full-body direction sheet` 두 장을 사용하지만 아직 운영에 배선되지 않았다. 어느 묶음이든 뒷면·얼굴 비노출이라는 이유로 아이덴티티 근거 전체를 빼는 방식은 폐기한다.
+>
+> **가상모델 아이덴티티·체형 레퍼런스 연구 기록 (2026-08-04 — C방식 3장)**: 사람컷(styling·horizon·mirror)에서 `modelId`가 지정되면 해당 가상모델의 **face_front 원본 베이스컷 1장 + 세드카드 그리드(2x2 멀티앵글, 자르지 않은 통짜) 1장 + body_front 전신 정면 1장**을 첨부하는 방식을 검증했다. 얼굴 2장의 근거는 v3 매트릭스(5조합×4포즈×3모델=60컷) + C 스트레스(표정3·비정형포즈4×2모델=16컷): ① 원본 1장 단독은 **버즈컷 표본 착시** — 헤어 있는 모델(m1·w1)에서 컷마다 헤어스타일이 변해 컷 간 일관성 실패 ② 그리드가 각도·헤어 정보를 공급해 헤어 고정 + 질감(주근깨) 최고 보존 ③ 표정 변화·착석·뒷모습(그리드 사각지대)까지 16/16 아이덴티티 유지 ④ 그리드 레이아웃이 출력에 새어나온 사례 0/28. **원본이 얼굴 질감의 정본, 그리드는 각도·헤어의 정본, body_front는 키 인상·어깨·몸통·팔다리 비율과 자연스러운 체형의 정본**으로 역할을 나눴고, body_front의 의상·배경·포즈·신발·프레이밍은 복사 금지 라벨로 격리했다. 이 기록은 최신 운영 입력 결정으로 자동 승격하지 않는다.
 > - **첨부 순서·매니페스트**: `images = [mannequin?, model_face?, model_sheet?, model_body?, *prod(slot순), match?, *mood]` — MODEL 3장은 마네킹 다음. 고정 라벨(셀러 데이터 미포함 — 빼지 말 것):
 >   - model_face: `MODEL — frontal close-up of the model (identity ground truth; do NOT copy this image's pose, framing, or clothing)`
 >   - model_sheet: `MODEL SHEET — a 2x2 grid of four studio portraits of the SAME single person (identity reference only). Do NOT copy the grid layout, framing, poses, or clothing; the output must be one single normal photograph, never a grid`

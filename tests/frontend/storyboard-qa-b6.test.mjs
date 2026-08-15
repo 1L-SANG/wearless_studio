@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { cutTypeOptionsForSection } from '../../src/lib/storyboardTaxonomy.js';
+import { allowedCutTypeOptionsForSection } from '../../src/lib/storyboardTaxonomy.js';
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const storyboardSource = read('../../src/features/storyboard/Storyboard.jsx');
@@ -14,13 +14,15 @@ test('N12 addBlock accepts cut types that older section-specific gates rejected'
   const addBlockStart = storyboardSource.indexOf('const addBlock = async');
   const addBlockEnd = storyboardSource.indexOf('// drag-to-reorder blocks', addBlockStart);
   const addBlockSource = storyboardSource.slice(addBlockStart, addBlockEnd);
-  assert.match(addBlockSource, /cutTypeOptionsForSection\(sectionRole\)\.some/);
+  assert.match(addBlockSource, /allowedCutTypeOptionsForSection\(sectionRole\)\.some/);
 
-  const acceptsDrop = (sectionRole, cutType) => cutTypeOptionsForSection(sectionRole)
+  const acceptsDrop = (sectionRole, cutType) => allowedCutTypeOptionsForSection(sectionRole)
     .some((option) => option.value === cutType);
   assert.equal(acceptsDrop('hooking', 'product'), true);
   assert.equal(acceptsDrop('studio', 'mirror'), true);
   assert.equal(acceptsDrop('product', 'styling'), true);
+  assert.match(addBlockSource, /!reservation && droppedCutType === 'mirror' && sectionRole !== SECTION_ROLES\.STYLING/);
+  assert.match(addBlockSource, /거울컷은 스타일링 섹션에만 추가할 수 있어요/);
 });
 
 test('N12 product conversion still clears worn-only matching fields', () => {
@@ -29,11 +31,11 @@ test('N12 product conversion still clears worn-only matching fields', () => {
   const commitSource = storyboardSource.slice(commitStart, commitEnd);
   assert.match(
     commitSource,
-    /pendingRecipe\.cutType === 'product' \? \{ matchIds: \[\], faceExposure: null \} : \{\}/,
+    /recipePatch\.cutType === 'product' \? \{ matchIds: \[\], faceExposure: null \} : \{\}/,
   );
   assert.match(
     commitSource,
-    /WORN_CUT_TYPES\.has\(pendingRecipe\.cutType\)[\s\S]*?: null/,
+    /WORN_CUT_TYPES\.has\(recipePatch\.cutType\)[\s\S]*?: null/,
   );
 });
 

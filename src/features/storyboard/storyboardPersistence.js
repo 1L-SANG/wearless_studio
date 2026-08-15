@@ -24,6 +24,10 @@ export function createStoryboardPersistence({
   const lastSaved = new Map();
   const pending = new Map();
   const retries = new Map();
+  // 4xx(결정적 거절) 복구 훅 — 화면이 카탈로그·성별 문맥으로 스냅샷을 고쳐 되돌려주면
+  // 그 복구본을 즉시 저장한다. 스냅샷당 1회만 시도해 무한 복구 루프를 막는다.
+  let repairRejected = null;
+  const repairAttempted = new WeakSet();
 
   const clearRetry = (projectId) => {
     const retry = retries.get(projectId);
@@ -83,7 +87,28 @@ export function createStoryboardPersistence({
         },
         (error) => {
           pending.set(projectId, snapshot);
-          scheduleRetry(projectId, snapshot, options);
+          const deterministic = Number.isInteger(error?.status)
+            && error.status >= 400 && error.status < 500;
+          if (!deterministic) {
+            // 네트워크·5xx — 같은 스냅샷 재전송이 의미 있는 유일한 부류.
+            scheduleRetry(projectId, snapshot, options);
+            throw error;
+          }
+          // 4xx는 같은 스냅샷을 다시 보내도 영원히 같은 답 — 맹목 재시도 대신
+          // 등록된 복구 훅(낡은 예시 제거·재배정)에 한 번 맡긴다. 복구가 없거나
+          // 무변경이면 pending 만 남긴다(다음 진입의 복원·정규화가 이어받는다).
+          if (repairRejected && typeof snapshot === 'object' && snapshot !== null
+            && !repairAttempted.has(snapshot)) {
+            repairAttempted.add(snapshot);
+            Promise.resolve()
+              .then(() => repairRejected(projectId, snapshot, error))
+              .then((repaired) => {
+                if (!repaired || repaired === snapshot) return;
+                if (pending.get(projectId) !== snapshot) return;   // 더 최신 저장이 이미 대체
+                void saveNow(projectId, () => repaired, options).catch(() => {});
+              })
+              .catch(() => {});
+          }
           throw error;
         },
       );
@@ -110,6 +135,7 @@ export function createStoryboardPersistence({
     pending,
     saveIdle: () => saveChain.catch(() => {}),
     saveNow,
+    setRepairRejected(fn) { repairRejected = typeof fn === 'function' ? fn : null; },
     dispose() {
       onlineTarget?.removeEventListener?.('online', retryOnline);
       for (const projectId of retries.keys()) clearRetry(projectId);
@@ -122,3 +148,4 @@ export const sbLastSaved = storyboardPersistence.lastSaved;
 export const sbPending = storyboardPersistence.pending;
 export const sbSaveIdle = storyboardPersistence.saveIdle;
 export const sbSaveNow = storyboardPersistence.saveNow;
+export const sbSetSaveRepair = storyboardPersistence.setRepairRejected;

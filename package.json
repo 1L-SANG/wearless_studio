@@ -16,6 +16,8 @@
     "@tanstack/react-query": "^5.101.0",
     "@tosspayments/tosspayments-sdk": "^2.7.1",
     "heic-to": "^1.5.2",
+    "html-to-image": "^1.11.13",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.460.0",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",

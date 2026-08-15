@@ -2,7 +2,7 @@
    features/editor/Editor.jsx — ⑦ 상세페이지 에디터 (PRD §10)
    Structure/markup/classNames ported verbatim from the prototype
    (reference/prototype/features/editor.jsx). The element manipulation
-   ENGINE is swapped to react-moveable (drag/resize/rotate/snap) and
+   ENGINE uses one shared pointer drag/snap path plus react-moveable for resize/rotate and
    crop to react-easy-crop, mapped onto the same Element {x,y,w,h,rotate}
    model + patchElById. Everything else (blocks, panels, mini-preview,
    layers, undo/redo, frames, download/preview) keeps prototype logic.
@@ -20,27 +20,31 @@ import { listModels } from '@/lib/api/facemarket.js';
 import { uid } from '@/lib/ids.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, IconButton, Button, Modal, EmptyState, useToast } from '@/components/ui.jsx';
+import { SmoothProgressTrack } from '@/components/SmoothProgress.jsx';
+import { EXPECTED_MS } from '@/lib/smoothProgress.js';
 import { exampleGenderFromAnalysis, hexFor } from '@/features/storyboard/Storyboard.jsx';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
-import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
-import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
-import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, findImageDropSlot, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
-import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage } from '@/features/editor/editorLibrary.js';
+import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
+import { exportBlockPng, exportBlocksZip, exportLongPng } from '@/features/editor/editorExport.js';
+import { snapEditorDragDelta } from '@/features/editor/editorSnap.js';
+import { copyEditorElements, pasteEditorElements } from '@/features/editor/editorClipboard.js';
+import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, findImageDropSlot, fitImageToFrameBlock, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
+import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage, objectPresetInitialSelectionIds, upgradeLegacyKiwiTemplateBlocks } from '@/features/editor/editorLibrary.js';
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
-import { imageResizeRect, resizePolicyForElement, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
-import { mergeEditorImagesIntoWardrobe } from '@/features/editor/editorWardrobe.js';
-import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPassGroupDragArea, shouldPreserveMultiSelectionOnPointerDown } from '@/features/editor/editorSelection.js';
+import { imageResizeRect, lineHitStrokeWidth, resizePolicyForElement, shouldShowRotationHandle, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
+import { isWardrobeImageUsed, mergeEditorImagesIntoWardrobe } from '@/features/editor/editorWardrobe.js';
+import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, selectableElementBelowBlankText, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPreserveMultiSelectionOnPointerDown, shouldStartTextOnlyDrag } from '@/features/editor/editorSelection.js';
 import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from '@/lib/imageTranscode.js';
 import { CONTENT_ROLES, SECTION_ROLES, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
 import { withStoryboardSpaceSetExamples } from '@/lib/storyboardSpaceSetCatalog.js';
 
 const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)' };
 
-/* 스냅 엔진 상시 on (Phase 1 정식 승격) — react-moveable 내장 snap(elementGuidelines + 캔버스 센티넬).
-   DEV 게이트 제거: prod 배포에서도 동작. 옛 커스텀 snapX 는 삭제됨. */
+/* 스냅 엔진 상시 on — 포인터 이동은 editorSnap, Moveable 리사이즈는 elementGuidelines를 쓴다.
+   DEV 게이트 없이 prod 배포에서도 같은 기준으로 동작한다. */
 const SNAP_SPIKE = true;
 
 // FaceMarket 정산 영수증(장면③) — 404 = '정산 없음' 확정 신호라 즉시 종료(비 FM 경로 지연 방지).
@@ -75,6 +79,31 @@ function readImageDimensions(file) {
     image.onload = () => finish({ width: image.naturalWidth, height: image.naturalHeight });
     image.onerror = () => finish({ width: null, height: null });
     image.src = src;
+  });
+}
+
+function waitForImageSource(src, timeoutMs = 12000) {
+  return new Promise((resolve, reject) => {
+    if (!src) {
+      reject(new Error('업로드한 이미지 주소를 확인하지 못했어요.'));
+      return;
+    }
+    const image = new Image();
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      image.onload = null;
+      image.onerror = null;
+      if (error) reject(error);
+      else resolve();
+    };
+    const timer = window.setTimeout(() => finish(new Error('이미지를 불러오는 데 시간이 오래 걸리고 있어요. 다시 시도해 주세요.')), timeoutMs);
+    image.onload = () => finish();
+    image.onerror = () => finish(new Error('업로드한 이미지를 불러오지 못했어요. 다시 시도해 주세요.'));
+    image.src = src;
+    if (image.complete && image.naturalWidth > 0) finish();
   });
 }
 
@@ -127,6 +156,19 @@ function editableText(node) {
   return String(node?.innerText ?? node?.textContent ?? '').replace(/\n$/, '');
 }
 
+function focusEditableAtEnd(node) {
+  if (!node) return;
+  node.focus({ preventScroll: true });
+  const doc = node.ownerDocument;
+  const selection = doc?.getSelection?.();
+  const range = doc?.createRange?.();
+  if (!selection || !range) return;
+  range.selectNodeContents(node);
+  range.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
 function naturalTextWidth(node, value) {
   const doc = node?.ownerDocument;
   if (!doc) return 0;
@@ -141,22 +183,36 @@ function naturalTextWidth(node, value) {
   )));
 }
 
-/* render-only element (selection + inline text edit). Manipulation handled by
-   the single <Moveable> in the Editor (targets the selected element node). */
-function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPatch, onTextCommit, onMultiDragStart, onBubbleGroupDragStart, onAddImage, onDropImage, onEdit, onCropStart }) {
+function ImageDropGuide({ scale, width, height, rotate = 0 }) {
+  const safeScale = scale || 1;
+  const compact = Math.min((Number(width) || 240) * safeScale, (Number(height) || 240) * safeScale) < 132;
+  return (
+    <div className="image-drop-guide" style={{ '--drop-inv': 1 / safeScale, '--drop-counter-rotate': `${-rotate}deg` }} aria-hidden="true">
+      <div className={`image-drop-guide-content${compact ? ' compact' : ''}`}>
+        <span className="image-drop-guide-icon"><Icon name="imagePlus" size={compact ? 18 : 22} /></span>
+      </div>
+    </div>
+  );
+}
+
+/* render-only element (selection + inline text edit). Position dragging enters the
+   shared pointer engine; the single <Moveable> owns only resize/rotate controls. */
+function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPickBelowText, onPatch, onTextCommit, onElementDragStart, onAddImage, onDropImage, onDropImageFiles, onEdit, onCropStart }) {
   const ref = useRef(null);
   const textRef = useRef(null);
   const deferredPick = useRef(false);
+  const draggedPointer = useRef(false);
   const pendingBubbleFit = useRef(null);
+  const pendingTextSize = useRef(null);
   const [imageDropOver, setImageDropOver] = useState(false);
 
-  /* 글자 위를 눌렀는지, 상자 안 빈 곳을 눌렀는지 가른다 — 판정은 pointMissesTextLines.
-     이미 고른/편집 중인 요소는 상자 전체를 살려 둔다(여백을 잡고 끌 수 있어야 한다). */
+  /* 글자 근처를 눌렀는지, 상자 안의 먼 빈 곳을 눌렀는지 가른다 — 판정은 viewport
+     좌표의 최소 hit 여유를 포함한다. 편집 중이거나 라이브러리 완성형인 요소는 상자 전체를 살려 둔다. */
   const missesGlyphs = (e) => {
-    if (el.type !== 'text' || el.shape === 'bubble' || selected || editing) return false;
+    if (el.type !== 'text' || el.shape === 'bubble' || el.fullTextHitArea || editing) return false;
     // Composite objects use the entire text box as their hit target. Exact-glyph
     // hit testing made speech-bubble text look selectable while dropping the group.
-    if (el.groupId) return false;
+    if (el.groupId && el.libraryItemId) return false;
     const node = ref.current;
     if (!node) return false;
     const range = document.createRange();
@@ -167,31 +223,48 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
   const pick = (e) => {
     if (preview) return;
     if (el.locked) return;
+    if (e.button != null && e.button !== 0) return;
     if (missesGlyphs(e)) {
-      if (!onSelectBlock) return;
       e.stopPropagation();
+      const elementBelow = onPickBelowText?.(e, el);
+      if (elementBelow) {
+        onSelect(elementBelow, e.shiftKey);
+        return;
+      }
+      if (!onSelectBlock) return;
       onSelectBlock();
       return;
     }
     e.stopPropagation();
-    // 처음 누른 Q&A도 같은 포인터 제스처로 바로 움직여야 한다. 아직 선택되지 않은
-    // 요소에는 Moveable이 붙어 있지 않으므로, 선택만 하고 끝내면 사용자가 한 번 더
-    // 눌러야 드래그된다. 첫 제스처만 캔버스가 이어 받아 그룹을 이동한다.
-    if (!selected && !e.shiftKey && onBubbleGroupDragStart?.(e, el)) {
+    draggedPointer.current = false;
+    if (e.shiftKey) {
       deferredPick.current = false;
-      onSelect(el, false);
+      onSelect(el, true);
       return;
     }
-    deferredPick.current = shouldPreserveMultiSelectionOnPointerDown({
+
+    // 직접 만든 일반 글자는 마퀴 다중선택 상태여도 자기 레이어만 잡는다.
+    // 라이브러리 완성형은 selectionIdsForElement 로 묶인 구성 요소 전체를 잡는다.
+    const isolateText = shouldStartTextOnlyDrag(el, false);
+    if (isolateText) {
+      // 드래그 임계값(4px)에 도달하기 전에 브라우저의 네이티브 글자 선택이 먼저
+      // 시작되면 같은 동작이 될 때도, 안 될 때도 있었다. 편집 진입은 더블클릭이
+      // 담당하므로 일반 선택 상태에서는 기본 글자 선택을 즉시 막는다.
+      e.preventDefault();
+    }
+    window.getSelection?.()?.removeAllRanges();
+
+    const preserveSelection = !isolateText && shouldPreserveMultiSelectionOnPointerDown({
       selected,
       selectionCount,
-      additive: e.shiftKey,
+      additive: false,
     });
-    if (deferredPick.current) {
-      onMultiDragStart?.(e, () => { deferredPick.current = false; });
-      return;
-    }
-    onSelect(el, e.shiftKey);
+    deferredPick.current = preserveSelection;
+    onElementDragStart?.(e, el, { isolateText, preserveSelection }, () => {
+      draggedPointer.current = true;
+      deferredPick.current = false;
+    });
+    if (!preserveSelection) onSelect(el, false);
   };
 
   const finishClick = (e) => {
@@ -224,6 +297,21 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     return fit;
   }, [el]);
 
+  const previewAutoTextSize = useCallback((node) => {
+    if (!node || el.type !== 'text' || el.shape === 'bubble' || el.textSizing !== 'auto') return null;
+    const value = editableText(node);
+    const computed = node.ownerDocument.defaultView.getComputedStyle(node);
+    const horizontalPadding = (Number.parseFloat(computed.paddingLeft) || 0) + (Number.parseFloat(computed.paddingRight) || 0);
+    // Figma의 포인트 텍스트처럼 줄바꿈 전에는 가장 긴 줄을 따라 가로로 자라고,
+    // Enter를 누른 뒤에는 사용자가 만든 줄만큼 세로로 자란다.
+    const width = Math.max(12, Math.ceil(naturalTextWidth(node, value) + horizontalPadding + 2));
+    node.style.width = width + 'px';
+    node.style.height = 'auto';
+    const size = { w: width, h: Math.max(1, Math.ceil(node.scrollHeight)) };
+    pendingTextSize.current = size;
+    return size;
+  }, [el.shape, el.textSizing, el.type]);
+
   // 프리셋의 임시 w/h 를 한 프레임 먼저 보여 주면 말풍선이 뒤늦게 커지거나 줄어든다.
   // 첫 paint 전 실제 글자 폭·줄바꿈 높이를 재서 캔버스 정본까지 한 번에 맞춘다.
   useLayoutEffect(() => {
@@ -235,6 +323,23 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     if (changed) onPatch(blockId, el.id, patch);
   }, [blockId, editing, el, onPatch, preview, previewBubbleSize]);
 
+  // 글꼴·크기·자간을 패널에서 바꿔도 포인트 텍스트의 저장 폭/높이가 실제 글자와
+  // 어긋나지 않게 첫 paint 전에 다시 맞춘다. 템플릿 문구는 명시적 auto 플래그가 없어 제외한다.
+  useLayoutEffect(() => {
+    if (el.hidden || editing || preview || el.type !== 'text' || el.shape === 'bubble' || el.textSizing !== 'auto') return;
+    const size = previewAutoTextSize(ref.current);
+    if (!size || !onPatch) return;
+    const changed = Math.round(Number(el.w || 0)) !== size.w || Math.round(Number(el.h || 0)) !== size.h;
+    if (changed) onPatch(blockId, el.id, size);
+  }, [blockId, editing, el, onPatch, preview, previewAutoTextSize]);
+
+  // contentEditable 이 실제 DOM에 반영된 직후 포커스와 캐럿을 문장 끝으로 보낸다.
+  // 더블클릭 좌표에 남아 있던 브라우저 기본 selection 때문에 중간 글자가 덮이는 것을 막는다.
+  useLayoutEffect(() => {
+    if (!editing || preview || el.hidden || el.type !== 'text') return;
+    focusEditableAtEnd(isSpeechBubbleElement(el) ? textRef.current : ref.current);
+  }, [editing, el.hidden, el.id, el.shape, el.type, preview]);
+
   if (el.hidden) return null;
 
   const base = {
@@ -242,11 +347,12 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     transform: el.rotate ? `rotate(${el.rotate}deg)` : undefined, opacity: el.opacity ?? 1,
     pointerEvents: el.locked ? 'none' : undefined,
   };
-  const cls = (extra) => `el${extra ? ' ' + extra : ''}${selected ? ' on' : ''}`;
+  const cls = (extra) => `el${extra ? ' ' + extra : ''}${selected ? ' on' : ''}${selected && selectionCount > 1 ? ' multi-selected' : ''}`;
   const common = { ref, 'data-elid': el.id, onPointerDown: pick, onClick: finishClick };
   const imageDropProps = preview || el.type !== 'image' ? {} : {
     onDragOver: (e) => {
-      if (!e.dataTransfer.types.includes(WARDROBE_IMAGE_MIME)) return;
+      const types = [...e.dataTransfer.types];
+      if (!types.includes(WARDROBE_IMAGE_MIME) && !types.includes('Files')) return;
       e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; setImageDropOver(true);
     },
     onDragLeave: (e) => {
@@ -255,12 +361,28 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     },
     onDrop: (e) => {
       const image = decodeWardrobeImage(e.dataTransfer.getData(WARDROBE_IMAGE_MIME));
-      if (!image) return;
-      e.preventDefault(); e.stopPropagation(); setImageDropOver(false); onDropImage?.(image);
+      const files = [...(e.dataTransfer.files || [])];
+      if (!image && !files.length) return;
+      e.preventDefault(); e.stopPropagation(); setImageDropOver(false);
+      if (image) onDropImage?.(image);
+      else onDropImageFiles?.(files);
     },
   };
 
+  if (el.type === 'template-overlay') {
+    return (
+      <div className="el el-template-overlay" style={base} aria-hidden="true">
+        <img src={el.src} alt="" draggable={false} />
+      </div>
+    );
+  }
+
   if (el.type === 'image') {
+    const imageFrameStyle = el.stroke && el.stroke !== 'none' ? {
+      border: `${el.strokeWidth || 2}px ${el.dash || 'solid'} ${el.stroke}`,
+      boxSizing: 'border-box',
+      overflow: 'hidden',
+    } : {};
     if (!el.src && el.genPending) {
       // 생성 대기/진행/실패 타일 — 입력 페이지 자리표시 언어(회색+로고). 선택·조작 불가
       // (이미지 내용 잠금), 호버 시 콘티에서 고른 예시가 잠깐 비친다(상시 노출 금지 결정).
@@ -280,21 +402,28 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     }
     if (!el.src) {
       const inv = 1 / (scale || 1);
+      const compactSlot = Math.min(el.w * (scale || 1), el.h * (scale || 1)) < 120;
       // 빈 슬롯도 radius 를 따른다 — 특징 포인트의 원형 사진 슬롯이 원으로 보이게
-      const slotBase = { ...base, borderRadius: el.radius };
+      const slotBase = { ...base, borderRadius: el.radius, ...imageFrameStyle };
       if (preview) return <div className="el el-slot" style={slotBase} />;
       return (
-        <div {...common} {...imageDropProps} className={cls(`el-slot${imageDropOver ? ' image-drop-over' : ''}`)} style={slotBase}>
-          <button className="slot-add" style={{ transform: `scale(${inv})` }}
+        <div {...common} {...imageDropProps} className={cls(`el-slot${el.checkerboard ? ' checkerboard' : ''}${imageDropOver ? ' image-drop-over' : ''}`)} style={slotBase}>
+          <button className={`slot-add${compactSlot ? ' compact' : ''}`} style={{ transform: `scale(${inv})` }}
+            aria-label="이 프레임에 사진 넣기" title="이 프레임에 사진 넣기"
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); onAddImage && onAddImage(el); }}>
-            <Icon name="plus" size={20} /><span>이미지 추가</span>
+            onClick={(e) => {
+              e.stopPropagation();
+              onAddImage && onAddImage(el);
+            }}>
+            <Icon name="imagePlus" size={compactSlot ? 22 : 28} />
+            {!compactSlot && <span>여기에 사진 넣기</span>}
           </button>
+          {imageDropOver && <ImageDropGuide scale={scale} width={el.w} height={el.h} rotate={el.rotate} />}
         </div>
       );
     }
     return (
-      <div {...common} {...imageDropProps} className={cls(imageDropOver ? 'image-drop-over' : '')} style={base}
+      <div {...common} {...imageDropProps} className={cls(imageDropOver ? 'image-drop-over' : '')} style={{ ...base, borderRadius: el.radius, ...imageFrameStyle }}
         onDoubleClick={preview ? undefined : (e) => { e.stopPropagation(); onCropStart && onCropStart(el); }}>
         {el.crop ? (
           /* 커밋된 인라인 크롭: 프레임(overflow hidden) 안에 원본을 -ox,-oy 오프셋으로 */
@@ -302,8 +431,9 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
             <img src={el.src} alt="" draggable={false} style={{ left: -el.crop.ox, top: -el.crop.oy, width: el.crop.iw, height: el.crop.ih }} />
           </div>
         ) : (
-          <img src={el.src} alt="" style={{ borderRadius: el.radius }} draggable={false} />
+          <img src={el.src} alt="" style={{ borderRadius: el.radius, objectFit: el.fit || 'cover' }} draggable={false} />
         )}
+        {imageDropOver && <ImageDropGuide scale={scale} width={el.w} height={el.h} rotate={el.rotate} />}
       </div>
     );
   }
@@ -325,7 +455,6 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
         <div {...common} className={cls(`el-speech-bubble${editing ? ' editing' : ''}`)} style={{ ...base, overflow: 'visible' }}
           onDoubleClick={preview ? undefined : (e) => {
             e.stopPropagation(); pendingBubbleFit.current = null; onEdit(el.id);
-            setTimeout(() => textRef.current && textRef.current.focus(), 0);
           }}>
           <svg width="100%" height="100%" viewBox={`0 0 ${Math.max(1, el.w)} ${Math.max(1, el.h)}`} preserveAspectRatio="none"
             aria-hidden="true" style={{ position: 'absolute', inset: 0, display: 'block', overflow: 'visible', pointerEvents: 'none' }}>
@@ -362,7 +491,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       );
     }
     return (
-      <div ref={ref} data-elid={el.id} className={`el el-text${selected ? ' on' : ''}${editing ? ' editing' : ''}`} style={{ ...base, height: 'auto',
+      <div ref={ref} data-elid={el.id} className={cls(`el-text${editing ? ' editing' : ''}`)} style={{ ...base, height: el.textSizing === 'fixed' ? el.h : 'auto',
         fontFamily: FONT_MAP[s.font] || 'var(--font-body)', fontSize: s.size, fontWeight: s.weight || 400,
         color: s.color || '#0e0d14', letterSpacing: s.tracking, textAlign: s.align || 'left',
         lineHeight: s.lineHeight ? s.lineHeight + 'px' : 1.4, whiteSpace: 'pre-wrap', opacity: (el.opacity ?? 1) * (s.opacity ?? 1),
@@ -373,12 +502,16 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
         /* pick 이 이미 요소든 블록이든 골라 놨다 — 어느 쪽이든 이 클릭은 캔버스 바닥까지
            가면 안 된다. 거기 onClick 이 선택을 지운다. */
         onClick={finishClick}
-        onDoubleClick={(e) => { e.stopPropagation(); pendingBubbleFit.current = null; onEdit(el.id); setTimeout(() => ref.current && ref.current.focus(), 0); }}
+        onDoubleClick={(e) => { e.stopPropagation(); pendingTextSize.current = null; onEdit(el.id); }}
         contentEditable={editing} suppressContentEditableWarning
+        onInput={(e) => { if (editing) previewAutoTextSize(e.currentTarget); }}
         onBlur={(e) => {
           const value = editableText(e.currentTarget);
+          const nextSize = pendingTextSize.current || previewAutoTextSize(e.currentTarget);
+          pendingTextSize.current = null;
           onEdit(null);
-          onPatch(blockId, el.id, { text: value });
+          if (nextSize && onTextCommit) onTextCommit(blockId, el.id, value, nextSize);
+          else onPatch(blockId, el.id, { text: value });
         }}>
         {editing ? el.text : display}</div>
     );
@@ -406,10 +539,13 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
   );
   else {
     const my = el.h / 2; const lc = el.stroke && el.stroke !== 'none' ? el.stroke : (el.fill || '#0e0d14'); const lw = el.strokeWidth || 2.5;
+    const hitWidth = lineHitStrokeWidth(lw, scale);
     const dashMap = { dotted: '3 5', dashed: '12 9', solid: '' };
     const da = dashMap[el.dash || 'solid'] || undefined;
     inner = (
       <svg width="100%" height="100%" viewBox={`0 0 ${el.w} ${el.h}`} style={{ overflow: 'visible', display: 'block' }}>
+        <line x1={0} y1={my} x2={el.w} y2={my} stroke="transparent" strokeWidth={hitWidth}
+          strokeLinecap="round" pointerEvents="stroke" />
         <line x1={el.shape === 'arrow-l' ? 12 : 0} y1={my} x2={el.shape === 'arrow-r' ? el.w - 12 : el.w} y2={my} stroke={lc} strokeWidth={lw} strokeLinecap="round" strokeDasharray={da} />
         {el.shape === 'arrow-l' && <polyline points={`14,${my - 8} 2,${my} 14,${my + 8}`} fill="none" stroke={lc} strokeWidth={lw} strokeLinecap="round" strokeLinejoin="round" />}
         {el.shape === 'arrow-r' && <polyline points={`${el.w - 14},${my - 8} ${el.w - 2},${my} ${el.w - 14},${my + 8}`} fill="none" stroke={lc} strokeWidth={lw} strokeLinecap="round" strokeLinejoin="round" />}
@@ -431,53 +567,70 @@ function ImageImportWait({ item, scale }) {
   const phase = IMAGE_IMPORT_COPY[item.phase] ? item.phase : 'preparing';
   const [title, detail] = IMAGE_IMPORT_COPY[phase];
   const inv = Math.min(2.5, 1 / (scale || 1));
-  const contentWidth = Math.max(84, Math.min(240, (item.w - 36) / inv));
+  const contentWidth = Math.max(76, Math.min(156, item.w * (scale || 1) - 16));
+  const compact = Math.min(item.w * (scale || 1), item.h * (scale || 1)) < 132;
+  const compactTitle = {
+    preparing: '사진 준비 중',
+    uploading: '업로드 중',
+    placing: '프레임 적용 중',
+    done: '완료',
+    error: '불러오기 실패',
+  }[phase];
   const iconName = phase === 'done' ? 'check' : phase === 'error' ? 'x' : 'loader';
 
   return (
-    <div className={`ed-uploadwait ${phase}`} role="status" aria-live="polite" aria-label={title}
-      style={{ left: item.x, top: item.y, width: item.w, height: item.h, borderRadius: item.radius || 12 }}
+    <div className={`ed-uploadwait ${phase}`} role="status" aria-live="polite" aria-label={compact ? compactTitle : title}
+      style={{ left: item.x, top: item.y, width: item.w, height: item.h, borderRadius: item.radius ?? 12, transform: item.rotate ? `rotate(${item.rotate}deg)` : undefined, '--upload-counter-rotate': `${-(item.rotate || 0)}deg` }}
       onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
       onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
       onDrop={(e) => { e.preventDefault(); e.stopPropagation(); }}>
       <span className="ed-uploadwait-shim" aria-hidden="true" />
-      <div className="ed-uploadwait-content" style={{ width: contentWidth, transform: `scale(${inv})` }}>
+      <div className={`ed-uploadwait-content${compact ? ' compact' : ''}`} style={{ width: contentWidth, transform: `rotate(var(--upload-counter-rotate)) scale(${inv})` }}>
         <span className="ed-uploadwait-icon"><Icon name={iconName} size={20} className={phase === 'preparing' || phase === 'uploading' || phase === 'placing' ? 'spin' : ''} /></span>
-        <strong>{title}</strong>
-        <span>{detail}</span>
+        <strong>{compact ? compactTitle : title}</strong>
+        {!compact && <span>{detail}</span>}
         {phase !== 'done' && phase !== 'error' && <span className="ed-uploadwait-track" aria-hidden="true"><i /></span>}
       </div>
     </div>
   );
 }
 
-function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onTextCommit, onMultiDragStart, onBubbleGroupDragStart, shouldSuppressBlankClick, onAddImage, onDropImage, onDropBlockImage, onDropImageFiles, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropCancel, onCropReset, idx }) {
+function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onTextCommit, onElementDragStart, shouldSuppressBlankClick, onAddImage, onDropImage, onDropBlockImage, onDropImageFiles, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropCancel, onCropReset, idx }) {
   // 블록 높이는 콘텐츠보다 작아지지 않는다 — 이미지를 블록보다 크게 리사이즈하면 블록도 따라 커져 클립 방지.
   // (기존: block.h 있으면 고정 → 이미지 키워도 block-clip 이 잘라 "안 커보이던" 버그)
   const blockH = getBlockRenderHeight(block);
-  // 블록 강조(테두리·빠른 도구)는 그 블록이 지금 다루는 블록이면 켠다 — 안의 요소를 고른
-  // 상태도 포함이다. 블록은 사진·글이 거의 다 덮고 있어서, 배경 여백을 정확히 맞춰 눌러야만
-  // 켜지던 이전 조건으로는 캔버스에서 블록을 잡았다는 표시를 사실상 볼 수 없었다.
+  // 블록은 요소 선택의 좌표계로 계속 활성 상태를 유지하되, 파란 선택 링과 높이 손잡이는
+  // 블록 자체만 고른 경우에만 보인다. 다중 요소 선택을 부모 블록 선택처럼 보이게 하지 않는다.
   const blockActive = selectedBlockId === block.id;
-  // 높이 조절 손잡이는 블록 자체를 고른 때만 — 요소를 옮기는 중에 같이 뜨면 서로 걸린다.
   const blockSelected = blockActive && (!selEls || selEls.length === 0);
   const [objOver, setObjOver] = useState(false);
 
-  const resize = (e, side) => {
+  const pickBelowBlankText = (event, currentElement) => {
+    const candidateIds = [];
+    const glyphHitIds = [];
+    const seen = new Set();
+    for (const hit of document.elementsFromPoint(event.clientX, event.clientY)) {
+      const node = hit.closest?.('[data-elid]');
+      const id = node?.dataset.elid;
+      if (!id || seen.has(id)) continue;
+      seen.add(id); candidateIds.push(id);
+      const candidate = block.elements.find((element) => element.id === id);
+      const normalText = candidate?.type === 'text' && candidate.shape !== 'bubble' && !candidate.fullTextHitArea
+        && !(candidate.groupId && candidate.libraryItemId);
+      if (!normalText) continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      if (!pointMissesTextLines([...range.getClientRects()], event.clientX, event.clientY)) glyphHitIds.push(id);
+    }
+    return selectableElementBelowBlankText(block.elements, currentElement.id, candidateIds, glyphHitIds);
+  };
+
+  const resizeFromBottom = (e) => {
     e.stopPropagation(); e.preventDefault();
     if (e.button != null && e.button !== 0) return;
     const sy = e.clientY, startH = blockH;
-    const startEls = block.elements.map((el) => ({ id: el.id, y: el.y }));
     const move = (ev) => {
-      const dy = (ev.clientY - sy) / (scale || 1);
-      if (side === 'bottom') { onReshape(block.id, { h: Math.max(120, Math.round(startH + dy)) }); }
-      else {
-        const nh = Math.max(120, Math.round(startH - dy));
-        const delta = nh - startH;
-        const shiftEls = {};
-        startEls.forEach((s) => { shiftEls[s.id] = Math.round(s.y + delta); });
-        onReshape(block.id, { h: nh, shiftEls });
-      }
+      onReshape(block.id, { h: blockHeightFromBottom(startH, ev.clientY - sy, scale) });
     };
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); document.body.style.userSelect = ''; };
     document.body.style.userSelect = 'none';
@@ -485,7 +638,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
   };
 
   return (
-    <div className={`canvas-block${blockActive ? ' on' : ''}${objOver ? ' obj-over' : ''}`}
+    <div className={`canvas-block${blockSelected ? ' on' : ''}${objOver ? ' obj-over' : ''}`}
       data-blockid={block.id}
       /* 고른 뒤 전파를 멈춘다 — 캔버스 바닥의 onClick 이 매 클릭마다 선택을 지우므로,
          멈추지 않으면 누르는 동안만 잡혔다가 손을 떼는 순간 풀린다. */
@@ -520,14 +673,17 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
             <CanvasElement key={el.id} el={el} blockId={block.id} scale={scale} preview={false}
               selected={selEls && selEls.includes(el.id)} selectionCount={selEls?.length || 0} editing={editEl === el.id}
               onSelect={(e, additive) => onSelectEl(block.id, e, additive)}
-              onSelectBlock={() => onSelectBlock(block.id)} onPatch={onElPatch} onTextCommit={onTextCommit}
-              onMultiDragStart={(event, onDragStarted) => onMultiDragStart?.(block.id, event, onDragStarted)}
-              onBubbleGroupDragStart={(event, element) => onBubbleGroupDragStart?.(block.id, element, event)}
+              onSelectBlock={() => onSelectBlock(block.id)} onPickBelowText={pickBelowBlankText}
+              onPatch={onElPatch} onTextCommit={onTextCommit}
+              onElementDragStart={(event, element, options, onDragStarted) => onElementDragStart?.(block.id, element, event, options, onDragStarted)}
               onAddImage={(elm) => onAddImage(block.id, elm)} onEdit={onEdit}
               onDropImage={(image) => onDropImage(block.id, el.id, image)}
+              onDropImageFiles={(files) => onDropImageFiles(block.id, files, null, el.id)}
               onCropStart={(elm) => onCropStart && onCropStart(block.id, elm)} />
           )
         ))}
+        <div className="editor-snap-guide vertical" data-editor-snap-guide="vertical" aria-hidden="true" />
+        <div className="editor-snap-guide horizontal" data-editor-snap-guide="horizontal" aria-hidden="true" />
         {(imageImports || []).map((item) => <ImageImportWait key={item.id} item={item} scale={scale} />)}
         {/* 인라인 크롭 오버레이 — 고스트(원본 전체) + 밝은 프레임(8핸들), 밖은 딤.
             딤 영역(레이어 자신) 클릭 = "빈 곳 클릭" → 크롭 확정 */}
@@ -539,7 +695,9 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
             </div>
             <div className="crop-frame" style={{ left: crop.fx, top: crop.fy, width: crop.fw, height: crop.fh, borderRadius: crop.radius }}
               onPointerDown={(e) => onCropDrag(e, 'img')}>
-              <img src={crop.src} alt="" draggable={false} style={{ left: -crop.ox, top: -crop.oy, width: crop.iw, height: crop.ih }} />
+              <div className="crop-frame-image">
+                <img src={crop.src} alt="" draggable={false} style={{ left: -crop.ox, top: -crop.oy, width: crop.iw, height: crop.ih }} />
+              </div>
               {['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'].map((d) => (
                 <span key={d} className={`crop-h ch-${d}`} onPointerDown={(e) => onCropDrag(e, 'frame', d)} />
               ))}
@@ -567,11 +725,8 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
         </div>
       )}
       {blockSelected && (
-        <>
-          {/* 손잡이를 눌렀다 뗀 클릭도 캔버스 바닥으로 새면 방금 잡은 블록이 풀린다 */}
-          <span className="blk-resize top" onPointerDown={(e) => resize(e, 'top')} onClick={(e) => e.stopPropagation()} title="위로 높이 조절"><span className="pill-bar" /></span>
-          <span className="blk-resize bottom" onPointerDown={(e) => resize(e, 'bottom')} onClick={(e) => e.stopPropagation()} title="아래로 높이 조절"><span className="pill-bar" /></span>
-        </>
+        /* 손잡이를 눌렀다 뗀 클릭도 캔버스 바닥으로 새면 방금 잡은 블록이 풀린다 */
+        <span className="blk-resize" onPointerDown={resizeFromBottom} onClick={(e) => e.stopPropagation()} title="아래로 높이 조절"><span className="pill-bar" /></span>
       )}
       <div className="quick" onClick={(e) => e.stopPropagation()}>
         <IconButton name="chevUp" onClick={() => onMove(idx, -1)} title="위로" />
@@ -580,7 +735,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
         {/* presetTypeOf 로 게이트 — 갓 조립된 size/care auto 블록은 info 가 없어도 폼 편집 대상이다 */}
         {onEditInfo && presetTypeOf(block) && <IconButton name="pencil" onClick={() => onEditInfo(block)} title="내용 수정" />}
         <IconButton name="layers" onClick={() => onOpenLayers(block.id)} title="레이어" />
-        <IconButton name="download" onClick={() => onDownload(block)} title="이 블록 다운로드" />
+        <IconButton name="download" onClick={() => onDownload(block, idx)} title="이 블록 다운로드" />
         <IconButton name="trash" onClick={() => onDelete(block.id)} title="블록 삭제" />
       </div>
     </div>
@@ -678,7 +833,8 @@ export function Editor() {
   const latestBlocks = useRef(null);
   const pendingGenerationDraft = useRef(false);
   const setBlocks = useCallback((u) => setBlocksState((prev) => {
-    const next = normalizeEditorSelectionGroups(expandBlockHeights(typeof u === 'function' ? u(prev) : u));
+    const source = typeof u === 'function' ? u(prev) : u;
+    const next = normalizeEditorSelectionGroups(expandBlockHeights(upgradeLegacyKiwiTemplateBlocks(source, uid)));
     latestBlocks.current = next;
     return next;
   }), []);
@@ -708,6 +864,8 @@ export function Editor() {
   // 블록 강조 표시 여부 — 캔버스 빈 곳을 클릭하면 꺼진다. selBlock 자체는 삽입 대상으로 계속 쓰므로 건드리지 않는다.
   const [blockFocused, setBlockFocused] = useState(false);
   const [download, setDownload] = useState(false);
+  const [dlBusy, setDlBusy] = useState(false); // 내보내기 진행 중 — 퀵바·모달 공용 잠금
+  const [dlProg, setDlProg] = useState(null); // '3/12' — 여러 블록 내보내기 진행률
   /* ---- 에디터 통합 대기(editor_wait_dev_spec v2) — 생성이 도는 동안 같은 캔버스에서 편집.
      잡 수명·이벤트는 store.detailPageJob 소유, 여기는 구독·채움·완료 병합만. ---- */
   const dpJob = useAppStore((s) => s.detailPageJob);
@@ -727,6 +885,7 @@ export function Editor() {
   const [frameDragging, setFrameDragging] = useState(false);
   const [pendingSlot, setPendingSlot] = useState(null);
   const [imageImports, setImageImports] = useState([]);
+  const [wardrobeUploadLoading, setWardrobeUploadLoading] = useState(false);
   const [hoverGray, setHoverGray] = useState(false);
   const [layerFloat, setLayerFloat] = useState(null);
   const [layerPos, setLayerPos] = useState(null);
@@ -738,20 +897,70 @@ export function Editor() {
   const [mvTargets, setMvTargets] = useState([]);  // DOM nodes for react-moveable
   const [mvGuides, setMvGuides] = useState([]);    // Phase0 스파이크: elementGuidelines 소스(형제 요소+센티넬), effect-수집(identity 안정)
   const [marquee, setMarquee] = useState(null);    // wrapper 좌표계의 Figma식 드래그 다중선택 박스
-  const dragSnap = useRef(null);                   // start coords during a moveable gesture
-  const dragBlockHeight = useRef(null);            // 시작 시 부모 하단 — 요소가 닿으면 더 내려가지 않는다
+  const dragSnap = useRef(null);                   // start coords during a Moveable resize/rotate gesture
   const gesturing = useRef(false);                 // moveable 제스처 진행 중 — 상태 커밋/updateRect 금지
   const liveRef = useRef({});                      // elId → 라이브 적용값 (gesture end에 한 번 커밋)
   const toast = useToast();
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);                  // unscaled-layout canvas (transform: scale)
   const moveableRef = useRef(null);                // for updateRect() on selection/layout change
+  const pointerGroupRectFrame = useRef(null);      // direct child drag 중 Moveable 그룹 박스 동기화 RAF
+  const activePointerDragCleanup = useRef(null);   // 화면 이탈/언마운트에도 window 포인터 리스너 정리
   const suppressMarqueeClick = useRef(false);      // pointerup 직후 합성 click이 블록 선택으로 덮는 것 방지
   const [canvasH, setCanvasH] = useState(0);       // unscaled canvas height → scaled spacer
   const hist = useRef({ past: [], future: [] });
   const prevBlocks = useRef(null);
   const fromHistory = useRef(false);
   const lastPush = useRef(0);
+
+  useEffect(() => {
+    if (pendingSlot && tab !== 'wardrobe') setPendingSlot(null);
+  }, [pendingSlot, tab]);
+
+  const syncPointerGroupSelectionBounds = useCallback(() => {
+    if (pointerGroupRectFrame.current != null) return;
+    pointerGroupRectFrame.current = window.requestAnimationFrame(() => {
+      pointerGroupRectFrame.current = null;
+      moveableRef.current?.updateRect();
+    });
+  }, []);
+
+  const hidePointerSnapGuides = useCallback((blockId = null) => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const blocksToClear = blockId
+      ? [...wrap.querySelectorAll('.canvas-block')].filter((node) => node.dataset.blockid === blockId)
+      : [...wrap.querySelectorAll('.canvas-block')];
+    blocksToClear.forEach((blockNode) => {
+      blockNode.querySelectorAll('[data-editor-snap-guide]').forEach((guide) => {
+        guide.style.display = 'none';
+      });
+    });
+  }, []);
+
+  const showPointerSnapGuides = useCallback((blockId, guides) => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const blockNode = [...wrap.querySelectorAll('.canvas-block')]
+      .find((node) => node.dataset.blockid === blockId);
+    if (!blockNode) return;
+    const vertical = blockNode.querySelector('[data-editor-snap-guide="vertical"]');
+    const horizontal = blockNode.querySelector('[data-editor-snap-guide="horizontal"]');
+    if (vertical) {
+      vertical.style.display = guides.vertical == null ? 'none' : 'block';
+      if (guides.vertical != null) vertical.style.left = `${guides.vertical}px`;
+    }
+    if (horizontal) {
+      horizontal.style.display = guides.horizontal == null ? 'none' : 'block';
+      if (guides.horizontal != null) horizontal.style.top = `${guides.horizontal}px`;
+    }
+  }, []);
+
+  useEffect(() => () => {
+    activePointerDragCleanup.current?.();
+    if (pointerGroupRectFrame.current != null) window.cancelAnimationFrame(pointerGroupRectFrame.current);
+    hidePointerSnapGuides();
+  }, [hidePointerSnapGuides]);
 
   useEffect(() => { genActiveRef.current = genActive; }, [genActive]);
 
@@ -814,7 +1023,7 @@ export function Editor() {
           if (savedDraft) withH = mergeServerBlocks(savedDraft, withH);
           withH = ensureShippingReturnsBlock(withH, ctx);
         }
-        withH = stripPhotoBlockTextElements(withH);
+        withH = upgradeLegacyKiwiTemplateBlocks(stripPhotoBlockTextElements(withH), uid);
         setBlocks(withH);
         setWardrobe(mergeEditorImagesIntoWardrobe({ wardrobe: w, blocks: withH, ...wardrobeContext.current }));
         setCatalogs(hydratedCatalogs); setFmModels(fm); setSelBlock(withH[0]?.id);
@@ -879,7 +1088,7 @@ export function Editor() {
             merged = applyInfoTemplate(merged, ctx).blocks;
           }
           merged = ensureShippingReturnsBlock(merged, ctx);
-          merged = normalizeEditorSelectionGroups(expandBlockHeights(stripPhotoBlockTextElements(merged)));
+          merged = normalizeEditorSelectionGroups(expandBlockHeights(upgradeLegacyKiwiTemplateBlocks(stripPhotoBlockTextElements(merged), uid)));
           latestBlocks.current = merged;
           setBlocksState(merged);
           await api.saveEditorBlocks(projectId, merged);
@@ -986,6 +1195,7 @@ export function Editor() {
   }, [selEls, selBlock, blockFocused]);
 
   const kb = useRef({});
+  const editorClipboard = useRef(null);
   useEffect(() => {
     const onKey = (e) => {
       const t = e.target;
@@ -999,6 +1209,10 @@ export function Editor() {
       if (mod && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); e.shiftKey ? kb.current.redo?.() : kb.current.undo?.(); return; }
       if (mod && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); kb.current.redo?.(); return; }
       if (mod && (e.key === 's' || e.key === 'S')) { e.preventDefault(); kb.current.save?.(); return; }
+      const copyKey = e.code === 'KeyC' || e.key === 'c' || e.key === 'C';
+      const pasteKey = e.code === 'KeyV' || e.key === 'v' || e.key === 'V';
+      if (mod && !typing && !kb.current.croppingOn && copyKey && kb.current.copy?.()) { e.preventDefault(); return; }
+      if (mod && !typing && !kb.current.croppingOn && pasteKey && kb.current.paste?.()) { e.preventDefault(); return; }
       if (!mod && !typing && e.key === '[' && kb.current.hasSel) { e.preventDefault(); kb.current.layer?.('down'); return; }
       if (!mod && !typing && e.key === ']' && kb.current.hasSel) { e.preventDefault(); kb.current.layer?.('up'); return; }
       if (!mod && !typing && (e.key === 't' || e.key === 'T' || e.key === 'ㅅ') && kb.current.canAddText) { e.preventDefault(); kb.current.addText?.(); }
@@ -1123,6 +1337,7 @@ export function Editor() {
 
   const selectEl = (blockId, el, additive, keepTab) => {
     if (cropping) commitCrop();   // 크롭 중 다른 요소 클릭 → 크롭 확정 후 선택 (런타임 호출이라 TDZ 무관)
+    setPendingSlot(null);         // 다른 요소를 고르면 프레임 사진 선택 모드를 끝낸다.
     setVaryTarget(null);          // 캔버스 선택이 바뀌면 'AI 편집' 지정 대상은 해제
     // 요소를 고르는 것도 그 블록을 잡은 것이다 — 이걸 안 켜면 블록 테두리·빠른 도구가
     // 안 뜨고, 블록 배경을 정확히 눌러야만 보이는 상태로 돌아간다.
@@ -1136,7 +1351,31 @@ export function Editor() {
     });
     if (!keepTab) setTab(el.type === 'text' ? 'text' : 'image');
   };
-  const clearSel = () => { setSelEl(null); setSelEls([]); setVaryTarget(null); };
+  const clearSel = () => { setSelEl(null); setSelEls([]); setVaryTarget(null); setPendingSlot(null); };
+  const copySelectedElements = () => {
+    const copied = copyEditorElements(latestBlocks.current || blocks, selEls);
+    if (!copied) return false;
+    editorClipboard.current = copied;
+    toast.push(`${copied.elements.length > 1 ? `${copied.elements.length}개 요소를` : '요소를'} 복사했어요`, { icon: 'copy' });
+    return true;
+  };
+  const pasteCopiedElements = () => {
+    const copied = editorClipboard.current;
+    if (!copied) return false;
+    const currentBlocks = latestBlocks.current || blocks;
+    const targetBlock = currentBlocks.find((block) => block.id === copied.blockId)
+      || currentBlocks.find((block) => block.id === selBlock);
+    if (!targetBlock) return false;
+    const pasted = pasteEditorElements({ ...targetBlock, h: getBlockRenderHeight(targetBlock) }, copied.elements, uid);
+    if (!pasted) return false;
+    setBlocks((items) => items.map((block) => block.id === targetBlock.id
+      ? { ...block, elements: [...block.elements, ...pasted.elements] }
+      : block));
+    setSelBlock(targetBlock.id); setBlockFocused(true); setSelEl(pasted.selectedIds[0]); setSelEls(pasted.selectedIds); setEditEl(null); setVaryTarget(null);
+    editorClipboard.current = { blockId: targetBlock.id, elements: pasted.elements };
+    toast.push(`${pasted.elements.length > 1 ? `${pasted.elements.length}개 요소를` : '요소를'} 붙여넣었어요`, { icon: 'copy' });
+    return true;
+  };
   const patchEl = (patch) => setBlocks((bs) => bs.map((b) => ({ ...b, elements: b.elements.map((e) => e.id === selEl ? { ...e, ...patch } : e) })));
   const patchBubbleAppearance = (patch) => setBlocks((bs) => patchSelectedBubbleAppearance(bs, selEls.length ? selEls : [selEl], patch));
   const patchElById = (blockId, elId, patch) => setBlocks((bs) => bs.map((b) => b.id === blockId ? { ...b, elements: b.elements.map((e) => e.id === elId ? { ...e, ...patch } : e) } : b));
@@ -1156,6 +1395,48 @@ export function Editor() {
     return { ...b, h, elements: els };
   }));
   const reorderBlock = (from, to) => setBlocks((bs) => { const n = [...bs]; const [it] = n.splice(from, 1); n.splice(to, 0, it); return n; });
+
+  /* ---- 다운로드 — 화면의 블록 DOM 을 그대로 PNG 캡처 (editorExport.js).
+     dlBusy 는 퀵바·모달 두 경로가 공유 — 캡처가 겹치면 메모리·중복 저장 사고(리뷰 반영). ---- */
+  const finishExport = (successMsg, { softFailed }) => {
+    if (softFailed > 0) {
+      toast.push(`저장했지만 외부 이미지 ${softFailed}장은 불러오지 못해 빈 자리로 남았어요`, { icon: 'x' });
+    } else {
+      toast.push(successMsg, { icon: 'download' });
+    }
+  };
+  const downloadBlock = async (block, idx) => {
+    if (dlBusy) return;
+    if (genActive) { toast.push('생성 중인 페이지는 저장할 수 없어요. 완료 후 받아주세요.', { icon: 'x' }); return; }
+    const node = canvasRef.current?.querySelector(`.canvas-block[data-blockid="${block.id}"]`);
+    if (!node) { toast.push('블록을 찾지 못했어요. 다시 시도해 주세요.', { icon: 'x' }); return; }
+    setDlBusy(true);
+    try {
+      finishExport('이 블록을 PNG로 저장했어요', await exportBlockPng(node, productName, idx));
+    } catch (e) {
+      toast.push(e?.message || '블록 저장에 실패했어요. 다시 시도해 주세요.', { icon: 'x' });
+    } finally {
+      setDlBusy(false);
+    }
+  };
+  const runDownload = async () => {
+    if (dlBusy) return;
+    const nodes = [...(canvasRef.current?.querySelectorAll('.canvas-block') || [])];
+    if (!nodes.length) { toast.push('저장할 블록이 없어요.', { icon: 'x' }); return; }
+    setDlBusy(true);
+    const onProgress = (done, total) => setDlProg(`${done + 1}/${total}`);
+    try {
+      const run = dlFormat === 'zip' ? exportBlocksZip : exportLongPng;
+      const result = await run(nodes, productName, onProgress);
+      setDownload(false);
+      finishExport(dlFormat === 'zip' ? '블록별 PNG를 ZIP으로 저장했어요' : '전체 상세페이지를 PNG로 저장했어요', result);
+    } catch (e) {
+      toast.push(e?.message || '다운로드에 실패했어요. 잠시 후 다시 시도해 주세요.', { icon: 'x' });
+    } finally {
+      setDlBusy(false);
+      setDlProg(null);
+    }
+  };
   const layerEl = (dir) => setBlocks((bs) => bs.map((b) => {
     const i = b.elements.findIndex((e) => e.id === selEl); if (i < 0) return b;
     const els = [...b.elements]; const [it] = els.splice(i, 1);
@@ -1212,9 +1493,10 @@ export function Editor() {
     }
     if (type === 'preset') {
       const elements = buildObjectPreset(shapeId, { x: Math.max(0, x), y: Math.max(0, y), idFn: uid });
+      const initialSelection = objectPresetInitialSelectionIds(shapeId, elements);
       setBlocks((bs) => bs.map((b) => b.id === target ? { ...b, elements: [...b.elements, ...elements] } : b));
-      setSelBlock(target); setBlockFocused(true); setSelEl(elements.find((el) => el.type === 'text')?.id || elements[0].id); setSelEls(elements.map((el) => el.id));
-      toast.push('추천 오브젝트를 묶음으로 추가했어요');
+      setSelBlock(target); setBlockFocused(true); setSelEl(initialSelection[0]); setSelEls(initialSelection);
+      toast.push(shapeId === 'qa-bubbles' ? '독립된 말풍선 두 개를 추가했어요' : '추천 오브젝트를 묶음으로 추가했어요');
       return;
     }
     const el = type === 'line'
@@ -1226,20 +1508,29 @@ export function Editor() {
           fill: '#FFFFFF', stroke: '#000000', strokeWidth: 2, radius: 28,
           bubbleFit: { maxWidth: 560, padX: 24, padTop: 20, padBottom: 38, anchor: 'left' },
         }
+      /* 도형 기본값: 흰 채움 + 잉크 테두리 — 검정 통면은 상세페이지에서 너무 무겁고,
+         흰 블록 위에서 테두리 없이는 안 보인다 (2026-08-14 오너 확정). */
       : { id: uid('el'), type: 'shape', shape: shapeId, x, y, w: 140, h: 140,
+        fill: '#FFFFFF', stroke: '#0e0d14', strokeWidth: 2,
       };
     setBlocks((bs) => bs.map((b) => b.id === target ? { ...b, elements: [...b.elements, el] } : b));
     selectEl(target, el); toast.push('오브젝트를 추가했어요');
   };
   const setSlotImage = (blockId, elId, image) => {
-    setBlocks((bs) => bs.map((b) => (b.id === blockId ? applySlotFillToInfo(b, elId, image || { src: null, cutType: null }) : b)));
+    setBlocks((bs) => bs.map((b) => {
+      if (b.id !== blockId) return b;
+      const nextBlock = applySlotFillToInfo(b, elId, image || { src: null, cutType: null });
+      return fitImageToFrameBlock(nextBlock, elId, image);
+    }));
   };
-  const insertImage = (im, { blockId, point } = {}) => {
+  const insertImage = (im, { blockId, point, slotId, keepTab = false } = {}) => {
     const target = blockId || visibleBlock();
     const targetBlock = (latestBlocks.current || blocks).find((block) => block.id === target);
     if (!targetBlock || !im?.src) return;
 
-    const slot = findImageDropSlot(targetBlock.elements, point);
+    const slot = slotId
+      ? targetBlock.elements.find((element) => element.id === slotId && element.type === 'image' && element.frameSlot)
+      : findImageDropSlot(targetBlock.elements, point);
     if (slot) {
       const filled = {
         ...slot,
@@ -1249,7 +1540,7 @@ export function Editor() {
         ...(im.wardrobeGroup ? { wardrobeGroup: im.wardrobeGroup } : {}),
       };
       setSlotImage(target, slot.id, filled);
-      selectEl(target, filled);
+      selectEl(target, filled, false, keepTab);
       toast.push('프레임에 이미지를 넣었어요', { icon: 'image' });
       return;
     }
@@ -1268,25 +1559,33 @@ export function Editor() {
       ...(im.wardrobeGroup ? { wardrobeGroup: im.wardrobeGroup } : {}),
     };
     setBlocks((bs) => bs.map((block) => block.id === target ? { ...block, elements: [...block.elements, el] } : block));
-    selectEl(target, el);
+    selectEl(target, el, false, keepTab);
     toast.push('이미지를 캔버스에 삽입했어요');
   };
-  const requestSlotImage = (blockId, el) => { setPendingSlot({ blockId, elId: el.id }); setTab('wardrobe'); };
+  const requestSlotImage = (blockId, el) => {
+    selectEl(blockId, el, false, true);
+    setPendingSlot({ blockId, elId: el.id });
+    setTab('wardrobe');
+  };
   const dropSlotImage = (blockId, elId, image) => {
     setSlotImage(blockId, elId, image);
     toast.push('프레임에 이미지를 넣었어요', { icon: 'image' });
   };
-  const wardrobeInsert = (im) => {
+  const wardrobeInsert = (im, { keepTab = false } = {}) => {
     if (pendingSlot) {
       // 정보 블록 슬롯이면 info(폼 정본)에도 동기화 — 재생성 때 사진-포인트 연결 유지
       setSlotImage(pendingSlot.blockId, pendingSlot.elId, {
         src: im.src,
         cutType: im.cutType || null,
+        width: im.width,
+        height: im.height,
         userUploaded: Boolean(im.userUploaded),
         wardrobeGroup: im.wardrobeGroup || null,
       });
-      setPendingSlot(null); setTab('image'); toast.push('빈 칸에 이미지를 넣었어요');
-    } else insertImage(im);
+      setPendingSlot(null);
+      if (!keepTab) setTab('image');
+      toast.push('빈 칸에 이미지를 넣었어요');
+    } else insertImage(im, { keepTab });
   };
   const patchImageImport = (id, patch) => {
     if (!id) return;
@@ -1301,6 +1600,8 @@ export function Editor() {
       toast.push('JPG, PNG, WebP 또는 HEIC 사진을 선택해 주세요.', { icon: 'x' });
       return;
     }
+    const isWardrobeUpload = !placement?.blockId && !importId;
+    if (isWardrobeUpload) setWardrobeUploadLoading(true);
     try {
       const prepared = await toUploadableImage(file);
       const validation = getUploadValidationError(prepared);
@@ -1330,19 +1631,22 @@ export function Editor() {
         userUploaded: true,
         wardrobeGroup: 'misc',
       };
-      setWardrobe((current) => ({ ...current, misc: [...(current.misc || []), image] }));
       patchImageImport(importId, { phase: 'placing' });
+      await waitForImageSource(uploaded.url);
+      setWardrobe((current) => ({ ...current, misc: [...(current.misc || []), image] }));
       if (placement?.blockId) insertImage(image, placement);
-      else wardrobeInsert(image);
+      else wardrobeInsert(image, { keepTab: true });
       patchImageImport(importId, { phase: 'done' });
       finishImageImport(importId, 420);
     } catch (error) {
       patchImageImport(importId, { phase: 'error' });
       finishImageImport(importId, 1600);
       toast.push(error?.message || '사진을 업로드하지 못했어요. 다시 시도해 주세요.', { icon: 'x' });
+    } finally {
+      if (isWardrobeUpload) setWardrobeUploadLoading(false);
     }
   };
-  const dropImageFiles = (blockId, files, point) => {
+  const dropImageFiles = (blockId, files, point, slotId = null) => {
     const file = files.find(looksLikeImageFile);
     if (!file) {
       toast.push('이미지 파일을 끌어 놓아 주세요.', { icon: 'x' });
@@ -1354,6 +1658,7 @@ export function Editor() {
       elements: targetBlock.elements,
       blockHeight: getBlockRenderHeight(targetBlock),
       point,
+      slotId,
     });
     if (target.slotId && imageImports.some((item) => item.blockId === blockId && item.slotId === target.slotId)) {
       toast.push('이 프레임에서 이미 이미지를 불러오고 있어요.', { icon: 'image' });
@@ -1375,9 +1680,24 @@ export function Editor() {
   };
   // fresh = 새로 생성된 컷의 4색 glow 하이라이트 — 사용자가 본 뒤(애니메이션 종료) 해제
   const freshSeen = (id) => setWardrobe((w) => { const nw = {}; for (const [g, arr] of Object.entries(w)) nw[g] = arr.map((x) => x.id === id && x.fresh ? { ...x, fresh: false } : x); return nw; });
-  const deleteWardrobeImages = (ids) => {
-    setWardrobe((w) => { const nw = {}; for (const [g, arr] of Object.entries(w)) { const f = arr.filter((im) => !ids.includes(im.id)); if (f.length) nw[g] = f; } return nw; });
-    toast.push(`${ids.length}개 이미지를 의류 목록에서 삭제했어요`, { icon: 'trash' });
+  const wardrobeImageInUse = (image) => (
+    isWardrobeImageUsed(latestBlocks.current || blocks, image)
+  );
+  const deleteWardrobeImage = (image) => {
+    if (wardrobeImageInUse(image)) {
+      toast.push('현재 에디팅에 사용 중인 사진은 삭제할 수 없어요', { icon: 'alertTri' });
+      return;
+    }
+    setWardrobe((current) => {
+      const next = {};
+      for (const [group, images] of Object.entries(current || {})) {
+        const filtered = images.filter((candidate) => candidate.id !== image.id);
+        if (filtered.length) next[group] = filtered;
+      }
+      return next;
+    });
+    if (varyTarget?.id === image.id) setVaryTarget(null);
+    toast.push('이미지를 의류 목록에서 삭제했어요', { icon: 'trash' });
   };
   // req = NewCutRequest 필드 전체 (계약 §6) — 방향·샷·모델·예시 선택이 생성에 그대로 반영되어야 한다
   const generateImage = async (req) => {
@@ -1438,17 +1758,13 @@ export function Editor() {
     const wrap = wrapRef.current; if (!wrap) return;
     const target = wrap.querySelectorAll('.canvas-block')[idx];
     if (target) { const wr = wrap.getBoundingClientRect(); const tr = target.getBoundingClientRect(); wrap.scrollTo({ top: wrap.scrollTop + (tr.top - wr.top) - 40, behavior: 'smooth' }); } };
-  const addText = (bId, preset) => {
+  const addText = (bId) => {
     const id = bId || visibleBlock();
-    // preset 'garment' = AI 컷의 뭉갠 프린트 글자를 정확한 글자로 덮는 오버레이. 프린트는 보통
-    // 크고 굵고 가운데라 기본값을 다르게 준다(색은 셀러가 원본 프린트에 맞게 조절).
-    const garment = preset === 'garment';
-    const el = garment
-      ? { id: uid('el'), type: 'text', x: 90, y: 70, w: 480, h: 60, text: '옷 글자 입력', style: { font: 'Pretendard', size: 44, weight: 700, color: '#0e0d14', align: 'center' } }
-      : { id: uid('el'), type: 'text', x: 120, y: 80, w: 420, h: 60, text: '텍스트를 입력하세요', style: { font: 'Pretendard', size: 32, weight: 500, color: '#0e0d14' } };
+    const el = { id: uid('el'), type: 'text', x: 120, y: 80, w: 12, h: 45, text: '', textSizing: 'auto', style: { font: 'Pretendard', size: 32, weight: 500, color: '#0e0d14' } };
     setBlocks((bs) => bs.map((b) => b.id === id ? { ...b, elements: [...b.elements, el] } : b));
     selectEl(id, el); setTab('text');
-    toast.push(garment ? '옷 글자를 추가했어요 — 뭉갠 글자 위로 옮겨 덮으세요' : '텍스트를 추가했어요');
+    setEditEl(el.id);
+    toast.push('텍스트를 추가했어요');
   };
   /* ---- 정보 블록 (PRD §10.14 `내용 추가`) — infoPresets 빌더로 폼→블록 생성 ---- */
   const targetGenders = (analysis && analysis.targetGenders) || [];
@@ -1562,8 +1878,14 @@ export function Editor() {
     if (editEl && wrapRef.current && bs) {
       const node = wrapRef.current.querySelector(`[data-elid="${editEl}"]`);
       if (node) {
-        const text = node.textContent;
-        bs = bs.map((b) => ({ ...b, elements: b.elements.map((el) => el.id === editEl ? { ...el, text } : el) }));
+        const text = editableText(node);
+        bs = bs.map((b) => ({ ...b, elements: b.elements.map((el) => {
+          if (el.id !== editEl) return el;
+          const textSize = el.type === 'text' && el.shape !== 'bubble' && el.textSizing === 'auto'
+            ? { w: Math.max(1, Math.round(node.offsetWidth)), h: Math.max(1, Math.round(node.offsetHeight)) }
+            : {};
+          return { ...el, text, ...textSize };
+        }) }));
         latestBlocks.current = bs;
       }
     }
@@ -1587,7 +1909,7 @@ export function Editor() {
   };
   /* kb.current 는 crop 핸들러 정의 뒤(아래)에서 채운다 — TDZ 방지 */
 
-  /* ---- react-moveable → Element {x,y,w,h,rotate}.
+  /* ---- shared pointer drag + react-moveable resize/rotate → Element {x,y,w,h,rotate}.
      좌표: rootContainer가 캔버스 scale을 행렬로 접어 넣음 → 델타/크기는 LOCAL 도착.
      적용: 제스처 중에는 e.target.style 에만 라이브로 쓰고(liveRef), End 에서 한 번
      상태를 커밋한다 — 매 프레임 setState→컨트롤박스 재생성이 리사이즈 제스처를
@@ -1609,67 +1931,132 @@ export function Editor() {
       return next;
     }) })));
   };
-  const onMvDragStart = () => {
+  const onMvTransformStart = () => {
     gesturing.current = true; liveRef.current = {};
-    const selectedBlock = blocks.find((block) => block.elements.some((element) => selEls.includes(element.id)));
-    dragBlockHeight.current = selectedBlock ? getBlockRenderHeight(selectedBlock) : null;
     const o = {};
     selEls.forEach((id) => { const e = elById(id); if (e) o[id] = { x: e.x, y: e.y, w: e.w, h: e.h }; });
     dragSnap.current = o;
   };
-  const onMvGestureEnd = () => { gesturing.current = false; commitLive(); dragBlockHeight.current = null; };
-  const liveDrag = (target, beforeTranslate) => {
-    const elId = target.dataset.elid;
-    const st = dragSnap.current && dragSnap.current[elId]; if (!st) return;
-    const [dx, dy] = clampDragDelta(dragSnap.current, beforeTranslate, dragBlockHeight.current);
-    const nx = st.x + dx; const ny = st.y + dy;  // moveable 내장 스냅으로 beforeTranslate 는 이미 스냅된 값
-    // 캔버스 밖으로 넘어가지 않게 clamp — 왼쪽 끝에서 x=0 flush(overshoot 방지), 오른쪽은 1000-w, 위(y<0)도 막음.
-    // block-clip 이 어차피 넘친 부분을 자르므로 손실 없음. ("맨 왼쪽 끌면 몇 px 더 넘어가던" 문제 해결)
-    target.style.left = nx + 'px'; target.style.top = ny + 'px';
-    liveRef.current[elId] = { x: Math.round(nx), y: Math.round(ny) };
-  };
-  const onMvResizeStart = () => { gesturing.current = true; liveRef.current = {}; dragBlockHeight.current = null; const id = selEls[0]; const e = elById(id); dragSnap.current = e ? { [id]: { x: e.x, y: e.y, w: e.w, h: e.h } } : null; };
-  const startPointerGroupDrag = (block, ids, event, { threshold = 0, onDragStarted } = {}) => {
-    const selected = block.elements.filter((candidate) => ids.includes(candidate.id));
-    if (selected.length < 2) return false;
-    const start = Object.fromEntries(selected.map((candidate) => [candidate.id, {
-      x: candidate.x, y: candidate.y, w: candidate.w, h: candidate.h,
+  const onMvGestureEnd = () => { gesturing.current = false; commitLive(); };
+  const onMvResizeStart = () => { gesturing.current = true; liveRef.current = {}; const id = selEls[0]; const e = elById(id); dragSnap.current = e ? { [id]: { x: e.x, y: e.y, w: e.w, h: e.h } } : null; };
+  const startPointerSelectionDrag = (block, ids, event, { threshold = 0, onDragStarted } = {}) => {
+    const blockNode = [...(wrapRef.current?.querySelectorAll('.canvas-block') || [])]
+      .find((node) => node.dataset.blockid === block.id);
+    const elementNodes = [...(blockNode?.querySelectorAll('[data-elid]') || [])];
+    const nodeById = Object.fromEntries(elementNodes.map((node) => [node.dataset.elid, node]));
+    const selected = block.elements.filter((candidate) => (
+      ids.includes(candidate.id)
+      && !candidate.hidden
+      && !candidate.locked
+      && nodeById[candidate.id]
+    ));
+    if (selected.length < 1) return false;
+    const moveIds = selected.map((candidate) => candidate.id);
+    const nodes = Object.fromEntries(moveIds.map((id) => [id, nodeById[id]]));
+    const blockRect = blockNode?.querySelector('.block-clip')?.getBoundingClientRect();
+    const zoom = scale || 1;
+    const measuredRect = (candidate, node) => ({
+      id: candidate.id,
+      ...(node && blockRect ? (() => {
+        const rect = node.getBoundingClientRect();
+        return {
+          x: (rect.left - blockRect.left) / zoom,
+          y: (rect.top - blockRect.top) / zoom,
+          w: rect.width / zoom,
+          h: rect.height / zoom,
+        };
+      })() : {
+        x: candidate.x,
+        y: candidate.y,
+        w: node?.offsetWidth || candidate.w,
+        h: node?.offsetHeight || candidate.h,
+      }),
+    });
+    const startRects = selected.map((candidate) => measuredRect(candidate, nodes[candidate.id]));
+    const clampRects = Object.fromEntries(startRects.map((rect) => [rect.id, rect]));
+    const modelStart = Object.fromEntries(selected.map((candidate) => [candidate.id, {
+      x: candidate.x,
+      y: candidate.y,
     }]));
+    const selectedSet = new Set(moveIds);
+    const guideRects = block.elements
+      .filter((candidate) => !selectedSet.has(candidate.id) && !candidate.hidden && !candidate.locked)
+      .map((candidate) => {
+        const node = nodeById[candidate.id];
+        return node ? measuredRect(candidate, node) : null;
+      })
+      .filter(Boolean);
     const startClientX = event.clientX;
     const startClientY = event.clientY;
     const pointerTarget = event.currentTarget;
     const pointerId = event.pointerId;
     const blockHeight = getBlockRenderHeight(block);
-    const nodes = Object.fromEntries(ids.map((id) => [id, wrapRef.current?.querySelector(`[data-elid="${id}"]`)]));
+    const previousUserSelect = document.body.style.userSelect;
     let active = false;
     let latest = null;
-    pointerTarget?.setPointerCapture?.(pointerId);
+    activePointerDragCleanup.current?.();
+    hidePointerSnapGuides();
+    try { pointerTarget?.setPointerCapture?.(pointerId); } catch { /* detached pointer target */ }
 
     const move = (pointerEvent) => {
+      if (pointerId != null && pointerEvent.pointerId != null && pointerEvent.pointerId !== pointerId) return;
       const clientDx = pointerEvent.clientX - startClientX;
       const clientDy = pointerEvent.clientY - startClientY;
       if (!active && Math.hypot(clientDx, clientDy) < threshold) return;
       if (!active) {
         active = true;
+        gesturing.current = true;
         onDragStarted?.();
+        document.body.style.userSelect = 'none';
       }
-      const [dx, dy] = clampDragDelta(start, [clientDx / (scale || 1), clientDy / (scale || 1)], blockHeight);
-      latest = Object.fromEntries(ids.map((id) => [id, {
-        x: Math.round(start[id].x + dx),
-        y: Math.round(start[id].y + dy),
+      pointerEvent.preventDefault();
+      const snapped = snapEditorDragDelta({
+        startRects,
+        guideRects,
+        delta: [clientDx / (scale || 1), clientDy / (scale || 1)],
+        scale,
+        blockWidth: 1000,
+        blockHeight,
+      });
+      const [dx, dy] = clampDragDelta(clampRects, snapped.delta, blockHeight);
+      showPointerSnapGuides(block.id, {
+        vertical: Math.abs(dx - snapped.delta[0]) < 0.01 ? snapped.guides.vertical : null,
+        horizontal: Math.abs(dy - snapped.delta[1]) < 0.01 ? snapped.guides.horizontal : null,
+      });
+      latest = Object.fromEntries(moveIds.map((id) => [id, {
+        x: Math.round(modelStart[id].x + dx),
+        y: Math.round(modelStart[id].y + dy),
       }]));
-      ids.forEach((id) => {
+      moveIds.forEach((id) => {
         const node = nodes[id];
         if (!node) return;
         node.style.left = latest[id].x + 'px';
         node.style.top = latest[id].y + 'px';
       });
+      // 직접 선택 요소를 잡아 끄는 경로는 Moveable 이벤트를 거치지 않는다. DOM 요소만
+      // 이동시키면 바깥 그룹 박스가 출발점에 남으므로, 같은 프레임에 함께 갱신한다.
+      syncPointerGroupSelectionBounds();
     };
-    const end = () => {
+    const cleanup = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', end);
       window.removeEventListener('pointercancel', end);
-      if (pointerTarget?.hasPointerCapture?.(pointerId)) pointerTarget.releasePointerCapture(pointerId);
+      window.removeEventListener('blur', end);
+      try {
+        if (pointerTarget?.hasPointerCapture?.(pointerId)) pointerTarget.releasePointerCapture(pointerId);
+      } catch { /* detached pointer target */ }
+      document.body.style.userSelect = previousUserSelect;
+      gesturing.current = false;
+      hidePointerSnapGuides(block.id);
+      if (pointerGroupRectFrame.current != null) {
+        window.cancelAnimationFrame(pointerGroupRectFrame.current);
+        pointerGroupRectFrame.current = null;
+      }
+      if (activePointerDragCleanup.current === cleanup) activePointerDragCleanup.current = null;
+    };
+    const end = (pointerEvent) => {
+      if (pointerId != null && pointerEvent?.pointerId != null && pointerEvent.pointerId !== pointerId) return;
+      cleanup();
       if (!active || !latest) return;
       setBlocks((current) => current.map((item) => item.id === block.id ? {
         ...item,
@@ -1681,22 +2068,20 @@ export function Editor() {
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', end);
     window.addEventListener('pointercancel', end);
+    window.addEventListener('blur', end);
+    activePointerDragCleanup.current = cleanup;
     return true;
   };
-  const startSelectedGroupDrag = (blockId, event, onDragStarted) => {
+  const startElementDrag = (blockId, element, event, options = {}, onDragStarted) => {
     const block = blocks.find((item) => item.id === blockId);
     if (!block) return false;
-    const blockIds = new Set(block.elements.map((element) => element.id));
-    const ids = selEls.filter((id) => blockIds.has(id));
-    return startPointerGroupDrag(block, ids, event, { threshold: 4, onDragStarted });
-  };
-  const startUnselectedBubbleGroupDrag = (blockId, element, event) => {
-    const block = blocks.find((item) => item.id === blockId);
-    if (!block || element?.type !== 'text' || element?.shape !== 'bubble') return false;
-    const ids = selectionIdsForElement(block.elements, element);
-    const selected = block.elements.filter((candidate) => ids.includes(candidate.id));
-    if (selected.length < 2 || !selected.every((candidate) => candidate.type === 'text' && candidate.shape === 'bubble')) return false;
-    return startPointerGroupDrag(block, ids, event);
+    const blockIds = new Set(block.elements.map((candidate) => candidate.id));
+    const ids = options.isolateText
+      ? [element.id]
+      : options.preserveSelection
+        ? selEls.filter((id) => blockIds.has(id))
+        : selectionIdsForElement(block.elements, element);
+    return startPointerSelectionDrag(block, ids, event, { threshold: 4, onDragStarted });
   };
   const liveResize = (target, width, height, drag) => {
     const elId = target.dataset.elid;
@@ -1723,7 +2108,10 @@ export function Editor() {
       imgNode.style.left = (-elNow.crop.ox * kx) + 'px';
       imgNode.style.top = (-elNow.crop.oy * ky) + 'px';
     }
-    liveRef.current[elId] = { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.w), h: Math.round(rect.h) };
+    liveRef.current[elId] = {
+      x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.w), h: Math.round(rect.h),
+      ...(elNow?.type === 'text' && elNow.shape !== 'bubble' && elNow.textSizing === 'auto' ? { textSizing: 'fixed' } : {}),
+    };
   };
   const liveRotate = (target, rotation) => {
     const elId = target.dataset.elid;
@@ -1782,7 +2170,7 @@ export function Editor() {
   };
 
   // keep latest action handlers for the global keyboard effect (incl. crop keys)
-  kb.current = { undo, redo, save, addText, canAddText: selEls.length === 0 && !!selBlock, layer: layerEl, hasSel: !!selEl,
+  kb.current = { undo, redo, save, copy: copySelectedElements, paste: pasteCopiedElements, addText, canAddText: selEls.length === 0 && !!selBlock, layer: layerEl, hasSel: !!selEl,
     croppingOn: !!cropping, cropCommit: commitCrop, cropCancel: cancelCrop };
 
   const TOOLS = [
@@ -1805,7 +2193,7 @@ export function Editor() {
   const renderPanel = () => {
     switch (tab) {
       case 'ai': return <AIPanel catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} matchClothing={matchClothing} exampleGender={exampleGenderFromAnalysis(analysis, catalogs, clothingType)} varySource={varySource} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickRef={() => api.pickRefImage(projectId)} onPickMoodRef={() => api.pickRefImage(projectId)} onSetCutType={setVaryCutType} />;
-      case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={detailColorOpts} pendingSlot={pendingSlot} onInsert={wardrobeInsert} onDeleteSelected={deleteWardrobeImages} onUpload={pickAndInsertImage} onVaryImage={varyImage} onFreshSeen={freshSeen}
+      case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={detailColorOpts} pendingSlot={pendingSlot} uploading={wardrobeUploadLoading} onInsert={wardrobeInsert} onDeleteImage={deleteWardrobeImage} isImageUsed={wardrobeImageInUse} onUpload={pickAndInsertImage} onVaryImage={varyImage} onFreshSeen={freshSeen}
         onImageDragStart={() => setFrameDragging(true)} onImageDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />;
       case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio}
         onCrop={(el) => startCrop(blockIdOf(el.id), el)} onCropReset={() => patchEl({ crop: undefined })}
@@ -1813,16 +2201,10 @@ export function Editor() {
         onRemove={(el) => { setSlotImage(blockIdOf(el.id), el.id, { src: null, cutType: null }); toast.push('이미지를 프레임에서 빼냈어요'); }}
         onVary={varyImage} />;
       case 'frame': return (
-        <>
-          <FramePanel onAdd={addFrame} onDragStart={() => setFrameDragging(true)} onDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />
-          {/* 내용 프리셋 — 프레임 탭에 통합 (별도 탭 없음). 기본 템플릿은 로드 시 자동 구성 */}
-          <div style={{ marginTop: 22 }}>
-            <ContentPanel recommendGender={recommendGender} onPick={openInfoPreset}
-              onDragStart={() => setFrameDragging(true)} onDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />
-          </div>
-        </>
+        <FramePanel onAdd={addFrame} recommendGender={recommendGender} onPickInfo={openInfoPreset}
+          onDragStart={() => setFrameDragging(true)} onDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />
       );
-      case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onBubbleAppearanceChange={patchBubbleAppearance} onLayer={layerEl} onAddText={() => addText()} onAddGarmentText={() => addText(undefined, 'garment')} />;
+      case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onBubbleAppearanceChange={patchBubbleAppearance} onLayer={layerEl} onAddText={() => addText()} />;
       case 'shape': return <ShapePanel catalogs={catalogs} onAdd={addShape} block={(selEls.length === 0 && selBlock) ? blocks.find((b) => b.id === selBlock) : null} onBgChange={changeBg} />;
       default: return null;
     }
@@ -1936,8 +2318,9 @@ export function Editor() {
   const fitToScreen = () => { const wrap = wrapRef.current; if (!wrap) return; setScale(Math.min(2, Math.max(0.1, +((wrap.clientWidth - 80) / 1000).toFixed(2)))); };
   const single = selEls.length === 1 && !editEl;
   const group = selEls.length > 1 && !editEl;
-  const passGroupDragArea = group && shouldPassGroupDragArea(selEls.map((id) => elById(id)));
   const resizePolicy = resizePolicyForElement(selectedElObj, lockRatio);
+  const showRotationHandle = single && shouldShowRotationHandle(selectedElObj);
+  const autoHeightTextTarget = single && selectedElObj?.type === 'text' && selectedElObj.shape !== 'bubble' && selectedElObj.textSizing !== 'fixed';
   // 정렬·분배(Phase 3b) — 다중선택이 "한 블록"일 때만(좌표가 블록-상대라 cross-block 정렬 무의미).
   const groupBlockId = (() => {
     if (!group) return null;
@@ -2030,7 +2413,18 @@ export function Editor() {
                 : '상세페이지를 만들고 있어요'}
           </span>
           {!genFailed && (
-            <span className="ed-genbar-track" aria-hidden="true"><i style={{ width: `${dpJob.progress}%` }} /></span>
+            /* 훅을 이 작은 컴포넌트가 소유한다 — 초당 여러 번의 진행 갱신이 에디터 전체
+               트리를 다시 그리지 않게 격리. */
+            /* active 를 status==='running' 에 묶으면 안 된다 — 잡이 done 이 된 뒤에도
+               마무리(완성본 병합·저장)가 끝날 때까지 이 리본은 몇 초 더 떠 있고, 그 사이
+               바가 0 으로 비어 버린다. 리본이 떠 있는 동안은 계속 살아 있고, done 이면
+               100 을 채운다. */
+            <SmoothProgressTrack
+              tag="span" className="ed-genbar-track"
+              value={dpJob.progress} done={dpJob.status === 'done'}
+              jobKey={dpJob.jobId || dpJob.projectId || ''}
+              startedAt={dpJob.startedAt} expectedMs={EXPECTED_MS.detailPage}
+            />
           )}
           <span className="ed-genbar-side">
             {genFailed ? (
@@ -2148,15 +2542,14 @@ export function Editor() {
                   crop={cropping && cropping.blockId === b.id ? cropping : null}
                   onCropDrag={cropDrag} onCropStart={startCrop} onCropCommit={commitCrop} onCropCancel={cancelCrop} onCropReset={resetCrop}
                   onSelectBlock={(id) => { setSelBlock(id); setBlockFocused(true); clearSel(); setTab('shape'); }} onSelectEl={selectEl}
-                  onElPatch={patchElById} onTextCommit={commitBubbleText} onMultiDragStart={startSelectedGroupDrag}
-                  onBubbleGroupDragStart={startUnselectedBubbleGroupDrag}
+                  onElPatch={patchElById} onTextCommit={commitBubbleText} onElementDragStart={startElementDrag}
                   shouldSuppressBlankClick={consumeMarqueeClick}
                   onAddImage={requestSlotImage} onDropImage={dropSlotImage}
                   onDropBlockImage={(blockId, image, point) => insertImage(image, { blockId, point })} onDropImageFiles={dropImageFiles}
                   onOpenLayers={(id) => { setLayerFloat(id); setLayerPos(null); }}
                   onObjectDrop={(bid, type, id, ev) => addShape(type, id, bid, ev)} onReshape={reshapeBlock}
                   onMove={moveBlock} onAddEmpty={addEmpty} onDelete={deleteBlock} onEditInfo={openInfoEdit}
-                  onDownload={() => toast.push('이 블록을 PNG로 저장했어요', { icon: 'download' })} />
+                  onDownload={downloadBlock} />
               </div>
             ))}
             <div className="canvas-droprow" onDragOver={(e) => { if (acceptsEditorBlockInsert(e.dataTransfer.types)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setFrameOver(blocks.length); } }}
@@ -2179,15 +2572,16 @@ export function Editor() {
           {mvTargets.length > 0 && (
             <Moveable
               ref={moveableRef}
+              className={autoHeightTextTarget ? 'moveable-auto-text' : undefined}
               target={mvTargets}
               rootContainer={wrapRef.current}
-              // 일반 합성 오브젝트는 자식 레이어 선택을 위해 투과한다. 완성된 말풍선끼리의
-              // 그룹은 드래그 영역이 포인터를 직접 받아야 선택 후 바로 이동할 수 있다.
-              passDragArea={passGroupDragArea}
+              // 모든 위치 이동은 CanvasElement의 공통 포인터 경로가 담당한다. 다중 선택의
+              // Moveable 면도 자식 포인터를 가로채지 않게 투과하고, Moveable은 크기/회전만 맡는다.
+              passDragArea={group}
               preventClickEventOnDrag
-              draggable
+              draggable={false}
               resizable={single}
-              rotatable={single}
+              rotatable={showRotationHandle}
               keepRatio={resizePolicy.keepRatio}
               {...(SNAP_SPIKE ? {
                 snappable: true,
@@ -2204,16 +2598,10 @@ export function Editor() {
               throttleDrag={0}
               throttleResize={0}
               throttleRotate={0}
-              onDragStart={onMvDragStart}
-              onDrag={(e) => liveDrag(e.target, e.beforeTranslate)}
-              onDragEnd={onMvGestureEnd}
-              onDragGroupStart={onMvDragStart}
-              onDragGroup={(e) => e.events.forEach((ev) => liveDrag(ev.target, ev.beforeTranslate))}
-              onDragGroupEnd={onMvGestureEnd}
               onResizeStart={onMvResizeStart}
               onResize={(e) => liveResize(e.target, e.width, e.height, e.drag)}
               onResizeEnd={onMvGestureEnd}
-              onRotateStart={onMvDragStart}
+              onRotateStart={onMvTransformStart}
               onRotate={(e) => liveRotate(e.target, e.rotation)}
               onRotateEnd={onMvGestureEnd}
             />
@@ -2251,8 +2639,9 @@ export function Editor() {
       )}
 
       {/* download modal */}
+      {/* onClose 도 dlBusy 게이트 — ESC·배경클릭으로 닫혀도 내보내기는 계속 돌아 유령 완료가 된다(리뷰 반영) */}
       {download && (
-        <Modal onClose={() => setDownload(false)} wide>
+        <Modal onClose={() => { if (!dlBusy) setDownload(false); }} wide>
           <div className="dl-modal">
             <div className="dl-head">
               <div className="dl-eyebrow">다운로드</div>
@@ -2275,8 +2664,8 @@ export function Editor() {
               })}
             </div>
             <div className="dl-foot">
-              <Button variant="quiet" onClick={() => setDownload(false)}>취소</Button>
-              <Button variant="primary" icon="download" onClick={() => { setDownload(false); toast.push('다운로드를 시작했어요', { icon: 'download' }); }}>다운로드</Button>
+              <Button variant="quiet" onClick={() => setDownload(false)} disabled={dlBusy}>취소</Button>
+              <Button variant="primary" icon="download" onClick={runDownload} disabled={dlBusy}>{dlBusy ? `만드는 중…${dlProg ? ` ${dlProg}` : ''}` : '다운로드'}</Button>
             </div>
           </div>
         </Modal>

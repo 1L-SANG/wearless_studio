@@ -1,6 +1,6 @@
 /* =============================================================
    features/editor/ContentPanel.jsx — 정보 프리셋 (PRD §10.14 `내용 추가`)
-   프레임 탭 안에 통합 렌더된다(별도 탭 없음). 사진이 필요 없는 표·글·안내를
+   프레임 탭의 `안내 프레임` 카테고리에 렌더된다. 사진이 필요 없는 표·글·안내를
    골라 정보 블록으로 넣는다. 목록은 중요도 순서(반드시 확인 → 판매에 도움 →
    필요할 때 추가) 단일 리스트로 전원 노출하고, targetGenders 는 '추천' 배지에만
    쓴다(UI 분기 금지). 상단에는 작은 스타일 토글(브랜드형/소호형) + 일괄 삽입.
@@ -93,14 +93,16 @@ function PresetThumb({ type }) {
   }
 }
 
-export function ContentPanel({ recommendGender, onPick, onDragStart, onDragEnd }) {
+export function ContentPanel({ recommendGender, onPick, onDragStart, onDragEnd, showIntro = true }) {
   return (
     <div>
-      <div className="lbl" style={{ marginBottom: 6 }}>내용 추가</div>
-      <p className="panel-sub" style={{ marginBottom: 12 }}>
-        표·글·안내처럼 사진이 필요 없는 내용을 블록으로 넣어요.
-        기본 구성(공지·헤더·특징·사이즈표·케어·고시)은 상세페이지 생성 때 자동으로 깔려요.
-      </p>
+      {showIntro && <>
+        <div className="lbl" style={{ marginBottom: 6 }}>내용 추가</div>
+        <p className="panel-sub" style={{ marginBottom: 12 }}>
+          표·글·안내처럼 사진이 필요 없는 내용을 블록으로 넣어요.
+          기본 구성(공지·헤더·특징·사이즈표·케어·고시)은 상세페이지 생성 때 자동으로 깔려요.
+        </p>
+      </>}
 
       {TIERS.map((tier) => {
         const items = INFO_PRESET_TYPES.filter((p) => p.tier === tier.id);

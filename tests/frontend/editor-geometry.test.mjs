@@ -2,12 +2,19 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  blockHeightFromBottom,
   clampDragDelta,
   clampElementRect,
   expandBlockHeights,
   getBlockRenderHeight,
   pointMissesTextLines,
 } from '../../src/features/editor/editorGeometry.js';
+
+test('block height resizing keeps the top anchored and follows only the bottom edge', () => {
+  assert.equal(blockHeightFromBottom(600, 40, 0.4), 700);
+  assert.equal(blockHeightFromBottom(600, -80, 0.4), 400);
+  assert.equal(blockHeightFromBottom(180, -40, 0.4), 120, 'the minimum block height is preserved');
+});
 
 test('editor geometry keeps derived heights and selections inside the canvas', () => {
   assert.equal(getBlockRenderHeight({ h: 660, elements: [{ y: 640, h: 120 }] }), 810);
@@ -58,10 +65,12 @@ test('pointMissesTextLines checks every line of a wrapped paragraph', () => {
   assert.equal(pointMissesTextLines(wrapped, 800, 746), true, '둘째 줄은 짧아 그 오른쪽은 빈 곳');
 });
 
-test('pointMissesTextLines forgives a couple of pixels at the glyph edge', () => {
+test('pointMissesTextLines keeps a stable screen-space target around tiny zoomed text', () => {
   const line = [{ left: 60, right: 320, top: 700, bottom: 728 }];
-  assert.equal(pointMissesTextLines(line, 321, 714), false, '경계 1px 밖은 아직 글자로 친다');
-  assert.equal(pointMissesTextLines(line, 340, 714), true, '충분히 벗어나면 빈 곳');
+  assert.equal(pointMissesTextLines(line, 322, 714), false, '경계 2px 밖은 아직 텍스트 hit 영역이다');
+  assert.equal(pointMissesTextLines(line, 324, 714), true, '기본 3px 여유를 벗어나면 빈 곳이다');
+  assert.equal(pointMissesTextLines(line, 180, 698), false, '줄 위 2px도 축소된 텍스트 클릭으로 받는다');
+  assert.equal(pointMissesTextLines(line, 180, 696), true, '줄 위 기본 여유를 벗어나면 빈 곳이다');
 });
 
 test('pointMissesTextLines leaves an empty text element clickable across its box', () => {

@@ -158,9 +158,10 @@ test('the mannequin CTA cannot mistake a failed storyboard fetch for zero AI cut
   // 소비 직전 CTA 가 '0 크레딧'(=무료로 읽힘)을 보여줄 수 있다. null 로 남겨 구분한다.
   assert.doesNotMatch(mannequinSource, /getStoryboard\(pid\)\.catch\(\(\) => \[\]\)/);
   assert.match(mannequinSource, /getStoryboard\(pid\)\.catch\(\(\) => null\)/);
+  // 크레딧 견적은 실제 생성 수(복제 접기) — 실패는 여전히 null 로 구분한다(ADR-0011).
   assert.match(
     mannequinSource,
-    /setAiCutCount\(Array\.isArray\(nextStoryboard\) \? nextStoryboard\.filter\(\(b\) => b\.source !== 'mine'\)\.length : null\)/,
+    /setAiCutCount\(Array\.isArray\(nextStoryboard\) \? uniqueGenerationCutCount\(nextStoryboard\) : null\)/,
   );
   // 조회 실패를 0원으로 표시하지 않으면서, 정상 조회된 컷 수에는 단가를 곱해 CTA에 보여준다.
   assert.match(
@@ -195,8 +196,8 @@ const detailPageRibbonSource = chromeSource.slice(detailPageRibbonStart, chromeL
 test('the transition overlay replaces the duplicate completion badge and the ribbon stops steering', () => {
   assert.doesNotMatch(mannequinRibbonSource, /마네킹컷 준비 완료/);
   assert.doesNotMatch(chromeSource, /DONE_BADGE_MS/);
-  assert.match(chromeSource, /마네킹컷을 먼저 만들고 있어요/);
-  assert.match(chromeSource, /setTimeout\(\(\) => setVisible\(false\), 2500\)/);
+  assert.match(chromeSource, /의류 구현 진행중/);
+  assert.match(chromeSource, /setTimeout\(\(\) => setVisible\(false\), 4725\)/);
   assert.doesNotMatch(mannequinRibbonSource, /마네킹 화면 보기/);
   assert.doesNotMatch(mannequinRibbonSource, /job-ribbon-btn/);
   assert.match(detailPageRibbonSource, /job-ribbon-btn/);
@@ -206,5 +207,8 @@ test('the transition overlay replaces the duplicate completion badge and the rib
 test('the removed completion badge leaves no stale running-state tracker behind', () => {
   assert.doesNotMatch(chromeSource, /wasRunningRef/);
   assert.doesNotMatch(chromeSource, /runningProjectIdRef/);
-  assert.match(mannequinRibbonSource, /if \(job\.status === 'idle'\) return null/);
+  // idle 이면 리본이 남지 않아야 한다는 게 요지. 진행바 작업에서 표시 조건을 visible 로
+  // 모으면서 문장 형태만 바뀌었고(rAF 루프를 숨김 상태에서 멈추려고), 불변식은 그대로다.
+  assert.match(mannequinRibbonSource, /job\.status !== 'idle'/);
+  assert.match(mannequinRibbonSource, /if \(!visible\) return null/);
 });

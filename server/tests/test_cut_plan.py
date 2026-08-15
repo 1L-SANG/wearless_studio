@@ -127,6 +127,38 @@ def test_reference_face_visibility_is_preserved_for_independent_qc():
     assert plan.to_dict()["referenceFaceVisibility"] == "hidden"
 
 
+def test_repeated_example_index_is_audited_only_when_micro_variation_is_active():
+    active = compile_cut_plan(
+        worn_spec(
+            exampleId="same-example", refScope="all", pose="auto",
+            _exampleRepeatIndex=1,
+        ),
+        "top",
+    )
+    inactive = compile_cut_plan(
+        worn_spec(
+            exampleId="same-example", refScope="all", pose="walking",
+            _exampleRepeatIndex=1,
+        ),
+        "top",
+    )
+
+    assert active.example_repeat_index == 1
+    assert active.to_dict()["exampleRepeatIndex"] == 1
+    assert active.to_dict()["conflictResolution"]["repeatedExampleMicroVariationApplied"]
+    assert inactive.to_dict()["exampleRepeatIndex"] == 0
+    assert not inactive.to_dict()["conflictResolution"]["repeatedExampleMicroVariationApplied"]
+
+
+@pytest.mark.parametrize("value", [-1, "1", True])
+def test_repeated_example_index_rejects_invalid_runtime_values(value):
+    with pytest.raises(CutPlanError, match="invalid_example_repeat_index"):
+        compile_cut_plan(
+            worn_spec(exampleId="same-example", _exampleRepeatIndex=value),
+            "top",
+        )
+
+
 def test_selected_model_owns_face_and_body_while_example_person_owns_neither():
     plan = compile_cut_plan(
         worn_spec(modelId="model-a", exampleId="example-a", refScope="all"),
@@ -251,7 +283,9 @@ def test_contract_renderer_is_compact_and_names_ownership_rules():
     assert "example person owns neither" in rendered
     assert "Seller name/category/sales/legacy-fit text owns no geometry" in rendered
     assert "Styling/all keeps scene type, ordinary ambience, palette, time" in rendered
-    assert ">=1 spatial-structure and >=2 furniture/sign/prop placement changes" in rendered
+    assert "coherent different location instance in the same visual family" in rendered
+    assert "Do not use a structural/prop change quota" in rendered
+    assert ">=1 spatial-structure" not in rendered
     assert len(rendered) < 1_200
 
 

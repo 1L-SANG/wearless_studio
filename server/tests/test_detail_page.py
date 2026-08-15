@@ -39,9 +39,14 @@ def test_detail_creates_job_and_reserves(client, make_token, monkeypatch):
         seen["reserved"] = amount
         return 100
 
+    async def fake_product(conn, pid):
+        # 크레딧 견적의 복제 접기(_duplicate_source_indexes)가 clothing_type을 읽는다.
+        return {"clothing_type": "top"}
+
     monkeypatch.setattr(routes.repo, "get_project", fake_gp)
     monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_eb)
     monkeypatch.setattr(routes.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(routes.repo, "get_product", fake_product)
     monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
     patch_route_db(monkeypatch, routes)
@@ -1241,7 +1246,9 @@ def test_run_detail_page_job_uses_analysis_model_without_mutating_storyboard(mon
         "k/man", "seed/models/mB/face_front.webp",
         "seed/models/mB/body_front.png", "k/a1",
     ]
-    assert captured["person"]["manifest"].splitlines()[0].startswith("1. PRODUCT — the garment worn")
+    assert captured["person"]["manifest"].splitlines()[0].startswith(
+        "1. MANNEQUIN — coarse worn-geometry prior"
+    )
     assert captured["person"]["manifest"].splitlines()[1].startswith("2. MODEL FACE —")
     assert captured["person"]["manifest"].splitlines()[2].startswith("3. MODEL FULL BODY —")
     assert captured["person"]["manifest"].splitlines()[3] == "4. PRODUCT — front view of the garment"

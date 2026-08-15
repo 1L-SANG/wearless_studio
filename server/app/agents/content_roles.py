@@ -85,21 +85,27 @@ def _canonicalize_example_selection(out: dict) -> dict:
 
 def validate_storyboard_example_references(
     blocks: list, *, assets: dict[str, dict], clothing_type: str, gender: str,
-) -> tuple[str, str] | None:
-    """Validate stable ID/applicability; shot/direction may differ outside same-space pose use."""
+) -> tuple[str, str, dict] | None:
+    """Validate stable ID/applicability; shot/direction may differ outside same-space pose use.
+
+    실패 시 meta에 문제의 exampleId를 실어 준다 — 카탈로그 발행 회전 뒤 클라이언트가
+    (자기 카탈로그 기준으론 유효해 보여도) 정확히 그 선택만 걷어내고 재저장할 수 있게.
+    """
     for block in blocks or []:
         if not isinstance(block, dict) or not block.get("exampleId"):
             continue
-        entry = assets.get(str(block["exampleId"]))
+        example_id = str(block["exampleId"])
+        meta = {"exampleId": example_id}
+        entry = assets.get(example_id)
         if not entry or not entry.get("all"):
-            return "unknown_example_id", "저장된 생성예시를 찾을 수 없어요. 다른 예시를 골라주세요."
+            return "unknown_example_id", "저장된 생성예시를 찾을 수 없어요. 다른 예시를 골라주세요.", meta
         if clothing_type not in (entry.get("applicableClothingTypes") or []):
-            return "example_not_applicable", "상품 조건에 맞지 않는 생성예시예요. 다른 예시를 골라주세요."
+            return "example_not_applicable", "상품 조건에 맞지 않는 생성예시예요. 다른 예시를 골라주세요.", meta
         if entry.get("cutType") != block.get("cutType"):
-            return "example_cut_mismatch", "컷 종류에 맞지 않는 생성예시예요. 다른 예시를 골라주세요."
+            return "example_cut_mismatch", "컷 종류에 맞지 않는 생성예시예요. 다른 예시를 골라주세요.", meta
         expected_gender = None if block.get("cutType") == "product" else gender
         if entry.get("gender") != expected_gender:
-            return "example_gender_mismatch", "모델 조건에 맞지 않는 생성예시예요. 다른 예시를 골라주세요."
+            return "example_gender_mismatch", "모델 조건에 맞지 않는 생성예시예요. 다른 예시를 골라주세요.", meta
     return None
 
 
