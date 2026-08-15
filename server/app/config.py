@@ -164,10 +164,12 @@ class Settings:
     # shadow=매칭 점수·하드게이트·바지영역 픽셀 메트릭 계측만, enforce=재롤/드롭·편집 롤백.
     # AI 콜 증가 0(기존 AG-P2 1콜에 바지 원본 1장·필드만 얹음). 다크 출고를 위해 기본 off.
     mannequin_pants_qc: str = "off"  # off | shadow | enforce
-    # flat-lay 재렌더 모델 티어. **image_high(Gemini 3 Pro Image) 가 정본** — 스파이크
-    # 리포트(flatlay-spike-inputs/out/report.html) 전략 B(정체성 고정) × Pro 조합이
-    # "고해상도 원단 디테일과 안정적인 정체성 유지"로 판정된 추천 설정이다. flash 는
-    # 비용·속도 이점이 있어 노브로 남기지만 기본값은 아니다(2026-08-15 오너 지시).
+    # flat-lay 재렌더 모델 티어. 프롬프트는 스파이크 전략 B(정체성 고정) 원문 고정이고,
+    # 모델만 이 노브로 고른다.
+    # **사실관계**: 리포트(flatlay-spike-inputs/out/report.html)는 두 모델의 정체성 보존을
+    # 동률(4/4 PASS)로 보고 **Flash 를 추천**했다 — 속도 ~9s vs ~19s, 실비 $0.068 vs $0.139.
+    # 그럼에도 기본을 Pro 로 두는 것은 **오너 판단**이다(2026-08-15 지시: 디테일 우선).
+    # 비용을 줄이려면 MATCHING_FLATLAY_TIER=image_light 로 내린다 — 아이템당 실비 절반.
     matching_flatlay_tier: str = "image_high"  # image_high | image_light
     base_mannequin_women_asset_id: str | None = None  # R2 seed asset (startup 검증)
     base_mannequin_men_asset_id: str | None = None
