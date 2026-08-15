@@ -17,8 +17,8 @@ export const HOOK_FRAME_VERSION = 1;
 
 export const HOOK_STYLE_LABELS = Object.freeze({
   signature: '시그니처 컷',
-  pair: '두컷 프레임',
-  moodGrid: '네컷 프레임',
+  pair: '두 컷 구성',
+  moodGrid: '네 컷 구성',
 });
 
 // 무드 그리드 내용은 선택지 없이 자동 — 색상 2개↑면 색상별 1컷, 단색이면 같은 색 4컷
@@ -96,7 +96,7 @@ export function hookSlotPlan(style, { colors, isCutAvailable } = {}) {
     return [{ role: 'signature', ...cut, titleOverlay: true }];
   }
   if (style === 'pair') {
-    // '두컷 프레임' = 의류 위주 미디움샷 2장(오너 카피 확정) — 기본 왼쪽 스타일링·오른쪽 호리존.
+    // '두 컷 구성' = 의류 위주 미디움샷 2장(오너 카피 확정) — 기본 왼쪽 스타일링·오른쪽 호리존.
     const cuts = resolveSlotCuts([
       { cutType: 'styling', shot: 'medium' },
       { cutType: 'horizon', shot: 'medium' },
@@ -109,7 +109,7 @@ export function hookSlotPlan(style, { colors, isCutAvailable } = {}) {
     ];
   }
   if (style === 'moodGrid') {
-    // '네컷 프레임' — 이름 그대로 항상 4칸.
+    // '네 컷 구성' — 이름 그대로 항상 4칸.
     if (moodGridContent(colors) === 'byColor') {
       // 등록 색상이 1번씩(같은 컷 종류·샷 — 비교 가능성 유지, 컬러웨이 페어와 동일 원리),
       // 색상이 2~3개면 남는 칸은 기준색 추가 컷으로 채운다(2026-08-14 확정).
@@ -275,7 +275,7 @@ export function applyHookStyle(blocks, style, {
 
 /* 저장된 보드의 레거시 승격 — 진입 시 1회.
    - 이미 프레임이 있으면 그대로.
-   - 기존 '오프닝 2단 행'(hero+benefit 미디움 2장)은 두컷 프레임의 전신 — pair 로 표식만 승격.
+   - 기존 '오프닝 2단 행'(hero+benefit 미디움 2장)은 두 컷 구성의 전신 — pair 로 표식만 승격.
    - 그 밖의 구형 보드는 건드리지 않는다(프레임 없음 = UI 가 기존 스택으로 폴백). */
 export function adoptHookFrame(blocks) {
   const list = Array.isArray(blocks) ? blocks : [];

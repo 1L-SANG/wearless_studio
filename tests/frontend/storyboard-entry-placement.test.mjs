@@ -98,7 +98,7 @@ test('default seed leads with the signature frame; a pair-switched default is st
   assert.equal(seeded.filter((block) => block.sectionRole === 'hooking').length, 1);
   assert.equal(isDefaultStoryboardForMode(seeded, baseColors, 'basic', context('opening-row')), true);
 
-  // 스타일만 두컷 프레임으로 바꾼 기본 보드도 기본 시드로 인정 — 사진 양 변경 재시드가
+  // 스타일만 두 컷 구성으로 바꾼 기본 보드도 기본 시드로 인정 — 사진 양 변경 재시드가
   // 스타일 선택을 존중하며 계속 동작한다(시드 경로는 applySeededHookStyle 이 오른칸을 만든다).
   const pairSwitched = applySeededHookStyle(seeded, 'pair', baseColors);
   assert.equal(pairSwitched.filter((block) => block.sectionRole === 'hooking').length, 2);

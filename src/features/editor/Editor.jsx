@@ -920,9 +920,9 @@ export function Editor() {
   const [loadError, setLoadError] = useState(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [waitBoardError, setWaitBoardError] = useState('');
+  const [waitBoardAttempt, setWaitBoardAttempt] = useState(0);
   // 콘티를 못 받아 대기 화면을 못 만든 경우, 뒤에서 계속 다시 받아 스스로 복구한다.
   // 생성은 서버에서 돌고 있으므로 사용자는 아무것도 안 해도 된다(오너: 실패는 우리가 흡수).
-  const waitBoardRetry = useRef(null);
   useEffect(() => {
     if (!waitBoardError || blocks || !product || !catalogs) return undefined;
     let cancelled = false;
@@ -944,10 +944,10 @@ export function Editor() {
         setBlocks(skeleton);
         setSelBlock(skeleton[0]?.id);
         setWaitBoardError('');
-      } catch { /* 재시도까지 실패 — 화면의 [다시 불러오기]가 남아 있다 */ }
+      } catch { /* 재시도까지 실패 — 화면의 [다시 불러오기]·[보관함으로]가 남아 있다 */ }
     })();
     return () => { cancelled = true; };
-  }, [waitBoardError, blocks, product, catalogs, projectId]);
+  }, [waitBoardError, waitBoardAttempt, blocks, product, catalogs, projectId]);
   // 화면 대기(3분)를 넘긴 생성 잡의 백그라운드 추적 — 훅은 로딩 early-return 위에만 둔다.
   const slowJobs = useRef(new Set());
   const slowJobTimers = useRef(new Set());
@@ -1066,6 +1066,9 @@ export function Editor() {
     const resumingGeneration = Boolean(enteringJob.projectId === projectId
       && (enteringJob.status === 'running'
         || (enteringJob.status === 'error' && enteringJob.jobId && savedDraft)));
+    // 이 진입이 '생성 대기'인지 — 콘티 재시도 여부를 여기서 가른다(일반 편집은 재시도 없음).
+    const enteringGeneration = resumingGeneration
+      || (enteringJob.status === 'running' && enteringJob.projectId === projectId);
     if (resumingGeneration) useAppStore.getState().startDetailPageGeneration(projectId);
     pendingGenerationDraft.current = Boolean(savedDraft);
     // 에디터는 앱 크롬 밖에서 열린다 — account 는 store 캐시를 직접 로드 (단일 소스)
@@ -1075,9 +1078,12 @@ export function Editor() {
       // 분석 컨텍스트 — 정보 블록 프리필·추천 배지 전용(실패해도 에디터는 뜬다)
       api.getAnalysis(projectId).catch(() => null),
       // 생성 중 진입이면 스켈레톤·예시 썸네일의 근거(콘티). 일시 장애로 한 번 실패하면
-      // 대기 화면에 사진 자리가 하나도 없는 채로 굳어 버리므로 자동 재시도부터 한다.
+      // 대기 화면에 사진 자리가 하나도 없는 채로 굳어 버리므로 그때만 자동 재시도한다.
+      // (일반 편집 진입에서는 콘티가 보조 자료라, 재시도로 첫 화면을 늦추지 않는다.)
       // 그래도 실패하면 null — '빈 콘티([])'와 구분해 스켈레톤을 만들지 않는다.
-      retryRead(() => api.getStoryboard(projectId)).catch(() => null),
+      (enteringGeneration
+        ? retryRead(() => api.getStoryboard(projectId))
+        : api.getStoryboard(projectId)).catch(() => null),
       // AI 탭 '매칭 의류 바꾸기' 목록 — 콘티보드와 동일 소스, 실패해도 에디터는 뜬다
       api.getMatchClothing(projectId).catch(() => [])])
       .then(([b, w, c, _a, p, fm, an, sb, mc]) => {
@@ -1107,6 +1113,9 @@ export function Editor() {
           setClothingType(p.clothingType || 'top');
           setMatchClothing(Array.isArray(mc) ? mc : []);
           setProduct(p); setAnalysis(an);
+          // wardrobe 는 반드시 채운다 — null 로 두면 나중에 캔버스가 복구된 뒤 '의류' 탭을
+          // 여는 순간 Object.entries(null) 로 에디터가 통째로 죽는다(리뷰 확정 결함).
+          setWardrobe(mergeEditorImagesIntoWardrobe({ wardrobe: w, blocks: [], ...wardrobeContext.current }));
           setDetailColorOpts(allColorOpts.length ? allColorOpts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
           setColorOpts(opts.length ? opts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
           return;
@@ -1472,7 +1481,12 @@ export function Editor() {
       <Icon name="loader" size={26} className="spin" />
       <div style={{ fontSize: 14, fontWeight: 600 }}>{waitBoardError}</div>
       <div className="panel-sub" style={{ margin: 0 }}>사진은 서버에서 계속 만들어지고 있어요. 잠시 뒤 자동으로 화면이 채워져요.</div>
-      <Button variant="ghost" onClick={() => setWaitBoardError((v) => v || ' ')}>다시 불러오기</Button>
+      <div style={{ display: 'flex', gap: 8 }}>
+        {/* 같은 문자열을 다시 넣으면 상태가 안 바뀌어 재시도가 안 돈다 — 시도 횟수를 올린다 */}
+        <Button variant="ghost" size="sm" onClick={() => setWaitBoardAttempt((n) => n + 1)}>다시 불러오기</Button>
+        {/* 자동 재시도가 소진돼도 갇히지 않게 — 생성은 서버에서 계속되고 보관함에서 다시 연다 */}
+        <Button variant="ghost" size="sm" onClick={leaveToLibrary}>나중에 하기 · 보관함으로</Button>
+      </div>
     </div></div>
   );
   if (!blocks || !catalogs) return <div className="editor"><div style={{ margin: 'auto' }}><Icon name="loader" size={26} className="spin" /></div></div>;
@@ -2144,6 +2158,26 @@ export function Editor() {
   // 되돌아가면 이미 만든 컷·편집이 다음 생성으로 덮여 되살릴 수 없기 때문이다. 대신
   // '나중에 하기'로 보관함에 안전하게 내려놓는다. 편집분은 flushExit 가 알아서
   // (생성 중이면 임시본, 아니면 서버로) 저장하므로 사라지지 않는다.
+  /* 라이선스 차단(409) 복구 — 앞 단계로 되돌아가지 않고 여기서 모델을 바꿔 다시 만든다.
+     modelId 가 null 이면 모델은 그대로 두고 재시도만 한다(일시 장애였을 수 있다). */
+  const licenseAlternatives = (fmModels || [])
+    .filter((m) => m.hasActiveLicense && m.assetsReady && m.id !== analysis?.selectedModelId)
+    .slice(0, 3);
+  const retryGenerationWithModel = async (modelId) => {
+    try {
+      if (modelId) {
+        await api.saveAnalysis(projectId, { selectedModelId: modelId });
+        setAnalysis((a) => ({ ...(a || {}), selectedModelId: modelId }));
+      }
+      genMergedRef.current = false;
+      useAppStore.getState().resetDetailPageJob();
+      useAppStore.getState().startDetailPageGeneration(projectId);
+      genActiveRef.current = true;
+      setGenActive(true);
+    } catch (e) {
+      toast.push(e?.message || '다시 시작하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'x' });
+    }
+  };
   const leaveToLibrary = () => {
     clearTimeout(saveTimer.current);
     flushExit();
@@ -2447,9 +2481,7 @@ export function Editor() {
       case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={detailColorOpts} pendingSlot={pendingSlot} uploading={wardrobeUploadLoading} onInsert={wardrobeInsert} onDeleteImage={deleteWardrobeImage} isImageUsed={wardrobeImageInUse} onUpload={pickAndInsertImage} onVaryImage={varyImage} onFreshSeen={freshSeen}
         onImageDragStart={() => setFrameDragging(true)} onImageDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />;
       case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio}
-        onCrop={(el) => startCrop(blockIdOf(el.id), el)} onCropReset={() => patchEl({ crop: undefined })}
-        onReplace={(el) => requestSlotImage(blockIdOf(el.id), el)}
-        onRemove={(el) => { setSlotImage(blockIdOf(el.id), el.id, { src: null, cutType: null }); toast.push('이미지를 프레임에서 빼냈어요'); }}
+        onCrop={(el) => startCrop(blockIdOf(el.id), el)}
         onVary={varyImage} />;
       case 'frame': return (
         <FramePanel onAdd={addFrame} recommendGender={recommendGender} onPickInfo={openInfoPreset}
@@ -2715,14 +2747,25 @@ export function Editor() {
           <div className="surface fm-blocked">
             <div className="fm-blocked-icon"><Icon name="alertCircle" size={28} /></div>
             <p className="fm-blocked-msg">{dpJob.errorMessage}</p>
-            <p className="fm-blocked-hint">모델 라이선스 상태를 확인한 뒤 다시 시도해 주세요. 지금까지 만든 내용은 그대로 있어요.</p>
-            <Button variant="primary" block size="sm" onClick={() => {
-              genMergedRef.current = false;
-              useAppStore.getState().resetDetailPageJob();
-              useAppStore.getState().startDetailPageGeneration(projectId);
-              genActiveRef.current = true;
-              setGenActive(true);
-            }}>다시 시도</Button>
+            <p className="fm-blocked-hint">
+              {licenseAlternatives.length
+                ? '다른 모델로 바꿔서 이어서 만들 수 있어요. 지금까지 만든 내용은 그대로 있어요.'
+                : '모델 라이선스 상태를 확인한 뒤 다시 시도해 주세요. 지금까지 만든 내용은 그대로 있어요.'}
+            </p>
+            {/* 앞 단계로 못 돌아가게 봉인했으므로(오너 8/15), 모델 교체는 여기서 할 수 있어야
+                한다 — 아니면 라이선스가 막힌 프로젝트는 영영 완성할 수 없다(리뷰 확정). */}
+            {licenseAlternatives.length > 0 && (
+              <div className="fm-blocked-models">
+                {licenseAlternatives.map((m) => (
+                  <button type="button" key={m.id} className="fm-blocked-model"
+                    onClick={() => retryGenerationWithModel(m.id)}>
+                    {m.coverImageUrl && <img src={m.coverImageUrl} alt="" loading="lazy" />}
+                    <span>{m.name || m.label || '모델'}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <Button variant="primary" block size="sm" onClick={() => retryGenerationWithModel(null)}>다시 시도</Button>
             <Button variant="ghost" block size="sm" style={{ marginTop: 8 }} onClick={leaveToLibrary}>나중에 하기 · 보관함으로</Button>
           </div>
         </div>
@@ -2753,7 +2796,17 @@ export function Editor() {
         </div>
 
         <div className={`ed-canvas-wrap${spaceDown ? ' panning' : ''}`} ref={wrapRef}
-          onPointerDown={(e) => { if (spaceDown) startPan(e); else startMarqueeSelection(e); }}
+          onPointerDown={(e) => {
+            if (spaceDown) { startPan(e); return; }
+            /* 텍스트를 쓰다가 캔버스 빈 곳을 누르면 순서가 이렇다:
+               pointerdown → blur(편집 종료) → 리렌더 → click(선택 해제).
+               blur 로 editing 만 풀리는 순간 선택 상태(파란 컨트롤 박스·핸들)가 한 프레임
+               나타났다가 이어지는 click 이 지운다 — 그게 오너가 본 "잠깐 선택된 채로 보였다
+               사라지는" 깜빡임이다. 해제를 blur 보다 먼저 해서 그 한 프레임을 없앤다.
+               (패널을 누른 blur 는 여기 오지 않으므로 스타일 편집용 선택은 그대로 유지된다.) */
+            if (editEl && shouldClearEditorSelection(e.target)) clearSel();
+            startMarqueeSelection(e);
+          }}
           onClick={(e) => { if (consumeMarqueeClick() || spaceDown || !shouldClearEditorSelection(e.target)) return; if (cropping) { commitCrop(); return; } clearSel(); setBlockFocused(false); }}
           onScroll={() => moveableRef.current?.updateRect()}
           onMouseMove={(e) => { const g = isEditorGrayWorkspaceTarget(e.target); setHoverGray((v) => v === g ? v : g); }}

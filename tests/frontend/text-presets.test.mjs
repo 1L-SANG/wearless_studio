@@ -11,11 +11,10 @@ const SPEC = {
   headline: { size: 40, weight: 600, color: '#0e0d14' },
   subtitle: { size: 26, weight: 600, color: '#0e0d14' },
   body: { size: 17, weight: 400, color: '#6b6b73', lineHeight: 26 },
-  tag: { size: 19, weight: 700, color: '#9a9aa2', tracking: 3 },
 };
 
-test('프리셋 4종이 스펙 타이포 값과 일치한다', () => {
-  assert.equal(TEXT_PRESETS.length, 4);
+test('프리셋 3종이 스펙 타이포 값과 일치한다(꼬리표는 오너 8/16 제거)', () => {
+  assert.equal(TEXT_PRESETS.length, 3);
   for (const [key, expected] of Object.entries(SPEC)) {
     const p = TEXT_PRESETS.find((x) => x.key === key);
     assert.ok(p, `${key} 프리셋이 있어야 한다`);
@@ -72,7 +71,6 @@ test('빠른 스타일 전환 — 행간·자간은 프리셋에 없으면 undef
   assert.ok('lineHeight' in toHeadline && toHeadline.lineHeight === undefined, '행간 리셋(undefined = 자동 1.4배)');
   assert.ok('tracking' in toHeadline && toHeadline.tracking === undefined, '자간 리셋');
   assert.equal(quickStylePatch('body').lineHeight, SPEC.body.lineHeight);
-  assert.equal(quickStylePatch('tag').tracking, SPEC.tag.tracking);
 });
 
 test('왕복 — 칩으로 입힌 스타일은 그 칩이 켜진 상태여야 한다', () => {
@@ -97,7 +95,6 @@ test('활성 프리셋 판별 — 화면이 같으면 같은 상태로 본다(�
   assert.equal(activeTextPreset({ ...SPEC.subtitle, color: '#0E0D14' }), 'subtitle');
   // 행간 자동(0/없음)과 명시된 size×1.4는 같은 화면이다 — 행간 칸을 스쳐도 칩이 꺼지면 안 된다.
   assert.equal(activeTextPreset({ ...SPEC.headline, lineHeight: 56 }), 'headline');
-  assert.equal(activeTextPreset({ ...SPEC.tag, lineHeight: 27 }), 'tag');
   // 반대로 렌더 기본값과 다른 실제 변경은 구분한다: weight 없음 = 400 렌더 ≠ 소제목 600.
   assert.equal(activeTextPreset({ size: 26, color: '#0e0d14' }), null);
 });

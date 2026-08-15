@@ -256,7 +256,7 @@ function storyboardTemplateFingerprint(blocks) {
   })));
 }
 
-/* 시드 보드에 두컷 프레임을 적용한다 — 후킹 시드가 시그니처 1컷이라 오른칸은 여기서
+/* 시드 보드에 두 컷 구성을 적용한다 — 후킹 시드가 시그니처 1컷이라 오른칸은 여기서
    만든다. 이 팩토리는 UI 전환(applyHookStyleChoice의 createBlock)과 지문 필드
    (storyboardTemplateFingerprint)가 일치해야 한다 — 어긋나면 pair 로 바꾼 기본 보드가
    사진 양 변경 재시드에서 "편집본"으로 오판된다. */
@@ -285,7 +285,7 @@ export function isDefaultStoryboardForMode(blocks, colors, mode, product = {}) {
   // 2026-08-07 개편 전 기본 시드(디테일 없음→ghost 대체)와 구 오프닝 행 시드는 지문이
   // 어긋나 "편집본"으로 남는다 — 기존 프로젝트가 전부 테스트용이라 마이그레이션하지
   // 않기로 한 선례(오너 결정)를 따르고, 구 오프닝 행은 진입 승격(adoptHookFrame)이 흡수한다.
-  // 두 번째 지문: 첫 화면 스타일만 두컷 프레임으로 바꾼 기본 보드도 기본 시드로 인정 —
+  // 두 번째 지문: 첫 화면 스타일만 두 컷 구성으로 바꾼 기본 보드도 기본 시드로 인정 —
   // 사진 양 변경 시 재시드가 스타일 선택을 존중하며 계속 동작하게 한다.
   return fingerprint === storyboardTemplateFingerprint(seeded)
     || fingerprint === storyboardTemplateFingerprint(applySeededHookStyle(seeded, 'pair', colors));

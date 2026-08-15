@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 import uuid
 from io import BytesIO
 
@@ -310,6 +311,11 @@ async def _gen_cuts(app, job, prepared, product, analysis):
             # 컷 생성 재시도 — 안전필터·응답 누락처럼 "다시 부르면 달라질 수 있는" 실패는
             # 한 번 더 시도한다. 빈 슬롯은 셀러에게 그냥 못 만든 페이지이고, 그 값은 우리가
             # 흡수해야 한다(오너 8/15). ValueError(잘못된 cutType 등)는 결정적이라 제외.
+            # 재시도 예산(초). 잡 lease(job_lease_timeout_seconds)를 넘기면 sweeper 가 실행 중인
+            # 잡을 회수해 같은 잡이 다시 도는 사고가 난다 — 앞선 시도가 이미 오래 걸렸으면
+            # (예: 프로바이더 타임아웃 연쇄) 재시도하지 않고 그 컷만 포기한다.
+            retry_budget_s = max(60, s.job_lease_timeout_seconds // 4)
+            cut_started = time.monotonic()
             img = mime = None
             for attempt in range(1, max(1, s.detail_cut_max_attempts) + 1):
                 try:
@@ -322,9 +328,10 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                                 {"blockId": b.get("id"), "status": "cut_failed"})
                     return None
                 except Exception as e:  # GeminiError 등 — 마지막 시도에서만 빈 슬롯(미차감)
-                    if attempt >= max(1, s.detail_cut_max_attempts):
-                        log.warning("AG-06 cut failed for job %s block %s after %d attempts: %r",
-                                    job_id, b.get("id"), attempt, e)
+                    spent = time.monotonic() - cut_started
+                    if attempt >= max(1, s.detail_cut_max_attempts) or spent >= retry_budget_s:
+                        log.warning("AG-06 cut failed for job %s block %s after %d attempts (%.0fs): %r",
+                                    job_id, b.get("id"), attempt, spent, e)
                         await _emit(app.state.pool, job_id, "step",
                                     {"blockId": b.get("id"), "status": "cut_failed"})
                         return None

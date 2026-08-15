@@ -21,8 +21,8 @@ test('contract constants: three seller-facing styles, signature is the entry def
   assert.deepEqual(HOOK_STYLES, ['signature', 'pair', 'moodGrid']);
   assert.equal(DEFAULT_HOOK_STYLE, 'signature');
   assert.equal(HOOK_STYLE_LABELS.signature, '시그니처 컷');
-  assert.equal(HOOK_STYLE_LABELS.pair, '두컷 프레임');
-  assert.equal(HOOK_STYLE_LABELS.moodGrid, '네컷 프레임');
+  assert.equal(HOOK_STYLE_LABELS.pair, '두 컷 구성');
+  assert.equal(HOOK_STYLE_LABELS.moodGrid, '네 컷 구성');
 });
 
 test('mood grid content branches by color count only — no user toggle', () => {
@@ -57,7 +57,7 @@ test('signature/pair plans reuse the default hero+benefit cuts (cut count unchan
   assert.deepEqual(signature, [
     { role: 'signature', cutType: 'horizon', shot: 'medium', titleOverlay: true },
   ]);
-  // '두컷 프레임' = 미디움샷 2장 (오너 카피: "미디움샷 이미지 2개를 붙여서")
+  // '두 컷 구성' = 미디움샷 2장 (오너 카피: "미디움샷 이미지 2개를 붙여서")
   const pair = hookSlotPlan('pair');
   assert.deepEqual(pair.map((slot) => [slot.role, slot.cutType, slot.shot]), [
     ['left', 'styling', 'medium'],

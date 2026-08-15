@@ -501,7 +501,7 @@ export const httpAdapter = {
       if (!isDefaultStoryboardForMode(saved, colors, previousMode, storyboardContext)) return saved;
       const seeded = defaultStoryboard(colors, mode, storyboardContext);
       // 첫 화면 스타일 선택은 사진 양을 바꿔도 유지한다 — pair 만 기본 지문에 들어올 수
-      // 있고(네컷 프레임은 컷이 늘어 애초에 기본이 아님), 그 외는 시드 기본(시그니처).
+      // 있고(네 컷 구성은 컷이 늘어 애초에 기본이 아님), 그 외는 시드 기본(시그니처).
       return deriveHookFrame(saved)?.style === 'pair'
         ? applySeededHookStyle(seeded, 'pair', colors)
         : seeded;

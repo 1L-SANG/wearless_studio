@@ -83,43 +83,47 @@ export const FRAME_LIBRARY_ITEMS = [
     id: 'single', label: '1컷 풀폭', recommended: true, h: 600,
     slots: [naturalSlot(40, 40, 920, 520)],
   },
+  /* 사진 배치 프레임은 칸끼리 딱 붙인다(오너 8/16) — 상세페이지는 사진이 이어져 흐르는
+     화면이라, 칸 사이 20px 틈이 있으면 한 장면이 조각난 것처럼 보인다. 좌우 40px 여백은
+     페이지 여백이라 유지한다(=칸 폭 합은 920). 글이 딸린 템플릿은 텍스트 열과 칸이 짝을
+     이루므로 건드리지 않는다. */
   {
     id: 'split2', label: '2분할', recommended: true, h: 580,
     // 단순 2열 프레임은 칸의 가로 폭만 정한다. 사진을 넣으면 원본 비율에 맞는
     // 세로 길이를 계산해, 세로 사진이 짧은 카드 안에서 잘리지 않게 한다.
     slots: [
-      naturalSlot(40, 60, 450, 460),
-      naturalSlot(510, 60, 450, 460),
+      naturalSlot(40, 60, 460, 460),
+      naturalSlot(500, 60, 460, 460),
     ],
   },
   {
     id: 'grid3', label: '3컷 구성', recommended: true, h: 580,
-    slots: [naturalSlot(40, 60, 293, 460), naturalSlot(353, 60, 294, 460), naturalSlot(667, 60, 293, 460)],
+    slots: [naturalSlot(40, 60, 307, 460), naturalSlot(347, 60, 306, 460), naturalSlot(653, 60, 307, 460)],
   },
   {
     id: 'grid4', label: '2 × 2', recommended: true, h: 640,
     slots: [
-      naturalSlot(40, 40, 450, 270, 0, { imageRowFlowGroup: 'grid4', imageRowFlowRow: 0, imageRowFlowGap: 20 }),
-      naturalSlot(510, 40, 450, 270, 0, { imageRowFlowGroup: 'grid4', imageRowFlowRow: 0, imageRowFlowGap: 20 }),
-      naturalSlot(40, 330, 450, 270, 0, { imageRowFlowGroup: 'grid4', imageRowFlowRow: 1, imageRowFlowGap: 20 }),
-      naturalSlot(510, 330, 450, 270, 0, { imageRowFlowGroup: 'grid4', imageRowFlowRow: 1, imageRowFlowGap: 20 }),
+      naturalSlot(40, 40, 460, 270, 0, { imageRowFlowGroup: 'grid4', imageRowFlowRow: 0, imageRowFlowGap: 0 }),
+      naturalSlot(500, 40, 460, 270, 0, { imageRowFlowGroup: 'grid4', imageRowFlowRow: 0, imageRowFlowGap: 0 }),
+      naturalSlot(40, 310, 460, 270, 0, { imageRowFlowGroup: 'grid4', imageRowFlowRow: 1, imageRowFlowGap: 0 }),
+      naturalSlot(500, 310, 460, 270, 0, { imageRowFlowGroup: 'grid4', imageRowFlowRow: 1, imageRowFlowGap: 0 }),
     ],
   },
   {
     id: 'hero2', label: '큰 사진 + 2장', recommended: true, h: 600,
     slots: [
-      naturalSlot(40, 50, 580, 500),
-      naturalSlot(640, 50, 320, 240, 0, { imageRowFlowGroup: 'hero2-side', imageRowFlowRow: 0, imageRowFlowGap: 20 }),
-      naturalSlot(640, 310, 320, 240, 0, { imageRowFlowGroup: 'hero2-side', imageRowFlowRow: 1, imageRowFlowGap: 20 }),
+      naturalSlot(40, 50, 600, 500),
+      naturalSlot(640, 50, 320, 250, 0, { imageRowFlowGroup: 'hero2-side', imageRowFlowRow: 0, imageRowFlowGap: 0 }),
+      naturalSlot(640, 300, 320, 250, 0, { imageRowFlowGroup: 'hero2-side', imageRowFlowRow: 1, imageRowFlowGap: 0 }),
     ],
   },
   {
     id: 'colorcmp', label: '컬러 비교', recommended: true, h: 580,
-    slots: [naturalSlot(40, 60, 293, 460), naturalSlot(353, 60, 294, 460), naturalSlot(667, 60, 293, 460)],
+    slots: [naturalSlot(40, 60, 307, 460), naturalSlot(347, 60, 306, 460), naturalSlot(653, 60, 307, 460)],
   },
   {
     id: 'ba', label: 'Before / After', recommended: false, h: 580,
-    slots: [naturalSlot(40, 60, 450, 460), naturalSlot(510, 60, 450, 460)],
+    slots: [naturalSlot(40, 60, 460, 460), naturalSlot(500, 60, 460, 460)],
   },
   {
     id: 'image-description-3', label: '이미지 설명 3단', recommended: false, h: 570, bg: '#ffffff',

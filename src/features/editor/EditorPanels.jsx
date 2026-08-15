@@ -207,10 +207,15 @@ function SwatchField({ value, opacity, allowNone, thumb, onColor, onOpacity, vis
         </div>
       )}
       {onOpacity && !isNone && (
-        <label className="sf-opacity">
+        /* 트랙 자체가 결과를 보여준다 — 체커보드(=비침) 위에 현재 색이 왼쪽 0%에서
+           오른쪽 100%로 차오른다. 브라우저 기본 슬라이더는 "무엇이 얼마나 투명해지는지"를
+           숫자로만 말해서, 값을 옮기며 눈으로 맞추기 어려웠다(오너 8/16 미감 지적). */
+        <label className="sf-opacity" style={{ '--sf-op-color': normalized || 'var(--fg-1)' }}>
           <span>투명도</span>
-          <input type="range" min="0" max="100" step="1" value={alpha}
-            onChange={(e) => onOpacity(Number(e.target.value))} />
+          <span className="sf-opacity-track">
+            <input type="range" min="0" max="100" step="1" value={alpha} aria-label="투명도"
+              onChange={(e) => onOpacity(Number(e.target.value))} />
+          </span>
         </label>
       )}
     </div>
@@ -742,7 +747,7 @@ const LINE_DASH = [
 function LabeledField({ label, children }) {
   return <div className="ff"><span className="ff-lbl">{label}</span>{children}</div>;
 }
-export function ImagePanel({ el, onChange, onLayer, onCrop, onCropReset, onReplace, onRemove, lock = true, onLock }) {
+export function ImagePanel({ el, onChange, onLayer, onCrop, lock = true, onLock }) {
   // 비율 잠금은 에디터가 소유 — moveable keepRatio와 연동 (자물쇠 = keepRatio)
   const setLock = onLock || (() => {});
   if (!el || !['image', 'shape', 'line'].includes(el.type)) return <EmptyState icon="image" title="요소를 선택하세요" desc="캔버스에서 이미지·오브젝트를 클릭하면 속성이 여기에 나와요." />;
@@ -757,17 +762,10 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, onCropReset, onRepla
     <div className="fig-panel">
       {/* 'AI로 컷 변형하기' 점프 버튼 제거(오너 8/15) — 같은 기능은 좌측 AI 탭(선택된 컷이
           자동으로 수정 대상이 된다)과 의류 타일의 'AI 편집' 뱃지로 계속 갈 수 있다. */}
-      {isImg && el.frameSlot && (
-        <PanelSection title="프레임 이미지" first>
-          <div className="frame-image-actions">
-            <Button variant="quiet" size="sm" icon="refresh" onClick={() => onReplace?.(el)}>교체</Button>
-            <Button variant="quiet" size="sm" icon="crop" disabled={!el.src} onClick={() => onCrop?.(el)}>자르기</Button>
-            <Button variant="quiet" size="sm" icon="undo" disabled={!el.crop} onClick={() => onCropReset?.(el)}>초기화</Button>
-            <Button variant="quiet" size="sm" icon="trash" disabled={!el.src} onClick={() => onRemove?.(el)}>빼내기</Button>
-          </div>
-        </PanelSection>
-      )}
-      <PanelSection title={isLine ? '선 크기' : '이미지 크기'} first={!isImg || !el.frameSlot}>
+      {/* '프레임 이미지' 액션 묶음(교체·자르기·초기화·빼내기) 제거(오너 8/16).
+          교체·빼내기는 빈 칸 클릭과 Delete 로, 자르기는 아래 '자르기' 섹션과 더블클릭으로
+          이미 되는 일이라 같은 화면에 두 벌이 있었다. */}
+      <PanelSection title={isLine ? '선 크기' : '이미지 크기'} first>
         <div className="size-row">
           <NumField iconText="가로" value={Math.round(el.w)} min={20} max={2000} onChange={setW} />
           <NumField iconText="세로" value={Math.round(el.h)} min={20} max={2000} onChange={setH} />
@@ -990,7 +988,8 @@ export function FramePanel({ onAdd, onDragStart, onDragEnd, recommendGender, onP
   ));
   return (
     <div>
-      <PanelHead title="프레임" sub="종류를 고른 뒤 끌어 놓거나 클릭해 추가하세요." />
+      {/* 제목은 좌측 패널 래퍼가 그린다(Editor.jsx) — 여기서 또 그리면 "프레임 프레임"이 된다 */}
+      <div className="panel-sub">종류를 고른 뒤 끌어 놓거나 클릭해 추가하세요.</div>
       <div className="frame-category-tabs">
         <UnderlineTabs options={FRAME_LIBRARY_TABS} value={category} onChange={setCategory} />
       </div>
@@ -1101,7 +1100,8 @@ export function ShapePanel({ catalogs, onAdd, block, onBgChange }) {
   const dragStart = (e, type, id) => { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/object', `${type}:${id}`); };
   return (
     <div>
-      <PanelHead title="오브젝트" sub="클릭하면 블록 중앙에, 드래그하면 원하는 자리에 놓여요." />
+      {/* 제목은 좌측 패널 래퍼가 그린다(Editor.jsx) — 중복 방지 */}
+      <div className="panel-sub">클릭하면 블록 중앙에, 드래그하면 원하는 자리에 놓여요.</div>
       <UnderlineTabs options={OBJECT_PANEL_TABS} value={tab} onChange={setTab} />
       {tab === 'preset' ? (
         <div className="object-preset-list" style={{ marginTop: 16 }}>

@@ -26,13 +26,15 @@ export const TEXT_FAINT = '#9a9aa2';
 
 /* previewSize는 패널 축소판 크기 — 실제 크기 순서(40>26>19>17)를 보존해야
    목록에서 "꼬리표가 설명글보다 크다"는 사실이 왜곡되지 않는다. */
+/* 꼬리표(POINT 01)는 뺐다(오너 8/16) — 실측에서도 11%뿐이고, 같은 라벨은 '특징 포인트'
+   정보 블록이 이미 제공한다. 남은 셋은 실측 상위 3종 그대로다:
+   소제목 372건(65.5%)·문단 75건(13.2%)이 본문 텍스트의 대부분이고, 큰 제목은 첫 화면의
+   한 방 문구다(§2-A). 크기도 스펙 값 그대로 — 40/26/17px. */
 export const TEXT_PRESETS = [
   { key: 'headline', label: '큰 제목', hint: '첫 화면 한 방 문구', previewSize: 22,
     style: { size: 40, weight: 600, color: TEXT_INK } },
   { key: 'subtitle', label: '소제목', hint: '사진 아래 한 줄', previewSize: 17,
     style: { size: 26, weight: 600, color: TEXT_INK } },
-  { key: 'tag', label: '꼬리표', hint: '짧은 라벨', sample: 'POINT 01', previewSize: 14,
-    style: { size: 19, weight: 700, color: TEXT_FAINT, tracking: 3 } },
   { key: 'body', label: '설명글', hint: '긴 설명 문단', previewSize: 13,
     style: { size: 17, weight: 400, color: TEXT_MUTED, lineHeight: 26 } },
 ];

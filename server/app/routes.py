@@ -2575,13 +2575,12 @@ def _immutable_cors_safe_headers(request: Request) -> dict:
     캐시 항목을 재사용해 "Access-Control-Allow-Origin 없음" 으로 차단된다 — 서버는
     멀쩡한데 브라우저만 실패하는, 에디터 이미지 다운로드가 안 되던 실제 원인이다.
 
-    그래서 Origin 없는 응답에도 Vary 를 박아 캐시 항목을 오리진별로 갈라 둔다.
-    (Origin 이 있는 요청은 미들웨어가 Vary 를 붙이므로 중복해서 넣지 않는다.)
+    그래서 Vary 를 항상 박아 캐시 항목을 오리진별로 갈라 둔다. 조건부(Origin 없을 때만)로
+    두지 않는 이유: 허용 목록에 없는 Origin 의 응답에는 미들웨어도 Vary 를 안 붙여서 같은
+    오염이 그대로 재발한다. 허용 Origin 에서는 미들웨어가 덧붙여 "Origin, Origin" 이 될 수
+    있지만 HTTP 상 유효하고(중복 필드명 무시), 캐시 정합성이 보기 좋음보다 중요하다.
     """
-    headers = {"Cache-Control": IMMUTABLE_CACHE}
-    if "origin" not in request.headers:
-        headers["Vary"] = "Origin"
-    return headers
+    return {"Cache-Control": IMMUTABLE_CACHE, "Vary": "Origin"}
 
 
 async def _public_asset_or_404(request: Request, asset_id: str) -> dict:

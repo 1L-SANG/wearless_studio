@@ -584,43 +584,6 @@ const blockPreviewSrc = (block, catalogs) => {
   return block.previewThumb || image?.src || block.thumb || block.ownImages?.[0];
 };
 
-/* 후킹 접힘 예외(스펙 2026-08-14 §3) — 스택 대신 흰 페이지 시트 위에 첫 화면 실형태.
-   클릭 = 섹션 펼침. 스타일 변경은 펼친 뒤 컷 인스펙터 상단에서. */
-function StoryboardHookSheet({ frame, slots, total, catalogs, colorOpts, productName, baseColorId, onOpen }) {
-  return (
-    <div className="sb-hooksheet-wrap">
-      <button
-        type="button"
-        className={`sb-hooksheet style-${frame.style}`}
-        onClick={onOpen}
-        aria-label="후킹 섹션 펼치기"
-      >
-        <span className="sb-hooksheet-box">
-          {slots.map(({ block, index }) => {
-            const color = colorOpts.find((option) => option.id === block.colorId);
-            return (
-              <span key={block.id} className="sb-hooksheet-tile">
-                <span className="sb-canvas-number">{cutNumber(index, total)}</span>
-                <img src={blockPreviewSrc(block, catalogs)} alt="" loading="lazy" decoding="async" />
-                {frame.style === 'signature' && block.hookTitleOverlay && productName && (
-                  <span className="sb-hooksheet-title"><i>{productName}</i></span>
-                )}
-                {frame.style === 'moodGrid' && color && (
-                  <span className="sb-hooksheet-color"><i style={{ background: color.hex }} />{color.label}</span>
-                )}
-                {frame.style === 'moodGrid' && baseColorId && block.colorId
-                  && block.colorId !== baseColorId && (
-                  <span className="sb-hooksheet-gen">자동 생성</span>
-                )}
-              </span>
-            );
-          })}
-        </span>
-      </button>
-    </div>
-  );
-}
-
 const ShuffleIcon = (
   <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
     strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1601,7 +1564,7 @@ function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, ana
   // 입력에서 성별·의류 종류를 바꾼 뒤 콘티로 오면(이전 버튼 재배치), 안 맞는 세트가 낀 카드가
   // 매 저장마다 space_set_gender_mismatch 등으로 400 나던 것을 — 여기서 바인딩만 떼어 되돌린다.
   const boundGender = genderForClothingType(clothingType, a?.targetGenders);
-  // 구 '오프닝 2단 행' 보드는 두컷 프레임의 전신 — 진입 1회, 프레임 표식만 승격한다
+  // 구 '오프닝 2단 행' 보드는 두 컷 구성의 전신 — 진입 1회, 프레임 표식만 승격한다
   // (컷·순서 불변, 스펙 2026-08-14 §2). 그 밖의 구형 보드는 프레임 없음 = 스택 폴백.
   const adoptedBlocks = adoptHookFrame(sectionedBlocks).blocks;
   const spaceSetRepairedBlocks = stripStaleSpaceSetBindings(adoptedBlocks, {
@@ -3092,31 +3055,9 @@ export function Storyboard() {
             </button>
             <div className="sb-stack-collapse">
               <div>
-                {(() => {
-                  // 후킹 접힘 예외(스펙 §3) — 프레임이 있으면 스택 대신 흰 페이지 시트.
-                  const hookSlots = hookFrame && groupSection.role === SECTION_ROLES.HOOKING
-                    ? hookFrame.slotIds
-                      .map((slotId) => group.items.find((item) => item.block.id === slotId))
-                      .filter(Boolean)
-                      .map((item) => ({ block: item.block, index: item.index }))
-                    : [];
-                  return hookSlots.length ? (
-                    <StoryboardHookSheet
-                      frame={hookFrame}
-                      slots={hookSlots}
-                      total={blocks.length}
-                      catalogs={catalogs}
-                      colorOpts={colorOpts}
-                      productName={productName}
-                      baseColorId={(composeModeSeed.colors.find((color) => color.isBase)
-                        || composeModeSeed.colors[0])?.id || null}
-                      onOpen={() => openRenderGroup(group.key)}
-                    />
-                  ) : (
-                    <StoryboardStack group={group} total={blocks.length} catalogs={catalogs}
-                      onOpen={() => openRenderGroup(group.key)} />
-                  );
-                })()}
+                {/* 후킹도 다른 섹션과 같은 스택(낱장 크기)으로 접힌다 — 흰 시트 예외 폐기(2026-08-16 오너). */}
+                <StoryboardStack group={group} total={blocks.length} catalogs={catalogs}
+                  onOpen={() => openRenderGroup(group.key)} />
               </div>
             </div>
             <div className="sb-deck-collapse">

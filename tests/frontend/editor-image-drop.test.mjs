@@ -86,8 +86,9 @@ test('the two-column frame keeps its width and derives the exact portrait height
   const block = buildFrameBlock('split2', (prefix) => `${prefix}${++sequence}`);
   const [slot] = block.elements.filter((element) => element.type === 'image');
 
-  assert.equal(slot.w, 450);
-  assert.deepEqual(fitImageToFrameSlot(slot, { width: 900, height: 1460 }), { h: 730 });
+  // 칸끼리 붙이면서 폭 450 → 460(오너 8/16). 세로는 원본 비율에서 그대로 파생된다.
+  assert.equal(slot.w, 460);
+  assert.deepEqual(fitImageToFrameSlot(slot, { width: 900, height: 1460 }), { h: 746 });
   assert.deepEqual(fitImageToFrameSlot({ ...slot, imageSizing: undefined }, { width: 900, height: 1460 }), {});
 });
 
@@ -118,7 +119,8 @@ test('a multi-row blank frame keeps the next row below the tallest resized photo
   const fitted = fitImageToFrameBlock(block, slots[0].id, { width: 450, height: 900 });
   const fittedSlots = fitted.elements.filter((element) => element.type === 'image');
 
-  assert.equal(fittedSlots[0].h, 900);
+  // 칸 폭 460·행 간격 0(오너 8/16) — 다음 행은 가장 큰 사진 바로 아래에 붙는다.
+  assert.equal(fittedSlots[0].h, 920);
   assert.deepEqual(fittedSlots.slice(0, 2).map((element) => element.y), [40, 40]);
   assert.deepEqual(fittedSlots.slice(2).map((element) => element.y), [960, 960]);
 });

@@ -80,9 +80,13 @@ function reflowImageRows(elements, groupId) {
     const row = members.filter((element) => (Number(element.imageRowFlowRow) || 0) === rowNumber);
     row.forEach((element) => positions.set(element.id, rowTop));
     const rowHeight = Math.max(...row.map((element) => Number(element.h) || 0));
-    const rowGap = rowIndex < rowNumbers.length - 1
-      ? Math.max(...row.map((element) => Number(element.imageRowFlowGap) || 20))
-      : 0;
+    // 간격 0(칸끼리 붙인 프레임)은 "값 없음"이 아니라 의도한 값이다 — `||` 로 받으면
+    // 0 이 falsy 라 20 으로 되살아나 사진 사이에 틈이 생긴다(오너 8/16 지적의 함정).
+    const gapOf = (element) => {
+      const raw = Number(element.imageRowFlowGap);
+      return Number.isFinite(raw) ? raw : 20;
+    };
+    const rowGap = rowIndex < rowNumbers.length - 1 ? Math.max(...row.map(gapOf)) : 0;
     rowTop += rowHeight + rowGap;
   });
 

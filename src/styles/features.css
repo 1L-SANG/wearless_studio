@@ -1518,8 +1518,30 @@
 .sf-op { display: inline-flex; align-items: center; gap: 1px; padding-left: 8px; box-shadow: inset 1px 0 0 0 var(--ring); }
 .sf-op input { width: 34px; height: 30px; border: 0; outline: 0; background: transparent; text-align: right; font-size: 12.5px; color: var(--fg-1); font-family: var(--font-body); }
 .sf-op i { color: var(--fg-3); font-size: 11px; font-style: normal; }
-.sf-opacity { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 9px; margin-top: 9px; color: var(--fg-3); font-size: 11.5px; }
-.sf-opacity input[type='range'] { width: 100%; height: 28px; margin: -6px 0; accent-color: var(--fg-1); cursor: pointer; }
+/* 투명도 — 트랙이 결과를 보여주는 슬라이더. 체커보드(비침) 위에 현재 색이 차오르고,
+   손잡이는 그 지점의 색을 그대로 물고 있다. 브라우저 기본 range 대신 직접 그린다. */
+.sf-opacity { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px; margin-top: 11px; color: var(--fg-3); font-size: 11.5px; }
+.sf-opacity-track { position: relative; display: block; height: 14px; border-radius: 999px; overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--ring);
+  background-color: #fff;
+  background-image:
+    linear-gradient(90deg, transparent, var(--sf-op-color)),
+    linear-gradient(45deg, #e2e2e6 25%, transparent 25%), linear-gradient(-45deg, #e2e2e6 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #e2e2e6 75%), linear-gradient(-45deg, transparent 75%, #e2e2e6 75%);
+  background-size: 100% 100%, 8px 8px, 8px 8px, 8px 8px, 8px 8px;
+  background-position: 0 0, 0 0, 0 4px, 4px -4px, -4px 0; }
+.sf-opacity input[type='range'] { -webkit-appearance: none; appearance: none; position: relative; z-index: 1;
+  width: 100%; height: 14px; margin: 0; background: transparent; cursor: pointer; display: block; }
+.sf-opacity input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; border-radius: 50%; background: #fff; cursor: grab;
+  box-shadow: 0 0 0 1.5px var(--fg-1), 0 1px 4px rgba(14,13,20,.28); transition: transform .12s; }
+.sf-opacity input[type='range']::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%;
+  background: #fff; cursor: grab; box-shadow: 0 0 0 1.5px var(--fg-1), 0 1px 4px rgba(14,13,20,.28); }
+.sf-opacity input[type='range']:hover::-webkit-slider-thumb { transform: scale(1.14); }
+.sf-opacity input[type='range']:active::-webkit-slider-thumb { cursor: grabbing; transform: scale(1.06); }
+.sf-opacity input[type='range']:focus-visible { outline: none; }
+.sf-opacity input[type='range']:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 1.5px var(--fg-1), 0 0 0 4px rgba(0,153,255,.3); }
+@media (prefers-reduced-motion: reduce) { .sf-opacity input[type='range']::-webkit-slider-thumb { transition: none; } }
 .sf-none-action, .sf-eye { width: 30px; height: 30px; border: 0; background: transparent; color: var(--fg-2); border-radius: 6px; cursor: pointer; display: grid; place-items: center; flex: none; }
 .sf-none-action:hover, .sf-eye:hover { color: var(--fg-1); background: var(--bg-2); }
 .sf-color-popover { position: absolute; z-index: 70; left: 0; top: calc(100% + 8px); width: 244px; padding: 10px; border-radius: 8px; background: #fff; box-shadow: 0 12px 34px rgba(14,13,20,.18), 0 0 0 1px var(--ring); }
@@ -1657,6 +1679,13 @@
 .ward-cell .ward-rm.disabled { background: rgba(14,13,20,.34); color: rgba(255,255,255,.66); cursor: not-allowed; }
 /* 사진 고르기 모드에서는 같은 자리에 선택 체크가 떠서 오클릭이 삭제가 된다 → 잠시 감춘다. */
 .ward-cell.select-target .ward-rm { display: none; }
+/* 라이선스 차단 화면의 대체 모델 선택 — 앞 단계로 못 돌아가므로 여기서 바꾼다 */
+.fm-blocked-models { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 4px 0 12px; }
+.fm-blocked-model { display: grid; gap: 5px; justify-items: center; padding: 8px 6px; border: 0; cursor: pointer;
+  border-radius: var(--r-4); background: var(--bg-1); box-shadow: var(--elev-card); font-size: 11.5px; font-weight: 600;
+  color: var(--fg-1); font-family: inherit; transition: box-shadow .14s; }
+.fm-blocked-model:hover { box-shadow: var(--elev-lift); }
+.fm-blocked-model img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: var(--r-3); }
 .ward-cell.loading { display: grid; place-items: center; }
 /* 3분 넘게 걸리는 잡 — 서버에서 계속 만드는 중이라는 표시(실패 아님) */
 .ward-cell.loading.slow { gap: 6px; align-content: center; }
@@ -1695,7 +1724,6 @@
 .frame-layout-prev.template > img { position: absolute; inset: 0; z-index: 2; width: 100%; height: 100%; object-fit: contain; background: #fff; pointer-events: none; }
 .frame-item .fl { display: flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 500; color: var(--fg-1); }
 .frame-rec { margin-left: auto; padding: 1px 5px; border-radius: 5px; background: #eef4fb; color: #4f88c9; font-size: 9.5px; font-weight: 700; }
-.frame-image-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 /* 추천 오브젝트 — 선화(line-art) 썸네일 한 언어 (2026-08-14 개편, 텍스트 알약 글리프 폐기) */
 .object-preset-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-bottom: 18px; }
 .object-preset-cell { border: 0; border-radius: var(--r-3); background: var(--bg-2); cursor: grab; padding: 0 0 9px; overflow: hidden;
@@ -2326,31 +2354,9 @@
 }
 .sb-stack-empty { position: absolute; inset: 0; display: grid; place-items: center; font-size: 13px; }
 
-/* ---- 후킹 첫 화면 스타일 (스펙 2026-08-14) ---- */
-/* 접힘 예외: 스택 대신 흰 페이지 시트 위 실형태 — 타일 완전 밀착, 여백 얇게 */
-.sb-hooksheet-wrap { min-height: 286px; }
-.sb-hooksheet {
-  display: block;
-  width: fit-content;
-  margin: 6px 10px 6px;
-  padding: 13px;
-  border: 0;
-  border-radius: 10px;
-  background: #fff;
-  box-shadow: var(--sb-card-shadow);
-  cursor: pointer;
-  transition: transform .22s var(--sb-ease), box-shadow .22s;
-}
-.sb-hooksheet:hover { transform: translateY(-4px); box-shadow: var(--sb-pop-shadow); }
-.sb-hooksheet:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.sb-hooksheet-box { display: grid; gap: 0; }
-/* 시그니처 접힘 이미지는 스택 낱장과 같은 크기(2026-08-15 오너 — 1.15배 확대 폐기). */
-.sb-hooksheet.style-signature .sb-hooksheet-box { grid-template-columns: var(--sb-card-w); }
-.sb-hooksheet.style-pair .sb-hooksheet-box,
-.sb-hooksheet.style-moodGrid .sb-hooksheet-box { grid-template-columns: var(--sb-card-w) var(--sb-card-w); }
-.sb-hooksheet-tile { position: relative; aspect-ratio: 3 / 4; overflow: hidden; background: var(--bg-2); }
-.sb-hooksheet-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.sb-hooksheet.style-signature .sb-hooksheet-tile img { transform: scale(1.35); transform-origin: 50% 24%; }
+/* ---- 후킹 첫 화면 스타일 (스펙 2026-08-14) ----
+   접힘 흰 페이지 시트는 폐기(2026-08-16 오너) — 접힘은 다른 섹션과 같은 스택.
+   -title 은 인스펙터 '첫 화면 스타일' 미리보기가 계속 쓴다. */
 .sb-hooksheet-title {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   padding: 12px; text-align: center;
@@ -2368,20 +2374,6 @@
   overflow: hidden;
 }
 .sb-hooksheet-title.small { font-size: 8.5px; letter-spacing: .06em; }
-.sb-hooksheet-color {
-  position: absolute; left: 7px; bottom: 7px; z-index: 3;
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 3px 8px 3px 4px; border-radius: 999px;
-  background: rgba(255, 255, 255, .92); box-shadow: 0 0 0 1px var(--sb-hair);
-  font-size: 10px; font-weight: 700; color: var(--sb-ink-2);
-}
-.sb-hooksheet-color i { width: 11px; height: 11px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(34, 42, 53, .18); }
-.sb-hooksheet-gen {
-  position: absolute; right: 7px; bottom: 7px; z-index: 3;
-  padding: 3px 8px; border-radius: 999px;
-  background: rgba(23, 25, 31, .72); color: #fff;
-  font-size: 9.5px; font-weight: 700; letter-spacing: .02em;
-}
 
 /* 구 UI 복원(2026-08-15 오너 스크린샷) —
    세트 예비 컷: 다음 멤버 사진을 희미하게 깔고 '＋ 이 컷 추가'를 얹은 카드.
