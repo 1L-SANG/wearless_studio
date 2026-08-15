@@ -26,7 +26,7 @@ import { exampleGenderFromAnalysis, hexFor } from '@/features/storyboard/Storybo
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
-import { buildTextPresetElement, textPresetOf } from '@/features/editor/presets/textPresets.js';
+import { buildTextPresetElement } from '@/features/editor/presets/textPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
 import { exportBlockPng, exportBlocksZip, exportLongPng } from '@/features/editor/editorExport.js';
@@ -1374,7 +1374,6 @@ export function Editor() {
       : block));
     setSelBlock(targetBlock.id); setBlockFocused(true); setSelEl(pasted.selectedIds[0]); setSelEls(pasted.selectedIds); setEditEl(null); setVaryTarget(null);
     editorClipboard.current = { blockId: targetBlock.id, elements: pasted.elements };
-    toast.push(`${pasted.elements.length > 1 ? `${pasted.elements.length}개 요소를` : '요소를'} 붙여넣었어요`, { icon: 'copy' });
     return true;
   };
   const patchEl = (patch) => setBlocks((bs) => bs.map((b) => ({ ...b, elements: b.elements.map((e) => e.id === selEl ? { ...e, ...patch } : e) })));
@@ -1462,14 +1461,12 @@ export function Editor() {
     const nb = buildFrameBlock(f, uid);
     setBlocks((bs) => { const n = [...bs]; n.splice(idx == null ? n.length : idx, 0, nb); return n; });
     setSelBlock(nb.id); setBlockFocused(true); setSelEl(null); setSelEls([]);
-    toast.push(`${f.label} 프레임을 새 블록으로 추가했어요`);
   };
   const addImageBlock = (image, idx) => {
     const nb = buildImageBlock(image, uid);
     setBlocks((bs) => { const n = [...bs]; n.splice(idx == null ? n.length : idx, 0, nb); return n; });
     const element = nb.elements[0];
     setSelBlock(nb.id); setBlockFocused(true); setSelEl(element.id); setSelEls([element.id]); setTab('image');
-    toast.push('이미지를 새 블록으로 추가했어요', { icon: 'image' });
   };
   const onCanvasInsertDrop = (e, idx) => {
     e.preventDefault(); setFrameOver(null); setFrameDragging(false);
@@ -1497,7 +1494,6 @@ export function Editor() {
       const initialSelection = objectPresetInitialSelectionIds(shapeId, elements);
       setBlocks((bs) => bs.map((b) => b.id === target ? { ...b, elements: [...b.elements, ...elements] } : b));
       setSelBlock(target); setBlockFocused(true); setSelEl(initialSelection[0]); setSelEls(initialSelection);
-      toast.push(shapeId === 'qa-bubbles' ? '독립된 말풍선 두 개를 추가했어요' : '추천 오브젝트를 묶음으로 추가했어요');
       return;
     }
     const el = type === 'line'
@@ -1515,7 +1511,7 @@ export function Editor() {
         fill: '#FFFFFF', stroke: '#0e0d14', strokeWidth: 2,
       };
     setBlocks((bs) => bs.map((b) => b.id === target ? { ...b, elements: [...b.elements, el] } : b));
-    selectEl(target, el); toast.push('오브젝트를 추가했어요');
+    selectEl(target, el);
   };
   const setSlotImage = (blockId, elId, image) => {
     setBlocks((bs) => bs.map((b) => {
@@ -1542,7 +1538,6 @@ export function Editor() {
       };
       setSlotImage(target, slot.id, filled);
       selectEl(target, filled, false, keepTab);
-      toast.push('프레임에 이미지를 넣었어요', { icon: 'image' });
       return;
     }
 
@@ -1561,7 +1556,6 @@ export function Editor() {
     };
     setBlocks((bs) => bs.map((block) => block.id === target ? { ...block, elements: [...block.elements, el] } : block));
     selectEl(target, el, false, keepTab);
-    toast.push('이미지를 캔버스에 삽입했어요');
   };
   const requestSlotImage = (blockId, el) => {
     selectEl(blockId, el, false, true);
@@ -1570,7 +1564,6 @@ export function Editor() {
   };
   const dropSlotImage = (blockId, elId, image) => {
     setSlotImage(blockId, elId, image);
-    toast.push('프레임에 이미지를 넣었어요', { icon: 'image' });
   };
   const wardrobeInsert = (im, { keepTab = false } = {}) => {
     if (pendingSlot) {
@@ -1585,7 +1578,6 @@ export function Editor() {
       });
       setPendingSlot(null);
       if (!keepTab) setTab('image');
-      toast.push('빈 칸에 이미지를 넣었어요');
     } else insertImage(im, { keepTab });
   };
   const patchImageImport = (id, patch) => {
@@ -1759,15 +1751,16 @@ export function Editor() {
     const wrap = wrapRef.current; if (!wrap) return;
     const target = wrap.querySelectorAll('.canvas-block')[idx];
     if (target) { const wr = wrap.getBoundingClientRect(); const tr = target.getBoundingClientRect(); wrap.scrollTo({ top: wrap.scrollTop + (tr.top - wr.top) - 40, behavior: 'smooth' }); } };
+  // 추가류 확인 토스트는 쓰지 않는다 — 결과가 캔버스에 바로 보이는 작은 행동에 알림을
+  // 띄우면 편집 집중을 깬다(2026-08-15 오너 결정). 토스트는 화면으로 알 수 없는 것
+  // (오류·저장·생성 진행·복사)과 파괴적 동작(삭제)에만 쓴다.
   const addText = (preset) => {
     const id = visibleBlock();
     // preset = 텍스트 프리셋 키(큰 제목·소제목·설명글·꼬리표). 미지정(T 단축키)이면 소제목.
-    // 라벨도 같은 textPresetOf 폴백을 타야 만든 요소와 토스트가 안 갈라진다.
     const el = buildTextPresetElement(preset);
     setBlocks((bs) => bs.map((b) => b.id === id ? { ...b, elements: [...b.elements, el] } : b));
     selectEl(id, el); setTab('text');
     setEditEl(el.id);
-    toast.push(`${textPresetOf(preset).label} 추가 — 바로 입력하세요`);
   };
   /* ---- 정보 블록 (PRD §10.14 `내용 추가`) — infoPresets 빌더로 폼→블록 생성 ---- */
   const targetGenders = (analysis && analysis.targetGenders) || [];
