@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { promoteCustomMatch, stripLocalCustomMatch } from '../../src/lib/customMatchPromotion.js';
 
 function fakeApi({ addResult, addError } = {}) {
-  const calls = { uploads: [], adds: [], saves: [] };
+  const calls = { uploads: [], adds: [], saves: [], cleared: 0 };
   return {
     calls,
     async uploadPhoto(projectId, payload) {
@@ -27,6 +27,9 @@ function fakeApi({ addResult, addError } = {}) {
     async saveAnalysis(projectId, analysis) {
       calls.saves.push({ projectId, analysis });
       return analysis;
+    },
+    clearCustomMatchDraft() {
+      calls.cleared += 1;
     },
   };
 }
@@ -51,15 +54,30 @@ test('내 옷 draft 는 확정 시 재업로드되고 custom-match-item 으로 �
   assert.deepEqual(api.calls.adds, [{ projectId: 'proj-1', assetIds: ['asset-1', 'asset-2'] }]);
 });
 
-test('draft 에서 선택돼 있던 내 옷은 승격본도 선택 상태로 저장된다', async () => {
+test('draft 에서 선택돼 있던 내 옷은 승격본도 선택 상태로 저장된다 — 델타만 보낸다', async () => {
   const api = fakeApi();
   await promoteCustomMatch(api, 'proj-1', DRAFT);
 
   assert.equal(api.calls.saves.length, 1, '선택 이월 저장 1회');
-  const saved = api.calls.saves[0].analysis.matchClothing;
-  const custom = saved.find((m) => m.id === 'custom_srv');
-  assert.equal(custom.selected, true);
-  assert.equal(custom.selOrder, 1);
+  const patch = api.calls.saves[0].analysis;
+  // analysis 전체를 보내면 서버 어댑터가 '추천 갱신'으로 읽고 보완 타입을 잘못 굳혀
+  // 하의 상품에서 승격본까지 선택 해제된다(리뷰 확정 결함) — 델타만 보내야 한다.
+  assert.deepEqual(Object.keys(patch), ['matchClothing']);
+  assert.deepEqual(patch.matchClothing, [{ id: 'custom_srv', selected: true, selOrder: 1 }]);
+});
+
+test('승격이 끝나면 draft 키를 반드시 비운다 (성공·실패·409 전부)', async () => {
+  const ok = fakeApi();
+  await promoteCustomMatch(ok, 'p', DRAFT);
+  assert.equal(ok.calls.cleared, 1, '성공 후 소거');
+
+  const boom = fakeApi({ addError: Object.assign(new Error('down'), { status: 500 }) });
+  await promoteCustomMatch(boom, 'p', DRAFT);
+  assert.equal(boom.calls.cleared, 1, '실패 후에도 소거 — 다음 프로젝트로 새면 안 된다');
+
+  const dup = fakeApi({ addError: Object.assign(new Error('exists'), { status: 409 }) });
+  await promoteCustomMatch(dup, 'p', DRAFT);
+  assert.equal(dup.calls.cleared, 1, '409 후에도 소거');
 });
 
 test('선택 안 된 draft 는 등록만 하고 선택 저장을 만들지 않는다', async () => {

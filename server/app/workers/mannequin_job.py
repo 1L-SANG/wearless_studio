@@ -677,6 +677,11 @@ def _build_retry_feedback(scores: dict | None, series: dict | None, p2) -> str:
     if series and series.get("inconsistencies"):
         parts.append("CONSISTENCY: " + _AXIS_FEEDBACK["series_consistency"] + " — "
                      + "; ".join(series["inconsistencies"][:3]))
+    # 매칭(코디) 하드 게이트 사유. merge_qc_scores 는 매칭 키를 싣지 않으므로 p2 에서 직접
+    # 읽는다 — 이게 없으면 바지 때문에 건 재롤이 같은 프롬프트로 돌아 같은 바지를 낸다.
+    if isinstance(p2, dict) and p2.get("matching_critical_errors"):
+        parts.append("MATCHING GARMENT (reproduce the coordination item exactly as in its "
+                     "reference photo): " + "; ".join(p2["matching_critical_errors"][:3]))
     if isinstance(p2, dict) and p2.get("correctionPrompt"):
         parts.append("CORRECTION (generate the SAME garment as the product photos): "
                      + p2["correctionPrompt"])
@@ -744,12 +749,24 @@ def gate_decision(s, pillow_verdict_str: str, p2) -> tuple[bool, bool]:
 # 바지 판정은 주상품 QC 와 **같은 1콜** 안에서 나온다(image_qc.verdict 에 match_image 첨부).
 # 여기 함수들은 그 결과(p2)를 읽어 재롤/드롭만 정한다 — AI 콜을 새로 만들지 않는다.
 
-def _pants_qc_ref(s, match_img):
-    """AG-P2 verdict 에 넘길 바지 참조. 플래그 off 거나 매칭 없으면 None(요청 불변).
+def _matching_is_bottom(clothing_type) -> bool:
+    """이 잡의 매칭 아이템이 하의인가 — 주상품이 하의면 매칭은 상의다.
+
+    프롬프트 매니페스트가 2026-08-01(WS4)에 이미 이 분기를 갖고 있다(_build_manifest).
+    판정 쪽도 같은 규칙을 따라야 한다 — 안 그러면 매칭 상의를 "coordinated matching
+    bottom" 이라고 단언한 채 판정해 하의 상품 잡이 통째로 오판된다.
+    """
+    return str(clothing_type or "").strip().lower() != "bottom"
+
+
+def _pants_qc_ref(s, match_img, clothing_type=None):
+    """AG-P2 verdict 에 넘길 바지 참조. 플래그 off·매칭 없음·매칭이 상의면 None(요청 불변).
 
     None 을 주면 image_qc.verdict 가 기존과 바이트 단위로 동일하게 돈다(매칭 필드·이미지 없음).
     """
-    if match_img is None or getattr(s, "mannequin_pants_qc", "off") == "off":
+    if (match_img is None
+            or getattr(s, "mannequin_pants_qc", "off") == "off"
+            or not _matching_is_bottom(clothing_type)):
         return None
     return match_img
 
@@ -772,9 +789,13 @@ def _pants_shippable(s, p2) -> bool:
     return not pants_gate(s, p2)
 
 
-def _pants_region_mode(s, match_img) -> str:
-    """편집 전후 바지영역 픽셀 비교 모드: 'off'|'shadow'|'enforce'. 매칭 없으면 항상 off."""
-    if match_img is None:
+def _pants_region_mode(s, match_img, clothing_type=None) -> str:
+    """편집 전후 바지영역 픽셀 비교 모드: 'off'|'shadow'|'enforce'.
+
+    매칭이 없거나 **매칭이 상의(=주상품이 하의)면 항상 off**. 밴드(0.60~0.97)가 그 경우
+    주상품을 덮으므로, 축 QC 가 의도적으로 바꾼 주상품 실루엣을 "바지 회귀"로 되돌린다.
+    """
+    if match_img is None or not _matching_is_bottom(clothing_type):
         return "off"
     return getattr(s, "mannequin_pants_qc", "off")
 
@@ -947,9 +968,13 @@ async def _apply_untuck_postpass(
         return res
     # 매칭 하의 보존: untuck 은 상의 밑단(허리 위)만 빼야 한다. 바지 영역(엉덩이 아래)이 색·폭·
     # 구조로 바뀌었으면 untuck 결과를 버리고 pre-untuck 을 유지한다 — AI 콜 없이 로컬 비교(요구 5).
-    pants_mode = _pants_region_mode(s, match_img)
+    pants_mode = _pants_region_mode(s, match_img, clothing_type)
     if pants_mode != "off":
-        pr = qc.compare_pants_region(res.image, out.image)
+        # untuck 은 정의상 상의 밑단을 허리 아래로 내린다 — 기본 밴드(0.60~)는 그 밑단을
+        # 품어 정상 untuck 을 "바지 회귀"로 읽는다. 이 패스에서만 밴드 상단을 무릎 아래로
+        # 내려, 상의가 절대 닿지 않는 구간만 본다.
+        pr = qc.compare_pants_region(
+            res.image, out.image, band_top=qc.PANTS_BAND_TOP_UNTUCK)
         await _emit(pool, job_id, "step", {
             **summary, "status": "pants_region", "phase": "untuck", "mode": pants_mode,
             "pants_verdict": pr.verdict, "pants_reasons": pr.reasons, "pants_metrics": pr.metrics})
@@ -1081,7 +1106,7 @@ async def _apply_edits(
     # 렌더하므로 하체 바지가 색·폭·구조로 조용히 드리프트할 수 있다. 편집 전(pre_res)과 픽셀로
     # 대보고 크게 바뀌었으면 편집 전으로 되돌린다 — AI 콜 없이 로컬 비교(요구 5). 바지만 고치는
     # 새 편집 슬롯을 만들지 않고 net 결과를 통째로 버리는 선에서 끝낸다(요구 6, 예산 불변).
-    pants_mode = _pants_region_mode(s, match_img)
+    pants_mode = _pants_region_mode(s, match_img, clothing_type)
     if pants_mode != "off" and hashlib.sha256(res.image).hexdigest() != pre_hash:
         pr = qc.compare_pants_region(pre_res.image, res.image)
         await _emit(pool, job_id, "step", {
@@ -1104,7 +1129,7 @@ async def _apply_edits(
     try:
         p2 = await image_qc.verdict(
             s, prod_imgs, InlineImage(res.mime, res.image), scored=True, fit_profile=fit_profile,
-            match_image=_pants_qc_ref(s, match_img))
+            match_image=_pants_qc_ref(s, match_img, clothing_type))
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "attempt": attempt,
             "status": "image_qc_rescored", "imageQc": p2})
@@ -1120,7 +1145,8 @@ async def _apply_edits(
         axis_hash = hashlib.sha256(post_axis_res.image).hexdigest()
         res, p2 = await _rollback_edits(
             pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
-            prod_imgs=prod_imgs, match_img=match_img, pre_res=pre_res, pre_p2=pre_p2,
+            prod_imgs=prod_imgs, match_img=match_img, clothing_type=clothing_type,
+            pre_res=pre_res, pre_p2=pre_p2,
             post_axis_res=post_axis_res, post_p2=p2,
             axis_changed=axis_hash != pre_hash,
             bust_changed=hashlib.sha256(res.image).hexdigest() != axis_hash,
@@ -1152,7 +1178,7 @@ async def _save_cut(
 
 
 async def _rollback_edits(
-    *, pool, s, job_id, candidate, attempt, prod_imgs, match_img=None,
+    *, pool, s, job_id, candidate, attempt, prod_imgs, match_img=None, clothing_type=None,
     pre_res, pre_p2, post_axis_res, post_p2, axis_changed, bust_changed, fit_profile=None,
 ):
     """회귀한 편집을 되돌린다. → (선택 이미지, 그 이미지의 판정)
@@ -1182,7 +1208,8 @@ async def _rollback_edits(
     try:
         mid_p2 = await image_qc.verdict(
             s, prod_imgs, InlineImage(post_axis_res.mime, post_axis_res.image), scored=True,
-            fit_profile=fit_profile, match_image=_pants_qc_ref(s, match_img))
+            fit_profile=fit_profile,
+            match_image=_pants_qc_ref(s, match_img, clothing_type))
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "attempt": attempt,
             "status": "image_qc_post_axis", "imageQc": mid_p2})
@@ -1331,7 +1358,8 @@ async def _run_candidate(
             try:
                 p2 = await image_qc.verdict(
                     s, prod_imgs, InlineImage(res.mime, res.image), scored=True,
-                    fit_profile=fit_profile, match_image=_pants_qc_ref(s, match_img))
+                    fit_profile=fit_profile,
+                    match_image=_pants_qc_ref(s, match_img, clothing_type))
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "image_qc", "imageQc": p2})
             except Exception as e:

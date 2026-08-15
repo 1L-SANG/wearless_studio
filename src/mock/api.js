@@ -14,7 +14,9 @@
    ============================================================= */
 import { DB, reseedDraft, buildEditorBlocksFromStoryboard, buildStoryboard } from '@/mock/db.js';
 import {
-  rememberCustomMatchDraft, clearCustomMatchDraft, readCustomMatchDraft,
+  rememberCustomMatchDraft,
+  clearCustomMatchDraft as forgetCustomMatchDraft,
+  readCustomMatchDraft,
 } from '@/mock/customMatchDraftStore.js';
 import { Placeholder } from '@/mock/placeholders.js';
 import {
@@ -437,7 +439,7 @@ export const api = {
     const analysis = removeCustomMatchFromAnalysis(DB.analysis);
     DB.analysis.matchClothing = analysis.matchClothing;
     if (analysis.fitProfile) DB.analysis.fitProfile = analysis.fitProfile;
-    clearCustomMatchDraft();
+    forgetCustomMatchDraft();
     return { analysis: clone(DB.analysis) };
   },
   // draft(비프로젝트) 단계에서 추가한 내 옷의 원본 blob 묶음 — 확정 승격(draftSync)이
@@ -454,6 +456,17 @@ export const api = {
       .map(({ filename, mime, blob }) => ({ filename, mime, blob }));
     if (!uploads.length) return null;
     return { uploads, selected: !!item?.selected, localId: item?.id ?? null };
+  },
+  // 승격이 끝난(성공·실패 무관) draft 의 키·blob 을 버린다. 모듈 스코프라 탭이 살아 있는
+  // 동안 남으므로, 비우지 않으면 다음 프로젝트가 이전 프로젝트의 옷을 등록한다.
+  clearCustomMatchDraft() {
+    const held = readCustomMatchDraft()?.assetIds || [];
+    held.forEach((id) => {
+      const up = customMatchUploads.get(id);
+      if (up?.url) URL.revokeObjectURL(up.url);
+      customMatchUploads.delete(id);
+    });
+    forgetCustomMatchDraft();
   },
   async refreshMatchClothing(/* projectId */) {
     DB.analysis.matchClothing = recommendLegacyMatchClothing({

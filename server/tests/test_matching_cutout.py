@@ -109,22 +109,43 @@ def _flat_png(fg_color, size=(60, 80), fg_box=(15, 20, 45, 60)):
     return buf.getvalue()
 
 
+def _photo_png(bg, garment, size=(120, 160)):
+    """배경 위에 옷이 놓인 원본 사진 — 테두리는 배경, 중앙은 옷."""
+    from PIL import ImageDraw
+    im = Image.new("RGB", size, bg)
+    ImageDraw.Draw(im).rectangle((size[0] // 4, size[1] // 4,
+                                  size[0] * 3 // 4, size[1] * 3 // 4), fill=garment)
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    return buf.getvalue()
+
+
 def test_color_gate_rejects_background_grab():
-    """검정 데님 원본인데 누끼 전경이 흰색 — 부츠컷 다리 사이 문틈을 딴 실사고 재현."""
-    ok, m = mc.cutout_color_agrees(_rgb_png((24, 26, 30)), _flat_png((246, 246, 244)))
+    """흰 문 배경 + 검정 데님인데 누끼 전경이 흰색 — 배경을 딴 실사고 재현."""
+    ok, m = mc.cutout_color_agrees(
+        _photo_png((246, 246, 244), (24, 26, 30)), _flat_png((246, 246, 244)))
     assert ok is False
-    assert m["delta"] > mc.CUTOUT_COLOR_DELTA_MAX
+    assert m["delta"] < mc.CUTOUT_BG_DELTA_MIN
+
+
+def test_color_gate_accepts_small_garment_on_large_background():
+    """옷이 프레임을 못 채워도 통과해야 한다 — 중앙 평균 기준이던 시절의 오탐(리뷰 확정)."""
+    tiny = Image.new("RGB", (200, 200), (245, 245, 245))
+    from PIL import ImageDraw
+    ImageDraw.Draw(tiny).rectangle((85, 85, 115, 115), fill=(20, 30, 90))  # 2.25% 면적
+    buf = io.BytesIO(); tiny.save(buf, "PNG")
+    ok, m = mc.cutout_color_agrees(buf.getvalue(), _flat_png((20, 30, 90)))
+    assert ok is True, m
 
 
 def test_color_gate_accepts_same_garment_and_lighting_shift():
-    dark = (24, 26, 30)
-    assert mc.cutout_color_agrees(_rgb_png(dark), _flat_png(dark))[0] is True
-    lit = (54, 56, 60)  # 조명 차 +30 — 같은 옷으로 본다
-    assert mc.cutout_color_agrees(_rgb_png(dark), _flat_png(lit))[0] is True
+    photo = _photo_png((246, 246, 244), (24, 26, 30))
+    assert mc.cutout_color_agrees(photo, _flat_png((24, 26, 30)))[0] is True
+    assert mc.cutout_color_agrees(photo, _flat_png((54, 56, 60)))[0] is True  # 조명 +30
 
 
 def test_color_gate_rejects_empty_foreground():
-    ok, m = mc.cutout_color_agrees(_rgb_png((24, 26, 30)), _flat_png(None))
+    ok, m = mc.cutout_color_agrees(_photo_png((246, 246, 244), (24, 26, 30)), _flat_png(None))
     assert ok is False and m["reason"] == "no_foreground"
 
 

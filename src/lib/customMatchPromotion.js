@@ -24,15 +24,15 @@ export async function promoteCustomMatch(api, projectId, customDraft) {
     const result = await api.addCustomMatchItem(projectId, { assetIds });
     // draft 에서 선택돼 있었으면 승격본(새 서버 id)도 선택 상태로 저장한다 —
     // 아니면 "선택했는데 확정하니 풀려 있음"이 된다.
+    //
+    // **패치는 선택 델타만** 보낸다. analysis 전체를 patch 로 넘기면 서버 어댑터가
+    // 이걸 '추천 갱신'으로 보고 matchClothing 을 통째 머지하는데, 승격 payload 에는
+    // clothingType 이 빠져 있어 보완 타입이 bottom 으로 굳는다 — 하의 상품에서는 방금
+    // 승격한 내 옷까지 selected:false 로 저장된다(리뷰 확정 결함).
     const promoted = (result?.analysis?.matchClothing || []).find((m) => m.isCustom);
     if (customDraft.selected && promoted) {
       await api.saveAnalysis(projectId, {
-        ...result.analysis,
-        matchClothing: result.analysis.matchClothing.map((m) => (
-          m.id === promoted.id
-            ? { ...m, selected: true, selOrder: 1 }
-            : { ...m, selected: false, selOrder: undefined }
-        )),
+        matchClothing: [{ id: promoted.id, selected: true, selOrder: 1 }],
       });
     }
     return { promoted: true, itemId: promoted?.id ?? null };
@@ -41,6 +41,11 @@ export async function promoteCustomMatch(api, projectId, customDraft) {
       console.warn('custom match promotion failed (확정은 유지)', err);
     }
     return { promoted: false, error: err };
+  } finally {
+    // 성공·실패·409 어느 경로든 이 draft 의 승격 키는 소비됐다. 남겨 두면 같은 탭에서
+    // 다음 프로젝트를 만들 때 이전 프로젝트의 blob 이 다시 등록된다(리뷰 확정 결함 —
+    // 커스텀 슬롯까지 점유해 진짜 내 옷 추가가 409 로 막힌다).
+    api.clearCustomMatchDraft?.();
   }
 }
 

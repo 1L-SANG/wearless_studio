@@ -42,28 +42,32 @@ def flatten_on_bg(rgba_png: bytes) -> bytes:
     return out.getvalue()
 
 
-#: 누끼 색 일치 게이트 임계 — 전경 평균색이 원본 중앙부와 채널당 이 이상 벌어지면
-#: "다른 것을 땄다"로 본다. 실측 근거(2026-08-15): 부츠컷 청바지에서 SAM 이 다리 사이
-#: 흰 문틈을 땄다(areaFrac 0.31 — 넓이로는 정상 범위). 원본 중앙부(검정 데님)와 누끼
-#: 전경(흰색)의 밝기 차가 100 이상이라 색 비교 한 번이면 걸린다. 같은 옷의 조명 차는
-#: 실측 30 안쪽. 판정 불가(디코드 실패 등)는 통과 — 이 게이트가 새 실패원이 되면 안 된다.
-CUTOUT_COLOR_DELTA_MAX = 70
+#: 배경 오채취 판정 임계 — 누끼 전경 평균색이 원본 **배경(테두리)** 색과 채널당 이 값
+#: 이내로 붙으면 "옷이 아니라 배경을 땄다"로 본다. 실측 근거(2026-08-15): 부츠컷 청바지에서
+#: SAM 이 다리 사이 흰 문틈을 땄고(areaFrac 0.31 — 넓이로는 정상), 그 전경색이 흰 문 배경과
+#: 사실상 동일했다. 반대로 정상 누끼는 배경과 뚜렷이 다르다(실측 Δ 100+).
+#: 판정 불가(디코드 실패 등)는 통과 — 이 게이트가 새 실패원이 되면 안 된다.
+CUTOUT_BG_DELTA_MIN = 40
 
 
 def cutout_color_agrees(original_bytes: bytes, flattened_png: bytes) -> tuple[bool, dict]:
-    """누끼 전경색이 원본 옷 색과 같은 계열인지 (결정론, AI 아님). → (일치 여부, 메트릭).
+    """누끼가 옷이 아니라 **배경**을 딴 것인지 (결정론, AI 아님). → (통과 여부, 메트릭).
 
-    원본 기준색 = 중앙 50% 크롭 평균(옷이 프레임 중앙을 차지한다는 업로드 관례).
-    누끼 전경 = 회색 배경(MATCHING_CUTOUT_BG)과 다른 픽셀들의 평균.
+    기준은 원본의 **테두리 밴드 색(=배경)** 이다. 중앙 평균을 기준으로 삼으면 "옷이 프레임
+    중앙을 채운다"는 구도 가정에 기대게 되고, 옷이 작게 찍힌 정상 업로드에서 기준색에
+    배경이 섞여 멀쩡한 누끼가 거절된다(2026-08-15 리뷰). 실제 실패 모드는 하나다 —
+    SAM 이 배경 조각을 땄다. 그러면 누끼 전경색이 원본 배경색과 거의 같아진다.
     """
     try:
         with Image.open(io.BytesIO(original_bytes)) as o:
             orig = o.convert("RGB")
+            orig.thumbnail((160, 160), Image.LANCZOS)
             w, h = orig.size
-            center = orig.crop((w // 4, h // 4, w * 3 // 4, h * 3 // 4))
-            center.thumbnail((64, 64), Image.LANCZOS)
-            px = list(center.getdata())
-            ref = tuple(sum(c[i] for c in px) // len(px) for i in range(3))
+            b = max(2, min(w, h) // 12)
+            edges = [orig.crop((0, 0, w, b)), orig.crop((0, h - b, w, h)),
+                     orig.crop((0, 0, b, h)), orig.crop((w - b, 0, w, h))]
+            epx = [p for e in edges for p in e.getdata()]
+            ref = tuple(sum(c[i] for c in epx) // len(epx) for i in range(3))
         with Image.open(io.BytesIO(flattened_png)) as f:
             cut = f.convert("RGB")
             cut.thumbnail((128, 128), Image.LANCZOS)
@@ -77,8 +81,9 @@ def cutout_color_agrees(original_bytes: bytes, flattened_png: bytes) -> tuple[bo
                 return False, {"reason": "no_foreground", "fgCount": len(fg)}
             got = tuple(sum(c[i] for c in fg) // len(fg) for i in range(3))
         delta = max(abs(ref[i] - got[i]) for i in range(3))
-        return delta <= CUTOUT_COLOR_DELTA_MAX, {
-            "refColor": ref, "cutoutColor": got, "delta": delta}
+        # 배경과 충분히 다르면 옷을 딴 것 — 통과.
+        return delta >= CUTOUT_BG_DELTA_MIN, {
+            "bgColor": ref, "cutoutColor": got, "delta": delta}
     except Exception:  # noqa: BLE001 - 게이트 자체가 실패원이 되면 안 된다
         return True, {"reason": "gate_error_fail_open"}
 

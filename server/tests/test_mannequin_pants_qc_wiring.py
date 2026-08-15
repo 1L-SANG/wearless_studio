@@ -242,7 +242,7 @@ def test_shadow_never_drops_and_still_observes(monkeypatch):
 
 def test_bust_edit_reverts_when_pants_region_regresses(monkeypatch):
     """bust 편집이 바지영역을 회귀시키면 편집 전(생성본)으로 롤백. compare_pants_region 배선 검증."""
-    def regressed(before, after):
+    def regressed(before, after, **kw):
         return QcResult("pants_regressed", ["matching_bottom_colour_shift"], {})
 
     result, gemini, r2, emits, vc = _run(
@@ -257,7 +257,10 @@ def test_bust_edit_reverts_when_pants_region_regresses(monkeypatch):
 
 def test_untuck_reverts_when_pants_region_regresses(monkeypatch):
     """untuck post-pass 가 바지영역을 회귀시키면 pre-untuck 을 유지한다."""
-    def regressed(before, after):
+    seen = {}
+
+    def regressed(before, after, **kw):
+        seen.update(kw)
         return QcResult("pants_regressed", ["matching_bottom_width_shift"], {})
 
     result, gemini, r2, emits, vc = _run(
@@ -267,11 +270,15 @@ def test_untuck_reverts_when_pants_region_regresses(monkeypatch):
     assert result is not None
     assert r2.puts[0][1] == b"gen-1", "회귀한 untuck 결과 대신 pre-untuck 이 출고된다"
     assert any(e.get("untuck_outcome") == "reverted_pants" for e in emits)
+    # untuck 은 상의 밑단을 허리 아래로 내린다 — 밴드 상단을 무릎 아래로 낮춰 비교해야
+    # 정상 untuck 이 "바지 회귀"로 오판되지 않는다(2026-08-15 리뷰).
+    from app.services import qc as qcmod
+    assert seen.get("band_top") == qcmod.PANTS_BAND_TOP_UNTUCK
 
 
 def test_shadow_region_observes_but_never_reverts(monkeypatch):
     """shadow: 바지영역이 회귀해도 편집을 되돌리지 않고 계측만 한다(다크 출고·캘리브 우선)."""
-    def regressed(before, after):
+    def regressed(before, after, **kw):
         return QcResult("pants_regressed", ["matching_bottom_colour_shift"], {"colorDelta": 99})
 
     result, gemini, r2, emits, vc = _run(
@@ -288,7 +295,7 @@ def test_shadow_region_observes_but_never_reverts(monkeypatch):
 
 def test_region_compare_fails_open_on_unknown(monkeypatch):
     """compare 가 pants_unknown(디코드 실패 등)이면 enforce 여도 편집을 되돌리지 않는다(fail-open)."""
-    def unknown(before, after):
+    def unknown(before, after, **kw):
         return QcResult("pants_unknown", ["decode_failed"], {})
 
     result, gemini, r2, emits, vc = _run(
@@ -299,3 +306,30 @@ def test_region_compare_fails_open_on_unknown(monkeypatch):
     assert r2.puts[0][1] == b"busted", "판정 불가에 멀쩡한 편집을 되돌리면 안 된다"
     assert not any(e.get("reason") == "pants_regressed"
                    for e in _status(emits, "edit_reverted"))
+
+
+# ── 하의 상품일 때 매칭은 상의 (2026-08-15 리뷰: 판정·밴드가 이 분기를 안 봤음) ──
+
+def test_bottom_hero_never_sends_matching_as_a_pants_reference():
+    """주상품이 하의면 매칭 아이템은 상의다 — 프롬프트가 'matching bottom' 이라 단언하므로
+    참조를 붙이면 안 되고(오판), 하체 밴드 비교도 주상품을 덮으므로 꺼야 한다."""
+    enf = make_settings(mannequin_pants_qc="enforce")
+    img = mannequin_job.InlineImage("image/png", b"m")
+    # 상의 상품(매칭=하의) — 정상 동작
+    assert mannequin_job._pants_qc_ref(enf, img, "top") is img
+    assert mannequin_job._pants_region_mode(enf, img, "top") == "enforce"
+    # 하의 상품(매칭=상의) — 판정·밴드 둘 다 꺼진다
+    assert mannequin_job._pants_qc_ref(enf, img, "bottom") is None
+    assert mannequin_job._pants_region_mode(enf, img, "bottom") == "off"
+    # 대소문자·공백도 같은 규칙(_build_manifest 와 동일 관례)
+    assert mannequin_job._pants_qc_ref(enf, img, " Bottom ") is None
+
+
+def test_retry_feedback_carries_the_matching_defect():
+    """바지 하드게이트로 건 재롤은 그 사유가 프롬프트에 실려야 의미가 있다 —
+    merge_qc_scores 가 매칭 키를 버리므로 p2 에서 직접 읽어야 한다(리뷰 확정 결함)."""
+    p2 = _p2(matching_critical=["matching bottom colour changed"])
+    fb = mannequin_job._build_retry_feedback(
+        mannequin_job.merge_qc_scores(p2, None), None, p2)
+    assert "matching bottom colour changed" in fb
+    assert "MATCHING GARMENT" in fb

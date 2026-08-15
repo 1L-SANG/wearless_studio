@@ -180,6 +180,10 @@ def format_qc_feedback(result: QcResult) -> str:
 # 국소화는 **고정 세로 밴드**다 — 랜드마크는 이 파이프라인에서 오탐 상수(missing_lower_body).
 # 허리 전이대(밴드 상단)를 살짝 비워 두어 상의 밑단·untuck 변화가 바지 판정으로 새지 않게 한다.
 PANTS_BAND_TOP = 0.60      # 프레임 높이의 이 지점부터(엉덩이 아래) — 허리 경계 소폭 허용
+#: untuck post-pass 전용 밴드 상단. untuck 은 상의 밑단을 허리 아래로 내리는 편집이라
+#: 기본 밴드가 그 밑단을 품는다 — 정상 untuck 이 "바지 색이 변했다"로 롤백되던 지점.
+#: 무릎 아래만 보면 상의가 닿을 수 없다(2026-08-15 리뷰).
+PANTS_BAND_TOP_UNTUCK = 0.75
 PANTS_BAND_BOTTOM = 0.97   # 밑단까지. 발/바닥(맨 아래 3%)은 제외
 PANTS_FG_MIN_RATIO = 0.02  # 밴드 전경 최소 질량 — 미만이면 색 판정을 건너뛴다(노이즈 방지)
 PANTS_COLOR_DELTA_MAX = 40    # 전경 평균색 최대 채널 이동(0-255) — 색 계열 변화
