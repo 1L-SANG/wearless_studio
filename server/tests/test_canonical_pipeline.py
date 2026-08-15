@@ -61,7 +61,7 @@ def test_cutout_identity_covers_source_view_model_and_algorithm():
     assert base != cutout_key("h1", "Front", model_version="m2")   # 모델
     assert base != cutout_key("h1", "Front", algorithm_version="v9")
     assert cutout_key("h1", "Front") == base                       # 결정적
-    assert ALGORITHM_VERSION == "sam2-grid8-v2"
+    assert ALGORITHM_VERSION == "sam2-grid8-v3"
 
 
 # ── 자산 메타데이터 / 신선도 ─────────────────────────────────────────────────
