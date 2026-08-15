@@ -285,6 +285,16 @@ export function ErrorState({ title = '문제가 발생했어요', desc, onRetry 
     </div>
   );
 }
+/* 업로드 대기 타일 — 로고 실루엣 + 흐르는 빛. 입력 페이지 사진 슬롯과 에디터 의류 탭이
+   같은 얼굴을 쓴다(오너 8/15: "의류 업로드 기다릴 때도 입력 페이지처럼 로고 로딩을"). */
+export function UploadPendingTile({ className = '' }) {
+  return (
+    <div className={`upload-placeholder${className ? ' ' + className : ''}`} aria-hidden="true">
+      <span className="upload-placeholder-logo" />
+    </div>
+  );
+}
+
 export function Skeleton({ w, h, r, style }) {
   return <div className="skeleton" style={{ width: w, height: h, borderRadius: r, ...style }} />;
 }

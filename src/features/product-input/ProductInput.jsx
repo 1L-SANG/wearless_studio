@@ -39,7 +39,7 @@ import {
   formatDraftClock,
   formatDraftRelativeTime,
 } from '@/lib/draftSlot.js';
-import { Icon, Button, IconButton, ErrorState, Modal, useToast } from '@/components/ui.jsx';
+import { Icon, Button, IconButton, ErrorState, Modal, UploadPendingTile, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { AnalysisForm, AnalysisSkeleton, AnalysisProgress, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
 import {
@@ -251,11 +251,7 @@ function AddDrop({ className, slot, room, onAddFiles, onPendingChange, children 
 }
 
 function PendingTile({ small }) {
-  return (
-    <div className={`tile upload-placeholder${small ? ' sm' : ''}`} aria-hidden="true">
-      <span className="upload-placeholder-logo" />
-    </div>
-  );
+  return <UploadPendingTile className={`tile${small ? ' sm' : ''}`} />;
 }
 
 function ProductPhotoPreview({ image, displayUrl }) {
@@ -999,7 +995,9 @@ export function ProductInput() {
         return;
       }
 
-      const fresh = { ...p, name: '', colors: [{ ...p.colors[0], swatchId: undefined, images: [] }] };
+      // 색상 이름도 비운다 — 시드 템플릿의 '블랙'이 새 제작으로 새면 스와치를 다른 색으로
+      // 골라도 이름만 '블랙'으로 남아 원과 이름이 어긋난다(오너 8/15 지적의 오염원).
+      const fresh = { ...p, name: '', colors: [{ ...p.colors[0], name: '', swatchId: undefined, images: [] }] };
       setProduct(fresh);
     })().catch((error) => {
       if (alive) setLoadError(error?.message || '입력 화면을 불러오지 못했어요. 다시 시도해 주세요.');

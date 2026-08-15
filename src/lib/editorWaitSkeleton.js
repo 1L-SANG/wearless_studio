@@ -108,7 +108,10 @@ export function canSafelyMergeServerBlocks(blocks, serverBlocks) {
   });
 }
 
-export function mergeServerBlocks(blocks, serverBlocks) {
+/** @param {Set<string>} [failedSourceIds] 서버가 못 만든 컷의 sourceBlockId — 그 자리는
+    "그냥 빈 칸"이 아니라 '만들지 못함' 표식(genFailed)을 남긴다. 표식이 없으면 완료 순간
+    실패 컷이 일반 빈 슬롯으로 둔갑해 셀러가 이유도, 과금 여부도 모른 채 넘어간다. */
+export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds) {
   if (!canSafelyMergeServerBlocks(blocks, serverBlocks)) return serverBlocks || [];
   const srcById = {}; const copyById = {};
   let serverNotice = null;
@@ -125,8 +128,12 @@ export function mergeServerBlocks(blocks, serverBlocks) {
     ...b,
     elements: (b.elements || []).map((el) => {
       if (el.type === 'image' && el.sourceBlockId) {
-        const { genPending, genExample, genAutoSrc, ...rest } = el;
-        return { ...rest, src: srcById[el.sourceBlockId] || rest.src || null };
+        const { genPending, genExample, genAutoSrc, genFailed, ...rest } = el;
+        const src = srcById[el.sourceBlockId] || rest.src || null;
+        if (!src && failedSourceIds?.has(el.sourceBlockId)) {
+          return { ...rest, src: null, genFailed: true };
+        }
+        return { ...rest, src };
       }
       if (el.type === 'text' && el.copyRole && el.sourceBlockId) {
         const { genAutoText, ...rest } = el;

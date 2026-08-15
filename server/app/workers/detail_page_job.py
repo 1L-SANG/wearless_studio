@@ -304,17 +304,33 @@ async def _gen_cuts(app, job, prepared, product, analysis):
             # 큐 대기 중인 컷이 전부 '생성 중'으로 보이지 않는다(editor_wait_dev_spec §2-1).
             await _emit(app.state.pool, job_id, "step",
                         {"blockId": b.get("id"), "status": "cut_start"})
-            try:
-                generate_kwargs = {"analysis": analysis, "manifest": manifest}
-                if has_face:
-                    generate_kwargs["has_face"] = True
-                img, mime = await cut_generator.generate(
-                    s, gemini, b, product, images, **generate_kwargs)
-            except Exception as e:  # GeminiError·ValueError 포함 — 실패 컷 = 빈 슬롯, 미차감(부분 성공)
-                log.warning("AG-06 cut failed for job %s block %s: %r", job_id, b.get("id"), e)
-                await _emit(app.state.pool, job_id, "step",
-                            {"blockId": b.get("id"), "status": "cut_failed"})
-                return None
+            generate_kwargs = {"analysis": analysis, "manifest": manifest}
+            if has_face:
+                generate_kwargs["has_face"] = True
+            # 컷 생성 재시도 — 안전필터·응답 누락처럼 "다시 부르면 달라질 수 있는" 실패는
+            # 한 번 더 시도한다. 빈 슬롯은 셀러에게 그냥 못 만든 페이지이고, 그 값은 우리가
+            # 흡수해야 한다(오너 8/15). ValueError(잘못된 cutType 등)는 결정적이라 제외.
+            img = mime = None
+            for attempt in range(1, max(1, s.detail_cut_max_attempts) + 1):
+                try:
+                    img, mime = await cut_generator.generate(
+                        s, gemini, b, product, images, **generate_kwargs)
+                    break
+                except ValueError as e:  # 입력 계약 위반 — 재시도해도 같다
+                    log.warning("AG-06 cut invalid for job %s block %s: %r", job_id, b.get("id"), e)
+                    await _emit(app.state.pool, job_id, "step",
+                                {"blockId": b.get("id"), "status": "cut_failed"})
+                    return None
+                except Exception as e:  # GeminiError 등 — 마지막 시도에서만 빈 슬롯(미차감)
+                    if attempt >= max(1, s.detail_cut_max_attempts):
+                        log.warning("AG-06 cut failed for job %s block %s after %d attempts: %r",
+                                    job_id, b.get("id"), attempt, e)
+                        await _emit(app.state.pool, job_id, "step",
+                                    {"blockId": b.get("id"), "status": "cut_failed"})
+                        return None
+                    log.info("AG-06 cut retry %d for job %s block %s: %r",
+                             attempt, job_id, b.get("id"), e)
+                    await asyncio.sleep(2)
             plate = space_set_plate
             # bg 편집 컷은 첫 첨부, 공간 세트는 별도 전달된 대표 plate를 같은 장소 QC 기준으로 쓴다.
             if (

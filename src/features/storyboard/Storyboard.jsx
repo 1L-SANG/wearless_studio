@@ -103,6 +103,7 @@ import { waitForAnalysisEditSave } from '@/features/product-input/saveRouting.js
 import { selectStoryboardCopywriting } from './copywritingSelection.js';
 import { applyStoryboardComposeMode } from './storyboardComposeMode.js';
 import { classifyStoryboardLoadError, storyboardNotFoundError } from './storyboardLoadError.js';
+import { buildColorOpts, visibleColorOpts } from '@/lib/colorOpts.js';
 import { continueAfterStoryboardFlush } from './storyboardNavigation.js';
 import { storyboardOverlayTop } from './storyboardOverlayTop.js';
 import { bindStoryboardExitFlush, scheduleStoryboardAutosave } from './storyboardSaveLifecycle.js';
@@ -1647,16 +1648,8 @@ function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, ana
     product: p,
     gender: exampleGender,
   });
-  const allColorOpts = (p.colors || []).map((color, index) => ({
-    id: color.id,
-    label: hydratedCatalogs.swatchColors.find((swatch) => swatch.id === color.swatchId)?.label
-      || color.name?.trim()
-      || `색상 ${index + 1}`,
-    hex: hexFor(color),
-  }));
-  const colorOpts = allColorOpts.filter((_option, index) => (
-    (p.colors[index].images || []).length || p.colors[index].isBase
-  ));
+  const allColorOpts = buildColorOpts(p.colors, hydratedCatalogs, hexFor);
+  const colorOpts = visibleColorOpts(allColorOpts, p.colors);
   const fallbackColor = [{ id: 'col1', label: '기본', hex: '#15141a' }];
 
   return {

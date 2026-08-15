@@ -1984,7 +1984,7 @@ async def _tone_bytes(request: Request, project_id: str, cut_id: str, user_id: s
         raise HTTPException(status_code=503, detail={
             "code": "asset_unavailable",
             "message": "이미지를 불러오지 못했어요. 잠시 후 다시 시도해 주세요."}) from exc
-    return Response(content=data, media_type=mime, headers={"Cache-Control": IMMUTABLE_CACHE})
+    return Response(content=data, media_type=mime, headers=_immutable_cors_safe_headers(request))
 
 
 @router.get(
@@ -2566,6 +2566,24 @@ async def get_asset_file(request: Request, asset_id: str):
     )
 
 
+def _immutable_cors_safe_headers(request: Request) -> dict:
+    """1년 immutable 로 캐시되는 바이트 응답의 헤더.
+
+    CORSMiddleware 는 요청에 Origin 이 있을 때만 허용 헤더와 `Vary: Origin` 을 붙인다.
+    그런데 브라우저가 같은 URL 을 `<img>`(Origin 없음)로 먼저 받아 두면, 그 응답에는
+    허용 헤더도 Vary 도 없이 1년치로 캐시된다. 이어서 도는 `fetch`(CORS 필수)가 같은
+    캐시 항목을 재사용해 "Access-Control-Allow-Origin 없음" 으로 차단된다 — 서버는
+    멀쩡한데 브라우저만 실패하는, 에디터 이미지 다운로드가 안 되던 실제 원인이다.
+
+    그래서 Origin 없는 응답에도 Vary 를 박아 캐시 항목을 오리진별로 갈라 둔다.
+    (Origin 이 있는 요청은 미들웨어가 Vary 를 붙이므로 중복해서 넣지 않는다.)
+    """
+    headers = {"Cache-Control": IMMUTABLE_CACHE}
+    if "origin" not in request.headers:
+        headers["Vary"] = "Origin"
+    return headers
+
+
 async def _public_asset_or_404(request: Request, asset_id: str) -> dict:
     """`/file`·`/bytes` 공용 capability URL 해석 — 정책 변경이 두 라우트에 같이 걸리게
     한 곳에 둔다(리뷰 반영: 복붙 두 벌이면 한쪽만 고쳐져 계약이 어긋난다)."""
@@ -2610,7 +2628,7 @@ async def get_asset_bytes(request: Request, asset_id: str):
     return Response(
         content=data,
         media_type=asset.get("mime_type") or "application/octet-stream",
-        headers={"Cache-Control": IMMUTABLE_CACHE},
+        headers=_immutable_cors_safe_headers(request),
     )
 
 

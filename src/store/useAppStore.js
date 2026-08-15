@@ -11,6 +11,7 @@
    서버에 동기화한다 (계약 §2).
    ============================================================= */
 import { create } from 'zustand';
+import { clearEditorEntered } from '@/lib/editorEntered.js';
 import { api } from '@/lib/api/index.js';
 import { resetAnalysisCache } from '@/lib/api/httpAdapter.js';
 import { clearDraft } from '@/lib/draftStore.js';
@@ -231,6 +232,7 @@ export const useAppStore = create((set, get) => ({
      여기선 로컬 플로우만 초기화: 미동기화 draft 폐기(묵은 입력 복원 방지) + projectGeneration
      을 올려 ProductInput 을 remount(폼 초기화)한다. */
   async beginProject() {
+    clearEditorEntered(get().projectId);   // 새 제작 — 이전 프로젝트의 편집 표식은 정리한다
     ensureProjectInflight = null;   // 새 제작 시작 — 이전 플로우의 in-flight 생성과 분리
     detailJobSeq += 1;              // 이전 프로젝트의 상세페이지 폴링 루프 무효화(codex F5 —
                                     // stale 루프가 새 플로우의 detailPageJob 을 덮지 않게)

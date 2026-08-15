@@ -41,6 +41,7 @@ import { api, isMockMode } from '@/lib/api/index.js';
 import { listMyModels } from '@/lib/api/facemarket.js';
 import { ErrorState, useToast } from '@/components/ui.jsx';
 import { shouldAdoptRouteProject } from '@/lib/projectRoute.js';
+import { markEditorEntered } from '@/lib/editorEntered.js';
 import {
   consumeFlowContinuation,
   hasFlowContinuation,
@@ -151,6 +152,10 @@ function RequireEditorProject() {
         if (shouldAdoptRouteProject(useAppStore.getState().projectId, project.id)) {
           adoptProject(project.id);
         }
+        // 에디터가 실제로 열린 뒤에야 '편집 시작' 표식을 남긴다 — 이후 앞 단계(입력·
+        // 마네킹·콘티) 재진입을 막는 근거다. 열리지도 않은 프로젝트에 표식을 남기면
+        // 입력 화면과 무한히 왕복하게 된다.
+        markEditorEntered(project.id);
         setPhase('ready');
       } catch (error) {
         if (!alive) return;

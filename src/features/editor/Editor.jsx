@@ -19,7 +19,7 @@ import { clearEditorWaitDraft, loadEditorWaitDraft, saveEditorWaitDraft } from '
 import { listModels } from '@/lib/api/facemarket.js';
 import { uid } from '@/lib/ids.js';
 import { useAppStore } from '@/store/useAppStore.js';
-import { Icon, IconButton, Button, Modal, EmptyState, useToast } from '@/components/ui.jsx';
+import { Icon, IconButton, Button, Modal, EmptyState, ErrorState, useToast } from '@/components/ui.jsx';
 import { SmoothProgressTrack } from '@/components/SmoothProgress.jsx';
 import { EXPECTED_MS } from '@/lib/smoothProgress.js';
 import { exampleGenderFromAnalysis, hexFor } from '@/features/storyboard/Storyboard.jsx';
@@ -27,6 +27,10 @@ import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, 
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isAutoManagedBlock, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { buildTextPresetElement } from '@/features/editor/presets/textPresets.js';
+import { buildColorOpts, visibleColorOpts } from '@/lib/colorOpts.js';
+import { retryRead } from '@/lib/retryRead.js';
+import { thumbUrl } from '@/lib/imageCdn.js';
+import { classifyEditorLoadError } from '@/features/editor/editorLoadError.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockContentBottom, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
 import { exportBlockPng, exportBlocksZip, exportLongPng } from '@/features/editor/editorExport.js';
@@ -201,7 +205,10 @@ function ImageDropGuide({ scale, width, height, rotate = 0 }) {
 
 /* render-only element (selection + inline text edit). Position dragging enters the
    shared pointer engine; the single <Moveable> owns only resize/rotate controls. */
-function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPickBelowText, onPatch, onTextCommit, onElementDragStart, onAddImage, onDropImage, onDropImageFiles, onEdit, onCropStart }) {
+function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPickBelowText, onPatch, onTextCommit, onElementDragStart, onAddImage, onDropImage, onDropImageFiles, onEdit, onCropStart, imageWidth = null }) {
+  /* imageWidth = 이 렌더가 실제로 필요한 이미지 폭(px). 미니 미리보기처럼 작게 그리는
+     곳만 넘긴다 — 캔버스 본체와 전체화면 미리보기는 넘기지 않는다(그쪽이 내보내기 캡처
+     원본이자 셀러 최종 확인 화면이라 원본 해상도를 지켜야 한다). */
   const ref = useRef(null);
   const textRef = useRef(null);
   const deferredPick = useRef(false);
@@ -439,23 +446,29 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
               e.stopPropagation();
               onAddImage && onAddImage(el);
             }}>
-            <Icon name="imagePlus" size={compactSlot ? 22 : 28} />
-            {!compactSlot && <span>여기에 사진 넣기</span>}
+            <Icon name={el.genFailed ? 'alertTri' : 'imagePlus'} size={compactSlot ? 22 : 28} />
+            {/* 못 만든 컷은 완료 후에도 "그냥 빈 칸"이 아니어야 한다 — 무엇이 왜 비었고
+                돈이 나갔는지, 어떻게 채우는지까지 이 자리에서 말한다(오너: 상업 서비스). */}
+            {!compactSlot && (el.genFailed
+              ? <span>이 컷은 만들지 못했어요<br /><small>크레딧 미차감 · 눌러서 사진을 넣거나 AI 탭에서 다시 만들 수 있어요</small></span>
+              : <span>여기에 사진 넣기</span>)}
           </button>
           {imageDropOver && <ImageDropGuide scale={scale} width={el.w} height={el.h} rotate={el.rotate} />}
         </div>
       );
     }
+    // 140px 미리보기에 원본(수천 px)을 그리면 스크롤이 무거워지고 탭 메모리가 커진다.
+    const imgSrc = imageWidth ? thumbUrl(el.src, imageWidth) : el.src;
     return (
       <div {...common} {...imageDropProps} className={cls(imageDropOver ? 'image-drop-over' : '')} style={{ ...base, borderRadius: el.radius, ...imageFrameStyle }}
         onDoubleClick={preview ? undefined : (e) => { e.stopPropagation(); onCropStart && onCropStart(el); }}>
         {el.crop ? (
           /* 커밋된 인라인 크롭: 프레임(overflow hidden) 안에 원본을 -ox,-oy 오프셋으로 */
           <div className="el-cropped" style={{ borderRadius: el.radius }}>
-            <img src={el.src} alt="" draggable={false} style={{ left: -el.crop.ox, top: -el.crop.oy, width: el.crop.iw, height: el.crop.ih }} />
+            <img src={imgSrc} alt="" draggable={false} style={{ left: -el.crop.ox, top: -el.crop.oy, width: el.crop.iw, height: el.crop.ih }} />
           </div>
         ) : (
-          <img src={el.src} alt="" style={{ borderRadius: el.radius, objectFit: el.fit || 'cover' }} draggable={false} />
+          <img src={imgSrc} alt="" style={{ borderRadius: el.radius, objectFit: el.fit || 'cover' }} draggable={false} />
         )}
         {imageDropOver && <ImageDropGuide scale={scale} width={el.w} height={el.h} rotate={el.rotate} />}
       </div>
@@ -769,6 +782,9 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
   );
 }
 
+// 미니 미리보기 실폭 ≈135 CSS px × DPR2 = 270 → 320 하나로 고정한다. 요소마다 계산하면
+// CDN 캐시 키가 폭마다 갈라져 캐시 미스가 폭증한다.
+const MINI_IMAGE_WIDTH = 320;
 function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
   const [dragId, setDragId] = useState(null);
   const [lineAt, setLineAt] = useState(null);
@@ -797,7 +813,7 @@ function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
               <div style={{ position: 'absolute', top: 0, left: 0, width: 1000, height: blockH,
                 transform: `scale(${(thumbW || 140) / 1000})`, transformOrigin: 'top left', pointerEvents: 'none' }}>
                 {b.elements.map((el) => (
-                  <CanvasElement key={el.id} el={el} preview selected={false} onSelect={() => {}} onEdit={() => {}} />
+                  <CanvasElement key={el.id} el={el} preview imageWidth={MINI_IMAGE_WIDTH} selected={false} onSelect={() => {}} onEdit={() => {}} />
                 ))}
               </div>
             </div>
@@ -898,6 +914,48 @@ export function Editor() {
   const dpJob = useAppStore((s) => s.detailPageJob);
   const [genActive, setGenActive] = useState(false);
   const genActiveRef = useRef(false);
+  // 이탈 액션이 자기 손으로 저장을 마쳤다는 표식 — 언마운트 정리가 한 번 더 쓰지 않게 한다.
+  const skipExitPersist = useRef(false);
+  // 첫 로딩 실패 상태 — 훅은 로딩 early-return 위에만 둔다(훅 개수 불변).
+  const [loadError, setLoadError] = useState(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [waitBoardError, setWaitBoardError] = useState('');
+  // 콘티를 못 받아 대기 화면을 못 만든 경우, 뒤에서 계속 다시 받아 스스로 복구한다.
+  // 생성은 서버에서 돌고 있으므로 사용자는 아무것도 안 해도 된다(오너: 실패는 우리가 흡수).
+  const waitBoardRetry = useRef(null);
+  useEffect(() => {
+    if (!waitBoardError || blocks || !product || !catalogs) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const sb = await retryRead(() => api.getStoryboard(projectId), { delays: [3000, 5000, 10000, 20000, 30000] });
+        if (cancelled) return;
+        const cw = useAppStore.getState().copywriting;
+        const dj = useAppStore.getState().detailPageJob;
+        const exThumb = {};
+        for (const blk of sb || []) {
+          if (blk?.exampleId) {
+            const ex = (catalogs?.genExamples || []).find((g) => g.id === blk.exampleId);
+            if (ex?.thumb) exThumb[blk.id] = ex.thumb;
+          }
+        }
+        const skeleton = upgradeLegacyKiwiTemplateBlocks(stripPhotoBlockTextElements(decorateGenBlocks(
+          alignSkeletonToServer(buildEditorBlocksFromStoryboard(sb || [], product, cw), cw), dj, exThumb)), uid);
+        setBlocks(skeleton);
+        setSelBlock(skeleton[0]?.id);
+        setWaitBoardError('');
+      } catch { /* 재시도까지 실패 — 화면의 [다시 불러오기]가 남아 있다 */ }
+    })();
+    return () => { cancelled = true; };
+  }, [waitBoardError, blocks, product, catalogs, projectId]);
+  // 화면 대기(3분)를 넘긴 생성 잡의 백그라운드 추적 — 훅은 로딩 early-return 위에만 둔다.
+  const slowJobs = useRef(new Set());
+  const slowJobTimers = useRef(new Set());
+  useEffect(() => () => {
+    slowJobs.current.clear();
+    slowJobTimers.current.forEach((t) => clearTimeout(t));
+    slowJobTimers.current.clear();
+  }, []);
   const genMergedRef = useRef(false);
   const [genFinalizeError, setGenFinalizeError] = useState('');
   const [genFinalizeAttempt, setGenFinalizeAttempt] = useState(0);
@@ -1002,6 +1060,7 @@ export function Editor() {
   useEffect(() => { genActiveRef.current = genActive; }, [genActive]);
 
   useEffect(() => {
+    setLoadError(null);
     const enteringJob = useAppStore.getState().detailPageJob;
     const savedDraft = loadEditorWaitDraft(projectId);
     const resumingGeneration = Boolean(enteringJob.projectId === projectId
@@ -1015,15 +1074,18 @@ export function Editor() {
       isMockMode ? Promise.resolve(null) : listModels().catch(() => null),
       // 분석 컨텍스트 — 정보 블록 프리필·추천 배지 전용(실패해도 에디터는 뜬다)
       api.getAnalysis(projectId).catch(() => null),
-      // 생성 중 진입이면 스켈레톤·예시 썸네일의 근거(콘티) — 실패해도 에디터는 뜬다
-      api.getStoryboard(projectId).catch(() => []),
+      // 생성 중 진입이면 스켈레톤·예시 썸네일의 근거(콘티). 일시 장애로 한 번 실패하면
+      // 대기 화면에 사진 자리가 하나도 없는 채로 굳어 버리므로 자동 재시도부터 한다.
+      // 그래도 실패하면 null — '빈 콘티([])'와 구분해 스켈레톤을 만들지 않는다.
+      retryRead(() => api.getStoryboard(projectId)).catch(() => null),
       // AI 탭 '매칭 의류 바꾸기' 목록 — 콘티보드와 동일 소스, 실패해도 에디터는 뜬다
       api.getMatchClothing(projectId).catch(() => [])])
       .then(([b, w, c, _a, p, fm, an, sb, mc]) => {
         const hydratedCatalogs = withStoryboardSpaceSetExamples(c);
         let withH = b.map((blk) => normalizeEditorBlockRole(blk));
-        const allColorOpts = (p.colors || []).map((col) => ({ id: col.id, label: col.name || '색상', hex: hexForCol(col) }));
-        const opts = allColorOpts.filter((_option, index) => (p.colors[index].images || []).length || p.colors[index].isBase);
+        // 라벨·원 색은 같은 근거(swatchId)에서 나와야 한다 — 규칙은 lib/colorOpts 한 곳.
+        const allColorOpts = buildColorOpts(p.colors, hydratedCatalogs, hexForCol);
+        const opts = visibleColorOpts(allColorOpts, p.colors);
         wardrobeContext.current = {
           storyboard: sb || [],
           colorIds: allColorOpts.map((option) => option.id),
@@ -1033,6 +1095,22 @@ export function Editor() {
         // 기본 정보 템플릿을 자동으로 구성한다 — 수동 '템플릿 추가' 버튼 대체(2026-07-29 결정).
         const dj = useAppStore.getState().detailPageJob;
         const genMode = resumingGeneration || (dj.status === 'running' && dj.projectId === projectId);
+        if (genMode && sb == null && !savedDraft) {
+          // 콘티를 못 받았다(재시도까지 실패). 사진 자리가 하나도 없는 스켈레톤을 만들어
+          // 저장까지 해 버리면 되돌릴 길이 없다 — 캔버스를 비워 둔 채 배경에서 계속 회복을
+          // 시도한다. 생성 자체는 서버에서 계속 돌고 있으므로 genActive 는 그대로 켠다.
+          setWaitBoardError('대기 화면을 준비하지 못했어요 — 생성은 계속되고 있어요');
+          genActiveRef.current = true;
+          setGenActive(true);
+          setCatalogs(hydratedCatalogs); setFmModels(fm);
+          setProductName(p.name || '제목 없는 상세페이지');
+          setClothingType(p.clothingType || 'top');
+          setMatchClothing(Array.isArray(mc) ? mc : []);
+          setProduct(p); setAnalysis(an);
+          setDetailColorOpts(allColorOpts.length ? allColorOpts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
+          setColorOpts(opts.length ? opts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
+          return;
+        }
         if (genMode) {
           // 생성 중 진입 — 저장된 blocks(구 데모 시드·빈 값) 대신 콘티 스켈레톤이 캔버스가 된다.
           // 컷·카피는 store 이벤트가 채우고, 완료 시 mergeServerBlocks 로 같은 화면에서 확정.
@@ -1070,8 +1148,11 @@ export function Editor() {
         setProduct(p); setAnalysis(an);
         setDetailColorOpts(allColorOpts.length ? allColorOpts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
         setColorOpts(opts.length ? opts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
-      });
-  }, []);
+      })
+      // 필수 데이터를 못 받으면 스피너를 영원히 돌리지 않는다 — 무슨 일인지 말하고 다시 시도.
+      .catch((error) => setLoadError(classifyEditorLoadError(error)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadAttempt]);
 
   // 상세페이지 생성 사진은 editor_blocks 안에만 저장되는 경로도 있다. 블록이 생성·복원될
   // 때마다 서버 의류함과 합쳐 누락 없이 색상별로 보여주고, 직접 업로드 출처는 기타로 모은다.
@@ -1112,13 +1193,16 @@ export function Editor() {
         const freshAnalysis = await api.getAnalysis(projectId).catch(() => null);
         if (cancelled) return;
         if (freshAnalysis) setAnalysis(freshAnalysis);
+        // 못 만든 컷은 완료 순간 표식을 잃고 일반 빈 슬롯이 된다 — 어떤 컷이 왜 비었는지,
+        // 크레딧이 나갔는지도 알 수 없다. 표식을 남겨 화면과 저장본 모두에서 보이게 한다.
+        const failedCutIds = new Set(useAppStore.getState().detailPageJob.failedCuts || []);
         let restoredServerLayout = false;
         // 서버 완성본의 안정 이미지 주소를 현재 임시 작업본에 합친 뒤 직접 저장한다.
         // 저장 요청 도중 사용자가 한 번 더 편집했다면 최신 ref로 다시 합쳐 저장하여 덮어쓰지 않는다.
         for (;;) {
           const current = latestBlocks.current || [];
           restoredServerLayout ||= !canSafelyMergeServerBlocks(current, server);
-          let merged = stripPhotoBlockTextElements(mergeServerBlocks(current, server));
+          let merged = stripPhotoBlockTextElements(mergeServerBlocks(current, server, failedCutIds));
           // 이 이펙트의 클로저가 붙든 analysis 는 여전히 마운트 스냅샷이라 위에서 다시 읽은 값을 쓴다.
           const ctx = buildInfoCtx({ productName, clothingType, catalogs, product, analysis: freshAnalysis || analysis, colorOpts, fmModels });
           if (needsDefaultTemplate(merged)) {
@@ -1136,9 +1220,14 @@ export function Editor() {
         pendingGenerationDraft.current = false;
         genActiveRef.current = false;
         setGenActive(false);
+        const failedShown = latestBlocks.current.reduce((n, b) => n
+          + (b.elements || []).filter((el) => el.genFailed).length, 0);
         toast.push(restoredServerLayout
           ? '일부 대기 화면을 복원할 수 없어 서버 완성본을 안전하게 불러왔어요'
-          : '상세페이지가 완성됐어요 — 편집 내용까지 저장했어요', { icon: 'check' });
+          : failedShown
+            ? `상세페이지가 완성됐어요 — 다만 ${failedShown}컷은 만들지 못했어요(크레딧 미차감). 빈 자리에서 다시 만들 수 있어요`
+            : '상세페이지가 완성됐어요 — 편집 내용까지 저장했어요',
+        { icon: failedShown && !restoredServerLayout ? 'alertTri' : 'check' });
         if (dpJob.jobId) {
           const r = await tryGetReceipt(dpJob.jobId);
           if (!cancelled && r) setGenReceipt(r);
@@ -1187,7 +1276,9 @@ export function Editor() {
   }, [blocks, genActive, projectId]);
   useEffect(() => () => {
     clearTimeout(saveTimer.current);
-    if (!latestBlocks.current) return;
+    // 이탈 액션이 이미 저장을 마쳤으면 여기서 다시 쓰지 않는다 — 생성 실패 화면에서
+    // 나갈 때 화면의 스켈레톤이 서버의 완성본을 덮어쓰던 사고를 막는다.
+    if (skipExitPersist.current || !latestBlocks.current) return;
     if (genActiveRef.current) saveEditorWaitDraft(projectId, latestBlocks.current);
     else api.saveEditorBlocks(projectId, latestBlocks.current);
   }, [projectId]);
@@ -1366,6 +1457,24 @@ export function Editor() {
     };
   });
 
+  if (loadError) return (
+    <div className="editor"><div style={{ margin: 'auto', display: 'grid', gap: 12, justifyItems: 'center' }}>
+      <ErrorState
+        desc={loadError.message}
+        onRetry={loadError.kind === 'notFound' ? undefined : () => { setLoadError(null); setLoadAttempt((n) => n + 1); }}
+      />
+      <Button variant="ghost" onClick={() => navigate('/library')}>보관함으로</Button>
+    </div></div>
+  );
+  // 콘티를 못 받아 대기 화면을 못 만든 경우 — 생성은 계속되고 있다는 것부터 분명히 말한다.
+  if (waitBoardError && !blocks) return (
+    <div className="editor"><div style={{ margin: 'auto', display: 'grid', gap: 12, justifyItems: 'center', textAlign: 'center' }}>
+      <Icon name="loader" size={26} className="spin" />
+      <div style={{ fontSize: 14, fontWeight: 600 }}>{waitBoardError}</div>
+      <div className="panel-sub" style={{ margin: 0 }}>사진은 서버에서 계속 만들어지고 있어요. 잠시 뒤 자동으로 화면이 채워져요.</div>
+      <Button variant="ghost" onClick={() => setWaitBoardError((v) => v || ' ')}>다시 불러오기</Button>
+    </div></div>
+  );
   if (!blocks || !catalogs) return <div className="editor"><div style={{ margin: 'auto' }}><Icon name="loader" size={26} className="spin" /></div></div>;
 
   const selectedElObj = blocks.flatMap((b) => b.elements).find((e) => e.id === selEl);
@@ -1746,6 +1855,65 @@ export function Editor() {
     if (varyTarget?.id === image.id) setVaryTarget(null);
     toast.push('이미지를 의류 목록에서 삭제했어요', { icon: 'trash' });
   };
+  /* ---- 단일 컷 생성의 공통 정책 — '새 이미지'와 '현재 이미지 수정'이 같은 규칙을 쓴다.
+     요청 바디·시작 문구·탭 이동은 각자 다르므로 그쪽에 남기고, 결과 반영/실패 처리만 공유한다. ---- */
+  // 도착한 이미지를 자리표에 넣는다. 대기 중 캔버스가 바뀌면 merge 가 src 없는 자리표를
+  // 지울 수 있는데(editorWardrobe append), 그때 결과를 버리지 않고 뒤에 붙인다.
+  const placeGeneratedImage = (group, loadingId, img) => setWardrobe((w) => {
+    const list = w[group] || [];
+    const next = list.some((x) => x.id === loadingId)
+      ? list.map((x) => (x.id === loadingId ? { ...img, wardrobeGroup: group, fresh: true } : x))
+      : [...list, { ...img, wardrobeGroup: group, fresh: true }];
+    return { ...w, [group]: next };
+  });
+  const dropLoadingTile = (group, loadingId) => setWardrobe((w) => (
+    { ...w, [group]: (w[group] || []).filter((x) => x.id !== loadingId) }));
+  // 타임아웃은 실패가 아니다 — 서버 잡은 계속 돈다. 타일을 남기고 뒤에서 완료를 기다린다.
+  // 이게 없으면 크레딧은 나갔는데 컷은 화면에서 사라져 셀러가 한 번 더 생성한다(이중 과금).
+  const trackSlowImageJob = (jobId, group, loadingId) => {
+    if (!jobId || slowJobs.current.has(jobId)) return;
+    slowJobs.current.add(jobId);
+    const started = Date.now();
+    const tick = async () => {
+      if (!slowJobs.current.has(jobId)) return;
+      try {
+        const job = await api.getJob(jobId);
+        if (job?.status === 'done') {
+          slowJobs.current.delete(jobId);
+          if (job.result?.data) {
+            placeGeneratedImage(group, loadingId, job.result.data);
+            toast.push('오래 걸린 이미지가 방금 도착했어요', { icon: 'check' });
+          } else dropLoadingTile(group, loadingId);
+          syncCredits(job.result?.credits);
+          return;
+        }
+        if (job?.status === 'error' || job?.status === 'cancelled') {
+          slowJobs.current.delete(jobId);
+          dropLoadingTile(group, loadingId);
+          toast.push(job.errorMessage || '이미지 생성에 실패했어요. 다시 시도해 주세요.', { icon: 'x' });
+          return;
+        }
+      } catch { /* 일시 오류는 다음 주기에 다시 묻는다 */ }
+      // 서버 잡 lease 상한(15분)까지만 따라간다 — 그 뒤엔 새로고침이 정본이다.
+      if (Date.now() - started > 15 * 60 * 1000) { slowJobs.current.delete(jobId); return; }
+      const timer = setTimeout(tick, 4000);
+      slowJobTimers.current.add(timer);
+    };
+    tick();
+  };
+  // 실패/타임아웃 공통 처리. 타임아웃이면 true 를 돌려 호출부가 '실패 토스트'를 건너뛴다.
+  const handleImageJobFailure = (e, group, loadingId) => {
+    if (e?.code === 'job_timeout') {
+      setWardrobe((w) => ({ ...w, [group]: (w[group] || []).map((x) => (x.id === loadingId ? { ...x, slow: true } : x)) }));
+      toast.push(e.message, { icon: 'sparkles' });
+      trackSlowImageJob(e.jobId, group, loadingId);
+      return true;
+    }
+    // 실서버 생성 실패 = 재생성 루프의 정상 경로 — 로딩 타일 제거 + 재시도 안내 (ADR-0004)
+    dropLoadingTile(group, loadingId);
+    toast.push(e?.message || '이미지 생성에 실패했어요. 다시 시도해 주세요.', { icon: 'x' });
+    return false;
+  };
   // req = NewCutRequest 필드 전체 (계약 §6) — 방향·샷·모델·예시 선택이 생성에 그대로 반영되어야 한다
   const generateImage = async (req) => {
     const group = req.colorId || 'misc';             // wardrobe 그룹 키 = colorId | 'misc' (계약 §3.6)
@@ -1754,13 +1922,11 @@ export function Editor() {
     genCount.current += 1; setGenDot('busy'); toast.push('이미지를 생성하는 중이에요', { icon: 'sparkles' });
     try {
       const { data: img, credits } = await api.generateImage(projectId, { mode: 'new', ...req, colorId: group });
-      setWardrobe((w) => ({ ...w, [group]: w[group].map((x) => x.id === loadingId ? { ...img, wardrobeGroup: group, fresh: true } : x) }));
+      placeGeneratedImage(group, loadingId, img);
       toast.push('이미지 생성을 완료했어요', { icon: 'check' });
       syncCredits(credits);                          // 차감은 서버 책임 — 봉투 잔액만 반영 (계약 §6)
     } catch (e) {
-      // 실서버 생성 실패 = 재생성 루프의 정상 경로 — 로딩 타일 제거 + 재시도 안내 (ADR-0004)
-      setWardrobe((w) => ({ ...w, [group]: (w[group] || []).filter((x) => x.id !== loadingId) }));
-      toast.push(e?.message || '이미지 생성에 실패했어요. 다시 시도해 주세요.', { icon: 'x' });
+      handleImageJobFailure(e, group, loadingId);
     } finally {
       genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done');
     }
@@ -1774,11 +1940,18 @@ export function Editor() {
     setTab('wardrobe');
     genCount.current += 1; setGenDot('busy');
     toast.push(changes.length ? `${changes.length}개 변경을 적용한 컷을 생성하는 중이에요` : '비슷한 컷을 생성하는 중이에요', { icon: 'sparkles' });
-    const { data: img, credits } = await api.generateImage(projectId, { mode: 'vary', source, changes, refBg, refBgAssetId });
-    setWardrobe((w) => ({ ...w, [group]: w[group].map((x) => x.id === loadingId ? { ...img, wardrobeGroup: group, fresh: true } : x) }));
-    genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done'); toast.push('이미지 생성을 완료했어요', { icon: 'check' });
-    syncCredits(credits);
-    return img;
+    try {
+      const { data: img, credits } = await api.generateImage(projectId, { mode: 'vary', source, changes, refBg, refBgAssetId });
+      placeGeneratedImage(group, loadingId, img);
+      toast.push('이미지 생성을 완료했어요', { icon: 'check' });
+      syncCredits(credits);
+      return img;
+    } catch (e) {
+      handleImageJobFailure(e, group, loadingId);
+      return null;
+    } finally {
+      genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done');
+    }
   };
   const varyImage = (im) => {
     setVaryTarget(im?.id ? { id: im.id, group: im.wardrobeGroup || 'misc' } : null); // 클릭한 의류 이미지가 변형 대상 — 이미지별 독립 상태
@@ -1967,13 +2140,15 @@ export function Editor() {
     }
     if (bs) api.saveEditorBlocks(projectId, bs);
   };
-  const discardGenerationAndReturnToStoryboard = () => {
+  // 에디터에 들어온 이상 앞 단계(콘티·마네킹·입력)로는 돌아가지 않는다(오너 8/15) —
+  // 되돌아가면 이미 만든 컷·편집이 다음 생성으로 덮여 되살릴 수 없기 때문이다. 대신
+  // '나중에 하기'로 보관함에 안전하게 내려놓는다. 편집분은 flushExit 가 알아서
+  // (생성 중이면 임시본, 아니면 서버로) 저장하므로 사라지지 않는다.
+  const leaveToLibrary = () => {
     clearTimeout(saveTimer.current);
-    clearEditorWaitDraft(projectId);
-    pendingGenerationDraft.current = false;
-    genActiveRef.current = false;
-    useAppStore.getState().resetDetailPageJob();
-    navigate('/create/storyboard');
+    flushExit();
+    skipExitPersist.current = true;   // 언마운트 정리가 같은 내용을 한 번 더 쓰지 않게
+    navigate('/library');
   };
   /* kb.current 는 crop 핸들러 정의 뒤(아래)에서 채운다 — TDZ 방지 */
 
@@ -2518,7 +2693,7 @@ export function Editor() {
                     setGenActive(true);
                   }}>다시 시도</Button>
                 )}
-                <Button size="sm" variant="ghost" onClick={discardGenerationAndReturnToStoryboard}>콘티로</Button>
+                <Button size="sm" variant="ghost" onClick={leaveToLibrary}>나중에 하기</Button>
               </>
             ) : (
               <>
@@ -2540,8 +2715,15 @@ export function Editor() {
           <div className="surface fm-blocked">
             <div className="fm-blocked-icon"><Icon name="alertCircle" size={28} /></div>
             <p className="fm-blocked-msg">{dpJob.errorMessage}</p>
-            <p className="fm-blocked-hint">다른 모델을 선택하거나 라이선스 상태를 확인한 뒤 다시 시도해 주세요.</p>
-            <Button variant="primary" block onClick={discardGenerationAndReturnToStoryboard}>콘티로 돌아가기</Button>
+            <p className="fm-blocked-hint">모델 라이선스 상태를 확인한 뒤 다시 시도해 주세요. 지금까지 만든 내용은 그대로 있어요.</p>
+            <Button variant="primary" block size="sm" onClick={() => {
+              genMergedRef.current = false;
+              useAppStore.getState().resetDetailPageJob();
+              useAppStore.getState().startDetailPageGeneration(projectId);
+              genActiveRef.current = true;
+              setGenActive(true);
+            }}>다시 시도</Button>
+            <Button variant="ghost" block size="sm" style={{ marginTop: 8 }} onClick={leaveToLibrary}>나중에 하기 · 보관함으로</Button>
           </div>
         </div>
       )}

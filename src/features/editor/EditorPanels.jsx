@@ -4,7 +4,7 @@
    Only change: ES imports/exports (was window globals).
    ============================================================= */
 import { useState, useEffect, useRef } from 'react';
-import { Icon, Button, IconButton, Chips, EmptyState } from '@/components/ui.jsx';
+import { Icon, Button, IconButton, Chips, EmptyState, UploadPendingTile } from '@/components/ui.jsx';
 import { UnderlineTabs, ColorDots, MoodGuide, OuterClosureIcon } from '@/features/storyboard/Storyboard.jsx';
 import { ModelThumb } from '@/features/analysis/AnalysisForm.jsx';
 import { SHAPE_D } from '@/features/editor/shapes.js';
@@ -658,10 +658,12 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading
         </div>
       )}
       <Button variant="ghost" block icon="upload" onClick={onUpload} disabled={uploading} style={{ marginBottom: uploading ? 8 : 16 }}>직접 이미지 업로드하기</Button>
+      {/* 업로드 중에는 사진이 들어올 자리를 로고 타일로 먼저 보여준다 — 입력 페이지와 같은
+          얼굴(오너 8/15). 상태를 늘리지 않고 uploading 플래그만으로 렌더한다. */}
       {uploading && (
-        <div className="ward-upload-status" role="status" aria-live="polite">
-          <Icon name="loader" size={16} className="spin" />
-          <span>의류 이미지를 불러오는 중이에요</span>
+        <div className="wardrobe-grid" style={{ marginBottom: 16 }} role="status" aria-live="polite">
+          <UploadPendingTile className="ward-cell" />
+          <span className="sr-only">의류 이미지를 불러오는 중이에요</span>
         </div>
       )}
       {Object.entries(wardrobe).map(([group, imgs]) => {
@@ -680,8 +682,13 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading
             {open && (
               <div className="wardrobe-grid">
                 {imgs.map((im) => {
+                  // slow = 화면 대기(3분)를 넘겨 백그라운드 추적 중 — 실패가 아니라 진행 중이다.
                   if (im.loading) return (
-                    <div className="ward-cell loading" key={im.id}><Icon name="loader" size={18} className="spin" style={{ color: 'var(--fg-3)' }} /></div>
+                    <div className={`ward-cell loading${im.slow ? ' slow' : ''}`} key={im.id}
+                      title={im.slow ? '아직 만들어지고 있어요 — 완성되면 여기에 나타나요' : '만드는 중이에요'}>
+                      <Icon name="loader" size={18} className="spin" style={{ color: 'var(--fg-3)' }} />
+                      {im.slow && <small>조금 더 걸려요</small>}
+                    </div>
                   );
                   const used = Boolean(isImageUsed?.(im));
                   return (
@@ -691,12 +698,15 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading
                       onAnimationEnd={im.fresh ? () => onFreshSeen && onFreshSeen(im.id) : undefined}>
                       <img src={thumbUrl(im.src, 240)} alt="" loading="lazy" decoding="async" />
                       {pendingSlot && <span className="ward-pick-check" aria-hidden="true"><Icon name="check" size={15} /></span>}
-                      <button type="button" className={`ward-trash${used ? ' disabled' : ''}`} draggable={false}
+                      {/* 삭제는 앱 관례대로 우측 위 X — 휴지통 대신(오너 8/15). 네이티브
+                          disabled 를 쓰지 않는 이유: 클릭이 통과해야 "사용 중이라 못 지워요"
+                          안내가 뜬다. draggable=false·pointerdown 차단은 셀 드래그 방지용. */}
+                      <button type="button" className={`ward-rm${used ? ' disabled' : ''}`} draggable={false}
                         aria-label={used ? '현재 에디팅에 사용 중인 사진' : '의류 사진 삭제'} aria-disabled={used}
                         title={used ? '현재 에디팅에 사용 중이라 삭제할 수 없어요' : '사진 삭제'}
                         onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => { e.stopPropagation(); onDeleteImage(im); }}>
-                        <Icon name="trash" size={13} />
+                        <Icon name="x" size={12} />
                       </button>
                       <button className="ai-flag" onClick={(e) => { e.stopPropagation(); onVaryImage(im); }} title="AI로 편집"><Icon name="wand" size={12} /><span>AI 편집</span></button>
                     </div>
@@ -732,7 +742,7 @@ const LINE_DASH = [
 function LabeledField({ label, children }) {
   return <div className="ff"><span className="ff-lbl">{label}</span>{children}</div>;
 }
-export function ImagePanel({ el, onChange, onLayer, onCrop, onCropReset, onReplace, onRemove, onVary, lock = true, onLock }) {
+export function ImagePanel({ el, onChange, onLayer, onCrop, onCropReset, onReplace, onRemove, lock = true, onLock }) {
   // 비율 잠금은 에디터가 소유 — moveable keepRatio와 연동 (자물쇠 = keepRatio)
   const setLock = onLock || (() => {});
   if (!el || !['image', 'shape', 'line'].includes(el.type)) return <EmptyState icon="image" title="요소를 선택하세요" desc="캔버스에서 이미지·오브젝트를 클릭하면 속성이 여기에 나와요." />;
@@ -745,9 +755,8 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, onCropReset, onRepla
   const curDash = el.dash || 'solid';
   return (
     <div className="fig-panel">
-      {isImg && onVary && (
-        <Button variant="ghost" block icon="wand" className="vary-jump" onClick={onVary} style={{ marginBottom: 16 }}>AI로 컷 변형하기</Button>
-      )}
+      {/* 'AI로 컷 변형하기' 점프 버튼 제거(오너 8/15) — 같은 기능은 좌측 AI 탭(선택된 컷이
+          자동으로 수정 대상이 된다)과 의류 타일의 'AI 편집' 뱃지로 계속 갈 수 있다. */}
       {isImg && el.frameSlot && (
         <PanelSection title="프레임 이미지" first>
           <div className="frame-image-actions">
@@ -1146,7 +1155,7 @@ export function ShapePanel({ catalogs, onAdd, block, onBgChange }) {
 
 /* ---------- 레이어 패널 ---------- */
 function layerMeta(el) {
-  if (el.type === 'image') return { icon: 'image', label: '이미지', thumb: el.src };
+  if (el.type === 'image') return { icon: 'image', label: '이미지', thumb: thumbUrl(el.src, 64) };  // .lr-ico 28px × DPR2
   if (el.type === 'text') return { icon: 'type', label: (el.text || '텍스트').replace(/\n/g, ' ').slice(0, 18) || '텍스트' };
   if (el.type === 'line') return { icon: 'minus', label: '선' };
   const names = { circle: '원', rect: '사각형', triangle: '삼각형', diamond: '마름모', star: '별', heart: '하트', hexagon: '육각형', bubble: '말풍선' };

@@ -7,6 +7,7 @@ import { isWardrobeImageUsed, mergeEditorImagesIntoWardrobe } from '../../src/fe
 
 const editorSource = readFileSync(fileURLToPath(new URL('../../src/features/editor/Editor.jsx', import.meta.url)), 'utf8');
 const panelSource = readFileSync(fileURLToPath(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url)), 'utf8');
+const styleSource = readFileSync(fileURLToPath(new URL('../../src/styles/features.css', import.meta.url)), 'utf8');
 
 test('generated editor photos are merged into their product color groups', () => {
   const wardrobe = {
@@ -129,7 +130,13 @@ test('wardrobe uses direct trash actions and blocks deletion for photos used in 
     panelSource.indexOf('/* ---------- 이미지 props'),
   );
 
-  assert.match(wardrobePanel, /className=\{`ward-trash\$\{used \? ' disabled' : ''\}`\}/);
+  // 삭제는 앱 공통 관례대로 우측 위 X(오너 8/15) — 휴지통 아이콘·좌상단 배치는 폐기.
+  assert.match(wardrobePanel, /className=\{`ward-rm\$\{used \? ' disabled' : ''\}`\}/);
+  assert.match(wardrobePanel, /<Icon name="x" size=\{12\} \/>/);
+  assert.doesNotMatch(wardrobePanel, /ward-trash|name="trash"/);
+  // 우측 위는 '사진 고르기' 체크와 자리가 겹친다 — 그 모드에서는 삭제를 감춰 오클릭을 막는다.
+  assert.match(styleSource, /\.ward-cell\.select-target \.ward-rm \{ display: none; \}/);
+  assert.match(styleSource, /\.ward-cell \.ward-rm \{[^}]*top: 4px; right: 4px;/);
   assert.match(wardrobePanel, /aria-disabled=\{used\}/);
   assert.match(wardrobePanel, /onDeleteImage\(im\)/);
   assert.doesNotMatch(wardrobePanel, /ward-check|onDeleteSelected|toggleSel|ward-delbar/);

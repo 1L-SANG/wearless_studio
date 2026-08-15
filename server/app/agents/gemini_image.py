@@ -111,10 +111,17 @@ class GeminiImageClient:
                         self._endpoint(model), json=body, headers={"x-goog-api-key": self._key}
                     )
             except httpx.RequestError as exc:
-                raise GeminiError(
-                    f"Gemini request failed: {type(exc).__name__}: {exc}"
-                ) from exc
-            if res.status_code != 429 or attempt == 2:
+                # 네트워크·타임아웃도 재시도 대상 — 한 번의 순간 장애로 컷이 빈 슬롯이 되면
+                # 셀러에게는 그냥 "못 만든 상세페이지"다(오너: 우린 상업 서비스다).
+                if attempt == 2:
+                    raise GeminiError(
+                        f"Gemini request failed: {type(exc).__name__}: {exc}"
+                    ) from exc
+                await asyncio.sleep(5 * (attempt + 1))
+                continue
+            # 429(스로틀)뿐 아니라 5xx(일시적 서버 장애)도 재시도한다. 4xx 는 파라미터
+            # 문제라 다시 보내도 같은 답이므로 즉시 실패.
+            if (res.status_code != 429 and res.status_code < 500) or attempt == 2:
                 break
             await asyncio.sleep(5 * (attempt + 1))  # 5s → 10s
         latency_ms = int((time.perf_counter() - t0) * 1000)

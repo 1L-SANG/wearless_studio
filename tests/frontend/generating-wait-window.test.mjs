@@ -125,20 +125,34 @@ test('생성 중 자동 저장은 서버 완성본 대신 임시 작업본을 �
   assert.match(autoSave, /api\.saveEditorBlocks\(projectId, latestBlocks\.current\)/);
 });
 
-test('실패 후 다시 시도는 임시 작업본을 지키고 콘티 복귀만 폐기한다', () => {
+test('실패 후 다시 시도는 임시 작업본을 지키고, 이탈은 앞 단계가 아니라 보관함으로 간다', () => {
   const retry = editor.slice(
     editor.indexOf("useAppStore.getState().resetDetailPageJob();", editor.indexOf("genFinalizeError ?")),
     editor.indexOf('>다시 시도</Button>'),
   );
   assert.doesNotMatch(retry, /clearEditorWaitDraft/);
 
-  const discard = editor.slice(
-    editor.indexOf('const discardGenerationAndReturnToStoryboard'),
-    editor.indexOf('/* kb.current', editor.indexOf('const discardGenerationAndReturnToStoryboard')),
+  // 에디터 진입 후 앞 단계 복귀는 금지(오너 8/15) — 되돌아가면 만든 컷·편집이 덮인다.
+  // 실패·차단 화면의 이탈은 편집분을 저장한 뒤 보관함으로 내려놓는다.
+  assert.doesNotMatch(editor, /navigate\('\/create\/storyboard'\)/);
+  assert.doesNotMatch(editor, /discardGenerationAndReturnToStoryboard/);
+  const leave = editor.slice(
+    editor.indexOf('const leaveToLibrary'),
+    editor.indexOf('/* kb.current', editor.indexOf('const leaveToLibrary')),
   );
-  assert.match(discard, /clearEditorWaitDraft\(projectId\)/);
-  assert.match(discard, /resetDetailPageJob\(\)/);
-  assert.match(discard, /navigate\('\/create\/storyboard'\)/);
+  assert.match(leave, /flushExit\(\)/, '편집분을 먼저 저장한다');
+  assert.match(leave, /skipExitPersist\.current = true/, '언마운트 정리가 덮어쓰지 않게');
+  assert.match(leave, /navigate\('\/library'\)/);
+  assert.doesNotMatch(leave, /clearEditorWaitDraft/, '임시 작업본은 남겨 재진입 때 이어서 한다');
+});
+
+test('편집을 시작한 프로젝트는 초안 단계로 되돌아갈 수 없다', () => {
+  const shell = readFileSync(new URL('../../src/features/shell/shell.jsx', import.meta.url), 'utf8');
+  const app = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
+  // 서버 status='done' 만으로는 부족하다 — 생성이 실패·차단으로 끝나면 done 이 아니다.
+  // 단 프로젝트가 실제로 열리는지 확인한 뒤에만 막는다(사라진 프로젝트를 막으면 무한 왕복).
+  assert.match(shell, /const p = await api\.getProject\(pid\);\s*\n\s*if \(!cancelled && \(p\?\.status === 'done' \|\| hasEditorEntered\(pid\)\)\) setBlocked\(true\);/);
+  assert.match(app, /markEditorEntered\(project\.id\);\s*\n\s*setPhase\('ready'\);/);
 });
 
 test('완료 병합은 기본 정보 템플릿을 같은 방문에서 적용한다', () => {
