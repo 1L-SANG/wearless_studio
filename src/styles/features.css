@@ -50,6 +50,8 @@
 .draft-slot-lock-card > svg { margin-bottom: 16px; color: var(--fg-2); }
 .draft-slot-lock-card h3 { font-family: var(--font-display); font-size: 21px; }
 .draft-slot-lock-card p { margin: 10px 0 22px; color: var(--fg-2); line-height: 1.6; }
+/* 잠금 카드는 본문이 가운데 정렬이라 버튼 짝도 가운데로 — 좁은 화면에서는 줄바꿈 */
+.draft-slot-lock-card .modal-actions { justify-content: center; flex-wrap: wrap; }
 .draft-source-options { display: grid; gap: 10px; margin-top: 22px; }
 .draft-source-options .btn { width: 100%; justify-content: center; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
