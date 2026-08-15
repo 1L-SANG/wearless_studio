@@ -1,6 +1,7 @@
 """인증 전 공개 체험 API. 프로젝트·DB·R2에 아무것도 영속하지 않는다."""
 
 import asyncio
+import json
 import logging
 import time
 from collections import deque
@@ -118,6 +119,7 @@ async def public_analyze(
     request: Request,
     images: list[UploadFile] = File(...),
     slots: list[str] | None = Form(default=None),
+    productContext: str | None = Form(default=None),
     authenticated_user: str | None = Depends(optional_user),
 ):
     """상품 사진 1~4장을 기존 AG-01 코어로 분석한다. 인증·프로젝트·DB 저장은 없다."""
@@ -169,6 +171,17 @@ async def public_analyze(
             raise _bad_request("invalid_image_content", "실제 이미지 파일만 올려주세요.")
         source_images.append((data, mime))
 
+    # 공개 흐름은 DB Product가 없으므로 colorGroupId 반환에 필요한 최소 메타만
+    # 받는다. AG-01 build_prompt가 모든 자유 텍스트를 sanitize한다.
+    product = {}
+    if productContext and len(productContext) <= 4096:
+        try:
+            parsed = json.loads(productContext)
+            if isinstance(parsed, dict):
+                product = parsed
+        except (TypeError, ValueError):
+            product = {}
+
     if _analysis_semaphore.locked():
         raise HTTPException(
             status_code=429,
@@ -177,7 +190,7 @@ async def public_analyze(
     await _analysis_semaphore.acquire()
     try:
         core = await analyze_image_bytes(
-            request.app.state.settings, source_images, slots=slots)
+            request.app.state.settings, source_images, product=product, slots=slots)
     except VisionError:
         raise HTTPException(
             status_code=502,

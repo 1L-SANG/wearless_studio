@@ -32,6 +32,7 @@ def test_public_analyze_succeeds_without_bearer_and_returns_login_shape(client, 
     async def fake_analyze(settings, source_images, **kwargs):
         seen["images"] = source_images
         seen["slots"] = kwargs.get("slots")
+        seen["product"] = kwargs.get("product")
         return _analysis_result()
 
     monkeypatch.setattr(public_routes, "analyze_image_bytes", fake_analyze)
@@ -41,7 +42,10 @@ def test_public_analyze_succeeds_without_bearer_and_returns_login_shape(client, 
             ("images", ("front.png", PNG, "image/png")),
             ("images", ("back.png", PNG, "image/png")),
         ],
-        data={"slots": ["Front", "Back"]},
+        data={
+            "slots": ["Front", "Back"],
+            "productContext": '{"colors":[{"id":"base"}]}',
+        },
     )
 
     assert response.status_code == 200, response.text
@@ -50,6 +54,7 @@ def test_public_analyze_succeeds_without_bearer_and_returns_login_shape(client, 
     assert seen["images"] == [
         (PNG, "image/png"), (PNG, "image/png")]
     assert seen["slots"] == ["Front", "Back"]
+    assert seen["product"] == {"colors": [{"id": "base"}]}
 
 
 def test_public_analyze_rejects_unsupported_mime_with_easy_korean_message(client):

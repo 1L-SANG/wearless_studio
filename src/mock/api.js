@@ -59,6 +59,18 @@ const settleMockMannequinCharge = (job) => {
 let ewSim = null;
 const mockDraftSlot = createDraftSlotMemory({ tokenFactory: () => uid('draft-token') });
 const shouldRefreshMatchClothing = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => key in patch);
+const mockSwatchSuggestions = (product) => {
+  const palette = ['black', 'ivory', 'blue'];
+  const labels = Object.fromEntries((DB.catalogs.swatchColors || []).map((swatch) => [swatch.id, swatch.label]));
+  return (product?.colors || []).map((color, index) => {
+    const swatchId = color.swatchId || palette[index % palette.length];
+    return {
+      colorGroupId: color.id,
+      swatchId,
+      colorName: color.name?.trim() || labels[swatchId],
+    };
+  });
+};
 const customMatchUploads = new Map();
 const mockCheckoutOrders = new Map();
 const MOCK_CHECKOUT_KEY = 'wl_mockCheckout';
@@ -303,13 +315,14 @@ export const api = {
   },
 
   /* ---- AI analysis (PRD §6) — 30s-feel progress, can fail ---- */
-  async analyzeProduct(_projectId, { onProgress, forceError = false } = {}) {
+  async analyzeProduct(_projectId, { onProgress, forceError = false, product } = {}) {
     const job = joinable('analyze', (listeners) => runJob({
       duration: 2800,
       onProgress: (progress) => listeners.forEach((listener) => listener(progress)),
     }).then(() => {
       if (forceError) throw new Error('분석 서버에 일시적인 문제가 발생했어요.');
       const a = normalizeAnalysisFit(clone(DB.analysis));
+      a.swatchSuggestions = mockSwatchSuggestions(product || DB.product);
       a.matchClothing = normalizeMatchClothingSelection(a.matchClothing);
       // 실측은 AI가 추정하지 않는다 — 사용자가 직접 입력하도록 빈칸으로 둔다.
       a.measurements = createMeasurementFields(a.clothingType);

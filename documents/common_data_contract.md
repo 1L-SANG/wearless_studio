@@ -70,12 +70,13 @@ Product {
 
 ColorGroup {
   id: string
-  swatchId: SwatchId | null        // 정체성. null = '색상 미정'
+  name: string                     // 쇼핑몰용 세부 색 이름(자유 텍스트, 예: 연청·워시드 블랙)
+  swatchId: SwatchId | null        // 12색 계열 토큰. null = '색상 미정'
   isBase: boolean                  // 기준 색상 여부
   images: ImageAsset[]
 }
-// 파생(저장 안 함): name·hex ← swatchId, monotone ← MONOTONE_SWATCHES 포함 여부
-// 폐기: name(자유 텍스트), isMain. AI 색상명 추정 기획은 'AI의 swatchId 추천'으로 대체.
+// 파생(저장 안 함): hex ← swatchId, monotone ← MONOTONE_SWATCHES 포함 여부
+// AG-01 swatchSuggestions: { colorGroupId, swatchId, colorName }[]. 빈 name/swatchId만 채우며 셀러 값은 보존한다.
 
 ImageAsset {
   id: string
