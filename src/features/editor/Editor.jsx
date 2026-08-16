@@ -2003,7 +2003,9 @@ export function Editor() {
       } catch { /* 일시 오류는 다음 주기에 다시 묻는다 */ }
       // 서버 잡 lease 상한(15분)까지만 따라간다 — 그 뒤엔 새로고침이 정본이다.
       if (Date.now() - started > 15 * 60 * 1000) { slowJobs.current.delete(jobId); return; }
-      const timer = setTimeout(tick, 4000);
+      // 발화한 id 를 안 걷어내면 15분짜리 잡 하나에 ~225개가 쌓인다 — 언마운트 정리가
+      // 이미 끝난 타이머 수백 개를 훑게 된다(2026-08-17 리뷰).
+      const timer = setTimeout(() => { slowJobTimers.current.delete(timer); tick(); }, 4000);
       slowJobTimers.current.add(timer);
     };
     tick();

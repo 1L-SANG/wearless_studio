@@ -22,7 +22,9 @@ export function hasEditorEntered(projectId) {
   try { return localStorage.getItem(KEY(projectId)) === '1'; } catch { return false; }
 }
 
-/** 새 제작을 시작할 때 이전 표식을 지운다 — 브라우저에 무한정 쌓이지 않게. */
+/** 표식을 지운다 — **프로젝트를 실제로 없앨 때만** 쓴다.
+    새 제작을 시작할 때 이전 프로젝트 표식을 지우면 안 된다: 그 프로젝트를 나중에
+    보관함에서 다시 열었을 때 앞 단계 복귀가 열려 편집분이 덮인다(2026-08-17 리뷰). */
 export function clearEditorEntered(projectId) {
   if (!projectId) return;
   try { localStorage.removeItem(KEY(projectId)); } catch { /* noop */ }
