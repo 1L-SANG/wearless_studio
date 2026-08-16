@@ -77,6 +77,10 @@ const CHROME_SELECTOR = [
   '.quick', '.blk-label', '.blk-resize', '.selection-marquee', '.crop-bar', '.crop-layer',
   '.align-bar', '.rot', '.hdl', '.edge', '.moveable-control-box',
   '.ed-genwait', '.ed-uploadwait', '.canvas-dropline', '.slot-add', '.image-drop-guide',
+  // 빈 사진 자리(.el-slot)는 "여기에 넣으세요"라는 편집기 안내지 상품 페이지의 내용이
+  // 아니다. 남겨 두면 완성본 PNG에 회색 네모가 그대로 찍힌다 — 사진을 비워 둔 채
+  // 내려받는 순간 상품 페이지에 빈 상자가 인쇄되는 셈이다(2026-08-17).
+  '.el-slot',
 ].join(',');
 
 const isRemoteSrc = (src) => !!src && !src.startsWith('data:') && !src.startsWith('blob:');

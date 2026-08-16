@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   EXPORT_WIDTH,
@@ -73,4 +74,15 @@ test('exportFileName: 금지문자 제거·빈 값 기본, 캡처 폭 계약 고
   assert.equal(exportFileName(''), '상세페이지.png');
   assert.equal(exportFileName('니트', '블록01'), '니트_블록01.png');
   assert.equal(EXPORT_WIDTH, 1000); // .ed-canvas 설계 폭과 같아야 한다 (features.css .ed-canvas)
+});
+
+
+test('내보내기 캡처에서 빈 사진 자리는 빠진다 — 완성본에 회색 네모가 찍히면 안 된다', () => {
+  const source = readFileSync(new URL('../../src/features/editor/editorExport.js', import.meta.url), 'utf8');
+  const chrome = source.slice(source.indexOf('const CHROME_SELECTOR'), source.indexOf("].join(',')"));
+  // 사진을 비워 둔 칸('＋ 여기에 사진 넣기')은 편집기 안내지 상품 페이지 내용이 아니다.
+  assert.match(chrome, /'\.el-slot'/);
+  assert.match(chrome, /'\.slot-add'/, '＋ 버튼도 함께 빠진다');
+  // 실제로 제거하는 코드와 이어져 있어야 목록이 의미가 있다.
+  assert.match(source, /clone\.querySelectorAll\(CHROME_SELECTOR\)\.forEach\(\(n\) => n\.remove\(\)\)/);
 });
