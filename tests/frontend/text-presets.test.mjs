@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { TEXT_PRESET_DRAG_PREFIX, textPresetKeyFromDragTypes } from '../../src/features/editor/editorImageDrop.js';
 import {
-  DEFAULT_TEXT_PRESET, TEXT_PRESETS, activeTextPreset, buildTextPresetElement, quickStylePatch,
-  textPresetDropPlacement, textPresetOf,
+  DEFAULT_TEXT_BODY, DEFAULT_TEXT_PRESET, PLAIN_TEXT_PRESET, TEXT_PRESETS, activeTextPreset,
+  buildTextPresetElement, quickStylePatch, textPresetBox, textPresetDropPlacement, textPresetOf,
 } from '../../src/features/editor/presets/textPresets.js';
 
 /* 값의 출처: docs/superpowers/specs/2026-08-04-editor-text-slots-design.md
@@ -36,18 +37,27 @@ test('기본 프리셋은 소제목 — 시장 최다 텍스트(65.5%)', () => {
   assert.equal(DEFAULT_TEXT_PRESET, 'subtitle');
 });
 
-test('요소 생성 — 빈 텍스트+자동 폭(즉시 입력 UX), 이미지 기둥(x=60)·캐럿 씨앗폭 12', () => {
-  for (const p of TEXT_PRESETS) {
+test('요소 생성 — 기본 문구+자동 폭, 이미지 기둥(x=60), 문구가 들어갈 만한 씨앗 폭', () => {
+  for (const p of [...TEXT_PRESETS, PLAIN_TEXT_PRESET]) {
     const el = buildTextPresetElement(p.key);
     assert.equal(el.type, 'text');
-    // 4e53fe7 이후 계약: 샘플 문구를 정본(el.text)에 넣지 않는다 — 셀러가 바로 타이핑.
-    assert.equal(el.text, '', `${p.key}는 빈 텍스트로 시작한다`);
+    // 오너 2026-08-16: 빈 상자로 시작하면 어디에 생겼는지·얼마나 큰지 안 보인다.
+    assert.equal(el.text, DEFAULT_TEXT_BODY, `${p.key}는 기본 문구로 시작한다`);
     assert.equal(el.textSizing, 'auto', `${p.key}는 자동 폭`);
-    assert.equal(el.w, 12, `${p.key} w — 포인트 텍스트 캐럿 씨앗값(키우면 빈 상자가 넓게 그려진다)`);
+    assert.ok(el.w > p.style.size * 4, `${p.key} w — 기본 문구가 들어갈 만한 씨앗 폭(붙는 즉시 실측으로 보정)`);
+    assert.equal(el.h, p.style.lineHeight || Math.round(p.style.size * 1.4), `${p.key} h`);
     assert.equal(el.x, 60, `${p.key} x`);
     assert.ok(el.id && el.id !== buildTextPresetElement(p.key).id, 'id는 매번 달라야 한다');
     assert.deepEqual(el.style, { font: 'Pretendard', ...p.style });
   }
+});
+
+test('일반 텍스트 상자 — 추천 3종과 따로, 빠른 스타일 칩에는 안 낀다', () => {
+  assert.equal(PLAIN_TEXT_PRESET.key, 'plain');
+  assert.ok(!TEXT_PRESETS.some((p) => p.key === PLAIN_TEXT_PRESET.key), '추천 목록에는 없다');
+  assert.equal(textPresetOf('plain').style.size, 18);
+  // 위계 프리셋이 아니므로 어떤 칩도 켜지지 않는다 — '기본'이 위계인 척하면 안 된다.
+  assert.equal(activeTextPreset(PLAIN_TEXT_PRESET.style), null);
 });
 
 test('모르는 키·미지정은 기본 프리셋으로 — 요소와 라벨이 같은 폴백을 공유한다', () => {
@@ -124,12 +134,29 @@ test('블록 크기를 모르면 가두지 않는다(0/미지정) — 좌표는 
   assert.deepEqual(place, { x: 700, y: 882 });
 });
 
-test('패널 계약 — 세 프리셋 버튼이 드래그 가능하고 오브젝트와 같은 형식으로 실어 보낸다', () => {
+test('패널 계약 — 프리셋 버튼이 드래그 가능하고, 끌리는 그림은 실제 텍스트 상자다', () => {
   const panel = readFileSync(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url), 'utf8');
   const item = panel.slice(panel.indexOf('className="text-preset-item"'), panel.indexOf('tp-sample'));
   assert.match(item, /draggable/, '버튼이 draggable 이어야 브라우저가 드래그를 시작한다');
-  assert.match(item, /setData\('text\/object', `text:\$\{p\.key\}`\)/,
+  assert.match(item, /startTextPresetDrag\(e, p\.key, canvasScale\)/);
+  const plain = panel.slice(panel.indexOf('className="text-preset-plain"'), panel.indexOf('tpp-glyph'));
+  assert.match(plain, /draggable/, '일반 텍스트 상자도 같은 방식으로 끌 수 있다');
+  const start = panel.slice(panel.indexOf('function startTextPresetDrag'), panel.indexOf('export function TextPanel'));
+  assert.match(start, /setData\('text\/object', `text:\$\{presetKey\}`\)/,
     "블록 드롭 핸들러가 이미 아는 'text/object' 형식이라야 하이라이트·드롭이 그대로 동작한다");
+  assert.match(start, /setData\(`\$\{TEXT_PRESET_DRAG_PREFIX\}\$\{presetKey\}`/,
+    '드래그 도중 getData 가 막히므로 종류는 타입 이름으로 실어 보낸다');
+  // 패널 카드가 아니라 실제 상자 그림이 끌려야 어디에 무엇이 놓일지 보인다(오너 8/16).
+  assert.match(start, /setDragImage\(ghost, 10, ghost\.offsetHeight \/ 2\)/);
+  assert.match(start, /ghost\.textContent = box\.text/);
+});
+
+test('드래그 미리보기 상자와 실제로 만들어지는 요소는 같은 값을 본다', () => {
+  for (const key of [...TEXT_PRESETS.map((p) => p.key), 'plain']) {
+    const box = textPresetBox(key);
+    const el = buildTextPresetElement(key);
+    assert.deepEqual({ w: el.w, h: el.h, text: el.text, style: el.style }, box, `${key}`);
+  }
 });
 
 test('에디터 계약 — 드롭된 텍스트는 도형이 아니라 텍스트 경로로 간다', () => {
@@ -137,4 +164,25 @@ test('에디터 계약 — 드롭된 텍스트는 도형이 아니라 텍스트 
   assert.match(editor, /type === 'text' \? dropText\(id, bid, ev\) : addShape\(/);
   // 자동 관리 블록(정보·사이즈·세탁·AI 고지)은 클릭 추가와 똑같이 막는다 — 재생성 때 글이 사라진다.
   assert.match(editor.slice(editor.indexOf('const dropText =')), /isAutoManagedBlock\(block\)/);
+});
+
+
+test('드래그 도중 종류 알아내기 — 타입 목록에서 프리셋 키를 뽑는다', () => {
+  const types = ['text/object', `${TEXT_PRESET_DRAG_PREFIX}body`];
+  assert.equal(textPresetKeyFromDragTypes(types), 'body');
+  assert.equal(textPresetKeyFromDragTypes([`${TEXT_PRESET_DRAG_PREFIX}plain`]), 'plain');
+  // 오브젝트·이미지 드래그는 텍스트 미리보기를 켜지 않는다.
+  assert.equal(textPresetKeyFromDragTypes(['text/object', 'Files']), null);
+  assert.equal(textPresetKeyFromDragTypes(undefined), null);
+});
+
+test('에디터 계약 — 블록 위에서 놓일 자리를 실제 상자로 미리 그린다', () => {
+  const editor = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
+  assert.match(editor, /const presetKey = textPresetKeyFromDragTypes\(types\);/);
+  assert.match(editor, /className="text-drop-ghost"/);
+  // 미리보기 자리와 실제 놓이는 자리는 같은 함수를 써야 "본 자리"와 "놓인 자리"가 같다.
+  const overlayStart = editor.indexOf('const presetKey = textPresetKeyFromDragTypes');
+  const overlay = editor.slice(overlayStart, editor.indexOf('onDragLeave', overlayStart));
+  assert.match(overlay, /textPresetDropPlacement\(/);
+  assert.match(overlay, /textPresetBox\(presetKey\)/);
 });

@@ -7,6 +7,15 @@ import {
 export const EDITOR_IMAGE_DRAG_TYPE = WARDROBE_IMAGE_MIME;
 export const EDITOR_FRAME_DRAG_TYPE = 'text/frame';
 export const EDITOR_INFO_PRESET_DRAG_TYPE = 'application/x-wearless-info-preset';
+/* 텍스트 프리셋 드래그의 '종류 표식'. 값이 아니라 **타입 이름**에 프리셋 키를 실어 보낸다 —
+   드래그 도중에는 보안상 getData 가 막혀 types 만 읽을 수 있는데, 블록은 마우스를 올린
+   순간 "어느 크기의 상자가 어디에 놓이는지"를 그려야 하기 때문이다(오너 2026-08-16).
+   실제 페이로드는 오브젝트와 같은 'text/object' = `text:<키>` 로도 함께 실린다. */
+export const TEXT_PRESET_DRAG_PREFIX = 'text/textpreset-';
+export const textPresetKeyFromDragTypes = (types) => {
+  const found = Array.from(types || []).find((type) => String(type).startsWith(TEXT_PRESET_DRAG_PREFIX));
+  return found ? found.slice(TEXT_PRESET_DRAG_PREFIX.length) : null;
+};
 export const encodeEditorImageDrag = encodeWardrobeImage;
 export const decodeEditorImageDrag = decodeWardrobeImage;
 

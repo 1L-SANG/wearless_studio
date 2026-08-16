@@ -20,7 +20,8 @@ import {
 import { thumbUrl } from '@/lib/imageCdn.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, OBJECT_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, colorWithOpacity, encodeWardrobeImage, normalizeHexColor, objectPresetPreview } from '@/features/editor/editorLibrary.js';
 import { DEFAULT_EDITOR_COLOR_PRESETS, commitNumberDraft, hexToHsv, hsvToHex, speechBubblePath } from '@/features/editor/editorAppearance.js';
-import { TEXT_MUTED, TEXT_PRESETS, activeTextPreset, quickStylePatch } from '@/features/editor/presets/textPresets.js';
+import { PLAIN_TEXT_PRESET, TEXT_MUTED, TEXT_PRESETS, activeTextPreset, quickStylePatch, textPresetBox } from '@/features/editor/presets/textPresets.js';
+import { TEXT_PRESET_DRAG_PREFIX } from '@/features/editor/editorImageDrop.js';
 import { speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 
@@ -805,7 +806,32 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, lock = true, onLock 
 const TEXT_PALETTE = ['#0e0d14', TEXT_MUTED, '#ffffff', '#4f88c9', '#d92d20', '#067647'];
 const HL_PALETTE = ['#fef3c7', '#dbeafe', '#dcfce7', '#fee2e2', '#f3f4f6', '#0e0d14'];
 const WEIGHTS = [{ value: 300, label: 'Light' }, { value: 400, label: 'Regular' }, { value: 500, label: 'Medium' }, { value: 600, label: 'SemiBold' }, { value: 700, label: 'Bold' }];
-export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, onLayer, onAddText }) {
+/* 드래그 중 커서를 따라다니는 그림 = **실제로 놓일 텍스트 상자**. 패널 카드(설명·px 표시가
+   붙은 안내 상자)가 그대로 끌려오면 "무엇이 어디에 놓이는지"를 알 수 없다는 오너 지적
+   (2026-08-16). 캔버스 배율을 곱해 화면에 놓일 크기 그대로 그리고, 커서는 상자 왼쪽 글줄
+   한가운데에 둔다 — 놓는 자리 계산(textPresetDropPlacement)과 같은 기준점이다. */
+function startTextPresetDrag(event, presetKey, scale) {
+  const box = textPresetBox(presetKey);
+  event.dataTransfer.effectAllowed = 'copy';
+  event.dataTransfer.setData('text/object', `text:${presetKey}`);
+  // 드래그 중에는 getData 가 막혀 있고 types 만 읽을 수 있다 — 어떤 프리셋인지 블록이
+  // 알아야 놓일 자리 미리보기를 정확히 그리므로 종류를 타입 이름에 실어 보낸다.
+  event.dataTransfer.setData(`${TEXT_PRESET_DRAG_PREFIX}${presetKey}`, presetKey);
+  if (typeof document === 'undefined' || !event.dataTransfer.setDragImage) return;
+  const ghost = document.createElement('div');
+  const ratio = Math.max(0.2, Number(scale) || 1);
+  ghost.className = 'text-drag-ghost';
+  ghost.textContent = box.text;
+  ghost.style.fontSize = `${Math.max(9, Math.round(box.style.size * ratio))}px`;
+  ghost.style.fontWeight = String(box.style.weight || 400);
+  ghost.style.color = box.style.color;
+  document.body.appendChild(ghost);
+  event.dataTransfer.setDragImage(ghost, 10, ghost.offsetHeight / 2);
+  // 드래그가 시작된 뒤에 지워야 브라우저가 스냅샷을 뜬 다음이 된다.
+  setTimeout(() => ghost.remove(), 0);
+}
+
+export function TextPanel({ el, catalogs, canvasScale = 1, onChange, onBubbleAppearanceChange, onLayer, onAddText }) {
   const has = el && el.type === 'text';
   const isBubble = has && el.shape === 'bubble';
   const s = (has && el.style) || {};
@@ -825,13 +851,26 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
       {TEXT_PRESETS.map((p) => (
         <button key={p.key} type="button" className="text-preset-item" draggable
           aria-label={`${p.label} 추가`} title={`${p.label} — 누르면 추가, 끌어다 놓으면 그 자리에`}
-          onDragStart={(e) => { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/object', `text:${p.key}`); }}
+          onDragStart={(e) => startTextPresetDrag(e, p.key, canvasScale)}
           onClick={() => onAddText?.(p.key)}>
           {/* 축소판 스타일은 프리셋 데이터에서 직접 그린다 — CSS에 복제하면 값이 갈라진다 */}
           <span className="tp-sample" style={{ fontSize: p.previewSize, fontWeight: p.style.weight, color: p.style.color, letterSpacing: p.style.tracking }}>{p.sample || p.label}</span>
           <span className="tp-meta">{p.style.size}px<br />{p.hint}</span>
         </button>
       ))}
+      {/* 위계 없는 '그냥 텍스트' — 추천 3종과 섞이면 어느 게 일반인지 흐려져 구분선 아래
+          한 줄로 둔다(오너 8/16: "그냥 텍스트 추가하는 내용이 없다"). */}
+      <button type="button" className="text-preset-plain" draggable
+        aria-label={`${PLAIN_TEXT_PRESET.label} 추가`} title={`${PLAIN_TEXT_PRESET.label} — 누르면 추가, 끌어다 놓으면 그 자리에`}
+        onDragStart={(e) => startTextPresetDrag(e, PLAIN_TEXT_PRESET.key, canvasScale)}
+        onClick={() => onAddText?.(PLAIN_TEXT_PRESET.key)}>
+        <span className="tpp-glyph" aria-hidden="true">T</span>
+        <span className="tpp-copy">
+          <b>{PLAIN_TEXT_PRESET.label}</b>
+          <em>{PLAIN_TEXT_PRESET.style.size}px · {PLAIN_TEXT_PRESET.hint}</em>
+        </span>
+        <span className="tpp-plus" aria-hidden="true">＋</span>
+      </button>
     </div>
   );
   return (
@@ -1061,17 +1100,41 @@ function PresetPreviewElement({ el }) {
     </div>
   );
 }
-/* 썸네일 칸(가로 THUMB_W, 세로 THUMB_H)에 통째로 들어가도록 축소만 한다 — 확대는 하지
-   않는다(구분선처럼 납작한 오브젝트가 흐리게 늘어난다). 실제 블록에서처럼 흰 바탕 위. */
-const OBJECT_THUMB = { w: 132, h: 58, pad: 6 };
+/* 썸네일 배율 — 두 가지를 동시에 만족시킨다(오너 2026-08-16 "가독성 있게 보정"):
+   ① 칸 안에서 오브젝트를 알아볼 수 있을 것(잘려 나가면 무엇인지 모른다),
+   ② 글자·선이 뭉개지지 않을 것(통째로 맞추기만 하면 Q&A 말풍선은 글자가 3~4px가 된다).
+   둘이 부딪히면 기본은 ①이고, **잘려도 손해가 없는 오브젝트만** 예외로 키운다:
+   긴 글상자는 오른쪽이 잘려도 "검은 띠에 흰 글씨"가 그대로 읽히고, 구분선은 어디를
+   잘라도 같은 선이다. 반대로 화살표 콜아웃은 화살촉이, 말풍선은 꼬리가 잘리면 정체가
+   사라지므로 절대 키우지 않는다. */
+const OBJECT_THUMB = { w: 132, h: 62, pad: 5, minText: 8, minStroke: 1.2 };
+const THUMB_WIDE_CROP_OK = new Set(['text-box', 'divider']);
 function ObjectPresetThumb({ presetId }) {
   const preview = useMemo(() => objectPresetPreview(presetId), [presetId]);
-  const scale = Math.min(1, (OBJECT_THUMB.w - OBJECT_THUMB.pad * 2) / preview.width,
-    (OBJECT_THUMB.h - OBJECT_THUMB.pad * 2) / preview.height);
+  const viewW = OBJECT_THUMB.w - OBJECT_THUMB.pad * 2;
+  const viewH = OBJECT_THUMB.h - OBJECT_THUMB.pad * 2;
+  const fit = Math.min(viewW / preview.width, viewH / preview.height);
+  // 가장 작은 글자는 minText px, 가장 얇은 선은 minStroke px 이상으로 보이게 하는 배율.
+  const textSizes = preview.elements.filter((el) => el.type === 'text').map((el) => el.style?.size || 0).filter(Boolean);
+  const strokes = preview.elements.filter((el) => el.type === 'line').map((el) => el.strokeWidth || 2.5);
+  const legible = Math.max(
+    textSizes.length ? OBJECT_THUMB.minText / Math.min(...textSizes) : 0,
+    strokes.length ? OBJECT_THUMB.minStroke / Math.min(...strokes) : 0,
+  );
+  // 가로로 잘려도 되는 것만 키운다 — 세로는 어떤 경우에도 안 자른다(위아래가 잘리면
+  // 말풍선 꼬리·아래 줄이 통째로 사라진다).
+  const scale = THUMB_WIDE_CROP_OK.has(presetId)
+    ? Math.min(1, Math.max(fit, Math.min(legible, viewH / preview.height)))
+    : fit;
+  const artW = preview.width * scale;
+  const artH = preview.height * scale;
   return (
     <span className="object-preset-thumb" aria-hidden="true">
-      <span className="object-preset-stage" style={{ width: preview.width * scale, height: preview.height * scale }}>
-        <span style={{ position: 'absolute', left: 0, top: 0, width: preview.width, height: preview.height, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
+      <span className="object-preset-stage" style={{ width: viewW, height: viewH }}>
+        <span className="object-preset-art" style={{
+          width: preview.width, height: preview.height, transform: `scale(${scale})`,
+          left: Math.max(0, (viewW - artW) / 2), top: Math.max(0, (viewH - artH) / 2),
+        }}>
           {preview.elements.map((el) => <PresetPreviewElement key={el.id} el={el} />)}
         </span>
       </span>

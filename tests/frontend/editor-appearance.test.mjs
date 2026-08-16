@@ -198,8 +198,10 @@ test('canvas routes every movable element through one pointer drag without nativ
 });
 
 test('entering text edit places the caret at the end for normal text and speech bubbles', () => {
-  assert.match(editorSource, /range\.selectNodeContents\(node\);\s*range\.collapse\(false\);/s);
-  assert.match(editorSource, /focusEditableAtEnd\(isSpeechBubbleElement\(el\) \? textRef\.current : ref\.current\)/);
+  // 방금 만든 텍스트만 예외 — 기본 문구가 통째로 선택돼 그냥 타이핑하면 갈아 끼워진다(오너 8/16).
+  assert.match(editorSource, /range\.selectNodeContents\(node\);\s*if \(!selectAll\) range\.collapse\(false\);/s);
+  assert.match(editorSource, /focusEditableAtEnd\(isSpeechBubbleElement\(el\) \? textRef\.current : ref\.current, fresh\)/);
+  assert.match(editorSource, /const fresh = FRESH_TEXT_IDS\.delete\(el\.id\);/);
   assert.doesNotMatch(editorSource, /setTimeout\(\(\) => (?:textRef|ref)\.current/);
 });
 

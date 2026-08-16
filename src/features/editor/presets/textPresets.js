@@ -42,19 +42,42 @@ export const TEXT_PRESETS = [
 /* 소제목이 기본 — 실측에서 셀러 텍스트의 65.5%가 한 줄 소제목이었다(중앙값 17자). */
 export const DEFAULT_TEXT_PRESET = 'subtitle';
 
+/* 새 텍스트의 기본 문구(오너 2026-08-16). 빈 상자로 시작하면 어디에 생겼는지 안 보이고
+   크기 감도 안 잡힌다는 지적 — 말풍선 프리셋과 같은 문구를 쓴다. 편집을 시작하면 이
+   문구가 통째로 선택되므로(Editor의 FRESH_TEXT_IDS) 그냥 타이핑하면 갈아 끼워진다. */
+export const DEFAULT_TEXT_BODY = '내용을 입력하세요.';
+
+/* 위계를 정하지 않고 그냥 한 상자 놓고 싶을 때(오너 2026-08-16: "그냥 텍스트 추가").
+   추천 3종과 나란히 두면 "어느 게 일반이지"가 흐려져 목록에는 넣지 않고, 별도 항목으로만
+   제공한다 — 빠른 스타일 칩도 위계 3종만 유지한다. */
+export const PLAIN_TEXT_PRESET = Object.freeze({
+  key: 'plain', label: '텍스트 상자', hint: '스타일 없이 기본 크기', previewSize: 15,
+  style: { size: 18, weight: 400, color: TEXT_INK },
+});
+
 /** 키 → 프리셋. 모르는 키·미지정은 기본 프리셋 — 요소 생성과 토스트 라벨이
     반드시 이 하나의 폴백을 공유해야 "만든 것"과 "말한 것"이 안 갈라진다. */
 export function textPresetOf(key) {
+  if (key === PLAIN_TEXT_PRESET.key) return PLAIN_TEXT_PRESET;
   return TEXT_PRESETS.find((p) => p.key === key) || TEXT_PRESETS.find((p) => p.key === DEFAULT_TEXT_PRESET);
 }
 
-/** 프리셋 키 → 새 텍스트 요소. x=60 은 이미지 기둥 왼끝 정렬(캔버스 1000px 기준).
-    w=12 는 포인트 텍스트의 캐럿 씨앗값(previewAutoTextSize 하한과 짝) — 키우면
-    빈 상자가 넓게 그려진다. */
-export function buildTextPresetElement(key) {
+/** 기본 문구가 차지할 대략적인 폭. 요소가 화면에 붙는 순간 auto 폭이 실측값으로
+    바로잡지만, ① 놓을 자리를 블록 안으로 가두는 계산과 ② 드래그 중 미리보기 상자는
+    붙기 전에 크기를 알아야 해서 이 씨앗값을 쓴다(한글 글자폭 ≈ 1em 기준). */
+const seedTextWidth = (size) => Math.round(size * 8.8);
+
+/** 프리셋 키 → 새 텍스트 요소의 크기·스타일·문구(id 없음 — 순수). 요소 생성과 드래그
+    미리보기가 같은 값을 봐야 "끌 때 본 상자"와 "놓인 상자"가 같다. */
+export function textPresetBox(key) {
   const p = textPresetOf(key);
   const h = p.style.lineHeight || Math.round(p.style.size * 1.4);
-  return { id: uid('el'), type: 'text', x: 60, y: 80, w: 12, h, text: '', textSizing: 'auto', style: { font: 'Pretendard', ...p.style } };
+  return { w: seedTextWidth(p.style.size), h, text: DEFAULT_TEXT_BODY, style: { font: 'Pretendard', ...p.style } };
+}
+
+/** 프리셋 키 → 새 텍스트 요소. x=60 은 이미지 기둥 왼끝 정렬(캔버스 1000px 기준). */
+export function buildTextPresetElement(key) {
+  return { id: uid('el'), type: 'text', x: 60, y: 80, textSizing: 'auto', ...textPresetBox(key) };
 }
 
 /** 끌어다 놓은 자리 → 새 텍스트 요소의 좌표(블록 기준). 요소는 캐럿 씨앗(w=12)이라

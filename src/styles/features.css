@@ -1636,8 +1636,32 @@
   border: 0; border-radius: var(--r-4); background: var(--bg-1); box-shadow: var(--elev-card);
   cursor: pointer; text-align: left; font-family: inherit; transition: box-shadow .14s; }
 .text-preset-item:hover { box-shadow: var(--elev-lift); }
+.text-preset-item:active { cursor: grabbing; }
 .text-preset-item .tp-sample { white-space: nowrap; }
 .text-preset-item .tp-meta { font-size: 11px; color: var(--fg-3); text-align: right; line-height: 1.5; flex: none; }
+/* 위계 없는 '텍스트 상자' — 추천 3종 아래 구분선 한 칸(2026-08-16 오너). 추천 카드와
+   같은 무게로 보이면 무엇이 기본인지 흐려져, 점선 테두리의 가벼운 행으로 둔다. */
+.text-preset-plain { display: flex; align-items: center; gap: 10px; margin-top: 4px; padding: 10px 12px;
+  border: 1px dashed var(--ring-strong); border-radius: var(--r-4); background: transparent;
+  cursor: pointer; text-align: left; font-family: inherit; transition: border-color .14s, background .14s; }
+.text-preset-plain:hover { border-color: var(--fg-2); background: var(--bg-2); }
+.text-preset-plain:active { cursor: grabbing; }
+.text-preset-plain .tpp-glyph { flex: none; width: 26px; height: 26px; display: grid; place-items: center;
+  border-radius: var(--r-3); background: var(--bg-2); color: var(--fg-1); font-size: 15px; font-weight: 600; }
+.text-preset-plain .tpp-copy { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.text-preset-plain .tpp-copy b { font-size: 12.5px; font-weight: 600; color: var(--fg-1); }
+.text-preset-plain .tpp-copy em { font-size: 11px; font-style: normal; color: var(--fg-3); }
+.text-preset-plain .tpp-plus { margin-left: auto; color: var(--fg-3); font-size: 13px; }
+/* 드래그 중 커서를 따라다니는 상자 = 실제로 놓일 텍스트 상자(패널 카드가 아니라).
+   화면 밖에 두고 브라우저가 스냅샷만 떠 가게 한다. */
+.text-drag-ghost { position: fixed; left: -9999px; top: -9999px; z-index: -1;
+  padding: 6px 10px; border: 1px solid var(--fg-1); border-radius: 4px; background: #fff;
+  font-family: var(--font-body); white-space: nowrap; line-height: 1.4; }
+/* 블록 위에서 "여기에 이만한 상자가 들어갑니다" — 손을 떼기 전에 자리·크기를 보여준다.
+   캔버스 배율은 블록이 이미 먹고 있으므로 좌표·크기는 블록 좌표계 그대로 쓴다. */
+.text-drop-ghost { position: absolute; z-index: 30; pointer-events: none;
+  padding: 0; border-radius: 2px; box-shadow: 0 0 0 calc(1.5px * var(--inv, 1)) var(--link);
+  background: rgba(0, 153, 255, .08); white-space: pre-wrap; opacity: .9; }
 /* 빠른 스타일 — 공용 .chip 시각(app.css)에 2×2 그리드 배치만 얹는다 */
 .quad-chips { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .quad-chips .chip { justify-content: center; }
@@ -1735,8 +1759,9 @@
   display: flex; flex-direction: column; align-items: stretch; transition: background .14s, box-shadow .14s; }
 .object-preset-cell:hover { background: var(--bg-1); box-shadow: 0 0 0 1px var(--ring-strong), 0 4px 14px -4px rgba(14,13,20,.12); }
 .object-preset-cell:active { cursor: grabbing; }
-.object-preset-thumb { height: 58px; display: grid; place-items: center; background: #fff; overflow: hidden; }
-.object-preset-stage { position: relative; }
+.object-preset-thumb { position: relative; height: 62px; display: grid; place-items: center; background: #fff; overflow: hidden; }
+.object-preset-stage { position: relative; overflow: hidden; }
+.object-preset-art { position: absolute; transform-origin: top left; }
 .object-preset-name { display: block; text-align: center; font-size: 11.5px; font-weight: 600; color: var(--fg-1); line-height: 1.2; margin-top: 8px; }
 /* 오브젝트 탭 — 플랫 타일 + 큰 글리프 (4열, Figma/Canva 류 패널 관례) */
 .shape-list { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }

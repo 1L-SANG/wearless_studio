@@ -26,7 +26,7 @@ import { exampleGenderFromAnalysis, hexFor } from '@/features/storyboard/Storybo
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isAutoManagedBlock, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
-import { buildTextPresetElement, textPresetDropPlacement } from '@/features/editor/presets/textPresets.js';
+import { buildTextPresetElement, textPresetBox, textPresetDropPlacement } from '@/features/editor/presets/textPresets.js';
 import { buildColorOpts, visibleColorOpts } from '@/lib/colorOpts.js';
 import { retryRead } from '@/lib/retryRead.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
@@ -36,7 +36,7 @@ import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHei
 import { exportBlockPng, exportBlocksZip, exportLongPng } from '@/features/editor/editorExport.js';
 import { snapEditorDragDelta } from '@/features/editor/editorSnap.js';
 import { copyEditorElements, pasteEditorElements } from '@/features/editor/editorClipboard.js';
-import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, findImageDropSlot, fitImageToFrameBlock, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
+import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, textPresetKeyFromDragTypes, findImageDropSlot, fitImageToFrameBlock, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage, objectPresetInitialSelectionIds, upgradeLegacyKiwiTemplateBlocks } from '@/features/editor/editorLibrary.js';
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { imageResizeRect, lineHitStrokeWidth, resizePolicyForElement, shouldShowRotationHandle, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
@@ -161,7 +161,12 @@ function editableText(node) {
   return String(node?.innerText ?? node?.textContent ?? '').replace(/\n$/, '');
 }
 
-function focusEditableAtEnd(node) {
+/* 방금 만든 텍스트의 id — 첫 편집에서 기본 문구('내용을 입력하세요.')를 통째로 선택해
+   그냥 타이핑하면 갈아 끼워지게 한다. 요소에 표식 필드를 달면 저장 문서에 남아 다음
+   세션까지 따라다니므로, 이 세션에서만 사는 모듈 스코프 집합으로 둔다(uid 라 충돌 없음). */
+const FRESH_TEXT_IDS = new Set();
+
+function focusEditableAtEnd(node, selectAll = false) {
   if (!node) return;
   node.focus({ preventScroll: true });
   // 새 텍스트가 블록 콘텐츠 아래(화면 밖)에 생길 수 있다 — 캐럿이 보이지 않는 채로
@@ -172,7 +177,7 @@ function focusEditableAtEnd(node) {
   const range = doc?.createRange?.();
   if (!selection || !range) return;
   range.selectNodeContents(node);
-  range.collapse(false);
+  if (!selectAll) range.collapse(false);
   selection.removeAllRanges();
   selection.addRange(range);
 }
@@ -368,7 +373,8 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
   // 더블클릭 좌표에 남아 있던 브라우저 기본 selection 때문에 중간 글자가 덮이는 것을 막는다.
   useLayoutEffect(() => {
     if (!editing || preview || el.hidden || el.type !== 'text') return;
-    focusEditableAtEnd(isSpeechBubbleElement(el) ? textRef.current : ref.current);
+    const fresh = FRESH_TEXT_IDS.delete(el.id);
+    focusEditableAtEnd(isSpeechBubbleElement(el) ? textRef.current : ref.current, fresh);
   }, [editing, el.hidden, el.id, el.shape, el.type, preview]);
 
   if (el.hidden) return null;
@@ -644,6 +650,8 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
   const blockActive = selectedBlockId === block.id;
   const blockSelected = blockActive && (!selEls || selEls.length === 0);
   const [objOver, setObjOver] = useState(false);
+  // 텍스트 프리셋을 끌고 지나가는 동안만 사는 '놓일 자리' 미리보기(저장 대상 아님).
+  const [textGhost, setTextGhost] = useState(null);
 
   const pickBelowBlankText = (event, currentElement) => {
     const candidateIds = [];
@@ -693,20 +701,39 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
         const types = [...e.dataTransfer.types];
         if (!types.some((type) => type === 'text/object' || type === WARDROBE_IMAGE_MIME || type === 'Files')) return;
         e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setObjOver(true);
+        // 텍스트 프리셋만 놓일 자리를 실제 상자로 미리 그린다 — 어디에 어떤 크기로
+        // 들어갈지 손을 떼기 전에 보여야 한다(오너 2026-08-16).
+        const presetKey = textPresetKeyFromDragTypes(types);
+        if (!presetKey) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        const box = textPresetBox(presetKey);
+        const point = viewportPointToBlock({ clientX: e.clientX, clientY: e.clientY, blockLeft: rect.left, blockTop: rect.top, scale });
+        setTextGhost({
+          ...textPresetDropPlacement({ ...point, w: box.w, h: box.h, blockW: block.w, blockH }),
+          box,
+        });
       }}
-      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setObjOver(false); }}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) { setObjOver(false); setTextGhost(null); } }}
       onDrop={(e) => {
         const draggedImage = decodeWardrobeImage(e.dataTransfer.getData(WARDROBE_IMAGE_MIME));
         const files = [...(e.dataTransfer.files || [])];
         const objectData = e.dataTransfer.getData('text/object');
         if (!draggedImage && !files.length && !objectData) return;
-        e.preventDefault(); setObjOver(false);
+        e.preventDefault(); setObjOver(false); setTextGhost(null);
         const rect = e.currentTarget.getBoundingClientRect();
         const point = viewportPointToBlock({ clientX: e.clientX, clientY: e.clientY, blockLeft: rect.left, blockTop: rect.top, scale });
         if (draggedImage) onDropBlockImage(block.id, draggedImage, point);
         else if (files.length) onDropImageFiles(block.id, files, point);
         else { const [type, id] = objectData.split(':'); onObjectDrop(block.id, type, id, e); }
       }}>
+      {textGhost && (
+        <div className="text-drop-ghost" style={{
+          left: textGhost.x, top: textGhost.y, width: textGhost.box.w, minHeight: textGhost.box.h,
+          fontSize: textGhost.box.style.size, fontWeight: textGhost.box.style.weight || 400,
+          color: textGhost.box.style.color,
+          lineHeight: textGhost.box.style.lineHeight ? `${textGhost.box.style.lineHeight}px` : 1.4,
+        }}>{textGhost.box.text}</div>
+      )}
       <div className="block-clip">
         {block.elements.map((el) => (
           (crop && crop.elId === el.id) ? null : (
@@ -2039,6 +2066,7 @@ export function Editor() {
     const roomBelow = (block.h || 220) - contentBottom;
     const y = contentBottom > 0 && roomBelow >= 20 ? contentBottom + 32 : 80;
     const el = { ...buildTextPresetElement(preset), y };
+    FRESH_TEXT_IDS.add(el.id);   // 첫 편집에서 기본 문구가 통째로 선택된다
     setBlocks((bs) => bs.map((b) => b.id === block.id ? { ...b, elements: [...b.elements, el] } : b));
     selectEl(block.id, el); setTab('text');
     setEditEl(el.id);
@@ -2057,6 +2085,7 @@ export function Editor() {
       ? viewportPointToBlock({ clientX: dropEvent.clientX, clientY: dropEvent.clientY, blockLeft: rect.left, blockTop: rect.top, scale })
       : { x: base.x, y: base.y + base.h / 2 };
     const el = { ...base, ...textPresetDropPlacement({ ...point, w: base.w, h: base.h, blockW: block.w, blockH: block.h }) };
+    FRESH_TEXT_IDS.add(el.id);
     setBlocks((bs) => bs.map((b) => b.id === block.id ? { ...b, elements: [...b.elements, el] } : b));
     selectEl(block.id, el); setTab('text');
     setEditEl(el.id);
@@ -2527,7 +2556,7 @@ export function Editor() {
         <FramePanel onAdd={addFrame} recommendGender={recommendGender} onPickInfo={openInfoPreset}
           onDragStart={() => setFrameDragging(true)} onDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />
       );
-      case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onBubbleAppearanceChange={patchBubbleAppearance} onLayer={layerEl} onAddText={addText} />;
+      case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} canvasScale={scale} onChange={patchEl} onBubbleAppearanceChange={patchBubbleAppearance} onLayer={layerEl} onAddText={addText} />;
       case 'shape': return <ShapePanel catalogs={catalogs} onAdd={addShape} block={(selEls.length === 0 && selBlock) ? blocks.find((b) => b.id === selBlock) : null} onBgChange={changeBg} />;
       default: return null;
     }
