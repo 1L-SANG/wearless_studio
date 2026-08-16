@@ -334,8 +334,11 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     const hero = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.HERO);
     const subtitle = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.BENEFIT);
     const hasCopy = Boolean(copywriting && hero);
-    // 격자는 카피가 위에 오므로 사진 시작 y 를 그만큼 내린다.
-    const imgTop = grid ? (hasCopy ? (subtitle ? 190 : 150) : 50) : 50;
+    // 사진 시작 y 는 어느 배치든 같다. 격자만 카피를 위로 올려 자리를 비워 뒀더니,
+    // 에디터가 사진 행의 카피를 통째로 걷어내는 규칙(stripPhotoBlockTextElements —
+    // grid2x2 도 PHOTO_ROW_KINDS 다) 때문에 격자 위에 190px 빈 띠만 남았다.
+    // 카피는 다른 행과 똑같이 사진 아래에 둔다(2026-08-16 리뷰에서 실측 확인).
+    const imgTop = 50;
     const els = chunk.map((rb, c) => Object.assign(
       grid
         ? IMG(60 + (c % 2) * w, imgTop + Math.floor(c / 2) * h, w, h, generatedImageFor(rb, w, h), 0, rb.cutType || undefined)
@@ -343,11 +346,12 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
       { sourceBlockId: rb.id },
     ));
     if (hasCopy) {
-      els.push(Object.assign(T(60, grid ? 60 : 582, 880, 56, `${product.name || '상품'}와 함께하는 하루`, {
+      const copyTop = imgTop + (grid ? h * 2 : h) + 32;
+      els.push(Object.assign(T(60, copyTop, 880, 56, `${product.name || '상품'}와 함께하는 하루`, {
         size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14',
       }), { sourceBlockId: hero.id, copyRole: 'headline' }));
       if (subtitle) {
-        els.push(Object.assign(T(60, grid ? 128 : 650, 880, 34, '강조 포인트를 살린 카피가 들어가는 자리예요.', {
+        els.push(Object.assign(T(60, copyTop + 68, 880, 34, '강조 포인트를 살린 카피가 들어가는 자리예요.', {
           size: 17, color: '#6b6b73', lineHeight: 26,
         }), { sourceBlockId: subtitle.id, copyRole: 'body' }));
       }

@@ -444,9 +444,10 @@ def assemble(
         block_i = len(blocks)
         row_layout = _ROW_LAYOUTS[layout]
         count = len(chunk)
-        # 2×2 격자는 사진 넷이 딱 붙어 한 덩어리로 보여야 한다(오너 2026-08-16). 칸 사이 간격을
-        # 두지 않고 카피는 격자 **위**에 놓는다 — 아래에 두면 격자와 다음 블록 사이에 글이 끼어
-        # 넷이 한 묶음으로 안 읽힌다. 클라이언트 조립기(src/mock/db.js pushRow)와 같은 규칙.
+        # 2×2 격자는 사진 넷이 딱 붙어 한 덩어리로 보여야 한다(오너 2026-08-16). 칸 사이 간격만
+        # 두지 않는다. 카피는 다른 행과 똑같이 사진 **아래**다 — 격자만 위로 올려 자리를 비워
+        # 뒀더니, 에디터가 사진 행의 카피를 걷어내는 규칙 때문에 격자 위에 빈 띠만 남았다
+        # (2026-08-16 리뷰 실측). 클라이언트 조립기(src/mock/db.js pushRow)와 같은 규칙.
         grid = layout == "grid2x2" and count == 4
         width = 440 if grid else (880 - (count - 1) * 20) // count
         height = 560 if grid else 500
@@ -458,8 +459,8 @@ def assemble(
         subtitle = _text_for_role(
             copy_by_block.get(subtitle_block.get("id"), []) if subtitle_block else [], "body",
         ) if hero else None
-        has_copy = bool(hero and (headline or subtitle))
-        img_top = (190 if subtitle else 150) if (grid and has_copy) else 50
+        img_top = 50
+        copy_top = img_top + (height * 2 if grid else height) + 32
         els: list[dict] = []
         for column, row_block in enumerate(chunk):
             meta = cut_meta_by_block.get(row_block.get("id")) or {}
@@ -479,13 +480,13 @@ def assemble(
         if hero:
             if headline:
                 els.append(_text_el(
-                    block_i, len(els), 60, 60 if grid else 582, 880, 56, headline,
+                    block_i, len(els), 60, copy_top, 880, 56, headline,
                     {"size": 40, "weight": 600, "font": "Cal Sans", "color": "#0e0d14"},
                     source_block_id=hero.get("id"), copy_role="headline",
                 ))
             if subtitle:
                 els.append(_text_el(
-                    block_i, len(els), 60, 128 if grid else 650, 880, 34, subtitle,
+                    block_i, len(els), 60, copy_top + 68, 880, 34, subtitle,
                     {"size": 17, "color": "#6b6b73", "lineHeight": 26},
                     source_block_id=subtitle_block.get("id") if subtitle_block else None,
                     copy_role="body",

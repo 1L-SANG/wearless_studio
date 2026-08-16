@@ -58,6 +58,10 @@ export function textPresetOf(key) {
   return TEXT_PRESETS.find((p) => p.key === key) || TEXT_PRESETS.find((p) => p.key === DEFAULT_TEXT_PRESET);
 }
 
+/* 캔버스(=블록) 기본 폭. 블록 객체는 w 를 저장하지 않는다(폭은 캔버스 고정) —
+   호출부가 block.w 를 넘기면 undefined 라 가둠이 통째로 풀렸다(2026-08-16 리뷰). */
+export const CANVAS_WIDTH = 1000;
+
 /** 기본 문구가 차지할 대략적인 폭. 요소가 화면에 붙는 순간 auto 폭이 실측값으로
     바로잡지만, ① 놓을 자리를 블록 안으로 가두는 계산과 ② 드래그 중 미리보기 상자는
     붙기 전에 크기를 알아야 해서 이 씨앗값을 쓴다(한글 글자폭 ≈ 1em 기준). */
@@ -80,9 +84,14 @@ export function buildTextPresetElement(key) {
     시작될 자리다: x는 포인터 그대로, y는 글줄 높이의 절반만 올려 포인터가 줄 한가운데
     오게 한다(드래그 그림의 잡는 점과 같은 기준). 블록 밖으로는 못 나간다 — 경계 밖
     요소는 화면에 아예 안 보여서 "놨는데 아무 일도 없다"로 보이기 때문(오너 8/16). */
-export function textPresetDropPlacement({ x, y, w = 12, h = 24, blockW = 0, blockH = 0 }) {
-  const clamp = (value, max) => Math.round(Math.min(Math.max(0, value), max > 0 ? max : Math.max(0, value)));
-  return { x: clamp(x, blockW - w), y: clamp(y - h / 2, blockH - h) };
+export function textPresetDropPlacement({ x, y, w = 12, h = 24, blockW = CANVAS_WIDTH, blockH = 0 }) {
+  // max 가 음수여도(상자가 블록보다 넓음) 0 으로 가둔다 — 예전엔 "모르는 크기"와 구분하지
+  // 못해 가둠 자체가 풀렸다. blockH 는 0(모름)일 때만 세로 가둠을 생략한다.
+  const clamp = (value, max) => Math.round(Math.min(Math.max(0, value), Math.max(0, max)));
+  return {
+    x: clamp(x, blockW - w),
+    y: blockH > 0 ? clamp(y - h / 2, blockH - h) : Math.max(0, Math.round(y - h / 2)),
+  };
 }
 
 /** 선택된 텍스트에 프리셋을 입히는 스타일 패치. 행간·자간은 프리셋에 없으면

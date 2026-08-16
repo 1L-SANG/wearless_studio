@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { TEXT_PRESET_DRAG_PREFIX, textPresetKeyFromDragTypes } from '../../src/features/editor/editorImageDrop.js';
 import {
-  DEFAULT_TEXT_BODY, DEFAULT_TEXT_PRESET, TEXT_PRESETS, activeTextPreset,
+  CANVAS_WIDTH, DEFAULT_TEXT_BODY, DEFAULT_TEXT_PRESET, TEXT_PRESETS, activeTextPreset,
   buildTextPresetElement, quickStylePatch, textPresetBox, textPresetDropPlacement, textPresetOf,
 } from '../../src/features/editor/presets/textPresets.js';
 
@@ -128,9 +128,18 @@ test('블록 밖으로는 못 나간다 — 안 보이는 글자를 만들지 �
   assert.deepEqual(negative, { x: 0, y: 0 });
 });
 
-test('블록 크기를 모르면 가두지 않는다(0/미지정) — 좌표는 살린다', () => {
-  const place = textPresetDropPlacement({ x: 700, y: 900, w: 12, h: 36 });
-  assert.deepEqual(place, { x: 700, y: 882 });
+test('블록 폭을 안 넘겨도 캔버스 폭으로 가둔다 — 실제 호출부에는 block.w 가 없다', () => {
+  // 2026-08-16 리뷰: 호출부가 존재하지 않는 block.w 를 넘겨 가둠이 통째로 죽어 있었다.
+  // 기본값이 캔버스 폭이라야 "인자를 안 넘긴 실제 경로"에서도 상자가 블록 밖으로 안 나간다.
+  assert.equal(CANVAS_WIDTH, 1000);
+  const wide = textPresetDropPlacement({ x: 900, y: 500, w: 352, h: 56, blockH: 1200 });
+  assert.equal(wide.x + 352, CANVAS_WIDTH, '오른끝이 정확히 블록 끝');
+  // 높이를 모르면(0) 세로만 가두지 않는다 — 가로는 항상 가둔다.
+  assert.deepEqual(textPresetDropPlacement({ x: 700, y: 900, w: 12, h: 36 }), { x: 700, y: 882 });
+});
+
+test('상자가 블록보다 넓으면 0으로 붙인다 — 음수 한계에서 가둠이 풀리면 안 된다', () => {
+  assert.deepEqual(textPresetDropPlacement({ x: 900, y: 50, w: 1200, h: 56, blockW: 1000, blockH: 400 }), { x: 0, y: 22 });
 });
 
 test('패널 계약 — 프리셋 버튼이 드래그 가능하고, 끌리는 그림은 실제 텍스트 상자다', () => {
@@ -186,4 +195,22 @@ test('에디터 계약 — 블록 위에서 놓일 자리를 실제 상자로 �
   const overlay = editor.slice(overlayStart, editor.indexOf('onDragLeave', overlayStart));
   assert.match(overlay, /textPresetDropPlacement\(/);
   assert.match(overlay, /textPresetBox\(presetKey\)/);
+});
+
+
+test('에디터 계약 — 미리보기와 실제 드롭이 같은 기준으로 가둔다(존재하지 않는 block.w 금지)', () => {
+  const editor = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(editor, /textPresetDropPlacement\([^)]*blockW: block\.w/,
+    '블록에는 w 필드가 없다 — 넘기면 가둠이 통째로 죽는다');
+  assert.match(editor, /textPresetDropPlacement\(\{ \.\.\.point, w: base\.w, h: base\.h, blockH: getBlockRenderHeight\(block\) \}\)/,
+    '드롭도 미리보기와 같은 렌더 높이를 쓴다');
+});
+
+test('에디터 계약 — 대기 화면이 쓰는 함수는 early-return 위에서 선언된다(TDZ 흰화면 방지)', () => {
+  const editor = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
+  const declared = editor.indexOf('const leaveToLibrary =');
+  const firstEarlyReturn = editor.indexOf('\n  if (loadError) return (');
+  assert.ok(declared > 0 && firstEarlyReturn > 0);
+  assert.ok(declared < firstEarlyReturn,
+    'const 는 선언 전 참조 시 ReferenceError — early-return 의 onClick 이 먼저 평가된다');
 });

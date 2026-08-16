@@ -354,9 +354,12 @@ def test_copywriting_on_but_no_matching_copy_result_omits_text():
 
 
 # ── 영속 행 조립 + 오프닝 카피 ───────────────────────────────────────────────
-def test_four_cut_grid_merges_into_one_block_with_copy_above_the_images():
-    """2×2 격자는 사진 넷이 딱 붙은 한 덩어리 — 카피는 격자 위(오너 2026-08-16).
-    간격이 있거나 카피가 아래에 있으면 격자가 두 묶음처럼 읽힌다."""
+def test_four_cut_grid_merges_into_one_block_with_adjacent_images():
+    """2×2 격자는 사진 넷이 딱 붙은 한 덩어리(오너 2026-08-16) — 간격 0·모서리 각짐.
+
+    카피 자리는 다른 행과 같은 규칙(사진 아래)이다. 격자만 카피를 위로 올려 자리를 비워
+    뒀더니 에디터가 사진 행의 카피를 걷어내는 규칙(stripPhotoBlockTextElements)과 맞물려
+    격자 위에 빈 띠만 남았다 — 2026-08-16 리뷰에서 실측하고 되돌렸다."""
     storyboard = [
         {
             "id": f"hook-{index}", "sectionRole": "benefit",
@@ -381,17 +384,18 @@ def test_four_cut_grid_merges_into_one_block_with_copy_above_the_images():
     grid = blocks[0]
     assert grid["kind"] == "grid2x2"
     images = [element for element in grid["elements"] if element["type"] == "image"]
-    # 카피(제목+본문)가 위에 있으니 사진은 190부터. 칸끼리 간격 0, 모서리도 각지게(radius 0).
+    # 사진 시작 y 는 어느 배치든 50. 칸끼리 간격 0, 모서리도 각지게(radius 0).
     assert [(image["x"], image["y"], image["w"], image["h"]) for image in images] == [
-        (60, 190, 440, 560),
-        (500, 190, 440, 560),
-        (60, 750, 440, 560),
-        (500, 750, 440, 560),
+        (60, 50, 440, 560),
+        (500, 50, 440, 560),
+        (60, 610, 440, 560),
+        (500, 610, 440, 560),
     ]
     assert all(image["radius"] == 0 for image in images)
 
     headline, subtitle = [element for element in grid["elements"] if element["type"] == "text"]
-    assert headline["y"] == 60 and subtitle["y"] == 128, "카피는 격자 위"
+    # 격자 두 줄(560×2) 아래 32 여백 — 2단 행의 582/650 과 같은 규칙
+    assert headline["y"] == 1202 and subtitle["y"] == 1270, "카피는 사진 아래"
     assert headline["text"] == "겨울을 부드럽게"
     assert subtitle["text"] == "골지 짜임의 포인트"
 

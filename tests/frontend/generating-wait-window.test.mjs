@@ -136,10 +136,10 @@ test('실패 후 다시 시도는 임시 작업본을 지키고, 이탈은 앞 �
   // 실패·차단 화면의 이탈은 편집분을 저장한 뒤 보관함으로 내려놓는다.
   assert.doesNotMatch(editor, /navigate\('\/create\/storyboard'\)/);
   assert.doesNotMatch(editor, /discardGenerationAndReturnToStoryboard/);
-  const leave = editor.slice(
-    editor.indexOf('const leaveToLibrary'),
-    editor.indexOf('/* kb.current', editor.indexOf('const leaveToLibrary')),
-  );
+  // 함수 본문만 잘라 본다 — 뒤따르는 주석 위치로 끝을 잡으면 그 주석이 옮겨질 때
+  // 슬라이스가 파일 절반을 삼켜 단정이 헛돈다(2026-08-16 TDZ 수정 때 실제로 깨졌다).
+  const leaveStart = editor.indexOf('const leaveToLibrary');
+  const leave = editor.slice(leaveStart, editor.indexOf('\n  };', leaveStart) + 5);
   assert.match(leave, /flushExit\(\)/, '편집분을 먼저 저장한다');
   assert.match(leave, /skipExitPersist\.current = true/, '언마운트 정리가 덮어쓰지 않게');
   assert.match(leave, /navigate\('\/library'\)/);

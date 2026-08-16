@@ -709,7 +709,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
         const box = textPresetBox(presetKey);
         const point = viewportPointToBlock({ clientX: e.clientX, clientY: e.clientY, blockLeft: rect.left, blockTop: rect.top, scale });
         setTextGhost({
-          ...textPresetDropPlacement({ ...point, w: box.w, h: box.h, blockW: block.w, blockH }),
+          ...textPresetDropPlacement({ ...point, w: box.w, h: box.h, blockH }),
           box,
         });
       }}
@@ -1494,6 +1494,17 @@ export function Editor() {
     };
   });
 
+  /* 아래 early-return 들이 이 함수를 onClick 으로 쓴다 — **반드시 early-return 위에서**
+     선언해야 한다. const 는 선언 줄을 지나기 전에는 TDZ 라, 아래에 두면 대기 화면을 그리는
+     순간 ReferenceError 로 흰 화면이 된다(2026-08-16 리뷰). 본문이 참조하는 flushExit 등은
+     클릭 시점에 이미 초기화돼 있으므로 아래에 있어도 된다. */
+  const leaveToLibrary = () => {
+    clearTimeout(saveTimer.current);
+    flushExit();
+    skipExitPersist.current = true;   // 언마운트 정리가 같은 내용을 한 번 더 쓰지 않게
+    navigate('/library');
+  };
+
   if (loadError) return (
     <div className="editor"><div style={{ margin: 'auto', display: 'grid', gap: 12, justifyItems: 'center' }}>
       <ErrorState
@@ -2084,7 +2095,9 @@ export function Editor() {
     const point = rect
       ? viewportPointToBlock({ clientX: dropEvent.clientX, clientY: dropEvent.clientY, blockLeft: rect.left, blockTop: rect.top, scale })
       : { x: base.x, y: base.y + base.h / 2 };
-    const el = { ...base, ...textPresetDropPlacement({ ...point, w: base.w, h: base.h, blockW: block.w, blockH: block.h }) };
+    // 세로 가둠은 미리보기와 **같은 기준**(렌더 높이)이어야 한다 — block.h 는 없는 블록이
+    // 많고(기본 220), 이미지를 늘려 블록이 커진 경우 저장값과 실제 높이가 다르다.
+    const el = { ...base, ...textPresetDropPlacement({ ...point, w: base.w, h: base.h, blockH: getBlockRenderHeight(block) }) };
     FRESH_TEXT_IDS.add(el.id);
     setBlocks((bs) => bs.map((b) => b.id === block.id ? { ...b, elements: [...b.elements, el] } : b));
     selectEl(block.id, el); setTab('text');
@@ -2246,12 +2259,6 @@ export function Editor() {
     } catch (e) {
       toast.push(e?.message || '다시 시작하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'x' });
     }
-  };
-  const leaveToLibrary = () => {
-    clearTimeout(saveTimer.current);
-    flushExit();
-    skipExitPersist.current = true;   // 언마운트 정리가 같은 내용을 한 번 더 쓰지 않게
-    navigate('/library');
   };
   /* kb.current 는 crop 핸들러 정의 뒤(아래)에서 채운다 — TDZ 방지 */
 

@@ -244,21 +244,23 @@ const gridStoryboard = () => [1, 2, 3, 4].map((index) => ({
   layoutRowId: 'row-hook',
 }));
 
-test('mock 4컷 격자는 한 블록에 사진 넷이 붙고 카피가 위에 온다', () => {
+test('mock 4컷 격자는 한 블록에 사진 넷이 딱 붙는다 (카피는 다른 행과 같이 사진 아래)', () => {
   const blocks = buildEditorBlocksFromStoryboard(gridStoryboard(), { ...PRODUCT, colors: COLORS }, true);
   const grid = blocks[0];
   assert.equal(grid.kind, 'grid2x2');
   const images = grid.elements.filter((element) => element.type === 'image');
   assert.equal(images.length, 4, '넷이 한 블록에 모인다(두 블록으로 쪼개지지 않는다)');
   assert.deepEqual(images.map((i) => [i.x, i.y, i.w, i.h]), [
-    [60, 190, 440, 560],
-    [500, 190, 440, 560],
-    [60, 750, 440, 560],
-    [500, 750, 440, 560],
+    [60, 50, 440, 560],
+    [500, 50, 440, 560],
+    [60, 610, 440, 560],
+    [500, 610, 440, 560],
   ]);
   assert.ok(images.every((i) => !i.radius), '붙은 격자는 모서리를 각지게 둔다');
   const texts = grid.elements.filter((element) => element.type === 'text');
-  assert.deepEqual(texts.map((t) => t.y), [60, 128], '카피는 격자 위');
+  // 카피를 격자 **위**에 두면, 에디터가 사진 행의 카피를 걷어내는 규칙과 맞물려
+  // 격자 위에 빈 띠(190px)만 남는다 — 2026-08-16 리뷰에서 실측하고 아래로 되돌렸다.
+  assert.deepEqual(texts.map((t) => t.y), [1202, 1270], '카피는 사진 아래(2단 행과 같은 규칙)');
 });
 
 test('mock and server assemblers emit the same 4-cut grid block structure', () => {
