@@ -65,3 +65,46 @@ test('세트별 셔플은 기존 run 크기를 유지한다 — 엔트리 2멤�
   // 스타일링 교체는 엔트리 규칙(풀+미디움 우선)을 따른다.
   assert.deepEqual(next.map((block) => block.shot).sort(), ['full', 'medium']);
 });
+
+
+/* ---------- 컷 하나만 다시 뽑기(카드별 셔플 아이콘, 2026-08-16) ---------- */
+
+test('낱개 셔플은 그 컷만 바꾸고 나머지는 손대지 않는다', () => {
+  const blocks = [ai('a'), ai('b'), ai('c')];
+  const next = shuffleSectionExamples(blocks, {
+    sectionId: 'sec-a', catalog: [], product: { clothingType: 'top' }, gender: 'women',
+    onlyBlockId: 'b',
+  });
+  assert.equal(next.length, 3);
+  assert.deepEqual(next.map((block) => block.id), ['a', 'b', 'c'], '순서 유지');
+  // 옆 컷의 예시가 덩달아 바뀌면 "한 컷만 다시 뽑기"가 아니다(배정기는 보드 전체를 다시
+  // 훑으므로 객체 정체성은 바뀔 수 있지만 내용은 그대로여야 한다).
+  assert.equal(next[0].exampleId, blocks[0].exampleId);
+  assert.equal(next[2].exampleId, blocks[2].exampleId);
+  assert.equal(next[1].id, 'b');
+});
+
+test('낱개 셔플은 직접 고른 예시도 바꾼다 — 그 컷을 지목한 명시 조작이기 때문', () => {
+  const blocks = [ai('pinned', { exampleSelectionOrigin: 'user', exampleChoice: 'manual' })];
+  const next = shuffleSectionExamples(blocks, {
+    sectionId: 'sec-a', catalog: [], product: { clothingType: 'top' }, gender: 'women',
+    onlyBlockId: 'pinned',
+  });
+  assert.notEqual(next, blocks);
+  // 'manual' 표식이 남으면 배정기가 건너뛰어 예시가 빈 채로 남는다.
+  assert.ok(!('exampleChoice' in next[0]), '자동 배정으로 되돌린다');
+  assert.equal(next[0].exampleSelectionOrigin ?? null, null);
+});
+
+test('낱개 셔플 대상이 아니면 원본을 그대로 돌려준다 — 세트 멤버·내 사진·예시 없는 컷', () => {
+  const opts = { sectionId: 'sec-a', catalog: [], product: { clothingType: 'top' }, gender: 'women' };
+  const setMember = [ai('s', { spaceGroupId: 'sg1' })];
+  assert.equal(shuffleSectionExamples(setMember, { ...opts, onlyBlockId: 's' }), setMember);
+  const mine = [{ id: 'm', source: 'mine', sectionId: 'sec-a', ownImages: ['m.png'] }];
+  assert.equal(shuffleSectionExamples(mine, { ...opts, onlyBlockId: 'm' }), mine);
+  const empty = [ai('e', { exampleId: null })];
+  assert.equal(shuffleSectionExamples(empty, { ...opts, onlyBlockId: 'e' }), empty);
+  const other = [ai('x', { sectionId: 'sec-b' })];
+  assert.equal(shuffleSectionExamples(other, { ...opts, onlyBlockId: 'x' }), other, '다른 섹션은 대상 아님');
+  assert.equal(shuffleSectionExamples([ai('a')], { ...opts, onlyBlockId: 'nope' }).length, 1);
+});

@@ -44,7 +44,9 @@ test('요소 생성 — 기본 문구+자동 폭, 이미지 기둥(x=60), 문구
     // 오너 2026-08-16: 빈 상자로 시작하면 어디에 생겼는지·얼마나 큰지 안 보인다.
     assert.equal(el.text, DEFAULT_TEXT_BODY, `${p.key}는 기본 문구로 시작한다`);
     assert.equal(el.textSizing, 'auto', `${p.key}는 자동 폭`);
-    assert.ok(el.w > p.style.size * 4, `${p.key} w — 기본 문구가 들어갈 만한 씨앗 폭(붙는 즉시 실측으로 보정)`);
+    // 씨앗 폭은 공식(크기 × 8.8)을 못 박는다 — 부등식으로 두면 20배가 돼도 통과해
+    // 드래그 미리보기 상자와 드롭 가둠이 조용히 어긋난다(2026-08-16 리뷰).
+    assert.equal(el.w, Math.round(p.style.size * 8.8), `${p.key} w — 기본 문구 폭 씨앗값`);
     assert.equal(el.h, p.style.lineHeight || Math.round(p.style.size * 1.4), `${p.key} h`);
     assert.equal(el.x, 60, `${p.key} x`);
     assert.ok(el.id && el.id !== buildTextPresetElement(p.key).id, 'id는 매번 달라야 한다');
@@ -166,6 +168,11 @@ test('드래그 미리보기 상자와 실제로 만들어지는 요소는 같�
     const box = textPresetBox(key);
     const el = buildTextPresetElement(key);
     assert.deepEqual({ w: el.w, h: el.h, text: el.text, style: el.style }, box, `${key}`);
+    // 스프레드 항등식만 보면 두 경로가 갈라져도 통과한다 — 스펙 값으로도 못 박는다.
+    const spec = textPresetOf(key);
+    assert.equal(box.style.size, spec.style.size);
+    assert.equal(box.h, spec.style.lineHeight || Math.round(spec.style.size * 1.4));
+    assert.equal(box.text, DEFAULT_TEXT_BODY);
   }
 });
 

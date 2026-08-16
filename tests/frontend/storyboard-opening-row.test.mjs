@@ -292,3 +292,29 @@ test('mock and server assemblers emit the same 4-cut grid block structure', () =
   assert.equal(python.status, 0, python.stderr);
   assert.deepEqual(withoutIds(JSON.parse(python.stdout)), withoutIds(mockGrid));
 });
+
+test('4컷 격자 — 카피가 비어도 두 조립기의 사진 자리가 같다', () => {
+  // 예전엔 클라가 "카피라이팅 켬"만 보고 자리를 비우고, 서버는 실제 카피 유무를 봐서
+  // 카피가 안 나온 생성에서 사진 위치가 140px 어긋났다(2026-08-16 리뷰). 카피 자리를
+  // 사진 아래로 통일하며 사라진 갈림 — 다시 벌어지지 않게 고정한다.
+  const storyboard = gridStoryboard();
+  const mockGrid = buildEditorBlocksFromStoryboard(storyboard, { ...PRODUCT, colors: COLORS }, true)[0];
+  const mockImages = mockGrid.elements.filter((element) => element.type === 'image');
+  const payload = {
+    storyboard,
+    cut_results: storyboard.map((block, index) => ({ blockId: block.id, imageUrl: mockImages[index].src })),
+    copy_results: [],
+    product: PRODUCT,
+  };
+  const python = spawnSync(PYTHON, ['-c', [
+    'import json, sys',
+    'from app.agents.page_assembler import assemble',
+    'payload = json.load(sys.stdin)',
+    'block = assemble(payload["storyboard"], payload["cut_results"], payload["copy_results"], payload["product"], True)[0]',
+    'print(json.dumps([[e["x"], e["y"], e["w"], e["h"]] for e in block["elements"] if e["type"] == "image"]))',
+  ].join('\n')], {
+    cwd: SERVER_DIR, encoding: 'utf8', env: { ...process.env, PYTHONPATH: '.' }, input: JSON.stringify(payload),
+  });
+  assert.equal(python.status, 0, python.stderr);
+  assert.deepEqual(JSON.parse(python.stdout), mockImages.map((i) => [i.x, i.y, i.w, i.h]));
+});

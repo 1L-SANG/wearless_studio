@@ -211,11 +211,20 @@ export function applyHookStyle(blocks, style, {
   while (end < list.length && list[end]?.sectionRole === 'hooking') end += 1;
 
   const previous = deriveHookFrame(list.slice(start, end));
+  /* 전환 전에 '첫 화면 구성 1묶음'이던 컷들. 셀러가 따로 추가한 개별컷은 여기에 없고,
+     스타일 전환에 관여하지 않는다 — 슬롯으로 흡수되지도, 정리 대상이 되지도 않는다
+     (2026-08-16 오너: "구성 바꿨더니 추가한 컷이 사라진다"). 묶음이 아예 없던 보드는
+     예전대로 후킹 AI 컷 전체를 후보로 써서 프레임을 복구한다. */
+  const previousSlotIds = new Set(
+    list.slice(start, end).filter(isHookFrameBlock).map((block) => block.id),
+  );
+  const framedBefore = previousSlotIds.size > 0;
   const section = list.slice(start, end).map(clearFrameOwnership);
   const plan = hookSlotPlan(style, { colors, isCutAvailable });
   const nextFrameId = frameId || previous?.frameId || `hookframe__${uid('hf')}`;
 
-  const pool = section.filter(isHookingAiBlock);
+  const pool = section.filter((block) => isHookingAiBlock(block)
+    && (!framedBefore || previousSlotIds.has(block.id)));
   const used = new Set();
   // 사용자가 직접 고른 예시(origin 'user')는 계약상 고정이다 — 틀이 같은 슬롯에는 그 컷을
   // 우선 배치해 선택을 보존하고, 틀을 바꿔야 하는 자리에는 auto 컷을 먼저 소모해
@@ -266,14 +275,35 @@ export function applyHookStyle(blocks, style, {
     });
   }
 
-  // 슬롯에 안 쓰인 AI 컷은 버린다(스타일 = 정확한 컷 구성). 내 사진만 뒤에 남긴다.
-  const rest = section.filter((block) => !used.has(block.id) && !isHookingAiBlock(block));
+  // 슬롯에 안 쓰인 '구성 컷'만 버린다(스타일 = 정확한 컷 구성).
+  // 내 사진과 구성 밖 개별컷은 그대로 뒤에 남는다(2026-08-16 오너).
+  const rest = section.filter((block) => !used.has(block.id)
+    && (!isHookingAiBlock(block) || (framedBefore && !previousSlotIds.has(block.id))));
   return [
     ...list.slice(0, start),
     ...slotBlocks,
     ...rest,
     ...list.slice(end),
   ];
+}
+
+/* 네 컷 구성의 행 승격 — 2026-08-16 이전 저장본은 2칸 2행(twoColumn)이라, 콘티는 붙은
+   2×2로 보이는데(렌더가 프레임 표식으로 이어 붙인다) 에디터·발행 조립은 두 덩어리로
+   갈렸다. 진입 시 한 번 4칸 1행(grid2x2)으로 올려 세 곳이 같은 뜻을 보게 한다.
+   컷 자체는 손대지 않는다 — 바꾸는 건 '어디까지가 한 행인가' 표식뿐이다. */
+function upgradeMoodGridRow(list, frame) {
+  if (frame.style !== 'moodGrid' || frame.slotIds.length !== 4) return { blocks: list, changed: false };
+  const slots = new Set(frame.slotIds);
+  const rowId = `row__${frame.frameId}__1`;
+  const stale = list.some((block) => slots.has(block?.id)
+    && (block.layoutRowId !== rowId || block.sectionLayout !== 'grid2x2'));
+  if (!stale) return { blocks: list, changed: false };
+  return {
+    blocks: list.map((block) => (slots.has(block?.id)
+      ? { ...block, layoutRowId: rowId, layoutRowVersion: 1, sectionLayout: 'grid2x2' }
+      : block)),
+    changed: true,
+  };
 }
 
 /* 저장된 보드의 레거시 승격 — 진입 시 1회.
@@ -283,7 +313,8 @@ export function applyHookStyle(blocks, style, {
 export function adoptHookFrame(blocks) {
   const list = Array.isArray(blocks) ? blocks : [];
   const hooking = list.filter((block) => block?.sectionRole === 'hooking');
-  if (deriveHookFrame(hooking)) return { blocks: list, changed: false };
+  const existing = deriveHookFrame(hooking);
+  if (existing) return upgradeMoodGridRow(list, existing);
   const [first, second] = hooking;
   const openingPair = !!first && !!second
     && first.source !== 'mine' && second.source !== 'mine'

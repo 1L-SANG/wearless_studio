@@ -32,7 +32,7 @@ test('retryRead: 4xx 는 다시 보내도 같은 답이라 즉시 포기한다',
   }, { sleep: async () => {} }));
   assert.equal(calls, 1, '재시도하지 않는다');
   assert.equal(isRetryableReadError({ status: 500 }), true);
-  assert.equal(isRetryableReadError({ status: 403 }), true === false);
+  assert.equal(isRetryableReadError({ status: 403 }), false, '4xx 는 다시 보내도 같은 답');
   assert.equal(isRetryableReadError(new Error('network')), true, '네트워크 오류는 일시적으로 본다');
 });
 
