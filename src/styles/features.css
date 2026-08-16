@@ -2464,9 +2464,18 @@
    미리보기 버튼을 누르면 아래로 스타일 3종 카드가 펼쳐진다. */
 /* '첫 화면 구성' 칩 — 섹션 헤더 한 줄(2026-08-16 오너: 인스펙터에서 헤더로 이동).
    헤더는 [펼치기 버튼][칩][컷 범위] 로 나뉜다 — 버튼 안에 버튼을 못 넣기 때문. */
-.sb-deck-headrow { display: flex; align-items: baseline; gap: 10px; padding-right: 12px; }
-.sb-deck-headrow > .sb-deck-header { width: auto; flex: 0 1 auto; min-width: 0; }
-.sb-deck-headrow > .sb-deck-range { margin-left: auto; flex: none; }
+.sb-deck-headrow { position: relative; display: flex; align-items: baseline; gap: 10px; padding-right: 12px; }
+/* 펼치기 버튼은 헤더 줄 전체를 덮는다 — 칩 옆 빈 공간·'컷 범위'를 눌러도 펼쳐지던 예전
+   조작감을 유지하기 위함(칩만 그 위에 떠 있다). 버튼을 텍스트 폭으로 줄였더니 클릭 영역이
+   858px → 218px 로 쪼그라들었다(자체 리뷰 medium). */
+.sb-deck-headrow > .sb-deck-header {
+  position: absolute; inset: 0; width: 100%;
+  justify-content: flex-start; z-index: 0;
+}
+.sb-deck-headrow > .sb-deck-header > * { visibility: hidden; }
+.sb-deck-headrow > .sb-deck-labels { position: relative; z-index: 1; display: flex; align-items: baseline; gap: 12px; pointer-events: none; }
+.sb-deck-headrow > .sb-stylechip-wrap { position: relative; z-index: 2; }
+.sb-deck-headrow > .sb-deck-range { position: relative; z-index: 1; margin-left: auto; flex: none; pointer-events: none; }
 
 .sb-stylechip-wrap { position: relative; flex: none; align-self: center; }
 .sb-stylechip {
