@@ -2580,7 +2580,7 @@ export function Editor() {
         <FramePanel onAdd={addFrame} recommendGender={recommendGender} onPickInfo={openInfoPreset}
           onDragStart={() => setFrameDragging(true)} onDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />
       );
-      case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} canvasScale={scale} onChange={patchEl} onBubbleAppearanceChange={patchBubbleAppearance} onLayer={layerEl} onAddText={addText} />;
+      case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onBubbleAppearanceChange={patchBubbleAppearance} onLayer={layerEl} onAddText={addText} />;
       case 'shape': return <ShapePanel catalogs={catalogs} onAdd={addShape} block={(selEls.length === 0 && selBlock) ? blocks.find((b) => b.id === selBlock) : null} onBgChange={changeBg} />;
       default: return null;
     }

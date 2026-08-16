@@ -144,23 +144,28 @@ test('상자가 블록보다 넓으면 0으로 붙인다 — 음수 한계에서
   assert.deepEqual(textPresetDropPlacement({ x: 900, y: 50, w: 1200, h: 56, blockW: 1000, blockH: 400 }), { x: 0, y: 22 });
 });
 
-test('패널 계약 — 프리셋 버튼이 드래그 가능하고, 끌리는 그림은 실제 텍스트 상자다', () => {
+test('패널 계약 — 프리셋 버튼이 드래그 가능하고, 커서 그림은 비어 있다(글자 겹침 방지)', () => {
   const panel = readFileSync(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url), 'utf8');
   const item = panel.slice(panel.indexOf('className="text-preset-item"'), panel.indexOf('tp-sample'));
   assert.match(item, /draggable/, '버튼이 draggable 이어야 브라우저가 드래그를 시작한다');
-  assert.match(item, /startTextPresetDrag\(e, p\.key, canvasScale\)/);
+  assert.match(item, /startTextPresetDrag\(e, p\.key\)/);
   const addBtn = panel.slice(panel.indexOf('className="add-text-btn"'), panel.indexOf('name="type"'));
   assert.match(addBtn, /draggable/, "'텍스트 추가'도 같은 방식으로 끌 수 있다(네 항목이 같은 조작)");
-  assert.match(addBtn, /startTextPresetDrag\(e, DEFAULT_TEXT_PRESET, canvasScale\)/);
+  assert.match(addBtn, /startTextPresetDrag\(e, DEFAULT_TEXT_PRESET\)/);
   assert.doesNotMatch(panel, /text-preset-plain|PLAIN_TEXT_PRESET/, '물린 방식의 흔적이 남으면 안 된다');
   const start = panel.slice(panel.indexOf('function startTextPresetDrag'), panel.indexOf('export function TextPanel'));
   assert.match(start, /setData\('text\/object', `text:\$\{presetKey\}`\)/,
     "블록 드롭 핸들러가 이미 아는 'text/object' 형식이라야 하이라이트·드롭이 그대로 동작한다");
   assert.match(start, /setData\(`\$\{TEXT_PRESET_DRAG_PREFIX\}\$\{presetKey\}`/,
     '드래그 도중 getData 가 막히므로 종류는 타입 이름으로 실어 보낸다');
-  // 패널 카드가 아니라 실제 상자 그림이 끌려야 어디에 무엇이 놓일지 보인다(오너 8/16).
-  assert.match(start, /setDragImage\(ghost, 10, ghost\.offsetHeight \/ 2\)/);
-  assert.match(start, /ghost\.textContent = box\.text/);
+  // 커서 그림에 같은 문구를 그리면 블록 위에서 글자가 둘로 겹쳐 보인다(오너 2026-08-16).
+  // 놓일 자리는 블록 안 미리보기 하나만 말한다.
+  assert.doesNotMatch(start, /textContent = box\.text/, '커서 그림에 문구를 넣지 않는다');
+  assert.match(start, /setDragImage\(blank, 0, 0\)/);
+  const css = readFileSync(new URL('../../src/styles/features.css', import.meta.url), 'utf8');
+  const ghostStart = css.indexOf('.text-drag-ghost {');
+  const ghostCss = css.slice(ghostStart, css.indexOf('}', ghostStart));
+  assert.match(ghostCss, /opacity: 0/, '커서 그림은 눈에 안 보여야 한다');
 });
 
 test('드래그 미리보기 상자와 실제로 만들어지는 요소는 같은 값을 본다', () => {

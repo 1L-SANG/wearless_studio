@@ -246,14 +246,19 @@ function StrokeWidthControl(props) {
   return <RangeNumberControl label="테두리 굵기" min={0.5} max={12} step={0.5} {...props} />;
 }
 
-/* ---------- AI · 같은 장소 이미지 생성 — 자리·포즈·표정만 바꿔 같은 장소에서 한 장 더 ---------- */
-/* 같은 장소 이미지 생성 — 옷·모델·장소는 그대로 두고 '자리·포즈·표정'만 바꾼다(오너 8/16).
+/* ---------- AI · 현재 이미지 수정 — 지금 고른 컷을 바탕으로 한 장 더 ---------- */
+/* 서브탭 이름은 '현재 이미지 수정'이고, 그 안에 생성 방식이 둘 있다(오너 2026-08-16):
+   ① 같은 장소 이미지 생성 — 아래에서 고른 방향·포즈·표정만 바꾸고 장소는 그대로
+   ② 비슷한 컷 만들기 — 고른 것 없이 현재 컷과 비슷한 분위기로 한 장
+
    배경 변경은 뺐다: 장면을 통째로 다시 그리는 유일한 항목이라 옷 정체성이 흔들릴 위험이
    가장 큰데 이 경로에는 품질 검사(QC)가 없고, 프리셋 배경은 셀러가 콘티에서 고른 연출과
    무관해 페이지의 장소 일관성도 깨뜨린다. 배경을 안 건드리면 프롬프트의 freeze 계약
-   (cut_vary_v1.txt)이 장소를 그대로 유지해 준다 = "같은 장소, 다른 위치". */
+   (cut_vary_v1.txt)이 장소를 그대로 유지해 준다 = "같은 장소, 다른 위치".
+   거리(풀샷·미디움샷)도 뺐다(오너 2026-08-16) — 같은 장소에서 자리를 옮기는 기능에
+   '얼마나 크게 찍을지'가 섞이면 결과가 원본과 다른 컷처럼 보인다. */
 const VARY_CATS = [
-  { id: 'cut', label: '자리' },
+  { id: 'cut', label: '방향' },
   { id: 'pose', label: '포즈' },
   { id: 'face', label: '표정' },
 ];
@@ -261,8 +266,7 @@ function VaryPanel({ catalogs, source, onGenerate }) {
   const opts = catalogs.varyOptions || {};
   const [cat, setCat] = useState('cut');
   const [sel, setSel] = useState({});
-  const [cutDir, setCutDir] = useState('keep'); // 자리 · 방향 — 'keep' = 현재 유지
-  const [cutShot, setCutShot] = useState('keep'); // 자리 · 거리(샷)
+  const [cutDir, setCutDir] = useState('keep'); // 방향 — 'keep' = 현재 유지
   const busyRef = useRef(false); // 같은 틱 더블클릭으로 생성이 2번 나가는 것 방지
   if (!source) {
     return <EmptyState icon="image" title="수정할 컷을 골라주세요" desc="캔버스나 의류 탭에서 이미지를 먼저 골라주세요." />;
@@ -272,59 +276,52 @@ function VaryPanel({ catalogs, source, onGenerate }) {
   // 아무것도 하기 전에 사진 분류부터 시키는 질문 카드였고, 답도 대개 이미 알고 있다.
   const srcType = source.cutType || null;
   const isProduct = srcType === 'product';
-  // mirror 레시피 소스(ADR-0004): 방향 변경 없음, 샷 full/medium만, 포즈는 셀피 구도 자동이라 변형 대상 아님
+  // mirror 레시피 소스(ADR-0004): 방향 변경 없음, 포즈는 셀피 구도 자동이라 변형 대상 아님
   const isMirror = srcType === 'mirror';
   const dirOpts = isProduct ? catalogs.productDirections : catalogs.directions;
-  // 이 경로는 색상별 Detail 근거를 안전하게 연결할 수 없으므로 디테일샷을 제공하지 않는다.
-  const shotOpts = isProduct ? catalogs.productShotTypes.filter((option) => option.value !== 'detail')
-    : catalogs.shotTypes;
-  // 제품컷엔 사람이 없다 — 포즈·표정은 성립하지 않는다. 거울컷은 셀피 구도가 고정이라 포즈 제외.
+  // 제품컷엔 사람이 없다 — 포즈·표정은 성립하지 않는다. 거울컷은 방향도 포즈도 못 바꾸니
+  // 표정만 남는다(거리를 뺀 뒤로 '방향' 칸이 통째로 비기 때문).
   const cats = isProduct ? VARY_CATS.filter((c) => c.id === 'cut')
-    : isMirror ? VARY_CATS.filter((c) => c.id !== 'pose')
+    : isMirror ? VARY_CATS.filter((c) => c.id === 'face')
     : VARY_CATS;
-  const safeCat = cats.some((c) => c.id === cat) ? cat : 'cut';
+  const safeCat = cats.some((c) => c.id === cat) ? cat : cats[0].id;
   const optLabel = (c, id) => (opts[c] || []).find((o) => o.id === id)?.label || id;
   const valLabel = (list, v) => (list || []).find((o) => o.value === v)?.label || v;
-  // 칩/payload 순서 = 적용 우선순위 계약: 자리(방향·거리)가 기준 → 포즈 → 표정이 그 위에 얹힌다
+  // 칩/payload 순서 = 적용 우선순위 계약: 방향이 기준 → 포즈 → 표정이 그 위에 얹힌다
   const chips = [];
   if (cutDir && cutDir !== 'keep') chips.push({ key: 'dir', cat: '방향', type: 'direction', value: cutDir, label: valLabel(dirOpts, cutDir), clear: () => setCutDir('keep') });
-  if (cutShot && cutShot !== 'keep') chips.push({ key: 'shot', cat: '거리', type: 'shot', value: cutShot, label: valLabel(shotOpts, cutShot), clear: () => setCutShot('keep') });
   if (sel.pose) chips.push({ key: 'pose', cat: '포즈', type: 'pose', value: sel.pose, label: optLabel('pose', sel.pose), clear: () => setSel((s) => ({ ...s, pose: null })) });
   if (sel.face) chips.push({ key: 'face', cat: '표정', type: 'face', value: sel.face, label: optLabel('face', sel.face), clear: () => setSel((s) => ({ ...s, face: null })) });
   const n = chips.length;
-  const hasChange = { pose: !!sel.pose, face: !!sel.face, cut: (cutDir && cutDir !== 'keep') || (cutShot && cutShot !== 'keep') };
+  const hasChange = { pose: !!sel.pose, face: !!sel.face, cut: !!cutDir && cutDir !== 'keep' };
   const cost = catalogs.creditCosts?.editorImage ?? 1;
   const pickCard = (oid) => setSel((s) => ({ ...s, [safeCat]: s[safeCat] === oid ? null : oid }));
-  const clearAll = () => { setSel({}); setCutDir('keep'); setCutShot('keep'); };
-  const generate = () => {
+  const clearAll = () => { setSel({}); setCutDir('keep'); };
+  /* 생성 방식 두 가지 — 서버 계약(§6)은 하나다. changes 배열이 곧 방식이다:
+     고른 변경을 담아 보내면 '같은 장소 이미지 생성', 빈 배열이면 '비슷한 컷 만들기'.
+     refBg 는 배경 변경을 뺀 뒤로 보내지 않는다(계약은 그대로라 생략만 하면 된다). */
+  const runGenerate = (changes) => {
     if (busyRef.current) return;
     busyRef.current = true; // 곧 의류 탭으로 전환되며 패널이 언마운트 — 같은 틱 더블클릭만 방어
     onGenerate({
       // 변형 대상 = 현재 변형 소스(캔버스 요소 또는 의류 이미지). cutType 미상이면 모델 착용 컷(styling)으로 가정.
       source: { id: source.id, src: source.src, cutType: srcType || 'styling' },
-      // 변경 0개(빈 트레이) = '비슷한 컷 만들기' (PRD §10.8) — 빈 배열이 그 계약
-      changes: chips.map((c) => ({ type: c.type, value: c.value, label: c.label })),
-      // refBg 는 배경 변경을 뺀 뒤로 보내지 않는다 — 서버 계약(§6)은 그대로라 생략만 하면 된다.
+      changes,
     });
   };
+  const generateSamePlace = () => runGenerate(chips.map((c) => ({ type: c.type, value: c.value, label: c.label })));
+  const generateSimilar = () => runGenerate([]);
   const catLabel = VARY_CATS.find((c) => c.id === safeCat).label;
   return (
     <div>
-      {/* 옵션을 고르기 전에 사진 종류부터 되묻지 않는다(오너 8/16). 대신 이 기능이 지키는
-          약속을 먼저 말한다 — 무엇이 그대로인지 알아야 마음 놓고 고른다. */}
-      <p className="vary-promise"><Icon name="check" size={13} />옷·모델·장소는 그대로 두고 바꿔요</p>
       <div className="vary-tabs">
         <UnderlineTabs value={safeCat} onChange={setCat}
           options={cats.map((c) => ({ value: c.id, label: <>{c.label}{hasChange[c.id] && <span className="vary-dot" />}</> }))} />
       </div>
       {safeCat === 'cut' ? (
-        <>
-          {/* Chips 는 선택된 칩 재클릭 시 null 을 보냄 → '변경 없음'(keep) 으로 복귀시킨다 */}
-          {!isMirror && <div className="insp-sec"><label className="lbl">보는 방향</label>
-            <Chips options={[{ value: 'keep', label: '변경 없음' }, ...dirOpts]} value={cutDir} onChange={(v) => setCutDir(v || 'keep')} /></div>}
-          <div className="insp-sec"><label className="lbl">가까이·멀리</label>
-            <Chips options={[{ value: 'keep', label: '변경 없음' }, ...shotOpts]} value={cutShot} onChange={(v) => setCutShot(v || 'keep')} /></div>
-        </>
+        /* Chips 는 선택된 칩 재클릭 시 null 을 보냄 → '변경 없음'(keep) 으로 복귀시킨다 */
+        <div className="insp-sec"><label className="lbl">보는 방향</label>
+          <Chips options={[{ value: 'keep', label: '변경 없음' }, ...dirOpts]} value={cutDir} onChange={(v) => setCutDir(v || 'keep')} /></div>
       ) : (
         <div className="insp-sec">
           <label className="lbl">{catLabel} 고르기</label>
@@ -357,12 +354,17 @@ function VaryPanel({ catalogs, source, onGenerate }) {
           </div>
         </div>
       )}
-      <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={generate} style={{ marginTop: 14 }}>
-        {n > 0 ? `${n}개 변경 적용해서 생성 · ${cost} 크레딧` : `비슷한 컷 만들기 · ${cost} 크레딧`}
+      {/* 같은 장소 이미지 생성 — '비슷한 컷 만들기'와 같은 버튼이되 흰 배경·검정 글씨로
+          두 방식의 무게를 나눈다(오너 2026-08-16). */}
+      <Button variant="ghost" block icon="sparkles" onClick={generateSamePlace} style={{ marginTop: 14 }}>
+        {n > 0 ? `같은 장소 이미지 생성 · ${n}개 변경 · ${cost} 크레딧` : `같은 장소 이미지 생성 · ${cost} 크레딧`}
+      </Button>
+      <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={generateSimilar} style={{ marginTop: 8 }}>
+        {`비슷한 컷 만들기 · ${cost} 크레딧`}
       </Button>
       <p className="hint" style={{ marginTop: 10 }}>
-        {n > 0 ? '모든 변경이 한 장의 새 컷에 함께 반영돼요. 기존 이미지는 유지되고 새 컷은 의류 탭에 추가돼요.'
-          : '변경 없이 생성하면 현재 컷과 비슷한 분위기의 새 컷을 만들어요. 새 컷은 의류 탭에 추가돼요.'}
+        {n > 0 ? '고른 변경이 한 장의 새 컷에 함께 반영돼요. 장소는 그대로예요. 기존 이미지는 유지되고 새 컷은 의류 탭에 추가돼요.'
+          : '위쪽은 장소를 그대로 두고 방향·포즈·표정만 바꿔요. 아래쪽은 현재 컷과 비슷한 분위기로 한 장 더 만들어요. 새 컷은 의류 탭에 추가돼요.'}
       </p>
     </div>
   );
@@ -497,7 +499,7 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
     <div>
       <div className="seg" data-idx={tab === 'vary' ? 1 : 0}>
         <button className={tab === 'new' ? 'on' : ''} onClick={() => setTab('new')}>새 이미지 추가</button>
-        <button className={tab === 'vary' ? 'on' : ''} onClick={() => setTab('vary')}>같은 장소 이미지 생성</button>
+        <button className={tab === 'vary' ? 'on' : ''} onClick={() => setTab('vary')}>현재 이미지 수정</button>
       </div>
       {tab === 'new' ? (
         <div>
@@ -806,32 +808,26 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, lock = true, onLock 
 const TEXT_PALETTE = ['#0e0d14', TEXT_MUTED, '#ffffff', '#4f88c9', '#d92d20', '#067647'];
 const HL_PALETTE = ['#fef3c7', '#dbeafe', '#dcfce7', '#fee2e2', '#f3f4f6', '#0e0d14'];
 const WEIGHTS = [{ value: 300, label: 'Light' }, { value: 400, label: 'Regular' }, { value: 500, label: 'Medium' }, { value: 600, label: 'SemiBold' }, { value: 700, label: 'Bold' }];
-/* 드래그 중 커서를 따라다니는 그림 = **실제로 놓일 텍스트 상자**. 패널 카드(설명·px 표시가
-   붙은 안내 상자)가 그대로 끌려오면 "무엇이 어디에 놓이는지"를 알 수 없다는 오너 지적
-   (2026-08-16). 캔버스 배율을 곱해 화면에 놓일 크기 그대로 그리고, 커서는 상자 왼쪽 글줄
-   한가운데에 둔다 — 놓는 자리 계산(textPresetDropPlacement)과 같은 기준점이다. */
-function startTextPresetDrag(event, presetKey, scale) {
-  const box = textPresetBox(presetKey);
+/* 텍스트 프리셋 드래그 시작. 놓일 자리 미리보기는 **블록 안에서만** 그린다(.text-drop-ghost) —
+   커서를 따라다니는 그림까지 같은 문구로 그렸더니 블록 위에서 글자가 둘로 겹쳐 보였다
+   (오너 2026-08-16). 그래서 커서 그림은 투명한 1px 로 비우고, 위치·크기를 정확히 말해 주는
+   블록 안 상자 하나만 남긴다(그쪽은 블록 좌표계라 배율·스크롤과 항상 일치한다). */
+function startTextPresetDrag(event, presetKey) {
   event.dataTransfer.effectAllowed = 'copy';
   event.dataTransfer.setData('text/object', `text:${presetKey}`);
   // 드래그 중에는 getData 가 막혀 있고 types 만 읽을 수 있다 — 어떤 프리셋인지 블록이
   // 알아야 놓일 자리 미리보기를 정확히 그리므로 종류를 타입 이름에 실어 보낸다.
   event.dataTransfer.setData(`${TEXT_PRESET_DRAG_PREFIX}${presetKey}`, presetKey);
   if (typeof document === 'undefined' || !event.dataTransfer.setDragImage) return;
-  const ghost = document.createElement('div');
-  const ratio = Math.max(0.2, Number(scale) || 1);
-  ghost.className = 'text-drag-ghost';
-  ghost.textContent = box.text;
-  ghost.style.fontSize = `${Math.max(9, Math.round(box.style.size * ratio))}px`;
-  ghost.style.fontWeight = String(box.style.weight || 400);
-  ghost.style.color = box.style.color;
-  document.body.appendChild(ghost);
-  event.dataTransfer.setDragImage(ghost, 10, ghost.offsetHeight / 2);
+  const blank = document.createElement('div');
+  blank.className = 'text-drag-ghost';
+  document.body.appendChild(blank);
+  event.dataTransfer.setDragImage(blank, 0, 0);
   // 드래그가 시작된 뒤에 지워야 브라우저가 스냅샷을 뜬 다음이 된다.
-  setTimeout(() => ghost.remove(), 0);
+  setTimeout(() => blank.remove(), 0);
 }
 
-export function TextPanel({ el, catalogs, canvasScale = 1, onChange, onBubbleAppearanceChange, onLayer, onAddText }) {
+export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, onLayer, onAddText }) {
   const has = el && el.type === 'text';
   const isBubble = has && el.shape === 'bubble';
   const s = (has && el.style) || {};
@@ -851,7 +847,7 @@ export function TextPanel({ el, catalogs, canvasScale = 1, onChange, onBubbleApp
       {TEXT_PRESETS.map((p) => (
         <button key={p.key} type="button" className="text-preset-item" draggable
           aria-label={`${p.label} 추가`} title={`${p.label} — 누르면 추가, 끌어다 놓으면 그 자리에`}
-          onDragStart={(e) => startTextPresetDrag(e, p.key, canvasScale)}
+          onDragStart={(e) => startTextPresetDrag(e, p.key)}
           onClick={() => onAddText?.(p.key)}>
           {/* 축소판 스타일은 프리셋 데이터에서 직접 그린다 — CSS에 복제하면 값이 갈라진다 */}
           <span className="tp-sample" style={{ fontSize: p.previewSize, fontWeight: p.style.weight, color: p.style.color, letterSpacing: p.style.tracking }}>{p.sample || p.label}</span>
@@ -864,7 +860,7 @@ export function TextPanel({ el, catalogs, canvasScale = 1, onChange, onBubbleApp
           조작(누르기/끌기)이라 넷이 한 덩어리로 읽힌다. */}
       <button type="button" className="add-text-btn" draggable
         title="텍스트 추가 — 누르면 추가, 끌어다 놓으면 그 자리에"
-        onDragStart={(e) => startTextPresetDrag(e, DEFAULT_TEXT_PRESET, canvasScale)}
+        onDragStart={(e) => startTextPresetDrag(e, DEFAULT_TEXT_PRESET)}
         onClick={() => onAddText?.()}>
         <Icon name="type" size={17} />텍스트 추가
       </button>
