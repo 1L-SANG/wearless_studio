@@ -235,22 +235,21 @@ test('category filters stay server-consistent for styling and horizon pools', ()
   }).stylingSets.every((set) => set === null));
 });
 
-test('no gender receives an auto-placed mirror; every gender gets the extra styling cut', () => {
-  // 2026-08-14 오너 결정: 거울샷 자동 배치 제거 — 거울샷은 수동 선택지로만 남는다.
+test('styling section auto-places space sets only — no mirror, no standalone cut', () => {
+  // 2026-08-14: 거울샷 자동 배치 제거. 2026-08-16: 그 자리를 메우던 낱장 스타일링컷도 제거 —
+  // 스타일링 섹션은 장소 세트만 자동 배치하고, 낱장은 셀러가 '컷 추가'로 직접 넣는다.
   const women = defaultStoryboard(baseColors, 'basic', context('women', 'bottom', 'women'));
   const men = defaultStoryboard(baseColors, 'basic', context('men', 'bottom', 'men'));
   const unknown = defaultStoryboard(baseColors, 'basic', context('unknown', 'bottom', null));
-  const standaloneStyling = (blocks) => blocks.filter((block) => (
-    block.sectionRole === 'styling'
-    && block.cutType === 'styling'
-    && block.shot === 'full'
-    && !block.spaceGroupId
-  ));
 
   for (const blocks of [women, men, unknown]) {
     assert.equal(blocks.some((block) => block.cutType === 'mirror'), false);
-    // 거울샷 자리는 낱장 스타일링컷으로 대체 — 하의는 뒷면 방향.
-    assert.equal(standaloneStyling(blocks).at(-1).direction, 'back');
+    const stylingSection = blocks.filter((block) => block.sectionRole === 'styling');
+    assert.ok(stylingSection.length > 0, '스타일링 섹션은 비어 있지 않다');
+    assert.ok(
+      stylingSection.every((block) => !!block.spaceGroupId),
+      '스타일링 섹션 자동 배치는 전부 장소 세트 멤버여야 한다',
+    );
   }
   // 성별 미상은 서버(select_base_gender)와 동일하게 women 기본 — 세트 배치는 그대로.
   assert.equal(unknown.some((block) => block.spaceGroupId), true);
@@ -296,7 +295,7 @@ test('multi-color basic and extended seeds follow product and studio repetition 
 
 test('cut counts include normal ranges and a forced one-slot styling fallback', () => {
   const basic = defaultStoryboard(baseColors, 'basic', context('counts', 'top', 'women'));
-  assert.equal(basic.length, 11);
+  assert.equal(basic.length, 10);   // 낱장 스타일링컷 제거(2026-08-16)로 11 → 10
   // 확장형 기대치는 실제 추첨(pickEntrySets)에서 유도 — 카탈로그가 자라도 테스트가 낡지 않게.
   for (const [pid, clothing, gender] of [
     ['counts-a', 'bottom', 'women'], ['counts-b', 'bottom', 'men'], ['counts-c', 'top', 'women'],
@@ -306,7 +305,7 @@ test('cut counts include normal ranges and a forced one-slot styling fallback', 
     const horizonCuts = (picked.sequenceSet || picked.rotationSet)?.members.length ?? 3;
     assert.equal(
       defaultStoryboard(baseColors, 'extended', context(pid, clothing, gender)).length,
-      1 + stylingCuts + horizonCuts + 1 + 4,
+      1 + stylingCuts + horizonCuts + 4,
       `${gender}/${clothing} extended`,
     );
   }
@@ -319,7 +318,7 @@ test('cut counts include normal ranges and a forced one-slot styling fallback', 
   const fallback = defaultStoryboard(baseColors, 'basic', forced);
   const fStyling = fPicked.stylingSets.reduce((s, set) => s + (set ? entryStylingMembers(set).length : 2), 0);
   const fHorizon = fPicked.rotationSet?.members.length ?? 3;
-  assert.equal(fallback.length, 1 + fStyling + fHorizon + 1 + 2);
+  assert.equal(fallback.length, 1 + fStyling + fHorizon + 2);
   assert.equal(
     new Set(fallback.filter((block) => block.spaceGroupId).map((block) => block.spaceGroupId)).size,
     fPicked.stylingSets.filter(Boolean).length + (fPicked.rotationSet ? 1 : 0),

@@ -87,19 +87,6 @@ function horizonRotationFallback(colorId) {
   ));
 }
 
-// 2026-08-14 오너 결정: 거울샷 자동 배치 제거 — 기본 구성은 전 성별 공통으로
-// 낱장 스타일링컷을 배치한다. 거울샷은 스타일링 섹션의 수동 선택지로만 남는다.
-function extraStylingBlock(colorId, clothingType) {
-  return sb(
-    SECTION_ROLES.STYLING,
-    CONTENT_ROLES.COORDINATION,
-    'styling',
-    clothingType === 'bottom' ? 'back' : 'front',
-    'full',
-    colorId,
-  );
-}
-
 export function defaultStoryboard(colors, mode = 'basic', context = {}) {
   if (mode !== 'basic' && mode !== 'extended') throw new Error('invalid_compose_mode');
   const list = Array.isArray(colors) && colors.length ? colors : [{ id: 'col1', isBase: true }];
@@ -134,6 +121,9 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
     }),
   ];
 
+  // 스타일링 섹션은 **장소 세트만** 자동 배치한다 — 세트에 안 묶인 낱장 컷을 하나 얹던
+  // 규칙은 폐기(2026-08-16 오너: "공간세트 2개 말고 컷 하나가 더 붙는 것 없애줘").
+  // 낱장 스타일링컷·거울샷은 셀러가 '컷 추가'로 직접 넣는 수동 선택지로만 남는다.
   for (const set of stylingSets) {
     blocks.push(...(set
       ? setMemberBlocks(set, base, SECTION_ROLES.STYLING, CONTENT_ROLES.COORDINATION)
@@ -141,7 +131,6 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
   }
 
   if (mode === 'extended') {
-    blocks.push(extraStylingBlock(base, clothingType));
     const horizonSet = sequenceSet || rotationSet;
     blocks.push(...(horizonSet
       ? setMemberBlocks(horizonSet, base, SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT)
@@ -188,7 +177,6 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
       sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor),
     );
   } else {
-    blocks.push(extraStylingBlock(base, clothingType));
     blocks.push(...(rotationSet
       ? setMemberBlocks(rotationSet, base, SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT)
       : horizonRotationFallback(base)));
