@@ -309,8 +309,10 @@ function VaryPanel({ catalogs, source, onGenerate }) {
       changes,
     });
   };
-  const generateSamePlace = () => runGenerate(chips.map((c) => ({ type: c.type, value: c.value, label: c.label })));
-  const generateSimilar = () => runGenerate([]);
+  // 고른 변경이 있으면 그걸 실어 보내고(=활성 버튼이 '비슷한 컷 만들기'), 하나도 없으면
+  // 빈 배열을 보낸다(=활성 버튼이 '같은 장소 이미지 생성'). 서버 계약(§6)은 하나다.
+  const generateWithPicks = () => runGenerate(chips.map((c) => ({ type: c.type, value: c.value, label: c.label })));
+  const generateAuto = () => runGenerate([]);
   const catLabel = VARY_CATS.find((c) => c.id === safeCat).label;
   return (
     <div>
@@ -354,19 +356,19 @@ function VaryPanel({ catalogs, source, onGenerate }) {
           </div>
         </div>
       )}
-      {/* 같은 장소 이미지 생성 — 아래 CTA 와 **모양·크기·테두리가 같고 색만 반대**다
-          (오너 2026-08-16). 그래서 variant 는 primary 그대로 두고 채움/글자만 뒤집는다 —
-          ghost 로 두면 높이·라운드·회전 테두리가 달라져 다른 종류의 버튼처럼 보인다. */}
-      <Button variant="primary" block icon="sparkles" className="btn-glowring btn-invert" onClick={generateSamePlace} style={{ marginTop: 14 }}>
-        {n > 0 ? `같은 장소 이미지 생성 · ${n}개 변경 · ${cost} 크레딧` : `같은 장소 이미지 생성 · ${cost} 크레딧`}
+      {/* 두 버튼은 서로 배타 — 고른 게 하나도 없으면 '같은 장소 이미지 생성'만, 방향·포즈·
+          표정을 하나라도 고르면 '비슷한 컷 만들기'만 눌린다(오너 2026-08-16). 그래서 눌리는
+          쪽이 항상 지금 상태에 맞는 일을 한다: 고른 게 없으면 빈 변경, 있으면 그 변경들.
+          모양·크기·테두리는 둘이 같고 채움/글자색만 반대다 — variant 는 primary 그대로 두고
+          .btn-invert 로 색만 뒤집는다(ghost 로 두면 높이·라운드·테두리가 달라진다). */}
+      <Button variant="primary" block icon="sparkles" className="btn-glowring btn-invert"
+        disabled={n > 0} onClick={generateAuto} style={{ marginTop: 14 }}>
+        {`같은 장소 이미지 생성 · ${cost} 크레딧`}
       </Button>
-      <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={generateSimilar} style={{ marginTop: 8 }}>
+      <Button variant="primary" block icon="sparkles" className="btn-glowring"
+        disabled={n === 0} onClick={generateWithPicks} style={{ marginTop: 8 }}>
         {`비슷한 컷 만들기 · ${cost} 크레딧`}
       </Button>
-      <p className="hint" style={{ marginTop: 10 }}>
-        {n > 0 ? '고른 변경이 한 장의 새 컷에 함께 반영돼요. 장소는 그대로예요. 기존 이미지는 유지되고 새 컷은 의류 탭에 추가돼요.'
-          : '위쪽은 장소를 그대로 두고 방향·포즈·표정만 바꿔요. 아래쪽은 현재 컷과 비슷한 분위기로 한 장 더 만들어요. 새 컷은 의류 탭에 추가돼요.'}
-      </p>
     </div>
   );
 }
