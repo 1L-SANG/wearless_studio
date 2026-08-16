@@ -218,13 +218,32 @@ test('에디터 계약 — 미리보기와 실제 드롭이 같은 기준으로 
     '드롭도 미리보기와 같은 렌더 높이를 쓴다');
 });
 
-test('에디터 계약 — 대기 화면이 쓰는 함수는 early-return 위에서 선언된다(TDZ 흰화면 방지)', () => {
+test('에디터 계약 — 대기 화면 이탈은 early-return 아래 것을 하나도 안 건드린다(TDZ 방지)', () => {
   const editor = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
-  const declared = editor.indexOf('const leaveToLibrary =');
   const firstEarlyReturn = editor.indexOf('\n  if (loadError) return (');
-  assert.ok(declared > 0 && firstEarlyReturn > 0);
-  assert.ok(declared < firstEarlyReturn,
-    'const 는 선언 전 참조 시 ReferenceError — early-return 의 onClick 이 먼저 평가된다');
+  const exitStart = editor.indexOf('const exitWaitScreenToLibrary =');
+  assert.ok(exitStart > 0 && firstEarlyReturn > 0);
+  assert.ok(exitStart < firstEarlyReturn, '대기 화면이 쓰는 함수는 early-return 위에 있어야 한다');
+
+  // 위에 선언하는 것만으로는 부족하다 — 본문이 early-return 아래 const 를 건드리면
+  // 클릭하는 순간 ReferenceError 다(화면은 떠 있는데 버튼만 죽는 막다른 골목).
+  const body = editor.slice(exitStart, editor.indexOf('\n  };', exitStart));
+  for (const late of ['flushExit', 'latestBlocks', 'genActive', 'saveEditorWaitDraft']) {
+    assert.doesNotMatch(body, new RegExp(`\\b${late}\\b`), `${late} 는 early-return 아래에서 초기화된다`);
+  }
+  // 편집분 저장이 필요한 본 화면용은 flushExit **뒤**에 있어야 한다.
+  assert.ok(editor.indexOf('const leaveToLibrary =') > editor.indexOf('const flushExit ='));
+  // 대기 화면 버튼은 대기 화면 전용 이탈을 쓴다.
+  const waitScreen = editor.slice(editor.indexOf('waitBoardError && !blocks'), firstEarlyReturn + 4000);
+  assert.match(waitScreen, /onClick=\{exitWaitScreenToLibrary\}/);
+});
+
+test('에디터 계약 — 안내 문구 정리는 그 글자에서 손을 뗀 뒤에만(스타일 먼저 고르는 순서 보호)', () => {
+  const editor = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
+  const prune = editor.slice(editor.indexOf('function pruneEmptyTextEl'), editor.indexOf('const changeBg'));
+  // 방금 만든 글자에 '빠른 스타일' 칩을 먼저 누르면 편집만 끝나고 선택은 남는다 —
+  // 그때 지우면 셀러가 만든 글자가 통째로 사라진다(2026-08-17 리뷰).
+  assert.match(prune, /FRESH_TEXT_IDS\.has\(elId\) && selEl !== elId/);
 });
 
 

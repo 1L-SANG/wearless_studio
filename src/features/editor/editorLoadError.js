@@ -6,6 +6,11 @@
    ============================================================= */
 
 export function classifyEditorLoadError(error) {
+  // 받아온 데이터를 화면으로 조립하다 터진 것은 '일시 장애'가 아니다 — 같은 데이터로
+  // 다시 시도해도 똑같이 터지므로, 다시 시도하라고 말하면 무한 왕복이 된다(2026-08-17 리뷰).
+  if (error?.duringRender) {
+    return { kind: 'render', message: '편집 화면을 그리는 중 문제가 생겼어요. 보관함에서 다시 열어 주세요.' };
+  }
   const status = error?.status;
   const message = error?.message || '';
   if (status === 401 || /로그인이 필요/.test(message)) {

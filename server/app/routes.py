@@ -1984,7 +1984,7 @@ async def _tone_bytes(request: Request, project_id: str, cut_id: str, user_id: s
         raise HTTPException(status_code=503, detail={
             "code": "asset_unavailable",
             "message": "이미지를 불러오지 못했어요. 잠시 후 다시 시도해 주세요."}) from exc
-    return Response(content=data, media_type=mime, headers=_immutable_cors_safe_headers(request))
+    return Response(content=data, media_type=mime, headers=_immutable_cors_safe_headers())
 
 
 @router.get(
@@ -2566,7 +2566,7 @@ async def get_asset_file(request: Request, asset_id: str):
     )
 
 
-def _immutable_cors_safe_headers(request: Request) -> dict:
+def _immutable_cors_safe_headers() -> dict:
     """1년 immutable 로 캐시되는 바이트 응답의 헤더.
 
     CORSMiddleware 는 요청에 Origin 이 있을 때만 허용 헤더와 `Vary: Origin` 을 붙인다.
@@ -2627,7 +2627,7 @@ async def get_asset_bytes(request: Request, asset_id: str):
     return Response(
         content=data,
         media_type=asset.get("mime_type") or "application/octet-stream",
-        headers=_immutable_cors_safe_headers(request),
+        headers=_immutable_cors_safe_headers(),
     )
 
 

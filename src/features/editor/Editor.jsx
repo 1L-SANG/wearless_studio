@@ -1105,6 +1105,7 @@ export function Editor() {
     if (resumingGeneration) useAppStore.getState().startDetailPageGeneration(projectId);
     pendingGenerationDraft.current = Boolean(savedDraft);
     // 에디터는 앱 크롬 밖에서 열린다 — account 는 store 캐시를 직접 로드 (단일 소스)
+    let fetched = false;
     Promise.all([api.getEditorBlocks(projectId), api.getWardrobe(projectId), api.getCatalogs(), useAppStore.getState().loadAccount(), api.getProduct(projectId),
       // 실존 모델 카탈로그 — mock 모드는 서버가 없으니 스킵, 실패는 null(AIPanel 이 가상모델 폴백)
       isMockMode ? Promise.resolve(null) : listModels().catch(() => null),
@@ -1120,6 +1121,7 @@ export function Editor() {
       // AI 탭 '매칭 의류 바꾸기' 목록 — 콘티보드와 동일 소스, 실패해도 에디터는 뜬다
       api.getMatchClothing(projectId).catch(() => [])])
       .then(([b, w, c, _a, p, fm, an, sb, mc]) => {
+        fetched = true;   // 여기부터 터지면 통신이 아니라 조립 문제다
         const hydratedCatalogs = withStoryboardSpaceSetExamples(c);
         let withH = b.map((blk) => normalizeEditorBlockRole(blk));
         // 라벨·원 색은 같은 근거(swatchId)에서 나와야 한다 — 규칙은 lib/colorOpts 한 곳.
@@ -1192,7 +1194,11 @@ export function Editor() {
         setColorOpts(opts.length ? opts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
       })
       // 필수 데이터를 못 받으면 스피너를 영원히 돌리지 않는다 — 무슨 일인지 말하고 다시 시도.
-      .catch((error) => setLoadError(classifyEditorLoadError(error)));
+      // 단 위 조립 본문에서 터진 것은 '못 받은 것'이 아니라 우리 버그다. 같은 응답으로 다시
+      // 시도해도 똑같이 터지므로 재시도를 권하지 않게 표식을 붙인다(2026-08-17 리뷰).
+      .catch((error) => setLoadError(classifyEditorLoadError(
+        fetched ? Object.assign(error instanceof Error ? error : new Error(String(error)), { duringRender: true }) : error,
+      )));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadAttempt]);
 
@@ -1499,14 +1505,15 @@ export function Editor() {
     };
   });
 
-  /* 아래 early-return 들이 이 함수를 onClick 으로 쓴다 — **반드시 early-return 위에서**
-     선언해야 한다. const 는 선언 줄을 지나기 전에는 TDZ 라, 아래에 두면 대기 화면을 그리는
-     순간 ReferenceError 로 흰 화면이 된다(2026-08-16 리뷰). 본문이 참조하는 flushExit 등은
-     클릭 시점에 이미 초기화돼 있으므로 아래에 있어도 된다. */
-  const leaveToLibrary = () => {
+  /* 아래 대기 화면(early-return)에서 쓰는 이탈 — 그 화면은 **blocks 가 없을 때만** 그려지므로
+     저장할 편집분 자체가 없다. 그래서 아래쪽 leaveToLibrary(편집분 flush 포함)를 부르지 않고,
+     early-return 위에서 이미 초기화된 것(ref·navigate)만으로 끝낸다.
+     주의: early-return 이 실행되면 그 아래 const 들은 **초기화되지 않은 채로 남는다**. 위에
+     선언해 둔 함수라도 본문이 아래쪽 const(flushExit 등)를 건드리면 클릭하는 순간
+     ReferenceError 다 — 화면은 떠 있는데 버튼만 죽는 막다른 골목이 된다(2026-08-17 리뷰). */
+  const exitWaitScreenToLibrary = () => {
     clearTimeout(saveTimer.current);
-    flushExit();
-    skipExitPersist.current = true;   // 언마운트 정리가 같은 내용을 한 번 더 쓰지 않게
+    skipExitPersist.current = true;   // 언마운트 정리가 빈 상태를 덮어쓰지 않게
     navigate('/library');
   };
 
@@ -1514,7 +1521,9 @@ export function Editor() {
     <div className="editor"><div style={{ margin: 'auto', display: 'grid', gap: 12, justifyItems: 'center' }}>
       <ErrorState
         desc={loadError.message}
-        onRetry={loadError.kind === 'notFound' ? undefined : () => { setLoadError(null); setLoadAttempt((n) => n + 1); }}
+        /* 없는 작업·조립 실패는 다시 시도해도 결과가 같다 — 버튼을 주면 무한 왕복이 된다 */
+        onRetry={loadError.kind === 'notFound' || loadError.kind === 'render' ? undefined
+          : () => { setLoadError(null); setLoadAttempt((n) => n + 1); }}
       />
       <Button variant="ghost" onClick={() => navigate('/library')}>보관함으로</Button>
     </div></div>
@@ -1529,7 +1538,7 @@ export function Editor() {
         {/* 같은 문자열을 다시 넣으면 상태가 안 바뀌어 재시도가 안 돈다 — 시도 횟수를 올린다 */}
         <Button variant="ghost" size="sm" onClick={() => setWaitBoardAttempt((n) => n + 1)}>다시 불러오기</Button>
         {/* 자동 재시도가 소진돼도 갇히지 않게 — 생성은 서버에서 계속되고 보관함에서 다시 연다 */}
-        <Button variant="ghost" size="sm" onClick={leaveToLibrary}>나중에 하기 · 보관함으로</Button>
+        <Button variant="ghost" size="sm" onClick={exitWaitScreenToLibrary}>나중에 하기 · 보관함으로</Button>
       </div>
     </div></div>
   );
@@ -1639,7 +1648,10 @@ export function Editor() {
     const block = bs0.find((b) => b.elements.some((element) => element.id === elId));
     const target = block?.elements.find((element) => element.id === elId);
     if (!block || !target) return;
-    const untouchedPlaceholder = FRESH_TEXT_IDS.has(elId)
+    // 안내 문구를 지우는 건 **그 요소에서 손을 뗀 뒤**여야 한다. 편집만 끝났을 뿐 아직
+    // 골라져 있는 상태(= 방금 만들고 '빠른 스타일' 칩·크기 칸을 먼저 누른 경우)에서 지우면,
+    // 셀러가 스타일부터 고르려던 아주 흔한 순서에서 글자가 통째로 사라진다(2026-08-17 리뷰).
+    const untouchedPlaceholder = FRESH_TEXT_IDS.has(elId) && selEl !== elId
       && String(target.text ?? '').trim() === DEFAULT_TEXT_BODY;
     if (isAutoManagedBlock(block) || target.type !== 'text' || target.shape === 'bubble'
       || target.copyRole || target.sourceBlockId
@@ -2252,6 +2264,15 @@ export function Editor() {
       return;
     }
     if (bs) api.saveEditorBlocks(projectId, bs);
+  };
+  /* 본 편집 화면의 이탈 — 편집분을 먼저 저장하고 나간다. **flushExit 뒤**에 선언해야 한다:
+     early-return 위로 올리면 그 화면에서 클릭하는 순간 flushExit 가 아직 초기화되지 않아
+     ReferenceError 다(2026-08-17 리뷰). 대기 화면 전용 이탈은 exitWaitScreenToLibrary. */
+  const leaveToLibrary = () => {
+    clearTimeout(saveTimer.current);
+    flushExit();
+    skipExitPersist.current = true;   // 언마운트 정리가 같은 내용을 한 번 더 쓰지 않게
+    navigate('/library');
   };
   // 에디터에 들어온 이상 앞 단계(콘티·마네킹·입력)로는 돌아가지 않는다(오너 8/15) —
   // 되돌아가면 이미 만든 컷·편집이 다음 생성으로 덮여 되살릴 수 없기 때문이다. 대신

@@ -325,9 +325,8 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
   const pushRow = (chunk, layout) => {
     const rowLayout = ROW_LAYOUTS[layout];
     const n = chunk.length;
-    /* 2×2 격자는 사진 넷이 딱 붙어 한 덩어리로 보여야 한다(오너 8/16). 그래서 칸 사이
-       간격을 두지 않고, 카피는 격자 아래가 아니라 **위**에 놓는다 — 아래에 두면 격자와
-       다음 블록 사이에 글이 끼어 넷이 한 묶음으로 안 읽힌다. */
+    /* 2×2 격자는 사진 넷이 딱 붙어 한 덩어리로 보여야 한다(오너 8/16) — 칸 사이 간격만
+       두지 않는다. 카피 자리는 아래 imgTop 주석 참고(다른 행과 같이 사진 아래). */
     const grid = layout === 'grid2x2' && n === 4;
     const w = grid ? 440 : Math.floor((880 - (n - 1) * 20) / n);
     const h = grid ? 560 : 500;

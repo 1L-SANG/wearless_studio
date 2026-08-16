@@ -78,6 +78,10 @@ test('로딩 실패 분류: 로그인 만료·없는 작업·일시 장애를 �
   assert.equal(network.kind, 'network');
   assert.equal(network.message, '서버가 응답하지 않아요');
   assert.match(classifyEditorLoadError({}).message, /다시 시도/);
+  // 조립 중 터진 건 통신 실패가 아니다 — 같은 응답으로 다시 시도해도 똑같이 터진다(2026-08-17 리뷰).
+  const render = classifyEditorLoadError({ duringRender: true, status: 500, message: '서버가 응답하지 않아요' });
+  assert.equal(render.kind, 'render');
+  assert.doesNotMatch(render.message, /다시 시도/, '재시도를 권하면 무한 왕복이 된다');
 });
 
 /* ---------- 3-09 실패 컷이 조용히 빈칸이 되지 않는다 ---------- */

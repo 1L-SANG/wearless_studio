@@ -189,8 +189,9 @@ export function reorderElements(elements, fromId, toId) {
   const to = next.findIndex((element) => element.id === toId);
   if (from < 0 || to < 0 || from === to) return elements;
   const [moved] = next.splice(from, 1);
-  const adjusted = to > from ? to - 1 : to;   // 꺼낸 만큼 목표 인덱스 보정
-  next.splice(to > from ? adjusted + 1 : adjusted, 0, moved);  // 뒤로 끌면 대상 뒷자리
+  // 꺼낸 뒤의 `to` 가 그대로 정답이다. 뒤로 끌면 제거로 인덱스가 하나 당겨지지만 '대상의
+  // 뒷자리'로 넣어야 해서 +1 이 되어 상쇄되고, 앞으로 끌면 대상 앞자리가 곧 `to` 다.
+  next.splice(to, 0, moved);
   return next;
 }
 
