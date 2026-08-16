@@ -7,7 +7,8 @@ const GROUPS = Object.freeze([
     { key: "product", title: "Section 4", label: "의류 확인" },
 ]);
 
-function renderGroupKey(block) {
+// 블록 하나만 보면 정해지는 순수 함수 — 드래그 중 그룹 판정에 쓰면 보드 전체 스캔이 없어진다.
+export function renderGroupKey(block) {
     const sectionRole = inferSectionRole(block);
     return sectionRole && GROUPS.some((group) => group.key === sectionRole)
         ? sectionRole

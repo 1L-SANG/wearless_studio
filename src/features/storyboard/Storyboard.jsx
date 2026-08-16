@@ -90,7 +90,7 @@ import {
   sbSetSaveRepair,
   sbStable,
 } from './storyboardPersistence.js';
-import { renderGroups } from '@/lib/storyboardRenderGroups.js';
+import { renderGroupKey, renderGroups } from '@/lib/storyboardRenderGroups.js';
 import { prewarmImages } from '@/lib/imagePrewarm.js';
 import { spaceSetDisplayName } from '@/lib/spaceSetDisplayNames.js';
 import {
@@ -361,10 +361,11 @@ const MoveDotsIcon = (
    · 손잡이를 잡고 끌면 = 기존 카드 드래그 그대로(카드 전체가 draggable 이라 손잡이도 잡힌다)
    · 손잡이를 누르면 = 이동 메뉴(한 칸씩·맨 앞/뒤) — 드래그가 어려운 상황·키보드 조작용
    낱장·두 컷 구성·네 컷 구성 어디서나 같은 손잡이를 쓴다. */
-function StoryboardCardActions({ onDuplicate, onDelete, move = null }) {
+function StoryboardCardActions({ onDuplicate, onDelete, move = null, canDelete = true }) {
   const [moveMenuOpen, setMoveMenuOpen] = useState(false);
   const moveWrapRef = useRef(null);
-  const canMove = !!move && (move.canMoveUp || move.canMoveDown);
+  // 6점 손잡이는 '낱장 컷'에만. 덩어리 안 컷은 사진 양옆 화살표(StoryboardMedia)가 담당한다.
+  const canMove = move?.kind === 'free' && (move.canMoveUp || move.canMoveDown);
   useEffect(() => { if (!canMove) setMoveMenuOpen(false); }, [canMove]);
   // 바깥을 누르면 닫힌다 — 메뉴가 열린 동안은 액션 묶음이 계속 보이므로 명시적으로 거둬야 한다.
   useEffect(() => {
@@ -384,7 +385,8 @@ function StoryboardCardActions({ onDuplicate, onDelete, move = null }) {
   return (
     <span className={'sb-canvas-actions' + (moveMenuOpen ? ' menu-open' : '')}
       onPointerDown={(event) => event.stopPropagation()}
-      onKeyDown={(event) => event.stopPropagation()}
+      /* ESC 는 이동 메뉴가 열렸을 때만 삼킨다 — 늘 막으면 document 리스너가 못 받는다. */
+      onKeyDown={(event) => { if (moveMenuOpen || event.key !== 'Escape') event.stopPropagation(); }}
       onClick={(event) => event.stopPropagation()}>
       {canMove && (
         <span className="sb-move-wrap" ref={moveWrapRef}>
@@ -409,7 +411,29 @@ function StoryboardCardActions({ onDuplicate, onDelete, move = null }) {
         </span>
       )}
       <button type="button" title="컷 복제" aria-label="컷 복제" onClick={onDuplicate}><Icon name="copy" size={15} /></button>
-      <button type="button" title="컷 삭제" aria-label="컷 삭제" onClick={onDelete}><Icon name="x" size={15} /></button>
+      {canDelete && (
+        <button type="button" title="컷 삭제" aria-label="컷 삭제" onClick={onDelete}><Icon name="x" size={15} /></button>
+      )}
+    </span>
+  );
+}
+
+/* 덩어리 안 컷의 자리 교환 — 사진 양옆 화살표. 이웃이 있는 쪽만 누를 수 있다.
+   네 컷 구성도 좌우만 쓴다(위아래까지 두면 작은 타일에 아이콘이 넷이라 복잡, 2026-08-16 오너):
+   읽는 순서(1→2→3→4)를 따라 2번의 '›' 는 3번 자리와 바뀐다. */
+function BundleSwapArrows({ move }) {
+  if (move?.kind !== 'swap') return null;
+  const press = (event, step) => { event.stopPropagation(); move.onSwap(step); };
+  return (
+    <span className="sb-swap-arrows"
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}>
+      <button type="button" className="sb-swap-arrow" aria-label="앞 자리와 바꾸기"
+        title="앞 자리와 바꾸기" disabled={!move.canPrev}
+        onClick={(event) => press(event, -1)}>‹</button>
+      <button type="button" className="sb-swap-arrow" aria-label="뒤 자리와 바꾸기"
+        title="뒤 자리와 바꾸기" disabled={!move.canNext}
+        onClick={(event) => press(event, 1)}>›</button>
     </span>
   );
 }
@@ -417,7 +441,7 @@ function StoryboardCardActions({ onDuplicate, onDelete, move = null }) {
 function StoryboardMedia({
   block, catalogs, matchClothing = null, index, total,
   showPoseVariation = false,
-  onDuplicate, onDelete, move = null,
+  onDuplicate, onDelete, move = null, canDelete = true,
 }) {
   const missing = block.source !== 'mine' && !block.exampleId && !block.previewThumb;
   const manualEmpty = missing && block.exampleChoice === 'manual';
@@ -458,7 +482,8 @@ function StoryboardMedia({
           <i>매칭</i>
         </span>
       )}
-      <StoryboardCardActions onDuplicate={onDuplicate} onDelete={onDelete} move={move} />
+      <BundleSwapArrows move={move} />
+      <StoryboardCardActions onDuplicate={onDuplicate} onDelete={onDelete} move={move} canDelete={canDelete} />
     </>
   );
 }
@@ -523,7 +548,7 @@ function StoryboardCard({
   item, total, catalogs, colorOpts, matchClothing, clothingType,
   selected, locked, cardDrag, onSelect, onDuplicate, onDelete, addControl,
   move = null, microVariationIds, onShuffle = null, alignCaptionWithMoodGrid = false,
-  swapProps = null,
+  swapProps = null, canDelete = true,
 }) {
   const { block, index } = item;
   const missing = block.source !== 'mine' && !block.exampleId;
@@ -567,6 +592,7 @@ function StoryboardCard({
             onDuplicate={onDuplicate}
             onDelete={onDelete}
             move={move}
+            canDelete={canDelete}
           />
           {selected && <SelectionRing />}
         </CardDragSurface>
@@ -587,7 +613,7 @@ function StoryboardCard({
 function StoryboardFrame({
   items, total, catalogs, colorOpts, matchClothing, clothingType,
   selectedId, locked, dragFor, onSelect, onDuplicate, onDelete, addControl,
-  microVariationIds, moveFor = null, swapFor = null,
+  microVariationIds, moveFor = null, swapFor = null, canDeleteFor = null,
 }) {
   const colorway = items.every((item) => (
     item.block.colorwayGroupId
@@ -625,6 +651,7 @@ function StoryboardFrame({
                         onDuplicate={() => onDuplicate(item.block.id)}
                   onDelete={() => onDelete(item.block.id)}
                   move={moveFor?.(item.block) || null}
+                  canDelete={canDeleteFor ? canDeleteFor(item.block) : true}
                 />
                 {item.block.id === selectedId && <SelectionRing />}
               </CardDragSurface>
@@ -655,7 +682,7 @@ function StoryboardFrame({
 function StoryboardMoodGrid({
   items, total, catalogs, colorOpts, matchClothing, clothingType,
   selectedId, locked, dragFor, onSelect, onDuplicate, onDelete, addControl,
-  microVariationIds, moveFor = null, swapFor = null,
+  microVariationIds, moveFor = null, swapFor = null, canDeleteFor = null,
 }) {
   const captions = (row) => (
     <div className="sb-frame-captions">
@@ -698,6 +725,7 @@ function StoryboardMoodGrid({
                   onDuplicate={() => onDuplicate(item.block.id)}
                   onDelete={() => onDelete(item.block.id)}
                   move={moveFor?.(item.block) || null}
+                  canDelete={canDeleteFor ? canDeleteFor(item.block) : true}
                 />
                 {item.block.id === selectedId && <SelectionRing />}
               </CardDragSurface>
@@ -1287,7 +1315,7 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, shot, 
   );
 }
 
-function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, hasDetailImage, projectId, onChange, onAtomicChange, onRetryAtomicSave, requestedRecipe, onCancelRequestedRecipe, matchClothing, spaceContext, onChangeSpaceSet, onAddMine, onExampleDrag, hookStyle = null }) {
+function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, hasDetailImage, projectId, onChange, onAtomicChange, onRetryAtomicSave, requestedRecipe, onCancelRequestedRecipe, matchClothing, spaceContext, onChangeSpaceSet, onAddMine, onExampleDrag }) {
   const [matchOpen, setMatchOpen] = useState(false);
   const [pendingRecipe, setPendingRecipe] = useState(null);
   const [pendingChoice, setPendingChoice] = useState(null);
@@ -1507,7 +1535,6 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   const outerClosureState = closureOptions.some((option) => option.value === block.outerClosureState) ? block.outerClosureState : 'open';
   return (
     <div className="surface inspector">
-      {hookStyle && <HookStyleSection {...hookStyle} />}
       {isMine && !block.spaceGroupId ? (
         <>
           <div className="sb-exhead">
@@ -1828,78 +1855,81 @@ const hookStyleDescription = (style, colors) => (
     : HOOK_STYLE_DESCRIPTIONS[style]
 );
 
-function HookStyleSection({
-  frame, blocks, catalogs, colors, productName, saving, error, onSelectStyle,
-  clothingType, gender, isCutAvailable,
+/* '첫 화면 구성' 칩 — 섹션 헤더에 상시(2026-08-16 오너). 컷 인스펙터에서 뺐다.
+   스타일은 후킹 섹션 전체를 정하는 하나의 결정이라 컷 선택과 묶으면 안 된다:
+   컷을 눌러야만 나와서 어디 있는지 알기 어려웠고, 스타일을 바꾸면 슬롯 순서가 바뀌어
+   패널이 통째로 사라지는 막다른 화면이 됐다(자체 리뷰 high). 헤더에 붙이면 둘 다 사라진다.
+   구성 안 개별 삭제를 막았으므로 '컷 수를 줄이는 유일한 길'이기도 하다 — 항상 보여야 한다. */
+function HookStyleChip({
+  frame, catalogs, colors, saving, error, onSelectStyle, clothingType, gender, isCutAvailable,
 }) {
   const [open, setOpen] = useState(false);
-  const slots = frame.slotIds
-    .map((slotId) => blocks.find((block) => block.id === slotId))
-    .filter(Boolean);
-  const previewSrc = slots.map((block) => blockPreviewSrc(block, catalogs));
-  // 스타일 카드 3종의 대표 이미지 = 발행 카탈로그에서 스타일 슬롯 사양대로 고정 선정
-  // (2026-08-14 오너: 현재 보드 컷 대신 스타일 차이가 잘 보이는 고정 이미지).
-  // 카탈로그 순위 1번을 쓰므로 발행이 갈리지 않는 한 항상 같은 그림이다.
+  const wrapRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (event) => {
+      if (!wrapRef.current?.contains(event.target)) setOpen(false);
+    };
+    const onKey = (event) => { if (event.key === 'Escape') setOpen(false); };
+    document.addEventListener('pointerdown', onDown, true);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown, true);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+  // 대표 이미지 = 발행 카탈로그에서 스타일 슬롯 사양대로 고정 선정(2026-08-14 오너).
+  // 카탈로그 순위 1번이라 발행이 갈리지 않는 한 항상 같은 그림이다.
   const representativeThumb = (cutType, shot) => {
     const example = selectGenerationExamples(catalogs?.genExamples || [], {
       cutType, shot, clothingType, gender, appendSetOnly: cutType !== 'product',
     })[0];
-    return example ? generationExampleImageSources(example).src : previewSrc[0];
+    return example ? generationExampleImageSources(example).src : null;
   };
   const thumbFor = (style) => hookSlotPlan(style, { colors, isCutAvailable })
     .map((slot) => representativeThumb(slot.cutType, slot.shot));
   return (
-    <div className="insp-sec sb-hookpanel">
-      <label className="lbl">첫 화면 스타일</label>
+    <span className="sb-stylechip-wrap" ref={wrapRef}
+      onClick={(event) => event.stopPropagation()}>
       <button
         type="button"
-        className="sb-hookpanel-live"
+        className={'sb-stylechip' + (open ? ' on' : '')}
         aria-expanded={open}
+        aria-label="첫 화면 구성 바꾸기"
+        disabled={saving}
         onClick={() => setOpen((value) => !value)}
       >
-        <span className={`sb-hookpanel-sheet style-${frame.style}`}>
-          {slots.map((block, index) => (
-            <span key={block.id} className="sb-hookpanel-tile">
-              <img src={previewSrc[index]} alt="" loading="lazy" decoding="async" />
-              {frame.style === 'signature' && productName && (
-                <span className="sb-hooksheet-title small"><i>{productName}</i></span>
-              )}
-            </span>
-          ))}
-        </span>
-        <span className="sb-hookpanel-desc">
-          <b>{HOOK_STYLE_LABELS[frame.style]}</b>
-          <span>{hookStyleDescription(frame.style, colors)}</span>
-          {/* 바꿀 수 있다는 신호는 버튼 모양으로 준다 — 회색 잔글씨는 안 보인다(2026-08-16 오너). */}
-          <em className="sb-hookpanel-cta">
-            {open ? '닫기' : '스타일 바꾸기'}
-            <Icon name="chevDown" size={14} />
-          </em>
-        </span>
+        첫 화면 구성<i>:</i>
+        <b>{HOOK_STYLE_LABELS[frame.style]}</b>
+        <Icon name="chevDown" size={13} />
       </button>
       {open && (
-      <div className="sb-hookpanel-cards" role="group" aria-label="첫 화면 스타일">
-        {HOOK_STYLES.map((style) => (
-          <button
-            key={style}
-            type="button"
-            className={'sb-hookpanel-card' + (style === frame.style ? ' on' : '')}
-            aria-pressed={style === frame.style}
-            disabled={saving}
-            onClick={() => { onSelectStyle(style); setOpen(false); }}   /* 고르면 목록 접힘(2026-08-15 오너) */
-          >
-            <span className={`sb-hookpanel-thumb style-${style}`}>
-              {thumbFor(style).map((src, index) => (
-                <i key={index} style={{ backgroundImage: src ? `url("${src}")` : undefined }} />
-              ))}
-            </span>
-            <span className="sb-hookpanel-name">{HOOK_STYLE_LABELS[style]}</span>
-          </button>
-        ))}
-      </div>
+        <span className="sb-stylechip-menu" role="menu" aria-label="첫 화면 구성">
+          {HOOK_STYLES.map((style) => (
+            <button
+              key={style}
+              type="button"
+              role="menuitem"
+              className={'sb-stylechip-item' + (style === frame.style ? ' on' : '')}
+              aria-current={style === frame.style ? 'true' : undefined}
+              disabled={saving}
+              onClick={() => { onSelectStyle(style); setOpen(false); }}
+            >
+              <span className={`sb-stylechip-thumb style-${style}`}>
+                {thumbFor(style).map((src, index) => (
+                  <i key={index} style={{ backgroundImage: src ? `url("${src}")` : undefined }} />
+                ))}
+              </span>
+              <span className="sb-stylechip-text">
+                <b>{HOOK_STYLE_LABELS[style]}</b>
+                <small>{hookStyleDescription(style, colors)}</small>
+              </span>
+            </button>
+          ))}
+        </span>
       )}
-      {error && <div className="sb-save-error">{error}</div>}
-    </div>
+      {error && <span className="sb-stylechip-error">{error}</span>}
+    </span>
   );
 }
 
@@ -1927,6 +1957,7 @@ export function Storyboard() {
   const [exampleGender, setExampleGender] = useState(() => initialEntry?.exampleGender || null);
   const [hasDetailImage, setHasDetailImage] = useState(() => initialEntry?.hasDetailImage || false);
   const [productName, setProductName] = useState(() => initialEntry?.productName || '');
+  const [autosaveFailed, setAutosaveFailed] = useState(false);
   const [hookStyleSaving, setHookStyleSaving] = useState(false);
   const [hookStyleError, setHookStyleError] = useState(null);
   const shuffleTickRef = useRef(0);
@@ -2150,6 +2181,10 @@ export function Storyboard() {
     return sbSaveNow(pid, () => latestBlocks.current, options);
   };
   const saveNow = (pid) => flushLatest(pid);
+  // 저장이 다시 성공하면 배너를 거둔다.
+  const retryAutosave = () => flushLatest(projectId)
+    .then(() => setAutosaveFailed(false))
+    .catch(() => setAutosaveFailed(true));
   useLayoutEffect(() => {
     latestBlocks.current = blocks;
   }, [blocks]);
@@ -2162,7 +2197,9 @@ export function Storyboard() {
       return;
     }
     return scheduleStoryboardAutosave(saveTimer, () => {
-      flushLatest(projectId).catch(() => {});
+      // 자동저장 실패를 침묵시키지 않는다 — 서버가 4xx 로 거절하면 재전송도 없어서
+      // 그 세션의 저장이 통째로 죽는데 화면엔 아무 표시가 없었다(자체 리뷰 high 의 2차 피해).
+      flushLatest(projectId).catch(() => setAutosaveFailed(true));
     });
   }, [blocks, projectId]);
   // hidden/pagehide/unmount 모두 같은 latest snapshot을 keepalive로 직렬 체인에 enqueue한다.
@@ -2663,7 +2700,7 @@ export function Storyboard() {
   const SWAP_SLOT_FIELDS = [
     'sectionId', 'sectionRole', 'sectionTitle', 'sectionLayout', 'contentRole',
     'spaceGroupId', 'spaceVariation', 'spaceSetMemberOrder', 'setSelectionOrigin', 'refScope',
-    'layoutRowId', 'layoutRowVersion',
+    'layoutRowId', 'layoutRowVersion', 'colorwayGroupId', 'colorwayPairVersion',
     'hookFrameId', 'hookStyle', 'hookFrameVersion', 'hookSlotRole', 'hookTitleOverlay',
   ];
   const swapBlocks = (movingId, targetId) => {
@@ -2693,16 +2730,21 @@ export function Storyboard() {
      컷 종류 정규화와 제품 섹션 정리(matchIds·아우터 열림 제거)를 해 주는데, 자리만 맞바꾸는
      교환은 그 경로를 타지 않아 섹션에 안 맞는 컷이 남는다(자체 리뷰 지적). 섹션 간 이동은
      기존대로 '사이 자리'에 떨구는 삽입이 담당한다. */
-  const isSwappable = (id) => {
-    const block = blocks.find((entry) => entry.id === id);
-    // '내 사진'은 교환에서 뺀다 — 자리(프레임 슬롯) 표식이 옮겨 붙으면 그 슬롯이 영영
-    // 'source !== mine' 게이트를 못 넘어 첫 화면 스타일 패널이 사라진다(자체 리뷰).
-    // 순서 변경이 필요하면 기존대로 '사이 자리'에 떨구면 된다.
-    return !!block && block.source !== 'mine';
+  /* 덩어리 소속 표식 — 자리 교환은 **같은 덩어리끼리만** 허용한다.
+     낱장↔낱장(둘 다 null)은 되고, 세트 멤버↔바깥 컷은 막힌다: 바깥 컷이 세트 슬롯을 입으면
+     포즈 참조가 없어 서버가 400 으로 거절하고, 그 뒤 자동저장이 통째로 죽었다(자체 리뷰 high). */
+  const bundleKeyOf = (block) => block?.spaceGroupId || block?.hookFrameId || block?.layoutRowId || null;
+  const canSwapWith = (blockId) => {
+    if (!dragId || dragId === blockId || dragSpaceGroupId) return false;
+    const moving = blocks.find((entry) => entry.id === dragId);
+    const target = blocks.find((entry) => entry.id === blockId);
+    if (!moving || !target) return false;
+    if (moving.source === 'mine' || target.source === 'mine') return false;
+    if (bundleKeyOf(moving) !== bundleKeyOf(target)) return false;
+    // 섹션(렌더 그룹) 판정은 블록 하나로 정해지는 순수 함수 — 드래그 중 보드 전체를 훑지 않는다
+    // (dragover 마다 전체 스캔 2회 = 13컷이면 26회 블록 방문이었다).
+    return renderGroupKey(moving) === renderGroupKey(target);
   };
-  const canSwapWith = (blockId) => !!dragId && dragId !== blockId && !dragSpaceGroupId
-    && isSwappable(dragId) && isSwappable(blockId)
-    && renderKeyForBlockId(dragId) === renderKeyForBlockId(blockId);
   const swapTargetProps = (blockId) => ({
     isTarget: swapOverId === blockId,
     onDragOver: (event) => {
@@ -2727,7 +2769,10 @@ export function Storyboard() {
   });
   const renderKeyForBlockId = (id) => renderGroups(blocks)
     .find((group) => group.items.some((item) => item.block.id === id))?.key;
-  const onDropAt = (idx, targetSid, targetRole = null, targetSpaceGroupId = null, targetGroupKey = null) => (e) => {
+  const onDropAt = (
+    idx, targetSid, targetRole = null, targetSpaceGroupId = null, targetGroupKey = null,
+    { canAdd = true } = {},
+  ) => (e) => {
     e.preventDefault();
     e.stopPropagation();
     const exampleId = e.dataTransfer.getData('text/example-id') || dragExampleId;
@@ -2756,6 +2801,13 @@ export function Storyboard() {
     }
     if (exampleId) {
       setDragExampleId(null);
+      // 예시 드롭은 '새 컷 생성' 이라 컷 수·크레딧이 는다. 예비가 소진된 세트 안 자리는
+      // ＋ 버튼을 감췄으므로 이 경로도 같이 막아야 한다 — 안 막으면 갤러리에서 끌어다
+      // 놓는 것만으로 확인 없이 크레딧이 늘었다(자체 리뷰).
+      if (!canAdd) {
+        toast.push('이 세트에는 준비된 컷이 남아 있지 않아요');
+        return;
+      }
       addBlock(idx, targetSid, targetRole, targetSpaceGroupId, targetGroupKey, exampleId);
       return;
     }
@@ -2843,10 +2895,43 @@ export function Storyboard() {
   };
   // 6점 손잡이에 넘길 이동 능력 — 낱장·두 컷 구성·네 컷 구성이 같은 것을 쓴다.
   // 이동 범위는 자기가 속한 렌더 그룹 안(드래그와 같은 규칙).
+  /* 컷이 속한 '덩어리'의 형제들 — 첫 화면 구성(hookFrameId) · 색상 세트 등 행(layoutRowId) ·
+     장소세트(spaceGroupId). 낱장이면 null.
+     덩어리는 저장 계약상 **연속 run** 이라, 그 안의 컷을 배열에서 뽑아 다른 자리에 끼워 넣으면
+     행·세트가 끊긴다(자체 리뷰 high 3건의 공통 뿌리). 그래서 덩어리 안 이동은 '끼워넣기'가
+     아니라 **형제와 자리 교환**만 허용한다 — 교환은 run 을 그대로 두기 때문이다. */
+  const bundleSiblingsFor = (block, group) => {
+    if (!group) return null;
+    const key = block.spaceGroupId ? 'spaceGroupId'
+      : block.hookFrameId ? 'hookFrameId'
+        : block.layoutRowId ? 'layoutRowId' : null;
+    if (!key) return null;
+    return group.items.filter((entry) => entry.block[key] === block[key]);
+  };
+  /* 컷마다 줄 이동 능력.
+     · 덩어리 안 컷 → kind 'swap': 양옆 화살표로 형제와 자리 교환(덩어리 밖으로 못 나간다)
+     · 낱장 컷      → kind 'free': 6점 손잡이(끌기 + 앞뒤/맨앞뒤 메뉴)
+     모양이 다른 것이 곧 "어디까지 옮길 수 있는지"의 안내다(2026-08-16 오너). */
   const moveHandleFor = (block, group) => {
-    const pos = group ? group.items.findIndex((entry) => entry.block.id === block.id) : -1;
-    if (pos < 0 || group.items.length < 2 || locked) return null;
+    if (locked || !group) return null;
+    const siblings = bundleSiblingsFor(block, group);
+    if (siblings) {
+      const pos = siblings.findIndex((entry) => entry.block.id === block.id);
+      if (pos < 0 || siblings.length < 2) return null;
+      return {
+        kind: 'swap',
+        canPrev: pos > 0,
+        canNext: pos < siblings.length - 1,
+        onSwap: (step) => {
+          const partner = siblings[pos + step];
+          if (partner) swapBlocks(block.id, partner.block.id);
+        },
+      };
+    }
+    const pos = group.items.findIndex((entry) => entry.block.id === block.id);
+    if (pos < 0 || group.items.length < 2) return null;
     return {
+      kind: 'free',
       canMoveUp: pos > 0,
       canMoveDown: pos < group.items.length - 1,
       onMove: (mode) => (mode === 'first' || mode === 'last'
@@ -2854,6 +2939,11 @@ export function Storyboard() {
         : nudgeBlock(block.id, mode === 'prev' ? -1 : 1)),
     };
   };
+  /* 첫 화면 구성 슬롯은 낱장으로 못 지운다 — 컷 수는 '첫 화면 구성'이 정하는 값이라
+     4장 중 1장만 지우면 어떤 스타일에도 없는 3장짜리 손상 구성이 된다(2026-08-16 오너).
+     줄이려면 섹션 헤더의 구성 칩에서 두 컷·시그니처로 바꾼다. 장소세트 멤버는 빼도
+     run 이 유지되고 정당한 요구라 그대로 허용한다. */
+  const canDeleteBlock = (block) => !block?.hookFrameId;
 
   /* 렌더 그룹 아코디언 (UI 전용) */
   // 다중 열기 — 한 섹션을 펼쳐도 이미 펼친 섹션은 그대로 둔다(생성 전 전체 점검 동선).
@@ -2975,6 +3065,21 @@ export function Storyboard() {
     catalogs?.genExamples || [],
     { cutType, shot, clothingType, gender: boundGenderNow },
   ).length > 0;
+
+  /* '첫 화면 구성' 칩에 넘길 값 — 섹션 헤더에 상시로 붙으므로 **선택 컷과 무관**하다.
+     (구 방식: 슬롯 첫 컷을 골랐을 때만 인스펙터에 표시 → 스타일 전환으로 슬롯 순서가
+     바뀌면 패널이 사라지는 막다른 화면. 2026-08-16 오너 지시로 헤더 이동) */
+  const hookStyleChipProps = hookFrame ? {
+    frame: hookFrame,
+    catalogs,
+    colors: composeModeSeed.colors,
+    saving: hookStyleSaving,
+    error: hookStyleError,
+    onSelectStyle: applyHookStyleChoice,
+    clothingType,
+    gender: boundGenderNow,
+    isCutAvailable: hookCutAvailable,
+  } : null;
 
   // 스타일 전환(스펙 §2 전환 엔진) — 컷 재사용·부족분 생성·잔여 AI 컷 삭제·예시 재배정 후 즉시 저장.
   async function applyHookStyleChoice(style) {
@@ -3109,7 +3214,7 @@ export function Storyboard() {
           setDragOverSec(section.id);
           setDragOverSpaceGroupId(targetSpaceGroupId);
         }}
-        onDrop={onDropAt(idx, section.id, section.role, targetSpaceGroupId, group.key)}
+        onDrop={onDropAt(idx, section.id, section.role, targetSpaceGroupId, group.key, { canAdd })}
         onAdd={canAdd ? ((event) => {
           event.stopPropagation();
           addBlock(idx, section.id, section.role, targetSpaceGroupId, group.key, requestedExample);
@@ -3186,6 +3291,7 @@ export function Storyboard() {
             locked={locked}
             dragFor={(id) => ({ draggable: true, onDragStart: onDragStart(id), onDragEnd })}
             moveFor={(memberBlock) => moveHandleFor(memberBlock, group)}
+            canDeleteFor={canDeleteBlock}
             swapFor={(memberId) => swapTargetProps(memberId)}
             onSelect={selectCard}
             onDuplicate={duplicate}
@@ -3221,6 +3327,7 @@ export function Storyboard() {
           onDelete={() => remove(block.id)}
           addControl={addControl}
           move={moveHandleFor(block, group)}
+          canDelete={canDeleteBlock(block)}
           swapProps={swapTargetProps(block.id)}
           alignCaptionWithMoodGrid={section.role === SECTION_ROLES.HOOKING}
           microVariationIds={microVariationIds}
@@ -3302,6 +3409,12 @@ export function Storyboard() {
 
   const list = (
     <div className="sb-canvas-board">
+      {autosaveFailed && (
+        <div className="sb-save-error sb-autosave-error" role="alert">
+          <span>변경 내용을 저장하지 못했어요. 잠시 뒤 다시 시도해주세요.</span>
+          <button type="button" onClick={retryAutosave}>다시 저장</button>
+        </div>
+      )}
       <div className="sb-board-tools">
         {/* 구성컷 수는 사진 양(기본형/확장형) 바로 위 — 같은 결정의 맥락으로 묶는다(2026-08-14 오너). */}
         <div className="sb-board-lead">
@@ -3345,17 +3458,24 @@ export function Storyboard() {
               ]), { concurrency: 6 });
             }}
           >
-            <button
-              type="button"
-              className="sb-deck-header"
-              aria-expanded={open}
-              onClick={() => toggleRenderGroup(group.key)}
-            >
-              <span className="sb-deck-chevron" aria-hidden="true"><Icon name="chevDown" size={18} /></span>
-              <span className="sb-deck-index">{group.title}</span>
-              <span className="sb-deck-label">{group.label}</span>
+            {/* 헤더는 '펼치기 버튼 + 칩 + 컷 범위' 한 줄. 칩은 버튼 안에 못 넣으므로
+                (버튼 중첩은 무효 HTML) 형제로 두고 flex 로 나란히 세운다. */}
+            <div className="sb-deck-headrow">
+              <button
+                type="button"
+                className="sb-deck-header"
+                aria-expanded={open}
+                onClick={() => toggleRenderGroup(group.key)}
+              >
+                <span className="sb-deck-chevron" aria-hidden="true"><Icon name="chevDown" size={18} /></span>
+                <span className="sb-deck-index">{group.title}</span>
+                <span className="sb-deck-label">{group.label}</span>
+              </button>
+              {groupSection.role === SECTION_ROLES.HOOKING && hookStyleChipProps && (
+                <HookStyleChip {...hookStyleChipProps} />
+              )}
               <span className="sb-deck-range">{range}</span>
-            </button>
+            </div>
             <div className="sb-stack-collapse">
               <div>
                 {/* 후킹도 다른 섹션과 같은 스택(낱장 크기)으로 접힌다 — 흰 시트 예외 폐기(2026-08-16 오너). */}
@@ -3447,27 +3567,11 @@ export function Storyboard() {
   /* '첫 화면 스타일'은 상시 패널이 아니라 컷 인스펙터에 얹는다(오너 확정). 단 **구성의 첫 컷
      하나에서만** — 스타일은 후킹 섹션 전체 구성을 지배하는 하나의 결정이라, 슬롯마다 같은
      선택지를 띄우면 컷별 설정처럼 오해된다(2026-08-16 오너). 구성 밖 개별컷에도 뜨지 않는다. */
-  const hookStyleSection = hookFrame && selected
-    && hookFrame.slotIds[0] === selected.id && selected.source !== 'mine'
-    ? {
-      frame: hookFrame,
-      blocks,
-      catalogs,
-      colors: composeModeSeed.colors,
-      productName,
-      saving: hookStyleSaving,
-      error: hookStyleError,
-      onSelectStyle: applyHookStyleChoice,
-      clothingType,
-      gender: boundGenderNow,
-      isCutAvailable: hookCutAvailable,
-    } : null;
   const inspector = setPicker ? (
     <SpaceSetGallery mode={setPicker.mode} error={setPickerError} onChoose={chooseSpaceSet}
       gender={exampleGender} clothingType={clothingType} sectionRole={setPicker.targetRole || null}
       onClose={() => { setSetPicker(null); setSetPickerError(null); }} />
   ) : <Inspector key={selectedId} block={selected} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} exampleGender={exampleGender} hasDetailImage={hasDetailImage} projectId={projectId}
-    hookStyle={hookStyleSection}
     onChange={(p, options) => patch(selectedId, p, options)} onAtomicChange={(p, options) => atomicPatch(selectedId, p, options)} onRetryAtomicSave={retryAtomicSave} requestedRecipe={pendingSectionMove}
     onCancelRequestedRecipe={() => setPendingSectionMove(null)} matchClothing={matchClothing}
     spaceContext={selectedSpaceContext}

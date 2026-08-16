@@ -2385,26 +2385,6 @@
 }
 .sb-stack-empty { position: absolute; inset: 0; display: grid; place-items: center; font-size: 13px; }
 
-/* ---- 후킹 첫 화면 스타일 (스펙 2026-08-14) ----
-   접힘 흰 페이지 시트는 폐기(2026-08-16 오너) — 접힘은 다른 섹션과 같은 스택.
-   -title 은 인스펙터 '첫 화면 스타일' 미리보기가 계속 쓴다. */
-.sb-hooksheet-title {
-  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  padding: 12px; text-align: center;
-  /* Pretendard Bold, 단어 단위 줄바꿈으로 최대 2줄 (오너 확정 2026-08-14) */
-  font-family: var(--font-body);
-  color: #fff; font-size: 13px; font-weight: 700; letter-spacing: .1em; line-height: 1.55;
-  word-break: keep-all; overflow-wrap: break-word;
-  text-shadow: 0 1px 14px rgba(0, 0, 0, .35), 0 0 2px rgba(0, 0, 0, .2);
-}
-.sb-hooksheet-title i {
-  font-style: normal;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;               /* 길면 단어 단위로 끊어 최대 2줄 */
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.sb-hooksheet-title.small { font-size: 8.5px; letter-spacing: .06em; }
 
 /* 구 UI 복원(2026-08-15 오너 스크린샷) —
    세트 예비 컷: 다음 멤버 사진을 희미하게 깔고 '＋ 이 컷 추가'를 얹은 카드.
@@ -2482,68 +2462,65 @@
 
 /* '첫 화면 스타일' — 후킹 컷 인스펙터 상단 섹션(상시 패널 폐기, 2026-08-14 오너).
    미리보기 버튼을 누르면 아래로 스타일 3종 카드가 펼쳐진다. */
-.sb-hookpanel { margin-bottom: 4px; }
-.sb-hookpanel-live {
-  width: 100%;
-  border: 0; cursor: pointer;
-  border-radius: 12px; background: var(--bg-2);
-  box-shadow: inset 0 0 0 1px var(--ring);
-  padding: 14px; display: grid; justify-items: center; gap: 10px;
-  margin-bottom: 10px;
-  transition: background .14s, box-shadow .14s;
-}
-.sb-hookpanel-live:hover { background: var(--bg-1); box-shadow: inset 0 0 0 1px var(--ring-strong); }
-.sb-hookpanel-live:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.sb-hookpanel-sheet {
-  display: grid; gap: 0; width: fit-content;
-  padding: 8px; border-radius: 8px; background: #fff;
-  box-shadow: var(--elev-card);
-}
-.sb-hookpanel-sheet.style-signature { grid-template-columns: 118px; }
-.sb-hookpanel-sheet.style-pair { grid-template-columns: 96px 96px; }
-.sb-hookpanel-sheet.style-moodGrid { grid-template-columns: 96px 96px; }
-.sb-hookpanel-tile { position: relative; aspect-ratio: 3 / 4; overflow: hidden; background: var(--bg-2); }
-.sb-hookpanel-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.sb-hookpanel-sheet.style-signature .sb-hookpanel-tile img { transform: scale(1.35); transform-origin: 50% 24%; }
-.sb-hookpanel-desc { display: grid; gap: 3px; text-align: center; max-width: 250px; }
-.sb-hookpanel-desc b { font-size: 12.5px; font-weight: 700; }
-.sb-hookpanel-desc span { font-size: 11.5px; color: var(--fg-2); line-height: 1.6; }
-/* '스타일 바꾸기'는 잔글씨가 아니라 버튼 모양으로 — 바꿀 수 있다는 걸 한눈에(2026-08-16 오너). */
-.sb-hookpanel-desc em.sb-hookpanel-cta {
-  justify-self: center;
-  display: inline-flex; align-items: center; gap: 4px;
-  margin-top: 6px; padding: 5px 12px 5px 13px;
+/* '첫 화면 구성' 칩 — 섹션 헤더 한 줄(2026-08-16 오너: 인스펙터에서 헤더로 이동).
+   헤더는 [펼치기 버튼][칩][컷 범위] 로 나뉜다 — 버튼 안에 버튼을 못 넣기 때문. */
+.sb-deck-headrow { display: flex; align-items: baseline; gap: 10px; padding-right: 12px; }
+.sb-deck-headrow > .sb-deck-header { width: auto; flex: 0 1 auto; min-width: 0; }
+.sb-deck-headrow > .sb-deck-range { margin-left: auto; flex: none; }
+
+.sb-stylechip-wrap { position: relative; flex: none; align-self: center; }
+.sb-stylechip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 10px 5px 12px;
   border: 1px solid var(--sb-ink); border-radius: 999px;
-  background: #fff;
-  font-style: normal; font-size: 11.5px; font-weight: 700; color: var(--sb-ink);
+  background: #fff; color: var(--sb-ink);
+  font-size: 11.5px; font-weight: 700; white-space: nowrap; cursor: pointer;
   transition: background .16s, color .16s;
 }
-.sb-hookpanel-live:hover .sb-hookpanel-cta { background: var(--sb-ink); color: #fff; }
-.sb-hookpanel-live[aria-expanded="true"] .sb-hookpanel-cta svg { transform: rotate(180deg); }
-.sb-hookpanel-cta svg { transition: transform .2s var(--sb-ease); }
-.sb-hookpanel-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
-.sb-hookpanel-card {
-  border: 0; padding: 8px 8px 10px;
-  border-radius: 12px; background: var(--bg-2);
-  box-shadow: inset 0 0 0 1px var(--ring);
-  text-align: center; cursor: pointer;
-  transition: box-shadow .14s, background .14s;
+.sb-stylechip i { font-style: normal; margin: 0 1px 0 -1px; color: var(--sb-ink-3); }
+.sb-stylechip b { font-weight: 700; color: var(--sb-accent-ink); }
+.sb-stylechip:hover:not(:disabled), .sb-stylechip.on { background: var(--sb-ink); color: #fff; }
+.sb-stylechip:hover:not(:disabled) b, .sb-stylechip.on b,
+.sb-stylechip:hover:not(:disabled) i, .sb-stylechip.on i { color: #fff; }
+.sb-stylechip:disabled { opacity: .5; cursor: default; }
+.sb-stylechip:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.sb-stylechip svg { transition: transform .2s var(--sb-ease); }
+.sb-stylechip.on svg { transform: rotate(180deg); }
+
+.sb-stylechip-menu {
+  position: absolute; z-index: 30; left: 0; top: calc(100% + 7px);
+  display: grid; gap: 2px; width: max-content; min-width: 232px; padding: 6px;
+  border-radius: 12px; background: #fff;
+  box-shadow: 0 0 0 1px var(--sb-hair-2), 0 12px 30px -8px rgba(23, 25, 31, .32);
 }
-.sb-hookpanel-card:hover:not(:disabled) { background: var(--bg-1); }
-.sb-hookpanel-card:disabled { opacity: .55; cursor: default; }
-.sb-hookpanel-card.on { background: #fff; box-shadow: inset 0 0 0 1.5px var(--sb-accent-ink), var(--elev-card); }
-.sb-hookpanel-card:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
-.sb-hookpanel-thumb {
-  display: grid; gap: 1px; width: 100%; aspect-ratio: 4 / 3.4;
-  border-radius: 7px; overflow: hidden;
-  padding: 4px; background: #fff; box-shadow: inset 0 0 0 1px var(--ring);
-  margin-bottom: 7px;
+.sb-stylechip-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border: 0; border-radius: 9px;
+  background: transparent; cursor: pointer; text-align: left;
 }
-.sb-hookpanel-thumb.style-signature { grid-template-columns: 1fr; padding: 4px 15px; }
-.sb-hookpanel-thumb.style-pair { grid-template-columns: 1fr 1fr; }
-.sb-hookpanel-thumb.style-moodGrid { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
-.sb-hookpanel-thumb i { display: block; background-size: cover; background-position: top center; background-color: var(--bg-2); }
-.sb-hookpanel-name { display: block; font-size: 11.5px; font-weight: 700; letter-spacing: -.01em; }
+.sb-stylechip-item:hover:not(:disabled) { background: var(--bg-1, #f4f4f6); }
+.sb-stylechip-item.on { background: #eef4fb; }
+.sb-stylechip-item:disabled { opacity: .5; cursor: default; }
+.sb-stylechip-item:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.sb-stylechip-thumb {
+  display: grid; gap: 1px; flex: none;
+  width: 30px; height: 24px; padding: 1px; border-radius: 4px; background: var(--sb-hair);
+}
+.sb-stylechip-thumb i {
+  background-color: var(--bg-2); background-size: cover; background-position: center 22%;
+  border-radius: 2px;
+}
+.sb-stylechip-thumb.style-signature { grid-template-columns: 1fr; }
+.sb-stylechip-thumb.style-pair { grid-template-columns: 1fr 1fr; }
+.sb-stylechip-thumb.style-moodGrid { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.sb-stylechip-text { display: grid; gap: 1px; min-width: 0; }
+.sb-stylechip-text b { font-size: 12.5px; font-weight: 700; color: var(--sb-ink); }
+.sb-stylechip-text small { font-size: 11px; font-weight: 500; color: var(--fg-3); }
+.sb-stylechip-item.on .sb-stylechip-text b { color: var(--sb-accent-ink); }
+.sb-stylechip-error {
+  position: absolute; left: 0; top: calc(100% + 6px); white-space: nowrap;
+  font-size: 11px; font-weight: 600; color: var(--accent-error, #d92d20);
+}
 
 /* 보드 상단 도구줄 — 좌측(구성컷 수 + 사진 양)과 우측 전체 펼치기/접기.
    우측 버튼은 좌측 pill 줄과 아랫선을 맞춘다. */
@@ -2730,6 +2707,28 @@
   background: rgba(255, 255, 255, .94);
   box-shadow: 0 1px 4px rgba(0, 0, 0, .15);
 }
+/* 덩어리 안 컷의 자리 교환 화살표 — 사진 양옆, 호버 시 노출(2026-08-16 오너).
+   6점 손잡이(자유 이동)와 모양이 달라서 "여긴 덩어리 안이라 옆자리와만 바꾼다"가 전달된다. */
+.sb-swap-arrows {
+  position: absolute; inset: 0; z-index: 5;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 4px; opacity: 0; transition: opacity .16s; pointer-events: none;
+}
+.sb-cutcard:hover .sb-swap-arrows, .sb-cutcard:focus-within .sb-swap-arrows,
+.sb-frame-half:hover .sb-swap-arrows, .sb-frame-half:focus-within .sb-swap-arrows { opacity: 1; }
+.sb-swap-arrow {
+  pointer-events: auto;
+  width: 24px; height: 24px; display: grid; place-items: center;
+  border: 0; border-radius: 999px; padding: 0 0 2px;
+  background: #fff; color: var(--sb-ink);
+  box-shadow: 0 0 0 1px var(--sb-hair), 0 1px 4px rgba(23, 25, 31, .2);
+  font-size: 15px; line-height: 1; cursor: pointer;
+  transition: transform .14s var(--sb-ease), box-shadow .14s;
+}
+.sb-swap-arrow:hover:not(:disabled) { transform: scale(1.1); box-shadow: 0 0 0 1px var(--sb-hair-2), 0 2px 8px rgba(23, 25, 31, .28); }
+.sb-swap-arrow:disabled { opacity: 0; pointer-events: none; }
+.sb-swap-arrow:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
 .sb-canvas-actions button > svg { position: relative; z-index: 1; }
 .sb-canvas-actions button:focus-visible { outline: 2px solid var(--focus); }
 
@@ -3240,3 +3239,19 @@
   justify-content: center; background: rgba(14,13,20,.4); backdrop-filter: blur(3px); padding: 24px; }
 .ed-genoverlay .surface { max-width: 420px; width: 100%; }
 @media (prefers-reduced-motion: reduce) { .ed-genwait-shim { animation: none !important; } }
+
+/* 묶음 울타리 — 두 컷·네 컷 구성은 "한 덩어리"가 눈에 안 보여서 낱장으로 빼려다 사고가 났다.
+   장소세트(.sb-tray)와 같은 결의 얇은 테두리만 두르고 라벨은 붙이지 않는다(2026-08-16 오너). */
+.sb-grid-unit.sb-frame-unit {
+  padding: 10px;
+  border: 1px solid var(--sb-hair-2);
+  border-radius: 14px;
+}
+
+/* 자동저장 실패 배너 — 조용히 죽는 저장을 사용자에게 알린다(2026-08-16 자체 리뷰). */
+.sb-autosave-error { max-width: 920px; }
+.sb-autosave-error button {
+  flex: none; border: 0; padding: 4px 10px; border-radius: 999px;
+  background: var(--accent-error, #d92d20); color: #fff;
+  font-size: 11.5px; font-weight: 700; cursor: pointer;
+}
