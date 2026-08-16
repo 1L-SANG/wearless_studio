@@ -460,8 +460,8 @@ test('one insert control handles empty, terminal, and set-internal additions', (
   const cssSource = readFileSync(new URL('../../src/styles/features.css', import.meta.url), 'utf8');
   assert.match(storyboardSource, /nextSpaceSetMemberReservation\(set, unit\.items\.map/);
   assert.equal((storyboardSource.match(/<StoryboardInsertControl/g) || []).length, 1);
-  // 세트 안 추가 존은 예비 멤버가 남아 있을 때만 — 소진 뒤 일반 컷 추가는 섹션 존이 담당(2026-08-14 오너 결정).
-  assert.match(storyboardSource, /targetSpaceGroupId && !reservation\s*\?\s*null/);
+  // 세트 안 ＋(직접 추가)는 예비 멤버가 남았을 때만 — 자리 자체는 드롭용으로 항상 살아 있다(2026-08-16 오너).
+  assert.match(storyboardSource, /canAdd: !\(targetSpaceGroupId && !reservation\)/);
   assert.match(storyboardSource, /renderUnit\(spaceUnit, group, unit\.spaceGroupId, reservation\)/);
   assert.match(storyboardSource, /insertControl\(lastItem\.index, group, null, null, 'end'\)/);
   assert.match(storyboardSource, /!group\.items\.length && insertControl\(groupSection\.start, group, null, null, 'empty'\)/);

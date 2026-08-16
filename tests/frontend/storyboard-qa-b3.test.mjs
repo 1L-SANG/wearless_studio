@@ -278,8 +278,9 @@ test('N5 generation-example dataTransfer reaches an addzone and inserts after th
   assert.match(storyboardSource, /event\.dataTransfer\.setData\('text\/example-id', example\.id\)/);
   assert.match(storyboardSource, /const exampleId = e\.dataTransfer\.getData\('text\/example-id'\) \|\| dragExampleId/);
   assert.match(storyboardSource, /addBlock\(idx, targetSid, targetRole, targetSpaceGroupId, targetGroupKey, exampleId\)/);
-  // 2026-08-14: 세트 안 추가 존은 예비 멤버가 남아 있을 때만 — 소진 시 null로 숨긴다.
-  assert.match(storyboardSource, /const addControl = targetSpaceGroupId && !reservation\s*\?\s*null\s*:\s*insertControl\(lastItem\.index, group, targetSpaceGroupId, reservation\)/);
+  // 2026-08-16: 세트 안 '사이 자리'는 언제나 드롭을 받고, ＋(직접 추가)만 예비 멤버가 남았을 때 열린다.
+  assert.match(storyboardSource, /canAdd: !\(targetSpaceGroupId && !reservation\)/);
+  assert.match(storyboardSource, /onAdd=\{canAdd \? \(\(event\) =>/);
   assert.match(storyboardSource, /const m = \[\.\.\.blocks\]; m\.splice\(idx, 0, nb\)/);
 });
 
