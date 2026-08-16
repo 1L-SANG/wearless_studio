@@ -2693,7 +2693,15 @@ export function Storyboard() {
      컷 종류 정규화와 제품 섹션 정리(matchIds·아우터 열림 제거)를 해 주는데, 자리만 맞바꾸는
      교환은 그 경로를 타지 않아 섹션에 안 맞는 컷이 남는다(자체 리뷰 지적). 섹션 간 이동은
      기존대로 '사이 자리'에 떨구는 삽입이 담당한다. */
+  const isSwappable = (id) => {
+    const block = blocks.find((entry) => entry.id === id);
+    // '내 사진'은 교환에서 뺀다 — 자리(프레임 슬롯) 표식이 옮겨 붙으면 그 슬롯이 영영
+    // 'source !== mine' 게이트를 못 넘어 첫 화면 스타일 패널이 사라진다(자체 리뷰).
+    // 순서 변경이 필요하면 기존대로 '사이 자리'에 떨구면 된다.
+    return !!block && block.source !== 'mine';
+  };
   const canSwapWith = (blockId) => !!dragId && dragId !== blockId && !dragSpaceGroupId
+    && isSwappable(dragId) && isSwappable(blockId)
     && renderKeyForBlockId(dragId) === renderKeyForBlockId(blockId);
   const swapTargetProps = (blockId) => ({
     isTarget: swapOverId === blockId,
@@ -3239,7 +3247,13 @@ export function Storyboard() {
             event.stopPropagation();
             const first = unit.items[0].block;
             setSelectedId(first.id);
-            openSetPicker({ mode: 'replace', spaceGroupId: unit.spaceGroupId });
+            // 교체도 그 섹션이 소화하는 세트만 보여야 한다 — 안 넘기면 필터가 무효가 되어
+            // 스타일링 칸을 호리존 세트로 바꿔 컷이 통째로 비는 사고가 그대로 남는다(자체 리뷰).
+            openSetPicker({
+              mode: 'replace',
+              spaceGroupId: unit.spaceGroupId,
+              targetRole: sectionForGroup(group).role,
+            });
           }}>장소 세트 변경</button>
         </div>
         <div className="sb-tray-grid">
@@ -3458,7 +3472,13 @@ export function Storyboard() {
     onCancelRequestedRecipe={() => setPendingSectionMove(null)} matchClothing={matchClothing}
     spaceContext={selectedSpaceContext}
     onChangeSpaceSet={() => {
-      if (selected?.spaceGroupId) openSetPicker({ mode: 'replace', spaceGroupId: selected.spaceGroupId });
+      if (selected?.spaceGroupId) {
+        openSetPicker({
+          mode: 'replace',
+          spaceGroupId: selected.spaceGroupId,
+          targetRole: selected.sectionRole || null,
+        });
+      }
     }}
     onAddMine={addMineBlock}
     onExampleDrag={(value) => {

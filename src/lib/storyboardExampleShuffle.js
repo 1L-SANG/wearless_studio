@@ -79,7 +79,16 @@ export function shuffleSectionExamples(blocks, {
       delete reset.exampleChoice;
       return reset;
     });
-    return assignGenerationExamples(cleared, { catalog, product, gender, avoidByBlockId }).blocks;
+    const rerolled = assignGenerationExamples(cleared, {
+      catalog, product, gender, avoidByBlockId,
+    }).blocks;
+    // 무변경이면 원본 참조를 그대로 돌려준다 — 호출부가 안내 토스트를 띄우고 되돌리기
+    // 배너·자동저장이 헛돌지 않는다(자체 리뷰). 두 경우:
+    //  · 후보가 하나뿐이라 같은 예시가 되돌아옴
+    //  · 이 조건에 발행된 예시가 아예 없어 배정기가 못 채움 → 비운 채로 두면 빈 카드가 된다
+    const after = rerolled.find((block) => block.id === onlyBlockId);
+    if (!after?.exampleId || after.exampleId === target.exampleId) return next;
+    return rerolled;
   }
 
   // ① 공간 세트 — 세트 단위 교체(같은 성별·의류 종류·세트 타입의 다른 발행 세트로).

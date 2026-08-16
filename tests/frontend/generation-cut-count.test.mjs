@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { uniqueGenerationCutCount } from '../../src/lib/generationCutCount.js';
 import { shuffleSectionExamples } from '../../src/lib/storyboardExampleShuffle.js';
+import genExamples from '../../src/data/genExamples.json' with { type: 'json' };
 import { entryStylingMembers } from '../../src/lib/storyboardEntryPlacement.js';
 import {
   spaceSetGroupId,
@@ -85,15 +86,37 @@ test('낱개 셔플은 그 컷만 바꾸고 나머지는 손대지 않는다', (
 });
 
 test('낱개 셔플은 직접 고른 예시도 바꾼다 — 그 컷을 지목한 명시 조작이기 때문', () => {
-  const blocks = [ai('pinned', { exampleSelectionOrigin: 'user', exampleChoice: 'manual' })];
+  // 실제 발행 카탈로그를 써야 재추첨이 실제로 일어난다(빈 카탈로그로는 뽑을 후보가 없어
+  // "무변경"이 정답이다 — 아래 별도 테스트에서 그 경계를 따로 고정한다).
+  const seed = genExamples.find((example) => (
+    example.cutType === 'styling' && example.shot === 'full' && !example.setOnly
+  ));
+  assert.ok(seed, '스타일링 풀샷 예시가 카탈로그에 있어야 한다');
+  const blocks = [ai('pinned', {
+    exampleId: seed.id, exampleSelectionOrigin: 'user', exampleChoice: 'manual',
+  })];
   const next = shuffleSectionExamples(blocks, {
-    sectionId: 'sec-a', catalog: [], product: { clothingType: 'top' }, gender: 'women',
+    sectionId: 'sec-a', catalog: genExamples, product: { clothingType: 'top' }, gender: 'women',
     onlyBlockId: 'pinned',
   });
-  assert.notEqual(next, blocks);
+  assert.notEqual(next, blocks, '고정 컷도 재추첨 대상이다');
+  assert.ok(next[0].exampleId, '예시를 비운 채 두지 않는다');
   // 'manual' 표식이 남으면 배정기가 건너뛰어 예시가 빈 채로 남는다.
   assert.ok(!('exampleChoice' in next[0]), '자동 배정으로 되돌린다');
-  assert.equal(next[0].exampleSelectionOrigin ?? null, null);
+  // 셔플로 새로 뽑힌 예시는 더는 '사용자 고정'이 아니다 — 다음 섹션 셔플의 대상이 된다.
+  assert.equal(next[0].exampleSelectionOrigin, 'auto');
+});
+
+test('낱개 셔플이 뽑을 후보가 없으면 컷을 비우지 않고 원본을 돌려준다', () => {
+  // 조건이 바뀌어 저장된 예시가 더는 발행되지 않는 컷에서 셔플을 눌러도, 예시를 지운 채
+  // 빈 카드로 남기면 안 된다 — 호출부가 "바꿀 수 있는 예시가 없어요"로 안내한다(자체 리뷰).
+  const blocks = [ai('stale', { exampleId: 'ex-gone' })];
+  const next = shuffleSectionExamples(blocks, {
+    sectionId: 'sec-a', catalog: [], product: { clothingType: 'top' }, gender: 'women',
+    onlyBlockId: 'stale',
+  });
+  assert.equal(next, blocks, '원본 참조 그대로 = 무변경');
+  assert.equal(next[0].exampleId, 'ex-gone', '예시가 비워지지 않는다');
 });
 
 test('낱개 셔플 대상이 아니면 원본을 그대로 돌려준다 — 세트 멤버·내 사진·예시 없는 컷', () => {
