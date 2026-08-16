@@ -2065,6 +2065,21 @@
     conic-gradient(from var(--gen-ang), var(--glow-sky), var(--glow-sage), var(--glow-sun), var(--glow-mauve), var(--glow-sky)) border-box; }
 @keyframes genRingSpin { to { --gen-ang: 360deg; } }
 @media (prefers-reduced-motion: reduce) { .btn-glowring { animation: none; } }
+/* 같은 CTA 와 **모양·크기·테두리가 같고 색만 반대**인 버튼(오너 2026-08-16).
+   높이·라운드·글자 굵기는 .btn-primary 를 그대로 쓰고, 회전 glow 테두리도 그대로 둔 채
+   채움만 흰색·글자만 잉크로 뒤집는다. 두 겹 배경(padding-box 채움 + border-box 링)이라
+   채움 쪽 그라디언트만 갈아 끼우면 된다. */
+.btn-primary.btn-invert {
+  color: var(--fg-1);
+  background:
+    linear-gradient(#fff, #fff) padding-box,
+    conic-gradient(from var(--gen-ang), var(--glow-sky), var(--glow-sage), var(--glow-sun), var(--glow-mauve), var(--glow-sky)) border-box;
+}
+.btn-primary.btn-invert:hover:not([disabled]) {
+  background:
+    linear-gradient(var(--bg-2), var(--bg-2)) padding-box,
+    conic-gradient(from var(--gen-ang), var(--glow-sky), var(--glow-sage), var(--glow-sun), var(--glow-mauve), var(--glow-sky)) border-box;
+}
 
 /* 변형 기준(모델 착용 컷 / 제품 사진) — cutType 미상이면 질문 카드, 알면 한 줄 안내 */
 .vary-kind { background: var(--bg-2); border-radius: var(--r-4); padding: 12px; margin-bottom: 14px; }

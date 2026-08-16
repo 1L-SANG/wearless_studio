@@ -354,9 +354,10 @@ function VaryPanel({ catalogs, source, onGenerate }) {
           </div>
         </div>
       )}
-      {/* 같은 장소 이미지 생성 — '비슷한 컷 만들기'와 같은 버튼이되 흰 배경·검정 글씨로
-          두 방식의 무게를 나눈다(오너 2026-08-16). */}
-      <Button variant="ghost" block icon="sparkles" onClick={generateSamePlace} style={{ marginTop: 14 }}>
+      {/* 같은 장소 이미지 생성 — 아래 CTA 와 **모양·크기·테두리가 같고 색만 반대**다
+          (오너 2026-08-16). 그래서 variant 는 primary 그대로 두고 채움/글자만 뒤집는다 —
+          ghost 로 두면 높이·라운드·회전 테두리가 달라져 다른 종류의 버튼처럼 보인다. */}
+      <Button variant="primary" block icon="sparkles" className="btn-glowring btn-invert" onClick={generateSamePlace} style={{ marginTop: 14 }}>
         {n > 0 ? `같은 장소 이미지 생성 · ${n}개 변경 · ${cost} 크레딧` : `같은 장소 이미지 생성 · ${cost} 크레딧`}
       </Button>
       <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={generateSimilar} style={{ marginTop: 8 }}>
