@@ -1,12 +1,13 @@
 /* =============================================================
-   features/editor/presets/textPresets.js — 텍스트 프리셋 4종
+   features/editor/presets/textPresets.js — 텍스트 프리셋 3종
    값의 정본은 docs/superpowers/specs/2026-08-04-editor-text-slots-design.md
    (셀러 텍스트 568건 실측 타이포 위계). 여기서 임의로 바꾸면 텍스트 자리
    슬롯 구현(대기 중)이 같은 값을 읽을 때 결이 갈라진다 — 자동 배치 쪽
    (editorWaitSkeleton·page_assembler)은 아직 이 값을 안 읽는다.
 
-   요소는 빈 텍스트 + textSizing 'auto'로 만든다(4e53fe7의 즉시 입력 UX).
-   샘플 문구를 el.text에 넣지 않으므로 안내 문구가 정본으로 둔갑할 경로가 없다.
+   요소는 기본 문구(DEFAULT_TEXT_BODY) + textSizing 'auto'로 만든다. 빈 상자로 시작하던
+   예전 방식(4e53fe7)은 "어디에 생겼는지·얼마나 큰지 안 보인다"는 오너 지적으로 되돌렸다
+   (2026-08-16). 대신 첫 편집에서 그 문구가 통째로 선택돼 타이핑하면 갈아 끼워진다.
    `sample`·`previewSize`는 패널 목록 표시용일 뿐 콘텐츠가 아니다.
 
    node --test 에서 직접 import 되므로 Vite 별칭(@/) 대신 상대 경로만 쓴다.
@@ -47,18 +48,13 @@ export const DEFAULT_TEXT_PRESET = 'subtitle';
    문구가 통째로 선택되므로(Editor의 FRESH_TEXT_IDS) 그냥 타이핑하면 갈아 끼워진다. */
 export const DEFAULT_TEXT_BODY = '내용을 입력하세요.';
 
-/* 위계를 정하지 않고 그냥 한 상자 놓고 싶을 때(오너 2026-08-16: "그냥 텍스트 추가").
-   추천 3종과 나란히 두면 "어느 게 일반이지"가 흐려져 목록에는 넣지 않고, 별도 항목으로만
-   제공한다 — 빠른 스타일 칩도 위계 3종만 유지한다. */
-export const PLAIN_TEXT_PRESET = Object.freeze({
-  key: 'plain', label: '텍스트 상자', hint: '스타일 없이 기본 크기', previewSize: 15,
-  style: { size: 18, weight: 400, color: TEXT_INK },
-});
+/* '텍스트 추가' 버튼(스타일을 안 고르고 그냥 하나 넣기)은 별도 프리셋을 만들지 않고 이
+   기본값을 쓴다 — 크기를 하나 더 못박으면 그것도 결국 "고정된 네 번째 스타일"이라
+   오너가 물렸던 방식이 된다(2026-08-16). */
 
 /** 키 → 프리셋. 모르는 키·미지정은 기본 프리셋 — 요소 생성과 토스트 라벨이
     반드시 이 하나의 폴백을 공유해야 "만든 것"과 "말한 것"이 안 갈라진다. */
 export function textPresetOf(key) {
-  if (key === PLAIN_TEXT_PRESET.key) return PLAIN_TEXT_PRESET;
   return TEXT_PRESETS.find((p) => p.key === key) || TEXT_PRESETS.find((p) => p.key === DEFAULT_TEXT_PRESET);
 }
 
@@ -80,9 +76,9 @@ export function buildTextPresetElement(key) {
   return { id: uid('el'), type: 'text', x: 60, y: 80, textSizing: 'auto', ...textPresetBox(key) };
 }
 
-/** 끌어다 놓은 자리 → 새 텍스트 요소의 좌표(블록 기준). 요소는 캐럿 씨앗(w=12)이라
-    포인터가 가리킨 곳이 글자가 시작될 자리다: x는 포인터 그대로, y는 글줄 높이의
-    절반만 올려 포인터가 줄 한가운데 오게 한다. 블록 밖으로는 못 나간다 — 경계 밖
+/** 끌어다 놓은 자리 → 새 텍스트 요소의 좌표(블록 기준). 포인터가 가리킨 곳이 글자가
+    시작될 자리다: x는 포인터 그대로, y는 글줄 높이의 절반만 올려 포인터가 줄 한가운데
+    오게 한다(드래그 그림의 잡는 점과 같은 기준). 블록 밖으로는 못 나간다 — 경계 밖
     요소는 화면에 아예 안 보여서 "놨는데 아무 일도 없다"로 보이기 때문(오너 8/16). */
 export function textPresetDropPlacement({ x, y, w = 12, h = 24, blockW = 0, blockH = 0 }) {
   const clamp = (value, max) => Math.round(Math.min(Math.max(0, value), max > 0 ? max : Math.max(0, value)));

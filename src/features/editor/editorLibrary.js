@@ -645,25 +645,6 @@ export function buildObjectPreset(presetId, { x = 120, y = 120, idFn }) {
   }));
 }
 
-/** 추천 오브젝트 썸네일용 — 실제로 만들어질 요소를 그대로 뽑아, 원점(0,0) 기준
-    바운딩 박스와 함께 돌려준다. 패널 아이콘을 따로 그리면 실물과 갈라지므로
-    (선화 아이콘 시절 오너 지적, 8/16) 미리보기도 이 빌더 하나만 본다.
-    id는 결정적 문자열 — 미리보기는 저장되지 않으니 uid가 필요 없고, 같은 결과가
-    나와야 리렌더가 값싸다. */
-export function objectPresetPreview(presetId) {
-  let seq = 0;
-  const elements = buildObjectPreset(presetId, { x: 0, y: 0, idFn: (prefix) => `prev-${presetId}-${prefix}-${(seq += 1)}` });
-  const minX = Math.min(...elements.map((element) => element.x));
-  const minY = Math.min(...elements.map((element) => element.y));
-  const maxX = Math.max(...elements.map((element) => element.x + element.w));
-  const maxY = Math.max(...elements.map((element) => element.y + element.h));
-  return {
-    width: Math.max(1, maxX - minX),
-    height: Math.max(1, maxY - minY),
-    elements: elements.map((element) => ({ ...element, x: element.x - minX, y: element.y - minY })),
-  };
-}
-
 export function objectPresetInitialSelectionIds(presetId, elements) {
   const ids = (elements || []).map((element) => element.id).filter(Boolean);
   return presetId === 'qa-bubbles' ? ids.slice(0, 1) : ids;

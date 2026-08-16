@@ -9,7 +9,6 @@ import {
   buildImageBlock,
   buildObjectPreset,
   colorWithOpacity,
-  objectPresetPreview,
   decodeWardrobeImage,
   encodeWardrobeImage,
   normalizeHexColor,
@@ -481,34 +480,4 @@ test('wardrobe drag payload accepts valid images and rejects malformed values', 
   });
   assert.equal(decodeWardrobeImage('{oops'), null);
   assert.equal(decodeWardrobeImage(JSON.stringify({ src: '' })), null);
-});
-
-
-/* ---------- 추천 오브젝트 썸네일 (오너 2026-08-16: 실제 블록에서의 모습으로) ---------- */
-
-test('썸네일 미리보기는 실제로 만들어질 요소 그대로다 — 따로 그린 그림이 아니다', () => {
-  for (const item of OBJECT_LIBRARY_ITEMS) {
-    const preview = objectPresetPreview(item.id);
-    const real = buildObjectPreset(item.id, { x: 0, y: 0, idFn: seqId() });
-    assert.equal(preview.elements.length, real.length, `${item.id}: 요소 개수가 같아야 한다`);
-    assert.deepEqual(preview.elements.map((element) => element.type), real.map((element) => element.type));
-    assert.deepEqual(preview.elements.map((element) => element.text), real.map((element) => element.text),
-      '문구도 실제와 같아야 "이런 게 나온다"가 거짓말이 되지 않는다');
-    assert.deepEqual(preview.elements.map((element) => element.fill), real.map((element) => element.fill));
-  }
-});
-
-test('썸네일 좌표는 원점 기준 — 어떤 칸에서도 잘리지 않게 통째로 담긴다', () => {
-  for (const item of OBJECT_LIBRARY_ITEMS) {
-    const { width, height, elements } = objectPresetPreview(item.id);
-    assert.ok(width > 0 && height > 0, `${item.id}: 크기가 있어야 한다`);
-    assert.equal(Math.min(...elements.map((element) => element.x)), 0);
-    assert.equal(Math.min(...elements.map((element) => element.y)), 0);
-    assert.equal(Math.max(...elements.map((element) => element.x + element.w)), width);
-    assert.equal(Math.max(...elements.map((element) => element.y + element.h)), height);
-  }
-});
-
-test('썸네일은 같은 입력에 같은 결과 — 리렌더마다 id가 흔들리지 않는다', () => {
-  assert.deepEqual(objectPresetPreview('label-badge'), objectPresetPreview('label-badge'));
 });

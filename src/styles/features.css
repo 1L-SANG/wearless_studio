@@ -1639,29 +1639,26 @@
 .text-preset-item:active { cursor: grabbing; }
 .text-preset-item .tp-sample { white-space: nowrap; }
 .text-preset-item .tp-meta { font-size: 11px; color: var(--fg-3); text-align: right; line-height: 1.5; flex: none; }
-/* 위계 없는 '텍스트 상자' — 추천 3종 아래 구분선 한 칸(2026-08-16 오너). 추천 카드와
-   같은 무게로 보이면 무엇이 기본인지 흐려져, 점선 테두리의 가벼운 행으로 둔다. */
-.text-preset-plain { display: flex; align-items: center; gap: 10px; margin-top: 4px; padding: 10px 12px;
-  border: 1px dashed var(--ring-strong); border-radius: var(--r-4); background: transparent;
-  cursor: pointer; text-align: left; font-family: inherit; transition: border-color .14s, background .14s; }
-.text-preset-plain:hover { border-color: var(--fg-2); background: var(--bg-2); }
-.text-preset-plain:active { cursor: grabbing; }
-.text-preset-plain .tpp-glyph { flex: none; width: 26px; height: 26px; display: grid; place-items: center;
-  border-radius: var(--r-3); background: var(--bg-2); color: var(--fg-1); font-size: 15px; font-weight: 600; }
-.text-preset-plain .tpp-copy { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.text-preset-plain .tpp-copy b { font-size: 12.5px; font-weight: 600; color: var(--fg-1); }
-.text-preset-plain .tpp-copy em { font-size: 11px; font-style: normal; color: var(--fg-3); }
-.text-preset-plain .tpp-plus { margin-left: auto; color: var(--fg-3); font-size: 13px; }
-/* 드래그 중 커서를 따라다니는 상자 = 실제로 놓일 텍스트 상자(패널 카드가 아니라).
-   화면 밖에 두고 브라우저가 스냅샷만 떠 가게 한다. */
+/* '텍스트 추가' — 예전 버튼 그대로 되살린 자리(2026-08-16 오너). 위 프리셋 카드와 같은
+   카드 시각(배경·radius·그림자)이라 넷이 한 덩어리로 읽힌다. */
+.add-text-btn { width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;
+  height: 46px; margin-top: 2px; border: 0; cursor: pointer;
+  border-radius: var(--r-4); background: var(--bg-1); color: var(--fg-1); font-size: 14px; font-weight: 600;
+  box-shadow: var(--elev-card); transition: box-shadow .14s; }
+.add-text-btn:hover { box-shadow: var(--elev-lift); }
+.add-text-btn:active { cursor: grabbing; }
+/* 드래그 중 커서를 따라다니는 상자 = 실제로 놓일 텍스트 상자. 캔버스에서 글자를 입력할
+   때(.el-text.editing)와 **같은 모습** — 흰 판때기가 아니라 투명 바탕에 얇은 파란 테두리
+   뿐이다(2026-08-16 오너). padding 2px 은 스냅샷이 테두리를 잘라먹지 않게 하는 여백. */
 .text-drag-ghost { position: fixed; left: -9999px; top: -9999px; z-index: -1;
-  padding: 6px 10px; border: 1px solid var(--fg-1); border-radius: 4px; background: #fff;
+  padding: 2px; background: transparent; outline: 1.5px solid var(--link); outline-offset: 2px;
   font-family: var(--font-body); white-space: nowrap; line-height: 1.4; }
 /* 블록 위에서 "여기에 이만한 상자가 들어갑니다" — 손을 떼기 전에 자리·크기를 보여준다.
-   캔버스 배율은 블록이 이미 먹고 있으므로 좌표·크기는 블록 좌표계 그대로 쓴다. */
+   같은 이유로 편집 중 텍스트박스와 같은 테두리만 쓴다. 캔버스 배율은 블록이 이미 먹고
+   있으므로 좌표·크기는 블록 좌표계 그대로 쓰되, 테두리는 화면에서 1.5px 로 보이게 되돌린다. */
 .text-drop-ghost { position: absolute; z-index: 30; pointer-events: none;
-  padding: 0; border-radius: 2px; box-shadow: 0 0 0 calc(1.5px * var(--inv, 1)) var(--link);
-  background: rgba(0, 153, 255, .08); white-space: pre-wrap; opacity: .9; }
+  padding: 0; background: transparent; white-space: pre-wrap;
+  outline: calc(1.5px * var(--inv, 1)) solid var(--link); outline-offset: calc(2px * var(--inv, 1)); }
 /* 빠른 스타일 — 공용 .chip 시각(app.css)에 2×2 그리드 배치만 얹는다 */
 .quad-chips { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .quad-chips .chip { justify-content: center; }
@@ -1752,17 +1749,29 @@
 .frame-layout-prev.template > img { position: absolute; inset: 0; z-index: 2; width: 100%; height: 100%; object-fit: contain; background: #fff; pointer-events: none; }
 .frame-item .fl { display: flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 500; color: var(--fg-1); }
 .frame-rec { margin-left: auto; padding: 1px 5px; border-radius: 5px; background: #eef4fb; color: #4f88c9; font-size: 9.5px; font-weight: 700; }
-/* 추천 오브젝트 — 썸네일은 실제 요소를 그대로 축소한 미니어처(2026-08-16 오너 지시).
-   무대(stage)는 블록과 같은 흰 바탕이라야 흰 말풍선·잉크 박스가 실제처럼 읽힌다. */
+/* 추천 오브젝트 — 오브젝트의 성격을 라벨 칩 하나로 압축한 글리프(오너가 지목한 예전
+   아이콘, 2026-08-16 복원). 실물 축소 미니어처는 이 칸 크기에서 글자가 뭉개져 폐기했다.
+   라벨 문구는 editorLibrary 의 item.preview 가 정본 — 여기서는 칩 모양만 입힌다. */
 .object-preset-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-bottom: 18px; }
-.object-preset-cell { border: 0; border-radius: var(--r-3); background: var(--bg-2); cursor: grab; padding: 0 0 9px; overflow: hidden;
-  display: flex; flex-direction: column; align-items: stretch; transition: background .14s, box-shadow .14s; }
-.object-preset-cell:hover { background: var(--bg-1); box-shadow: 0 0 0 1px var(--ring-strong), 0 4px 14px -4px rgba(14,13,20,.12); }
+.object-preset-cell { min-height: 86px; padding: 10px 8px; border: 0; border-radius: var(--r-3); background: var(--bg-2); color: var(--fg-2); cursor: grab;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  font-size: 11.5px; line-height: 1.2; text-align: center; transition: background .14s, color .14s, box-shadow .14s; }
+.object-preset-cell:hover { background: var(--bg-1); color: var(--fg-1); box-shadow: 0 0 0 1px var(--ring-strong); }
 .object-preset-cell:active { cursor: grabbing; }
-.object-preset-thumb { position: relative; height: 62px; display: grid; place-items: center; background: #fff; overflow: hidden; }
-.object-preset-stage { position: relative; overflow: hidden; }
-.object-preset-art { position: absolute; transform-origin: top left; }
-.object-preset-name { display: block; text-align: center; font-size: 11.5px; font-weight: 600; color: var(--fg-1); line-height: 1.2; margin-top: 8px; }
+.object-preset-name { display: block; }
+.object-preset-glyph { min-width: 52px; min-height: 24px; padding: 4px 8px; border-radius: 7px; background: #0e0d14; color: #fff;
+  display: grid; place-items: center; font-size: 10px; font-weight: 700; letter-spacing: .4px; }
+/* 말풍선은 꼬리까지 그려야 말풍선으로 읽힌다 — 테두리·채움 두 겹 삼각형으로 낸다. */
+.object-preset-glyph.single-bubble { position: relative; min-width: 64px; min-height: 28px; margin-bottom: 5px; padding: 5px 10px 7px;
+  border: 1px solid #000; border-radius: 11px; background: #fff; color: #000; box-sizing: border-box; letter-spacing: 0; }
+.object-preset-glyph.single-bubble::before,
+.object-preset-glyph.single-bubble::after { content: ''; position: absolute; left: 12px; width: 0; height: 0; }
+.object-preset-glyph.single-bubble::before { bottom: -8px; border-top: 8px solid #000; border-right: 11px solid transparent; }
+.object-preset-glyph.single-bubble::after { left: 13px; bottom: -6px; border-top: 7px solid #fff; border-right: 9px solid transparent; }
+.object-preset-glyph.qa-bubbles { background: #dcecff; color: #0e0d14; border-radius: 999px; }
+.object-preset-glyph.divider { min-width: 62px; padding: 0; background: transparent; color: #0e0d14; font-size: 22px; }
+.object-preset-glyph.arrow-callout { background: transparent; color: #0e0d14; padding: 0; }
+.object-preset-glyph.label-badge { border-radius: 999px; }
 /* 오브젝트 탭 — 플랫 타일 + 큰 글리프 (4열, Figma/Canva 류 패널 관례) */
 .shape-list { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .shape-cell { aspect-ratio: 1; border: 0; border-radius: var(--r-3); background: var(--bg-2); display: grid; place-items: center; cursor: grab;

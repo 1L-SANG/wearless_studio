@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { TEXT_PRESET_DRAG_PREFIX, textPresetKeyFromDragTypes } from '../../src/features/editor/editorImageDrop.js';
 import {
-  DEFAULT_TEXT_BODY, DEFAULT_TEXT_PRESET, PLAIN_TEXT_PRESET, TEXT_PRESETS, activeTextPreset,
+  DEFAULT_TEXT_BODY, DEFAULT_TEXT_PRESET, TEXT_PRESETS, activeTextPreset,
   buildTextPresetElement, quickStylePatch, textPresetBox, textPresetDropPlacement, textPresetOf,
 } from '../../src/features/editor/presets/textPresets.js';
 
@@ -38,7 +38,7 @@ test('기본 프리셋은 소제목 — 시장 최다 텍스트(65.5%)', () => {
 });
 
 test('요소 생성 — 기본 문구+자동 폭, 이미지 기둥(x=60), 문구가 들어갈 만한 씨앗 폭', () => {
-  for (const p of [...TEXT_PRESETS, PLAIN_TEXT_PRESET]) {
+  for (const p of TEXT_PRESETS) {
     const el = buildTextPresetElement(p.key);
     assert.equal(el.type, 'text');
     // 오너 2026-08-16: 빈 상자로 시작하면 어디에 생겼는지·얼마나 큰지 안 보인다.
@@ -52,12 +52,11 @@ test('요소 생성 — 기본 문구+자동 폭, 이미지 기둥(x=60), 문구
   }
 });
 
-test('일반 텍스트 상자 — 추천 3종과 따로, 빠른 스타일 칩에는 안 낀다', () => {
-  assert.equal(PLAIN_TEXT_PRESET.key, 'plain');
-  assert.ok(!TEXT_PRESETS.some((p) => p.key === PLAIN_TEXT_PRESET.key), '추천 목록에는 없다');
-  assert.equal(textPresetOf('plain').style.size, 18);
-  // 위계 프리셋이 아니므로 어떤 칩도 켜지지 않는다 — '기본'이 위계인 척하면 안 된다.
-  assert.equal(activeTextPreset(PLAIN_TEXT_PRESET.style), null);
+test("'텍스트 추가' 버튼은 네 번째 고정 스타일을 만들지 않는다", () => {
+  // 오너 2026-08-16: 크기를 하나 더 못박은 '텍스트 상자' 항목은 물렸다 — 버튼은 기본 프리셋을 쓴다.
+  assert.equal(TEXT_PRESETS.length, 3);
+  assert.equal(textPresetOf('plain').key, DEFAULT_TEXT_PRESET, '모르는 키는 전부 기본 프리셋으로');
+  assert.deepEqual(buildTextPresetElement(undefined).style, buildTextPresetElement(DEFAULT_TEXT_PRESET).style);
 });
 
 test('모르는 키·미지정은 기본 프리셋으로 — 요소와 라벨이 같은 폴백을 공유한다', () => {
@@ -139,8 +138,10 @@ test('패널 계약 — 프리셋 버튼이 드래그 가능하고, 끌리는 �
   const item = panel.slice(panel.indexOf('className="text-preset-item"'), panel.indexOf('tp-sample'));
   assert.match(item, /draggable/, '버튼이 draggable 이어야 브라우저가 드래그를 시작한다');
   assert.match(item, /startTextPresetDrag\(e, p\.key, canvasScale\)/);
-  const plain = panel.slice(panel.indexOf('className="text-preset-plain"'), panel.indexOf('tpp-glyph'));
-  assert.match(plain, /draggable/, '일반 텍스트 상자도 같은 방식으로 끌 수 있다');
+  const addBtn = panel.slice(panel.indexOf('className="add-text-btn"'), panel.indexOf('name="type"'));
+  assert.match(addBtn, /draggable/, "'텍스트 추가'도 같은 방식으로 끌 수 있다(네 항목이 같은 조작)");
+  assert.match(addBtn, /startTextPresetDrag\(e, DEFAULT_TEXT_PRESET, canvasScale\)/);
+  assert.doesNotMatch(panel, /text-preset-plain|PLAIN_TEXT_PRESET/, '물린 방식의 흔적이 남으면 안 된다');
   const start = panel.slice(panel.indexOf('function startTextPresetDrag'), panel.indexOf('export function TextPanel'));
   assert.match(start, /setData\('text\/object', `text:\$\{presetKey\}`\)/,
     "블록 드롭 핸들러가 이미 아는 'text/object' 형식이라야 하이라이트·드롭이 그대로 동작한다");
@@ -152,7 +153,7 @@ test('패널 계약 — 프리셋 버튼이 드래그 가능하고, 끌리는 �
 });
 
 test('드래그 미리보기 상자와 실제로 만들어지는 요소는 같은 값을 본다', () => {
-  for (const key of [...TEXT_PRESETS.map((p) => p.key), 'plain']) {
+  for (const key of [...TEXT_PRESETS.map((p) => p.key), undefined]) {
     const box = textPresetBox(key);
     const el = buildTextPresetElement(key);
     assert.deepEqual({ w: el.w, h: el.h, text: el.text, style: el.style }, box, `${key}`);

@@ -18,9 +18,9 @@ import {
   generationExampleStructuralRecipePatch,
 } from '@/lib/storyboardExampleSelection.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
-import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, OBJECT_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, colorWithOpacity, encodeWardrobeImage, normalizeHexColor, objectPresetPreview } from '@/features/editor/editorLibrary.js';
+import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, OBJECT_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, colorWithOpacity, encodeWardrobeImage, normalizeHexColor } from '@/features/editor/editorLibrary.js';
 import { DEFAULT_EDITOR_COLOR_PRESETS, commitNumberDraft, hexToHsv, hsvToHex, speechBubblePath } from '@/features/editor/editorAppearance.js';
-import { PLAIN_TEXT_PRESET, TEXT_MUTED, TEXT_PRESETS, activeTextPreset, quickStylePatch, textPresetBox } from '@/features/editor/presets/textPresets.js';
+import { DEFAULT_TEXT_PRESET, TEXT_MUTED, TEXT_PRESETS, activeTextPreset, quickStylePatch, textPresetBox } from '@/features/editor/presets/textPresets.js';
 import { TEXT_PRESET_DRAG_PREFIX } from '@/features/editor/editorImageDrop.js';
 import { speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
@@ -858,18 +858,15 @@ export function TextPanel({ el, catalogs, canvasScale = 1, onChange, onBubbleApp
           <span className="tp-meta">{p.style.size}px<br />{p.hint}</span>
         </button>
       ))}
-      {/* 위계 없는 '그냥 텍스트' — 추천 3종과 섞이면 어느 게 일반인지 흐려져 구분선 아래
-          한 줄로 둔다(오너 8/16: "그냥 텍스트 추가하는 내용이 없다"). */}
-      <button type="button" className="text-preset-plain" draggable
-        aria-label={`${PLAIN_TEXT_PRESET.label} 추가`} title={`${PLAIN_TEXT_PRESET.label} — 누르면 추가, 끌어다 놓으면 그 자리에`}
-        onDragStart={(e) => startTextPresetDrag(e, PLAIN_TEXT_PRESET.key, canvasScale)}
-        onClick={() => onAddText?.(PLAIN_TEXT_PRESET.key)}>
-        <span className="tpp-glyph" aria-hidden="true">T</span>
-        <span className="tpp-copy">
-          <b>{PLAIN_TEXT_PRESET.label}</b>
-          <em>{PLAIN_TEXT_PRESET.style.size}px · {PLAIN_TEXT_PRESET.hint}</em>
-        </span>
-        <span className="tpp-plus" aria-hidden="true">＋</span>
+      {/* 그냥 한 줄 넣고 싶을 때 — 예전 '텍스트 추가' 버튼 그대로다(오너 8/16). 스타일을 골라
+          주지 않고 기본 프리셋으로 만든다: 크기를 이름표에 박아 두면 그것도 '고정 스타일'이
+          하나 더 생기는 셈이라 오너가 물렸던 방식이 된다. 위 카드 셋과 같은 카드 시각·같은
+          조작(누르기/끌기)이라 넷이 한 덩어리로 읽힌다. */}
+      <button type="button" className="add-text-btn" draggable
+        title="텍스트 추가 — 누르면 추가, 끌어다 놓으면 그 자리에"
+        onDragStart={(e) => startTextPresetDrag(e, DEFAULT_TEXT_PRESET, canvasScale)}
+        onClick={() => onAddText?.()}>
+        <Icon name="type" size={17} />텍스트 추가
       </button>
     </div>
   );
@@ -1056,91 +1053,10 @@ function ShapeGlyph({ id }) {
   const d = id === 'triangle' ? 'M50 8 L96 92 L4 92 Z' : SHAPE_D[id];
   return <svg className="obj-glyph" viewBox="0 0 100 100"><path d={d} fill="#fff" stroke="currentColor" strokeWidth="6" strokeLinejoin="round" /></svg>;
 }
-/* 추천 오브젝트 미리보기 — 그림을 따로 그리지 않고 **실제로 만들어질 요소**를 그대로
-   축소해 보여준다(오너 8/16: "블록에서 실제 어떻게 보이는지를 썸네일에"). 선화 아이콘
-   시절엔 캔버스 결과와 결이 달랐고, 프리셋 값이 바뀌어도 아이콘이 따라오지 않았다.
-   캔버스(Editor.jsx El)의 그리기 규칙 중 정지 화면에 필요한 것만 옮겨 온다. */
-function PresetPreviewElement({ el }) {
-  const box = { position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h, opacity: el.opacity ?? 1 };
-  const s = el.style || {};
-  const typography = {
-    fontSize: s.size, fontWeight: s.weight || 400, color: s.color || '#0e0d14',
-    letterSpacing: s.tracking, textAlign: s.align || 'left',
-    lineHeight: s.lineHeight ? `${s.lineHeight}px` : 1.4, whiteSpace: 'pre-wrap',
-  };
-  if (el.type === 'text' && el.shape === 'bubble') {
-    const fit = speechBubbleFitOptions(el);
-    return (
-      <div style={{ ...box, overflow: 'visible' }}>
-        <svg width="100%" height="100%" viewBox={`0 0 ${el.w} ${el.h}`} preserveAspectRatio="none" aria-hidden="true"
-          style={{ position: 'absolute', inset: 0, display: 'block', overflow: 'visible' }}>
-          <path d={speechBubblePath({ width: el.w, height: el.h, radius: el.radius ?? DEFAULT_BUBBLE_RADIUS })}
-            fill={colorWithOpacity(el.fill || '#ffffff', el.fillOpacity ?? 1)}
-            stroke={el.stroke === 'none' ? 'none' : (el.stroke || DEFAULT_BUBBLE_STROKE)}
-            strokeWidth={el.stroke === 'none' ? 0 : (el.strokeWidth ?? DEFAULT_BUBBLE_STROKE_WIDTH)}
-            strokeLinejoin="round" transform={el.flipX ? `translate(${el.w} 0) scale(-1 1)` : undefined} />
-        </svg>
-        <div style={{ position: 'absolute', left: fit.padX, top: fit.padTop, width: Math.max(1, el.w - fit.padX * 2), ...typography }}>{el.text}</div>
-      </div>
-    );
-  }
-  if (el.type === 'text') return <div style={{ ...box, height: 'auto', ...typography }}>{el.text}</div>;
-  if (el.type === 'shape') {
-    return <div style={{ ...box, background: el.fill || '#0e0d14', borderRadius: el.radius || 0 }} />;
-  }
-  const my = el.h / 2;
-  const lc = el.stroke && el.stroke !== 'none' ? el.stroke : (el.fill || '#0e0d14');
-  const lw = el.strokeWidth || 2.5;
-  return (
-    <div style={box}>
-      <svg width="100%" height="100%" viewBox={`0 0 ${el.w} ${el.h}`} style={{ overflow: 'visible', display: 'block' }}>
-        <line x1={el.shape === 'arrow-l' ? 12 : 0} y1={my} x2={el.shape === 'arrow-r' ? el.w - 12 : el.w} y2={my} stroke={lc} strokeWidth={lw} strokeLinecap="round" />
-        {el.shape === 'arrow-r' && <polyline points={`${el.w - 14},${my - 8} ${el.w - 2},${my} ${el.w - 14},${my + 8}`} fill="none" stroke={lc} strokeWidth={lw} strokeLinecap="round" strokeLinejoin="round" />}
-      </svg>
-    </div>
-  );
-}
-/* 썸네일 배율 — 두 가지를 동시에 만족시킨다(오너 2026-08-16 "가독성 있게 보정"):
-   ① 칸 안에서 오브젝트를 알아볼 수 있을 것(잘려 나가면 무엇인지 모른다),
-   ② 글자·선이 뭉개지지 않을 것(통째로 맞추기만 하면 Q&A 말풍선은 글자가 3~4px가 된다).
-   둘이 부딪히면 기본은 ①이고, **잘려도 손해가 없는 오브젝트만** 예외로 키운다:
-   긴 글상자는 오른쪽이 잘려도 "검은 띠에 흰 글씨"가 그대로 읽히고, 구분선은 어디를
-   잘라도 같은 선이다. 반대로 화살표 콜아웃은 화살촉이, 말풍선은 꼬리가 잘리면 정체가
-   사라지므로 절대 키우지 않는다. */
-const OBJECT_THUMB = { w: 132, h: 62, pad: 5, minText: 8, minStroke: 1.2 };
-const THUMB_WIDE_CROP_OK = new Set(['text-box', 'divider']);
-function ObjectPresetThumb({ presetId }) {
-  const preview = useMemo(() => objectPresetPreview(presetId), [presetId]);
-  const viewW = OBJECT_THUMB.w - OBJECT_THUMB.pad * 2;
-  const viewH = OBJECT_THUMB.h - OBJECT_THUMB.pad * 2;
-  const fit = Math.min(viewW / preview.width, viewH / preview.height);
-  // 가장 작은 글자는 minText px, 가장 얇은 선은 minStroke px 이상으로 보이게 하는 배율.
-  const textSizes = preview.elements.filter((el) => el.type === 'text').map((el) => el.style?.size || 0).filter(Boolean);
-  const strokes = preview.elements.filter((el) => el.type === 'line').map((el) => el.strokeWidth || 2.5);
-  const legible = Math.max(
-    textSizes.length ? OBJECT_THUMB.minText / Math.min(...textSizes) : 0,
-    strokes.length ? OBJECT_THUMB.minStroke / Math.min(...strokes) : 0,
-  );
-  // 가로로 잘려도 되는 것만 키운다 — 세로는 어떤 경우에도 안 자른다(위아래가 잘리면
-  // 말풍선 꼬리·아래 줄이 통째로 사라진다).
-  const scale = THUMB_WIDE_CROP_OK.has(presetId)
-    ? Math.min(1, Math.max(fit, Math.min(legible, viewH / preview.height)))
-    : fit;
-  const artW = preview.width * scale;
-  const artH = preview.height * scale;
-  return (
-    <span className="object-preset-thumb" aria-hidden="true">
-      <span className="object-preset-stage" style={{ width: viewW, height: viewH }}>
-        <span className="object-preset-art" style={{
-          width: preview.width, height: preview.height, transform: `scale(${scale})`,
-          left: Math.max(0, (viewW - artW) / 2), top: Math.max(0, (viewH - artH) / 2),
-        }}>
-          {preview.elements.map((el) => <PresetPreviewElement key={el.id} el={el} />)}
-        </span>
-      </span>
-    </span>
-  );
-}
+/* 추천 오브젝트 아이콘 — 오브젝트의 성격을 한 글자짜리 라벨 칩으로 압축한 글리프.
+   실물을 그대로 축소한 미니어처도 해 봤지만(8/16 오전), 132×62 칸에서는 글자가 뭉개져
+   무엇인지 알기 어려웠다. 오너가 지목한 예전 아이콘으로 되돌린다(8/16) — 라벨 문구는
+   editorLibrary 의 item.preview 가 정본이고, 칩 모양만 CSS 가 오브젝트별로 입힌다. */
 const OBJECT_PANEL_TABS = [
   { value: 'preset', label: '추천 오브젝트' },
   { value: 'shape', label: '도형·선' },
@@ -1161,7 +1077,7 @@ export function ShapePanel({ catalogs, onAdd, block, onBgChange }) {
           {OBJECT_LIBRARY_ITEMS.map((item) => (
             <button className="object-preset-cell" key={item.id} draggable title={item.label}
               onClick={() => onAdd('preset', item.id)} onDragStart={(e) => dragStart(e, 'preset', item.id)}>
-              <ObjectPresetThumb presetId={item.id} />
+              <span className={`object-preset-glyph ${item.id}`}>{item.preview}</span>
               <span className="object-preset-name">{item.label}</span>
             </button>
           ))}
