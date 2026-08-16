@@ -221,3 +221,16 @@ test('에디터 계약 — 대기 화면이 쓰는 함수는 early-return 위에
   assert.ok(declared < firstEarlyReturn,
     'const 는 선언 전 참조 시 ReferenceError — early-return 의 onClick 이 먼저 평가된다');
 });
+
+
+test('에디터 계약 — 손 안 댄 기본 문구는 편집이 끝날 때 요소째 사라진다', () => {
+  const editor = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
+  const prune = editor.slice(editor.indexOf('function pruneEmptyTextEl'), editor.indexOf('const changeBg'));
+  // '내용을 입력하세요.' 가 그대로 남으면 상업 상세페이지에 안내 문구가 발행된다(2026-08-16 리뷰).
+  assert.match(prune, /FRESH_TEXT_IDS\.has\(elId\)/);
+  assert.match(prune, /=== DEFAULT_TEXT_BODY/);
+  // 카피 슬롯·말풍선·자동 관리 블록은 여전히 예외로 남긴다.
+  assert.match(prune, /target\.copyRole \|\| target\.sourceBlockId/);
+  assert.match(prune, /target\.shape === 'bubble'/);
+  assert.match(prune, /isAutoManagedBlock\(block\)/);
+});

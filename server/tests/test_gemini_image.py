@@ -143,3 +143,70 @@ def test_image_200_records_exactly_once_and_returns_image(monkeypatch):
 
     assert result.image == b"image-bytes"
     assert len(recorded) == 1 and recorded[0]["has_image"] is True
+
+
+def _counting_client(monkeypatch, raise_exc, sleeps):
+    calls = {"n": 0}
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, *args, **kwargs):
+            calls["n"] += 1
+            raise raise_exc
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(gemini_image.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(gemini_image.asyncio, "sleep", fake_sleep)
+    return calls
+
+
+def test_read_timeout_is_not_retried_so_a_charged_image_is_not_paid_for_twice(monkeypatch):
+    """읽기 타임아웃 = 요청은 이미 도착했고 답만 늦는 상태.
+
+    다시 보내면 프로바이더가 이미 만든(=과금된) 이미지를 한 장 더 만들고, 그 추가 호출은
+    비용 원장(image_usage_events)에도 안 남는다. 그래서 재시도하지 않는다(2026-08-16 리뷰).
+    """
+    sleeps: list[float] = []
+    calls = _counting_client(monkeypatch, httpx.ReadTimeout("slow"), sleeps)
+    client = gemini_image.GeminiImageClient(settings())
+    with pytest.raises(gemini_image.GeminiError, match="ReadTimeout"):
+        asyncio.run(
+            client.generate_content_image(
+                "gemini-3-pro-image",
+                "prompt",
+                [gemini_image.InlineImage("image/png", b"image")],
+                "1K",
+            )
+        )
+
+    assert calls["n"] == 1, "한 번만 보낸다 — 재시도하면 같은 컷을 두 번 과금한다"
+    assert sleeps == []
+
+
+def test_connect_error_is_retried_because_the_provider_never_received_the_request(monkeypatch):
+    """연결 자체가 안 선 경우는 프로바이더가 요청을 받지도 못했다 — 재시도해도 이중 과금이 없다."""
+    sleeps: list[float] = []
+    calls = _counting_client(monkeypatch, httpx.ConnectError("offline"), sleeps)
+    client = gemini_image.GeminiImageClient(settings())
+    with pytest.raises(gemini_image.GeminiError, match="ConnectError"):
+        asyncio.run(
+            client.generate_content_image(
+                "gemini-3-pro-image",
+                "prompt",
+                [gemini_image.InlineImage("image/png", b"image")],
+                "1K",
+            )
+        )
+
+    assert calls["n"] == 3, "3회까지 시도"
+    assert sleeps == [5, 10], "5초 → 10초 백오프"

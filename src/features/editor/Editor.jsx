@@ -26,7 +26,7 @@ import { exampleGenderFromAnalysis, hexFor } from '@/features/storyboard/Storybo
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isAutoManagedBlock, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
-import { buildTextPresetElement, textPresetBox, textPresetDropPlacement } from '@/features/editor/presets/textPresets.js';
+import { DEFAULT_TEXT_BODY, buildTextPresetElement, textPresetBox, textPresetDropPlacement } from '@/features/editor/presets/textPresets.js';
 import { buildColorOpts, visibleColorOpts } from '@/lib/colorOpts.js';
 import { retryRead } from '@/lib/retryRead.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
@@ -373,7 +373,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
   // 더블클릭 좌표에 남아 있던 브라우저 기본 selection 때문에 중간 글자가 덮이는 것을 막는다.
   useLayoutEffect(() => {
     if (!editing || preview || el.hidden || el.type !== 'text') return;
-    const fresh = FRESH_TEXT_IDS.delete(el.id);
+    const fresh = FRESH_TEXT_IDS.has(el.id);   // 지우지 않는다 — 실제로 고쳤을 때만 뗀다
     focusEditableAtEnd(isSpeechBubbleElement(el) ? textRef.current : ref.current, fresh);
   }, [editing, el.hidden, el.id, el.shape, el.type, preview]);
 
@@ -1606,7 +1606,12 @@ export function Editor() {
   const patchEl = (patch) => setBlocks((bs) => bs.map((b) => ({ ...b, elements: b.elements.map((e) => e.id === selEl ? { ...e, ...patch } : e) })));
   const patchBubbleAppearance = (patch) => setBlocks((bs) => patchSelectedBubbleAppearance(bs, selEls.length ? selEls : [selEl], patch));
   const patchElById = (blockId, elId, patch) => setBlocks((bs) => bs.map((b) => b.id === blockId ? { ...b, elements: b.elements.map((e) => e.id === elId ? { ...e, ...patch } : e) } : b));
-  const commitText = (blockId, elementId, value, elementPatch) => setBlocks((bs) => bs.map((b) => {
+  const commitText = (blockId, elementId, value, elementPatch) => {
+    // 한 글자라도 고쳤으면 더는 '안내 문구'가 아니다 — 안 지우는 대상으로 확정한다.
+    if (String(value ?? '').trim() !== DEFAULT_TEXT_BODY) FRESH_TEXT_IDS.delete(elementId);
+    return commitTextValue(blockId, elementId, value, elementPatch);
+  };
+  const commitTextValue = (blockId, elementId, value, elementPatch) => setBlocks((bs) => bs.map((b) => {
     if (b.id !== blockId) return b;
     return {
       ...b,
@@ -1620,14 +1625,21 @@ export function Editor() {
   // 말풍선(모양 자체가 보임), 자동 관리 블록의 요소(폼·병합이 통째로 재생성),
   // copyRole/sourceBlockId가 달린 카피 자리(생성 완료 때 AI 카피가 착지할 슬롯 —
   // 지우면 그 컷의 카피가 영영 유실된다).
+  // "방금 만들었는데 한 글자도 안 친 것"도 같이 지운다: 기본 문구는 편집 시작 때 통째로
+  // 선택돼 있어 타이핑하면 갈아 끼워지는 안내일 뿐인데, 그대로 두면 '내용을 입력하세요.'
+  // 가 상업 상세페이지에 그대로 발행된다(2026-08-16 리뷰).
   function pruneEmptyTextEl(elId) {
     const bs0 = latestBlocks.current || blocks;
     if (!bs0) return;
     const block = bs0.find((b) => b.elements.some((element) => element.id === elId));
     const target = block?.elements.find((element) => element.id === elId);
     if (!block || !target) return;
+    const untouchedPlaceholder = FRESH_TEXT_IDS.has(elId)
+      && String(target.text ?? '').trim() === DEFAULT_TEXT_BODY;
     if (isAutoManagedBlock(block) || target.type !== 'text' || target.shape === 'bubble'
-      || target.copyRole || target.sourceBlockId || String(target.text ?? '').trim()) return;
+      || target.copyRole || target.sourceBlockId
+      || (String(target.text ?? '').trim() && !untouchedPlaceholder)) return;
+    FRESH_TEXT_IDS.delete(elId);
     setBlocks((bs) => bs.map((b) => b.id === block.id
       ? { ...b, elements: b.elements.filter((element) => element.id !== elId) }
       : b));

@@ -201,7 +201,9 @@ test('entering text edit places the caret at the end for normal text and speech 
   // 방금 만든 텍스트만 예외 — 기본 문구가 통째로 선택돼 그냥 타이핑하면 갈아 끼워진다(오너 8/16).
   assert.match(editorSource, /range\.selectNodeContents\(node\);\s*if \(!selectAll\) range\.collapse\(false\);/s);
   assert.match(editorSource, /focusEditableAtEnd\(isSpeechBubbleElement\(el\) \? textRef\.current : ref\.current, fresh\)/);
-  assert.match(editorSource, /const fresh = FRESH_TEXT_IDS\.delete\(el\.id\);/);
+  // 편집 시작 때 표식을 떼면 "손 안 댄 안내 문구"인지 끝에 가서 알 수 없다 — 엿보기만 한다.
+  assert.match(editorSource, /const fresh = FRESH_TEXT_IDS\.has\(el\.id\);/);
+  assert.match(editorSource, /if \(String\(value \?\? ''\)\.trim\(\) !== DEFAULT_TEXT_BODY\) FRESH_TEXT_IDS\.delete\(elementId\);/);
   assert.doesNotMatch(editorSource, /setTimeout\(\(\) => (?:textRef|ref)\.current/);
 });
 

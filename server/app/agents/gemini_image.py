@@ -111,9 +111,13 @@ class GeminiImageClient:
                         self._endpoint(model), json=body, headers={"x-goog-api-key": self._key}
                     )
             except httpx.RequestError as exc:
-                # 네트워크·타임아웃도 재시도 대상 — 한 번의 순간 장애로 컷이 빈 슬롯이 되면
-                # 셀러에게는 그냥 "못 만든 상세페이지"다(오너: 우린 상업 서비스다).
-                if attempt == 2:
+                # 연결 자체가 안 선 경우만 재시도한다 — 그건 프로바이더가 요청을 받지도
+                # 못했다는 뜻이라 다시 보내도 이미지가 두 번 만들어지지 않는다.
+                # 반대로 ReadTimeout 은 "보냈는데 답을 늦게 받는 중"이라, 재시도하면 이미
+                # 만들어져(=과금돼) 있는 이미지를 한 장 더 만든다. 그 추가 호출은 원장
+                # (image_usage_events)에도 안 남아 비용이 조용히 샌다 — 2026-08-16 리뷰.
+                retryable = isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
+                if attempt == 2 or not retryable:
                     raise GeminiError(
                         f"Gemini request failed: {type(exc).__name__}: {exc}"
                     ) from exc
