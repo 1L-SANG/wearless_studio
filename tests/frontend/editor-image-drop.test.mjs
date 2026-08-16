@@ -274,8 +274,7 @@ test('quick toolbars stay non-interactive by default and remain open for the sel
 
   assert.match(quickRule, /pointer-events:\s*none/);
   assert.match(quickRule, /visibility:\s*hidden/);
-  // 선택 블록 + 화면에 가장 많이 들어온 블록(.in-view)에서 열린 채로 남는다(오너 8/16).
-  assert.match(styles, /\.canvas-block:hover \.quick, \.canvas-block\.on \.quick, \.canvas-block\.in-view \.quick \{[^}]*visibility:\s*visible[^}]*pointer-events:\s*auto/s);
+  assert.match(styles, /\.canvas-block:hover \.quick, \.canvas-block\.on \.quick \{[^}]*visibility:\s*visible[^}]*pointer-events:\s*auto/s);
 });
 
 test('quick toolbar has a pointer bridge across its visual gap', () => {

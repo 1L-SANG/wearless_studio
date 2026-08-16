@@ -258,9 +258,7 @@ test('새 텍스트는 자동 관리 블록(정보·사이즈·세탁·AI 고지
 });
 
 test('block quick actions stay visible while the top-level block is selected', () => {
-  // 화면에 가장 많이 들어온 블록(.in-view)도 마우스와 무관하게 고정 노출한다(오너 8/16).
-  assert.match(editorStylesSource, /\.canvas-block:hover \.quick, \.canvas-block\.on \.quick, \.canvas-block\.in-view \.quick\s*\{[^}]*opacity:\s*1[^}]*visibility:\s*visible[^}]*pointer-events:\s*auto/s);
-  assert.match(editorSource, /setInViewBlock\(\(current\) => \(current === bestId \? current : bestId\)\)/);
+  assert.match(editorStylesSource, /\.canvas-block:hover \.quick, \.canvas-block\.on \.quick\s*\{[^}]*opacity:\s*1[^}]*visibility:\s*visible[^}]*pointer-events:\s*auto/s);
 });
 
 test('shared pointer drag covers frame controls, movable group members, rotation bounds, and cleanup', () => {

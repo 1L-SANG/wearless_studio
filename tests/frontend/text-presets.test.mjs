@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
-  DEFAULT_TEXT_PRESET, TEXT_PRESETS, activeTextPreset, buildTextPresetElement, quickStylePatch, textPresetOf,
+  DEFAULT_TEXT_PRESET, TEXT_PRESETS, activeTextPreset, buildTextPresetElement, quickStylePatch,
+  textPresetDropPlacement, textPresetOf,
 } from '../../src/features/editor/presets/textPresets.js';
 
 /* 값의 출처: docs/superpowers/specs/2026-08-04-editor-text-slots-design.md
@@ -97,4 +99,42 @@ test('활성 프리셋 판별 — 화면이 같으면 같은 상태로 본다(�
   assert.equal(activeTextPreset({ ...SPEC.headline, lineHeight: 56 }), 'headline');
   // 반대로 렌더 기본값과 다른 실제 변경은 구분한다: weight 없음 = 400 렌더 ≠ 소제목 600.
   assert.equal(activeTextPreset({ size: 26, color: '#0e0d14' }), null);
+});
+
+
+/* ---------- 끌어다 놓기(오너 2026-08-16: 세 종류 다 블록 위 원하는 자리에) ---------- */
+
+test('놓은 자리에 캐럿이 온다 — 세로는 글줄 한가운데', () => {
+  const el = buildTextPresetElement('subtitle');
+  const place = textPresetDropPlacement({ x: 300, y: 400, w: el.w, h: el.h, blockW: 1000, blockH: 1200 });
+  assert.equal(place.x, 300);
+  assert.equal(place.y, Math.round(400 - el.h / 2), '포인터가 글줄 한가운데');
+});
+
+test('블록 밖으로는 못 나간다 — 안 보이는 글자를 만들지 않는다', () => {
+  const inside = textPresetDropPlacement({ x: 990, y: 1190, w: 12, h: 36, blockW: 1000, blockH: 1200 });
+  assert.equal(inside.x, 988, '오른쪽 끝에서도 상자 전체가 블록 안');
+  assert.equal(inside.y, 1164);
+  const negative = textPresetDropPlacement({ x: -50, y: -50, w: 12, h: 36, blockW: 1000, blockH: 1200 });
+  assert.deepEqual(negative, { x: 0, y: 0 });
+});
+
+test('블록 크기를 모르면 가두지 않는다(0/미지정) — 좌표는 살린다', () => {
+  const place = textPresetDropPlacement({ x: 700, y: 900, w: 12, h: 36 });
+  assert.deepEqual(place, { x: 700, y: 882 });
+});
+
+test('패널 계약 — 세 프리셋 버튼이 드래그 가능하고 오브젝트와 같은 형식으로 실어 보낸다', () => {
+  const panel = readFileSync(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url), 'utf8');
+  const item = panel.slice(panel.indexOf('className="text-preset-item"'), panel.indexOf('tp-sample'));
+  assert.match(item, /draggable/, '버튼이 draggable 이어야 브라우저가 드래그를 시작한다');
+  assert.match(item, /setData\('text\/object', `text:\$\{p\.key\}`\)/,
+    "블록 드롭 핸들러가 이미 아는 'text/object' 형식이라야 하이라이트·드롭이 그대로 동작한다");
+});
+
+test('에디터 계약 — 드롭된 텍스트는 도형이 아니라 텍스트 경로로 간다', () => {
+  const editor = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
+  assert.match(editor, /type === 'text' \? dropText\(id, bid, ev\) : addShape\(/);
+  // 자동 관리 블록(정보·사이즈·세탁·AI 고지)은 클릭 추가와 똑같이 막는다 — 재생성 때 글이 사라진다.
+  assert.match(editor.slice(editor.indexOf('const dropText =')), /isAutoManagedBlock\(block\)/);
 });

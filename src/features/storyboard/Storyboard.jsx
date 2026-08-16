@@ -53,6 +53,7 @@ import {
 import { stripStaleSpaceSetBindings } from '@/lib/storyboardSpaceSetStaleness.js';
 import { stripExampleSelectionsById, stripStaleExampleSelections } from '@/lib/storyboardExampleStaleness.js';
 import {
+  HOOK_FRAME_VERSION,
   HOOK_STYLES,
   HOOK_STYLE_LABELS,
   adoptHookFrame,
@@ -106,12 +107,17 @@ import { classifyStoryboardLoadError, storyboardNotFoundError } from './storyboa
 import { buildColorOpts, visibleColorOpts } from '@/lib/colorOpts.js';
 import { continueAfterStoryboardFlush } from './storyboardNavigation.js';
 import { storyboardOverlayTop } from './storyboardOverlayTop.js';
+import { frameUnits } from './storyboardUnits.js';
 import { bindStoryboardExitFlush, scheduleStoryboardAutosave } from './storyboardSaveLifecycle.js';
 import {
   collectInitialRevealThumbnailUrls,
   waitForInitialReveal,
 } from './initialRevealGate.js';
 
+
+/* 장소 세트를 받을 수 있는 섹션 — 세트 setType 이 styling(스타일링)·horizon-*(스튜디오)뿐이라
+   의류 확인(제품컷)·후킹(스타일이 컷 구성을 지배)에는 '장소세트 추가'를 열지 않는다. */
+const SPACE_SET_SECTION_ROLES = new Set([SECTION_ROLES.STYLING, SECTION_ROLES.STUDIO]);
 
 const COLOR_HEX = {
   white: '#ffffff', ivory: '#f3eee1', beige: '#d8c4a3', brown: '#7a5230', black: '#15141a',
@@ -275,7 +281,7 @@ function cardLabels(block, catalogs) {
   return { direction, shot, isProduct };
 }
 
-function StoryboardCaption({ block, catalogs, colorOpts, clothingType }) {
+function StoryboardCaption({ block, catalogs, colorOpts, clothingType, onShuffle = null }) {
   if (block.source === 'mine') return <div className="sb-canvas-caption mine">내 사진</div>;
 
   const colors = ((block.colorIds && block.colorIds.length) ? block.colorIds : [block.colorId])
@@ -295,6 +301,18 @@ function StoryboardCaption({ block, catalogs, colorOpts, clothingType }) {
 
   return (
     <div className="sb-canvas-caption">
+      {/* 컷 단위 셔플 — 정보 줄 왼쪽 끝 아이콘(2026-08-16 오너). 시그니처 컷·장소세트 컷에는
+          붙지 않는다(그쪽은 프레임·세트 단위 셔플이 따로 있다). */}
+      {onShuffle && (
+        <button
+          type="button"
+          className="sb-caption-shuffle"
+          title="이 컷의 예시만 다시 뽑기"
+          aria-label="이 컷의 예시만 다시 뽑기"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => { event.stopPropagation(); onShuffle(); }}
+        >{ShuffleIcon}</button>
+      )}
       {/* 매칭 의류 표시는 이미지 위 오버레이(StoryboardMedia)로 옮겼다 —
           셀러가 직접 바꾼 컷에만 뜬다(2026-08-14 오너 확정). */}
       <span className="sb-caption-values">
@@ -448,7 +466,7 @@ function CardDragSurface({ className, dragProps, onSelect, children }) {
 function StoryboardCard({
   item, total, catalogs, colorOpts, matchClothing, clothingType,
   selected, locked, cardDrag, onSelect, onDuplicate, onDelete, addControl,
-  onNudge, canNudgeUp, canNudgeDown, microVariationIds,
+  onNudge, canNudgeUp, canNudgeDown, microVariationIds, onShuffle = null,
 }) {
   const { block, index } = item;
   const missing = block.source !== 'mine' && !block.exampleId;
@@ -485,6 +503,7 @@ function StoryboardCard({
         colorOpts={colorOpts}
         matchClothing={matchClothing}
         clothingType={clothingType}
+        onShuffle={onShuffle}
       />
     </div>
   );
@@ -553,6 +572,66 @@ function StoryboardFrame({
   );
 }
 
+/* 네 컷 구성 — 사진 넷이 빈틈 없이 붙은 2×2 한 덩어리. 위 두 컷의 설명은 사진 **위**로
+   올린다: 사진 사이에 두면 그리드가 위아래로 갈라져 "네 컷 한 장"으로 안 읽힌다
+   (2026-08-16 오너 지시). 에디터·서버 조립도 같은 배치(카피가 그리드 위)를 만든다. */
+function StoryboardMoodGrid({
+  items, total, catalogs, colorOpts, matchClothing, clothingType,
+  selectedId, locked, dragFor, onSelect, onDuplicate, onDelete, addControl,
+  microVariationIds,
+}) {
+  const captions = (row) => (
+    <div className="sb-frame-captions">
+      {row.map((item) => (
+        <StoryboardCaption
+          key={item.block.id}
+          block={item.block}
+          catalogs={catalogs}
+          colorOpts={colorOpts}
+          matchClothing={matchClothing}
+          clothingType={clothingType}
+        />
+      ))}
+    </div>
+  );
+  return (
+    <div className="sb-frame sb-moodgrid">
+      {captions(items.slice(0, 2))}
+      <div className="sb-frame-media">
+        <div className="sb-frame-box sb-moodgrid-box">
+          {items.map((item) => {
+            const missing = item.block.source !== 'mine' && !item.block.exampleId;
+            const manualEmpty = missing && item.block.exampleChoice === 'manual';
+            return (
+              <CardDragSurface
+                key={item.block.id}
+                className={'sb-frame-half' + (item.block.id === selectedId ? ' selected' : '') + (missing ? ' missing' : '') + (manualEmpty ? ' manual-empty' : '') + (locked && item.block.id !== selectedId ? ' locked' : '')}
+                dragProps={dragFor(item.block.id)}
+                onSelect={() => onSelect(item.block.id)}
+              >
+                <StoryboardMedia
+                  block={item.block}
+                  catalogs={catalogs}
+                  colorOpts={colorOpts}
+                  matchClothing={matchClothing}
+                  index={item.index}
+                  total={total}
+                  showPoseVariation={microVariationIds?.has(item.block.id)}
+                  onDuplicate={() => onDuplicate(item.block.id)}
+                  onDelete={() => onDelete(item.block.id)}
+                />
+                {item.block.id === selectedId && <SelectionRing />}
+              </CardDragSurface>
+            );
+          })}
+        </div>
+        {addControl}
+      </div>
+      {captions(items.slice(2, 4))}
+    </div>
+  );
+}
+
 function StoryboardStack({ group, total, catalogs, onOpen }) {
   const previews = group.items.slice(0, 3);
   return (
@@ -592,24 +671,6 @@ const ShuffleIcon = (
   </svg>
 );
 
-function frameUnits(items) {
-  const units = [];
-  for (let index = 0; index < items.length;) {
-    const rowId = items[index].block.layoutRowId;
-    if (rowId) {
-      let end = index + 1;
-      while (end < items.length && items[end].block.layoutRowId === rowId) end += 1;
-      if (end - index === 2) {
-        units.push({ kind: 'frame', items: items.slice(index, end) });
-        index = end;
-        continue;
-      }
-    }
-    units.push({ kind: 'card', items: [items[index]] });
-    index += 1;
-  }
-  return units;
-}
 
 function canvasUnits(items) {
   const units = [];
@@ -857,9 +918,16 @@ function SpaceSetInspectorHeader({ set, siblings, block, onChangeSet }) {
   );
 }
 
-function SpaceSetGallery({ mode, error, onChoose, onClose, gender, clothingType }) {
+function SpaceSetGallery({ mode, error, onChoose, onClose, gender, clothingType, sectionRole = null }) {
   const replacing = mode === 'replace';
-  const spaceSets = storyboardSpaceSetsFor({ gender, clothingType });
+  // 섹션이 정해진 추가는 그 섹션이 실제로 소화하는 세트만 보여준다 — 스타일링 칸에 호리존
+  // 세트를 넣으면 그 섹션에서는 발행되지 않은 조합이라 컷이 통째로 빈다(2026-08-16 실측).
+  const spaceSets = storyboardSpaceSetsFor({ gender, clothingType })
+    .filter((set) => (
+      sectionRole === SECTION_ROLES.STYLING ? set.setType === 'styling'
+        : sectionRole === SECTION_ROLES.STUDIO ? String(set.setType || '').startsWith('horizon')
+          : true
+    ));
   const [preview, setPreview] = useState(null);
   const previewTimer = useRef(null);
   useEffect(() => () => clearTimeout(previewTimer.current), []);
@@ -2398,6 +2466,37 @@ export function Storyboard() {
           ? { ...b, spaceGroupId: g.spaceGroupId, spaceVariation: g.spaceVariation ?? 'subtle', refScope: 'pose' } : b));
       }
       out = normalizeStoryboardMutation(out);   // 행 위생 + 분리된 공간 run 재키 (삽입 경로 공통 규칙)
+    // 후킹에 프레임이 없으면(시그니처 컷을 지워 비운 상태) 새로 넣는 첫 컷이 시그니처가 된다 —
+    // 후킹은 첫 화면 스타일이 컷 구성을 지배하므로 프레임 없는 상태로 남겨두지 않는다(2026-08-16 오너).
+    if (sectionRole === SECTION_ROLES.HOOKING && !deriveHookFrame(out)) {
+      // 가용성 판정은 자동 배정기와 같은 기준 — 닫힌 조합을 슬롯으로 잡으면 빈 컷이 된다.
+      // (hookCutAvailable 은 로딩 early-return 아래 선언이라 여기서 같은 식을 로컬로 만든다.)
+      const genderNow = exampleGender
+        || genderForClothingType(clothingType, composeModeSeed.targetGenders);
+      const [slot] = hookSlotPlan('signature', {
+        isCutAvailable: (cutType, shot) => selectGenerationExamples(
+          catalogs?.genExamples || [], { cutType, shot, clothingType, gender: genderNow },
+        ).length > 0,
+      });
+      const frameId = `hookframe__${uid('hf')}`;
+      out = out.map((block) => {
+        if (block.id !== nb.id) return block;
+        const framed = {
+          ...block,
+          // 드롭한 예시가 있으면 그 그림의 틀을 존중하고, 맨손 추가일 때만 시그니처 슬롯 틀로 맞춘다.
+          ...(droppedExample ? {} : { cutType: slot.cutType, shot: slot.shot }),
+          hookFrameId: frameId,
+          hookStyle: 'signature',
+          hookFrameVersion: HOOK_FRAME_VERSION,
+          hookSlotRole: slot.role,
+          hookTitleOverlay: true,
+        };
+        // 시그니처는 첫 화면 그림이다 — 빈 채로 두지 않고 시드와 같이 자동 배정을 받는다
+        // ('manual' 표식이 남으면 배정기가 건너뛰어 "예시를 골라주세요" 빈 컷이 된다).
+        delete framed.exampleChoice;
+        return framed;
+      });
+    }
     const next = droppedExample
       ? out.map((block) => block.id === nb.id ? {
         ...block,
@@ -2789,6 +2888,14 @@ export function Storyboard() {
   };
   const shuffleSection = (group) => runShuffle(group);
   const shuffleSpaceSet = (group, spaceGroupId) => runShuffle(group, { onlySpaceGroupId: spaceGroupId });
+  const shuffleBlock = (group, blockId) => runShuffle(group, { onlyBlockId: blockId });
+  // 컷 단위 셔플 아이콘은 '낱개 AI 컷'에만 — 시그니처(프레임 슬롯)·장소세트 멤버·내 사진·
+  // 아직 예시가 없는 컷은 제외한다(2026-08-16 오너).
+  const canShuffleBlock = (block) => !locked
+    && block.source === 'ai'
+    && !block.spaceGroupId
+    && !block.hookFrameId
+    && !!block.exampleId;
 
   const insertControl = (
     idx,
@@ -2868,14 +2975,15 @@ export function Storyboard() {
     const addControl = targetSpaceGroupId && !reservation
       ? null
       : insertControl(lastItem.index, group, targetSpaceGroupId, reservation);
-    if (unit.kind === 'frame') {
+    if (unit.kind === 'frame' || unit.kind === 'grid4') {
+      const Renderer = unit.kind === 'grid4' ? StoryboardMoodGrid : StoryboardFrame;
       return (
         <div
-          key={'frame:' + unit.items[0].block.layoutRowId}
+          key={unit.kind + ':' + (unit.items[0].block.layoutRowId || unit.items[0].block.id)}
           ref={(node) => registerUnitRef(node, unit.items)}
           className={'sb-grid-unit sb-frame-unit sb-drag' + (unit.items.some((item) => item.block.id === dragId) ? ' dragging' : '')}
         >
-          <StoryboardFrame
+          <Renderer
             items={unit.items}
             total={blocks.length}
             catalogs={catalogs}
@@ -2924,7 +3032,7 @@ export function Storyboard() {
           canNudgeUp={inGroup && groupPos > 0}
           canNudgeDown={inGroup && groupPos < group.items.length - 1}
           microVariationIds={microVariationIds}
-          microVariationIds={microVariationIds}
+          onShuffle={canShuffleBlock(block) ? (() => shuffleBlock(group, block.id)) : null}
         />
       </div>
     );
@@ -3065,24 +3173,42 @@ export function Storyboard() {
                     unit.kind === 'spaceRun' ? renderSpaceRun(unit, group) : renderUnit(unit, group)
                   ))}
                   {!group.items.length && insertControl(groupSection.start, group, null, null, 'empty')}
-                  {/* 개별 컷 추가 — 점선 카드(구 UI, 2026-08-15 오너 스크린샷). 후킹 섹션은
-                      스타일이 컷 구성을 지배하므로 여기서 컷을 추가하지 않는다. */}
+                  {/* 추가 칸 — 점선 카드 안에 흰 pill 두 줄: 위 '컷 추가', 아래 '장소세트 추가'
+                      (2026-08-16 오너). 후킹 섹션은 스타일이 컷 구성을 지배하므로 제외하고,
+                      장소세트는 스타일링·스튜디오만 받는다(의류 확인은 제품컷 전용). */}
                   {group.items.length > 0 && groupSection.role !== SECTION_ROLES.HOOKING && (
                     <div className="sb-grid-unit">
-                      <button
-                        type="button"
-                        className="sb-addcard"
-                        disabled={locked}
-                        onClick={() => addBlock(
-                          group.items[group.items.length - 1].index,
-                          groupSection.id,
-                          groupSection.role,
-                          null,
-                          group.key,
+                      <div className="sb-addslot">
+                        <button
+                          type="button"
+                          className="sb-addpill"
+                          disabled={locked}
+                          onClick={() => addBlock(
+                            group.items[group.items.length - 1].index,
+                            groupSection.id,
+                            groupSection.role,
+                            null,
+                            group.key,
+                          )}
+                        >
+                          ＋ 컷 추가
+                        </button>
+                        {SPACE_SET_SECTION_ROLES.has(groupSection.role) && (
+                          <button
+                            type="button"
+                            className="sb-addpill"
+                            disabled={locked}
+                            onClick={() => openSetPicker({
+                              mode: 'add',
+                              index: group.items[group.items.length - 1].index,
+                              targetSid: groupSection.id,
+                              targetRole: groupSection.role,
+                            })}
+                          >
+                            ＋ 장소세트 추가
+                          </button>
                         )}
-                      >
-                        ＋ 컷 추가
-                      </button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -3135,7 +3261,7 @@ export function Storyboard() {
     } : null;
   const inspector = setPicker ? (
     <SpaceSetGallery mode={setPicker.mode} error={setPickerError} onChoose={chooseSpaceSet}
-      gender={exampleGender} clothingType={clothingType}
+      gender={exampleGender} clothingType={clothingType} sectionRole={setPicker.targetRole || null}
       onClose={() => { setSetPicker(null); setSetPickerError(null); }} />
   ) : <Inspector key={selectedId} block={selected} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} exampleGender={exampleGender} hasDetailImage={hasDetailImage} projectId={projectId}
     hookStyle={hookStyleSection}

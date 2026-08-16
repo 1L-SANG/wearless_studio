@@ -3,7 +3,7 @@
    Ported verbatim from reference/prototype/features/editor-panels.jsx.
    Only change: ES imports/exports (was window globals).
    ============================================================= */
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Icon, Button, IconButton, Chips, EmptyState, UploadPendingTile } from '@/components/ui.jsx';
 import { UnderlineTabs, ColorDots, MoodGuide, OuterClosureIcon } from '@/features/storyboard/Storyboard.jsx';
 import { ModelThumb } from '@/features/analysis/AnalysisForm.jsx';
@@ -18,9 +18,10 @@ import {
   generationExampleStructuralRecipePatch,
 } from '@/lib/storyboardExampleSelection.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
-import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, OBJECT_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, colorWithOpacity, encodeWardrobeImage, normalizeHexColor } from '@/features/editor/editorLibrary.js';
-import { DEFAULT_EDITOR_COLOR_PRESETS, commitNumberDraft, hexToHsv, hsvToHex } from '@/features/editor/editorAppearance.js';
+import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, OBJECT_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, colorWithOpacity, encodeWardrobeImage, normalizeHexColor, objectPresetPreview } from '@/features/editor/editorLibrary.js';
+import { DEFAULT_EDITOR_COLOR_PRESETS, commitNumberDraft, hexToHsv, hsvToHex, speechBubblePath } from '@/features/editor/editorAppearance.js';
 import { TEXT_MUTED, TEXT_PRESETS, activeTextPreset, quickStylePatch } from '@/features/editor/presets/textPresets.js';
+import { speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 
 function PanelHead({ title, sub }) {
@@ -819,8 +820,12 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
   const activePresetKey = has ? activeTextPreset(s) : null;
   const presetList = (
     <div className="text-preset-list">
+      {/* 누르면 자동 자리, 끌어다 놓으면 놓은 자리 — 오브젝트·프레임과 같은 'text/object'
+          운반 형식이라 블록이 이미 갖고 있는 드롭 하이라이트를 그대로 탄다(오너 8/16). */}
       {TEXT_PRESETS.map((p) => (
-        <button key={p.key} type="button" className="text-preset-item" aria-label={`${p.label} 추가`} title={`${p.label} 추가`}
+        <button key={p.key} type="button" className="text-preset-item" draggable
+          aria-label={`${p.label} 추가`} title={`${p.label} — 누르면 추가, 끌어다 놓으면 그 자리에`}
+          onDragStart={(e) => { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/object', `text:${p.key}`); }}
           onClick={() => onAddText?.(p.key)}>
           {/* 축소판 스타일은 프리셋 데이터에서 직접 그린다 — CSS에 복제하면 값이 갈라진다 */}
           <span className="tp-sample" style={{ fontSize: p.previewSize, fontWeight: p.style.weight, color: p.style.color, letterSpacing: p.style.tracking }}>{p.sample || p.label}</span>
@@ -834,7 +839,7 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
       {!has ? (
         <>
           {presetList}
-          <div className="panel-sub" style={{ marginTop: 14 }}>원하는 종류를 누르면 그 스타일로 바로 입력할 수 있어요. 캔버스의 텍스트를 클릭하면 편집해요.</div>
+          <div className="panel-sub" style={{ marginTop: 14 }}>누르면 바로 입력할 수 있고, 끌어다 놓으면 원하는 자리에 들어가요. 캔버스의 텍스트를 클릭하면 편집해요.</div>
         </>
       ) : (
         <>
@@ -1012,46 +1017,67 @@ function ShapeGlyph({ id }) {
   const d = id === 'triangle' ? 'M50 8 L96 92 L4 92 Z' : SHAPE_D[id];
   return <svg className="obj-glyph" viewBox="0 0 100 100"><path d={d} fill="#fff" stroke="currentColor" strokeWidth="6" strokeLinejoin="round" /></svg>;
 }
-/* 추천 오브젝트 미리보기 — 캔버스 결과물을 같은 선 굵기로 축약한 아이콘 (84×44) */
-const presetIconProps = { viewBox: '0 0 84 44', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' };
-const PRESET_ICONS = {
-  'text-box': (
-    <svg {...presetIconProps}>
-      <rect x="10" y="8" width="64" height="28" rx="6" fill="currentColor" fillOpacity=".9" stroke="none" />
-      <path d="M22 19h40M22 26h26" stroke="#fff" strokeWidth="2.4" />
-    </svg>
-  ),
-  'single-bubble': (
-    <svg {...presetIconProps}>
-      <path d="M16 8h52a6 6 0 0 1 6 6v12a6 6 0 0 1-6 6H34l-9 8v-8h-9a6 6 0 0 1-6-6V14a6 6 0 0 1 6-6Z" />
-      <path d="M26 20h32" opacity=".55" />
-    </svg>
-  ),
-  'qa-bubbles': (
-    <svg {...presetIconProps}>
-      <path d="M10 6h34a5 5 0 0 1 5 5v6a5 5 0 0 1-5 5H24l-7 6v-6h-7a5 5 0 0 1-5-5v-6a5 5 0 0 1 5-5Z" />
-      <path d="M72 21H42a5 5 0 0 0-5 5v6a5 5 0 0 0 5 5h16l7 6v-6h7a5 5 0 0 0 5-5v-6a5 5 0 0 0-5-5Z" opacity=".55" />
-    </svg>
-  ),
-  divider: (
-    <svg {...presetIconProps}>
-      <path d="M10 22h64" />
-      <circle cx="42" cy="22" r="3.4" fill="currentColor" stroke="none" />
-    </svg>
-  ),
-  'arrow-callout': (
-    <svg {...presetIconProps}>
-      <path d="M12 14h34M12 22h24" />
-      <path d="M48 30h22m0 0-6-5m6 5-6 5" />
-    </svg>
-  ),
-  'label-badge': (
-    <svg {...presetIconProps}>
-      <rect x="20" y="12" width="44" height="20" rx="10" />
-      <path d="M32 22h20" opacity=".55" />
-    </svg>
-  ),
-};
+/* 추천 오브젝트 미리보기 — 그림을 따로 그리지 않고 **실제로 만들어질 요소**를 그대로
+   축소해 보여준다(오너 8/16: "블록에서 실제 어떻게 보이는지를 썸네일에"). 선화 아이콘
+   시절엔 캔버스 결과와 결이 달랐고, 프리셋 값이 바뀌어도 아이콘이 따라오지 않았다.
+   캔버스(Editor.jsx El)의 그리기 규칙 중 정지 화면에 필요한 것만 옮겨 온다. */
+function PresetPreviewElement({ el }) {
+  const box = { position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h, opacity: el.opacity ?? 1 };
+  const s = el.style || {};
+  const typography = {
+    fontSize: s.size, fontWeight: s.weight || 400, color: s.color || '#0e0d14',
+    letterSpacing: s.tracking, textAlign: s.align || 'left',
+    lineHeight: s.lineHeight ? `${s.lineHeight}px` : 1.4, whiteSpace: 'pre-wrap',
+  };
+  if (el.type === 'text' && el.shape === 'bubble') {
+    const fit = speechBubbleFitOptions(el);
+    return (
+      <div style={{ ...box, overflow: 'visible' }}>
+        <svg width="100%" height="100%" viewBox={`0 0 ${el.w} ${el.h}`} preserveAspectRatio="none" aria-hidden="true"
+          style={{ position: 'absolute', inset: 0, display: 'block', overflow: 'visible' }}>
+          <path d={speechBubblePath({ width: el.w, height: el.h, radius: el.radius ?? DEFAULT_BUBBLE_RADIUS })}
+            fill={colorWithOpacity(el.fill || '#ffffff', el.fillOpacity ?? 1)}
+            stroke={el.stroke === 'none' ? 'none' : (el.stroke || DEFAULT_BUBBLE_STROKE)}
+            strokeWidth={el.stroke === 'none' ? 0 : (el.strokeWidth ?? DEFAULT_BUBBLE_STROKE_WIDTH)}
+            strokeLinejoin="round" transform={el.flipX ? `translate(${el.w} 0) scale(-1 1)` : undefined} />
+        </svg>
+        <div style={{ position: 'absolute', left: fit.padX, top: fit.padTop, width: Math.max(1, el.w - fit.padX * 2), ...typography }}>{el.text}</div>
+      </div>
+    );
+  }
+  if (el.type === 'text') return <div style={{ ...box, height: 'auto', ...typography }}>{el.text}</div>;
+  if (el.type === 'shape') {
+    return <div style={{ ...box, background: el.fill || '#0e0d14', borderRadius: el.radius || 0 }} />;
+  }
+  const my = el.h / 2;
+  const lc = el.stroke && el.stroke !== 'none' ? el.stroke : (el.fill || '#0e0d14');
+  const lw = el.strokeWidth || 2.5;
+  return (
+    <div style={box}>
+      <svg width="100%" height="100%" viewBox={`0 0 ${el.w} ${el.h}`} style={{ overflow: 'visible', display: 'block' }}>
+        <line x1={el.shape === 'arrow-l' ? 12 : 0} y1={my} x2={el.shape === 'arrow-r' ? el.w - 12 : el.w} y2={my} stroke={lc} strokeWidth={lw} strokeLinecap="round" />
+        {el.shape === 'arrow-r' && <polyline points={`${el.w - 14},${my - 8} ${el.w - 2},${my} ${el.w - 14},${my + 8}`} fill="none" stroke={lc} strokeWidth={lw} strokeLinecap="round" strokeLinejoin="round" />}
+      </svg>
+    </div>
+  );
+}
+/* 썸네일 칸(가로 THUMB_W, 세로 THUMB_H)에 통째로 들어가도록 축소만 한다 — 확대는 하지
+   않는다(구분선처럼 납작한 오브젝트가 흐리게 늘어난다). 실제 블록에서처럼 흰 바탕 위. */
+const OBJECT_THUMB = { w: 132, h: 58, pad: 6 };
+function ObjectPresetThumb({ presetId }) {
+  const preview = useMemo(() => objectPresetPreview(presetId), [presetId]);
+  const scale = Math.min(1, (OBJECT_THUMB.w - OBJECT_THUMB.pad * 2) / preview.width,
+    (OBJECT_THUMB.h - OBJECT_THUMB.pad * 2) / preview.height);
+  return (
+    <span className="object-preset-thumb" aria-hidden="true">
+      <span className="object-preset-stage" style={{ width: preview.width * scale, height: preview.height * scale }}>
+        <span style={{ position: 'absolute', left: 0, top: 0, width: preview.width, height: preview.height, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
+          {preview.elements.map((el) => <PresetPreviewElement key={el.id} el={el} />)}
+        </span>
+      </span>
+    </span>
+  );
+}
 const OBJECT_PANEL_TABS = [
   { value: 'preset', label: '추천 오브젝트' },
   { value: 'shape', label: '도형·선' },
@@ -1072,7 +1098,7 @@ export function ShapePanel({ catalogs, onAdd, block, onBgChange }) {
           {OBJECT_LIBRARY_ITEMS.map((item) => (
             <button className="object-preset-cell" key={item.id} draggable title={item.label}
               onClick={() => onAdd('preset', item.id)} onDragStart={(e) => dragStart(e, 'preset', item.id)}>
-              <span className="object-preset-thumb">{PRESET_ICONS[item.id] || item.preview}</span>
+              <ObjectPresetThumb presetId={item.id} />
               <span className="object-preset-name">{item.label}</span>
             </button>
           ))}

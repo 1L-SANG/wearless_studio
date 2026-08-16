@@ -254,12 +254,15 @@ export function applyHookStyle(blocks, style, {
     return framed;
   });
 
-  // pair = 1행, moodGrid = 2행(위 2·아래 2) — 기존 영속 행 계약(layoutRow) 재사용.
+  // pair = 2칸 1행, moodGrid = 4칸 1행(grid2x2) — 기존 영속 행 계약(layoutRow) 재사용.
+  // 네 컷을 2행으로 쪼개면 콘티에서도 에디터에서도 두 덩어리로 읽힌다. 오너 확정(8/16)은
+  // "네 컷이 하나로 합쳐 보이게" — 한 행이어야 콘티의 붙은 2×2와 에디터 조립이 같은 뜻이 된다.
   if (style === 'pair' || style === 'moodGrid') {
-    slotBlocks.forEach((block, index) => {
-      block.layoutRowId = `row__${nextFrameId}__${Math.floor(index / 2) + 1}`;
+    const layout = style === 'moodGrid' ? 'grid2x2' : 'twoColumn';
+    slotBlocks.forEach((block) => {
+      block.layoutRowId = `row__${nextFrameId}__1`;
       block.layoutRowVersion = 1;
-      block.sectionLayout = 'twoColumn';
+      block.sectionLayout = layout;
     });
   }
 

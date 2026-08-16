@@ -26,7 +26,7 @@ import { exampleGenderFromAnalysis, hexFor } from '@/features/storyboard/Storybo
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isAutoManagedBlock, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
-import { buildTextPresetElement } from '@/features/editor/presets/textPresets.js';
+import { buildTextPresetElement, textPresetDropPlacement } from '@/features/editor/presets/textPresets.js';
 import { buildColorOpts, visibleColorOpts } from '@/lib/colorOpts.js';
 import { retryRead } from '@/lib/retryRead.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
@@ -635,7 +635,7 @@ function ImageImportWait({ item, scale }) {
   );
 }
 
-function CanvasBlock({ block, scale, inView = false, imageImports, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onTextCommit, onElementDragStart, shouldSuppressBlankClick, onAddImage, onDropImage, onDropBlockImage, onDropImageFiles, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropCancel, onCropReset, idx }) {
+function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onTextCommit, onElementDragStart, shouldSuppressBlankClick, onAddImage, onDropImage, onDropBlockImage, onDropImageFiles, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropCancel, onCropReset, idx }) {
   // 블록 높이는 콘텐츠보다 작아지지 않는다 — 이미지를 블록보다 크게 리사이즈하면 블록도 따라 커져 클립 방지.
   // (기존: block.h 있으면 고정 → 이미지 키워도 block-clip 이 잘라 "안 커보이던" 버그)
   const blockH = getBlockRenderHeight(block);
@@ -678,7 +678,7 @@ function CanvasBlock({ block, scale, inView = false, imageImports, selectedBlock
   };
 
   return (
-    <div className={`canvas-block${blockSelected ? ' on' : ''}${inView ? ' in-view' : ''}${objOver ? ' obj-over' : ''}`}
+    <div className={`canvas-block${blockSelected ? ' on' : ''}${objOver ? ' obj-over' : ''}`}
       data-blockid={block.id}
       /* 고른 뒤 전파를 멈춘다 — 캔버스 바닥의 onClick 이 매 클릭마다 선택을 지우므로,
          멈추지 않으면 누르는 동안만 잡혔다가 손을 떼는 순간 풀린다. */
@@ -972,10 +972,6 @@ export function Editor() {
   const [imageImports, setImageImports] = useState([]);
   const [wardrobeUploadLoading, setWardrobeUploadLoading] = useState(false);
   const [hoverGray, setHoverGray] = useState(false);
-  /* 화면에 가장 많이 들어온 블록 — 그 블록의 퀵액션은 마우스와 무관하게 고정 노출한다
-     (오너 8/16). 예전에는 hover 로만 떠서, 버튼을 누르러 블록 밖으로 나가는 순간
-     사라지는 것처럼 보였다. */
-  const [inViewBlock, setInViewBlock] = useState(null);
   const [layerFloat, setLayerFloat] = useState(null);
   const [layerPos, setLayerPos] = useState(null);
   const layerFloatRef = useRef(null);
@@ -1008,33 +1004,6 @@ export function Editor() {
   const activePointerDragCleanup = useRef(null);   // 화면 이탈/언마운트에도 window 포인터 리스너 정리
   const suppressMarqueeClick = useRef(false);      // pointerup 직후 합성 click이 블록 선택으로 덮는 것 방지
   const [canvasH, setCanvasH] = useState(0);       // unscaled canvas height → scaled spacer
-  // 스크롤·확대에 따라 '지금 보고 있는 블록'을 갱신한다. rAF 로 묶어 프레임당 한 번만 잰다.
-  useEffect(() => {
-    const wrap = wrapRef.current;
-    if (!wrap) return undefined;
-    let frame = 0;
-    const measure = () => {
-      frame = 0;
-      const wr = wrap.getBoundingClientRect();
-      let bestId = null;
-      let bestVisible = 0;
-      for (const node of wrap.querySelectorAll('.canvas-block')) {
-        const r = node.getBoundingClientRect();
-        const visible = Math.min(r.bottom, wr.bottom) - Math.max(r.top, wr.top);
-        if (visible > bestVisible) { bestVisible = visible; bestId = node.dataset.blockid; }
-      }
-      setInViewBlock((current) => (current === bestId ? current : bestId));
-    };
-    const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
-    schedule();
-    wrap.addEventListener('scroll', schedule, { passive: true });
-    window.addEventListener('resize', schedule);
-    return () => {
-      if (frame) cancelAnimationFrame(frame);
-      wrap.removeEventListener('scroll', schedule);
-      window.removeEventListener('resize', schedule);
-    };
-  }, [blocks, scale, stitched]);
   const hist = useRef({ past: [], future: [] });
   const prevBlocks = useRef(null);
   const fromHistory = useRef(false);
@@ -2074,6 +2043,24 @@ export function Editor() {
     selectEl(block.id, el); setTab('text');
     setEditEl(el.id);
   };
+  /* 텍스트 프리셋을 끌어다 놓았을 때 — 클릭 추가(addText)와 같은 요소를 만들되 블록과
+     자리는 셀러가 가리킨 그대로 쓴다. 자동 관리 블록만은 클릭 경로와 똑같이 막는다
+     (요소가 폼 재적용·생성 병합에서 통째로 재생성돼 적은 글이 사라진다). */
+  const dropText = (preset, blockId, dropEvent) => {
+    const bs0 = latestBlocks.current || blocks;
+    const block = bs0.find((b) => b.id === blockId);
+    if (!block) return;
+    if (isAutoManagedBlock(block)) { toast.push('이 블록은 자동으로 채워져서 글자를 넣을 수 없어요', { icon: 'x' }); return; }
+    const base = buildTextPresetElement(preset);
+    const rect = dropEvent?.currentTarget?.getBoundingClientRect?.();
+    const point = rect
+      ? viewportPointToBlock({ clientX: dropEvent.clientX, clientY: dropEvent.clientY, blockLeft: rect.left, blockTop: rect.top, scale })
+      : { x: base.x, y: base.y + base.h / 2 };
+    const el = { ...base, ...textPresetDropPlacement({ ...point, w: base.w, h: base.h, blockW: block.w, blockH: block.h }) };
+    setBlocks((bs) => bs.map((b) => b.id === block.id ? { ...b, elements: [...b.elements, el] } : b));
+    selectEl(block.id, el); setTab('text');
+    setEditEl(el.id);
+  };
   /* ---- 정보 블록 (PRD §10.14 `내용 추가`) — infoPresets 빌더로 폼→블록 생성 ---- */
   const targetGenders = (analysis && analysis.targetGenders) || [];
   const recommendGender = targetGenders.length
@@ -2901,7 +2888,7 @@ export function Editor() {
                   onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setFrameOver((o) => o === i ? null : o); }} onDrop={(e) => onCanvasInsertDrop(e, i)}>
                   <div className={`canvas-dropline${frameOver === i ? ' on' : ''}`} />
                 </div>
-                <CanvasBlock block={b} scale={scale} idx={i} inView={inViewBlock === b.id} imageImports={imageImports.filter((item) => item.blockId === b.id)}
+                <CanvasBlock block={b} scale={scale} idx={i} imageImports={imageImports.filter((item) => item.blockId === b.id)}
                   selectedBlockId={blockFocused ? selBlock : null} selEls={selEls} editEl={editEl} onEdit={setEditEl}
                   crop={cropping && cropping.blockId === b.id ? cropping : null}
                   onCropDrag={cropDrag} onCropStart={startCrop} onCropCommit={commitCrop} onCropCancel={cancelCrop} onCropReset={resetCrop}
@@ -2911,7 +2898,7 @@ export function Editor() {
                   onAddImage={requestSlotImage} onDropImage={dropSlotImage}
                   onDropBlockImage={(blockId, image, point) => insertImage(image, { blockId, point })} onDropImageFiles={dropImageFiles}
                   onOpenLayers={(id) => { setLayerFloat(id); setLayerPos(null); }}
-                  onObjectDrop={(bid, type, id, ev) => addShape(type, id, bid, ev)} onReshape={reshapeBlock}
+                  onObjectDrop={(bid, type, id, ev) => (type === 'text' ? dropText(id, bid, ev) : addShape(type, id, bid, ev))} onReshape={reshapeBlock}
                   onMove={moveBlock} onAddEmpty={addEmpty} onDelete={deleteBlock} onEditInfo={openInfoEdit}
                   onDownload={downloadBlock} />
               </div>

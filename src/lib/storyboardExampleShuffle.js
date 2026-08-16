@@ -41,16 +41,46 @@ function autoSetRuns(blocks, sectionId) {
   ));
 }
 
+/* 낱개 컷 하나만 콕 집어 재추첨할 때(카드별 셔플 아이콘, 2026-08-16)의 대상 판정.
+   섹션 단위 셔플과 달리 '직접 고른 예시'도 바꾼다 — 그 컷을 지목한 명시 조작이기 때문이다.
+   세트 멤버·내 사진·예시 없는 빈 컷은 여전히 대상이 아니다(카드에 아이콘도 뜨지 않는다). */
+const isRerollableOne = (block, sectionId) => (
+  !!block
+  && block.sectionId === sectionId
+  && block.source === 'ai'
+  && !block.spaceGroupId
+  && !!block.exampleId
+);
+
 /* rotation: 같은 섹션에서 셔플을 연타할 때 세트 후보를 순환시키는 정수(횟수 카운터).
    uid: 새 세트 run 의 spaceGroupId 인스턴스 키 생성기(주입 — 테스트 결정성).
    onlySpaceGroupId: 지정하면 그 세트 run 하나만 교체한다(세트별 셔플 버튼, 2026-08-15 —
-   낱개 컷 재추첨은 건너뛴다). */
+   낱개 컷 재추첨은 건너뛴다).
+   onlyBlockId: 지정하면 그 낱개 컷 하나만 재추첨한다(카드별 셔플 아이콘, 2026-08-16 —
+   세트 교체는 건너뛴다). */
 export function shuffleSectionExamples(blocks, {
-  sectionId, catalog, product, gender, rotation = 0, uid = null, onlySpaceGroupId = null,
+  sectionId, catalog, product, gender, rotation = 0, uid = null,
+  onlySpaceGroupId = null, onlyBlockId = null,
 }) {
   const list = Array.isArray(blocks) ? blocks : [];
   if (!sectionId) return list;
   let next = list;
+
+  // 낱개 컷 하나만 — 세트 교체 없이 그 컷의 예시만 다시 뽑는다.
+  if (onlyBlockId) {
+    const target = next.find((block) => block.id === onlyBlockId);
+    if (!isRerollableOne(target, sectionId)) return next;
+    const avoidByBlockId = { [onlyBlockId]: target.exampleId };
+    // exampleChoice 'manual' 은 배정기가 건너뛰는 표식이다 — 셔플은 "알아서 다시 뽑아줘"라는
+    // 뜻이므로 이 컷만 자동 배정으로 돌린다(안 그러면 예시가 비워진 채 남는다).
+    const cleared = next.map((block) => {
+      if (block.id !== onlyBlockId) return block;
+      const reset = { ...clearExampleSelection(block), exampleSelectionOrigin: null };
+      delete reset.exampleChoice;
+      return reset;
+    });
+    return assignGenerationExamples(cleared, { catalog, product, gender, avoidByBlockId }).blocks;
+  }
 
   // ① 공간 세트 — 세트 단위 교체(같은 성별·의류 종류·세트 타입의 다른 발행 세트로).
   // 교체는 **기존 run 크기를 유지**한다: 엔트리 시드가 스타일링 세트를 2멤버만 깔았는데

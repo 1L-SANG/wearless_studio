@@ -57,6 +57,15 @@ export function buildTextPresetElement(key) {
   return { id: uid('el'), type: 'text', x: 60, y: 80, w: 12, h, text: '', textSizing: 'auto', style: { font: 'Pretendard', ...p.style } };
 }
 
+/** 끌어다 놓은 자리 → 새 텍스트 요소의 좌표(블록 기준). 요소는 캐럿 씨앗(w=12)이라
+    포인터가 가리킨 곳이 글자가 시작될 자리다: x는 포인터 그대로, y는 글줄 높이의
+    절반만 올려 포인터가 줄 한가운데 오게 한다. 블록 밖으로는 못 나간다 — 경계 밖
+    요소는 화면에 아예 안 보여서 "놨는데 아무 일도 없다"로 보이기 때문(오너 8/16). */
+export function textPresetDropPlacement({ x, y, w = 12, h = 24, blockW = 0, blockH = 0 }) {
+  const clamp = (value, max) => Math.round(Math.min(Math.max(0, value), max > 0 ? max : Math.max(0, value)));
+  return { x: clamp(x, blockW - w), y: clamp(y - h / 2, blockH - h) };
+}
+
 /** 선택된 텍스트에 프리셋을 입히는 스타일 패치. 행간·자간은 프리셋에 없으면
     undefined로 리셋한다 — 설명글(행간 26)에서 큰 제목(40px)으로 바꿀 때 행간이 남으면
     글줄이 겹친다. 0이 아니라 undefined인 이유: 0을 쓰면 "명시적 0"과 "미설정"이 저장

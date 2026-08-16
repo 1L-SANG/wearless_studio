@@ -179,14 +179,16 @@ test('applyHookStyle(pair): two medium slots, hero converts shot and drops its s
   assert.equal(slots[1].exampleId, 'ex-benefit');      // 틀 유지 슬롯은 예시 보존
 });
 
-test('applyHookStyle(moodGrid, 4 colors): four color slots in two rows, missing cuts created', () => {
+test('applyHookStyle(moodGrid, 4 colors): four color slots in one 2×2 row, missing cuts created', () => {
   const colors = [{ id: 'base', isBase: true }, { id: 'c2' }, { id: 'c3' }, { id: 'c4' }];
   const next = applyHookStyle(seedBoard(), 'moodGrid', { colors, createBlock: makeFactory(), frameId: 'hookframe__t' });
   const slots = next.filter((block) => block.hookFrameId === 'hookframe__t');
   assert.equal(slots.length, 4);
   assert.deepEqual(slots.map((block) => block.colorId), ['base', 'c2', 'c3', 'c4']);
   assert.ok(slots.every((block) => block.cutType === 'horizon' && block.shot === 'medium'));
-  assert.deepEqual([...new Set(slots.map((block) => block.layoutRowId))].length, 2);   // 2×2 = 2행
+  // 네 컷은 한 행(grid2x2) — 콘티의 붙은 2×2와 에디터 조립이 같은 뜻이 되려면 쪼개면 안 된다(오너 8/16).
+  assert.equal([...new Set(slots.map((block) => block.layoutRowId))].length, 1);
+  assert.ok(slots.every((block) => block.sectionLayout === 'grid2x2'));
   // 기존 후킹 2컷 재사용 + 신규 2컷 생성, 다른 섹션 컷은 소모하지 않는다
   assert.deepEqual(slots.map((block) => block.id), ['benefit', 'hero', 'new-1', 'new-2']);
   assert.ok(next.some((block) => block.id === 'styling-1' && !block.hookFrameId));
@@ -240,8 +242,8 @@ test('board normalization keeps hook-frame rows regardless of section cut counts
   const normalized = normalizeBoard(ensureSections(grid));
   const slots = normalized.filter((block) => block.hookFrameId === 'hf2');
   assert.equal(slots.length, 4);
-  assert.ok(slots.every((block) => block.sectionLayout === 'twoColumn'));
-  assert.equal(new Set(slots.map((block) => block.layoutRowId)).size, 2);   // 2행 유지
+  assert.ok(slots.every((block) => block.sectionLayout === 'grid2x2'));
+  assert.equal(new Set(slots.map((block) => block.layoutRowId)).size, 1);   // 4칸 1행 유지
 });
 
 test('style transition keeps user-pinned examples in matching slots (Codex review #2)', () => {

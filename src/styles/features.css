@@ -1372,9 +1372,7 @@
   margin-left: var(--quick-gap); display: flex; flex-direction: column; gap: 8px; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .14s;
   padding: 8px; background: #fff; border-radius: var(--r-5); box-shadow: var(--elev-card); }
 .canvas-block .quick::before { content: ''; position: absolute; right: 100%; top: 0; width: var(--quick-gap); height: 100%; }
-/* .in-view = 지금 화면을 가장 많이 차지한 블록 — 마우스를 떼도 퀵액션이 고정으로 남는다.
-   hover 로만 띄우면 버튼을 누르러 블록 밖으로 나가는 동안 사라지는 것처럼 보인다(오너 8/16). */
-.canvas-block:hover .quick, .canvas-block.on .quick, .canvas-block.in-view .quick { opacity: 1; visibility: visible; pointer-events: auto; transition-delay: 0s; }
+.canvas-block:hover .quick, .canvas-block.on .quick { opacity: 1; visibility: visible; pointer-events: auto; transition-delay: 0s; }
 .el { position: absolute; cursor: pointer; outline: 1px solid rgba(14,13,20,.16); outline-offset: 0; }
 .el:hover { outline-color: rgba(14,13,20,.34); }
 /* 도형·선은 자체 형태(채움·획)가 이미 보인다 — 원이나 사선 둘레의 사각 회색 상자는
@@ -1730,16 +1728,16 @@
 .frame-layout-prev.template > img { position: absolute; inset: 0; z-index: 2; width: 100%; height: 100%; object-fit: contain; background: #fff; pointer-events: none; }
 .frame-item .fl { display: flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 500; color: var(--fg-1); }
 .frame-rec { margin-left: auto; padding: 1px 5px; border-radius: 5px; background: #eef4fb; color: #4f88c9; font-size: 9.5px; font-weight: 700; }
-/* 추천 오브젝트 — 선화(line-art) 썸네일 한 언어 (2026-08-14 개편, 텍스트 알약 글리프 폐기) */
+/* 추천 오브젝트 — 썸네일은 실제 요소를 그대로 축소한 미니어처(2026-08-16 오너 지시).
+   무대(stage)는 블록과 같은 흰 바탕이라야 흰 말풍선·잉크 박스가 실제처럼 읽힌다. */
 .object-preset-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-bottom: 18px; }
 .object-preset-cell { border: 0; border-radius: var(--r-3); background: var(--bg-2); cursor: grab; padding: 0 0 9px; overflow: hidden;
   display: flex; flex-direction: column; align-items: stretch; transition: background .14s, box-shadow .14s; }
 .object-preset-cell:hover { background: var(--bg-1); box-shadow: 0 0 0 1px var(--ring-strong), 0 4px 14px -4px rgba(14,13,20,.12); }
-.object-preset-cell:hover .object-preset-thumb svg { color: var(--fg-1); }
 .object-preset-cell:active { cursor: grabbing; }
-.object-preset-thumb { height: 58px; display: grid; place-items: center; }
-.object-preset-thumb svg { width: 80px; height: 42px; color: #4a4e57; transition: color .14s; }
-.object-preset-name { display: block; text-align: center; font-size: 11.5px; font-weight: 600; color: var(--fg-1); line-height: 1.2; }
+.object-preset-thumb { height: 58px; display: grid; place-items: center; background: #fff; overflow: hidden; }
+.object-preset-stage { position: relative; }
+.object-preset-name { display: block; text-align: center; font-size: 11.5px; font-weight: 600; color: var(--fg-1); line-height: 1.2; margin-top: 8px; }
 /* 오브젝트 탭 — 플랫 타일 + 큰 글리프 (4열, Figma/Canva 류 패널 관례) */
 .shape-list { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .shape-cell { aspect-ratio: 1; border: 0; border-radius: var(--r-3); background: var(--bg-2); display: grid; place-items: center; cursor: grab;
@@ -2405,17 +2403,31 @@
   text-shadow: 0 0 6px rgba(255, 255, 255, .9);
 }
 .sb-reserve-label b { font-size: 21px; font-weight: 600; line-height: 1; }
-.sb-addcard {
+/* 추가 칸 — 점선 카드 안에 흰 pill 두 줄(위 '컷 추가' · 아래 '장소세트 추가', 2026-08-16 오너). */
+.sb-addslot {
   width: 100%; aspect-ratio: 3 / 4;
   border: 1.5px dashed var(--sb-hair-2); border-radius: 10px;
   background: rgba(255, 255, 255, .45);
-  display: grid; place-items: center;
-  color: var(--sb-ink-3); font-size: 13px; font-weight: 600; cursor: pointer;
-  transition: color .16s, border-color .16s, background .16s;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px;
+  padding: 10px;
+  transition: border-color .16s, background .16s;
 }
-.sb-addcard:hover:not(:disabled) { color: var(--sb-ink); border-color: var(--sb-ink-3); background: rgba(255, 255, 255, .8); }
-.sb-addcard:disabled { opacity: .45; cursor: default; }
-.sb-addcard:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.sb-addslot:hover { border-color: var(--sb-ink-3); background: rgba(255, 255, 255, .8); }
+.sb-addpill {
+  max-width: 100%;
+  padding: 8px 15px;
+  border: 0; border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--sb-hair), 0 1px 2px rgba(23, 25, 31, .06), 0 4px 12px -4px rgba(23, 25, 31, .10);
+  color: var(--sb-ink); font-size: 12.5px; font-weight: 650; white-space: nowrap; cursor: pointer;
+  transition: transform .18s var(--sb-ease), box-shadow .18s;
+}
+.sb-addpill:hover:not(:disabled) {
+  transform: translateY(-1.5px);
+  box-shadow: 0 0 0 1px var(--sb-hair-2), 0 2px 4px rgba(23, 25, 31, .08), 0 10px 22px -8px rgba(23, 25, 31, .16);
+}
+.sb-addpill:disabled { opacity: .45; cursor: default; }
+.sb-addpill:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 /* 예시 셔플 — 후킹 섹션·장소세트에만, 마지막 카드 우측 아래(2026-08-15 오너). */
 .sb-shuffle-row { display: flex; align-items: center; gap: 10px; padding: 0 10px 16px; }
@@ -2736,6 +2748,16 @@
   font-size: 13px;
 }
 .sb-canvas-caption.mine { color: var(--sb-ink-3); font-weight: 600; }
+/* 컷 단위 셔플 — 정보 줄 왼쪽 끝(캡션은 우측 정렬이라 auto 여백으로 밀어낸다, 2026-08-16 오너). */
+.sb-caption-shuffle {
+  display: inline-grid; place-items: center; flex: none;
+  width: 22px; height: 22px; margin-right: auto;
+  border: 0; border-radius: 999px; padding: 0;
+  background: transparent; color: var(--sb-ink-3); cursor: pointer;
+  transition: color .16s, background .16s, transform .3s var(--sb-ease);
+}
+.sb-caption-shuffle:hover { color: var(--sb-ink); background: rgba(23, 25, 31, .06); transform: rotate(-14deg) scale(1.06); }
+.sb-caption-shuffle:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .sb-caption-values { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sb-caption-values .sb-val-changed { color: var(--sb-accent-ink); font-weight: 700; }
 .sb-caption-dot {
@@ -2896,6 +2918,10 @@
 }
 .sb-frame.colorway-set .sb-frame-box { box-shadow: 0 0 0 1px var(--sb-hair), var(--sb-card-shadow); }
 .sb-frame.colorway-set .sb-frame-tag { color: var(--fg-1); }
+/* 네 컷 구성 — 사진 넷이 완전히 붙은 2×2(간격 0). 위 두 컷의 설명은 그리드 위에 오므로
+   사진 쪽에 붙여 어느 칸의 설명인지 눈으로 이어지게 한다(2026-08-16 오너 지시). */
+.sb-moodgrid-box { grid-template-columns: 1fr 1fr; gap: 0; }
+.sb-moodgrid > .sb-frame-captions:first-child { margin-bottom: 6px; }
 .sb-frame-captions { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
 .sb-frame-captions .sb-canvas-caption { min-width: 0; }
 /* 프레임 반쪽은 폭이 절반(≈99px) — 색상 이름 텍스트는 빼고 점만 남겨 넘침을 막는다.
