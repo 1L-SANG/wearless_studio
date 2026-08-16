@@ -41,7 +41,7 @@ import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WID
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { imageResizeRect, lineHitStrokeWidth, resizePolicyForElement, shouldShowRotationHandle, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
 import { isWardrobeImageUsed, mergeEditorImagesIntoWardrobe } from '@/features/editor/editorWardrobe.js';
-import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, reorderElements, selectableElementBelowBlankText, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPreserveMultiSelectionOnPointerDown, shouldStartTextOnlyDrag } from '@/features/editor/editorSelection.js';
+import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, isPhotoSlotElement, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, reorderElements, selectableElementBelowBlankText, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPreserveMultiSelectionOnPointerDown, shouldStartTextOnlyDrag } from '@/features/editor/editorSelection.js';
 import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from '@/lib/imageTranscode.js';
 import { CONTENT_ROLES, SECTION_ROLES, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
 import { withStoryboardSpaceSetExamples } from '@/lib/storyboardSpaceSetCatalog.js';
@@ -1340,9 +1340,15 @@ export function Editor() {
       if (isEditorDeleteKey(e) && (deleteElements || deleteBlockSelection)) {
         e.preventDefault();
         if (deleteElements) {
+          // 격자·프레임의 사진 자리는 지워지는 게 아니라 빈 자리로 남는다 — 안내도 그렇게.
+          const bs0 = latestBlocks.current || blocks || [];
+          const picked = bs0.flatMap((b) => b.elements.filter((el) => selEls.includes(el.id)).map((el) => ({ b, el })));
+          const allSlots = picked.length > 0 && picked.every(({ b, el }) => isPhotoSlotElement(b, el));
           setBlocks((bs) => removeSelectedElements(bs, selEls));
           setSelEl(null); setSelEls([]); setBlockFocused(false);
-          toast.push(`${selEls.length > 1 ? selEls.length + '개 요소를' : '요소를'} 삭제했어요`, { icon: 'trash' });
+          toast.push(allSlots
+            ? `${picked.length > 1 ? picked.length + '장을' : '사진을'} 비웠어요 · 자리는 그대로예요`
+            : `${selEls.length > 1 ? selEls.length + '개 요소를' : '요소를'} 삭제했어요`, { icon: 'trash' });
         } else {
           setBlocks((bs) => removeSelectedBlock(bs, selBlock));
           setSelEl(null); setSelEls([]); setSelBlock(null); setBlockFocused(false);

@@ -7,7 +7,7 @@ import { DEFAULT_READ_RETRY_DELAYS, isRetryableReadError, retryRead } from '../.
 import { buildColorOpts, colorLabelOf, visibleColorOpts } from '../../src/lib/colorOpts.js';
 import { classifyEditorLoadError } from '../../src/features/editor/editorLoadError.js';
 import { mergeServerBlocks } from '../../src/lib/editorWaitSkeleton.js';
-import { reorderElements } from '../../src/features/editor/editorSelection.js';
+import { isPhotoSlotElement, removeSelectedElements, reorderElements } from '../../src/features/editor/editorSelection.js';
 
 /* ---------- 3-14 콘티 조회 자동 재시도 ---------- */
 
@@ -141,4 +141,50 @@ test('레이어 순서 — 제자리·없는 id 는 원본을 그대로 돌려�
   assert.equal(reorderElements(list, 'A', 'A'), list);
   assert.equal(reorderElements(list, 'A', 'Z'), list);
   assert.equal(reorderElements(list, 'Z', 'A'), list);
+});
+
+
+/* ---------- 격자·프레임의 사진 자리는 지우면 '빈 자리'로 남는다 (오너 2026-08-17) ---------- */
+
+const gridBlock = () => ({
+  id: 'b1', kind: 'grid2x2',
+  elements: [1, 2, 3, 4].map((i) => ({
+    id: `i${i}`, type: 'image', src: `${i}.png`, radius: 0, cutType: 'styling',
+    x: i % 2 ? 60 : 500, y: i <= 2 ? 50 : 610, w: 440, h: 560,
+  })),
+});
+
+test('격자 사진 하나를 지우면 자리·크기는 그대로 남고 사진만 빠진다', () => {
+  const after = removeSelectedElements([gridBlock()], ['i4'])[0];
+  assert.equal(after.elements.length, 4, '자리가 사라지면 격자가 무너지고 다시 넣은 사진이 블록을 덮는다');
+  const slot = after.elements.find((el) => el.id === 'i4');
+  assert.deepEqual([slot.x, slot.y, slot.w, slot.h], [500, 610, 440, 560]);
+  assert.equal(slot.src, null);
+  assert.equal(slot.cutType, null);
+  assert.equal(slot.frameSlot, true, '드롭이 이 칸에 스냅되고 ＋ 버튼이 뜨는 근거');
+});
+
+test('사진에 딸린 자국(크롭·실패 표식)은 비울 때 같이 걷어낸다', () => {
+  const block = gridBlock();
+  block.elements[0] = { ...block.elements[0], crop: { ox: 10 }, genFailed: true, genPending: 'wait' };
+  const slot = removeSelectedElements([block], ['i1'])[0].elements[0];
+  assert.ok(!('crop' in slot) && !('genFailed' in slot) && !('genPending' in slot));
+});
+
+test('사진 자리가 아닌 것은 예전처럼 지워진다 — 낱장 사진·격자 안 글자', () => {
+  const single = { id: 'b2', kind: 'hooking', elements: [{ id: 'f1', type: 'image', src: 'x.png' }, { id: 't1', type: 'text', text: 'hi' }] };
+  assert.deepEqual(removeSelectedElements([single], ['f1'])[0].elements.map((el) => el.id), ['t1']);
+  const withText = gridBlock();
+  withText.elements.push({ id: 't9', type: 'text', text: 'x' });
+  assert.deepEqual(removeSelectedElements([withText], ['t9'])[0].elements.map((el) => el.id), ['i1', 'i2', 'i3', 'i4']);
+});
+
+test('사진 자리 판정 — 프레임 템플릿 칸과 조립된 사진 행·격자', () => {
+  const img = { type: 'image' };
+  assert.equal(isPhotoSlotElement({ kind: 'custom' }, { ...img, frameSlot: true }), true);
+  for (const kind of ['twocol', 'threecol', 'grid2x2', 'colorcmp']) {
+    assert.equal(isPhotoSlotElement({ kind }, img), true, kind);
+  }
+  assert.equal(isPhotoSlotElement({ kind: 'hooking' }, img), false);
+  assert.equal(isPhotoSlotElement({ kind: 'grid2x2' }, { type: 'text' }), false);
 });

@@ -734,8 +734,10 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, lock = true, onLock 
       {/* 'AI로 컷 변형하기' 점프 버튼 제거(오너 8/15) — 같은 기능은 좌측 AI 탭(선택된 컷이
           자동으로 수정 대상이 된다)과 의류 타일의 'AI 편집' 뱃지로 계속 갈 수 있다. */}
       {/* '프레임 이미지' 액션 묶음(교체·자르기·초기화·빼내기) 제거(오너 8/16).
-          교체·빼내기는 빈 칸 클릭과 Delete 로, 자르기는 아래 '자르기' 섹션과 더블클릭으로
-          이미 되는 일이라 같은 화면에 두 벌이 있었다. */}
+          같은 일을 하는 수단이 화면에 이미 있다: 교체는 의류 탭에서 그 칸 위로 드래그,
+          빼내기는 Delete(격자·프레임의 사진 자리는 지워지지 않고 '＋ 여기에 사진 넣기'
+          빈 자리로 돌아간다 — editorSelection.isPhotoSlotElement, 2026-08-17 오너),
+          자르기는 아래 '자르기' 섹션과 더블클릭. */}
       <PanelSection title={isLine ? '선 크기' : '이미지 크기'} first>
         <div className="size-row">
           <NumField iconText="가로" value={Math.round(el.w)} min={20} max={2000} onChange={setW} />

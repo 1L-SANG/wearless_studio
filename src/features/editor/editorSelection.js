@@ -170,12 +170,33 @@ export function isEditorDeleteKey(event) {
   return true;
 }
 
+/* 격자·프레임 안의 사진 자리 — 여기 사진을 지우면 요소를 없애는 게 아니라 **빈 자리로
+   되돌린다**(오너 2026-08-17). 4장짜리 격자는 따로 만든 사진 4장을 나란히 붙여 둔 것이라
+   한 장만 지우는 건 맞지만, 자리까지 사라지면 격자가 무너지고 다시 넣은 사진이 칸 크기를
+   모른 채 블록을 통째로 덮는다. 빈 자리로 남기면 '＋ 여기에 사진 넣기'가 그 자리에 뜨고
+   드롭도 그 칸에 스냅된다. */
+const PHOTO_SLOT_BLOCK_KINDS = new Set(['twocol', 'threecol', 'grid2x2', 'colorcmp']);
+
+export function isPhotoSlotElement(block, element) {
+  if (element?.type !== 'image') return false;
+  if (element.frameSlot) return true;   // 프레임 탭 템플릿의 사진 칸
+  return PHOTO_SLOT_BLOCK_KINDS.has(block?.kind);   // 콘티에서 조립된 사진 행·격자
+}
+
+/** 사진 자리는 비우고(요소 유지), 그 밖의 요소는 지운다. */
 export function removeSelectedElements(blocks, selectedIds) {
   const selected = new Set(selectedIds || []);
   if (!selected.size) return blocks;
   return blocks.map((block) => ({
     ...block,
-    elements: block.elements.filter((element) => !selected.has(element.id)),
+    elements: block.elements.reduce((kept, element) => {
+      if (!selected.has(element.id)) { kept.push(element); return kept; }
+      if (!isPhotoSlotElement(block, element)) return kept;   // 지운다
+      // 비운다 — 자리·크기·모서리는 그대로, 사진에 딸린 것만 걷어낸다.
+      const { crop: _crop, genFailed: _genFailed, genPending: _genPending, ...rest } = element;
+      kept.push({ ...rest, src: null, cutType: null, frameSlot: true });
+      return kept;
+    }, []),
   }));
 }
 
