@@ -197,6 +197,13 @@ test('canvas routes every movable element through one pointer drag without nativ
   assert.match(editorSource, /onDoubleClick=\{\(e\) => \{ e\.stopPropagation\(\); pendingTextSize\.current = null; onEdit\(el\.id\)/);
 });
 
+test('텍스트 높이 동기화 기준선은 StrictMode 재마운트에서도 유지된다', () => {
+  // dev 는 setup→cleanup→setup 으로 두 번 돈다. ref 는 cleanup 으로 안 돌아가므로 마운트
+  // 전용 cleanup 이 없으면 두 번째 setup 이 '이미 무장됨'이 돼, 문서를 여는 것만으로 전
+  // 텍스트의 h 가 재기록되고 자동저장이 나간다(2026-08-16 리뷰).
+  assert.match(editorSource, /useLayoutEffect\(\(\) => \(\) => \{ hSyncArmed\.current = false; \}, \[\]\);/);
+});
+
 test('entering text edit places the caret at the end for normal text and speech bubbles', () => {
   // 방금 만든 텍스트만 예외 — 기본 문구가 통째로 선택돼 그냥 타이핑하면 갈아 끼워진다(오너 8/16).
   assert.match(editorSource, /range\.selectNodeContents\(node\);\s*if \(!selectAll\) range\.collapse\(false\);/s);

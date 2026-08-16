@@ -368,6 +368,11 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     if (Math.round(Number(el.h || 0)) !== h) onPatch(blockId, el.id, { h });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [el.text, el.w, el.textSizing, s0.size, s0.weight, s0.lineHeight, s0.tracking, s0.font, s0.list, editing, preview, el.hidden]);
+  // StrictMode(dev)는 마운트 효과를 setup→cleanup→setup 으로 두 번 돌린다. ref 는 cleanup 으로
+  // 되돌아가지 않으므로 두 번째 setup 에서 위 가드가 이미 'armed' 라, 문서를 여는 것만으로
+  // 전 텍스트의 h 가 재기록되고 자동저장 PUT 이 나갔다(dev 는 실서버가 기본이라 저장본이
+  // 실제로 바뀐다 — 2026-08-16 리뷰). 마운트 전용 cleanup 에서 기준선을 되돌린다.
+  useLayoutEffect(() => () => { hSyncArmed.current = false; }, []);
 
   // contentEditable 이 실제 DOM에 반영된 직후 포커스와 캐럿을 문장 끝으로 보낸다.
   // 더블클릭 좌표에 남아 있던 브라우저 기본 selection 때문에 중간 글자가 덮이는 것을 막는다.
