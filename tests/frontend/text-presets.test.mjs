@@ -244,6 +244,10 @@ test('에디터 계약 — 안내 문구 정리는 그 글자에서 손을 뗀 �
   // 방금 만든 글자에 '빠른 스타일' 칩을 먼저 누르면 편집만 끝나고 선택은 남는다 —
   // 그때 지우면 셀러가 만든 글자가 통째로 사라진다(2026-08-17 리뷰).
   assert.match(prune, /FRESH_TEXT_IDS\.has\(elId\) && selEl !== elId/);
+  // 편집 종료만 보면 '만들자마자 왼쪽 패널을 누른' 순서를 놓쳐 안내 문구가 발행된다 —
+  // 선택이 그 글자를 떠날 때도 정리한다(2026-08-17 리뷰).
+  assert.match(editor, /const prevSelEl = useRef\(null\);/);
+  assert.match(editor, /if \(prev && prev !== selEl && prev !== editEl\) pruneEmptyTextEl\(prev\);/);
 });
 
 

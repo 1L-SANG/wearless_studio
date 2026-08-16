@@ -150,6 +150,7 @@ const gridBlock = () => ({
   id: 'b1', kind: 'grid2x2',
   elements: [1, 2, 3, 4].map((i) => ({
     id: `i${i}`, type: 'image', src: `${i}.png`, radius: 0, cutType: 'styling',
+    sourceBlockId: `sb${i}`,   // 조립된 '칸'의 표식 — 나중에 얹은 낱장 사진과 구분한다
     x: i % 2 ? 60 : 500, y: i <= 2 ? 50 : 610, w: 440, h: 560,
   })),
 });
@@ -162,6 +163,8 @@ test('격자 사진 하나를 지우면 자리·크기는 그대로 남고 사�
   assert.equal(slot.src, null);
   assert.equal(slot.cutType, null);
   assert.equal(slot.frameSlot, true, '드롭이 이 칸에 스냅되고 ＋ 버튼이 뜨는 근거');
+  // 콘티 컷과의 연결을 끊는다 — 남기면 생성 완료 병합이 지운 사진을 되돌려 놓는다.
+  assert.ok(!('sourceBlockId' in slot));
 });
 
 test('사진에 딸린 자국(크롭·실패 표식)은 비울 때 같이 걷어낸다', () => {
@@ -180,11 +183,20 @@ test('사진 자리가 아닌 것은 예전처럼 지워진다 — 낱장 사진
 });
 
 test('사진 자리 판정 — 프레임 템플릿 칸과 조립된 사진 행·격자', () => {
-  const img = { type: 'image' };
-  assert.equal(isPhotoSlotElement({ kind: 'custom' }, { ...img, frameSlot: true }), true);
+  const slot = { type: 'image', sourceBlockId: 'sb1' };
+  assert.equal(isPhotoSlotElement({ kind: 'custom' }, { type: 'image', frameSlot: true }), true);
   for (const kind of ['twocol', 'threecol', 'grid2x2', 'colorcmp']) {
-    assert.equal(isPhotoSlotElement({ kind }, img), true, kind);
+    assert.equal(isPhotoSlotElement({ kind }, slot), true, kind);
   }
-  assert.equal(isPhotoSlotElement({ kind: 'hooking' }, img), false);
+  assert.equal(isPhotoSlotElement({ kind: 'hooking' }, slot), false);
   assert.equal(isPhotoSlotElement({ kind: 'grid2x2' }, { type: 'text' }), false);
+  // 격자 블록에 나중에 얹은 낱장 사진은 '칸'이 아니다 — 칸으로 보면 영영 못 지운다.
+  assert.equal(isPhotoSlotElement({ kind: 'grid2x2' }, { type: 'image', src: 'x.png' }), false);
+});
+
+test('격자 블록에 얹은 낱장 사진은 예전처럼 지워진다 — 지워지지 않는 유령이 남으면 안 된다', () => {
+  const block = gridBlock();
+  block.elements.push({ id: 'loose', type: 'image', src: 'x.png', x: 100, y: 100, w: 300, h: 300 });
+  const after = removeSelectedElements([block], ['loose'])[0];
+  assert.deepEqual(after.elements.map((el) => el.id), ['i1', 'i2', 'i3', 'i4']);
 });

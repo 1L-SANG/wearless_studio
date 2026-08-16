@@ -329,7 +329,11 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                     return None
                 except Exception as e:  # GeminiError 등 — 마지막 시도에서만 빈 슬롯(미차감)
                     spent = time.monotonic() - cut_started
-                    if attempt >= max(1, s.detail_cut_max_attempts) or spent >= retry_budget_s:
+                    # 프로바이더가 이미 그렸을 수 있는 실패(읽기 타임아웃·502/504)는 여기서도
+                    # 다시 보내지 않는다 — 아래층이 안 보내기로 한 이유가 위층에서 무효가 되면
+                    # 같은 컷을 두 번 과금한다(2026-08-17 리뷰).
+                    billable = bool(getattr(e, "billable", False))
+                    if billable or attempt >= max(1, s.detail_cut_max_attempts) or spent >= retry_budget_s:
                         log.warning("AG-06 cut failed for job %s block %s after %d attempts (%.0fs): %r",
                                     job_id, b.get("id"), attempt, spent, e)
                         await _emit(app.state.pool, job_id, "step",

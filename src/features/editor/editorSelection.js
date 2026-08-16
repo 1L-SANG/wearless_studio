@@ -180,7 +180,10 @@ const PHOTO_SLOT_BLOCK_KINDS = new Set(['twocol', 'threecol', 'grid2x2', 'colorc
 export function isPhotoSlotElement(block, element) {
   if (element?.type !== 'image') return false;
   if (element.frameSlot) return true;   // 프레임 탭 템플릿의 사진 칸
-  return PHOTO_SLOT_BLOCK_KINDS.has(block?.kind);   // 콘티에서 조립된 사진 행·격자
+  // 콘티에서 조립된 사진 행·격자의 '칸'만 — sourceBlockId 가 그 표식이다. 블록 종류만 보면
+  // 그 블록에 나중에 얹은 낱장 사진까지 칸으로 오인해, Delete 해도 빈 칸으로만 바뀌며
+  // 영영 못 지우게 된다(2026-08-17 리뷰).
+  return PHOTO_SLOT_BLOCK_KINDS.has(block?.kind) && Boolean(element.sourceBlockId);
 }
 
 /** 사진 자리는 비우고(요소 유지), 그 밖의 요소는 지운다. */
@@ -193,7 +196,10 @@ export function removeSelectedElements(blocks, selectedIds) {
       if (!selected.has(element.id)) { kept.push(element); return kept; }
       if (!isPhotoSlotElement(block, element)) return kept;   // 지운다
       // 비운다 — 자리·크기·모서리는 그대로, 사진에 딸린 것만 걷어낸다.
-      const { crop: _crop, genFailed: _genFailed, genPending: _genPending, ...rest } = element;
+      // sourceBlockId(콘티 컷과의 연결)도 끊는다: 남겨 두면 생성이 끝나는 순간 병합이
+      // 셀러가 일부러 지운 사진을 말없이 되돌려 놓는다(2026-08-17 리뷰).
+      const { crop: _crop, genFailed: _genFailed, genPending: _genPending,
+        sourceBlockId: _sourceBlockId, ...rest } = element;
       kept.push({ ...rest, src: null, cutType: null, frameSlot: true });
       return kept;
     }, []),

@@ -71,11 +71,16 @@ test('세트별 셔플은 기존 run 크기를 유지한다 — 엔트리 2멤�
 /* ---------- 컷 하나만 다시 뽑기(카드별 셔플 아이콘, 2026-08-16) ---------- */
 
 test('낱개 셔플은 그 컷만 바꾸고 나머지는 손대지 않는다', () => {
+  // 빈 카탈로그로 돌리면 재배정이 아예 안 일어나 원본 배열이 그대로 나오고, 어떤 단정이든
+  // 통과한다(2026-08-17 리뷰: 헛도는 테스트). 실제 예시 카탈로그로 돌린다.
+  const catalog = genExamples;
+  assert.ok(catalog.length > 0, '카탈로그가 비면 이 테스트는 아무것도 검사하지 않는다');
   const blocks = [ai('a'), ai('b'), ai('c')];
   const next = shuffleSectionExamples(blocks, {
-    sectionId: 'sec-a', catalog: [], product: { clothingType: 'top' }, gender: 'women',
+    sectionId: 'sec-a', catalog, product: { clothingType: 'top' }, gender: 'women',
     onlyBlockId: 'b',
   });
+  assert.notEqual(next, blocks, '실제로 재배정이 일어나야 검사가 의미 있다');
   assert.equal(next.length, 3);
   assert.deepEqual(next.map((block) => block.id), ['a', 'b', 'c'], '순서 유지');
   // 옆 컷의 예시가 덩달아 바뀌면 "한 컷만 다시 뽑기"가 아니다(배정기는 보드 전체를 다시

@@ -130,9 +130,11 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds) {
       if (el.type === 'image' && el.sourceBlockId) {
         const { genPending, genExample, genAutoSrc, genFailed, ...rest } = el;
         const src = srcById[el.sourceBlockId] || rest.src || null;
-        if (!src && failedSourceIds?.has(el.sourceBlockId)) {
-          return { ...rest, src: null, genFailed: true };
-        }
+        // 실패 목록을 아는 호출(완료 병합)만 표식을 새로 판정한다. 목록 없이 부르는
+        // 재진입 병합은 이미 저장된 표식을 그대로 지킨다 — 안 그러면 다시 열 때마다
+        // '만들지 못했어요'가 평범한 빈 칸으로 둔갑한다(2026-08-17 리뷰).
+        const failed = failedSourceIds ? failedSourceIds.has(el.sourceBlockId) : Boolean(genFailed);
+        if (!src && failed) return { ...rest, src: null, genFailed: true };
         return { ...rest, src };
       }
       if (el.type === 'text' && el.copyRole && el.sourceBlockId) {

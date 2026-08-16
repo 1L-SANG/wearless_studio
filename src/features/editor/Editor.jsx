@@ -1018,6 +1018,18 @@ export function Editor() {
     if (prev && prev !== editEl) pruneEmptyTextEl(prev);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editEl]);
+  /* 손 안 댄 안내 문구('내용을 입력하세요.')는 그 글자에서 **선택이 떠날 때** 정리한다.
+     편집 종료만 보면 놓치는 흔한 순서가 있다: 글자를 만들고 곧장 왼쪽 패널의 '빠른 스타일'
+     을 누르면 편집만 끝나고 선택은 남아, 그 뒤로 editEl 이 다시는 안 바뀌어 안내 문구가
+     그대로 발행된다(2026-08-17 리뷰). 반대로 선택이 남아 있는 동안 지우면 스타일을 고르던
+     글자가 사라진다 — 그래서 두 신호를 나눠 본다. */
+  const prevSelEl = useRef(null);
+  useEffect(() => {
+    const prev = prevSelEl.current;
+    prevSelEl.current = selEl;
+    if (prev && prev !== selEl && prev !== editEl) pruneEmptyTextEl(prev);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selEl]);
   // inline crop mode (Figma식): { blockId, elId, src, radius, fx,fy,fw,fh, ox,oy,iw,ih }
   // frame = 보이는 창(fx..fh, 블록 좌표), image drawn at frame-relative -ox,-oy size iw×ih
   const [cropping, setCropping] = useState(null);
@@ -2882,7 +2894,7 @@ export function Editor() {
                   <button type="button" key={m.id} className="fm-blocked-model"
                     onClick={() => retryGenerationWithModel(m.id)}>
                     {m.coverImageUrl && <img src={m.coverImageUrl} alt="" loading="lazy" />}
-                    <span>{m.name || m.label || '모델'}</span>
+                    <span>{m.displayName || m.name || m.label || '모델'}</span>
                   </button>
                 ))}
               </div>

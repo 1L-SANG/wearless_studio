@@ -31,7 +31,16 @@ class GeminiImageResult:
 
 
 class GeminiError(RuntimeError):
-    pass
+    """이미지 호출 실패.
+
+    billable=True 는 "프로바이더가 이미 그림을 만들었을 수 있다"는 뜻이다(읽기 타임아웃,
+    게이트웨이 502/504). 이런 실패는 **위층에서도 재시도하면 안 된다** — 같은 컷을 한 장
+    더 만들고 요금이 두 번 나가는데 추가 호출은 비용 원장에도 안 남는다(2026-08-17 리뷰).
+    """
+
+    def __init__(self, message: str, *, billable: bool = False) -> None:
+        super().__init__(message)
+        self.billable = billable
 
 
 class GeminiImageClient:
@@ -119,18 +128,21 @@ class GeminiImageClient:
                 retryable = isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
                 if attempt == 2 or not retryable:
                     raise GeminiError(
-                        f"Gemini request failed: {type(exc).__name__}: {exc}"
+                        f"Gemini request failed: {type(exc).__name__}: {exc}",
+                        billable=not retryable,   # 요청은 도착했다 — 그림이 이미 나왔을 수 있다
                     ) from exc
                 await asyncio.sleep(5 * (attempt + 1))
                 continue
-            # 429(스로틀)뿐 아니라 5xx(일시적 서버 장애)도 재시도한다. 4xx 는 파라미터
-            # 문제라 다시 보내도 같은 답이므로 즉시 실패.
-            if (res.status_code != 429 and res.status_code < 500) or attempt == 2:
+            # 429(스로틀)와 500/503(백엔드가 요청을 거절)만 재시도한다. 502/504 는 게이트웨이가
+            # 응답을 못 받은 것이라 모델이 이미 그려(=과금돼) 있을 수 있어 다시 보내지 않는다
+            # — 읽기 타임아웃과 같은 사정이다(2026-08-17 리뷰).
+            if res.status_code not in (429, 500, 503) or attempt == 2:
                 break
             await asyncio.sleep(5 * (attempt + 1))  # 5s → 10s
         latency_ms = int((time.perf_counter() - t0) * 1000)
         if res.status_code != 200:
-            raise GeminiError(f"Gemini {res.status_code}: {res.text[:500]}")
+            raise GeminiError(f"Gemini {res.status_code}: {res.text[:500]}",
+                              billable=res.status_code in (502, 504))
         parse_error = None
         usage = None
         parts = []

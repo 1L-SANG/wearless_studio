@@ -116,10 +116,12 @@ test('생성 진입 화면은 잡을 시작하고 에디터로 바로 보내며 
 });
 
 test('생성 중 자동 저장은 서버 완성본 대신 임시 작업본을 사용한다', () => {
-  const autoSave = editor.slice(
-    editor.indexOf('// 자동 저장 — 생성 중에는'),
-    editor.indexOf('// delete key removes selection'),
-  );
+  // 존재하지 않는 문구로 끝을 잡으면 indexOf 가 -1 이라 파일 거의 전체가 슬라이스돼
+  // 단정이 엉뚱한 코드에 걸린다(2026-08-17 리뷰). 그 효과의 닫는 줄까지만 자른다.
+  const autoSaveStart = editor.indexOf('// 자동 저장 — 생성 중에는');
+  assert.ok(autoSaveStart > 0, '자동 저장 블록을 못 찾았다');
+  const autoSave = editor.slice(autoSaveStart, autoSaveStart + editor.slice(autoSaveStart).indexOf('\n  }, ['));
+  assert.ok(autoSave.length < 2000, `슬라이스가 너무 넓다(${autoSave.length}자) — 단정이 헛돈다`);
   assert.match(autoSave, /if \(genActive\)/);
   assert.match(autoSave, /saveEditorWaitDraft\(projectId, latestBlocks\.current\)/);
   assert.match(autoSave, /api\.saveEditorBlocks\(projectId, latestBlocks\.current\)/);
