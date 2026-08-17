@@ -988,7 +988,7 @@ export function ProductInput() {
         try {
           const a = await api.analyzeProduct(editingProjectId, {});
           if (!alive) return;
-          const analyzedProductPatch = splitAnalysisEditPatch(a).productPatch;
+          const analyzedProductPatch = analysisResponseProductPatch(a);
           // 분석 대기 중에 입력된 셀러 값도 시작 스냅샷으로 되돌리지 않게
           // 가장 최신 Product를 기준으로 빈칸만 채운다.
           const currentProduct = latestProductRef.current || recoveredProduct;
@@ -1137,7 +1137,7 @@ export function ProductInput() {
       setAnalysisProjectId(null);
       const enteredName = (product.name && product.name.trim()) ? product.name.trim() : null;
       const a = await api.analyzeProduct(null, { product });
-      const analyzedProductPatch = splitAnalysisEditPatch(a).productPatch;
+      const analyzedProductPatch = analysisResponseProductPatch(a);
       // 상품명이 비어 있으면 AI가 임의로 지어준다 → 요약 카드에 표시됨 + 서버에도 반영
       const currentProduct = latestProductRef.current || product;
       const finalName = enteredName || a.suggestedName || '새 상품';

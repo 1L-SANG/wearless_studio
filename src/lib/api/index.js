@@ -19,7 +19,10 @@ export const isMockMode = mode !== 'http';
 // (draftWashCare 는 서버 wash-care:draft, regenerateMannequin 은 서버 mannequins:regenerate 로 실배선됨 → httpAdapter 담당.)
 // getCustomMatchDraft/clearCustomMatchDraft: draft 단계 내 옷 blob 접근자·소거자 —
 // 확정 승격(draftSync)이 실서버 등록에 쓰고, 끝나면 반드시 비운다(탭 내 다음 프로젝트 오염 방지).
-const CLIENT_ONLY = ['getCatalogs', 'download', 'getCustomMatchDraft', 'clearCustomMatchDraft'];
+// resetInputDraft: 게스트 구간 로컬 저장소(mock 싱글톤) 비우기 — 새 제작이 http 모드에서도
+// 불러야 한다(직전 제작의 분석이 다음 분석 응답에 섞이는 것을 막는다).
+const CLIENT_ONLY = ['getCatalogs', 'download', 'getCustomMatchDraft', 'clearCustomMatchDraft',
+  'resetInputDraft'];
 
 // 제품 결정: 입력·분석은 로그인 없이 공개하고, 로그인은 마네킹 단계부터 요구한다.
 // 공개 흐름은 서버 projectId가 없으므로 로컬 draft 기능은 mock에 위임한다. 단 분석만은

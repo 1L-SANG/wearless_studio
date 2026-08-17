@@ -60,6 +60,18 @@ export function splitAnalysisEditPatch(patch) {
   return { productPatch, analysisPatch };
 }
 
+/** 분석 **응답**에서 유도한 product 패치 — 응답이 사진(colors)을 덮어쓰지 못하게 뺀다.
+
+    AG-01 은 colors 를 산출하지 않는다. 그 필드가 응답에 실려 온다면 게스트 구간의 로컬
+    저장소(mock 싱글톤)에 남아 있던 **직전 제작의 값**이며, 그대로 상품에 spread 되면 셀러가
+    방금 올린 Front/Back 이 조용히 교체된다(2026-08-17 사고의 진짜 원인). 셀러 편집이 보내는
+    colors 패치는 이 함수를 지나지 않으므로 영향받지 않는다. */
+export function analysisResponseProductPatch(analysis) {
+  const { productPatch } = splitAnalysisEditPatch(analysis);
+  const { colors: _photosAreNotTheAnalysisJob, ...rest } = productPatch;
+  return rest;
+}
+
 export function hasPatchFields(patch) {
   return !!patch && Object.keys(patch).length > 0;
 }

@@ -18,25 +18,10 @@
    ============================================================= */
 import { api } from '@/lib/api/index.js';
 import { isUploadablePhotoMime } from '@/lib/imageTranscode.js';
+import { withUploadedSrcs } from '@/lib/draftPromotionProduct.js';
 import { createDraftSyncSingleFlight } from '@/lib/draftSyncSingleFlight.js';
 import { draftPromotionSession } from '@/lib/draftPromotionSession.js';
 import { promoteCustomMatch, stripLocalCustomMatch } from '@/lib/customMatchPromotion.js';
-
-// product.colors[].images[] 의 id·src 를 업로드 결과로 치환 (원본 imageId 매칭).
-// **id 를 서버 asset id 로 바꾼다** — 서버(mannequin.base_color_images·분석 워커)가 이미지를
-// asset id 로 링크하므로, 로컬 uid 를 남기면 사진을 못 찾는다. src 는 R2 서빙 URL.
-function withUploadedSrcs(product, uploadByImageId) {
-  return {
-    ...product,
-    colors: (product.colors ?? []).map((c) => ({
-      ...c,
-      images: (c.images ?? []).map((im) => {
-        const up = uploadByImageId[im.id];
-        return up ? { ...im, id: up.assetId, src: up.url } : im;
-      }),
-    })),
-  };
-}
 
 async function runDraftSync(draft, { projectId: existing } = {}) {
   // 서버 createProject 는 명시적 Idempotency-Key 를 지원하지 않는다. 프로젝트를 만든 즉시

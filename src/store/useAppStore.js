@@ -244,8 +244,10 @@ export const useAppStore = create((set, get) => ({
     clearFlowSession();
     clearDraftPromotionSession();
     await clearDraft().catch(() => {});
-    // mock도 실제 흐름처럼 project 없이 시작하되, 이전 데모 입력 데이터만 깨끗하게 재시드한다.
-    if (mode !== 'http') await api.resetInputDraft();
+    // 게스트 구간(projectId 없음)의 상품·분석 저장소는 http 모드에서도 mock 어댑터다 —
+    // 비우지 않으면 직전 제작의 분석·colors 가 다음 분석 응답에 섞여 나와 새로 올린 사진을
+    // 교체한다(2026-08-17 사고). mock 모드에선 종전처럼 데모 입력을 재시드한다.
+    await api.resetInputDraft();
     set({
       ...initialFlow,
       mannequinJob: initialMannequinJob(),

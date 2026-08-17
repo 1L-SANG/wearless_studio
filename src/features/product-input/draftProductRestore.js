@@ -10,13 +10,17 @@
 
    순수 함수로 둔 이유: 이 판정이 곧 셀러가 사진을 잃는 경계라 화면 없이 테스트해야 한다. */
 
-import { isUploadablePhotoSrc } from '../../lib/imageTranscode.js';
+import { isPlaceholderPhotoSrc, isUploadablePhotoMime } from '../../lib/imageTranscode.js';
 
 export function restoreDraftProduct(draft, { createObjectUrl } = {}) {
   if (!draft?.product) return null;
   const makeUrl = createObjectUrl || ((blob) => URL.createObjectURL(blob));
   const urlById = {};
   for (const photo of draft.photos || []) {
+    // 저장된 mime 도 본다 — 배포 전 옛 번들은 데모 플레이스홀더(SVG)까지 blob 으로 담았고,
+    // blob 을 objectURL 로 감싸면 src 판정만으로는 걸러지지 않는다(2026-08-17 사고).
+    // mime 이 아예 없는 레코드는 판정 근거가 없으므로 버리지 않는다(정상 사진 유실 방지).
+    if (photo.mime && !isUploadablePhotoMime(photo.mime)) continue;
     try { urlById[photo.imageId] = makeUrl(photo.blob); } catch { /* skip */ }
   }
   return {
@@ -26,9 +30,11 @@ export function restoreDraftProduct(draft, { createObjectUrl } = {}) {
       images: (color.images || []).flatMap((image) => {
         const restored = urlById[image.id];
         if (restored) return [{ ...image, src: restored }];
-        // blob 이 없는 사진 — 서버에 올라간 자산만 그대로 쓸 수 있다.
-        const keepable = isUploadablePhotoSrc(image.src) && !String(image.src).startsWith('blob:');
-        return keepable ? [image] : [];
+        // blob 이 없는 사진 — 서버 자산 참조만 그대로 쓸 수 있다. `blob:` 은 그 페이지에서만
+        // 살아 있던 주소라 이미 죽었고, `data:` 는 데모 플레이스홀더다. src 가 아예 없는 항목은
+        // 계약상 유효한 asset id 참조이므로 지우지 않는다.
+        const dead = String(image.src || '').startsWith('blob:') || isPlaceholderPhotoSrc(image.src);
+        return dead ? [] : [image];
       }),
     })),
   };

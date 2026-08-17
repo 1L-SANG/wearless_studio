@@ -33,7 +33,8 @@ from .agents import (
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
 from .services import (editor_garment_mask, garment_grid, input_qc,
-                       mannequin_tone_render, matching, matching_cutout, retrieval)
+                       mannequin_tone_render, matching, matching_cutout, product_photos,
+                       retrieval)
 from .auth import require_user
 from .db import get_conn
 from .models import (
@@ -800,6 +801,10 @@ async def save_product(
       - `404 Not Found`: 프로젝트가 존재하지 않거나, 타 사용자의 소유인 경우 발생
     """
     fields = patch.model_dump(exclude_unset=True)
+    # 저장할 수 없는 사진 src(프론트 목 데모의 data: 플레이스홀더, 브라우저 전용 blob:)는
+    # 여기서 걷어낸다. 프론트가 이미 막지만, 캐시된 옛 번들을 쓰는 브라우저는 배포 즉시
+    # 보호되지 않는다 — 생성의 정본인 product.colors 를 지키는 마지막 문지기(2026-08-17 사고).
+    fields = product_photos.sanitize_product_colors(fields)
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
@@ -842,6 +847,9 @@ async def save_analysis(
     """
     # 프론트 소유 shape를 유지하되 폐기된 레거시 핏 어휘는 신규 저장하지 않는다.
     analysis = fit_axes.normalize_analysis_fit(analysis)
+    # 지금 analysis.colors 를 읽는 코드는 없지만, 2026-08-17 사고의 플레이스홀더가 실제로 여기
+    # 3건 저장됐다. 나중에 누가 이 필드를 읽기 시작할 때 오염을 물려받지 않게 입구에서 막는다.
+    analysis = product_photos.sanitize_analysis_colors(analysis)
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
