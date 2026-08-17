@@ -186,7 +186,8 @@ export function isPhotoSlotElement(block, element) {
   return PHOTO_SLOT_BLOCK_KINDS.has(block?.kind) && Boolean(element.sourceBlockId);
 }
 
-/** 사진 자리는 비우고(요소 유지), 그 밖의 요소는 지운다. */
+/** 사진이 **든** 자리는 비우고(요소 유지), 이미 빈 자리와 그 밖의 요소는 지운다.
+    빈 자리까지 남기면 프레임 템플릿의 남는 칸이나 한 번 비운 칸을 영영 못 없앤다. */
 export function removeSelectedElements(blocks, selectedIds) {
   const selected = new Set(selectedIds || []);
   if (!selected.size) return blocks;
@@ -194,13 +195,14 @@ export function removeSelectedElements(blocks, selectedIds) {
     ...block,
     elements: block.elements.reduce((kept, element) => {
       if (!selected.has(element.id)) { kept.push(element); return kept; }
-      if (!isPhotoSlotElement(block, element)) return kept;   // 지운다
+      if (!isPhotoSlotElement(block, element) || !element.src) return kept;   // 지운다
       // 비운다 — 자리·크기·모서리는 그대로, 사진에 딸린 것만 걷어낸다.
-      // sourceBlockId(콘티 컷과의 연결)도 끊는다: 남겨 두면 생성이 끝나는 순간 병합이
-      // 셀러가 일부러 지운 사진을 말없이 되돌려 놓는다(2026-08-17 리뷰).
-      const { crop: _crop, genFailed: _genFailed, genPending: _genPending,
-        sourceBlockId: _sourceBlockId, ...rest } = element;
-      kept.push({ ...rest, src: null, cutType: null, frameSlot: true });
+      // sourceBlockId(콘티 컷과의 연결)는 **남긴다**: 지우면 완료 병합의 안전 검사
+      // (canSafelyMergeServerBlocks)가 "배치가 서버와 다르다"고 판단해 대기 중 편집분을
+      // 통째로 서버본으로 갈아끼운다. 대신 slotCleared 로 "셀러가 일부러 비웠다"를 남겨
+      // 병합·자동 채움이 이 자리를 되살리지 않게 한다(2026-08-17 검증).
+      const { crop: _crop, genFailed: _genFailed, genPending: _genPending, ...rest } = element;
+      kept.push({ ...rest, src: null, cutType: null, frameSlot: true, slotCleared: true });
       return kept;
     }, []),
   }));

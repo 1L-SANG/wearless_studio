@@ -180,7 +180,10 @@ test('image frames show an exact placement guide for wardrobe and external file 
 
 test('frame images show the full source and a wardrobe click fills the pending slot immediately', () => {
   assert.match(editorSource, /objectFit: el\.fit \|\| 'cover'/);
-  assert.match(editorSource, /return fitImageToFrameBlock\(nextBlock, elId, image\)/);
+  assert.match(editorSource, /const fitted = fitImageToFrameBlock\(nextBlock, elId, image\);/);
+  // 다시 채운 칸에서는 '일부러 비움' 표식을 뗀다 — 안 떼면 그 뒤 생성 병합이 이 칸을
+  // 계속 건너뛰어 채워 넣은 사진이 자동 갱신 대상에서 빠진다(2026-08-17 검증).
+  assert.match(editorSource, /if \(el\.id !== elId \|\| !el\.slotCleared\) return el;/);
   assert.match(editorSource, /const requestSlotImage = \(blockId, el\) => \{[\s\S]*selectEl\(blockId, el, false, true\);[\s\S]*setPendingSlot\(\{ blockId, elId: el\.id \}\);[\s\S]*setTab\('wardrobe'\);[\s\S]*\}/);
   assert.match(editorSource, /if \(pendingSlot\) \{[\s\S]*setSlotImage\(pendingSlot\.blockId, pendingSlot\.elId,[\s\S]*setPendingSlot\(null\);[\s\S]*setTab\('image'\);[\s\S]*return;/);
   assert.match(panelSource, /onClick=\{\(e\) => \{ const image = e\.currentTarget\.querySelector\('img'\); onInsert\(\{ \.\.\.im, width: image\?\.naturalWidth \|\| im\.width, height: image\?\.naturalHeight \|\| im\.height \}\); \}\}/);

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { DEFAULT_READ_RETRY_DELAYS, ReadRetryCancelled, isRetryableReadError, retryRead } from '../../src/lib/retryRead.js';
 import { buildColorOpts, colorLabelOf, visibleColorOpts } from '../../src/lib/colorOpts.js';
 import { classifyEditorLoadError } from '../../src/features/editor/editorLoadError.js';
-import { mergeServerBlocks } from '../../src/lib/editorWaitSkeleton.js';
+import { canSafelyMergeServerBlocks, mergeServerBlocks } from '../../src/lib/editorWaitSkeleton.js';
 import { isPhotoSlotElement, removeSelectedElements, reorderElements } from '../../src/features/editor/editorSelection.js';
 
 /* ---------- 3-14 콘티 조회 자동 재시도 ---------- */
@@ -163,8 +163,10 @@ test('격자 사진 하나를 지우면 자리·크기는 그대로 남고 사�
   assert.equal(slot.src, null);
   assert.equal(slot.cutType, null);
   assert.equal(slot.frameSlot, true, '드롭이 이 칸에 스냅되고 ＋ 버튼이 뜨는 근거');
-  // 콘티 컷과의 연결을 끊는다 — 남기면 생성 완료 병합이 지운 사진을 되돌려 놓는다.
-  assert.ok(!('sourceBlockId' in slot));
+  // 콘티 컷과의 연결(sourceBlockId)은 남긴다 — 끊으면 완료 병합의 안전 검사가
+  // "배치가 다르다"고 보고 대기 중 편집분을 통째로 서버본으로 갈아끼운다.
+  assert.equal(slot.sourceBlockId, 'sb4');
+  assert.equal(slot.slotCleared, true, '되살리지 말라는 표식');
 });
 
 test('사진에 딸린 자국(크롭·실패 표식)은 비울 때 같이 걷어낸다', () => {
@@ -222,4 +224,33 @@ test('retryRead: 취소 신호가 없으면 예전과 똑같이 동작한다(하
   }, { delays: [1, 1, 1], sleep: async () => {} });
   assert.equal(value, 'ok');
   assert.equal(calls, 3);
+});
+
+
+test('일부러 비운 자리는 생성이 끝나도 되살아나지 않고, 편집분도 안 날아간다', () => {
+  const local = [{ id: 'b1', kind: 'grid2x2', elements: [
+    { id: 'i1', type: 'image', src: 'a.png', sourceBlockId: 'sb1', x: 60, y: 50, w: 440, h: 560 },
+    { id: 'i2', type: 'image', src: 'b.png', sourceBlockId: 'sb2', x: 500, y: 50, w: 440, h: 560 },
+  ] }];
+  const blanked = removeSelectedElements(local, ['i1']);
+  const server = [{ id: 'b1', kind: 'grid2x2', elements: [
+    { id: 's1', type: 'image', src: '/final1.jpg', sourceBlockId: 'sb1' },
+    { id: 's2', type: 'image', src: '/final2.jpg', sourceBlockId: 'sb2' },
+  ] }];
+  // 안전 검사가 통과해야 서버본 통째 교체(=대기 중 편집 소실)를 피한다.
+  assert.equal(canSafelyMergeServerBlocks(blanked, server), true);
+  const merged = mergeServerBlocks(blanked, server, new Set());
+  assert.equal(merged[0].elements[0].src, null, '일부러 비운 자리는 그대로');
+  assert.equal(merged[0].elements[1].src, '/final2.jpg', '나머지는 정상 채움');
+});
+
+test('이미 빈 자리는 Delete 로 없앨 수 있다 — 프레임 템플릿의 남는 칸이 영영 안 지워지면 안 된다', () => {
+  const block = { id: 'b1', kind: 'custom', elements: [
+    { id: 'empty', type: 'image', frameSlot: true, src: null, x: 0, y: 0, w: 100, h: 100 },
+    { id: 'filled', type: 'image', frameSlot: true, src: 'a.png', x: 100, y: 0, w: 100, h: 100 },
+  ] };
+  assert.deepEqual(removeSelectedElements([block], ['empty'])[0].elements.map((el) => el.id), ['filled']);
+  const after = removeSelectedElements([block], ['filled'])[0];
+  assert.deepEqual(after.elements.map((el) => el.id), ['empty', 'filled'], '사진이 든 칸은 비우기');
+  assert.equal(after.elements[1].src, null);
 });

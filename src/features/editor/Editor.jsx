@@ -1360,12 +1360,23 @@ export function Editor() {
           // 격자·프레임의 사진 자리는 지워지는 게 아니라 빈 자리로 남는다 — 안내도 그렇게.
           const bs0 = latestBlocks.current || blocks || [];
           const picked = bs0.flatMap((b) => b.elements.filter((el) => selEls.includes(el.id)).map((el) => ({ b, el })));
-          const allSlots = picked.length > 0 && picked.every(({ b, el }) => isPhotoSlotElement(b, el));
-          setBlocks((bs) => removeSelectedElements(bs, selEls));
+          // 사진이 든 자리만 '비우기'다 — 이미 빈 자리·다른 요소는 그냥 지워진다.
+          const cleared = picked.filter(({ b, el }) => isPhotoSlotElement(b, el) && el.src);
+          const removedCount = picked.length - cleared.length;
+          setBlocks((bs) => {
+            const next = removeSelectedElements(bs, selEls);
+            // 정보 블록은 폼(block.info)이 정본이라 요소만 비우면 '내용 수정 → 업데이트'
+            // 한 번에 지운 사진이 되살아난다. 폼 쪽 src 도 같이 비운다(2026-08-17 검증).
+            const infoIds = new Set(cleared.filter(({ b }) => presetTypeOf(b) && b.info).map(({ b, el }) => `${b.id}:${el.id}`));
+            if (!infoIds.size) return next;
+            return next.map((b) => [...infoIds].filter((key) => key.startsWith(`${b.id}:`))
+              .reduce((acc, key) => applySlotFillToInfo(acc, key.split(':').slice(1).join(':'), { src: null, cutType: null }), b));
+          });
           setSelEl(null); setSelEls([]); setBlockFocused(false);
-          toast.push(allSlots
-            ? `${picked.length > 1 ? picked.length + '장을' : '사진을'} 비웠어요 · 자리는 그대로예요`
-            : `${selEls.length > 1 ? selEls.length + '개 요소를' : '요소를'} 삭제했어요`, { icon: 'trash' });
+          const parts = [];
+          if (cleared.length) parts.push(`${cleared.length > 1 ? `사진 ${cleared.length}장을` : '사진을'} 비웠어요 · 자리는 그대로예요`);
+          if (removedCount) parts.push(`${removedCount > 1 ? `${removedCount}개 요소를` : '요소를'} 삭제했어요`);
+          toast.push(parts.join(' · ') || '요소를 삭제했어요', { icon: 'trash' });
         } else {
           setBlocks((bs) => removeSelectedBlock(bs, selBlock));
           setSelEl(null); setSelEls([]); setSelBlock(null); setBlockFocused(false);
@@ -1810,7 +1821,15 @@ export function Editor() {
     setBlocks((bs) => bs.map((b) => {
       if (b.id !== blockId) return b;
       const nextBlock = applySlotFillToInfo(b, elId, image || { src: null, cutType: null });
-      return fitImageToFrameBlock(nextBlock, elId, image);
+      const fitted = fitImageToFrameBlock(nextBlock, elId, image);
+      // 다시 채운 칸에서는 '일부러 비움' 표식을 뗀다 — 안 떼면 그 뒤 생성 병합이 이 칸을
+      // 계속 건너뛰어, 채워 넣은 사진이 자동 갱신 대상에서 빠진다(2026-08-17 검증).
+      if (!image?.src) return fitted;
+      return { ...fitted, elements: fitted.elements.map((el) => {
+        if (el.id !== elId || !el.slotCleared) return el;
+        const { slotCleared: _cleared, ...rest } = el;
+        return rest;
+      }) };
     }));
   };
   const insertImage = (im, { blockId, point, slotId, keepTab = false } = {}) => {

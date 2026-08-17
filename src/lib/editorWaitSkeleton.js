@@ -62,7 +62,7 @@ export function fillGenBlocks(blocks, job) {
   return (blocks || []).map((b) => ({
     ...b,
     elements: (b.elements || []).map((el) => {
-      if (el.type === 'image' && el.sourceBlockId
+      if (el.type === 'image' && el.sourceBlockId && !el.slotCleared
           && ((!el.src && el.genPending) || ('genAutoSrc' in el && el.src === el.genAutoSrc))) {
         const cut = job.cuts[el.sourceBlockId];
         if (cut?.url) {
@@ -129,7 +129,9 @@ export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds) {
     elements: (b.elements || []).map((el) => {
       if (el.type === 'image' && el.sourceBlockId) {
         const { genPending, genExample, genAutoSrc, genFailed, ...rest } = el;
-        const src = srcById[el.sourceBlockId] || rest.src || null;
+        // 셀러가 일부러 비운 자리는 되살리지 않는다 — 지운 사진이 완료 순간 말없이
+        // 돌아오면 "내가 지운 게 왜 있지"가 된다(2026-08-17 검증).
+        const src = rest.slotCleared ? null : (srcById[el.sourceBlockId] || rest.src || null);
         // 실패 목록을 아는 호출(완료 병합)만 표식을 새로 판정한다. 목록 없이 부르는
         // 재진입 병합은 이미 저장된 표식을 그대로 지킨다 — 안 그러면 다시 열 때마다
         // '만들지 못했어요'가 평범한 빈 칸으로 둔갑한다(2026-08-17 리뷰).
