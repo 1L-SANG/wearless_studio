@@ -445,7 +445,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
             garment_warnings = [*candidate_scene_warnings, *garment_warnings]
 
             cut_qc = None
-            if s.cut_output_qc_mode == "shadow":
+            if s.cut_output_qc_mode in {"shadow", "repair"}:
                 try:
                     normalized_spec = cut_generator.normalize_spec(
                         b, clothing_type=clothing_type
@@ -464,10 +464,69 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                     cut_qc = await cut_output_qc.verdict(
                         s, plan, qc_references, chosen
                     )
+
+                    if s.cut_output_qc_mode == "repair":
+                        route = cut_output_qc.repair_route(cut_qc)
+                        repair = {
+                            "attempted": False,
+                            "route": route,
+                            "accepted": False,
+                            "finalSource": "stage1",
+                        }
+                        if route in {"EDIT_STAGE1", "REGENERATE_FROM_SCRATCH"}:
+                            instructions = cut_output_qc.repair_instructions(cut_qc)
+                            repair["attempted"] = True
+                            try:
+                                if route == "EDIT_STAGE1":
+                                    repaired_img, repaired_mime = await cut_generator.repair(
+                                        s,
+                                        gemini,
+                                        b,
+                                        product,
+                                        chosen,
+                                        qc_corrections=instructions,
+                                    )
+                                else:
+                                    repaired_img, repaired_mime = await cut_generator.generate(
+                                        s,
+                                        gemini,
+                                        b,
+                                        product,
+                                        images,
+                                        **generate_kwargs,
+                                        qc_corrections=instructions,
+                                    )
+                                repaired = InlineImage(repaired_mime, repaired_img)
+                                repaired_qc = await cut_output_qc.verdict(
+                                    s, plan, qc_references, repaired
+                                )
+                                comparison = cut_output_qc.compare_repair(
+                                    cut_qc, repaired_qc
+                                )
+                                repair.update(comparison)
+                                repair["stage2Qc"] = repaired_qc
+                                if comparison["accepted"]:
+                                    chosen = repaired
+                                    img, mime = repaired.data, repaired.mime
+                                    repair["finalSource"] = "stage2"
+                            except Exception as e:
+                                # Stage2는 정확히 한 번만 시도한다. timeout/응답 불명확을 여기서
+                                # 다시 호출하면 중복 과금될 수 있으므로 1차를 보존하고 끝낸다.
+                                log.warning(
+                                    "AG-06 cut repair unavailable job %s block %s: %r — keep stage1",
+                                    job_id,
+                                    b.get("id"),
+                                    e,
+                                )
+                                repair["error"] = "repair_unavailable"
+                                garment_warnings.append({
+                                    "code": "cut_output_qc_repair_unavailable"
+                                })
+                        cut_qc = {**cut_qc, "repair": repair}
                 except Exception as e:
-                    # shadow는 관측 전용이다. plan/manifest/provider 오류가 성공 이미지를 막지 않는다.
+                    # QC/plan/manifest/provider 오류가 성공한 1차 이미지를 막지 않는다.
                     log.warning(
-                        "AG-06 cut output QC unavailable job %s block %s: %r — shadow only",
+                        "AG-06 cut output QC unavailable job %s block %s: %r — keep stage1",
                         job_id,
                         b.get("id"),
                         e,

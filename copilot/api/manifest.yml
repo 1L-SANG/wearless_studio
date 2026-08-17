@@ -121,6 +121,15 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 주름·미세광택은 점수만 남기고 막지 않는다. 편집(bust/untuck) 후 바지 영역이 회귀하면
   # 로컬 픽셀 비교(AI 콜 0)로 그 편집만 되돌린다.
   MANNEQUIN_PANTS_QC: enforce
+  # 콘티의 모든 AI 생성 블록은 서로 병렬로 실행하되, 블록 안에서는
+  # Gemini 1차 → 독립 QC → 필요 시 Gemini 2차 1회 → 독립 재검수 순서를 지킨다.
+  # 새 hard-gate가 garment 동일성까지 포함하므로 구 best-of 후보 생성은 중복 비용을 막기 위해 끈다.
+  MODEL_ROUTING_IMAGE_HIGH: gemini-3-pro-image
+  DETAIL_CUT_IMAGE_SIZE: "4K"
+  DETAIL_CUT_CONCURRENCY: "0"
+  DETAIL_CUT_STAGGER_MS: "3000"
+  GARMENT_QC_MODE: "off"
+  CUT_OUTPUT_QC_MODE: repair
   # text tier 모델. AI Studio 유효 id 여야 한다 — 구값 'gemini-3-pro' 는 미존재라 Gemini 404 로
   # 분석이 통째로 죽었다(2026-07-07). OpenAI 키 미설정이라 gemini 가 유일 provider = 폴백 없음.
   #

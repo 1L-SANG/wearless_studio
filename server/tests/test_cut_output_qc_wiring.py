@@ -47,13 +47,18 @@ def _detail_spec():
 
 def _run_detail_cut(
     monkeypatch, *, qc_mode="shadow", manifest="1. PRODUCT — front", events=None,
+    generated_outputs=None,
 ):
     events = [] if events is None else events
     captured = {}
 
-    async def fake_generate(*_args, **_kwargs):
+    generated_outputs = list(generated_outputs or [b"INITIAL"])
+
+    async def fake_generate(*_args, **kwargs):
         events.append("generate")
-        return b"INITIAL", "image/png"
+        captured.setdefault("generateKwargs", []).append(kwargs)
+        output = generated_outputs.pop(0) if generated_outputs else b"INITIAL"
+        return output, "image/png"
 
     async def fake_best_of(settings, product_images, initial, generate_candidate):
         events.append("garment")
@@ -89,6 +94,18 @@ def _run_detail_cut(
     return captured
 
 
+def _qc_result(*failed_gates):
+    raw = {
+        "gates": [
+            {"gate": gate, "status": "PASS", "evidence": f"evidence for {gate}"}
+            for gate in dpj.cut_output_qc.GATES
+        ]
+    }
+    for gate in failed_gates:
+        raw["gates"][dpj.cut_output_qc.GATES.index(gate)]["status"] = "FAIL"
+    return dpj.cut_output_qc.validate(raw)
+
+
 def test_detail_shadow_qc_observes_chosen_output_before_save(monkeypatch):
     captured = {}
     events = []
@@ -115,6 +132,152 @@ def test_detail_shadow_qc_observes_chosen_output_before_save(monkeypatch):
     assert captured["plan"]["declaredFitAxes"] == ["fit"]
     assert run["r2"].saved == [b"CHOSEN"]
     assert run["events"] == ["generate", "garment", "cut-qc", "save"]
+
+
+def test_detail_repair_mode_regenerates_global_failure_and_accepts_pass(monkeypatch):
+    seen = []
+
+    async def fake_cut_qc(settings, plan, references, generated):
+        seen.append(generated.data)
+        return (
+            _qc_result("garmentConstruction")
+            if generated.data == b"CHOSEN"
+            else _qc_result()
+        )
+
+    monkeypatch.setattr(dpj.cut_output_qc, "verdict", fake_cut_qc)
+    run = _run_detail_cut(
+        monkeypatch,
+        qc_mode="repair",
+        generated_outputs=[b"INITIAL", b"REPAIRED"],
+    )
+
+    assert seen == [b"CHOSEN", b"REPAIRED"]
+    assert run["r2"].saved == [b"REPAIRED"]
+    assert len(run["generateKwargs"]) == 2
+    assert run["generateKwargs"][1]["qc_corrections"] == (
+        dpj.cut_output_qc._CORRECTIONS["garmentConstruction"],
+    )
+    repair = run["result"][4][0]["repair"]
+    assert repair["route"] == "REGENERATE_FROM_SCRATCH"
+    assert repair["attempted"] is repair["accepted"] is True
+    assert repair["finalSource"] == "stage2"
+
+
+def test_detail_repair_mode_edits_stage1_for_local_failure(monkeypatch):
+    captured = {}
+
+    async def fake_cut_qc(settings, plan, references, generated):
+        return (
+            _qc_result("framingDirectionFacePose")
+            if generated.data == b"CHOSEN"
+            else _qc_result()
+        )
+
+    async def fake_repair(
+        settings, gemini, cut_spec, product, source, *, qc_corrections,
+    ):
+        captured.update(
+            source=source,
+            cut_spec=cut_spec,
+            product=product,
+            qc_corrections=qc_corrections,
+        )
+        return b"EDITED", "image/png"
+
+    monkeypatch.setattr(dpj.cut_output_qc, "verdict", fake_cut_qc)
+    monkeypatch.setattr(dpj.cut_generator, "repair", fake_repair)
+    run = _run_detail_cut(monkeypatch, qc_mode="repair")
+
+    assert captured["source"].data == b"CHOSEN"
+    assert captured["cut_spec"]["cutType"] == "product"
+    assert captured["product"]["clothingType"] == "top"
+    assert captured["qc_corrections"] == (
+        dpj.cut_output_qc._CORRECTIONS["framingDirectionFacePose"],
+    )
+    assert run["r2"].saved == [b"EDITED"]
+    assert len(run["generateKwargs"]) == 1
+    repair = run["result"][4][0]["repair"]
+    assert repair["route"] == "EDIT_STAGE1"
+    assert repair["accepted"] is True
+
+
+def test_detail_repair_mode_keeps_stage1_when_stage2_regresses(monkeypatch):
+    async def fake_cut_qc(settings, plan, references, generated):
+        return (
+            _qc_result("framingDirectionFacePose")
+            if generated.data == b"CHOSEN"
+            else _qc_result("framingDirectionFacePose", "modelIdentity")
+        )
+
+    async def fake_repair(*_args, **_kwargs):
+        return b"REGRESSED", "image/png"
+
+    monkeypatch.setattr(dpj.cut_output_qc, "verdict", fake_cut_qc)
+    monkeypatch.setattr(dpj.cut_generator, "repair", fake_repair)
+    run = _run_detail_cut(monkeypatch, qc_mode="repair")
+
+    assert run["r2"].saved == [b"CHOSEN"]
+    repair = run["result"][4][0]["repair"]
+    assert repair["attempted"] is True
+    assert repair["accepted"] is False
+    assert repair["finalSource"] == "stage1"
+    assert repair["regressions"] == ["modelIdentity"]
+
+
+def test_detail_repair_pipelines_keep_storyboard_blocks_parallel(monkeypatch):
+    state = {"active": 0, "peak": 0}
+    both_started = asyncio.Event()
+
+    async def fake_generate(settings, gemini, block, product, images, **kwargs):
+        state["active"] += 1
+        state["peak"] = max(state["peak"], state["active"])
+        if state["active"] == 2:
+            both_started.set()
+        await asyncio.wait_for(both_started.wait(), timeout=1)
+        state["active"] -= 1
+        return f"IMAGE-{block['id']}".encode(), "image/png"
+
+    async def fake_best_of(settings, product_images, initial, generate_candidate):
+        return initial, None, []
+
+    async def fake_cut_qc(settings, plan, references, generated):
+        return _qc_result()
+
+    async def fake_emit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_generate)
+    monkeypatch.setattr(dpj.image_qc, "best_of", fake_best_of)
+    monkeypatch.setattr(dpj.cut_output_qc, "verdict", fake_cut_qc)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+    r2 = _RecordingR2([])
+    app = fake_worker_app(make_settings(
+        gemini_api_key="x",
+        r2_bucket="b",
+        garment_qc_mode="off",
+        cut_output_qc_mode="repair",
+        detail_cut_concurrency=0,
+        detail_cut_stagger_ms=0,
+    ), r2=r2)
+    product_image = InlineImage("image/png", b"PRODUCT")
+    front = _detail_spec()
+    back = {**_detail_spec(), "id": "b2", "direction": "back"}
+    result = asyncio.run(dpj._gen_cuts(
+        app,
+        worker_job(),
+        [
+            (front, [product_image], "1. PRODUCT — front", False, [product_image]),
+            (back, [product_image], "1. PRODUCT — back", False, [product_image]),
+        ],
+        {"clothingType": "top"},
+        {},
+    ))
+
+    assert state["peak"] == 2
+    assert len(result[0]) == len(result[1]) == 2
+    assert len(r2.saved) == 2
 
 
 @pytest.mark.parametrize("failure", ["provider", "manifest", "plan"])
@@ -307,10 +470,11 @@ def _run_editor(monkeypatch, *, qc_mode, qc_error=False):
     [
         ("shadow", False, 1, ["generate", "garment", "cut-qc", "save"]),
         ("shadow", True, 1, ["generate", "garment", "cut-qc", "save"]),
+        ("repair", False, 1, ["generate", "garment", "cut-qc", "save"]),
         ("off", False, 0, ["generate", "garment", "save"]),
     ],
 )
-def test_editor_cut_qc_is_shadow_only_and_persisted_separately(
+def test_editor_cut_qc_stays_observation_only_and_persisted_separately(
     monkeypatch, qc_mode, qc_error, expected_calls, expected_events,
 ):
     captured, r2 = _run_editor(monkeypatch, qc_mode=qc_mode, qc_error=qc_error)
@@ -319,13 +483,13 @@ def test_editor_cut_qc_is_shadow_only_and_persisted_separately(
     assert captured["events"] == expected_events
     assert r2.saved == [b"CHOSEN"]
     assert metadata["garmentQc"] == {"chosenIndex": 0}
-    if qc_mode == "shadow" and not qc_error:
+    if qc_mode in {"shadow", "repair"} and not qc_error:
         assert metadata["cutQc"] == {"verdict": "PASS", "passed": True, "gates": {}}
         assert captured["generated"].data == b"CHOSEN"
         assert [reference.role for reference in captured["references"]] == ["product"]
         assert captured["plan"]["declaredFitAxes"] == ["fit"]
         assert "warnings" not in metadata
-    elif qc_mode == "shadow":
+    elif qc_mode in {"shadow", "repair"}:
         assert "cutQc" not in metadata
         assert metadata["warnings"] == [{"code": "cut_output_qc_unavailable"}]
     else:

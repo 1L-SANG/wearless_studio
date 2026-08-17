@@ -87,7 +87,8 @@ async def generate(
     prompt = build_prompt({"changes": changes, "cutType": cut_type, "hasRefBg": ref_bg is not None})
     images = [source_image] if ref_bg is None else [source_image, ref_bg]
     res = await gemini.generate_content_image(
-        model, prompt, images, settings.mannequin_image_size,
+        model, prompt, images,
+        getattr(settings, "detail_cut_image_size", None) or settings.mannequin_image_size,
         aspect_ratio=settings.mannequin_aspect_ratio,
     )
     return res.image, res.mime

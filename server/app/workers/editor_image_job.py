@@ -607,7 +607,9 @@ async def run_editor_image_job(app, job: dict) -> None:
             )
             image, mime = chosen.data, chosen.mime
             example_warnings.extend(garment_warnings)
-            if s.cut_output_qc_mode == "shadow":
+            # repair는 PL-4 콘티 블록 전용이다. 같은 전역 설정을 쓰는 에디터 단건 경로는
+            # 기존 shadow 관측을 유지하되 자동 2차 생성은 하지 않는다.
+            if s.cut_output_qc_mode in {"shadow", "repair"}:
                 try:
                     plan = cut_plan.compile_cut_plan(
                         cut_generator.apply_reference_compatibility(normalized),
@@ -621,7 +623,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                         s, plan, qc_references, chosen
                     )
                 except Exception as e:
-                    # shadow는 관측 전용이다. QC 불능을 기록하되 선택된 이미지는 그대로 저장한다.
+                    # 에디터 경로는 관측 전용이다. QC 불능을 기록하되 선택 이미지는 저장한다.
                     log.warning(
                         "AG-06 editor cut output QC unavailable job %s: %r — shadow only",
                         job_id,
