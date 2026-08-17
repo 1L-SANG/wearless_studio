@@ -144,3 +144,43 @@ export function dropUntouchedPlaceholders(blocks, freshIds) {
   });
   return changed ? next : blocks;
 }
+
+/* 시그니처 컷(첫 화면) 위의 제품명 — 콘티보드가 hookTitleOverlay 로 "이 컷엔 제품명이
+   올라간다"를 이미 저장한다(storyboardHookFrame.js). 에디터는 그 표식을 읽어 도착 즉시
+   가운데 정렬로 한 번만 얹고, 이후 편집·이동·삭제는 전적으로 사용자 몫이다.
+
+   재배치 방지: 얹은 블록에 signatureTitleSeeded 표식을 남긴다. 텍스트 유무로 판정하면
+   사용자가 지운 제목이 다시 들어올 때마다 살아나 "지워도 계속 생긴다"가 된다. */
+export const SIGNATURE_TITLE_PRESET = 'headline';
+
+export function buildSignatureTitleElement(productName, { blockW = CANVAS_WIDTH } = {}) {
+  const box = textPresetBox(SIGNATURE_TITLE_PRESET);
+  const w = Math.min(blockW - 80, Math.max(box.w, Math.round(blockW * 0.7)));
+  return {
+    id: uid('el'),
+    type: 'text',
+    x: Math.round((blockW - w) / 2),
+    y: 80,
+    textSizing: 'auto',
+    ...box,
+    w,
+    text: (productName || '').trim() || box.text,
+    style: { ...box.style, align: 'center' },
+  };
+}
+
+/** 시그니처 컷 블록들에 제품명을 한 번만 얹는다. 이미 얹었거나 표식이 없으면 그대로 둔다. */
+export function seedSignatureTitles(blocks, productName) {
+  if (!Array.isArray(blocks)) return blocks;
+  let changed = false;
+  const next = blocks.map((block) => {
+    if (!block?.hookTitleOverlay || block.signatureTitleSeeded) return block;
+    changed = true;
+    return {
+      ...block,
+      signatureTitleSeeded: true,
+      elements: [...(block.elements || []), buildSignatureTitleElement(productName)],
+    };
+  });
+  return changed ? next : blocks;
+}

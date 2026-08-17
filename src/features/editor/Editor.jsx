@@ -26,7 +26,7 @@ import { exampleGenderFromAnalysis, hexFor } from '@/features/storyboard/Storybo
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isAutoManagedBlock, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
-import { DEFAULT_TEXT_BODY, buildTextPresetElement, dropUntouchedPlaceholders, textPresetBox, textPresetDropPlacement } from '@/features/editor/presets/textPresets.js';
+import { DEFAULT_TEXT_BODY, buildTextPresetElement, dropUntouchedPlaceholders, seedSignatureTitles, textPresetBox, textPresetDropPlacement } from '@/features/editor/presets/textPresets.js';
 import { buildColorOpts, visibleColorOpts } from '@/lib/colorOpts.js';
 import { retryRead } from '@/lib/retryRead.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
@@ -1204,6 +1204,8 @@ export function Editor() {
           withH = ensureShippingReturnsBlock(withH, ctx);
         }
         withH = upgradeLegacyKiwiTemplateBlocks(stripPhotoBlockTextElements(withH), uid);
+        // 시그니처 컷엔 제품명을 가운데로 한 번만 얹는다 — 콘티보드가 남긴 hookTitleOverlay 표식 기준.
+        withH = seedSignatureTitles(withH, p.name || '');
         setBlocks(withH);
         setWardrobe(mergeEditorImagesIntoWardrobe({ wardrobe: w, blocks: withH, ...wardrobeContext.current }));
         setCatalogs(hydratedCatalogs); setFmModels(fm); setSelBlock(withH[0]?.id);
