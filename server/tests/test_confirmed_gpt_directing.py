@@ -23,6 +23,7 @@ _EXCLUDED_HEAD_CROPPED_FULL_IDS = {
     "ex_styling_men_outer_full_06",
     "ex_styling_women_dress_full_home_01",
     "ex_styling_women_outer_full_alley_01",
+    "ex_styling_women_top_full_mia_cafe_snapshot_01",
     "ex_styling_women_top_full_snapshot_04",
 }
 
@@ -74,7 +75,7 @@ def test_live_catalog_covers_every_compatible_visually_verified_example():
     }
     catalog = load_confirmed_gpt_directing_catalog()
 
-    assert len(structurally_eligible) == 54
+    assert len(structurally_eligible) == 55
     assert len(catalog) == 50
     assert structurally_eligible - set(catalog) == _EXCLUDED_HEAD_CROPPED_FULL_IDS
     assert set(catalog) - structurally_eligible == set()
