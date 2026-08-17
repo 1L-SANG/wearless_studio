@@ -2122,13 +2122,9 @@ export function Storyboard() {
     void task.promise.then(async (result) => {
       if (!active) return;
       setCustomMatchPromotionPending(false);
-      if (result?.attempted && !result.promoted) {
-        if (!customMatchPromotionHandledRef.current.has(projectId)) {
-          customMatchPromotionHandledRef.current.add(projectId);
-          pushToast('내 옷을 등록하지 못했어요. 분석 화면에서 다시 올려주세요.', { icon: 'alert' });
-        }
-        return;
-      }
+      // 실패 알림은 태스크 층(onCustomMatchPromotionFailure)이 화면과 무관하게 띄운다 —
+      // 셀러가 콘티를 곧바로 떠나도 안내가 사라지지 않게(리뷰 지적).
+      if (result?.attempted && !result.promoted) return;
       if (!result?.attempted) return;
       try {
         const refreshed = await api.getMatchClothing(projectId);
@@ -2147,15 +2143,15 @@ export function Storyboard() {
         if (active) setLoadRetry((current) => current + 1);
       }
     }).catch(() => {
-      if (!active) return;
-      setCustomMatchPromotionPending(false);
-      if (!customMatchPromotionHandledRef.current.has(projectId)) {
-        customMatchPromotionHandledRef.current.add(projectId);
-        pushToast('내 옷을 등록하지 못했어요. 분석 화면에서 다시 올려주세요.', { icon: 'alert' });
-      }
+      if (active) setCustomMatchPromotionPending(false);
     });
     return () => { active = false; };
   }, [projectId, pushToast]);
+
+  // 승격 실패 안내 — 어느 화면이 떠 있든 프로젝트당 한 번. 콘티보드 언마운트로 유실되지 않는다.
+  useEffect(() => onCustomMatchPromotionFailure(() => {
+    pushToast('내 옷을 등록하지 못했어요. 분석 화면에서 다시 올려주세요.', { icon: 'alert' });
+  }), [pushToast]);
 
   // 새로고침·이탈로 메모리 프라미스가 유실된 경우 새 백엔드 인프라를 만들지 않는다. 이미 서버
   // 목록에 내 옷이 없다면 기존 실패 안내로 수렴해 분석 화면의 재업로드 경로를 알려준다.

@@ -17,6 +17,10 @@ export async function promoteCustomMatch(api, projectId, customDraft) {
   try {
     // Promise.all 은 결과 배열을 입력 map 순서로 돌려주므로, 업로드 완료 순서와 무관하게
     // set_custom_match_source_order 가 읽는 assetIds 는 셀러가 올린 사진 순서를 유지한다.
+    // 알려진 한계(리뷰 2026-08-17): 3장 중 2번째가 실패하면 1·3번은 이미 올라간 뒤라
+    // 아무도 참조하지 않는 고아 자산으로 남는다. 자산 삭제 API 가 없어 지금은 되돌릴 수
+    // 없다 — 순차였던 이전 코드도 완료분은 같은 이유로 남았고, 실패는 드물며 사용자에게
+    // 보이는 손상은 없다(스토리지 비용만). 삭제 엔드포인트가 생기면 여기서 정리한다.
     const assetIds = await Promise.all(customDraft.uploads.map(async (up) => {
       const uploaded = await api.uploadPhoto(projectId, {
         filename: up.filename, mime: up.mime, blob: up.blob,
@@ -57,25 +61,51 @@ export async function promoteCustomMatch(api, projectId, customDraft) {
 // 서버 폴링을 새로 만들지 않고, 완료된 task 도 현재 세션 동안 남겨 콘티가 조금 늦게
 // 마운트되어도 성공/실패 결과를 놓치지 않게 한다.
 const promotionTasks = new Map();
+const MAX_TRACKED_PROMOTIONS = 8;
+
+/* 실패 알림은 어느 화면이 떠 있든 한 번은 전달돼야 한다. 콘티보드 안에서만 구독하면
+   셀러가 곧바로 생성·에디터로 넘어갔을 때 "등록 실패"가 조용히 사라진다(리뷰 지적). */
+const failureListeners = new Set();
+
+export function onCustomMatchPromotionFailure(listener) {
+  failureListeners.add(listener);
+  return () => failureListeners.delete(listener);
+}
+
+function notifyFailure(projectId) {
+  const task = promotionTasks.get(projectId);
+  if (task?.notified) return;          // 프로젝트당 한 번만
+  if (task) task.notified = true;
+  for (const listener of failureListeners) {
+    try { listener(projectId); } catch { /* 구독자 오류가 다른 구독자를 막지 않는다 */ }
+  }
+}
 
 export function startCustomMatchPromotion(api, projectId, customDraft, { onSettled } = {}) {
   if (!projectId || !customDraft?.uploads?.length) return null;
   const current = promotionTasks.get(projectId);
   if (current?.status === 'pending') return current;
 
-  const task = { status: 'pending', promise: null };
+  const task = { status: 'pending', promise: null, notified: false };
   task.promise = promoteCustomMatch(api, projectId, customDraft)
     .finally(() => onSettled?.(projectId))
     .then((result) => {
       task.status = 'settled';
       task.result = result;
+      if (result?.attempted && !result.promoted) notifyFailure(projectId);
       return result;
     }, (error) => {
       task.status = 'settled';
       task.error = error;
+      notifyFailure(projectId);
       throw error;
     });
   promotionTasks.set(projectId, task);
+  // 세션 안에서 프로젝트를 여러 개 만들어도 Map 이 무한정 커지지 않게 오래된 것부터 버린다.
+  if (promotionTasks.size > MAX_TRACKED_PROMOTIONS) {
+    const oldest = promotionTasks.keys().next().value;
+    if (oldest !== projectId) promotionTasks.delete(oldest);
+  }
   return task;
 }
 

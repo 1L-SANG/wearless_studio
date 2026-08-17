@@ -242,3 +242,44 @@ test('상의 상품이면 매칭 상의는 타입 불일치로 탈락한다', ()
   );
   assert.equal(out.find((m) => m.id === 'custom_srv').selected, false);
 });
+
+/* 리뷰 후속(2026-08-17): 승격 결과 소비가 콘티보드 마운트에 묶여 있어, 셀러가 화면을
+   빨리 떠나면 실패 안내가 조용히 사라졌다. 알림을 태스크 층으로 올려 화면과 분리한다. */
+test('실패 알림은 화면과 무관하게 프로젝트당 한 번만 전달된다', async () => {
+  const mod = await import('../../src/lib/customMatchPromotion.js');
+  const { startCustomMatchPromotion, onCustomMatchPromotionFailure, clearCustomMatchPromotionTask } = mod;
+
+  const seen = [];
+  const off = onCustomMatchPromotionFailure((id) => seen.push(id));
+  const api = {
+    uploadPhoto: async () => { throw new Error('upload boom'); },
+    addCustomMatchItem: async () => ({}),
+    saveAnalysis: async () => ({}),
+  };
+  const draft = { uploads: [{ filename: 'a.jpg', mime: 'image/jpeg', blob: new Blob(['x']) }] };
+
+  const task = startCustomMatchPromotion(api, 'proj-fail', draft);
+  await task.promise.catch(() => {});
+  assert.deepEqual(seen, ['proj-fail'], '구독자가 실패를 정확히 한 번 받는다');
+
+  off();
+  clearCustomMatchPromotionTask('proj-fail');
+});
+
+test('추적하는 승격 태스크는 무한정 쌓이지 않는다', async () => {
+  const mod = await import('../../src/lib/customMatchPromotion.js');
+  const { startCustomMatchPromotion, getCustomMatchPromotionTask, clearCustomMatchPromotionTask } = mod;
+  const api = {
+    uploadPhoto: async () => ({ assetId: 'a1' }),
+    addCustomMatchItem: async () => ({ analysis: { matchClothing: [] } }),
+    saveAnalysis: async () => ({}),
+  };
+  const draft = () => ({ uploads: [{ filename: 'a.jpg', mime: 'image/jpeg', blob: new Blob(['x']) }] });
+
+  const ids = Array.from({ length: 12 }, (_, i) => `bulk-${i}`);
+  for (const id of ids) await startCustomMatchPromotion(api, id, draft())?.promise?.catch(() => {});
+  // 오래된 것부터 버려지므로 처음 것은 사라지고 마지막 것은 남는다.
+  assert.equal(getCustomMatchPromotionTask('bulk-0'), null);
+  assert.ok(getCustomMatchPromotionTask(ids.at(-1)));
+  ids.forEach(clearCustomMatchPromotionTask);
+});
