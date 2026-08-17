@@ -1788,7 +1788,15 @@ def test_job_events_poll_returns_json_with_after_cursor(client, make_token, monk
 
     monkeypatch.setattr(routes.repo, "get_job", fake_get_job)
     monkeypatch.setattr(routes.repo, "list_job_events", fake_list)
-    patch_route_db(monkeypatch, routes)
+    connection_leases = 0
+
+    @contextlib.asynccontextmanager
+    async def counted_conn(_request):
+        nonlocal connection_leases
+        connection_leases += 1
+        yield object()
+
+    monkeypatch.setattr(routes, "get_conn", counted_conn)
     res = client.get("/v1/jobs/j1/events?poll=1&after=3", headers=auth_headers(make_token))
     assert res.status_code == 200
     assert res.headers["content-type"].startswith("application/json")
@@ -1797,6 +1805,7 @@ def test_job_events_poll_returns_json_with_after_cursor(client, make_token, monk
     assert [e["id"] for e in body["events"]] == [4, 5]
     assert body["events"][0]["type"] == "step"
     assert body["events"][0]["payload"]["previewUrl"] == "https://r2.test/k"
+    assert connection_leases == 1, "poll 1회가 소유권·이벤트 조회용 DB lease를 중복 획득하면 안 된다"
 
 
 def test_billable_failure_is_not_retried_by_the_worker(monkeypatch):

@@ -503,13 +503,27 @@ export const useAppStore = create((set, get) => ({
       // 15분 — 정상 실측 242~285초 + 서버 lease 복구(900초) 동안 화면이 먼저 포기하지 않게
       // (httpAdapter.generateDetailPage 의 timeoutMs 와 같은 근거).
       const deadline = (running.startedAt || Date.now()) + 900000;
+      let dbUnavailableCount = 0;
       for (;;) {
         if (!alive()) return;
-        const [job, ev] = await Promise.all([
-          api.getJob(res.jobId),
-          // 이벤트는 보조 신호 — 일시 실패해도 잡 폴링은 계속(다음 턴에 after 재시도)
-          api.getJobEvents(res.jobId, after).catch(() => ({ events: [] })),
-        ]);
+        let job;
+        let ev;
+        try {
+          [job, ev] = await Promise.all([
+            api.getJob(res.jobId),
+            // 이벤트는 보조 신호 — 일시 실패해도 잡 폴링은 계속(다음 턴에 after 재시도)
+            api.getJobEvents(res.jobId, after).catch(() => ({ events: [] })),
+          ]);
+          dbUnavailableCount = 0;
+        } catch (e) {
+          // DB 풀/DB 자체의 일시 503은 생성 실패가 아니다. 서버의 기존 jobId는 그대로 두고
+          // 재조회만 늦춘다. POST를 다시 보내지 않으므로 중복 생성·중복 과금도 없다.
+          if (e?.status !== 503 || Date.now() > deadline) throw e;
+          dbUnavailableCount += 1;
+          const retryMs = Math.min(5000, 1200 * (2 ** Math.min(dbUnavailableCount - 1, 2)));
+          await new Promise((r) => setTimeout(r, retryMs));
+          continue;
+        }
         if (!alive()) return;
         const events = ev?.events || [];
         if (events.length) {

@@ -49,6 +49,15 @@ def test_qc_flags_are_declared(manifest_vars):
     assert not missing, f"매니페스트에 QC 플래그 미선언: {missing}"
 
 
+def test_production_db_pool_leaves_room_during_rolling_deploy(manifest_vars):
+    """구·신 API 태스크와 Supabase REST가 동시에 DB에 붙을 여유를 남긴다."""
+    pool_max = int(manifest_vars.get("DB_POOL_MAX_SIZE", "0"))
+    assert 1 <= pool_max <= 3, (
+        f"DB_POOL_MAX_SIZE={pool_max} — 롤링 배포의 두 태스크가 session pooler 한도 15를 "
+        "잠식하지 않도록 프로세스당 최대 3으로 고정한다"
+    )
+
+
 @pytest.mark.parametrize("env_name,attr", QC_FLAGS)
 def test_manifest_flag_value_survives_loader(env_name, attr, manifest_vars, monkeypatch):
     """배포값을 실제 로더에 넣었을 때 그대로 살아남는가.

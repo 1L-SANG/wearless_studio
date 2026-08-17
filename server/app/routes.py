@@ -2780,18 +2780,24 @@ async def job_events(
       - `404 Not Found`: 해당 작업이 존재하지 않거나, 다른 사용자가 소유한 경우 발생
       - 완료(`done`), 실패(`error`) 혹은 취소(`cancelled`) 이벤트가 전달되거나, 최대 5분(300초)이 경과하면 연결이 안전하게 정리 종료됩니다.
     """
-    async with get_conn(request) as conn:  # 소유권 확인
-        if await repo.get_job(conn, user_id, job_id) is None:
-            raise HTTPException(
-                status_code=404, detail={"code": "not_found", "message": "작업을 찾을 수 없습니다."})
     # ?poll=1 — SSE 대신 1회 JSON 조회(editor_wait_dev_spec §2-2). EventSource 는 Bearer
-    # 헤더를 못 실으므로 프론트는 마네킹과 동일하게 폴링으로 통일한다. after 커서 재사용.
+    # 헤더를 못 실으므로 프론트는 마네킹과 동일하게 폴링으로 통일한다. 소유권 확인과 이벤트
+    # 조회를 한 lease에서 끝내 DB 장애 때의 풀 압력을 절반으로 줄인다.
     if poll:
         async with get_conn(request) as conn:
+            if await repo.get_job(conn, user_id, job_id) is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"code": "not_found", "message": "작업을 찾을 수 없습니다."},
+                )
             events = await repo.list_job_events(conn, user_id, job_id, after)
         return JSONResponse({"events": [
             {"id": e["id"], "type": e["event_type"], "payload": e["payload"]} for e in events
         ]})
+    async with get_conn(request) as conn:  # SSE 소유권 확인
+        if await repo.get_job(conn, user_id, job_id) is None:
+            raise HTTPException(
+                status_code=404, detail={"code": "not_found", "message": "작업을 찾을 수 없습니다."})
     start = int(last_event_id) if (last_event_id is not None and last_event_id.isdigit()) else after
     pool = request.app.state.pool
 

@@ -47,6 +47,17 @@ test('상세페이지 대기 상한은 서버 lease 복구와 같은 15분이다
   assert.doesNotMatch(body, /timeoutMs: 300000/);
 });
 
+test('DB 503은 기존 jobId 폴링만 늦추고 생성 POST를 재호출하지 않는다', () => {
+  const start = store.indexOf('let dbUnavailableCount = 0;');
+  assert.ok(start > 0, 'DB 일시 장애 재조회 분기를 못 찾았다');
+  const retry = store.slice(start, store.indexOf('const events = ev?.events || [];', start));
+  assert.match(retry, /e\?\.status !== 503/);
+  assert.match(retry, /Math\.min\(5000/);
+  assert.match(retry, /continue;/);
+  assert.doesNotMatch(retry, /startDetailPage/);
+  assert.doesNotMatch(retry, /generateDetailPage/);
+});
+
 test('진행 중 job 표식은 새로고침 뒤 같은 jobId로 복원하고 완료 시 지운다', () => {
   const storage = memoryStorage();
   const job = { projectId: 'p1', jobId: 'j1', startedAt: 1234 };
