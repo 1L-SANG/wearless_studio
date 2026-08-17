@@ -9,6 +9,7 @@
 import { mockAdapter } from './mockAdapter.js';
 import { httpAdapter } from './httpAdapter.js';
 import { analyzePublicDraft } from './publicAnalysis.js';
+import { withoutDemoPhotos } from './guestProductTemplate.js';
 
 const mode = import.meta.env.VITE_API_MODE ?? 'mock';
 export const isMockMode = mode !== 'http';
@@ -46,6 +47,17 @@ function buildHttpApi() {
             remote: httpAdapter, local: mockAdapter,
           })
           : httpAdapter.analyzeProduct(projectId, options)
+      );
+      continue;
+    }
+    if (name === 'getProduct') {
+      // 게스트 구간의 상품 템플릿에서 데모 사진을 잘라낸다. mock DB 의 시드 사진은 SVG
+      // 플레이스홀더라, 실제 흐름이 그걸 셀러 사진으로 들고 가면 임시저장·복원을 거쳐
+      // 확정 업로드에서 서버 400(지원하지 않는 이미지 형식)으로 막힌다(2026-08-17 사고).
+      api[name] = async (projectId, ...args) => (
+        projectId == null
+          ? withoutDemoPhotos(await mockAdapter.getProduct(projectId, ...args))
+          : httpAdapter.getProduct(projectId, ...args)
       );
       continue;
     }

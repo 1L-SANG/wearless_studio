@@ -1,4 +1,5 @@
 import { invalidateStoryboardEntryPrefetch } from '../storyboard/storyboardEntryPrefetch.js';
+import { isPlaceholderPhotoSrc } from '../../lib/imageTranscode.js';
 
 const analysisEditSaveBarriers = new Map();
 
@@ -95,7 +96,10 @@ export function mergeColorMetadataWithPersistedImages(persistedColors, editedCol
     });
     // 분석 후 사진 편집은 별도 업로드 전의 blob/local id일 수 있다. 색상명 저장이 그 임시값을
     // 서버의 asset 목록으로 승격하지 않도록 마지막 서버 저장본의 images만 유지한다.
-    merged.images = persisted?.images || [];
+    // 단 올릴 수 없는 src(=목 데모의 SVG 플레이스홀더)는 저장본에 있었더라도 실어 보내지
+    // 않는다 — 그게 실려 나가면 복원된 화면의 상품 사진이 되고 확정 업로드가 서버에
+    // 거부된다(2026-08-17 사고).
+    merged.images = (persisted?.images || []).filter((image) => !isPlaceholderPhotoSrc(image?.src));
     return merged;
   });
 }

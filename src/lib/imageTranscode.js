@@ -31,6 +31,29 @@ export const looksLikeImageFile = (file) => (
   file?.type ? file.type.startsWith('image/') : IMAGE_EXT.test(file?.name || '')
 );
 
+/* 이 mime 으로 R2 에 올릴 수 있나 — 서버 화이트리스트(r2.MIME_EXT)와 같은 집합.
+   업로드 직전이 아니라 **사진을 보관·복원하는 지점**에서도 물어야 한다: 올릴 수 없는 것이
+   상품 사진 자리에 들어오면 확정 단계에서 서버 400 으로 터지고, 셀러는 자기가 올린 jpg 가
+   거부됐다고 읽는다(2026-08-17 사고 — 목 데모의 SVG 플레이스홀더가 그 자리에 들어왔다). */
+export const isUploadablePhotoMime = (mime) => (
+  UPLOAD_IMAGE_MIME_TYPES.has(String(mime || '').toLowerCase())
+);
+
+/* 셀러의 실제 사진이 가질 수 있는 src 인가.
+   blob: = 방금 고른 파일, http(s):·/ = 이미 업로드된 자산. `data:` 는 이 앱에서 목
+   플레이스홀더(SVG)뿐이라 상품 사진으로 취급해선 안 된다. */
+export const isUploadablePhotoSrc = (src) => {
+  const value = String(src || '');
+  if (!value) return false;
+  return value.startsWith('blob:') || value.startsWith('http://')
+    || value.startsWith('https://') || value.startsWith('/');
+};
+
+/* 사진 자리에 있어선 **안 되는** src 인가 — 목 데모 플레이스홀더(data:) 같은 것.
+   src 가 아예 없는 것은 여기서 판정하지 않는다: 서버 저장본은 asset id 만으로 사진을 가리킬
+   수 있고(계약), 그걸 지우면 색상명만 바꿔도 사진이 사라진다. 지울 근거가 있는 것만 지운다. */
+export const isPlaceholderPhotoSrc = (src) => (src ? !isUploadablePhotoSrc(src) : false);
+
 // 서버의 presigned upload 문지기(r2.MIME_EXT/routes.MAX_UPLOAD_BYTES)와 같은 규칙.
 // 반드시 HEIC 변환·축소가 끝난 File 에 적용한다.
 export const getUploadValidationError = (file) => {

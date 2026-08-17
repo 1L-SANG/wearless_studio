@@ -17,6 +17,7 @@
    재시도뿐 아니라 새로고침 뒤에도 같은 프로젝트·업로드에 합류한다.
    ============================================================= */
 import { api } from '@/lib/api/index.js';
+import { isUploadablePhotoMime } from '@/lib/imageTranscode.js';
 import { createDraftSyncSingleFlight } from '@/lib/draftSyncSingleFlight.js';
 import { draftPromotionSession } from '@/lib/draftPromotionSession.js';
 import { promoteCustomMatch, stripLocalCustomMatch } from '@/lib/customMatchPromotion.js';
@@ -47,8 +48,17 @@ async function runDraftSync(draft, { projectId: existing } = {}) {
   try {
     // 성공한 사진별 asset 매핑도 즉시 기록한다. 중간 실패·새로고침 뒤 재시도는 이미 올라간
     // 사진을 재사용해 중복 R2 객체를 만들지 않는다.
+    // 올릴 수 없는 mime 은 여기서 걸러 낸다. 그대로 보내면 서버가 400 으로 거부하고, 그
+    // 메시지("지원하지 않는 이미지 형식입니다")가 CTA 토스트로 그대로 떠서 셀러는 자기가 올린
+    // jpg 가 거부됐다고 읽는다 — 사진 한 장 때문에 확정 전체가 막히는 건 더 나쁘다.
+    // (2026-08-17 사고. 상류에서 이미 걸러지지만 승격은 마지막 문지기라 여기도 본다.)
+    const uploadable = (draft.photos ?? []).filter((p) => isUploadablePhotoMime(p?.mime));
+    const unsupported = (draft.photos ?? []).length - uploadable.length;
+    if (unsupported) {
+      console.warn(`[promote] 업로드할 수 없는 사진 ${unsupported}장을 건너뜁니다.`);
+    }
     const pairs = await Promise.all(
-      (draft.photos ?? []).map(async (p) => {
+      uploadable.map(async (p) => {
         const cached = draftPromotionSession.read().assets?.[p.imageId];
         if (cached?.assetId && cached?.url) return [p.imageId, cached];
         const uploaded = await api.uploadPhoto(projectId, p);

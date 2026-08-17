@@ -53,6 +53,7 @@ import {
   splitAnalysisEditPatch,
 } from './saveRouting.js';
 import { getBaseSlotUploadRoom, getPendingTileCount, PENDING_TILE_DELAY_MS } from './pendingTiles.js';
+import { restoreDraftProduct } from './draftProductRestore.js';
 import { photoCaption } from './photoCaption.js';
 import { createProductPhotoPreviewRegistry } from './productPhotoPreviewRegistry.js';
 import { autofillColorGroups } from './colorAutofill.js';
@@ -155,24 +156,6 @@ const filesToMetas = async (fileList, room) => {
   };
 };
 const fileExt = (im) => (im.type && im.type.split('/')[1] ? im.type.split('/')[1].toUpperCase() : 'IMG');
-
-function restoreDraftProduct(draft) {
-  if (!draft?.product) return null;
-  const urlById = {};
-  for (const photo of draft.photos || []) {
-    try { urlById[photo.imageId] = URL.createObjectURL(photo.blob); } catch { /* skip */ }
-  }
-  return {
-    ...draft.product,
-    colors: (draft.product.colors || []).map((color) => ({
-      ...color,
-      images: (color.images || []).map((image) => ({
-        ...image,
-        src: urlById[image.id] || image.src,
-      })),
-    })),
-  };
-}
 
 function hasRequiredDraftPhotos(product) {
   const base = (product?.colors || []).find((color) => color.isBase) || product?.colors?.[0];
@@ -963,7 +946,12 @@ export function ProductInput() {
       setCatalogs(c);
       const staged = draftSlot.consumeStaged();
       if (staged?.payload && applyDraftPayload(staged.payload)) return;
-      persistedColorsRef.current = p.colors || [];
+      // 이 ref 는 "서버에 저장된 상품 색상"이다 — 색상명·스와치만 저장할 때 그 저장본의
+      // images 를 그대로 유지하는 데 쓴다. 게스트(서버 프로젝트 없음)에겐 그런 저장본이
+      // 아예 없으므로 비워 둔다. 예전엔 getProduct(null) 이 돌려준 **목 데모 시드**의 색상이
+      // 여기 들어와, 데모의 SVG 플레이스홀더 사진이 저장 패치·임시저장을 타고 셀러의 상품
+      // 사진 자리까지 흘러갔다(2026-08-17 사고).
+      persistedColorsRef.current = editingProjectId ? (p.colors || []) : [];
       const analysisWasRunning = editingProjectId && isAnalysisRunning(editingProjectId);
 
       // 같은 탭에서 마네킹/후속 단계로 갔다가 input 으로 돌아온 경우에는 현재 프로젝트를
