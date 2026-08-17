@@ -587,8 +587,12 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
                   {m.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
                 </div>
               )) : (catalogs.models || []).map((m) => (
-                <div key={m.id} className={`model-card img-only${model === m.id ? ' on' : ''}`} style={{ width: 'auto' }} onClick={() => { setModel(m.id); setExampleId(null); setRefScope('all'); }}>
+                /* 이름을 사진 위에 얹는다(분석 화면과 동일) — 2026-08-17 가상모델이 5→14명이
+                   되면서 라벨 없는 썸네일만으로는 특정 모델을 고를 수 없게 됐다. */
+                <div key={m.id} className={`model-card ai-model img-only${model === m.id ? ' on' : ''}`} style={{ width: 'auto' }}
+                  title={m.name} onClick={() => { setModel(m.id); setExampleId(null); setRefScope('all'); }}>
                   <img src={m.thumb} alt={m.name} style={{ height: 104 }} />
+                  <span className="ai-name">{m.name}</span>
                 </div>
               ))}
             </div>

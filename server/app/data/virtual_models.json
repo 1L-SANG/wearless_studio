@@ -188,6 +188,339 @@
           "mime": "image/png"
         }
       }
+    },
+    "mF": {
+      "gender": "women",
+      "name": "하린",
+      "thumb": "/models/women/w3.webp",
+      "views": {
+        "face_front": {
+          "key": "seed/models/mF/face_front.webp",
+          "url": "https://images.wearless.kr/seed/models/mF/face_front.webp",
+          "mime": "image/webp"
+        },
+        "grid_sedcard": {
+          "key": "seed/models/mF/grid_sedcard.png",
+          "url": "https://images.wearless.kr/seed/models/mF/grid_sedcard.png",
+          "mime": "image/jpeg"
+        },
+        "three_quarter": {
+          "key": "seed/models/mF/three_quarter.png",
+          "url": "https://images.wearless.kr/seed/models/mF/three_quarter.png",
+          "mime": "image/jpeg"
+        },
+        "profile": {
+          "key": "seed/models/mF/profile.png",
+          "url": "https://images.wearless.kr/seed/models/mF/profile.png",
+          "mime": "image/jpeg"
+        },
+        "body_front": {
+          "key": "seed/models/mF/body_front.png",
+          "url": "https://images.wearless.kr/seed/models/mF/body_front.png",
+          "mime": "image/jpeg"
+        },
+        "body_back": {
+          "key": "seed/models/mF/body_back.png",
+          "url": "https://images.wearless.kr/seed/models/mF/body_back.png",
+          "mime": "image/jpeg"
+        }
+      }
+    },
+    "mG": {
+      "gender": "women",
+      "name": "세아",
+      "thumb": "/models/women/w4.webp",
+      "views": {
+        "face_front": {
+          "key": "seed/models/mG/face_front.webp",
+          "url": "https://images.wearless.kr/seed/models/mG/face_front.webp",
+          "mime": "image/webp"
+        },
+        "grid_sedcard": {
+          "key": "seed/models/mG/grid_sedcard.png",
+          "url": "https://images.wearless.kr/seed/models/mG/grid_sedcard.png",
+          "mime": "image/jpeg"
+        },
+        "three_quarter": {
+          "key": "seed/models/mG/three_quarter.png",
+          "url": "https://images.wearless.kr/seed/models/mG/three_quarter.png",
+          "mime": "image/jpeg"
+        },
+        "profile": {
+          "key": "seed/models/mG/profile.png",
+          "url": "https://images.wearless.kr/seed/models/mG/profile.png",
+          "mime": "image/jpeg"
+        },
+        "body_front": {
+          "key": "seed/models/mG/body_front.png",
+          "url": "https://images.wearless.kr/seed/models/mG/body_front.png",
+          "mime": "image/jpeg"
+        },
+        "body_back": {
+          "key": "seed/models/mG/body_back.png",
+          "url": "https://images.wearless.kr/seed/models/mG/body_back.png",
+          "mime": "image/jpeg"
+        }
+      }
+    },
+    "mH": {
+      "gender": "women",
+      "name": "예린",
+      "thumb": "/models/women/w5.webp",
+      "views": {
+        "face_front": {
+          "key": "seed/models/mH/face_front.webp",
+          "url": "https://images.wearless.kr/seed/models/mH/face_front.webp",
+          "mime": "image/webp"
+        },
+        "grid_sedcard": {
+          "key": "seed/models/mH/grid_sedcard.png",
+          "url": "https://images.wearless.kr/seed/models/mH/grid_sedcard.png",
+          "mime": "image/jpeg"
+        },
+        "three_quarter": {
+          "key": "seed/models/mH/three_quarter.png",
+          "url": "https://images.wearless.kr/seed/models/mH/three_quarter.png",
+          "mime": "image/jpeg"
+        },
+        "profile": {
+          "key": "seed/models/mH/profile.png",
+          "url": "https://images.wearless.kr/seed/models/mH/profile.png",
+          "mime": "image/jpeg"
+        },
+        "body_front": {
+          "key": "seed/models/mH/body_front.png",
+          "url": "https://images.wearless.kr/seed/models/mH/body_front.png",
+          "mime": "image/jpeg"
+        },
+        "body_back": {
+          "key": "seed/models/mH/body_back.png",
+          "url": "https://images.wearless.kr/seed/models/mH/body_back.png",
+          "mime": "image/jpeg"
+        }
+      }
+    },
+    "mI": {
+      "gender": "women",
+      "name": "다인",
+      "thumb": "/models/women/w6.webp",
+      "views": {
+        "face_front": {
+          "key": "seed/models/mI/face_front.webp",
+          "url": "https://images.wearless.kr/seed/models/mI/face_front.webp",
+          "mime": "image/webp"
+        },
+        "grid_sedcard": {
+          "key": "seed/models/mI/grid_sedcard.png",
+          "url": "https://images.wearless.kr/seed/models/mI/grid_sedcard.png",
+          "mime": "image/jpeg"
+        },
+        "three_quarter": {
+          "key": "seed/models/mI/three_quarter.png",
+          "url": "https://images.wearless.kr/seed/models/mI/three_quarter.png",
+          "mime": "image/jpeg"
+        },
+        "profile": {
+          "key": "seed/models/mI/profile.png",
+          "url": "https://images.wearless.kr/seed/models/mI/profile.png",
+          "mime": "image/jpeg"
+        },
+        "body_front": {
+          "key": "seed/models/mI/body_front.png",
+          "url": "https://images.wearless.kr/seed/models/mI/body_front.png",
+          "mime": "image/jpeg"
+        },
+        "body_back": {
+          "key": "seed/models/mI/body_back.png",
+          "url": "https://images.wearless.kr/seed/models/mI/body_back.png",
+          "mime": "image/jpeg"
+        }
+      }
+    },
+    "mJ": {
+      "gender": "women",
+      "name": "소윤",
+      "thumb": "/models/women/w7.webp",
+      "views": {
+        "face_front": {
+          "key": "seed/models/mJ/face_front.webp",
+          "url": "https://images.wearless.kr/seed/models/mJ/face_front.webp",
+          "mime": "image/webp"
+        },
+        "grid_sedcard": {
+          "key": "seed/models/mJ/grid_sedcard.png",
+          "url": "https://images.wearless.kr/seed/models/mJ/grid_sedcard.png",
+          "mime": "image/jpeg"
+        },
+        "three_quarter": {
+          "key": "seed/models/mJ/three_quarter.png",
+          "url": "https://images.wearless.kr/seed/models/mJ/three_quarter.png",
+          "mime": "image/jpeg"
+        },
+        "profile": {
+          "key": "seed/models/mJ/profile.png",
+          "url": "https://images.wearless.kr/seed/models/mJ/profile.png",
+          "mime": "image/jpeg"
+        },
+        "body_front": {
+          "key": "seed/models/mJ/body_front.png",
+          "url": "https://images.wearless.kr/seed/models/mJ/body_front.png",
+          "mime": "image/jpeg"
+        },
+        "body_back": {
+          "key": "seed/models/mJ/body_back.png",
+          "url": "https://images.wearless.kr/seed/models/mJ/body_back.png",
+          "mime": "image/jpeg"
+        }
+      }
+    },
+    "mK": {
+      "gender": "women",
+      "name": "유나",
+      "thumb": "/models/women/w8.webp",
+      "views": {
+        "face_front": {
+          "key": "seed/models/mK/face_front.webp",
+          "url": "https://images.wearless.kr/seed/models/mK/face_front.webp",
+          "mime": "image/webp"
+        },
+        "grid_sedcard": {
+          "key": "seed/models/mK/grid_sedcard.png",
+          "url": "https://images.wearless.kr/seed/models/mK/grid_sedcard.png",
+          "mime": "image/jpeg"
+        },
+        "three_quarter": {
+          "key": "seed/models/mK/three_quarter.png",
+          "url": "https://images.wearless.kr/seed/models/mK/three_quarter.png",
+          "mime": "image/jpeg"
+        },
+        "profile": {
+          "key": "seed/models/mK/profile.png",
+          "url": "https://images.wearless.kr/seed/models/mK/profile.png",
+          "mime": "image/jpeg"
+        },
+        "body_front": {
+          "key": "seed/models/mK/body_front.png",
+          "url": "https://images.wearless.kr/seed/models/mK/body_front.png",
+          "mime": "image/jpeg"
+        },
+        "body_back": {
+          "key": "seed/models/mK/body_back.png",
+          "url": "https://images.wearless.kr/seed/models/mK/body_back.png",
+          "mime": "image/jpeg"
+        }
+      }
+    },
+    "mL": {
+      "gender": "women",
+      "name": "채원",
+      "thumb": "/models/women/w9.webp",
+      "views": {
+        "face_front": {
+          "key": "seed/models/mL/face_front.webp",
+          "url": "https://images.wearless.kr/seed/models/mL/face_front.webp",
+          "mime": "image/webp"
+        },
+        "grid_sedcard": {
+          "key": "seed/models/mL/grid_sedcard.png",
+          "url": "https://images.wearless.kr/seed/models/mL/grid_sedcard.png",
+          "mime": "image/jpeg"
+        },
+        "three_quarter": {
+          "key": "seed/models/mL/three_quarter.png",
+          "url": "https://images.wearless.kr/seed/models/mL/three_quarter.png",
+          "mime": "image/jpeg"
+        },
+        "profile": {
+          "key": "seed/models/mL/profile.png",
+          "url": "https://images.wearless.kr/seed/models/mL/profile.png",
+          "mime": "image/jpeg"
+        },
+        "body_front": {
+          "key": "seed/models/mL/body_front.png",
+          "url": "https://images.wearless.kr/seed/models/mL/body_front.png",
+          "mime": "image/jpeg"
+        },
+        "body_back": {
+          "key": "seed/models/mL/body_back.png",
+          "url": "https://images.wearless.kr/seed/models/mL/body_back.png",
+          "mime": "image/jpeg"
+        }
+      }
+    },
+    "mM": {
+      "gender": "women",
+      "name": "나윤",
+      "thumb": "/models/women/w10.webp",
+      "views": {
+        "face_front": {
+          "key": "seed/models/mM/face_front.webp",
+          "url": "https://images.wearless.kr/seed/models/mM/face_front.webp",
+          "mime": "image/webp"
+        },
+        "grid_sedcard": {
+          "key": "seed/models/mM/grid_sedcard.png",
+          "url": "https://images.wearless.kr/seed/models/mM/grid_sedcard.png",
+          "mime": "image/jpeg"
+        },
+        "three_quarter": {
+          "key": "seed/models/mM/three_quarter.png",
+          "url": "https://images.wearless.kr/seed/models/mM/three_quarter.png",
+          "mime": "image/jpeg"
+        },
+        "profile": {
+          "key": "seed/models/mM/profile.png",
+          "url": "https://images.wearless.kr/seed/models/mM/profile.png",
+          "mime": "image/jpeg"
+        },
+        "body_front": {
+          "key": "seed/models/mM/body_front.png",
+          "url": "https://images.wearless.kr/seed/models/mM/body_front.png",
+          "mime": "image/jpeg"
+        },
+        "body_back": {
+          "key": "seed/models/mM/body_back.png",
+          "url": "https://images.wearless.kr/seed/models/mM/body_back.png",
+          "mime": "image/jpeg"
+        }
+      }
+    },
+    "mN": {
+      "gender": "women",
+      "name": "Nora",
+      "thumb": "/models/women/w11.webp",
+      "views": {
+        "face_front": {
+          "key": "seed/models/mN/face_front.webp",
+          "url": "https://images.wearless.kr/seed/models/mN/face_front.webp",
+          "mime": "image/webp"
+        },
+        "grid_sedcard": {
+          "key": "seed/models/mN/grid_sedcard.png",
+          "url": "https://images.wearless.kr/seed/models/mN/grid_sedcard.png",
+          "mime": "image/jpeg"
+        },
+        "three_quarter": {
+          "key": "seed/models/mN/three_quarter.png",
+          "url": "https://images.wearless.kr/seed/models/mN/three_quarter.png",
+          "mime": "image/jpeg"
+        },
+        "profile": {
+          "key": "seed/models/mN/profile.png",
+          "url": "https://images.wearless.kr/seed/models/mN/profile.png",
+          "mime": "image/jpeg"
+        },
+        "body_front": {
+          "key": "seed/models/mN/body_front.png",
+          "url": "https://images.wearless.kr/seed/models/mN/body_front.png",
+          "mime": "image/jpeg"
+        },
+        "body_back": {
+          "key": "seed/models/mN/body_back.png",
+          "url": "https://images.wearless.kr/seed/models/mN/body_back.png",
+          "mime": "image/jpeg"
+        }
+      }
     }
   }
 }

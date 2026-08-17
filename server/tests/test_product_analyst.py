@@ -6,7 +6,7 @@ def test_validate_keeps_valid_enums():
         "clothingType": "top", "subCategory": "knit", "targetGenders": ["women"],
         "fit": "regular", "materials": [{"name": "울", "ratio": 80}],
         "aiSuggestedPoints": ["포근한 골지"], "suggestedName": "소프트 니트",
-        "swatchSuggestions": [{"colorGroupId": "c1", "swatchId": "ivory"}],
+        "swatchSuggestions": [{"colorGroupId": "c1", "swatchId": "ivory", "colorName": "크림 아이보리"}],
         "styleTags": ["basic", "minimal"],
     }
     v = pa.validate(raw)
@@ -14,7 +14,9 @@ def test_validate_keeps_valid_enums():
     assert v["subCategory"] == "knit"
     assert v["fit"] == "regular"
     assert v["materials"] == [{"name": "울", "ratio": 80}]
-    assert v["swatchSuggestions"] == [{"colorGroupId": "c1", "swatchId": "ivory"}]
+    assert v["swatchSuggestions"] == [
+        {"colorGroupId": "c1", "swatchId": "ivory", "colorName": "크림 아이보리"}
+    ]
     assert v["styleTags"] == ["basic", "minimal"]
 
 
@@ -38,6 +40,36 @@ def test_validate_drops_out_of_enum():
 
 def test_validate_normalizes_retired_tight_fit_to_slim():
     assert pa.validate({"fit": "tight"})["fit"] == "slim"
+
+
+def test_swatch_schema_requires_color_name():
+    item = pa.analysis_schema()["properties"]["swatchSuggestions"]["items"]
+    assert item["properties"]["colorName"] == {"type": "string"}
+    assert item["required"] == ["colorGroupId", "swatchId", "colorName"]
+
+
+def test_validate_cleans_color_name_and_falls_back_to_swatch_label():
+    cleaned = pa.validate({
+        "swatchSuggestions": [{
+            "colorGroupId": "base", "swatchId": "black", "colorName": "  워시드\n블랙 스톤 워싱  ",
+        }],
+    })["swatchSuggestions"][0]
+    assert cleaned == {
+        "colorGroupId": "base", "swatchId": "black", "colorName": "워시드 블랙 스톤",
+    }
+
+    for missing in ({}, {"colorName": " "}, {"colorName": "파"}):
+        suggestion = {"colorGroupId": "base", "swatchId": "blue", **missing}
+        assert pa.validate({"swatchSuggestions": [suggestion]})["swatchSuggestions"] == [{
+            "colorGroupId": "base", "swatchId": "blue", "colorName": "블루",
+        }]
+
+
+def test_build_prompt_requests_korean_shopping_mall_color_name():
+    prompt = pa.build_prompt({"colors": [{"id": "base"}]})
+    assert "specific Korean shopping-mall color name of 2-10" in prompt
+    assert "{colorGroupId, swatchId, colorName}" in prompt
+    assert "Visible colorGroupIds" in prompt and "base" in prompt
 
 
 def test_validate_truncates_points_and_drops_bad_materials():

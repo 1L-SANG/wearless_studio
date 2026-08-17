@@ -136,6 +136,8 @@ const catalogs = {
     { id: 'ivory', label: '아이보리', hex: '#f3eee1' },
     { id: 'beige', label: '베이지', hex: '#d8c4a3' },
     { id: 'brown', label: '브라운', hex: '#7a5230' },
+    // 퍼플은 7번째 — 7열 그리드의 첫 줄 맨 오른쪽 자리 (2026-08-15 사용자 결정)
+    { id: 'purple', label: '퍼플', hex: '#7d5ba6' },
     { id: 'red', label: '레드', hex: '#c0392b' },
     { id: 'yellow', label: '옐로우', hex: '#e7c75c' },
     { id: 'green', label: '그린', hex: '#3f7a4f' },

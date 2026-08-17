@@ -422,6 +422,17 @@ export const httpAdapter = {
       form.append('images', blob, photo.name || `product-${index + 1}`);
       form.append('slots', photo.slot || (index === 0 ? 'Front' : 'Detail'));
     }
+    // 공개 분석은 DB Product가 없다. 에셋·blob을 제외한 색상 그룹 정체성만
+    // 함께 보내야 AG-01이 현재 그룹 id를 그대로 되돌려주고 프론트가 매칭할 수 있다.
+    form.append('productContext', JSON.stringify({
+      name: product?.name || '',
+      clothingType: product?.clothingType || null,
+      colors: colors.map((color) => ({
+        id: color.id,
+        name: color.name || '',
+        swatchId: color.swatchId || null,
+      })),
+    }));
     onProgress?.(30);
     const result = await publicHttp('/v1/public/analyze', form, { signal });
     onProgress?.(100);

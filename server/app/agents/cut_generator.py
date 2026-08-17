@@ -56,6 +56,7 @@ _SWATCH_META = {
     "ivory": ("아이보리", "#f3eee1"),
     "beige": ("베이지", "#d8c4a3"),
     "brown": ("브라운", "#7a5230"),
+    "purple": ("퍼플", "#7d5ba6"),
     "red": ("레드", "#c0392b"),
     "yellow": ("옐로우", "#e7c75c"),
     "green": ("그린", "#3f7a4f"),

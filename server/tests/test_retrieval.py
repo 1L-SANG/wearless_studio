@@ -169,11 +169,11 @@ def test_recommend_v1_applies_limit():
 def test_color_harmony_map_is_complete_one_direction_and_unit_interval():
     colors = {
         "white", "gray", "black", "ivory", "beige", "brown",
-        "red", "yellow", "green", "blue", "navy", "pink", "khaki",
+        "red", "yellow", "green", "blue", "navy", "pink", "khaki", "purple",
     }
     harmony = color_harmony.harmony_map()
     assert harmony is color_harmony.HARMONY
-    assert len(harmony) == 91  # 13색의 중복 없는 조합 수: 13 * 14 / 2
+    assert len(harmony) == 105  # 14색의 중복 없는 조합 수: 14 * 15 / 2 (2026-08-15 퍼플 추가)
     assert {color for pair in harmony for color in pair} == colors
     for (left, right), score in harmony.items():
         assert 0 <= score <= 1
