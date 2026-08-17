@@ -63,6 +63,28 @@ class GeminiError(RuntimeError):
         self.billable = billable
 
 
+def _as_openai_png(image: "InlineImage") -> bytes:
+    """OpenAI images/edits 입력용 표준화 — RGB PNG 로 통일.
+
+    Gemini 는 관대하지만 OpenAI 는 MPO(확장자만 .jpeg 인 아이폰 다중사진)·팔레트·CMYK 를
+    invalid_image_file 로 거부한다. 실측(2026-08-17): 같은 사진이 Gemini 성공 / OpenAI 400.
+    이미 표준 PNG 면 재인코딩하지 않는다.
+    """
+    if image.mime == "image/png":
+        return image.data
+    try:
+        from io import BytesIO
+
+        from PIL import Image as _PILImage
+
+        with _PILImage.open(BytesIO(image.data)) as im:
+            buf = BytesIO()
+            im.convert("RGB").save(buf, "PNG")
+            return buf.getvalue()
+    except Exception:  # noqa: BLE001 — 변환 실패 시 원본을 그대로 보내 기존 동작 유지
+        return image.data
+
+
 class GeminiImageClient:
     """앱 1개당 1개. app.state.gemini 에 둔다. settings.gemini_api_key 없으면 생성 안 함."""
 
@@ -240,9 +262,12 @@ class GeminiImageClient:
             raise GeminiError("OPENAI_API_KEY 미설정")
         size = self._OPENAI_SIZE.get(aspect_ratio or "", "1024x1536")
         _ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+        # OpenAI images/edits 는 Gemini 보다 입력 형식에 엄격하다 — 확장자만 .jpeg 인
+        # MPO(아이폰 다중사진)나 팔레트/알파 모드가 오면 invalid_image_file 로 거부한다.
+        # 셀러 사진은 대부분 휴대폰 촬영본이므로, 보내기 직전에 표준 PNG(RGB)로 통일한다.
         files = [
-            ("image[]", (f"ref{i}.{_ext.get(im.mime, 'png')}", im.data, im.mime))
-            for i, im in enumerate(images)
+            ("image[]", (f"ref{i}.png", data, "image/png"))
+            for i, data in enumerate(_as_openai_png(im) for im in images)
         ]
         data = {"model": model, "prompt": prompt, "size": size, "n": "1"}
         t0 = time.perf_counter()

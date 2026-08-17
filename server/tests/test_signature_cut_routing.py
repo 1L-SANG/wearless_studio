@@ -88,3 +88,33 @@ def test_signature_falls_back_when_openai_key_is_missing(monkeypatch):
     assert chosen(without_key) == "gemini-3-pro-image"
     # gpt 계열이 아닌 모델로 바꿔 두면 키와 무관하게 그대로 쓴다.
     assert chosen(_settings(model_image_signature="gemini-3-pro-image", openai_api_key=None)) == "gemini-3-pro-image"
+
+
+def test_openai_input_is_normalized_to_png():
+    """OpenAI images/edits 는 MPO(확장자만 .jpeg 인 아이폰 다중사진)를 거부한다.
+
+    실측(2026-08-17): 같은 사진이 Gemini 성공 / OpenAI 400 invalid_image_file.
+    셀러 사진은 대부분 휴대폰 촬영본이라, 보내기 직전 표준 RGB PNG 로 통일한다.
+    """
+    from io import BytesIO
+
+    from PIL import Image
+
+    from app.agents.gemini_image import InlineImage, _as_openai_png
+
+    # 표준 PNG 는 재인코딩하지 않고 그대로 통과시킨다.
+    buf = BytesIO()
+    Image.new("RGB", (8, 8), (10, 20, 30)).save(buf, "PNG")
+    png = buf.getvalue()
+    assert _as_openai_png(InlineImage("image/png", png)) is png
+
+    # JPEG·팔레트 등은 PNG 로 변환된다.
+    buf = BytesIO()
+    Image.new("RGB", (8, 8), (200, 100, 50)).save(buf, "JPEG")
+    converted = _as_openai_png(InlineImage("image/jpeg", buf.getvalue()))
+    assert Image.open(BytesIO(converted)).format == "PNG"
+    assert Image.open(BytesIO(converted)).mode == "RGB"
+
+    # 깨진 바이트는 변환하지 못해도 원본을 그대로 보내 기존 동작을 유지한다(폴백).
+    broken = b"not-an-image"
+    assert _as_openai_png(InlineImage("image/jpeg", broken)) == broken
