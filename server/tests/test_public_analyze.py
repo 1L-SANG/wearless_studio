@@ -33,6 +33,7 @@ def test_public_analyze_succeeds_without_bearer_and_returns_login_shape(client, 
         seen["images"] = source_images
         seen["slots"] = kwargs.get("slots")
         seen["product"] = kwargs.get("product")
+        seen["persist_confirmed_evidence"] = kwargs.get("persist_confirmed_evidence")
         return _analysis_result()
 
     monkeypatch.setattr(public_routes, "analyze_image_bytes", fake_analyze)
@@ -55,6 +56,35 @@ def test_public_analyze_succeeds_without_bearer_and_returns_login_shape(client, 
         (PNG, "image/png"), (PNG, "image/png")]
     assert seen["slots"] == ["Front", "Back"]
     assert seen["product"] == {"colors": [{"id": "base"}]}
+    assert seen.get("persist_confirmed_evidence") is True
+
+
+def test_public_analyze_returns_only_a_signed_evidence_handoff(client, monkeypatch):
+    async def fake_analyze(settings, source_images, **kwargs):
+        result = _analysis_result()
+        result["analysis_payload"] = {
+            "confirmedGptProductEvidence": {"server": "contract"}
+        }
+        return result
+
+    monkeypatch.setattr(public_routes, "analyze_image_bytes", fake_analyze)
+    monkeypatch.setattr(
+        public_routes.product_evidence_contract,
+        "issue_handoff",
+        lambda contract, secret: {"signed": contract},
+    )
+    response = client.post(
+        "/v1/public/analyze",
+        files=[("images", ("front.png", PNG, "image/png"))],
+        data={"slots": ["Front"]},
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["confirmedGptProductEvidenceHandoff"] == {
+        "signed": {"server": "contract"}
+    }
+    assert "confirmedGptProductEvidence" not in data
 
 
 def test_public_analyze_rejects_unsupported_mime_with_easy_korean_message(client):

@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import inspect
 import types
 
 import app.routes as routes
@@ -1222,6 +1223,14 @@ def test_run_detail_page_job_attaches_set_plate_and_set_or_flat_pose(monkeypatch
     assert "SPACE SET PLATE" in captured["cuts"]["set-2"]["manifest"]
     assert "SPACE SET PLATE" not in captured["cuts"]["dragged-out"]["manifest"]
     assert captured["finalize"]["charge"] == 4
+
+
+def test_standalone_space_set_example_is_bound_as_confirmed_service_example():
+    source = inspect.getsource(dpj.run_detail_page_job)
+    append = "imgs.append(_space_example_cache[cache_key])"
+    bind = "service_example_image = _space_example_cache[cache_key]"
+    assert append in source and bind in source
+    assert source.index(bind, source.index(append)) > source.index(append)
 
 
 def test_run_detail_page_job_uses_analysis_model_without_mutating_storyboard(monkeypatch):

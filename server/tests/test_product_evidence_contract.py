@@ -216,3 +216,19 @@ def test_schema_is_closed_and_requires_all_four_model_fields():
     panel = schema["properties"]["panels"]["items"]
     assert panel["additionalProperties"] is False
     assert set(panel["properties"]) == set(panel["required"])
+
+
+def test_public_analysis_handoff_is_signed_short_lived_and_tamper_evident():
+    contract = pec.validate_and_bind(_raw(), _binding())
+    secret = "test-only-handoff-secret-32-bytes"
+    handoff = pec.issue_handoff(contract, secret, now=1000)
+
+    assert pec.verify_handoff(handoff, secret, now=1001) == contract
+
+    tampered = deepcopy(handoff)
+    tampered["contract"]["hardFacts"][0]["value"] = "invented zipper"
+    with pytest.raises(pec.ProductEvidenceContractError, match="signature_invalid"):
+        pec.verify_handoff(tampered, secret, now=1001)
+
+    with pytest.raises(pec.ProductEvidenceContractError, match="expired_or_invalid"):
+        pec.verify_handoff(handoff, secret, now=handoff["expiresAt"] + 1)

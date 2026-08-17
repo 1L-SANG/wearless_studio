@@ -96,3 +96,13 @@ def test_renew_query_only_touches_the_same_lease_holder():
     source = inspect.getsource(dispatcher_mod.repo.renew_job_lease)
     assert "status = 'running'" in source and "locked_by = %s" in source
     assert "locked_at = now()" in source
+
+
+def test_stale_paid_detail_page_is_not_automatically_requeued():
+    """Provider outcome is unknown after a crash, so whole-page replay can double-charge."""
+
+    source = inspect.getsource(dispatcher_mod.repo.recover_stale_leases)
+    assert "stale.kind = 'detail_page'" in source
+    assert "then 'error'" in source
+    assert source.count("stale.kind = 'detail_page' or stale.recoveries >= 1") == 3
+    assert "finished_at = case" in source

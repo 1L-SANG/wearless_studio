@@ -10,14 +10,19 @@ images are replaced or reordered after analysis.
 from __future__ import annotations
 
 from hashlib import sha256
+import hmac
 import json
 import re
+import time
 from typing import Any
 
 
 PERSISTED_KEY = "confirmedGptProductEvidence"
 INTERNAL_BINDING_KEY = "__confirmedGptProductEvidenceInput"
+HANDOFF_KEY = "confirmedGptProductEvidenceHandoff"
 SCHEMA_VERSION = 1
+HANDOFF_SCHEMA_VERSION = 1
+HANDOFF_TTL_SECONDS = 24 * 60 * 60
 
 _SLOT_MAP = {
     "Front": "FRONT",
@@ -38,6 +43,69 @@ _JUDGEABILITY_REASONS = frozenset(
         "partial_crop",
     }
 )
+
+
+def _handoff_secret(secret: str | None) -> bytes:
+    if not isinstance(secret, str) or len(secret) < 16:
+        raise ProductEvidenceContractError("product_evidence_handoff_secret_unavailable")
+    return secret.encode("utf-8")
+
+
+def issue_handoff(
+    contract_value: object,
+    secret: str | None,
+    *,
+    now: int | None = None,
+) -> dict[str, Any]:
+    """Sign a short-lived public-analysis artifact for authenticated draft promotion."""
+
+    contract = validate_persisted(contract_value)
+    issued_at = int(time.time()) if now is None else int(now)
+    payload = {
+        "schemaVersion": HANDOFF_SCHEMA_VERSION,
+        "issuedAt": issued_at,
+        "expiresAt": issued_at + HANDOFF_TTL_SECONDS,
+        "contract": contract,
+    }
+    payload["signature"] = hmac.new(
+        _handoff_secret(secret), _canonical_bytes(payload), "sha256"
+    ).hexdigest()
+    return payload
+
+
+def verify_handoff(
+    value: object,
+    secret: str | None,
+    *,
+    now: int | None = None,
+) -> dict[str, Any]:
+    handoff = _exact_keys(
+        value,
+        {"schemaVersion", "issuedAt", "expiresAt", "contract", "signature"},
+        "product_evidence_handoff_field_set_mismatch",
+    )
+    current = int(time.time()) if now is None else int(now)
+    issued_at = handoff["issuedAt"]
+    expires_at = handoff["expiresAt"]
+    if (
+        handoff["schemaVersion"] != HANDOFF_SCHEMA_VERSION
+        or type(issued_at) is not int
+        or type(expires_at) is not int
+        or expires_at - issued_at != HANDOFF_TTL_SECONDS
+        or issued_at > current + 60
+        or current > expires_at
+    ):
+        raise ProductEvidenceContractError("product_evidence_handoff_expired_or_invalid")
+    signature = handoff["signature"]
+    if not isinstance(signature, str) or not re.fullmatch(r"[0-9a-f]{64}", signature):
+        raise ProductEvidenceContractError("product_evidence_handoff_signature_invalid")
+    unsigned = {key: handoff[key] for key in handoff if key != "signature"}
+    expected = hmac.new(
+        _handoff_secret(secret), _canonical_bytes(unsigned), "sha256"
+    ).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        raise ProductEvidenceContractError("product_evidence_handoff_signature_invalid")
+    return validate_persisted(handoff["contract"])
 _CODE_RE = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*")
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 _SHA_RE = re.compile(r"[0-9a-f]{64}")

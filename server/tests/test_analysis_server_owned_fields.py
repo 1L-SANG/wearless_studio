@@ -12,7 +12,8 @@ import asyncio
 
 import pytest
 
-from app import repo
+from app import repo, routes
+from conftest import auth_headers, patch_route_db
 
 
 class _Cur:
@@ -117,6 +118,61 @@ def test_client_cannot_replace_or_create_confirmed_gpt_product_evidence():
         {"fit": "regular", "confirmedGptProductEvidence": client_contract},
     )
     assert "confirmedGptProductEvidence" not in without_previous
+
+
+def test_signed_public_evidence_is_rebound_to_uploaded_product_before_save(
+    client, make_token, monkeypatch
+):
+    patch_route_db(monkeypatch, routes)
+    client.app.state.r2 = type(
+        "R2", (), {"get_bytes": staticmethod(lambda key: b"\x89PNG-bytes")}
+    )()
+    saved = []
+    contract = {"schemaVersion": 1, "contractSha256": "server-contract"}
+
+    async def fake_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_product(conn, project_id):
+        return {
+            "colors": [{
+                "isBase": True,
+                "images": [{"slot": "Front", "id": "asset-front"}],
+            }]
+        }
+
+    async def fake_asset(conn, user_id, asset_id):
+        return {"r2_key": "seller/front.png", "mime_type": "image/png"}
+
+    async def fake_save(conn, project_id, value):
+        saved.append((project_id, value))
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_project)
+    monkeypatch.setattr(routes.repo, "get_product", fake_product)
+    monkeypatch.setattr(routes.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(routes.repo, "save_confirmed_gpt_product_evidence", fake_save)
+    monkeypatch.setattr(
+        routes.product_evidence_contract,
+        "verify_handoff",
+        lambda value, secret: contract,
+    )
+    monkeypatch.setattr(
+        routes.product_evidence_contract,
+        "source_binding_matches",
+        lambda value, images, slots: value == contract
+        and images == [(b"\x89PNG-bytes", "image/png")]
+        and slots == ["Front"],
+    )
+
+    response = client.post(
+        "/v1/projects/p1/analysis/confirmed-gpt-evidence:promote",
+        headers=auth_headers(make_token),
+        json={"signed": "handoff"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"promoted": True}
+    assert saved == [("p1", contract)]
 
 
 @pytest.mark.parametrize("junk", ["false", 0, None, "true", 1])

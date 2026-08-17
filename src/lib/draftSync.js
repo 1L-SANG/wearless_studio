@@ -60,8 +60,10 @@ async function runDraftSync(draft, { projectId: existing } = {}) {
     // 분석 폼이 이들을 analysis 작업본에 둘 수 있으니(과도기) → product 로 미러(현재값 반영)하고
     // analysis payload 에선 제거한다(analysis 에 stale product 상태가 박히는 것 방지).
     let analysis = draft.analysis;
+    const evidenceHandoff = analysis?.confirmedGptProductEvidenceHandoff ?? null;
     if (analysis) {
       analysis = { ...analysis };
+      delete analysis.confirmedGptProductEvidenceHandoff;
       for (const k of ['clothingType', 'measurements', 'measurementsUnknown']) {
         if (analysis[k] != null) product[k] = analysis[k];
         delete analysis[k];
@@ -79,6 +81,9 @@ async function runDraftSync(draft, { projectId: existing } = {}) {
     await api.saveProduct(projectId, product);
     if (analysis) {
       await api.saveAnalysis(projectId, analysis);
+      if (evidenceHandoff) {
+        await api.promoteConfirmedGptEvidence(projectId, evidenceHandoff);
+      }
     }
     await api.patchProject(projectId, {
       composeMode: draft.composeMode === 'extended' ? 'extended' : 'basic',

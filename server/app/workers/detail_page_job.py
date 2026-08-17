@@ -1401,6 +1401,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                             )
                         imgs.append(_space_example_cache[cache_key])
                         example_scope = scope
+                        service_example_image = _space_example_cache[cache_key]
                     else:
                         status = cut_generator.example_asset_status(
                             example_id, clothing_type, scope)
