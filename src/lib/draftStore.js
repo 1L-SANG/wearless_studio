@@ -11,6 +11,7 @@
    ============================================================= */
 
 import { normalizeAnalysisFit } from './fitAxes.js';
+import { isUploadablePhotoMime } from './imageTranscode.js';
 
 const DB_NAME = 'wearless-draft';
 const DB_VERSION = 1;
@@ -52,20 +53,37 @@ async function withStore(mode, run) {
 
 /** ProductInput 의 product 에서 사진 blob 을 추출해 draft 를 IndexedDB 에 저장한다.
     blob 추출(fetch(objectURL))은 페이지가 살아있을 때만 가능 → 리다이렉트 직전에 호출. */
-export async function saveProductDraft(product, analysis = null, composeMode = 'basic', updatedAt = new Date().toISOString(), customMatch = null) {
+/** product 의 사진을 draft 에 담을 수 있는 형태로 모은다. → {photos, cleanProduct, failed}
+ *
+ * 담는 조건은 두 개다: blob 을 읽을 수 있고, **서버에 올릴 수 있는 mime** 이어야 한다.
+ * mime 은 셀러 파일의 type 을 먼저 믿되 화이트리스트에 없으면 blob 의 실제 타입으로 고친다
+ * (filesToMetas 폴백이 남긴 'image' 같은 잘못된 값이 그대로 확정 업로드까지 가면 서버가
+ * 400 으로 거부하고, 셀러는 자기가 올린 jpg 가 거부됐다고 읽는다 — 2026-08-17 사고).
+ * 목 데모의 SVG 플레이스홀더도 여기서 걸린다: data: 는 fetch 가 성공하므로 mime 검사만이
+ * 유일한 문지기다.
+ *
+ * fetchBlob 주입은 테스트용 — 화면·IndexedDB 없이 이 판정만 검증한다. */
+export async function collectDraftPhotos(product, fetchBlob = (src) => fetch(src).then((r) => r.blob())) {
   const photos = [];
   const okIds = new Set();
   let failed = 0;
   for (const color of product?.colors || []) {
     for (const img of color.images || []) {
       try {
-        const blob = await fetch(img.src).then((r) => r.blob());
+        const blob = await fetchBlob(img.src);
+        const mime = isUploadablePhotoMime(img.type) ? img.type : blob?.type;
+        if (!isUploadablePhotoMime(mime)) {
+          // 올릴 수 없는 사진 — 담아 두면 확정 단계에서 서버 400 으로 진행이 막힌다.
+          failed += 1;
+          console.warn(`[draft] 업로드할 수 없는 사진 형식 — imageId=${img.id} mime=${mime}`);
+          continue;
+        }
         photos.push({
           imageId: img.id,
           colorId: color.id,
           slot: img.slot,
           blob,
-          mime: img.type || blob.type || 'image/jpeg',
+          mime,
           filename: img.name || `${img.id}`,
         });
         okIds.add(img.id);
@@ -76,11 +94,16 @@ export async function saveProductDraft(product, analysis = null, composeMode = '
       }
     }
   }
-  // blob 추출에 성공한 이미지만 product 에 남긴다 — 실패 이미지가 죽은 src 로 '정상 이미지인 척'
+  // 담긴 이미지만 product 에 남긴다 — 담기지 않은 사진이 죽은 src 로 '정상 이미지인 척'
   // 복원되는(좀비) 것을 막는다. photos[] 와 product.images[] 가 항상 일치.
   const cleanProduct = product
     ? { ...product, colors: (product.colors || []).map((c) => ({ ...c, images: (c.images || []).filter((im) => okIds.has(im.id)) })) }
     : product;
+  return { photos, cleanProduct, failed };
+}
+
+export async function saveProductDraft(product, analysis = null, composeMode = 'basic', updatedAt = new Date().toISOString(), customMatch = null) {
+  const { photos, cleanProduct, failed } = await collectDraftPhotos(product);
   // 커스텀 매칭(내 옷) blob 도 상품 사진과 같은 등급으로 저장한다. 이게 없으면 비로그인
   // 셀러의 OAuth 리다이렉트(=풀 페이지 리로드)에서 메모리의 blob 이 사라져, 확정 승격이
   // 읽을 게 없어지고 내 옷이 조용히 유실된다(2026-08-15 전수조사).

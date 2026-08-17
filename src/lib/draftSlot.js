@@ -1,3 +1,5 @@
+import { isPlaceholderPhotoSrc } from './imageTranscode.js';
+
 const TOKEN_KEY = 'wl_draftSlotToken';
 const SYNCED_AT_KEY = 'wl_draftSlotSyncedAt';
 const SERVER_SYNCED_AT_KEY = 'wl_draftSlotServerSyncedAt';
@@ -377,6 +379,10 @@ export function createDraftSlotSync({
       colors: (snapshot.product.colors || []).map((color) => ({
         ...color,
         images: (color.images || []).flatMap((image) => {
+          // 올릴 수 없는 src(목 데모의 SVG 플레이스홀더 등)는 임시저장에 싣지 않는다 —
+          // 실려 나가면 복원된 화면의 상품 사진이 되고, 확정 업로드에서 서버가 거부한다
+          // (2026-08-17 사고). blob: 이 아니라는 이유로 통과시키던 자리다.
+          if (isPlaceholderPhotoSrc(image.src)) return [];
           if (!image.src?.startsWith('blob:')) return [image];
           const upload = uploads.get(image.id);
           if (upload?.status === 'uploaded' || upload?.status === 'synced') {

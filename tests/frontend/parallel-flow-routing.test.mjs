@@ -98,7 +98,7 @@ test('all color mutations share the debounced existing analysis-save queue', () 
   }
   assert.match(productInputSource, /colorSaveSchedulerRef\.current\.flush\(\);\s*\n\s*\/\/ 직전 입력 이벤트/);
   assert.match(productInputSource, /queueAnalysisPatch[\s\S]*?persistAnalysisEdit\(api, analysisProjectId, patch\)/);
-  assert.match(productInputSource, /persistedColorsRef\.current = p\.colors \|\| \[\]/);
+  assert.match(productInputSource, /persistedColorsRef\.current = editingProjectId \? \(p\.colors \|\| \[\]\) : \[\]/);
   assert.match(productInputSource, /persistedColorsRef\.current = savedProduct\?\.colors \|\| patch\.colors/);
   assert.match(productInputSource, /registerAnalysisEditSave\(analysisProjectId, analysisSaveChainRef\.current\)/);
   const storyboardLoad = storyboardSource.slice(
