@@ -43,6 +43,14 @@ _JUDGEABILITY_REASONS = frozenset(
         "partial_crop",
     }
 )
+_FRONT_SURFACE_POLICY = (
+    "FRONT/FRONT_DETAIL surfaces are DOMINANT; BACK/BACK_DETAIL surfaces are CONTEXT "
+    "only for physically revealed slivers and transitions."
+)
+_BACK_DOMINANT_RE = re.compile(
+    r"\b(?:back|back_detail)(?:\s+surface)?\s+(?:is|are|as|=)?\s*dominant\b",
+    re.IGNORECASE,
+)
 
 
 def _handoff_secret(secret: str | None) -> bytes:
@@ -540,12 +548,28 @@ def validate_and_bind(raw_value: object, binding_value: object) -> dict[str, Any
     uncertainties = _validate_facts(
         raw["uncertainties"], uncertain=True, panel_status=panel_status, codes=codes
     )
-    surface_plan = _line(
-        raw["visibleSurfacePlan"], "visible_surface_plan", max_length=1000
+    raw_surface_plan = raw["visibleSurfacePlan"]
+    already_normalized = (
+        isinstance(raw_surface_plan, str)
+        and raw_surface_plan.startswith(_FRONT_SURFACE_POLICY)
     )
-    folded_plan = surface_plan.casefold()
-    if "front" not in folded_plan or "dominant" not in folded_plan:
+    model_surface_plan = _line(
+        raw_surface_plan,
+        "visible_surface_plan",
+        max_length=1000 if already_normalized else 800,
+    )
+    if _BACK_DOMINANT_RE.search(model_surface_plan):
         raise ProductEvidenceContractError("product_evidence_front_surface_plan_required")
+    # Direction and surface authority are server-owned fields above. Do not make a
+    # valid model observation fail merely because it paraphrased "front is dominant";
+    # prepend the canonical policy instead. The prefix check keeps persisted-contract
+    # revalidation idempotent.
+    surface_plan = (
+        model_surface_plan
+        if already_normalized
+        else f"{_FRONT_SURFACE_POLICY} Observed visible-surface details: {model_surface_plan}"
+    )
+    _line(surface_plan, "visible_surface_plan", max_length=1000)
 
     contract: dict[str, Any] = {
         "schemaVersion": SCHEMA_VERSION,

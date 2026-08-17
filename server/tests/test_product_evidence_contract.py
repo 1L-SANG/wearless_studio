@@ -140,6 +140,21 @@ def test_validate_binds_only_server_metadata_and_derives_front_authority():
     assert pec.validate_persisted(contract) == contract
 
 
+def test_surface_plan_accepts_semantic_paraphrase_and_prepends_server_policy():
+    raw = _raw()
+    raw["visibleSurfacePlan"] = (
+        "Preserve the visible neckline, button placket and shoulder seam transitions."
+    )
+
+    contract = pec.validate_and_bind(raw, _binding())
+
+    assert contract["visibleSurfacePlan"].startswith(
+        "FRONT/FRONT_DETAIL surfaces are DOMINANT;"
+    )
+    assert "Preserve the visible neckline" in contract["visibleSurfacePlan"]
+    assert pec.validate_persisted(contract) == contract
+
+
 @pytest.mark.parametrize(
     "mutate,error",
     [
