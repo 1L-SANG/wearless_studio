@@ -166,10 +166,10 @@ const catalogs = {
       { id: 'home', label: '집 거실', thumb: P.scene('v-home', 240, 240) },
       { id: 'night', label: '야경 거리', thumb: P.scene('v-night', 240, 240) },
     ],
+    // '뒷모습'은 포즈가 아니라 방향이다 — '자리 · 방향'에 같은 게 있어 두 벌이었다(오너 8/16).
     pose: [
       { id: 'stand', label: '정면 스탠딩', thumb: P.pose('v-stand', 240, 240) },
       { id: 'walk', label: '걷는 모습', thumb: P.pose('v-walk', 240, 240) },
-      { id: 'back', label: '뒷모습', thumb: P.pose('v-back', 240, 240) },
       { id: 'lean', label: '벽에 기대기', thumb: P.pose('v-lean', 240, 240) },
       { id: 'sit', label: '앉은 포즈', thumb: P.pose('v-sit', 240, 240) },
       { id: 'turn', label: '돌아보기', thumb: P.pose('v-turn', 240, 240) },
@@ -257,11 +257,11 @@ function buildAutoBlocks(product) {
     {
       id: uid('b'), name: '사이즈 안내', kind: 'size', auto: true, bg: '#ffffff', elements: [
         T(60, 56, 500, 44, '사이즈 안내', { size: 28, weight: 600, font: 'Cal Sans', color: '#0e0d14' }),
-        T(60, 104, 760, 24, '단위: cm · 측정 위치에 따라 1~3cm 오차가 있을 수 있어요', { size: 14, color: '#4a4a45' }),
+        T(60, 104, 760, 24, '단위: cm · 측정 위치에 따라 1~3cm 오차가 있을 수 있어요', { size: 14, color: '#6b6b73' }),
         ...(product.measurements || []).slice(0, 4).flatMap((m, i) => {
           const x = 60 + i * 232;
           return [
-            T(x, 168, 200, 24, catalogs.measurementLabels[m.key] || m.key, { size: 14, color: '#4a4a45' }),
+            T(x, 168, 200, 24, catalogs.measurementLabels[m.key] || m.key, { size: 14, color: '#6b6b73' }),
             T(x, 194, 200, 48, (m.value != null ? m.value + ' cm' : '—'), { size: 32, weight: 600, font: 'Cal Sans', color: '#0e0d14' }),
           ];
         }),
@@ -275,7 +275,7 @@ function buildAutoBlocks(product) {
     },
     {
       id: uid('b'), name: 'AI 생성 안내', kind: 'ai-notice', auto: true, bg: '#ffffff', elements: [
-        T(60, 48, 880, 60, '본 상세페이지의 일부 이미지는 AI를 활용해 생성되었습니다. 실제 상품의 색상과 핏은 촬영 환경 및 화면 설정에 따라 다르게 보일 수 있습니다.', { size: 13, color: '#4a4a45', align: 'center' }),
+        T(60, 48, 880, 60, '본 상세페이지의 일부 이미지는 AI를 활용해 생성되었습니다. 실제 상품의 색상과 핏은 촬영 환경 및 화면 설정에 따라 다르게 보일 수 있습니다.', { size: 13, color: '#6b6b73', align: 'center' }),
       ],
     },
   ];
@@ -329,27 +329,40 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
       els.push(Object.assign(T(120, 110, 600, 80, `${product.name || '상품'}와 함께하는 하루`, { size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14' }), { sourceBlockId: b.id, copyRole: 'headline' }));
     }
     if (copywriting && contentRole === CONTENT_ROLES.BENEFIT) {
-      els.push(Object.assign(T(120, 560, 760, 40, '강조 포인트를 살린 카피가 들어가는 자리예요.', { size: 18, color: '#4a4a45' }), { sourceBlockId: b.id, copyRole: 'body' }));
+      els.push(Object.assign(T(120, 560, 760, 40, '강조 포인트를 살린 카피가 들어가는 자리예요.', { size: 17, color: '#6b6b73', lineHeight: 26 }), { sourceBlockId: b.id, copyRole: 'body' }));
     }
     blocks.push({ id: uid('b'), name, kind: sectionRole, contentRole, bg, h: 660, elements: els });
   };
   const pushRow = (chunk, layout) => {
     const rowLayout = ROW_LAYOUTS[layout];
     const n = chunk.length;
-    const w = Math.floor((880 - (n - 1) * 20) / n);
+    /* 2×2 격자는 사진 넷이 딱 붙어 한 덩어리로 보여야 한다(오너 8/16) — 칸 사이 간격만
+       두지 않는다. 카피 자리는 아래 imgTop 주석 참고(다른 행과 같이 사진 아래). */
+    const grid = layout === 'grid2x2' && n === 4;
+    const w = grid ? 440 : Math.floor((880 - (n - 1) * 20) / n);
+    const h = grid ? 560 : 500;
+    const hero = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.HERO);
+    const subtitle = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.BENEFIT);
+    const hasCopy = Boolean(copywriting && hero);
+    // 사진 시작 y 는 어느 배치든 같다. 격자만 카피를 위로 올려 자리를 비워 뒀더니,
+    // 에디터가 사진 행의 카피를 통째로 걷어내는 규칙(stripPhotoBlockTextElements —
+    // grid2x2 도 PHOTO_ROW_KINDS 다) 때문에 격자 위에 190px 빈 띠만 남았다.
+    // 카피는 다른 행과 똑같이 사진 아래에 둔다(2026-08-16 리뷰에서 실측 확인).
+    const imgTop = 50;
     const els = chunk.map((rb, c) => Object.assign(
-      IMG(60 + c * (w + 20), 50, w, 500, generatedImageFor(rb, w, 500), 12, rb.cutType || undefined),
+      grid
+        ? IMG(60 + (c % 2) * w, imgTop + Math.floor(c / 2) * h, w, h, generatedImageFor(rb, w, h), 0, rb.cutType || undefined)
+        : IMG(60 + c * (w + 20), imgTop, w, h, generatedImageFor(rb, w, h), 12, rb.cutType || undefined),
       { sourceBlockId: rb.id },
     ));
-    const hero = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.HERO);
-    if (copywriting && hero) {
-      els.push(Object.assign(T(60, 582, 880, 56, `${product.name || '상품'}와 함께하는 하루`, {
+    if (hasCopy) {
+      const copyTop = imgTop + (grid ? h * 2 : h) + 32;
+      els.push(Object.assign(T(60, copyTop, 880, 56, `${product.name || '상품'}와 함께하는 하루`, {
         size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14',
       }), { sourceBlockId: hero.id, copyRole: 'headline' }));
-      const subtitle = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.BENEFIT);
       if (subtitle) {
-        els.push(Object.assign(T(60, 650, 880, 34, '강조 포인트를 살린 카피가 들어가는 자리예요.', {
-          size: 18, color: '#6b6b73',
+        els.push(Object.assign(T(60, copyTop + 68, 880, 34, '강조 포인트를 살린 카피가 들어가는 자리예요.', {
+          size: 17, color: '#6b6b73', lineHeight: 26,
         }), { sourceBlockId: subtitle.id, copyRole: 'body' }));
       }
     }
@@ -408,7 +421,7 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     ));
     const [productLabel, matchingLabel] = colorwayLabels(ordered);
     els.push(T(60, 683, 880, 24, productLabel, {
-      size: 14, weight: 400, color: '#4a4a45', align: 'center', tracking: 0.2,
+      size: 14, weight: 400, color: '#6b6b73', align: 'center', tracking: 0.2,
     }));
     if (matchingLabel) {
       els.push(T(60, 705, 880, 26, matchingLabel, {
@@ -597,7 +610,7 @@ function buildDraft() {
       id: uid('b'), name: '핵심 장점', kind: SECTION_ROLES.HOOKING, contentRole: CONTENT_ROLES.BENEFIT, bg: '#f5f5f5', elements: [
         IMG(60, 50, 420, 540, P.detail('ed_sell', 420, 540), 12, 'product'),
         T(540, 150, 380, 40, '부드러운 촉감', { size: 28, weight: 600, font: 'Cal Sans', color: '#0e0d14' }),
-        T(540, 210, 380, 80, '코튼 혼방으로 자연스럽게 떨어지는 결, 피부에 닿는 감촉이 부담 없습니다.', { size: 17, color: '#4a4a45' }),
+        T(540, 210, 380, 80, '코튼 혼방으로 자연스럽게 떨어지는 결, 피부에 닿는 감촉이 부담 없습니다.', { size: 17, color: '#6b6b73' }),
       ],
     },
     {

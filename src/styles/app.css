@@ -230,8 +230,9 @@ input, textarea, select { font-family: inherit; }
 .btn-danger:hover:not([disabled]) { box-shadow: 0 0 0 1px var(--accent-error); }
 .btn-sm { padding: 8px 13px; font-size: 14px; }
 /* small primary buttons shouldn't inherit the tall CTA min-height — match the sm ghost height
-   (e.g. 다운로드 == 저장 in the editor toolbar) */
-.btn-sm.btn-primary { min-height: 0; }
+   (e.g. 다운로드 == 저장 in the editor toolbar). 모양도 같이 맞춘다 — 알약은 히어로 CTA 의
+   언어이고, 툴바에서 알약 하나만 서 있으면 옆 네모 버튼들과 종류가 달라 보인다(오너 8/15). */
+.btn-sm.btn-primary { min-height: 0; border-radius: var(--r-4); }
 .btn-lg { padding: 13px 22px; font-size: 16px; }
 .btn-block { width: 100%; justify-content: center; }
 /* 모달·선택지처럼 버튼이 짝으로 놓이는 곳은 모양을 통일한다 — 색(주=검정 채움, 보조=흰색)만

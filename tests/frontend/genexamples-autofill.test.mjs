@@ -412,8 +412,8 @@ test('every supported gender and clothing category seeds styling and horizon set
     const horizonMembers = setMembers.filter((item) => item.cutType === 'horizon');
 
     // 회전 세트는 별도 세트 범위로 성별 내 모든 지원 의류에 배치된다.
-    // 후킹은 시그니처 1컷(2026-08-14 확정) — 총 11컷.
-    assert.equal(basic.length, 11, `${gender}/${clothingType} basic`);
+    // 후킹 시그니처 1컷(2026-08-14) + 낱장 스타일링컷 제거(2026-08-16) — 총 10컷.
+    assert.equal(basic.length, 10, `${gender}/${clothingType} basic`);
     assert.equal(stylingMembers.length, 4, `${gender}/${clothingType} styling members`);
     assert.equal(horizonMembers.length, 3, `${gender}/${clothingType} rotation members`);
     assert.equal(new Set(setMembers.map((item) => item.spaceGroupId)).size, 3);
@@ -434,7 +434,7 @@ test('every supported gender and clothing category seeds styling and horizon set
     const horizonCuts = (picked.sequenceSet || picked.rotationSet)?.members.length ?? 3;
     assert.equal(
       defaultStoryboard(fourColorsWithDetail, 'extended', context).length,
-      1 + stylingCuts + horizonCuts + 1 + 9 + 4,
+      1 + stylingCuts + horizonCuts + 9 + 4,   // 낱장 스타일링컷 제거(2026-08-16)
       `${gender}/${clothingType} extended`,
     );
   }

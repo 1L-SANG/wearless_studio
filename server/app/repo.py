@@ -1195,6 +1195,28 @@ async def set_job_progress(conn: AsyncConnection, job_id: str, progress: int):
             "update jobs set progress = greatest(progress, %s) where id = %s", (progress, job_id))
 
 
+async def renew_job_lease(conn: AsyncConnection, job_id: str, lease_token: str) -> bool:
+    """실행 중인 잡의 lease 를 연장한다(하트비트).
+
+    lease 는 "워커가 죽었는지"를 판별하는 장치인데, 판별 기준이 **시작 시각**이라
+    오래 걸리는 정상 잡(상세페이지 13컷 등)도 시간만 넘기면 죽은 것으로 오인돼 재큐된다.
+    재큐되면 컷 전체를 처음부터 다시 생성해 프로바이더 실비가 페이지 단위로 두 번 나간다
+    (2026-08-17 검증). 살아 있는 동안 주기적으로 시각을 갱신해 그 오인을 없앤다.
+
+    lease_token 이 일치할 때만 갱신한다 — 이미 회수돼 다른 워커가 집어간 잡의 lease 를
+    되살리면 같은 잡이 두 워커에서 동시에 돌게 된다.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            update jobs set locked_at = now()
+            where id = %s and status = 'running' and locked_by = %s
+            """,
+            (job_id, lease_token),
+        )
+        return cur.rowcount > 0
+
+
 async def recover_stale_leases(conn: AsyncConnection, lease_timeout_seconds: int) -> list[dict]:
     """lease 초과 running job: 1회차 pending 재큐, 2회차 error (§5 고착 방지).
     error 전환 시 같은 statement(ev CTE)로 error job_event도 원자 append (SSE 종결 신호)."""

@@ -212,6 +212,14 @@ export function selectGenerationExamples(catalog, rawOptions) {
   });
 }
 
+/** 이 컷을 '다시 뽑을' 수 있는가 — 후보가 2개 이상이어야 다른 예시로 바뀔 수 있다.
+    후보가 0·1개면 셔플을 눌러도 영영 아무 일도 안 난다. 그때는 버튼을 아예 안 보여
+    주는 게 정직하다(2026-08-17 검증: 확장형 추가색상 컷이 늘 무반응이었다). */
+export function canRerollGenerationExample(block, { catalog, product, gender }) {
+  if (!block?.exampleId) return false;
+  return candidatesForBlock(block, catalog || [], product, gender).length > 1;
+}
+
 function candidatesForBlock(block, catalog, product, gender) {
   return selectGenerationExamples(catalog, {
     cutType: block.cutType,

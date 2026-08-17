@@ -97,6 +97,7 @@ def make_settings(**overrides) -> Settings:
     base = dict(
         app_env="prod",
         detail_cut_stagger_ms=0,  # 테스트는 제출 간격 없이(실시간 sleep 방지) — 운영 기본은 3000
+        detail_cut_retry_delay_seconds=0,  # 컷 재시도 대기도 테스트에서는 0 — 운영 기본은 2초
         supabase_url="https://example.supabase.co",
         jwks_url="https://example.supabase.co/auth/v1/.well-known/jwks.json",
         jwt_audience=AUDIENCE,

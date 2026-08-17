@@ -19,24 +19,29 @@ import { clearEditorWaitDraft, loadEditorWaitDraft, saveEditorWaitDraft } from '
 import { listModels } from '@/lib/api/facemarket.js';
 import { uid } from '@/lib/ids.js';
 import { useAppStore } from '@/store/useAppStore.js';
-import { Icon, IconButton, Button, Modal, EmptyState, useToast } from '@/components/ui.jsx';
+import { Icon, IconButton, Button, Modal, EmptyState, ErrorState, useToast } from '@/components/ui.jsx';
 import { SmoothProgressTrack } from '@/components/SmoothProgress.jsx';
 import { EXPECTED_MS } from '@/lib/smoothProgress.js';
 import { exampleGenderFromAnalysis, hexFor } from '@/features/storyboard/Storyboard.jsx';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
-import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
+import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isAutoManagedBlock, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
+import { DEFAULT_TEXT_BODY, buildTextPresetElement, dropUntouchedPlaceholders, textPresetBox, textPresetDropPlacement } from '@/features/editor/presets/textPresets.js';
+import { buildColorOpts, visibleColorOpts } from '@/lib/colorOpts.js';
+import { retryRead } from '@/lib/retryRead.js';
+import { thumbUrl } from '@/lib/imageCdn.js';
+import { classifyEditorLoadError } from '@/features/editor/editorLoadError.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
-import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
+import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHeights, getBlockContentBottom, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
 import { exportBlockPng, exportBlocksZip, exportLongPng } from '@/features/editor/editorExport.js';
 import { snapEditorDragDelta } from '@/features/editor/editorSnap.js';
 import { copyEditorElements, pasteEditorElements } from '@/features/editor/editorClipboard.js';
-import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, findImageDropSlot, fitImageToFrameBlock, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
+import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, textPresetKeyFromDragTypes, findImageDropSlot, fitImageToFrameBlock, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage, objectPresetInitialSelectionIds, upgradeLegacyKiwiTemplateBlocks } from '@/features/editor/editorLibrary.js';
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { imageResizeRect, lineHitStrokeWidth, resizePolicyForElement, shouldShowRotationHandle, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
 import { isWardrobeImageUsed, mergeEditorImagesIntoWardrobe } from '@/features/editor/editorWardrobe.js';
-import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, selectableElementBelowBlankText, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPreserveMultiSelectionOnPointerDown, shouldStartTextOnlyDrag } from '@/features/editor/editorSelection.js';
+import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, isPhotoSlotElement, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, reorderElements, selectableElementBelowBlankText, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPreserveMultiSelectionOnPointerDown, shouldStartTextOnlyDrag } from '@/features/editor/editorSelection.js';
 import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from '@/lib/imageTranscode.js';
 import { CONTENT_ROLES, SECTION_ROLES, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
 import { withStoryboardSpaceSetExamples } from '@/lib/storyboardSpaceSetCatalog.js';
@@ -156,15 +161,23 @@ function editableText(node) {
   return String(node?.innerText ?? node?.textContent ?? '').replace(/\n$/, '');
 }
 
-function focusEditableAtEnd(node) {
+/* 방금 만든 텍스트의 id — 첫 편집에서 기본 문구('내용을 입력하세요.')를 통째로 선택해
+   그냥 타이핑하면 갈아 끼워지게 한다. 요소에 표식 필드를 달면 저장 문서에 남아 다음
+   세션까지 따라다니므로, 이 세션에서만 사는 모듈 스코프 집합으로 둔다(uid 라 충돌 없음). */
+const FRESH_TEXT_IDS = new Set();
+
+function focusEditableAtEnd(node, selectAll = false) {
   if (!node) return;
   node.focus({ preventScroll: true });
+  // 새 텍스트가 블록 콘텐츠 아래(화면 밖)에 생길 수 있다 — 캐럿이 보이지 않는 채로
+  // 타이핑되는 것을 막는다. nearest 라 이미 보이면 스크롤이 움직이지 않는다.
+  node.scrollIntoView({ block: 'nearest' });
   const doc = node.ownerDocument;
   const selection = doc?.getSelection?.();
   const range = doc?.createRange?.();
   if (!selection || !range) return;
   range.selectNodeContents(node);
-  range.collapse(false);
+  if (!selectAll) range.collapse(false);
   selection.removeAllRanges();
   selection.addRange(range);
 }
@@ -197,7 +210,10 @@ function ImageDropGuide({ scale, width, height, rotate = 0 }) {
 
 /* render-only element (selection + inline text edit). Position dragging enters the
    shared pointer engine; the single <Moveable> owns only resize/rotate controls. */
-function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPickBelowText, onPatch, onTextCommit, onElementDragStart, onAddImage, onDropImage, onDropImageFiles, onEdit, onCropStart }) {
+function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPickBelowText, onPatch, onTextCommit, onElementDragStart, onAddImage, onDropImage, onDropImageFiles, onEdit, onCropStart, imageWidth = null }) {
+  /* imageWidth = 이 렌더가 실제로 필요한 이미지 폭(px). 미니 미리보기처럼 작게 그리는
+     곳만 넘긴다 — 캔버스 본체와 전체화면 미리보기는 넘기지 않는다(그쪽이 내보내기 캡처
+     원본이자 셀러 최종 확인 화면이라 원본 해상도를 지켜야 한다). */
   const ref = useRef(null);
   const textRef = useRef(null);
   const deferredPick = useRef(false);
@@ -333,11 +349,37 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     if (changed) onPatch(blockId, el.id, size);
   }, [blockId, editing, el, onPatch, preview, previewAutoTextSize]);
 
+  // 고정폭·템플릿 텍스트의 h 동기화 — 텍스트 높이는 내용에서 파생된다(렌더는 height:auto).
+  // 단 "셀러의 조작으로 내용·스타일이 바뀐 뒤"에만 잰다: 마운트 직후까지 재면 문서를 여는
+  // 것만으로 저장된 h가 일괄 재기록돼 undo 첫 칸이 유령 편집이 되고, 자동저장 PUT이 나가고,
+  // 서버 백필 스크립트의 좌표 핑거프린트가 깨지고, 웹폰트 로딩 전 오측정이 고착된다.
+  // deps는 높이에 실제로 영향 주는 필드만 — onPatch(매 렌더 재생성)를 넣으면 마퀴·줌마다
+  // 전 텍스트가 강제 리플로우를 밟는다.
+  const hSyncArmed = useRef(false);
+  const s0 = el.style || {};
+  useLayoutEffect(() => {
+    const armed = hSyncArmed.current;
+    hSyncArmed.current = true;          // 마운트 기준선은 가드와 무관하게 첫 실행에서 소비
+    if (!armed) return;
+    if (el.hidden || editing || preview || el.type !== 'text' || el.shape === 'bubble' || el.textSizing === 'auto') return;
+    const node = ref.current;
+    if (!node || !onPatch) return;
+    const h = Math.max(1, Math.ceil(node.offsetHeight));
+    if (Math.round(Number(el.h || 0)) !== h) onPatch(blockId, el.id, { h });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [el.text, el.w, el.textSizing, s0.size, s0.weight, s0.lineHeight, s0.tracking, s0.font, s0.list, editing, preview, el.hidden]);
+  // StrictMode(dev)는 마운트 효과를 setup→cleanup→setup 으로 두 번 돌린다. ref 는 cleanup 으로
+  // 되돌아가지 않으므로 두 번째 setup 에서 위 가드가 이미 'armed' 라, 문서를 여는 것만으로
+  // 전 텍스트의 h 가 재기록되고 자동저장 PUT 이 나갔다(dev 는 실서버가 기본이라 저장본이
+  // 실제로 바뀐다 — 2026-08-16 리뷰). 마운트 전용 cleanup 에서 기준선을 되돌린다.
+  useLayoutEffect(() => () => { hSyncArmed.current = false; }, []);
+
   // contentEditable 이 실제 DOM에 반영된 직후 포커스와 캐럿을 문장 끝으로 보낸다.
   // 더블클릭 좌표에 남아 있던 브라우저 기본 selection 때문에 중간 글자가 덮이는 것을 막는다.
   useLayoutEffect(() => {
     if (!editing || preview || el.hidden || el.type !== 'text') return;
-    focusEditableAtEnd(isSpeechBubbleElement(el) ? textRef.current : ref.current);
+    const fresh = FRESH_TEXT_IDS.has(el.id);   // 지우지 않는다 — 실제로 고쳤을 때만 뗀다
+    focusEditableAtEnd(isSpeechBubbleElement(el) ? textRef.current : ref.current, fresh);
   }, [editing, el.hidden, el.id, el.shape, el.type, preview]);
 
   if (el.hidden) return null;
@@ -415,23 +457,29 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
               e.stopPropagation();
               onAddImage && onAddImage(el);
             }}>
-            <Icon name="imagePlus" size={compactSlot ? 22 : 28} />
-            {!compactSlot && <span>여기에 사진 넣기</span>}
+            <Icon name={el.genFailed ? 'alertTri' : 'imagePlus'} size={compactSlot ? 22 : 28} />
+            {/* 못 만든 컷은 완료 후에도 "그냥 빈 칸"이 아니어야 한다 — 무엇이 왜 비었고
+                돈이 나갔는지, 어떻게 채우는지까지 이 자리에서 말한다(오너: 상업 서비스). */}
+            {!compactSlot && (el.genFailed
+              ? <span>이 컷은 만들지 못했어요<br /><small>크레딧 미차감 · 눌러서 사진을 넣거나 AI 탭에서 다시 만들 수 있어요</small></span>
+              : <span>여기에 사진 넣기</span>)}
           </button>
           {imageDropOver && <ImageDropGuide scale={scale} width={el.w} height={el.h} rotate={el.rotate} />}
         </div>
       );
     }
+    // 140px 미리보기에 원본(수천 px)을 그리면 스크롤이 무거워지고 탭 메모리가 커진다.
+    const imgSrc = imageWidth ? thumbUrl(el.src, imageWidth) : el.src;
     return (
       <div {...common} {...imageDropProps} className={cls(imageDropOver ? 'image-drop-over' : '')} style={{ ...base, borderRadius: el.radius, ...imageFrameStyle }}
         onDoubleClick={preview ? undefined : (e) => { e.stopPropagation(); onCropStart && onCropStart(el); }}>
         {el.crop ? (
           /* 커밋된 인라인 크롭: 프레임(overflow hidden) 안에 원본을 -ox,-oy 오프셋으로 */
           <div className="el-cropped" style={{ borderRadius: el.radius }}>
-            <img src={el.src} alt="" draggable={false} style={{ left: -el.crop.ox, top: -el.crop.oy, width: el.crop.iw, height: el.crop.ih }} />
+            <img src={imgSrc} alt="" draggable={false} style={{ left: -el.crop.ox, top: -el.crop.oy, width: el.crop.iw, height: el.crop.ih }} />
           </div>
         ) : (
-          <img src={el.src} alt="" style={{ borderRadius: el.radius, objectFit: el.fit || 'cover' }} draggable={false} />
+          <img src={imgSrc} alt="" style={{ borderRadius: el.radius, objectFit: el.fit || 'cover' }} draggable={false} />
         )}
         {imageDropOver && <ImageDropGuide scale={scale} width={el.w} height={el.h} rotate={el.rotate} />}
       </div>
@@ -491,7 +539,9 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       );
     }
     return (
-      <div ref={ref} data-elid={el.id} className={cls(`el-text${editing ? ' editing' : ''}`)} style={{ ...base, height: el.textSizing === 'fixed' ? el.h : 'auto',
+      /* 높이는 항상 auto — 고정폭 텍스트도 크기를 키우면 상자가 따라 자라야 하고,
+         저장되는 el.h는 위의 h 동기화 효과가 실제 렌더 높이로 맞춘다. */
+      <div ref={ref} data-elid={el.id} className={cls(`el-text${editing ? ' editing' : ''}`)} style={{ ...base, height: 'auto',
         fontFamily: FONT_MAP[s.font] || 'var(--font-body)', fontSize: s.size, fontWeight: s.weight || 400,
         color: s.color || '#0e0d14', letterSpacing: s.tracking, textAlign: s.align || 'left',
         lineHeight: s.lineHeight ? s.lineHeight + 'px' : 1.4, whiteSpace: 'pre-wrap', opacity: (el.opacity ?? 1) * (s.opacity ?? 1),
@@ -510,7 +560,8 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
           const nextSize = pendingTextSize.current || previewAutoTextSize(e.currentTarget);
           pendingTextSize.current = null;
           onEdit(null);
-          if (nextSize && onTextCommit) onTextCommit(blockId, el.id, value, nextSize);
+          // 텍스트 커밋은 항상 onTextCommit(commitText) 경로로 — 편집 종료 감시가 빈 텍스트를 정리한다.
+          if (onTextCommit) onTextCommit(blockId, el.id, value, nextSize);
           else onPatch(blockId, el.id, { text: value });
         }}>
         {editing ? el.text : display}</div>
@@ -552,7 +603,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       </svg>
     );
   }
-  return <div {...common} className={cls()} style={base}>{inner}</div>;
+  return <div {...common} className={cls(el.type === 'line' ? 'el-line' : el.type === 'shape' ? 'el-shape' : '')} style={base}>{inner}</div>;
 }
 
 const IMAGE_IMPORT_COPY = {
@@ -604,6 +655,8 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
   const blockActive = selectedBlockId === block.id;
   const blockSelected = blockActive && (!selEls || selEls.length === 0);
   const [objOver, setObjOver] = useState(false);
+  // 텍스트 프리셋을 끌고 지나가는 동안만 사는 '놓일 자리' 미리보기(저장 대상 아님).
+  const [textGhost, setTextGhost] = useState(null);
 
   const pickBelowBlankText = (event, currentElement) => {
     const candidateIds = [];
@@ -653,20 +706,39 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
         const types = [...e.dataTransfer.types];
         if (!types.some((type) => type === 'text/object' || type === WARDROBE_IMAGE_MIME || type === 'Files')) return;
         e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setObjOver(true);
+        // 텍스트 프리셋만 놓일 자리를 실제 상자로 미리 그린다 — 어디에 어떤 크기로
+        // 들어갈지 손을 떼기 전에 보여야 한다(오너 2026-08-16).
+        const presetKey = textPresetKeyFromDragTypes(types);
+        if (!presetKey) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        const box = textPresetBox(presetKey);
+        const point = viewportPointToBlock({ clientX: e.clientX, clientY: e.clientY, blockLeft: rect.left, blockTop: rect.top, scale });
+        setTextGhost({
+          ...textPresetDropPlacement({ ...point, w: box.w, h: box.h, blockH }),
+          box,
+        });
       }}
-      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setObjOver(false); }}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) { setObjOver(false); setTextGhost(null); } }}
       onDrop={(e) => {
         const draggedImage = decodeWardrobeImage(e.dataTransfer.getData(WARDROBE_IMAGE_MIME));
         const files = [...(e.dataTransfer.files || [])];
         const objectData = e.dataTransfer.getData('text/object');
         if (!draggedImage && !files.length && !objectData) return;
-        e.preventDefault(); setObjOver(false);
+        e.preventDefault(); setObjOver(false); setTextGhost(null);
         const rect = e.currentTarget.getBoundingClientRect();
         const point = viewportPointToBlock({ clientX: e.clientX, clientY: e.clientY, blockLeft: rect.left, blockTop: rect.top, scale });
         if (draggedImage) onDropBlockImage(block.id, draggedImage, point);
         else if (files.length) onDropImageFiles(block.id, files, point);
         else { const [type, id] = objectData.split(':'); onObjectDrop(block.id, type, id, e); }
       }}>
+      {textGhost && (
+        <div className="text-drop-ghost" style={{
+          left: textGhost.x, top: textGhost.y, width: textGhost.box.w, minHeight: textGhost.box.h,
+          fontSize: textGhost.box.style.size, fontWeight: textGhost.box.style.weight || 400,
+          color: textGhost.box.style.color,
+          lineHeight: textGhost.box.style.lineHeight ? `${textGhost.box.style.lineHeight}px` : 1.4,
+        }}>{textGhost.box.text}</div>
+      )}
       <div className="block-clip">
         {block.elements.map((el) => (
           (crop && crop.elId === el.id) ? null : (
@@ -742,6 +814,9 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
   );
 }
 
+// 미니 미리보기 실폭 ≈135 CSS px × DPR2 = 270 → 320 하나로 고정한다. 요소마다 계산하면
+// CDN 캐시 키가 폭마다 갈라져 캐시 미스가 폭증한다.
+const MINI_IMAGE_WIDTH = 320;
 function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
   const [dragId, setDragId] = useState(null);
   const [lineAt, setLineAt] = useState(null);
@@ -770,7 +845,7 @@ function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
               <div style={{ position: 'absolute', top: 0, left: 0, width: 1000, height: blockH,
                 transform: `scale(${(thumbW || 140) / 1000})`, transformOrigin: 'top left', pointerEvents: 'none' }}>
                 {b.elements.map((el) => (
-                  <CanvasElement key={el.id} el={el} preview selected={false} onSelect={() => {}} onEdit={() => {}} />
+                  <CanvasElement key={el.id} el={el} preview imageWidth={MINI_IMAGE_WIDTH} selected={false} onSelect={() => {}} onEdit={() => {}} />
                 ))}
               </div>
             </div>
@@ -871,6 +946,53 @@ export function Editor() {
   const dpJob = useAppStore((s) => s.detailPageJob);
   const [genActive, setGenActive] = useState(false);
   const genActiveRef = useRef(false);
+  // 이탈 액션이 자기 손으로 저장을 마쳤다는 표식 — 언마운트 정리가 한 번 더 쓰지 않게 한다.
+  const skipExitPersist = useRef(false);
+  // 첫 로딩 실패 상태 — 훅은 로딩 early-return 위에만 둔다(훅 개수 불변).
+  const [loadError, setLoadError] = useState(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [waitBoardError, setWaitBoardError] = useState('');
+  const [waitBoardAttempt, setWaitBoardAttempt] = useState(0);
+  // 콘티를 못 받아 대기 화면을 못 만든 경우, 뒤에서 계속 다시 받아 스스로 복구한다.
+  // 생성은 서버에서 돌고 있으므로 사용자는 아무것도 안 해도 된다(오너: 실패는 우리가 흡수).
+  useEffect(() => {
+    if (!waitBoardError || blocks || !product || !catalogs) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        // 버려진 사슬은 즉시 멈춘다 — '다시 불러오기'를 연타하면 68초짜리 재시도 사슬이
+        // 겹겹이 쌓여, 이미 실패 중인 서버에 요청만 늘린다(2026-08-17 리뷰).
+        const sb = await retryRead(() => api.getStoryboard(projectId), {
+          delays: [3000, 5000, 10000, 20000, 30000],
+          isCancelled: () => cancelled,
+        });
+        if (cancelled) return;
+        const cw = useAppStore.getState().copywriting;
+        const dj = useAppStore.getState().detailPageJob;
+        const exThumb = {};
+        for (const blk of sb || []) {
+          if (blk?.exampleId) {
+            const ex = (catalogs?.genExamples || []).find((g) => g.id === blk.exampleId);
+            if (ex?.thumb) exThumb[blk.id] = ex.thumb;
+          }
+        }
+        const skeleton = upgradeLegacyKiwiTemplateBlocks(stripPhotoBlockTextElements(decorateGenBlocks(
+          alignSkeletonToServer(buildEditorBlocksFromStoryboard(sb || [], product, cw), cw), dj, exThumb)), uid);
+        setBlocks(skeleton);
+        setSelBlock(skeleton[0]?.id);
+        setWaitBoardError('');
+      } catch { /* 재시도까지 실패 — 화면의 [다시 불러오기]·[보관함으로]가 남아 있다 */ }
+    })();
+    return () => { cancelled = true; };
+  }, [waitBoardError, waitBoardAttempt, blocks, product, catalogs, projectId]);
+  // 화면 대기(3분)를 넘긴 생성 잡의 백그라운드 추적 — 훅은 로딩 early-return 위에만 둔다.
+  const slowJobs = useRef(new Set());
+  const slowJobTimers = useRef(new Set());
+  useEffect(() => () => {
+    slowJobs.current.clear();
+    slowJobTimers.current.forEach((t) => clearTimeout(t));
+    slowJobTimers.current.clear();
+  }, []);
   const genMergedRef = useRef(false);
   const [genFinalizeError, setGenFinalizeError] = useState('');
   const [genFinalizeAttempt, setGenFinalizeAttempt] = useState(0);
@@ -889,7 +1011,34 @@ export function Editor() {
   const [hoverGray, setHoverGray] = useState(false);
   const [layerFloat, setLayerFloat] = useState(null);
   const [layerPos, setLayerPos] = useState(null);
+  const layerFloatRef = useRef(null);
   const [editEl, setEditEl] = useState(null);     // text element being inline-edited
+  // 편집이 어떤 경로로 끝나든(blur 커밋·패널 클릭·다른 요소 편집 시작) 빈 텍스트를 정리한다 —
+  // blur만 믿으면 포커스를 안 거친 종료 경로가 유령 요소를 남긴다. pruneEmptyTextEl 은
+  // 함수 선언이라 호이스팅되고 latestBlocks 를 읽으므로 로딩 렌더에서도 안전하다.
+  const prevEditEl = useRef(null);
+  useEffect(() => {
+    const prev = prevEditEl.current;
+    prevEditEl.current = editEl;
+    if (prev && prev !== editEl) pruneEmptyTextEl(prev);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editEl]);
+  /* 손 안 댄 안내 문구('내용을 입력하세요.')는 그 글자에서 **선택이 떠날 때** 정리한다.
+     편집 종료만 보면 놓치는 흔한 순서가 있다: 글자를 만들고 곧장 왼쪽 패널의 '빠른 스타일'
+     을 누르면 편집만 끝나고 선택은 남아, 그 뒤로 editEl 이 다시는 안 바뀌어 안내 문구가
+     그대로 발행된다(2026-08-17 리뷰). 반대로 선택이 남아 있는 동안 지우면 스타일을 고르던
+     글자가 사라진다 — 그래서 두 신호를 나눠 본다. */
+  /* 저장·발행 직전 관문 — 손 안 댄 안내 문구는 문서에 실리지 않는다. 화면에서 지우는
+     경로(선택 이동)를 놓치는 순서가 있어서(만들자마자 저장·다운로드), 나가는 길목에서
+     한 번 더 거른다(2026-08-17 검증). */
+  const persistable = (bs) => dropUntouchedPlaceholders(bs || [], FRESH_TEXT_IDS);
+  const prevSelEl = useRef(null);
+  useEffect(() => {
+    const prev = prevSelEl.current;
+    prevSelEl.current = selEl;
+    if (prev && prev !== selEl && prev !== editEl) pruneEmptyTextEl(prev);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selEl]);
   // inline crop mode (Figma식): { blockId, elId, src, radius, fx,fy,fw,fh, ox,oy,iw,ih }
   // frame = 보이는 창(fx..fh, 블록 좌표), image drawn at frame-relative -ox,-oy size iw×ih
   const [cropping, setCropping] = useState(null);
@@ -965,28 +1114,40 @@ export function Editor() {
   useEffect(() => { genActiveRef.current = genActive; }, [genActive]);
 
   useEffect(() => {
+    setLoadError(null);
     const enteringJob = useAppStore.getState().detailPageJob;
     const savedDraft = loadEditorWaitDraft(projectId);
     const resumingGeneration = Boolean(enteringJob.projectId === projectId
       && (enteringJob.status === 'running'
         || (enteringJob.status === 'error' && enteringJob.jobId && savedDraft)));
+    // 이 진입이 '생성 대기'인지 — 콘티 재시도 여부를 여기서 가른다(일반 편집은 재시도 없음).
+    const enteringGeneration = resumingGeneration
+      || (enteringJob.status === 'running' && enteringJob.projectId === projectId);
     if (resumingGeneration) useAppStore.getState().startDetailPageGeneration(projectId);
     pendingGenerationDraft.current = Boolean(savedDraft);
     // 에디터는 앱 크롬 밖에서 열린다 — account 는 store 캐시를 직접 로드 (단일 소스)
+    let fetched = false;
     Promise.all([api.getEditorBlocks(projectId), api.getWardrobe(projectId), api.getCatalogs(), useAppStore.getState().loadAccount(), api.getProduct(projectId),
       // 실존 모델 카탈로그 — mock 모드는 서버가 없으니 스킵, 실패는 null(AIPanel 이 가상모델 폴백)
       isMockMode ? Promise.resolve(null) : listModels().catch(() => null),
       // 분석 컨텍스트 — 정보 블록 프리필·추천 배지 전용(실패해도 에디터는 뜬다)
       api.getAnalysis(projectId).catch(() => null),
-      // 생성 중 진입이면 스켈레톤·예시 썸네일의 근거(콘티) — 실패해도 에디터는 뜬다
-      api.getStoryboard(projectId).catch(() => []),
+      // 생성 중 진입이면 스켈레톤·예시 썸네일의 근거(콘티). 일시 장애로 한 번 실패하면
+      // 대기 화면에 사진 자리가 하나도 없는 채로 굳어 버리므로 그때만 자동 재시도한다.
+      // (일반 편집 진입에서는 콘티가 보조 자료라, 재시도로 첫 화면을 늦추지 않는다.)
+      // 그래도 실패하면 null — '빈 콘티([])'와 구분해 스켈레톤을 만들지 않는다.
+      (enteringGeneration
+        ? retryRead(() => api.getStoryboard(projectId))
+        : api.getStoryboard(projectId)).catch(() => null),
       // AI 탭 '매칭 의류 바꾸기' 목록 — 콘티보드와 동일 소스, 실패해도 에디터는 뜬다
       api.getMatchClothing(projectId).catch(() => [])])
       .then(([b, w, c, _a, p, fm, an, sb, mc]) => {
+        fetched = true;   // 여기부터 터지면 통신이 아니라 조립 문제다
         const hydratedCatalogs = withStoryboardSpaceSetExamples(c);
         let withH = b.map((blk) => normalizeEditorBlockRole(blk));
-        const allColorOpts = (p.colors || []).map((col) => ({ id: col.id, label: col.name || '색상', hex: hexForCol(col) }));
-        const opts = allColorOpts.filter((_option, index) => (p.colors[index].images || []).length || p.colors[index].isBase);
+        // 라벨·원 색은 같은 근거(swatchId)에서 나와야 한다 — 규칙은 lib/colorOpts 한 곳.
+        const allColorOpts = buildColorOpts(p.colors, hydratedCatalogs, hexForCol);
+        const opts = visibleColorOpts(allColorOpts, p.colors);
         wardrobeContext.current = {
           storyboard: sb || [],
           colorIds: allColorOpts.map((option) => option.id),
@@ -996,6 +1157,25 @@ export function Editor() {
         // 기본 정보 템플릿을 자동으로 구성한다 — 수동 '템플릿 추가' 버튼 대체(2026-07-29 결정).
         const dj = useAppStore.getState().detailPageJob;
         const genMode = resumingGeneration || (dj.status === 'running' && dj.projectId === projectId);
+        if (genMode && sb == null && !savedDraft) {
+          // 콘티를 못 받았다(재시도까지 실패). 사진 자리가 하나도 없는 스켈레톤을 만들어
+          // 저장까지 해 버리면 되돌릴 길이 없다 — 캔버스를 비워 둔 채 배경에서 계속 회복을
+          // 시도한다. 생성 자체는 서버에서 계속 돌고 있으므로 genActive 는 그대로 켠다.
+          setWaitBoardError('대기 화면을 준비하지 못했어요 — 생성은 계속되고 있어요');
+          genActiveRef.current = true;
+          setGenActive(true);
+          setCatalogs(hydratedCatalogs); setFmModels(fm);
+          setProductName(p.name || '제목 없는 상세페이지');
+          setClothingType(p.clothingType || 'top');
+          setMatchClothing(Array.isArray(mc) ? mc : []);
+          setProduct(p); setAnalysis(an);
+          // wardrobe 는 반드시 채운다 — null 로 두면 나중에 캔버스가 복구된 뒤 '의류' 탭을
+          // 여는 순간 Object.entries(null) 로 에디터가 통째로 죽는다(리뷰 확정 결함).
+          setWardrobe(mergeEditorImagesIntoWardrobe({ wardrobe: w, blocks: [], ...wardrobeContext.current }));
+          setDetailColorOpts(allColorOpts.length ? allColorOpts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
+          setColorOpts(opts.length ? opts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
+          return;
+        }
         if (genMode) {
           // 생성 중 진입 — 저장된 blocks(구 데모 시드·빈 값) 대신 콘티 스켈레톤이 캔버스가 된다.
           // 컷·카피는 store 이벤트가 채우고, 완료 시 mergeServerBlocks 로 같은 화면에서 확정.
@@ -1033,8 +1213,15 @@ export function Editor() {
         setProduct(p); setAnalysis(an);
         setDetailColorOpts(allColorOpts.length ? allColorOpts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
         setColorOpts(opts.length ? opts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
-      });
-  }, []);
+      })
+      // 필수 데이터를 못 받으면 스피너를 영원히 돌리지 않는다 — 무슨 일인지 말하고 다시 시도.
+      // 단 위 조립 본문에서 터진 것은 '못 받은 것'이 아니라 우리 버그다. 같은 응답으로 다시
+      // 시도해도 똑같이 터지므로 재시도를 권하지 않게 표식을 붙인다(2026-08-17 리뷰).
+      .catch((error) => setLoadError(classifyEditorLoadError(
+        fetched ? Object.assign(error instanceof Error ? error : new Error(String(error)), { duringRender: true }) : error,
+      )));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadAttempt]);
 
   // 상세페이지 생성 사진은 editor_blocks 안에만 저장되는 경로도 있다. 블록이 생성·복원될
   // 때마다 서버 의류함과 합쳐 누락 없이 색상별로 보여주고, 직접 업로드 출처는 기타로 모은다.
@@ -1075,13 +1262,16 @@ export function Editor() {
         const freshAnalysis = await api.getAnalysis(projectId).catch(() => null);
         if (cancelled) return;
         if (freshAnalysis) setAnalysis(freshAnalysis);
+        // 못 만든 컷은 완료 순간 표식을 잃고 일반 빈 슬롯이 된다 — 어떤 컷이 왜 비었는지,
+        // 크레딧이 나갔는지도 알 수 없다. 표식을 남겨 화면과 저장본 모두에서 보이게 한다.
+        const failedCutIds = new Set(useAppStore.getState().detailPageJob.failedCuts || []);
         let restoredServerLayout = false;
         // 서버 완성본의 안정 이미지 주소를 현재 임시 작업본에 합친 뒤 직접 저장한다.
         // 저장 요청 도중 사용자가 한 번 더 편집했다면 최신 ref로 다시 합쳐 저장하여 덮어쓰지 않는다.
         for (;;) {
           const current = latestBlocks.current || [];
           restoredServerLayout ||= !canSafelyMergeServerBlocks(current, server);
-          let merged = stripPhotoBlockTextElements(mergeServerBlocks(current, server));
+          let merged = stripPhotoBlockTextElements(mergeServerBlocks(current, server, failedCutIds));
           // 이 이펙트의 클로저가 붙든 analysis 는 여전히 마운트 스냅샷이라 위에서 다시 읽은 값을 쓴다.
           const ctx = buildInfoCtx({ productName, clothingType, catalogs, product, analysis: freshAnalysis || analysis, colorOpts, fmModels });
           if (needsDefaultTemplate(merged)) {
@@ -1099,9 +1289,14 @@ export function Editor() {
         pendingGenerationDraft.current = false;
         genActiveRef.current = false;
         setGenActive(false);
+        const failedShown = latestBlocks.current.reduce((n, b) => n
+          + (b.elements || []).filter((el) => el.genFailed).length, 0);
         toast.push(restoredServerLayout
           ? '일부 대기 화면을 복원할 수 없어 서버 완성본을 안전하게 불러왔어요'
-          : '상세페이지가 완성됐어요 — 편집 내용까지 저장했어요', { icon: 'check' });
+          : failedShown
+            ? `상세페이지가 완성됐어요 — 다만 ${failedShown}컷은 만들지 못했어요(크레딧 미차감). 빈 자리에서 다시 만들 수 있어요`
+            : '상세페이지가 완성됐어요 — 편집 내용까지 저장했어요',
+        { icon: failedShown && !restoredServerLayout ? 'alertTri' : 'check' });
         if (dpJob.jobId) {
           const r = await tryGetReceipt(dpJob.jobId);
           if (!cancelled && r) setGenReceipt(r);
@@ -1134,13 +1329,13 @@ export function Editor() {
     clearTimeout(saveTimer.current);
     if (genActive) {
       saveTimer.current = setTimeout(() => {
-        saveEditorWaitDraft(projectId, latestBlocks.current);
+        saveEditorWaitDraft(projectId, persistable(latestBlocks.current));
         pendingGenerationDraft.current = true;
       }, 300);
       return;
     }
     saveTimer.current = setTimeout(() => {
-      api.saveEditorBlocks(projectId, latestBlocks.current).then(() => {
+      api.saveEditorBlocks(projectId, persistable(latestBlocks.current)).then(() => {
         if (pendingGenerationDraft.current) {
           clearEditorWaitDraft(projectId);
           pendingGenerationDraft.current = false;
@@ -1150,9 +1345,11 @@ export function Editor() {
   }, [blocks, genActive, projectId]);
   useEffect(() => () => {
     clearTimeout(saveTimer.current);
-    if (!latestBlocks.current) return;
-    if (genActiveRef.current) saveEditorWaitDraft(projectId, latestBlocks.current);
-    else api.saveEditorBlocks(projectId, latestBlocks.current);
+    // 이탈 액션이 이미 저장을 마쳤으면 여기서 다시 쓰지 않는다 — 생성 실패 화면에서
+    // 나갈 때 화면의 스켈레톤이 서버의 완성본을 덮어쓰던 사고를 막는다.
+    if (skipExitPersist.current || !latestBlocks.current) return;
+    if (genActiveRef.current) saveEditorWaitDraft(projectId, persistable(latestBlocks.current));
+    else api.saveEditorBlocks(projectId, persistable(latestBlocks.current));
   }, [projectId]);
 
   // Delete/Backspace removes the most specific selection: selected elements
@@ -1164,9 +1361,26 @@ export function Editor() {
       if (isEditorDeleteKey(e) && (deleteElements || deleteBlockSelection)) {
         e.preventDefault();
         if (deleteElements) {
-          setBlocks((bs) => removeSelectedElements(bs, selEls));
+          // 격자·프레임의 사진 자리는 지워지는 게 아니라 빈 자리로 남는다 — 안내도 그렇게.
+          const bs0 = latestBlocks.current || blocks || [];
+          const picked = bs0.flatMap((b) => b.elements.filter((el) => selEls.includes(el.id)).map((el) => ({ b, el })));
+          // 사진이 든 자리만 '비우기'다 — 이미 빈 자리·다른 요소는 그냥 지워진다.
+          const cleared = picked.filter(({ b, el }) => isPhotoSlotElement(b, el) && el.src);
+          const removedCount = picked.length - cleared.length;
+          setBlocks((bs) => {
+            const next = removeSelectedElements(bs, selEls);
+            // 정보 블록은 폼(block.info)이 정본이라 요소만 비우면 '내용 수정 → 업데이트'
+            // 한 번에 지운 사진이 되살아난다. 폼 쪽 src 도 같이 비운다(2026-08-17 검증).
+            const infoIds = new Set(cleared.filter(({ b }) => presetTypeOf(b) && b.info).map(({ b, el }) => `${b.id}:${el.id}`));
+            if (!infoIds.size) return next;
+            return next.map((b) => [...infoIds].filter((key) => key.startsWith(`${b.id}:`))
+              .reduce((acc, key) => applySlotFillToInfo(acc, key.split(':').slice(1).join(':'), { src: null, cutType: null }), b));
+          });
           setSelEl(null); setSelEls([]); setBlockFocused(false);
-          toast.push(`${selEls.length > 1 ? selEls.length + '개 요소를' : '요소를'} 삭제했어요`, { icon: 'trash' });
+          const parts = [];
+          if (cleared.length) parts.push(`${cleared.length > 1 ? `사진 ${cleared.length}장을` : '사진을'} 비웠어요 · 자리는 그대로예요`);
+          if (removedCount) parts.push(`${removedCount > 1 ? `${removedCount}개 요소를` : '요소를'} 삭제했어요`);
+          toast.push(parts.join(' · ') || '요소를 삭제했어요', { icon: 'trash' });
         } else {
           setBlocks((bs) => removeSelectedBlock(bs, selBlock));
           setSelEl(null); setSelEls([]); setSelBlock(null); setBlockFocused(false);
@@ -1329,6 +1543,43 @@ export function Editor() {
     };
   });
 
+  /* 아래 대기 화면(early-return)에서 쓰는 이탈 — 그 화면은 **blocks 가 없을 때만** 그려지므로
+     저장할 편집분 자체가 없다. 그래서 아래쪽 leaveToLibrary(편집분 flush 포함)를 부르지 않고,
+     early-return 위에서 이미 초기화된 것(ref·navigate)만으로 끝낸다.
+     주의: early-return 이 실행되면 그 아래 const 들은 **초기화되지 않은 채로 남는다**. 위에
+     선언해 둔 함수라도 본문이 아래쪽 const(flushExit 등)를 건드리면 클릭하는 순간
+     ReferenceError 다 — 화면은 떠 있는데 버튼만 죽는 막다른 골목이 된다(2026-08-17 리뷰). */
+  const exitWaitScreenToLibrary = () => {
+    clearTimeout(saveTimer.current);
+    skipExitPersist.current = true;   // 언마운트 정리가 빈 상태를 덮어쓰지 않게
+    navigate('/library');
+  };
+
+  if (loadError) return (
+    <div className="editor"><div style={{ margin: 'auto', display: 'grid', gap: 12, justifyItems: 'center' }}>
+      <ErrorState
+        desc={loadError.message}
+        /* 없는 작업·조립 실패는 다시 시도해도 결과가 같다 — 버튼을 주면 무한 왕복이 된다 */
+        onRetry={loadError.kind === 'notFound' || loadError.kind === 'render' ? undefined
+          : () => { setLoadError(null); setLoadAttempt((n) => n + 1); }}
+      />
+      <Button variant="ghost" onClick={() => navigate('/library')}>보관함으로</Button>
+    </div></div>
+  );
+  // 콘티를 못 받아 대기 화면을 못 만든 경우 — 생성은 계속되고 있다는 것부터 분명히 말한다.
+  if (waitBoardError && !blocks) return (
+    <div className="editor"><div style={{ margin: 'auto', display: 'grid', gap: 12, justifyItems: 'center', textAlign: 'center' }}>
+      <Icon name="loader" size={26} className="spin" />
+      <div style={{ fontSize: 14, fontWeight: 600 }}>{waitBoardError}</div>
+      <div className="panel-sub" style={{ margin: 0 }}>사진은 서버에서 계속 만들어지고 있어요. 잠시 뒤 자동으로 화면이 채워져요.</div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        {/* 같은 문자열을 다시 넣으면 상태가 안 바뀌어 재시도가 안 돈다 — 시도 횟수를 올린다 */}
+        <Button variant="ghost" size="sm" onClick={() => setWaitBoardAttempt((n) => n + 1)}>다시 불러오기</Button>
+        {/* 자동 재시도가 소진돼도 갇히지 않게 — 생성은 서버에서 계속되고 보관함에서 다시 연다 */}
+        <Button variant="ghost" size="sm" onClick={exitWaitScreenToLibrary}>나중에 하기 · 보관함으로</Button>
+      </div>
+    </div></div>
+  );
   if (!blocks || !catalogs) return <div className="editor"><div style={{ margin: 'auto' }}><Icon name="loader" size={26} className="spin" /></div></div>;
 
   const selectedElObj = blocks.flatMap((b) => b.elements).find((e) => e.id === selEl);
@@ -1350,6 +1601,35 @@ export function Editor() {
       return allPicked ? cur.filter((id) => !pickedIds.includes(id)) : [...new Set([...cur, ...pickedIds])];
     });
     if (!keepTab) setTab(el.type === 'text' ? 'text' : 'image');
+  };
+  /* 레이어 창 옮기기 — 머리말을 잡고 끈다. 창은 캔버스 영역(.ed-body) 기준 absolute 라
+     그 컨테이너 좌표로 환산하고, 화면 밖으로 나가 못 잡게 되는 일이 없도록 가둔다. */
+  const startLayerFloatDrag = (event) => {
+    if (event.button !== 0 || event.target.closest('button')) return;
+    const panel = layerFloatRef.current;
+    const parent = panel?.offsetParent;
+    if (!panel || !parent) return;
+    event.preventDefault();
+    const panelRect = panel.getBoundingClientRect();
+    const parentRect = parent.getBoundingClientRect();
+    const grabX = event.clientX - panelRect.left;
+    const grabY = event.clientY - panelRect.top;
+    const move = (e) => {
+      const x = e.clientX - parentRect.left - grabX;
+      const y = e.clientY - parentRect.top - grabY;
+      setLayerPos({
+        x: Math.max(0, Math.min(x, parentRect.width - panelRect.width)),
+        y: Math.max(0, Math.min(y, parentRect.height - panelRect.height)),
+      });
+    };
+    const end = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
   };
   const clearSel = () => { setSelEl(null); setSelEls([]); setVaryTarget(null); setPendingSlot(null); };
   const copySelectedElements = () => {
@@ -1373,13 +1653,17 @@ export function Editor() {
       : block));
     setSelBlock(targetBlock.id); setBlockFocused(true); setSelEl(pasted.selectedIds[0]); setSelEls(pasted.selectedIds); setEditEl(null); setVaryTarget(null);
     editorClipboard.current = { blockId: targetBlock.id, elements: pasted.elements };
-    toast.push(`${pasted.elements.length > 1 ? `${pasted.elements.length}개 요소를` : '요소를'} 붙여넣었어요`, { icon: 'copy' });
     return true;
   };
   const patchEl = (patch) => setBlocks((bs) => bs.map((b) => ({ ...b, elements: b.elements.map((e) => e.id === selEl ? { ...e, ...patch } : e) })));
   const patchBubbleAppearance = (patch) => setBlocks((bs) => patchSelectedBubbleAppearance(bs, selEls.length ? selEls : [selEl], patch));
   const patchElById = (blockId, elId, patch) => setBlocks((bs) => bs.map((b) => b.id === blockId ? { ...b, elements: b.elements.map((e) => e.id === elId ? { ...e, ...patch } : e) } : b));
-  const commitBubbleText = (blockId, elementId, value, elementPatch) => setBlocks((bs) => bs.map((b) => {
+  const commitText = (blockId, elementId, value, elementPatch) => {
+    // 한 글자라도 고쳤으면 더는 '안내 문구'가 아니다 — 안 지우는 대상으로 확정한다.
+    if (String(value ?? '').trim() !== DEFAULT_TEXT_BODY) FRESH_TEXT_IDS.delete(elementId);
+    return commitTextValue(blockId, elementId, value, elementPatch);
+  };
+  const commitTextValue = (blockId, elementId, value, elementPatch) => setBlocks((bs) => bs.map((b) => {
     if (b.id !== blockId) return b;
     return {
       ...b,
@@ -1388,6 +1672,34 @@ export function Editor() {
         : element),
     };
   }));
+  // 내용이 빈 일반 텍스트는 요소째 지운다 — 안 그러면 보이지 않는 빈 상자가 페이지·
+  // 레이어 목록에 쌓이고 그 자리의 클릭을 가로챈다(유령 요소). 남기는 것 세 가지:
+  // 말풍선(모양 자체가 보임), 자동 관리 블록의 요소(폼·병합이 통째로 재생성),
+  // copyRole/sourceBlockId가 달린 카피 자리(생성 완료 때 AI 카피가 착지할 슬롯 —
+  // 지우면 그 컷의 카피가 영영 유실된다).
+  // "방금 만들었는데 한 글자도 안 친 것"도 같이 지운다: 기본 문구는 편집 시작 때 통째로
+  // 선택돼 있어 타이핑하면 갈아 끼워지는 안내일 뿐인데, 그대로 두면 '내용을 입력하세요.'
+  // 가 상업 상세페이지에 그대로 발행된다(2026-08-16 리뷰).
+  function pruneEmptyTextEl(elId) {
+    const bs0 = latestBlocks.current || blocks;
+    if (!bs0) return;
+    const block = bs0.find((b) => b.elements.some((element) => element.id === elId));
+    const target = block?.elements.find((element) => element.id === elId);
+    if (!block || !target) return;
+    // 안내 문구를 지우는 건 **그 요소에서 손을 뗀 뒤**여야 한다. 편집만 끝났을 뿐 아직
+    // 골라져 있는 상태(= 방금 만들고 '빠른 스타일' 칩·크기 칸을 먼저 누른 경우)에서 지우면,
+    // 셀러가 스타일부터 고르려던 아주 흔한 순서에서 글자가 통째로 사라진다(2026-08-17 리뷰).
+    const untouchedPlaceholder = FRESH_TEXT_IDS.has(elId) && selEl !== elId
+      && String(target.text ?? '').trim() === DEFAULT_TEXT_BODY;
+    if (isAutoManagedBlock(block) || target.type !== 'text' || target.shape === 'bubble'
+      || target.copyRole || target.sourceBlockId
+      || (String(target.text ?? '').trim() && !untouchedPlaceholder)) return;
+    FRESH_TEXT_IDS.delete(elId);
+    setBlocks((bs) => bs.map((b) => b.id === block.id
+      ? { ...b, elements: b.elements.filter((element) => element.id !== elId) }
+      : b));
+    if (selEl === elId) { setSelEl(null); setSelEls([]); }
+  }
   const changeBg = (blockId, patch) => setBlocks((bs) => bs.map((b) => b.id === blockId ? { ...b, ...(typeof patch === 'string' ? { bg: patch } : patch) } : b));
   const reshapeBlock = (blockId, { h, shiftEls }) => setBlocks((bs) => bs.map((b) => {
     if (b.id !== blockId) return b;
@@ -1445,12 +1757,8 @@ export function Editor() {
   }));
   const reorderLayer = (blockId, fromId, toId) => setBlocks((bs) => bs.map((b) => {
     if (b.id !== blockId) return b;
-    const els = [...b.elements];
-    const fi = els.findIndex((e) => e.id === fromId); if (fi < 0) return b;
-    const [it] = els.splice(fi, 1);
-    const ti = els.findIndex((e) => e.id === toId); if (ti < 0) return b;
-    els.splice(fi < ti ? ti + 1 : ti, 0, it);
-    return { ...b, elements: els };
+    const els = reorderElements(b.elements, fromId, toId);
+    return els === b.elements ? b : { ...b, elements: els };
   }));
   const toggleElField = (blockId, elId, field) => setBlocks((bs) => bs.map((b) => b.id === blockId
     ? { ...b, elements: b.elements.map((e) => e.id === elId ? { ...e, [field]: !e[field] } : e) } : b));
@@ -1461,14 +1769,12 @@ export function Editor() {
     const nb = buildFrameBlock(f, uid);
     setBlocks((bs) => { const n = [...bs]; n.splice(idx == null ? n.length : idx, 0, nb); return n; });
     setSelBlock(nb.id); setBlockFocused(true); setSelEl(null); setSelEls([]);
-    toast.push(`${f.label} 프레임을 새 블록으로 추가했어요`);
   };
   const addImageBlock = (image, idx) => {
     const nb = buildImageBlock(image, uid);
     setBlocks((bs) => { const n = [...bs]; n.splice(idx == null ? n.length : idx, 0, nb); return n; });
     const element = nb.elements[0];
     setSelBlock(nb.id); setBlockFocused(true); setSelEl(element.id); setSelEls([element.id]); setTab('image');
-    toast.push('이미지를 새 블록으로 추가했어요', { icon: 'image' });
   };
   const onCanvasInsertDrop = (e, idx) => {
     e.preventDefault(); setFrameOver(null); setFrameDragging(false);
@@ -1496,7 +1802,6 @@ export function Editor() {
       const initialSelection = objectPresetInitialSelectionIds(shapeId, elements);
       setBlocks((bs) => bs.map((b) => b.id === target ? { ...b, elements: [...b.elements, ...elements] } : b));
       setSelBlock(target); setBlockFocused(true); setSelEl(initialSelection[0]); setSelEls(initialSelection);
-      toast.push(shapeId === 'qa-bubbles' ? '독립된 말풍선 두 개를 추가했어요' : '추천 오브젝트를 묶음으로 추가했어요');
       return;
     }
     const el = type === 'line'
@@ -1514,13 +1819,21 @@ export function Editor() {
         fill: '#FFFFFF', stroke: '#0e0d14', strokeWidth: 2,
       };
     setBlocks((bs) => bs.map((b) => b.id === target ? { ...b, elements: [...b.elements, el] } : b));
-    selectEl(target, el); toast.push('오브젝트를 추가했어요');
+    selectEl(target, el);
   };
   const setSlotImage = (blockId, elId, image) => {
     setBlocks((bs) => bs.map((b) => {
       if (b.id !== blockId) return b;
       const nextBlock = applySlotFillToInfo(b, elId, image || { src: null, cutType: null });
-      return fitImageToFrameBlock(nextBlock, elId, image);
+      const fitted = fitImageToFrameBlock(nextBlock, elId, image);
+      // 다시 채운 칸에서는 '일부러 비움' 표식을 뗀다 — 안 떼면 그 뒤 생성 병합이 이 칸을
+      // 계속 건너뛰어, 채워 넣은 사진이 자동 갱신 대상에서 빠진다(2026-08-17 검증).
+      if (!image?.src) return fitted;
+      return { ...fitted, elements: fitted.elements.map((el) => {
+        if (el.id !== elId || !el.slotCleared) return el;
+        const { slotCleared: _cleared, ...rest } = el;
+        return rest;
+      }) };
     }));
   };
   const insertImage = (im, { blockId, point, slotId, keepTab = false } = {}) => {
@@ -1541,7 +1854,6 @@ export function Editor() {
       };
       setSlotImage(target, slot.id, filled);
       selectEl(target, filled, false, keepTab);
-      toast.push('프레임에 이미지를 넣었어요', { icon: 'image' });
       return;
     }
 
@@ -1560,7 +1872,6 @@ export function Editor() {
     };
     setBlocks((bs) => bs.map((block) => block.id === target ? { ...block, elements: [...block.elements, el] } : block));
     selectEl(target, el, false, keepTab);
-    toast.push('이미지를 캔버스에 삽입했어요');
   };
   const requestSlotImage = (blockId, el) => {
     selectEl(blockId, el, false, true);
@@ -1569,7 +1880,6 @@ export function Editor() {
   };
   const dropSlotImage = (blockId, elId, image) => {
     setSlotImage(blockId, elId, image);
-    toast.push('프레임에 이미지를 넣었어요', { icon: 'image' });
   };
   const wardrobeInsert = (im, { keepTab = false } = {}) => {
     if (pendingSlot) {
@@ -1584,7 +1894,6 @@ export function Editor() {
       });
       setPendingSlot(null);
       if (!keepTab) setTab('image');
-      toast.push('빈 칸에 이미지를 넣었어요');
     } else insertImage(im, { keepTab });
   };
   const patchImageImport = (id, patch) => {
@@ -1699,6 +2008,67 @@ export function Editor() {
     if (varyTarget?.id === image.id) setVaryTarget(null);
     toast.push('이미지를 의류 목록에서 삭제했어요', { icon: 'trash' });
   };
+  /* ---- 단일 컷 생성의 공통 정책 — '새 이미지'와 '현재 이미지 수정'이 같은 규칙을 쓴다.
+     요청 바디·시작 문구·탭 이동은 각자 다르므로 그쪽에 남기고, 결과 반영/실패 처리만 공유한다. ---- */
+  // 도착한 이미지를 자리표에 넣는다. 대기 중 캔버스가 바뀌면 merge 가 src 없는 자리표를
+  // 지울 수 있는데(editorWardrobe append), 그때 결과를 버리지 않고 뒤에 붙인다.
+  const placeGeneratedImage = (group, loadingId, img) => setWardrobe((w) => {
+    const list = w[group] || [];
+    const next = list.some((x) => x.id === loadingId)
+      ? list.map((x) => (x.id === loadingId ? { ...img, wardrobeGroup: group, fresh: true } : x))
+      : [...list, { ...img, wardrobeGroup: group, fresh: true }];
+    return { ...w, [group]: next };
+  });
+  const dropLoadingTile = (group, loadingId) => setWardrobe((w) => (
+    { ...w, [group]: (w[group] || []).filter((x) => x.id !== loadingId) }));
+  // 타임아웃은 실패가 아니다 — 서버 잡은 계속 돈다. 타일을 남기고 뒤에서 완료를 기다린다.
+  // 이게 없으면 크레딧은 나갔는데 컷은 화면에서 사라져 셀러가 한 번 더 생성한다(이중 과금).
+  const trackSlowImageJob = (jobId, group, loadingId) => {
+    if (!jobId || slowJobs.current.has(jobId)) return;
+    slowJobs.current.add(jobId);
+    const started = Date.now();
+    const tick = async () => {
+      if (!slowJobs.current.has(jobId)) return;
+      try {
+        const job = await api.getJob(jobId);
+        if (job?.status === 'done') {
+          slowJobs.current.delete(jobId);
+          if (job.result?.data) {
+            placeGeneratedImage(group, loadingId, job.result.data);
+            toast.push('오래 걸린 이미지가 방금 도착했어요', { icon: 'check' });
+          } else dropLoadingTile(group, loadingId);
+          syncCredits(job.result?.credits);
+          return;
+        }
+        if (job?.status === 'error' || job?.status === 'cancelled') {
+          slowJobs.current.delete(jobId);
+          dropLoadingTile(group, loadingId);
+          toast.push(job.errorMessage || '이미지 생성에 실패했어요. 다시 시도해 주세요.', { icon: 'x' });
+          return;
+        }
+      } catch { /* 일시 오류는 다음 주기에 다시 묻는다 */ }
+      // 서버 잡 lease 상한(15분)까지만 따라간다 — 그 뒤엔 새로고침이 정본이다.
+      if (Date.now() - started > 15 * 60 * 1000) { slowJobs.current.delete(jobId); return; }
+      // 발화한 id 를 안 걷어내면 15분짜리 잡 하나에 ~225개가 쌓인다 — 언마운트 정리가
+      // 이미 끝난 타이머 수백 개를 훑게 된다(2026-08-17 리뷰).
+      const timer = setTimeout(() => { slowJobTimers.current.delete(timer); tick(); }, 4000);
+      slowJobTimers.current.add(timer);
+    };
+    tick();
+  };
+  // 실패/타임아웃 공통 처리. 타임아웃이면 true 를 돌려 호출부가 '실패 토스트'를 건너뛴다.
+  const handleImageJobFailure = (e, group, loadingId) => {
+    if (e?.code === 'job_timeout') {
+      setWardrobe((w) => ({ ...w, [group]: (w[group] || []).map((x) => (x.id === loadingId ? { ...x, slow: true } : x)) }));
+      toast.push(e.message, { icon: 'sparkles' });
+      trackSlowImageJob(e.jobId, group, loadingId);
+      return true;
+    }
+    // 실서버 생성 실패 = 재생성 루프의 정상 경로 — 로딩 타일 제거 + 재시도 안내 (ADR-0004)
+    dropLoadingTile(group, loadingId);
+    toast.push(e?.message || '이미지 생성에 실패했어요. 다시 시도해 주세요.', { icon: 'x' });
+    return false;
+  };
   // req = NewCutRequest 필드 전체 (계약 §6) — 방향·샷·모델·예시 선택이 생성에 그대로 반영되어야 한다
   const generateImage = async (req) => {
     const group = req.colorId || 'misc';             // wardrobe 그룹 키 = colorId | 'misc' (계약 §3.6)
@@ -1707,13 +2077,11 @@ export function Editor() {
     genCount.current += 1; setGenDot('busy'); toast.push('이미지를 생성하는 중이에요', { icon: 'sparkles' });
     try {
       const { data: img, credits } = await api.generateImage(projectId, { mode: 'new', ...req, colorId: group });
-      setWardrobe((w) => ({ ...w, [group]: w[group].map((x) => x.id === loadingId ? { ...img, wardrobeGroup: group, fresh: true } : x) }));
+      placeGeneratedImage(group, loadingId, img);
       toast.push('이미지 생성을 완료했어요', { icon: 'check' });
       syncCredits(credits);                          // 차감은 서버 책임 — 봉투 잔액만 반영 (계약 §6)
     } catch (e) {
-      // 실서버 생성 실패 = 재생성 루프의 정상 경로 — 로딩 타일 제거 + 재시도 안내 (ADR-0004)
-      setWardrobe((w) => ({ ...w, [group]: (w[group] || []).filter((x) => x.id !== loadingId) }));
-      toast.push(e?.message || '이미지 생성에 실패했어요. 다시 시도해 주세요.', { icon: 'x' });
+      handleImageJobFailure(e, group, loadingId);
     } finally {
       genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done');
     }
@@ -1727,11 +2095,18 @@ export function Editor() {
     setTab('wardrobe');
     genCount.current += 1; setGenDot('busy');
     toast.push(changes.length ? `${changes.length}개 변경을 적용한 컷을 생성하는 중이에요` : '비슷한 컷을 생성하는 중이에요', { icon: 'sparkles' });
-    const { data: img, credits } = await api.generateImage(projectId, { mode: 'vary', source, changes, refBg, refBgAssetId });
-    setWardrobe((w) => ({ ...w, [group]: w[group].map((x) => x.id === loadingId ? { ...img, wardrobeGroup: group, fresh: true } : x) }));
-    genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done'); toast.push('이미지 생성을 완료했어요', { icon: 'check' });
-    syncCredits(credits);
-    return img;
+    try {
+      const { data: img, credits } = await api.generateImage(projectId, { mode: 'vary', source, changes, refBg, refBgAssetId });
+      placeGeneratedImage(group, loadingId, img);
+      toast.push('이미지 생성을 완료했어요', { icon: 'check' });
+      syncCredits(credits);
+      return img;
+    } catch (e) {
+      handleImageJobFailure(e, group, loadingId);
+      return null;
+    } finally {
+      genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done');
+    }
   };
   const varyImage = (im) => {
     setVaryTarget(im?.id ? { id: im.id, group: im.wardrobeGroup || 'misc' } : null); // 클릭한 의류 이미지가 변형 대상 — 이미지별 독립 상태
@@ -1747,10 +2122,6 @@ export function Editor() {
       ? { id: selectedElObj.id, src: selectedElObj.src, cutType: selectedElObj.cutType || null, wardrobeGroup: selectedElObj.wardrobeGroup || null }
       : null;
   })();
-  const setVaryCutType = (t) => {
-    if (varyTarget) setWardrobe((w) => { const nw = {}; for (const [g, arr] of Object.entries(w)) nw[g] = arr.map((x) => x.id === varyTarget.id ? { ...x, cutType: t } : x); return nw; });
-    else patchEl({ cutType: t });
-  };
   // setBlockFocused 없이 selBlock 만 세우면 오른쪽 목록만 켜지고 캔버스는 조용하다 —
   // 캔버스 강조는 blockFocused 로 게이팅되고 그건 캔버스 클릭에서만 켜졌다.
   const jumpTo = (id) => { setSelBlock(id); setBlockFocused(true); setSelEl(null); setSelEls([]);
@@ -1758,13 +2129,56 @@ export function Editor() {
     const wrap = wrapRef.current; if (!wrap) return;
     const target = wrap.querySelectorAll('.canvas-block')[idx];
     if (target) { const wr = wrap.getBoundingClientRect(); const tr = target.getBoundingClientRect(); wrap.scrollTo({ top: wrap.scrollTop + (tr.top - wr.top) - 40, behavior: 'smooth' }); } };
-  const addText = (bId) => {
-    const id = bId || visibleBlock();
-    const el = { id: uid('el'), type: 'text', x: 120, y: 80, w: 12, h: 45, text: '', textSizing: 'auto', style: { font: 'Pretendard', size: 32, weight: 500, color: '#0e0d14' } };
-    setBlocks((bs) => bs.map((b) => b.id === id ? { ...b, elements: [...b.elements, el] } : b));
-    selectEl(id, el); setTab('text');
+  // 추가류 확인 토스트는 쓰지 않는다 — 결과가 캔버스에 바로 보이는 작은 행동에 알림을
+  // 띄우면 편집 집중을 깬다(2026-08-15 오너 결정). 토스트는 화면으로 알 수 없는 것
+  // (오류·저장·생성 진행·복사)과 파괴적 동작(삭제)에만 쓴다.
+  const addText = (preset) => {
+    // 자동 관리 블록(정보·사이즈·세탁·AI 고지)은 피한다 — 요소가 폼 재적용·생성 병합에서
+    // 통째로 재생성돼 셀러 텍스트가 사라진다. 화면의 블록이 그 부류면 가까운 일반 블록으로
+    // (아래쪽 우선), 일반 블록이 하나도 없으면 만들지 않는다 — 어차피 지워질 곳에 넣는
+    // 것보다 안 만드는 쪽이 정직하다.
+    const bs0 = latestBlocks.current || blocks;
+    const visibleId = visibleBlock();
+    const idx = Math.max(0, bs0.findIndex((b) => b.id === visibleId));
+    let block = bs0[idx] && !isAutoManagedBlock(bs0[idx]) ? bs0[idx] : null;
+    for (let d = 1; !block && d < bs0.length; d += 1) {
+      if (bs0[idx + d] && !isAutoManagedBlock(bs0[idx + d])) block = bs0[idx + d];
+      else if (bs0[idx - d] && !isAutoManagedBlock(bs0[idx - d])) block = bs0[idx - d];
+    }
+    if (!block) { toast.push('텍스트를 넣을 일반 블록이 없어요', { icon: 'x' }); return; }
+    // preset = 텍스트 프리셋 키(큰 제목·소제목·설명글·꼬리표). 미지정(T 단축키)이면 소제목.
+    // 위치는 블록의 기존 콘텐츠 아래(간격 32 — 스펙 §3-A의 사진↔캡션 간격). 단 콘텐츠가
+    // 블록 바닥까지 차 있으면(프레임 템플릿의 풀블리드 아트 등) 아래에 둘 자리가 없다는
+    // 뜻이라 예전처럼 위쪽(80)에 둔다 — 블록 밖 빈 띠에 보이지 않는 글자를 만들지 않는다.
+    const contentBottom = getBlockContentBottom(block);
+    const roomBelow = (block.h || 220) - contentBottom;
+    const y = contentBottom > 0 && roomBelow >= 20 ? contentBottom + 32 : 80;
+    const el = { ...buildTextPresetElement(preset), y };
+    FRESH_TEXT_IDS.add(el.id);   // 첫 편집에서 기본 문구가 통째로 선택된다
+    setBlocks((bs) => bs.map((b) => b.id === block.id ? { ...b, elements: [...b.elements, el] } : b));
+    selectEl(block.id, el); setTab('text');
     setEditEl(el.id);
-    toast.push('텍스트를 추가했어요');
+  };
+  /* 텍스트 프리셋을 끌어다 놓았을 때 — 클릭 추가(addText)와 같은 요소를 만들되 블록과
+     자리는 셀러가 가리킨 그대로 쓴다. 자동 관리 블록만은 클릭 경로와 똑같이 막는다
+     (요소가 폼 재적용·생성 병합에서 통째로 재생성돼 적은 글이 사라진다). */
+  const dropText = (preset, blockId, dropEvent) => {
+    const bs0 = latestBlocks.current || blocks;
+    const block = bs0.find((b) => b.id === blockId);
+    if (!block) return;
+    if (isAutoManagedBlock(block)) { toast.push('이 블록은 자동으로 채워져서 글자를 넣을 수 없어요', { icon: 'x' }); return; }
+    const base = buildTextPresetElement(preset);
+    const rect = dropEvent?.currentTarget?.getBoundingClientRect?.();
+    const point = rect
+      ? viewportPointToBlock({ clientX: dropEvent.clientX, clientY: dropEvent.clientY, blockLeft: rect.left, blockTop: rect.top, scale })
+      : { x: base.x, y: base.y + base.h / 2 };
+    // 세로 가둠은 미리보기와 **같은 기준**(렌더 높이)이어야 한다 — block.h 는 없는 블록이
+    // 많고(기본 220), 이미지를 늘려 블록이 커진 경우 저장값과 실제 높이가 다르다.
+    const el = { ...base, ...textPresetDropPlacement({ ...point, w: base.w, h: base.h, blockH: getBlockRenderHeight(block) }) };
+    FRESH_TEXT_IDS.add(el.id);
+    setBlocks((bs) => bs.map((b) => b.id === block.id ? { ...b, elements: [...b.elements, el] } : b));
+    selectEl(block.id, el); setTab('text');
+    setEditEl(el.id);
   };
   /* ---- 정보 블록 (PRD §10.14 `내용 추가`) — infoPresets 빌더로 폼→블록 생성 ---- */
   const targetGenders = (analysis && analysis.targetGenders) || [];
@@ -1899,13 +2313,38 @@ export function Editor() {
     }
     if (bs) api.saveEditorBlocks(projectId, bs);
   };
-  const discardGenerationAndReturnToStoryboard = () => {
+  /* 본 편집 화면의 이탈 — 편집분을 먼저 저장하고 나간다. **flushExit 뒤**에 선언해야 한다:
+     early-return 위로 올리면 그 화면에서 클릭하는 순간 flushExit 가 아직 초기화되지 않아
+     ReferenceError 다(2026-08-17 리뷰). 대기 화면 전용 이탈은 exitWaitScreenToLibrary. */
+  const leaveToLibrary = () => {
     clearTimeout(saveTimer.current);
-    clearEditorWaitDraft(projectId);
-    pendingGenerationDraft.current = false;
-    genActiveRef.current = false;
-    useAppStore.getState().resetDetailPageJob();
-    navigate('/create/storyboard');
+    flushExit();
+    skipExitPersist.current = true;   // 언마운트 정리가 같은 내용을 한 번 더 쓰지 않게
+    navigate('/library');
+  };
+  // 에디터에 들어온 이상 앞 단계(콘티·마네킹·입력)로는 돌아가지 않는다(오너 8/15) —
+  // 되돌아가면 이미 만든 컷·편집이 다음 생성으로 덮여 되살릴 수 없기 때문이다. 대신
+  // '나중에 하기'로 보관함에 안전하게 내려놓는다. 편집분은 flushExit 가 알아서
+  // (생성 중이면 임시본, 아니면 서버로) 저장하므로 사라지지 않는다.
+  /* 라이선스 차단(409) 복구 — 앞 단계로 되돌아가지 않고 여기서 모델을 바꿔 다시 만든다.
+     modelId 가 null 이면 모델은 그대로 두고 재시도만 한다(일시 장애였을 수 있다). */
+  const licenseAlternatives = (fmModels || [])
+    .filter((m) => m.hasActiveLicense && m.assetsReady && m.id !== analysis?.selectedModelId)
+    .slice(0, 3);
+  const retryGenerationWithModel = async (modelId) => {
+    try {
+      if (modelId) {
+        await api.saveAnalysis(projectId, { selectedModelId: modelId });
+        setAnalysis((a) => ({ ...(a || {}), selectedModelId: modelId }));
+      }
+      genMergedRef.current = false;
+      useAppStore.getState().resetDetailPageJob();
+      useAppStore.getState().startDetailPageGeneration(projectId);
+      genActiveRef.current = true;
+      setGenActive(true);
+    } catch (e) {
+      toast.push(e?.message || '다시 시작하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'x' });
+    }
   };
   /* kb.current 는 crop 핸들러 정의 뒤(아래)에서 채운다 — TDZ 방지 */
 
@@ -2096,8 +2535,13 @@ export function Editor() {
     });
     const { x: nx, y: ny, w: nw, h: nh } = proposed;
     const rect = clampElementRect(nx, ny, nw, nh);
+    // 일반 텍스트는 높이가 내용 파생(렌더 height:auto) — 라이브 드래그가 px 높이를 인라인으로
+    // 박으면 React가 'auto'를 다시 안 써서(prop 불변) 그 px가 영구히 박힌다. 폭만 쓴다.
+    const plainText = elNow?.type === 'text' && elNow.shape !== 'bubble';
     target.style.left = rect.x + 'px'; target.style.top = rect.y + 'px';
-    target.style.width = rect.w + 'px'; target.style.height = rect.h + 'px';
+    target.style.width = rect.w + 'px';
+    if (plainText) target.style.height = 'auto';
+    else target.style.height = rect.h + 'px';
     // 크롭된 이미지는 안쪽 원본(<img> 인라인 px)도 같은 배율로 라이브 스케일 —
     // 안 하면 틀만 커지고 사진은 제자리라 "사진이 같이 안 커지는" 것처럼 보인다.
     // (gesture end 의 commitLive 가 crop{ox,oy,iw,ih} 을 같은 비율로 커밋해 이어짐)
@@ -2108,9 +2552,12 @@ export function Editor() {
       imgNode.style.left = (-elNow.crop.ox * kx) + 'px';
       imgNode.style.top = (-elNow.crop.oy * ky) + 'px';
     }
+    // 일반 텍스트는 h를 커밋하지 않는다 — 커밋 직후 h 동기화 효과가 실측값으로 다시 재므로
+    // 여기의 드래그값은 한 프레임 만에 뒤집히는 이중 변경일 뿐이다.
     liveRef.current[elId] = {
-      x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.w), h: Math.round(rect.h),
-      ...(elNow?.type === 'text' && elNow.shape !== 'bubble' && elNow.textSizing === 'auto' ? { textSizing: 'fixed' } : {}),
+      x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.w),
+      ...(plainText ? {} : { h: Math.round(rect.h) }),
+      ...(plainText && elNow.textSizing === 'auto' ? { textSizing: 'fixed' } : {}),
     };
   };
   const liveRotate = (target, rotation) => {
@@ -2192,19 +2639,17 @@ export function Editor() {
 
   const renderPanel = () => {
     switch (tab) {
-      case 'ai': return <AIPanel catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} matchClothing={matchClothing} exampleGender={exampleGenderFromAnalysis(analysis, catalogs, clothingType)} varySource={varySource} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickRef={() => api.pickRefImage(projectId)} onPickMoodRef={() => api.pickRefImage(projectId)} onSetCutType={setVaryCutType} />;
+      case 'ai': return <AIPanel catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} matchClothing={matchClothing} exampleGender={exampleGenderFromAnalysis(analysis, catalogs, clothingType)} varySource={varySource} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickMoodRef={() => api.pickRefImage(projectId)} />;
       case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={detailColorOpts} pendingSlot={pendingSlot} uploading={wardrobeUploadLoading} onInsert={wardrobeInsert} onDeleteImage={deleteWardrobeImage} isImageUsed={wardrobeImageInUse} onUpload={pickAndInsertImage} onVaryImage={varyImage} onFreshSeen={freshSeen}
         onImageDragStart={() => setFrameDragging(true)} onImageDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />;
       case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio}
-        onCrop={(el) => startCrop(blockIdOf(el.id), el)} onCropReset={() => patchEl({ crop: undefined })}
-        onReplace={(el) => requestSlotImage(blockIdOf(el.id), el)}
-        onRemove={(el) => { setSlotImage(blockIdOf(el.id), el.id, { src: null, cutType: null }); toast.push('이미지를 프레임에서 빼냈어요'); }}
+        onCrop={(el) => startCrop(blockIdOf(el.id), el)}
         onVary={varyImage} />;
       case 'frame': return (
         <FramePanel onAdd={addFrame} recommendGender={recommendGender} onPickInfo={openInfoPreset}
           onDragStart={() => setFrameDragging(true)} onDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />
       );
-      case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onBubbleAppearanceChange={patchBubbleAppearance} onLayer={layerEl} onAddText={() => addText()} />;
+      case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onBubbleAppearanceChange={patchBubbleAppearance} onLayer={layerEl} onAddText={addText} />;
       case 'shape': return <ShapePanel catalogs={catalogs} onAdd={addShape} block={(selEls.length === 0 && selBlock) ? blocks.find((b) => b.id === selBlock) : null} onBgChange={changeBg} />;
       default: return null;
     }
@@ -2442,7 +2887,7 @@ export function Editor() {
                     setGenActive(true);
                   }}>다시 시도</Button>
                 )}
-                <Button size="sm" variant="ghost" onClick={discardGenerationAndReturnToStoryboard}>콘티로</Button>
+                <Button size="sm" variant="ghost" onClick={leaveToLibrary}>나중에 하기</Button>
               </>
             ) : (
               <>
@@ -2464,8 +2909,26 @@ export function Editor() {
           <div className="surface fm-blocked">
             <div className="fm-blocked-icon"><Icon name="alertCircle" size={28} /></div>
             <p className="fm-blocked-msg">{dpJob.errorMessage}</p>
-            <p className="fm-blocked-hint">다른 모델을 선택하거나 라이선스 상태를 확인한 뒤 다시 시도해 주세요.</p>
-            <Button variant="primary" block onClick={discardGenerationAndReturnToStoryboard}>콘티로 돌아가기</Button>
+            <p className="fm-blocked-hint">
+              {licenseAlternatives.length
+                ? '다른 모델로 바꿔서 이어서 만들 수 있어요. 지금까지 만든 내용은 그대로 있어요.'
+                : '모델 라이선스 상태를 확인한 뒤 다시 시도해 주세요. 지금까지 만든 내용은 그대로 있어요.'}
+            </p>
+            {/* 앞 단계로 못 돌아가게 봉인했으므로(오너 8/15), 모델 교체는 여기서 할 수 있어야
+                한다 — 아니면 라이선스가 막힌 프로젝트는 영영 완성할 수 없다(리뷰 확정). */}
+            {licenseAlternatives.length > 0 && (
+              <div className="fm-blocked-models">
+                {licenseAlternatives.map((m) => (
+                  <button type="button" key={m.id} className="fm-blocked-model"
+                    onClick={() => retryGenerationWithModel(m.id)}>
+                    {m.coverImageUrl && <img src={m.coverImageUrl} alt="" loading="lazy" />}
+                    <span>{m.displayName || m.name || m.label || '모델'}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <Button variant="primary" block size="sm" onClick={() => retryGenerationWithModel(null)}>다시 시도</Button>
+            <Button variant="ghost" block size="sm" style={{ marginTop: 8 }} onClick={leaveToLibrary}>나중에 하기 · 보관함으로</Button>
           </div>
         </div>
       )}
@@ -2495,7 +2958,17 @@ export function Editor() {
         </div>
 
         <div className={`ed-canvas-wrap${spaceDown ? ' panning' : ''}`} ref={wrapRef}
-          onPointerDown={(e) => { if (spaceDown) startPan(e); else startMarqueeSelection(e); }}
+          onPointerDown={(e) => {
+            if (spaceDown) { startPan(e); return; }
+            /* 텍스트를 쓰다가 캔버스 빈 곳을 누르면 순서가 이렇다:
+               pointerdown → blur(편집 종료) → 리렌더 → click(선택 해제).
+               blur 로 editing 만 풀리는 순간 선택 상태(파란 컨트롤 박스·핸들)가 한 프레임
+               나타났다가 이어지는 click 이 지운다 — 그게 오너가 본 "잠깐 선택된 채로 보였다
+               사라지는" 깜빡임이다. 해제를 blur 보다 먼저 해서 그 한 프레임을 없앤다.
+               (패널을 누른 blur 는 여기 오지 않으므로 스타일 편집용 선택은 그대로 유지된다.) */
+            if (editEl && shouldClearEditorSelection(e.target)) clearSel();
+            startMarqueeSelection(e);
+          }}
           onClick={(e) => { if (consumeMarqueeClick() || spaceDown || !shouldClearEditorSelection(e.target)) return; if (cropping) { commitCrop(); return; } clearSel(); setBlockFocused(false); }}
           onScroll={() => moveableRef.current?.updateRect()}
           onMouseMove={(e) => { const g = isEditorGrayWorkspaceTarget(e.target); setHoverGray((v) => v === g ? v : g); }}
@@ -2542,12 +3015,12 @@ export function Editor() {
                   crop={cropping && cropping.blockId === b.id ? cropping : null}
                   onCropDrag={cropDrag} onCropStart={startCrop} onCropCommit={commitCrop} onCropCancel={cancelCrop} onCropReset={resetCrop}
                   onSelectBlock={(id) => { setSelBlock(id); setBlockFocused(true); clearSel(); setTab('shape'); }} onSelectEl={selectEl}
-                  onElPatch={patchElById} onTextCommit={commitBubbleText} onElementDragStart={startElementDrag}
+                  onElPatch={patchElById} onTextCommit={commitText} onElementDragStart={startElementDrag}
                   shouldSuppressBlankClick={consumeMarqueeClick}
                   onAddImage={requestSlotImage} onDropImage={dropSlotImage}
                   onDropBlockImage={(blockId, image, point) => insertImage(image, { blockId, point })} onDropImageFiles={dropImageFiles}
                   onOpenLayers={(id) => { setLayerFloat(id); setLayerPos(null); }}
-                  onObjectDrop={(bid, type, id, ev) => addShape(type, id, bid, ev)} onReshape={reshapeBlock}
+                  onObjectDrop={(bid, type, id, ev) => (type === 'text' ? dropText(id, bid, ev) : addShape(type, id, bid, ev))} onReshape={reshapeBlock}
                   onMove={moveBlock} onAddEmpty={addEmpty} onDelete={deleteBlock} onEditInfo={openInfoEdit}
                   onDownload={downloadBlock} />
               </div>
@@ -2611,8 +3084,12 @@ export function Editor() {
         {!rightHidden && <MiniPreview blocks={blocks} selectedBlockId={selBlock} onJump={jumpTo} onReorder={reorderBlock} />}
 
         {layerFloat && blocks.find((b) => b.id === layerFloat) && (
-          <div className="layer-float" style={layerPos ? { left: layerPos.x, top: layerPos.y, right: 'auto' } : undefined}>
-            <div className="lf-head">
+          <div className="layer-float" ref={layerFloatRef}
+            style={layerPos ? { left: layerPos.x, top: layerPos.y, right: 'auto' } : undefined}>
+            {/* 손잡이를 잡아 창을 옮긴다. 여태 커서만 grab 이고 실제로 옮기는 코드가 없어
+                "레이어 창이 안 움직인다"는 신고가 나왔다(오너 8/16). 목록 행의 순서 드래그와
+                섞이지 않게 머리말에서만 시작한다. */}
+            <div className="lf-head" onPointerDown={startLayerFloatDrag}>
               <Icon name="gripV" size={14} className="lf-grip" /><Icon name="layers" size={15} /><span>레이어</span>
               <IconButton name="x" size="sm" onClick={() => setLayerFloat(null)} />
             </div>

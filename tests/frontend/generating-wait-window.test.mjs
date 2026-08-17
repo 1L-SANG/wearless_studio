@@ -116,29 +116,49 @@ test('생성 진입 화면은 잡을 시작하고 에디터로 바로 보내며 
 });
 
 test('생성 중 자동 저장은 서버 완성본 대신 임시 작업본을 사용한다', () => {
-  const autoSave = editor.slice(
-    editor.indexOf('// 자동 저장 — 생성 중에는'),
-    editor.indexOf('// delete key removes selection'),
-  );
+  // 존재하지 않는 문구로 끝을 잡으면 indexOf 가 -1 이라 파일 거의 전체가 슬라이스돼
+  // 단정이 엉뚱한 코드에 걸린다(2026-08-17 리뷰). 그 효과의 닫는 줄까지만 자른다.
+  const autoSaveStart = editor.indexOf('// 자동 저장 — 생성 중에는');
+  assert.ok(autoSaveStart > 0, '자동 저장 블록을 못 찾았다');
+  const autoSave = editor.slice(autoSaveStart, autoSaveStart + editor.slice(autoSaveStart).indexOf('\n  }, ['));
+  assert.ok(autoSave.length < 2000, `슬라이스가 너무 넓다(${autoSave.length}자) — 단정이 헛돈다`);
   assert.match(autoSave, /if \(genActive\)/);
-  assert.match(autoSave, /saveEditorWaitDraft\(projectId, latestBlocks\.current\)/);
-  assert.match(autoSave, /api\.saveEditorBlocks\(projectId, latestBlocks\.current\)/);
+  // persistable() = 손 안 댄 안내 문구를 걷어내는 저장 관문(2026-08-17 검증).
+  assert.match(autoSave, /saveEditorWaitDraft\(projectId, persistable\(latestBlocks\.current\)\)/);
+  assert.match(autoSave, /api\.saveEditorBlocks\(projectId, persistable\(latestBlocks\.current\)\)/);
 });
 
-test('실패 후 다시 시도는 임시 작업본을 지키고 콘티 복귀만 폐기한다', () => {
+test('실패 후 다시 시도는 임시 작업본을 지키고, 이탈은 앞 단계가 아니라 보관함으로 간다', () => {
   const retry = editor.slice(
     editor.indexOf("useAppStore.getState().resetDetailPageJob();", editor.indexOf("genFinalizeError ?")),
     editor.indexOf('>다시 시도</Button>'),
   );
   assert.doesNotMatch(retry, /clearEditorWaitDraft/);
 
-  const discard = editor.slice(
-    editor.indexOf('const discardGenerationAndReturnToStoryboard'),
-    editor.indexOf('/* kb.current', editor.indexOf('const discardGenerationAndReturnToStoryboard')),
-  );
-  assert.match(discard, /clearEditorWaitDraft\(projectId\)/);
-  assert.match(discard, /resetDetailPageJob\(\)/);
-  assert.match(discard, /navigate\('\/create\/storyboard'\)/);
+  // 에디터 진입 후 앞 단계 복귀는 금지(오너 8/15) — 되돌아가면 만든 컷·편집이 덮인다.
+  // 실패·차단 화면의 이탈은 편집분을 저장한 뒤 보관함으로 내려놓는다.
+  assert.doesNotMatch(editor, /navigate\('\/create\/storyboard'\)/);
+  assert.doesNotMatch(editor, /discardGenerationAndReturnToStoryboard/);
+  // 함수 본문만 잘라 본다 — 뒤따르는 주석 위치로 끝을 잡으면 그 주석이 옮겨질 때
+  // 슬라이스가 파일 절반을 삼켜 단정이 헛돈다(2026-08-16 TDZ 수정 때 실제로 깨졌다).
+  const leaveStart = editor.indexOf('const leaveToLibrary');
+  const leave = editor.slice(leaveStart, editor.indexOf('\n  };', leaveStart) + 5);
+  assert.match(leave, /flushExit\(\)/, '편집분을 먼저 저장한다');
+  assert.match(leave, /skipExitPersist\.current = true/, '언마운트 정리가 덮어쓰지 않게');
+  assert.match(leave, /navigate\('\/library'\)/);
+  assert.doesNotMatch(leave, /clearEditorWaitDraft/, '임시 작업본은 남겨 재진입 때 이어서 한다');
+});
+
+test('편집을 시작한 프로젝트는 초안 단계로 되돌아갈 수 없다', () => {
+  const shell = readFileSync(new URL('../../src/features/shell/shell.jsx', import.meta.url), 'utf8');
+  const app = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
+  // 서버 status='done' 만으로는 부족하다 — 생성이 실패·차단으로 끝나면 done 이 아니다.
+  // 단 프로젝트가 실제로 열리는지 확인한 뒤에만 막는다(사라진 프로젝트를 막으면 무한 왕복).
+  // 돌아온 프로젝트가 **그 프로젝트가 맞는지**까지 본다 — mock 은 id 를 무시하고 현재
+  // 초안을 돌려주므로, 확인 없이 막으면 개발 모드에서 모달↔입력 화면 왕복이 된다(8/17 리뷰).
+  assert.match(shell, /const sameProject = p\?\.id === pid;/);
+  assert.match(shell, /if \(!cancelled && sameProject && \(p\.status === 'done' \|\| hasEditorEntered\(pid\)\)\) setBlocked\(true\);/);
+  assert.match(app, /markEditorEntered\(project\.id\);\s*\n\s*setPhase\('ready'\);/);
 });
 
 test('완료 병합은 기본 정보 템플릿을 같은 방문에서 적용한다', () => {
@@ -153,9 +173,11 @@ test('완료 병합은 기본 정보 템플릿을 같은 방문에서 적용한�
 });
 
 test('저장된 문서를 여는 경로도 누락된 배송·교환·반품 프레임을 복구한다', () => {
+  // 경계를 'setWardrobe(...' 로 잡으면 콘티 실패 폴백 분기가 앞에 끼면서 슬라이스가 잘린다.
+  // 저장 문서 경로(else 분기)의 끝인 withH 정규화 지점을 경계로 쓴다.
   const initialization = editor.slice(
     editor.indexOf('.then(([b, w, c, _a, p, fm, an, sb, mc]) => {'),
-    editor.indexOf('setWardrobe(mergeEditorImagesIntoWardrobe'),
+    editor.indexOf('withH = upgradeLegacyKiwiTemplateBlocks'),
   );
   assert.match(initialization, /ensureShippingReturnsBlock\(withH, ctx\)/);
 });

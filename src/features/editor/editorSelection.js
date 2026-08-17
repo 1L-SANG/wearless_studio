@@ -170,13 +170,67 @@ export function isEditorDeleteKey(event) {
   return true;
 }
 
+/* 격자·프레임 안의 사진 자리 — 여기 사진을 지우면 요소를 없애는 게 아니라 **빈 자리로
+   되돌린다**(오너 2026-08-17). 4장짜리 격자는 따로 만든 사진 4장을 나란히 붙여 둔 것이라
+   한 장만 지우는 건 맞지만, 자리까지 사라지면 격자가 무너지고 다시 넣은 사진이 칸 크기를
+   모른 채 블록을 통째로 덮는다. 빈 자리로 남기면 '＋ 여기에 사진 넣기'가 그 자리에 뜨고
+   드롭도 그 칸에 스냅된다. */
+const PHOTO_SLOT_BLOCK_KINDS = new Set(['twocol', 'threecol', 'grid2x2', 'colorcmp']);
+
+export function isPhotoSlotElement(block, element) {
+  if (element?.type !== 'image') return false;
+  if (element.frameSlot) return true;   // 프레임 탭 템플릿의 사진 칸
+  // 콘티에서 조립된 사진 행·격자의 '칸'만 — sourceBlockId 가 그 표식이다. 블록 종류만 보면
+  // 그 블록에 나중에 얹은 낱장 사진까지 칸으로 오인해, Delete 해도 빈 칸으로만 바뀌며
+  // 영영 못 지우게 된다(2026-08-17 리뷰).
+  return PHOTO_SLOT_BLOCK_KINDS.has(block?.kind) && Boolean(element.sourceBlockId);
+}
+
+/** 사진이 **든** 자리는 비우고(요소 유지), 이미 빈 자리와 그 밖의 요소는 지운다.
+    빈 자리까지 남기면 프레임 템플릿의 남는 칸이나 한 번 비운 칸을 영영 못 없앤다. */
 export function removeSelectedElements(blocks, selectedIds) {
   const selected = new Set(selectedIds || []);
   if (!selected.size) return blocks;
   return blocks.map((block) => ({
     ...block,
-    elements: block.elements.filter((element) => !selected.has(element.id)),
+    elements: block.elements.reduce((kept, element) => {
+      if (!selected.has(element.id)) { kept.push(element); return kept; }
+      // 지우는 경우: ①사진 자리가 아니거나 ②이미 비어 있고 콘티 컷과도 안 묶인 자리
+      // (프레임 템플릿의 남는 칸). 콘티 컷 자리(sourceBlockId)는 비어 있어도 요소를 없애면
+      // 안 된다 — 완료 병합의 안전 검사가 깨져 대기 중 편집분이 통째로 서버본으로 덮인다
+      // (2026-08-17 검증). 그 자리는 격자 배치의 일부라 비워 두는 게 맞다.
+      if (!isPhotoSlotElement(block, element)) return kept;
+      if (!element.src) {
+        if (!element.sourceBlockId) return kept;      // 템플릿 빈 칸 — 없앤다
+        kept.push(element);                            // 콘티 컷 자리 — 그대로 둔다
+        return kept;
+      }
+      // 비운다 — 자리·크기·모서리는 그대로, 사진에 딸린 것만 걷어낸다.
+      // sourceBlockId(콘티 컷과의 연결)는 **남긴다**: 지우면 완료 병합의 안전 검사
+      // (canSafelyMergeServerBlocks)가 "배치가 서버와 다르다"고 판단해 대기 중 편집분을
+      // 통째로 서버본으로 갈아끼운다. 대신 slotCleared 로 "셀러가 일부러 비웠다"를 남겨
+      // 병합·자동 채움이 이 자리를 되살리지 않게 한다(2026-08-17 검증).
+      const { crop: _crop, genFailed: _genFailed, genPending: _genPending, ...rest } = element;
+      kept.push({ ...rest, src: null, cutType: null, frameSlot: true, slotCleared: true });
+      return kept;
+    }, []),
   }));
+}
+
+/** 레이어 창 드래그로 요소 순서 바꾸기 — 끌어 놓은 요소를 대상 자리로 옮긴 elements 배열.
+    두 인덱스를 **꺼내기 전에** 모두 구해야 한다. 먼저 꺼내면 제거로 뒤 인덱스가 하나씩
+    당겨져, 바로 위 칸에 놓는 경우(가장 흔한 조작) 목표가 출발 자리와 같아져 제자리에
+    도로 꽂혔다 — "위로 옮기기"가 통째로 먹통이던 원인(오너 2026-08-16). */
+export function reorderElements(elements, fromId, toId) {
+  const next = [...(elements || [])];
+  const from = next.findIndex((element) => element.id === fromId);
+  const to = next.findIndex((element) => element.id === toId);
+  if (from < 0 || to < 0 || from === to) return elements;
+  const [moved] = next.splice(from, 1);
+  // 꺼낸 뒤의 `to` 가 그대로 정답이다. 뒤로 끌면 제거로 인덱스가 하나 당겨지지만 '대상의
+  // 뒷자리'로 넣어야 해서 +1 이 되어 상쇄되고, 앞으로 끌면 대상 앞자리가 곧 `to` 다.
+  next.splice(to, 0, moved);
+  return next;
 }
 
 export function removeSelectedBlock(blocks, selectedBlockId) {

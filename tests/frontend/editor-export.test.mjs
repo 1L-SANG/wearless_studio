@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   EXPORT_WIDTH,
   exportFileName,
   fitPixelRatio,
+  isAssetBytesUrl,
   stitchLayout,
   toBytesUrl,
 } from '../../src/features/editor/editorExport.js';
@@ -12,14 +14,26 @@ import {
 const AID = '123e4567-e89b-42d3-a456-426614174000';
 
 test('toBytesUrl: /file 자산 URL을 /bytes로 바꾼다 (상대·절대·비uuid id — id 검증은 서버 몫)', () => {
-  assert.equal(toBytesUrl(`/v1/assets/${AID}/file`), `/v1/assets/${AID}/bytes`);
+  // ?e=1 은 CORS 캐시 오염 탈출용 1회성 버스터 — 예전 빌드가 허가 헤더 없는 사본을
+  // 1년짜리로 캐시에 박아 둬서, 주소를 갈지 않으면 서버를 고쳐도 계속 차단된다.
+  assert.equal(toBytesUrl(`/v1/assets/${AID}/file`), `/v1/assets/${AID}/bytes?e=1`);
   assert.equal(
     toBytesUrl(`https://api.wearless.app/v1/assets/${AID}/file`),
-    `https://api.wearless.app/v1/assets/${AID}/bytes`,
+    `https://api.wearless.app/v1/assets/${AID}/bytes?e=1`,
   );
   // 프론트가 서버보다 엄격하면 어긋난다 — id 모양은 경로 수준만 본다 (리뷰 반영)
-  assert.equal(toBytesUrl('/v1/assets/stable-1/file'), '/v1/assets/stable-1/bytes');
-  assert.equal(toBytesUrl(`/v1/assets/${AID}/file?v=2`), `/v1/assets/${AID}/bytes`);
+  assert.equal(toBytesUrl('/v1/assets/stable-1/file'), '/v1/assets/stable-1/bytes?e=1');
+  assert.equal(toBytesUrl(`/v1/assets/${AID}/file?v=2`), `/v1/assets/${AID}/bytes?e=1`);
+});
+
+test('isAssetBytesUrl: 쿼리가 붙어도 핵심 자산으로 판정한다', () => {
+  // 이 판정이 깨지면 상품컷 실패가 soft 로 강등돼 빈 이미지인 채 "저장 완료" 로 속인다.
+  assert.equal(isAssetBytesUrl(`/v1/assets/${AID}/bytes?e=1`), true);
+  assert.equal(isAssetBytesUrl(`/v1/assets/${AID}/bytes`), true);
+  assert.equal(isAssetBytesUrl(toBytesUrl(`/v1/assets/${AID}/file`)), true);
+  assert.equal(isAssetBytesUrl(`/v1/assets/${AID}/file`), false);
+  assert.equal(isAssetBytesUrl('https://cdn.example.com/img.png'), false);
+  assert.equal(isAssetBytesUrl(null), false);
 });
 
 test('toBytesUrl: blob·data·외부·비자산 URL은 그대로 둔다', () => {
@@ -60,4 +74,15 @@ test('exportFileName: 금지문자 제거·빈 값 기본, 캡처 폭 계약 고
   assert.equal(exportFileName(''), '상세페이지.png');
   assert.equal(exportFileName('니트', '블록01'), '니트_블록01.png');
   assert.equal(EXPORT_WIDTH, 1000); // .ed-canvas 설계 폭과 같아야 한다 (features.css .ed-canvas)
+});
+
+
+test('내보내기 캡처에서 빈 사진 자리는 빠진다 — 완성본에 회색 네모가 찍히면 안 된다', () => {
+  const source = readFileSync(new URL('../../src/features/editor/editorExport.js', import.meta.url), 'utf8');
+  const chrome = source.slice(source.indexOf('const CHROME_SELECTOR'), source.indexOf("].join(',')"));
+  // 사진을 비워 둔 칸('＋ 여기에 사진 넣기')은 편집기 안내지 상품 페이지 내용이 아니다.
+  assert.match(chrome, /'\.el-slot'/);
+  assert.match(chrome, /'\.slot-add'/, '＋ 버튼도 함께 빠진다');
+  // 실제로 제거하는 코드와 이어져 있어야 목록이 의미가 있다.
+  assert.match(source, /clone\.querySelectorAll\(CHROME_SELECTOR\)\.forEach\(\(n\) => n\.remove\(\)\)/);
 });

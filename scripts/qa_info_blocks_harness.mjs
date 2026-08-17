@@ -59,7 +59,7 @@ for (const p of INFO_PRESET_TYPES) {
     { id: 'cut', name: '컷', kind: 'benefit', contentRole: 'hero', bg: '#ffffff', h: 300, elements: [{ id: 'cutimg', type: 'image', x: 60, y: 50, w: 880, h: 200, src: null }] },
     { id: 's', name: '사이즈 안내', kind: 'size', auto: true, bg: '#ffffff', h: 200, elements: [] },
     { id: 'c', name: '세탁 안내', kind: 'care', auto: true, bg: '#f5f5f5', h: 160, elements: [] },
-    { id: 'n', name: 'AI 생성 안내', kind: 'ai-notice', auto: true, bg: '#ffffff', h: 120, elements: [{ id: 'nt', type: 'text', x: 60, y: 48, w: 880, h: 40, text: '본 상세페이지의 일부 이미지는 AI를 활용해 생성되었습니다.', style: { size: 13, color: '#4a4a45', align: 'center' } }] },
+    { id: 'n', name: 'AI 생성 안내', kind: 'ai-notice', auto: true, bg: '#ffffff', h: 120, elements: [{ id: 'nt', type: 'text', x: 60, y: 48, w: 880, h: 40, text: '본 상세페이지의 일부 이미지는 AI를 활용해 생성되었습니다.', style: { size: 13, color: '#6b6b73', align: 'center' } }] },
   ];
   const res = applyInfoTemplate(doc, CTX);
   out += `<h2 style="text-align:center;font-family:system-ui">기본 템플릿 적용 결과 (${res.inserted.length} 구성)</h2>`;

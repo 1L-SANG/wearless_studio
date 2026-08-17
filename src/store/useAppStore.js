@@ -231,6 +231,10 @@ export const useAppStore = create((set, get) => ({
      여기선 로컬 플로우만 초기화: 미동기화 draft 폐기(묵은 입력 복원 방지) + projectGeneration
      을 올려 ProductInput 을 remount(폼 초기화)한다. */
   async beginProject() {
+    // 이전 프로젝트의 '편집 시작' 표식은 **지우지 않는다**(2026-08-17 리뷰). 그 표식은
+    // "이 프로젝트는 이미 편집했다"는 프로젝트별 사실이라, 새 제작을 시작했다고 사라지면
+    // 나중에 보관함에서 그 프로젝트를 다시 열었을 때 앞 단계 복귀가 다시 열려 편집분이
+    // 다음 생성으로 덮인다. 표식 하나는 수십 바이트라 남겨 두는 비용이 훨씬 싸다.
     ensureProjectInflight = null;   // 새 제작 시작 — 이전 플로우의 in-flight 생성과 분리
     detailJobSeq += 1;              // 이전 프로젝트의 상세페이지 폴링 루프 무효화(codex F5 —
                                     // stale 루프가 새 플로우의 detailPageJob 을 덮지 않게)

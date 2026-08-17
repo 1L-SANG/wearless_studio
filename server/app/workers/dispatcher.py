@@ -6,6 +6,7 @@ lease 초과(고착) job을 복구하고, 복구로 error 처리된 job의 예�
 """
 
 import asyncio
+import contextlib
 import logging
 import time
 
@@ -102,15 +103,48 @@ class JobDispatcher:
                     continue
                 # 이 잡이 도는 동안 일어난 이미지 호출에 job·user·kind 를 붙인다
                 # (워커 시그니처를 바꾸지 않고 실비를 잡별로 귀속시키는 유일한 지점).
-                with image_usage.job_scope(
-                    job_id=job["id"], user_id=job.get("user_id"), stage=job["kind"]
-                ):
-                    await worker(self.app, job)
+                heartbeat = asyncio.create_task(self._keep_lease(s, pool, job))
+                try:
+                    with image_usage.job_scope(
+                        job_id=job["id"], user_id=job.get("user_id"), stage=job["kind"]
+                    ):
+                        await worker(self.app, job)
+                finally:
+                    heartbeat.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await heartbeat
             except asyncio.CancelledError:
                 raise
             except Exception:
                 log.exception("dispatcher loop error")
                 await asyncio.sleep(s.job_poll_interval_seconds)
+
+    async def _keep_lease(self, s, pool, job):
+        """잡이 도는 동안 lease 시각을 갱신한다.
+
+        lease 는 '워커가 죽었는지'를 보려는 장치인데 기준이 시작 시각이라, 정상적으로
+        오래 걸리는 잡(상세페이지 13컷)이 그대로 재큐돼 **전 컷을 처음부터 다시 생성**했다
+        — 페이지 단위로 프로바이더 실비가 두 번 나간다(2026-08-17 검증).
+        갱신 주기는 타임아웃의 1/3 — 한두 번 실패해도 회수 전에 회복할 여유가 있다.
+        """
+        token = job.get("lease_token")
+        if not token:
+            return
+        interval = max(5, int(s.job_lease_timeout_seconds) // 3)
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                async with pool.connection() as conn:
+                    renewed = await repo.renew_job_lease(conn, job["id"], token)
+                    await conn.commit()
+                # 이미 회수돼 다른 워커가 집어간 잡이면 하트비트를 멈춘다(양쪽에서 도는 것 방지).
+                if not renewed:
+                    log.warning("lease lost for job %s — heartbeat stops", job["id"])
+                    return
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("lease renew failed for job %s", job["id"])
 
     async def _recover_stale(self, s, pool):
         async with pool.connection() as conn:

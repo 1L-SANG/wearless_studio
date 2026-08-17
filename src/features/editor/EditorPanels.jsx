@@ -3,8 +3,8 @@
    Ported verbatim from reference/prototype/features/editor-panels.jsx.
    Only change: ES imports/exports (was window globals).
    ============================================================= */
-import { useState, useEffect, useRef } from 'react';
-import { Icon, Button, IconButton, Chips, EmptyState } from '@/components/ui.jsx';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Icon, Button, IconButton, Chips, EmptyState, UploadPendingTile } from '@/components/ui.jsx';
 import { UnderlineTabs, ColorDots, MoodGuide, OuterClosureIcon } from '@/features/storyboard/Storyboard.jsx';
 import { ModelThumb } from '@/features/analysis/AnalysisForm.jsx';
 import { SHAPE_D } from '@/features/editor/shapes.js';
@@ -19,7 +19,10 @@ import {
 } from '@/lib/storyboardExampleSelection.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, OBJECT_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, colorWithOpacity, encodeWardrobeImage, normalizeHexColor } from '@/features/editor/editorLibrary.js';
-import { DEFAULT_EDITOR_COLOR_PRESETS, commitNumberDraft, hexToHsv, hsvToHex } from '@/features/editor/editorAppearance.js';
+import { DEFAULT_EDITOR_COLOR_PRESETS, commitNumberDraft, hexToHsv, hsvToHex, speechBubblePath } from '@/features/editor/editorAppearance.js';
+import { DEFAULT_TEXT_PRESET, TEXT_MUTED, TEXT_PRESETS, activeTextPreset, quickStylePatch, textPresetBox } from '@/features/editor/presets/textPresets.js';
+import { TEXT_PRESET_DRAG_PREFIX } from '@/features/editor/editorImageDrop.js';
+import { speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 
 function PanelHead({ title, sub }) {
@@ -206,10 +209,15 @@ function SwatchField({ value, opacity, allowNone, thumb, onColor, onOpacity, vis
         </div>
       )}
       {onOpacity && !isNone && (
-        <label className="sf-opacity">
+        /* 트랙 자체가 결과를 보여준다 — 체커보드(=비침) 위에 현재 색이 왼쪽 0%에서
+           오른쪽 100%로 차오른다. 브라우저 기본 슬라이더는 "무엇이 얼마나 투명해지는지"를
+           숫자로만 말해서, 값을 옮기며 눈으로 맞추기 어려웠다(오너 8/16 미감 지적). */
+        <label className="sf-opacity" style={{ '--sf-op-color': normalized || 'var(--fg-1)' }}>
           <span>투명도</span>
-          <input type="range" min="0" max="100" step="1" value={alpha}
-            onChange={(e) => onOpacity(Number(e.target.value))} />
+          <span className="sf-opacity-track">
+            <input type="range" min="0" max="100" step="1" value={alpha} aria-label="투명도"
+              onChange={(e) => onOpacity(Number(e.target.value))} />
+          </span>
         </label>
       )}
     </div>
@@ -238,98 +246,87 @@ function StrokeWidthControl(props) {
   return <RangeNumberControl label="테두리 굵기" min={0.5} max={12} step={0.5} {...props} />;
 }
 
-/* ---------- AI · 현재 이미지 수정 — 예시 카드 선택 + 누적 트레이 ---------- */
+/* ---------- AI · 현재 이미지 수정 — 지금 고른 컷을 바탕으로 한 장 더 ---------- */
+/* 서브탭 이름은 '현재 이미지 수정'이고, 그 안에 생성 방식이 둘 있다(오너 2026-08-16):
+   ① 같은 장소 이미지 생성 — 아래에서 고른 방향·포즈·표정만 바꾸고 장소는 그대로
+   ② 비슷한 컷 만들기 — 고른 것 없이 현재 컷과 비슷한 분위기로 한 장
+
+   배경 변경은 뺐다: 장면을 통째로 다시 그리는 유일한 항목이라 옷 정체성이 흔들릴 위험이
+   가장 큰데 이 경로에는 품질 검사(QC)가 없고, 프리셋 배경은 셀러가 콘티에서 고른 연출과
+   무관해 페이지의 장소 일관성도 깨뜨린다. 배경을 안 건드리면 프롬프트의 freeze 계약
+   (cut_vary_v1.txt)이 장소를 그대로 유지해 준다 = "같은 장소, 다른 위치".
+   거리(풀샷·미디움샷)도 뺐다(오너 2026-08-16) — 같은 장소에서 자리를 옮기는 기능에
+   '얼마나 크게 찍을지'가 섞이면 결과가 원본과 다른 컷처럼 보인다. */
 const VARY_CATS = [
-  { id: 'cut', label: '컷 변경' }, { id: 'bg', label: '배경' },
-  { id: 'pose', label: '포즈' }, { id: 'face', label: '표정' },
+  { id: 'cut', label: '방향' },
+  { id: 'pose', label: '포즈' },
+  { id: 'face', label: '표정' },
 ];
-function VaryPanel({ catalogs, source, onPickRef, onGenerate, onSetCutType }) {
+function VaryPanel({ catalogs, source, onGenerate }) {
   const opts = catalogs.varyOptions || {};
   const [cat, setCat] = useState('cut');
   const [sel, setSel] = useState({});
-  const [refBg, setRefBg] = useState(null); // 레퍼런스 배경 src — bg 프리셋 카드와 상호 배타
-  const [cutDir, setCutDir] = useState('keep'); // 컷 변경 · 방향 — 'keep' = 현재 유지
-  const [cutShot, setCutShot] = useState('keep'); // 컷 변경 · 샷 종류
+  const [cutDir, setCutDir] = useState('keep'); // 방향 — 'keep' = 현재 유지
   const busyRef = useRef(false); // 같은 틱 더블클릭으로 생성이 2번 나가는 것 방지
   if (!source) {
-    return <EmptyState icon="image" title="변형할 컷을 선택하세요" desc="캔버스나 의류 탭에서 이미지를 먼저 선택해주세요." />;
+    return <EmptyState icon="image" title="수정할 컷을 골라주세요" desc="캔버스나 의류 탭에서 이미지를 먼저 골라주세요." />;
   }
-  // 소스 컷 종류 — AI 생성 컷은 생성 시 기록된 cutType 으로 알고, 직접 업로드는 미상(null).
-  // 미상이면 '모델 착용 컷'으로 가정하고(B안), 질문 카드로 제품 사진 전환만 받는다.
+  // 소스 컷 종류 — AI 생성 컷은 생성 시 기록된 cutType 으로 안다. 직접 업로드는 미상이고,
+  // 그때는 사람컷 대표값(styling)으로 가정한다. 셀러에게 되묻지 않는다(오너 8/16):
+  // 아무것도 하기 전에 사진 분류부터 시키는 질문 카드였고, 답도 대개 이미 알고 있다.
   const srcType = source.cutType || null;
   const isProduct = srcType === 'product';
-  // mirror 레시피 소스(ADR-0004): 방향 변경 없음, 샷 full/medium만, 포즈는 셀피 구도 자동이라 변형 대상 아님
+  // mirror 레시피 소스(ADR-0004): 방향 변경 없음, 포즈는 셀피 구도 자동이라 변형 대상 아님
   const isMirror = srcType === 'mirror';
   const dirOpts = isProduct ? catalogs.productDirections : catalogs.directions;
-  // 현재 이미지 수정은 색상별 Detail 근거를 안전하게 연결할 수 없으므로 디테일샷을 제공하지 않는다.
-  const shotOpts = isProduct ? catalogs.productShotTypes.filter((option) => option.value !== 'detail')
-    : catalogs.shotTypes;
-  const cats = isProduct ? VARY_CATS.filter((c) => c.id === 'cut' || c.id === 'bg')
-    : isMirror ? VARY_CATS.filter((c) => c.id !== 'pose')
+  // 제품컷엔 사람이 없다 — 포즈·표정은 성립하지 않는다. 거울컷은 방향도 포즈도 못 바꾸니
+  // 표정만 남는다(거리를 뺀 뒤로 '방향' 칸이 통째로 비기 때문).
+  const cats = isProduct ? VARY_CATS.filter((c) => c.id === 'cut')
+    : isMirror ? VARY_CATS.filter((c) => c.id === 'face')
     : VARY_CATS;
-  const safeCat = cats.some((c) => c.id === cat) ? cat : 'cut';
+  const safeCat = cats.some((c) => c.id === cat) ? cat : cats[0].id;
   const optLabel = (c, id) => (opts[c] || []).find((o) => o.id === id)?.label || id;
   const valLabel = (list, v) => (list || []).find((o) => o.value === v)?.label || v;
-  // 칩/payload 순서 = 적용 우선순위 계약: 구도(방향·샷)가 기준 → 포즈·표정 → 배경(레퍼런스 포함)이 구도에 맞춰 따라온다
+  // 칩/payload 순서 = 적용 우선순위 계약: 방향이 기준 → 포즈 → 표정이 그 위에 얹힌다
   const chips = [];
   if (cutDir && cutDir !== 'keep') chips.push({ key: 'dir', cat: '방향', type: 'direction', value: cutDir, label: valLabel(dirOpts, cutDir), clear: () => setCutDir('keep') });
-  if (cutShot && cutShot !== 'keep') chips.push({ key: 'shot', cat: '샷 종류', type: 'shot', value: cutShot, label: valLabel(shotOpts, cutShot), clear: () => setCutShot('keep') });
   if (sel.pose) chips.push({ key: 'pose', cat: '포즈', type: 'pose', value: sel.pose, label: optLabel('pose', sel.pose), clear: () => setSel((s) => ({ ...s, pose: null })) });
   if (sel.face) chips.push({ key: 'face', cat: '표정', type: 'face', value: sel.face, label: optLabel('face', sel.face), clear: () => setSel((s) => ({ ...s, face: null })) });
-  if (sel.bg || refBg) chips.push({ key: 'bg', cat: '배경', type: 'bg', value: sel.bg || 'ref',
-    label: sel.bg ? optLabel('bg', sel.bg) : '레퍼런스 이미지', clear: () => { setSel((s) => ({ ...s, bg: null })); setRefBg(null); } });
   const n = chips.length;
-  const hasChange = { bg: !!(sel.bg || refBg), pose: !!sel.pose, face: !!sel.face, cut: (cutDir && cutDir !== 'keep') || (cutShot && cutShot !== 'keep') };
+  const hasChange = { pose: !!sel.pose, face: !!sel.face, cut: !!cutDir && cutDir !== 'keep' };
   const cost = catalogs.creditCosts?.editorImage ?? 1;
-  const pickCard = (oid) => { if (safeCat === 'bg') setRefBg(null); setSel((s) => ({ ...s, [safeCat]: s[safeCat] === oid ? null : oid })); };
-  const clearAll = () => { setSel({}); setRefBg(null); setCutDir('keep'); setCutShot('keep'); };
-  // 기준 전환 — 요소에 영구 저장(이미지당 1번만 답하면 됨). 옵션 세트가 바뀌므로 선택은 초기화.
-  // '모델 착용 컷' 전환은 사람컷 대표값 styling 으로 기록한다 (ADR-0003).
-  const setKind = (t) => { onSetCutType(t); clearAll(); setCat('cut'); };
-  const pickRef = async () => { const picked = await onPickRef(); if (picked) { setRefBg(picked); setSel((s) => ({ ...s, bg: null })); } };
-  const generate = () => {
+  const pickCard = (oid) => setSel((s) => ({ ...s, [safeCat]: s[safeCat] === oid ? null : oid }));
+  const clearAll = () => { setSel({}); setCutDir('keep'); };
+  /* 생성 방식 두 가지 — 서버 계약(§6)은 하나다. changes 배열이 곧 방식이다:
+     고른 변경을 담아 보내면 '같은 장소 이미지 생성', 빈 배열이면 '비슷한 컷 만들기'.
+     refBg 는 배경 변경을 뺀 뒤로 보내지 않는다(계약은 그대로라 생략만 하면 된다). */
+  const runGenerate = (changes) => {
     if (busyRef.current) return;
     busyRef.current = true; // 곧 의류 탭으로 전환되며 패널이 언마운트 — 같은 틱 더블클릭만 방어
     onGenerate({
       // 변형 대상 = 현재 변형 소스(캔버스 요소 또는 의류 이미지). cutType 미상이면 모델 착용 컷(styling)으로 가정.
       source: { id: source.id, src: source.src, cutType: srcType || 'styling' },
-      // 변경 0개(빈 트레이) = '비슷한 컷 만들기' (PRD §10.8) — 빈 배열이 그 계약
-      changes: chips.map((c) => ({ type: c.type, value: c.value, label: c.label })),
-      refBg: refBg ? (refBg.url || refBg) : null,             // 표시용 URL (mock 계약 유지)
-      refBgAssetId: refBg?.assetId || null,                   // 서버 첨부용 asset id (계약 §6)
+      changes,
     });
   };
+  // 고른 변경이 있으면 그걸 실어 보내고(=활성 버튼이 '비슷한 컷 만들기'), 하나도 없으면
+  // 빈 배열을 보낸다(=활성 버튼이 '같은 장소 이미지 생성'). 서버 계약(§6)은 하나다.
+  const generateWithPicks = () => runGenerate(chips.map((c) => ({ type: c.type, value: c.value, label: c.label })));
+  const generateAuto = () => runGenerate([]);
   const catLabel = VARY_CATS.find((c) => c.id === safeCat).label;
   return (
     <div>
-      {!srcType ? (
-        <div className="vary-kind">
-          <p className="vk-txt">모델 착용 컷 기준 옵션이에요. 제품만 나온 사진이면 알려주세요.</p>
-          <button type="button" className="vk-btn" onClick={() => setKind('product')}>제품만 나온 사진이에요</button>
-        </div>
-      ) : (
-        <div className="vary-kind compact">
-          <span className="vk-txt">{isProduct ? '제품 사진 기준의 옵션이에요.' : '모델 착용 컷 기준의 옵션이에요.'}</span>
-          <button type="button" className="vk-link" onClick={() => setKind(isProduct ? 'styling' : 'product')}>
-            {isProduct ? '모델 착용 컷으로 전환' : '제품 사진으로 전환'}
-          </button>
-        </div>
-      )}
       <div className="vary-tabs">
         <UnderlineTabs value={safeCat} onChange={setCat}
           options={cats.map((c) => ({ value: c.id, label: <>{c.label}{hasChange[c.id] && <span className="vary-dot" />}</> }))} />
       </div>
       {safeCat === 'cut' ? (
-        <>
-          {/* Chips 는 선택된 칩 재클릭 시 null 을 보냄 → '변경 없음'(keep) 으로 복귀시킨다 */}
-          {!isMirror && <div className="insp-sec"><label className="lbl">방향</label>
-            <Chips options={[{ value: 'keep', label: '변경 없음' }, ...dirOpts]} value={cutDir} onChange={(v) => setCutDir(v || 'keep')} /></div>}
-          <div className="insp-sec"><label className="lbl">샷 종류</label>
-            <Chips options={[{ value: 'keep', label: '변경 없음' }, ...shotOpts]} value={cutShot} onChange={(v) => setCutShot(v || 'keep')} /></div>
-        </>
+        /* Chips 는 선택된 칩 재클릭 시 null 을 보냄 → '변경 없음'(keep) 으로 복귀시킨다 */
+        <div className="insp-sec"><label className="lbl">보는 방향</label>
+          <Chips options={[{ value: 'keep', label: '변경 없음' }, ...dirOpts]} value={cutDir} onChange={(v) => setCutDir(v || 'keep')} /></div>
       ) : (
         <div className="insp-sec">
-          <label className="lbl">{catLabel} 카드 선택</label>
+          <label className="lbl">{catLabel} 고르기</label>
           <div className="vary-grid">
             {(opts[safeCat] || []).map((o) => {
               const on = sel[safeCat] === o.id;
@@ -343,32 +340,6 @@ function VaryPanel({ catalogs, source, onPickRef, onGenerate, onSetCutType }) {
             })}
           </div>
         </div>
-      )}
-      {safeCat === 'bg' && (
-        <details className="insp-extra vary-ref">
-          <summary><Icon name="chevRight" size={15} />레퍼런스로 배경 지정{refBg && <span className="vr-badge">사용 중</span>}</summary>
-          <div className="vary-ref-body">
-            {refBg ? (
-              <>
-                {/* 업로드한 레퍼런스는 배경 카드와 같은 크기의 카드로 표시 */}
-                <div className="vary-grid">
-                  <span className="vary-card on vr-cardprev">
-                    <span className="vc-check"><Icon name="check" size={12} /></span>
-                    <img src={refBg?.url || refBg} alt="" />
-                    <span className="vc-label">레퍼런스</span>
-                  </span>
-                </div>
-                <Button variant="ghost" size="sm" icon="trash" onClick={() => setRefBg(null)} style={{ marginTop: 10 }}>해제</Button>
-                <p className="hint" style={{ marginTop: 8 }}>배경은 선택한 컷 구도에 맞춰 적용돼요.</p>
-              </>
-            ) : (
-              <>
-                <Button variant="ghost" size="sm" block icon="upload" onClick={pickRef}>배경 레퍼런스 업로드</Button>
-                <p className="hint" style={{ marginTop: 8 }}>원하는 배경 사진을 올리면 카드 대신 그 분위기로 배경을 바꿔요. 배경은 선택한 컷 구도에 맞춰 적용돼요.</p>
-              </>
-            )}
-          </div>
-        </details>
       )}
       {n > 0 && (
         <div className="vary-tray">
@@ -385,20 +356,26 @@ function VaryPanel({ catalogs, source, onPickRef, onGenerate, onSetCutType }) {
           </div>
         </div>
       )}
-      <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={generate} style={{ marginTop: 14 }}>
-        {n > 0 ? `${n}개 변경 적용해서 생성 · ${cost} 크레딧` : `비슷한 컷 만들기 · ${cost} 크레딧`}
+      {/* 두 버튼은 서로 배타 — 고른 게 하나도 없으면 '같은 장소 이미지 생성'만, 방향·포즈·
+          표정을 하나라도 고르면 '비슷한 컷 만들기'만 눌린다(오너 2026-08-16). 그래서 눌리는
+          쪽이 항상 지금 상태에 맞는 일을 한다: 고른 게 없으면 빈 변경, 있으면 그 변경들.
+          모양·크기·테두리는 둘이 같고 채움/글자색만 반대다 — variant 는 primary 그대로 두고
+          .btn-invert 로 색만 뒤집는다(ghost 로 두면 높이·라운드·테두리가 달라진다). */}
+      <Button variant="primary" block icon="sparkles" className="btn-glowring btn-invert"
+        disabled={n > 0} onClick={generateAuto} style={{ marginTop: 14 }}>
+        {`같은 장소 이미지 생성 · ${cost} 크레딧`}
       </Button>
-      <p className="hint" style={{ marginTop: 10 }}>
-        {n > 0 ? '모든 변경이 한 장의 새 컷에 함께 반영돼요. 기존 이미지는 유지되고 새 컷은 의류 탭에 추가돼요.'
-          : '변경 없이 생성하면 현재 컷과 비슷한 분위기의 새 컷을 만들어요. 새 컷은 의류 탭에 추가돼요.'}
-      </p>
+      <Button variant="primary" block icon="sparkles" className="btn-glowring"
+        disabled={n === 0} onClick={generateWithPicks} style={{ marginTop: 8 }}>
+        {`비슷한 컷 만들기 · ${cost} 크레딧`}
+      </Button>
     </div>
   );
 }
 
 /* ---------- AI ---------- */
 const NEW_CUT_DEFAULT_SHOT = { styling: 'full', horizon: 'full', mirror: 'full', product: 'ghost' };
-export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, varySource, onGenerate, onVaryGenerate, onPickRef, onPickMoodRef, onSetCutType }) {
+export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, varySource, onGenerate, onVaryGenerate, onPickMoodRef }) {
   const [tab, setTab] = useState('vary');
   // 콘티보드와 같은 규칙 — 사용자는 컷 종류(촬영 방식)만 고르고, 사진 목적(contentRole)은 내부 자동 결정.
   const [cutType, setCutType] = useState('styling');
@@ -632,7 +609,7 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
         </div>
       ) : (
         /* key=소스 id — 변형 대상이 바뀌면 패널 상태(선택/트레이/결과)를 통째로 초기화해 이미지 간 누수를 차단 */
-        <VaryPanel key={varySource ? varySource.id : 'none'} catalogs={catalogs} source={varySource} onPickRef={onPickRef} onGenerate={onVaryGenerate} onSetCutType={onSetCutType} />
+        <VaryPanel key={varySource ? varySource.id : 'none'} catalogs={catalogs} source={varySource} onGenerate={onVaryGenerate} />
       )}
     </div>
   );
@@ -661,10 +638,12 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading
         </div>
       )}
       <Button variant="ghost" block icon="upload" onClick={onUpload} disabled={uploading} style={{ marginBottom: uploading ? 8 : 16 }}>직접 이미지 업로드하기</Button>
+      {/* 업로드 중에는 사진이 들어올 자리를 로고 타일로 먼저 보여준다 — 입력 페이지와 같은
+          얼굴(오너 8/15). 상태를 늘리지 않고 uploading 플래그만으로 렌더한다. */}
       {uploading && (
-        <div className="ward-upload-status" role="status" aria-live="polite">
-          <Icon name="loader" size={16} className="spin" />
-          <span>의류 이미지를 불러오는 중이에요</span>
+        <div className="wardrobe-grid" style={{ marginBottom: 16 }} role="status" aria-live="polite">
+          <UploadPendingTile className="ward-cell" />
+          <span className="sr-only">의류 이미지를 불러오는 중이에요</span>
         </div>
       )}
       {Object.entries(wardrobe).map(([group, imgs]) => {
@@ -683,8 +662,13 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading
             {open && (
               <div className="wardrobe-grid">
                 {imgs.map((im) => {
+                  // slow = 화면 대기(3분)를 넘겨 백그라운드 추적 중 — 실패가 아니라 진행 중이다.
                   if (im.loading) return (
-                    <div className="ward-cell loading" key={im.id}><Icon name="loader" size={18} className="spin" style={{ color: 'var(--fg-3)' }} /></div>
+                    <div className={`ward-cell loading${im.slow ? ' slow' : ''}`} key={im.id}
+                      title={im.slow ? '아직 만들어지고 있어요 — 완성되면 여기에 나타나요' : '만드는 중이에요'}>
+                      <Icon name="loader" size={18} className="spin" style={{ color: 'var(--fg-3)' }} />
+                      {im.slow && <small>조금 더 걸려요</small>}
+                    </div>
                   );
                   const used = Boolean(isImageUsed?.(im));
                   return (
@@ -694,12 +678,15 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, uploading
                       onAnimationEnd={im.fresh ? () => onFreshSeen && onFreshSeen(im.id) : undefined}>
                       <img src={thumbUrl(im.src, 240)} alt="" loading="lazy" decoding="async" />
                       {pendingSlot && <span className="ward-pick-check" aria-hidden="true"><Icon name="check" size={15} /></span>}
-                      <button type="button" className={`ward-trash${used ? ' disabled' : ''}`} draggable={false}
+                      {/* 삭제는 앱 관례대로 우측 위 X — 휴지통 대신(오너 8/15). 네이티브
+                          disabled 를 쓰지 않는 이유: 클릭이 통과해야 "사용 중이라 못 지워요"
+                          안내가 뜬다. draggable=false·pointerdown 차단은 셀 드래그 방지용. */}
+                      <button type="button" className={`ward-rm${used ? ' disabled' : ''}`} draggable={false}
                         aria-label={used ? '현재 에디팅에 사용 중인 사진' : '의류 사진 삭제'} aria-disabled={used}
                         title={used ? '현재 에디팅에 사용 중이라 삭제할 수 없어요' : '사진 삭제'}
                         onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => { e.stopPropagation(); onDeleteImage(im); }}>
-                        <Icon name="trash" size={13} />
+                        <Icon name="x" size={12} />
                       </button>
                       <button className="ai-flag" onClick={(e) => { e.stopPropagation(); onVaryImage(im); }} title="AI로 편집"><Icon name="wand" size={12} /><span>AI 편집</span></button>
                     </div>
@@ -735,7 +722,7 @@ const LINE_DASH = [
 function LabeledField({ label, children }) {
   return <div className="ff"><span className="ff-lbl">{label}</span>{children}</div>;
 }
-export function ImagePanel({ el, onChange, onLayer, onCrop, onCropReset, onReplace, onRemove, onVary, lock = true, onLock }) {
+export function ImagePanel({ el, onChange, onLayer, onCrop, lock = true, onLock }) {
   // 비율 잠금은 에디터가 소유 — moveable keepRatio와 연동 (자물쇠 = keepRatio)
   const setLock = onLock || (() => {});
   if (!el || !['image', 'shape', 'line'].includes(el.type)) return <EmptyState icon="image" title="요소를 선택하세요" desc="캔버스에서 이미지·오브젝트를 클릭하면 속성이 여기에 나와요." />;
@@ -748,20 +735,14 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, onCropReset, onRepla
   const curDash = el.dash || 'solid';
   return (
     <div className="fig-panel">
-      {isImg && onVary && (
-        <Button variant="ghost" block icon="wand" className="vary-jump" onClick={onVary} style={{ marginBottom: 16 }}>AI로 컷 변형하기</Button>
-      )}
-      {isImg && el.frameSlot && (
-        <PanelSection title="프레임 이미지" first>
-          <div className="frame-image-actions">
-            <Button variant="quiet" size="sm" icon="refresh" onClick={() => onReplace?.(el)}>교체</Button>
-            <Button variant="quiet" size="sm" icon="crop" disabled={!el.src} onClick={() => onCrop?.(el)}>자르기</Button>
-            <Button variant="quiet" size="sm" icon="undo" disabled={!el.crop} onClick={() => onCropReset?.(el)}>초기화</Button>
-            <Button variant="quiet" size="sm" icon="trash" disabled={!el.src} onClick={() => onRemove?.(el)}>빼내기</Button>
-          </div>
-        </PanelSection>
-      )}
-      <PanelSection title={isLine ? '선 크기' : '이미지 크기'} first={!isImg || !el.frameSlot}>
+      {/* 'AI로 컷 변형하기' 점프 버튼 제거(오너 8/15) — 같은 기능은 좌측 AI 탭(선택된 컷이
+          자동으로 수정 대상이 된다)과 의류 타일의 'AI 편집' 뱃지로 계속 갈 수 있다. */}
+      {/* '프레임 이미지' 액션 묶음(교체·자르기·초기화·빼내기) 제거(오너 8/16).
+          같은 일을 하는 수단이 화면에 이미 있다: 교체는 의류 탭에서 그 칸 위로 드래그,
+          빼내기는 Delete(격자·프레임의 사진 자리는 지워지지 않고 '＋ 여기에 사진 넣기'
+          빈 자리로 돌아간다 — editorSelection.isPhotoSlotElement, 2026-08-17 오너),
+          자르기는 아래 '자르기' 섹션과 더블클릭. */}
+      <PanelSection title={isLine ? '선 크기' : '이미지 크기'} first>
         <div className="size-row">
           <NumField iconText="가로" value={Math.round(el.w)} min={20} max={2000} onChange={setW} />
           <NumField iconText="세로" value={Math.round(el.h)} min={20} max={2000} onChange={setH} />
@@ -832,9 +813,29 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, onCropReset, onRepla
 }
 
 /* ---------- 텍스트 props ---------- */
-const TEXT_PALETTE = ['#0e0d14', '#898989', '#ffffff', '#4f88c9', '#d92d20', '#067647'];
+/* 회색 스와치는 프리셋 회색과 같은 값 — 다르면 "같은 회색으로 되돌릴" 길이 없다. */
+const TEXT_PALETTE = ['#0e0d14', TEXT_MUTED, '#ffffff', '#4f88c9', '#d92d20', '#067647'];
 const HL_PALETTE = ['#fef3c7', '#dbeafe', '#dcfce7', '#fee2e2', '#f3f4f6', '#0e0d14'];
 const WEIGHTS = [{ value: 300, label: 'Light' }, { value: 400, label: 'Regular' }, { value: 500, label: 'Medium' }, { value: 600, label: 'SemiBold' }, { value: 700, label: 'Bold' }];
+/* 텍스트 프리셋 드래그 시작. 놓일 자리 미리보기는 **블록 안에서만** 그린다(.text-drop-ghost) —
+   커서를 따라다니는 그림까지 같은 문구로 그렸더니 블록 위에서 글자가 둘로 겹쳐 보였다
+   (오너 2026-08-16). 그래서 커서 그림은 투명한 1px 로 비우고, 위치·크기를 정확히 말해 주는
+   블록 안 상자 하나만 남긴다(그쪽은 블록 좌표계라 배율·스크롤과 항상 일치한다). */
+function startTextPresetDrag(event, presetKey) {
+  event.dataTransfer.effectAllowed = 'copy';
+  event.dataTransfer.setData('text/object', `text:${presetKey}`);
+  // 드래그 중에는 getData 가 막혀 있고 types 만 읽을 수 있다 — 어떤 프리셋인지 블록이
+  // 알아야 놓일 자리 미리보기를 정확히 그리므로 종류를 타입 이름에 실어 보낸다.
+  event.dataTransfer.setData(`${TEXT_PRESET_DRAG_PREFIX}${presetKey}`, presetKey);
+  if (typeof document === 'undefined' || !event.dataTransfer.setDragImage) return;
+  const blank = document.createElement('div');
+  blank.className = 'text-drag-ghost';
+  document.body.appendChild(blank);
+  event.dataTransfer.setDragImage(blank, 0, 0);
+  // 드래그가 시작된 뒤에 지워야 브라우저가 스냅샷을 뜬 다음이 된다.
+  setTimeout(() => blank.remove(), 0);
+}
+
 export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, onLayer, onAddText }) {
   const has = el && el.type === 'text';
   const isBubble = has && el.shape === 'bubble';
@@ -844,14 +845,57 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
   const bubbleStroke = isBubble && el.stroke !== 'none' ? (el.stroke || DEFAULT_BUBBLE_STROKE) : 'none';
   const bubbleStrokeWidth = Number.isFinite(Number(el?.strokeWidth)) ? Number(el.strokeWidth) : DEFAULT_BUBBLE_STROKE_WIDTH;
   const hasBubbleStroke = isBubble && bubbleStroke !== 'none';
+  // 선택 중에는 추가 목록을 맨 위에 두지 않는다 — 같은 4개 이름이 "추가"와 "스타일 전환"
+  // 두 의미로 나란히 보이면 스타일을 바꾸려다 빈 요소를 새로 만드는 오클릭이 난다(리뷰 반영).
+  // 대신 아래쪽 "새로 추가" 섹션으로 내려 추가 수단 자체는 항상 남긴다.
+  const activePresetKey = has ? activeTextPreset(s) : null;
+  const presetList = (
+    <div className="text-preset-list">
+      {/* 누르면 자동 자리, 끌어다 놓으면 놓은 자리 — 오브젝트·프레임과 같은 'text/object'
+          운반 형식이라 블록이 이미 갖고 있는 드롭 하이라이트를 그대로 탄다(오너 8/16). */}
+      {TEXT_PRESETS.map((p) => (
+        <button key={p.key} type="button" className="text-preset-item" draggable
+          aria-label={`${p.label} 추가`} title={`${p.label} — 누르면 추가, 끌어다 놓으면 그 자리에`}
+          onDragStart={(e) => startTextPresetDrag(e, p.key)}
+          onClick={() => onAddText?.(p.key)}>
+          {/* 축소판 스타일은 프리셋 데이터에서 직접 그린다 — CSS에 복제하면 값이 갈라진다 */}
+          <span className="tp-sample" style={{ fontSize: p.previewSize, fontWeight: p.style.weight, color: p.style.color, letterSpacing: p.style.tracking }}>{p.sample || p.label}</span>
+          <span className="tp-meta">{p.style.size}px<br />{p.hint}</span>
+        </button>
+      ))}
+      {/* 그냥 한 줄 넣고 싶을 때 — 예전 '텍스트 추가' 버튼 그대로다(오너 8/16). 스타일을 골라
+          주지 않고 기본 프리셋으로 만든다: 크기를 이름표에 박아 두면 그것도 '고정 스타일'이
+          하나 더 생기는 셈이라 오너가 물렸던 방식이 된다. 위 카드 셋과 같은 카드 시각·같은
+          조작(누르기/끌기)이라 넷이 한 덩어리로 읽힌다. */}
+      <button type="button" className="add-text-btn" draggable
+        title="텍스트 추가 — 누르면 추가, 끌어다 놓으면 그 자리에"
+        onDragStart={(e) => startTextPresetDrag(e, DEFAULT_TEXT_PRESET)}
+        onClick={() => onAddText?.()}>
+        <Icon name="type" size={17} />텍스트 추가
+      </button>
+    </div>
+  );
   return (
     <div className="fig-panel">
-      <button type="button" className="add-text-btn" onClick={onAddText}><Icon name="type" size={17} />텍스트 추가</button>
       {!has ? (
-        <div className="panel-sub" style={{ marginTop: 18 }}>위 버튼으로 텍스트를 추가하거나, 캔버스에서 텍스트를 클릭해 편집해요.</div>
+        <>
+          {presetList}
+          <div className="panel-sub" style={{ marginTop: 14 }}>누르면 바로 입력할 수 있고, 끌어다 놓으면 원하는 자리에 들어가요. 캔버스의 텍스트를 클릭하면 편집해요.</div>
+        </>
       ) : (
         <>
-          <PanelSection title="텍스트 박스" first>
+          {/* 말풍선은 제외 — 자체 튜닝된 행간·색을 칩이 덮으면 짝 말풍선과 어긋난다.
+              칩 시각은 앱 공용 Chips — 활성 칩 재클릭은 가드로 무시(불필요한 히스토리 방지). */}
+          {!isBubble && (
+            <PanelSection title="빠른 스타일" first>
+              <Chips className="quad-chips" allowDeselect={false}
+                options={TEXT_PRESETS.map((p) => ({ value: p.key, label: p.label }))}
+                value={activePresetKey}
+                onChange={(key) => { if (key && key !== activePresetKey) setS(quickStylePatch(key)); }} />
+              <div className="panel-sub" style={{ marginTop: 8, marginBottom: 0 }}>내용은 그대로, 크기·굵기·색만 한 번에 바뀌어요.</div>
+            </PanelSection>
+          )}
+          <PanelSection title="텍스트 박스" first={isBubble}>
             <div className="field-2up">
               <NumField iconText="가로" value={Math.round(el.w || 120)} min={1} max={10000}
                 onChange={(w) => onChange({ w, ...(!isBubble && el.textSizing === 'auto' ? { textSizing: 'fixed' } : {}) })} />
@@ -928,6 +972,12 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
           <PanelSection title="하이라이트">
             <SwatchField value={s.bg || 'none'} palette={HL_PALETTE} allowNone onColor={(c) => setS({ bg: c })} />
           </PanelSection>
+
+          {/* 추가 수단은 선택 중에도 남긴다 — 없애면 소제목을 쓴 직후 설명글을 붙일 방법이
+              "빈 곳을 클릭해 선택 해제"뿐이라 발견 불가능하다(리뷰 반영). 제목으로 칩과 구분. */}
+          <PanelSection title="새로 추가">
+            {presetList}
+          </PanelSection>
         </>
       )}
     </div>
@@ -948,7 +998,8 @@ export function FramePanel({ onAdd, onDragStart, onDragEnd, recommendGender, onP
   ));
   return (
     <div>
-      <PanelHead title="프레임" sub="종류를 고른 뒤 끌어 놓거나 클릭해 추가하세요." />
+      {/* 제목은 좌측 패널 래퍼가 그린다(Editor.jsx) — 여기서 또 그리면 "프레임 프레임"이 된다 */}
+      <div className="panel-sub">종류를 고른 뒤 끌어 놓거나 클릭해 추가하세요.</div>
       <div className="frame-category-tabs">
         <UnderlineTabs options={FRAME_LIBRARY_TABS} value={category} onChange={setCategory} />
       </div>
@@ -1007,46 +1058,10 @@ function ShapeGlyph({ id }) {
   const d = id === 'triangle' ? 'M50 8 L96 92 L4 92 Z' : SHAPE_D[id];
   return <svg className="obj-glyph" viewBox="0 0 100 100"><path d={d} fill="#fff" stroke="currentColor" strokeWidth="6" strokeLinejoin="round" /></svg>;
 }
-/* 추천 오브젝트 미리보기 — 캔버스 결과물을 같은 선 굵기로 축약한 아이콘 (84×44) */
-const presetIconProps = { viewBox: '0 0 84 44', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' };
-const PRESET_ICONS = {
-  'text-box': (
-    <svg {...presetIconProps}>
-      <rect x="10" y="8" width="64" height="28" rx="6" fill="currentColor" fillOpacity=".9" stroke="none" />
-      <path d="M22 19h40M22 26h26" stroke="#fff" strokeWidth="2.4" />
-    </svg>
-  ),
-  'single-bubble': (
-    <svg {...presetIconProps}>
-      <path d="M16 8h52a6 6 0 0 1 6 6v12a6 6 0 0 1-6 6H34l-9 8v-8h-9a6 6 0 0 1-6-6V14a6 6 0 0 1 6-6Z" />
-      <path d="M26 20h32" opacity=".55" />
-    </svg>
-  ),
-  'qa-bubbles': (
-    <svg {...presetIconProps}>
-      <path d="M10 6h34a5 5 0 0 1 5 5v6a5 5 0 0 1-5 5H24l-7 6v-6h-7a5 5 0 0 1-5-5v-6a5 5 0 0 1 5-5Z" />
-      <path d="M72 21H42a5 5 0 0 0-5 5v6a5 5 0 0 0 5 5h16l7 6v-6h7a5 5 0 0 0 5-5v-6a5 5 0 0 0-5-5Z" opacity=".55" />
-    </svg>
-  ),
-  divider: (
-    <svg {...presetIconProps}>
-      <path d="M10 22h64" />
-      <circle cx="42" cy="22" r="3.4" fill="currentColor" stroke="none" />
-    </svg>
-  ),
-  'arrow-callout': (
-    <svg {...presetIconProps}>
-      <path d="M12 14h34M12 22h24" />
-      <path d="M48 30h22m0 0-6-5m6 5-6 5" />
-    </svg>
-  ),
-  'label-badge': (
-    <svg {...presetIconProps}>
-      <rect x="20" y="12" width="44" height="20" rx="10" />
-      <path d="M32 22h20" opacity=".55" />
-    </svg>
-  ),
-};
+/* 추천 오브젝트 아이콘 — 오브젝트의 성격을 한 글자짜리 라벨 칩으로 압축한 글리프.
+   실물을 그대로 축소한 미니어처도 해 봤지만(8/16 오전), 132×62 칸에서는 글자가 뭉개져
+   무엇인지 알기 어려웠다. 오너가 지목한 예전 아이콘으로 되돌린다(8/16) — 라벨 문구는
+   editorLibrary 의 item.preview 가 정본이고, 칩 모양만 CSS 가 오브젝트별로 입힌다. */
 const OBJECT_PANEL_TABS = [
   { value: 'preset', label: '추천 오브젝트' },
   { value: 'shape', label: '도형·선' },
@@ -1059,14 +1074,15 @@ export function ShapePanel({ catalogs, onAdd, block, onBgChange }) {
   const dragStart = (e, type, id) => { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/object', `${type}:${id}`); };
   return (
     <div>
-      <PanelHead title="오브젝트" sub="클릭하면 블록 중앙에, 드래그하면 원하는 자리에 놓여요." />
+      {/* 제목은 좌측 패널 래퍼가 그린다(Editor.jsx) — 중복 방지 */}
+      <div className="panel-sub">클릭하면 블록 중앙에, 드래그하면 원하는 자리에 놓여요.</div>
       <UnderlineTabs options={OBJECT_PANEL_TABS} value={tab} onChange={setTab} />
       {tab === 'preset' ? (
         <div className="object-preset-list" style={{ marginTop: 16 }}>
           {OBJECT_LIBRARY_ITEMS.map((item) => (
             <button className="object-preset-cell" key={item.id} draggable title={item.label}
               onClick={() => onAdd('preset', item.id)} onDragStart={(e) => dragStart(e, 'preset', item.id)}>
-              <span className="object-preset-thumb">{PRESET_ICONS[item.id] || item.preview}</span>
+              <span className={`object-preset-glyph ${item.id}`}>{item.preview}</span>
               <span className="object-preset-name">{item.label}</span>
             </button>
           ))}
@@ -1113,7 +1129,7 @@ export function ShapePanel({ catalogs, onAdd, block, onBgChange }) {
 
 /* ---------- 레이어 패널 ---------- */
 function layerMeta(el) {
-  if (el.type === 'image') return { icon: 'image', label: '이미지', thumb: el.src };
+  if (el.type === 'image') return { icon: 'image', label: '이미지', thumb: thumbUrl(el.src, 64) };  // .lr-ico 28px × DPR2
   if (el.type === 'text') return { icon: 'type', label: (el.text || '텍스트').replace(/\n/g, ' ').slice(0, 18) || '텍스트' };
   if (el.type === 'line') return { icon: 'minus', label: '선' };
   const names = { circle: '원', rect: '사각형', triangle: '삼각형', diamond: '마름모', star: '별', heart: '하트', hexagon: '육각형', bubble: '말풍선' };
@@ -1140,8 +1156,20 @@ export function LayerPanel({ block, selEls = [], embedded, onSelect, onReorder, 
                 draggable
                 onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/layer', el.id); setDragId(el.id); }}
                 onDragEnd={() => { setDragId(null); setOverId(null); }}
-                onDragOver={(e) => { if (dragId) { e.preventDefault(); setOverId(el.id); } }}
-                onDrop={(e) => { e.preventDefault(); if (dragId && dragId !== el.id) onReorder(block.id, dragId, el.id); setDragId(null); setOverId(null); }}
+                /* 드롭 허용 판정은 React 상태(dragId)가 아니라 드래그 데이터로 한다 —
+                   상태가 아직 커밋되기 전이면 preventDefault 를 건너뛰어 drop 자체가
+                   막히고, 끌어다 놔도 아무 일이 없는 것처럼 보인다. */
+                onDragOver={(e) => {
+                  if (![...e.dataTransfer.types].includes('text/layer')) return;
+                  e.preventDefault();
+                  setOverId(el.id);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const fromId = e.dataTransfer.getData('text/layer') || dragId;
+                  if (fromId && fromId !== el.id) onReorder(block.id, fromId, el.id);
+                  setDragId(null); setOverId(null);
+                }}
                 onClick={() => onSelect(block.id, el)}>
                 <span className="lr-grip"><Icon name="gripV" size={15} /></span>
                 <span className="lr-ico">{m.thumb ? <img src={m.thumb} alt="" /> : <Icon name={m.icon} size={15} />}</span>

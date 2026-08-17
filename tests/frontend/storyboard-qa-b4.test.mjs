@@ -1,9 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { buildColorOpts, colorLabelOf } from '../../src/lib/colorOpts.js';
 
 const storyboardSource = readFileSync(
   new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url),
+  'utf8',
+);
+const editorSource = readFileSync(
+  new URL('../../src/features/editor/Editor.jsx', import.meta.url),
   'utf8',
 );
 const featureStyles = readFileSync(
@@ -38,13 +43,9 @@ test('N6 matching badge sits at the image bottom-right corner', () => {
 });
 
 test('N7 swatch labels win, then trimmed names, then numbered fallbacks for mock and HTTP shapes', () => {
-  const entry = storyboardSource.slice(
-    storyboardSource.indexOf('function prepareStoryboardEntry'),
-    storyboardSource.indexOf('function ComposeModeSummary'),
-  );
-  const expression = entry.match(/label:\s*([^,]+),\s*hex: hexFor\(color\)/)?.[1];
-  assert.ok(expression, 'the allColorOpts label expression must stay next to hexFor');
-  const deriveLabel = new Function('hydratedCatalogs', 'color', 'index', `return ${expression}`);
+  // 라벨 규칙은 lib/colorOpts 한 곳이 소유한다 — 콘티보드와 에디터가 각자 복제하던 시절
+  // 에디터의 색상 원(swatchId 근거)과 이름(name 근거)이 갈라지는 버그가 났다(오너 8/15).
+  const deriveLabel = (catalogs, color, index) => colorLabelOf(color, catalogs, index);
   const catalogs = {
     swatchColors: [
       { id: 'pink', label: '핑크' },
@@ -72,7 +73,12 @@ test('N7 swatch labels win, then trimmed names, then numbered fallbacks for mock
     productsByMode.http.map((color, index) => deriveLabel(catalogs, color, index)),
     ['라이트그레이', 'Navy', '색상 3'],
   );
-  assert.match(entry, /hex: hexFor\(color\)/, 'existing hex derivation must remain unchanged');
+  // 원 색과 이름이 같은 근거를 쓰는지 — 두 화면 모두 이 한 모듈을 통과해야 한다.
+  assert.match(storyboardSource, /buildColorOpts\(p\.colors, hydratedCatalogs, hexFor\)/);
+  assert.match(editorSource, /buildColorOpts\(p\.colors, hydratedCatalogs, hexForCol\)/);
+  const opts = buildColorOpts(productsByMode.mock, catalogs, () => '#123456');
+  assert.deepEqual(opts.map((o) => o.label), ['핑크', '민트', '색상 3']);
+  assert.deepEqual(opts.map((o) => o.hex), ['#123456', '#123456', '#123456']);
 });
 
 test('N8 selecting A then B stores only B, and selecting B again clears the array', () => {
@@ -136,9 +142,11 @@ test('N11 caption typography is 13px and long matched captions stay inside one l
   assert.match(featureStyles, /\.sb-canvas-caption \{[^}]*font-size: 13px/);
   assert.match(featureStyles, /\.sb-caption-color \{[^}]*max-width: 64px;[^}]*font-size: 13px/);
   assert.match(featureStyles, /\.sb-caption-dot \{[^}]*width: 11px;[^}]*height: 11px/);
+  // 캡션 자체는 자르지 않는다(셔플 아이콘 원이 깎여서) — 말줄임은 아래 .sb-caption-values 가
+  // 맡는다. 가로 폭 제한(width/max-width)과 nowrap 은 그대로 유지돼야 한다(2026-08-17).
   assert.match(
     featureStyles,
-    /\.sb-canvas-caption \{[^}]*width: 100%;[^}]*max-width: 100%;[^}]*overflow: hidden;[^}]*white-space: nowrap;[^}]*box-sizing: border-box/,
+    /\.sb-canvas-caption \{[^}]*width: 100%;[^}]*max-width: 100%;[^}]*overflow: visible;[^}]*white-space: nowrap;[^}]*box-sizing: border-box/,
   );
   assert.match(
     featureStyles,

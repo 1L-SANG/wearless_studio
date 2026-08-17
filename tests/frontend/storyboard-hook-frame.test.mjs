@@ -21,8 +21,8 @@ test('contract constants: three seller-facing styles, signature is the entry def
   assert.deepEqual(HOOK_STYLES, ['signature', 'pair', 'moodGrid']);
   assert.equal(DEFAULT_HOOK_STYLE, 'signature');
   assert.equal(HOOK_STYLE_LABELS.signature, '시그니처 컷');
-  assert.equal(HOOK_STYLE_LABELS.pair, '두컷 프레임');
-  assert.equal(HOOK_STYLE_LABELS.moodGrid, '네컷 프레임');
+  assert.equal(HOOK_STYLE_LABELS.pair, '두 컷 구성');
+  assert.equal(HOOK_STYLE_LABELS.moodGrid, '네 컷 구성');
 });
 
 test('mood grid content branches by color count only — no user toggle', () => {
@@ -57,7 +57,7 @@ test('signature/pair plans reuse the default hero+benefit cuts (cut count unchan
   assert.deepEqual(signature, [
     { role: 'signature', cutType: 'horizon', shot: 'medium', titleOverlay: true },
   ]);
-  // '두컷 프레임' = 미디움샷 2장 (오너 카피: "미디움샷 이미지 2개를 붙여서")
+  // '두 컷 구성' = 미디움샷 2장 (오너 카피: "미디움샷 이미지 2개를 붙여서")
   const pair = hookSlotPlan('pair');
   assert.deepEqual(pair.map((slot) => [slot.role, slot.cutType, slot.shot]), [
     ['left', 'styling', 'medium'],
@@ -164,6 +164,25 @@ test('applyHookStyle keeps seller-uploaded mine cuts in the hooking section', ()
   assert.deepEqual(next.map((block) => block.id), ['benefit', 'mine-1', 'styling-1']);
 });
 
+test('applyHookStyle keeps individually added cuts that were never frame slots', () => {
+  // 네 컷 구성(프레임 4장) 옆에 셀러가 개별컷 하나를 추가한 보드 → 시그니처로 되돌리기.
+  const framed = (id) => aiBlock(id, {
+    cutType: 'horizon', shot: 'medium', colorId: 'base',
+    hookFrameId: 'hookframe__grid', hookStyle: 'moodGrid', hookFrameVersion: 1,
+    exampleId: `ex-${id}`, exampleSelectionOrigin: 'auto',
+  });
+  const board = [
+    framed('g1'), framed('g2'), framed('g3'), framed('g4'),
+    aiBlock('added', { cutType: 'styling', shot: 'full', colorId: 'base', exampleChoice: 'manual' }),
+    { id: 'styling-1', source: 'ai', sectionId: 'sec-styling', sectionRole: 'styling', cutType: 'styling', shot: 'full' },
+  ];
+  const next = applyHookStyle(board, 'signature', { colors: [{ id: 'base', isBase: true }], frameId: 'hookframe__t' });
+  // 슬롯 1개만 남고 남은 구성 컷 3장은 정리되지만, 추가한 개별컷은 살아남는다.
+  assert.deepEqual(next.map((block) => block.id), ['g1', 'added', 'styling-1']);
+  assert.equal(next[0].hookStyle, 'signature');
+  assert.equal(next[1].hookFrameId, undefined, '개별컷은 프레임에 흡수되지 않는다');
+});
+
 test('applyHookStyle(pair): two medium slots, hero converts shot and drops its stale example', () => {
   const next = applyHookStyle(seedBoard(), 'pair', { colors: [{ id: 'base', isBase: true }], frameId: 'hookframe__t' });
   const slots = next.filter((block) => block.hookFrameId === 'hookframe__t');
@@ -179,14 +198,16 @@ test('applyHookStyle(pair): two medium slots, hero converts shot and drops its s
   assert.equal(slots[1].exampleId, 'ex-benefit');      // 틀 유지 슬롯은 예시 보존
 });
 
-test('applyHookStyle(moodGrid, 4 colors): four color slots in two rows, missing cuts created', () => {
+test('applyHookStyle(moodGrid, 4 colors): four color slots in one 2×2 row, missing cuts created', () => {
   const colors = [{ id: 'base', isBase: true }, { id: 'c2' }, { id: 'c3' }, { id: 'c4' }];
   const next = applyHookStyle(seedBoard(), 'moodGrid', { colors, createBlock: makeFactory(), frameId: 'hookframe__t' });
   const slots = next.filter((block) => block.hookFrameId === 'hookframe__t');
   assert.equal(slots.length, 4);
   assert.deepEqual(slots.map((block) => block.colorId), ['base', 'c2', 'c3', 'c4']);
   assert.ok(slots.every((block) => block.cutType === 'horizon' && block.shot === 'medium'));
-  assert.deepEqual([...new Set(slots.map((block) => block.layoutRowId))].length, 2);   // 2×2 = 2행
+  // 네 컷은 한 행(grid2x2) — 콘티의 붙은 2×2와 에디터 조립이 같은 뜻이 되려면 쪼개면 안 된다(오너 8/16).
+  assert.equal([...new Set(slots.map((block) => block.layoutRowId))].length, 1);
+  assert.ok(slots.every((block) => block.sectionLayout === 'grid2x2'));
   // 기존 후킹 2컷 재사용 + 신규 2컷 생성, 다른 섹션 컷은 소모하지 않는다
   assert.deepEqual(slots.map((block) => block.id), ['benefit', 'hero', 'new-1', 'new-2']);
   assert.ok(next.some((block) => block.id === 'styling-1' && !block.hookFrameId));
@@ -240,8 +261,8 @@ test('board normalization keeps hook-frame rows regardless of section cut counts
   const normalized = normalizeBoard(ensureSections(grid));
   const slots = normalized.filter((block) => block.hookFrameId === 'hf2');
   assert.equal(slots.length, 4);
-  assert.ok(slots.every((block) => block.sectionLayout === 'twoColumn'));
-  assert.equal(new Set(slots.map((block) => block.layoutRowId)).size, 2);   // 2행 유지
+  assert.ok(slots.every((block) => block.sectionLayout === 'grid2x2'));
+  assert.equal(new Set(slots.map((block) => block.layoutRowId)).size, 1);   // 4칸 1행 유지
 });
 
 test('style transition keeps user-pinned examples in matching slots (Codex review #2)', () => {
@@ -280,4 +301,39 @@ test('section shuffle skips space sets holding a user-pinned member (Codex revie
     rotation: 1,
   });
   assert.equal(next, setBlocks);   // 고정 멤버 보유 세트는 통째로 제외 — 무변경
+});
+
+
+/* ---------- 구보드 네 컷: 2칸 2행 → 4칸 1행 승격 (2026-08-16 리뷰) ---------- */
+
+const legacyMoodGridBoard = () => [1, 2, 3, 4].map((index) => ({
+  id: `hook-${index}`, sectionId: 'sec-hook', sectionRole: 'hooking', source: 'ai',
+  contentRole: index === 1 ? 'hero' : 'benefit', cutType: 'styling', shot: 'medium',
+  taxonomyVersion: 3,
+  hookFrameId: 'hf-old', hookStyle: 'moodGrid', hookFrameVersion: 1, hookSlotRole: `grid:${index}`,
+  sectionLayout: 'twoColumn', layoutRowId: `row__hf-old__${Math.ceil(index / 2)}`,
+}));
+
+test('구보드 네 컷(2칸 2행)은 진입 때 4칸 1행으로 올라간다 — 콘티·에디터·발행이 같은 뜻을 본다', () => {
+  const { blocks, changed } = adoptHookFrame(legacyMoodGridBoard());
+  assert.equal(changed, true);
+  const slots = blocks.filter((block) => block.hookFrameId === 'hf-old');
+  assert.equal(slots.length, 4, '컷 자체는 그대로');
+  assert.equal(new Set(slots.map((block) => block.layoutRowId)).size, 1, '한 행');
+  assert.ok(slots.every((block) => block.sectionLayout === 'grid2x2'));
+  assert.deepEqual(slots.map((block) => block.id), ['hook-1', 'hook-2', 'hook-3', 'hook-4'], '순서 보존');
+});
+
+test('이미 4칸 1행인 보드는 건드리지 않는다 — 열기만 해도 저장이 나가면 안 된다', () => {
+  const upgraded = adoptHookFrame(legacyMoodGridBoard()).blocks;
+  const again = adoptHookFrame(upgraded);
+  assert.equal(again.changed, false);
+  assert.equal(again.blocks, upgraded, '같은 배열을 그대로 돌려준다');
+});
+
+test('두 컷 구성·시그니처는 승격 대상이 아니다', () => {
+  const pair = legacyMoodGridBoard().slice(0, 2).map((block) => ({ ...block, hookStyle: 'pair', layoutRowId: 'row__hf-old__1' }));
+  assert.equal(adoptHookFrame(pair).changed, false);
+  const signature = [{ ...legacyMoodGridBoard()[0], hookStyle: 'signature', layoutRowId: undefined }];
+  assert.equal(adoptHookFrame(signature).changed, false);
 });

@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 import uuid
 from io import BytesIO
 
@@ -304,17 +305,44 @@ async def _gen_cuts(app, job, prepared, product, analysis):
             # 큐 대기 중인 컷이 전부 '생성 중'으로 보이지 않는다(editor_wait_dev_spec §2-1).
             await _emit(app.state.pool, job_id, "step",
                         {"blockId": b.get("id"), "status": "cut_start"})
-            try:
-                generate_kwargs = {"analysis": analysis, "manifest": manifest}
-                if has_face:
-                    generate_kwargs["has_face"] = True
-                img, mime = await cut_generator.generate(
-                    s, gemini, b, product, images, **generate_kwargs)
-            except Exception as e:  # GeminiError·ValueError 포함 — 실패 컷 = 빈 슬롯, 미차감(부분 성공)
-                log.warning("AG-06 cut failed for job %s block %s: %r", job_id, b.get("id"), e)
-                await _emit(app.state.pool, job_id, "step",
-                            {"blockId": b.get("id"), "status": "cut_failed"})
-                return None
+            generate_kwargs = {"analysis": analysis, "manifest": manifest}
+            if has_face:
+                generate_kwargs["has_face"] = True
+            # 컷 생성 재시도 — 안전필터·응답 누락처럼 "다시 부르면 달라질 수 있는" 실패는
+            # 한 번 더 시도한다. 빈 슬롯은 셀러에게 그냥 못 만든 페이지이고, 그 값은 우리가
+            # 흡수해야 한다(오너 8/15). ValueError(잘못된 cutType 등)는 결정적이라 제외.
+            # 재시도 예산(초). 잡 lease(job_lease_timeout_seconds)를 넘기면 sweeper 가 실행 중인
+            # 잡을 회수해 같은 잡이 다시 도는 사고가 난다 — 앞선 시도가 이미 오래 걸렸으면
+            # (예: 프로바이더 타임아웃 연쇄) 재시도하지 않고 그 컷만 포기한다.
+            retry_budget_s = max(60, s.job_lease_timeout_seconds // 4)
+            cut_started = time.monotonic()
+            img = mime = None
+            for attempt in range(1, max(1, s.detail_cut_max_attempts) + 1):
+                try:
+                    img, mime = await cut_generator.generate(
+                        s, gemini, b, product, images, **generate_kwargs)
+                    break
+                except ValueError as e:  # 입력 계약 위반 — 재시도해도 같다
+                    log.warning("AG-06 cut invalid for job %s block %s: %r", job_id, b.get("id"), e)
+                    await _emit(app.state.pool, job_id, "step",
+                                {"blockId": b.get("id"), "status": "cut_failed"})
+                    return None
+                except Exception as e:  # GeminiError 등 — 마지막 시도에서만 빈 슬롯(미차감)
+                    spent = time.monotonic() - cut_started
+                    # 프로바이더가 이미 그렸을 수 있는 실패(읽기 타임아웃·502/504)는 여기서도
+                    # 다시 보내지 않는다 — 아래층이 안 보내기로 한 이유가 위층에서 무효가 되면
+                    # 같은 컷을 두 번 과금한다(2026-08-17 리뷰).
+                    billable = bool(getattr(e, "billable", False))
+                    if billable or attempt >= max(1, s.detail_cut_max_attempts) or spent >= retry_budget_s:
+                        log.warning("AG-06 cut failed for job %s block %s after %d attempts (%.0fs): %r",
+                                    job_id, b.get("id"), attempt, spent, e)
+                        await _emit(app.state.pool, job_id, "step",
+                                    {"blockId": b.get("id"), "status": "cut_failed"})
+                        return None
+                    log.info("AG-06 cut retry %d for job %s block %s: %r",
+                             attempt, job_id, b.get("id"), e)
+                    if s.detail_cut_retry_delay_seconds > 0:
+                        await asyncio.sleep(s.detail_cut_retry_delay_seconds)
             plate = space_set_plate
             # bg 편집 컷은 첫 첨부, 공간 세트는 별도 전달된 대표 plate를 같은 장소 QC 기준으로 쓴다.
             if (

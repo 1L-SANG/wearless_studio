@@ -271,7 +271,7 @@ def build_auto_blocks(product: dict, start_index: int = 0, *,
         _text_el(i, 0, 60, 56, 500, 44, "사이즈 안내",
                  {"size": 28, "weight": 600, "font": "Cal Sans", "color": "#0e0d14"}),
         _text_el(i, 1, 60, 104, 760, 24, "단위: cm · 측정 위치에 따라 1~3cm 오차가 있을 수 있어요",
-                 {"size": 14, "color": "#4a4a45"}),
+                 {"size": 14, "color": "#6b6b73"}),
     ]
     j = 2
     for idx, m in enumerate((product.get("measurements") or [])[:4]):
@@ -279,7 +279,7 @@ def build_auto_blocks(product: dict, start_index: int = 0, *,
         key = m.get("key") if isinstance(m, dict) else None
         value = m.get("value") if isinstance(m, dict) else None
         els.append(_text_el(i, j, x, 168, 200, 24, measurement_labels.get(key, key),
-                             {"size": 14, "color": "#4a4a45"}))
+                             {"size": 14, "color": "#6b6b73"}))
         j += 1
         els.append(_text_el(i, j, x, 194, 200, 48, (f"{value} cm" if value is not None else "—"),
                              {"size": 32, "weight": 600, "font": "Cal Sans", "color": "#0e0d14"}))
@@ -324,7 +324,7 @@ def build_auto_blocks(product: dict, start_index: int = 0, *,
         "bg": "#ffffff",
         "elements": [
             _text_el(i, 0, 60, 48, 880, notice_h, notice_text,
-                     {"size": 13, "color": "#4a4a45", "align": "center"}),
+                     {"size": 13, "color": "#6b6b73", "align": "center"}),
         ],
     }
 
@@ -430,7 +430,7 @@ def assemble(
                 if body:
                     # 이미지 하단 근처(구 레이아웃의 시각 관계) — 이미지 높이에서 유도한다.
                     els.append(_text_el(block_i, el_j, 120, _IMG_Y + img_h - _BODY_INSET_B, 760, 40, body,
-                                         {"size": 18, "color": "#4a4a45"},
+                                         {"size": 17, "color": "#6b6b73", "lineHeight": 26},
                                          source_block_id=b.get("id"), copy_role="body"))
                     el_j += 1
 
@@ -445,47 +445,53 @@ def assemble(
         block_i = len(blocks)
         row_layout = _ROW_LAYOUTS[layout]
         count = len(chunk)
-        width = (880 - (count - 1) * 20) // count
+        # 2×2 격자는 사진 넷이 딱 붙어 한 덩어리로 보여야 한다(오너 2026-08-16). 칸 사이 간격만
+        # 두지 않는다. 카피는 다른 행과 똑같이 사진 **아래**다 — 격자만 위로 올려 자리를 비워
+        # 뒀더니, 에디터가 사진 행의 카피를 걷어내는 규칙 때문에 격자 위에 빈 띠만 남았다
+        # (2026-08-16 리뷰 실측). 클라이언트 조립기(src/mock/db.js pushRow)와 같은 규칙.
+        grid = layout == "grid2x2" and count == 4
+        width = 440 if grid else (880 - (count - 1) * 20) // count
+        height = 560 if grid else 500
+        hero = next((row_block for row_block in chunk
+                     if resolve_content_role(row_block) == "hero"), None) if copywriting else None
+        subtitle_block = next((row_block for row_block in chunk
+                               if resolve_content_role(row_block) == "benefit"), None)
+        headline = _text_for_role(copy_by_block.get(hero.get("id"), []), "headline") if hero else None
+        subtitle = _text_for_role(
+            copy_by_block.get(subtitle_block.get("id"), []) if subtitle_block else [], "body",
+        ) if hero else None
+        img_top = 50
+        copy_top = img_top + (height * 2 if grid else height) + 32
         els: list[dict] = []
         for column, row_block in enumerate(chunk):
             meta = cut_meta_by_block.get(row_block.get("id")) or {}
             els.append(_image_el(
                 block_i,
                 column,
-                60 + column * (width + 20),
-                50,
+                60 + (column % 2) * width if grid else 60 + column * (width + 20),
+                img_top + (column // 2) * height if grid else img_top,
                 width,
-                500,
+                height,
                 meta.get("imageUrl"),
-                12,
+                0 if grid else 12,
                 row_block.get("cutType") or None,
                 source_block_id=row_block.get("id"),
             ))
 
-        if copywriting:
-            hero = next((row_block for row_block in chunk
-                         if resolve_content_role(row_block) == "hero"), None)
-            if hero:
-                headline = _text_for_role(copy_by_block.get(hero.get("id"), []), "headline")
-                if headline:
-                    els.append(_text_el(
-                        block_i, len(els), 60, 582, 880, 56, headline,
-                        {"size": 40, "weight": 600, "font": "Cal Sans", "color": "#0e0d14"},
-                        source_block_id=hero.get("id"), copy_role="headline",
-                    ))
-                subtitle_block = next((row_block for row_block in chunk
-                                       if resolve_content_role(row_block) == "benefit"), None)
-                subtitle = _text_for_role(
-                    copy_by_block.get(subtitle_block.get("id"), []) if subtitle_block else [],
-                    "body",
-                )
-                if subtitle:
-                    els.append(_text_el(
-                        block_i, len(els), 60, 650, 880, 34, subtitle,
-                        {"size": 18, "color": "#6b6b73"},
-                        source_block_id=subtitle_block.get("id") if subtitle_block else None,
-                        copy_role="body",
-                    ))
+        if hero:
+            if headline:
+                els.append(_text_el(
+                    block_i, len(els), 60, copy_top, 880, 56, headline,
+                    {"size": 40, "weight": 600, "font": "Cal Sans", "color": "#0e0d14"},
+                    source_block_id=hero.get("id"), copy_role="headline",
+                ))
+            if subtitle:
+                els.append(_text_el(
+                    block_i, len(els), 60, copy_top + 68, 880, 34, subtitle,
+                    {"size": 17, "color": "#6b6b73", "lineHeight": 26},
+                    source_block_id=subtitle_block.get("id") if subtitle_block else None,
+                    copy_role="body",
+                ))
 
         blocks.append({
             "id": _block_id(block_i),
@@ -524,7 +530,7 @@ def assemble(
         label_y = image_bottom + 14
         els.append(_text_el(
             block_i, len(els), 60, label_y, 880, 24, product_label,
-            {"size": 14, "weight": 400, "color": "#4a4a45", "align": "center", "tracking": 0.2},
+            {"size": 14, "weight": 400, "color": "#6b6b73", "align": "center", "tracking": 0.2},
         ))
         if matching_label:
             els.append(_text_el(

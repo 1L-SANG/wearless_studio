@@ -229,3 +229,92 @@ test('mock and server assemblers emit the same opening-row block structure', () 
   assert.equal(python.status, 0, python.stderr);
   assert.deepEqual(withoutIds(JSON.parse(python.stdout)), withoutIds(mockOpening));
 });
+
+/* 후킹 섹션 4컷 = 2×2 격자 한 덩어리. 사진 넷이 붙고 카피는 격자 위에 온다(오너 2026-08-16).
+   목·서버 조립기가 같은 결과를 내야 실서버 생성과 대기 화면이 어긋나지 않는다. */
+const gridStoryboard = () => [1, 2, 3, 4].map((index) => ({
+  id: `hook-${index}`,
+  source: 'ai',
+  sectionRole: 'benefit',
+  contentRole: index === 1 ? 'hero' : 'benefit',
+  cutType: 'styling',
+  shot: 'medium',
+  sectionId: 'hook',
+  sectionLayout: 'grid2x2',
+  layoutRowId: 'row-hook',
+}));
+
+test('mock 4컷 격자는 한 블록에 사진 넷이 딱 붙는다 (카피는 다른 행과 같이 사진 아래)', () => {
+  const blocks = buildEditorBlocksFromStoryboard(gridStoryboard(), { ...PRODUCT, colors: COLORS }, true);
+  const grid = blocks[0];
+  assert.equal(grid.kind, 'grid2x2');
+  const images = grid.elements.filter((element) => element.type === 'image');
+  assert.equal(images.length, 4, '넷이 한 블록에 모인다(두 블록으로 쪼개지지 않는다)');
+  assert.deepEqual(images.map((i) => [i.x, i.y, i.w, i.h]), [
+    [60, 50, 440, 560],
+    [500, 50, 440, 560],
+    [60, 610, 440, 560],
+    [500, 610, 440, 560],
+  ]);
+  assert.ok(images.every((i) => !i.radius), '붙은 격자는 모서리를 각지게 둔다');
+  const texts = grid.elements.filter((element) => element.type === 'text');
+  // 카피를 격자 **위**에 두면, 에디터가 사진 행의 카피를 걷어내는 규칙과 맞물려
+  // 격자 위에 빈 띠(190px)만 남는다 — 2026-08-16 리뷰에서 실측하고 아래로 되돌렸다.
+  assert.deepEqual(texts.map((t) => t.y), [1202, 1270], '카피는 사진 아래(2단 행과 같은 규칙)');
+});
+
+test('mock and server assemblers emit the same 4-cut grid block structure', () => {
+  const storyboard = gridStoryboard();
+  const mockGrid = buildEditorBlocksFromStoryboard(storyboard, { ...PRODUCT, colors: COLORS }, true)[0];
+  const mockImages = mockGrid.elements.filter((element) => element.type === 'image');
+  const payload = {
+    storyboard,
+    cut_results: storyboard.map((block, index) => ({ blockId: block.id, imageUrl: mockImages[index].src })),
+    copy_results: [
+      { blockId: storyboard[0].id, texts: [{ role: 'headline', text: `${PRODUCT.name}와 함께하는 하루` }] },
+      { blockId: storyboard[1].id, texts: [{ role: 'body', text: '강조 포인트를 살린 카피가 들어가는 자리예요.' }] },
+    ],
+    product: PRODUCT,
+  };
+  const python = spawnSync(PYTHON, ['-c', [
+    'import json, sys',
+    'from app.agents.page_assembler import assemble',
+    'payload = json.load(sys.stdin)',
+    'block = assemble(payload["storyboard"], payload["cut_results"], payload["copy_results"], payload["product"], True)[0]',
+    'print(json.dumps(block, ensure_ascii=False))',
+  ].join('\n')], {
+    cwd: SERVER_DIR,
+    encoding: 'utf8',
+    env: { ...process.env, PYTHONPATH: '.' },
+    input: JSON.stringify(payload),
+  });
+
+  assert.equal(python.status, 0, python.stderr);
+  assert.deepEqual(withoutIds(JSON.parse(python.stdout)), withoutIds(mockGrid));
+});
+
+test('4컷 격자 — 카피가 비어도 두 조립기의 사진 자리가 같다', () => {
+  // 예전엔 클라가 "카피라이팅 켬"만 보고 자리를 비우고, 서버는 실제 카피 유무를 봐서
+  // 카피가 안 나온 생성에서 사진 위치가 140px 어긋났다(2026-08-16 리뷰). 카피 자리를
+  // 사진 아래로 통일하며 사라진 갈림 — 다시 벌어지지 않게 고정한다.
+  const storyboard = gridStoryboard();
+  const mockGrid = buildEditorBlocksFromStoryboard(storyboard, { ...PRODUCT, colors: COLORS }, true)[0];
+  const mockImages = mockGrid.elements.filter((element) => element.type === 'image');
+  const payload = {
+    storyboard,
+    cut_results: storyboard.map((block, index) => ({ blockId: block.id, imageUrl: mockImages[index].src })),
+    copy_results: [],
+    product: PRODUCT,
+  };
+  const python = spawnSync(PYTHON, ['-c', [
+    'import json, sys',
+    'from app.agents.page_assembler import assemble',
+    'payload = json.load(sys.stdin)',
+    'block = assemble(payload["storyboard"], payload["cut_results"], payload["copy_results"], payload["product"], True)[0]',
+    'print(json.dumps([[e["x"], e["y"], e["w"], e["h"]] for e in block["elements"] if e["type"] == "image"]))',
+  ].join('\n')], {
+    cwd: SERVER_DIR, encoding: 'utf8', env: { ...process.env, PYTHONPATH: '.' }, input: JSON.stringify(payload),
+  });
+  assert.equal(python.status, 0, python.stderr);
+  assert.deepEqual(JSON.parse(python.stdout), mockImages.map((i) => [i.x, i.y, i.w, i.h]));
+});

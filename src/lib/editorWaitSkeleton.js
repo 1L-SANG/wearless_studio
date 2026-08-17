@@ -3,6 +3,7 @@
    콘티 → 스켈레톤 블록(서버 조립 규칙 정렬) → 생성 이벤트 채움 → 완료 병합.
    전부 순수 함수 — Editor/Generating 어디서든 재사용, node 테스트 가능.
    ============================================================= */
+import { TEXT_MUTED } from '../features/editor/presets/textPresets.js';
 
 /* mock 조립기는 구조(블록·행 분할·자동 블록)의 정본이지만, 단일 AI 컷의 지오메트리가
    서버 조립기와 다르다 — 서버는 이미지 비율(미상 시 2:3 폴백=880×1320)로 높이를 잡고
@@ -21,7 +22,7 @@ export function alignSkeletonToServer(blocks, copywriting) {
     const isHero = b.contentRole === 'hero';
     if (copywriting && !isHero && !out.some((e) => e.type === 'text' && e.copyRole === 'body')) {
       out.push({ id: `${b.id}-ewbody`, type: 'text', x: 120, y: IMG_Y + IMG_H - MARGIN, w: 760, h: 40,
-        text: '', style: { size: 18, color: '#4a4a45' }, sourceBlockId: img.sourceBlockId, copyRole: 'body' });
+        text: '', style: { size: 17, color: TEXT_MUTED, lineHeight: 26 }, sourceBlockId: img.sourceBlockId, copyRole: 'body' });
     }
     const bottom = Math.max(...out.map((e) => (e.y || 0) + (e.h || 0)));
     return { ...b, elements: out, h: bottom + MARGIN };
@@ -61,7 +62,7 @@ export function fillGenBlocks(blocks, job) {
   return (blocks || []).map((b) => ({
     ...b,
     elements: (b.elements || []).map((el) => {
-      if (el.type === 'image' && el.sourceBlockId
+      if (el.type === 'image' && el.sourceBlockId && !el.slotCleared
           && ((!el.src && el.genPending) || ('genAutoSrc' in el && el.src === el.genAutoSrc))) {
         const cut = job.cuts[el.sourceBlockId];
         if (cut?.url) {
@@ -107,7 +108,10 @@ export function canSafelyMergeServerBlocks(blocks, serverBlocks) {
   });
 }
 
-export function mergeServerBlocks(blocks, serverBlocks) {
+/** @param {Set<string>} [failedSourceIds] 서버가 못 만든 컷의 sourceBlockId — 그 자리는
+    "그냥 빈 칸"이 아니라 '만들지 못함' 표식(genFailed)을 남긴다. 표식이 없으면 완료 순간
+    실패 컷이 일반 빈 슬롯으로 둔갑해 셀러가 이유도, 과금 여부도 모른 채 넘어간다. */
+export function mergeServerBlocks(blocks, serverBlocks, failedSourceIds) {
   if (!canSafelyMergeServerBlocks(blocks, serverBlocks)) return serverBlocks || [];
   const srcById = {}; const copyById = {};
   let serverNotice = null;
@@ -124,8 +128,16 @@ export function mergeServerBlocks(blocks, serverBlocks) {
     ...b,
     elements: (b.elements || []).map((el) => {
       if (el.type === 'image' && el.sourceBlockId) {
-        const { genPending, genExample, genAutoSrc, ...rest } = el;
-        return { ...rest, src: srcById[el.sourceBlockId] || rest.src || null };
+        const { genPending, genExample, genAutoSrc, genFailed, ...rest } = el;
+        // 셀러가 일부러 비운 자리는 되살리지 않는다 — 지운 사진이 완료 순간 말없이
+        // 돌아오면 "내가 지운 게 왜 있지"가 된다(2026-08-17 검증).
+        const src = rest.slotCleared ? null : (srcById[el.sourceBlockId] || rest.src || null);
+        // 실패 목록을 아는 호출(완료 병합)만 표식을 새로 판정한다. 목록 없이 부르는
+        // 재진입 병합은 이미 저장된 표식을 그대로 지킨다 — 안 그러면 다시 열 때마다
+        // '만들지 못했어요'가 평범한 빈 칸으로 둔갑한다(2026-08-17 리뷰).
+        const failed = failedSourceIds ? failedSourceIds.has(el.sourceBlockId) : Boolean(genFailed);
+        if (!src && failed) return { ...rest, src: null, genFailed: true };
+        return { ...rest, src };
       }
       if (el.type === 'text' && el.copyRole && el.sourceBlockId) {
         const { genAutoText, ...rest } = el;

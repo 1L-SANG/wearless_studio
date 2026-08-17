@@ -240,8 +240,8 @@ GIF에 대해: **우리 조사에 근거가 없다.** 수집 이미지 10,479장
 **필요한 구현 — 비대칭 레이아웃 신설**
 
 ```js
-// src/lib/sections.js:309 — 현재
-export const LAYOUT_ROW = { stack: 1, twoColumn: 2, threeColumn: 3, grid2x2: 2, colorCompare: 3 };
+// src/lib/sections.js — 현재 (grid2x2 는 2026-08-16 에 2 → 4: 2열×2행이라 4컷이 한 묶음)
+export const LAYOUT_ROW = { stack: 1, twoColumn: 2, threeColumn: 3, grid2x2: 4, colorCompare: 3 };
 ```
 
 전부 **균등 분할**이고 비대칭이 하나도 없다. `bigTopSmallBottom`(위 1 + 아래 2)을 추가하는 것이 이번 작업의 실질이며, 조사에서 나온 가장 확실한 근거다. 콘티보드 레이아웃 칩(`Storyboard.jsx:1945-1977`)과 에디터 행 조립(`db.js` `ROW_LAYOUTS`, `page_assembler`)에 함께 반영해야 한다.

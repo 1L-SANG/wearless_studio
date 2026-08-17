@@ -18,6 +18,11 @@ export { toMatchItem } from '@/lib/api/matchingItems.js';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const LONG_IMAGE_JOB_TIMEOUT_MS = 15 * 60 * 1000;
+/* 에디터 단일 컷 생성이 화면 앞에서 기다리는 시간(오너 8/15: "3분이면 만들어진다").
+   기본 90초는 QC 재시도로 3콜을 타는 경우(실측 75~154초)를 못 견뎠다. 여기서 끝나도
+   실패로 단정하지 않는다 — 타일을 남기고 jobId 로 뒤에서 계속 확인한다. */
+const EDITOR_IMAGE_JOB_TIMEOUT_MS = 3 * 60 * 1000;
+const EDITOR_IMAGE_JOB_TIMEOUT_MESSAGE = '이미지가 아직 만들어지고 있어요. 완성되면 의류 탭에 자동으로 나타나요.';
 const DEFAULT_JOB_TIMEOUT_MESSAGE = '작업이 지연되고 있어요. 잠시 후 다시 시도해 주세요.';
 const MANNEQUIN_JOB_TIMEOUT_MESSAGE = '마네킹컷 생성이 예상보다 오래 걸리고 있어요. 잠시 후 다시 확인해 주세요.';
 const MANNEQUIN_ADJUST_JOB_TIMEOUT_MESSAGE = '마네킹컷 조정이 예상보다 오래 걸리고 있어요. 잠시 후 다시 확인해 주세요.';
@@ -507,7 +512,7 @@ export const httpAdapter = {
       if (!isDefaultStoryboardForMode(saved, colors, previousMode, storyboardContext)) return saved;
       const seeded = defaultStoryboard(colors, mode, storyboardContext);
       // 첫 화면 스타일 선택은 사진 양을 바꿔도 유지한다 — pair 만 기본 지문에 들어올 수
-      // 있고(네컷 프레임은 컷이 늘어 애초에 기본이 아님), 그 외는 시드 기본(시그니처).
+      // 있고(네 컷 구성은 컷이 늘어 애초에 기본이 아님), 그 외는 시드 기본(시그니처).
       return deriveHookFrame(saved)?.style === 'pair'
         ? applySeededHookStyle(seeded, 'pair', colors)
         : seeded;
@@ -823,7 +828,17 @@ export const httpAdapter = {
       method: 'POST', body,
     });
     if (res.data) return { data: res.data, credits: res.credits };
-    const result = await pollJob(res.jobId, { onProgress });
-    return { data: result.data, credits: result.credits };
+    try {
+      const result = await pollJob(res.jobId, {
+        onProgress,
+        timeoutMs: EDITOR_IMAGE_JOB_TIMEOUT_MS,
+        timeoutMessage: EDITOR_IMAGE_JOB_TIMEOUT_MESSAGE,
+      });
+      return { data: result.data, credits: result.credits };
+    } catch (e) {
+      // 타임아웃이어도 서버 잡은 계속 돈다 — jobId 를 실어 보내 화면이 계속 추적하게 한다.
+      if (e?.code === 'job_timeout') e.jobId = res.jobId;
+      throw e;
+    }
   },
 };

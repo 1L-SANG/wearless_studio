@@ -39,7 +39,7 @@ import {
   formatDraftClock,
   formatDraftRelativeTime,
 } from '@/lib/draftSlot.js';
-import { Icon, Button, IconButton, ErrorState, Modal, useToast } from '@/components/ui.jsx';
+import { Icon, Button, IconButton, ErrorState, Modal, UploadPendingTile, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { AnalysisForm, AnalysisSkeleton, AnalysisProgress, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
 import {
@@ -281,11 +281,7 @@ function AddDrop({ className, slot, room, onAddFiles, onPendingChange, children 
 }
 
 function PendingTile({ small }) {
-  return (
-    <div className={`tile upload-placeholder${small ? ' sm' : ''}`} aria-hidden="true">
-      <span className="upload-placeholder-logo" />
-    </div>
-  );
+  return <UploadPendingTile className={`tile${small ? ' sm' : ''}`} />;
 }
 
 function ProductPhotoPreview({ image, displayUrl }) {
@@ -1056,6 +1052,8 @@ export function ProductInput() {
         return;
       }
 
+      // 색상 이름도 비운다 — 시드 템플릿의 '블랙'이 새 제작으로 새면 스와치를 다른 색으로
+      // 골라도 이름만 '블랙'으로 남아 원과 이름이 어긋난다(오너 8/15 지적의 오염원).
       const fresh = {
         ...p,
         name: '',

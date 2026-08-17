@@ -19,6 +19,7 @@ const editorPanelsSource = readFileSync(fileURLToPath(new URL('../../src/feature
 const editorStylesSource = readFileSync(fileURLToPath(new URL('../../src/styles/features.css', import.meta.url)), 'utf8');
 const moveableStylesSource = readFileSync(fileURLToPath(new URL('../../src/styles/moveable.css', import.meta.url)), 'utf8');
 const editorSource = readFileSync(fileURLToPath(new URL('../../src/features/editor/Editor.jsx', import.meta.url)), 'utf8');
+const infoPresetsSource = readFileSync(fileURLToPath(new URL('../../src/features/editor/presets/infoPresets.js', import.meta.url)), 'utf8');
 
 test('editor colors expose a practical preset palette made only of HEX values', () => {
   assert.deepEqual(DEFAULT_EDITOR_COLOR_PRESETS, [
@@ -125,10 +126,11 @@ test('row photo blocks are recognized by source-linked images even without conte
   assert.deepEqual(output[0].elements.map((element) => element.id), ['image']);
 });
 
-test('ordinary text restores the complete editable box around its saved bounds', () => {
+test('ordinary text resizes horizontally only — height is content-derived (auto render)', () => {
+  // 세로 핸들을 주면 드래그 순간만 커졌다가 h 동기화가 실측값으로 되돌리는 죽은 컨트롤이 된다.
   assert.deepEqual(resizePolicyForElement({ type: 'text' }, true), {
     keepRatio: false,
-    directions: ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'],
+    directions: ['w', 'e'],
   });
 });
 
@@ -195,9 +197,20 @@ test('canvas routes every movable element through one pointer drag without nativ
   assert.match(editorSource, /onDoubleClick=\{\(e\) => \{ e\.stopPropagation\(\); pendingTextSize\.current = null; onEdit\(el\.id\)/);
 });
 
+test('텍스트 높이 동기화 기준선은 StrictMode 재마운트에서도 유지된다', () => {
+  // dev 는 setup→cleanup→setup 으로 두 번 돈다. ref 는 cleanup 으로 안 돌아가므로 마운트
+  // 전용 cleanup 이 없으면 두 번째 setup 이 '이미 무장됨'이 돼, 문서를 여는 것만으로 전
+  // 텍스트의 h 가 재기록되고 자동저장이 나간다(2026-08-16 리뷰).
+  assert.match(editorSource, /useLayoutEffect\(\(\) => \(\) => \{ hSyncArmed\.current = false; \}, \[\]\);/);
+});
+
 test('entering text edit places the caret at the end for normal text and speech bubbles', () => {
-  assert.match(editorSource, /range\.selectNodeContents\(node\);\s*range\.collapse\(false\);/s);
-  assert.match(editorSource, /focusEditableAtEnd\(isSpeechBubbleElement\(el\) \? textRef\.current : ref\.current\)/);
+  // 방금 만든 텍스트만 예외 — 기본 문구가 통째로 선택돼 그냥 타이핑하면 갈아 끼워진다(오너 8/16).
+  assert.match(editorSource, /range\.selectNodeContents\(node\);\s*if \(!selectAll\) range\.collapse\(false\);/s);
+  assert.match(editorSource, /focusEditableAtEnd\(isSpeechBubbleElement\(el\) \? textRef\.current : ref\.current, fresh\)/);
+  // 편집 시작 때 표식을 떼면 "손 안 댄 안내 문구"인지 끝에 가서 알 수 없다 — 엿보기만 한다.
+  assert.match(editorSource, /const fresh = FRESH_TEXT_IDS\.has\(el\.id\);/);
+  assert.match(editorSource, /if \(String\(value \?\? ''\)\.trim\(\) !== DEFAULT_TEXT_BODY\) FRESH_TEXT_IDS\.delete\(elementId\);/);
   assert.doesNotMatch(editorSource, /setTimeout\(\(\) => (?:textRef|ref)\.current/);
 });
 
@@ -207,19 +220,52 @@ test('new ordinary text starts as an immediately editable Figma-style point text
     editorSource.indexOf('/* ---- 정보 블록', editorSource.indexOf('const addText =')),
   );
 
-  assert.match(addTextSource, /w:\s*12, h:\s*45, text:\s*'', textSizing:\s*'auto'/);
+  // 요소 생성은 textPresets.js 로 이동 — 빈 텍스트+auto 계약은 text-presets.test.mjs 가
+  // 동작 수준으로 고정한다. 여기서는 addText 가 그 빌더를 쓰고 즉시 편집에 들어가는지만 본다.
+  assert.match(addTextSource, /buildTextPresetElement\(preset\)/);
   assert.match(addTextSource, /setEditEl\(el\.id\)/);
   assert.match(editorSource, /const previewAutoTextSize = useCallback/);
   assert.match(editorSource, /naturalTextWidth\(node, value\)/);
   assert.match(editorSource, /h:\s*Math\.max\(1, Math\.ceil\(node\.scrollHeight\)\)/);
   assert.match(editorSource, /onInput=\{\(e\) => \{ if \(editing\) previewAutoTextSize\(e\.currentTarget\); \}\}/);
-  assert.match(editorSource, /if \(nextSize && onTextCommit\) onTextCommit\(blockId, el\.id, value, nextSize\)/);
+  // 텍스트 커밋은 항상 onTextCommit(commitText)으로, 빈 텍스트 정리는 편집 종료 감시가 맡는다 —
+  // blur를 안 타는 종료 경로(패널 클릭 등)에서도 유령 요소가 남지 않아야 한다. 단 copyRole/
+  // sourceBlockId가 달린 카피 자리는 생성 완료 때 AI 카피가 착지할 슬롯이라 지우면 안 된다.
+  assert.match(editorSource, /if \(onTextCommit\) onTextCommit\(blockId, el\.id, value, nextSize\)/);
+  assert.match(editorSource, /function pruneEmptyTextEl\(elId\)/);
+  assert.match(editorSource, /target\.copyRole \|\| target\.sourceBlockId/);
+  assert.match(editorSource, /if \(prev && prev !== editEl\) pruneEmptyTextEl\(prev\)/);
 });
 
 test('manually resizing point text converts it into a fixed text box', () => {
-  assert.match(editorSource, /elNow\?\.type === 'text' && elNow\.shape !== 'bubble' && elNow\.textSizing === 'auto' \? \{ textSizing: 'fixed' \} : \{\}/);
-  assert.match(editorSource, /height: el\.textSizing === 'fixed' \? el\.h : 'auto'/);
+  // 일반 텍스트는 라이브 드래그에서 px 높이를 인라인으로 박지 않고(height:auto 유지),
+  // 커밋에도 h를 넣지 않는다 — h 동기화 효과가 실측값으로 잰다.
+  assert.match(editorSource, /const plainText = elNow\?\.type === 'text' && elNow\.shape !== 'bubble'/);
+  assert.match(editorSource, /if \(plainText\) target\.style\.height = 'auto'/);
+  assert.match(editorSource, /\.\.\.\(plainText \? \{\} : \{ h: Math\.round\(rect\.h\) \}\)/);
+  assert.match(editorSource, /\.\.\.\(plainText && elNow\.textSizing === 'auto' \? \{ textSizing: 'fixed' \} : \{\}\)/);
+  // 렌더 높이는 항상 auto — 고정폭 텍스트도 크기를 키우면 상자가 따라 자라고,
+  // 저장되는 el.h는 h 동기화 효과(offsetHeight)가 맞춘다. 고정되는 건 폭뿐이다.
+  assert.match(editorSource, /style=\{\{ \.\.\.base, height: 'auto',/);
+  assert.match(editorSource, /const h = Math\.max\(1, Math\.ceil\(node\.offsetHeight\)\)/);
   assert.match(editorPanelsSource, /onChange\(\{ w, \.\.\.\(!isBubble && el\.textSizing === 'auto' \? \{ textSizing: 'fixed' \} : \{\}\) \}\)/);
+});
+
+test('도형·선에는 사각 회색 외곽선을 긋지 않는다 — 원·사선 둘레의 상자가 모양을 왜곡한다(오너 8/15)', () => {
+  // 알 수 없는 요소 타입은 기존 .el 외곽선을 유지해야 화면에서 찾을 수 있다 — 도형·선만 게이트.
+  assert.match(editorSource, /className=\{cls\(el\.type === 'line' \? 'el-line' : el\.type === 'shape' \? 'el-shape' : ''\)\}/);
+  assert.match(editorStylesSource, /\.el\.el-shape, \.el\.el-line, \.el\.el-shape:hover, \.el\.el-line:hover \{ outline: none; \}/);
+});
+
+test('새 텍스트는 자동 관리 블록(정보·사이즈·세탁·AI 고지)을 피해 가까운 일반 블록에 붙는다', () => {
+  // 자동 관리 블록의 요소는 폼 재적용·생성 병합 때 통째로 재생성돼 셀러 텍스트가 사라진다.
+  // 술어는 infoPresets가 한 벌로 소유한다. 콘텐츠가 블록 바닥까지 차 있으면(프레임 템플릿)
+  // 아래 빈 띠 대신 위쪽(80)에 둔다.
+  assert.match(editorSource, /isAutoManagedBlock\(bs0\[idx\]\)/);
+  assert.match(editorSource, /const bs0 = latestBlocks\.current \|\| blocks/);
+  assert.match(editorSource, /const roomBelow = \(block\.h \|\| 220\) - contentBottom/);
+  assert.match(editorSource, /contentBottom > 0 && roomBelow >= 20 \? contentBottom \+ 32 : 80/);
+  assert.match(infoPresetsSource, /export function isAutoManagedBlock/);
 });
 
 test('block quick actions stay visible while the top-level block is selected', () => {

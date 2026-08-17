@@ -9,6 +9,7 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { Icon, Modal, Button, useToast } from '@/components/ui.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
+import { hasEditorEntered } from '@/lib/editorEntered.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { WIZARD_STEPS, STEP_INDEX } from '@/lib/wizardSteps.js';
 import { flushProductDraftSave } from '@/lib/draftStore.js';
@@ -243,8 +244,16 @@ export function useDoneGuard() {
         await useAppStore.getState().loadProject();
         const pid = useAppStore.getState().projectId;
         if (!pid) return;   // 콜드 진입(복원 불가) — 가드 대상 아님, 화면 자체가 입력으로 리다이렉트
+        // 편집을 시작한 프로젝트도 막는다 — 생성이 실패·차단으로 끝나면 status 가 done 이
+        // 아니어서 뒤로가기로 그대로 들어가진다(오너 8/15). 단 프로젝트가 실제로 열리는지
+        // 먼저 확인한 뒤 막는다: 사라진 프로젝트를 막으면 에디터도 못 열려 입력 화면과
+        // 무한히 왕복하게 된다(가드가 사용자를 가두는 최악).
         const p = await api.getProject(pid);
-        if (!cancelled && p?.status === 'done') setBlocked(true);
+        // **그 프로젝트가 맞는지**까지 확인한다. mock 은 요청한 id 를 무시하고 현재 초안을
+        // 돌려주므로, 새로고침으로 초안이 새로 깔린 개발 모드에서 옛 표식만 보고 막으면
+        // 모달 → 에디터 → id 불일치 → 입력 화면으로 되튀는 왕복이 된다(2026-08-17 리뷰).
+        const sameProject = p?.id === pid;
+        if (!cancelled && sameProject && (p.status === 'done' || hasEditorEntered(pid))) setBlocked(true);
       } catch { /* 보호 가드 조회 실패는 공개 입력 화면을 막지 않는다. */ }
     })();
     return () => { cancelled = true; };
@@ -258,7 +267,7 @@ export function DoneGuardModal() {
   return (
     <Modal onClose={go}>
       <h3>초안 단계로 돌아갈 수 없어요</h3>
-      <p>이미 생성이 완료된 상세페이지입니다. 필요한 컷은 에디터에서 추가하거나 수정해주세요.</p>
+      <p>편집을 시작한 상세페이지예요. 여기서 되돌아가면 이미 만든 사진과 편집이 덮여요. 필요한 컷은 에디터에서 추가하거나 다시 만들 수 있어요.</p>
       <div className="modal-actions"><Button variant="primary" onClick={go}>에디터로 이동</Button></div>
     </Modal>
   );

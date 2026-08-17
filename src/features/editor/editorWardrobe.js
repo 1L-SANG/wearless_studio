@@ -87,9 +87,22 @@ export function mergeEditorImagesIntoWardrobe({
   );
 
   const seenSrc = new Set();
+  const seenPendingId = new Set();
   const append = (group, image) => {
     const src = normalizedSrc(image?.src);
-    if (!src || seenSrc.has(src)) return;
+    /* 생성 중·'조금 더 걸려요' 타일은 아직 src 가 없다. 여기서 떨구면 셀러가 뭐라도
+       편집하는 순간(블록이 바뀌면 이 함수가 다시 돈다) 표시가 사라져, 실패한 줄 알고
+       다시 생성한다 = 같은 컷에 크레딧이 두 번 나간다. 이 표시가 존재하는 이유가
+       바로 그 이중 결제를 막는 것이다(2026-08-17 리뷰). */
+    if (!src) {
+      const pendingId = (image?.loading || image?.slow) && image?.id;
+      if (!pendingId || seenPendingId.has(pendingId)) return;
+      if (!output[group]) output[group] = [];
+      output[group].push({ ...image });
+      seenPendingId.add(pendingId);
+      return;
+    }
+    if (seenSrc.has(src)) return;
     if (!output[group]) output[group] = [];
     output[group].push({ ...image, src });
     seenSrc.add(src);

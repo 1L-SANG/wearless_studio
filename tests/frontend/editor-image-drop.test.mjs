@@ -86,8 +86,9 @@ test('the two-column frame keeps its width and derives the exact portrait height
   const block = buildFrameBlock('split2', (prefix) => `${prefix}${++sequence}`);
   const [slot] = block.elements.filter((element) => element.type === 'image');
 
-  assert.equal(slot.w, 450);
-  assert.deepEqual(fitImageToFrameSlot(slot, { width: 900, height: 1460 }), { h: 730 });
+  // 칸끼리 붙이면서 폭 450 → 460(오너 8/16). 세로는 원본 비율에서 그대로 파생된다.
+  assert.equal(slot.w, 460);
+  assert.deepEqual(fitImageToFrameSlot(slot, { width: 900, height: 1460 }), { h: 746 });
   assert.deepEqual(fitImageToFrameSlot({ ...slot, imageSizing: undefined }, { width: 900, height: 1460 }), {});
 });
 
@@ -118,7 +119,8 @@ test('a multi-row blank frame keeps the next row below the tallest resized photo
   const fitted = fitImageToFrameBlock(block, slots[0].id, { width: 450, height: 900 });
   const fittedSlots = fitted.elements.filter((element) => element.type === 'image');
 
-  assert.equal(fittedSlots[0].h, 900);
+  // 칸 폭 460·행 간격 0(오너 8/16) — 다음 행은 가장 큰 사진 바로 아래에 붙는다.
+  assert.equal(fittedSlots[0].h, 920);
   assert.deepEqual(fittedSlots.slice(0, 2).map((element) => element.y), [40, 40]);
   assert.deepEqual(fittedSlots.slice(2).map((element) => element.y), [960, 960]);
 });
@@ -178,7 +180,10 @@ test('image frames show an exact placement guide for wardrobe and external file 
 
 test('frame images show the full source and a wardrobe click fills the pending slot immediately', () => {
   assert.match(editorSource, /objectFit: el\.fit \|\| 'cover'/);
-  assert.match(editorSource, /return fitImageToFrameBlock\(nextBlock, elId, image\)/);
+  assert.match(editorSource, /const fitted = fitImageToFrameBlock\(nextBlock, elId, image\);/);
+  // 다시 채운 칸에서는 '일부러 비움' 표식을 뗀다 — 안 떼면 그 뒤 생성 병합이 이 칸을
+  // 계속 건너뛰어 채워 넣은 사진이 자동 갱신 대상에서 빠진다(2026-08-17 검증).
+  assert.match(editorSource, /if \(el\.id !== elId \|\| !el\.slotCleared\) return el;/);
   assert.match(editorSource, /const requestSlotImage = \(blockId, el\) => \{[\s\S]*selectEl\(blockId, el, false, true\);[\s\S]*setPendingSlot\(\{ blockId, elId: el\.id \}\);[\s\S]*setTab\('wardrobe'\);[\s\S]*\}/);
   assert.match(editorSource, /if \(pendingSlot\) \{[\s\S]*setSlotImage\(pendingSlot\.blockId, pendingSlot\.elId,[\s\S]*setPendingSlot\(null\);[\s\S]*setTab\('image'\);[\s\S]*return;/);
   assert.match(panelSource, /onClick=\{\(e\) => \{ const image = e\.currentTarget\.querySelector\('img'\); onInsert\(\{ \.\.\.im, width: image\?\.naturalWidth \|\| im\.width, height: image\?\.naturalHeight \|\| im\.height \}\); \}\}/);
@@ -202,8 +207,11 @@ test('pending frame placement is cancelled when the user selects something else'
 
 test('empty template frames always label the exact place where a photo goes', () => {
   assert.match(editorSource, /aria-label="이 프레임에 사진 넣기"/);
-  assert.match(editorSource, /<Icon name="imagePlus" size=\{compactSlot \? 22 : 28\}/);
-  assert.match(editorSource, /!compactSlot && <span>여기에 사진 넣기<\/span>/);
+  assert.match(editorSource, /<Icon name=\{el\.genFailed \? 'alertTri' : 'imagePlus'\} size=\{compactSlot \? 22 : 28\}/);
+  assert.match(editorSource, /<span>여기에 사진 넣기<\/span>/);
+  // 못 만든 컷은 같은 자리를 쓰되 빈 슬롯과 구분돼야 한다 — 이유·미차감·다음 행동까지.
+  assert.match(editorSource, /el\.genFailed\s*\n?\s*\? <span>이 컷은 만들지 못했어요/);
+  assert.match(editorSource, /크레딧 미차감 · 눌러서 사진을 넣거나 AI 탭에서 다시 만들 수 있어요/);
   assert.match(editorSource, /onPointerDown=\{\(e\) => e\.stopPropagation\(\)\}/);
   assert.match(editorSource, /const requestSlotImage = \(blockId, el\) => \{[\s\S]*selectEl\(blockId, el, false, true\);[\s\S]*setPendingSlot\(\{ blockId, elId: el\.id \}\);[\s\S]*setTab\('wardrobe'\);[\s\S]*\}/);
   assert.match(stylesSource, /\.el-slot\.checkerboard\s*\{[^}]*background-image:\s*linear-gradient/s);

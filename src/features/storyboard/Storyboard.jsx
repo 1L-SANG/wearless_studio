@@ -36,6 +36,7 @@ import {
 } from '@/lib/storyboardTaxonomy.js';
 import {
   assignGenerationExamples,
+  canRerollGenerationExample,
   generationExampleImageSources,
   hasSelectableGenerationExamples,
   isGenerationCombinationPublic,
@@ -53,6 +54,7 @@ import {
 import { stripStaleSpaceSetBindings } from '@/lib/storyboardSpaceSetStaleness.js';
 import { stripExampleSelectionsById, stripStaleExampleSelections } from '@/lib/storyboardExampleStaleness.js';
 import {
+  HOOK_FRAME_VERSION,
   HOOK_STYLES,
   HOOK_STYLE_LABELS,
   adoptHookFrame,
@@ -89,7 +91,7 @@ import {
   sbSetSaveRepair,
   sbStable,
 } from './storyboardPersistence.js';
-import { renderGroups } from '@/lib/storyboardRenderGroups.js';
+import { renderGroupKey, renderGroups } from '@/lib/storyboardRenderGroups.js';
 import { prewarmImages } from '@/lib/imagePrewarm.js';
 import { spaceSetDisplayName } from '@/lib/spaceSetDisplayNames.js';
 import {
@@ -103,14 +105,20 @@ import { waitForAnalysisEditSave } from '@/features/product-input/saveRouting.js
 import { selectStoryboardCopywriting } from './copywritingSelection.js';
 import { applyStoryboardComposeMode } from './storyboardComposeMode.js';
 import { classifyStoryboardLoadError, storyboardNotFoundError } from './storyboardLoadError.js';
+import { buildColorOpts, visibleColorOpts } from '@/lib/colorOpts.js';
 import { continueAfterStoryboardFlush } from './storyboardNavigation.js';
 import { storyboardOverlayTop } from './storyboardOverlayTop.js';
+import { frameUnits, snapOutOfForeignBundle } from './storyboardUnits.js';
 import { bindStoryboardExitFlush, scheduleStoryboardAutosave } from './storyboardSaveLifecycle.js';
 import {
   collectInitialRevealThumbnailUrls,
   waitForInitialReveal,
 } from './initialRevealGate.js';
 
+
+/* 장소 세트를 받을 수 있는 섹션 — 세트 setType 이 styling(스타일링)·horizon-*(스튜디오)뿐이라
+   의류 확인(제품컷)·후킹(스타일이 컷 구성을 지배)에는 '장소세트 추가'를 열지 않는다. */
+const SPACE_SET_SECTION_ROLES = new Set([SECTION_ROLES.STYLING, SECTION_ROLES.STUDIO]);
 
 const COLOR_HEX = {
   white: '#ffffff', ivory: '#f3eee1', beige: '#d8c4a3', brown: '#7a5230', black: '#15141a',
@@ -235,7 +243,9 @@ function SelectionRing() {
   return <span className="sb-selection-ring" aria-hidden="true"><i /><i /><i /><i /></span>;
 }
 
-function StoryboardInsertControl({ inTray, active, placement: forcedPlacement = null, onDragOver, onDrop, onAdd }) {
+function StoryboardInsertControl({
+  inTray, active, placement: forcedPlacement = null, dragging = false, onDragOver, onDrop, onAdd,
+}) {
   const controlRef = useRef(null);
   const [placement, setPlacement] = useState('end');
   useLayoutEffect(() => {
@@ -257,9 +267,13 @@ function StoryboardInsertControl({ inTray, active, placement: forcedPlacement = 
   const resolvedPlacement = forcedPlacement || placement;
   return (
     <span ref={controlRef}
-      className={`sb-addzone ${resolvedPlacement}${inTray ? ' in-tray' : ''}${active ? ' drop-on' : ''}`}
+      className={`sb-addzone ${resolvedPlacement}${inTray ? ' in-tray' : ''}${active ? ' drop-on' : ''}${dragging ? ' dragging' : ''}`}
       onDragOver={onDragOver} onDrop={onDrop}>
-      <button type="button" className="sb-addzone-plus" aria-label="이 위치에 컷 추가" onClick={onAdd}>＋</button>
+      {/* 끄는 중에는 이 자리에 놓인다는 파란 점선 자리표를 띄운다(에디터 블록 삽입과 같은 결). */}
+      <span className="sb-addzone-slot" aria-hidden="true" />
+      {onAdd && (
+        <button type="button" className="sb-addzone-plus" aria-label="이 위치에 컷 추가" onClick={onAdd}>＋</button>
+      )}
     </span>
   );
 }
@@ -275,7 +289,7 @@ function cardLabels(block, catalogs) {
   return { direction, shot, isProduct };
 }
 
-function StoryboardCaption({ block, catalogs, colorOpts, clothingType }) {
+function StoryboardCaption({ block, catalogs, colorOpts, clothingType, onShuffle = null }) {
   if (block.source === 'mine') return <div className="sb-canvas-caption mine">내 사진</div>;
 
   const colors = ((block.colorIds && block.colorIds.length) ? block.colorIds : [block.colorId])
@@ -284,17 +298,36 @@ function StoryboardCaption({ block, catalogs, colorOpts, clothingType }) {
   const example = block.exampleId
     ? (catalogs.genExamples || []).find((item) => item.id === block.exampleId)
     : null;
-  const scope = block.spaceGroupId ? 'pose' : (block.refScope || 'all');
   const { direction, shot } = cardLabels(block, catalogs);
-  const scopeAll = !block.spaceGroupId && scope === 'all';
-  const directionDiffers = scopeAll && !!example?.direction && !!block.direction && example.direction !== block.direction;
-  const shotDiffers = scopeAll && !!example?.shot && !!block.shot && example.shot !== block.shot;
+  /* 셀러가 방향·샷을 원래 값에서 바꿨으면 그 값을 색으로 표시한다(2026-08-16 오너).
+     기준(원래 값)은 컷의 성격에 따라 다르다:
+     · 장소세트 멤버 — 세트가 정해 둔 그 자리의 컷(예시는 포즈 참조라 기준이 못 된다)
+     · 그 밖 — 물고 있는 생성예시의 컷(예시 = 이 컷이 원래 따라가려던 그림) */
+  const setMemberSpec = block.spaceGroupId
+    ? (inferStoryboardSpaceSet(block.spaceGroupId)?.members || [])
+      .find((member) => (member.order ?? null) === (block.spaceSetMemberOrder ?? null))
+    : null;
+  const baseline = block.spaceGroupId ? setMemberSpec : example;
+  const directionDiffers = !!baseline?.direction && !!block.direction && baseline.direction !== block.direction;
+  const shotDiffers = !!baseline?.shot && !!block.shot && baseline.shot !== block.shot;
   const closureOptions = catalogs.outerClosureStates || [];
   const closure = closureOptions.find((option) => option.value === block.outerClosureState)?.label || '전체 열림';
   const showClosure = clothingType === 'outer' && WORN_CUT_TYPES.has(block.cutType);
 
   return (
     <div className="sb-canvas-caption">
+      {/* 컷 단위 셔플 — 정보 줄 왼쪽 끝 아이콘(2026-08-16 오너). 시그니처 컷·장소세트 컷에는
+          붙지 않는다(그쪽은 프레임·세트 단위 셔플이 따로 있다). */}
+      {onShuffle && (
+        <button
+          type="button"
+          className="sb-caption-shuffle"
+          title="이 컷의 예시만 다시 뽑기"
+          aria-label="이 컷의 예시만 다시 뽑기"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => { event.stopPropagation(); onShuffle(); }}
+        >{ShuffleIcon}</button>
+      )}
       {/* 매칭 의류 표시는 이미지 위 오버레이(StoryboardMedia)로 옮겼다 —
           셀러가 직접 바꾼 컷에만 뜬다(2026-08-14 오너 확정). */}
       <span className="sb-caption-values">
@@ -317,26 +350,93 @@ function StoryboardCaption({ block, catalogs, colorOpts, clothingType }) {
   );
 }
 
-function StoryboardCardActions({ onDuplicate, onDelete, onNudge, canNudgeUp, canNudgeDown }) {
+/* 컷 이동 손잡이 아이콘 — 2열 3행 6점(끌어서 옮기는 자리라는 관용 표기). */
+const MoveDotsIcon = (
+  <svg viewBox="0 0 10 14" width="11" height="15" aria-hidden="true" fill="currentColor">
+    {[2, 7, 12].map((cy) => (
+      <g key={cy}><circle cx="2.5" cy={cy} r="1.35" /><circle cx="7.5" cy={cy} r="1.35" /></g>
+    ))}
+  </svg>
+);
+
+/* 컷 이동(2026-08-16 오너) — 앞뒤 화살표 버튼을 없애고 이미지 우측 위 6점 손잡이로 통일한다.
+   · 손잡이를 잡고 끌면 = 기존 카드 드래그 그대로(카드 전체가 draggable 이라 손잡이도 잡힌다)
+   · 손잡이를 누르면 = 이동 메뉴(한 칸씩·맨 앞/뒤) — 드래그가 어려운 상황·키보드 조작용
+   낱장·두 컷 구성·네 컷 구성 어디서나 같은 손잡이를 쓴다. */
+function StoryboardCardActions({ onDuplicate, onDelete, move = null, canDelete = true }) {
+  const [moveMenuOpen, setMoveMenuOpen] = useState(false);
+  const moveWrapRef = useRef(null);
+  // 6점 손잡이는 '낱장 컷'에만. 덩어리 안 컷은 사진 양옆 화살표(StoryboardMedia)가 담당한다.
+  const canMove = move?.kind === 'free' && (move.canMoveUp || move.canMoveDown);
+  useEffect(() => { if (!canMove) setMoveMenuOpen(false); }, [canMove]);
+  // 바깥을 누르면 닫힌다 — 메뉴가 열린 동안은 액션 묶음이 계속 보이므로 명시적으로 거둬야 한다.
+  useEffect(() => {
+    if (!moveMenuOpen) return undefined;
+    const onDown = (event) => {
+      if (!moveWrapRef.current?.contains(event.target)) setMoveMenuOpen(false);
+    };
+    const onKey = (event) => { if (event.key === 'Escape') setMoveMenuOpen(false); };
+    document.addEventListener('pointerdown', onDown, true);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown, true);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [moveMenuOpen]);
+  const runMove = (mode) => { setMoveMenuOpen(false); move.onMove(mode); };
   return (
-    <span className="sb-canvas-actions" onPointerDown={(event) => event.stopPropagation()}
-      onKeyDown={(event) => event.stopPropagation()}
+    <span className={'sb-canvas-actions' + (moveMenuOpen ? ' menu-open' : '')}
+      onPointerDown={(event) => event.stopPropagation()}
+      /* ESC 는 통과시킨다 — 삼키면 메뉴를 닫는 document 리스너가 못 받는다.
+         (앞선 조건은 주석과 정반대로 '열렸을 때 삼킨다' 였다 — 자체 리뷰) */
+      onKeyDown={(event) => { if (event.key !== 'Escape') event.stopPropagation(); }}
       onClick={(event) => event.stopPropagation()}>
-      {/* 드래그를 못 쓰는 경우(키보드 조작 포함)의 순서 변경 수단 — 드래그와 규칙이 같다. */}
-      {onNudge && (
-        <button
-          type="button" title="앞으로 한 칸" aria-label="앞으로 한 칸 이동"
-          disabled={!canNudgeUp} onClick={() => onNudge(-1)}
-        ><Icon name="chevLeft" size={16} /></button>
-      )}
-      {onNudge && (
-        <button
-          type="button" title="뒤로 한 칸" aria-label="뒤로 한 칸 이동"
-          disabled={!canNudgeDown} onClick={() => onNudge(1)}
-        ><Icon name="chevRight" size={16} /></button>
+      {canMove && (
+        <span className="sb-move-wrap" ref={moveWrapRef}>
+          <button
+            type="button" className="sb-move-handle"
+            title="끌어서 옮기기 · 눌러서 이동 메뉴" aria-label="컷 이동"
+            aria-expanded={moveMenuOpen}
+            onClick={() => setMoveMenuOpen((open) => !open)}
+          >{MoveDotsIcon}</button>
+          {moveMenuOpen && (
+            <span className="sb-move-menu" role="menu">
+              <button type="button" role="menuitem" disabled={!move.canMoveUp}
+                onClick={() => runMove('prev')}>앞으로 한 칸</button>
+              <button type="button" role="menuitem" disabled={!move.canMoveDown}
+                onClick={() => runMove('next')}>뒤로 한 칸</button>
+              <button type="button" role="menuitem" disabled={!move.canMoveUp}
+                onClick={() => runMove('first')}>맨 앞으로</button>
+              <button type="button" role="menuitem" disabled={!move.canMoveDown}
+                onClick={() => runMove('last')}>맨 뒤로</button>
+            </span>
+          )}
+        </span>
       )}
       <button type="button" title="컷 복제" aria-label="컷 복제" onClick={onDuplicate}><Icon name="copy" size={15} /></button>
-      <button type="button" title="컷 삭제" aria-label="컷 삭제" onClick={onDelete}><Icon name="x" size={15} /></button>
+      {canDelete && (
+        <button type="button" title="컷 삭제" aria-label="컷 삭제" onClick={onDelete}><Icon name="x" size={15} /></button>
+      )}
+    </span>
+  );
+}
+
+/* 덩어리 안 컷의 자리 교환 — 사진 양옆 화살표. 이웃이 있는 쪽만 누를 수 있다.
+   네 컷 구성도 좌우만 쓴다(위아래까지 두면 작은 타일에 아이콘이 넷이라 복잡, 2026-08-16 오너):
+   읽는 순서(1→2→3→4)를 따라 2번의 '›' 는 3번 자리와 바뀐다. */
+function BundleSwapArrows({ move }) {
+  if (move?.kind !== 'swap') return null;
+  const press = (event, step) => { event.stopPropagation(); move.onSwap(step); };
+  return (
+    <span className="sb-swap-arrows"
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}>
+      <button type="button" className="sb-swap-arrow" aria-label="앞 자리와 바꾸기"
+        title="앞 자리와 바꾸기" disabled={!move.canPrev}
+        onClick={(event) => press(event, -1)}>‹</button>
+      <button type="button" className="sb-swap-arrow" aria-label="뒤 자리와 바꾸기"
+        title="뒤 자리와 바꾸기" disabled={!move.canNext}
+        onClick={(event) => press(event, 1)}>›</button>
     </span>
   );
 }
@@ -344,7 +444,7 @@ function StoryboardCardActions({ onDuplicate, onDelete, onNudge, canNudgeUp, can
 function StoryboardMedia({
   block, catalogs, matchClothing = null, index, total,
   showPoseVariation = false,
-  onDuplicate, onDelete, onNudge, canNudgeUp, canNudgeDown,
+  onDuplicate, onDelete, move = null, canDelete = true,
 }) {
   const missing = block.source !== 'mine' && !block.exampleId && !block.previewThumb;
   const manualEmpty = missing && block.exampleChoice === 'manual';
@@ -385,15 +485,13 @@ function StoryboardMedia({
           <i>매칭</i>
         </span>
       )}
-      <StoryboardCardActions
-        onDuplicate={onDuplicate} onDelete={onDelete}
-        onNudge={onNudge} canNudgeUp={canNudgeUp} canNudgeDown={canNudgeDown}
-      />
+      <BundleSwapArrows move={move} />
+      <StoryboardCardActions onDuplicate={onDuplicate} onDelete={onDelete} move={move} canDelete={canDelete} />
     </>
   );
 }
 
-function CardDragSurface({ className, dragProps, onSelect, children }) {
+function CardDragSurface({ className, dragProps, onSelect, swapProps = null, children }) {
   const pointerStart = useRef(null);
   const movedBeyondClick = useRef(false);
   const onPointerDown = (event) => {
@@ -424,6 +522,10 @@ function CardDragSurface({ className, dragProps, onSelect, children }) {
         pointerStart.current = null;
         dragProps?.onDragEnd?.(event);
       }}
+      // 카드 위에 떨구면 그 자리와 맞바꾼다(2026-08-16 오너) — 사이에 떨구는 삽입과 구분된다.
+      onDragOver={swapProps?.onDragOver}
+      onDragLeave={swapProps?.onDragLeave}
+      onDrop={swapProps?.onDrop}
       onClick={(event) => {
         pointerStart.current = null;
         if (movedBeyondClick.current) {
@@ -448,17 +550,38 @@ function CardDragSurface({ className, dragProps, onSelect, children }) {
 function StoryboardCard({
   item, total, catalogs, colorOpts, matchClothing, clothingType,
   selected, locked, cardDrag, onSelect, onDuplicate, onDelete, addControl,
-  onNudge, canNudgeUp, canNudgeDown, microVariationIds,
+  move = null, microVariationIds, onShuffle = null, alignCaptionWithMoodGrid = false,
+  swapProps = null, canDelete = true,
 }) {
   const { block, index } = item;
   const missing = block.source !== 'mine' && !block.exampleId;
   const manualEmpty = missing && block.exampleChoice === 'manual';
+  /* 네 컷 구성 격자의 첫 줄과 나란히 선 낱장 컷은 설명을 사진 위로 올린다 — 같은 줄에서
+     설명 위치가 엇갈리면 한 덩어리로 안 읽힌다(2026-08-16 오너). 줄 판정은 실제 배치를 잰다. */
+  const cardRef = useRef(null);
+  const [captionOnTop, setCaptionOnTop] = useState(false);
+  useLayoutEffect(() => {
+    if (!alignCaptionWithMoodGrid) { setCaptionOnTop(false); return undefined; }
+    const unit = cardRef.current?.closest('.sb-grid-unit');
+    const grid = unit?.parentElement;
+    if (!unit || !grid) return undefined;
+    const measure = () => {
+      const anchor = grid.querySelector('.sb-moodgrid')?.closest('.sb-grid-unit');
+      setCaptionOnTop(!!anchor && anchor !== unit && Math.abs(unit.offsetTop - anchor.offsetTop) < 2);
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(grid);
+    measure();
+    return () => observer.disconnect();
+  }, [alignCaptionWithMoodGrid, index, total]);
   return (
-    <div className={'sb-canvas-card' + (locked ? ' locked' : '')}>
+    <div ref={cardRef}
+      className={'sb-canvas-card' + (captionOnTop ? ' cap-top' : '') + (locked ? ' locked' : '')}>
       <div className="sb-card-media">
         <CardDragSurface
-          className={'sb-cutcard' + (selected ? ' selected' : '') + (missing ? ' missing' : '') + (manualEmpty ? ' manual-empty' : '')}
+          className={'sb-cutcard' + (selected ? ' selected' : '') + (missing ? ' missing' : '') + (manualEmpty ? ' manual-empty' : '') + (swapProps?.isTarget ? ' swap-over' : '')}
           dragProps={cardDrag}
+          swapProps={swapProps}
           onSelect={onSelect}
         >
           <StoryboardMedia
@@ -471,9 +594,8 @@ function StoryboardCard({
             showPoseVariation={microVariationIds?.has(block.id)}
             onDuplicate={onDuplicate}
             onDelete={onDelete}
-            onNudge={onNudge}
-            canNudgeUp={canNudgeUp}
-            canNudgeDown={canNudgeDown}
+            move={move}
+            canDelete={canDelete}
           />
           {selected && <SelectionRing />}
         </CardDragSurface>
@@ -485,6 +607,7 @@ function StoryboardCard({
         colorOpts={colorOpts}
         matchClothing={matchClothing}
         clothingType={clothingType}
+        onShuffle={onShuffle}
       />
     </div>
   );
@@ -493,7 +616,7 @@ function StoryboardCard({
 function StoryboardFrame({
   items, total, catalogs, colorOpts, matchClothing, clothingType,
   selectedId, locked, dragFor, onSelect, onDuplicate, onDelete, addControl,
-  microVariationIds,
+  microVariationIds, moveFor = null, swapFor = null, canDeleteFor = null,
 }) {
   const colorway = items.every((item) => (
     item.block.colorwayGroupId
@@ -515,8 +638,9 @@ function StoryboardFrame({
             return (
               <CardDragSurface
                 key={item.block.id}
-                className={'sb-frame-half' + (item.block.id === selectedId ? ' selected' : '') + (missing ? ' missing' : '') + (manualEmpty ? ' manual-empty' : '') + (locked && item.block.id !== selectedId ? ' locked' : '')}
+                className={'sb-frame-half' + (item.block.id === selectedId ? ' selected' : '') + (missing ? ' missing' : '') + (manualEmpty ? ' manual-empty' : '') + (locked && item.block.id !== selectedId ? ' locked' : '') + (swapFor?.(item.block.id)?.isTarget ? ' swap-over' : '')}
                 dragProps={dragFor(item.block.id)}
+                swapProps={swapFor?.(item.block.id) || null}
                 onSelect={() => onSelect(item.block.id)}
               >
                 <StoryboardMedia
@@ -529,6 +653,8 @@ function StoryboardFrame({
                   showPoseVariation={microVariationIds?.has(item.block.id)}
                         onDuplicate={() => onDuplicate(item.block.id)}
                   onDelete={() => onDelete(item.block.id)}
+                  move={moveFor?.(item.block) || null}
+                  canDelete={canDeleteFor ? canDeleteFor(item.block) : true}
                 />
                 {item.block.id === selectedId && <SelectionRing />}
               </CardDragSurface>
@@ -549,6 +675,69 @@ function StoryboardFrame({
           />
         ))}
       </div>
+    </div>
+  );
+}
+
+/* 네 컷 구성 — 사진 넷이 빈틈 없이 붙은 2×2 한 덩어리. 위 두 컷의 설명은 사진 **위**로
+   올린다: 사진 사이에 두면 그리드가 위아래로 갈라져 "네 컷 한 장"으로 안 읽힌다
+   (2026-08-16 오너 지시). 에디터·서버 조립도 같은 배치(카피가 그리드 위)를 만든다. */
+function StoryboardMoodGrid({
+  items, total, catalogs, colorOpts, matchClothing, clothingType,
+  selectedId, locked, dragFor, onSelect, onDuplicate, onDelete, addControl,
+  microVariationIds, moveFor = null, swapFor = null, canDeleteFor = null,
+}) {
+  const captions = (row) => (
+    <div className="sb-frame-captions">
+      {row.map((item) => (
+        <StoryboardCaption
+          key={item.block.id}
+          block={item.block}
+          catalogs={catalogs}
+          colorOpts={colorOpts}
+          matchClothing={matchClothing}
+          clothingType={clothingType}
+        />
+      ))}
+    </div>
+  );
+  return (
+    <div className="sb-frame sb-moodgrid">
+      {captions(items.slice(0, 2))}
+      <div className="sb-frame-media">
+        <div className="sb-frame-box sb-moodgrid-box">
+          {items.map((item) => {
+            const missing = item.block.source !== 'mine' && !item.block.exampleId;
+            const manualEmpty = missing && item.block.exampleChoice === 'manual';
+            return (
+              <CardDragSurface
+                key={item.block.id}
+                className={'sb-frame-half' + (item.block.id === selectedId ? ' selected' : '') + (missing ? ' missing' : '') + (manualEmpty ? ' manual-empty' : '') + (locked && item.block.id !== selectedId ? ' locked' : '') + (swapFor?.(item.block.id)?.isTarget ? ' swap-over' : '')}
+                dragProps={dragFor(item.block.id)}
+                swapProps={swapFor?.(item.block.id) || null}
+                onSelect={() => onSelect(item.block.id)}
+              >
+                <StoryboardMedia
+                  block={item.block}
+                  catalogs={catalogs}
+                  colorOpts={colorOpts}
+                  matchClothing={matchClothing}
+                  index={item.index}
+                  total={total}
+                  showPoseVariation={microVariationIds?.has(item.block.id)}
+                  onDuplicate={() => onDuplicate(item.block.id)}
+                  onDelete={() => onDelete(item.block.id)}
+                  move={moveFor?.(item.block) || null}
+                  canDelete={canDeleteFor ? canDeleteFor(item.block) : true}
+                />
+                {item.block.id === selectedId && <SelectionRing />}
+              </CardDragSurface>
+            );
+          })}
+        </div>
+        {addControl}
+      </div>
+      {captions(items.slice(2, 4))}
     </div>
   );
 }
@@ -576,51 +765,6 @@ function StoryboardStack({ group, total, catalogs, onOpen }) {
   );
 }
 
-const blockPreviewSrc = (block, catalogs) => {
-  const example = block.exampleId
-    ? (catalogs?.genExamples || []).find((candidate) => candidate.id === block.exampleId)
-    : null;
-  const image = example ? generationExampleImageSources(example) : null;
-  return block.previewThumb || image?.src || block.thumb || block.ownImages?.[0];
-};
-
-/* 후킹 접힘 예외(스펙 2026-08-14 §3) — 스택 대신 흰 페이지 시트 위에 첫 화면 실형태.
-   클릭 = 섹션 펼침. 스타일 변경은 펼친 뒤 컷 인스펙터 상단에서. */
-function StoryboardHookSheet({ frame, slots, total, catalogs, colorOpts, productName, baseColorId, onOpen }) {
-  return (
-    <div className="sb-hooksheet-wrap">
-      <button
-        type="button"
-        className={`sb-hooksheet style-${frame.style}`}
-        onClick={onOpen}
-        aria-label="후킹 섹션 펼치기"
-      >
-        <span className="sb-hooksheet-box">
-          {slots.map(({ block, index }) => {
-            const color = colorOpts.find((option) => option.id === block.colorId);
-            return (
-              <span key={block.id} className="sb-hooksheet-tile">
-                <span className="sb-canvas-number">{cutNumber(index, total)}</span>
-                <img src={blockPreviewSrc(block, catalogs)} alt="" loading="lazy" decoding="async" />
-                {frame.style === 'signature' && block.hookTitleOverlay && productName && (
-                  <span className="sb-hooksheet-title"><i>{productName}</i></span>
-                )}
-                {frame.style === 'moodGrid' && color && (
-                  <span className="sb-hooksheet-color"><i style={{ background: color.hex }} />{color.label}</span>
-                )}
-                {frame.style === 'moodGrid' && baseColorId && block.colorId
-                  && block.colorId !== baseColorId && (
-                  <span className="sb-hooksheet-gen">자동 생성</span>
-                )}
-              </span>
-            );
-          })}
-        </span>
-      </button>
-    </div>
-  );
-}
-
 const ShuffleIcon = (
   <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
     strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -629,24 +773,6 @@ const ShuffleIcon = (
   </svg>
 );
 
-function frameUnits(items) {
-  const units = [];
-  for (let index = 0; index < items.length;) {
-    const rowId = items[index].block.layoutRowId;
-    if (rowId) {
-      let end = index + 1;
-      while (end < items.length && items[end].block.layoutRowId === rowId) end += 1;
-      if (end - index === 2) {
-        units.push({ kind: 'frame', items: items.slice(index, end) });
-        index = end;
-        continue;
-      }
-    }
-    units.push({ kind: 'card', items: [items[index]] });
-    index += 1;
-  }
-  return units;
-}
 
 function canvasUnits(items) {
   const units = [];
@@ -894,9 +1020,16 @@ function SpaceSetInspectorHeader({ set, siblings, block, onChangeSet }) {
   );
 }
 
-function SpaceSetGallery({ mode, error, onChoose, onClose, gender, clothingType }) {
+function SpaceSetGallery({ mode, error, onChoose, onClose, gender, clothingType, sectionRole = null }) {
   const replacing = mode === 'replace';
-  const spaceSets = storyboardSpaceSetsFor({ gender, clothingType });
+  // 섹션이 정해진 추가는 그 섹션이 실제로 소화하는 세트만 보여준다 — 스타일링 칸에 호리존
+  // 세트를 넣으면 그 섹션에서는 발행되지 않은 조합이라 컷이 통째로 빈다(2026-08-16 실측).
+  const spaceSets = storyboardSpaceSetsFor({ gender, clothingType })
+    .filter((set) => (
+      sectionRole === SECTION_ROLES.STYLING ? set.setType === 'styling'
+        : sectionRole === SECTION_ROLES.STUDIO ? String(set.setType || '').startsWith('horizon')
+          : true
+    ));
   const [preview, setPreview] = useState(null);
   const previewTimer = useRef(null);
   useEffect(() => () => clearTimeout(previewTimer.current), []);
@@ -1139,13 +1272,10 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, shot, 
             event.preventDefault(); scrollToGalleryPage(galleryPage + 1);
           }
         }}>
+        {/* 세로 휠은 갤러리가 먹지 않는다 — 인스펙터 세로 스크롤이 그대로 이어진다.
+            페이지 넘김은 가로 스크롤·넘김 버튼·←→ 키만 (2026-08-16 오너). */}
         <div ref={galleryRef} className="sb-exgrid"
-          onScroll={updateGalleryPageFromScroll}
-          onWheel={(event) => {
-            if (galleryPageCount <= 1 || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
-            event.preventDefault();
-            scrollToGalleryPage(galleryPage + (event.deltaY > 0 ? 1 : -1));
-          }}>
+          onScroll={updateGalleryPageFromScroll}>
           {galleryPages.map((pageItems, pageIndex) => (
             <div className="sb-expage" key={`page:${pageIndex}`}>
               {pageItems}
@@ -1180,7 +1310,7 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, shot, 
   );
 }
 
-function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, hasDetailImage, projectId, onChange, onAtomicChange, onRetryAtomicSave, requestedRecipe, onCancelRequestedRecipe, matchClothing, spaceContext, onChangeSpaceSet, onAddMine, onExampleDrag, hookStyle = null }) {
+function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, hasDetailImage, projectId, onChange, onAtomicChange, onRetryAtomicSave, requestedRecipe, onCancelRequestedRecipe, matchClothing, spaceContext, onChangeSpaceSet, onAddMine, onExampleDrag }) {
   const [matchOpen, setMatchOpen] = useState(false);
   const [pendingRecipe, setPendingRecipe] = useState(null);
   const [pendingChoice, setPendingChoice] = useState(null);
@@ -1400,7 +1530,6 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   const outerClosureState = closureOptions.some((option) => option.value === block.outerClosureState) ? block.outerClosureState : 'open';
   return (
     <div className="surface inspector">
-      {hookStyle && <HookStyleSection {...hookStyle} />}
       {isMine && !block.spaceGroupId ? (
         <>
           <div className="sb-exhead">
@@ -1601,7 +1730,7 @@ function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, ana
   // 입력에서 성별·의류 종류를 바꾼 뒤 콘티로 오면(이전 버튼 재배치), 안 맞는 세트가 낀 카드가
   // 매 저장마다 space_set_gender_mismatch 등으로 400 나던 것을 — 여기서 바인딩만 떼어 되돌린다.
   const boundGender = genderForClothingType(clothingType, a?.targetGenders);
-  // 구 '오프닝 2단 행' 보드는 두컷 프레임의 전신 — 진입 1회, 프레임 표식만 승격한다
+  // 구 '오프닝 2단 행' 보드는 두 컷 구성의 전신 — 진입 1회, 프레임 표식만 승격한다
   // (컷·순서 불변, 스펙 2026-08-14 §2). 그 밖의 구형 보드는 프레임 없음 = 스택 폴백.
   const adoptedBlocks = adoptHookFrame(sectionedBlocks).blocks;
   const spaceSetRepairedBlocks = stripStaleSpaceSetBindings(adoptedBlocks, {
@@ -1648,16 +1777,8 @@ function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, ana
     product: p,
     gender: exampleGender,
   });
-  const allColorOpts = (p.colors || []).map((color, index) => ({
-    id: color.id,
-    label: hydratedCatalogs.swatchColors.find((swatch) => swatch.id === color.swatchId)?.label
-      || color.name?.trim()
-      || `색상 ${index + 1}`,
-    hex: hexFor(color),
-  }));
-  const colorOpts = allColorOpts.filter((_option, index) => (
-    (p.colors[index].images || []).length || p.colors[index].isBase
-  ));
+  const allColorOpts = buildColorOpts(p.colors, hydratedCatalogs, hexFor);
+  const colorOpts = visibleColorOpts(allColorOpts, p.colors);
   const fallbackColor = [{ id: 'col1', label: '기본', hex: '#15141a' }];
 
   return {
@@ -1716,11 +1837,12 @@ function ComposeModeSegment({ modes, value, canApply, onApply, onError }) {
 
 /* '첫 화면 스타일'(스펙 §3, 2026-08-14 오너 확정) — 상시 우측 패널이 아니라 후킹 섹션
    컷을 클릭했을 때 그 컷 인스펙터의 맨 위에 뜬다. 미리보기를 누르면 스타일 3종이 펼쳐진다. */
+// 설명은 개조식·명사형 종결 — 길면 안 읽힌다(2026-08-16 오너).
 const HOOK_STYLE_DESCRIPTIONS = {
-  signature: '의류 위주로 확대한 이미지 중간에 제품명을 강조해서 넣었어요.',
-  pair: '의류 위주로 표현된 미디움샷 이미지 2개를 붙여서 보여줘요.',
-  moodGridByColor: '여러 분위기의 이미지를 색상별로 한번에 보여줘요.',
-  moodGridByCuts: '같은 색의 서로 다른 네 컷을 모아 무드를 풍성하게 보여줘요.',
+  signature: '확대한 한 컷 + 제품명',
+  pair: '미디움샷 두 컷 나란히',
+  moodGridByColor: '네 컷 · 색상별로 한 장씩',
+  moodGridByCuts: '네 컷 · 같은 색 다른 장면',
 };
 const hookStyleDescription = (style, colors) => (
   style === 'moodGrid'
@@ -1728,74 +1850,105 @@ const hookStyleDescription = (style, colors) => (
     : HOOK_STYLE_DESCRIPTIONS[style]
 );
 
-function HookStyleSection({
-  frame, blocks, catalogs, colors, productName, saving, error, onSelectStyle,
-  clothingType, gender, isCutAvailable,
+/* '첫 화면 구성' 칩 — 섹션 헤더에 상시(2026-08-16 오너). 컷 인스펙터에서 뺐다.
+   스타일은 후킹 섹션 전체를 정하는 하나의 결정이라 컷 선택과 묶으면 안 된다:
+   컷을 눌러야만 나와서 어디 있는지 알기 어려웠고, 스타일을 바꾸면 슬롯 순서가 바뀌어
+   패널이 통째로 사라지는 막다른 화면이 됐다(자체 리뷰 high). 헤더에 붙이면 둘 다 사라진다.
+   구성 안 개별 삭제를 막았으므로 '컷 수를 줄이는 유일한 길'이기도 하다 — 항상 보여야 한다. */
+function HookStyleChip({
+  frame, catalogs, colors, saving, error, onSelectStyle, clothingType, gender, isCutAvailable,
 }) {
   const [open, setOpen] = useState(false);
-  const slots = frame.slotIds
-    .map((slotId) => blocks.find((block) => block.id === slotId))
-    .filter(Boolean);
-  const previewSrc = slots.map((block) => blockPreviewSrc(block, catalogs));
-  // 스타일 카드 3종의 대표 이미지 = 발행 카탈로그에서 스타일 슬롯 사양대로 고정 선정
-  // (2026-08-14 오너: 현재 보드 컷 대신 스타일 차이가 잘 보이는 고정 이미지).
-  // 카탈로그 순위 1번을 쓰므로 발행이 갈리지 않는 한 항상 같은 그림이다.
+  const wrapRef = useRef(null);
+  const chipRef = useRef(null);
+  const menuRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (event) => {
+      if (!wrapRef.current?.contains(event.target)) setOpen(false);
+    };
+    const onKey = (event) => { if (event.key === 'Escape') setOpen(false); };
+    document.addEventListener('pointerdown', onDown, true);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown, true);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+  // 열면 첫 항목으로 포커스를 옮기고, 닫으면 칩으로 되돌린다 — 안 그러면 포커스가 body 로
+  // 흩어져 키보드 사용자가 자리를 잃는다(자체 리뷰).
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (open) menuRef.current?.querySelector('button:not(:disabled)')?.focus();
+    else if (wasOpen.current) chipRef.current?.focus();
+    wasOpen.current = open;
+  }, [open]);
+  // ↑↓ 로 항목 이동, Home/End 로 처음·끝.
+  const onMenuKeyDown = (event) => {
+    const items = [...(menuRef.current?.querySelectorAll('button:not(:disabled)') || [])];
+    if (!items.length) return;
+    const at = items.indexOf(document.activeElement);
+    const go = (index) => { event.preventDefault(); items[(index + items.length) % items.length].focus(); };
+    if (event.key === 'ArrowDown') go(at + 1);
+    else if (event.key === 'ArrowUp') go(at - 1);
+    else if (event.key === 'Home') go(0);
+    else if (event.key === 'End') go(items.length - 1);
+  };
+  // 대표 이미지 = 발행 카탈로그에서 스타일 슬롯 사양대로 고정 선정(2026-08-14 오너).
+  // 카탈로그 순위 1번이라 발행이 갈리지 않는 한 항상 같은 그림이다.
   const representativeThumb = (cutType, shot) => {
     const example = selectGenerationExamples(catalogs?.genExamples || [], {
       cutType, shot, clothingType, gender, appendSetOnly: cutType !== 'product',
     })[0];
-    return example ? generationExampleImageSources(example).src : previewSrc[0];
+    return example ? generationExampleImageSources(example).src : null;
   };
   const thumbFor = (style) => hookSlotPlan(style, { colors, isCutAvailable })
     .map((slot) => representativeThumb(slot.cutType, slot.shot));
   return (
-    <div className="insp-sec sb-hookpanel">
-      <label className="lbl">첫 화면 스타일</label>
+    <span className="sb-stylechip-wrap" ref={wrapRef}
+      onClick={(event) => event.stopPropagation()}>
       <button
         type="button"
-        className="sb-hookpanel-live"
+        ref={chipRef}
+        className={'sb-stylechip' + (open ? ' on' : '')}
         aria-expanded={open}
+        aria-label="첫 화면 구성 바꾸기"
+        disabled={saving}
         onClick={() => setOpen((value) => !value)}
       >
-        <span className={`sb-hookpanel-sheet style-${frame.style}`}>
-          {slots.map((block, index) => (
-            <span key={block.id} className="sb-hookpanel-tile">
-              <img src={previewSrc[index]} alt="" loading="lazy" decoding="async" />
-              {frame.style === 'signature' && productName && (
-                <span className="sb-hooksheet-title small"><i>{productName}</i></span>
-              )}
-            </span>
-          ))}
-        </span>
-        <span className="sb-hookpanel-desc">
-          <b>{HOOK_STYLE_LABELS[frame.style]}</b>
-          <span>{hookStyleDescription(frame.style, colors)}</span>
-          <em>{open ? '스타일 목록 접기' : '미리보기를 눌러 스타일 바꾸기'}</em>
-        </span>
+        첫 화면 구성<i>:</i>
+        <b>{(frame && HOOK_STYLE_LABELS[frame.style]) || '구성 없음'}</b>
+        <Icon name="chevDown" size={13} />
       </button>
       {open && (
-      <div className="sb-hookpanel-cards" role="group" aria-label="첫 화면 스타일">
-        {HOOK_STYLES.map((style) => (
-          <button
-            key={style}
-            type="button"
-            className={'sb-hookpanel-card' + (style === frame.style ? ' on' : '')}
-            aria-pressed={style === frame.style}
-            disabled={saving}
-            onClick={() => { onSelectStyle(style); setOpen(false); }}   /* 고르면 목록 접힘(2026-08-15 오너) */
-          >
-            <span className={`sb-hookpanel-thumb style-${style}`}>
-              {thumbFor(style).map((src, index) => (
-                <i key={index} style={{ backgroundImage: src ? `url("${src}")` : undefined }} />
-              ))}
-            </span>
-            <span className="sb-hookpanel-name">{HOOK_STYLE_LABELS[style]}</span>
-          </button>
-        ))}
-      </div>
+        <span className="sb-stylechip-menu" role="menu" aria-label="첫 화면 구성"
+          ref={menuRef} onKeyDown={onMenuKeyDown}>
+          {HOOK_STYLES.map((style) => (
+            <button
+              key={style}
+              type="button"
+              role="menuitem"
+              className={'sb-stylechip-item' + (style === frame?.style ? ' on' : '')}
+              aria-current={style === frame?.style ? 'true' : undefined}
+              disabled={saving}
+              onClick={() => { onSelectStyle(style); setOpen(false); }}
+            >
+              <span className={`sb-stylechip-thumb style-${style}`}>
+                {thumbFor(style).map((src, index) => (
+                  <i key={index} style={{ backgroundImage: src ? `url("${src}")` : undefined }} />
+                ))}
+              </span>
+              <span className="sb-stylechip-text">
+                <b>{HOOK_STYLE_LABELS[style]}</b>
+                <small>{hookStyleDescription(style, colors)}</small>
+              </span>
+            </button>
+          ))}
+        </span>
       )}
-      {error && <div className="sb-save-error">{error}</div>}
-    </div>
+      {/* 메뉴가 열리면 그 아래에 가려 안 보인다 — 닫힌 동안만 띄운다. */}
+      {error && !open && <span className="sb-stylechip-error" role="alert">{error}</span>}
+    </span>
   );
 }
 
@@ -1822,7 +1975,7 @@ export function Storyboard() {
   const [clothingType, setClothingType] = useState(() => initialEntry?.clothingType || 'top'); // 샷 필터 아이콘·예시 크롭용 (상의=위/하의=아래)
   const [exampleGender, setExampleGender] = useState(() => initialEntry?.exampleGender || null);
   const [hasDetailImage, setHasDetailImage] = useState(() => initialEntry?.hasDetailImage || false);
-  const [productName, setProductName] = useState(() => initialEntry?.productName || '');
+  const [autosaveFailed, setAutosaveFailed] = useState(false);
   const [hookStyleSaving, setHookStyleSaving] = useState(false);
   const [hookStyleError, setHookStyleError] = useState(null);
   const shuffleTickRef = useRef(0);
@@ -1839,6 +1992,7 @@ export function Storyboard() {
   const [dragOverSec, setDragOverSec] = useState(null); // 호버 중인 드롭 대상 섹션 — 하이라이트와 드롭이 같은 신호를 쓴다
   const [dragOverSpaceGroupId, setDragOverSpaceGroupId] = useState(null);
   const [dragExampleId, setDragExampleId] = useState(null);
+  const [swapOverId, setSwapOverId] = useState(null);   // 자리 교환 대상으로 조준된 컷
   const [setPicker, setSetPicker] = useState(null);
   const [setPickerError, setSetPickerError] = useState(null);
   const [openGroupKeys, setOpenGroupKeys] = useState([]); // 펼쳐 둔 렌더 그룹들 (다중 허용 · UI 전용)
@@ -2000,7 +2154,6 @@ export function Storyboard() {
           setDetailColorOpts(prepared.detailColorOpts);
           setColorOpts(prepared.colorOpts);
           setComposeModeSeed(prepared.composeModeSeed);
-          setProductName(prepared.productName);
         }
         if (prepared.normalized || prepared.assignment.changed || usePending) {
           const autoAssignmentOnly = prepared.assignment.assignedIds.length > 0
@@ -2045,6 +2198,10 @@ export function Storyboard() {
     return sbSaveNow(pid, () => latestBlocks.current, options);
   };
   const saveNow = (pid) => flushLatest(pid);
+  // 저장이 다시 성공하면 배너를 거둔다.
+  const retryAutosave = () => flushLatest(projectId)
+    .then(() => setAutosaveFailed(false))
+    .catch(() => setAutosaveFailed(true));
   useLayoutEffect(() => {
     latestBlocks.current = blocks;
   }, [blocks]);
@@ -2057,7 +2214,11 @@ export function Storyboard() {
       return;
     }
     return scheduleStoryboardAutosave(saveTimer, () => {
-      flushLatest(projectId).catch(() => {});
+      // 자동저장 실패를 침묵시키지 않는다 — 서버가 4xx 로 거절하면 재전송도 없어서
+      // 그 세션의 저장이 통째로 죽는데 화면엔 아무 표시가 없었다(자체 리뷰 high 의 2차 피해).
+      flushLatest(projectId)
+        .then(() => setAutosaveFailed(false))     // 다시 성공하면 배너를 거둔다(오경보 방지)
+        .catch(() => setAutosaveFailed(true));
     });
   }, [blocks, projectId]);
   // hidden/pagehide/unmount 모두 같은 latest snapshot을 keepalive로 직렬 체인에 enqueue한다.
@@ -2307,6 +2468,17 @@ export function Storyboard() {
     setSelectedId(id); setSplitOpen(true);
   };
   const duplicate = (id) => {
+    // 예비가 소진된 장소세트 멤버는 복제로도 늘릴 수 없다 — ＋ 와 예시 드롭만 막고 복제를
+    // 열어두면 같은 문으로 컷·크레딧이 확인 없이 늘었다(자체 리뷰 medium).
+    const source = blocks.find((block) => block.id === id);
+    if (source?.spaceGroupId) {
+      const set = inferStoryboardSpaceSet(source.spaceGroupId);
+      const members = blocks.filter((block) => block.spaceGroupId === source.spaceGroupId);
+      if (!nextSpaceSetMemberReservation(set, members)) {
+        toast.push('이 세트에는 준비된 컷이 남아 있지 않아요');
+        return;
+      }
+    }
     dismissUndo();
     setBlocks((bs) => {
       const i = bs.findIndex((b) => b.id === id); if (i < 0) return bs;
@@ -2446,6 +2618,44 @@ export function Storyboard() {
           ? { ...b, spaceGroupId: g.spaceGroupId, spaceVariation: g.spaceVariation ?? 'subtle', refScope: 'pose' } : b));
       }
       out = normalizeStoryboardMutation(out);   // 행 위생 + 분리된 공간 run 재키 (삽입 경로 공통 규칙)
+    // 후킹에 프레임이 없으면(시그니처 컷을 지워 비운 상태) 새로 넣는 첫 컷이 시그니처가 된다 —
+    // 후킹은 첫 화면 스타일이 컷 구성을 지배하므로 프레임 없는 상태로 남겨두지 않는다(2026-08-16 오너).
+    if (sectionRole === SECTION_ROLES.HOOKING && !deriveHookFrame(out)) {
+      // 가용성 판정은 자동 배정기와 같은 기준 — 닫힌 조합을 슬롯으로 잡으면 빈 컷이 된다.
+      // (hookCutAvailable 은 로딩 early-return 아래 선언이라 여기서 같은 식을 로컬로 만든다.)
+      const genderNow = exampleGender
+        || genderForClothingType(clothingType, composeModeSeed.targetGenders);
+      const [slot] = hookSlotPlan('signature', {
+        isCutAvailable: (cutType, shot) => selectGenerationExamples(
+          catalogs?.genExamples || [], { cutType, shot, clothingType, gender: genderNow },
+        ).length > 0,
+      });
+      const frameId = `hookframe__${uid('hf')}`;
+      // 손상된 표식이 남아 있으면(비연속 run 등) 새 표식을 얹어봐야 파생이 계속 실패한다.
+      // 후킹 섹션의 옛 프레임 표식을 먼저 걷어내고 새 프레임 하나만 남긴다(자체 리뷰).
+      out = out.map((block) => (
+        block.id !== nb.id && block.sectionRole === SECTION_ROLES.HOOKING && block.hookFrameId
+          ? stripHookFrameFields(block)
+          : block
+      ));
+      out = out.map((block) => {
+        if (block.id !== nb.id) return block;
+        const framed = {
+          ...block,
+          // 드롭한 예시가 있으면 그 그림의 틀을 존중하고, 맨손 추가일 때만 시그니처 슬롯 틀로 맞춘다.
+          ...(droppedExample ? {} : { cutType: slot.cutType, shot: slot.shot }),
+          hookFrameId: frameId,
+          hookStyle: 'signature',
+          hookFrameVersion: HOOK_FRAME_VERSION,
+          hookSlotRole: slot.role,
+          hookTitleOverlay: true,
+        };
+        // 시그니처는 첫 화면 그림이다 — 빈 채로 두지 않고 시드와 같이 자동 배정을 받는다
+        // ('manual' 표식이 남으면 배정기가 건너뛰어 "예시를 골라주세요" 빈 컷이 된다).
+        delete framed.exampleChoice;
+        return framed;
+      });
+    }
     const next = droppedExample
       ? out.map((block) => block.id === nb.id ? {
         ...block,
@@ -2517,10 +2727,93 @@ export function Storyboard() {
   };
   const onDragEnd = () => {
     setDragId(null); setDragSpaceGroupId(null); setDragOver(null); setDragOverSec(null); setDragOverSpaceGroupId(null);
+    setSwapOverId(null);
   };
+
+  /* 컷 자리 바꾸기(2026-08-16 오너) — 컷을 다른 컷 위에 떨구면 둘의 자리를 맞바꾼다.
+     '자리'가 가진 성격(섹션 소속·장소세트 소속·행/프레임 표식·역할)은 자리에 남고 컷 내용만
+     옮겨 탄다. 그래야 장소세트 울타리와 첫 화면 구성이 그대로 유지된다 — 세트 컷과 바깥 컷을
+     맞바꿔도 세트는 여전히 연속 run 이고 테두리도 그대로다. */
+  const SWAP_SLOT_FIELDS = [
+    'sectionId', 'sectionRole', 'sectionTitle', 'sectionLayout', 'contentRole',
+    'spaceGroupId', 'spaceVariation', 'spaceSetMemberOrder', 'setSelectionOrigin', 'refScope',
+    'layoutRowId', 'layoutRowVersion', 'colorwayGroupId', 'colorwayPairVersion',
+    'hookFrameId', 'hookStyle', 'hookFrameVersion', 'hookSlotRole', 'hookTitleOverlay',
+  ];
+  const swapBlocks = (movingId, targetId) => {
+    if (!movingId || !targetId || movingId === targetId) return;
+    const from = blocks.findIndex((block) => block.id === movingId);
+    const to = blocks.findIndex((block) => block.id === targetId);
+    if (from < 0 || to < 0) return;
+    dismissUndo();
+    const previous = blocks;
+    const wearSlot = (cut, slot) => {
+      const next = { ...cut };
+      for (const field of SWAP_SLOT_FIELDS) {
+        if (slot[field] === undefined) delete next[field];
+        else next[field] = slot[field];
+      }
+      return next;
+    };
+    const next = [...blocks];
+    next[from] = wearSlot(blocks[to], blocks[from]);
+    next[to] = wearSlot(blocks[from], blocks[to]);
+    const normalized = normalizeStoryboardMutation(ensureContiguousSpaceRuns(next));
+    setBlocks(normalized);
+    showUndo(previous, normalized, { blockId: movingId, label: '컷 자리 바꾸기' });
+  };
+  /* 카드 자체를 드롭 대상으로 — 조준되면 파란 반투명으로 표시하고, 놓으면 자리를 맞바꾼다.
+     교환은 **같은 렌더 그룹(섹션) 안에서만** 허용한다: 섹션을 넘는 이동은 adoptSection 이
+     컷 종류 정규화와 제품 섹션 정리(matchIds·아우터 열림 제거)를 해 주는데, 자리만 맞바꾸는
+     교환은 그 경로를 타지 않아 섹션에 안 맞는 컷이 남는다(자체 리뷰 지적). 섹션 간 이동은
+     기존대로 '사이 자리'에 떨구는 삽입이 담당한다. */
+  /* 덩어리 소속 표식 — 자리 교환은 **같은 덩어리끼리만** 허용한다.
+     낱장↔낱장(둘 다 null)은 되고, 세트 멤버↔바깥 컷은 막힌다: 바깥 컷이 세트 슬롯을 입으면
+     포즈 참조가 없어 서버가 400 으로 거절하고, 그 뒤 자동저장이 통째로 죽었다(자체 리뷰 high). */
+  const bundleKeyOf = (block) => block?.spaceGroupId || block?.hookFrameId || block?.layoutRowId || null;
+  const canSwapWith = (blockId) => {
+    if (!dragId || dragId === blockId || dragSpaceGroupId) return false;
+    const moving = blocks.find((entry) => entry.id === dragId);
+    const target = blocks.find((entry) => entry.id === blockId);
+    if (!moving || !target) return false;
+    if (moving.source === 'mine' || target.source === 'mine') return false;
+    if (bundleKeyOf(moving) !== bundleKeyOf(target)) return false;
+    // 섹션(렌더 그룹) 판정은 블록 하나로 정해지는 순수 함수 — 드래그 중 보드 전체를 훑지 않는다
+    // (dragover 마다 전체 스캔 2회 = 13컷이면 26회 블록 방문이었다).
+    return renderGroupKey(moving) === renderGroupKey(target);
+  };
+  const swapTargetProps = (blockId) => ({
+    isTarget: swapOverId === blockId,
+    onDragOver: (event) => {
+      if (!canSwapWith(blockId)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (swapOverId !== blockId) setSwapOverId(blockId);
+      // 사이 자리와 카드는 서로 배타적인 목적지다 — 카드가 조준되면 직전 '사이 자리' 점선을
+      // 끈다(반대 방향은 insertControl.onDragOver 가 이미 한다). 안 그러면 두 곳이 동시에
+      // 켜져 어디에 놓이는지 알 수 없었다(자체 리뷰).
+      if (dragOver !== null) { setDragOver(null); setDragOverSec(null); setDragOverSpaceGroupId(null); }
+    },
+    // 자식 요소로 옮겨갈 때도 dragleave 가 올라온다 — 카드 밖으로 나갈 때만 표시를 거둔다.
+    onDragLeave: (event) => {
+      if (event.currentTarget.contains(event.relatedTarget)) return;
+      setSwapOverId((current) => (current === blockId ? null : current));
+    },
+    onDrop: (event) => {
+      if (!canSwapWith(blockId)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const movingId = dragId;
+      onDragEnd();
+      swapBlocks(movingId, blockId);
+    },
+  });
   const renderKeyForBlockId = (id) => renderGroups(blocks)
     .find((group) => group.items.some((item) => item.block.id === id))?.key;
-  const onDropAt = (idx, targetSid, targetRole = null, targetSpaceGroupId = null, targetGroupKey = null) => (e) => {
+  const onDropAt = (
+    idx, targetSid, targetRole = null, targetSpaceGroupId = null, targetGroupKey = null,
+    { canAdd = true } = {},
+  ) => (e) => {
     e.preventDefault();
     e.stopPropagation();
     const exampleId = e.dataTransfer.getData('text/example-id') || dragExampleId;
@@ -2549,6 +2842,13 @@ export function Storyboard() {
     }
     if (exampleId) {
       setDragExampleId(null);
+      // 예시 드롭은 '새 컷 생성' 이라 컷 수·크레딧이 는다. 예비가 소진된 세트 안 자리는
+      // ＋ 버튼을 감췄으므로 이 경로도 같이 막아야 한다 — 안 막으면 갤러리에서 끌어다
+      // 놓는 것만으로 확인 없이 크레딧이 늘었다(자체 리뷰).
+      if (!canAdd) {
+        toast.push('이 세트에는 준비된 컷이 남아 있지 않아요');
+        return;
+      }
       addBlock(idx, targetSid, targetRole, targetSpaceGroupId, targetGroupKey, exampleId);
       return;
     }
@@ -2558,8 +2858,14 @@ export function Storyboard() {
 
   /* 단일 블록 이동의 공통 경로 — 드래그(onDropAt)와 위/아래 버튼(nudgeBlock)이 함께 쓴다.
      그룹 제한·섹션 이동 시 예시 재선택·세트 소속 승계 규칙이 두 경로에서 동일해야 한다. */
-  const applySingleMove = ({ id, idx, targetSid, targetRole = null, targetSpaceGroupId = null, targetGroupKey = null }) => {
+  /* 목적지가 '남의 덩어리' run 한가운데면 그 run 바깥으로 밀어낸다.
+     덩어리(첫 화면 구성·행·장소세트)는 저장 계약상 연속 run 이라, 사이에 다른 컷이 끼면
+     행 표식이 풀리거나(normalizeRows) 세트가 두 개로 갈린다(rekeySeparatedSpaceRuns).
+     이번 커밋은 '덩어리 안 컷의 이동'만 막았고 '덩어리 밖 컷이 들어오는 것'은 안 막아
+     복제 컷을 '앞으로 한 칸' 하는 것만으로 구성이 무너졌다(자체 리뷰 high). */
+  const applySingleMove = ({ id, idx: rawIdx, targetSid, targetRole = null, targetSpaceGroupId = null, targetGroupKey = null }) => {
     const moving = blocks.find((block) => block.id === id);
+    const idx = snapOutOfForeignBundle(blocks, moving, rawIdx);
     const currentGroupKey = moving ? renderKeyForBlockId(id) : null;
     const crossedRenderGroup = !!targetGroupKey && currentGroupKey !== targetGroupKey;
     // 다른 섹션으로 옮길 때는 사용자가 어느 드롭라인을 가리켰든 그 섹션의 맨 뒤가 목적지다.
@@ -2618,6 +2924,79 @@ export function Storyboard() {
       targetSpaceGroupId: neighbor.spaceGroupId || null,
       targetGroupKey: renderKeyForBlockId(neighbor.id),
     });
+  };
+
+  // 그룹(섹션) 안의 맨 앞·맨 뒤로 한 번에 — nudge 와 같은 목적지 규칙(이웃의 소속을 따른다).
+  const moveBlockToEdge = (group, id, edge) => {
+    const items = group?.items || [];
+    if (!items.length) return;
+    const anchor = edge === 'first' ? items[0] : items[items.length - 1];
+    applySingleMove({
+      id,
+      idx: edge === 'first' ? anchor.index - 1 : anchor.index,
+      targetSid: anchor.block.sectionId,
+      targetRole: anchor.block.sectionRole || null,
+      targetSpaceGroupId: anchor.block.spaceGroupId || null,
+      targetGroupKey: renderKeyForBlockId(anchor.block.id),
+    });
+  };
+  // 6점 손잡이에 넘길 이동 능력 — 낱장·두 컷 구성·네 컷 구성이 같은 것을 쓴다.
+  // 이동 범위는 자기가 속한 렌더 그룹 안(드래그와 같은 규칙).
+  /* 컷이 속한 '덩어리'의 형제들 — 첫 화면 구성(hookFrameId) · 색상 세트 등 행(layoutRowId) ·
+     장소세트(spaceGroupId). 낱장이면 null.
+     덩어리는 저장 계약상 **연속 run** 이라, 그 안의 컷을 배열에서 뽑아 다른 자리에 끼워 넣으면
+     행·세트가 끊긴다(자체 리뷰 high 3건의 공통 뿌리). 그래서 덩어리 안 이동은 '끼워넣기'가
+     아니라 **형제와 자리 교환**만 허용한다 — 교환은 run 을 그대로 두기 때문이다. */
+  const bundleSiblingsFor = (block, group) => {
+    if (!group) return null;
+    const key = block.spaceGroupId ? 'spaceGroupId'
+      : block.hookFrameId ? 'hookFrameId'
+        : block.layoutRowId ? 'layoutRowId' : null;
+    if (!key) return null;
+    return group.items.filter((entry) => entry.block[key] === block[key]);
+  };
+  /* 컷마다 줄 이동 능력.
+     · 덩어리 안 컷 → kind 'swap': 양옆 화살표로 형제와 자리 교환(덩어리 밖으로 못 나간다)
+     · 낱장 컷      → kind 'free': 6점 손잡이(끌기 + 앞뒤/맨앞뒤 메뉴)
+     모양이 다른 것이 곧 "어디까지 옮길 수 있는지"의 안내다(2026-08-16 오너). */
+  const moveHandleFor = (block, group) => {
+    if (locked || !group) return null;
+    const siblings = bundleSiblingsFor(block, group);
+    // 형제가 2장 이상일 때만 '덩어리'다 — 1장뿐이면 지킬 연속성이 없으므로 아래 낱장 규칙으로
+    // 떨어뜨려 자유 이동을 준다(전에는 화살표도 손잡이도 없어 그 컷만 영영 못 옮겼다 — 자체 리뷰).
+    if (siblings && siblings.length >= 2) {
+      const pos = siblings.findIndex((entry) => entry.block.id === block.id);
+      if (pos < 0) return null;
+      return {
+        kind: 'swap',
+        canPrev: pos > 0,
+        canNext: pos < siblings.length - 1,
+        onSwap: (step) => {
+          const partner = siblings[pos + step];
+          if (partner) swapBlocks(block.id, partner.block.id);
+        },
+      };
+    }
+    const pos = group.items.findIndex((entry) => entry.block.id === block.id);
+    if (pos < 0 || group.items.length < 2) return null;
+    return {
+      kind: 'free',
+      canMoveUp: pos > 0,
+      canMoveDown: pos < group.items.length - 1,
+      onMove: (mode) => (mode === 'first' || mode === 'last'
+        ? moveBlockToEdge(group, block.id, mode)
+        : nudgeBlock(block.id, mode === 'prev' ? -1 : 1)),
+    };
+  };
+  /* 첫 화면 구성 슬롯은 낱장으로 못 지운다 — 컷 수는 '첫 화면 구성'이 정하는 값이라
+     4장 중 1장만 지우면 어떤 스타일에도 없는 3장짜리 손상 구성이 된다(2026-08-16 오너).
+     줄이려면 섹션 헤더의 구성 칩에서 두 컷·시그니처로 바꾼다. 장소세트 멤버는 빼도
+     run 이 유지되고 정당한 요구라 그대로 허용한다. */
+  const canDeleteBlock = (block) => {
+    if (!block?.hookFrameId) return true;
+    // 구성이 깨져 파생이 안 되면(또는 이 컷이 슬롯 목록에 없으면) 삭제를 열어 준다 —
+    // 안 그러면 '칩도 삭제도 없는' 막다른 보드가 된다(자체 리뷰 high).
+    return !hookFrame || !hookFrame.slotIds.includes(block.id);
   };
 
   /* 렌더 그룹 아코디언 (UI 전용) */
@@ -2680,7 +3059,9 @@ export function Storyboard() {
             makeId: (_member, index) => memberIds[index],
             setSelectionOrigin: 'user',
           });
-          for (const id of memberIds) inserted = adoptSection(inserted, id, setPicker.targetSid, setPicker.targetRole);
+          // 멤버마다 부르면 빈 섹션에서 host 를 못 찾아 **멤버 수만큼 새 sectionId** 가 생기고
+          // 섹션 연속 run 이 깨진다(자체 리뷰). adoptSection 은 id 배열을 받는다 — 한 번에 넘긴다.
+          inserted = adoptSection(inserted, memberIds, setPicker.targetSid, setPicker.targetRole);
           inserted = inserted.map((block) => memberIdSet.has(block.id) ? {
             ...block, spaceGroupId: groupId, spaceVariation: set.spaceVariation || 'subtle', refScope: 'pose',
           } : block);
@@ -2741,19 +3122,43 @@ export function Storyboard() {
     { cutType, shot, clothingType, gender: boundGenderNow },
   ).length > 0;
 
+  /* '첫 화면 구성' 칩에 넘길 값 — 섹션 헤더에 상시로 붙으므로 **선택 컷과 무관**하다.
+     (구 방식: 슬롯 첫 컷을 골랐을 때만 인스펙터에 표시 → 스타일 전환으로 슬롯 순서가
+     바뀌면 패널이 사라지는 막다른 화면. 2026-08-16 오너 지시로 헤더 이동) */
+  const hookingHasAiCut = (blocks || []).some(
+    (block) => block.sectionRole === SECTION_ROLES.HOOKING && block.source !== 'mine',
+  );
+  // 프레임 파생이 실패해도(run 이 갈린 손상 보드) 칩은 남는다 — 여기서 스타일을 다시 고르는
+  // 것이 유일한 복구 경로이기 때문이다. 이때 현재 구성 표시는 '구성 없음'.
+  const hookStyleChipProps = hookingHasAiCut ? {
+    frame: hookFrame,
+    catalogs,
+    colors: composeModeSeed.colors,
+    saving: hookStyleSaving,
+    error: hookStyleError,
+    onSelectStyle: applyHookStyleChoice,
+    clothingType,
+    gender: boundGenderNow,
+    isCutAvailable: hookCutAvailable,
+  } : null;
+
   // 스타일 전환(스펙 §2 전환 엔진) — 컷 재사용·부족분 생성·잔여 AI 컷 삭제·예시 재배정 후 즉시 저장.
   async function applyHookStyleChoice(style) {
-    if (locked || hookStyleSaving || !hookFrame) return;
+    if (locked || hookStyleSaving) return;
+    // 프레임이 깨져 파생이 null 이 된 보드에서도 **재적용으로 복구**할 수 있어야 한다.
+    // (전에는 !hookFrame 이면 그냥 return 이라, run 이 한 번 갈리면 구성을 되돌릴 방법이
+    //  없고 슬롯 삭제도 막혀 막다른 화면이 됐다 — 자체 리뷰 high)
+    if (!blocks?.some((block) => block.sectionRole === SECTION_ROLES.HOOKING && block.source !== 'mine')) return;
     // 같은 스타일 재선택은 프레임이 온전할 때만 무시한다 — 슬롯 컷을 삭제해 프레임이
     // 모자라진 보드는 재적용으로 복구한다(Codex 리뷰 2차 #5: 카드 삭제 후 복구 불가).
-    if (style === hookFrame.style) {
+    if (hookFrame && style === hookFrame.style) {
       const planLength = hookSlotPlan(style, {
         colors: composeModeSeed.colors || [], isCutAvailable: hookCutAvailable,
       }).length;
       if (hookFrame.slotIds.length >= planLength) return;
     }
     const previous = blocks;
-    const template = previous.find((block) => block.id === hookFrame.slotIds[0])
+    const template = (hookFrame && previous.find((block) => block.id === hookFrame.slotIds[0]))
       || previous.find((block) => block.sectionRole === SECTION_ROLES.HOOKING && block.source !== 'mine');
     if (!template) return;
     const colors = composeModeSeed.colors || [];
@@ -2802,7 +3207,9 @@ export function Storyboard() {
       await sbSaveNow(pidRef.current, () => next);
       if (sbPending.get(pidRef.current) === next) sbPending.delete(pidRef.current);
     } catch {
+      // 스스로 사라지게 — 안 그러면 한 번 실패한 문구가 세션 내내 남아 오경보가 된다(자체 리뷰).
       setHookStyleError('스타일을 저장하지 못했어요');
+      setTimeout(() => setHookStyleError(null), 6000);
     } finally {
       setHookStyleSaving(false);
     }
@@ -2825,7 +3232,12 @@ export function Storyboard() {
       ...options,
     });
     if (next === previous) {
-      toast.push('바꿀 수 있는 예시가 없어요 — 모두 직접 고른 컷이에요');
+      // 이유가 경로마다 다르다. 섹션 셔플은 '직접 고른 컷'을 건너뛰지만, 컷 하나만 다시
+      // 뽑기는 직접 고른 것도 바꾼다 — 그때 안 바뀌었다면 후보가 없거나 하나뿐이라는
+      // 뜻이다. 같은 문구를 쓰면 셀러를 엉뚱한 원인으로 안내한다(2026-08-17 리뷰).
+      toast.push(options?.onlyBlockId
+        ? '이 조건에 바꿀 다른 예시가 없어요'
+        : '바꿀 수 있는 예시가 없어요 — 모두 직접 고른 컷이에요');
       return;
     }
     const normalized = ensureContiguousSpaceRuns(next);
@@ -2837,6 +3249,21 @@ export function Storyboard() {
   };
   const shuffleSection = (group) => runShuffle(group);
   const shuffleSpaceSet = (group, spaceGroupId) => runShuffle(group, { onlySpaceGroupId: spaceGroupId });
+  const shuffleBlock = (group, blockId) => runShuffle(group, { onlyBlockId: blockId });
+  // 컷 단위 셔플 아이콘은 '낱개 AI 컷'에만 — 시그니처(프레임 슬롯)·장소세트 멤버·내 사진·
+  // 아직 예시가 없는 컷은 제외한다(2026-08-16 오너).
+  /* 후보가 하나뿐인 컷(확장형 추가색상 등)은 눌러도 영영 안 바뀐다 — 그런 자리에는
+     아이콘 자체를 안 보여 준다(2026-08-17 검증: 늘 무반응 + 틀린 이유 안내). */
+  const canShuffleBlock = (block) => !locked
+    && block.source === 'ai'
+    && !block.spaceGroupId
+    && !block.hookFrameId
+    && !!block.exampleId
+    && canRerollGenerationExample(block, {
+      // product 는 이 스코프에 없다 — 다른 호출부(runShuffle 등)와 같이 { clothingType } 을 넘긴다.
+      // (2026-08-17: 축약 표기 `product,` 가 그대로 들어와 콘티보드가 런타임 크래시했다)
+      catalog: catalogs?.genExamples || [], product: { clothingType }, gender: boundGenderNow,
+    });
 
   const insertControl = (
     idx,
@@ -2844,6 +3271,7 @@ export function Storyboard() {
     targetSpaceGroupId = null,
     requestedExample = null,
     placement = null,
+    { canAdd = true } = {},
   ) => {
     const section = sectionForGroup(group);
     const canAcceptDrag = (!draggedSpaceGroupKey || draggedSpaceGroupKey === group.key)
@@ -2855,19 +3283,23 @@ export function Storyboard() {
         inTray={!!targetSpaceGroupId}
         active={lineOn}
         placement={placement}
+        /* 실제로 받을 수 있는 자리에만 자리표를 켠다 — 예시 드래그는 '새 컷 생성'이라
+           canAdd 가 false 인 자리(예비 소진 세트)에서는 거부되므로 표시도 하지 않는다. */
+        dragging={!!(dragId || dragSpaceGroupId || (dragExampleId && canAdd))}
         onDragOver={(event) => {
           if (!(dragId || dragExampleId || dragSpaceGroupId) || !canAcceptDrag) return;
           event.preventDefault();
           event.stopPropagation();
+          setSwapOverId(null);          // 사이 자리를 조준하는 동안은 교환 표시를 끈다
           setDragOver(idx);
           setDragOverSec(section.id);
           setDragOverSpaceGroupId(targetSpaceGroupId);
         }}
-        onDrop={onDropAt(idx, section.id, section.role, targetSpaceGroupId, group.key)}
-        onAdd={(event) => {
-            event.stopPropagation();
-            addBlock(idx, section.id, section.role, targetSpaceGroupId, group.key, requestedExample);
-          }}
+        onDrop={onDropAt(idx, section.id, section.role, targetSpaceGroupId, group.key, { canAdd })}
+        onAdd={canAdd ? ((event) => {
+          event.stopPropagation();
+          addBlock(idx, section.id, section.role, targetSpaceGroupId, group.key, requestedExample);
+        }) : null}
       />
     );
   };
@@ -2913,17 +3345,23 @@ export function Storyboard() {
     const lastItem = unit.items[unit.items.length - 1];
     // 세트 안 추가는 예약된 예비 멤버가 남아 있을 때만 — 예비 소진 뒤 일반 컷을 세트에
     // 넣는 추가 존은 제공하지 않는다(섹션 추가와 중복, 2026-08-14 오너 결정).
-    const addControl = targetSpaceGroupId && !reservation
-      ? null
-      : insertControl(lastItem.index, group, targetSpaceGroupId, reservation);
-    if (unit.kind === 'frame') {
+    // 세트 안에서도 '사이 자리'는 언제나 드롭을 받는다 — 예비 컷이 남았을 때만 ＋ 로 직접
+    // 추가할 수 있고, 소진 뒤에는 옮겨 넣는 자리로만 쓴다(2026-08-16 오너).
+    const addControl = insertControl(
+      lastItem.index, group, targetSpaceGroupId, reservation,
+      null, { canAdd: !(targetSpaceGroupId && !reservation) },
+    );
+    if (unit.kind === 'frame' || unit.kind === 'grid4') {
+      const Renderer = unit.kind === 'grid4' ? StoryboardMoodGrid : StoryboardFrame;
       return (
         <div
-          key={'frame:' + unit.items[0].block.layoutRowId}
+          key={unit.kind + ':' + (unit.items[0].block.layoutRowId || unit.items[0].block.id)}
           ref={(node) => registerUnitRef(node, unit.items)}
-          className={'sb-grid-unit sb-frame-unit sb-drag' + (unit.items.some((item) => item.block.id === dragId) ? ' dragging' : '')}
+          className={'sb-grid-unit sb-frame-unit sb-drag'
+            + (unit.kind === 'grid4' ? ' sb-moodgrid-unit' : '')
+            + (unit.items.some((item) => item.block.id === dragId) ? ' dragging' : '')}
         >
-          <StoryboardFrame
+          <Renderer
             items={unit.items}
             total={blocks.length}
             catalogs={catalogs}
@@ -2932,7 +3370,12 @@ export function Storyboard() {
             clothingType={clothingType}
             selectedId={selectedId}
             locked={locked}
-            dragFor={(id) => ({ draggable: true, onDragStart: onDragStart(id), onDragEnd })}
+            /* 덩어리 안 컷은 끌 수 없다 — 끌어서 '사이 자리'에 놓으면 run 밖으로 빠져나가
+               구성이 소멸했다(자체 리뷰 high). 순서 바꾸기는 사진 양옆 화살표가 담당한다. */
+            dragFor={(id) => ({ draggable: false, onDragStart: onDragStart(id), onDragEnd })}
+            moveFor={(memberBlock) => moveHandleFor(memberBlock, group)}
+            canDeleteFor={canDeleteBlock}
+            swapFor={(memberId) => swapTargetProps(memberId)}
             onSelect={selectCard}
             onDuplicate={duplicate}
             onDelete={remove}
@@ -2945,9 +3388,7 @@ export function Storyboard() {
 
     const item = unit.items[0];
     const block = item.block;
-    // 이동 가능 범위는 자기가 속한 렌더 그룹 안 — 그룹 밖으로 나가는 이동은 드래그와 동일하게 막힌다.
-    const groupPos = group ? group.items.findIndex((entry) => entry.block.id === block.id) : -1;
-    const inGroup = groupPos >= 0;
+    // 이동 가능 범위는 자기가 속한 렌더 그룹 안 — 판정은 moveHandleFor 가 한다(드래그와 동일 규칙).
     return (
       <div
         key={block.id}
@@ -2963,16 +3404,17 @@ export function Storyboard() {
           clothingType={clothingType}
           selected={block.id === selectedId}
           locked={locked && block.id !== selectedId}
-          cardDrag={{ draggable: true, onDragStart: onDragStart(block.id), onDragEnd }}
+          cardDrag={{ draggable: !bundleKeyOf(block), onDragStart: onDragStart(block.id), onDragEnd }}
           onSelect={() => selectCard(block.id)}
           onDuplicate={() => duplicate(block.id)}
           onDelete={() => remove(block.id)}
           addControl={addControl}
-          onNudge={inGroup ? ((delta) => nudgeBlock(block.id, delta)) : undefined}
-          canNudgeUp={inGroup && groupPos > 0}
-          canNudgeDown={inGroup && groupPos < group.items.length - 1}
+          move={moveHandleFor(block, group)}
+          canDelete={canDeleteBlock(block)}
+          swapProps={swapTargetProps(block.id)}
+          alignCaptionWithMoodGrid={section.role === SECTION_ROLES.HOOKING}
           microVariationIds={microVariationIds}
-          microVariationIds={microVariationIds}
+          onShuffle={canShuffleBlock(block) ? (() => shuffleBlock(group, block.id)) : null}
         />
       </div>
     );
@@ -2995,7 +3437,13 @@ export function Storyboard() {
             event.stopPropagation();
             const first = unit.items[0].block;
             setSelectedId(first.id);
-            openSetPicker({ mode: 'replace', spaceGroupId: unit.spaceGroupId });
+            // 교체도 그 섹션이 소화하는 세트만 보여야 한다 — 안 넘기면 필터가 무효가 되어
+            // 스타일링 칸을 호리존 세트로 바꿔 컷이 통째로 비는 사고가 그대로 남는다(자체 리뷰).
+            openSetPicker({
+              mode: 'replace',
+              spaceGroupId: unit.spaceGroupId,
+              targetRole: sectionForGroup(group).role,
+            });
           }}>장소 세트 변경</button>
         </div>
         <div className="sb-tray-grid">
@@ -3044,6 +3492,12 @@ export function Storyboard() {
 
   const list = (
     <div className="sb-canvas-board">
+      {autosaveFailed && (
+        <div className="sb-save-error sb-autosave-error" role="alert">
+          <span>변경 내용을 저장하지 못했어요. 잠시 뒤 다시 시도해주세요.</span>
+          <button type="button" onClick={retryAutosave}>다시 저장</button>
+        </div>
+      )}
       <div className="sb-board-tools">
         {/* 구성컷 수는 사진 양(기본형/확장형) 바로 위 — 같은 결정의 맥락으로 묶는다(2026-08-14 오너). */}
         <div className="sb-board-lead">
@@ -3087,44 +3541,33 @@ export function Storyboard() {
               ]), { concurrency: 6 });
             }}
           >
-            <button
-              type="button"
-              className="sb-deck-header"
-              aria-expanded={open}
-              onClick={() => toggleRenderGroup(group.key)}
-            >
-              <span className="sb-deck-chevron" aria-hidden="true"><Icon name="chevDown" size={18} /></span>
-              <span className="sb-deck-index">{group.title}</span>
-              <span className="sb-deck-label">{group.label}</span>
+            {/* 헤더는 '펼치기 버튼 + 칩 + 컷 범위' 한 줄. 칩은 버튼 안에 못 넣으므로
+                (버튼 중첩은 무효 HTML) 형제로 두고 flex 로 나란히 세운다. */}
+            <div className="sb-deck-headrow">
+              {/* 펼치기 버튼은 헤더 줄 전체를 덮는 바닥면. 보이는 글자는 위에 따로 그린다 —
+                  버튼을 글자 폭으로 줄였더니 클릭 영역이 확 줄었다(자체 리뷰). */}
+              <button
+                type="button"
+                className="sb-deck-header"
+                aria-expanded={open}
+                aria-label={`${group.title} ${group.label} 섹션 ${open ? '접기' : '펼치기'}`}
+                onClick={() => toggleRenderGroup(group.key)}
+              />
+              <span className="sb-deck-labels">
+                <span className="sb-deck-chevron" aria-hidden="true"><Icon name="chevDown" size={18} /></span>
+                <span className="sb-deck-index">{group.title}</span>
+                <span className="sb-deck-label">{group.label}</span>
+              </span>
+              {groupSection.role === SECTION_ROLES.HOOKING && hookStyleChipProps && (
+                <HookStyleChip {...hookStyleChipProps} />
+              )}
               <span className="sb-deck-range">{range}</span>
-            </button>
+            </div>
             <div className="sb-stack-collapse">
               <div>
-                {(() => {
-                  // 후킹 접힘 예외(스펙 §3) — 프레임이 있으면 스택 대신 흰 페이지 시트.
-                  const hookSlots = hookFrame && groupSection.role === SECTION_ROLES.HOOKING
-                    ? hookFrame.slotIds
-                      .map((slotId) => group.items.find((item) => item.block.id === slotId))
-                      .filter(Boolean)
-                      .map((item) => ({ block: item.block, index: item.index }))
-                    : [];
-                  return hookSlots.length ? (
-                    <StoryboardHookSheet
-                      frame={hookFrame}
-                      slots={hookSlots}
-                      total={blocks.length}
-                      catalogs={catalogs}
-                      colorOpts={colorOpts}
-                      productName={productName}
-                      baseColorId={(composeModeSeed.colors.find((color) => color.isBase)
-                        || composeModeSeed.colors[0])?.id || null}
-                      onOpen={() => openRenderGroup(group.key)}
-                    />
-                  ) : (
-                    <StoryboardStack group={group} total={blocks.length} catalogs={catalogs}
-                      onOpen={() => openRenderGroup(group.key)} />
-                  );
-                })()}
+                {/* 후킹도 다른 섹션과 같은 스택(낱장 크기)으로 접힌다 — 흰 시트 예외 폐기(2026-08-16 오너). */}
+                <StoryboardStack group={group} total={blocks.length} catalogs={catalogs}
+                  onOpen={() => openRenderGroup(group.key)} />
               </div>
             </div>
             <div className="sb-deck-collapse">
@@ -3135,26 +3578,47 @@ export function Storyboard() {
                     unit.kind === 'spaceRun' ? renderSpaceRun(unit, group) : renderUnit(unit, group)
                   ))}
                   {!group.items.length && insertControl(groupSection.start, group, null, null, 'empty')}
-                  {/* 개별 컷 추가 — 점선 카드(구 UI, 2026-08-15 오너 스크린샷). 후킹 섹션은
-                      스타일이 컷 구성을 지배하므로 여기서 컷을 추가하지 않는다. */}
-                  {group.items.length > 0 && groupSection.role !== SECTION_ROLES.HOOKING && (
-                    <div className="sb-grid-unit">
-                      <button
-                        type="button"
-                        className="sb-addcard"
-                        disabled={locked}
-                        onClick={() => addBlock(
-                          group.items[group.items.length - 1].index,
-                          groupSection.id,
-                          groupSection.role,
-                          null,
-                          group.key,
-                        )}
-                      >
-                        ＋ 컷 추가
-                      </button>
-                    </div>
-                  )}
+                  {/* 추가 칸 — 점선 카드 안에 흰 pill 두 줄: 위 '컷 추가', 아래 '장소세트 추가'
+                      (2026-08-16 오너). 후킹 섹션도 '컷 추가'는 준다(비었을 때 되살릴 수단이
+                      필요 — 첫 장은 addBlock 의 첫 화면 구성 규칙이 시그니처로 만든다).
+                      장소세트는 스타일링·스튜디오만 받는다(의류 확인은 제품컷 전용). */}
+                  {(() => {
+                    // 빈 섹션이면 섹션 시작 자리에 넣는다(마지막 컷이 없으므로).
+                    const addIndex = group.items.length
+                      ? group.items[group.items.length - 1].index
+                      : groupSection.start;
+                    return (
+                      <div className="sb-grid-unit">
+                        <div className="sb-addslot">
+                          <button
+                            type="button"
+                            className="sb-addpill"
+                            disabled={locked}
+                            onClick={() => addBlock(
+                              addIndex, groupSection.id, groupSection.role, null, group.key,
+                            )}
+                          >
+                            ＋ 컷 추가
+                          </button>
+                          {SPACE_SET_SECTION_ROLES.has(groupSection.role) && (
+                            <button
+                              type="button"
+                              className="sb-addpill"
+                              disabled={locked}
+                              onClick={() => openSetPicker({
+                                mode: 'add',
+                                index: addIndex,
+                                targetSid: groupSection.id,
+                                targetRole: groupSection.role,
+                              })}
+                            >
+                              ＋ 장소세트 추가
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
                 {/* 예시 셔플 — 섹션1(후킹)에만, 마지막 카드 우측 아래(2026-08-15 오너).
                     장소세트는 renderSpaceRun 안에서 세트 단위로 붙는다. */}
@@ -3187,33 +3651,25 @@ export function Storyboard() {
     siblings: selectedSpaceSiblings,
     set: inferStoryboardSpaceSet(selectedSpaceRun.spaceGroupId),
   } : null;
-  // '첫 화면 스타일'은 후킹 섹션 AI 컷의 인스펙터에만 얹는다(상시 패널 없음 — 오너 확정).
-  const hookStyleSection = hookFrame && selected
-    && selected.sectionRole === SECTION_ROLES.HOOKING && selected.source !== 'mine'
-    ? {
-      frame: hookFrame,
-      blocks,
-      catalogs,
-      colors: composeModeSeed.colors,
-      productName,
-      saving: hookStyleSaving,
-      error: hookStyleError,
-      onSelectStyle: applyHookStyleChoice,
-      clothingType,
-      gender: boundGenderNow,
-      isCutAvailable: hookCutAvailable,
-    } : null;
+  /* '첫 화면 스타일'은 상시 패널이 아니라 컷 인스펙터에 얹는다(오너 확정). 단 **구성의 첫 컷
+     하나에서만** — 스타일은 후킹 섹션 전체 구성을 지배하는 하나의 결정이라, 슬롯마다 같은
+     선택지를 띄우면 컷별 설정처럼 오해된다(2026-08-16 오너). 구성 밖 개별컷에도 뜨지 않는다. */
   const inspector = setPicker ? (
     <SpaceSetGallery mode={setPicker.mode} error={setPickerError} onChoose={chooseSpaceSet}
-      gender={exampleGender} clothingType={clothingType}
+      gender={exampleGender} clothingType={clothingType} sectionRole={setPicker.targetRole || null}
       onClose={() => { setSetPicker(null); setSetPickerError(null); }} />
   ) : <Inspector key={selectedId} block={selected} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} exampleGender={exampleGender} hasDetailImage={hasDetailImage} projectId={projectId}
-    hookStyle={hookStyleSection}
     onChange={(p, options) => patch(selectedId, p, options)} onAtomicChange={(p, options) => atomicPatch(selectedId, p, options)} onRetryAtomicSave={retryAtomicSave} requestedRecipe={pendingSectionMove}
     onCancelRequestedRecipe={() => setPendingSectionMove(null)} matchClothing={matchClothing}
     spaceContext={selectedSpaceContext}
     onChangeSpaceSet={() => {
-      if (selected?.spaceGroupId) openSetPicker({ mode: 'replace', spaceGroupId: selected.spaceGroupId });
+      if (selected?.spaceGroupId) {
+        openSetPicker({
+          mode: 'replace',
+          spaceGroupId: selected.spaceGroupId,
+          targetRole: selected.sectionRole || null,
+        });
+      }
     }}
     onAddMine={addMineBlock}
     onExampleDrag={(value) => {
