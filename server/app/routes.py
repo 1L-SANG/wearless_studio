@@ -2310,11 +2310,15 @@ async def save_storyboard(request: Request, project_id: str, blocks: list = Body
             standalone_set_example_ids = {
                 id(block) for block in standalone_set_example_blocks
             }
+            # 시그니처 컷(sig_*)은 카탈로그가 아니라 첫 화면 전용 풀 소속이라, 공간 세트 멤버와
+            # 같은 이유로 카탈로그 대조에서 뺀다 — 컷 종류가 슬롯(horizon|styling)에 따라 정해져
+            # 자산의 cutType 과 일치할 수 없다. 자산 존재 여부는 레지스트리 등록으로 보장된다.
             flat_blocks = [
                 block
                 for block in canonical
                 if isinstance(block, dict)
                 and block.get("exampleId")
+                and not str(block.get("exampleId")).startswith("sig_")
                 and id(block) not in standalone_set_example_ids
                 and space_set_assets.parse_space_set_group_id(
                     block.get("spaceGroupId") or block.get("space_group_id")

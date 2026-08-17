@@ -489,6 +489,7 @@ function RootRedirect() {
   const target = returnIntent || '/create/input';
   const [phase, setPhase] = useState('init');   // init | syncing | done
   const [dest, setDest] = useState(null);
+  const [destState, setDestState] = useState(null);
 
   useEffect(() => {
     // 일반 첫 진입(/create/input)은 인증 확인과 무관하게 연다. 로그인 복귀처럼 세션이
@@ -517,7 +518,7 @@ function RootRedirect() {
         // 안에서 먼저 소비해야만 프로젝트 생성을 시작할 수 있다.
         await draftSlot.remove();
         const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('sync_timeout')), DRAFT_SYNC_TIMEOUT_MS));
-        const { projectId } = await Promise.race([promoteDraftToProject(draft), timeout]);
+        const { projectId, customMatchPromotion } = await Promise.race([promoteDraftToProject(draft), timeout]);
         promotedProjectId = projectId;
         if (!alive) return;
         // 같은 이유로 재생성 신호를 보존 — 로그인 복귀 draft sync 도 동일한 '신원 획득' 경로.
@@ -526,6 +527,7 @@ function RootRedirect() {
         useAppStore.getState().confirmProductInfo(projectId);
         markFlowSession(projectId, '/create/storyboard');
         await clearDraft().then(() => { resetDraftSyncSingleFlight(); }).catch(() => {});
+        setDestState({ customMatchPromotionStarted: Boolean(customMatchPromotion) });
         setDest('/create/storyboard'); setPhase('done');
       } catch {
         if (!alive) return;
@@ -540,7 +542,7 @@ function RootRedirect() {
   }, [loading, returnIntent, target]);
 
   if (phase === 'syncing') return <div className="route-loading">입력 내용을 안전하게 저장하고 있어요…</div>;
-  if (phase === 'done' && dest) return <Navigate to={dest} replace />;
+  if (phase === 'done' && dest) return <Navigate to={dest} replace state={destState} />;
   return <div className="route-loading">불러오는 중이에요</div>;
 }
 

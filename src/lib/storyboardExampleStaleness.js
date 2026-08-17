@@ -44,6 +44,9 @@ export function staleExampleReason(block, catalog, { gender, clothingType } = {}
   const exampleId = block && block.exampleId;
   if (!exampleId) return null;               // 예시를 아직 안 고른 블록 — 볼 것 없음
   if (block.spaceGroupId) return null;        // 세트 그룹 소속 — storyboardSpaceSetStaleness.js 소관
+  // 시그니처 컷(sig_*)은 생성예시 카탈로그가 아니라 첫 화면 전용 풀 소속이다. 카탈로그에
+  // 없는 게 정상이라 여기서 걷어내면 사용자가 고른 첫 화면이 재진입마다 사라진다.
+  if (String(exampleId).startsWith('sig_')) return null;
   const entry = findExample(catalog, exampleId);
   if (!entry || !isPublishedAll(entry)) return EXAMPLE_STALE_REASONS.UNKNOWN_ID;
   if (!(entry.applicableClothingTypes || []).includes(clothingType)) {

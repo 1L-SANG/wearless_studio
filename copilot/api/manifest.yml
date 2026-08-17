@@ -170,6 +170,9 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   R2_ACCESS_KEY_ID: /copilot/wearless/prod/secrets/R2_ACCESS_KEY_ID
   R2_SECRET_ACCESS_KEY: /copilot/wearless/prod/secrets/R2_SECRET_ACCESS_KEY
   GEMINI_API_KEY: /copilot/wearless/prod/secrets/GEMINI_API_KEY
+  # 첫 화면(시그니처) 컷 전용 GPT-image 경로 키. 없으면 시그니처 컷만 기존
+  # image_high(gemini) 로 자동 폴백한다 — 기동 실패는 아니지만 GPT 생성은 안 된다.
+  OPENAI_API_KEY: /copilot/wearless/prod/secrets/OPENAI_API_KEY
   # CX 본인확인 HMAC pepper. 없으면 /v1/facemarket/identity/verify 가 503.
   # ⚠️ 배포 전 값 저장 필요: copilot secret init --name FM_CI_PEPPER (프로드 SSM).
   FM_CI_PEPPER: /copilot/wearless/prod/secrets/FM_CI_PEPPER

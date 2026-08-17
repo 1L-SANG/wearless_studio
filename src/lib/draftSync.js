@@ -19,7 +19,8 @@
 import { api } from '@/lib/api/index.js';
 import { createDraftSyncSingleFlight } from '@/lib/draftSyncSingleFlight.js';
 import { draftPromotionSession } from '@/lib/draftPromotionSession.js';
-import { promoteCustomMatch, stripLocalCustomMatch } from '@/lib/customMatchPromotion.js';
+import { startCustomMatchPromotion, stripLocalCustomMatch } from '@/lib/customMatchPromotion.js';
+import { invalidateStoryboardEntryPrefetch } from '@/features/storyboard/storyboardEntryPrefetch.js';
 
 // product.colors[].images[] 의 id·src 를 업로드 결과로 치환 (원본 imageId 매칭).
 // **id 를 서버 asset id 로 바꾼다** — 서버(mannequin.base_color_images·분석 워커)가 이미지를
@@ -88,12 +89,14 @@ async function runDraftSync(draft, { projectId: existing } = {}) {
       composeMode: draft.composeMode === 'extended' ? 'extended' : 'basic',
     });
 
-    // 내 옷 승격 — blob 재업로드 → custom-match-item 등록(서버가 누끼 잡을 건다).
-    // 결과를 위로 돌려준다: 셀러는 확정 직전까지 '내 옷' 카드를 보고 있었으므로, 등록만
-    // 실패했다면 화면이 그 사실을 알려야 한다(확정 자체는 막지 않는다 — fail-open 유지).
-    const customMatch = await promoteCustomMatch(api, projectId, customDraft);
+    // CTA 대기 경계는 여기까지다: 프로젝트 생성·상품 사진·상품·분석·사진 양 저장만 확정에
+    // 필요하다. 아래 내 옷 승격은 프라미스만 시작해 콘티보드 진입 로딩과 겹쳐 진행한다.
+    const customMatchPromotion = startCustomMatchPromotion(api, projectId, customDraft, {
+      // 승격이 analysis.matchClothing 을 바꾸므로, 입력 화면에서 데운 콘티 캐시는 완료 즉시 폐기한다.
+      onSettled: invalidateStoryboardEntryPrefetch,
+    });
 
-    return { projectId, customMatch };
+    return { projectId, customMatchPromotion };
   } catch (err) {
     err.projectId = projectId; // 재시도 시 이 projectId로 호출 → 프로젝트 중복 방지
     throw err;

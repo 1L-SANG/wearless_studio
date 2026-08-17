@@ -123,7 +123,10 @@ def test_dev_generation_example_catalog_matches_server_registry_v2():
     assets = registry["assets"]
 
     assert registry["_meta"]["schemaVersion"] == 2
-    assert {item["id"] for item in catalog} == set(assets)
+    # 시그니처 컷(sig_*)은 첫 화면 전용 풀이라 서버 레지스트리에만 있고 클라이언트 생성예시
+    # 카탈로그에는 일부러 넣지 않는다(갤러리 나열·자동 배정·발행 게이트에 섞이면 안 됨).
+    catalog_assets = {k: v for k, v in assets.items() if not k.startswith("sig_")}
+    assert {item["id"] for item in catalog} == set(catalog_assets)
     for item in catalog:
         entry = assets[item["id"]]
         assert item["thumb"].endswith(entry["thumb"])
@@ -182,7 +185,11 @@ def test_committed_catalog_and_registry_cover_the_single_public_combination_tabl
         release.generation_example_coverage(catalog, combinations)
     )
     registry_counts, registry_missing, registry_undeclared = (
-        release.generation_example_coverage(list(registry["assets"].values()), combinations)
+        release.generation_example_coverage(
+            # sig_* 는 카탈로그에 없는 첫 화면 전용 풀 — 공개 조합 커버리지 대상이 아니다.
+            [v for k, v in registry["assets"].items() if not k.startswith("sig_")],
+            combinations,
+        )
     )
 
     assert release.PUBLIC_COMBINATIONS_PATH == (

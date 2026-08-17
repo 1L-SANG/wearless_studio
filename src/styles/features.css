@@ -2225,6 +2225,9 @@
   padding: 8px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-inline: contain; background: var(--bg-1); }
 .sb-match-inline .match-grid { display: flex; gap: 6px; width: max-content; min-width: 100%; margin-top: 0; }
 .sb-match-inline .match-cell { flex: 0 0 92px; }
+.sb-match-pending { cursor: default; }
+.sb-match-pending-preview { display: grid; place-items: center; width: 100%; height: 78px;
+  color: var(--fg-3); background: var(--bg-2); }
 .insp-detail-btn.open { box-shadow: inset 0 0 0 1.5px var(--ring-strong); }
 
 /* 공간 세트 카드 공통 톤 = 포인트 컬러 (오너 확정: 톤별 색 대신 연한 포인트 컬러) */
@@ -3292,3 +3295,13 @@
   background: var(--accent-error, #d92d20); color: #fff;
   font-size: 11.5px; font-weight: 700; cursor: pointer;
 }
+
+/* 시그니처 컷 전용 갤러리 — 생성예시 격자와 같은 시각 언어, 조작은 선택뿐. */
+.sb-signature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.sb-signature-cell {
+  position: relative; aspect-ratio: 3 / 4; border-radius: 8px; overflow: hidden;
+  padding: 0; border: 2px solid transparent; background: var(--bg-2); cursor: pointer; display: block;
+}
+.sb-signature-cell img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform .16s, opacity .16s; }
+.sb-signature-cell:not(.sel):hover img { transform: scale(1.035); opacity: .94; }
+.sb-signature-cell.sel { border-color: var(--link); }

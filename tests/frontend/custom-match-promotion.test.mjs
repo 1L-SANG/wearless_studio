@@ -1,7 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { promoteCustomMatch, stripLocalCustomMatch } from '../../src/lib/customMatchPromotion.js';
+import {
+  clearCustomMatchPromotionTask,
+  applyPromotedMatchSelection,
+  getCustomMatchPromotionTask,
+  promoteCustomMatch,
+  startCustomMatchPromotion,
+  stripLocalCustomMatch,
+} from '../../src/lib/customMatchPromotion.js';
 
 function fakeApi({ addResult, addError } = {}) {
   const calls = { uploads: [], adds: [], saves: [], cleared: 0 };
@@ -52,6 +59,65 @@ test('내 옷 draft 는 확정 시 재업로드되고 custom-match-item 으로 �
   assert.ok(api.calls.uploads.every((u) => u.purpose === 'custom_match_source'),
     '용도가 custom_match_source 여야 서버가 매칭 원본으로 취급한다');
   assert.deepEqual(api.calls.adds, [{ projectId: 'proj-1', assetIds: ['asset-1', 'asset-2'] }]);
+});
+
+test('내 옷 사진은 병렬 업로드하되 assetIds 는 입력 순서를 유지한다', async () => {
+  const releases = new Map();
+  const started = [];
+  let addedAssetIds = null;
+  const api = {
+    uploadPhoto(_projectId, payload) {
+      started.push(payload.filename);
+      return new Promise((resolve) => releases.set(payload.filename, resolve));
+    },
+    async addCustomMatchItem(_projectId, body) {
+      addedAssetIds = body.assetIds;
+      return { analysis: { matchClothing: [{ id: 'custom_srv', isCustom: true }] } };
+    },
+    clearCustomMatchDraft() {},
+  };
+
+  const promotion = promoteCustomMatch(api, 'proj-parallel', { ...DRAFT, selected: false });
+  await Promise.resolve();
+  assert.deepEqual(started, ['p1.png', 'p2.png'], '첫 업로드 완료 전 두 요청이 모두 시작된다');
+  releases.get('p2.png')({ assetId: 'asset-second' });
+  releases.get('p1.png')({ assetId: 'asset-first' });
+  await promotion;
+  assert.deepEqual(addedAssetIds, ['asset-first', 'asset-second']);
+});
+
+test('콘티는 같은 승격 완료 프라미스를 구독하고 완료 콜백은 한 번 실행된다', async () => {
+  const projectId = 'proj-background-task';
+  clearCustomMatchPromotionTask(projectId);
+  let releaseUpload;
+  let settled = 0;
+  const api = fakeApi();
+  api.uploadPhoto = () => new Promise((resolve) => { releaseUpload = resolve; });
+
+  const task = startCustomMatchPromotion(api, projectId, { ...DRAFT, uploads: [DRAFT.uploads[0]] }, {
+    onSettled: () => { settled += 1; },
+  });
+  assert.equal(task.status, 'pending');
+  assert.equal(getCustomMatchPromotionTask(projectId)?.promise, task.promise);
+  releaseUpload({ assetId: 'asset-bg' });
+  const result = await task.promise;
+  assert.equal(result.promoted, true);
+  assert.equal(task.status, 'settled');
+  assert.equal(settled, 1);
+  clearCustomMatchPromotionTask(projectId);
+});
+
+test('승격된 선택은 자동 매칭 컷에 반영하되 사용자가 고른 컷은 보존한다', () => {
+  const colors = [{ id: 'base', isBase: true, swatchId: 'black' }];
+  const matches = [{ id: 'custom_srv', isCustom: true, selected: true, isCompatible: true }];
+  const automatic = { id: 'auto', source: 'ai', cutType: 'horizon', colorId: 'base', matchIds: ['seed'] };
+  const user = { id: 'user', source: 'ai', cutType: 'styling', colorId: 'base', matchIds: ['mine'], matchIdsOrigin: 'user' };
+  const product = { id: 'product', source: 'ai', cutType: 'product', colorId: 'base', matchIds: [] };
+
+  const next = applyPromotedMatchSelection([automatic, user, product], colors, matches);
+  assert.deepEqual(next[0].matchIds, ['custom_srv']);
+  assert.equal(next[1], user);
+  assert.equal(next[2], product);
 });
 
 test('draft 에서 선택돼 있던 내 옷은 승격본도 선택 상태로 저장된다 — 델타만 보낸다', async () => {
@@ -175,4 +241,45 @@ test('상의 상품이면 매칭 상의는 타입 불일치로 탈락한다', ()
     'top',
   );
   assert.equal(out.find((m) => m.id === 'custom_srv').selected, false);
+});
+
+/* 리뷰 후속(2026-08-17): 승격 결과 소비가 콘티보드 마운트에 묶여 있어, 셀러가 화면을
+   빨리 떠나면 실패 안내가 조용히 사라졌다. 알림을 태스크 층으로 올려 화면과 분리한다. */
+test('실패 알림은 화면과 무관하게 프로젝트당 한 번만 전달된다', async () => {
+  const mod = await import('../../src/lib/customMatchPromotion.js');
+  const { startCustomMatchPromotion, onCustomMatchPromotionFailure, clearCustomMatchPromotionTask } = mod;
+
+  const seen = [];
+  const off = onCustomMatchPromotionFailure((id) => seen.push(id));
+  const api = {
+    uploadPhoto: async () => { throw new Error('upload boom'); },
+    addCustomMatchItem: async () => ({}),
+    saveAnalysis: async () => ({}),
+  };
+  const draft = { uploads: [{ filename: 'a.jpg', mime: 'image/jpeg', blob: new Blob(['x']) }] };
+
+  const task = startCustomMatchPromotion(api, 'proj-fail', draft);
+  await task.promise.catch(() => {});
+  assert.deepEqual(seen, ['proj-fail'], '구독자가 실패를 정확히 한 번 받는다');
+
+  off();
+  clearCustomMatchPromotionTask('proj-fail');
+});
+
+test('추적하는 승격 태스크는 무한정 쌓이지 않는다', async () => {
+  const mod = await import('../../src/lib/customMatchPromotion.js');
+  const { startCustomMatchPromotion, getCustomMatchPromotionTask, clearCustomMatchPromotionTask } = mod;
+  const api = {
+    uploadPhoto: async () => ({ assetId: 'a1' }),
+    addCustomMatchItem: async () => ({ analysis: { matchClothing: [] } }),
+    saveAnalysis: async () => ({}),
+  };
+  const draft = () => ({ uploads: [{ filename: 'a.jpg', mime: 'image/jpeg', blob: new Blob(['x']) }] });
+
+  const ids = Array.from({ length: 12 }, (_, i) => `bulk-${i}`);
+  for (const id of ids) await startCustomMatchPromotion(api, id, draft())?.promise?.catch(() => {});
+  // 오래된 것부터 버려지므로 처음 것은 사라지고 마지막 것은 남는다.
+  assert.equal(getCustomMatchPromotionTask('bulk-0'), null);
+  assert.ok(getCustomMatchPromotionTask(ids.at(-1)));
+  ids.forEach(clearCustomMatchPromotionTask);
 });

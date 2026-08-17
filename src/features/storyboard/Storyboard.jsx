@@ -9,7 +9,7 @@
    ============================================================= */
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
 import { Placeholder } from '@/mock/placeholders.js';
@@ -64,6 +64,7 @@ import {
   moodGridContent,
   stripHookFrameFields,
 } from '@/lib/storyboardHookFrame.js';
+import { pickSignatureCut, signatureCutById, signatureCutsFor } from '@/lib/signatureCutPool.js';
 import { shuffleSectionExamples } from '@/lib/storyboardExampleShuffle.js';
 import { uniqueGenerationCutCount } from '@/lib/generationCutCount.js';
 import { genderForClothingType } from '@/lib/productGender.js';
@@ -114,6 +115,10 @@ import {
   collectInitialRevealThumbnailUrls,
   waitForInitialReveal,
 } from './initialRevealGate.js';
+import {
+  applyPromotedMatchSelection,
+  getCustomMatchPromotionTask,
+} from '@/lib/customMatchPromotion.js';
 
 
 /* 장소 세트를 받을 수 있는 섹션 — 세트 setType 이 styling(스타일링)·horizon-*(스튜디오)뿐이라
@@ -166,8 +171,11 @@ const WORN_ROLE_BY_CUT_TYPE = Object.freeze({
   mirror: CONTENT_ROLES.REAL_WEAR,
 });
 const exampleCategoryFor = (cut) => cut === 'product' ? 'product' : (cut === 'horizon' ? 'horizon' : 'styling');
+/* 시그니처 풀(sig_*)은 생성예시 카탈로그에 없다 — 카탈로그 조회 전에 먼저 확인한다.
+   이 한 곳이 카드 썸네일의 유일한 관문이라, 여기만 알면 보드·인스펙터 전 경로에 반영된다. */
 const exampleThumbFor = (catalogs, exampleId, cut) => (
-  (catalogs?.genExamples || []).find((example) => example.id === exampleId)?.thumb
+  signatureCutById(exampleId)?.thumb
+  || (catalogs?.genExamples || []).find((example) => example.id === exampleId)?.thumb
   || Placeholder.photo(exampleId, exampleCategoryFor(cut), 240, 320)
 );
 export function exampleGenderFromAnalysis(analysis, catalogs, clothingType) {
@@ -1100,6 +1108,31 @@ function SpaceSetGallery({ mode, error, onChoose, onClose, gender, clothingType,
 }
 
 
+/* 시그니처 컷 전용 갤러리 — 생성예시 카탈로그가 아니라 signatureCutPool 을 보여준다.
+   분위기를 고를 여지는 남기되(장소 세트처럼 감추지 않는다), 샷·참조범위 같은
+   생성예시용 조작은 없다. 시그니처는 구도·배경 문법이 고정된 자리이기 때문이다. */
+function SignatureCutGallery({ gender, exampleId, onExampleChange }) {
+  const cuts = signatureCutsFor(gender);
+  return (
+    <div className="insp-sec sb-signature-gallery">
+      <label className="lbl">첫 화면 분위기</label>
+      <div className="sb-signature-grid">
+        {cuts.map((cut) => (
+          <button
+            key={cut.id}
+            type="button"
+            className={'sb-signature-cell' + (cut.id === exampleId ? ' sel' : '')}
+            aria-pressed={cut.id === exampleId}
+            onClick={() => onExampleChange(cut.id)}
+          >
+            <img src={cut.thumb} alt="" loading="lazy" decoding="async" />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function shouldRenderGenerationExampleGuide(block) {
   return !block?.spaceGroupId;
 }
@@ -1310,7 +1343,7 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, shot, 
   );
 }
 
-function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, hasDetailImage, projectId, onChange, onAtomicChange, onRetryAtomicSave, requestedRecipe, onCancelRequestedRecipe, matchClothing, spaceContext, onChangeSpaceSet, onAddMine, onExampleDrag }) {
+function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, hasDetailImage, projectId, onChange, onAtomicChange, onRetryAtomicSave, requestedRecipe, onCancelRequestedRecipe, matchClothing, customMatchPromotionPending = false, spaceContext, onChangeSpaceSet, onAddMine, onExampleDrag }) {
   const [matchOpen, setMatchOpen] = useState(false);
   const [pendingRecipe, setPendingRecipe] = useState(null);
   const [pendingChoice, setPendingChoice] = useState(null);
@@ -1356,6 +1389,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   const isMirror = block.cutType === 'mirror';
   const isDetail = block.contentRole === CONTENT_ROLES.DETAIL;
   const shouldRenderGenerationExamples = shouldRenderGenerationExampleGuide(block);
+  const isSignatureSlot = block.hookSlotRole === 'signature';
   const effectiveSectionRole = requestedRecipe?.sectionRole || block.sectionRole;
   const pendingInSpace = !!block.spaceGroupId && !requestedRecipe;
   // 디테일 샷 상시 제공(2026-08-07 개편) — 디테일 사진이 없어도 서버가 원본 구조 확대로 생성
@@ -1593,7 +1627,18 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         </div>
       ) : (
         <>
-          {shouldRenderGenerationExamples && (
+          {isSignatureSlot && (
+            <SignatureCutGallery
+              gender={exampleGender}
+              exampleId={block.exampleId || null}
+              onExampleChange={(id) => onChange({
+                exampleId: id,
+                exampleSelectionOrigin: 'user',
+                thumb: signatureCutById(id)?.thumb || null,
+              })}
+            />
+          )}
+          {shouldRenderGenerationExamples && !isSignatureSlot && (
             <MoodGuide onUseMine={(ref) => onChange({
               source: 'mine', title: '내 이미지', cutType: null, contentRole: CONTENT_ROLES.CUSTOM,
               ownImages: [ref?.url || ref], thumb: ref?.url || ref,
@@ -1668,7 +1713,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       {/* 매칭 의류가 없으면 편집 패널이 빈 화면이 되므로 진입 자체를 막는다.
           세트 멤버(spaceGroupId)는 세트 연출이 정본이라 매칭 편집도 숨긴다(2026-08-15 오너). */}
       {WORN_CUT_TYPES.has(block.cutType) && !block.spaceGroupId
-        && Array.isArray(matchClothing) && matchClothing.length > 0 && (
+        && ((Array.isArray(matchClothing) && matchClothing.length > 0) || customMatchPromotionPending) && (
         <>
           <button className={`insp-detail-btn${matchOpen ? ' open' : ''}`} onClick={() => setMatchOpen((v) => !v)}>
             <Icon name="settings" size={17} />매칭 의류 바꾸기
@@ -1676,7 +1721,13 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
           {matchOpen && (
             <div className="sb-match-inline">
               <div className="match-grid">
-                {matchClothing.map((m) => {
+                {customMatchPromotionPending && (
+                  <div className="match-cell sb-match-pending" role="status" aria-label="내 옷 준비 중">
+                    <span className="sb-match-pending-preview"><Icon name="loader" className="spin" size={20} /></span>
+                    <span className="ml">내 옷 준비 중</span>
+                  </div>
+                )}
+                {(matchClothing || []).map((m) => {
                   const on = (block.matchIds || []).includes(m.id);
                   return (
                     <button key={m.id} className={`match-cell${on ? ' on' : ''}`} aria-pressed={on}
@@ -1777,12 +1828,32 @@ function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, ana
     product: p,
     gender: exampleGender,
   });
+  // 시그니처 컷은 전용 풀에서 배정한다(생성예시 카탈로그 대상이 아니다). 자동 배정이
+  // 카탈로그 예시를 붙여 놨더라도 여기서 풀 이미지로 바꾼다 — 사용자가 직접 고른
+  // 선택(origin 'user')은 존중해 건드리지 않는다.
+  const withSignature = assignment.blocks.map((block) => {
+    if (block.hookSlotRole !== 'signature') return block;
+    if (block.exampleSelectionOrigin === 'user' && signatureCutById(block.exampleId)) return block;
+    const picked = pickSignatureCut({
+      gender: exampleGender,
+      // 프로젝트 단위로 고정되는 값이면 무엇이든 된다 — 같은 보드를 다시 열면 같은 컷이어야 한다.
+      projectId: p?.projectId || p?.id || a?.projectId || 'default',
+    });
+    if (!picked) return block;
+    return {
+      ...block,
+      exampleId: picked.id,
+      exampleSelectionOrigin: block.exampleSelectionOrigin === 'user' ? 'user' : 'auto',
+      thumb: picked.thumb,
+    };
+  });
+
   const allColorOpts = buildColorOpts(p.colors, hydratedCatalogs, hexFor);
   const colorOpts = visibleColorOpts(allColorOpts, p.colors);
   const fallbackColor = [{ id: 'col1', label: '기본', hex: '#15141a' }];
 
   return {
-    blocks: assignment.blocks,
+    blocks: withSignature,
     catalogs: hydratedCatalogs,
     matchClothing,
     clothingType,
@@ -1954,6 +2025,7 @@ function HookStyleChip({
 
 export function Storyboard() {
   const navigate = useNavigate();
+  const location = useLocation();
   const initialEntryRef = useRef(undefined);
   if (initialEntryRef.current === undefined) {
     const initialProjectId = useAppStore.getState().projectId;
@@ -1970,6 +2042,10 @@ export function Storyboard() {
   const [blocks, setBlocks] = useState(() => initialEntry?.blocks || null);
   const [catalogs, setCatalogs] = useState(() => initialEntry?.catalogs || null);
   const [matchClothing, setMatchClothing] = useState(() => initialEntry?.matchClothing || null);
+  const [customMatchPromotionPending, setCustomMatchPromotionPending] = useState(() => {
+    const initialProjectId = useAppStore.getState().projectId;
+    return getCustomMatchPromotionTask(initialProjectId)?.status === 'pending';
+  });
   const [colorOpts, setColorOpts] = useState(() => initialEntry?.colorOpts || []);
   const [detailColorOpts, setDetailColorOpts] = useState(() => initialEntry?.detailColorOpts || []);
   const [clothingType, setClothingType] = useState(() => initialEntry?.clothingType || 'top'); // 샷 필터 아이콘·예시 크롭용 (상의=위/하의=아래)
@@ -2018,6 +2094,11 @@ export function Storyboard() {
   const cardRefs = useRef(new Map());
   const setPickerScrollY = useRef(null);
   const toast = useToast();
+  const pushToast = toast.push;
+  const customMatchPromotionExpectedRef = useRef(location.state?.customMatchPromotionStarted === true);
+  const customMatchPromotionHandledRef = useRef(new Set());
+  const promotedMatchClothingRef = useRef({ projectId: null, items: null });
+  const composeModeSeedRef = useRef(composeModeSeed);
   // 카피라이팅 토글 = 플로우 선택값 (store → patchProject 동기화, ADR-0002)
   const projectId = useAppStore((s) => s.projectId);
   const composeMode = useAppStore((s) => s.composeMode);
@@ -2030,7 +2111,61 @@ export function Storyboard() {
   const copywritingSelectionRef = useRef({ requestId: 0, pending: 0, confirmedValue: copyOn });
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
 
+  // 입력 화면이 시작한 완료 프라미스를 직접 구독한다. 서버를 반복 조회하지 않고 완료 시 한 번만
+  // 최신 매칭 목록을 읽어 준비 타일을 실제 내 옷으로 자동 교체한다.
+  useEffect(() => {
+    if (!projectId) return undefined;
+    const task = getCustomMatchPromotionTask(projectId);
+    if (!task) return undefined;
+    let active = true;
+    setCustomMatchPromotionPending(task.status === 'pending');
+    void task.promise.then(async (result) => {
+      if (!active) return;
+      setCustomMatchPromotionPending(false);
+      // 실패 알림은 태스크 층(onCustomMatchPromotionFailure)이 화면과 무관하게 띄운다 —
+      // 셀러가 콘티를 곧바로 떠나도 안내가 사라지지 않게(리뷰 지적).
+      if (result?.attempted && !result.promoted) return;
+      if (!result?.attempted) return;
+      try {
+        const refreshed = await api.getMatchClothing(projectId);
+        if (!active) return;
+        const nextMatchClothing = refreshed || [];
+        promotedMatchClothingRef.current = { projectId, items: nextMatchClothing };
+        setMatchClothing(nextMatchClothing);
+        setComposeModeSeed((current) => ({ ...current, matchClothing: nextMatchClothing }));
+        setBlocks((current) => applyPromotedMatchSelection(
+          current,
+          composeModeSeedRef.current.colors,
+          nextMatchClothing,
+        ));
+      } catch {
+        // 완료 시 캐시는 이미 무효화됐다. 단발 조회가 실패하면 기존 로드 경로로 한 번 재진입한다.
+        if (active) setLoadRetry((current) => current + 1);
+      }
+    }).catch(() => {
+      if (active) setCustomMatchPromotionPending(false);
+    });
+    return () => { active = false; };
+  }, [projectId, pushToast]);
+
+  // 승격 실패 안내 — 어느 화면이 떠 있든 프로젝트당 한 번. 콘티보드 언마운트로 유실되지 않는다.
+  useEffect(() => onCustomMatchPromotionFailure(() => {
+    pushToast('내 옷을 등록하지 못했어요. 분석 화면에서 다시 올려주세요.', { icon: 'alert' });
+  }), [pushToast]);
+
+  // 새로고침·이탈로 메모리 프라미스가 유실된 경우 새 백엔드 인프라를 만들지 않는다. 이미 서버
+  // 목록에 내 옷이 없다면 기존 실패 안내로 수렴해 분석 화면의 재업로드 경로를 알려준다.
+  useEffect(() => {
+    if (!customMatchPromotionExpectedRef.current || !projectId || matchClothing === null) return;
+    if (getCustomMatchPromotionTask(projectId)) return;
+    if ((matchClothing || []).some((item) => item.isCustom)) return;
+    if (customMatchPromotionHandledRef.current.has(projectId)) return;
+    customMatchPromotionHandledRef.current.add(projectId);
+    pushToast('내 옷을 등록하지 못했어요. 분석 화면에서 다시 올려주세요.', { icon: 'alert' });
+  }, [matchClothing, projectId, pushToast]);
+
   useEffect(() => () => clearTimeout(undoTimerRef.current), []);
+  useLayoutEffect(() => { composeModeSeedRef.current = composeModeSeed; }, [composeModeSeed]);
   useEffect(() => {
     if (!composeModeSelectionRef.current.pending) {
       composeModeSelectionRef.current.confirmedMode = composeMode;
@@ -2113,10 +2248,11 @@ export function Storyboard() {
         // ProductInput의 이탈 cleanup이 마지막 색상 PATCH를 막 시작했을 수 있다. 같은 project의
         // 저장만 기다린 뒤 생성/콘티 GET을 시작해, 빠른 브라우저 뒤로가기에서도 옛 색을 읽지 않는다.
         await waitForAnalysisEditSave(pid);
-        // 마네킹컷 생성은 오래 걸린다 — 사용자가 콘티를 짜는 동안 백그라운드로 돌린다.
-        // await 하지 않는다: 보드 로드가 생성 완료를 기다리면 병렬화가 사라진다. 실패는 리본과
-        // 마네킹 화면이 각각 보고하므로 여기선 삼킨다. 중복 호출은 러너와 서버가 함께 흡수한다.
-        void requestMannequinGeneration(pid).catch(() => {});
+        // 마네킹컷 생성은 콘티 로드와 병렬로 돌리되, 재료인 내 옷 승격만은 먼저 정착시킨다.
+        // fail-open 결과도 resolve되므로 등록 실패가 마네킹 생성을 막지는 않는다.
+        const customMatchTask = getCustomMatchPromotionTask(pid);
+        const customMatchReady = customMatchTask?.promise.catch(() => null) || Promise.resolve();
+        void customMatchReady.then(() => requestMannequinGeneration(pid)).catch(() => {});
         await sbSaveIdle();     // 직전 인스턴스의 비행 중 저장(이탈 플러시)이 착지한 뒤에 읽는다 — 스테일 로드 방지
         const entry = await consumeStoryboardEntry(pid) || await loadStoryboardEntry(pid);
         const [board] = entry;
@@ -2142,22 +2278,35 @@ export function Storyboard() {
         const prepared = reuseInitialEntry
           ? initialEntryRef.current.prepared
           : prepareStoryboardEntry(entry, usePending ? pending : board);
-        const initBlocks = prepared.blocks;
+        const promotedMatchClothing = promotedMatchClothingRef.current.projectId === pid
+          ? promotedMatchClothingRef.current.items
+          : null;
+        const initBlocks = promotedMatchClothing
+          ? applyPromotedMatchSelection(
+            prepared.blocks,
+            prepared.composeModeSeed.colors,
+            promotedMatchClothing,
+          )
+          : prepared.blocks;
+        const promotionChangedBlocks = initBlocks !== prepared.blocks;
         setOpenGroupKeys([]);
         if (!reuseInitialEntry) {
           setBlocks(initBlocks);
           setCatalogs(prepared.catalogs);
-          setMatchClothing(prepared.matchClothing);
+          setMatchClothing(promotedMatchClothing || prepared.matchClothing);
           setClothingType(prepared.clothingType);
           setExampleGender(prepared.exampleGender);
           setHasDetailImage(prepared.hasDetailImage);
           setDetailColorOpts(prepared.detailColorOpts);
           setColorOpts(prepared.colorOpts);
-          setComposeModeSeed(prepared.composeModeSeed);
+          setComposeModeSeed(promotedMatchClothing
+            ? { ...prepared.composeModeSeed, matchClothing: promotedMatchClothing }
+            : prepared.composeModeSeed);
         }
-        if (prepared.normalized || prepared.assignment.changed || usePending) {
+        if (prepared.normalized || prepared.assignment.changed || usePending || promotionChangedBlocks) {
           const autoAssignmentOnly = prepared.assignment.assignedIds.length > 0
-            && prepared.assignment.protectedIds.length === 0 && !prepared.normalized && !usePending;
+            && prepared.assignment.protectedIds.length === 0 && !prepared.normalized
+            && !usePending && !promotionChangedBlocks;
           try {
             await sbSaveNow(pid, () => initBlocks, { autoAssignment: autoAssignmentOnly });
           } catch {
@@ -2175,9 +2324,11 @@ export function Storyboard() {
     if (!blocks || !catalogs) return undefined;
     const blockImages = blocks.flatMap((block) => [
       block.exampleId
-        ? generationExampleImageSources(
+        // 시그니처 컷은 카탈로그에 없다 — 조회가 비면 block.thumb 로 떨어져야 첫 화면 카드가
+        // 늦게 뜨지 않는다(이 카드가 보드에서 가장 먼저 보이는 자리다).
+        ? (generationExampleImageSources(
           (catalogs.genExamples || []).find((example) => example.id === block.exampleId),
-        ).prewarm
+        ).prewarm || block.thumb)
         : block.thumb,
       block.ownImages?.[0],
     ]);
@@ -3661,6 +3812,7 @@ export function Storyboard() {
   ) : <Inspector key={selectedId} block={selected} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} exampleGender={exampleGender} hasDetailImage={hasDetailImage} projectId={projectId}
     onChange={(p, options) => patch(selectedId, p, options)} onAtomicChange={(p, options) => atomicPatch(selectedId, p, options)} onRetryAtomicSave={retryAtomicSave} requestedRecipe={pendingSectionMove}
     onCancelRequestedRecipe={() => setPendingSectionMove(null)} matchClothing={matchClothing}
+    customMatchPromotionPending={customMatchPromotionPending}
     spaceContext={selectedSpaceContext}
     onChangeSpaceSet={() => {
       if (selected?.spaceGroupId) {
