@@ -1187,6 +1187,19 @@ def is_signature_cut(spec: dict) -> bool:
     return isinstance(example_id, str) and example_id.startswith(SIGNATURE_EXAMPLE_PREFIX)
 
 
+def _resolve_generation_model(settings: Settings, spec: dict) -> str:
+    """일반/시그니처 컷의 Stage-1·Stage-2 모델 선택을 한 계약으로 유지한다."""
+
+    model = resolve_model(settings, "image_high")
+    if is_signature_cut(spec):
+        signature_model = resolve_model(settings, "image_signature")
+        if not signature_model.startswith("gpt-image") or getattr(
+            settings, "openai_api_key", None
+        ):
+            model = signature_model
+    return model
+
+
 # 첫 화면의 화면 문법(오너 확정 2026-08-17): 인물을 바짝 당겨 얼굴은 일부만 보이고,
 # 배경은 착장 의류 색의 연한 톤. 인물·의류가 주인공이 되도록 배경에 디테일을 두지 않는다.
 SIGNATURE_DIRECTION = (
@@ -1321,11 +1334,7 @@ async def generate(
     # 시그니처 컷만 별도 모델(기본 gpt-image-2) — 나머지 컷은 기존 image_high 유지.
     # gpt-image 경로는 OPENAI_API_KEY 가 있어야 한다(gemini_image.py:239). 프로덕션에 키가
     # 아직 없으므로, 없으면 첫 화면이 통째로 빈칸이 되는 대신 기존 모델로 조용히 떨어진다.
-    model = resolve_model(settings, "image_high")
-    if is_signature_cut(spec):
-        signature_model = resolve_model(settings, "image_signature")
-        if not signature_model.startswith("gpt-image") or getattr(settings, "openai_api_key", None):
-            model = signature_model
+    model = _resolve_generation_model(settings, spec)
     crop_pose_medium = (
         spec["refScope"] == "pose"
         and spec["shot"] == "medium"
@@ -1348,9 +1357,17 @@ async def generate(
             directing_profile=directing_profile,
             qc_corrections=qc_corrections,
         )
+    provider_kwargs = {"aspect_ratio": settings.mannequin_aspect_ratio}
+    if confirmed_prompt_input is not None:
+        # 과거 확정 실험은 역할·순서뿐 아니라 provider가 받은 참조 바이트/MIME도
+        # 봉인했다. 일반 OpenAI 호환용 PNG 정규화를 이 exact 경로에 적용하지 않는다.
+        provider_kwargs["openai_preserve_input_bytes"] = True
     res = await gemini.generate_content_image(
-        model, prompt, images, _detail_image_size(settings),
-        aspect_ratio=settings.mannequin_aspect_ratio,
+        model,
+        prompt,
+        images,
+        _detail_image_size(settings),
+        **provider_kwargs,
     )
     if crop_pose_medium:
         return await pose_crop.crop_pose_medium(
@@ -1370,7 +1387,7 @@ async def repair(
 ) -> tuple[bytes, str]:
     """AG-06 국소 2차 보정. 호출자가 고른 image_high 모델로 1차 결과만 편집한다."""
 
-    model = resolve_model(settings, "image_high")
+    model = _resolve_generation_model(settings, cut_spec)
     prompt = build_qc_repair_prompt(cut_spec, product, qc_corrections)
     res = await gemini.generate_content_image(
         model,

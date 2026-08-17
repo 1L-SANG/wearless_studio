@@ -272,6 +272,11 @@ async def _gen_cuts(app, job, prepared, product, analysis):
         strict_space_scene_qc = bool(item[6]) if len(item) > 6 else False
         passthrough = item[7] if len(item) > 7 else None
         confirmed_packet = item[8] if len(item) > 8 else None
+        # 최신 main의 첫 화면 시그니처 컷은 자체 모델/폴백 계약을 가진다. AG-06 일반
+        # 컷용 GPT 설정을 덮어씌우지 않고 원래 Settings를 써서 그 경계를 보존한다.
+        generation_settings = (
+            s if cut_generator.is_signature_cut(b) else detail_settings
+        )
         # 원본 패스스루 — 미세 패턴(스트라이프·체크) 상품의 디테일 컷은 **생성하지 않고**
         # 셀러가 찍은 그 색상의 Detail 사진을 그대로 쓴다. 원단 매크로는 전신 컷 해상도로는
         # 재현이 불가능하다(2026-08-01 측정: 4K 에서도 줄 한 주기당 14px → 파란 2가닥을 그리려면
@@ -336,7 +341,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
             for attempt in range(1, max_attempts + 1):
                 try:
                     img, mime = await cut_generator.generate(
-                        detail_settings, gemini, b, product, images, **generate_kwargs)
+                        generation_settings, gemini, b, product, images, **generate_kwargs)
                     break
                 except ValueError as e:  # 입력 계약 위반 — 재시도해도 같다
                     log.warning("AG-06 cut invalid for job %s block %s: %r", job_id, b.get("id"), e)
@@ -412,7 +417,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                     attempt += 1
                     try:
                         img, mime = await cut_generator.generate(
-                            detail_settings, gemini, b, product, images, **generate_kwargs)
+                            generation_settings, gemini, b, product, images, **generate_kwargs)
                     except Exception as e:
                         log.warning("AG-06 scene retry generate failed job %s block %s: %r",
                                     job_id, b.get("id"), e)
@@ -423,7 +428,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
 
             async def _generate_candidate():
                 candidate_img, candidate_mime = await cut_generator.generate(
-                    detail_settings, gemini, b, product, images, **generate_kwargs)
+                    generation_settings, gemini, b, product, images, **generate_kwargs)
                 if plate is None:
                     return InlineImage(candidate_mime, candidate_img)
 
@@ -448,7 +453,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                         raise RuntimeError("candidate scene mismatch")
                     candidate_attempt += 1
                     candidate_img, candidate_mime = await cut_generator.generate(
-                        detail_settings, gemini, b, product, images, **generate_kwargs)
+                        generation_settings, gemini, b, product, images, **generate_kwargs)
                 return InlineImage(candidate_mime, candidate_img)
 
             if confirmed_packet is not None:
@@ -518,7 +523,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                             try:
                                 if route == "EDIT_STAGE1":
                                     repaired_img, repaired_mime = await cut_generator.repair(
-                                        detail_settings,
+                                        generation_settings,
                                         gemini,
                                         b,
                                         product,
@@ -527,7 +532,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                                     )
                                 else:
                                     repaired_img, repaired_mime = await cut_generator.generate(
-                                        detail_settings,
+                                        generation_settings,
                                         gemini,
                                         b,
                                         product,
@@ -1160,11 +1165,12 @@ async def run_detail_page_job(app, job: dict) -> None:
             try:
                 confirmed_requested = bool(
                     normalized is not None
-                    and source == "VIRTUAL"
-                    and bool(selected_model_id)
-                    and _uses_base_color(b)
-                    and confirmed_gpt_runtime.profile_requested(
-                        cut_generator.apply_reference_compatibility(normalized)
+                    and confirmed_gpt_runtime.resolve_profile_request(
+                        cut_generator.apply_reference_compatibility(normalized),
+                        identity_source=source,
+                        selected_model_id=selected_model_id,
+                        effective_model_id=eff_model_id,
+                        uses_base_color=_uses_base_color(b),
                     )
                 )
             except confirmed_gpt_runtime.ConfirmedGptRuntimeError as e:

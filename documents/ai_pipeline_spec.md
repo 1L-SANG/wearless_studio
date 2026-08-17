@@ -80,9 +80,9 @@ prep     exact 요청 블록은 선택 resolved 마네킹 → grid_face_directio
          라벨 셀러 근거 그리드 1장 → 선택 매칭 최대 1장 → 서비스 예시 순서로 패킷 준비.
          그 밖의 VIRTUAL 착용컷은 기존 face_front + body_front 쌍을 포함한 generic
          프롬프트·에셋 계약을 준비한다 (비AI).
-cuts     AG-06 cut-generator — source='ai' 블록별 병렬 실행. exact 블록은 GPT Image 2 Stage 1,
-         독립 QC와 조건부 GPT Stage 2·재검수를 사용한다. generic 블록은 기존 generic/
-         image_high Gemini 경로를 유지한다. exact의 1·2차만
+cuts     AG-06 cut-generator — source='ai' 블록별 병렬 실행. 일반 블록은 모두 detail_cut GPT로
+         Stage 1과 조건부 Stage 2를 만들고, exact 대상만 과거 입력·프롬프트 패킷을 추가한다.
+         첫 시그니처 컷은 별도 image_signature 계약을 유지한다.
          MODEL_ROUTING_DETAIL_CUT=gpt-image-2-2026-04-21과 DETAIL_CUT_IMAGE_SIZE=4K를 쓴다.
          세 계열로 컴파일하고, mirror는 styling의 mirrorSelfie 하위 방식으로 병렬 처리한다.
          source='mine' 블록은 ownImages 그대로(에이전트 호출 없음).
@@ -103,7 +103,9 @@ done     project.status='done' · { data: EditorBlock[], credits }
 - **exact 프롬프트·출력**: hash-pinned `cut_generate_confirmed_gpt_v1.txt`의 기존 iPhone 기본
   Photo 계약과 Adjacent V4 문구를 그대로 쓴다. GPT snapshot·`medium`·PNG는 과거 확정 조건과
   같고, 서비스 `4K`만 과거 `1024x1536` 대신 GPT 유효 최대 2:3 `2336x3504`로 변환한다. 이것이
-  과거 실험 대비 유일하게 의도한 provider-level 변경이다.
+  과거 실험 대비 유일하게 의도한 provider-level 변경이다. 해시 검증을 마친 입력 이미지는
+  과거 요청처럼 원본 바이트와 MIME 그대로 multipart에 넣으며, generic/시그니처 호환용 PNG
+  정규화를 exact 요청에는 적용하지 않는다.
 - **생성예시·촬영 세트 레지스트리**: generic 경로에서 `exampleId`의 현재 상품 종류가
   `applicableClothingTypes`에 없거나 요청 `refScope` variant가 발행되지 않았으면 그 예시만
   픽셀·텍스트 양쪽에서 생략하고 컷 생성은 계속한다. 생략 사유는 job 결과 metadata의
@@ -112,7 +114,7 @@ done     project.status='done' · { data: EditorBlock[], credits }
   plate를 함께 사용한다. 임의 그룹 값은 거부한다. 현재 운영 R2에는 개별
   생성예시와 `space-sets-20260730-v1` 촬영 세트가 발행돼 있다.
 - **멱등**: status='generating' 재호출 → 합류, status='done' 재호출 → 기존 결과 반환 (계약 §6).
-- **독립 이미지 QC**: AG-06 각 컷 뒤 `CUT_OUTPUT_QC_MODE=shadow`이면 상품 동일성(텍스트·로고 포함), 사용자 의도, 인체·원근, 광원·그림자·주름을 독립 판정해 metadata에 저장한다. exact 경로의 `repair`는 `GPT Stage 1 → 독립 QC → 조건부 Stage 2 → 독립 재검수`다. `anatomyPerspectiveAsymmetry`와 `lightingShadowReflectionDrape` 실패만 Stage 1을 같은 GPT로 직접 편집한다. `framingDirectionFacePose`를 포함한 그 밖의 실패는 같은 exact 패킷과 고정 프롬프트에 교정 사실을 추가해 같은 GPT로 처음부터 재생성한다. Stage 2는 한 번만 시도하고, 통과하거나 실패 축이 줄면서 기존 통과 축의 회귀가 없을 때만 채택한다. 성공한 Stage 1 뒤 QC/Stage 2 실패나 `UNJUDGEABLE`이면 추가 호출 없이 Stage 1을 보존한다. exact 입력 준비의 fail-closed와 이 QC fail-open은 서로 다른 시점의 규칙이다. generic PL-4, 에디터 PL-5와 AG-07은 기존 generic/공유 `image_high` Gemini 계약을 유지한다. 사용자 크레딧은 최종 컷 한 장 기준으로 유지하고 추가 provider 호출 실비는 `image_usage_events`에 기록한다. `PAGE_OUTPUT_QC_MODE=shadow`이면 같은 SKU·목표 색상·모델·매칭·이너와 세트별 공간 연속성을 검사한다. 기본값은 `off`이며 프로덕션만 명시적으로 `repair`를 켠다.
+- **독립 이미지 QC**: AG-06 각 컷 뒤 `CUT_OUTPUT_QC_MODE=shadow`이면 상품 동일성(텍스트·로고 포함), 사용자 의도, 인체·원근, 광원·그림자·주름을 독립 판정해 metadata에 저장한다. exact 경로의 `repair`는 `GPT Stage 1 → 독립 QC → 조건부 Stage 2 → 독립 재검수`다. `anatomyPerspectiveAsymmetry`와 `lightingShadowReflectionDrape` 실패만 Stage 1을 같은 GPT로 직접 편집한다. `framingDirectionFacePose`를 포함한 그 밖의 실패는 같은 exact 패킷과 고정 프롬프트에 교정 사실을 추가해 같은 GPT로 처음부터 재생성한다. Stage 2는 한 번만 시도하고, 통과하거나 실패 축이 줄면서 기존 통과 축의 회귀가 없을 때만 채택한다. 성공한 Stage 1 뒤 QC/Stage 2 실패나 `UNJUDGEABLE`이면 추가 호출 없이 Stage 1을 보존한다. exact 입력 준비의 fail-closed와 이 QC fail-open은 서로 다른 시점의 규칙이다. generic PL-4도 generic 입력·프롬프트는 유지하되 `detail_cut` GPT를 쓰며, 첫 시그니처 컷은 별도 `image_signature`, 에디터 PL-5와 AG-07은 공유 `image_high` Gemini를 유지한다. 사용자 크레딧은 최종 컷 한 장 기준으로 유지하고 추가 provider 호출 실비는 `image_usage_events`에 기록한다. `PAGE_OUTPUT_QC_MODE=shadow`이면 같은 SKU·목표 색상·모델·매칭·이너와 세트별 공간 연속성을 검사한다. 기본값은 `off`이며 프로덕션만 명시적으로 `repair`를 켠다.
 
 ### PL-5 / PL-6 에디터 새 이미지·현재 이미지 수정 — `generateImage(projectId, req)`
 
@@ -172,8 +174,8 @@ Job {
 GEMINI_API_KEY=
 OPENAI_API_KEY=
 MODEL_ROUTING_IMAGE_HIGH=gemini-3-pro-image        # 2026-06-12 공식 문서로 실재 확인(Nano Banana Pro, stable) — 교체는 여기서만
-MODEL_ROUTING_DETAIL_CUT=gpt-image-2-2026-04-21   # PL-4 exact Stage 1·2 고정 스냅샷
-DETAIL_CUT_IMAGE_SIZE=4K                          # exact 2:3은 GPT 유효 최대 2336x3504로 변환
+MODEL_ROUTING_DETAIL_CUT=gpt-image-2-2026-04-21   # PL-4 일반 컷 Stage 1·2 고정 스냅샷
+DETAIL_CUT_IMAGE_SIZE=4K                          # PL-4 2:3은 GPT 유효 최대 2336x3504로 변환
 MODEL_ROUTING_IMAGE_LIGHT=gemini-3.1-flash-image
 MODEL_ROUTING_TEXT_GEMINI=gemini-3.7-flash          # text tier 정본(Gemini). 2026-08-14 3.5 flash → 3.7 flash — 상세 pl1_analysis_agent_spec §2
 MODEL_ROUTING_TEXT_GEMINI_ANALYSIS=gemini-3.7-flash # AG-01 상품분석만 분기 (2026-08-14 실측 결정)

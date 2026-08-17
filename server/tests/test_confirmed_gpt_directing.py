@@ -26,6 +26,17 @@ _EXCLUDED_HEAD_CROPPED_FULL_IDS = {
     "ex_styling_women_top_full_mia_cafe_snapshot_01",
     "ex_styling_women_top_full_snapshot_04",
 }
+_SIGNATURE_IDS = {
+    "sig_men_01",
+    "sig_men_02",
+    "sig_men_03",
+    "sig_men_04",
+    "sig_men_05",
+    "sig_women_01",
+    "sig_women_02",
+    "sig_women_03",
+    "sig_women_04",
+}
 
 
 def _registry(tmp_path, image_bytes=b"released image bytes"):
@@ -116,6 +127,11 @@ def test_missing_metadata_is_not_silently_treated_as_an_explicit_exclusion(
     path.write_text(json.dumps(raw), encoding="utf-8")
 
     assert confirmed_gpt_explicitly_excluded("ex", path) is False
+
+
+@pytest.mark.parametrize("example_id", sorted(_SIGNATURE_IDS))
+def test_signature_examples_explicitly_use_their_separate_profile(example_id):
+    assert confirmed_gpt_explicitly_excluded(example_id) is True
 
 
 def test_explicit_exclusion_cannot_coexist_with_directing_metadata(tmp_path):

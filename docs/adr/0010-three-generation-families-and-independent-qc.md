@@ -104,8 +104,9 @@ exact 프롬프트는 과거 선호 실험에서 확정한 기존 iPhone 기본 
 `cut_generate_confirmed_gpt_v1.txt`에 그대로 고정한다. 모델은
 `gpt-image-2-2026-04-21`, 품질은 `medium`, 출력은 PNG다. 서비스의 `4K` 요청은 GPT가 허용하는
 정확한 2:3 최대 크기 `2336x3504`로 변환한다. 이것만 과거 실험의 `1024x1536`에서 의도적으로
-바꾼 provider-level 조건이다. exact 경로가 아닌 블록은 기존 generic 계약을 유지하며, 에디터,
-AG-07과 공유 `image_high`는 기존 Gemini 경로를 유지한다.
+바꾼 provider-level 조건이다. PL-4의 exact가 아닌 블록도 generic 입력·프롬프트는 유지하되
+`detail_cut` GPT를 사용한다. 첫 시그니처 컷은 별도 `image_signature`, 에디터와 AG-07의 공유
+`image_high`는 기존 Gemini 경로를 유지한다.
 
 exact 프로필을 요청한 뒤에는 필수 모델 시트의 SHA-256·길이, AG-01 셀러 근거 계약과 현재
 원본 바인딩, 생성예시/연출 카탈로그 및 해당 바이트 중 하나라도 없거나 불일치하면 그 컷을

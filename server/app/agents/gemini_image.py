@@ -144,12 +144,20 @@ class GeminiImageClient:
         temperature: float | None = None,
         aspect_ratio: str | None = None,
         timeout: float = 180.0,
+        openai_preserve_input_bytes: bool = False,
     ) -> GeminiImageResult:
         # 모델 id 로 provider 분기. gpt-image* 는 OpenAI images/edits(멀티 레퍼런스), 그 외는 Gemini.
         # 같은 시그니처·같은 GeminiImageResult 반환이라 9개 콜사이트는 무변경이다.
         if model.startswith("gpt-image"):
             return await self._openai_generate(
-                model, prompt, images, image_size, aspect_ratio, timeout)
+                model,
+                prompt,
+                images,
+                image_size,
+                aspect_ratio,
+                timeout,
+                preserve_input_bytes=openai_preserve_input_bytes,
+            )
         if not self._key:
             raise GeminiError("GEMINI_API_KEY 미설정")
         body = self._body(prompt, images, image_size, temperature, aspect_ratio)
@@ -262,6 +270,7 @@ class GeminiImageClient:
     async def _openai_generate(
         self, model: str, prompt: str, images: list[InlineImage],
         image_size: str, aspect_ratio: str | None, timeout: float,
+        *, preserve_input_bytes: bool,
     ) -> GeminiImageResult:
         """OpenAI images/edits — 멀티 레퍼런스 편집 생성. Gemini 와 동일 반환 계약.
 
@@ -272,13 +281,26 @@ class GeminiImageClient:
             raise GeminiError("OPENAI_API_KEY 미설정")
         size = self._openai_size(image_size, aspect_ratio)
         _ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
-        # OpenAI images/edits 는 Gemini 보다 입력 형식에 엄격하다 — 확장자만 .jpeg 인
-        # MPO(아이폰 다중사진)나 팔레트/알파 모드가 오면 invalid_image_file 로 거부한다.
-        # 셀러 사진은 대부분 휴대폰 촬영본이므로, 보내기 직전에 표준 PNG(RGB)로 통일한다.
-        files = [
-            ("image[]", (f"ref{i}.png", data, "image/png"))
-            for i, data in enumerate(_as_openai_png(im) for im in images)
-        ]
+        if preserve_input_bytes:
+            # 과거 오너 확정 실험의 요청은 각 참조 이미지의 원본 bytes/MIME까지 봉인했다.
+            # 이 전용 경로에서는 JPEG를 PNG로 다시 그리지 않고 같은 multipart payload를
+            # 보낸다. 미지원 MIME을 임의 변환하는 대신 호출 전에 실패시킨다.
+            files = []
+            for i, image in enumerate(images):
+                ext = _ext.get(image.mime)
+                if ext is None:
+                    raise GeminiError(
+                        f"confirmed GPT input MIME unsupported: {image.mime}"
+                    )
+                files.append(
+                    ("image[]", (f"ref{i}.{ext}", image.data, image.mime))
+                )
+        else:
+            # 일반·시그니처 경로의 아이폰 MPO/CMYK 호환성 보정은 기존대로 유지한다.
+            files = [
+                ("image[]", (f"ref{i}.png", data, "image/png"))
+                for i, data in enumerate(_as_openai_png(im) for im in images)
+            ]
         # 선정 실험의 GPT Image 2 레시피: medium + PNG. GPT Image 2는
         # 모든 입력 이미지를 high-fidelity로 처리하므로 input_fidelity는 보내지 않는다.
         data = {

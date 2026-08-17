@@ -69,6 +69,32 @@ def profile_requested(spec: dict) -> bool:
         raise ConfirmedGptRuntimeError(str(exc)) from exc
 
 
+def resolve_profile_request(
+    spec: dict,
+    *,
+    identity_source: str,
+    selected_model_id: str | None,
+    effective_model_id: str | None,
+    uses_base_color: bool,
+) -> bool:
+    """Resolve the structural route before checking its execution prerequisites.
+
+    A structurally exact cut must never become generic merely because the owner chose
+    a real/no model, an unresolved virtual model, or an additional color. Those are
+    missing exact-profile prerequisites and therefore fail this cut closed.
+    """
+
+    if not profile_requested(spec):
+        return False
+    if identity_source != "VIRTUAL":
+        raise ConfirmedGptRuntimeError("confirmed_gpt_requires_virtual_model")
+    if not selected_model_id or selected_model_id != effective_model_id:
+        raise ConfirmedGptRuntimeError("confirmed_gpt_forbids_model_substitution")
+    if uses_base_color is not True:
+        raise ConfirmedGptRuntimeError("confirmed_gpt_requires_base_color")
+    return True
+
+
 def _image(value: object, field: str) -> InlineImage:
     if (
         not isinstance(value, InlineImage)
@@ -112,14 +138,14 @@ def build_packet(
 ) -> ConfirmedGptRuntimePacket:
     """Build the exact ordered provider packet or reject the cut without fallback."""
 
-    if not profile_requested(spec):
+    if not resolve_profile_request(
+        spec,
+        identity_source=identity_source,
+        selected_model_id=selected_model_id,
+        effective_model_id=effective_model_id,
+        uses_base_color=uses_base_color,
+    ):
         raise ConfirmedGptRuntimeError("confirmed_gpt_profile_not_requested")
-    if identity_source != "VIRTUAL":
-        raise ConfirmedGptRuntimeError("confirmed_gpt_requires_virtual_model")
-    if not selected_model_id or selected_model_id != effective_model_id:
-        raise ConfirmedGptRuntimeError("confirmed_gpt_forbids_model_substitution")
-    if uses_base_color is not True:
-        raise ConfirmedGptRuntimeError("confirmed_gpt_requires_base_color")
     if not isinstance(seller_images, tuple) or not 1 <= len(seller_images) <= 4:
         raise ConfirmedGptRuntimeError("confirmed_gpt_requires_one_to_four_seller_images")
     if not isinstance(matching_images, tuple) or len(matching_images) > 1:

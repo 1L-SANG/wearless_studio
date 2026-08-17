@@ -1236,6 +1236,57 @@ def test_stage1_and_local_stage2_share_caller_selected_model_and_detail_4k():
     assert "do not reconstruct a different photograph" in calls[1]["prompt"]
 
 
+def test_confirmed_profile_requests_original_openai_input_transport(monkeypatch):
+    captured = {}
+
+    class FakeGemini:
+        async def generate_content_image(
+            self,
+            model,
+            prompt,
+            images,
+            image_size,
+            aspect_ratio,
+            openai_preserve_input_bytes=False,
+        ):
+            captured.update(
+                model=model,
+                prompt=prompt,
+                images=images,
+                image_size=image_size,
+                aspect_ratio=aspect_ratio,
+                preserve=openai_preserve_input_bytes,
+            )
+            return SimpleNamespace(image=b"EXACT", mime="image/png")
+
+    monkeypatch.setattr(
+        cg, "compile_confirmed_gpt_prompt", lambda *_args, **_kwargs: "EXACT PROMPT"
+    )
+    reference = cg.InlineImage("image/jpeg", b"historical-bytes")
+    result = asyncio.run(cg.generate(
+        make_settings(
+            model_image_high="gpt-image-2-2026-04-21",
+            detail_cut_image_size="4K",
+            mannequin_aspect_ratio="2:3",
+        ),
+        FakeGemini(),
+        {"cutType": "styling", "shot": "full", "direction": "front"},
+        PRODUCT_TOP,
+        [reference],
+        confirmed_prompt_input=object(),
+    ))
+
+    assert result == (b"EXACT", "image/png")
+    assert captured == {
+        "model": "gpt-image-2-2026-04-21",
+        "prompt": "EXACT PROMPT",
+        "images": [reference],
+        "image_size": "4K",
+        "aspect_ratio": "2:3",
+        "preserve": True,
+    }
+
+
 def test_default_cut_route_keeps_editor_on_shared_high_tier():
     calls = []
 

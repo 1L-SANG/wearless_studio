@@ -192,6 +192,36 @@ def test_uncurated_eligible_example_requests_fail_closed_profile():
     assert confirmed_gpt_runtime.profile_requested(_spec()) is True
 
 
+@pytest.mark.parametrize(
+    "overrides,error",
+    [
+        ({"identity_source": "REAL"}, "requires_virtual_model"),
+        (
+            {"selected_model_id": None, "effective_model_id": None},
+            "forbids_model_substitution",
+        ),
+        (
+            {"selected_model_id": "unknown", "effective_model_id": "mB"},
+            "forbids_model_substitution",
+        ),
+        ({"uses_base_color": False}, "requires_base_color"),
+    ],
+)
+def test_structurally_exact_cut_fails_closed_when_prerequisite_is_missing(
+    overrides, error,
+):
+    kwargs = {
+        "identity_source": "VIRTUAL",
+        "selected_model_id": "mE",
+        "effective_model_id": "mE",
+        "uses_base_color": True,
+        **overrides,
+    }
+
+    with pytest.raises(confirmed_gpt_runtime.ConfirmedGptRuntimeError, match=error):
+        confirmed_gpt_runtime.resolve_profile_request(_spec(), **kwargs)
+
+
 def test_explicitly_excluded_example_uses_the_generic_route(monkeypatch):
     monkeypatch.setattr(
         confirmed_gpt_runtime,
@@ -200,6 +230,31 @@ def test_explicitly_excluded_example_uses_the_generic_route(monkeypatch):
     )
 
     assert confirmed_gpt_runtime.profile_requested(_spec()) is False
+
+
+def test_explicitly_excluded_profile_stays_generic_without_exact_prerequisites(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        confirmed_gpt_runtime,
+        "confirmed_gpt_explicitly_excluded",
+        lambda _example_id: True,
+    )
+
+    assert confirmed_gpt_runtime.resolve_profile_request(
+        _spec(),
+        identity_source="NONE",
+        selected_model_id=None,
+        effective_model_id=None,
+        uses_base_color=False,
+    ) is False
+
+
+def test_signature_example_does_not_enter_the_confirmed_detail_profile():
+    spec = _spec()
+    spec["exampleId"] = "sig_men_01"
+
+    assert confirmed_gpt_runtime.profile_requested(spec) is False
 
 
 def test_invalid_eligibility_catalog_fails_the_exact_route_closed(monkeypatch):

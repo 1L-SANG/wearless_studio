@@ -2003,7 +2003,8 @@
    "cutType": "signature",
    "direction": "front",
    "gender": "men",
-   "shot": "medium"
+   "shot": "medium",
+   "confirmedGptEligibleV1": false
   },
   "sig_men_02": {
    "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_men_02.png",
@@ -2017,7 +2018,8 @@
    "cutType": "signature",
    "direction": "front",
    "gender": "men",
-   "shot": "medium"
+   "shot": "medium",
+   "confirmedGptEligibleV1": false
   },
   "sig_men_03": {
    "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_men_03.png",
@@ -2031,7 +2033,8 @@
    "cutType": "signature",
    "direction": "front",
    "gender": "men",
-   "shot": "medium"
+   "shot": "medium",
+   "confirmedGptEligibleV1": false
   },
   "sig_men_04": {
    "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_men_04.png",
@@ -2045,7 +2048,8 @@
    "cutType": "signature",
    "direction": "front",
    "gender": "men",
-   "shot": "medium"
+   "shot": "medium",
+   "confirmedGptEligibleV1": false
   },
   "sig_men_05": {
    "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_men_05.png",
@@ -2059,7 +2063,8 @@
    "cutType": "signature",
    "direction": "front",
    "gender": "men",
-   "shot": "medium"
+   "shot": "medium",
+   "confirmedGptEligibleV1": false
   },
   "sig_women_01": {
    "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_women_01.png",
@@ -2073,7 +2078,8 @@
    "cutType": "signature",
    "direction": "front",
    "gender": "women",
-   "shot": "medium"
+   "shot": "medium",
+   "confirmedGptEligibleV1": false
   },
   "sig_women_02": {
    "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_women_02.png",
@@ -2087,7 +2093,8 @@
    "cutType": "signature",
    "direction": "front",
    "gender": "women",
-   "shot": "medium"
+   "shot": "medium",
+   "confirmedGptEligibleV1": false
   },
   "sig_women_03": {
    "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_women_03.png",
@@ -2101,7 +2108,8 @@
    "cutType": "signature",
    "direction": "front",
    "gender": "women",
-   "shot": "medium"
+   "shot": "medium",
+   "confirmedGptEligibleV1": false
   },
   "sig_women_04": {
    "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_women_04.png",
@@ -2115,7 +2123,8 @@
    "cutType": "signature",
    "direction": "front",
    "gender": "women",
-   "shot": "medium"
+   "shot": "medium",
+   "confirmedGptEligibleV1": false
   }
  }
 }

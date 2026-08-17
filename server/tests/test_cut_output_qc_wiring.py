@@ -48,7 +48,7 @@ def _detail_spec():
 
 def _run_detail_cut(
     monkeypatch, *, qc_mode="shadow", manifest="1. PRODUCT — front", events=None,
-    generated_outputs=None, confirmed_packet=None,
+    generated_outputs=None, confirmed_packet=None, spec=None, settings_overrides=None,
 ):
     events = [] if events is None else events
     captured = {}
@@ -75,19 +75,18 @@ def _run_detail_cut(
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
     r2 = _RecordingR2(events)
-    app = fake_worker_app(
-        make_settings(
-            gemini_api_key="x",
-            r2_bucket="b",
-            model_image_high="gemini-3-pro-image",
-            model_detail_cut="gpt-image-2-2026-04-21",
-            garment_qc_mode="off",
-            cut_output_qc_mode=qc_mode,
-        ),
-        r2=r2,
-    )
+    setting_values = {
+        "gemini_api_key": "x",
+        "r2_bucket": "b",
+        "model_image_high": "gemini-3-pro-image",
+        "model_detail_cut": "gpt-image-2-2026-04-21",
+        "garment_qc_mode": "off",
+        "cut_output_qc_mode": qc_mode,
+    }
+    setting_values.update(settings_overrides or {})
+    app = fake_worker_app(make_settings(**setting_values), r2=r2)
     product_image = InlineImage("image/png", b"PRODUCT")
-    prepared = (_detail_spec(), [product_image], manifest, False, [product_image])
+    prepared = (spec or _detail_spec(), [product_image], manifest, False, [product_image])
     if confirmed_packet is not None:
         prepared = (*prepared, None, False, None, confirmed_packet)
     result = asyncio.run(dpj._gen_cuts(
@@ -130,6 +129,31 @@ def test_confirmed_profile_is_first_result_only_and_uses_confirmed_qc_authority(
     assert run["result"][3] == []  # no garment best-of insertion
     assert captured["authority_profile"] == "confirmed_gpt_v1"
     assert captured["generated"].data == b"INITIAL"
+
+
+def test_signature_cut_keeps_main_profile_settings_in_detail_worker(monkeypatch):
+    signature = {
+        "id": "sig-block",
+        "cutType": "styling",
+        "direction": "front",
+        "shot": "medium",
+        "pose": "auto",
+        "refScope": "all",
+        "exampleId": "sig_men_01",
+    }
+    run = _run_detail_cut(
+        monkeypatch,
+        qc_mode="off",
+        spec=signature,
+        settings_overrides={
+            "openai_api_key": None,
+            "model_image_signature": "gpt-image-2",
+        },
+    )
+
+    # Missing OpenAI key must still fall back to shared Gemini as main's signature
+    # profile specifies; AG-06's confirmed-detail GPT override must not intercept it.
+    assert run["generateModels"] == ["gemini-3-pro-image"]
 
 
 def _qc_result(*failed_gates):

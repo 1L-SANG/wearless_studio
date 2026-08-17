@@ -380,6 +380,80 @@ def test_openai_gpt_image_2_uses_exact_2_by_3_4k_recipe(monkeypatch):
     assert recorded[0]["has_image"] is True
 
 
+def test_confirmed_openai_profile_preserves_original_multipart_bytes_and_mime(
+    monkeypatch,
+):
+    posted = {}
+    response = SimpleNamespace(
+        status_code=200,
+        text="ok",
+        json=lambda: {
+            "data": [{"b64_json": base64.b64encode(b"gpt-image").decode()}],
+            "usage": {},
+        },
+    )
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, **kwargs):
+            posted.update(url=url, **kwargs)
+            return response
+
+    monkeypatch.setattr(gemini_image.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(gemini_image.image_usage, "record", lambda **kw: None)
+    historical_jpeg = b"\xff\xd8historical-mannequin-bytes\xff\xd9"
+    historical_png = b"\x89PNG\r\n\x1a\nhistorical-sheet-bytes"
+
+    asyncio.run(gemini_image.GeminiImageClient(settings()).generate_content_image(
+        "gpt-image-2-2026-04-21",
+        "prompt",
+        [
+            gemini_image.InlineImage("image/jpeg", historical_jpeg),
+            gemini_image.InlineImage("image/png", historical_png),
+        ],
+        "4K",
+        aspect_ratio="2:3",
+        openai_preserve_input_bytes=True,
+    ))
+
+    assert posted["files"] == [
+        ("image[]", ("ref0.jpg", historical_jpeg, "image/jpeg")),
+        ("image[]", ("ref1.png", historical_png, "image/png")),
+    ]
+
+
+def test_confirmed_openai_profile_rejects_unsupported_mime_before_network(
+    monkeypatch,
+):
+    calls = {"n": 0}
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            calls["n"] += 1
+
+    monkeypatch.setattr(gemini_image.httpx, "AsyncClient", Client)
+
+    with pytest.raises(gemini_image.GeminiError, match="input MIME unsupported"):
+        asyncio.run(gemini_image.GeminiImageClient(settings()).generate_content_image(
+            "gpt-image-2-2026-04-21",
+            "prompt",
+            [gemini_image.InlineImage("image/gif", b"gif")],
+            "4K",
+            aspect_ratio="2:3",
+            openai_preserve_input_bytes=True,
+        ))
+
+    assert calls["n"] == 0
+
+
 def test_openai_malformed_200_keeps_available_usage_in_ledger(monkeypatch):
     usage = {"input_tokens": 10, "output_tokens": 20}
     response = SimpleNamespace(
