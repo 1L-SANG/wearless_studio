@@ -1786,3 +1786,27 @@ def test_job_events_poll_returns_json_with_after_cursor(client, make_token, monk
     assert [e["id"] for e in body["events"]] == [4, 5]
     assert body["events"][0]["type"] == "step"
     assert body["events"][0]["payload"]["previewUrl"] == "https://r2.test/k"
+
+
+def test_billable_failure_is_not_retried_by_the_worker(monkeypatch):
+    """프로바이더가 이미 그렸을 수 있는 실패는 워커도 다시 보내지 않는다.
+
+    아래층(gemini_image)이 "다시 안 보낸다"고 판단한 실패를 위층 컷 재시도가 그대로
+    다시 보내면 같은 컷을 두 번 과금한다 — 그 방어를 코드로 고정한다(2026-08-17 검증).
+    """
+    import inspect
+    from app.workers import detail_page_job
+
+    source = inspect.getsource(detail_page_job)
+    assert 'billable = bool(getattr(e, "billable", False))' in source
+    assert "if billable or attempt >= max(1, s.detail_cut_max_attempts)" in source
+
+
+def test_gemini_error_carries_the_billable_flag_across_layers():
+    """표식이 오류 객체에 실려야 위층이 볼 수 있다."""
+    from app.agents.gemini_image import GeminiError
+
+    assert GeminiError("x").billable is False
+    assert GeminiError("x", billable=True).billable is True
+    # 위층은 getattr 로 읽는다 — 다른 예외 타입이 와도 안전하게 False.
+    assert getattr(ValueError("y"), "billable", False) is False

@@ -1319,6 +1319,11 @@ async def _run_candidate(
             await _emit(pool, job_id, "step", {
                 "candidate": candidate, "model": model, "attempt": attempt,
                 "status": "error", "message": str(e)[:200]})
+            # 프로바이더가 이미 그렸을 수 있는 실패(읽기 타임아웃·502/504)는 다음 시도로
+            # 넘어가지 않는다 — 같은 후보를 한 번 더 그려 요금이 두 번 나가고, 그 호출은
+            # 비용 원장에도 안 남는다(2026-08-17 검증. 컷 생성 쪽과 같은 규칙).
+            if getattr(e, "billable", False):
+                break
             continue
         await _cancel_checkpoint(cancel_check)
         verdict = qc.evaluate_mannequin_qc(res.image)

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { DEFAULT_READ_RETRY_DELAYS, ReadRetryCancelled, isRetryableReadError, retryRead } from '../../src/lib/retryRead.js';
 import { buildColorOpts, colorLabelOf, visibleColorOpts } from '../../src/lib/colorOpts.js';
 import { classifyEditorLoadError } from '../../src/features/editor/editorLoadError.js';
-import { canSafelyMergeServerBlocks, mergeServerBlocks } from '../../src/lib/editorWaitSkeleton.js';
+import { canSafelyMergeServerBlocks, fillGenBlocks, mergeServerBlocks } from '../../src/lib/editorWaitSkeleton.js';
 import { isPhotoSlotElement, removeSelectedElements, reorderElements } from '../../src/features/editor/editorSelection.js';
 
 /* ---------- 3-14 콘티 조회 자동 재시도 ---------- */
@@ -253,4 +253,26 @@ test('이미 빈 자리는 Delete 로 없앨 수 있다 — 프레임 템플릿�
   const after = removeSelectedElements([block], ['filled'])[0];
   assert.deepEqual(after.elements.map((el) => el.id), ['empty', 'filled'], '사진이 든 칸은 비우기');
   assert.equal(after.elements[1].src, null);
+});
+
+
+test('생성 중 도착한 컷도 일부러 비운 자리는 다시 채우지 않는다', () => {
+  const blocks = [{ id: 'b1', kind: 'grid2x2', elements: [
+    { id: 'i1', type: 'image', src: null, sourceBlockId: 'sb1', frameSlot: true, slotCleared: true },
+    { id: 'i2', type: 'image', src: null, sourceBlockId: 'sb2', genPending: 'wait' },
+  ] }];
+  const job = { cuts: { sb1: { url: '/late1.jpg' }, sb2: { url: '/late2.jpg' } }, copy: {} };
+  const filled = fillGenBlocks(blocks, job);
+  assert.equal(filled[0].elements[0].src, null, '비운 자리는 그대로');
+  assert.equal(filled[0].elements[1].src, '/late2.jpg', '기다리던 자리는 채워진다');
+});
+
+test('빈 콘티 컷 자리는 Delete 해도 요소가 사라지지 않는다 — 사라지면 대기 중 편집분이 덮인다', () => {
+  const block = { id: 'b1', kind: 'grid2x2', elements: [
+    { id: 'cut', type: 'image', src: null, frameSlot: true, slotCleared: true, sourceBlockId: 'sb1' },
+    { id: 'tmpl', type: 'image', src: null, frameSlot: true },
+  ] };
+  assert.deepEqual(removeSelectedElements([block], ['cut'])[0].elements.map((el) => el.id), ['cut', 'tmpl']);
+  // 콘티와 안 묶인 템플릿 빈 칸은 없앨 수 있다.
+  assert.deepEqual(removeSelectedElements([block], ['tmpl'])[0].elements.map((el) => el.id), ['cut']);
 });

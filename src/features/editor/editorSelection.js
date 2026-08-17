@@ -195,7 +195,16 @@ export function removeSelectedElements(blocks, selectedIds) {
     ...block,
     elements: block.elements.reduce((kept, element) => {
       if (!selected.has(element.id)) { kept.push(element); return kept; }
-      if (!isPhotoSlotElement(block, element) || !element.src) return kept;   // 지운다
+      // 지우는 경우: ①사진 자리가 아니거나 ②이미 비어 있고 콘티 컷과도 안 묶인 자리
+      // (프레임 템플릿의 남는 칸). 콘티 컷 자리(sourceBlockId)는 비어 있어도 요소를 없애면
+      // 안 된다 — 완료 병합의 안전 검사가 깨져 대기 중 편집분이 통째로 서버본으로 덮인다
+      // (2026-08-17 검증). 그 자리는 격자 배치의 일부라 비워 두는 게 맞다.
+      if (!isPhotoSlotElement(block, element)) return kept;
+      if (!element.src) {
+        if (!element.sourceBlockId) return kept;      // 템플릿 빈 칸 — 없앤다
+        kept.push(element);                            // 콘티 컷 자리 — 그대로 둔다
+        return kept;
+      }
       // 비운다 — 자리·크기·모서리는 그대로, 사진에 딸린 것만 걷어낸다.
       // sourceBlockId(콘티 컷과의 연결)는 **남긴다**: 지우면 완료 병합의 안전 검사
       // (canSafelyMergeServerBlocks)가 "배치가 서버와 다르다"고 판단해 대기 중 편집분을
