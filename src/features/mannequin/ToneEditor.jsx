@@ -237,6 +237,11 @@ export function ToneEditor({ projectId, cutId, enabled = true, overlayRef, onApp
       )}
       {state.status === 'ready' && (
         <>
+          {/* 코디 의류를 함께 입은 컷에서만 — 조정 대상이 파는 옷 하나라는 걸 셀러가 알아야
+              슬라이더를 믿을 수 있다. 마스크 자체도 그렇게 만들어진다(서버가 보장). */}
+          {state.matchingSide && (
+            <p className="tone-editor-note">메인 의류에만 적용돼요 — 함께 입은 코디 옷은 그대로예요.</p>
+          )}
           <ToneSlider label="색감" value={saturation} range={SATURATION_RANGE}
             disabled={busy || !ready} listId={`tone-sat-${cutId}`}
             onChange={(v) => { setApplied(false); setSaturation(snapSat(v)); }} />

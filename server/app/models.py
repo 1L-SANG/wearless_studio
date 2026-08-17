@@ -201,6 +201,9 @@ class ToneEditorState(CamelModel):
     status: Literal["processing", "ready", "failed", "disabled"]
     mask_asset_id: str | None = None
     mask_algorithm_version: str | None = None
+    #: 이 컷이 함께 입은 코디 의류의 쪽(top|bottom). 값이 있으면 조정 대상이 **주상품 하나**
+    #: 라는 뜻이고, 화면은 그 사실을 셀러에게 알린다. 코디 의류가 없으면 None.
+    matching_side: str | None = None
     #: 편집 원본. **항상 원본 컷**이며 조정본이 아니다 (누적 열화 방지).
     source_asset_id: str | None = None
     adjustment: ToneAdjustment = ToneAdjustment()

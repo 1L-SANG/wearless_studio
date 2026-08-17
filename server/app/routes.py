@@ -1880,6 +1880,14 @@ async def _tone_state(conn, r2, *, user_id: str, project_id: str, cut_id: str) -
         raise _not_found()
     source_asset_id = str(cut.get("id") or "")
     mask = await editor_garment_mask.find_for_cut(conn, project_id=project_id, cut_id=cut_id)
+    # 코디 의류를 함께 입은 컷인데 "주상품 위" 보장 이전에 만들어진 마스크면 없는 것으로 본다 —
+    # 그래야 아래 lazy 큐가 무과금으로 다시 만든다. 잡이 마스크를 기록할 때 보장 스탬프를
+    # 반드시 찍으므로(editor_garment_mask.record) 이 조건이 영구 재큐로 남지 않는다.
+    matching_side = await editor_garment_mask.matching_side_for_project(
+        conn, user_id=user_id, project_id=project_id)
+    if mask is not None and editor_garment_mask.needs_match_guard(
+            mask.get("metadata") or {}, matching_side=matching_side):
+        mask = None
     render = await mannequin_tone_render.active_for_cut(
         conn, project_id=project_id, cut_id=cut_id)
     meta = (render or {}).get("metadata") or {}
@@ -1889,6 +1897,7 @@ async def _tone_state(conn, r2, *, user_id: str, project_id: str, cut_id: str) -
         "status": "ready" if mask else "processing",
         "maskAssetId": (mask or {}).get("id"),
         "maskAlgorithmVersion": mask_meta.get("algorithmVersion"),
+        "matchingSide": matching_side,
         "sourceAssetId": source_asset_id,
         "adjustment": {"saturation": int(meta.get("saturation") or 0),
                        "exposure": int(meta.get("exposure") or 0)},
@@ -1896,17 +1905,37 @@ async def _tone_state(conn, r2, *, user_id: str, project_id: str, cut_id: str) -
     }
 
 
+#: 마스크 잡이 이 상태로 끝났으면 더 기다릴 게 없다 — 멱등키가 같은 잡을 다시 만들지 않으므로
+#: "준비 중"으로 남겨두면 영구 대기 화면이 된다. 계약의 failed(= 이 컷은 조정 불가)로 내린다.
+_TONE_JOB_TERMINAL = ("done", "error", "cancelled")
+
+
+def _tone_state_with_job(state: dict, job: dict | None) -> dict:
+    """합류한 마스크 잡의 종결 상태를 화면 상태로 옮긴다.
+
+    마스크 없이 끝난 잡(의류를 못 찾음·코디 의류 위였음·SAM 미설정)은 다시 큐에 들어가지
+    않는다 — 그걸 processing 으로 두면 셀러는 영원히 "색감 조정 준비 중"을 본다.
+    """
+    if state.get("status") != "processing" or job is None:
+        return state
+    if str(job.get("status") or "") not in _TONE_JOB_TERMINAL:
+        return state
+    return {**state, "status": "failed"}
+
+
 async def _enqueue_missing_tone_mask(conn, *, user_id: str, project_id: str,
-                                     cut_id: str, state: dict) -> bool:
+                                     cut_id: str, state: dict) -> tuple[bool, dict | None]:
     """플래그를 켜기 전에 만들어진 컷의 마스크를 첫 조회에서 무과금으로 준비한다.
 
     생성 직후 큐잉과 같은 멱등키를 써서 새 컷·기존 컷·중복 폴링이 한 잡으로 합류한다.
     보조 마스크 큐 실패가 컷 조회를 500으로 만들면 안 되므로 실패는 rollback 후 삼킨다.
+
+    (created, job) 을 돌려준다 — 합류한 잡의 종결 상태가 화면의 processing/failed 를 가른다.
     """
     if state.get("status") != "processing":
-        return False
+        return False, None
     try:
-        _job, created = await repo.create_job(
+        job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id,
             kind="editor_garment_mask", payload={"cutId": cut_id},
             idempotency_key=(
@@ -1915,13 +1944,13 @@ async def _enqueue_missing_tone_mask(conn, *, user_id: str, project_id: str,
             ),
             credits_reserved=0, metadata={})
         await conn.commit()
-        return created
+        return created, job
     except Exception:  # noqa: BLE001 - 톤 마스크 실패가 기존 컷 조회를 막지 않는다
         with contextlib.suppress(Exception):
             await conn.rollback()
         logger.warning("tone mask lazy enqueue failed project=%s cut=%s",
                        project_id, cut_id, exc_info=True)
-        return False
+        return False, None
 
 
 @router.get(
@@ -1937,6 +1966,8 @@ async def get_tone_editor(request: Request, project_id: str, cut_id: str,
 
     - `processing`: 마스크 전처리가 아직 안 끝났다. 다른 기능은 그대로 쓸 수 있다.
     - `ready`: 슬라이더를 열어도 된다.
+    - `failed`: 이 컷은 조정 불가 — 마스크 잡이 마스크 없이 종결했다(의류를 못 찾음, 또는
+      찾은 영역이 코디 의류 위였음). 더 기다려도 바뀌지 않으므로 화면도 기다리게 두지 않는다.
     - `disabled`: 기능 플래그가 꺼져 있다.
     """
     async with get_conn(request) as conn:
@@ -1946,11 +1977,11 @@ async def get_tone_editor(request: Request, project_id: str, cut_id: str,
             return {"cutId": cut_id, "status": "disabled"}
         state = await _tone_state(conn, _r2(request), user_id=user_id,
                                   project_id=project_id, cut_id=cut_id)
-        created = await _enqueue_missing_tone_mask(
+        created, job = await _enqueue_missing_tone_mask(
             conn, user_id=user_id, project_id=project_id, cut_id=cut_id, state=state)
     if created:
         _wake_dispatcher(request)
-    return state
+    return _tone_state_with_job(state, job)
 
 
 async def _tone_bytes(request: Request, project_id: str, cut_id: str, user_id: str,

@@ -11,8 +11,10 @@ torch 없이 도는 부분(버전 신원·키·채점·형태 정리)만 다룬�
 from __future__ import annotations
 
 import inspect
+import io
 import pathlib
 
+import cv2
 import numpy as np
 import pytest
 
@@ -26,7 +28,7 @@ SAM_DIR = pathlib.Path(__file__).resolve().parents[1] / "sam_service"
 # ── 신원: 캐노니컬과 절대 섞이지 않는다 ──────────────────────────────────────
 
 def test_editor_algorithm_identity_is_separate_from_canonical():
-    assert W.ALGORITHM_VERSION == "editor-worn-garment-sam2-v1"
+    assert W.ALGORITHM_VERSION == "editor-worn-garment-sam2-v2"
     assert W.ALGORITHM_VERSION != CANONICAL_ALGORITHM
     assert W.MASK_PREFIX != CUTOUT_PREFIX
 
@@ -37,7 +39,7 @@ def test_mask_key_encodes_the_full_cache_identity():
     assert key.endswith(".png")
     assert CUTOUT_PREFIX not in key
     # 알고리즘이 바뀌면 다른 객체로 떨어져야 한다 — 옛 규칙으로 만든 마스크를 재사용하지 않는다.
-    assert W.mask_key("a" * 64, algorithm_version="v2") != key
+    assert W.mask_key("a" * 64, algorithm_version="v1") != key
 
 
 def test_validated_generation_parameters_are_pinned():
@@ -176,3 +178,151 @@ def test_produce_is_deterministic_for_identical_input():
     assert W.source_fingerprint(data) == W.source_fingerprint(b"same-bytes")
     assert W.mask_key(W.source_fingerprint(data)) == W.mask_key(W.source_fingerprint(data))
     assert W.source_fingerprint(b"other") != W.source_fingerprint(data)
+
+
+# ── 코디 의류(매칭 의류)는 조정 대상이 아니다 ─────────────────────────────────
+#
+# 마네킹컷은 주상품과 코디 의류를 함께 입는다. 파는 옷은 주상품 하나뿐이라, 에디터 마스크가
+# 코디 옷에 앉으면 셀러는 구매자가 살 수 없는 색을 발행한다. Base-Diff 는 둘을 구분할 수
+# 없으므로(둘 다 "베이스 이후 생긴 것") 코디 쪽은 상품 메타로 들어와 **채점과 거부**에만 쓴다.
+
+def test_matching_band_belongs_to_the_coordinating_garment_only():
+    assert W.matching_core_band("top", "bottom") == W.MATCHING_CORE["bottom"]
+    assert W.matching_core_band("outer", "bottom") == W.MATCHING_CORE["bottom"]
+    assert W.matching_core_band("bottom", "top") == W.MATCHING_CORE["top"]
+
+
+@pytest.mark.parametrize("clothing_type,side", [
+    ("top", None),          # 코디 없이 주상품만 입은 컷
+    ("top", ""),
+    ("dress", "bottom"),    # 원피스는 종아리까지 — 코디만의 밴드가 성립하지 않는다
+    ("top", "top"),         # 잘못 태깅된 커스텀 업로드: 주상품과 같은 쪽
+    ("bottom", "bottom"),
+    ("nonsense", "bottom"),  # 알 수 없는 종류는 top 으로 떨어지지만 밴드는 여전히 성립
+])
+def test_matching_band_is_empty_when_the_geometry_cannot_separate(clothing_type, side):
+    band = W.matching_core_band(clothing_type, side)
+    if clothing_type == "nonsense" and side == "bottom":
+        assert band == W.MATCHING_CORE["bottom"], "알 수 없는 종류는 상의로 취급된다"
+    else:
+        assert band == (), "가를 수 없으면 v1 과 똑같이 판단해야 한다"
+
+
+def test_matching_band_never_overlaps_what_the_product_can_reach():
+    """밴드가 주상품이 닿을 수 있는 구간을 물면 정상 후보가 벌점을 받는다."""
+    assert W.MATCHING_CORE["bottom"][0] >= W.CATEGORY_ZONE["top"][1] - 0.10
+    assert W.MATCHING_CORE["top"][1] <= W.CATEGORY_ZONE["bottom"][0]
+
+
+def test_evidence_roi_excludes_the_matching_garment():
+    """증거가 가장 무거운 축이다 — 코디 옷이 ROI 에 남으면 두 벌을 함께 덮은 후보가 이긴다."""
+    assert W.diff_roi("top", ()) == W.DIFF_ROI["top"]
+    assert W.diff_roi("top", W.MATCHING_CORE["bottom"]) == (W.DIFF_ROI["top"][0], 0.60)
+    # 하의 상품: 코디 상의 밴드는 이미 ROI 밖이라 그대로다.
+    assert W.diff_roi("bottom", W.MATCHING_CORE["top"]) == W.DIFF_ROI["bottom"]
+
+
+def test_scoring_is_byte_identical_to_v1_without_a_matching_garment():
+    shape = (100, 60)
+    figure = np.ones(shape, np.uint8)
+    evidence = _mask(shape, (10, 50, 15, 45)).astype(np.uint8)
+    garment = _mask(shape, (10, 50, 15, 45))
+    assert (W.score_candidate(garment, evidence, figure, "top")
+            == W.score_candidate(garment, evidence, figure, "top", ()))
+    assert W.score_candidate(garment, evidence, figure, "top")["matchZone"] == 0
+
+
+def test_the_coordinating_bottom_loses_to_the_product_top():
+    shape = (100, 60)
+    figure = np.ones(shape, np.uint8)
+    evidence = _mask(shape, (10, 55, 15, 45)).astype(np.uint8)
+    band = W.matching_core_band("top", "bottom")
+    product = _mask(shape, (12, 58, 15, 45))          # 상의: 허리 위에서 끝난다
+    coordination = _mask(shape, (62, 96, 20, 40))     # 코디 바지
+    both = _mask(shape, (12, 96, 15, 45))             # 두 벌을 한 덩어리로 덮은 후보
+
+    good = W.score_candidate(product, evidence, figure, "top", band)
+    pants = W.score_candidate(coordination, evidence, figure, "top", band)
+    outfit = W.score_candidate(both, evidence, figure, "top", band)
+
+    assert good["matchZone"] == 0
+    assert pants["matchZone"] > 0.9 and outfit["matchZone"] > 0.2
+    assert good["score"] > pants["score"]
+    assert good["score"] > outfit["score"]
+    # 밴드가 실제로 벌점을 준다 — v1 채점과 비교해 두 후보 모두 점수가 내려간다.
+    assert pants["score"] < W.score_candidate(coordination, evidence, figure, "top")["score"]
+    assert outfit["score"] < W.score_candidate(both, evidence, figure, "top")["score"]
+
+
+def test_a_long_top_dipping_below_the_waist_is_not_thrown_away():
+    """밴드는 교집합이 아니라 벌점이다 — 밑단이 조금 내려온 오버사이즈 상의는 살아남는다."""
+    shape = (100, 60)
+    figure = np.ones(shape, np.uint8)
+    evidence = _mask(shape, (10, 58, 15, 45)).astype(np.uint8)
+    band = W.matching_core_band("top", "bottom")
+    long_top = _mask(shape, (12, 64, 15, 45))         # 0.64 까지 내려온 밑단
+    coordination = _mask(shape, (62, 96, 20, 40))
+    assert 0 < W.score_candidate(long_top, evidence, figure, "top", band)["matchZone"] \
+        <= W.MATCH_ZONE_MAX
+    assert (W.score_candidate(long_top, evidence, figure, "top", band)["score"]
+            > W.score_candidate(coordination, evidence, figure, "top", band)["score"])
+
+
+# ── produce() 전체 경로: 모델만 대역, 나머지는 실제 코드 ──────────────────────
+#
+# 채점은 선호일 뿐이다. 실제로 내주는 마스크가 주상품인지는 M2M·정리까지 지난 **최종 마스크**로
+# 판정해야 하고, 그 판정은 produce 안에 있다. torch 없이 그 경로를 도는 방법은 후보 생성과
+# 정련만 대역으로 두는 것이다 — diff_map·evidence·figure·채점·거부는 전부 진짜로 돈다.
+
+def _cut_bytes(shape, top_box=None, bottom_box=None):
+    """흰 배경 + 회색 마네킹 + (있으면) 상의·하의 색면으로 만든 합성 컷 PNG."""
+    h, w = shape
+    img = np.full((h, w, 3), 245, np.uint8)                    # 배경
+    img[int(h * .05):int(h * .98), int(w * .30):int(w * .70)] = 200   # 마네킹 몸통
+    if top_box:
+        y0, y1, x0, x1 = top_box
+        img[y0:y1, x0:x1] = (40, 90, 200)
+    if bottom_box:
+        y0, y1, x0, x1 = bottom_box
+        img[y0:y1, x0:x1] = (30, 30, 30)
+    ok, buf = cv2.imencode(".png", img)
+    assert ok
+    return buf.tobytes()
+
+
+def _produce_with(monkeypatch, candidates, **kwargs):
+    shape = (200, 120)
+    base = _cut_bytes(shape)
+    dressed = _cut_bytes(shape, top_box=(24, 116, 36, 84), bottom_box=(124, 192, 42, 78))
+    monkeypatch.setattr(W, "generate_candidates", lambda *_a, **_k: list(candidates))
+    monkeypatch.setattr(W, "refine", lambda _seg, _rgb, mask: mask)
+    return W.produce(object(), dressed, base, clothing_type="top", **kwargs)
+
+
+def test_produce_refuses_a_mask_that_sits_on_the_coordinating_garment(monkeypatch):
+    """코디 바지밖에 후보가 없으면 마스크를 내주지 않는다 — 톤 에디터만 그 컷에서 닫힌다."""
+    shape = (200, 120)
+    pants_only = [_mask(shape, (124, 192, 42, 78))]
+    with pytest.raises(W.NoGarmentCandidate) as exc:
+        _produce_with(monkeypatch, pants_only, matching_side="bottom")
+    assert "matching garment" in str(exc.value)
+
+
+def test_produce_picks_the_product_over_the_coordinating_garment(monkeypatch):
+    shape = (200, 120)
+    product = _mask(shape, (24, 116, 36, 84))
+    pants = _mask(shape, (124, 192, 42, 78))
+    out = _produce_with(monkeypatch, [pants, product], matching_side="bottom")
+    assert out.matching_side == "bottom"
+    assert out.match_share <= W.MATCH_ZONE_MAX
+    from PIL import Image
+    chosen = np.array(Image.open(io.BytesIO(out.png)).convert("L")) > 127
+    assert chosen[60, 60] and not chosen[160, 60], "상의는 잡고 바지는 두어야 한다"
+
+
+def test_produce_without_a_coordinating_garment_keeps_v1_behaviour(monkeypatch):
+    """코디가 없으면 밴드도 없고 거부도 없다 — 바지밖에 없는 컷도 그대로 내준다(v1 동작)."""
+    shape = (200, 120)
+    pants_only = [_mask(shape, (124, 192, 42, 78))]
+    out = _produce_with(monkeypatch, pants_only)
+    assert out.match_share == 0.0 and out.matching_side is None

@@ -75,6 +75,9 @@ class WornGarmentRequest(BaseModel):
     baseKey: str = Field(..., description="R2 key of the bare base mannequin it was dressed on")
     clothingType: str | None = Field(default=None, description="top|outer|bottom|dress")
     subCategory: str | None = Field(default=None)
+    #: Side the coordinating (not-for-sale) garment is worn on in this cut: top|bottom, or absent
+    #: when the cut wears the product alone. Product metadata — never inferred from the image.
+    matchingSide: str | None = Field(default=None, description="top|bottom")
 
 
 def get_settings() -> SamSettings:
@@ -213,7 +216,8 @@ async def _segment_worn_one(req: WornGarmentRequest, source, settings: SamSettin
         async with _INFERENCE_SLOT:
             mask = await asyncio.wait_for(
                 asyncio.to_thread(worn_garment.produce, segmenter, generated, base,
-                                  clothing_type=req.clothingType),
+                                  clothing_type=req.clothingType,
+                                  matching_side=req.matchingSide),
                 timeout=VIEW_TIMEOUT_S)
     except TimeoutError:
         return fail("timeout", f"worn-garment segmentation exceeded {VIEW_TIMEOUT_S:.0f}s")
@@ -242,6 +246,7 @@ async def _segment_worn_one(req: WornGarmentRequest, source, settings: SamSettin
             "width": mask.width, "height": mask.height, "areaFrac": mask.area_frac,
             "candidates": mask.candidates, "plausibleCandidates": mask.plausible_candidates,
             "selectedScore": mask.selected_score, "evidence": mask.evidence,
+            "matchingSide": mask.matching_side, "matchShare": mask.match_share,
             "mime": "image/png", "bytes": len(mask.png),
             "latencyMs": int((time.monotonic() - t0) * 1000)}
 

@@ -85,6 +85,10 @@ class WornGarmentResult:
     byte_size: int | None = None
     grid: int | None = None
     m2m: bool | None = None
+    #: 서비스가 본 매칭 의류 쪽과, 내준 마스크가 그 밴드에 걸친 비율. 구버전 서비스는 둘 다
+    #: 주지 않는다 — 그래서 API 쪽이 픽셀로 한 번 더 확인한다(editor_garment_mask).
+    matching_side: str | None = None
+    match_share: float | None = None
     cached: bool = False
     code: str | None = None
     message: str | None = None
@@ -99,7 +103,9 @@ class WornGarmentResult:
             selector_version=body.get("selectorVersion"), checksum=body.get("checksum"),
             width=body.get("width"), height=body.get("height"),
             area_frac=body.get("areaFrac"), byte_size=body.get("bytes"),
-            grid=body.get("grid"), m2m=body.get("m2m"), cached=bool(body.get("cached")),
+            grid=body.get("grid"), m2m=body.get("m2m"),
+            matching_side=body.get("matchingSide"), match_share=body.get("matchShare"),
+            cached=bool(body.get("cached")),
             code=body.get("code"), message=body.get("message"))
 
 
@@ -111,19 +117,26 @@ def configured(settings) -> bool:
 
 async def segment_worn_garment(settings, *, source_key: str, base_key: str,
                                clothing_type: str | None,
-                               sub_category: str | None = None) -> WornGarmentResult:
+                               sub_category: str | None = None,
+                               matching_side: str | None = None) -> WornGarmentResult:
     """Generated mannequin cut -> editor garment mask. Raises `SamUnavailable` on transport failure.
 
     A separate route from `segment_garment` on purpose: that one background-removes a product
     photograph, this one finds the sold garment on a dressed mannequin. Same service, different
     algorithm and cache namespace.
+
+    `matching_side` ("top"/"bottom") tells the service the cut also wears a coordinating garment
+    on that side, so the mask stays on the garment being sold. A service that predates the field
+    ignores it — the caller verifies the returned mask itself, so deploy order cannot regress the
+    guarantee.
     """
     if not configured(settings):
         raise SamUnavailable("SAM service is not configured (SAM_SERVICE_URL / token)")
 
     url = f"{settings.sam_service_url}/segment-worn-garment"
     payload = {"sourceKey": source_key, "baseKey": base_key,
-               "clothingType": clothing_type, "subCategory": sub_category}
+               "clothingType": clothing_type, "subCategory": sub_category,
+               "matchingSide": matching_side}
     timeout = float(getattr(settings, "sam_request_timeout_s", 90.0) or 90.0)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:

@@ -116,11 +116,12 @@ def test_existing_cut_lazily_enqueues_the_same_free_mask_job(monkeypatch):
 
     monkeypatch.setattr("app.routes.repo.create_job", create_job)
     conn = Conn()
-    created = asyncio.run(_enqueue_missing_tone_mask(
+    created, job = asyncio.run(_enqueue_missing_tone_mask(
         conn, user_id="u1", project_id="p1", cut_id="A-1",
         state={"status": "processing"}))
 
     assert created is True and conn.committed is True
+    assert job == {"id": "mask-job"}, "합류한 잡 행이 화면 상태 판정에 필요하다"
     assert captured["kind"] == "editor_garment_mask"
     assert captured["payload"] == {"cutId": "A-1"}
     assert captured["credits_reserved"] == 0
@@ -134,7 +135,7 @@ def test_ready_cut_does_not_enqueue_another_mask(monkeypatch):
     monkeypatch.setattr("app.routes.repo.create_job", unexpected)
     assert asyncio.run(_enqueue_missing_tone_mask(
         object(), user_id="u1", project_id="p1", cut_id="A-1",
-        state={"status": "ready"})) is False
+        state={"status": "ready"})) == (False, None)
 
 
 def test_mask_metadata_carries_provenance():
