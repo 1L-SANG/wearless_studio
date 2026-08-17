@@ -1,6 +1,6 @@
 # AI 파이프라인 명세 (ai_pipeline_spec.md)
 
-> 상태: 확정 (2026-06-11, 갱신 2026-07-17) · 짝 문서: `documents/ai_agent_modules.md`(에이전트 정의), `documents/common_data_contract.md`(API 계약·크레딧·멱등 규약)
+> 상태: 확정 (2026-06-11, 갱신 2026-08-18) · 짝 문서: `documents/ai_agent_modules.md`(에이전트 정의), `documents/common_data_contract.md`(API 계약·크레딧·멱등 규약)
 > 실행 주체: **FastAPI(AWS ECS Fargate) job orchestration** (`documents/03_기술스택_결정서.md` §7 — Railway에서 이전 완료, 2026-07). 프론트는 `lib/api` 함수만 호출하고, 파이프라인의 존재를 모른다.
 
 ---
@@ -37,12 +37,15 @@
 
 ```
 입력 수집(product.name, 색상 그룹 이미지 R2 URL)
-  → AG-01 product-analyst (1콜, 구조화 JSON)
-  → 서버 후처리: measurements 강제 null · enum 검증
+  → AG-01 product-analyst (1콜, 일반 분석 + confirmedGptProductEvidence 구조화 JSON)
+  → 서버 후처리: measurements 강제 null · enum 검증 · 원본/실제 분석 이미지 바이트 바인딩 봉인
   → M-01 matching-recommender (AG-01의 styleTags 입력)
   → Analysis 조립(matchCandidates 후보 + matchSelections 기본 선택 포함) → 응답
 ```
 - 진행률: 단일 job 0→100 (현 mock의 2.8s runJob 자리). 실패: throw, 화면 재시도 버튼.
+- 확정 GPT 상품 근거는 별도 호출이 아니다. 같은 AG-01 호출이 패널별 판독 가능성·hard facts·
+  uncertainties·visibleSurfacePlan을 만들고, 서버가 원본과 실제 분석 입력의 순서·MIME·길이·
+  SHA-256을 결합해 analysis payload에 저장한다. 일반 클라이언트 응답에서는 숨긴다.
 - [P1 훅] AG-P1로 M-01 스왑 가능(동일 출력 shape).
 
 ### PL-2 마네킹 생성 — `generateMannequins(projectId)` (페이지 진입 시 자동)
@@ -73,10 +76,14 @@ prep(기준 색상 이미지·분석 속성·매칭 하의 이미지·fitProfile
 
 ```
 info     상품·분석·콘티 데이터 수집/검증 (비AI)
-prep     블록별 프롬프트·에셋 준비, selectedMannequinId 컷 + 가상모델 face_front·body_front 원자 쌍 로드 (비AI, 모델 레퍼런스 계약은 ai_agent_modules §3 AG-06)
-cuts     AG-06 cut-generator — source='ai' 블록별 Gemini 1차. 블록들은 병렬 실행하고,
-         CUT_OUTPUT_QC_MODE=repair이면 독립 QC 뒤 필요한 블록만 Gemini 2차 1회
-         1·2차 모두 image_high=gemini-3-pro-image와 DETAIL_CUT_IMAGE_SIZE=4K를 사용한다.
+prep     exact 요청 블록은 선택 resolved 마네킹 → grid_face_direction → grid_fullbody →
+         라벨 셀러 근거 그리드 1장 → 선택 매칭 최대 1장 → 서비스 예시 순서로 패킷 준비.
+         그 밖의 VIRTUAL 착용컷은 기존 face_front + body_front 쌍을 포함한 generic
+         프롬프트·에셋 계약을 준비한다 (비AI).
+cuts     AG-06 cut-generator — source='ai' 블록별 병렬 실행. exact 블록은 GPT Image 2 Stage 1,
+         독립 QC와 조건부 GPT Stage 2·재검수를 사용한다. generic 블록은 기존 generic/
+         image_high Gemini 경로를 유지한다. exact의 1·2차만
+         MODEL_ROUTING_DETAIL_CUT=gpt-image-2-2026-04-21과 DETAIL_CUT_IMAGE_SIZE=4K를 쓴다.
          세 계열로 컴파일하고, mirror는 styling의 mirrorSelfie 하위 방식으로 병렬 처리한다.
          source='mine' 블록은 ownImages 그대로(에이전트 호출 없음).
 copy     copywriting=true면: 카피 대상 블록별 AG-02 → 묶음 AG-03 검수(revise 채택)
@@ -86,15 +93,26 @@ done     project.status='done' · { data: EditorBlock[], credits }
 - **진행 표시**: HTTP 경로는 현재 `inputs_loaded → cuts → copy → done`의 수치 진행률만 전달한다. mock 체크리스트는 호환용 key(info/prep/styling/horizon/product/copy/assemble)를 유지하지만 화면 라벨은 `후킹 / 스타일링 / 스튜디오 / 의류 확인`의 공식 네 섹션을 따른다. HTTP의 단계 체크리스트 실배선은 TODO다.
 - **크레딧**: `storyboardPerCut × ai 블록 수` (내 이미지 제외 — 계약 §6). 컷 단위 실패는 해당 컷 미차감.
 - **부분 실패 정책**: 일부 컷만 실패하면 그 자리만 빈 슬롯으로 조립하고, 성공한 컷만 과금한다. AI 컷이 전부 실패하면 빈 상세페이지를 완료 처리하지 않고 `all_cuts_failed`로 작업을 실패시키며 예약 크레딧을 해제한다. 일부 실패 컷은 에디터 의류 탭에서 다시 만들 수 있다(PL-5).
-- **생성예시·촬영 세트 레지스트리**: `exampleId`의 현재 상품 종류가
-  `applicableClothingTypes`에 없거나 요청 `refScope` variant가 발행되지 않았으면
-  그 예시만 픽셀·텍스트 양쪽에서 생략하고 컷 생성은 계속한다. 생략 사유는 job
-  결과 metadata의 `warnings`에 남긴다. 발행된
+- **확정 GPT exact 적용 범위와 입력 게이트**: `styling/direct`, front, full/medium,
+  `refScope='all'`, `pose='auto'`, `spaceGroupId` 없음, 예시 방향 호환이며 서비스 예시를
+  선택한 블록은 exact 프로필을 요청한 것이다. 실행에는 기준 색상, 선택 resolved 마네킹,
+  대체되지 않은 선택 가상모델, 큐레이션된 서비스 예시가 필요하다. 두 모델 방향 시트의
+  SHA-256·길이, AG-01 근거·현재 원본 바인딩, 생성예시/연출 카탈로그 및 실제 바이트까지 모두
+  일치해야 한다. 요청 뒤 하나라도 없거나 다르면 해당 컷을 fail-closed하며 generic으로 바꾸지
+  않는다. 처음부터 이 구조적 범위 밖인 블록만 기존 generic 경로를 정상 사용한다.
+- **exact 프롬프트·출력**: hash-pinned `cut_generate_confirmed_gpt_v1.txt`의 기존 iPhone 기본
+  Photo 계약과 Adjacent V4 문구를 그대로 쓴다. GPT snapshot·`medium`·PNG는 과거 확정 조건과
+  같고, 서비스 `4K`만 과거 `1024x1536` 대신 GPT 유효 최대 2:3 `2336x3504`로 변환한다. 이것이
+  과거 실험 대비 유일하게 의도한 provider-level 변경이다.
+- **생성예시·촬영 세트 레지스트리**: generic 경로에서 `exampleId`의 현재 상품 종류가
+  `applicableClothingTypes`에 없거나 요청 `refScope` variant가 발행되지 않았으면 그 예시만
+  픽셀·텍스트 양쪽에서 생략하고 컷 생성은 계속한다. 생략 사유는 job 결과 metadata의
+  `warnings`에 남긴다. exact 프로필 요청은 바로 위의 fail-closed 계약을 따른다. 발행된
   `ssg1__<setId>__<instanceId>` 촬영 세트 안의 예시는 `pose`로 강제하고 대표
   plate를 함께 사용한다. 임의 그룹 값은 거부한다. 현재 운영 R2에는 개별
   생성예시와 `space-sets-20260730-v1` 촬영 세트가 발행돼 있다.
 - **멱등**: status='generating' 재호출 → 합류, status='done' 재호출 → 기존 결과 반환 (계약 §6).
-- **독립 이미지 QC**: AG-06 각 컷 뒤 `CUT_OUTPUT_QC_MODE=shadow`이면 상품 동일성(텍스트·로고 포함), 사용자 의도, 인체·원근, 광원·그림자·주름을 독립 판정해 metadata에 저장한다. `repair`이면 모든 AI 블록이 같은 병렬 AG-06 파이프라인을 타고, 1차 실패 중 프레이밍·인체·광원처럼 국소적인 결함은 1차 이미지를 AG-06의 국소 보정 분기로 직접 편집하며 의류·모델·공간 등 전역 결함은 AG-06의 원래 정본 입력에서 재생성한다. 두 경로 모두 `image_high` 모델과 콘티 전용 해상도 설정을 공유하며, 프로덕션은 Gemini 3 Pro Image·4K로 고정한다. 2차는 1회뿐이며 독립 재검수에서 통과하거나 실패 축이 줄고 새 회귀가 없을 때만 채택한다. QC/2차 실패나 `UNJUDGEABLE`이면 추가 호출 없이 1차를 보존한다. 사용자 크레딧은 최종 컷 한 장 기준으로 유지하고 추가 provider 호출 실비는 `image_usage_events`에 기록한다. `PAGE_OUTPUT_QC_MODE=shadow`이면 같은 SKU·색상·모델·매칭·이너와 세트별 공간 연속성을 검사한다. 기본값은 `off`이며 프로덕션만 명시적으로 `repair`를 켠다.
+- **독립 이미지 QC**: AG-06 각 컷 뒤 `CUT_OUTPUT_QC_MODE=shadow`이면 상품 동일성(텍스트·로고 포함), 사용자 의도, 인체·원근, 광원·그림자·주름을 독립 판정해 metadata에 저장한다. exact 경로의 `repair`는 `GPT Stage 1 → 독립 QC → 조건부 Stage 2 → 독립 재검수`다. `anatomyPerspectiveAsymmetry`와 `lightingShadowReflectionDrape` 실패만 Stage 1을 같은 GPT로 직접 편집한다. `framingDirectionFacePose`를 포함한 그 밖의 실패는 같은 exact 패킷과 고정 프롬프트에 교정 사실을 추가해 같은 GPT로 처음부터 재생성한다. Stage 2는 한 번만 시도하고, 통과하거나 실패 축이 줄면서 기존 통과 축의 회귀가 없을 때만 채택한다. 성공한 Stage 1 뒤 QC/Stage 2 실패나 `UNJUDGEABLE`이면 추가 호출 없이 Stage 1을 보존한다. exact 입력 준비의 fail-closed와 이 QC fail-open은 서로 다른 시점의 규칙이다. generic PL-4, 에디터 PL-5와 AG-07은 기존 generic/공유 `image_high` Gemini 계약을 유지한다. 사용자 크레딧은 최종 컷 한 장 기준으로 유지하고 추가 provider 호출 실비는 `image_usage_events`에 기록한다. `PAGE_OUTPUT_QC_MODE=shadow`이면 같은 SKU·목표 색상·모델·매칭·이너와 세트별 공간 연속성을 검사한다. 기본값은 `off`이며 프로덕션만 명시적으로 `repair`를 켠다.
 
 ### PL-5 / PL-6 에디터 새 이미지·현재 이미지 수정 — `generateImage(projectId, req)`
 
@@ -154,6 +172,8 @@ Job {
 GEMINI_API_KEY=
 OPENAI_API_KEY=
 MODEL_ROUTING_IMAGE_HIGH=gemini-3-pro-image        # 2026-06-12 공식 문서로 실재 확인(Nano Banana Pro, stable) — 교체는 여기서만
+MODEL_ROUTING_DETAIL_CUT=gpt-image-2-2026-04-21   # PL-4 exact Stage 1·2 고정 스냅샷
+DETAIL_CUT_IMAGE_SIZE=4K                          # exact 2:3은 GPT 유효 최대 2336x3504로 변환
 MODEL_ROUTING_IMAGE_LIGHT=gemini-3.1-flash-image
 MODEL_ROUTING_TEXT_GEMINI=gemini-3.7-flash          # text tier 정본(Gemini). 2026-08-14 3.5 flash → 3.7 flash — 상세 pl1_analysis_agent_spec §2
 MODEL_ROUTING_TEXT_GEMINI_ANALYSIS=gemini-3.7-flash # AG-01 상품분석만 분기 (2026-08-14 실측 결정)

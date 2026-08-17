@@ -1799,7 +1799,7 @@ def test_billable_failure_is_not_retried_by_the_worker(monkeypatch):
 
     source = inspect.getsource(detail_page_job)
     assert 'billable = bool(getattr(e, "billable", False))' in source
-    assert "if billable or attempt >= max(1, s.detail_cut_max_attempts)" in source
+    assert "if billable or attempt >= max_attempts" in source
 
 
 def test_gemini_error_carries_the_billable_flag_across_layers():

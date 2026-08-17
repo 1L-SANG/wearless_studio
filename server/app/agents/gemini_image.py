@@ -7,6 +7,7 @@ async httpx로 호출해 이벤트 루프를 막지 않는다 (§5).
 
 import asyncio
 import base64
+import binascii
 import logging
 import time
 from dataclasses import dataclass
@@ -147,7 +148,8 @@ class GeminiImageClient:
         # 모델 id 로 provider 분기. gpt-image* 는 OpenAI images/edits(멀티 레퍼런스), 그 외는 Gemini.
         # 같은 시그니처·같은 GeminiImageResult 반환이라 9개 콜사이트는 무변경이다.
         if model.startswith("gpt-image"):
-            return await self._openai_generate(model, prompt, images, aspect_ratio, timeout)
+            return await self._openai_generate(
+                model, prompt, images, image_size, aspect_ratio, timeout)
         if not self._key:
             raise GeminiError("GEMINI_API_KEY 미설정")
         body = self._body(prompt, images, image_size, temperature, aspect_ratio)
@@ -242,16 +244,24 @@ class GeminiImageClient:
             usage=usage,
         )
 
-    #: aspect_ratio → OpenAI 고정 사이즈. OpenAI 이미지 모델은 임의 해상도를 못 받는다
-    #: (Gemini 의 848×1264 같은 값 불가) — 세로/가로/정사각으로 접는다. 후단(에디터 지오메트리)이
-    #: 특정 dim 을 기대하면 리사이즈가 별도로 필요하다(정식 배선 시 처리).
+    #: 기본(1K) 캔버스는 기존 배선을 보존한다. GPT Image 2의 임의 유효 해상도 지원을
+    #: 이용하는 4K 2:3만 별도로 승급한다. 2336×3504는 정확히 2:3이고, 양 변이 16의
+    #: 배수이며, 8,185,344 픽셀로 API의 8,294,400 픽셀 상한 안에 드는 최대 크기다.
     _OPENAI_SIZE = {"2:3": "1024x1536", "9:16": "1024x1536", "3:4": "1024x1536",
                     "3:2": "1536x1024", "16:9": "1536x1024", "4:3": "1536x1024",
                     "1:1": "1024x1024"}
+    _OPENAI_4K_SIZE = {"2:3": "2336x3504", "3:2": "3504x2336"}
+
+    @classmethod
+    def _openai_size(cls, image_size: str, aspect_ratio: str | None) -> str:
+        ratio = aspect_ratio or ""
+        if image_size.upper() == "4K" and ratio in cls._OPENAI_4K_SIZE:
+            return cls._OPENAI_4K_SIZE[ratio]
+        return cls._OPENAI_SIZE.get(ratio, "1024x1536")
 
     async def _openai_generate(
         self, model: str, prompt: str, images: list[InlineImage],
-        aspect_ratio: str | None, timeout: float,
+        image_size: str, aspect_ratio: str | None, timeout: float,
     ) -> GeminiImageResult:
         """OpenAI images/edits — 멀티 레퍼런스 편집 생성. Gemini 와 동일 반환 계약.
 
@@ -260,7 +270,7 @@ class GeminiImageClient:
         """
         if not self._openai_key:
             raise GeminiError("OPENAI_API_KEY 미설정")
-        size = self._OPENAI_SIZE.get(aspect_ratio or "", "1024x1536")
+        size = self._openai_size(image_size, aspect_ratio)
         _ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
         # OpenAI images/edits 는 Gemini 보다 입력 형식에 엄격하다 — 확장자만 .jpeg 인
         # MPO(아이폰 다중사진)나 팔레트/알파 모드가 오면 invalid_image_file 로 거부한다.
@@ -269,7 +279,16 @@ class GeminiImageClient:
             ("image[]", (f"ref{i}.png", data, "image/png"))
             for i, data in enumerate(_as_openai_png(im) for im in images)
         ]
-        data = {"model": model, "prompt": prompt, "size": size, "n": "1"}
+        # 선정 실험의 GPT Image 2 레시피: medium + PNG. GPT Image 2는
+        # 모든 입력 이미지를 high-fidelity로 처리하므로 input_fidelity는 보내지 않는다.
+        data = {
+            "model": model,
+            "prompt": prompt,
+            "size": size,
+            "quality": "medium",
+            "output_format": "png",
+            "n": "1",
+        }
         t0 = time.perf_counter()
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
@@ -292,18 +311,32 @@ class GeminiImageClient:
             if billable:
                 _record_unbilled_failure(model, size, t0, f"http_{res.status_code}")
             raise GeminiError(f"OpenAI {res.status_code}: {res.text[:500]}", billable=billable)
+        payload = None
+        usage = None
+        img = None
+        parse_error = None
         try:
             payload = res.json()
-            b64 = ((payload.get("data") or [{}])[0]).get("b64_json")
-            if not b64:
+            if not isinstance(payload, dict):
+                raise ValueError("response root is not an object")
+            usage = payload.get("usage")
+            rows = payload.get("data") or []
+            if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+                raise ValueError("no image row in response")
+            b64 = rows[0].get("b64_json")
+            if not isinstance(b64, str) or not b64:
                 raise ValueError("no b64_json in response")
-        except (TypeError, ValueError, KeyError) as exc:
-            raise GeminiError(f"OpenAI 200 응답 형식 오류: {exc}") from exc
-        img = base64.b64decode(b64)
-        try:  # 계량은 best-effort — OpenAI usage shape 가 달라도 생성을 죽이지 않는다.
-            image_usage.record(model=model, image_size=size, usage=payload.get("usage"),
-                               latency_ms=latency_ms, has_image=True)
-        except Exception:
-            pass
-        return GeminiImageResult(image=img, mime="image/png", latency_ms=latency_ms,
-                                 usage=payload.get("usage"))
+            img = base64.b64decode(b64, validate=True)
+        except (TypeError, ValueError, KeyError, binascii.Error) as exc:
+            parse_error = exc
+
+        # 200이면 이미지 파싱이 실패해도 이미 과금됐을 수 있다. usage를 먼저
+        # 기록해야 원장에서 조용히 사라지지 않는다.
+        image_usage.record(
+            model=model, image_size=size, usage=usage,
+            latency_ms=latency_ms, has_image=img is not None,
+        )
+        if parse_error is not None:
+            raise GeminiError(f"OpenAI 200 응답 형식 오류: {parse_error}") from parse_error
+        return GeminiImageResult(
+            image=img, mime="image/png", latency_ms=latency_ms, usage=usage)

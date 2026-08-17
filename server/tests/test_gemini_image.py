@@ -11,6 +11,7 @@ from app.agents import gemini_image
 def settings():
     return SimpleNamespace(
         gemini_api_key="test-key",
+        openai_api_key="openai-test-key",
         vertex_project=None,
         vertex_location="global",
     )
@@ -309,3 +310,130 @@ def test_openai_branch_carries_the_same_billable_contract():
     assert "billable = not isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))" in source
     assert "billable = res.status_code in (502, 504)" in source
     assert "_record_unbilled_failure(" in source
+
+
+@pytest.mark.parametrize(
+    "ratio,expected",
+    [("2:3", "1024x1536"), ("3:2", "1536x1024"), ("1:1", "1024x1024")],
+)
+def test_openai_1k_keeps_the_existing_canvas_mapping(ratio, expected):
+    assert gemini_image.GeminiImageClient._openai_size("1K", ratio) == expected
+
+
+def test_openai_gpt_image_2_uses_exact_2_by_3_4k_recipe(monkeypatch):
+    posted = {}
+    usage = {
+        "input_tokens": 9839,
+        "input_tokens_details": {"text_tokens": 2376, "image_tokens": 7463},
+        "output_tokens": 1372,
+        "output_tokens_details": {"text_tokens": 0, "image_tokens": 1372},
+    }
+    response = SimpleNamespace(
+        status_code=200,
+        text="ok",
+        json=lambda: {
+            "data": [{"b64_json": base64.b64encode(b"gpt-image").decode()}],
+            "usage": usage,
+        },
+    )
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, **kwargs):
+            posted.update(url=url, **kwargs)
+            return response
+
+    recorded = []
+    monkeypatch.setattr(gemini_image.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(gemini_image.image_usage, "record", lambda **kw: recorded.append(kw))
+
+    result = asyncio.run(gemini_image.GeminiImageClient(settings()).generate_content_image(
+        "gpt-image-2-2026-04-21",
+        "prompt",
+        [gemini_image.InlineImage("image/png", b"reference")],
+        "4K",
+        aspect_ratio="2:3",
+    ))
+
+    assert result.image == b"gpt-image"
+    assert posted["url"] == "https://api.openai.com/v1/images/edits"
+    assert posted["data"] == {
+        "model": "gpt-image-2-2026-04-21",
+        "prompt": "prompt",
+        "size": "2336x3504",
+        "quality": "medium",
+        "output_format": "png",
+        "n": "1",
+    }
+    assert "input_fidelity" not in posted["data"]
+    assert len(recorded) == 1
+    assert recorded[0]["image_size"] == "2336x3504"
+    assert recorded[0]["usage"] == usage
+    assert recorded[0]["has_image"] is True
+
+
+def test_openai_malformed_200_keeps_available_usage_in_ledger(monkeypatch):
+    usage = {"input_tokens": 10, "output_tokens": 20}
+    response = SimpleNamespace(
+        status_code=200,
+        text="ok",
+        json=lambda: {"data": [], "usage": usage},
+    )
+    recorded = []
+    _wire_response(monkeypatch, response)
+    monkeypatch.setattr(gemini_image.image_usage, "record", lambda **kw: recorded.append(kw))
+
+    with pytest.raises(gemini_image.GeminiError, match="OpenAI 200 응답 형식 오류"):
+        asyncio.run(gemini_image.GeminiImageClient(settings()).generate_content_image(
+            "gpt-image-2", "prompt", [], "4K", aspect_ratio="2:3"))
+
+    assert len(recorded) == 1
+    assert recorded[0]["usage"] == usage
+    assert recorded[0]["has_image"] is False
+
+
+@pytest.mark.parametrize(
+    "error,expected_billable",
+    [(httpx.ConnectError("offline"), False), (httpx.ReadTimeout("slow"), True)],
+)
+def test_openai_transport_is_one_shot_without_hidden_retry(
+    monkeypatch, error, expected_billable,
+):
+    calls = {"n": 0}
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, *args, **kwargs):
+            calls["n"] += 1
+            raise error
+
+    monkeypatch.setattr(gemini_image.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(gemini_image.image_usage, "record", lambda **kw: None)
+
+    with pytest.raises(gemini_image.GeminiError) as raised:
+        asyncio.run(gemini_image.GeminiImageClient(settings()).generate_content_image(
+            "gpt-image-2-2026-04-21",
+            "prompt",
+            [gemini_image.InlineImage("image/png", b"reference")],
+            "4K",
+            aspect_ratio="2:3",
+        ))
+
+    assert calls["n"] == 1
+    assert raised.value.billable is expected_billable

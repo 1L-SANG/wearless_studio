@@ -12,7 +12,13 @@ from io import BytesIO
 from PIL import Image
 
 from .. import repo
-from ..agents import feature_extractor, input_consistency, mannequin, product_analyst
+from ..agents import (
+    feature_extractor,
+    input_consistency,
+    mannequin,
+    product_analyst,
+    product_evidence_contract,
+)
 from ..agents.gemini_image import InlineImage
 from ..agents.vision_llm import VisionError
 from ._common import emit_job_event as _emit  # 공용 헬퍼(mannequin_job과 공유). 테스트가 이 이름을 monkeypatch
@@ -66,6 +72,7 @@ async def analyze_image_bytes(
     product: dict | None = None,
     slots: list[str] | None = None,
     on_prepared=None,
+    persist_confirmed_evidence: bool = False,
 ) -> dict:
     """DB·R2 없이 이미지 바이트를 분석하는 AG-01 공용 코어.
 
@@ -80,10 +87,19 @@ async def analyze_image_bytes(
         for data, mime in source_images
     ))
     images = [InlineImage(mime, data) for data, mime in loaded]
+    analysis_product = product
+    if persist_confirmed_evidence:
+        evidence_binding = product_evidence_contract.build_input_binding(
+            source_images, loaded, slots
+        )
+        analysis_product = {
+            **product,
+            product_evidence_contract.INTERNAL_BINDING_KEY: evidence_binding,
+        }
     if on_prepared is not None:
         await on_prepared(sum(len(image.data) for image in images))
     analyze_res, feature_res, consistency_res = await asyncio.gather(
-        product_analyst.analyze(settings, product, images),
+        product_analyst.analyze(settings, analysis_product, images),
         feature_extractor.extract(settings, product, images, slots=slots),
         _judge_input_consistency(settings, images, slots),
         return_exceptions=True,
@@ -119,8 +135,15 @@ async def analyze_image_bytes(
     ):
         analysis_payload["inputConsistency"] = consistency
     clothing_type = distributed["product"]["clothingType"]
+    # The evidence contract is server-owned generation input. It stays in
+    # analyses.payload but is not duplicated into the client-facing analysis job result.
+    public_analysis_payload = {
+        key: value
+        for key, value in analysis_payload.items()
+        if key != product_evidence_contract.PERSISTED_KEY
+    }
     result_data = {
-        **analysis_payload,
+        **public_analysis_payload,
         "clothingType": clothing_type,
         "styleTags": analysis_payload["styleTags"],
         "swatchSuggestions": distributed["intermediate"]["swatchSuggestions"],
@@ -188,7 +211,13 @@ async def run_analyze_job(app, job: dict) -> None:
             })
 
         core = await analyze_image_bytes(
-            s, loaded, product=product, slots=slots, on_prepared=_inputs_loaded)
+            s,
+            loaded,
+            product=product,
+            slots=slots,
+            on_prepared=_inputs_loaded,
+            persist_confirmed_evidence=True,
+        )
 
         provider = core["provider"]
         feature_provider = core["feature_provider"]

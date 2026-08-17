@@ -122,12 +122,16 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 로컬 픽셀 비교(AI 콜 0)로 그 편집만 되돌린다.
   MANNEQUIN_PANTS_QC: enforce
   # 콘티의 모든 AI 생성 블록은 서로 병렬로 실행하되, 블록 안에서는
-  # Gemini 1차 → 독립 QC → 필요 시 Gemini 2차 1회 → 독립 재검수 순서를 지킨다.
+  # 고정 GPT Image 2 1차 → 독립 QC → 필요 시 같은 GPT 2차 1회 → 독립 재검수 순서를 지킨다.
+  # image_high는 마네킹·매칭·AG-07 공유 경로이므로 Gemini로 유지하고 AG-06만 분리한다.
   # 새 hard-gate가 garment 동일성까지 포함하므로 구 best-of 후보 생성은 중복 비용을 막기 위해 끈다.
   MODEL_ROUTING_IMAGE_HIGH: gemini-3-pro-image
+  MODEL_ROUTING_DETAIL_CUT: gpt-image-2-2026-04-21
   DETAIL_CUT_IMAGE_SIZE: "4K"
   DETAIL_CUT_CONCURRENCY: "0"
   DETAIL_CUT_STAGGER_MS: "3000"
+  # 오너가 확정한 1차 baseline은 best-of/provider 재호출이 없는 first-result 계약이다.
+  DETAIL_CUT_MAX_ATTEMPTS: "1"
   GARMENT_QC_MODE: "off"
   CUT_OUTPUT_QC_MODE: repair
   # text tier 모델. AI Studio 유효 id 여야 한다 — 구값 'gemini-3-pro' 는 미존재라 Gemini 404 로
@@ -170,8 +174,8 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   R2_ACCESS_KEY_ID: /copilot/wearless/prod/secrets/R2_ACCESS_KEY_ID
   R2_SECRET_ACCESS_KEY: /copilot/wearless/prod/secrets/R2_SECRET_ACCESS_KEY
   GEMINI_API_KEY: /copilot/wearless/prod/secrets/GEMINI_API_KEY
-  # 첫 화면(시그니처) 컷 전용 GPT-image 경로 키. 없으면 시그니처 컷만 기존
-  # image_high(gemini) 로 자동 폴백한다 — 기동 실패는 아니지만 GPT 생성은 안 된다.
+  # 첫 화면 시그니처 컷과 AG-06 상세컷 GPT 경로가 함께 사용한다.
+  # 배포 전 SSM SecureString이 실제로 존재하는지 확인한다.
   OPENAI_API_KEY: /copilot/wearless/prod/secrets/OPENAI_API_KEY
   # CX 본인확인 HMAC pepper. 없으면 /v1/facemarket/identity/verify 가 503.
   # ⚠️ 배포 전 값 저장 필요: copilot secret init --name FM_CI_PEPPER (프로드 SSM).

@@ -56,6 +56,57 @@ _REFERENCE_ROLE_LABELS = {
     "example": "EXAMPLE",
     "plate": "PLATE",
 }
+_AUTHORITY_PROFILES = frozenset({"generic_v1", "confirmed_gpt_v1"})
+_GENERIC_MANNEQUIN_AUTHORITY = (
+    "- PRODUCT images alone own the target garment's construction, material, pattern, hardware and garment\n"
+    "  text/logo. MANNEQUIN is only a coarse worn-geometry prior for PRODUCT-supported fit, length, silhouette\n"
+    "  and drape; it cannot settle uncertain color, material, construction, fit or length. The storyboard owns selected\n"
+    "  color, direction, shot, face handling, model, matching apparel, closure, and any explicit pose. Declared\n"
+    "  fit axes may change only the fit dimensions owned by fitProfile."
+)
+_CONFIRMED_MANNEQUIN_AUTHORITY = (
+    "- PRODUCT images alone own the target garment's construction, material, pattern, hardware and garment\n"
+    "  text/logo. MANNEQUIN is the selected resolved garment-local authority for visibly judgeable worn color\n"
+    "  values, saturation, brightness, fit, length, silhouette and drape. Seller-only uncertainty remains unresolved\n"
+    "  except garment-local worn color/fit visibly judgeable in MANNEQUIN; MANNEQUIN cannot settle unsupported\n"
+    "  construction, material or pattern. The storyboard still owns direction, shot, face handling, model, matching\n"
+    "  apparel, closure and any explicit pose; its base-color selection does not override MANNEQUIN garment pixels.\n"
+    "  Declared fit axes are already resolved into the selected MANNEQUIN and do not separately override it."
+)
+_GENERIC_GARMENT_CONSTRUCTION_GATE = (
+    "4. garmentConstruction — PRODUCT silhouette, neckline, panels, sleeves, seams, lengths and structure match."
+)
+_CONFIRMED_GARMENT_CONSTRUCTION_GATE = (
+    "4. garmentConstruction — PRODUCT neckline, panels, sleeves, seams and permanent construction match; "
+    "selected MANNEQUIN owns the visibly judgeable worn silhouette and length."
+)
+_GENERIC_GARMENT_COLOR_GATE = (
+    "5. garmentColor — selected PRODUCT color is faithful; scene/example color must not recolor the garment."
+)
+_CONFIRMED_GARMENT_COLOR_GATE = (
+    "5. garmentColor — selected MANNEQUIN garment-local worn color values, saturation and brightness are "
+    "faithful where judgeable; scene/example/global grade must not recolor the garment."
+)
+_GENERIC_MATERIAL_GATE = (
+    "6. materialTexture — when PRODUCT evidence supports them, compare crinkle, weave/knit/open holes, edge\n"
+    "   thickness and layer overlap, roughness, specular gloss, translucency, weight, stiffness and drape. Do not\n"
+    "   demand a cue absent or unreadable in PRODUCT evidence. A flat 2-D fill that erases supported surface or\n"
+    "   depth cues FAILS."
+)
+_CONFIRMED_MATERIAL_GATE = (
+    "6. materialTexture — when PRODUCT evidence supports them, compare crinkle, weave/knit/open holes, edge\n"
+    "   thickness and layer overlap, roughness, specular gloss, translucency, material weight and stiffness; compare\n"
+    "   the visibly judgeable worn drape against selected MANNEQUIN. Do not demand a cue absent or unreadable in\n"
+    "   its owning evidence. A flat 2-D fill that erases supported surface or depth cues FAILS."
+)
+_GENERIC_FIT_GATE = (
+    "10. fitClosureAllowedMutation — only declared fit axes may change; closure equals storyboard intent; undeclared\n"
+    "   fit, hem, tuck, silhouette, construction and matching-apparel boundaries remain unchanged."
+)
+_CONFIRMED_FIT_GATE = (
+    "10. fitClosureAllowedMutation — selected MANNEQUIN visibly judgeable fit, length, hem, tuck, silhouette and\n"
+    "   drape hold; closure equals storyboard intent; PRODUCT construction and matching-apparel boundaries remain unchanged."
+)
 
 MAX_EVIDENCE_LENGTH = 240
 MAX_CORRECTION_OPERATIONS = 5
@@ -78,7 +129,8 @@ _OWNERS = frozenset({
     "modelFace", "modelFullBody",
 })
 _OWNER_ATTRIBUTES = frozenset({
-    "construction", "material", "pattern", "hardware", "textLogo", "color",
+    "construction", "length", "material", "pattern", "hardware", "silhouette",
+    "textLogo", "color",
     "direction", "shot", "face", "model", "matching", "outerClosure", "pose",
     "camera", "scene", "light", "captureTone", "sceneContinuity", "faceIdentity",
     "bodyProportions",
@@ -150,6 +202,25 @@ _CORRECTIONS = MappingProxyType({
         "reflection, contact, and cast shadows under the owned scene light."
     ),
 })
+_CONFIRMED_GPT_CORRECTIONS = MappingProxyType({
+    **_CORRECTIONS,
+    "garmentConstruction": (
+        "Restore PRODUCT-evidenced neckline, panels, sleeves, seams and permanent construction; "
+        "restore selected MANNEQUIN visibly judgeable worn silhouette and length."
+    ),
+    "garmentColor": (
+        "Restore the selected MANNEQUIN garment-local worn color values, saturation and brightness "
+        "where judgeable; do not borrow color from PRODUCT lighting, the example or the scene."
+    ),
+    "fitClosureAllowedMutation": (
+        "Restore the selected MANNEQUIN garment-local fit, length, silhouette and drape where "
+        "judgeable; preserve PRODUCT construction and the storyboard closure state."
+    ),
+    "materialTexture": (
+        "Restore PRODUCT-evidenced surface/material cues, weight and stiffness; restore selected "
+        "MANNEQUIN visibly judgeable worn drape."
+    ),
+})
 
 # 이 세 축만 1차 이미지를 직접 편집한다. 의류·모델 정체성·장소·레시피처럼 원본
 # 근거를 다시 봐야 하는 실패는 scratch 재생성으로 보낸다.
@@ -158,6 +229,9 @@ _EDIT_STAGE1_GATES = frozenset({
     "anatomyPerspectiveAsymmetry",
     "lightingShadowReflectionDrape",
 })
+_CONFIRMED_EDIT_STAGE1_GATES = _EDIT_STAGE1_GATES - {
+    "framingDirectionFacePose",
+}
 
 
 @dataclass(frozen=True)
@@ -456,26 +530,52 @@ def gate_applicability(contract: Mapping[str, Any]) -> dict[str, bool]:
     return applicable
 
 
-def _reference_manifest(references: Sequence[LabeledReference]) -> str:
+def _reference_manifest(
+    references: Sequence[LabeledReference], *, authority_profile: str = "generic_v1"
+) -> str:
     counts = {role: 0 for role in REFERENCE_ROLES}
     lines = []
     for index, reference in enumerate(references, start=1):
         counts[reference.role] += 1
-        lines.append(
-            f"{index}. {_REFERENCE_ROLE_LABELS[reference.role]} {counts[reference.role]}"
-        )
+        label = _REFERENCE_ROLE_LABELS[reference.role]
+        if authority_profile == "confirmed_gpt_v1" and reference.role == "mannequin":
+            label = "MANNEQUIN (selected garment-local color and fit authority)"
+        lines.append(f"{index}. {label} {counts[reference.role]}")
     lines.append(f"{len(references) + 1}. GENERATED OUTPUT")
     return "\n".join(lines)
 
 
-def build_prompt(contract: Mapping[str, Any], references: Sequence[LabeledReference]) -> str:
+def build_prompt(
+    contract: Mapping[str, Any],
+    references: Sequence[LabeledReference],
+    *,
+    authority_profile: str = "generic_v1",
+) -> str:
     """Render only canonical enum/boolean/count data; never serialize the source plan."""
+
+    if authority_profile not in _AUTHORITY_PROFILES:
+        raise VisionError("cut_output_qc: unknown authority profile")
 
     with open(_PROMPT_FILE, encoding="utf-8") as handle:
         template = handle.read()
+    if authority_profile == "confirmed_gpt_v1":
+        replacements = (
+            (_GENERIC_MANNEQUIN_AUTHORITY, _CONFIRMED_MANNEQUIN_AUTHORITY),
+            (_GENERIC_GARMENT_CONSTRUCTION_GATE, _CONFIRMED_GARMENT_CONSTRUCTION_GATE),
+            (_GENERIC_GARMENT_COLOR_GATE, _CONFIRMED_GARMENT_COLOR_GATE),
+            (_GENERIC_MATERIAL_GATE, _CONFIRMED_MATERIAL_GATE),
+            (_GENERIC_FIT_GATE, _CONFIRMED_FIT_GATE),
+        )
+        if any(template.count(old) != 1 for old, _new in replacements):
+            raise VisionError("cut_output_qc: authority template drift")
+        for old, new in replacements:
+            template = template.replace(old, new)
     applicability = gate_applicability(contract)
     prompt = (
-        template.replace("${referenceManifest}", _reference_manifest(references))
+        template.replace(
+            "${referenceManifest}",
+            _reference_manifest(references, authority_profile=authority_profile),
+        )
         .replace(
             "${planContract}",
             json.dumps(contract, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
@@ -490,13 +590,40 @@ def build_prompt(contract: Mapping[str, Any], references: Sequence[LabeledRefere
     return prompt
 
 
+def _confirmed_authority_contract(contract: Mapping[str, Any]) -> dict:
+    """Align the judge's machine-readable owners with the confirmed prompt.
+
+    The generic CutPlan deliberately treats PRODUCT/fitProfile as the operating
+    baseline. The owner-confirmed historical route instead supplies an already
+    resolved selected mannequin whose visible garment-local color and fit pixels are
+    final. Changing only the prose would leave contradictory owners in planContract.
+    """
+
+    aligned = dict(contract)
+    owners = dict(_mapping(contract.get("attributeOwners")))
+    for attribute in ("color", "length", "silhouette", "declaredFit"):
+        if attribute in owners:
+            owners[attribute] = "mannequin"
+    aligned["attributeOwners"] = dict(sorted(owners.items()))
+    aligned["confirmedGptMannequinAuthority"] = {
+        "garmentLocalColor": True,
+        "garmentLocalFitLengthSilhouetteDrape": True,
+        "productPermanentConstructionStillFinal": True,
+    }
+    return aligned
+
+
 def _clean_evidence(value: Any) -> str:
     if not isinstance(value, str):
         return ""
     return clean_text(value, MAX_EVIDENCE_LENGTH)
 
 
-def _correction_patch(gates: Mapping[str, Mapping[str, str]]) -> dict | None:
+def _correction_patch(
+    gates: Mapping[str, Mapping[str, str]],
+    *,
+    corrections: Mapping[str, str] = _CORRECTIONS,
+) -> dict | None:
     blocking = [
         gate for gate in GATES
         if gates[gate]["status"] in {"FAIL", "UNJUDGEABLE"}
@@ -509,7 +636,7 @@ def _correction_patch(gates: Mapping[str, Mapping[str, str]]) -> dict | None:
         operations.append({
             "gate": gate,
             "action": "regenerate" if status == "FAIL" else "rejudge",
-            "instruction": _CORRECTIONS[gate],
+            "instruction": corrections[gate],
         })
     return {
         "version": 1,
@@ -538,7 +665,12 @@ def repair_route(result: Mapping[str, Any]) -> str:
         for gate in blocking
     ):
         return "HOLD_STAGE1"
-    if blocking <= _EDIT_STAGE1_GATES:
+    local_gates = (
+        _CONFIRMED_EDIT_STAGE1_GATES
+        if result.get("authorityProfile") == "confirmed_gpt_v1"
+        else _EDIT_STAGE1_GATES
+    )
+    if blocking <= local_gates:
         return "EDIT_STAGE1"
     return "REGENERATE_FROM_SCRATCH"
 
@@ -556,6 +688,14 @@ def repair_instructions(result: Mapping[str, Any]) -> tuple[str, ...]:
     } or patch.get("version") != 1:
         raise VisionError("cut_output_qc: invalid correction patch")
     operations = patch.get("operations")
+    authority_profile = result.get("authorityProfile", "generic_v1")
+    if authority_profile not in _AUTHORITY_PROFILES:
+        raise VisionError("cut_output_qc: unknown authority profile")
+    correction_map = (
+        _CONFIRMED_GPT_CORRECTIONS
+        if authority_profile == "confirmed_gpt_v1"
+        else _CORRECTIONS
+    )
     if not isinstance(operations, list) or not operations:
         raise VisionError("cut_output_qc: empty correction operations")
     instructions = []
@@ -570,12 +710,12 @@ def repair_instructions(result: Mapping[str, Any]) -> tuple[str, ...]:
             == "UNJUDGEABLE"
         ) else "regenerate"
         if (
-            gate not in _CORRECTIONS
+            gate not in correction_map
             or operation.get("action") != expected_action
-            or operation.get("instruction") != _CORRECTIONS[gate]
+            or operation.get("instruction") != correction_map[gate]
         ):
             raise VisionError("cut_output_qc: untrusted correction operation")
-        instructions.append(_CORRECTIONS[gate])
+        instructions.append(correction_map[gate])
     if len(instructions) > MAX_CORRECTION_OPERATIONS:
         raise VisionError("cut_output_qc: too many correction operations")
     return tuple(instructions)
@@ -813,6 +953,8 @@ async def verdict(
     plan: Any,
     references: Sequence[LabeledReference],
     generated_image: InlineImage,
+    *,
+    authority_profile: str = "generic_v1",
 ) -> dict:
     """Judge one candidate; reference order is preserved and output is always attached last.
 
@@ -821,18 +963,36 @@ async def verdict(
     provider call.
     """
 
+    if authority_profile not in _AUTHORITY_PROFILES:
+        raise VisionError("cut_output_qc: unknown authority profile")
     checked_references = _validate_references(references)
     contract = normalize_plan(plan)
+    if authority_profile == "confirmed_gpt_v1":
+        contract = _confirmed_authority_contract(contract)
     applicable = gate_applicability(contract)
     forced = _forced_preflight(contract, checked_references, generated_image)
     if not _valid_image(generated_image):
         result = validate({}, applicable=applicable, forced=forced)
-        result.update({"provider": None, "contract": contract})
+        result.update({
+            "provider": None,
+            "contract": contract,
+            "authorityProfile": authority_profile,
+        })
         return result
 
-    prompt = build_prompt(contract, checked_references)
+    prompt = build_prompt(
+        contract, checked_references, authority_profile=authority_profile
+    )
     images = [*(reference.image for reference in checked_references), generated_image]
     raw, provider = await analyze_with_fallback(settings, prompt, images, qc_schema())
     result = validate(raw, applicable=applicable, forced=forced)
-    result.update({"provider": provider, "contract": contract})
+    result.update({
+        "provider": provider,
+        "contract": contract,
+        "authorityProfile": authority_profile,
+    })
+    if authority_profile == "confirmed_gpt_v1" and result.get("correctionPatch"):
+        result["correctionPatch"] = _correction_patch(
+            result["gates"], corrections=_CONFIRMED_GPT_CORRECTIONS
+        )
     return result

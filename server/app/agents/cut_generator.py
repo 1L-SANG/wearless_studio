@@ -21,6 +21,10 @@ import httpx
 
 from ..config import Settings
 from .content_roles import canonicalize_storyboard_block
+from .confirmed_gpt_prompt import (
+    ConfirmedGptPromptInput,
+    compile_confirmed_gpt_prompt,
+)
 from .cut_plan import compile_cut_plan, render_prompt_contract
 from .directing_profile import render_directing_profile
 from .gemini_image import GeminiImageClient, InlineImage
@@ -478,6 +482,57 @@ def resolve_virtual_model_assets(
                 model_id, view_name)
             return None
         resolved.append({"key": key, "mime": mime, "bucket": "public"})
+    return tuple(resolved)
+
+
+def resolve_confirmed_gpt_direction_sheets(
+    spec: dict,
+) -> tuple[dict[str, str | int], dict[str, str | int]]:
+    """Return the two direction-sheet roles used by the confirmed GPT profile.
+
+    This path is intentionally fail-closed. ``face_front``/``body_front`` are different
+    assets with different authority and must never silently replace either direction sheet.
+    """
+
+    if spec.get("cutType") not in _WORN_CUTS or not spec.get("modelId"):
+        raise ValueError("confirmed_gpt_direction_sheets_require_worn_cut_model")
+    model_id = str(spec["modelId"])
+    try:
+        model = load_virtual_model_registry().get(model_id)
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ValueError("confirmed_gpt_virtual_model_manifest_unavailable") from exc
+    if not isinstance(model, dict):
+        raise ValueError("confirmed_gpt_virtual_model_unknown")
+    views = model.get("views")
+    if not isinstance(views, dict):
+        raise ValueError("confirmed_gpt_virtual_model_views_missing")
+
+    resolved: list[dict[str, str | int]] = []
+    for view_name in ("grid_face_direction", "grid_fullbody"):
+        view = views.get(view_name)
+        key = view.get("key") if isinstance(view, dict) else None
+        mime = view.get("mime") if isinstance(view, dict) else None
+        byte_length = view.get("byteLength") if isinstance(view, dict) else None
+        sha256 = view.get("sha256") if isinstance(view, dict) else None
+        if (
+            not isinstance(key, str)
+            or not key.strip()
+            or not isinstance(mime, str)
+            or not mime.startswith("image/")
+            or isinstance(byte_length, bool)
+            or not isinstance(byte_length, int)
+            or byte_length <= 0
+            or not isinstance(sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", sha256) is None
+        ):
+            raise ValueError(f"confirmed_gpt_missing_{view_name}")
+        resolved.append({
+            "key": key,
+            "mime": mime,
+            "bucket": "public",
+            "byteLength": byte_length,
+            "sha256": sha256,
+        })
     return tuple(resolved)
 
 
@@ -1251,6 +1306,7 @@ async def generate(
     has_face: bool = False,
     directing_profile: dict | None = None,
     qc_corrections: tuple[str, ...] = (),
+    confirmed_prompt_input: ConfirmedGptPromptInput | None = None,
 ) -> tuple[bytes, str]:
     """컷 1개 생성. 실패 시 GeminiError 전파(호출자가 빈 슬롯 등으로 처리).
     스펙 위반(unknown cutType)은 ValueError — 조용한 styling 폴백을 하지 않는다
@@ -1276,15 +1332,22 @@ async def generate(
         and not spec.get("spaceGroupId")
         and _is_bottom(clothing_type)
     )
-    prompt = build_prompt(
-        cut_spec,
-        product,
-        analysis=analysis,
-        manifest=manifest,
-        has_face=has_face,
-        directing_profile=directing_profile,
-        qc_corrections=qc_corrections,
-    )
+    if confirmed_prompt_input is not None:
+        if analysis is not None or manifest is not None or has_face or directing_profile is not None:
+            raise ValueError("confirmed_gpt_forbids_generic_prompt_inputs")
+        prompt = compile_confirmed_gpt_prompt(
+            confirmed_prompt_input, qc_corrections=qc_corrections
+        )
+    else:
+        prompt = build_prompt(
+            cut_spec,
+            product,
+            analysis=analysis,
+            manifest=manifest,
+            has_face=has_face,
+            directing_profile=directing_profile,
+            qc_corrections=qc_corrections,
+        )
     res = await gemini.generate_content_image(
         model, prompt, images, _detail_image_size(settings),
         aspect_ratio=settings.mannequin_aspect_ratio,
@@ -1305,7 +1368,7 @@ async def repair(
     *,
     qc_corrections: tuple[str, ...],
 ) -> tuple[bytes, str]:
-    """AG-06 국소 2차 보정. 같은 image_high 모델을 쓰고 1차 결과만 직접 편집한다."""
+    """AG-06 국소 2차 보정. 호출자가 고른 image_high 모델로 1차 결과만 편집한다."""
 
     model = resolve_model(settings, "image_high")
     prompt = build_qc_repair_prompt(cut_spec, product, qc_corrections)

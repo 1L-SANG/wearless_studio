@@ -78,17 +78,12 @@ def test_no_carry_when_no_previous_analysis():
     assert "sourceMirrored" not in saved
 
 
-def test_previous_lookup_skipped_when_nothing_missing():
-    """전 키가 있으면 이전 payload 조회 자체를 안 한다 — 저장 경로에 불필요한 쿼리 금지.
-
-    payload 를 _SERVER_OWNED_ANALYSIS_KEYS 에서 만든다: 키를 추가할 때 이 테스트가
-    '한 키만 든 payload' 를 계속 보내면 실제 클라가 전문을 보내는데도 실패한다.
-    현행 클라는 값이 없을 때 null 로라도 키를 실어 보낸다(httpAdapter analyzeProduct).
-    """
+def test_immutable_contract_forces_previous_lookup_even_when_all_keys_are_supplied():
+    """클라가 전문을 보내도 해시 계약은 서버의 기존 값을 확인해야 한다."""
     full = {k: None for k in repo._SERVER_OWNED_ANALYSIS_KEYS}
     conn = _Conn({"sourceMirrored": True})
     asyncio.run(repo.save_analysis(conn, "p1", full))
-    assert all("select" not in sql.lower() for sql, _ in conn.calls)
+    assert any("select" in sql.lower() for sql, _ in conn.calls)
 
 
 def test_previous_lookup_happens_when_a_key_is_missing():
@@ -96,6 +91,32 @@ def test_previous_lookup_happens_when_a_key_is_missing():
     conn = _Conn({"sourceMirrored": True})
     asyncio.run(repo.save_analysis(conn, "p1", {"fit": "regular"}))
     assert any("select" in sql.lower() for sql, _ in conn.calls)
+
+
+def test_confirmed_gpt_product_evidence_is_carried_when_client_omits_it():
+    contract = {"schemaVersion": 1, "contractSha256": "server-owned"}
+    saved = _save(
+        {"confirmedGptProductEvidence": contract, "fit": "over"},
+        {"fit": "regular"},
+    )
+    assert saved["confirmedGptProductEvidence"] == contract
+    assert saved["fit"] == "regular"
+
+
+def test_client_cannot_replace_or_create_confirmed_gpt_product_evidence():
+    server_contract = {"schemaVersion": 1, "contractSha256": "server-owned"}
+    client_contract = {"schemaVersion": 1, "contractSha256": "tampered"}
+    saved = _save(
+        {"confirmedGptProductEvidence": server_contract},
+        {"fit": "regular", "confirmedGptProductEvidence": client_contract},
+    )
+    assert saved["confirmedGptProductEvidence"] == server_contract
+
+    without_previous = _save(
+        None,
+        {"fit": "regular", "confirmedGptProductEvidence": client_contract},
+    )
+    assert "confirmedGptProductEvidence" not in without_previous
 
 
 @pytest.mark.parametrize("junk", ["false", 0, None, "true", 1])

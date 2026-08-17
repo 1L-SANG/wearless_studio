@@ -477,7 +477,16 @@ async def save_product(
 # inputConsistency: 셀러가 분석 폼을 한 번 수정하면 REPLACE 로 경고가 사라져, 생성 직전
 # 게이트가 조용히 없어진다(사라지는 경고 = 없는 경고). 재분석 때는 finalize 가 payload 를
 # 통째로 갈아끼우므로 낡은 판정이 남지 않는다.
-_SERVER_OWNED_ANALYSIS_KEYS = ("sourceMirrored", "inputConsistency", "featureCopy")
+_SERVER_OWNED_ANALYSIS_KEYS = (
+    "sourceMirrored",
+    "inputConsistency",
+    "featureCopy",
+    "confirmedGptProductEvidence",
+)
+# Unlike sourceMirrored (which the analysis form may explicitly edit), this value is a
+# hash-bound AG-01 artifact. API clients may echo it but can never create or replace it;
+# only finalize_analyze_success replaces the full payload after a fresh provider call.
+_IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS = ("confirmedGptProductEvidence",)
 
 
 async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict) -> dict:
@@ -486,13 +495,26 @@ async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict) 
     REPLACE 시맨틱이라 들어온 payload 가 곧 새 전문이다. 다만 `_SERVER_OWNED_ANALYSIS_KEYS`
     는 클라가 안 보냈을 때 기존 값을 이월한다 — 셀러가 소재·핏을 한 번 수정하면 AI 파생
     신호가 조용히 소실되고, sourceMirrored 의 경우 그 결과로 반전된 로고가 출고된다.
+    해시로 봉인된 confirmedGptProductEvidence 는 클라이언트가 보내도 기존 서버 값을 유지한다.
     """
     missing = [k for k in _SERVER_OWNED_ANALYSIS_KEYS if k not in analysis]
-    if missing:
+    immutable_supplied = any(k in analysis for k in _IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS)
+    if missing or immutable_supplied:
         prev = await get_analysis(conn, project_id) or {}
         carried = {k: prev[k] for k in missing if k in prev}
-        if carried:
-            analysis = {**analysis, **carried}
+        immutable = {
+            k: prev[k]
+            for k in _IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS
+            if k in prev
+        }
+        if immutable_supplied:
+            analysis = {
+                k: value
+                for k, value in analysis.items()
+                if k not in _IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS
+            }
+        if carried or immutable:
+            analysis = {**analysis, **carried, **immutable}
     locked = bool(analysis.get("locked", False))
     async with conn.cursor() as cur:
         await cur.execute(

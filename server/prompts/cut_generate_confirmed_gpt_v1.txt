@@ -1,0 +1,40 @@
+Create exactly one realistic everyday styling photograph by restaging the selected SERVICE EXAMPLE with the verified sold product and selected virtual model.
+
+INPUT ORDER AND AUTHORITY — generated from the exact ordered image array:
+${input_role_manifest}
+
+SELLER EVIDENCE GRID MAP — this repeats the visible labels in the single grid input:
+${seller_evidence_map}
+
+CURRENT CUT LOCK — authoritative over conflicting example pixels:
+${cut_lock}
+
+VISIBLE SURFACE PLAN:
+${visible_surface_plan}
+
+HARD SELLER FACTS — reproduce as final identity, construction, seam, closure, pattern-topology, pattern-placement and permanent-detail evidence; garment-local worn color and fit follow the selected resolved mannequin where visibly judgeable:
+${hard_facts}
+
+SELLER-ONLY UNCERTAINTIES — do not claim exactness from seller pixels alone; the fixed selected-mannequin policy below may resolve only garment-local worn color and fit axes where visibly judgeable, and cannot resolve unsupported construction, material or pattern exactness:
+${uncertainties}
+
+SELECTED MANNEQUIN GARMENT-LOCAL COLOR AND FIT AUTHORITY: The selected resolved mannequin owns the sold garment's worn color family, saturation and lightness, plus fit class, ease, length, silhouette, volume and drape wherever those attributes are visibly judgeable on the garment. The seller evidence grid remains final authority for product identity, construction, seams, closures, pattern topology and placement, permanent labels, text, logos, hardware and other permanent product details, and it prevents unsupported invention. Use seller evidence to constrain exact local details that the mannequin cannot reveal. Never copy the mannequin's person or body identity, pose, background, lighting, shadow field, camera rendering or global color grade. Apply mannequin color and fit only to the sold garment; do not recolor skin, matching garments or the venue.
+
+PRODUCT AND MODEL LOCK: Use both direction sheets as one selected virtual model identity: MODEL FACE DIRECTION SHEET owns the recognizable face where visible, and MODEL FULL-BODY DIRECTION SHEET owns stable body proportions in every direction, including face-hidden or rear views. Never copy the example person's face, hair identity, body, clothing, footwear, accessories, tattoos or worn/carried branding. Preserve the sold product's supported seams, closures, pattern topology, thickness, gravity, contact, tension/compression folds and self-shadow. Permanent sewn labels, printed text, embroidery and logos shown by seller pixels remain product truth when naturally visible in the requested worn view; preserve their spelling, form, color, placement, orientation and count without forcing an interior label into view. Do not turn temporary price tags, retail hangtags or store clip tags into garment design. ${outfit_lock}
+
+BOUNDED POSE SEMANTICS — preserve the pose's meaning, not exact coordinates:
+${pose_semantics}
+Preserve the action, body-direction family, weight-bearing/support logic, key contacts, broad limb roles, gaze behavior and rough framing. Allow only small natural changes in joint angles, hand/finger placement, head tilt, loose hair and fabric response needed for the selected model, verified garments and the new venue. A precision skeletal/contour/pixel copy fails. A different action, reversed weight/support side, removed support/contact, neutralized asymmetry, incompatible gaze or entirely different pose also fails. Do not center or symmetrize the subject into a mannequin stance.
+
+BOUNDED ADJACENT-PLACE: Treat the example as art direction, not a floor plan or base canvas. Preserve its place category and visual family, ordinary atmosphere and tone, broad palette and color relationships, time/weather, environmental light direction and softness, spatial feel, background density, broad depth layering and composition. Create a naturally plausible nearby-feeling alternate part or alternate concrete instance from the same kind of outing, with its own small spatial and incidental-prop details. It must not reproduce the exact site, floor plan, or distinctive architecture, furniture or prop relationships closely enough to read as the same photographed spot or moment. Vary only small plausible spatial or prop details that arise naturally; never use an object-count quota, and never add, relocate, duplicate or awkwardly stage objects merely to prove difference. Include only ordinary plausible elements at plausible scale and with plausible physical support. Keep any pose-essential support object's function and support side, but use a different plausible object or placement rather than copying it. Ordinary environmental text or signage is not automatically erased; keep it natural, but do not reproduce a distinctive third-party brand or sign verbatim or invent conspicuous fake or garbled text. Do not beautify or drift the place category, visual family, atmosphere, tone, palette, time/weather, lighting principle, camera geometry, structural anchors, background density or depth layering. Camera height, obliqueness, distance, crop, headroom, subject scale, negative space, perspective and foreshortening remain fixed from the example in both capture arms. The selected CAPTURE ARM below alone controls output capture rendering/processing, depth-of-field behavior and lens rendering; it must not change that camera geometry or framing. An uninformed viewer should read this as a nearby alternate part or instance from the same kind of outing, recognize the example's pose semantics and atmosphere, and still not read it as an exact-site replica.
+
+CAPTURE RENDERING:
+RECENT IPHONE DEFAULT PHOTO CONTRACT: Render this as a believable photograph from a recent iPhone using the default Photo app and the ordinary main 1x camera. Do not use Portrait mode, Cinematic mode, a telephoto portrait look, ProRAW styling or a simulated interchangeable-lens camera. Keep broad natural depth of field, ordinary main-camera rendering with mild wide-angle edge behavior, realistic computational exposure and white balance, restrained local HDR, natural skin and fabric texture, slight handheld capture character and ordinary edge-to-edge phone sharpness. This arm changes capture rendering only: do not change the sealed camera height, obliqueness, distance, crop, headroom, subject scale, negative space, perspective or foreshortening. Avoid synthetic bokeh, over-sharpening, waxy skin, haloed HDR edges and glossy campaign polish.
+
+CAMERA AND PRODUCT SAFETY: Camera height, distance, crop and subject scale remain fixed; preserve the source-locked obliqueness, headroom, negative space, perspective and foreshortening as well. Keep the sold garment inspectably sharp. Do not use Portrait mode, Cinematic mode, a telephoto portrait look or artificial bokeh.
+
+CONDITIONAL POINT LIGHT: Only when a real window, sunlight gap or practical fixture in the example makes it physically plausible, allow one restrained directional accent. It must affect background, skin, sold product and matching garment with one coherent direction and color temperature while keeping product midtones readable. No invented studio spotlight, bleaching, face/body light separation or theatrical rim light.
+
+PHYSICAL INTEGRATION: Person, garments and venue share one physical light field and camera perspective. Within the selected capture arm's exposure, white-balance and contrast rendering, keep skin, garments and background coherent. Keep the sold product inspectably sharp. Add coherent contact/cast shadows, ambient occlusion, reflected light/color, fabric self-shadow and fold shading. No halos, pasted texture, floating contact, masked separation or artificial bokeh.
+
+Output exactly one vertical 2:3 photograph. No collage, duplicate person, inset, caption, watermark, temporary retail tag or invented garment feature.

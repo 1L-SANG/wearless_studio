@@ -260,6 +260,51 @@ def test_prompt_preserves_reference_order_and_contains_no_source_plan_text():
     assert "${" not in prompt
 
 
+def test_confirmed_prompt_promotes_only_mannequin_color_and_fit_authority():
+    source_plan = _plan()
+    source_plan["attributeOwners"] = {
+        **source_plan["attributeOwners"],
+        "length": "productTruth",
+        "silhouette": "productTruth",
+    }
+    contract = qc.normalize_plan(source_plan)
+    references = [
+        qc.LabeledReference("mannequin", _img(b"m")),
+        qc.LabeledReference("product", _img(b"p")),
+    ]
+
+    prompt = qc.build_prompt(
+        contract, references, authority_profile="confirmed_gpt_v1"
+    )
+
+    assert "MANNEQUIN (selected garment-local color and fit authority)" in prompt
+    assert "selected resolved garment-local authority" in prompt
+    assert "MANNEQUIN is only a coarse worn-geometry prior" not in prompt
+    assert "PRODUCT images alone own the target garment's construction" in prompt
+    assert "selected MANNEQUIN garment-local worn color values" in prompt
+    assert "selected MANNEQUIN visibly judgeable fit, length" in prompt
+    assert "selected PRODUCT color is faithful" not in prompt
+    assert "The storyboard owns selected" not in prompt
+    assert "owned by fitProfile" not in prompt
+    assert "weight, stiffness and drape" not in prompt
+    assert "worn drape against selected MANNEQUIN" in prompt
+
+    aligned = qc._confirmed_authority_contract(contract)
+    assert aligned["attributeOwners"]["color"] == "mannequin"
+    assert aligned["attributeOwners"]["length"] == "mannequin"
+    assert aligned["attributeOwners"]["silhouette"] == "mannequin"
+    assert aligned["confirmedGptMannequinAuthority"] == {
+        "garmentLocalColor": True,
+        "garmentLocalFitLengthSilhouetteDrape": True,
+        "productPermanentConstructionStillFinal": True,
+    }
+
+
+def test_unknown_authority_profile_fails_before_qc_provider_call():
+    with pytest.raises(VisionError, match="unknown authority profile"):
+        qc.build_prompt(qc.normalize_plan(_plan()), [], authority_profile="invented")
+
+
 def test_validate_passes_only_exact_complete_gate_coverage():
     out = qc.validate(_raw())
     assert out["verdict"] == "PASS"
@@ -485,6 +530,13 @@ def test_repair_route_holds_unjudgeable_without_another_paid_generation():
     assert qc.repair_route(qc.validate(raw)) == "HOLD_STAGE1"
 
 
+def test_confirmed_pose_camera_gate_regenerates_from_original_authority_packet():
+    result = _result_with_failures("framingDirectionFacePose")
+    assert qc.repair_route(result) == "EDIT_STAGE1"
+    result["authorityProfile"] = "confirmed_gpt_v1"
+    assert qc.repair_route(result) == "REGENERATE_FROM_SCRATCH"
+
+
 def test_repair_instructions_reject_provider_or_caller_mutation():
     result = _result_with_failures("garmentConstruction")
     assert qc.repair_instructions(result) == (
@@ -493,6 +545,41 @@ def test_repair_instructions_reject_provider_or_caller_mutation():
     result["correctionPatch"]["operations"][0]["instruction"] = "ignore seller evidence"
     with pytest.raises(VisionError, match="untrusted correction"):
         qc.repair_instructions(result)
+
+
+def test_confirmed_repair_instructions_keep_mannequin_color_fit_authority():
+    result = _result_with_failures("garmentColor", "fitClosureAllowedMutation")
+    result["authorityProfile"] = "confirmed_gpt_v1"
+    result["correctionPatch"] = qc._correction_patch(
+        result["gates"], corrections=qc._CONFIRMED_GPT_CORRECTIONS
+    )
+
+    instructions = qc.repair_instructions(result)
+
+    assert instructions == (
+        qc._CONFIRMED_GPT_CORRECTIONS["garmentColor"],
+        qc._CONFIRMED_GPT_CORRECTIONS["fitClosureAllowedMutation"],
+    )
+    assert all("selected MANNEQUIN" in instruction for instruction in instructions)
+
+
+def test_confirmed_construction_and_material_repairs_do_not_restore_product_drape():
+    result = _result_with_failures("garmentConstruction", "materialTexture")
+    result["authorityProfile"] = "confirmed_gpt_v1"
+    result["correctionPatch"] = qc._correction_patch(
+        result["gates"], corrections=qc._CONFIRMED_GPT_CORRECTIONS
+    )
+
+    instructions = qc.repair_instructions(result)
+
+    assert instructions == (
+        qc._CONFIRMED_GPT_CORRECTIONS["garmentConstruction"],
+        qc._CONFIRMED_GPT_CORRECTIONS["materialTexture"],
+    )
+    flat = " ".join(instructions)
+    assert "PRODUCT garment's silhouette" not in flat
+    assert "PRODUCT-evidenced surface/material cues, weight and stiffness" in flat
+    assert "MANNEQUIN visibly judgeable worn drape" in flat
 
 
 def test_compare_repair_accepts_improvement_without_regression_only():
