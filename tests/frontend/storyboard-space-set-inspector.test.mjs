@@ -23,7 +23,10 @@ const spaceSetHeaderSource = storyboardSource.slice(
 
 test('selecting a space-set block omits the generation gallery, shot tabs, and my-photo tab', () => {
   assert.match(storyboardSource, /shouldRenderGenerationExampleGuide\(block\) \{\s*return !block\?\.spaceGroupId;/);
-  assert.equal((inspectorSource.match(/\{shouldRenderGenerationExamples && \(/g) || []).length, 2);
+  // 갤러리 게이트는 두 곳(대기 레시피 / 일반). 시그니처 슬롯은 전용 갤러리를 쓰므로
+  // 일반 쪽 게이트에 !isSignatureSlot 이 붙는다 — 두 게이트 모두 여전히 존재해야 한다.
+  assert.equal((inspectorSource.match(/\{shouldRenderGenerationExamples && /g) || []).length, 2);
+  assert.match(inspectorSource, /\{shouldRenderGenerationExamples && !isSignatureSlot && \(/);
   assert.match(inspectorSource, /isMine && !block\.spaceGroupId/);
   assert.match(storyboardSource, /aria-label="생성예시 갤러리"/);
   assert.match(storyboardSource, /<ShotSegment/);

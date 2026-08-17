@@ -64,6 +64,7 @@ import {
   moodGridContent,
   stripHookFrameFields,
 } from '@/lib/storyboardHookFrame.js';
+import { pickSignatureCut, signatureCutById, signatureCutsFor } from '@/lib/signatureCutPool.js';
 import { shuffleSectionExamples } from '@/lib/storyboardExampleShuffle.js';
 import { uniqueGenerationCutCount } from '@/lib/generationCutCount.js';
 import { genderForClothingType } from '@/lib/productGender.js';
@@ -170,8 +171,11 @@ const WORN_ROLE_BY_CUT_TYPE = Object.freeze({
   mirror: CONTENT_ROLES.REAL_WEAR,
 });
 const exampleCategoryFor = (cut) => cut === 'product' ? 'product' : (cut === 'horizon' ? 'horizon' : 'styling');
+/* 시그니처 풀(sig_*)은 생성예시 카탈로그에 없다 — 카탈로그 조회 전에 먼저 확인한다.
+   이 한 곳이 카드 썸네일의 유일한 관문이라, 여기만 알면 보드·인스펙터 전 경로에 반영된다. */
 const exampleThumbFor = (catalogs, exampleId, cut) => (
-  (catalogs?.genExamples || []).find((example) => example.id === exampleId)?.thumb
+  signatureCutById(exampleId)?.thumb
+  || (catalogs?.genExamples || []).find((example) => example.id === exampleId)?.thumb
   || Placeholder.photo(exampleId, exampleCategoryFor(cut), 240, 320)
 );
 export function exampleGenderFromAnalysis(analysis, catalogs, clothingType) {
@@ -1104,6 +1108,31 @@ function SpaceSetGallery({ mode, error, onChoose, onClose, gender, clothingType,
 }
 
 
+/* 시그니처 컷 전용 갤러리 — 생성예시 카탈로그가 아니라 signatureCutPool 을 보여준다.
+   분위기를 고를 여지는 남기되(장소 세트처럼 감추지 않는다), 샷·참조범위 같은
+   생성예시용 조작은 없다. 시그니처는 구도·배경 문법이 고정된 자리이기 때문이다. */
+function SignatureCutGallery({ gender, exampleId, onExampleChange }) {
+  const cuts = signatureCutsFor(gender);
+  return (
+    <div className="insp-sec sb-signature-gallery">
+      <label className="lbl">첫 화면 분위기</label>
+      <div className="sb-signature-grid">
+        {cuts.map((cut) => (
+          <button
+            key={cut.id}
+            type="button"
+            className={'sb-signature-cell' + (cut.id === exampleId ? ' sel' : '')}
+            aria-pressed={cut.id === exampleId}
+            onClick={() => onExampleChange(cut.id)}
+          >
+            <img src={cut.thumb} alt="" loading="lazy" decoding="async" />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function shouldRenderGenerationExampleGuide(block) {
   return !block?.spaceGroupId;
 }
@@ -1360,6 +1389,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   const isMirror = block.cutType === 'mirror';
   const isDetail = block.contentRole === CONTENT_ROLES.DETAIL;
   const shouldRenderGenerationExamples = shouldRenderGenerationExampleGuide(block);
+  const isSignatureSlot = block.hookSlotRole === 'signature';
   const effectiveSectionRole = requestedRecipe?.sectionRole || block.sectionRole;
   const pendingInSpace = !!block.spaceGroupId && !requestedRecipe;
   // 디테일 샷 상시 제공(2026-08-07 개편) — 디테일 사진이 없어도 서버가 원본 구조 확대로 생성
@@ -1597,7 +1627,18 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         </div>
       ) : (
         <>
-          {shouldRenderGenerationExamples && (
+          {isSignatureSlot && (
+            <SignatureCutGallery
+              gender={exampleGender}
+              exampleId={block.exampleId || null}
+              onExampleChange={(id) => onChange({
+                exampleId: id,
+                exampleSelectionOrigin: 'user',
+                thumb: signatureCutById(id)?.thumb || null,
+              })}
+            />
+          )}
+          {shouldRenderGenerationExamples && !isSignatureSlot && (
             <MoodGuide onUseMine={(ref) => onChange({
               source: 'mine', title: '내 이미지', cutType: null, contentRole: CONTENT_ROLES.CUSTOM,
               ownImages: [ref?.url || ref], thumb: ref?.url || ref,
@@ -1787,12 +1828,32 @@ function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, ana
     product: p,
     gender: exampleGender,
   });
+  // 시그니처 컷은 전용 풀에서 배정한다(생성예시 카탈로그 대상이 아니다). 자동 배정이
+  // 카탈로그 예시를 붙여 놨더라도 여기서 풀 이미지로 바꾼다 — 사용자가 직접 고른
+  // 선택(origin 'user')은 존중해 건드리지 않는다.
+  const withSignature = assignment.blocks.map((block) => {
+    if (block.hookSlotRole !== 'signature') return block;
+    if (block.exampleSelectionOrigin === 'user' && signatureCutById(block.exampleId)) return block;
+    const picked = pickSignatureCut({
+      gender: exampleGender,
+      // 프로젝트 단위로 고정되는 값이면 무엇이든 된다 — 같은 보드를 다시 열면 같은 컷이어야 한다.
+      projectId: p?.projectId || p?.id || a?.projectId || 'default',
+    });
+    if (!picked) return block;
+    return {
+      ...block,
+      exampleId: picked.id,
+      exampleSelectionOrigin: block.exampleSelectionOrigin === 'user' ? 'user' : 'auto',
+      thumb: picked.thumb,
+    };
+  });
+
   const allColorOpts = buildColorOpts(p.colors, hydratedCatalogs, hexFor);
   const colorOpts = visibleColorOpts(allColorOpts, p.colors);
   const fallbackColor = [{ id: 'col1', label: '기본', hex: '#15141a' }];
 
   return {
-    blocks: assignment.blocks,
+    blocks: withSignature,
     catalogs: hydratedCatalogs,
     matchClothing,
     clothingType,

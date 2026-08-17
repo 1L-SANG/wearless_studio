@@ -3295,3 +3295,13 @@
   background: var(--accent-error, #d92d20); color: #fff;
   font-size: 11.5px; font-weight: 700; cursor: pointer;
 }
+
+/* 시그니처 컷 전용 갤러리 — 생성예시 격자와 같은 시각 언어, 조작은 선택뿐. */
+.sb-signature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.sb-signature-cell {
+  position: relative; aspect-ratio: 3 / 4; border-radius: 8px; overflow: hidden;
+  padding: 0; border: 2px solid transparent; background: var(--bg-2); cursor: pointer; display: block;
+}
+.sb-signature-cell img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform .16s, opacity .16s; }
+.sb-signature-cell:not(.sel):hover img { transform: scale(1.035); opacity: .94; }
+.sb-signature-cell.sel { border-color: var(--link); }
