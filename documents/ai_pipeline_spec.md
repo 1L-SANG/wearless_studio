@@ -76,6 +76,7 @@ info     상품·분석·콘티 데이터 수집/검증 (비AI)
 prep     블록별 프롬프트·에셋 준비, selectedMannequinId 컷 + 가상모델 face_front·body_front 원자 쌍 로드 (비AI, 모델 레퍼런스 계약은 ai_agent_modules §3 AG-06)
 cuts     AG-06 cut-generator — source='ai' 블록별 Gemini 1차. 블록들은 병렬 실행하고,
          CUT_OUTPUT_QC_MODE=repair이면 독립 QC 뒤 필요한 블록만 Gemini 2차 1회
+         1·2차 모두 image_high=gemini-3-pro-image와 DETAIL_CUT_IMAGE_SIZE=4K를 사용한다.
          세 계열로 컴파일하고, mirror는 styling의 mirrorSelfie 하위 방식으로 병렬 처리한다.
          source='mine' 블록은 ownImages 그대로(에이전트 호출 없음).
 copy     copywriting=true면: 카피 대상 블록별 AG-02 → 묶음 AG-03 검수(revise 채택)
@@ -93,7 +94,7 @@ done     project.status='done' · { data: EditorBlock[], credits }
   plate를 함께 사용한다. 임의 그룹 값은 거부한다. 현재 운영 R2에는 개별
   생성예시와 `space-sets-20260730-v1` 촬영 세트가 발행돼 있다.
 - **멱등**: status='generating' 재호출 → 합류, status='done' 재호출 → 기존 결과 반환 (계약 §6).
-- **독립 이미지 QC**: AG-06 각 컷 뒤 `CUT_OUTPUT_QC_MODE=shadow`이면 상품 동일성(텍스트·로고 포함), 사용자 의도, 인체·원근, 광원·그림자·주름을 독립 판정해 metadata에 저장한다. `repair`이면 모든 AI 블록이 같은 병렬 파이프라인을 타고, 1차 실패 중 프레이밍·인체·광원처럼 국소적인 결함은 1차 이미지를 직접 보정하며 의류·모델·공간 등 전역 결함은 원래 정본 입력에서 재생성한다. 2차는 1회뿐이며 독립 재검수에서 통과하거나 실패 축이 줄고 새 회귀가 없을 때만 채택한다. QC/2차 실패나 `UNJUDGEABLE`이면 추가 호출 없이 1차를 보존한다. 사용자 크레딧은 최종 컷 한 장 기준으로 유지하고 추가 provider 호출 실비는 `image_usage_events`에 기록한다. `PAGE_OUTPUT_QC_MODE=shadow`이면 같은 SKU·색상·모델·매칭·이너와 세트별 공간 연속성을 검사한다. 기본값은 `off`이며 프로덕션만 명시적으로 `repair`를 켠다.
+- **독립 이미지 QC**: AG-06 각 컷 뒤 `CUT_OUTPUT_QC_MODE=shadow`이면 상품 동일성(텍스트·로고 포함), 사용자 의도, 인체·원근, 광원·그림자·주름을 독립 판정해 metadata에 저장한다. `repair`이면 모든 AI 블록이 같은 병렬 AG-06 파이프라인을 타고, 1차 실패 중 프레이밍·인체·광원처럼 국소적인 결함은 1차 이미지를 AG-06의 국소 보정 분기로 직접 편집하며 의류·모델·공간 등 전역 결함은 AG-06의 원래 정본 입력에서 재생성한다. 두 경로 모두 `image_high` 모델과 콘티 전용 해상도 설정을 공유하며, 프로덕션은 Gemini 3 Pro Image·4K로 고정한다. 2차는 1회뿐이며 독립 재검수에서 통과하거나 실패 축이 줄고 새 회귀가 없을 때만 채택한다. QC/2차 실패나 `UNJUDGEABLE`이면 추가 호출 없이 1차를 보존한다. 사용자 크레딧은 최종 컷 한 장 기준으로 유지하고 추가 provider 호출 실비는 `image_usage_events`에 기록한다. `PAGE_OUTPUT_QC_MODE=shadow`이면 같은 SKU·색상·모델·매칭·이너와 세트별 공간 연속성을 검사한다. 기본값은 `off`이며 프로덕션만 명시적으로 `repair`를 켠다.
 
 ### PL-5 / PL-6 에디터 새 이미지·현재 이미지 수정 — `generateImage(projectId, req)`
 

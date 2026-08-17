@@ -125,6 +125,7 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # Gemini 1차 → 독립 QC → 필요 시 Gemini 2차 1회 → 독립 재검수 순서를 지킨다.
   # 새 hard-gate가 garment 동일성까지 포함하므로 구 best-of 후보 생성은 중복 비용을 막기 위해 끈다.
   MODEL_ROUTING_IMAGE_HIGH: gemini-3-pro-image
+  DETAIL_CUT_IMAGE_SIZE: "4K"
   DETAIL_CUT_CONCURRENCY: "0"
   DETAIL_CUT_STAGGER_MS: "3000"
   GARMENT_QC_MODE: "off"

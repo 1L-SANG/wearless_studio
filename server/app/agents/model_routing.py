@@ -28,4 +28,8 @@ def model_routing_snapshot(settings: Settings) -> dict:
         "image_high": settings.model_image_high,
         "text": settings.model_text,
         "imageSize": settings.mannequin_image_size,
+        "detailImageSize": (
+            getattr(settings, "detail_cut_image_size", None)
+            or settings.mannequin_image_size
+        ),
     }

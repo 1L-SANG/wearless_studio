@@ -23,7 +23,6 @@ from ..agents import (
     cut_generator,
     cut_output_qc,
     cut_plan,
-    cut_variator,
     feature_copy,
     image_qc,
     mannequin,
@@ -479,15 +478,13 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                             repair["attempted"] = True
                             try:
                                 if route == "EDIT_STAGE1":
-                                    repaired_img, repaired_mime = await cut_variator.generate(
+                                    repaired_img, repaired_mime = await cut_generator.repair(
                                         s,
                                         gemini,
+                                        b,
+                                        product,
                                         chosen,
-                                        [
-                                            {"type": "qc", "value": instruction}
-                                            for instruction in instructions
-                                        ],
-                                        b.get("cutType"),
+                                        qc_corrections=instructions,
                                     )
                                 else:
                                     repaired_img, repaired_mime = await cut_generator.generate(

@@ -1170,6 +1170,49 @@ def build_prompt(
     return prompt
 
 
+def build_qc_repair_prompt(
+    cut_spec: dict, product: dict, qc_corrections: tuple[str, ...],
+) -> str:
+    """AG-06 국소 2차 보정 프롬프트.
+
+    입력은 1차 결과 한 장뿐이다. 정본을 다시 봐야 하는 실패는 이 함수를 쓰지 않고
+    ``generate(..., qc_corrections=...)``로 원래 입력에서 재생성한다.
+    """
+
+    if not qc_corrections or len(qc_corrections) > 5 or any(
+        not isinstance(item, str) or not item or len(item) > 240
+        for item in qc_corrections
+    ):
+        raise ValueError("invalid_qc_corrections")
+    clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
+    spec = apply_reference_compatibility(
+        normalize_spec(cut_spec, clothing_type=clothing_type)
+    )
+    intent = (
+        f"recipe={spec['cutType']}; shot={spec['shot']}; "
+        f"direction={spec['direction']}; face={spec.get('faceExposure') or 'none'}"
+    )
+    return (
+        "You are the AG-06 second-stage fashion cut generator. Edit the single attached "
+        "STAGE-1 output; do not reconstruct a different photograph.\n\n"
+        f"COMPILED CUT INTENT: {intent}\n\n"
+        "INDEPENDENT QC CORRECTIONS:\n"
+        + "\n".join(f"- {instruction}" for instruction in qc_corrections)
+        + "\n\nPRESERVATION CONTRACT:\n"
+        "- Change only the named failed axes. Freeze every other visible pixel-level fact.\n"
+        "- Keep the same person and face, garment and matching garments, pose meaning, place, "
+        "props, light, color tone, and capture character unless a correction explicitly names it.\n"
+        "- Preserve all garment text, logos, hardware, pattern, seams, material, color, fit, and "
+        "silhouette exactly as visible in STAGE-1. Add no new item or design detail.\n"
+        "- Output exactly one fully opaque photorealistic portrait 2:3 image, with no collage, "
+        "caption, overlay, or watermark."
+    )
+
+
+def _detail_image_size(settings: Settings) -> str:
+    return getattr(settings, "detail_cut_image_size", None) or settings.mannequin_image_size
+
+
 async def generate(
     settings: Settings,
     gemini: GeminiImageClient,
@@ -1210,11 +1253,34 @@ async def generate(
         qc_corrections=qc_corrections,
     )
     res = await gemini.generate_content_image(
-        model, prompt, images, settings.mannequin_image_size,
+        model, prompt, images, _detail_image_size(settings),
         aspect_ratio=settings.mannequin_aspect_ratio,
     )
     if crop_pose_medium:
         return await pose_crop.crop_pose_medium(
             settings, res.image, res.mime, clothing_type
         )
+    return res.image, res.mime
+
+
+async def repair(
+    settings: Settings,
+    gemini: GeminiImageClient,
+    cut_spec: dict,
+    product: dict,
+    source_image: InlineImage,
+    *,
+    qc_corrections: tuple[str, ...],
+) -> tuple[bytes, str]:
+    """AG-06 국소 2차 보정. 같은 image_high 모델을 쓰고 1차 결과만 직접 편집한다."""
+
+    model = resolve_model(settings, "image_high")
+    prompt = build_qc_repair_prompt(cut_spec, product, qc_corrections)
+    res = await gemini.generate_content_image(
+        model,
+        prompt,
+        [source_image],
+        _detail_image_size(settings),
+        aspect_ratio=settings.mannequin_aspect_ratio,
+    )
     return res.image, res.mime

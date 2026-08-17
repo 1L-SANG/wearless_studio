@@ -85,6 +85,9 @@ class Settings:
     # 조정 흐름에서만 다른 모델을 시험할 때 쓴다 — 초기 생성 품질을 건드리지 않고 비교한다.
     mannequin_adjust_tier: str = ""  # "" | image_light | image_high
     mannequin_image_size: str = "1K"  # 1K | 2K | 4K (2K 서버경로 저하 시 1K)
+    # 상세페이지/에디터 컷 전용 해상도. 마네킹 해상도와 분리해야 콘티 4K 배포가
+    # 마네킹 생성 비용·지연까지 조용히 바꾸지 않는다.
+    detail_cut_image_size: str = ""  # ""=mannequin_image_size 상속 | 1K | 2K | 4K
     # 전신 세로 고정 → 컷 간 비율 일관 (gemini-3-pro-image 지원: 16:9·9:16·1:1·5:4·4:5·3:2·2:3)
     mannequin_aspect_ratio: str = "2:3"
     #: 일반 generation/QC 호출 총 상한 — 최초 생성 포함 2회 고정(최초 + 재시도 1회).
@@ -294,6 +297,15 @@ def _image_size() -> str:
     return v if v in {"1K", "2K", "4K"} else "1K"
 
 
+def _detail_cut_image_size() -> str:
+    # 미설정 환경은 기존 MANNEQUIN_IMAGE_SIZE를 그대로 상속해 하위 호환한다.
+    v = os.getenv("DETAIL_CUT_IMAGE_SIZE")
+    if v is None:
+        return _image_size()
+    v = v.upper()
+    return v if v in {"1K", "2K", "4K"} else _image_size()
+
+
 def _mannequin_tier() -> str:
     t = os.getenv("MANNEQUIN_TIER", "image_high")
     return t if t in {"image_light", "image_high"} else "image_high"
@@ -365,6 +377,7 @@ def load_settings() -> Settings:
         mannequin_tier=_mannequin_tier(),
         mannequin_adjust_tier=_mannequin_adjust_tier(),
         mannequin_image_size=_image_size(),
+        detail_cut_image_size=_detail_cut_image_size(),
         mannequin_aspect_ratio=os.getenv("MANNEQUIN_ASPECT_RATIO", "2:3"),
         mannequin_max_attempts=int(os.getenv("MANNEQUIN_MAX_ATTEMPTS", "2")),
         detail_cut_max_attempts=int(os.getenv("DETAIL_CUT_MAX_ATTEMPTS", "2")),

@@ -1112,6 +1112,66 @@ def test_generate_forwards_directing_profile_to_rendered_prompt():
     assert result == (b"PROFILE", "image/png")
 
 
+def test_stage1_and_local_stage2_share_ag06_high_model_and_detail_4k():
+    calls = []
+
+    class FakeGemini:
+        async def generate_content_image(
+            self, model, prompt, images, image_size, aspect_ratio,
+        ):
+            calls.append({
+                "model": model,
+                "prompt": prompt,
+                "images": images,
+                "imageSize": image_size,
+                "aspectRatio": aspect_ratio,
+            })
+            return SimpleNamespace(image=f"OUT-{len(calls)}".encode(), mime="image/png")
+
+    settings = make_settings(
+        gemini_api_key="x",
+        model_image_high="gemini-3-pro-image",
+        mannequin_image_size="1K",
+        detail_cut_image_size="4K",
+        mannequin_aspect_ratio="2:3",
+    )
+    spec = {"cutType": "styling", "shot": "full", "direction": "front"}
+    product = {"name": "니트", "clothingType": "top", "colors": []}
+    stage1 = asyncio.run(cg.generate(settings, FakeGemini(), spec, product, []))
+    stage2 = asyncio.run(cg.repair(
+        settings,
+        FakeGemini(),
+        spec,
+        product,
+        cg.InlineImage("image/png", stage1[0]),
+        qc_corrections=(
+            "Restore the storyboard shot, direction, face handling, and effective pose; "
+            "storyboard controls override example pixels.",
+        ),
+    ))
+
+    assert stage1 == (b"OUT-1", "image/png")
+    assert stage2 == (b"OUT-2", "image/png")
+    assert [call["model"] for call in calls] == [
+        "gemini-3-pro-image", "gemini-3-pro-image",
+    ]
+    assert [call["imageSize"] for call in calls] == ["4K", "4K"]
+    assert [call["aspectRatio"] for call in calls] == ["2:3", "2:3"]
+    assert calls[0]["images"] == []
+    assert [image.data for image in calls[1]["images"]] == [b"OUT-1"]
+    assert "AG-06 second-stage" in calls[1]["prompt"]
+    assert "do not reconstruct a different photograph" in calls[1]["prompt"]
+
+
+def test_qc_repair_prompt_rejects_empty_or_oversized_corrections():
+    spec = {"cutType": "styling", "shot": "full", "direction": "front"}
+    product = {"clothingType": "top"}
+    with pytest.raises(ValueError, match="invalid_qc_corrections"):
+        cg.build_qc_repair_prompt(spec, product, ())
+    with pytest.raises(ValueError, match="invalid_qc_corrections"):
+        cg.build_qc_repair_prompt(spec, product, ("x" * 241,))
+
+
 def test_face_ref_token_always_substituted_on_every_path():
     # ${faceRefLine} 미치환은 render 의 leftover 가드 → ValueError → _gen_cuts 가 삼켜
     # **전 컷 빈 슬롯 + 전액 미차감**으로 조용히 죽는다. 모든 컷 조합에서 치환을 확인.

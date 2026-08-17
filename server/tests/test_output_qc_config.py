@@ -16,8 +16,12 @@ def test_output_qc_defaults_off_and_accepts_repair(monkeypatch):
     assert settings.page_output_qc_mode == "shadow"
 
     monkeypatch.setenv("CUT_OUTPUT_QC_MODE", "repair")
+    monkeypatch.setenv("MANNEQUIN_IMAGE_SIZE", "1K")
+    monkeypatch.setenv("DETAIL_CUT_IMAGE_SIZE", "4K")
     settings = load_settings()
     assert settings.cut_output_qc_mode == "repair"
+    assert settings.mannequin_image_size == "1K"
+    assert settings.detail_cut_image_size == "4K"
 
     monkeypatch.setenv("CUT_OUTPUT_QC_MODE", "enforce")
     monkeypatch.setenv("PAGE_OUTPUT_QC_MODE", "invalid")
@@ -31,7 +35,18 @@ def test_production_manifest_enables_parallel_gemini_repair_pipeline():
     variables = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))["variables"]
 
     assert variables["MODEL_ROUTING_IMAGE_HIGH"] == "gemini-3-pro-image"
+    assert variables["DETAIL_CUT_IMAGE_SIZE"] == "4K"
     assert variables["DETAIL_CUT_CONCURRENCY"] == "0"
     assert variables["DETAIL_CUT_STAGGER_MS"] == "3000"
     assert variables["GARMENT_QC_MODE"] == "off"
     assert variables["CUT_OUTPUT_QC_MODE"] == "repair"
+
+
+def test_detail_cut_image_size_inherits_mannequin_size_when_unset(monkeypatch):
+    monkeypatch.setenv("MANNEQUIN_IMAGE_SIZE", "2K")
+    monkeypatch.delenv("DETAIL_CUT_IMAGE_SIZE", raising=False)
+
+    settings = load_settings()
+
+    assert settings.mannequin_image_size == "2K"
+    assert settings.detail_cut_image_size == "2K"

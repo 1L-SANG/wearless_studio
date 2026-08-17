@@ -174,20 +174,27 @@ def test_detail_repair_mode_edits_stage1_for_local_failure(monkeypatch):
             else _qc_result()
         )
 
-    async def fake_variator(settings, gemini, source, changes, cut_type):
-        captured.update(source=source, changes=changes, cut_type=cut_type)
+    async def fake_repair(
+        settings, gemini, cut_spec, product, source, *, qc_corrections,
+    ):
+        captured.update(
+            source=source,
+            cut_spec=cut_spec,
+            product=product,
+            qc_corrections=qc_corrections,
+        )
         return b"EDITED", "image/png"
 
     monkeypatch.setattr(dpj.cut_output_qc, "verdict", fake_cut_qc)
-    monkeypatch.setattr(dpj.cut_variator, "generate", fake_variator)
+    monkeypatch.setattr(dpj.cut_generator, "repair", fake_repair)
     run = _run_detail_cut(monkeypatch, qc_mode="repair")
 
     assert captured["source"].data == b"CHOSEN"
-    assert captured["cut_type"] == "product"
-    assert captured["changes"] == [{
-        "type": "qc",
-        "value": dpj.cut_output_qc._CORRECTIONS["framingDirectionFacePose"],
-    }]
+    assert captured["cut_spec"]["cutType"] == "product"
+    assert captured["product"]["clothingType"] == "top"
+    assert captured["qc_corrections"] == (
+        dpj.cut_output_qc._CORRECTIONS["framingDirectionFacePose"],
+    )
     assert run["r2"].saved == [b"EDITED"]
     assert len(run["generateKwargs"]) == 1
     repair = run["result"][4][0]["repair"]
@@ -203,11 +210,11 @@ def test_detail_repair_mode_keeps_stage1_when_stage2_regresses(monkeypatch):
             else _qc_result("framingDirectionFacePose", "modelIdentity")
         )
 
-    async def fake_variator(*_args, **_kwargs):
+    async def fake_repair(*_args, **_kwargs):
         return b"REGRESSED", "image/png"
 
     monkeypatch.setattr(dpj.cut_output_qc, "verdict", fake_cut_qc)
-    monkeypatch.setattr(dpj.cut_variator, "generate", fake_variator)
+    monkeypatch.setattr(dpj.cut_generator, "repair", fake_repair)
     run = _run_detail_cut(monkeypatch, qc_mode="repair")
 
     assert run["r2"].saved == [b"CHOSEN"]
