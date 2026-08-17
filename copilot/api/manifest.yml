@@ -44,6 +44,10 @@ network:
 
 variables:                       # 평문 (민감하지 않음). 시크릿은 아래 secrets 블록.
   APP_ENV: production
+  # Supabase session pooler 전체 한도(15)를 롤링 배포의 구·신 태스크가 함께 잠식하지 않게 한다.
+  # dispatcher는 프로세스당 1개 직렬 실행이므로 3개면 충분하고, 10개 기본값을 두 태스크가
+  # 동시에 잡아 PostgREST까지 PGRST002/503이 되던 2026-08-18 장애를 방지한다.
+  DB_POOL_MAX_SIZE: "3"
   SUPABASE_URL: https://pedonlvyhoyedzdmmwco.supabase.co
   CORS_ORIGINS: https://ai.wearless.kr,http://localhost:5173
   SUPABASE_ANON_KEY: sb_publishable_iY1-8oAlYRJitM09dPGJnw_fs44eUzs
