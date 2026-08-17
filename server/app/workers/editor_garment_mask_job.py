@@ -146,7 +146,7 @@ async def run_editor_garment_mask_job(app, job: dict) -> None:
                                    "maskKey": result.mask_key,
                                    "latencySeconds": latency})
             return
-        if match_share > editor_garment_mask.MATCH_BAND_MAX:
+        if match_share > editor_garment_mask.MATCH_ZONE_MAX:
             await finish("done", {"state": "failed", "cutId": cut_id,
                                   "code": FAIL_ON_MATCHING, "matchingSide": matching_side,
                                   "matchShare": match_share, "band": list(band),

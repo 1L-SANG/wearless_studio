@@ -50,7 +50,7 @@ STATUS_FAILED = "failed"
 # 고정한다(ALGORITHM_VERSION 이 이미 같은 이유로 복제되어 있다).
 MATCHING_CORE = {"bottom": (0.60, 1.00), "top": (0.00, 0.35)}
 MATCHING_SEPARABLE = {"top": ("bottom",), "outer": ("bottom",), "bottom": ("top",)}
-MATCH_BAND_MAX = 0.25
+MATCH_ZONE_MAX = 0.25
 #: 종류를 모르면 상의로 본다 — `worn_garment.category_of` 와 같은 폴백이어야 한다. 여기서
 #: 갈리면 종류가 비어 있는 컷에서 서비스는 밴드를 쓰는데 API 검증은 건너뛴다(2026-08-17 실측).
 KNOWN_CATEGORIES = ("top", "outer", "bottom", "dress")
@@ -79,6 +79,21 @@ async def matching_side_for_project(conn, *, user_id: str, project_id: str) -> s
     meta = await repo.get_matching_item_metadata(conn, match_id, user_id, project_id)
     side = str((meta or {}).get("clothing_type") or "").strip().lower()
     return side if side in ("top", "bottom") else None
+
+
+async def current_mask_for_cut(conn, *, user_id: str, project_id: str,
+                               cut_id: str) -> tuple[dict | None, str | None]:
+    """지금 **써도 되는** 마스크와 이 컷의 코디 쪽. 보장 이전 마스크는 없는 것으로 본다.
+
+    상태 조회·마스크 픽셀 전송·적용이 모두 이 함수를 지난다. 한 곳이라도 `find_for_cut` 을
+    직접 부르면 그 경로로 검증되지 않은 마스크가 새고, 배포 순간 에디터를 열어 둔 셀러가
+    바로 그 경로를 탄다(2026-08-17 리뷰).
+    """
+    mask = await find_for_cut(conn, project_id=project_id, cut_id=cut_id)
+    side = await matching_side_for_project(conn, user_id=user_id, project_id=project_id)
+    if mask is not None and needs_match_guard(mask.get("metadata") or {}, matching_side=side):
+        return None, side
+    return mask, side
 
 
 def matching_core_band(clothing_type: str | None, matching_side: str | None) -> tuple:

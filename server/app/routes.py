@@ -1879,15 +1879,11 @@ async def _tone_state(conn, r2, *, user_id: str, project_id: str, cut_id: str) -
     if cut is None:
         raise _not_found()
     source_asset_id = str(cut.get("id") or "")
-    mask = await editor_garment_mask.find_for_cut(conn, project_id=project_id, cut_id=cut_id)
     # 코디 의류를 함께 입은 컷인데 "주상품 위" 보장 이전에 만들어진 마스크면 없는 것으로 본다 —
     # 그래야 아래 lazy 큐가 무과금으로 다시 만든다. 잡이 마스크를 기록할 때 보장 스탬프를
     # 반드시 찍으므로(editor_garment_mask.record) 이 조건이 영구 재큐로 남지 않는다.
-    matching_side = await editor_garment_mask.matching_side_for_project(
-        conn, user_id=user_id, project_id=project_id)
-    if mask is not None and editor_garment_mask.needs_match_guard(
-            mask.get("metadata") or {}, matching_side=matching_side):
-        mask = None
+    mask, matching_side = await editor_garment_mask.current_mask_for_cut(
+        conn, user_id=user_id, project_id=project_id, cut_id=cut_id)
     render = await mannequin_tone_render.active_for_cut(
         conn, project_id=project_id, cut_id=cut_id)
     meta = (render or {}).get("metadata") or {}
@@ -2004,8 +2000,9 @@ async def _tone_bytes(request: Request, project_id: str, cut_id: str, user_id: s
         if which == "source":
             key, mime = cut["r2_key"], cut.get("mime_type") or "image/png"
         else:
-            mask = await editor_garment_mask.find_for_cut(
-                conn, project_id=project_id, cut_id=cut_id)
+            # 검증된 마스크만 픽셀을 내준다 — 클라이언트가 받은 마스크가 곧 조정 대상이다.
+            mask, _side = await editor_garment_mask.current_mask_for_cut(
+                conn, user_id=user_id, project_id=project_id, cut_id=cut_id)
             if mask is None or not mask.get("r2_key"):
                 raise _not_found()
             key, mime = mask["r2_key"], "image/png"
@@ -2066,17 +2063,20 @@ async def apply_tone_editor(request: Request, project_id: str, cut_id: str,
         cut = await repo.get_mannequin_cut_asset(conn, user_id, project_id, cut_id)
         if cut is None:
             raise _not_found()
-        mask = await editor_garment_mask.find_for_cut(
-            conn, project_id=project_id, cut_id=cut_id)
-        if mask is None:
-            raise _bad_request("mask_not_ready", "색감 조정 준비가 아직 끝나지 않았어요.")
+        mask, _side = await editor_garment_mask.current_mask_for_cut(
+            conn, user_id=user_id, project_id=project_id, cut_id=cut_id)
 
+        # 초기화(0/0)는 마스크와 무관하게 항상 받는다 — 이미 붙은 조정본을 내리는 동작이다.
+        # 마스크를 요구하면, 보장 이전 마스크로 붙인 조정을 셀러가 되돌릴 수 없게 된다.
         if mannequin_tone_render.is_neutral(saturation, exposure):
             await mannequin_tone_render.clear_for_cut(
                 conn, project_id=project_id, cut_id=cut_id)
             await conn.commit()
             return await _tone_state(conn, _r2(request), user_id=user_id,
                                      project_id=project_id, cut_id=cut_id)
+
+        if mask is None:
+            raise _bad_request("mask_not_ready", "색감 조정 준비가 아직 끝나지 않았어요.")
 
         # 올라온 자산이 **이 사용자·이 프로젝트**의 것인지 확인한다. 메타데이터의 주장만 믿고
         # 다른 프로젝트의 이미지를 결과로 붙이는 일이 없어야 한다.

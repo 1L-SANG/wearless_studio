@@ -33,7 +33,7 @@ def test_api_and_sam_service_agree_on_the_matching_band():
     """API 이미지는 SAM 런타임을 임포트하지 않는다 — 그래서 값을 복제하고, 여기서 고정한다."""
     assert egm.MATCHING_CORE == W.MATCHING_CORE
     assert egm.MATCHING_SEPARABLE == W.MATCHING_SEPARABLE
-    assert egm.MATCH_BAND_MAX == W.MATCH_ZONE_MAX
+    assert egm.MATCH_ZONE_MAX == W.MATCH_ZONE_MAX
 
 
 @pytest.mark.parametrize("clothing_type", ["top", "outer", "bottom", "dress", "nonsense", None])
@@ -238,7 +238,7 @@ def _async(value):
 class _RecordingMask:
     """`editor_garment_mask` 대역 — 밴드 계산·픽셀 판정은 진짜 모듈 함수를 그대로 쓴다."""
 
-    MATCH_BAND_MAX = egm.MATCH_BAND_MAX
+    MATCH_ZONE_MAX = egm.MATCH_ZONE_MAX
     matching_core_band = staticmethod(egm.matching_core_band)
     band_mass_fraction = staticmethod(egm.band_mass_fraction)
     matching_side_for_project = staticmethod(egm.matching_side_for_project)
@@ -308,9 +308,20 @@ def test_the_route_and_the_job_read_the_matching_side_from_one_function():
     """두 판정이 갈리면 '만들면 stale, 조회하면 없음' 무한 재큐가 된다."""
     import inspect
     from app import routes
-    assert "editor_garment_mask.matching_side_for_project" in inspect.getsource(routes._tone_state)
+    assert "editor_garment_mask.current_mask_for_cut" in inspect.getsource(routes._tone_state)
     assert "editor_garment_mask.matching_side_for_project" in inspect.getsource(
         job.run_editor_garment_mask_job)
+
+
+def test_no_route_serves_a_mask_without_passing_the_guard():
+    """라우트가 `find_for_cut` 을 직접 부르면 그 경로로 검증 안 된 마스크가 샌다 —
+    배포 순간 에디터를 열어 둔 셀러가 정확히 그 경로(마스크 픽셀·적용)를 탄다."""
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parents[1] / "app" / "routes.py").read_text(
+        encoding="utf-8")
+    assert "editor_garment_mask.find_for_cut" not in src
+    # 상태 조회·마스크 픽셀 전송·적용, 세 소비자 모두.
+    assert src.count("editor_garment_mask.current_mask_for_cut") >= 3
 
 
 def test_the_band_covers_every_pair_the_product_can_actually_create():
@@ -330,3 +341,13 @@ def test_the_band_covers_every_pair_the_product_can_actually_create():
         else:
             assert band, f"{clothing_type}+{side} 조합에 밴드가 없으면 보장 밖이다"
             assert band == W.matching_core_band(clothing_type, side)
+
+
+def test_reset_is_always_allowed_even_without_a_usable_mask():
+    """보장 이전 마스크로 붙인 조정을 셀러가 되돌릴 수 있어야 한다 — 초기화는 마스크와 무관하다."""
+    import inspect
+    from app import routes
+    src = inspect.getsource(routes.apply_tone_editor)
+    neutral_at = src.index("is_neutral(")
+    guard_at = src.index('_bad_request("mask_not_ready"')
+    assert neutral_at < guard_at, "초기화 분기가 마스크 요구보다 앞에 있어야 한다"
