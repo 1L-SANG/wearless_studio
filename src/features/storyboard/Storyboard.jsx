@@ -9,7 +9,7 @@
    ============================================================= */
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
 import { Placeholder } from '@/mock/placeholders.js';
@@ -114,6 +114,7 @@ import {
   collectInitialRevealThumbnailUrls,
   waitForInitialReveal,
 } from './initialRevealGate.js';
+import { getCustomMatchPromotionTask } from '@/lib/customMatchPromotion.js';
 
 
 /* 장소 세트를 받을 수 있는 섹션 — 세트 setType 이 styling(스타일링)·horizon-*(스튜디오)뿐이라
@@ -1310,7 +1311,7 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, shot, 
   );
 }
 
-function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, hasDetailImage, projectId, onChange, onAtomicChange, onRetryAtomicSave, requestedRecipe, onCancelRequestedRecipe, matchClothing, spaceContext, onChangeSpaceSet, onAddMine, onExampleDrag }) {
+function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, hasDetailImage, projectId, onChange, onAtomicChange, onRetryAtomicSave, requestedRecipe, onCancelRequestedRecipe, matchClothing, customMatchPromotionPending = false, spaceContext, onChangeSpaceSet, onAddMine, onExampleDrag }) {
   const [matchOpen, setMatchOpen] = useState(false);
   const [pendingRecipe, setPendingRecipe] = useState(null);
   const [pendingChoice, setPendingChoice] = useState(null);
@@ -1668,7 +1669,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       {/* 매칭 의류가 없으면 편집 패널이 빈 화면이 되므로 진입 자체를 막는다.
           세트 멤버(spaceGroupId)는 세트 연출이 정본이라 매칭 편집도 숨긴다(2026-08-15 오너). */}
       {WORN_CUT_TYPES.has(block.cutType) && !block.spaceGroupId
-        && Array.isArray(matchClothing) && matchClothing.length > 0 && (
+        && ((Array.isArray(matchClothing) && matchClothing.length > 0) || customMatchPromotionPending) && (
         <>
           <button className={`insp-detail-btn${matchOpen ? ' open' : ''}`} onClick={() => setMatchOpen((v) => !v)}>
             <Icon name="settings" size={17} />매칭 의류 바꾸기
@@ -1676,7 +1677,13 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
           {matchOpen && (
             <div className="sb-match-inline">
               <div className="match-grid">
-                {matchClothing.map((m) => {
+                {customMatchPromotionPending && (
+                  <div className="match-cell sb-match-pending" role="status" aria-label="내 옷 준비 중">
+                    <span className="sb-match-pending-preview"><Icon name="loader" className="spin" size={20} /></span>
+                    <span className="ml">내 옷 준비 중</span>
+                  </div>
+                )}
+                {(matchClothing || []).map((m) => {
                   const on = (block.matchIds || []).includes(m.id);
                   return (
                     <button key={m.id} className={`match-cell${on ? ' on' : ''}`} aria-pressed={on}
@@ -1954,6 +1961,7 @@ function HookStyleChip({
 
 export function Storyboard() {
   const navigate = useNavigate();
+  const location = useLocation();
   const initialEntryRef = useRef(undefined);
   if (initialEntryRef.current === undefined) {
     const initialProjectId = useAppStore.getState().projectId;
@@ -1970,6 +1978,10 @@ export function Storyboard() {
   const [blocks, setBlocks] = useState(() => initialEntry?.blocks || null);
   const [catalogs, setCatalogs] = useState(() => initialEntry?.catalogs || null);
   const [matchClothing, setMatchClothing] = useState(() => initialEntry?.matchClothing || null);
+  const [customMatchPromotionPending, setCustomMatchPromotionPending] = useState(() => {
+    const initialProjectId = useAppStore.getState().projectId;
+    return getCustomMatchPromotionTask(initialProjectId)?.status === 'pending';
+  });
   const [colorOpts, setColorOpts] = useState(() => initialEntry?.colorOpts || []);
   const [detailColorOpts, setDetailColorOpts] = useState(() => initialEntry?.detailColorOpts || []);
   const [clothingType, setClothingType] = useState(() => initialEntry?.clothingType || 'top'); // 샷 필터 아이콘·예시 크롭용 (상의=위/하의=아래)
@@ -2018,6 +2030,9 @@ export function Storyboard() {
   const cardRefs = useRef(new Map());
   const setPickerScrollY = useRef(null);
   const toast = useToast();
+  const pushToast = toast.push;
+  const customMatchPromotionExpectedRef = useRef(location.state?.customMatchPromotionStarted === true);
+  const customMatchPromotionHandledRef = useRef(new Set());
   // 카피라이팅 토글 = 플로우 선택값 (store → patchProject 동기화, ADR-0002)
   const projectId = useAppStore((s) => s.projectId);
   const composeMode = useAppStore((s) => s.composeMode);
@@ -2029,6 +2044,56 @@ export function Storyboard() {
   const composeModeSelectionRef = useRef({ requestId: 0, pending: 0, confirmedMode: composeMode });
   const copywritingSelectionRef = useRef({ requestId: 0, pending: 0, confirmedValue: copyOn });
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
+
+  // 입력 화면이 시작한 완료 프라미스를 직접 구독한다. 서버를 반복 조회하지 않고 완료 시 한 번만
+  // 최신 매칭 목록을 읽어 준비 타일을 실제 내 옷으로 자동 교체한다.
+  useEffect(() => {
+    if (!projectId) return undefined;
+    const task = getCustomMatchPromotionTask(projectId);
+    if (!task) return undefined;
+    let active = true;
+    setCustomMatchPromotionPending(task.status === 'pending');
+    void task.promise.then(async (result) => {
+      if (!active) return;
+      setCustomMatchPromotionPending(false);
+      if (result?.attempted && !result.promoted) {
+        if (!customMatchPromotionHandledRef.current.has(projectId)) {
+          customMatchPromotionHandledRef.current.add(projectId);
+          pushToast('내 옷을 등록하지 못했어요. 분석 화면에서 다시 올려주세요.', { icon: 'alert' });
+        }
+        return;
+      }
+      if (!result?.attempted) return;
+      try {
+        const refreshed = await api.getMatchClothing(projectId);
+        if (!active) return;
+        setMatchClothing(refreshed || []);
+        setComposeModeSeed((current) => ({ ...current, matchClothing: refreshed || [] }));
+      } catch {
+        // 완료 시 캐시는 이미 무효화됐다. 단발 조회가 실패하면 기존 로드 경로로 한 번 재진입한다.
+        if (active) setLoadRetry((current) => current + 1);
+      }
+    }).catch(() => {
+      if (!active) return;
+      setCustomMatchPromotionPending(false);
+      if (!customMatchPromotionHandledRef.current.has(projectId)) {
+        customMatchPromotionHandledRef.current.add(projectId);
+        pushToast('내 옷을 등록하지 못했어요. 분석 화면에서 다시 올려주세요.', { icon: 'alert' });
+      }
+    });
+    return () => { active = false; };
+  }, [projectId, pushToast]);
+
+  // 새로고침·이탈로 메모리 프라미스가 유실된 경우 새 백엔드 인프라를 만들지 않는다. 이미 서버
+  // 목록에 내 옷이 없다면 기존 실패 안내로 수렴해 분석 화면의 재업로드 경로를 알려준다.
+  useEffect(() => {
+    if (!customMatchPromotionExpectedRef.current || !projectId || matchClothing === null) return;
+    if (getCustomMatchPromotionTask(projectId)) return;
+    if ((matchClothing || []).some((item) => item.isCustom)) return;
+    if (customMatchPromotionHandledRef.current.has(projectId)) return;
+    customMatchPromotionHandledRef.current.add(projectId);
+    pushToast('내 옷을 등록하지 못했어요. 분석 화면에서 다시 올려주세요.', { icon: 'alert' });
+  }, [matchClothing, projectId, pushToast]);
 
   useEffect(() => () => clearTimeout(undoTimerRef.current), []);
   useEffect(() => {
@@ -3661,6 +3726,7 @@ export function Storyboard() {
   ) : <Inspector key={selectedId} block={selected} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} exampleGender={exampleGender} hasDetailImage={hasDetailImage} projectId={projectId}
     onChange={(p, options) => patch(selectedId, p, options)} onAtomicChange={(p, options) => atomicPatch(selectedId, p, options)} onRetryAtomicSave={retryAtomicSave} requestedRecipe={pendingSectionMove}
     onCancelRequestedRecipe={() => setPendingSectionMove(null)} matchClothing={matchClothing}
+    customMatchPromotionPending={customMatchPromotionPending}
     spaceContext={selectedSpaceContext}
     onChangeSpaceSet={() => {
       if (selected?.spaceGroupId) {

@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { promoteCustomMatch, stripLocalCustomMatch } from '../../src/lib/customMatchPromotion.js';
+import {
+  clearCustomMatchPromotionTask,
+  getCustomMatchPromotionTask,
+  promoteCustomMatch,
+  startCustomMatchPromotion,
+  stripLocalCustomMatch,
+} from '../../src/lib/customMatchPromotion.js';
 
 function fakeApi({ addResult, addError } = {}) {
   const calls = { uploads: [], adds: [], saves: [], cleared: 0 };
@@ -52,6 +58,52 @@ test('내 옷 draft 는 확정 시 재업로드되고 custom-match-item 으로 �
   assert.ok(api.calls.uploads.every((u) => u.purpose === 'custom_match_source'),
     '용도가 custom_match_source 여야 서버가 매칭 원본으로 취급한다');
   assert.deepEqual(api.calls.adds, [{ projectId: 'proj-1', assetIds: ['asset-1', 'asset-2'] }]);
+});
+
+test('내 옷 사진은 병렬 업로드하되 assetIds 는 입력 순서를 유지한다', async () => {
+  const releases = new Map();
+  const started = [];
+  let addedAssetIds = null;
+  const api = {
+    uploadPhoto(_projectId, payload) {
+      started.push(payload.filename);
+      return new Promise((resolve) => releases.set(payload.filename, resolve));
+    },
+    async addCustomMatchItem(_projectId, body) {
+      addedAssetIds = body.assetIds;
+      return { analysis: { matchClothing: [{ id: 'custom_srv', isCustom: true }] } };
+    },
+    clearCustomMatchDraft() {},
+  };
+
+  const promotion = promoteCustomMatch(api, 'proj-parallel', { ...DRAFT, selected: false });
+  await Promise.resolve();
+  assert.deepEqual(started, ['p1.png', 'p2.png'], '첫 업로드 완료 전 두 요청이 모두 시작된다');
+  releases.get('p2.png')({ assetId: 'asset-second' });
+  releases.get('p1.png')({ assetId: 'asset-first' });
+  await promotion;
+  assert.deepEqual(addedAssetIds, ['asset-first', 'asset-second']);
+});
+
+test('콘티는 같은 승격 완료 프라미스를 구독하고 완료 콜백은 한 번 실행된다', async () => {
+  const projectId = 'proj-background-task';
+  clearCustomMatchPromotionTask(projectId);
+  let releaseUpload;
+  let settled = 0;
+  const api = fakeApi();
+  api.uploadPhoto = () => new Promise((resolve) => { releaseUpload = resolve; });
+
+  const task = startCustomMatchPromotion(api, projectId, { ...DRAFT, uploads: [DRAFT.uploads[0]] }, {
+    onSettled: () => { settled += 1; },
+  });
+  assert.equal(task.status, 'pending');
+  assert.equal(getCustomMatchPromotionTask(projectId)?.promise, task.promise);
+  releaseUpload({ assetId: 'asset-bg' });
+  const result = await task.promise;
+  assert.equal(result.promoted, true);
+  assert.equal(task.status, 'settled');
+  assert.equal(settled, 1);
+  clearCustomMatchPromotionTask(projectId);
 });
 
 test('draft 에서 선택돼 있던 내 옷은 승격본도 선택 상태로 저장된다 — 델타만 보낸다', async () => {

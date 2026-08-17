@@ -727,21 +727,24 @@ export function ProductInput() {
         // 프로젝트를 만들기 전에 서버 잠금 안에서 active token을 소비한다. 여기서 409면
         // 작업권을 잃은 기기는 승격 자체를 시작하지 않는다.
         await draftSlot.remove();
-        const { projectId, customMatch } = await promoteDraftToProject(draft);
+        const { projectId, customMatchPromotion } = await promoteDraftToProject(draft);
         promotedProjectId = projectId;
         if (!isCurrentRun()) return;
-        // 내 옷 등록만 실패한 경우: 확정은 그대로 진행하고 경고만 띄운다. 아무 신호가
-        // 없으면 셀러는 등록됐다고 믿는데 서버에도 화면에도 그 옷이 없다(2026-08-15 전수조사).
-        if (customMatch && customMatch.attempted && !customMatch.promoted) {
-          toast.push('내 옷을 등록하지 못했어요. 분석 화면에서 다시 올려주세요.', { icon: 'alert' });
-        }
+        // 여기부터는 CTA 비대기 구간이다. 내 옷 승격은 이미 시작됐고 콘티보드가 그 프라미스를
+        // 구독해 준비 상태·완료 반영·실패 안내를 맡는다.
         // 게스트로 편집(재생성 신호 dirty)한 뒤 세션이 생겨 여기서 처음 project 를 얻는 경로 —
         // '다른 작업으로 전환'이 아니라 같은 작업이 신원을 얻는 것뿐이라 신호를 지우면 안 된다.
         useAppStore.getState().adoptProject(projectId, { preserveGenerationDirty: true });
         setAnalysisProjectId(projectId);
         useAppStore.getState().confirmProductInfo(projectId);
-        await clearDraft().then(() => { resetDraftSyncSingleFlight(); }).catch(() => {});
-        navigate('/create/storyboard', { state: { showMannequinTransition: true } });
+        navigate('/create/storyboard', {
+          state: {
+            showMannequinTransition: true,
+            customMatchPromotionStarted: Boolean(customMatchPromotion),
+          },
+        });
+        // 로컬 draft 정리는 화면 이동을 붙잡을 이유가 없으며, 실행 중 승격은 blob 참조를 이미 갖고 있다.
+        void clearDraft().then(() => { resetDraftSyncSingleFlight(); }).catch(() => {});
         return;
       }
       openLogin('/create/storyboard');
