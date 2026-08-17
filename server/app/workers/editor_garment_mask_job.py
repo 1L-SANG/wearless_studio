@@ -14,6 +14,7 @@ No credits, no image generation, no Gemini, no VLM. One HTTP call to the interna
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
@@ -28,6 +29,11 @@ SKIP_DISABLED = "tone_editor_disabled"
 SKIP_SAM_UNCONFIGURED = "sam_not_configured"
 SKIP_NO_CUT = "cut_unavailable"
 SKIP_NO_BASE = "missing_base_reference"
+#: 내준 마스크가 코디 의류 위에 앉았다 → 마스크를 기록하지 않는다. 셀러는 그 컷에서 색감
+#: 조정을 못 하게 되지만, 파는 옷이 아닌 코디 옷의 색을 바꿔 발행할 일은 없다.
+FAIL_ON_MATCHING = "mask_on_matching_garment"
+#: 마스크를 읽지 못해 "코디 위가 아님"을 확인할 수 없었다 → 기록하지 않고 재시도로 넘긴다.
+FAIL_UNVERIFIED = "mask_unverified"
 
 
 def _base_gender(cut_metadata, analysis: dict, clothing_type) -> str:
@@ -82,6 +88,9 @@ async def run_editor_garment_mask_job(app, job: dict) -> None:
         analysis = await repo.get_analysis(conn, project_id) or {}
         clothing_type = (product.get("clothing_type") or product.get("clothingType")
                          or analysis.get("clothingType") or "top")
+        # 라우트의 상태 판정과 **같은 함수**를 쓴다 — 갈리면 영구 재큐가 된다.
+        matching_side = await editor_garment_mask.matching_side_for_project(
+            conn, user_id=user_id, project_id=project_id)
         gender = _base_gender(payload.get("cutMetadata"), analysis, clothing_type)
         base_asset_id = (s.base_mannequin_men_asset_id if gender == "men"
                          else s.base_mannequin_women_asset_id)
@@ -99,7 +108,8 @@ async def run_editor_garment_mask_job(app, job: dict) -> None:
     try:
         result = await sam_client.segment_worn_garment(
             s, source_key=cut["r2_key"], base_key=base_asset["r2_key"],
-            clothing_type=clothing_type, sub_category=analysis.get("subCategory"))
+            clothing_type=clothing_type, sub_category=analysis.get("subCategory"),
+            matching_side=matching_side)
     except sam_client.SamUnavailable as exc:
         # Bounded dispatcher retry covers transient outages. The mask key is deterministic, so a
         # retry after a partial failure is cheap — a finished mask is served from R2.
@@ -113,16 +123,50 @@ async def run_editor_garment_mask_job(app, job: dict) -> None:
                               "latencySeconds": latency})
         return
 
+    # 코디 의류가 함께 착장된 컷이면, 내준 마스크가 정말 주상품 위인지 **여기서 픽셀로** 본다.
+    # 서비스 쪽 채점·veto 와 겹치는 검사지만 겹쳐야 한다: SAM 서비스는 별도 배포라 구버전이
+    # 돌 수 있고(그때는 matchingSide 를 아예 무시한다), 캐시 히트로 옛 규칙의 마스크가 그대로
+    # 돌아올 수도 있다. 보장은 배포 순서와 캐시에 의존해선 안 된다.
+    band = editor_garment_mask.matching_core_band(clothing_type, matching_side)
+    match_share = None
+    if band:
+        try:
+            png = await asyncio.to_thread(app.state.r2.get_bytes, result.mask_key)
+        except Exception:  # noqa: BLE001 - 읽기 실패는 일시적일 수 있다 → 재시도로 넘긴다
+            log.warning("mask fetch for guard failed project=%s cut=%s key=%s",
+                        project_id, cut_id, result.mask_key, exc_info=True)
+            png = b""
+        match_share = editor_garment_mask.band_mass_fraction(png, band)
+        if match_share is None:
+            # 재볼 수 없는 마스크는 기록하지 않는다 — "검증했다"는 도장을 못 찍는 마스크를
+            # 남기면 그 컷은 확인되지 않은 채 영구히 보장된 것으로 취급된다. error 로 끝내
+            # 디스패처의 유한 재시도에 맡기고, 재시도가 다 떨어지면 화면은 failed 로 간다.
+            await finish("error", {"state": "unverified", "cutId": cut_id,
+                                   "code": FAIL_UNVERIFIED, "matchingSide": matching_side,
+                                   "maskKey": result.mask_key,
+                                   "latencySeconds": latency})
+            return
+        if match_share > editor_garment_mask.MATCH_ZONE_MAX:
+            await finish("done", {"state": "failed", "cutId": cut_id,
+                                  "code": FAIL_ON_MATCHING, "matchingSide": matching_side,
+                                  "matchShare": match_share, "band": list(band),
+                                  "maskKey": result.mask_key,
+                                  "algorithmVersion": result.algorithm_version,
+                                  "latencySeconds": latency})
+            return
+
     async with pool.connection() as conn:
         row = await editor_garment_mask.record(
             conn, user_id=user_id, project_id=project_id, cut_id=cut_id,
             source_asset_id=str(cut.get("id") or ""), result=result,
-            category=clothing_type, sub_category=analysis.get("subCategory"))
+            category=clothing_type, sub_category=analysis.get("subCategory"),
+            matching_side=matching_side, match_share=match_share)
         await conn.commit()
 
     await finish("done", {"state": "ready", "cutId": cut_id,
                           "maskAssetId": (row or {}).get("id"),
                           "sourceHash": result.source_hash,
                           "algorithmVersion": result.algorithm_version,
+                          "matchingSide": matching_side, "matchShare": match_share,
                           "areaFrac": result.area_frac, "cached": result.cached,
                           "latencySeconds": latency})

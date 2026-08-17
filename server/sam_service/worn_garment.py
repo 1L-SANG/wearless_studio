@@ -41,9 +41,13 @@ from sam_service.segmentation import (MODEL_VERSION, SegmentationUnavailable,
 #:
 #: Deliberately unrelated to `sam2-grid8-v2`. A canonical cutout and an editor mask answer
 #: different questions about different images and must never share a cache slot.
-ALGORITHM_VERSION = "editor-worn-garment-sam2-v1"
+#:
+#: v2 (2026-08-17): the coordinating garment worn in the same cut is scored against and vetoed,
+#: so an editor mask can only ever be the garment being sold. Cache identity moves with it — a
+#: mask produced under v1 rules was never asked that question.
+ALGORITHM_VERSION = "editor-worn-garment-sam2-v2"
 #: Bumped alone when only the ranking changes — candidates would be identical, the choice not.
-SELECTOR_VERSION = "basediff-rank-v1"
+SELECTOR_VERSION = "basediff-rank-v2"
 
 #: Validated candidate generation. 16x16 is 4x the canonical grid: this image is a dressed
 #: mannequin rather than a product on white, and the extra prompts are what surfaced the
@@ -70,6 +74,35 @@ HEAD_BAND = (0.00, 0.11)
 DIFF_ROI = {"top": (0.08, 0.62), "outer": (0.08, 0.62),
             "bottom": (0.38, 1.00), "dress": (0.08, 0.95)}
 
+# ── The matching garment (코디 의류) is worn in the same cut, and is NOT for sale ─────────
+#
+# A mannequin cut dresses the base in the product AND in a coordinating garment (mannequin_job
+# `matching TOP/BOTTOM garment — also dress the mannequin in this`). Only the product is sold, so
+# only the product may be recoloured: the seller adjusting the tone of a coordinating item would
+# publish a colour their buyer cannot get.
+#
+# Base-Diff cannot tell the two apart on its own — both are "something that appeared since the
+# bare base", so a candidate covering both garments collects MORE evidence than the product
+# alone. The matching garment's side is therefore passed in from the product metadata, exactly
+# like the category, and used the same way: to score candidates, never to prompt SAM.
+
+#: Where ONLY the matching garment can be, keyed by which side that garment is worn on.
+#: 0.60 is the band top this pipeline already validated for the coordinating bottom
+#: (`app/services/qc.py` PANTS_BAND_TOP — below the hip, waist transition left out so a top's hem
+#: does not land inside it). 0.35 mirrors it upwards: `CATEGORY_ZONE["bottom"]` starts at 0.35, so
+#: a product bottom cannot reach above it.
+MATCHING_CORE = {"bottom": (0.60, 1.00), "top": (0.00, 0.35)}
+
+#: Product category -> matching sides this geometry can actually separate. A dress is absent on
+#: purpose: it reaches the calf, so no band belongs to the matching garment alone and the v1
+#: scoring stands unchanged.
+MATCHING_SEPARABLE = {"top": ("bottom",), "outer": ("bottom",), "bottom": ("top",)}
+
+#: A chosen mask with more than this share of its mass in the matching band is the matching
+#: garment (or both garments at once), not the product. Refused rather than served: losing the
+#: Tone Editor on that cut costs the seller nothing, recolouring the wrong garment does.
+MATCH_ZONE_MAX = 0.25
+
 MASK_PREFIX = "derived/editor-garment-mask"
 
 
@@ -90,6 +123,11 @@ class WornGarmentMask:
     evidence: float
     m2m: bool
     source_sha256: str
+    #: Share of the served mask that sits in the matching garment's band, and which side that
+    #: garment was on. Both None/0 when the cut wears the product alone. Reported so a drift
+    #: toward the coordinating garment is visible in the job ledger instead of only on screen.
+    match_share: float = 0.0
+    matching_side: str | None = None
 
 
 def source_fingerprint(data: bytes) -> str:
@@ -110,6 +148,36 @@ def mask_key(source_sha256: str, model_version: str = MODEL_VERSION,
 def category_of(clothing_type: str | None) -> str:
     ct = str(clothing_type or "").lower()
     return ct if ct in CATEGORY_ZONE else "top"
+
+
+def matching_core_band(clothing_type: str | None, matching_side: str | None) -> tuple:
+    """The band that belongs to the coordinating garment alone, or () when it cannot be told.
+
+    Empty for every case v1 could not reason about — no matching garment, a dress, or a matching
+    item on the product's own side (a mislabelled custom upload). Empty means "score exactly as
+    v1 did", which is what keeps this change confined to cuts that actually wear two garments.
+    """
+    side = str(matching_side or "").strip().lower()
+    if side not in MATCHING_SEPARABLE.get(category_of(clothing_type), ()):
+        return ()
+    return MATCHING_CORE[side]
+
+
+def diff_roi(category: str, match_band: tuple) -> tuple:
+    """Where to ask "what changed", with the matching garment's band taken out.
+
+    Evidence is the heaviest scoring axis, so leaving the coordinating garment inside the ROI is
+    what would let a candidate covering both garments outrank the product alone.
+    """
+    y0, y1 = DIFF_ROI[category]
+    if not match_band:
+        return (y0, y1)
+    b0, b1 = match_band
+    if b0 <= y0:                      # matching garment above the product (product = bottom)
+        y0 = max(y0, b1)
+    else:                             # matching garment below it (product = top/outer)
+        y1 = min(y1, b0)
+    return (y0, y1) if y1 > y0 else DIFF_ROI[category]
 
 
 # ── Base-Diff: candidate evidence ONLY ───────────────────────────────────────
@@ -182,11 +250,14 @@ def _band_frac(mask: np.ndarray, band: tuple) -> float:
 
 
 def score_candidate(mask: np.ndarray, evidence: np.ndarray, figure: np.ndarray,
-                    category: str) -> dict:
+                    category: str, match_band: tuple = ()) -> dict:
     """Rank one already-generated candidate. Generic axes only — no per-sample rules.
 
     Weights express the ordering of the axes, not a fit to any image: carrying the evidence
     matters most, being made mostly of evidence next, and contamination subtracts.
+
+    `match_band` empty (no coordinating garment, or a pair this geometry cannot separate) leaves
+    `matchZone` at 0 and the score identical to v1's.
     """
     m = mask.astype(bool)
     ev_bool = evidence.astype(bool)
@@ -197,6 +268,9 @@ def score_candidate(mask: np.ndarray, evidence: np.ndarray, figure: np.ndarray,
         "zone": round(_band_frac(m, CATEGORY_ZONE[category]), 3),
         "forbidden": round(_band_frac(m, CATEGORY_FORBIDDEN[category]), 3),
         "head": round(_band_frac(m, HEAD_BAND), 3),
+        # Mass sitting where only the coordinating garment can be. Weighted like `forbidden`:
+        # both answer "this cannot be the garment we are selling".
+        "matchZone": round(_band_frac(m, match_band), 3),
         "outsideFigure": round(float((m & ~figure.astype(bool)).sum() / max(1, m.sum())), 3),
         "areaFrac": round(float(m.mean()), 4),
     }
@@ -205,7 +279,8 @@ def score_candidate(mask: np.ndarray, evidence: np.ndarray, figure: np.ndarray,
         return {**parts, "score": None, "rejected": why}
     parts["score"] = round(
         1.5 * parts["evidence"] + 1.0 * parts["density"] + 0.5 * parts["zone"]
-        - 2.0 * parts["forbidden"] - 2.0 * parts["head"] - 1.5 * parts["outsideFigure"], 4)
+        - 2.0 * parts["forbidden"] - 2.0 * parts["head"] - 2.0 * parts["matchZone"]
+        - 1.5 * parts["outsideFigure"], 4)
     return parts
 
 
@@ -323,8 +398,14 @@ def encode_mask_png(mask: np.ndarray) -> bytes:
 
 
 def produce(segmenter, generated: bytes, base: bytes, *, clothing_type: str | None,
+            matching_side: str | None = None,
             grid: int = GRID, use_m2m: bool = M2M) -> WornGarmentMask:
-    """Generated cut + bare base -> editor garment mask. Raises `SegmentationUnavailable`."""
+    """Generated cut + bare base -> editor garment mask. Raises `SegmentationUnavailable`.
+
+    `matching_side` is "top"/"bottom" when the cut also wears a coordinating garment on that side
+    (product metadata, never inferred from the image). It only ever scores and vetoes; SAM is
+    prompted identically with or without it.
+    """
     gen = cv2.imdecode(np.frombuffer(generated, np.uint8), cv2.IMREAD_COLOR)
     if gen is None:
         raise SegmentationUnavailable("generated cut failed to decode")
@@ -336,18 +417,19 @@ def produce(segmenter, generated: bytes, base: bytes, *, clothing_type: str | No
         base_img = cv2.resize(base_img, (w, h), interpolation=cv2.INTER_AREA)
 
     category = category_of(clothing_type)
+    match_band = matching_core_band(clothing_type, matching_side)
     rgb = cv2.cvtColor(gen, cv2.COLOR_BGR2RGB)
     raw = generate_candidates(segmenter, rgb, grid)
     candidates = dedupe(raw)
 
     d = diff_map(base_img, gen)
-    evidence = evidence_mask(d, DIFF_ROI[category])
+    evidence = evidence_mask(d, diff_roi(category, match_band))
     figure = figure_silhouette(gen)
 
     best, best_score, best_parts = None, None, None
     for m in candidates:
         filled = fill_holes(m)
-        parts = score_candidate(filled, evidence, figure, category)
+        parts = score_candidate(filled, evidence, figure, category, match_band)
         if parts["score"] is None:
             continue
         if best_score is None or parts["score"] > best_score:
@@ -362,11 +444,22 @@ def produce(segmenter, generated: bytes, base: bytes, *, clothing_type: str | No
         mask = cv2.resize(mask.astype(np.uint8), (w, h),
                           interpolation=cv2.INTER_NEAREST).astype(bool)
 
+    # Veto AFTER refinement: M2M can grow the mask, and it is the mask we would actually serve
+    # that has to be the product. Scoring alone is a preference; this is the guarantee.
+    match_share = round(_band_frac(mask, match_band), 4) if match_band else 0.0
+    if match_band and match_share > MATCH_ZONE_MAX:
+        raise NoGarmentCandidate(
+            f"selected mask sits on the matching garment: {match_share:.2f} of its mass in "
+            f"{match_band} (category={category}, matching={matching_side})")
+
     return WornGarmentMask(
         png=encode_mask_png(mask), width=w, height=h,
         area_frac=round(float(mask.mean()), 4), candidates=len(candidates),
         plausible_candidates=sum(
             1 for m in candidates
-            if score_candidate(fill_holes(m), evidence, figure, category)["score"] is not None),
+            if score_candidate(fill_holes(m), evidence, figure, category,
+                               match_band)["score"] is not None),
         selected_score=float(best_score), evidence=float(best_parts["evidence"]),
-        m2m=bool(use_m2m), source_sha256=source_fingerprint(generated))
+        m2m=bool(use_m2m), match_share=match_share,
+        matching_side=(str(matching_side).lower() if match_band else None),
+        source_sha256=source_fingerprint(generated))
