@@ -107,7 +107,7 @@ import { classifyStoryboardLoadError, storyboardNotFoundError } from './storyboa
 import { buildColorOpts, visibleColorOpts } from '@/lib/colorOpts.js';
 import { continueAfterStoryboardFlush } from './storyboardNavigation.js';
 import { storyboardOverlayTop } from './storyboardOverlayTop.js';
-import { frameUnits } from './storyboardUnits.js';
+import { frameUnits, snapOutOfForeignBundle } from './storyboardUnits.js';
 import { bindStoryboardExitFlush, scheduleStoryboardAutosave } from './storyboardSaveLifecycle.js';
 import {
   collectInitialRevealThumbnailUrls,
@@ -2826,24 +2826,9 @@ export function Storyboard() {
      행 표식이 풀리거나(normalizeRows) 세트가 두 개로 갈린다(rekeySeparatedSpaceRuns).
      이번 커밋은 '덩어리 안 컷의 이동'만 막았고 '덩어리 밖 컷이 들어오는 것'은 안 막아
      복제 컷을 '앞으로 한 칸' 하는 것만으로 구성이 무너졌다(자체 리뷰 high). */
-  const snapOutOfForeignBundle = (movingBlock, idx) => {
-    const list = blocks;
-    const keyOf = (block) => (block?.spaceGroupId || block?.hookFrameId || block?.layoutRowId || null);
-    const movingKey = keyOf(movingBlock);
-    // idx 는 '원본 배열 기준 삽입 위치' — 그 앞뒤가 같은 덩어리면 run 내부를 가리킨 것이다.
-    const before = list[idx - 1];
-    const after = list[idx];
-    const beforeKey = keyOf(before);
-    if (!beforeKey || beforeKey !== keyOf(after)) return idx;
-    if (movingKey && movingKey === beforeKey) return idx;   // 제 덩어리 안 재배치는 그대로
-    // run 의 끝으로 밀어낸다(앞쪽 경계보다 뒤쪽이 사용자의 의도에 더 가깝다).
-    let end = idx;
-    while (end < list.length && keyOf(list[end]) === beforeKey) end += 1;
-    return end;
-  };
   const applySingleMove = ({ id, idx: rawIdx, targetSid, targetRole = null, targetSpaceGroupId = null, targetGroupKey = null }) => {
     const moving = blocks.find((block) => block.id === id);
-    const idx = snapOutOfForeignBundle(moving, rawIdx);
+    const idx = snapOutOfForeignBundle(blocks, moving, rawIdx);
     const currentGroupKey = moving ? renderKeyForBlockId(id) : null;
     const crossedRenderGroup = !!targetGroupKey && currentGroupKey !== targetGroupKey;
     // 다른 섹션으로 옮길 때는 사용자가 어느 드롭라인을 가리켰든 그 섹션의 맨 뒤가 목적지다.
@@ -3206,7 +3191,12 @@ export function Storyboard() {
       ...options,
     });
     if (next === previous) {
-      toast.push('바꿀 수 있는 예시가 없어요 — 모두 직접 고른 컷이에요');
+      // 이유가 경로마다 다르다. 섹션 셔플은 '직접 고른 컷'을 건너뛰지만, 컷 하나만 다시
+      // 뽑기는 직접 고른 것도 바꾼다 — 그때 안 바뀌었다면 후보가 없거나 하나뿐이라는
+      // 뜻이다. 같은 문구를 쓰면 셀러를 엉뚱한 원인으로 안내한다(2026-08-17 리뷰).
+      toast.push(options?.onlyBlockId
+        ? '이 조건에 바꿀 다른 예시가 없어요'
+        : '바꿀 수 있는 예시가 없어요 — 모두 직접 고른 컷이에요');
       return;
     }
     const normalized = ensureContiguousSpaceRuns(next);

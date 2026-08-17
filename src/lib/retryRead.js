@@ -23,21 +23,31 @@ export function isRetryableReadError(error) {
 /**
  * fetchOnce 를 성공할 때까지 재시도한다. delays 를 다 쓰면 마지막 오류를 던진다.
  * @param {() => Promise<any>} fetchOnce
- * @param {{delays?: number[], sleep?: (ms:number)=>Promise<void>, shouldRetry?: (e:any)=>boolean, onRetry?: (info:{attempt:number, error:any})=>void}} [options]
+ * isCancelled 가 true 를 돌려주면 다음 시도를 하지 않고 조용히 멈춘다 — 화면이 이미
+ * 떠났거나 사용자가 '다시 불러오기'를 다시 눌러 새 시도가 시작된 경우, 버려진 사슬이
+ * 남은 대기(3·5·10·20·30초)를 끝까지 돌며 요청을 쌓는 것을 막는다(2026-08-17 리뷰).
+ * @param {{delays?: number[], sleep?: (ms:number)=>Promise<void>, shouldRetry?: (e:any)=>boolean, onRetry?: (info:{attempt:number, error:any})=>void, isCancelled?: () => boolean}} [options]
  */
+export class ReadRetryCancelled extends Error {
+  constructor() { super('read_retry_cancelled'); this.name = 'ReadRetryCancelled'; }
+}
+
 export async function retryRead(fetchOnce, options = {}) {
   const {
     delays = DEFAULT_READ_RETRY_DELAYS,
     sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     shouldRetry = isRetryableReadError,
     onRetry,
+    isCancelled,
   } = options;
   let lastError;
   for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+    if (isCancelled?.()) throw new ReadRetryCancelled();
     try {
       return await fetchOnce();
     } catch (error) {
       lastError = error;
+      if (error instanceof ReadRetryCancelled) throw error;
       if (attempt === delays.length || !shouldRetry(error)) throw error;
       onRetry?.({ attempt: attempt + 1, error });
       await sleep(delays[attempt]);

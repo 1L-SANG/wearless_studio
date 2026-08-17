@@ -960,7 +960,12 @@ export function Editor() {
     let cancelled = false;
     (async () => {
       try {
-        const sb = await retryRead(() => api.getStoryboard(projectId), { delays: [3000, 5000, 10000, 20000, 30000] });
+        // 버려진 사슬은 즉시 멈춘다 — '다시 불러오기'를 연타하면 68초짜리 재시도 사슬이
+        // 겹겹이 쌓여, 이미 실패 중인 서버에 요청만 늘린다(2026-08-17 리뷰).
+        const sb = await retryRead(() => api.getStoryboard(projectId), {
+          delays: [3000, 5000, 10000, 20000, 30000],
+          isCancelled: () => cancelled,
+        });
         if (cancelled) return;
         const cw = useAppStore.getState().copywriting;
         const dj = useAppStore.getState().detailPageJob;

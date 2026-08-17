@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 
 import { moveBlockWithSpaceMembership } from '../../src/lib/storyboardSpaceSets.js';
 import { adoptSection, normalizeBoard } from '../../src/lib/sections.js';
-import { frameUnits } from '../../src/features/storyboard/storyboardUnits.js';
+import { bundleKeyOf, frameUnits, snapOutOfForeignBundle } from '../../src/features/storyboard/storyboardUnits.js';
 import { deriveHookFrame } from '../../src/lib/storyboardHookFrame.js';
 
 const storyboardSource = readFileSync(
@@ -30,18 +30,8 @@ const hookingItems = (bs) => bs
   .filter((b) => b.sectionRole === 'hooking')
   .map((b, i) => ({ index: i + 1, block: b }));
 
-/* Storyboard.jsx 의 snapOutOfForeignBundle 과 같은 규칙 — 목적지가 남의 덩어리 run 내부면
-   run 끝으로 밀어낸다. 여기서는 그 규칙을 적용했을 때 run 이 유지되는지를 본다. */
-const bundleKeyOf = (b) => b?.spaceGroupId || b?.hookFrameId || b?.layoutRowId || null;
-const snapOutOfForeignBundle = (list, movingBlock, idx) => {
-  const movingKey = bundleKeyOf(movingBlock);
-  const beforeKey = bundleKeyOf(list[idx - 1]);
-  if (!beforeKey || beforeKey !== bundleKeyOf(list[idx])) return idx;
-  if (movingKey && movingKey === beforeKey) return idx;
-  let end = idx;
-  while (end < list.length && bundleKeyOf(list[end]) === beforeKey) end += 1;
-  return end;
-};
+/* 규칙을 여기 베껴 쓰면 진짜 가드를 지워도 테스트가 통과한다 — 실제 함수를 그대로
+   가져와 태운다(2026-08-17 리뷰에서 이 테스트가 헛돈다고 지적된 지점). */
 const moveWithGuard = (board, id, rawIdx) => {
   const moving = board.find((b) => b.id === id);
   const idx = snapOutOfForeignBundle(board, moving, rawIdx);

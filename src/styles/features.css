@@ -2464,7 +2464,10 @@
    미리보기 버튼을 누르면 아래로 스타일 3종 카드가 펼쳐진다. */
 /* '첫 화면 구성' 칩 — 섹션 헤더 한 줄(2026-08-16 오너: 인스펙터에서 헤더로 이동).
    헤더는 [펼치기 버튼][칩][컷 범위] 로 나뉜다 — 버튼 안에 버튼을 못 넣기 때문. */
-.sb-deck-headrow { position: relative; display: flex; align-items: baseline; gap: 10px; padding-right: 12px; }
+/* 펼치기 버튼을 absolute 로 띄우면 그 padding 이 흐름에서 빠져 헤더 줄 높이·왼쪽 여백이
+   통째로 사라진다(52px → 28px, 글자가 카드 모서리에 붙음). 같은 여백을 줄이 대신 갖는다
+   — 값은 .sb-deck-header 의 12px 10px 과 짝이다(2026-08-17 리뷰). */
+.sb-deck-headrow { position: relative; display: flex; align-items: baseline; gap: 10px; padding: 12px 12px 12px 10px; }
 /* 펼치기 버튼은 헤더 줄 전체를 덮는다 — 칩 옆 빈 공간·'컷 범위'를 눌러도 펼쳐지던 예전
    조작감을 유지하기 위함(칩만 그 위에 떠 있다). 버튼을 텍스트 폭으로 줄였더니 클릭 영역이
    858px → 218px 로 쪼그라들었다(자체 리뷰 medium). */
@@ -2507,8 +2510,11 @@
   padding: 8px 10px; border: 0; border-radius: 9px;
   background: transparent; cursor: pointer; text-align: left;
 }
-.sb-stylechip-item:hover:not(:disabled) { background: var(--bg-1, #f4f4f6); }
-.sb-stylechip-item.on { background: #eef4fb; }
+/* --bg-1 은 #ffffff — 메뉴 배경과 같아 hover 가 아무 반응도 안 했다. 그리고 hover 쪽
+   특성도가 더 높아, 지금 고른 스타일에 마우스를 올리면 파란 하이라이트가 지워졌다
+   (2026-08-17 리뷰). 선택 표시가 hover 를 이기게 순서·특성도를 맞춘다. */
+.sb-stylechip-item:hover:not(:disabled) { background: var(--bg-2); }
+.sb-stylechip-item.on, .sb-stylechip-item.on:hover:not(:disabled) { background: #eef4fb; }
 .sb-stylechip-item:disabled { opacity: .5; cursor: default; }
 .sb-stylechip-item:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .sb-stylechip-thumb {
@@ -2762,7 +2768,8 @@
   color: var(--sb-ink); font-size: 11.5px; font-weight: 600; text-align: left; white-space: nowrap;
 }
 .sb-canvas-actions .sb-move-menu button::before { content: none; }
-.sb-canvas-actions .sb-move-menu button:hover:not(:disabled) { background: var(--bg-1, #f4f4f6); }
+/* --bg-1 은 #ffffff — 메뉴 배경과 같아 hover 가 아무 반응도 안 했다(2026-08-17 리뷰). */
+.sb-canvas-actions .sb-move-menu button:hover:not(:disabled) { background: var(--bg-2); }
 
 /* 자리 교환 조준 — 끌고 온 컷을 이 카드 위에 놓으면 둘의 자리가 바뀐다는 표시(2026-08-16 오너). */
 .sb-cutcard.swap-over::after, .sb-frame-half.swap-over::after {

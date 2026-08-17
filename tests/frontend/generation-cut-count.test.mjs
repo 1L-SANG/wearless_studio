@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 
 import { uniqueGenerationCutCount } from '../../src/lib/generationCutCount.js';
@@ -135,4 +136,12 @@ test('낱개 셔플 대상이 아니면 원본을 그대로 돌려준다 — 세
   const other = [ai('x', { sectionId: 'sec-b' })];
   assert.equal(shuffleSectionExamples(other, { ...opts, onlyBlockId: 'x' }), other, '다른 섹션은 대상 아님');
   assert.equal(shuffleSectionExamples([ai('a')], { ...opts, onlyBlockId: 'nope' }).length, 1);
+});
+
+
+test('낱개 셔플은 배정기에게 그 컷만 맡긴다 — 옆 컷이 조용히 바뀌면 안 된다', () => {
+  const shuffle = readFileSync(new URL('../../src/lib/storyboardExampleShuffle.js', import.meta.url), 'utf8');
+  const one = shuffle.slice(shuffle.indexOf('if (onlyBlockId)'), shuffle.indexOf('// ① 공간 세트'));
+  // onlyBlockIds 를 안 넘기면 배정기가 보드 전체를 다시 훑는다(2026-08-17 리뷰).
+  assert.match(one, /onlyBlockIds: \[onlyBlockId\]/);
 });

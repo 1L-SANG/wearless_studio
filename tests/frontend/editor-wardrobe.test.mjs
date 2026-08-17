@@ -185,3 +185,26 @@ test('crop controls keep original and expose mouse confirm/cancel without instru
 test('crop controls render outside the clipped block contents', () => {
   assert.match(editorSource, /<\/div>\s*\{crop && \(\s*<div className="crop-bar"/);
 });
+
+
+test('생성 중·지연 타일은 블록이 바뀌어도 살아남는다 — 사라지면 셀러가 다시 생성해 이중 결제', () => {
+  const wardrobe = {
+    c1: [
+      { id: 'done', src: '/a.png' },
+      { id: 'loading', loading: true },
+      { id: 'slow', loading: true, slow: true },
+    ],
+  };
+  const merged = mergeEditorImagesIntoWardrobe({ wardrobe, blocks: [], colorIds: ['c1'] });
+  assert.deepEqual(merged.c1.map((image) => image.id), ['done', 'loading', 'slow']);
+  assert.equal(merged.c1[2].slow, true, "'조금 더 걸려요' 표시가 유지된다");
+  // src 도 표식도 없는 찌꺼기는 예전처럼 걸러낸다.
+  const junk = mergeEditorImagesIntoWardrobe({ wardrobe: { c1: [{ id: 'ghost' }] }, blocks: [], colorIds: ['c1'] });
+  assert.equal(junk.c1, undefined);
+});
+
+test('같은 대기 타일이 두 번 들어와도 한 번만 남는다', () => {
+  const wardrobe = { c1: [{ id: 'loading', loading: true }, { id: 'loading', loading: true }] };
+  const merged = mergeEditorImagesIntoWardrobe({ wardrobe, blocks: [], colorIds: ['c1'] });
+  assert.equal(merged.c1.length, 1);
+});

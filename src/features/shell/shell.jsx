@@ -249,7 +249,11 @@ export function useDoneGuard() {
         // 먼저 확인한 뒤 막는다: 사라진 프로젝트를 막으면 에디터도 못 열려 입력 화면과
         // 무한히 왕복하게 된다(가드가 사용자를 가두는 최악).
         const p = await api.getProject(pid);
-        if (!cancelled && (p?.status === 'done' || hasEditorEntered(pid))) setBlocked(true);
+        // **그 프로젝트가 맞는지**까지 확인한다. mock 은 요청한 id 를 무시하고 현재 초안을
+        // 돌려주므로, 새로고침으로 초안이 새로 깔린 개발 모드에서 옛 표식만 보고 막으면
+        // 모달 → 에디터 → id 불일치 → 입력 화면으로 되튀는 왕복이 된다(2026-08-17 리뷰).
+        const sameProject = p?.id === pid;
+        if (!cancelled && sameProject && (p.status === 'done' || hasEditorEntered(pid))) setBlocked(true);
       } catch { /* 보호 가드 조회 실패는 공개 입력 화면을 막지 않는다. */ }
     })();
     return () => { cancelled = true; };

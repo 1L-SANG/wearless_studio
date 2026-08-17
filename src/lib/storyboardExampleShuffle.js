@@ -79,8 +79,10 @@ export function shuffleSectionExamples(blocks, {
       delete reset.exampleChoice;
       return reset;
     });
+    // onlyBlockIds 를 안 넘기면 배정기가 보드 전체를 다시 훑는다 — 컷 하나만 눌렀는데
+    // 컬러웨이 짝이나 섹션을 옮겨 예시가 비워진 다른 컷까지 조용히 바뀐다(2026-08-17 리뷰).
     const rerolled = assignGenerationExamples(cleared, {
-      catalog, product, gender, avoidByBlockId,
+      catalog, product, gender, avoidByBlockId, onlyBlockIds: [onlyBlockId],
     }).blocks;
     // 무변경이면 원본 참조를 그대로 돌려준다 — 호출부가 안내 토스트를 띄우고 되돌리기
     // 배너·자동저장이 헛돌지 않는다(자체 리뷰). 두 경우:

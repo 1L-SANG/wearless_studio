@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { DEFAULT_READ_RETRY_DELAYS, isRetryableReadError, retryRead } from '../../src/lib/retryRead.js';
+import { DEFAULT_READ_RETRY_DELAYS, ReadRetryCancelled, isRetryableReadError, retryRead } from '../../src/lib/retryRead.js';
 import { buildColorOpts, colorLabelOf, visibleColorOpts } from '../../src/lib/colorOpts.js';
 import { classifyEditorLoadError } from '../../src/features/editor/editorLoadError.js';
 import { mergeServerBlocks } from '../../src/lib/editorWaitSkeleton.js';
@@ -199,4 +199,27 @@ test('격자 블록에 얹은 낱장 사진은 예전처럼 지워진다 — 지
   block.elements.push({ id: 'loose', type: 'image', src: 'x.png', x: 100, y: 100, w: 300, h: 300 });
   const after = removeSelectedElements([block], ['loose'])[0];
   assert.deepEqual(after.elements.map((el) => el.id), ['i1', 'i2', 'i3', 'i4']);
+});
+
+
+test('retryRead: 화면이 떠났으면 남은 재시도를 멈춘다 — 버려진 사슬이 요청을 쌓지 않게', async () => {
+  let calls = 0;
+  let cancelled = false;
+  await assert.rejects(() => retryRead(async () => {
+    calls += 1;
+    cancelled = true;            // 첫 실패 뒤 사용자가 화면을 떠났다고 가정
+    const e = new Error('502'); e.status = 502; throw e;
+  }, { delays: [1, 1, 1], sleep: async () => {}, isCancelled: () => cancelled }), ReadRetryCancelled);
+  assert.equal(calls, 1, '취소 뒤에는 한 번도 더 보내지 않는다');
+});
+
+test('retryRead: 취소 신호가 없으면 예전과 똑같이 동작한다(하위 호환)', async () => {
+  let calls = 0;
+  const value = await retryRead(async () => {
+    calls += 1;
+    if (calls < 3) { const e = new Error('503'); e.status = 503; throw e; }
+    return 'ok';
+  }, { delays: [1, 1, 1], sleep: async () => {} });
+  assert.equal(value, 'ok');
+  assert.equal(calls, 3);
 });

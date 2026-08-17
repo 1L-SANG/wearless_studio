@@ -153,7 +153,10 @@ test('편집을 시작한 프로젝트는 초안 단계로 되돌아갈 수 없�
   const app = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
   // 서버 status='done' 만으로는 부족하다 — 생성이 실패·차단으로 끝나면 done 이 아니다.
   // 단 프로젝트가 실제로 열리는지 확인한 뒤에만 막는다(사라진 프로젝트를 막으면 무한 왕복).
-  assert.match(shell, /const p = await api\.getProject\(pid\);\s*\n\s*if \(!cancelled && \(p\?\.status === 'done' \|\| hasEditorEntered\(pid\)\)\) setBlocked\(true\);/);
+  // 돌아온 프로젝트가 **그 프로젝트가 맞는지**까지 본다 — mock 은 id 를 무시하고 현재
+  // 초안을 돌려주므로, 확인 없이 막으면 개발 모드에서 모달↔입력 화면 왕복이 된다(8/17 리뷰).
+  assert.match(shell, /const sameProject = p\?\.id === pid;/);
+  assert.match(shell, /if \(!cancelled && sameProject && \(p\.status === 'done' \|\| hasEditorEntered\(pid\)\)\) setBlocked\(true\);/);
   assert.match(app, /markEditorEntered\(project\.id\);\s*\n\s*setPhase\('ready'\);/);
 });
 
