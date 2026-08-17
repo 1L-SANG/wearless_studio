@@ -26,7 +26,7 @@ import { exampleGenderFromAnalysis, hexFor } from '@/features/storyboard/Storybo
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isAutoManagedBlock, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
-import { DEFAULT_TEXT_BODY, buildTextPresetElement, textPresetBox, textPresetDropPlacement } from '@/features/editor/presets/textPresets.js';
+import { DEFAULT_TEXT_BODY, buildTextPresetElement, dropUntouchedPlaceholders, textPresetBox, textPresetDropPlacement } from '@/features/editor/presets/textPresets.js';
 import { buildColorOpts, visibleColorOpts } from '@/lib/colorOpts.js';
 import { retryRead } from '@/lib/retryRead.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
@@ -1028,6 +1028,10 @@ export function Editor() {
      을 누르면 편집만 끝나고 선택은 남아, 그 뒤로 editEl 이 다시는 안 바뀌어 안내 문구가
      그대로 발행된다(2026-08-17 리뷰). 반대로 선택이 남아 있는 동안 지우면 스타일을 고르던
      글자가 사라진다 — 그래서 두 신호를 나눠 본다. */
+  /* 저장·발행 직전 관문 — 손 안 댄 안내 문구는 문서에 실리지 않는다. 화면에서 지우는
+     경로(선택 이동)를 놓치는 순서가 있어서(만들자마자 저장·다운로드), 나가는 길목에서
+     한 번 더 거른다(2026-08-17 검증). */
+  const persistable = (bs) => dropUntouchedPlaceholders(bs || [], FRESH_TEXT_IDS);
   const prevSelEl = useRef(null);
   useEffect(() => {
     const prev = prevSelEl.current;
@@ -1325,13 +1329,13 @@ export function Editor() {
     clearTimeout(saveTimer.current);
     if (genActive) {
       saveTimer.current = setTimeout(() => {
-        saveEditorWaitDraft(projectId, latestBlocks.current);
+        saveEditorWaitDraft(projectId, persistable(latestBlocks.current));
         pendingGenerationDraft.current = true;
       }, 300);
       return;
     }
     saveTimer.current = setTimeout(() => {
-      api.saveEditorBlocks(projectId, latestBlocks.current).then(() => {
+      api.saveEditorBlocks(projectId, persistable(latestBlocks.current)).then(() => {
         if (pendingGenerationDraft.current) {
           clearEditorWaitDraft(projectId);
           pendingGenerationDraft.current = false;
@@ -1344,8 +1348,8 @@ export function Editor() {
     // 이탈 액션이 이미 저장을 마쳤으면 여기서 다시 쓰지 않는다 — 생성 실패 화면에서
     // 나갈 때 화면의 스켈레톤이 서버의 완성본을 덮어쓰던 사고를 막는다.
     if (skipExitPersist.current || !latestBlocks.current) return;
-    if (genActiveRef.current) saveEditorWaitDraft(projectId, latestBlocks.current);
-    else api.saveEditorBlocks(projectId, latestBlocks.current);
+    if (genActiveRef.current) saveEditorWaitDraft(projectId, persistable(latestBlocks.current));
+    else api.saveEditorBlocks(projectId, persistable(latestBlocks.current));
   }, [projectId]);
 
   // Delete/Backspace removes the most specific selection: selected elements

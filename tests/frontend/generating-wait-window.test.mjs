@@ -123,8 +123,9 @@ test('생성 중 자동 저장은 서버 완성본 대신 임시 작업본을 �
   const autoSave = editor.slice(autoSaveStart, autoSaveStart + editor.slice(autoSaveStart).indexOf('\n  }, ['));
   assert.ok(autoSave.length < 2000, `슬라이스가 너무 넓다(${autoSave.length}자) — 단정이 헛돈다`);
   assert.match(autoSave, /if \(genActive\)/);
-  assert.match(autoSave, /saveEditorWaitDraft\(projectId, latestBlocks\.current\)/);
-  assert.match(autoSave, /api\.saveEditorBlocks\(projectId, latestBlocks\.current\)/);
+  // persistable() = 손 안 댄 안내 문구를 걷어내는 저장 관문(2026-08-17 검증).
+  assert.match(autoSave, /saveEditorWaitDraft\(projectId, persistable\(latestBlocks\.current\)\)/);
+  assert.match(autoSave, /api\.saveEditorBlocks\(projectId, persistable\(latestBlocks\.current\)\)/);
 });
 
 test('실패 후 다시 시도는 임시 작업본을 지키고, 이탈은 앞 단계가 아니라 보관함으로 간다', () => {

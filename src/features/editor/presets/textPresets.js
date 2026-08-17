@@ -122,3 +122,25 @@ export function activeTextPreset(style) {
     (prop) => effectiveOf(p.style, prop) === effectiveOf(style, prop)));
   return found ? found.key : null;
 }
+
+/** 손 안 댄 안내 문구를 걷어낸 blocks. 저장·발행 직전에 통과시키면, 셀러가 글자를 만들고
+    한 글자도 안 친 채 저장·다운로드로 넘어가도 '내용을 입력하세요.'가 상품 페이지에
+    실리지 않는다(2026-08-17 검증 — 선택이 떠날 때만 지우면 이 순서를 놓친다).
+    freshIds 는 "이번에 만들었고 아직 안 고친" 글자들 — 셀러가 직접 그 문장을 타이핑한
+    경우까지 지우지 않도록 좁히는 근거다. */
+export function dropUntouchedPlaceholders(blocks, freshIds) {
+  const fresh = freshIds instanceof Set ? freshIds : new Set(freshIds || []);
+  if (!fresh.size) return blocks;
+  let changed = false;
+  const next = (blocks || []).map((block) => {
+    const elements = (block.elements || []).filter((element) => {
+      const drop = fresh.has(element.id) && element.type === 'text' && element.shape !== 'bubble'
+        && !element.copyRole && !element.sourceBlockId
+        && String(element.text ?? '').trim() === DEFAULT_TEXT_BODY;
+      if (drop) changed = true;
+      return !drop;
+    });
+    return elements.length === (block.elements || []).length ? block : { ...block, elements };
+  });
+  return changed ? next : blocks;
+}

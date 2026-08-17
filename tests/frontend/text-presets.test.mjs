@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { TEXT_PRESET_DRAG_PREFIX, textPresetKeyFromDragTypes } from '../../src/features/editor/editorImageDrop.js';
 import {
-  CANVAS_WIDTH, DEFAULT_TEXT_BODY, DEFAULT_TEXT_PRESET, TEXT_PRESETS, activeTextPreset,
+  CANVAS_WIDTH, DEFAULT_TEXT_BODY, DEFAULT_TEXT_PRESET, TEXT_PRESETS, activeTextPreset, dropUntouchedPlaceholders,
   buildTextPresetElement, quickStylePatch, textPresetBox, textPresetDropPlacement, textPresetOf,
 } from '../../src/features/editor/presets/textPresets.js';
 
@@ -261,4 +261,34 @@ test('에디터 계약 — 손 안 댄 기본 문구는 편집이 끝날 때 요
   assert.match(prune, /target\.copyRole \|\| target\.sourceBlockId/);
   assert.match(prune, /target\.shape === 'bubble'/);
   assert.match(prune, /isAutoManagedBlock\(block\)/);
+});
+
+
+test('저장 직전 관문 — 손 안 댄 안내 문구는 문서에 실리지 않는다', () => {
+  const fresh = new Set(['new1']);
+  const blocks = [{ id: 'b1', elements: [
+    { id: 'new1', type: 'text', text: DEFAULT_TEXT_BODY },
+    { id: 'typed', type: 'text', text: '가을 니트' },
+    { id: 'old', type: 'text', text: DEFAULT_TEXT_BODY },        // 이번에 만든 게 아니다
+  ] }];
+  const out = dropUntouchedPlaceholders(blocks, fresh);
+  assert.deepEqual(out[0].elements.map((el) => el.id), ['typed', 'old']);
+});
+
+test('저장 관문은 AI 카피 자리·말풍선은 건드리지 않는다', () => {
+  const fresh = new Set(['copy', 'bubble', 'cut']);
+  const blocks = [{ id: 'b1', elements: [
+    { id: 'copy', type: 'text', text: DEFAULT_TEXT_BODY, copyRole: 'headline' },
+    { id: 'bubble', type: 'text', shape: 'bubble', text: DEFAULT_TEXT_BODY },
+    { id: 'cut', type: 'text', text: DEFAULT_TEXT_BODY, sourceBlockId: 'sb1' },
+  ] }];
+  assert.equal(dropUntouchedPlaceholders(blocks, fresh), blocks, '바뀐 게 없으면 원본 참조 그대로');
+});
+
+test('저장 관문 계약 — 모든 저장 경로가 이 관문을 지난다', () => {
+  const editor = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
+  assert.match(editor, /const persistable = \(bs\) => dropUntouchedPlaceholders\(bs \|\| \[\], FRESH_TEXT_IDS\);/);
+  // latestBlocks 를 그대로 저장하는 경로가 남아 있으면 안내 문구가 그 길로 새 나간다.
+  assert.doesNotMatch(editor, /saveEditorWaitDraft\(projectId, latestBlocks\.current\)/);
+  assert.doesNotMatch(editor, /api\.saveEditorBlocks\(projectId, latestBlocks\.current\)/);
 });

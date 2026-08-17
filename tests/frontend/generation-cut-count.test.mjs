@@ -145,3 +145,19 @@ test('낱개 셔플은 배정기에게 그 컷만 맡긴다 — 옆 컷이 조�
   // onlyBlockIds 를 안 넘기면 배정기가 보드 전체를 다시 훑는다(2026-08-17 리뷰).
   assert.match(one, /onlyBlockIds: \[onlyBlockId\]/);
 });
+
+
+test('낱개 셔플은 옆 컷을 오염시키지 않는다 — 예시가 비어 있던 컷까지 채워지면 안 된다', () => {
+  // 보드 전체를 다시 훑으면(onlyBlockIds 누락) 예시가 비워진 컷('c')에 새 예시가 배정된다.
+  // 그게 바로 2026-08-17 리뷰가 잡은 부수효과다 — 동작으로 고정한다.
+  const blocks = [ai('a'), ai('b'), ai('c', { exampleId: null, exampleSelectionOrigin: null })];
+  const next = shuffleSectionExamples(blocks, {
+    sectionId: 'sec-a', catalog: genExamples, product: { clothingType: 'top' }, gender: 'women',
+    onlyBlockId: 'b',
+  });
+  assert.notEqual(next, blocks, '대상 컷은 실제로 바뀌어야 한다');
+  const byId = Object.fromEntries(next.map((block) => [block.id, block]));
+  assert.notEqual(byId.b.exampleId, blocks[1].exampleId, 'b 는 바뀐다');
+  assert.equal(byId.a.exampleId, blocks[0].exampleId, 'a 는 그대로');
+  assert.equal(byId.c.exampleId, null, '비어 있던 c 가 덩달아 채워지면 안 된다');
+});
