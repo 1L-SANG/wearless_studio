@@ -11,6 +11,7 @@ import json
 import logging
 import time
 import uuid
+from dataclasses import replace
 from io import BytesIO
 
 from PIL import Image
@@ -20,6 +21,7 @@ from ..agents import (
     content_roles,
     copy_qc,
     copywriter,
+    confirmed_gpt_runtime,
     cut_generator,
     cut_output_qc,
     cut_plan,
@@ -31,6 +33,7 @@ from ..agents import (
     space_set_assets,
 )
 from ..agents.gemini_image import InlineImage
+from ..agents.model_routing import resolve_detail_cut_model
 from ..agents.vision_llm import VisionError
 from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
 from ._common import emit_job_event as _emit
@@ -223,13 +226,17 @@ async def _load_license_row(app, conn, project) -> dict | None:
 async def _gen_cuts(app, job, prepared, product, analysis):
     """준비된 블록별
     (block, images, manifest, has_face, product_images,
-    space_set_plate, strict_space_scene_qc)로 AG-06 컷 생성
+    space_set_plate, strict_space_scene_qc, passthrough, confirmed_packet)로 AG-06 컷 생성
     → (cut_results, cut_assets, face_cuts, garment_qcs, cut_qcs, page_qc, warnings).
     face_cuts = 라이선스 얼굴이 실제로 들어가고
     **성공까지 한** 컷 수 — AI 고지 문구 분기의 사실 근거(주입 0건이면 기본 문구).
     실패 컷은 건너뛴다(빈 슬롯은 assemble 이 처리) — 부분 성공. 스펙 위반(unknown cutType)도
     같은 경로(빈 슬롯) — 조용한 styling 대체 렌더는 하지 않는다(ADR-0004)."""
     s, gemini, r2 = app.state.settings, app.state.gemini, app.state.r2
+    # AG-06만 상세컷 전용 모델을 사용한다. 공용 cut_generator의 기본 라우트를
+    # 바꾸면 에디터의 '새 이미지'까지 함께 GPT로 전환되므로, 이 워커 안에서만
+    # 불변 Settings 복사본의 image_high를 상세컷 snapshot으로 치환한다.
+    detail_settings = replace(s, model_image_high=resolve_detail_cut_model(s))
     job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
     # 동시성: 설정값(0=제한 없음 → 컷 수만큼). 구 상수 3은 429 실측 없는 보수적 추정이라
     # 오너 결정(2026-08-03)으로 전부 병렬 + 제출 간격(stagger) + 429 백오프가 기본이 됐다.
@@ -264,6 +271,12 @@ async def _gen_cuts(app, job, prepared, product, analysis):
         space_set_plate = item[5] if len(item) > 5 else None
         strict_space_scene_qc = bool(item[6]) if len(item) > 6 else False
         passthrough = item[7] if len(item) > 7 else None
+        confirmed_packet = item[8] if len(item) > 8 else None
+        # 최신 main의 첫 화면 시그니처 컷은 자체 모델/폴백 계약을 가진다. AG-06 일반
+        # 컷용 GPT 설정을 덮어씌우지 않고 원래 Settings를 써서 그 경계를 보존한다.
+        generation_settings = (
+            s if cut_generator.is_signature_cut(b) else detail_settings
+        )
         # 원본 패스스루 — 미세 패턴(스트라이프·체크) 상품의 디테일 컷은 **생성하지 않고**
         # 셀러가 찍은 그 색상의 Detail 사진을 그대로 쓴다. 원단 매크로는 전신 컷 해상도로는
         # 재현이 불가능하다(2026-08-01 측정: 4K 에서도 줄 한 주기당 14px → 파란 2가닥을 그리려면
@@ -305,9 +318,14 @@ async def _gen_cuts(app, job, prepared, product, analysis):
             # 큐 대기 중인 컷이 전부 '생성 중'으로 보이지 않는다(editor_wait_dev_spec §2-1).
             await _emit(app.state.pool, job_id, "step",
                         {"blockId": b.get("id"), "status": "cut_start"})
-            generate_kwargs = {"analysis": analysis, "manifest": manifest}
-            if has_face:
-                generate_kwargs["has_face"] = True
+            if confirmed_packet is not None:
+                generate_kwargs = {
+                    "confirmed_prompt_input": confirmed_packet.prompt_input,
+                }
+            else:
+                generate_kwargs = {"analysis": analysis, "manifest": manifest}
+                if has_face:
+                    generate_kwargs["has_face"] = True
             # 컷 생성 재시도 — 안전필터·응답 누락처럼 "다시 부르면 달라질 수 있는" 실패는
             # 한 번 더 시도한다. 빈 슬롯은 셀러에게 그냥 못 만든 페이지이고, 그 값은 우리가
             # 흡수해야 한다(오너 8/15). ValueError(잘못된 cutType 등)는 결정적이라 제외.
@@ -317,10 +335,13 @@ async def _gen_cuts(app, job, prepared, product, analysis):
             retry_budget_s = max(60, s.job_lease_timeout_seconds // 4)
             cut_started = time.monotonic()
             img = mime = None
-            for attempt in range(1, max(1, s.detail_cut_max_attempts) + 1):
+            max_attempts = (
+                1 if confirmed_packet is not None else max(1, s.detail_cut_max_attempts)
+            )
+            for attempt in range(1, max_attempts + 1):
                 try:
                     img, mime = await cut_generator.generate(
-                        s, gemini, b, product, images, **generate_kwargs)
+                        generation_settings, gemini, b, product, images, **generate_kwargs)
                     break
                 except ValueError as e:  # 입력 계약 위반 — 재시도해도 같다
                     log.warning("AG-06 cut invalid for job %s block %s: %r", job_id, b.get("id"), e)
@@ -333,7 +354,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                     # 다시 보내지 않는다 — 아래층이 안 보내기로 한 이유가 위층에서 무효가 되면
                     # 같은 컷을 두 번 과금한다(2026-08-17 리뷰).
                     billable = bool(getattr(e, "billable", False))
-                    if billable or attempt >= max(1, s.detail_cut_max_attempts) or spent >= retry_budget_s:
+                    if billable or attempt >= max_attempts or spent >= retry_budget_s:
                         log.warning("AG-06 cut failed for job %s block %s after %d attempts (%.0fs): %r",
                                     job_id, b.get("id"), attempt, spent, e)
                         await _emit(app.state.pool, job_id, "step",
@@ -396,7 +417,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                     attempt += 1
                     try:
                         img, mime = await cut_generator.generate(
-                            s, gemini, b, product, images, **generate_kwargs)
+                            generation_settings, gemini, b, product, images, **generate_kwargs)
                     except Exception as e:
                         log.warning("AG-06 scene retry generate failed job %s block %s: %r",
                                     job_id, b.get("id"), e)
@@ -407,7 +428,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
 
             async def _generate_candidate():
                 candidate_img, candidate_mime = await cut_generator.generate(
-                    s, gemini, b, product, images, **generate_kwargs)
+                    generation_settings, gemini, b, product, images, **generate_kwargs)
                 if plate is None:
                     return InlineImage(candidate_mime, candidate_img)
 
@@ -432,15 +453,24 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                         raise RuntimeError("candidate scene mismatch")
                     candidate_attempt += 1
                     candidate_img, candidate_mime = await cut_generator.generate(
-                        s, gemini, b, product, images, **generate_kwargs)
+                        generation_settings, gemini, b, product, images, **generate_kwargs)
                 return InlineImage(candidate_mime, candidate_img)
 
-            chosen, garment_qc, garment_warnings = await image_qc.best_of(
-                s,
-                product_images,
-                InlineImage(mime, img),
-                _generate_candidate,
-            )
+            if confirmed_packet is not None:
+                # The reviewed baseline was first-result-only.  Independent cut QC below
+                # owns the optional single Stage-2 attempt; best-of is never inserted.
+                chosen, garment_qc, garment_warnings = (
+                    InlineImage(mime, img),
+                    None,
+                    [],
+                )
+            else:
+                chosen, garment_qc, garment_warnings = await image_qc.best_of(
+                    s,
+                    product_images,
+                    InlineImage(mime, img),
+                    _generate_candidate,
+                )
             img, mime = chosen.data, chosen.mime
             garment_warnings = [*candidate_scene_warnings, *garment_warnings]
 
@@ -461,8 +491,22 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                     qc_references = cut_output_qc.references_from_manifest(
                         manifest, images
                     )
+                    authority_profile = (
+                        "confirmed_gpt_v1"
+                        if confirmed_packet is not None
+                        else "generic_v1"
+                    )
+                    verdict_kwargs = (
+                        {"authority_profile": authority_profile}
+                        if confirmed_packet is not None
+                        else {}
+                    )
                     cut_qc = await cut_output_qc.verdict(
-                        s, plan, qc_references, chosen
+                        s,
+                        plan,
+                        qc_references,
+                        chosen,
+                        **verdict_kwargs,
                     )
 
                     if s.cut_output_qc_mode == "repair":
@@ -479,7 +523,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                             try:
                                 if route == "EDIT_STAGE1":
                                     repaired_img, repaired_mime = await cut_generator.repair(
-                                        s,
+                                        generation_settings,
                                         gemini,
                                         b,
                                         product,
@@ -488,7 +532,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                                     )
                                 else:
                                     repaired_img, repaired_mime = await cut_generator.generate(
-                                        s,
+                                        generation_settings,
                                         gemini,
                                         b,
                                         product,
@@ -498,7 +542,11 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                                     )
                                 repaired = InlineImage(repaired_mime, repaired_img)
                                 repaired_qc = await cut_output_qc.verdict(
-                                    s, plan, qc_references, repaired
+                                    s,
+                                    plan,
+                                    qc_references,
+                                    repaired,
+                                    **verdict_kwargs,
                                 )
                                 comparison = cut_output_qc.compare_repair(
                                     cut_qc, repaired_qc
@@ -1003,6 +1051,35 @@ async def run_detail_page_job(app, job: dict) -> None:
                     _model_cache[model_id] = None
             return _model_cache[model_id] or []
 
+        # Confirmed GPT uses the exact historical face-direction + full-body-direction
+        # sheets, not the generic face_front/body_front pair.  Both bytes are verified
+        # against the server manifest before either becomes usable.
+        _confirmed_model_cache: dict[str, tuple[InlineImage, InlineImage]] = {}
+
+        async def _confirmed_model_images(
+            spec: dict,
+        ) -> tuple[InlineImage, InlineImage]:
+            model_id = str(spec.get("modelId") or "")
+            if not model_id:
+                raise ValueError("confirmed_gpt_model_id_required")
+            if model_id not in _confirmed_model_cache:
+                refs = cut_generator.resolve_confirmed_gpt_direction_sheets(spec)
+                loaded: list[InlineImage] = []
+                for ref in refs:
+                    image = await _r2_img(
+                        ref["key"], ref["mime"], ref.get("bucket", "public")
+                    )
+                    if (
+                        len(image.data) != ref.get("byteLength")
+                        or hashlib.sha256(image.data).hexdigest() != ref.get("sha256")
+                    ):
+                        raise ValueError("confirmed_gpt_direction_sheet_hash_mismatch")
+                    loaded.append(image)
+                if len(loaded) != 2:
+                    raise ValueError("confirmed_gpt_direction_sheet_pair_required")
+                _confirmed_model_cache[model_id] = (loaded[0], loaded[1])
+            return _confirmed_model_cache[model_id]
+
         # 실존 모델(REAL) 그리드 — 비공개 r2_face 에서 로드(bucket 인지). 잡당 1회 캐시.
         # 로드 실패는 얼굴 없이 생성으로 강등(가상 모델 경로와 같은 fail-open).
         _real_cache: dict[str, list[InlineImage] | None] = {}
@@ -1022,7 +1099,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             return _real_cache["refs"] or []
 
         # (runtime block, images, manifest, has_face, product_images,
-        #  space_set_plate, strict_space_scene_qc)
+        #  space_set_plate, strict_space_scene_qc, passthrough, confirmed_packet)
         # — images 순서는 manifest 계약과 동일. 대표 plate는 같은 세트에서 1회만 로드해 공유한다.
         prepared = []
         _example_cache: dict[str, InlineImage | None] = {}
@@ -1085,6 +1162,27 @@ async def run_detail_page_job(app, job: dict) -> None:
                 normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
             except ValueError:
                 normalized = None  # generate()가 블록 단위 실패로 처리하는 기존 경로 유지
+            try:
+                confirmed_requested = bool(
+                    normalized is not None
+                    and confirmed_gpt_runtime.resolve_profile_request(
+                        cut_generator.apply_reference_compatibility(normalized),
+                        identity_source=source,
+                        selected_model_id=selected_model_id,
+                        effective_model_id=eff_model_id,
+                        uses_base_color=_uses_base_color(b),
+                    )
+                )
+            except confirmed_gpt_runtime.ConfirmedGptRuntimeError as e:
+                log.warning(
+                    "AG-06 confirmed GPT profile unavailable — cut fail-closed "
+                    "job %s block %s: %r",
+                    job_id,
+                    b.get("id"),
+                    e,
+                )
+                prepared.append((cut_spec, [], "", False, [], None, False))
+                continue
             is_product_cut = normalized is not None and normalized["cutType"] == "product"
             is_worn_cut = normalized is not None and normalized["cutType"] in _WORN_CUT_TYPES
             # PRODUCT 컷은 사람 없는 상품 단독 이미지다. 프로젝트에 선택 마네킹이 있어도 이 컷의
@@ -1164,7 +1262,20 @@ async def run_detail_page_job(app, job: dict) -> None:
                 has_identity = wants
                 face_slot = wants
             elif source == "VIRTUAL":
-                model_images = await _model_images(normalized)
+                try:
+                    model_images = list(
+                        await _confirmed_model_images(normalized)
+                    ) if confirmed_requested else await _model_images(normalized)
+                except Exception as e:
+                    log.warning(
+                        "AG-06 confirmed GPT direction sheets unavailable — cut "
+                        "fail-closed job %s block %s: %r",
+                        job_id,
+                        b.get("id"),
+                        e,
+                    )
+                    prepared.append((cut_spec, [], "", False, [], None, False))
+                    continue
                 model_has_full_body = len(model_images) == 2
                 has_identity = False
                 face_slot = False
@@ -1194,8 +1305,10 @@ async def run_detail_page_job(app, job: dict) -> None:
                         _fallback_warned = True
             imgs = []
             product_images = []
+            cut_mannequin_image = None
             if cut_mannequin_asset is not None:
-                imgs.append(await _img(cut_mannequin_asset))
+                cut_mannequin_image = await _img(cut_mannequin_asset)
+                imgs.append(cut_mannequin_image)
             imgs.extend(model_images)
             for a in prods:
                 product_image = await _img(a)
@@ -1209,6 +1322,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             # 아예 첨부하지 않는다. 예시를 해석한 뒤 이 위치에 필요한 경우에만 삽입한다.
             scene_suffix_start = len(imgs)
             example_scope = None
+            service_example_image = None
             space_set_plate = None
             has_space_set_plate = False
             example_id = b.get("exampleId") or b.get("example_id")
@@ -1287,6 +1401,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                             )
                         imgs.append(_space_example_cache[cache_key])
                         example_scope = scope
+                        service_example_image = _space_example_cache[cache_key]
                     else:
                         status = cut_generator.example_asset_status(
                             example_id, clothing_type, scope)
@@ -1338,6 +1453,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                                 else:
                                     imgs.append(example_img)
                                 example_scope = scope
+                                service_example_image = example_img
             # 정식 공간 세트는 대표 plate가 없는 회전/호리존 세트도 자체 장면 계약을 가진다.
             # 저장 payload에 남은 수동 무드가 세트 컷 사이로 새지 않게 binding 자체를 장면
             # 소유권으로 본다. 대표 plate 유무는 배경 이미지 첨부 여부일 뿐 권한이 아니다.
@@ -1349,21 +1465,57 @@ async def run_detail_page_job(app, job: dict) -> None:
                 mood_images = [await _img(a) for a in moods]
                 imgs[scene_suffix_start:scene_suffix_start] = mood_images
                 attached_mood_count = len(mood_images)
-            manifest = cut_generator.build_manifest(
-                prods, has_mannequin=cut_mannequin_asset is not None,
-                has_match=bool(matching_images), matching_count=len(matching_images),
-                matching_custom=[matching_id.startswith("custom_") for matching_id in mids],
-                mood_count=attached_mood_count,
-                has_model_face=len(model_images) == 2,
-                has_model_sheet=len(model_images) == 2 and not model_has_full_body,
-                has_model_full_body=model_has_full_body,
-                has_face=face_slot,
-                example_scope=example_scope,
-                example_is_product=normalized is not None and normalized["cutType"] == "product",
-                has_space_set_plate=has_space_set_plate,
-                reference_direction_compatible=cut_generator.apply_reference_compatibility(
-                    cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
-                )["_referenceDirectionCompatible"])
+            confirmed_packet = None
+            if confirmed_requested:
+                try:
+                    confirmed_packet = confirmed_gpt_runtime.build_packet(
+                        cut_generator.apply_reference_compatibility(normalized),
+                        clothing_type=clothing_type,
+                        identity_source=source,
+                        selected_model_id=selected_model_id,
+                        effective_model_id=eff_model_id,
+                        uses_base_color=_uses_base_color(b),
+                        mannequin_image=cut_mannequin_image,
+                        face_direction_sheet=model_images[0],
+                        full_body_direction_sheet=model_images[1],
+                        seller_images=tuple(
+                            (asset["slot"], image)
+                            for asset, image in zip(prods, product_images, strict=True)
+                        ),
+                        matching_images=tuple(matching_images),
+                        example_image=service_example_image,
+                        evidence_contract=analysis.get(
+                            "confirmedGptProductEvidence"
+                        ),
+                    )
+                except Exception as e:
+                    log.warning(
+                        "AG-06 confirmed GPT packet invalid — cut fail-closed "
+                        "job %s block %s: %r",
+                        job_id,
+                        b.get("id"),
+                        e,
+                    )
+                    prepared.append((cut_spec, [], "", False, [], None, False))
+                    continue
+                imgs = list(confirmed_packet.images)
+                manifest = confirmed_packet.manifest
+            else:
+                manifest = cut_generator.build_manifest(
+                    prods, has_mannequin=cut_mannequin_asset is not None,
+                    has_match=bool(matching_images), matching_count=len(matching_images),
+                    matching_custom=[matching_id.startswith("custom_") for matching_id in mids],
+                    mood_count=attached_mood_count,
+                    has_model_face=len(model_images) == 2,
+                    has_model_sheet=len(model_images) == 2 and not model_has_full_body,
+                    has_model_full_body=model_has_full_body,
+                    has_face=face_slot,
+                    example_scope=example_scope,
+                    example_is_product=normalized is not None and normalized["cutType"] == "product",
+                    has_space_set_plate=has_space_set_plate,
+                    reference_direction_compatible=cut_generator.apply_reference_compatibility(
+                        cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
+                    )["_referenceDirectionCompatible"])
             # 4번째 = has_identity: 검증 얼굴(REAL 그리드·LEGACY 단일)이 실제 담긴 컷 → face_cuts 계수·
             # generate has_face·검증 배지 근거. VIRTUAL 그리드는 검증 얼굴이 아니므로 False.
             prepared.append(
@@ -1376,6 +1528,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     space_set_plate,
                     space_binding is not None and space_set_plate is not None,
                     _detail_passthrough(b, asset_key),
+                    confirmed_packet,
                 )
             )
 

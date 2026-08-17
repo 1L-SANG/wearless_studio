@@ -1,4 +1,7 @@
+import pytest
+
 from app.agents import product_analyst as pa
+from app.agents import product_evidence_contract as pec
 
 
 def test_validate_keeps_valid_enums():
@@ -312,6 +315,101 @@ def test_analysis_schema_shape():
         assert k in s["properties"]
         assert k in s["required"]
     assert "measurements" not in s["properties"]
+
+
+def _confirmed_binding():
+    return pec.build_input_binding(
+        [(b"front-original", "image/png")],
+        [(b"front-analysis", "image/jpeg")],
+        ["Front"],
+    )
+
+
+def _confirmed_raw():
+    return {
+        "panels": [{
+            "evidenceOrdinal": 1,
+            "detail": "complete front and neckline",
+            "judgeability": "usable",
+            "judgeabilityReasons": ["clear_enough"],
+        }],
+        "hardFacts": [{
+            "code": "neckline",
+            "value": "round neckline",
+            "evidenceOrdinals": [1],
+        }],
+        "uncertainties": [{
+            "code": "exact_worn_fit",
+            "value": "exact body-worn ease",
+            "reason": "flat presentation does not prove body-worn fit",
+            "evidenceOrdinals": [1],
+        }],
+        "visibleSurfacePlan": "FRONT is dominant; preserve the supported neckline and seams.",
+    }
+
+
+def test_confirmed_evidence_schema_is_added_only_for_bound_production_call():
+    ordinary = pa.analysis_schema()
+    confirmed = pa.analysis_schema(include_confirmed_evidence=True)
+    assert pec.PERSISTED_KEY not in ordinary["properties"]
+    assert pec.PERSISTED_KEY in confirmed["properties"]
+    assert pec.PERSISTED_KEY in confirmed["required"]
+    assert set(confirmed["properties"]) == set(confirmed["required"])
+
+
+def test_confirmed_evidence_prompt_and_payload_flow_through_existing_ag01_call(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    binding = _confirmed_binding()
+    seen = {}
+
+    async def fake(settings, prompt, images, schema, thinking_level=None, models=None):
+        seen["prompt"] = prompt
+        seen["schema"] = schema
+        return {
+            "clothingType": "top",
+            "subCategory": "tshirt",
+            "customCategory": None,
+            "targetGenders": ["women"],
+            "fit": "regular",
+            "materials": [],
+            "materialPresetIndex": None,
+            "aiSuggestedPoints": [],
+            "suggestedName": None,
+            "swatchSuggestions": [],
+            "styleTags": [],
+            "sourceMirrored": False,
+            pec.PERSISTED_KEY: _confirmed_raw(),
+        }, "gemini"
+
+    monkeypatch.setattr(pa, "analyze_with_fallback", fake)
+    product = {pec.INTERNAL_BINDING_KEY: binding}
+    settings = SimpleNamespace(model_text_gemini_analysis="")
+    distributed, provider = asyncio.run(pa.analyze(settings, product, []))
+
+    assert provider == "gemini"
+    assert "CONFIRMED GPT PRODUCT-EVIDENCE CONTRACT" in seen["prompt"]
+    assert binding["images"][0]["source"]["sha256"] in seen["prompt"]
+    assert pec.PERSISTED_KEY in seen["schema"]["required"]
+    contract = distributed["analysis"][pec.PERSISTED_KEY]
+    assert contract["inputBinding"] == binding
+    assert pec.validate_persisted(contract) == contract
+
+
+def test_confirmed_evidence_invalid_semantics_fail_the_ag01_call(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    async def fake(settings, prompt, images, schema, thinking_level=None, models=None):
+        raw = _confirmed_raw()
+        raw["hardFacts"] = []
+        return {pec.PERSISTED_KEY: raw}, "gemini"
+
+    monkeypatch.setattr(pa, "analyze_with_fallback", fake)
+    product = {pec.INTERNAL_BINDING_KEY: _confirmed_binding()}
+    with pytest.raises(pa.VisionError, match="상품 사진 근거"):
+        asyncio.run(pa.analyze(SimpleNamespace(model_text_gemini_analysis=""), product, []))
 
 
 def test_analyze_uses_analysis_tier_model(monkeypatch):

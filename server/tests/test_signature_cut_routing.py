@@ -6,6 +6,7 @@
 저장 계약에 새 필드를 더하지 않는다.
 """
 
+import asyncio
 from types import SimpleNamespace
 
 from app.agents import cut_generator
@@ -88,6 +89,43 @@ def test_signature_falls_back_when_openai_key_is_missing(monkeypatch):
     assert chosen(without_key) == "gemini-3-pro-image"
     # gpt 계열이 아닌 모델로 바꿔 두면 키와 무관하게 그대로 쓴다.
     assert chosen(_settings(model_image_signature="gemini-3-pro-image", openai_api_key=None)) == "gemini-3-pro-image"
+
+
+def test_signature_stage1_and_local_stage2_use_the_same_gpt_tier():
+    calls = []
+
+    class FakeGemini:
+        async def generate_content_image(
+            self, model, prompt, images, image_size, aspect_ratio,
+        ):
+            calls.append(model)
+            return SimpleNamespace(image=f"OUT-{len(calls)}".encode(), mime="image/png")
+
+    settings = _settings(
+        openai_api_key="sk-test",
+        detail_cut_image_size="4K",
+        mannequin_aspect_ratio="2:3",
+    )
+    spec = {
+        "cutType": "styling",
+        "shot": "medium",
+        "direction": "front",
+        "exampleId": "sig_women_01",
+    }
+    product = {"name": "니트", "clothingType": "top", "colors": []}
+    stage1 = asyncio.run(
+        cut_generator.generate(settings, FakeGemini(), spec, product, [])
+    )
+    asyncio.run(cut_generator.repair(
+        settings,
+        FakeGemini(),
+        spec,
+        product,
+        cut_generator.InlineImage("image/png", stage1[0]),
+        qc_corrections=("Restore only the failed lighting integration.",),
+    ))
+
+    assert calls == ["gpt-image-2", "gpt-image-2"]
 
 
 def test_openai_input_is_normalized_to_png():

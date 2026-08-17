@@ -23,12 +23,18 @@ def resolve_model(settings: Settings, tier: str) -> str:
     return model
 
 
+def resolve_detail_cut_model(settings: Settings) -> str:
+    """AG-06 콘티 전용 모델. 미설정 환경은 기존 image_high 경로를 그대로 쓴다."""
+    return getattr(settings, "model_detail_cut", "") or resolve_model(settings, "image_high")
+
+
 def model_routing_snapshot(settings: Settings) -> dict:
     """관측 로그·디버그용 현재 라우팅 스냅샷 (ai_agent_modules §6)."""
     return {
         "image_light": settings.model_image_light,
         "image_high": settings.model_image_high,
         "image_signature": getattr(settings, "model_image_signature", None) or settings.model_image_high,
+        "detail_cut": resolve_detail_cut_model(settings),
         "text": settings.model_text,
         "imageSize": settings.mannequin_image_size,
         "detailImageSize": (

@@ -344,6 +344,7 @@ function mergeAnalysisResult(ai) {
     styleTags: ai.styleTags ?? [],
     swatchSuggestions: ai.swatchSuggestions ?? [],
     sourceMirrored: ai.sourceMirrored === true,
+    confirmedGptProductEvidenceHandoff: ai.confirmedGptProductEvidenceHandoff ?? null,
     customCategory: ai.customCategory ?? null,
     sellingPoints: [],
     inputConsistency: ai.inputConsistency ?? null,
@@ -462,6 +463,11 @@ export const httpAdapter = {
   async saveProduct(projectId, patch) {
     // getProduct·마네킹·콘티·에디터가 모두 http 로 스왑됨(US-2~4) → mock 미러 불필요, 서버가 단일 소스.
     return http(`/v1/projects/${projectId}/product`, { method: 'PATCH', body: patch });
+  },
+  async promoteConfirmedGptEvidence(projectId, handoff) {
+    return http(`/v1/projects/${projectId}/analysis/confirmed-gpt-evidence:promote`, {
+      method: 'POST', body: handoff,
+    });
   },
   // AG-01 상품 분석 — POST /analyze(job) → 폴링 → analysis payload.
   // 반환 shape 은 계약 §6 와 동일해야 한다 — AnalysisForm 이 a.models/.matchClothing/.sellingPoints 등을

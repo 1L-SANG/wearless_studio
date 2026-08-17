@@ -81,4 +81,5 @@ ENUMS:
 Return a single JSON object with keys: clothingType, subCategory, customCategory,
 targetGenders, fit, materials (array of {name, ratio}), materialPresetIndex,
 aiSuggestedPoints, suggestedName, swatchSuggestions (array of {colorGroupId, swatchId, colorName}),
-styleTags, sourceMirrored.
+styleTags, sourceMirrored. When a server-owned CONFIRMED GPT PRODUCT-EVIDENCE CONTRACT block
+follows this prompt, also return its required confirmedGptProductEvidence key in the same object.

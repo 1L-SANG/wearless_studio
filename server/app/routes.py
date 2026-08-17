@@ -26,6 +26,7 @@ from .agents import (
     fit_axes,
     mannequin,
     mannequin_base_fidelity_qc,
+    product_evidence_contract,
     product_analyst,
     space_set_assets,
     style_affinity,
@@ -861,6 +862,67 @@ async def save_analysis(
         row = await repo.save_analysis(conn, project_id, analysis)
         await conn.commit()
     return {"projectId": row["project_id"], **(row["payload"] or {})}
+
+
+@router.post(
+    "/projects/{project_id}/analysis/confirmed-gpt-evidence:promote",
+    responses={**COMMON_RESPONSES},
+    tags=["Analysis"],
+    summary="공개 분석의 서버 소유 GPT 상품 증거 승격",
+)
+async def promote_confirmed_gpt_evidence(
+    request: Request,
+    project_id: str,
+    handoff: dict = Body(...),
+    user_id: str = Depends(require_user),
+):
+    """Verify the signed handoff and uploaded seller bytes before persisting it."""
+
+    s = request.app.state.settings
+    try:
+        contract = product_evidence_contract.verify_handoff(
+            handoff, s.r2_secret_access_key
+        )
+    except product_evidence_contract.ProductEvidenceContractError:
+        raise _bad_request(
+            "invalid_analysis_handoff",
+            "분석 결과의 유효성을 확인하지 못했어요. 상품 분석을 다시 진행해 주세요.",
+        ) from None
+
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        product = await repo.get_product(conn, project_id) or {}
+        source_images: list[tuple[bytes, str]] = []
+        slots: list[str] = []
+        for slot, asset_id in mannequin.base_color_images(product):
+            asset = await repo.get_asset_for_user(conn, user_id, asset_id)
+            if asset is None:
+                raise _bad_request(
+                    "analysis_handoff_source_missing",
+                    "분석에 사용한 상품 사진을 찾지 못했어요. 상품 분석을 다시 진행해 주세요.",
+                )
+            source_images.append(
+                (
+                    await asyncio.to_thread(_r2(request).get_bytes, asset["r2_key"]),
+                    asset["mime_type"],
+                )
+            )
+            slots.append(slot)
+        try:
+            matches = product_evidence_contract.source_binding_matches(
+                contract, source_images, slots
+            )
+        except product_evidence_contract.ProductEvidenceContractError:
+            matches = False
+        if not matches:
+            raise _bad_request(
+                "analysis_handoff_source_drift",
+                "분석 후 상품 사진이 달라졌어요. 현재 사진으로 다시 분석해 주세요.",
+            )
+        await repo.save_confirmed_gpt_product_evidence(conn, project_id, contract)
+        await conn.commit()
+    return {"promoted": True}
 
 
 @router.get(

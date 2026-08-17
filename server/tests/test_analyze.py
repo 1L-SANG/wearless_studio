@@ -3,6 +3,7 @@ import inspect
 
 import app.routes as routes
 from app import repo
+from app.agents import product_evidence_contract as pec
 from app.workers import analyze_job
 from conftest import auth_headers, fake_worker_app, make_settings, patch_route_db, worker_job
 
@@ -83,6 +84,9 @@ def test_run_analyze_job_success(monkeypatch):
 
     async def fake_analyze(settings, product, images):
         assert images and images[0].data == b"\x89PNG-bytes"  # bytes 입력 확인
+        binding = product[pec.INTERNAL_BINDING_KEY]
+        assert binding["images"][0]["slot"] == "FRONT"
+        assert binding["images"][0]["source"]["sha256"] == binding["images"][0]["analysis"]["sha256"]
         return ({"product": {"clothingType": "top"},
                  "analysis": {"subCategory": "knit", "fit": "regular", "targetGenders": ["women"],
                               "materials": [], "aiSuggestedPoints": [], "suggestedName": "니트"},
@@ -127,6 +131,98 @@ def test_run_analyze_job_success(monkeypatch):
     assert captured["metadata"]["provider"] == "gpt"
     assert captured["metadata"]["featureProvider"] == "gemini"
     assert captured["metadata"]["promptVersion"] == "v1"
+
+
+def test_analyze_worker_persists_but_does_not_expose_server_evidence_contract(monkeypatch):
+    captured = {}
+    contract = {"schemaVersion": 1, "contractSha256": "server-only"}
+
+    async def fake_get_product(conn, pid):
+        return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
+
+    async def fake_get_asset(conn, uid, aid):
+        return {"mime_type": "image/png", "r2_key": "k/a1"}
+
+    async def fake_analyze(settings, product, images):
+        assert pec.INTERNAL_BINDING_KEY in product
+        return ({
+            "product": {"clothingType": "top"},
+            "analysis": {
+                "subCategory": "tshirt",
+                "fit": "regular",
+                "targetGenders": ["women"],
+                "materials": [],
+                "aiSuggestedPoints": [],
+                "suggestedName": None,
+                pec.PERSISTED_KEY: contract,
+            },
+            "intermediate": {"styleTags": [], "swatchSuggestions": []},
+        }, "gemini")
+
+    async def fake_extract(settings, product, images, slots=None):
+        return [], "gemini"
+
+    async def fake_finalize(conn, **kwargs):
+        captured.update(kwargs)
+        return {"result": kwargs["result"]}
+
+    async def fake_emit(pool, job_id, event_type, payload):
+        return None
+
+    monkeypatch.setattr(analyze_job.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(analyze_job.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(analyze_job.product_analyst, "analyze", fake_analyze)
+    monkeypatch.setattr(analyze_job.feature_extractor, "extract", fake_extract)
+    monkeypatch.setattr(analyze_job.repo, "finalize_analyze_success", fake_finalize)
+    monkeypatch.setattr(analyze_job, "_emit", fake_emit)
+
+    app = fake_worker_app(make_settings(gemini_api_key="g-x"))
+    asyncio.run(analyze_job.run_analyze_job(app, worker_job()))
+
+    assert captured["analysis_payload"][pec.PERSISTED_KEY] == contract
+    assert pec.PERSISTED_KEY not in captured["result"]["data"]
+
+
+def test_ag01_contract_binds_original_and_actual_resized_provider_bytes_in_order(monkeypatch):
+    from hashlib import sha256
+
+    captured = {}
+    source = [(b"front-original", "image/png"), (b"back-original", "image/png")]
+
+    def fake_shrink(data, mime):
+        return b"resized:" + data, "image/jpeg"
+
+    async def fake_analyze(settings, product, images):
+        captured["binding"] = product[pec.INTERNAL_BINDING_KEY]
+        return ({
+            "product": {"clothingType": "top"},
+            "analysis": {
+                "subCategory": "tshirt", "fit": "regular", "targetGenders": ["women"],
+                "materials": [], "aiSuggestedPoints": [], "suggestedName": None,
+            },
+            "intermediate": {"styleTags": [], "swatchSuggestions": []},
+        }, "gemini")
+
+    async def fake_extract(settings, product, images, slots=None):
+        return [], "gemini"
+
+    monkeypatch.setattr(analyze_job, "shrink_for_vision", fake_shrink)
+    monkeypatch.setattr(analyze_job.product_analyst, "analyze", fake_analyze)
+    monkeypatch.setattr(analyze_job.feature_extractor, "extract", fake_extract)
+
+    asyncio.run(analyze_job.analyze_image_bytes(
+        make_settings(input_consistency="off"),
+        source,
+        slots=["Front", "Back"],
+        persist_confirmed_evidence=True,
+    ))
+
+    rows = captured["binding"]["images"]
+    assert [row["slot"] for row in rows] == ["FRONT", "BACK"]
+    assert rows[0]["source"]["sha256"] == sha256(b"front-original").hexdigest()
+    assert rows[0]["source"]["byteLength"] == len(b"front-original")
+    assert rows[0]["analysis"]["sha256"] == sha256(b"resized:front-original").hexdigest()
+    assert rows[0]["analysis"]["byteLength"] == len(b"resized:front-original")
 
 
 def test_run_analyze_job_feature_agent_failure_falls_back(monkeypatch):

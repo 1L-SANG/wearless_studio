@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import inspect
 import types
 
 import app.routes as routes
@@ -841,11 +842,13 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
     async def fake_sb(conn, pid):
         return [
             {"id": "all", "source": "ai", "cutType": "styling",
-             "exampleId": "ex_styling_top_full_1", "refScope": "all"},
+             "exampleId": "ex_styling_top_full_1", "refScope": "all",
+             "pose": "walk"},
             {"id": "pose", "source": "ai", "cutType": "horizon",
              "exampleId": "ex_horizon_top_full_1", "refScope": "pose"},
             {"id": "mismatch", "source": "ai", "cutType": "styling",
-             "exampleId": "ex_wrong_clothing", "refScope": "all"},
+             "exampleId": "ex_wrong_clothing", "refScope": "all",
+             "pose": "walk"},
             {"id": "unpublished", "source": "ai", "cutType": "horizon",
              "exampleId": "ex_without_bg", "refScope": "bg"},
             {"id": "direction-mismatch", "source": "ai", "cutType": "styling",
@@ -1002,7 +1005,7 @@ def test_run_detail_page_job_attaches_set_plate_and_set_or_flat_pose(monkeypatch
             "sectionRole": "fit",
             "contentRole": "coordination",
             "cutType": "styling",
-            "direction": "front",
+            "direction": "side",
             "shot": "full",
             "exampleId": "ss_all_example",
             "refScope": "all",
@@ -1220,6 +1223,14 @@ def test_run_detail_page_job_attaches_set_plate_and_set_or_flat_pose(monkeypatch
     assert "SPACE SET PLATE" in captured["cuts"]["set-2"]["manifest"]
     assert "SPACE SET PLATE" not in captured["cuts"]["dragged-out"]["manifest"]
     assert captured["finalize"]["charge"] == 4
+
+
+def test_standalone_space_set_example_is_bound_as_confirmed_service_example():
+    source = inspect.getsource(dpj.run_detail_page_job)
+    append = "imgs.append(_space_example_cache[cache_key])"
+    bind = "service_example_image = _space_example_cache[cache_key]"
+    assert append in source and bind in source
+    assert source.index(bind, source.index(append)) > source.index(append)
 
 
 def test_run_detail_page_job_uses_analysis_model_without_mutating_storyboard(monkeypatch):
@@ -1799,7 +1810,7 @@ def test_billable_failure_is_not_retried_by_the_worker(monkeypatch):
 
     source = inspect.getsource(detail_page_job)
     assert 'billable = bool(getattr(e, "billable", False))' in source
-    assert "if billable or attempt >= max(1, s.detail_cut_max_attempts)" in source
+    assert "if billable or attempt >= max_attempts" in source
 
 
 def test_gemini_error_carries_the_billable_flag_across_layers():

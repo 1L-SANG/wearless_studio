@@ -28,7 +28,7 @@ if (isLoopbackAlias) {
     <React.StrictMode>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
-          <BrowserRouter>
+          <BrowserRouter future={{ v7_startTransition: true }}>
             <ToastProvider>
               <App />
             </ToastProvider>

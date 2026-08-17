@@ -12,7 +12,8 @@ import asyncio
 
 import pytest
 
-from app import repo
+from app import repo, routes
+from conftest import auth_headers, patch_route_db
 
 
 class _Cur:
@@ -78,17 +79,12 @@ def test_no_carry_when_no_previous_analysis():
     assert "sourceMirrored" not in saved
 
 
-def test_previous_lookup_skipped_when_nothing_missing():
-    """전 키가 있으면 이전 payload 조회 자체를 안 한다 — 저장 경로에 불필요한 쿼리 금지.
-
-    payload 를 _SERVER_OWNED_ANALYSIS_KEYS 에서 만든다: 키를 추가할 때 이 테스트가
-    '한 키만 든 payload' 를 계속 보내면 실제 클라가 전문을 보내는데도 실패한다.
-    현행 클라는 값이 없을 때 null 로라도 키를 실어 보낸다(httpAdapter analyzeProduct).
-    """
+def test_immutable_contract_forces_previous_lookup_even_when_all_keys_are_supplied():
+    """클라가 전문을 보내도 해시 계약은 서버의 기존 값을 확인해야 한다."""
     full = {k: None for k in repo._SERVER_OWNED_ANALYSIS_KEYS}
     conn = _Conn({"sourceMirrored": True})
     asyncio.run(repo.save_analysis(conn, "p1", full))
-    assert all("select" not in sql.lower() for sql, _ in conn.calls)
+    assert any("select" in sql.lower() for sql, _ in conn.calls)
 
 
 def test_previous_lookup_happens_when_a_key_is_missing():
@@ -96,6 +92,87 @@ def test_previous_lookup_happens_when_a_key_is_missing():
     conn = _Conn({"sourceMirrored": True})
     asyncio.run(repo.save_analysis(conn, "p1", {"fit": "regular"}))
     assert any("select" in sql.lower() for sql, _ in conn.calls)
+
+
+def test_confirmed_gpt_product_evidence_is_carried_when_client_omits_it():
+    contract = {"schemaVersion": 1, "contractSha256": "server-owned"}
+    saved = _save(
+        {"confirmedGptProductEvidence": contract, "fit": "over"},
+        {"fit": "regular"},
+    )
+    assert saved["confirmedGptProductEvidence"] == contract
+    assert saved["fit"] == "regular"
+
+
+def test_client_cannot_replace_or_create_confirmed_gpt_product_evidence():
+    server_contract = {"schemaVersion": 1, "contractSha256": "server-owned"}
+    client_contract = {"schemaVersion": 1, "contractSha256": "tampered"}
+    saved = _save(
+        {"confirmedGptProductEvidence": server_contract},
+        {"fit": "regular", "confirmedGptProductEvidence": client_contract},
+    )
+    assert saved["confirmedGptProductEvidence"] == server_contract
+
+    without_previous = _save(
+        None,
+        {"fit": "regular", "confirmedGptProductEvidence": client_contract},
+    )
+    assert "confirmedGptProductEvidence" not in without_previous
+
+
+def test_signed_public_evidence_is_rebound_to_uploaded_product_before_save(
+    client, make_token, monkeypatch
+):
+    patch_route_db(monkeypatch, routes)
+    client.app.state.r2 = type(
+        "R2", (), {"get_bytes": staticmethod(lambda key: b"\x89PNG-bytes")}
+    )()
+    saved = []
+    contract = {"schemaVersion": 1, "contractSha256": "server-contract"}
+
+    async def fake_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_product(conn, project_id):
+        return {
+            "colors": [{
+                "isBase": True,
+                "images": [{"slot": "Front", "id": "asset-front"}],
+            }]
+        }
+
+    async def fake_asset(conn, user_id, asset_id):
+        return {"r2_key": "seller/front.png", "mime_type": "image/png"}
+
+    async def fake_save(conn, project_id, value):
+        saved.append((project_id, value))
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_project)
+    monkeypatch.setattr(routes.repo, "get_product", fake_product)
+    monkeypatch.setattr(routes.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(routes.repo, "save_confirmed_gpt_product_evidence", fake_save)
+    monkeypatch.setattr(
+        routes.product_evidence_contract,
+        "verify_handoff",
+        lambda value, secret: contract,
+    )
+    monkeypatch.setattr(
+        routes.product_evidence_contract,
+        "source_binding_matches",
+        lambda value, images, slots: value == contract
+        and images == [(b"\x89PNG-bytes", "image/png")]
+        and slots == ["Front"],
+    )
+
+    response = client.post(
+        "/v1/projects/p1/analysis/confirmed-gpt-evidence:promote",
+        headers=auth_headers(make_token),
+        json={"signed": "handoff"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"promoted": True}
+    assert saved == [("p1", contract)]
 
 
 @pytest.mark.parametrize("junk", ["false", 0, None, "true", 1])

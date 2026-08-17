@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "description": "Virtual model identity assets. Worn-cut contract: face_front (facial identity only) + body_front (full-body proportions only) as one atomic pair. grid_sedcard remains a legacy face-continuity/QC asset and is never body authority.",
+    "description": "Virtual model identity assets. Default worn-cut contract: face_front (facial identity only) + body_front (full-body proportions only). Confirmed GPT contract: grid_face_direction (lossless original-pixel face directions) + grid_fullbody (full-body directions) as one atomic pair.",
     "source": "spike facepack v2 + public/models 원본 앵커"
   },
   "models": {
@@ -17,7 +17,28 @@
         "grid_sedcard": {
           "key": "seed/models/mA/grid_sedcard.png",
           "url": "https://images.wearless.kr/seed/models/mA/grid_sedcard.png",
-          "mime": "image/jpeg"
+          "mime": "image/jpeg",
+          "byteLength": 336166,
+          "sha256": "84af33c6c26b6a7c47028cb8413be7cec8278812514f9bbec907f031c55d65b3"
+        },
+        "grid_face_direction": {
+          "key": "seed/models/mA/grid_face_direction.png",
+          "url": "https://images.wearless.kr/seed/models/mA/grid_face_direction.png",
+          "mime": "image/jpeg",
+          "byteLength": 8424806,
+          "sha256": "a174e318df933858d6cce32dcbe67d62d733940774e4a59e4e6d83154e328e74",
+          "sourceSha256": "4d6ee1a185fa78f6670246ec43549bce90478f9b0a2829100e2ded024e03acf8",
+          "width": 3584,
+          "height": 4800,
+          "decodedRgbaSha256": "50a9544da6ef24e46b3ee67e32a826106b1b6012ec5214555fb3a4119079c3bc",
+          "sanitization": "lossless_metadata_strip_no_resize"
+        },
+        "grid_fullbody": {
+          "key": "seed/models/mA/grid_fullbody.png",
+          "url": "https://images.wearless.kr/seed/models/mA/grid_fullbody.png",
+          "mime": "image/jpeg",
+          "byteLength": 6525189,
+          "sha256": "0060a50185c77c4ba866cee9d1b21e5efa6780c47e4119795c0a844de18e861f"
         },
         "three_quarter": {
           "key": "seed/models/mA/three_quarter.png",
@@ -54,7 +75,28 @@
         "grid_sedcard": {
           "key": "seed/models/mB/grid_sedcard.png",
           "url": "https://images.wearless.kr/seed/models/mB/grid_sedcard.png",
-          "mime": "image/jpeg"
+          "mime": "image/jpeg",
+          "byteLength": 278762,
+          "sha256": "932f3c9f47ba3e0fd45816ec3bf7031c4699d8cf4c4ff94db91402f678244912"
+        },
+        "grid_face_direction": {
+          "key": "seed/models/mB/grid_face_direction.png",
+          "url": "https://images.wearless.kr/seed/models/mB/grid_face_direction.png",
+          "mime": "image/jpeg",
+          "byteLength": 7725504,
+          "sha256": "cbdebd6cd54dbc13c055b31190bdc797cd9b641e0e9ab479ad25098eb7c74b95",
+          "sourceSha256": "99b9980a14814d2422f4abcecbb0029c10d16b6ca2e8d0fdd17df56341a687fc",
+          "width": 3584,
+          "height": 4800,
+          "decodedRgbaSha256": "0cff794a272224828f5e72dd8ed8230fc005ebd3710544cb08741721f43b7386",
+          "sanitization": "lossless_metadata_strip_no_resize"
+        },
+        "grid_fullbody": {
+          "key": "seed/models/mB/grid_fullbody.png",
+          "url": "https://images.wearless.kr/seed/models/mB/grid_fullbody.png",
+          "mime": "image/jpeg",
+          "byteLength": 6570761,
+          "sha256": "44d6a1358a6bd12bfc5d1f6c6d04914a53d1cbe9d9d9e9e81a9d28862c330bc1"
         },
         "three_quarter": {
           "key": "seed/models/mB/three_quarter.png",
@@ -91,7 +133,28 @@
         "grid_sedcard": {
           "key": "seed/models/mC/grid_sedcard.png",
           "url": "https://images.wearless.kr/seed/models/mC/grid_sedcard.png",
-          "mime": "image/jpeg"
+          "mime": "image/jpeg",
+          "byteLength": 295900,
+          "sha256": "ab02312589b178049a109bcff6d327dce54bb36da71c3ef999f7d2162c746923"
+        },
+        "grid_face_direction": {
+          "key": "seed/models/mC/grid_face_direction.png",
+          "url": "https://images.wearless.kr/seed/models/mC/grid_face_direction.png",
+          "mime": "image/jpeg",
+          "byteLength": 7884390,
+          "sha256": "a3a9a93d43da1579a7720fda038c1f6fd1eda09014d4595386a05383ab81a472",
+          "sourceSha256": "3ed8456e4793d9ee625911de5e49463154c0952d78d93fcc592a10a24fbec774",
+          "width": 3584,
+          "height": 4800,
+          "decodedRgbaSha256": "8ef0e1d365aef81b5e4b2574783a56f374c7f0f0b0b52055134966402a950a66",
+          "sanitization": "lossless_metadata_strip_no_resize"
+        },
+        "grid_fullbody": {
+          "key": "seed/models/mC/grid_fullbody.png",
+          "url": "https://images.wearless.kr/seed/models/mC/grid_fullbody.png",
+          "mime": "image/jpeg",
+          "byteLength": 6470561,
+          "sha256": "6dd9ee2d87f6948347c4d74b54364a3f8938b42a3ca864ea5d64b4b77d955058"
         },
         "three_quarter": {
           "key": "seed/models/mC/three_quarter.png",
@@ -128,7 +191,28 @@
         "grid_sedcard": {
           "key": "seed/models/mD/grid_sedcard.png",
           "url": "https://images.wearless.kr/seed/models/mD/grid_sedcard.png",
-          "mime": "image/png"
+          "mime": "image/png",
+          "byteLength": 2725467,
+          "sha256": "fe4a7841d61daa0963acde01975da50b778f2a0baa1317af10aacec132b9b1fd"
+        },
+        "grid_face_direction": {
+          "key": "seed/models/mD/grid_face_direction.png",
+          "url": "https://images.wearless.kr/seed/models/mD/grid_face_direction.png",
+          "mime": "image/png",
+          "byteLength": 1809984,
+          "sha256": "cc728a0d483912dd4b522b32bdb2dc133231e6dd59b4b5774efe5b47182e035d",
+          "sourceSha256": "ab244d4ab484ee80a843312ea6289b4b5a81ce660416c2225e4e85d10939b5f9",
+          "width": 1254,
+          "height": 1254,
+          "decodedRgbaSha256": "f5e6b98c1c415cdd4dc8bed2bc3ad5dda5418a4f06b1f2a43c53b7605ad6bd0a",
+          "sanitization": "lossless_metadata_strip_no_resize"
+        },
+        "grid_fullbody": {
+          "key": "seed/models/mD/grid_fullbody.png",
+          "url": "https://images.wearless.kr/seed/models/mD/grid_fullbody.png",
+          "mime": "image/png",
+          "byteLength": 1751236,
+          "sha256": "d4f6f336f5f5d2475c88d692dee49f2cbde377dc1293984557ebf4aa4fe8b12f"
         },
         "three_quarter": {
           "key": "seed/models/mD/three_quarter.png",
@@ -165,7 +249,28 @@
         "grid_sedcard": {
           "key": "seed/models/mE/grid_sedcard.png",
           "url": "https://images.wearless.kr/seed/models/mE/grid_sedcard.png",
-          "mime": "image/png"
+          "mime": "image/png",
+          "byteLength": 2557224,
+          "sha256": "f1870727bce5e870f64f21b4cf7d46d07ce374a1fe8a9d7d43d761a18a7f538b"
+        },
+        "grid_face_direction": {
+          "key": "seed/models/mE/grid_face_direction.png",
+          "url": "https://images.wearless.kr/seed/models/mE/grid_face_direction.png",
+          "mime": "image/png",
+          "byteLength": 1739708,
+          "sha256": "987c88e59cc5fcbf20b290494ecc831ef926cd48c2efed3fb90ccbdbed04b1a9",
+          "sourceSha256": "e906d14b996fc32ad63b0e694c110b7d6b4c96b5cdb7da35289f98460c7f6062",
+          "width": 1254,
+          "height": 1254,
+          "decodedRgbaSha256": "c2a3f5d7a838c7f7db3541423887f554dfd26e38e3d6ce51af3cf5b1fd033f88",
+          "sanitization": "lossless_metadata_strip_no_resize"
+        },
+        "grid_fullbody": {
+          "key": "seed/models/mE/grid_fullbody.png",
+          "url": "https://images.wearless.kr/seed/models/mE/grid_fullbody.png",
+          "mime": "image/png",
+          "byteLength": 5423927,
+          "sha256": "d41a41271cb0f0a13586c508e4c00ada48712fd36fea62cce75bcd50c1f1a45b"
         },
         "three_quarter": {
           "key": "seed/models/mE/three_quarter.png",
@@ -202,7 +307,28 @@
         "grid_sedcard": {
           "key": "seed/models/mF/grid_sedcard.png",
           "url": "https://images.wearless.kr/seed/models/mF/grid_sedcard.png",
-          "mime": "image/jpeg"
+          "mime": "image/jpeg",
+          "byteLength": 284820,
+          "sha256": "7d8ee7c41e195f258bab57768a6a2b473f6db6cc007fb2073c824e88017b20fd"
+        },
+        "grid_face_direction": {
+          "key": "seed/models/mF/grid_face_direction.png",
+          "url": "https://images.wearless.kr/seed/models/mF/grid_face_direction.png",
+          "mime": "image/jpeg",
+          "byteLength": 8000556,
+          "sha256": "e23ccaf50ef990b537f40bea191bdf1b01ab22a8761c17962a67fd6b83f9f4bf",
+          "sourceSha256": "32fe183ff9d4741086750258fac8b694d4256d3cc6434818edf540f8c7c0cc6c",
+          "width": 3584,
+          "height": 4800,
+          "decodedRgbaSha256": "566028b6fb2d8d18912abcf4f7eaab17f172dfd5aa65667131a0321fbff4f694",
+          "sanitization": "lossless_metadata_strip_no_resize"
+        },
+        "grid_fullbody": {
+          "key": "seed/models/mF/grid_fullbody.png",
+          "url": "https://images.wearless.kr/seed/models/mF/grid_fullbody.png",
+          "mime": "image/jpeg",
+          "byteLength": 6601383,
+          "sha256": "b3875984dade00ca6ed79cb539484eec070f6158eceefd5371556ddda9bdc1d8"
         },
         "three_quarter": {
           "key": "seed/models/mF/three_quarter.png",
@@ -239,7 +365,28 @@
         "grid_sedcard": {
           "key": "seed/models/mG/grid_sedcard.png",
           "url": "https://images.wearless.kr/seed/models/mG/grid_sedcard.png",
-          "mime": "image/jpeg"
+          "mime": "image/jpeg",
+          "byteLength": 234633,
+          "sha256": "d747f44c1a443e72de064eb70b4562d17f2f34d8522c4c9366e8c7186448000e"
+        },
+        "grid_face_direction": {
+          "key": "seed/models/mG/grid_face_direction.png",
+          "url": "https://images.wearless.kr/seed/models/mG/grid_face_direction.png",
+          "mime": "image/jpeg",
+          "byteLength": 6998201,
+          "sha256": "4cdd13c45de124d75f1d4ab693ba75c198878dcde7fe52b6a6e2147d77070676",
+          "sourceSha256": "50ec960ea5f5ccacec02fed668452b9f9fef4267701d30536b4e4b324407202d",
+          "width": 3584,
+          "height": 4800,
+          "decodedRgbaSha256": "003583b543e80709b32d4138d6c24139bf52f1c722b2e5852ca60e66d79b068e",
+          "sanitization": "lossless_metadata_strip_no_resize"
+        },
+        "grid_fullbody": {
+          "key": "seed/models/mG/grid_fullbody.png",
+          "url": "https://images.wearless.kr/seed/models/mG/grid_fullbody.png",
+          "mime": "image/jpeg",
+          "byteLength": 6645302,
+          "sha256": "0730d45375e6fe11e6d761dea7a525f7b9900514b39c18d5249c3d4c53104e60"
         },
         "three_quarter": {
           "key": "seed/models/mG/three_quarter.png",
@@ -276,7 +423,28 @@
         "grid_sedcard": {
           "key": "seed/models/mH/grid_sedcard.png",
           "url": "https://images.wearless.kr/seed/models/mH/grid_sedcard.png",
-          "mime": "image/jpeg"
+          "mime": "image/jpeg",
+          "byteLength": 288646,
+          "sha256": "bc945ea3f0ae14f6538b3f71788c9296086e26173dcc92fd0b9f5c8540e145e5"
+        },
+        "grid_face_direction": {
+          "key": "seed/models/mH/grid_face_direction.png",
+          "url": "https://images.wearless.kr/seed/models/mH/grid_face_direction.png",
+          "mime": "image/jpeg",
+          "byteLength": 7814801,
+          "sha256": "7c09fe94621faade3b58785f8f03ed7562bc76ebcc90a0d8e7d78d26a97d7635",
+          "sourceSha256": "544d6770f14dded28581ffe765cb45a176b5000bb21725765fe2360222325771",
+          "width": 3584,
+          "height": 4800,
+          "decodedRgbaSha256": "39d62f60d6503f16de04ef0123ea0564f22ef748f94406c68111657f57240689",
+          "sanitization": "lossless_metadata_strip_no_resize"
+        },
+        "grid_fullbody": {
+          "key": "seed/models/mH/grid_fullbody.png",
+          "url": "https://images.wearless.kr/seed/models/mH/grid_fullbody.png",
+          "mime": "image/jpeg",
+          "byteLength": 6411517,
+          "sha256": "8fb98c16c2d52fdaa1f64da3bb7c4f54e63a531609fe65706fbda5328c3c7ae2"
         },
         "three_quarter": {
           "key": "seed/models/mH/three_quarter.png",
@@ -313,7 +481,28 @@
         "grid_sedcard": {
           "key": "seed/models/mI/grid_sedcard.png",
           "url": "https://images.wearless.kr/seed/models/mI/grid_sedcard.png",
-          "mime": "image/jpeg"
+          "mime": "image/jpeg",
+          "byteLength": 271592,
+          "sha256": "a2bccd211e484d0b64ae4b452af08104f32e6b277379b333718820238f6664d8"
+        },
+        "grid_face_direction": {
+          "key": "seed/models/mI/grid_face_direction.png",
+          "url": "https://images.wearless.kr/seed/models/mI/grid_face_direction.png",
+          "mime": "image/jpeg",
+          "byteLength": 7753529,
+          "sha256": "285f011001f7ac99585342d9ac9f8a81401e520ae7ba7fd23c0411d5be07fc95",
+          "sourceSha256": "ce2cc9e45c6335b743bb055b936e7ae0a8119d0f4ab9d6e7adcfb6acf9dd983b",
+          "width": 3584,
+          "height": 4800,
+          "decodedRgbaSha256": "fa733c0f9560ccd3942b3a5e75ee26143e814d1dbc99753d2f34e3e411c9afd4",
+          "sanitization": "lossless_metadata_strip_no_resize"
+        },
+        "grid_fullbody": {
+          "key": "seed/models/mI/grid_fullbody.png",
+          "url": "https://images.wearless.kr/seed/models/mI/grid_fullbody.png",
+          "mime": "image/jpeg",
+          "byteLength": 6610752,
+          "sha256": "20f845c8217050ff97b10fca88c6b3a35723e964734df98ac3a4c0390fced5ea"
         },
         "three_quarter": {
           "key": "seed/models/mI/three_quarter.png",
@@ -350,7 +539,28 @@
         "grid_sedcard": {
           "key": "seed/models/mJ/grid_sedcard.png",
           "url": "https://images.wearless.kr/seed/models/mJ/grid_sedcard.png",
-          "mime": "image/jpeg"
+          "mime": "image/jpeg",
+          "byteLength": 277545,
+          "sha256": "e5d00d37cd8d0b60728c6213a8f8ef217c3da69245f60fdd181b9401065a1b96"
+        },
+        "grid_face_direction": {
+          "key": "seed/models/mJ/grid_face_direction.png",
+          "url": "https://images.wearless.kr/seed/models/mJ/grid_face_direction.png",
+          "mime": "image/jpeg",
+          "byteLength": 7730039,
+          "sha256": "1baf2981fcb4cc8831c838ca37869e8f13b4bca8fab07395c8aefd67eab28a8a",
+          "sourceSha256": "4cff1c56e1626cbc6faa1fd67f95fe0da8ce982e3462109d58bcd9d208c3797d",
+          "width": 3584,
+          "height": 4800,
+          "decodedRgbaSha256": "ec7aa7610ffd7ca52359fa8c4a94a9806ba53d25e0c4a99fd32fd86d309ee1ea",
+          "sanitization": "lossless_metadata_strip_no_resize"
+        },
+        "grid_fullbody": {
+          "key": "seed/models/mJ/grid_fullbody.png",
+          "url": "https://images.wearless.kr/seed/models/mJ/grid_fullbody.png",
+          "mime": "image/jpeg",
+          "byteLength": 6400188,
+          "sha256": "28e96b228fd75a2580d7698b03d33e35fd8124d09df5d7211258c597fa65724f"
         },
         "three_quarter": {
           "key": "seed/models/mJ/three_quarter.png",
@@ -387,7 +597,28 @@
         "grid_sedcard": {
           "key": "seed/models/mK/grid_sedcard.png",
           "url": "https://images.wearless.kr/seed/models/mK/grid_sedcard.png",
-          "mime": "image/jpeg"
+          "mime": "image/jpeg",
+          "byteLength": 252908,
+          "sha256": "7186eb355c670b3be2d8cedcbbdfa58fe9bbfb8bc8be7afde91bd5e4ac31f991"
+        },
+        "grid_face_direction": {
+          "key": "seed/models/mK/grid_face_direction.png",
+          "url": "https://images.wearless.kr/seed/models/mK/grid_face_direction.png",
+          "mime": "image/jpeg",
+          "byteLength": 7337404,
+          "sha256": "d2d67e1a0f5b243acfdf30a0e18e4386e7aa18b801751c1ef6780bd6f15d4c3d",
+          "sourceSha256": "a38f49d77ed074775e223a5f41c7769e4d976a3e1132dea457d35de70d7698f6",
+          "width": 3584,
+          "height": 4800,
+          "decodedRgbaSha256": "24e17416a7fba9afd76a111d5ef5b1b8b82bc340240db663a04baa1e36af9023",
+          "sanitization": "lossless_metadata_strip_no_resize"
+        },
+        "grid_fullbody": {
+          "key": "seed/models/mK/grid_fullbody.png",
+          "url": "https://images.wearless.kr/seed/models/mK/grid_fullbody.png",
+          "mime": "image/jpeg",
+          "byteLength": 6626756,
+          "sha256": "6384b0bc90e8a4e99f5449a23b528e10eb295a7a505b926cc49b590d331b860b"
         },
         "three_quarter": {
           "key": "seed/models/mK/three_quarter.png",
@@ -424,7 +655,28 @@
         "grid_sedcard": {
           "key": "seed/models/mL/grid_sedcard.png",
           "url": "https://images.wearless.kr/seed/models/mL/grid_sedcard.png",
-          "mime": "image/jpeg"
+          "mime": "image/jpeg",
+          "byteLength": 251859,
+          "sha256": "21ddc4b8a97949dd6219b92c738aa57fd00718fc58a1f083d820d28de99c16f7"
+        },
+        "grid_face_direction": {
+          "key": "seed/models/mL/grid_face_direction.png",
+          "url": "https://images.wearless.kr/seed/models/mL/grid_face_direction.png",
+          "mime": "image/jpeg",
+          "byteLength": 7348594,
+          "sha256": "d21da9f589a97aa6f6a998fa065ded4393049a567137733db8f42670d2adfe83",
+          "sourceSha256": "e8e67971c8775fcf9caa8c77ac7cdd7fe51b64273ceff22a2c2a069053781d50",
+          "width": 3584,
+          "height": 4800,
+          "decodedRgbaSha256": "a417e10c7b29b366dd18331efdd0728e180cb7eb7162205cb37e368ee83c6471",
+          "sanitization": "lossless_metadata_strip_no_resize"
+        },
+        "grid_fullbody": {
+          "key": "seed/models/mL/grid_fullbody.png",
+          "url": "https://images.wearless.kr/seed/models/mL/grid_fullbody.png",
+          "mime": "image/jpeg",
+          "byteLength": 6517462,
+          "sha256": "a25ca421aab59d4050f0324c3f5f2a276fa2816076ca20a810c4b24690be72b8"
         },
         "three_quarter": {
           "key": "seed/models/mL/three_quarter.png",
@@ -461,7 +713,28 @@
         "grid_sedcard": {
           "key": "seed/models/mM/grid_sedcard.png",
           "url": "https://images.wearless.kr/seed/models/mM/grid_sedcard.png",
-          "mime": "image/jpeg"
+          "mime": "image/jpeg",
+          "byteLength": 241126,
+          "sha256": "19e9acae3bfa342c18f2449ab4cee5f5242835b88aabe2ed3c063756ee304722"
+        },
+        "grid_face_direction": {
+          "key": "seed/models/mM/grid_face_direction.png",
+          "url": "https://images.wearless.kr/seed/models/mM/grid_face_direction.png",
+          "mime": "image/jpeg",
+          "byteLength": 7131962,
+          "sha256": "66314f1a5e22f18cbbd38748cdbbe64992d6c8cda7a8429977f893cc26ad68f1",
+          "sourceSha256": "02068ac88c792768bc566c3a163c528533eddd92089cd1c198f66e26a72a758a",
+          "width": 3584,
+          "height": 4800,
+          "decodedRgbaSha256": "547a8917cb636c2917ca955996e4c84920aa97251e8c579ab466ea13a7f88c9f",
+          "sanitization": "lossless_metadata_strip_no_resize"
+        },
+        "grid_fullbody": {
+          "key": "seed/models/mM/grid_fullbody.png",
+          "url": "https://images.wearless.kr/seed/models/mM/grid_fullbody.png",
+          "mime": "image/jpeg",
+          "byteLength": 6698467,
+          "sha256": "ae8c6776fd99b8d1010e61861fc2ad5fad47914a901b0fee75d524b0a1cf0c75"
         },
         "three_quarter": {
           "key": "seed/models/mM/three_quarter.png",
@@ -498,7 +771,28 @@
         "grid_sedcard": {
           "key": "seed/models/mN/grid_sedcard.png",
           "url": "https://images.wearless.kr/seed/models/mN/grid_sedcard.png",
-          "mime": "image/jpeg"
+          "mime": "image/jpeg",
+          "byteLength": 255546,
+          "sha256": "0c61868df3692d451d5c5695872e6ffce2b62d932770c02c3a11b5334dad9d71"
+        },
+        "grid_face_direction": {
+          "key": "seed/models/mN/grid_face_direction.png",
+          "url": "https://images.wearless.kr/seed/models/mN/grid_face_direction.png",
+          "mime": "image/jpeg",
+          "byteLength": 7301770,
+          "sha256": "09adad2e42ca61092afaffcf8b1fa9aa06e3af3533dabf1d2864563331d08e1f",
+          "sourceSha256": "a6469cbd0b1ac0b6bb3fe653b184bba0219fdb82ad3f9ae6655609569fa0cf56",
+          "width": 3584,
+          "height": 4800,
+          "decodedRgbaSha256": "96dd5f5879c70fa2f602a2d04f644d03621d7be12ccc22645774d6f702d16ea6",
+          "sanitization": "lossless_metadata_strip_no_resize"
+        },
+        "grid_fullbody": {
+          "key": "seed/models/mN/grid_fullbody.png",
+          "url": "https://images.wearless.kr/seed/models/mN/grid_fullbody.png",
+          "mime": "image/jpeg",
+          "byteLength": 6661532,
+          "sha256": "9c47fc0cb235ec023a0314c60a6b37ba37fb010ed37ea006d6460afac6ab32b3"
         },
         "three_quarter": {
           "key": "seed/models/mN/three_quarter.png",

@@ -314,7 +314,23 @@
    "direction": "front",
    "gender": "men",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_01.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_01.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "295f0ffce510b2a4ee45aee620ed25a9a6084e8edc4d1aeb8f21f79ee3cb7c34",
+    "directionDescription": "front-family full-body standing view with a slight torso turn",
+    "faceExposure": "fully visible; direct camera gaze",
+    "requestedFraming": "Complete head, outer jacket, both legs and complete shoes with floor margin.",
+    "fixedFootwear": "plain unbranded dark brown low-top shoes",
+    "fixedInner": "plain black crew-neck T-shirt",
+    "poseSemantics": {
+     "action": "quiet standing portrait",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "weight biased to one straight leg with the other relaxed",
+     "keyContacts": "one hand rests at the hip/pocket opening; other arm hangs freely; no prop",
+     "gaze": "directly at camera",
+     "roughFraming": "vertical full-body with complete head and both feet"
+    }
+   }
   },
   "ex_styling_men_outer_full_02": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_men_outer_full_02.png",
@@ -325,7 +341,23 @@
    "direction": "front",
    "gender": "men",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_02.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_02.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "51f06a6dcb8f315e8f60720be7303edb597836c0f83beb8b28ce20ec69e5265f",
+    "directionDescription": "front-family seated full-body view with torso turned slightly",
+    "faceExposure": "visible behind dark sunglasses; gaze turned off camera",
+    "requestedFraming": "Complete head, jacket, seated legs and both complete shoes.",
+    "fixedFootwear": "plain unbranded black lace-up shoes with black socks",
+    "fixedInner": "plain black crew-neck T-shirt",
+    "poseSemantics": {
+     "action": "relaxed seated portrait",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "body weight supported by bench; ankles crossed loosely",
+     "keyContacts": "one hand on thigh and the other braced on bench",
+     "gaze": "head and gaze turned off camera",
+     "roughFraming": "vertical seated full-body with head and both shoes visible"
+    }
+   }
   },
   "ex_styling_men_outer_full_03": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_men_outer_full_03.png",
@@ -336,7 +368,23 @@
    "direction": "front",
    "gender": "men",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_03.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_03.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "7e64ecffeab96bb635951de51a6e6153e25b2f0d254ac0dd7e735ce03b567d53",
+    "directionDescription": "front-family full-body view with torso pitched and turned slightly",
+    "faceExposure": "lower face visible; eyes hidden by cap brim",
+    "requestedFraming": "Complete cap, outer jacket, both legs and complete shoes.",
+    "fixedFootwear": "plain unbranded dark athletic shoes",
+    "fixedInner": "plain white crew-neck T-shirt",
+    "poseSemantics": {
+     "action": "paused forward-leaning stance",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "weight biased forward over unevenly placed feet",
+     "keyContacts": "one hand at back/hip and the other arm bent loosely forward",
+     "gaze": "downward and off camera under cap brim",
+     "roughFraming": "vertical full-body with cap and both feet visible"
+    }
+   }
   },
   "ex_styling_men_outer_full_04": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_men_outer_full_04.png",
@@ -347,7 +395,23 @@
    "direction": "front",
    "gender": "men",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_04.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_04.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "71009b54586c43abf7c18f1d9395258d64eb3da5d730cf8a930b9811123ce413",
+    "directionDescription": "front-family full-body standing view with mild shoulder asymmetry",
+    "faceExposure": "fully visible; direct camera gaze",
+    "requestedFraming": "Complete head, outer jacket, both legs and complete shoes.",
+    "fixedFootwear": "plain unbranded black low shoes",
+    "fixedInner": "plain white crew-neck T-shirt",
+    "poseSemantics": {
+     "action": "standing while touching hair",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "weight biased to one leg; feet set apart",
+     "keyContacts": "one hand touches hair and the other rests behind the hip",
+     "gaze": "directly at camera",
+     "roughFraming": "vertical full-body with complete head and both feet"
+    }
+   }
   },
   "ex_styling_men_outer_full_05": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_men_outer_full_05.png",
@@ -369,7 +433,8 @@
    "direction": "front",
    "gender": "men",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_06.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_06.webp",
+   "confirmedGptEligibleV1": false
   },
   "ex_styling_men_outer_full_07": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_men_outer_full_07.png",
@@ -380,7 +445,23 @@
    "direction": "front",
    "gender": "men",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_07.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_07.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "5bbb3a554b80dc8b644dec37ebe89ced9bd4de93dcd5cae0c9576d1e531c9012",
+    "directionDescription": "front-family full-body standing view with slight torso turn",
+    "faceExposure": "fully visible in near-profile; gaze far off camera",
+    "requestedFraming": "Complete head, outer jacket, both legs and complete shoes.",
+    "fixedFootwear": "plain unbranded black low shoes",
+    "fixedInner": "plain white crew-neck T-shirt",
+    "poseSemantics": {
+     "action": "quiet standing portrait",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "upright stance with subtle weight bias and close-set feet",
+     "keyContacts": "both hands held behind the back",
+     "gaze": "head turned strongly off camera",
+     "roughFraming": "vertical full-body with complete head and both feet"
+    }
+   }
   },
   "ex_styling_men_outer_full_08": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_men_outer_full_08.png",
@@ -391,7 +472,23 @@
    "direction": "front",
    "gender": "men",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_08.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_full_08.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "68a4b3da65d2d3d1c1f0c4267c3b1d942b9bcc5397d2f77dbd1b1d18f03aeb0e",
+    "directionDescription": "front-family full-body standing view with slight torso turn",
+    "faceExposure": "visible; head bowed and gaze directed down",
+    "requestedFraming": "Complete head, outer jacket, both legs and complete shoes with generous room context.",
+    "fixedFootwear": "plain unbranded dark brown low shoes",
+    "fixedInner": "plain black crew-neck T-shirt",
+    "poseSemantics": {
+     "action": "quiet downward-looking stance",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "weight centered with feet set apart",
+     "keyContacts": "one hand in jacket pocket; other arm hangs freely",
+     "gaze": "down toward the floor/garment",
+     "roughFraming": "vertical full-body with complete head and both feet"
+    }
+   }
   },
   "ex_styling_men_outer_medium_01": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_men_outer_medium_01.png",
@@ -402,7 +499,23 @@
    "direction": "front",
    "gender": "men",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_medium_01.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_medium_01.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "70950362f1bf8c77006a91eca473206c5a23a0406d021a72f32905446a477441",
+    "directionDescription": "front-family close medium apparel view",
+    "faceExposure": "eyes and upper face out of frame; mouth and jaw edge visible",
+    "requestedFraming": "Preserve the close crop from lower face through jacket hem and upper thighs; keep both hands visible where shown.",
+    "fixedFootwear": "not visible",
+    "fixedInner": "plain black crew-neck T-shirt",
+    "poseSemantics": {
+     "action": "standing jacket-detail portrait",
+     "bodyDirection": "front-facing",
+     "weightAndSupport": "standing support is off frame and unjudgeable",
+     "keyContacts": "one hand lightly grips jacket opening; other arm hangs",
+     "gaze": "unjudgeable because eyes are out of frame",
+     "roughFraming": "vertical close medium from lower face to upper thighs"
+    }
+   }
   },
   "ex_styling_men_outer_medium_02": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_men_outer_medium_02.png",
@@ -424,7 +537,23 @@
    "direction": "front",
    "gender": "men",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_medium_03.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_medium_03.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "8022e5a6ba585ee62f74f2148b2aea2efd990a61de0f73060e41f56d89f4cd80",
+    "directionDescription": "front-family seated medium view with torso turned slightly",
+    "faceExposure": "lower face visible; eyes hidden by cap brim",
+    "requestedFraming": "Complete cap and jacket through the hem/upper lap with both forearms and hands visible.",
+    "fixedFootwear": "not visible",
+    "fixedInner": "plain white crew-neck T-shirt",
+    "poseSemantics": {
+     "action": "relaxed seated portrait",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "body weight supported by chair",
+     "keyContacts": "one hand raised loosely; other hand rests on thigh",
+     "gaze": "turned down and off camera under cap brim",
+     "roughFraming": "vertical seated medium from cap through upper thighs"
+    }
+   }
   },
   "ex_styling_men_outer_medium_04": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_men_outer_medium_04.png",
@@ -457,7 +586,23 @@
    "direction": "front",
    "gender": "men",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_medium_06.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_medium_06.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "bfdf0365b4873e0ded28c9699a0a301159065131c94f455dd4916da79281254c",
+    "directionDescription": "front-family close medium apparel view with slight turn",
+    "faceExposure": "face completely out of frame",
+    "requestedFraming": "Preserve the crop from neck through outer-shirt hem and upper trousers; keep the sleeve-adjusting hands visible; do not add a face.",
+    "fixedFootwear": "not visible",
+    "fixedInner": "plain black crew-neck T-shirt",
+    "poseSemantics": {
+     "action": "adjusting one sleeve cuff",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "standing support is off frame and unjudgeable",
+     "keyContacts": "one hand grips/adjusts the opposite sleeve cuff",
+     "gaze": "unjudgeable because face is out of frame",
+     "roughFraming": "vertical close medium from neck to upper thighs"
+    }
+   }
   },
   "ex_styling_men_outer_medium_07": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_men_outer_medium_07.png",
@@ -468,7 +613,23 @@
    "direction": "front",
    "gender": "men",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_medium_07.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_medium_07.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "8732fdf3f81d5190ef565c3fef24baf7a86061e6d7ee046f532293e54effb2d6",
+    "directionDescription": "front-family medium standing view with slight torso turn",
+    "faceExposure": "fully visible in near-profile; gaze far off camera",
+    "requestedFraming": "Complete head and jacket through hem plus upper trousers; preserve arms behind the torso.",
+    "fixedFootwear": "not visible",
+    "fixedInner": "plain white crew-neck T-shirt",
+    "poseSemantics": {
+     "action": "quiet standing portrait",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "upright support below crop; exact leg weighting unjudgeable",
+     "keyContacts": "both hands held behind the back",
+     "gaze": "head turned strongly off camera",
+     "roughFraming": "vertical medium from complete head through upper thighs"
+    }
+   }
   },
   "ex_styling_men_outer_medium_08": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_men_outer_medium_08.png",
@@ -479,7 +640,23 @@
    "direction": "front",
    "gender": "men",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_medium_08.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_men_outer_medium_08.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "f5a26a61c70f992076dda6c8cf0c2b76ad00c8d6cc71ba795519c9189e59baaa",
+    "directionDescription": "front-family close medium apparel view",
+    "faceExposure": "face completely out of frame; neck visible",
+    "requestedFraming": "Preserve the crop from neck through jacket hem and upper trousers; do not add a face.",
+    "fixedFootwear": "not visible",
+    "fixedInner": "plain white crew-neck T-shirt",
+    "poseSemantics": {
+     "action": "quiet standing apparel portrait",
+     "bodyDirection": "front-facing",
+     "weightAndSupport": "standing support is off frame and unjudgeable",
+     "keyContacts": "both hands held behind the back",
+     "gaze": "unjudgeable because face is out of frame",
+     "roughFraming": "vertical close medium from neck through upper thighs"
+    }
+   }
   },
   "ex_styling_men_top_full_snapshot_01": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_men_top_full_snapshot_01.png",
@@ -622,7 +799,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_bottom_full_snapshot_03.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_bottom_full_snapshot_03.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "0d65165c30610018a711353ed636f4260b25a9b39c20ed0344e1135ee3e6e32b",
+    "directionDescription": "front-family full-body standing view with slight torso turn",
+    "faceExposure": "fully visible in profile; gaze off camera",
+    "requestedFraming": "Complete head, sold bottom, both feet and footwear; retain the tote at one side.",
+    "fixedFootwear": "plain black thong sandals",
+    "fixedInner": "plain pale gray long-sleeve top",
+    "poseSemantics": {
+     "action": "quiet standing portrait",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "weight biased to one leg with feet close/crossed",
+     "keyContacts": "one hand in bottom pocket; other holds tote handle",
+     "gaze": "head turned off camera",
+     "roughFraming": "vertical full-body with complete head and feet"
+    }
+   }
   },
   "ex_styling_women_bottom_full_snapshot_04": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_bottom_full_snapshot_04.png",
@@ -633,7 +826,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_bottom_full_snapshot_04.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_bottom_full_snapshot_04.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "8dfd8178ba3ee87e8228334c28595cadeebe1ba5764a756a50a695d2672ec560",
+    "directionDescription": "front-family full-body standing view with slight torso turn",
+    "faceExposure": "fully visible in near-profile; gaze off camera",
+    "requestedFraming": "Complete head, sold trousers and both complete sandals; keep cup and hair-touch gestures.",
+    "fixedFootwear": "plain black platform thong sandals",
+    "fixedInner": "plain fitted light-gray cap-sleeve top",
+    "poseSemantics": {
+     "action": "standing while holding a cup and touching hair",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "upright with feet close and weight subtly biased",
+     "keyContacts": "one hand holds cup; other touches hair",
+     "gaze": "head turned off camera",
+     "roughFraming": "square full-body with complete head and feet"
+    }
+   }
   },
   "ex_styling_women_bottom_full_snapshot_05": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_bottom_full_snapshot_05.png",
@@ -644,7 +853,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_bottom_full_snapshot_05.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_bottom_full_snapshot_05.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "bb30cddae7c889d06d2573e1bb85faef839ed7e2173b41e24fd8f90de3bd19f9",
+    "directionDescription": "front-family full-body standing view with slight torso turn",
+    "faceExposure": "fully visible; gaze downward",
+    "requestedFraming": "Complete head, sold trousers and both complete sandals.",
+    "fixedFootwear": "plain black thin-strap sandals",
+    "fixedInner": "white ribbed tank under an open pale-gray short-sleeve shirt",
+    "poseSemantics": {
+     "action": "quiet downward-looking stance",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "weight biased to one leg with feet set apart",
+     "keyContacts": "one hand near waistband/pocket; other arm hangs",
+     "gaze": "down toward the trousers",
+     "roughFraming": "vertical full-body with complete head and feet"
+    }
+   }
   },
   "ex_styling_women_bottom_full_snapshot_06": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_bottom_full_snapshot_06.png",
@@ -655,7 +880,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_bottom_full_snapshot_06.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_bottom_full_snapshot_06.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "f0ce5ee60a48d19c818ec1fc994ff62f62e0eef0fa74e3a9095006a1be613096",
+    "directionDescription": "front-family full-body leaning view with crossed legs",
+    "faceExposure": "face intentionally hidden by a camera held at eye level",
+    "requestedFraming": "Complete head area, sold trousers and both complete shoes; preserve camera occlusion and wall contact.",
+    "fixedFootwear": "plain black high-top sneakers",
+    "fixedInner": "dark gray tank under an open gray short-sleeve shirt",
+    "poseSemantics": {
+     "action": "taking a photograph while leaning",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "one leg bears weight while the other crosses in front; opposite hand braces on wall",
+     "keyContacts": "one hand holds camera to face; other hand contacts wall",
+     "gaze": "hidden behind camera",
+     "roughFraming": "vertical full-body with face occluded and both feet visible"
+    }
+   }
   },
   "ex_styling_women_bottom_medium_snapshot_01": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_bottom_medium_snapshot_01.png",
@@ -677,7 +918,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_bottom_medium_snapshot_02.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_bottom_medium_snapshot_02.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "40342fe45030441475c5e9f08dbfa2d7186f48cdc94234e60534b8a88b950b67",
+    "directionDescription": "front-family lower-body-focused medium view with slight turn",
+    "faceExposure": "head and face completely out of frame",
+    "requestedFraming": "Preserve the crop from lower torso/waist through the sold trousers and both complete shoes; do not add a face.",
+    "fixedFootwear": "plain white low-top sneakers",
+    "fixedInner": "plain white short-sleeve T-shirt tucked into trousers",
+    "poseSemantics": {
+     "action": "standing lower-body apparel view",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "weight biased to rear leg; front leg slightly advanced",
+     "keyContacts": "one hand rests on front thigh; shoulder-bag strap visible",
+     "gaze": "unjudgeable because face is out of frame",
+     "roughFraming": "vertical lower-body view from lower torso through both feet"
+    }
+   }
   },
   "ex_styling_women_bottom_medium_snapshot_03": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_bottom_medium_snapshot_03.png",
@@ -688,7 +945,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_bottom_medium_snapshot_03.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_bottom_medium_snapshot_03.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "1592ebf244c765670062d3cfa51faf4803fdd331e03dc40f4ab84c001a39bbd8",
+    "directionDescription": "front-family lower-body-focused walking view",
+    "faceExposure": "head and face completely out of frame",
+    "requestedFraming": "Preserve the top-down crop from upper torso through the complete sold skirt/trouser silhouette and both shoes; do not add a face.",
+    "fixedFootwear": "plain black canvas low-top sneakers with white toe caps",
+    "fixedInner": "plain white short-sleeve fitted top",
+    "poseSemantics": {
+     "action": "mid-step walk",
+     "bodyDirection": "front-family with slight turn from camera perspective",
+     "weightAndSupport": "front foot bears the current step while rear foot lifts/advances",
+     "keyContacts": "both arms swing loosely without prop",
+     "gaze": "unjudgeable because face is out of frame",
+     "roughFraming": "square top-down lower-body view including both feet"
+    }
+   }
   },
   "ex_styling_women_bottom_medium_snapshot_04": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_bottom_medium_snapshot_04.png",
@@ -699,7 +972,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_bottom_medium_snapshot_04.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_bottom_medium_snapshot_04.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "6272a96ea00f68fa2062257d8fa30e321c80e4fd3ccee3a42d82828068269aa4",
+    "directionDescription": "front-family seated lower-body-focused view",
+    "faceExposure": "head and face completely out of frame",
+    "requestedFraming": "Preserve seated crop from torso/waist through complete sold skirt and both complete sandals; do not add a face.",
+    "fixedFootwear": "plain black slide sandals",
+    "fixedInner": "plain black short-sleeve T-shirt with a light-gray shirt tied at waist",
+    "poseSemantics": {
+     "action": "relaxed seated apparel view",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "body weight supported by chair; feet placed apart on deck",
+     "keyContacts": "one hand rests on skirt and other beside chair; no carried prop",
+     "gaze": "unjudgeable because face is out of frame",
+     "roughFraming": "square seated view from torso through both feet"
+    }
+   }
   },
   "ex_styling_women_bottom_medium_snapshot_05": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_bottom_medium_snapshot_05.png",
@@ -710,7 +999,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_bottom_medium_snapshot_05.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_bottom_medium_snapshot_05.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "598b88b66ef305b42d3f09dd976b088f62b2a2df8d35ce61666f2e01ea27b966",
+    "directionDescription": "front-family lower-body-focused standing view with slight turn",
+    "faceExposure": "head and face completely out of frame",
+    "requestedFraming": "Preserve crop from upper torso through complete sold trousers and both sandals; do not add a face.",
+    "fixedFootwear": "plain light-beige thin-strap sandals",
+    "fixedInner": "plain light-gray long-sleeve top",
+    "poseSemantics": {
+     "action": "quiet standing apparel portrait",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "weight biased to one leg; feet staggered",
+     "keyContacts": "one hand at hip/back; shoulder bag hangs at opposite side",
+     "gaze": "unjudgeable because face is out of frame",
+     "roughFraming": "vertical lower-body view from upper torso through both feet"
+    }
+   }
   },
   "ex_styling_women_bottom_medium_snapshot_06": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_bottom_medium_snapshot_06.png",
@@ -721,7 +1026,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_bottom_medium_snapshot_06.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_bottom_medium_snapshot_06.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "41d0d10d805d9c7a5c4c3a732ac4307d9b93e16d94ec0f20d952e91913cdeeb8",
+    "directionDescription": "front-family lower-body-focused standing view",
+    "faceExposure": "head and face completely out of frame",
+    "requestedFraming": "Preserve crop from upper torso through complete sold skirt and both sandals; keep carried shirt visible; do not add a face.",
+    "fixedFootwear": "plain taupe thin-strap flat sandals",
+    "fixedInner": "plain black sleeveless top",
+    "poseSemantics": {
+     "action": "standing apparel view while holding a shirt",
+     "bodyDirection": "front-facing",
+     "weightAndSupport": "feet set apart with mild weight bias",
+     "keyContacts": "one hand in skirt pocket; other holds a light-gray shirt",
+     "gaze": "unjudgeable because face is out of frame",
+     "roughFraming": "square lower-body view from upper torso through both feet"
+    }
+   }
   },
   "ex_styling_women_dress_full_cafe_shop_09": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_dress_full_cafe_shop_09.png",
@@ -743,7 +1064,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_city_03.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_city_03.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "7f2c5f93b6a53cd2e21773e491eedf7c665a7b42e8d83608cb51961b6786813a",
+    "directionDescription": "front-family full-body view with the example's walking action, compatible slight torso turn and naturally exposed side surfaces",
+    "faceExposure": "visible; retain the example's broad head turn and off-camera gaze behavior while using the selected model identity",
+    "fixedFootwear": "plain unbranded dark neutral flats",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "a natural mid-step walk",
+     "bodyDirection": "front-family with a slight turn",
+     "gaze": "head and gaze turned away from the camera in the same broad direction as the example",
+     "keyContacts": "no support prop and no carried prop",
+     "roughFraming": "vertical full-body with head and both complete feet visible",
+     "weightAndSupport": "one leg bearing the current step while the other advances; both feet remain physically grounded in the walking sequence"
+    },
+    "requestedFraming": "Show the complete head, sold dress, both legs, both complete feet and footwear with a modest floor margin. The short dress/tunic must remain fully inspectable."
+   }
   },
   "ex_styling_women_dress_full_city_10": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_dress_full_city_10.png",
@@ -754,7 +1091,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_city_10.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_city_10.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "c2a813e97d4b3cddc03c21df7ff5ac6788f0fe64acf33b565c0f839e1e299a95",
+    "directionDescription": "front-family full-body standing view with slight torso turn",
+    "faceExposure": "fully visible in profile; gaze off camera",
+    "requestedFraming": "Complete head, complete sold dress and both complete ankle boots.",
+    "fixedFootwear": "plain unbranded black ankle boots",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "quiet standing portrait",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "weight biased to one leg with ankles lightly crossed",
+     "keyContacts": "hands loosely clasped in front; no prop",
+     "gaze": "head turned strongly off camera",
+     "roughFraming": "vertical full-body with complete head and both feet"
+    }
+   }
   },
   "ex_styling_women_dress_full_home_01": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_dress_full_home_01.png",
@@ -765,7 +1118,8 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_home_01.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_home_01.webp",
+   "confirmedGptEligibleV1": false
   },
   "ex_styling_women_dress_full_home_04": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_dress_full_home_04.png",
@@ -776,7 +1130,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_home_04.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_home_04.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "4d382d95fc0c7f5aaf23132aa0ffbe4246fc0211a6f742f54d5fbf0c5e9a4a98",
+    "directionDescription": "front-family full-body standing view with slight torso turn",
+    "faceExposure": "fully visible; gaze off camera",
+    "requestedFraming": "Complete raised hand/head, complete sold dress and both complete flats.",
+    "fixedFootwear": "plain dark gray flats",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "standing while touching top of head",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "weight biased to one leg; feet set apart",
+     "keyContacts": "one hand rests on head; other arm hangs",
+     "gaze": "head and gaze turned off camera",
+     "roughFraming": "vertical full-body with raised hand, head and both feet"
+    }
+   }
   },
   "ex_styling_women_dress_full_home_07": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_dress_full_home_07.png",
@@ -787,7 +1157,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_home_07.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_home_07.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "15ea6817dbfc86bbc960fb6e034549ea7df6dc91a8ab3caa1518354ba10c0c64",
+    "directionDescription": "front-family full-body standing view with slight torso turn",
+    "faceExposure": "fully visible; direct camera gaze",
+    "requestedFraming": "Complete head, complete sold shirt-dress and both complete pumps.",
+    "fixedFootwear": "plain black low-heel pumps",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "standing while lightly lifting dress edge",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "weight biased to one leg with feet close",
+     "keyContacts": "one hand pinches/lifts dress edge; other arm hangs",
+     "gaze": "directly at camera",
+     "roughFraming": "vertical full-body with complete head and both feet"
+    }
+   }
   },
   "ex_styling_women_dress_full_home_08": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_dress_full_home_08.png",
@@ -798,7 +1184,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_home_08.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_home_08.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "5a47adc56d6df1f64e8b72d682788f98cdead9953f4d308bae86e0493ffbd08e",
+    "directionDescription": "front-family full-body standing view",
+    "faceExposure": "fully visible; head bowed and gaze down",
+    "requestedFraming": "Complete head, complete sold dress and both complete sneakers.",
+    "fixedFootwear": "plain white low-top sneakers",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "quiet downward-looking stance",
+     "bodyDirection": "front-facing",
+     "weightAndSupport": "weight biased to one leg; other foot slightly forward",
+     "keyContacts": "both arms hang beside torso; no prop",
+     "gaze": "down toward floor/dress",
+     "roughFraming": "vertical full-body with complete head and both feet"
+    }
+   }
   },
   "ex_styling_women_dress_full_park_05": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_dress_full_park_05.png",
@@ -809,7 +1211,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_park_05.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_park_05.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "6b5d559e79dee031c6b1375d54e15800050f5461187f39d3611e36632776153d",
+    "directionDescription": "front-family full-body standing view with torso leaning slightly",
+    "faceExposure": "fully visible; head bowed and gaze down",
+    "requestedFraming": "Complete head, complete sold dress and both complete flats with ground shadow.",
+    "fixedFootwear": "plain light-gray flats",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "quiet downward-looking stance",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "weight biased to one leg with feet close",
+     "keyContacts": "both arms hang loosely; no prop",
+     "gaze": "down toward floor/dress",
+     "roughFraming": "vertical full-body with complete head and both feet"
+    }
+   }
   },
   "ex_styling_women_dress_full_resort_06": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_dress_full_resort_06.png",
@@ -820,7 +1238,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_resort_06.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_resort_06.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "dc53fd041b6b5302d3e0d1e4a097421f38dc012e2a0518902c1030a46de0a19e",
+    "directionDescription": "front-family full-body standing view with slight torso turn",
+    "faceExposure": "fully visible; direct camera gaze",
+    "requestedFraming": "Complete head, complete sold dress including slit and both complete sandals.",
+    "fixedFootwear": "plain black thong sandals",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "relaxed standing portrait",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "weight on rear leg while slit-side leg extends forward",
+     "keyContacts": "both arms hang with one hand near thigh; no prop",
+     "gaze": "directly at camera",
+     "roughFraming": "vertical full-body with complete head and both feet"
+    }
+   }
   },
   "ex_styling_women_dress_medium_cafe_shop_09": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_dress_medium_cafe_shop_09.png",
@@ -842,7 +1276,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_medium_city_03.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_medium_city_03.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "f592a4921111685f6e2cbb01fb47caa80b1770cd89ba13f1710b4025c778a6bf",
+    "directionDescription": "front-family medium walking view with slight torso turn",
+    "faceExposure": "fully visible but partly crossed by loose hair; gaze off camera",
+    "requestedFraming": "Complete head and sold dress from neckline through the visible hem/slit area; preserve walking arm swing.",
+    "fixedFootwear": "not visible",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "mid-step walk",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "walking support below crop; exact foot phase unjudgeable",
+     "keyContacts": "arms swing naturally without prop",
+     "gaze": "head turned off camera",
+     "roughFraming": "vertical medium from complete head through below-knee dress area"
+    }
+   }
   },
   "ex_styling_women_dress_medium_city_10": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_dress_medium_city_10.png",
@@ -853,7 +1303,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_medium_city_10.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_medium_city_10.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "dd6697b42616eeee975f86ec4c3a81183ca17c3f843db06f41748d0a9d3712c0",
+    "directionDescription": "front-family medium walking/leaning view with slight torso turn",
+    "faceExposure": "fully visible; gaze down",
+    "requestedFraming": "Complete head and sold dress from neckline through the visible skirt portion; keep both arms visible where framed.",
+    "fixedFootwear": "not visible",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "slow downward-looking walk",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "walking support below crop and unjudgeable",
+     "keyContacts": "arms hang/swing loosely; no prop",
+     "gaze": "down toward dress/ground",
+     "roughFraming": "vertical medium from complete head through lower skirt crop"
+    }
+   }
   },
   "ex_styling_women_dress_medium_home_01": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_dress_medium_home_01.png",
@@ -864,7 +1330,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_medium_home_01.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_medium_home_01.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "992162ee24fd973fad5885f68daddb75c18cef3a73d156b8ae69ca0b15750c20",
+    "directionDescription": "front-family close medium apparel view",
+    "faceExposure": "eyes and upper face out of frame; mouth/jaw visible",
+    "requestedFraming": "Preserve the crop from lower face through the sold dress bodice and upper skirt; keep crossed-arm and cheek-touch gesture; do not add eyes/full head.",
+    "fixedFootwear": "not visible",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "standing with one hand touching cheek",
+     "bodyDirection": "front-facing",
+     "weightAndSupport": "standing support below crop and unjudgeable",
+     "keyContacts": "one forearm crosses waist to support opposite elbow; opposite hand touches cheek",
+     "gaze": "unjudgeable because eyes are out of frame",
+     "roughFraming": "vertical close medium from lower face through upper skirt"
+    }
+   }
   },
   "ex_styling_women_dress_medium_home_04": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_dress_medium_home_04.png",
@@ -875,7 +1357,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_medium_home_04.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_medium_home_04.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "3d3de2de00bad1344f542a439a933afb3b1f52b6fecf7404dc8e9c2e45748595",
+    "directionDescription": "front-family seated medium view with torso turned slightly",
+    "faceExposure": "fully visible in near-profile; gaze off camera",
+    "requestedFraming": "Complete head and sold dress from neckline through seated skirt/knee area; preserve bench contact.",
+    "fixedFootwear": "not visible",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "relaxed seated portrait",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "body weight supported by bench; legs angled/crossed below crop",
+     "keyContacts": "one hand braces on bench; other rests on lap",
+     "gaze": "head turned off camera",
+     "roughFraming": "vertical seated medium from complete head through knees"
+    }
+   }
   },
   "ex_styling_women_dress_medium_home_08": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_dress_medium_home_08.png",
@@ -886,7 +1384,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_medium_home_08.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_medium_home_08.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "08056c58420d30e089f36989fa70ecb24d5feac2664bd5400e62322ba8335696",
+    "directionDescription": "front-family close medium apparel view with slight turn",
+    "faceExposure": "eyes and upper face out of frame; mouth/chin visible",
+    "requestedFraming": "Preserve crop from lower face through sold dress bodice and upper skirt; keep both hands visible; do not add eyes/full head.",
+    "fixedFootwear": "not visible",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "quiet standing apparel portrait",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "standing support below crop and unjudgeable",
+     "keyContacts": "one hand rests near waist; other arm hangs",
+     "gaze": "unjudgeable because eyes are out of frame",
+     "roughFraming": "vertical close medium from lower face through upper skirt"
+    }
+   }
   },
   "ex_styling_women_dress_medium_resort_06": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_dress_medium_resort_06.png",
@@ -897,7 +1411,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_medium_resort_06.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_medium_resort_06.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "7d060ed85274b87bb0679768d0038fba107264cfdd16eeaa528e1c4dfa5e1ff1",
+    "directionDescription": "front-family seated medium view with slight torso turn",
+    "faceExposure": "fully visible; direct camera gaze",
+    "requestedFraming": "Complete head and sold dress from neckline through crossed knees; preserve stool contact.",
+    "fixedFootwear": "not visible",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "relaxed seated portrait",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "body weight supported by stool; legs crossed at knee",
+     "keyContacts": "one hand rests on knee; other arm hangs beside stool",
+     "gaze": "directly at camera",
+     "roughFraming": "vertical seated medium from complete head through crossed knees"
+    }
+   }
   },
   "ex_styling_women_outer_full_alley_01": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_outer_full_alley_01.png",
@@ -908,7 +1438,8 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_outer_full_alley_01.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_outer_full_alley_01.webp",
+   "confirmedGptEligibleV1": false
   },
   "ex_styling_women_outer_full_bakery_storefront_01": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_outer_full_bakery_storefront_01.png",
@@ -941,7 +1472,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_outer_full_garden_01.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_outer_full_garden_01.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "8140e922a2525a9d1417d76178877ce92d950d075233aa66bacb52d5a2c273c6",
+    "directionDescription": "front-family full-body standing view with slight torso turn",
+    "faceExposure": "fully visible; gaze down",
+    "requestedFraming": "Complete head, outer jacket, both legs and both complete shoes.",
+    "fixedFootwear": "plain black athletic shoes",
+    "fixedInner": "plain black crew-neck T-shirt",
+    "poseSemantics": {
+     "action": "quiet downward-looking stance",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "weight centered with feet slightly apart",
+     "keyContacts": "both hands in jacket pockets",
+     "gaze": "down toward jacket/ground",
+     "roughFraming": "vertical full-body with complete head and both feet"
+    }
+   }
   },
   "ex_styling_women_outer_full_night_city_01": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_outer_full_night_city_01.png",
@@ -952,7 +1499,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_outer_full_night_city_01.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_outer_full_night_city_01.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "3ead2be23248cd0455b1a185d16fc44335a75d38386755e95dd3aae2d424c82d",
+    "directionDescription": "front-family full-body walking view with slight torso turn",
+    "faceExposure": "lower face partly visible; eyes hidden by cap brim",
+    "requestedFraming": "Complete cap, outer jacket, both legs and both shoes; preserve cap-touching gesture.",
+    "fixedFootwear": "plain black athletic shoes",
+    "fixedInner": "plain black crew-neck top",
+    "poseSemantics": {
+     "action": "mid-step walk while adjusting cap",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "one foot bears step while other crosses/advances",
+     "keyContacts": "one hand touches cap brim; other touches side of neck",
+     "gaze": "down under cap brim",
+     "roughFraming": "vertical full-body with cap and both feet visible"
+    }
+   }
   },
   "ex_styling_women_outer_full_rain_street_01": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_outer_full_rain_street_01.png",
@@ -963,7 +1526,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_outer_full_rain_street_01.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_outer_full_rain_street_01.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "e597d621d7a6332cc638f4f67bf2b3d502a541eb6fe83f1135fee62ea8a892ce",
+    "directionDescription": "front-family full-body standing view with slight torso turn",
+    "faceExposure": "head/face fully hidden by umbrella canopy",
+    "requestedFraming": "Preserve umbrella occlusion, complete outer jacket, both legs and both complete rain boots; do not reveal the face.",
+    "fixedFootwear": "plain black ankle rain boots",
+    "fixedInner": "not visible",
+    "poseSemantics": {
+     "action": "standing under open umbrella",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "weight biased to one leg with feet set apart",
+     "keyContacts": "both hands clasp umbrella handle",
+     "gaze": "unjudgeable because umbrella hides face",
+     "roughFraming": "vertical full-body including umbrella and both feet"
+    }
+   }
   },
   "ex_styling_women_outer_full_stone_doorway_replacement_01": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_outer_full_stone_doorway_replacement_01.png",
@@ -974,7 +1553,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_outer_full_stone_doorway_replacement_01.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_outer_full_stone_doorway_replacement_01.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "ede4b819ed49138e12c40d2ca3103b47eb1e688de9f49af381abf9ae21e5b3c5",
+    "directionDescription": "front-family full-body standing view with slight torso turn",
+    "faceExposure": "fully visible; gaze down into bag",
+    "requestedFraming": "Complete head, outer jacket, trousers and both complete flats; preserve tote interaction.",
+    "fixedFootwear": "plain black flats",
+    "fixedInner": "plain black crew-neck top",
+    "poseSemantics": {
+     "action": "standing while searching inside tote",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "weight biased to one leg with feet set apart",
+     "keyContacts": "one hand holds tote opening; other hand reaches inside",
+     "gaze": "down into tote",
+     "roughFraming": "vertical environmental full-body with complete head and feet"
+    }
+   }
   },
   "ex_styling_women_outer_full_terrace_back_01": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_outer_full_terrace_back_01.png",
@@ -996,7 +1591,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_outer_medium_building_01.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_outer_medium_building_01.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "f9970e0d7def3bdf94172c523a2d63ae4bfebbe7507aa382000e31c8cdbca188",
+    "directionDescription": "front-family medium apparel view with slight torso turn",
+    "faceExposure": "head and face completely out of frame; neck visible",
+    "requestedFraming": "Preserve crop from neck through complete blazer hem, visible skirt and both complete flats; do not add a face.",
+    "fixedFootwear": "plain black bow flats",
+    "fixedInner": "plain black crew-neck top",
+    "poseSemantics": {
+     "action": "quiet standing apparel portrait",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "weight biased to one leg with feet staggered",
+     "keyContacts": "one hand in blazer pocket; other arm hangs",
+     "gaze": "unjudgeable because face is out of frame",
+     "roughFraming": "vertical apparel view from neck through both feet"
+    }
+   }
   },
   "ex_styling_women_outer_medium_cafe_01": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_outer_medium_cafe_01.png",
@@ -1007,7 +1618,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_outer_medium_cafe_01.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_outer_medium_cafe_01.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "fbacf94ebbacc08a810458c25d8f2b405aeee69c1ceb43e5afc58433d26c19bb",
+    "directionDescription": "front-family medium standing view with raised arm",
+    "faceExposure": "fully visible; direct camera gaze",
+    "requestedFraming": "Complete raised hand/head and outer jacket through hem plus upper trousers; keep phone visible.",
+    "fixedFootwear": "not visible",
+    "fixedInner": "plain black crew-neck top",
+    "poseSemantics": {
+     "action": "standing while lifting hood/fabric above head",
+     "bodyDirection": "front-facing",
+     "weightAndSupport": "standing support below crop and unjudgeable",
+     "keyContacts": "one hand lifts hood/fabric; other holds phone",
+     "gaze": "directly at camera",
+     "roughFraming": "vertical medium from raised hand/head through upper thighs"
+    }
+   }
   },
   "ex_styling_women_outer_medium_market_01": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_outer_medium_market_01.png",
@@ -1029,7 +1656,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_outer_medium_rainy_city_01.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_outer_medium_rainy_city_01.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "1a0b10f5dc7008ff73b8436cfaa4d419d68906426a9bbed75166da213d7166b4",
+    "directionDescription": "front-family medium apparel view under umbrella",
+    "faceExposure": "eyes and upper face out of frame; lower jaw/neck edge visible",
+    "requestedFraming": "Preserve crop from lower face through outer jacket hem and upper trousers; keep umbrella handle and phone visible; do not add eyes/full head.",
+    "fixedFootwear": "not visible",
+    "fixedInner": "plain black crew-neck top",
+    "poseSemantics": {
+     "action": "standing under umbrella while holding phone",
+     "bodyDirection": "front-facing",
+     "weightAndSupport": "standing support below crop and unjudgeable",
+     "keyContacts": "one hand grips umbrella; other holds phone",
+     "gaze": "unjudgeable because eyes are out of frame",
+     "roughFraming": "vertical medium from lower face through upper legs"
+    }
+   }
   },
   "ex_styling_women_outer_medium_record_store_01": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_outer_medium_record_store_01.png",
@@ -1048,6 +1691,7 @@
     "top",
     "outer"
    ],
+   "confirmedGptEligibleV1": false,
    "cutType": "styling",
    "direction": "front",
    "gender": "women",
@@ -1063,7 +1707,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_full_snapshot_01.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_full_snapshot_01.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "d053e369d21f3af6b8029d68fd97d9cde7b1129218327b3b347899a743b07b10",
+    "directionDescription": "front-family seated full-body view with slight torso turn",
+    "faceExposure": "visible behind sunglasses; gaze off camera",
+    "requestedFraming": "Complete head, sold top through hem, seated legs and both complete sandals; retain chair/table contacts.",
+    "fixedFootwear": "plain black thin-strap sandals",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "relaxed seated café portrait shading forehead",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "body weight supported by chair; ankles crossed",
+     "keyContacts": "one hand shades forehead; other touches drink on table",
+     "gaze": "head/gaze turned off camera behind sunglasses",
+     "roughFraming": "vertical seated full-body with head and both feet"
+    }
+   }
   },
   "ex_styling_women_top_full_snapshot_02": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_top_full_snapshot_02.png",
@@ -1074,7 +1734,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_full_snapshot_02.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_full_snapshot_02.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "9b3a9abd47065f2c992e105dde37e42d5921896b4e87d5bff700d4edf6f36779",
+    "directionDescription": "front-family full-body standing view with slight torso turn",
+    "faceExposure": "visible but partly covered by hair; gaze down at phone",
+    "requestedFraming": "Complete head, sold top, full matching skirt and both complete shoes; retain phone and crossbody bag.",
+    "fixedFootwear": "plain black loafers with gray socks",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "standing while checking phone",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "weight biased to one leg with feet close",
+     "keyContacts": "one hand holds phone; crossbody bag hangs at side",
+     "gaze": "down at phone",
+     "roughFraming": "vertical full-body with complete head and feet"
+    }
+   }
   },
   "ex_styling_women_top_full_snapshot_03": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_top_full_snapshot_03.png",
@@ -1085,7 +1761,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_full_snapshot_03.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_full_snapshot_03.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "90a9d45f842cfcdf330870f73c10d38c77afa68a5e62e3c89757fd3360f3b467",
+    "directionDescription": "front-family full-body standing view with slight torso turn",
+    "faceExposure": "fully visible; gaze down",
+    "requestedFraming": "Complete head, sold top through hem, matching trousers and both complete sandals.",
+    "fixedFootwear": "plain black slide sandals",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "quiet downward-looking stance",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "weight biased to one leg with feet staggered",
+     "keyContacts": "both hands rest near front hips/upper thighs",
+     "gaze": "down toward garment",
+     "roughFraming": "vertical full-body with complete head and feet"
+    }
+   }
   },
   "ex_styling_women_top_full_snapshot_04": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_top_full_snapshot_04.png",
@@ -1096,7 +1788,8 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_full_snapshot_04.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_full_snapshot_04.webp",
+   "confirmedGptEligibleV1": false
   },
   "ex_styling_women_top_full_snapshot_05": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_top_full_snapshot_05.png",
@@ -1107,7 +1800,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_full_snapshot_05.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_full_snapshot_05.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "95eff64d9fe3215fbbc16d9b899bd4ff7a37e03b459d6b174936e04870ef785e",
+    "directionDescription": "front-family full-body standing view with slight torso turn",
+    "faceExposure": "fully visible; direct camera gaze",
+    "requestedFraming": "Complete head, sold top through hem, matching trousers and both complete sneakers; keep cup visible.",
+    "fixedFootwear": "plain light-gray low-top sneakers",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "standing on steps while holding cup",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "feet on different stair levels with weight biased to upper/rear leg",
+     "keyContacts": "one hand holds cup; other arm hangs",
+     "gaze": "directly at camera",
+     "roughFraming": "square elevated full-body with complete head and feet"
+    }
+   }
   },
   "ex_styling_women_top_full_snapshot_06": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_top_full_snapshot_06.png",
@@ -1118,7 +1827,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "full",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_full_snapshot_06.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_full_snapshot_06.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "59249a6320e6189f4e5a44c5a22bc3b770e11d9db01d8b22a5000258a09f2df2",
+    "directionDescription": "front-family full-body standing view with slight torso turn",
+    "faceExposure": "fully visible; smiling toward camera with mouth partly covered by hand",
+    "requestedFraming": "Complete head, sold top, matching trousers and both complete sandals; preserve face-covering hand gesture.",
+    "fixedFootwear": "plain gray sport sandals",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "standing while laughing/shielding mouth",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "weight biased to one leg; other foot angled outward",
+     "keyContacts": "one hand covers mouth; other hand in trouser pocket",
+     "gaze": "toward camera",
+     "roughFraming": "square full-body with complete head and feet"
+    }
+   }
   },
   "ex_styling_women_top_medium_snapshot_01": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_top_medium_snapshot_01.png",
@@ -1129,7 +1854,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_medium_snapshot_01.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_medium_snapshot_01.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "c562e051725ee187bb16cf633c24580768cd9d793a821c54bd0ada5785ad3767",
+    "directionDescription": "front-family close medium apparel view with slight torso turn",
+    "faceExposure": "head and face completely out of frame; neck visible",
+    "requestedFraming": "Preserve crop from neck through complete sold top hem and upper trousers; keep tote strap and drink visible; do not add a face.",
+    "fixedFootwear": "not visible",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "standing while holding drink and tote strap",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "standing support below crop and unjudgeable",
+     "keyContacts": "one hand holds drink; other grips tote strap",
+     "gaze": "unjudgeable because face is out of frame",
+     "roughFraming": "vertical close medium from neck through upper thighs"
+    }
+   }
   },
   "ex_styling_women_top_medium_snapshot_02": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_top_medium_snapshot_02.png",
@@ -1140,7 +1881,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_medium_snapshot_02.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_medium_snapshot_02.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "94924d23bf89b8a41e3247f191837ec32a9371a0ce4d53a995c48c58ae527dcc",
+    "directionDescription": "front-family seated medium view with slight torso turn",
+    "faceExposure": "fully visible; gaze down into tote",
+    "requestedFraming": "Complete head and sold top through hem plus seated upper legs; retain tote interaction.",
+    "fixedFootwear": "not visible",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "seated while searching inside tote",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "body weight supported by bench; legs extend below crop",
+     "keyContacts": "one hand reaches into tote; other holds tote rim",
+     "gaze": "down into tote",
+     "roughFraming": "vertical seated medium from complete head through upper legs"
+    }
+   }
   },
   "ex_styling_women_top_medium_snapshot_03": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_top_medium_snapshot_03.png",
@@ -1151,7 +1908,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_medium_snapshot_03.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_medium_snapshot_03.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "ceabff76f243c04606cde0d38c26726041dc0c6c248c504c086919a900bf5f1f",
+    "directionDescription": "front-family medium standing view with slight torso turn",
+    "faceExposure": "fully visible; gaze down",
+    "requestedFraming": "Complete head and sold top through hem plus enough matching trousers; retain cardigan draped off shoulders.",
+    "fixedFootwear": "not visible",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "quiet doorway portrait with cardigan draped off shoulders",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "standing support below crop and unjudgeable",
+     "keyContacts": "one hand in trouser pocket; other near doorway edge",
+     "gaze": "down toward garment",
+     "roughFraming": "vertical medium from complete head through upper thighs"
+    }
+   }
   },
   "ex_styling_women_top_medium_snapshot_04": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_top_medium_snapshot_04.png",
@@ -1162,7 +1935,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_medium_snapshot_04.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_medium_snapshot_04.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "df639ea0c4e388bef9e0baeba9acbd7351052723669cacf904cd0c99bca74a69",
+    "directionDescription": "front-family medium view with the example's relaxed asymmetry and compatible slight torso turn",
+    "faceExposure": "visible; preserve the example's broad off-camera gaze behavior while using the selected model identity",
+    "fixedFootwear": "not visible unless naturally included by the medium composition",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "quiet standing portrait with relaxed asymmetry",
+     "bodyDirection": "front-family with a slight turn",
+     "gaze": "head and gaze turned slightly off camera in the same broad direction as the example",
+     "keyContacts": "arms relaxed beside the torso; preserve the broad near-wall relationship, while exact physical back/shoulder contact is uncertain; no carried prop",
+     "roughFraming": "vertical medium styling cut from complete head through the sold shirt hem",
+     "weightAndSupport": "upright near-wall stance with subtle weight bias rather than a symmetric mannequin stance; whether the wall bears any body weight is uncertain"
+    },
+    "requestedFraming": "Show the complete head and the complete sold shirt through its hem, plus enough of the selected matching trousers to make the layer relationship unambiguous. This is an independently composed medium cut, not a crop of a full-body image."
+   }
   },
   "ex_styling_women_top_medium_snapshot_05": {
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_top_medium_snapshot_05.png",
@@ -1184,7 +1973,23 @@
    "direction": "front",
    "gender": "women",
    "shot": "medium",
-   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_medium_snapshot_06.webp"
+   "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_top_medium_snapshot_06.webp",
+   "confirmedGptDirectingV1": {
+    "allSha256": "b4a829c0ed816f508a490d8459eae6ab3263275ffbfb822e5c3393c0db87411d",
+    "directionDescription": "front-family medium standing view with slight torso turn",
+    "faceExposure": "fully visible; gaze off camera",
+    "requestedFraming": "Complete head and sold top through hem plus upper matching trousers; keep one-hand-on-hip asymmetry.",
+    "fixedFootwear": "not visible",
+    "fixedInner": null,
+    "poseSemantics": {
+     "action": "quiet standing portrait",
+     "bodyDirection": "front-family with a slight turn",
+     "weightAndSupport": "weight support below crop; subtle bias implied by hip shift",
+     "keyContacts": "one hand rests on hip; other arm hangs and holds bag strap/edge low in frame",
+     "gaze": "head and gaze turned off camera",
+     "roughFraming": "vertical medium from complete head through upper thighs"
+    }
+   }
   },
   "sig_men_01": {
    "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_men_01.png",
@@ -1198,7 +2003,8 @@
    "cutType": "signature",
    "direction": "front",
    "gender": "men",
-   "shot": "medium"
+   "shot": "medium",
+   "confirmedGptEligibleV1": false
   },
   "sig_men_02": {
    "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_men_02.png",
@@ -1212,7 +2018,8 @@
    "cutType": "signature",
    "direction": "front",
    "gender": "men",
-   "shot": "medium"
+   "shot": "medium",
+   "confirmedGptEligibleV1": false
   },
   "sig_men_03": {
    "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_men_03.png",
@@ -1226,7 +2033,8 @@
    "cutType": "signature",
    "direction": "front",
    "gender": "men",
-   "shot": "medium"
+   "shot": "medium",
+   "confirmedGptEligibleV1": false
   },
   "sig_men_04": {
    "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_men_04.png",
@@ -1240,7 +2048,8 @@
    "cutType": "signature",
    "direction": "front",
    "gender": "men",
-   "shot": "medium"
+   "shot": "medium",
+   "confirmedGptEligibleV1": false
   },
   "sig_men_05": {
    "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_men_05.png",
@@ -1254,7 +2063,8 @@
    "cutType": "signature",
    "direction": "front",
    "gender": "men",
-   "shot": "medium"
+   "shot": "medium",
+   "confirmedGptEligibleV1": false
   },
   "sig_women_01": {
    "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_women_01.png",
@@ -1268,7 +2078,8 @@
    "cutType": "signature",
    "direction": "front",
    "gender": "women",
-   "shot": "medium"
+   "shot": "medium",
+   "confirmedGptEligibleV1": false
   },
   "sig_women_02": {
    "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_women_02.png",
@@ -1282,7 +2093,8 @@
    "cutType": "signature",
    "direction": "front",
    "gender": "women",
-   "shot": "medium"
+   "shot": "medium",
+   "confirmedGptEligibleV1": false
   },
   "sig_women_03": {
    "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_women_03.png",
@@ -1296,7 +2108,8 @@
    "cutType": "signature",
    "direction": "front",
    "gender": "women",
-   "shot": "medium"
+   "shot": "medium",
+   "confirmedGptEligibleV1": false
   },
   "sig_women_04": {
    "all": "https://images.wearless.kr/seed/genexamples/signature/v1/all/sig_women_04.png",
@@ -1310,7 +2123,8 @@
    "cutType": "signature",
    "direction": "front",
    "gender": "women",
-   "shot": "medium"
+   "shot": "medium",
+   "confirmedGptEligibleV1": false
   }
  }
 }

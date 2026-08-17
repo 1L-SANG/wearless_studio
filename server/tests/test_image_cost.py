@@ -14,6 +14,7 @@ from app import image_usage
 
 PRO = "gemini-3-pro-image"
 FLASH = "gemini-3.1-flash-image"
+GPT_IMAGE_2 = "gpt-image-2"
 
 
 def _usage(prompt: int, image: int, text: int = 0) -> dict:
@@ -119,6 +120,121 @@ def test_input_images_are_billed():
     few = estimate_cost(PRO, "1K", _usage(prompt=600, image=1120))
     many = estimate_cost(PRO, "1K", _usage(prompt=4000, image=1120))
     assert many.usd > few.usd
+
+
+def test_gpt_image_2_actual_usage_matches_the_sealed_experiment_receipt():
+    """선정 실험의 실제 Images API usage: text 2,376 + image 7,463 + output 1,372."""
+    cost = estimate_cost(GPT_IMAGE_2, "1024x1536", {
+        "input_tokens": 9839,
+        "input_tokens_details": {"text_tokens": 2376, "image_tokens": 7463},
+        "output_tokens": 1372,
+        "total_tokens": 11211,
+        "output_tokens_details": {"image_tokens": 1372, "text_tokens": 0},
+    })
+    assert cost.source == "usage"
+    assert cost.input_tokens == 9839
+    assert cost.output_image_tokens == 1372
+    # 2376*$5/M + 7463*$8/M + 1372*$30/M
+    assert cost.usd == pytest.approx(0.112744, abs=1e-9)
+
+
+def test_gpt_image_2_snapshot_uses_the_same_rate_card():
+    usage = {
+        "input_tokens": 9839,
+        "input_tokens_details": {"text_tokens": 2376, "image_tokens": 7463},
+        "output_tokens": 1372,
+        "output_tokens_details": {"image_tokens": 1372},
+    }
+    assert estimate_cost("gpt-image-2-2026-04-21", "2336x3504", usage).usd == 0.112744
+
+
+def test_gpt_image_2_applies_cache_rates_only_with_modality_evidence():
+    cost = estimate_cost(GPT_IMAGE_2, "2336x3504", {
+        "input_tokens": 3000,
+        "input_tokens_details": {
+            "text_tokens": 1000,
+            "image_tokens": 2000,
+            "text_tokens_details": {"cached_tokens": 400},
+            "image_tokens_details": {"cached_tokens": 500},
+        },
+        "output_tokens": 100,
+        "output_tokens_details": {"image_tokens": 100},
+    })
+    # 600*$5 + 400*$1.25 + 1500*$8 + 500*$2 + 100*$30 = $0.0195
+    assert cost.usd == pytest.approx(0.0195, abs=1e-9)
+
+
+def test_gpt_image_2_without_usage_is_not_given_a_made_up_4k_table_price():
+    cost = estimate_cost(GPT_IMAGE_2, "2336x3504", None)
+    assert cost.source == "unavailable_usage"
+    assert cost.usd is None
+
+
+@pytest.mark.parametrize("usage", [
+    {
+        "input_tokens": -1,
+        "input_tokens_details": {"text_tokens": 0, "image_tokens": 1},
+        "output_tokens": 1,
+        "output_tokens_details": {"image_tokens": 1},
+    },
+    {
+        "input_tokens": 10,
+        "input_tokens_details": {"text_tokens": 4, "image_tokens": 5},
+        "output_tokens": 1,
+        "output_tokens_details": {"image_tokens": 1},
+    },
+    {
+        "input_tokens": 10,
+        "input_tokens_details": {"text_tokens": 4, "image_tokens": 6},
+        "output_tokens": 2,
+        "output_tokens_details": {"image_tokens": 1},
+    },
+    {
+        "input_tokens": 10,
+        "input_tokens_details": {
+            "text_tokens": 4,
+            "image_tokens": 6,
+            "text_tokens_details": {"cached_tokens": 5},
+        },
+        "output_tokens": 1,
+        "output_tokens_details": {"image_tokens": 1},
+    },
+])
+def test_gpt_image_2_invalid_usage_fails_closed_instead_of_underbilling(usage):
+    cost = estimate_cost(GPT_IMAGE_2, "2336x3504", usage)
+    assert cost.source == "invalid_usage"
+    assert cost.usd is None
+    assert (cost.input_tokens, cost.output_text_tokens, cost.output_image_tokens) == (0, 0, 0)
+
+
+def test_gpt_image_2_ambiguous_aggregate_cache_fails_closed():
+    cost = estimate_cost(GPT_IMAGE_2, "2336x3504", {
+        "input_tokens": 10,
+        "input_tokens_details": {
+            "text_tokens": 4,
+            "image_tokens": 6,
+            "cached_tokens": 3,
+        },
+        "output_tokens": 1,
+        "output_tokens_details": {"image_tokens": 1},
+    })
+    assert cost.source == "invalid_usage"
+    assert cost.usd is None
+
+
+def test_gpt_image_2_zero_aggregate_cache_is_not_ambiguous():
+    cost = estimate_cost(GPT_IMAGE_2, "2336x3504", {
+        "input_tokens": 10,
+        "input_tokens_details": {
+            "text_tokens": 4,
+            "image_tokens": 6,
+            "cached_tokens": 0,
+        },
+        "output_tokens": 1,
+        "output_tokens_details": {"image_tokens": 1},
+    })
+    assert cost.source == "usage"
+    assert cost.usd == pytest.approx((4 * 5 + 6 * 8 + 1 * 30) / 1_000_000)
 
 
 def test_unknown_model_records_tokens_without_price():

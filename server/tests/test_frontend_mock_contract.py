@@ -87,8 +87,20 @@ def test_virtual_model_catalogs_and_public_assets_stay_in_sync():
         assert (model["name"], model["gender"], model["thumb"]) == (name, gender, thumb)
         assert set(model["views"]) == {
             "face_front", "grid_sedcard", "three_quarter", "profile",
-            "body_front", "body_back",
+            "body_front", "body_back", "grid_face_direction", "grid_fullbody",
         }
+        for view_name in ("grid_sedcard", "grid_face_direction", "grid_fullbody"):
+            view = model["views"][view_name]
+            assert view["key"] == f"seed/models/{model_id}/{view_name}.png"
+            assert view["url"].endswith(f"/{view['key']}")
+            assert view["mime"] in {"image/jpeg", "image/png"}
+            assert isinstance(view["byteLength"], int) and view["byteLength"] > 0
+            assert re.fullmatch(r"[0-9a-f]{64}", view["sha256"])
+        exact_face = model["views"]["grid_face_direction"]
+        assert exact_face["sanitization"] == "lossless_metadata_strip_no_resize"
+        assert exact_face["width"] > 0 and exact_face["height"] > 0
+        assert re.fullmatch(r"[0-9a-f]{64}", exact_face["sourceSha256"])
+        assert re.fullmatch(r"[0-9a-f]{64}", exact_face["decodedRgbaSha256"])
         # 행 단위로 id·표시명·성별·썸네일이 **한 줄 안에서** 짝지어져 있는지 본다.
         # 셋을 따로 substring 검사하면 이름이 서로 바뀌거나 썸네일이 남의 것이어도
         # 통과한다(2026-08-17 리뷰 지적) — 선택 화면과 생성 아이덴티티가 어긋나는 사고다.
@@ -111,6 +123,20 @@ def test_virtual_model_catalogs_and_public_assets_stay_in_sync():
         assert (REPO_ROOT / f"public/models/{gender}/{anchor}").is_file(), (
             f"{model_id} 앵커 {anchor} 없음 — 시드가 업로드 도중 죽는다"
         )
+
+    # 지안(mE)은 과거 owner-selected GPT 실험의 실제 outbound와 픽셀·크기·bytes가 같다.
+    assert manifest["models"]["mE"]["views"]["grid_face_direction"] == {
+        "key": "seed/models/mE/grid_face_direction.png",
+        "url": "https://images.wearless.kr/seed/models/mE/grid_face_direction.png",
+        "mime": "image/png",
+        "byteLength": 1739708,
+        "sha256": "987c88e59cc5fcbf20b290494ecc831ef926cd48c2efed3fb90ccbdbed04b1a9",
+        "sourceSha256": "e906d14b996fc32ad63b0e694c110b7d6b4c96b5cdb7da35289f98460c7f6062",
+        "width": 1254,
+        "height": 1254,
+        "decodedRgbaSha256": "c2a3f5d7a838c7f7db3541423887f554dfd26e38e3d6ce51af3cf5b1fd033f88",
+        "sanitization": "lossless_metadata_strip_no_resize",
+    }
 
 
 def test_dev_generation_example_catalog_matches_server_registry_v2():

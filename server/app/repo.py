@@ -477,7 +477,16 @@ async def save_product(
 # inputConsistency: 셀러가 분석 폼을 한 번 수정하면 REPLACE 로 경고가 사라져, 생성 직전
 # 게이트가 조용히 없어진다(사라지는 경고 = 없는 경고). 재분석 때는 finalize 가 payload 를
 # 통째로 갈아끼우므로 낡은 판정이 남지 않는다.
-_SERVER_OWNED_ANALYSIS_KEYS = ("sourceMirrored", "inputConsistency", "featureCopy")
+_SERVER_OWNED_ANALYSIS_KEYS = (
+    "sourceMirrored",
+    "inputConsistency",
+    "featureCopy",
+    "confirmedGptProductEvidence",
+)
+# Unlike sourceMirrored (which the analysis form may explicitly edit), this value is a
+# hash-bound AG-01 artifact. API clients may echo it but can never create or replace it;
+# only finalize_analyze_success replaces the full payload after a fresh provider call.
+_IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS = ("confirmedGptProductEvidence",)
 
 
 async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict) -> dict:
@@ -486,13 +495,26 @@ async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict) 
     REPLACE 시맨틱이라 들어온 payload 가 곧 새 전문이다. 다만 `_SERVER_OWNED_ANALYSIS_KEYS`
     는 클라가 안 보냈을 때 기존 값을 이월한다 — 셀러가 소재·핏을 한 번 수정하면 AI 파생
     신호가 조용히 소실되고, sourceMirrored 의 경우 그 결과로 반전된 로고가 출고된다.
+    해시로 봉인된 confirmedGptProductEvidence 는 클라이언트가 보내도 기존 서버 값을 유지한다.
     """
     missing = [k for k in _SERVER_OWNED_ANALYSIS_KEYS if k not in analysis]
-    if missing:
+    immutable_supplied = any(k in analysis for k in _IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS)
+    if missing or immutable_supplied:
         prev = await get_analysis(conn, project_id) or {}
         carried = {k: prev[k] for k in missing if k in prev}
-        if carried:
-            analysis = {**analysis, **carried}
+        immutable = {
+            k: prev[k]
+            for k in _IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS
+            if k in prev
+        }
+        if immutable_supplied:
+            analysis = {
+                k: value
+                for k, value in analysis.items()
+                if k not in _IMMUTABLE_SERVER_OWNED_ANALYSIS_KEYS
+            }
+        if carried or immutable:
+            analysis = {**analysis, **carried, **immutable}
     locked = bool(analysis.get("locked", False))
     async with conn.cursor() as cur:
         await cur.execute(
@@ -534,6 +556,29 @@ async def get_analysis(conn: AsyncConnection, project_id: str) -> dict:
         await cur.execute("select payload from analyses where project_id = %s", (project_id,))
         row = await cur.fetchone()
     return (row or {}).get("payload") or {}
+
+
+async def save_confirmed_gpt_product_evidence(
+    conn: AsyncConnection,
+    project_id: str,
+    contract: dict,
+) -> dict:
+    """Persist a verified public-analysis handoff without exposing a client write path."""
+
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            update analyses
+            set payload = jsonb_set(payload, '{confirmedGptProductEvidence}', %s::jsonb, true)
+            where project_id = %s
+            returning payload
+            """,
+            (Json(contract), project_id),
+        )
+        row = await cur.fetchone()
+    if row is None:
+        raise RuntimeError("analysis_required_before_evidence_promotion")
+    return row["payload"]
 
 
 async def get_asset_for_user(conn: AsyncConnection, user_id: str, asset_id: str) -> dict | None:
@@ -1218,26 +1263,39 @@ async def renew_job_lease(conn: AsyncConnection, job_id: str, lease_token: str) 
 
 
 async def recover_stale_leases(conn: AsyncConnection, lease_timeout_seconds: int) -> list[dict]:
-    """lease 초과 running job: 1회차 pending 재큐, 2회차 error (§5 고착 방지).
-    error 전환 시 같은 statement(ev CTE)로 error job_event도 원자 append (SSE 종결 신호)."""
+    """lease 초과 running job을 복구한다.
+
+    유료 상세페이지 잡은 provider 응답 여부를 알 수 없는 상태에서 전체를 재큐하면 중복
+    청구될 수 있으므로 첫 회수부터 error로 종결한다. 다른 잡은 기존처럼 1회 재큐 후
+    error로 종결한다. error 전환과 SSE 종결 이벤트는 한 statement로 원자 기록한다.
+    """
     msg = "작업 서버가 응답하지 않아 작업을 중단했어요. 다시 시도해 주세요."
     async with conn.cursor() as cur:
         await cur.execute(
             """
             with stale as (
-              select id, coalesce((metadata->>'leaseRecoveries')::int, 0) as recoveries
+              select id, kind, coalesce((metadata->>'leaseRecoveries')::int, 0) as recoveries
               from jobs
               where status = 'running' and locked_at < now() - make_interval(secs => %s)
               for update skip locked
             ),
             updated as (
               update jobs j
-              set status = case when stale.recoveries >= 1 then 'error' else 'pending' end,
+              set status = case
+                    when stale.kind = 'detail_page' or stale.recoveries >= 1 then 'error'
+                    else 'pending'
+                  end,
                   locked_by = null, locked_at = null,
-                  error_message = case when stale.recoveries >= 1 then %s else null end,
+                  error_message = case
+                    when stale.kind = 'detail_page' or stale.recoveries >= 1 then %s
+                    else null
+                  end,
                   metadata = jsonb_set(j.metadata, '{leaseRecoveries}',
                     to_jsonb(stale.recoveries + 1), true),
-                  finished_at = case when stale.recoveries >= 1 then now() else null end
+                  finished_at = case
+                    when stale.kind = 'detail_page' or stale.recoveries >= 1 then now()
+                    else null
+                  end
               from stale where j.id = stale.id
               returning j.id as id, j.user_id as user_id, j.status as status,
                         j.credits_reserved as credits_reserved

@@ -50,6 +50,20 @@ test('public AI fields are saved into the local draft before returning matching 
   assert.deepEqual(result.matchClothing.map((item) => item.id), ['ranked-main', 'ranked-sub']);
 });
 
+test('signed public evidence survives the draft and is promoted outside editable analysis', async () => {
+  const [adapterSource, syncSource, shapeSource] = await Promise.all([
+    read('src/lib/api/httpAdapter.js'),
+    read('src/lib/draftSync.js'),
+    read('src/lib/api/shapes.js'),
+  ]);
+
+  assert.match(adapterSource, /confirmedGptProductEvidenceHandoff: ai\.confirmedGptProductEvidenceHandoff/);
+  assert.match(shapeSource, /confirmedGptProductEvidenceHandoff: null/);
+  assert.match(syncSource, /const evidenceHandoff = analysis\?\.confirmedGptProductEvidenceHandoff/);
+  assert.match(syncSource, /delete analysis\.confirmedGptProductEvidenceHandoff/);
+  assert.match(syncSource, /await api\.promoteConfirmedGptEvidence\(projectId, evidenceHandoff\)/);
+});
+
 test('mock matching diversifies the second candidate deterministically', () => {
   const ranked = [
     { id: 'a', colorGroup: 'black' },

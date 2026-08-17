@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
+from .agents import product_evidence_contract
 from .agents.vision_llm import VisionError
 from .auth import optional_user
 from .r2 import ext_for_mime
@@ -190,7 +191,12 @@ async def public_analyze(
     await _analysis_semaphore.acquire()
     try:
         core = await analyze_image_bytes(
-            request.app.state.settings, source_images, product=product, slots=slots)
+            request.app.state.settings,
+            source_images,
+            product=product,
+            slots=slots,
+            persist_confirmed_evidence=True,
+        )
     except VisionError:
         raise HTTPException(
             status_code=502,
@@ -198,4 +204,24 @@ async def public_analyze(
         ) from None
     finally:
         _analysis_semaphore.release()
-    return JSONResponse({"data": core["result_data"]})
+    data = dict(core["result_data"])
+    evidence = (core.get("analysis_payload") or {}).get(
+        product_evidence_contract.PERSISTED_KEY
+    )
+    if evidence is not None:
+        try:
+            data[product_evidence_contract.HANDOFF_KEY] = (
+                product_evidence_contract.issue_handoff(
+                    evidence, request.app.state.settings.r2_secret_access_key
+                )
+            )
+        except product_evidence_contract.ProductEvidenceContractError:
+            logger.exception("public analysis evidence handoff could not be sealed")
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "analysis_handoff_unavailable",
+                    "message": "분석 결과를 안전하게 저장하지 못했어요. 잠시 후 다시 시도해 주세요.",
+                },
+            ) from None
+    return JSONResponse({"data": data})

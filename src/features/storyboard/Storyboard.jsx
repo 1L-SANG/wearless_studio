@@ -118,6 +118,7 @@ import {
 import {
   applyPromotedMatchSelection,
   getCustomMatchPromotionTask,
+  onCustomMatchPromotionFailure,
 } from '@/lib/customMatchPromotion.js';
 
 

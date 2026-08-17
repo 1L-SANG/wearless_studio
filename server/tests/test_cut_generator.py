@@ -751,6 +751,79 @@ def test_virtual_model_full_body_resolution_is_atomic(monkeypatch):
     ) is None
 
 
+def test_confirmed_gpt_direction_sheet_resolution_is_exact_and_fail_closed(monkeypatch):
+    monkeypatch.setattr(cg, "load_virtual_model_registry", lambda: {
+        "complete": {"views": {
+            "face_front": {"key": "wrong-face", "mime": "image/png"},
+            "body_front": {"key": "wrong-body", "mime": "image/png"},
+            "grid_face_direction": {
+                "key": "face-directions", "mime": "image/png",
+                "byteLength": 123, "sha256": "a" * 64,
+            },
+            "grid_fullbody": {
+                "key": "body-directions", "mime": "image/jpeg",
+                "byteLength": 456, "sha256": "b" * 64,
+            },
+        }},
+        "legacy-only": {"views": {
+            "face_front": {"key": "face", "mime": "image/png"},
+            "body_front": {"key": "body", "mime": "image/png"},
+        }},
+    })
+
+    assert cg.resolve_confirmed_gpt_direction_sheets(
+        {"cutType": "styling", "modelId": "complete"}
+    ) == (
+        {
+            "key": "face-directions", "mime": "image/png", "bucket": "public",
+            "byteLength": 123, "sha256": "a" * 64,
+        },
+        {
+            "key": "body-directions", "mime": "image/jpeg", "bucket": "public",
+            "byteLength": 456, "sha256": "b" * 64,
+        },
+    )
+    with pytest.raises(ValueError, match="missing_grid_face_direction"):
+        cg.resolve_confirmed_gpt_direction_sheets(
+            {"cutType": "styling", "modelId": "legacy-only"}
+        )
+    with pytest.raises(ValueError, match="require_worn_cut_model"):
+        cg.resolve_confirmed_gpt_direction_sheets(
+            {"cutType": "product", "modelId": "complete"}
+        )
+
+
+@pytest.mark.parametrize(
+    "bad_field,bad_value",
+    [
+        ("byteLength", 0),
+        ("byteLength", True),
+        ("sha256", "A" * 64),
+        ("sha256", "a" * 63),
+    ],
+)
+def test_confirmed_gpt_direction_sheet_resolution_rejects_unsealed_assets(
+    monkeypatch, bad_field, bad_value,
+):
+    valid = {
+        "key": "directions", "mime": "image/png",
+        "byteLength": 123, "sha256": "a" * 64,
+    }
+    bad = dict(valid)
+    bad[bad_field] = bad_value
+    monkeypatch.setattr(cg, "load_virtual_model_registry", lambda: {
+        "model": {"views": {
+            "grid_face_direction": bad,
+            "grid_fullbody": valid,
+        }},
+    })
+
+    with pytest.raises(ValueError, match="missing_grid_face_direction"):
+        cg.resolve_confirmed_gpt_direction_sheets(
+            {"cutType": "styling", "modelId": "model"}
+        )
+
+
 @pytest.mark.parametrize(
     "manifest_kwargs",
     [
@@ -1112,7 +1185,7 @@ def test_generate_forwards_directing_profile_to_rendered_prompt():
     assert result == (b"PROFILE", "image/png")
 
 
-def test_stage1_and_local_stage2_share_ag06_high_model_and_detail_4k():
+def test_stage1_and_local_stage2_share_caller_selected_model_and_detail_4k():
     calls = []
 
     class FakeGemini:
@@ -1130,7 +1203,7 @@ def test_stage1_and_local_stage2_share_ag06_high_model_and_detail_4k():
 
     settings = make_settings(
         gemini_api_key="x",
-        model_image_high="gemini-3-pro-image",
+        model_image_high="gpt-image-2-2026-04-21",
         mannequin_image_size="1K",
         detail_cut_image_size="4K",
         mannequin_aspect_ratio="2:3",
@@ -1153,7 +1226,7 @@ def test_stage1_and_local_stage2_share_ag06_high_model_and_detail_4k():
     assert stage1 == (b"OUT-1", "image/png")
     assert stage2 == (b"OUT-2", "image/png")
     assert [call["model"] for call in calls] == [
-        "gemini-3-pro-image", "gemini-3-pro-image",
+        "gpt-image-2-2026-04-21", "gpt-image-2-2026-04-21",
     ]
     assert [call["imageSize"] for call in calls] == ["4K", "4K"]
     assert [call["aspectRatio"] for call in calls] == ["2:3", "2:3"]
@@ -1161,6 +1234,82 @@ def test_stage1_and_local_stage2_share_ag06_high_model_and_detail_4k():
     assert [image.data for image in calls[1]["images"]] == [b"OUT-1"]
     assert "AG-06 second-stage" in calls[1]["prompt"]
     assert "do not reconstruct a different photograph" in calls[1]["prompt"]
+
+
+def test_confirmed_profile_requests_original_openai_input_transport(monkeypatch):
+    captured = {}
+
+    class FakeGemini:
+        async def generate_content_image(
+            self,
+            model,
+            prompt,
+            images,
+            image_size,
+            aspect_ratio,
+            openai_preserve_input_bytes=False,
+        ):
+            captured.update(
+                model=model,
+                prompt=prompt,
+                images=images,
+                image_size=image_size,
+                aspect_ratio=aspect_ratio,
+                preserve=openai_preserve_input_bytes,
+            )
+            return SimpleNamespace(image=b"EXACT", mime="image/png")
+
+    monkeypatch.setattr(
+        cg, "compile_confirmed_gpt_prompt", lambda *_args, **_kwargs: "EXACT PROMPT"
+    )
+    reference = cg.InlineImage("image/jpeg", b"historical-bytes")
+    result = asyncio.run(cg.generate(
+        make_settings(
+            model_image_high="gpt-image-2-2026-04-21",
+            detail_cut_image_size="4K",
+            mannequin_aspect_ratio="2:3",
+        ),
+        FakeGemini(),
+        {"cutType": "styling", "shot": "full", "direction": "front"},
+        PRODUCT_TOP,
+        [reference],
+        confirmed_prompt_input=object(),
+    ))
+
+    assert result == (b"EXACT", "image/png")
+    assert captured == {
+        "model": "gpt-image-2-2026-04-21",
+        "prompt": "EXACT PROMPT",
+        "images": [reference],
+        "image_size": "4K",
+        "aspect_ratio": "2:3",
+        "preserve": True,
+    }
+
+
+def test_default_cut_route_keeps_editor_on_shared_high_tier():
+    calls = []
+
+    class FakeGemini:
+        async def generate_content_image(
+            self, model, prompt, images, image_size, aspect_ratio,
+        ):
+            calls.append(model)
+            return SimpleNamespace(image=b"OUT", mime="image/png")
+
+    settings = make_settings(
+        model_image_high="gemini-3-pro-image",
+        model_detail_cut="",
+    )
+    asyncio.run(cg.generate(
+        settings,
+        FakeGemini(),
+        {"cutType": "styling", "shot": "full", "direction": "front"},
+        {"name": "니트", "clothingType": "top", "colors": []},
+        [],
+    ))
+
+    assert calls == ["gemini-3-pro-image"]
 
 
 def test_qc_repair_prompt_rejects_empty_or_oversized_corrections():

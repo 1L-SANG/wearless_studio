@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   clearCustomMatchPromotionTask,
@@ -49,6 +50,15 @@ const DRAFT = {
   selected: true,
   localId: 'custom_local',
 };
+
+test('콘티보드는 승격 실패 구독 함수를 실제로 import한다', () => {
+  const src = readFileSync(
+    new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url),
+    'utf8',
+  );
+  const imports = src.slice(0, src.indexOf('const SPACE_SET_SECTION_ROLES'));
+  assert.match(imports, /\bonCustomMatchPromotionFailure\b/);
+});
 
 test('내 옷 draft 는 확정 시 재업로드되고 custom-match-item 으로 등록된다', async () => {
   const api = fakeApi();

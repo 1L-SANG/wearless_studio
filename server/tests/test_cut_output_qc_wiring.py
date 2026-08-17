@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -47,15 +48,16 @@ def _detail_spec():
 
 def _run_detail_cut(
     monkeypatch, *, qc_mode="shadow", manifest="1. PRODUCT — front", events=None,
-    generated_outputs=None,
+    generated_outputs=None, confirmed_packet=None, spec=None, settings_overrides=None,
 ):
     events = [] if events is None else events
     captured = {}
 
     generated_outputs = list(generated_outputs or [b"INITIAL"])
 
-    async def fake_generate(*_args, **kwargs):
+    async def fake_generate(settings, *_args, **kwargs):
         events.append("generate")
+        captured.setdefault("generateModels", []).append(settings.model_image_high)
         captured.setdefault("generateKwargs", []).append(kwargs)
         output = generated_outputs.pop(0) if generated_outputs else b"INITIAL"
         return output, "image/png"
@@ -73,25 +75,85 @@ def _run_detail_cut(
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
     r2 = _RecordingR2(events)
-    app = fake_worker_app(
-        make_settings(
-            gemini_api_key="x",
-            r2_bucket="b",
-            garment_qc_mode="off",
-            cut_output_qc_mode=qc_mode,
-        ),
-        r2=r2,
-    )
+    setting_values = {
+        "gemini_api_key": "x",
+        "r2_bucket": "b",
+        "model_image_high": "gemini-3-pro-image",
+        "model_detail_cut": "gpt-image-2-2026-04-21",
+        "garment_qc_mode": "off",
+        "cut_output_qc_mode": qc_mode,
+    }
+    setting_values.update(settings_overrides or {})
+    app = fake_worker_app(make_settings(**setting_values), r2=r2)
     product_image = InlineImage("image/png", b"PRODUCT")
+    prepared = (spec or _detail_spec(), [product_image], manifest, False, [product_image])
+    if confirmed_packet is not None:
+        prepared = (*prepared, None, False, None, confirmed_packet)
     result = asyncio.run(dpj._gen_cuts(
         app,
         worker_job(),
-        [(_detail_spec(), [product_image], manifest, False, [product_image])],
+        [prepared],
         {"clothingType": "top"},
         {"fitProfile": {"axes": {"fit": "regular"}}},
     ))
     captured.update(events=events, r2=r2, result=result)
     return captured
+
+
+def test_confirmed_profile_is_first_result_only_and_uses_confirmed_qc_authority(
+    monkeypatch,
+):
+    captured = {}
+
+    async def recording_cut_qc(
+        settings, plan, references, generated, *, authority_profile
+    ):
+        captured.update(
+            authority_profile=authority_profile,
+            generated=generated,
+            references=references,
+        )
+        return _qc_result()
+
+    monkeypatch.setattr(dpj.cut_output_qc, "verdict", recording_cut_qc)
+    prompt_input = object()
+    run = _run_detail_cut(
+        monkeypatch,
+        confirmed_packet=SimpleNamespace(prompt_input=prompt_input),
+    )
+
+    assert run["events"] == ["generate", "save"]
+    assert run["generateKwargs"] == [
+        {"confirmed_prompt_input": prompt_input},
+    ]
+    assert run["result"][3] == []  # no garment best-of insertion
+    assert captured["authority_profile"] == "confirmed_gpt_v1"
+    assert captured["generated"].data == b"INITIAL"
+
+
+def test_signature_cut_keeps_main_profile_settings_in_detail_worker(monkeypatch):
+    signature = {
+        "id": "sig-block",
+        "cutType": "styling",
+        "direction": "front",
+        "shot": "medium",
+        "pose": "auto",
+        "refScope": "all",
+        "exampleId": "sig_men_01",
+    }
+    run = _run_detail_cut(
+        monkeypatch,
+        qc_mode="off",
+        spec=signature,
+        settings_overrides={
+            "openai_api_key": None,
+            "model_image_signature": "gpt-image-2",
+        },
+    )
+
+    # Missing OpenAI key must still fall back to shared Gemini as main's signature
+    # profile specifies; AG-06's confirmed-detail GPT override must not intercept it.
+    assert run["generateModels"] == ["gemini-3-pro-image"]
 
 
 def _qc_result(*failed_gates):
@@ -154,6 +216,10 @@ def test_detail_repair_mode_regenerates_global_failure_and_accepts_pass(monkeypa
 
     assert seen == [b"CHOSEN", b"REPAIRED"]
     assert run["r2"].saved == [b"REPAIRED"]
+    assert run["generateModels"] == [
+        "gpt-image-2-2026-04-21",
+        "gpt-image-2-2026-04-21",
+    ]
     assert len(run["generateKwargs"]) == 2
     assert run["generateKwargs"][1]["qc_corrections"] == (
         dpj.cut_output_qc._CORRECTIONS["garmentConstruction"],
@@ -178,6 +244,7 @@ def test_detail_repair_mode_edits_stage1_for_local_failure(monkeypatch):
         settings, gemini, cut_spec, product, source, *, qc_corrections,
     ):
         captured.update(
+            model=settings.model_image_high,
             source=source,
             cut_spec=cut_spec,
             product=product,
@@ -190,6 +257,7 @@ def test_detail_repair_mode_edits_stage1_for_local_failure(monkeypatch):
     run = _run_detail_cut(monkeypatch, qc_mode="repair")
 
     assert captured["source"].data == b"CHOSEN"
+    assert captured["model"] == "gpt-image-2-2026-04-21"
     assert captured["cut_spec"]["cutType"] == "product"
     assert captured["product"]["clothingType"] == "top"
     assert captured["qc_corrections"] == (

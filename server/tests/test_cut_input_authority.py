@@ -280,7 +280,8 @@ def test_detail_prunes_mood_for_all_and_bg_but_keeps_pose_order(monkeypatch):
     captured = {}
     blocks = [
         {"id": scope, "source": "ai", "cutType": "styling", "shot": "full",
-         "refAssetIds": ["mood"], "exampleId": f"example-{scope}", "refScope": scope}
+         "refAssetIds": ["mood"], "exampleId": f"example-{scope}", "refScope": scope,
+         "pose": "walk" if scope == "all" else "auto"}
         for scope in ("all", "bg", "pose")
     ]
 
