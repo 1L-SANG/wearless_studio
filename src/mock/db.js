@@ -211,6 +211,15 @@ const models = [
   { id: 'mC', name: '도윤', gender: 'men', thumb: '/models/men/m2.webp', recommended: false },
   { id: 'mD', name: '수혁', gender: 'men', thumb: '/models/men/m3.webp', recommended: false },
   { id: 'mE', name: '지안', gender: 'women', thumb: '/models/women/w2.webp', recommended: false },
+  { id: 'mF', name: '하린', gender: 'women', thumb: '/models/women/w3.webp', recommended: false },
+  { id: 'mG', name: '세아', gender: 'women', thumb: '/models/women/w4.webp', recommended: false },
+  { id: 'mH', name: '예린', gender: 'women', thumb: '/models/women/w5.webp', recommended: false },
+  { id: 'mI', name: '다인', gender: 'women', thumb: '/models/women/w6.webp', recommended: false },
+  { id: 'mJ', name: '소윤', gender: 'women', thumb: '/models/women/w7.webp', recommended: false },
+  { id: 'mK', name: '유나', gender: 'women', thumb: '/models/women/w8.webp', recommended: false },
+  { id: 'mL', name: '채원', gender: 'women', thumb: '/models/women/w9.webp', recommended: false },
+  { id: 'mM', name: '나윤', gender: 'women', thumb: '/models/women/w10.webp', recommended: false },
+  { id: 'mN', name: 'Nora', gender: 'women', thumb: '/models/women/w11.webp', recommended: false },
 ];
 const matchClothing = toLegacyMatchClothing(recommendMatchingItems({
   clothingType: 'top',

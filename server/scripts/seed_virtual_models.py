@@ -43,6 +43,17 @@ _MAX_EDGE = "1536"  # v2 팩 자산 리샘플 상한 — 아이덴티티 참조�
 _PACK_MIME = "image/jpeg"  # 기존 v2 팩의 .png 파일명과 달리 실제 바이트는 JPEG
 
 # 프론트 모델 ID(src/mock/db.js AI_MODELS) ↔ 스파이크 소스 ID 매핑
+# mF~mN(2026-08-17): 여성 9인 2차 배치. 크롭 바이트는 JPEG 라 pack_mime 기본값
+# (image/jpeg)을 그대로 쓴다. 앵커는 mD·mE 와 같이 셀렉터 썸네일({sid}.webp)과 분리된
+# {sid}-face.webp — 썸네일 restyle 이 R2 의 아이덴티티 정본을 덮지 못하게 하는 장치
+# (m3 qc-notes 의 확립된 패턴).
+#
+# `run` = 큐레이션(시각 QC) 통과 런 디렉터리. 모델마다 재생성 때문에 런이 2~3개씩 있고
+# 어느 것이 통과본인지는 디렉터리 이름만으론 알 수 없다. "가장 최신 런"에 의존하면
+# 나중에 누가 실험 삼아 한 번 더 돌린 팩이 조용히 R2 를 덮어쓴다(spike/runs 는 gitignore
+# 라 저장소 diff 에도 안 남는다) — 통과본을 여기 못박는다.
+# 생성에 쓴 IDENTITY 버전은 모델마다 다르다(v3: mF·mL / v4: mG·mH·mJ·mK·mN / v5: mI·mM).
+# 문구 원문과 개정 내력은 documents/virtual_model_batch_2026-08-17.md 참조.
 MODELS = {
     "mA": {"sid": "w1", "gender": "women", "name": "Mia"},
     "mB": {"sid": "m1", "gender": "men", "name": "Leo"},
@@ -55,6 +66,24 @@ MODELS = {
         "sid": "w2", "gender": "women", "name": "지안", "pack_mime": "image/png",
         "anchor": "w2-face.webp",
     },
+    "mF": {"sid": "w3", "gender": "women", "name": "하린",
+            "anchor": "w3-face.webp", "run": "facepack-w3v2-2026-08-16T19-27-21"},
+    "mG": {"sid": "w4", "gender": "women", "name": "세아",
+            "anchor": "w4-face.webp", "run": "facepack-w4v2-2026-08-16T19-50-35"},
+    "mH": {"sid": "w5", "gender": "women", "name": "예린",
+            "anchor": "w5-face.webp", "run": "facepack-w5v2-2026-08-16T19-50-35"},
+    "mI": {"sid": "w6", "gender": "women", "name": "다인",
+            "anchor": "w6-face.webp", "run": "facepack-w6v2-2026-08-16T20-06-03"},
+    "mJ": {"sid": "w7", "gender": "women", "name": "소윤",
+            "anchor": "w7-face.webp", "run": "facepack-w7v2-2026-08-16T19-50-35"},
+    "mK": {"sid": "w8", "gender": "women", "name": "유나",
+            "anchor": "w8-face.webp", "run": "facepack-w8v2-2026-08-16T19-51-46"},
+    "mL": {"sid": "w9", "gender": "women", "name": "채원",
+            "anchor": "w9-face.webp", "run": "facepack-w9v2-2026-08-16T19-31-01"},
+    "mM": {"sid": "w10", "gender": "women", "name": "나윤",
+            "anchor": "w10-face.webp", "run": "facepack-w10v2-2026-08-16T20-06-03"},
+    "mN": {"sid": "w11", "gender": "women", "name": "Nora",
+            "anchor": "w11-face.webp", "run": "facepack-w11v2-2026-08-16T19-51-46"},
 }
 # 팩 크롭 파일명 → manifest 뷰 키 (계약의 시트 낱장 4뷰)
 PACK_VIEWS = {
@@ -65,10 +94,18 @@ PACK_VIEWS = {
 }
 
 
-def _pack_dir(sid: str) -> Path:
+def _pack_dir(sid: str, run: str | None = None) -> Path:
+    """큐레이션 통과 런의 pack 디렉터리. `run` 이 지정되면 그것만 쓴다.
+
+    미지정 모델(1차 배치 mA~mE)은 종전대로 최신 런 폴백 — 런이 하나뿐이라 모호하지 않다.
+    """
+    if run:
+        pack = ROOT / "spike/runs" / run / "pack"
+        assert pack.is_dir(), f"고정된 런이 없다: {pack}"
+        return pack
     runs = sorted(glob.glob(str(ROOT / f"spike/runs/facepack-{sid}v2-*/pack")))
     assert runs, f"팩 없음: spike/runs/facepack-{sid}v2-*/pack"
-    return Path(runs[-1])  # 최신 런 = 큐레이션 통과본
+    return Path(runs[-1])
 
 
 def _resample(src: Path, dst: Path) -> bytes:
@@ -116,7 +153,7 @@ def main() -> None:
             fresh = _put_if_changed(r2, key, anchor.read_bytes(), "image/webp")
             uploaded, skipped = uploaded + fresh, skipped + (not fresh)
             views["face_front"] = {"key": key, "url": r2.public_url(key), "mime": "image/webp"}
-            pack = _pack_dir(m["sid"])
+            pack = _pack_dir(m["sid"], m.get("run"))
             # 세드카드 = v2 팩 루트의 2x2 통짜 그리드 리샘플(max 1536px)
             dst = Path(tmp) / f"{model_id}-grid_sedcard.png"
             data = _resample(pack.parent / "grid-sedcard.png", dst)

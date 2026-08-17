@@ -79,6 +79,11 @@ ccswitch.sh
 spike/face*.js
 spike/posescope/
 reference/genexamples/
+# 가상모델 베이스컷 원본·QC 스냅샷·러너 (2026-08-17 여성 2차 배치, ~40MB 바이너리).
+# 팩 산출물은 spike/runs/ 와 같은 성격이라 저장소에 싣지 않는다 — 배선 기록은
+# documents/virtual_model_batch_2026-08-17.md 에 있다.
+women_ex/
+generated-assets/
 reference/competitive-analysis/
 
 # 얼굴 대조 QC weights (OpenCV Zoo, Apache-2.0) — Docker 빌드시 재다운로드+checksum

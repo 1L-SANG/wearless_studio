@@ -6,6 +6,7 @@ import {
   realModelFeeLabel,
   resolveSelectedModelId,
 } from '../../src/features/analysis/modelSelection.js';
+import { AI_MODELS } from '../../src/features/analysis/aiModels.js';
 
 const aiModels = [
   { id: 'mA', gender: 'women' },
@@ -87,6 +88,32 @@ test('identifies only FaceMarket selections for the mannequin KRW surcharge labe
   assert.equal(isRealModelSelection('mE'), false);
   assert.equal(isRealModelSelection('face-market-model-id'), true);
   assert.equal(isRealModelSelection(null), false);
+});
+
+// 카탈로그에 있는 가상모델은 하나도 빠짐없이 무료로 판정돼야 한다. 2026-08-17 에
+// mF~mN 9인을 그리드에만 넣고 무료 집합에 안 넣어, 선택하면 '+ 실제 모델 이용료 별도'
+// 라는 없는 요금이 CTA 에 붙었다. 목록 전체를 훑어 그 사고가 다시 나면 여기서 깨진다.
+test('every catalog AI model is free — no fabricated licensing surcharge', () => {
+  assert.ok(AI_MODELS.length >= 14, 'catalog shrank unexpectedly');
+  for (const model of AI_MODELS) {
+    assert.equal(isRealModelSelection(model.id), false, `${model.id} misread as a real model`);
+    assert.equal(realModelFeeLabel(model.id, []), '', `${model.id} shows a fee label`);
+  }
+});
+
+test('catalog rows are well formed and unique', () => {
+  const ids = new Set();
+  const thumbs = new Set();
+  for (const { id, displayName, gender, thumb } of AI_MODELS) {
+    assert.match(id, /^m[A-Z]$/, `bad id ${id}`);
+    assert.ok(displayName && displayName.trim(), `${id} has no displayName`);
+    assert.ok(gender === 'women' || gender === 'men', `${id} has bad gender ${gender}`);
+    assert.equal(thumb, `/models/${gender}/${thumb.split('/').pop()}`, `${id} thumb/gender mismatch`);
+    assert.ok(!ids.has(id), `duplicate id ${id}`);
+    assert.ok(!thumbs.has(thumb), `duplicate thumb ${thumb} on ${id}`);
+    ids.add(id);
+    thumbs.add(thumb);
+  }
 });
 
 test('formats the selected FaceMarket catalog unit price and falls back when unknown', () => {

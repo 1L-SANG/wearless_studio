@@ -12,6 +12,7 @@ import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppSt
 import { Icon, Chips, Button, Skeleton, ErrorState, Modal, useToast } from '@/components/ui.jsx';
 import { useSteppedProgress } from '@/components/SmoothProgress.jsx';
 import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
+import { AI_MODELS } from '@/features/analysis/aiModels.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import {
   genderForClothingType,
@@ -306,18 +307,6 @@ export function AnalysisSkeleton() {
   );
 }
 
-// AI(가상) 모델 — 서버 레지스트리(server/app/data/virtual_models.json)와 동기 유지.
-// 컷 생성(AG-06)이 이 id('mA'…)로 아이덴티티 자산을 해석하고, 라이선스 게이트는
-// 비-UUID id를 no-op 처리한다(과금 없음). 실제 모델(FaceMarket)과 탭으로 구분 표시.
-// 이름은 인물 외형에 맞춘다(2026-08-01 사용자 결정): 서양인 = 짧은 영문 이름,
-// 동양인 = 짧은 한국어 이름. 'mA'… id 는 서버 자산 키라 그대로 두고 표시명만 바꾼다.
-const AI_MODELS = [
-  { id: 'mA', displayName: 'Mia', gender: 'women', thumb: '/models/women/w1.webp' },
-  { id: 'mB', displayName: 'Leo', gender: 'men', thumb: '/models/men/m1.webp' },
-  { id: 'mC', displayName: '도윤', gender: 'men', thumb: '/models/men/m2.webp' },
-  { id: 'mD', displayName: '수혁', gender: 'men', thumb: '/models/men/m3.webp' },
-  { id: 'mE', displayName: '지안', gender: 'women', thumb: '/models/women/w2.webp' },
-];
 
 const expectedMatchingType = (clothingType) => {
   if (clothingType === 'dress') return null;
