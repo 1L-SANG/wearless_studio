@@ -74,7 +74,8 @@ prep(기준 색상 이미지·분석 속성·매칭 하의 이미지·fitProfile
 ```
 info     상품·분석·콘티 데이터 수집/검증 (비AI)
 prep     블록별 프롬프트·에셋 준비, selectedMannequinId 컷 + 가상모델 face_front·body_front 원자 쌍 로드 (비AI, 모델 레퍼런스 계약은 ai_agent_modules §3 AG-06)
-cuts     AG-06 cut-generator — source='ai' 블록별 1콜. 워커는 styling/horizon/product
+cuts     AG-06 cut-generator — source='ai' 블록별 Gemini 1차. 블록들은 병렬 실행하고,
+         CUT_OUTPUT_QC_MODE=repair이면 독립 QC 뒤 필요한 블록만 Gemini 2차 1회
          세 계열로 컴파일하고, mirror는 styling의 mirrorSelfie 하위 방식으로 병렬 처리한다.
          source='mine' 블록은 ownImages 그대로(에이전트 호출 없음).
 copy     copywriting=true면: 카피 대상 블록별 AG-02 → 묶음 AG-03 검수(revise 채택)
@@ -92,7 +93,7 @@ done     project.status='done' · { data: EditorBlock[], credits }
   plate를 함께 사용한다. 임의 그룹 값은 거부한다. 현재 운영 R2에는 개별
   생성예시와 `space-sets-20260730-v1` 촬영 세트가 발행돼 있다.
 - **멱등**: status='generating' 재호출 → 합류, status='done' 재호출 → 기존 결과 반환 (계약 §6).
-- **독립 이미지 QC**: AG-06 각 컷 뒤 `CUT_OUTPUT_QC_MODE=shadow`이면 상품 동일성(텍스트·로고 포함), 사용자 의도, 인체·원근, 광원·그림자·주름을 독립 판정해 metadata에 저장한다. 모든 컷 뒤 `PAGE_OUTPUT_QC_MODE=shadow`이면 같은 SKU·색상·모델·매칭·이너와 세트별 공간 연속성을 검사한다. 둘 다 기본값은 `off`이며 현재는 생성·저장·과금·재시도에 영향을 주지 않는다. 자동 교정 재시도와 HOLD는 골든셋 보정 뒤 별도 enforce 단계에서 연다.
+- **독립 이미지 QC**: AG-06 각 컷 뒤 `CUT_OUTPUT_QC_MODE=shadow`이면 상품 동일성(텍스트·로고 포함), 사용자 의도, 인체·원근, 광원·그림자·주름을 독립 판정해 metadata에 저장한다. `repair`이면 모든 AI 블록이 같은 병렬 파이프라인을 타고, 1차 실패 중 프레이밍·인체·광원처럼 국소적인 결함은 1차 이미지를 직접 보정하며 의류·모델·공간 등 전역 결함은 원래 정본 입력에서 재생성한다. 2차는 1회뿐이며 독립 재검수에서 통과하거나 실패 축이 줄고 새 회귀가 없을 때만 채택한다. QC/2차 실패나 `UNJUDGEABLE`이면 추가 호출 없이 1차를 보존한다. 사용자 크레딧은 최종 컷 한 장 기준으로 유지하고 추가 provider 호출 실비는 `image_usage_events`에 기록한다. `PAGE_OUTPUT_QC_MODE=shadow`이면 같은 SKU·색상·모델·매칭·이너와 세트별 공간 연속성을 검사한다. 기본값은 `off`이며 프로덕션만 명시적으로 `repair`를 켠다.
 
 ### PL-5 / PL-6 에디터 새 이미지·현재 이미지 수정 — `generateImage(projectId, req)`
 
@@ -103,6 +104,7 @@ PL-6 (mode:'vary'): VaryRequest 검증 → AG-07 1콜 → WardrobeImage('misc' �
 - 단건 job(수 초). 동시 다발 호출 허용 — 에디터 UI가 로딩 셀·busy 점으로 표현(기존 동작).
 - 원본 이미지는 항상 보존, 결과는 의류 탭에 추가 (PRD §10.8).
 - 기준색 착용컷 생성처럼 선택 마네킹을 입력에 넣는 PL-5 경로는 `selectedMannequinId`의 resolved asset을 사용한다. 톤 조정본이 있으면 최신 조정본, 없으면 원본 컷이다.
+- 프로덕션의 전역 `CUT_OUTPUT_QC_MODE=repair`에서도 자동 2차 생성은 PL-4 콘티 블록에만 적용한다. PL-5 에디터 단건 `mode:'new'`는 같은 독립 QC를 shadow로만 기록해 기존 단건 편집 동작과 비용을 바꾸지 않는다.
 - `mode:'new'`의 생성예시는 PL-4와 같은 레지스트리 v2 적용성·발행 variant 검증과 범위별 원본 첨부 규칙을 사용한다. 부적합/미발행 예시는 해당 참고만 생략하고 job metadata에 경고를 남긴다.
 - `mode:'new'`의 AG-06 결과는 PL-4와 같은 독립 컷 QC를 `shadow`로 실행할 수 있다. `mode:'vary'`(AG-07)는 아직 새 QC 범위 밖이다. shadow 판정은 결과를 차단하거나 재생성하지 않는다.
 
@@ -168,6 +170,6 @@ PIPELINE_CUT_CONCURRENCY=3                          # PL-4 그룹 내 병렬 상
 
 1. **모델 배정은 잠정** — tier별 비용·품질 로그(모듈 정의서 §6-5)를 근거로 재배정. 특히 내부 `product` 레시피와 변형 작업의 Pro 유지 여부.
 2. **환불·재시도 정책 미정** (PRD §12.2) — 차감 후 실패 보상, 품질 불만 재생성 정책.
-3. **이미지 동일성 검수** — AG-06 컷 단위와 상세페이지/공간 세트 단위 독립 비전 QC는 `off|shadow`로 구현됐다. 상품 색·구조·소재·무늬·부자재·텍스트·로고, 모델, 사용자 방향·샷·포즈, 인체·원근·광원·그림자·주름을 판정한다. 아직 실제 좋은/나쁜 골든셋 보정과 오탐률 측정 전이므로 기본 `off`이고, shadow도 실패를 차단하지 않는다. 남은 일은 실데이터 보정 후 enforce·교정 재시도·HOLD·크레딧 정책을 확정하는 것이다(ADR-0010).
+3. **이미지 동일성 검수** — AG-06 컷 단위 독립 비전 QC는 `off|shadow|repair`, 상세페이지/공간 세트 단위 QC는 `off|shadow`다. `repair`는 최대 1회 교정하고 개선되지 않으면 1차를 보존하는 fail-open 서비스 모드다. 상품 색·구조·소재·무늬·부자재·텍스트·로고, 모델, 사용자 방향·샷·포즈, 인체·원근·광원·그림자·주름을 판정한다. 강제 HOLD와 페이지 단위 자동복구는 별도 골든셋 보정 뒤 남은 과제다(ADR-0010).
 4. **기본형·확장형 생성 품질 검증** — composeMode별 콘티 시드는 구현됐다. 남은 검증은 상의·하의·아우터·원피스 각 10상품에서 기본형과 확장형이 같은 네 섹션을 유지하면서 필요한 사진 수와 다양성을 만드는지 확인하는 것이다.
 5. **분위기 예시 시드** — 운영자 데이터 입력 예정(에이전트 아님). 시드 스키마는 `MatchingItem` 패턴(구조적 에셋 경로)을 따른다.

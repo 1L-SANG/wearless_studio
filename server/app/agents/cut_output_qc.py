@@ -1,6 +1,6 @@
 """Independent hard-gate QC for one generated storyboard cut.
 
-This module is wired after AG-06 in optional shadow mode.  It accepts the compiled
+This module is wired after AG-06 in optional shadow or repair mode. It accepts the compiled
 cut-plan authority contract, labelled reference pixels and one candidate, then asks
 the shared vision tier for an auditable gate-by-gate verdict.  The producer prompt and
 producer verdict are not inputs: the judge sees only the contract and the evidence it needs.
@@ -149,6 +149,14 @@ _CORRECTIONS = MappingProxyType({
         "Restore pose-driven tension, compression and asymmetric folds plus coherent self, "
         "reflection, contact, and cast shadows under the owned scene light."
     ),
+})
+
+# 이 세 축만 1차 이미지를 직접 편집한다. 의류·모델 정체성·장소·레시피처럼 원본
+# 근거를 다시 봐야 하는 실패는 scratch 재생성으로 보낸다.
+_EDIT_STAGE1_GATES = frozenset({
+    "framingDirectionFacePose",
+    "anatomyPerspectiveAsymmetry",
+    "lightingShadowReflectionDrape",
 })
 
 
@@ -508,6 +516,104 @@ def _correction_patch(gates: Mapping[str, Mapping[str, str]]) -> dict | None:
         "blockingGates": blocking,
         "operations": operations,
         "truncated": len(blocking) > len(operations),
+    }
+
+
+def repair_route(result: Mapping[str, Any]) -> str:
+    """QC 결과를 KEEP/EDIT_STAGE1/REGENERATE_FROM_SCRATCH/HOLD로 결정한다.
+
+    UNJUDGEABLE은 결함 사실이 아니므로 이미지 호출을 추가하지 않는다. 편집 가능한 국소
+    실패만 1차 이미지를 입력으로 쓰고, 나머지는 원래 authority 입력에서 다시 생성한다.
+    """
+
+    gates = _mapping(result.get("gates"))
+    if result.get("passed") is True:
+        return "KEEP_STAGE1"
+    blocking = {
+        gate for gate in GATES
+        if _mapping(gates.get(gate)).get("status") in {"FAIL", "UNJUDGEABLE"}
+    }
+    if not blocking or any(
+        _mapping(gates.get(gate)).get("status") == "UNJUDGEABLE"
+        for gate in blocking
+    ):
+        return "HOLD_STAGE1"
+    if blocking <= _EDIT_STAGE1_GATES:
+        return "EDIT_STAGE1"
+    return "REGENERATE_FROM_SCRATCH"
+
+
+def repair_instructions(result: Mapping[str, Any]) -> tuple[str, ...]:
+    """검증된 고정 문구만 2차 생성 프롬프트에 전달한다.
+
+    provider evidence나 판매자 텍스트는 절대 전달하지 않는다. patch가 변조되거나 구조가
+    어긋나면 2차 생성을 시작하지 않도록 fail-closed한다.
+    """
+
+    patch = result.get("correctionPatch")
+    if not isinstance(patch, Mapping) or set(patch) != {
+        "version", "blockingGates", "operations", "truncated",
+    } or patch.get("version") != 1:
+        raise VisionError("cut_output_qc: invalid correction patch")
+    operations = patch.get("operations")
+    if not isinstance(operations, list) or not operations:
+        raise VisionError("cut_output_qc: empty correction operations")
+    instructions = []
+    for operation in operations:
+        if not isinstance(operation, Mapping) or set(operation) != {
+            "gate", "action", "instruction",
+        }:
+            raise VisionError("cut_output_qc: invalid correction operation")
+        gate = operation.get("gate")
+        expected_action = "rejudge" if (
+            _mapping(_mapping(result.get("gates")).get(gate)).get("status")
+            == "UNJUDGEABLE"
+        ) else "regenerate"
+        if (
+            gate not in _CORRECTIONS
+            or operation.get("action") != expected_action
+            or operation.get("instruction") != _CORRECTIONS[gate]
+        ):
+            raise VisionError("cut_output_qc: untrusted correction operation")
+        instructions.append(_CORRECTIONS[gate])
+    if len(instructions) > MAX_CORRECTION_OPERATIONS:
+        raise VisionError("cut_output_qc: too many correction operations")
+    return tuple(instructions)
+
+
+def compare_repair(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict:
+    """2차 결과가 실제로 개선됐는지 결정한다.
+
+    PASS면 채택한다. 아직 FAIL이어도 blocking gate가 줄고, 1차 PASS/NA 축을 새로 망가뜨리지
+    않았을 때만 채택한다. 그 외에는 1차를 보존한다.
+    """
+
+    before_gates = _mapping(before.get("gates"))
+    after_gates = _mapping(after.get("gates"))
+    if set(before_gates) != set(GATES) or set(after_gates) != set(GATES):
+        raise VisionError("cut_output_qc: incomplete repair comparison")
+
+    def blocking(gates: Mapping[str, Any]) -> set[str]:
+        return {
+            gate for gate in GATES
+            if _mapping(gates.get(gate)).get("status") in {"FAIL", "UNJUDGEABLE"}
+        }
+
+    before_blocking = blocking(before_gates)
+    after_blocking = blocking(after_gates)
+    regressions = [
+        gate for gate in GATES
+        if _mapping(before_gates.get(gate)).get("status") in {"PASS", "NA"}
+        and _mapping(after_gates.get(gate)).get("status") in {"FAIL", "UNJUDGEABLE"}
+    ]
+    accepted = after.get("passed") is True or (
+        len(after_blocking) < len(before_blocking) and not regressions
+    )
+    return {
+        "accepted": accepted,
+        "beforeBlockingCount": len(before_blocking),
+        "afterBlockingCount": len(after_blocking),
+        "regressions": regressions,
     }
 
 

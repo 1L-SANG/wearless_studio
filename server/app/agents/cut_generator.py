@@ -1126,6 +1126,7 @@ def build_prompt(
     cut_spec: dict, product: dict, *,
     analysis: dict | None = None, manifest: str | None = None, has_face: bool = False,
     directing_profile: dict | None = None,
+    qc_corrections: tuple[str, ...] = (),
 ) -> str:
     """스펙 정규화(ValueError=unknown_cut_type) + 템플릿 렌더. manifest 미지정 시
     일반 컷은 해당 색상 상품 슬롯을, 디테일 컷은 detail_reference_images 정책의 상품 슬롯을
@@ -1156,10 +1157,17 @@ def build_prompt(
         manifest = build_manifest(
             prod_assets, has_mannequin=False, has_match=False, mood_count=0,
             has_face=has_face and _face_fits(spec, _is_bottom(clothing_type)))
-    return render_cut_prompt(
+    prompt = render_cut_prompt(
         load_cut_template(), spec, product, analysis or {}, clothing_type, manifest, has_face,
         authority_plan_line=authority_plan_line,
         directing_profile=directing_profile)
+    if qc_corrections:
+        prompt += (
+            "\n\nINDEPENDENT QC CORRECTION — regenerate from the original authority "
+            "references. Preserve every already-correct axis and apply only these corrections:\n"
+            + "\n".join(f"- {instruction}" for instruction in qc_corrections)
+        )
+    return prompt
 
 
 async def generate(
@@ -1173,6 +1181,7 @@ async def generate(
     manifest: str | None = None,
     has_face: bool = False,
     directing_profile: dict | None = None,
+    qc_corrections: tuple[str, ...] = (),
 ) -> tuple[bytes, str]:
     """컷 1개 생성. 실패 시 GeminiError 전파(호출자가 빈 슬롯 등으로 처리).
     스펙 위반(unknown cutType)은 ValueError — 조용한 styling 폴백을 하지 않는다
@@ -1198,6 +1207,7 @@ async def generate(
         manifest=manifest,
         has_face=has_face,
         directing_profile=directing_profile,
+        qc_corrections=qc_corrections,
     )
     res = await gemini.generate_content_image(
         model, prompt, images, settings.mannequin_image_size,
