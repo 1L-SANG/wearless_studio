@@ -15,7 +15,9 @@ const MEANINGLESS_NAME = new RegExp([
   '^unnamed[\\s_-]*(\\(\\d+\\)|\\d*)$',
   '^photo[\\s_-]*(\\(\\d+\\)|\\d*)$',
   '^다운로드$', '^download$',
-  '^스크린샷.*', '^screenshot.*', '^screen shot.*',   // 스크린샷 + 날짜·시간
+  /* 스크린샷 기본명은 뒤에 날짜·번호가 반드시 붙는다(스크린샷 2026-…, Screenshot (1),
+     Screenshot_20260817-…). 숫자·괄호를 요구해 셀러가 직접 붙인 '스크린샷_옷_앞면' 은 살린다. */
+  '^스크린샷[\\s_-]*[(\\d].*', '^screen[\\s_-]?shot[\\s_-]*[(\\d].*',
   '^clipboard.*', '^pasted[\\s_-]*image.*',
 ].join('|'), 'i');
 

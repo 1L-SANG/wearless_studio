@@ -8,7 +8,8 @@ test('macOS 드래그·붙여넣기 임시 이름을 임시로 판정한다', ()
     'tempImage6mNIRA.jpg', 'tempimage.png', 'tempImage-2.jpeg',
     'image.png', 'image (1).png', 'image_2.jpg', 'unnamed.jpg', 'photo.jpg',
     '스크린샷 2026-08-15 오후 3.45.12.png', 'Screenshot 2026-08-15 at 15.45.png',
-    'Screen Shot 2026-08-15.png', 'clipboard.png', 'pasted image 3.png',
+    'Screen Shot 2026-08-15.png', 'Screenshot (1).png', 'Screenshot_20260817-152412.png',
+    'clipboard.png', 'pasted image 3.png',
     '', null, undefined, '   ',
   ]) assert.equal(isMeaninglessPhotoName(name), true, `임시로 봐야 함: ${name}`);
 });
@@ -17,6 +18,8 @@ test('사람이 붙인 이름과 카메라 기본명은 살린다', () => {
   for (const name of [
     '니트_앞면.jpg', 'IMG_1234.HEIC', 'DSC_0099.jpg', '골지니트-뒷면-디테일.png',
     'front.jpg', 'imagenary-knit.jpg', 'photobooth-01.jpg',
+    // 셀러가 직접 이름을 붙인 스크린샷 — 기본명과 달리 뒤에 날짜·번호가 없다
+    '스크린샷_옷_앞면.jpg', '스크린샷-사이즈표.png', 'Screenshot-detail.png',
   ]) assert.equal(isMeaninglessPhotoName(name), false, `살려야 함: ${name}`);
 });
 
