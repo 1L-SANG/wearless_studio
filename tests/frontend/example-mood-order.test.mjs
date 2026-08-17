@@ -52,9 +52,9 @@ test('mood ordering is deterministic by bucket, then rank, then id', () => {
   assert.deepEqual(orderExamplesByMood([...input].reverse()).map((item) => item.id), expected);
 });
 
-test('all 71 released free-text moods are exercised', () => {
+test('all 72 released free-text moods are exercised', () => {
   const moods = new Set(genExamples.map((example) => example.mood).filter(Boolean));
-  assert.equal(moods.size, 71);
+  assert.equal(moods.size, 72);
 });
 
 test('runtime styling and horizon examples keep ordinary other coverage at or below 15%', () => {
