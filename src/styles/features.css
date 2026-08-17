@@ -2748,7 +2748,14 @@
 .sb-canvas-actions button:focus-visible { outline: 2px solid var(--focus); }
 
 /* 컷 이동 6점 손잡이 — 앞뒤 화살표 대체(2026-08-16 오너). 잡고 끌면 드래그, 누르면 이동 메뉴. */
-.sb-canvas-actions { grid-auto-flow: column; grid-template-columns: none; }
+/* 손잡이·복제·삭제를 한 줄로 세우면 136px 이라, 창이 좁아 카드가 128px 까지 줄면
+   맨 왼쪽 손잡이가 카드 밖으로 잘렸다(901~942px 구간 실측). 카드 폭을 넘지 않게 감싼다. */
+.sb-canvas-actions {
+  grid-auto-flow: row dense;
+  grid-template-columns: repeat(auto-fit, 44px);
+  max-width: calc(100% - 12px);
+  justify-items: end; justify-content: end;
+}
 .sb-canvas-actions.menu-open { opacity: 1; }        /* 메뉴 열린 동안은 마우스가 떠나도 유지 */
 /* 메뉴는 손잡이(44px)가 아니라 액션 묶음 기준으로 건다 — 손잡이 기준으로 걸면 왼쪽으로
    삐져나가 카드의 overflow:hidden 에 잘린다(자체 리뷰 실측: 104px 중 86px만 보임). */
@@ -2817,7 +2824,11 @@
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  overflow: hidden;
+  /* 캡션 자체는 자르지 않는다 — 자르면 왼쪽 끝 셔플 아이콘의 흰 원이 호버 확대 때
+     밑동째 평평하게 깎인다. (overflow-x:hidden + overflow-y:visible 조합은 CSS 규칙상
+     overflow-y 가 auto 로 계산돼 똑같이 잘린다.) 긴 라벨의 말줄임은 자식이 맡는다:
+     .sb-caption-values 와 .sb-caption-color 가 각각 ellipsis 를 갖고 있다(2026-08-17). */
+  overflow: visible;
   padding: 7px 3px 0;
   color: var(--sb-ink-2);
   font-size: 13px;

@@ -3259,7 +3259,9 @@ export function Storyboard() {
     && !block.hookFrameId
     && !!block.exampleId
     && canRerollGenerationExample(block, {
-      catalog: catalogs?.genExamples || [], product, gender: boundGenderNow,
+      // product 는 이 스코프에 없다 — 다른 호출부(runShuffle 등)와 같이 { clothingType } 을 넘긴다.
+      // (2026-08-17: 축약 표기 `product,` 가 그대로 들어와 콘티보드가 런타임 크래시했다)
+      catalog: catalogs?.genExamples || [], product: { clothingType }, gender: boundGenderNow,
     });
 
   const insertControl = (

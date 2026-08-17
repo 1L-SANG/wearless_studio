@@ -1,3 +1,8 @@
+/* ⚠️ 현재 동작하지 않음(2026-08-17 확인) — 아래 import 가 가리키는
+   src/features/editor/VaryReviewModal.jsx · reviewGate.js 가 저장소에서 삭제됐다.
+   그 탓에 vite 의 의존성 스캔이 실패해 dev 서버가 흰 화면이 됐고(2026-08-16),
+   vite.config.js 의 optimizeDeps.entries 를 index.html 로 좁혀 우회했다.
+   되살리려면 삭제된 모듈을 복구하거나 이 하네스와 qa-review-gate.html 을 정리해야 한다. */
 /* =============================================================
    qa/reviewGateHarness.jsx — 검수 게이트 실 DOM QA (dev 전용, 빌드 미포함)
 

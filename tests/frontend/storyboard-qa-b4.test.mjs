@@ -142,9 +142,11 @@ test('N11 caption typography is 13px and long matched captions stay inside one l
   assert.match(featureStyles, /\.sb-canvas-caption \{[^}]*font-size: 13px/);
   assert.match(featureStyles, /\.sb-caption-color \{[^}]*max-width: 64px;[^}]*font-size: 13px/);
   assert.match(featureStyles, /\.sb-caption-dot \{[^}]*width: 11px;[^}]*height: 11px/);
+  // 캡션 자체는 자르지 않는다(셔플 아이콘 원이 깎여서) — 말줄임은 아래 .sb-caption-values 가
+  // 맡는다. 가로 폭 제한(width/max-width)과 nowrap 은 그대로 유지돼야 한다(2026-08-17).
   assert.match(
     featureStyles,
-    /\.sb-canvas-caption \{[^}]*width: 100%;[^}]*max-width: 100%;[^}]*overflow: hidden;[^}]*white-space: nowrap;[^}]*box-sizing: border-box/,
+    /\.sb-canvas-caption \{[^}]*width: 100%;[^}]*max-width: 100%;[^}]*overflow: visible;[^}]*white-space: nowrap;[^}]*box-sizing: border-box/,
   );
   assert.match(
     featureStyles,
