@@ -114,7 +114,10 @@ import {
   collectInitialRevealThumbnailUrls,
   waitForInitialReveal,
 } from './initialRevealGate.js';
-import { getCustomMatchPromotionTask } from '@/lib/customMatchPromotion.js';
+import {
+  applyPromotedMatchSelection,
+  getCustomMatchPromotionTask,
+} from '@/lib/customMatchPromotion.js';
 
 
 /* 장소 세트를 받을 수 있는 섹션 — 세트 setType 이 styling(스타일링)·horizon-*(스튜디오)뿐이라
@@ -2033,6 +2036,8 @@ export function Storyboard() {
   const pushToast = toast.push;
   const customMatchPromotionExpectedRef = useRef(location.state?.customMatchPromotionStarted === true);
   const customMatchPromotionHandledRef = useRef(new Set());
+  const promotedMatchClothingRef = useRef({ projectId: null, items: null });
+  const composeModeSeedRef = useRef(composeModeSeed);
   // 카피라이팅 토글 = 플로우 선택값 (store → patchProject 동기화, ADR-0002)
   const projectId = useAppStore((s) => s.projectId);
   const composeMode = useAppStore((s) => s.composeMode);
@@ -2067,8 +2072,15 @@ export function Storyboard() {
       try {
         const refreshed = await api.getMatchClothing(projectId);
         if (!active) return;
-        setMatchClothing(refreshed || []);
-        setComposeModeSeed((current) => ({ ...current, matchClothing: refreshed || [] }));
+        const nextMatchClothing = refreshed || [];
+        promotedMatchClothingRef.current = { projectId, items: nextMatchClothing };
+        setMatchClothing(nextMatchClothing);
+        setComposeModeSeed((current) => ({ ...current, matchClothing: nextMatchClothing }));
+        setBlocks((current) => applyPromotedMatchSelection(
+          current,
+          composeModeSeedRef.current.colors,
+          nextMatchClothing,
+        ));
       } catch {
         // 완료 시 캐시는 이미 무효화됐다. 단발 조회가 실패하면 기존 로드 경로로 한 번 재진입한다.
         if (active) setLoadRetry((current) => current + 1);
@@ -2096,6 +2108,7 @@ export function Storyboard() {
   }, [matchClothing, projectId, pushToast]);
 
   useEffect(() => () => clearTimeout(undoTimerRef.current), []);
+  useLayoutEffect(() => { composeModeSeedRef.current = composeModeSeed; }, [composeModeSeed]);
   useEffect(() => {
     if (!composeModeSelectionRef.current.pending) {
       composeModeSelectionRef.current.confirmedMode = composeMode;
@@ -2178,10 +2191,11 @@ export function Storyboard() {
         // ProductInput의 이탈 cleanup이 마지막 색상 PATCH를 막 시작했을 수 있다. 같은 project의
         // 저장만 기다린 뒤 생성/콘티 GET을 시작해, 빠른 브라우저 뒤로가기에서도 옛 색을 읽지 않는다.
         await waitForAnalysisEditSave(pid);
-        // 마네킹컷 생성은 오래 걸린다 — 사용자가 콘티를 짜는 동안 백그라운드로 돌린다.
-        // await 하지 않는다: 보드 로드가 생성 완료를 기다리면 병렬화가 사라진다. 실패는 리본과
-        // 마네킹 화면이 각각 보고하므로 여기선 삼킨다. 중복 호출은 러너와 서버가 함께 흡수한다.
-        void requestMannequinGeneration(pid).catch(() => {});
+        // 마네킹컷 생성은 콘티 로드와 병렬로 돌리되, 재료인 내 옷 승격만은 먼저 정착시킨다.
+        // fail-open 결과도 resolve되므로 등록 실패가 마네킹 생성을 막지는 않는다.
+        const customMatchTask = getCustomMatchPromotionTask(pid);
+        const customMatchReady = customMatchTask?.promise.catch(() => null) || Promise.resolve();
+        void customMatchReady.then(() => requestMannequinGeneration(pid)).catch(() => {});
         await sbSaveIdle();     // 직전 인스턴스의 비행 중 저장(이탈 플러시)이 착지한 뒤에 읽는다 — 스테일 로드 방지
         const entry = await consumeStoryboardEntry(pid) || await loadStoryboardEntry(pid);
         const [board] = entry;
@@ -2207,22 +2221,35 @@ export function Storyboard() {
         const prepared = reuseInitialEntry
           ? initialEntryRef.current.prepared
           : prepareStoryboardEntry(entry, usePending ? pending : board);
-        const initBlocks = prepared.blocks;
+        const promotedMatchClothing = promotedMatchClothingRef.current.projectId === pid
+          ? promotedMatchClothingRef.current.items
+          : null;
+        const initBlocks = promotedMatchClothing
+          ? applyPromotedMatchSelection(
+            prepared.blocks,
+            prepared.composeModeSeed.colors,
+            promotedMatchClothing,
+          )
+          : prepared.blocks;
+        const promotionChangedBlocks = initBlocks !== prepared.blocks;
         setOpenGroupKeys([]);
         if (!reuseInitialEntry) {
           setBlocks(initBlocks);
           setCatalogs(prepared.catalogs);
-          setMatchClothing(prepared.matchClothing);
+          setMatchClothing(promotedMatchClothing || prepared.matchClothing);
           setClothingType(prepared.clothingType);
           setExampleGender(prepared.exampleGender);
           setHasDetailImage(prepared.hasDetailImage);
           setDetailColorOpts(prepared.detailColorOpts);
           setColorOpts(prepared.colorOpts);
-          setComposeModeSeed(prepared.composeModeSeed);
+          setComposeModeSeed(promotedMatchClothing
+            ? { ...prepared.composeModeSeed, matchClothing: promotedMatchClothing }
+            : prepared.composeModeSeed);
         }
-        if (prepared.normalized || prepared.assignment.changed || usePending) {
+        if (prepared.normalized || prepared.assignment.changed || usePending || promotionChangedBlocks) {
           const autoAssignmentOnly = prepared.assignment.assignedIds.length > 0
-            && prepared.assignment.protectedIds.length === 0 && !prepared.normalized && !usePending;
+            && prepared.assignment.protectedIds.length === 0 && !prepared.normalized
+            && !usePending && !promotionChangedBlocks;
           try {
             await sbSaveNow(pid, () => initBlocks, { autoAssignment: autoAssignmentOnly });
           } catch {

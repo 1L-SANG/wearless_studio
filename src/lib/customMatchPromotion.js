@@ -1,3 +1,5 @@
+import { matchingIdsForColor } from './colorwayMatching.js';
+
 /* =============================================================
    customMatchPromotion — draft(비프로젝트) 단계에서 추가한 "내 옷"을
    확정 승격 시 실서버에 등록한다.
@@ -84,6 +86,31 @@ export function getCustomMatchPromotionTask(projectId) {
 // 테스트와 새 프로젝트 경계에서만 쓰는 명시적 정리 함수. 진행 중 요청을 취소하지는 않는다.
 export function clearCustomMatchPromotionTask(projectId) {
   if (projectId) promotionTasks.delete(projectId);
+}
+
+// 승격 전에 만들어진 기본 콘티는 이전 추천 의류 id를 들고 있다. 셀러가 인스펙터에서 직접
+// 고른 컷은 보존하고, 자동 배정 컷만 최신 analysis 선택으로 다시 맞춘다.
+export function applyPromotedMatchSelection(blocks, colors, matchClothing) {
+  if (!Array.isArray(blocks)) return blocks;
+  const colorList = Array.isArray(colors) ? colors : [];
+  const baseColor = colorList.find((color) => color.isBase) || colorList[0] || null;
+  const colorById = new Map(colorList.map((color) => [color.id, color]));
+  let changed = false;
+  const next = blocks.map((block) => {
+    if (!['styling', 'horizon', 'mirror'].includes(block.cutType)
+      || block.source === 'mine' || block.matchIdsOrigin === 'user') return block;
+    const color = colorById.get(block.colorId) || baseColor;
+    const matchIds = matchingIdsForColor(color, matchClothing, {
+      preferMain: Boolean(color && baseColor && color.id === baseColor.id),
+    });
+    const current = Array.isArray(block.matchIds) ? block.matchIds : [];
+    if (current.length === matchIds.length && current.every((id, index) => id === matchIds[index])) {
+      return block;
+    }
+    changed = true;
+    return { ...block, matchIds };
+  });
+  return changed ? next : blocks;
 }
 
 // analysis payload 승격 전에 로컬 커스텀 항목을 걷어낸다 — objectURL·로컬 id 가

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   clearCustomMatchPromotionTask,
+  applyPromotedMatchSelection,
   getCustomMatchPromotionTask,
   promoteCustomMatch,
   startCustomMatchPromotion,
@@ -104,6 +105,19 @@ test('콘티는 같은 승격 완료 프라미스를 구독하고 완료 콜백�
   assert.equal(task.status, 'settled');
   assert.equal(settled, 1);
   clearCustomMatchPromotionTask(projectId);
+});
+
+test('승격된 선택은 자동 매칭 컷에 반영하되 사용자가 고른 컷은 보존한다', () => {
+  const colors = [{ id: 'base', isBase: true, swatchId: 'black' }];
+  const matches = [{ id: 'custom_srv', isCustom: true, selected: true, isCompatible: true }];
+  const automatic = { id: 'auto', source: 'ai', cutType: 'horizon', colorId: 'base', matchIds: ['seed'] };
+  const user = { id: 'user', source: 'ai', cutType: 'styling', colorId: 'base', matchIds: ['mine'], matchIdsOrigin: 'user' };
+  const product = { id: 'product', source: 'ai', cutType: 'product', colorId: 'base', matchIds: [] };
+
+  const next = applyPromotedMatchSelection([automatic, user, product], colors, matches);
+  assert.deepEqual(next[0].matchIds, ['custom_srv']);
+  assert.equal(next[1], user);
+  assert.equal(next[2], product);
 });
 
 test('draft 에서 선택돼 있던 내 옷은 승격본도 선택 상태로 저장된다 — 델타만 보낸다', async () => {
