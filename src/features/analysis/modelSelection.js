@@ -1,3 +1,5 @@
+import { AI_MODEL_IDS } from './aiModels.js';
+
 export function resolveSelectedModelId({
   selectedModelId,
   targetGenders,
@@ -23,7 +25,9 @@ export function resolveSelectedModelId({
   return (pool[0] || aiModels[0])?.id;
 }
 
-const VIRTUAL_MODEL_IDS = new Set(['mA', 'mB', 'mC', 'mD', 'mE']);
+// 가상모델 판정은 카탈로그 단일 출처에서 가져온다 — 손으로 다시 적으면 새 모델을 넣을 때
+// 빠뜨려 유료 실제 모델로 오분류된다(2026-08-17 mF~mN 사고).
+const VIRTUAL_MODEL_IDS = AI_MODEL_IDS;
 
 export function isRealModelSelection(selectedModelId) {
   return !!selectedModelId && !VIRTUAL_MODEL_IDS.has(selectedModelId);

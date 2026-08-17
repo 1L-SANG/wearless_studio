@@ -34,12 +34,30 @@ def test_mock_analysis_starts_with_ai_keyword_suggestions_only():
         assert not re.search(r"[.!?。]|(합니다|습니다|해요|있어요|가능)$", point)
 
 
+def _seed_script_models() -> dict:
+    """seed_virtual_models.py 의 MODELS 딕셔너리를 소스에서 그대로 읽는다.
+
+    앵커 파일명 같은 운영 사실을 테스트에 손으로 다시 적으면(2026-08-17 리뷰 지적),
+    스크립트만 고치고 테스트를 안 고쳐도 초록이라 시드가 R2 업로드 도중
+    FileNotFoundError 로 죽는다(일부만 올라간 채 manifest 미기록). 출처를 하나로 묶는다.
+    """
+    source = (REPO_ROOT / "server/scripts/seed_virtual_models.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            getattr(t, "id", None) == "MODELS" for t in node.targets
+        ):
+            return ast.literal_eval(node.value)
+    raise AssertionError("seed_virtual_models.py 에서 MODELS 를 찾지 못했다")
+
+
 def test_virtual_model_catalogs_and_public_assets_stay_in_sync():
     manifest = json.loads(
         (REPO_ROOT / "server/app/data/virtual_models.json").read_text(encoding="utf-8")
     )
-    analysis_source = (
-        REPO_ROOT / "src/features/analysis/AnalysisForm.jsx"
+    # 프론트 카탈로그 단일 출처(2026-08-17) — AnalysisForm 과 modelSelection 이 함께 읽는다.
+    catalog_source = (
+        REPO_ROOT / "src/features/analysis/aiModels.js"
     ).read_text(encoding="utf-8")
     mock_source = MOCK_DB.read_text(encoding="utf-8")
     expected = {
@@ -59,26 +77,40 @@ def test_virtual_model_catalogs_and_public_assets_stay_in_sync():
         "mM": ("나윤", "women", "w10"),
         "mN": ("Nora", "women", "w11"),
     }
-    # 분리형 얼굴 앵커를 쓰는 모델 — 셀렉터 썸네일과 별개 파일이 실제로 있어야
-    # 시드가 R2 에 아이덴티티 정본을 올릴 수 있다.
-    face_anchored = {"mD", "mE", "mF", "mG", "mH", "mI", "mJ", "mK", "mL", "mM", "mN"}
-
+    seed_models = _seed_script_models()
+    assert set(seed_models) == set(expected)
     assert set(manifest["models"]) == set(expected)
+
     for model_id, (name, gender, sid) in expected.items():
         model = manifest["models"][model_id]
         thumb = f"/models/{gender}/{sid}.webp"
         assert (model["name"], model["gender"], model["thumb"]) == (name, gender, thumb)
-        assert f"id: '{model_id}'" in analysis_source
-        assert f"displayName: '{name}'" in analysis_source
-        assert f"id: '{model_id}'" in mock_source
-        assert f"name: '{name}'" in mock_source
-        assert (REPO_ROOT / f"public/models/{gender}/{sid}.webp").is_file()
         assert set(model["views"]) == {
             "face_front", "grid_sedcard", "three_quarter", "profile",
             "body_front", "body_back",
         }
-        if model_id in face_anchored:
-            assert (REPO_ROOT / f"public/models/{gender}/{sid}-face.webp").is_file()
+        # 행 단위로 id·표시명·성별·썸네일이 **한 줄 안에서** 짝지어져 있는지 본다.
+        # 셋을 따로 substring 검사하면 이름이 서로 바뀌거나 썸네일이 남의 것이어도
+        # 통과한다(2026-08-17 리뷰 지적) — 선택 화면과 생성 아이덴티티가 어긋나는 사고다.
+        assert re.search(
+            rf"\{{\s*id:\s*'{model_id}',\s*displayName:\s*'{re.escape(name)}',"
+            rf"\s*gender:\s*'{gender}',\s*thumb:\s*'{re.escape(thumb)}'\s*\}}",
+            catalog_source,
+        ), f"{model_id} row mismatched in aiModels.js"
+        assert re.search(
+            rf"\{{\s*id:\s*'{model_id}',\s*name:\s*'{re.escape(name)}',"
+            rf"\s*gender:\s*'{gender}',\s*thumb:\s*'{re.escape(thumb)}',",
+            mock_source,
+        ), f"{model_id} row mismatched in mock/db.js"
+
+        # 시드 스크립트가 실제로 읽는 파일이 저장소에 있어야 한다. 앵커 파일명은
+        # 스크립트에서 그대로 가져온다(기본값 = 썸네일과 동일 파일).
+        assert (seed_models[model_id]["sid"], seed_models[model_id]["gender"]) == (sid, gender)
+        assert (REPO_ROOT / f"public/models/{gender}/{sid}.webp").is_file()
+        anchor = seed_models[model_id].get("anchor", f"{sid}.webp")
+        assert (REPO_ROOT / f"public/models/{gender}/{anchor}").is_file(), (
+            f"{model_id} 앵커 {anchor} 없음 — 시드가 업로드 도중 죽는다"
+        )
 
 
 def test_dev_generation_example_catalog_matches_server_registry_v2():
