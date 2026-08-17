@@ -55,6 +55,9 @@ test('분석 응답에서 유도한 상품 패치에는 colors 가 없다', () =
 
 test('submit 과 진행 중 분석 복구 둘 다 그 패치를 쓴다', () => {
   const src = read('../../src/features/product-input/ProductInput.jsx');
+  const imports = src.slice(0, src.indexOf('draftSlot.configure'));
+  assert.match(imports, /\banalysisResponseProductPatch\b/,
+    '호출하는 가드를 ProductInput 이 실제로 import 해야 한다');
   assert.equal(
     (src.match(/analysisResponseProductPatch\(/g) || []).length, 2,
     '두 분석 경로(최초 submit·새로고침 복구)가 같은 가드를 지나야 한다',

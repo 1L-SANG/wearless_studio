@@ -43,6 +43,7 @@ import { Icon, Button, IconButton, ErrorState, Modal, UploadPendingTile, useToas
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { AnalysisForm, AnalysisSkeleton, AnalysisProgress, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
 import {
+  analysisResponseProductPatch,
   createTrailingPatchScheduler,
   hasPatchFields,
   mergeColorMetadataWithPersistedImages,
