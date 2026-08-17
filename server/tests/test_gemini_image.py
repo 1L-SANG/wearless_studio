@@ -266,3 +266,46 @@ def test_5xx_retry_is_narrowed_to_backend_rejections(monkeypatch, status, expect
             [gemini_image.InlineImage("image/png", b"image")], "1K"))
     assert calls["n"] == expect_calls
     assert raised.value.billable is expect_billable
+
+
+def test_billable_failures_are_written_to_the_usage_ledger(monkeypatch):
+    """과금됐을 수 있는 실패도 원장에 남아야 누수액을 잴 수 있다(2026-08-17 검증)."""
+    recorded = []
+    monkeypatch.setattr(gemini_image.image_usage, "record",
+                        lambda **kw: recorded.append(kw))
+    sleeps: list[float] = []
+    _counting_client(monkeypatch, httpx.ReadTimeout("slow"), sleeps)
+    client = gemini_image.GeminiImageClient(settings())
+    with pytest.raises(gemini_image.GeminiError):
+        asyncio.run(client.generate_content_image(
+            "gemini-3-pro-image", "prompt",
+            [gemini_image.InlineImage("image/png", b"image")], "1K"))
+    assert len(recorded) == 1
+    assert recorded[0]["model"] == "gemini-3-pro-image"
+    assert recorded[0]["has_image"] is False
+    assert recorded[0]["usage"] is None
+
+
+def test_non_billable_failures_are_not_written(monkeypatch):
+    """연결이 안 선 실패는 그림도 안 나왔다 — 원장에 남기면 비용이 부풀려진다."""
+    recorded = []
+    monkeypatch.setattr(gemini_image.image_usage, "record",
+                        lambda **kw: recorded.append(kw))
+    sleeps: list[float] = []
+    _counting_client(monkeypatch, httpx.ConnectError("offline"), sleeps)
+    client = gemini_image.GeminiImageClient(settings())
+    with pytest.raises(gemini_image.GeminiError):
+        asyncio.run(client.generate_content_image(
+            "gemini-3-pro-image", "prompt",
+            [gemini_image.InlineImage("image/png", b"image")], "1K"))
+    assert recorded == []
+
+
+def test_openai_branch_carries_the_same_billable_contract():
+    """이미지 모델을 gpt-image 로 돌려도 이중 과금 방어가 유지된다."""
+    import inspect
+
+    source = inspect.getsource(gemini_image.GeminiImageClient._openai_generate)
+    assert "billable = not isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))" in source
+    assert "billable = res.status_code in (502, 504)" in source
+    assert "_record_unbilled_failure(" in source

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 
 import { uniqueGenerationCutCount } from '../../src/lib/generationCutCount.js';
 import { shuffleSectionExamples } from '../../src/lib/storyboardExampleShuffle.js';
+import { canRerollGenerationExample } from '../../src/lib/generationExamples.js';
 import genExamples from '../../src/data/genExamples.json' with { type: 'json' };
 import { entryStylingMembers } from '../../src/lib/storyboardEntryPlacement.js';
 import {
@@ -160,4 +161,16 @@ test('낱개 셔플은 옆 컷을 오염시키지 않는다 — 예시가 비어
   assert.notEqual(byId.b.exampleId, blocks[1].exampleId, 'b 는 바뀐다');
   assert.equal(byId.a.exampleId, blocks[0].exampleId, 'a 는 그대로');
   assert.equal(byId.c.exampleId, null, '비어 있던 c 가 덩달아 채워지면 안 된다');
+});
+
+
+test('후보가 하나뿐인 컷에는 셔플을 제안하지 않는다 — 눌러도 영영 안 바뀐다', () => {
+  const product = { clothingType: 'top' };
+  const opts = { catalog: genExamples, product, gender: 'women' };
+  // 예시가 아직 없는 컷은 대상이 아니다.
+  assert.equal(canRerollGenerationExample(ai('a', { exampleId: null }), opts), false);
+  // 후보가 없는 조합(빈 카탈로그)도 대상이 아니다.
+  assert.equal(canRerollGenerationExample(ai('a'), { ...opts, catalog: [] }), false);
+  // 후보가 2개 이상인 일반 조합은 대상이다.
+  assert.equal(canRerollGenerationExample(ai('a'), opts), true);
 });

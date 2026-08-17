@@ -7,6 +7,7 @@ async httpx로 호출해 이벤트 루프를 막지 않는다 (§5).
 
 import asyncio
 import base64
+import logging
 import time
 from dataclasses import dataclass
 
@@ -14,6 +15,8 @@ import httpx
 
 from .. import image_usage
 from ..config import Settings
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -28,6 +31,23 @@ class GeminiImageResult:
     mime: str
     latency_ms: int
     usage: dict | None
+
+
+def _record_unbilled_failure(model: str, image_size: str, t0: float, reason: str) -> None:
+    """응답을 못 받았지만 프로바이더는 이미 그렸을 수 있는 실패를 원장에 남긴다.
+
+    usage 를 못 받았으므로 토큰 수는 알 수 없다(추정 단가만 남는다). 그래도 남겨야
+    "그 시각에 과금됐을 수 있는 호출이 몇 건"인지 셀 수 있다 — 안 남기면 이번 재시도
+    차단이 실제로 얼마를 아꼈는지 검증할 방법이 없다(2026-08-17 검증).
+    """
+    try:
+        latency_ms = int((time.perf_counter() - t0) * 1000)
+        log.warning("image_usage unbilled_failure model=%s size=%s reason=%s latency_ms=%d",
+                    model, image_size, reason, latency_ms)
+        image_usage.record(model=model, image_size=image_size, usage=None,
+                           latency_ms=latency_ms, has_image=False)
+    except Exception:  # 계측 실패가 생성 경로를 깨뜨리지 않게
+        log.exception("unbilled failure record failed (ignored)")
 
 
 class GeminiError(RuntimeError):
@@ -127,9 +147,14 @@ class GeminiImageClient:
                 # (image_usage_events)에도 안 남아 비용이 조용히 샌다 — 2026-08-16 리뷰.
                 retryable = isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
                 if attempt == 2 or not retryable:
+                    billable = not retryable
+                    # 그림이 이미 나왔을 수 있으면 원장에도 남긴다 — 안 남기면 "재시도를 막아
+                    # 얼마를 아꼈는지"도, "지금 얼마가 새는지"도 영영 못 잰다(2026-08-17 검증).
+                    if billable:
+                        _record_unbilled_failure(model, image_size, t0, f"{type(exc).__name__}")
                     raise GeminiError(
                         f"Gemini request failed: {type(exc).__name__}: {exc}",
-                        billable=not retryable,   # 요청은 도착했다 — 그림이 이미 나왔을 수 있다
+                        billable=billable,
                     ) from exc
                 await asyncio.sleep(5 * (attempt + 1))
                 continue
@@ -141,8 +166,10 @@ class GeminiImageClient:
             await asyncio.sleep(5 * (attempt + 1))  # 5s → 10s
         latency_ms = int((time.perf_counter() - t0) * 1000)
         if res.status_code != 200:
-            raise GeminiError(f"Gemini {res.status_code}: {res.text[:500]}",
-                              billable=res.status_code in (502, 504))
+            billable = res.status_code in (502, 504)
+            if billable:
+                _record_unbilled_failure(model, image_size, t0, f"http_{res.status_code}")
+            raise GeminiError(f"Gemini {res.status_code}: {res.text[:500]}", billable=billable)
         parse_error = None
         usage = None
         parts = []
@@ -226,10 +253,20 @@ class GeminiImageClient:
                     headers={"Authorization": f"Bearer {self._openai_key}"},
                     data=data, files=files)
         except httpx.RequestError as exc:
-            raise GeminiError(f"OpenAI request failed: {type(exc).__name__}: {exc}") from exc
+            # Gemini 경로와 같은 규칙 — 연결이 안 선 경우만 '아직 안 그려졌다'로 본다.
+            # 안 맞추면 이미지 모델을 바꾸는 순간 이중 과금 방어가 통째로 사라진다
+            # (2026-08-17 검증: 프로바이더별 비대칭).
+            billable = not isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
+            if billable:
+                _record_unbilled_failure(model, size, t0, type(exc).__name__)
+            raise GeminiError(
+                f"OpenAI request failed: {type(exc).__name__}: {exc}", billable=billable) from exc
         latency_ms = int((time.perf_counter() - t0) * 1000)
         if res.status_code != 200:
-            raise GeminiError(f"OpenAI {res.status_code}: {res.text[:500]}")
+            billable = res.status_code in (502, 504)
+            if billable:
+                _record_unbilled_failure(model, size, t0, f"http_{res.status_code}")
+            raise GeminiError(f"OpenAI {res.status_code}: {res.text[:500]}", billable=billable)
         try:
             payload = res.json()
             b64 = ((payload.get("data") or [{}])[0]).get("b64_json")

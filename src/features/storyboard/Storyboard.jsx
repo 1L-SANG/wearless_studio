@@ -36,6 +36,7 @@ import {
 } from '@/lib/storyboardTaxonomy.js';
 import {
   assignGenerationExamples,
+  canRerollGenerationExample,
   generationExampleImageSources,
   hasSelectableGenerationExamples,
   isGenerationCombinationPublic,
@@ -1858,6 +1859,8 @@ function HookStyleChip({
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
+  const chipRef = useRef(null);
+  const menuRef = useRef(null);
   useEffect(() => {
     if (!open) return undefined;
     const onDown = (event) => {
@@ -1871,6 +1874,25 @@ function HookStyleChip({
       document.removeEventListener('keydown', onKey);
     };
   }, [open]);
+  // 열면 첫 항목으로 포커스를 옮기고, 닫으면 칩으로 되돌린다 — 안 그러면 포커스가 body 로
+  // 흩어져 키보드 사용자가 자리를 잃는다(자체 리뷰).
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (open) menuRef.current?.querySelector('button:not(:disabled)')?.focus();
+    else if (wasOpen.current) chipRef.current?.focus();
+    wasOpen.current = open;
+  }, [open]);
+  // ↑↓ 로 항목 이동, Home/End 로 처음·끝.
+  const onMenuKeyDown = (event) => {
+    const items = [...(menuRef.current?.querySelectorAll('button:not(:disabled)') || [])];
+    if (!items.length) return;
+    const at = items.indexOf(document.activeElement);
+    const go = (index) => { event.preventDefault(); items[(index + items.length) % items.length].focus(); };
+    if (event.key === 'ArrowDown') go(at + 1);
+    else if (event.key === 'ArrowUp') go(at - 1);
+    else if (event.key === 'Home') go(0);
+    else if (event.key === 'End') go(items.length - 1);
+  };
   // 대표 이미지 = 발행 카탈로그에서 스타일 슬롯 사양대로 고정 선정(2026-08-14 오너).
   // 카탈로그 순위 1번이라 발행이 갈리지 않는 한 항상 같은 그림이다.
   const representativeThumb = (cutType, shot) => {
@@ -1886,6 +1908,7 @@ function HookStyleChip({
       onClick={(event) => event.stopPropagation()}>
       <button
         type="button"
+        ref={chipRef}
         className={'sb-stylechip' + (open ? ' on' : '')}
         aria-expanded={open}
         aria-label="첫 화면 구성 바꾸기"
@@ -1897,7 +1920,8 @@ function HookStyleChip({
         <Icon name="chevDown" size={13} />
       </button>
       {open && (
-        <span className="sb-stylechip-menu" role="menu" aria-label="첫 화면 구성">
+        <span className="sb-stylechip-menu" role="menu" aria-label="첫 화면 구성"
+          ref={menuRef} onKeyDown={onMenuKeyDown}>
           {HOOK_STYLES.map((style) => (
             <button
               key={style}
@@ -1921,7 +1945,8 @@ function HookStyleChip({
           ))}
         </span>
       )}
-      {error && <span className="sb-stylechip-error">{error}</span>}
+      {/* 메뉴가 열리면 그 아래에 가려 안 보인다 — 닫힌 동안만 띄운다. */}
+      {error && !open && <span className="sb-stylechip-error" role="alert">{error}</span>}
     </span>
   );
 }
@@ -2605,6 +2630,13 @@ export function Storyboard() {
         ).length > 0,
       });
       const frameId = `hookframe__${uid('hf')}`;
+      // 손상된 표식이 남아 있으면(비연속 run 등) 새 표식을 얹어봐야 파생이 계속 실패한다.
+      // 후킹 섹션의 옛 프레임 표식을 먼저 걷어내고 새 프레임 하나만 남긴다(자체 리뷰).
+      out = out.map((block) => (
+        block.id !== nb.id && block.sectionRole === SECTION_ROLES.HOOKING && block.hookFrameId
+          ? stripHookFrameFields(block)
+          : block
+      ));
       out = out.map((block) => {
         if (block.id !== nb.id) return block;
         const framed = {
@@ -2756,6 +2788,10 @@ export function Storyboard() {
       event.preventDefault();
       event.stopPropagation();
       if (swapOverId !== blockId) setSwapOverId(blockId);
+      // 사이 자리와 카드는 서로 배타적인 목적지다 — 카드가 조준되면 직전 '사이 자리' 점선을
+      // 끈다(반대 방향은 insertControl.onDragOver 가 이미 한다). 안 그러면 두 곳이 동시에
+      // 켜져 어디에 놓이는지 알 수 없었다(자체 리뷰).
+      if (dragOver !== null) { setDragOver(null); setDragOverSec(null); setDragOverSpaceGroupId(null); }
     },
     // 자식 요소로 옮겨갈 때도 dragleave 가 올라온다 — 카드 밖으로 나갈 때만 표시를 거둔다.
     onDragLeave: (event) => {
@@ -3022,7 +3058,9 @@ export function Storyboard() {
             makeId: (_member, index) => memberIds[index],
             setSelectionOrigin: 'user',
           });
-          for (const id of memberIds) inserted = adoptSection(inserted, id, setPicker.targetSid, setPicker.targetRole);
+          // 멤버마다 부르면 빈 섹션에서 host 를 못 찾아 **멤버 수만큼 새 sectionId** 가 생기고
+          // 섹션 연속 run 이 깨진다(자체 리뷰). adoptSection 은 id 배열을 받는다 — 한 번에 넘긴다.
+          inserted = adoptSection(inserted, memberIds, setPicker.targetSid, setPicker.targetRole);
           inserted = inserted.map((block) => memberIdSet.has(block.id) ? {
             ...block, spaceGroupId: groupId, spaceVariation: set.spaceVariation || 'subtle', refScope: 'pose',
           } : block);
@@ -3168,7 +3206,9 @@ export function Storyboard() {
       await sbSaveNow(pidRef.current, () => next);
       if (sbPending.get(pidRef.current) === next) sbPending.delete(pidRef.current);
     } catch {
+      // 스스로 사라지게 — 안 그러면 한 번 실패한 문구가 세션 내내 남아 오경보가 된다(자체 리뷰).
       setHookStyleError('스타일을 저장하지 못했어요');
+      setTimeout(() => setHookStyleError(null), 6000);
     } finally {
       setHookStyleSaving(false);
     }
@@ -3211,11 +3251,16 @@ export function Storyboard() {
   const shuffleBlock = (group, blockId) => runShuffle(group, { onlyBlockId: blockId });
   // 컷 단위 셔플 아이콘은 '낱개 AI 컷'에만 — 시그니처(프레임 슬롯)·장소세트 멤버·내 사진·
   // 아직 예시가 없는 컷은 제외한다(2026-08-16 오너).
+  /* 후보가 하나뿐인 컷(확장형 추가색상 등)은 눌러도 영영 안 바뀐다 — 그런 자리에는
+     아이콘 자체를 안 보여 준다(2026-08-17 검증: 늘 무반응 + 틀린 이유 안내). */
   const canShuffleBlock = (block) => !locked
     && block.source === 'ai'
     && !block.spaceGroupId
     && !block.hookFrameId
-    && !!block.exampleId;
+    && !!block.exampleId
+    && canRerollGenerationExample(block, {
+      catalog: catalogs?.genExamples || [], product, gender: boundGenderNow,
+    });
 
   const insertControl = (
     idx,
