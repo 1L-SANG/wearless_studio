@@ -48,7 +48,20 @@ def test_virtual_model_catalogs_and_public_assets_stay_in_sync():
         "mC": ("도윤", "men", "m2"),
         "mD": ("수혁", "men", "m3"),
         "mE": ("지안", "women", "w2"),
+        # 2026-08-17 여성 2차 배치 — 앵커는 전원 {sid}-face.webp 분리형
+        "mF": ("하린", "women", "w3"),
+        "mG": ("세아", "women", "w4"),
+        "mH": ("예린", "women", "w5"),
+        "mI": ("다인", "women", "w6"),
+        "mJ": ("소윤", "women", "w7"),
+        "mK": ("유나", "women", "w8"),
+        "mL": ("채원", "women", "w9"),
+        "mM": ("나윤", "women", "w10"),
+        "mN": ("Nora", "women", "w11"),
     }
+    # 분리형 얼굴 앵커를 쓰는 모델 — 셀렉터 썸네일과 별개 파일이 실제로 있어야
+    # 시드가 R2 에 아이덴티티 정본을 올릴 수 있다.
+    face_anchored = {"mD", "mE", "mF", "mG", "mH", "mI", "mJ", "mK", "mL", "mM", "mN"}
 
     assert set(manifest["models"]) == set(expected)
     for model_id, (name, gender, sid) in expected.items():
@@ -64,9 +77,8 @@ def test_virtual_model_catalogs_and_public_assets_stay_in_sync():
             "face_front", "grid_sedcard", "three_quarter", "profile",
             "body_front", "body_back",
         }
-
-    assert (REPO_ROOT / "public/models/men/m3-face.webp").is_file()
-    assert (REPO_ROOT / "public/models/women/w2-face.webp").is_file()
+        if model_id in face_anchored:
+            assert (REPO_ROOT / f"public/models/{gender}/{sid}-face.webp").is_file()
 
 
 def test_dev_generation_example_catalog_matches_server_registry_v2():

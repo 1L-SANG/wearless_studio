@@ -43,6 +43,10 @@ _MAX_EDGE = "1536"  # v2 팩 자산 리샘플 상한 — 아이덴티티 참조�
 _PACK_MIME = "image/jpeg"  # 기존 v2 팩의 .png 파일명과 달리 실제 바이트는 JPEG
 
 # 프론트 모델 ID(src/mock/db.js AI_MODELS) ↔ 스파이크 소스 ID 매핑
+# mF~mN(2026-08-17): 여성 9인 2차 배치. 팩은 --identity v3 로 생성(주근깨 단정 제거)했고
+# 크롭 바이트는 JPEG 라 pack_mime 기본값(image/jpeg)을 그대로 쓴다. 앵커는 mD·mE 와 같이
+# 셀렉터 썸네일({sid}.webp)과 분리된 {sid}-face.webp — 썸네일 restyle 이 R2 의 아이덴티티
+# 정본을 덮지 못하게 하는 장치(m3 qc-notes 의 확립된 패턴).
 MODELS = {
     "mA": {"sid": "w1", "gender": "women", "name": "Mia"},
     "mB": {"sid": "m1", "gender": "men", "name": "Leo"},
@@ -55,6 +59,15 @@ MODELS = {
         "sid": "w2", "gender": "women", "name": "지안", "pack_mime": "image/png",
         "anchor": "w2-face.webp",
     },
+    "mF": {"sid": "w3", "gender": "women", "name": "하린", "anchor": "w3-face.webp"},
+    "mG": {"sid": "w4", "gender": "women", "name": "세아", "anchor": "w4-face.webp"},
+    "mH": {"sid": "w5", "gender": "women", "name": "예린", "anchor": "w5-face.webp"},
+    "mI": {"sid": "w6", "gender": "women", "name": "다인", "anchor": "w6-face.webp"},
+    "mJ": {"sid": "w7", "gender": "women", "name": "소윤", "anchor": "w7-face.webp"},
+    "mK": {"sid": "w8", "gender": "women", "name": "유나", "anchor": "w8-face.webp"},
+    "mL": {"sid": "w9", "gender": "women", "name": "채원", "anchor": "w9-face.webp"},
+    "mM": {"sid": "w10", "gender": "women", "name": "나윤", "anchor": "w10-face.webp"},
+    "mN": {"sid": "w11", "gender": "women", "name": "Nora", "anchor": "w11-face.webp"},
 }
 # 팩 크롭 파일명 → manifest 뷰 키 (계약의 시트 낱장 4뷰)
 PACK_VIEWS = {
