@@ -41,6 +41,9 @@ class Settings:
     # tier→모델 매핑 (ai_agent_modules §1 — 교체는 여기/env 한 곳)
     model_image_light: str = "gemini-3.1-flash-image"
     model_image_high: str = "gemini-3-pro-image"
+    # 시그니처 컷(상세페이지 첫 화면) 전용. gpt-image 계열은 gemini_image.py 가 OpenAI
+    # images/edits 경로로 분기한다(:127) — 표기는 그 분기가 인식하는 그대로 둔다.
+    model_image_signature: str = "gpt-image-2"
     # AG-01 상품 분석 (text tier, 멀티모달 입력) — ai_agent_modules §1·§3
     openai_api_key: str | None = None  # sk-… (서버 전용, secret). GPT 경로 키
     model_text: str = "gpt-5.4-mini"  # GPT 폴백 provider 의 text/vision 모델 (openai key 있을 때만)
@@ -362,6 +365,7 @@ def load_settings() -> Settings:
         vertex_location=os.getenv("VERTEX_LOCATION", "global"),
         model_image_light=os.getenv("MODEL_ROUTING_IMAGE_LIGHT", "gemini-3.1-flash-image"),
         model_image_high=os.getenv("MODEL_ROUTING_IMAGE_HIGH", "gemini-3-pro-image"),
+        model_image_signature=os.getenv("MODEL_ROUTING_IMAGE_SIGNATURE", "gpt-image-2"),
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         model_text=os.getenv("MODEL_ROUTING_TEXT", "gpt-5.4-mini"),
         model_text_gemini=os.getenv("MODEL_ROUTING_TEXT_GEMINI", "gemini-3.7-flash"),

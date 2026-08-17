@@ -1122,6 +1122,28 @@ def build_manifest(
     return "\n".join(lines) or "(the seller's product photos — treat as ground truth)"
 
 
+# 시그니처 컷(상세페이지 첫 화면) 판정 — 프론트가 전용 풀(signatureCutPool)에서 배정한
+# exampleId 는 'sig_' 접두를 쓴다. 저장 계약에 새 필드를 더하지 않고 이 표식만으로 구분한다.
+SIGNATURE_EXAMPLE_PREFIX = "sig_"
+
+
+def is_signature_cut(spec: dict) -> bool:
+    example_id = (spec or {}).get("exampleId") or (spec or {}).get("example_id") or ""
+    return isinstance(example_id, str) and example_id.startswith(SIGNATURE_EXAMPLE_PREFIX)
+
+
+# 첫 화면의 화면 문법(오너 확정 2026-08-17): 인물을 바짝 당겨 얼굴은 일부만 보이고,
+# 배경은 착장 의류 색의 연한 톤. 인물·의류가 주인공이 되도록 배경에 디테일을 두지 않는다.
+SIGNATURE_DIRECTION = (
+    "SIGNATURE OPENING CUT — extreme close crop of the upper body. "
+    "Show only part of the face (back of head, partial profile, half face, or lower face only); "
+    "never a full centered frontal portrait. "
+    "BACKGROUND: same hue family as the garment's dominant color but much lighter and "
+    "desaturated — a soft, detail-free surface so the person and the garment stay dominant. "
+    "No props, no text, no busy scenery."
+)
+
+
 def build_prompt(
     cut_spec: dict, product: dict, *,
     analysis: dict | None = None, manifest: str | None = None, has_face: bool = False,
@@ -1157,6 +1179,10 @@ def build_prompt(
         manifest = build_manifest(
             prod_assets, has_mannequin=False, has_match=False, mood_count=0,
             has_face=has_face and _face_fits(spec, _is_bottom(clothing_type)))
+    if is_signature_cut(spec):
+        # 기존 컷 프롬프트는 건드리지 않고 시그니처 분기에서만 지시를 덧붙인다.
+        authority_plan_line = f"{authority_plan_line}\n{SIGNATURE_DIRECTION}"
+
     prompt = render_cut_prompt(
         load_cut_template(), spec, product, analysis or {}, clothing_type, manifest, has_face,
         authority_plan_line=authority_plan_line,
@@ -1234,9 +1260,10 @@ async def generate(
     매니페스트와 같은 자리에 넣었다'는 뜻이다. MODEL / MODEL SHEET
     identity pair는 has_face와 독립적으로 매니페스트에서 판정한다 — 첨부와
     매니페스트가 어긋나면 라벨이 밀린다."""
-    model = resolve_model(settings, "image_high")
     clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
     spec = normalize_spec(cut_spec, clothing_type=clothing_type)
+    # 시그니처 컷만 별도 모델(기본 gpt-image-2) — 나머지 컷은 기존 image_high 유지.
+    model = resolve_model(settings, "image_signature" if is_signature_cut(spec) else "image_high")
     crop_pose_medium = (
         spec["refScope"] == "pose"
         and spec["shot"] == "medium"

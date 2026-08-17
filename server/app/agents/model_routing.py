@@ -13,6 +13,8 @@ def resolve_model(settings: Settings, tier: str) -> str:
     mapping = {
         "image_light": settings.model_image_light,
         "image_high": settings.model_image_high,
+        # 시그니처 컷(첫 화면)만 별도 모델 — 구도·배경 문법이 달라 오너가 GPT-image 계열로 확정(2026-08-17).
+        "image_signature": getattr(settings, "model_image_signature", None) or settings.model_image_high,
         "text": settings.model_text,  # AG-01 등 text tier (계약 §1 MODEL_ROUTING_TEXT)
     }
     model = mapping.get(tier)
@@ -26,6 +28,7 @@ def model_routing_snapshot(settings: Settings) -> dict:
     return {
         "image_light": settings.model_image_light,
         "image_high": settings.model_image_high,
+        "image_signature": getattr(settings, "model_image_signature", None) or settings.model_image_high,
         "text": settings.model_text,
         "imageSize": settings.mannequin_image_size,
         "detailImageSize": (
