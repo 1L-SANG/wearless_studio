@@ -53,6 +53,7 @@ import {
   splitAnalysisEditPatch,
 } from './saveRouting.js';
 import { getBaseSlotUploadRoom, getPendingTileCount, PENDING_TILE_DELAY_MS } from './pendingTiles.js';
+import { photoCaption } from './photoCaption.js';
 import { createProductPhotoPreviewRegistry } from './productPhotoPreviewRegistry.js';
 import { autofillColorGroups } from './colorAutofill.js';
 import {
@@ -194,11 +195,14 @@ function draftHasContent(product, analysis) {
   );
 }
 
-// small file-meta caption shown over an uploaded image (name · size · type) — requested feature
-function MetaCap({ im }) {
+// small file-meta caption shown over an uploaded image (name · size · type) — requested feature.
+// caption 은 photoCaption 이 정리한 표시용 이름 — OS 임시 이름(tempImage…)이면 '앞면 사진 1'.
+// 원본 파일명은 지우지 않고 tooltip 에 남긴다(셀러가 실제 파일을 되찾는 단서).
+function MetaCap({ im, caption }) {
+  const shown = caption || im.name || '이미지';
   return (
     <span className="img-cap">
-      <span className="img-cap-name" title={im.name}>{im.name || '이미지'}</span>
+      <span className="img-cap-name" title={im.name && im.name !== shown ? im.name : shown}>{shown}</span>
       <span className="img-cap-sub">{fmtSize(im.size)} · {fileExt(im)}</span>
     </span>
   );
@@ -325,11 +329,11 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
     const pendingCount = getPendingTileCount(pendingBySlot[s], room);
     return (
       <div className="slot-tiles">
-        {imgs.map((im) => (
+        {imgs.map((im, imageIndex) => (
           <div className={`tile${small ? ' sm' : ''}`} key={im.id}>
             <ProductPhotoPreview image={im} displayUrl={displayUrl} />
             {!photosLocked && <button className="rm" aria-label="내가 업로드한 의류 사진 삭제" onClick={() => onRemove(im.id)}><Icon name="x" size={12} /></button>}
-            <MetaCap im={im} />
+            <MetaCap im={im} caption={photoCaption(im.name, slotLabel(s), imageIndex)} />
           </div>
         ))}
         {Array.from({ length: pendingCount }, (_, index) => (
@@ -379,11 +383,11 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
         </>
       ) : (
         <div className="slot-tiles">
-          {group.images.map((im) => (
+          {group.images.map((im, imageIndex) => (
             <div className="tile" key={im.id}>
               <ProductPhotoPreview image={im} displayUrl={displayUrl} />
               {!photosLocked && <button className="rm" aria-label="내가 업로드한 의류 사진 삭제" onClick={() => onRemove(im.id)}><Icon name="x" size={12} /></button>}
-              <MetaCap im={im} />
+              <MetaCap im={im} caption={photoCaption(im.name, slotLabel(im.slot), imageIndex)} />
             </div>
           ))}
           {Array.from({ length: getPendingTileCount(pendingBySlot.Front, 3 - used) }, (_, index) => (
