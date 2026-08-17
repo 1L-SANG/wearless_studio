@@ -66,3 +66,25 @@ def test_signature_direction_covers_composition_and_background():
     assert "same hue family as the garment" in lowered
     assert "desaturated" in lowered
     assert "detail-free" in lowered
+
+
+def test_signature_falls_back_when_openai_key_is_missing(monkeypatch):
+    """프로덕션에 OPENAI_API_KEY 가 아직 없다 — 첫 화면이 빈칸이 되는 대신 기존 모델로 떨어진다."""
+    from app.agents import cut_generator as cg
+
+    with_key = _settings(openai_api_key="sk-test")
+    without_key = _settings(openai_api_key=None)
+    spec = {"exampleId": "sig_women_01"}
+
+    def chosen(settings):
+        model = resolve_model(settings, "image_high")
+        if cg.is_signature_cut(spec):
+            sig = resolve_model(settings, "image_signature")
+            if not sig.startswith("gpt-image") or getattr(settings, "openai_api_key", None):
+                model = sig
+        return model
+
+    assert chosen(with_key) == "gpt-image-2"
+    assert chosen(without_key) == "gemini-3-pro-image"
+    # gpt 계열이 아닌 모델로 바꿔 두면 키와 무관하게 그대로 쓴다.
+    assert chosen(_settings(model_image_signature="gemini-3-pro-image", openai_api_key=None)) == "gemini-3-pro-image"

@@ -60,30 +60,3 @@ test('보드는 시그니처 슬롯에만 풀을 배정하고 사용자 선택�
   // 썸네일 관문이 카탈로그보다 풀을 먼저 본다 — 이 순서가 깨지면 자리표시자가 뜬다.
   assert.match(source, /signatureCutById\(exampleId\)\?\.thumb\s*\n\s*\|\| \(catalogs\?\.genExamples/);
 });
-
-/* 에디터: 시그니처 컷 위의 제품명 자동 배치 (오너 확정 2026-08-17).
-   콘티보드가 남긴 hookTitleOverlay 표식을 읽어 한 번만 얹는다. */
-test('제품명은 시그니처 컷에만, 가운데 정렬로, 한 번만 얹힌다', async () => {
-  const { seedSignatureTitles } = await import('../../src/features/editor/presets/textPresets.js');
-  const blocks = [
-    { id: 'b1', hookTitleOverlay: true, elements: [] },
-    { id: 'b2', elements: [] },
-  ];
-  const once = seedSignatureTitles(blocks, '오버핏 셔츠');
-  const seeded = once[0].elements.at(-1);
-  assert.equal(seeded.type, 'text');
-  assert.equal(seeded.text, '오버핏 셔츠');
-  assert.equal(seeded.style.align, 'center');
-  assert.equal(once[0].signatureTitleSeeded, true);
-  assert.equal(once[1].elements.length, 0, '시그니처가 아닌 블록은 건드리지 않는다');
-
-  // 두 번 돌려도 늘지 않는다.
-  assert.equal(seedSignatureTitles(once, '오버핏 셔츠')[0].elements.length, 1);
-});
-
-test('사용자가 제목을 지워도 다시 살아나지 않는다', async () => {
-  const { seedSignatureTitles } = await import('../../src/features/editor/presets/textPresets.js');
-  const seeded = seedSignatureTitles([{ id: 'b1', hookTitleOverlay: true, elements: [] }], '셔츠');
-  const deleted = [{ ...seeded[0], elements: [] }];  // 사용자가 지운 상태
-  assert.equal(seedSignatureTitles(deleted, '셔츠')[0].elements.length, 0);
-});

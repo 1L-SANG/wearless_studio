@@ -2328,9 +2328,11 @@ export function Storyboard() {
     if (!blocks || !catalogs) return undefined;
     const blockImages = blocks.flatMap((block) => [
       block.exampleId
-        ? generationExampleImageSources(
+        // 시그니처 컷은 카탈로그에 없다 — 조회가 비면 block.thumb 로 떨어져야 첫 화면 카드가
+        // 늦게 뜨지 않는다(이 카드가 보드에서 가장 먼저 보이는 자리다).
+        ? (generationExampleImageSources(
           (catalogs.genExamples || []).find((example) => example.id === block.exampleId),
-        ).prewarm
+        ).prewarm || block.thumb)
         : block.thumb,
       block.ownImages?.[0],
     ]);

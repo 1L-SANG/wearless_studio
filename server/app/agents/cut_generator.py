@@ -1263,7 +1263,13 @@ async def generate(
     clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
     spec = normalize_spec(cut_spec, clothing_type=clothing_type)
     # 시그니처 컷만 별도 모델(기본 gpt-image-2) — 나머지 컷은 기존 image_high 유지.
-    model = resolve_model(settings, "image_signature" if is_signature_cut(spec) else "image_high")
+    # gpt-image 경로는 OPENAI_API_KEY 가 있어야 한다(gemini_image.py:239). 프로덕션에 키가
+    # 아직 없으므로, 없으면 첫 화면이 통째로 빈칸이 되는 대신 기존 모델로 조용히 떨어진다.
+    model = resolve_model(settings, "image_high")
+    if is_signature_cut(spec):
+        signature_model = resolve_model(settings, "image_signature")
+        if not signature_model.startswith("gpt-image") or getattr(settings, "openai_api_key", None):
+            model = signature_model
     crop_pose_medium = (
         spec["refScope"] == "pose"
         and spec["shot"] == "medium"
