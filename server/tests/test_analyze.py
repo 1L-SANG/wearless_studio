@@ -32,12 +32,18 @@ def test_analyze_route_creates_job(client, make_token, monkeypatch):
     async def fake_get_project(conn, uid, pid):
         return {"id": pid}
 
+    async def fake_get_product(conn, pid):
+        # 전처리 잡의 멱등키는 지금 이 상품의 기준 색상 사진에서 나온다 — 사진이 없으면
+        # 분할할 것도 없으므로 잡을 만들지 않는다(2026-08-18).
+        return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "img-front"}]}]}
+
     async def fake_create_job(conn, **kw):
         calls.append(kw)
         return {"id": f"job-{kw['kind']}-1"}, True
 
     monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
     monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
+    monkeypatch.setattr(routes.repo, "get_product", fake_get_product)
     patch_route_db(monkeypatch, routes)
     res = client.post("/v1/projects/p1/analyze", headers=auth_headers(make_token))
     assert res.status_code == 202, res.text

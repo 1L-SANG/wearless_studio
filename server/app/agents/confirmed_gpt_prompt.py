@@ -466,3 +466,22 @@ def compile_confirmed_gpt_prompt(
         + "\nChange only those failed axes. Preserve every other passed input authority, "
         "pose meaning, camera relationship, scene decision and capture characteristic."
     )
+
+
+def confirmed_gpt_framing_contract(request: ConfirmedGptPromptInput) -> dict[str, str]:
+    """Return the curated framing fields shared by generation, QC and local Stage 2.
+
+    The values are server-owned, hash-bound catalog metadata.  Reusing this validator keeps the
+    judge and the editor from silently reducing a head-cropped example to only ``shot=medium``.
+    """
+
+    if not isinstance(request, ConfirmedGptPromptInput):
+        raise ConfirmedGptPromptError("confirmed_gpt_prompt_input_required")
+    _cut_lock(request.cut_lock)
+    _pose_semantics(request.pose_semantics)
+    return {
+        "shot": request.cut_lock.shot,
+        "requestedFraming": request.cut_lock.requested_framing,
+        "faceExposure": request.cut_lock.face_exposure,
+        "roughFraming": request.pose_semantics.rough_framing,
+    }

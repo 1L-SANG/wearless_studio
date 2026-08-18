@@ -375,7 +375,7 @@ function VaryPanel({ catalogs, source, onGenerate }) {
 
 /* ---------- AI ---------- */
 const NEW_CUT_DEFAULT_SHOT = { styling: 'full', horizon: 'full', mirror: 'full', product: 'ghost' };
-export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, varySource, onGenerate, onVaryGenerate, onPickMoodRef }) {
+export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, varySource, failedCutRetry = null, onRetryFailedCut, onGenerate, onVaryGenerate, onPickMoodRef }) {
   const [tab, setTab] = useState('vary');
   // 콘티보드와 같은 규칙 — 사용자는 컷 종류(촬영 방식)만 고르고, 사진 목적(contentRole)은 내부 자동 결정.
   const [cutType, setCutType] = useState('styling');
@@ -498,6 +498,25 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
       setDir(detailDirectionFromExample(example));
     }
   };
+  if (failedCutRetry) {
+    return (
+      <div className="ai-failed-retry">
+        <PanelHead title="원래 콘티로 다시 만들기"
+          sub={failedCutRetry.signature
+            ? '시그니처 전용 예시와 원래 모델·색상·매칭 의류를 그대로 사용해요.'
+            : '이 자리에 지정했던 예시와 생성 설정을 그대로 사용해요.'} />
+        {failedCutRetry.thumb && (
+          <img className="ai-failed-retry-thumb" src={failedCutRetry.thumb} alt="원래 선택한 생성 예시" />
+        )}
+        <Button variant="primary" block icon="sparkles" className="btn-glowring"
+          onClick={onRetryFailedCut}>
+          {failedCutRetry.signature ? '시그니처 컷 다시 만들기' : '이 컷 다시 만들기'} · {catalogs.creditCosts?.editorImage ?? 1} 크레딧
+        </Button>
+        <p className="ai-failed-retry-hint">다른 사진으로 직접 채우려면 의류 탭에서 사진을 선택하세요.</p>
+      </div>
+    );
+  }
+
   return (
     <div>
       <div className="seg" data-idx={tab === 'vary' ? 1 : 0}>

@@ -22,9 +22,10 @@ from app.services import canonical_reference, sam_client
 
 log = logging.getLogger(__name__)
 
-#: Only these views get a cutout. Detail is a macro close-up with no garment silhouette to
-#: isolate, and Fit is a photograph of a person.
-ELIGIBLE_VIEWS = ("Front", "Back")
+#: One definition, in the service, because the enqueue sites build the job's identity from the
+#: same list (`canonical_reference.preprocess_idempotency_key`). Two copies drifting apart would
+#: mean a key that promises a view this worker then refuses to segment.
+ELIGIBLE_VIEWS = canonical_reference.ELIGIBLE_VIEWS
 
 
 async def run_sam_preprocess_job(app, job: dict) -> None:

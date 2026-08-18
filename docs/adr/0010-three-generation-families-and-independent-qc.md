@@ -92,10 +92,12 @@ resolved 마네킹컷, 대체되지 않은 선택 가상모델과 큐레이션�
 요청 뒤 이 실행 조건을 충족하지 못했다고 generic 경로로 바꾸지 않는다.
 
 이 경로는 `GPT Image 2 Stage 1 → 독립 QC → 조건부 Stage 2 → 독립 재검수` 순서다.
-`anatomyPerspectiveAsymmetry`와 `lightingShadowReflectionDrape` 실패만 Stage 1 이미지를 같은
-GPT로 직접 편집한다. 프레이밍·방향·얼굴·포즈와 의류·모델·공간처럼 정본을 다시 봐야 하는
-실패는 같은 CutPlan, exact 입력 패킷과 고정 프롬프트에 실패 축만 추가해 처음부터 다시
-생성한다. Stage 2는 정확히 한 번만 시도하며, 통과하거나 실패 축이 줄고
+`framingCrop`, `anatomyPerspectiveAsymmetry`, `lightingShadowReflectionDrape` 실패만 Stage 1
+이미지를 같은 GPT로 직접 편집한다. `framingCrop`은 큐레이션된 생성예시의 실제 프레임 범위와
+머리 경계(`requestedFraming`, `faceExposure`, `roughFraming`)를 그대로 사용해 기존 사진을
+확대·크롭하고, 모델·의류·공간을 다시 구성하지 않는다. 방향·포즈·시선·카메라 의미와
+의류·모델·공간처럼 정본을 다시 봐야 하는 실패는 같은 CutPlan, exact 입력 패킷과 고정
+프롬프트에 실패 축만 추가해 처음부터 다시 생성한다. Stage 2는 정확히 한 번만 시도하며, 통과하거나 실패 축이 줄고
 기존 통과 축의 회귀가 없을 때만 채택한다. `UNJUDGEABLE`, QC 불능, Stage 2 실패·회귀에는 추가
 호출 없이 Stage 1을 보존한다. 이 `repair`는 출고 차단 모드가 아니며, 모든 후보가 실패했을 때
 `HOLD`하는 별도 `enforce`는 골든셋 보정 뒤에 연다.

@@ -257,6 +257,23 @@ def test_signature_example_does_not_enter_the_confirmed_detail_profile():
     assert confirmed_gpt_runtime.profile_requested(spec) is False
 
 
+@pytest.mark.parametrize(
+    "example_id",
+    (
+        "ex_styling_men_outer_full_06",
+        "ex_styling_women_dress_full_home_01",
+        "ex_styling_women_outer_full_alley_01",
+        "ex_styling_women_top_full_mia_cafe_snapshot_01",
+        "ex_styling_women_top_full_snapshot_04",
+    ),
+)
+def test_curated_head_cropped_full_examples_enter_exact_profile(example_id):
+    spec = _spec()
+    spec.update(exampleId=example_id, shot="full")
+
+    assert confirmed_gpt_runtime.profile_requested(spec) is True
+
+
 def test_invalid_eligibility_catalog_fails_the_exact_route_closed(monkeypatch):
     def broken(_example_id):
         raise confirmed_gpt_runtime.ConfirmedGptDirectingError("catalog drift")

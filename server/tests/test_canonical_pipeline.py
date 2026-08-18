@@ -359,14 +359,39 @@ def test_sam_preprocess_is_a_registered_job_kind():
     assert "sam_preprocess" in _WORKERS and "sam_preprocess" in _KINDS
 
 
-def test_analysis_route_enqueues_sam_preprocess_independently():
-    """같은 소스-준비 지점에서 둘 다 뜬다. 서로의 완료를 기다리지 않는다."""
-    import pathlib
-    src = pathlib.Path("app/routes.py").read_text(encoding="utf-8")
-    block = src[src.index('kind="analyze"'):src.index('kind="analyze"') + 1800]
-    assert 'kind="sam_preprocess"' in block
-    assert block.index('kind="sam_preprocess"') > block.index('kind="analyze"')
-    assert "await conn.commit()" in block        # 커밋 후 디스패처 wake
+def test_analysis_route_enqueues_sam_preprocess_independently(client, make_token, monkeypatch):
+    """같은 소스-준비 지점에서 둘 다 뜬다. 서로의 완료를 기다리지 않는다.
+
+    소스 문자열이 아니라 실제로 생긴 잡으로 본다 — 큐잉이 헬퍼로 빠져도 계약은 그대로다.
+    """
+    import app.routes as routes
+    from conftest import patch_route_db
+
+    jobs = []
+
+    async def fake_create_job(_conn, **kwargs):
+        jobs.append(kwargs["kind"])
+        return {"id": f"job-{len(jobs)}"}, True
+
+    monkeypatch.setattr(routes.repo, "get_project",
+                        lambda _c, _u, pid: _done({"id": pid}))
+    monkeypatch.setattr(routes.repo, "get_product",
+                        lambda _c, _pid: _done({"colors": [{"isBase": True, "images": [
+                            {"slot": "Front", "id": "img-front"}]}]}))
+    monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
+    patch_route_db(monkeypatch, routes)
+
+    res = client.post("/v1/projects/p1/analyze",
+                      headers={"Authorization": f"Bearer {make_token()}"}, json={})
+
+    assert res.status_code == 202, res.text
+    assert jobs == ["analyze", "sam_preprocess"], "분석이 먼저 뜨고 전처리가 뒤따른다"
+
+
+def _done(value):
+    async def _coro():
+        return value
+    return _coro()
 
 
 # ── 생성 입력 구성 ───────────────────────────────────────────────────────────

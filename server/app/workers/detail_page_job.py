@@ -497,7 +497,10 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                         else "generic_v1"
                     )
                     verdict_kwargs = (
-                        {"authority_profile": authority_profile}
+                        {
+                            "authority_profile": authority_profile,
+                            "confirmed_prompt_input": confirmed_packet.prompt_input,
+                        }
                         if confirmed_packet is not None
                         else {}
                     )
@@ -522,13 +525,18 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                             repair["attempted"] = True
                             try:
                                 if route == "EDIT_STAGE1":
+                                    repair_kwargs = {"qc_corrections": instructions}
+                                    if confirmed_packet is not None:
+                                        repair_kwargs["confirmed_prompt_input"] = (
+                                            confirmed_packet.prompt_input
+                                        )
                                     repaired_img, repaired_mime = await cut_generator.repair(
                                         generation_settings,
                                         gemini,
                                         b,
                                         product,
                                         chosen,
-                                        qc_corrections=instructions,
+                                        **repair_kwargs,
                                     )
                                 else:
                                     repaired_img, repaired_mime = await cut_generator.generate(

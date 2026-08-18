@@ -19,7 +19,7 @@ _HISTORICAL_SOURCE_IDS = {
     "ex_styling_women_dress_full_city_03",
     "ex_styling_women_top_medium_snapshot_04",
 }
-_EXCLUDED_HEAD_CROPPED_FULL_IDS = {
+_CURATED_HEAD_CROPPED_FULL_IDS = {
     "ex_styling_men_outer_full_06",
     "ex_styling_women_dress_full_home_01",
     "ex_styling_women_outer_full_alley_01",
@@ -87,8 +87,8 @@ def test_live_catalog_covers_every_compatible_visually_verified_example():
     catalog = load_confirmed_gpt_directing_catalog()
 
     assert len(structurally_eligible) == 55
-    assert len(catalog) == 50
-    assert structurally_eligible - set(catalog) == _EXCLUDED_HEAD_CROPPED_FULL_IDS
+    assert len(catalog) == 55
+    assert structurally_eligible - set(catalog) == set()
     assert set(catalog) - structurally_eligible == set()
     assert _HISTORICAL_SOURCE_IDS <= set(catalog)
     assert catalog["ex_styling_women_dress_full_city_03"].all_sha256 == (
@@ -99,24 +99,16 @@ def test_live_catalog_covers_every_compatible_visually_verified_example():
     )
 
 
-@pytest.mark.parametrize("example_id", sorted(_EXCLUDED_HEAD_CROPPED_FULL_IDS))
-def test_head_cropped_full_examples_fail_closed(example_id):
-    # The exclusion is from direct review of the released pixels, not any
-    # inference from the example id. A full cut must satisfy the exact
-    # head-to-feet framing contract, so these four source crops cannot bind.
-    with pytest.raises(
-        ConfirmedGptDirectingError,
-        match=f"confirmed_gpt_directing_not_curated:{example_id}",
-    ):
-        bind_confirmed_gpt_directing(
-            example_id,
-            b"content is irrelevant before a missing metadata rejection",
-            shot="full",
-            direction="front",
-            clothing_type="outer",
-        )
+@pytest.mark.parametrize("example_id", sorted(_CURATED_HEAD_CROPPED_FULL_IDS))
+def test_head_cropped_full_examples_preserve_their_reviewed_head_boundary(example_id):
+    entry = load_confirmed_gpt_directing_catalog()[example_id]
 
-    assert confirmed_gpt_explicitly_excluded(example_id) is True
+    assert "out of frame" in entry.face_exposure
+    assert "do not add" in entry.requested_framing
+    assert "head cropped" in entry.pose_semantics.rough_framing or (
+        "lower face" in entry.pose_semantics.rough_framing
+    )
+    assert confirmed_gpt_explicitly_excluded(example_id) is False
 
 
 def test_missing_metadata_is_not_silently_treated_as_an_explicit_exclusion(

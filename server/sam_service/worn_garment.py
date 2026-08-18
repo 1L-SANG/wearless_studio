@@ -45,9 +45,9 @@ from sam_service.segmentation import (MODEL_VERSION, SegmentationUnavailable,
 #: v2 (2026-08-17): the coordinating garment worn in the same cut is scored against and vetoed,
 #: so an editor mask can only ever be the garment being sold. Cache identity moves with it — a
 #: mask produced under v1 rules was never asked that question.
-ALGORITHM_VERSION = "editor-worn-garment-sam2-v2"
+ALGORITHM_VERSION = "editor-worn-garment-sam2-v3"
 #: Bumped alone when only the ranking changes — candidates would be identical, the choice not.
-SELECTOR_VERSION = "basediff-rank-v2"
+SELECTOR_VERSION = "basediff-rank-v3"
 
 #: Validated candidate generation. 16x16 is 4x the canonical grid: this image is a dressed
 #: mannequin rather than a product on white, and the extra prompts are what surfaced the
@@ -103,6 +103,53 @@ MATCHING_SEPARABLE = {"top": ("bottom",), "outer": ("bottom",), "bottom": ("top"
 #: Tone Editor on that cut costs the seller nothing, recolouring the wrong garment does.
 MATCH_ZONE_MAX = 0.25
 
+#: How far down the ranking a veto may walk. Each rank past the first costs one more `refine`
+#: inference (~a few seconds), so this trades a bounded slice of latency for not losing the
+#: Tone Editor whenever SAM's top pick happens to be the whole outfit.
+VETO_FALLBACK_RANKS = 3
+
+#: A mask served through one of the veto's fallback paths may be no more than this much
+#: background. Tone rendering paints every nonzero mask pixel, so dodging the coordinating
+#: garment only to recolour the backdrop trades one wrong answer for another; that cut is better
+#: left unadjustable.
+#:
+#: Deliberately NOT applied to the top pick's refined mask — that is what v3 already serves, and
+#: bolting a new threshold onto the existing path could turn a cut that works today into
+#: "색감 조정을 지원하지 않아요", which is the symptom this change exists to remove. `figure`
+#: is a heuristic silhouette, so a ceiling on it can be wrong; the new paths are where the
+#: scorer's own -1.5 penalty no longer protects us, because a vetoed winner hands over to a
+#: candidate chosen without re-reading its score.
+FALLBACK_OUTSIDE_MAX = 0.25
+
+#: Tolerances for "is this the same garment", in Lab units, measured on the 2026-08-18 cut.
+#:
+#: Chroma barely moves between a photograph and a render (the shirt's a/b moved 0.7 and 3.8),
+#: so it is compared tightly. Lightness moves a lot — the SAME shirt read L=184 in the seller's
+#: photograph and L=215 on the mannequin, a whole exposure step — so it is compared loosely.
+#: Loose is not useless: the coordinating denim sat at L=109, which no exposure difference
+#: explains.
+#:
+#: Each sigma is ~1.5x the drift measured on that same-garment pair (chroma 4.0, lightness 31),
+#: so a garment that drifted as much as the observed one still reads as itself rather than
+#: sitting on the kernel's half-power point.
+#:
+#: CALIBRATED ON ONE REAL PAIR. The ordering is what these numbers are for; the absolute values
+#: are not a validated distribution, and a second real pair should be allowed to move them.
+PRODUCT_CHROMA_SIGMA = 6.0
+PRODUCT_LIGHTNESS_SIGMA = 45.0
+
+#: Alpha above which a cutout pixel counts as garment. The service feathers the edge inward, so
+#: the midpoint keeps the feather out of the signature.
+PRODUCT_ALPHA_MIN = 127
+
+#: How much "it looks like the garment being sold" is worth. The heaviest axis, deliberately:
+#: every other axis is a proxy (where it sits, what changed against the bare mannequin), and
+#: 2026-08-18 showed the proxies pointing squarely at the coordinating garment when the product
+#: is low-contrast against the mannequin and the coordinating garment is not. This axis is the
+#: only one that knows what is actually being sold. Zero without a reference, so a project with
+#: no cutout scores exactly as it did before.
+PRODUCT_WEIGHT = 2.0
+
 MASK_PREFIX = "derived/editor-garment-mask"
 
 
@@ -128,6 +175,14 @@ class WornGarmentMask:
     #: toward the coordinating garment is visible in the job ledger instead of only on screen.
     match_share: float = 0.0
     matching_side: str | None = None
+    #: Which rank the served mask came from (0 = SAM's top pick) and how many masks the veto
+    #: refused on the way there. Both 0 on the ordinary path; non-zero is the ledger's record
+    #: that the coordinating-garment guard actually had to work on this cut.
+    selected_rank: int = 0
+    vetoed_attempts: int = 0
+    #: How much the served mask looked like the seller's own uploaded garment. 0.0 means the
+    #: cutout was not available for this cut, not that the mask looked wrong.
+    product_match: float = 0.0
 
 
 def source_fingerprint(data: bytes) -> str:
@@ -135,14 +190,21 @@ def source_fingerprint(data: bytes) -> str:
 
 
 def mask_key(source_sha256: str, model_version: str = MODEL_VERSION,
-             algorithm_version: str = ALGORITHM_VERSION) -> str:
+             algorithm_version: str = ALGORITHM_VERSION,
+             product_key: str | None = None) -> str:
     """Deterministic object key; a hit means this exact mask already exists.
 
     Sits under its own prefix rather than beside canonical cutouts — same bucket, different
     question, and the layout should make a mix-up impossible to do by accident.
+
+    The product reference is part of the identity. The mask job runs right after generation and
+    the seller's cutout may still be preprocessing, so the same cut is legitimately asked twice:
+    once without a reference and once with. Without this the first answer would be cached and
+    the reference would never get a chance to change it.
     """
+    ref = hashlib.sha256(product_key.encode("utf-8")).hexdigest()[:12] if product_key else "noref"
     return (f"{MASK_PREFIX}/{algorithm_version}/{model_version.replace('/', '_')}"
-            f"/{source_sha256}.png")
+            f"/{ref}/{source_sha256}.png")
 
 
 def category_of(clothing_type: str | None) -> str:
@@ -242,6 +304,65 @@ def figure_silhouette(gen_bgr: np.ndarray) -> np.ndarray:
     return fg
 
 
+def _lab_median(bgr: np.ndarray, keep: np.ndarray) -> np.ndarray | None:
+    """Median Lab of the kept pixels. None when there is nothing to measure.
+
+    Median, not mean: a candidate mask that caught a sliver of background or a logo print should
+    still report the colour of the cloth that fills it.
+    """
+    keep = keep.astype(bool)
+    if not keep.any():
+        return None
+    lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
+    return np.median(lab[keep].reshape(-1, 3).astype(np.float32), axis=0)
+
+
+def product_signature(cutout_png: bytes) -> np.ndarray | None:
+    """Colour fingerprint of the garment the seller actually uploaded. None when unusable.
+
+    The input is the canonical cutout: the original photograph with an alpha channel, so the
+    garment pixels are simply the opaque ones — no re-segmentation, no guessing at background.
+
+    None is fail-open. A missing, empty or corrupt cutout must leave scoring exactly as it was
+    rather than nudge it with a signature nobody can vouch for.
+    """
+    if not cutout_png:
+        return None
+    img = cv2.imdecode(np.frombuffer(cutout_png, np.uint8), cv2.IMREAD_UNCHANGED)
+    if img is None or img.ndim != 3 or img.shape[2] not in (3, 4):
+        return None
+    if img.shape[2] == 4:
+        keep = img[..., 3] > PRODUCT_ALPHA_MIN
+        bgr = img[..., :3]
+    else:                                   # no alpha: every pixel is garment
+        keep, bgr = np.ones(img.shape[:2], bool), img
+    return _lab_median(bgr, keep)
+
+
+def product_affinity(gen_bgr: np.ndarray, mask: np.ndarray,
+                     signature: np.ndarray | None) -> float:
+    """0..1 — does this region look like the garment being sold.
+
+    Distance between the two median colours, not histogram overlap. Overlap was tried first and
+    is actively wrong here: a region with a WIDE colour spread covers more of a narrow
+    signature than the true garment does, so washed denim outscored the shirt it was worn with
+    (2026-08-18 real pixels: denim 0.358, shirt 0.042).
+
+    Chroma and lightness are separate kernels because they disagree between a photograph and a
+    render by very different amounts — see the sigma constants.
+    """
+    if signature is None:
+        return 0.0
+    here = _lab_median(gen_bgr, mask)
+    if here is None:
+        return 0.0
+    chroma = float(np.hypot(here[1] - signature[1], here[2] - signature[2]))
+    lightness = float(abs(here[0] - signature[0]))
+    score = (np.exp(-(chroma ** 2) / (2 * PRODUCT_CHROMA_SIGMA ** 2))
+             * np.exp(-(lightness ** 2) / (2 * PRODUCT_LIGHTNESS_SIGMA ** 2)))
+    return round(float(score), 4)
+
+
 def _band_frac(mask: np.ndarray, band: tuple) -> float:
     if not band:
         return 0.0
@@ -250,7 +371,8 @@ def _band_frac(mask: np.ndarray, band: tuple) -> float:
 
 
 def score_candidate(mask: np.ndarray, evidence: np.ndarray, figure: np.ndarray,
-                    category: str, match_band: tuple = ()) -> dict:
+                    category: str, match_band: tuple = (),
+                    product: tuple | None = None) -> dict:
     """Rank one already-generated candidate. Generic axes only — no per-sample rules.
 
     Weights express the ordering of the axes, not a fit to any image: carrying the evidence
@@ -258,6 +380,10 @@ def score_candidate(mask: np.ndarray, evidence: np.ndarray, figure: np.ndarray,
 
     `match_band` empty (no coordinating garment, or a pair this geometry cannot separate) leaves
     `matchZone` at 0 and the score identical to v1's.
+
+    `product` is `(generated_bgr, signature)` when the seller's own garment cutout is ready.
+    Absent leaves `productMatch` at 0 and the score identical to v3's — the axis only ever adds
+    what it can prove.
     """
     m = mask.astype(bool)
     ev_bool = evidence.astype(bool)
@@ -271,6 +397,9 @@ def score_candidate(mask: np.ndarray, evidence: np.ndarray, figure: np.ndarray,
         # Mass sitting where only the coordinating garment can be. Weighted like `forbidden`:
         # both answer "this cannot be the garment we are selling".
         "matchZone": round(_band_frac(m, match_band), 3),
+        # Looks like the garment the seller uploaded. Scoring only — the cutout never prompts
+        # SAM, never becomes a box, and is never intersected with the mask (2026-08-18).
+        "productMatch": (product_affinity(product[0], m, product[1]) if product else 0.0),
         "outsideFigure": round(float((m & ~figure.astype(bool)).sum() / max(1, m.sum())), 3),
         "areaFrac": round(float(m.mean()), 4),
     }
@@ -279,6 +408,7 @@ def score_candidate(mask: np.ndarray, evidence: np.ndarray, figure: np.ndarray,
         return {**parts, "score": None, "rejected": why}
     parts["score"] = round(
         1.5 * parts["evidence"] + 1.0 * parts["density"] + 0.5 * parts["zone"]
+        + PRODUCT_WEIGHT * parts["productMatch"]
         - 2.0 * parts["forbidden"] - 2.0 * parts["head"] - 2.0 * parts["matchZone"]
         - 1.5 * parts["outsideFigure"], 4)
     return parts
@@ -388,6 +518,34 @@ def tidy(mask: np.ndarray) -> np.ndarray:
     return m.astype(bool)
 
 
+def _serving_order(segmenter, rgb: np.ndarray, candidate: np.ndarray,
+                   shape: tuple[int, int], use_m2m: bool):
+    """The masks we would serve for one candidate, best first, as (mask, is_top_pick_refined).
+
+    A generator so a candidate whose refinement already passes never pays for the fallback. The
+    flag marks the one mask v3 already served, which the fallback quality gate must leave alone.
+    """
+    if use_m2m:
+        yield _settle(refine(segmenter, rgb, candidate), shape), True
+    yield _settle(candidate, shape), False
+
+
+def outside_figure_frac(mask: np.ndarray, figure: np.ndarray) -> float:
+    """Share of the mask that is not on the figure at all — i.e. plain background."""
+    m = mask.astype(bool)
+    total = float(m.sum())
+    return float((m & ~figure.astype(bool)).sum() / total) if total else 1.0
+
+
+def _settle(mask: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    """Cleanup + source sizing. `post_process_masks` returns the model's size, not the cut's."""
+    m = tidy(mask)
+    if m.shape != shape:
+        h, w = shape
+        m = cv2.resize(m.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST).astype(bool)
+    return m
+
+
 def encode_mask_png(mask: np.ndarray) -> bytes:
     """8-bit single-channel PNG, 0 = untouched, 255 = garment. Lossless, never JPEG."""
     from PIL import Image
@@ -398,7 +556,7 @@ def encode_mask_png(mask: np.ndarray) -> bytes:
 
 
 def produce(segmenter, generated: bytes, base: bytes, *, clothing_type: str | None,
-            matching_side: str | None = None,
+            matching_side: str | None = None, product: bytes | None = None,
             grid: int = GRID, use_m2m: bool = M2M) -> WornGarmentMask:
     """Generated cut + bare base -> editor garment mask. Raises `SegmentationUnavailable`.
 
@@ -425,41 +583,68 @@ def produce(segmenter, generated: bytes, base: bytes, *, clothing_type: str | No
     d = diff_map(base_img, gen)
     evidence = evidence_mask(d, diff_roi(category, match_band))
     figure = figure_silhouette(gen)
+    signature = product_signature(product) if product else None
+    reference = (gen, signature) if signature is not None else None
 
-    best, best_score, best_parts = None, None, None
+    ranked = []
     for m in candidates:
         filled = fill_holes(m)
-        parts = score_candidate(filled, evidence, figure, category, match_band)
-        if parts["score"] is None:
-            continue
-        if best_score is None or parts["score"] > best_score:
-            best, best_score, best_parts = filled, parts["score"], parts
-    if best is None:
+        parts = score_candidate(filled, evidence, figure, category, match_band, reference)
+        if parts["score"] is not None:
+            ranked.append((parts["score"], filled, parts))
+    if not ranked:
         raise NoGarmentCandidate(
             f"no plausible garment candidate among {len(candidates)} (category={category})")
-
-    mask = refine(segmenter, rgb, best) if use_m2m else best
-    mask = tidy(mask)
-    if mask.shape != (h, w):                        # post_process_masks returns source size
-        mask = cv2.resize(mask.astype(np.uint8), (w, h),
-                          interpolation=cv2.INTER_NEAREST).astype(bool)
+    ranked.sort(key=lambda r: -r[0])
 
     # Veto AFTER refinement: M2M can grow the mask, and it is the mask we would actually serve
     # that has to be the product. Scoring alone is a preference; this is the guarantee.
-    match_share = round(_band_frac(mask, match_band), 4) if match_band else 0.0
-    if match_band and match_share > MATCH_ZONE_MAX:
+    #
+    # Refusing is right; giving up after one refusal is not (2026-08-18: three consecutive
+    # production cuts lost the Tone Editor to a single refusal at 0.63-0.73). Two ways down:
+    #
+    #   1. M2M is an optional improvement, so a refinement that spilled onto the coordinating
+    #      garment falls back to the candidate it started from — the same "a worse mask is
+    #      worse than no refinement" rule `refine` already states, applied to the one property
+    #      we actually guarantee.
+    #   2. SAM often returns the whole outfit as one blob, which carries every scrap of
+    #      evidence and therefore outranks the garment alone. That blob being unusable says
+    #      nothing about the runner-up.
+    #
+    # Bounded, because each extra rank costs one more `refine` inference.
+    chosen, refused = None, []
+    for rank, (score, candidate, parts) in enumerate(ranked[:VETO_FALLBACK_RANKS]):
+        for mask, top_pick in _serving_order(segmenter, rgb, candidate, (h, w), use_m2m):
+            share = round(_band_frac(mask, match_band), 4) if match_band else 0.0
+            if match_band and share > MATCH_ZONE_MAX:
+                refused.append(share)
+                continue
+            # Everything below rank 0's refined mask is a path v3 did not have. Those must be
+            # at least garment-shaped, or we are recolouring the backdrop to avoid the trousers.
+            if rank == 0 and top_pick:
+                chosen = (mask, share, score, parts, rank)
+                break
+            if outside_figure_frac(mask, figure) <= FALLBACK_OUTSIDE_MAX:
+                chosen = (mask, share, score, parts, rank)
+                break
+        if chosen is not None:
+            break
+    if chosen is None:
         raise NoGarmentCandidate(
-            f"selected mask sits on the matching garment: {match_share:.2f} of its mass in "
-            f"{match_band} (category={category}, matching={matching_side})")
+            f"no fallback mask was both off the matching garment and garment-shaped: "
+            f"matchZone refusals {[f'{s:.2f}' for s in refused]} vs {match_band}, "
+            f"outsideFigure ceiling {FALLBACK_OUTSIDE_MAX} "
+            f"(category={category}, matching={matching_side}, "
+            f"ranks={min(len(ranked), VETO_FALLBACK_RANKS)}/{len(ranked)})")
+    mask, match_share, score, parts, rank = chosen
 
     return WornGarmentMask(
         png=encode_mask_png(mask), width=w, height=h,
         area_frac=round(float(mask.mean()), 4), candidates=len(candidates),
-        plausible_candidates=sum(
-            1 for m in candidates
-            if score_candidate(fill_holes(m), evidence, figure, category,
-                               match_band)["score"] is not None),
-        selected_score=float(best_score), evidence=float(best_parts["evidence"]),
-        m2m=bool(use_m2m), match_share=match_share,
+        plausible_candidates=len(ranked),
+        selected_score=float(score), evidence=float(parts["evidence"]),
+        product_match=float(parts["productMatch"]),
+        m2m=bool(use_m2m), match_share=match_share, selected_rank=rank,
+        vetoed_attempts=len(refused),
         matching_side=(str(matching_side).lower() if match_band else None),
         source_sha256=source_fingerprint(generated))
