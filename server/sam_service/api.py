@@ -78,6 +78,9 @@ class WornGarmentRequest(BaseModel):
     #: Side the coordinating (not-for-sale) garment is worn on in this cut: top|bottom, or absent
     #: when the cut wears the product alone. Product metadata — never inferred from the image.
     matchingSide: str | None = Field(default=None, description="top|bottom")
+    #: R2 key of the background-removed cutout of the seller's own product photograph, when one
+    #: is ready. Scoring evidence for "which region is the garment being sold" — never a prompt.
+    productKey: str | None = Field(default=None)
 
 
 def get_settings() -> SamSettings:
@@ -192,8 +195,19 @@ async def _segment_worn_one(req: WornGarmentRequest, source, settings: SamSettin
     except Exception as e:                       # noqa: BLE001
         return fail("source_error", f"{type(e).__name__}: {e}")
 
+    # Fail-open on purpose: the cutout is supporting evidence, so an unreadable or not-yet-made
+    # reference costs a better-informed ranking, never the mask.
+    product = None
+    if req.productKey:
+        try:
+            product, _ = await asyncio.to_thread(source.fetch, req.productKey)
+        except Exception as e:                   # noqa: BLE001
+            log.warning("worn-garment product reference unavailable key=%s: %r",
+                        req.productKey, e)
+
     source_hash = worn_garment.source_fingerprint(generated)
-    out_key = worn_garment.mask_key(source_hash)
+    out_key = worn_garment.mask_key(source_hash,
+                                    product_key=req.productKey if product else None)
     existing = await asyncio.to_thread(source.head, out_key)
     if existing:
         log.info("worn-garment cache=hit key=%s", out_key)
@@ -217,7 +231,7 @@ async def _segment_worn_one(req: WornGarmentRequest, source, settings: SamSettin
             mask = await asyncio.wait_for(
                 asyncio.to_thread(worn_garment.produce, segmenter, generated, base,
                                   clothing_type=req.clothingType,
-                                  matching_side=req.matchingSide),
+                                  matching_side=req.matchingSide, product=product),
                 timeout=VIEW_TIMEOUT_S)
     except TimeoutError:
         return fail("timeout", f"worn-garment segmentation exceeded {VIEW_TIMEOUT_S:.0f}s")
@@ -247,6 +261,8 @@ async def _segment_worn_one(req: WornGarmentRequest, source, settings: SamSettin
             "candidates": mask.candidates, "plausibleCandidates": mask.plausible_candidates,
             "selectedScore": mask.selected_score, "evidence": mask.evidence,
             "matchingSide": mask.matching_side, "matchShare": mask.match_share,
+            "selectedRank": mask.selected_rank, "vetoedAttempts": mask.vetoed_attempts,
+            "productMatch": mask.product_match,
             "mime": "image/png", "bytes": len(mask.png),
             "latencyMs": int((time.monotonic() - t0) * 1000)}
 

@@ -20,6 +20,7 @@ instead of being painted onto a different garment.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import uuid
 
@@ -33,7 +34,7 @@ MASK_KIND = "editorGarmentMask"
 PRODUCER = "sam2-worn-garment"
 # 생성 직후 큐와 기존 컷 lazy backfill 큐가 공유하는 알고리즘 신원. torch 없는 API
 # 모듈에 둬서 두 경로가 같은 멱등키 버전을 사용하게 한다.
-ALGORITHM_VERSION = "editor-worn-garment-sam2-v2"
+ALGORITHM_VERSION = "editor-worn-garment-sam2-v3"
 
 STATUS_READY = "ready"
 STATUS_PROCESSING = "processing"
@@ -61,6 +62,38 @@ KNOWN_CATEGORIES = ("top", "outer", "bottom", "dress")
 MATCH_GUARD_VERSION = "main-garment-guard-v1"
 
 
+def mask_job_key(project_id: str, cut_id: str, *, product_key: str | None = None) -> str:
+    """마스크 잡의 신원. 생성 직후 큐·lazy backfill·업그레이드가 모두 이 함수를 지난다.
+
+    레퍼런스를 물린 키는 **업그레이드 전용**이다. 기본 키(레퍼런스 없음)와 달라야 재생성이
+    실제로 돌아간다 — 같은 키로 걸면 이미 done 인 잡에 합류만 하고 아무것도 안 만든다.
+    """
+    base = f"{project_id}:editor_garment_mask:{cut_id}:{ALGORITHM_VERSION}"
+    if not product_key:
+        return base
+    return f"{base}:{hashlib.sha256(product_key.encode('utf-8')).hexdigest()[:12]}"
+
+
+def mask_upgrade_reason(meta: dict, *, product_key: str | None) -> str | None:
+    """이 마스크를 **백그라운드에서 다시 만들 만한** 이유. 없으면 None.
+
+    무효화가 아니라 업그레이드다. 여기서 "없는 것으로 본다"를 돌려주면, 재큐가 done 인 잡에
+    합류하는 순간 화면이 failed 로 떨어져 쓰던 기능이 사라진다 — 두 서비스가 따로 배포되는
+    창이나 컷아웃 읽기 실패가 정확히 거기에 걸린다. 그래서 호출자는 이 값이 있어도 **기존
+    마스크를 계속 내주고** 재생성만 건다.
+
+    None 을 반드시 돌려주는 종료 조건이 있어야 한다 — 아니면 조회할 때마다 큐가 늘어난다.
+    현재 알고리즘 + 현재 레퍼런스로 만들어진 마스크가 그 종점이다.
+    """
+    if not isinstance(meta, dict):
+        return None
+    if str(meta.get("algorithmVersion") or "") != ALGORITHM_VERSION:
+        return "algorithm"
+    if product_key and str(meta.get("productKey") or "") != str(product_key):
+        return "reference"
+    return None
+
+
 async def matching_side_for_project(conn, *, user_id: str, project_id: str) -> str | None:
     """이 프로젝트의 마네킹컷이 함께 입은 코디 의류의 쪽(top|bottom). 없으면 None.
 
@@ -81,8 +114,9 @@ async def matching_side_for_project(conn, *, user_id: str, project_id: str) -> s
     return side if side in ("top", "bottom") else None
 
 
-async def current_mask_for_cut(conn, *, user_id: str, project_id: str,
-                               cut_id: str) -> tuple[dict | None, str | None]:
+async def current_mask_for_cut(conn, *, user_id: str, project_id: str, cut_id: str,
+                               product_key: str | None = None
+                               ) -> tuple[dict | None, str | None, str | None]:
     """지금 **써도 되는** 마스크와 이 컷의 코디 쪽. 보장 이전 마스크는 없는 것으로 본다.
 
     상태 조회·마스크 픽셀 전송·적용이 모두 이 함수를 지난다. 한 곳이라도 `find_for_cut` 을
@@ -92,8 +126,11 @@ async def current_mask_for_cut(conn, *, user_id: str, project_id: str,
     mask = await find_for_cut(conn, project_id=project_id, cut_id=cut_id)
     side = await matching_side_for_project(conn, user_id=user_id, project_id=project_id)
     if mask is not None and needs_match_guard(mask.get("metadata") or {}, matching_side=side):
-        return None, side
-    return mask, side
+        # 유일한 **하드** 무효화다. 코디 의류 위일 수 있는 마스크는 내주는 것 자체가 해롭다.
+        return None, side, None
+    upgrade = (mask_upgrade_reason(mask.get("metadata") or {}, product_key=product_key)
+               if mask is not None else None)
+    return mask, side, upgrade
 
 
 def matching_core_band(clothing_type: str | None, matching_side: str | None) -> tuple:
@@ -150,7 +187,7 @@ def needs_match_guard(meta: dict, *, matching_side: str | None) -> bool:
 
 def metadata_for(result, *, cut_id: str, source_asset_id: str, category: str | None,
                  sub_category: str | None, matching_side: str | None = None,
-                 match_share: float | None = None) -> dict:
+                 match_share: float | None = None, product_key: str | None = None) -> dict:
     """Provenance stored on the derived asset. Enough to answer 'what made this, from what'."""
     return {
         "type": MASK_KIND,
@@ -174,6 +211,9 @@ def metadata_for(result, *, cut_id: str, source_asset_id: str, category: str | N
         "matchingSide": matching_side,
         "matchShare": match_share,
         "matchGuardVersion": MATCH_GUARD_VERSION,
+        # 이 마스크를 고를 때 셀러의 주상품 컷아웃을 실제로 봤는지. None 이면 못 봤다는
+        # 뜻이고, 나중에 컷아웃이 준비되면 업그레이드 대상이 된다(mask_upgrade_reason).
+        "productKey": product_key,
         "status": STATUS_READY,
     }
 
@@ -201,7 +241,8 @@ def is_current(meta: dict, *, cut_id: str, source_hash: str | None,
 async def record(conn, *, user_id: str, project_id: str, cut_id: str, source_asset_id: str,
                  result, category: str | None = None,
                  sub_category: str | None = None, matching_side: str | None = None,
-                 match_share: float | None = None) -> dict | None:
+                 match_share: float | None = None,
+                 product_key: str | None = None) -> dict | None:
     """Create — or reuse — the asset row for one produced mask. Idempotent.
 
     Idempotency is lookup-before-create on (project, r2Key): the service derives that key
@@ -218,7 +259,7 @@ async def record(conn, *, user_id: str, project_id: str, cut_id: str, source_ass
     meta = metadata_for(
         result, cut_id=cut_id, source_asset_id=source_asset_id,
         category=category, sub_category=sub_category,
-        matching_side=matching_side, match_share=match_share)
+        matching_side=matching_side, match_share=match_share, product_key=product_key)
     existing = await find_by_key(conn, project_id=project_id, r2_key=result.mask_key)
     if existing:
         if (existing.get("metadata") or {}) != meta:

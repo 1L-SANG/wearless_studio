@@ -33,7 +33,7 @@ from .agents import (
 )
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
-from .services import (editor_garment_mask, garment_grid, input_qc,
+from .services import (canonical_reference, editor_garment_mask, garment_grid, input_qc,
                        mannequin_tone_render, matching, matching_cutout, product_photos,
                        retrieval)
 from .auth import require_user
@@ -782,6 +782,27 @@ async def get_product(
     return row
 
 
+async def _enqueue_canonical_cutout(conn, *, user_id: str, project_id: str,
+                                    product: dict) -> bool:
+    """주상품 사진의 배경 제거 컷아웃(canonical cutout)을 무과금으로 건다.
+
+    두 곳에서 부른다. 분석 라우트는 로그인 상태로 시작한 셀러를, 상품 저장 라우트는 게스트로
+    시작해 로그인 시점에 사진이 서버로 승격되는 셀러를 덮는다 — 후자가 지금의 기본 흐름인데
+    분석이 /public/analyze 로 나가서 분석 라우트를 아예 타지 않는다(2026-08-18: 실서버에서
+    sam_preprocess 가 10일간 1회). 같은 키를 쓰므로 둘 다 걸려도 잡은 하나다.
+
+    호출자가 커밋한다. 실패는 호출자가 삼킨다 — 보조 인프라가 본 기능을 되돌리지 않는다.
+    """
+    key = canonical_reference.preprocess_idempotency_key(project_id, product or {})
+    if not key:
+        return False
+    await repo.create_job(
+        conn, user_id=user_id, project_id=project_id, kind="sam_preprocess",
+        payload={"mode": "canonical_cutout"}, idempotency_key=key,
+        credits_reserved=0, metadata={})
+    return True
+
+
 @router.patch(
     "/projects/{project_id}/product",
     response_model=Product,
@@ -822,6 +843,18 @@ async def save_product(
                     {**analysis, "targetGenders": ["women"]},
                 )
         await conn.commit()
+        # 사진이 서버에 확정된 첫 지점이다. 컷아웃 큐잉 실패가 상품 저장을 500 으로 만들면
+        # 안 되므로 **커밋 뒤에** 별도로 걸고 예외는 삼킨다(analyze 라우트와 같은 규율).
+        try:
+            if await _enqueue_canonical_cutout(
+                    conn, user_id=user_id, project_id=project_id, product=row or {}):
+                await conn.commit()
+                _wake_dispatcher(request)
+        except Exception:  # noqa: BLE001 - 전처리 큐잉 실패가 상품 저장을 막지 않는다
+            with contextlib.suppress(Exception):
+                await conn.rollback()
+            logger.warning("canonical cutout enqueue failed for project %s", project_id,
+                           exc_info=True)
     return row
 
 
@@ -1062,11 +1095,9 @@ async def analyze_product(
         # 됐다(2026-08-12 로컬 QA — jobs_kind_check 에 sam_preprocess 가 없던 시점). 보조
         # 인프라가 본 기능을 죽이지 않는다는 건 주석이 아니라 트랜잭션 경계로 지켜야 한다.
         try:
-            await repo.create_job(
-                conn, user_id=user_id, project_id=project_id, kind="sam_preprocess",
-                payload={"mode": "canonical_cutout"},
-                idempotency_key=f"{project_id}:sam_preprocess",
-                credits_reserved=0, metadata={})
+            await _enqueue_canonical_cutout(
+                conn, user_id=user_id, project_id=project_id,
+                product=await repo.get_product(conn, project_id) or {})
             await conn.commit()
         except Exception:  # noqa: BLE001 - 전처리 큐잉 실패가 분석을 막지 않는다
             # 정리 코드가 다시 터져서 500 이 되면 위 보장이 무의미하다. rollback 실패까지 삼킨다.
@@ -1943,6 +1974,66 @@ def _tone_editor_enabled(request: Request) -> bool:
     return getattr(request.app.state.settings, "mannequin_tone_editor", "off") == "on"
 
 
+#: `_tone_state` 가 큐잉 판단에만 쓰는 내부 키. 계약에 없는 값이라 응답으로 나가면 안 된다.
+_TONE_PRIVATE_KEYS = ("_upgrade", "_productKey")
+
+
+def _tone_public(state: dict) -> dict:
+    """화면으로 나가는 상태. 내부 판단용 키를 여기서 잘라낸다."""
+    return {k: v for k, v in state.items() if k not in _TONE_PRIVATE_KEYS}
+
+
+async def _tone_product_reference(conn, *, user_id: str, project_id: str) -> str | None:
+    """이 프로젝트 주상품 앞면의 현재 컷아웃 키. 조회 실패는 None 으로 강등한다.
+
+    마스크 잡이 보는 것과 **같은 답**이어야 한다 — 갈리면 "만들면 최신, 조회하면 낡음"이 되어
+    업그레이드가 영원히 다시 걸린다.
+    """
+    try:
+        product = await repo.get_product(conn, project_id) or {}
+        front = next((aid for slot, aid in mannequin.base_color_images(product)
+                      if slot == "Front" and aid), None)
+        if not front:
+            return None
+        return await canonical_reference.current_key(
+            conn, project_id=project_id, view="Front", source={"id": front, "hash": None})
+    except Exception:  # noqa: BLE001 - 보조 근거 조회 실패가 톤 상태를 막지 않는다
+        logger.warning("tone product reference lookup failed project=%s", project_id,
+                       exc_info=True)
+        return None
+
+
+async def _enqueue_tone_mask_upgrade(conn, *, user_id: str, project_id: str, cut_id: str,
+                                     state: dict) -> bool:
+    """쓸 수 있는 마스크를 **그대로 둔 채** 더 나은 신원으로 재생성만 건다.
+
+    무효화하지 않는 이유가 핵심이다. 낡았다고 화면에서 빼면 재큐가 이미 done 인 잡에 합류하는
+    순간 상태가 failed 로 떨어져, 잘 쓰던 컷이 "지원하지 않아요"가 된다 — 두 서비스가 따로
+    배포되는 창이나 컷아웃 읽기 실패가 정확히 거기 걸린다. 성공하면 새 행이 이기고(조회는
+    최신 행부터), 끝내 실패해도 셀러는 아무것도 잃지 않는다.
+
+    멱등키가 레퍼런스를 물어서 옛 잡에 합류하지 않는다. 재생성이 또 레퍼런스 없이 끝나면
+    같은 키의 done 잡에 합류만 하므로, 조회할 때마다 잡이 늘어나지도 않는다.
+    """
+    if not state.get("_upgrade"):
+        return False
+    try:
+        _job, created = await repo.create_job(
+            conn, user_id=user_id, project_id=project_id,
+            kind="editor_garment_mask", payload={"cutId": cut_id},
+            idempotency_key=editor_garment_mask.mask_job_key(
+                project_id, cut_id, product_key=state.get("_productKey")),
+            credits_reserved=0, metadata={"upgrade": state["_upgrade"]})
+        await conn.commit()
+        return created
+    except Exception:  # noqa: BLE001 - 업그레이드 큐잉 실패가 쓰던 마스크를 뺏지 않는다
+        with contextlib.suppress(Exception):
+            await conn.rollback()
+        logger.warning("tone mask upgrade enqueue failed project=%s cut=%s",
+                       project_id, cut_id, exc_info=True)
+        return False
+
+
 async def _tone_state(conn, r2, *, user_id: str, project_id: str, cut_id: str) -> dict:
     """컷 하나의 톤 에디터 상태. 마스크가 없으면 processing — 오류가 아니다."""
     cut = await repo.get_mannequin_cut_asset(conn, user_id, project_id, cut_id)
@@ -1952,8 +2043,9 @@ async def _tone_state(conn, r2, *, user_id: str, project_id: str, cut_id: str) -
     # 코디 의류를 함께 입은 컷인데 "주상품 위" 보장 이전에 만들어진 마스크면 없는 것으로 본다 —
     # 그래야 아래 lazy 큐가 무과금으로 다시 만든다. 잡이 마스크를 기록할 때 보장 스탬프를
     # 반드시 찍으므로(editor_garment_mask.record) 이 조건이 영구 재큐로 남지 않는다.
-    mask, matching_side = await editor_garment_mask.current_mask_for_cut(
-        conn, user_id=user_id, project_id=project_id, cut_id=cut_id)
+    product_key = await _tone_product_reference(conn, user_id=user_id, project_id=project_id)
+    mask, matching_side, upgrade = await editor_garment_mask.current_mask_for_cut(
+        conn, user_id=user_id, project_id=project_id, cut_id=cut_id, product_key=product_key)
     render = await mannequin_tone_render.active_for_cut(
         conn, project_id=project_id, cut_id=cut_id)
     meta = (render or {}).get("metadata") or {}
@@ -1964,6 +2056,9 @@ async def _tone_state(conn, r2, *, user_id: str, project_id: str, cut_id: str) -
         "maskAssetId": (mask or {}).get("id"),
         "maskAlgorithmVersion": mask_meta.get("algorithmVersion"),
         "matchingSide": matching_side,
+        # 화면에 내보내지 않는 내부 값 — 업그레이드 큐잉만 이걸 본다.
+        "_upgrade": upgrade,
+        "_productKey": product_key,
         "sourceAssetId": source_asset_id,
         "adjustment": {"saturation": int(meta.get("saturation") or 0),
                        "exposure": int(meta.get("exposure") or 0)},
@@ -2004,10 +2099,7 @@ async def _enqueue_missing_tone_mask(conn, *, user_id: str, project_id: str,
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id,
             kind="editor_garment_mask", payload={"cutId": cut_id},
-            idempotency_key=(
-                f"{project_id}:editor_garment_mask:{cut_id}:"
-                f"{editor_garment_mask.ALGORITHM_VERSION}"
-            ),
+            idempotency_key=editor_garment_mask.mask_job_key(project_id, cut_id),
             credits_reserved=0, metadata={})
         await conn.commit()
         return created, job
@@ -2045,9 +2137,11 @@ async def get_tone_editor(request: Request, project_id: str, cut_id: str,
                                   project_id=project_id, cut_id=cut_id)
         created, job = await _enqueue_missing_tone_mask(
             conn, user_id=user_id, project_id=project_id, cut_id=cut_id, state=state)
+        created = await _enqueue_tone_mask_upgrade(
+            conn, user_id=user_id, project_id=project_id, cut_id=cut_id, state=state) or created
     if created:
         _wake_dispatcher(request)
-    return _tone_state_with_job(state, job)
+    return _tone_public(_tone_state_with_job(state, job))
 
 
 async def _tone_bytes(request: Request, project_id: str, cut_id: str, user_id: str,
@@ -2071,7 +2165,7 @@ async def _tone_bytes(request: Request, project_id: str, cut_id: str, user_id: s
             key, mime = cut["r2_key"], cut.get("mime_type") or "image/png"
         else:
             # 검증된 마스크만 픽셀을 내준다 — 클라이언트가 받은 마스크가 곧 조정 대상이다.
-            mask, _side = await editor_garment_mask.current_mask_for_cut(
+            mask, _side, _upgrade = await editor_garment_mask.current_mask_for_cut(
                 conn, user_id=user_id, project_id=project_id, cut_id=cut_id)
             if mask is None or not mask.get("r2_key"):
                 raise _not_found()
@@ -2133,7 +2227,7 @@ async def apply_tone_editor(request: Request, project_id: str, cut_id: str,
         cut = await repo.get_mannequin_cut_asset(conn, user_id, project_id, cut_id)
         if cut is None:
             raise _not_found()
-        mask, _side = await editor_garment_mask.current_mask_for_cut(
+        mask, _side, _upgrade = await editor_garment_mask.current_mask_for_cut(
             conn, user_id=user_id, project_id=project_id, cut_id=cut_id)
 
         # 초기화(0/0)는 마스크와 무관하게 항상 받는다 — 이미 붙은 조정본을 내리는 동작이다.
@@ -2142,8 +2236,8 @@ async def apply_tone_editor(request: Request, project_id: str, cut_id: str,
             await mannequin_tone_render.clear_for_cut(
                 conn, project_id=project_id, cut_id=cut_id)
             await conn.commit()
-            return await _tone_state(conn, _r2(request), user_id=user_id,
-                                     project_id=project_id, cut_id=cut_id)
+            return _tone_public(await _tone_state(
+                conn, _r2(request), user_id=user_id, project_id=project_id, cut_id=cut_id))
 
         if mask is None:
             raise _bad_request("mask_not_ready", "색감 조정 준비가 아직 끝나지 않았어요.")
@@ -2164,8 +2258,8 @@ async def apply_tone_editor(request: Request, project_id: str, cut_id: str,
             mask_algorithm_version=(mask.get("metadata") or {}).get("algorithmVersion"),
             saturation=saturation, exposure=exposure)
         await conn.commit()
-        return await _tone_state(conn, _r2(request), user_id=user_id,
-                                 project_id=project_id, cut_id=cut_id)
+        return _tone_public(await _tone_state(
+            conn, _r2(request), user_id=user_id, project_id=project_id, cut_id=cut_id))
 
 
 @router.post(

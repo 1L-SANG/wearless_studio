@@ -22,6 +22,19 @@ _KEY_PATTERNS = (
     re.compile(r"^users/[0-9a-fA-F-]{36}/projects/[0-9a-fA-F-]{36}/uploads/[\w.-]+$"),
     re.compile(r"^users/[0-9a-fA-F-]{36}/projects/[0-9a-fA-F-]{36}/ai/[\w./-]+$"),
     re.compile(r"^seed/[\w./-]+$"),
+    # This service's OWN canonical cutouts (`segmentation.cutout_key`): background-removed
+    # product photographs it wrote itself and now reads back as scoring evidence for the Tone
+    # Editor mask. Spelled out element by element — version, model, view, content hash — rather
+    # than as a loose prefix, so widening the reader stays exactly this one shape.
+    #
+    # `@` is in the character class because the model segment carries it
+    # (`facebook_sam2.1-hiera-tiny@grid8`); the general patterns above do not allow it, which is
+    # why a prefix bolted onto them would still have refused every real key (2026-08-18).
+    #
+    # These keys are content-addressed and name no user or project, exactly like `seed/`. That
+    # is the same trust level: the only caller is our own API behind the internal token inside
+    # the VPC, and traversal is already refused above.
+    re.compile(r"^derived/canonical-cutout/[\w.@-]+/[\w.@-]+/[A-Za-z]+/[0-9a-f]{64}\.png$"),
 )
 
 SUPPORTED_MIME = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
