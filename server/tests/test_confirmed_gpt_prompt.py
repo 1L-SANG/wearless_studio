@@ -15,6 +15,7 @@ from app.agents.confirmed_gpt_prompt import (
     SellerFact,
     SellerUncertainty,
     compile_confirmed_gpt_prompt,
+    confirmed_gpt_framing_contract,
 )
 
 
@@ -304,6 +305,17 @@ def test_confirmed_top_with_matching_replays_immutable_prompt_byte_for_byte() ->
 
     assert len(prompt.encode("utf-8")) == 12731
     assert sha256(prompt.encode("utf-8")).hexdigest() == EXPECTED_TOP_PROMPT_SHA256
+
+
+def test_confirmed_framing_contract_preserves_curated_crop_and_face_boundary() -> None:
+    request = _top_request()
+
+    assert confirmed_gpt_framing_contract(request) == {
+        "shot": "medium",
+        "requestedFraming": request.cut_lock.requested_framing,
+        "faceExposure": request.cut_lock.face_exposure,
+        "roughFraming": request.pose_semantics.rough_framing,
+    }
 
 
 def test_confirmed_second_stage_appends_only_bounded_qc_corrections() -> None:

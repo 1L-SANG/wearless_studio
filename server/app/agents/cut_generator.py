@@ -24,6 +24,7 @@ from .content_roles import canonicalize_storyboard_block
 from .confirmed_gpt_prompt import (
     ConfirmedGptPromptInput,
     compile_confirmed_gpt_prompt,
+    confirmed_gpt_framing_contract,
 )
 from .cut_plan import compile_cut_plan, render_prompt_contract
 from .directing_profile import render_directing_profile
@@ -1265,7 +1266,11 @@ def build_prompt(
 
 
 def build_qc_repair_prompt(
-    cut_spec: dict, product: dict, qc_corrections: tuple[str, ...],
+    cut_spec: dict,
+    product: dict,
+    qc_corrections: tuple[str, ...],
+    *,
+    confirmed_prompt_input: ConfirmedGptPromptInput | None = None,
 ) -> str:
     """AG-06 국소 2차 보정 프롬프트.
 
@@ -1286,10 +1291,21 @@ def build_qc_repair_prompt(
         f"recipe={spec['cutType']}; shot={spec['shot']}; "
         f"direction={spec['direction']}; face={spec.get('faceExposure') or 'none'}"
     )
+    framing_lock = ""
+    if confirmed_prompt_input is not None:
+        framing = confirmed_gpt_framing_contract(confirmed_prompt_input)
+        if framing["shot"] != spec["shot"]:
+            raise ValueError("confirmed_gpt_repair_shot_mismatch")
+        framing_lock = (
+            "\n\nCONFIRMED EXAMPLE FRAMING LOCK:\n"
+            f"- requested framing: {framing['requestedFraming']}\n"
+            f"- face exposure/crop: {framing['faceExposure']}\n"
+            f"- rough framing: {framing['roughFraming']}"
+        )
     return (
         "You are the AG-06 second-stage fashion cut generator. Edit the single attached "
         "STAGE-1 output; do not reconstruct a different photograph.\n\n"
-        f"COMPILED CUT INTENT: {intent}\n\n"
+        f"COMPILED CUT INTENT: {intent}{framing_lock}\n\n"
         "INDEPENDENT QC CORRECTIONS:\n"
         + "\n".join(f"- {instruction}" for instruction in qc_corrections)
         + "\n\nPRESERVATION CONTRACT:\n"
@@ -1384,11 +1400,17 @@ async def repair(
     source_image: InlineImage,
     *,
     qc_corrections: tuple[str, ...],
+    confirmed_prompt_input: ConfirmedGptPromptInput | None = None,
 ) -> tuple[bytes, str]:
     """AG-06 국소 2차 보정. 호출자가 고른 image_high 모델로 1차 결과만 편집한다."""
 
     model = _resolve_generation_model(settings, cut_spec)
-    prompt = build_qc_repair_prompt(cut_spec, product, qc_corrections)
+    prompt = build_qc_repair_prompt(
+        cut_spec,
+        product,
+        qc_corrections,
+        confirmed_prompt_input=confirmed_prompt_input,
+    )
     res = await gemini.generate_content_image(
         model,
         prompt,

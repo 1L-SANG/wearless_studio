@@ -1321,6 +1321,29 @@ def test_qc_repair_prompt_rejects_empty_or_oversized_corrections():
         cg.build_qc_repair_prompt(spec, product, ("x" * 241,))
 
 
+def test_confirmed_qc_repair_prompt_includes_exact_curated_framing(monkeypatch):
+    framing = {
+        "shot": "medium",
+        "requestedFraming": "crop from lower face through the garment hem",
+        "faceExposure": "eyes and upper head intentionally out of frame",
+        "roughFraming": "vertical medium with the head cropped",
+    }
+    monkeypatch.setattr(cg, "confirmed_gpt_framing_contract", lambda _request: framing)
+
+    prompt = cg.build_qc_repair_prompt(
+        {"cutType": "styling", "shot": "medium", "direction": "front"},
+        {"clothingType": "top"},
+        ("Reframe the existing image only.",),
+        confirmed_prompt_input=object(),
+    )
+
+    assert "CONFIRMED EXAMPLE FRAMING LOCK" in prompt
+    assert framing["requestedFraming"] in prompt
+    assert framing["faceExposure"] in prompt
+    assert framing["roughFraming"] in prompt
+    assert "do not reconstruct a different photograph" in prompt
+
+
 def test_face_ref_token_always_substituted_on_every_path():
     # ${faceRefLine} 미치환은 render 의 leftover 가드 → ValueError → _gen_cuts 가 삼켜
     # **전 컷 빈 슬롯 + 전액 미차감**으로 조용히 죽는다. 모든 컷 조합에서 치환을 확인.
