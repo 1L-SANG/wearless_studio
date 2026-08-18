@@ -20,6 +20,11 @@ from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
 from ..config import Settings
+from .confirmed_gpt_prompt import (
+    ConfirmedGptPromptInput,
+    ConfirmedGptPromptError,
+    confirmed_gpt_framing_contract,
+)
 from .gemini_image import InlineImage
 from .prompts import clean_text
 from .vision_llm import VisionError, analyze_with_fallback
@@ -28,6 +33,7 @@ from .vision_llm import VisionError, analyze_with_fallback
 GATES = (
     "fileValidity",
     "recipeIntent",
+    "framingCrop",
     "framingDirectionFacePose",
     "garmentConstruction",
     "garmentColor",
@@ -74,37 +80,37 @@ _CONFIRMED_MANNEQUIN_AUTHORITY = (
     "  Declared fit axes are already resolved into the selected MANNEQUIN and do not separately override it."
 )
 _GENERIC_GARMENT_CONSTRUCTION_GATE = (
-    "4. garmentConstruction — PRODUCT silhouette, neckline, panels, sleeves, seams, lengths and structure match."
+    "5. garmentConstruction — PRODUCT silhouette, neckline, panels, sleeves, seams, lengths and structure match."
 )
 _CONFIRMED_GARMENT_CONSTRUCTION_GATE = (
-    "4. garmentConstruction — PRODUCT neckline, panels, sleeves, seams and permanent construction match; "
+    "5. garmentConstruction — PRODUCT neckline, panels, sleeves, seams and permanent construction match; "
     "selected MANNEQUIN owns the visibly judgeable worn silhouette and length."
 )
 _GENERIC_GARMENT_COLOR_GATE = (
-    "5. garmentColor — selected PRODUCT color is faithful; scene/example color must not recolor the garment."
+    "6. garmentColor — selected PRODUCT color is faithful; scene/example color must not recolor the garment."
 )
 _CONFIRMED_GARMENT_COLOR_GATE = (
-    "5. garmentColor — selected MANNEQUIN garment-local worn color values, saturation and brightness are "
+    "6. garmentColor — selected MANNEQUIN garment-local worn color values, saturation and brightness are "
     "faithful where judgeable; scene/example/global grade must not recolor the garment."
 )
 _GENERIC_MATERIAL_GATE = (
-    "6. materialTexture — when PRODUCT evidence supports them, compare crinkle, weave/knit/open holes, edge\n"
+    "7. materialTexture — when PRODUCT evidence supports them, compare crinkle, weave/knit/open holes, edge\n"
     "   thickness and layer overlap, roughness, specular gloss, translucency, weight, stiffness and drape. Do not\n"
     "   demand a cue absent or unreadable in PRODUCT evidence. A flat 2-D fill that erases supported surface or\n"
     "   depth cues FAILS."
 )
 _CONFIRMED_MATERIAL_GATE = (
-    "6. materialTexture — when PRODUCT evidence supports them, compare crinkle, weave/knit/open holes, edge\n"
+    "7. materialTexture — when PRODUCT evidence supports them, compare crinkle, weave/knit/open holes, edge\n"
     "   thickness and layer overlap, roughness, specular gloss, translucency, material weight and stiffness; compare\n"
     "   the visibly judgeable worn drape against selected MANNEQUIN. Do not demand a cue absent or unreadable in\n"
     "   its owning evidence. A flat 2-D fill that erases supported surface or depth cues FAILS."
 )
 _GENERIC_FIT_GATE = (
-    "10. fitClosureAllowedMutation — only declared fit axes may change; closure equals storyboard intent; undeclared\n"
+    "11. fitClosureAllowedMutation — only declared fit axes may change; closure equals storyboard intent; undeclared\n"
     "   fit, hem, tuck, silhouette, construction and matching-apparel boundaries remain unchanged."
 )
 _CONFIRMED_FIT_GATE = (
-    "10. fitClosureAllowedMutation — selected MANNEQUIN visibly judgeable fit, length, hem, tuck, silhouette and\n"
+    "11. fitClosureAllowedMutation — selected MANNEQUIN visibly judgeable fit, length, hem, tuck, silhouette and\n"
     "   drape hold; closure equals storyboard intent; PRODUCT construction and matching-apparel boundaries remain unchanged."
 )
 
@@ -151,9 +157,13 @@ _GARMENT_GATES = (
 _CORRECTIONS = MappingProxyType({
     "fileValidity": "Regenerate one complete, decodable image with no blank, truncated, or corrupt region.",
     "recipeIntent": "Regenerate using only the compiled recipe and product subtype or capture mode.",
+    "framingCrop": (
+        "Reframe the existing STAGE-1 photograph to the compiled shot, requested crop, subject scale, "
+        "head boundary, and face exposure. Preserve all other pixels and do not reconstruct the scene."
+    ),
     "framingDirectionFacePose": (
-        "Restore the storyboard shot, direction, face handling, and effective pose; storyboard "
-        "controls override example pixels."
+        "Restore the storyboard direction, non-crop face handling, and effective pose/camera semantics; "
+        "storyboard controls override conflicting example pixels."
     ),
     "garmentConstruction": (
         "Restore the PRODUCT garment's silhouette, panels, neckline, sleeves, seams, "
@@ -222,16 +232,20 @@ _CONFIRMED_GPT_CORRECTIONS = MappingProxyType({
     ),
 })
 
-# 이 세 축만 1차 이미지를 직접 편집한다. 의류·모델 정체성·장소·레시피처럼 원본
-# 근거를 다시 봐야 하는 실패는 scratch 재생성으로 보낸다.
+# 아래 허용 축만 1차 이미지를 직접 편집한다. 의류·모델 정체성·장소·레시피처럼 원본
+# 근거를 다시 봐야 하는 실패는 scratch 재생성으로 보낸다. confirmed 프로필은 프레이밍
+# 크롭과 방향·포즈·카메라 의미를 분리해, 크롭만 기존 사진에서 고친다.
 _EDIT_STAGE1_GATES = frozenset({
+    "framingCrop",
     "framingDirectionFacePose",
     "anatomyPerspectiveAsymmetry",
     "lightingShadowReflectionDrape",
 })
-_CONFIRMED_EDIT_STAGE1_GATES = _EDIT_STAGE1_GATES - {
-    "framingDirectionFacePose",
-}
+_CONFIRMED_EDIT_STAGE1_GATES = frozenset({
+    "framingCrop",
+    "anatomyPerspectiveAsymmetry",
+    "lightingShadowReflectionDrape",
+})
 
 
 @dataclass(frozen=True)
@@ -590,7 +604,9 @@ def build_prompt(
     return prompt
 
 
-def _confirmed_authority_contract(contract: Mapping[str, Any]) -> dict:
+def _confirmed_authority_contract(
+    contract: Mapping[str, Any], prompt_input: ConfirmedGptPromptInput,
+) -> dict:
     """Align the judge's machine-readable owners with the confirmed prompt.
 
     The generic CutPlan deliberately treats PRODUCT/fitProfile as the operating
@@ -610,6 +626,14 @@ def _confirmed_authority_contract(contract: Mapping[str, Any]) -> dict:
         "garmentLocalFitLengthSilhouetteDrape": True,
         "productPermanentConstructionStillFinal": True,
     }
+    try:
+        framing = confirmed_gpt_framing_contract(prompt_input)
+    except ConfirmedGptPromptError as exc:
+        raise VisionError("cut_output_qc: invalid confirmed framing contract") from exc
+    storyboard = _mapping(contract.get("storyboard"))
+    if framing["shot"] != storyboard.get("shot"):
+        raise VisionError("cut_output_qc: confirmed framing shot mismatch")
+    aligned["confirmedExampleFraming"] = framing
     return aligned
 
 
@@ -955,6 +979,7 @@ async def verdict(
     generated_image: InlineImage,
     *,
     authority_profile: str = "generic_v1",
+    confirmed_prompt_input: ConfirmedGptPromptInput | None = None,
 ) -> dict:
     """Judge one candidate; reference order is preserved and output is always attached last.
 
@@ -968,7 +993,11 @@ async def verdict(
     checked_references = _validate_references(references)
     contract = normalize_plan(plan)
     if authority_profile == "confirmed_gpt_v1":
-        contract = _confirmed_authority_contract(contract)
+        if confirmed_prompt_input is None:
+            raise VisionError("cut_output_qc: confirmed framing contract required")
+        contract = _confirmed_authority_contract(contract, confirmed_prompt_input)
+    elif confirmed_prompt_input is not None:
+        raise VisionError("cut_output_qc: confirmed framing contract on generic profile")
     applicable = gate_applicability(contract)
     forced = _forced_preflight(contract, checked_references, generated_image)
     if not _valid_image(generated_image):

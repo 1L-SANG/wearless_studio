@@ -106,10 +106,12 @@ def test_confirmed_profile_is_first_result_only_and_uses_confirmed_qc_authority(
     captured = {}
 
     async def recording_cut_qc(
-        settings, plan, references, generated, *, authority_profile
+        settings, plan, references, generated, *, authority_profile,
+        confirmed_prompt_input,
     ):
         captured.update(
             authority_profile=authority_profile,
+            confirmed_prompt_input=confirmed_prompt_input,
             generated=generated,
             references=references,
         )
@@ -128,7 +130,48 @@ def test_confirmed_profile_is_first_result_only_and_uses_confirmed_qc_authority(
     ]
     assert run["result"][3] == []  # no garment best-of insertion
     assert captured["authority_profile"] == "confirmed_gpt_v1"
+    assert captured["confirmed_prompt_input"] is prompt_input
     assert captured["generated"].data == b"INITIAL"
+
+
+def test_confirmed_framing_crop_edits_stage1_with_exact_example_contract(monkeypatch):
+    captured = {}
+    prompt_input = object()
+
+    async def fake_cut_qc(
+        settings, plan, references, generated, *, authority_profile,
+        confirmed_prompt_input,
+    ):
+        captured.setdefault("qcInputs", []).append(confirmed_prompt_input)
+        return _qc_result("framingCrop") if generated.data == b"INITIAL" else _qc_result()
+
+    async def fake_repair(
+        settings, gemini, cut_spec, product, source, *, qc_corrections,
+        confirmed_prompt_input,
+    ):
+        captured.update(
+            source=source,
+            corrections=qc_corrections,
+            repairPromptInput=confirmed_prompt_input,
+        )
+        return b"CROPPED", "image/png"
+
+    monkeypatch.setattr(dpj.cut_output_qc, "verdict", fake_cut_qc)
+    monkeypatch.setattr(dpj.cut_generator, "repair", fake_repair)
+    run = _run_detail_cut(
+        monkeypatch,
+        qc_mode="repair",
+        confirmed_packet=SimpleNamespace(prompt_input=prompt_input),
+    )
+
+    assert captured["source"].data == b"INITIAL"
+    assert captured["corrections"] == (dpj.cut_output_qc._CORRECTIONS["framingCrop"],)
+    assert captured["repairPromptInput"] is prompt_input
+    assert captured["qcInputs"] == [prompt_input, prompt_input]
+    assert run["r2"].saved == [b"CROPPED"]
+    repair = run["result"][4][0]["repair"]
+    assert repair["route"] == "EDIT_STAGE1"
+    assert repair["accepted"] is True
 
 
 def test_signature_cut_keeps_main_profile_settings_in_detail_worker(monkeypatch):

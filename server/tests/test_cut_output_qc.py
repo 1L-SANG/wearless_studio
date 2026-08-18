@@ -256,11 +256,13 @@ def test_prompt_preserves_reference_order_and_contains_no_source_plan_text():
     assert "fine lettering is unreadable in BOTH PRODUCT and candidate" in flat_prompt
     assert "do not FAIL solely for undecodable micro-strokes" in flat_prompt
     assert "Do not excuse candidate blur when PRODUCT is readable" in flat_prompt
-    assert "Its value is 16 objects" in flat_prompt
+    assert "Its value is 17 objects" in flat_prompt
+    assert "A requested medium rendered as full" in flat_prompt
+    assert "intentionally head/eyes-cropped example rendered with the whole head visible" in flat_prompt
     assert "${" not in prompt
 
 
-def test_confirmed_prompt_promotes_only_mannequin_color_and_fit_authority():
+def test_confirmed_prompt_promotes_only_mannequin_color_and_fit_authority(monkeypatch):
     source_plan = _plan()
     source_plan["attributeOwners"] = {
         **source_plan["attributeOwners"],
@@ -289,7 +291,14 @@ def test_confirmed_prompt_promotes_only_mannequin_color_and_fit_authority():
     assert "weight, stiffness and drape" not in prompt
     assert "worn drape against selected MANNEQUIN" in prompt
 
-    aligned = qc._confirmed_authority_contract(contract)
+    framing = {
+        "shot": "full",
+        "requestedFraming": "complete head through both feet",
+        "faceExposure": "visible",
+        "roughFraming": "vertical full-body",
+    }
+    monkeypatch.setattr(qc, "confirmed_gpt_framing_contract", lambda _request: framing)
+    aligned = qc._confirmed_authority_contract(contract, object())
     assert aligned["attributeOwners"]["color"] == "mannequin"
     assert aligned["attributeOwners"]["length"] == "mannequin"
     assert aligned["attributeOwners"]["silhouette"] == "mannequin"
@@ -298,6 +307,7 @@ def test_confirmed_prompt_promotes_only_mannequin_color_and_fit_authority():
         "garmentLocalFitLengthSilhouetteDrape": True,
         "productPermanentConstructionStillFinal": True,
     }
+    assert aligned["confirmedExampleFraming"] == framing
 
 
 def test_unknown_authority_profile_fails_before_qc_provider_call():
@@ -516,6 +526,7 @@ def _result_with_failures(*failed_gates):
 
 def test_repair_route_edits_only_local_failures_and_regenerates_global_failures():
     assert qc.repair_route(_result_with_failures()) == "KEEP_STAGE1"
+    assert qc.repair_route(_result_with_failures("framingCrop")) == "EDIT_STAGE1"
     assert qc.repair_route(
         _result_with_failures("framingDirectionFacePose")
     ) == "EDIT_STAGE1"
@@ -535,6 +546,13 @@ def test_confirmed_pose_camera_gate_regenerates_from_original_authority_packet()
     assert qc.repair_route(result) == "EDIT_STAGE1"
     result["authorityProfile"] = "confirmed_gpt_v1"
     assert qc.repair_route(result) == "REGENERATE_FROM_SCRATCH"
+
+
+def test_confirmed_crop_gate_edits_the_existing_stage1():
+    result = _result_with_failures("framingCrop")
+    result["authorityProfile"] = "confirmed_gpt_v1"
+    assert qc.repair_route(result) == "EDIT_STAGE1"
+    assert qc.repair_instructions(result) == (qc._CORRECTIONS["framingCrop"],)
 
 
 def test_repair_instructions_reject_provider_or_caller_mutation():
