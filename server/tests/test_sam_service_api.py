@@ -329,9 +329,17 @@ def test_an_over_long_key_is_rejected():
 
 # ── 주상품 컷아웃 레퍼런스 (2026-08-18) ─────────────────────────────────────
 
-KEY_CUT = KEY_FRONT.replace("uploads/front.jpg", "ai/cut.jpg")
+def _canonical_cutout_key() -> str:
+    from sam_service.segmentation import cutout_key
+    from sam_service.storage import validate_key
+    return validate_key(cutout_key("c" * 64, "Front"))
+
+
+KEY_CUT = validate_key(KEY_FRONT.replace("uploads/front.jpg", "ai/cut.jpg"))
 KEY_BASE = "seed/mannequin/base-women-2K.png"
-KEY_PRODUCT = KEY_FRONT.replace("uploads/front.jpg", "derived/canonical/front.png")
+#: 진짜 키다. 지어낸 문자열을 쓰면 대역 저장소가 검증을 안 해서 통과해 버리고, 실서버
+#: 화이트리스트가 그 경로를 거절한다는 사실이 테스트를 그냥 지나간다(2026-08-18 사고).
+KEY_PRODUCT = _canonical_cutout_key()
 
 
 def _worn_body(**extra):

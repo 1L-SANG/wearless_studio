@@ -92,11 +92,13 @@ class WornGarmentResult:
     cached: bool = False
     #: 내준 마스크가 몇 등 후보에서 나왔고, 그 전에 veto 가 몇 장을 물렸는지. 판단에는 쓰지
     #: 않는다 — 원장이 "무엇을 시도했는지"에 답하게 하는 계측값이다(2026-08-18).
-    selected_rank: int = 0
-    vetoed_attempts: int = 0
+    #: None 은 "모른다"다 — 캐시로 답한 응답은 어떤 순위였는지 알 수 없다. 0 으로 채우면
+    #: 원장이 "1등을 거부 없이 골랐다"고 거짓 진술한다(2026-08-18).
+    selected_rank: int | None = None
+    vetoed_attempts: int | None = None
     #: 내준 마스크가 셀러가 올린 주상품 컷아웃과 얼마나 닮았나(0..1). 0.0 은 "닮지 않았다"가
     #: 아니라 "레퍼런스가 없었다"일 수 있다 — 둘을 가르려면 productKey 를 함께 본다.
-    product_match: float = 0.0
+    product_match: float | None = None
     code: str | None = None
     message: str | None = None
 
@@ -113,9 +115,12 @@ class WornGarmentResult:
             grid=body.get("grid"), m2m=body.get("m2m"),
             matching_side=body.get("matchingSide"), match_share=body.get("matchShare"),
             cached=bool(body.get("cached")),
-            selected_rank=int(body.get("selectedRank") or 0),
-            vetoed_attempts=int(body.get("vetoedAttempts") or 0),
-            product_match=float(body.get("productMatch") or 0.0),
+            selected_rank=(None if body.get("selectedRank") is None
+                           else int(body["selectedRank"])),
+            vetoed_attempts=(None if body.get("vetoedAttempts") is None
+                             else int(body["vetoedAttempts"])),
+            product_match=(None if body.get("productMatch") is None
+                           else float(body["productMatch"])),
             code=body.get("code"), message=body.get("message"))
 
 

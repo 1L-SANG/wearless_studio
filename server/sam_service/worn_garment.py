@@ -108,6 +108,19 @@ MATCH_ZONE_MAX = 0.25
 #: Tone Editor whenever SAM's top pick happens to be the whole outfit.
 VETO_FALLBACK_RANKS = 3
 
+#: A mask served through one of the veto's fallback paths may be no more than this much
+#: background. Tone rendering paints every nonzero mask pixel, so dodging the coordinating
+#: garment only to recolour the backdrop trades one wrong answer for another; that cut is better
+#: left unadjustable.
+#:
+#: Deliberately NOT applied to the top pick's refined mask — that is what v3 already serves, and
+#: bolting a new threshold onto the existing path could turn a cut that works today into
+#: "색감 조정을 지원하지 않아요", which is the symptom this change exists to remove. `figure`
+#: is a heuristic silhouette, so a ceiling on it can be wrong; the new paths are where the
+#: scorer's own -1.5 penalty no longer protects us, because a vetoed winner hands over to a
+#: candidate chosen without re-reading its score.
+FALLBACK_OUTSIDE_MAX = 0.25
+
 #: Tolerances for "is this the same garment", in Lab units, measured on the 2026-08-18 cut.
 #:
 #: Chroma barely moves between a photograph and a render (the shirt's a/b moved 0.7 and 3.8),
@@ -507,13 +520,21 @@ def tidy(mask: np.ndarray) -> np.ndarray:
 
 def _serving_order(segmenter, rgb: np.ndarray, candidate: np.ndarray,
                    shape: tuple[int, int], use_m2m: bool):
-    """The masks we would serve for one candidate, best first: refined, then the raw candidate.
+    """The masks we would serve for one candidate, best first, as (mask, is_top_pick_refined).
 
-    A generator so a candidate whose refinement already passes never pays for the fallback.
+    A generator so a candidate whose refinement already passes never pays for the fallback. The
+    flag marks the one mask v3 already served, which the fallback quality gate must leave alone.
     """
     if use_m2m:
-        yield _settle(refine(segmenter, rgb, candidate), shape)
-    yield _settle(candidate, shape)
+        yield _settle(refine(segmenter, rgb, candidate), shape), True
+    yield _settle(candidate, shape), False
+
+
+def outside_figure_frac(mask: np.ndarray, figure: np.ndarray) -> float:
+    """Share of the mask that is not on the figure at all — i.e. plain background."""
+    m = mask.astype(bool)
+    total = float(m.sum())
+    return float((m & ~figure.astype(bool)).sum() / total) if total else 1.0
 
 
 def _settle(mask: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
@@ -593,18 +614,26 @@ def produce(segmenter, generated: bytes, base: bytes, *, clothing_type: str | No
     # Bounded, because each extra rank costs one more `refine` inference.
     chosen, refused = None, []
     for rank, (score, candidate, parts) in enumerate(ranked[:VETO_FALLBACK_RANKS]):
-        for mask in _serving_order(segmenter, rgb, candidate, (h, w), use_m2m):
+        for mask, top_pick in _serving_order(segmenter, rgb, candidate, (h, w), use_m2m):
             share = round(_band_frac(mask, match_band), 4) if match_band else 0.0
-            if not match_band or share <= MATCH_ZONE_MAX:
+            if match_band and share > MATCH_ZONE_MAX:
+                refused.append(share)
+                continue
+            # Everything below rank 0's refined mask is a path v3 did not have. Those must be
+            # at least garment-shaped, or we are recolouring the backdrop to avoid the trousers.
+            if rank == 0 and top_pick:
                 chosen = (mask, share, score, parts, rank)
                 break
-            refused.append(share)
+            if outside_figure_frac(mask, figure) <= FALLBACK_OUTSIDE_MAX:
+                chosen = (mask, share, score, parts, rank)
+                break
         if chosen is not None:
             break
     if chosen is None:
         raise NoGarmentCandidate(
-            f"every mask tried sits on the matching garment: "
-            f"{[f'{s:.2f}' for s in refused]} of mass in {match_band} "
+            f"no fallback mask was both off the matching garment and garment-shaped: "
+            f"matchZone refusals {[f'{s:.2f}' for s in refused]} vs {match_band}, "
+            f"outsideFigure ceiling {FALLBACK_OUTSIDE_MAX} "
             f"(category={category}, matching={matching_side}, "
             f"ranks={min(len(ranked), VETO_FALLBACK_RANKS)}/{len(ranked)})")
     mask, match_share, score, parts, rank = chosen

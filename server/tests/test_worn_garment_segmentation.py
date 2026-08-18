@@ -374,10 +374,38 @@ def test_a_vetoed_winner_hands_over_to_the_next_plausible_candidate(monkeypatch)
     높다. 1등이 거부됐다는 이유로 그 컷에서 색감 조정을 통째로 닫을 이유는 없다.
     """
     outfit = _mask(SHAPE, PRODUCT_BOX) | _mask(SHAPE, COORD_BOX)
-    sloppy_top = _mask(SHAPE, (70, 116, 4, 116))          # 배경까지 번진 상의 — 점수는 낮다
+    partial_top = _mask(SHAPE, (70, 116, 36, 84))         # 가슴 아래만 잡은 상의 — 점수는 낮다
 
-    out = _produce_trying(monkeypatch, [outfit, sloppy_top], matching_side="bottom")
+    out = _produce_trying(monkeypatch, [outfit, partial_top], matching_side="bottom")
 
     assert out.match_share <= W.MATCH_ZONE_MAX
     chosen = _served(out)
     assert chosen[100, 60] and not chosen[160, 60], "상의 후보로 내려와야 한다"
+
+
+def test_the_fallback_never_serves_a_mask_made_mostly_of_background(monkeypatch):
+    """내려간 후보라도 배경 덩어리면 내주지 않는다.
+
+    톤 렌더는 마스크가 0이 아닌 픽셀을 전부 물들인다(lib/toneRender.js). 코디 옷을 피하려다
+    배경을 물들이면 막은 의미가 없다 — 그 컷은 차라리 조정 불가로 둔다.
+    첫 구현은 이 후보를 그대로 내줬고, 테스트가 오히려 그걸 옳다고 박아두고 있었다
+    (2026-08-18 코덱스 리뷰).
+    """
+    outfit = _mask(SHAPE, PRODUCT_BOX) | _mask(SHAPE, COORD_BOX)
+    spilled = _mask(SHAPE, (70, 116, 4, 116))             # 몸 밖 51.8% — 대부분 배경
+
+    with pytest.raises(W.NoGarmentCandidate):
+        _produce_trying(monkeypatch, [outfit, spilled], matching_side="bottom")
+
+
+def test_the_top_pick_keeps_serving_exactly_as_it_did(monkeypatch):
+    """품질 문턱은 **새로 생긴 경로**에만 건다.
+
+    1등의 정제 마스크는 v3 이 이미 내주던 것이다. 거기에 새 문턱을 얹으면 오늘 잘 되던 컷이
+    조용히 "지원하지 않아요"가 될 수 있다 — 이 PR 이 고치려던 바로 그 증상이다.
+    """
+    sprawling = _mask(SHAPE, (70, 116, 4, 116))           # 몸 밖 51.8%, 그러나 1등
+
+    out = _produce_trying(monkeypatch, [sprawling])       # 코디 없음 → 거부 자체가 없다
+
+    assert out.selected_rank == 0 and _served(out)[100, 10]

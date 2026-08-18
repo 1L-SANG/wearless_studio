@@ -181,7 +181,7 @@ async def run_editor_garment_mask_job(app, job: dict) -> None:
             conn, user_id=user_id, project_id=project_id, cut_id=cut_id,
             source_asset_id=str(cut.get("id") or ""), result=result,
             category=clothing_type, sub_category=analysis.get("subCategory"),
-            matching_side=matching_side, match_share=match_share)
+            matching_side=matching_side, match_share=match_share, product_key=product_key)
         await conn.commit()
 
     await finish("done", {"state": "ready", "cutId": cut_id,
