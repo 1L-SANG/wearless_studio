@@ -1591,7 +1591,7 @@ async def _run_candidate(
     return None  # 구제할 후보조차 없음 → 이 후보 드롭(부분 성공 허용)
 
 
-async def _enqueue_editor_garment_mask(pool, s, *, user_id, project_id, cuts,
+async def _enqueue_editor_garment_mask(pool, s, *, app=None, user_id, project_id, cuts,
                                        cut_metadata) -> None:
     """방금 확정된 컷들에 톤 에디터 마스크 전처리를 건다. 절대 생성을 막지 않는다.
 
@@ -1604,6 +1604,7 @@ async def _enqueue_editor_garment_mask(pool, s, *, user_id, project_id, cuts,
     """
     if getattr(s, "mannequin_tone_editor", "off") != "on":
         return
+    queued = False
     for cut in cuts:
         cut_id = (cut or {}).get("id")
         if not cut_id:
@@ -1614,12 +1615,22 @@ async def _enqueue_editor_garment_mask(pool, s, *, user_id, project_id, cuts,
                     conn, user_id=user_id, project_id=project_id,
                     kind="editor_garment_mask",
                     payload={"cutId": cut_id, "cutMetadata": cut_metadata},
-                    idempotency_key=f"{project_id}:editor_garment_mask:{cut_id}:{EDITOR_MASK_VERSION}",
+                    idempotency_key=editor_garment_mask.mask_job_key(project_id, cut_id),
                     credits_reserved=0, metadata={})
                 await conn.commit()
+                queued = True
         except Exception:  # noqa: BLE001 - 마스크 큐잉 실패가 마네킹 생성을 되돌리지 않는다
             log.warning("editor_garment_mask enqueue failed project=%s cut=%s",
                         project_id, cut_id, exc_info=True)
+    if queued:
+        # 셀러는 이 순간 컷을 보고 있다 — 유휴 폴링(최대 3초)을 기다릴 이유가 없다.
+        # 라우트의 _wake_dispatcher 와 같은 동작을 워커 쪽에서 한다. 실패는 무해(폴링이 줍는다).
+        try:
+            dispatcher = getattr(getattr(app, "state", None), "dispatcher", None)
+            if dispatcher is not None:
+                dispatcher.wake()
+        except Exception:  # noqa: BLE001 - wake 실패가 큐잉을 되돌리지 않는다
+            log.warning("dispatcher wake failed project=%s", project_id, exc_info=True)
 
 
 async def run_mannequin_job(app, job: dict) -> None:
@@ -1891,7 +1902,7 @@ async def run_mannequin_job(app, job: dict) -> None:
             # 톤 에디터 마스크는 **커밋 뒤에** 별도 트랜잭션으로 건다. 컷은 이미 확정됐고
             # 셀러 화면에도 떴다 — 전처리 큐잉이 실패해도 생성 결과는 그대로 성공이다.
             await _enqueue_editor_garment_mask(
-                pool, s, user_id=user_id, project_id=project_id,
+                pool, s, app=app, user_id=user_id, project_id=project_id,
                 cuts=out.get("cuts") or [], cut_metadata=cut_generation_metadata)
     except _MannequinJobCancelled:
         # 취소 라우트가 status/event/차감까지 종결한다. 워커는 error/done을 추가하지 않는다.

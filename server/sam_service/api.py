@@ -20,6 +20,7 @@ spending ~25s on inference, which is what makes job retries cheap instead of dup
 from __future__ import annotations
 
 import asyncio
+import heapq
 import hashlib
 import hmac
 import logging
@@ -53,7 +54,69 @@ VIEW_TIMEOUT_S = float(600)
 #: ~15.7 GB locally, so two concurrent ones would double the task's memory ceiling and turn a
 #: sizing question into an OOM kill. Views within a request are already sequential; this also
 #: serialises across concurrent requests.
-_INFERENCE_SLOT = asyncio.Semaphore(1)
+class PrioritySlot:
+    """One inference at a time — the memory ceiling — but the QUEUE is priority-ordered.
+
+    Plain FIFO put the seller's Tone Editor mask behind background preprocessing whenever a
+    product was registered and generated in one sitting; the mask then blew the caller's 90s
+    timeout and died as `unavailable` (2026-08-18). Priority only reorders the waiting line;
+    it never runs two inferences at once and never preempts a running one.
+
+    Starvation is accepted by design at this traffic: background cutouts are retried by their
+    own callers and nobody is watching them.
+    """
+
+    def __init__(self) -> None:
+        self._held = False
+        self._waiters: list[tuple[int, int, asyncio.Future]] = []   # heap
+        self._seq = 0
+
+    def hold(self, priority: int):
+        return _SlotHold(self, priority)
+
+    async def _acquire(self, priority: int) -> None:
+        if not self._held:
+            self._held = True
+            return
+        fut = asyncio.get_running_loop().create_future()
+        heapq.heappush(self._waiters, (priority, self._seq, fut))
+        self._seq += 1
+        try:
+            await fut
+        except asyncio.CancelledError:
+            # 이미 슬롯을 넘겨받은 뒤 취소됐으면(레이스) 도로 넘긴다 — 아니면 영구 점유.
+            if fut.done() and not fut.cancelled():
+                self._release()
+            raise
+
+    def _release(self) -> None:
+        while self._waiters:
+            _pri, _seq, fut = heapq.heappop(self._waiters)
+            if not fut.done():
+                fut.set_result(None)        # 점유가 이관된다 — _held 는 True 그대로
+                return
+        self._held = False
+
+
+class _SlotHold:
+    def __init__(self, slot: PrioritySlot, priority: int) -> None:
+        self._slot, self._priority = slot, priority
+
+    async def __aenter__(self):
+        await self._slot._acquire(self._priority)
+        return self
+
+    async def __aexit__(self, *_exc):
+        self._slot._release()
+        return False
+
+
+#: The seller is looking at the cut RIGHT NOW and the editor shows "준비 중" until this lands.
+PRIORITY_WORN_GARMENT = 0
+#: Nobody waits on these: canonical/matching cutouts are consumed later by generation/scoring.
+PRIORITY_CANONICAL = 10
+
+_INFERENCE_SLOT = PrioritySlot()
 
 
 class ViewRequest(BaseModel):
@@ -227,7 +290,7 @@ async def _segment_worn_one(req: WornGarmentRequest, source, settings: SamSettin
     try:
         # Same single-inference slot as the canonical path. The two capabilities share one
         # process and one memory ceiling, so they must also share the one-at-a-time rule.
-        async with _INFERENCE_SLOT:
+        async with _INFERENCE_SLOT.hold(PRIORITY_WORN_GARMENT):
             mask = await asyncio.wait_for(
                 asyncio.to_thread(worn_garment.produce, segmenter, generated, base,
                                   clothing_type=req.clothingType,
@@ -305,7 +368,7 @@ async def _segment_one(view: str, key: str, source, settings: SamSettings) -> di
         return fail("model_unavailable", str(e))
 
     try:
-        async with _INFERENCE_SLOT:
+        async with _INFERENCE_SLOT.hold(PRIORITY_CANONICAL):
             cut = await asyncio.wait_for(
                 asyncio.to_thread(segmenter.cutout, data, view=view), timeout=VIEW_TIMEOUT_S)
     except TimeoutError:

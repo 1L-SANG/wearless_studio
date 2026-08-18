@@ -306,7 +306,11 @@ def test_an_unreadable_mask_is_retried_not_stamped_as_verified(monkeypatch):
     """확인 못 한 마스크에 보장 도장을 찍으면 그 컷은 영구히 검증된 것으로 남는다."""
     finished, recorded, _r2 = _run_job(
         monkeypatch, mask_png=b"corrupted", matching_side="bottom")
-    assert finished["status"] == "error", "일시적 실패는 디스패처 재시도로 넘긴다"
+    # done+retryable 이다 — error 는 재시도 없는 종착이라(2026-08-18 실측) 일시 장애가
+    # 그 컷의 톤 에디터를 영구히 닫는다. 재시도는 톤 상태 라우트가 세대 키로 몰고 간다.
+    assert finished["status"] == "done"
+    assert finished["result"]["state"] == "unverified"
+    assert finished["result"]["retryable"] is True
     assert finished["result"]["code"] == job.FAIL_UNVERIFIED
     assert "record" not in recorded
 

@@ -2071,15 +2071,40 @@ async def _tone_state(conn, r2, *, user_id: str, project_id: str, cut_id: str) -
 _TONE_JOB_TERMINAL = ("done", "error", "cancelled")
 
 
+def _tone_job_is_retryable(job: dict) -> bool:
+    """이 종결이 판정(재시도해도 같은 답)이 아니라 일시 장애(다시 돌리면 답이 바뀔 수 있음)인가.
+
+    result.state 로 판별한다 — 구버전 워커가 error 로 종결해 둔 과거 잡도 state 는 같으므로,
+    배포 이전에 막힌 컷(2026-08-18 05:59 실사고)도 이 판별을 지나 되살아난다.
+    """
+    result = job.get("result") or {}
+    return str(result.get("state") or "") in editor_garment_mask.TONE_MASK_RETRYABLE_STATES
+
+
+def _tone_job_retry_count(job: dict) -> int:
+    payload = job.get("payload") or {}
+    try:
+        return int(payload.get("retry") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _tone_state_with_job(state: dict, job: dict | None) -> dict:
     """합류한 마스크 잡의 종결 상태를 화면 상태로 옮긴다.
 
-    마스크 없이 끝난 잡(의류를 못 찾음·코디 의류 위였음·SAM 미설정)은 다시 큐에 들어가지
+    판정으로 끝난 잡(의류를 못 찾음·코디 의류 위였음·SAM 미설정)은 다시 큐에 들어가지
     않는다 — 그걸 processing 으로 두면 셀러는 영원히 "색감 조정 준비 중"을 본다.
+
+    일시 장애(unavailable·unverified)는 반대다: 재시도 예산이 남아 있는 동안 failed 로
+    내리면, 서버가 30초 뒤 멀쩡히 돌아오는데 셀러는 "지원하지 않아요"를 이미 읽은 뒤다
+    (2026-08-18 사고 2호). 그동안은 준비 중을 유지한다 — 다음 세대 잡은 walker 가 이미 걸었다.
     """
     if state.get("status") != "processing" or job is None:
         return state
     if str(job.get("status") or "") not in _TONE_JOB_TERMINAL:
+        return state
+    if (_tone_job_is_retryable(job)
+            and _tone_job_retry_count(job) < editor_garment_mask.TONE_MASK_MAX_RETRIES):
         return state
     return {**state, "status": "failed"}
 
@@ -2096,13 +2121,33 @@ async def _enqueue_missing_tone_mask(conn, *, user_id: str, project_id: str,
     if state.get("status") != "processing":
         return False, None
     try:
-        job, created = await repo.create_job(
-            conn, user_id=user_id, project_id=project_id,
-            kind="editor_garment_mask", payload={"cutId": cut_id},
-            idempotency_key=editor_garment_mask.mask_job_key(project_id, cut_id),
-            credits_reserved=0, metadata={})
+        created_any = False
+        job = None
+        payload = {"cutId": cut_id}
+        # 세대(:rN)를 한 칸씩 걷는다. 세대 n 이 일시 장애로 종결돼 있으면 n+1 을 만들고,
+        # 살아 있거나(진행 중) 판정으로 끝났으면 멈춘다. 폴링 한 번에 최대 예산+1 회의 행
+        # 조회 — SAM 이 죽어 있는 최악의 경우에도 잡은 폴링당 1개만 새로 생긴다.
+        for n in range(editor_garment_mask.TONE_MASK_MAX_RETRIES + 1):
+            job, created = await repo.create_job(
+                conn, user_id=user_id, project_id=project_id,
+                kind="editor_garment_mask",
+                payload=payload if n == 0 else {**payload, "retry": n},
+                idempotency_key=editor_garment_mask.mask_job_key(
+                    project_id, cut_id, retry=n),
+                credits_reserved=0, metadata={})
+            created_any = created_any or created
+            if str(job.get("status") or "") not in _TONE_JOB_TERMINAL:
+                break                      # 살아 있는 잡 — 결과를 기다린다
+            if not _tone_job_is_retryable(job):
+                break                      # 판정 종결 — 재시도는 같은 답만 반복한다
+            # 활성 잡 합류가 kind 단위라 다른 컷의 잡에 합류할 수 있다. 그 잡의 종결로
+            # 이 컷의 세대를 올리면 엉뚱한 재시도가 생기므로 내 컷일 때만 걷는다.
+            if str((job.get("payload") or {}).get("cutId") or "") != str(cut_id):
+                break
+            payload = {k: v for k, v in (job.get("payload") or {}).items() if k != "retry"}
+            payload.setdefault("cutId", cut_id)
         await conn.commit()
-        return created, job
+        return created_any, job
     except Exception:  # noqa: BLE001 - 톤 마스크 실패가 기존 컷 조회를 막지 않는다
         with contextlib.suppress(Exception):
             await conn.rollback()

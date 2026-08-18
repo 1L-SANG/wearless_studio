@@ -132,9 +132,13 @@ async def run_editor_garment_mask_job(app, job: dict) -> None:
             clothing_type=clothing_type, sub_category=analysis.get("subCategory"),
             matching_side=matching_side, product_key=product_key)
     except sam_client.SamUnavailable as exc:
-        # Bounded dispatcher retry covers transient outages. The mask key is deterministic, so a
-        # retry after a partial failure is cheap — a finished mask is served from R2.
-        await finish("error", {"state": "unavailable", "reason": str(exc), "cutId": cut_id})
+        # done + retryable — error 가 아니다. error 잡은 디스패처가 재시도하지 않고(2026-08-18
+        # 실측: 재시도 코드가 존재하지 않는다) 멱등키를 문 채 종착이라, 일시 장애 한 번이
+        # 그 컷의 톤 에디터를 영구히 닫았다. 재시도는 톤 상태 라우트가 세대 키(:rN)로 몰고
+        # 가고, 마스크 캐시 키는 결정적이라 재시도 비용도 싸다(완성분은 R2 에서 돌아온다).
+        await finish("done", {"state": "unavailable", "retryable": True,
+                              "reason": str(exc), "cutId": cut_id,
+                              "retry": int(payload.get("retry") or 0)})
         return
 
     latency = round(time.monotonic() - t0, 2)
@@ -162,10 +166,14 @@ async def run_editor_garment_mask_job(app, job: dict) -> None:
             # 재볼 수 없는 마스크는 기록하지 않는다 — "검증했다"는 도장을 못 찍는 마스크를
             # 남기면 그 컷은 확인되지 않은 채 영구히 보장된 것으로 취급된다. error 로 끝내
             # 디스패처의 유한 재시도에 맡기고, 재시도가 다 떨어지면 화면은 failed 로 간다.
-            await finish("error", {"state": "unverified", "cutId": cut_id,
-                                   "code": FAIL_UNVERIFIED, "matchingSide": matching_side,
-                                   "maskKey": result.mask_key,
-                                   "latencySeconds": latency})
+            # unavailable 과 같은 부류다 — R2 읽기 실패는 판정이 아니라 인프라 장애고,
+            # 재시도 경로도 같은 이유로 라우트의 세대 키다(error 는 재시도 없는 종착).
+            await finish("done", {"state": "unverified", "retryable": True,
+                                  "cutId": cut_id,
+                                  "code": FAIL_UNVERIFIED, "matchingSide": matching_side,
+                                  "maskKey": result.mask_key,
+                                  "retry": int(payload.get("retry") or 0),
+                                  "latencySeconds": latency})
             return
         if match_share > editor_garment_mask.MATCH_ZONE_MAX:
             await finish("done", {"state": "failed", "cutId": cut_id,
