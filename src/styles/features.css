@@ -3305,3 +3305,13 @@
 .sb-signature-cell img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform .16s, opacity .16s; }
 .sb-signature-cell:not(.sel):hover img { transform: scale(1.035); opacity: .94; }
 .sb-signature-cell.sel { border-color: var(--link); }
+
+/* 실패 슬롯의 정확 재시도 — 일반 새 이미지 폼으로 보내 원래 exampleId를 잃지 않는다. */
+.ai-failed-retry { display: flex; flex-direction: column; gap: 14px; }
+.ai-failed-retry-thumb {
+  display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover;
+  border-radius: 10px; background: var(--bg-2); border: 1px solid var(--ring);
+}
+.ai-failed-retry-hint {
+  margin: 0; color: var(--fg-2b); font-size: 12px; line-height: 1.55; text-align: center;
+}

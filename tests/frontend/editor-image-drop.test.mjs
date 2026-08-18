@@ -183,8 +183,8 @@ test('frame images show the full source and a wardrobe click fills the pending s
   assert.match(editorSource, /const fitted = fitImageToFrameBlock\(nextBlock, elId, image\);/);
   // 다시 채운 칸에서는 '일부러 비움' 표식을 뗀다 — 안 떼면 그 뒤 생성 병합이 이 칸을
   // 계속 건너뛰어 채워 넣은 사진이 자동 갱신 대상에서 빠진다(2026-08-17 검증).
-  assert.match(editorSource, /if \(el\.id !== elId \|\| !el\.slotCleared\) return el;/);
-  assert.match(editorSource, /const requestSlotImage = \(blockId, el\) => \{[\s\S]*selectEl\(blockId, el, false, true\);[\s\S]*setPendingSlot\(\{ blockId, elId: el\.id \}\);[\s\S]*setTab\('wardrobe'\);[\s\S]*\}/);
+  assert.match(editorSource, /if \(el\.id !== elId\) return el;[\s\S]*genFailed: _genFailed,[\s\S]*genPending: _genPending/);
+  assert.match(editorSource, /const requestSlotImage = \(blockId, el\) => \{[\s\S]*selectEl\(blockId, el, false, true\);[\s\S]*sourceBlockId: el\.sourceBlockId \|\| null,[\s\S]*genFailed: Boolean\(el\.genFailed\),[\s\S]*setTab\('wardrobe'\);[\s\S]*\}/);
   assert.match(editorSource, /if \(pendingSlot\) \{[\s\S]*setSlotImage\(pendingSlot\.blockId, pendingSlot\.elId,[\s\S]*setPendingSlot\(null\);[\s\S]*setTab\('image'\);[\s\S]*return;/);
   assert.match(panelSource, /onClick=\{\(e\) => \{ const image = e\.currentTarget\.querySelector\('img'\); onInsert\(\{ \.\.\.im, width: image\?\.naturalWidth \|\| im\.width, height: image\?\.naturalHeight \|\| im\.height \}\); \}\}/);
 });
@@ -200,7 +200,7 @@ test('pending frame placement clearly invites one-click selection in the wardrob
 });
 
 test('pending frame placement is cancelled when the user selects something else', () => {
-  assert.match(editorSource, /if \(pendingSlot && tab !== 'wardrobe'\) setPendingSlot\(null\)/);
+  assert.match(editorSource, /pendingSlot[\s\S]*tab !== 'wardrobe'[\s\S]*!\(pendingSlot\.genFailed && tab === 'ai'\)[\s\S]*setPendingSlot\(null\)/);
   assert.match(editorSource, /const selectEl = \(blockId, el, additive, keepTab\) => \{[\s\S]*setPendingSlot\(null\);/);
   assert.match(editorSource, /const clearSel = \(\) => \{[^}]*setPendingSlot\(null\);[^}]*\}/);
 });
@@ -213,7 +213,7 @@ test('empty template frames always label the exact place where a photo goes', ()
   assert.match(editorSource, /el\.genFailed\s*\n?\s*\? <span>이 컷은 만들지 못했어요/);
   assert.match(editorSource, /크레딧 미차감 · 눌러서 사진을 넣거나 AI 탭에서 다시 만들 수 있어요/);
   assert.match(editorSource, /onPointerDown=\{\(e\) => e\.stopPropagation\(\)\}/);
-  assert.match(editorSource, /const requestSlotImage = \(blockId, el\) => \{[\s\S]*selectEl\(blockId, el, false, true\);[\s\S]*setPendingSlot\(\{ blockId, elId: el\.id \}\);[\s\S]*setTab\('wardrobe'\);[\s\S]*\}/);
+  assert.match(editorSource, /const requestSlotImage = \(blockId, el\) => \{[\s\S]*selectEl\(blockId, el, false, true\);[\s\S]*sourceBlockId: el\.sourceBlockId \|\| null,[\s\S]*genFailed: Boolean\(el\.genFailed\),[\s\S]*setTab\('wardrobe'\);[\s\S]*\}/);
   assert.match(stylesSource, /\.el-slot\.checkerboard\s*\{[^}]*background-image:\s*linear-gradient/s);
 });
 

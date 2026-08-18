@@ -41,6 +41,7 @@ import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WID
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { imageResizeRect, lineHitStrokeWidth, resizePolicyForElement, shouldShowRotationHandle, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
 import { isWardrobeImageUsed, mergeEditorImagesIntoWardrobe } from '@/features/editor/editorWardrobe.js';
+import { buildFailedCutRetry } from '@/features/editor/failedCutRetry.js';
 import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, isPhotoSlotElement, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, reorderElements, selectableElementBelowBlankText, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPreserveMultiSelectionOnPointerDown, shouldStartTextOnlyDrag } from '@/features/editor/editorSelection.js';
 import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from '@/lib/imageTranscode.js';
 import { CONTENT_ROLES, SECTION_ROLES, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
@@ -1063,7 +1064,11 @@ export function Editor() {
   const lastPush = useRef(0);
 
   useEffect(() => {
-    if (pendingSlot && tab !== 'wardrobe') setPendingSlot(null);
+    if (
+      pendingSlot
+      && tab !== 'wardrobe'
+      && !(pendingSlot.genFailed && tab === 'ai')
+    ) setPendingSlot(null);
   }, [pendingSlot, tab]);
 
   const syncPointerGroupSelectionBounds = useCallback(() => {
@@ -1830,8 +1835,13 @@ export function Editor() {
       // 계속 건너뛰어, 채워 넣은 사진이 자동 갱신 대상에서 빠진다(2026-08-17 검증).
       if (!image?.src) return fitted;
       return { ...fitted, elements: fitted.elements.map((el) => {
-        if (el.id !== elId || !el.slotCleared) return el;
-        const { slotCleared: _cleared, ...rest } = el;
+        if (el.id !== elId) return el;
+        const {
+          slotCleared: _cleared,
+          genFailed: _genFailed,
+          genPending: _genPending,
+          ...rest
+        } = el;
         return rest;
       }) };
     }));
@@ -1875,7 +1885,12 @@ export function Editor() {
   };
   const requestSlotImage = (blockId, el) => {
     selectEl(blockId, el, false, true);
-    setPendingSlot({ blockId, elId: el.id });
+    setPendingSlot({
+      blockId,
+      elId: el.id,
+      sourceBlockId: el.sourceBlockId || null,
+      genFailed: Boolean(el.genFailed),
+    });
     setTab('wardrobe');
   };
   const dropSlotImage = (blockId, elId, image) => {
@@ -2080,11 +2095,32 @@ export function Editor() {
       placeGeneratedImage(group, loadingId, img);
       toast.push('이미지 생성을 완료했어요', { icon: 'check' });
       syncCredits(credits);                          // 차감은 서버 책임 — 봉투 잔액만 반영 (계약 §6)
+      return img;
     } catch (e) {
       handleImageJobFailure(e, group, loadingId);
+      return null;
     } finally {
       genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done');
     }
+  };
+  const failedCutRetry = pendingSlot?.genFailed
+    ? buildFailedCutRetry(wardrobeContext.current.storyboard, pendingSlot.sourceBlockId)
+    : null;
+  const retryFailedCut = async () => {
+    if (!failedCutRetry || !pendingSlot) return;
+    const target = { blockId: pendingSlot.blockId, elId: pendingSlot.elId };
+    const img = await generateImage(failedCutRetry.request);
+    if (!img?.src) return;
+    setSlotImage(target.blockId, target.elId, {
+      src: img.src,
+      cutType: img.cutType || failedCutRetry.request.cutType || null,
+      width: img.width,
+      height: img.height,
+      wardrobeGroup: failedCutRetry.request.colorId || 'misc',
+    });
+    setPendingSlot(null);
+    setTab('image');
+    toast.push('원래 콘티 설정으로 다시 만든 이미지를 빈 자리에 넣었어요', { icon: 'check' });
   };
   // 현재 이미지 수정 — 누적된 변경(chips)을 적용해 생성. 원본의 색상 그룹을 그대로
   // 이어 받아 의류 탭에서 같은 상품 컬러끼리 모여 보이게 한다.
@@ -2639,7 +2675,7 @@ export function Editor() {
 
   const renderPanel = () => {
     switch (tab) {
-      case 'ai': return <AIPanel catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} matchClothing={matchClothing} exampleGender={exampleGenderFromAnalysis(analysis, catalogs, clothingType)} varySource={varySource} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickMoodRef={() => api.pickRefImage(projectId)} />;
+      case 'ai': return <AIPanel catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} matchClothing={matchClothing} exampleGender={exampleGenderFromAnalysis(analysis, catalogs, clothingType)} varySource={varySource} failedCutRetry={failedCutRetry} onRetryFailedCut={retryFailedCut} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickMoodRef={() => api.pickRefImage(projectId)} />;
       case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={detailColorOpts} pendingSlot={pendingSlot} uploading={wardrobeUploadLoading} onInsert={wardrobeInsert} onDeleteImage={deleteWardrobeImage} isImageUsed={wardrobeImageInUse} onUpload={pickAndInsertImage} onVaryImage={varyImage} onFreshSeen={freshSeen}
         onImageDragStart={() => setFrameDragging(true)} onImageDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />;
       case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio}
