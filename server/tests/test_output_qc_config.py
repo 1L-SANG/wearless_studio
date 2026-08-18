@@ -34,16 +34,37 @@ def test_output_qc_defaults_off_and_accepts_repair(monkeypatch):
 
 def test_production_manifest_bounds_4k_gpt_repair_concurrency_without_moving_shared_tier():
     manifest_path = Path(__file__).resolve().parents[2] / "copilot/api/manifest.yml"
-    variables = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))["variables"]
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    variables = manifest["variables"]
 
     assert variables["MODEL_ROUTING_IMAGE_HIGH"] == "gemini-3-pro-image"
     assert variables["MODEL_ROUTING_DETAIL_CUT"] == "gpt-image-2-2026-04-21"
     assert variables["DETAIL_CUT_IMAGE_SIZE"] == "4K"
-    assert variables["DETAIL_CUT_CONCURRENCY"] == "2"
     assert variables["DETAIL_CUT_STAGGER_MS"] == "3000"
     assert variables["DETAIL_CUT_MAX_ATTEMPTS"] == "1"
     assert variables["GARMENT_QC_MODE"] == "off"
     assert variables["CUT_OUTPUT_QC_MODE"] == "repair"
+
+    # 동시 컷 수는 **정확값이 아니라 메모리와의 관계**로 묶는다. 정확값으로 못 박으면
+    # 위험을 발견해 안전하게 낮추는 변경까지 빨갛게 만든다(2026-08-19 Codex 리뷰).
+    concurrency = int(variables["DETAIL_CUT_CONCURRENCY"])
+    assert 1 <= concurrency <= 5, "실측 전까지 5 가 상한 — 올리려면 CloudWatch 사용률부터"
+
+    # 4K 컷 하나가 잡는 최대치: repair 가 1차를 살려둔 채 2차를 만들어 이미지가 두 장이고
+    # (detail_page_job.py 의 chosen 교체 지점), 각 장이 응답 base64 + 디코딩본 + QC 입력을
+    # 함께 붙든다. 실측 대조 — 9컷: 700+9×360=3940MB ≫ 2048 (죽음, 2026-08-18)
+    #                  2컷: 700+2×360=1420MB < 2048 (버팀)
+    # 최악 입력(색상당 사진 6장·장당 25MB)의 reference 총량은 이 식에 안 들어간다. 잡 단위
+    # 상한이 생기기 전까지 이 계산은 '평균적으로 안전'까지만 보장한다(같은 리뷰 지적).
+    per_cut_mb, baseline_mb = 360, 700
+    need = baseline_mb + concurrency * per_cut_mb
+    assert manifest["memory"] >= need, (
+        f"동시 {concurrency}컷에는 최소 {need}MB 가 필요한데 manifest 는 "
+        f"{manifest['memory']}MB 다 — OOM 이 나면 이미 만든 컷을 버리고 다시 생성한다"
+    )
+    # Fargate 제약: 0.5 vCPU(512) 는 메모리 4096 까지만 붙일 수 있다(초과 시 배포 거부).
+    if manifest["cpu"] == 512:
+        assert manifest["memory"] <= 4096
 
     secrets = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))["secrets"]
     assert secrets["OPENAI_API_KEY"] == "/copilot/wearless/prod/secrets/OPENAI_API_KEY"
