@@ -49,7 +49,66 @@ WAIST_HIP_TARGET = (
     "than the attached image, never heavier"
 )
 
+import os
+
+from .vision_llm import analyze_with_fallback
+
 _TOKENS = {"${bustTarget}": BUST_TARGET, "${waistHipTarget}": WAIST_HIP_TARGET}
+
+_GATE_PROMPT_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "prompts", "bust_gate_v1.txt")
+
+# 사전 게이트(2026-08-19 오너 승인) — 편집 콜(45~65초·$0.14) 전에 값싼 판정(~$0.01)으로
+# "이미 가슴 볼륨이 충분히 표현돼 있나"를 묻는다. 근거 실측: 보정 적용 66건 중 47% 가 회귀
+# 판정으로 폐기(8/1~). untuck 게이트와 같은 **비대칭**: 스킵은 확신에 찬 adequate 뿐이고
+# insufficient/unclear/판정실패/게이트 off 는 전부 기존 동작(편집 실행)이다.
+GATE_SKIP_CONFIDENCE = 0.85
+
+_GATE_VERDICTS = {"adequate", "insufficient", "unclear"}
+
+
+def gate_schema() -> dict:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "verdict": {"type": "string", "enum": sorted(_GATE_VERDICTS)},
+            "confidence": {"type": "number"},
+        },
+        "required": ["verdict", "confidence"],
+    }
+
+
+def validate_gate(raw: dict | None) -> dict:
+    """스키마 밖 값은 전부 '편집 실행' 쪽으로 눕힌다 — mannequin_untuck.validate_gate 와 동일 규약."""
+    raw = raw if isinstance(raw, dict) else {}
+    verdict = raw.get("verdict")
+    if verdict not in _GATE_VERDICTS:
+        verdict = "unclear"
+    c = raw.get("confidence")
+    confidence = (
+        float(c)
+        if isinstance(c, (int, float)) and not isinstance(c, bool) and 0 <= c <= 1
+        else 0.0)
+    return {"verdict": verdict, "confidence": confidence}
+
+
+def gate_skips(result: dict) -> bool:
+    """확신에 찬 adequate 만 편집을 건너뛴다 (순수)."""
+    return (result.get("verdict") == "adequate"
+            and result.get("confidence", 0.0) >= GATE_SKIP_CONFIDENCE)
+
+
+async def judge_gate(settings, cut_image) -> dict:
+    """생성본 1장만 보고 가슴 볼륨이 이미 충분한지 판정한다. 실패는 호출자가 잡아 편집 실행."""
+    with open(_GATE_PROMPT_FILE, encoding="utf-8") as f:
+        prompt = f.read()
+    model = getattr(settings, "mannequin_bust_gate_model", "") or ""
+    raw, _provider = await analyze_with_fallback(
+        settings, prompt, [cut_image], gate_schema(),
+        models={"gemini": model} if model else None)
+    return validate_gate(raw)
 
 
 # 가슴을 덮는 옷. 2패스는 이 카테고리에서만 의미가 있다.

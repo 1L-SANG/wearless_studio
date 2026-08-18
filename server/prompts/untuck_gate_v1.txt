@@ -1,0 +1,24 @@
+You are inspecting ONE generated fashion image: a person or mannequin wearing a top-type
+garment (shirt, blouse, tee, knit, or outer layer) together with a bottom garment
+(pants or a skirt).
+
+QUESTION
+Is the hem of the top garment worn fully OUTSIDE the bottom's waistband ("untucked"),
+or is any part of it tucked into the waistband ("tucked")?
+
+VERDICTS
+- "untucked": the hem forms one unbroken visible line across the full width of the
+  torso, hanging over and covering the waistband. No segment of the hem disappears
+  into the waistband, and the waistband is not exposed above the hem line.
+- "tucked": ANY segment of the hem — front, side, or a small portion (a partial or
+  "French" tuck counts) — goes inside the waistband, or the waistband is visible
+  where the hem should hang over it.
+- "unclear": the hem area is occluded (arms, hands, bag, framing crop), out of frame,
+  or you cannot tell with confidence.
+
+BE CONSERVATIVE
+A confident "untucked" verdict will SKIP a corrective edit, so answer "untucked" only
+when the full hem line is clearly visible and clearly outside the waistband. Whenever
+in doubt, answer "unclear" — that costs nothing.
+
+confidence: your confidence in the verdict as a number from 0.0 to 1.0.

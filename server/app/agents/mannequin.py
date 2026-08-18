@@ -43,6 +43,36 @@ _FINE_PATTERN_TOKENS = (
 )
 
 
+# 로고·레터링·프린트 상품 감지 토큰 (2026-08-19 해상도 A/B). 1K 에서 작은 글자가 뭉개져
+# "로고 변형" 재롤·구제의 주 원인이었고, 2K 는 1K 와 요금이 같아(공식 표 출력 1,120tok 동일)
+# 과탐 비용이 0 이다 — has_fine_pattern 과 같은 이유로 넓게 잡는다.
+_LOGO_TEXT_TOKENS = (
+    "로고", "레터링", "프린트", "프린팅", "자수", "그래픽", "와펜", "브랜드", "텍스트", "라벨",
+    "logo", "lettering", "print", "graphic", "embroider", "monogram", "wappen", "text",
+)
+
+
+def has_logo_text(product: dict | None, analysis: dict | None) -> bool:
+    """로고·글자·프린트가 있는 상품인가 — 셀러·AI 텍스트에서 찾는다(순수).
+
+    has_fine_pattern 과 동일한 소스(이름·특징·카테고리)를 훑는다. 실측 예: 캘빈클라인 티의
+    sellingPoints = ["가슴 레터링 로고", "소매 라벨 탭"]. 미탐이 실손해(글자 깨진 컷 출고)고
+    과탐은 비용 0(1K↔2K 동일 요금)이라 넓게 잡는다.
+    """
+    parts = []
+    for src in (product or {}), (analysis or {}):
+        for key in ("name", "suggestedName", "customCategory", "subCategory"):
+            v = src.get(key)
+            if isinstance(v, str):
+                parts.append(v)
+        for key in ("sellingPoints", "aiSuggestedPoints", "styleTags"):
+            v = src.get(key)
+            if isinstance(v, list):
+                parts.extend(x for x in v if isinstance(x, str))
+    blob = " ".join(parts).lower()
+    return any(tok.lower() in blob for tok in _LOGO_TEXT_TOKENS)
+
+
 def has_fine_pattern(product: dict | None, analysis: dict | None) -> bool:
     """미세 반복 패턴 상품인가 — 셀러·AI 가 쓴 텍스트에서 찾는다(순수).
 

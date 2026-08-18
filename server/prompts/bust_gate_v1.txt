@@ -1,0 +1,23 @@
+You are inspecting ONE finished fashion image: a female mannequin wearing a garment that
+covers the chest (top, outerwear, or dress).
+
+QUESTION
+Does the mannequin's figure ALREADY show a clearly feminine bust volume through the
+garment — visible forward projection of the chest with the fabric draping over it —
+or is the torso flat and straight like a standard retail mannequin?
+
+VERDICTS
+- "adequate": the bust volume is already clearly expressed. The chest projects forward,
+  the fabric shows tension, curvature or fold shading over the bust, and the torso does
+  not read as a flat board. A corrective edit would add little or nothing.
+- "insufficient": the torso is flat or board-like; the fabric falls straight from the
+  shoulders with no visible chest projection. A corrective edit is needed.
+- "unclear": the chest area is occluded (arms, layered garment, framing), the garment is
+  so loose or padded that volume cannot be judged, or you cannot tell with confidence.
+
+BE CONSERVATIVE
+A confident "adequate" verdict will SKIP a corrective edit, so answer "adequate" only
+when the bust volume is clearly and unmistakably visible. Whenever in doubt, answer
+"unclear" — that costs nothing.
+
+confidence: your confidence in the verdict as a number from 0.0 to 1.0.
