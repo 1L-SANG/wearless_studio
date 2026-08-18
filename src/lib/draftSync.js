@@ -24,12 +24,15 @@ import { draftPromotionSession } from '@/lib/draftPromotionSession.js';
 import { startCustomMatchPromotion, stripLocalCustomMatch } from '@/lib/customMatchPromotion.js';
 import { invalidateStoryboardEntryPrefetch } from '@/features/storyboard/storyboardEntryPrefetch.js';
 
-async function runDraftSync(draft, { projectId: existing } = {}) {
+async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhotoProgress } = {}) {
   // 서버 createProject 는 명시적 Idempotency-Key 를 지원하지 않는다. 프로젝트를 만든 즉시
   // localStorage 에 기록해 새로고침 뒤에도 같은 행으로 합류한다.
   const persisted = draftPromotionSession.read();
   const projectId = existing ?? persisted.projectId ?? (await api.createProject()).id;
   draftPromotionSession.rememberProject(projectId);
+  // 프로젝트 신원이 생긴 순간 알린다 — CTA 는 여기까지만 기다리고 화면을 넘긴다. 남은 업로드·
+  // 저장은 콘티보드가 구독하는 프라미스로 이어진다(2026-08-18: 업로드 대기 44~211초 제거).
+  onProjectReady?.(projectId);
 
   try {
     // 성공한 사진별 asset 매핑도 즉시 기록한다. 중간 실패·새로고침 뒤 재시도는 이미 올라간
@@ -43,13 +46,20 @@ async function runDraftSync(draft, { projectId: existing } = {}) {
     if (unsupported) {
       console.warn(`[promote] 업로드할 수 없는 사진 ${unsupported}장을 건너뜁니다.`);
     }
+    let done = 0;
+    onPhotoProgress?.({ done, total: uploadable.length });
     const pairs = await Promise.all(
       uploadable.map(async (p) => {
         const cached = draftPromotionSession.read().assets?.[p.imageId];
-        if (cached?.assetId && cached?.url) return [p.imageId, cached];
+        const settle = (value) => {
+          done += 1;
+          onPhotoProgress?.({ done, total: uploadable.length });
+          return value;
+        };
+        if (cached?.assetId && cached?.url) return settle([p.imageId, cached]);
         const uploaded = await api.uploadPhoto(projectId, p);
         draftPromotionSession.rememberAsset(p.imageId, uploaded);
-        return [p.imageId, uploaded];
+        return settle([p.imageId, uploaded]);
       }),
     );
     const uploadByImageId = Object.fromEntries(pairs);  // imageId -> {assetId, url}

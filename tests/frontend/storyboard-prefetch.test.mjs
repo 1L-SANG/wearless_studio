@@ -73,7 +73,7 @@ test('a ready cache hit initializes content and skips the empty loading state', 
   assert.match(storyboardSource, /const initialEntry = initialEntryRef\.current\?\.prepared/);
   assert.match(storyboardSource, /useState\(\(\) => initialEntry\?\.blocks \|\| null\)/);
   assert.match(storyboardSource, /useState\(\(\) => initialEntry\?\.catalogs \|\| null\)/);
-  assert.match(storyboardSource, /if \(!blocks \|\| !catalogs\) return <StoryboardLoadingState \/>/);
+  assert.match(storyboardSource, /if \(!blocks \|\| !catalogs\) return <StoryboardLoadingState/);
 });
 
 test('missing, stale, invalidated, and failed entries stay unavailable for the empty loading state', async () => {
@@ -106,10 +106,11 @@ test('missing, stale, invalidated, and failed entries stay unavailable for the e
   assert.equal(failedLoads, 1);
 
   const loadingState = storyboardSource.slice(
-    storyboardSource.indexOf('function StoryboardLoadingState()'),
+    storyboardSource.indexOf('function StoryboardLoadingState('),
     storyboardSource.indexOf('function prepareStoryboardEntry'),
   );
-  assert.match(loadingState, /role="status" aria-busy="true"[\s\S]*?콘티보드를 불러오는 중이에요/);
+  assert.match(loadingState, /role="status" aria-busy="true"/);
+  assert.match(loadingState, /콘티보드를 불러오는 중이에요/);
   assert.doesNotMatch(loadingState, /PageHead|sb-loading-|StoryboardLoadingFrame/);
 });
 

@@ -102,6 +102,10 @@ import {
 } from '@/lib/storyboardExampleSelection.js';
 import { mineImageUrl, normalizeMineImages, promoteMineImage } from '@/lib/storyboardMineImages.js';
 import { requestMannequinGeneration } from '@/features/mannequin/generationRunner.js';
+import {
+  getProductPhotoPromotionTask,
+  productPhotosReady,
+} from '@/lib/productPhotoPromotion.js';
 import { waitForAnalysisEditSave } from '@/features/product-input/saveRouting.js';
 import { selectStoryboardCopywriting } from './copywritingSelection.js';
 import { applyStoryboardComposeMode } from './storyboardComposeMode.js';
@@ -1753,11 +1757,39 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   );
 }
 
-function StoryboardLoadingState() {
+/* 업로드 진행률 — 확정 CTA 는 프로젝트 신원까지만 기다리고 넘어오므로, 남은 사진 업로드는
+   이 화면에서 정착한다. 몇 장 중 몇 장인지 보여주지 않으면 셀러는 얼마나 남았는지 알 수 없다
+   (오너 요구, 2026-08-18). task 가 없으면(이미 끝난 세션·복원 진입) 아무것도 그리지 않는다. */
+function usePhotoUploadProgress(projectId) {
+  const [state, setState] = useState(null);
+  useEffect(() => {
+    const task = getProductPhotoPromotionTask(projectId);
+    if (!task?.subscribe) { setState(null); return undefined; }
+    return task.subscribe(setState);
+  }, [projectId]);
+  if (!state || state.status !== 'pending' || !state.total) return null;
+  return state;
+}
+
+function StoryboardLoadingState({ photoUpload = null }) {
   // 빈 div 의 aria-label 은 낭독되지 않을 수 있다 — 숨긴 텍스트 + status 로 알린다(리뷰 반영)
+  const label = photoUpload
+    ? `사진 ${photoUpload.total}장 중 ${photoUpload.done}장 올렸어요`
+    : '콘티보드를 불러오는 중이에요';
   return (
     <div role="status" aria-busy="true">
-      <span className="sr-only">콘티보드를 불러오는 중이에요</span>
+      <span className="sr-only">{label}</span>
+      {photoUpload && (
+        <div className="sb-upload-progress">
+          <p className="sb-upload-progress-text">{label}</p>
+          <div className="sb-upload-progress-track">
+            <div
+              className="sb-upload-progress-bar"
+              style={{ width: `${Math.round((photoUpload.done / photoUpload.total) * 100)}%` }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2233,7 +2265,15 @@ export function Storyboard() {
     return () => { active = false; };
   }, [initialRevealReady]);
 
+  // 훅은 로딩 early-return 위에 둔다(CLAUDE.md — 훅 개수 불변).
+  const photoUploadProgress = usePhotoUploadProgress(
+    pidRef.current || useAppStore.getState().projectId,
+  );
+
   useEffect(() => {
+    // 사진 업로드 정착을 여기서 기다리므로(수십 초 가능) 언마운트 후 setState 를 막는 플래그가
+    // 필요하다. 종전에는 즉시 끝나는 로드라 없어도 무방했다.
+    let active = true;
     (async () => {
       const requestedProjectId = pidRef.current || useAppStore.getState().projectId;
       try {
@@ -2249,6 +2289,18 @@ export function Storyboard() {
         // ProductInput의 이탈 cleanup이 마지막 색상 PATCH를 막 시작했을 수 있다. 같은 project의
         // 저장만 기다린 뒤 생성/콘티 GET을 시작해, 빠른 브라우저 뒤로가기에서도 옛 색을 읽지 않는다.
         await waitForAnalysisEditSave(pid);
+        // 확정 CTA 는 프로젝트 신원까지만 기다리고 넘어온다 — 상품 사진 업로드·저장은 여기서
+        // 정착한다. 보드 시드가 상품 색상을 읽으므로(shapes.defaultStoryboard) 저장 전에 읽으면
+        // 빈 상품으로 시드된다. 기다리는 동안 화면은 진행률을 보여준다(아래 photoUpload 상태).
+        await productPhotosReady(pid).catch(() => null);
+        if (!active) return;
+        // 업로드가 실패로 끝났다면 셀러가 알아야 한다. 이 화면은 사진 없이도 뜨지만, 그대로
+        // 생성에 들어가면 "상품 사진을 찾을 수 없어요"로 뒤늦게 막힌다. 로컬 draft 는 실패 시
+        // 지우지 않으므로(ProductInput), 입력으로 돌아가면 사진이 남아 있다.
+        if (getProductPhotoPromotionTask(pid)?.status === 'failed') {
+          pushToast('사진 업로드를 끝내지 못했어요. 입력 화면에서 다시 시도해 주세요.',
+            { icon: 'alertTri', duration: 8000 });
+        }
         // 마네킹컷 생성은 콘티 로드와 병렬로 돌리되, 재료인 내 옷 승격만은 먼저 정착시킨다.
         // fail-open 결과도 resolve되므로 등록 실패가 마네킹 생성을 막지는 않는다.
         const customMatchTask = getCustomMatchPromotionTask(pid);
@@ -2315,9 +2367,10 @@ export function Storyboard() {
           }
         }
       } catch (error) {
-        setLoadError(classifyStoryboardLoadError(error, STORYBOARD_NETWORK_ERROR_MESSAGE));
+        if (active) setLoadError(classifyStoryboardLoadError(error, STORYBOARD_NETWORK_ERROR_MESSAGE));
       }
     })();
+    return () => { active = false; };
   }, [loadRetry]);
   /* 보드 썸네일 선캐싱 — 트리거 ① 보드 내용이 확정/변경될 때마다(진입·컷 추가·예시 교체).
      이미 데운 URL은 모듈 캐시가 걸러내므로 재실행이 중복 요청을 만들지 않는다. */
@@ -2449,7 +2502,7 @@ export function Storyboard() {
       )}
     </div></div>
   );
-  if (!blocks || !catalogs) return <StoryboardLoadingState />;
+  if (!blocks || !catalogs) return <StoryboardLoadingState photoUpload={photoUploadProgress} />;
 
   const composeModeApplies = isDefaultStoryboardForMode(
     blocks,

@@ -35,6 +35,12 @@ import {
   retryDraftPromotion,
 } from '@/lib/draftSync.js';
 import {
+  adoptProductPhotoPromotion,
+  NEW_PROJECT_KEY,
+  productPhotosReady,
+  startProductPhotoPromotion,
+} from '@/lib/productPhotoPromotion.js';
+import {
   draftSlot,
   formatDraftClock,
   formatDraftRelativeTime,
@@ -640,7 +646,12 @@ export function ProductInput() {
     if (!analysisProjectId || phase !== 'done') return;
     if (storyboardPrefetchProjectRef.current === analysisProjectId) return;
     storyboardPrefetchProjectRef.current = analysisProjectId;
-    void prefetchStoryboardEntry(analysisProjectId);
+    // 사진 업로드·상품 저장이 아직 돌고 있으면 기다린다. 콘티 시드는 상품 색상을 읽으므로
+    // (shapes.defaultStoryboard) 저장 전에 데우면 **빈 상품으로 시드된 보드**가 캐시되고,
+    // 콘티보드는 그 캐시를 그대로 즉시 표시한다 — 잘못된 보드가 굳는다(2026-08-18).
+    void productPhotosReady(analysisProjectId)
+      .catch(() => null)
+      .then(() => prefetchStoryboardEntry(analysisProjectId));
   }, [analysisProjectId, phase]);
 
   useEffect(() => {
@@ -711,10 +722,35 @@ export function ProductInput() {
         // 프로젝트를 만들기 전에 서버 잠금 안에서 active token을 소비한다. 여기서 409면
         // 작업권을 잃은 기기는 승격 자체를 시작하지 않는다.
         await draftSlot.remove();
-        const { projectId, customMatchPromotion } = await promoteDraftToProject(draft);
+        // CTA 는 **프로젝트 신원까지만** 기다린다. 사진 업로드·상품 저장은 그 뒤로 계속 돌고,
+        // 콘티보드가 그 프라미스를 구독해 진행률을 보여주고 마네킹 생성 전에 정착을 기다린다.
+        // 이 대기를 CTA 에 두면 사진 용량에 정비례해 화면이 멈춘다(실측 44~211초, 2026-08-17).
+        const photoCount = (draft.photos || []).length;
+        let promotion;
+        const projectId = await new Promise((resolve, reject) => {
+          let settled = false;
+          const task = startProductPhotoPromotion(NEW_PROJECT_KEY, photoCount, ({ onPhotoProgress }) => (
+            promoteDraftToProject(draft, {
+              onProjectReady: (id) => {
+                if (settled) return;
+                settled = true;
+                // 진행률 task 를 실제 projectId 로 옮겨 붙인다 — 콘티보드는 그 키로 구독한다.
+                adoptProductPhotoPromotion(NEW_PROJECT_KEY, id);
+                resolve(id);
+              },
+              onPhotoProgress,
+            })
+          ));
+          promotion = task;
+          task.promise.then((value) => {
+            if (!settled) { settled = true; resolve(value?.projectId); }
+          }, (error) => {
+            if (!settled) { settled = true; reject(error); }
+          });
+        });
         promotedProjectId = projectId;
         if (!isCurrentRun()) return;
-        // 여기부터는 CTA 비대기 구간이다. 내 옷 승격은 이미 시작됐고 콘티보드가 그 프라미스를
+        // 여기부터는 CTA 비대기 구간이다. 내 옷 승격도 이미 시작됐고 콘티보드가 그 프라미스를
         // 구독해 준비 상태·완료 반영·실패 안내를 맡는다.
         // 게스트로 편집(재생성 신호 dirty)한 뒤 세션이 생겨 여기서 처음 project 를 얻는 경로 —
         // '다른 작업으로 전환'이 아니라 같은 작업이 신원을 얻는 것뿐이라 신호를 지우면 안 된다.
@@ -724,11 +760,14 @@ export function ProductInput() {
         navigate('/create/storyboard', {
           state: {
             showMannequinTransition: true,
-            customMatchPromotionStarted: Boolean(customMatchPromotion),
+            customMatchPromotionStarted: true,
           },
         });
-        // 로컬 draft 정리는 화면 이동을 붙잡을 이유가 없으며, 실행 중 승격은 blob 참조를 이미 갖고 있다.
-        void clearDraft().then(() => { resetDraftSyncSingleFlight(); }).catch(() => {});
+        // 로컬 draft 는 **업로드가 끝난 뒤에** 지운다 — 업로드 중 탭이 닫히면 그 draft 가 유일한
+        // 사진 원본이라, 먼저 지우면 재시도할 재료가 없어진다.
+        void promotion.promise
+          .then(() => clearDraft().then(() => { resetDraftSyncSingleFlight(); }))
+          .catch(() => {});
         return;
       }
       openLogin('/create/storyboard');
