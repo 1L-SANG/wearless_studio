@@ -342,18 +342,21 @@ def effective_image_size(s, product: dict | None, analysis: dict | None) -> str:
     2px 남짓이라 두 색 줄이 한 색으로 뭉개졌다. 해상도가 곧 재현 한계인 축이라 프롬프트로는
     못 넘는다. 무지 상품은 재현할 고주파가 없어 승급하지 않는다 — 비용만 늘고 결과는 같다.
     """
-    base = s.mannequin_image_size
+    # 적용 가능한 승급들 중 **최댓값** 하나를 고른다(리뷰 2026-08-19): 패턴 분기가 무조건
+    # return 하면 운영자가 패턴 크기를 내렸을 때 패턴+로고 상품의 로고 승급이 평가조차 안
+    # 된다. 로고 2K 는 해상도 A/B 근거(1K 실컷 0/3 vs 2K 3/4 통과, pro 요금 동일).
+    # 승급은 절대 base 를 깎지 않는다.
     rank = {"1K": 1, "2K": 2, "4K": 3}
-    pattern = getattr(s, "mannequin_pattern_image_size", "OFF")
-    if pattern not in (None, "", "OFF") and mannequin.has_fine_pattern(product, analysis):
-        # 패턴 승급(4K)은 로고 승급(2K)의 상위 호환 — 둘 다 해당하면 여기서 끝난다.
-        return pattern if rank.get(pattern, 0) > rank.get(base, 0) else base
-    # 로고·텍스트 상품 2K 승급 (2026-08-19 해상도 A/B: 1K 실컷 0/3 통과·글자 깨짐,
-    # 2K 3/4 통과 — 1K 와 요금 동일이라 승급 비용 0). 승급은 절대 base 를 깎지 않는다.
-    logo = getattr(s, "mannequin_logo_image_size", "OFF")
-    if logo not in (None, "", "OFF") and mannequin.has_logo_text(product, analysis):
-        return logo if rank.get(logo, 0) > rank.get(base, 0) else base
-    return base
+    best = s.mannequin_image_size
+    upgrades = (
+        (getattr(s, "mannequin_pattern_image_size", "OFF"), mannequin.has_fine_pattern),
+        (getattr(s, "mannequin_logo_image_size", "OFF"), mannequin.has_logo_text),
+    )
+    for size, applies in upgrades:
+        if size not in (None, "", "OFF") and rank.get(size, 0) > rank.get(best, 0) \
+                and applies(product, analysis):
+            best = size
+    return best
 
 
 def tier_for_job(s, job: dict | None) -> str:
@@ -910,12 +913,34 @@ async def _observe_generation_qc(
                 "error": type(e).__name__, "message": str(e)[:200]})
             return None
 
-    p2, base_fidelity = await asyncio.gather(
-        _judge_identity(),
-        _apply_base_fidelity_qc(
-            pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
-            base_img=base_img, res=res, product=product, analysis=analysis))
+    async def _judge_base_fidelity():
+        # _apply_base_fidelity_qc 는 "예외를 안 올린다"가 계약이지만 문서 약속일 뿐이다 —
+        # 성공 경로 emit 이 try 밖에서 result shape 을 읽는다(리뷰 2026-08-19). 여기서 한 번
+        # 더 잡는다: 깨지면 gather 가 후보 전체를 죽이고 동일성 판정 태스크를 고아로 만든다.
+        try:
+            return await _apply_base_fidelity_qc(
+                pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
+                base_img=base_img, res=res, product=product, analysis=analysis)
+        except Exception as e:
+            log.warning("base fidelity QC broke its no-raise contract for job %s: %r", job_id, e)
+            return None
+
+    p2, base_fidelity = await asyncio.gather(_judge_identity(), _judge_base_fidelity())
     return p2, base_fidelity
+
+
+async def _judge_edit_gate(gate_module, s, res, job_id, *, label: str) -> dict:
+    """편집 게이트 공통 발화(untuck·bust) — 판정 실패는 gate_error 로 눕혀 fail-open.
+
+    gate_error 는 gate_skips 가 항상 False 라 편집이 그대로 실행된다(오늘 상태).
+    호출부는 플래그 검사와 이벤트 필드 기록만 책임진다 — 발화·실패 처리가 게이트마다
+    갈라지면 두 게이트의 위험 성향이 달라진다(리뷰 2026-08-19, edit_gate 와 같은 이유).
+    """
+    try:
+        return await gate_module.judge_gate(s, InlineImage(res.mime, res.image))
+    except Exception as e:
+        log.warning("%s gate judge failed for job %s (편집은 그대로 실행): %r", label, job_id, e)
+        return {"verdict": "gate_error", "confidence": 0.0}
 
 
 async def _apply_bust_pass(
@@ -948,11 +973,7 @@ async def _apply_bust_pass(
     # 만 스킵(예산도 안 씀), 나머지 전부 아래 기존 경로. untuck 게이트와 같은 비대칭·fail-open.
     gate = None
     if getattr(s, "mannequin_bust_gate", "off") == "on":
-        try:
-            gate = await mannequin_bust.judge_gate(s, InlineImage(res.mime, res.image))
-        except Exception as e:
-            log.warning("bust gate judge failed for job %s (편집은 그대로 실행): %r", job_id, e)
-            gate = {"verdict": "gate_error", "confidence": 0.0}
+        gate = await _judge_edit_gate(mannequin_bust, s, res, job_id, label="bust")
         if mannequin_bust.gate_skips(gate):
             await _emit(pool, job_id, "step", {
                 "candidate": candidate, "attempt": attempt, "status": "bust_pass",
@@ -1013,15 +1034,12 @@ async def _apply_untuck_postpass(
         return res
     # 사전 게이트(2026-08-19 오너 승인) — 값싼 판정으로 "이미 빠져 있나"를 묻고 확신에 찬
     # untucked 만 편집을 스킵한다. tucked/unclear/판정실패는 전부 아래 기존 경로(무조건 편집).
-    # "항상 1회" 계약(모듈 주석 5항)의 예외가 아니라 정제다: 게이트가 완전히 틀려도 최악이
-    # 오늘 상태(편집 실행)이고, 스킵률·오탐은 untuck_gate 이벤트 필드로 관측한다.
+    # "항상 1회" 계약(모듈 주석 5항)의 예외가 아니라 정제다. 유일한 하방은 판정기가 **자신
+    # 있게 틀린** 스킵(실제 tuck 을 untucked 0.9 로 읽음)이며, 보수 프롬프트와 공유 임계로
+    # 관리한다(edit_gate 규약·오너 승인). 스킵률·오탐은 untuck_gate 이벤트 필드로 관측한다.
     if getattr(s, "mannequin_untuck_gate", "off") == "on":
         await _cancel_checkpoint(cancel_check)
-        try:
-            gate = await mannequin_untuck.judge_gate(s, InlineImage(res.mime, res.image))
-        except Exception as e:
-            log.warning("untuck gate judge failed for job %s (편집은 그대로 실행): %r", job_id, e)
-            gate = {"verdict": "gate_error", "confidence": 0.0}
+        gate = await _judge_edit_gate(mannequin_untuck, s, res, job_id, label="untuck")
         summary["untuck_gate"] = gate
         if mannequin_untuck.gate_skips(gate):
             await _emit(pool, job_id, "step", {**summary, "untuck_outcome": "skipped_gate"})

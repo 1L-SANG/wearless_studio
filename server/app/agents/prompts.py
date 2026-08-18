@@ -27,6 +27,8 @@ _DEFAULT_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_generate_v1.tx
 _BUST_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_bust_v3.txt")
 _FABRIC_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_fabric_v1.txt")
 _UNTUCK_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_untuck_v1.txt")
+_UNTUCK_GATE_PROMPT = os.path.join(_SERVER_DIR, "prompts", "untuck_gate_v1.txt")
+_BUST_GATE_PROMPT = os.path.join(_SERVER_DIR, "prompts", "bust_gate_v1.txt")
 
 
 def _sanitize(value: Any) -> str:
@@ -79,6 +81,18 @@ def load_fabric_prompt_template() -> str:
 def load_untuck_prompt_template() -> str:
     """untuck 2패스 템플릿. 같은 규약 — env 오버라이드 없음."""
     with open(_UNTUCK_PROMPT, encoding="utf-8") as f:
+        return f.read()
+
+
+def load_untuck_gate_prompt_template() -> str:
+    """untuck 사전 게이트 판정 템플릿. 같은 규약 — env 오버라이드 없음."""
+    with open(_UNTUCK_GATE_PROMPT, encoding="utf-8") as f:
+        return f.read()
+
+
+def load_bust_gate_prompt_template() -> str:
+    """가슴 보정 사전 게이트 판정 템플릿. 같은 규약 — env 오버라이드 없음."""
+    with open(_BUST_GATE_PROMPT, encoding="utf-8") as f:
         return f.read()
 
 

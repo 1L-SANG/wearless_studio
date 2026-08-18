@@ -7,8 +7,14 @@
 **생성** 프롬프트에는 없었다 — 이 테스트가 그 가드의 존재를 고정한다.
 """
 
+from pathlib import Path
+
+import pytest
+
 from app.workers.mannequin_job import load_prompt_template
 from tests.conftest import make_settings
+
+_PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
 
 
 def test_generation_prompt_forbids_lengthening_to_achieve_untuck():
@@ -23,3 +29,14 @@ def test_generation_prompt_forbids_lengthening_to_achieve_untuck():
     assert "not permission to lengthen" in bottom_block, \
         "기장 보존 가드는 MATCHING BOTTOM(언턱 지시) 블록 안에 있어야 한다"
     assert "product photos" in bottom_block and "length" in bottom_block
+
+
+@pytest.mark.parametrize("fname,marker", [
+    ("mannequin_generate_v1.txt", "not permission to lengthen"),
+    ("mannequin_generate_v1.ko.txt", "기장을 늘릴 면허가 아니다"),
+], ids=["en", "ko"])
+def test_hem_guard_exists_in_both_templates(fname, marker):
+    """리뷰 지적(8/19): MANNEQUIN_PROMPT_FILE 로 ko 템플릿이 켜져도 기장 가드가 살아야
+    한다 — garment_body_contact 테스트와 같은 양쪽 템플릿 동등 관례."""
+    text = (_PROMPTS / fname).read_text(encoding="utf-8")
+    assert marker in text, f"{fname} 에 기장 보존 가드가 없다"

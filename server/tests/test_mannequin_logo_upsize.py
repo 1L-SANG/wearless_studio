@@ -33,6 +33,19 @@ def test_has_logo_text_ignores_plain_products():
     assert not mannequin.has_logo_text({}, {})
 
 
+def test_has_logo_text_ignores_generic_marketing_words():
+    """리뷰 지적(8/19): 흔한 단어로 과탐하면 사실상 전 상품 스위치가 된다.
+
+    'text'⊂'textured' 같은 부분일치와, 셀러 문구에 늘 나오는 브랜드/라벨류는
+    글자 재현과 무관하므로 트리거가 아니어야 한다. (진짜 로고 상품은 로고·레터링·
+    프린트 같은 구체 토큰으로 잡힌다 — CK 실사례의 강조특징도 '가슴 레터링 로고'.)
+    """
+    assert not mannequin.has_logo_text({}, {"styleTags": ["textured knit"]})
+    assert not mannequin.has_logo_text({}, {"sellingPoints": ["케어라벨 표기"]})
+    assert not mannequin.has_logo_text({}, {"sellingPoints": ["인기 브랜드 감성"]})
+    assert not mannequin.has_logo_text({"name": "context aware fit tee"}, {})
+
+
 # ---------------------------------------------------------------- 해상도 결정 (순수)
 
 
@@ -60,6 +73,14 @@ def test_plain_product_stays_at_base_size():
 def test_fine_pattern_wins_over_logo():
     """패턴 승급(4K)이 로고 승급(2K)의 상위 호환 — 둘 다면 4K."""
     assert effective_image_size(_s(pattern="4K"), *_PATTERN_LOGO) == "4K"
+
+
+def test_logo_upgrade_survives_lowered_pattern_size():
+    """리뷰 지적(8/19): 패턴 분기가 무조건 return 하면, 운영자가 패턴 크기를 1K 로
+    내렸을 때 패턴+로고 상품의 로고 승급이 평가조차 안 된다 — 적용 가능한 승급 중
+    최댓값을 골라야 한다."""
+    assert effective_image_size(_s(pattern="1K"), *_PATTERN_LOGO) == "2K"
+    assert effective_image_size(_s(pattern="2K"), *_PATTERN_LOGO) == "2K"
 
 
 def test_logo_upgrade_never_downgrades_base():

@@ -87,6 +87,29 @@ def test_image_qc_failure_is_isolated_and_emitted(monkeypatch):
     assert len(fails) == 1 and fails[0]["error"] == "RuntimeError"
 
 
+def test_base_fidelity_raise_does_not_kill_candidate_or_identity_qc(monkeypatch):
+    """리뷰 지적(8/19): base_fidelity 의 '예외를 안 올린다' 계약은 문서 약속일 뿐이라
+    (성공 경로 emit 이 try 밖에서 result shape 을 읽는다), 여기서 한 번 더 잡는다 —
+    깨지면 gather 가 후보 전체를 죽이고 동일성 판정 태스크를 고아로 만든다."""
+    async def fake_verdict(s, prod, gen, **kw):
+        return {"verdict": "pass", "mismatches": []}
+
+    async def fake_base(**kw):
+        raise KeyError("poseFrameMatch")  # 미래의 shape 변경 시나리오
+
+    async def fake_emit(pool, job_id, et, payload):
+        pass
+
+    monkeypatch.setattr(mj, "_emit", fake_emit)
+    monkeypatch.setattr(mj.image_qc, "verdict", fake_verdict)
+    monkeypatch.setattr(mj, "_apply_base_fidelity_qc", fake_base)
+
+    p2, base_fidelity = asyncio.run(mj._observe_generation_qc(
+        **_call(_settings(), prod_imgs=[mj.InlineImage("image/png", b"p1")])))
+    assert p2 == {"verdict": "pass", "mismatches": []}, "동일성 판정은 살아야 한다"
+    assert base_fidelity is None, "깨진 관측은 None — 관측 실패가 생성을 못 죽인다"
+
+
 def test_image_qc_skipped_when_off_or_no_product_images(monkeypatch):
     """스킵 조건(off 모드·상품사진 없음)에서는 판정 콜 자체가 없다 — 직렬 시절과 동일."""
     called = []
