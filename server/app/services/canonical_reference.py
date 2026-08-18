@@ -18,6 +18,7 @@ photo, the old cutout's `sourceAssetId`/`sourceHash` no longer match the current
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import uuid
 
@@ -32,10 +33,34 @@ CANONICAL_FRONT = "CanonicalFront"
 CANONICAL_BACK = "CanonicalBack"
 SLOT_FOR_VIEW = {"Front": CANONICAL_FRONT, "Back": CANONICAL_BACK}
 
+#: Only these views get a cutout. Detail is a macro close-up with no garment silhouette to
+#: isolate, and Fit is a photograph of a person. Lives here rather than in the worker because
+#: the enqueue sites need the same answer to build the job's identity.
+ELIGIBLE_VIEWS = ("Front", "Back")
+
 #: Marks an asset row as one of ours. Detail is deliberately absent: a macro close-up has no
 #: garment silhouette to isolate, so there is no CanonicalDetail.
 CANONICAL_KIND = "canonical_cutout"
 PRODUCER = "sam2_service"
+
+
+def preprocess_idempotency_key(project_id: str, product: dict) -> str | None:
+    """The cutout job's identity: this project's *current* base-colour photographs.
+
+    None when there is nothing to segment — an empty job must never take the key, or the real
+    photographs arriving a moment later would join a `skipped` job and never be segmented.
+
+    The photo ids are IN the key on purpose. A seller who swaps the front photograph has to get
+    a new cutout; a fixed per-project key would keep serving the previous garment's silhouette
+    to every consumer that asks "what does the product look like".
+    """
+    from app.agents import mannequin      # 서비스→에이전트 단방향 (editor_garment_mask 와 같은 결)
+    ids = [aid for slot, aid in mannequin.base_color_images(product)
+           if slot in ELIGIBLE_VIEWS and aid]
+    if not ids:
+        return None
+    digest = hashlib.sha256("|".join(ids).encode("utf-8")).hexdigest()[:16]
+    return f"{project_id}:sam_preprocess:{digest}"
 
 
 def metadata_for(view: str, result, source_asset_id: str) -> dict:
@@ -123,6 +148,22 @@ async def list_for_project(conn, *, project_id: str) -> list[dict]:
             "and metadata->>'canonicalType' = %s order by created_at desc",
             (project_id, CANONICAL_KIND))
         return list(await cur.fetchall())
+
+
+async def current_key(conn, *, project_id: str, view: str, source: dict) -> str | None:
+    """R2 key of the cutout made from *this exact* photograph. None when absent or stale.
+
+    A key, not bytes: the SAM boundary only ever takes trusted R2 keys (`sam_client`), and the
+    service resolves them with its own credentials. Same staleness rule as `load` — a cutout
+    naming a photograph the product no longer has is a picture of the previous garment.
+    """
+    for row in await list_for_project(conn, project_id=project_id):   # newest first
+        meta = row.get("metadata") or {}
+        if meta.get("view") != view:
+            continue
+        if is_current(meta, source_asset_id=source.get("id"), source_hash=source.get("hash")):
+            return row.get("r2_key") or None
+    return None
 
 
 async def load(conn, r2, *, project_id: str,

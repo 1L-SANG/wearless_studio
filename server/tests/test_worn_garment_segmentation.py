@@ -28,7 +28,7 @@ SAM_DIR = pathlib.Path(__file__).resolve().parents[1] / "sam_service"
 # ── 신원: 캐노니컬과 절대 섞이지 않는다 ──────────────────────────────────────
 
 def test_editor_algorithm_identity_is_separate_from_canonical():
-    assert W.ALGORITHM_VERSION == "editor-worn-garment-sam2-v2"
+    assert W.ALGORITHM_VERSION == "editor-worn-garment-sam2-v3"
     assert W.ALGORITHM_VERSION != CANONICAL_ALGORITHM
     assert W.MASK_PREFIX != CUTOUT_PREFIX
 
@@ -326,3 +326,58 @@ def test_produce_without_a_coordinating_garment_keeps_v1_behaviour(monkeypatch):
     pants_only = [_mask(shape, (124, 192, 42, 78))]
     out = _produce_with(monkeypatch, pants_only)
     assert out.match_share == 0.0 and out.matching_side is None
+
+# ── 거부는 포기가 아니다: 다음 수단으로 넘어간다 ─────────────────────────────
+#
+# 2026-08-18 실서버 사고. 코디 하의를 함께 입은 컷 3장이 연달아
+# `no_garment_candidate`("selected mask sits on the matching garment: 0.63~0.73")로 끝나
+# 셀러 화면이 "이 컷은 색감 조정을 지원하지 않아요"가 됐다. 거부 자체는 옳다 — 파는 옷이
+# 아닌 픽셀을 물들이면 안 된다. 잘못은 **거부한 뒤 아무것도 더 시도하지 않은 것**이다.
+
+SHAPE = (200, 120)
+PRODUCT_BOX = (24, 116, 36, 84)
+COORD_BOX = (124, 192, 42, 78)
+
+
+def _produce_trying(monkeypatch, candidates, *, refine_to=None, **kwargs):
+    """`_produce_with` 와 같되 M2M 정제의 결과를 지정할 수 있다(정제가 마스크를 키우는 상황)."""
+    base = _cut_bytes(SHAPE)
+    dressed = _cut_bytes(SHAPE, top_box=PRODUCT_BOX, bottom_box=COORD_BOX)
+    monkeypatch.setattr(W, "generate_candidates", lambda *_a, **_k: list(candidates))
+    monkeypatch.setattr(W, "refine",
+                        lambda _seg, _rgb, mask: (mask if refine_to is None else refine_to))
+    return W.produce(object(), dressed, base, clothing_type="top", **kwargs)
+
+
+def _served(out):
+    from PIL import Image
+    return np.array(Image.open(io.BytesIO(out.png)).convert("L")) > 127
+
+
+def test_refinement_that_spills_onto_the_coordinating_garment_falls_back_to_the_candidate(
+        monkeypatch):
+    """정제가 마스크를 바지까지 키우면 정제 **전** 마스크를 쓴다 — 컷을 통째로 버리지 않는다."""
+    product = _mask(SHAPE, PRODUCT_BOX)
+    spilled = product | _mask(SHAPE, COORD_BOX)
+
+    out = _produce_trying(monkeypatch, [product], refine_to=spilled, matching_side="bottom")
+
+    assert out.match_share <= W.MATCH_ZONE_MAX
+    chosen = _served(out)
+    assert chosen[60, 60] and not chosen[160, 60], "상의는 잡고 바지는 두어야 한다"
+
+
+def test_a_vetoed_winner_hands_over_to_the_next_plausible_candidate(monkeypatch):
+    """1등이 상하의 한 덩어리라 거부되면 2등(허술하지만 상의인) 후보를 쓴다.
+
+    SAM 은 착장 전체를 한 덩어리로 내놓을 때가 잦고, 그 덩어리는 증거를 전부 품어서 점수가
+    높다. 1등이 거부됐다는 이유로 그 컷에서 색감 조정을 통째로 닫을 이유는 없다.
+    """
+    outfit = _mask(SHAPE, PRODUCT_BOX) | _mask(SHAPE, COORD_BOX)
+    sloppy_top = _mask(SHAPE, (70, 116, 4, 116))          # 배경까지 번진 상의 — 점수는 낮다
+
+    out = _produce_trying(monkeypatch, [outfit, sloppy_top], matching_side="bottom")
+
+    assert out.match_share <= W.MATCH_ZONE_MAX
+    chosen = _served(out)
+    assert chosen[100, 60] and not chosen[160, 60], "상의 후보로 내려와야 한다"

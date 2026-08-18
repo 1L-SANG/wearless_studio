@@ -325,3 +325,78 @@ def test_project_owned_keys_are_accepted(good):
 def test_an_over_long_key_is_rejected():
     with pytest.raises(SourceRejected):
         validate_key("users/" + "a" * 600)
+
+
+# ── 주상품 컷아웃 레퍼런스 (2026-08-18) ─────────────────────────────────────
+
+KEY_CUT = KEY_FRONT.replace("uploads/front.jpg", "ai/cut.jpg")
+KEY_BASE = "seed/mannequin/base-women-2K.png"
+KEY_PRODUCT = KEY_FRONT.replace("uploads/front.jpg", "derived/canonical/front.png")
+
+
+def _worn_body(**extra):
+    return {"sourceKey": KEY_CUT, "baseKey": KEY_BASE, "clothingType": "top", **extra}
+
+
+def _worn(client, **extra):
+    return client.post("/segment-worn-garment", json=_worn_body(**extra),
+                       headers={"Authorization": f"Bearer {TOKEN}"})
+
+
+def test_the_product_cutout_is_fetched_and_handed_to_the_selector(monkeypatch):
+    """올린 옷 사진의 컷아웃도 키로 받아 읽고, 채점에 넘긴다."""
+    seen = {}
+
+    def fake_produce(_seg, _gen, _base, **kwargs):
+        seen.update(kwargs)
+        return _worn_mask()
+
+    from sam_service import api as sapi
+    monkeypatch.setattr(sapi.worn_garment, "produce", fake_produce)
+    client, src = _client()
+
+    res = _worn(client, productKey=KEY_PRODUCT)
+
+    assert res.status_code == 200, res.text
+    assert KEY_PRODUCT in src.fetched
+    assert seen["product"] == b"bytes"
+
+
+def test_an_unreadable_product_cutout_does_not_cost_the_mask(monkeypatch):
+    """컷아웃은 보조 근거다 — 못 읽어도 마스크는 나온다(레퍼런스 없이 채점)."""
+    seen = {}
+
+    def fake_produce(_seg, _gen, _base, **kwargs):
+        seen.update(kwargs)
+        return _worn_mask()
+
+    from sam_service import api as sapi
+    monkeypatch.setattr(sapi.worn_garment, "produce", fake_produce)
+    client, _src = _client({KEY_PRODUCT: SourceUnavailable("gone")})
+
+    res = _worn(client, productKey=KEY_PRODUCT)
+
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "ready"
+    assert seen["product"] is None
+
+
+def test_a_mask_made_without_the_reference_is_not_reused_once_it_arrives():
+    """캐시 키가 레퍼런스를 물어야 한다.
+
+    마스크 잡은 마네킹 생성 직후 돌고, 컷아웃 전처리는 그때 아직 안 끝났을 수 있다. 키가
+    레퍼런스를 모르면 먼저 만들어진 "레퍼런스 없는" 마스크가 영원히 캐시 히트로 돌아온다.
+    """
+    from sam_service import worn_garment as W
+    without = W.mask_key("a" * 64)
+    with_ref = W.mask_key("a" * 64, product_key=KEY_PRODUCT)
+    other = W.mask_key("a" * 64, product_key=KEY_PRODUCT + "x")
+
+    assert without != with_ref != other and without != other
+
+
+def _worn_mask():
+    from sam_service.worn_garment import WornGarmentMask
+    return WornGarmentMask(png=_png_bytes(), width=4, height=4, area_frac=0.1, candidates=3,
+                           plausible_candidates=2, selected_score=1.0, evidence=0.9,
+                           m2m=True, source_sha256="a" * 64)

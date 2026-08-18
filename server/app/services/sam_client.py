@@ -90,6 +90,13 @@ class WornGarmentResult:
     matching_side: str | None = None
     match_share: float | None = None
     cached: bool = False
+    #: 내준 마스크가 몇 등 후보에서 나왔고, 그 전에 veto 가 몇 장을 물렸는지. 판단에는 쓰지
+    #: 않는다 — 원장이 "무엇을 시도했는지"에 답하게 하는 계측값이다(2026-08-18).
+    selected_rank: int = 0
+    vetoed_attempts: int = 0
+    #: 내준 마스크가 셀러가 올린 주상품 컷아웃과 얼마나 닮았나(0..1). 0.0 은 "닮지 않았다"가
+    #: 아니라 "레퍼런스가 없었다"일 수 있다 — 둘을 가르려면 productKey 를 함께 본다.
+    product_match: float = 0.0
     code: str | None = None
     message: str | None = None
 
@@ -106,6 +113,9 @@ class WornGarmentResult:
             grid=body.get("grid"), m2m=body.get("m2m"),
             matching_side=body.get("matchingSide"), match_share=body.get("matchShare"),
             cached=bool(body.get("cached")),
+            selected_rank=int(body.get("selectedRank") or 0),
+            vetoed_attempts=int(body.get("vetoedAttempts") or 0),
+            product_match=float(body.get("productMatch") or 0.0),
             code=body.get("code"), message=body.get("message"))
 
 
@@ -118,7 +128,8 @@ def configured(settings) -> bool:
 async def segment_worn_garment(settings, *, source_key: str, base_key: str,
                                clothing_type: str | None,
                                sub_category: str | None = None,
-                               matching_side: str | None = None) -> WornGarmentResult:
+                               matching_side: str | None = None,
+                               product_key: str | None = None) -> WornGarmentResult:
     """Generated mannequin cut -> editor garment mask. Raises `SamUnavailable` on transport failure.
 
     A separate route from `segment_garment` on purpose: that one background-removes a product
@@ -129,6 +140,11 @@ async def segment_worn_garment(settings, *, source_key: str, base_key: str,
     on that side, so the mask stays on the garment being sold. A service that predates the field
     ignores it — the caller verifies the returned mask itself, so deploy order cannot regress the
     guarantee.
+
+    `product_key` is the R2 key of the background-removed cutout of the seller's own front
+    photograph, when one is ready. It answers "what does the garment being sold look like",
+    which geometry alone gets wrong whenever the product is low-contrast against the mannequin
+    and the coordinating garment is not (2026-08-18). Scoring evidence only — never a prompt.
     """
     if not configured(settings):
         raise SamUnavailable("SAM service is not configured (SAM_SERVICE_URL / token)")
@@ -136,7 +152,7 @@ async def segment_worn_garment(settings, *, source_key: str, base_key: str,
     url = f"{settings.sam_service_url}/segment-worn-garment"
     payload = {"sourceKey": source_key, "baseKey": base_key,
                "clothingType": clothing_type, "subCategory": sub_category,
-               "matchingSide": matching_side}
+               "matchingSide": matching_side, "productKey": product_key}
     timeout = float(getattr(settings, "sam_request_timeout_s", 90.0) or 90.0)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:

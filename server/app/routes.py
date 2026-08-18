@@ -33,7 +33,7 @@ from .agents import (
 )
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
-from .services import (editor_garment_mask, garment_grid, input_qc,
+from .services import (canonical_reference, editor_garment_mask, garment_grid, input_qc,
                        mannequin_tone_render, matching, matching_cutout, product_photos,
                        retrieval)
 from .auth import require_user
@@ -782,6 +782,27 @@ async def get_product(
     return row
 
 
+async def _enqueue_canonical_cutout(conn, *, user_id: str, project_id: str,
+                                    product: dict) -> bool:
+    """주상품 사진의 배경 제거 컷아웃(canonical cutout)을 무과금으로 건다.
+
+    두 곳에서 부른다. 분석 라우트는 로그인 상태로 시작한 셀러를, 상품 저장 라우트는 게스트로
+    시작해 로그인 시점에 사진이 서버로 승격되는 셀러를 덮는다 — 후자가 지금의 기본 흐름인데
+    분석이 /public/analyze 로 나가서 분석 라우트를 아예 타지 않는다(2026-08-18: 실서버에서
+    sam_preprocess 가 10일간 1회). 같은 키를 쓰므로 둘 다 걸려도 잡은 하나다.
+
+    호출자가 커밋한다. 실패는 호출자가 삼킨다 — 보조 인프라가 본 기능을 되돌리지 않는다.
+    """
+    key = canonical_reference.preprocess_idempotency_key(project_id, product or {})
+    if not key:
+        return False
+    await repo.create_job(
+        conn, user_id=user_id, project_id=project_id, kind="sam_preprocess",
+        payload={"mode": "canonical_cutout"}, idempotency_key=key,
+        credits_reserved=0, metadata={})
+    return True
+
+
 @router.patch(
     "/projects/{project_id}/product",
     response_model=Product,
@@ -822,6 +843,18 @@ async def save_product(
                     {**analysis, "targetGenders": ["women"]},
                 )
         await conn.commit()
+        # 사진이 서버에 확정된 첫 지점이다. 컷아웃 큐잉 실패가 상품 저장을 500 으로 만들면
+        # 안 되므로 **커밋 뒤에** 별도로 걸고 예외는 삼킨다(analyze 라우트와 같은 규율).
+        try:
+            if await _enqueue_canonical_cutout(
+                    conn, user_id=user_id, project_id=project_id, product=row or {}):
+                await conn.commit()
+                _wake_dispatcher(request)
+        except Exception:  # noqa: BLE001 - 전처리 큐잉 실패가 상품 저장을 막지 않는다
+            with contextlib.suppress(Exception):
+                await conn.rollback()
+            logger.warning("canonical cutout enqueue failed for project %s", project_id,
+                           exc_info=True)
     return row
 
 
@@ -1062,11 +1095,9 @@ async def analyze_product(
         # 됐다(2026-08-12 로컬 QA — jobs_kind_check 에 sam_preprocess 가 없던 시점). 보조
         # 인프라가 본 기능을 죽이지 않는다는 건 주석이 아니라 트랜잭션 경계로 지켜야 한다.
         try:
-            await repo.create_job(
-                conn, user_id=user_id, project_id=project_id, kind="sam_preprocess",
-                payload={"mode": "canonical_cutout"},
-                idempotency_key=f"{project_id}:sam_preprocess",
-                credits_reserved=0, metadata={})
+            await _enqueue_canonical_cutout(
+                conn, user_id=user_id, project_id=project_id,
+                product=await repo.get_product(conn, project_id) or {})
             await conn.commit()
         except Exception:  # noqa: BLE001 - 전처리 큐잉 실패가 분석을 막지 않는다
             # 정리 코드가 다시 터져서 500 이 되면 위 보장이 무의미하다. rollback 실패까지 삼킨다.

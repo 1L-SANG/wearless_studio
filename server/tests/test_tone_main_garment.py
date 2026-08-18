@@ -93,6 +93,9 @@ class _Result:
     cached = False
     matching_side = None
     match_share = 0.0
+    selected_rank = 0
+    vetoed_attempts = 0
+    product_match = 0.0
 
 
 def test_recorded_metadata_states_which_check_ran():
@@ -175,7 +178,8 @@ class _App:
         self.state = type("S", (), {"pool": _Pool(), "r2": r2})()
 
 
-def _run_job(monkeypatch, *, mask_png, matching_side, clothing_type="top"):
+def _run_job(monkeypatch, *, mask_png, matching_side, clothing_type="top", result=_Result,
+             product_extra=None, product_cutout_key=None):
     """마스크 잡 한 번. DB·SAM·R2 는 대역, 판정 로직은 진짜."""
     finished = {}
     recorded = {}
@@ -189,7 +193,7 @@ def _run_job(monkeypatch, *, mask_png, matching_side, clothing_type="top"):
 
     async def segment(_s, **kwargs):
         recorded["request"] = kwargs
-        return type("R", (_Result,), {})()
+        return type("R", (result,), {})()
 
     async def finalize(_conn, *, job_id, lease_token, status, result):
         finished.update({"status": status, "result": result})
@@ -205,7 +209,10 @@ def _run_job(monkeypatch, *, mask_png, matching_side, clothing_type="top"):
     monkeypatch.setattr(job.repo, "get_mannequin_cut_asset",
                         lambda *_a, **_k: _async({"id": "cut-1", "r2_key": "cuts/a.jpg"}))
     monkeypatch.setattr(job.repo, "get_product",
-                        lambda *_a, **_k: _async({"clothing_type": clothing_type}))
+                        lambda *_a, **_k: _async({"clothing_type": clothing_type,
+                                                  **(product_extra or {})}))
+    monkeypatch.setattr(job.canonical_reference, "current_key",
+                        lambda *_a, **_k: _async(product_cutout_key))
     monkeypatch.setattr(job.repo, "get_analysis",
                         lambda *_a, **_k: _async({"matchSelections": [
                             {"clothingId": "m1", "role": "main"}]}))
@@ -351,3 +358,61 @@ def test_reset_is_always_allowed_even_without_a_usable_mask():
     neutral_at = src.index("is_neutral(")
     guard_at = src.index('_bad_request("mask_not_ready"')
     assert neutral_at < guard_at, "초기화 분기가 마스크 요구보다 앞에 있어야 한다"
+
+
+def test_the_ledger_says_how_hard_the_guard_had_to_work(monkeypatch):
+    """몇 등 후보를 내줬고 그 전에 몇 장을 거부했는지 잡 기록에 남긴다.
+
+    2026-08-18 사고 때 실서버 기록에는 거부 사실만 있고 "무엇을 시도했는지"가 없어서, 1등이
+    원래 바지였는지 정제가 번진 건지 코드를 읽고 추측해야 했다. 다음엔 기록이 답하게 한다.
+    """
+    class _FellBack(_Result):
+        selected_rank = 2
+        vetoed_attempts = 3
+        product_match = 0.81
+
+    finished, _recorded, _r2 = _run_job(
+        monkeypatch, mask_png=_mask_png((100, 60), (12, 56, 15, 45)), matching_side="bottom",
+        result=_FellBack)
+
+    assert finished["result"]["state"] == "ready"
+    assert finished["result"]["selectedRank"] == 2
+    assert finished["result"]["vetoedAttempts"] == 3
+    assert finished["result"]["productMatch"] == 0.81, "올린 옷과 얼마나 닮았는지도 남는다"
+
+
+def test_the_cuts_stranded_by_the_2026_08_18_veto_are_not_stranded_forever():
+    """1등 하나 거부하고 포기하던 시절의 알고리즘 신원은 재사용하지 않는다.
+
+    마스크 잡의 멱등키와 SAM 캐시 키가 둘 다 이 값을 물고 있다. 값을 그대로 두면 그때
+    `no_garment_candidate` 로 끝난 컷들은 이 수정이 배포돼도 그 done 잡에 계속 합류하고,
+    셀러 화면은 영원히 "이 컷은 색감 조정을 지원하지 않아요"로 남는다.
+    """
+    assert egm.ALGORITHM_VERSION != "editor-worn-garment-sam2-v2"
+
+
+# ── 주상품 레퍼런스: 올린 사진으로 파는 옷을 짚는다 (2026-08-18) ──────────────
+#
+# 전체 이야기와 근거는 tests/test_product_reference_mask.py 머리말에 있다. 여기서는 마스크
+# 잡이 그 레퍼런스를 실제로 SAM 에 넘기는지만 본다.
+
+_BASE_PHOTOS = {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "img-front"}]}]}
+
+
+def test_the_mask_job_hands_sam_the_uploaded_product_cutout(monkeypatch):
+    """올린 앞면 사진의 컷아웃이 준비돼 있으면 채점 근거로 함께 보낸다."""
+    _finished, recorded, _r2 = _run_job(
+        monkeypatch, mask_png=_mask_png((100, 60), (12, 56, 15, 45)), matching_side="bottom",
+        product_extra=_BASE_PHOTOS, product_cutout_key="derived/canonical/front.png")
+
+    assert recorded["request"]["product_key"] == "derived/canonical/front.png"
+
+
+def test_a_cut_whose_product_cutout_is_not_ready_still_gets_a_mask(monkeypatch):
+    """컷아웃은 보조 근거다 — 없으면 없는 대로 v3 채점으로 간다. 기다리지 않는다."""
+    finished, recorded, _r2 = _run_job(
+        monkeypatch, mask_png=_mask_png((100, 60), (12, 56, 15, 45)), matching_side="bottom",
+        product_extra=_BASE_PHOTOS, product_cutout_key=None)
+
+    assert recorded["request"]["product_key"] is None
+    assert finished["result"]["state"] == "ready"

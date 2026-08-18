@@ -21,7 +21,7 @@ import time
 from app import repo
 from app.agents import mannequin
 from app.config import load_settings
-from app.services import editor_garment_mask, sam_client
+from app.services import canonical_reference, editor_garment_mask, sam_client
 
 log = logging.getLogger("wearless.editor_garment_mask")
 
@@ -48,6 +48,23 @@ def _base_gender(cut_metadata, analysis: dict, clothing_type) -> str:
         if g in ("men", "women"):
             return g
     return mannequin.select_base_gender(analysis, clothing_type)
+
+
+async def _product_reference_key(conn, *, project_id: str, product: dict) -> str | None:
+    """이 상품의 현재 앞면 사진으로 만든 캐노니컬 컷아웃 키. 조회 실패는 None 으로 강등한다.
+
+    앞면 하나만 쓴다. 마네킹컷은 정면 착장이라 뒷면 컷아웃은 같은 질문에 답하지 못한다.
+    """
+    front = next((aid for slot, aid in mannequin.base_color_images(product or {})
+                  if slot == "Front" and aid), None)
+    if not front:
+        return None
+    try:
+        return await canonical_reference.current_key(
+            conn, project_id=project_id, view="Front", source={"id": front, "hash": None})
+    except Exception:  # noqa: BLE001 - 보조 근거 조회 실패가 마스크를 막지 않는다
+        log.warning("product reference lookup failed project=%s", project_id, exc_info=True)
+        return None
 
 
 async def run_editor_garment_mask_job(app, job: dict) -> None:
@@ -96,6 +113,10 @@ async def run_editor_garment_mask_job(app, job: dict) -> None:
                          else s.base_mannequin_women_asset_id)
         base_asset = (await repo.get_asset_for_user(conn, user_id, base_asset_id)
                       if base_asset_id else None)
+        # 셀러가 올린 주상품 앞면 사진의 배경 제거 컷아웃. 있으면 "파는 옷이 어떻게 생겼나"를
+        # 채점이 위치가 아니라 생김새로 답할 수 있다. 없으면(전처리 미완·SAM 미설정·사진 교체
+        # 직후) 그냥 없는 채로 간다 — 보조 근거를 기다리느라 마스크를 미루지 않는다.
+        product_key = await _product_reference_key(conn, project_id=project_id, product=product)
 
     if cut is None or not cut.get("r2_key"):
         await skip(SKIP_NO_CUT, {"cutId": cut_id})
@@ -109,7 +130,7 @@ async def run_editor_garment_mask_job(app, job: dict) -> None:
         result = await sam_client.segment_worn_garment(
             s, source_key=cut["r2_key"], base_key=base_asset["r2_key"],
             clothing_type=clothing_type, sub_category=analysis.get("subCategory"),
-            matching_side=matching_side)
+            matching_side=matching_side, product_key=product_key)
     except sam_client.SamUnavailable as exc:
         # Bounded dispatcher retry covers transient outages. The mask key is deterministic, so a
         # retry after a partial failure is cheap — a finished mask is served from R2.
@@ -168,5 +189,9 @@ async def run_editor_garment_mask_job(app, job: dict) -> None:
                           "sourceHash": result.source_hash,
                           "algorithmVersion": result.algorithm_version,
                           "matchingSide": matching_side, "matchShare": match_share,
+                          "selectedRank": result.selected_rank,
+                          "vetoedAttempts": result.vetoed_attempts,
+                          "productMatch": result.product_match,
+                          "productKey": product_key,
                           "areaFrac": result.area_frac, "cached": result.cached,
                           "latencySeconds": latency})
