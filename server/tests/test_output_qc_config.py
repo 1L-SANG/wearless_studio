@@ -32,14 +32,14 @@ def test_output_qc_defaults_off_and_accepts_repair(monkeypatch):
     assert settings.page_output_qc_mode == "off"
 
 
-def test_production_manifest_enables_parallel_gpt_repair_pipeline_without_moving_shared_tier():
+def test_production_manifest_bounds_4k_gpt_repair_concurrency_without_moving_shared_tier():
     manifest_path = Path(__file__).resolve().parents[2] / "copilot/api/manifest.yml"
     variables = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))["variables"]
 
     assert variables["MODEL_ROUTING_IMAGE_HIGH"] == "gemini-3-pro-image"
     assert variables["MODEL_ROUTING_DETAIL_CUT"] == "gpt-image-2-2026-04-21"
     assert variables["DETAIL_CUT_IMAGE_SIZE"] == "4K"
-    assert variables["DETAIL_CUT_CONCURRENCY"] == "0"
+    assert variables["DETAIL_CUT_CONCURRENCY"] == "2"
     assert variables["DETAIL_CUT_STAGGER_MS"] == "3000"
     assert variables["DETAIL_CUT_MAX_ATTEMPTS"] == "1"
     assert variables["GARMENT_QC_MODE"] == "off"
