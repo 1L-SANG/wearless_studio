@@ -34,10 +34,17 @@ image:
       BUILDKIT_INLINE_CACHE: "1" # 다음 배포가 레지스트리 이미지에서 캐시 메타데이터를 복원
   port: 8080
 
-cpu: 512        # Pillow 이미지 처리 여유
-memory: 2048    # image_high job + OpenCV SFace ONNX(얼굴 QC) 상주. 1024는 부족(codex 리뷰).
+cpu: 512        # Pillow 이미지 처리 여유. 0.5 vCPU 는 메모리를 4096 까지 붙일 수 있다.
+# 2048 은 컷 동시 생성의 상한을 2 로 묶는 병목이었다(4K 응답 base64 + 디코딩본 + QC 입력이
+# 컷당 ~150~180MB — 9컷 병렬이 2GB 태스크를 죽인 실측, 2026-08-18). 4096 으로 올려 동시 5로
+# 간다: 생성 시간 절반 + OOM 으로 이미 만든 컷을 버리고 다시 만들던 실비 누수도 함께 막는다
+# (월 서버비 +$7.5 ≈ 1만 원 — 다시 생성 한 페이지 값보다 싸다. 오너 승인 2026-08-19).
+memory: 4096
 platform: linux/x86_64
-count: 1        # 항상 1개 상주 → in-process JobDispatcher 계속 살아있음
+# 잡은 이 태스크에서 **한 번에 하나씩** 처리된다(dispatcher: claim 1 → 끝까지 → 다음).
+# 즉 동시 사용자가 늘어도 메모리는 안 늘고 **대기열만 길어진다** — 그때는 이 count 를 올린다
+# (claim 이 FOR UPDATE SKIP LOCKED 라 여러 대가 서로 다른 잡을 안전하게 나눠 갖는다).
+count: 1
 exec: true
 network:
   connect: true
@@ -76,6 +83,11 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 편집이 등급을 떨어뜨리면 편집 전으로 되돌린다(qc_edit_regression_margin=10, 판정 노이즈
   # ±30 을 감안한 마진). 셋 다 여기 없으면 config 기본 off 로 떨어져 조용히 안 돈다.
   MANNEQUIN_UNTUCK_PASS: "on"   # 상의·아우터를 하의 밖으로 — QC 탐지가 불안정해 무조건 실행
+  # untuck 사전 게이트(2026-08-19 오너 승인) — 값싼 판정(~$0.01·3~5초)이 "이미 빠져 있다"고
+  # **확신할 때만** 위 편집(~$0.14·40~60초)을 스킵. tucked/unclear/판정실패는 전부 기존
+  # 동작(무조건 편집)이라 게이트가 틀려도 최악이 오늘 상태다. 스킵률·오탐은 untuck_pass
+  # 이벤트의 untuck_gate 필드로 관측. 되돌리기: 이 줄 삭제 또는 "off".
+  MANNEQUIN_UNTUCK_GATE: "on"
   MANNEQUIN_FABRIC_PASS: "on"   # 미세 패턴 표면 재적용 — 두 색 줄이 한 색으로 뭉개지던 문제
   MANNEQUIN_BUST_PASS: "on"     # 가슴 볼륨(배수 1.3). 하의 상품엔 코드에서 미적용
   # 베이스 충실도 QC — 생성 컷이 베이스 마네킹의 연출(뷰·프레이밍·스케일)을 지켰는가.
@@ -121,12 +133,17 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 주름·미세광택은 점수만 남기고 막지 않는다. 편집(bust/untuck) 후 바지 영역이 회귀하면
   # 로컬 픽셀 비교(AI 콜 0)로 그 편집만 되돌린다.
   MANNEQUIN_PANTS_QC: enforce
-  # 콘티의 모든 AI 생성 블록은 서로 병렬로 실행하되, 블록 안에서는
-  # Gemini 1차 → 독립 QC → 필요 시 Gemini 2차 1회 → 독립 재검수 순서를 지킨다.
+  # 4K 생성은 응답 JSON(base64)·디코딩본·QC 입력을 동시에 메모리에 잡는다. 9컷 무제한
+  # 병렬은 2GB API 태스크를 종료시켜 생성된 5장까지 저장 전에 유실됐다(2026-08-18).
+  # → 메모리를 4096 으로 올리고 동시 실행을 5 로 되돌린다(2026-08-19 오너 승인).
+  #   컷당 ~150~180MB 역산 기준 4GB 에서 5컷은 여유가 있다. 배포 뒤 CloudWatch 메모리
+  #   사용률을 보고 6~8 까지 올릴지 판단한다 — 한계까지 밀면 QC 재시도가 겹칠 때 또 죽는다.
+  # 품질·컷 수는 그대로 두고 동시 실행만 제한한다. 블록 안에서는
+  # 이미지 1차 → 독립 QC → 필요 시 이미지 2차 1회 → 독립 재검수 순서를 지킨다.
   # 새 hard-gate가 garment 동일성까지 포함하므로 구 best-of 후보 생성은 중복 비용을 막기 위해 끈다.
   MODEL_ROUTING_IMAGE_HIGH: gemini-3-pro-image
   DETAIL_CUT_IMAGE_SIZE: "4K"
-  DETAIL_CUT_CONCURRENCY: "0"
+  DETAIL_CUT_CONCURRENCY: "5"
   DETAIL_CUT_STAGGER_MS: "3000"
   GARMENT_QC_MODE: "off"
   CUT_OUTPUT_QC_MODE: repair
