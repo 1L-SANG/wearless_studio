@@ -126,10 +126,69 @@ test('콘티보드는 보드를 읽기 전에 사진 정착을 기다린다', ()
 });
 
 
-test('업로드 실패는 콘티보드에서 셀러에게 알린다', () => {
+test('업로드 실패는 보드를 열지 않고 제자리 재시도로 이어진다', () => {
   const src = read('../../src/features/storyboard/Storyboard.jsx');
   assert.match(src, /getProductPhotoPromotionTask\(pid\)\?\.status === 'failed'/);
-  assert.match(src, /사진 업로드를 끝내지 못했어요/);
+  assert.match(src, /retryProductPhotoPromotionFromDraft\(pid\)/);
+  // 실패를 그대로 두고 보드를 읽으면 사진 없는 상품으로 시드된 보드가 굳는다.
+  assert.match(src, /kind: 'photoUpload'/);
+  // 확정 뒤에는 입력 화면이 봉인되므로(App.jsx redirect → start-new 가 draft 삭제)
+  // "입력 화면에서 다시" 같은 갈 수 없는 안내를 하면 안 된다.
+  assert.equal(src.includes('입력 화면에서 다시 시도'), false);
+});
+
+test('제자리 재시도는 같은 draft 로 승격을 다시 돌리고 성공 시에만 draft 를 정리한다', async () => {
+  clearProductPhotoPromotionTask('r1');
+  const calls = [];
+  const io = {
+    loadDraft: async () => ({ product: { colors: [] }, photos: [{ imageId: 'a' }, { imageId: 'b' }] }),
+    resetRetry: (pid) => calls.push(['reset', pid]),
+    promote: async (draft, { projectId, onPhotoProgress }) => {
+      calls.push(['promote', projectId, draft.photos.length]);
+      onPhotoProgress({ done: 2, total: 2 });
+      return { projectId };
+    },
+    finishDraft: async () => calls.push(['finish']),
+  };
+  const { retryProductPhotoPromotionFromDraft: retry } = await import('../../src/lib/productPhotoPromotion.js');
+  assert.equal(await retry('r1', io), true);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(calls, [['reset', 'r1'], ['promote', 'r1', 2], ['finish']]);
+  const task = getProductPhotoPromotionTask('r1');
+  assert.equal(task.status, 'settled');
+  clearProductPhotoPromotionTask('r1');
+});
+
+test('제자리 재시도가 또 실패하면 draft 를 지우지 않고 실패 상태를 남긴다', async () => {
+  clearProductPhotoPromotionTask('r2');
+  let finished = 0;
+  const io = {
+    loadDraft: async () => ({ product: {}, photos: [{ imageId: 'a' }] }),
+    resetRetry: () => {},
+    promote: async () => { throw new Error('still down'); },
+    finishDraft: async () => { finished += 1; },
+  };
+  const { retryProductPhotoPromotionFromDraft: retry } = await import('../../src/lib/productPhotoPromotion.js');
+  assert.equal(await retry('r2', io), false);
+  assert.equal(finished, 0, '실패했는데 draft 를 지우면 재시도할 재료가 사라진다');
+  assert.equal(getProductPhotoPromotionTask('r2').status, 'failed',
+    '실패 상태가 남아야 오류 화면의 다시 시도가 다시 이 경로로 들어온다');
+  clearProductPhotoPromotionTask('r2');
+});
+
+test('재시도할 draft 가 없으면 조용히 포기한다 — 다른 기기에서 지웠을 수 있다', async () => {
+  const { retryProductPhotoPromotionFromDraft: retry } = await import('../../src/lib/productPhotoPromotion.js');
+  assert.equal(await retry('r3', { loadDraft: async () => null,
+    resetRetry: () => {}, promote: async () => {}, finishDraft: async () => {} }), false);
+  assert.equal(await retry(null, {}), false);
+});
+
+test('CTA 는 버려진 임시 키 task 를 지우고 시작한다', () => {
+  const src = read('../../src/features/product-input/ProductInput.jsx');
+  const clearAt = src.indexOf('clearProductPhotoPromotionTask(NEW_PROJECT_KEY)');
+  const startAt = src.indexOf('startProductPhotoPromotion(NEW_PROJECT_KEY');
+  assert.ok(clearAt > 0 && clearAt < startAt,
+    'pending 잔재가 남아 있으면 이번 run 이 실행되지 않고 CTA 가 영원히 기다린다');
 });
 
 test('프리페치도 사진 정착 뒤에 돈다 — 빈 상품으로 시드된 보드가 캐시되면 안 된다', () => {

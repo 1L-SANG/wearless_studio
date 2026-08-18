@@ -105,6 +105,7 @@ import { requestMannequinGeneration } from '@/features/mannequin/generationRunne
 import {
   getProductPhotoPromotionTask,
   productPhotosReady,
+  retryProductPhotoPromotionFromDraft,
 } from '@/lib/productPhotoPromotion.js';
 import { waitForAnalysisEditSave } from '@/features/product-input/saveRouting.js';
 import { selectStoryboardCopywriting } from './copywritingSelection.js';
@@ -2294,12 +2295,21 @@ export function Storyboard() {
         // 빈 상품으로 시드된다. 기다리는 동안 화면은 진행률을 보여준다(아래 photoUpload 상태).
         await productPhotosReady(pid).catch(() => null);
         if (!active) return;
-        // 업로드가 실패로 끝났다면 셀러가 알아야 한다. 이 화면은 사진 없이도 뜨지만, 그대로
-        // 생성에 들어가면 "상품 사진을 찾을 수 없어요"로 뒤늦게 막힌다. 로컬 draft 는 실패 시
-        // 지우지 않으므로(ProductInput), 입력으로 돌아가면 사진이 남아 있다.
+        // 업로드가 실패로 끝났으면 보드를 읽지 않는다 — 사진 없는 상품으로 시드된 잘못된 보드가
+        // 굳는다. 복구는 **여기서** 한다: 실패 시점은 이미 확정 뒤라 입력 화면이 봉인돼 있어
+        // (App.jsx entryDecision 'redirect' → 재진입 고집 시 start-new 가 draft 삭제)
+        // 뒤로 보내는 안내는 갈 수 없는 곳을 가리킨다. 같은 draft 로 승격을 다시 돌리고,
+        // 그래도 실패면 기존 '다시 시도' 오류 화면(loadRetry 루프)에 태운다.
         if (getProductPhotoPromotionTask(pid)?.status === 'failed') {
-          pushToast('사진 업로드를 끝내지 못했어요. 입력 화면에서 다시 시도해 주세요.',
-            { icon: 'alertTri', duration: 8000 });
+          const recovered = await retryProductPhotoPromotionFromDraft(pid);
+          if (!active) return;
+          if (!recovered) {
+            setLoadError({
+              kind: 'photoUpload',
+              message: '사진 업로드를 끝내지 못했어요. 네트워크를 확인한 뒤 다시 시도해 주세요.',
+            });
+            return;
+          }
         }
         // 마네킹컷 생성은 콘티 로드와 병렬로 돌리되, 재료인 내 옷 승격만은 먼저 정착시킨다.
         // fail-open 결과도 resolve되므로 등록 실패가 마네킹 생성을 막지는 않는다.

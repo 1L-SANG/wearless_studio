@@ -102,3 +102,42 @@ export function productPhotosReady(projectId) {
 export function clearProductPhotoPromotionTask(projectId) {
   if (projectId) tasks.delete(projectId);
 }
+
+/* 업로드가 실패로 끝난 뒤의 **제자리 재시도** — 콘티보드에서 부른다.
+
+   실패 시점은 이미 확정(confirmProductInfo) 뒤라 입력 화면은 봉인돼 있다("의류 정보는 확정돼
+   수정할 수 없어요" 반송, 재진입을 고집하면 start-new 가 draft 를 지운다). 그래서 뒤로 보내는
+   안내는 갈 수 없는 곳을 가리킨다 — 복구는 여기서, 같은 draft(로컬 IndexedDB, 실패 시 지우지
+   않는다)로 승격을 다시 돌리는 것뿐이다. 이미 올라간 사진은 draftPromotionSession 의 자산
+   매핑이 재사용하므로 두 번 올라가지 않는다.
+
+   io 주입은 테스트용 — 실제 임포트는 순환이 없다(draftSync·draftStore 는 이 모듈을 모른다). */
+export async function retryProductPhotoPromotionFromDraft(projectId, io = {}) {
+  if (!projectId) return false;
+  const load = io.loadDraft
+    ?? (await import('./draftStore.js')).loadDraft;
+  const draftSync = io.promote && io.resetRetry && io.finishDraft ? null : await import('./draftSync.js');
+  const promote = io.promote ?? draftSync.promoteDraftToProject;
+  const resetRetry = io.resetRetry ?? draftSync.retryDraftPromotion;
+  const finishDraft = io.finishDraft ?? (async () => {
+    const store = await import('./draftStore.js');
+    await store.clearDraft();
+    draftSync?.resetDraftSyncSingleFlight?.();
+  });
+
+  const draft = await Promise.resolve().then(load).catch(() => null);
+  if (!draft?.product || !(draft.photos || []).length) return false;   // 재시도할 재료 없음
+
+  clearProductPhotoPromotionTask(projectId);
+  resetRetry(projectId);   // 단일비행의 실패 결과를 지우고 같은 projectId 로 합류시킨다
+  const task = startProductPhotoPromotion(projectId, (draft.photos || []).length,
+    ({ onPhotoProgress }) => promote(draft, { projectId, onPhotoProgress }));
+  try {
+    await task.promise;
+  } catch {
+    return false;          // task 는 failed 로 남는다 — 호출측이 재시도 화면을 유지한다
+  }
+  // 성공 — CTA 성공 경로와 같은 정리(업로드 원본을 더 들고 있을 이유가 없다).
+  void Promise.resolve().then(finishDraft).catch(() => {});
+  return true;
+}

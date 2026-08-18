@@ -36,6 +36,7 @@ import {
 } from '@/lib/draftSync.js';
 import {
   adoptProductPhotoPromotion,
+  clearProductPhotoPromotionTask,
   NEW_PROJECT_KEY,
   productPhotosReady,
   startProductPhotoPromotion,
@@ -726,6 +727,10 @@ export function ProductInput() {
         // 콘티보드가 그 프라미스를 구독해 진행률을 보여주고 마네킹 생성 전에 정착을 기다린다.
         // 이 대기를 CTA 에 두면 사진 용량에 정비례해 화면이 멈춘다(실측 44~211초, 2026-08-17).
         const photoCount = (draft.photos || []).length;
+        // 버려진 이전 시도(전환 전 실패·이탈)의 임시 키 task 가 pending 으로 남아 있으면
+        // startProductPhotoPromotion 이 그걸 돌려줘 이번 run 이 아예 실행되지 않는다.
+        // 동시 실행은 redirectingRef 가 이미 막으므로, 여기 남아 있는 것은 항상 잔재다.
+        clearProductPhotoPromotionTask(NEW_PROJECT_KEY);
         let promotion;
         const projectId = await new Promise((resolve, reject) => {
           let settled = false;
