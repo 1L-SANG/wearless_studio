@@ -44,6 +44,10 @@ def test_production_manifest_bounds_4k_gpt_repair_concurrency_without_moving_sha
     assert variables["DETAIL_CUT_MAX_ATTEMPTS"] == "1"
     assert variables["GARMENT_QC_MODE"] == "off"
     assert variables["CUT_OUTPUT_QC_MODE"] == "repair"
+    # 마네킹컷 기본 2K (2026-08-19 오너 결정 — 1K 는 로고 글자가 깨짐, pro 요금 동일).
+    # 이 핀이 없으면 manifest 병합 사고 때 소리 없이 1K 로 돌아간다(같은 날 실제 겪은 사고 유형).
+    assert variables["MANNEQUIN_IMAGE_SIZE"] == "2K"
+    assert variables["MANNEQUIN_LOGO_IMAGE_SIZE"] == "2K"
 
     # 동시 컷 수는 **정확값이 아니라 메모리와의 관계**로 묶는다. 정확값으로 못 박으면
     # 위험을 발견해 안전하게 낮추는 변경까지 빨갛게 만든다(2026-08-19 Codex 리뷰).
