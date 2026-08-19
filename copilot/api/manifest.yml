@@ -35,7 +35,12 @@ image:
   port: 8080
 
 cpu: 512        # Pillow 이미지 처리 여유
-memory: 2048    # image_high job + OpenCV SFace ONNX(얼굴 QC) 상주. 1024는 부족(codex 리뷰).
+# image_high job + OpenCV SFace ONNX(얼굴 QC) 상주. 1024는 부족(codex 리뷰).
+# 2048 은 컷 동시 생성의 상한이기도 했다: 4K 컷 하나가 응답 base64 + 디코딩본 + QC 입력을
+# 동시에 잡고, repair 는 1차를 살려둔 채 2차를 만들어 컷당 4K 이미지가 두 장이다
+# (detail_page_job.py 의 chosen 교체 지점). 그래서 동시 2 로 묶여 한 페이지에 ~10분이 걸렸다.
+# 4096 = 0.5 vCPU 가 붙일 수 있는 최대. 동시 5 로 올려 ~4분을 목표한다(오너 승인 2026-08-19).
+memory: 4096
 platform: linux/x86_64
 count: 1        # 항상 1개 상주 → in-process JobDispatcher 계속 살아있음
 exec: true
@@ -134,7 +139,11 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   MODEL_ROUTING_IMAGE_HIGH: gemini-3-pro-image
   MODEL_ROUTING_DETAIL_CUT: gpt-image-2-2026-04-21
   DETAIL_CUT_IMAGE_SIZE: "4K"
-  DETAIL_CUT_CONCURRENCY: "2"
+  # 동시 컷 수 — 메모리와 **짝으로** 움직인다(아래 memory 주석 참고). 올리기 전에 반드시
+  # CloudWatch MemoryUtilization 을 보고, 최악 입력(색상당 사진 6장·장당 25MB 상한)에서의
+  # reference 총량까지 감안한다. 잡 단위 reference 상한이 아직 없어 최악치는 계산으로만
+  # 보장되지 않는다(2026-08-19 Codex 리뷰) — 실측 전까지 5 를 상한으로 둔다.
+  DETAIL_CUT_CONCURRENCY: "5"
   DETAIL_CUT_STAGGER_MS: "3000"
   # 오너가 확정한 1차 baseline은 best-of/provider 재호출이 없는 first-result 계약이다.
   DETAIL_CUT_MAX_ATTEMPTS: "1"
