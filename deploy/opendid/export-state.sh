@@ -9,6 +9,8 @@ POSTGRES_VOLUME_FALLBACKS=${OPENDID_POSTGRES_VOLUME_FALLBACKS:-postgre_postgre_o
 BESU_VOLUME_FALLBACKS=${OPENDID_BESU_VOLUME_FALLBACKS:-besu_besu_opendid_data}
 POSTGRES_USER=${OPENDID_POSTGRES_USER:-${OPENDID_DB_USER:-postgres}}
 OPENDID_ROOT=${OPENDID_ROOT:-/opt/opendid}
+SECRETS_DIR=${OPENDID_SECRETS_DIR:-$OPENDID_ROOT/secrets}
+CONFIG_DIR=${OPENDID_CONFIG_DIR:-$OPENDID_ROOT/config}
 HOLDER_DATA_DIR=${OPENDID_HOLDER_DATA_DIR:-$OPENDID_ROOT/state/holder}
 APP_SERVICES=${OPENDID_APP_SERVICES:-opendid-tas opendid-issuer opendid-cas fm-holder}
 
@@ -82,22 +84,32 @@ docker run --rm -v "$BESU_VOLUME:/source:ro" -v "$OUT:/out" alpine:3.20 \
   tar -C /source -cf /out/besu-data.tar .
 chmod 600 "$OUT/besu-data.tar"
 
-tmp_list=$(mktemp)
-trap 'rm -f "$tmp_list"' EXIT
-if [ -d "$OPENDID_ROOT" ]; then
-  find "$OPENDID_ROOT" -type f \( -name '*.wallet' -o -name '*.zkpwallet' -o -name '*.did' -o -name 'blockchain.properties' -o -name 'besu.dat' \) \
-    -print | while IFS= read -r file; do
+tmp_stage=$(mktemp -d)
+cleanup() { rm -rf "$tmp_stage"; }
+trap cleanup EXIT
+stage_allowed() {
+  local root=$1 file rel dest_dir
+  [ -d "$root" ] || return 0
+  find "$root" -type f \( -name '*.wallet' -o -name '*.zkpwallet' -o -name '*.did' -o -name 'blockchain.properties' -o -name 'besu.dat' \) -print0 |
+    while IFS= read -r -d '' file; do
       case "$file" in
-        "$OPENDID_ROOT"/*) printf '%s\n' "${file#$OPENDID_ROOT/}" ;;
+        "$OPENDID_ROOT"/*) rel=${file#$OPENDID_ROOT/} ;;
+        *) continue ;;
       esac
-    done >>"$tmp_list"
-fi
-if [ -s "$tmp_list" ]; then
-  tar -C "$OPENDID_ROOT" -cf "$OUT/opendid-files.tar" -T "$tmp_list"
+      case "$rel" in
+        /*|../*|*/../*) continue ;;
+      esac
+      dest_dir=$(dirname "$tmp_stage/$rel")
+      mkdir -p "$dest_dir"
+      cp -p "$file" "$tmp_stage/$rel"
+    done
+}
+stage_allowed "$SECRETS_DIR"
+stage_allowed "$CONFIG_DIR"
+if [ -n "$(find "$tmp_stage" -mindepth 1 -print -quit 2>/dev/null)" ]; then
+  tar -C "$tmp_stage" -cf "$OUT/opendid-files.tar" .
 else
-  empty_dir=$(mktemp -d)
-  tar -C "$empty_dir" -cf "$OUT/opendid-files.tar" .
-  rmdir "$empty_dir"
+  tar -C "$tmp_stage" -cf "$OUT/opendid-files.tar" .
 fi
 chmod 600 "$OUT/opendid-files.tar"
 

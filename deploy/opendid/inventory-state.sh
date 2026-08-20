@@ -7,8 +7,8 @@ POSTGRES_VOLUME=${OPENDID_POSTGRES_VOLUME:-postgre_opendid_data}
 BESU_VOLUME=${OPENDID_BESU_VOLUME:-besu_opendid_data}
 POSTGRES_VOLUME_FALLBACKS=${OPENDID_POSTGRES_VOLUME_FALLBACKS:-postgre_postgre_opendid_data}
 BESU_VOLUME_FALLBACKS=${OPENDID_BESU_VOLUME_FALLBACKS:-besu_besu_opendid_data}
-POSTGRES_USER=${OPENDID_POSTGRES_USER:-${OPENDID_DB_USER:-postgres}}
-POSTGRES_DB=${OPENDID_POSTGRES_DB:-${OPENDID_DB_NAME:-postgres}}
+POSTGRES_USER=${OPENDID_POSTGRES_USER:-${OPENDID_DB_USER:-}}
+POSTGRES_DB=${OPENDID_POSTGRES_DB:-${OPENDID_DB_NAME:-}}
 OPENDID_ROOT=${OPENDID_ROOT:-/opt/opendid}
 SECRETS_DIR=${OPENDID_SECRETS_DIR:-$OPENDID_ROOT/secrets}
 CONFIG_DIR=${OPENDID_CONFIG_DIR:-$OPENDID_ROOT/config}
@@ -30,30 +30,63 @@ resolve_volume() {
   done
   return 1
 }
-count_files() { [ -d "$1" ] && find "$1" -type f "$@" 2>/dev/null | wc -l | tr -d ' ' || echo 0; }
+container_env_value() {
+  docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$POSTGRES_CONTAINER" 2>/dev/null |
+    sed -n "s/^$1=//p" | head -1
+}
+count_files() {
+  local dir=$1
+  shift
+  local count=0
+  if [ -d "$dir" ]; then
+    while IFS= read -r -d '' _file; do
+      count=$((count + 1))
+    done < <(find "$dir" -type f "$@" -print0 2>/dev/null)
+  fi
+  printf '%s\n' "$count"
+}
 psql_value() {
-  docker exec -i "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA -c "$1" 2>/dev/null | head -1 || true
+  docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA -c "$1" 2>/dev/null | head -1 || true
 }
 psql_value_db() {
-  docker exec -i "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "$1" -tA -c "$2" 2>/dev/null | head -1 || true
+  docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "$1" -tA -c "$2" 2>/dev/null | head -1
 }
 count_rows_exact() {
   local dbs=$1
   shift
   [ -n "$dbs" ] || { printf 'unknown\n'; return; }
-  local total=0 found=0 db spec table where sql count
+  local total=0 found=0 db spec target_db table where sql count reg
   while IFS= read -r db; do
     [ -n "$db" ] || continue
     for spec in "$@"; do
+      target_db=''
+      case "$spec" in
+        *:*) target_db=${spec%%:*}; spec=${spec#*:} ;;
+      esac
+      [ -z "$target_db" ] || [ "$target_db" = "$db" ] || continue
       table=${spec%%|*}
       where=''
       [ "$table" != "$spec" ] && where=${spec#*|}
+      if reg=$(psql_value_db "$db" "select to_regclass('public.$table');"); then
+        [ -n "$reg" ] || continue
+      else
+        printf 'unknown\n'
+        return
+      fi
       sql="select count(*) from public.$table"
       [ -n "$where" ] && sql="$sql where $where"
-      count=$(psql_value_db "$db" "$sql;")
+      if count=$(psql_value_db "$db" "$sql;"); then
+        :
+      else
+        printf 'unknown\n'
+        return
+      fi
       if printf '%s' "$count" | grep -Eq '^[0-9]+$'; then
         total=$((total + count))
         found=1
+      else
+        printf 'unknown\n'
+        return
       fi
     done
   done <<EOF
@@ -83,15 +116,19 @@ else
   fi
 
   if [ -n "$pg_image" ]; then
+    [ -n "$POSTGRES_USER" ] || POSTGRES_USER=$(container_env_value POSTGRES_USER)
+    [ -n "$POSTGRES_DB" ] || POSTGRES_DB=$(container_env_value POSTGRES_DB)
+    POSTGRES_USER=${POSTGRES_USER:-postgres}
+    POSTGRES_DB=${POSTGRES_DB:-postgres}
     version=$(psql_value "select current_setting('server_version');")
     [ -n "$version" ] && printf 'postgres_version=%s\n' "$version"
-    db_lines=$(docker exec -i "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d postgres -tA -F '|' -c \
+    db_lines=$(docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA -F '|' -c \
       "select datname, pg_database_size(datname) from pg_database where datistemplate=false order by datname;" 2>/dev/null || true)
     if [ -n "$db_lines" ]; then
       db_names=$(printf '%s\n' "$db_lines" | cut -d '|' -f 1)
       printf '%s\n' "$db_lines" | while IFS='|' read -r db size _; do
           [ -n "$db" ] || continue
-          tables=$(docker exec -i "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "$db" -tA -c \
+          tables=$(docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "$db" -tA -c \
             "select count(*) from information_schema.tables where table_schema='public';" 2>/dev/null | head -1 || true)
           printf 'db=%s size_bytes=%s public_tables=%s\n' "$db" "$size" "${tables:-unknown}"
         done
@@ -99,12 +136,12 @@ else
       db_names=''
       printf 'db_metadata=unknown\n'
     fi
-    printf 'facelicense_namespace_rows=%s\n' "$(count_rows_exact "$db_names" "namespace|namespace_id='kr.wearless.facelicense'")"
-    printf 'facelicense_schema_rows=%s\n' "$(count_rows_exact "$db_names" "vc_schema|vc_schema_id='facelicense'")"
-    printf 'facelicense_plan_rows=%s\n' "$(count_rows_exact "$db_names" "issue_profile|vc_plan_id='vcplanface0000000001'" "list_vc_plan|vc_plan_id='vcplanface0000000001'")"
-    printf 'entity_rows=%s\n' "$(count_rows_exact "$db_names" entity)"
-    printf 'issuer_rows=%s\n' "$(count_rows_exact "$db_names" issuer)"
-    printf 'cas_rows=%s\n' "$(count_rows_exact "$db_names" cas ca)"
+    printf 'facelicense_namespace_rows=%s\n' "$(count_rows_exact "$db_names" "issuer:namespace|namespace_id='kr.wearless.facelicense'")"
+    printf 'facelicense_schema_rows=%s\n' "$(count_rows_exact "$db_names" "issuer:vc_schema|vc_schema_id='facelicense'")"
+    printf 'facelicense_plan_rows=%s\n' "$(count_rows_exact "$db_names" "issuer:issue_profile|vc_plan_id='vcplanface0000000001'" "tas:list_vc_plan|vc_plan_id='vcplanface0000000001'")"
+    printf 'entity_rows=%s\n' "$(count_rows_exact "$db_names" tas:entity)"
+    printf 'issuer_rows=%s\n' "$(count_rows_exact "$db_names" issuer:issuer)"
+    printf 'cas_rows=%s\n' "$(count_rows_exact "$db_names" cas:cas cas:ca)"
   fi
 fi
 

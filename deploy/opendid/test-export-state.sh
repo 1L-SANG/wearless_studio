@@ -19,6 +19,12 @@ want_grep() { grep -Eq "$1" "$2" && ok "$3" || bad "$3"; }
 want_no_grep() { ! grep -Eq "$1" "$2" && ok "$3" || bad "$3"; }
 want_tar_has() { tar -tf "$1" | grep -Eq "$2" && ok "$3" || bad "$3"; }
 want_tar_lacks() { ! tar -tf "$1" | grep -Eq "$2" && ok "$3" || bad "$3"; }
+want_one_line_value() {
+  local key=$1 want=$2 file=$3 label=$4
+  local got
+  got=$(grep -E "^$key=" "$file" || true)
+  [ "$got" = "$key=$want" ] && ok "$label" || bad "$label (got $(printf '%s' "$got" | tr '\n' '|'))"
+}
 want_mode_600() {
   mode=$(stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1")
   [ "$mode" = "600" ] && ok "$2" || bad "$2 (got $mode)"
@@ -39,6 +45,17 @@ case "$1" in
         esac
         exit 0
       fi
+      if [ "$3" = "{{range .Config.Env}}{{println .}}{{end}}" ]; then
+        case "$4" in
+          "$OPENDID_POSTGRES_CONTAINER")
+            echo 'POSTGRES_USER=omn'
+            echo 'POSTGRES_DB=omn'
+            echo 'POSTGRES_PASSWORD=do-not-print'
+            ;;
+          *) exit 1 ;;
+        esac
+        exit 0
+      fi
       case "$4" in
         "$OPENDID_BESU_CONTAINER") echo "${FAKE_BESU_RUNNING:-false}" ;;
         "$OPENDID_POSTGRES_CONTAINER") echo true ;;
@@ -54,11 +71,22 @@ case "$1" in
     exit 0
     ;;
   exec)
-    if [ "$3" = "$OPENDID_POSTGRES_CONTAINER" ] && [ "$4" = "pg_dumpall" ]; then
+    container=$2
+    cmd=$3
+    has_i=0
+    if [ "$container" = "-i" ]; then
+      has_i=1
+      container=$3
+      cmd=$4
+    fi
+    if [ "${FAKE_CONSUME_STDIN:-0}" = "1" ] && [ "$has_i" = "1" ]; then
+      while IFS= read -r _line; do :; done || true
+    fi
+    if [ "$container" = "$OPENDID_POSTGRES_CONTAINER" ] && [ "$cmd" = "pg_dumpall" ]; then
       printf '%s\n' '-- fake pg_dumpall'
       exit 0
     fi
-    if [ "$3" = "$OPENDID_POSTGRES_CONTAINER" ] && [ "$4" = "psql" ]; then
+    if [ "$container" = "$OPENDID_POSTGRES_CONTAINER" ] && [ "$cmd" = "psql" ]; then
       sql="${*: -1}"
       db='postgres'
       prev=''
@@ -66,16 +94,48 @@ case "$1" in
         if [ "$prev" = "-d" ]; then db="$arg"; fi
         prev="$arg"
       done
+      user=''
+      prev=''
+      for arg in "$@"; do
+        if [ "$prev" = "-U" ]; then user="$arg"; fi
+        prev="$arg"
+      done
+      [ "$user" = "${FAKE_EXPECT_PGUSER:-$user}" ] || exit 2
+      case "$sql" in
+        *"from pg_database"*) [ "$db" = "${FAKE_EXPECT_PGDB:-$db}" ] || exit 2 ;;
+      esac
+      case "${FAKE_SQL_FAIL:-}" in
+        namespace) case "$sql" in *"count(*) from public.namespace"*) exit 2 ;; esac ;;
+      esac
       case "$sql" in
         *"current_setting('server_version'"*) echo '16.4' ;;
-        *"from pg_database"*) echo 'opendid_tas|1000'; echo 'opendid_issuer|2000' ;;
+        *"from pg_database"*)
+          echo 'omn|100'
+          echo 'tas|200'
+          echo 'issuer|300'
+          echo 'cas|400'
+          echo 'wallet|500'
+          echo 'verifier|600'
+          echo 'api|700'
+          echo 'holder|800'
+          ;;
         *"information_schema.tables"*"table_schema='public'"*) echo '2' ;;
-        *"count(*) from public.namespace where namespace_id='kr.wearless.facelicense'"*) [ "$db" = "opendid_issuer" ] && echo '7' || exit 1 ;;
-        *"count(*) from public.vc_schema where vc_schema_id='facelicense'"*) [ "$db" = "opendid_issuer" ] && echo '8' || exit 1 ;;
-        *"count(*) from public.issue_profile where vc_plan_id='vcplanface0000000001'"*) [ "$db" = "opendid_issuer" ] && echo '4' || exit 1 ;;
-        *"count(*) from public.list_vc_plan where vc_plan_id='vcplanface0000000001'"*) [ "$db" = "opendid_tas" ] && echo '5' || exit 1 ;;
-        *"count(*) from public.entity"*) [ "$db" = "opendid_tas" ] && echo '10' || exit 1 ;;
-        *"count(*) from public.issuer"*) [ "$db" = "opendid_issuer" ] && echo '11' || exit 1 ;;
+        *"to_regclass('public.namespace')"*) [ "$db" = "issuer" ] && echo 'namespace' || echo '' ;;
+        *"to_regclass('public.vc_schema')"*) [ "$db" = "issuer" ] && echo 'vc_schema' || echo '' ;;
+        *"to_regclass('public.issue_profile')"*) [ "$db" = "issuer" ] && echo 'issue_profile' || echo '' ;;
+        *"to_regclass('public.list_vc_plan')"*) [ "$db" = "tas" ] && echo 'list_vc_plan' || echo '' ;;
+        *"to_regclass('public.entity')"*) [ "$db" = "tas" ] && echo 'entity' || echo '' ;;
+        *"to_regclass('public.issuer')"*) [ "$db" = "issuer" ] && echo 'issuer' || echo '' ;;
+        *"to_regclass('public.cas')"*) [ "$db" = "cas" ] && echo 'cas' || echo '' ;;
+        *"to_regclass('public.ca')"*) echo '' ;;
+        *"count(*) from public.namespace where namespace_id='kr.wearless.facelicense'"*) [ "$db" = "issuer" ] && echo '1' || exit 1 ;;
+        *"count(*) from public.vc_schema where vc_schema_id='facelicense'"*) [ "$db" = "issuer" ] && echo '1' || exit 1 ;;
+        *"count(*) from public.issue_profile where vc_plan_id='vcplanface0000000001'"*) [ "$db" = "issuer" ] && echo '1' || exit 1 ;;
+        *"count(*) from public.list_vc_plan where vc_plan_id='vcplanface0000000001'"*) [ "$db" = "tas" ] && echo '1' || exit 1 ;;
+        *"count(*) from public.entity"*) [ "$db" = "tas" ] && echo '5' || exit 1 ;;
+        *"count(*) from public.issuer"*) [ "$db" = "issuer" ] && echo '1' || exit 1 ;;
+        *"count(*) from public.cas"*) [ "$db" = "cas" ] && echo '1' || exit 1 ;;
+        *"count(*) from public.ca"*) exit 1 ;;
         *) echo '0' ;;
       esac
       exit 0
@@ -121,6 +181,10 @@ export OPENDID_ROOT="$tmp/opendid-root"
 export OPENDID_SECRETS_DIR="$OPENDID_ROOT/secrets"
 export OPENDID_CONFIG_DIR="$OPENDID_ROOT/config"
 export OPENDID_HOLDER_DATA_DIR="$OPENDID_ROOT/state/holder"
+unset OPENDID_POSTGRES_USER OPENDID_DB_USER OPENDID_POSTGRES_DB OPENDID_DB_NAME
+export FAKE_EXPECT_PGUSER="omn"
+export FAKE_EXPECT_PGDB="omn"
+export FAKE_CONSUME_STDIN=1
 mkdir -p "$FAKE_VOLUMES/$OPENDID_POSTGRES_VOLUME" "$FAKE_VOLUMES/$OPENDID_BESU_VOLUME" \
   "$OPENDID_SECRETS_DIR/TA" "$OPENDID_SECRETS_DIR/Issuer" "$OPENDID_SECRETS_DIR/CA" "$OPENDID_CONFIG_DIR"
 printf 'besu source\n' >"$FAKE_VOLUMES/$OPENDID_BESU_VOLUME/block"
@@ -128,6 +192,9 @@ printf 'wallet-secret\n' >"$OPENDID_SECRETS_DIR/TA/tas.wallet"
 printf 'did-secret\n' >"$OPENDID_SECRETS_DIR/Issuer/issuer.did"
 printf 'chain-secret\n' >"$OPENDID_SECRETS_DIR/CA/blockchain.properties"
 printf 'besu-secret\n' >"$OPENDID_SECRETS_DIR/CA/besu.dat"
+adversarial=$'bad\n--checkpoint-action=exec=touch SHOULD_NOT_EXIST.wallet'
+printf 'adversarial-secret\n' >"$OPENDID_SECRETS_DIR/CA/$adversarial"
+printf 'leading-secret\n' >"$OPENDID_SECRETS_DIR/CA/-leading.wallet"
 printf 'unrelated-secret\n' >"$OPENDID_SECRETS_DIR/CA/unrelated.txt"
 printf 'config-secret\n' >"$OPENDID_CONFIG_DIR/ta.yml"
 before_hash=$(find "$FAKE_VOLUMES" "$OPENDID_ROOT" -type f -exec shasum -a 256 {} + | sort)
@@ -137,7 +204,7 @@ mkdir -p "$symlink_target"
 printf 'keep me\n' >"$symlink_target/existing"
 ln -s "$symlink_target" "$tmp/symlink-out"
 before_symlink_hash=$(find "$symlink_target" -type f -exec shasum -a 256 {} + | sort)
-if "$EXPORT" "$tmp/symlink-out" >/tmp/opendid-export-symlink.out 2>&1; then
+if "$EXPORT" "$tmp/symlink-out" >"$tmp/opendid-export-symlink.out" 2>&1; then
   bad 'export refuses symlink output path'
 else
   ok 'export refuses symlink output path'
@@ -148,7 +215,7 @@ after_symlink_hash=$(find "$symlink_target" -type f -exec shasum -a 256 {} + | s
 nonempty="$tmp/nonempty"
 mkdir -p "$nonempty"
 printf x >"$nonempty/existing"
-if "$EXPORT" "$nonempty" >/tmp/opendid-export-overwrite.out 2>&1; then
+if "$EXPORT" "$nonempty" >"$tmp/opendid-export-overwrite.out" 2>&1; then
   bad 'export refuses nonempty output'
 else
   ok 'export refuses nonempty output'
@@ -160,12 +227,12 @@ else
 fi
 
 active_out="$tmp/active-out"
-FAKE_ACTIVE_SERVICE=opendid-tas "$EXPORT" "$active_out" >/tmp/opendid-export-active.out 2>&1 \
+FAKE_ACTIVE_SERVICE=opendid-tas "$EXPORT" "$active_out" >"$tmp/opendid-export-active.out" 2>&1 \
   && bad 'export refuses active systemd service' || ok 'export refuses active systemd service'
 [ ! -e "$active_out/postgres.dump.sql" ] && ok 'active service refusal creates no dump' || bad 'active service refusal creates no dump'
 
 besu_running_out="$tmp/besu-running-out"
-FAKE_BESU_RUNNING=true "$EXPORT" "$besu_running_out" >/tmp/opendid-export-besu-running.out 2>&1 \
+FAKE_BESU_RUNNING=true "$EXPORT" "$besu_running_out" >"$tmp/opendid-export-besu-running.out" 2>&1 \
   && bad 'export refuses running Besu' || ok 'export refuses running Besu'
 [ ! -e "$besu_running_out/postgres.dump.sql" ] && ok 'running Besu refusal creates no dump' || bad 'running Besu refusal creates no dump'
 
@@ -187,19 +254,35 @@ want_tar_has "$out/opendid-files.tar" '(^|/)issuer\.did$' 'DID included in file 
 want_tar_has "$out/opendid-files.tar" '(^|/)blockchain\.properties$' 'blockchain properties included in file archive'
 want_tar_has "$out/opendid-files.tar" '(^|/)besu\.dat$' 'besu.dat included in file archive'
 want_tar_lacks "$out/opendid-files.tar" '(^|/)ta\.yml$|(^|/)unrelated\.txt$' 'unrelated config/secret excluded from file archive'
+extract="$tmp/extract"
+mkdir -p "$extract"
+tar -xf "$out/opendid-files.tar" -C "$extract"
+[ -f "$extract/secrets/CA/$adversarial" ] && ok 'newline adversarial wallet archived verbatim' || bad 'newline adversarial wallet archived verbatim'
+[ -f "$extract/secrets/CA/-leading.wallet" ] && ok 'leading-dash wallet archived verbatim' || bad 'leading-dash wallet archived verbatim'
+[ ! -e "$out/SHOULD_NOT_EXIST.wallet" ] && [ ! -e "$OPENDID_ROOT/SHOULD_NOT_EXIST.wallet" ] && ok 'adversarial filename does not inject extra file' || bad 'adversarial filename does not inject extra file'
 want_no_grep 'wallet-secret|did-secret|chain-secret|config-secret' "$tmp/export.out" 'export does not print secrets'
 after_hash=$(find "$FAKE_VOLUMES" "$OPENDID_ROOT" -type f -exec shasum -a 256 {} + | sort)
 [ "$before_hash" = "$after_hash" ] && ok 'source files unchanged' || bad 'source files unchanged'
 
 "$INVENTORY" >"$tmp/inventory.out"
 want_grep 'postgres_container=present' "$tmp/inventory.out" 'inventory reports postgres presence'
-want_grep 'facelicense_namespace_rows=7' "$tmp/inventory.out" 'inventory counts FaceLicense namespace rows'
-want_grep 'facelicense_schema_rows=8' "$tmp/inventory.out" 'inventory counts FaceLicense schema rows'
-want_grep 'facelicense_plan_rows=9' "$tmp/inventory.out" 'inventory counts FaceLicense plan rows'
-want_grep 'entity_rows=10' "$tmp/inventory.out" 'inventory counts entity rows'
-want_grep 'issuer_rows=11' "$tmp/inventory.out" 'inventory counts issuer rows'
-want_grep 'cas_rows=0' "$tmp/inventory.out" 'inventory reports absent CAS rows as 0'
+want_grep 'db=omn ' "$tmp/inventory.out" 'inventory includes first DB'
+want_grep 'db=holder ' "$tmp/inventory.out" 'inventory includes last DB despite stdin-consuming docker exec'
+want_grep 'postgres_version=16.4' "$tmp/inventory.out" 'inventory resolves postgres env user/db'
+want_grep 'facelicense_namespace_rows=1' "$tmp/inventory.out" 'inventory counts FaceLicense namespace rows'
+want_grep 'facelicense_schema_rows=1' "$tmp/inventory.out" 'inventory counts FaceLicense schema rows'
+want_grep 'facelicense_plan_rows=2' "$tmp/inventory.out" 'inventory counts FaceLicense plan rows'
+want_grep 'entity_rows=5' "$tmp/inventory.out" 'inventory counts entity rows'
+want_grep 'issuer_rows=1' "$tmp/inventory.out" 'inventory counts issuer rows'
+want_grep 'cas_rows=1' "$tmp/inventory.out" 'inventory counts CAS rows'
+want_one_line_value wallet_files 3 "$tmp/inventory.out" 'wallet count is exact single line'
+want_one_line_value did_files 1 "$tmp/inventory.out" 'DID count is exact single line'
+want_one_line_value blockchain_config_files 1 "$tmp/inventory.out" 'blockchain config count is exact single line'
+want_one_line_value app_config_files 1 "$tmp/inventory.out" 'app config count is exact single line'
 want_grep 'holder_data=missing' "$tmp/inventory.out" 'inventory reports missing holder data'
 want_no_grep 'wallet-secret|did-secret|chain-secret|config-secret' "$tmp/inventory.out" 'inventory does not print secrets'
+
+FAKE_SQL_FAIL=namespace "$INVENTORY" >"$tmp/inventory-sql-fail.out"
+want_grep 'facelicense_namespace_rows=unknown' "$tmp/inventory-sql-fail.out" 'SQL failure reports unknown, not zero'
 
 exit "$fail"
