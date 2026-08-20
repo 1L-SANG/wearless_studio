@@ -90,7 +90,7 @@ class Settings:
     # 분리가 안 된다. 빈 값이면 분기 없이 mannequin_tier 를 그대로 쓴다(기존 동작).
     # 조정 흐름에서만 다른 모델을 시험할 때 쓴다 — 초기 생성 품질을 건드리지 않고 비교한다.
     mannequin_adjust_tier: str = ""  # "" | image_light | image_high
-    mannequin_image_size: str = "1K"  # 1K | 2K | 4K (2K 서버경로 저하 시 1K)
+    mannequin_image_size: str = "2K"  # 1K | 2K | 4K (오너 결정: 모든 마네킹컷 기본 2K)
     # 상세페이지/에디터 컷 전용 해상도. 마네킹 해상도와 분리해야 콘티 4K 배포가
     # 마네킹 생성 비용·지연까지 조용히 바꾸지 않는다.
     detail_cut_image_size: str = ""  # ""=mannequin_image_size 상속 | 1K | 2K | 4K
@@ -318,8 +318,8 @@ def _bust_pass() -> str:
 
 
 def _image_size() -> str:
-    v = os.getenv("MANNEQUIN_IMAGE_SIZE", "1K").upper()
-    return v if v in {"1K", "2K", "4K"} else "1K"
+    v = os.getenv("MANNEQUIN_IMAGE_SIZE", "2K").upper()
+    return v if v in {"1K", "2K", "4K"} else "2K"
 
 
 def _detail_cut_image_size() -> str:

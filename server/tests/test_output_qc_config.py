@@ -32,6 +32,16 @@ def test_output_qc_defaults_off_and_accepts_repair(monkeypatch):
     assert settings.page_output_qc_mode == "off"
 
 
+def test_mannequin_image_size_defaults_to_2k_everywhere(monkeypatch):
+    """manifest가 없는 로컬·테스트 실행도 오너 결정과 같은 전체 2K 기본값을 쓴다."""
+    monkeypatch.delenv("MANNEQUIN_IMAGE_SIZE", raising=False)
+    assert Settings.__dataclass_fields__["mannequin_image_size"].default == "2K"
+    assert load_settings().mannequin_image_size == "2K"
+
+    monkeypatch.setenv("MANNEQUIN_IMAGE_SIZE", "invalid")
+    assert load_settings().mannequin_image_size == "2K"
+
+
 def test_production_manifest_bounds_4k_gpt_repair_concurrency_without_moving_shared_tier():
     manifest_path = Path(__file__).resolve().parents[2] / "copilot/api/manifest.yml"
     manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
