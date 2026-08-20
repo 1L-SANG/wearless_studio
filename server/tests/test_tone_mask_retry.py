@@ -40,12 +40,14 @@ def _async(value):
     return _coro()
 
 
-def _run_outage_job(monkeypatch, *, raise_exc):
+def _run_outage_job(monkeypatch, *, raise_exc=None, result=None):
     """SAM 이 죽어 있는 동안 마스크 잡 한 번. DB 는 대역, 종결 판단은 진짜."""
     finished = {}
 
     async def segment(_s, **_kw):
-        raise raise_exc
+        if raise_exc is not None:
+            raise raise_exc
+        return result
 
     async def finalize(_conn, *, job_id, lease_token, status, result):
         finished.update({"status": status, "result": result})
@@ -101,6 +103,27 @@ def test_a_transient_sam_outage_is_not_a_permanent_verdict(monkeypatch):
     assert finished["result"]["state"] == "unavailable"
     assert "retryable" not in finished["result"]
     assert "retry" not in finished["result"]
+
+
+@pytest.mark.parametrize("code", egm.TONE_MASK_RETRYABLE_CODES)
+def test_sam_200_infrastructure_failures_are_retryable(monkeypatch, code):
+    """전송은 성공했어도 모델·R2·추론 장애면 영구 판정으로 내리지 않는다."""
+    finished = _run_outage_job(
+        monkeypatch,
+        result=sam_client.WornGarmentResult(ready=False, code=code, message="temporary"),
+    )
+    assert finished["status"] == "done"
+    assert finished["result"]["state"] == "unavailable"
+    assert finished["result"]["code"] == code
+
+
+@pytest.mark.parametrize("code", ["source_rejected", "no_garment_candidate"])
+def test_sam_input_verdicts_are_not_retried(monkeypatch, code):
+    finished = _run_outage_job(
+        monkeypatch,
+        result=sam_client.WornGarmentResult(ready=False, code=code, message="verdict"),
+    )
+    assert finished["result"]["state"] == "failed"
 
 
 # ── ① 서비스: 재시도마다 새 잡 신원 ─────────────────────────────────────────

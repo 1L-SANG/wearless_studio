@@ -74,6 +74,18 @@ TONE_MASK_RETRY_BACKOFF_SECONDS = (15, 60, 120)
 #: 있다. 반대로 no_garment 류 판정 실패는 재시도해도 같은 답이므로 여기 없다.
 TONE_MASK_RETRYABLE_STATES = ("unavailable", "unverified")
 
+#: SAM 서비스가 HTTP 200 안에서 돌려주는 실패 중 다시 실행하면 회복될 수 있는 것들.
+#: 입력 자체의 판정인 source_rejected·no_garment_candidate 는 의도적으로 제외한다.
+TONE_MASK_RETRYABLE_CODES = (
+    "source_unavailable",
+    "source_error",
+    "model_unavailable",
+    "timeout",
+    "segmentation_failed",
+    "segmentation_error",
+    "mask_store_failed",
+)
+
 
 def mask_job_key(project_id: str, cut_id: str, *, product_key: str | None = None,
                  retry: int = 0) -> str:

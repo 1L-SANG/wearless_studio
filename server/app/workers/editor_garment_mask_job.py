@@ -142,7 +142,10 @@ async def run_editor_garment_mask_job(app, job: dict) -> None:
 
     latency = round(time.monotonic() - t0, 2)
     if not result.ready:
-        await finish("done", {"state": "failed", "cutId": cut_id,
+        state = ("unavailable"
+                 if result.code in editor_garment_mask.TONE_MASK_RETRYABLE_CODES
+                 else "failed")
+        await finish("done", {"state": state, "cutId": cut_id,
                               "code": result.code, "message": result.message,
                               "latencySeconds": latency})
         return

@@ -49,7 +49,7 @@ test('tone polling survives three consecutive fetch failures and resets after su
   const stop = startToneEditorPolling({
     fetchState: () => responses.shift()(),
     onState: (state) => states.push(state.status),
-    onFailed: () => { failed += 1; },
+    onUnavailable: () => { failed += 1; },
     schedule: scheduler.schedule,
     cancelSchedule: scheduler.cancel,
   });
@@ -69,7 +69,7 @@ test('tone polling fails only after exceeding three consecutive fetch failures',
   startToneEditorPolling({
     fetchState: async () => { calls += 1; throw new Error('offline'); },
     onState: () => {},
-    onFailed: () => { failed += 1; },
+    onUnavailable: () => { failed += 1; },
     schedule: scheduler.schedule,
     cancelSchedule: scheduler.cancel,
   });
@@ -89,4 +89,23 @@ test('tone polling runway covers four 90-second jobs plus escalating backoff', (
   const serverBackoffMs = (15 + 60 + 120) * 1_000;
   const pollAlignmentMs = 6 * POLL_MS;
   assert.ok(POLL_LIMIT * POLL_MS >= jobRuntimeMs + serverBackoffMs + pollAlignmentMs);
+});
+
+test('tone polling reports timeout instead of leaving processing on screen forever', async () => {
+  const scheduler = manualSchedule();
+  const reasons = [];
+
+  startToneEditorPolling({
+    fetchState: async () => ({ status: 'processing' }),
+    onState: () => {},
+    onUnavailable: (reason) => reasons.push(reason),
+    schedule: scheduler.schedule,
+    cancelSchedule: scheduler.cancel,
+    pollLimit: 2,
+  });
+  await flush();
+  await scheduler.runNext();
+
+  assert.deepEqual(reasons, ['timeout']);
+  assert.equal(scheduler.queued.length, 0);
 });

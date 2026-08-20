@@ -87,18 +87,23 @@ export function ToneEditor({ projectId, cutId, enabled = true, overlayRef, onApp
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [applied, setApplied] = useState(false);     // 방금 적용 성공 — 슬라이더를 만지면 꺼진다
+  const [pollVersion, setPollVersion] = useState(0);
 
   const canvasRef = useRef(null);
   const buffers = useRef(null);                       // {src, mask, out, w, h}
   const full = useRef(null);                          // {srcImg, maskImg, w, h} — 적용 시에만
   const frame = useRef(0);
 
-  const ready = state?.status === 'ready' && !!buffers.current;
+  const ready = state?.cutId === cutId && state?.status === 'ready' && !!buffers.current;
   const neutral = isNeutral(saturation, exposure);
 
   // ── 상태 조회 (준비될 때까지만 폴링) ──────────────────────────────────────
   useEffect(() => {
     if (!enabled || !projectId || !cutId) return undefined;
+    buffers.current = null;
+    full.current = null;
+    setError('');
+    setState({ cutId, status: 'processing' });
     return startToneEditorPolling({
       fetchState: () => api.getToneEditor(projectId, cutId),
       onState: (next) => {
@@ -108,9 +113,9 @@ export function ToneEditor({ projectId, cutId, enabled = true, overlayRef, onApp
         setSaturation(snapSat(next?.adjustment?.saturation ?? 0));
         setExposure(snapExp(next?.adjustment?.exposure ?? 0));
       },
-      onFailed: () => setState({ status: 'failed' }),
+      onUnavailable: () => setState({ cutId, status: 'unavailable' }),
     });
-  }, [enabled, projectId, cutId]);
+  }, [enabled, projectId, cutId, pollVersion]);
 
   // ── 원본·마스크를 한 번만 디코드 ────────────────────────────────────────
   useEffect(() => {
@@ -222,6 +227,13 @@ export function ToneEditor({ projectId, cutId, enabled = true, overlayRef, onApp
       )}
       {state.status === 'failed' && (
         <p className="tone-editor-wait">이 컷은 색감 조정을 지원하지 않아요.</p>
+      )}
+      {state.status === 'unavailable' && (
+        <div className="tone-editor-wait tone-editor-wait-action" role="alert">
+          <span>색감 조정 준비 상태를 확인하지 못했어요.</span>
+          <button type="button" className="btn btn-ghost"
+            onClick={() => setPollVersion((value) => value + 1)}>다시 확인</button>
+        </div>
       )}
       {state.status === 'ready' && (
         <>

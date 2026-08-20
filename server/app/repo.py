@@ -1231,7 +1231,8 @@ async def claim_next_job(conn: AsyncConnection, kinds: tuple[str, ...], worker_i
             with next_job as (
               select id as nid from jobs
               where status = 'pending' and kind = any(%s)
-              order by case when kind = 'editor_garment_mask' then 0 else 1 end, created_at
+              order by case when kind in ('sam_preprocess', 'matching_cutout') then 1 else 0 end,
+                created_at
               for update skip locked limit 1
             )
             update jobs j set status = 'running', locked_by = %s, locked_at = now(),

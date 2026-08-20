@@ -9,7 +9,7 @@ export const MAX_CONSECUTIVE_FAILURES = 3;
 export function startToneEditorPolling({
   fetchState,
   onState,
-  onFailed,
+  onUnavailable,
   schedule = setTimeout,
   cancelSchedule = clearTimeout,
   pollMs = POLL_MS,
@@ -20,8 +20,19 @@ export function startToneEditorPolling({
   let consecutiveFailures = 0;
   let timer;
 
+  const finishUnavailable = (reason) => {
+    if (!active) return;
+    active = false;
+    onUnavailable(reason);
+  };
+
   const queueNext = (tick) => {
-    if (active && attempts < pollLimit) timer = schedule(tick, pollMs);
+    if (!active) return;
+    if (attempts >= pollLimit) {
+      finishUnavailable('timeout');
+      return;
+    }
+    timer = schedule(tick, pollMs);
   };
 
   const tick = async () => {
@@ -36,7 +47,7 @@ export function startToneEditorPolling({
       if (!active) return;
       consecutiveFailures += 1;
       if (consecutiveFailures > MAX_CONSECUTIVE_FAILURES) {
-        onFailed();
+        finishUnavailable('network');
         return;
       }
       queueNext(tick);

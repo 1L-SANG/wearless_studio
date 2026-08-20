@@ -39,5 +39,6 @@ def test_claim_prioritizes_a_later_editor_mask_over_older_background_jobs():
         conn, ("sam_preprocess", "matching_cutout", "editor_garment_mask"), "worker"))
 
     assert row["kind"] == "editor_garment_mask"
-    assert "case when kind = 'editor_garment_mask' then 0 else 1 end" in conn.cur.sql
-    assert "case when kind = 'editor_garment_mask' then 0 else 1 end, created_at" in conn.cur.sql
+    assert "case when kind in ('sam_preprocess', 'matching_cutout') then 1 else 0 end" in conn.cur.sql
+    assert "kind = 'editor_garment_mask' then 0" not in conn.cur.sql
+    assert "end, created_at" in conn.cur.sql
