@@ -17,13 +17,18 @@ export function loadEditorWaitDraft(projectId, storage) {
   } catch { return null; }
 }
 
+/** 편집분을 이 브라우저에 임시 보관. **정말 보관됐는지 boolean 으로 돌려준다** —
+    저장 공간 초과·사생활 모드에서는 조용히 실패하는데, 그걸 모르고 화면이 "보관해 뒀어요"
+    라고 말하면 셀러는 안심하고 창을 닫고 편집을 잃는다(2026-08-19). 대기 화면 경로처럼
+    반환값이 필요 없는 호출부는 그대로 무시하면 된다. */
 export function saveEditorWaitDraft(projectId, blocks, storage) {
-  if (!projectId || !Array.isArray(blocks)) return;
+  if (!projectId || !Array.isArray(blocks)) return false;
   const target = browserStorage(storage);
-  if (!target) return;
+  if (!target) return false;
   try {
     target.setItem(keyFor(projectId), JSON.stringify({ version: 1, blocks }));
-  } catch { /* 저장 공간·사생활 모드 오류는 현재 화면의 편집에는 영향 없음 */ }
+    return true;
+  } catch { return false; }
 }
 
 export function clearEditorWaitDraft(projectId, storage) {

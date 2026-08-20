@@ -192,3 +192,85 @@ test('저장된 문서를 여는 경로도 누락된 배송·교환·반품 프�
   );
   assert.match(initialization, /ensureShippingReturnsBlock\(withH, ctx\)/);
 });
+
+
+test('자동저장 실패를 삼키지 않는다 — 임시 보관 + 배너 + 다시 저장', () => {
+  // 조용히 실패하면 화면은 멀쩡한데 편집만 사라져, 셀러는 탭을 닫고서야 전부 날아간 걸
+  // 안다(오너 신고 2026-08-19). 실패 경로가 셋을 모두 하는지 고정한다.
+  const saveStart = editor.indexOf('api.saveEditorBlocks(projectId, persistable(latestBlocks.current)).then');
+  assert.ok(saveStart > 0);
+  const block = editor.slice(saveStart, editor.indexOf('}, 1500);', saveStart));
+  assert.doesNotMatch(block, /catch\(\(\) => \{\}\)/, '실패를 삼키면 안 된다');
+  assert.match(block, /const backedUp = saveEditorWaitDraft\(projectId, persistable\(latestBlocks\.current\)\)/, '브라우저에 임시 보관');
+  assert.match(block, /setSaveError\(\{ \.\.\.classifyEditorLoadError\(error\), backedUp \}\)/, '원인 + 보관 성공 여부를 배너로');
+  assert.match(block, /setSaveError\(null\)/, '성공하면 배너를 거둔다');
+  // 배너와 복구 수단
+  assert.match(editor, /className="ed-savebar"/);
+  assert.match(editor, /const retrySaveNow = \(\) => \{/);
+  assert.match(editor, /openLogin\(`\/editor\/\$\{projectId\}`\)/, '로그인이 풀린 경우 제자리 복귀');
+});
+
+
+test('임시 보관 실패는 안심시키지 않는다 — 저장 공간이 없으면 사실대로', () => {
+  // 보관까지 실패했는데 "보관해 뒀어요"라고 말하면 셀러는 안심하고 창을 닫는다.
+  // 저장 실패를 삼키던 것과 같은 종류의 거짓말이라 같은 강도로 막는다.
+  assert.match(editor, /saveError\.backedUp/, '배너가 보관 성공 여부를 읽는다');
+  assert.match(editor, /창을 닫으면 편집 내용이 사라져요/, '보관 실패 시 경고');
+});
+
+test('saveEditorWaitDraft 는 보관 성공 여부를 돌려준다', async () => {
+  const { saveEditorWaitDraft } = await import('../../src/lib/editorWaitDraft.js');
+  const ok = { setItem() {} };
+  const full = { setItem() { throw new Error('QuotaExceededError'); } };
+  assert.equal(saveEditorWaitDraft('p1', [{ id: 'b' }], ok), true);
+  assert.equal(saveEditorWaitDraft('p1', [{ id: 'b' }], full), false, '공간 초과는 false');
+  assert.equal(saveEditorWaitDraft('', [], ok), false);
+  assert.equal(saveEditorWaitDraft('p1', null, ok), false);
+});
+
+
+test('에디터를 나갈 때의 저장도 실패를 흘리지 않는다', () => {
+  // 화면이 곧 사라져 알릴 방법이 없다 — 대신 브라우저에 보관해 다음 진입에서 복원한다.
+  // catch 가 없던 동안에는 서버가 죽은 채로 나가면 편집이 통째로 사라졌다.
+  const flush = editor.slice(editor.indexOf('const flushExit = () => {'));
+  assert.match(flush.slice(0, 1800),
+    /api\.saveEditorBlocks\(projectId, persistable\(bs\)\)\s*\.catch\(\(\) => saveEditorWaitDraft\(projectId, persistable\(bs\)\)\)/,
+    '이탈 플러시: persistable 게이트 + 실패 시 로컬 보관');
+  const unmount = editor.slice(editor.indexOf('if (skipExitPersist.current'));
+  assert.match(unmount.slice(0, 900),
+    /\.catch\(\(\) => saveEditorWaitDraft\(projectId, persistable\(latestBlocks\.current\)\)\)/,
+    '언마운트 정리 저장도 마찬가지');
+});
+
+test('수동 [저장] 버튼은 실패를 반드시 말한다', () => {
+  // onClick={save} 라 실패가 unhandled rejection 으로 흘렀다 — 누른 사람은 저장된 줄 안다.
+  const save = editor.slice(editor.indexOf('const save = async () => {'));
+  const body = save.slice(0, 1600);
+  assert.match(body, /try \{\s*await api\.saveEditorBlocks\(projectId, persistable\(/, 'persistable 게이트 + try');
+  assert.match(body, /catch \(error\) \{/, '실패를 잡는다');
+  assert.match(body, /saveEditorWaitDraft\(projectId, persistable\(/, '실패분을 보관');
+  assert.match(body, /setSaveError\(\{ \.\.\.classifyEditorLoadError\(error\), backedUp \}\)/, '배너로');
+  assert.match(body, /저장하지 못했어요/, '토스트로도 즉시 알림');
+});
+
+
+test('모든 서버 저장은 persistable 게이트를 통과한다 (불변식)', () => {
+  // 스냅샷이 아니라 불변식으로 잡는다 — 나중에 저장 경로가 하나 더 생겨도 걸린다.
+  // 게이트를 빠뜨리면 손 안 댄 '내용을 입력하세요.'가 셀러의 상품 페이지에 그대로 실린다.
+  const sites = [...editor.matchAll(/api\.saveEditorBlocks\(projectId,\s*([^;]{0,80})/g)];
+  assert.ok(sites.length >= 6, `저장 경로가 ${sites.length}개뿐 — 찾기 정규식을 의심하라`);
+  for (const [, arg] of sites) {
+    assert.match(arg, /^persistable\(/, `게이트 없는 저장 경로: ${arg.slice(0, 50)}`);
+  }
+});
+
+test('모든 서버 저장 실패는 잡힌다 (불변식)', () => {
+  // 잡히지 않은 저장 실패는 unhandled rejection 으로 흘러 화면이 아무 말도 안 한다.
+  // 각 호출 뒤 300자 안에 .catch( 가 있거나, 그 호출이 try 블록 안(await)이어야 한다.
+  for (const m of editor.matchAll(/api\.saveEditorBlocks\(projectId,/g)) {
+    const before = editor.slice(Math.max(0, m.index - 60), m.index);
+    const after = editor.slice(m.index, m.index + 320);
+    const guarded = /\.catch\(/.test(after) || /await /.test(before);
+    assert.ok(guarded, `실패를 안 잡는 저장 경로: ...${before.slice(-40)}`);
+  }
+});
