@@ -76,7 +76,19 @@ echo "==> 4/4 엔티티 4개 온체인 등록 (issuer/cas/wallet/verifier)"
 post_json entities_register "$TAS/tas/admin/v1/entities/register-simple" '{}'
 
 echo "==> 검증: entities/list"
-curl -fsS "$TAS/tas/admin/v1/entities/list" | python3 -c "import sys,json;d=json.load(sys.stdin);c=d.get('content',[]);print('entities_registered=%d' % len(c))" 2>/dev/null || echo "entities_registered=unknown"
+entities_registered=$(curl -fsS "$TAS/tas/admin/v1/entities/list" | python3 -c 'import json,sys
+try:
+    data = json.load(sys.stdin)
+    content = data.get("content")
+    if not isinstance(content, list):
+        raise ValueError
+    print(len(content))
+except Exception:
+    raise SystemExit(1)
+') || { echo "entities_registered=invalid"; exit 1; }
+case "$entities_registered" in ''|*[!0-9]*) echo "entities_registered=invalid"; exit 1 ;; esac
+[ "$entities_registered" -ge 4 ] || { echo "entities_registered=insufficient"; exit 1; }
+printf 'entities_registered=%s\n' "$entities_registered"
 python3 - "$FRESH_MARKER" <<'PY'
 import os, sys
 os.unlink(sys.argv[1])

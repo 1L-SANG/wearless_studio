@@ -50,6 +50,14 @@ done
 body=$(cat || true)
 if [ "${FAKE_CURL_FAIL:-}" = 1 ]; then exit 22; fi
 case " $* " in
+  *'/entities/list'*)
+    if [ "${FAKE_LIST_FAIL:-}" = 1 ]; then exit 22; fi
+    if [ "${FAKE_LIST_RESPONSE+x}" ]; then
+      printf '%s\n' "$FAKE_LIST_RESPONSE"
+    else
+      printf '{"content":[{"state":"registered"},{"state":"registered"},{"state":"registered"},{"state":"registered"}]}\n'
+    fi
+    ;;
   *' /create/all '*|*'/create/all'*)
     [ "$body" = '{"password": "fresh-secret"}' ] || { echo 'unexpected create body' >&2; exit 6; }
     printf '{}\n'
@@ -101,6 +109,7 @@ FAKE_LOG="$tmp/fresh-ok.log" FAKE_ENTITIES=0 FAKE_PLAN_ISSUER=0 FAKE_PLAN_TAS=0 
 want_grep 'create_all=ok' "$tmp/fresh-ok.out" 'fresh bootstrap requires successful create/all'
 want_grep 'tas_register=ok' "$tmp/fresh-ok.out" 'fresh bootstrap requires successful TAS registration'
 want_grep 'entities_register=ok' "$tmp/fresh-ok.out" 'fresh bootstrap requires successful entity registration'
+want_grep 'entities_registered=4' "$tmp/fresh-ok.out" 'fresh bootstrap verifies registered entity count'
 [ ! -e "$marker" ] && ok 'fresh marker is consumed after success' || bad 'fresh marker is consumed after success'
 want_no_grep 'fresh-secret' "$tmp/fresh-ok.log" 'fresh secret never reaches curl argv'
 
@@ -113,5 +122,35 @@ FAKE_LOG="$tmp/fresh-fail.log" FAKE_CURL_FAIL=1 FAKE_ENTITIES=0 FAKE_PLAN_ISSUER
   || ok 'fresh bootstrap fails closed on curl failure'
 [ -e "$marker_fail" ] && ok 'failed bootstrap preserves marker' || bad 'failed bootstrap preserves marker'
 want_no_grep 'fresh-secret' "$tmp/fresh-fail.log" 'failed bootstrap keeps secret out of argv'
+
+marker_list_fail="$tmp/fresh-list-fail.marker"
+printf 'one-shot\n' >"$marker_list_fail"
+chmod 600 "$marker_list_fail"
+FAKE_LOG="$tmp/fresh-list-fail.log" FAKE_LIST_FAIL=1 FAKE_ENTITIES=0 FAKE_PLAN_ISSUER=0 FAKE_PLAN_TAS=0 FAKE_VCS=0 \
+  OPENDID_PW=fresh-secret OPENDID_FRESH_STATE_MARKER="$marker_list_fail" "$SCRIPT" >"$tmp/fresh-list-fail.out" 2>&1 \
+  && bad 'fresh bootstrap fails closed when entities list HTTP fails' \
+  || ok 'fresh bootstrap fails closed when entities list HTTP fails'
+[ -e "$marker_list_fail" ] && ok 'entities list HTTP failure preserves marker' || bad 'entities list HTTP failure preserves marker'
+want_no_grep 'entities_registered=unknown|완료' "$tmp/fresh-list-fail.out" 'entities list HTTP failure is not reported as success'
+
+marker_malformed="$tmp/fresh-list-malformed.marker"
+printf 'one-shot\n' >"$marker_malformed"
+chmod 600 "$marker_malformed"
+FAKE_LOG="$tmp/fresh-list-malformed.log" FAKE_LIST_RESPONSE='not-json' FAKE_ENTITIES=0 FAKE_PLAN_ISSUER=0 FAKE_PLAN_TAS=0 FAKE_VCS=0 \
+  OPENDID_PW=fresh-secret OPENDID_FRESH_STATE_MARKER="$marker_malformed" "$SCRIPT" >"$tmp/fresh-list-malformed.out" 2>&1 \
+  && bad 'fresh bootstrap fails closed when entities list is malformed' \
+  || ok 'fresh bootstrap fails closed when entities list is malformed'
+[ -e "$marker_malformed" ] && ok 'malformed entities list preserves marker' || bad 'malformed entities list preserves marker'
+want_no_grep 'entities_registered=unknown|완료' "$tmp/fresh-list-malformed.out" 'malformed entities list is not reported as success'
+
+marker_short="$tmp/fresh-list-short.marker"
+printf 'one-shot\n' >"$marker_short"
+chmod 600 "$marker_short"
+FAKE_LOG="$tmp/fresh-list-short.log" FAKE_LIST_RESPONSE='{"content":[{}]}' FAKE_ENTITIES=0 FAKE_PLAN_ISSUER=0 FAKE_PLAN_TAS=0 FAKE_VCS=0 \
+  OPENDID_PW=fresh-secret OPENDID_FRESH_STATE_MARKER="$marker_short" "$SCRIPT" >"$tmp/fresh-list-short.out" 2>&1 \
+  && bad 'fresh bootstrap fails closed when entity count is insufficient' \
+  || ok 'fresh bootstrap fails closed when entity count is insufficient'
+[ -e "$marker_short" ] && ok 'insufficient entities list preserves marker' || bad 'insufficient entities list preserves marker'
+want_no_grep '완료' "$tmp/fresh-list-short.out" 'insufficient entities list is not reported as success'
 
 [ "$fail" -eq 0 ]
