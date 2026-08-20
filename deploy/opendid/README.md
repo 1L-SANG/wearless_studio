@@ -30,22 +30,19 @@ Copy configs and units:
 
 ```bash
 sudo cp deploy/opendid/config/*.yml /opt/opendid/config/
+sudo cp deploy/opendid/infra.compose.yml /opt/opendid/infra.compose.yml
 sudo cp deploy/opendid/systemd/*.service /etc/systemd/system/
 sudo install -o root -g opendid -m 0640 deploy/opendid/env.example /opt/opendid/opendid.env
 sudo editor /opt/opendid/opendid.env
 ```
 
-Start infra first:
-
-```bash
-docker compose -f deploy/opendid/infra.compose.yml --env-file /opt/opendid/opendid.env up -d
-```
-
-Then start apps:
+Start infra and apps:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now opendid-tas opendid-cas opendid-issuer fm-holder
+sudo systemctl enable --now opendid-infra opendid-tas opendid-cas opendid-issuer fm-holder
 ```
 
 Only localhost ports are bound: PostgreSQL `5432`, Besu RPC `8545/8546`, OpenDID apps `8090/8091/8094`, Holder `8100`. Block external access at the host firewall if Docker is configured to publish beyond loopback.
+
+`opendid-infra.service` runs `docker compose ... up -d --wait`; Java services require it before startup.

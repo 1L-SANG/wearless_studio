@@ -1,8 +1,8 @@
 [Unit]
 Description=OpenDID TAS
-After=network-online.target docker.service
+After=network-online.target opendid-infra.service
 Wants=network-online.target
-Requires=docker.service
+Requires=opendid-infra.service
 
 [Service]
 User=opendid

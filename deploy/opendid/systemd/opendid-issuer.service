@@ -1,8 +1,8 @@
 [Unit]
 Description=OpenDID Issuer
-After=network-online.target docker.service opendid-tas.service
+After=network-online.target opendid-infra.service opendid-tas.service
 Wants=network-online.target
-Requires=docker.service opendid-tas.service
+Requires=opendid-infra.service opendid-tas.service
 
 [Service]
 User=opendid

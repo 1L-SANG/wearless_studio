@@ -1,0 +1,17 @@
+[Unit]
+Description=OpenDID PostgreSQL and Besu infra
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+WorkingDirectory=/opt/opendid
+EnvironmentFile=/opt/opendid/opendid.env
+ExecStart=docker compose -f /opt/opendid/infra.compose.yml --env-file /opt/opendid/opendid.env up -d --wait
+ExecStop=docker compose -f /opt/opendid/infra.compose.yml --env-file /opt/opendid/opendid.env down
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target

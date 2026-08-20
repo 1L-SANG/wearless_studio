@@ -1,8 +1,8 @@
 [Unit]
 Description=FaceMarket OpenDID Holder
-After=network-online.target opendid-tas.service opendid-cas.service opendid-issuer.service
+After=network-online.target opendid-infra.service opendid-tas.service opendid-cas.service opendid-issuer.service
 Wants=network-online.target
-Requires=opendid-tas.service opendid-cas.service opendid-issuer.service
+Requires=opendid-infra.service opendid-tas.service opendid-cas.service opendid-issuer.service
 
 [Service]
 User=opendid

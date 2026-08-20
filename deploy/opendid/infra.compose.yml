@@ -4,11 +4,11 @@ services:
     container_name: postgre-opendid
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${OPENDID_POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${OPENDID_POSTGRES_PORT:?set OPENDID_POSTGRES_PORT}:5432"
     environment:
-      POSTGRES_USER: "${OPENDID_POSTGRES_USER:-postgres}"
-      POSTGRES_PASSWORD: "${OPENDID_POSTGRES_PASSWORD:-change-me-before-start}"
-      POSTGRES_DB: "${OPENDID_POSTGRES_DB:-postgres}"
+      POSTGRES_USER: "${OPENDID_POSTGRES_USER:?set OPENDID_POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${OPENDID_POSTGRES_PASSWORD:?set OPENDID_POSTGRES_PASSWORD}"
+      POSTGRES_DB: "${OPENDID_POSTGRES_DB:?set OPENDID_POSTGRES_DB}"
     volumes:
       - postgre_opendid_data:/var/lib/postgresql/data
     healthcheck:
@@ -23,10 +23,10 @@ services:
     container_name: opendid-besu-node
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${OPENDID_BESU_HTTP_PORT:-8545}:8545"
-      - "127.0.0.1:${OPENDID_BESU_WS_PORT:-8546}:8546"
-      - "127.0.0.1:${OPENDID_BESU_P2P_PORT:-30303}:30303"
-      - "127.0.0.1:${OPENDID_BESU_P2P_PORT:-30303}:30303/udp"
+      - "127.0.0.1:${OPENDID_BESU_HTTP_PORT:?set OPENDID_BESU_HTTP_PORT}:8545"
+      - "127.0.0.1:${OPENDID_BESU_WS_PORT:?set OPENDID_BESU_WS_PORT}:8546"
+      - "127.0.0.1:${OPENDID_BESU_P2P_PORT:?set OPENDID_BESU_P2P_PORT}:30303"
+      - "127.0.0.1:${OPENDID_BESU_P2P_PORT:?set OPENDID_BESU_P2P_PORT}:30303/udp"
     volumes:
       - besu_opendid_data:/opt/besu/data
     command: >
@@ -44,7 +44,12 @@ services:
       --min-gas-price=0
       --tx-pool-price-bump=0
     healthcheck:
-      test: ["CMD-SHELL", "besu --version >/dev/null"]
+      test:
+        - CMD-SHELL
+        - >
+          /usr/bin/bash -ec 'exec 3<>/dev/tcp/127.0.0.1/8545;
+          printf "POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: 59\r\n\r\n{\"jsonrpc\":\"2.0\",\"method\":\"net_version\",\"params\":[],\"id\":1}" >&3;
+          dd bs=4096 count=1 <&3 2>/dev/null | grep -q "\"result\""'
       interval: 15s
       timeout: 5s
       retries: 10
