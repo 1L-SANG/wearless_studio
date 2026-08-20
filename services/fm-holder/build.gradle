@@ -6,7 +6,11 @@ plugins {
 
 group = 'kr.wearless'
 version = '0.1.0'
-java { sourceCompatibility = '21' }
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
 ext { set('springCloudVersion', "2023.0.1") }
 repositories { mavenCentral() }
 
