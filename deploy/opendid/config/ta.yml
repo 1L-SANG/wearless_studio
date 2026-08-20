@@ -1,0 +1,12 @@
+spring:
+  profiles:
+    active: prod
+blockchain:
+  file-path: /opt/opendid/secrets/TA/blockchain.properties
+setup:
+  base-url: http://127.0.0.1
+  path: /opt/opendid/jars
+tas:
+  url: http://127.0.0.1:8090
+wallet:
+  file-path: /opt/opendid/secrets/TA/tas.wallet

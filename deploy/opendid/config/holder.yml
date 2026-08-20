@@ -1,0 +1,26 @@
+server:
+  port: 8100
+
+spring:
+  application:
+    name: fm-holder
+
+holder:
+  data-dir: ${FM_HOLDER_DATA_DIR}
+  wallet-pepper: ${FM_HOLDER_PEPPER}
+
+opendid:
+  tas-url: http://127.0.0.1:8090
+  issuer-url: http://127.0.0.1:8091
+  verifier-url: http://127.0.0.1:8092
+  api-server-url: http://127.0.0.1:8093
+  cas-url: http://127.0.0.1:8094
+  kyc:
+    name: fm-holder-cas
+    cas-server-url: http://127.0.0.1:8094/cas
+  wallet-provider:
+    file-path: ${FM_WALLET_PROVIDER_PATH}
+    password: ${FM_WALLET_PROVIDER_PW}
+  cas-provider:
+    file-path: ${FM_CAS_PROVIDER_PATH}
+    password: ${FM_CAS_PROVIDER_PW}

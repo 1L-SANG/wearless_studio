@@ -1,0 +1,14 @@
+spring:
+  profiles:
+    active: prod
+blockchain:
+  file-path: /opt/opendid/secrets/Issuer/blockchain.properties
+setup:
+  base-url: http://127.0.0.1
+  path: /opt/opendid/jars
+tas:
+  url: http://127.0.0.1:8090
+wallet:
+  file-path: /opt/opendid/secrets/Issuer/issuer.wallet
+zkp-wallet:
+  file-path: /opt/opendid/secrets/Issuer/issuer.zkpwallet

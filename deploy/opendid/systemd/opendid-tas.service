@@ -1,0 +1,21 @@
+[Unit]
+Description=OpenDID TAS
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+User=opendid
+Group=opendid
+WorkingDirectory=/opt/opendid
+EnvironmentFile=/opt/opendid/opendid.env
+ExecStart=java -jar /opt/opendid/jars/TA/did-ta-server-2.0.0.jar --server.port=8090 --spring.config.additional-location=file:/opt/opendid/config/ta.yml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/opendid/state /opt/opendid/secrets
+
+[Install]
+WantedBy=multi-user.target

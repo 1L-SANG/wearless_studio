@@ -1,0 +1,21 @@
+[Unit]
+Description=OpenDID Issuer
+After=network-online.target docker.service opendid-tas.service
+Wants=network-online.target
+Requires=docker.service opendid-tas.service
+
+[Service]
+User=opendid
+Group=opendid
+WorkingDirectory=/opt/opendid
+EnvironmentFile=/opt/opendid/opendid.env
+ExecStart=java -jar /opt/opendid/jars/Issuer/did-issuer-server-2.0.0.jar --server.port=8091 --spring.config.additional-location=file:/opt/opendid/config/issuer.yml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/opendid/state /opt/opendid/secrets
+
+[Install]
+WantedBy=multi-user.target

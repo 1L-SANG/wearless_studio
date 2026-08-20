@@ -1,0 +1,51 @@
+# OpenDID single-server deploy
+
+Production layout:
+
+```text
+/opt/opendid/
+  jars/{TA,Issuer,CA,Holder}/
+  config/
+  secrets/{TA,Issuer,CA,Wallet}/
+  state/holder/
+  state/migration/
+```
+
+Use only OpenDID V2.0.0 release jars for TA, Issuer, and CA, plus this repo's built Holder jar:
+
+- `/opt/opendid/jars/TA/did-ta-server-2.0.0.jar`
+- `/opt/opendid/jars/Issuer/did-issuer-server-2.0.0.jar`
+- `/opt/opendid/jars/CA/did-ca-server-2.0.0.jar`
+- `/opt/opendid/jars/Holder/fm-holder-0.1.0.jar`
+
+Create the runtime user and directories:
+
+```bash
+sudo useradd --system --home /opt/opendid --shell /usr/sbin/nologin opendid
+sudo install -d -o opendid -g opendid -m 0755 /opt/opendid/jars/{TA,Issuer,CA,Holder} /opt/opendid/config /opt/opendid/state/{holder,migration}
+sudo install -d -o opendid -g opendid -m 0700 /opt/opendid/secrets/{TA,Issuer,CA,Wallet}
+```
+
+Copy configs and units:
+
+```bash
+sudo cp deploy/opendid/config/*.yml /opt/opendid/config/
+sudo cp deploy/opendid/systemd/*.service /etc/systemd/system/
+sudo install -o root -g opendid -m 0640 deploy/opendid/env.example /opt/opendid/opendid.env
+sudo editor /opt/opendid/opendid.env
+```
+
+Start infra first:
+
+```bash
+docker compose -f deploy/opendid/infra.compose.yml --env-file /opt/opendid/opendid.env up -d
+```
+
+Then start apps:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now opendid-tas opendid-cas opendid-issuer fm-holder
+```
+
+Only localhost ports are bound: PostgreSQL `5432`, Besu RPC `8545/8546`, OpenDID apps `8090/8091/8094`, Holder `8100`. Block external access at the host firewall if Docker is configured to publish beyond loopback.
