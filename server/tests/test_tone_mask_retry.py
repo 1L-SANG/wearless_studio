@@ -11,6 +11,7 @@ error 잡은 디스패처가 재시도하지 않고(주석만 그렇게 믿고 �
 """
 
 import asyncio
+import inspect
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -92,13 +93,14 @@ def _run_outage_job(monkeypatch, *, raise_exc):
 
 
 def test_a_transient_sam_outage_is_not_a_permanent_verdict(monkeypatch):
-    """unavailable 은 done+retryable 로 끝난다 — error 는 재시도가 없는 종착이다."""
+    """unavailable 은 done+state 로 끝나며 라우트가 state 로 재시도를 판정한다."""
     finished = _run_outage_job(
         monkeypatch, raise_exc=sam_client.SamUnavailable("connect timeout"))
 
     assert finished["status"] == "done", "error 종결은 이 잡을 영구히 죽인다"
     assert finished["result"]["state"] == "unavailable"
-    assert finished["result"]["retryable"] is True
+    assert "retryable" not in finished["result"]
+    assert "retry" not in finished["result"]
 
 
 # ── ① 서비스: 재시도마다 새 잡 신원 ─────────────────────────────────────────
@@ -285,16 +287,11 @@ def test_upgrade_mask_uses_retry_generations_and_keeps_the_existing_mask(monkeyp
 
 # ── ③ 워커 큐잉 직후 디스패처 기상 ─────────────────────────────────────────
 
-def test_saving_cuts_wakes_the_dispatcher_for_the_mask_job():
-    """컷 확정 직후 걸리는 마스크 잡이 최대 3초 폴링을 기다리면 안 된다."""
+def test_saving_cuts_relies_on_the_dispatcher_reclaim_after_worker_return():
+    """직렬 워커 안의 wake는 효과가 없고, 반환 직후 디스패처가 다시 claim한다."""
     from app.workers import mannequin_job as mj
 
-    woken = []
     created = []
-
-    class _Disp:
-        def wake(self):
-            woken.append(True)
 
     class _Conn:
         async def commit(self):
@@ -311,10 +308,6 @@ def test_saving_cuts_wakes_the_dispatcher_for_the_mask_job():
         def connection(self):
             return _Ctx()
 
-    class _App:
-        class state:
-            dispatcher = _Disp()
-
     async def fake_create_job(_conn, **kw):
         created.append(kw)
         return {"id": "j"}, True
@@ -325,8 +318,8 @@ def test_saving_cuts_wakes_the_dispatcher_for_the_mask_job():
     import unittest.mock as um
     with um.patch.object(mj.repo, "create_job", fake_create_job):
         asyncio.run(mj._enqueue_editor_garment_mask(
-            _Pool(), _S(), app=_App(), user_id="u1", project_id="p1",
+            _Pool(), _S(), user_id="u1", project_id="p1",
             cuts=[{"id": "A-1"}], cut_metadata={}))
 
     assert len(created) == 1
-    assert woken == [True], "큐잉했으면 즉시 깨워야 한다"
+    assert "app" not in inspect.signature(mj._enqueue_editor_garment_mask).parameters

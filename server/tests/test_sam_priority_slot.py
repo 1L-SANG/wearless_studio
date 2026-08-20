@@ -1,14 +1,16 @@
-"""SAM 단일 추론 슬롯의 우선순위 — 셀러가 기다리는 요청이 배경 전처리를 추월한다.
+"""SAM 단일 추론 슬롯의 보조 우선순위 — 동시 직접 요청에서도 셀러 작업이 먼저다.
 
 2026-08-18. 상품 등록→바로 생성 흐름에서 업로드 누끼(sam_preprocess)·코디 누끼
 (matching_cutout)·톤 마스크(worn-garment)가 몇 분 안에 전부 도착한다. 슬롯이 도착순(FIFO)
 이면 셀러가 화면 앞에서 기다리는 톤 마스크가 아무도 안 기다리는 전처리 뒤에 줄을 서고,
 클라이언트 타임아웃(90초)을 넘겨 unavailable 로 죽는다 — 실사고의 절반이 이 줄서기였다.
 
-한 번에 하나(메모리 상한)는 그대로다. 바뀌는 건 **줄의 순서**뿐이다.
+운영의 주 대기열은 DB claim 순서다. 이 슬롯은 다중 레플리카의 동시 직접 요청에서도
+한 번에 하나라는 메모리 상한과 우선순위를 지키는 2차 방어다.
 """
 
 import asyncio
+import inspect
 from contextlib import asynccontextmanager
 
 from sam_service import api as sapi
@@ -65,6 +67,13 @@ def test_release_with_an_empty_queue_frees_the_slot():
 def test_worn_garment_is_declared_ahead_of_canonical_preprocess():
     """급행은 톤 마스크다 — 셀러가 화면 앞에서 기다리는 유일한 SAM 작업이다."""
     assert sapi.PRIORITY_WORN_GARMENT < sapi.PRIORITY_CANONICAL
+
+
+def test_priority_slot_docs_do_not_claim_background_callers_retry():
+    """PrioritySlot은 다중 레플리카 방어이며 존재하지 않는 호출자 재시도를 전제하지 않는다."""
+    docs = inspect.getdoc(sapi.PrioritySlot) or ""
+    assert "retried by their own callers" not in docs
+    assert "database claim order" in docs
 
 
 def test_the_worn_endpoint_actually_uses_the_express_priority(monkeypatch):

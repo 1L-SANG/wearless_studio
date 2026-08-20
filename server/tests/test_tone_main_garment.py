@@ -288,7 +288,7 @@ def test_a_cut_without_a_coordinating_garment_costs_nothing_extra(monkeypatch):
     ("pending", "processing"),      # 아직 큐에 있다 — 기다리는 게 맞다
     ("running", "processing"),
     ("done", "failed"),             # 마스크 없이 끝났다(코디 위·의류 못 찾음·SAM 미설정)
-    ("error", "failed"),
+    ("error", "processing"),       # lease 복구의 result 없는 error 는 다음 세대로 복구
     ("cancelled", "failed"),
 ])
 def test_a_terminated_mask_job_stops_the_waiting_message(job_status, expected):
@@ -306,11 +306,11 @@ def test_an_unreadable_mask_is_retried_not_stamped_as_verified(monkeypatch):
     """확인 못 한 마스크에 보장 도장을 찍으면 그 컷은 영구히 검증된 것으로 남는다."""
     finished, recorded, _r2 = _run_job(
         monkeypatch, mask_png=b"corrupted", matching_side="bottom")
-    # done+retryable 이다 — error 는 재시도 없는 종착이라(2026-08-18 실측) 일시 장애가
-    # 그 컷의 톤 에디터를 영구히 닫는다. 재시도는 톤 상태 라우트가 세대 키로 몰고 간다.
+    # done+retryable state다. 재시도 여부는 별도 boolean이 아니라 state 어휘 하나로 판정한다.
     assert finished["status"] == "done"
     assert finished["result"]["state"] == "unverified"
-    assert finished["result"]["retryable"] is True
+    assert "retryable" not in finished["result"]
+    assert "retry" not in finished["result"]
     assert finished["result"]["code"] == job.FAIL_UNVERIFIED
     assert "record" not in recorded
 

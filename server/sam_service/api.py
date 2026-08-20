@@ -55,15 +55,13 @@ VIEW_TIMEOUT_S = float(600)
 #: sizing question into an OOM kill. Views within a request are already sequential; this also
 #: serialises across concurrent requests.
 class PrioritySlot:
-    """One inference at a time — the memory ceiling — but the QUEUE is priority-ordered.
+    """One inference at a time; concurrent in-process waiters are priority-ordered.
 
-    Plain FIFO put the seller's Tone Editor mask behind background preprocessing whenever a
-    product was registered and generated in one sitting; the mask then blew the caller's 90s
-    timeout and died as `unavailable` (2026-08-18). Priority only reorders the waiting line;
-    it never runs two inferences at once and never preempts a running one.
+    Production normally serializes jobs before they reach this slot, so database claim order is
+    the primary queue. This remains a harmless second line of defence for concurrent requests
+    from multiple replicas: it never runs two inferences at once or preempts a running one.
 
-    Starvation is accepted by design at this traffic: background cutouts are retried by their
-    own callers and nobody is watching them.
+    Equal-priority work remains FIFO; sustained foreground traffic may delay background work.
     """
 
     def __init__(self) -> None:

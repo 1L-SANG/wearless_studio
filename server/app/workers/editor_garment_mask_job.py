@@ -136,9 +136,8 @@ async def run_editor_garment_mask_job(app, job: dict) -> None:
         # 실측: 재시도 코드가 존재하지 않는다) 멱등키를 문 채 종착이라, 일시 장애 한 번이
         # 그 컷의 톤 에디터를 영구히 닫았다. 재시도는 톤 상태 라우트가 세대 키(:rN)로 몰고
         # 가고, 마스크 캐시 키는 결정적이라 재시도 비용도 싸다(완성분은 R2 에서 돌아온다).
-        await finish("done", {"state": "unavailable", "retryable": True,
-                              "reason": str(exc), "cutId": cut_id,
-                              "retry": int(payload.get("retry") or 0)})
+        await finish("done", {"state": "unavailable", "reason": str(exc),
+                              "cutId": cut_id})
         return
 
     latency = round(time.monotonic() - t0, 2)
@@ -164,15 +163,11 @@ async def run_editor_garment_mask_job(app, job: dict) -> None:
         match_share = editor_garment_mask.band_mass_fraction(png, band)
         if match_share is None:
             # 재볼 수 없는 마스크는 기록하지 않는다 — "검증했다"는 도장을 못 찍는 마스크를
-            # 남기면 그 컷은 확인되지 않은 채 영구히 보장된 것으로 취급된다. error 로 끝내
-            # 디스패처의 유한 재시도에 맡기고, 재시도가 다 떨어지면 화면은 failed 로 간다.
-            # unavailable 과 같은 부류다 — R2 읽기 실패는 판정이 아니라 인프라 장애고,
-            # 재시도 경로도 같은 이유로 라우트의 세대 키다(error 는 재시도 없는 종착).
-            await finish("done", {"state": "unverified", "retryable": True,
-                                  "cutId": cut_id,
+            # 남기면 그 컷은 확인되지 않은 채 영구히 보장된 것으로 취급된다. 판정 실패가 아닌
+            # done+unverified 로 끝내고, 톤 상태 라우트가 세대 키와 백오프로 유한 재시도한다.
+            await finish("done", {"state": "unverified", "cutId": cut_id,
                                   "code": FAIL_UNVERIFIED, "matchingSide": matching_side,
                                   "maskKey": result.mask_key,
-                                  "retry": int(payload.get("retry") or 0),
                                   "latencySeconds": latency})
             return
         if match_share > editor_garment_mask.MATCH_ZONE_MAX:
