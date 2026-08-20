@@ -224,7 +224,7 @@ async def identity_verify(
     token = (body.token or "").strip()
     if not token:
         raise _err("token_required", "인증 토큰이 없습니다.")
-    cx_tx_id = f"sha256:{hashlib.sha256(token.encode()).hexdigest()}"
+    cx_tx_id = f"cxsha256:{hashlib.sha256(token.encode()).hexdigest()}"
 
     # ⚠️ 원문 신원 조기 폐기 미적용 지점(api-spec §3.0). trans·ci·birth 가 함수 끝까지 프레임
     # 로컬로 남아, 예외 전파 시 traceback 이 이 프레임을 잡으면 CX 원문(CI·이름·생년월일)이
@@ -272,9 +272,10 @@ async def identity_verify(
             # 원본 CX capability는 저장하지 않고 digest UNIQUE로 같은 토큰 재사용만 차단한다.
             try:
                 await cur.execute(
-                    """insert into fm_identity_verifications (model_id, cx_tx_id, fields)
-                       values (%s, %s, %s)""",
-                    (model_id, cx_tx_id, Json(fields)),
+                    """insert into fm_identity_verifications
+                       (model_id, cx_tx_id, cx_tx_id_format, fields)
+                       values (%s, %s, %s, %s)""",
+                    (model_id, cx_tx_id, "sha256-v1", Json(fields)),
                 )
             except UniqueViolation:
                 raise _err("identity_replay", "이미 처리된 인증입니다.", status=409)
@@ -1089,6 +1090,7 @@ async def record_license_settlement(
     total: int,
     job_id: str | None = None,
     credit_ledger_id: str | None = None,
+    first_attempt=None,
 ) -> dict | None:
     """라이선스 사용 1건을 온체인 기록 + fm_settlements 미러. best-effort(생성 흐름 비파손).
 
@@ -1105,15 +1107,27 @@ async def record_license_settlement(
     async with pool.connection() as conn:
         existing = await _find_settlement(conn, payment_key)
         if not existing:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """insert into fm_settlement_signer_intents
-                        (payment_id, license_id, job_id, credit_ledger_id, model_id, total_amount)
-                        values (%s, %s, %s, %s, %s, %s)
-                        on conflict (payment_id) do nothing""",
-                    (payment_key, license_id, job_id, credit_ledger_id, model_id, int(total)),
-                )
-            await conn.commit()
+            try:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """insert into fm_settlement_signer_intents
+                            (payment_id, license_id, job_id, credit_ledger_id,
+                             model_id, total_amount)
+                            values (%s, %s, %s, %s, %s, %s)
+                            on conflict (payment_id) do nothing
+                            returning payment_id""",
+                        (
+                            payment_key, license_id, job_id, credit_ledger_id,
+                            model_id, int(total),
+                        ),
+                    )
+                    inserted = await cur.fetchone()
+                if inserted and first_attempt:
+                    await first_attempt(conn)
+                await conn.commit()
+            except Exception:
+                await conn.rollback()
+                raise
     if existing:
         return existing
 
@@ -1302,6 +1316,14 @@ async def simulate_settlement(
             raise _err("not_found", "라이선스를 찾을 수 없습니다.", status=404)
         if lic["status"] != "active":
             raise _err("license_inactive", "활성 라이선스만 정산할 수 있습니다.", status=400)
+
+    key = idempotency_key.strip()
+    if not key:
+        raise _err("idempotency_key_required", "Idempotency-Key가 필요합니다.")
+    digest = hashlib.sha256(f"{user_id}:{key}".encode()).hexdigest()
+    payment_key = f"sim:{body.license_id}:{digest}"
+
+    async def _first_attempt_rate_slot(conn):
         await _take_simulation_rate_slot(
             conn,
             user_id=user_id,
@@ -1309,17 +1331,13 @@ async def simulate_settlement(
             pepper=request.app.state.settings.fm_ci_pepper,
         )
 
-    key = idempotency_key.strip()
-    if not key:
-        raise _err("idempotency_key_required", "Idempotency-Key가 필요합니다.")
-    digest = hashlib.sha256(f"{user_id}:{key}".encode()).hexdigest()
-    payment_key = f"sim:{body.license_id}:{digest}"
     row = await record_license_settlement(
         request.app,
         payment_key=payment_key,
         license_id=lic["id"],
         model_id=lic["model_id"],
         total=int(lic["unit_price"]),
+        first_attempt=_first_attempt_rate_slot,
     )
     if row is None:
         raise _err("settlement_failed", "온체인 정산 기록에 실패했습니다.", status=502)

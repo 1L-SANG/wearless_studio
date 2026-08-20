@@ -66,7 +66,9 @@ class FakeCursor:
             self._result = {"id": mid}
         elif s.startswith("insert into fm_identity_verifications"):
             self.store["identity_insert_sql"] = s
-            _model_id, cx_tx_id, _fields = params
+            _model_id, cx_tx_id, *rest = params
+            if rest and rest[0] == "sha256-v1":
+                self.store["identity_insert_format"] = rest[0]
             if cx_tx_id in self.store["tx"]:
                 raise UniqueViolation("duplicate cx_tx_id")
             self.store["tx"].add(cx_tx_id)
@@ -109,7 +111,7 @@ def fm(keypair, monkeypatch):
     app = create_app(make_settings(facemarket_enabled=True, fm_ci_pepper="pep"))
     app.state.jwt_key_resolver = lambda token: public_key
 
-    store = {"models": [], "tx": set(), "identity_insert_sql": ""}
+    store = {"models": [], "tx": set(), "identity_insert_sql": "", "identity_insert_format": None}
 
     @contextlib.asynccontextmanager
     async def fake_get_conn(_request):
@@ -146,8 +148,9 @@ def test_verify_success_creates_verified_model(fm, make_token):
     # 원문 CI가 응답 어디에도 없어야 한다.
     assert "ci" not in r.text and SAMPLE_TRANS["ci"] not in r.text
     assert len(store["models"]) == 1 and len(store["tx"]) == 1
-    assert store["tx"] == {f"sha256:{hashlib.sha256(b'tok-1').hexdigest()}"}
-    assert "(model_id, cx_tx_id, fields)" in store["identity_insert_sql"]
+    assert store["tx"] == {f"cxsha256:{hashlib.sha256(b'tok-1').hexdigest()}"}
+    assert "(model_id, cx_tx_id, cx_tx_id_format, fields)" in store["identity_insert_sql"]
+    assert store["identity_insert_format"] == "sha256-v1"
 
 
 def test_replay_same_token_409(fm, make_token):

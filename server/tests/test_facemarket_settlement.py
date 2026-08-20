@@ -186,13 +186,17 @@ class FakeCursor:
             self._one = {"unlocked": True}
         elif "insert into fm_settlement_signer_intents" in s:
             payment_id = p[0]
-            if not any(x["payment_id"] == payment_id for x in self.store["intents"]):
-                self.store["intents"].append({
+            if any(x["payment_id"] == payment_id for x in self.store["intents"]):
+                inserted = None
+            else:
+                inserted = {
                     "payment_id": payment_id, "license_id": p[1], "job_id": p[2],
                     "credit_ledger_id": p[3], "model_id": p[4], "total_amount": p[5],
                     "status": "queued", "attempted_at": None,
-                })
-            self._one = None
+                }
+                self.store["intents"].append(inserted)
+                self.conn.inserted_intents.append(payment_id)
+            self._one = {"payment_id": payment_id} if inserted and "returning" in s else None
         elif "from fm_settlement_signer_intents" in s and "status = 'broadcasting'" in s:
             self._many = [
                 dict(x) for x in self.store["intents"] if x["status"] == "broadcasting"
@@ -267,15 +271,22 @@ class FakeConn:
         self.store = store
         self.signer_lock_held = False
         self.signer_lock_kind = None
+        self.inserted_intents = []
 
     def cursor(self):
         return FakeCursor(self)
 
     async def commit(self):
+        self.inserted_intents.clear()
         if self.signer_lock_kind == "transaction":
             self.release_signer_lock()
 
     async def rollback(self):
+        for payment_id in self.inserted_intents:
+            self.store["intents"] = [
+                x for x in self.store["intents"] if x["payment_id"] != payment_id
+            ]
+        self.inserted_intents.clear()
         if self.signer_lock_kind == "transaction":
             self.release_signer_lock()
 
@@ -645,6 +656,73 @@ def test_simulate_same_idempotency_key_returns_same_receipt(fmset, make_token):
     assert len(chain.record_calls) == 1 and len(store["settlements"]) == 1
 
 
+def test_simulate_retries_same_idempotency_key_do_not_spend_rate_slots(fmset, make_token):
+    app, client, store, add = fmset
+    chain = FakeChain()
+    app.state.fm_chain = chain
+    tok, uid = _uid(make_token)
+    add("lic-1", uid)
+
+    responses = [
+        _simulate(client, store, tok, uid, "lic-1", key="same-request")
+        for _ in range(6)
+    ]
+
+    assert [r.status_code for r in responses] == [201] * 6
+    assert {r.json()["paymentId"] for r in responses} == {responses[0].json()["paymentId"]}
+    assert sorted(store["rate_hits"].values()) == [1, 1]
+    assert len(chain.record_calls) == 1 and len(store["settlements"]) == 1
+
+
+def test_record_concurrent_same_payment_consumes_first_attempt_once(fmset):
+    app, _client, store, _add = fmset
+    chain = SlowFirstChain()
+    app.state.fm_chain = chain
+    first_attempts = {"n": 0}
+
+    async def first_attempt(_conn):
+        first_attempts["n"] += 1
+
+    async def record():
+        return await facemarket.record_license_settlement(
+            app, payment_key="sim:lic-1:same", license_id="lic-1",
+            model_id="m", total=10000, first_attempt=first_attempt,
+        )
+
+    async def race():
+        owner = asyncio.create_task(record())
+        await asyncio.to_thread(chain.started.wait, 0.2)
+        waiter = asyncio.create_task(record())
+        await asyncio.sleep(0.01)
+        chain.release.set()
+        return await asyncio.gather(owner, waiter)
+
+    first, second = asyncio.run(race())
+
+    assert first["payment_id"] == second["payment_id"] == "sim:lic-1:same"
+    assert first_attempts["n"] == 1
+    assert len(chain.record_calls) == 1 and len(store["settlements"]) == 1
+
+
+def test_record_first_attempt_failure_rolls_back_intent_and_skips_chain(fmset):
+    app, _client, store, _add = fmset
+    chain = FakeChain()
+    app.state.fm_chain = chain
+
+    async def reject(_conn):
+        raise facemarket._err("rate_limited", "잠시 후 다시 시도해주세요.", status=429)
+
+    with pytest.raises(facemarket.HTTPException) as error:
+        asyncio.run(facemarket.record_license_settlement(
+            app, payment_key="sim:lic-1:blocked", license_id="lic-1",
+            model_id="m", total=10000, first_attempt=reject,
+        ))
+
+    assert error.value.status_code == 429
+    assert store["intents"] == []
+    assert chain.record_calls == [] and store["settlements"] == []
+
+
 def test_simulate_rate_limit_returns_429_without_chain_call(fmset, make_token):
     app, client, store, add = fmset
     chain = FakeChain()
@@ -661,3 +739,6 @@ def test_simulate_rate_limit_returns_429_without_chain_call(fmset, make_token):
     assert blocked.status_code == 429
     assert blocked.json()["error"]["code"] == "rate_limited"
     assert len(chain.record_calls) == 5 and len(store["settlements"]) == 5
+    assert [x["payment_id"] for x in store["intents"]] == [
+        x["payment_id"] for x in store["settlements"]
+    ]

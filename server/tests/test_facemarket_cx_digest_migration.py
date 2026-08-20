@@ -35,10 +35,14 @@ def test_cx_digest_migration_is_rolling_deploy_safe():
     sql = " ".join(MIGRATION.read_text().split()).lower()
 
     assert "rename column cx_tx_id" not in sql
+    assert "cx_tx_id_format" in sql
+    assert "'raw'" in sql and "'sha256-v1'" in sql
     assert "before insert or update of cx_tx_id" in sql
     assert "set cx_tx_id = cx_tx_id" in sql
-    assert "^sha256:[0-9a-f]{64}$" in sql
+    assert "where cx_tx_id_format = 'raw'" in sql
+    assert "^cxsha256:[0-9a-f]{64}$" in sql
     assert "fm_identity_verifications_cx_tx_id_digest" in sql
+    assert "where cx_tx_id !~" not in sql
 
 
 def test_settlement_simulation_rate_limit_is_shared_and_private():
@@ -75,6 +79,7 @@ def test_cx_digest_migration_executes_and_blocks_raw_replay():
             )
             model_id = (await model.fetchone())["id"]
             existing_raw = f"legacy-raw-cx-{uuid.uuid4()}"
+            marker_like_raw = f"sha256:{'a' * 64}"
             await conn.execute(
                 "drop trigger if exists fm_identity_verifications_digest_cx_tx_id "
                 "on fm_identity_verifications"
@@ -84,28 +89,48 @@ def test_cx_digest_migration_executes_and_blocks_raw_replay():
                 "fm_identity_verifications_cx_tx_id_digest"
             )
             await conn.execute(
+                "alter table fm_identity_verifications drop column if exists cx_tx_id_format"
+            )
+            await conn.execute(
                 "insert into fm_identity_verifications (model_id, cx_tx_id) values (%s, %s)",
                 (model_id, existing_raw),
             )
+            await conn.execute(
+                "insert into fm_identity_verifications (model_id, cx_tx_id) values (%s, %s)",
+                (model_id, marker_like_raw),
+            )
             await conn.execute(MIGRATION.read_text())
             stored = await conn.execute(
-                "select cx_tx_id from fm_identity_verifications where model_id = %s",
+                "select cx_tx_id, cx_tx_id_format from fm_identity_verifications "
+                "where model_id = %s order by cx_tx_id",
                 (model_id,),
             )
-            assert (await stored.fetchone())["cx_tx_id"] == (
-                f"sha256:{hashlib.sha256(existing_raw.encode()).hexdigest()}"
-            )
+            rows = await stored.fetchall()
+            assert {
+                (row["cx_tx_id"], row["cx_tx_id_format"]) for row in rows
+            } == {
+                (f"cxsha256:{hashlib.sha256(existing_raw.encode()).hexdigest()}", "sha256-v1"),
+                (f"cxsha256:{hashlib.sha256(marker_like_raw.encode()).hexdigest()}", "sha256-v1"),
+            }
             new_raw = f"new-raw-cx-{uuid.uuid4()}"
             await conn.execute(
                 "insert into fm_identity_verifications (model_id, cx_tx_id) values (%s, %s)",
                 (model_id, new_raw),
             )
+            new_digest = f"cxsha256:{hashlib.sha256(new_raw.encode()).hexdigest()}"
             with pytest.raises(UniqueViolation):
                 async with conn.transaction():
                     await conn.execute(
                         "insert into fm_identity_verifications (model_id, cx_tx_id) "
                         "values (%s, %s)",
                         (model_id, new_raw),
+                    )
+            with pytest.raises(UniqueViolation):
+                async with conn.transaction():
+                    await conn.execute(
+                        "insert into fm_identity_verifications "
+                        "(model_id, cx_tx_id, cx_tx_id_format) values (%s, %s, %s)",
+                        (model_id, new_digest, "sha256-v1"),
                     )
         finally:
             await conn.rollback()
