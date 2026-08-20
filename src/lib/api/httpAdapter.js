@@ -13,6 +13,7 @@ import { applyOpeningRow, hasOpeningRow } from '@/lib/storyboardEntryPlacement.j
 import { deriveHookFrame } from '@/lib/storyboardHookFrame.js';
 import { selectPublicAnalysisPhotos } from '@/lib/publicAnalysisPhotos.js';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
+import { rebaseAssetUrls, relativizeAssetUrls } from '@/lib/assetUrl.js';
 
 export { toMatchItem } from '@/lib/api/matchingItems.js';
 
@@ -45,47 +46,13 @@ function networkError(code, message, context, cause) {
 
 const browserOrigin = () => globalThis.location?.origin || 'unknown';
 
-// 잘못 절대화되어 저장된 에셋 URL 의 호스트를 벗겨 경로만 남긴다.
-// `http(s)://<any-host>/v1/assets/{id}/file` → `/v1/assets/{id}/file`.
-// (예: 옛 로컬 도커 빌드가 VITE_API_BASE_URL=localhost 인 채 editor_blocks 를 저장 → src 에 localhost 박힘)
-const _ASSET_HOST_RE = /^https?:\/\/[^/]+(\/v1\/assets\/.*)$/;
-
 // 서버는 에셋 이미지를 안정 앱 URL `/v1/assets/{id}/file`(상대경로)로 반환한다. 프론트는 다른
 // 도메인(Vercel)에서 서빙되므로 <img src> 가 그대로 쓰면 프론트 도메인에 붙어 404 가 난다.
 // 모든 응답이 지나는 http() 초크포인트에서 재귀로 절대화한다(API 도메인 프리픽스).
 // vary 요청이 src 를 서버로 되돌려보내도 워커의 _ASSET_FILE_RE 는 search(비앵커)라 절대 URL 도 파싱된다.
 // 상대경로뿐 아니라 옛 빌드가 오염 저장한 절대 URL(잘못된 호스트)도 현재 BASE_URL 로 재기준화해
-// 자가치유한다 — /v1/assets/ 는 언제나 API 만 서빙하므로 호스트 교체는 안전하다.
-function absolutizeAssetUrls(v) {
-  if (typeof v === 'string') {
-    if (v.startsWith('/v1/assets/')) return `${BASE_URL}${v}`;
-    const m = _ASSET_HOST_RE.exec(v);
-    return m ? `${BASE_URL}${m[1]}` : v;
-  }
-  if (Array.isArray(v)) return v.map(absolutizeAssetUrls);
-  if (v && typeof v === 'object') {
-    const out = {};
-    for (const k of Object.keys(v)) out[k] = absolutizeAssetUrls(v[k]);
-    return out;
-  }
-  return v;
-}
-
-// 저장 직전 에셋 URL 을 상대경로로 되돌려 DB 에 호스트가 절대 박히지 않게 한다(재발 차단).
-// `http(s)://<host>/v1/assets/...` → `/v1/assets/...`. 다른 문자열·비에셋 URL 은 그대로.
-export function relativizeAssetUrls(v) {
-  if (typeof v === 'string') {
-    const m = _ASSET_HOST_RE.exec(v);
-    return m ? m[1] : v;
-  }
-  if (Array.isArray(v)) return v.map(relativizeAssetUrls);
-  if (v && typeof v === 'object') {
-    const out = {};
-    for (const k of Object.keys(v)) out[k] = relativizeAssetUrls(v[k]);
-    return out;
-  }
-  return v;
-}
+// 자가치유한다(공용 로직 = @/lib/assetUrl).
+const absolutizeAssetUrls = rebaseAssetUrls;
 
 // 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).
 // 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
