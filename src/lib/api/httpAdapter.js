@@ -13,6 +13,7 @@ import { applyOpeningRow, hasOpeningRow } from '@/lib/storyboardEntryPlacement.j
 import { deriveHookFrame } from '@/lib/storyboardHookFrame.js';
 import { selectPublicAnalysisPhotos } from '@/lib/publicAnalysisPhotos.js';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
+import { rebaseAssetUrls, relativizeAssetUrls } from '@/lib/assetUrl.js';
 
 export { toMatchItem } from '@/lib/api/matchingItems.js';
 
@@ -49,18 +50,9 @@ const browserOrigin = () => globalThis.location?.origin || 'unknown';
 // 도메인(Vercel)에서 서빙되므로 <img src> 가 그대로 쓰면 프론트 도메인에 붙어 404 가 난다.
 // 모든 응답이 지나는 http() 초크포인트에서 재귀로 절대화한다(API 도메인 프리픽스).
 // vary 요청이 src 를 서버로 되돌려보내도 워커의 _ASSET_FILE_RE 는 search(비앵커)라 절대 URL 도 파싱된다.
-function absolutizeAssetUrls(v) {
-  if (typeof v === 'string') {
-    return v.startsWith('/v1/assets/') ? `${BASE_URL}${v}` : v;
-  }
-  if (Array.isArray(v)) return v.map(absolutizeAssetUrls);
-  if (v && typeof v === 'object') {
-    const out = {};
-    for (const k of Object.keys(v)) out[k] = absolutizeAssetUrls(v[k]);
-    return out;
-  }
-  return v;
-}
+// 상대경로뿐 아니라 옛 빌드가 오염 저장한 절대 URL(잘못된 호스트)도 현재 BASE_URL 로 재기준화해
+// 자가치유한다(공용 로직 = @/lib/assetUrl).
+const absolutizeAssetUrls = rebaseAssetUrls;
 
 // 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).
 // 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
@@ -528,13 +520,13 @@ export const httpAdapter = {
     return defaultStoryboard(colors, mode, storyboardContext);
   },
   async saveStoryboard(projectId, blocks, options = {}) {
-    return http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: blocks, ...options });
+    return http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: relativizeAssetUrls(blocks), ...options });
   },
   async getEditorBlocks(projectId) {
     return http(`/v1/projects/${projectId}/editor-blocks`);
   },
   async saveEditorBlocks(projectId, blocks) {
-    await http(`/v1/projects/${projectId}/editor-blocks`, { method: 'PUT', body: blocks });
+    await http(`/v1/projects/${projectId}/editor-blocks`, { method: 'PUT', body: relativizeAssetUrls(blocks) });
   },
   // AG-06 컷 + AG-02/03 카피 → M-02 조립. 완료 재호출은 서버가 기존 결과 반환(무차감).
   async generateDetailPage(projectId, { onProgress } = {}) {
