@@ -1614,12 +1614,14 @@ async def _enqueue_editor_garment_mask(pool, s, *, user_id, project_id, cuts,
                     conn, user_id=user_id, project_id=project_id,
                     kind="editor_garment_mask",
                     payload={"cutId": cut_id, "cutMetadata": cut_metadata},
-                    idempotency_key=f"{project_id}:editor_garment_mask:{cut_id}:{EDITOR_MASK_VERSION}",
+                    idempotency_key=editor_garment_mask.mask_job_key(project_id, cut_id),
                     credits_reserved=0, metadata={})
                 await conn.commit()
         except Exception:  # noqa: BLE001 - 마스크 큐잉 실패가 마네킹 생성을 되돌리지 않는다
             log.warning("editor_garment_mask enqueue failed project=%s cut=%s",
                         project_id, cut_id, exc_info=True)
+    # 디스패처는 현재 워커가 반환한 직후 다음 잡을 즉시 다시 claim한다. 직렬 실행 중 wake는
+    # 새 claim을 앞당기지 못하므로 여기서는 큐잉만 마치고 반환한다.
 
 
 async def run_mannequin_job(app, job: dict) -> None:

@@ -24,13 +24,11 @@ import {
   isNeutral,
   maskAlphaFrom,
 } from '../../lib/toneRender.js';
+import { startToneEditorPolling } from './toneEditorPolling.js';
 
 //: 드래그 중 다시 칠하는 버퍼의 긴 변. 화면에 보이는 크기면 충분하고, 원본(2K 이상)을
 //  매 프레임 돌리면 슬라이더가 끊긴다. 최종 렌더만 원본 해상도로 간다.
 const PREVIEW_MAX_EDGE = 900;
-//: 마스크 전처리 폴링. 생성 직후 몇 초면 끝나므로 공격적으로 두드릴 이유가 없다.
-const POLL_MS = 4000;
-const POLL_LIMIT = 15;
 //: 중앙 스냅 폭. 0 근처는 0 으로 — "아무것도 안 한 상태"가 슬라이더에서 명확해야 한다.
 const SNAP = 1;
 
@@ -89,40 +87,35 @@ export function ToneEditor({ projectId, cutId, enabled = true, overlayRef, onApp
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [applied, setApplied] = useState(false);     // 방금 적용 성공 — 슬라이더를 만지면 꺼진다
+  const [pollVersion, setPollVersion] = useState(0);
 
   const canvasRef = useRef(null);
   const buffers = useRef(null);                       // {src, mask, out, w, h}
   const full = useRef(null);                          // {srcImg, maskImg, w, h} — 적용 시에만
   const frame = useRef(0);
 
-  const ready = state?.status === 'ready' && !!buffers.current;
+  const ready = state?.cutId === cutId && state?.status === 'ready' && !!buffers.current;
   const neutral = isNeutral(saturation, exposure);
 
   // ── 상태 조회 (준비될 때까지만 폴링) ──────────────────────────────────────
   useEffect(() => {
     if (!enabled || !projectId || !cutId) return undefined;
-    let alive = true;
-    let tries = 0;
-    let timer;
-    const tick = async () => {
-      try {
-        const next = await api.getToneEditor(projectId, cutId);
-        if (!alive) return;
+    buffers.current = null;
+    full.current = null;
+    setError('');
+    setState({ cutId, status: 'processing' });
+    return startToneEditorPolling({
+      fetchState: () => api.getToneEditor(projectId, cutId),
+      onState: (next) => {
         setState(next);
         setApplied(false);
         // 저장된 조정값 복원. 처음이면 0/0 — 슬라이더는 항상 중앙에서 시작한다.
         setSaturation(snapSat(next?.adjustment?.saturation ?? 0));
         setExposure(snapExp(next?.adjustment?.exposure ?? 0));
-        if (next?.status === 'processing' && (tries += 1) < POLL_LIMIT) {
-          timer = setTimeout(tick, POLL_MS);
-        }
-      } catch {
-        if (alive) setState({ status: 'failed' });     // 조회 실패 = 이 컷은 조정 불가
-      }
-    };
-    tick();
-    return () => { alive = false; clearTimeout(timer); };
-  }, [enabled, projectId, cutId]);
+      },
+      onUnavailable: () => setState({ cutId, status: 'unavailable' }),
+    });
+  }, [enabled, projectId, cutId, pollVersion]);
 
   // ── 원본·마스크를 한 번만 디코드 ────────────────────────────────────────
   useEffect(() => {
@@ -234,6 +227,13 @@ export function ToneEditor({ projectId, cutId, enabled = true, overlayRef, onApp
       )}
       {state.status === 'failed' && (
         <p className="tone-editor-wait">이 컷은 색감 조정을 지원하지 않아요.</p>
+      )}
+      {state.status === 'unavailable' && (
+        <div className="tone-editor-wait tone-editor-wait-action" role="alert">
+          <span>색감 조정 준비 상태를 확인하지 못했어요.</span>
+          <button type="button" className="btn btn-ghost"
+            onClick={() => setPollVersion((value) => value + 1)}>다시 확인</button>
+        </div>
       )}
       {state.status === 'ready' && (
         <>

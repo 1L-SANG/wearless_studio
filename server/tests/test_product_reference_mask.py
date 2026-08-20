@@ -437,6 +437,9 @@ def _tone_editor_state(monkeypatch, *, mask_meta, product_cutout_key, jobs):
         jobs.append(kwargs)
         return {"id": "job-1", "status": "queued"}, True
 
+    async def fake_latest_job(_conn, _user_id, _base_key):
+        return None
+
     monkeypatch.setattr(routes.repo, "get_project",
                         lambda _c, _u, pid: _coro({"id": pid}))
     monkeypatch.setattr(routes.repo, "get_mannequin_cut_asset",
@@ -445,6 +448,7 @@ def _tone_editor_state(monkeypatch, *, mask_meta, product_cutout_key, jobs):
                         lambda *_a, **_k: _coro({"clothing_type": "top", "colors": [
                             {"isBase": True, "images": [{"slot": "Front", "id": "img-front"}]}]}))
     monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
+    monkeypatch.setattr(routes.repo, "get_latest_job_generation", fake_latest_job)
     monkeypatch.setattr(routes.editor_garment_mask, "find_for_cut",
                         lambda *_a, **_k: _coro(mask_row))
     monkeypatch.setattr(routes.editor_garment_mask, "matching_side_for_project",

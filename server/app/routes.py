@@ -2012,18 +2012,15 @@ async def _enqueue_tone_mask_upgrade(conn, *, user_id: str, project_id: str, cut
     배포되는 창이나 컷아웃 읽기 실패가 정확히 거기 걸린다. 성공하면 새 행이 이기고(조회는
     최신 행부터), 끝내 실패해도 셀러는 아무것도 잃지 않는다.
 
-    멱등키가 레퍼런스를 물어서 옛 잡에 합류하지 않는다. 재생성이 또 레퍼런스 없이 끝나면
-    같은 키의 done 잡에 합류만 하므로, 조회할 때마다 잡이 늘어나지도 않는다.
+    멱등키가 레퍼런스를 물어서 옛 잡에 합류하지 않는다. 일시 장애로 끝나면 기본 마스크와
+    같은 세대·백오프 규칙으로 재시도하며, 예산을 다 써도 현재 마스크는 그대로 둔다.
     """
     if not state.get("_upgrade"):
         return False
     try:
-        _job, created = await repo.create_job(
-            conn, user_id=user_id, project_id=project_id,
-            kind="editor_garment_mask", payload={"cutId": cut_id},
-            idempotency_key=editor_garment_mask.mask_job_key(
-                project_id, cut_id, product_key=state.get("_productKey")),
-            credits_reserved=0, metadata={"upgrade": state["_upgrade"]})
+        created, _job = await _enqueue_tone_mask_generations(
+            conn, user_id=user_id, project_id=project_id, cut_id=cut_id,
+            product_key=state.get("_productKey"), metadata={"upgrade": state["_upgrade"]})
         await conn.commit()
         return created
     except Exception:  # noqa: BLE001 - 업그레이드 큐잉 실패가 쓰던 마스크를 뺏지 않는다
@@ -2071,15 +2068,96 @@ async def _tone_state(conn, r2, *, user_id: str, project_id: str, cut_id: str) -
 _TONE_JOB_TERMINAL = ("done", "error", "cancelled")
 
 
+def _tone_job_is_retryable(job: dict) -> bool:
+    """이 종결이 판정(재시도해도 같은 답)이 아니라 일시 장애(다시 돌리면 답이 바뀔 수 있음)인가.
+
+    result.state 로 판별한다 — 구버전 워커가 error 로 종결해 둔 과거 잡도 state 는 같으므로,
+    배포 이전에 막힌 컷(2026-08-18 05:59 실사고)도 이 판별을 지나 되살아난다.
+    """
+    result = job.get("result") or {}
+    state = str(result.get("state") or "")
+    if state in editor_garment_mask.TONE_MASK_RETRYABLE_STATES:
+        return True
+    # lease 복구가 서버 재시작 중 실행을 error 로 닫으면 result 자체가 없다. 이는 의류를
+    # 못 찾았다는 판정이 아니라 실행 인프라 사망이므로 다음 세대에서 다시 시도한다.
+    return str(job.get("status") or "") == "error" and not state
+
+
+def _tone_job_retry_count(job: dict) -> int:
+    payload = job.get("payload") or {}
+    try:
+        return int(payload.get("retry") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _tone_retry_backoff_elapsed(job: dict, *, now: datetime | None = None) -> bool:
+    retry = _tone_job_retry_count(job)
+    waits = editor_garment_mask.TONE_MASK_RETRY_BACKOFF_SECONDS
+    if retry >= len(waits):
+        return False
+    finished_at = job.get("finished_at")
+    if isinstance(finished_at, str):
+        with contextlib.suppress(ValueError):
+            finished_at = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
+    if not isinstance(finished_at, datetime):
+        return False
+    if finished_at.tzinfo is None:
+        finished_at = finished_at.replace(tzinfo=timezone.utc)
+    return (now or datetime.now(timezone.utc)) >= finished_at + timedelta(seconds=waits[retry])
+
+
+async def _enqueue_tone_mask_generations(
+    conn, *, user_id: str, project_id: str, cut_id: str,
+    product_key: str | None = None, metadata: dict,
+) -> tuple[bool, dict | None]:
+    """기본·업그레이드 마스크가 공유하는 세대 선택과 백오프."""
+    base_key = editor_garment_mask.mask_job_key(
+        project_id, cut_id, product_key=product_key)
+    job = await repo.get_latest_job_generation(conn, user_id, base_key)
+    retry = 0
+    payload = {"cutId": cut_id}
+    if job is not None:
+        if str(job.get("status") or "") not in _TONE_JOB_TERMINAL:
+            return False, job
+        if not _tone_job_is_retryable(job):
+            return False, job
+        if str((job.get("payload") or {}).get("cutId") or "") != str(cut_id):
+            return False, job
+        retry = _tone_job_retry_count(job) + 1
+        if retry > editor_garment_mask.TONE_MASK_MAX_RETRIES:
+            return False, job
+        if not _tone_retry_backoff_elapsed(job):
+            return False, job
+        payload = {k: v for k, v in (job.get("payload") or {}).items() if k != "retry"}
+        payload.setdefault("cutId", cut_id)
+        payload["retry"] = retry
+
+    job, created = await repo.create_job(
+        conn, user_id=user_id, project_id=project_id, kind="editor_garment_mask",
+        payload=payload,
+        idempotency_key=editor_garment_mask.mask_job_key(
+            project_id, cut_id, product_key=product_key, retry=retry),
+        credits_reserved=0, metadata=metadata)
+    return created, job
+
+
 def _tone_state_with_job(state: dict, job: dict | None) -> dict:
     """합류한 마스크 잡의 종결 상태를 화면 상태로 옮긴다.
 
-    마스크 없이 끝난 잡(의류를 못 찾음·코디 의류 위였음·SAM 미설정)은 다시 큐에 들어가지
+    판정으로 끝난 잡(의류를 못 찾음·코디 의류 위였음·SAM 미설정)은 다시 큐에 들어가지
     않는다 — 그걸 processing 으로 두면 셀러는 영원히 "색감 조정 준비 중"을 본다.
+
+    일시 장애(unavailable·unverified)는 반대다: 재시도 예산이 남아 있는 동안 failed 로
+    내리면, 서버가 30초 뒤 멀쩡히 돌아오는데 셀러는 "지원하지 않아요"를 이미 읽은 뒤다
+    (2026-08-18 사고 2호). 그동안은 준비 중을 유지한다 — 다음 세대 잡은 walker 가 이미 걸었다.
     """
     if state.get("status") != "processing" or job is None:
         return state
     if str(job.get("status") or "") not in _TONE_JOB_TERMINAL:
+        return state
+    if (_tone_job_is_retryable(job)
+            and _tone_job_retry_count(job) < editor_garment_mask.TONE_MASK_MAX_RETRIES):
         return state
     return {**state, "status": "failed"}
 
@@ -2096,13 +2174,10 @@ async def _enqueue_missing_tone_mask(conn, *, user_id: str, project_id: str,
     if state.get("status") != "processing":
         return False, None
     try:
-        job, created = await repo.create_job(
-            conn, user_id=user_id, project_id=project_id,
-            kind="editor_garment_mask", payload={"cutId": cut_id},
-            idempotency_key=editor_garment_mask.mask_job_key(project_id, cut_id),
-            credits_reserved=0, metadata={})
+        created_any, job = await _enqueue_tone_mask_generations(
+            conn, user_id=user_id, project_id=project_id, cut_id=cut_id, metadata={})
         await conn.commit()
-        return created, job
+        return created_any, job
     except Exception:  # noqa: BLE001 - 톤 마스크 실패가 기존 컷 조회를 막지 않는다
         with contextlib.suppress(Exception):
             await conn.rollback()

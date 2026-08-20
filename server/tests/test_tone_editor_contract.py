@@ -88,13 +88,48 @@ def test_mask_job_is_flag_gated_and_fails_closed():
 
 
 def test_mask_idempotency_binds_cut_and_algorithm_version():
-    """같은 컷·같은 알고리즘은 한 번만. 재생성 컷은 새 신원이라 다시 돈다."""
-    src = inspect.getsource(
-        __import__("app.workers.mannequin_job", fromlist=["mannequin_job"])
-        ._enqueue_editor_garment_mask)
-    key = re.search(r"idempotency_key=f\"([^\"]+)\"", src)
-    assert key, "멱등키가 없다"
-    assert "{cut_id}" in key.group(1) and "{EDITOR_MASK_VERSION}" in key.group(1)
+    """같은 컷·같은 알고리즘은 한 번만. 재생성 컷은 새 신원이라 다시 돈다.
+
+    소스 문자열이 아니라 실제로 만들어진 잡의 키로 본다 — 큐잉이 mask_job_key 로 통합돼도
+    (2026-08-18) 계약은 그대로다: 키에 컷 id 와 알고리즘 버전이 들어 있다.
+    """
+    import asyncio
+
+    import app.services.editor_garment_mask as egm
+    from app.workers import mannequin_job as mj
+
+    seen = []
+
+    async def fake_create_job(_conn, **kw):
+        seen.append(kw["idempotency_key"])
+        return {"id": "j"}, True
+
+    class _Conn:
+        async def commit(self):
+            return None
+
+    class _Ctx:
+        async def __aenter__(self):
+            return _Conn()
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    class _Pool:
+        def connection(self):
+            return _Ctx()
+
+    class _S:
+        mannequin_tone_editor = "on"
+
+    import unittest.mock as um
+    with um.patch.object(mj.repo, "create_job", fake_create_job):
+        asyncio.run(mj._enqueue_editor_garment_mask(
+            _Pool(), _S(), user_id="u1", project_id="p1",
+            cuts=[{"id": "A-1"}], cut_metadata={}))
+
+    assert seen == [egm.mask_job_key("p1", "A-1")]
+    assert "A-1" in seen[0] and egm.ALGORITHM_VERSION in seen[0]
 
 
 def test_existing_cut_lazily_enqueues_the_same_free_mask_job(monkeypatch):
@@ -104,6 +139,9 @@ def test_existing_cut_lazily_enqueues_the_same_free_mask_job(monkeypatch):
     async def create_job(_conn, **kwargs):
         captured.update(kwargs)
         return {"id": "mask-job"}, True
+
+    async def latest_job(_conn, _user_id, _base_key):
+        return None
 
     class Conn:
         committed = False
@@ -115,6 +153,7 @@ def test_existing_cut_lazily_enqueues_the_same_free_mask_job(monkeypatch):
             raise AssertionError("성공 경로에서 rollback 하면 안 된다")
 
     monkeypatch.setattr("app.routes.repo.create_job", create_job)
+    monkeypatch.setattr("app.routes.repo.get_latest_job_generation", latest_job)
     conn = Conn()
     created, job = asyncio.run(_enqueue_missing_tone_mask(
         conn, user_id="u1", project_id="p1", cut_id="A-1",

@@ -62,16 +62,45 @@ KNOWN_CATEGORIES = ("top", "outer", "bottom", "dress")
 MATCH_GUARD_VERSION = "main-garment-guard-v1"
 
 
-def mask_job_key(project_id: str, cut_id: str, *, product_key: str | None = None) -> str:
-    """마스크 잡의 신원. 생성 직후 큐·lazy backfill·업그레이드가 모두 이 함수를 지난다.
+#: 일시 장애(unavailable·unverified) 재시도 상한. 상한이 없으면 죽은 SAM 을 향해 잡이
+#: 계속 쌓여 복구 순간 몰매를 놓는다(2026-08-18).
+TONE_MASK_MAX_RETRIES = 3
+
+#: 직전 세대 종결 뒤 다음 세대를 허용하기까지의 최소 간격. 연결 거부처럼 1초 안에 끝나는
+#: 장애도 4초 폴링마다 예산을 태우지 않도록 세대가 오를수록 복구 시간을 더 준다.
+TONE_MASK_RETRY_BACKOFF_SECONDS = (15, 60, 120)
+
+#: 이 상태로 끝난 잡은 판정이 아니라 인프라 장애다 — 같은 입력을 다시 돌리면 답이 바뀔 수
+#: 있다. 반대로 no_garment 류 판정 실패는 재시도해도 같은 답이므로 여기 없다.
+TONE_MASK_RETRYABLE_STATES = ("unavailable", "unverified")
+
+#: SAM 서비스가 HTTP 200 안에서 돌려주는 실패 중 다시 실행하면 회복될 수 있는 것들.
+#: 입력 자체의 판정인 source_rejected·no_garment_candidate 는 의도적으로 제외한다.
+TONE_MASK_RETRYABLE_CODES = (
+    "source_unavailable",
+    "source_error",
+    "model_unavailable",
+    "timeout",
+    "segmentation_failed",
+    "segmentation_error",
+    "mask_store_failed",
+)
+
+
+def mask_job_key(project_id: str, cut_id: str, *, product_key: str | None = None,
+                 retry: int = 0) -> str:
+    """마스크 잡의 신원. 생성 직후 큐·lazy backfill·업그레이드·재시도가 모두 이 함수를 지난다.
 
     레퍼런스를 물린 키는 **업그레이드 전용**이다. 기본 키(레퍼런스 없음)와 달라야 재생성이
     실제로 돌아간다 — 같은 키로 걸면 이미 done 인 잡에 합류만 하고 아무것도 안 만든다.
+
+    `retry` 도 같은 이유로 키에 들어간다. 일시 장애로 끝난 잡이 키를 물고 있는 한 재시도는
+    그 시체에 합류만 한다 — 세대마다 새 신원을 줘야 실제로 다시 돈다(2026-08-18 사고 2호).
     """
     base = f"{project_id}:editor_garment_mask:{cut_id}:{ALGORITHM_VERSION}"
-    if not product_key:
-        return base
-    return f"{base}:{hashlib.sha256(product_key.encode('utf-8')).hexdigest()[:12]}"
+    if product_key:
+        base = f"{base}:{hashlib.sha256(product_key.encode('utf-8')).hexdigest()[:12]}"
+    return base if retry <= 0 else f"{base}:r{int(retry)}"
 
 
 def mask_upgrade_reason(meta: dict, *, product_key: str | None) -> str | None:
