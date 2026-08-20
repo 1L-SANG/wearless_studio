@@ -40,14 +40,14 @@ container_env_value() {
     sed -n "s/^$1=//p" | head -1
 }
 check_writers_stopped() {
-  local svc port
+  local svc port systemd_checked=0
   if command -v systemctl >/dev/null 2>&1; then
     for svc in $APP_SERVICES; do
       if systemctl is-active "$svc" >/dev/null 2>&1; then
         die "$svc is active; stop Holder/TAS/Issuer/CAS before export"
       fi
     done
-    return 0
+    systemd_checked=1
   fi
   if command -v lsof >/dev/null 2>&1; then
     for port in $WRITER_PORTS; do
@@ -57,6 +57,7 @@ check_writers_stopped() {
     done
     return 0
   fi
+  [ "$systemd_checked" = 1 ] && return 0
   die "systemctl or lsof not found; install lsof or run on a systemd host to verify OpenDID writers are stopped"
 }
 

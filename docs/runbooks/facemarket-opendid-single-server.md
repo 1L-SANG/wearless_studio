@@ -146,7 +146,7 @@ wait_legacy_ports_closed 8545 8546
 SOURCE_FREEZE_VERIFIED=legacy
 ```
 
-> 현재 `deploy/opendid/export-state.sh`는 `systemctl`을 필수 도구로 검사한다. 따라서 macOS legacy source는 위 freeze/history 수집까지 검증할 수 있지만, platform-aware writer check가 export 도구에 반영되기 전에는 2.2 export로 진행하지 않는다. 임시 `systemctl` shim으로 우회하지 않는다.
+`deploy/opendid/export-state.sh`는 systemd-managed source에서 unit 상태를 확인하고 `lsof`가 있으면 writer port도 함께 확인한다. systemd가 없는 legacy source에서는 `lsof`로 writer port 폐쇄를 확인하며, 둘 다 없으면 export를 거부한다.
 
 어느 경로든 최종 확인에서 Java/OpenDID/Besu listener가 남거나 Besu container가 실행 중이면 export하지 않는다. PostgreSQL container는 계속 실행 중이어야 한다.
 
@@ -284,10 +284,9 @@ target inventory를 만들고 source의 모든 DB 이름·public table 수를 �
 ```bash
 TARGET_INVENTORY=$(mktemp)
 TARGET_ISSUER_STATE=$(mktemp)
-TARGET_ISSUER_STATE_AFTER_VERIFY=$(mktemp)
 SOURCE_DB_SHAPE=$(mktemp)
 TARGET_DB_SHAPE=$(mktemp)
-trap 'rm -f "$TARGET_INVENTORY" "$TARGET_ISSUER_STATE" "$TARGET_ISSUER_STATE_AFTER_VERIFY" "$SOURCE_DB_SHAPE" "$TARGET_DB_SHAPE"' EXIT
+trap 'rm -f "$TARGET_INVENTORY" "$TARGET_ISSUER_STATE" "$SOURCE_DB_SHAPE" "$TARGET_DB_SHAPE"' EXIT
 OPENDID_ROOT=/opt/opendid deploy/opendid/inventory-state.sh >"$TARGET_INVENTORY"
 
 db_shape() {
@@ -388,69 +387,17 @@ PY
 
 ### 5.3 기존 VC 온체인 metadata 전수 검증
 
-DB 동일성 비교를 먼저 끝낸 뒤 Issuer `vc`의 모든 기존 행을 Holder verify endpoint로 검사한다. 출력은 집계뿐이며 VC ID나 응답 본문을 출력하지 않는다. DB `ACTIVE`는 온체인 `valid`, DB `REVOKED`는 온체인 `revoked`여야 하고 그 외 상태나 `unknown`은 실패다.
+DB 동일성 비교를 먼저 끝낸 뒤 Issuer `vc`의 모든 기존 행을 OpenDID V2 contract의 view 함수 `getVcmetaData(string)`으로 조회한다. JSON-RPC `eth_call`만 사용하므로 transaction, nonce, revoke 행을 만들지 않는다. 출력은 집계뿐이며 VC ID, VC 본문, RPC 응답은 출력하지 않는다. DB와 온체인 status는 각각 `ACTIVE` 또는 `REVOKED`로 같아야 하며 다른 상태와 조회 오류는 실패다.
 
-현재 Holder verify는 직접 조회 API가 없어 Issuer `inspect-propose-revoke`를 사용한다. 따라서 **ACTIVE VC 한 건을 확인할 때마다 실제 폐기는 하지 않지만 미완료 `REVOKE_VC` transaction/revoke nonce 행을 만들 수 있다.** 이 부작용은 불가피하므로 source와 target history 비교 뒤 한 번만 실행하고, 생성된 probe 행을 삭제하지 않는다.
+`verify-vcmeta.py`는 먼저 selector, 단일 dynamic string 인자 encoder, 반환 struct의 다섯 번째 `status` decoder를 고정 fixture로 self-check한다. 하나라도 어긋나면 Besu 조회 전에 중단한다.
 
 ```bash
 export OPENDID_POSTGRES_CONTAINER OPENDID_POSTGRES_USER OPENDID_ISSUER_DB
-python3 - <<'PY'
-import collections
-import json
-import os
-import subprocess
-import urllib.request
-
-query = "select json_build_object('vcId', vc_id, 'status', status)::text from vc order by vc_id nulls first, id;"
-result = subprocess.run(
-    [
-        'docker', 'exec', os.environ['OPENDID_POSTGRES_CONTAINER'],
-        'psql', '-X', '-v', 'ON_ERROR_STOP=1', '-U', os.environ['OPENDID_POSTGRES_USER'],
-        '-d', os.environ['OPENDID_ISSUER_DB'], '-At', '-c', query,
-    ],
-    check=True, capture_output=True, text=True,
-)
-rows = [json.loads(line) for line in result.stdout.splitlines() if line]
-counts = collections.Counter()
-mismatches = 0
-
-for row in rows:
-    db_status = row.get('status')
-    try:
-        body = json.dumps({'vcId': row.get('vcId')}).encode()
-        request = urllib.request.Request(
-            'http://127.0.0.1:8100/holder/vc/verify', body,
-            {'Content-Type': 'application/json'}, method='POST',
-        )
-        with urllib.request.urlopen(request, timeout=30) as response:
-            verified = json.load(response)
-        chain_status = verified.get('status')
-        on_chain = verified.get('onChain') is True
-    except Exception:
-        chain_status = 'request_error'
-        on_chain = False
-
-    if db_status == 'ACTIVE' and chain_status == 'valid' and on_chain:
-        counts['active_valid'] += 1
-    elif db_status == 'REVOKED' and chain_status == 'revoked' and on_chain:
-        counts['revoked_revoked'] += 1
-    else:
-        mismatches += 1
-
-print(f'onchain_checked={len(rows)}')
-print(f'onchain_active_valid={counts["active_valid"]}')
-print(f'onchain_revoked_revoked={counts["revoked_revoked"]}')
-print(f'onchain_mismatch={mismatches}')
-if mismatches:
-    raise SystemExit('existing VC on-chain metadata mismatch')
-PY
-
-record_issuer_state "$TARGET_ISSUER_STATE_AFTER_VERIFY"
-diff -u <(grep '^vc_' "$TARGET_ISSUER_STATE") <(grep '^vc_' "$TARGET_ISSUER_STATE_AFTER_VERIFY")
-diff -u "$TARGET_ISSUER_STATE" "$TARGET_ISSUER_STATE_AFTER_VERIFY" || true
+sudo --preserve-env=OPENDID_POSTGRES_CONTAINER,OPENDID_POSTGRES_USER,OPENDID_ISSUER_DB \
+  deploy/opendid/verify-vcmeta.py
 ```
 
-마지막 diff는 status별 개수와 digest만 보여 probe side effect를 기록한다. VC ID는 출력하지 않는다. `holder_data=missing`이어도 이 검증은 모델 wallet을 쓰지 않아 가능하지만, 기존 모델 명의의 revoke 서명은 여전히 불가능하다.
+`eth_call`은 모델 wallet을 쓰지 않으므로 `holder_data=missing`이어도 이 조회는 가능하다. 그러나 기존 모델 명의의 revoke 서명은 여전히 불가능하다.
 
 ### 5.4 Orchestrator 미실행
 
@@ -480,7 +427,7 @@ command -v ss >/dev/null
 - source/target checksum, 모든 DB 이름·table 수, VC/revoke status 개수와 digest가 일치함
 - PostgreSQL/Besu 및 네 Java 서비스 health가 성공함
 - FaceLicense namespace/schema/plan과 chain/contract 검사가 성공함
-- 모든 기존 VC의 DB status와 온체인 status가 일치하고 probe side effect가 기록됨
+- 모든 기존 VC의 DB status와 read-only 온체인 status가 일치함
 - `:9001`이 닫혀 있음
 - 별도 lifecycle smoke에서 issue → valid → revoke → revoked와 전체 재시작 후 상태 유지가 성공함
 

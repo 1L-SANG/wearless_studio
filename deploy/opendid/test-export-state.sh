@@ -177,6 +177,21 @@ exit 3
 SH
 chmod +x "$fakebin/systemctl"
 
+cat >"$fakebin/lsof" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "lsof $*" >>"${FAKE_LOG:?}"
+port=''
+for arg in "$@"; do
+  case "$arg" in -iTCP:*) port=${arg#-iTCP:} ;; esac
+done
+[ -n "$port" ] || exit 9
+[ "${FAKE_LISTEN_PORT:-}" = "$port" ] || exit 1
+printf 'COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n'
+printf 'java 123 test 1u IPv4 0 0t0 TCP 127.0.0.1:%s (LISTEN)\n' "$port"
+SH
+chmod +x "$fakebin/lsof"
+
 export PATH="$fakebin:$PATH"
 host_path=$PATH
 export FAKE_LOG="$tmp/fake.log"
@@ -250,20 +265,12 @@ FAKE_BESU_RUNNING=true "$EXPORT" "$besu_running_out" >"$tmp/opendid-export-besu-
   && bad 'export refuses running Besu' || ok 'export refuses running Besu'
 [ ! -e "$besu_running_out/postgres.dump.sql" ] && ok 'running Besu refusal creates no dump' || bad 'running Besu refusal creates no dump'
 
-cat >"$fakebin/lsof" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\n' "lsof $*" >>"${FAKE_LOG:?}"
-port=''
-for arg in "$@"; do
-  case "$arg" in -iTCP:*) port=${arg#-iTCP:} ;; esac
-done
-[ -n "$port" ] || exit 9
-[ "${FAKE_LISTEN_PORT:-}" = "$port" ] || exit 1
-printf 'COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n'
-printf 'java 123 test 1u IPv4 0 0t0 TCP 127.0.0.1:%s (LISTEN)\n' "$port"
-SH
-chmod +x "$fakebin/lsof"
+systemd_listening_out="$tmp/systemd-listening-out"
+FAKE_LISTEN_PORT=8091 "$EXPORT" "$systemd_listening_out" >"$tmp/export-systemd-listening.out" 2>&1 \
+  && bad 'systemd source export refuses listening writer port' || ok 'systemd source export refuses listening writer port'
+[ ! -e "$systemd_listening_out/postgres.dump.sql" ] && ok 'systemd listening refusal creates no dump' || bad 'systemd listening refusal creates no dump'
+want_grep 'port 8091 is listening' "$tmp/export-systemd-listening.out" 'systemd listening refusal names writer port'
+
 no_systemctl_bin="$tmp/no-systemctl-bin"
 mkdir -p "$no_systemctl_bin"
 for cmd in bash basename chmod cp cut dirname find grep head mkdir mktemp pwd rm sed shasum stat tar tr; do
