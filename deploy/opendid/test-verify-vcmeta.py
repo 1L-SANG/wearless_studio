@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 import importlib.util
+import json
+import subprocess
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -42,6 +45,68 @@ class VcMetaCodecTest(unittest.TestCase):
         fixture = b''.join(value.to_bytes(32, 'big') for value in words)
         with self.assertRaisesRegex(ValueError, 'truncated'):
             module.decode_vcmeta_status('0x' + fixture.hex())
+
+
+class IssuerStatusQueryTest(unittest.TestCase):
+    def query_rows(self, db_rows):
+        module = load_module()
+        captured = {}
+
+        def fake_run(args, check, capture_output, text):
+            captured['query'] = args[-1]
+            effective_rows = []
+            for vc_id, vc_status, revoke_statuses in db_rows:
+                if 'revoke_vc' not in captured['query']:
+                    status = vc_status
+                elif vc_status == 'REVOKED' or 'REVOKED' in revoke_statuses:
+                    status = 'REVOKED'
+                elif vc_status == 'ACTIVE' and all(status == 'ACTIVE' for status in revoke_statuses):
+                    status = 'ACTIVE'
+                else:
+                    status = 'UNKNOWN'
+                effective_rows.append({'vcId': vc_id, 'status': status})
+            return subprocess.CompletedProcess(
+                args,
+                0,
+                '\n'.join(json.dumps(row) for row in effective_rows) + '\n',
+                '',
+            )
+
+        with patch('subprocess.run', fake_run):
+            rows = module.query_rows('postgre-opendid', 'issuer', 'issuer_db')
+        return rows, captured['query']
+
+    def test_related_revoked_protocol_row_makes_active_vc_effectively_revoked(self):
+        rows, _ = self.query_rows([('vc-1', 'ACTIVE', ['REVOKED'])])
+
+        self.assertEqual(rows, [{'vcId': 'vc-1', 'status': 'REVOKED'}])
+
+    def test_active_vc_without_revoke_row_stays_active(self):
+        rows, _ = self.query_rows([('vc-1', 'ACTIVE', [])])
+
+        self.assertEqual(rows, [{'vcId': 'vc-1', 'status': 'ACTIVE'}])
+
+    def test_revoked_vc_stays_revoked(self):
+        rows, _ = self.query_rows([('vc-1', 'REVOKED', [])])
+
+        self.assertEqual(rows, [{'vcId': 'vc-1', 'status': 'REVOKED'}])
+
+    def test_unknown_status_fails_closed(self):
+        rows, _ = self.query_rows([
+            ('vc-1', 'SUSPENDED', []),
+            ('vc-2', 'ACTIVE', ['PENDING']),
+        ])
+
+        self.assertEqual(rows, [
+            {'vcId': 'vc-1', 'status': 'UNKNOWN'},
+            {'vcId': 'vc-2', 'status': 'UNKNOWN'},
+        ])
+
+    def test_query_groups_revoke_rows_by_vc_without_multiplying_rows(self):
+        rows, query = self.query_rows([('vc-1', 'ACTIVE', ['ACTIVE', 'REVOKED'])])
+
+        self.assertEqual(rows, [{'vcId': 'vc-1', 'status': 'REVOKED'}])
+        self.assertIn('group by vc.id, vc.vc_id, vc.status', query.lower())
 
 
 if __name__ == '__main__':

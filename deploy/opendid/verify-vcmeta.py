@@ -94,7 +94,22 @@ def required_env(name):
 
 
 def query_rows(container, user, database):
-    query = "select json_build_object('vcId', vc_id, 'status', status)::text from vc order by vc_id nulls first, id;"
+    query = """
+select json_build_object(
+  'vcId', vc.vc_id,
+  'status',
+  case
+    when vc.status = 'REVOKED' or coalesce(bool_or(rv.status = 'REVOKED'), false) then 'REVOKED'
+    when vc.status = 'ACTIVE'
+      and count(rv.vc_id) filter (where rv.status is distinct from 'ACTIVE') = 0 then 'ACTIVE'
+    else 'UNKNOWN'
+  end
+)::text
+from vc
+left join revoke_vc rv on rv.vc_id = vc.vc_id
+group by vc.id, vc.vc_id, vc.status
+order by vc.vc_id nulls first, vc.id;
+"""
     try:
         result = subprocess.run(
             [
