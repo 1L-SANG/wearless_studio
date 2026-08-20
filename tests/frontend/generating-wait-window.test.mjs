@@ -11,6 +11,10 @@ import {
   loadEditorWaitDraft,
   saveEditorWaitDraft,
 } from '../../src/lib/editorWaitDraft.js';
+import {
+  bindEditorExitBackup,
+  createLatestEditorSaveGuard,
+} from '../../src/lib/editorSaveLifecycle.js';
 import { canSafelyMergeServerBlocks, fillGenBlocks, mergeServerBlocks } from '../../src/lib/editorWaitSkeleton.js';
 
 const httpAdapter = readFileSync(
@@ -135,8 +139,8 @@ test('생성 중 자동 저장은 서버 완성본 대신 임시 작업본을 �
   assert.ok(autoSave.length < 2000, `슬라이스가 너무 넓다(${autoSave.length}자) — 단정이 헛돈다`);
   assert.match(autoSave, /if \(genActive\)/);
   // persistable() = 손 안 댄 안내 문구를 걷어내는 저장 관문(2026-08-17 검증).
-  assert.match(autoSave, /saveEditorWaitDraft\(projectId, persistable\(latestBlocks\.current\)\)/);
-  assert.match(autoSave, /api\.saveEditorBlocks\(projectId, persistable\(latestBlocks\.current\)\)/);
+  assert.match(autoSave, /backupLatestEditorDraft\(latestBlocks\.current\)/);
+  assert.match(autoSave, /api\.saveEditorBlocks\(projectId, persistable\(source\)\)/);
 });
 
 test('실패 후 다시 시도는 임시 작업본을 지키고, 이탈은 앞 단계가 아니라 보관함으로 간다', () => {
@@ -191,4 +195,140 @@ test('저장된 문서를 여는 경로도 누락된 배송·교환·반품 프�
     editor.indexOf('withH = upgradeLegacyKiwiTemplateBlocks'),
   );
   assert.match(initialization, /ensureShippingReturnsBlock\(withH, ctx\)/);
+});
+
+
+test('자동저장 실패를 삼키지 않는다 — 임시 보관 + 배너 + 다시 저장', () => {
+  // 조용히 실패하면 화면은 멀쩡한데 편집만 사라져, 셀러는 탭을 닫고서야 전부 날아간 걸
+  // 안다(오너 신고 2026-08-19). 실패 경로가 셋을 모두 하는지 고정한다.
+  const saveStart = editor.indexOf('api.saveEditorBlocks(projectId, persistable(source)).then');
+  assert.ok(saveStart > 0);
+  const block = editor.slice(saveStart, editor.indexOf('}, 1500);', saveStart));
+  assert.doesNotMatch(block, /catch\(\(\) => \{\}\)/, '실패를 삼키면 안 된다');
+  assert.match(block, /const backedUp = backupLatestEditorDraft\(latestBlocks\.current\)/, '브라우저에 임시 보관');
+  assert.match(block, /saveGuard\.current\.isCurrent\(ticket, latestBlocks\.current\)/, '오래된 성공은 최신 백업을 지우지 않음');
+  assert.match(block, /setSaveError\(\{ \.\.\.classifyEditorLoadError\(error\), backedUp \}\)/, '원인 + 보관 성공 여부를 배너로');
+  assert.match(block, /setSaveError\(null\)/, '성공하면 배너를 거둔다');
+  // 배너와 복구 수단
+  assert.match(editor, /className="ed-savebar"/);
+  assert.match(editor, /const retrySaveNow = \(\) => \{/);
+  assert.match(editor, /openLogin\(`\/editor\/\$\{projectId\}`\)/, '로그인이 풀린 경우 제자리 복귀');
+});
+
+
+test('임시 보관 실패는 안심시키지 않는다 — 저장 공간이 없으면 사실대로', () => {
+  // 보관까지 실패했는데 "보관해 뒀어요"라고 말하면 셀러는 안심하고 창을 닫는다.
+  // 저장 실패를 삼키던 것과 같은 종류의 거짓말이라 같은 강도로 막는다.
+  assert.match(editor, /saveError\.backedUp/, '배너가 보관 성공 여부를 읽는다');
+  assert.match(editor, /창을 닫으면 편집 내용이 사라져요/, '보관 실패 시 경고');
+  const manualSave = editor.slice(editor.indexOf('const save = async () => {'), editor.indexOf('// 이탈 직전 플러시'));
+  assert.match(manualSave, /if \(genActive\)[\s\S]*const backedUp = backupLatestEditorDraft\(source\)/,
+    '생성 중 수동 저장도 실제 임시보관 결과를 확인');
+  assert.match(manualSave, /임시 저장하지 못했어요 — 창을 닫지 말아 주세요/,
+    '생성 중 임시보관 실패를 성공이라고 말하지 않음');
+});
+
+test('saveEditorWaitDraft 는 보관 성공 여부를 돌려준다', async () => {
+  const { saveEditorWaitDraft } = await import('../../src/lib/editorWaitDraft.js');
+  const ok = { setItem() {} };
+  const full = { setItem() { throw new Error('QuotaExceededError'); } };
+  assert.equal(saveEditorWaitDraft('p1', [{ id: 'b' }], ok), true);
+  assert.equal(saveEditorWaitDraft('p1', [{ id: 'b' }], full), false, '공간 초과는 false');
+  assert.equal(saveEditorWaitDraft('', [], ok), false);
+  assert.equal(saveEditorWaitDraft('p1', null, ok), false);
+});
+
+test('늦게 끝난 예전 저장은 최신 편집 상태를 건드릴 수 없다', () => {
+  const guard = createLatestEditorSaveGuard();
+  const oldSource = [{ id: 'old' }];
+  const newSource = [{ id: 'new' }];
+  const oldSave = guard.begin(oldSource);
+
+  assert.equal(guard.isCurrent(oldSave, newSource), false, '새 편집이 생기면 예전 성공은 무효');
+  const newSave = guard.begin(newSource);
+  assert.equal(guard.isNewest(oldSave), false, '뒤에 시작한 저장이 있으면 예전 실패도 무효');
+  assert.equal(guard.isCurrent(newSave, newSource), true);
+
+  guard.invalidate();
+  assert.equal(guard.isNewest(newSave), false, '탭을 닫으며 남긴 로컬 백업도 예전 응답이 못 지움');
+});
+
+test('pagehide 와 숨김 전환은 언마운트를 기다리지 않고 최신 편집을 보관한다', () => {
+  const windowListeners = new Map();
+  const documentListeners = new Map();
+  const windowTarget = {
+    addEventListener: (name, fn) => windowListeners.set(name, fn),
+    removeEventListener: (name) => windowListeners.delete(name),
+  };
+  const documentTarget = {
+    hidden: false,
+    addEventListener: (name, fn) => documentListeners.set(name, fn),
+    removeEventListener: (name) => documentListeners.delete(name),
+  };
+  let backups = 0;
+  const unbind = bindEditorExitBackup({
+    windowTarget,
+    documentTarget,
+    backupLatest: () => { backups += 1; },
+  });
+
+  windowListeners.get('pagehide')();
+  documentListeners.get('visibilitychange')();
+  assert.equal(backups, 1, '보이는 동안의 visibilitychange 는 무시');
+  documentTarget.hidden = true;
+  documentListeners.get('visibilitychange')();
+  assert.equal(backups, 2);
+
+  unbind();
+  assert.equal(windowListeners.size, 0);
+  assert.equal(documentListeners.size, 0);
+});
+
+
+test('에디터를 나갈 때의 저장도 실패를 흘리지 않는다', () => {
+  // 화면이 곧 사라져 알릴 방법이 없다 — 대신 브라우저에 보관해 다음 진입에서 복원한다.
+  // catch 가 없던 동안에는 서버가 죽은 채로 나가면 편집이 통째로 사라졌다.
+  const flush = editor.slice(editor.indexOf('const flushExit = () => {'));
+  assert.match(flush.slice(0, 1800),
+    /backupLatestEditorDraft\(bs\)[\s\S]*api\.saveEditorBlocks\(projectId, persistable\(bs\)\)/,
+    '이탈 플러시: 서버 응답 전에 로컬부터 보관');
+  const unmount = editor.slice(editor.indexOf('if (skipExitPersist.current'));
+  assert.match(unmount.slice(0, 900),
+    /backupLatestEditorDraft\(source, \{ reportFailure: false \}\)[\s\S]*api\.saveEditorBlocks\(projectId, persistable\(source\)\)/,
+    '언마운트 정리도 서버보다 로컬을 먼저 보관');
+  assert.match(editor, /bindEditorExitBackup\(\{/,
+    '탭 종료는 React 언마운트에만 기대지 않는다');
+});
+
+test('수동 [저장] 버튼은 실패를 반드시 말한다', () => {
+  // onClick={save} 라 실패가 unhandled rejection 으로 흘렀다 — 누른 사람은 저장된 줄 안다.
+  const save = editor.slice(editor.indexOf('const save = async () => {'));
+  const body = save.slice(0, 1600);
+  assert.match(body, /try \{\s*await api\.saveEditorBlocks\(projectId, persistable\(/, 'persistable 게이트 + try');
+  assert.match(body, /catch \(error\) \{/, '실패를 잡는다');
+  assert.match(body, /backupLatestEditorDraft\(latestBlocks\.current\)/, '실패분을 보관');
+  assert.match(body, /setSaveError\(\{ \.\.\.classifyEditorLoadError\(error\), backedUp \}\)/, '배너로');
+  assert.match(body, /저장하지 못했어요/, '토스트로도 즉시 알림');
+});
+
+
+test('모든 서버 저장은 persistable 게이트를 통과한다 (불변식)', () => {
+  // 스냅샷이 아니라 불변식으로 잡는다 — 나중에 저장 경로가 하나 더 생겨도 걸린다.
+  // 게이트를 빠뜨리면 손 안 댄 '내용을 입력하세요.'가 셀러의 상품 페이지에 그대로 실린다.
+  const sites = [...editor.matchAll(/api\.saveEditorBlocks\(projectId,\s*([^;]{0,80})/g)];
+  assert.ok(sites.length >= 6, `저장 경로가 ${sites.length}개뿐 — 찾기 정규식을 의심하라`);
+  for (const [, arg] of sites) {
+    assert.match(arg, /^persistable\(/, `게이트 없는 저장 경로: ${arg.slice(0, 50)}`);
+  }
+});
+
+test('모든 서버 저장 실패는 잡힌다 (불변식)', () => {
+  // 잡히지 않은 저장 실패는 unhandled rejection 으로 흘러 화면이 아무 말도 안 한다.
+  // 각 호출 뒤 같은 저장 블록 안에 .catch( 가 있거나, 그 호출이 try 블록 안(await)이어야 한다.
+  for (const m of editor.matchAll(/api\.saveEditorBlocks\(projectId,/g)) {
+    const before = editor.slice(Math.max(0, m.index - 60), m.index);
+    const after = editor.slice(m.index, m.index + 1200);
+    const guarded = /\.catch\(/.test(after) || /await /.test(before);
+    assert.ok(guarded, `실패를 안 잡는 저장 경로: ...${before.slice(-40)}`);
+  }
 });
