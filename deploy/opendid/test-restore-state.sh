@@ -79,21 +79,45 @@ case "$1" in
       '{{range .Config.Env}}{{println .}}{{end}}')
         printf 'POSTGRES_USER=%s\nPOSTGRES_DB=%s\n' "${FAKE_SOURCE_DB_USER:-omn}" "${FAKE_SOURCE_DB_NAME:-omn}"
         ;;
+      '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}')
+        printf 'opendid-test-network\n'
+        ;;
+      '{{with index .NetworkSettings.Networks "opendid-test-network"}}{{.IPAddress}}{{end}}')
+        printf '172.20.0.2\n'
+        ;;
       *) exit 9 ;;
     esac
     ;;
   volume)
     case "$2" in
       inspect)
-        [ -d "${FAKE_VOLUMES:?}/$3" ] || exit 1
-        printf '%s\n' "$FAKE_VOLUMES/$3"
+        if [ "$3" = -f ]; then
+          name=$5
+          [ -d "${FAKE_VOLUMES:?}/$name" ] || exit 1
+          [ -f "${FAKE_VOLUME_LABELS:?}/$name" ] && cat "$FAKE_VOLUME_LABELS/$name"
+        else
+          [ -d "${FAKE_VOLUMES:?}/$3" ] || exit 1
+          printf '%s\n' "$FAKE_VOLUMES/$3"
+        fi
         ;;
       create)
-        mkdir -p "$FAKE_VOLUMES/$3"
-        printf '%s\n' "$3"
+        shift 2
+        label=''
+        while [ "$#" -gt 1 ]; do
+          case "$1" in --label) label=${2#opendid.restore-token=}; shift 2 ;; *) exit 9 ;; esac
+        done
+        name=$1
+        mkdir -p "$FAKE_VOLUMES/$name" "$FAKE_VOLUME_LABELS"
+        if [ "${FAKE_VOLUME_RACE:-}" = "$name" ]; then
+          printf 'peer-token\n' >"$FAKE_VOLUME_LABELS/$name"
+        else
+          printf '%s\n' "$label" >"$FAKE_VOLUME_LABELS/$name"
+        fi
+        printf '%s\n' "$name"
         ;;
       rm)
         case "$FAKE_VOLUMES/$3" in "$FAKE_VOLUMES"/*) rm -rf "$FAKE_VOLUMES/$3" ;; *) exit 9 ;; esac
+        rm -f "$FAKE_VOLUME_LABELS/$3"
         ;;
       *) exit 9 ;;
     esac
@@ -140,7 +164,20 @@ case "$1" in
         *:/archive:ro) archive_dir=${arg%:/archive:ro} ;;
       esac
     done
-    if [ -n "$src_volume" ] && [ -n "$out_dir" ]; then
+    env_file=''
+    network=''
+    previous=''
+    for arg in "$@"; do
+      [ "$previous" = --env-file ] && env_file=$arg
+      [ "$previous" = --network ] && network=$arg
+      previous=$arg
+    done
+    if printf '%s\n' "$*" | grep -q 'postgres:16.4 psql'; then
+      [ "$network" = opendid-test-network ] || exit 9
+      grep -qx "PGPASSWORD=${FAKE_EXPECT_DB_PASSWORD:-test-only}" "$env_file" || exit 6
+      printf '%s\n' "$*" >>"${FAKE_SQL_LOG:?}"
+      printf '1\n'
+    elif [ -n "$src_volume" ] && [ -n "$out_dir" ]; then
       tar -C "$FAKE_VOLUMES/$src_volume" -cf "$out_dir/besu-data.tar" .
     elif [ -n "$src_volume" ]; then
       [ -z "$(find "$FAKE_VOLUMES/$src_volume" -mindepth 1 -print -quit)" ]
@@ -177,17 +214,14 @@ cat >"$fakebin/id" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'id %s\n' "$*" >>"${FAKE_INSTALL_LOG:?}"
-[ "$1" = "${OPENDID_OWNER:?}" ]
+if [ "$1" = -Gn ]; then
+  [ "$2" = "${OPENDID_OWNER:?}" ]
+  printf '%s\n' "${OPENDID_GROUP:?}"
+else
+  [ "$1" = "${OPENDID_OWNER:?}" ]
+fi
 SH
 chmod +x "$fakebin/id"
-
-cat >"$fakebin/getent" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-printf 'getent %s\n' "$*" >>"${FAKE_INSTALL_LOG:?}"
-[ "$1" = group ] && [ "$2" = "${OPENDID_GROUP:?}" ]
-SH
-chmod +x "$fakebin/getent"
 
 cat >"$fakebin/install" <<'SH'
 #!/usr/bin/env bash
@@ -217,11 +251,12 @@ chmod +x "$fakebin/install"
 export PATH="$fakebin:$PATH"
 export FAKE_LOG="$tmp/docker.log"
 export FAKE_VOLUMES="$tmp/volumes"
+export FAKE_VOLUME_LABELS="$tmp/volume-labels"
 export FAKE_DB_FIXTURE="$tmp/database.sql"
 export FAKE_INSTALL_LOG="$tmp/install.log"
 export FAKE_SQL_LOG="$tmp/sql.log"
 printf '%s\n' '-- FaceLicense fixture' 'CREATE TABLE fixture(id integer);' 'INSERT INTO fixture VALUES (7);' >"$FAKE_DB_FIXTURE"
-mkdir -p "$FAKE_VOLUMES"
+mkdir -p "$FAKE_VOLUMES" "$FAKE_VOLUME_LABELS"
 
 make_archive() {
   local label=$1 holder=$2
@@ -358,6 +393,29 @@ fi
 [ "$before_existing" = "$(tree_hash "$OPENDID_ROOT")" ] && ok 'existing target secret remains unchanged' || bad 'existing target secret remains unchanged'
 want_missing "$FAKE_VOLUMES/$OPENDID_POSTGRES_VOLUME" 'existing-file preflight creates no volume'
 
+set_target stale-holder-missing
+mkdir -p "$OPENDID_HOLDER_DATA_DIR"
+printf 'stale holder\n' >"$OPENDID_HOLDER_DATA_DIR/model.json"
+before_stale_holder=$(tree_hash "$OPENDID_HOLDER_DATA_DIR")
+: >"$FAKE_LOG"
+if "$RESTORE" "$archive_missing" --apply >"$tmp/stale-holder-missing.out" 2>&1; then
+  bad 'missing Holder archive with stale target is refused'
+else
+  ok 'missing Holder archive with stale target is refused'
+fi
+[ "$before_stale_holder" = "$(tree_hash "$OPENDID_HOLDER_DATA_DIR")" ] && ok 'stale Holder target remains unchanged' || bad 'stale Holder target remains unchanged'
+[ ! -s "$FAKE_LOG" ] && ok 'stale Holder refusal precedes Docker access' || bad 'stale Holder refusal precedes Docker access'
+want_missing "$FAKE_VOLUMES/$OPENDID_POSTGRES_VOLUME" 'stale Holder refusal creates no volume'
+
+set_target volume-race
+if FAKE_VOLUME_RACE="$OPENDID_BESU_VOLUME" "$RESTORE" "$archive_missing" --apply >"$tmp/volume-race.out" 2>&1; then
+  bad 'mismatched Besu restore-token label is refused'
+else
+  ok 'mismatched Besu restore-token label is refused'
+fi
+want_missing "$FAKE_VOLUMES/$OPENDID_POSTGRES_VOLUME" 'owned PostgreSQL volume is removed after Besu label race'
+[ -d "$FAKE_VOLUMES/$OPENDID_BESU_VOLUME" ] && ok 'mismatched peer Besu volume is preserved' || bad 'mismatched peer Besu volume is preserved'
+
 set_target pg-failure
 if FAKE_FAIL_PSQL=1 "$RESTORE" "$archive_missing" --apply >"$tmp/pg-failure.out" 2>&1; then
   bad 'forced PostgreSQL restore failure is surfaced'
@@ -480,7 +538,7 @@ else
   ok 'every install carries runtime owner and group'
 fi
 want_grep 'id fixture_owner' "$FAKE_INSTALL_LOG" 'runtime owner is validated'
-want_grep 'getent group fixture_group' "$FAKE_INSTALL_LOG" 'runtime group is validated'
+want_grep 'id -Gn fixture_owner' "$FAKE_INSTALL_LOG" 'runtime group membership is validated'
 want_grep 'ALTER ROLE.*NOLOGIN PASSWORD NULL' "$FAKE_SQL_LOG" 'bootstrap PostgreSQL role is locked, not dropped'
 want_grep 'SELECT 1' "$FAKE_SQL_LOG" 'restored operational PostgreSQL role is verified'
 if grep -q 'DROP ROLE' "$FAKE_SQL_LOG"; then bad 'bootstrap PostgreSQL role is never dropped'; else ok 'bootstrap PostgreSQL role is never dropped'; fi

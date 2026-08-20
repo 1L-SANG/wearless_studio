@@ -62,6 +62,12 @@ validate_tar() {
   done <"$names"
 }
 volume_exists() { docker volume inspect "$1" >/dev/null 2>&1; }
+volume_token() { docker volume inspect -f '{{ index .Labels "opendid.restore-token" }}' "$1" 2>/dev/null || true; }
+remove_owned_volume() {
+  local volume=$1
+  [ "$(volume_token "$volume")" = "$RESTORE_TOKEN" ] || return 0
+  docker volume rm "$volume" >/dev/null 2>&1 || true
+}
 container_absent() { ! docker inspect -f '{{.State.Running}}' "$1" >/dev/null 2>&1; }
 path_has_no_symlink() {
   local path=$1 current=/ rest part
@@ -93,6 +99,8 @@ need awk
 need grep
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/opendid-restore.XXXXXX")
+RESTORE_TOKEN=$(basename "$WORK")
+case "$RESTORE_TOKEN" in opendid-restore.*) : ;; *) die "unsafe restore token" ;; esac
 POSTGRES_STARTED=0
 CREATED_PG_VOLUME=0
 CREATED_BESU_VOLUME=0
@@ -121,9 +129,9 @@ cleanup() {
     if [ "$CREATED_PG_VOLUME" = 1 ]; then
       OPENDID_POSTGRES_USER="$RESTORE_USER" OPENDID_POSTGRES_DB=postgres \
         docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" rm -f -s postgres-opendid >/dev/null 2>&1 || true
-      docker volume rm "$POSTGRES_VOLUME" >/dev/null 2>&1 || true
+      remove_owned_volume "$POSTGRES_VOLUME"
     fi
-    [ "$CREATED_BESU_VOLUME" = 1 ] && docker volume rm "$BESU_VOLUME" >/dev/null 2>&1 || true
+    [ "$CREATED_BESU_VOLUME" = 1 ] && remove_owned_volume "$BESU_VOLUME"
   fi
   rm -rf "$WORK"
   trap - EXIT
@@ -169,10 +177,15 @@ if [ "$APPLY" = 0 ]; then
   exit 0
 fi
 
+path_has_no_symlink "$HOLDER_DATA_DIR" || die "Holder target is relative or contains a symlink: $HOLDER_DATA_DIR"
+if [ -e "$HOLDER_DATA_DIR" ]; then
+  [ -d "$HOLDER_DATA_DIR" ] || die "Holder target is not a directory: $HOLDER_DATA_DIR"
+  [ -z "$(find "$HOLDER_DATA_DIR" -mindepth 1 -print -quit)" ] || die "Holder target is not empty: $HOLDER_DATA_DIR"
+fi
+
 need docker
 need install
 need id
-need getent
 [ -n "$POSTGRES_USER" ] || die "OPENDID_POSTGRES_USER is required for --apply"
 [ -n "$POSTGRES_DB" ] || die "OPENDID_POSTGRES_DB is required for --apply"
 [ -n "$POSTGRES_PASSWORD" ] || die "OPENDID_POSTGRES_PASSWORD is required for --apply"
@@ -183,7 +196,7 @@ fi
 regular_file "$COMPOSE_FILE" || die "missing or unsafe compose file: $COMPOSE_FILE"
 regular_file "$ENV_FILE" || die "missing or unsafe environment file: $ENV_FILE"
 id "$OWNER" >/dev/null 2>&1 || die "runtime owner does not exist: $OWNER"
-getent group "$GROUP" >/dev/null 2>&1 || die "runtime group does not exist: $GROUP"
+id -Gn "$OWNER" | tr ' ' '\n' | grep -qx "$GROUP" || die "runtime owner $OWNER is not in group $GROUP"
 container_absent "$POSTGRES_CONTAINER" || die "target container already exists: $POSTGRES_CONTAINER"
 container_absent "$BESU_CONTAINER" || die "target container already exists: $BESU_CONTAINER"
 
@@ -209,19 +222,16 @@ done < <(find "$files_stage" -type f -print0)
 
 holder_stage=''
 if [ "$HOLDER_STATE" = present ]; then
-  path_has_no_symlink "$HOLDER_DATA_DIR" || die "Holder target is relative or contains a symlink: $HOLDER_DATA_DIR"
-  if [ -e "$HOLDER_DATA_DIR" ]; then
-    [ -d "$HOLDER_DATA_DIR" ] || die "Holder target is not a directory: $HOLDER_DATA_DIR"
-    [ -z "$(find "$HOLDER_DATA_DIR" -mindepth 1 -print -quit)" ] || die "Holder target is not empty: $HOLDER_DATA_DIR"
-  fi
   holder_stage="$WORK/holder-data"
   mkdir -p "$holder_stage"
   tar -C "$holder_stage" -xf "$ARCHIVE/holder-data.tar"
 fi
 
-docker volume create "$POSTGRES_VOLUME" >/dev/null
+docker volume create --label "opendid.restore-token=$RESTORE_TOKEN" "$POSTGRES_VOLUME" >/dev/null
+[ "$(volume_token "$POSTGRES_VOLUME")" = "$RESTORE_TOKEN" ] || die "PostgreSQL volume ownership label mismatch: $POSTGRES_VOLUME"
 CREATED_PG_VOLUME=1
-docker volume create "$BESU_VOLUME" >/dev/null
+docker volume create --label "opendid.restore-token=$RESTORE_TOKEN" "$BESU_VOLUME" >/dev/null
+[ "$(volume_token "$BESU_VOLUME")" = "$RESTORE_TOKEN" ] || die "Besu volume ownership label mismatch: $BESU_VOLUME"
 CREATED_BESU_VOLUME=1
 OPENDID_POSTGRES_USER="$RESTORE_USER" OPENDID_POSTGRES_DB=postgres \
   docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d postgres-opendid
@@ -242,8 +252,16 @@ docker exec -i "$POSTGRES_CONTAINER" psql -X -v ON_ERROR_STOP=1 -U "$RESTORE_USE
 lock_result=$(docker exec "$POSTGRES_CONTAINER" psql -X -v ON_ERROR_STOP=1 -At -U "$RESTORE_USER" -d postgres \
   -c "ALTER ROLE \"$RESTORE_USER\" NOLOGIN PASSWORD NULL; SELECT rolcanlogin::text || ':' || (rolpassword IS NULL)::text FROM pg_authid WHERE rolname='$RESTORE_USER';")
 printf '%s\n' "$lock_result" | grep -qx 'false:true' || die "restore bootstrap role was not locked"
-docker exec "$POSTGRES_CONTAINER" psql -X -v ON_ERROR_STOP=1 -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
-  -c 'SELECT 1;' | grep -qx 1 || die "restored PostgreSQL user cannot connect"
+pg_client_env="$WORK/postgres-client.env"
+printf 'PGPASSWORD=%s\n' "$POSTGRES_PASSWORD" >"$pg_client_env"
+chmod 600 "$pg_client_env"
+pg_network=$(docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}' "$POSTGRES_CONTAINER" | head -1)
+[ -n "$pg_network" ] || die "PostgreSQL Compose network not found"
+pg_ip=$(docker inspect -f "{{with index .NetworkSettings.Networks \"$pg_network\"}}{{.IPAddress}}{{end}}" "$POSTGRES_CONTAINER")
+[ -n "$pg_ip" ] || die "PostgreSQL target IP not found"
+docker run --rm --network "$pg_network" --env-file "$pg_client_env" postgres:16.4 \
+  psql -X -v ON_ERROR_STOP=1 -At -h "$pg_ip" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c 'SELECT 1;' \
+  | grep -qx 1 || die "restored PostgreSQL bridge login failed"
 OPENDID_POSTGRES_USER="$RESTORE_USER" OPENDID_POSTGRES_DB=postgres \
   docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" stop postgres-opendid
 POSTGRES_STARTED=0
