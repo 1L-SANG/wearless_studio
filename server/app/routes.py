@@ -2012,18 +2012,15 @@ async def _enqueue_tone_mask_upgrade(conn, *, user_id: str, project_id: str, cut
     배포되는 창이나 컷아웃 읽기 실패가 정확히 거기 걸린다. 성공하면 새 행이 이기고(조회는
     최신 행부터), 끝내 실패해도 셀러는 아무것도 잃지 않는다.
 
-    멱등키가 레퍼런스를 물어서 옛 잡에 합류하지 않는다. 재생성이 또 레퍼런스 없이 끝나면
-    같은 키의 done 잡에 합류만 하므로, 조회할 때마다 잡이 늘어나지도 않는다.
+    멱등키가 레퍼런스를 물어서 옛 잡에 합류하지 않는다. 일시 장애로 끝나면 기본 마스크와
+    같은 세대·백오프 규칙으로 재시도하며, 예산을 다 써도 현재 마스크는 그대로 둔다.
     """
     if not state.get("_upgrade"):
         return False
     try:
-        _job, created = await repo.create_job(
-            conn, user_id=user_id, project_id=project_id,
-            kind="editor_garment_mask", payload={"cutId": cut_id},
-            idempotency_key=editor_garment_mask.mask_job_key(
-                project_id, cut_id, product_key=state.get("_productKey")),
-            credits_reserved=0, metadata={"upgrade": state["_upgrade"]})
+        created, _job = await _enqueue_tone_mask_generations(
+            conn, user_id=user_id, project_id=project_id, cut_id=cut_id,
+            product_key=state.get("_productKey"), metadata={"upgrade": state["_upgrade"]})
         await conn.commit()
         return created
     except Exception:  # noqa: BLE001 - 업그레이드 큐잉 실패가 쓰던 마스크를 뺏지 않는다
@@ -2078,7 +2075,12 @@ def _tone_job_is_retryable(job: dict) -> bool:
     배포 이전에 막힌 컷(2026-08-18 05:59 실사고)도 이 판별을 지나 되살아난다.
     """
     result = job.get("result") or {}
-    return str(result.get("state") or "") in editor_garment_mask.TONE_MASK_RETRYABLE_STATES
+    state = str(result.get("state") or "")
+    if state in editor_garment_mask.TONE_MASK_RETRYABLE_STATES:
+        return True
+    # lease 복구가 서버 재시작 중 실행을 error 로 닫으면 result 자체가 없다. 이는 의류를
+    # 못 찾았다는 판정이 아니라 실행 인프라 사망이므로 다음 세대에서 다시 시도한다.
+    return str(job.get("status") or "") == "error" and not state
 
 
 def _tone_job_retry_count(job: dict) -> int:
@@ -2087,6 +2089,57 @@ def _tone_job_retry_count(job: dict) -> int:
         return int(payload.get("retry") or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _tone_retry_backoff_elapsed(job: dict, *, now: datetime | None = None) -> bool:
+    retry = _tone_job_retry_count(job)
+    waits = editor_garment_mask.TONE_MASK_RETRY_BACKOFF_SECONDS
+    if retry >= len(waits):
+        return False
+    finished_at = job.get("finished_at")
+    if isinstance(finished_at, str):
+        with contextlib.suppress(ValueError):
+            finished_at = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
+    if not isinstance(finished_at, datetime):
+        return False
+    if finished_at.tzinfo is None:
+        finished_at = finished_at.replace(tzinfo=timezone.utc)
+    return (now or datetime.now(timezone.utc)) >= finished_at + timedelta(seconds=waits[retry])
+
+
+async def _enqueue_tone_mask_generations(
+    conn, *, user_id: str, project_id: str, cut_id: str,
+    product_key: str | None = None, metadata: dict,
+) -> tuple[bool, dict | None]:
+    """기본·업그레이드 마스크가 공유하는 세대 선택과 백오프."""
+    base_key = editor_garment_mask.mask_job_key(
+        project_id, cut_id, product_key=product_key)
+    job = await repo.get_latest_job_generation(conn, user_id, base_key)
+    retry = 0
+    payload = {"cutId": cut_id}
+    if job is not None:
+        if str(job.get("status") or "") not in _TONE_JOB_TERMINAL:
+            return False, job
+        if not _tone_job_is_retryable(job):
+            return False, job
+        if str((job.get("payload") or {}).get("cutId") or "") != str(cut_id):
+            return False, job
+        retry = _tone_job_retry_count(job) + 1
+        if retry > editor_garment_mask.TONE_MASK_MAX_RETRIES:
+            return False, job
+        if not _tone_retry_backoff_elapsed(job):
+            return False, job
+        payload = {k: v for k, v in (job.get("payload") or {}).items() if k != "retry"}
+        payload.setdefault("cutId", cut_id)
+        payload["retry"] = retry
+
+    job, created = await repo.create_job(
+        conn, user_id=user_id, project_id=project_id, kind="editor_garment_mask",
+        payload=payload,
+        idempotency_key=editor_garment_mask.mask_job_key(
+            project_id, cut_id, product_key=product_key, retry=retry),
+        credits_reserved=0, metadata=metadata)
+    return created, job
 
 
 def _tone_state_with_job(state: dict, job: dict | None) -> dict:
@@ -2121,31 +2174,8 @@ async def _enqueue_missing_tone_mask(conn, *, user_id: str, project_id: str,
     if state.get("status") != "processing":
         return False, None
     try:
-        created_any = False
-        job = None
-        payload = {"cutId": cut_id}
-        # 세대(:rN)를 한 칸씩 걷는다. 세대 n 이 일시 장애로 종결돼 있으면 n+1 을 만들고,
-        # 살아 있거나(진행 중) 판정으로 끝났으면 멈춘다. 폴링 한 번에 최대 예산+1 회의 행
-        # 조회 — SAM 이 죽어 있는 최악의 경우에도 잡은 폴링당 1개만 새로 생긴다.
-        for n in range(editor_garment_mask.TONE_MASK_MAX_RETRIES + 1):
-            job, created = await repo.create_job(
-                conn, user_id=user_id, project_id=project_id,
-                kind="editor_garment_mask",
-                payload=payload if n == 0 else {**payload, "retry": n},
-                idempotency_key=editor_garment_mask.mask_job_key(
-                    project_id, cut_id, retry=n),
-                credits_reserved=0, metadata={})
-            created_any = created_any or created
-            if str(job.get("status") or "") not in _TONE_JOB_TERMINAL:
-                break                      # 살아 있는 잡 — 결과를 기다린다
-            if not _tone_job_is_retryable(job):
-                break                      # 판정 종결 — 재시도는 같은 답만 반복한다
-            # 활성 잡 합류가 kind 단위라 다른 컷의 잡에 합류할 수 있다. 그 잡의 종결로
-            # 이 컷의 세대를 올리면 엉뚱한 재시도가 생기므로 내 컷일 때만 걷는다.
-            if str((job.get("payload") or {}).get("cutId") or "") != str(cut_id):
-                break
-            payload = {k: v for k, v in (job.get("payload") or {}).items() if k != "retry"}
-            payload.setdefault("cutId", cut_id)
+        created_any, job = await _enqueue_tone_mask_generations(
+            conn, user_id=user_id, project_id=project_id, cut_id=cut_id, metadata={})
         await conn.commit()
         return created_any, job
     except Exception:  # noqa: BLE001 - 톤 마스크 실패가 기존 컷 조회를 막지 않는다

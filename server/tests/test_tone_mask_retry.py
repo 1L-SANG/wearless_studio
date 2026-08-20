@@ -11,6 +11,7 @@ error 잡은 디스패처가 재시도하지 않고(주석만 그렇게 믿고 �
 """
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -112,9 +113,10 @@ def test_mask_job_key_carries_the_retry_generation():
 
 # ── ① 라우트: 폴링이 재시도를 몰고 간다 ────────────────────────────────────
 
-def _terminal_job(state, retry, *, code=None):
+def _terminal_job(state, retry, *, code=None, finished_at=None):
     return {"id": f"job-{state}-{retry}", "status": "done",
             "payload": {"cutId": "A-1", "retry": retry},
+            "finished_at": finished_at or datetime.now(timezone.utc) - timedelta(minutes=10),
             "result": {"state": state, "cutId": "A-1",
                        **({"retryable": True} if state in ("unavailable", "unverified") else {}),
                        **({"code": code} if code else {})}}
@@ -123,10 +125,15 @@ def _terminal_job(state, retry, *, code=None):
 def _tone_query(client, make_token, monkeypatch, *, seeded_jobs):
     """톤 에디터 상태 조회 한 번. 잡 저장소는 멱등 합류를 흉내 낸다."""
     store = dict(seeded_jobs)
-    created = []
+    class _Created(list):
+        pass
+
+    created = _Created()
+    created.attempted = []
 
     async def fake_create_job(_conn, **kw):
         key = kw["idempotency_key"]
+        created.attempted.append(key)
         if key in store:
             return store[key], False
         row = {"id": f"job-new-{len(created)}", "status": "pending",
@@ -135,12 +142,19 @@ def _tone_query(client, make_token, monkeypatch, *, seeded_jobs):
         created.append({"key": key, "payload": kw["payload"]})
         return row, True
 
+    async def fake_latest(_conn, _user_id, base_key):
+        candidates = [row for key, row in store.items()
+                      if key == base_key or key.startswith(f"{base_key}:r")]
+        return max(candidates, key=lambda row: int((row.get("payload") or {}).get("retry") or 0),
+                   default=None)
+
     monkeypatch.setattr(routes.repo, "get_project", lambda _c, _u, pid: _async({"id": pid}))
     monkeypatch.setattr(routes.repo, "get_mannequin_cut_asset",
                         lambda *_a, **_k: _async({"id": "cut-asset-1", "r2_key": "ai/c.jpg"}))
     monkeypatch.setattr(routes.repo, "get_product",
                         lambda *_a, **_k: _async({"clothing_type": "top"}))
     monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
+    monkeypatch.setattr(routes.repo, "get_latest_job_generation", fake_latest)
     monkeypatch.setattr(routes.editor_garment_mask, "find_for_cut",
                         lambda *_a, **_k: _async(None))
     monkeypatch.setattr(routes.editor_garment_mask, "matching_side_for_project",
@@ -168,6 +182,41 @@ def test_a_transient_outage_keeps_preparing_and_queues_a_retry(client, make_toke
     assert created[0]["payload"]["cutId"] == "A-1"
 
 
+def test_retry_generation_waits_for_its_backoff_before_advancing(
+        client, make_token, monkeypatch):
+    """직전 잡이 막 끝났다면 연속 폴이 재시도 예산을 즉시 태우면 안 된다."""
+    res, created = _tone_query(client, make_token, monkeypatch, seeded_jobs={
+        egm.mask_job_key("p1", "A-1"): _terminal_job(
+            "unavailable", 0, finished_at=datetime.now(timezone.utc))})
+
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "processing"
+    assert created == []
+
+
+def test_retry_generation_advances_after_its_backoff(client, make_token, monkeypatch):
+    """최소 간격이 지난 뒤에는 다음 세대를 정확히 하나 만든다."""
+    res, created = _tone_query(client, make_token, monkeypatch, seeded_jobs={
+        egm.mask_job_key("p1", "A-1"): _terminal_job(
+            "unavailable", 0, finished_at=datetime.now(timezone.utc) - timedelta(seconds=16))})
+
+    assert res.status_code == 200, res.text
+    assert [c["key"] for c in created] == [egm.mask_job_key("p1", "A-1", retry=1)]
+
+
+def test_lease_recovery_error_without_result_advances_generation(
+        client, make_token, monkeypatch):
+    """서버 재시작으로 result 없이 error 난 잡은 판정 실패가 아니므로 복구한다."""
+    dead = {"id": "job-dead", "status": "error", "payload": {"cutId": "A-1"},
+            "result": None, "finished_at": datetime.now(timezone.utc) - timedelta(seconds=16)}
+    res, created = _tone_query(client, make_token, monkeypatch, seeded_jobs={
+        egm.mask_job_key("p1", "A-1"): dead})
+
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "processing"
+    assert [c["key"] for c in created] == [egm.mask_job_key("p1", "A-1", retry=1)]
+
+
 def test_retries_stop_at_the_budget_and_only_then_admit_failure(client, make_token, monkeypatch):
     """무한 재시도는 SAM 을 다시 눕힌다 — 예산이 다하면 실패를 인정한다."""
     seeded = {egm.mask_job_key("p1", "A-1", retry=n): _terminal_job("unavailable", n)
@@ -177,6 +226,7 @@ def test_retries_stop_at_the_budget_and_only_then_admit_failure(client, make_tok
     assert res.status_code == 200, res.text
     assert res.json()["status"] == "failed"
     assert created == []
+    assert len(created.attempted) <= 1, "최신 세대부터 확인해 폴마다 r0부터 다시 읽지 않는다"
 
 
 def test_a_true_no_garment_verdict_is_not_retried(client, make_token, monkeypatch):
@@ -188,6 +238,49 @@ def test_a_true_no_garment_verdict_is_not_retried(client, make_token, monkeypatc
     assert res.status_code == 200, res.text
     assert res.json()["status"] == "failed"
     assert created == []
+
+
+def test_upgrade_mask_uses_retry_generations_and_keeps_the_existing_mask(monkeypatch):
+    """업그레이드 일시 실패도 새 세대로 재시도하되 현재 ready 마스크는 유지한다."""
+    product_key = "uploads/front-current.png"
+    base = egm.mask_job_key("p1", "A-1", product_key=product_key)
+    store = {base: _terminal_job(
+        "unverified", 0, finished_at=datetime.now(timezone.utc) - timedelta(seconds=16))}
+    created = []
+
+    async def fake_create_job(_conn, **kw):
+        key = kw["idempotency_key"]
+        if key in store:
+            return store[key], False
+        row = {"id": "upgrade-r1", "status": "pending", "payload": kw["payload"]}
+        store[key] = row
+        created.append(kw)
+        return row, True
+
+    async def fake_latest(_conn, _user_id, base_key):
+        candidates = [row for key, row in store.items()
+                      if key == base_key or key.startswith(f"{base_key}:r")]
+        return max(candidates, key=lambda row: int((row.get("payload") or {}).get("retry") or 0),
+                   default=None)
+
+    class _Conn:
+        async def commit(self):
+            return None
+
+        async def rollback(self):
+            return None
+
+    monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
+    monkeypatch.setattr(routes.repo, "get_latest_job_generation", fake_latest)
+    queued = asyncio.run(routes._enqueue_tone_mask_upgrade(
+        _Conn(), user_id="u1", project_id="p1", cut_id="A-1",
+        state={"status": "ready", "_upgrade": "product-reference",
+               "_productKey": product_key, "maskAssetId": "existing-mask"}))
+
+    assert queued is True
+    assert [row["idempotency_key"] for row in created] == [
+        egm.mask_job_key("p1", "A-1", product_key=product_key, retry=1)]
+    assert created[0]["payload"] == {"cutId": "A-1", "retry": 1}
 
 
 # ── ③ 워커 큐잉 직후 디스패처 기상 ─────────────────────────────────────────

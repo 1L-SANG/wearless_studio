@@ -62,10 +62,13 @@ KNOWN_CATEGORIES = ("top", "outer", "bottom", "dress")
 MATCH_GUARD_VERSION = "main-garment-guard-v1"
 
 
-#: 일시 장애(unavailable·unverified) 재시도 상한. 톤 에디터 폴링이 한 번에 한 세대씩
-#: 몰고 가므로, 실제 재시도 간격은 폴링 주기 + 잡 실행 시간으로 자연히 벌어진다. 상한이
-#: 없으면 죽은 SAM 을 향해 폴링마다 새 잡이 쌓여 복구 순간 몰매를 놓는다(2026-08-18).
+#: 일시 장애(unavailable·unverified) 재시도 상한. 상한이 없으면 죽은 SAM 을 향해 잡이
+#: 계속 쌓여 복구 순간 몰매를 놓는다(2026-08-18).
 TONE_MASK_MAX_RETRIES = 3
+
+#: 직전 세대 종결 뒤 다음 세대를 허용하기까지의 최소 간격. 연결 거부처럼 1초 안에 끝나는
+#: 장애도 4초 폴링마다 예산을 태우지 않도록 세대가 오를수록 복구 시간을 더 준다.
+TONE_MASK_RETRY_BACKOFF_SECONDS = (15, 60, 120)
 
 #: 이 상태로 끝난 잡은 판정이 아니라 인프라 장애다 — 같은 입력을 다시 돌리면 답이 바뀔 수
 #: 있다. 반대로 no_garment 류 판정 실패는 재시도해도 같은 답이므로 여기 없다.

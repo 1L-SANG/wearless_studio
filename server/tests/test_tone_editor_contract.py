@@ -140,6 +140,9 @@ def test_existing_cut_lazily_enqueues_the_same_free_mask_job(monkeypatch):
         captured.update(kwargs)
         return {"id": "mask-job"}, True
 
+    async def latest_job(_conn, _user_id, _base_key):
+        return None
+
     class Conn:
         committed = False
 
@@ -150,6 +153,7 @@ def test_existing_cut_lazily_enqueues_the_same_free_mask_job(monkeypatch):
             raise AssertionError("성공 경로에서 rollback 하면 안 된다")
 
     monkeypatch.setattr("app.routes.repo.create_job", create_job)
+    monkeypatch.setattr("app.routes.repo.get_latest_job_generation", latest_job)
     conn = Conn()
     created, job = asyncio.run(_enqueue_missing_tone_mask(
         conn, user_id="u1", project_id="p1", cut_id="A-1",

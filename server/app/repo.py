@@ -1108,6 +1108,20 @@ async def get_job(conn: AsyncConnection, user_id: str, job_id: str) -> dict | No
         return await cur.fetchone()
 
 
+async def get_latest_job_generation(
+    conn: AsyncConnection, user_id: str, base_idempotency_key: str,
+) -> dict | None:
+    """base 또는 ``base:rN`` 중 가장 높은 재시도 세대 하나를 조회한다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"select {_JOB_COLS} from jobs where user_id = %s "
+            "and (idempotency_key = %s or idempotency_key like %s) "
+            "order by coalesce((payload->>'retry')::int, 0) desc limit 1",
+            (user_id, base_idempotency_key, f"{base_idempotency_key}:r%"),
+        )
+        return await cur.fetchone()
+
+
 async def is_job_cancelled(conn: AsyncConnection, job_id: str) -> bool:
     """워커의 협조적 취소 확인용 경량 scalar 조회."""
     async with conn.cursor() as cur:
