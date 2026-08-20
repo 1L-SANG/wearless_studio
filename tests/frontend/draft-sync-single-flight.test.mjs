@@ -185,9 +185,19 @@ test('업로드가 도는 중에 새 제작을 시작해도 다음 승격이 이
   coordinator.forgetProject();               // 업로드 도는 중 '새 만들기'
   const second = coordinator.sync({ updatedAt: 'B', product: { name: '상품B' } });
 
+  // A의 업로드 promise는 살아 있지만, 새 흐름 B는 그 완료를 기다리지 않고 바로 시작한다.
+  await Promise.resolve();
+  assert.deepEqual(seen, [
+    { name: '상품A', projectId: undefined },
+    { name: '상품B', projectId: undefined },
+  ]);
+  await second;
+
   finishFirst();
   await first;
-  await second;
+
+  // A가 늦게 끝나도 B의 완료 캐시는 그대로다. 같은 B revision 재호출은 다시 실행하지 않는다.
+  await coordinator.sync({ updatedAt: 'B', product: { name: '상품B' } });
 
   assert.deepEqual(readyA, ['project-1']);   // A 를 기다리던 화면은 그대로 A 를 본다
   assert.deepEqual(seen, [

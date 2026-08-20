@@ -132,6 +132,13 @@ export function createDraftSyncSingleFlight(runSync) {
       result = null;
       resultRevision = null;
       projectId = null;
+      // 이전 flight 를 취소하지는 않는다. 그 promise 를 이미 받은 A 화면은 그대로 완료·진행률을
+      // 받는다. 다만 전역 슬롯에서는 분리해야 새 상품 B가 A의 느리거나 멈춘 업로드를 기다리지
+      // 않고 자기 프로젝트를 즉시 시작한다. 이전 flight 의 finally 는 promise 동일성 비교로 새 flight 를
+      // 지우지 못하고, epoch 비교는 이전 결과가 새 신원으로 복귀하는 것을 막는다.
+      inFlight = null;
+      inFlightRevision = null;
+      flightCallbacks = null;
     },
     retryFrom(existingProjectId) {
       if (inFlight) return false;
