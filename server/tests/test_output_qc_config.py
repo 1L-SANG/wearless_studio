@@ -48,6 +48,10 @@ def test_production_manifest_bounds_4k_gpt_repair_concurrency_without_moving_sha
     # 이 핀이 없으면 manifest 병합 사고 때 소리 없이 1K 로 돌아간다(같은 날 실제 겪은 사고 유형).
     assert variables["MANNEQUIN_IMAGE_SIZE"] == "2K"
     assert variables["MANNEQUIN_LOGO_IMAGE_SIZE"] == "2K"
+    # 사전 게이트는 코드 기본값이 off 라 manifest 선언이 빠지면 배포가 성공해도 조용히
+    # 비활성화된다. 오너가 승인한 프로덕션 동작을 함께 고정한다.
+    assert variables["MANNEQUIN_UNTUCK_GATE"] == "on"
+    assert variables["MANNEQUIN_BUST_GATE"] == "on"
 
     # 동시 컷 수는 **정확값이 아니라 메모리와의 관계**로 묶는다. 정확값으로 못 박으면
     # 위험을 발견해 안전하게 낮추는 변경까지 빨갛게 만든다(2026-08-19 Codex 리뷰).
