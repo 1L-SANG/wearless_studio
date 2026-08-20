@@ -16,7 +16,6 @@ import { CREDIT_COSTS } from '@/lib/limits.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { CreditShortfallModal } from '@/features/credits/CreditShortfallModal.jsx';
 import {
-  clearDraft,
   flushProductDraftSave,
   hasPendingDraft,
   loadDraft,

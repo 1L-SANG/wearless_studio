@@ -2126,7 +2126,8 @@ export function Storyboard({ toastOverride = null } = {}) {
   const newSeq = useRef(0);
   const cardRefs = useRef(new Map());
   const setPickerScrollY = useRef(null);
-  const toast = toastOverride || useToast();
+  const defaultToast = useToast();
+  const toast = toastOverride || defaultToast;
   const pushToast = toast.push;
   const customMatchPromotionExpectedRef = useRef(location.state?.customMatchPromotionStarted === true);
   const customMatchPromotionHandledRef = useRef(new Set());

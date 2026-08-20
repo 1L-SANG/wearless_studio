@@ -94,8 +94,11 @@ export function startProductPhotoPromotion(projectId, run, {
       },
     }))
     .then((result) => {
-      if (task.status !== 'pending') return result;
+      // 워치독이 먼저 failed 로 바꿨더라도 실제 요청이 뒤늦게 성공하면 정착 상태를 회복한다.
+      // 그렇지 않으면 서버 저장은 끝났는데 화면은 영원히 재시도 오류로 남는다.
+      if (task.status === 'settled') return result;
       task.status = 'settled';
+      task.error = null;
       task.done = task.total;
       notify(task);
       return result;
@@ -209,8 +212,11 @@ export async function retryProductPhotoPromotionFromDraft(projectId, io = {}) {
   const draft = await Promise.resolve().then(load).catch(() => null);
   if (!draft?.product || !(draft.photos || []).length) return false;   // 재시도할 재료 없음
 
+  // 워치독은 UI의 무한 대기만 끊을 뿐 브라우저 fetch 자체를 취소할 수는 없다. 기존 단일비행이
+  // 아직 살아 있으면 새 태스크가 거기에 다시 합류해 또 무한 대기하므로, 재시도를 시작하지 않고
+  // 오류 화면을 연다. 원 요청이 뒤늦게 성공하면 위의 late-success 경로가 settled 로 회복한다.
+  if (resetRetry(projectId) === false) return false;
   clearProductPhotoPromotionTask(projectId);
-  resetRetry(projectId);   // 단일비행의 실패 결과를 지우고 같은 projectId 로 합류시킨다
   const task = startProductPhotoPromotion(projectId,
     ({ onPhotoProgress }) => promote(draft, { projectId, onPhotoProgress }));
   try {

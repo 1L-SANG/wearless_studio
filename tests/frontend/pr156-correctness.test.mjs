@@ -138,6 +138,31 @@ test('F11 상품 사진 승격은 진행률이 멈추면 실패로 전환되어 
   mod.clearProductPhotoPromotionTask(projectId);
 });
 
+test('F11 워치독 뒤 살아 있는 단일비행에는 재합류하지 않고, 늦은 성공은 settled로 회복한다', async () => {
+  const mod = await import('../../src/lib/productPhotoPromotion.js');
+  const projectId = 'project-f11-late';
+  mod.clearProductPhotoPromotionTask(projectId);
+  let finish;
+  const task = mod.startProductPhotoPromotion(projectId, async () => (
+    new Promise((resolve) => { finish = resolve; })
+  ));
+  await assert.rejects(mod.productPhotosReady(projectId, { stallMs: 10 }), /진행이 멈췄습니다/);
+
+  let reruns = 0;
+  assert.equal(await mod.retryProductPhotoPromotionFromDraft(projectId, {
+    loadDraft: async () => ({ product: { name: 'knit' }, photos: [{ imageId: 'photo-1' }] }),
+    resetRetry: () => false,
+    promote: async () => { reruns += 1; },
+    finishDraft: async () => {},
+  }), false);
+  assert.equal(reruns, 0);
+
+  finish({ projectId });
+  await task.promise;
+  assert.equal(mod.getProductPhotoPromotionTask(projectId).status, 'settled');
+  mod.clearProductPhotoPromotionTask(projectId);
+});
+
 test('F5 지연 정리는 승격을 시작한 revision과 현재 draft가 같을 때만 삭제한다', async () => {
   const { clearDraftIfCurrent } = await import('../../src/lib/draftStore.js');
   let current = { updatedAt: 'new-revision', product: { name: 'new product' } };
@@ -161,6 +186,16 @@ test('F5 지연 정리는 승격을 시작한 revision과 현재 draft가 같을
   }), false);
   assert.equal(current.product.name, 'old product');
   assert.equal(cleared, 1, '아직 디스크에 쓰이지 않은 새 draft도 지우면 안 된다');
+
+  let pending = null;
+  current = { updatedAt: 'old-revision', product: { name: 'old product' } };
+  assert.equal(await clearDraftIfCurrent('old-revision', {
+    ...io,
+    getPending: () => pending,
+    waitForSaves: async () => { pending = { updatedAt: 'new-during-wait' }; },
+  }), false);
+  assert.equal(current.product.name, 'old product');
+  assert.equal(cleared, 1, '정리 대기 중 생긴 새 draft도 지우면 안 된다');
 });
 
 test('F8 화면이 없을 때 난 업로드 실패도 draft 슬롯을 복구하고 다음 리스너에게 한 번 전달한다', async () => {

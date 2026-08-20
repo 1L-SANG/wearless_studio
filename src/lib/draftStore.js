@@ -201,6 +201,8 @@ export async function clearDraftIfCurrent(expectedUpdatedAt, {
   if (pending?.updatedAt && pending.updatedAt !== expectedUpdatedAt) return false;
   await waitForSaves();
   const current = await load();
+  const latestPending = getPending();
+  if (latestPending?.updatedAt && latestPending.updatedAt !== expectedUpdatedAt) return false;
   if (current?.updatedAt !== expectedUpdatedAt) return false;
   await clear();
   return true;
