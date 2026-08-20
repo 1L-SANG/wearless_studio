@@ -32,6 +32,16 @@ def test_output_qc_defaults_off_and_accepts_repair(monkeypatch):
     assert settings.page_output_qc_mode == "off"
 
 
+def test_mannequin_image_size_defaults_to_2k_everywhere(monkeypatch):
+    """manifest가 없는 로컬·테스트 실행도 오너 결정과 같은 전체 2K 기본값을 쓴다."""
+    monkeypatch.delenv("MANNEQUIN_IMAGE_SIZE", raising=False)
+    assert Settings.__dataclass_fields__["mannequin_image_size"].default == "2K"
+    assert load_settings().mannequin_image_size == "2K"
+
+    monkeypatch.setenv("MANNEQUIN_IMAGE_SIZE", "invalid")
+    assert load_settings().mannequin_image_size == "2K"
+
+
 def test_production_manifest_bounds_4k_gpt_repair_concurrency_without_moving_shared_tier():
     manifest_path = Path(__file__).resolve().parents[2] / "copilot/api/manifest.yml"
     manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
@@ -44,6 +54,14 @@ def test_production_manifest_bounds_4k_gpt_repair_concurrency_without_moving_sha
     assert variables["DETAIL_CUT_MAX_ATTEMPTS"] == "1"
     assert variables["GARMENT_QC_MODE"] == "off"
     assert variables["CUT_OUTPUT_QC_MODE"] == "repair"
+    # 마네킹컷 기본 2K (2026-08-19 오너 결정 — 1K 는 로고 글자가 깨짐, pro 요금 동일).
+    # 이 핀이 없으면 manifest 병합 사고 때 소리 없이 1K 로 돌아간다(같은 날 실제 겪은 사고 유형).
+    assert variables["MANNEQUIN_IMAGE_SIZE"] == "2K"
+    assert variables["MANNEQUIN_LOGO_IMAGE_SIZE"] == "2K"
+    # 사전 게이트는 코드 기본값이 off 라 manifest 선언이 빠지면 배포가 성공해도 조용히
+    # 비활성화된다. 오너가 승인한 프로덕션 동작을 함께 고정한다.
+    assert variables["MANNEQUIN_UNTUCK_GATE"] == "on"
+    assert variables["MANNEQUIN_BUST_GATE"] == "on"
 
     # 동시 컷 수는 **정확값이 아니라 메모리와의 관계**로 묶는다. 정확값으로 못 박으면
     # 위험을 발견해 안전하게 낮추는 변경까지 빨갛게 만든다(2026-08-19 Codex 리뷰).

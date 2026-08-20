@@ -97,3 +97,7 @@ insight/
 
 # 로컬 워크트리(에이전트 작업용) — 커밋 금지
 .worktrees/
+
+# 리뷰 지적(2026-08-19): 루트 스크린샷·output/ 가 ignore 를 빠져나감 — 쇼핑몰 저작권 이미지 커밋 방지
+output/
+phase1-ko-review-top.png

@@ -90,7 +90,7 @@ class Settings:
     # 분리가 안 된다. 빈 값이면 분기 없이 mannequin_tier 를 그대로 쓴다(기존 동작).
     # 조정 흐름에서만 다른 모델을 시험할 때 쓴다 — 초기 생성 품질을 건드리지 않고 비교한다.
     mannequin_adjust_tier: str = ""  # "" | image_light | image_high
-    mannequin_image_size: str = "1K"  # 1K | 2K | 4K (2K 서버경로 저하 시 1K)
+    mannequin_image_size: str = "2K"  # 1K | 2K | 4K (오너 결정: 모든 마네킹컷 기본 2K)
     # 상세페이지/에디터 컷 전용 해상도. 마네킹 해상도와 분리해야 콘티 4K 배포가
     # 마네킹 생성 비용·지연까지 조용히 바꾸지 않는다.
     detail_cut_image_size: str = ""  # ""=mannequin_image_size 상속 | 1K | 2K | 4K
@@ -143,6 +143,12 @@ class Settings:
     # 2K 실측(2026-08-01): 줄 주기 8.9px → 한 주기를 이루는 요소당 2px 남짓이라 두 색 줄이 한 색으로
     # 뭉개졌다. 4K 면 주기 ~18px 로 요소당 4~5px 이 확보된다. 무지 상품은 승급하지 않는다(비용).
     mannequin_pattern_image_size: str = "4K"  # off | 1K | 2K | 4K
+    # 로고·레터링·프린트 상품의 출력 해상도 (2026-08-19 해상도 A/B — 오너 승인).
+    # 1K 는 작은 글자가 뭉개져 "로고 변형" 재롤·구제의 주 원인(실컷 0/3 통과)이었고,
+    # 2K 는 3/4 통과 + **1K 와 요금 동일**(공식 표 출력 1,120tok)이라 승급 비용 0.
+    # 4K 는 0/2(글자는 읽히나 다른 결함·+80% 비용)라 채택하지 않았다. 'off' 면 승급 없음.
+    # 패턴 승급(4K)과 겹치면 패턴이 이긴다(상위 호환). 승급은 base 해상도를 깎지 않는다.
+    mannequin_logo_image_size: str = "2K"  # off | 1K | 2K | 4K
     # 생성 컷의 상품·로고 동일성 QC. off=미판정, shadow=판정만 기록,
     # bestof=불일치 시 원본 입력에서 후보를 더 생성해 첫 pass 또는 picker 최선을 채택.
     garment_qc_mode: str = "bestof"  # off | shadow | bestof
@@ -190,6 +196,19 @@ class Settings:
     # QC 재생성이 모두 소진된 뒤의 구조 변경(2026-08-01). QC 검출이 불안정해 게이트로 쓰지
     # 않고 매칭 하의가 붙는 top/outer 잡마다 1회 돈다(이미 빠져 있으면 무변경 반환 지시).
     mannequin_untuck_pass: str = "off"  # off | on
+    # untuck 사전 게이트(2026-08-19 오너 승인) — 편집 콜(40~60초·$0.14) 전에 값싼 판정
+    # (3~5초·~$0.01)으로 "이미 빠져 있나"를 묻고, **확신에 찬 untucked 만** 편집을 스킵한다.
+    # tucked/unclear/판정실패는 전부 기존 동작(무조건 편집)으로 — 검출 불안정 이력
+    # (mannequin_untuck 모듈 주석) 때문에 "tuck 놓침" 방향으론 게이트에 권한이 없다.
+    mannequin_untuck_gate: str = "off"  # off | on
+    # 게이트 전용 판정 모델. "" 면 정본 텍스트 모델(model_text_gemini) 그대로 —
+    # AG-08 features 분기와 같은 패턴. 스킵률·오탐 관측 후 flash-lite 강등을 별도 결정.
+    mannequin_untuck_gate_model: str = ""
+    # 가슴 보정 사전 게이트(2026-08-19 오너 승인) — untuck 게이트와 같은 비대칭 규약.
+    # 근거: 보정 적용 66건 중 47% 회귀 폐기(8/1~ 실측) — 45~65초·이미지 콜을 쓰고 버렸다.
+    # 확신에 찬 "이미 볼륨 충분"만 스킵, insufficient/unclear/판정실패는 전부 편집 실행.
+    mannequin_bust_gate: str = "off"  # off | on
+    mannequin_bust_gate_model: str = ""
     # 매칭 하의(코디 바지) 정체성 QC — 매칭 하의가 붙는 잡에서만 활성. off|shadow|enforce.
     # shadow=매칭 점수·하드게이트·바지영역 픽셀 메트릭 계측만, enforce=재롤/드롭·편집 롤백.
     # AI 콜 증가 0(기존 AG-P2 1콜에 바지 원본 1장·필드만 얹음). 다크 출고를 위해 기본 off.
@@ -299,8 +318,8 @@ def _bust_pass() -> str:
 
 
 def _image_size() -> str:
-    v = os.getenv("MANNEQUIN_IMAGE_SIZE", "1K").upper()
-    return v if v in {"1K", "2K", "4K"} else "1K"
+    v = os.getenv("MANNEQUIN_IMAGE_SIZE", "2K").upper()
+    return v if v in {"1K", "2K", "4K"} else "2K"
 
 
 def _detail_cut_image_size() -> str:
@@ -399,6 +418,10 @@ def load_settings() -> Settings:
         mannequin_bust_pass=_bust_pass(),
         mannequin_fabric_pass=_flag("MANNEQUIN_FABRIC_PASS", "off", {"off", "on"}),
         mannequin_untuck_pass=_flag("MANNEQUIN_UNTUCK_PASS", "off", {"off", "on"}),
+        mannequin_untuck_gate=_flag("MANNEQUIN_UNTUCK_GATE", "off", {"off", "on"}),
+        mannequin_untuck_gate_model=os.getenv("MANNEQUIN_UNTUCK_GATE_MODEL", ""),
+        mannequin_bust_gate=_flag("MANNEQUIN_BUST_GATE", "off", {"off", "on"}),
+        mannequin_bust_gate_model=os.getenv("MANNEQUIN_BUST_GATE_MODEL", ""),
         mannequin_pants_qc=_flag("MANNEQUIN_PANTS_QC", "off", {"off", "shadow", "enforce"}),
         matching_flatlay_tier=_flag(
             "MATCHING_FLATLAY_TIER", "image_high", {"image_light", "image_high"}),
@@ -442,6 +465,8 @@ def load_settings() -> Settings:
             str(Settings.__dataclass_fields__["qc_edit_regression_margin"].default))),
         mannequin_pattern_image_size=_flag(
             "MANNEQUIN_PATTERN_IMAGE_SIZE", "4K", {"off", "1k", "2k", "4k"}).upper(),
+        mannequin_logo_image_size=_flag(
+            "MANNEQUIN_LOGO_IMAGE_SIZE", "2K", {"off", "1k", "2k", "4k"}).upper(),
         garment_qc_mode=_flag(
             "GARMENT_QC_MODE", "bestof", {"off", "shadow", "bestof"}),
         garment_qc_extra_candidates=int(os.getenv("GARMENT_QC_EXTRA_CANDIDATES", "2")),

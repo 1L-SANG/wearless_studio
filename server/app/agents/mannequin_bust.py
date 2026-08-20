@@ -1,4 +1,7 @@
-"""여성 마네킹 기본 가슴 볼륨 2패스 — 순수 모듈 (DB·네트워크 없음).
+"""여성 마네킹 기본 가슴 볼륨 2패스.
+
+프롬프트 조립·판정 규칙은 순수 함수지만, judge_gate 는 예외다 — 템플릿 파일을 읽고
+vision LLM 을 호출한다(2026-08-19 사전 게이트). 동기 컨텍스트에서 부르지 말 것.
 
 왜 2패스인가 (2026-07-30 스파이크, docs/reports/2026-07-30-mannequin-volume-2pass-spike.md):
 - 볼륨 있는 베이스를 image 1 로 넣어도 1패스가 몸을 표준으로 정규화한다. 실측으로 베이스끼리
@@ -49,7 +52,42 @@ WAIST_HIP_TARGET = (
     "than the attached image, never heavier"
 )
 
+from . import edit_gate
+from .prompts import load_bust_gate_prompt_template
+from .vision_llm import analyze_with_fallback
+
 _TOKENS = {"${bustTarget}": BUST_TARGET, "${waistHipTarget}": WAIST_HIP_TARGET}
+
+# 사전 게이트(2026-08-19 오너 승인) — 편집 콜(45~65초·$0.14) 전에 값싼 판정(~$0.01)으로
+# "이미 가슴 볼륨이 충분히 표현돼 있나"를 묻는다. 근거 실측: 보정 적용 66건 중 47% 가 회귀
+# 판정으로 폐기(8/1~). 규약은 untuck 게이트와 동일 — 공유 구현 edit_gate 모듈 참조
+# (비대칭·스킵은 확신에 찬 adequate 뿐·임계는 두 게이트 공용).
+GATE_SKIP_CONFIDENCE = edit_gate.GATE_SKIP_CONFIDENCE
+
+_GATE_VERDICTS = ("adequate", "insufficient", "unclear")
+
+
+def gate_schema() -> dict:
+    return edit_gate.schema(_GATE_VERDICTS)
+
+
+def validate_gate(raw: dict | None) -> dict:
+    return edit_gate.validate(raw, _GATE_VERDICTS)
+
+
+def gate_skips(result: dict) -> bool:
+    """확신에 찬 adequate 만 편집을 건너뛴다 (순수)."""
+    return edit_gate.skips(result, "adequate")
+
+
+async def judge_gate(settings, cut_image) -> dict:
+    """생성본 1장만 보고 가슴 볼륨이 이미 충분한지 판정한다. 실패는 호출자가 잡아 편집 실행."""
+    prompt = load_bust_gate_prompt_template()
+    model = getattr(settings, "mannequin_bust_gate_model", "") or ""
+    raw, _provider = await analyze_with_fallback(
+        settings, prompt, [cut_image], gate_schema(),
+        models={"gemini": model} if model else None)
+    return validate_gate(raw)
 
 
 # 가슴을 덮는 옷. 2패스는 이 카테고리에서만 의미가 있다.

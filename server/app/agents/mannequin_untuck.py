@@ -19,8 +19,50 @@
 깨졌다(프로덕션 실측 2건 연속 tuck 출고). 지금은 일반 예산 2회와 무관한 전용 슬롯 1회다.
 """
 
+from . import edit_gate
+from .prompts import load_untuck_gate_prompt_template
+from .vision_llm import analyze_with_fallback
+
 # 하의 위로 입는 주상품만 대상 — 하의 상품이면 매칭이 상의라 tuck 방향 자체가 다르다(WS4).
 _TUCKABLE = {"top", "outer"}
+
+# 사전 게이트(2026-08-19 오너 승인) — 편집 콜(이미지, 40~60초·$0.14) 전에 값싼 판정 콜
+# (vision, 3~5초·~$0.01)로 "이미 빠져 있나"를 묻는다. 위 주석 5항(검출 불안정)과 충돌하지
+# 않는 이유 = 비대칭 규약(edit_gate 모듈 docstring): 스킵은 확신에 찬 untucked 뿐이고
+# tucked/unclear/판정실패/off 는 전부 기존 동작(무조건 편집)이다. 유일한 하방은 판정기가
+# **자신 있게 틀린** 스킵이며, 보수 프롬프트("의심되면 unclear")와 공유 임계로 관리한다.
+# 스킵률·오탐 관측 = untuck_pass 이벤트의 untuck_gate 필드.
+GATE_SKIP_CONFIDENCE = edit_gate.GATE_SKIP_CONFIDENCE
+
+_GATE_VERDICTS = ("tucked", "untucked", "unclear")
+
+
+def gate_schema() -> dict:
+    return edit_gate.schema(_GATE_VERDICTS)
+
+
+def validate_gate(raw: dict | None) -> dict:
+    return edit_gate.validate(raw, _GATE_VERDICTS)
+
+
+def gate_skips(result: dict) -> bool:
+    """이 판정으로 편집을 건너뛰어도 되는가 (순수). 확신에 찬 untucked 만 True."""
+    return edit_gate.skips(result, "untucked")
+
+
+async def judge_gate(settings, cut_image) -> dict:
+    """생성본 1장만 보고 밑단이 이미 빠져 있는지 판정한다. 실패는 호출자가 잡아 편집 실행.
+
+    입력이 1장인 건 편집 패스와 같은 원칙(과제 1개) — 상품·매칭 사진은 이 질문에 필요
+    없고 섞으면 판정 대상이 흐려진다. 전용 모델 설정(mannequin_untuck_gate_model)이 있으면
+    gemini 오버라이드로 전달, 없으면 정본 텍스트 모델 그대로(AG-08 features 와 같은 패턴).
+    """
+    prompt = load_untuck_gate_prompt_template()
+    model = getattr(settings, "mannequin_untuck_gate_model", "") or ""
+    raw, _provider = await analyze_with_fallback(
+        settings, prompt, [cut_image], gate_schema(),
+        models={"gemini": model} if model else None)
+    return validate_gate(raw)
 
 
 def should_apply(mode: str, clothing_type: str | None, has_match_image: bool) -> bool:

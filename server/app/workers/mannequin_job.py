@@ -342,10 +342,21 @@ def effective_image_size(s, product: dict | None, analysis: dict | None) -> str:
     2px 남짓이라 두 색 줄이 한 색으로 뭉개졌다. 해상도가 곧 재현 한계인 축이라 프롬프트로는
     못 넘는다. 무지 상품은 재현할 고주파가 없어 승급하지 않는다 — 비용만 늘고 결과는 같다.
     """
-    upgrade = getattr(s, "mannequin_pattern_image_size", "OFF")
-    if upgrade in (None, "", "OFF"):
-        return s.mannequin_image_size
-    return upgrade if mannequin.has_fine_pattern(product, analysis) else s.mannequin_image_size
+    # 적용 가능한 승급들 중 **최댓값** 하나를 고른다(리뷰 2026-08-19): 패턴 분기가 무조건
+    # return 하면 운영자가 패턴 크기를 내렸을 때 패턴+로고 상품의 로고 승급이 평가조차 안
+    # 된다. 로고 2K 는 해상도 A/B 근거(1K 실컷 0/3 vs 2K 3/4 통과, pro 요금 동일).
+    # 승급은 절대 base 를 깎지 않는다.
+    rank = {"1K": 1, "2K": 2, "4K": 3}
+    best = s.mannequin_image_size
+    upgrades = (
+        (getattr(s, "mannequin_pattern_image_size", "OFF"), mannequin.has_fine_pattern),
+        (getattr(s, "mannequin_logo_image_size", "OFF"), mannequin.has_logo_text),
+    )
+    for size, applies in upgrades:
+        if size not in (None, "", "OFF") and rank.get(size, 0) > rank.get(best, 0) \
+                and applies(product, analysis):
+            best = size
+    return best
 
 
 def tier_for_job(s, job: dict | None) -> str:
@@ -867,6 +878,71 @@ async def _apply_base_fidelity_qc(
     return result
 
 
+async def _observe_generation_qc(
+    *, pool, s, job_id, candidate, attempt, res, prod_imgs, match_img, clothing_type,
+    fit_profile, eff_image_qc, base_img, product, analysis,
+) -> tuple[dict | None, dict | None]:
+    """생성 직후 독립 관측 판정 2종을 **동시에** 돌린다. → (p2, base_fidelity)
+
+    AG-P2 동일성과 베이스 충실도는 입력이 다르고(상품사진 vs 베이스컷) 서로 결과를 읽지
+    않으며 둘 다 fail-open 이다 — 직렬 대기는 잡당 3~4초 순수 낭비였다(2026-08-19 실측
+    분해, 오너 승인). 판정 결과·이벤트 계약은 직렬 시절과 바이트 단위로 동일하다:
+    image_qc 성공 = image_qc 이벤트 + p2, 실패 = image_qc_failed 이벤트 + p2 None(게이트
+    미적용), base_fidelity 는 자체 계약대로 어떤 경우에도 예외를 올리지 않는다.
+    """
+    async def _judge_identity():
+        # AG-P2 이미지 동일성 검수 — shadow(로그만)·enforce(게이트) 시 판정. off면 skip.
+        # vision 실패(키미설정 등)는 삼켜 p2=None → 게이트 미적용(생성 자체 안 막음).
+        if not (eff_image_qc in ("shadow", "enforce") and prod_imgs):
+            return None
+        try:
+            p2 = await image_qc.verdict(
+                s, prod_imgs, InlineImage(res.mime, res.image), scored=True,
+                fit_profile=fit_profile,
+                match_image=_pants_qc_ref(s, match_img, clothing_type))
+            await _emit(pool, job_id, "step", {
+                "candidate": candidate, "attempt": attempt, "status": "image_qc",
+                "imageQc": p2})
+            return p2
+        except Exception as e:
+            log.warning("AG-P2 image_qc failed for job %s: %r", job_id, e)
+            # 실패도 이벤트로 남긴다 — 로그만 남기면 shadow 관측에서 "판정 실패율" 자체가
+            # 안 잡혀 pass/retry 분포가 생존 편향된다(캘리브레이션 근거 오염).
+            await _emit(pool, job_id, "step", {
+                "candidate": candidate, "attempt": attempt, "status": "image_qc_failed",
+                "error": type(e).__name__, "message": str(e)[:200]})
+            return None
+
+    async def _judge_base_fidelity():
+        # _apply_base_fidelity_qc 는 "예외를 안 올린다"가 계약이지만 문서 약속일 뿐이다 —
+        # 성공 경로 emit 이 try 밖에서 result shape 을 읽는다(리뷰 2026-08-19). 여기서 한 번
+        # 더 잡는다: 깨지면 gather 가 후보 전체를 죽이고 동일성 판정 태스크를 고아로 만든다.
+        try:
+            return await _apply_base_fidelity_qc(
+                pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
+                base_img=base_img, res=res, product=product, analysis=analysis)
+        except Exception as e:
+            log.warning("base fidelity QC broke its no-raise contract for job %s: %r", job_id, e)
+            return None
+
+    p2, base_fidelity = await asyncio.gather(_judge_identity(), _judge_base_fidelity())
+    return p2, base_fidelity
+
+
+async def _judge_edit_gate(gate_module, s, res, job_id, *, label: str) -> dict:
+    """편집 게이트 공통 발화(untuck·bust) — 판정 실패는 gate_error 로 눕혀 fail-open.
+
+    gate_error 는 gate_skips 가 항상 False 라 편집이 그대로 실행된다(오늘 상태).
+    호출부는 플래그 검사와 이벤트 필드 기록만 책임진다 — 발화·실패 처리가 게이트마다
+    갈라지면 두 게이트의 위험 성향이 달라진다(리뷰 2026-08-19, edit_gate 와 같은 이유).
+    """
+    try:
+        return await gate_module.judge_gate(s, InlineImage(res.mime, res.image))
+    except Exception as e:
+        log.warning("%s gate judge failed for job %s (편집은 그대로 실행): %r", label, job_id, e)
+        return {"verdict": "gate_error", "confidence": 0.0}
+
+
 async def _apply_bust_pass(
     *, pool, gemini, s, job_id, candidate, attempt, base_gender, res, calls_spent,
     clothing_type=None, image_size=None,
@@ -893,6 +969,17 @@ async def _apply_bust_pass(
             "outcome": "budget_exhausted",
             "image_hash": hashlib.sha256(res.image).hexdigest()[:12]})
         return res, False
+    # 사전 게이트(2026-08-19 오너 승인) — 보정 47% 폐기 실측이 근거. 확신에 찬 "이미 충분"
+    # 만 스킵(예산도 안 씀), 나머지 전부 아래 기존 경로. untuck 게이트와 같은 비대칭·fail-open.
+    gate = None
+    if getattr(s, "mannequin_bust_gate", "off") == "on":
+        gate = await _judge_edit_gate(mannequin_bust, s, res, job_id, label="bust")
+        if mannequin_bust.gate_skips(gate):
+            await _emit(pool, job_id, "step", {
+                "candidate": candidate, "attempt": attempt, "status": "bust_pass",
+                "outcome": "skipped_gate", "bust_gate": gate,
+                "image_hash": hashlib.sha256(res.image).hexdigest()[:12]})
+            return res, False
     before = hashlib.sha256(res.image).hexdigest()[:12]
     try:
         prompt = mannequin_bust.build_prompt(load_bust_prompt_template())
@@ -905,12 +992,14 @@ async def _apply_bust_pass(
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "attempt": attempt, "status": "bust_pass",
             "outcome": "failed_open", "image_hash": before,
-            "error_type": type(e).__name__, "error_message": str(e)[:200]})
+            "error_type": type(e).__name__, "error_message": str(e)[:200],
+            **({"bust_gate": gate} if gate else {})})
         return res, True  # 실패해도 호출은 나갔다 — 예산은 소비됐다
     await _emit(pool, job_id, "step", {
         "candidate": candidate, "attempt": attempt, "status": "bust_pass",
         "outcome": "applied", "image_hash": before,
-        "result_hash": hashlib.sha256(out.image).hexdigest()[:12]})
+        "result_hash": hashlib.sha256(out.image).hexdigest()[:12],
+        **({"bust_gate": gate} if gate else {})})
     return out, True
 
 
@@ -943,6 +1032,18 @@ async def _apply_untuck_postpass(
     if not needed:
         await _emit(pool, job_id, "step", summary)
         return res
+    # 사전 게이트(2026-08-19 오너 승인) — 값싼 판정으로 "이미 빠져 있나"를 묻고 확신에 찬
+    # untucked 만 편집을 스킵한다. tucked/unclear/판정실패는 전부 아래 기존 경로(무조건 편집).
+    # "항상 1회" 계약(모듈 주석 5항)의 예외가 아니라 정제다. 유일한 하방은 판정기가 **자신
+    # 있게 틀린** 스킵(실제 tuck 을 untucked 0.9 로 읽음)이며, 보수 프롬프트와 공유 임계로
+    # 관리한다(edit_gate 규약·오너 승인). 스킵률·오탐은 untuck_gate 이벤트 필드로 관측한다.
+    if getattr(s, "mannequin_untuck_gate", "off") == "on":
+        await _cancel_checkpoint(cancel_check)
+        gate = await _judge_edit_gate(mannequin_untuck, s, res, job_id, label="untuck")
+        summary["untuck_gate"] = gate
+        if mannequin_untuck.gate_skips(gate):
+            await _emit(pool, job_id, "step", {**summary, "untuck_outcome": "skipped_gate"})
+            return res
     before = hashlib.sha256(res.image).hexdigest()[:12]
     summary.update(untuck_calls=1, image_hash=before)
     await _cancel_checkpoint(cancel_check)
@@ -1353,32 +1454,16 @@ async def _run_candidate(
             })
             feedback = qc.format_qc_feedback(verdict)
             continue
-        # AG-P2 이미지 동일성 검수 — shadow(로그만)·enforce(게이트) 시 판정. off면 skip.
-        # vision 실패(키미설정 등)는 삼켜 p2=None → 게이트 미적용(생성 자체 안 막음).
         # STYLE REFERENCE 첨부 시 오염(다른 옷 유출)을 반드시 계측 — image_qc=off 여도 최소 shadow 로
         # 승격해 동일성 판정을 기록한다(게이팅 아님 — enforce 만 reject, gate_decision). off↔측정 결합.
         eff_image_qc = s.image_qc if s.image_qc != "off" else ("shadow" if ref_imgs else "off")
-        p2 = None
-        if eff_image_qc in ("shadow", "enforce") and prod_imgs:
-            try:
-                p2 = await image_qc.verdict(
-                    s, prod_imgs, InlineImage(res.mime, res.image), scored=True,
-                    fit_profile=fit_profile,
-                    match_image=_pants_qc_ref(s, match_img, clothing_type))
-                await _emit(pool, job_id, "step", {
-                    "candidate": candidate, "attempt": attempt, "status": "image_qc", "imageQc": p2})
-            except Exception as e:
-                log.warning("AG-P2 image_qc failed for job %s: %r", job_id, e)
-                # 실패도 이벤트로 남긴다 — 로그만 남기면 shadow 관측에서 "판정 실패율" 자체가
-                # 안 잡혀 pass/retry 분포가 생존 편향된다(캘리브레이션 근거 오염).
-                await _emit(pool, job_id, "step", {
-                    "candidate": candidate, "attempt": attempt, "status": "image_qc_failed",
-                    "error": type(e).__name__, "message": str(e)[:200]})
-        # 베이스 충실도 QC(관측 전용). 반환값은 아래 게이트에 **넣지 않는다** — 넣는 순간
-        # shadow 가 아니게 된다. 실패해도 None/skip 을 돌려줄 뿐 생성 경로를 막지 않는다.
-        base_fidelity = await _apply_base_fidelity_qc(
-            pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
-            base_img=base_img, res=res, product=product, analysis=analysis)
+        # AG-P2 동일성 + 베이스 충실도(관측 전용 — 반환값은 아래 게이트에 **넣지 않는다**,
+        # 넣는 순간 shadow 가 아니게 된다). 서로 독립이라 동시에 판정한다(_observe_generation_qc).
+        p2, base_fidelity = await _observe_generation_qc(
+            pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt, res=res,
+            prod_imgs=prod_imgs, match_img=match_img, clothing_type=clothing_type,
+            fit_profile=fit_profile, eff_image_qc=eff_image_qc,
+            base_img=base_img, product=product, analysis=analysis)
         # **사전 게이트** — 잘못된 옷을 axis/bust 편집하면 그 정체성이 보존되므로, 편집 전에
         # 한 번 거른다. 최종 출고 판정은 여기가 아니라 아래 final_decision 하나가 내린다.
         pillow_reject, p2_reject = gate_decision(s, verdict.verdict, p2)

@@ -84,7 +84,12 @@ def test_the_qc_only_reaches_the_decision_path_through_the_policy_function():
     off/shadow 에서도 조용히 막히는 사고가 난다.
     """
     code = _code_only(RUN_CANDIDATE)
-    assert "base_fidelity = await _apply_base_fidelity_qc" in code
+    # 2026-08-19 병렬화: base_fidelity 는 _observe_generation_qc(동일성과 동시 판정)를
+    # 경유하지만, 그 안에서 여전히 _apply_base_fidelity_qc 단일 헬퍼만 호출한다 —
+    # "정책 함수 한 곳" 불변식은 경로가 아니라 아래 두 단언이 지킨다.
+    assert "base_fidelity = await _observe_generation_qc" in code
+    observer = _code_only(_func_source("_observe_generation_qc"))
+    assert "_apply_base_fidelity_qc(" in observer
     assert code.count("base_fidelity_retry_axes(s, base_fidelity)") == 1
     # 점수 계산·구제 판단에는 절대 섞이지 않는다.
     for consumer in ("merge_qc_scores", "_is_better_candidate", "score_outcome"):

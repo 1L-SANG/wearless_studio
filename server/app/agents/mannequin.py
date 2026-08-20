@@ -43,13 +43,23 @@ _FINE_PATTERN_TOKENS = (
 )
 
 
-def has_fine_pattern(product: dict | None, analysis: dict | None) -> bool:
-    """미세 반복 패턴 상품인가 — 셀러·AI 가 쓴 텍스트에서 찾는다(순수).
+# 로고·레터링·프린트 상품 감지 토큰 (2026-08-19 해상도 A/B). 1K 에서 작은 글자가 뭉개져
+# "로고 변형" 재롤·구제의 주 원인이었고, pro 이미지 모델은 1K↔2K 요금이 같아(공식 표
+# 출력 1,120tok 동일) 과탐 비용이 사실상 0 이다. 단 **전 상품 스위치가 되면 안 된다**
+# (리뷰 2026-08-19): 'text'⊂'textured' 같은 부분일치와 셀러 문구에 늘 나오는 브랜드/라벨류는
+# 글자 재현과 무관해서 뺐다 — 진짜 로고 상품은 아래 구체 토큰으로 잡힌다(CK 실사례:
+# 강조특징 "가슴 레터링 로고").
+_LOGO_TEXT_TOKENS = (
+    "로고", "레터링", "프린트", "프린팅", "자수", "그래픽", "와펜",
+    "logo", "lettering", "print", "graphic", "embroider", "monogram", "wappen",
+)
 
-    분석 payload 에 패턴 전용 필드가 없어서 이름·특징(sellingPoints)·카테고리를 훑는다.
-    실측 예: 스트라이프 셔츠의 sellingPoints = ["멀티 스트라이프", "세미 크롭 기장"].
-    과탐(무지인데 4K)은 비용만 더 쓰고 결과는 같지만, 미탐(패턴인데 2K)은 셀러가 원단이
-    다르다고 느끼는 컷이 나가므로 **넓게 잡는 쪽**이 맞다.
+
+def _text_blob(product: dict | None, analysis: dict | None) -> str:
+    """상품 성질 감지가 공유하는 텍스트 소스(순수) — 이름·특징·카테고리를 한 줄로.
+
+    키 목록이 곧 감지 계약이다: 여기 한 곳만 고치면 패턴·로고 감지가 함께 따라온다
+    (리뷰 2026-08-19 — 수확 루프를 감지기마다 들고 있으면 조용히 갈라진다).
     """
     parts = []
     for src in (product or {}), (analysis or {}):
@@ -61,7 +71,29 @@ def has_fine_pattern(product: dict | None, analysis: dict | None) -> bool:
             v = src.get(key)
             if isinstance(v, list):
                 parts.extend(x for x in v if isinstance(x, str))
-    blob = " ".join(parts).lower()
+    return " ".join(parts).lower()
+
+
+def has_logo_text(product: dict | None, analysis: dict | None) -> bool:
+    """로고·글자·프린트가 있는 상품인가 — 셀러·AI 텍스트에서 찾는다(순수).
+
+    실측 예: 캘빈클라인 티의 sellingPoints = ["가슴 레터링 로고", "소매 라벨 탭"].
+    미탐이 실손해(글자 깨진 컷 출고)지만, 과탐이 흔한 일반어까지 잡으면 사실상 전역
+    해상도 스위치가 되므로 구체 토큰만 쓴다(위 토큰 주석).
+    """
+    blob = _text_blob(product, analysis)
+    return any(tok.lower() in blob for tok in _LOGO_TEXT_TOKENS)
+
+
+def has_fine_pattern(product: dict | None, analysis: dict | None) -> bool:
+    """미세 반복 패턴 상품인가 — 셀러·AI 가 쓴 텍스트에서 찾는다(순수).
+
+    분석 payload 에 패턴 전용 필드가 없어서 이름·특징(sellingPoints)·카테고리를 훑는다.
+    실측 예: 스트라이프 셔츠의 sellingPoints = ["멀티 스트라이프", "세미 크롭 기장"].
+    과탐(무지인데 4K)은 비용만 더 쓰고 결과는 같지만, 미탐(패턴인데 2K)은 셀러가 원단이
+    다르다고 느끼는 컷이 나가므로 **넓게 잡는 쪽**이 맞다.
+    """
+    blob = _text_blob(product, analysis)
     return any(tok.lower() in blob for tok in _FINE_PATTERN_TOKENS)
 
 

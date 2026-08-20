@@ -182,8 +182,14 @@ def _report_edit_impact(rows: list[dict], s) -> None:
             slot["pre"] = p.get("imageQc")
         elif st == "image_qc_rescored":
             slot["post"] = p.get("imageQc")
+        elif st == "bust_pass":
+            # applied 만 편집으로 센다 — skipped_gate(게이트 스킵)·budget_exhausted·
+            # failed_open 은 이미지에 편집이 닿지 않았다. 여기 섞이면 회귀 귀속이 오염돼
+            # 게이트 도입 근거였던 "보정 47% 폐기" 계열 수치를 다시 잴 수 없다(2026-08-19).
+            if p.get("outcome") == "applied":
+                slot.setdefault("edits", set()).add("bust")
         else:
-            slot.setdefault("edits", set()).add("bust" if st == "bust_pass" else "axis")
+            slot.setdefault("edits", set()).add("axis")
 
     judged = [v for v in pairs.values() if v.get("pre") and v.get("post")]
     if not judged:
