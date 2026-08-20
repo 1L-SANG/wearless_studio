@@ -7,7 +7,7 @@ FM-11 본인확인(CX 표준인증창 ENT_MID):
 프론트는 위젯 성공 콜백의 **token만** 백엔드로 보낸다(원문 PII는 절대 클라→서버 신뢰 안 함).
 백엔드가 CX `trans/{token}`을 **서버발** 호출해 실 신원을 받고:
   · dedup = HMAC-SHA256(ci, pepper) → fm_models.ci_hash 단일 보관(원문 CI 미저장)
-  · 리플레이 차단 = fm_identity_verifications.cx_tx_id UNIQUE(같은 token 재사용 시 409)
+  · 리플레이 차단 = fm_identity_verifications.cx_tx_id UNIQUE(값은 SHA-256 digest, 같은 token 재사용 시 409)
   · 화이트리스트 마스킹 필드만 감사 저장(이름 마스킹·생년(연도)·VC종류 — 원문 생년월일 미보관)
 FM-03 실측(2026-07-09): ENT_MID 응답에 `ci` 존재 확인 → ci HMAC 채택.
 """
@@ -18,11 +18,12 @@ import hmac
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
+from ipaddress import ip_address
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
@@ -38,6 +39,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket"])
 
 CX_TRANS_TIMEOUT = 10.0
+_SIMULATION_RATE_LIMIT_PER_MINUTE = 5
+_SETTLEMENT_SIGNER_LOCK_ID = 0x57464D5349474E52
+_SETTLEMENT_LOCK_RETRY_SECONDS = 0.05
 
 _FM_RESPONSES = {
     400: {"model": ErrorResponse, "description": "본인확인 실패 (토큰 무효·CI 누락)"},
@@ -220,6 +224,7 @@ async def identity_verify(
     token = (body.token or "").strip()
     if not token:
         raise _err("token_required", "인증 토큰이 없습니다.")
+    cx_tx_id = f"sha256:{hashlib.sha256(token.encode()).hexdigest()}"
 
     # ⚠️ 원문 신원 조기 폐기 미적용 지점(api-spec §3.0). trans·ci·birth 가 함수 끝까지 프레임
     # 로컬로 남아, 예외 전파 시 traceback 이 이 프레임을 잡으면 CX 원문(CI·이름·생년월일)이
@@ -264,12 +269,12 @@ async def identity_verify(
                 )
                 model_id = (await cur.fetchone())["id"]
 
-            # 리플레이 차단: cx_tx_id(token) UNIQUE — 같은 인증 토큰 재사용은 409.
+            # 원본 CX capability는 저장하지 않고 digest UNIQUE로 같은 토큰 재사용만 차단한다.
             try:
                 await cur.execute(
                     """insert into fm_identity_verifications (model_id, cx_tx_id, fields)
                        values (%s, %s, %s)""",
-                    (model_id, token, Json(fields)),
+                    (model_id, cx_tx_id, Json(fields)),
                 )
             except UniqueViolation:
                 raise _err("identity_replay", "이미 처리된 인증입니다.", status=409)
@@ -911,6 +916,170 @@ class SimulateRequest(CamelModel):
     license_id: str
 
 
+def _request_client_ip(request: Request) -> str:
+    """AWS ALB append-mode XFF의 마지막 주소를 사용하고 ASGI peer로 폴백한다."""
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        candidate = forwarded.rsplit(",", 1)[-1].strip()
+        try:
+            return str(ip_address(candidate))
+        except ValueError:
+            pass
+    return request.client.host if request.client else "unknown"
+
+
+async def _take_simulation_rate_slot(
+    conn, *, user_id: str, client_ip: str, pepper: str
+) -> None:
+    """공유 PostgreSQL에서 admin과 IP 각각 분당 실 TX 상한을 원자적으로 소비한다."""
+    admin_key = hmac.new(pepper.encode(), user_id.encode(), hashlib.sha256).hexdigest()
+    ip_key = hmac.new(pepper.encode(), client_ip.encode(), hashlib.sha256).hexdigest()
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """with pruned as (
+                   delete from public.fm_settlement_simulation_limits
+                    where window_start < clock_timestamp() - interval '1 day'
+               ), requested(scope, key_hash) as (
+                   values ('admin', %s), ('ip', %s)
+               ), consumed as (
+                   insert into public.fm_settlement_simulation_limits
+                       (scope, key_hash, window_start, request_count)
+                   select scope, key_hash, date_trunc('minute', clock_timestamp()), 1
+                     from requested
+                   on conflict (scope, key_hash, window_start) do update
+                      set request_count = fm_settlement_simulation_limits.request_count + 1
+                    where fm_settlement_simulation_limits.request_count < %s
+                   returning 1
+               )
+               select count(*)::int as accepted from consumed""",
+            (admin_key, ip_key, _SIMULATION_RATE_LIMIT_PER_MINUTE),
+        )
+        accepted = (await cur.fetchone())["accepted"]
+    if accepted != 2:
+        raise _err("rate_limited", "잠시 후 다시 시도해주세요.", status=429)
+
+
+async def _run_chain_call_until_done(call, **kwargs):
+    """요청 취소 시에도 signer lock을 chain thread가 끝날 때까지 유지한다."""
+    task = asyncio.create_task(asyncio.to_thread(call, **kwargs))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        try:
+            await task
+        except Exception:
+            pass
+        raise
+
+
+async def _find_settlement(conn, payment_key: str) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"select {_SETTLEMENT_COLS} from fm_settlements where payment_id = %s",
+            (payment_key,),
+        )
+        return await cur.fetchone()
+
+
+def _chain_result(chain, stored: dict, tx_hash: str | None = None) -> dict:
+    return {
+        "tx_hash": tx_hash, "block": stored["block"], "chain_id": chain.chain_id,
+        "model_ref": stored["model_ref"], "model_amount": stored["model_amount"],
+        "platform_amount": stored["platform_amount"], "ops_amount": stored["ops_amount"],
+        "total": stored["total"],
+    }
+
+
+async def _mirror_settlement(conn, intent: dict, result: dict) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"""insert into fm_settlements
+                (payment_id, job_id, license_id, credit_ledger_id, model_ref,
+                 total_amount, model_amount, platform_amount, ops_amount,
+                 chain_status, tx_hash, chain_id, recorded_block)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'confirmed', %s, %s, %s)
+                on conflict (payment_id) do nothing
+                returning {_SETTLEMENT_COLS}""",
+            (
+                intent["payment_id"], intent.get("job_id"), intent.get("license_id"),
+                intent.get("credit_ledger_id"), result["model_ref"], int(result["total"]),
+                result["model_amount"], result["platform_amount"], result["ops_amount"],
+                result["tx_hash"], str(result["chain_id"]), result["block"],
+            ),
+        )
+        row = await cur.fetchone()
+    return row or await _find_settlement(conn, intent["payment_id"])
+
+
+async def _reconcile_settlement_intents(conn, chain) -> None:
+    """이전 task가 broadcast 중 죽었다면 먼저 체인 결과를 미러하거나 timeout까지 fence한다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select payment_id, license_id::text, job_id::text, credit_ledger_id::text,
+                      model_id, total_amount, attempted_at
+                 from fm_settlement_signer_intents
+                where status = 'broadcasting'
+                order by attempted_at nulls first"""
+        )
+        intents = await cur.fetchall()
+
+    for intent in intents:
+        if await _find_settlement(conn, intent["payment_id"]):
+            status = "confirmed"
+        else:
+            attempted_at = intent.get("attempted_at") or datetime.now(timezone.utc)
+            if attempted_at.tzinfo is None:
+                attempted_at = attempted_at.replace(tzinfo=timezone.utc)
+            remaining = max(
+                float(getattr(chain, "confirm_timeout", 90.0))
+                - (datetime.now(timezone.utc) - attempted_at).total_seconds(),
+                0.0,
+            )
+            stored = await _run_chain_call_until_done(
+                chain.wait_for_settlement,
+                payment_key=intent["payment_id"],
+                timeout=remaining,
+            )
+            if not stored or not stored.get("exists"):
+                # RPC 오류를 미기록으로 오판해 pending nonce를 재사용하지 않도록 마지막 조회는 fail-closed.
+                stored = await _run_chain_call_until_done(
+                    chain.get_settlement, payment_key=intent["payment_id"]
+                )
+            if stored and stored.get("exists"):
+                result = _chain_result(chain, stored)
+            else:
+                # exists=false는 mempool에 같은 nonce의 pending TX가 없다는 증거가 아니다.
+                # 다른 payment를 보내지 말고 동일 payment만 안전하게 재전송한다.
+                try:
+                    result = await _run_chain_call_until_done(
+                        chain.record_settlement,
+                        payment_key=intent["payment_id"],
+                        model_uuid=intent["model_id"],
+                        total=int(intent["total_amount"]),
+                    )
+                except Exception:
+                    stored = await _run_chain_call_until_done(
+                        chain.wait_for_settlement, payment_key=intent["payment_id"]
+                    )
+                    if not stored or not stored.get("exists"):
+                        stored = await _run_chain_call_until_done(
+                            chain.get_settlement, payment_key=intent["payment_id"]
+                        )
+                    if not stored or not stored.get("exists"):
+                        raise RuntimeError(
+                            f"settlement intent unresolved: {intent['payment_id']}"
+                        )
+                    result = _chain_result(chain, stored)
+            await _mirror_settlement(conn, intent, result)
+            status = "confirmed"
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "update fm_settlement_signer_intents set status = %s where payment_id = %s",
+                (status, intent["payment_id"]),
+            )
+    await conn.commit()
+
+
 async def record_license_settlement(
     app,
     *,
@@ -934,60 +1103,111 @@ async def record_license_settlement(
     pool = app.state.pool
     # DB 선확인 — 이미 미러된 payment 면 재기록 없이 반환(재시도 멱등).
     async with pool.connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                f"select {_SETTLEMENT_COLS} from fm_settlements where payment_id = %s",
-                (payment_key,),
-            )
-            existing = await cur.fetchone()
+        existing = await _find_settlement(conn, payment_key)
+        if not existing:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """insert into fm_settlement_signer_intents
+                        (payment_id, license_id, job_id, credit_ledger_id, model_id, total_amount)
+                        values (%s, %s, %s, %s, %s, %s)
+                        on conflict (payment_id) do nothing""",
+                    (payment_key, license_id, job_id, credit_ledger_id, model_id, int(total)),
+                )
+            await conn.commit()
     if existing:
         return existing
 
-    try:
-        result = await asyncio.to_thread(
-            chain.record_settlement, payment_key=payment_key, model_uuid=model_id, total=int(total)
-        )
-    except Exception:
-        # 중복 paymentId revert 등 — 이미 온체인에 있는지 getSettlement 로 대조 후 미러 복구.
-        try:
-            stored = await asyncio.to_thread(chain.get_settlement, payment_key)
-        except Exception:
-            logger.exception("settlement_record_failed", extra={"payment_key": payment_key})
-            return None
-        if not stored.get("exists"):
-            logger.exception("settlement_record_failed", extra={"payment_key": payment_key})
-            return None
-        result = {
-            "tx_hash": None, "block": stored["block"], "chain_id": chain.chain_id,
-            "model_ref": stored["model_ref"], "model_amount": stored["model_amount"],
-            "platform_amount": stored["platform_amount"], "ops_amount": stored["ops_amount"],
-            "total": stored["total"],
-        }
+    # Session advisory lock은 commit 뒤에도 유지된다. 미획득자는 연결을 즉시 반납해 작은 pool을
+    # 고갈시키지 않고, owner만 durable broadcasting intent→RPC→mirror 구간에 연결 하나를 쓴다.
+    while True:
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "select pg_try_advisory_lock(%s) as locked",
+                    (_SETTLEMENT_SIGNER_LOCK_ID,),
+                )
+                locked = (await cur.fetchone())["locked"]
+            if not locked:
+                continue_after_release = True
+            else:
+                continue_after_release = False
+                try:
+                    await _reconcile_settlement_intents(conn, chain)
+                    existing = await _find_settlement(conn, payment_key)
+                    if existing:
+                        return existing
 
-    async with pool.connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                f"""insert into fm_settlements
-                    (payment_id, job_id, license_id, credit_ledger_id, model_ref,
-                     total_amount, model_amount, platform_amount, ops_amount,
-                     chain_status, tx_hash, chain_id, recorded_block)
-                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'confirmed', %s, %s, %s)
-                    on conflict (payment_id) do nothing
-                    returning {_SETTLEMENT_COLS}""",
-                (
-                    payment_key, job_id, license_id, credit_ledger_id, result["model_ref"],
-                    int(result["total"]), result["model_amount"], result["platform_amount"],
-                    result["ops_amount"], result["tx_hash"], str(result["chain_id"]),
-                    result["block"],
-                ),
-            )
-            row = await cur.fetchone()
-        await conn.commit()
-    logger.info(
-        "settlement_recorded",
-        extra={"payment_key": payment_key, "tx_hash": result["tx_hash"], "total": total},
-    )
-    return row
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            """update fm_settlement_signer_intents
+                                  set status = 'broadcasting', attempted_at = clock_timestamp()
+                                where payment_id = %s""",
+                            (payment_key,),
+                        )
+                    await conn.commit()  # crash fence가 RPC 전 반드시 durable 해야 한다.
+
+                    try:
+                        result = await _run_chain_call_until_done(
+                            chain.record_settlement,
+                            payment_key=payment_key,
+                            model_uuid=model_id,
+                            total=int(total),
+                        )
+                    except Exception:
+                        try:
+                            stored = await _run_chain_call_until_done(
+                                chain.wait_for_settlement, payment_key=payment_key
+                            )
+                            if not stored or not stored.get("exists"):
+                                stored = await _run_chain_call_until_done(
+                                    chain.get_settlement, payment_key=payment_key
+                                )
+                        except Exception:
+                            logger.exception(
+                                "settlement_record_failed", extra={"payment_key": payment_key}
+                            )
+                            return None
+                        if not stored or not stored.get("exists"):
+                            logger.error(
+                                "settlement_record_unresolved", extra={"payment_key": payment_key}
+                            )
+                            return None
+                        result = _chain_result(chain, stored)
+
+                    intent = {
+                        "payment_id": payment_key, "license_id": license_id, "job_id": job_id,
+                        "credit_ledger_id": credit_ledger_id,
+                    }
+                    row = await _mirror_settlement(conn, intent, result)
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            "update fm_settlement_signer_intents set status = %s "
+                            "where payment_id = %s",
+                            ("confirmed", payment_key),
+                        )
+                    await conn.commit()
+                    logger.info(
+                        "settlement_recorded",
+                        extra={
+                            "payment_key": payment_key, "tx_hash": result["tx_hash"],
+                            "total": total,
+                        },
+                    )
+                    return row
+                except Exception:
+                    logger.exception(
+                        "settlement_recovery_failed", extra={"payment_key": payment_key}
+                    )
+                    return None
+                finally:
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            "select pg_advisory_unlock(%s) as unlocked",
+                            (_SETTLEMENT_SIGNER_LOCK_ID,),
+                        )
+                    await conn.commit()
+        if continue_after_release:
+            await asyncio.sleep(_SETTLEMENT_LOCK_RETRY_SECONDS)
 
 
 @router.get(
@@ -1046,22 +1266,30 @@ async def confirm_settlement(
     responses={
         **_FM_RESPONSES,
         404: {"model": ErrorResponse, "description": "라이선스 없음/비소유/체인 미설정"},
+        429: {"model": ErrorResponse, "description": "실 TX 분당 요청 한도 초과"},
     },
     tags=["FaceMarket"],
     summary="정산 시뮬레이션 (데모/부하 — 실 TX)",
 )
 async def simulate_settlement(
-    request: Request, body: SimulateRequest, user_id: str = Depends(require_user)
+    request: Request,
+    body: SimulateRequest,
+    user_id: str = Depends(require_user),
+    idempotency_key: str = Header(
+        ..., alias="Idempotency-Key", min_length=1, max_length=128
+    ),
 ):
     """라이선스 1건 사용을 온체인에 실제 기록(장면④·KPI '시뮬' 집계용). 실 상세페이지 잡과 분리.
 
-    소유 라이선스만·active 만. payment_id 는 매 호출 고유(실 TX 다건 생성). 실거래(워커 훅)와
-    구분되는 '정산 검증용' 경로 — 제안서 KPI 는 실/시뮬 분리 집계.
+    관리자 본인의 active 라이선스만 허용한다. payment_id 는 Idempotency-Key에 결정적으로 묶어
+    재시도가 실 TX를 중복 생성하지 않는다. 실거래(워커 훅)와 분리해 집계한다.
     """
-    chain = getattr(request.app.state, "fm_chain", None)
-    if chain is None:
-        raise _err("chain_unavailable", "체인이 설정되지 않았습니다.", status=404)
     async with get_conn(request) as conn:
+        if not await repo.is_admin(conn, user_id):
+            raise _err("forbidden", "관리자만 가능해요.", status=403)
+        chain = getattr(request.app.state, "fm_chain", None)
+        if chain is None:
+            raise _err("chain_unavailable", "체인이 설정되지 않았습니다.", status=404)
         async with conn.cursor() as cur:
             await cur.execute(
                 """select l.id::text as id, l.model_id::text as model_id, l.unit_price, l.status
@@ -1070,12 +1298,22 @@ async def simulate_settlement(
                 (body.license_id, user_id),
             )
             lic = await cur.fetchone()
-    if not lic:
-        raise _err("not_found", "라이선스를 찾을 수 없습니다.", status=404)
-    if lic["status"] != "active":
-        raise _err("license_inactive", "활성 라이선스만 정산할 수 있습니다.", status=400)
+        if not lic:
+            raise _err("not_found", "라이선스를 찾을 수 없습니다.", status=404)
+        if lic["status"] != "active":
+            raise _err("license_inactive", "활성 라이선스만 정산할 수 있습니다.", status=400)
+        await _take_simulation_rate_slot(
+            conn,
+            user_id=user_id,
+            client_ip=_request_client_ip(request),
+            pepper=request.app.state.settings.fm_ci_pepper,
+        )
 
-    payment_key = f"sim:{body.license_id}:{uuid.uuid4().hex}"
+    key = idempotency_key.strip()
+    if not key:
+        raise _err("idempotency_key_required", "Idempotency-Key가 필요합니다.")
+    digest = hashlib.sha256(f"{user_id}:{key}".encode()).hexdigest()
+    payment_key = f"sim:{body.license_id}:{digest}"
     row = await record_license_settlement(
         request.app,
         payment_key=payment_key,

@@ -43,6 +43,10 @@ cpu: 512        # Pillow 이미지 처리 여유
 memory: 4096
 platform: linux/x86_64
 count: 1        # 항상 1개 상주 → in-process JobDispatcher 계속 살아있음
+# 첫 signer-intent 릴리스는 구버전 task가 DB lock/fence를 모르므로 겹치면 안 된다.
+# 이 릴리스 안정화 후 rolling: default로 되돌려도 이후 버전끼리는 공유 fence로 안전하다.
+deployment:
+  rolling: recreate
 exec: true
 network:
   connect: true

@@ -68,6 +68,7 @@ class FaceMarketChain:
     # 확정하고(README 설계), tx 필드는 전부 명시해 estimate/gasPrice 호출을 피한다.
     _CONFIRM_TIMEOUT = 90.0
     _POLL_INTERVAL = 2.0
+    confirm_timeout = _CONFIRM_TIMEOUT
 
     def __init__(self, rpc_url: str, address: str, private_key: str, chain_id: int | None):
         import time as _time
@@ -133,7 +134,7 @@ class FaceMarketChain:
         mref = self.keccak32(model_uuid)
 
         with self._nonce_lock:  # 단일 키 nonce 직렬화(동시 정산 충돌 방지)
-            # 각 tx 를 확정(_await_recorded)까지 블로킹 → 직전 tx 는 이미 채굴됨 → "latest" 정확.
+            # 각 tx 를 확정(wait_for_settlement)까지 블로킹 → 직전 tx 는 이미 채굴됨 → "latest" 정확.
             # (게이트웨이가 "pending" 태그를 보장 안 해 "latest" 채택.)
             nonce = self.w3.eth.get_transaction_count(self.account.address, "latest")
             tx = self.contract.functions.recordSettlement(pid, mref, int(total)).build_transaction(
@@ -148,11 +149,11 @@ class FaceMarketChain:
             signed = self.account.sign_transaction(tx)
             raw = getattr(signed, "raw_transaction", None) or signed.rawTransaction  # web3 v7/v6
             tx_hash = self.w3.eth.send_raw_transaction(raw)
-
-        # receipt 대신 getSettlement eth_call 폴링으로 확정(게이트웨이 receipt 미지원).
-        stored = self._await_recorded(payment_key)
-        if stored is None:
-            raise RuntimeError(f"recordSettlement not confirmed on-chain: {tx_hash.hex()}")
+            # receipt 대신 getSettlement eth_call 폴링으로 확정(게이트웨이 receipt 미지원).
+            # latest nonce를 쓰므로 확정 전에는 다음 제출이 lock을 얻으면 안 된다.
+            stored = self.wait_for_settlement(payment_key)
+            if stored is None:
+                raise RuntimeError(f"recordSettlement not confirmed on-chain: {tx_hash.hex()}")
         return {
             "tx_hash": tx_hash.hex(),
             "block": stored["block"],
@@ -164,9 +165,11 @@ class FaceMarketChain:
             "total": stored["total"],
         }
 
-    def _await_recorded(self, payment_key: str) -> dict | None:
+    def wait_for_settlement(self, payment_key: str, timeout: float | None = None) -> dict | None:
         """getSettlement eth_call 을 exists=True 될 때까지 폴링(receipt 대체). 타임아웃이면 None."""
-        deadline = self._time.monotonic() + self._CONFIRM_TIMEOUT
+        deadline = self._time.monotonic() + (
+            self._CONFIRM_TIMEOUT if timeout is None else max(timeout, 0)
+        )
         while self._time.monotonic() < deadline:
             try:
                 stored = self.get_settlement(payment_key)

@@ -3113,7 +3113,7 @@ export function Editor() {
         <div className="ed-genoverlay" onClick={() => setGenReceipt(null)}>
           <div className="surface fm-receipt" onClick={(e) => e.stopPropagation()}>
             <div className="fm-receipt-head">
-              <span className="fm-receipt-badge"><Icon name="check" size={13} />정산 완료</span>
+              <span className="fm-receipt-badge"><Icon name="check" size={13} />온체인 기록 완료</span>
               <span className="fm-receipt-total">{wonFmt(genReceipt.totalAmount)}</span>
             </div>
             <div className="fm-split">

@@ -8,7 +8,7 @@
 
 **OpenDID Orchestrator(기본 9001)는 FaceLicense VC 발급·상태 확인의 런타임 필수 서버가 아니다.** Orchestrator는 OpenDID 구성요소 JAR 다운로드, PostgreSQL/Besu 준비, 엔티티 월렛·DID 생성, 설정 생성, 각 독립 서버의 시작·정지를 담당하는 **빌드·프로비저닝 제어면(control plane)** 이다. 공식 설치 가이드도 전체 서버 기동 뒤 “Orchestrator의 역할은 완료”된다고 설명하고, 구현은 별도 JAR 프로세스를 `java -jar`로 실행한다. [공식 Orchestrator 설치·운영 가이드](https://github.com/OmniOneID/did-orchestrator-server/blob/V2.0.0/docs/installation/OpenDID_orchestrator_InstallationAndOperation_Guide_ko.md), [공식 기동 구현](https://github.com/OmniOneID/did-orchestrator-server/blob/V2.0.0/source/did-orchestrator-server/src/main/java/org/omnione/did/orchestrator/service/OrchestratorServiceImpl.java), [공식 `start.sh`](https://github.com/OmniOneID/did-orchestrator-server/blob/V2.0.0/source/did-orchestrator-server/jars/start.sh)
 
-따라서 해커톤 서버에는 Orchestrator를 상시 띄우지 않고도 모든 **현재 FaceMarket VC 기능**을 유지할 수 있다. 다만 **소스 코드 또는 JAR만 복사하고 프로비저닝 없이 실행하는 것은 불가능**하다. OpenDID는 DB, Besu 원장과 배포 계약, 엔티티 DID/개인키 월렛, 발급 스키마·플랜, 홀더별 월렛 상태가 결합된 stateful 시스템이다. 코드와 bootstrap 스크립트를 가져가 서버에서 이 상태를 새로 생성하는 것은 가능하다.
+따라서 해커톤 서버에는 Orchestrator를 상시 띄우지 않고도 현재 코드가 구현한 **FaceLicense VC 발급·온체인 상태 확인·폐기 기능 범위**를 유지할 수 있다. 다만 이는 아래 build/provision/state/smoke-test 조건을 충족한 뒤의 목표 상태다. 현재 production manifest는 Holder를 연결하지 않아 실제 VC 발급을 skip한다. 또한 **소스 코드 또는 JAR만 복사하고 프로비저닝 없이 실행하는 것은 불가능**하다. OpenDID는 DB, Besu 원장과 배포 계약, 엔티티 DID/개인키 월렛, 발급 스키마·플랜, 홀더별 월렛 상태가 결합된 stateful 시스템이다. 코드와 bootstrap 스크립트를 가져가 서버에서 이 상태를 새로 생성하는 것은 가능하다.
 
 Orchestrator를 빼면 제어용 JVM 하나는 줄지만 OpenDID 데이터면 자체가 사라지는 것은 아니다. 현재 기능 기준 최소 구성도 `fm-holder`, TAS, Issuer, CAS의 JVM 4개와 PostgreSQL, Besu이므로, 이를 FastAPI 코드 한 프로세스로 합치는 것은 별도 재구현이다.
 
@@ -18,6 +18,8 @@ Orchestrator를 빼면 제어용 JVM 하나는 줄지만 OpenDID 데이터면 �
 2. 서버에는 **TAS + Issuer + CAS + `fm-holder` + PostgreSQL + Besu**만 각각 독립 프로세스/컨테이너로 배포한다.
 3. 생성된 상태와 키를 영속 볼륨/비밀 저장소로 이관하고 Orchestrator 9001은 종료하거나 배포하지 않는다.
 4. FastAPI에 내부 주소 `OPENDID_HOLDER_URL=http://fm-holder:8100`만 연결한다.
+
+서버 수는 사용자가 원하는 3대로 유지된다. Server 1은 FastAPI와 FaceMarket 카탈로그·라이선스·생성 gate를 유지하고, Server 2는 SAM을 유지한다. Server 3은 `fm-holder`와 OpenDID 데이터면을 묶는 VC 서버다. “FaceMarket 서버”라는 이름 때문에 FaceMarket API 전체가 Server 3으로 이동하는 것으로 해석하면 안 된다. 애플리케이션/Supabase DB도 Server 1 측 현행 위치에 남고, Server 3에는 OpenDID PostgreSQL·Besu와 wallet/DID/holder 상태만 둔다.
 
 ## 제어면과 데이터면
 
@@ -37,7 +39,7 @@ Orchestrator 소스는 `requestStartupAll()`에서 포트별 독립 서버를 �
 
 ## FaceMarket 실제 호출 그래프
 
-현재 백엔드는 라이선스 생성 시 `fm-holder`의 `/wallet` → `/register-did` → `/issue-vc`만 호출하고, 결과 `vcId`와 사용자 DID를 FaceMarket DB에 저장한다. 사용 전 검증은 `/holder/vc/verify`, 폐기는 `/revoke-vc`를 호출한다. 이 경로 어디에도 Orchestrator 9001 호출이 없다. [`facemarket.py` 발급 경로](../../server/app/facemarket.py#L1091), [`facemarket.py` 검증·폐기 경로](../../server/app/facemarket.py#L1281)
+현재 백엔드는 라이선스 생성 시 `fm-holder`의 `/wallet` → `/register-did` → `/issue-vc`만 호출하고, 결과 `vcId`와 사용자 DID를 FaceMarket DB에 저장한다. 사용 전 검증은 `/holder/vc/verify`, 폐기는 `/revoke-vc`를 호출한다. 이 경로 어디에도 Orchestrator 9001 호출이 없다. [`facemarket.py` 발급 경로](../../server/app/facemarket.py#L1338), [`facemarket.py` 검증 경로](../../server/app/facemarket.py#L1477), [`facemarket.py` 폐기 경로](../../server/app/facemarket.py#L1565)
 
 ```text
 Internet
@@ -127,7 +129,7 @@ TAS, Issuer, CAS의 V2.0.0 태그를 각각 빌드해 이미지/JAR만 배포한
 
 ### 2. 현재 production manifest에는 Holder가 없다
 
-Copilot API manifest는 `OPENDID_HOLDER_URL`을 의도적으로 비워 VC 발급을 비치명적으로 skip한다고 명시한다. 즉 현재 production 구성은 FaceLicense 레코드는 만들 수 있어도 VC를 발급하지 않는다. [`copilot/api/manifest.yml`](../../copilot/api/manifest.yml#L122)
+Copilot API manifest는 `OPENDID_HOLDER_URL`을 의도적으로 비워 VC 발급을 비치명적으로 skip한다고 명시한다. 즉 현재 production 구성은 FaceLicense 레코드는 만들 수 있어도 VC를 발급하지 않는다. [`copilot/api/manifest.yml`](../../copilot/api/manifest.yml#L202)
 
 ### 3. 개발용 키·경로를 그대로 배포할 수 없다
 
