@@ -83,6 +83,13 @@ case "$1" in
       while IFS= read -r _line; do :; done || true
     fi
     if [ "$container" = "$OPENDID_POSTGRES_CONTAINER" ] && [ "$cmd" = "pg_dumpall" ]; then
+      user=''
+      prev=''
+      for arg in "$@"; do
+        if [ "$prev" = "-U" ]; then user="$arg"; fi
+        prev="$arg"
+      done
+      [ "$user" = "${FAKE_EXPECT_DUMP_USER:-$user}" ] || exit 2
       printf '%s\n' '-- fake pg_dumpall'
       exit 0
     fi
@@ -184,6 +191,7 @@ export OPENDID_HOLDER_DATA_DIR="$OPENDID_ROOT/state/holder"
 unset OPENDID_POSTGRES_USER OPENDID_DB_USER OPENDID_POSTGRES_DB OPENDID_DB_NAME
 export FAKE_EXPECT_PGUSER="omn"
 export FAKE_EXPECT_PGDB="omn"
+export FAKE_EXPECT_DUMP_USER="omn"
 export FAKE_CONSUME_STDIN=1
 mkdir -p "$FAKE_VOLUMES/$OPENDID_POSTGRES_VOLUME" "$FAKE_VOLUMES/$OPENDID_BESU_VOLUME" \
   "$OPENDID_SECRETS_DIR/TA" "$OPENDID_SECRETS_DIR/Issuer" "$OPENDID_SECRETS_DIR/CA" "$OPENDID_CONFIG_DIR"
@@ -263,6 +271,11 @@ tar -xf "$out/opendid-files.tar" -C "$extract"
 want_no_grep 'wallet-secret|did-secret|chain-secret|config-secret' "$tmp/export.out" 'export does not print secrets'
 after_hash=$(find "$FAKE_VOLUMES" "$OPENDID_ROOT" -type f -exec shasum -a 256 {} + | sort)
 [ "$before_hash" = "$after_hash" ] && ok 'source files unchanged' || bad 'source files unchanged'
+
+override_out="$tmp/override-out"
+FAKE_EXPECT_DUMP_USER=override OPENDID_POSTGRES_USER=override "$EXPORT" "$override_out" >"$tmp/export-override.out"
+want_file "$override_out/postgres.dump.sql" 'explicit postgres user override used for dump'
+want_no_grep 'do-not-print' "$tmp/export-override.out" 'export override does not print container env secrets'
 
 "$INVENTORY" >"$tmp/inventory.out"
 want_grep 'postgres_container=present' "$tmp/inventory.out" 'inventory reports postgres presence'

@@ -7,7 +7,7 @@ POSTGRES_VOLUME=${OPENDID_POSTGRES_VOLUME:-postgre_opendid_data}
 BESU_VOLUME=${OPENDID_BESU_VOLUME:-besu_opendid_data}
 POSTGRES_VOLUME_FALLBACKS=${OPENDID_POSTGRES_VOLUME_FALLBACKS:-postgre_postgre_opendid_data}
 BESU_VOLUME_FALLBACKS=${OPENDID_BESU_VOLUME_FALLBACKS:-besu_besu_opendid_data}
-POSTGRES_USER=${OPENDID_POSTGRES_USER:-${OPENDID_DB_USER:-postgres}}
+POSTGRES_USER=${OPENDID_POSTGRES_USER:-${OPENDID_DB_USER:-}}
 OPENDID_ROOT=${OPENDID_ROOT:-/opt/opendid}
 SECRETS_DIR=${OPENDID_SECRETS_DIR:-$OPENDID_ROOT/secrets}
 CONFIG_DIR=${OPENDID_CONFIG_DIR:-$OPENDID_ROOT/config}
@@ -33,6 +33,10 @@ resolve_volume() {
 }
 sha256_one() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi
+}
+container_env_value() {
+  docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$POSTGRES_CONTAINER" 2>/dev/null |
+    sed -n "s/^$1=//p" | head -1
 }
 
 [ "$#" = 1 ] || die "usage: $0 <new-empty-output-dir>"
@@ -67,6 +71,8 @@ besu_running=$(docker inspect -f '{{.State.Running}}' "$BESU_CONTAINER" 2>/dev/n
 
 POSTGRES_VOLUME=$(resolve_volume "$POSTGRES_VOLUME" $POSTGRES_VOLUME_FALLBACKS) || die "PostgreSQL volume not found"
 BESU_VOLUME=$(resolve_volume "$BESU_VOLUME" $BESU_VOLUME_FALLBACKS) || die "Besu volume not found"
+[ -n "$POSTGRES_USER" ] || POSTGRES_USER=$(container_env_value POSTGRES_USER)
+POSTGRES_USER=${POSTGRES_USER:-postgres}
 
 manifest="$OUT/EXPORT-MANIFEST.txt"
 {
@@ -106,11 +112,7 @@ stage_allowed() {
 }
 stage_allowed "$SECRETS_DIR"
 stage_allowed "$CONFIG_DIR"
-if [ -n "$(find "$tmp_stage" -mindepth 1 -print -quit 2>/dev/null)" ]; then
-  tar -C "$tmp_stage" -cf "$OUT/opendid-files.tar" .
-else
-  tar -C "$tmp_stage" -cf "$OUT/opendid-files.tar" .
-fi
+tar -C "$tmp_stage" -cf "$OUT/opendid-files.tar" .
 chmod 600 "$OUT/opendid-files.tar"
 
 if [ -d "$HOLDER_DATA_DIR" ] && [ -n "$(find "$HOLDER_DATA_DIR" -mindepth 1 -print -quit 2>/dev/null)" ]; then
