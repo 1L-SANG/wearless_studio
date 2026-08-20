@@ -17,6 +17,7 @@ import {
   advanceMannequinCompletion,
   createMannequinCompletionState,
 } from '@/features/mannequin/completionToastCore.js';
+import { onProductPhotoPromotionFailure } from '@/lib/productPhotoPromotion.js';
 
 const mannequinCuts = (envelope) => {
   if (Array.isArray(envelope)) return envelope;
@@ -217,10 +218,16 @@ export function ChromeLayout() {
   const storyboardOwnsEntrance = pathname === '/create/storyboard';
   const loadAccount = useAppStore((s) => s.loadAccount);
   const loadCatalogs = useAppStore((s) => s.loadCatalogs);
+  const { push: pushToast } = useToast();
 
   // 카탈로그는 공개 입력 페이지에도 필요 → 항상 로드. 계정은 로그인 후에만.
   useEffect(() => { loadCatalogs(); }, [loadCatalogs]);
   useEffect(() => { if (session) loadAccount(); }, [session, loadAccount]);
+  useEffect(() => onProductPhotoPromotionFailure(() => {
+    pushToast('상품 사진 업로드를 끝내지 못했어요. 네트워크를 확인한 뒤 다시 시도해 주세요.', {
+      icon: 'alert',
+    });
+  }), [pushToast]);
 
   // Background glow intensity uses the CSS default. Final orb/edge opacity is defined in app.css.
   // The wizard stepper now lives centered inside TopNav (see shell.jsx),

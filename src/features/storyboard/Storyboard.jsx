@@ -14,7 +14,7 @@ import { api } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
 import { Placeholder } from '@/mock/placeholders.js';
 import { useAppStore } from '@/store/useAppStore.js';
-import { Icon, IconButton, Button, Chips, EmptyState, Modal, Toggle, useToast } from '@/components/ui.jsx';
+import { Icon, IconButton, Button, Chips, EmptyState, Modal, ProgressBar, Toggle, useToast } from '@/components/ui.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { isDefaultStoryboardForMode } from '@/lib/api/shapes.js';
 import { normalizeMatchIds } from '@/lib/api/matchingItems.js';
@@ -102,6 +102,12 @@ import {
 } from '@/lib/storyboardExampleSelection.js';
 import { mineImageUrl, normalizeMineImages, promoteMineImage } from '@/lib/storyboardMineImages.js';
 import { requestMannequinGeneration } from '@/features/mannequin/generationRunner.js';
+import {
+  getProductPhotoPromotionTask,
+  resumeProductPhotoPromotionForStoryboard,
+  retryProductPhotoPromotionFromDraft,
+  subscribeProductPhotoPromotion,
+} from '@/lib/productPhotoPromotion.js';
 import { waitForAnalysisEditSave } from '@/features/product-input/saveRouting.js';
 import { selectStoryboardCopywriting } from './copywritingSelection.js';
 import { applyStoryboardComposeMode } from './storyboardComposeMode.js';
@@ -109,6 +115,7 @@ import { classifyStoryboardLoadError, storyboardNotFoundError } from './storyboa
 import { buildColorOpts, visibleColorOpts } from '@/lib/colorOpts.js';
 import { continueAfterStoryboardFlush } from './storyboardNavigation.js';
 import { storyboardOverlayTop } from './storyboardOverlayTop.js';
+import { shouldReuseInitialStoryboardEntry } from './storyboardEntryReuse.js';
 import { frameUnits, snapOutOfForeignBundle } from './storyboardUnits.js';
 import { bindStoryboardExitFlush, scheduleStoryboardAutosave } from './storyboardSaveLifecycle.js';
 import {
@@ -119,6 +126,7 @@ import {
   applyPromotedMatchSelection,
   getCustomMatchPromotionTask,
   onCustomMatchPromotionFailure,
+  subscribeCustomMatchPromotion,
 } from '@/lib/customMatchPromotion.js';
 
 
@@ -1753,11 +1761,35 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   );
 }
 
-function StoryboardLoadingState() {
+/* 업로드 진행률 — 확정 CTA 는 프로젝트 신원까지만 기다리고 넘어오므로, 남은 사진 업로드는
+   이 화면에서 정착한다. 몇 장 중 몇 장인지 보여주지 않으면 셀러는 얼마나 남았는지 알 수 없다
+   (오너 요구, 2026-08-18). task 가 없으면(이미 끝난 세션·복원 진입) 아무것도 그리지 않는다. */
+function usePhotoUploadProgress(projectId) {
+  const [state, setState] = useState(null);
+  useEffect(() => {
+    if (!projectId) { setState(null); return undefined; }
+    return subscribeProductPhotoPromotion(projectId, setState);
+  }, [projectId]);
+  if (!state || state.status !== 'pending' || !state.total) return null;
+  return state;
+}
+
+export function StoryboardLoadingState({ photoUpload = null }) {
   // 빈 div 의 aria-label 은 낭독되지 않을 수 있다 — 숨긴 텍스트 + status 로 알린다(리뷰 반영)
+  const label = photoUpload
+    ? `사진 ${photoUpload.total}장 중 ${photoUpload.done}장 올렸어요`
+    : '콘티보드를 불러오는 중이에요';
   return (
     <div role="status" aria-busy="true">
-      <span className="sr-only">콘티보드를 불러오는 중이에요</span>
+      <span className="sr-only">{label}</span>
+      {photoUpload && (
+        <div className="sb-upload-progress">
+          <ProgressBar
+            label={label}
+            value={(photoUpload.done / photoUpload.total) * 100}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -2024,7 +2056,7 @@ function HookStyleChip({
   );
 }
 
-export function Storyboard() {
+export function Storyboard({ toastOverride = null } = {}) {
   const navigate = useNavigate();
   const location = useLocation();
   const initialEntryRef = useRef(undefined);
@@ -2094,7 +2126,8 @@ export function Storyboard() {
   const newSeq = useRef(0);
   const cardRefs = useRef(new Map());
   const setPickerScrollY = useRef(null);
-  const toast = useToast();
+  const defaultToast = useToast();
+  const toast = toastOverride || defaultToast;
   const pushToast = toast.push;
   const customMatchPromotionExpectedRef = useRef(location.state?.customMatchPromotionStarted === true);
   const customMatchPromotionHandledRef = useRef(new Set());
@@ -2116,37 +2149,41 @@ export function Storyboard() {
   // 최신 매칭 목록을 읽어 준비 타일을 실제 내 옷으로 자동 교체한다.
   useEffect(() => {
     if (!projectId) return undefined;
-    const task = getCustomMatchPromotionTask(projectId);
-    if (!task) return undefined;
     let active = true;
-    setCustomMatchPromotionPending(task.status === 'pending');
-    void task.promise.then(async (result) => {
+    let observedTask = null;
+    const unsubscribe = subscribeCustomMatchPromotion(projectId, (task) => {
       if (!active) return;
-      setCustomMatchPromotionPending(false);
-      // 실패 알림은 태스크 층(onCustomMatchPromotionFailure)이 화면과 무관하게 띄운다 —
-      // 셀러가 콘티를 곧바로 떠나도 안내가 사라지지 않게(리뷰 지적).
-      if (result?.attempted && !result.promoted) return;
-      if (!result?.attempted) return;
-      try {
-        const refreshed = await api.getMatchClothing(projectId);
+      setCustomMatchPromotionPending(task?.status === 'pending');
+      if (!task || task === observedTask) return;
+      observedTask = task;
+      void task.promise.then(async (result) => {
         if (!active) return;
-        const nextMatchClothing = refreshed || [];
-        promotedMatchClothingRef.current = { projectId, items: nextMatchClothing };
-        setMatchClothing(nextMatchClothing);
-        setComposeModeSeed((current) => ({ ...current, matchClothing: nextMatchClothing }));
-        setBlocks((current) => applyPromotedMatchSelection(
-          current,
-          composeModeSeedRef.current.colors,
-          nextMatchClothing,
-        ));
-      } catch {
-        // 완료 시 캐시는 이미 무효화됐다. 단발 조회가 실패하면 기존 로드 경로로 한 번 재진입한다.
-        if (active) setLoadRetry((current) => current + 1);
-      }
-    }).catch(() => {
-      if (active) setCustomMatchPromotionPending(false);
+        setCustomMatchPromotionPending(false);
+        // 실패 알림은 태스크 층(onCustomMatchPromotionFailure)이 화면과 무관하게 띄운다 —
+        // 셀러가 콘티를 곧바로 떠나도 안내가 사라지지 않게(리뷰 지적).
+        if (result?.attempted && !result.promoted) return;
+        if (!result?.attempted) return;
+        try {
+          const refreshed = await api.getMatchClothing(projectId);
+          if (!active) return;
+          const nextMatchClothing = refreshed || [];
+          promotedMatchClothingRef.current = { projectId, items: nextMatchClothing };
+          setMatchClothing(nextMatchClothing);
+          setComposeModeSeed((current) => ({ ...current, matchClothing: nextMatchClothing }));
+          setBlocks((current) => applyPromotedMatchSelection(
+            current,
+            composeModeSeedRef.current.colors,
+            nextMatchClothing,
+          ));
+        } catch {
+          // 완료 시 캐시는 이미 무효화됐다. 단발 조회가 실패하면 기존 로드 경로로 한 번 재진입한다.
+          if (active) setLoadRetry((current) => current + 1);
+        }
+      }).catch(() => {
+        if (active) setCustomMatchPromotionPending(false);
+      });
     });
-    return () => { active = false; };
+    return () => { active = false; unsubscribe(); };
   }, [projectId, pushToast]);
 
   // 승격 실패 안내 — 어느 화면이 떠 있든 프로젝트당 한 번. 콘티보드 언마운트로 유실되지 않는다.
@@ -2233,8 +2270,16 @@ export function Storyboard() {
     return () => { active = false; };
   }, [initialRevealReady]);
 
+  // 훅은 로딩 early-return 위에 둔다(CLAUDE.md — 훅 개수 불변).
+  const photoUploadProgress = usePhotoUploadProgress(projectId);
+
   useEffect(() => {
+    // 사진 업로드 정착을 여기서 기다리므로(수십 초 가능) 언마운트 후 setState 를 막는 플래그가
+    // 필요하다. 종전에는 즉시 끝나는 로드라 없어도 무방했다.
+    let active = true;
     (async () => {
+      let productPhotoPromotionObserved = false;
+      let productPhotoRecoveryAttempted = false;
       const requestedProjectId = pidRef.current || useAppStore.getState().projectId;
       try {
         setLoadError(null);
@@ -2249,6 +2294,31 @@ export function Storyboard() {
         // ProductInput의 이탈 cleanup이 마지막 색상 PATCH를 막 시작했을 수 있다. 같은 project의
         // 저장만 기다린 뒤 생성/콘티 GET을 시작해, 빠른 브라우저 뒤로가기에서도 옛 색을 읽지 않는다.
         await waitForAnalysisEditSave(pid);
+        // 확정 CTA 는 프로젝트 신원까지만 기다리고 넘어온다 — 상품 사진 업로드·저장은 여기서
+        // 정착한다. 보드 시드가 상품 색상을 읽으므로(shapes.defaultStoryboard) 저장 전에 읽으면
+        // 빈 상품으로 시드된다. 기다리는 동안 화면은 진행률을 보여준다(아래 photoUpload 상태).
+        const photoPreparation = await resumeProductPhotoPromotionForStoryboard(pid);
+        productPhotoPromotionObserved = photoPreparation.promotionObserved;
+        productPhotoRecoveryAttempted = photoPreparation.recoveryAttempted;
+        if (!active) return;
+        // 업로드가 실패로 끝났으면 보드를 읽지 않는다 — 사진 없는 상품으로 시드된 잘못된 보드가
+        // 굳는다. 복구는 **여기서** 한다: 실패 시점은 이미 확정 뒤라 입력 화면이 봉인돼 있어
+        // (App.jsx entryDecision 'redirect' → 재진입 고집 시 start-new 가 draft 삭제)
+        // 뒤로 보내는 안내는 갈 수 없는 곳을 가리킨다. 같은 draft 로 승격을 다시 돌리고,
+        // 그래도 실패면 기존 '다시 시도' 오류 화면(loadRetry 루프)에 태운다.
+        if (getProductPhotoPromotionTask(pid)?.status === 'failed') {
+          const recovered = productPhotoRecoveryAttempted
+            ? false
+            : await retryProductPhotoPromotionFromDraft(pid);
+          if (!active) return;
+          if (!recovered) {
+            setLoadError({
+              kind: 'photoUpload',
+              message: '사진 업로드를 끝내지 못했어요. 네트워크를 확인한 뒤 다시 시도해 주세요.',
+            });
+            return;
+          }
+        }
         // 마네킹컷 생성은 콘티 로드와 병렬로 돌리되, 재료인 내 옷 승격만은 먼저 정착시킨다.
         // fail-open 결과도 resolve되므로 등록 실패가 마네킹 생성을 막지는 않는다.
         const customMatchTask = getCustomMatchPromotionTask(pid);
@@ -2273,9 +2343,13 @@ export function Storyboard() {
           toast.push('다른 곳에서 저장된 최신 콘티를 불러왔어요 — 이전에 저장 못 한 변경은 반영되지 않았어요');
         }
         if (!usePending) sbLastSaved.set(pid, board);   // 이번 로드의 서버 상태를 기준선으로 기록
-        const reuseInitialEntry = !usePending
-          && initialEntryRef.current?.projectId === pid
-          && initialEntryRef.current?.raw === entry;
+        const reuseInitialEntry = shouldReuseInitialStoryboardEntry({
+          usePending,
+          promotionObserved: productPhotoPromotionObserved,
+          initialEntry: initialEntryRef.current,
+          projectId: pid,
+          entry,
+        });
         const prepared = reuseInitialEntry
           ? initialEntryRef.current.prepared
           : prepareStoryboardEntry(entry, usePending ? pending : board);
@@ -2315,9 +2389,10 @@ export function Storyboard() {
           }
         }
       } catch (error) {
-        setLoadError(classifyStoryboardLoadError(error, STORYBOARD_NETWORK_ERROR_MESSAGE));
+        if (active) setLoadError(classifyStoryboardLoadError(error, STORYBOARD_NETWORK_ERROR_MESSAGE));
       }
     })();
+    return () => { active = false; };
   }, [loadRetry]);
   /* 보드 썸네일 선캐싱 — 트리거 ① 보드 내용이 확정/변경될 때마다(진입·컷 추가·예시 교체).
      이미 데운 URL은 모듈 캐시가 걸러내므로 재실행이 중복 요청을 만들지 않는다. */
@@ -2449,7 +2524,7 @@ export function Storyboard() {
       )}
     </div></div>
   );
-  if (!blocks || !catalogs) return <StoryboardLoadingState />;
+  if (!blocks || !catalogs) return <StoryboardLoadingState photoUpload={photoUploadProgress} />;
 
   const composeModeApplies = isDefaultStoryboardForMode(
     blocks,

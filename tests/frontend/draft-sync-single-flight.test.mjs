@@ -115,3 +115,33 @@ test('post-promotion cleanup failure reruns the latest draft on the same project
     { name: 'edited-before-retry', projectId: 'project-1' },
   ]);
 });
+
+test('F6 같은 revision 합류자도 project ready와 사진 진행률 콜백을 함께 받는다', async () => {
+  let runningOptions;
+  let finish;
+  const coordinator = createDraftSyncSingleFlight(async (_draft, options) => {
+    runningOptions = options;
+    await new Promise((resolve) => { finish = resolve; });
+    return { projectId: 'project-f6' };
+  });
+  const draft = { updatedAt: 'revision-f6', product: { name: 'knit' } };
+  const firstReady = [];
+  const joinedReady = [];
+  const joinedProgress = [];
+  const first = coordinator.sync(draft, { onProjectReady: (id) => firstReady.push(id) });
+  await Promise.resolve();
+  const joined = coordinator.sync(draft, {
+    onProjectReady: (id) => joinedReady.push(id),
+    onPhotoProgress: (progress) => joinedProgress.push(progress),
+  });
+
+  runningOptions.onProjectReady('project-f6');
+  runningOptions.onPhotoProgress({ done: 1, total: 2 });
+  finish();
+  await Promise.all([first, joined]);
+
+  assert.equal(joined, first);
+  assert.deepEqual(firstReady, ['project-f6']);
+  assert.deepEqual(joinedReady, ['project-f6']);
+  assert.deepEqual(joinedProgress, [{ done: 1, total: 2 }]);
+});

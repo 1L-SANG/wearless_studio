@@ -826,7 +826,7 @@ test('promotion happens only at confirmation and cleans the slot before flow loc
   const confirm = input.slice(input.indexOf('const goToStoryboard = async (opts) =>'), input.indexOf('const queueAnalysisPatch ='));
   assert.match(submit, /api\.analyzeProduct\(null, \{ product \}\)/);
   assert.doesNotMatch(submit, /ensureProject|createProject|uploadProductPhotos|saveProduct/);
-  assert.match(confirm, /promoteDraftToProject\(draft\)/);
+  assert.match(confirm, /promoteDraftToProject\(draft, \{/);
   assert.ok(confirm.indexOf('await draftSlot.remove()') < confirm.indexOf('confirmProductInfo(projectId)'));
   assert.ok(confirm.indexOf('confirmProductInfo(projectId)') < confirm.indexOf("navigate('/create/storyboard'"));
 });
