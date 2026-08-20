@@ -13,6 +13,7 @@ SECRETS_DIR=${OPENDID_SECRETS_DIR:-$OPENDID_ROOT/secrets}
 CONFIG_DIR=${OPENDID_CONFIG_DIR:-$OPENDID_ROOT/config}
 HOLDER_DATA_DIR=${OPENDID_HOLDER_DATA_DIR:-$OPENDID_ROOT/state/holder}
 APP_SERVICES=${OPENDID_APP_SERVICES:-opendid-tas opendid-issuer opendid-cas fm-holder}
+WRITER_PORTS="8090 8091 8094 8100 9001"
 
 die() { printf 'REFUSING: %s\n' "$*" >&2; exit 2; }
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 not found"; }
@@ -38,6 +39,26 @@ container_env_value() {
   docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$POSTGRES_CONTAINER" 2>/dev/null |
     sed -n "s/^$1=//p" | head -1
 }
+check_writers_stopped() {
+  local svc port
+  if command -v systemctl >/dev/null 2>&1; then
+    for svc in $APP_SERVICES; do
+      if systemctl is-active "$svc" >/dev/null 2>&1; then
+        die "$svc is active; stop Holder/TAS/Issuer/CAS before export"
+      fi
+    done
+    return 0
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    for port in $WRITER_PORTS; do
+      if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+        die "port $port is listening; stop Holder/TAS/Issuer/CAS before export"
+      fi
+    done
+    return 0
+  fi
+  die "systemctl or lsof not found; install lsof or run on a systemd host to verify OpenDID writers are stopped"
+}
 
 [ "$#" = 1 ] || die "usage: $0 <new-empty-output-dir>"
 OUT_INPUT=$1
@@ -51,7 +72,6 @@ OUT="$OUT_PARENT_REAL/$OUT_BASE"
 
 need docker
 need tar
-need systemctl
 mkdir -m 700 "$OUT" || die "could not create output directory: $OUT"
 [ -d "$OUT" ] && [ ! -L "$OUT" ] || die "output path is not a real directory: $OUT"
 OUT="$(cd -P "$OUT" && pwd)"
@@ -60,11 +80,7 @@ case "$OUT" in
   *) die "output escaped parent: $OUT" ;;
 esac
 
-for svc in $APP_SERVICES; do
-  if systemctl is-active "$svc" >/dev/null 2>&1; then
-    die "$svc is active; stop Holder/TAS/Issuer/CAS before export"
-  fi
-done
+check_writers_stopped
 
 besu_running=$(docker inspect -f '{{.State.Running}}' "$BESU_CONTAINER" 2>/dev/null || echo false)
 [ "$besu_running" != "true" ] || die "$BESU_CONTAINER is running; stop Besu before export"

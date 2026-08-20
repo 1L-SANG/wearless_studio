@@ -178,6 +178,7 @@ SH
 chmod +x "$fakebin/systemctl"
 
 export PATH="$fakebin:$PATH"
+host_path=$PATH
 export FAKE_LOG="$tmp/fake.log"
 export FAKE_VOLUMES="$tmp/volumes"
 export OPENDID_POSTGRES_CONTAINER="opendid-test-postgres"
@@ -248,6 +249,54 @@ besu_running_out="$tmp/besu-running-out"
 FAKE_BESU_RUNNING=true "$EXPORT" "$besu_running_out" >"$tmp/opendid-export-besu-running.out" 2>&1 \
   && bad 'export refuses running Besu' || ok 'export refuses running Besu'
 [ ! -e "$besu_running_out/postgres.dump.sql" ] && ok 'running Besu refusal creates no dump' || bad 'running Besu refusal creates no dump'
+
+cat >"$fakebin/lsof" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "lsof $*" >>"${FAKE_LOG:?}"
+port=''
+for arg in "$@"; do
+  case "$arg" in -iTCP:*) port=${arg#-iTCP:} ;; esac
+done
+[ -n "$port" ] || exit 9
+[ "${FAKE_LISTEN_PORT:-}" = "$port" ] || exit 1
+printf 'COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n'
+printf 'java 123 test 1u IPv4 0 0t0 TCP 127.0.0.1:%s (LISTEN)\n' "$port"
+SH
+chmod +x "$fakebin/lsof"
+no_systemctl_bin="$tmp/no-systemctl-bin"
+mkdir -p "$no_systemctl_bin"
+for cmd in bash basename chmod cp cut dirname find grep head mkdir mktemp pwd rm sed shasum stat tar tr; do
+  cmd_path=$(PATH=$host_path command -v "$cmd") || {
+    bad "test setup finds $cmd"
+    continue
+  }
+  ln -s "$cmd_path" "$no_systemctl_bin/$cmd"
+done
+ln -s "$fakebin/docker" "$no_systemctl_bin/docker"
+ln -s "$fakebin/lsof" "$no_systemctl_bin/lsof"
+
+legacy_out="$tmp/legacy-out"
+PATH="$no_systemctl_bin" "$EXPORT" "$legacy_out" >"$tmp/export-legacy.out" 2>&1 \
+  && ok 'legacy source export command succeeds with writer ports closed' || bad 'legacy source export command succeeds with writer ports closed'
+want_file "$legacy_out/postgres.dump.sql" 'legacy source export creates dump with writer ports closed'
+
+legacy_listening_out="$tmp/legacy-listening-out"
+FAKE_LISTEN_PORT=8094 PATH="$no_systemctl_bin" "$EXPORT" "$legacy_listening_out" >"$tmp/export-legacy-listening.out" 2>&1 \
+  && bad 'legacy source export refuses listening writer port' || ok 'legacy source export refuses listening writer port'
+[ ! -e "$legacy_listening_out/postgres.dump.sql" ] && ok 'legacy listening refusal creates no dump' || bad 'legacy listening refusal creates no dump'
+want_grep 'port 8094 is listening' "$tmp/export-legacy-listening.out" 'legacy listening refusal names writer port'
+
+no_freeze_tool_bin="$tmp/no-freeze-tool-bin"
+mkdir -p "$no_freeze_tool_bin"
+for cmd in bash basename chmod cp cut dirname find grep head mkdir mktemp pwd rm sed shasum stat tar tr; do
+  ln -s "$(PATH=$host_path command -v "$cmd")" "$no_freeze_tool_bin/$cmd"
+done
+ln -s "$fakebin/docker" "$no_freeze_tool_bin/docker"
+no_freeze_tool_out="$tmp/no-freeze-tool-out"
+PATH="$no_freeze_tool_bin" "$EXPORT" "$no_freeze_tool_out" >"$tmp/export-no-freeze-tool.out" 2>&1 \
+  && bad 'export refuses when neither systemctl nor lsof exists' || ok 'export refuses when neither systemctl nor lsof exists'
+want_grep 'systemctl or lsof not found' "$tmp/export-no-freeze-tool.out" 'missing freeze tool error is actionable'
 
 out="$tmp/out"
 export OPENDID_TEST_OUT="$out"
