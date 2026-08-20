@@ -24,15 +24,11 @@ import {
   isNeutral,
   maskAlphaFrom,
 } from '../../lib/toneRender.js';
+import { startToneEditorPolling } from './toneEditorPolling.js';
 
 //: 드래그 중 다시 칠하는 버퍼의 긴 변. 화면에 보이는 크기면 충분하고, 원본(2K 이상)을
 //  매 프레임 돌리면 슬라이더가 끊긴다. 최종 렌더만 원본 해상도로 간다.
 const PREVIEW_MAX_EDGE = 900;
-//: 마스크 전처리 폴링. 생성 직후 몇 초면 끝나므로 공격적으로 두드릴 이유가 없다.
-const POLL_MS = 4000;
-// 3분. 마스크 1회가 25~90초고, 서버는 일시 장애(SAM 혼잡)를 최대 3회까지 재시도한다 —
-// 60초(15회)로 두면 첫 재시도가 끝나기 전에 폴링이 멈춰 "준비 중"에서 얼어붙는다(2026-08-18).
-const POLL_LIMIT = 45;
 //: 중앙 스냅 폭. 0 근처는 0 으로 — "아무것도 안 한 상태"가 슬라이더에서 명확해야 한다.
 const SNAP = 1;
 
@@ -103,27 +99,17 @@ export function ToneEditor({ projectId, cutId, enabled = true, overlayRef, onApp
   // ── 상태 조회 (준비될 때까지만 폴링) ──────────────────────────────────────
   useEffect(() => {
     if (!enabled || !projectId || !cutId) return undefined;
-    let alive = true;
-    let tries = 0;
-    let timer;
-    const tick = async () => {
-      try {
-        const next = await api.getToneEditor(projectId, cutId);
-        if (!alive) return;
+    return startToneEditorPolling({
+      fetchState: () => api.getToneEditor(projectId, cutId),
+      onState: (next) => {
         setState(next);
         setApplied(false);
         // 저장된 조정값 복원. 처음이면 0/0 — 슬라이더는 항상 중앙에서 시작한다.
         setSaturation(snapSat(next?.adjustment?.saturation ?? 0));
         setExposure(snapExp(next?.adjustment?.exposure ?? 0));
-        if (next?.status === 'processing' && (tries += 1) < POLL_LIMIT) {
-          timer = setTimeout(tick, POLL_MS);
-        }
-      } catch {
-        if (alive) setState({ status: 'failed' });     // 조회 실패 = 이 컷은 조정 불가
-      }
-    };
-    tick();
-    return () => { alive = false; clearTimeout(timer); };
+      },
+      onFailed: () => setState({ status: 'failed' }),
+    });
   }, [enabled, projectId, cutId]);
 
   // ── 원본·마스크를 한 번만 디코드 ────────────────────────────────────────
