@@ -111,6 +111,7 @@ echo "  vc_schema     : $(q_issuer "SELECT id||' ok' FROM vc_schema WHERE id = :
 echo "  issue_profile : $(q_issuer "SELECT id||' ok' FROM issue_profile WHERE id = :'id';" -v "id=$IP_ID")"
 # list_vc_plan 은 tas DB(List Community). issue-profile POST 가 여기에 자동 등록한다.
 LVP=$(q_tas "SELECT count(*) FROM list_vc_plan WHERE vc_plan_id = :'vc_plan';" -v "vc_plan=$VC_PLAN" || true)
-[ "${LVP:-0}" -gt 0 ] && echo "facelicense_plan=present" || echo "facelicense_plan=missing"
+[ "${LVP:-0}" -gt 0 ] || { echo "facelicense_plan=missing"; exit 1; }
+echo "facelicense_plan=present"
 echo "완료. plan=$VC_PLAN 로 FaceLicense VC 발급 가능."
 echo "홀더: POST /holder/models/{id}/issue-vc  body={\"plan\":\"facelicense\",\"claims\":{...}}"

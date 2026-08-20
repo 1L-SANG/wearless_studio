@@ -8,6 +8,7 @@ PGUSER=${OPENDID_POSTGRES_USER:-${PG_USER:-}}
 ISSUER_DB=${OPENDID_ISSUER_DB:-issuer}
 TAS_DB=${OPENDID_TAS_DB:-tas}
 PLAN=${FL_VC_PLAN:-vcplanface0000000001}
+FRESH_MARKER=${OPENDID_FRESH_STATE_MARKER:-}
 
 [ -n "$PGUSER" ] || { echo "OPENDID_POSTGRES_USER=missing" >&2; exit 1; }
 
@@ -28,6 +29,10 @@ issuer_plan=$(num q "$ISSUER_DB" "select count(*) from public.issue_profile wher
 tas_plan=$(num q "$TAS_DB" "select count(*) from public.list_vc_plan where vc_plan_id = :'plan';" -v "plan=$PLAN")
 issuer_vcs=$(num q "$ISSUER_DB" "select count(*) from public.vc;")
 
+case "$entities:$issuer_plan:$tas_plan:$issuer_vcs" in
+  *unknown*) printf 'opendid_bootstrap=ambiguous\n'; exit 1 ;;
+esac
+
 plan=missing
 [ "$issuer_plan" != unknown ] && [ "$tas_plan" != unknown ] && [ "$issuer_plan" -gt 0 ] && [ "$tas_plan" -gt 0 ] && plan=present
 
@@ -39,27 +44,41 @@ if [ "$entities" != 0 ] || [ "$issuer_plan" != 0 ] || [ "$tas_plan" != 0 ] || [ 
   exit 0
 fi
 
+[ -n "$FRESH_MARKER" ] || { printf 'opendid_bootstrap=ambiguous\n'; exit 1; }
+[ -f "$FRESH_MARKER" ] && [ ! -L "$FRESH_MARKER" ] || { printf 'opendid_bootstrap=ambiguous\n'; exit 1; }
+mode=$(stat -f %Lp "$FRESH_MARKER" 2>/dev/null || stat -c %a "$FRESH_MARKER")
+[ "$mode" = 600 ] || { printf 'opendid_bootstrap=ambiguous\n'; exit 1; }
 [ -n "${OPENDID_PW:-}" ] || { echo "OPENDID_PW=missing" >&2; exit 1; }
 
+post_json() {
+  local label=$1 url=$2 body=$3
+  printf '%s' "$body" | curl -fsS -X POST "$url" -H 'Content-Type: application/json' --data-binary @- -o /dev/null
+  printf '%s=ok\n' "$label"
+}
+
 echo "==> 1/4 create/all (엔티티 월렛·DID 생성)"
-body=$(python3 -c 'import json,os; print(json.dumps({"password": os.environ["OPENDID_PW"]}))')
-curl -s -X POST "$ORC/create/all" -H 'Content-Type: application/json' -d "$body" -o /dev/null -w 'create_all=%{http_code}\n'
+post_json create_all "$ORC/create/all" "$(python3 -c 'import json,os; print(json.dumps({"password": os.environ["OPENDID_PW"]}))')"
 
 echo "==> 2/4 재기동 (shutdown/all → startup/all, 엔티티가 새 DID 로드)"
-curl -s "$ORC/shutdown/all" -w ' [%{http_code}]\n' >/dev/null
+curl -fsS "$ORC/shutdown/all" -o /dev/null
+echo "shutdown_all=ok"
 sleep 3
-curl -s "$ORC/startup/all" -w ' [%{http_code}]\n' >/dev/null
+curl -fsS "$ORC/startup/all" -o /dev/null
+echo "startup_all=ok"
 echo "   엔티티 기동 대기..."
 until curl -sf "$TAS/actuator/health" >/dev/null 2>&1; do sleep 4; done
 until curl -sf "http://localhost:8091/actuator/health" >/dev/null 2>&1; do sleep 4; done
 
 echo "==> 3/4 TAS DID 온체인 등록 (ta/register-simple)"
-curl -s -X POST "$TAS/tas/admin/v1/ta/register-simple" -H 'Content-Type: application/json' \
-  -d "{\"serverUrl\":\"$TAS\"}" -o /dev/null -w 'tas_register=%{http_code}\n'
+post_json tas_register "$TAS/tas/admin/v1/ta/register-simple" "{\"serverUrl\":\"$TAS\"}"
 
 echo "==> 4/4 엔티티 4개 온체인 등록 (issuer/cas/wallet/verifier)"
-curl -s -X POST "$TAS/tas/admin/v1/entities/register-simple" -H 'Content-Type: application/json' -o /dev/null -w 'entities_register=%{http_code}\n'
+post_json entities_register "$TAS/tas/admin/v1/entities/register-simple" '{}'
 
 echo "==> 검증: entities/list"
-curl -s "$TAS/tas/admin/v1/entities/list" | python3 -c "import sys,json;d=json.load(sys.stdin);c=d.get('content',[]);print('entities_registered=%d' % len(c))" 2>/dev/null || echo "entities_registered=unknown"
+curl -fsS "$TAS/tas/admin/v1/entities/list" | python3 -c "import sys,json;d=json.load(sys.stdin);c=d.get('content',[]);print('entities_registered=%d' % len(c))" 2>/dev/null || echo "entities_registered=unknown"
+python3 - "$FRESH_MARKER" <<'PY'
+import os, sys
+os.unlink(sys.argv[1])
+PY
 echo "완료. 이제 홀더 DID 앵커(anchor-did) + issue-vc 가능."

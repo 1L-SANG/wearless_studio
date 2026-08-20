@@ -33,10 +33,13 @@ holder_data="$tmp/holder-data"
 mkdir -p "$holder_data"
 chmod 700 "$tmp" "$holder_data"
 pids=''
+stopped_docker=''
 cleanup() {
   local pid
   for pid in $pids; do kill "$pid" >/dev/null 2>&1 || true; done
   wait $pids >/dev/null 2>&1 || true
+  local name
+  for name in $stopped_docker; do docker start "$name" >/dev/null 2>&1 || true; done
   if [ "$keep_tmp" = 0 ]; then
     python3 - "$tmp" <<'PY'
 import shutil, sys
@@ -90,6 +93,29 @@ psql_scalar() {
   shift 2
   printf '%s\n' "$sql" | docker exec -i "$PGC" psql -X -v ON_ERROR_STOP=1 -U "$PGUSER" -d "$db" "$@" -tA 2>/dev/null | tr -d '[:space:]'
 }
+prop_value() {
+  sed -n "s/^$2=//p" "$1" | head -1
+}
+chain_decimal() {
+  python3 - "$1" <<'PY'
+import sys
+value = sys.argv[1].strip()
+print(int(value, 16) if value.startswith("0x") else int(value))
+PY
+}
+track_stop() {
+  docker stop "$1" >/dev/null
+  stopped_docker="$stopped_docker $1"
+}
+untrack_started() {
+  local keep='' name
+  for name in $stopped_docker; do [ "$name" = "$1" ] || keep="$keep $name"; done
+  stopped_docker=$keep
+}
+track_start() {
+  docker start "$1" >/dev/null
+  untrack_started "$1"
+}
 
 contract=$(sed -n 's/^evm\.contract\.address=//p' "$CONTRACT_FILE" | head -1)
 case "$contract" in 0x????????????????????????????????????????) : ;; *) die contract_invalid ;; esac
@@ -122,7 +148,13 @@ chain_id=$(rpc eth_chainId -)
 [ -n "$chain_id" ] || die chain_id_missing
 code=$(rpc eth_getCode "[\"$contract\",\"latest\"]")
 [ "$code" != "0x" ] && [ -n "$code" ] || die contract_code_missing
-log chain checked
+rpc_chain=$(chain_decimal "$chain_id")
+for file in "$SOURCE/shells/Besu/TA/blockchain.properties" "$SOURCE/shells/Besu/Issuer/blockchain.properties" "$SOURCE/shells/Besu/blockchain.properties" "$CONTRACT_FILE"; do
+  [ -f "$file" ] || die chain_contract_mismatch
+  [ "$(chain_decimal "$(prop_value "$file" evm.chainId)")" = "$rpc_chain" ] || die chain_contract_mismatch
+  [ "$(prop_value "$file" evm.contract.address)" = "$contract" ] || die chain_contract_mismatch
+done
+log chain_contract ok
 
 issuer_plan=$(psql_scalar "$ISSUER_DB" "select count(*) from public.issue_profile where vc_plan_id = :'plan';" -v "plan=$PLAN")
 tas_plan=$(psql_scalar "$TAS_DB" "select count(*) from public.list_vc_plan where vc_plan_id = :'plan';" -v "plan=$PLAN")
@@ -245,10 +277,10 @@ log lifecycle_1 revoked
 for pid in $pids; do kill "$pid" >/dev/null 2>&1 || true; done
 wait $pids >/dev/null 2>&1 || true
 pids=''
-docker stop "$BESU" >/dev/null 2>&1 || true
-docker stop "$PGC" >/dev/null 2>&1 || true
-docker start "$PGC" >/dev/null
-docker start "$BESU" >/dev/null
+track_stop "$BESU"
+track_stop "$PGC"
+track_start "$PGC"
+track_start "$BESU"
 start_java "$SOURCE/jars/TA/did-ta-server-2.0.0.jar" "$tmp/ta.yml" 8090 tas2
 start_java "$SOURCE/jars/Issuer/did-issuer-server-2.0.0.jar" "$tmp/issuer.yml" 8091 issuer2
 start_java "$SOURCE/jars/CA/did-ca-server-2.0.0.jar" "$tmp/cas.yml" 8094 cas2

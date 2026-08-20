@@ -44,10 +44,15 @@ set -euo pipefail
 printf 'curl' >>"${FAKE_LOG:?}"
 printf ' %q' "$@" >>"$FAKE_LOG"
 printf '\n' >>"$FAKE_LOG"
+for arg in "$@"; do
+  [ "$arg" != *"${OPENDID_PW:-__unset__}"* ] || { echo 'secret reached argv' >&2; exit 7; }
+done
+body=$(cat || true)
+if [ "${FAKE_CURL_FAIL:-}" = 1 ]; then exit 22; fi
 case " $* " in
   *' /create/all '*|*'/create/all'*)
-    echo 'create/all must not be called for populated state' >&2
-    exit 8
+    [ "$body" = '{"password": "fresh-secret"}' ] || { echo 'unexpected create body' >&2; exit 6; }
+    printf '{}\n'
     ;;
   *) printf '{}\n' ;;
 esac
@@ -70,11 +75,43 @@ want_grep 'facelicense_plan=present' "$tmp/populated.out" 'populated state prove
 want_no_grep 'create/all' "$FAKE_LOG" 'populated state never calls create/all'
 want_no_grep 'omn' "$tmp/populated.out" 'default password is not printed'
 
-FAKE_ENTITIES=0 FAKE_PLAN_ISSUER=0 FAKE_PLAN_TAS=0 FAKE_VCS=0 \
+missing_secret_marker="$tmp/missing-secret.marker"
+printf 'one-shot\n' >"$missing_secret_marker"
+chmod 600 "$missing_secret_marker"
+FAKE_ENTITIES=0 FAKE_PLAN_ISSUER=0 FAKE_PLAN_TAS=0 FAKE_VCS=0 OPENDID_FRESH_STATE_MARKER="$missing_secret_marker" \
   "$SCRIPT" >"$tmp/fresh-missing-secret.out" 2>&1 \
   && bad 'fresh bootstrap requires explicit OPENDID_PW' \
   || ok 'fresh bootstrap requires explicit OPENDID_PW'
 want_grep 'OPENDID_PW=missing' "$tmp/fresh-missing-secret.out" 'missing secret reports env name only'
 want_no_grep 'omn' "$tmp/fresh-missing-secret.out" 'missing secret does not mention fallback password'
+
+FAKE_ENTITIES=0 FAKE_PLAN_ISSUER=0 FAKE_PLAN_TAS=0 FAKE_VCS=0 OPENDID_PW=fresh-secret \
+  "$SCRIPT" >"$tmp/fresh-no-marker.out" 2>&1 \
+  && bad 'empty DB without fresh marker fails closed' \
+  || ok 'empty DB without fresh marker fails closed'
+want_grep 'opendid_bootstrap=ambiguous' "$tmp/fresh-no-marker.out" 'empty DB without marker reports ambiguous'
+
+marker="$tmp/fresh.marker"
+printf 'one-shot\n' >"$marker"
+chmod 600 "$marker"
+FAKE_LOG="$tmp/fresh-ok.log" FAKE_ENTITIES=0 FAKE_PLAN_ISSUER=0 FAKE_PLAN_TAS=0 FAKE_VCS=0 \
+  OPENDID_PW=fresh-secret OPENDID_FRESH_STATE_MARKER="$marker" "$SCRIPT" >"$tmp/fresh-ok.out" 2>&1 \
+  && ok 'fresh marker bootstrap succeeds' \
+  || bad 'fresh marker bootstrap succeeds'
+want_grep 'create_all=ok' "$tmp/fresh-ok.out" 'fresh bootstrap requires successful create/all'
+want_grep 'tas_register=ok' "$tmp/fresh-ok.out" 'fresh bootstrap requires successful TAS registration'
+want_grep 'entities_register=ok' "$tmp/fresh-ok.out" 'fresh bootstrap requires successful entity registration'
+[ ! -e "$marker" ] && ok 'fresh marker is consumed after success' || bad 'fresh marker is consumed after success'
+want_no_grep 'fresh-secret' "$tmp/fresh-ok.log" 'fresh secret never reaches curl argv'
+
+marker_fail="$tmp/fresh-fail.marker"
+printf 'one-shot\n' >"$marker_fail"
+chmod 600 "$marker_fail"
+FAKE_LOG="$tmp/fresh-fail.log" FAKE_CURL_FAIL=1 FAKE_ENTITIES=0 FAKE_PLAN_ISSUER=0 FAKE_PLAN_TAS=0 FAKE_VCS=0 \
+  OPENDID_PW=fresh-secret OPENDID_FRESH_STATE_MARKER="$marker_fail" "$SCRIPT" >"$tmp/fresh-fail.out" 2>&1 \
+  && bad 'fresh bootstrap fails closed on curl failure' \
+  || ok 'fresh bootstrap fails closed on curl failure'
+[ -e "$marker_fail" ] && ok 'failed bootstrap preserves marker' || bad 'failed bootstrap preserves marker'
+want_no_grep 'fresh-secret' "$tmp/fresh-fail.log" 'failed bootstrap keeps secret out of argv'
 
 [ "$fail" -eq 0 ]

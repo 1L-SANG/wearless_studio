@@ -33,10 +33,10 @@ for arg in "$@"; do
 done
 sql=$(cat)
 case "$sql" in
+  *"list_vc_plan"*) echo "${FAKE_LVP:-1}" ;;
   *"namespace"*) echo 1 ;;
   *"vc_schema"*) echo 1 ;;
   *"issue_profile"*) echo 2 ;;
-  *"list_vc_plan"*) echo 1 ;;
   *) echo 1 ;;
 esac
 SH
@@ -68,5 +68,11 @@ fi
 want_grep 'facelicense_plan=present' "$tmp/out" 'script proves FaceLicense plan exists'
 want_no_grep "$UNSAFE_VALUE" "$FAKE_LOG" 'unsafe env value never appears in psql argv'
 want_no_grep "$UNSAFE_VALUE" "$tmp/out" 'unsafe env value is not logged'
+
+FAKE_LVP=0 "$SCRIPT" >"$tmp/missing-plan.out" 2>&1 \
+  && bad 'missing FaceLicense TAS plan exits nonzero' \
+  || ok 'missing FaceLicense TAS plan exits nonzero'
+want_grep 'facelicense_plan=missing' "$tmp/missing-plan.out" 'missing plan is reported'
+want_no_grep '발급 가능' "$tmp/missing-plan.out" 'missing plan never prints issuance-ready message'
 
 [ "$fail" -eq 0 ]

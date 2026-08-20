@@ -47,6 +47,12 @@ case "$1" in
     esac
     ;;
   start|stop)
+    printf '%s %s\n' "$1" "$2" >>"${FAKE_DOCKER_STATE_LOG:?}"
+    if [ "${FAKE_STOP_FAIL:-}" = "$2" ]; then exit 5; fi
+    if [ "$1" = start ] && [ "${FAKE_START_FAIL:-}" = "$2" ] && [ "$(cat "${FAKE_START_FAIL_ONCE:?}")" = 1 ]; then
+      printf '0\n' >"${FAKE_START_FAIL_ONCE:?}"
+      exit 6
+    fi
     exit 0
     ;;
   *) exit 9 ;;
@@ -69,7 +75,7 @@ case "$url" in
   *:8545*)
     body=$(cat)
     case "$body" in
-      *eth_chainId*) printf '{"result":"0x539"}\n' ;;
+      *eth_chainId*) printf '{"result":"%s"}\n' "${FAKE_CHAIN_ID:-0x539}" ;;
       *eth_getCode*) printf '{"result":"0x60016001"}\n' ;;
       *) printf '{"result":"ACTIVE"}\n' ;;
     esac
@@ -81,6 +87,7 @@ case "$url" in
     printf '{"status":"registered","userDid":"did:fixture:user"}\n'
     ;;
   */issue-vc)
+    printf 'ACTIVE\n' >"${FAKE_STATUS_FILE:?}"
     printf '{"vcId":"opaque-sensitive-id","status":"issued","vc":{"body":"OPAQUE_BODY_MARKER"}}\n'
     ;;
   */revoke-vc)
@@ -121,6 +128,9 @@ chmod +x "$fakebin/python3"
 
 export PATH="$fakebin:$PATH"
 export FAKE_LOG="$tmp/fake.log"
+export FAKE_DOCKER_STATE_LOG="$tmp/docker-state.log"
+export FAKE_START_FAIL_ONCE="$tmp/start-fail-once"
+printf '0\n' >"$FAKE_START_FAIL_ONCE"
 export FAKE_STATUS_FILE="$tmp/status"
 printf 'ACTIVE\n' >"$FAKE_STATUS_FILE"
 export OPENDID_LOCAL_SOURCE="$tmp/source"
@@ -138,14 +148,20 @@ export FM_HOLDER_PEPPER=pepper-secret
 export FM_WALLET_PROVIDER_PW=wallet-secret
 export FM_CAS_PROVIDER_PW=cas-secret
 mkdir -p "$OPENDID_LOCAL_SOURCE/jars/TA" "$OPENDID_LOCAL_SOURCE/jars/Issuer" "$OPENDID_LOCAL_SOURCE/jars/CA" \
-  "$OPENDID_LOCAL_SOURCE/jars/Wallet" "$OPENDID_LOCAL_SOURCE/shells/Besu"
+  "$OPENDID_LOCAL_SOURCE/jars/Wallet" "$OPENDID_LOCAL_SOURCE/shells/Besu/TA" "$OPENDID_LOCAL_SOURCE/shells/Besu/Issuer"
 touch "$OPENDID_LOCAL_SOURCE/jars/TA/did-ta-server-2.0.0.jar" \
   "$OPENDID_LOCAL_SOURCE/jars/Issuer/did-issuer-server-2.0.0.jar" \
   "$OPENDID_LOCAL_SOURCE/jars/CA/did-ca-server-2.0.0.jar" \
   "$OPENDID_LOCAL_SOURCE/jars/Wallet/wallet.wallet" \
   "$OPENDID_LOCAL_SOURCE/jars/CA/cas.wallet" \
   "$FM_HOLDER_JAR"
-printf 'evm.contract.address=0x1111111111111111111111111111111111111111\n' >"$OPENDID_BLOCKCHAIN_PROPERTIES"
+write_chain_files() {
+  printf 'evm.chainId=%s\nevm.contract.address=0x1111111111111111111111111111111111111111\n' "${1:-1337}" >"$OPENDID_BLOCKCHAIN_PROPERTIES"
+  printf 'evm.chainId=%s\nevm.contract.address=%s\n' "${2:-1337}" "${5:-0x1111111111111111111111111111111111111111}" >"$OPENDID_LOCAL_SOURCE/shells/Besu/blockchain.properties"
+  printf 'evm.chainId=%s\nevm.contract.address=0x1111111111111111111111111111111111111111\n' "${3:-1337}" >"$OPENDID_LOCAL_SOURCE/shells/Besu/TA/blockchain.properties"
+  printf 'evm.chainId=%s\nevm.contract.address=0x1111111111111111111111111111111111111111\n' "${4:-1337}" >"$OPENDID_LOCAL_SOURCE/shells/Besu/Issuer/blockchain.properties"
+}
+write_chain_files 1337 1337 1337 1337
 
 if "$SCRIPT" >"$tmp/out" 2>&1; then
   ok 'smoke script completes happy path'
@@ -155,9 +171,37 @@ else
 fi
 want_grep 'smoke_result=ok' "$tmp/out" 'smoke reports aggregate success'
 want_grep 'orchestrator=closed' "$tmp/out" 'smoke proves Orchestrator closed'
+want_grep 'chain_contract=ok' "$tmp/out" 'smoke proves matching chain and contract config'
 want_grep 'lifecycle_1=revoked' "$tmp/out" 'smoke reports first lifecycle revoked'
 want_grep 'lifecycle_2=issued' "$tmp/out" 'smoke reports second issuance after restart'
 want_no_grep 'opaque-sensitive-id|OPAQUE_BODY_MARKER|did:fixture|pepper-secret|wallet-secret|cas-secret|tas-secret|issuer-secret' "$tmp/out" 'smoke stdout redacts VC IDs, bodies, DIDs, and secrets'
 want_no_grep 'pepper-secret|wallet-secret|cas-secret|tas-secret|issuer-secret' "$FAKE_LOG" 'smoke does not pass secrets in argv'
+
+printf 'ACTIVE\n' >"$FAKE_STATUS_FILE"
+write_chain_files 1 1337 1337 1337
+"$SCRIPT" >"$tmp/chain-mismatch.out" 2>&1 \
+  && bad 'smoke fails on chain ID mismatch' \
+  || ok 'smoke fails on chain ID mismatch'
+want_grep 'smoke_error=chain_contract_mismatch' "$tmp/chain-mismatch.out" 'chain mismatch reports opaque label'
+
+printf 'ACTIVE\n' >"$FAKE_STATUS_FILE"
+write_chain_files 1337 1337 1337 1337 0x2222222222222222222222222222222222222222
+"$SCRIPT" >"$tmp/contract-mismatch.out" 2>&1 \
+  && bad 'smoke fails on contract mismatch' \
+  || ok 'smoke fails on contract mismatch'
+want_grep 'smoke_error=chain_contract_mismatch' "$tmp/contract-mismatch.out" 'contract mismatch reports opaque label'
+
+: >"$FAKE_DOCKER_STATE_LOG"
+printf '1\n' >"$FAKE_START_FAIL_ONCE"
+printf 'ACTIVE\n' >"$FAKE_STATUS_FILE"
+write_chain_files 1337 1337 1337 1337
+FAKE_START_FAIL=postgre-opendid "$SCRIPT" >"$tmp/restart-fail.out" 2>&1 \
+  && bad 'smoke fails when restart cannot restore PostgreSQL' \
+  || ok 'smoke fails when restart cannot restore PostgreSQL'
+want_grep '^stop opendid-besu-node$' "$FAKE_DOCKER_STATE_LOG" 'restart stopped Besu before injected failure'
+want_grep '^stop postgre-opendid$' "$FAKE_DOCKER_STATE_LOG" 'restart stopped PostgreSQL before injected failure'
+pg_starts=$(grep -c '^start postgre-opendid$' "$FAKE_DOCKER_STATE_LOG" || true)
+[ "$pg_starts" -ge 2 ] && ok 'cleanup restarts stopped PostgreSQL after failure' || bad 'cleanup restarts stopped PostgreSQL after failure'
+want_grep '^start opendid-besu-node$' "$FAKE_DOCKER_STATE_LOG" 'cleanup restarts stopped Besu after failure'
 
 [ "$fail" -eq 0 ]
