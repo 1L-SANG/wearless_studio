@@ -46,16 +46,29 @@ date -u --iso-8601=seconds
 Linux Server 3에서는 위 preflight를 통과한 뒤 systemd 의존 순서대로 복구한다.
 
 ```bash
+set -euo pipefail
+wait_http() {
+  local url=$1 name=$2
+  for _ in $(seq 1 60); do
+    if curl -fsS --max-time 2 "$url" >/dev/null; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "FAILED: $name readiness timed out: $url" >&2
+  return 1
+}
+
 sudo systemctl stop fm-holder opendid-cas opendid-issuer opendid-tas
 sudo systemctl restart opendid-infra
 docker inspect -f '{{.State.Health.Status}}' opendid-besu-node | grep -qx healthy
 sudo systemctl start opendid-tas
-curl -fsS http://127.0.0.1:8090/actuator/health >/dev/null
+wait_http http://127.0.0.1:8090/actuator/health TAS
 sudo systemctl start opendid-issuer opendid-cas
-curl -fsS http://127.0.0.1:8091/actuator/health >/dev/null
-curl -fsS http://127.0.0.1:8094/actuator/health >/dev/null
+wait_http http://127.0.0.1:8091/actuator/health Issuer
+wait_http http://127.0.0.1:8094/actuator/health CAS
 sudo systemctl start fm-holder
-curl -fsS http://127.0.0.1:8100/holder/health >/dev/null
+wait_http http://127.0.0.1:8100/holder/health Holder
 ```
 
 TAS보다 Issuer/CAS/Holder를 먼저 시작하거나, Besu health 실패 상태에서 발급을 재시도하지 않는다.
