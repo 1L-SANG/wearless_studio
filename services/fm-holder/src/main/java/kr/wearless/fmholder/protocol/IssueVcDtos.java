@@ -1,5 +1,6 @@
 package kr.wearless.fmholder.protocol;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.omnione.did.base.datamodel.data.AccE2e;
@@ -61,6 +62,11 @@ public final class IssueVcDtos {
 
     /** FaceLicense claim 입력. namespace kr.wearless.facelicense 의 6개 claim 에 매핑된다. */
     @JsonInclude(JsonInclude.Include.NON_NULL)
-    public record Claims(String allowedUse, String forbiddenUse, Integer unitPrice,
-                         String licenseValidUntil, String faceImageDigest, String modelName) {}
+    public record Claims(
+            @JsonAlias("allowed_use") String allowedUse,
+            @JsonAlias("forbidden_use") String forbiddenUse,
+            @JsonAlias("unit_price") Integer unitPrice,
+            @JsonAlias("license_valid_until") String licenseValidUntil,
+            @JsonAlias("face_image_digest") String faceImageDigest,
+            @JsonAlias("model_name") String modelName) {}
 }
