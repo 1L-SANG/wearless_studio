@@ -1,0 +1,34 @@
+OpenDID did-ta-server datamodel source
+
+This service vendors the approved Java source import closure under:
+
+    org/omnione/did/base/datamodel/data
+
+Source:
+    https://github.com/OmniOneID/did-ta-server
+    tag: v2.0.0
+    commit: 4bdf24d12adaf6abb46df1b713f0396426f9a054
+
+License:
+    Apache License 2.0
+
+Vendored files:
+    AccE2e.java
+    AccEcdh.java
+    AttestedAppInfo.java
+    AttestedDidDoc.java
+    Candidate.java
+    DidAuth.java
+    E2e.java
+    EcdhReqData.java
+    Proof.java
+    Provider.java
+    ReqRevokeVc.java
+    ServerTokenSeed.java
+    SignedDidDoc.java
+    SignedWalletInfo.java
+    Wallet.java
+
+This is the exact Task 1 import closure. The remaining top-level data DTOs and
+the ZKP subpackage are intentionally excluded because they require unused ZKP
+SDK types outside the single-server holder deployment path.
