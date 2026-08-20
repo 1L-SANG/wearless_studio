@@ -776,7 +776,11 @@ export function ProductInput() {
         // 사진 원본이라, 먼저 지우면 재시도할 재료가 없어진다.
         void promotion.promise
           .then(async () => {
-            if (await clearDraftIfCurrent(promotedDraftRevision)) resetDraftSyncSingleFlight();
+            // 두 정리는 관심사가 다르다. draft 삭제는 "그 사이 새 입력이 없을 때만"이지만,
+            // single-flight 신원 정리는 이 승격이 끝나면 언제나 해야 한다 — 조건을 묶어 두면
+            // 새 입력이 생긴 경우에 앞 projectId 가 남아 다음 상품이 거기에 덮어써진다.
+            await clearDraftIfCurrent(promotedDraftRevision);
+            resetDraftSyncSingleFlight();
           })
           .catch(() => {});
         return;
