@@ -3319,7 +3319,3 @@
 /* 콘티보드 도착 후 남은 사진 업로드 진행률 — 확정 CTA 가 업로드를 기다리지 않게 되면서
    (2026-08-18) 그 대기가 이 화면으로 옮겨왔다. 얼마나 남았는지 보이지 않으면 멈춘 것처럼 읽힌다. */
 .sb-upload-progress { max-width: 260px; margin: 0 auto; padding: 96px 0 0; text-align: center; }
-.sb-upload-progress-text { margin: 0 0 10px; font-size: 13px; color: var(--fg-2); }
-.sb-upload-progress-track { height: 4px; border-radius: 999px; background: var(--ring); overflow: hidden; }
-.sb-upload-progress-bar { height: 100%; border-radius: 999px; background: var(--link);
-  transition: width .3s ease; }

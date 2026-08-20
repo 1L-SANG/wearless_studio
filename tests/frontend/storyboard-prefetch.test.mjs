@@ -41,7 +41,7 @@ test('repeated mannequin warm-ups share one project request', async () => {
   // analysisProjectId 만으로 미저장 상태를 캐시해 버린다).
   assert.match(
     productInputSource,
-    /if \(!analysisProjectId \|\| phase !== 'done'\) return;[\s\S]*?storyboardPrefetchProjectRef\.current === analysisProjectId[\s\S]*?prefetchStoryboardEntry\(analysisProjectId\)/,
+    /if \(!analysisProjectId \|\| phase !== 'done'\) return;[\s\S]*?storyboardPrefetchProjectRef\.current === analysisProjectId[\s\S]*?prefetchStoryboardAfterProductPhotos\(analysisProjectId/,
   );
   assert.match(productInputSource, /\}, \[analysisProjectId, phase\]\);/);
   assert.doesNotMatch(mannequinSource, /warmStoryboardEntry/);

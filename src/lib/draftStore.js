@@ -189,6 +189,23 @@ export async function clearDraft() {
   sessionStorage.removeItem(PENDING_KEY);
 }
 
+/** 오래 걸린 승격이 끝나는 사이 새 draft가 저장됐으면 그 새 작업은 지우지 않는다. */
+export async function clearDraftIfCurrent(expectedUpdatedAt, {
+  load = loadDraft,
+  clear = clearDraft,
+  getPending = () => pendingSnapshot,
+  waitForSaves = () => saveChain.catch(() => null),
+} = {}) {
+  if (!expectedUpdatedAt) return false;
+  const pending = getPending();
+  if (pending?.updatedAt && pending.updatedAt !== expectedUpdatedAt) return false;
+  await waitForSaves();
+  const current = await load();
+  if (current?.updatedAt !== expectedUpdatedAt) return false;
+  await clear();
+  return true;
+}
+
 /** 이 탭 세션에 미동기화 draft 가 있는지 — 복원 게이팅용. */
 export function hasPendingDraft() {
   return sessionStorage.getItem(PENDING_KEY) === '1';

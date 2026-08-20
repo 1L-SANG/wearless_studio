@@ -1,4 +1,5 @@
 import { matchingIdsForColor } from './colorwayMatching.js';
+import { createPromotionTaskRegistry } from './promotionTaskRegistry.js';
 
 /* =============================================================
    customMatchPromotion — draft(비프로젝트) 단계에서 추가한 "내 옷"을
@@ -60,8 +61,7 @@ export async function promoteCustomMatch(api, projectId, customDraft) {
 // 같은 SPA 안에서 입력 화면이 시작한 승격 프라미스를 콘티보드가 직접 구독한다.
 // 서버 폴링을 새로 만들지 않고, 완료된 task 도 현재 세션 동안 남겨 콘티가 조금 늦게
 // 마운트되어도 성공/실패 결과를 놓치지 않게 한다.
-const promotionTasks = new Map();
-const MAX_TRACKED_PROMOTIONS = 8;
+const promotionTasks = createPromotionTaskRegistry();
 
 /* 실패 알림은 어느 화면이 떠 있든 한 번은 전달돼야 한다. 콘티보드 안에서만 구독하면
    셀러가 곧바로 생성·에디터로 넘어갔을 때 "등록 실패"가 조용히 사라진다(리뷰 지적). */
@@ -92,25 +92,26 @@ export function startCustomMatchPromotion(api, projectId, customDraft, { onSettl
     .then((result) => {
       task.status = 'settled';
       task.result = result;
+      promotionTasks.notify(projectId);
       if (result?.attempted && !result.promoted) notifyFailure(projectId);
       return result;
     }, (error) => {
       task.status = 'settled';
       task.error = error;
+      promotionTasks.notify(projectId);
       notifyFailure(projectId);
       throw error;
     });
   promotionTasks.set(projectId, task);
-  // 세션 안에서 프로젝트를 여러 개 만들어도 Map 이 무한정 커지지 않게 오래된 것부터 버린다.
-  if (promotionTasks.size > MAX_TRACKED_PROMOTIONS) {
-    const oldest = promotionTasks.keys().next().value;
-    if (oldest !== projectId) promotionTasks.delete(oldest);
-  }
   return task;
 }
 
 export function getCustomMatchPromotionTask(projectId) {
-  return projectId ? promotionTasks.get(projectId) ?? null : null;
+  return projectId ? promotionTasks.get(projectId) : null;
+}
+
+export function subscribeCustomMatchPromotion(projectId, listener) {
+  return promotionTasks.subscribe(projectId, listener);
 }
 
 // 테스트와 새 프로젝트 경계에서만 쓰는 명시적 정리 함수. 진행 중 요청을 취소하지는 않는다.

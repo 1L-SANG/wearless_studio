@@ -1,4 +1,9 @@
 import { createStoryboardEntryPrefetchCache } from './storyboardEntryPrefetchCache.js';
+import {
+  getProductPhotoPromotionTask,
+  NEW_PROJECT_KEY,
+  productPhotosReady,
+} from '../../lib/productPhotoPromotion.js';
 
 // api 를 모듈 top-level 에서 정적 import 하지 않는다 — lib/api/index.js 는 mock/http 두
 // 어댑터를 모두 물어 `@/` 별칭 경로로 끌어오는데, 이 파일은 (invalidate 등 캐시 조작
@@ -28,3 +33,21 @@ export const prefetchStoryboardEntry = (projectId, waitForIdle) => (
 export const peekStoryboardEntry = (projectId) => storyboardEntryCache.peek(projectId);
 export const consumeStoryboardEntry = (projectId) => storyboardEntryCache.consume(projectId);
 export const invalidateStoryboardEntryPrefetch = (projectId) => storyboardEntryCache.invalidate(projectId);
+
+export async function prefetchStoryboardAfterProductPhotos(projectId, {
+  getTask = getProductPhotoPromotionTask,
+  ready = productPhotosReady,
+  prefetch = prefetchStoryboardEntry,
+  isActive = () => true,
+} = {}) {
+  if (!projectId || !isActive()) return null;
+  const pending = [getTask(NEW_PROJECT_KEY), getTask(projectId)]
+    .find((task) => task?.status === 'pending');
+  if (pending) {
+    try { await pending.promise; } catch { return null; }
+  }
+  if (!isActive()) return null;
+  try { await ready(projectId); } catch { return null; }
+  if (!isActive() || getTask(projectId)?.status === 'failed') return null;
+  return prefetch(projectId);
+}

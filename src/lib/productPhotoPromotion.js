@@ -10,8 +10,7 @@
 
    완료된 task 도 세션 동안 남긴다. 콘티보드가 조금 늦게 마운트돼도 결과를 놓치지 않는다. */
 
-const tasks = new Map();
-const MAX_TRACKED = 8;
+import { createPromotionTaskRegistry } from './promotionTaskRegistry.js';
 
 const snapshot = (task) => ({
   status: task.status,
@@ -20,25 +19,64 @@ const snapshot = (task) => ({
   error: task.error || null,
 });
 
+const registry = createPromotionTaskRegistry({ snapshot });
+const failureListeners = new Set();
+
+function notifyFailure(task) {
+  if (!task || task.failureNotified || !failureListeners.size) return;
+  task.failureNotified = true;
+  for (const listener of failureListeners) {
+    try { listener(task.projectId, task.error); } catch { /* 다른 실패 리스너까지 계속 알린다 */ }
+  }
+}
+
+function recoverAfterFailure(task) {
+  if (!task || task.recoveryStarted) return;
+  task.recoveryStarted = true;
+  const recover = task.recoverDraftSlot ?? (async (snapshot) => {
+    const { draftSlot } = await import('./draftSlot.js');
+    draftSlot.resume();
+    if (snapshot) draftSlot.queue(snapshot);
+  });
+  void Promise.resolve().then(() => recover(task.draftSlotSnapshot)).catch(() => {});
+}
+
+export function onProductPhotoPromotionFailure(listener) {
+  failureListeners.add(listener);
+  for (const task of registry.values()) {
+    if (task.status === 'failed') notifyFailure(task);
+  }
+  return () => failureListeners.delete(listener);
+}
+
 function notify(task) {
   const state = snapshot(task);
   for (const listener of task.listeners) {
     try { listener(state); } catch { /* 구독자 오류가 다른 구독자를 막지 않는다 */ }
   }
+  registry.notify(task.projectId);
 }
 
 /** 승격 시작 — `run({ onPhotoProgress })` 이 실제 업로드·저장을 수행한다.
  *  같은 프로젝트로 두 번 부르면 진행 중 task 를 그대로 돌려준다(중복 업로드 방지). */
-export function startProductPhotoPromotion(projectId, total, run) {
+export function startProductPhotoPromotion(projectId, run, {
+  recoverDraftSlot = null,
+  draftSlotSnapshot = null,
+} = {}) {
   if (!projectId) return null;
-  const current = tasks.get(projectId);
+  const current = registry.get(projectId);
   if (current?.status === 'pending') return current;
 
   const task = {
+    projectId,
     status: 'pending',
-    total: Number.isFinite(total) ? Math.max(0, total) : 0,
+    total: 0,
     done: 0,
     error: null,
+    failureNotified: false,
+    recoveryStarted: false,
+    recoverDraftSlot,
+    draftSlotSnapshot,
     listeners: new Set(),
     promise: null,
   };
@@ -56,51 +94,94 @@ export function startProductPhotoPromotion(projectId, total, run) {
       },
     }))
     .then((result) => {
+      if (task.status !== 'pending') return result;
       task.status = 'settled';
       task.done = task.total;
       notify(task);
       return result;
     }, (error) => {
+      if (task.status !== 'pending') throw error;
       task.status = 'failed';
       task.error = error;
       notify(task);
+      recoverAfterFailure(task);
+      notifyFailure(task);
       throw error;
     });
 
-  tasks.set(projectId, task);
-  if (tasks.size > MAX_TRACKED) {
-    const oldest = tasks.keys().next().value;
-    if (oldest !== projectId) tasks.delete(oldest);
-  }
+  registry.set(projectId, task);
   return task;
 }
 
 /** 프로젝트 id 는 승격 도중에 생긴다. 그 전까지 임시 키로 담아 둔 task 를 실제 id 로 옮긴다. */
 export function adoptProductPhotoPromotion(temporaryKey, projectId) {
   if (!temporaryKey || !projectId || temporaryKey === projectId) return null;
-  const task = tasks.get(temporaryKey);
-  if (!task) return null;
-  tasks.delete(temporaryKey);
-  tasks.set(projectId, task);
-  return task;
+  const task = registry.get(temporaryKey);
+  if (task) task.projectId = projectId;
+  return registry.move(temporaryKey, projectId);
 }
 
 //: 아직 projectId 가 없는 동안 쓰는 임시 키.
 export const NEW_PROJECT_KEY = '__pending_project__';
 
 export function getProductPhotoPromotionTask(projectId) {
-  return projectId ? tasks.get(projectId) ?? null : null;
+  return projectId ? registry.get(projectId) : null;
+}
+
+export function subscribeProductPhotoPromotion(projectId, listener) {
+  return registry.subscribe(projectId, listener);
 }
 
 /** 콘티보드가 기다릴 프라미스. 없으면(이미 끝난 세션·복원 진입) 즉시 통과한다 —
  *  사진은 그때 이미 서버에 있으므로 여기서 막을 이유가 없다. */
-export function productPhotosReady(projectId) {
+export function productPhotosReady(projectId, {
+  stallMs = 90_000,
+  setTimer = setTimeout,
+  clearTimer = clearTimeout,
+} = {}) {
   const task = getProductPhotoPromotionTask(projectId);
-  return task ? task.promise : Promise.resolve(null);
+  if (!task) return Promise.resolve(null);
+  if (task.status === 'failed') return Promise.reject(task.error);
+  if (task.status === 'settled') return task.promise;
+
+  return new Promise((resolve, reject) => {
+    let timer = null;
+    let finished = false;
+    let unsubscribe = () => {};
+    const finish = (callback, value) => {
+      if (finished) return;
+      finished = true;
+      clearTimer(timer);
+      unsubscribe();
+      callback(value);
+    };
+    const armWatchdog = () => {
+      clearTimer(timer);
+      timer = setTimer(() => {
+        if (getProductPhotoPromotionTask(projectId) !== task || task.status !== 'pending') return;
+        const error = new Error('상품 사진 업로드 진행이 멈췄습니다.');
+        error.code = 'product_photo_promotion_stalled';
+        task.status = 'failed';
+        task.error = error;
+        notify(task);
+        recoverAfterFailure(task);
+        notifyFailure(task);
+        finish(reject, error);
+      }, stallMs);
+    };
+    unsubscribe = subscribeProductPhotoPromotion(projectId, (state) => {
+      if (state?.status === 'pending') armWatchdog();
+      else if (state?.status === 'failed') finish(reject, state.error);
+    });
+    task.promise.then(
+      (value) => finish(resolve, value),
+      (error) => finish(reject, error),
+    );
+  });
 }
 
 export function clearProductPhotoPromotionTask(projectId) {
-  if (projectId) tasks.delete(projectId);
+  if (projectId) registry.delete(projectId);
 }
 
 /* 업로드가 실패로 끝난 뒤의 **제자리 재시도** — 콘티보드에서 부른다.
@@ -130,7 +211,7 @@ export async function retryProductPhotoPromotionFromDraft(projectId, io = {}) {
 
   clearProductPhotoPromotionTask(projectId);
   resetRetry(projectId);   // 단일비행의 실패 결과를 지우고 같은 projectId 로 합류시킨다
-  const task = startProductPhotoPromotion(projectId, (draft.photos || []).length,
+  const task = startProductPhotoPromotion(projectId,
     ({ onPhotoProgress }) => promote(draft, { projectId, onPhotoProgress }));
   try {
     await task.promise;
@@ -140,4 +221,31 @@ export async function retryProductPhotoPromotionFromDraft(projectId, io = {}) {
   // 성공 — CTA 성공 경로와 같은 정리(업로드 원본을 더 들고 있을 이유가 없다).
   void Promise.resolve().then(finishDraft).catch(() => {});
   return true;
+}
+
+/** 새로고침으로 메모리 task 만 사라진 경우 localStorage 세션과 IndexedDB draft 로 재개한다. */
+export async function resumeProductPhotoPromotionForStoryboard(projectId, io = {}) {
+  if (!projectId) return { promotionObserved: false, recoveryAttempted: false, recovered: false };
+  const current = getProductPhotoPromotionTask(projectId);
+  if (current) {
+    await productPhotosReady(projectId, io).catch(() => null);
+    return { promotionObserved: true, recoveryAttempted: false, recovered: current.status === 'settled' };
+  }
+
+  const readSession = io.readSession
+    ?? (() => import('./draftPromotionSession.js').then(({ draftPromotionSession }) => draftPromotionSession.read()));
+  const session = await Promise.resolve().then(readSession).catch(() => ({}));
+  if (session?.projectId !== projectId) {
+    return { promotionObserved: false, recoveryAttempted: false, recovered: false };
+  }
+
+  const load = io.loadDraft ?? (await import('./draftStore.js')).loadDraft;
+  const draft = await Promise.resolve().then(load).catch(() => null);
+  if (!draft?.product || !(draft.photos || []).length) {
+    return { promotionObserved: false, recoveryAttempted: false, recovered: false };
+  }
+
+  const retry = io.retry ?? retryProductPhotoPromotionFromDraft;
+  const recovered = await retry(projectId);
+  return { promotionObserved: true, recoveryAttempted: true, recovered };
 }

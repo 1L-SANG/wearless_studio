@@ -82,7 +82,7 @@ test('the input CTA proceeds without a generation-start acknowledgement modal', 
   assert.match(gate, /if \(!guardMannequinCredits\(\)\) return;/);
   assert.match(gate, /inputConsistency && !consistencyAck && !force/);
   assert.match(gate, /promoteDraftToProject\(draft, \{[\s\S]*?confirmProductInfo\(projectId\)/);
-  assert.match(gate, /showMannequinTransition: true/);
+  assert.match(gate, /state: storyboardTransitionState\(draft\)/);
 });
 
 test('all color mutations share the debounced existing analysis-save queue', () => {
