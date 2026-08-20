@@ -5,6 +5,10 @@ export function createDraftSyncSingleFlight(runSync) {
   let resultRevision = null;
   let projectId = null;
   let flightCallbacks = null;
+  // 기억한 project 신원의 세대. '새 제작'이 올리면 이전 세대의 flight 는 계속 돌되(업로드를
+  // 끊으면 그 사진이 유실된다) 그 완료가 신원을 다시 등록하지 못한다 — 다음 상품이 앞
+  // 프로젝트에 덮어쓰던 사고를 막는다.
+  let identityEpoch = 0;
 
   const revisionOf = (draft) => draft?.updatedAt || null;
 
@@ -23,9 +27,11 @@ export function createDraftSyncSingleFlight(runSync) {
     return entry;
   };
 
-  const notifyProjectReady = (nextProjectId, callbacks) => {
+  const notifyProjectReady = (nextProjectId, callbacks, epoch = identityEpoch) => {
     if (!nextProjectId) return;
-    projectId = nextProjectId;
+    // 신원 승계는 같은 세대에서만. 구독자 통지는 세대와 무관하다 — 그 flight 를 기다리던
+    // 화면은 '새 제작'과 상관없이 자기 프로젝트를 계속 봐야 한다.
+    if (epoch === identityEpoch) projectId = nextProjectId;
     for (const entry of callbacks) {
       if (entry.projectReadyNotified || !entry.onProjectReady) continue;
       entry.projectReadyNotified = true;
@@ -46,6 +52,7 @@ export function createDraftSyncSingleFlight(runSync) {
     result = null;
     resultRevision = null;
     inFlightRevision = revision;
+    const epoch = identityEpoch;
     const callbacks = new Set();
     flightCallbacks = callbacks;
     registerCallbacks(options, callbacks);
@@ -59,16 +66,19 @@ export function createDraftSyncSingleFlight(runSync) {
       .then(() => runSync(draft, {
         ...runOptions,
         projectId: options.projectId ?? projectId ?? undefined,
-        onProjectReady: (id) => notifyProjectReady(id, callbacks),
+        onProjectReady: (id) => notifyProjectReady(id, callbacks, epoch),
         onPhotoProgress: (progress) => notifyPhotoProgress(progress, callbacks),
       }))
       .then((value) => {
-        notifyProjectReady(value.projectId, callbacks);
-        result = value;
-        resultRevision = revision;
+        notifyProjectReady(value.projectId, callbacks, epoch);
+        // 세대가 끊긴 flight 의 결과는 캐시하지 않는다 — 다음 상품이 재사용하면 안 된다.
+        if (epoch === identityEpoch) {
+          result = value;
+          resultRevision = revision;
+        }
         return value;
       }, (error) => {
-        if (error?.projectId) notifyProjectReady(error.projectId, callbacks);
+        if (error?.projectId) notifyProjectReady(error.projectId, callbacks, epoch);
         throw error;
       })
       .finally(() => {
@@ -113,6 +123,15 @@ export function createDraftSyncSingleFlight(runSync) {
       resultRevision = null;
       projectId = null;
       return true;
+    },
+    /** '새 제작' 진입 — 도는 업로드는 그대로 두고 project 신원만 끊는다. reset 과 달리
+        in-flight 여도 반드시 끊어야 한다: 다음 상품이 앞 프로젝트에 덮어쓰는 걸 막는 게
+        목적이고, 그 상황이 바로 앞 승격이 아직 도는 중인 경우다. */
+    forgetProject() {
+      identityEpoch += 1;
+      result = null;
+      resultRevision = null;
+      projectId = null;
     },
     retryFrom(existingProjectId) {
       if (inFlight) return false;

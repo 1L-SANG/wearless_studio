@@ -128,6 +128,13 @@ export function promoteDraftToProject(draft, options) {
   return draftSyncFlight.sync(draft, options);
 }
 
+/** '새 제작' 진입 전용 — 도는 업로드는 살려 두고(사진 유실 방지) 기억한 project 신원만 끊는다.
+    reset 은 in-flight 면 아무것도 안 하므로 이 경우를 못 막는다. */
+export function forgetDraftSyncProject() {
+  draftSyncFlight.forgetProject();
+  draftPromotionSession.clear();
+}
+
 export function resetDraftSyncSingleFlight() {
   const reset = draftSyncFlight.reset();
   if (reset) draftPromotionSession.clear();

@@ -15,6 +15,7 @@ import { api } from '@/lib/api/index.js';
 import { resetAnalysisCache } from '@/lib/api/httpAdapter.js';
 import { clearDraft } from '@/lib/draftStore.js';
 import { clearDraftPromotionSession } from '@/lib/draftPromotionSession.js';
+import { forgetDraftSyncProject } from '@/lib/draftSync.js';
 import { clearFlowSession, markProductInfoConfirmed, readFlowSession } from '@/lib/flowSession.js';
 import { clearDetailPageJobMarker, loadDetailPageJobMarker, saveDetailPageJobMarker } from '@/lib/detailPageJobPersistence.js';
 import {
@@ -243,6 +244,10 @@ export const useAppStore = create((set, get) => ({
     resetAnalysisCache();           // 이전 프로젝트의 analysis/매칭 캐시 해제 (F1)
     clearFlowSession();
     clearDraftPromotionSession();
+    // 메모리 안의 single-flight 도 같이 끊는다 — 세션(localStorage)만 지우면 이전 승격이
+    // 기억한 projectId 가 남아, 앞 상품 업로드가 도는 중에 새로 만든 상품이 그 프로젝트에
+    // 덮어써진다.
+    forgetDraftSyncProject();
     await clearDraft().catch(() => {});
     // 게스트 구간(projectId 없음)의 상품·분석 저장소는 http 모드에서도 mock 어댑터다 —
     // 비우지 않으면 직전 제작의 분석·colors 가 다음 분석 응답에 섞여 나와 새로 올린 사진을
