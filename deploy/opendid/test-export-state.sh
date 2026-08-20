@@ -17,6 +17,8 @@ bad() { printf 'FAIL %s\n' "$1"; fail=$((fail + 1)); }
 want_file() { [ -f "$1" ] && ok "$2" || bad "$2"; }
 want_grep() { grep -Eq "$1" "$2" && ok "$3" || bad "$3"; }
 want_no_grep() { ! grep -Eq "$1" "$2" && ok "$3" || bad "$3"; }
+want_tar_has() { tar -tf "$1" | grep -Eq "$2" && ok "$3" || bad "$3"; }
+want_tar_lacks() { ! tar -tf "$1" | grep -Eq "$2" && ok "$3" || bad "$3"; }
 want_mode_600() {
   mode=$(stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1")
   [ "$mode" = "600" ] && ok "$2" || bad "$2 (got $mode)"
@@ -38,7 +40,7 @@ case "$1" in
         exit 0
       fi
       case "$4" in
-        "$OPENDID_BESU_CONTAINER") echo false ;;
+        "$OPENDID_BESU_CONTAINER") echo "${FAKE_BESU_RUNNING:-false}" ;;
         "$OPENDID_POSTGRES_CONTAINER") echo true ;;
         *) echo false ;;
       esac
@@ -58,15 +60,22 @@ case "$1" in
     fi
     if [ "$3" = "$OPENDID_POSTGRES_CONTAINER" ] && [ "$4" = "psql" ]; then
       sql="${*: -1}"
+      db='postgres'
+      prev=''
+      for arg in "$@"; do
+        if [ "$prev" = "-d" ]; then db="$arg"; fi
+        prev="$arg"
+      done
       case "$sql" in
         *"current_setting('server_version'"*) echo '16.4' ;;
-        *"pg_database_size"*) echo 'opendid_tas|1000|1' ;;
-        *"information_schema.tables"*) echo '2' ;;
-        *"facelicense"*"schema"*) echo '3' ;;
-        *"plan"*) echo '4' ;;
-        *"entity"*) echo '5' ;;
-        *"issuer"*) echo '1' ;;
-        *"cas"*) echo '1' ;;
+        *"from pg_database"*) echo 'opendid_tas|1000'; echo 'opendid_issuer|2000' ;;
+        *"information_schema.tables"*"table_schema='public'"*) echo '2' ;;
+        *"count(*) from public.namespace where namespace_id='kr.wearless.facelicense'"*) [ "$db" = "opendid_issuer" ] && echo '7' || exit 1 ;;
+        *"count(*) from public.vc_schema where vc_schema_id='facelicense'"*) [ "$db" = "opendid_issuer" ] && echo '8' || exit 1 ;;
+        *"count(*) from public.issue_profile where vc_plan_id='vcplanface0000000001'"*) [ "$db" = "opendid_issuer" ] && echo '4' || exit 1 ;;
+        *"count(*) from public.list_vc_plan where vc_plan_id='vcplanface0000000001'"*) [ "$db" = "opendid_tas" ] && echo '5' || exit 1 ;;
+        *"count(*) from public.entity"*) [ "$db" = "opendid_tas" ] && echo '10' || exit 1 ;;
+        *"count(*) from public.issuer"*) [ "$db" = "opendid_issuer" ] && echo '11' || exit 1 ;;
         *) echo '0' ;;
       esac
       exit 0
@@ -96,6 +105,7 @@ cat >"$fakebin/systemctl" <<'SH'
 set -euo pipefail
 printf '%s\n' "systemctl $*" >>"${FAKE_LOG:?}"
 [ "$1" = "is-active" ] || exit 9
+[ "${FAKE_ACTIVE_SERVICE:-}" = "$2" ] && exit 0
 exit 3
 SH
 chmod +x "$fakebin/systemctl"
@@ -117,8 +127,23 @@ printf 'besu source\n' >"$FAKE_VOLUMES/$OPENDID_BESU_VOLUME/block"
 printf 'wallet-secret\n' >"$OPENDID_SECRETS_DIR/TA/tas.wallet"
 printf 'did-secret\n' >"$OPENDID_SECRETS_DIR/Issuer/issuer.did"
 printf 'chain-secret\n' >"$OPENDID_SECRETS_DIR/CA/blockchain.properties"
+printf 'besu-secret\n' >"$OPENDID_SECRETS_DIR/CA/besu.dat"
+printf 'unrelated-secret\n' >"$OPENDID_SECRETS_DIR/CA/unrelated.txt"
 printf 'config-secret\n' >"$OPENDID_CONFIG_DIR/ta.yml"
 before_hash=$(find "$FAKE_VOLUMES" "$OPENDID_ROOT" -type f -exec shasum -a 256 {} + | sort)
+
+symlink_target="$tmp/symlink-target"
+mkdir -p "$symlink_target"
+printf 'keep me\n' >"$symlink_target/existing"
+ln -s "$symlink_target" "$tmp/symlink-out"
+before_symlink_hash=$(find "$symlink_target" -type f -exec shasum -a 256 {} + | sort)
+if "$EXPORT" "$tmp/symlink-out" >/tmp/opendid-export-symlink.out 2>&1; then
+  bad 'export refuses symlink output path'
+else
+  ok 'export refuses symlink output path'
+fi
+after_symlink_hash=$(find "$symlink_target" -type f -exec shasum -a 256 {} + | sort)
+[ "$before_symlink_hash" = "$after_symlink_hash" ] && ok 'symlink target unchanged' || bad 'symlink target unchanged'
 
 nonempty="$tmp/nonempty"
 mkdir -p "$nonempty"
@@ -134,12 +159,22 @@ else
   bad 'overwrite refusal happens before docker/systemctl'
 fi
 
+active_out="$tmp/active-out"
+FAKE_ACTIVE_SERVICE=opendid-tas "$EXPORT" "$active_out" >/tmp/opendid-export-active.out 2>&1 \
+  && bad 'export refuses active systemd service' || ok 'export refuses active systemd service'
+[ ! -e "$active_out/postgres.dump.sql" ] && ok 'active service refusal creates no dump' || bad 'active service refusal creates no dump'
+
+besu_running_out="$tmp/besu-running-out"
+FAKE_BESU_RUNNING=true "$EXPORT" "$besu_running_out" >/tmp/opendid-export-besu-running.out 2>&1 \
+  && bad 'export refuses running Besu' || ok 'export refuses running Besu'
+[ ! -e "$besu_running_out/postgres.dump.sql" ] && ok 'running Besu refusal creates no dump' || bad 'running Besu refusal creates no dump'
+
 out="$tmp/out"
 export OPENDID_TEST_OUT="$out"
 "$EXPORT" "$out" >"$tmp/export.out"
 want_file "$out/postgres.dump.sql" 'pg_dumpall file created'
 want_file "$out/besu-data.tar" 'Besu archive created'
-want_file "$out/opendid-files.tar" 'wallet DID config archive created'
+want_file "$out/opendid-files.tar" 'wallet DID blockchain archive created'
 want_file "$out/SHA256SUMS" 'checksum manifest created'
 want_grep '^holder_data=missing$' "$out/EXPORT-MANIFEST.txt" 'holder missing recorded'
 want_grep 'postgres.dump.sql$' "$out/SHA256SUMS" 'dump checksum recorded'
@@ -147,12 +182,23 @@ want_grep 'besu-data.tar$' "$out/SHA256SUMS" 'Besu checksum recorded'
 want_mode_600 "$out/postgres.dump.sql" 'dump permission is 0600'
 want_mode_600 "$out/besu-data.tar" 'Besu archive permission is 0600'
 want_mode_600 "$out/opendid-files.tar" 'files archive permission is 0600'
+want_tar_has "$out/opendid-files.tar" '(^|/)tas\.wallet$' 'wallet included in file archive'
+want_tar_has "$out/opendid-files.tar" '(^|/)issuer\.did$' 'DID included in file archive'
+want_tar_has "$out/opendid-files.tar" '(^|/)blockchain\.properties$' 'blockchain properties included in file archive'
+want_tar_has "$out/opendid-files.tar" '(^|/)besu\.dat$' 'besu.dat included in file archive'
+want_tar_lacks "$out/opendid-files.tar" '(^|/)ta\.yml$|(^|/)unrelated\.txt$' 'unrelated config/secret excluded from file archive'
 want_no_grep 'wallet-secret|did-secret|chain-secret|config-secret' "$tmp/export.out" 'export does not print secrets'
 after_hash=$(find "$FAKE_VOLUMES" "$OPENDID_ROOT" -type f -exec shasum -a 256 {} + | sort)
 [ "$before_hash" = "$after_hash" ] && ok 'source files unchanged' || bad 'source files unchanged'
 
 "$INVENTORY" >"$tmp/inventory.out"
 want_grep 'postgres_container=present' "$tmp/inventory.out" 'inventory reports postgres presence'
+want_grep 'facelicense_namespace_rows=7' "$tmp/inventory.out" 'inventory counts FaceLicense namespace rows'
+want_grep 'facelicense_schema_rows=8' "$tmp/inventory.out" 'inventory counts FaceLicense schema rows'
+want_grep 'facelicense_plan_rows=9' "$tmp/inventory.out" 'inventory counts FaceLicense plan rows'
+want_grep 'entity_rows=10' "$tmp/inventory.out" 'inventory counts entity rows'
+want_grep 'issuer_rows=11' "$tmp/inventory.out" 'inventory counts issuer rows'
+want_grep 'cas_rows=0' "$tmp/inventory.out" 'inventory reports absent CAS rows as 0'
 want_grep 'holder_data=missing' "$tmp/inventory.out" 'inventory reports missing holder data'
 want_no_grep 'wallet-secret|did-secret|chain-secret|config-secret' "$tmp/inventory.out" 'inventory does not print secrets'
 

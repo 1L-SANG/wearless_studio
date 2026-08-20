@@ -9,8 +9,6 @@ POSTGRES_VOLUME_FALLBACKS=${OPENDID_POSTGRES_VOLUME_FALLBACKS:-postgre_postgre_o
 BESU_VOLUME_FALLBACKS=${OPENDID_BESU_VOLUME_FALLBACKS:-besu_besu_opendid_data}
 POSTGRES_USER=${OPENDID_POSTGRES_USER:-${OPENDID_DB_USER:-postgres}}
 OPENDID_ROOT=${OPENDID_ROOT:-/opt/opendid}
-SECRETS_DIR=${OPENDID_SECRETS_DIR:-$OPENDID_ROOT/secrets}
-CONFIG_DIR=${OPENDID_CONFIG_DIR:-$OPENDID_ROOT/config}
 HOLDER_DATA_DIR=${OPENDID_HOLDER_DATA_DIR:-$OPENDID_ROOT/state/holder}
 APP_SERVICES=${OPENDID_APP_SERVICES:-opendid-tas opendid-issuer opendid-cas fm-holder}
 
@@ -36,18 +34,25 @@ sha256_one() {
 }
 
 [ "$#" = 1 ] || die "usage: $0 <new-empty-output-dir>"
-OUT=$1
-[ ! -e "$OUT" ] || [ -d "$OUT" ] || die "output path is not a directory: $OUT"
-if [ -e "$OUT" ] && [ -n "$(find "$OUT" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
-  die "output directory is not empty: $OUT"
-fi
+OUT_INPUT=$1
+OUT_PARENT=$(dirname -- "$OUT_INPUT")
+OUT_BASE=$(basename -- "$OUT_INPUT")
+[ "$OUT_BASE" != "." ] && [ "$OUT_BASE" != ".." ] || die "unsafe output path: $OUT_INPUT"
+[ -d "$OUT_PARENT" ] || die "output parent does not exist: $OUT_PARENT"
+[ ! -e "$OUT_INPUT" ] && [ ! -L "$OUT_INPUT" ] || die "output path already exists: $OUT_INPUT"
+OUT_PARENT_REAL="$(cd -P "$OUT_PARENT" && pwd)"
+OUT="$OUT_PARENT_REAL/$OUT_BASE"
 
 need docker
 need tar
 need systemctl
-mkdir -p "$OUT"
-OUT="$(cd "$OUT" && pwd)"
-chmod 700 "$OUT"
+mkdir -m 700 "$OUT" || die "could not create output directory: $OUT"
+[ -d "$OUT" ] && [ ! -L "$OUT" ] || die "output path is not a real directory: $OUT"
+OUT="$(cd -P "$OUT" && pwd)"
+case "$OUT" in
+  "$OUT_PARENT_REAL"/*) : ;;
+  *) die "output escaped parent: $OUT" ;;
+esac
 
 for svc in $APP_SERVICES; do
   if systemctl is-active "$svc" >/dev/null 2>&1; then
@@ -79,12 +84,13 @@ chmod 600 "$OUT/besu-data.tar"
 
 tmp_list=$(mktemp)
 trap 'rm -f "$tmp_list"' EXIT
-if [ -d "$SECRETS_DIR" ]; then
-  find "$SECRETS_DIR" -type f \( -name '*.wallet' -o -name '*.zkpwallet' -o -name '*.did' -o -name 'blockchain.properties' \) \
-    -print | sed "s#^$OPENDID_ROOT/##" >>"$tmp_list"
-fi
-if [ -d "$CONFIG_DIR" ]; then
-  find "$CONFIG_DIR" -type f -print | sed "s#^$OPENDID_ROOT/##" >>"$tmp_list"
+if [ -d "$OPENDID_ROOT" ]; then
+  find "$OPENDID_ROOT" -type f \( -name '*.wallet' -o -name '*.zkpwallet' -o -name '*.did' -o -name 'blockchain.properties' -o -name 'besu.dat' \) \
+    -print | while IFS= read -r file; do
+      case "$file" in
+        "$OPENDID_ROOT"/*) printf '%s\n' "${file#$OPENDID_ROOT/}" ;;
+      esac
+    done >>"$tmp_list"
 fi
 if [ -s "$tmp_list" ]; then
   tar -C "$OPENDID_ROOT" -cf "$OUT/opendid-files.tar" -T "$tmp_list"

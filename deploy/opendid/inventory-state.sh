@@ -34,6 +34,33 @@ count_files() { [ -d "$1" ] && find "$1" -type f "$@" 2>/dev/null | wc -l | tr -
 psql_value() {
   docker exec -i "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA -c "$1" 2>/dev/null | head -1 || true
 }
+psql_value_db() {
+  docker exec -i "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "$1" -tA -c "$2" 2>/dev/null | head -1 || true
+}
+count_rows_exact() {
+  local dbs=$1
+  shift
+  [ -n "$dbs" ] || { printf 'unknown\n'; return; }
+  local total=0 found=0 db spec table where sql count
+  while IFS= read -r db; do
+    [ -n "$db" ] || continue
+    for spec in "$@"; do
+      table=${spec%%|*}
+      where=''
+      [ "$table" != "$spec" ] && where=${spec#*|}
+      sql="select count(*) from public.$table"
+      [ -n "$where" ] && sql="$sql where $where"
+      count=$(psql_value_db "$db" "$sql;")
+      if printf '%s' "$count" | grep -Eq '^[0-9]+$'; then
+        total=$((total + count))
+        found=1
+      fi
+    done
+  done <<EOF
+$dbs
+EOF
+  [ "$found" = "1" ] && printf '%s\n' "$total" || printf '0\n'
+}
 
 if ! command -v docker >/dev/null 2>&1; then
   echo 'docker=absent'
@@ -61,6 +88,7 @@ else
     db_lines=$(docker exec -i "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d postgres -tA -F '|' -c \
       "select datname, pg_database_size(datname) from pg_database where datistemplate=false order by datname;" 2>/dev/null || true)
     if [ -n "$db_lines" ]; then
+      db_names=$(printf '%s\n' "$db_lines" | cut -d '|' -f 1)
       printf '%s\n' "$db_lines" | while IFS='|' read -r db size _; do
           [ -n "$db" ] || continue
           tables=$(docker exec -i "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "$db" -tA -c \
@@ -68,20 +96,15 @@ else
           printf 'db=%s size_bytes=%s public_tables=%s\n' "$db" "$size" "${tables:-unknown}"
         done
     else
+      db_names=''
       printf 'db_metadata=unknown\n'
     fi
-    fl_schema=$(psql_value "select count(*) from information_schema.schemata where lower(schema_name) like '%facelicense%';")
-    fl_namespace=$(psql_value "select count(*) from information_schema.tables where lower(table_name) like '%namespace%';")
-    fl_plan=$(psql_value "select count(*) from information_schema.tables where lower(table_name) like '%plan%';")
-    entity_count=$(psql_value "select count(*) from information_schema.tables where lower(table_name) like '%entity%';")
-    issuer_count=$(psql_value "select count(*) from information_schema.tables where lower(table_name) like '%issuer%';")
-    cas_count=$(psql_value "select count(*) from information_schema.tables where lower(table_name) like '%cas%';")
-    printf 'facelicense_schema_count=%s\n' "${fl_schema:-unknown}"
-    printf 'facelicense_namespace_table_count=%s\n' "${fl_namespace:-unknown}"
-    printf 'facelicense_plan_table_count=%s\n' "${fl_plan:-unknown}"
-    printf 'entity_table_count=%s\n' "${entity_count:-unknown}"
-    printf 'issuer_table_count=%s\n' "${issuer_count:-unknown}"
-    printf 'cas_table_count=%s\n' "${cas_count:-unknown}"
+    printf 'facelicense_namespace_rows=%s\n' "$(count_rows_exact "$db_names" "namespace|namespace_id='kr.wearless.facelicense'")"
+    printf 'facelicense_schema_rows=%s\n' "$(count_rows_exact "$db_names" "vc_schema|vc_schema_id='facelicense'")"
+    printf 'facelicense_plan_rows=%s\n' "$(count_rows_exact "$db_names" "issue_profile|vc_plan_id='vcplanface0000000001'" "list_vc_plan|vc_plan_id='vcplanface0000000001'")"
+    printf 'entity_rows=%s\n' "$(count_rows_exact "$db_names" entity)"
+    printf 'issuer_rows=%s\n' "$(count_rows_exact "$db_names" issuer)"
+    printf 'cas_rows=%s\n' "$(count_rows_exact "$db_names" cas ca)"
   fi
 fi
 
