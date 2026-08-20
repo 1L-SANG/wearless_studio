@@ -68,3 +68,24 @@ Evidence:
 - JAR contents: `jar tf build/libs/fm-holder-0.1.0.jar | rg 'BOOT-INF/classes/kr/wearless/fmholder|BOOT-INF/classes/org/omnione/did/base/datamodel/data/Proof.class'` found holder classes and `BOOT-INF/classes/org/omnione/did/base/datamodel/data/Proof.class`.
 
 Concern removed: the literal brief commands no longer need a manual `JAVA_HOME`.
+
+## Fix round 2 — remove hardcoded Gradle Java path
+
+Reviewer finding: `services/fm-holder/gradle.properties` hardcoded a Homebrew Java 21 path, which would break Linux or other JDK layouts.
+
+Changes:
+
+- Removed `services/fm-holder/gradle.properties`.
+- Kept the Gradle Java 21 toolchain in `services/fm-holder/build.gradle`.
+- Updated the existing POSIX `services/fm-holder/gradlew` wrapper so macOS resolves Java 21 with `/usr/libexec/java_home -v 21` only when `JAVA_HOME` is unset.
+- Left Linux and explicit `JAVA_HOME` behavior on the standard Gradle wrapper path; no Linux path guessing or dependency was added.
+
+Evidence:
+
+- RED after removing the hardcoded property: `./gradlew clean test` → `BUILD FAILED`; Gradle ran under the current Java 25 launcher and failed with `Unsupported class file major version 69`.
+- GREEN macOS unset-`JAVA_HOME` branch: `env -u JAVA_HOME ./gradlew clean test` → `BUILD SUCCESSFUL in 2s`.
+- JAR: `env -u JAVA_HOME ./gradlew bootJar` → `BUILD SUCCESSFUL in 693ms`.
+- JAR contents: `jar tf build/libs/fm-holder-0.1.0.jar | rg 'BOOT-INF/classes/kr/wearless/fmholder|BOOT-INF/classes/org/omnione/did/base/datamodel/data/Proof.class'` found holder classes and `BOOT-INF/classes/org/omnione/did/base/datamodel/data/Proof.class`.
+- Explicit Java 21 remains standard: `JAVA_HOME=/opt/homebrew/Cellar/openjdk@21/21.0.11/libexec/openjdk.jdk/Contents/Home ./gradlew --version` → Gradle 8.8 on JVM `21.0.11`.
+
+Concern: this task runner process has `JAVA_HOME=/opt/homebrew/opt/openjdk@25` set. The wrapper intentionally does not override an explicit `JAVA_HOME`, per review instruction, so the validated macOS auto-resolution path is the unset-`JAVA_HOME` branch.
