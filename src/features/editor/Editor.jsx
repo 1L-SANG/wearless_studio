@@ -16,6 +16,7 @@ import { getJobSettlement } from '@/lib/api/facemarket.js';
 import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';
 import { alignSkeletonToServer, canSafelyMergeServerBlocks, decorateGenBlocks, fillGenBlocks, mergeServerBlocks } from '@/lib/editorWaitSkeleton.js';
 import { clearEditorWaitDraft, loadEditorWaitDraft, saveEditorWaitDraft } from '@/lib/editorWaitDraft.js';
+import { bindEditorExitBackup, createLatestEditorSaveGuard } from '@/lib/editorSaveLifecycle.js';
 import { listModels } from '@/lib/api/facemarket.js';
 import { uid } from '@/lib/ids.js';
 import { useAppStore } from '@/store/useAppStore.js';
@@ -909,6 +910,8 @@ export function Editor() {
   // 마지막 편집이 유실되던 구멍의 수정.
   const latestBlocks = useRef(null);
   const pendingGenerationDraft = useRef(false);
+  const saveGuard = useRef(null);
+  if (!saveGuard.current) saveGuard.current = createLatestEditorSaveGuard();
   const setBlocks = useCallback((u) => setBlocksState((prev) => {
     const source = typeof u === 'function' ? u(prev) : u;
     const next = normalizeEditorSelectionGroups(expandBlockHeights(upgradeLegacyKiwiTemplateBlocks(source, uid)));
@@ -1000,6 +1003,19 @@ export function Editor() {
   // 자동저장이 실패한 상태 — {kind, message}. null 이면 정상 저장 중이다.
   const [saveError, setSaveError] = useState(null);
   const { openLogin } = useAuth();
+  const backupLatestEditorDraft = useCallback((source = latestBlocks.current, { reportFailure = true } = {}) => {
+    if (!Array.isArray(source)) return false;
+    const backedUp = saveEditorWaitDraft(projectId, persistable(source));
+    pendingGenerationDraft.current = backedUp;
+    if (!backedUp && reportFailure) {
+      setSaveError({
+        kind: 'storage',
+        message: '브라우저 임시 저장 공간을 사용할 수 없어요.',
+        backedUp: false,
+      });
+    }
+    return backedUp;
+  }, [projectId]);
   const [genFinalizeAttempt, setGenFinalizeAttempt] = useState(0);
   const [genReceipt, setGenReceipt] = useState(null);
   const [genNotif, setGenNotif] = useState(
@@ -1340,59 +1356,92 @@ export function Editor() {
     clearTimeout(saveTimer.current);
     if (genActive) {
       saveTimer.current = setTimeout(() => {
-        saveEditorWaitDraft(projectId, persistable(latestBlocks.current));
-        pendingGenerationDraft.current = true;
+        const backedUp = backupLatestEditorDraft(latestBlocks.current);
+        if (backedUp) {
+          setSaveError((current) => (current?.kind === 'storage' ? null : current));
+        }
       }, 300);
       return;
     }
     saveTimer.current = setTimeout(() => {
-      api.saveEditorBlocks(projectId, persistable(latestBlocks.current)).then(() => {
+      const source = latestBlocks.current;
+      if (!source) return;
+      const ticket = saveGuard.current.begin(source);
+      api.saveEditorBlocks(projectId, persistable(source)).then(() => {
+        // 뒤에 시작한 저장이 있거나 그사이 편집이 바뀌었으면, 이 응답은 최신 백업을
+        // 지울 권한이 없다. 느린 예전 성공이 최신 실패분을 지우는 데이터 유실 방지.
+        if (!saveGuard.current.isCurrent(ticket, latestBlocks.current)) return;
         if (pendingGenerationDraft.current) {
           clearEditorWaitDraft(projectId);
           pendingGenerationDraft.current = false;
         }
         setSaveError(null);
       }).catch((error) => {
+        if (!saveGuard.current.isNewest(ticket)) return;
         /* 저장 실패를 삼키면 안 된다. 화면은 멀쩡해 보이는데 편집만 사라져, 셀러는 한참
            작업한 뒤 탭을 닫고서야(또는 다음 접속에서) 전부 날아간 걸 안다(오너 신고
            2026-08-19: "창 켜둔 사람은 수정해도 반영이 안 되는 거 아니야?").
            ① 브라우저에 임시 보관해 탭을 닫아도 살아남게 하고
            ② 배너로 알리고 ③ 다음 편집 때 자동으로 다시 시도한다(전체 문서 PUT 이라
            여러 번 보내도 안전하다). */
-        const backedUp = saveEditorWaitDraft(projectId, persistable(latestBlocks.current));
-        pendingGenerationDraft.current = true;
+        const backedUp = backupLatestEditorDraft(latestBlocks.current);
         setSaveError({ ...classifyEditorLoadError(error), backedUp });
       });
     }, 1500);
-  }, [blocks, genActive, projectId]);
+  }, [blocks, genActive, projectId, backupLatestEditorDraft]);
   /* 배너의 [다시 저장] — 자동 저장과 같은 경로. 성공하면 배너가 사라지고 임시 보관본도 정리된다. */
   const retrySaveNow = () => {
-    if (!latestBlocks.current) return;
-    api.saveEditorBlocks(projectId, persistable(latestBlocks.current)).then(() => {
+    const source = latestBlocks.current;
+    if (!source) return;
+    // 생성 중 문서는 서버 완성본 자리에 쓰면 안 된다. 이때 [다시 저장]은 브라우저
+    // 임시보관만 다시 시도하고, 실제 성공했을 때만 안심 문구를 보여준다.
+    if (genActiveRef.current) {
+      const backedUp = backupLatestEditorDraft(source);
+      if (backedUp) {
+        setSaveError(null);
+        toast.push('이 브라우저에 임시 저장했어요', { icon: 'check' });
+      } else {
+        toast.push('임시 저장하지 못했어요 — 창을 닫지 말아 주세요', { icon: 'x' });
+      }
+      return;
+    }
+    const ticket = saveGuard.current.begin(source);
+    api.saveEditorBlocks(projectId, persistable(source)).then(() => {
+      if (!saveGuard.current.isCurrent(ticket, latestBlocks.current)) return;
       clearEditorWaitDraft(projectId);
       pendingGenerationDraft.current = false;
       setSaveError(null);
       toast.push('저장했어요', { icon: 'check' });
     }).catch((error) => {
-      const backedUp = saveEditorWaitDraft(projectId, persistable(latestBlocks.current));
-      pendingGenerationDraft.current = true;
+      if (!saveGuard.current.isNewest(ticket)) return;
+      const backedUp = backupLatestEditorDraft(latestBlocks.current);
       setSaveError({ ...classifyEditorLoadError(error), backedUp });
     });
   };
+  // 탭 닫기·새로고침에서는 React 언마운트 정리가 실행된다는 보장이 없다. 브라우저가
+  // 페이지를 숨기거나 버리기 전에 최신 편집분을 동기적으로 로컬에 먼저 남긴다.
+  useEffect(() => bindEditorExitBackup({
+    backupLatest: () => {
+      saveGuard.current.invalidate();
+      backupLatestEditorDraft(latestBlocks.current);
+    },
+  }), [backupLatestEditorDraft]);
   useEffect(() => () => {
     clearTimeout(saveTimer.current);
     // 이탈 액션이 이미 저장을 마쳤으면 여기서 다시 쓰지 않는다 — 생성 실패 화면에서
     // 나갈 때 화면의 스켈레톤이 서버의 완성본을 덮어쓰던 사고를 막는다.
     if (skipExitPersist.current || !latestBlocks.current) return;
-    if (genActiveRef.current) saveEditorWaitDraft(projectId, persistable(latestBlocks.current));
+    const source = latestBlocks.current;
     // 나가면서 하는 마지막 저장 — 실패해도 알릴 화면이 이미 사라진 뒤다. 그래서 조용히
     // 브라우저에 보관해 두고, 다음에 이 작업을 열 때 복원되게 한다(진입 시 loadEditorWaitDraft).
     // 이 catch 가 없던 동안에는 서버가 죽은 채로 나가면 편집이 통째로 사라졌다(2026-08-19).
-    else {
-      api.saveEditorBlocks(projectId, persistable(latestBlocks.current))
-        .catch(() => saveEditorWaitDraft(projectId, persistable(latestBlocks.current)));
+    saveGuard.current.invalidate();
+    backupLatestEditorDraft(source, { reportFailure: false });
+    if (!genActiveRef.current) {
+      api.saveEditorBlocks(projectId, persistable(source))
+        .catch(() => {});
     }
-  }, [projectId]);
+  }, [projectId, backupLatestEditorDraft]);
 
   // Delete/Backspace removes the most specific selection: selected elements
   // first, or the whole top-level block when the block itself is selected.
@@ -2351,26 +2400,33 @@ export function Editor() {
   const undo = () => { const h = hist.current; if (!h.past.length) { toast.push('되돌릴 작업이 없어요'); return; } const snap = h.past.pop(); h.future.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('실행 취소', { icon: 'undo' }); };
   const redo = () => { const h = hist.current; if (!h.future.length) { toast.push('다시 실행할 작업이 없어요'); return; } const snap = h.future.pop(); h.past.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('다시 실행', { icon: 'redo' }); };
   const save = async () => {
+    const source = latestBlocks.current || blocks;
     if (genActive) {
-      saveEditorWaitDraft(projectId, latestBlocks.current || blocks);
-      pendingGenerationDraft.current = true;
-      toast.push('생성 중 작업을 임시 저장했어요 — 나갔다 와도 이어서 볼 수 있어요');
+      const backedUp = backupLatestEditorDraft(source);
+      if (backedUp) {
+        setSaveError(null);
+        toast.push('생성 중 작업을 임시 저장했어요 — 나갔다 와도 이어서 볼 수 있어요');
+      } else {
+        toast.push('임시 저장하지 못했어요 — 창을 닫지 말아 주세요', { icon: 'x' });
+      }
       return;
     }
     // persistable: 손 안 댄 '내용을 입력하세요.'를 걷어내고 보낸다 — 자동 저장과 같은 게이트를
     // 써야 수동 저장으로 나간 문서에만 안내 문구가 실리는 일이 없다.
+    const ticket = saveGuard.current.begin(source);
     try {
-      await api.saveEditorBlocks(projectId, persistable(latestBlocks.current || blocks));
+      await api.saveEditorBlocks(projectId, persistable(source));
     } catch (error) {
+      if (!saveGuard.current.isNewest(ticket)) return;
       // 눌렀는데 아무 반응이 없으면 저장된 줄 안다 — 실패는 반드시 말한다.
-      const backedUp = saveEditorWaitDraft(projectId, persistable(latestBlocks.current || blocks));
-      pendingGenerationDraft.current = true;
+      const backedUp = backupLatestEditorDraft(latestBlocks.current);
       setSaveError({ ...classifyEditorLoadError(error), backedUp });
       toast.push(backedUp
         ? '저장하지 못했어요 — 편집 내용은 이 브라우저에 보관해 뒀어요'
         : '저장하지 못했어요 — 창을 닫지 말고 다시 시도해 주세요', { icon: 'x' });
       return;
     }
+    if (!saveGuard.current.isCurrent(ticket, latestBlocks.current)) return;
     if (pendingGenerationDraft.current) {
       clearEditorWaitDraft(projectId);
       pendingGenerationDraft.current = false;
@@ -2401,14 +2457,16 @@ export function Editor() {
     // 생성 중 이탈 — 미완성 화면은 서버 완성본 자리에 PUT하지 않고 브라우저 임시 작업본으로
     // 저장한다. 진행 잡은 store/서버가 계속 돌며 재진입 때 이 작업본 위로 이벤트를 재생한다.
     if (genActive) {
-      if (bs) saveEditorWaitDraft(projectId, bs);
-      pendingGenerationDraft.current = Boolean(bs);
+      if (bs) backupLatestEditorDraft(bs);
       return;
     }
-    // 실패해도 알릴 화면이 곧 사라진다 — 조용히 브라우저에 보관해 다음 진입 때 복원되게 한다.
+    // 나가기 전 서버 응답을 기다릴 수 없으므로 로컬을 먼저 남긴다. 서버 성공 뒤 여기서
+    // 지우면 재진입한 새 에디터의 더 최신 작업본까지 지울 수 있어, 다음 정상 저장이 정리한다.
     if (bs) {
+      saveGuard.current.invalidate();
+      backupLatestEditorDraft(bs);
       api.saveEditorBlocks(projectId, persistable(bs))
-        .catch(() => saveEditorWaitDraft(projectId, persistable(bs)));
+        .catch(() => {});
     }
   };
   /* 본 편집 화면의 이탈 — 편집분을 먼저 저장하고 나간다. **flushExit 뒤**에 선언해야 한다:
@@ -2932,7 +2990,7 @@ export function Editor() {
       )}
       {/* toolbar */}
       <div className="ed-toolbar">
-        <button className="ed-tool" onClick={() => { flushExit(); navigate('/library'); }} title="보관함으로" style={{ flexDirection: 'row', gap: 6 }}>
+        <button className="ed-tool" onClick={leaveToLibrary} title="보관함으로" style={{ flexDirection: 'row', gap: 6 }}>
           <span className="brand">
             <img className="brand-logo" src="/assets/brand/logo.svg" alt="" />
             <img className="brand-wordmark" src="/assets/brand/wordmark.png" alt="Wearless" />
