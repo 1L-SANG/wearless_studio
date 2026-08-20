@@ -194,16 +194,21 @@ export FAKE_EXPECT_PGDB="omn"
 export FAKE_EXPECT_DUMP_USER="omn"
 export FAKE_CONSUME_STDIN=1
 mkdir -p "$FAKE_VOLUMES/$OPENDID_POSTGRES_VOLUME" "$FAKE_VOLUMES/$OPENDID_BESU_VOLUME" \
-  "$OPENDID_SECRETS_DIR/TA" "$OPENDID_SECRETS_DIR/Issuer" "$OPENDID_SECRETS_DIR/CA" "$OPENDID_CONFIG_DIR"
+  "$OPENDID_ROOT/jars/TA" "$OPENDID_ROOT/jars/Issuer" "$OPENDID_ROOT/jars/CA" \
+  "$OPENDID_ROOT/jars/Wallet" "$OPENDID_ROOT/shells/Besu/TA" "$OPENDID_ROOT/shells/Besu/Issuer" \
+  "$OPENDID_ROOT/config"
 printf 'besu source\n' >"$FAKE_VOLUMES/$OPENDID_BESU_VOLUME/block"
-printf 'wallet-secret\n' >"$OPENDID_SECRETS_DIR/TA/tas.wallet"
-printf 'did-secret\n' >"$OPENDID_SECRETS_DIR/Issuer/issuer.did"
-printf 'chain-secret\n' >"$OPENDID_SECRETS_DIR/CA/blockchain.properties"
-printf 'besu-secret\n' >"$OPENDID_SECRETS_DIR/CA/besu.dat"
+printf 'wallet-secret\n' >"$OPENDID_ROOT/jars/TA/tas.wallet"
+printf 'did-secret\n' >"$OPENDID_ROOT/jars/Issuer/issuer.did"
+printf 'wallet-provider-secret\n' >"$OPENDID_ROOT/jars/Wallet/wallet.wallet"
+printf 'ta-chain-secret\n' >"$OPENDID_ROOT/shells/Besu/TA/blockchain.properties"
+printf 'issuer-chain-secret\n' >"$OPENDID_ROOT/shells/Besu/Issuer/blockchain.properties"
+printf 'chain-secret\n' >"$OPENDID_ROOT/shells/Besu/blockchain.properties"
+printf 'besu-secret\n' >"$OPENDID_ROOT/shells/Besu/besu.dat"
 adversarial=$'bad\n--checkpoint-action=exec=touch SHOULD_NOT_EXIST.wallet'
-printf 'adversarial-secret\n' >"$OPENDID_SECRETS_DIR/CA/$adversarial"
-printf 'leading-secret\n' >"$OPENDID_SECRETS_DIR/CA/-leading.wallet"
-printf 'unrelated-secret\n' >"$OPENDID_SECRETS_DIR/CA/unrelated.txt"
+printf 'adversarial-secret\n' >"$OPENDID_ROOT/jars/CA/$adversarial"
+printf 'leading-secret\n' >"$OPENDID_ROOT/jars/CA/-leading.wallet"
+printf 'unrelated-secret\n' >"$OPENDID_ROOT/jars/CA/unrelated.txt"
 printf 'config-secret\n' >"$OPENDID_CONFIG_DIR/ta.yml"
 before_hash=$(find "$FAKE_VOLUMES" "$OPENDID_ROOT" -type f -exec shasum -a 256 {} + | sort)
 
@@ -257,10 +262,13 @@ want_grep 'besu-data.tar$' "$out/SHA256SUMS" 'Besu checksum recorded'
 want_mode_600 "$out/postgres.dump.sql" 'dump permission is 0600'
 want_mode_600 "$out/besu-data.tar" 'Besu archive permission is 0600'
 want_mode_600 "$out/opendid-files.tar" 'files archive permission is 0600'
-want_tar_has "$out/opendid-files.tar" '(^|/)tas\.wallet$' 'wallet included in file archive'
-want_tar_has "$out/opendid-files.tar" '(^|/)issuer\.did$' 'DID included in file archive'
-want_tar_has "$out/opendid-files.tar" '(^|/)blockchain\.properties$' 'blockchain properties included in file archive'
-want_tar_has "$out/opendid-files.tar" '(^|/)besu\.dat$' 'besu.dat included in file archive'
+want_tar_has "$out/opendid-files.tar" '(^|/)secrets/TA/tas\.wallet$' 'TA wallet normalized into target secrets'
+want_tar_has "$out/opendid-files.tar" '(^|/)secrets/Issuer/issuer\.did$' 'Issuer DID normalized into target secrets'
+want_tar_has "$out/opendid-files.tar" '(^|/)secrets/Wallet/wallet\.wallet$' 'Wallet provider normalized into target secrets'
+want_tar_has "$out/opendid-files.tar" '(^|/)secrets/TA/blockchain\.properties$' 'TA blockchain config normalized into target secrets'
+want_tar_has "$out/opendid-files.tar" '(^|/)secrets/Issuer/blockchain\.properties$' 'Issuer blockchain config normalized into target secrets'
+want_tar_has "$out/opendid-files.tar" '(^|/)secrets/CA/blockchain\.properties$' 'common blockchain config normalized into CA secrets'
+want_tar_has "$out/opendid-files.tar" '(^|/)config/besu\.dat$' 'besu.dat normalized into target config'
 want_tar_lacks "$out/opendid-files.tar" '(^|/)ta\.yml$|(^|/)unrelated\.txt$' 'unrelated config/secret excluded from file archive'
 extract="$tmp/extract"
 mkdir -p "$extract"
@@ -271,6 +279,18 @@ tar -xf "$out/opendid-files.tar" -C "$extract"
 want_no_grep 'wallet-secret|did-secret|chain-secret|config-secret' "$tmp/export.out" 'export does not print secrets'
 after_hash=$(find "$FAKE_VOLUMES" "$OPENDID_ROOT" -type f -exec shasum -a 256 {} + | sort)
 [ "$before_hash" = "$after_hash" ] && ok 'source files unchanged' || bad 'source files unchanged'
+
+collision_root="$tmp/collision-root"
+mkdir -p "$collision_root/jars/TA" "$collision_root/secrets/TA"
+printf 'actual\n' >"$collision_root/jars/TA/collision.wallet"
+printf 'normalized\n' >"$collision_root/secrets/TA/collision.wallet"
+if OPENDID_ROOT="$collision_root" OPENDID_SECRETS_DIR="$collision_root/secrets" \
+  OPENDID_CONFIG_DIR="$collision_root/config" OPENDID_HOLDER_DATA_DIR="$collision_root/state/holder" \
+  "$EXPORT" "$tmp/collision-out" >"$tmp/collision.out" 2>&1; then
+  bad 'source-to-target identity collision is refused'
+else
+  ok 'source-to-target identity collision is refused'
+fi
 
 override_out="$tmp/override-out"
 FAKE_EXPECT_DUMP_USER=override OPENDID_POSTGRES_USER=override "$EXPORT" "$override_out" >"$tmp/export-override.out"
@@ -288,9 +308,9 @@ want_grep 'facelicense_plan_rows=2' "$tmp/inventory.out" 'inventory counts FaceL
 want_grep 'entity_rows=5' "$tmp/inventory.out" 'inventory counts entity rows'
 want_grep 'issuer_rows=1' "$tmp/inventory.out" 'inventory counts issuer rows'
 want_grep 'cas_rows=1' "$tmp/inventory.out" 'inventory counts CAS rows'
-want_one_line_value wallet_files 3 "$tmp/inventory.out" 'wallet count is exact single line'
+want_one_line_value wallet_files 4 "$tmp/inventory.out" 'wallet count is exact single line'
 want_one_line_value did_files 1 "$tmp/inventory.out" 'DID count is exact single line'
-want_one_line_value blockchain_config_files 1 "$tmp/inventory.out" 'blockchain config count is exact single line'
+want_one_line_value blockchain_config_files 3 "$tmp/inventory.out" 'blockchain config count is exact single line'
 want_one_line_value app_config_files 1 "$tmp/inventory.out" 'app config count is exact single line'
 want_grep 'holder_data=missing' "$tmp/inventory.out" 'inventory reports missing holder data'
 want_no_grep 'wallet-secret|did-secret|chain-secret|config-secret' "$tmp/inventory.out" 'inventory does not print secrets'

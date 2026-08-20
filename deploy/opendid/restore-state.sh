@@ -14,6 +14,8 @@ POSTGRES_USER=${OPENDID_POSTGRES_USER:-}
 POSTGRES_DB=${OPENDID_POSTGRES_DB:-}
 POSTGRES_PASSWORD=${OPENDID_POSTGRES_PASSWORD:-}
 RESTORE_USER=${OPENDID_RESTORE_POSTGRES_USER:-opendid_restore_admin}
+OWNER=${OPENDID_OWNER:-opendid}
+GROUP=${OPENDID_GROUP:-opendid}
 
 die() { printf 'REFUSING: %s\n' "$*" >&2; exit 2; }
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 not found"; }
@@ -60,15 +62,7 @@ validate_tar() {
   done <"$names"
 }
 volume_exists() { docker volume inspect "$1" >/dev/null 2>&1; }
-volume_empty() {
-  docker run --rm -v "$1:/source:ro" alpine:3.20 \
-    sh -ec 'test -z "$(find /source -mindepth 1 -print -quit)"'
-}
-container_stopped() {
-  local running
-  running=$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null || printf false)
-  [ "$running" != true ]
-}
+container_absent() { ! docker inspect -f '{{.State.Running}}' "$1" >/dev/null 2>&1; }
 path_has_no_symlink() {
   local path=$1 current=/ rest part
   case "$path" in /*) rest=${path#/} ;; *) return 1 ;; esac
@@ -100,12 +94,40 @@ need grep
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/opendid-restore.XXXXXX")
 POSTGRES_STARTED=0
+CREATED_PG_VOLUME=0
+CREATED_BESU_VOLUME=0
+FILES_INSTALLED=0
+HOLDER_INSTALLED=0
+SUCCESS=0
 cleanup() {
+  status=$?
   if [ "$POSTGRES_STARTED" = 1 ]; then
     OPENDID_POSTGRES_USER="$RESTORE_USER" OPENDID_POSTGRES_DB=postgres \
       docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" stop postgres-opendid >/dev/null 2>&1 || true
   fi
+  if [ "$SUCCESS" != 1 ]; then
+    if [ "$FILES_INSTALLED" = 1 ]; then
+      while IFS= read -r -d '' file; do
+        rel=${file#$files_stage/}
+        rm -f -- "$OPENDID_ROOT/$rel"
+      done < <(find "$files_stage" -type f -print0)
+    fi
+    if [ "$HOLDER_INSTALLED" = 1 ]; then
+      while IFS= read -r -d '' file; do
+        rel=${file#$holder_stage/}
+        rm -f -- "$HOLDER_DATA_DIR/$rel"
+      done < <(find "$holder_stage" -type f -print0)
+    fi
+    if [ "$CREATED_PG_VOLUME" = 1 ]; then
+      OPENDID_POSTGRES_USER="$RESTORE_USER" OPENDID_POSTGRES_DB=postgres \
+        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" rm -f -s postgres-opendid >/dev/null 2>&1 || true
+      docker volume rm "$POSTGRES_VOLUME" >/dev/null 2>&1 || true
+    fi
+    [ "$CREATED_BESU_VOLUME" = 1 ] && docker volume rm "$BESU_VOLUME" >/dev/null 2>&1 || true
+  fi
   rm -rf "$WORK"
+  trap - EXIT
+  exit "$status"
 }
 trap cleanup EXIT
 
@@ -148,25 +170,32 @@ if [ "$APPLY" = 0 ]; then
 fi
 
 need docker
+need install
+need id
+need getent
 [ -n "$POSTGRES_USER" ] || die "OPENDID_POSTGRES_USER is required for --apply"
 [ -n "$POSTGRES_DB" ] || die "OPENDID_POSTGRES_DB is required for --apply"
 [ -n "$POSTGRES_PASSWORD" ] || die "OPENDID_POSTGRES_PASSWORD is required for --apply"
 printf '%s\n' "$RESTORE_USER" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*$' || die "unsafe restore PostgreSQL user"
+if grep -Eq "^(CREATE|ALTER) ROLE ($RESTORE_USER|\"$RESTORE_USER\")([ ;]|$)" "$ARCHIVE/postgres.dump.sql"; then
+  die "restore bootstrap role already exists in source dump: $RESTORE_USER"
+fi
 regular_file "$COMPOSE_FILE" || die "missing or unsafe compose file: $COMPOSE_FILE"
 regular_file "$ENV_FILE" || die "missing or unsafe environment file: $ENV_FILE"
-container_stopped "$POSTGRES_CONTAINER" || die "$POSTGRES_CONTAINER is running"
-container_stopped "$BESU_CONTAINER" || die "$BESU_CONTAINER is running"
+id "$OWNER" >/dev/null 2>&1 || die "runtime owner does not exist: $OWNER"
+getent group "$GROUP" >/dev/null 2>&1 || die "runtime group does not exist: $GROUP"
+container_absent "$POSTGRES_CONTAINER" || die "target container already exists: $POSTGRES_CONTAINER"
+container_absent "$BESU_CONTAINER" || die "target container already exists: $BESU_CONTAINER"
 
-pg_exists=0
-besu_exists=0
-if volume_exists "$POSTGRES_VOLUME"; then
-  pg_exists=1
-  volume_empty "$POSTGRES_VOLUME" || die "PostgreSQL target volume is not empty: $POSTGRES_VOLUME"
-fi
-if volume_exists "$BESU_VOLUME"; then
-  besu_exists=1
-  volume_empty "$BESU_VOLUME" || die "Besu target volume is not empty: $BESU_VOLUME"
-fi
+volume_exists "$POSTGRES_VOLUME" && die "PostgreSQL target volume already exists: $POSTGRES_VOLUME"
+volume_exists "$BESU_VOLUME" && die "Besu target volume already exists: $BESU_VOLUME"
+for identity_root in "$OPENDID_ROOT/secrets" "$OPENDID_ROOT/config"; do
+  if [ -d "$identity_root" ] && find "$identity_root" \( -type f -o -type l \) \
+    \( -name '*.wallet' -o -name '*.zkpwallet' -o -name '*.did' -o -name 'blockchain.properties' -o -name 'besu.dat' \) \
+    -print -quit | grep -q .; then
+    die "stale identity artifact exists under $identity_root"
+  fi
+done
 
 files_stage="$WORK/opendid-files"
 mkdir -p "$files_stage"
@@ -190,8 +219,10 @@ if [ "$HOLDER_STATE" = present ]; then
   tar -C "$holder_stage" -xf "$ARCHIVE/holder-data.tar"
 fi
 
-[ "$pg_exists" = 1 ] || docker volume create "$POSTGRES_VOLUME" >/dev/null
-[ "$besu_exists" = 1 ] || docker volume create "$BESU_VOLUME" >/dev/null
+docker volume create "$POSTGRES_VOLUME" >/dev/null
+CREATED_PG_VOLUME=1
+docker volume create "$BESU_VOLUME" >/dev/null
+CREATED_BESU_VOLUME=1
 OPENDID_POSTGRES_USER="$RESTORE_USER" OPENDID_POSTGRES_DB=postgres \
   docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d postgres-opendid
 POSTGRES_STARTED=1
@@ -208,11 +239,16 @@ done
 [ "$ready" = 1 ] || die "PostgreSQL did not become ready"
 docker exec -i "$POSTGRES_CONTAINER" psql -X -v ON_ERROR_STOP=1 -U "$RESTORE_USER" -d postgres \
   <"$ARCHIVE/postgres.dump.sql"
-docker exec "$POSTGRES_CONTAINER" psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres \
-  -c "DROP ROLE \"$RESTORE_USER\";"
+lock_result=$(docker exec "$POSTGRES_CONTAINER" psql -X -v ON_ERROR_STOP=1 -At -U "$RESTORE_USER" -d postgres \
+  -c "ALTER ROLE \"$RESTORE_USER\" NOLOGIN PASSWORD NULL; SELECT rolcanlogin::text || ':' || (rolpassword IS NULL)::text FROM pg_authid WHERE rolname='$RESTORE_USER';")
+printf '%s\n' "$lock_result" | grep -qx 'false:true' || die "restore bootstrap role was not locked"
+docker exec "$POSTGRES_CONTAINER" psql -X -v ON_ERROR_STOP=1 -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+  -c 'SELECT 1;' | grep -qx 1 || die "restored PostgreSQL user cannot connect"
 OPENDID_POSTGRES_USER="$RESTORE_USER" OPENDID_POSTGRES_DB=postgres \
   docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" stop postgres-opendid
 POSTGRES_STARTED=0
+OPENDID_POSTGRES_USER="$RESTORE_USER" OPENDID_POSTGRES_DB=postgres \
+  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" rm -f postgres-opendid
 
 docker run --rm -v "$BESU_VOLUME:/target" -v "$ARCHIVE:/archive:ro" alpine:3.20 \
   tar -C /target -xf /archive/besu-data.tar
@@ -220,20 +256,25 @@ docker run --rm -v "$BESU_VOLUME:/target" -v "$ARCHIVE:/archive:ro" alpine:3.20 
 while IFS= read -r -d '' file; do
   rel=${file#$files_stage/}
   target="$OPENDID_ROOT/$rel"
-  mkdir -p "$(dirname "$target")"
-  cp "$file" "$target"
-  chmod 600 "$target"
+  install -d -o "$OWNER" -g "$GROUP" -m 700 "$(dirname "$target")"
+  FILES_INSTALLED=1
+  install -o "$OWNER" -g "$GROUP" -m 600 "$file" "$target"
 done < <(find "$files_stage" -type f -print0)
 
 if [ "$HOLDER_STATE" = present ]; then
+  while IFS= read -r -d '' dir; do
+    rel=${dir#$holder_stage/}
+    [ "$rel" = "$dir" ] && rel=''
+    install -d -o "$OWNER" -g "$GROUP" -m 700 "$HOLDER_DATA_DIR${rel:+/$rel}"
+  done < <(find "$holder_stage" -type d -print0)
   while IFS= read -r -d '' file; do
     rel=${file#$holder_stage/}
     target="$HOLDER_DATA_DIR/$rel"
-    mkdir -p "$(dirname "$target")"
-    cp "$file" "$target"
-    chmod 600 "$target"
+    HOLDER_INSTALLED=1
+    install -o "$OWNER" -g "$GROUP" -m 600 "$file" "$target"
   done < <(find "$holder_stage" -type f -print0)
 fi
 
+SUCCESS=1
 printf 'mode=applied\n'
 printf 'holder_data=%s\n' "$HOLDER_STATE"

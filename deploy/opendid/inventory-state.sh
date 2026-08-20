@@ -145,9 +145,18 @@ else
   fi
 fi
 
-wallets=$(count_files "$SECRETS_DIR" \( -name '*.wallet' -o -name '*.zkpwallet' \))
-dids=$(count_files "$SECRETS_DIR" -name '*.did')
-blockchain=$(count_files "$SECRETS_DIR" -name 'blockchain.properties')
+wallets=$((
+  $(count_files "$SECRETS_DIR" \( -name '*.wallet' -o -name '*.zkpwallet' \)) +
+  $(count_files "$OPENDID_ROOT/jars" \( -name '*.wallet' -o -name '*.zkpwallet' \))
+))
+dids=$((
+  $(count_files "$SECRETS_DIR" -name '*.did') +
+  $(count_files "$OPENDID_ROOT/jars" -name '*.did')
+))
+blockchain=$((
+  $(count_files "$SECRETS_DIR" -name 'blockchain.properties') +
+  $(count_files "$OPENDID_ROOT/shells/Besu" -name 'blockchain.properties')
+))
 configs=$(count_files "$CONFIG_DIR")
 printf 'wallet_files=%s\n' "$wallets"
 printf 'did_files=%s\n' "$dids"

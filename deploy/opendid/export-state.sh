@@ -93,8 +93,15 @@ chmod 600 "$OUT/besu-data.tar"
 tmp_stage=$(mktemp -d)
 cleanup() { rm -rf "$tmp_stage"; }
 trap cleanup EXIT
-stage_allowed() {
-  local root=$1 file rel dest_dir
+stage_file() {
+  local source=$1 rel=$2 dest="$tmp_stage/$2"
+  case "$rel" in /*|..|../*|*/..|*/../*) die "unsafe staged path: $rel" ;; esac
+  [ ! -e "$dest" ] && [ ! -L "$dest" ] || die "multiple source files map to $rel"
+  mkdir -p "$(dirname "$dest")"
+  cp -p "$source" "$dest"
+}
+stage_normalized() {
+  local root=$1 file rel
   [ -d "$root" ] || return 0
   find "$root" -type f \( -name '*.wallet' -o -name '*.zkpwallet' -o -name '*.did' -o -name 'blockchain.properties' -o -name 'besu.dat' \) -print0 |
     while IFS= read -r -d '' file; do
@@ -105,13 +112,29 @@ stage_allowed() {
       case "$rel" in
         /*|../*|*/../*) continue ;;
       esac
-      dest_dir=$(dirname "$tmp_stage/$rel")
-      mkdir -p "$dest_dir"
-      cp -p "$file" "$tmp_stage/$rel"
+      stage_file "$file" "$rel"
     done
 }
-stage_allowed "$SECRETS_DIR"
-stage_allowed "$CONFIG_DIR"
+stage_entity() {
+  local entity=$1 root="$OPENDID_ROOT/jars/$1" file rel
+  [ -d "$root" ] || return 0
+  find "$root" -type f \( -name '*.wallet' -o -name '*.zkpwallet' -o -name '*.did' \) -print0 |
+    while IFS= read -r -d '' file; do
+      rel=${file#$root/}
+      stage_file "$file" "secrets/$entity/$rel"
+    done
+}
+for entity in TA Issuer CA Wallet Verifier; do stage_entity "$entity"; done
+[ ! -f "$OPENDID_ROOT/shells/Besu/TA/blockchain.properties" ] || \
+  stage_file "$OPENDID_ROOT/shells/Besu/TA/blockchain.properties" secrets/TA/blockchain.properties
+[ ! -f "$OPENDID_ROOT/shells/Besu/Issuer/blockchain.properties" ] || \
+  stage_file "$OPENDID_ROOT/shells/Besu/Issuer/blockchain.properties" secrets/Issuer/blockchain.properties
+[ ! -f "$OPENDID_ROOT/shells/Besu/blockchain.properties" ] || \
+  stage_file "$OPENDID_ROOT/shells/Besu/blockchain.properties" secrets/CA/blockchain.properties
+[ ! -f "$OPENDID_ROOT/shells/Besu/besu.dat" ] || \
+  stage_file "$OPENDID_ROOT/shells/Besu/besu.dat" config/besu.dat
+stage_normalized "$SECRETS_DIR"
+stage_normalized "$CONFIG_DIR"
 tar -C "$tmp_stage" -cf "$OUT/opendid-files.tar" .
 chmod 600 "$OUT/opendid-files.tar"
 

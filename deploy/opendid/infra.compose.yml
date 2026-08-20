@@ -57,6 +57,6 @@ services:
 
 volumes:
   postgre_opendid_data:
-    name: postgre_opendid_data
+    name: "${OPENDID_POSTGRES_VOLUME:-postgre_opendid_data}"
   besu_opendid_data:
-    name: besu_opendid_data
+    name: "${OPENDID_BESU_VOLUME:-besu_opendid_data}"
