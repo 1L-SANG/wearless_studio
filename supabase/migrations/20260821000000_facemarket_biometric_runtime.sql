@@ -55,6 +55,7 @@ create table if not exists public.fm_biometric_enrollment_photo_cleanup (
   r2_key text not null,
   reason text not null check (reason in ('upload_orphan', 'superseded', 'delete')),
   created_at timestamptz not null default now(),
+  not_before timestamptz not null default now(),
   primary key (enrollment_id, r2_key)
 );
 

@@ -22,6 +22,8 @@ router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket biometric enrollme
 
 BIOMETRIC_CONSENT_VERSION = "2026-08-v1"
 ENROLLMENT_TTL = timedelta(hours=24)
+# Longer than the private R2 client's bounded connect/read retry budget.
+UPLOAD_ORPHAN_LEASE = timedelta(minutes=5)
 ANGLES = ("front", "angle45", "side")
 MAX_FACE_BYTES = 25 * 1024 * 1024
 ALLOWED_FACE_MIME = {"image/png", "image/jpeg", "image/webp"}
@@ -141,7 +143,7 @@ async def _drain_photo_cleanup(
     r2 = getattr(app.state, "r2_face", None)
     if pool is None or r2 is None:
         return 0, 1
-    clauses = ["c.enrollment_id = %s"]
+    clauses = ["c.enrollment_id = %s", "c.not_before <= now()"]
     params: list[str] = [enrollment_id]
     if angle is not None:
         clauses.append("c.angle = %s")
@@ -233,6 +235,37 @@ async def _drain_photo_cleanup(
             continue
         deleted_count += int(delete_object)
     return deleted_count, failed_count
+
+
+async def _make_upload_cleanup_due(
+    app, *, enrollment_id: str, key: str
+) -> bool:
+    pool = getattr(app.state, "pool", None)
+    if pool is None:
+        return False
+    try:
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    update fm_biometric_enrollment_photo_cleanup
+                    set not_before = now()
+                    where enrollment_id = %s and r2_key = %s
+                      and reason = 'upload_orphan'
+                    """,
+                    (enrollment_id, key),
+                )
+            await conn.commit()
+        return True
+    except Exception as exc:
+        logger.warning(
+            "facemarket_enrollment_photo_cleanup_release_failed",
+            extra={
+                "enrollment_id": enrollment_id,
+                "error_type": type(exc).__name__,
+            },
+        )
+        return False
 
 
 async def _load_current_enrollment(conn, user_id: str) -> dict | None:
@@ -485,11 +518,11 @@ async def upload_enrollment_photo(
                     await cur.execute(
                         """
                         insert into fm_biometric_enrollment_photo_cleanup
-                            (enrollment_id, angle, r2_key, reason)
-                        values (%s, %s, %s, 'upload_orphan')
+                            (enrollment_id, angle, r2_key, reason, not_before)
+                        values (%s, %s, %s, 'upload_orphan', now() + %s)
                         on conflict (enrollment_id, r2_key) do nothing
                         """,
-                        (enrollment_id, angle, new_key),
+                        (enrollment_id, angle, new_key, UPLOAD_ORPHAN_LEASE),
                     )
                 await conn.commit()
             async with get_conn(request) as conn:
@@ -585,6 +618,9 @@ async def upload_enrollment_photo(
                 await conn.commit()
         except Exception as db_error:
             if new_key is not None:
+                await _make_upload_cleanup_due(
+                    request.app, enrollment_id=enrollment_id, key=new_key
+                )
                 await _drain_photo_cleanup(
                     request.app, enrollment_id=enrollment_id, key=new_key
                 )

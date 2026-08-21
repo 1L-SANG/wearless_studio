@@ -55,6 +55,7 @@ def test_photo_deletion_and_superseded_keys_have_durable_retry_state():
         "create table if not exists public.fm_biometric_enrollment_photo_cleanup", 1
     )[1].split(");", 1)[0]
     assert "r2_key text not null" in cleanup_schema
+    assert "not_before timestamptz not null default now()" in cleanup_schema
     assert "primary key (enrollment_id, r2_key)" in cleanup_schema
 
 

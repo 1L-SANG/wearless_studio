@@ -2,11 +2,14 @@ import asyncio
 import contextlib
 import copy
 import hashlib
+import io
 import json
+import threading
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.datastructures import Headers
 
 from app import facemarket_enrollment, r2
 from app.main import create_app
@@ -33,6 +36,7 @@ class EnrollmentStore:
         self.models = []
         self.licenses = []
         self.cleanup = []
+        self.now = NOW
         self.fail_photo_upsert = False
         self.commit_attempts = 0
         self.fail_commit_attempts = set()
@@ -214,7 +218,7 @@ class FakeCursor:
             )
             self.result = {"r2_key": photo["r2_key"]} if photo else None
         elif query.startswith("insert into fm_biometric_enrollment_photo_cleanup"):
-            enrollment_id, angle, key = params
+            enrollment_id, angle, key, *lease = params
             cleanup_key = (enrollment_id, key)
             row = {
                 "enrollment_id": enrollment_id,
@@ -227,7 +231,8 @@ class FakeCursor:
                     if "'delete'" in query
                     else "upload_orphan"
                 ),
-                "created_at": NOW,
+                "created_at": self.store.now,
+                "not_before": self.store.now + lease[0] if lease else self.store.now,
             }
             self.conn.cleanup_adds[cleanup_key] = row
             self.conn.cleanup_deletes.discard(cleanup_key)
@@ -255,6 +260,11 @@ class FakeCursor:
                     continue
                 if reason is not None and cleanup["reason"] != reason:
                     continue
+                if (
+                    "c.not_before <= now()" in query
+                    and cleanup["not_before"] > self.store.now
+                ):
+                    continue
                 photo = next(
                     (
                         item
@@ -273,6 +283,23 @@ class FakeCursor:
                         "current_state": photo["storage_state"] if photo else None,
                     }
                 )
+        elif query.startswith(
+            "update fm_biometric_enrollment_photo_cleanup set not_before = now()"
+        ):
+            enrollment_id, key = params
+            cleanup_key = (enrollment_id, key)
+            cleanup = next(
+                (
+                    item
+                    for item in self.store.cleanup
+                    if (item["enrollment_id"], item["r2_key"]) == cleanup_key
+                    and item["reason"] == "upload_orphan"
+                ),
+                None,
+            )
+            if cleanup:
+                cleanup["not_before"] = self.store.now
+                self.conn.cleanup_adds[cleanup_key] = copy.deepcopy(cleanup)
         elif query.startswith("delete from fm_biometric_enrollment_photo_cleanup"):
             enrollment_id, key = params
             cleanup_key = (enrollment_id, key)
@@ -452,6 +479,7 @@ class FakeConn:
         working = EnrollmentStore()
         for name in ("enrollments", "photos", "models", "licenses", "cleanup"):
             setattr(working, name, copy.deepcopy(getattr(self.store, name)))
+        working.now = self.store.now
         working.fail_photo_upsert = self.store.fail_photo_upsert
         return working
 
@@ -1575,6 +1603,144 @@ def test_upload_replacement_and_failure_cleanup_never_nest_pool_checkouts(
     assert fake_pool.max_checkout_depth == 1
     assert fake_pool.max_active_checkouts == 1
     assert fake_pool.active_checkouts == 0
+
+
+def test_upload_orphan_lease_blocks_cleanup_after_put_until_metadata_commit(
+    enrollment_client,
+    auth,
+    fake_r2,
+    enrollment_store,
+    monkeypatch,
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    object_stored = threading.Event()
+    allow_metadata = threading.Event()
+    original_put = fake_r2.put_bytes
+
+    def put_then_wait(key, data, mime, cache=None):
+        original_put(key, data, mime, cache)
+        object_stored.set()
+        if not allow_metadata.wait(timeout=3):
+            raise RuntimeError("test barrier timed out")
+
+    monkeypatch.setattr(fake_r2, "put_bytes", put_then_wait)
+
+    async def scenario():
+        request = facemarket_enrollment.Request(
+            {"type": "http", "app": enrollment_client.app}
+        )
+        photo = facemarket_enrollment.UploadFile(
+            io.BytesIO(b"image"),
+            filename="front.jpg",
+            headers=Headers({"content-type": "image/jpeg"}),
+        )
+        upload = asyncio.create_task(
+            facemarket_enrollment.upload_enrollment_photo(
+                request, enrollment_id, "front", photo, "user-1"
+            )
+        )
+        assert await asyncio.to_thread(object_stored.wait, 3)
+        new_key = fake_r2.puts[-1][0]
+
+        drained = asyncio.create_task(
+            facemarket_enrollment._drain_photo_cleanup(
+                enrollment_client.app,
+                enrollment_id=enrollment_id,
+                key=new_key,
+            )
+        )
+        assert await drained == (0, 0)
+        assert new_key in fake_r2.objects
+        assert [row["r2_key"] for row in enrollment_store.cleanup] == [new_key]
+        assert new_key not in fake_r2.deletes
+
+        allow_metadata.set()
+        result = await upload
+        assert result.angle == "front"
+        assert enrollment_store.photos[0]["r2_key"] == new_key
+        assert new_key in fake_r2.objects
+        assert enrollment_store.cleanup == []
+
+    asyncio.run(scenario())
+
+
+def test_upload_orphan_lease_survives_cancel_before_put_and_expires_for_cleanup(
+    enrollment_client,
+    auth,
+    fake_r2,
+    enrollment_store,
+    monkeypatch,
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    put_started = threading.Event()
+    allow_put = threading.Event()
+    put_finished = threading.Event()
+    original_put = fake_r2.put_bytes
+
+    def wait_then_put(key, data, mime, cache=None):
+        put_started.set()
+        if not allow_put.wait(timeout=3):
+            raise RuntimeError("test barrier timed out")
+        original_put(key, data, mime, cache)
+        put_finished.set()
+
+    monkeypatch.setattr(fake_r2, "put_bytes", wait_then_put)
+
+    async def scenario():
+        request = facemarket_enrollment.Request(
+            {"type": "http", "app": enrollment_client.app}
+        )
+        photo = facemarket_enrollment.UploadFile(
+            io.BytesIO(b"image"),
+            filename="front.jpg",
+            headers=Headers({"content-type": "image/jpeg"}),
+        )
+        upload = asyncio.create_task(
+            facemarket_enrollment.upload_enrollment_photo(
+                request, enrollment_id, "front", photo, "user-1"
+            )
+        )
+        assert await asyncio.to_thread(put_started.wait, 3)
+        new_key = enrollment_store.cleanup[0]["r2_key"]
+        assert (
+            enrollment_store.cleanup[0]["not_before"] - enrollment_store.now
+            == facemarket_enrollment.UPLOAD_ORPHAN_LEASE
+        )
+
+        drained = asyncio.create_task(
+            facemarket_enrollment._drain_photo_cleanup(
+                enrollment_client.app,
+                enrollment_id=enrollment_id,
+                key=new_key,
+            )
+        )
+        assert await drained == (0, 0)
+        assert [row["r2_key"] for row in enrollment_store.cleanup] == [new_key]
+        assert new_key not in fake_r2.objects
+        assert new_key not in fake_r2.deletes
+
+        upload.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await upload
+        allow_put.set()
+        assert await asyncio.to_thread(put_finished.wait, 3)
+        assert new_key in fake_r2.objects
+        assert [row["r2_key"] for row in enrollment_store.cleanup] == [new_key]
+
+        enrollment_store.now = enrollment_store.cleanup[0]["not_before"] + timedelta(
+            seconds=1
+        )
+        assert await facemarket_enrollment._drain_photo_cleanup(
+            enrollment_client.app,
+            enrollment_id=enrollment_id,
+            key=new_key,
+        ) == (1, 0)
+        assert new_key not in fake_r2.objects
+        assert enrollment_store.cleanup == []
+
+    asyncio.run(scenario())
 
 
 def test_cancel_is_idempotent_and_cleans_quarantine_photos(
