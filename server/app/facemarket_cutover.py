@@ -22,6 +22,7 @@ from .facemarket_enrollment import (
 _CUTOVER_CANCEL_MESSAGE = "실물 모델 보안 전환으로 작업을 취소하고 크레딧을 돌려드렸어요."
 _PERSONALIZATION_CANCEL_MESSAGE = "개인화 파기로 작업을 취소하고 크레딧을 돌려드렸어요."
 _MANIFEST_BATCH_TAG = "facemarketManifestBatchId"
+_MANIFEST_DIGEST_VERSION = "facemarket-cutover-v1"
 _CONTROLLER_LOCK_NAMESPACE = 89123017
 _CONTROLLER_LOCK_KEY = 8
 
@@ -57,12 +58,13 @@ class CutoverManifest:
 
     @property
     def target_digest(self) -> str:
-        values = (
+        values = [
+            _MANIFEST_DIGEST_VERSION,
             *(f"model:{value}" for value in self.model_ids),
             *(f"license:{value}" for value in self.license_ids),
             *(f"job:{value}" for value in self.job_ids),
-        )
-        return hashlib.sha256("\n".join(sorted(values)).encode()).hexdigest()
+        ]
+        return hashlib.sha256("\n".join([values[0], *sorted(values[1:])]).encode()).hexdigest()
 
     def public_summary(self) -> dict:
         return {
@@ -179,7 +181,8 @@ async def _lock_freeze_batch(conn, batch_id: str) -> dict:
     async with conn.cursor() as cur:
         await cur.execute(
             """
-            select id::text as id, status, started_at, model_count, license_count
+            select id::text as id, status, started_at, target_digest,
+                   model_count, license_count, job_count
               from fm_cutover_batches
              where id = %s
              for update
@@ -218,30 +221,52 @@ async def _initial_legacy_license_ids(conn, model_ids: list[str]) -> list[str]:
         return _ids(await cur.fetchall())
 
 
+async def _batch_tagged_job_ids(conn, batch_id: str) -> list[str]:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select id::text as id
+              from jobs
+             where metadata->>%s = %s
+             order by created_at, id
+            """,
+            (_MANIFEST_BATCH_TAG, batch_id),
+        )
+        return _ids(await cur.fetchall())
+
+
 def _uniq(values) -> tuple[str, ...]:
     return tuple(sorted({str(value) for value in values if value is not None}))
 
 
-async def build_initial_cutover_manifest(app) -> CutoverManifest:
-    """Build the PII-free initial legacy cutover identity and mutable inventory count."""
-    async with app.state.pool.connection() as conn:
-        model_ids = list(_uniq(await _initial_legacy_model_ids(conn)))
-        license_ids = _uniq(await _initial_legacy_license_ids(conn, model_ids))
+async def _manifest_identity(conn, *, batch_id: str | None = None) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    model_ids = _uniq(await _initial_legacy_model_ids(conn))
+    license_ids = _uniq(await _initial_legacy_license_ids(conn, list(model_ids)))
+    if batch_id is None:
         jobs = await repo.list_facemarket_scope_jobs(
             conn,
-            model_ids=tuple(model_ids),
+            model_ids=model_ids,
             license_ids=license_ids,
             initial_legacy_project_fallback=True,
         )
         job_ids = _uniq(row.get("id") for row in jobs)
+    else:
+        job_ids = _uniq(await _batch_tagged_job_ids(conn, batch_id))
+    return model_ids, license_ids, job_ids
+
+
+async def build_initial_cutover_manifest(app, *, batch_id: str | None = None) -> CutoverManifest:
+    """Build the PII-free initial legacy cutover identity and mutable inventory count."""
+    async with app.state.pool.connection() as conn:
+        model_ids, license_ids, job_ids = await _manifest_identity(conn, batch_id=batch_id)
         await conn.commit()
     asset_count = await biometric_purge.initial_cutover_asset_count(
         app,
-        model_ids=tuple(model_ids),
+        model_ids=model_ids,
         license_ids=license_ids,
         job_ids=job_ids,
     )
-    return CutoverManifest(tuple(model_ids), license_ids, job_ids, asset_count)
+    return CutoverManifest(model_ids, license_ids, job_ids, asset_count)
 
 
 async def _load_batch(conn, batch_id: str) -> dict:
@@ -353,10 +378,27 @@ async def approve_initial_cutover_batch(app, *, batch_id: str, admin_user_id: st
                 if manifest.job_ids:
                     await cur.execute(
                         """
+                        select id::text as id, metadata->>%s as manifest_batch_id
+                          from jobs
+                         where id = any(%s)
+                         for update
+                        """,
+                        (_MANIFEST_BATCH_TAG, list(manifest.job_ids)),
+                    )
+                    locked = await cur.fetchall()
+                    if _uniq(row["id"] for row in locked) != manifest.job_ids or any(
+                        row.get("manifest_batch_id")
+                        and row.get("manifest_batch_id") != batch_id
+                        for row in locked
+                    ):
+                        raise CutoverBlocked("manifest_job_tag_conflict")
+                    await cur.execute(
+                        """
                         update jobs
                            set metadata = metadata || %s::jsonb
                          where id = any(%s)
                            and coalesce(metadata->>%s, %s) = %s
+                         returning id::text as id
                         """,
                         (
                             Json({_MANIFEST_BATCH_TAG: batch_id}),
@@ -366,6 +408,8 @@ async def approve_initial_cutover_batch(app, *, batch_id: str, admin_user_id: st
                             batch_id,
                         ),
                     )
+                    if _uniq(row["id"] for row in await cur.fetchall()) != manifest.job_ids:
+                        raise CutoverBlocked("manifest_job_tag_conflict")
                 await cur.execute(
                     """
                     update fm_cutover_batches
@@ -380,26 +424,24 @@ async def approve_initial_cutover_batch(app, *, batch_id: str, admin_user_id: st
             raise
 
 
-async def _try_controller_lock(pool) -> bool:
-    async with pool.connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                "select pg_try_advisory_lock(%s, %s) as locked",
-                (_CONTROLLER_LOCK_NAMESPACE, _CONTROLLER_LOCK_KEY),
-            )
-            row = await cur.fetchone()
-        await conn.commit()
+async def _try_controller_lock(conn) -> bool:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select pg_try_advisory_lock(%s, %s) as locked",
+            (_CONTROLLER_LOCK_NAMESPACE, _CONTROLLER_LOCK_KEY),
+        )
+        row = await cur.fetchone()
+    await conn.commit()
     return bool(row and row["locked"])
 
 
-async def _release_controller_lock(pool) -> None:
-    async with pool.connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                "select pg_advisory_unlock(%s, %s)",
-                (_CONTROLLER_LOCK_NAMESPACE, _CONTROLLER_LOCK_KEY),
-            )
-        await conn.commit()
+async def _release_controller_lock(conn) -> None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select pg_advisory_unlock(%s, %s)",
+            (_CONTROLLER_LOCK_NAMESPACE, _CONTROLLER_LOCK_KEY),
+        )
+    await conn.commit()
 
 
 async def _set_batch_status(pool, batch_id: str, status: str, *, error_code: str | None = None) -> None:
@@ -440,15 +482,79 @@ async def _batch_status(pool, batch_id: str) -> dict:
         return batch
 
 
-async def _move_failed_for_resume(pool, batch_id: str, status: str) -> None:
-    async with pool.connection() as conn:
-        await repo.lock_facemarket_writer_boundary(conn)
-        async with conn.cursor() as cur:
-            await cur.execute(
-                "update fm_cutover_batches set status=%s where id=%s and status='failed'",
-                (status, batch_id),
-            )
-        await conn.commit()
+async def _linked_resume_state(conn, batch_id: str) -> tuple[list[dict], list[dict]]:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select id::text as id, status, reverification_batch_id::text as reverification_batch_id
+              from fm_models
+             where reverification_batch_id = %s
+             order by id
+            """,
+            (batch_id,),
+        )
+        models = await cur.fetchall()
+        await cur.execute(
+            """
+            select id::text as id, status, reverification_batch_id::text as reverification_batch_id
+              from fm_licenses
+             where reverification_batch_id = %s
+             order by id
+            """,
+            (batch_id,),
+        )
+        licenses = await cur.fetchall()
+    return models, licenses
+
+
+async def _mark_resume_invalid(conn, batch_id: str) -> None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            update fm_cutover_batches
+               set last_error_code='cutover_resume_state_invalid'
+             where id=%s and status='failed'
+            """,
+            (batch_id,),
+        )
+
+
+async def _resume_failed_batch(app, batch_id: str) -> str:
+    async with app.state.pool.connection() as conn:
+        try:
+            await repo.lock_facemarket_writer_boundary(conn)
+            batch = await _load_batch(conn, batch_id)
+            if batch["status"] != "failed":
+                raise CutoverBlocked("cutover_batch_not_failed")
+            model_ids, license_ids, job_ids = await _manifest_identity(conn, batch_id=batch_id)
+            manifest = CutoverManifest(model_ids, license_ids, job_ids, asset_count=0)
+            _require_matching_manifest(batch, manifest, include_assets=False)
+            models, licenses = await _linked_resume_state(conn, batch_id)
+            linked_model_ids = _uniq(row["id"] for row in models)
+            linked_license_ids = _uniq(row["id"] for row in licenses)
+            if not linked_model_ids and not linked_license_ids:
+                status = "draining"
+            elif (
+                linked_model_ids == manifest.model_ids
+                and linked_license_ids == manifest.license_ids
+                and all(row["status"] == "reverification_required" for row in models)
+                and all(row["status"] != "active" for row in licenses)
+            ):
+                status = "reconciling"
+            else:
+                await _mark_resume_invalid(conn, batch_id)
+                await conn.commit()
+                raise CutoverBlocked("cutover_resume_state_invalid")
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "update fm_cutover_batches set status=%s where id=%s and status='failed'",
+                    (status, batch_id),
+                )
+            await conn.commit()
+            return status
+        except Exception:
+            await conn.rollback()
+            raise
 
 
 async def _verify_reconciling_links(pool, batch_id: str, manifest: CutoverManifest) -> None:
@@ -499,16 +605,16 @@ async def apply_initial_cutover(
     batch = await _batch_status(pool, batch_id)
     if batch["status"] == "completed":
         return _batch_summary(batch)
-    if not await _try_controller_lock(pool):
-        raise CutoverBlocked("cutover_controller_busy")
-    try:
-        batch = await _batch_status(pool, batch_id)
-        if batch["status"] == "completed":
-            return _batch_summary(batch)
-        if batch["status"] == "failed":
-            await _move_failed_for_resume(pool, batch_id, "draining")
-            batch = await _batch_status(pool, batch_id)
+    async with pool.connection() as controller_conn:
+        if not await _try_controller_lock(controller_conn):
+            raise CutoverBlocked("cutover_controller_busy")
         try:
+            batch = await _batch_status(pool, batch_id)
+            if batch["status"] == "completed":
+                return _batch_summary(batch)
+            if batch["status"] == "failed":
+                resumed = await _resume_failed_batch(app, batch_id)
+                batch = {**batch, "status": resumed}
             if batch["status"] == "approved":
                 await close_initial_cutover_writers(pool, batch_id=batch_id)
             if batch["status"] in {"approved", "draining"}:
@@ -517,11 +623,11 @@ async def apply_initial_cutover(
                     batch_id=batch_id,
                     timeout_seconds=drain_timeout_seconds,
                 )
-                manifest = await build_initial_cutover_manifest(app)
+                manifest = await build_initial_cutover_manifest(app, batch_id=batch_id)
                 _require_matching_manifest(batch, manifest, include_assets=False)
                 await freeze_initial_cutover_batch(pool, batch_id=batch_id)
             else:
-                manifest = await build_initial_cutover_manifest(app)
+                manifest = await build_initial_cutover_manifest(app, batch_id=batch_id)
             await _verify_reconciling_links(pool, batch_id, manifest)
             result = await purge_biometric_scope(
                 app,
@@ -542,8 +648,8 @@ async def apply_initial_cutover(
         except biometric_purge.PurgeIncomplete as exc:
             await _set_batch_status(pool, batch_id, "failed", error_code=exc.code)
             raise CutoverBlocked(exc.code)
-    finally:
-        await _release_controller_lock(pool)
+        finally:
+            await _release_controller_lock(controller_conn)
 
 
 async def _lock_target_licenses(conn, model_ids: list[str]) -> list[dict]:
@@ -595,6 +701,15 @@ async def freeze_initial_cutover_batch(pool, *, batch_id: str) -> FreezeSummary:
                 raise CutoverBlocked("target_scope_changed")
             if any(_foreign_batch(row, batch_id) for row in (*models, *licenses)):
                 raise CutoverBlocked("target_scope_link_conflict")
+            job_ids = _uniq(await _batch_tagged_job_ids(conn, batch_id))
+            stable = CutoverManifest(
+                model_ids=_uniq(row["id"] for row in models),
+                license_ids=_uniq(row["id"] for row in licenses),
+                job_ids=job_ids,
+                asset_count=0,
+            )
+            if batch["target_digest"] != stable.target_digest or int(batch["job_count"]) != len(job_ids):
+                raise CutoverBlocked("target_digest_changed")
 
             license_ids = _ids(licenses)
             if license_ids:

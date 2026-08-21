@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import hashlib
 import inspect
 import os
 import json
@@ -37,8 +38,10 @@ class _Cursor:
         elif q.startswith("select pg_advisory_xact_lock"):
             self.last = {"locked": True}
         elif q.startswith("select pg_try_advisory_lock") and params[0] == facemarket_cutover._CONTROLLER_LOCK_NAMESPACE:
+            self.store.controller_lock_conn_ids.append(self.conn.conn_id)
             self.last = {"locked": self.store.controller_lock_available}
         elif q.startswith("select pg_advisory_unlock"):
+            self.store.controller_unlock_conn_ids.append(self.conn.conn_id)
             self.last = {"unlocked": True}
         elif q.startswith("select m.id::text as id") and "not exists" in q:
             self.last = [{"id": model_id} for model_id in self.store.target_model_ids]
@@ -51,9 +54,25 @@ class _Cursor:
             self.last = None
         elif "select id::text as id, status, target_digest" in q and "from fm_cutover_batches" in q:
             self.last = self.store.manifest_batch
+        elif q.startswith("select id::text as id, metadata->>") and "from jobs" in q:
+            ids = set(params[1] or ())
+            locked_ids = self.store.locked_job_ids or list(params[1] or ())
+            self.last = [
+                {"id": job_id, "manifest_batch_id": self.store.job_tags.get(job_id)}
+                for job_id in locked_ids
+                if job_id in ids
+            ]
         elif q.startswith("update jobs") and "metadata = metadata ||" in q:
             self.store.tagged_jobs = list(params[1])
             self.store.job_metadata_tag = params[2]
+            self.last = [
+                {"id": job_id}
+                for job_id in (self.store.approval_returned_jobs or list(params[1] or ()))
+            ]
+        elif "from jobs" in q and "metadata->>%s = %s" in q:
+            self.last = [{"id": job_id} for job_id in self.store.tagged_jobs]
+        elif q.startswith("update fm_cutover_batches") and "last_error_code='cutover_resume_state_invalid'" in q:
+            self.store.last_error_code = "cutover_resume_state_invalid"
             self.last = None
         elif q.startswith("update fm_cutover_batches") and "set status='approved'" in q:
             self.store.batch_status = "approved"
@@ -76,6 +95,26 @@ class _Cursor:
             if self.store.manifest_batch:
                 self.store.manifest_batch["status"] = params[0]
             self.last = None
+        elif "from fm_models" in q and "where reverification_batch_id = %s" in q:
+            self.last = [
+                {
+                    "id": row["id"],
+                    "status": row["status"],
+                    "reverification_batch_id": row.get("reverification_batch_id"),
+                }
+                for row in self.store.models
+                if row.get("reverification_batch_id") == params[0]
+            ]
+        elif "from fm_licenses" in q and "where reverification_batch_id = %s" in q:
+            self.last = [
+                {
+                    "id": row["id"],
+                    "status": row["status"],
+                    "reverification_batch_id": row.get("reverification_batch_id"),
+                }
+                for row in self.store.licenses
+                if row.get("reverification_batch_id") == params[0]
+            ]
         elif q.startswith("select count(*)::int as count") and "from fm_models" in q:
             self.last = {"count": len([r for r in self.store.models if r.get("reverification_batch_id") == params[0] and r["status"] == "reverification_required"])}
         elif q.startswith("select count(*)::int as count") and "from fm_licenses" in q:
@@ -194,6 +233,8 @@ class _Conn:
     def __init__(self, store):
         self.store = store
         self.commits = 0
+        self.conn_id = store.next_conn_id
+        store.next_conn_id += 1
         self._snapshot = store.snapshot()
 
     def cursor(self):
@@ -258,8 +299,14 @@ class _Store:
         self.batch_refreshed = False
         self.tagged_jobs = []
         self.job_metadata_tag = None
+        self.locked_job_ids = []
+        self.approval_returned_jobs = []
+        self.job_tags = {}
         self.last_error_code = None
         self.controller_lock_available = True
+        self.controller_lock_conn_ids = []
+        self.controller_unlock_conn_ids = []
+        self.next_conn_id = 1
         self.batch_started_at = "2026-08-21T00:00:00Z"
         self.batch_model_count = 1
         self.batch_license_count = 2
@@ -291,6 +338,14 @@ class _Store:
                 "vc_id": "vc-b",
             },
         ]
+        stable = facemarket_cutover.CutoverManifest(
+            model_ids=("model-legacy",),
+            license_ids=("license-a", "license-b"),
+            job_ids=(),
+            asset_count=0,
+        )
+        self.batch_target_digest = stable.target_digest
+        self.batch_job_count = 0
 
     @property
     def batch_row(self):
@@ -298,8 +353,10 @@ class _Store:
             "id": self.batch_id,
             "status": self.batch_status,
             "started_at": self.batch_started_at,
+            "target_digest": getattr(self, "batch_target_digest", ""),
             "model_count": self.batch_model_count,
             "license_count": self.batch_license_count,
+            "job_count": getattr(self, "batch_job_count", 0),
         }
 
     def snapshot(self):
@@ -755,6 +812,21 @@ def test_initial_manifest_digest_ignores_asset_count_and_uses_legacy_job_fallbac
     assert "license-a" not in str(first.public_summary())
 
 
+def test_cutover_manifest_digest_is_versioned():
+    """Break caught: future digest schema changes can collide with unversioned approved batches."""
+    manifest = facemarket_cutover.CutoverManifest(
+        model_ids=("model-a",),
+        license_ids=("license-a",),
+        job_ids=("job-a",),
+        asset_count=0,
+    )
+    unversioned = hashlib.sha256(
+        "\n".join(("job:job-a", "license:license-a", "model:model-a")).encode()
+    ).hexdigest()
+
+    assert manifest.target_digest != unversioned
+
+
 def test_approve_initial_batch_requires_admin_and_tags_exact_jobs(monkeypatch):
     """Break caught: approval can skip admin or reuse Task5's cancellation tag."""
     store = _Store()
@@ -775,7 +847,7 @@ def test_approve_initial_batch_requires_admin_and_tags_exact_jobs(monkeypatch):
         "asset_count": 3,
     }
 
-    async def build(_app):
+    async def build(_app, *, batch_id=None):
         return manifest
 
     async def is_admin(_conn, user_id):
@@ -801,6 +873,225 @@ def test_approve_initial_batch_requires_admin_and_tags_exact_jobs(monkeypatch):
     assert store.job_metadata_tag != "cutoverBatchId"
 
 
+def test_approve_initial_batch_rolls_back_when_exact_job_tagging_fails(monkeypatch):
+    """Break caught: approval can proceed when a manifest job is missing or already foreign-tagged."""
+    store = _Store()
+    store.batch_status = "planned"
+    store.approval_returned_jobs = ["job-done"]
+    manifest = facemarket_cutover.CutoverManifest(
+        model_ids=("model-legacy",),
+        license_ids=("license-a",),
+        job_ids=("job-done", "job-missing"),
+        asset_count=3,
+    )
+    store.manifest_batch = {
+        "id": store.batch_id,
+        "status": "planned",
+        "target_digest": manifest.target_digest,
+        "model_count": 1,
+        "license_count": 1,
+        "job_count": 2,
+        "asset_count": 3,
+    }
+
+    async def build(_app, *, batch_id=None):
+        return manifest
+
+    async def is_admin(_conn, _user_id):
+        return True
+
+    monkeypatch.setattr(facemarket_cutover, "build_initial_cutover_manifest", build)
+    monkeypatch.setattr(facemarket_cutover.repo, "is_admin", is_admin)
+    app = type("App", (), {"state": type("State", (), {"pool": _Pool(store)})()})()
+
+    with pytest.raises(facemarket_cutover.CutoverBlocked) as exc:
+        asyncio.run(facemarket_cutover.approve_initial_cutover_batch(
+            app, batch_id=store.batch_id, admin_user_id="admin-user"
+        ))
+
+    assert exc.value.code == "manifest_job_tag_conflict"
+    assert store.batch_status == "planned"
+    assert store.rollbacks == 1
+
+
+def test_batch_aware_manifest_uses_tagged_jobs_without_legacy_project_fallback(monkeypatch):
+    """Break caught: approved/resume manifests drift when project pointers change after approval."""
+    calls = []
+
+    async def model_ids(_conn):
+        return ["model-legacy"]
+
+    async def license_ids(_conn, model_ids):
+        assert model_ids == ["model-legacy"]
+        return ["license-a"]
+
+    async def jobs(conn, **kwargs):
+        calls.append(kwargs)
+        return [{"id": "project-fallback-job", "created_at": 1}]
+
+    async def tagged(_conn, batch_id):
+        assert batch_id == _Store.batch_id
+        return ["approved-tagged-job"]
+
+    async def assets(_app, **kwargs):
+        assert kwargs["job_ids"] == ("approved-tagged-job",)
+        return 4
+
+    monkeypatch.setattr(facemarket_cutover, "_initial_legacy_model_ids", model_ids)
+    monkeypatch.setattr(facemarket_cutover, "_initial_legacy_license_ids", license_ids)
+    monkeypatch.setattr(facemarket_cutover.repo, "list_facemarket_scope_jobs", jobs)
+    monkeypatch.setattr(facemarket_cutover, "_batch_tagged_job_ids", tagged)
+    monkeypatch.setattr(facemarket_cutover.biometric_purge, "initial_cutover_asset_count", assets)
+    app = type("App", (), {"state": type("State", (), {"pool": _Pool(_Store())})()})()
+
+    manifest = asyncio.run(facemarket_cutover.build_initial_cutover_manifest(
+        app, batch_id=_Store.batch_id
+    ))
+
+    assert manifest.job_ids == ("approved-tagged-job",)
+    assert calls == []
+
+
+def test_freeze_verifies_stable_digest_and_tagged_job_count_inside_transaction(monkeypatch):
+    """Break caught: freeze can pass a precheck then mutate after manifest/tag drift."""
+    store = _Store()
+    store.batch_status = "draining"
+    store.batch_target_digest = "wrong-digest"
+    store.batch_job_count = 1
+    store.tagged_jobs = ["job-a"]
+
+    async def enqueue(_conn, **_kwargs):
+        raise AssertionError("enqueue must not run after digest drift")
+
+    monkeypatch.setattr(facemarket_cutover.facemarket, "enqueue_vc_revocation", enqueue)
+
+    with pytest.raises(facemarket_cutover.CutoverBlocked) as exc:
+        asyncio.run(facemarket_cutover.freeze_initial_cutover_batch(
+            _Pool(store), batch_id=store.batch_id
+        ))
+
+    assert exc.value.code == "target_digest_changed"
+    assert store.freeze_steps == []
+    assert store.licenses[0]["status"] == "active"
+
+
+def test_failed_resume_classifies_linked_state_before_restarting(monkeypatch):
+    """Break caught: every failed batch resumes through draining even when it should purge or fail closed."""
+    manifest = facemarket_cutover.CutoverManifest(
+        model_ids=("model-legacy",),
+        license_ids=("license-a", "license-b"),
+        job_ids=(),
+        asset_count=0,
+    )
+
+    async def build(_app, *, batch_id=None):
+        assert batch_id == _Store.batch_id
+        return manifest
+
+    monkeypatch.setattr(facemarket_cutover, "build_initial_cutover_manifest", build)
+
+    clean = _Store()
+    clean.batch_status = "failed"
+    clean.manifest_batch = {
+        "id": clean.batch_id,
+        "status": "failed",
+        "target_digest": manifest.target_digest,
+        "model_count": 1,
+        "license_count": 2,
+        "job_count": 0,
+        "asset_count": 0,
+    }
+    app = type("App", (), {"state": type("State", (), {"pool": _Pool(clean)})()})()
+    status = asyncio.run(facemarket_cutover._resume_failed_batch(app, clean.batch_id))
+    assert status == "draining"
+    assert clean.batch_status == "draining"
+
+    linked = _Store()
+    linked.batch_status = "failed"
+    linked.manifest_batch = {**clean.manifest_batch, "status": "failed"}
+    linked.models[0].update(status="reverification_required", reverification_batch_id=linked.batch_id)
+    for row in linked.licenses:
+        row.update(status="reverification_required", reverification_batch_id=linked.batch_id)
+    app.state.pool = _Pool(linked)
+    status = asyncio.run(facemarket_cutover._resume_failed_batch(app, linked.batch_id))
+    assert status == "reconciling"
+    assert linked.batch_status == "reconciling"
+
+    invalid = _Store()
+    invalid.batch_status = "failed"
+    invalid.manifest_batch = {**clean.manifest_batch, "status": "failed"}
+    invalid.models[0].update(status="verified", reverification_batch_id=invalid.batch_id)
+    app.state.pool = _Pool(invalid)
+    with pytest.raises(facemarket_cutover.CutoverBlocked) as exc:
+        asyncio.run(facemarket_cutover._resume_failed_batch(app, invalid.batch_id))
+    assert exc.value.code == "cutover_resume_state_invalid"
+    assert invalid.batch_status == "failed"
+    assert invalid.last_error_code == "cutover_resume_state_invalid"
+
+
+def test_apply_holds_and_releases_controller_lock_on_same_connection(monkeypatch):
+    """Break caught: session advisory lock is released on a different pooled connection."""
+    store = _Store()
+    store.batch_status = "approved"
+    manifest = facemarket_cutover.CutoverManifest(
+        model_ids=("model-legacy",),
+        license_ids=("license-a", "license-b"),
+        job_ids=(),
+        asset_count=9,
+    )
+    store.manifest_batch = {
+        "id": store.batch_id,
+        "status": "approved",
+        "target_digest": manifest.target_digest,
+        "model_count": 1,
+        "license_count": 2,
+        "job_count": 0,
+        "asset_count": 9,
+    }
+
+    async def build(_app, *, batch_id=None):
+        assert batch_id == store.batch_id
+        return manifest
+
+    async def close(_pool, *, batch_id):
+        store.batch_status = "draining"
+
+    async def quiesce(_pool, **_kwargs):
+        return facemarket_cutover.WriterQuiescence(0, 0, 0)
+
+    async def freeze(_pool, *, batch_id):
+        store.batch_status = "applying"
+        store.models[0].update(status="reverification_required", reverification_batch_id=batch_id)
+        for row in store.licenses:
+            row.update(status="reverification_required", reverification_batch_id=batch_id)
+        return facemarket_cutover.FreezeSummary(1, 2, 2)
+
+    async def purge(_app, **_kwargs):
+        return type("Result", (), {
+            "complete": True,
+            "target_count": 1,
+            "confirmed_absent_count": 1,
+            "model_count": 1,
+        })()
+
+    monkeypatch.setattr(facemarket_cutover, "build_initial_cutover_manifest", build)
+    monkeypatch.setattr(facemarket_cutover, "close_initial_cutover_writers", close)
+    monkeypatch.setattr(facemarket_cutover, "quiesce_initial_cutover_writers", quiesce)
+    monkeypatch.setattr(facemarket_cutover, "freeze_initial_cutover_batch", freeze)
+    monkeypatch.setattr(facemarket_cutover, "purge_biometric_scope", purge)
+    app = type("App", (), {"state": type("State", (), {"pool": _Pool(store)})()})()
+
+    asyncio.run(facemarket_cutover.apply_initial_cutover(
+        app,
+        batch_id=store.batch_id,
+        confirmation=store.batch_id,
+        drain_timeout_seconds=1,
+    ))
+
+    assert store.controller_lock_conn_ids
+    assert store.controller_unlock_conn_ids == store.controller_lock_conn_ids
+
+
 def test_apply_initial_cutover_orders_reused_steps_and_completed_replay_is_noop(monkeypatch):
     """Break caught: Task8 starts R2 purge before close/quiesce/freeze or reruns completed batches."""
     store = _Store()
@@ -822,7 +1113,7 @@ def test_apply_initial_cutover_orders_reused_steps_and_completed_replay_is_noop(
     }
     order = []
 
-    async def build(_app):
+    async def build(_app, *, batch_id=None):
         order.append("manifest")
         return manifest
 
@@ -896,6 +1187,58 @@ def test_cutover_cli_help_has_no_mutation_modes():
         script.main(["--approve", _Store.batch_id])
     with pytest.raises(SystemExit):
         script.main(["--apply", _Store.batch_id])
+
+
+def test_cutover_cli_default_and_explicit_dry_run_are_bounded(monkeypatch, capsys):
+    """Break caught: CLI default diverges from dry-run or leaks raw service errors."""
+    from scripts import facemarket_security_cutover as script
+
+    calls = []
+
+    async def dry_run():
+        calls.append("dry")
+        return {
+            "targetDigest": "d" * 64,
+            "modelCount": 1,
+            "licenseCount": 2,
+            "jobCount": 3,
+            "assetCount": 4,
+        }
+
+    monkeypatch.setattr(script, "_run_dry_run", dry_run)
+    script.main([])
+    script.main(["--dry-run"])
+    out = capsys.readouterr().out.strip().splitlines()
+
+    assert calls == ["dry", "dry"]
+    assert [json.loads(line) for line in out] == [
+        {
+            "targetDigest": "d" * 64,
+            "modelCount": 1,
+            "licenseCount": 2,
+            "jobCount": 3,
+            "assetCount": 4,
+        },
+        {
+            "targetDigest": "d" * 64,
+            "modelCount": 1,
+            "licenseCount": 2,
+            "jobCount": 3,
+            "assetCount": 4,
+        },
+    ]
+
+    async def fail():
+        raise RuntimeError("RAW-SENTINEL facemarket/models/secret")
+
+    monkeypatch.setattr(script, "_run_dry_run", fail)
+    with pytest.raises(SystemExit) as exc:
+        script.main([])
+    err = capsys.readouterr().err
+    assert exc.value.code == 2
+    assert err.strip() == "internal_error"
+    assert "RAW-SENTINEL" not in err
+    assert "facemarket/models/" not in err
 
 
 @pytest.mark.skipif(

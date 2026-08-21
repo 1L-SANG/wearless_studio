@@ -11,8 +11,9 @@ from types import SimpleNamespace
 from psycopg_pool import AsyncConnectionPool
 
 from app.config import load_settings
-from app.facemarket_cutover import build_initial_cutover_manifest
+from app.facemarket_cutover import CutoverBlocked, build_initial_cutover_manifest
 from app.r2 import R2Client
+from app.services.biometric_purge import PurgeIncomplete
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -44,8 +45,17 @@ def main(argv: list[str] | None = None) -> None:
     _parser().parse_args(argv)
     try:
         print(json.dumps(asyncio.run(_run_dry_run()), ensure_ascii=False, sort_keys=True))
+    except (CutoverBlocked, PurgeIncomplete) as exc:
+        print(exc.code, file=sys.stderr)
+        raise SystemExit(2) from None
     except RuntimeError as exc:
-        print(str(exc), file=sys.stderr)
+        code = str(exc)
+        if code not in {"database_url_required"}:
+            code = "internal_error"
+        print(code, file=sys.stderr)
+        raise SystemExit(2) from None
+    except Exception:
+        print("internal_error", file=sys.stderr)
         raise SystemExit(2) from None
 
 
