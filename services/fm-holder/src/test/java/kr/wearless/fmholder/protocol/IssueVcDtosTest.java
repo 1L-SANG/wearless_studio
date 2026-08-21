@@ -12,6 +12,7 @@ class IssueVcDtosTest {
         var json = """
                 {
                   "plan": "facelicense",
+                  "idempotencyKey": "fm-license:123e4567-e89b-12d3-a456-426614174000",
                   "claims": {
                     "allowed_use": "smoke",
                     "forbidden_use": "resale",
@@ -25,6 +26,8 @@ class IssueVcDtosTest {
 
         var req = new ObjectMapper().readValue(json, IssueVcDtos.IssueRequest.class);
 
+        assertThat(req.idempotencyKey())
+                .isEqualTo("fm-license:123e4567-e89b-12d3-a456-426614174000");
         assertThat(req.claims().allowedUse()).isEqualTo("smoke");
         assertThat(req.claims().forbiddenUse()).isEqualTo("resale");
         assertThat(req.claims().unitPrice()).isZero();

@@ -2,6 +2,10 @@ package kr.wearless.fmholder.api;
 
 import kr.wearless.fmholder.protocol.IssueVcDtos;
 import kr.wearless.fmholder.protocol.IssueVcService;
+import java.util.Locale;
+import java.util.regex.Pattern;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -18,11 +22,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/holder")
 public class IssueController {
+    private static final Pattern FACELICENSE_KEY = Pattern.compile(
+            "fm-license:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
 
     private final IssueVcService issueVc;
+    private final IssueIdempotencyStore idempotency;
 
-    public IssueController(IssueVcService issueVc) {
+    public IssueController(IssueVcService issueVc, IssueIdempotencyStore idempotency) {
         this.issueVc = issueVc;
+        this.idempotency = idempotency;
     }
 
     /**
@@ -33,6 +41,24 @@ public class IssueController {
     public IssueVcService.IssueResult issueVc(@PathVariable String modelId,
                                               @RequestBody(required = false) IssueVcDtos.IssueRequest body)
             throws Exception {
-        return issueVc.issue(modelId, body);
+        if (!isFaceLicense(body)) {
+            return issueVc.issue(modelId, body);
+        }
+        if (body.idempotencyKey() == null
+                || !FACELICENSE_KEY.matcher(body.idempotencyKey()).matches()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid_idempotency_key");
+        }
+        try {
+            return idempotency.execute(modelId, body, () -> issueVc.issue(modelId, body));
+        } catch (IssueIdempotencyStore.UnavailableException error) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT, "issue_idempotency_unavailable");
+        }
+    }
+
+    private static boolean isFaceLicense(IssueVcDtos.IssueRequest body) {
+        return body != null
+                && body.plan() != null
+                && "facelicense".equals(body.plan().trim().toLowerCase(Locale.ROOT));
     }
 }

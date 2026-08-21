@@ -58,7 +58,11 @@ public final class IssueVcDtos {
     // 본문 없음/plan 생략 → MDL(기존 동작). plan="facelicense" → FaceLicense VC + claims 를
     // Issuer user(userInfo)로 upsert 해 credentialSubject 에 실린다(값은 서버측 user.data 에서 유래).
     @JsonInclude(JsonInclude.Include.NON_NULL)
-    public record IssueRequest(String plan, Claims claims) {}
+    public record IssueRequest(String plan, Claims claims, String idempotencyKey) {
+        public IssueRequest(String plan, Claims claims) {
+            this(plan, claims, null);
+        }
+    }
 
     /** FaceLicense claim 입력. namespace kr.wearless.facelicense 의 6개 claim 에 매핑된다. */
     @JsonInclude(JsonInclude.Include.NON_NULL)
