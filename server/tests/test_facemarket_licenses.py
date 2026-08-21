@@ -233,6 +233,8 @@ class FakeCursor:
 
         if s.startswith("select pg_advisory_xact_lock"):
             self._result = {"?column?": None}
+        elif "payload->>'reason' = 'account_delete'" in s and "ready_for_identity_delete" in s:
+            self._result = {"closed": self.store.get("account_closed", False)}
         elif "from fm_cutover_batches" in s and "status = any" in s:
             self._result = {"closed": False}
         elif s.startswith("select l.id::text as id, m.id::text as model_id"):
@@ -643,6 +645,7 @@ def fm(keypair, monkeypatch):
         "face_photos": [],  # 개인화 얼굴 슬롯 {profile_id, angle, r2_key, image_digest}
         "identities": [],   # fm_identity_verifications {model_id, birth_year}
         "revocations": {},
+        "account_closed": False,
     }
 
     @contextlib.asynccontextmanager
@@ -694,6 +697,7 @@ def biometric_fm(keypair, monkeypatch):
         "face_photos": [],
         "identities": [],
         "revocations": {},
+        "account_closed": False,
     }
 
     @contextlib.asynccontextmanager

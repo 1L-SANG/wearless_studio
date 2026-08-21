@@ -124,6 +124,11 @@ def _err(code: str, message: str, status: int = 400, **extra) -> HTTPException:
     return HTTPException(status_code=status, detail=detail)
 
 
+async def _assert_account_open(conn, user_id: str) -> None:
+    if await repo.user_account_delete_completed(conn, user_id):
+        raise _err("account_closed", "계정 삭제가 완료되어 사용할 수 없습니다.", status=404)
+
+
 def _json(payload: dict, status: int = 200) -> JSONResponse:
     """datetime/Decimal 안전 직렬화(jsonable_encoder) + 상태코드 지정."""
     return JSONResponse(status_code=status, content=jsonable_encoder(payload))
@@ -290,6 +295,7 @@ async def _ensure_profile(conn, user_id: str):
 
     동시 첫-제출 레이스는 personalization_profiles_active_user_idx(user_id where status<>'purged')
     가 막고, UniqueViolation 시 savepoint 롤백 후 재조회로 합류한다."""
+    await _assert_account_open(conn, user_id)
     row = await _load_profile(conn, user_id, for_update=True)
     if row is not None:
         return row, False
@@ -575,6 +581,7 @@ async def identity_verify(
     cx_tx_hash = hashlib.sha256(token.encode()).hexdigest()
 
     async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
         async with conn.cursor() as cur:
             try:
                 await cur.execute(
@@ -665,6 +672,7 @@ async def withdraw_consent(
         raise _err("invalid_consent_type", "알 수 없는 동의 유형입니다.")
 
     async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
         profile = await _load_profile(conn, user_id)
         if profile is None:
             raise _err("not_found", "개인화 프로필을 찾을 수 없습니다.", status=404)
@@ -755,6 +763,7 @@ async def upload_face_photo(
 
     # 1) 전제조건 게이트(얼굴 바이트를 외부 API로 보내기 전에 필수 동의를 코드로 확인 — §1.4).
     async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
         profile = await _load_profile(conn, user_id)
         if profile is not None and profile["status"] == "purging":
             raise _err("purge_in_progress", "파기가 진행 중이라 지금은 업로드할 수 없어요.", status=409)
@@ -794,6 +803,7 @@ async def upload_face_photo(
     stored_new = False
     try:
         async with get_conn(request) as conn:
+            await _assert_account_open(conn, user_id)
             locked = await _load_profile(conn, user_id, for_update=True)
             if locked is None or locked["status"] == "purging":
                 raise _err("purge_in_progress", "파기가 진행 중이라 지금은 업로드할 수 없어요.", status=409)
@@ -870,6 +880,7 @@ async def get_face_photo_file(
         raise _err("not_found", "찾을 수 없습니다.", status=404)
     r2 = _r2_face(request)
     async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
         profile = await _load_profile(conn, user_id, for_update=True)
         if profile is None or profile["status"] not in ("draft", "ready"):
             raise _err("not_found", "찾을 수 없습니다.", status=404)
@@ -958,6 +969,7 @@ async def delete_face_photo(
         raise _err("not_found", "찾을 수 없습니다.", status=404)
     r2 = _r2_face(request)
     async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
         profile = await _load_profile(conn, user_id, for_update=True)
         if profile is None:
             raise _err("not_found", "개인화 프로필을 찾을 수 없습니다.", status=404)
@@ -1120,6 +1132,7 @@ async def withdraw_all(request: Request, user_id: str = Depends(require_user)):
     계정 삭제 훅도 내부적으로 이 경로를 호출한다. 진행 상태는 GET /v1/jobs/{id}(+SSE) 재사용.
     """
     async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
         profile = await _load_profile(conn, user_id, for_update=True)
         if profile is None:
             raise _err("not_found", "개인화 프로필을 찾을 수 없습니다.", status=404)
@@ -1190,6 +1203,7 @@ async def start_generation(
     }
 
     async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
         profile = await _load_profile(conn, user_id, for_update=True)
         if profile is not None and profile["status"] == "purging":
             raise _err("purge_in_progress", "파기가 진행 중이라 지금은 생성할 수 없어요.", status=409)
@@ -1260,6 +1274,7 @@ async def refine_generation(
 
     new_generation_id = str(uuid.uuid4())
     async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
         profile = await _load_profile(conn, user_id, for_update=True)
         if profile is None:
             raise _err("not_found", "생성 결과를 찾을 수 없습니다.", status=404)

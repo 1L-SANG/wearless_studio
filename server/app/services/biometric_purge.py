@@ -19,6 +19,7 @@ _CODES = {
     "r2_delete_failed",
     "r2_reconcile_failed",
     "db_cleanup_failed",
+    "vc_revocation_missing",
 }
 class PurgeIncomplete(RuntimeError):
     def __init__(self, code: str):
@@ -519,6 +520,22 @@ async def _cleanup(
     job_ids = {j["id"] for j in derived_jobs if j.get("id")}
     project_ids = {j["project_id"] for j in derived_jobs if j.get("project_id")}
     async with conn.cursor() as cur:
+        if reason == "account_delete" and license_ids:
+            if not _has(schema, "fm_vc_revocation_jobs", "vc_id"):
+                raise PurgeIncomplete("vc_revocation_missing")
+            await cur.execute(
+                """
+                select count(*)::int as missing_count
+                from fm_licenses l
+                left join fm_vc_revocation_jobs j on j.vc_id = l.vc_id
+                where l.id = any(%s)
+                  and nullif(btrim(l.vc_id), '') is not null
+                  and j.vc_id is null
+                """,
+                (list(license_ids),),
+            )
+            if int((await cur.fetchone() or {}).get("missing_count") or 0) > 0:
+                raise PurgeIncomplete("vc_revocation_missing")
         if asset_ids:
             ids = list(asset_ids)
             for table, col in (

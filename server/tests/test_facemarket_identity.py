@@ -52,7 +52,9 @@ class FakeCursor:
         s = " ".join(sql.split()).lower()
         params = params or ()
         models = self.store["models"]
-        if s.startswith("select id, status from fm_models where ci_hash"):
+        if "payload->>'reason' = 'account_delete'" in s and "ready_for_identity_delete" in s:
+            self._result = {"closed": self.store.get("account_closed", False)}
+        elif s.startswith("select id, status from fm_models where ci_hash"):
             m = next((r for r in models if r["ci_hash"] == params[0]), None)
             self._result = {"id": m["id"], "status": m["status"]} if m else None
         elif s.startswith("update fm_models set status"):
@@ -158,6 +160,7 @@ def fm(keypair, monkeypatch):
         "identity_insert_format": None,
         "catalog_sql": "",
         "catalog_params": (),
+        "account_closed": False,
     }
 
     @contextlib.asynccontextmanager

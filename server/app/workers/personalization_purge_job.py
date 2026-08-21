@@ -14,6 +14,7 @@ from ..services.biometric_purge import PurgeIncomplete, purge_biometric_scope
 log = logging.getLogger("wearless.personalization_purge_job")
 
 _BACKUP_RETENTION_DAYS = 30
+_REASON_STRENGTH = {"withdrawal": 0, "account_delete": 1}
 
 
 async def _audit(cur, user_id: str, profile_id: str, event_type: str, detail: dict) -> None:
@@ -22,6 +23,25 @@ async def _audit(cur, user_id: str, profile_id: str, event_type: str, detail: di
         "values (%s, %s, %s, %s)",
         (user_id, profile_id, event_type, Json(detail)),
     )
+
+
+def _strongest_reason(current: str, candidate: str) -> str:
+    if current not in _REASON_STRENGTH or candidate not in _REASON_STRENGTH:
+        raise ValueError("invalid_purge_reason")
+    return candidate if _REASON_STRENGTH[candidate] > _REASON_STRENGTH[current] else current
+
+
+async def _leased_reason(conn, *, job_id: str, lease_token: str) -> str | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select payload from jobs where id = %s and locked_by = %s and status = 'running' "
+            "for update",
+            (job_id, lease_token),
+        )
+        row = await cur.fetchone()
+    if row is None:
+        return None
+    return str((row.get("payload") or {}).get("reason") or "withdrawal")
 
 
 async def run_personalization_purge_job(app, job: dict) -> None:
@@ -59,82 +79,105 @@ async def run_personalization_purge_job(app, job: dict) -> None:
             await _fatal("invalid_purge_reason")
             return
 
-        try:
-            await facemarket_cutover.quiesce_personalization_writers(
-                pool, user_id=user_id, timeout_seconds=30.0
-            )
-            await facemarket_cutover.quiesce_user_facemarket_writers(
-                pool, user_id=user_id, timeout_seconds=30.0
-            )
-        except facemarket_cutover.CutoverBlocked as exc:
-            await _retry(exc.code)
-            return
-
-        result = await purge_biometric_scope(
-            app,
-            user_id=user_id,
-            reason=reason,  # type: ignore[arg-type]
-            source_job_id=job_id if reason == "account_delete" else None,
-        )
-
-        async with pool.connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    "select id from jobs where id = %s and locked_by = %s and status = 'running' "
-                    "for update",
-                    (job_id, lease_token),
-                )
-                if await cur.fetchone() is None:
-                    await conn.rollback()
-                    return
-                await cur.execute(
-                    "select id::text as id from personalization_profiles where user_id=%s",
-                    (user_id,),
-                )
-                profile_ids = [row["id"] for row in await cur.fetchall()]
-                receipt_id = None
-                if reason == "account_delete":
-                    await cur.execute(
-                        "select id::text as id from fm_biometric_purge_receipts where source_job_id=%s",
-                        (job_id,),
+        while True:
+            try:
+                async with pool.connection() as conn:
+                    leased_reason = await _leased_reason(
+                        conn, job_id=job_id, lease_token=lease_token
                     )
-                    row = await cur.fetchone()
-                    receipt_id = row["id"] if row else None
-                counts = {
-                    "targetCount": result.target_count,
-                    "confirmedAbsentCount": result.confirmed_absent_count,
-                    "modelCount": result.model_count,
-                    "profileCount": result.profile_count,
-                    "enrollmentCount": result.enrollment_count,
-                    "assetCount": result.asset_count,
-                    "backupPurgeDueAt": (
-                        datetime.now(timezone.utc) + timedelta(days=_BACKUP_RETENTION_DAYS)
-                    ).isoformat(),
-                }
-                if reason == "withdrawal":
-                    for profile_id in profile_ids:
-                        await _audit(cur, user_id, profile_id, "purge_completed", counts)
-                envelope = {
-                    "status": "done",
-                    "reason": reason,
-                    "outcome": (
-                        "ready_for_identity_delete"
-                        if reason == "account_delete"
-                        else "biometric_purged"
-                    ),
-                    "receiptId": receipt_id,
-                    "counts": counts,
-                }
-                await cur.execute(
-                    "update jobs set status = 'done', result = %s, progress = 100, "
-                    "locked_by = null, locked_at = null, finished_at = now() where id = %s",
-                    (Json(envelope), job_id),
+                    if leased_reason is None:
+                        await conn.rollback()
+                        return
+                    reason = _strongest_reason(reason, leased_reason)
+                    await conn.commit()
+            except ValueError:
+                await _fatal("invalid_purge_reason")
+                return
+
+            try:
+                await facemarket_cutover.quiesce_personalization_writers(
+                    pool, user_id=user_id, timeout_seconds=30.0
                 )
-                await cur.execute(
-                    "insert into job_events (job_id, event_type, payload) values (%s, 'done', %s)",
-                    (job_id, Json(envelope)),
+                await facemarket_cutover.quiesce_user_facemarket_writers(
+                    pool, user_id=user_id, timeout_seconds=30.0
                 )
-            await conn.commit()
+            except facemarket_cutover.CutoverBlocked as exc:
+                await _retry(exc.code)
+                return
+
+            result = await purge_biometric_scope(
+                app,
+                user_id=user_id,
+                reason=reason,  # type: ignore[arg-type]
+                source_job_id=job_id if reason == "account_delete" else None,
+            )
+
+            async with pool.connection() as conn:
+                try:
+                    final_reason = await _leased_reason(
+                        conn, job_id=job_id, lease_token=lease_token
+                    )
+                    if final_reason is None:
+                        await conn.rollback()
+                        return
+                    final_reason = _strongest_reason(reason, final_reason)
+                except ValueError:
+                    await _fatal("invalid_purge_reason")
+                    return
+                if final_reason != reason:
+                    await conn.rollback()
+                    reason = final_reason
+                    continue
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "select id::text as id from personalization_profiles where user_id=%s",
+                        (user_id,),
+                    )
+                    profile_ids = [row["id"] for row in await cur.fetchall()]
+                    receipt_id = None
+                    if reason == "account_delete":
+                        await cur.execute(
+                            "select id::text as id from fm_biometric_purge_receipts where source_job_id=%s",
+                            (job_id,),
+                        )
+                        row = await cur.fetchone()
+                        receipt_id = row["id"] if row else None
+                    counts = {
+                        "targetCount": result.target_count,
+                        "confirmedAbsentCount": result.confirmed_absent_count,
+                        "modelCount": result.model_count,
+                        "profileCount": result.profile_count,
+                        "enrollmentCount": result.enrollment_count,
+                        "assetCount": result.asset_count,
+                        "backupPurgeDueAt": (
+                            datetime.now(timezone.utc) + timedelta(days=_BACKUP_RETENTION_DAYS)
+                        ).isoformat(),
+                    }
+                    if reason == "withdrawal":
+                        for profile_id in profile_ids:
+                            await _audit(cur, user_id, profile_id, "purge_completed", counts)
+                    envelope = {
+                        "status": "done",
+                        "reason": reason,
+                        "outcome": (
+                            "ready_for_identity_delete"
+                            if reason == "account_delete"
+                            else "biometric_purged"
+                        ),
+                        "receiptId": receipt_id,
+                        "counts": counts,
+                    }
+                    await cur.execute(
+                        "update jobs set status = 'done', result = %s, progress = 100, "
+                        "locked_by = null, locked_at = null, finished_at = now() where id = %s",
+                        (Json(envelope), job_id),
+                    )
+                    await cur.execute(
+                        "insert into job_events (job_id, event_type, payload) values (%s, 'done', %s)",
+                        (job_id, Json(envelope)),
+                    )
+                await conn.commit()
+                return
     except PurgeIncomplete as exc:
         await _retry(exc.code)
     except Exception:

@@ -179,6 +179,7 @@ class FakeDB:
             "fm_model_assets": [],
             "fm_models": [],
             "fm_biometric_purge_receipts": [],
+            "fm_vc_revocation_jobs": [],
             "fm_settlements": [],
             "generation_outputs": [],
             "generation_runs": [],
@@ -295,6 +296,16 @@ class FakeDB:
         if "from fm_licenses where id = any" in q and "status = 'active'" in q:
             ids = set(params[0])
             return [{"?column?": 1} for r in self.tables["fm_licenses"] if r.get("id") in ids and r.get("status") == "active"][:1]
+        if "from fm_licenses l" in q and "fm_vc_revocation_jobs" in q:
+            ids = set(params[0])
+            missing = [
+                r
+                for r in self.tables["fm_licenses"]
+                if r.get("id") in ids
+                and str(r.get("vc_id") or "").strip()
+                and not any(j.get("vc_id") == r.get("vc_id") for j in self.tables["fm_vc_revocation_jobs"])
+            ]
+            return [{"missing_count": len(missing)}]
         if "from jobs where kind='personalization_generation'" in q:
             ids = set(params[0])
             return [
@@ -995,6 +1006,7 @@ def test_fake_user_purge_reconciles_both_buckets_and_tombstones_recursive_lineag
 
 def test_fake_account_delete_anonymizes_identity_and_writes_aggregate_receipt(caplog):
     ctx = _fake_case()
+    ctx.db.add("fm_vc_revocation_jobs", vc_id="vc-a", license_id=ctx.license, model_id=ctx.model)
 
     result = _run(ctx, user_id=ctx.user, reason="account_delete")
 
@@ -1030,6 +1042,23 @@ def test_fake_account_delete_anonymizes_identity_and_writes_aggregate_receipt(ca
     for secret in (ctx.user, ctx.model, ctx.profile, ctx.enrollment, "ci-a", "did:a", "vc-a"):
         assert secret not in receipt_blob
     assert "facemarket/" not in caplog.text and ctx.user not in caplog.text
+
+
+def test_fake_account_delete_requires_vc_revocation_job_before_receipt_or_anonymization():
+    ctx = _fake_case()
+
+    with pytest.raises(PurgeIncomplete) as exc:
+        _run(ctx, user_id=ctx.user, reason="account_delete")
+
+    assert exc.value.code == "vc_revocation_missing"
+    assert ctx.db.tables["fm_biometric_purge_receipts"] == []
+    model = ctx.db.tables["fm_models"][0]
+    assert model["user_id"] == ctx.user
+    assert model["ci_hash"] == "ci-a"
+    assert model["did"] == "did:a"
+    assert model["display_name"] == "모델A"
+    assert ctx.db.tables["fm_identity_verifications"]
+    assert ctx.db.tables["personalization_consents"]
 
 
 def test_fake_batch_scope_excludes_unrelated_personalization_and_other_batches():

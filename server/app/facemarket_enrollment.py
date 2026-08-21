@@ -198,6 +198,11 @@ def _err(code: str, message: str, status: int = 400, **extra) -> HTTPException:
     )
 
 
+async def _assert_account_open(conn, user_id: str) -> None:
+    if await repo.user_account_delete_completed(conn, user_id):
+        raise _err("account_closed", "계정 삭제가 완료되어 사용할 수 없습니다.", status=404)
+
+
 def _canonical_enrollment_id(enrollment_id: str) -> str:
     try:
         return str(uuid.UUID(str(enrollment_id)))
@@ -641,6 +646,7 @@ async def create_enrollment(
     now = datetime.now(timezone.utc)
     expires_at = now + ENROLLMENT_TTL
     async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
         await _reject_cutover_closed(conn)
         async with conn.cursor() as cur:
             await cur.execute(
@@ -766,6 +772,8 @@ async def upload_enrollment_photo(
     mime = (photo.content_type or "").lower()
     if mime not in ALLOWED_FACE_MIME:
         raise _err("unsupported_type", "PNG, JPEG, WebP 이미지만 사용할 수 있습니다.")
+    async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
     r2 = _r2_face(request)
     data = await photo.read()
     new_key = None
@@ -801,6 +809,7 @@ async def upload_enrollment_photo(
         intent_committed = False
         try:
             async with get_conn(request) as conn:
+                await _assert_account_open(conn, user_id)
                 row = await _load_owned_enrollment(conn, enrollment_id, user_id)
                 _validate_photo_mutation_enrollment(row)
                 await _reject_cutover_closed(conn)
@@ -819,6 +828,7 @@ async def upload_enrollment_photo(
                         status=409,
                     )
                 try:
+                    await _assert_account_open(conn, user_id)
                     await _reject_cutover_closed(conn)
                     await _lock_photo_mutation_enrollment(conn, enrollment_id, user_id)
                     async with conn.cursor() as cur:
@@ -996,6 +1006,7 @@ async def start_enrollment_liveness(
     nonce_digest = hashlib.sha256(nonce_bytes).hexdigest()
 
     async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
         async with conn.cursor() as cur:
             await cur.execute(
                 """
@@ -1144,6 +1155,7 @@ async def delete_enrollment_photo(
                     status=409,
                 )
             try:
+                await _assert_account_open(conn, user_id)
                 await _lock_photo_mutation_enrollment(conn, enrollment_id, user_id)
                 async with conn.cursor() as cur:
                     await cur.execute(
@@ -1554,6 +1566,7 @@ async def _initial_completion_checks(
 ) -> tuple[dict, list[dict]]:
     token_digest = f"cxsha256:{hashlib.sha256(token.encode()).hexdigest()}"
     async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
         async with conn.cursor() as cur:
             await cur.execute(
                 """
@@ -1710,6 +1723,7 @@ async def process_enrollment_completion(
             settings.fm_ci_pepper.encode(), evidence.ci, hashlib.sha256
         ).hexdigest()
         async with get_conn(request) as conn:
+            await _assert_account_open(conn, user_id)
             await _reject_cutover_closed(conn)
             async with conn.cursor() as cur:
                 await cur.execute(
@@ -1906,6 +1920,7 @@ async def cancel_enrollment(
     enrollment_id = _canonical_enrollment_id(enrollment_id)
     try:
         async with get_conn(request) as conn:
+            await _assert_account_open(conn, user_id)
             async with conn.cursor() as cur:
                 await cur.execute(
                     """

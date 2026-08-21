@@ -32,6 +32,15 @@ class CutoverInProgress(RuntimeError):
     pass
 
 
+class AccountClosed(RuntimeError):
+    pass
+
+
+async def _assert_account_open(conn, user_id: str) -> None:
+    if await repo.user_account_delete_completed(conn, user_id):
+        raise AccountClosed("account_closed")
+
+
 def _ordered_faces(rows: list[dict]) -> list[dict] | None:
     by_angle = {row.get("angle"): row for row in rows}
     if set(by_angle) != set(_ANGLES):
@@ -215,6 +224,7 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                         )
                         if await cur.fetchone() is None:
                             raise RuntimeError("lease_lost")
+                        await _assert_account_open(conn, user_id)
                         await cur.execute(
                             "select m.status, p.id as profile_id from fm_models m "
                             "join personalization_profiles p on p.user_id = m.user_id "
@@ -294,6 +304,7 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                         )
                         if await cur.fetchone() is None:
                             raise RuntimeError("lease_lost")
+                        await _assert_account_open(conn, user_id)
                         await cur.execute(
                             """
                             select id
@@ -381,6 +392,7 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                     )
                     if await cur.fetchone() is None:
                         raise RuntimeError("lease_lost")
+                    await _assert_account_open(conn, user_id)
                     await cur.execute(
                         """
                         select e.status, e.match_policy_version, p.angle, p.r2_key,
@@ -455,6 +467,7 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                     )
                     if await cur.fetchone() is None:
                         raise RuntimeError("lease_lost")
+                    await _assert_account_open(conn, user_id)
                     await cur.execute(
                         """
                         select status, match_policy_version
@@ -600,6 +613,8 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
         raise
     except CutoverInProgress:
         await fail(_CUTOVER_CODE, _CUTOVER_CODE, _CUTOVER_MESSAGE)
+    except AccountClosed:
+        await fail("account_closed", "account_closed")
     except Exception as exc:
         log.warning(
             "fm_model_asset_failed",

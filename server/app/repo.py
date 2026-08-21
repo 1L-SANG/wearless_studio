@@ -1408,6 +1408,27 @@ async def requeue_personalization_purge(
         return await cur.fetchone() is not None
 
 
+async def user_account_delete_completed(conn: AsyncConnection, user_id: str) -> bool:
+    """Server-owned account-delete completion gate."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select exists (
+              select 1
+                from jobs
+               where user_id = %s
+                 and kind = 'personalization_purge'
+                 and status = 'done'
+                 and payload->>'reason' = 'account_delete'
+                 and result->>'outcome' = 'ready_for_identity_delete'
+            ) as closed
+            """,
+            (user_id,),
+        )
+        row = await cur.fetchone()
+    return bool(row and row["closed"])
+
+
 async def lock_facemarket_writer_boundary(conn: AsyncConnection) -> None:
     """Serialize cutover close with FaceMarket biometric writers for this transaction."""
     async with conn.cursor() as cur:

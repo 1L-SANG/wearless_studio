@@ -479,7 +479,9 @@ class _RouteCur:
     async def execute(self, sql, params=None):
         normalized = " ".join(sql.split()).lower()
         params = params or ()
-        if normalized.startswith("select") and "from fm_licenses l join fm_models m" in normalized and "l.vc_id" in normalized:
+        if "payload->>'reason' = 'account_delete'" in normalized and "ready_for_identity_delete" in normalized:
+            self._one = {"closed": self.store.get("account_closed", False)}
+        elif normalized.startswith("select") and "from fm_licenses l join fm_models m" in normalized and "l.vc_id" in normalized:
             lic = self.store["licenses"].get(params[0])
             # 스냅샷 반환(dict 복사) — 실제 DB fetchone 처럼 이후 UPDATE 변형과 격리.
             self._one = dict(lic) if (lic and lic["user_id"] == params[1]) else None
@@ -533,7 +535,7 @@ def route(keypair, monkeypatch):
     app.state.jwt_key_resolver = lambda token: public_key
     store = {
         "licenses": {}, "settlements": {}, "revocations": {},
-        "commit_count": 0, "select_for_update": 0,
+        "commit_count": 0, "select_for_update": 0, "account_closed": False,
     }
 
     @contextlib.asynccontextmanager

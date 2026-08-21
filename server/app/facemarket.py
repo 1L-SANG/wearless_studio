@@ -92,6 +92,11 @@ def _err(code: str, message: str, status: int = 400) -> HTTPException:
     return HTTPException(status_code=status, detail={"code": code, "message": message})
 
 
+async def _assert_account_open(conn, user_id: str) -> None:
+    if await repo.user_account_delete_completed(conn, user_id):
+        raise _err("account_closed", "계정 삭제가 완료되어 사용할 수 없습니다.", status=404)
+
+
 def _wake_dispatcher(request: Request) -> None:
     """잡 생성 직후 디스패처 즉시 기상(personalization._wake_dispatcher 미러)."""
     dispatcher = getattr(request.app.state, "dispatcher", None)
@@ -235,6 +240,9 @@ async def identity_verify(
         )
     cx_tx_id = f"cxsha256:{hashlib.sha256(token.encode()).hexdigest()}"
 
+    async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
+
     # ⚠️ 원문 신원 조기 폐기 미적용 지점(api-spec §3.0). trans·ci·birth 가 함수 끝까지 프레임
     # 로컬로 남아, 예외 전파 시 traceback 이 이 프레임을 잡으면 CX 원문(CI·이름·생년월일)이
     # 프레임-로컬 캡처형 에러 트래커로 나갈 수 있다. 현재 에러 트래커 미배선이라 실위험은 0이나,
@@ -258,6 +266,7 @@ async def identity_verify(
     }
 
     async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
         async with conn.cursor() as cur:
             # dedup: 같은 사람(ci_hash) 재인증이면 기존 모델 재사용, 아니면 신규 verified 생성.
             await cur.execute(
@@ -394,6 +403,7 @@ async def list_models(
     (FM-13 팀원 계약: 프론트 카탈로그가 이 shape를 소비.)
     """
     async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
         async with conn.cursor() as cur:
             await cur.execute(
                 f"""select {_MODEL_CARD_COLS_ENRICHED} from fm_models m
@@ -746,6 +756,7 @@ async def finalize_issued_face_vc(
                 "실물 모델 보안 전환 중이라 잠시 후 다시 시도해 주세요.",
                 status=409,
             )
+        await _assert_account_open(conn, user_id)
         try:
             locked = await _find_license_for_update(conn, user_id, license_id)
             if locked is None or str(locked.get("enrollment_id") or "") != enrollment_id:
@@ -933,6 +944,7 @@ async def create_license(
     license_id = str(uuid.uuid4())
     row = None
     async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
         existing = await _find_license_by_enrollment(conn, user_id, enrollment_id)
         if existing and existing["status"] == "active":
             return existing
@@ -1659,6 +1671,7 @@ async def simulate_settlement(
     재시도가 실 TX를 중복 생성하지 않는다. 실거래(워커 훅)와 분리해 집계한다.
     """
     async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
         if not await repo.is_admin(conn, user_id):
             raise _err("forbidden", "관리자만 가능해요.", status=403)
         chain = getattr(request.app.state, "fm_chain", None)
@@ -2132,6 +2145,7 @@ async def revoke_license(
     - **에지 케이스**: `404 not_found`(비존재·비소유)
     """
     async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
         async with conn.cursor() as cur:
             await cur.execute(
                 """select l.id::text as id, l.model_id::text as model_id, l.vc_id, l.status

@@ -63,6 +63,7 @@ class EnrollmentStore:
         self.allow_unlock = None
         self.fail_unlock = False
         self.cutover_closed_sequence = []
+        self.account_closed = False
 
     def serialized(self):
         return json.dumps(
@@ -148,7 +149,9 @@ class FakeCursor:
         self.result = None
         self.many = []
 
-        if query.startswith("select pg_try_advisory_lock"):
+        if "payload->>'reason' = 'account_delete'" in query and "ready_for_identity_delete" in query:
+            self.result = {"closed": self.store.account_closed}
+        elif query.startswith("select pg_try_advisory_lock"):
             lock_key = tuple(params)
             owner = self.conn.store.advisory_lock_owners.get(lock_key)
             locked = owner is None or owner is self.conn

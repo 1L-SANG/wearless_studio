@@ -175,7 +175,9 @@ class FakeCursor:
     async def execute(self, sql, params=None):
         s = " ".join(sql.split()).lower()
         p = params or ()
-        if "pg_try_advisory_lock" in s:
+        if "payload->>'reason' = 'account_delete'" in s and "ready_for_identity_delete" in s:
+            self._one = {"closed": self.store.get("account_closed", False)}
+        elif "pg_try_advisory_lock" in s:
             locked = not self.store["signer_locked"]
             if locked:
                 self.store["signer_locked"] = True
