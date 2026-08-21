@@ -93,7 +93,7 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                     metadata={"error": reason},
                     code=code,
                 )
-                if finalized and model_id:
+                if finalized and model_id and enrollment_id:
                     async with conn.cursor() as cur:
                         await cur.execute(
                             """
@@ -134,13 +134,21 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
             await fail("missing_enrollment_id", "missing_enrollment_id")
             return
         if not enrollment_id:
+            old_assets: list[dict] = []
             async with pool.connection() as conn:
                 async with conn.cursor() as cur:
+                    await cur.execute(
+                        "select id from jobs where id=%s and locked_by=%s and status='running' for update",
+                        (job_id, lease),
+                    )
+                    if await cur.fetchone() is None:
+                        raise RuntimeError("lease_lost")
                     await cur.execute(
                         "select m.status, p.id as profile_id from fm_models m "
                         "join personalization_profiles p on p.user_id = m.user_id "
                         "where m.id=%s and m.user_id=%s "
-                        "order by p.created_at desc limit 1",
+                        "order by p.created_at desc limit 1 "
+                        "for update",
                         (model_id, user_id),
                     )
                     mrow = await cur.fetchone()
@@ -148,11 +156,25 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                         await fail("legacy_model_missing", "legacy_model_missing")
                         return
                     await cur.execute(
+                        """
+                        update fm_models
+                        set assets_status='building'
+                        where id=%s and user_id=%s and status='verified'
+                        """,
+                        (model_id, user_id),
+                    )
+                    await cur.execute(
                         "select angle, r2_key, mime_type from personalization_face_photos "
                         "where profile_id=%s",
                         (mrow["profile_id"],),
                     )
                     legacy_rows = await cur.fetchall()
+                    await cur.execute(
+                        "select view, r2_key from fm_model_assets where model_id=%s for update",
+                        (model_id,),
+                    )
+                    old_assets = await cur.fetchall()
+                await conn.commit()
             by_angle = {row.get("angle"): row for row in legacy_rows}
             if set(by_angle) != set(_ANGLES):
                 await fail("legacy_face_photos_incomplete", "legacy_face_photos_incomplete")
@@ -163,13 +185,12 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                 for face in faces
             ]
             grid = compose_sedcard(face_bytes)
-            legacy_version = f"legacy-{job_id}"
             registered = []
             for view, data, mime in (
                 ("grid_sedcard", grid, "image/png"),
                 ("face_front", face_bytes[0], faces[0]["mime_type"]),
             ):
-                key = model_asset_key(model_id, legacy_version, view, ext_for_mime(mime) or "png")
+                key = model_asset_key(model_id, "legacy", view, ext_for_mime(mime) or "png")
                 attempt_keys.append(key)
                 await _run_r2_call_until_done(
                     lambda key=key, data=data, mime=mime: r2_face.put_bytes(
@@ -177,6 +198,11 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                     )
                 )
                 registered.append((view, key, mime))
+            registered_keys = {key for _view, key, _mime in registered}
+            for row in old_assets:
+                old_key = row.get("r2_key")
+                if old_key and old_key not in registered_keys:
+                    await _run_r2_call_until_done(r2_face.delete, old_key)
             async with pool.connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
@@ -185,6 +211,18 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                     )
                     if await cur.fetchone() is None:
                         raise RuntimeError("lease_lost")
+                    await cur.execute(
+                        """
+                        select id
+                        from fm_models
+                        where id=%s and user_id=%s and status='verified'
+                          and assets_status='building'
+                        for update
+                        """,
+                        (model_id, user_id),
+                    )
+                    if await cur.fetchone() is None:
+                        raise RuntimeError("legacy_model_binding_lost")
                     for view, key, mime in registered:
                         await cur.execute(
                             """
@@ -204,6 +242,7 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                         update fm_models
                         set assets_status='ready', assets_source_hash=%s
                         where id=%s and user_id=%s and status='verified'
+                          and assets_status='building'
                         """,
                         (_source_hash(faces), model_id, user_id),
                     )

@@ -164,3 +164,78 @@ Result: `2705 passed, 103 skipped, 391 warnings in 43.23s`.
 ### Remaining concerns
 
 No live PostgreSQL advisory/row-lock race or live R2 crash harness was run. The new deterministic regressions cover the required crash points, retry rows, DB-reference cleanup skip, stale lease behavior, flag-off rollback coherence, and metadata redaction in-process.
+
+---
+
+## Fix round 2 — flag-off legacy rollback write fence
+
+Status: complete in the Task 8 scope. This round addresses the remaining flag-off rollback gap without changing the feature-on enrollment path and without restoring pairwise QC, numeric QC scores, raw exception metadata, or private-key logging.
+
+Root cause: the rollback branch wrote `legacy-{job_id}` asset keys before any durable model-state fence. A crash/cancel/lease-loss after R2 writes could leave new rollback objects outside any committed usable state, and successful repeats could upsert new keys while leaving prior legacy keys behind.
+
+### RED evidence
+
+Focused command:
+
+```text
+cd server && uv run pytest -q tests/test_fm_model_asset_job.py tests/test_identity_source.py
+```
+
+Result before the fix: `4 failed, 27 passed, 1 warning`.
+
+Expected failures covered:
+
+- flag-off jobs still wrote `legacy-job-*` keys instead of stable rollback keys;
+- prewrite R2 failure did not leave an `assets_status='building'` resolver fence;
+- lost final lease after legacy writes did not prove resolver-closed state;
+- repeated rollback builds did not remove prior legacy version keys.
+
+### GREEN / fix evidence
+
+Minimum root-cause fixes:
+
+- flag-off legacy jobs now first revalidate the job lease and set the verified model to `assets_status='building'` before R2 writes;
+- rollback asset keys are stable under `enrollments/legacy/assets/...`, eliminating successful-repeat key churn;
+- old legacy asset keys are deleted while the model is resolver-closed and before the final ready commit; keys equal to the new stable set are not deleted;
+- final commit revalidates the job lease and `status='verified' and assets_status='building'` before marking assets ready;
+- legacy failure finalization no longer mutates model/enrollment failure state through the enrollment-bound failure path, preserving fail-closed resolver behavior;
+- resolver already refuses interrupted rollback because `allow_legacy` still requires `assets_status='ready'`.
+
+Focused command:
+
+```text
+cd server && uv run pytest -q tests/test_fm_model_asset_job.py tests/test_identity_source.py
+```
+
+Result: `31 passed, 1 warning`.
+
+Affected command:
+
+```text
+cd server && uv run pytest -q tests/test_fm_model_asset_job.py tests/test_identity_source.py tests/test_detail_page_identity_source.py tests/test_detail_page_license_face.py tests/test_facemarket_identity.py tests/test_facemarket_biometric_cleanup.py tests/test_facemarket_biometric_enrollment.py tests/test_cut_input_authority.py
+```
+
+Result: `169 passed, 1 warning`.
+
+Full server command:
+
+```text
+cd server && uv run pytest -q
+```
+
+Result: `2709 passed, 103 skipped, 391 warnings in 35.35s`.
+
+Compile/diff/leak checks:
+
+```text
+git diff --check
+cd server && uv run python -m compileall -q app/workers/fm_model_asset_job.py app/agents/identity_source.py tests/test_fm_model_asset_job.py tests/test_identity_source.py
+cd server && rg -n "pairwise_min_similarity|load_face_qc|qc_score|str\\(exc\\)" app/workers/fm_model_asset_job.py
+cd server && rg -n "provider leaked/key\\.png|legacy-job-old|legacy-job-1|old/front\\.png|quarantine/front\\.png" app/workers/fm_model_asset_job.py app/agents/identity_source.py app/workers/detail_page_job.py app/workers/editor_image_job.py app/facemarket.py app/facemarket_enrollment.py
+```
+
+Result: compile and diff checks exited 0; both leak/QC scans returned no production matches.
+
+### Remaining concerns
+
+No live R2 crash harness was run. The rollback path intentionally uses the stable-key plus `assets_status='building'` fence direction from the controller note; interrupted rollback builds are resolver-closed until a later rollback job completes the same stable keys and marks the model ready.

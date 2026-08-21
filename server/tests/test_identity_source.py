@@ -165,3 +165,14 @@ def test_resolver_accepts_legacy_assets_only_when_rollback_allows_it():
 
     assert _run(rows) is None
     assert _run(rows, allow_legacy=True) is not None
+
+
+def test_resolver_refuses_interrupted_legacy_build():
+    rows = _asset_rows(
+        assets_status="building",
+        current_enrollment_id=None,
+        asset_source_enrollment_id=None,
+        evidence_version="legacy-personalization-v1",
+    )
+
+    assert _run(rows, allow_legacy=True) is None
