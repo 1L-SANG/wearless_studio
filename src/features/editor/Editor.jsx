@@ -49,7 +49,7 @@ import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from 
 import { CONTENT_ROLES, SECTION_ROLES, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
 import { withStoryboardSpaceSetExamples } from '@/lib/storyboardSpaceSetCatalog.js';
 
-const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)' };
+const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)', 'Gowun Dodum': 'var(--font-soft)' };
 
 /* 스냅 엔진 상시 on — 포인터 이동은 editorSnap, Moveable 리사이즈는 elementGuidelines를 쓴다.
    DEV 게이트 없이 prod 배포에서도 같은 기준으로 동작한다. */
