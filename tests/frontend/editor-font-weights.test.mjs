@@ -48,3 +48,46 @@ test('isBold 는 그 폰트의 가장 굵은 값일 때만 켜진다', () => {
   assert.equal(isBold('Gowun Dodum', 700), false);   // 토글 없음 → 절대 bold 아님
   assert.equal(isBold('Cal Sans', 600), false);
 });
+
+// ---- Codex 리뷰 반영 (2026-08-21) ----
+import { cssWeight, supportedWeights as _sw } from '../../src/features/editor/fontWeights.js';
+import { activeTextPreset, quickStylePatch } from '../../src/features/editor/presets/textPresets.js';
+import { buildFrameBlock } from '../../src/features/editor/editorLibrary.js';
+
+test('cssWeight: Cal Sans 는 저장값 600 을 브라우저가 실제로 가진 face 400 으로 그린다', () => {
+  assert.equal(cssWeight('Cal Sans', 600), 400);
+  assert.equal(cssWeight('Cal Sans', 700), 400);      // 옛 문서의 어떤 값이든 face 는 하나
+  assert.equal(cssWeight('Cal Sans', undefined), 400);
+});
+
+test('cssWeight: 못 주는 굵기(옛 문서 900 등)는 가장 가까운 지원 굵기로 그린다', () => {
+  assert.equal(cssWeight('Roboto Mono', 900), 600);
+  assert.equal(cssWeight('Roboto Mono', 700), 600);
+  assert.equal(cssWeight('Gowun Dodum', 700), 400);
+  assert.equal(cssWeight('Pretendard', 700), 700);     // 가변 폰트는 그대로
+  assert.equal(cssWeight(undefined, undefined), 400);
+});
+
+test('빠른 스타일: 단일 굵기 폰트에 적용해도 활성 칩이 켜진다', () => {
+  // 패널이 하는 일 그대로: 프리셋 패치의 weight 를 현재 폰트가 줄 수 있는 값으로 붙인다
+  for (const font of ['Gowun Dodum', 'Cal Sans', 'Roboto Mono']) {
+    for (const key of ['headline', 'subtitle', 'body']) {
+      const patch = quickStylePatch(key);
+      const style = { font, ...patch, weight: nearestWeight(font, patch.weight) };
+      assert.equal(activeTextPreset(style), key, `${font} / ${key}`);
+    }
+  }
+});
+
+test('내장 프레임 템플릿의 모든 텍스트 굵기는 그 폰트가 실제로 주는 값이다', () => {
+  let seq = 0; const idFn = () => `t${seq++}`;
+  const ids = ['kiwi-17'];
+  for (const id of ids) {
+    const block = buildFrameBlock(id, idFn);
+    for (const el of block.elements.filter((e) => e.type === 'text')) {
+      const font = el.style.font || 'Pretendard';
+      assert.ok(_sw(font).includes(el.style.weight),
+        `${id}: "${el.text}" ${font} ${el.style.weight} 은 지원 굵기 ${_sw(font).join('/')} 밖`);
+    }
+  }
+});

@@ -24,8 +24,16 @@ const SUPPORTED = {
   'Pretendard': [300, 400, 500, 600, 700],   // 가변 45~930
   'Cormorant': [300, 400, 500, 600, 700],    // 가변 300~700
   'Roboto Mono': [500, 600],                 // index.html 쿼리가 받는 두 굵기
-  'Cal Sans': [600],                         // 단일 굵기(600 으로 읽힘) — tokens.css 주석
+  'Cal Sans': [600],                         // 단일 굵기 — 저장값은 600(아래 CSS_FACE 참고)
   'Gowun Dodum': [400],                      // Regular 단일
+};
+
+// 저장 굵기 → 브라우저가 실제로 가진 CSS face. Cal Sans 는 디자인상 "600 으로 읽히는" 굵기라
+// 프리셋 8곳이 weight:600 으로 저장하지만, Google Fonts 가 주는 face 는 font-weight:400 하나다
+// (Codex 리뷰 2026-08-21). 저장값을 400 으로 바꾸면 기존 문서·프리셋 매칭이 전부 흔들리므로,
+// 저장은 600 그대로 두고 **그릴 때만** 400 으로 보내 브라우저가 합성 볼드를 만들지 않게 한다.
+const CSS_FACE = {
+  'Cal Sans': { 600: 400 },
 };
 
 export const DEFAULT_FONT = 'Pretendard';
@@ -65,6 +73,15 @@ export function boldToggle(font) {
   const regular = nearestWeight(font, 400);
   const bold = list[list.length - 1];
   return bold === regular ? null : { regular, bold };
+}
+
+/** 렌더러가 CSS font-weight 에 넣을 값. 폰트가 못 주는 굵기(옛 문서·템플릿의 900 등)는 가장
+    가까운 지원 굵기로, 그 뒤 CSS_FACE 매핑이 있으면 브라우저가 실제로 가진 face 로 보낸다.
+    저장 상태는 건드리지 않는다 — 화면과 PNG 에 합성 굵기가 찍히는 것만 막는다. */
+export function cssWeight(font, weight) {
+  const snapped = nearestWeight(font, weight);
+  const map = CSS_FACE[font || DEFAULT_FONT];
+  return (map && map[snapped]) || snapped;
 }
 
 /** 현재 스타일이 "굵게" 상태인가 — 이 폰트의 가장 굵은 값이면서 보통과 다를 때. */
