@@ -44,8 +44,10 @@ def test_none_when_nothing():
 class _Cur:
     def __init__(self, rows):
         self._rows = rows
+        self.sql = None
 
     async def execute(self, sql, params=None):
+        self.sql = sql
         return None
 
     async def fetchall(self):
@@ -88,27 +90,67 @@ def test_resolve_virtual_model_id_skips_db_and_returns_none():
         assert asyncio.run(resolve_real_model_assets(_ExplodingConn(), vid)) is None
 
 
-def test_resolve_ready_returns_two_refs_face_bucket():
-    rows = [
-        {"assets_status": "ready", "view": "face_front",
-         "r2_key": "facemarket/models/m1/face_front.png", "mime": "image/png", "bucket": "face"},
-        {"assets_status": "ready", "view": "grid_sedcard",
-         "r2_key": "facemarket/models/m1/grid_sedcard.png", "mime": "image/png", "bucket": "face"},
+def _asset_rows(
+    *,
+    model_status="verified",
+    assets_status="ready",
+    current_enrollment_id="enrollment-1",
+    asset_source_enrollment_id="enrollment-1",
+    evidence_version="policy-v1",
+):
+    return [
+        {"model_status": model_status, "assets_status": assets_status,
+         "current_enrollment_id": current_enrollment_id, "view": "face_front",
+         "r2_key": "facemarket/models/m1/face_front.png", "mime": "image/png", "bucket": "face",
+         "source_enrollment_id": asset_source_enrollment_id, "evidence_version": evidence_version},
+        {"model_status": model_status, "assets_status": assets_status,
+         "current_enrollment_id": current_enrollment_id, "view": "grid_sedcard",
+         "r2_key": "facemarket/models/m1/grid_sedcard.png", "mime": "image/png", "bucket": "face",
+         "source_enrollment_id": asset_source_enrollment_id, "evidence_version": evidence_version},
     ]
-    refs = _run(rows)
+
+
+def test_resolve_ready_returns_two_refs_face_bucket():
+    refs = _run(_asset_rows())
     assert refs is not None and len(refs) == 2
     assert refs[0]["key"].endswith("face_front.png") and refs[0]["bucket"] == "face"
     assert refs[1]["key"].endswith("grid_sedcard.png")
 
 
 def test_resolve_not_ready_returns_none():
-    rows = [{"assets_status": "building", "view": None, "r2_key": None, "mime": None, "bucket": None}]
+    rows = [{"model_status": "verified", "assets_status": "building",
+             "current_enrollment_id": "enrollment-1", "view": None, "r2_key": None,
+             "mime": None, "bucket": None, "source_enrollment_id": None,
+             "evidence_version": None}]
     assert _run(rows) is None
 
 
 def test_resolve_missing_view_returns_none():
     rows = [
-        {"assets_status": "ready", "view": "face_front",
-         "r2_key": "k", "mime": "image/png", "bucket": "face"},
+        {"model_status": "verified", "assets_status": "ready",
+         "current_enrollment_id": "enrollment-1", "view": "face_front",
+         "r2_key": "k", "mime": "image/png", "bucket": "face",
+         "source_enrollment_id": "enrollment-1", "evidence_version": "policy-v1"},
     ]  # grid_sedcard 없음
     assert _run(rows) is None
+
+
+def test_resolver_requires_verified_model_status():
+    assert _run(_asset_rows(model_status="pending")) is None
+
+
+def test_resolver_requires_asset_source_to_equal_current_enrollment():
+    refs = asyncio.run(resolve_real_model_assets(
+        _Conn(_asset_rows(
+            model_status="verified",
+            assets_status="ready",
+            current_enrollment_id="enrollment-new",
+            asset_source_enrollment_id="enrollment-old",
+        )),
+        _FM_UUID,
+    ))
+    assert refs is None
+
+
+def test_resolver_requires_evidence_version():
+    assert _run(_asset_rows(evidence_version="")) is None

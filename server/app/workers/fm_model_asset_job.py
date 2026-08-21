@@ -1,15 +1,7 @@
-"""실존 모델 자산 빌드 워커 (handoff: 가상모델 fork). payload={modelId}.
+"""Enrollment-bound FaceMarket model asset promotion.
 
-user_id 로 fm_models(verified) + personalization_face_photos(3각도)를 서버측 로드하고,
-r2_face(비공개)에서 얼굴 bytes 를 읽어 얼굴 대조 QC → 통과 시 2×2 그리드 합성 + face_front 를
-비공개 버킷에 저장하고 fm_model_assets 에 등록한다. 얼굴은 생성하지 않는다(실사진 합성).
-
-순서: assets_status='building' 선점 → QC → 최종 키에 put → DB 등록 tx(lease 펜스) → done.
-put 후 DB 실패면 방금 올린 오브젝트를 정리한다. 크래시로 오브젝트만 남아도 assets_status 가
-'ready' 가 아니면 컷 resolve 가 쓰지 않고, 재빌드가 같은 키를 덮으므로 안전하다.
-
-PII 하드룰(§1.4): 얼굴 키·바이트·임베딩·qc_score 는 payload·이벤트·로그·job result 미포함.
-남기는 것은 상태 enum·카운트뿐. weights·경로는 예외 메시지에도 싣지 않는다.
+Task 6 owns biometric matching. This worker only promotes the exact enrollment
+photos that already passed, records evidence binding, and never emits R2 keys.
 """
 
 import asyncio
@@ -20,152 +12,322 @@ from psycopg.types.json import Json
 
 from .. import repo
 from ..agents.face_grid import compose_sedcard
-from ..agents.face_qc import QcFailed, load_face_qc
-from ..r2 import IMMUTABLE_CACHE, ext_for_mime
+from ..facemarket_enrollment import _run_r2_call_until_done
+from ..r2 import IMMUTABLE_CACHE, enrollment_original_key, ext_for_mime, model_asset_key
 from ._common import emit_job_event as _emit
 
 log = logging.getLogger("wearless.fm_model_asset_job")
 
-_ANGLE_ORDER = {"front": 0, "side": 1, "angle45": 2}
+_ANGLES = ("front", "angle45", "side")
+_OLD_ASSET_ANGLE = {"face_front": "front", "grid_sedcard": "side"}
 
 
-def _asset_key(model_id: str, view: str, ext: str) -> str:
-    """실존 모델 아이덴티티 자산의 비공개 버킷 키. 어떤 API 응답에도 미노출."""
-    return f"facemarket/models/{model_id}/{view}.{ext}"
+def _ordered_faces(rows: list[dict]) -> list[dict] | None:
+    by_angle = {row.get("angle"): row for row in rows}
+    if set(by_angle) != set(_ANGLES):
+        return None
+    faces = [by_angle[angle] for angle in _ANGLES]
+    if any(face.get("storage_state") != "quarantine" for face in faces):
+        return None
+    if any(face.get("status") != "asset_building" for face in faces):
+        return None
+    return faces
+
+
+def _source_hash(faces: list[dict]) -> str:
+    return hashlib.sha256(
+        "|".join(str(face.get("image_digest") or "") for face in faces).encode()
+    ).hexdigest()
+
+
+async def _register_cleanup(conn, enrollment_id: str, angle: str, key: str) -> None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            insert into fm_biometric_enrollment_photo_cleanup
+                (enrollment_id, angle, r2_key, reason)
+            values (%s, %s, %s, 'delete')
+            on conflict (enrollment_id, r2_key)
+            do update set angle = excluded.angle, reason = 'delete', not_before = now()
+            """,
+            (enrollment_id, angle, key),
+        )
+
+
+async def _remove_cleanup(conn, enrollment_id: str, key: str) -> None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            delete from fm_biometric_enrollment_photo_cleanup
+            where enrollment_id = %s and r2_key = %s
+            """,
+            (enrollment_id, key),
+        )
 
 
 async def run_fm_model_asset_job(app, job: dict) -> None:
     pool = app.state.pool
     job_id, user_id, lease = job["id"], job["user_id"], job["lease_token"]
-    model_id = (job.get("payload") or {}).get("modelId")
+    payload = job.get("payload") or {}
+    model_id = payload.get("modelId")
+    enrollment_id = payload.get("enrollmentId")
     r2_face = getattr(app.state, "r2_face", None)
-    s = app.state.settings
-    put_keys: list[str] = []  # 실패 시 정리할 최종 키
+    attempt_keys: list[str] = []
 
-    async def _fail(message: str, meta: dict, code: str = "asset_build_failed") -> None:
-        for k in put_keys:
+    async def cleanup_attempt() -> None:
+        if r2_face is None:
+            return
+        for key in attempt_keys:
             try:
-                await asyncio.to_thread(r2_face.delete, k)
-            except Exception:
-                log.warning("orphan face asset cleanup failed job %s", job_id)
+                await _run_r2_call_until_done(r2_face.delete, key)
+            except Exception as exc:
+                log.warning(
+                    "fm_model_asset_attempt_cleanup_failed",
+                    extra={
+                        "job_id": job_id,
+                        "enrollment_id": enrollment_id,
+                        "error_type": type(exc).__name__,
+                    },
+                )
+
+    async def fail(reason: str, code: str = "asset_build_failed") -> None:
+        await cleanup_attempt()
         try:
             async with pool.connection() as conn:
                 await repo._finalize_job_failure(
-                    conn, job_id=job_id, lease_token=lease,
-                    message=message, metadata=meta, code=code)
+                    conn,
+                    job_id=job_id,
+                    lease_token=lease,
+                    message="자산 생성 중 오류가 발생했어요.",
+                    metadata={"error": reason},
+                    code=code,
+                )
                 if model_id:
                     async with conn.cursor() as cur:
                         await cur.execute(
-                            "update fm_models set assets_status='failed' where id=%s", (model_id,))
+                            """
+                            update fm_models
+                            set assets_status='failed'
+                            where id=%s and user_id=%s and assets_status='building'
+                            """,
+                            (model_id, user_id),
+                        )
                 await conn.commit()
-        except Exception:
-            log.exception("asset job finalize_failure error job %s", job_id)
+        except Exception as exc:
+            log.warning(
+                "fm_model_asset_failure_finalize_failed",
+                extra={"job_id": job_id, "error_type": type(exc).__name__},
+            )
 
     try:
         if not model_id:
-            await _fail("모델 대상이 없어요.", {"error": "missing_model_id"}); return
-        if r2_face is None:  # 얼굴 로드·저장 불가 — 공개 버킷 폴백 금지(§1.4)
-            await _fail("얼굴 저장소가 설정되지 않았어요.", {"error": "face_storage_unavailable"}); return
+            await fail("missing_model_id", "missing_model_id")
+            return
+        if not enrollment_id:
+            await fail("missing_enrollment_id", "missing_enrollment_id")
+            return
+        if r2_face is None:
+            await fail("face_storage_unavailable", "face_storage_unavailable")
+            return
 
-        # ── 1) 로드: 모델(verified) + 최신 프로필의 얼굴 3장 ──
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    "select m.status, p.id as profile_id from fm_models m "
-                    "join personalization_profiles p on p.user_id = m.user_id "
-                    "where m.id=%s and m.user_id=%s "
-                    "order by p.created_at desc limit 1",
-                    (model_id, user_id))
-                mrow = await cur.fetchone()
-                if mrow is None:
-                    await _fail("모델 또는 프로필을 찾을 수 없어요.",
-                                {"error": "model_or_profile_missing"}, code="model_or_profile_missing")
-                    return
-                if mrow["status"] != "verified":
-                    await _fail("검증된 모델이 아니에요.",
-                                {"error": "model_not_verified"}, code="model_not_verified")
-                    return
-                await cur.execute(
-                    "select angle, r2_key, mime_type from personalization_face_photos "
-                    "where profile_id=%s", (mrow["profile_id"],))
-                faces = await cur.fetchall()
-                await cur.execute(
-                    "update fm_models set assets_status='building' where id=%s", (model_id,))
-            await conn.commit()
+                    """
+                    select e.status, e.match_policy_version, p.angle, p.r2_key,
+                           p.mime_type, p.image_digest, p.storage_state
+                    from fm_biometric_enrollment_photos p
+                    join fm_biometric_enrollments e on e.id=p.enrollment_id
+                    where e.id=%s and e.model_id=%s and e.user_id=%s
+                    order by case p.angle
+                      when 'front' then 0 when 'angle45' then 1 when 'side' then 2 end
+                    """,
+                    (enrollment_id, model_id, user_id),
+                )
+                rows = await cur.fetchall()
 
-        if len({f["angle"] for f in faces}) < 3:
-            await _fail("얼굴 사진 3장이 필요해요.",
-                        {"error": "face_photos_incomplete", "have": len(faces)},
-                        code="face_photos_incomplete")
+        faces = _ordered_faces(rows)
+        if faces is None:
+            await fail("enrollment_photos_invalid", "enrollment_photos_invalid")
             return
 
-        faces.sort(key=lambda f: _ANGLE_ORDER.get(f["angle"], 9))
+        originals: list[tuple[str, str, str]] = []
+        for face in faces:
+            ext = ext_for_mime(face.get("mime_type")) or "png"
+            key = enrollment_original_key(model_id, enrollment_id, face["angle"], ext)
+            attempt_keys.append(key)
+            await _run_r2_call_until_done(r2_face.copy, face["r2_key"], key, face["mime_type"])
+            originals.append((face["angle"], face["r2_key"], key))
+
         face_bytes = [
-            await asyncio.to_thread(r2_face.get_bytes, f["r2_key"]) for f in faces
+            await _run_r2_call_until_done(r2_face.get_bytes, face["r2_key"])
+            for face in faces
         ]
-        await _emit(pool, job_id, "progress", {"progress": 30, "phase": "inputs_loaded"})
+        await _emit(pool, job_id, "progress", {"progress": 40, "phase": "inputs_loaded"})
 
-        # ── 2) 얼굴 대조 QC — 미달/검출실패 시 등록 차단 ──
-        qc = load_face_qc(s)
-        qc_score = None
-        if qc is not None:
-            try:
-                qc_score = qc.pairwise_min_similarity(face_bytes)
-            except QcFailed as e:
-                await _fail("본인 얼굴 일치 확인에 실패했어요.",
-                            {"error": "qc_failed", "reason": e.reason}, code="qc_failed")
-                return
-            if qc_score < s.fm_face_qc_threshold:
-                await _fail("본인 얼굴 일치 확인에 실패했어요.",
-                            {"error": "qc_below_threshold"}, code="qc_failed")
-                return
-        await _emit(pool, job_id, "progress", {"progress": 55, "phase": "qc_passed"})
-
-        # ── 3) 그리드 합성 + face_front ──
         grid = compose_sedcard(face_bytes)
-        front_i = next((i for i, f in enumerate(faces) if f["angle"] == "front"), 0)
-        front, front_mime = face_bytes[front_i], faces[front_i]["mime_type"]
-        src_hash = hashlib.sha256(b"".join(sorted(face_bytes, key=len))).hexdigest()
-        assets = [
+        derived = [
             ("grid_sedcard", grid, "image/png"),
-            ("face_front", front, front_mime),
+            ("face_front", face_bytes[0], faces[0]["mime_type"]),
         ]
-
-        # ── 4) 최종 키에 put ──
         registered = []
-        for view, data, mime in assets:
+        for view, data, mime in derived:
             ext = ext_for_mime(mime) or "png"
-            key = _asset_key(model_id, view, ext)
-            await asyncio.to_thread(r2_face.put_bytes, key, data, mime, cache=IMMUTABLE_CACHE)
-            put_keys.append(key)
+            key = model_asset_key(model_id, enrollment_id, view, ext)
+            attempt_keys.append(key)
+            await _run_r2_call_until_done(
+                lambda key=key, data=data, mime=mime: r2_face.put_bytes(
+                    key, data, mime, cache=IMMUTABLE_CACHE
+                )
+            )
             registered.append((view, key, mime))
         await _emit(pool, job_id, "progress", {"progress": 80, "phase": "stored"})
 
-        # ── 5) DB 등록 tx(lease 펜스) ──
+        old_assets: list[dict] = []
+        evidence_version = faces[0]["match_policy_version"]
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     "select id from jobs where id=%s and locked_by=%s and status='running' for update",
-                    (job_id, lease))
+                    (job_id, lease),
+                )
                 if await cur.fetchone() is None:
                     raise RuntimeError("lease_lost")
+                await cur.execute(
+                    """
+                    select status, match_policy_version
+                    from fm_biometric_enrollments
+                    where id=%s and model_id=%s and user_id=%s and status='asset_building'
+                    for update
+                    """,
+                    (enrollment_id, model_id, user_id),
+                )
+                enrollment = await cur.fetchone()
+                if not enrollment or enrollment.get("match_policy_version") != evidence_version:
+                    raise RuntimeError("enrollment_binding_lost")
+                await cur.execute(
+                    """
+                    select status, current_enrollment_id
+                    from fm_models
+                    where id=%s and user_id=%s and current_enrollment_id=%s
+                      and status in ('pending', 'reverification_required')
+                    for update
+                    """,
+                    (model_id, user_id, enrollment_id),
+                )
+                model = await cur.fetchone()
+                if not model:
+                    raise RuntimeError("model_binding_lost")
+                await cur.execute(
+                    "select view, r2_key from fm_model_assets where model_id=%s for update",
+                    (model_id,),
+                )
+                old_assets = await cur.fetchall()
                 for view, key, mime in registered:
                     await cur.execute(
-                        "insert into fm_model_assets (model_id, view, r2_key, mime, bucket) "
-                        "values (%s,%s,%s,%s,'face') on conflict (model_id, view) "
-                        "do update set r2_key=excluded.r2_key, mime=excluded.mime",
-                        (model_id, view, key, mime))
+                        """
+                        insert into fm_model_assets
+                            (model_id, view, r2_key, mime, bucket,
+                             source_enrollment_id, evidence_version)
+                        values (%s, %s, %s, %s, 'face', %s, %s)
+                        on conflict (model_id, view) do update set
+                            r2_key=excluded.r2_key,
+                            mime=excluded.mime,
+                            bucket='face',
+                            source_enrollment_id=excluded.source_enrollment_id,
+                            evidence_version=excluded.evidence_version
+                        """,
+                        (model_id, view, key, mime, enrollment_id, evidence_version),
+                    )
+                for angle, _old_key, new_key in originals:
+                    await cur.execute(
+                        """
+                        update fm_biometric_enrollment_photos
+                        set r2_key=%s, storage_state='approved', approved_at=now()
+                        where enrollment_id=%s and angle=%s and storage_state='quarantine'
+                        """,
+                        (new_key, enrollment_id, angle),
+                    )
                 await cur.execute(
-                    "update fm_models set assets_status='ready', qc_score=%s, assets_source_hash=%s "
-                    "where id=%s", (qc_score, src_hash, model_id))
+                    """
+                    update fm_models
+                    set assets_status='ready',
+                        current_enrollment_id=%s,
+                        assets_source_hash=%s
+                    where id=%s and user_id=%s and status in ('pending', 'reverification_required')
+                    """,
+                    (enrollment_id, _source_hash(faces), model_id, user_id),
+                )
                 await cur.execute(
-                    "update jobs set status='done', progress=100, locked_by=null, "
-                    "locked_at=null, finished_at=now(), result=%s where id=%s",
-                    (Json({"data": {"modelId": model_id, "assetsStatus": "ready"}}), job_id))
+                    """
+                    update fm_biometric_enrollments
+                    set status='license_pending', decision='passed', completed_at=now()
+                    where id=%s and model_id=%s and user_id=%s and status='asset_building'
+                    """,
+                    (enrollment_id, model_id, user_id),
+                )
+                await cur.execute(
+                    """
+                    update jobs set status='done', progress=100, locked_by=null,
+                        locked_at=null, finished_at=now(), result=%s
+                    where id=%s
+                    """,
+                    (
+                        Json({"data": {
+                            "modelId": model_id,
+                            "enrollmentId": enrollment_id,
+                            "assetsStatus": "ready",
+                        }}),
+                        job_id,
+                    ),
+                )
                 await cur.execute(
                     "insert into job_events (job_id, event_type, payload) values (%s,'done',%s)",
-                    (job_id, Json({"data": {"modelId": model_id}})))
+                    (job_id, Json({"data": {
+                        "modelId": model_id,
+                        "enrollmentId": enrollment_id,
+                        "assetsStatus": "ready",
+                    }})),
+                )
             await conn.commit()
-        put_keys = []  # 커밋 성공 → 정리 대상 아님
-    except Exception as e:
-        await _fail("자산 생성 중 오류가 발생했어요.", {"error": str(e)[:200]})
+
+        attempt_keys = []
+        registered_keys = {key for _view, key, _mime in registered}
+        cleanup_targets = [
+            (angle, old_key)
+            for angle, old_key, new_key in originals
+            if old_key != new_key
+        ]
+        cleanup_targets.extend(
+            (_OLD_ASSET_ANGLE.get(row.get("view"), "front"), row["r2_key"])
+            for row in old_assets
+            if row.get("r2_key") and row["r2_key"] not in registered_keys
+        )
+        for angle, key in cleanup_targets:
+            async with pool.connection() as conn:
+                await _register_cleanup(conn, enrollment_id, angle, key)
+                await conn.commit()
+            try:
+                await _run_r2_call_until_done(r2_face.delete, key)
+            except Exception as exc:
+                log.warning(
+                    "fm_model_asset_post_commit_cleanup_failed",
+                    extra={
+                        "enrollment_id": enrollment_id,
+                        "angle": angle,
+                        "error_type": type(exc).__name__,
+                    },
+                )
+                continue
+            async with pool.connection() as conn:
+                await _remove_cleanup(conn, enrollment_id, key)
+                await conn.commit()
+    except asyncio.CancelledError:
+        await cleanup_attempt()
+        raise
+    except Exception as exc:
+        log.warning(
+            "fm_model_asset_failed",
+            extra={"job_id": job_id, "error_type": type(exc).__name__},
+        )
+        await fail("asset_build_failed", "asset_build_failed")

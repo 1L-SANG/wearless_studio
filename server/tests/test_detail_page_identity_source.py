@@ -18,11 +18,16 @@ FACE_FRONT_KEY = "facemarket/models/11111111-1111-1111-1111-111111111111/face_fr
 
 
 def _asset_rows(status="ready"):
+    enrollment_id = "22222222-2222-2222-2222-222222222222"
     return [
-        {"assets_status": status, "view": "face_front",
-         "r2_key": FACE_FRONT_KEY, "mime": "image/png", "bucket": "face"},
-        {"assets_status": status, "view": "grid_sedcard",
-         "r2_key": GRID_KEY, "mime": "image/png", "bucket": "face"},
+        {"model_status": "verified", "assets_status": status,
+         "current_enrollment_id": enrollment_id, "view": "face_front",
+         "r2_key": FACE_FRONT_KEY, "mime": "image/png", "bucket": "face",
+         "source_enrollment_id": enrollment_id, "evidence_version": "policy-v1"},
+        {"model_status": "verified", "assets_status": status,
+         "current_enrollment_id": enrollment_id, "view": "grid_sedcard",
+         "r2_key": GRID_KEY, "mime": "image/png", "bucket": "face",
+         "source_enrollment_id": enrollment_id, "evidence_version": "policy-v1"},
     ]
 
 

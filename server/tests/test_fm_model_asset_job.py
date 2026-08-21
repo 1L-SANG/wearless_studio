@@ -1,20 +1,22 @@
-"""실존 모델 자산 빌드 워커 — 합성·등록·PII 경계 검증(QC off로 격리).
-
-SQL 라우팅 stub 으로 워커의 여러 쿼리에 canned row 를 돌려주고, r2_face put/DB insert 를
-기록해 (1) grid_sedcard+face_front 두 자산 등록, (2) assets_status='ready', (3) done 이벤트·
-job result 에 얼굴 키 미포함(§1.4)을 단언한다.
-"""
+"""Enrollment-bound FaceMarket asset promotion tests."""
 
 import asyncio
 import contextlib
 import io
 import types
+from dataclasses import dataclass
 
 import numpy as np
+import pytest
+from fastapi import HTTPException
 from PIL import Image
 
+from app import facemarket
 from app.workers.fm_model_asset_job import run_fm_model_asset_job
 from conftest import make_settings
+
+MODEL_ID = "11111111-1111-1111-1111-111111111111"
+ENROLLMENT_ID = "22222222-2222-2222-2222-222222222222"
 
 
 def _png_bytes(color: int) -> bytes:
@@ -23,24 +25,47 @@ def _png_bytes(color: int) -> bytes:
     return out.getvalue()
 
 
+@dataclass
+class CopyCall:
+    source: str
+    destination: str
+
+
 class _Cur:
-    def __init__(self, log):
-        self._log = log
+    def __init__(self, store):
+        self.store = store
         self._last = None
 
     async def execute(self, sql, params=None):
-        self._log.append((sql, params))
-        s = " ".join(sql.split())
-        if "from fm_models m join personalization_profiles" in s:
-            self._last = {"status": "verified", "profile_id": "prof-1"}
-        elif "from personalization_face_photos" in s:
-            self._last = [
-                {"angle": "front", "r2_key": "face/f.png", "mime_type": "image/png"},
-                {"angle": "side", "r2_key": "face/s.png", "mime_type": "image/png"},
-                {"angle": "angle45", "r2_key": "face/a.png", "mime_type": "image/png"},
-            ]
+        self.store.log.append((sql, params))
+        s = " ".join(sql.split()).lower()
+        if "from fm_biometric_enrollment_photos" in s and "join fm_biometric_enrollments" in s:
+            self._last = self.store.enrollment_rows if self.store.initial_binding else []
         elif "from jobs where id=" in s and "for update" in s:
-            self._last = {"id": "job-1"}  # lease 유지
+            self._last = {"id": "job-1"} if self.store.lease_ok else None
+        elif "from fm_biometric_enrollments" in s and "for update" in s:
+            self._last = (
+                {"status": "asset_building", "match_policy_version": "policy-v1"}
+                if self.store.final_binding
+                else None
+            )
+        elif "from fm_models" in s and "for update" in s:
+            self._last = (
+                {"status": self.store.model_status, "current_enrollment_id": ENROLLMENT_ID}
+                if self.store.final_binding
+                else None
+            )
+        elif "from fm_model_assets" in s:
+            self._last = [
+                {"view": view, "r2_key": key}
+                for view, key in self.store.old_asset_keys.items()
+            ]
+        elif s.startswith("update fm_models") and "assets_status='ready'" in s:
+            self.store.ready_updates += 1
+            self._last = None
+        elif s.startswith("insert into fm_biometric_enrollment_photo_cleanup"):
+            self.store.cleanup_refs.append({"angle": params[1], "reason": "delete"})
+            self._last = None
         else:
             self._last = None
 
@@ -58,81 +83,250 @@ class _Cur:
 
 
 class _Conn:
-    def __init__(self, log):
-        self._log = log
+    def __init__(self, store):
+        self.store = store
 
     async def commit(self):
         return None
 
+    async def rollback(self):
+        return None
+
     def cursor(self):
-        return _Cur(self._log)
+        return _Cur(self.store)
 
 
 class _Pool:
-    def __init__(self, log):
-        self._log = log
+    def __init__(self, store):
+        self.store = store
 
     def connection(self):
         @contextlib.asynccontextmanager
         async def _cm():
-            yield _Conn(self._log)
+            yield _Conn(self.store)
 
         return _cm()
 
 
 class _FaceR2:
-    def __init__(self):
+    def __init__(self, *, fail_delete: str | None = None):
+        self.get_order: list[str] = []
+        self.copies: list[CopyCall] = []
         self.puts: list[tuple[str, str]] = []
         self.deletes: list[str] = []
+        self.fail_delete = fail_delete
 
     def get_bytes(self, key):
-        return _png_bytes(hash(key) % 200)
+        angle = key.split("/")[-1].split(".")[0]
+        self.get_order.append(angle)
+        return _png_bytes({"front": 30, "angle45": 90, "side": 150}.get(angle, 10))
+
+    def copy(self, source, destination, *_args, **_kwargs):
+        self.copies.append(CopyCall(source, destination))
 
     def put_bytes(self, key, data, mime, cache=None):
         self.puts.append((key, mime))
 
     def delete(self, key):
         self.deletes.append(key)
+        if key == self.fail_delete:
+            raise RuntimeError("provider leaked/key.png")
 
 
-def _job():
-    return {"id": "job-1", "user_id": "u1", "lease_token": "u1:tok",
-            "payload": {"modelId": "model-1"}}
+class _Store:
+    def __init__(
+        self,
+        *,
+        status="asset_building",
+        initial_binding=True,
+        final_binding=True,
+        lease_ok=True,
+        photos=None,
+        old_asset_keys=None,
+    ):
+        self.log = []
+        self.initial_binding = initial_binding
+        self.final_binding = final_binding
+        self.lease_ok = lease_ok
+        self.model_status = "pending"
+        self.ready_updates = 0
+        self.cleanup_refs = []
+        self.old_asset_keys = old_asset_keys or {}
+        self.enrollment_rows = photos if photos is not None else [
+            {
+                "status": status,
+                "match_policy_version": "policy-v1",
+                "angle": "side",
+                "r2_key": "quarantine/side.png",
+                "mime_type": "image/png",
+                "image_digest": "digest-side",
+                "storage_state": "quarantine",
+            },
+            {
+                "status": status,
+                "match_policy_version": "policy-v1",
+                "angle": "front",
+                "r2_key": "quarantine/front.png",
+                "mime_type": "image/png",
+                "image_digest": "digest-front",
+                "storage_state": "quarantine",
+            },
+            {
+                "status": status,
+                "match_policy_version": "policy-v1",
+                "angle": "angle45",
+                "r2_key": "quarantine/angle45.png",
+                "mime_type": "image/png",
+                "image_digest": "digest-angle45",
+                "storage_state": "quarantine",
+            },
+        ]
 
 
-def test_asset_build_registers_two_views_and_ready():
-    log: list = []
+def _job(payload=None):
+    return {
+        "id": "job-1",
+        "user_id": "u1",
+        "lease_token": "u1:tok",
+        "payload": payload if payload is not None else {
+            "modelId": MODEL_ID,
+            "enrollmentId": ENROLLMENT_ID,
+        },
+    }
+
+
+def build_worker_fixture(**store_kwargs):
+    store = _Store(**store_kwargs)
     face_r2 = _FaceR2()
     app = types.SimpleNamespace(state=types.SimpleNamespace(
-        pool=_Pool(log), r2_face=face_r2,
-        settings=make_settings(fm_face_qc_enabled=False)))
+        pool=_Pool(store),
+        r2_face=face_r2,
+        settings=make_settings(fm_face_qc_enabled=False),
+    ))
+    return app, store.log, face_r2, store
+
+
+def test_asset_build_reads_only_enrollment_photos_and_promotes_in_contract_order():
+    app, log, face_r2, _store = build_worker_fixture()
 
     asyncio.run(run_fm_model_asset_job(app, _job()))
 
-    joined = " | ".join(" ".join(sql.split()) for sql, _ in log)
-    # 두 자산 put (grid_sedcard, face_front)
-    put_keys = [k for k, _ in face_r2.puts]
-    assert any("grid_sedcard" in k for k in put_keys)
-    assert any("face_front" in k for k in put_keys)
-    # fm_model_assets 등록 + ready
-    assert "insert into fm_model_assets" in joined
-    assert "set assets_status='ready'" in joined
-    # 성공 경로면 orphan 정리(delete) 없음
-    assert face_r2.deletes == []
+    sql = " | ".join(" ".join(statement.split()) for statement, _ in log)
+    assert "from fm_biometric_enrollment_photos" in sql
+    assert "personalization_face_photos" not in sql
+    assert face_r2.get_order == ["front", "angle45", "side"]
+    assert [copy.destination for copy in face_r2.copies] == [
+        f"facemarket/models/{MODEL_ID}/enrollments/{ENROLLMENT_ID}/originals/front.png",
+        f"facemarket/models/{MODEL_ID}/enrollments/{ENROLLMENT_ID}/originals/angle45.png",
+        f"facemarket/models/{MODEL_ID}/enrollments/{ENROLLMENT_ID}/originals/side.png",
+    ]
 
 
-def test_asset_build_event_has_no_face_key():
-    log: list = []
-    face_r2 = _FaceR2()
-    app = types.SimpleNamespace(state=types.SimpleNamespace(
-        pool=_Pool(log), r2_face=face_r2,
-        settings=make_settings(fm_face_qc_enabled=False)))
+def test_asset_swap_is_bound_to_current_enrollment_and_version():
+    app, log, face_r2, _store = build_worker_fixture(
+        old_asset_keys={"face_front": "old/front.png", "grid_sedcard": "old/grid.png"}
+    )
 
     asyncio.run(run_fm_model_asset_job(app, _job()))
 
-    # job_events / result 에 실린 payload(params)에 얼굴 R2 키가 없어야 한다(§1.4)
-    for sql, params in log:
-        if "job_events" in sql or "update jobs set status='done'" in sql:
-            blob = str(params)
-            assert "facemarket/models/model-1/grid_sedcard" not in blob
-            assert "face/f.png" not in blob
+    sql = " | ".join(" ".join(statement.split()) for statement, _ in log)
+    assert "source_enrollment_id" in sql
+    assert "evidence_version" in sql
+    assert "current_enrollment_id" in sql
+    assert "status='license_pending'" in sql
+    assert face_r2.deletes[-2:] == ["old/front.png", "old/grid.png"]
+
+
+@pytest.mark.parametrize(
+    ("payload", "store_kwargs"),
+    [
+        ({"modelId": MODEL_ID}, {}),
+        ({"modelId": MODEL_ID, "enrollmentId": ENROLLMENT_ID}, {"initial_binding": False}),
+        ({"modelId": MODEL_ID, "enrollmentId": ENROLLMENT_ID}, {"status": "photos_pending"}),
+        (
+            {"modelId": MODEL_ID, "enrollmentId": ENROLLMENT_ID},
+            {"photos": [
+                {
+                    "status": "asset_building",
+                    "match_policy_version": "policy-v1",
+                    "angle": "front",
+                    "r2_key": "quarantine/front.png",
+                    "mime_type": "image/png",
+                    "image_digest": "digest-front",
+                    "storage_state": "quarantine",
+                }
+            ]},
+        ),
+    ],
+)
+def test_invalid_or_stale_enrollment_build_creates_no_approved_object(payload, store_kwargs):
+    app, _log, face_r2, store = build_worker_fixture(**store_kwargs)
+
+    asyncio.run(run_fm_model_asset_job(app, _job(payload)))
+
+    assert face_r2.copies == []
+    assert face_r2.puts == []
+    assert store.ready_updates == 0
+
+
+def test_lost_final_lease_cleans_attempt_and_does_not_set_ready():
+    app, _log, face_r2, store = build_worker_fixture(lease_ok=False)
+
+    asyncio.run(run_fm_model_asset_job(app, _job()))
+
+    attempted = [copy.destination for copy in face_r2.copies] + [key for key, _ in face_r2.puts]
+    assert attempted
+    assert set(attempted).issubset(set(face_r2.deletes))
+    assert store.ready_updates == 0
+
+
+def test_failed_post_commit_delete_keeps_retry_reference_without_logging_private_key(caplog):
+    store = _Store(old_asset_keys={"face_front": "old/front.png"})
+    face_r2 = _FaceR2(fail_delete="old/front.png")
+    app = types.SimpleNamespace(state=types.SimpleNamespace(
+        pool=_Pool(store),
+        r2_face=face_r2,
+        settings=make_settings(fm_face_qc_enabled=False),
+    ))
+
+    asyncio.run(run_fm_model_asset_job(app, _job()))
+
+    assert store.cleanup_refs
+    assert "old/front.png" not in caplog.text
+    assert "provider leaked/key.png" not in caplog.text
+
+
+def test_manual_build_rejects_when_biometric_enrollment_enabled(monkeypatch):
+    class ManualCur:
+        async def execute(self, *_args):
+            return None
+
+        async def fetchone(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class ManualConn:
+        def cursor(self):
+            return ManualCur()
+
+    @contextlib.asynccontextmanager
+    async def fake_conn(_request):
+        yield ManualConn()
+
+    monkeypatch.setattr(facemarket, "get_conn", fake_conn)
+    request = types.SimpleNamespace(app=types.SimpleNamespace(
+        state=types.SimpleNamespace(settings=make_settings(
+            fm_biometric_enrollment_enabled=True
+        ))
+    ))
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(facemarket.build_my_model_assets(request, user_id="u1"))
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "biometric_enrollment_required"

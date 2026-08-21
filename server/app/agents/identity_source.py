@@ -49,18 +49,26 @@ async def resolve_real_model_assets(conn, model_id: str):
         return None
     async with conn.cursor() as cur:
         await cur.execute(
-            "select m.assets_status, a.view, a.r2_key, a.mime, a.bucket "
+            "select m.status as model_status, m.assets_status, m.current_enrollment_id, "
+            "a.view, a.r2_key, a.mime, a.bucket, a.source_enrollment_id, a.evidence_version "
             "from fm_models m left join fm_model_assets a on a.model_id = m.id "
             "where m.id = %s",
             (model_id,))
         rows = await cur.fetchall()
-    if not rows or rows[0]["assets_status"] != "ready":
+    if not rows or rows[0]["model_status"] != "verified" or rows[0]["assets_status"] != "ready":
+        return None
+    current_enrollment_id = rows[0].get("current_enrollment_id")
+    if not current_enrollment_id:
         return None
     by_view = {r["view"]: r for r in rows if r.get("view")}
     out = []
     for view in ("face_front", "grid_sedcard"):
         r = by_view.get(view)
         if not r or not r.get("r2_key") or not str(r.get("mime") or "").startswith("image/"):
+            return None
+        if str(r.get("source_enrollment_id") or "") != str(current_enrollment_id):
+            return None
+        if not r.get("evidence_version"):
             return None
         out.append({"key": r["r2_key"], "mime": r["mime"], "bucket": r.get("bucket") or "face"})
     return out

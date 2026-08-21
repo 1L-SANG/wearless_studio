@@ -380,6 +380,12 @@ async def build_my_model_assets(request: Request, user_id: str = Depends(require
     얼굴 대조 QC 통과 시에만 자산이 등록된다(handoff §03 필수 게이트). payload=modelId 만(PII 금지 —
     워커가 modelId 로 서버측 재조회). 모델 행 FOR UPDATE 로 동시 요청 직렬화(_start_purge 선례).
     """
+    if getattr(request.app.state.settings, "fm_biometric_enrollment_enabled", False):
+        raise _err(
+            "biometric_enrollment_required",
+            "생체 등록 플로우를 완료해 주세요.",
+            status=409,
+        )
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
