@@ -17,23 +17,25 @@ import hashlib
 import hmac
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import Response
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
+from pydantic import Field, ValidationError
 
 from . import cx_identity
 from . import repo
 from .auth import require_user
 from .db import get_conn
 from .models import CamelModel, ErrorResponse
-from .r2 import MIME_EXT, ext_for_mime, face_key, sha256_sri
+from .r2 import MIME_EXT
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket"])
@@ -429,7 +431,6 @@ async def build_my_model_assets(request: Request, user_id: str = Depends(require
 # ── 얼굴 라이선스 (FM: 얼굴 업로드 + 조건) ─────────────────────────
 # 얼굴 이미지 = 생체 PII. 공개 R2 URL 절대 노출 금지 → 비공개 버킷 저장 + 게이트 스트림.
 # face_image_uri = 게이트 라우트 URL(공개 URL 아님). face_image_key = 내부 비공개 키(응답 제외).
-MAX_FACE_BYTES = 25 * 1024 * 1024  # 25MB (routes.py MAX_UPLOAD_BYTES 미러 — 아이폰 HEIC 대응 상향)
 MAX_USE_ITEMS = 20                 # allowed/forbidden 용도 태그 개수 상한
 MAX_USE_LEN = 60                   # 용도 태그 1개 길이 상한
 _EXT_TO_MIME = {ext: mime for mime, ext in MIME_EXT.items()}  # 게이트 응답 Content-Type 역매핑
@@ -464,6 +465,14 @@ class LicenseCard(CamelModel):
     created_at: datetime
 
 
+class CreateLicenseRequest(CamelModel):
+    enrollment_id: str
+    allowed_use: list[str] = Field(default_factory=list)
+    forbidden_use: list[str] = Field(default_factory=list)
+    unit_price: int = Field(default=10000, ge=0, le=100_000_000)
+    valid_days: int = Field(default=365, ge=1, le=3650)
+
+
 def _r2_face(request: Request):
     """얼굴 전용 R2 클라이언트(app.state.r2_face). 미설정이면 503 (공개 버킷 폴백 금지)."""
     r2 = getattr(request.app.state, "r2_face", None)
@@ -484,197 +493,197 @@ def _clean_uses(items: list[str]) -> list[str]:
     return out
 
 
-async def _my_verified_model_id(request: Request, user_id: str) -> str | None:
-    """호출자 본인의 verified 모델 id(가장 최근). 없으면 None."""
-    async with get_conn(request) as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                """select id from fm_models
-                   where user_id = %s and status = 'verified'
-                   order by created_at desc limit 1""",
-                (user_id,),
-            )
-            row = await cur.fetchone()
-    return row["id"] if row else None
-
-
-async def _resolve_profile_face(conn, user_id: str, profile_id: str) -> tuple[str, str]:
-    """개인화 프로필(ready)의 **front 슬롯** → `(r2_key, image_digest)`. 부적격이면 400.
-
-    step02 "1.얼굴 업로드(다각도 3장 권장)" = 개인화 온보딩의 3각도 QC 통과 얼굴 재사용.
-    ready 상태가 그 자체로 [3각도 QC 통과 + 필수동의 + 신체 + 성인 인증]의 합의어다
-    (personalization._readiness) → 여기서 조건을 재구현하지 않고 상태만 신뢰한다. 재구현하면
-    두 판정이 갈려 개인화가 막은 얼굴이 라이선스로 새어나갈 수 있다.
-
-    **복사가 아니라 참조** — 프로필 R2 키를 그대로 라이선스 얼굴로 삼는다. FaceMarket 키스페이스로
-    사본을 뜨면 개인화 파기(§3.5)가 원본만 지우고 사본은 남겨 파기 캐스케이드가 무력화된다.
-    참조라서 파기 시 얼굴 게이트가 함께 404 로 닫힌다(라이선스 행은 보존 — 정산 이력 때문).
-    """
-    try:  # uuid 컬럼 직접 비교 전 형식 가드 — 쓰레기 입력은 500 아닌 400
-        uuid.UUID(str(profile_id))
-    except (ValueError, TypeError):
-        raise _err("invalid_profile", "개인화 프로필을 찾을 수 없습니다.")
-
-    async with conn.cursor() as cur:
-        # 소유자 스코프를 SQL 에 포함 — 타인 프로필은 '없는 프로필'과 같은 코드로 떨어져
-        # 존재 여부가 새지 않는다(얼굴 게이트 404 선례와 동일 원칙).
-        await cur.execute(
-            "select id::text as id, status from personalization_profiles "
-            "where id = %s and user_id = %s and status <> 'purged'",
-            (str(profile_id), user_id),
-        )
-        prof = await cur.fetchone()
-    if prof is None:
-        raise _err("invalid_profile", "개인화 프로필을 찾을 수 없습니다.")
-    if prof["status"] != "ready":
-        raise _err(
-            "profile_not_ready",
-            "개인화 준비가 완료되지 않았어요. 얼굴 3장·필수 동의·신체 정보를 먼저 완료해 주세요.",
-        )
-
+async def _find_license_by_enrollment(conn, user_id: str, enrollment_id: str) -> dict | None:
     async with conn.cursor() as cur:
         await cur.execute(
-            "select r2_key, image_digest from personalization_face_photos "
-            "where profile_id = %s and angle = 'front'",
-            (prof["id"],),
+            f"""select {_LICENSE_CARD_COLS_L} from fm_licenses l
+                join fm_models m on m.id = l.model_id
+                where l.enrollment_id = %s and m.user_id = %s
+                limit 1""",
+            (enrollment_id, user_id),
         )
-        photo = await cur.fetchone()
-    if photo is None or not photo["r2_key"]:
-        # ready 인데 front 가 없으면 데이터 불일치 — 사유코드만(키·digest 로그 금지, §1.4).
-        raise _err("profile_not_ready", "개인화 정면 얼굴 사진을 찾을 수 없어요.")
-    return photo["r2_key"], photo["image_digest"]
+        return await cur.fetchone()
+
+
+async def _load_license_evidence(conn, user_id: str, enrollment_id: str) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select e.id::text as enrollment_id, e.status as enrollment_status,
+                      e.match_policy_version, m.id::text as model_id, m.status as model_status,
+                      m.did as model_did, m.assets_status, m.current_enrollment_id::text,
+                      p.r2_key as front_key, p.image_digest as front_digest,
+                      p.storage_state as front_storage_state,
+                      fa.r2_key as face_asset_key,
+                      fa.source_enrollment_id::text as face_asset_source_enrollment_id,
+                      fa.evidence_version as face_asset_evidence_version,
+                      ga.r2_key as grid_asset_key,
+                      ga.source_enrollment_id::text as grid_asset_source_enrollment_id,
+                      ga.evidence_version as grid_asset_evidence_version
+                 from fm_biometric_enrollments e
+                 join fm_models m on m.id = e.model_id and m.user_id = e.user_id
+                 left join fm_biometric_enrollment_photos p
+                   on p.enrollment_id = e.id and p.angle = 'front'
+                 left join fm_model_assets fa
+                   on fa.model_id = m.id and fa.view = 'face_front'
+                 left join fm_model_assets ga
+                   on ga.model_id = m.id and ga.view = 'grid_sedcard'
+                where e.id = %s and e.user_id = %s
+                limit 1""",
+            (enrollment_id, user_id),
+        )
+        return await cur.fetchone()
+
+
+def _checked_license_evidence(row: dict | None) -> tuple[str, str, str]:
+    if row is None:
+        raise _err("not_found", "등록을 찾을 수 없습니다.", status=404)
+    enrollment_id = str(row["enrollment_id"])
+    if row["enrollment_status"] not in {"license_pending", "vc_pending"}:
+        raise _err("enrollment_not_ready", "라이선스 발급 가능한 등록 상태가 아닙니다.", status=409)
+    if str(row.get("current_enrollment_id") or "") != enrollment_id:
+        raise _err("enrollment_not_current", "최신 등록으로 다시 시도해 주세요.", status=409)
+    if row.get("assets_status") != "ready":
+        raise _err("model_assets_not_ready", "모델 자산 준비가 완료되지 않았습니다.", status=409)
+    if row.get("front_storage_state") != "approved" or not row.get("front_key"):
+        raise _err("approved_front_missing", "승인된 정면 사진을 찾을 수 없습니다.", status=409)
+    evidence_version = row.get("match_policy_version")
+    for view in ("face", "grid"):
+        if not row.get(f"{view}_asset_key"):
+            raise _err("model_assets_not_ready", "모델 자산 준비가 완료되지 않았습니다.", status=409)
+        if str(row.get(f"{view}_asset_source_enrollment_id") or "") != enrollment_id:
+            raise _err("model_assets_stale", "현재 등록으로 생성된 모델 자산이 아닙니다.", status=409)
+        if not evidence_version or row.get(f"{view}_asset_evidence_version") != evidence_version:
+            raise _err("model_assets_stale", "현재 증거 버전으로 생성된 모델 자산이 아닙니다.", status=409)
+    return str(row["model_id"]), row["front_key"], row["front_digest"]
 
 
 @router.post(
     "/licenses",
     response_model=LicenseCard,
     status_code=201,
-    responses={**_FM_RESPONSES, 413: {"model": ErrorResponse, "description": "파일이 너무 큼"}},
+    responses={**_FM_RESPONSES, 502: {"model": ErrorResponse, "description": "VC 발급 지연"}},
     tags=["FaceMarket"],
-    summary="얼굴 라이선스 생성 (얼굴 업로드 + 조건)",
+    summary="등록 증거 기반 얼굴 라이선스 생성",
 )
 async def create_license(
     request: Request,
-    face: UploadFile | None = File(
-        None, description="라이선스 얼굴 이미지(비공개 저장). profile_id 사용 시 생략"
-    ),
-    profile_id: str | None = Form(
-        None, description="개인화 프로필 id — 프로필 front 얼굴을 라이선스 대상으로(face 대신)"
-    ),
-    allowed_use: list[str] = Form(default=[], description="허용 용도 태그"),
-    forbidden_use: list[str] = Form(default=[], description="금지 용도 태그"),
-    unit_price: int = Form(default=10000, ge=0, le=100_000_000, description="건당 단가(KRW)"),
-    valid_days: int = Form(default=365, ge=1, le=3650, description="사용권 유효기간(일)"),
     user_id: str = Depends(require_user),
 ):
-    """검증(verified) 모델 본인이 얼굴 + 라이선스 조건을 등록한다(제안서 step02).
-
-    얼굴 지정 방식 **택1**:
-      · `face` — 얼굴 1장 직접 업로드(레거시 경로, 그대로 유지).
-      · `profile_id` — 개인화 프로필(ready = 3각도 QC 통과+필수동의+신체)의 **front 슬롯**을
-        라이선스 얼굴로 참조. 사본을 뜨지 않으므로 개인화 파기 시 얼굴 게이트도 함께 닫힌다.
-
-    - **Bearer Token**: 필수 (검증 모델 본인)
-    - **멀티파트**: `face` 또는 `profile_id` + 조건 필드. 얼굴은 비공개 버킷에만 있고
-      응답/카탈로그에는 게이트 URL만 실린다(원본 바이트·내부 키 비노출).
-    - **에지 케이스**: `400 face_or_profile_required`(둘 다 없음) ·
-      `400 face_and_profile_conflict`(둘 다 있음 — 어느 얼굴을 라이선스했는지 모호해지므로
-      우선순위 대신 명시적 거절. 생체정보는 조용히 무시·폐기하지 않는다) ·
-      `400 invalid_profile`(없음/타인 프로필) · `400 profile_not_ready`(온보딩 미완) ·
-      `400 no_verified_model`(본인확인 선행 필요) · `400 bad_image` · `413 file_too_large`
-    """
-    r2 = _r2_face(request)
-
-    # 빈 파트(filename='')를 '얼굴 있음'으로 오인하면 profile_id 단독 요청이 conflict 로 튄다.
-    has_face = face is not None and bool(face.filename)
-    linked_profile_id = (profile_id or "").strip() or None
-    if has_face and linked_profile_id:
-        raise _err(
-            "face_and_profile_conflict",
-            "얼굴 사진과 개인화 프로필 중 하나만 선택해 주세요.",
-        )
-    if not has_face and not linked_profile_id:
-        raise _err(
-            "face_or_profile_required",
-            "라이선스할 얼굴이 없어요. 얼굴 사진을 올리거나 개인화 프로필을 선택해 주세요.",
-        )
-
-    data = mime = ext = None
-    if has_face:  # 레거시 경로 — 검증 순서(형식→바이트→모델) 보존
-        mime = (face.content_type or "").lower()
-        ext = ext_for_mime(mime)
-        if not ext:
-            raise _err("bad_image", "허용되지 않는 이미지 형식입니다. (png/jpg/webp)")
-
-        data = await face.read()
-        if not data:
-            raise _err("bad_image", "빈 파일입니다.")
-        if len(data) > MAX_FACE_BYTES:
-            raise _err("file_too_large", "이미지는 25MB 이하만 가능합니다.", status=413)
-
-    model_id = await _my_verified_model_id(request, user_id)
-    if not model_id:
-        raise _err(
-            "no_verified_model",
-            "먼저 모바일 신분증 본인확인을 완료해 주세요.",
-            status=400,
-        )
+    """JSON-only enrollment contract. Multipart/direct face/profile never creates a license."""
+    content_type = (request.headers.get("content-type") or "").lower()
+    if "application/json" not in content_type:
+        raise _err("json_required", "JSON 요청만 허용됩니다.", status=415)
+    try:
+        body = CreateLicenseRequest.model_validate(await request.json())
+    except (ValueError, ValidationError):
+        raise _err("invalid_license_request", "라이선스 요청 형식이 올바르지 않습니다.", status=400)
+    enrollment_id = str(body.enrollment_id)
+    valid_until = datetime.now(timezone.utc) + timedelta(days=body.valid_days)
+    allowed = _clean_uses(body.allowed_use)
+    forbidden = _clean_uses(body.forbidden_use)
+    unit_price = body.unit_price
 
     license_id = str(uuid.uuid4())
-    gate_uri = f"/v1/facemarket/licenses/{license_id}/face"
-    valid_until = datetime.now(timezone.utc) + timedelta(days=valid_days)
-    allowed = _clean_uses(allowed_use)
-    forbidden = _clean_uses(forbidden_use)
+    row = None
+    async with get_conn(request) as conn:
+        existing = await _find_license_by_enrollment(conn, user_id, enrollment_id)
+        if existing and existing["status"] == "active":
+            return existing
 
-    # uploaded_key = **이 요청이 새로 올린** 객체만. 프로필 참조 모드의 key 는 개인화 소유라
-    # 롤백 대상이 아니다 — 여기서 지우면 DB 실패가 사용자의 개인화 정면 사진을 파괴한다.
-    uploaded_key: str | None = None
-    if has_face:
-        key = face_key(str(model_id), license_id, ext)
-        digest = sha256_sri(data)
-        # boto3 동기 → to_thread (이벤트 루프 보호)
-        await asyncio.to_thread(r2.put_bytes, key, data, mime)
-        uploaded_key = key
-    else:
-        async with get_conn(request) as conn:
-            key, digest = await _resolve_profile_face(conn, user_id, linked_profile_id)
-
-    try:
-        async with get_conn(request) as conn:
+        model_id, key, digest = _checked_license_evidence(
+            await _load_license_evidence(conn, user_id, enrollment_id)
+        )
+        if existing:
+            row = existing
+            license_id = existing["id"]
+            allowed = list(existing["allowed_use"] or [])
+            forbidden = list(existing["forbidden_use"] or [])
+            unit_price = int(existing["unit_price"])
+            valid_until = existing["license_valid_until"]
+            digest = existing["face_image_digest"]
+        else:
+            gate_uri = f"/v1/facemarket/licenses/{license_id}/face"
             async with conn.cursor() as cur:
                 await cur.execute(
                     f"""insert into fm_licenses
-                        (id, model_id, face_image_uri, face_image_key, face_image_digest,
-                         allowed_use, forbidden_use, unit_price, license_valid_until, profile_id)
-                        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        (id, model_id, enrollment_id, face_image_uri, face_image_key,
+                         face_image_digest, allowed_use, forbidden_use, unit_price,
+                         license_valid_until, status)
+                        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending')
+                        on conflict (enrollment_id) where enrollment_id is not null do nothing
                         returning {_LICENSE_CARD_COLS}""",
                     (
-                        license_id, model_id, gate_uri, key, digest,
-                        allowed, forbidden, unit_price, valid_until, linked_profile_id,
+                        license_id, model_id, enrollment_id, gate_uri, key, digest,
+                        allowed, forbidden, unit_price, valid_until,
                     ),
                 )
                 row = await cur.fetchone()
-            await conn.commit()
-    except Exception:
-        # DB 실패 시 방금 올린 얼굴 객체 best-effort 정리(고아 방지). 프로필 참조 모드는 no-op.
-        if uploaded_key:
-            try:
-                await asyncio.to_thread(r2.delete, uploaded_key)
-            except Exception:
-                # 비공개 얼굴 R2 키는 로그에 남기지 않는다 — 이 파일의 공개 검증 하드룰과
-                # api-spec §1.4("키는 어떤 응답·이벤트·로그에도 미노출")를 따른다. 개인화 워커도
-                # 동일 상황에서 job_id 만 남긴다. 고아 정리 실패는 model_id 로 추적 가능.
-                logger.warning("face_orphan_cleanup_failed", extra={"model_id": str(model_id)})
-        raise
+            if row is None:
+                row = await _find_license_by_enrollment(conn, user_id, enrollment_id)
+                if row is None:
+                    raise _err("license_create_conflict", "라이선스 생성 상태를 확인할 수 없습니다.", status=409)
+                license_id = row["id"]
+                if row["status"] == "active":
+                    await conn.commit()
+                    return row
 
-    # FaceLicense VC 발급(선택과제1) — 홀더 설정 시 백그라운드 best-effort.
-    # VC 발급 실패는 라이선스 생성에 영향 없음(vc_id 는 나중에 채워짐). 프로드=홀더 미설정→no-op.
-    _schedule_face_vc(
-        request.app, license_id=license_id, model_id=str(model_id),
-        allowed=allowed, forbidden=forbidden, unit_price=unit_price,
-        valid_until=valid_until, digest=digest,
-    )
-    return row
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "update fm_biometric_enrollments set status = 'vc_pending' "
+                "where id = %s and status in ('license_pending', 'vc_pending') returning id",
+                (enrollment_id,),
+            )
+            if await cur.fetchone() is None:
+                await conn.rollback()
+                raise _err("enrollment_not_ready", "라이선스 발급 가능한 등록 상태가 아닙니다.", status=409)
+        await conn.commit()
+
+    try:
+        issued = await issue_face_vc(
+            request.app, license_id=license_id, model_id=str(model_id),
+            allowed=allowed, forbidden=forbidden, unit_price=unit_price,
+            valid_until=valid_until, digest=digest,
+        )
+    except FaceVcIssueError:
+        raise _err("vc_issue_delayed", "VC 발급이 지연되었습니다. 잠시 후 다시 시도해 주세요.", status=502)
+
+    async with get_conn(request) as conn:
+        try:
+            model_id, _key, _digest = _checked_license_evidence(
+                await _load_license_evidence(conn, user_id, enrollment_id)
+            )
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"""update fm_licenses set status = 'active', vc_id = %s
+                        where id = %s and status = 'pending'
+                        returning {_LICENSE_CARD_COLS}""",
+                    (issued.vc_id, license_id),
+                )
+                active = await cur.fetchone()
+                await cur.execute(
+                    """update fm_models set status = 'verified',
+                              did = coalesce(nullif(did, ''), %s)
+                        where id = %s and current_enrollment_id = %s
+                        returning id""",
+                    (issued.user_did, model_id, enrollment_id),
+                )
+                model_updated = await cur.fetchone()
+                await cur.execute(
+                    """update fm_biometric_enrollments
+                          set status = 'passed', decision = 'passed',
+                              vc_id = %s, completed_at = now()
+                        where id = %s and status = 'vc_pending'
+                        returning id""",
+                    (issued.vc_id, enrollment_id),
+                )
+                enrollment_updated = await cur.fetchone()
+            if active is None or model_updated is None or enrollment_updated is None:
+                await conn.rollback()
+                raise _err("license_activation_stale", "라이선스 활성화 상태가 변경되었습니다.", status=409)
+            await conn.commit()
+            return active
+        except HTTPException:
+            raise
 
 
 @router.get(
@@ -1357,91 +1366,78 @@ async def simulate_settlement(
 
 
 # ============================================================================
-# FaceLicense VC 발급 (선택과제1 — OpenDID 커스터디얼 홀더 :8100 배선).
-# 라이선스 생성 시 백그라운드로 모델 등록(register-did)+FaceLicense VC 발급(issue-vc) →
-# fm_licenses.vc_id + fm_models.did 저장. best-effort: 어떤 실패도 라이선스 흐름 비파손.
-# 홀더 미설정(프로드)이면 no-op. 홀더 계약: POST /holder/models/{id}/register-did,
-# POST /holder/models/{id}/issue-vc {plan:"facelicense", claims:{...}} → {vcId, userDid, ...}.
+# FaceLicense VC 발급 (OpenDID 커스터디얼 홀더 :8100 배선).
+# 모델/라이선스 활성화 전 동기 발급. 실패 응답·claims·외부 body는 로그/응답에 싣지 않는다.
 # ============================================================================
 
 _HOLDER_TIMEOUT = 180.0
 
 
-def _schedule_face_vc(app, **kwargs) -> None:
-    """홀더 설정 시에만 백그라운드 VC 발급 태스크 스케줄(GC 방지 참조 유지). 미설정=no-op."""
-    if not getattr(app.state.settings, "opendid_holder_url", None):
-        return
-    task = asyncio.create_task(_issue_face_vc(app, **kwargs))
-    bucket = getattr(app.state, "_face_vc_tasks", None)
-    if bucket is None:
-        bucket = set()
-        app.state._face_vc_tasks = bucket
-    bucket.add(task)
-    task.add_done_callback(bucket.discard)
+@dataclass(frozen=True, slots=True)
+class FaceVcIssueResult:
+    vc_id: str
+    user_did: str | None
 
 
-async def _issue_face_vc(app, *, license_id, model_id, allowed, forbidden,
-                         unit_price, valid_until, digest) -> None:
-    """모델을 홀더에 등록(멱등)하고 FaceLicense VC 발급 → DB 저장. 실패는 로그만."""
+class FaceVcIssueError(RuntimeError):
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+def build_face_vc_claims(*, allowed, forbidden, unit_price, valid_until, digest) -> dict:
+    valid_str = valid_until.date().isoformat() if hasattr(valid_until, "date") else str(valid_until)
+    return {
+        "allowedUse": ", ".join(allowed),
+        "forbiddenUse": ", ".join(forbidden),
+        "unitPrice": int(unit_price),
+        "licenseValidUntil": valid_str,
+        "faceImageDigest": digest,
+    }
+
+
+async def issue_face_vc(app, *, license_id, model_id, allowed, forbidden,
+                        unit_price, valid_until, digest) -> FaceVcIssueResult:
     base = app.state.settings.opendid_holder_url
+    if not base:
+        raise FaceVcIssueError("holder_unavailable")
+    headers = {"Idempotency-Key": f"fm-license:{license_id}"}
     try:
-        async with app.state.pool.connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute("select display_name from fm_models where id = %s", (model_id,))
-                mrow = await cur.fetchone()
-        model_name = (mrow or {}).get("display_name") or ""
-
         async with httpx.AsyncClient(timeout=_HOLDER_TIMEOUT) as client:
-            # 홀더 월렛 생성(register-did 선행 조건). 이미 있으면 홀더가 에러 반환 → 무시하고 진행(멱등).
-            try:
-                await client.post(f"{base}/holder/models/{model_id}/wallet")
-            except Exception:
-                logger.debug("holder_wallet_create_skip", extra={"model_id": model_id})
-            reg = await client.post(f"{base}/holder/models/{model_id}/register-did")
-            reg_body = reg.json() if reg.status_code == 200 else {}
-            user_did = reg_body.get("userDid")
-            if not reg_body.get("flowAComplete") and not user_did:
-                logger.warning(
-                    "holder_register_incomplete",
-                    extra={"model_id": model_id, "status": reg_body.get("status")},
-                )
-                return
-
-            valid_str = valid_until.date().isoformat() if hasattr(valid_until, "date") else str(valid_until)
-            claims = {
-                "allowedUse": ", ".join(allowed),
-                "forbiddenUse": ", ".join(forbidden),
-                "unitPrice": int(unit_price),
-                "licenseValidUntil": valid_str,
-                "faceImageDigest": digest,
-                "modelName": model_name,
-            }
-            iv = await client.post(
-                f"{base}/holder/models/{model_id}/issue-vc",
-                json={"plan": "facelicense", "claims": claims},
+            wallet = await client.post(f"{base}/holder/models/{model_id}/wallet", headers=headers)
+            if wallet.status_code not in (200, 409):
+                raise FaceVcIssueError("holder_wallet_failed")
+            register = await client.post(
+                f"{base}/holder/models/{model_id}/register-did", headers=headers
             )
-            if iv.status_code != 200:
-                logger.warning(
-                    "issue_vc_failed",
-                    extra={"model_id": model_id, "status": iv.status_code, "body": iv.text[:300]},
-                )
-                return
-            vc = iv.json()
-            vc_id = vc.get("vcId")
-            user_did = vc.get("userDid") or user_did
-
-        async with app.state.pool.connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute("update fm_licenses set vc_id = %s where id = %s", (vc_id, license_id))
-                if user_did:
-                    await cur.execute(
-                        "update fm_models set did = %s where id = %s and (did is null or did = '')",
-                        (user_did, model_id),
-                    )
-            await conn.commit()
-        logger.info("facelicense_vc_issued", extra={"license_id": license_id, "vc_id": vc_id})
-    except Exception:
-        logger.exception("facelicense_vc_issuance_failed", extra={"license_id": license_id})
+            if register.status_code != 200:
+                raise FaceVcIssueError("holder_register_failed")
+            register_body = register.json()
+            user_did = register_body.get("userDid")
+            if not register_body.get("flowAComplete") and not user_did:
+                raise FaceVcIssueError("holder_register_incomplete")
+            issue = await client.post(
+                f"{base}/holder/models/{model_id}/issue-vc",
+                headers=headers,
+                json={
+                    "plan": "facelicense",
+                    "claims": build_face_vc_claims(
+                        allowed=allowed, forbidden=forbidden, unit_price=unit_price,
+                        valid_until=valid_until, digest=digest,
+                    ),
+                },
+            )
+            if issue.status_code != 200:
+                raise FaceVcIssueError("holder_issue_failed")
+            issue_body = issue.json()
+    except FaceVcIssueError:
+        raise
+    except Exception as exc:
+        raise FaceVcIssueError("holder_malformed_response") from exc
+    vc_id = issue_body.get("vcId")
+    if not vc_id:
+        raise FaceVcIssueError("holder_issue_incomplete")
+    return FaceVcIssueResult(vc_id=vc_id, user_did=issue_body.get("userDid") or user_did)
 
 
 # ============================================================================

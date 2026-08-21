@@ -1893,6 +1893,8 @@ def validate_biometric_settings(settings: Settings) -> None:
         return
     if not settings.facemarket_enabled:
         raise RuntimeError("FACEMARKET_ENABLED is required for biometric enrollment")
+    if not settings.opendid_holder_url:
+        raise RuntimeError("OPENDID_HOLDER_URL is required for biometric enrollment")
     if settings.fm_liveness_region != "us-east-1":
         raise RuntimeError("Face Liveness region must be us-east-1")
     if not settings.fm_liveness_browser_role_arn:

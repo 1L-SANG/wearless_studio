@@ -216,6 +216,7 @@ def test_identity_only_cannot_activate_model_when_biometrics_are_enabled(
             fm_match_policy_version="dev-gold-v1",
             fm_ci_pepper="pep",
             fm_face_qc_enabled=True,
+            opendid_holder_url="http://holder.test",
         )
     )
     app.state.jwt_key_resolver = lambda _token: public_key

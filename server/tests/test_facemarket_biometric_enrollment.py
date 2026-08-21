@@ -1057,6 +1057,7 @@ def enrollment_client(
         fm_match_policy_version="dev-gold-v1",
         fm_ci_pepper="pep",
         fm_face_qc_enabled=True,
+        opendid_holder_url="http://holder.test",
     )
     monkeypatch.setattr(
         facemarket_enrollment,
