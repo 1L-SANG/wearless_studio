@@ -2,16 +2,23 @@
 
 import asyncio
 import hashlib
+import hmac
 import json
 import logging
+import math
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import boto3
 from botocore.config import Config
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
+from psycopg.errors import UniqueViolation
+from psycopg.types.json import Json
 
+from . import cx_identity
+from .agents.face_qc import QcFailed, load_face_qc
 from .auth import require_user
 from .config import Settings
 from .db import get_conn
@@ -49,7 +56,46 @@ AWS_LIVENESS_CONFIG = Config(
 
 
 class BiometricProviderError(RuntimeError):
-    pass
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(reason)
+
+
+class EnrollmentMappedError(RuntimeError):
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(reason)
+
+
+@dataclass(slots=True)
+class LivenessResult:
+    reference_image: bytearray
+    confidence: float
+    provider_version: str = "aws-rekognition-face-liveness"
+
+
+@dataclass(frozen=True, slots=True)
+class EnrollmentDecision:
+    passed: bool
+    retryable: bool
+    reason: str | None
+    status: str
+    model_id: str | None = None
+
+
+RETRYABLE_REASONS = {
+    "liveness_retry",
+    "liveness_unavailable",
+    "qc_unavailable",
+    "id_portrait_unavailable",
+}
+TERMINAL_REASONS = {
+    "minor_blocked",
+    "liveness_failed",
+    "face_match_failed",
+    "identity_replay",
+    "identity_recovery_required",
+}
 
 
 def create_liveness_session(rekognition, *, client_request_token: str) -> str:
@@ -62,6 +108,27 @@ def create_liveness_session(rekognition, *, client_request_token: str) -> str:
         return str(uuid.UUID(str(session_id)))
     except (AttributeError, TypeError, ValueError) as exc:
         raise BiometricProviderError("liveness_unavailable") from exc
+
+
+def get_liveness_result(
+    rekognition, *, session_id: str, minimum_confidence: float
+) -> LivenessResult:
+    try:
+        response = rekognition.get_face_liveness_session_results(SessionId=session_id)
+    except Exception as exc:
+        raise BiometricProviderError("liveness_unavailable") from exc
+    if response.get("Status") != "SUCCEEDED":
+        raise BiometricProviderError("liveness_retry")
+    reference = (response.get("ReferenceImage") or {}).get("Bytes")
+    if not reference:
+        raise BiometricProviderError("liveness_retry")
+    try:
+        confidence = float(response.get("Confidence") or 0.0)
+    except (TypeError, ValueError) as exc:
+        raise BiometricProviderError("liveness_failed") from exc
+    if not math.isfinite(confidence) or confidence < minimum_confidence:
+        raise BiometricProviderError("liveness_failed")
+    return LivenessResult(bytearray(reference), confidence)
 
 
 def assume_liveness_browser_credentials(
@@ -94,6 +161,11 @@ class CreateEnrollmentBody(CamelModel):
 
 class LivenessSessionBody(CamelModel):
     nonce: str
+
+
+class CompleteEnrollmentBody(CamelModel):
+    session_id: str
+    token: str
 
 
 class EnrollmentPhotoView(CamelModel):
@@ -133,6 +205,12 @@ def _r2_face(request: Request):
     if client is None:
         raise _err("storage_unavailable", "얼굴 저장소를 사용할 수 없습니다.", status=503)
     return client
+
+
+def _wake_dispatcher(request: Request) -> None:
+    dispatcher = getattr(request.app.state, "dispatcher", None)
+    if dispatcher is not None:
+        dispatcher.wake()
 
 
 async def _load_owned_enrollment(conn, enrollment_id: str, user_id: str) -> dict | None:
@@ -1170,6 +1248,409 @@ async def cleanup_terminal_enrollment(app, *, enrollment_id: str) -> bool:
             },
         )
         return False
+
+
+def _decision_body(decision: EnrollmentDecision) -> dict:
+    body = {
+        "passed": decision.passed,
+        "retryable": decision.retryable,
+        "reason": decision.reason,
+        "status": decision.status,
+    }
+    if decision.model_id is not None:
+        body["modelId"] = decision.model_id
+    return body
+
+
+def _assert_match(score: float, threshold: float) -> None:
+    try:
+        value = float(score)
+    except (TypeError, ValueError):
+        raise EnrollmentMappedError("face_match_failed") from None
+    if not math.isfinite(value) or value < threshold:
+        raise EnrollmentMappedError("face_match_failed")
+
+
+async def record_raw_release_evidence(
+    request: Request, enrollment_id: str, **evidence: bool
+) -> None:
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                update fm_biometric_enrollments
+                set raw_deletion_evidence = coalesce(raw_deletion_evidence, '{}'::jsonb)
+                  || jsonb_build_object(
+                    'oacxPortraitReleased', %s,
+                    'livenessReferenceReleased', %s,
+                    'temporaryEmbeddingsReleased', %s
+                  )
+                where id = %s
+                """,
+                (
+                    evidence.get("oacx_portrait_released", False),
+                    evidence.get("liveness_reference_released", False),
+                    evidence.get("temporary_embeddings_released", False),
+                    enrollment_id,
+                ),
+            )
+        await conn.commit()
+
+
+async def _fail_enrollment(
+    request: Request,
+    *,
+    enrollment_id: str,
+    reason: str,
+    retryable: bool,
+) -> EnrollmentDecision:
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            cooldown_until = None
+            if not retryable:
+                await cur.execute(
+                    """
+                    select count(*) as recent_failures
+                    from fm_biometric_enrollments current
+                    join fm_biometric_enrollments prior
+                      on (prior.user_id = current.user_id
+                          or prior.device_digest = current.device_digest)
+                    where current.id = %s
+                      and prior.status = 'failed'
+                      and prior.completed_at >= now() - interval '3 minutes'
+                      and prior.reason in ('minor_blocked', 'liveness_failed',
+                                           'face_match_failed', 'identity_replay',
+                                           'identity_recovery_required')
+                    """,
+                    (enrollment_id,),
+                )
+                recent = int((await cur.fetchone() or {}).get("recent_failures") or 0)
+                if recent + 1 >= 5:
+                    cooldown_until = datetime.now(timezone.utc) + timedelta(minutes=45)
+            await cur.execute(
+                """
+                update fm_biometric_enrollments
+                set status = 'failed', decision = 'failed', reason = %s,
+                    completed_at = coalesce(completed_at, now()),
+                    cooldown_until = coalesce(%s, cooldown_until)
+                where id = %s
+                """,
+                (reason, cooldown_until, enrollment_id),
+            )
+        await conn.commit()
+    await cleanup_terminal_enrollment(request.app, enrollment_id=enrollment_id)
+    return EnrollmentDecision(False, retryable, reason, "failed")
+
+
+async def _initial_completion_checks(
+    request: Request, *, enrollment_id: str, user_id: str, session_id: str, token: str
+) -> tuple[dict, list[dict]]:
+    token_digest = f"cxsha256:{hashlib.sha256(token.encode()).hexdigest()}"
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                select e.id::text as id, e.user_id::text as user_id,
+                       e.model_id::text as model_id, e.status, e.cooldown_until,
+                       e.expires_at, e.liveness_session_digest, e.device_digest
+                from fm_biometric_enrollments e
+                where e.id = %s and e.user_id = %s
+                for update
+                """,
+                (enrollment_id, user_id),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                raise _err("not_found", "등록을 찾을 수 없습니다.", status=404)
+            if row["status"] != "liveness_pending":
+                raise _err(
+                    "invalid_enrollment_state",
+                    "현재 등록 단계에서는 인증을 완료할 수 없습니다.",
+                    status=409,
+                )
+            if row.get("cooldown_until") and row["cooldown_until"] > datetime.now(timezone.utc):
+                raise _err("liveness_cooldown", "잠시 후 다시 시도해 주세요.", status=429)
+            if row["liveness_session_digest"] != hashlib.sha256(session_id.encode()).hexdigest():
+                await conn.commit()
+                raise EnrollmentMappedError("liveness_retry")
+            await cur.execute(
+                """
+                select exists(
+                  select 1 from fm_identity_verifications
+                  where cx_tx_id = %s and cx_tx_id_format = 'sha256-v1'
+                  union all
+                  select 1 from fm_biometric_enrollments
+                  where oacx_tx_digest = %s
+                ) as replayed
+                """,
+                (token_digest, token_digest),
+            )
+            if (await cur.fetchone())["replayed"]:
+                await conn.commit()
+                raise EnrollmentMappedError("identity_replay")
+            await cur.execute(
+                """
+                select angle, r2_key, mime_type
+                from fm_biometric_enrollment_photos
+                where enrollment_id = %s and qc_status = 'passed'
+                  and storage_state = 'quarantine'
+                  and angle in ('front', 'angle45', 'side')
+                order by case angle when 'front' then 1 when 'angle45' then 2 else 3 end
+                """,
+                (enrollment_id,),
+            )
+            photos = await cur.fetchall()
+            if [row["angle"] for row in photos] != list(ANGLES):
+                raise _err("photos_required", "사진 세 장이 필요합니다.", status=409)
+            await cur.execute(
+                """
+                update fm_biometric_enrollments
+                set status = 'processing'
+                where id = %s and user_id = %s and status = 'liveness_pending'
+                """,
+                (enrollment_id, user_id),
+            )
+        await conn.commit()
+    return row, photos
+
+
+async def process_enrollment_completion(
+    request: Request,
+    *,
+    enrollment_id: str,
+    user_id: str,
+    session_id: str,
+    token: str,
+) -> EnrollmentDecision:
+    settings = request.app.state.settings
+    liveness = None
+    evidence = None
+    photo_buffers: list[bytearray] = []
+    try:
+        row, photos = await _initial_completion_checks(
+            request,
+            enrollment_id=enrollment_id,
+            user_id=user_id,
+            session_id=session_id,
+            token=token,
+        )
+        try:
+            liveness = await asyncio.to_thread(
+                get_liveness_result,
+                request.app.state.fm_rekognition,
+                session_id=session_id,
+                minimum_confidence=settings.fm_liveness_confidence_threshold,
+            )
+        except BiometricProviderError as exc:
+            raise EnrollmentMappedError(exc.reason) from None
+
+        try:
+            trans = await cx_identity.fetch_trans(settings.cx_trans_base_url, token)
+            if not cx_identity.is_adult_from_birth(trans.get("birth")):
+                raise EnrollmentMappedError("minor_blocked")
+            evidence = cx_identity.parse_oacx_biometric_evidence(
+                trans,
+                contract=cx_identity.get_oacx_biometric_contract(settings),
+            )
+        except EnrollmentMappedError:
+            raise
+        except cx_identity.OacxBiometricError as exc:
+            raise EnrollmentMappedError(exc.reason) from None
+        except Exception:
+            raise EnrollmentMappedError("id_portrait_unavailable") from None
+
+        r2 = _r2_face(request)
+        for photo in photos:
+            try:
+                photo_buffers.append(bytearray(await asyncio.to_thread(r2.get_bytes, photo["r2_key"])))
+            except Exception:
+                raise EnrollmentMappedError("id_portrait_unavailable") from None
+
+        try:
+            qc = load_face_qc(settings, required=True)
+            _assert_match(
+                qc.one_to_one_similarity(evidence.portrait, liveness.reference_image),
+                settings.fm_id_live_threshold,
+            )
+            for buffer in photo_buffers:
+                _assert_match(
+                    qc.one_to_one_similarity(buffer, liveness.reference_image),
+                    settings.fm_retouched_live_threshold,
+                )
+        except EnrollmentMappedError:
+            raise
+        except QcFailed as exc:
+            reason = exc.reason if exc.reason == "qc_unavailable" else "face_match_failed"
+            raise EnrollmentMappedError(reason) from None
+        except Exception:
+            raise EnrollmentMappedError("qc_unavailable") from None
+
+        token_digest = f"cxsha256:{hashlib.sha256(token.encode()).hexdigest()}"
+        ci = evidence.ci.decode()
+        ci_hash = hmac.new(
+            settings.fm_ci_pepper.encode(), ci.encode(), hashlib.sha256
+        ).hexdigest()
+        async with get_conn(request) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "select id::text as id, user_id::text as user_id from fm_models where ci_hash = %s for update",
+                    (ci_hash,),
+                )
+                model = await cur.fetchone()
+                if model and model["user_id"] != user_id:
+                    raise EnrollmentMappedError("identity_recovery_required")
+                if model:
+                    model_id = model["id"]
+                elif row.get("model_id"):
+                    model_id = row["model_id"]
+                    await cur.execute(
+                        """
+                        update fm_models
+                        set ci_hash = %s, display_name = %s, user_id = %s
+                        where id = %s
+                        """,
+                        (ci_hash, evidence.name_masked, user_id, model_id),
+                    )
+                else:
+                    await cur.execute(
+                        """
+                        insert into fm_models (user_id, display_name, status, ci_hash)
+                        values (%s, %s, 'pending', %s)
+                        returning id::text as id
+                        """,
+                        (user_id, evidence.name_masked, ci_hash),
+                    )
+                    model_id = (await cur.fetchone())["id"]
+                try:
+                    await cur.execute(
+                        """
+                        insert into fm_identity_verifications
+                            (model_id, cx_tx_id, cx_tx_id_format, fields)
+                        values (%s, %s, 'sha256-v1', %s)
+                        """,
+                        (
+                            model_id,
+                            token_digest,
+                            Json({
+                                "nameMasked": evidence.name_masked,
+                                "birthYear": evidence.birth[:4],
+                                "biometric": True,
+                            }),
+                        ),
+                    )
+                except UniqueViolation:
+                    raise EnrollmentMappedError("identity_replay")
+                await cur.execute(
+                    """
+                    update fm_models
+                    set assets_status = 'building', current_enrollment_id = %s
+                    where id = %s
+                    """,
+                    (enrollment_id, model_id),
+                )
+                await cur.execute(
+                    """
+                    update fm_biometric_enrollments
+                    set model_id = %s, status = 'asset_building', decision = 'passed',
+                        reason = null, completed_at = now(), oacx_tx_digest = %s,
+                        match_policy_version = %s,
+                        provider_versions = provider_versions || %s::jsonb
+                    where id = %s
+                    """,
+                    (
+                        model_id,
+                        token_digest,
+                        settings.fm_match_policy_version,
+                        Json({
+                            "faceLiveness": liveness.provider_version,
+                            "oacx": evidence.contract_version,
+                            "faceMatch": "sface-one-to-one",
+                        }),
+                        enrollment_id,
+                    ),
+                )
+                await cur.execute(
+                    """
+                    insert into jobs (user_id, project_id, kind, status, payload, credits_reserved, metadata)
+                    values (%s, null, 'fm_model_asset_build', 'pending', %s, 0, '{}'::jsonb)
+                    """,
+                    (
+                        user_id,
+                        Json({"modelId": model_id, "enrollmentId": enrollment_id}),
+                    ),
+                )
+            await conn.commit()
+        return EnrollmentDecision(True, False, None, "asset_building", model_id)
+    except EnrollmentMappedError as exc:
+        return await _fail_enrollment(
+            request,
+            enrollment_id=enrollment_id,
+            reason=exc.reason,
+            retryable=exc.reason in RETRYABLE_REASONS,
+        )
+    finally:
+        if evidence is not None:
+            cx_identity.wipe_bytearray(evidence.ci)
+            cx_identity.wipe_bytearray(evidence.portrait)
+        if liveness is not None:
+            cx_identity.wipe_bytearray(liveness.reference_image)
+        for buffer in photo_buffers:
+            cx_identity.wipe_bytearray(buffer)
+        photo_buffers.clear()
+        try:
+            await asyncio.shield(
+                record_raw_release_evidence(
+                    request,
+                    enrollment_id,
+                    oacx_portrait_released=True,
+                    liveness_reference_released=True,
+                    temporary_embeddings_released=True,
+                )
+            )
+        except Exception:
+            logger.warning(
+                "facemarket_enrollment_raw_release_evidence_failed",
+                extra={"enrollment_id": enrollment_id},
+            )
+
+
+@router.post("/enrollments/{enrollment_id}/complete")
+async def complete_enrollment(
+    request: Request,
+    enrollment_id: str,
+    body: CompleteEnrollmentBody,
+    user_id: str = Depends(require_user),
+):
+    enrollment_id = _canonical_enrollment_id(enrollment_id)
+    try:
+        session_id = str(uuid.UUID(str(body.session_id)))
+    except (AttributeError, TypeError, ValueError):
+        raise _err("invalid_liveness_session", "인증 세션을 확인할 수 없습니다.")
+    token = (body.token or "").strip()
+    if not token:
+        raise _err("token_required", "인증 토큰이 없습니다.")
+    try:
+        decision = await process_enrollment_completion(
+            request,
+            enrollment_id=enrollment_id,
+            user_id=user_id,
+            session_id=session_id,
+            token=token,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning(
+            "facemarket_enrollment_complete_failed",
+            extra={"enrollment_id": enrollment_id, "error_type": type(exc).__name__},
+        )
+        raise _err("enrollment_unavailable", "등록을 완료할 수 없습니다.", status=503)
+    if decision.passed:
+        _wake_dispatcher(request)
+    return JSONResponse(
+        status_code=202 if decision.passed else 200,
+        content=_decision_body(decision),
+    )
 
 
 @router.post("/enrollments/{enrollment_id}/cancel", response_model=EnrollmentView)

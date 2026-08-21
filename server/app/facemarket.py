@@ -224,6 +224,12 @@ async def identity_verify(
     token = (body.token or "").strip()
     if not token:
         raise _err("token_required", "인증 토큰이 없습니다.")
+    if getattr(settings, "fm_biometric_enrollment_enabled", False):
+        raise _err(
+            "biometric_enrollment_required",
+            "생체 등록 플로우를 완료해 주세요.",
+            status=409,
+        )
     cx_tx_id = f"cxsha256:{hashlib.sha256(token.encode()).hexdigest()}"
 
     # ⚠️ 원문 신원 조기 폐기 미적용 지점(api-spec §3.0). trans·ci·birth 가 함수 끝까지 프레임

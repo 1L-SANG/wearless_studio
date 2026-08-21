@@ -33,13 +33,23 @@ NOW = datetime(2026, 8, 21, 3, 2, tzinfo=timezone.utc)
 
 
 class RecordingRekognition:
-    def __init__(self, session_id="00000000-0000-0000-0000-000000000001"):
+    def __init__(
+        self,
+        session_id="00000000-0000-0000-0000-000000000001",
+        result=None,
+    ):
         self.session_id = session_id
+        self.result = result or {}
         self.calls = []
+        self.result_calls = []
 
     def create_face_liveness_session(self, **kwargs):
         self.calls.append(kwargs)
         return {"SessionId": self.session_id}
+
+    def get_face_liveness_session_results(self, **kwargs):
+        self.result_calls.append(kwargs)
+        return self.result
 
 
 class RecordingSts:
@@ -164,6 +174,53 @@ def test_create_session_rejects_malformed_provider_session_id():
         facemarket_enrollment.create_liveness_session(
             rekognition, client_request_token="a" * 64
         )
+
+
+def test_get_result_requires_success_reference_and_threshold():
+    rekognition = RecordingRekognition(result={
+        "Status": "SUCCEEDED",
+        "Confidence": 94.5,
+        "ReferenceImage": {"Bytes": b"live-reference"},
+    })
+
+    result = facemarket_enrollment.get_liveness_result(
+        rekognition,
+        session_id="00000000-0000-0000-0000-000000000001",
+        minimum_confidence=90.0,
+    )
+
+    assert result.reference_image == bytearray(b"live-reference")
+    assert result.confidence == 94.5
+    assert rekognition.result_calls == [{
+        "SessionId": "00000000-0000-0000-0000-000000000001"
+    }]
+
+
+@pytest.mark.parametrize(
+    "result,reason",
+    [
+        ({"Status": "IN_PROGRESS"}, "liveness_retry"),
+        ({"Status": "FAILED"}, "liveness_retry"),
+        (
+            {
+                "Status": "SUCCEEDED",
+                "Confidence": 89.99,
+                "ReferenceImage": {"Bytes": b"live"},
+            },
+            "liveness_failed",
+        ),
+        ({"Status": "SUCCEEDED", "Confidence": 99.0}, "liveness_retry"),
+    ],
+)
+def test_get_result_fails_closed(result, reason):
+    with pytest.raises(facemarket_enrollment.BiometricProviderError) as error:
+        facemarket_enrollment.get_liveness_result(
+            RecordingRekognition(result=result),
+            session_id="00000000-0000-0000-0000-000000000001",
+            minimum_confidence=90.0,
+        )
+
+    assert error.value.reason == reason
 
 
 def test_sts_credentials_are_fifteen_minutes_start_only_and_region_locked():

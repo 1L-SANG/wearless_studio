@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 from psycopg.errors import UniqueViolation
 
-from app import facemarket
+from app import facemarket, facemarket_enrollment
 from app.main import create_app
 from conftest import make_settings
 
@@ -192,6 +192,49 @@ def test_disabled_when_flag_off(keypair):
     client = TestClient(app)
     r = client.post("/v1/facemarket/identity/verify", json={"token": "tok"})
     assert r.status_code == 404  # 라우트 미등록
+
+
+def test_identity_only_cannot_activate_model_when_biometrics_are_enabled(
+    keypair, make_token, monkeypatch
+):
+    _priv, public_key = keypair
+    monkeypatch.setattr(
+        facemarket_enrollment,
+        "build_biometric_aws_clients",
+        lambda _settings: (object(), object()),
+    )
+    app = create_app(
+        make_settings(
+            app_env="dev",
+            facemarket_enabled=True,
+            fm_biometric_enrollment_enabled=True,
+            fm_oacx_contract_mode="dev-mock-v1",
+            fm_liveness_browser_role_arn="arn:aws:iam::123456789012:role/test",
+            fm_liveness_confidence_threshold=90.0,
+            fm_id_live_threshold=0.45,
+            fm_retouched_live_threshold=0.40,
+            fm_match_policy_version="dev-gold-v1",
+            fm_ci_pepper="pep",
+            fm_face_qc_enabled=True,
+        )
+    )
+    app.state.jwt_key_resolver = lambda _token: public_key
+    store = {"models": []}
+
+    async def fail_fetch(*_args):
+        pytest.fail("identity-only route called OACX while biometrics enabled")
+
+    monkeypatch.setattr(facemarket, "_fetch_trans", fail_fetch)
+
+    response = TestClient(app).post(
+        "/v1/facemarket/identity/verify",
+        json={"token": "tok-1"},
+        headers=_headers(make_token),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "biometric_enrollment_required"
+    assert store["models"] == []
 
 
 # ---- FM-13 카탈로그 ----------------------------------------------------------

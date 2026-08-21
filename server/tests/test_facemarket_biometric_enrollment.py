@@ -1,7 +1,9 @@
 import asyncio
+import base64
 import contextlib
 import copy
 import hashlib
+import hmac
 import io
 import json
 import threading
@@ -11,9 +13,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 from botocore.exceptions import EndpointConnectionError
+from psycopg.errors import UniqueViolation
 from starlette.datastructures import Headers
 
-from app import facemarket_enrollment, r2
+from app import cx_identity, facemarket_enrollment, r2
 from app.main import create_app
 from app.personalization_qc import FaceQcResult
 from conftest import make_settings
@@ -34,6 +37,10 @@ TEST_ENROLLMENT_ID = "123e4567-e89b-12d3-a456-426614174000"
 TEST_MODEL_ID = "987fcdeb-51a2-43d7-9abc-def012345678"
 
 
+def _json_value(value):
+    return getattr(value, "obj", value)
+
+
 class EnrollmentStore:
     def __init__(self):
         self.enrollments = []
@@ -41,6 +48,8 @@ class EnrollmentStore:
         self.models = []
         self.licenses = []
         self.cleanup = []
+        self.identities = []
+        self.jobs = []
         self.advisory_lock_owners = {}
         self.terminal_cleanup_loads = 0
         self.now = NOW
@@ -59,6 +68,8 @@ class EnrollmentStore:
                 "models": self.models,
                 "licenses": self.licenses,
                 "cleanup": self.cleanup,
+                "identities": self.identities,
+                "jobs": self.jobs,
             },
             default=str,
         )
@@ -67,7 +78,13 @@ class EnrollmentStore:
 class FakeRekognition:
     def __init__(self):
         self.session_id = "00000000-0000-0000-0000-000000000001"
+        self.result = {
+            "Status": "SUCCEEDED",
+            "Confidence": 95.0,
+            "ReferenceImage": {"Bytes": b"live-reference"},
+        }
         self.calls = []
+        self.result_calls = []
         self.failures = 0
 
     def create_face_liveness_session(self, **kwargs):
@@ -76,6 +93,13 @@ class FakeRekognition:
             self.failures -= 1
             raise EndpointConnectionError(endpoint_url="https://rekognition.test")
         return {"SessionId": self.session_id}
+
+    def get_face_liveness_session_results(self, **kwargs):
+        self.result_calls.append(kwargs)
+        if self.failures:
+            self.failures -= 1
+            raise EndpointConnectionError(endpoint_url="https://rekognition.test")
+        return self.result
 
 
 class FakeSts:
@@ -179,6 +203,30 @@ class FakeCursor:
             for license_row in self.store.licenses:
                 if license_row["model_id"] == model_id and license_row["status"] == "active":
                     license_row["status"] = "reverification_required"
+        elif query.startswith("select e.id::text as id, e.user_id::text as user_id"):
+            enrollment_id, user_id = params
+            row = next(
+                (
+                    item
+                    for item in self.store.enrollments
+                    if item["id"] == enrollment_id and item["user_id"] == user_id
+                ),
+                None,
+            )
+            self.result = (
+                {
+                    "id": row["id"],
+                    "user_id": row["user_id"],
+                    "model_id": row["model_id"],
+                    "status": row["status"],
+                    "cooldown_until": row.get("cooldown_until"),
+                    "expires_at": row["expires_at"],
+                    "liveness_session_digest": row.get("liveness_session_digest"),
+                    "device_digest": row["device_digest"],
+                }
+                if row
+                else None
+            )
         elif query.startswith("select e.status, e.cooldown_until"):
             enrollment_id, user_id = params
             row = next(
@@ -199,6 +247,17 @@ class FakeCursor:
                 if row
                 else None
             )
+        elif query.startswith("select exists(") and "fm_identity_verifications" in query:
+            token_digest = params[0]
+            self.result = {
+                "replayed": any(
+                    row.get("cx_tx_id") == token_digest for row in self.store.identities
+                )
+                or any(
+                    row.get("oacx_tx_digest") == token_digest
+                    for row in self.store.enrollments
+                )
+            }
         elif query.startswith("select exists(") and "liveness_nonce_digest" in query:
             nonce_digest = params[0]
             self.result = {
@@ -234,6 +293,7 @@ class FakeCursor:
                     "status": "photos_pending",
                     "decision": None,
                     "reason": None,
+                    "provider_versions": {},
                     "cooldown_until": None,
                     "expires_at": expires_at,
                     "completed_at": None,
@@ -287,6 +347,24 @@ class FakeCursor:
                 if photo["enrollment_id"] == enrollment_id
                 and photo["storage_state"] == "quarantine"
             ]
+        elif query.startswith("select angle, r2_key, mime_type"):
+            enrollment_id = params[0]
+            order = {"front": 0, "angle45": 1, "side": 2}
+            self.many = sorted(
+                [
+                    {
+                        "angle": photo["angle"],
+                        "r2_key": photo["r2_key"],
+                        "mime_type": photo["mime_type"],
+                    }
+                    for photo in self.store.photos
+                    if photo["enrollment_id"] == enrollment_id
+                    and photo["qc_status"] == "passed"
+                    and photo["storage_state"] == "quarantine"
+                    and photo["angle"] in order
+                ],
+                key=lambda row: order[row["angle"]],
+            )
         elif query.startswith("select r2_key, storage_state"):
             enrollment_id, angle = params
             photo = next(
@@ -477,6 +555,45 @@ class FakeCursor:
             row.setdefault("provider_versions", {})["faceLiveness"] = (
                 "aws-rekognition-us-east-1"
             )
+        elif query.startswith("update fm_biometric_enrollments set status = 'processing'"):
+            enrollment_id, user_id = params
+            row = next(
+                item
+                for item in self.store.enrollments
+                if item["id"] == enrollment_id and item["user_id"] == user_id
+            )
+            if row["status"] == "liveness_pending":
+                row["status"] = "processing"
+        elif query.startswith("select count(*) as recent_failures"):
+            enrollment_id = params[0]
+            current = next(
+                item for item in self.store.enrollments if item["id"] == enrollment_id
+            )
+            self.result = {
+                "recent_failures": sum(
+                    row["status"] == "failed"
+                    and row.get("completed_at")
+                    and row["completed_at"] >= NOW - timedelta(minutes=3)
+                    and row.get("reason") in facemarket_enrollment.TERMINAL_REASONS
+                    and (
+                        row["user_id"] == current["user_id"]
+                        or row["device_digest"] == current["device_digest"]
+                    )
+                    for row in self.store.enrollments
+                )
+            }
+        elif query.startswith(
+            "update fm_biometric_enrollments set status = 'failed'"
+        ):
+            reason, cooldown_until, enrollment_id = params
+            row = next(item for item in self.store.enrollments if item["id"] == enrollment_id)
+            row.update(
+                status="failed",
+                decision="failed",
+                reason=reason,
+                completed_at=row.get("completed_at") or NOW,
+                cooldown_until=cooldown_until or row.get("cooldown_until"),
+            )
         elif query.startswith("update fm_biometric_enrollments set status = 'liveness_pending'"):
             enrollment_id, user_id = params
             row = next(
@@ -555,6 +672,17 @@ class FakeCursor:
                     for row in self.store.cleanup
                 )
             }
+        elif (
+            query.startswith("update fm_biometric_enrollments set raw_deletion_evidence")
+            and "oacxportraitreleased" in query
+        ):
+            portrait, liveness, embeddings, enrollment_id = params
+            row = next(item for item in self.store.enrollments if item["id"] == enrollment_id)
+            row["raw_deletion_evidence"].update(
+                oacxPortraitReleased=portrait,
+                livenessReferenceReleased=liveness,
+                temporaryEmbeddingsReleased=embeddings,
+            )
         elif query.startswith("update fm_biometric_enrollments set raw_deletion_evidence"):
             complete, deleted_count, failed_count, enrollment_id = params
             row = next(item for item in self.store.enrollments if item["id"] == enrollment_id)
@@ -566,6 +694,65 @@ class FakeCursor:
                 quarantineDeleteFailedCount=evidence.get("quarantineDeleteFailedCount", 0)
                 + failed_count,
                 quarantineCleanupAt=NOW.isoformat(),
+            )
+        elif query.startswith("select id::text as id, user_id::text as user_id from fm_models"):
+            ci_hash = params[0]
+            model = next(
+                (row for row in self.store.models if row.get("ci_hash") == ci_hash),
+                None,
+            )
+            self.result = (
+                {"id": model["id"], "user_id": model["user_id"]} if model else None
+            )
+        elif query.startswith("update fm_models set ci_hash"):
+            ci_hash, display_name, user_id, model_id = params
+            model = next(row for row in self.store.models if row["id"] == model_id)
+            model.update(ci_hash=ci_hash, display_name=display_name, user_id=user_id)
+        elif query.startswith("insert into fm_models"):
+            user_id, display_name, ci_hash = params
+            model = {
+                "id": f"model-{len(self.store.models) + 1}",
+                "user_id": user_id,
+                "display_name": display_name,
+                "status": "pending",
+                "ci_hash": ci_hash,
+                "assets_status": "none",
+                "current_enrollment_id": None,
+            }
+            self.store.models.append(model)
+            self.result = {"id": model["id"]}
+        elif query.startswith("insert into fm_identity_verifications"):
+            model_id, token_digest, fields = params
+            if any(row.get("cx_tx_id") == token_digest for row in self.store.identities):
+                raise UniqueViolation("duplicate cx_tx_id")
+            self.store.identities.append(
+                {
+                    "model_id": model_id,
+                    "cx_tx_id": token_digest,
+                    "fields": _json_value(fields),
+                }
+            )
+        elif query.startswith("update fm_models set assets_status = 'building'"):
+            enrollment_id, model_id = params
+            model = next(row for row in self.store.models if row["id"] == model_id)
+            model.update(assets_status="building", current_enrollment_id=enrollment_id)
+        elif query.startswith("update fm_biometric_enrollments set model_id"):
+            model_id, token_digest, policy_version, provider_versions, enrollment_id = params
+            row = next(item for item in self.store.enrollments if item["id"] == enrollment_id)
+            row.update(
+                model_id=model_id,
+                status="asset_building",
+                decision="passed",
+                reason=None,
+                completed_at=NOW,
+                oacx_tx_digest=token_digest,
+                match_policy_version=policy_version,
+            )
+            row.setdefault("provider_versions", {}).update(_json_value(provider_versions))
+        elif query.startswith("insert into jobs"):
+            _user_id, payload = params
+            self.store.jobs.append(
+                {"kind": "fm_model_asset_build", "payload": _json_value(payload)}
             )
         else:
             raise AssertionError(f"unexpected SQL: {query}")
@@ -589,7 +776,15 @@ class FakeConn:
 
     def _snapshot(self):
         working = EnrollmentStore()
-        for name in ("enrollments", "photos", "models", "licenses", "cleanup"):
+        for name in (
+            "enrollments",
+            "photos",
+            "models",
+            "licenses",
+            "cleanup",
+            "identities",
+            "jobs",
+        ):
             setattr(working, name, copy.deepcopy(getattr(self.store, name)))
         working.now = self.store.now
         working.fail_photo_upsert = self.store.fail_photo_upsert
@@ -609,7 +804,7 @@ class FakeConn:
             self.cleanup_adds.clear()
             self.cleanup_deletes.clear()
             raise RuntimeError("commit unavailable")
-        for name in ("enrollments", "photos", "models", "licenses"):
+        for name in ("enrollments", "photos", "models", "licenses", "identities", "jobs"):
             target = getattr(self.store, name)
             target[:] = copy.deepcopy(getattr(self.working, name))
         cleanup = {
@@ -701,6 +896,10 @@ class FakeR2:
         self.puts.append((key, data, mime))
         self.objects[key] = (data, mime)
 
+    def get_bytes(self, key):
+        data, _mime = self.objects[key]
+        return data
+
     def delete(self, key):
         if self.fail_next_delete:
             self.fail_next_delete = False
@@ -783,6 +982,7 @@ def enrollment_client(
         fm_id_live_threshold=0.45,
         fm_retouched_live_threshold=0.40,
         fm_match_policy_version="dev-gold-v1",
+        fm_ci_pepper="pep",
         fm_face_qc_enabled=True,
     )
     monkeypatch.setattr(
@@ -846,6 +1046,394 @@ def create_ready_enrollment(client, auth, store):
         for angle in ("front", "angle45", "side")
     )
     return enrollment_id
+
+
+def create_complete_ready_enrollment(client, auth, store, fake_r2, fake_rekognition):
+    enrollment_id = create_ready_enrollment(client, auth, store)
+    store.enrollments[0]["liveness_session_digest"] = hashlib.sha256(
+        fake_rekognition.session_id.encode()
+    ).hexdigest()
+    for angle in ("front", "angle45", "side"):
+        fake_r2.objects[f"private/{angle}.jpg"] = (f"{angle}-bytes".encode(), "image/jpeg")
+    return enrollment_id
+
+
+def dev_trans(**patch):
+    trans = {
+        "ci": "dev-ci-value",
+        "birth": "19900102",
+        "nm": "홍길동",
+        "txId": "tx-dev-1",
+        "idPortraitBase64": base64.b64encode(b"portrait-bytes").decode(),
+        "idPortraitMime": "image/jpeg",
+        "issuedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    trans.update(patch)
+    return trans
+
+
+class RecordingFaceQc:
+    def __init__(self, scores=(0.46, 0.41, 0.42, 0.43), fail=False):
+        self.scores = list(scores)
+        self.fail = fail
+        self.calls = []
+
+    def one_to_one_similarity(self, reference, candidate):
+        labels = {
+            b"portrait-bytes": "id",
+            b"front-bytes": "front",
+            b"angle45-bytes": "angle45",
+            b"side-bytes": "side",
+            b"live-reference": "live",
+        }
+        self.calls.append((labels.get(bytes(reference)), labels.get(bytes(candidate))))
+        if self.fail:
+            raise RuntimeError("qc unavailable")
+        return self.scores.pop(0)
+
+
+@pytest.fixture()
+def completion_fakes(monkeypatch):
+    state = {
+        "trans": dev_trans(),
+        "face_qc": RecordingFaceQc(),
+    }
+
+    async def fake_fetch_trans(_base_url, token):
+        if token == "timeout-token":
+            raise cx_identity.CxIdentityError("cx timeout")
+        return copy.deepcopy(state["trans"])
+
+    monkeypatch.setattr(cx_identity, "fetch_trans", fake_fetch_trans)
+    monkeypatch.setattr(
+        facemarket_enrollment,
+        "load_face_qc",
+        lambda _settings, *, required=False: state["face_qc"],
+    )
+    return state
+
+
+def complete_enrollment(client, auth, enrollment_id, session_id, token="oacx-token-used-only-now"):
+    return client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/complete",
+        json={"sessionId": session_id, "token": token},
+        headers=auth(),
+    )
+
+
+def assert_completion_failure(response, store, reason, *, retryable):
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "passed": False,
+        "retryable": retryable,
+        "reason": reason,
+        "status": "failed",
+    }
+    row = store.enrollments[0]
+    assert row["status"] == "failed"
+    assert row["decision"] == "failed"
+    assert row["reason"] == reason
+    assert store.jobs == []
+    assert all(photo["storage_state"] != "quarantine" for photo in store.photos)
+    assert "score" not in response.text.lower()
+    assert "private/" not in response.text
+
+
+def test_complete_uses_distinct_thresholds_and_queues_bound_asset_job(
+    enrollment_client,
+    auth,
+    enrollment_store,
+    fake_r2,
+    fake_rekognition,
+    completion_fakes,
+):
+    enrollment_id = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
+    )
+
+    response = complete_enrollment(
+        enrollment_client, auth, enrollment_id, fake_rekognition.session_id
+    )
+
+    assert response.status_code == 202, response.text
+    assert response.json() == {
+        "passed": True,
+        "retryable": False,
+        "reason": None,
+        "status": "asset_building",
+        "modelId": "model-1",
+    }
+    assert completion_fakes["face_qc"].calls == [
+        ("id", "live"),
+        ("front", "live"),
+        ("angle45", "live"),
+        ("side", "live"),
+    ]
+    assert enrollment_store.jobs == [{
+        "kind": "fm_model_asset_build",
+        "payload": {"modelId": "model-1", "enrollmentId": enrollment_id},
+    }]
+    stored = enrollment_store.enrollments[0]
+    assert stored["status"] == "asset_building"
+    assert stored["decision"] == "passed"
+    assert stored["model_id"] == "model-1"
+    assert stored["provider_versions"] == {
+        "faceLiveness": "aws-rekognition-face-liveness",
+        "oacx": "dev-mock-v1",
+        "faceMatch": "sface-one-to-one",
+    }
+    assert stored["raw_deletion_evidence"] == {
+        "oacxPortraitReleased": True,
+        "livenessReferenceReleased": True,
+        "temporaryEmbeddingsReleased": True,
+    }
+    serialized = enrollment_store.serialized()
+    for secret in (
+        "oacx-token-used-only-now",
+        "portrait-bytes",
+        "live-reference",
+        fake_rekognition.session_id,
+        "0.46",
+    ):
+        assert secret not in serialized
+    assert "private/" not in response.text
+    assert "private/" not in json.dumps(enrollment_store.jobs)
+
+
+def test_complete_rejects_session_digest_mismatch_without_provider_call(
+    enrollment_client,
+    auth,
+    enrollment_store,
+    fake_r2,
+    fake_rekognition,
+    completion_fakes,
+):
+    enrollment_id = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
+    )
+
+    response = complete_enrollment(
+        enrollment_client,
+        auth,
+        enrollment_id,
+        "00000000-0000-0000-0000-000000000099",
+    )
+
+    assert_completion_failure(
+        response, enrollment_store, "liveness_retry", retryable=True
+    )
+    assert fake_rekognition.result_calls == []
+    assert completion_fakes["face_qc"].calls == []
+    assert enrollment_store.enrollments[0]["cooldown_until"] is None
+
+
+def test_complete_rejects_same_oacx_token_replay(
+    enrollment_client,
+    auth,
+    enrollment_store,
+    fake_r2,
+    fake_rekognition,
+    completion_fakes,
+):
+    enrollment_id = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
+    )
+    token = "already-used-oacx-token"
+    enrollment_store.identities.append(
+        {"cx_tx_id": f"cxsha256:{hashlib.sha256(token.encode()).hexdigest()}"}
+    )
+
+    response = complete_enrollment(
+        enrollment_client, auth, enrollment_id, fake_rekognition.session_id, token
+    )
+
+    assert_completion_failure(
+        response, enrollment_store, "identity_replay", retryable=False
+    )
+
+
+@pytest.mark.parametrize(
+    "patch,reason",
+    [
+        ({"idPortraitBase64": None}, "id_portrait_unavailable"),
+        ({"birth": "20100102"}, "minor_blocked"),
+    ],
+)
+def test_complete_maps_oacx_portrait_and_minor_failures(
+    enrollment_client,
+    auth,
+    enrollment_store,
+    fake_r2,
+    fake_rekognition,
+    completion_fakes,
+    patch,
+    reason,
+):
+    enrollment_id = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
+    )
+    completion_fakes["trans"] = dev_trans(**patch)
+
+    response = complete_enrollment(
+        enrollment_client, auth, enrollment_id, fake_rekognition.session_id
+    )
+
+    assert_completion_failure(
+        response,
+        enrollment_store,
+        reason,
+        retryable=reason == "id_portrait_unavailable",
+    )
+    assert enrollment_store.enrollments[0]["cooldown_until"] is None
+
+
+@pytest.mark.parametrize(
+    "scores,calls",
+    [
+        ((None, 0.9, 0.9, 0.9), [("id", "live")]),
+        ((0.4499, 0.9, 0.9, 0.9), [("id", "live")]),
+        ((0.9, 0.3999, 0.9, 0.9), [("id", "live"), ("front", "live")]),
+        (
+            (0.9, 0.9, 0.3999, 0.9),
+            [("id", "live"), ("front", "live"), ("angle45", "live")],
+        ),
+        (
+            (0.9, 0.9, 0.9, 0.3999),
+            [("id", "live"), ("front", "live"), ("angle45", "live"), ("side", "live")],
+        ),
+    ],
+)
+def test_complete_fails_closed_on_each_distinct_threshold(
+    enrollment_client,
+    auth,
+    enrollment_store,
+    fake_r2,
+    fake_rekognition,
+    completion_fakes,
+    scores,
+    calls,
+):
+    enrollment_id = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
+    )
+    completion_fakes["face_qc"] = RecordingFaceQc(scores=scores)
+
+    response = complete_enrollment(
+        enrollment_client, auth, enrollment_id, fake_rekognition.session_id
+    )
+
+    assert_completion_failure(
+        response, enrollment_store, "face_match_failed", retryable=False
+    )
+    assert completion_fakes["face_qc"].calls == calls
+
+
+def test_complete_requires_identity_recovery_for_ci_owned_by_another_account(
+    enrollment_client,
+    auth,
+    enrollment_store,
+    fake_r2,
+    fake_rekognition,
+    completion_fakes,
+):
+    enrollment_id = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
+    )
+    enrollment_store.models.append(
+        {
+            "id": "other-model",
+            "user_id": "other-user",
+            "display_name": "다른 사람",
+            "status": "verified",
+            "ci_hash": hmac.new(
+                b"pep", b"dev-ci-value", hashlib.sha256
+            ).hexdigest(),
+            "assets_status": "ready",
+            "current_enrollment_id": None,
+        }
+    )
+
+    response = complete_enrollment(
+        enrollment_client, auth, enrollment_id, fake_rekognition.session_id
+    )
+
+    assert_completion_failure(
+        response, enrollment_store, "identity_recovery_required", retryable=False
+    )
+
+
+@pytest.mark.parametrize(
+    "setup,reason,retryable",
+    [
+        (lambda rekognition, fakes: setattr(rekognition, "failures", 1), "liveness_unavailable", True),
+        (lambda rekognition, fakes: setattr(rekognition, "result", {"Status": "IN_PROGRESS"}), "liveness_retry", True),
+        (lambda rekognition, fakes: fakes.update(face_qc=RecordingFaceQc(fail=True)), "qc_unavailable", True),
+    ],
+)
+def test_complete_provider_and_qc_failures_are_retryable_without_cooldown(
+    enrollment_client,
+    auth,
+    enrollment_store,
+    fake_r2,
+    fake_rekognition,
+    completion_fakes,
+    setup,
+    reason,
+    retryable,
+):
+    enrollment_id = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
+    )
+    setup(fake_rekognition, completion_fakes)
+
+    response = complete_enrollment(
+        enrollment_client, auth, enrollment_id, fake_rekognition.session_id
+    )
+
+    assert_completion_failure(response, enrollment_store, reason, retryable=retryable)
+    assert enrollment_store.enrollments[0]["cooldown_until"] is None
+
+
+def test_complete_terminal_biometric_failures_set_cooldown_after_five(
+    enrollment_client,
+    auth,
+    enrollment_store,
+    fake_r2,
+    fake_rekognition,
+    completion_fakes,
+):
+    enrollment_id = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
+    )
+    completion_fakes["face_qc"] = RecordingFaceQc(scores=(0.1, 0.9, 0.9, 0.9))
+    for index in range(4):
+        enrollment_store.enrollments.append(
+            {
+                "id": f"00000000-0000-0000-0000-00000000000{index}",
+                "user_id": "user-1",
+                "model_id": None,
+                "device_digest": enrollment_store.enrollments[0]["device_digest"],
+                "consent_version": "2026-08-v1",
+                "status": "failed",
+                "decision": "failed",
+                "reason": "face_match_failed",
+                "cooldown_until": None,
+                "expires_at": NOW,
+                "completed_at": NOW - timedelta(minutes=1),
+                "raw_deletion_evidence": {},
+            }
+        )
+
+    before = datetime.now(timezone.utc) + timedelta(minutes=45)
+    response = complete_enrollment(
+        enrollment_client, auth, enrollment_id, fake_rekognition.session_id
+    )
+    after = datetime.now(timezone.utc) + timedelta(minutes=45)
+
+    assert_completion_failure(
+        response, enrollment_store, "face_match_failed", retryable=False
+    )
+    assert before <= enrollment_store.enrollments[0]["cooldown_until"] <= after
 
 
 def stub_qc(monkeypatch, verdict="pass", reasons=None):
