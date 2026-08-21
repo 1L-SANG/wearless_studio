@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse, Response
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
 
-from . import cx_identity
+from . import cx_identity, repo
 from .agents.face_qc import QcFailed, load_face_qc
 from .auth import require_user
 from .config import Settings
@@ -286,6 +286,16 @@ async def _try_photo_fence(conn, enrollment_id: str) -> bool:
             (_PHOTO_FENCE_NAMESPACE, enrollment_id),
         )
         return bool((await cur.fetchone())["locked"])
+
+
+async def _reject_cutover_closed(conn) -> None:
+    await repo.lock_facemarket_writer_boundary(conn)
+    if await repo.facemarket_writer_boundary_closed(conn):
+        raise _err(
+            "facemarket_cutover_in_progress",
+            "실물 모델 보안 전환 중이라 잠시 후 다시 시도해 주세요.",
+            status=409,
+        )
 
 
 async def _unlock_photo_fence_once(conn, enrollment_id: str) -> None:
@@ -631,6 +641,7 @@ async def create_enrollment(
     now = datetime.now(timezone.utc)
     expires_at = now + ENROLLMENT_TTL
     async with get_conn(request) as conn:
+        await _reject_cutover_closed(conn)
         async with conn.cursor() as cur:
             await cur.execute(
                 """
@@ -792,6 +803,8 @@ async def upload_enrollment_photo(
             async with get_conn(request) as conn:
                 row = await _load_owned_enrollment(conn, enrollment_id, user_id)
                 _validate_photo_mutation_enrollment(row)
+                await _reject_cutover_closed(conn)
+                await conn.commit()
             await _drain_photo_cleanup(
                 request.app,
                 enrollment_id=enrollment_id,
@@ -851,6 +864,7 @@ async def upload_enrollment_photo(
                             status=503,
                         )
 
+                    await _reject_cutover_closed(conn)
                     await _lock_photo_mutation_enrollment(conn, enrollment_id, user_id)
                     async with conn.cursor() as cur:
                         await cur.execute(
@@ -1695,6 +1709,7 @@ async def process_enrollment_completion(
             settings.fm_ci_pepper.encode(), evidence.ci, hashlib.sha256
         ).hexdigest()
         async with get_conn(request) as conn:
+            await _reject_cutover_closed(conn)
             async with conn.cursor() as cur:
                 await cur.execute(
                     """

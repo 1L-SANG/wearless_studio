@@ -13,6 +13,11 @@ from psycopg.types.json import Json
 
 from .credits import allocate_fifo
 
+FACEMARKET_WRITER_FENCE_NAMESPACE = 0x464D4354
+FACEMARKET_WRITER_FENCE_KEY = 0
+FACEMARKET_CLOSED_BATCH_STATUSES = ("draining", "applying", "reconciling", "failed")
+FACEMARKET_CUTOVER_JOB_KINDS = ("detail_page", "editor_image", "fm_model_asset_build")
+
 
 class CreditError(Exception):
     """크레딧 도메인 에러 — 라우트가 code/status로 HTTP 매핑(토스트 가능한 한국어 message)."""
@@ -1289,12 +1294,28 @@ async def claim_next_job(conn: AsyncConnection, kinds: tuple[str, ...], worker_i
     복구 후 같은 프로세스의 재클레임과 옛 stale 실행을 구분 못 한다. 워커는 반환된 row의
     locked_by(=토큰)로 종결을 펜싱(lock_owned_running_job)해야 한다."""
     lease_token = f"{worker_id}:{uuid.uuid4()}"
+    await lock_facemarket_writer_boundary(conn)
     async with conn.cursor() as cur:
         await cur.execute(
             f"""
             with next_job as (
               select id as nid from jobs
               where status = 'pending' and kind = any(%s)
+                and not (
+                  kind = any(%s)
+                  and exists (
+                    select 1 from fm_cutover_batches
+                    where status = any(%s)
+                  )
+                )
+                and not (
+                  kind = 'personalization_generation'
+                  and exists (
+                    select 1 from personalization_profiles p
+                    where p.id::text = jobs.payload->>'profileId'
+                      and p.status in ('purging', 'purged')
+                  )
+                )
               order by case when kind in ('sam_preprocess', 'matching_cutout') then 1 else 0 end,
                 created_at
               for update skip locked limit 1
@@ -1304,9 +1325,82 @@ async def claim_next_job(conn: AsyncConnection, kinds: tuple[str, ...], worker_i
             from next_job where j.id = next_job.nid
             returning {_JOB_COLS}, locked_by as lease_token
             """,
-            (list(kinds), lease_token),
+            (
+                list(kinds),
+                list(FACEMARKET_CUTOVER_JOB_KINDS),
+                list(FACEMARKET_CLOSED_BATCH_STATUSES),
+                lease_token,
+            ),
         )
         return await cur.fetchone()
+
+
+async def lock_facemarket_writer_boundary(conn: AsyncConnection) -> None:
+    """Serialize cutover close with FaceMarket biometric writers for this transaction."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select pg_advisory_xact_lock(%s, %s)",
+            (FACEMARKET_WRITER_FENCE_NAMESPACE, FACEMARKET_WRITER_FENCE_KEY),
+        )
+
+
+async def facemarket_writer_boundary_closed(conn: AsyncConnection) -> bool:
+    """Return true when a cutover batch has closed biometric writers."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select exists (
+              select 1 from fm_cutover_batches
+              where status = any(%s)
+            ) as closed
+            """,
+            (list(FACEMARKET_CLOSED_BATCH_STATUSES),),
+        )
+        row = await cur.fetchone()
+    return bool(row and row["closed"])
+
+
+async def cancel_pending_job_with_refund(
+    conn: AsyncConnection, *, job_id: str, code: str, message: str
+) -> bool:
+    """Terminalize one pending job as cancelled and idempotently release its reservation."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select id::text as id, user_id::text as user_id,
+                   project_id::text as project_id, credits_reserved
+            from jobs
+            where id = %s and status = 'pending'
+            for update
+            """,
+            (job_id,),
+        )
+        job = await cur.fetchone()
+    if job is None:
+        return False
+    await release_credits(
+        conn,
+        user_id=job["user_id"],
+        project_id=job["project_id"],
+        job_id=job_id,
+        reserved=int(job["credits_reserved"] or 0),
+        settle_key=f"credit:job:{job_id}:settle",
+        metadata={"reason": code},
+    )
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            update jobs set status = 'cancelled', error_message = %s,
+                   locked_by = null, locked_at = null, finished_at = now()
+            where id = %s and status = 'pending'
+            """,
+            (message, job_id),
+        )
+        await cur.execute(
+            "insert into job_events (job_id, event_type, payload) values (%s, 'cancelled', %s)",
+            (job_id, Json({"code": code, "message": message})),
+        )
+    return True
 
 
 # job 종결(에셋·컷·크레딧·done)은 finalize_mannequin_success/failure 한 함수에서 원자적으로 —

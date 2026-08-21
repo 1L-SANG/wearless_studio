@@ -546,6 +546,7 @@ def test_editor_new_owns_category_model_and_license_snapshot(
     client, make_token, monkeypatch, model_key
 ):
     seen = {}
+    fence = []
     client.app.state.settings = replace(
         client.app.state.settings,
         facemarket_enabled=True,
@@ -571,12 +572,21 @@ def test_editor_new_owns_category_model_and_license_snapshot(
     async def fake_reserve(conn, user_id, amount):
         return 9
 
+    async def fake_lock(conn):
+        fence.append("lock")
+
+    async def fake_closed(conn):
+        fence.append("closed")
+        return False
+
     monkeypatch.setattr(routes.repo, "get_project", fake_project)
     monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(routes.facemarket, "resolve_model_license", fake_resolve)
     monkeypatch.setattr(routes.facemarket, "verify_license", fake_verify)
     monkeypatch.setattr(routes.repo, "create_job", fake_create)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
+    monkeypatch.setattr(routes.repo, "lock_facemarket_writer_boundary", fake_lock)
+    monkeypatch.setattr(routes.repo, "facemarket_writer_boundary_closed", fake_closed)
     patch_route_db(monkeypatch, routes)
 
     response = client.post(
@@ -599,6 +609,7 @@ def test_editor_new_owns_category_model_and_license_snapshot(
         "modelId": MODEL_ID,
         "licenseId": LICENSE_ID,
     }
+    assert fence == ["lock", "closed"]
 
 
 def test_editor_denial_precedes_job_and_credit(client, make_token, monkeypatch):

@@ -324,6 +324,10 @@ class FakeCursor:
                     reason="enrollment_expired",
                     completed_at=self.store.now,
                 )
+        elif query.startswith("select pg_advisory_xact_lock"):
+            self.result = {"?column?": None}
+        elif "from fm_cutover_batches" in query and "status = any" in query:
+            self.result = {"closed": False}
         elif query.startswith("select id::text as id from fm_biometric_enrollments"):
             user_id = params[0]
             row = next(
@@ -2610,7 +2614,7 @@ def test_superseded_cleanup_finalize_commit_failure_retries_without_orphan(
         headers=auth(),
     )
     first_key = enrollment_store.photos[0]["r2_key"]
-    enrollment_store.fail_commit_attempts.add(enrollment_store.commit_attempts + 3)
+    enrollment_store.fail_commit_attempts.add(enrollment_store.commit_attempts + 4)
 
     replacement = enrollment_client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/photos",

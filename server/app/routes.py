@@ -220,6 +220,18 @@ def _generation_in_progress() -> HTTPException:
     )
 
 
+async def _reject_facemarket_cutover_closed(conn) -> None:
+    await repo.lock_facemarket_writer_boundary(conn)
+    if await repo.facemarket_writer_boundary_closed(conn):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "facemarket_cutover_in_progress",
+                "message": "실물 모델 보안 전환 중이라 잠시 후 다시 시도해 주세요.",
+            },
+        )
+
+
 def _custom_match_error(status: int, code: str, message: str) -> HTTPException:
     return HTTPException(status_code=status, detail={"code": code, "message": message})
 
@@ -2777,6 +2789,7 @@ async def generate_editor_image(
                 brand_use_category=brand_use_category,
             )
             if license_row is not None:
+                await _reject_facemarket_cutover_closed(conn)
                 payload["_facemarket"] = {
                     "modelId": str(license_row["model_id"]),
                     "licenseId": str(license_row["id"]),
@@ -2836,6 +2849,7 @@ async def generate_detail_page(
                 brand_use_category=brand_use_category,
             )
             if license_row is not None:
+                await _reject_facemarket_cutover_closed(conn)
                 await facemarket.set_project_license(conn, project_id, license_row["id"])
                 payload["_facemarket"] = {
                     "modelId": str(license_row["model_id"]),

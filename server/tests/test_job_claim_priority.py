@@ -19,6 +19,7 @@ class _Cursor:
     async def execute(self, sql, params):
         self.sql = " ".join(sql.split()).lower()
         self.params = params
+        self.conn.statements.append(self.sql)
 
     async def fetchone(self):
         return {"id": "mask-job", "kind": "editor_garment_mask"}
@@ -26,7 +27,9 @@ class _Cursor:
 
 class _Conn:
     def __init__(self):
+        self.statements = []
         self.cur = _Cursor()
+        self.cur.conn = self
 
     def cursor(self):
         return self.cur
@@ -42,3 +45,20 @@ def test_claim_prioritizes_a_later_editor_mask_over_older_background_jobs():
     assert "case when kind in ('sam_preprocess', 'matching_cutout') then 1 else 0 end" in conn.cur.sql
     assert "kind = 'editor_garment_mask' then 0" not in conn.cur.sql
     assert "end, created_at" in conn.cur.sql
+
+
+def test_claim_takes_facemarket_writer_fence_and_skips_closed_biometric_writers():
+    """Break caught: a cutover close can race a job claim and let biometric writers start."""
+    conn = _Conn()
+
+    asyncio.run(repo.claim_next_job(
+        conn,
+        ("detail_page", "editor_image", "fm_model_asset_build", "analyze"),
+        "worker",
+    ))
+
+    assert conn.statements[0].startswith("select pg_advisory_xact_lock")
+    assert "fm_cutover_batches" in conn.cur.sql
+    assert "draining" in str(conn.cur.params) or "draining" in conn.cur.sql
+    assert "fm_model_asset_build" in str(conn.cur.params) or "fm_model_asset_build" in conn.cur.sql
+    assert "personalization_profiles" in conn.cur.sql

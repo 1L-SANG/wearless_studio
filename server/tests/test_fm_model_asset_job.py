@@ -42,7 +42,11 @@ class _Cur:
     async def execute(self, sql, params=None):
         self.store.log.append((sql, params))
         s = " ".join(sql.split()).lower()
-        if s.startswith("select pg_try_advisory_xact_lock"):
+        if s.startswith("select pg_advisory_xact_lock"):
+            self._last = {"?column?": None}
+        elif "from fm_cutover_batches" in s and "status = any" in s:
+            self._last = {"closed": False}
+        elif s.startswith("select pg_try_advisory_xact_lock"):
             self._last = {"locked": True}
         elif s.startswith("select pg_try_advisory_lock"):
             lock_key = tuple(params)
@@ -422,9 +426,9 @@ def test_lost_final_lease_cleans_attempt_and_does_not_set_ready():
     asyncio.run(run_fm_model_asset_job(app, _job()))
 
     attempted = [copy.destination for copy in face_r2.copies] + [key for key, _ in face_r2.puts]
-    assert attempted
+    assert attempted == []
     assert face_r2.deletes == []
-    assert set(attempted).issubset({ref["key"] for ref in store.cleanup_refs})
+    assert store.cleanup_refs == []
     assert store.ready_updates == 0
 
 
@@ -489,7 +493,7 @@ def test_lost_lease_does_not_delete_newer_deterministic_keys_or_fail_model():
 
     asyncio.run(run_fm_model_asset_job(app, _job()))
 
-    assert face_r2.puts
+    assert face_r2.puts == []
     assert face_r2.deletes == []
     assert store.failed_updates == 0
     assert store.enrollment_failed_updates == 0

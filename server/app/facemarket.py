@@ -567,6 +567,16 @@ def _clean_uses(items: list[str], accepted: tuple[str, ...]) -> list[str]:
     return out
 
 
+async def _reject_cutover_closed(conn) -> None:
+    await repo.lock_facemarket_writer_boundary(conn)
+    if await repo.facemarket_writer_boundary_closed(conn):
+        raise _err(
+            "facemarket_cutover_in_progress",
+            "실물 모델 보안 전환 중이라 잠시 후 다시 시도해 주세요.",
+            status=409,
+        )
+
+
 async def _find_license_by_enrollment(conn, user_id: str, enrollment_id: str) -> dict | None:
     async with conn.cursor() as cur:
         await cur.execute(
@@ -631,6 +641,11 @@ async def _load_activation_evidence_for_update(
             """select e.id::text as enrollment_id, e.status as enrollment_status,
                       e.match_policy_version, m.id::text as model_id, m.status as model_status,
                       m.did as model_did, m.assets_status, m.current_enrollment_id::text,
+                      m.reverification_batch_id::text as model_reverification_batch_id,
+                      b.status as batch_status, b.completed_at as batch_completed_at,
+                      e.created_at as enrollment_created_at,
+                      l.created_at as license_created_at,
+                      l.reverification_batch_id::text as license_reverification_batch_id,
                       p.r2_key as front_key, p.image_digest as front_digest,
                       p.storage_state as front_storage_state,
                       fa.r2_key as face_asset_key,
@@ -644,6 +659,7 @@ async def _load_activation_evidence_for_update(
                    on e.id = l.enrollment_id
                  join fm_models m
                    on m.id = e.model_id and m.user_id = e.user_id
+                 left join fm_cutover_batches b on b.id = m.reverification_batch_id
                  join fm_biometric_enrollment_photos p
                    on p.enrollment_id = e.id and p.angle = 'front'
                  join fm_model_assets fa
@@ -719,6 +735,17 @@ async def finalize_issued_face_vc(
     winner = None
     model_id = str(model_id)
     async with connect() as conn:
+        await repo.lock_facemarket_writer_boundary(conn)
+        if await repo.facemarket_writer_boundary_closed(conn):
+            await enqueue_vc_revocation(
+                conn, license_id=license_id, model_id=model_id, vc_id=issued.vc_id
+            )
+            await conn.commit()
+            raise _err(
+                "facemarket_cutover_in_progress",
+                "실물 모델 보안 전환 중이라 잠시 후 다시 시도해 주세요.",
+                status=409,
+            )
         try:
             locked = await _find_license_for_update(conn, user_id, license_id)
             if locked is None or str(locked.get("enrollment_id") or "") != enrollment_id:
@@ -741,6 +768,28 @@ async def finalize_issued_face_vc(
                     conn, user_id, license_id, enrollment_id
                 )
                 model_id, key, fresh_digest = _checked_license_evidence(evidence)
+                batch_id = evidence.get("model_reverification_batch_id")
+                if batch_id:
+                    completed_at = evidence.get("batch_completed_at")
+                    if (
+                        evidence.get("batch_status") != "completed"
+                        or completed_at is None
+                        or evidence.get("enrollment_created_at") <= completed_at
+                        or evidence.get("license_created_at") <= completed_at
+                        or evidence.get("license_reverification_batch_id") is not None
+                    ):
+                        await enqueue_vc_revocation(
+                            conn,
+                            license_id=license_id,
+                            model_id=model_id,
+                            vc_id=issued.vc_id,
+                        )
+                        await conn.commit()
+                        raise _err(
+                            "license_activation_stale",
+                            "라이선스 활성화 상태가 변경되었습니다.",
+                            status=409,
+                        )
                 if evidence["model_status"] not in {"pending", "reverification_required"}:
                     raise _err(
                         "model_not_activatable",
@@ -891,6 +940,7 @@ async def create_license(
         model_id, key, digest = _checked_license_evidence(
             await _load_license_evidence(conn, user_id, enrollment_id)
         )
+        await _reject_cutover_closed(conn)
         if existing:
             row = existing
             license_id = existing["id"]

@@ -157,7 +157,16 @@ def _patch_counted_route_conn(monkeypatch, events):
     async def fake_conn(_request):
         yield _RouteConn(events)
 
+    async def fake_lock(_conn):
+        events.append("cutover_lock")
+
+    async def fake_closed(_conn):
+        events.append("cutover_open")
+        return False
+
     monkeypatch.setattr(routes, "get_conn", fake_conn)
+    monkeypatch.setattr(routes.repo, "lock_facemarket_writer_boundary", fake_lock)
+    monkeypatch.setattr(routes.repo, "facemarket_writer_boundary_closed", fake_closed)
 
 
 def test_detail_current_selection_updates_lock_and_queues_snapshot_atomically(
@@ -232,7 +241,14 @@ def test_detail_current_selection_updates_lock_and_queues_snapshot_atomically(
         "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
     }
     assert events == [
-        "verified", ("lock", LICENSE_ID), "cache", "job", "reserve", "commit"
+        "verified",
+        "cutover_lock",
+        "cutover_open",
+        ("lock", LICENSE_ID),
+        "cache",
+        "job",
+        "reserve",
+        "commit",
     ]
 
 
@@ -342,7 +358,7 @@ def test_detail_reservation_failure_does_not_commit_new_lock(
     )
 
     assert response.status_code == 402
-    assert events == ["lock"]
+    assert events == ["cutover_lock", "cutover_open", "lock"]
 
 
 def test_detail_cached_success_commits_verified_lock_immediately_before_return(
@@ -392,7 +408,15 @@ def test_detail_cached_success_commits_verified_lock_immediately_before_return(
     )
 
     assert response.status_code == 200
-    assert events == ["verified", "lock", "cache", "account", "commit"]
+    assert events == [
+        "verified",
+        "cutover_lock",
+        "cutover_open",
+        "lock",
+        "cache",
+        "account",
+        "commit",
+    ]
 
 
 # ---------- 워커 (부분 성공 정산) ----------

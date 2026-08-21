@@ -231,7 +231,11 @@ class FakeCursor:
         self.rowcount = -1
         self.store.setdefault("sql", []).append(s)
 
-        if s.startswith("select l.id::text as id, m.id::text as model_id"):
+        if s.startswith("select pg_advisory_xact_lock"):
+            self._result = {"?column?": None}
+        elif "from fm_cutover_batches" in s and "status = any" in s:
+            self._result = {"closed": False}
+        elif s.startswith("select l.id::text as id, m.id::text as model_id"):
             self.store["runtime_license_sql"] = sql
             self.store["runtime_license_params"] = params
         elif s.startswith("select l.face_image_key, p.mime_type from fm_models m"):
@@ -327,6 +331,7 @@ class FakeCursor:
                 )
             self._many = rows
         elif s.startswith("select e.id::text as enrollment_id"):
+            lic = None
             if len(params) == 3:
                 license_id, enrollment_id, user_id = params[:3]
                 owned = {m["id"] for m in models if m["user_id"] == user_id}
@@ -370,6 +375,12 @@ class FakeCursor:
                 "model_did": (m or {}).get("did"),
                 "assets_status": (m or {}).get("assets_status"),
                 "current_enrollment_id": (m or {}).get("current_enrollment_id"),
+                "model_reverification_batch_id": (m or {}).get("reverification_batch_id"),
+                "batch_status": (m or {}).get("batch_status"),
+                "batch_completed_at": (m or {}).get("batch_completed_at"),
+                "enrollment_created_at": e.get("created_at", NOW),
+                "license_created_at": (lic or {}).get("created_at", NOW),
+                "license_reverification_batch_id": (lic or {}).get("reverification_batch_id"),
                 "front_key": (front_photo or {}).get("r2_key"),
                 "front_digest": (front_photo or {}).get("image_digest"),
                 "front_storage_state": (front_photo or {}).get("storage_state"),
@@ -838,6 +849,7 @@ def _seed_license_pending_enrollment(store, *, enrollment_id=ENROLLMENT_ID, user
             "consent_version": facemarket_enrollment.BIOMETRIC_CONSENT_VERSION,
             "match_policy_version": EVIDENCE_VERSION,
             "vc_id": None,
+            "created_at": NOW,
             "completed_at": None,
         }
     )
@@ -1370,6 +1382,61 @@ def test_final_activation_cas_failure_rolls_back_all_updates_and_queues_vc(
     assert store["enrollments"][0]["status"] == "vc_pending"
     assert store["enrollments"][0]["vc_id"] is None
     assert set(store["revocations"]) == {"vc:dev:1"}
+
+
+def test_final_activation_rejects_batch_linked_pre_completion_evidence_and_revokes_vc(
+    biometric_fm, make_token, holder_stub
+):
+    """Break caught: stale batch-linked enrollment evidence can activate after cutover close."""
+    client, store, _ = biometric_fm
+    enrollment_id = _seed_license_pending_enrollment(store)
+    store["models"][0].update(
+        reverification_batch_id="batch-1",
+        batch_status="completed",
+        batch_completed_at=NOW,
+    )
+    store["enrollments"][0]["created_at"] = NOW
+
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body(enrollment_id),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "license_activation_stale"
+    assert store["licenses"][0]["status"] == "pending"
+    assert store["revocations"]["vc:dev:1"]["vc_id"] == "vc:dev:1"
+    assert any(
+        "m.reverification_batch_id::text as model_reverification_batch_id" in sql
+        and "l.reverification_batch_id::text as license_reverification_batch_id" in sql
+        for sql in store["sql"]
+    )
+
+
+def test_final_activation_allows_batch_linked_strict_post_completion_evidence(
+    biometric_fm, make_token, holder_stub
+):
+    """Break caught: completed cutover would stay permanently closed to fresh re-enrollment."""
+    client, store, _ = biometric_fm
+    enrollment_id = _seed_license_pending_enrollment(store)
+    store["models"][0].update(
+        reverification_batch_id="batch-1",
+        batch_status="completed",
+        batch_completed_at=NOW - timedelta(seconds=1),
+    )
+    store["enrollments"][0]["created_at"] = NOW
+
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body(enrollment_id),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 201
+    assert store["licenses"][0]["status"] == "active"
+    assert store["models"][0]["reverification_batch_id"] == "batch-1"
+    assert store.get("revocations", {}) == {}
 
 
 @pytest.mark.parametrize("register_body", [[], "not-object", None])

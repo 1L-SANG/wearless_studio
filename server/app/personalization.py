@@ -619,7 +619,7 @@ async def withdraw_consent(
         raise _err("invalid_consent_type", "알 수 없는 동의 유형입니다.")
 
     async with get_conn(request) as conn:
-        profile = await _load_profile(conn, user_id, for_update=True)
+        profile = await _load_profile(conn, user_id)
         if profile is None:
             raise _err("not_found", "개인화 프로필을 찾을 수 없습니다.", status=404)
         if profile["status"] == "purging" and consent_type == "training_use":
@@ -743,16 +743,16 @@ async def upload_face_photo(
     ext = ext_for_mime(mime)
     new_key = _face_key(profile["id"], angle, ext)
     digest = sha256_sri(data)
-    await asyncio.to_thread(r2.put_bytes, new_key, data, mime)
 
     old_key: str | None = None
+    stored_new = False
     try:
         async with get_conn(request) as conn:
             locked = await _load_profile(conn, user_id, for_update=True)
             if locked is None or locked["status"] == "purging":
-                # QC 도중 철회가 시작됐을 수 있음 — 방금 올린 객체 회수 후 409.
-                await asyncio.to_thread(r2.delete, new_key)
                 raise _err("purge_in_progress", "파기가 진행 중이라 지금은 업로드할 수 없어요.", status=409)
+            await asyncio.to_thread(r2.put_bytes, new_key, data, mime)
+            stored_new = True
             async with conn.cursor() as cur:
                 await cur.execute(
                     "select r2_key from personalization_face_photos where profile_id = %s and angle = %s",
@@ -777,7 +777,8 @@ async def upload_face_photo(
     except HTTPException:
         raise
     except Exception:
-        await asyncio.to_thread(r2.delete, new_key)  # DB 실패 → 고아 방지
+        if stored_new:
+            await asyncio.to_thread(r2.delete, new_key)  # DB 실패 → 고아 방지
         raise
 
     if old_key and old_key != new_key:  # 교체 시 구 객체 즉시 정리(고아 얼굴 금지 — §3.2)
@@ -823,7 +824,7 @@ async def get_face_photo_file(
         raise _err("not_found", "찾을 수 없습니다.", status=404)
     r2 = _r2_face(request)
     async with get_conn(request) as conn:
-        profile = await _load_profile(conn, user_id)
+        profile = await _load_profile(conn, user_id, for_update=True)
         if profile is None or profile["status"] not in ("draft", "ready"):
             raise _err("not_found", "찾을 수 없습니다.", status=404)
         async with conn.cursor() as cur:

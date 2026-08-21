@@ -108,6 +108,12 @@ async def _unlock_model_asset_fence(conn, model_id: str) -> None:
         raise
 
 
+async def _reject_cutover_closed(conn) -> None:
+    await repo.lock_facemarket_writer_boundary(conn)
+    if await repo.facemarket_writer_boundary_closed(conn):
+        raise RuntimeError("facemarket_cutover_in_progress")
+
+
 async def run_fm_model_asset_job(app, job: dict) -> None:
     pool = app.state.pool
     job_id, user_id, lease = job["id"], job["user_id"], job["lease_token"]
@@ -179,6 +185,7 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
             async with pool.connection() as conn:
                 locked = False
                 try:
+                    await _reject_cutover_closed(conn)
                     locked = await _try_model_asset_fence(conn, model_id)
                     if not locked:
                         await repo._finalize_job_failure(
@@ -245,6 +252,18 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                     ):
                         key = model_asset_key(model_id, "legacy", view, ext_for_mime(mime) or "png")
                         attempt_keys.append(key)
+                        async with conn.cursor() as cur:
+                            await cur.execute(
+                                """
+                                insert into fm_model_asset_cleanup
+                                    (model_id, r2_key, reason)
+                                values (%s, %s, 'upload_orphan')
+                                on conflict (model_id, r2_key) do update set
+                                    reason='upload_orphan', not_before=now()
+                                """,
+                                (model_id, key),
+                            )
+                        await conn.commit()
                         await _run_r2_call_until_done(
                             lambda key=key, data=data, mime=mime: r2_face.put_bytes(
                                 key, data, mime, cache=IMMUTABLE_CACHE
@@ -257,6 +276,7 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                         for row in old_assets
                         if row.get("r2_key") and row["r2_key"] not in registered_keys
                     ]
+                    await _reject_cutover_closed(conn)
                     async with conn.cursor() as cur:
                         await cur.execute(
                             "select id from jobs where id=%s and locked_by=%s and status='running' for update",
@@ -286,6 +306,11 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                                     reason='superseded', not_before=now()
                                 """,
                                 (model_id, old_key),
+                            )
+                        for _view, key, _mime in registered:
+                            await cur.execute(
+                                "delete from fm_model_asset_cleanup where model_id=%s and r2_key=%s",
+                                (model_id, key),
                             )
                         for view, key, mime in registered:
                             await cur.execute(
@@ -332,189 +357,209 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
             return
 
         async with pool.connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    select e.status, e.match_policy_version, p.angle, p.r2_key,
-                           p.mime_type, p.image_digest, p.storage_state
-                    from fm_biometric_enrollment_photos p
-                    join fm_biometric_enrollments e on e.id=p.enrollment_id
-                    where e.id=%s and e.model_id=%s and e.user_id=%s
-                    order by case p.angle
-                      when 'front' then 0 when 'angle45' then 1 when 'side' then 2 end
-                    """,
-                    (enrollment_id, model_id, user_id),
-                )
-                rows = await cur.fetchall()
-
-        faces = _ordered_faces(rows)
-        if faces is None:
-            await fail("enrollment_photos_invalid", "enrollment_photos_invalid")
-            return
-
-        originals: list[tuple[str, str, str]] = []
-        for face in faces:
-            ext = ext_for_mime(face.get("mime_type")) or "png"
-            key = enrollment_original_key(model_id, enrollment_id, face["angle"], ext)
-            attempt_keys.append(key)
-            async with pool.connection() as conn:
-                await _register_cleanup(conn, enrollment_id, face["angle"], key)
+            locked = False
+            try:
+                await _reject_cutover_closed(conn)
+                locked = await _try_model_asset_fence(conn, model_id)
+                if not locked:
+                    await fail("model_asset_busy", "model_asset_busy")
+                    return
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "select id from jobs where id=%s and locked_by=%s and status='running' for update",
+                        (job_id, lease),
+                    )
+                    if await cur.fetchone() is None:
+                        raise RuntimeError("lease_lost")
+                    await cur.execute(
+                        """
+                        select e.status, e.match_policy_version, p.angle, p.r2_key,
+                               p.mime_type, p.image_digest, p.storage_state
+                        from fm_biometric_enrollment_photos p
+                        join fm_biometric_enrollments e on e.id=p.enrollment_id
+                        join fm_models m on m.id=e.model_id
+                        where e.id=%s and e.model_id=%s and e.user_id=%s
+                          and e.status='asset_building'
+                          and m.current_enrollment_id=e.id
+                          and m.reverification_batch_id is null
+                        order by case p.angle
+                          when 'front' then 0 when 'angle45' then 1 when 'side' then 2 end
+                        """,
+                        (enrollment_id, model_id, user_id),
+                    )
+                    rows = await cur.fetchall()
                 await conn.commit()
-            await _run_r2_call_until_done(r2_face.copy, face["r2_key"], key, face["mime_type"])
-            originals.append((face["angle"], face["r2_key"], key))
 
-        face_bytes = [
-            await _run_r2_call_until_done(r2_face.get_bytes, face["r2_key"])
-            for face in faces
-        ]
-        await _emit(pool, job_id, "progress", {"progress": 40, "phase": "inputs_loaded"})
+                faces = _ordered_faces(rows)
+                if faces is None:
+                    await fail("enrollment_photos_invalid", "enrollment_photos_invalid")
+                    return
 
-        grid = compose_sedcard(face_bytes)
-        derived = [
-            ("grid_sedcard", grid, "image/png"),
-            ("face_front", face_bytes[0], faces[0]["mime_type"]),
-        ]
-        registered = []
-        for view, data, mime in derived:
-            ext = ext_for_mime(mime) or "png"
-            key = model_asset_key(model_id, enrollment_id, view, ext)
-            attempt_keys.append(key)
-            async with pool.connection() as conn:
-                await _register_cleanup(
-                    conn,
-                    enrollment_id,
-                    _OLD_ASSET_ANGLE.get(view, "front"),
-                    key,
-                )
-                await conn.commit()
-            await _run_r2_call_until_done(
-                lambda key=key, data=data, mime=mime: r2_face.put_bytes(
-                    key, data, mime, cache=IMMUTABLE_CACHE
-                )
-            )
-            registered.append((view, key, mime))
-        await _emit(pool, job_id, "progress", {"progress": 80, "phase": "stored"})
+                originals: list[tuple[str, str, str]] = []
+                for face in faces:
+                    ext = ext_for_mime(face.get("mime_type")) or "png"
+                    key = enrollment_original_key(model_id, enrollment_id, face["angle"], ext)
+                    attempt_keys.append(key)
+                    await _register_cleanup(conn, enrollment_id, face["angle"], key)
+                    await conn.commit()
+                    await _run_r2_call_until_done(r2_face.copy, face["r2_key"], key, face["mime_type"])
+                    originals.append((face["angle"], face["r2_key"], key))
 
-        old_assets: list[dict] = []
-        evidence_version = faces[0]["match_policy_version"]
-        async with pool.connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    "select id from jobs where id=%s and locked_by=%s and status='running' for update",
-                    (job_id, lease),
-                )
-                if await cur.fetchone() is None:
-                    raise RuntimeError("lease_lost")
-                await cur.execute(
-                    """
-                    select status, match_policy_version
-                    from fm_biometric_enrollments
-                    where id=%s and model_id=%s and user_id=%s and status='asset_building'
-                    for update
-                    """,
-                    (enrollment_id, model_id, user_id),
-                )
-                enrollment = await cur.fetchone()
-                if not enrollment or enrollment.get("match_policy_version") != evidence_version:
-                    raise RuntimeError("enrollment_binding_lost")
-                await cur.execute(
-                    """
-                    select status, current_enrollment_id
-                    from fm_models
-                    where id=%s and user_id=%s and current_enrollment_id=%s
-                      and status in ('pending', 'reverification_required')
-                    for update
-                    """,
-                    (model_id, user_id, enrollment_id),
-                )
-                model = await cur.fetchone()
-                if not model:
-                    raise RuntimeError("model_binding_lost")
-                await cur.execute(
-                    "select view, r2_key from fm_model_assets where model_id=%s for update",
-                    (model_id,),
-                )
-                old_assets = await cur.fetchall()
-                registered_keys = {key for _view, key, _mime in registered}
-                cleanup_targets = [
-                    (angle, old_key)
-                    for angle, old_key, new_key in originals
-                    if old_key != new_key
+                face_bytes = [
+                    await _run_r2_call_until_done(r2_face.get_bytes, face["r2_key"])
+                    for face in faces
                 ]
-                cleanup_targets.extend(
-                    (_OLD_ASSET_ANGLE.get(row.get("view"), "front"), row["r2_key"])
-                    for row in old_assets
-                    if row.get("r2_key") and row["r2_key"] not in registered_keys
-                )
-                for angle, key in cleanup_targets:
-                    await _register_cleanup(conn, enrollment_id, angle, key)
-                for view, key, mime in registered:
+                await _emit(pool, job_id, "progress", {"progress": 40, "phase": "inputs_loaded"})
+
+                grid = compose_sedcard(face_bytes)
+                derived = [
+                    ("grid_sedcard", grid, "image/png"),
+                    ("face_front", face_bytes[0], faces[0]["mime_type"]),
+                ]
+                registered = []
+                for view, data, mime in derived:
+                    ext = ext_for_mime(mime) or "png"
+                    key = model_asset_key(model_id, enrollment_id, view, ext)
+                    attempt_keys.append(key)
+                    await _register_cleanup(
+                        conn,
+                        enrollment_id,
+                        _OLD_ASSET_ANGLE.get(view, "front"),
+                        key,
+                    )
+                    await conn.commit()
+                    await _run_r2_call_until_done(
+                        lambda key=key, data=data, mime=mime: r2_face.put_bytes(
+                            key, data, mime, cache=IMMUTABLE_CACHE
+                        )
+                    )
+                    registered.append((view, key, mime))
+                await _emit(pool, job_id, "progress", {"progress": 80, "phase": "stored"})
+
+                evidence_version = faces[0]["match_policy_version"]
+                await _reject_cutover_closed(conn)
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "select id from jobs where id=%s and locked_by=%s and status='running' for update",
+                        (job_id, lease),
+                    )
+                    if await cur.fetchone() is None:
+                        raise RuntimeError("lease_lost")
                     await cur.execute(
                         """
-                        insert into fm_model_assets
-                            (model_id, view, r2_key, mime, bucket,
-                             source_enrollment_id, evidence_version)
-                        values (%s, %s, %s, %s, 'face', %s, %s)
-                        on conflict (model_id, view) do update set
-                            r2_key=excluded.r2_key,
-                            mime=excluded.mime,
-                            bucket='face',
-                            source_enrollment_id=excluded.source_enrollment_id,
-                            evidence_version=excluded.evidence_version
+                        select status, match_policy_version
+                        from fm_biometric_enrollments
+                        where id=%s and model_id=%s and user_id=%s and status='asset_building'
+                        for update
                         """,
-                        (model_id, view, key, mime, enrollment_id, evidence_version),
+                        (enrollment_id, model_id, user_id),
                     )
-                for angle, _old_key, new_key in originals:
+                    enrollment = await cur.fetchone()
+                    if not enrollment or enrollment.get("match_policy_version") != evidence_version:
+                        raise RuntimeError("enrollment_binding_lost")
                     await cur.execute(
                         """
-                        update fm_biometric_enrollment_photos
-                        set r2_key=%s, storage_state='approved', approved_at=now()
-                        where enrollment_id=%s and angle=%s and storage_state='quarantine'
+                        select status, current_enrollment_id
+                        from fm_models
+                        where id=%s and user_id=%s and current_enrollment_id=%s
+                          and status in ('pending', 'reverification_required')
+                          and reverification_batch_id is null
+                        for update
                         """,
-                        (new_key, enrollment_id, angle),
+                        (model_id, user_id, enrollment_id),
                     )
-                await cur.execute(
-                    """
-                    update fm_models
-                    set assets_status='ready',
-                        current_enrollment_id=%s,
-                        assets_source_hash=%s
-                    where id=%s and user_id=%s and status in ('pending', 'reverification_required')
-                    """,
-                    (enrollment_id, _source_hash(faces), model_id, user_id),
-                )
-                await cur.execute(
-                    """
-                    update fm_biometric_enrollments
-                    set status='license_pending', decision='passed', completed_at=now()
-                    where id=%s and model_id=%s and user_id=%s and status='asset_building'
-                    """,
-                    (enrollment_id, model_id, user_id),
-                )
-                await cur.execute(
-                    """
-                    update jobs set status='done', progress=100, locked_by=null,
-                        locked_at=null, finished_at=now(), result=%s
-                    where id=%s
-                    """,
-                    (
-                        Json({"data": {
+                    model = await cur.fetchone()
+                    if not model:
+                        raise RuntimeError("model_binding_lost")
+                    await cur.execute(
+                        "select view, r2_key from fm_model_assets where model_id=%s for update",
+                        (model_id,),
+                    )
+                    old_assets = await cur.fetchall()
+                    registered_keys = {key for _view, key, _mime in registered}
+                    cleanup_targets = [
+                        (angle, old_key)
+                        for angle, old_key, new_key in originals
+                        if old_key != new_key
+                    ]
+                    cleanup_targets.extend(
+                        (_OLD_ASSET_ANGLE.get(row.get("view"), "front"), row["r2_key"])
+                        for row in old_assets
+                        if row.get("r2_key") and row["r2_key"] not in registered_keys
+                    )
+                    for angle, key in cleanup_targets:
+                        await _register_cleanup(conn, enrollment_id, angle, key)
+                    for view, key, mime in registered:
+                        await cur.execute(
+                            """
+                            insert into fm_model_assets
+                                (model_id, view, r2_key, mime, bucket,
+                                 source_enrollment_id, evidence_version)
+                            values (%s, %s, %s, %s, 'face', %s, %s)
+                            on conflict (model_id, view) do update set
+                                r2_key=excluded.r2_key,
+                                mime=excluded.mime,
+                                bucket='face',
+                                source_enrollment_id=excluded.source_enrollment_id,
+                                evidence_version=excluded.evidence_version
+                            """,
+                            (model_id, view, key, mime, enrollment_id, evidence_version),
+                        )
+                    for angle, _old_key, new_key in originals:
+                        await cur.execute(
+                            """
+                            update fm_biometric_enrollment_photos
+                            set r2_key=%s, storage_state='approved', approved_at=now()
+                            where enrollment_id=%s and angle=%s and storage_state='quarantine'
+                            """,
+                            (new_key, enrollment_id, angle),
+                        )
+                    await cur.execute(
+                        """
+                        update fm_models
+                        set assets_status='ready',
+                            current_enrollment_id=%s,
+                            assets_source_hash=%s
+                        where id=%s and user_id=%s and status in ('pending', 'reverification_required')
+                          and reverification_batch_id is null
+                        """,
+                        (enrollment_id, _source_hash(faces), model_id, user_id),
+                    )
+                    await cur.execute(
+                        """
+                        update fm_biometric_enrollments
+                        set status='license_pending', decision='passed', completed_at=now()
+                        where id=%s and model_id=%s and user_id=%s and status='asset_building'
+                        """,
+                        (enrollment_id, model_id, user_id),
+                    )
+                    await cur.execute(
+                        """
+                        update jobs set status='done', progress=100, locked_by=null,
+                            locked_at=null, finished_at=now(), result=%s
+                        where id=%s
+                        """,
+                        (
+                            Json({"data": {
+                                "modelId": model_id,
+                                "enrollmentId": enrollment_id,
+                                "assetsStatus": "ready",
+                            }}),
+                            job_id,
+                        ),
+                    )
+                    await cur.execute(
+                        "insert into job_events (job_id, event_type, payload) values (%s,'done',%s)",
+                        (job_id, Json({"data": {
                             "modelId": model_id,
                             "enrollmentId": enrollment_id,
                             "assetsStatus": "ready",
-                        }}),
-                        job_id,
-                    ),
-                )
-                await cur.execute(
-                    "insert into job_events (job_id, event_type, payload) values (%s,'done',%s)",
-                    (job_id, Json({"data": {
-                        "modelId": model_id,
-                        "enrollmentId": enrollment_id,
-                        "assetsStatus": "ready",
-                    }})),
-                )
-            await conn.commit()
+                        }})),
+                    )
+                await conn.commit()
+            finally:
+                if locked:
+                    await _unlock_model_asset_fence(conn, model_id)
 
         attempt_keys = []
         current_keys = [key for _angle, _old_key, key in originals] + [
