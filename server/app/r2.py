@@ -57,8 +57,16 @@ def face_key(model_id: str, license_id: str, ext: str) -> str:
     return f"facemarket/models/{model_id}/licenses/{license_id}/face.{ext}"
 
 
-def enrollment_quarantine_key(enrollment_id: str, angle: str, ext: str) -> str:
-    return f"facemarket/enrollments/{enrollment_id}/quarantine/{angle}.{ext}"
+def enrollment_quarantine_key(
+    enrollment_id: str,
+    angle: str,
+    ext: str,
+    *,
+    version: str | None = None,
+) -> str:
+    if version is None:
+        return f"facemarket/enrollments/{enrollment_id}/quarantine/{angle}.{ext}"
+    return f"facemarket/enrollments/{enrollment_id}/quarantine/{angle}/{version}.{ext}"
 
 
 def enrollment_original_key(

@@ -43,10 +43,19 @@ create table if not exists public.fm_biometric_enrollment_photos (
   byte_size integer not null check (byte_size > 0 and byte_size <= 26214400),
   qc_status text not null default 'passed' check (qc_status = 'passed'),
   storage_state text not null default 'quarantine'
-    check (storage_state in ('quarantine', 'approved')),
+    check (storage_state in ('quarantine', 'approved', 'delete_pending')),
   uploaded_at timestamptz not null default now(),
   approved_at timestamptz,
   primary key (enrollment_id, angle)
+);
+
+create table if not exists public.fm_biometric_enrollment_photo_cleanup (
+  enrollment_id uuid not null,
+  angle text not null check (angle in ('front', 'angle45', 'side')),
+  r2_key text not null,
+  reason text not null check (reason in ('upload_orphan', 'superseded', 'delete')),
+  created_at timestamptz not null default now(),
+  primary key (enrollment_id, r2_key)
 );
 
 alter table public.fm_models
@@ -76,6 +85,7 @@ create unique index if not exists fm_licenses_enrollment_unique
 
 alter table public.fm_biometric_enrollments enable row level security;
 alter table public.fm_biometric_enrollment_photos enable row level security;
+alter table public.fm_biometric_enrollment_photo_cleanup enable row level security;
 
 drop trigger if exists fm_biometric_enrollments_set_updated_at
   on public.fm_biometric_enrollments;

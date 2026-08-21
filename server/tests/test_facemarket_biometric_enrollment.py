@@ -1,4 +1,6 @@
+import asyncio
 import contextlib
+import copy
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
@@ -30,7 +32,10 @@ class EnrollmentStore:
         self.photos = []
         self.models = []
         self.licenses = []
+        self.cleanup = []
         self.fail_photo_upsert = False
+        self.commit_attempts = 0
+        self.fail_commit_attempts = set()
 
     def serialized(self):
         return json.dumps(
@@ -39,14 +44,16 @@ class EnrollmentStore:
                 "photos": self.photos,
                 "models": self.models,
                 "licenses": self.licenses,
+                "cleanup": self.cleanup,
             },
             default=str,
         )
 
 
 class FakeCursor:
-    def __init__(self, store):
-        self.store = store
+    def __init__(self, conn):
+        self.conn = conn
+        self.store = conn.working
         self.result = None
         self.many = []
 
@@ -175,7 +182,26 @@ class FakeCursor:
                 }
                 for photo in self.store.photos
                 if photo["enrollment_id"] == enrollment_id
+                and photo["storage_state"] == "quarantine"
             ]
+        elif query.startswith("select r2_key, storage_state"):
+            enrollment_id, angle = params
+            photo = next(
+                (
+                    item
+                    for item in self.store.photos
+                    if item["enrollment_id"] == enrollment_id and item["angle"] == angle
+                ),
+                None,
+            )
+            self.result = (
+                {
+                    "r2_key": photo["r2_key"],
+                    "storage_state": photo["storage_state"],
+                }
+                if photo
+                else None
+            )
         elif query.startswith("select r2_key from fm_biometric_enrollment_photos"):
             enrollment_id, angle = params
             photo = next(
@@ -187,6 +213,76 @@ class FakeCursor:
                 None,
             )
             self.result = {"r2_key": photo["r2_key"]} if photo else None
+        elif query.startswith("insert into fm_biometric_enrollment_photo_cleanup"):
+            enrollment_id, angle, key = params
+            cleanup_key = (enrollment_id, key)
+            row = {
+                "enrollment_id": enrollment_id,
+                "angle": angle,
+                "r2_key": key,
+                "reason": (
+                    "superseded"
+                    if "'superseded'" in query
+                    else "delete"
+                    if "'delete'" in query
+                    else "upload_orphan"
+                ),
+                "created_at": NOW,
+            }
+            self.conn.cleanup_adds[cleanup_key] = row
+            self.conn.cleanup_deletes.discard(cleanup_key)
+            self.store.cleanup[:] = [
+                item
+                for item in self.store.cleanup
+                if (item["enrollment_id"], item["r2_key"]) != cleanup_key
+            ]
+            self.store.cleanup.append(copy.deepcopy(row))
+        elif query.startswith("select c.angle, c.r2_key, c.reason"):
+            enrollment_id = params[0]
+            index = 1
+            angle = params[index] if "c.angle = %s" in query else None
+            index += int(angle is not None)
+            key = params[index] if "c.r2_key = %s" in query else None
+            index += int(key is not None)
+            reason = params[index] if "c.reason = %s" in query else None
+            self.many = []
+            for cleanup in self.store.cleanup:
+                if cleanup["enrollment_id"] != enrollment_id:
+                    continue
+                if angle is not None and cleanup["angle"] != angle:
+                    continue
+                if key is not None and cleanup["r2_key"] != key:
+                    continue
+                if reason is not None and cleanup["reason"] != reason:
+                    continue
+                photo = next(
+                    (
+                        item
+                        for item in self.store.photos
+                        if item["enrollment_id"] == enrollment_id
+                        and item["angle"] == cleanup["angle"]
+                        and item["r2_key"] == cleanup["r2_key"]
+                    ),
+                    None,
+                )
+                self.many.append(
+                    {
+                        "angle": cleanup["angle"],
+                        "r2_key": cleanup["r2_key"],
+                        "reason": cleanup["reason"],
+                        "current_state": photo["storage_state"] if photo else None,
+                    }
+                )
+        elif query.startswith("delete from fm_biometric_enrollment_photo_cleanup"):
+            enrollment_id, key = params
+            cleanup_key = (enrollment_id, key)
+            self.conn.cleanup_deletes.add(cleanup_key)
+            self.conn.cleanup_adds.pop(cleanup_key, None)
+            self.store.cleanup[:] = [
+                item
+                for item in self.store.cleanup
+                if (item["enrollment_id"], item["r2_key"]) != cleanup_key
+            ]
         elif query.startswith("delete from fm_biometric_enrollment_photos"):
             enrollment_id, angle, key = params
             self.store.photos[:] = [
@@ -198,6 +294,16 @@ class FakeCursor:
                     and photo["r2_key"] == key
                 )
             ]
+        elif query.startswith("update fm_biometric_enrollment_photos"):
+            enrollment_id, angle, key = params
+            photo = next(
+                item
+                for item in self.store.photos
+                if item["enrollment_id"] == enrollment_id
+                and item["angle"] == angle
+                and item["r2_key"] == key
+            )
+            photo["storage_state"] = "delete_pending"
         elif query.startswith("insert into fm_biometric_enrollment_photos"):
             if self.store.fail_photo_upsert:
                 raise RuntimeError("database unavailable")
@@ -243,7 +349,8 @@ class FakeCursor:
                 for item in self.store.enrollments
                 if item["id"] == enrollment_id and item["user_id"] == user_id
             )
-            row["status"] = "liveness_pending"
+            if row["status"] == "photos_pending":
+                row["status"] = "liveness_pending"
         elif query.startswith("update fm_biometric_enrollments set status = 'photos_pending'"):
             enrollment_id, user_id = params
             row = next(
@@ -285,7 +392,7 @@ class FakeCursor:
                     photo
                     for photo in self.store.photos
                     if photo["enrollment_id"] == enrollment_id
-                    and photo["storage_state"] == "quarantine"
+                    and photo["storage_state"] in {"quarantine", "delete_pending"}
                 ]
                 self.many = (
                     [
@@ -293,18 +400,23 @@ class FakeCursor:
                             "status": enrollment["status"],
                             "angle": photo["angle"],
                             "r2_key": photo["r2_key"],
+                            "storage_state": photo["storage_state"],
                         }
                         for photo in photos
                     ]
                     or [{"status": enrollment["status"], "angle": None, "r2_key": None}]
                 )
-        elif query.startswith("select count(*) as remaining"):
+        elif "as remaining" in query and query.startswith("select"):
             enrollment_id = params[0]
             self.result = {
                 "remaining": sum(
                     photo["enrollment_id"] == enrollment_id
-                    and photo["storage_state"] == "quarantine"
+                    and photo["storage_state"] in {"quarantine", "delete_pending"}
                     for photo in self.store.photos
+                )
+                + sum(
+                    row["enrollment_id"] == enrollment_id
+                    for row in self.store.cleanup
                 )
             }
         elif query.startswith("update fm_biometric_enrollments set raw_deletion_evidence"):
@@ -332,15 +444,46 @@ class FakeCursor:
 class FakeConn:
     def __init__(self, store):
         self.store = store
+        self.working = self._snapshot()
+        self.cleanup_adds = {}
+        self.cleanup_deletes = set()
+
+    def _snapshot(self):
+        working = EnrollmentStore()
+        for name in ("enrollments", "photos", "models", "licenses", "cleanup"):
+            setattr(working, name, copy.deepcopy(getattr(self.store, name)))
+        working.fail_photo_upsert = self.store.fail_photo_upsert
+        return working
 
     def cursor(self):
-        return FakeCursor(self.store)
+        return FakeCursor(self)
 
     async def commit(self):
-        return None
+        self.store.commit_attempts += 1
+        if self.store.commit_attempts in self.store.fail_commit_attempts:
+            self.working = self._snapshot()
+            self.cleanup_adds.clear()
+            self.cleanup_deletes.clear()
+            raise RuntimeError("commit unavailable")
+        for name in ("enrollments", "photos", "models", "licenses"):
+            target = getattr(self.store, name)
+            target[:] = copy.deepcopy(getattr(self.working, name))
+        cleanup = {
+            (row["enrollment_id"], row["r2_key"]): copy.deepcopy(row)
+            for row in self.store.cleanup
+        }
+        cleanup.update(copy.deepcopy(self.cleanup_adds))
+        for cleanup_key in self.cleanup_deletes:
+            cleanup.pop(cleanup_key, None)
+        self.store.cleanup[:] = list(cleanup.values())
+        self.working = self._snapshot()
+        self.cleanup_adds.clear()
+        self.cleanup_deletes.clear()
 
     async def rollback(self):
-        return None
+        self.working = self._snapshot()
+        self.cleanup_adds.clear()
+        self.cleanup_deletes.clear()
 
 
 class FakePool:
@@ -361,14 +504,23 @@ class FakeR2:
         self.puts = []
         self.deletes = []
         self.fail_delete_for = set()
+        self.fail_next_delete = False
+        self.not_found_for = set()
 
     def put_bytes(self, key, data, mime, cache=None):
         self.puts.append((key, data, mime))
         self.objects[key] = (data, mime)
 
     def delete(self, key):
+        if self.fail_next_delete:
+            self.fail_next_delete = False
+            raise RuntimeError("r2 unavailable")
         if key in self.fail_delete_for:
             raise RuntimeError("r2 unavailable")
+        if key in self.not_found_for:
+            error = RuntimeError("not found")
+            error.response = {"Error": {"Code": "404"}}
+            raise error
         self.deletes.append(key)
         self.objects.pop(key, None)
 
@@ -382,6 +534,7 @@ def _enrollment_db_view(row):
         "reason": row["reason"],
         "cooldown_until": row["cooldown_until"],
         "expires_at": row["expires_at"],
+        "liveness_session_digest": row.get("liveness_session_digest"),
     }
 
 
@@ -596,7 +749,7 @@ def test_create_enrollment_enforces_active_device_cooldown(
             "status": "failed",
             "decision": "failed",
             "reason": "liveness_failed",
-            "cooldown_until": NOW + timedelta(minutes=30),
+                "cooldown_until": datetime.now(timezone.utc) + timedelta(minutes=30),
             "expires_at": NOW + timedelta(hours=20),
             "completed_at": NOW - timedelta(minutes=10),
             "raw_deletion_evidence": {},
@@ -708,6 +861,19 @@ def test_biometric_r2_keys_are_deterministic_and_private():
     ) == "facemarket/models/model-1/enrollments/enrollment-1/assets/face_front.webp"
 
 
+def test_replacement_quarantine_keys_are_versioned():
+    first = r2.enrollment_quarantine_key(
+        "enrollment-1", "front", "jpg", version="upload-1"
+    )
+    second = r2.enrollment_quarantine_key(
+        "enrollment-1", "front", "jpg", version="upload-2"
+    )
+
+    assert first == "facemarket/enrollments/enrollment-1/quarantine/front/upload-1.jpg"
+    assert second == "facemarket/enrollments/enrollment-1/quarantine/front/upload-2.jpg"
+    assert first != second
+
+
 def test_r2_copy_stays_server_side_and_replaces_content_type():
     calls = []
 
@@ -748,9 +914,10 @@ def test_upload_passed_photo_uses_quarantine_prefix(
     assert response.status_code == 201
     assert response.json()["angle"] == "angle45"
     assert response.json()["qcStatus"] == "passed"
-    assert fake_r2.puts[0][0] == (
-        f"facemarket/enrollments/{enrollment_id}/quarantine/angle45.jpg"
+    assert fake_r2.puts[0][0].startswith(
+        f"facemarket/enrollments/{enrollment_id}/quarantine/angle45/"
     )
+    assert fake_r2.puts[0][0].endswith(".jpg")
     assert "quarantine" not in response.text
 
 
@@ -860,6 +1027,89 @@ def test_three_passed_angles_transition_to_liveness_pending(
     ]
 
 
+@pytest.mark.parametrize(
+    "status",
+    [
+        "processing",
+        "asset_building",
+        "license_pending",
+        "vc_pending",
+        "passed",
+        "failed",
+        "cancelled",
+        "expired",
+    ],
+)
+def test_photo_mutation_rejects_post_liveness_and_terminal_states(
+    enrollment_client, auth, fake_r2, enrollment_store, monkeypatch, status
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    enrollment_store.enrollments[0]["status"] = status
+    puts_before = list(fake_r2.puts)
+
+    upload = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"image", "image/jpeg")},
+        headers=auth(),
+    )
+    delete = enrollment_client.delete(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos/front", headers=auth()
+    )
+
+    assert upload.status_code == delete.status_code == 409
+    assert upload.json()["error"]["code"] == "invalid_enrollment_state"
+    assert fake_r2.puts == puts_before
+    assert fake_r2.deletes == []
+
+
+def test_issued_liveness_session_blocks_photo_mutation(
+    enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    enrollment_store.enrollments[0].update(
+        status="liveness_pending", liveness_session_digest="sha256-session"
+    )
+
+    upload = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"image", "image/jpeg")},
+        headers=auth(),
+    )
+    delete = enrollment_client.delete(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos/front", headers=auth()
+    )
+
+    assert upload.status_code == delete.status_code == 409
+    assert fake_r2.puts == []
+    assert fake_r2.deletes == []
+
+
+def test_pre_session_liveness_photo_delete_returns_to_photos_pending(
+    enrollment_client, auth, enrollment_store, monkeypatch
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    for angle in ("front", "angle45", "side"):
+        enrollment_client.post(
+            f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+            data={"angle": angle},
+            files={"photo": (f"{angle}.jpg", b"image", "image/jpeg")},
+            headers=auth(),
+        )
+    assert enrollment_store.enrollments[0]["status"] == "liveness_pending"
+
+    response = enrollment_client.delete(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos/front", headers=auth()
+    )
+
+    assert response.status_code == 204
+    assert enrollment_store.enrollments[0]["status"] == "photos_pending"
+
+
 def test_other_user_cannot_read_or_delete_enrollment(enrollment_client, auth):
     enrollment_id = create_enrollment(enrollment_client, auth)
     other = auth(sub="other-user")
@@ -891,6 +1141,35 @@ def test_other_user_upload_is_removed_and_returns_same_not_found(
     assert "quarantine" not in response.text
 
 
+def test_other_user_same_angle_upload_never_touches_owner_object_or_row(
+    enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    owner = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"owner-image", "image/jpeg")},
+        headers=auth(),
+    )
+    assert owner.status_code == 201
+    owner_photo = copy.deepcopy(enrollment_store.photos[0])
+    owner_object = fake_r2.objects[owner_photo["r2_key"]]
+    puts_before_attack = list(fake_r2.puts)
+
+    attack = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"attacker-image", "image/jpeg")},
+        headers=auth(sub="other-user"),
+    )
+
+    assert attack.status_code == 404
+    assert fake_r2.puts == puts_before_attack
+    assert enrollment_store.photos == [owner_photo]
+    assert fake_r2.objects == {owner_photo["r2_key"]: owner_object}
+
+
 def test_delete_photo_removes_private_object_before_metadata(
     enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
 ):
@@ -909,9 +1188,7 @@ def test_delete_photo_removes_private_object_before_metadata(
     )
 
     assert response.status_code == 204
-    assert fake_r2.deletes == [
-        f"facemarket/enrollments/{enrollment_id}/quarantine/front.jpg"
-    ]
+    assert fake_r2.deletes == [fake_r2.puts[0][0]]
     assert enrollment_store.photos == []
 
 
@@ -934,7 +1211,72 @@ def test_delete_photo_r2_failure_leaves_metadata_for_retry(
     )
 
     assert response.status_code == 503
-    assert [photo["angle"] for photo in enrollment_store.photos] == ["front"]
+    assert enrollment_store.photos[0]["storage_state"] == "delete_pending"
+    assert [row["r2_key"] for row in enrollment_store.cleanup] == [key]
+
+    fake_r2.fail_delete_for.clear()
+    retry = enrollment_client.delete(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos/front", headers=auth()
+    )
+    assert retry.status_code == 204
+    assert enrollment_store.photos == []
+    assert enrollment_store.cleanup == []
+
+
+def test_delete_prepare_commit_failure_does_not_touch_r2(
+    enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"image", "image/jpeg")},
+        headers=auth(),
+    )
+    photo = copy.deepcopy(enrollment_store.photos[0])
+    enrollment_store.fail_commit_attempts.add(enrollment_store.commit_attempts + 1)
+
+    response = enrollment_client.delete(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos/front", headers=auth()
+    )
+
+    assert response.status_code == 503
+    assert enrollment_store.photos == [photo]
+    assert photo["r2_key"] in fake_r2.objects
+    assert fake_r2.deletes == []
+    assert enrollment_store.cleanup == []
+
+
+def test_delete_finalize_commit_failure_is_retryable_after_r2_delete(
+    enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"image", "image/jpeg")},
+        headers=auth(),
+    )
+    key = enrollment_store.photos[0]["r2_key"]
+    enrollment_store.fail_commit_attempts.add(enrollment_store.commit_attempts + 2)
+
+    first = enrollment_client.delete(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos/front", headers=auth()
+    )
+
+    assert first.status_code == 503
+    assert key not in fake_r2.objects
+    assert enrollment_store.photos[0]["storage_state"] == "delete_pending"
+    assert [row["r2_key"] for row in enrollment_store.cleanup] == [key]
+
+    retry = enrollment_client.delete(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos/front", headers=auth()
+    )
+    assert retry.status_code == 204
+    assert enrollment_store.photos == []
+    assert enrollment_store.cleanup == []
 
 
 def test_upload_replacement_with_new_extension_deletes_old_object_after_commit(
@@ -951,10 +1293,88 @@ def test_upload_replacement_with_new_extension_deletes_old_object_after_commit(
         )
         assert response.status_code == 201, response.text
 
-    old_key = f"facemarket/enrollments/{enrollment_id}/quarantine/front.jpg"
-    new_key = f"facemarket/enrollments/{enrollment_id}/quarantine/front.png"
+    old_key = fake_r2.puts[0][0]
+    new_key = fake_r2.puts[1][0]
+    assert old_key != new_key
     assert fake_r2.deletes == [old_key]
     assert enrollment_store.photos[0]["r2_key"] == new_key
+    assert enrollment_store.cleanup == []
+
+
+def test_superseded_photo_cleanup_failure_remains_referenced_until_retry(
+    enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"first", "image/jpeg")},
+        headers=auth(),
+    )
+    first_key = enrollment_store.photos[0]["r2_key"]
+    fake_r2.fail_delete_for.add(first_key)
+
+    replacement = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.png", b"second", "image/png")},
+        headers=auth(),
+    )
+    second_key = enrollment_store.photos[0]["r2_key"]
+
+    assert replacement.status_code == 201
+    assert second_key != first_key
+    assert first_key in fake_r2.objects
+    assert [row["r2_key"] for row in enrollment_store.cleanup] == [first_key]
+
+    fake_r2.fail_delete_for.clear()
+    retry = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.png", b"third", "image/png")},
+        headers=auth(),
+    )
+
+    assert retry.status_code == 201
+    assert first_key not in fake_r2.objects
+    assert second_key not in fake_r2.objects
+    assert enrollment_store.cleanup == []
+
+
+def test_superseded_cleanup_finalize_commit_failure_retries_without_orphan(
+    enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"first", "image/jpeg")},
+        headers=auth(),
+    )
+    first_key = enrollment_store.photos[0]["r2_key"]
+    enrollment_store.fail_commit_attempts.add(enrollment_store.commit_attempts + 3)
+
+    replacement = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"second", "image/jpeg")},
+        headers=auth(),
+    )
+
+    assert replacement.status_code == 201
+    assert first_key not in fake_r2.objects
+    assert [row["r2_key"] for row in enrollment_store.cleanup] == [first_key]
+
+    retry = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"third", "image/jpeg")},
+        headers=auth(),
+    )
+    assert retry.status_code == 201
+    assert enrollment_store.cleanup == []
 
 
 def test_upload_database_failure_removes_new_quarantine_object(
@@ -971,12 +1391,102 @@ def test_upload_database_failure_removes_new_quarantine_object(
         headers=auth(),
     )
 
-    key = f"facemarket/enrollments/{enrollment_id}/quarantine/front.jpg"
+    key = fake_r2.puts[0][0]
     assert response.status_code == 503
     assert key not in response.text
     assert "digest" not in response.text.lower()
     assert fake_r2.deletes == [key]
     assert key not in fake_r2.objects
+
+
+def test_same_extension_replacement_db_failure_preserves_owner_photo(
+    enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    first = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"owner-image", "image/jpeg")},
+        headers=auth(),
+    )
+    assert first.status_code == 201
+    owner_photo = copy.deepcopy(enrollment_store.photos[0])
+    owner_object = fake_r2.objects[owner_photo["r2_key"]]
+    enrollment_store.fail_photo_upsert = True
+
+    failed = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"replacement", "image/jpeg")},
+        headers=auth(),
+    )
+
+    assert failed.status_code == 503
+    assert enrollment_store.photos == [owner_photo]
+    assert fake_r2.objects == {owner_photo["r2_key"]: owner_object}
+    assert enrollment_store.cleanup == []
+
+
+def test_replacement_commit_failure_rolls_back_switch_and_cleans_new_object(
+    enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"owner-image", "image/jpeg")},
+        headers=auth(),
+    )
+    owner_photo = copy.deepcopy(enrollment_store.photos[0])
+    owner_object = fake_r2.objects[owner_photo["r2_key"]]
+    enrollment_store.fail_commit_attempts.add(enrollment_store.commit_attempts + 2)
+
+    failed = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"replacement", "image/jpeg")},
+        headers=auth(),
+    )
+
+    assert failed.status_code == 503
+    assert enrollment_store.photos == [owner_photo]
+    assert fake_r2.objects == {owner_photo["r2_key"]: owner_object}
+    assert enrollment_store.cleanup == []
+
+
+def test_failed_replacement_cleanup_is_tracked_and_retried_on_next_upload(
+    enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    enrollment_store.fail_photo_upsert = True
+    fake_r2.fail_next_delete = True
+
+    failed = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"orphan-candidate", "image/jpeg")},
+        headers=auth(),
+    )
+    orphan_key = fake_r2.puts[-1][0]
+
+    assert failed.status_code == 503
+    assert orphan_key in fake_r2.objects
+    assert [row["r2_key"] for row in enrollment_store.cleanup] == [orphan_key]
+
+    enrollment_store.fail_photo_upsert = False
+    retry = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"good-image", "image/jpeg")},
+        headers=auth(),
+    )
+
+    assert retry.status_code == 201
+    assert orphan_key not in fake_r2.objects
+    assert enrollment_store.cleanup == []
 
 
 def test_cancel_is_idempotent_and_cleans_quarantine_photos(
@@ -1005,3 +1515,217 @@ def test_cancel_is_idempotent_and_cleans_quarantine_photos(
     assert evidence["quarantineDeleted"] is True
     assert evidence["quarantineDeletedCount"] == 1
     assert "facemarket/" not in json.dumps(evidence)
+
+
+def test_cancel_cleanup_failure_remains_delete_pending_until_retry(
+    enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"image", "image/jpeg")},
+        headers=auth(),
+    )
+    key = enrollment_store.photos[0]["r2_key"]
+    fake_r2.fail_delete_for.add(key)
+
+    first = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/cancel", headers=auth()
+    )
+
+    assert first.status_code == 200
+    assert enrollment_store.photos[0]["storage_state"] == "delete_pending"
+    assert [row["r2_key"] for row in enrollment_store.cleanup] == [key]
+    assert key in fake_r2.objects
+
+    fake_r2.fail_delete_for.clear()
+    retry = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/cancel", headers=auth()
+    )
+    assert retry.status_code == 200
+    assert enrollment_store.photos == []
+    assert enrollment_store.cleanup == []
+    assert key not in fake_r2.objects
+
+
+def test_cancel_commit_failure_keeps_active_photo_usable_and_untouched(
+    enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"image", "image/jpeg")},
+        headers=auth(),
+    )
+    photo = copy.deepcopy(enrollment_store.photos[0])
+    enrollment_store.fail_commit_attempts.add(enrollment_store.commit_attempts + 1)
+
+    response = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/cancel", headers=auth()
+    )
+
+    assert response.status_code == 503
+    assert enrollment_store.enrollments[0]["status"] == "photos_pending"
+    assert enrollment_store.photos == [photo]
+    assert photo["r2_key"] in fake_r2.objects
+    assert fake_r2.deletes == []
+
+
+def test_cancel_cleanup_finalize_commit_failure_is_retryable(
+    enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"image", "image/jpeg")},
+        headers=auth(),
+    )
+    key = enrollment_store.photos[0]["r2_key"]
+    enrollment_store.fail_commit_attempts.add(enrollment_store.commit_attempts + 3)
+
+    first = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/cancel", headers=auth()
+    )
+
+    assert first.status_code == 200
+    assert first.json()["photos"] == []
+    assert key not in fake_r2.objects
+    assert enrollment_store.photos[0]["storage_state"] == "delete_pending"
+    assert [row["r2_key"] for row in enrollment_store.cleanup] == [key]
+
+    retry = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/cancel", headers=auth()
+    )
+    assert retry.status_code == 200
+    assert enrollment_store.photos == []
+    assert enrollment_store.cleanup == []
+
+
+def test_terminal_cleanup_prepare_commit_failure_never_deletes_usable_object(
+    enrollment_client, fake_r2, enrollment_store, auth, monkeypatch
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"image", "image/jpeg")},
+        headers=auth(),
+    )
+    photo = copy.deepcopy(enrollment_store.photos[0])
+    enrollment_store.enrollments[0]["status"] = "failed"
+    enrollment_store.fail_commit_attempts.add(enrollment_store.commit_attempts + 1)
+
+    complete = asyncio.run(
+        facemarket_enrollment.cleanup_terminal_enrollment(
+            enrollment_client.app, enrollment_id=enrollment_id
+        )
+    )
+
+    assert complete is False
+    assert enrollment_store.photos == [photo]
+    assert photo["r2_key"] in fake_r2.objects
+    assert fake_r2.deletes == []
+
+
+def test_terminal_cleanup_finalize_commit_failure_retries_after_object_is_gone(
+    enrollment_client, fake_r2, enrollment_store, auth, monkeypatch
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"image", "image/jpeg")},
+        headers=auth(),
+    )
+    key = enrollment_store.photos[0]["r2_key"]
+    enrollment_store.enrollments[0]["status"] = "expired"
+    enrollment_store.fail_commit_attempts.add(enrollment_store.commit_attempts + 2)
+
+    first = asyncio.run(
+        facemarket_enrollment.cleanup_terminal_enrollment(
+            enrollment_client.app, enrollment_id=enrollment_id
+        )
+    )
+
+    assert first is False
+    assert key not in fake_r2.objects
+    assert enrollment_store.photos[0]["storage_state"] == "delete_pending"
+    assert [row["r2_key"] for row in enrollment_store.cleanup] == [key]
+
+    retry = asyncio.run(
+        facemarket_enrollment.cleanup_terminal_enrollment(
+            enrollment_client.app, enrollment_id=enrollment_id
+        )
+    )
+    assert retry is True
+    assert enrollment_store.photos == []
+    assert enrollment_store.cleanup == []
+
+
+def test_terminal_cleanup_r2_failure_stays_referenced_until_retry(
+    enrollment_client, fake_r2, enrollment_store, auth, monkeypatch
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"image", "image/jpeg")},
+        headers=auth(),
+    )
+    key = enrollment_store.photos[0]["r2_key"]
+    enrollment_store.enrollments[0]["status"] = "failed"
+    fake_r2.fail_delete_for.add(key)
+
+    first = asyncio.run(
+        facemarket_enrollment.cleanup_terminal_enrollment(
+            enrollment_client.app, enrollment_id=enrollment_id
+        )
+    )
+
+    assert first is False
+    assert key in fake_r2.objects
+    assert enrollment_store.photos[0]["storage_state"] == "delete_pending"
+    assert [row["r2_key"] for row in enrollment_store.cleanup] == [key]
+
+    fake_r2.fail_delete_for.clear()
+    retry = asyncio.run(
+        facemarket_enrollment.cleanup_terminal_enrollment(
+            enrollment_client.app, enrollment_id=enrollment_id
+        )
+    )
+    assert retry is True
+    assert enrollment_store.photos == []
+    assert enrollment_store.cleanup == []
+
+
+def test_delete_treats_r2_not_found_as_success(
+    enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"image", "image/jpeg")},
+        headers=auth(),
+    )
+    key = enrollment_store.photos[0]["r2_key"]
+    fake_r2.objects.pop(key)
+    fake_r2.not_found_for.add(key)
+
+    response = enrollment_client.delete(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos/front", headers=auth()
+    )
+
+    assert response.status_code == 204
+    assert enrollment_store.photos == []
+    assert enrollment_store.cleanup == []

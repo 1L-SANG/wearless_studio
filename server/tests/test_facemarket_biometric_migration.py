@@ -39,9 +39,23 @@ def test_status_and_current_evidence_links_are_constrained():
     assert "evidence_version" in sql
     assert "primary key (enrollment_id, angle)" in sql
     assert "angle in ('front', 'angle45', 'side')" in sql
-    assert "storage_state in ('quarantine', 'approved')" in sql
+    assert "storage_state in ('quarantine', 'approved', 'delete_pending')" in sql
     assert "device_digest text not null" in sql
     assert "fm_biometric_failure_device_window" in sql
+
+
+def test_photo_deletion_and_superseded_keys_have_durable_retry_state():
+    sql = " ".join(MIGRATION.read_text().split()).lower()
+    assert "storage_state in ('quarantine', 'approved', 'delete_pending')" in sql
+    assert (
+        "create table if not exists public.fm_biometric_enrollment_photo_cleanup"
+        in sql
+    )
+    cleanup_schema = sql.split(
+        "create table if not exists public.fm_biometric_enrollment_photo_cleanup", 1
+    )[1].split(");", 1)[0]
+    assert "r2_key text not null" in cleanup_schema
+    assert "primary key (enrollment_id, r2_key)" in cleanup_schema
 
 
 @requires_database
