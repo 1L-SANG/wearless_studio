@@ -4,7 +4,7 @@
 """
 
 import pytest
-from botocore.exceptions import ClientError, ConnectTimeoutError
+from botocore.exceptions import ClientError, ConnectTimeoutError, EndpointConnectionError
 
 from app.r2 import R2Client, ai_key, ext_for_mime, upload_key
 
@@ -97,13 +97,19 @@ def _client_with_head(result) -> R2Client:
     return client
 
 
-def _head_error(code: str | None = None, status: int | None = None) -> ClientError:
+def _head_error(code: str | None = None, status=None) -> ClientError:
     response = {}
     if code is not None:
         response["Error"] = {"Code": code}
     if status is not None:
         response["ResponseMetadata"] = {"HTTPStatusCode": status}
     return ClientError(response, "HeadObject")
+
+
+def _head_error_response(response) -> ClientError:
+    error = ClientError({}, "HeadObject")
+    error.response = response
+    return error
 
 
 @pytest.mark.parametrize(
@@ -123,7 +129,14 @@ def test_head_returns_none_for_confirmed_missing_object(error):
 
 @pytest.mark.parametrize(
     "error",
-    [_head_error("AccessDenied", 403), _head_error("InternalError", 500), _head_error()],
+    [
+        _head_error("AccessDenied", 403),
+        _head_error("InternalError", 500),
+        _head_error("Throttling", 429),
+        _head_error(status="wat"),
+        _head_error_response({"ResponseMetadata": "wat"}),
+        _head_error(),
+    ],
 )
 def test_head_raises_for_unconfirmed_absence(error):
     client = _client_with_head(error)
@@ -132,8 +145,15 @@ def test_head_raises_for_unconfirmed_absence(error):
         client.head("private/key")
 
 
-def test_head_raises_botocore_transport_errors():
-    client = _client_with_head(ConnectTimeoutError(endpoint_url="https://r2.example"))
+@pytest.mark.parametrize(
+    "error",
+    [
+        ConnectTimeoutError(endpoint_url="https://r2.example"),
+        EndpointConnectionError(endpoint_url="https://r2.example"),
+    ],
+)
+def test_head_raises_botocore_transport_errors(error):
+    client = _client_with_head(error)
 
-    with pytest.raises(ConnectTimeoutError):
+    with pytest.raises(type(error)):
         client.head("private/key")

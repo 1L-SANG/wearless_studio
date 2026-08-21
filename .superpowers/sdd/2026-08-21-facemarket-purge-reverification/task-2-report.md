@@ -13,3 +13,13 @@ TDD evidence:
 Scope notes:
 - No new method, dependency, or external R2 call.
 - Upload, public URL, delete, and metadata return shape are unchanged.
+
+### Round 1 Reviewer Fix
+
+Changes:
+- Kept malformed `ResponseMetadata` and nonnumeric `HTTPStatusCode` on the fail-closed path by falling through to the original bare `raise`.
+- Added coverage for throttling, malformed status values/shapes, and `EndpointConnectionError`.
+
+TDD evidence:
+- Red: `.venv/bin/pytest tests/test_r2.py -q` failed because malformed status escaped as `ValueError`/`AttributeError` instead of the original `ClientError`.
+- Green: `.venv/bin/pytest tests/test_r2.py -q` passed after safe status parsing.

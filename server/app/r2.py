@@ -133,7 +133,12 @@ class R2Client:
         except ClientError as exc:
             response = exc.response or {}
             code = str((response.get("Error") or {}).get("Code") or "")
-            status = int((response.get("ResponseMetadata") or {}).get("HTTPStatusCode") or 0)
+            metadata = response.get("ResponseMetadata") or {}
+            status_code = metadata.get("HTTPStatusCode") if isinstance(metadata, dict) else None
+            try:
+                status = int(status_code)
+            except (TypeError, ValueError):
+                status = None
             if status == 404 or code in {"404", "NoSuchKey", "NotFound"}:
                 return None
             raise
