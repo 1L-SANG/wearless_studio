@@ -1397,7 +1397,7 @@ async def cancel_pending_job_with_refund(
             (message, job_id),
         )
         await cur.execute(
-            "insert into job_events (job_id, event_type, payload) values (%s, 'cancelled', %s)",
+            "insert into job_events (job_id, event_type, payload) values (%s, 'error', %s)",
             (job_id, Json({"code": code, "message": message})),
         )
     return True

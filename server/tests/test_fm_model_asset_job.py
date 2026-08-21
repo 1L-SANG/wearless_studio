@@ -45,7 +45,7 @@ class _Cur:
         if s.startswith("select pg_advisory_xact_lock"):
             self._last = {"?column?": None}
         elif "from fm_cutover_batches" in s and "status = any" in s:
-            self._last = {"closed": False}
+            self._last = {"closed": self.store.cutover_closed}
         elif s.startswith("select pg_try_advisory_xact_lock"):
             self._last = {"locked": True}
         elif s.startswith("select pg_try_advisory_lock"):
@@ -287,6 +287,7 @@ class _Store:
         self.commits = []
         self.last_commit_index = 0
         self.crash_after_done_commit = crash_after_done_commit
+        self.cutover_closed = False
         self.biometric_enabled = biometric_enabled
         self.old_asset_keys = old_asset_keys or {}
         self.legacy_rows = [
@@ -418,6 +419,27 @@ def test_invalid_or_stale_enrollment_build_creates_no_approved_object(payload, s
     assert face_r2.copies == []
     assert face_r2.puts == []
     assert store.ready_updates == 0
+
+
+def test_cutover_closed_asset_sentinel_terminalizes_with_exact_bounded_code():
+    app, log, face_r2, store = build_worker_fixture()
+    store.cutover_closed = True
+
+    asyncio.run(run_fm_model_asset_job(app, _job()))
+
+    assert face_r2.copies == []
+    assert face_r2.puts == []
+    event_payloads = [
+        getattr(param, "obj", param)
+        for sql, params in log
+        if "insert into job_events" in " ".join(sql.split()).lower()
+        for param in (params or ())
+        if isinstance(getattr(param, "obj", param), dict)
+    ]
+    assert event_payloads == [{
+        "code": "facemarket_cutover_in_progress",
+        "message": "실물 모델 보안 전환 중이라 잠시 후 다시 시도해 주세요.",
+    }]
 
 
 def test_lost_final_lease_cleans_attempt_and_does_not_set_ready():

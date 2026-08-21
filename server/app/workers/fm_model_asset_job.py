@@ -24,6 +24,12 @@ log = logging.getLogger("wearless.fm_model_asset_job")
 
 _ANGLES = ("front", "angle45", "side")
 _OLD_ASSET_ANGLE = {"face_front": "front", "grid_sedcard": "side"}
+_CUTOVER_CODE = "facemarket_cutover_in_progress"
+_CUTOVER_MESSAGE = "실물 모델 보안 전환 중이라 잠시 후 다시 시도해 주세요."
+
+
+class CutoverInProgress(RuntimeError):
+    pass
 
 
 def _ordered_faces(rows: list[dict]) -> list[dict] | None:
@@ -111,7 +117,7 @@ async def _unlock_model_asset_fence(conn, model_id: str) -> None:
 async def _reject_cutover_closed(conn) -> None:
     await repo.lock_facemarket_writer_boundary(conn)
     if await repo.facemarket_writer_boundary_closed(conn):
-        raise RuntimeError("facemarket_cutover_in_progress")
+        raise CutoverInProgress(_CUTOVER_CODE)
 
 
 async def run_fm_model_asset_job(app, job: dict) -> None:
@@ -127,7 +133,11 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
     async def cleanup_attempt() -> None:
         return None
 
-    async def fail(reason: str, code: str = "asset_build_failed") -> None:
+    async def fail(
+        reason: str,
+        code: str = "asset_build_failed",
+        message: str = "자산 생성 중 오류가 발생했어요.",
+    ) -> None:
         await cleanup_attempt()
         try:
             async with pool.connection() as conn:
@@ -135,7 +145,7 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                     conn,
                     job_id=job_id,
                     lease_token=lease,
-                    message="자산 생성 중 오류가 발생했어요.",
+                    message=message,
                     metadata={"error": reason},
                     code=code,
                 )
@@ -588,6 +598,8 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
     except asyncio.CancelledError:
         await cleanup_attempt()
         raise
+    except CutoverInProgress:
+        await fail(_CUTOVER_CODE, _CUTOVER_CODE, _CUTOVER_MESSAGE)
     except Exception as exc:
         log.warning(
             "fm_model_asset_failed",

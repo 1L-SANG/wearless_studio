@@ -875,6 +875,61 @@ def test_start_generation_ready_profile_queues_job(client, headers, monkeypatch,
     assert job["status"] == "pending"
 
 
+def test_start_generation_locks_profile_row_until_enqueue_commit(
+    client, headers, monkeypatch, uid
+):
+    """Break caught: purge could flip the profile while generation enqueue used an unlocked read."""
+    c, _r2 = client
+    _make_ready_profile(c, headers, monkeypatch)
+    asset_id = _seed_asset(uid)
+    _seed_credits(uid)
+    original = personalization._load_profile
+    seen: list[bool] = []
+
+    async def spy(conn, user_id, *, for_update=False):
+        seen.append(for_update)
+        return await original(conn, user_id, for_update=for_update)
+
+    monkeypatch.setattr(personalization, "_load_profile", spy)
+
+    r = c.post(
+        "/v1/personalization/generations",
+        json={"productImageAssetIds": [asset_id]},
+        headers=headers,
+    )
+
+    assert r.status_code == 202, r.text
+    assert seen and all(seen)
+
+
+def test_refine_generation_locks_profile_row_until_enqueue_commit(
+    client, headers, monkeypatch, uid
+):
+    """Break caught: purge could flip the profile while refine enqueue used an unlocked read."""
+    c, _r2 = client
+    _make_ready_profile(c, headers, monkeypatch)
+    profile_id = _fetch_profile_id(uid)
+    generation_id = _seed_generation(profile_id, ["personalization/result.png"])
+    _seed_credits(uid)
+    original = personalization._load_profile
+    seen: list[bool] = []
+
+    async def spy(conn, user_id, *, for_update=False):
+        seen.append(for_update)
+        return await original(conn, user_id, for_update=for_update)
+
+    monkeypatch.setattr(personalization, "_load_profile", spy)
+
+    r = c.post(
+        f"/v1/personalization/generations/{generation_id}:refine",
+        json={"changes": {"background": "plain"}},
+        headers=headers,
+    )
+
+    assert r.status_code == 202, r.text
+    assert seen and all(seen)
+
+
 # ============================================================================
 # 6) 파기(캐스케이드) — §3.5
 # ============================================================================

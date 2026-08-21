@@ -1,6 +1,7 @@
 import asyncio
 import os
 import uuid
+from pathlib import Path
 
 import pytest
 from psycopg import AsyncConnection
@@ -10,6 +11,7 @@ from psycopg.types.json import Json
 from app import facemarket_cutover, repo
 
 TEST_DATABASE_URL = os.getenv("FACEMARKET_TEST_DATABASE_URL")
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class _Cursor:
@@ -36,6 +38,12 @@ class _Cursor:
             self.last = None
         elif q.startswith("insert into job_events"):
             self.store.events += 1
+            if "'cancelled'" in q:
+                self.store.event_types.append("cancelled")
+            elif "'error'" in q:
+                self.store.event_types.append("error")
+            else:
+                self.store.event_types.append(params[1])
             self.last = None
         elif q.startswith("update fm_cutover_batches") and "status = 'draining'" in q:
             self.store.batch_status = "draining"
@@ -121,6 +129,7 @@ class _Store:
         }
         self.job_status = "pending"
         self.events = 0
+        self.event_types = []
         self.batch_status = "approved"
         self.pending_rows = []
         self.pending_count = 0
@@ -163,6 +172,15 @@ def test_cancel_pending_job_refunds_once_and_writes_cancelled_event(monkeypatch)
     assert releases[0]["settle_key"] == "credit:job:job-1:settle"
     assert store.job_status == "cancelled"
     assert store.events == 1
+    assert store.event_types == ["error"]
+
+
+def test_cutover_cancel_event_type_matches_current_schema_contract():
+    """Break caught: cancellation used an event_type rejected by the deployed CHECK."""
+    sql = (ROOT / "supabase/migrations/20260612090000_init.sql").read_text()
+
+    assert "event_type in ('progress', 'step', 'done', 'error')" in sql
+    assert "'cancelled'" not in sql.split("create table public.job_events", 1)[1].split(");", 1)[0]
 
 
 def test_close_initial_cutover_writers_moves_approved_batch_to_draining():
@@ -299,7 +317,7 @@ def test_live_boundary_lock_interleavings_and_refund_idempotency():
             ).fetchone()
             event_count = await (
                 await conn.execute(
-                    "select count(*)::int as count from job_events where job_id = %s and event_type = 'cancelled'",
+                    "select count(*)::int as count from job_events where job_id = %s and event_type = 'error'",
                     (job_id,),
                 )
             ).fetchone()

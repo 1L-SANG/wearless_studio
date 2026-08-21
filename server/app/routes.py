@@ -2849,8 +2849,6 @@ async def generate_detail_page(
                 brand_use_category=brand_use_category,
             )
             if license_row is not None:
-                await _reject_facemarket_cutover_closed(conn)
-                await facemarket.set_project_license(conn, project_id, license_row["id"])
                 payload["_facemarket"] = {
                     "modelId": str(license_row["model_id"]),
                     "licenseId": str(license_row["id"]),
@@ -2858,9 +2856,10 @@ async def generate_detail_page(
         existing = await repo.get_editor_blocks(conn, project_id)
         if existing:  # 완료 재호출 → 기존 결과 반환(재생성·재차감 없음)
             account = await repo.get_account(conn, user_id)
-            if license_row is not None:
-                await conn.commit()
             return JSONResponse({"data": existing, "credits": (account or {}).get("credits", 0)})
+        if license_row is not None:
+            await _reject_facemarket_cutover_closed(conn)
+            await facemarket.set_project_license(conn, project_id, license_row["id"])
         storyboard = await repo.get_storyboard(conn, project_id)
         _require_bg_examples_enabled(request, storyboard)
         # 크레딧 견적은 실제 생성 수 기준 — 생성 계약이 완전히 같은 복제 컷은 1장만

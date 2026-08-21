@@ -62,6 +62,7 @@ class EnrollmentStore:
         self.unlock_started = None
         self.allow_unlock = None
         self.fail_unlock = False
+        self.cutover_closed_sequence = []
 
     def serialized(self):
         return json.dumps(
@@ -327,7 +328,12 @@ class FakeCursor:
         elif query.startswith("select pg_advisory_xact_lock"):
             self.result = {"?column?": None}
         elif "from fm_cutover_batches" in query and "status = any" in query:
-            self.result = {"closed": False}
+            closed = (
+                self.conn.store.cutover_closed_sequence.pop(0)
+                if self.conn.store.cutover_closed_sequence
+                else False
+            )
+            self.result = {"closed": closed}
         elif query.startswith("select id::text as id from fm_biometric_enrollments"):
             user_id = params[0]
             row = next(
@@ -2940,6 +2946,33 @@ def test_connection_death_mid_put_keeps_upload_orphan_until_object_is_deleted(
         assert fake_pool.max_checkout_depth == 1
 
     asyncio.run(scenario())
+
+
+def test_cutover_close_between_photo_preflight_and_fence_writes_no_r2_or_link(
+    enrollment_client,
+    auth,
+    fake_r2,
+    enrollment_store,
+    monkeypatch,
+):
+    """Break caught: close after preflight but before photo fence could still put R2."""
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    enrollment_store.cutover_closed_sequence = [False, True]
+
+    response = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"image", "image/jpeg")},
+        headers=auth(),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "facemarket_cutover_in_progress"
+    assert fake_r2.puts == []
+    assert fake_r2.objects == {}
+    assert enrollment_store.photos == []
+    assert enrollment_store.cleanup == []
 
 
 def test_upload_orphan_cleanup_requires_strict_post_delete_absence(

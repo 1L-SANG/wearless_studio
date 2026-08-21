@@ -242,10 +242,10 @@ def test_detail_current_selection_updates_lock_and_queues_snapshot_atomically(
     }
     assert events == [
         "verified",
+        "cache",
         "cutover_lock",
         "cutover_open",
         ("lock", LICENSE_ID),
-        "cache",
         "job",
         "reserve",
         "commit",
@@ -408,15 +408,7 @@ def test_detail_cached_success_commits_verified_lock_immediately_before_return(
     )
 
     assert response.status_code == 200
-    assert events == [
-        "verified",
-        "cutover_lock",
-        "cutover_open",
-        "lock",
-        "cache",
-        "account",
-        "commit",
-    ]
+    assert events == ["verified", "cache", "account"]
 
 
 # ---------- 워커 (부분 성공 정산) ----------

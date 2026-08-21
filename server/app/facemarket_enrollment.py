@@ -819,6 +819,7 @@ async def upload_enrollment_photo(
                         status=409,
                     )
                 try:
+                    await _reject_cutover_closed(conn)
                     await _lock_photo_mutation_enrollment(conn, enrollment_id, user_id)
                     async with conn.cursor() as cur:
                         await cur.execute(

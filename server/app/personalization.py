@@ -1144,7 +1144,7 @@ async def start_generation(
     }
 
     async with get_conn(request) as conn:
-        profile = await _load_profile(conn, user_id)
+        profile = await _load_profile(conn, user_id, for_update=True)
         if profile is not None and profile["status"] == "purging":
             raise _err("purge_in_progress", "파기가 진행 중이라 지금은 생성할 수 없어요.", status=409)
         if profile is None:
@@ -1214,7 +1214,7 @@ async def refine_generation(
 
     new_generation_id = str(uuid.uuid4())
     async with get_conn(request) as conn:
-        profile = await _load_profile(conn, user_id)
+        profile = await _load_profile(conn, user_id, for_update=True)
         if profile is None:
             raise _err("not_found", "생성 결과를 찾을 수 없습니다.", status=404)
         if profile["status"] == "purging":
