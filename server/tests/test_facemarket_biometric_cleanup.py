@@ -176,6 +176,22 @@ def test_sweep_expires_preapproval_rows_and_retries_pending_deletes():
     assert active_id != expired_id
 
 
+def test_sweep_completes_terminal_false_evidence_with_no_cleanup_rows():
+    store = EnrollmentStore()
+    enrollment_id = _add_enrollment(store, status="failed")
+    store.enrollments[0]["raw_deletion_evidence"] = {"quarantineDeleted": False}
+
+    cleaned = asyncio.run(
+        facemarket_enrollment.sweep_terminal_enrollments(_app(store), limit=100)
+    )
+
+    assert cleaned == 1
+    assert store.terminal_cleanup_loads == 1
+    assert store.enrollments[0]["id"] == enrollment_id
+    assert store.enrollments[0]["raw_deletion_evidence"]["quarantineDeleted"] is True
+    assert store.enrollments[0]["raw_deletion_evidence"]["quarantineDeletedCount"] == 0
+
+
 def test_dispatcher_recovery_runs_biometric_sweep_when_feature_enabled(monkeypatch):
     calls = []
 

@@ -345,17 +345,7 @@ class FakeCursor:
                     continue
                 if row["raw_deletion_evidence"].get("quarantineDeleted") is True:
                     continue
-                has_photo = any(
-                    photo["enrollment_id"] == row["id"]
-                    and photo["storage_state"] in {"quarantine", "delete_pending"}
-                    for photo in self.store.photos
-                )
-                has_cleanup = any(
-                    cleanup["enrollment_id"] == row["id"]
-                    for cleanup in self.store.cleanup
-                )
-                if has_photo or has_cleanup:
-                    candidates.append(row)
+                candidates.append(row)
             candidates.sort(
                 key=lambda row: (
                     row.get("completed_at") is not None,

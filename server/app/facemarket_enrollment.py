@@ -1294,17 +1294,6 @@ async def sweep_terminal_enrollments(app, *, limit: int = 100) -> int:
                             (e.raw_deletion_evidence->>'quarantineDeleted')::boolean,
                             false
                           ) is not true
-                      and (
-                            exists (
-                                select 1 from fm_biometric_enrollment_photos p
-                                where p.enrollment_id = e.id
-                                  and p.storage_state in ('quarantine', 'delete_pending')
-                            )
-                            or exists (
-                                select 1 from fm_biometric_enrollment_photo_cleanup c
-                                where c.enrollment_id = e.id
-                            )
-                          )
                     order by e.completed_at nulls first, e.created_at
                     for update skip locked
                     limit %s
