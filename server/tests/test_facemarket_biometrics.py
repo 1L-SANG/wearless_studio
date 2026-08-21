@@ -1,12 +1,13 @@
 import base64
+import json
 from dataclasses import replace
-from datetime import datetime, timezone
-from unittest.mock import Mock, call
+from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock
 
 import pytest
 from fastapi import FastAPI
 
-from app import cx_identity
+from app import cx_identity, facemarket_enrollment
 from app.cx_identity import (
     DEV_MOCK_OACX_BIOMETRIC_CONTRACT,
     OacxBiometricError,
@@ -29,6 +30,36 @@ DEV_TRANS = {
     "issuedAt": "2026-08-21T03:00:00Z",
 }
 NOW = datetime(2026, 8, 21, 3, 2, tzinfo=timezone.utc)
+
+
+class RecordingRekognition:
+    def __init__(self, session_id="00000000-0000-0000-0000-000000000001"):
+        self.session_id = session_id
+        self.calls = []
+
+    def create_face_liveness_session(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"SessionId": self.session_id}
+
+
+class RecordingSts:
+    def __init__(self):
+        self.calls = []
+
+    def assume_role(self, **kwargs):
+        self.calls.append(kwargs)
+        return {
+            "Credentials": {
+                "AccessKeyId": "temporary-access-key",
+                "SecretAccessKey": "temporary-secret-key",
+                "SessionToken": "temporary-session-token",
+                "Expiration": NOW + timedelta(minutes=15),
+            },
+            "AssumedRoleUser": {
+                "AssumedRoleId": "AROATEST:fm-live-123456789abc",
+                "Arn": "arn:aws:sts::123456789012:assumed-role/test/fm-live-123456789abc",
+            },
+        }
 
 
 def biometric_settings(**overrides):
@@ -90,13 +121,80 @@ def test_enabled_dev_feature_builds_isolated_clients_and_includes_router(monkeyp
 
     app = create_app(biometric_settings())
 
-    assert boto_client.call_args_list == [
-        call("rekognition", region_name="us-east-1"),
-        call("sts", region_name="us-east-1"),
+    assert [item.args for item in boto_client.call_args_list] == [
+        ("rekognition",),
+        ("sts",),
     ]
+    for item in boto_client.call_args_list:
+        assert item.kwargs["region_name"] == "us-east-1"
+        assert item.kwargs["config"].retries == {
+            "mode": "standard",
+            "max_attempts": 3,
+        }
+        assert item.kwargs["config"].connect_timeout == 3
+        assert item.kwargs["config"].read_timeout == 10
     assert app.state.fm_rekognition is rekognition
     assert app.state.fm_sts is sts
     assert biometric_enrollment_router in included_routers
+
+
+def test_create_session_disables_audit_and_s3_output():
+    rekognition = RecordingRekognition()
+
+    session_id = facemarket_enrollment.create_liveness_session(
+        rekognition, client_request_token="a" * 64
+    )
+
+    assert session_id == "00000000-0000-0000-0000-000000000001"
+    assert rekognition.calls == [
+        {
+            "ClientRequestToken": "a" * 64,
+            "Settings": {"AuditImagesLimit": 0},
+        }
+    ]
+
+
+def test_create_session_rejects_malformed_provider_session_id():
+    rekognition = RecordingRekognition(session_id="not-a-session-id")
+
+    with pytest.raises(
+        facemarket_enrollment.BiometricProviderError,
+        match="^liveness_unavailable$",
+    ):
+        facemarket_enrollment.create_liveness_session(
+            rekognition, client_request_token="a" * 64
+        )
+
+
+def test_sts_credentials_are_fifteen_minutes_start_only_and_region_locked():
+    sts = RecordingSts()
+
+    result = facemarket_enrollment.assume_liveness_browser_credentials(
+        sts,
+        role_arn="arn:aws:iam::123456789012:role/fm-liveness-browser",
+        session_name="fm-live-123456789abc",
+    )
+
+    call = sts.calls[0]
+    assert call["DurationSeconds"] == 900
+    assert call["RoleArn"] == "arn:aws:iam::123456789012:role/fm-liveness-browser"
+    assert call["RoleSessionName"] == "fm-live-123456789abc"
+    assert json.loads(call["Policy"])["Statement"] == [
+        {
+            "Effect": "Allow",
+            "Action": "rekognition:StartFaceLivenessSession",
+            "Resource": "*",
+            "Condition": {
+                "StringEquals": {"aws:RequestedRegion": "us-east-1"}
+            },
+        }
+    ]
+    assert result == {
+        "accessKeyId": "temporary-access-key",
+        "secretAccessKey": "temporary-secret-key",
+        "sessionToken": "temporary-session-token",
+        "expiration": NOW + timedelta(minutes=15),
+    }
 
 
 def test_oacx_dev_contract_extracts_mutable_sensitive_buffers():

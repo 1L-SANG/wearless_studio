@@ -74,6 +74,12 @@ create unique index if not exists fm_biometric_active_per_user
   on public.fm_biometric_enrollments(user_id)
   where status in ('photos_pending', 'liveness_pending', 'processing', 'asset_building',
                    'license_pending', 'vc_pending');
+create unique index if not exists fm_biometric_liveness_nonce_unique
+  on public.fm_biometric_enrollments(liveness_nonce_digest)
+  where liveness_nonce_digest is not null;
+create unique index if not exists fm_biometric_liveness_session_unique
+  on public.fm_biometric_enrollments(liveness_session_digest)
+  where liveness_session_digest is not null;
 create index if not exists fm_biometric_cleanup_due
   on public.fm_biometric_enrollments(expires_at)
   where status not in ('passed', 'cancelled', 'expired');

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from botocore.exceptions import EndpointConnectionError
 from starlette.datastructures import Headers
 
 from app import facemarket_enrollment, r2
@@ -62,6 +63,43 @@ class EnrollmentStore:
             default=str,
         )
 
+
+class FakeRekognition:
+    def __init__(self):
+        self.session_id = "00000000-0000-0000-0000-000000000001"
+        self.calls = []
+        self.failures = 0
+
+    def create_face_liveness_session(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.failures:
+            self.failures -= 1
+            raise EndpointConnectionError(endpoint_url="https://rekognition.test")
+        return {"SessionId": self.session_id}
+
+
+class FakeSts:
+    def __init__(self):
+        self.calls = []
+        self.failures = 0
+
+    def assume_role(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.failures:
+            self.failures -= 1
+            raise EndpointConnectionError(endpoint_url="https://sts.test")
+        return {
+            "Credentials": {
+                "AccessKeyId": "temporary-access-key",
+                "SecretAccessKey": "temporary-secret-key",
+                "SessionToken": "temporary-session-token",
+                "Expiration": NOW + timedelta(minutes=15),
+            },
+            "AssumedRoleUser": {
+                "AssumedRoleId": "AROATEST:fm-live-123e4567e89b",
+                "Arn": "arn:aws:sts::123456789012:assumed-role/test/fm-live-123e4567e89b",
+            },
+        }
 
 class FakeCursor:
     def __init__(self, conn):
@@ -141,6 +179,34 @@ class FakeCursor:
             for license_row in self.store.licenses:
                 if license_row["model_id"] == model_id and license_row["status"] == "active":
                     license_row["status"] = "reverification_required"
+        elif query.startswith("select e.status, e.cooldown_until"):
+            enrollment_id, user_id = params
+            row = next(
+                (
+                    item
+                    for item in self.store.enrollments
+                    if item["id"] == enrollment_id and item["user_id"] == user_id
+                ),
+                None,
+            )
+            self.result = (
+                {
+                    "status": row["status"],
+                    "cooldown_until": row.get("cooldown_until"),
+                    "liveness_nonce_digest": row.get("liveness_nonce_digest"),
+                    "liveness_session_digest": row.get("liveness_session_digest"),
+                }
+                if row
+                else None
+            )
+        elif query.startswith("select exists(") and "liveness_nonce_digest" in query:
+            nonce_digest = params[0]
+            self.result = {
+                "replayed": any(
+                    row.get("liveness_nonce_digest") == nonce_digest
+                    for row in self.store.enrollments
+                )
+            }
         elif query.startswith("insert into fm_biometric_enrollments"):
             user_id, model_id, device_digest, consent_version, expires_at = params
             existing = next(
@@ -382,9 +448,35 @@ class FakeCursor:
                 "passed_count": sum(
                     photo["enrollment_id"] == enrollment_id
                     and photo["qc_status"] == "passed"
+                    and photo["storage_state"] == "quarantine"
                     for photo in self.store.photos
                 )
             }
+        elif query.startswith(
+            "update fm_biometric_enrollments set liveness_nonce_digest"
+        ):
+            nonce_digest, enrollment_id, user_id = params
+            row = next(
+                item
+                for item in self.store.enrollments
+                if item["id"] == enrollment_id and item["user_id"] == user_id
+            )
+            row["liveness_nonce_digest"] = nonce_digest
+        elif query.startswith(
+            "update fm_biometric_enrollments set liveness_session_digest"
+        ):
+            session_digest, enrollment_id, user_id, nonce_digest = params
+            row = next(
+                item
+                for item in self.store.enrollments
+                if item["id"] == enrollment_id
+                and item["user_id"] == user_id
+                and item["liveness_nonce_digest"] == nonce_digest
+            )
+            row["liveness_session_digest"] = session_digest
+            row.setdefault("provider_versions", {})["faceLiveness"] = (
+                "aws-rekognition-us-east-1"
+            )
         elif query.startswith("update fm_biometric_enrollments set status = 'liveness_pending'"):
             enrollment_id, user_id = params
             row = next(
@@ -661,7 +753,25 @@ def fake_pool(enrollment_store):
 
 
 @pytest.fixture()
-def enrollment_client(keypair, monkeypatch, enrollment_store, fake_r2, fake_pool):
+def fake_rekognition():
+    return FakeRekognition()
+
+
+@pytest.fixture()
+def fake_sts():
+    return FakeSts()
+
+
+@pytest.fixture()
+def enrollment_client(
+    keypair,
+    monkeypatch,
+    enrollment_store,
+    fake_r2,
+    fake_pool,
+    fake_rekognition,
+    fake_sts,
+):
     _private_key, public_key = keypair
     settings = make_settings(
         app_env="dev",
@@ -678,7 +788,7 @@ def enrollment_client(keypair, monkeypatch, enrollment_store, fake_r2, fake_pool
     monkeypatch.setattr(
         facemarket_enrollment,
         "build_biometric_aws_clients",
-        lambda _settings: (object(), object()),
+        lambda _settings: (fake_rekognition, fake_sts),
     )
 
     @contextlib.asynccontextmanager
@@ -716,6 +826,26 @@ def create_enrollment(client, auth, *, device_id=DEVICE_ID):
     )
     assert response.status_code == 201, response.text
     return response.json()["id"]
+
+
+def create_ready_enrollment(client, auth, store):
+    enrollment_id = create_enrollment(client, auth)
+    store.enrollments[0]["status"] = "liveness_pending"
+    store.photos.extend(
+        {
+            "enrollment_id": enrollment_id,
+            "angle": angle,
+            "r2_key": f"private/{angle}.jpg",
+            "image_digest": f"sha256-{angle}",
+            "mime_type": "image/jpeg",
+            "byte_size": 10,
+            "qc_status": "passed",
+            "storage_state": "quarantine",
+            "uploaded_at": NOW,
+        }
+        for angle in ("front", "angle45", "side")
+    )
+    return enrollment_id
 
 
 def stub_qc(monkeypatch, verdict="pass", reasons=None):
@@ -2422,3 +2552,236 @@ def test_delete_treats_r2_not_found_as_success(
     assert response.status_code == 204
     assert enrollment_store.photos == []
     assert enrollment_store.cleanup == []
+
+
+def test_liveness_session_is_bound_to_owner_nonce_and_three_photos(
+    enrollment_client,
+    auth,
+    enrollment_store,
+    fake_rekognition,
+    fake_sts,
+):
+    enrollment_id = create_ready_enrollment(
+        enrollment_client, auth, enrollment_store
+    )
+    nonce = "browser-nonce-with-at-least-32-bytes"
+
+    response = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/liveness-session",
+        json={"nonce": nonce},
+        headers=auth(),
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["region"] == "us-east-1"
+    assert response.json()["sessionId"] == fake_rekognition.session_id
+    assert set(response.json()["credentials"]) == {
+        "accessKeyId",
+        "secretAccessKey",
+        "sessionToken",
+        "expiration",
+    }
+    stored = enrollment_store.enrollments[0]
+    assert stored["liveness_nonce_digest"] == hashlib.sha256(
+        nonce.encode()
+    ).hexdigest()
+    assert stored["liveness_session_digest"] == hashlib.sha256(
+        fake_rekognition.session_id.encode()
+    ).hexdigest()
+    assert fake_rekognition.session_id not in enrollment_store.serialized()
+    assert "temporary-secret-key" not in enrollment_store.serialized()
+    assert len(fake_rekognition.calls) == len(fake_sts.calls) == 1
+
+
+def test_liveness_session_is_issued_only_once_per_enrollment(
+    enrollment_client, auth, enrollment_store, fake_rekognition
+):
+    enrollment_id = create_ready_enrollment(
+        enrollment_client, auth, enrollment_store
+    )
+    first = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/liveness-session",
+        json={"nonce": "first-browser-nonce-with-at-least-32-bytes"},
+        headers=auth(),
+    )
+
+    second = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/liveness-session",
+        json={"nonce": "second-browser-nonce-with-at-least-32-bytes"},
+        headers=auth(),
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 409
+    assert second.json()["error"]["code"] == "invalid_enrollment_state"
+    assert len(fake_rekognition.calls) == 1
+
+
+def test_liveness_session_requires_all_three_quarantine_photos(
+    enrollment_client, auth, enrollment_store, fake_rekognition
+):
+    enrollment_id = create_ready_enrollment(
+        enrollment_client, auth, enrollment_store
+    )
+    enrollment_store.photos.pop()
+
+    response = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/liveness-session",
+        json={"nonce": "browser-nonce-with-at-least-32-bytes"},
+        headers=auth(),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "photos_required"
+    assert fake_rekognition.calls == []
+
+
+def test_liveness_session_rejects_short_nonce_before_provider_call(
+    enrollment_client, auth, enrollment_store, fake_rekognition
+):
+    enrollment_id = create_ready_enrollment(
+        enrollment_client, auth, enrollment_store
+    )
+
+    response = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/liveness-session",
+        json={"nonce": "too-short"},
+        headers=auth(),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_nonce"
+    assert fake_rekognition.calls == []
+
+
+def test_liveness_session_rejects_repeated_nonce_before_provider_call(
+    enrollment_client, auth, enrollment_store, fake_rekognition
+):
+    enrollment_id = create_ready_enrollment(
+        enrollment_client, auth, enrollment_store
+    )
+    nonce = "browser-nonce-with-at-least-32-bytes"
+    enrollment_store.enrollments[0]["liveness_nonce_digest"] = hashlib.sha256(
+        nonce.encode()
+    ).hexdigest()
+
+    response = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/liveness-session",
+        json={"nonce": nonce},
+        headers=auth(),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "nonce_replayed"
+    assert fake_rekognition.calls == []
+
+
+def test_liveness_session_rejects_nonce_used_by_another_enrollment(
+    enrollment_client, auth, enrollment_store, fake_rekognition
+):
+    enrollment_id = create_ready_enrollment(
+        enrollment_client, auth, enrollment_store
+    )
+    nonce = "browser-nonce-with-at-least-32-bytes"
+    enrollment_store.enrollments.append(
+        {
+            "id": "00000000-0000-0000-0000-000000000099",
+            "user_id": "former-user",
+            "model_id": None,
+            "device_digest": "former-device-digest",
+            "consent_version": "2026-08-v1",
+            "status": "failed",
+            "decision": "failed",
+            "reason": "liveness_failed",
+            "cooldown_until": None,
+            "expires_at": NOW,
+            "completed_at": NOW,
+            "raw_deletion_evidence": {},
+            "liveness_nonce_digest": hashlib.sha256(nonce.encode()).hexdigest(),
+        }
+    )
+
+    response = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/liveness-session",
+        json={"nonce": nonce},
+        headers=auth(),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "nonce_replayed"
+    assert fake_rekognition.calls == []
+
+
+def test_liveness_session_hides_other_owners_enrollment(
+    enrollment_client, auth, enrollment_store, fake_rekognition
+):
+    enrollment_id = create_ready_enrollment(
+        enrollment_client, auth, enrollment_store
+    )
+
+    response = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/liveness-session",
+        json={"nonce": "browser-nonce-with-at-least-32-bytes"},
+        headers=auth(sub="other-user"),
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "not_found"
+    assert fake_rekognition.calls == []
+
+
+def test_liveness_session_enforces_active_cooldown(
+    enrollment_client, auth, enrollment_store, fake_rekognition
+):
+    enrollment_id = create_ready_enrollment(
+        enrollment_client, auth, enrollment_store
+    )
+    enrollment_store.enrollments[0]["cooldown_until"] = datetime.now(
+        timezone.utc
+    ) + timedelta(minutes=1)
+
+    response = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/liveness-session",
+        json={"nonce": "browser-nonce-with-at-least-32-bytes"},
+        headers=auth(),
+    )
+
+    assert response.status_code == 429
+    assert response.json()["error"]["code"] == "liveness_cooldown"
+    assert fake_rekognition.calls == []
+
+
+@pytest.mark.parametrize("failed_provider", ["rekognition", "sts"])
+def test_liveness_provider_failure_is_sanitized_and_not_a_biometric_failure(
+    enrollment_client,
+    auth,
+    enrollment_store,
+    fake_rekognition,
+    fake_sts,
+    failed_provider,
+):
+    enrollment_id = create_ready_enrollment(
+        enrollment_client, auth, enrollment_store
+    )
+    nonce = "browser-nonce-with-at-least-32-bytes"
+    provider = fake_rekognition if failed_provider == "rekognition" else fake_sts
+    provider.failures = 1
+
+    response = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/liveness-session",
+        json={"nonce": nonce},
+        headers=auth(),
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "liveness_unavailable"
+    assert fake_rekognition.session_id not in response.text
+    assert "temporary-access-key" not in response.text
+    assert "temporary-secret-key" not in response.text
+    stored = enrollment_store.enrollments[0]
+    assert stored["decision"] is None
+    assert stored["completed_at"] is None
+    assert stored.get("liveness_session_digest") is None
+    assert stored["liveness_nonce_digest"] == hashlib.sha256(
+        nonce.encode()
+    ).hexdigest()

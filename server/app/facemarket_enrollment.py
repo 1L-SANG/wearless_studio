@@ -2,11 +2,13 @@
 
 import asyncio
 import hashlib
+import json
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import boto3
+from botocore.config import Config
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 
@@ -26,6 +28,58 @@ _PHOTO_FENCE_NAMESPACE = 0x464D5048
 ANGLES = ("front", "angle45", "side")
 MAX_FACE_BYTES = 25 * 1024 * 1024
 ALLOWED_FACE_MIME = {"image/png", "image/jpeg", "image/webp"}
+START_LIVENESS_POLICY = {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": "rekognition:StartFaceLivenessSession",
+            "Resource": "*",
+            "Condition": {
+                "StringEquals": {"aws:RequestedRegion": "us-east-1"}
+            },
+        }
+    ],
+}
+AWS_LIVENESS_CONFIG = Config(
+    connect_timeout=3,
+    read_timeout=10,
+    retries={"mode": "standard", "max_attempts": 3},
+)
+
+
+class BiometricProviderError(RuntimeError):
+    pass
+
+
+def create_liveness_session(rekognition, *, client_request_token: str) -> str:
+    response = rekognition.create_face_liveness_session(
+        ClientRequestToken=client_request_token,
+        Settings={"AuditImagesLimit": 0},
+    )
+    session_id = response.get("SessionId")
+    try:
+        return str(uuid.UUID(str(session_id)))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise BiometricProviderError("liveness_unavailable") from exc
+
+
+def assume_liveness_browser_credentials(
+    sts, *, role_arn: str, session_name: str
+) -> dict:
+    response = sts.assume_role(
+        RoleArn=role_arn,
+        RoleSessionName=session_name,
+        DurationSeconds=900,
+        Policy=json.dumps(START_LIVENESS_POLICY, separators=(",", ":")),
+    )
+    credentials = response["Credentials"]
+    return {
+        "accessKeyId": credentials["AccessKeyId"],
+        "secretAccessKey": credentials["SecretAccessKey"],
+        "sessionToken": credentials["SessionToken"],
+        "expiration": credentials["Expiration"],
+    }
 
 
 class BiometricConsent(CamelModel):
@@ -36,6 +90,10 @@ class BiometricConsent(CamelModel):
 class CreateEnrollmentBody(CamelModel):
     device_id: str
     biometric_consent: BiometricConsent
+
+
+class LivenessSessionBody(CamelModel):
+    nonce: str
 
 
 class EnrollmentPhotoView(CamelModel):
@@ -744,6 +802,149 @@ async def upload_enrollment_photo(
         data = b""
 
 
+@router.post("/enrollments/{enrollment_id}/liveness-session", status_code=201)
+async def start_enrollment_liveness(
+    request: Request,
+    enrollment_id: str,
+    body: LivenessSessionBody,
+    user_id: str = Depends(require_user),
+):
+    enrollment_id = _canonical_enrollment_id(enrollment_id)
+    nonce = body.nonce.strip()
+    nonce_bytes = nonce.encode()
+    if not 32 <= len(nonce_bytes) <= 512:
+        raise _err("invalid_nonce", "인증 세션을 시작할 수 없습니다.")
+    nonce_digest = hashlib.sha256(nonce_bytes).hexdigest()
+
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                select e.status, e.cooldown_until, e.liveness_nonce_digest,
+                       e.liveness_session_digest
+                from fm_biometric_enrollments e
+                where e.id = %s and e.user_id = %s
+                for update
+                """,
+                (enrollment_id, user_id),
+            )
+            enrollment = await cur.fetchone()
+            if enrollment is None:
+                raise _err("not_found", "등록을 찾을 수 없습니다.", status=404)
+            if (
+                enrollment["status"] != "liveness_pending"
+                or enrollment.get("liveness_session_digest") is not None
+            ):
+                raise _err(
+                    "invalid_enrollment_state",
+                    "현재 등록 단계에서는 인증 세션을 시작할 수 없습니다.",
+                    status=409,
+                )
+            cooldown_until = enrollment.get("cooldown_until")
+            if cooldown_until is not None and cooldown_until > datetime.now(timezone.utc):
+                raise _err(
+                    "liveness_cooldown",
+                    "잠시 후 생체 인증을 다시 시도해 주세요.",
+                    status=429,
+                )
+            if enrollment.get("liveness_nonce_digest") == nonce_digest:
+                raise _err(
+                    "nonce_replayed",
+                    "새 인증 세션으로 다시 시도해 주세요.",
+                    status=409,
+                )
+            await cur.execute(
+                """
+                select exists(
+                    select 1 from fm_biometric_enrollments
+                    where liveness_nonce_digest = %s
+                ) as replayed
+                """,
+                (nonce_digest,),
+            )
+            if (await cur.fetchone())["replayed"]:
+                raise _err(
+                    "nonce_replayed",
+                    "새 인증 세션으로 다시 시도해 주세요.",
+                    status=409,
+                )
+            await cur.execute(
+                """
+                select count(*) as passed_count
+                from fm_biometric_enrollment_photos
+                where enrollment_id = %s and qc_status = 'passed'
+                  and storage_state = 'quarantine'
+                  and angle in ('front', 'angle45', 'side')
+                """,
+                (enrollment_id,),
+            )
+            if (await cur.fetchone())["passed_count"] != len(ANGLES):
+                raise _err(
+                    "photos_required",
+                    "정면, 45도, 측면 사진을 모두 등록해 주세요.",
+                    status=409,
+                )
+            await cur.execute(
+                """
+                update fm_biometric_enrollments
+                set liveness_nonce_digest = %s
+                where id = %s and user_id = %s and status = 'liveness_pending'
+                """,
+                (nonce_digest, enrollment_id, user_id),
+            )
+
+        try:
+            session_id = await asyncio.to_thread(
+                create_liveness_session,
+                request.app.state.fm_rekognition,
+                client_request_token=nonce_digest,
+            )
+            credentials = await asyncio.to_thread(
+                assume_liveness_browser_credentials,
+                request.app.state.fm_sts,
+                role_arn=request.app.state.settings.fm_liveness_browser_role_arn,
+                session_name=f"fm-live-{enrollment_id.replace('-', '')[:12]}",
+            )
+        except Exception as exc:
+            await conn.commit()
+            logger.warning(
+                "facemarket_liveness_provider_unavailable",
+                extra={"provider": "aws_liveness", "error_type": type(exc).__name__},
+            )
+            raise _err(
+                "liveness_unavailable",
+                "생체 인증을 지금 시작할 수 없습니다. "
+                "잠시 후 다시 시도해 주세요.",
+                status=503,
+            )
+
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                update fm_biometric_enrollments
+                set liveness_session_digest = %s,
+                    provider_versions = provider_versions
+                      || jsonb_build_object('faceLiveness', 'aws-rekognition-us-east-1')
+                where id = %s and user_id = %s and status = 'liveness_pending'
+                  and liveness_nonce_digest = %s
+                """,
+                (
+                    hashlib.sha256(session_id.encode()).hexdigest(),
+                    enrollment_id,
+                    user_id,
+                    nonce_digest,
+                ),
+            )
+        await conn.commit()
+
+    return {
+        "sessionId": session_id,
+        "region": "us-east-1",
+        "expiresAt": datetime.now(timezone.utc) + timedelta(minutes=3),
+        "credentials": credentials,
+    }
+
+
 @router.delete("/enrollments/{enrollment_id}/photos/{angle}", status_code=204)
 async def delete_enrollment_photo(
     request: Request,
@@ -1044,6 +1245,8 @@ def validate_biometric_settings(settings: Settings) -> None:
 
 
 def build_biometric_aws_clients(settings: Settings):
-    rekognition = boto3.client("rekognition", region_name="us-east-1")
-    sts = boto3.client("sts", region_name="us-east-1")
+    rekognition = boto3.client(
+        "rekognition", region_name="us-east-1", config=AWS_LIVENESS_CONFIG
+    )
+    sts = boto3.client("sts", region_name="us-east-1", config=AWS_LIVENESS_CONFIG)
     return rekognition, sts

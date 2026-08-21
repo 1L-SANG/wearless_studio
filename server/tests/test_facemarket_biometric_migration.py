@@ -59,6 +59,12 @@ def test_photo_deletion_and_superseded_keys_have_durable_retry_state():
     assert "primary key (enrollment_id, r2_key)" in cleanup_schema
 
 
+def test_liveness_nonce_and_session_digests_are_unique():
+    sql = " ".join(MIGRATION.read_text().split()).lower()
+    assert "fm_biometric_liveness_nonce_unique" in sql
+    assert "fm_biometric_liveness_session_unique" in sql
+
+
 @requires_database
 def test_biometric_migration_executes_and_enforces_one_photo_per_angle():
     async def scenario():
