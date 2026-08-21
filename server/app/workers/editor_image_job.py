@@ -291,7 +291,10 @@ async def run_editor_image_job(app, job: dict) -> None:
             if s.facemarket_enabled and selected_model_id:
                 async with pool.connection() as conn:
                     real_refs = await identity_source.resolve_real_model_assets(
-                        conn, selected_model_id)
+                        conn,
+                        selected_model_id,
+                        allow_legacy=not getattr(s, "fm_biometric_enrollment_enabled", False),
+                    )
                     if real_refs is not None:
                         fm_license_row = await facemarket.resolve_model_license(
                             conn, selected_model_id)

@@ -353,6 +353,26 @@ class FakeCursor:
                 )
             )
             self.many = [{"id": row["id"]} for row in candidates[:limit]]
+        elif (
+            query.startswith("select e.id::text as id")
+            and "exists (" in query
+            and "fm_biometric_enrollment_photo_cleanup" in query
+        ):
+            limit = params[0]
+            due_ids = []
+            for cleanup in self.store.cleanup:
+                if cleanup["not_before"] > self.store.now:
+                    continue
+                row = next(
+                    (
+                        item for item in self.store.enrollments
+                        if item["id"] == cleanup["enrollment_id"]
+                    ),
+                    None,
+                )
+                if row and row["status"] == "license_pending" and row["id"] not in due_ids:
+                    due_ids.append(row["id"])
+            self.many = [{"id": enrollment_id} for enrollment_id in due_ids[:limit]]
         elif query.startswith("select e.id::text as id") and "where e.user_id = %s" in query:
             user_id = params[0]
             row = next(

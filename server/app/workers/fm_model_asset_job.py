@@ -36,7 +36,10 @@ def _ordered_faces(rows: list[dict]) -> list[dict] | None:
 
 def _source_hash(faces: list[dict]) -> str:
     return hashlib.sha256(
-        "|".join(str(face.get("image_digest") or "") for face in faces).encode()
+        "|".join(
+            str(face.get("image_digest") or face.get("r2_key") or "")
+            for face in faces
+        ).encode()
     ).hexdigest()
 
 
@@ -72,29 +75,17 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
     model_id = payload.get("modelId")
     enrollment_id = payload.get("enrollmentId")
     r2_face = getattr(app.state, "r2_face", None)
+    settings = app.state.settings
     attempt_keys: list[str] = []
 
     async def cleanup_attempt() -> None:
-        if r2_face is None:
-            return
-        for key in attempt_keys:
-            try:
-                await _run_r2_call_until_done(r2_face.delete, key)
-            except Exception as exc:
-                log.warning(
-                    "fm_model_asset_attempt_cleanup_failed",
-                    extra={
-                        "job_id": job_id,
-                        "enrollment_id": enrollment_id,
-                        "error_type": type(exc).__name__,
-                    },
-                )
+        return None
 
     async def fail(reason: str, code: str = "asset_build_failed") -> None:
         await cleanup_attempt()
         try:
             async with pool.connection() as conn:
-                await repo._finalize_job_failure(
+                finalized = await repo._finalize_job_failure(
                     conn,
                     job_id=job_id,
                     lease_token=lease,
@@ -102,16 +93,28 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                     metadata={"error": reason},
                     code=code,
                 )
-                if model_id:
+                if finalized and model_id:
                     async with conn.cursor() as cur:
                         await cur.execute(
                             """
                             update fm_models
                             set assets_status='failed'
-                            where id=%s and user_id=%s and assets_status='building'
+                            where id=%s and user_id=%s and current_enrollment_id=%s
+                              and assets_status='building'
                             """,
-                            (model_id, user_id),
+                            (model_id, user_id, enrollment_id),
                         )
+                        if enrollment_id:
+                            await cur.execute(
+                                """
+                                update fm_biometric_enrollments
+                                set status='failed', decision='failed', reason=%s,
+                                    completed_at=now()
+                                where id=%s and model_id=%s and user_id=%s
+                                  and status='asset_building'
+                                """,
+                                (reason, enrollment_id, model_id, user_id),
+                            )
                 await conn.commit()
         except Exception as exc:
             log.warning(
@@ -123,11 +126,96 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
         if not model_id:
             await fail("missing_model_id", "missing_model_id")
             return
-        if not enrollment_id:
-            await fail("missing_enrollment_id", "missing_enrollment_id")
-            return
         if r2_face is None:
             await fail("face_storage_unavailable", "face_storage_unavailable")
+            return
+        biometric_enabled = getattr(settings, "fm_biometric_enrollment_enabled", False)
+        if not enrollment_id and biometric_enabled:
+            await fail("missing_enrollment_id", "missing_enrollment_id")
+            return
+        if not enrollment_id:
+            async with pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "select m.status, p.id as profile_id from fm_models m "
+                        "join personalization_profiles p on p.user_id = m.user_id "
+                        "where m.id=%s and m.user_id=%s "
+                        "order by p.created_at desc limit 1",
+                        (model_id, user_id),
+                    )
+                    mrow = await cur.fetchone()
+                    if not mrow or mrow.get("status") != "verified":
+                        await fail("legacy_model_missing", "legacy_model_missing")
+                        return
+                    await cur.execute(
+                        "select angle, r2_key, mime_type from personalization_face_photos "
+                        "where profile_id=%s",
+                        (mrow["profile_id"],),
+                    )
+                    legacy_rows = await cur.fetchall()
+            by_angle = {row.get("angle"): row for row in legacy_rows}
+            if set(by_angle) != set(_ANGLES):
+                await fail("legacy_face_photos_incomplete", "legacy_face_photos_incomplete")
+                return
+            faces = [by_angle[angle] for angle in _ANGLES]
+            face_bytes = [
+                await _run_r2_call_until_done(r2_face.get_bytes, face["r2_key"])
+                for face in faces
+            ]
+            grid = compose_sedcard(face_bytes)
+            legacy_version = f"legacy-{job_id}"
+            registered = []
+            for view, data, mime in (
+                ("grid_sedcard", grid, "image/png"),
+                ("face_front", face_bytes[0], faces[0]["mime_type"]),
+            ):
+                key = model_asset_key(model_id, legacy_version, view, ext_for_mime(mime) or "png")
+                attempt_keys.append(key)
+                await _run_r2_call_until_done(
+                    lambda key=key, data=data, mime=mime: r2_face.put_bytes(
+                        key, data, mime, cache=IMMUTABLE_CACHE
+                    )
+                )
+                registered.append((view, key, mime))
+            async with pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "select id from jobs where id=%s and locked_by=%s and status='running' for update",
+                        (job_id, lease),
+                    )
+                    if await cur.fetchone() is None:
+                        raise RuntimeError("lease_lost")
+                    for view, key, mime in registered:
+                        await cur.execute(
+                            """
+                            insert into fm_model_assets
+                                (model_id, view, r2_key, mime, bucket, evidence_version)
+                            values (%s, %s, %s, %s, 'face', 'legacy-personalization-v1')
+                            on conflict (model_id, view) do update set
+                                r2_key=excluded.r2_key,
+                                mime=excluded.mime,
+                                bucket='face',
+                                evidence_version=excluded.evidence_version
+                            """,
+                            (model_id, view, key, mime),
+                        )
+                    await cur.execute(
+                        """
+                        update fm_models
+                        set assets_status='ready', assets_source_hash=%s
+                        where id=%s and user_id=%s and status='verified'
+                        """,
+                        (_source_hash(faces), model_id, user_id),
+                    )
+                    await cur.execute(
+                        """
+                        update jobs set status='done', progress=100, locked_by=null,
+                            locked_at=null, finished_at=now(), result=%s
+                        where id=%s
+                        """,
+                        (Json({"data": {"modelId": model_id, "assetsStatus": "ready"}}), job_id),
+                    )
+                await conn.commit()
             return
 
         async with pool.connection() as conn:
@@ -156,6 +244,9 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
             ext = ext_for_mime(face.get("mime_type")) or "png"
             key = enrollment_original_key(model_id, enrollment_id, face["angle"], ext)
             attempt_keys.append(key)
+            async with pool.connection() as conn:
+                await _register_cleanup(conn, enrollment_id, face["angle"], key)
+                await conn.commit()
             await _run_r2_call_until_done(r2_face.copy, face["r2_key"], key, face["mime_type"])
             originals.append((face["angle"], face["r2_key"], key))
 
@@ -175,6 +266,14 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
             ext = ext_for_mime(mime) or "png"
             key = model_asset_key(model_id, enrollment_id, view, ext)
             attempt_keys.append(key)
+            async with pool.connection() as conn:
+                await _register_cleanup(
+                    conn,
+                    enrollment_id,
+                    _OLD_ASSET_ANGLE.get(view, "front"),
+                    key,
+                )
+                await conn.commit()
             await _run_r2_call_until_done(
                 lambda key=key, data=data, mime=mime: r2_face.put_bytes(
                     key, data, mime, cache=IMMUTABLE_CACHE
@@ -223,6 +322,19 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                     (model_id,),
                 )
                 old_assets = await cur.fetchall()
+                registered_keys = {key for _view, key, _mime in registered}
+                cleanup_targets = [
+                    (angle, old_key)
+                    for angle, old_key, new_key in originals
+                    if old_key != new_key
+                ]
+                cleanup_targets.extend(
+                    (_OLD_ASSET_ANGLE.get(row.get("view"), "front"), row["r2_key"])
+                    for row in old_assets
+                    if row.get("r2_key") and row["r2_key"] not in registered_keys
+                )
+                for angle, key in cleanup_targets:
+                    await _register_cleanup(conn, enrollment_id, angle, key)
                 for view, key, mime in registered:
                     await cur.execute(
                         """
@@ -292,21 +404,14 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
             await conn.commit()
 
         attempt_keys = []
-        registered_keys = {key for _view, key, _mime in registered}
-        cleanup_targets = [
-            (angle, old_key)
-            for angle, old_key, new_key in originals
-            if old_key != new_key
+        current_keys = [key for _angle, _old_key, key in originals] + [
+            key for _view, key, _mime in registered
         ]
-        cleanup_targets.extend(
-            (_OLD_ASSET_ANGLE.get(row.get("view"), "front"), row["r2_key"])
-            for row in old_assets
-            if row.get("r2_key") and row["r2_key"] not in registered_keys
-        )
-        for angle, key in cleanup_targets:
+        for key in current_keys:
             async with pool.connection() as conn:
-                await _register_cleanup(conn, enrollment_id, angle, key)
+                await _remove_cleanup(conn, enrollment_id, key)
                 await conn.commit()
+        for angle, key in cleanup_targets:
             try:
                 await _run_r2_call_until_done(r2_face.delete, key)
             except Exception as exc:

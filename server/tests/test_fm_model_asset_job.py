@@ -41,7 +41,11 @@ class _Cur:
         s = " ".join(sql.split()).lower()
         if "from fm_biometric_enrollment_photos" in s and "join fm_biometric_enrollments" in s:
             self._last = self.store.enrollment_rows if self.store.initial_binding else []
-        elif "from jobs where id=" in s and "for update" in s:
+        elif "from fm_models m join personalization_profiles" in s:
+            self._last = {"status": "verified", "profile_id": "prof-1"}
+        elif "from personalization_face_photos" in s:
+            self._last = self.store.legacy_rows
+        elif "from jobs" in s and "locked_by" in s and "status" in s and "running" in s:
             self._last = {"id": "job-1"} if self.store.lease_ok else None
         elif "from fm_biometric_enrollments" in s and "for update" in s:
             self._last = (
@@ -63,8 +67,21 @@ class _Cur:
         elif s.startswith("update fm_models") and "assets_status='ready'" in s:
             self.store.ready_updates += 1
             self._last = None
+        elif s.startswith("update fm_models") and "assets_status='failed'" in s:
+            self.store.failed_updates += 1
+            self._last = None
+        elif s.startswith("update fm_biometric_enrollments") and "status='failed'" in s:
+            self.store.enrollment_failed_updates += 1
+            self._last = None
         elif s.startswith("insert into fm_biometric_enrollment_photo_cleanup"):
-            self.store.cleanup_refs.append({"angle": params[1], "reason": "delete"})
+            self.store.cleanup_refs.append({"angle": params[1], "key": params[2], "reason": "delete"})
+            self._last = None
+        elif s.startswith("delete from fm_biometric_enrollment_photo_cleanup"):
+            enrollment_id, key = params
+            self.store.cleanup_refs = [
+                ref for ref in self.store.cleanup_refs
+                if not (ref.get("key") == key and enrollment_id == ENROLLMENT_ID)
+            ]
             self._last = None
         else:
             self._last = None
@@ -87,6 +104,18 @@ class _Conn:
         self.store = store
 
     async def commit(self):
+        new_statements = [
+            " ".join(sql.split()).lower()
+            for sql, _ in self.store.log[self.store.last_commit_index:]
+        ]
+        self.store.commits.append(new_statements)
+        self.store.last_commit_index = len(self.store.log)
+        if (
+            self.store.crash_after_done_commit
+            and any("update jobs set status='done'" in stmt for stmt in new_statements)
+        ):
+            self.store.crash_after_done_commit = False
+            raise RuntimeError("synthetic_after_commit_crash")
         return None
 
     async def rollback(self):
@@ -109,12 +138,13 @@ class _Pool:
 
 
 class _FaceR2:
-    def __init__(self, *, fail_delete: str | None = None):
+    def __init__(self, *, fail_delete: str | None = None, fail_put: str | None = None):
         self.get_order: list[str] = []
         self.copies: list[CopyCall] = []
         self.puts: list[tuple[str, str]] = []
         self.deletes: list[str] = []
         self.fail_delete = fail_delete
+        self.fail_put = fail_put
 
     def get_bytes(self, key):
         angle = key.split("/")[-1].split(".")[0]
@@ -126,6 +156,8 @@ class _FaceR2:
 
     def put_bytes(self, key, data, mime, cache=None):
         self.puts.append((key, mime))
+        if self.fail_put and self.fail_put in key:
+            raise RuntimeError("provider leaked/key.png")
 
     def delete(self, key):
         self.deletes.append(key)
@@ -143,6 +175,8 @@ class _Store:
         lease_ok=True,
         photos=None,
         old_asset_keys=None,
+        biometric_enabled=True,
+        crash_after_done_commit=False,
     ):
         self.log = []
         self.initial_binding = initial_binding
@@ -150,8 +184,19 @@ class _Store:
         self.lease_ok = lease_ok
         self.model_status = "pending"
         self.ready_updates = 0
+        self.failed_updates = 0
+        self.enrollment_failed_updates = 0
         self.cleanup_refs = []
+        self.commits = []
+        self.last_commit_index = 0
+        self.crash_after_done_commit = crash_after_done_commit
+        self.biometric_enabled = biometric_enabled
         self.old_asset_keys = old_asset_keys or {}
+        self.legacy_rows = [
+            {"angle": "side", "r2_key": "legacy/side.png", "mime_type": "image/png"},
+            {"angle": "front", "r2_key": "legacy/front.png", "mime_type": "image/png"},
+            {"angle": "angle45", "r2_key": "legacy/angle45.png", "mime_type": "image/png"},
+        ]
         self.enrollment_rows = photos if photos is not None else [
             {
                 "status": status,
@@ -201,7 +246,10 @@ def build_worker_fixture(**store_kwargs):
     app = types.SimpleNamespace(state=types.SimpleNamespace(
         pool=_Pool(store),
         r2_face=face_r2,
-        settings=make_settings(fm_face_qc_enabled=False),
+        settings=make_settings(
+            fm_face_qc_enabled=False,
+            fm_biometric_enrollment_enabled=store.biometric_enabled,
+        ),
     ))
     return app, store.log, face_r2, store
 
@@ -276,7 +324,8 @@ def test_lost_final_lease_cleans_attempt_and_does_not_set_ready():
 
     attempted = [copy.destination for copy in face_r2.copies] + [key for key, _ in face_r2.puts]
     assert attempted
-    assert set(attempted).issubset(set(face_r2.deletes))
+    assert face_r2.deletes == []
+    assert set(attempted).issubset({ref["key"] for ref in store.cleanup_refs})
     assert store.ready_updates == 0
 
 
@@ -294,6 +343,70 @@ def test_failed_post_commit_delete_keeps_retry_reference_without_logging_private
     assert store.cleanup_refs
     assert "old/front.png" not in caplog.text
     assert "provider leaked/key.png" not in caplog.text
+
+
+def test_final_swap_registers_cleanup_intents_before_commit_survives_crash():
+    app, _log, _face_r2, store = build_worker_fixture(
+        old_asset_keys={"face_front": "old/front.png"},
+        crash_after_done_commit=True,
+    )
+
+    asyncio.run(run_fm_model_asset_job(app, _job()))
+
+    keys = {ref["key"] for ref in store.cleanup_refs}
+    assert {
+        "quarantine/front.png",
+        "quarantine/angle45.png",
+        "quarantine/side.png",
+        "old/front.png",
+    }.issubset(keys)
+    done_commit = next(
+        commit for commit in store.commits
+        if any("update jobs set status='done'" in statement for statement in commit)
+    )
+    assert any("fm_biometric_enrollment_photo_cleanup" in statement for statement in done_commit)
+
+
+def test_prewrite_failure_leaves_durable_cleanup_without_private_leak(caplog):
+    store = _Store()
+    face_r2 = _FaceR2(fail_put="grid_sedcard")
+    app = types.SimpleNamespace(state=types.SimpleNamespace(
+        pool=_Pool(store),
+        r2_face=face_r2,
+        settings=make_settings(
+            fm_face_qc_enabled=False,
+            fm_biometric_enrollment_enabled=True,
+        ),
+    ))
+
+    asyncio.run(run_fm_model_asset_job(app, _job()))
+
+    assert any("grid_sedcard" in ref["key"] for ref in store.cleanup_refs)
+    assert "provider leaked/key.png" not in caplog.text
+
+
+def test_lost_lease_does_not_delete_newer_deterministic_keys_or_fail_model():
+    app, _log, face_r2, store = build_worker_fixture(lease_ok=False)
+
+    asyncio.run(run_fm_model_asset_job(app, _job()))
+
+    assert face_r2.puts
+    assert face_r2.deletes == []
+    assert store.failed_updates == 0
+    assert store.enrollment_failed_updates == 0
+
+
+def test_flag_off_model_only_job_uses_legacy_source_without_qc():
+    app, log, face_r2, store = build_worker_fixture(biometric_enabled=False)
+
+    asyncio.run(run_fm_model_asset_job(app, _job({"modelId": MODEL_ID})))
+
+    sql = " | ".join(" ".join(statement.split()) for statement, _ in log)
+    assert "personalization_face_photos" in sql
+    assert "pairwise_min_similarity" not in sql
+    assert face_r2.get_order == ["front", "angle45", "side"]
+    assert face_r2.puts
+    assert store.ready_updates == 1
 
 
 def test_manual_build_rejects_when_biometric_enrollment_enabled(monkeypatch):

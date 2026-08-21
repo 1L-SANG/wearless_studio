@@ -192,6 +192,32 @@ def test_sweep_completes_terminal_false_evidence_with_no_cleanup_rows():
     assert store.enrollments[0]["raw_deletion_evidence"]["quarantineDeletedCount"] == 0
 
 
+def test_sweep_drains_due_license_pending_cleanup_rows():
+    store = EnrollmentStore()
+    r2 = FakeR2()
+    enrollment_id = _add_enrollment(store, status="license_pending")
+    store.cleanup.append(
+        {
+            "enrollment_id": enrollment_id,
+            "angle": "front",
+            "r2_key": "private/stale-front.jpg",
+            "reason": "delete",
+            "created_at": NOW,
+            "not_before": NOW,
+        }
+    )
+    r2.objects["private/stale-front.jpg"] = (b"front", "image/jpeg")
+
+    cleaned = asyncio.run(
+        facemarket_enrollment.sweep_terminal_enrollments(_app(store, r2), limit=100)
+    )
+
+    assert cleaned == 1
+    assert r2.deletes == ["private/stale-front.jpg"]
+    assert store.cleanup == []
+    assert store.enrollments[0]["status"] == "license_pending"
+
+
 def test_dispatcher_recovery_runs_biometric_sweep_when_feature_enabled(monkeypatch):
     calls = []
 

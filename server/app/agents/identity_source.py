@@ -31,7 +31,7 @@ def select_source(*, selected_model_id, license_row, has_real_assets: bool,
     return "NONE"
 
 
-async def resolve_real_model_assets(conn, model_id: str):
+async def resolve_real_model_assets(conn, model_id: str, *, allow_legacy: bool = False):
     """등록된 실존 모델 자산을 계약 순서(face_front, grid_sedcard)로 반환.
 
     assets_status='ready' 이고 두 뷰가 모두 유효할 때만 refs 리스트. 아니면 None(→ VIRTUAL/폴백).
@@ -58,17 +58,22 @@ async def resolve_real_model_assets(conn, model_id: str):
     if not rows or rows[0]["model_status"] != "verified" or rows[0]["assets_status"] != "ready":
         return None
     current_enrollment_id = rows[0].get("current_enrollment_id")
-    if not current_enrollment_id:
-        return None
     by_view = {r["view"]: r for r in rows if r.get("view")}
     out = []
     for view in ("face_front", "grid_sedcard"):
         r = by_view.get(view)
         if not r or not r.get("r2_key") or not str(r.get("mime") or "").startswith("image/"):
             return None
-        if str(r.get("source_enrollment_id") or "") != str(current_enrollment_id):
-            return None
         if not r.get("evidence_version"):
+            return None
+        if current_enrollment_id:
+            if str(r.get("source_enrollment_id") or "") != str(current_enrollment_id):
+                return None
+        elif not (
+            allow_legacy
+            and not r.get("source_enrollment_id")
+            and r.get("evidence_version") == "legacy-personalization-v1"
+        ):
             return None
         out.append({"key": r["r2_key"], "mime": r["mime"], "bucket": r.get("bucket") or "face"})
     return out

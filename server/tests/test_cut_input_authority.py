@@ -663,7 +663,7 @@ def test_editor_real_product_prunes_identity_and_never_sets_settlement_flag(monk
     _patch_editor_common(monkeypatch, captured)
     model_id = "11111111-1111-1111-1111-111111111111"
 
-    async def fake_real_refs(conn, selected_model_id):
+    async def fake_real_refs(conn, selected_model_id, **_kwargs):
         assert selected_model_id == model_id
         return [
             {"key": "face-front", "mime": "image/png", "bucket": "face"},
@@ -717,7 +717,7 @@ def test_editor_real_visible_worn_cut_enables_identity_contract(monkeypatch):
     _patch_editor_common(monkeypatch, captured)
     model_id = "11111111-1111-1111-1111-111111111111"
 
-    async def fake_real_refs(conn, selected_model_id):
+    async def fake_real_refs(conn, selected_model_id, **_kwargs):
         return [
             {"key": "face-front", "mime": "image/png", "bucket": "face"},
             {"key": "face-sheet", "mime": "image/png", "bucket": "face"},

@@ -351,11 +351,15 @@ async def _drain_photo_cleanup_locked(
         async with conn.cursor() as cur:
             await cur.execute(
                 f"""
-                select c.angle, c.r2_key, c.reason, p.storage_state as current_state
+                select c.angle, c.r2_key, c.reason, p.storage_state as current_state,
+                       a.view as current_asset_view
                 from fm_biometric_enrollment_photo_cleanup c
                 left join fm_biometric_enrollment_photos p
                   on p.enrollment_id = c.enrollment_id
                  and p.angle = c.angle and p.r2_key = c.r2_key
+                left join fm_model_assets a
+                  on a.source_enrollment_id = c.enrollment_id
+                 and a.r2_key = c.r2_key
                 where {' and '.join(clauses)}
                 order by c.created_at
                 """,
@@ -377,7 +381,7 @@ async def _drain_photo_cleanup_locked(
     deleted_count = 0
     failed_count = 0
     for row in rows:
-        if row.get("current_state") in {"quarantine", "approved"}:
+        if row.get("current_state") in {"quarantine", "approved"} or row.get("current_asset_view"):
             delete_object = False
         else:
             delete_object = True
@@ -1302,6 +1306,27 @@ async def sweep_terminal_enrollments(app, *, limit: int = 100) -> int:
                 )
                 candidates = await cur.fetchall()
             await conn.commit()
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    select e.id::text as id
+                    from fm_biometric_enrollments e
+                    where e.status = 'license_pending'
+                      and exists (
+                          select 1
+                          from fm_biometric_enrollment_photo_cleanup c
+                          where c.enrollment_id = e.id
+                            and c.not_before <= now()
+                      )
+                    order by e.id
+                    for update skip locked
+                    limit %s
+                    """,
+                    (limit,),
+                )
+                cleanup_candidates = await cur.fetchall()
+            await conn.commit()
     except Exception as exc:
         logger.warning(
             "facemarket_enrollment_cleanup_sweep_failed",
@@ -1314,6 +1339,11 @@ async def sweep_terminal_enrollments(app, *, limit: int = 100) -> int:
         cleaned += int(
             await cleanup_terminal_enrollment(app, enrollment_id=row["id"])
         )
+    for row in cleanup_candidates:
+        deleted, failed = await _drain_photo_cleanup(
+            app, enrollment_id=row["id"], reason="delete"
+        )
+        cleaned += int(deleted > 0 and failed == 0)
     return cleaned
 
 

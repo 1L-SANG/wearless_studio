@@ -890,8 +890,14 @@ async def run_detail_page_job(app, job: dict) -> None:
             license_row = await _load_license_row(app, conn, project)
             # 실존 자산 조회는 facemarket 켜졌고 선택 모델이 있을 때만 — off(기존/가상 경로)면
             # 쿼리조차 돌지 않아 완전 무영향.
-            real_refs = (await identity_source.resolve_real_model_assets(conn, selected_model_id)
-                         if selected_model_id and s.facemarket_enabled else None)
+            real_refs = (
+                await identity_source.resolve_real_model_assets(
+                    conn,
+                    selected_model_id,
+                    allow_legacy=not getattr(s, "fm_biometric_enrollment_enabled", False),
+                )
+                if selected_model_id and s.facemarket_enabled else None
+            )
             source = identity_source.select_source(
                 selected_model_id=selected_model_id, license_row=license_row,
                 has_real_assets=real_refs is not None, has_license_face=face_ref is not None)

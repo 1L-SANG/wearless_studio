@@ -71,8 +71,8 @@ class _Conn:
 _FM_UUID = "11111111-1111-1111-1111-111111111111"  # 실존 모델 id 는 uuid (fm_models.id)
 
 
-def _run(rows):
-    return asyncio.run(resolve_real_model_assets(_Conn(rows), _FM_UUID))
+def _run(rows, **kwargs):
+    return asyncio.run(resolve_real_model_assets(_Conn(rows), _FM_UUID, **kwargs))
 
 
 class _ExplodingConn:
@@ -154,3 +154,14 @@ def test_resolver_requires_asset_source_to_equal_current_enrollment():
 
 def test_resolver_requires_evidence_version():
     assert _run(_asset_rows(evidence_version="")) is None
+
+
+def test_resolver_accepts_legacy_assets_only_when_rollback_allows_it():
+    rows = _asset_rows(
+        current_enrollment_id=None,
+        asset_source_enrollment_id=None,
+        evidence_version="legacy-personalization-v1",
+    )
+
+    assert _run(rows) is None
+    assert _run(rows, allow_legacy=True) is not None
