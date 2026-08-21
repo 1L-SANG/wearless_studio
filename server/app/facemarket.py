@@ -432,8 +432,22 @@ async def build_my_model_assets(request: Request, user_id: str = Depends(require
 # ── 얼굴 라이선스 (FM: 얼굴 업로드 + 조건) ─────────────────────────
 # 얼굴 이미지 = 생체 PII. 공개 R2 URL 절대 노출 금지 → 비공개 버킷 저장 + 게이트 스트림.
 # face_image_uri = 게이트 라우트 URL(공개 URL 아님). face_image_key = 내부 비공개 키(응답 제외).
-MAX_USE_ITEMS = 20                 # allowed/forbidden 용도 태그 개수 상한
-MAX_USE_LEN = 60                   # 용도 태그 1개 길이 상한
+ALLOWED_BRAND_USE_CATEGORIES = (
+    "일반 여성 의류",
+    "남성 의류",
+    "캐주얼·스트릿",
+    "스포츠·애슬레저",
+    "뷰티·화장품",
+    "액세서리·잡화",
+)
+FORBIDDEN_BRAND_USE_CATEGORIES = (
+    "속옷·란제리",
+    "수영복·비키니",
+    "성인용품",
+    "주류·담배",
+    "의료·성형",
+    "정치·종교",
+)
 _EXT_TO_MIME = {ext: mime for mime, ext in MIME_EXT.items()}  # 게이트 응답 Content-Type 역매핑
 
 # 응답 화이트리스트 — face_image_key(비공개)·모델 PII 제외. uuid(id/model_id)는 ::text 캐스트
@@ -482,15 +496,16 @@ def _r2_face(request: Request):
     return r2
 
 
-def _clean_uses(items: list[str]) -> list[str]:
-    """용도 태그 정규화: strip·빈값 제거·중복 제거(순서 유지)·개수/길이 상한."""
+def _clean_uses(items: list[str], accepted: tuple[str, ...]) -> list[str]:
     out: list[str] = []
     for raw in items or []:
-        v = (raw or "").strip()[:MAX_USE_LEN]
-        if v and v not in out:
-            out.append(v)
-        if len(out) >= MAX_USE_ITEMS:
-            break
+        value = (raw or "").strip()
+        if not value:
+            continue
+        if value not in accepted:
+            raise _err("invalid_use_category", "정해진 브랜드 유형만 선택할 수 있어요.")
+        if value not in out:
+            out.append(value)
     return out
 
 
@@ -804,8 +819,8 @@ async def create_license(
     except (TypeError, ValueError):
         raise _err("invalid_enrollment_id", "등록 ID 형식이 올바르지 않습니다.", status=400)
     valid_until = datetime.now(timezone.utc) + timedelta(days=body.valid_days)
-    allowed = _clean_uses(body.allowed_use)
-    forbidden = _clean_uses(body.forbidden_use)
+    allowed = _clean_uses(body.allowed_use, ALLOWED_BRAND_USE_CATEGORIES)
+    forbidden = _clean_uses(body.forbidden_use, FORBIDDEN_BRAND_USE_CATEGORIES)
     unit_price = body.unit_price
 
     license_id = str(uuid.uuid4())

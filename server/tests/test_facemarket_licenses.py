@@ -506,6 +506,59 @@ def valid_license_body(enrollment_id=ENROLLMENT_ID):
     }
 
 
+def test_license_use_categories_are_the_exact_approved_sets():
+    assert facemarket.ALLOWED_BRAND_USE_CATEGORIES == (
+        "일반 여성 의류",
+        "남성 의류",
+        "캐주얼·스트릿",
+        "스포츠·애슬레저",
+        "뷰티·화장품",
+        "액세서리·잡화",
+    )
+    assert facemarket.FORBIDDEN_BRAND_USE_CATEGORIES == (
+        "속옷·란제리",
+        "수영복·비키니",
+        "성인용품",
+        "주류·담배",
+        "의료·성형",
+        "정치·종교",
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("allowedUse", "광고"),
+        ("forbiddenUse", "성인"),
+        ("allowedUse", "정치·종교"),
+        ("forbiddenUse", "일반 여성 의류"),
+    ],
+    ids=[
+        "unknown-allowed",
+        "unknown-forbidden",
+        "forbidden-preset-in-allowed",
+        "allowed-preset-in-forbidden",
+    ],
+)
+def test_create_license_rejects_invalid_use_category_before_db_and_holder(
+    biometric_fm, make_token, holder_stub, field, value
+):
+    client, store, _ = biometric_fm
+    body = valid_license_body()
+    body[field] = [value]
+
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json=body,
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_use_category"
+    assert store.get("sql", []) == []
+    assert holder_stub.calls == []
+
+
 def _assert_biometric_creation_gate(response):
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "biometric_enrollment_required"
@@ -652,6 +705,40 @@ def test_license_starts_pending_and_activates_only_after_vc(
     issue_call = next(c for c in holder_stub.calls if c["path"].endswith("/issue-vc"))
     assert issue_call["payload"]["idempotencyKey"] == f"fm-license:{card['id']}"
     assert all(c["secret"] == "shared-secret" for c in holder_stub.calls)
+
+
+def test_license_terms_are_normalized_once_for_storage_and_holder_claims(
+    biometric_fm, make_token, holder_stub
+):
+    client, store, _ = biometric_fm
+    enrollment_id = _seed_license_pending_enrollment(store)
+
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json={
+            **valid_license_body(enrollment_id),
+            "allowedUse": [
+                "  일반 여성 의류  ",
+                "",
+                "남성 의류",
+                "일반 여성 의류",
+            ],
+            "forbiddenUse": [
+                "  정치·종교  ",
+                "\t",
+                "의료·성형",
+                "정치·종교",
+            ],
+        },
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["allowedUse"] == ["일반 여성 의류", "남성 의류"]
+    assert response.json()["forbiddenUse"] == ["정치·종교", "의료·성형"]
+    issue_call = next(c for c in holder_stub.calls if c["path"].endswith("/issue-vc"))
+    assert issue_call["payload"]["claims"]["allowedUse"] == "일반 여성 의류, 남성 의류"
+    assert issue_call["payload"]["claims"]["forbiddenUse"] == "정치·종교, 의료·성형"
 
 
 def test_holder_failure_leaves_everything_non_active(
@@ -1064,8 +1151,8 @@ def test_conflict_reload_uses_persisted_terms_for_holder_claims(
     persisted = _seed_pending_license(
         store,
         enrollment_id=enrollment_id,
-        allowed_use=["persisted runway"],
-        forbidden_use=["persisted adult"],
+        allowed_use=["남성 의류"],
+        forbidden_use=["주류·담배"],
         unit_price=4321,
         valid_until=datetime(2027, 2, 3, tzinfo=timezone.utc),
         digest="sha256-persisted-digest",
@@ -1077,8 +1164,8 @@ def test_conflict_reload_uses_persisted_terms_for_holder_claims(
         "/v1/facemarket/licenses",
         json={
             "enrollmentId": enrollment_id,
-            "allowedUse": ["second request"],
-            "forbiddenUse": ["second forbidden"],
+            "allowedUse": ["일반 여성 의류"],
+            "forbiddenUse": ["정치·종교"],
             "unitPrice": 9999,
             "validDays": 30,
         },
@@ -1089,8 +1176,8 @@ def test_conflict_reload_uses_persisted_terms_for_holder_claims(
     issue_call = next(c for c in holder_stub.calls if c["path"].endswith("/issue-vc"))
     assert issue_call["payload"]["idempotencyKey"] == f"fm-license:{persisted['id']}"
     assert issue_call["payload"]["claims"] == {
-        "allowedUse": "persisted runway",
-        "forbiddenUse": "persisted adult",
+        "allowedUse": "남성 의류",
+        "forbiddenUse": "주류·담배",
         "unitPrice": 4321,
         "licenseValidUntil": "2027-02-03",
         "faceImageDigest": "sha256-persisted-digest",
