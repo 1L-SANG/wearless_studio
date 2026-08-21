@@ -104,5 +104,6 @@ pnpm build
     - 모든 스타일링 작업은 `src/styles/tokens.css`에 정의된 CSS 변수(`var(--*)`)만을 사용하여 이루어집니다. 컴포넌트 내에 임의의 HEX 색상 코드, 인라인 스타일, 독자적인 아웃라인 등 디자인 시스템에 어긋나는 요소는 삽입할 수 없습니다.
 3. **Mock-First 원칙**
     - 프론트엔드는 UI와 로컬 상태만을 소유하며 Supabase나 실서버 AI 엔드포인트를 컴포넌트 레벨에서 직접 호출하지 않습니다. 모든 통신 흐름은 `src/mock/` layer의 `api.js`, `db.js`, `placeholders.js`를 먼저 거치도록 구현해야 합니다.
+    - 예외는 AWS Face Liveness의 브라우저 카메라 스트리밍뿐입니다. `FaceLivenessStep`은 서버가 발급한 일회용 세션과 임시 자격증명을 메모리에서만 사용하며, 저장·로그·앱 API 우회에 사용하지 않습니다.
 4. **Append-Only 데이터베이스 마이그레이션**
     - `supabase/migrations/*.sql`에 정의된 마이그레이션 히스토리는 절대 사후 편집하거나 삭제하지 않습니다. 스키마 변경 시에는 반드시 새로운 포워드 마이그레이션 파일(`<timestamp>_*.sql`)을 추가해야 합니다.
