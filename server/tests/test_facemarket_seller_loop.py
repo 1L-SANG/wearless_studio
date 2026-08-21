@@ -274,6 +274,19 @@ def test_resolve_picks_model_latest_license():
     assert out["id"] == "lic-1"
 
 
+def test_resolve_accepts_snake_case_selected_model_alias():
+    mid = "11111111-1111-1111-1111-111111111111"
+    lic = {"id": "lic-1", "model_id": mid, "status": "active"}
+
+    out = _resolve(
+        {},
+        {"selected_model_id": mid},
+        {"by_id": {}, "by_model": {mid: lic}},
+    )
+
+    assert out["id"] == "lic-1"
+
+
 def test_resolve_prefers_locked_project_license():
     # 프로젝트가 이미 라이선스에 잠겨 있으면(재생성) 그 라이선스를 우선 로드(상태 무관).
     mid = "11111111-1111-1111-1111-111111111111"

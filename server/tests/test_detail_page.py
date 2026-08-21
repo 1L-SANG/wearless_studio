@@ -1313,7 +1313,14 @@ def test_run_detail_page_job_uses_analysis_model_without_mutating_storyboard(mon
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
-    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"), r2=TrackingR2())
+    app = fake_worker_app(
+        make_settings(
+            gemini_api_key="x",
+            r2_bucket="b",
+            facemarket_enabled=True,
+        ),
+        r2=TrackingR2(),
+    )
     asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=2)))
 
     assert captured["person"]["spec"]["modelId"] == "mB"

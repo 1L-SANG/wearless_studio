@@ -2,7 +2,7 @@
 
 REAL: 셀러가 실존 모델(selectedModelId)+활성 라이선스 → 그리드(face_front,grid_sedcard)가
 비공개 face 버킷에서 로드돼 컷에 주입되고, 단일 라이선스 얼굴은 미첨부(이중주입 0), 검증 배지 노출.
-REJECTED: 실존 자산 있으나 라이선스 불일치/비활성 → 얼굴 미주입, 배지 없음.
+REJECTED: 선택한 실존 모델에 검증된 라이선스가 없으면 자산 조회 전에 잡 전체 실패.
 """
 
 import asyncio
@@ -10,6 +10,7 @@ import contextlib
 import types
 from datetime import datetime, timedelta, timezone
 
+from app import facemarket
 from app.workers import detail_page_job as dpj
 from conftest import FakeR2, make_settings, worker_job
 
@@ -34,26 +35,43 @@ def _asset_rows(status="ready"):
 def _license_meta(model_id="11111111-1111-1111-1111-111111111111", status="active", days=30):
     return {"id": "lic-1", "model_id": model_id, "status": status,
             "license_valid_until": datetime.now(timezone.utc) + timedelta(days=days),
-            "display_name": "노지운"}
+            "display_name": "노지운", "unit_price": 100}
 
 
 class _Cur:
-    def __init__(self, asset_rows, license_meta):
-        self._assets = asset_rows
-        self._lic = license_meta
+    def __init__(self, pool):
+        self._pool = pool
         self._sql = ""
+        self._params = ()
 
     async def execute(self, sql, params=None):
         self._sql = " ".join(sql.split())
+        self._params = params or ()
+        if "left join fm_model_assets" in self._sql:
+            self._pool.asset_queries += 1
 
     async def fetchone(self):
+        license_meta = self._pool.license_meta
+        if "from fm_licenses where id" in self._sql:
+            return license_meta
+        if "from fm_licenses where model_id" in self._sql:
+            if license_meta and str(license_meta["model_id"]) == str(self._params[0]):
+                return license_meta
+            return None
         if "l.id::text as id" in self._sql and "l.model_id::text as model_id" in self._sql:
-            return self._lic          # _load_license_row
+            return license_meta       # _load_license_row
+        if "select model_id::text as model_id, unit_price" in self._sql:
+            if license_meta:
+                return {
+                    "model_id": license_meta["model_id"],
+                    "unit_price": license_meta["unit_price"],
+                }
+            return None
         return None                    # _load_license_face → 얼굴 없음(REAL은 그리드로 대체)
 
     async def fetchall(self):
         if "left join fm_model_assets" in self._sql:
-            return self._assets        # resolve_real_model_assets
+            return self._pool.asset_rows  # resolve_real_model_assets
         return []
 
     async def __aenter__(self):
@@ -64,26 +82,26 @@ class _Cur:
 
 
 class _Conn:
-    def __init__(self, asset_rows, license_meta):
-        self._a = asset_rows
-        self._l = license_meta
+    def __init__(self, pool):
+        self._pool = pool
 
     async def commit(self):
         return None
 
     def cursor(self):
-        return _Cur(self._a, self._l)
+        return _Cur(self._pool)
 
 
 class _Pool:
     def __init__(self, asset_rows, license_meta):
-        self._a = asset_rows
-        self._l = license_meta
+        self.asset_rows = asset_rows
+        self.license_meta = license_meta
+        self.asset_queries = 0
 
     def connection(self):
         @contextlib.asynccontextmanager
         async def _cm():
-            yield _Conn(self._a, self._l)
+            yield _Conn(self)
 
         return _cm()
 
@@ -111,11 +129,13 @@ def _app(asset_rows, license_meta, face_r2):
     return types.SimpleNamespace(state=state)
 
 
-def _patch(monkeypatch, captured):
+def _patch(monkeypatch, captured, *, project=None, analysis=None, storyboard=None):
     async def fake_gp(conn, uid, pid):
-        return {"facemarket_license_id": "lic-1", "copywriting": False}
+        return project or {"facemarket_license_id": "lic-1", "copywriting": False}
 
     async def fake_sb(conn, pid):
+        if storyboard is not None:
+            return storyboard
         return [{"id": "b1", "source": "ai", "cutType": "styling", "shot": "full"}]
 
     async def fake_prod(conn, pid):
@@ -123,6 +143,8 @@ def _patch(monkeypatch, captured):
                 "colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
 
     async def fake_analysis(conn, pid):
+        if analysis is not None:
+            return analysis
         return {"selectedModelId": "11111111-1111-1111-1111-111111111111"}
 
     async def fake_asset(conn, uid, aid):
@@ -140,7 +162,12 @@ def _patch(monkeypatch, captured):
         return [{"id": "b0", "kind": "hook", "elements": []}]
 
     async def fake_finalize(conn, **kw):
+        captured["success"] = kw
         return {"editor_blocks": kw["editor_blocks"], "available": 99}
+
+    async def fake_finalize_failure(conn, **kw):
+        captured["failure"] = kw
+        return {"status": "failed"}
 
     async def fake_emit(pool, job_id, et, payload):
         return None
@@ -153,6 +180,7 @@ def _patch(monkeypatch, captured):
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", fake_finalize_failure)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
 
@@ -174,33 +202,78 @@ def test_real_source_injects_grid_from_face_bucket_and_shows_badge(monkeypatch):
     assert captured["calls"] and captured["calls"][0]["n_images"] >= 2
 
 
-def test_rejected_when_license_model_mismatch(monkeypatch):
-    captured = {}
-    face_r2 = _FaceR2()
-    _patch(monkeypatch, captured)
-    # 라이선스가 다른 모델 → REJECTED → 얼굴 미주입, 배지 없음
-    app = _app(_asset_rows(), _license_meta(model_id="other-model"), face_r2)
-
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
-
-    assert face_r2.gets == []                      # 그리드 미로드
-    assert captured["license_notice"] is None      # 배지 없음
-
-
-def test_rejected_falls_back_to_virtual_model_pack_for_consistency(monkeypatch):
-    # prod 안전망: 실모델 골랐는데 라이선스 무효(REJECTED) → 착용컷이 참조 0장으로 랜덤이 되지 않게
-    # 결정적 가상모델(mB) 얼굴·시트·체형 묶음으로 폴백. 단 무라이선스 실 얼굴은 재사용 안 함,
-    # 검증 배지도 없음(실 얼굴 아님). = 랜덤 차단 + 컴플라이언스 동시 충족.
+def test_locked_license_model_mismatch_fails_before_real_asset_resolution(monkeypatch):
     captured = {}
     face_r2 = _FaceR2()
     _patch(monkeypatch, captured)
     app = _app(_asset_rows(), _license_meta(model_id="other-model"), face_r2)
+    app.state.fm_chain = object()
+
+    async def fake_settlement(*_args, **_kwargs):
+        captured.setdefault("settlements", []).append(_kwargs)
+
+    monkeypatch.setattr(facemarket, "record_license_settlement", fake_settlement)
 
     asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
 
-    assert face_r2.gets == []                       # 무라이선스 실 얼굴 미사용(컴플라이언스)
-    assert captured["license_notice"] is None       # 검증 배지 없음(실 얼굴 아님)
-    # 착용컷 b1: 상품 1장 + mB 얼굴·전신 기준 2장 = 3
-    # (참조 0장 → 랜덤을 막는 결정적 인물·체형)
-    assert captured["calls"] and captured["calls"][0]["n_images"] == 3
-    assert "MODEL FULL BODY —" in captured["calls"][0]["manifest"]
+    assert app.state.pool.asset_queries == 0
+    assert face_r2.gets == []
+    assert captured.get("calls") is None
+    assert captured.get("success") is None
+    assert captured.get("settlements") is None
+    assert captured["failure"]["reserved"] == 1
+
+
+def test_selected_real_model_without_license_fails_before_real_asset_resolution(monkeypatch):
+    captured = {}
+    face_r2 = _FaceR2()
+    _patch(
+        monkeypatch,
+        captured,
+        project={"copywriting": False},
+        analysis={"selectedModelId": "11111111-1111-1111-1111-111111111111"},
+    )
+    app = _app(_asset_rows(), None, face_r2)
+    app.state.fm_chain = object()
+
+    async def fake_settlement(*_args, **_kwargs):
+        captured.setdefault("settlements", []).append(_kwargs)
+
+    monkeypatch.setattr(facemarket, "record_license_settlement", fake_settlement)
+
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+
+    assert app.state.pool.asset_queries == 0
+    assert face_r2.gets == []
+    assert captured.get("calls") is None
+    assert captured.get("success") is None
+    assert captured.get("settlements") is None
+    assert captured["failure"]["reserved"] == 1
+
+
+def test_product_only_selected_real_model_does_not_require_face_license(monkeypatch):
+    captured = {}
+    face_r2 = _FaceR2()
+    _patch(
+        monkeypatch,
+        captured,
+        project={"copywriting": False},
+        analysis={"selectedModelId": "11111111-1111-1111-1111-111111111111"},
+        storyboard=[
+            {
+                "id": "product",
+                "source": "ai",
+                "cutType": "product",
+                "shot": "ghost",
+            }
+        ],
+    )
+    app = _app(_asset_rows(), None, face_r2)
+
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+
+    assert app.state.pool.asset_queries == 0
+    assert face_r2.gets == []
+    assert captured["calls"]
+    assert captured["success"]["charge"] == 1
+    assert captured.get("failure") is None

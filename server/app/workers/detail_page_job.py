@@ -873,6 +873,9 @@ async def run_detail_page_job(app, job: dict) -> None:
                 for b in storyboard
                 if isinstance(b, dict) and b.get("source") == "ai"
             ]
+            uses_model_identity = any(
+                block.get("cutType") in _WORN_CUT_TYPES for block in ai_blocks
+            )
             example_repeat_indexes = _example_repeat_indexes(
                 ai_blocks, clothing_type
             )
@@ -882,21 +885,40 @@ async def run_detail_page_job(app, job: dict) -> None:
 
             # 요청 게이트 통과 후의 해지·만료·VC 변경 레이스를 워커에서 재확인한다.
             # 이 순서가 실모델 자산 조회·비공개 얼굴 로드보다 반드시 앞서야 한다.
-            if s.facemarket_enabled:
+            if s.facemarket_enabled and uses_model_identity:
                 license_to_verify = await facemarket.resolve_project_license(
                     conn, project, analysis
                 )
+                try:
+                    uuid.UUID(str(selected_model_id))
+                except (TypeError, ValueError):
+                    selected_is_real = False
+                else:
+                    selected_is_real = True
+                if selected_is_real and (
+                    license_to_verify is None
+                    or str(license_to_verify.get("model_id")) != str(selected_model_id)
+                ):
+                    raise ValueError("license_rejected")
                 if license_to_verify is not None:
                     await facemarket.verify_license(app, license_to_verify)
 
             # FaceMarket 라이선스 얼굴(FM-31) — 프로젝트에 잠긴 라이선스가 있을 때만.
             # 잠금 없음 = 기존 마네킹 경로 → None, 아래 첨부·고지 분기 전부 미진입.
-            face_ref = await _load_license_face(app, conn, project)
+            face_ref = (
+                await _load_license_face(app, conn, project)
+                if uses_model_identity
+                else None
+            )
 
             # 컷당 단일 아이덴티티-소스 선택(codex [P1]) — 실존 모델 그리드/라이선스 얼굴/가상모델 중 1개.
-            # 실존 모델(REAL)은 라이선스 활성일 때만. 실자산 있는데 라이선스 실패면 REJECTED → 얼굴 미주입.
+            # 실존 모델(REAL)은 라이선스 활성일 때만. 남은 REJECTED 경로도 잡을 중단한다.
             from ..agents import identity_source
-            license_row = await _load_license_row(app, conn, project)
+            license_row = (
+                await _load_license_row(app, conn, project)
+                if uses_model_identity
+                else None
+            )
             # 실존 자산 조회는 facemarket 켜졌고 선택 모델이 있을 때만 — off(기존/가상 경로)면
             # 쿼리조차 돌지 않아 완전 무영향.
             real_refs = (
@@ -905,18 +927,18 @@ async def run_detail_page_job(app, job: dict) -> None:
                     selected_model_id,
                     allow_legacy=not getattr(s, "fm_biometric_enrollment_enabled", False),
                 )
-                if selected_model_id and s.facemarket_enabled else None
+                if selected_model_id and s.facemarket_enabled and uses_model_identity
+                else None
             )
             source = identity_source.select_source(
-                selected_model_id=selected_model_id, license_row=license_row,
+                selected_model_id=(selected_model_id if uses_model_identity else None),
+                license_row=license_row,
                 has_real_assets=real_refs is not None, has_license_face=face_ref is not None)
             # 관측 로그(PII 없음 — 소스 enum·플래그만). 데모·검증에서 REAL 주입 확인용.
             log.info("AG-06 identity source=%s job=%s hasReal=%s hasLicenseFace=%s",
                      source, job_id, real_refs is not None, face_ref is not None)
             if source == "REJECTED":
-                log.warning("AG-06 real model selected without active license; skipping face (job %s)", job_id)
-                face_ref = None
-                real_refs = None
+                raise ValueError("license_rejected")
             if source == "REAL" and license_row is not None:
                 notice_ctx = {"model_name": license_row["model_name"], "license_id": license_row["id"]}
             elif source == "LEGACY" and face_ref is not None:
@@ -1133,8 +1155,8 @@ async def run_detail_page_job(app, job: dict) -> None:
         fallback_model_id = s.detailpage_fallback_model_id
         # 폴백 registry 는 폴백이 실제로 가능한 소스에서만 지연 로드(파일 없으면 fail-open, 잡 안 죽임):
         #  VIRTUAL           → Phase B 결정적 치환(resolve_effective_model_id)
-        #  REAL·REJECTED     → prod 안전망(needs_identity_fallback → mB). 이 둘도 _virtual_ids 필요.
-        if fallback_model_id and source in ("VIRTUAL", "REAL", "REJECTED"):
+        #  REAL              → 자산 장애 안전망(needs_identity_fallback → mB).
+        if fallback_model_id and source in ("VIRTUAL", "REAL"):
             try:
                 _virtual_ids = set(cut_generator.load_virtual_model_registry())
             except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
@@ -1302,17 +1324,16 @@ async def run_detail_page_job(app, job: dict) -> None:
                 model_has_full_body = len(model_images) == 2
                 has_identity = False
                 face_slot = False
-            else:  # NONE / REJECTED — 얼굴 없이 생성
+            else:  # NONE — 얼굴 없이 생성
                 model_images = []
                 has_identity = False
                 face_slot = False
             # 안전망(prod facemarket ON): **실존 모델을 골랐는데** 착용컷 인물 참조가 0장이면
-            # (REJECTED=무라이선스 실모델, REAL grid 로드 실패) 결정적 가상모델로 폴백 — 랜덤 인물
-            # 원천 차단. Phase B 의 mB 폴백은 VIRTUAL 전용이라 REAL/REJECTED 를 못 막는다. 무모델
+            # (REAL grid 로드 실패) 결정적 가상모델로 폴백 — 랜덤 인물 원천 차단.
+            # Phase B 의 mB 폴백은 VIRTUAL 전용이라 REAL 을 못 막는다. 무모델
             # 선택(NONE)은 기존 동작 유지(모델을 요청하지 않은 프로젝트에 인물을 강요하지 않는다).
-            # 무라이선스 실 얼굴은 재사용 안 함(대체 인물 mB → 생체 라이선스 위반 없음). 검증 배지
-            # (has_identity)는 주지 않는다(실 얼굴 아님).
-            if source in ("REAL", "REJECTED") and cut_generator.needs_identity_fallback(
+            # 대체 인물 mB 에는 검증 배지(has_identity)를 주지 않는다(실 얼굴 아님).
+            if source == "REAL" and cut_generator.needs_identity_fallback(
                     cut_type=normalized.get("cutType") if normalized else None,
                     has_model_images=bool(model_images), face_slot=face_slot):
                 _fb_id = s.detailpage_fallback_model_id

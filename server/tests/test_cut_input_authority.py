@@ -196,7 +196,12 @@ def test_detail_product_prunes_mannequin_model_matching_and_owned_mood(monkeypat
 
     r2 = _TrackingR2()
     app = fake_worker_app(
-        make_settings(gemini_api_key="x", r2_bucket="b", detailpage_fallback_model_id=""),
+        make_settings(
+            gemini_api_key="x",
+            r2_bucket="b",
+            detailpage_fallback_model_id="",
+            facemarket_enabled=True,
+        ),
         r2=r2,
     )
     asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))

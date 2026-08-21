@@ -1718,7 +1718,10 @@ async def resolve_project_license(conn, project: dict, analysis: dict) -> dict |
         if row:
             return row
 
-    return await resolve_model_license(conn, (analysis or {}).get("selectedModelId"))
+    selected_model_id = (analysis or {}).get("selectedModelId") or (
+        analysis or {}
+    ).get("selected_model_id")
+    return await resolve_model_license(conn, selected_model_id)
 
 
 async def resolve_model_license(conn, model_id) -> dict | None:
