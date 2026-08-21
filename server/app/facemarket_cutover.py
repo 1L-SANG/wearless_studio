@@ -643,7 +643,7 @@ async def apply_initial_cutover(
             ):
                 raise CutoverBlocked("purge_incomplete")
             await _set_batch_status(pool, batch_id, "completed")
-            return manifest.public_summary()
+            return _batch_summary(await _batch_status(pool, batch_id))
         except CutoverBlocked as exc:
             await _set_batch_status(pool, batch_id, "failed", error_code=exc.code)
             raise
