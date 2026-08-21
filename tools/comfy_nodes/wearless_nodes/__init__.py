@@ -35,8 +35,29 @@ def _find_server_dir() -> Path | None:
     return None
 
 
+def _load_dotenv(server_dir: Path) -> int:
+    """server/.env 를 읽어 환경변수로 주입. 이미 설정된 값은 덮어쓰지 않는다."""
+    n = 0
+    for name in (".env", ".env.local"):
+        p = server_dir / name
+        if not p.exists():
+            continue
+        for line in p.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k = k.strip()
+            v = v.strip().strip('"').strip("'")
+            if k and k not in os.environ:
+                os.environ[k] = v
+                n += 1
+    return n
+
+
 _SERVER = _find_server_dir()
 _IMPORT_ERROR = None
+_DOTENV_LOADED = _load_dotenv(_SERVER) if _SERVER else 0
 
 if _SERVER and str(_SERVER) not in sys.path:
     sys.path.insert(0, str(_SERVER))
@@ -371,6 +392,7 @@ class WearlessStatus:
         info = {
             "server_dir": str(_SERVER) if _SERVER else None,
             "import_error": repr(_IMPORT_ERROR) if _IMPORT_ERROR else None,
+            "dotenv_vars_loaded": _DOTENV_LOADED,
             "gemini_key": bool(os.environ.get("GEMINI_API_KEY")),
             "openai_key": bool(os.environ.get("OPENAI_API_KEY")),
         }
