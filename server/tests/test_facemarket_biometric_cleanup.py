@@ -1,8 +1,11 @@
 import asyncio
+import builtins
 import json
 import types
 import uuid
 from datetime import timedelta
+
+import pytest
 
 from app import facemarket_enrollment
 from app.workers.dispatcher import JobDispatcher
@@ -14,12 +17,15 @@ from test_facemarket_biometric_enrollment import (
 )
 
 
-def _app(store, r2=None, *, enabled=True):
+def _app(store, r2=None, *, enabled=True, facemarket_enabled=True):
     return types.SimpleNamespace(
         state=types.SimpleNamespace(
             pool=FakePool(store),
             r2_face=r2 or FakeR2(),
-            settings=types.SimpleNamespace(fm_biometric_enrollment_enabled=enabled),
+            settings=types.SimpleNamespace(
+                facemarket_enabled=facemarket_enabled,
+                fm_biometric_enrollment_enabled=enabled,
+            ),
         )
     )
 
@@ -218,8 +224,17 @@ def test_sweep_drains_due_license_pending_cleanup_rows():
     assert store.enrollments[0]["status"] == "license_pending"
 
 
-def test_dispatcher_recovery_runs_biometric_sweep_when_feature_enabled(monkeypatch):
+@pytest.mark.parametrize(
+    ("facemarket_enabled", "biometric_enabled", "should_sweep"),
+    [(True, True, True), (True, False, True), (False, True, False)],
+    ids=["biometric-on", "biometric-rollback", "facemarket-off"],
+)
+def test_dispatcher_recovery_sweep_follows_facemarket_flag(
+    monkeypatch, facemarket_enabled, biometric_enabled, should_sweep
+):
     calls = []
+    imports = []
+    real_import = builtins.__import__
 
     async def fake_sweep(app, *, limit):
         calls.append((app, limit))
@@ -228,17 +243,27 @@ def test_dispatcher_recovery_runs_biometric_sweep_when_feature_enabled(monkeypat
     async def noop(*_args, **_kwargs):
         return []
 
+    def tracking_import(name, *args, **kwargs):
+        if name.endswith("facemarket_enrollment"):
+            imports.append(name)
+        return real_import(name, *args, **kwargs)
+
     monkeypatch.setattr("app.workers.dispatcher.repo.recover_stale_leases", noop)
     monkeypatch.setattr("app.workers.dispatcher.repo.list_unsettled_errored_jobs", noop)
     monkeypatch.setattr(facemarket_enrollment, "sweep_terminal_enrollments", fake_sweep)
+    monkeypatch.setattr(builtins, "__import__", tracking_import)
     store = EnrollmentStore()
-    app = _app(store, enabled=True)
-    dispatcher = JobDispatcher(app)
+    app = _app(
+        store,
+        enabled=biometric_enabled,
+        facemarket_enabled=facemarket_enabled,
+    )
 
     asyncio.run(
-        dispatcher._recover_stale(
+        JobDispatcher(app)._recover_stale(
             types.SimpleNamespace(job_lease_timeout_seconds=30), app.state.pool
         )
     )
 
-    assert calls == [(app, 100)]
+    assert imports == (["facemarket_enrollment"] if should_sweep else [])
+    assert calls == ([(app, 100)] if should_sweep else [])

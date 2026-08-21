@@ -394,3 +394,67 @@ Optional Ruff checks were attempted with `uv run ruff check ...` and `uv run ruf
 ### Remaining concerns
 
 No live PostgreSQL multi-instance claim race, migration execution, or live R2 crash harness was run; the migration execution test remained skipped because `FACEMARKET_TEST_DATABASE_URL` is not configured. Deterministic regressions cover final-transaction persistence, after-commit crash recovery, failure rescheduling and later deletion, current-reference non-deletion, bounded multi-instance SQL shape, same-model lock/cancel/lost-lease behavior, and metadata redaction.
+
+---
+
+## Fix round 5 — run cleanup recovery throughout FaceMarket rollback
+
+Status: complete in the Task 8 scope. Dispatcher recovery now schedules the existing `sweep_terminal_enrollments` cadence whenever FaceMarket itself is enabled, independent of the biometric enrollment subflag. Legacy cleanup rows created while biometrics are disabled therefore retain scheduled reconciliation, while disabling FaceMarket prevents both the lazy import and sweep call. No timer, service, cleanup behavior, or lock scope changed.
+
+### RED evidence
+
+```text
+cd server && uv run pytest -q tests/test_facemarket_biometric_cleanup.py
+```
+
+Result before the fix: `2 failed, 6 passed, 1 warning in 0.07s`.
+
+Expected failures proved:
+
+- FaceMarket enabled with biometric enrollment disabled did not invoke the sweep;
+- FaceMarket disabled with a stale-on biometric flag still imported and invoked the sweep.
+
+The existing FaceMarket/biometric flag-on dispatcher regression remained green.
+
+### GREEN / fix evidence
+
+The sole production change replaced the dispatcher gate from `fm_biometric_enrollment_enabled` to `facemarket_enabled`. The existing lazy import and sweep call remain inside that gate.
+
+Focused command:
+
+```text
+cd server && uv run pytest -q tests/test_facemarket_biometric_cleanup.py
+```
+
+Result: `8 passed, 1 warning in 0.04s`.
+
+Affected command:
+
+```text
+cd server && uv run pytest -q tests/test_fm_model_asset_job.py tests/test_facemarket_biometric_cleanup.py tests/test_facemarket_biometric_enrollment.py tests/test_facemarket_biometric_migration.py tests/test_identity_source.py tests/test_detail_page_identity_source.py tests/test_detail_page_license_face.py tests/test_facemarket_identity.py tests/test_cut_input_authority.py
+```
+
+Result: `187 passed, 1 skipped, 1 warning in 7.13s`.
+
+Full server command:
+
+```text
+cd server && uv run pytest -q
+```
+
+Result: `2723 passed, 103 skipped, 391 warnings in 50.10s`.
+
+Compile/diff/leak checks:
+
+```text
+cd server && uv run python -m compileall -q app/workers/dispatcher.py tests/test_facemarket_biometric_cleanup.py
+cd server && git diff --check
+cd server && ! rg -n "pairwise_min_similarity|qc_score|str\\(exc\\)" app/workers/fm_model_asset_job.py
+cd server && ! rg -n "provider leaked/key\\.png|private/legacy-prior\\.png|private/current\\.png|private/stale\\.png" app/workers/dispatcher.py app/workers/fm_model_asset_job.py app/facemarket_enrollment.py app/agents/identity_source.py app/workers/detail_page_job.py app/workers/editor_image_job.py app/facemarket.py
+```
+
+Result: all commands exited 0 with no matches/output.
+
+### Remaining concerns
+
+The reviewer’s Minor about holding bounded cleanup row locks across R2 deletion remains ledger-deferred by controller ruling and was not changed in this round. Live PostgreSQL/R2 integration remains unexercised; deterministic dispatcher coverage proves the required FaceMarket/biometric flag combinations for scheduled reconciliation.
