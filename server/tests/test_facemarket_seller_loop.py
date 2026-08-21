@@ -412,7 +412,7 @@ def test_resolve_picks_only_current_enrollment_license_and_masks_name():
     for fragment in (
         "e.id = m.current_enrollment_id", "e.model_id = m.id",
         "l.enrollment_id = m.current_enrollment_id", "match_policy_version",
-        "face_front", "grid_sedcard", "bucket = 'face'", "like 'image/%'",
+        "face_front", "grid_sedcard", "bucket = 'face'", "like 'image/%%'",
         "nullif(btrim", "source_enrollment_id", "evidence_version",
     ):
         assert fragment in sql

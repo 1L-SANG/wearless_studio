@@ -7,12 +7,15 @@ DB·R2를 페이크로 대체해 순수 로직만 검증:
   · verified 모델 선행 필수(없으면 400)
 """
 
+import asyncio
 import contextlib
 import copy
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from psycopg._queries import PostgresQuery
+from psycopg.adapt import Transformer
 
 from app import facemarket, holder_client
 from app import facemarket_enrollment
@@ -40,6 +43,12 @@ _LICENSE_KEYS = (
     "id", "model_id", "face_image_uri", "face_image_digest", "allowed_use",
     "forbidden_use", "unit_price", "license_valid_until", "status", "vc_id", "created_at",
 )
+
+
+def _compile_psycopg_query(sql, params):
+    query = PostgresQuery(Transformer())
+    query.convert(sql, params)
+    return query.query.decode()
 
 
 class FakeR2Face:
@@ -164,7 +173,7 @@ def _assert_current_card_sql(sql):
         "nullif(btrim(l.vc_id), '') is not null",
         "l.vc_id = e.vc_id",
         "p.storage_state = 'approved'",
-        "p.mime_type like 'image/%'",
+        "p.mime_type like 'image/%%'",
         "nullif(btrim(p.r2_key), '') is not null",
         "nullif(btrim(l.face_image_key), '') is not null",
         "p.r2_key = l.face_image_key",
@@ -172,7 +181,7 @@ def _assert_current_card_sql(sql):
         "a.view = 'grid_sedcard'",
         "nullif(btrim(a.r2_key), '') is not null",
         "a.bucket = 'face'",
-        "a.mime like 'image/%'",
+        "a.mime like 'image/%%'",
         "a.source_enrollment_id = e.id",
         "a.evidence_version = e.match_policy_version",
     ):
@@ -202,7 +211,10 @@ class FakeCursor:
         self.rowcount = -1
         self.store.setdefault("sql", []).append(s)
 
-        if s.startswith("select l.face_image_key, p.mime_type from fm_models m"):
+        if s.startswith("select l.id::text as id, m.id::text as model_id"):
+            self.store["runtime_license_sql"] = sql
+            self.store["runtime_license_params"] = params
+        elif s.startswith("select l.face_image_key, p.mime_type from fm_models m"):
             consent_version, license_id, user_id = params
             current = _current_card(
                 self.store,
@@ -221,6 +233,7 @@ class FakeCursor:
         elif s.startswith("select 1 as eligible from fm_models m"):
             consent_version, model_id = params
             self.store["thumbnail_sql"] = s
+            self.store["thumbnail_params"] = params
             self._result = (
                 {"eligible": 1}
                 if _current_card(
@@ -1764,6 +1777,29 @@ def test_thumbnail_is_fixed_non_biometric_and_never_reads_storage(
     assert "cover_image_url" not in sql
     assert "nullif(btrim(a.r2_key), '') is not null" in sql
     assert "p.r2_key = l.face_image_key" in sql
+    compiled = _compile_psycopg_query(sql, store["thumbnail_params"])
+    assert compiled.count("like 'image/%'") == 3
+    assert "image/%%" not in compiled
+
+
+def test_runtime_license_query_escapes_mime_wildcards_for_psycopg(biometric_fm):
+    _, store, _ = biometric_fm
+
+    result = asyncio.run(facemarket.resolve_model_license(FakeConn(store), MODEL_ID))
+
+    assert result is None
+    raw_sql = " ".join(store["runtime_license_sql"].split()).lower()
+    assert raw_sql.count("like 'image/%%'") == 4
+    compiled = _compile_psycopg_query(
+        store["runtime_license_sql"], store["runtime_license_params"]
+    )
+    assert compiled.count("like 'image/%'") == 4
+    assert "image/%%" not in compiled
+
+
+def test_detail_page_worker_mime_extension_contract_remains_importable():
+    assert facemarket._EXT_TO_MIME["png"] == "image/png"
+    assert facemarket._EXT_TO_MIME["jpg"] == "image/jpeg"
 
 
 def _purge_current(store):

@@ -37,6 +37,7 @@ from .auth import require_user
 from .db import get_conn
 from .facemarket_enrollment import BIOMETRIC_CONSENT_VERSION
 from .models import CamelModel, ErrorResponse
+from .r2 import MIME_EXT
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket"])
@@ -328,7 +329,7 @@ and (l.license_valid_until is null or l.license_valid_until > now())
 and nullif(btrim(l.vc_id), '') is not null
 and l.vc_id = e.vc_id
 and p.storage_state = 'approved'
-and p.mime_type like 'image/%'
+and p.mime_type like 'image/%%'
 and nullif(btrim(p.r2_key), '') is not null
 and nullif(btrim(l.face_image_key), '') is not null
 and p.r2_key = l.face_image_key
@@ -336,7 +337,7 @@ and exists (
   select 1 from fm_model_assets a
   where a.model_id = m.id and a.view = 'face_front'
     and nullif(btrim(a.r2_key), '') is not null
-    and a.bucket = 'face' and a.mime like 'image/%'
+    and a.bucket = 'face' and a.mime like 'image/%%'
     and a.source_enrollment_id = e.id
     and a.evidence_version = e.match_policy_version
 )
@@ -344,7 +345,7 @@ and exists (
   select 1 from fm_model_assets a
   where a.model_id = m.id and a.view = 'grid_sedcard'
     and nullif(btrim(a.r2_key), '') is not null
-    and a.bucket = 'face' and a.mime like 'image/%'
+    and a.bucket = 'face' and a.mime like 'image/%%'
     and a.source_enrollment_id = e.id
     and a.evidence_version = e.match_policy_version
 )
@@ -505,6 +506,8 @@ FORBIDDEN_BRAND_USE_CATEGORIES = (
     "의료·성형",
     "정치·종교",
 )
+_EXT_TO_MIME = {ext: mime for mime, ext in MIME_EXT.items()}  # 상세컷 워커 Content-Type 역매핑
+
 # 응답 화이트리스트 — face_image_key(비공개)·모델 PII 제외. uuid(id/model_id)는 ::text 캐스트
 # (psycopg→uuid.UUID, CamelModel str 필드가 거부 → 500 방지, repo.py 관례).
 # RETURNING 용(단일 테이블, 별칭 없음).
@@ -1805,27 +1808,27 @@ async def resolve_model_license(
                            select 1 from fm_model_assets a
                             where a.model_id = m.id and a.view = 'face_front'
                               and nullif(btrim(a.r2_key), '') is not null
-                              and a.bucket = 'face' and a.mime like 'image/%'
+                              and a.bucket = 'face' and a.mime like 'image/%%'
                        ) as has_face_front,
                        exists (
                            select 1 from fm_model_assets a
                             where a.model_id = m.id and a.view = 'grid_sedcard'
                               and nullif(btrim(a.r2_key), '') is not null
-                              and a.bucket = 'face' and a.mime like 'image/%'
+                              and a.bucket = 'face' and a.mime like 'image/%%'
                        ) as has_grid_sedcard,
                        nullif(btrim(e.match_policy_version), '') is not null
                        and exists (
                            select 1 from fm_model_assets a
                             where a.model_id = m.id and a.view = 'face_front'
                               and nullif(btrim(a.r2_key), '') is not null
-                              and a.bucket = 'face' and a.mime like 'image/%'
+                              and a.bucket = 'face' and a.mime like 'image/%%'
                               and a.source_enrollment_id = m.current_enrollment_id
                               and a.evidence_version = e.match_policy_version
                        ) and exists (
                            select 1 from fm_model_assets a
                             where a.model_id = m.id and a.view = 'grid_sedcard'
                               and nullif(btrim(a.r2_key), '') is not null
-                              and a.bucket = 'face' and a.mime like 'image/%'
+                              and a.bucket = 'face' and a.mime like 'image/%%'
                               and a.source_enrollment_id = m.current_enrollment_id
                               and a.evidence_version = e.match_policy_version
                        ) as assets_current_evidence
