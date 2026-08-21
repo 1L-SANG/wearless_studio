@@ -5,7 +5,7 @@ detail_page/editor 워커가 컷 루프 전 1회 소스를 정한다 — 컷마�
 
   REAL      실존 모델 자산(그리드+face_front, 비공개 버킷) — 라이선스 활성일 때만
   VIRTUAL   가상모델(virtual_models.json, 공개 버킷) — 라이선스 불요
-  LEGACY    기존 step03 단일 라이선스 얼굴(그리드 자산 없는 모델 폴백)
+  LEGACY    모델 미선택 기존 step03 단일 얼굴 호환
   NONE      얼굴 없이 생성
   REJECTED  실존 모델 대상인데 라이선스 실패 → 조용한 폴백 금지, 얼굴 미주입
 
@@ -18,12 +18,22 @@ import uuid
 def select_source(*, selected_model_id, license_row, has_real_assets: bool,
                   has_license_face: bool) -> str:
     """컷 루프 전 1회 호출. 반환: REAL|VIRTUAL|LEGACY|NONE|REJECTED."""
-    if has_real_assets:
-        if (license_row
-                and str(license_row.get("model_id")) == str(selected_model_id)
-                and license_row.get("status") == "active"):
+    try:
+        uuid.UUID(str(selected_model_id))
+    except (TypeError, ValueError):
+        is_real = False
+    else:
+        is_real = True
+    if is_real:
+        if (
+            has_real_assets
+            and license_row
+            and str(license_row.get("model_id")) == str(selected_model_id)
+            and license_row.get("status") == "active"
+            and license_row.get("model_status") == "verified"
+        ):
             return "REAL"
-        return "REJECTED"  # 무라이선스 실얼굴 차단 — 다른 소스로 폴백하지 않는다
+        return "REJECTED"
     if selected_model_id:
         return "VIRTUAL"
     if has_license_face:
@@ -31,49 +41,59 @@ def select_source(*, selected_model_id, license_row, has_real_assets: bool,
     return "NONE"
 
 
-async def resolve_real_model_assets(conn, model_id: str, *, allow_legacy: bool = False):
-    """등록된 실존 모델 자산을 계약 순서(face_front, grid_sedcard)로 반환.
-
-    assets_status='ready' 이고 두 뷰가 모두 유효할 때만 refs 리스트. 아니면 None(→ VIRTUAL/폴백).
-    각 ref = {key, mime, bucket}. bucket='face' 면 워커가 r2_face(비공개)에서 로드한다.
-
-    가상모델 id(mA…mE — 계약 §catalogs.models)는 UUID 가 아니다. fm_models.id(uuid)
-    쿼리에 그대로 바인딩하면 psycopg InvalidTextRepresentation 으로 **쿼리 자체가 죽어**
-    상세페이지·에디터 이미지 잡 전체가 실패한다(2026-07-29 재현: facemarket_enabled=true
-    + 가상모델 선택 → progress 5 즉사). UUID 형식이 아니면 실존 모델일 수 없으므로
-    조회 없이 None → VIRTUAL 폴백.
-    """
+async def resolve_real_model_assets(
+    conn,
+    model_id: str,
+    *,
+    enrollment_id: str,
+    evidence_version: str,
+) -> list[dict] | None:
+    """Return the exact two private refs pinned to current passed evidence."""
     try:
         uuid.UUID(str(model_id))
     except (TypeError, ValueError):
         return None
     async with conn.cursor() as cur:
         await cur.execute(
-            "select m.status as model_status, m.assets_status, m.current_enrollment_id, "
-            "a.view, a.r2_key, a.mime, a.bucket, a.source_enrollment_id, a.evidence_version "
-            "from fm_models m left join fm_model_assets a on a.model_id = m.id "
+            "select m.status as model_status, m.assets_status, "
+            "m.current_enrollment_id::text as current_enrollment_id, "
+            "e.status as enrollment_status, e.match_policy_version, "
+            "a.view, a.r2_key, a.mime, a.bucket, "
+            "a.source_enrollment_id::text as source_enrollment_id, a.evidence_version "
+            "from fm_models m "
+            "left join fm_biometric_enrollments e "
+            "on e.id = m.current_enrollment_id and e.model_id = m.id "
+            "left join fm_model_assets a on a.model_id = m.id "
             "where m.id = %s",
             (model_id,))
         rows = await cur.fetchall()
-    if not rows or rows[0]["model_status"] != "verified" or rows[0]["assets_status"] != "ready":
+    if not rows:
         return None
-    current_enrollment_id = rows[0].get("current_enrollment_id")
+    state = rows[0]
+    current_enrollment_id = str(state.get("current_enrollment_id") or "")
+    policy_version = str(state.get("match_policy_version") or "").strip()
+    if (
+        state.get("model_status") != "verified"
+        or state.get("assets_status") != "ready"
+        or state.get("enrollment_status") != "passed"
+        or current_enrollment_id != str(enrollment_id)
+        or not policy_version
+        or policy_version != str(evidence_version)
+    ):
+        return None
     by_view = {r["view"]: r for r in rows if r.get("view")}
     out = []
     for view in ("face_front", "grid_sedcard"):
         r = by_view.get(view)
-        if not r or not r.get("r2_key") or not str(r.get("mime") or "").startswith("image/"):
-            return None
-        if not r.get("evidence_version"):
-            return None
-        if current_enrollment_id:
-            if str(r.get("source_enrollment_id") or "") != str(current_enrollment_id):
-                return None
-        elif not (
-            allow_legacy
-            and not r.get("source_enrollment_id")
-            and r.get("evidence_version") == "legacy-personalization-v1"
+        if (
+            not r
+            or not str(r.get("r2_key") or "").strip()
+            or r.get("bucket") != "face"
+            or not str(r.get("mime") or "").startswith("image/")
+            or str(r.get("source_enrollment_id") or "") != str(enrollment_id)
+            or r.get("evidence_version") != evidence_version
+            or r.get("evidence_version") != policy_version
         ):
             return None
-        out.append({"key": r["r2_key"], "mime": r["mime"], "bucket": r.get("bucket") or "face"})
+        out.append({"key": r["r2_key"], "mime": r["mime"], "bucket": r["bucket"]})
     return out

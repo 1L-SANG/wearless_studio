@@ -2,11 +2,17 @@ import asyncio
 import contextlib
 import inspect
 import types
+from dataclasses import replace
 
 import app.routes as routes
 from app import repo
 from app.workers import detail_page_job as dpj
 from conftest import auth_headers, fake_worker_app, make_settings, patch_route_db, worker_job
+
+
+MODEL_ID = "11111111-1111-1111-1111-111111111111"
+LICENSE_ID = "22222222-2222-2222-2222-222222222222"
+CATEGORY = "일반 여성 의류"
 
 
 # ---------- 라우트 ----------
@@ -44,10 +50,14 @@ def test_detail_creates_job_and_reserves(client, make_token, monkeypatch):
         # 크레딧 견적의 복제 접기(_duplicate_source_indexes)가 clothing_type을 읽는다.
         return {"clothing_type": "top"}
 
+    async def fake_analysis(conn, pid):
+        return {}
+
     monkeypatch.setattr(routes.repo, "get_project", fake_gp)
     monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_eb)
     monkeypatch.setattr(routes.repo, "get_storyboard", fake_sb)
     monkeypatch.setattr(routes.repo, "get_product", fake_product)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
     patch_route_db(monkeypatch, routes)
@@ -89,9 +99,13 @@ def test_detail_rejects_saved_bg_example_before_job_or_credit(
         calls["reserve"] += 1
         return 100
 
+    async def fake_analysis(conn, pid):
+        return {}
+
     monkeypatch.setattr(routes.repo, "get_project", fake_gp)
     monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_eb)
     monkeypatch.setattr(routes.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
     patch_route_db(monkeypatch, routes)
@@ -116,14 +130,269 @@ def test_detail_completed_recall(client, make_token, monkeypatch):
     async def fake_acct(conn, uid):
         return {"credits": 42}
 
+    async def fake_analysis(conn, pid):
+        return {}
+
     monkeypatch.setattr(routes.repo, "get_project", fake_gp)
     monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_eb)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(routes.repo, "get_account", fake_acct)
     patch_route_db(monkeypatch, routes)
     res = client.post("/v1/projects/p1/detail-page:generate", headers=auth_headers(make_token))
     assert res.status_code == 200
     body = res.json()
     assert body["data"][0]["id"] == "b0" and body["credits"] == 42
+
+
+class _RouteConn:
+    def __init__(self, events):
+        self.events = events
+
+    async def commit(self):
+        self.events.append("commit")
+
+
+def _patch_counted_route_conn(monkeypatch, events):
+    @contextlib.asynccontextmanager
+    async def fake_conn(_request):
+        yield _RouteConn(events)
+
+    monkeypatch.setattr(routes, "get_conn", fake_conn)
+
+
+def test_detail_current_selection_updates_lock_and_queues_snapshot_atomically(
+    client, make_token, monkeypatch
+):
+    events = []
+    seen = {}
+    client.app.state.settings = replace(
+        client.app.state.settings,
+        facemarket_enabled=True,
+    )
+
+    async def fake_project(conn, user_id, project_id):
+        return {"id": project_id, "facemarket_license_id": "revoked-old"}
+
+    async def fake_analysis(conn, project_id):
+        return {"selected_model_id": MODEL_ID, "brandUseCategory": CATEGORY}
+
+    async def fake_resolve(conn, project, analysis):
+        assert project["facemarket_license_id"] == "revoked-old"
+        assert analysis["selected_model_id"] == MODEL_ID
+        return {"id": LICENSE_ID, "model_id": MODEL_ID}
+
+    async def fake_verify(app, row, **kwargs):
+        assert kwargs == {"model_id": MODEL_ID, "brand_use_category": CATEGORY}
+        events.append("verified")
+
+    async def fake_lock(conn, project_id, license_id):
+        events.append(("lock", license_id))
+
+    async def fake_editor(conn, project_id):
+        events.append("cache")
+        return []
+
+    async def fake_storyboard(conn, project_id):
+        return [{"id": "b1", "source": "ai", "cutType": "styling"}]
+
+    async def fake_product(conn, project_id):
+        return {"clothing_type": "top"}
+
+    async def fake_create(conn, **kwargs):
+        seen.update(kwargs)
+        events.append("job")
+        return {"id": "job-1"}, True
+
+    async def fake_reserve(conn, user_id, amount):
+        events.append("reserve")
+        return 10
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_project)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(routes.facemarket, "resolve_project_license", fake_resolve)
+    monkeypatch.setattr(routes.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(routes.facemarket, "set_project_license", fake_lock)
+    monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_editor)
+    monkeypatch.setattr(routes.repo, "get_storyboard", fake_storyboard)
+    monkeypatch.setattr(routes.repo, "get_product", fake_product)
+    monkeypatch.setattr(routes.repo, "create_job", fake_create)
+    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
+    _patch_counted_route_conn(monkeypatch, events)
+
+    response = client.post(
+        "/v1/projects/p1/detail-page:generate",
+        headers=auth_headers(make_token),
+    )
+
+    assert response.status_code == 202, response.text
+    assert seen["payload"] == {
+        "mode": "generate",
+        "modelId": MODEL_ID,
+        "brandUseCategory": CATEGORY,
+        "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
+    }
+    assert events == [
+        "verified", ("lock", LICENSE_ID), "cache", "job", "reserve", "commit"
+    ]
+
+
+def test_detail_denial_precedes_cache_job_and_credit(
+    client, make_token, monkeypatch
+):
+    client.app.state.settings = replace(
+        client.app.state.settings,
+        facemarket_enabled=True,
+    )
+    calls = {"cache": 0, "job": 0, "reserve": 0}
+
+    async def fake_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_analysis(conn, project_id):
+        return {"selectedModelId": MODEL_ID, "brandUseCategory": CATEGORY}
+
+    async def fake_resolve(conn, project, analysis):
+        return {"id": LICENSE_ID, "model_id": MODEL_ID}
+
+    async def deny(*args, **kwargs):
+        raise routes.HTTPException(
+            status_code=409,
+            detail={"code": "license_revoked", "message": "blocked"},
+        )
+
+    async def counted(name, result=None):
+        calls[name] += 1
+        return result
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_project)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(routes.facemarket, "resolve_project_license", fake_resolve)
+    monkeypatch.setattr(routes.facemarket, "verify_license", deny)
+    monkeypatch.setattr(routes.repo, "get_editor_blocks",
+                        lambda *args: counted("cache", []))
+    monkeypatch.setattr(routes.repo, "create_job",
+                        lambda *args, **kwargs: counted("job"))
+    monkeypatch.setattr(routes.repo, "reserve_credits",
+                        lambda *args: counted("reserve"))
+    patch_route_db(monkeypatch, routes)
+
+    response = client.post(
+        "/v1/projects/p1/detail-page:generate",
+        headers=auth_headers(make_token),
+    )
+
+    assert response.status_code == 409
+    assert calls == {"cache": 0, "job": 0, "reserve": 0}
+
+
+def test_detail_reservation_failure_does_not_commit_new_lock(
+    client, make_token, monkeypatch
+):
+    events = []
+    client.app.state.settings = replace(
+        client.app.state.settings,
+        facemarket_enabled=True,
+    )
+
+    async def fake_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_analysis(conn, project_id):
+        return {"selectedModelId": MODEL_ID, "brandUseCategory": CATEGORY}
+
+    async def fake_resolve(conn, project, analysis):
+        return {"id": LICENSE_ID, "model_id": MODEL_ID}
+
+    async def fake_verify(*args, **kwargs):
+        return None
+
+    async def fake_lock(conn, project_id, license_id):
+        events.append("lock")
+
+    async def fake_editor(conn, project_id):
+        return []
+
+    async def fake_storyboard(conn, project_id):
+        return [{"id": "b1", "source": "ai", "cutType": "styling"}]
+
+    async def fake_product(conn, project_id):
+        return {"clothing_type": "top"}
+
+    async def fake_create(conn, **kwargs):
+        return {"id": "job-1"}, True
+
+    async def fake_reserve(conn, user_id, amount):
+        return None
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_project)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(routes.facemarket, "resolve_project_license", fake_resolve)
+    monkeypatch.setattr(routes.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(routes.facemarket, "set_project_license", fake_lock)
+    monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_editor)
+    monkeypatch.setattr(routes.repo, "get_storyboard", fake_storyboard)
+    monkeypatch.setattr(routes.repo, "get_product", fake_product)
+    monkeypatch.setattr(routes.repo, "create_job", fake_create)
+    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
+    _patch_counted_route_conn(monkeypatch, events)
+
+    response = client.post(
+        "/v1/projects/p1/detail-page:generate",
+        headers=auth_headers(make_token),
+    )
+
+    assert response.status_code == 402
+    assert events == ["lock"]
+
+
+def test_detail_cached_success_commits_verified_lock_immediately_before_return(
+    client, make_token, monkeypatch
+):
+    events = []
+    client.app.state.settings = replace(
+        client.app.state.settings,
+        facemarket_enabled=True,
+    )
+
+    async def fake_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_analysis(conn, project_id):
+        return {"selectedModelId": MODEL_ID, "brandUseCategory": CATEGORY}
+
+    async def fake_resolve(conn, project, analysis):
+        return {"id": LICENSE_ID, "model_id": MODEL_ID}
+
+    async def fake_verify(*args, **kwargs):
+        events.append("verified")
+
+    async def fake_lock(conn, project_id, license_id):
+        events.append("lock")
+
+    async def fake_editor(conn, project_id):
+        events.append("cache")
+        return [{"id": "done"}]
+
+    async def fake_account(conn, user_id):
+        events.append("account")
+        return {"credits": 5}
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_project)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(routes.facemarket, "resolve_project_license", fake_resolve)
+    monkeypatch.setattr(routes.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(routes.facemarket, "set_project_license", fake_lock)
+    monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_editor)
+    monkeypatch.setattr(routes.repo, "get_account", fake_account)
+    _patch_counted_route_conn(monkeypatch, events)
+
+    response = client.post(
+        "/v1/projects/p1/detail-page:generate",
+        headers=auth_headers(make_token),
+    )
+
+    assert response.status_code == 200
+    assert events == ["verified", "lock", "cache", "account", "commit"]
 
 
 # ---------- 워커 (부분 성공 정산) ----------
@@ -1233,7 +1502,7 @@ def test_standalone_space_set_example_is_bound_as_confirmed_service_example():
     assert source.index(bind, source.index(append)) > source.index(append)
 
 
-def test_run_detail_page_job_uses_analysis_model_without_mutating_storyboard(monkeypatch):
+def test_run_detail_page_job_uses_queued_model_without_mutating_storyboard(monkeypatch):
     captured = {}
     storyboard = [
         {"id": "product", "source": "ai", "cutType": "product", "shot": "ghost"},
@@ -1321,7 +1590,11 @@ def test_run_detail_page_job_uses_analysis_model_without_mutating_storyboard(mon
         ),
         r2=TrackingR2(),
     )
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=2)))
+    asyncio.run(dpj.run_detail_page_job(app, worker_job({
+        "mode": "generate",
+        "modelId": "mB",
+        "brandUseCategory": None,
+    }, credits_reserved=2)))
 
     assert captured["person"]["spec"]["modelId"] == "mB"
     assert captured["person"]["data"] == [

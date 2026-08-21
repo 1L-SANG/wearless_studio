@@ -135,7 +135,11 @@ def test_generate_image_402_insufficient_credits(client, make_token, monkeypatch
     async def fake_reserve(conn, uid, amount):
         return None  # 부족
 
+    async def fake_analysis(conn, pid):
+        return {}
+
     monkeypatch.setattr(routes.repo, "get_project", fake_gp)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
     patch_route_db(monkeypatch, routes)

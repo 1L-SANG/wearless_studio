@@ -201,28 +201,6 @@ async def _load_license_face(app, conn, project: dict) -> dict | None:
     }
 
 
-async def _load_license_row(app, conn, project) -> dict | None:
-    """프로젝트에 잠긴 라이선스의 게이트용 메타(id·model_id·상태·마스킹 이름). 얼굴 바이트는 로드하지
-    않는다 — 실존 모델(REAL) 소스 선택·검증 배지 근거로만 쓴다. 활성·미만료가 아니면 None."""
-    s = app.state.settings
-    lic_id = project.get("facemarket_license_id") or project.get("facemarketLicenseId")
-    if not s.facemarket_enabled or not lic_id:
-        return None
-    from ..facemarket import _is_expired, _mask_name
-    async with conn.cursor() as cur:
-        await cur.execute(
-            """select l.id::text as id, l.model_id::text as model_id, l.status,
-                      l.license_valid_until, m.display_name
-               from fm_licenses l join fm_models m on m.id = l.model_id
-               where l.id = %s""",
-            (str(lic_id),))
-        lic = await cur.fetchone()
-    if not lic or lic["status"] != "active" or _is_expired(lic):
-        return None
-    return {"id": lic["id"], "model_id": lic["model_id"], "status": lic["status"],
-            "model_name": _mask_name(lic["display_name"] or "")}
-
-
 async def _gen_cuts(app, job, prepared, product, analysis):
     """준비된 블록별
     (block, images, manifest, has_face, product_images,
@@ -822,6 +800,7 @@ async def run_detail_page_job(app, job: dict) -> None:
     lease_token = job["lease_token"]
     reserved = job.get("credits_reserved") or 0
     settle_key = f"credit:job:{job_id}:settle"
+    payload = job.get("payload") or {}
 
     async def _fail(message: str, meta: dict, code: str = "generation_failed"):
         try:
@@ -879,9 +858,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             example_repeat_indexes = _example_repeat_indexes(
                 ai_blocks, clothing_type
             )
-            # StoryboardBlock에는 modelId가 없다(계약 §3.4). 상세페이지의 프로젝트 단위 선택값은
-            # Analysis.selectedModelId가 정본이며, 아래 prep에서 저장 블록을 바꾸지 않고 런타임 주입한다.
-            selected_model_id = analysis.get("selectedModelId") or analysis.get("selected_model_id")
+            selected_model_id = payload.get("modelId")
             try:
                 uuid.UUID(str(selected_model_id))
             except (TypeError, ValueError):
@@ -889,49 +866,45 @@ async def run_detail_page_job(app, job: dict) -> None:
             else:
                 selected_is_real = True
             selected_is_virtual = bool(selected_model_id) and not selected_is_real
-            uses_facemarket_identity = uses_model_identity and not selected_is_virtual
-
-            # 요청 게이트 통과 후의 해지·만료·VC 변경 레이스를 워커에서 재확인한다.
-            # 이 순서가 실모델 자산 조회·비공개 얼굴 로드보다 반드시 앞서야 한다.
-            if s.facemarket_enabled and uses_facemarket_identity:
-                license_to_verify = await facemarket.resolve_project_license(
-                    conn, project, analysis
-                )
-                if selected_is_real and (
-                    license_to_verify is None
-                    or str(license_to_verify.get("model_id")) != str(selected_model_id)
-                ):
-                    raise ValueError("license_rejected")
-                if license_to_verify is not None:
-                    await facemarket.verify_license(app, license_to_verify)
-
-            # FaceMarket 라이선스 얼굴(FM-31) — 프로젝트에 잠긴 라이선스가 있을 때만.
-            # 잠금 없음 = 기존 마네킹 경로 → None, 아래 첨부·고지 분기 전부 미진입.
-            face_ref = (
-                await _load_license_face(app, conn, project)
-                if uses_facemarket_identity
-                else None
-            )
-
-            # 컷당 단일 아이덴티티-소스 선택(codex [P1]) — 실존 모델 그리드/라이선스 얼굴/가상모델 중 1개.
-            # 실존 모델(REAL)은 라이선스 활성일 때만. 남은 REJECTED 경로도 잡을 중단한다.
             from ..agents import identity_source
-            license_row = (
-                await _load_license_row(app, conn, project)
-                if uses_facemarket_identity
-                else None
-            )
-            # 실존 자산 조회는 facemarket 켜졌고 선택 모델이 있을 때만 — off(기존/가상 경로)면
-            # 쿼리조차 돌지 않아 완전 무영향.
-            real_refs = (
-                await identity_source.resolve_real_model_assets(
+            license_row = None
+            real_refs = None
+            face_ref = None
+            if selected_is_real and uses_model_identity:
+                snapshot = payload.get("_facemarket")
+                if (
+                    not isinstance(snapshot, dict)
+                    or str(snapshot.get("modelId") or "") != str(selected_model_id)
+                    or not str(snapshot.get("licenseId") or "").strip()
+                ):
+                    raise facemarket._err(
+                        "model_unavailable", "사용할 수 없는 모델입니다.", status=409
+                    )
+                license_row = await facemarket.resolve_model_license(
                     conn,
-                    selected_model_id,
-                    allow_legacy=not getattr(s, "fm_biometric_enrollment_enabled", False),
+                    str(snapshot["modelId"]),
+                    license_id=str(snapshot["licenseId"]),
                 )
-                if selected_is_real and s.facemarket_enabled and uses_model_identity
-                else None
-            )
+                await facemarket.verify_license(
+                    app,
+                    license_row,
+                    model_id=str(snapshot["modelId"]),
+                    brand_use_category=payload.get("brandUseCategory"),
+                )
+                real_refs = await identity_source.resolve_real_model_assets(
+                    conn,
+                    str(snapshot["modelId"]),
+                    enrollment_id=str(license_row["current_enrollment_id"]),
+                    evidence_version=str(license_row["match_policy_version"]),
+                )
+                if real_refs is None:
+                    raise facemarket._err(
+                        "model_assets_unavailable",
+                        "현재 모델 자산을 사용할 수 없습니다.",
+                        status=409,
+                    )
+            elif not selected_model_id and uses_model_identity:
+                face_ref = await _load_license_face(app, conn, project)
             source = identity_source.select_source(
                 selected_model_id=(selected_model_id if uses_model_identity else None),
                 license_row=license_row,
@@ -940,7 +913,9 @@ async def run_detail_page_job(app, job: dict) -> None:
             log.info("AG-06 identity source=%s job=%s hasReal=%s hasLicenseFace=%s",
                      source, job_id, real_refs is not None, face_ref is not None)
             if source == "REJECTED":
-                raise ValueError("license_rejected")
+                raise facemarket._err(
+                    "model_unavailable", "사용할 수 없는 모델입니다.", status=409
+                )
             if source == "REAL" and license_row is not None:
                 notice_ctx = {"model_name": license_row["model_name"], "license_id": license_row["id"]}
             elif source == "LEGACY" and face_ref is not None:
@@ -1127,23 +1102,25 @@ async def run_detail_page_job(app, job: dict) -> None:
                 _confirmed_model_cache[model_id] = (loaded[0], loaded[1])
             return _confirmed_model_cache[model_id]
 
-        # 실존 모델(REAL) 그리드 — 비공개 r2_face 에서 로드(bucket 인지). 잡당 1회 캐시.
-        # 로드 실패는 얼굴 없이 생성으로 강등(가상 모델 경로와 같은 fail-open).
-        _real_cache: dict[str, list[InlineImage] | None] = {}
-
-        async def _real_model_images() -> list[InlineImage]:
-            if not real_refs:
-                return []
-            if "refs" not in _real_cache:
-                try:
-                    _real_cache["refs"] = [
-                        await _r2_img(r["key"], r["mime"], r.get("bucket", "face"))
-                        for r in real_refs
-                    ]
-                except Exception as e:
-                    log.warning("AG-06 real model assets unavailable job %s: %r", job_id, e)
-                    _real_cache["refs"] = None
-            return _real_cache["refs"] or []
+        real_model_images: list[InlineImage] = []
+        if source == "REAL":
+            try:
+                r2_face = getattr(app.state, "r2_face", None)
+                if r2_face is None:
+                    raise RuntimeError("face storage unavailable")
+                real_model_images = [
+                    InlineImage(
+                        ref["mime"],
+                        await asyncio.to_thread(r2_face.get_bytes, ref["key"]),
+                    )
+                    for ref in real_refs
+                ]
+            except Exception as exc:
+                raise facemarket._err(
+                    "model_assets_unavailable",
+                    "현재 모델 자산을 사용할 수 없습니다.",
+                    status=409,
+                ) from exc
 
         # (runtime block, images, manifest, has_face, product_images,
         #  space_set_plate, strict_space_scene_qc, passthrough, confirmed_packet)
@@ -1155,10 +1132,7 @@ async def run_detail_page_job(app, job: dict) -> None:
         example_warnings: list[dict] = []
         _virtual_ids: set[str] = set()
         fallback_model_id = s.detailpage_fallback_model_id
-        # 폴백 registry 는 폴백이 실제로 가능한 소스에서만 지연 로드(파일 없으면 fail-open, 잡 안 죽임):
-        #  VIRTUAL           → Phase B 결정적 치환(resolve_effective_model_id)
-        #  REAL              → 자산 장애 안전망(needs_identity_fallback → mB).
-        if fallback_model_id and source in ("VIRTUAL", "REAL"):
+        if fallback_model_id and source == "VIRTUAL":
             try:
                 _virtual_ids = set(cut_generator.load_virtual_model_registry())
             except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
@@ -1301,7 +1275,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                 # (REAL 은 VIRTUAL 과 달리 mB 폴백도 없음). 배지(has_identity)만 wants 로 준다.
                 attach_grid, _badge = cut_generator.real_identity_plan(
                     normalized.get("cutType") if normalized else None, wants_face=wants)
-                model_images = await _real_model_images() if attach_grid else []
+                model_images = real_model_images if attach_grid else []
                 has_identity = _badge and len(model_images) == 2
                 face_slot = False
             elif source == "LEGACY":
@@ -1330,25 +1304,6 @@ async def run_detail_page_job(app, job: dict) -> None:
                 model_images = []
                 has_identity = False
                 face_slot = False
-            # 안전망(prod facemarket ON): **실존 모델을 골랐는데** 착용컷 인물 참조가 0장이면
-            # (REAL grid 로드 실패) 결정적 가상모델로 폴백 — 랜덤 인물 원천 차단.
-            # Phase B 의 mB 폴백은 VIRTUAL 전용이라 REAL 을 못 막는다. 무모델
-            # 선택(NONE)은 기존 동작 유지(모델을 요청하지 않은 프로젝트에 인물을 강요하지 않는다).
-            # 대체 인물 mB 에는 검증 배지(has_identity)를 주지 않는다(실 얼굴 아님).
-            if source == "REAL" and cut_generator.needs_identity_fallback(
-                    cut_type=normalized.get("cutType") if normalized else None,
-                    has_model_images=bool(model_images), face_slot=face_slot):
-                _fb_id = s.detailpage_fallback_model_id
-                if _fb_id and _fb_id in _virtual_ids:
-                    model_images = await _model_images(
-                        {"cutType": normalized["cutType"], "modelId": _fb_id})
-                    model_has_full_body = len(model_images) == 2
-                    if model_images and not _fallback_warned:
-                        log.warning(
-                            "AG-06 worn cut identity empty (source=%s model=%s) → deterministic %s "
-                            "fallback for consistency (job %s)",
-                            source, selected_model_id, _fb_id, job_id)
-                        _fallback_warned = True
             imgs = []
             product_images = []
             cut_mannequin_image = None
@@ -1711,35 +1666,33 @@ async def run_detail_page_job(app, job: dict) -> None:
             # 이번 잡의 소스가 VIRTUAL/NONE 이면 라이선스를 소비하지 않았으므로 기록하지 않는다.
             # best-effort: 정산 실패가 이미 완료된 상세페이지 생성을 되돌리지 않는다.
             if (
-                s.facemarket_enabled
-                and source in ("REAL", "LEGACY")
+                source == "REAL"
+                and license_row is not None
+                and license_row.get("unit_price") is not None
                 and getattr(app.state, "fm_chain", None) is not None
             ):
-                lic_id = project.get("facemarket_license_id") or project.get("facemarketLicenseId")
-                if lic_id:
-                    try:
-                        async with pool.connection() as conn:
-                            async with conn.cursor() as cur:
-                                await cur.execute(
-                                    "select model_id::text as model_id, unit_price "
-                                    "from fm_licenses where id = %s and status = 'active'",
-                                    (lic_id,),
-                                )
-                                lic = await cur.fetchone()
-                        if lic:
-                            from ..facemarket import record_license_settlement
-                            await record_license_settlement(
-                                app, payment_key=f"job:{job_id}", license_id=str(lic_id),
-                                model_id=lic["model_id"], total=int(lic["unit_price"]),
-                                job_id=str(job_id))
-                    except Exception:
-                        log.warning("facemarket settlement hook failed for job %s", job_id)
+                try:
+                    await facemarket.record_license_settlement(
+                        app,
+                        payment_key=f"job:{job_id}",
+                        license_id=str(license_row["id"]),
+                        model_id=str(license_row["model_id"]),
+                        total=int(license_row["unit_price"]),
+                        job_id=str(job_id),
+                    )
+                except Exception:
+                    log.warning("facemarket settlement hook failed for job %s", job_id)
     except Exception as e:
         error = str(e)[:300]
+        fm_detail = e.detail if isinstance(e, facemarket.HTTPException) else None
+        fm_code = fm_detail.get("code") if isinstance(fm_detail, dict) else None
+        fm_message = fm_detail.get("message") if isinstance(fm_detail, dict) else None
         is_space_set_error = isinstance(e, space_set_assets.SpaceSetBindingError)
         await _fail(
             (
-                e.message
+                fm_message
+                if fm_message
+                else e.message
                 if is_space_set_error
                 else "배경만 생성예시는 현재 사용할 수 없어요. 콘티에서 해당 예시를 제거해 주세요."
                 if error == "genexample_bg_disabled"
@@ -1747,7 +1700,9 @@ async def run_detail_page_job(app, job: dict) -> None:
             ),
             {"error": error},
             code=(
-                e.code
+                fm_code
+                if fm_code
+                else e.code
                 if is_space_set_error
                 else "genexample_bg_disabled"
                 if error == "genexample_bg_disabled"

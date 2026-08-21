@@ -20,6 +20,34 @@ from conftest import FakeR2, make_settings, worker_job
 
 GRID_KEY = "facemarket/models/11111111-1111-1111-1111-111111111111/grid_sedcard.png"
 FACE_FRONT_KEY = "facemarket/models/11111111-1111-1111-1111-111111111111/face_front.png"
+MODEL_ID = "11111111-1111-1111-1111-111111111111"
+LICENSE_ID = "33333333-3333-3333-3333-333333333333"
+ENROLLMENT_ID = "22222222-2222-2222-2222-222222222222"
+CATEGORY = "일반 여성 의류"
+
+
+def _snapshot_payload(*, model_id=MODEL_ID, license_id=LICENSE_ID):
+    return {
+        "mode": "generate",
+        "modelId": MODEL_ID,
+        "brandUseCategory": CATEGORY,
+        "_facemarket": {"modelId": model_id, "licenseId": license_id},
+    }
+
+
+def _runtime_row(**overrides):
+    row = {
+        "id": LICENSE_ID,
+        "model_id": MODEL_ID,
+        "model_name": "홍*동",
+        "status": "active",
+        "unit_price": 100,
+        "model_status": "verified",
+        "current_enrollment_id": ENROLLMENT_ID,
+        "match_policy_version": "policy-v1",
+    }
+    row.update(overrides)
+    return row
 
 
 def _asset_rows(status="ready"):
@@ -202,14 +230,32 @@ def test_real_source_injects_grid_from_face_bucket_and_shows_badge(monkeypatch):
     _patch(monkeypatch, captured)
     app = _app(_asset_rows(), _license_meta(), face_r2)
 
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+    async def fake_resolve(conn, model_id, *, license_id=None):
+        return _runtime_row()
+
+    async def fake_verify(app, row, **kwargs):
+        return None
+
+    async def fake_assets(conn, model_id, *, enrollment_id, evidence_version):
+        return [
+            {"key": FACE_FRONT_KEY, "mime": "image/png", "bucket": "face"},
+            {"key": GRID_KEY, "mime": "image/png", "bucket": "face"},
+        ]
+
+    monkeypatch.setattr(facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(identity_source, "resolve_real_model_assets", fake_assets)
+
+    asyncio.run(dpj.run_detail_page_job(
+        app, worker_job(_snapshot_payload(), credits_reserved=1)
+    ))
 
     # 그리드 2장이 비공개 face 버킷에서 로드됨
     assert GRID_KEY in face_r2.gets
     assert FACE_FRONT_KEY in face_r2.gets
     # 검증 배지(실존 모델) 노출
     assert captured["license_notice"] is not None
-    assert captured["license_notice"]["licenseId"] == "lic-1"
+    assert captured["license_notice"]["licenseId"] == LICENSE_ID
     # 생성 호출에 그리드 2장 포함(그리드가 아이덴티티 앵커)
     assert captured["calls"] and captured["calls"][0]["n_images"] >= 2
 
@@ -226,7 +272,13 @@ def test_locked_license_model_mismatch_fails_before_real_asset_resolution(monkey
 
     monkeypatch.setattr(facemarket, "record_license_settlement", fake_settlement)
 
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+    asyncio.run(dpj.run_detail_page_job(
+        app,
+        worker_job(
+            _snapshot_payload(model_id="44444444-4444-4444-4444-444444444444"),
+            credits_reserved=1,
+        ),
+    ))
 
     assert app.state.pool.asset_queries == 0
     assert face_r2.gets == []
@@ -253,7 +305,14 @@ def test_selected_real_model_without_license_fails_before_real_asset_resolution(
 
     monkeypatch.setattr(facemarket, "record_license_settlement", fake_settlement)
 
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+    async def missing_license(conn, model_id, *, license_id=None):
+        return None
+
+    monkeypatch.setattr(facemarket, "resolve_model_license", missing_license)
+
+    asyncio.run(dpj.run_detail_page_job(
+        app, worker_job(_snapshot_payload(), credits_reserved=1)
+    ))
 
     assert app.state.pool.asset_queries == 0
     assert face_r2.gets == []
@@ -263,7 +322,7 @@ def test_selected_real_model_without_license_fails_before_real_asset_resolution(
     assert captured["failure"]["reserved"] == 1
 
 
-def test_product_only_selected_real_model_does_not_require_face_license(monkeypatch):
+def test_product_only_queued_real_model_does_not_require_face_assets(monkeypatch):
     captured = {}
     face_r2 = _FaceR2()
     _patch(
@@ -282,7 +341,9 @@ def test_product_only_selected_real_model_does_not_require_face_license(monkeypa
     )
     app = _app(_asset_rows(), None, face_r2)
 
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+    asyncio.run(dpj.run_detail_page_job(
+        app, worker_job(_snapshot_payload(), credits_reserved=1)
+    ))
 
     assert app.state.pool.asset_queries == 0
     assert face_r2.gets == []
@@ -318,16 +379,11 @@ def test_virtual_worn_selection_ignores_stale_facemarket_license(
     app.state.fm_chain = object()
 
     original_verify = facemarket.verify_license
-    original_face_loader = dpj._load_license_face
     original_asset_resolver = identity_source.resolve_real_model_assets
 
     async def tracked_verify(*args, **kwargs):
         calls["verify"] += 1
         return await original_verify(*args, **kwargs)
-
-    async def tracked_face_loader(*args, **kwargs):
-        calls["face"] += 1
-        return await original_face_loader(*args, **kwargs)
 
     async def tracked_asset_resolver(*args, **kwargs):
         calls["assets"] += 1
@@ -340,13 +396,17 @@ def test_virtual_worn_selection_ignores_stale_facemarket_license(
         calls["settlement"] += 1
 
     monkeypatch.setattr(facemarket, "verify_license", tracked_verify)
-    monkeypatch.setattr(dpj, "_load_license_face", tracked_face_loader)
     monkeypatch.setattr(identity_source, "resolve_real_model_assets", tracked_asset_resolver)
     monkeypatch.setattr(facemarket, "record_license_settlement", tracked_settlement)
     if vc_required:
         monkeypatch.setattr(facemarket.holder_client, "post", holder_down)
 
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+    model_id = analysis.get("selectedModelId") or analysis.get("selected_model_id")
+    asyncio.run(dpj.run_detail_page_job(
+        app,
+        worker_job({"mode": "generate", "modelId": model_id,
+                    "brandUseCategory": None}, credits_reserved=1),
+    ))
 
     assert calls == {"verify": 0, "face": 0, "assets": 0, "settlement": 0}
     assert face_r2.gets == []
@@ -354,4 +414,130 @@ def test_virtual_worn_selection_ignores_stale_facemarket_license(
     assert captured["calls"]
     assert captured["license_notice"] is None
     assert captured["success"]["charge"] == 1
+    assert captured.get("failure") is None
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_code"),
+    [
+        ("missing_snapshot", "model_unavailable"),
+        ("mismatched_snapshot", "model_unavailable"),
+        ("revoked", "license_revoked"),
+        ("holder", "holder_unavailable"),
+        ("stale_evidence", "model_enrollment_unavailable"),
+        ("missing_refs", "model_assets_unavailable"),
+        ("r2_failure", "model_assets_unavailable"),
+    ],
+)
+def test_real_worker_denials_refund_without_output_or_settlement(
+    monkeypatch, case, expected_code
+):
+    captured = {"settlements": 0, "resolver": 0, "verify": 0, "assets": 0}
+    _patch(
+        monkeypatch,
+        captured,
+        analysis={"selectedModelId": "different-mutable-model"},
+    )
+    face_r2 = _FaceR2()
+    if case == "r2_failure":
+        def fail_read(key):
+            face_r2.gets.append(key)
+            raise RuntimeError("private object unavailable")
+        face_r2.get_bytes = fail_read
+    app = _app([], None, face_r2)
+
+    async def fake_resolve(conn, model_id, *, license_id=None):
+        captured["resolver"] += 1
+        return _runtime_row()
+
+    async def fake_verify(app, row, **kwargs):
+        captured["verify"] += 1
+        if case in {"revoked", "holder", "stale_evidence"}:
+            raise facemarket._err(expected_code, "blocked", status=503 if case == "holder" else 409)
+
+    async def fake_assets(conn, model_id, *, enrollment_id, evidence_version):
+        captured["assets"] += 1
+        assert enrollment_id == ENROLLMENT_ID and evidence_version == "policy-v1"
+        if case == "missing_refs":
+            return None
+        return [
+            {"key": FACE_FRONT_KEY, "mime": "image/png", "bucket": "face"},
+            {"key": GRID_KEY, "mime": "image/png", "bucket": "face"},
+        ]
+
+    async def fake_settlement(*args, **kwargs):
+        captured["settlements"] += 1
+
+    monkeypatch.setattr(facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(identity_source, "resolve_real_model_assets", fake_assets)
+    monkeypatch.setattr(facemarket, "record_license_settlement", fake_settlement)
+    app.state.fm_chain = object()
+
+    payload = _snapshot_payload()
+    if case == "missing_snapshot":
+        payload.pop("_facemarket")
+    elif case == "mismatched_snapshot":
+        payload["_facemarket"]["modelId"] = "44444444-4444-4444-4444-444444444444"
+    asyncio.run(dpj.run_detail_page_job(
+        app,
+        worker_job(payload, credits_reserved=7),
+    ))
+
+    assert captured.get("calls") is None
+    assert captured.get("success") is None
+    assert captured["settlements"] == 0
+    assert captured["failure"]["reserved"] == 7
+    assert captured["failure"]["code"] == expected_code
+    if case in {"revoked", "holder", "stale_evidence"}:
+        assert face_r2.gets == [] and captured["assets"] == 0
+    if case in {"missing_snapshot", "mismatched_snapshot"}:
+        assert captured["resolver"] == 0
+
+
+def test_real_worker_snapshot_wins_and_notice_is_masked(monkeypatch):
+    captured = {}
+    _patch(
+        monkeypatch,
+        captured,
+        analysis={"selectedModelId": "different-mutable-model"},
+    )
+    app = _app([], None, _FaceR2())
+
+    async def fake_resolve(conn, model_id, *, license_id=None):
+        assert model_id == MODEL_ID and license_id == LICENSE_ID
+        return _runtime_row()
+
+    async def fake_verify(app, row, **kwargs):
+        assert kwargs == {"model_id": MODEL_ID, "brand_use_category": CATEGORY}
+
+    async def fake_assets(conn, model_id, *, enrollment_id, evidence_version):
+        return [
+            {"key": FACE_FRONT_KEY, "mime": "image/png", "bucket": "face"},
+            {"key": GRID_KEY, "mime": "image/png", "bucket": "face"},
+        ]
+
+    async def fake_settlement(app, **kwargs):
+        captured["settlement"] = kwargs
+
+    monkeypatch.setattr(facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(identity_source, "resolve_real_model_assets", fake_assets)
+    monkeypatch.setattr(facemarket, "record_license_settlement", fake_settlement)
+    app.state.fm_chain = object()
+
+    asyncio.run(dpj.run_detail_page_job(
+        app,
+        worker_job(_snapshot_payload(), credits_reserved=1),
+    ))
+
+    assert captured["license_notice"]["modelName"] == "홍*동"
+    assert captured["license_notice"]["licenseId"] == LICENSE_ID
+    assert captured["settlement"] == {
+        "payment_key": "job:j1",
+        "license_id": LICENSE_ID,
+        "model_id": MODEL_ID,
+        "total": 100,
+        "job_id": "j1",
+    }
     assert captured.get("failure") is None

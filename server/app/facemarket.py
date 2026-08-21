@@ -1709,59 +1709,88 @@ async def issue_face_vc(app, *, license_id, model_id, allowed, forbidden,
 
 _HOLDER_VERIFY_TIMEOUT = 5.0  # 게이트는 셀러 요청 블로킹 경로 — 홀더 지연이 생성 지연되지 않게 짧게.
 
-# 게이트 검증 대상 라이선스 로드용 컬럼(단일 테이블 l 별칭 없이).
-_LICENSE_VERIFY_COLS = (
-    "id::text as id, model_id::text as model_id, status, license_valid_until, "
-    "unit_price, vc_id, vc_status_uri"
-)
-
-
 async def resolve_project_license(conn, project: dict, analysis: dict) -> dict | None:
-    """상세페이지 프로젝트가 검증할 얼굴 라이선스를 해석. 없으면 None(게이트 no-op).
-
-    1) 프로젝트가 이미 특정 라이선스에 잠겨 있으면(재생성) 그 라이선스를 대상으로 —
-       해지된 라이선스가 재생성을 막아야 하므로(장면⑤). 상태 무관 로드.
-    2) 아니면 선택 모델(analysis.selectedModelId = fm_models.id)의 라이선스 —
-       active 우선, 없으면 최신. 비-UUID/미선택/무라이선스 → None(구 'mA'/'mB' 500 방지).
-    """
-    locked = (project or {}).get("facemarket_license_id")
-    if locked:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                f"select {_LICENSE_VERIFY_COLS} from fm_licenses where id = %s",
-                (str(locked),),
-            )
-            row = await cur.fetchone()
-        if row:
-            return row
-
+    """Resolve the selected model's current license; historical project locks are inert."""
     selected_model_id = (analysis or {}).get("selectedModelId") or (
         analysis or {}
     ).get("selected_model_id")
     return await resolve_model_license(conn, selected_model_id)
 
 
-async def resolve_model_license(conn, model_id) -> dict | None:
-    """모델 id 하나의 검증 대상 라이선스를 해석 — active 우선, 없으면 최신.
-
-    에디터 새 컷(NewCutRequest.modelId) 경로가 상세페이지와 같은 게이트를 타도록 분리.
-    비-UUID(구 'mA'/'mB' 가상모델)·미선택·무라이선스 → None(게이트 no-op).
-    """
+async def resolve_model_license(
+    conn,
+    model_id: str | None,
+    *,
+    license_id: str | None = None,
+) -> dict | None:
+    """Load a model's current runtime evidence, optionally pinned to one license."""
     if not model_id:
         return None
     try:
         uuid.UUID(str(model_id))
     except (ValueError, TypeError):
-        return None  # 구 정적 mock id('mA'/'mB' 등) → 비-FaceMarket → no-op
+        return None
 
+    license_join = "l.model_id = m.id and l.enrollment_id = m.current_enrollment_id"
+    where = "m.id = %s"
+    params: tuple[str, ...] = (str(model_id),)
+    if license_id is not None:
+        license_join = "l.model_id = m.id"
+        where += " and l.id = %s"
+        params = (str(model_id), str(license_id))
     async with conn.cursor() as cur:
         await cur.execute(
-            f"""select {_LICENSE_VERIFY_COLS} from fm_licenses
-                where model_id = %s
-                order by (status = 'active') desc, created_at desc limit 1""",
-            (str(model_id),),
+            f"""select l.id::text as id, m.id::text as model_id,
+                       m.display_name as _model_name_raw, l.status,
+                       l.license_valid_until, l.unit_price, l.vc_id,
+                       l.allowed_use, l.forbidden_use,
+                       m.status as model_status, m.assets_status,
+                       m.current_enrollment_id::text as current_enrollment_id,
+                       l.enrollment_id::text as license_enrollment_id,
+                       e.status as enrollment_status, e.match_policy_version,
+                       exists (
+                           select 1 from fm_model_assets a
+                            where a.model_id = m.id and a.view = 'face_front'
+                              and nullif(btrim(a.r2_key), '') is not null
+                              and a.bucket = 'face' and a.mime like 'image/%'
+                       ) as has_face_front,
+                       exists (
+                           select 1 from fm_model_assets a
+                            where a.model_id = m.id and a.view = 'grid_sedcard'
+                              and nullif(btrim(a.r2_key), '') is not null
+                              and a.bucket = 'face' and a.mime like 'image/%'
+                       ) as has_grid_sedcard,
+                       nullif(btrim(e.match_policy_version), '') is not null
+                       and exists (
+                           select 1 from fm_model_assets a
+                            where a.model_id = m.id and a.view = 'face_front'
+                              and nullif(btrim(a.r2_key), '') is not null
+                              and a.bucket = 'face' and a.mime like 'image/%'
+                              and a.source_enrollment_id = m.current_enrollment_id
+                              and a.evidence_version = e.match_policy_version
+                       ) and exists (
+                           select 1 from fm_model_assets a
+                            where a.model_id = m.id and a.view = 'grid_sedcard'
+                              and nullif(btrim(a.r2_key), '') is not null
+                              and a.bucket = 'face' and a.mime like 'image/%'
+                              and a.source_enrollment_id = m.current_enrollment_id
+                              and a.evidence_version = e.match_policy_version
+                       ) as assets_current_evidence
+                  from fm_models m
+                  left join fm_biometric_enrollments e
+                    on e.id = m.current_enrollment_id and e.model_id = m.id
+                  left join fm_licenses l on {license_join}
+                 where {where}
+                 limit 1""",
+            params,
         )
-        return await cur.fetchone()
+        row = await cur.fetchone()
+    if row is None:
+        return None
+    result = dict(row)
+    raw_name = result.pop("_model_name_raw", result.pop("model_name", ""))
+    result["model_name"] = _mask_name(raw_name or "")
+    return result
 
 
 def _is_expired(license_row: dict) -> bool:
@@ -1779,7 +1808,13 @@ def _is_expired(license_row: dict) -> bool:
     return vu <= datetime.now(timezone.utc)
 
 
-async def verify_license(app, license_row: dict) -> None:
+async def verify_license(
+    app,
+    license_row: dict | None,
+    *,
+    model_id: str | None,
+    brand_use_category: str | None,
+) -> None:
     """얼굴 라이선스 사용 자격 검증. 실패 시 409 {code, message}(KR) 발생.
 
     검사 순서(계약):
@@ -1789,6 +1824,18 @@ async def verify_license(app, license_row: dict) -> None:
       3. mandatory VC 누락/invalid/revoked → 409, Holder 장애/계약 오류 → 503
     optional 개발 모드는 Holder 설정 또는 VC가 없을 때만 로컬 검사로 끝낸다.
     """
+    try:
+        uuid.UUID(str(model_id))
+    except (TypeError, ValueError):
+        return
+
+    if (
+        license_row is None
+        or str(license_row.get("model_id") or "") != str(model_id)
+        or license_row.get("model_status") != "verified"
+    ):
+        raise _err("model_unavailable", "사용할 수 없는 모델입니다.", status=409)
+
     status = license_row.get("status")
     if status == "revoked":
         raise _err(
@@ -1803,6 +1850,59 @@ async def verify_license(app, license_row: dict) -> None:
         raise _err(
             "license_expired",
             "얼굴 라이선스 사용 기간이 만료되었습니다.",
+            status=409,
+        )
+
+    category = (
+        brand_use_category.strip()
+        if isinstance(brand_use_category, str)
+        else ""
+    )
+    fixed_categories = {
+        *ALLOWED_BRAND_USE_CATEGORIES,
+        *FORBIDDEN_BRAND_USE_CATEGORIES,
+    }
+    if not category or category not in fixed_categories:
+        raise _err(
+            "brand_use_category_required",
+            "브랜드 사용 카테고리를 확인해 주세요.",
+            status=409,
+        )
+    forbidden = license_row.get("forbidden_use")
+    if isinstance(forbidden, list) and category in forbidden:
+        raise _err(
+            "license_use_forbidden",
+            "이 라이선스에서 금지된 사용 카테고리입니다.",
+            status=409,
+        )
+    allowed = license_row.get("allowed_use")
+    if not isinstance(allowed, list) or category not in allowed:
+        raise _err(
+            "license_use_not_allowed",
+            "이 라이선스에서 허용된 사용 카테고리가 아닙니다.",
+            status=409,
+        )
+    enrollment_id = str(license_row.get("current_enrollment_id") or "")
+    if (
+        not enrollment_id
+        or license_row.get("enrollment_status") != "passed"
+        or not str(license_row.get("match_policy_version") or "").strip()
+        or str(license_row.get("license_enrollment_id") or "") != enrollment_id
+    ):
+        raise _err(
+            "model_enrollment_unavailable",
+            "현재 모델 등록을 사용할 수 없습니다.",
+            status=409,
+        )
+    if (
+        license_row.get("assets_status") != "ready"
+        or license_row.get("has_face_front") is not True
+        or license_row.get("has_grid_sedcard") is not True
+        or license_row.get("assets_current_evidence") is not True
+    ):
+        raise _err(
+            "model_assets_unavailable",
+            "현재 모델 자산을 사용할 수 없습니다.",
             status=409,
         )
 

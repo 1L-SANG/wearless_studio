@@ -2,10 +2,17 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 import httpx
+import pytest
 
 from app.workers import detail_page_job as dpj
 from app.workers import editor_image_job as eij
 from conftest import FakeR2, fake_worker_app, make_settings, worker_job
+
+
+REAL_MODEL_ID = "11111111-1111-1111-1111-111111111111"
+REAL_LICENSE_ID = "22222222-2222-2222-2222-222222222222"
+REAL_ENROLLMENT_ID = "33333333-3333-3333-3333-333333333333"
+REAL_CATEGORY = "일반 여성 의류"
 
 
 class _TrackingR2(FakeR2):
@@ -669,7 +676,7 @@ def test_editor_prunes_mood_for_all_and_bg_but_keeps_pose_order(monkeypatch):
 def test_editor_real_product_prunes_identity_and_never_sets_settlement_flag(monkeypatch):
     captured = {"settlements": 0}
     _patch_editor_common(monkeypatch, captured)
-    model_id = "11111111-1111-1111-1111-111111111111"
+    model_id = REAL_MODEL_ID
 
     async def fake_real_refs(conn, selected_model_id, **_kwargs):
         assert selected_model_id == model_id
@@ -678,8 +685,20 @@ def test_editor_real_product_prunes_identity_and_never_sets_settlement_flag(monk
             {"key": "face-sheet", "mime": "image/png", "bucket": "face"},
         ]
 
-    async def fake_license(conn, selected_model_id):
-        return {"id": "license", "model_id": selected_model_id, "status": "active", "unit_price": 10}
+    async def fake_license(conn, selected_model_id, *, license_id=None):
+        assert license_id == REAL_LICENSE_ID
+        return {
+            "id": license_id,
+            "model_id": selected_model_id,
+            "status": "active",
+            "model_status": "verified",
+            "current_enrollment_id": REAL_ENROLLMENT_ID,
+            "match_policy_version": "policy-v1",
+            "unit_price": 10,
+        }
+
+    async def fake_verify(app, row, **kwargs):
+        return None
 
     async def fake_example(settings, example_id, scope="all", clothing_type=None):
         return eij.InlineImage("image/png", b"example:all")
@@ -689,6 +708,7 @@ def test_editor_real_product_prunes_identity_and_never_sets_settlement_flag(monk
 
     monkeypatch.setattr(eij.identity_source, "resolve_real_model_assets", fake_real_refs)
     monkeypatch.setattr(eij.facemarket, "resolve_model_license", fake_license)
+    monkeypatch.setattr(eij.facemarket, "verify_license", fake_verify)
     monkeypatch.setattr(eij.facemarket, "record_license_settlement", fake_settlement)
     monkeypatch.setattr(eij.cut_generator, "example_asset_status", lambda *_args: "available")
     monkeypatch.setattr(eij.cut_generator, "load_example_image", fake_example)
@@ -706,6 +726,8 @@ def test_editor_real_product_prunes_identity_and_never_sets_settlement_flag(monk
         "cutType": "product",
         "shot": "ghost",
         "modelId": model_id,
+        "brandUseCategory": REAL_CATEGORY,
+        "_facemarket": {"modelId": model_id, "licenseId": REAL_LICENSE_ID},
         "refAssetIds": ["mood"],
         "exampleId": "example-all",
         "refScope": "all",
@@ -723,7 +745,7 @@ def test_editor_real_product_prunes_identity_and_never_sets_settlement_flag(monk
 def test_editor_real_visible_worn_cut_enables_identity_contract(monkeypatch):
     captured = {"settlements": 0}
     _patch_editor_common(monkeypatch, captured)
-    model_id = "11111111-1111-1111-1111-111111111111"
+    model_id = REAL_MODEL_ID
 
     async def fake_real_refs(conn, selected_model_id, **_kwargs):
         return [
@@ -731,11 +753,24 @@ def test_editor_real_visible_worn_cut_enables_identity_contract(monkeypatch):
             {"key": "face-sheet", "mime": "image/png", "bucket": "face"},
         ]
 
-    async def fake_license(conn, selected_model_id):
-        return {"id": "license", "model_id": selected_model_id, "status": "active", "unit_price": 10}
+    async def fake_license(conn, selected_model_id, *, license_id=None):
+        assert license_id == REAL_LICENSE_ID
+        return {
+            "id": license_id,
+            "model_id": selected_model_id,
+            "status": "active",
+            "model_status": "verified",
+            "current_enrollment_id": REAL_ENROLLMENT_ID,
+            "match_policy_version": "policy-v1",
+            "unit_price": 10,
+        }
+
+    async def fake_verify(app, row, **kwargs):
+        return None
 
     monkeypatch.setattr(eij.identity_source, "resolve_real_model_assets", fake_real_refs)
     monkeypatch.setattr(eij.facemarket, "resolve_model_license", fake_license)
+    monkeypatch.setattr(eij.facemarket, "verify_license", fake_verify)
 
     app = fake_worker_app(
         make_settings(gemini_api_key="x", r2_bucket="b", facemarket_enabled=True),
@@ -749,6 +784,8 @@ def test_editor_real_visible_worn_cut_enables_identity_contract(monkeypatch):
         "direction": "front",
         "faceExposure": "show",
         "modelId": model_id,
+        "brandUseCategory": REAL_CATEGORY,
+        "_facemarket": {"modelId": model_id, "licenseId": REAL_LICENSE_ID},
     })))
 
     generated = captured["generations"][0]
@@ -772,7 +809,7 @@ class _HolderResponse:
 def _run_editor_worker_vc_denial(monkeypatch, holder_call, *, license_overrides=None):
     captured = {}
     _patch_editor_common(monkeypatch, captured)
-    model_id = "11111111-1111-1111-1111-111111111111"
+    model_id = REAL_MODEL_ID
 
     async def fake_real_refs(conn, selected_model_id, **_kwargs):
         return [
@@ -780,14 +817,25 @@ def _run_editor_worker_vc_denial(monkeypatch, holder_call, *, license_overrides=
             {"key": "face-sheet", "mime": "image/png", "bucket": "face"},
         ]
 
-    async def fake_license(conn, selected_model_id):
+    async def fake_license(conn, selected_model_id, *, license_id=None):
         return {
-            "id": "license",
+            "id": REAL_LICENSE_ID,
             "model_id": selected_model_id,
             "status": "active",
             "license_valid_until": None,
             "unit_price": 10,
             "vc_id": "vc-1",
+            "allowed_use": [REAL_CATEGORY],
+            "forbidden_use": [],
+            "model_status": "verified",
+            "assets_status": "ready",
+            "current_enrollment_id": REAL_ENROLLMENT_ID,
+            "license_enrollment_id": REAL_ENROLLMENT_ID,
+            "enrollment_status": "passed",
+            "match_policy_version": "policy-v1",
+            "has_face_front": True,
+            "has_grid_sedcard": True,
+            "assets_current_evidence": True,
             **(license_overrides or {}),
         }
 
@@ -829,6 +877,8 @@ def _run_editor_worker_vc_denial(monkeypatch, holder_call, *, license_overrides=
         "direction": "front",
         "faceExposure": "show",
         "modelId": model_id,
+        "brandUseCategory": REAL_CATEGORY,
+        "_facemarket": {"modelId": model_id, "licenseId": REAL_LICENSE_ID},
     })))
 
     assert captured.get("generations") is None
@@ -868,3 +918,128 @@ def test_editor_invalid_or_revoked_vc_fails_before_model_asset_reads(monkeypatch
             return _HolderResponse(_payload)
 
         _run_editor_worker_vc_denial(monkeypatch, holder_result)
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_code"),
+    [
+        ("missing_snapshot", "model_unavailable"),
+        ("missing_snapshot_flag_off", "model_unavailable"),
+        ("mismatched_snapshot", "model_unavailable"),
+        ("revoked", "license_revoked"),
+        ("holder", "holder_unavailable"),
+        ("stale_evidence", "model_enrollment_unavailable"),
+        ("missing_refs", "model_assets_unavailable"),
+        ("r2_failure", "model_assets_unavailable"),
+    ],
+)
+def test_editor_real_denials_refund_without_generation_output_or_settlement(
+    monkeypatch, case, expected_code
+):
+    captured = {"resolve": 0, "verify": 0, "assets": 0, "settlement": 0}
+    _patch_editor_common(monkeypatch, captured)
+
+    async def fake_resolve(conn, model_id, *, license_id=None):
+        captured["resolve"] += 1
+        assert model_id == REAL_MODEL_ID and license_id == REAL_LICENSE_ID
+        return {
+            "id": REAL_LICENSE_ID,
+            "model_id": REAL_MODEL_ID,
+            "model_status": "verified",
+            "status": "active",
+            "current_enrollment_id": REAL_ENROLLMENT_ID,
+            "match_policy_version": "policy-v1",
+            "unit_price": 10,
+        }
+
+    async def fake_verify(app, row, **kwargs):
+        captured["verify"] += 1
+        assert kwargs == {
+            "model_id": REAL_MODEL_ID,
+            "brand_use_category": REAL_CATEGORY,
+        }
+        if case in {"revoked", "holder", "stale_evidence"}:
+            raise eij.facemarket._err(
+                expected_code,
+                "blocked",
+                status=503 if case == "holder" else 409,
+            )
+
+    async def fake_refs(conn, model_id, *, enrollment_id, evidence_version):
+        captured["assets"] += 1
+        assert enrollment_id == REAL_ENROLLMENT_ID
+        assert evidence_version == "policy-v1"
+        if case == "missing_refs":
+            return None
+        return [
+            {"key": "face-front", "mime": "image/png", "bucket": "face"},
+            {"key": "face-grid", "mime": "image/png", "bucket": "face"},
+        ]
+
+    async def fake_failure(conn, **kwargs):
+        captured["failure"] = kwargs
+        return {"status": "failed"}
+
+    async def forbidden_success(*args, **kwargs):
+        raise AssertionError("denial must not finalize success")
+
+    async def fake_settlement(*args, **kwargs):
+        captured["settlement"] += 1
+
+    monkeypatch.setattr(eij.facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(eij.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(eij.identity_source, "resolve_real_model_assets", fake_refs)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_failure)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", forbidden_success)
+    monkeypatch.setattr(eij.facemarket, "record_license_settlement", fake_settlement)
+
+    public_r2 = _TrackingR2()
+    face_r2 = _TrackingR2()
+    if case == "r2_failure":
+        def fail_read(key):
+            face_r2.reads.append(key)
+            raise RuntimeError("private object unavailable")
+        face_r2.get_bytes = fail_read
+    app = fake_worker_app(
+        make_settings(
+            gemini_api_key="x",
+            r2_bucket="b",
+            facemarket_enabled=case != "missing_snapshot_flag_off",
+        ),
+        r2=public_r2,
+    )
+    app.state.r2_face = face_r2
+    app.state.fm_chain = object()
+    payload = {
+        "mode": "new",
+        "cutType": "styling",
+        "shot": "full",
+        "modelId": REAL_MODEL_ID,
+        "brandUseCategory": REAL_CATEGORY,
+        "_facemarket": {
+            "modelId": REAL_MODEL_ID,
+            "licenseId": REAL_LICENSE_ID,
+        },
+    }
+    if case in {"missing_snapshot", "missing_snapshot_flag_off"}:
+        payload.pop("_facemarket")
+    elif case == "mismatched_snapshot":
+        payload["_facemarket"]["modelId"] = "44444444-4444-4444-4444-444444444444"
+
+    asyncio.run(eij.run_editor_image_job(
+        app,
+        worker_job(payload, credits_reserved=7),
+    ))
+
+    assert captured.get("generations") is None
+    assert captured["settlement"] == 0
+    assert captured["failure"]["reserved"] == 7
+    assert captured["failure"]["code"] == expected_code
+    if case in {"revoked", "holder", "stale_evidence"}:
+        assert face_r2.reads == [] and captured["assets"] == 0
+    if case in {
+        "missing_snapshot",
+        "missing_snapshot_flag_off",
+        "mismatched_snapshot",
+    }:
+        assert captured["resolve"] == 0

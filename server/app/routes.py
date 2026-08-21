@@ -2722,12 +2722,23 @@ async def generate_editor_image(
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
+        payload = dict(body or {})
+        payload.pop("_facemarket", None)
+        analysis = None
+        selected_model_id = None
+        brand_use_category = None
+        if payload.get("mode") == "new":
+            analysis = await repo.get_analysis(conn, project_id) or {}
+            selected_model_id = payload.get("modelId") or payload.pop("model_id", None)
+            payload.pop("model_id", None)
+            payload["modelId"] = selected_model_id
+            brand_use_category = analysis.get("brandUseCategory")
+            payload["brandUseCategory"] = brand_use_category
         if (
-            (body or {}).get("mode") == "new"
-            and str((body or {}).get("exampleId") or "").startswith("ss_")
+            payload.get("mode") == "new"
+            and str(payload.get("exampleId") or "").startswith("ss_")
         ):
             product = await repo.get_product(conn, project_id) or {}
-            analysis = await repo.get_analysis(conn, project_id) or {}
             clothing_type = (
                 product.get("clothingType")
                 or product.get("clothing_type")
@@ -2735,7 +2746,7 @@ async def generate_editor_image(
             )
             try:
                 example_spec = cut_generator.normalize_spec(
-                    content_roles.canonicalize_storyboard_block(body),
+                    content_roles.canonicalize_storyboard_block(payload),
                     clothing_type=clothing_type,
                 )
                 space_set_assets.resolve_published_example_reference(
@@ -2755,14 +2766,24 @@ async def generate_editor_image(
         # FaceMarket verify-before-use 게이트(FM-30) — 에디터 새 컷도 상세페이지와 동일하게,
         # 실존 모델(UUID modelId) 선택 시 라이선스 자격을 잡 생성 전에 검증한다(실패=409, 예약 없음).
         # 가상모델('mA' 등 비-UUID)·무라이선스 모델은 no-op → 기존 플로우 무영향.
-        if s.facemarket_enabled and (body or {}).get("mode") == "new":
+        if s.facemarket_enabled and payload.get("mode") == "new":
             license_row = await facemarket.resolve_model_license(
-                conn, (body or {}).get("modelId") or (body or {}).get("model_id"))
+                conn, selected_model_id
+            )
+            await facemarket.verify_license(
+                request.app,
+                license_row,
+                model_id=selected_model_id,
+                brand_use_category=brand_use_category,
+            )
             if license_row is not None:
-                await facemarket.verify_license(request.app, license_row)  # 실패=409
+                payload["_facemarket"] = {
+                    "modelId": str(license_row["model_id"]),
+                    "licenseId": str(license_row["id"]),
+                }
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="editor_image",
-            payload=body, idempotency_key=scoped_key, credits_reserved=cost,
+            payload=payload, idempotency_key=scoped_key, credits_reserved=cost,
             metadata={"creditCostVersion": s.credit_cost_version})
         if created:  # 신규 job만 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
             if await repo.reserve_credits(conn, user_id, cost) is None:
@@ -2792,19 +2813,39 @@ async def generate_detail_page(
         project = await repo.get_project(conn, user_id, project_id)
         if project is None:
             raise _not_found()
+        analysis = await repo.get_analysis(conn, project_id) or {}
+        selected_model_id = analysis.get("selectedModelId") or analysis.get(
+            "selected_model_id"
+        )
+        brand_use_category = analysis.get("brandUseCategory")
+        payload = {
+            "mode": "generate",
+            "modelId": selected_model_id,
+            "brandUseCategory": brand_use_category,
+        }
+        license_row = None
         # FaceMarket verify-before-use 게이트(FM-30). **캐시 반환보다 먼저** — 해지·만료된
         # 라이선스가 이미 생성된 페이지의 재생성까지 막아야 하므로(장면⑤). facemarket off면
         # 미진입 → 기존 셀러 플로우 무영향. 선택 모델에 라이선스 없으면 no-op(비-FaceMarket 셀러).
         if s.facemarket_enabled:
-            analysis = await repo.get_analysis(conn, project_id)
             license_row = await facemarket.resolve_project_license(conn, project, analysis)
+            await facemarket.verify_license(
+                request.app,
+                license_row,
+                model_id=selected_model_id,
+                brand_use_category=brand_use_category,
+            )
             if license_row is not None:
-                await facemarket.verify_license(request.app, license_row)  # 실패=409
                 await facemarket.set_project_license(conn, project_id, license_row["id"])
-                await conn.commit()  # 잠금 확정 — 캐시 반환 경로도 워커 정산 포인터 보존
+                payload["_facemarket"] = {
+                    "modelId": str(license_row["model_id"]),
+                    "licenseId": str(license_row["id"]),
+                }
         existing = await repo.get_editor_blocks(conn, project_id)
         if existing:  # 완료 재호출 → 기존 결과 반환(재생성·재차감 없음)
             account = await repo.get_account(conn, user_id)
+            if license_row is not None:
+                await conn.commit()
             return JSONResponse({"data": existing, "credits": (account or {}).get("credits", 0)})
         storyboard = await repo.get_storyboard(conn, project_id)
         _require_bg_examples_enabled(request, storyboard)
@@ -2821,7 +2862,7 @@ async def generate_detail_page(
         cost = ai_count * s.credit_cost_storyboard_per_cut
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="detail_page",
-            payload={"mode": "generate"}, idempotency_key=scoped_key, credits_reserved=cost,
+            payload=payload, idempotency_key=scoped_key, credits_reserved=cost,
             # perCutCost = 예약 시점 컷당 단가 스냅샷 — 워커 정산의 단일 기준(실행 시점 설정
             # 변경·콘티 재저장으로 인한 블록 수 변동과 무관하게 견적 가격을 고정).
             metadata={"creditCostVersion": s.credit_cost_version,

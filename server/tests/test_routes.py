@@ -4,11 +4,18 @@
 explicit-null PATCH가 500이 아니라 422 봉투로 떨어지는지 — 에러 핸들러 직렬화 버그 가드.
 """
 
+from dataclasses import replace
+
 import pytest
 
 import app.routes as routes
 
 from conftest import patch_route_db
+
+
+MODEL_ID = "11111111-1111-1111-1111-111111111111"
+LICENSE_ID = "22222222-2222-2222-2222-222222222222"
+CATEGORY = "일반 여성 의류"
 
 
 def _auth(make_token):
@@ -532,6 +539,158 @@ def test_generate_editor_image_rejects_space_groups_before_credit_reservation(
 
     assert res.status_code == 400
     assert res.json()["error"]["code"] == "space_set_editor_unsupported"
+
+
+@pytest.mark.parametrize("model_key", ["modelId", "model_id"])
+def test_editor_new_owns_category_model_and_license_snapshot(
+    client, make_token, monkeypatch, model_key
+):
+    seen = {}
+    client.app.state.settings = replace(
+        client.app.state.settings,
+        facemarket_enabled=True,
+    )
+
+    async def fake_project(conn, user_id, project_id):
+        return {"id": project_id, "facemarket_license_id": "stale"}
+
+    async def fake_analysis(conn, project_id):
+        return {"brandUseCategory": CATEGORY}
+
+    async def fake_resolve(conn, model_id, **kwargs):
+        assert model_id == MODEL_ID and kwargs == {}
+        return {"id": LICENSE_ID, "model_id": MODEL_ID}
+
+    async def fake_verify(app, row, **kwargs):
+        assert kwargs == {"model_id": MODEL_ID, "brand_use_category": CATEGORY}
+
+    async def fake_create(conn, **kwargs):
+        seen.update(kwargs)
+        return {"id": "job-1"}, True
+
+    async def fake_reserve(conn, user_id, amount):
+        return 9
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_project)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(routes.facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(routes.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(routes.repo, "create_job", fake_create)
+    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
+    patch_route_db(monkeypatch, routes)
+
+    response = client.post(
+        "/v1/projects/p1/editor:generate-image",
+        headers=_auth(make_token),
+        json={
+            "mode": "new",
+            "cutType": "styling",
+            model_key: MODEL_ID,
+            "brandUseCategory": "정치·종교",
+            "_facemarket": {"modelId": "attacker", "licenseId": "attacker"},
+        },
+    )
+
+    assert response.status_code == 202, response.text
+    assert seen["payload"]["modelId"] == MODEL_ID
+    assert "model_id" not in seen["payload"]
+    assert seen["payload"]["brandUseCategory"] == CATEGORY
+    assert seen["payload"]["_facemarket"] == {
+        "modelId": MODEL_ID,
+        "licenseId": LICENSE_ID,
+    }
+
+
+def test_editor_denial_precedes_job_and_credit(client, make_token, monkeypatch):
+    client.app.state.settings = replace(
+        client.app.state.settings,
+        facemarket_enabled=True,
+    )
+    calls = {"create": 0, "reserve": 0}
+
+    async def fake_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_analysis(conn, project_id):
+        return {"brandUseCategory": CATEGORY}
+
+    async def fake_resolve(conn, model_id, **kwargs):
+        return {"id": LICENSE_ID, "model_id": MODEL_ID}
+
+    async def deny(*args, **kwargs):
+        raise routes.HTTPException(
+            status_code=409,
+            detail={"code": "model_assets_unavailable", "message": "blocked"},
+        )
+
+    async def fake_create(*args, **kwargs):
+        calls["create"] += 1
+
+    async def fake_reserve(*args, **kwargs):
+        calls["reserve"] += 1
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_project)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(routes.facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(routes.facemarket, "verify_license", deny)
+    monkeypatch.setattr(routes.repo, "create_job", fake_create)
+    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
+    patch_route_db(monkeypatch, routes)
+
+    response = client.post(
+        "/v1/projects/p1/editor:generate-image",
+        headers=_auth(make_token),
+        json={"mode": "new", "cutType": "styling", "modelId": MODEL_ID},
+    )
+
+    assert response.status_code == 409
+    assert calls == {"create": 0, "reserve": 0}
+
+
+def test_editor_virtual_and_vary_strip_client_snapshot(
+    client, make_token, monkeypatch
+):
+    client.app.state.settings = replace(
+        client.app.state.settings,
+        facemarket_enabled=True,
+    )
+    payloads = []
+
+    async def fake_project(conn, user_id, project_id):
+        return {"id": project_id, "facemarket_license_id": "stale"}
+
+    async def fake_analysis(conn, project_id):
+        return {"brandUseCategory": CATEGORY}
+
+    async def fake_create(conn, **kwargs):
+        payloads.append(kwargs["payload"])
+        return {"id": f"job-{len(payloads)}"}, True
+
+    async def fake_reserve(conn, user_id, amount):
+        return 9
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_project)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(routes.repo, "create_job", fake_create)
+    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
+    patch_route_db(monkeypatch, routes)
+
+    common = {"_facemarket": {"modelId": "attacker", "licenseId": "attacker"}}
+    virtual = client.post(
+        "/v1/projects/p1/editor:generate-image",
+        headers=_auth(make_token),
+        json={"mode": "new", "cutType": "styling", "model_id": "mA", **common},
+    )
+    vary = client.post(
+        "/v1/projects/p1/editor:generate-image",
+        headers=_auth(make_token),
+        json={"mode": "vary", "source": {"src": "/v1/assets/a/file"}, **common},
+    )
+
+    assert virtual.status_code == 202 and vary.status_code == 202
+    assert payloads[0]["modelId"] == "mA" and "model_id" not in payloads[0]
+    assert payloads[0]["brandUseCategory"] == CATEGORY
+    assert all("_facemarket" not in payload for payload in payloads)
 
 
 def test_patch_unknown_status_field_ignored_not_500(client, make_token):

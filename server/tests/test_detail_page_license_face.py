@@ -13,10 +13,14 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 from app import facemarket
+from app.agents import identity_source
 from app.workers import detail_page_job as dpj
 from conftest import FakeR2, make_settings, worker_job
 
 LIC_ID = "11111111-1111-4111-8111-111111111111"
+MODEL_ID = "22222222-2222-4222-8222-222222222222"
+ENROLLMENT_ID = "33333333-3333-4333-8333-333333333333"
+CATEGORY = "일반 여성 의류"
 FACE_KEY = "faces/model-1/lic-1.png"
 FACE_BYTES = b"\x89PNG-FACE-BYTES"
 
@@ -24,7 +28,8 @@ FACE_BYTES = b"\x89PNG-FACE-BYTES"
 def _license_row(status="active", days_left=30, key=FACE_KEY, name="김하늘"):
     return {
         "id": LIC_ID,
-        "model_id": "22222222-2222-4222-8222-222222222222",
+        "model_id": MODEL_ID,
+        "model_name": "김*늘",
         "face_image_key": key,
         "status": status,
         "display_name": name,
@@ -32,7 +37,46 @@ def _license_row(status="active", days_left=30, key=FACE_KEY, name="김하늘"):
         "unit_price": 10000,
         "vc_id": "vc-1",
         "vc_status_uri": None,
+        "allowed_use": [CATEGORY],
+        "forbidden_use": [],
+        "model_status": "verified",
+        "assets_status": "ready",
+        "current_enrollment_id": ENROLLMENT_ID,
+        "license_enrollment_id": ENROLLMENT_ID,
+        "enrollment_status": "passed",
+        "match_policy_version": "policy-v1",
+        "has_face_front": True,
+        "has_grid_sedcard": True,
+        "assets_current_evidence": True,
     }
+
+
+def _snapshot_job(*, reserved=1):
+    return worker_job(
+        {
+            "mode": "generate",
+            "modelId": MODEL_ID,
+            "brandUseCategory": CATEGORY,
+            "_facemarket": {"modelId": MODEL_ID, "licenseId": LIC_ID},
+        },
+        credits_reserved=reserved,
+    )
+
+
+def _patch_snapshot_denial(monkeypatch, row):
+    async def fake_resolve(conn, model_id, *, license_id=None):
+        assert model_id == MODEL_ID and license_id == LIC_ID
+        return row
+
+    async def forbidden_assets(*args, **kwargs):
+        raise AssertionError("verifier denial must precede current asset lookup")
+
+    async def forbidden_legacy(*args, **kwargs):
+        raise AssertionError("snapshot-backed REAL must not load face_image_key")
+
+    monkeypatch.setattr(facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(identity_source, "resolve_real_model_assets", forbidden_assets)
+    monkeypatch.setattr(dpj, "_load_license_face", forbidden_legacy)
 
 
 class _Cur:
@@ -274,18 +318,59 @@ def test_face_is_attached_only_to_cuts_that_show_it(monkeypatch):
 
 
 # ── verify-before-use 시점 갭 (해지된 얼굴이 생성돼 나가면 회수 불가) ────────
+def test_snapshot_real_job_uses_current_evidence_not_legacy_face_key(monkeypatch):
+    captured = {}
+    _patch_inputs(
+        monkeypatch,
+        captured,
+        project={"copywriting": False, "facemarket_license_id": "later-lock"},
+    )
+    row = _license_row(key=FACE_KEY)
+    app, _ = _app(row)
+
+    async def fake_resolve(conn, model_id, *, license_id=None):
+        return row
+
+    async def fake_assets(conn, model_id, *, enrollment_id, evidence_version):
+        assert enrollment_id == ENROLLMENT_ID
+        assert evidence_version == "policy-v1"
+        return [
+            {"key": "current/face_front.png", "mime": "image/png", "bucket": "face"},
+            {"key": "current/grid_sedcard.png", "mime": "image/png", "bucket": "face"},
+        ]
+
+    async def forbidden_legacy(*args, **kwargs):
+        raise AssertionError("snapshot-backed REAL must not load face_image_key")
+
+    monkeypatch.setattr(facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(identity_source, "resolve_real_model_assets", fake_assets)
+    monkeypatch.setattr(dpj, "_load_license_face", forbidden_legacy)
+
+    asyncio.run(dpj.run_detail_page_job(app, _snapshot_job()))
+
+    assert app.state.r2_face.gets == [
+        "current/face_front.png",
+        "current/grid_sedcard.png",
+    ]
+    assert FACE_KEY not in app.state.r2_face.gets
+    assert captured.get("failure") is None
+
+
 def test_revoked_license_at_worker_time_fails_job_and_refunds(monkeypatch):
     """게이트(요청 시점) 통과 후 해지된 라이선스 — 워커가 재확인해 얼굴을 쓰지 않는다.
     한 번 생성되면 공개 URL 로 나가 회수가 불가능하다."""
     captured = {}
     _patch_inputs(monkeypatch, captured,
                   project={"copywriting": False, "facemarket_license_id": LIC_ID})
-    app, _ = _app(_license_row(status="revoked"))
+    row = _license_row(status="revoked")
+    app, _ = _app(row)
+    _patch_snapshot_denial(monkeypatch, row)
 
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+    asyncio.run(dpj.run_detail_page_job(app, _snapshot_job()))
 
     assert captured.get("calls") is None
     assert captured["failure"]["reserved"] == 1
+    assert captured["failure"]["code"] == "license_revoked"
     assert app.state.r2_face.gets == []
 
 
@@ -293,12 +378,15 @@ def test_expired_license_at_worker_time_fails_job_and_refunds(monkeypatch):
     captured = {}
     _patch_inputs(monkeypatch, captured,
                   project={"copywriting": False, "facemarket_license_id": LIC_ID})
-    app, _ = _app(_license_row(days_left=-1))
+    row = _license_row(days_left=-1)
+    app, _ = _app(row)
+    _patch_snapshot_denial(monkeypatch, row)
 
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+    asyncio.run(dpj.run_detail_page_job(app, _snapshot_job()))
 
     assert captured.get("calls") is None
     assert captured["failure"]["reserved"] == 1
+    assert captured["failure"]["code"] == "license_expired"
     assert app.state.r2_face.gets == []
 
 
@@ -324,12 +412,15 @@ def test_holder_outage_at_worker_time_fails_before_face_read(monkeypatch):
         raise httpx.ConnectError("holder down")
 
     monkeypatch.setattr(facemarket.holder_client, "post", holder_down)
-    app, _ = _app(_license_row(), vc_required=True)
+    row = _license_row()
+    app, _ = _app(row, vc_required=True)
+    _patch_snapshot_denial(monkeypatch, row)
 
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+    asyncio.run(dpj.run_detail_page_job(app, _snapshot_job()))
 
     assert captured.get("calls") is None
     assert captured["failure"]["reserved"] == 1
+    assert captured["failure"]["code"] == "holder_unavailable"
     assert app.state.r2_face.gets == []
 
 
@@ -349,12 +440,15 @@ def test_invalid_or_revoked_vc_at_worker_time_fails_before_face_read(monkeypatch
             return _HolderResponse(_payload)
 
         monkeypatch.setattr(facemarket.holder_client, "post", holder_result)
-        app, _ = _app(_license_row(), vc_required=True)
+        row = _license_row()
+        app, _ = _app(row, vc_required=True)
+        _patch_snapshot_denial(monkeypatch, row)
 
-        asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+        asyncio.run(dpj.run_detail_page_job(app, _snapshot_job()))
 
         assert captured.get("calls") is None
         assert captured["failure"]["reserved"] == 1
+        assert captured["failure"]["code"] == "license_unverified"
         assert app.state.r2_face.gets == []
 
 

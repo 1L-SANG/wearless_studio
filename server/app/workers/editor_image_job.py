@@ -67,13 +67,17 @@ async def run_editor_image_job(app, job: dict) -> None:
     garment_qc_metadata: dict | None = None  # new 모드만; vary 경로는 QC·메타 모두 무변경
     cut_qc_metadata: dict | None = None  # new 모드 shadow 관측 결과; 생성 선택에는 영향 없음
 
-    async def _fail(message: str, meta: dict):
+    async def _fail(
+        message: str,
+        meta: dict,
+        code: str = "generation_failed",
+    ):
         try:
             async with pool.connection() as conn:
                 await repo.finalize_editor_image_failure(
                     conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
                     project_id=project_id, reserved=reserved, settle_key=settle_key,
-                    message=message, metadata=meta)
+                    message=message, metadata=meta, code=code)
                 await conn.commit()
         except Exception:
             log.exception("editor_image finalize_failure error for job %s", job_id)
@@ -286,29 +290,57 @@ async def run_editor_image_job(app, job: dict) -> None:
             # 아이덴티티 소스 1회 결정(detail_page 와 동일 계약, codex [P1]) — 실존 모델(UUID)은
             # REAL 로 비공개 자산을 첨부하고, 라이선스 실패면 조용한 폴백 없이 잡 실패(라우트 409
             # 게이트 이후 해지 레이스 방어). 가상모델('mA' 등)은 기존 VIRTUAL 경로 그대로.
-            selected_model_id = normalized.get("modelId") or normalized.get("model_id")
+            selected_model_id = payload.get("modelId")
             real_refs = None
-            if s.facemarket_enabled and selected_model_id:
+            try:
+                uuid.UUID(str(selected_model_id))
+            except (TypeError, ValueError):
+                selected_is_real = False
+            else:
+                selected_is_real = True
+            if selected_is_real:
+                snapshot = payload.get("_facemarket")
+                if (
+                    not isinstance(snapshot, dict)
+                    or str(snapshot.get("modelId") or "") != str(selected_model_id)
+                    or not str(snapshot.get("licenseId") or "").strip()
+                ):
+                    raise facemarket._err(
+                        "model_unavailable", "사용할 수 없는 모델입니다.", status=409
+                    )
                 async with pool.connection() as conn:
                     fm_license_row = await facemarket.resolve_model_license(
-                        conn, selected_model_id
+                        conn,
+                        str(snapshot["modelId"]),
+                        license_id=str(snapshot["licenseId"]),
                     )
-                    if fm_license_row is not None:
-                        await facemarket.verify_license(app, fm_license_row)
+                    await facemarket.verify_license(
+                        app,
+                        fm_license_row,
+                        model_id=str(snapshot["modelId"]),
+                        brand_use_category=payload.get("brandUseCategory"),
+                    )
                     real_refs = await identity_source.resolve_real_model_assets(
                         conn,
-                        selected_model_id,
-                        allow_legacy=not getattr(s, "fm_biometric_enrollment_enabled", False),
+                        str(snapshot["modelId"]),
+                        enrollment_id=str(fm_license_row["current_enrollment_id"]),
+                        evidence_version=str(fm_license_row["match_policy_version"]),
                     )
+                    if real_refs is None:
+                        raise facemarket._err(
+                            "model_assets_unavailable",
+                            "현재 모델 자산을 사용할 수 없습니다.",
+                            status=409,
+                        )
                 fm_source = identity_source.select_source(
                     selected_model_id=selected_model_id, license_row=fm_license_row,
                     has_real_assets=real_refs is not None, has_license_face=False)
                 log.info("AG-06 identity source=%s job=%s hasReal=%s",
                          fm_source, job_id, real_refs is not None)
                 if fm_source == "REJECTED":
-                    await _fail("모델의 얼굴 라이선스가 활성 상태가 아니에요. 다시 확인해 주세요.",
-                                {"error": "license_rejected", "modelId": str(selected_model_id)})
-                    return
+                    raise facemarket._err(
+                        "model_unavailable", "사용할 수 없는 모델입니다.", status=409
+                    )
 
             # NewCutRequest.modelId가 이 경로의 정본. C방식 두 장을 원자적으로 로드하며,
             # 모르는 modelId/manifest/R2 실패는 모델 참조만 빼고 기존 상품 참조로 계속한다
@@ -346,8 +378,9 @@ async def run_editor_image_job(app, job: dict) -> None:
             except Exception as e:
                 if fm_source == "REAL":
                     await _fail("모델 자산을 불러오지 못했어요. 다시 시도해 주세요.",
-                                {"error": "real_model_assets_unavailable",
-                                 "detail": repr(e)[:200]})
+                                {"error": "model_assets_unavailable",
+                                 "detail": repr(e)[:200]},
+                                code="model_assets_unavailable")
                     return
                 log.warning(
                     "AG-06 virtual model assets unavailable for job %s model %s; "
@@ -679,7 +712,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 await asyncio.to_thread(app.state.r2.delete, key)
             except Exception:
                 log.warning("orphan R2 cleanup failed: %s", key)
-        elif (s.facemarket_enabled and fm_face_injected and fm_license_row is not None
+        elif (fm_face_injected and fm_license_row is not None
               and fm_license_row.get("unit_price") is not None
               and getattr(app.state, "fm_chain", None) is not None):
             # FaceMarket 온체인 정산 훅(선택과제2) — 에디터 컷도 얼굴 라이선스 1회 사용으로
@@ -693,4 +726,11 @@ async def run_editor_image_job(app, job: dict) -> None:
             except Exception:
                 log.exception("editor_image settlement hook failed for job %s", job_id)
     except Exception as e:  # 예기치 못한 오류도 lease 펜스 종결로
-        await _fail("이미지 생성 중 오류가 발생했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
+        detail = e.detail if isinstance(e, facemarket.HTTPException) else None
+        code = detail.get("code") if isinstance(detail, dict) else "generation_failed"
+        message = (
+            detail.get("message")
+            if isinstance(detail, dict)
+            else "이미지 생성 중 오류가 발생했어요. 다시 시도해 주세요."
+        )
+        await _fail(message, {"error": str(e)[:300]}, code=code)

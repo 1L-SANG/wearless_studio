@@ -21,6 +21,44 @@ from conftest import make_settings
 NOW = datetime.now(timezone.utc)
 FUTURE = NOW + timedelta(days=30)
 PAST = NOW - timedelta(days=1)
+MODEL_ID = "11111111-1111-1111-1111-111111111111"
+LICENSE_ID = "22222222-2222-2222-2222-222222222222"
+ENROLLMENT_ID = "33333333-3333-3333-3333-333333333333"
+CATEGORY = "일반 여성 의류"
+
+
+def _valid_gate_row(**overrides):
+    row = {
+        "id": LICENSE_ID,
+        "model_id": MODEL_ID,
+        "model_name": "홍*동",
+        "status": "active",
+        "license_valid_until": FUTURE,
+        "unit_price": 100,
+        "vc_id": "vc-1",
+        "allowed_use": [CATEGORY],
+        "forbidden_use": [],
+        "model_status": "verified",
+        "assets_status": "ready",
+        "current_enrollment_id": ENROLLMENT_ID,
+        "license_enrollment_id": ENROLLMENT_ID,
+        "enrollment_status": "passed",
+        "match_policy_version": "policy-v1",
+        "has_face_front": True,
+        "has_grid_sedcard": True,
+        "assets_current_evidence": True,
+    }
+    row.update(overrides)
+    return row
+
+
+def _verify(app, row=None, *, model_id=MODEL_ID, category=CATEGORY):
+    return facemarket.verify_license(
+        app,
+        _valid_gate_row() if row is None else row,
+        model_id=model_id,
+        brand_use_category=category,
+    )
 
 
 def _app(opendid_holder_url=None, *, required=False, secret="shared-secret"):
@@ -39,7 +77,7 @@ def _app(opendid_holder_url=None, *, required=False, secret="shared-secret"):
 
 def test_verify_revoked_raises_409_license_revoked():
     with pytest.raises(facemarket.HTTPException) as ei:
-        asyncio.run(facemarket.verify_license(_app(), {"status": "revoked"}))
+        asyncio.run(_verify(_app(), _valid_gate_row(status="revoked")))
     assert ei.value.status_code == 409
     assert ei.value.detail["code"] == "license_revoked"
     assert "해지" in ei.value.detail["message"]
@@ -47,28 +85,27 @@ def test_verify_revoked_raises_409_license_revoked():
 
 def test_verify_inactive_raises_409_license_inactive():
     with pytest.raises(facemarket.HTTPException) as ei:
-        asyncio.run(facemarket.verify_license(_app(), {"status": "suspended"}))
+        asyncio.run(_verify(_app(), _valid_gate_row(status="suspended")))
     assert ei.value.status_code == 409 and ei.value.detail["code"] == "license_inactive"
 
 
 def test_verify_expired_raises_409_license_expired():
-    row = {"status": "active", "license_valid_until": PAST}
+    row = _valid_gate_row(license_valid_until=PAST)
     with pytest.raises(facemarket.HTTPException) as ei:
-        asyncio.run(facemarket.verify_license(_app(), row))
+        asyncio.run(_verify(_app(), row))
     assert ei.value.status_code == 409 and ei.value.detail["code"] == "license_expired"
 
 
 def test_verify_active_valid_passes_without_holder():
     # 홀더 미설정 → 라이브 arm skip. active+미만료 → 통과(예외 없음).
-    row = {"status": "active", "license_valid_until": FUTURE, "vc_id": "vc-1"}
-    assert asyncio.run(facemarket.verify_license(_app(None), row)) is None
+    assert asyncio.run(_verify(_app(None))) is None
 
 
 def test_verify_naive_datetime_treated_as_utc():
     # tz-naive valid_until(미래) 도 통과해야 한다(비교 시 utc 부여).
     naive_future = datetime.now() + timedelta(days=5)
-    row = {"status": "active", "license_valid_until": naive_future}
-    assert asyncio.run(facemarket.verify_license(_app(None), row)) is None
+    row = _valid_gate_row(license_valid_until=naive_future)
+    assert asyncio.run(_verify(_app(None), row)) is None
 
 
 class _FakeResp:
@@ -98,9 +135,8 @@ def _patch_holder(monkeypatch, resp=None, error=None):
 
 def test_verify_holder_revoked_raises_license_unverified(monkeypatch):
     _patch_holder(monkeypatch, _FakeResp(200, {"verified": True, "status": "revoked"}))
-    row = {"status": "active", "license_valid_until": FUTURE, "vc_id": "vc-1"}
     with pytest.raises(facemarket.HTTPException) as ei:
-        asyncio.run(facemarket.verify_license(_app("http://holder", required=True), row))
+        asyncio.run(_verify(_app("http://holder", required=True)))
     assert ei.value.status_code == 409 and ei.value.detail["code"] == "license_unverified"
 
 
@@ -109,9 +145,8 @@ def test_verify_holder_valid_passes(monkeypatch):
         monkeypatch,
         _FakeResp(200, {"verified": True, "status": "valid", "onChain": True}),
     )
-    row = {"status": "active", "license_valid_until": FUTURE, "vc_id": "vc-1"}
     assert asyncio.run(
-        facemarket.verify_license(_app("http://holder", required=True), row)
+        _verify(_app("http://holder", required=True))
     ) is None
     assert calls == [{
         "base_url": "http://holder",
@@ -127,18 +162,17 @@ def test_verify_holder_valid_passes(monkeypatch):
 )
 def test_required_verify_holder_transport_failure_is_503(monkeypatch, error):
     _patch_holder(monkeypatch, error=error)
-    row = {"status": "active", "license_valid_until": FUTURE, "vc_id": "vc-1"}
     with pytest.raises(facemarket.HTTPException) as ei:
-        asyncio.run(facemarket.verify_license(_app("http://holder", required=True), row))
+        asyncio.run(_verify(_app("http://holder", required=True)))
     assert ei.value.status_code == 503
     assert ei.value.detail["code"] == "holder_unavailable"
 
 
 def test_required_verify_without_vc_is_409(monkeypatch):
     calls = _patch_holder(monkeypatch, error=AssertionError("must not call Holder"))
-    row = {"status": "active", "license_valid_until": FUTURE, "vc_id": None}
+    row = _valid_gate_row(vc_id=None)
     with pytest.raises(facemarket.HTTPException) as ei:
-        asyncio.run(facemarket.verify_license(_app("http://holder", required=True), row))
+        asyncio.run(_verify(_app("http://holder", required=True), row))
     assert ei.value.status_code == 409
     assert ei.value.detail["code"] == "license_unverified"
     assert calls == []
@@ -155,9 +189,8 @@ def test_required_verify_without_vc_is_409(monkeypatch):
 )
 def test_required_verify_missing_runtime_config_is_503(monkeypatch, app):
     calls = _patch_holder(monkeypatch, error=AssertionError("must not call Holder"))
-    row = {"status": "active", "license_valid_until": FUTURE, "vc_id": "vc-1"}
     with pytest.raises(facemarket.HTTPException) as ei:
-        asyncio.run(facemarket.verify_license(app, row))
+        asyncio.run(_verify(app))
     assert ei.value.status_code == 503
     assert ei.value.detail["code"] == "holder_unavailable"
     assert calls == []
@@ -175,9 +208,8 @@ def test_required_verify_missing_runtime_config_is_503(monkeypatch, app):
 )
 def test_required_verify_non_200_or_malformed_is_503(monkeypatch, response):
     _patch_holder(monkeypatch, response)
-    row = {"status": "active", "license_valid_until": FUTURE, "vc_id": "vc-1"}
     with pytest.raises(facemarket.HTTPException) as ei:
-        asyncio.run(facemarket.verify_license(_app("http://holder", required=True), row))
+        asyncio.run(_verify(_app("http://holder", required=True)))
     assert ei.value.status_code == 503
     assert ei.value.detail["code"] == "holder_unavailable"
 
@@ -195,16 +227,56 @@ def test_required_verify_non_200_or_malformed_is_503(monkeypatch, response):
 )
 def test_required_verify_non_valid_credential_is_409(monkeypatch, payload):
     _patch_holder(monkeypatch, _FakeResp(200, payload))
-    row = {"status": "active", "license_valid_until": FUTURE, "vc_id": "vc-1"}
     with pytest.raises(facemarket.HTTPException) as ei:
-        asyncio.run(facemarket.verify_license(_app("http://holder", required=True), row))
+        asyncio.run(_verify(_app("http://holder", required=True)))
     assert ei.value.status_code == 409
     assert ei.value.detail["code"] == "license_unverified"
 
 
 def test_optional_dev_mode_preserves_local_only_behavior():
-    row = {"status": "active", "license_valid_until": FUTURE, "vc_id": None}
-    assert asyncio.run(facemarket.verify_license(_app(required=False), row)) is None
+    assert asyncio.run(_verify(_app(required=False), _valid_gate_row(vc_id=None))) is None
+
+
+@pytest.mark.parametrize(
+    ("overrides", "model_id", "category", "code"),
+    [
+        ({}, None, None, None),
+        ({}, "mA", None, None),
+        ({}, "44444444-4444-4444-4444-444444444444", CATEGORY, "model_unavailable"),
+        ({"model_status": "pending"}, MODEL_ID, CATEGORY, "model_unavailable"),
+        ({"id": None, "status": None}, MODEL_ID, CATEGORY, "license_inactive"),
+        ({"status": "reverification_required"}, MODEL_ID, CATEGORY, "license_inactive"),
+        ({}, MODEL_ID, " ", "brand_use_category_required"),
+        ({}, MODEL_ID, "not-fixed", "brand_use_category_required"),
+        ({"forbidden_use": [CATEGORY]}, MODEL_ID, CATEGORY, "license_use_forbidden"),
+        ({"allowed_use": None}, MODEL_ID, CATEGORY, "license_use_not_allowed"),
+        ({"allowed_use": "not-a-list"}, MODEL_ID, CATEGORY, "license_use_not_allowed"),
+        ({"allowed_use": ["남성 의류"]}, MODEL_ID, CATEGORY, "license_use_not_allowed"),
+        ({"current_enrollment_id": None}, MODEL_ID, CATEGORY, "model_enrollment_unavailable"),
+        ({"enrollment_status": "pending"}, MODEL_ID, CATEGORY, "model_enrollment_unavailable"),
+        ({"match_policy_version": " "}, MODEL_ID, CATEGORY, "model_enrollment_unavailable"),
+        ({"license_enrollment_id": "other"}, MODEL_ID, CATEGORY, "model_enrollment_unavailable"),
+        ({"assets_status": "building"}, MODEL_ID, CATEGORY, "model_assets_unavailable"),
+        ({"has_face_front": False}, MODEL_ID, CATEGORY, "model_assets_unavailable"),
+        ({"has_grid_sedcard": False}, MODEL_ID, CATEGORY, "model_assets_unavailable"),
+        ({"assets_current_evidence": False}, MODEL_ID, CATEGORY, "model_assets_unavailable"),
+    ],
+)
+def test_verify_current_runtime_gate_fails_closed_without_holder(
+    monkeypatch, overrides, model_id, category, code
+):
+    calls = _patch_holder(monkeypatch, error=AssertionError("must not call Holder"))
+    row = _valid_gate_row(**overrides)
+    if code is None:
+        assert asyncio.run(_verify(_app("http://holder", required=True), row,
+                                   model_id=model_id, category=category)) is None
+    else:
+        with pytest.raises(facemarket.HTTPException) as exc:
+            asyncio.run(_verify(_app("http://holder", required=True), row,
+                                model_id=model_id, category=category))
+        assert exc.value.status_code == 409
+        assert exc.value.detail["code"] == code
+    assert calls == []
 
 
 # ── resolve_project_license (no-op 가드) ─────────────────────────
@@ -223,9 +295,10 @@ class _Cur:
     async def execute(self, sql, params=None):
         s = " ".join(sql.split()).lower()
         p = params or ()
-        if "from fm_licenses where id" in s:
-            self._one = self.store["by_id"].get(p[0])
-        elif "from fm_licenses where model_id" in s:
+        self.store.setdefault("queries", []).append((s, p))
+        if "l.id = %s" in s:
+            self._one = self.store["by_pair"].get((p[0], p[1]))
+        elif "m.id = %s" in s:
             self._one = self.store["by_model"].get(p[0])
         else:  # pragma: no cover
             raise AssertionError(f"unexpected SQL: {s}")
@@ -253,48 +326,71 @@ def _resolve(project, analysis, store):
 
 def test_resolve_non_uuid_selected_model_is_noop():
     # 구 정적 mock id → None(500/409 아님).
-    out = _resolve({}, {"selectedModelId": "mA"}, {"by_id": {}, "by_model": {}})
+    out = _resolve({}, {"selectedModelId": "mA"}, {"by_pair": {}, "by_model": {}})
     assert out is None
 
 
 def test_resolve_no_selection_is_noop():
-    assert _resolve({}, {}, {"by_id": {}, "by_model": {}}) is None
+    assert _resolve({}, {}, {"by_pair": {}, "by_model": {}}) is None
 
 
-def test_resolve_model_with_no_license_is_noop():
-    mid = "11111111-1111-1111-1111-111111111111"
-    out = _resolve({}, {"selectedModelId": mid}, {"by_id": {}, "by_model": {}})
-    assert out is None
+def test_resolve_uuid_without_current_license_returns_model_row():
+    row = _valid_gate_row(id=None, status=None, license_enrollment_id=None)
+    out = _resolve({}, {"selectedModelId": MODEL_ID},
+                   {"by_pair": {}, "by_model": {MODEL_ID: row}})
+    assert out["model_id"] == MODEL_ID and out["id"] is None
 
 
-def test_resolve_picks_model_latest_license():
-    mid = "11111111-1111-1111-1111-111111111111"
-    lic = {"id": "lic-1", "model_id": mid, "status": "active"}
-    out = _resolve({}, {"selectedModelId": mid}, {"by_id": {}, "by_model": {mid: lic}})
-    assert out["id"] == "lic-1"
+def test_resolve_picks_only_current_enrollment_license_and_masks_name():
+    row = _valid_gate_row(model_name="홍길동")
+    store = {"by_pair": {}, "by_model": {MODEL_ID: row}}
+    out = _resolve({}, {"selectedModelId": MODEL_ID}, store)
+    assert out["id"] == LICENSE_ID and out["model_name"] == "홍*동"
+    sql = store["queries"][0][0]
+    for fragment in (
+        "e.id = m.current_enrollment_id", "e.model_id = m.id",
+        "l.enrollment_id = m.current_enrollment_id", "match_policy_version",
+        "face_front", "grid_sedcard", "bucket = 'face'", "like 'image/%'",
+        "nullif(btrim", "source_enrollment_id", "evidence_version",
+    ):
+        assert fragment in sql
 
 
 def test_resolve_accepts_snake_case_selected_model_alias():
-    mid = "11111111-1111-1111-1111-111111111111"
-    lic = {"id": "lic-1", "model_id": mid, "status": "active"}
-
     out = _resolve(
         {},
-        {"selected_model_id": mid},
-        {"by_id": {}, "by_model": {mid: lic}},
+        {"selected_model_id": MODEL_ID},
+        {"by_pair": {}, "by_model": {MODEL_ID: _valid_gate_row()}},
     )
+    assert out["id"] == LICENSE_ID
 
-    assert out["id"] == "lic-1"
+
+def test_resolve_ignores_stale_project_lock_for_current_selection():
+    store = {"by_pair": {}, "by_model": {MODEL_ID: _valid_gate_row()}}
+    out = _resolve(
+        {"facemarket_license_id": "stale-license"},
+        {"selectedModelId": MODEL_ID},
+        store,
+    )
+    assert out["id"] == LICENSE_ID
+    assert len(store["queries"]) == 1
 
 
-def test_resolve_prefers_locked_project_license():
-    # 프로젝트가 이미 라이선스에 잠겨 있으면(재생성) 그 라이선스를 우선 로드(상태 무관).
-    mid = "11111111-1111-1111-1111-111111111111"
-    locked = {"id": "lic-locked", "model_id": mid, "status": "revoked"}
-    fresh = {"id": "lic-fresh", "model_id": mid, "status": "active"}
-    store = {"by_id": {"lic-locked": locked}, "by_model": {mid: fresh}}
-    out = _resolve({"facemarket_license_id": "lic-locked"}, {"selectedModelId": mid}, store)
-    assert out["id"] == "lic-locked" and out["status"] == "revoked"
+def test_resolve_pinned_requires_exact_model_license_pair():
+    row = _valid_gate_row()
+    store = {"by_pair": {(MODEL_ID, LICENSE_ID): row}, "by_model": {}}
+    out = asyncio.run(facemarket.resolve_model_license(
+        _Conn(store), MODEL_ID, license_id=LICENSE_ID
+    ))
+    missing = asyncio.run(facemarket.resolve_model_license(
+        _Conn(store), MODEL_ID,
+        license_id="44444444-4444-4444-4444-444444444444",
+    ))
+    assert out["id"] == LICENSE_ID
+    assert missing is None
+    pinned_sql = store["queries"][0][0]
+    assert "left join fm_licenses l on l.model_id = m.id" in pinned_sql
+    assert "l.enrollment_id = m.current_enrollment_id" not in pinned_sql
 
 
 # ── revoke 라우트 + 영수증 라우트 (소유 스코프·멱등·shape) ─────────
