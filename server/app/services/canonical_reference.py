@@ -23,6 +23,7 @@ import logging
 import uuid
 
 from app import repo
+from app.services import sam_retry
 from app.agents.product_reference import ProductReference
 from app.agents.vision_llm import InlineImage
 
@@ -44,7 +45,8 @@ CANONICAL_KIND = "canonical_cutout"
 PRODUCER = "sam2_service"
 
 
-def preprocess_idempotency_key(project_id: str, product: dict) -> str | None:
+def preprocess_idempotency_key(project_id: str, product: dict, *,
+                               retry: int = 0) -> str | None:
     """The cutout job's identity: this project's *current* base-colour photographs.
 
     None when there is nothing to segment — an empty job must never take the key, or the real
@@ -53,6 +55,9 @@ def preprocess_idempotency_key(project_id: str, product: dict) -> str | None:
     The photo ids are IN the key on purpose. A seller who swaps the front photograph has to get
     a new cutout; a fixed per-project key would keep serving the previous garment's silhouette
     to every consumer that asks "what does the product look like".
+
+    `retry` 도 같은 이유로 키에 들어간다 — 일시 장애로 끝난 잡이 키를 물고 있는 한 재시도는
+    그 시체에 합류만 한다(2026-08-21, 톤 마스크의 mask_job_key 와 같은 규칙).
     """
     from app.agents import mannequin      # 서비스→에이전트 단방향 (editor_garment_mask 와 같은 결)
     ids = [aid for slot, aid in mannequin.base_color_images(product)
@@ -60,7 +65,7 @@ def preprocess_idempotency_key(project_id: str, product: dict) -> str | None:
     if not ids:
         return None
     digest = hashlib.sha256("|".join(ids).encode("utf-8")).hexdigest()[:16]
-    return f"{project_id}:sam_preprocess:{digest}"
+    return sam_retry.generation_key(f"{project_id}:sam_preprocess:{digest}", retry)
 
 
 def metadata_for(view: str, result, source_asset_id: str) -> dict:

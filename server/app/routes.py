@@ -35,7 +35,7 @@ from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
 from .services import (canonical_reference, editor_garment_mask, garment_grid, input_qc,
                        mannequin_tone_render, matching, matching_cutout, product_photos,
-                       retrieval)
+                       retrieval, sam_retry)
 from .auth import require_user
 from .db import get_conn
 from .models import (
@@ -1282,8 +1282,7 @@ async def _enqueue_matching_cutout(conn, *, settings, user_id, project_id, match
             payload={"matchingItemId": matching_item_id,
                      "sourceAssetIds": source_asset_ids, "sourceKeys": source_keys,
                      "gridAssetId": grid_asset_id},
-            idempotency_key=(f"{project_id}:matching_cutout:{matching_item_id}:"
-                             f"{matching_cutout.ALGORITHM_VERSION}"),
+            idempotency_key=matching_cutout.cutout_job_key(project_id, matching_item_id),
             credits_reserved=0, metadata={})
         await conn.commit()
     except Exception:  # noqa: BLE001 - 큐잉 실패가 매칭 등록을 되돌리지 않는다
@@ -1756,6 +1755,14 @@ async def create_upload_url(
             if await repo.get_project(conn, user_id, body.project_id) is None:
                 raise _not_found()
 
+    # sam2 온디맨드(2026-08-21): 사진이 올라오는 가장 이른 순간에 "지금 켜라". 실패·중복 전부
+    # 무해 — reconciler 가 60초 안에 덮고, 어댑터가 off 면 즉시 return 한다. 동기 호출이라
+    # 발급 응답을 기다리게 하지 않는다(task 생성·참조 보관은 SamAutoscaler.prewarm_soon 이 한다).
+    scaler = getattr(request.app.state, "sam_autoscaler", None)
+    if scaler is not None:
+        with contextlib.suppress(Exception):   # 훅은 발급 응답을 절대 막지 않는다
+            scaler.prewarm_soon()
+
     asset_id = str(uuid.uuid4())
     storage_scope = DRAFT_SLOT_STORAGE_KEY if body.purpose == "draft_slot" else body.project_id
     key = upload_key(user_id, storage_scope, asset_id, ext)
@@ -2071,40 +2078,21 @@ _TONE_JOB_TERMINAL = ("done", "error", "cancelled")
 def _tone_job_is_retryable(job: dict) -> bool:
     """이 종결이 판정(재시도해도 같은 답)이 아니라 일시 장애(다시 돌리면 답이 바뀔 수 있음)인가.
 
-    result.state 로 판별한다 — 구버전 워커가 error 로 종결해 둔 과거 잡도 state 는 같으므로,
-    배포 이전에 막힌 컷(2026-08-18 05:59 실사고)도 이 판별을 지나 되살아난다.
+    판정 규칙은 `sam_retry` 가 단일 출처다 — 세 SAM 잡이 같은 기준으로 움직여야 한다.
+    result.state 로 판별하므로 구버전 워커가 error 로 종결해 둔 과거 잡(2026-08-18 05:59
+    실사고)도 되살아난다.
     """
-    result = job.get("result") or {}
-    state = str(result.get("state") or "")
-    if state in editor_garment_mask.TONE_MASK_RETRYABLE_STATES:
-        return True
-    # lease 복구가 서버 재시작 중 실행을 error 로 닫으면 result 자체가 없다. 이는 의류를
-    # 못 찾았다는 판정이 아니라 실행 인프라 사망이므로 다음 세대에서 다시 시도한다.
-    return str(job.get("status") or "") == "error" and not state
+    return sam_retry.job_is_retryable(
+        job, states=editor_garment_mask.TONE_MASK_RETRYABLE_STATES)
 
 
 def _tone_job_retry_count(job: dict) -> int:
-    payload = job.get("payload") or {}
-    try:
-        return int(payload.get("retry") or 0)
-    except (TypeError, ValueError):
-        return 0
+    return sam_retry.job_retry_count(job)
 
 
 def _tone_retry_backoff_elapsed(job: dict, *, now: datetime | None = None) -> bool:
-    retry = _tone_job_retry_count(job)
-    waits = editor_garment_mask.TONE_MASK_RETRY_BACKOFF_SECONDS
-    if retry >= len(waits):
-        return False
-    finished_at = job.get("finished_at")
-    if isinstance(finished_at, str):
-        with contextlib.suppress(ValueError):
-            finished_at = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
-    if not isinstance(finished_at, datetime):
-        return False
-    if finished_at.tzinfo is None:
-        finished_at = finished_at.replace(tzinfo=timezone.utc)
-    return (now or datetime.now(timezone.utc)) >= finished_at + timedelta(seconds=waits[retry])
+    return sam_retry.backoff_elapsed(
+        job, waits=editor_garment_mask.TONE_MASK_RETRY_BACKOFF_SECONDS, now=now)
 
 
 async def _enqueue_tone_mask_generations(

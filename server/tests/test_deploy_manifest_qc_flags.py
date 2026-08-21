@@ -34,6 +34,8 @@ QC_FLAGS = [
      "mannequin_base_fidelity_observe_regenerations"),
     # 톤 에디터도 미선언이면 API 가 disabled 를 반환하고 UI 가 조용히 사라진다.
     ("MANNEQUIN_TONE_EDITOR", "mannequin_tone_editor"),
+    # sam2 온디맨드(2026-08-21). 미선언이면 reconciler 가 매 주기 skip — sam2 가 영영 안 켜진다.
+    ("SAM_AUTOSCALE", "sam_autoscale"),
 ]
 
 
@@ -344,3 +346,72 @@ def test_analysis_model_is_split_from_the_gating_qc_model(manifest_vars):
     QC 를 flash 로 내리거나(판정이 무뎌져 다른 옷 컷 출고).
     """
     assert manifest_vars["MODEL_ROUTING_TEXT_GEMINI_ANALYSIS"] != manifest_vars["MODEL_ROUTING_TEXT_GEMINI"]
+
+
+
+# ── sam2 온디맨드 기동/종료 (2026-08-21) ─────────────────────────────────────
+
+SAM2_MANIFEST = MANIFEST.parent.parent / "sam2/manifest.yml"
+ADDON = MANIFEST.parent / "addons/sam-autoscale.yml"
+
+
+class _CfnLoader(yaml.SafeLoader):
+    """CloudFormation 단축 태그(!Ref·!Sub·!GetAtt)를 값으로 풀어 읽는다 — safe_load 는 모른다."""
+
+
+def _construct_cfn(loader, _suffix, node):
+    if isinstance(node, yaml.ScalarNode):
+        return loader.construct_scalar(node)
+    if isinstance(node, yaml.SequenceNode):
+        return loader.construct_sequence(node)
+    return loader.construct_mapping(node)
+
+
+_CfnLoader.add_multi_constructor("!", _construct_cfn)
+
+
+def test_sam2_manifest_defaults_to_zero_tasks():
+    """온디맨드: 배포가 desiredCount 를 1로 되돌리면 상시 가동으로 복귀한다(월 $169)."""
+    doc = yaml.safe_load(SAM2_MANIFEST.read_text(encoding="utf-8"))
+    assert doc["count"] == 0
+
+
+def test_api_manifest_declares_idle_minutes_but_not_the_topic(manifest_vars):
+    assert manifest_vars["SAM_AUTOSCALE_IDLE_MINUTES"] == "30"
+    # 토픽 ARN 은 addon Output 이 SAM_ALERT_TOPIC_ARN 으로 자동 주입한다 — 매니페스트에 박으면
+    # 배포가 깨지거나 값이 갈린다(Codex 검토: from_cfn 은 환경 addon Export 용).
+    assert "SAM_ALERT_TOPIC_ARN" not in manifest_vars
+
+
+def test_autoscale_addon_exists_with_scoped_permissions():
+    addon = yaml.load(ADDON.read_text(encoding="utf-8"), Loader=_CfnLoader)
+    assert set(addon["Parameters"]) >= {"App", "Env", "Name"}, "Copilot workload addon 필수 파라미터"
+    res = addon["Resources"]
+    assert res["SamAlertTopic"]["Type"] == "AWS::SNS::Topic"
+    assert res["SamAlertEmail"]["Type"] == "AWS::SNS::Subscription"
+    assert res["SamAlertEmail"]["Properties"]["Endpoint"] == "dlftkd3269@gmail.com"
+    statements = res["SamAutoscalePolicy"]["Properties"]["PolicyDocument"]["Statement"]
+    actions = set()
+    for st in statements:
+        acts = st["Action"] if isinstance(st["Action"], list) else [st["Action"]]
+        actions.update(acts)
+    assert {"ecs:ListClusters", "ecs:ListServices", "ecs:DescribeServices", "ecs:ListTasks",
+            "ecs:DescribeTasks", "ecs:UpdateService", "sns:Publish"} <= actions
+    assert not any(a.startswith("iam:") for a in actions)
+    # UpdateService 는 sam2 태그 조건이 있어야 한다 — api 가 자기 자신을 내리면 안 된다
+    # (IAM 시뮬레이터 실측 2026-08-21: sam2 allowed / api implicitDeny).
+    upd = next(st for st in statements if st["Action"] == "ecs:UpdateService")
+    assert upd["Condition"]["StringEquals"]["aws:ResourceTag/copilot-service"] == "sam2"
+    # PolicyArn 접미사 Output 은 Copilot 이 task role 에 자동 부착, 일반 Output 은 env 로 주입.
+    assert "SamAutoscalePolicyArn" in addon["Outputs"]
+    assert "SamAlertTopicArn" in addon["Outputs"]
+
+
+def test_workflows_pin_copilot_and_deploy_server_watches_addons():
+    root = MANIFEST.parents[2]
+    for wf in ("deploy-sam2.yml", "deploy-server.yml"):
+        text = (root / ".github/workflows" / wf).read_text(encoding="utf-8")
+        assert "releases/latest/download/copilot-linux" not in text, f"{wf}: Copilot 버전 고정"
+        assert "releases/download/v1.34.1/copilot-linux" in text, wf
+    server_wf = (root / ".github/workflows/deploy-server.yml").read_text(encoding="utf-8")
+    assert server_wf.count("copilot/api/addons/**") >= 3, "push·pull_request·filters 세 곳"

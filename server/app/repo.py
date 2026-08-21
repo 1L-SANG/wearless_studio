@@ -704,13 +704,22 @@ async def has_active_matching_cutout_job(conn: AsyncConnection, project_id: str)
     나이 상한을 넘긴 잡은 없는 것으로 본다. 상한을 넘겨도 잡 자체는 계속 살아 있고,
     나중에 성공하면 스왑된 파생 asset 이 상태를 ready 로 만든다 — 상한은 화면이 원본을
     보여줄지 스켈레톤을 보여줄지만 가른다(fail-open).
+
+    **재시도 대기 중인 잡도 진행 중이다**(2026-08-21). 일시 장애로 `done`+`unavailable` 로
+    끝났고 예산이 남은 세대는 푸셔가 15~120초 뒤 다음 세대를 건다 — 그 사이를 "끝남"으로
+    보면 카드가 실패로 떨어졌다가 다시 처리 중으로 올라오며 깜빡인다.
     """
+    from app.services import sam_retry  # repo→services 단방향은 이미 여러 곳에서 쓰는 결
     async with conn.cursor() as cur:
         await cur.execute(
             "select exists (select 1 from jobs where project_id = %s "
-            "and kind = 'matching_cutout' and status in ('pending', 'running') "
-            "and created_at > now() - (%s * interval '1 minute')) as active",
-            (project_id, MATCHING_CUTOUT_ACTIVE_WINDOW_MINUTES),
+            "and kind = 'matching_cutout' "
+            "and created_at > now() - (%s * interval '1 minute') "
+            "and (status in ('pending', 'running') "
+            "     or (status = 'done' and result->>'state' = any(%s) "
+            "         and (case when payload->>'retry' ~ '^[0-9]+$' then (payload->>'retry')::int else 0 end) < %s))) as active",
+            (project_id, MATCHING_CUTOUT_ACTIVE_WINDOW_MINUTES,
+             list(sam_retry.RETRYABLE_STATES), sam_retry.MAX_RETRIES),
         )
         row = await cur.fetchone()
     return bool(row and row["active"])
@@ -1111,15 +1120,82 @@ async def get_job(conn: AsyncConnection, user_id: str, job_id: str) -> dict | No
 async def get_latest_job_generation(
     conn: AsyncConnection, user_id: str, base_idempotency_key: str,
 ) -> dict | None:
-    """base 또는 ``base:rN`` 중 가장 높은 재시도 세대 하나를 조회한다."""
+    """base 또는 ``base:rN`` 중 가장 높은 재시도 세대 하나를 조회한다.
+
+    retry 캐스트는 숫자 패턴일 때만 — 비숫자 한 행이 `22P02` 로 조회를 통째로 죽이면 톤 에디터
+    상태 라우트가 500 이 된다(2026-08-21 PR #169 검토에서 실측). 쓰는 쪽은 전부 int 를 넣지만
+    DB 행은 코드보다 오래 산다.
+    """
     async with conn.cursor() as cur:
         await cur.execute(
             f"select {_JOB_COLS} from jobs where user_id = %s "
             "and (idempotency_key = %s or idempotency_key like %s) "
-            "order by coalesce((payload->>'retry')::int, 0) desc limit 1",
+            "order by (case when payload->>'retry' ~ '^[0-9]+$' then (payload->>'retry')::int else 0 end) desc limit 1",
             (user_id, base_idempotency_key, f"{base_idempotency_key}:r%"),
         )
         return await cur.fetchone()
+
+
+async def list_retryable_sam_jobs(
+    conn: AsyncConnection, kinds: tuple[str, ...], *, max_retries: int,
+    min_age_seconds: float, limit: int = 50,
+) -> list[dict]:
+    """일시 장애로 끝났고 예산이 남은 SAM 잡 후보(2026-08-21, sam_retry_pusher 전용).
+
+    정확한 백오프 판정은 세대마다 대기가 달라서 SQL 로 하지 않는다 — 여기서는 **가장 짧은
+    대기**보다 오래된 것만 넓게 긁고, 호출자가 `sam_retry.backoff_elapsed` 로 거른다.
+    `idempotency_key` 를 함께 돌려주는 이유는 푸셔가 base 키를 되찾아야 하기 때문이다.
+    조회는 `jobs_sam_retry_idx`(partial) 가 받친다.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"select {_JOB_COLS}, idempotency_key from jobs "
+            "where kind = any(%s) and status = any(%s) "
+            "and finished_at is not null "
+            "and finished_at < now() - make_interval(secs => %s) "
+            "and (case when payload->>'retry' ~ '^[0-9]+$' then (payload->>'retry')::int else 0 end) < %s "
+            "order by finished_at desc limit %s",
+            (list(kinds), ["done", "error"], float(min_age_seconds),
+             int(max_retries), int(limit)),
+        )
+        return await cur.fetchall()
+
+
+async def sam_demand_snapshot(conn: AsyncConnection, kinds: tuple[str, ...]):
+    """sam2 가 켜져 있어야 하는지 판단할 세 값을 한 왕복으로(2026-08-21, sam_autoscaler 전용).
+
+    업로드는 `source='upload'` 만 센다 — 파생 asset(누끼·마스크·생성물)은 SAM 수요가 아니다.
+    `jobs_sam_retry_idx`(kind, finished_at) 와 `assets_upload_created_idx` 가 받친다.
+    """
+    from app.services.sam_autoscale import DemandSnapshot
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select "
+            "  (select count(*) from jobs where kind = any(%s) "
+            "     and status in ('pending', 'running')) as active_sam_jobs, "
+            "  (select max(finished_at) from jobs where kind = any(%s) "
+            "     and finished_at is not null) as last_sam_finished_at, "
+            "  (select max(created_at) from assets where source = 'upload') as last_upload_at",
+            (list(kinds), list(kinds)),
+        )
+        row = await cur.fetchone() or {}
+    return DemandSnapshot(
+        active_sam_jobs=int(row.get("active_sam_jobs") or 0),
+        last_sam_finished_at=row.get("last_sam_finished_at"),
+        last_upload_at=row.get("last_upload_at"),
+    )
+
+
+async def try_advisory_lock(conn: AsyncConnection, key: str) -> bool:
+    """트랜잭션 범위 advisory lock 을 **기다리지 않고** 시도한다. 못 잡으면 False.
+
+    api 가 2대가 되는 날 두 reconciler 가 반대 방향으로 밀지 않게 한다. 잡은 프로세스가
+    커밋/롤백하면 풀린다(pg_advisory_xact_lock 계열 — 이 파일의 기존 선례와 같은 결).
+    """
+    async with conn.cursor() as cur:
+        await cur.execute("select pg_try_advisory_xact_lock(hashtext(%s)) as locked", (key,))
+        row = await cur.fetchone()
+    return bool(row and row["locked"])
 
 
 async def is_job_cancelled(conn: AsyncConnection, job_id: str) -> bool:
