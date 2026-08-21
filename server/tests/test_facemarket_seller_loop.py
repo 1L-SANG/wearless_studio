@@ -2,7 +2,7 @@
 
 DB/홀더를 페이크로 대체해 순수 로직만 검증:
 verify_license 4-arm 409 계약, resolve_project_license no-op 가드(비-UUID·무라이선스·잠금),
-revoke 소유 스코프·멱등·홀더 best-effort, 영수증 shape·소유 스코프.
+revoke 소유 스코프·멱등·내구성 있는 큐 적재, 영수증 shape·소유 스코프.
 """
 
 import asyncio
@@ -306,22 +306,32 @@ class _RouteCur:
         return False
 
     async def execute(self, sql, params=None):
-        s = " ".join(sql.split()).lower()
-        p = params or ()
-        if "from fm_licenses l join fm_models m" in s and "l.vc_id" in s and "update" not in s:
-            lic = self.store["licenses"].get(p[0])
+        normalized = " ".join(sql.split()).lower()
+        params = params or ()
+        if normalized.startswith("select") and "from fm_licenses l join fm_models m" in normalized and "l.vc_id" in normalized:
+            lic = self.store["licenses"].get(params[0])
             # 스냅샷 반환(dict 복사) — 실제 DB fetchone 처럼 이후 UPDATE 변형과 격리.
-            self._one = dict(lic) if (lic and lic["user_id"] == p[1]) else None
-        elif s.startswith("update fm_licenses set status = 'revoked'"):
-            lic = self.store["licenses"].get(p[0])
+            self._one = dict(lic) if (lic and lic["user_id"] == params[1]) else None
+            self.store["select_for_update"] += int("for update" in normalized)
+        elif normalized.startswith("update fm_licenses set status = 'revoked'"):
+            lic = self.store["licenses"].get(params[0])
             if lic:
                 lic["status"] = "revoked"
             self._one = dict(_LIC_ROW, status="revoked")
-        elif "from fm_settlements st" in s:
-            row = self.store["settlements"].get(p[0])
-            self._one = row if (row and row["user_id"] == p[1]) else None
+        elif normalized.startswith("insert into fm_vc_revocation_jobs"):
+            if self.store.get("enqueue_error"):
+                raise RuntimeError("queue unavailable")
+            license_id, model_id, vc_id = params
+            self.store["revocations"].setdefault(
+                vc_id,
+                {"license_id": license_id, "model_id": model_id, "status": "pending"},
+            )
+            self._one = None
+        elif "from fm_settlements st" in normalized:
+            row = self.store["settlements"].get(params[0])
+            self._one = row if (row and row["user_id"] == params[1]) else None
         else:  # pragma: no cover
-            raise AssertionError(f"unexpected SQL: {s}")
+            raise AssertionError(f"unexpected SQL: {normalized}")
 
     async def fetchone(self):
         return self._one
@@ -330,12 +340,19 @@ class _RouteCur:
 class _RouteConn:
     def __init__(self, store):
         self.store = store
+        self._statuses = {
+            key: value["status"] for key, value in store["licenses"].items()
+        }
 
     def cursor(self):
         return _RouteCur(self.store)
 
     async def commit(self):
-        return None
+        self.store["commit_count"] += 1
+
+    async def rollback(self):
+        for key, status in self._statuses.items():
+            self.store["licenses"][key]["status"] = status
 
 
 @pytest.fixture()
@@ -343,11 +360,19 @@ def route(keypair, monkeypatch):
     _priv, public_key = keypair
     app = create_app(make_settings(facemarket_enabled=True, fm_ci_pepper="pep"))
     app.state.jwt_key_resolver = lambda token: public_key
-    store = {"licenses": {}, "settlements": {}}
+    store = {
+        "licenses": {}, "settlements": {}, "revocations": {},
+        "commit_count": 0, "select_for_update": 0,
+    }
 
     @contextlib.asynccontextmanager
     async def fake_get_conn(_request):
-        yield _RouteConn(store)
+        conn = _RouteConn(store)
+        try:
+            yield conn
+        except Exception:
+            await conn.rollback()
+            raise
 
     monkeypatch.setattr(facemarket, "get_conn", fake_get_conn)
     return TestClient(app), store
@@ -359,7 +384,7 @@ def _uid(make_token):
     return tok, _jwt.decode(tok, options={"verify_signature": False})["sub"]
 
 
-def test_revoke_owner_sets_status_revoked(route, make_token):
+def test_revoke_route_halts_license_and_enqueues_in_one_commit(route, make_token):
     client, store = route
     tok, uid = _uid(make_token)
     store["licenses"]["lic-1"] = {
@@ -370,6 +395,12 @@ def test_revoke_owner_sets_status_revoked(route, make_token):
                     headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "revoked" and r.json()["id"] == "lic-1"
+    assert store["licenses"]["lic-1"]["status"] == "revoked"
+    assert store["revocations"]["vc-1"] == {
+        "license_id": "lic-1", "model_id": "m-1", "status": "pending",
+    }
+    assert store["commit_count"] == 1
+    assert store["select_for_update"] == 1
 
 
 def test_revoke_nonowner_404(route, make_token):
@@ -384,42 +415,52 @@ def test_revoke_nonowner_404(route, make_token):
     assert r.status_code == 404
 
 
-def test_revoke_idempotent_when_already_revoked(route, make_token, monkeypatch):
+def test_revoke_already_revoked_self_heals_missing_intent(route, make_token):
     client, store = route
     tok, uid = _uid(make_token)
     store["licenses"]["lic-1"] = {
         "id": "lic-1", "model_id": "m-1", "vc_id": "vc-1", "status": "revoked",
         "user_id": uid,
     }
-    calls = {"n": 0}
-
-    async def _spy(app, *, model_id, vc_id):
-        calls["n"] += 1
-
-    monkeypatch.setattr(facemarket, "_revoke_holder_vc", _spy)
     r = client.post("/v1/facemarket/licenses/lic-1/revoke",
                     headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 200 and r.json()["status"] == "revoked"
-    assert calls["n"] == 0  # 이미 revoked → 홀더 재폐기 호출 안 함(멱등)
+    assert store["revocations"]["vc-1"]["status"] == "pending"
+    assert store["commit_count"] == 1
 
 
-def test_revoke_calls_holder_on_transition(route, make_token, monkeypatch):
+def test_revoke_without_vc_still_halts_locally(route, make_token):
+    client, store = route
+    tok, uid = _uid(make_token)
+    store["licenses"]["lic-1"] = {
+        "id": "lic-1", "model_id": "m-1", "vc_id": None, "status": "active",
+        "user_id": uid,
+    }
+    r = client.post("/v1/facemarket/licenses/lic-1/revoke",
+                    headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200
+    assert store["licenses"]["lic-1"]["status"] == "revoked"
+    assert store["revocations"] == {}
+    assert store["commit_count"] == 1
+
+
+def test_revoke_enqueue_failure_rolls_back_local_halt(route, make_token):
     client, store = route
     tok, uid = _uid(make_token)
     store["licenses"]["lic-1"] = {
         "id": "lic-1", "model_id": "m-1", "vc_id": "vc-1", "status": "active",
         "user_id": uid,
     }
-    seen = {}
+    store["enqueue_error"] = True
 
-    async def _spy(app, *, model_id, vc_id):
-        seen.update(model_id=model_id, vc_id=vc_id)
+    response = client.post(
+        "/v1/facemarket/licenses/lic-1/revoke",
+        headers={"Authorization": f"Bearer {tok}"},
+    )
 
-    monkeypatch.setattr(facemarket, "_revoke_holder_vc", _spy)
-    r = client.post("/v1/facemarket/licenses/lic-1/revoke",
-                    headers={"Authorization": f"Bearer {tok}"})
-    assert r.status_code == 200
-    assert seen == {"model_id": "m-1", "vc_id": "vc-1"}
+    assert response.status_code == 500
+    assert store["licenses"]["lic-1"]["status"] == "active"
+    assert store["commit_count"] == 0
 
 
 def test_job_settlement_receipt_shape(route, make_token):

@@ -608,15 +608,23 @@ def _checked_license_evidence(row: dict | None) -> tuple[str, str, str]:
     return str(row["model_id"]), row["front_key"], row["front_digest"]
 
 
+async def enqueue_vc_revocation(
+    conn, *, license_id: str, model_id: str, vc_id: str
+) -> None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """insert into fm_vc_revocation_jobs (license_id, model_id, vc_id)
+               values (%s, %s, %s)
+               on conflict (vc_id) do nothing""",
+            (license_id, model_id, vc_id),
+        )
+
+
 async def _enqueue_issued_vc_revocation(connect, *, license_id, model_id, vc_id) -> None:
     async with connect() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                """insert into fm_vc_revocation_jobs (license_id, model_id, vc_id)
-                   values (%s, %s, %s)
-                   on conflict (vc_id) do nothing""",
-                (license_id, model_id, vc_id),
-            )
+        await enqueue_vc_revocation(
+            conn, license_id=license_id, model_id=model_id, vc_id=vc_id
+        )
         await conn.commit()
 
 
@@ -1860,23 +1868,6 @@ async def set_project_license(conn, project_id: str, license_id: str) -> None:
         )
 
 
-async def _revoke_holder_vc(app, *, model_id: str, vc_id: str | None) -> None:
-    """홀더에 VC 온체인 폐기 요청(best-effort). 미설정/vc 없음/불통이면 no-op."""
-    base = getattr(app.state.settings, "opendid_holder_url", None)
-    if not base or not vc_id:
-        return
-    try:
-        async with httpx.AsyncClient(timeout=_HOLDER_TIMEOUT) as client:
-            await client.post(
-                f"{base}/holder/models/{model_id}/revoke-vc", json={"vcId": vc_id}
-            )
-    except Exception:
-        logger.warning(
-            "holder_revoke_vc_unreachable",
-            extra={"model_id": model_id, "vc_id": vc_id},
-        )
-
-
 @router.post(
     "/licenses/{license_id}/revoke",
     response_model=LicenseCard,
@@ -1894,7 +1885,7 @@ async def revoke_license(
 
     - **Bearer Token**: 필수 (라이선스 소유 모델 본인 — fm_models.user_id 조인 스코프)
     - **효과**: `status='revoked'` → 이후 얼굴 게이트(404)·verify 게이트(409) 모두 차단.
-      [FULL] 홀더에 VC 온체인 폐기(best-effort). 멱등(이미 revoked면 상태 그대로 반환).
+      VC가 있으면 같은 트랜잭션에 내구성 폐기 잡을 적재한다.
     - **에지 케이스**: `404 not_found`(비존재·비소유)
     """
     async with get_conn(request) as conn:
@@ -1902,7 +1893,8 @@ async def revoke_license(
             await cur.execute(
                 """select l.id::text as id, l.model_id::text as model_id, l.vc_id, l.status
                    from fm_licenses l join fm_models m on m.id = l.model_id
-                   where l.id = %s and m.user_id = %s""",
+                   where l.id = %s and m.user_id = %s
+                   for update of l""",
                 (license_id, user_id),
             )
             lic = await cur.fetchone()
@@ -1915,13 +1907,14 @@ async def revoke_license(
                 (license_id,),
             )
             row = await cur.fetchone()
+        if lic.get("vc_id"):
+            await enqueue_vc_revocation(
+                conn,
+                license_id=lic["id"],
+                model_id=lic["model_id"],
+                vc_id=lic["vc_id"],
+            )
         await conn.commit()
-
-    # 상태 전이(active→revoked)일 때만 홀더 폐기 1회 — 멱등 재호출 방지.
-    if lic["status"] != "revoked":
-        await _revoke_holder_vc(
-            request.app, model_id=lic["model_id"], vc_id=lic.get("vc_id")
-        )
     return row
 
 

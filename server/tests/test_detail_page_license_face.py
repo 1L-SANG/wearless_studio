@@ -10,6 +10,9 @@ import contextlib
 import types
 from datetime import datetime, timedelta, timezone
 
+import httpx
+
+from app import facemarket
 from app.workers import detail_page_job as dpj
 from conftest import FakeR2, make_settings, worker_job
 
@@ -19,8 +22,17 @@ FACE_BYTES = b"\x89PNG-FACE-BYTES"
 
 
 def _license_row(status="active", days_left=30, key=FACE_KEY, name="김하늘"):
-    return {"face_image_key": key, "status": status, "display_name": name,
-            "license_valid_until": datetime.now(timezone.utc) + timedelta(days=days_left)}
+    return {
+        "id": LIC_ID,
+        "model_id": "22222222-2222-4222-8222-222222222222",
+        "face_image_key": key,
+        "status": status,
+        "display_name": name,
+        "license_valid_until": datetime.now(timezone.utc) + timedelta(days=days_left),
+        "unit_price": 10000,
+        "vc_id": "vc-1",
+        "vc_status_uri": None,
+    }
 
 
 class _Cur:
@@ -33,10 +45,6 @@ class _Cur:
         return None
 
     async def fetchone(self):
-        # _load_license_row(실존 소스 게이트용) 쿼리 → None: 이 테스트들은 실존 자산이 없어
-        # LEGACY(단일 라이선스 얼굴) 경로를 유지한다. 그 외(=_load_license_face) → 라이선스 row.
-        if "l.id::text as id" in self._sql and "l.model_id::text as model_id" in self._sql:
-            return None
         return self._row
 
     async def fetchall(self):
@@ -95,11 +103,24 @@ class _FaceR2:
         return None
 
 
-def _app(license_row, *, face_r2=None, facemarket_enabled=True, with_face_storage=True):
+def _app(
+    license_row,
+    *,
+    face_r2=None,
+    facemarket_enabled=True,
+    with_face_storage=True,
+    vc_required=False,
+):
     main_r2 = FakeR2()
     state = types.SimpleNamespace(
-        settings=make_settings(gemini_api_key="x", r2_bucket="b",
-                              facemarket_enabled=facemarket_enabled),
+        settings=make_settings(
+            gemini_api_key="x",
+            r2_bucket="b",
+            facemarket_enabled=facemarket_enabled,
+            fm_vc_required=vc_required,
+            opendid_holder_url="http://holder" if vc_required else None,
+            opendid_holder_hmac_secret="shared-secret" if vc_required else None,
+        ),
         pool=_Pool(license_row), r2=main_r2, gemini=types.SimpleNamespace(),
     )
     if with_face_storage:
@@ -253,7 +274,7 @@ def test_face_is_attached_only_to_cuts_that_show_it(monkeypatch):
 
 
 # ── verify-before-use 시점 갭 (해지된 얼굴이 생성돼 나가면 회수 불가) ────────
-def test_revoked_license_at_worker_time_injects_no_face(monkeypatch):
+def test_revoked_license_at_worker_time_fails_job_and_refunds(monkeypatch):
     """게이트(요청 시점) 통과 후 해지된 라이선스 — 워커가 재확인해 얼굴을 쓰지 않는다.
     한 번 생성되면 공개 URL 로 나가 회수가 불가능하다."""
     captured = {}
@@ -263,13 +284,12 @@ def test_revoked_license_at_worker_time_injects_no_face(monkeypatch):
 
     asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
 
-    assert captured["calls"][0]["has_face"] is False
-    assert app.state.r2_face.gets == []                 # 바이트를 읽지도 않는다
-    assert captured["license_notice"] is None           # 허위 고지 금지 — 기본 문구
-    assert captured["charge"] == 1                      # 컷 생성 자체는 성공(부분 성공 계약)
+    assert captured.get("calls") is None
+    assert captured["failure"]["reserved"] == 1
+    assert app.state.r2_face.gets == []
 
 
-def test_expired_license_at_worker_time_injects_no_face(monkeypatch):
+def test_expired_license_at_worker_time_fails_job_and_refunds(monkeypatch):
     captured = {}
     _patch_inputs(monkeypatch, captured,
                   project={"copywriting": False, "facemarket_license_id": LIC_ID})
@@ -277,8 +297,65 @@ def test_expired_license_at_worker_time_injects_no_face(monkeypatch):
 
     asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
 
-    assert captured["calls"][0]["has_face"] is False
-    assert captured["license_notice"] is None
+    assert captured.get("calls") is None
+    assert captured["failure"]["reserved"] == 1
+    assert app.state.r2_face.gets == []
+
+
+class _HolderResponse:
+    status_code = 200
+
+    def __init__(self, payload):
+        self.payload = payload
+
+    def json(self):
+        return self.payload
+
+
+def test_holder_outage_at_worker_time_fails_before_face_read(monkeypatch):
+    captured = {}
+    _patch_inputs(
+        monkeypatch,
+        captured,
+        project={"copywriting": False, "facemarket_license_id": LIC_ID},
+    )
+
+    async def holder_down(*_args, **_kwargs):
+        raise httpx.ConnectError("holder down")
+
+    monkeypatch.setattr(facemarket.holder_client, "post", holder_down)
+    app, _ = _app(_license_row(), vc_required=True)
+
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+
+    assert captured.get("calls") is None
+    assert captured["failure"]["reserved"] == 1
+    assert app.state.r2_face.gets == []
+
+
+def test_invalid_or_revoked_vc_at_worker_time_fails_before_face_read(monkeypatch):
+    for payload in (
+        {"verified": False, "status": "invalid"},
+        {"verified": True, "status": "revoked"},
+    ):
+        captured = {}
+        _patch_inputs(
+            monkeypatch,
+            captured,
+            project={"copywriting": False, "facemarket_license_id": LIC_ID},
+        )
+
+        async def holder_result(*_args, _payload=payload, **_kwargs):
+            return _HolderResponse(_payload)
+
+        monkeypatch.setattr(facemarket.holder_client, "post", holder_result)
+        app, _ = _app(_license_row(), vc_required=True)
+
+        asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+
+        assert captured.get("calls") is None
+        assert captured["failure"]["reserved"] == 1
+        assert app.state.r2_face.gets == []
 
 
 # ── 우아한 강등 (잡 전체 실패 금지) ──────────────────────────────────────────

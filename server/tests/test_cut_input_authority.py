@@ -1,4 +1,7 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
+
+import httpx
 
 from app.workers import detail_page_job as dpj
 from app.workers import editor_image_job as eij
@@ -749,3 +752,114 @@ def test_editor_real_visible_worn_cut_enables_identity_contract(monkeypatch):
     assert "MODEL — frontal close-up" in generated["manifest"]
     assert "MODEL SHEET" in generated["manifest"]
     assert "MODEL FULL BODY" not in generated["manifest"]
+
+
+class _HolderResponse:
+    status_code = 200
+
+    def __init__(self, payload):
+        self.payload = payload
+
+    def json(self):
+        return self.payload
+
+
+def _run_editor_worker_vc_denial(monkeypatch, holder_call, *, license_overrides=None):
+    captured = {}
+    _patch_editor_common(monkeypatch, captured)
+    model_id = "11111111-1111-1111-1111-111111111111"
+
+    async def fake_real_refs(conn, selected_model_id, **_kwargs):
+        return [
+            {"key": "face-front", "mime": "image/png", "bucket": "face"},
+            {"key": "face-sheet", "mime": "image/png", "bucket": "face"},
+        ]
+
+    async def fake_license(conn, selected_model_id):
+        return {
+            "id": "license",
+            "model_id": selected_model_id,
+            "status": "active",
+            "license_valid_until": None,
+            "unit_price": 10,
+            "vc_id": "vc-1",
+            **(license_overrides or {}),
+        }
+
+    async def fake_failure(conn, **kwargs):
+        captured["failure"] = kwargs
+
+    async def forbidden_success(*_args, **_kwargs):
+        raise AssertionError("VC denial must not finalize success")
+
+    async def forbidden_settlement(*_args, **_kwargs):
+        raise AssertionError("VC denial must not settle")
+
+    monkeypatch.setattr(eij.identity_source, "resolve_real_model_assets", fake_real_refs)
+    monkeypatch.setattr(eij.facemarket, "resolve_model_license", fake_license)
+    monkeypatch.setattr(eij.facemarket.holder_client, "post", holder_call)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_failure)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", forbidden_success)
+    monkeypatch.setattr(eij.facemarket, "record_license_settlement", forbidden_settlement)
+
+    public_r2 = _TrackingR2()
+    face_r2 = _TrackingR2()
+    app = fake_worker_app(
+        make_settings(
+            gemini_api_key="x",
+            r2_bucket="b",
+            facemarket_enabled=True,
+            fm_vc_required=True,
+            opendid_holder_url="http://holder",
+            opendid_holder_hmac_secret="shared-secret",
+        ),
+        r2=public_r2,
+    )
+    app.state.r2_face = face_r2
+
+    asyncio.run(eij.run_editor_image_job(app, worker_job({
+        "mode": "new",
+        "cutType": "styling",
+        "shot": "full",
+        "direction": "front",
+        "faceExposure": "show",
+        "modelId": model_id,
+    })))
+
+    assert captured.get("generations") is None
+    assert captured["failure"]["reserved"] == 1
+    assert public_r2.reads == []
+    assert face_r2.reads == []
+
+
+def test_editor_holder_outage_fails_before_model_asset_reads(monkeypatch):
+    async def holder_down(*_args, **_kwargs):
+        raise httpx.ConnectError("holder down")
+
+    _run_editor_worker_vc_denial(monkeypatch, holder_down)
+
+
+def test_editor_revoked_or_expired_license_fails_before_model_asset_reads(monkeypatch):
+    async def forbidden_holder(*_args, **_kwargs):
+        raise AssertionError("local denial must not call Holder")
+
+    for overrides in (
+        {"status": "revoked"},
+        {"license_valid_until": datetime.now(timezone.utc) - timedelta(seconds=1)},
+    ):
+        _run_editor_worker_vc_denial(
+            monkeypatch,
+            forbidden_holder,
+            license_overrides=overrides,
+        )
+
+
+def test_editor_invalid_or_revoked_vc_fails_before_model_asset_reads(monkeypatch):
+    for payload in (
+        {"verified": False, "status": "invalid"},
+        {"verified": True, "status": "revoked"},
+    ):
+        async def holder_result(*_args, _payload=payload, **_kwargs):
+            return _HolderResponse(_payload)
+
+        _run_editor_worker_vc_denial(monkeypatch, holder_result)

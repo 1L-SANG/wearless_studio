@@ -16,7 +16,7 @@ from io import BytesIO
 
 from PIL import Image
 
-from .. import repo
+from .. import facemarket, repo
 from ..agents import (
     content_roles,
     copy_qc,
@@ -879,6 +879,15 @@ async def run_detail_page_job(app, job: dict) -> None:
             # StoryboardBlock에는 modelId가 없다(계약 §3.4). 상세페이지의 프로젝트 단위 선택값은
             # Analysis.selectedModelId가 정본이며, 아래 prep에서 저장 블록을 바꾸지 않고 런타임 주입한다.
             selected_model_id = analysis.get("selectedModelId") or analysis.get("selected_model_id")
+
+            # 요청 게이트 통과 후의 해지·만료·VC 변경 레이스를 워커에서 재확인한다.
+            # 이 순서가 실모델 자산 조회·비공개 얼굴 로드보다 반드시 앞서야 한다.
+            if s.facemarket_enabled:
+                license_to_verify = await facemarket.resolve_project_license(
+                    conn, project, analysis
+                )
+                if license_to_verify is not None:
+                    await facemarket.verify_license(app, license_to_verify)
 
             # FaceMarket 라이선스 얼굴(FM-31) — 프로젝트에 잠긴 라이선스가 있을 때만.
             # 잠금 없음 = 기존 마네킹 경로 → None, 아래 첨부·고지 분기 전부 미진입.

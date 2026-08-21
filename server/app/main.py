@@ -23,6 +23,7 @@ from .r2 import R2Client
 from .routes import router as v1_router, COMMON_RESPONSES
 from .workers.dispatcher import JobDispatcher
 from .workers.draft_asset_reclaimer import DraftAssetReclaimer
+from .workers.fm_vc_revocation_reconciler import FaceVcRevocationReconciler
 
 DEFAULT_ERROR_CODES = {
     401: "unauthorized",
@@ -112,8 +113,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         dispatcher = None
         draft_asset_reclaimer = None
+        vc_revocation_reconciler = None
         if pool is not None:
             await pool.open()
+            if settings.fm_vc_required:
+                vc_revocation_reconciler = FaceVcRevocationReconciler(app)
+                await vc_revocation_reconciler.start()
             if app.state.r2 is not None:
                 draft_asset_reclaimer = DraftAssetReclaimer(app)
                 await draft_asset_reclaimer.start()
@@ -132,6 +137,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await draft_asset_reclaimer.stop()
         if dispatcher is not None:
             await dispatcher.stop()
+        if vc_revocation_reconciler is not None:
+            await vc_revocation_reconciler.stop()
         if pool is not None:
             await image_usage.drain(timeout_seconds=5.0)
             await pool.close()
