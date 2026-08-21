@@ -17,6 +17,7 @@ import hashlib
 import hmac
 import logging
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address
@@ -505,6 +506,21 @@ async def _find_license_by_enrollment(conn, user_id: str, enrollment_id: str) ->
         return await cur.fetchone()
 
 
+async def _find_license_for_update(conn, user_id: str, license_id: str) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"""select {_LICENSE_CARD_COLS_L}, l.enrollment_id::text as enrollment_id,
+                      l.face_image_key
+                from fm_licenses l
+                join fm_models m on m.id = l.model_id
+                where l.id = %s and m.user_id = %s
+                limit 1
+                for update of l""",
+            (license_id, user_id),
+        )
+        return await cur.fetchone()
+
+
 async def _load_license_evidence(conn, user_id: str, enrollment_id: str) -> dict | None:
     async with conn.cursor() as cur:
         await cur.execute(
@@ -530,6 +546,41 @@ async def _load_license_evidence(conn, user_id: str, enrollment_id: str) -> dict
                 where e.id = %s and e.user_id = %s
                 limit 1""",
             (enrollment_id, user_id),
+        )
+        return await cur.fetchone()
+
+
+async def _load_activation_evidence_for_update(
+    conn, user_id: str, license_id: str, enrollment_id: str
+) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select e.id::text as enrollment_id, e.status as enrollment_status,
+                      e.match_policy_version, m.id::text as model_id, m.status as model_status,
+                      m.did as model_did, m.assets_status, m.current_enrollment_id::text,
+                      p.r2_key as front_key, p.image_digest as front_digest,
+                      p.storage_state as front_storage_state,
+                      fa.r2_key as face_asset_key,
+                      fa.source_enrollment_id::text as face_asset_source_enrollment_id,
+                      fa.evidence_version as face_asset_evidence_version,
+                      ga.r2_key as grid_asset_key,
+                      ga.source_enrollment_id::text as grid_asset_source_enrollment_id,
+                      ga.evidence_version as grid_asset_evidence_version
+                 from fm_licenses l
+                 join fm_biometric_enrollments e
+                   on e.id = l.enrollment_id
+                 join fm_models m
+                   on m.id = e.model_id and m.user_id = e.user_id
+                 join fm_biometric_enrollment_photos p
+                   on p.enrollment_id = e.id and p.angle = 'front'
+                 join fm_model_assets fa
+                   on fa.model_id = m.id and fa.view = 'face_front'
+                 join fm_model_assets ga
+                   on ga.model_id = m.id and ga.view = 'grid_sedcard'
+                where l.id = %s and e.id = %s and e.user_id = %s
+                limit 1
+                for update of l, e, m, p, fa, ga""",
+            (license_id, enrollment_id, user_id),
         )
         return await cur.fetchone()
 
@@ -570,6 +621,12 @@ async def create_license(
     user_id: str = Depends(require_user),
 ):
     """JSON-only enrollment contract. Multipart/direct face/profile never creates a license."""
+    if not getattr(request.app.state.settings, "fm_biometric_enrollment_enabled", False):
+        raise _err(
+            "biometric_enrollment_required",
+            "생체 등록 플로우를 완료해 주세요.",
+            status=409,
+        )
     content_type = (request.headers.get("content-type") or "").lower()
     if "application/json" not in content_type:
         raise _err("json_required", "JSON 요청만 허용됩니다.", status=415)
@@ -577,7 +634,10 @@ async def create_license(
         body = CreateLicenseRequest.model_validate(await request.json())
     except (ValueError, ValidationError):
         raise _err("invalid_license_request", "라이선스 요청 형식이 올바르지 않습니다.", status=400)
-    enrollment_id = str(body.enrollment_id)
+    try:
+        enrollment_id = str(uuid.UUID(str(body.enrollment_id)))
+    except (TypeError, ValueError):
+        raise _err("invalid_enrollment_id", "등록 ID 형식이 올바르지 않습니다.", status=400)
     valid_until = datetime.now(timezone.utc) + timedelta(days=body.valid_days)
     allowed = _clean_uses(body.allowed_use)
     forbidden = _clean_uses(body.forbidden_use)
@@ -626,6 +686,11 @@ async def create_license(
                 if row["status"] == "active":
                     await conn.commit()
                     return row
+                allowed = list(row["allowed_use"] or [])
+                forbidden = list(row["forbidden_use"] or [])
+                unit_price = int(row["unit_price"])
+                valid_until = row["license_valid_until"]
+                digest = row["face_image_digest"]
 
         async with conn.cursor() as cur:
             await cur.execute(
@@ -649,9 +714,31 @@ async def create_license(
 
     async with get_conn(request) as conn:
         try:
-            model_id, _key, _digest = _checked_license_evidence(
-                await _load_license_evidence(conn, user_id, enrollment_id)
+            locked = await _find_license_for_update(conn, user_id, license_id)
+            if locked is None or str(locked.get("enrollment_id") or "") != enrollment_id:
+                await conn.rollback()
+                raise _err("license_activation_stale", "라이선스 활성화 상태가 변경되었습니다.", status=409)
+            if locked["status"] == "active":
+                await conn.commit()
+                return {k: locked[k] for k in LicenseCard.model_fields}
+            if locked["status"] != "pending":
+                await conn.rollback()
+                raise _err("license_activation_stale", "라이선스 활성화 상태가 변경되었습니다.", status=409)
+
+            evidence = await _load_activation_evidence_for_update(
+                conn, user_id, license_id, enrollment_id
             )
+            try:
+                model_id, key, fresh_digest = _checked_license_evidence(evidence)
+            except HTTPException:
+                await conn.rollback()
+                raise
+            if evidence["model_status"] not in {"pending", "reverification_required"}:
+                await conn.rollback()
+                raise _err("model_not_activatable", "활성화 가능한 모델 상태가 아닙니다.", status=409)
+            if locked["face_image_key"] != key or locked["face_image_digest"] != fresh_digest:
+                await conn.rollback()
+                raise _err("license_activation_stale", "라이선스 활성화 상태가 변경되었습니다.", status=409)
             async with conn.cursor() as cur:
                 await cur.execute(
                     f"""update fm_licenses set status = 'active', vc_id = %s
@@ -661,9 +748,10 @@ async def create_license(
                 )
                 active = await cur.fetchone()
                 await cur.execute(
-                    """update fm_models set status = 'verified',
+                        """update fm_models set status = 'verified',
                               did = coalesce(nullif(did, ''), %s)
                         where id = %s and current_enrollment_id = %s
+                          and status in ('pending', 'reverification_required')
                         returning id""",
                     (issued.user_did, model_id, enrollment_id),
                 )
@@ -679,6 +767,9 @@ async def create_license(
                 enrollment_updated = await cur.fetchone()
             if active is None or model_updated is None or enrollment_updated is None:
                 await conn.rollback()
+                existing = await _find_license_by_enrollment(conn, user_id, enrollment_id)
+                if existing and existing["status"] == "active":
+                    return existing
                 raise _err("license_activation_stale", "라이선스 활성화 상태가 변경되었습니다.", status=409)
             await conn.commit()
             return active
@@ -1413,6 +1504,8 @@ async def issue_face_vc(app, *, license_id, model_id, allowed, forbidden,
             if register.status_code != 200:
                 raise FaceVcIssueError("holder_register_failed")
             register_body = register.json()
+            if not isinstance(register_body, Mapping):
+                raise FaceVcIssueError("holder_register_malformed")
             user_did = register_body.get("userDid")
             if not register_body.get("flowAComplete") and not user_did:
                 raise FaceVcIssueError("holder_register_incomplete")
@@ -1430,13 +1523,15 @@ async def issue_face_vc(app, *, license_id, model_id, allowed, forbidden,
             if issue.status_code != 200:
                 raise FaceVcIssueError("holder_issue_failed")
             issue_body = issue.json()
+            if not isinstance(issue_body, Mapping):
+                raise FaceVcIssueError("holder_issue_malformed")
+            vc_id = issue_body.get("vcId")
+            if not isinstance(vc_id, str) or not vc_id:
+                raise FaceVcIssueError("holder_issue_incomplete")
     except FaceVcIssueError:
         raise
     except Exception as exc:
         raise FaceVcIssueError("holder_malformed_response") from exc
-    vc_id = issue_body.get("vcId")
-    if not vc_id:
-        raise FaceVcIssueError("holder_issue_incomplete")
     return FaceVcIssueResult(vc_id=vc_id, user_did=issue_body.get("userDid") or user_did)
 
 

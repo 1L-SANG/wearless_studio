@@ -287,7 +287,7 @@ class Settings:
     fm_settlement_address: str | None = None  # 배포된 FaceMarketSettlement 주소(0x…)
     fm_chain_private_key: str | None = None  # owner 개인키(0x…). 절대 커밋 금지
     # ---- OpenDID 홀더(선택과제1) — 커스터디얼 홀더 MSA(로컬 :8100). 라이선스 발급 시 FaceLicense VC 발급 ----
-    # 미설정이면(프로드) VC 발급 훅 no-op — 기존 라이선스 흐름 무영향. 로컬 dev 에서만 홀더 도달가능.
+    # 신규 라이선스 생성은 생체 등록 + Holder URL 동시 cutover 때만 열린다. 프로드는 생체 플래그 false 유지.
     opendid_holder_url: str | None = None
     # ---- 실존 모델 얼굴 대조 QC (handoff §03 필수 게이트) — OpenCV SFace/YuNet(Apache-2.0) ----
     # enabled=false면 QC 스킵(dev·shadow). 3장 pairwise 코사인 최소값 < threshold 면 자산 등록 차단.

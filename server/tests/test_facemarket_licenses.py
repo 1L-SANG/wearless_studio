@@ -73,9 +73,24 @@ class FakeCursor:
         self._result = None
         self._many = None
         self.rowcount = -1
+        self.store.setdefault("sql", []).append(s)
 
         if s.startswith("select e.id::text as enrollment_id"):
-            enrollment_id, user_id = params[:2]
+            if len(params) == 3:
+                license_id, enrollment_id, user_id = params[:3]
+                owned = {m["id"] for m in models if m["user_id"] == user_id}
+                lic = next(
+                    (r for r in licenses
+                     if r["id"] == license_id
+                     and r.get("enrollment_id") == enrollment_id
+                     and r["model_id"] in owned),
+                    None,
+                )
+                if lic is None:
+                    self._result = None
+                    return
+            else:
+                enrollment_id, user_id = params[:2]
             e = next(
                 (r for r in self.store["enrollments"]
                  if r["id"] == enrollment_id and r["user_id"] == user_id),
@@ -122,8 +137,25 @@ class FakeCursor:
                 None,
             )
             self._result = {"id": m["id"]} if m else None
+        elif (
+            s.startswith("select l.id::text as id")
+            and "from fm_licenses l" in s
+            and "where l.id = %s" in s
+        ):
+            license_id, user_id = params[:2]
+            owned = {m["id"] for m in models if m["user_id"] == user_id}
+            row = next((r for r in licenses if r["id"] == license_id and r["model_id"] in owned), None)
+            if row:
+                self._result = {k: row[k] for k in _LICENSE_KEYS}
+                self._result["enrollment_id"] = row.get("enrollment_id")
+                self._result["face_image_key"] = row.get("face_image_key")
+            else:
+                self._result = None
         elif s.startswith("select") and "from fm_licenses l" in s and "l.enrollment_id" in s:
             enrollment_id, user_id = params[:2]
+            if self.store.pop("hide_existing_license_once", False):
+                self._result = None
+                return
             owned = {m["id"] for m in models if m["user_id"] == user_id}
             row = next(
                 (r for r in licenses if r.get("enrollment_id") == enrollment_id and r["model_id"] in owned),
@@ -191,7 +223,10 @@ class FakeCursor:
         elif s.startswith("update fm_models set status = 'verified'"):
             user_did, model_id, enrollment_id = params[:3]
             m = next(
-                (r for r in models if r["id"] == model_id and r.get("current_enrollment_id") == enrollment_id),
+                (r for r in models
+                 if r["id"] == model_id
+                 and r.get("current_enrollment_id") == enrollment_id
+                 and r["status"] in {"pending", "reverification_required"}),
                 None,
             )
             if m:
@@ -383,12 +418,15 @@ class HolderStub:
         self.calls = []
         self.fail_with_status = None
         self.malformed_issue = False
+        self.register_body = {"flowAComplete": True, "userDid": "did:dev:user-1"}
+        self.issue_body = {"vcId": "vc:dev:1", "userDid": "did:dev:user-1"}
+        self.after_issue = None
 
 
 class _HolderResponse:
     def __init__(self, status_code=200, body=None):
         self.status_code = status_code
-        self._body = body or {}
+        self._body = {} if body is None else body
         self.text = "SECRET_HOLDER_BODY_WITH_CLAIMS"
 
     def json(self):
@@ -412,10 +450,12 @@ class _HolderClient:
         if url.endswith("/wallet"):
             return _HolderResponse(200, {"walletId": "wallet-1"})
         if url.endswith("/register-did"):
-            return _HolderResponse(200, {"flowAComplete": True, "userDid": "did:dev:user-1"})
+            return _HolderResponse(200, self.stub.register_body)
         if self.stub.malformed_issue:
             return _HolderResponse(200, {"userDid": "did:dev:user-1", "claims": "SECRET_CLAIM"})
-        return _HolderResponse(200, {"vcId": "vc:dev:1", "userDid": "did:dev:user-1"})
+        if self.stub.after_issue:
+            self.stub.after_issue()
+        return _HolderResponse(200, self.stub.issue_body)
 
 
 @pytest.fixture()
@@ -441,6 +481,11 @@ def valid_license_body(enrollment_id=ENROLLMENT_ID):
         "unitPrice": 10000,
         "validDays": 365,
     }
+
+
+def _assert_biometric_creation_gate(response):
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "biometric_enrollment_required"
 
 
 def _seed_license_pending_enrollment(store, *, enrollment_id=ENROLLMENT_ID, user_id="user-1"):
@@ -528,6 +573,37 @@ def _seed_active_license(
     store["licenses"].append(row)
     r2.objects[key] = (data, "image/png")
     return {"id": license_id, "faceImageDigest": digest}
+
+
+def _seed_pending_license(
+    store,
+    *,
+    license_id="55555555-5555-5555-5555-555555555555",
+    enrollment_id=ENROLLMENT_ID,
+    allowed_use=None,
+    forbidden_use=None,
+    unit_price=7000,
+    valid_until=None,
+    digest="sha256-persisted-front",
+):
+    row = {
+        "id": license_id,
+        "model_id": MODEL_ID,
+        "enrollment_id": enrollment_id,
+        "face_image_uri": f"/v1/facemarket/licenses/{license_id}/face",
+        "face_image_key": APPROVED_FRONT_KEY,
+        "face_image_digest": digest,
+        "allowed_use": allowed_use or ["persisted allowed"],
+        "forbidden_use": forbidden_use or ["persisted forbidden"],
+        "unit_price": unit_price,
+        "license_valid_until": valid_until or datetime(2027, 1, 1, tzinfo=timezone.utc),
+        "status": "pending",
+        "vc_id": None,
+        "created_at": NOW,
+        "profile_id": None,
+    }
+    store["licenses"].append(row)
+    return row
 
 
 def test_license_starts_pending_and_activates_only_after_vc(
@@ -684,6 +760,175 @@ def test_malformed_holder_issue_response_stays_pending(
     assert "SECRET_CLAIM" not in caplog.text
 
 
+def test_final_activation_rejects_suspended_model_and_rolls_back(
+    biometric_fm, make_token, holder_stub
+):
+    client, store, _ = biometric_fm
+    enrollment_id = _seed_license_pending_enrollment(store)
+    store["models"][0]["status"] = "suspended"
+
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body(enrollment_id),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 409
+    assert store["licenses"][0]["status"] == "pending"
+    assert store["licenses"][0]["vc_id"] is None
+    assert store["models"][0]["status"] == "suspended"
+    assert store["enrollments"][0]["status"] == "vc_pending"
+
+
+def test_final_activation_concurrent_winner_returns_active_card(
+    biometric_fm, make_token, holder_stub
+):
+    client, store, _ = biometric_fm
+    enrollment_id = _seed_license_pending_enrollment(store)
+
+    def concurrent_winner():
+        lic = store["licenses"][0]
+        lic["status"] = "active"
+        lic["vc_id"] = "vc:dev:1"
+        store["models"][0]["status"] = "verified"
+        store["enrollments"][0]["status"] = "passed"
+        store["enrollments"][0]["vc_id"] = "vc:dev:1"
+
+    holder_stub.after_issue = concurrent_winner
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body(enrollment_id),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["id"] == store["licenses"][0]["id"]
+    assert response.json()["status"] == "active"
+    assert response.json()["vcId"] == "vc:dev:1"
+
+
+@pytest.mark.parametrize("register_body", [[], "not-object", None])
+def test_malformed_holder_register_body_is_closed_502(
+    biometric_fm, make_token, holder_stub, register_body
+):
+    client, store, _ = biometric_fm
+    holder_stub.register_body = register_body
+    enrollment_id = _seed_license_pending_enrollment(store)
+
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body(enrollment_id),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "vc_issue_delayed"
+    assert store["licenses"][0]["status"] == "pending"
+
+
+@pytest.mark.parametrize("issue_body", [[], "not-object", None, {"vcId": ""}, {"vcId": 123}])
+def test_malformed_holder_issue_body_is_closed_502(
+    biometric_fm, make_token, holder_stub, issue_body, caplog
+):
+    client, store, _ = biometric_fm
+    holder_stub.issue_body = issue_body
+    enrollment_id = _seed_license_pending_enrollment(store)
+
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body(enrollment_id),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "vc_issue_delayed"
+    assert store["licenses"][0]["status"] == "pending"
+    assert "SECRET_HOLDER_BODY_WITH_CLAIMS" not in response.text
+    assert "SECRET_CLAIM" not in caplog.text
+
+
+def test_license_creation_flag_off_rejects_json_and_multipart_before_db(
+    fm, make_token, holder_stub
+):
+    client, store, _ = fm
+
+    json_response = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body(),
+        headers=_auth(make_token),
+    )
+    multipart_response = client.post(
+        "/v1/facemarket/licenses",
+        files={"face": _png()},
+        data={"unit_price": "1000"},
+        headers=_auth(make_token),
+    )
+
+    assert json_response.status_code == 409
+    assert json_response.json()["error"]["code"] == "biometric_enrollment_required"
+    assert multipart_response.status_code == 409
+    assert multipart_response.json()["error"]["code"] == "biometric_enrollment_required"
+    assert store["licenses"] == []
+    assert store.get("sql", []) == []
+    assert holder_stub.calls == []
+
+
+def test_malformed_enrollment_uuid_rejected_before_sql(
+    biometric_fm, make_token, holder_stub
+):
+    client, store, _ = biometric_fm
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body("not-a-uuid"),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code in {400, 404}
+    assert store.get("sql", []) == []
+    assert holder_stub.calls == []
+
+
+def test_conflict_reload_uses_persisted_terms_for_holder_claims(
+    biometric_fm, make_token, holder_stub
+):
+    client, store, _ = biometric_fm
+    enrollment_id = _seed_license_pending_enrollment(store)
+    persisted = _seed_pending_license(
+        store,
+        enrollment_id=enrollment_id,
+        allowed_use=["persisted runway"],
+        forbidden_use=["persisted adult"],
+        unit_price=4321,
+        valid_until=datetime(2027, 2, 3, tzinfo=timezone.utc),
+        digest="sha256-persisted-digest",
+    )
+    store["hide_existing_license_once"] = True
+    holder_stub.issue_body = {}
+
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json={
+            "enrollmentId": enrollment_id,
+            "allowedUse": ["second request"],
+            "forbiddenUse": ["second forbidden"],
+            "unitPrice": 9999,
+            "validDays": 30,
+        },
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 502
+    issue_call = next(c for c in holder_stub.calls if c["url"].endswith("/issue-vc"))
+    assert issue_call["headers"]["Idempotency-Key"] == f"fm-license:{persisted['id']}"
+    assert issue_call["json"]["claims"] == {
+        "allowedUse": "persisted runway",
+        "forbiddenUse": "persisted adult",
+        "unitPrice": 4321,
+        "licenseValidUntil": "2027-02-03",
+        "faceImageDigest": "sha256-persisted-digest",
+    }
+
+
 def test_final_stale_transition_does_not_report_active(
     biometric_fm, make_token, holder_stub
 ):
@@ -732,8 +977,7 @@ def test_direct_face_license_request_is_rejected_before_storage(fm, make_token):
               "unit_price": "5000", "valid_days": "30"},
         headers=_auth(make_token),
     )
-    assert r.status_code == 415
-    assert r.json()["error"]["code"] == "json_required"
+    _assert_biometric_creation_gate(r)
     assert len(r2.objects) == 0
     assert store["licenses"] == []
 
@@ -746,8 +990,7 @@ def test_create_license_requires_verified_model(fm, make_token):
         data={"unit_price": "1000"},
         headers=_auth(make_token, sub="user-2"),
     )
-    assert r.status_code == 415
-    assert r.json()["error"]["code"] == "json_required"
+    _assert_biometric_creation_gate(r)
 
 
 def test_create_license_rejects_non_image(fm, make_token):
@@ -757,8 +1000,7 @@ def test_create_license_rejects_non_image(fm, make_token):
         files={"face": ("x.pdf", b"%PDF-1.4", "application/pdf")},
         headers=_auth(make_token),
     )
-    assert r.status_code == 415
-    assert r.json()["error"]["code"] == "json_required"
+    _assert_biometric_creation_gate(r)
     assert len(r2.objects) == 0  # 저장 안 됨
 
 
@@ -841,8 +1083,7 @@ def test_create_license_from_profile_references_front_slot(fm, make_token):
         data={"profile_id": PROFILE_ID, "allowed_use": ["광고"], "unit_price": "7000"},
         headers=_auth(make_token),
     )
-    assert r.status_code == 415
-    assert r.json()["error"]["code"] == "json_required"
+    _assert_biometric_creation_gate(r)
     assert store["licenses"] == []
     assert len(r2.objects) == 1                     # 프로필 시드뿐 — 새 업로드 0
 
@@ -867,8 +1108,7 @@ def test_create_license_rejects_not_ready_profile(fm, make_token):
     _seed_profile(store, r2, status="draft")  # 온보딩 미완(3각도·동의·신체 중 결손)
     r = client.post("/v1/facemarket/licenses", data={"profile_id": PROFILE_ID},
                     headers=_auth(make_token))
-    assert r.status_code == 415
-    assert r.json()["error"]["code"] == "json_required"
+    _assert_biometric_creation_gate(r)
     assert store["licenses"] == []
 
 
@@ -878,14 +1118,13 @@ def test_create_license_rejects_foreign_profile(fm, make_token):
     _seed_profile(store, r2, user_id="user-2")
     r = client.post("/v1/facemarket/licenses", data={"profile_id": PROFILE_ID},
                     headers=_auth(make_token))
-    assert r.status_code == 415
-    assert r.json()["error"]["code"] == "json_required"
+    _assert_biometric_creation_gate(r)
     missing = client.post(
         "/v1/facemarket/licenses",
         data={"profile_id": "22222222-2222-2222-2222-222222222222"},
         headers=_auth(make_token),
     )
-    assert missing.json()["error"]["code"] == "json_required"  # 동일 코드
+    assert missing.json()["error"]["code"] == "biometric_enrollment_required"  # 동일 코드
     assert store["licenses"] == []
 
 
@@ -894,8 +1133,7 @@ def test_create_license_rejects_purged_profile(fm, make_token):
     _seed_profile(store, r2, status="purged")
     r = client.post("/v1/facemarket/licenses", data={"profile_id": PROFILE_ID},
                     headers=_auth(make_token))
-    assert r.status_code == 415
-    assert r.json()["error"]["code"] == "json_required"
+    _assert_biometric_creation_gate(r)
 
 
 def test_create_license_rejects_malformed_profile_id(fm, make_token):
@@ -903,16 +1141,14 @@ def test_create_license_rejects_malformed_profile_id(fm, make_token):
     client, _, _ = fm
     r = client.post("/v1/facemarket/licenses", data={"profile_id": "not-a-uuid"},
                     headers=_auth(make_token))
-    assert r.status_code == 415
-    assert r.json()["error"]["code"] == "json_required"
+    _assert_biometric_creation_gate(r)
 
 
 def test_create_license_requires_face_or_profile(fm, make_token):
     client, _, r2 = fm
     r = client.post("/v1/facemarket/licenses", data={"unit_price": "1000"},
                     headers=_auth(make_token))
-    assert r.status_code == 415
-    assert r.json()["error"]["code"] == "json_required"
+    _assert_biometric_creation_gate(r)
     assert len(r2.objects) == 0
 
 
@@ -922,8 +1158,7 @@ def test_create_license_rejects_face_and_profile_together(fm, make_token):
     _seed_profile(store, r2)
     r = client.post("/v1/facemarket/licenses", files={"face": _png()},
                     data={"profile_id": PROFILE_ID}, headers=_auth(make_token))
-    assert r.status_code == 415
-    assert r.json()["error"]["code"] == "json_required"
+    _assert_biometric_creation_gate(r)
     assert store["licenses"] == []
     assert len(r2.objects) == 1  # 프로필 얼굴만 — 업로드분 저장 0
 
@@ -933,7 +1168,7 @@ def test_legacy_face_license_records_null_profile(fm, make_token):
     client, store, _ = fm
     r = client.post("/v1/facemarket/licenses", files={"face": _png()},
                     data={"unit_price": "1000"}, headers=_auth(make_token))
-    assert r.status_code == 415
+    _assert_biometric_creation_gate(r)
     assert store["licenses"] == []
 
 
@@ -1051,8 +1286,7 @@ def test_storage_unavailable_503(keypair, monkeypatch, make_token):
     client = TestClient(app)
     r = client.post("/v1/facemarket/licenses", files={"face": _png()},
                     data={"unit_price": "1000"}, headers={"Authorization": f"Bearer {make_token(sub='user-1')}"})
-    assert r.status_code == 415
-    assert r.json()["error"]["code"] == "json_required"
+    _assert_biometric_creation_gate(r)
     assert store["licenses"] == []
 
 
