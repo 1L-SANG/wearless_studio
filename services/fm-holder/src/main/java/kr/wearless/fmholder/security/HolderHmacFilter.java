@@ -31,6 +31,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -38,6 +39,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @Component
 public final class HolderHmacFilter extends OncePerRequestFilter {
     static final long MAX_SKEW_SECONDS = 60;
+    static final int MAX_BODY_BYTES = 256 * 1024;
     private static final long NONCE_RETENTION_SECONDS = 120;
     private static final long CLEANUP_INTERVAL_SECONDS = 60;
     private static final int MAX_CLEANUP_ENTRIES = 256;
@@ -50,6 +52,7 @@ public final class HolderHmacFilter extends OncePerRequestFilter {
     private final Clock clock;
     private final AtomicLong nextCleanupAt = new AtomicLong(Long.MIN_VALUE);
 
+    @Autowired
     public HolderHmacFilter(
             @Value("${holder.api-hmac-secret}") String secret,
             @Value("${holder.data-dir}") String dataDir) {
@@ -85,14 +88,6 @@ public final class HolderHmacFilter extends OncePerRequestFilter {
             HttpServletRequest request,
             HttpServletResponse response,
             FilterChain filterChain) throws ServletException, IOException {
-        byte[] body;
-        try {
-            body = request.getInputStream().readAllBytes();
-        } catch (IOException error) {
-            unauthorized(response);
-            return;
-        }
-
         String timestamp = request.getHeader("X-FM-Timestamp");
         String nonce = request.getHeader("X-FM-Nonce");
         String suppliedSignature = request.getHeader("X-FM-Signature");
@@ -102,6 +97,22 @@ public final class HolderHmacFilter extends OncePerRequestFilter {
                 || !NONCE_PATTERN.matcher(nonce).matches()
                 || suppliedSignature == null
                 || !SHA256_HEX_PATTERN.matcher(suppliedSignature).matches()) {
+            unauthorized(response);
+            return;
+        }
+
+        if (request.getContentLengthLong() > MAX_BODY_BYTES) {
+            unauthorized(response);
+            return;
+        }
+        byte[] body;
+        try {
+            body = request.getInputStream().readNBytes(MAX_BODY_BYTES + 1);
+        } catch (IOException error) {
+            unauthorized(response);
+            return;
+        }
+        if (body.length > MAX_BODY_BYTES) {
             unauthorized(response);
             return;
         }

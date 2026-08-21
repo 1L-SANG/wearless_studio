@@ -1,6 +1,7 @@
 package kr.wearless.fmholder.security;
 
 import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -35,6 +36,7 @@ class HolderHmacFilterTest {
     private static final Clock CLOCK = Clock.fixed(Instant.ofEpochSecond(NOW), ZoneOffset.UTC);
     private static final String NONCE = "nonce_value_123456789012";
     private static final byte[] BODY = "{\"vcId\":\"vc-1\"}".getBytes(StandardCharsets.UTF_8);
+    private static final int MAX_BODY_BYTES = 256 * 1024;
 
     @Test
     void signatureMatchesTheIndependentProtocolVector() {
@@ -63,6 +65,77 @@ class HolderHmacFilterTest {
 
         assertEquals(200, response.getStatus());
         assertArrayEquals(BODY, observed.get());
+    }
+
+    @Test
+    void invalidHeadersRejectChunkedBodyBeforeOpeningItsStream(@TempDir Path dir) throws Exception {
+        HolderHmacFilter filter = new HolderHmacFilter(SECRET, dir, CLOCK);
+        byte[] hugeBody = new byte[MAX_BODY_BYTES + 1];
+        List<ChunkedRequest> requests = new ArrayList<>();
+        requests.add(new ChunkedRequest("POST", "/holder/vc/verify", hugeBody));
+
+        ChunkedRequest malformedTimestamp = new ChunkedRequest(
+                "POST", "/holder/vc/verify", hugeBody);
+        malformedTimestamp.addHeader("X-FM-Timestamp", "not-a-number");
+        malformedTimestamp.addHeader("X-FM-Nonce", NONCE);
+        malformedTimestamp.addHeader("X-FM-Signature", "0".repeat(64));
+        requests.add(malformedTimestamp);
+
+        ChunkedRequest malformedNonce = new ChunkedRequest(
+                "POST", "/holder/vc/verify", hugeBody);
+        malformedNonce.addHeader("X-FM-Timestamp", Long.toString(NOW));
+        malformedNonce.addHeader("X-FM-Nonce", "short");
+        malformedNonce.addHeader("X-FM-Signature", "0".repeat(64));
+        requests.add(malformedNonce);
+
+        ChunkedRequest malformedSignature = new ChunkedRequest(
+                "POST", "/holder/vc/verify", hugeBody);
+        malformedSignature.addHeader("X-FM-Timestamp", Long.toString(NOW));
+        malformedSignature.addHeader("X-FM-Nonce", NONCE);
+        malformedSignature.addHeader("X-FM-Signature", "not-hex");
+        requests.add(malformedSignature);
+
+        for (ChunkedRequest request : requests) {
+            MockHttpServletResponse response = new MockHttpServletResponse();
+            filter.doFilter(request, response, new MockFilterChain());
+            assertUnauthorized(response);
+            assertFalse(request.inputStreamOpened);
+        }
+    }
+
+    @Test
+    void signedChunkedBodyOverLimitIsUniformlyRejected(@TempDir Path dir) throws Exception {
+        HolderHmacFilter filter = new HolderHmacFilter(SECRET, dir, CLOCK);
+        byte[] body = new byte[MAX_BODY_BYTES + 1];
+        ChunkedRequest request = new ChunkedRequest("POST", "/holder/vc/verify", body);
+        addSignature(request, SECRET, "POST", "/holder/vc/verify", null,
+                Long.toString(NOW), "oversize_nonce_123456789", body);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        AtomicInteger invoked = new AtomicInteger();
+
+        filter.doFilter(request, response, (req, res) -> invoked.incrementAndGet());
+
+        assertUnauthorized(response);
+        assertTrue(request.inputStreamOpened);
+        assertEquals(0, invoked.get());
+    }
+
+    @Test
+    void signedBodyAtExactLimitPassesAndPreservesEveryByte(@TempDir Path dir) throws Exception {
+        HolderHmacFilter filter = new HolderHmacFilter(SECRET, dir, CLOCK);
+        byte[] body = new byte[MAX_BODY_BYTES];
+        java.util.Arrays.fill(body, (byte) 0x5a);
+        ChunkedRequest request = new ChunkedRequest("POST", "/holder/vc/verify", body);
+        addSignature(request, SECRET, "POST", "/holder/vc/verify", null,
+                Long.toString(NOW), "exact_limit_nonce_12345678", body);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        AtomicReference<byte[]> observed = new AtomicReference<>();
+
+        filter.doFilter(request, response,
+                (req, res) -> observed.set(req.getInputStream().readAllBytes()));
+
+        assertEquals(200, response.getStatus());
+        assertArrayEquals(body, observed.get());
     }
 
     @Test
@@ -276,12 +349,24 @@ class HolderHmacFilterTest {
         MockHttpServletRequest request = new MockHttpServletRequest(method, path);
         request.setQueryString(query);
         request.setContent(body);
+        addSignature(request, secret, method, path, query, timestamp, nonce, body);
+        return request;
+    }
+
+    private static void addSignature(
+            MockHttpServletRequest request,
+            String secret,
+            String method,
+            String path,
+            String query,
+            String timestamp,
+            String nonce,
+            byte[] body) {
         String target = query == null ? path : path + "?" + query;
         request.addHeader("X-FM-Timestamp", timestamp);
         request.addHeader("X-FM-Nonce", nonce);
         request.addHeader("X-FM-Signature",
                 HolderHmacFilter.signature(secret, method, target, timestamp, nonce, body));
-        return request;
     }
 
     private static void assertUnauthorized(MockHttpServletResponse response) throws Exception {
@@ -290,5 +375,30 @@ class HolderHmacFilterTest {
         assertEquals("{\"error\":\"unauthorized\"}", response.getContentAsString());
         assertFalse(response.getContentAsString().contains(SECRET));
         assertFalse(response.getContentAsString().contains(NONCE));
+    }
+
+    private static final class ChunkedRequest extends MockHttpServletRequest {
+        private boolean inputStreamOpened;
+
+        ChunkedRequest(String method, String path, byte[] body) {
+            super(method, path);
+            setContent(body);
+        }
+
+        @Override
+        public int getContentLength() {
+            return -1;
+        }
+
+        @Override
+        public long getContentLengthLong() {
+            return -1;
+        }
+
+        @Override
+        public ServletInputStream getInputStream() {
+            inputStreamOpened = true;
+            return super.getInputStream();
+        }
     }
 }
