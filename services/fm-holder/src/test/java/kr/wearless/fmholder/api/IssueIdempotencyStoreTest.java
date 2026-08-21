@@ -43,9 +43,63 @@ class IssueIdempotencyStoreTest {
                     return result("vc-duplicate");
                 });
 
-        assertEquals("vc-1", first.vcId());
-        assertEquals("vc-1", replayed.vcId());
+        assertEquals(issued, first);
+        assertEquals(issued, replayed);
         assertEquals(1, calls.get());
+    }
+
+    @Test
+    void forcesParentDirectoryAfterBothIntentAndResultMoves(@TempDir Path dataDir)
+            throws Exception {
+        AtomicInteger directoryForces = new AtomicInteger();
+        IssueIdempotencyStore store = new IssueIdempotencyStore(
+                dataDir, () -> directoryForces.incrementAndGet());
+
+        store.execute(MODEL, faceLicense(KEY, "allowed-a"), () -> result("vc-1"));
+
+        assertEquals(2, directoryForces.get());
+    }
+
+    @Test
+    void directoryForceFailureAfterEitherMoveFailsClosedWithoutSecondFlowBCall(
+            @TempDir Path dataDir) throws Exception {
+        for (int failedForce = 1; failedForce <= 2; failedForce++) {
+            int failureAt = failedForce;
+            Path caseDir = dataDir.resolve("force-" + failedForce);
+            AtomicInteger directoryForces = new AtomicInteger();
+            AtomicInteger calls = new AtomicInteger();
+            IssueVcDtos.IssueRequest request = faceLicense(KEY, "allowed-a");
+            IssueVcService.IssueResult issued = result("vc-1");
+            IssueIdempotencyStore failing = new IssueIdempotencyStore(caseDir, () -> {
+                if (directoryForces.incrementAndGet() == failureAt) {
+                    throw new IllegalStateException("simulated directory force failure");
+                }
+            });
+
+            assertThrows(IssueIdempotencyStore.UnavailableException.class,
+                    () -> failing.execute(MODEL, request, () -> {
+                        calls.incrementAndGet();
+                        return issued;
+                    }));
+
+            IssueIdempotencyStore restarted = new IssueIdempotencyStore(caseDir);
+            if (failedForce == 1) {
+                assertThrows(IssueIdempotencyStore.UnavailableException.class,
+                        () -> restarted.execute(MODEL, request, () -> {
+                            calls.incrementAndGet();
+                            return result("vc-duplicate");
+                        }));
+                assertEquals(0, calls.get());
+            } else {
+                IssueVcService.IssueResult replayed = restarted.execute(
+                        MODEL, request, () -> {
+                            calls.incrementAndGet();
+                            return result("vc-duplicate");
+                        });
+                assertEquals(issued, replayed);
+                assertEquals(1, calls.get());
+            }
+        }
     }
 
     @Test
@@ -117,6 +171,36 @@ class IssueIdempotencyStoreTest {
                 }));
 
         assertEquals(1, calls.get());
+    }
+
+    @Test
+    void invalidPersistedResultNeverReplaysOrCallsFlowB(@TempDir Path dataDir) throws Exception {
+        for (int invalidCase = 0; invalidCase < 2; invalidCase++) {
+            Path caseDir = dataDir.resolve("persisted-" + invalidCase);
+            IssueVcDtos.IssueRequest request = faceLicense(KEY, "allowed-a");
+            new IssueIdempotencyStore(caseDir)
+                    .execute(MODEL, request, () -> result("vc-1"));
+            Path resultFile;
+            try (var entries = Files.list(caseDir.resolve("issue-idempotency"))) {
+                resultFile = entries
+                        .filter(path -> path.getFileName().toString().endsWith(".result"))
+                        .findFirst()
+                        .orElseThrow();
+            }
+            String stored = Files.readString(resultFile, StandardCharsets.UTF_8);
+            String invalid = invalidCase == 0
+                    ? stored.replace("\"status\":\"issued\"", "\"status\":\"flow_a_incomplete\"")
+                    : stored.replace("\"vcId\":\"vc-1\"", "\"vcId\":\"   \"");
+            Files.writeString(resultFile, invalid, StandardCharsets.UTF_8);
+            AtomicInteger retryCalls = new AtomicInteger();
+
+            assertThrows(IssueIdempotencyStore.UnavailableException.class,
+                    () -> new IssueIdempotencyStore(caseDir).execute(MODEL, request, () -> {
+                        retryCalls.incrementAndGet();
+                        return result("vc-duplicate");
+                    }));
+            assertEquals(0, retryCalls.get());
+        }
     }
 
     @Test

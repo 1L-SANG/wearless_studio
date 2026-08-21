@@ -45,6 +45,7 @@ public final class IssueIdempotencyStore {
             PosixFilePermissions.asFileAttribute(FILE_PERMISSIONS);
 
     private final Path directory;
+    private final Runnable directoryForce;
     private final ObjectMapper mapper = JsonMapper.builder()
             .enable(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY)
             .build();
@@ -55,7 +56,12 @@ public final class IssueIdempotencyStore {
     }
 
     IssueIdempotencyStore(Path dataDir) {
+        this(dataDir, null);
+    }
+
+    IssueIdempotencyStore(Path dataDir, Runnable directoryForce) {
         directory = Objects.requireNonNull(dataDir).resolve("issue-idempotency");
+        this.directoryForce = directoryForce == null ? this::forceDirectory : directoryForce;
         try {
             createDirectory(directory);
         } catch (IOException error) {
@@ -80,7 +86,7 @@ public final class IssueIdempotencyStore {
         try (HeldLock ignored = acquire(lockPath)) {
             if (Files.exists(resultPath, LinkOption.NOFOLLOW_LINKS)) {
                 StoredResult stored = read(resultPath, StoredResult.class);
-                if (!stored.binding().equals(expected) || stored.result() == null) {
+                if (!stored.binding().equals(expected) || !isIssued(stored.result())) {
                     throw unavailable();
                 }
                 return stored.result();
@@ -94,7 +100,10 @@ public final class IssueIdempotencyStore {
             }
 
             persistAtomically(intentPath, mapper.writeValueAsBytes(expected), true);
-            IssueVcService.IssueResult result = Objects.requireNonNull(action.call());
+            IssueVcService.IssueResult result = action.call();
+            if (!isIssued(result)) {
+                throw unavailable();
+            }
             persistAtomically(
                     resultPath,
                     mapper.writeValueAsBytes(new StoredResult(expected, result)),
@@ -112,6 +121,13 @@ public final class IssueIdempotencyStore {
         } catch (IOException error) {
             throw unavailable();
         }
+    }
+
+    private static boolean isIssued(IssueVcService.IssueResult result) {
+        return result != null
+                && "issued".equals(result.status())
+                && result.vcId() != null
+                && !result.vcId().trim().isEmpty();
     }
 
     private HeldLock acquire(Path path) {
@@ -169,6 +185,11 @@ public final class IssueIdempotencyStore {
             }
             Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE);
             secureFile(target);
+            try {
+                directoryForce.run();
+            } catch (RuntimeException error) {
+                throw unavailable();
+            }
         } catch (AtomicMoveNotSupportedException error) {
             throw unavailable();
         } catch (IOException error) {
@@ -205,6 +226,14 @@ public final class IssueIdempotencyStore {
             Files.setPosixFilePermissions(path, FILE_PERMISSIONS);
         } catch (UnsupportedOperationException ignored) {
             // Non-POSIX platforms do not expose owner-only mode bits.
+        }
+    }
+
+    private void forceDirectory() {
+        try (FileChannel channel = FileChannel.open(directory, StandardOpenOption.READ)) {
+            channel.force(true);
+        } catch (IOException | UnsupportedOperationException error) {
+            throw unavailable();
         }
     }
 
