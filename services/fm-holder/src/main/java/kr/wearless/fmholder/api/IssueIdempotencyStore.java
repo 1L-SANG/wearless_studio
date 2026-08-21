@@ -86,14 +86,16 @@ public final class IssueIdempotencyStore {
         try (HeldLock ignored = acquire(lockPath)) {
             if (Files.exists(resultPath, LinkOption.NOFOLLOW_LINKS)) {
                 StoredResult stored = read(resultPath, StoredResult.class);
-                if (!stored.binding().equals(expected) || !isIssued(stored.result())) {
+                if (stored == null
+                        || !expected.equals(stored.binding())
+                        || !isIssued(stored.result())) {
                     throw unavailable();
                 }
                 return stored.result();
             }
             if (Files.exists(intentPath, LinkOption.NOFOLLOW_LINKS)) {
                 Binding stored = read(intentPath, Binding.class);
-                if (!stored.equals(expected)) {
+                if (stored == null || !expected.equals(stored)) {
                     throw unavailable();
                 }
                 throw unavailable();

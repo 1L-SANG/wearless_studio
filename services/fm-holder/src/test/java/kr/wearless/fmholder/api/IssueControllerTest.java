@@ -1,6 +1,8 @@
 package kr.wearless.fmholder.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicInteger;
 import kr.wearless.fmholder.protocol.IssueVcDtos;
@@ -10,6 +12,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -131,6 +134,47 @@ class IssueControllerTest {
                 }));
 
         assertUnavailable(() -> controller.issueVc(MODEL, request));
+    }
+
+    @Test
+    void nullEmptyOrTruncatedIntentAndResultFailClosedWithoutRewriteOrFlowB(
+            @TempDir Path dataDir) throws Exception {
+        String[] corruptJson = {"null", "", "{"};
+        for (String suffix : new String[] {".intent", ".result"}) {
+            for (int index = 0; index < corruptJson.length; index++) {
+                Path caseDir = dataDir.resolve(suffix.substring(1) + "-" + index);
+                String key = "fm-license:123e4567-e89b-12d3-a456-4266141740"
+                        + (suffix.equals(".intent") ? "1" : "2") + index;
+                IssueVcDtos.IssueRequest request = new IssueVcDtos.IssueRequest(
+                        "facelicense", claims(), key);
+                IssueIdempotencyStore setup = new IssueIdempotencyStore(caseDir);
+                if (suffix.equals(".intent")) {
+                    assertThrows(IllegalStateException.class,
+                            () -> setup.execute(MODEL, request, () -> {
+                                throw new IllegalStateException("simulated crash");
+                            }));
+                } else {
+                    setup.execute(MODEL, request, () -> result("vc-1"));
+                }
+                Path artifact;
+                try (var entries = Files.list(caseDir.resolve("issue-idempotency"))) {
+                    artifact = entries
+                            .filter(path -> path.getFileName().toString().endsWith(suffix))
+                            .findFirst()
+                            .orElseThrow();
+                }
+                byte[] corruption = corruptJson[index].getBytes(StandardCharsets.UTF_8);
+                Files.write(artifact, corruption);
+                IssueVcService service = mock(IssueVcService.class);
+                IssueController controller = new IssueController(
+                        service, new IssueIdempotencyStore(caseDir));
+
+                assertUnavailable(() -> controller.issueVc(MODEL, request));
+
+                verify(service, never()).issue(eq(MODEL), any());
+                assertArrayEquals(corruption, Files.readAllBytes(artifact));
+            }
+        }
     }
 
     private static IssueVcDtos.Claims claims() {
