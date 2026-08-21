@@ -285,15 +285,6 @@ wait_http http://${FM_HOLDER_BIND_ADDRESS}:8100/holder/health Holder
 
 Holder는 non-templated unit 하나와 data directory 하나만 사용한다. 새 jar/config 배포 시 `systemctl stop fm-holder`가 끝난 뒤 `systemctl start fm-holder`를 실행한다. rolling overlap, 두 번째 Holder, `flock`, 분산 lock은 nonce cleanup에 프로세스 간 조정이 생기기 전까지 금지한다.
 
-위 systemd 기동이 모두 끝난 뒤 target에서는 managed smoke만 실행한다. 이 모드는 기존 서비스를 health-check하고 Holder만 한 번 재시작한다. Java를 직접 실행하거나 Docker/PostgreSQL/Besu를 중지·시작하지 않는다.
-
-```bash
-sudo --preserve-env=FM_HOLDER_HMAC_SECRET,FM_HOLDER_BIND_ADDRESS \
-  env OPENDID_SMOKE_MODE=managed deploy/opendid/smoke.sh
-```
-
-성공 출력은 `holder_unsigned=blocked`, `holder_valid=valid`, `holder_revoked=revoked`, `restart_holder_revoked=revoked`, `smoke_result=ok` 집계만 보존한다. 전체 infra 재시작과 power-loss 검증은 별도 승인된 운영 창에서만 수행한다.
-
 ## 5. 상태 일치 검증
 
 ### 5.1 DB, FaceLicense, VC/revoke history
@@ -429,6 +420,17 @@ command -v ss >/dev/null
 ! ss -ltnH | awk '{print $4}' | grep -Eq ':9001$'
 ```
 
+### 5.5 인증 lifecycle smoke
+
+위 source/target 동일성 비교와 read-only chain/VC/Orchestrator 검증을 모두 통과한 뒤 target에서는 managed smoke를 마지막으로 실행한다. 이 모드는 기존 서비스를 health-check하고 Holder만 한 번 재시작한다. Java를 직접 실행하거나 Docker/PostgreSQL/Besu를 중지·시작하지 않는다.
+
+```bash
+sudo --preserve-env=FM_HOLDER_HMAC_SECRET,FM_HOLDER_BIND_ADDRESS \
+  env OPENDID_SMOKE_MODE=managed deploy/opendid/smoke.sh
+```
+
+성공 출력은 `holder_unsigned=blocked`, `holder_valid=valid`, `holder_revoked=revoked`, `restart_holder_revoked=revoked`, `smoke_result=ok` 집계만 보존한다. 전체 infra 재시작과 power-loss 검증은 별도 승인된 운영 창에서만 수행한다.
+
 ## 6. Holder data 공백 규칙
 
 `EXPORT-MANIFEST.txt`가 `holder_data=missing`이면 DB와 Besu를 통한 기존 VC lifecycle 조회는 가능할 수 있지만, 과거 모델 wallet 개인키가 없으므로 Holder는 그 모델 명의의 revoke 서명을 만들 수 없다.
@@ -448,7 +450,7 @@ command -v ss >/dev/null
 - FaceLicense namespace/schema/plan과 chain/contract 검사가 성공함
 - 모든 기존 VC의 DB status와 read-only 온체인 status가 일치함
 - `:9001`이 닫혀 있음
-- 별도 lifecycle smoke에서 issue → valid → revoke → revoked와 전체 재시작 후 상태 유지가 성공함
+- 마지막 lifecycle smoke에서 issue → valid → revoke → revoked와 Holder 재시작 후 상태 유지가 성공함
 
 하나라도 실패하면 `OPENDID_HOLDER_URL`을 변경하지 않는다. target의 Java 서비스와 infra를 중지하고 작업 기록에는 aggregate status와 digest만 보존한다.
 

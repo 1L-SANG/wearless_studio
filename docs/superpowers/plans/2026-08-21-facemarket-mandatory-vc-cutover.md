@@ -1475,14 +1475,28 @@ sudo --preserve-env=OPENDID_POSTGRES_USER,OPENDID_POSTGRES_PASSWORD,OPENDID_POST
 
 Do not proceed if checksum, DB/table counts, VC/revoke digest, chain ID, contract address, or full VC metadata comparison differs.
 
-- [ ] **Step 4: Start Server 3 and run the authenticated real lifecycle smoke**
+- [ ] **Step 4: Start Server 3, prove restored state, then run the authenticated lifecycle smoke**
 
 After UTC/NTP preflight:
 
 ```bash
+: "${SERVER3_PRIVATE_BIND_ADDRESS:?approved Server 3 private IP is required}"
+set -a
+. /opt/opendid/opendid.env
+set +a
+: "${FM_HOLDER_HMAC_SECRET:?set Holder HMAC secret in /opt/opendid/opendid.env}"
+: "${FM_HOLDER_BIND_ADDRESS:?set Holder private bind in /opt/opendid/opendid.env}"
+test "$FM_HOLDER_BIND_ADDRESS" = "$SERVER3_PRIVATE_BIND_ADDRESS"
+
 sudo systemctl daemon-reload
 sudo systemctl enable --now opendid-infra opendid-tas opendid-issuer opendid-cas fm-holder
-deploy/opendid/smoke.sh
+```
+
+Run runbook Sections 5.1-5.4 in order. Stop on any source/target entity, VC/revoke count or digest mismatch, chain/contract mismatch, full VC metadata mismatch, or open Orchestrator surface. Only after those exact and read-only proofs pass, run the mutating smoke last:
+
+```bash
+sudo --preserve-env=FM_HOLDER_HMAC_SECRET,FM_HOLDER_BIND_ADDRESS \
+  env OPENDID_SMOKE_MODE=managed deploy/opendid/smoke.sh
 ```
 
 Expected aggregate output includes:

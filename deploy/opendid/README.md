@@ -57,7 +57,11 @@ Do not add a second Holder process until nonce cleanup has inter-process coordin
 `smoke.sh` defaults to the self-managed closed-port local fixture and requires an explicit `FM_HOLDER_HMAC_SECRET`. On an already-running Server 3, use only managed mode after systemd startup:
 
 ```bash
-OPENDID_SMOKE_MODE=managed deploy/opendid/smoke.sh
+set -a
+. /opt/opendid/opendid.env
+set +a
+sudo --preserve-env=FM_HOLDER_HMAC_SECRET,FM_HOLDER_BIND_ADDRESS \
+  env OPENDID_SMOKE_MODE=managed deploy/opendid/smoke.sh
 ```
 
 Managed mode also requires `FM_HOLDER_BIND_ADDRESS`; it health-checks existing services and restarts only `fm-holder`.

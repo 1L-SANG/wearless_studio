@@ -63,6 +63,12 @@ chmod +x "$fakebin/docker"
 cat >"$fakebin/curl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+for arg in "$@"; do
+  if [ -n "${FM_HOLDER_HMAC_SECRET:-}" ] && [[ "$arg" == *"$FM_HOLDER_HMAC_SECRET"* ]]; then
+    : >"${FAKE_SECRET_ARG_MARKER:?}"
+    exit 12
+  fi
+done
 url=''
 output=''
 write_format=''
@@ -140,6 +146,20 @@ if not hmac.compare_digest(expected, os.environ["FM_CAPTURED_SIGNATURE"]):
     raise SystemExit(9)
 PY
     printf 'hmac=ok body_mode=600\n' >>"${FAKE_HMAC_LOG:?}"
+    require_issued_vc() {
+      if ! "${REAL_PYTHON:?}" - "$body_file" "${FAKE_ISSUED_VC_FILE:?}" <<'PY'
+import json, pathlib, sys
+
+body = json.loads(pathlib.Path(sys.argv[1]).read_bytes())
+issued_vc = pathlib.Path(sys.argv[2]).read_text().strip()
+if body != {"vcId": issued_vc}:
+    raise SystemExit(11)
+PY
+      then
+        : >"${FAKE_VC_MISMATCH_MARKER:?}"
+        exit 11
+      fi
+    }
     case "$url" in
       */wallet) emit '{"modelId":"opaque-model","did":"did:fixture:holder"}' ;;
       */register-did) emit '{"status":"registered","userDid":"did:fixture:user"}' ;;
@@ -153,14 +173,31 @@ if not re.fullmatch(r"fm-license:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9
 PY
         issues=$(cat "${FAKE_ISSUE_COUNT:?}")
         printf '%s\n' "$((issues + 1))" >"$FAKE_ISSUE_COUNT"
+        (umask 077; printf 'opaque-sensitive-id\n' >"${FAKE_ISSUED_VC_FILE:?}")
         printf 'valid\n' >"${FAKE_STATUS_FILE:?}"
+        printf 'valid\n' >"${FAKE_TRANSIENT_STATUS_FILE:?}"
+        printf 'issue\n' >>"${FAKE_EVENT_LOG:?}"
         emit '{"vcId":"opaque-sensitive-id","status":"issued","vc":{"body":"OPAQUE_BODY_MARKER"}}'
         ;;
       */revoke-vc)
+        require_issued_vc
         printf 'revoked\n' >"${FAKE_STATUS_FILE:?}"
+        printf 'revoked\n' >"${FAKE_TRANSIENT_STATUS_FILE:?}"
+        printf 'revoke\n' >>"${FAKE_EVENT_LOG:?}"
         emit '{"status":"revoked","revoked":true}'
         ;;
-      */holder/vc/verify) emit "{\"status\":\"$(cat "${FAKE_STATUS_FILE:?}")\"}" ;;
+      */holder/vc/verify)
+        require_issued_vc
+        if [ -f "${FAKE_TRANSIENT_STATUS_FILE:?}" ]; then
+          status_source=live
+        else
+          status_source=restarted
+          cp "${FAKE_STATUS_FILE:?}" "$FAKE_TRANSIENT_STATUS_FILE"
+        fi
+        status=$(cat "$FAKE_TRANSIENT_STATUS_FILE")
+        printf 'verify %s %s\n' "$status_source" "$status" >>"${FAKE_EVENT_LOG:?}"
+        emit "{\"status\":\"$status\"}"
+        ;;
     esac
     ;;
   *) emit '{}' ;;
@@ -184,7 +221,11 @@ case "$1" in
       *) exit 3 ;;
     esac
     ;;
-  restart) [ "$2" = fm-holder ] ;;
+  restart)
+    [ "$2" = fm-holder ]
+    rm -f "${FAKE_TRANSIENT_STATUS_FILE:?}"
+    printf 'restart\n' >>"${FAKE_EVENT_LOG:?}"
+    ;;
   *) exit 9 ;;
 esac
 SH
@@ -221,12 +262,18 @@ export REAL_PYTHON
 REAL_PYTHON=$(command -v python3)
 export PATH="$fakebin:$PATH"
 export FAKE_LOG="$tmp/fake.log"
+: >"$FAKE_LOG"
 export FAKE_HMAC_LOG="$tmp/hmac.log"
 export FAKE_ISSUE_COUNT="$tmp/issue-count"
 export FAKE_DOCKER_STATE_LOG="$tmp/docker-state.log"
 export FAKE_START_FAIL_ONCE="$tmp/start-fail-once"
 printf '0\n' >"$FAKE_START_FAIL_ONCE"
 export FAKE_STATUS_FILE="$tmp/status"
+export FAKE_TRANSIENT_STATUS_FILE="$tmp/transient-status"
+export FAKE_ISSUED_VC_FILE="$tmp/issued-vc"
+export FAKE_EVENT_LOG="$tmp/events.log"
+export FAKE_SECRET_ARG_MARKER="$tmp/secret-in-argv"
+export FAKE_VC_MISMATCH_MARKER="$tmp/vc-mismatch"
 printf 'valid\n' >"$FAKE_STATUS_FILE"
 printf '0\n' >"$FAKE_ISSUE_COUNT"
 export OPENDID_LOCAL_SOURCE="$tmp/source"
@@ -244,6 +291,20 @@ export FM_HOLDER_PEPPER=pepper-secret
 export FM_HOLDER_HMAC_SECRET=test-only-holder-hmac
 export FM_WALLET_PROVIDER_PW=wallet-secret
 export FM_CAS_PROVIDER_PW=cas-secret
+
+if curl -fsS -H "X-Harness-Probe: $FM_HOLDER_HMAC_SECRET" \
+  http://127.0.0.1:8100/holder/health >/dev/null 2>&1; then
+  bad 'fake curl rejects a secret passed in argv'
+else
+  ok 'fake curl rejects a secret passed in argv'
+fi
+[ -e "$FAKE_SECRET_ARG_MARKER" ] \
+  && ok 'fake curl records an opaque secret-argv violation' \
+  || bad 'fake curl records an opaque secret-argv violation'
+want_no_grep 'test-only-holder-hmac' "$FAKE_LOG" 'fake curl never logs the secret-bearing argv'
+rm -f "$FAKE_SECRET_ARG_MARKER"
+: >"$FAKE_LOG"
+
 mkdir -p "$OPENDID_LOCAL_SOURCE/jars/TA" "$OPENDID_LOCAL_SOURCE/jars/Issuer" "$OPENDID_LOCAL_SOURCE/jars/CA" \
   "$OPENDID_LOCAL_SOURCE/jars/Wallet" "$OPENDID_LOCAL_SOURCE/shells/Besu/TA" "$OPENDID_LOCAL_SOURCE/shells/Besu/Issuer"
 touch "$OPENDID_LOCAL_SOURCE/jars/TA/did-ta-server-2.0.0.jar" \
@@ -298,11 +359,40 @@ want_grep 'http://\$\{FM_HOLDER_BIND_ADDRESS\}:8100/holder/health' \
   "$RUNBOOK" 'runbook health-checks the private Holder listener'
 want_grep 'OPENDID_SMOKE_MODE=managed' "$RUNBOOK" 'runbook uses only managed target smoke'
 want_no_grep 'OPENDID_SMOKE_MODE=self-managed' "$RUNBOOK" 'runbook never starts self-managed smoke on target'
+runbook_smoke_line=$(grep -n 'env OPENDID_SMOKE_MODE=managed deploy/opendid/smoke.sh' "$RUNBOOK" | tail -1 | cut -d: -f1)
+runbook_state_line=$(grep -n 'diff -u "\$SOURCE_ISSUER_STATE" "\$TARGET_ISSUER_STATE"' "$RUNBOOK" | tail -1 | cut -d: -f1)
+runbook_vcmeta_line=$(grep -n 'deploy/opendid/verify-vcmeta.py' "$RUNBOOK" | tail -1 | cut -d: -f1)
+runbook_orchestrator_line=$(grep -n '! ss -ltnH' "$RUNBOOK" | tail -1 | cut -d: -f1)
+if [ "$runbook_smoke_line" -gt "$runbook_state_line" ] \
+  && [ "$runbook_smoke_line" -gt "$runbook_vcmeta_line" ] \
+  && [ "$runbook_smoke_line" -gt "$runbook_orchestrator_line" ]; then
+  ok 'runbook runs mutating managed smoke after restored-state and read-only proofs'
+else
+  bad 'runbook runs mutating managed smoke after restored-state and read-only proofs'
+fi
+
+PLAN_FILE="$ROOT/docs/superpowers/plans/2026-08-21-facemarket-mandatory-vc-cutover.md"
+TASK7_PLAN="$tmp/task7-plan"
+sed -n '/^### Task 7:/,/^### Task 8:/p' "$PLAN_FILE" >"$TASK7_PLAN"
+want_grep 'SERVER3_PRIVATE_BIND_ADDRESS' "$TASK7_PLAN" 'Task 7 requires the approved Server 3 private bind'
+want_grep 'test "\$FM_HOLDER_BIND_ADDRESS" = "\$SERVER3_PRIVATE_BIND_ADDRESS"' \
+  "$TASK7_PLAN" 'Task 7 checks the Holder bind mapping before startup'
+want_grep 'OPENDID_SMOKE_MODE=managed' "$TASK7_PLAN" 'Task 7 invokes managed smoke explicitly'
+want_no_grep '^[[:space:]]*deploy/opendid/smoke\.sh$' "$TASK7_PLAN" 'Task 7 never invokes default self-managed smoke'
+
+README="$ROOT/deploy/opendid/README.md"
+README_MANAGED="$tmp/readme-managed"
+sed -n '/On an already-running Server 3/,/Managed mode also requires/p' "$README" >"$README_MANAGED"
+want_grep '\. /opt/opendid/opendid\.env' "$README_MANAGED" 'README managed command loads the deployed environment'
+want_grep 'sudo --preserve-env=FM_HOLDER_HMAC_SECRET,FM_HOLDER_BIND_ADDRESS' \
+  "$README_MANAGED" 'README managed command has restart privilege and preserves required values'
 
 : >"$FAKE_LOG"
 : >"$FAKE_HMAC_LOG"
+: >"$FAKE_EVENT_LOG"
 printf '0\n' >"$FAKE_ISSUE_COUNT"
 printf 'valid\n' >"$FAKE_STATUS_FILE"
+rm -f "$FAKE_TRANSIENT_STATUS_FILE" "$FAKE_ISSUED_VC_FILE" "$FAKE_VC_MISMATCH_MARKER"
 if OPENDID_SMOKE_MODE=managed \
   FM_HOLDER_BIND_ADDRESS=10.0.3.7 \
   OPENDID_LOCAL_SOURCE=/Users/developer/source \
@@ -331,6 +421,19 @@ want_no_grep 'test-only-holder-hmac|opaque-sensitive-id|OPAQUE_BODY_MARKER|did:f
 [ "$(wc -l <"$FAKE_HMAC_LOG" | tr -d '[:space:]')" = 7 ] \
   && ok 'managed smoke verifies all seven signed request bodies' \
   || bad 'managed smoke verifies all seven signed request bodies'
+expected_events=$(printf '%s\n' \
+  issue \
+  'verify live valid' \
+  revoke \
+  'verify live revoked' \
+  restart \
+  'verify restarted revoked')
+[ "$(cat "$FAKE_EVENT_LOG")" = "$expected_events" ] \
+  && ok 'managed smoke verifies one VC across exactly one persisted Holder restart' \
+  || bad 'managed smoke verifies one VC across exactly one persisted Holder restart'
+[ ! -e "$FAKE_VC_MISMATCH_MARKER" ] \
+  && ok 'managed revoke and verify bodies use the issued VC ID' \
+  || bad 'managed revoke and verify bodies use the issued VC ID'
 
 if (unset FM_HOLDER_HMAC_SECRET; OPENDID_SMOKE_MODE=managed FM_HOLDER_BIND_ADDRESS=10.0.3.7 "$SCRIPT") \
   >"$tmp/missing-hmac.out" 2>&1; then
