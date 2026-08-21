@@ -32,6 +32,7 @@ def test_biometric_tables_are_service_private_and_raw_free():
 
 def test_status_and_current_evidence_links_are_constrained():
     sql = " ".join(MIGRATION.read_text().split()).lower()
+    assert "update public.fm_models" not in sql
     assert "reverification_required" in sql
     assert "current_enrollment_id" in sql
     assert "source_enrollment_id" in sql

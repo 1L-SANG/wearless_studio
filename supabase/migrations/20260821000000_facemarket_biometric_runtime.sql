@@ -82,5 +82,3 @@ drop trigger if exists fm_biometric_enrollments_set_updated_at
 create trigger fm_biometric_enrollments_set_updated_at
   before update on public.fm_biometric_enrollments
   for each row execute function public.set_updated_at();
-
-update public.fm_models set qc_score = null where qc_score is not null;
