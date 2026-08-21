@@ -1679,6 +1679,27 @@ async def process_enrollment_completion(
         async with get_conn(request) as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
+                    """
+                    select e.id::text as id
+                    from fm_biometric_enrollments e
+                    where e.id = %s and e.user_id = %s
+                      and e.status = 'processing'
+                      and e.liveness_session_digest = %s
+                    for update
+                    """,
+                    (
+                        enrollment_id,
+                        user_id,
+                        hashlib.sha256(session_id.encode()).hexdigest(),
+                    ),
+                )
+                if await cur.fetchone() is None:
+                    raise _err(
+                        "invalid_enrollment_state",
+                        "현재 등록 단계에서는 인증을 완료할 수 없습니다.",
+                        status=409,
+                    )
+                await cur.execute(
                     "select id::text as id, user_id::text as user_id from fm_models where ci_hash = %s for update",
                     (ci_hash,),
                 )

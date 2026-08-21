@@ -37,10 +37,13 @@ function loadCxWidget() {
     element.id = id;
     element.src = src;
     element.onload = resolve;
-    element.onerror = () => reject(new Error('인증 모듈을 불러오지 못했어요.'));
+    element.onerror = () => {
+      element.remove();
+      reject(new Error('인증 모듈을 불러오지 못했어요.'));
+    };
     document.head.appendChild(element);
   });
-  cxLoader = new Promise((resolve, reject) => {
+  const pending = new Promise((resolve, reject) => {
     if (!document.getElementById('oacx-ux-css')) {
       const link = document.createElement('link');
       link.id = 'oacx-ux-css';
@@ -63,6 +66,10 @@ function loadCxWidget() {
         }, 100);
       })
       .catch(reject);
+  });
+  cxLoader = pending.catch((error) => {
+    cxLoader = undefined;
+    throw error;
   });
   return cxLoader;
 }
@@ -202,7 +209,10 @@ export function ModelRegister() {
         issuedLivenessEnrollmentRef.current = enrollment.id;
         setSession(created);
       })
-      .catch(() => { if (active) abandonLiveness(); });
+      .catch(() => {
+        if (active) abandonLiveness();
+        else cancelEnrollment(enrollment.id).catch(() => {});
+      });
     return () => { active = false; };
   }, [abandonLiveness, enrollment?.id, session, step]);
 
@@ -210,8 +220,23 @@ export function ModelRegister() {
     if (step !== 'processing' || !enrollment?.id) return undefined;
     let active = true;
     (async () => {
+      let consecutiveFailures = 0;
       for (let elapsed = 0; active && elapsed <= 120000; elapsed += 2500) {
-        const current = await getEnrollment(enrollment.id);
+        let current;
+        try {
+          current = await getEnrollment(enrollment.id);
+          consecutiveFailures = 0;
+        } catch (requestError) {
+          if (!active) return;
+          consecutiveFailures += 1;
+          if (consecutiveFailures > 3) {
+            setError(requestError?.message || '등록 상태를 확인하지 못했어요.');
+            setStep('poll_error');
+            return;
+          }
+          await wait(2500);
+          continue;
+        }
         if (!active) return;
         setEnrollment(current);
         const restoredStep = nextEnrollmentStep(current);
@@ -222,10 +247,11 @@ export function ModelRegister() {
         }
         await wait(2500);
       }
-      if (active) setError('처리가 지연되고 있어요. 잠시 후 다시 확인해 주세요.');
-    })().catch((requestError) => {
-      if (active) setError(requestError?.message || '등록 상태를 확인하지 못했어요.');
-    });
+      if (active) {
+        setError('처리가 지연되고 있어요. 다시 확인해 주세요.');
+        setStep('poll_timeout');
+      }
+    })();
     return () => { active = false; };
   }, [enrollment?.id, step]);
 
@@ -272,7 +298,7 @@ export function ModelRegister() {
   if (step === 'error') {
     return (
       <div className="wizard narrow"><div className="surface">
-        <p className={s.error}><Icon name="alertCircle" size={15} /> {error}</p>
+        <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {error}</p>
         <Button variant="secondary" block onClick={restore}>다시 불러오기</Button>
       </div></div>
     );
@@ -282,12 +308,21 @@ export function ModelRegister() {
     return (
       <div className="wizard narrow"><div className="surface">
         <h1 className={s.stateTitle}>현재 등록을 종료하고 있어요</h1>
-        <p className={error ? s.error : 'hint'}>
+        <p className={error ? s.error : 'hint'} role={error ? 'alert' : undefined}>
           {error || '사용한 라이브 인증 세션과 사진을 안전하게 정리하고 있어요.'}
         </p>
         {step === 'cancel_failed' && (
           <Button variant="secondary" block onClick={abandonLiveness}>등록 취소 다시 시도</Button>
         )}
+      </div></div>
+    );
+  }
+
+  if (step === 'poll_timeout' || step === 'poll_error') {
+    return (
+      <div className="wizard narrow"><div className="surface">
+        <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {error}</p>
+        <Button variant="secondary" block onClick={restore}>다시 확인하기</Button>
       </div></div>
     );
   }
@@ -397,7 +432,7 @@ export function ModelRegister() {
 
       {step === 'failed' && (
         <div className="surface">
-          <p className={s.error}><Icon name="alertCircle" size={15} /> {error || enrollmentReasonMessage(enrollment?.reason)}</p>
+          <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {error || enrollmentReasonMessage(enrollment?.reason)}</p>
           <Button variant="primary" block onClick={() => { setError(''); setConsentAccepted(false); setStep('consent'); }}>
             새 등록으로 다시 시작
           </Button>
@@ -405,7 +440,7 @@ export function ModelRegister() {
       )}
 
       {error && !['failed', 'error'].includes(step) && (
-        <p className={s.error}><Icon name="alertCircle" size={15} /> {error}</p>
+        <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {error}</p>
       )}
     </div>
   );

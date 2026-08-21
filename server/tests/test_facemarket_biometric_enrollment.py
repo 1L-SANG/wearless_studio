@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from botocore.exceptions import EndpointConnectionError
 from psycopg.errors import UniqueViolation
@@ -330,6 +331,24 @@ class FakeCursor:
                     item
                     for item in reversed(self.store.enrollments)
                     if item["user_id"] == user_id and item["status"] in ACTIVE_STATUSES
+                ),
+                None,
+            )
+            self.result = {"id": row["id"]} if row else None
+        elif (
+            query.startswith("select e.id::text as id from fm_biometric_enrollments e")
+            and "e.status = 'processing'" in query
+            and "e.liveness_session_digest = %s" in query
+        ):
+            enrollment_id, user_id, session_digest = params
+            row = next(
+                (
+                    item
+                    for item in self.store.enrollments
+                    if item["id"] == enrollment_id
+                    and item["user_id"] == user_id
+                    and item["status"] == "processing"
+                    and item.get("liveness_session_digest") == session_digest
                 ),
                 None,
             )
@@ -1272,6 +1291,66 @@ def test_complete_uses_distinct_thresholds_and_queues_bound_asset_job(
         assert secret not in serialized
     assert "private/" not in response.text
     assert "private/" not in json.dumps(enrollment_store.jobs)
+
+
+def test_cancel_wins_before_completion_finalization_without_resurrection(
+    enrollment_client,
+    auth,
+    enrollment_store,
+    fake_r2,
+    fake_rekognition,
+    completion_fakes,
+    monkeypatch,
+):
+    enrollment_id = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
+    )
+    request = types.SimpleNamespace(app=enrollment_client.app)
+    original_get_conn = facemarket_enrollment.get_conn
+    finalization_started = asyncio.Event()
+    allow_finalization = asyncio.Event()
+    checkout_counts = {}
+    completion_task = None
+
+    @contextlib.asynccontextmanager
+    async def gated_get_conn(inner_request):
+        task = asyncio.current_task()
+        checkout_counts[task] = checkout_counts.get(task, 0) + 1
+        if task is completion_task and checkout_counts[task] == 2:
+            finalization_started.set()
+            await allow_finalization.wait()
+        async with original_get_conn(inner_request) as conn:
+            yield conn
+
+    monkeypatch.setattr(facemarket_enrollment, "get_conn", gated_get_conn)
+
+    async def run_race():
+        nonlocal completion_task
+        completion_task = asyncio.create_task(
+            facemarket_enrollment.process_enrollment_completion(
+                request,
+                enrollment_id=enrollment_id,
+                user_id="user-1",
+                session_id=fake_rekognition.session_id,
+                token="oacx-token-used-only-now",
+            )
+        )
+        await finalization_started.wait()
+        cancelled = await facemarket_enrollment.cancel_enrollment(
+            request, enrollment_id, "user-1"
+        )
+        assert cancelled.status == "cancelled"
+        allow_finalization.set()
+        with pytest.raises(HTTPException) as exc_info:
+            await completion_task
+        assert exc_info.value.status_code == 409
+
+    asyncio.run(run_race())
+
+    assert enrollment_store.enrollments[0]["status"] == "cancelled"
+    assert enrollment_store.identities == []
+    assert enrollment_store.models == []
+    assert enrollment_store.jobs == []
 
 
 def test_complete_expires_liveness_pending_without_provider_oacx_or_job(
