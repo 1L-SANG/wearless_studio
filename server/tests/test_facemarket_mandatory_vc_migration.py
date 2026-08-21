@@ -31,6 +31,18 @@ def _executable_sql(path: Path) -> str:
     return " ".join(sql.split()).lower()
 
 
+def _contains_license_update(sql: str) -> bool:
+    return bool(
+        re.search(
+            r"\bupdate\s+(?:only\s+)?"
+            r"(?:(?:public|\"public\")\s*\.\s*)?"
+            r"(?:fm_licenses|\"fm_licenses\")(?![a-z0-9_$\"])",
+            sql,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def test_sql_normalization_excludes_line_and_block_comments(tmp_path):
     migration = tmp_path / "migration.sql"
     migration.write_text(
@@ -40,6 +52,25 @@ def test_sql_normalization_excludes_line_and_block_comments(tmp_path):
     )
 
     assert _executable_sql(migration) == "select 1;"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "update fm_licenses set status = 'active'",
+        "UPDATE public.fm_licenses SET status = 'active'",
+        'update "public"."fm_licenses" set status = \'active\'',
+        "update only fm_licenses set status = 'active'",
+        "update only public.fm_licenses set status = 'active'",
+        'update only "fm_licenses" set status = \'active\'',
+        'update only "public" . "fm_licenses" set status = \'active\'',
+        "-- update fm_licenses set status = 'active'",
+        "/* update public.fm_licenses set status = 'active' */",
+        "select 'update only \"public\".\"fm_licenses\" set status = active'",
+    ],
+)
+def test_raw_update_guard_rejects_existing_license_rewrites(sql):
+    assert _contains_license_update(sql)
 
 
 def _sql() -> str:
@@ -56,7 +87,7 @@ def test_license_status_defaults_pending_without_rewriting_existing_rows():
     sql = _sql()
     assert "alter column status set default 'pending'" in sql
     assert "fm_licenses_status_check" not in sql
-    assert not re.search(r"\bupdate\s+(?:public\s*\.\s*)?fm_licenses\b", sql)
+    assert not _contains_license_update(MIGRATION.read_text(encoding="utf-8"))
 
 
 def test_revocation_queue_is_durable_idempotent_and_service_private():
