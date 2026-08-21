@@ -39,3 +39,12 @@ def test_loader_falls_back_on_garbage_idle_minutes(monkeypatch):
 def test_loader_treats_empty_topic_as_none(monkeypatch):
     monkeypatch.setenv("SAM_ALERT_TOPIC_ARN", "")
     assert load_settings().sam_alert_topic_arn is None
+
+
+def test_loader_default_matches_dataclass_default_for_idle_minutes(monkeypatch):
+    """`test_dataclass_defaults_match_loader_defaults` 는 `os.getenv("X", "d")` 직접 호출만
+    정규식으로 긁는다 — `_int_env()` 경유 필드는 그 그물에 안 걸린다(PR #169 Codex 검토).
+    여기서 직접 고정한다: 환경변수가 없을 때 로더와 dataclass 가 같은 값을 내야 한다."""
+    from app.config import Settings
+    monkeypatch.delenv("SAM_AUTOSCALE_IDLE_MINUTES", raising=False)
+    assert load_settings().sam_autoscale_idle_minutes == Settings.sam_autoscale_idle_minutes == 30
