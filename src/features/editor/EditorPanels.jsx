@@ -13,6 +13,7 @@ import {
   inferContentRole,
 } from '@/lib/storyboardTaxonomy.js';
 import { hasSelectableGenerationExamples } from '@/lib/generationExamples.js';
+import { BRAND_USE_CATEGORIES } from '@/lib/brandUseCategories.js';
 import {
   detailDirectionFromExample,
   generationExampleStructuralRecipePatch,
@@ -375,7 +376,7 @@ function VaryPanel({ catalogs, source, onGenerate }) {
 
 /* ---------- AI ---------- */
 const NEW_CUT_DEFAULT_SHOT = { styling: 'full', horizon: 'full', mirror: 'full', product: 'ghost' };
-export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, varySource, failedCutRetry = null, onRetryFailedCut, onGenerate, onVaryGenerate, onPickMoodRef }) {
+export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, brandUseCategory = null, brandUseCategorySaving = false, onBrandUseCategoryChange, varySource, failedCutRetry = null, onRetryFailedCut, onGenerate, onVaryGenerate, onPickMoodRef }) {
   const [tab, setTab] = useState('vary');
   // 콘티보드와 같은 규칙 — 사용자는 컷 종류(촬영 방식)만 고르고, 사진 목적(contentRole)은 내부 자동 결정.
   const [cutType, setCutType] = useState('styling');
@@ -615,9 +616,18 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
                 </div>
               ))}
             </div>
+            {useFm && (
+              <div className="insp-sec">
+                <div className="lbl">사용 브랜드 유형</div>
+                <Chips options={BRAND_USE_CATEGORIES} value={brandUseCategory}
+                  allowDeselect={false} onChange={(value) => onBrandUseCategoryChange?.(value)} />
+                <div className="hint">이 모델을 사용할 브랜드 유형을 하나 선택해 주세요.</div>
+              </div>
+            )}
           </details>}
 
-          <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={() => onGenerate({
+          <Button variant="primary" block icon="sparkles" className="btn-glowring"
+            disabled={useFm && (!brandUseCategory || brandUseCategorySaving)} onClick={() => onGenerate({
             contentRole: effectiveRecipe.contentRole,
             colorId: colorVal, cutType: effectiveCutType, direction: isMirror ? null : effectiveDirectionVal, shot: effectiveShotVal, modelId: model, exampleId, refScope,
             outerClosureState: showOuterClosure ? outerClosure : null,

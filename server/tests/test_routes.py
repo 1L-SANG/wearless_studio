@@ -75,6 +75,90 @@ def test_save_analysis_forces_dress_to_women(client, make_token, monkeypatch):
     assert res.json()["targetGenders"] == ["women"]
 
 
+def test_save_analysis_normalizes_brand_use_category(client, make_token, monkeypatch):
+    seen = {}
+
+    async def fake_get_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_get_product(conn, project_id):
+        return {"clothingType": "top"}
+
+    async def fake_save_analysis(conn, project_id, analysis):
+        seen["analysis"] = analysis
+        return {"project_id": project_id, "payload": analysis}
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(routes.repo, "save_analysis", fake_save_analysis)
+    patch_route_db(monkeypatch, routes)
+
+    res = client.patch(
+        "/v1/projects/p1/analysis",
+        headers=_auth(make_token),
+        json={"brandUseCategory": "  일반 여성 의류  "},
+    )
+
+    assert res.status_code == 200, res.text
+    assert seen["analysis"]["brandUseCategory"] == "일반 여성 의류"
+    assert res.json()["brandUseCategory"] == "일반 여성 의류"
+
+
+def test_save_analysis_rejects_unknown_brand_use_category_before_persistence(
+    client, make_token, monkeypatch
+):
+    called = False
+
+    async def fake_save_analysis(conn, project_id, analysis):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(routes.repo, "save_analysis", fake_save_analysis)
+    patch_route_db(monkeypatch, routes)
+
+    res = client.patch(
+        "/v1/projects/p1/analysis",
+        headers=_auth(make_token),
+        json={"brandUseCategory": "의류"},
+    )
+
+    assert res.status_code == 400, res.text
+    assert res.json()["error"]["code"] == "invalid_brand_use_category"
+    assert called is False
+
+
+def test_save_analysis_normalizes_empty_brand_use_category_to_none(
+    client, make_token, monkeypatch
+):
+    seen = []
+
+    async def fake_get_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_get_product(conn, project_id):
+        return {"clothingType": "top"}
+
+    async def fake_save_analysis(conn, project_id, analysis):
+        seen.append(analysis)
+        return {"project_id": project_id, "payload": analysis}
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(routes.repo, "save_analysis", fake_save_analysis)
+    patch_route_db(monkeypatch, routes)
+
+    for value in (None, "   "):
+        res = client.patch(
+            "/v1/projects/p1/analysis",
+            headers=_auth(make_token),
+            json={"brandUseCategory": value},
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["brandUseCategory"] is None
+
+    assert [analysis["brandUseCategory"] for analysis in seen] == [None, None]
+
+
 def test_analysis_routes_normalize_retired_tight_fit(client, make_token, monkeypatch):
     seen = {}
 

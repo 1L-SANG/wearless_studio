@@ -28,26 +28,13 @@ import {
     revokeLicense,
     verifyLicensePublic,
 } from "@/lib/api/facemarket.js";
+import {
+    ALLOWED_BRAND_USE_CATEGORIES,
+    FORBIDDEN_BRAND_USE_CATEGORIES,
+} from "@/lib/brandUseCategories.js";
 import { enrollmentReasonMessage } from "./biometricEnrollment.js";
 import s from "./ModelLicense.module.css";
 
-// 브랜드 유형(카테고리) 기준 — 모델이 자기 얼굴이 쓰일 브랜드 종류를 허용/금지로 통제.
-const ALLOWED_PRESETS = [
-    "일반 여성 의류",
-    "남성 의류",
-    "캐주얼·스트릿",
-    "스포츠·애슬레저",
-    "뷰티·화장품",
-    "액세서리·잡화",
-];
-const FORBIDDEN_PRESETS = [
-    "속옷·란제리",
-    "수영복·비키니",
-    "성인용품",
-    "주류·담배",
-    "의료·성형",
-    "정치·종교",
-];
 const VALIDITY = [
     { value: 90, label: "90일" },
     { value: 365, label: "1년" },
@@ -327,8 +314,8 @@ function VcCard({ license, onRevoked, push }) {
 
 /* ── 4단계: 라이선스 조건 + 발급 ──────────────────────────── */
 function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued, push }) {
-    const [allowed, setAllowed] = useState([ALLOWED_PRESETS[0]]);
-    const [forbidden, setForbidden] = useState([FORBIDDEN_PRESETS[0]]);
+    const [allowed, setAllowed] = useState([ALLOWED_BRAND_USE_CATEGORIES[0]]);
+    const [forbidden, setForbidden] = useState([FORBIDDEN_BRAND_USE_CATEGORIES[0]]);
     const [unitPrice, setUnitPrice] = useState(10000);
     const [validDays, setValidDays] = useState(365);
     const [submitting, setSubmitting] = useState(false);
@@ -371,7 +358,7 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
 
             <div className={s.sectionLabel}>허용 브랜드 유형</div>
             <Chips
-                options={ALLOWED_PRESETS}
+                options={ALLOWED_BRAND_USE_CATEGORIES}
                 value={allowed}
                 onChange={setAllowed}
                 multi
@@ -379,7 +366,7 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
 
             <div className={s.sectionLabel}>금지 브랜드 유형</div>
             <Chips
-                options={FORBIDDEN_PRESETS}
+                options={FORBIDDEN_BRAND_USE_CATEGORIES}
                 value={forbidden}
                 onChange={setForbidden}
                 multi

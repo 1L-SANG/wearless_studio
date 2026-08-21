@@ -73,6 +73,10 @@ router = APIRouter(prefix="/v1")
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25MB
 UPLOAD_URL_TTL = 300  # presigned PUT 만료(초)
 DRAFT_SLOT_STORAGE_KEY = "draft-slot"
+_BRAND_USE_CATEGORIES = frozenset((
+    *facemarket.ALLOWED_BRAND_USE_CATEGORIES,
+    *facemarket.FORBIDDEN_BRAND_USE_CATEGORIES,
+))
 
 COMMON_RESPONSES = {
     401: {"model": ErrorResponse, "description": "인증 실패 (토큰 누락, 만료 또는 위변조)"},
@@ -884,6 +888,17 @@ async def save_analysis(
     # 지금 analysis.colors 를 읽는 코드는 없지만, 2026-08-17 사고의 플레이스홀더가 실제로 여기
     # 3건 저장됐다. 나중에 누가 이 필드를 읽기 시작할 때 오염을 물려받지 않게 입구에서 막는다.
     analysis = product_photos.sanitize_analysis_colors(analysis)
+    if "brandUseCategory" in analysis:
+        category = str(analysis.get("brandUseCategory") or "").strip()
+        if not category:
+            analysis = {**analysis, "brandUseCategory": None}
+        elif category not in _BRAND_USE_CATEGORIES:
+            raise _bad_request(
+                "invalid_brand_use_category",
+                "정해진 브랜드 사용 분류를 선택해 주세요.",
+            )
+        else:
+            analysis = {**analysis, "brandUseCategory": category}
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()

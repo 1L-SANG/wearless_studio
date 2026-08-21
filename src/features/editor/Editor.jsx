@@ -930,6 +930,7 @@ export function Editor() {
   const [productName, setProductName] = useState('');
   const [product, setProduct] = useState(null);   // 실측(measurements) 등 — 정보 블록 프리필 (PRD §10.14)
   const [analysis, setAnalysis] = useState(null); // targetGenders·materials·fit·sellingPoints — 추천 배지·프리필 전용
+  const [brandUseCategorySaving, setBrandUseCategorySaving] = useState(false);
   const [infoModal, setInfoModal] = useState(null); // { type, blockId|null, initialInfo }
   const [tab, setTab] = useState('ai');
   const [selBlock, setSelBlock] = useState(null);
@@ -2177,6 +2178,20 @@ export function Editor() {
     toast.push(e?.message || '이미지 생성에 실패했어요. 다시 시도해 주세요.', { icon: 'x' });
     return false;
   };
+  const saveBrandUseCategory = async (value) => {
+    if (!value || value === analysis?.brandUseCategory || brandUseCategorySaving) return;
+    setBrandUseCategorySaving(true);
+    try {
+      const saved = await api.saveAnalysis(projectId, { brandUseCategory: value });
+      setAnalysis((current) => ({ ...(current || {}), ...(saved || {}), brandUseCategory: value }));
+    } catch (error) {
+      toast.push(error?.message || '브랜드 유형을 저장하지 못했어요. 다시 시도해 주세요.', {
+        icon: 'x',
+      });
+    } finally {
+      setBrandUseCategorySaving(false);
+    }
+  };
   // req = NewCutRequest 필드 전체 (계약 §6) — 방향·샷·모델·예시 선택이 생성에 그대로 반영되어야 한다
   const generateImage = async (req) => {
     const group = req.colorId || 'misc';             // wardrobe 그룹 키 = colorId | 'misc' (계약 §3.6)
@@ -2184,7 +2199,8 @@ export function Editor() {
     setWardrobe((w) => ({ ...w, [group]: [...(w[group] || []), { id: loadingId, loading: true }] }));
     genCount.current += 1; setGenDot('busy'); toast.push('이미지를 생성하는 중이에요', { icon: 'sparkles' });
     try {
-      const { data: img, credits } = await api.generateImage(projectId, { mode: 'new', ...req, colorId: group });
+      const { data: img, credits } = await api.generateImage(projectId, { mode: 'new', ...req, colorId: group,
+        brandUseCategory: analysis?.brandUseCategory });
       placeGeneratedImage(group, loadingId, img);
       toast.push('이미지 생성을 완료했어요', { icon: 'check' });
       syncCredits(credits);                          // 차감은 서버 책임 — 봉투 잔액만 반영 (계약 §6)
@@ -2795,7 +2811,7 @@ export function Editor() {
 
   const renderPanel = () => {
     switch (tab) {
-      case 'ai': return <AIPanel catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} matchClothing={matchClothing} exampleGender={exampleGenderFromAnalysis(analysis, catalogs, clothingType)} varySource={varySource} failedCutRetry={failedCutRetry} onRetryFailedCut={retryFailedCut} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickMoodRef={() => api.pickRefImage(projectId)} />;
+      case 'ai': return <AIPanel catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} matchClothing={matchClothing} exampleGender={exampleGenderFromAnalysis(analysis, catalogs, clothingType)} brandUseCategory={analysis?.brandUseCategory} brandUseCategorySaving={brandUseCategorySaving} onBrandUseCategoryChange={saveBrandUseCategory} varySource={varySource} failedCutRetry={failedCutRetry} onRetryFailedCut={retryFailedCut} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickMoodRef={() => api.pickRefImage(projectId)} />;
       case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={detailColorOpts} pendingSlot={pendingSlot} uploading={wardrobeUploadLoading} onInsert={wardrobeInsert} onDeleteImage={deleteWardrobeImage} isImageUsed={wardrobeImageInUse} onUpload={pickAndInsertImage} onVaryImage={varyImage} onFreshSeen={freshSeen}
         onImageDragStart={() => setFrameDragging(true)} onImageDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />;
       case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio}

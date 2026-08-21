@@ -1,0 +1,89 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import test from 'node:test';
+
+const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
+
+const modelLicenseSource = read('../../src/features/model/ModelLicense.jsx');
+const shapesSource = read('../../src/lib/api/shapes.js');
+const analysisFormSource = read('../../src/features/analysis/AnalysisForm.jsx');
+const editorSource = read('../../src/features/editor/Editor.jsx');
+const editorPanelsSource = read('../../src/features/editor/EditorPanels.jsx');
+const typesSource = read('../../src/lib/types.js');
+
+const allowed = [
+  '일반 여성 의류',
+  '남성 의류',
+  '캐주얼·스트릿',
+  '스포츠·애슬레저',
+  '뷰티·화장품',
+  '액세서리·잡화',
+];
+const forbidden = [
+  '속옷·란제리',
+  '수영복·비키니',
+  '성인용품',
+  '주류·담배',
+  '의료·성형',
+  '정치·종교',
+];
+
+test('frontend brand-use categories exactly match the server contract', async () => {
+  const {
+    ALLOWED_BRAND_USE_CATEGORIES,
+    FORBIDDEN_BRAND_USE_CATEGORIES,
+    BRAND_USE_CATEGORIES,
+  } = await import('../../src/lib/brandUseCategories.js');
+
+  assert.deepEqual(ALLOWED_BRAND_USE_CATEGORIES, allowed);
+  assert.deepEqual(FORBIDDEN_BRAND_USE_CATEGORIES, forbidden);
+  assert.deepEqual(BRAND_USE_CATEGORIES, [...allowed, ...forbidden]);
+  assert.equal(BRAND_USE_CATEGORIES.length, 12);
+  assert.equal(new Set(BRAND_USE_CATEGORIES).size, 12);
+});
+
+test('ModelLicense reuses the shared category lists', () => {
+  assert.match(modelLicenseSource, /import \{[\s\S]*ALLOWED_BRAND_USE_CATEGORIES,[\s\S]*FORBIDDEN_BRAND_USE_CATEGORIES[\s\S]*\} from "@\/lib\/brandUseCategories\.js";/);
+  assert.doesNotMatch(modelLicenseSource, /const (?:ALLOWED|FORBIDDEN)_PRESETS/);
+  assert.match(modelLicenseSource, /options=\{ALLOWED_BRAND_USE_CATEGORIES\}/);
+  assert.match(modelLicenseSource, /options=\{FORBIDDEN_BRAND_USE_CATEGORIES\}/);
+});
+
+test('analysis shape and form require an explicit category for a real model', () => {
+  assert.match(shapesSource, /selectedModelId: null, brandUseCategory: null, models: \[\]/);
+  assert.match(analysisFormSource, /import \{ BRAND_USE_CATEGORIES \} from '@\/lib\/brandUseCategories\.js';/);
+  assert.match(analysisFormSource, /import \{ isRealModelSelection, resolveSelectedModelId \} from '\.\/modelSelection\.js';/);
+  assert.match(analysisFormSource, /isRealModelSelection\(a\.selectedModelId\)[\s\S]*?<Chips[\s\S]*?options=\{BRAND_USE_CATEGORIES\}[\s\S]*?value=\{a\.brandUseCategory\}/);
+  assert.match(analysisFormSource, /실제 모델을 사용할 브랜드 유형을 선택해 주세요\./);
+});
+
+test('frontend analysis and new-cut contracts expose brandUseCategory', () => {
+  const analysisContract = typesSource.slice(
+    typesSource.indexOf('@typedef {Object} Analysis'),
+    typesSource.indexOf('@typedef {Object} FitProfile'),
+  );
+  const newCutContract = typesSource.slice(
+    typesSource.indexOf('@typedef {Object} NewCutRequest'),
+    typesSource.indexOf('@typedef {Object} GenStep'),
+  );
+  assert.match(analysisContract, /@property \{string\|null\} brandUseCategory/);
+  assert.match(newCutContract, /@property \{string\|null\} brandUseCategory/);
+});
+
+test('Editor AI panel remediates a missing persisted category in place', () => {
+  const aiPanel = editorPanelsSource.slice(editorPanelsSource.indexOf('export function AIPanel'));
+  assert.match(editorPanelsSource, /import \{ BRAND_USE_CATEGORIES \} from '@\/lib\/brandUseCategories\.js';/);
+  assert.match(aiPanel, /brandUseCategory = null/);
+  assert.match(aiPanel, /brandUseCategorySaving = false/);
+  assert.match(aiPanel, /onBrandUseCategoryChange/);
+  assert.match(aiPanel, /useFm && \([\s\S]*?<Chips[\s\S]*?options=\{BRAND_USE_CATEGORIES\}[\s\S]*?value=\{brandUseCategory\}/);
+  assert.match(aiPanel, /disabled=\{useFm && \(!brandUseCategory \|\| brandUseCategorySaving\)\}/);
+});
+
+test('Editor persists category selection and keeps persisted analysis request-authoritative', () => {
+  assert.match(editorSource, /const \[brandUseCategorySaving, setBrandUseCategorySaving\] = useState\(false\);/);
+  assert.match(editorSource, /api\.saveAnalysis\(projectId, \{ brandUseCategory: value \}\)/);
+  assert.match(editorSource, /setAnalysis\(\(current\) => \(\{ \.\.\.\(current \|\| \{\}\), \.\.\.\(saved \|\| \{\}\), brandUseCategory: value \}\)\)/);
+  assert.match(editorSource, /api\.generateImage\(projectId, \{ mode: 'new', \.\.\.req, colorId: group,\s*brandUseCategory: analysis\?\.brandUseCategory \}\)/);
+  assert.match(editorSource, /<AIPanel[\s\S]*?brandUseCategory=\{analysis\?\.brandUseCategory\}[\s\S]*?brandUseCategorySaving=\{brandUseCategorySaving\}[\s\S]*?onBrandUseCategoryChange=\{saveBrandUseCategory\}/);
+});

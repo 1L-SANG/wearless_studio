@@ -118,6 +118,7 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {string[]} sellingPoints    자유 텍스트 (max 5)
    @property {string[]} aiSuggestedPoints (max 2)
    @property {string} selectedModelId
+   @property {string|null} brandUseCategory
    @property {MatchClothing[]} matchClothing  후보 목록 (선택 상태 포함 — 계약은 matchSelections 분리, §7 갭)
    @property {string} washCare
    @property {boolean} locked
@@ -273,6 +274,7 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {Direction|ProductDirection|null} direction  mirror는 null — 방향 없음 (ADR-0004)
    @property {ShotType|ProductShotType} shot
    @property {string} modelId
+   @property {string|null} brandUseCategory
    @property {string|null} [exampleId]   촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
    @property {string[]} [refImages]
 

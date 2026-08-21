@@ -24,9 +24,10 @@ import {
   resolveMainMatchingItem,
 } from '@/lib/matchingFit.js';
 import { mergeMatchClothing, reconcileMatchCompatibility } from '@/lib/api/matchingItems.js';
+import { BRAND_USE_CATEGORIES } from '@/lib/brandUseCategories.js';
 import { looksLikeImageFile, toUploadableImages } from '@/lib/imageTranscode.js';
 import { invalidateStoryboardEntryPrefetch } from '@/features/storyboard/storyboardEntryPrefetch.js';
-import { resolveSelectedModelId } from './modelSelection.js';
+import { isRealModelSelection, resolveSelectedModelId } from './modelSelection.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { SELLING_POINTS_MAX, applySellingPointEdit } from './sellingPoints.js';
 import { selectAnalysisComposeMode } from './composeModeSelection.js';
@@ -670,6 +671,12 @@ export function AnalysisForm({
     });
   };
   const confirmAnalysis = async () => {
+    if (isRealModelSelection(a.selectedModelId) && !a.brandUseCategory) {
+      toast.push('실제 모델을 사용할 브랜드 유형을 선택해 주세요.', {
+        icon: 'alertCircle',
+      });
+      return;
+    }
     if (confirming) return;
     setConfirming(true);
     onConfirmingChange?.(true);
@@ -1265,6 +1272,18 @@ export function AnalysisForm({
             onSelect={(id) => onChange({ selectedModelId: id })}
             onClose={() => setDetailFor(null)}
           />
+        )}
+        {isRealModelSelection(a.selectedModelId) && (
+          <div className="fm-use-category">
+            <div className="sec-title">사용 브랜드 유형</div>
+            <div className="sec-sub">이 모델을 사용할 브랜드 유형을 하나 선택해 주세요.</div>
+            <Chips
+              options={BRAND_USE_CATEGORIES}
+              value={a.brandUseCategory}
+              allowDeselect={ false }
+              onChange={(value) => onChange({ brandUseCategory: value })}
+            />
+          </div>
         )}
       </div>
 
