@@ -286,9 +286,11 @@ class Settings:
     fm_chain_id: int | None = None  # 없으면 eth_chainId 로 조회
     fm_settlement_address: str | None = None  # 배포된 FaceMarketSettlement 주소(0x…)
     fm_chain_private_key: str | None = None  # owner 개인키(0x…). 절대 커밋 금지
-    # ---- OpenDID 홀더(선택과제1) — 커스터디얼 홀더 MSA(로컬 :8100). 라이선스 발급 시 FaceLicense VC 발급 ----
-    # 신규 라이선스 생성은 생체 등록 + Holder URL 동시 cutover 때만 열린다. 프로드는 생체 플래그 false 유지.
+    # ---- OpenDID 홀더(선택과제1) — 커스터디얼 홀더 MSA(로컬 :8100). ----
+    # 프로덕션 FaceMarket은 인증된 Holder가 필수이며 설정 누락 시 서버가 기동하지 않는다.
+    fm_vc_required: bool = False
     opendid_holder_url: str | None = None
+    opendid_holder_hmac_secret: str | None = None
     # ---- 실존 모델 얼굴 대조 QC (handoff §03 필수 게이트) — OpenCV SFace/YuNet(Apache-2.0) ----
     # enabled=false면 QC 스킵(dev·shadow). 3장 pairwise 코사인 최소값 < threshold 면 자산 등록 차단.
     fm_face_qc_enabled: bool = False
@@ -525,7 +527,11 @@ def load_settings() -> Settings:
         fm_chain_id=(int(os.getenv("FM_CHAIN_ID")) if os.getenv("FM_CHAIN_ID") else None),
         fm_settlement_address=os.getenv("FM_SETTLEMENT_ADDRESS") or None,
         fm_chain_private_key=os.getenv("FM_CHAIN_PRIVATE_KEY") or None,
+        fm_vc_required=(
+            os.getenv("FACEMARKET_VC_REQUIRED", "false").lower() == "true"
+        ),
         opendid_holder_url=(os.getenv("OPENDID_HOLDER_URL") or "").rstrip("/") or None,
+        opendid_holder_hmac_secret=os.getenv("OPENDID_HOLDER_HMAC_SECRET") or None,
         fm_face_qc_enabled=(os.getenv("FM_FACE_QC_ENABLED", "false").lower() == "true"),
         fm_face_qc_threshold=float(os.getenv("FM_FACE_QC_THRESHOLD") or "0.363"),
         fm_face_qc_dir=os.getenv("FM_FACE_QC_DIR") or None,

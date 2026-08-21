@@ -77,6 +77,26 @@ def _configure_logging() -> None:
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
+def _validate_facemarket_vc_settings(settings: Settings) -> None:
+    if (
+        settings.app_env == "production"
+        and settings.facemarket_enabled
+        and not settings.fm_vc_required
+    ):
+        raise RuntimeError(
+            "FACEMARKET_VC_REQUIRED=true is required for production FaceMarket"
+        )
+    if settings.fm_vc_required and (
+        not settings.opendid_holder_url
+        or not settings.opendid_holder_url.strip()
+        or not settings.opendid_holder_hmac_secret
+        or not settings.opendid_holder_hmac_secret.strip()
+    ):
+        raise RuntimeError(
+            "OpenDID Holder URL and HMAC secret are required when FaceMarket VC is mandatory"
+        )
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     _configure_logging()
     settings = settings or load_settings()
@@ -84,6 +104,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from .facemarket_enrollment import build_biometric_aws_clients, validate_biometric_settings
 
     validate_biometric_settings(settings)
+    _validate_facemarket_vc_settings(settings)
 
     pool = create_pool(settings.database_url) if settings.database_url else None
 
