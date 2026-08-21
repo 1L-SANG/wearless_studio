@@ -1,10 +1,12 @@
 import base64
+from dataclasses import replace
 from datetime import datetime, timezone
 from unittest.mock import Mock, call
 
 import pytest
 from fastapi import FastAPI
 
+from app import cx_identity
 from app.cx_identity import (
     DEV_MOCK_OACX_BIOMETRIC_CONTRACT,
     OacxBiometricError,
@@ -143,6 +145,41 @@ def test_oacx_oversized_portrait_fails_with_sanitized_reason():
         )
 
     assert error.value.reason == "id_portrait_unavailable"
+
+
+def test_oacx_oversized_encoding_is_rejected_before_decode(monkeypatch):
+    contract = replace(DEV_MOCK_OACX_BIOMETRIC_CONTRACT, max_portrait_bytes=3)
+    trans = {**DEV_TRANS, "idPortraitBase64": base64.b64encode(b"four").decode()}
+    monkeypatch.setattr(
+        cx_identity.base64,
+        "b64decode",
+        lambda *args, **kwargs: pytest.fail("oversized base64 reached decoder"),
+    )
+
+    with pytest.raises(OacxBiometricError) as error:
+        parse_oacx_biometric_evidence(trans, contract=contract, now=NOW)
+
+    assert error.value.reason == "id_portrait_unavailable"
+
+
+def test_oacx_post_decode_failure_wipes_portrait(monkeypatch):
+    wiped = []
+
+    def track_wipe(value):
+        wipe_bytearray(value)
+        if value is not None:
+            wiped.append(value)
+
+    monkeypatch.setattr(cx_identity, "wipe_bytearray", track_wipe)
+    trans = {**DEV_TRANS, "issuedAt": "2026-08-21T02:54:59Z"}
+
+    with pytest.raises(OacxBiometricError):
+        parse_oacx_biometric_evidence(
+            trans, contract=DEV_MOCK_OACX_BIOMETRIC_CONTRACT, now=NOW
+        )
+
+    assert len(wiped) == 1
+    assert wiped[0] == bytearray(len(b"portrait-bytes"))
 
 
 def test_oacx_production_cannot_select_dev_contract():

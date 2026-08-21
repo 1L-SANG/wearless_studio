@@ -51,6 +51,29 @@ class FakeRecognizer:
         return np.array([[1.0, 0.0]], dtype=np.float32)
 
 
+class FailingFeatureRecognizer:
+    def __init__(self, aligned):
+        self.aligned = aligned
+
+    def alignCrop(self, image, face):
+        return self.aligned
+
+    def feature(self, image):
+        raise RuntimeError("feature failed")
+
+
+class TrackingRecognizer:
+    def __init__(self, aligned, feature):
+        self.aligned = aligned
+        self.raw_feature = feature
+
+    def alignCrop(self, image, face):
+        return self.aligned
+
+    def feature(self, image):
+        return self.raw_feature
+
+
 def test_qc_disabled_returns_none():
     assert load_face_qc(make_settings(fm_face_qc_enabled=False)) is None
 
@@ -105,9 +128,19 @@ def test_pairwise_min_similarity_math(monkeypatch):
         b"b": np.array([1.0, 0.0, 0.0]),   # a와 동일 → cos 1.0
         b"c": np.array([0.0, 1.0, 0.0]),   # a·b와 직교 → cos 0.0 (최소)
     }
-    monkeypatch.setattr(FaceQc, "_embed", lambda self, d: vecs[d])
+    returned = []
+
+    def embed(self, data):
+        feature = vecs[data].copy()
+        returned.append(feature)
+        return feature
+
+    monkeypatch.setattr(FaceQc, "_embed", embed)
     assert qc.pairwise_min_similarity([b"a", b"b"]) == pytest.approx(1.0)
+    assert all(np.count_nonzero(feature) == 0 for feature in returned)
+    returned.clear()
     assert qc.pairwise_min_similarity([b"a", b"b", b"c"]) == pytest.approx(0.0, abs=1e-6)
+    assert all(np.count_nonzero(feature) == 0 for feature in returned)
 
 
 def test_one_to_one_similarity_wipes_both_embeddings(monkeypatch):
@@ -122,15 +155,147 @@ def test_one_to_one_similarity_wipes_both_embeddings(monkeypatch):
     assert np.count_nonzero(second) == 0
 
 
-def test_embed_rejects_multiple_faces():
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        (np.array([np.nan, 0.0]), np.array([1.0, 0.0])),
+        (np.array([1.0, 0.0]), np.array([np.inf, 0.0])),
+        (np.array([0.0, 0.0]), np.array([1.0, 0.0])),
+        (
+            np.array([np.finfo(np.float64).max, np.finfo(np.float64).max]),
+            np.array([1.0, 0.0]),
+        ),
+    ],
+    ids=("nan", "inf", "zero", "nonfinite-denominator"),
+)
+def test_one_to_one_rejects_invalid_embeddings(first, second, monkeypatch):
+    qc = FaceQc.__new__(FaceQc)
+    values = iter((first, second))
+    monkeypatch.setattr(FaceQc, "_embed", lambda self, data: next(values))
+
+    with pytest.raises(QcFailed) as error:
+        qc.one_to_one_similarity(b"id", b"live")
+
+    assert error.value.reason == "embedding_invalid"
+    assert np.count_nonzero(first) == 0
+    assert np.count_nonzero(second) == 0
+
+
+def test_one_to_one_rejects_nonfinite_dot(monkeypatch):
+    qc = FaceQc.__new__(FaceQc)
+    values = iter((np.array([1.0, 0.0]), np.array([1.0, 0.0])))
+    monkeypatch.setattr(FaceQc, "_embed", lambda self, data: next(values))
+    monkeypatch.setattr(face_qc.np, "dot", lambda left, right: np.inf)
+
+    with pytest.raises(QcFailed) as error:
+        qc.one_to_one_similarity(b"id", b"live")
+
+    assert error.value.reason == "embedding_invalid"
+
+
+def test_one_to_one_rejects_nonfinite_final_score(monkeypatch):
+    qc = FaceQc.__new__(FaceQc)
+    values = iter((np.array([1.0, 0.0]), np.array([1.0, 0.0])))
+    norms = iter((1.0, 1e-200))
+    monkeypatch.setattr(FaceQc, "_embed", lambda self, data: next(values))
+    monkeypatch.setattr(face_qc.np.linalg, "norm", lambda value: next(norms))
+    monkeypatch.setattr(face_qc.np, "dot", lambda left, right: np.finfo(np.float64).max)
+
+    with pytest.raises(QcFailed) as error:
+        qc.one_to_one_similarity(b"id", b"live")
+
+    assert error.value.reason == "embedding_invalid"
+
+
+def test_one_to_one_wipes_first_embedding_when_second_fails(monkeypatch):
+    qc = FaceQc.__new__(FaceQc)
+    first = np.array([1.0, 0.0])
+    calls = iter((first, QcFailed("decode_failed")))
+
+    def embed(self, data):
+        value = next(calls)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    monkeypatch.setattr(FaceQc, "_embed", embed)
+
+    with pytest.raises(QcFailed) as error:
+        qc.one_to_one_similarity(b"id", b"live")
+
+    assert error.value.reason == "decode_failed"
+    assert np.count_nonzero(first) == 0
+
+
+def test_embed_rejects_multiple_faces_and_wipes_decoded_image(monkeypatch):
     qc = FaceQc.__new__(FaceQc)
     qc._det = FakeDetector(face_count=2)
     qc._rec = FakeRecognizer()
+    decoded = np.ones((4, 4, 3), dtype=np.uint8)
+    caller_data = bytearray(b"caller-owned")
+    monkeypatch.setattr(face_qc.cv2, "imdecode", lambda data, mode: decoded)
 
     with pytest.raises(QcFailed) as error:
-        qc._embed(_blank_png())
+        qc._embed(caller_data)
 
     assert error.value.reason == "multiple_faces"
+    assert np.count_nonzero(decoded) == 0
+    assert caller_data == bytearray(b"caller-owned")
+
+
+def test_embed_wipes_decoded_and_aligned_images_when_feature_fails(monkeypatch):
+    qc = FaceQc.__new__(FaceQc)
+    qc._det = FakeDetector(face_count=1)
+    decoded = np.ones((4, 4, 3), dtype=np.uint8)
+    aligned = np.ones((2, 2, 3), dtype=np.uint8)
+    qc._rec = FailingFeatureRecognizer(aligned)
+    monkeypatch.setattr(face_qc.cv2, "imdecode", lambda data, mode: decoded)
+
+    with pytest.raises(RuntimeError, match="feature failed"):
+        qc._embed(b"encoded")
+
+    assert np.count_nonzero(decoded) == 0
+    assert np.count_nonzero(aligned) == 0
+
+
+def test_embed_wipes_raw_feature_after_copying_embedding(monkeypatch):
+    qc = FaceQc.__new__(FaceQc)
+    qc._det = FakeDetector(face_count=1)
+    decoded = np.ones((4, 4, 3), dtype=np.uint8)
+    aligned = np.ones((2, 2, 3), dtype=np.uint8)
+    raw_feature = np.array([[1.0, 0.0]])
+    qc._rec = TrackingRecognizer(aligned, raw_feature)
+    monkeypatch.setattr(face_qc.cv2, "imdecode", lambda data, mode: decoded)
+
+    embedding = qc._embed(b"encoded")
+
+    assert embedding.tolist() == [1.0, 0.0]
+    assert np.count_nonzero(decoded) == 0
+    assert np.count_nonzero(aligned) == 0
+    assert np.count_nonzero(raw_feature) == 0
+    embedding.fill(0)
+
+
+def test_pairwise_wipes_embeddings_after_partial_failure(monkeypatch):
+    qc = FaceQc.__new__(FaceQc)
+    first = np.array([1.0, 0.0])
+    second = np.array([0.0, 1.0])
+    calls = iter((first, second, QcFailed("decode_failed")))
+
+    def embed(self, data):
+        value = next(calls)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    monkeypatch.setattr(FaceQc, "_embed", embed)
+
+    with pytest.raises(QcFailed) as error:
+        qc.pairwise_min_similarity([b"a", b"b", b"c"])
+
+    assert error.value.reason == "decode_failed"
+    assert np.count_nonzero(first) == 0
+    assert np.count_nonzero(second) == 0
 
 
 def test_default_model_dir_points_at_bundle():

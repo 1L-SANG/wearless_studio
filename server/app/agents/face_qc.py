@@ -48,19 +48,28 @@ class FaceQc:
         self._rec = cv2.FaceRecognizerSF.create(rec_path, "")
 
     def _embed(self, data: bytes | bytearray) -> np.ndarray:
-        arr = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
-        if arr is None:
-            raise QcFailed("decode_failed")
-        h, w = arr.shape[:2]
-        self._det.setInputSize((w, h))
-        _, faces = self._det.detect(arr)
-        if faces is None or len(faces) == 0:
-            raise QcFailed("no_face_detected")
-        if len(faces) != 1:
-            raise QcFailed("multiple_faces")
-        face = faces[0]
-        aligned = self._rec.alignCrop(arr, face)
-        return self._rec.feature(aligned).flatten()
+        image = aligned = raw_feature = None
+        try:
+            image = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+            if image is None:
+                raise QcFailed("decode_failed")
+            h, w = image.shape[:2]
+            self._det.setInputSize((w, h))
+            _, faces = self._det.detect(image)
+            if faces is None or len(faces) == 0:
+                raise QcFailed("no_face_detected")
+            if len(faces) != 1:
+                raise QcFailed("multiple_faces")
+            aligned = self._rec.alignCrop(image, faces[0])
+            raw_feature = self._rec.feature(aligned)
+            return raw_feature.flatten()
+        finally:
+            if raw_feature is not None:
+                raw_feature.fill(0)
+            if aligned is not None:
+                aligned.fill(0)
+            if image is not None:
+                image.fill(0)
 
     def one_to_one_similarity(
         self, reference: bytes | bytearray, candidate: bytes | bytearray
@@ -69,10 +78,19 @@ class FaceQc:
         try:
             left = self._embed(reference)
             right = self._embed(candidate)
-            denominator = float(np.linalg.norm(left)) * float(np.linalg.norm(right))
-            if denominator <= 0:
+            if not np.isfinite(left).all() or not np.isfinite(right).all():
                 raise QcFailed("embedding_invalid")
-            return float(np.dot(left, right)) / denominator
+            with np.errstate(all="ignore"):
+                denominator = float(np.linalg.norm(left)) * float(np.linalg.norm(right))
+                if not np.isfinite(denominator) or denominator <= 0:
+                    raise QcFailed("embedding_invalid")
+                dot = float(np.dot(left, right))
+                if not np.isfinite(dot):
+                    raise QcFailed("embedding_invalid")
+                score = float(np.divide(dot, denominator))
+                if not np.isfinite(score):
+                    raise QcFailed("embedding_invalid")
+                return score
         finally:
             if left is not None:
                 left.fill(0)
@@ -83,15 +101,21 @@ class FaceQc:
         """모든 쌍의 코사인 유사도 중 최소값. 얼굴 미검출 시 QcFailed."""
         if len(images) < 2:
             raise QcFailed("insufficient_images")
-        feats = [self._embed(d) for d in images]
-        mn = 1.0
-        for i in range(len(feats)):
-            for j in range(i + 1, len(feats)):
-                a, b = feats[i], feats[j]
-                denom = (float(np.linalg.norm(a)) * float(np.linalg.norm(b))) + 1e-9
-                cos = float(np.dot(a, b)) / denom
-                mn = min(mn, cos)
-        return mn
+        feats = []
+        try:
+            for data in images:
+                feats.append(self._embed(data))
+            mn = 1.0
+            for i in range(len(feats)):
+                for j in range(i + 1, len(feats)):
+                    a, b = feats[i], feats[j]
+                    denom = (float(np.linalg.norm(a)) * float(np.linalg.norm(b))) + 1e-9
+                    cos = float(np.dot(a, b)) / denom
+                    mn = min(mn, cos)
+            return mn
+        finally:
+            for feature in feats:
+                feature.fill(0)
 
 
 def load_face_qc(settings, *, required: bool = False) -> "FaceQc | None":

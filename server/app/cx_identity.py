@@ -107,6 +107,7 @@ def parse_oacx_biometric_evidence(
     now: datetime | None = None,
 ) -> OacxBiometricEvidence:
     """Parse only an injected, reviewed OACX portrait contract; sanitize every failure."""
+    portrait = None
     try:
         ci = trans["ci"]
         birth = trans["birth"]
@@ -123,6 +124,9 @@ def parse_oacx_biometric_evidence(
         if contract.portrait_encoding != "base64" or not isinstance(encoded, str):
             raise ValueError
         if portrait_mime not in _PORTRAIT_MIMES or not isinstance(issued_at, str):
+            raise ValueError
+        max_encoded_length = 4 * ((contract.max_portrait_bytes + 2) // 3)
+        if len(encoded) > max_encoded_length:
             raise ValueError
 
         portrait = bytearray(base64.b64decode(encoded, validate=True))
@@ -153,6 +157,7 @@ def parse_oacx_biometric_evidence(
             contract_version=contract.version,
         )
     except Exception:
+        wipe_bytearray(portrait)
         raise OacxBiometricError() from None
 
 
