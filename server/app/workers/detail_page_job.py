@@ -882,19 +882,21 @@ async def run_detail_page_job(app, job: dict) -> None:
             # StoryboardBlock에는 modelId가 없다(계약 §3.4). 상세페이지의 프로젝트 단위 선택값은
             # Analysis.selectedModelId가 정본이며, 아래 prep에서 저장 블록을 바꾸지 않고 런타임 주입한다.
             selected_model_id = analysis.get("selectedModelId") or analysis.get("selected_model_id")
+            try:
+                uuid.UUID(str(selected_model_id))
+            except (TypeError, ValueError):
+                selected_is_real = False
+            else:
+                selected_is_real = True
+            selected_is_virtual = bool(selected_model_id) and not selected_is_real
+            uses_facemarket_identity = uses_model_identity and not selected_is_virtual
 
             # 요청 게이트 통과 후의 해지·만료·VC 변경 레이스를 워커에서 재확인한다.
             # 이 순서가 실모델 자산 조회·비공개 얼굴 로드보다 반드시 앞서야 한다.
-            if s.facemarket_enabled and uses_model_identity:
+            if s.facemarket_enabled and uses_facemarket_identity:
                 license_to_verify = await facemarket.resolve_project_license(
                     conn, project, analysis
                 )
-                try:
-                    uuid.UUID(str(selected_model_id))
-                except (TypeError, ValueError):
-                    selected_is_real = False
-                else:
-                    selected_is_real = True
                 if selected_is_real and (
                     license_to_verify is None
                     or str(license_to_verify.get("model_id")) != str(selected_model_id)
@@ -907,7 +909,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             # 잠금 없음 = 기존 마네킹 경로 → None, 아래 첨부·고지 분기 전부 미진입.
             face_ref = (
                 await _load_license_face(app, conn, project)
-                if uses_model_identity
+                if uses_facemarket_identity
                 else None
             )
 
@@ -916,7 +918,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             from ..agents import identity_source
             license_row = (
                 await _load_license_row(app, conn, project)
-                if uses_model_identity
+                if uses_facemarket_identity
                 else None
             )
             # 실존 자산 조회는 facemarket 켜졌고 선택 모델이 있을 때만 — off(기존/가상 경로)면
@@ -927,7 +929,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     selected_model_id,
                     allow_legacy=not getattr(s, "fm_biometric_enrollment_enabled", False),
                 )
-                if selected_model_id and s.facemarket_enabled and uses_model_identity
+                if selected_is_real and s.facemarket_enabled and uses_model_identity
                 else None
             )
             source = identity_source.select_source(
@@ -1705,10 +1707,14 @@ async def run_detail_page_job(app, job: dict) -> None:
                     log.warning("orphan R2 cleanup failed: %s", c["key"])
         else:
             # FaceMarket 온체인 정산 훅(선택과제2). 이 잡이 얼굴 라이선스를 소비했으면
-            # 성공 종결 지점에서 70/20/10 을 온체인 기록. FM-30(verify-before-use)이
-            # project 에 facemarket_license_id 를 실으면 활성 — 그전엔 lic_id None → no-op.
+            # 성공 종결 지점에서 70/20/10 을 온체인 기록. 프로젝트에 과거 잠금이 남아도
+            # 이번 잡의 소스가 VIRTUAL/NONE 이면 라이선스를 소비하지 않았으므로 기록하지 않는다.
             # best-effort: 정산 실패가 이미 완료된 상세페이지 생성을 되돌리지 않는다.
-            if s.facemarket_enabled and getattr(app.state, "fm_chain", None) is not None:
+            if (
+                s.facemarket_enabled
+                and source in ("REAL", "LEGACY")
+                and getattr(app.state, "fm_chain", None) is not None
+            ):
                 lic_id = project.get("facemarket_license_id") or project.get("facemarketLicenseId")
                 if lic_id:
                     try:

@@ -10,7 +10,11 @@ import contextlib
 import types
 from datetime import datetime, timedelta, timezone
 
+import httpx
+import pytest
+
 from app import facemarket
+from app.agents import identity_source
 from app.workers import detail_page_job as dpj
 from conftest import FakeR2, make_settings, worker_job
 
@@ -35,7 +39,8 @@ def _asset_rows(status="ready"):
 def _license_meta(model_id="11111111-1111-1111-1111-111111111111", status="active", days=30):
     return {"id": "lic-1", "model_id": model_id, "status": status,
             "license_valid_until": datetime.now(timezone.utc) + timedelta(days=days),
-            "display_name": "노지운", "unit_price": 100}
+            "display_name": "노지운", "unit_price": 100, "vc_id": "vc-1",
+            "vc_status_uri": None}
 
 
 class _Cur:
@@ -121,9 +126,16 @@ class _FaceR2:
         return None
 
 
-def _app(asset_rows, license_meta, face_r2):
+def _app(asset_rows, license_meta, face_r2, *, vc_required=False):
     state = types.SimpleNamespace(
-        settings=make_settings(gemini_api_key="x", r2_bucket="b", facemarket_enabled=True),
+        settings=make_settings(
+            gemini_api_key="x",
+            r2_bucket="b",
+            facemarket_enabled=True,
+            fm_vc_required=vc_required,
+            opendid_holder_url="http://holder" if vc_required else None,
+            opendid_holder_hmac_secret="shared-secret" if vc_required else None,
+        ),
         pool=_Pool(asset_rows, license_meta), r2=FakeR2(), r2_face=face_r2,
         gemini=types.SimpleNamespace())
     return types.SimpleNamespace(state=state)
@@ -275,5 +287,71 @@ def test_product_only_selected_real_model_does_not_require_face_license(monkeypa
     assert app.state.pool.asset_queries == 0
     assert face_r2.gets == []
     assert captured["calls"]
+    assert captured["success"]["charge"] == 1
+    assert captured.get("failure") is None
+
+
+@pytest.mark.parametrize(
+    ("analysis", "license_status", "vc_required"),
+    [
+        ({"selectedModelId": "mB"}, "revoked", False),
+        ({"selected_model_id": "mB"}, "active", True),
+    ],
+    ids=("revoked-old-license", "holder-outage-snake-alias"),
+)
+def test_virtual_worn_selection_ignores_stale_facemarket_license(
+    monkeypatch,
+    analysis,
+    license_status,
+    vc_required,
+):
+    captured = {}
+    calls = {"verify": 0, "face": 0, "assets": 0, "settlement": 0}
+    face_r2 = _FaceR2()
+    _patch(monkeypatch, captured, analysis=analysis)
+    app = _app(
+        _asset_rows(),
+        _license_meta(status=license_status),
+        face_r2,
+        vc_required=vc_required,
+    )
+    app.state.fm_chain = object()
+
+    original_verify = facemarket.verify_license
+    original_face_loader = dpj._load_license_face
+    original_asset_resolver = identity_source.resolve_real_model_assets
+
+    async def tracked_verify(*args, **kwargs):
+        calls["verify"] += 1
+        return await original_verify(*args, **kwargs)
+
+    async def tracked_face_loader(*args, **kwargs):
+        calls["face"] += 1
+        return await original_face_loader(*args, **kwargs)
+
+    async def tracked_asset_resolver(*args, **kwargs):
+        calls["assets"] += 1
+        return await original_asset_resolver(*args, **kwargs)
+
+    async def holder_down(*_args, **_kwargs):
+        raise httpx.ConnectError("holder down")
+
+    async def tracked_settlement(*_args, **_kwargs):
+        calls["settlement"] += 1
+
+    monkeypatch.setattr(facemarket, "verify_license", tracked_verify)
+    monkeypatch.setattr(dpj, "_load_license_face", tracked_face_loader)
+    monkeypatch.setattr(identity_source, "resolve_real_model_assets", tracked_asset_resolver)
+    monkeypatch.setattr(facemarket, "record_license_settlement", tracked_settlement)
+    if vc_required:
+        monkeypatch.setattr(facemarket.holder_client, "post", holder_down)
+
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+
+    assert calls == {"verify": 0, "face": 0, "assets": 0, "settlement": 0}
+    assert face_r2.gets == []
+    assert app.state.pool.asset_queries == 0
+    assert captured["calls"]
+    assert captured["license_notice"] is None
     assert captured["success"]["charge"] == 1
     assert captured.get("failure") is None
