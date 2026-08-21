@@ -789,6 +789,38 @@ def test_repeated_pending_post_reuses_license_and_holder_idempotency(
     ] == [f"fm-license:{license_id}", f"fm-license:{license_id}"]
 
 
+@pytest.mark.parametrize(
+    ("allowed_use", "forbidden_use"),
+    [
+        (["legacy allowed"], ["정치·종교"]),
+        (["일반 여성 의류"], ["legacy forbidden"]),
+    ],
+    ids=["invalid-stored-allowed", "invalid-stored-forbidden"],
+)
+def test_pending_retry_rejects_invalid_persisted_terms_before_enrollment_or_holder(
+    biometric_fm, make_token, holder_stub, allowed_use, forbidden_use
+):
+    client, store, _ = biometric_fm
+    enrollment_id = _seed_license_pending_enrollment(store)
+    _seed_pending_license(
+        store,
+        enrollment_id=enrollment_id,
+        allowed_use=allowed_use,
+        forbidden_use=forbidden_use,
+    )
+
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body(enrollment_id),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_use_category"
+    assert store["enrollments"][0]["status"] == "license_pending"
+    assert holder_stub.calls == []
+
+
 def test_active_retry_returns_existing_card_without_reissue(
     biometric_fm, make_token, holder_stub
 ):
@@ -1140,6 +1172,39 @@ def test_malformed_enrollment_uuid_rejected_before_sql(
 
     assert response.status_code in {400, 404}
     assert store.get("sql", []) == []
+    assert holder_stub.calls == []
+
+
+@pytest.mark.parametrize(
+    ("allowed_use", "forbidden_use"),
+    [
+        (["legacy allowed"], ["정치·종교"]),
+        (["일반 여성 의류"], ["legacy forbidden"]),
+    ],
+    ids=["invalid-stored-allowed", "invalid-stored-forbidden"],
+)
+def test_conflict_reload_rejects_invalid_persisted_terms_before_enrollment_or_holder(
+    biometric_fm, make_token, holder_stub, allowed_use, forbidden_use
+):
+    client, store, _ = biometric_fm
+    enrollment_id = _seed_license_pending_enrollment(store)
+    _seed_pending_license(
+        store,
+        enrollment_id=enrollment_id,
+        allowed_use=allowed_use,
+        forbidden_use=forbidden_use,
+    )
+    store["hide_existing_license_once"] = True
+
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body(enrollment_id),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_use_category"
+    assert store["enrollments"][0]["status"] == "license_pending"
     assert holder_stub.calls == []
 
 

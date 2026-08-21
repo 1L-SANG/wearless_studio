@@ -872,6 +872,8 @@ async def create_license(
                 valid_until = row["license_valid_until"]
                 digest = row["face_image_digest"]
 
+        allowed = _clean_uses(allowed, ALLOWED_BRAND_USE_CATEGORIES)
+        forbidden = _clean_uses(forbidden, FORBIDDEN_BRAND_USE_CATEGORIES)
         async with conn.cursor() as cur:
             await cur.execute(
                 "update fm_biometric_enrollments set status = 'vc_pending' "
