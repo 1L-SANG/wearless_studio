@@ -390,9 +390,111 @@ async def _known_targets(conn, schema, scope, enrollment_ids, derived_jobs):
             )
             for row in await cur.fetchall():
                 asset_ids.add(row["id"])
+        lineage_keys, lineage_asset_ids, lineage = await _lineage_targets(
+            cur, schema, job_ids, asset_ids
+        )
+        r2_keys |= lineage_keys
+        asset_ids |= lineage_asset_ids
     targets = {("r2_face", k) for k in face_keys}
     targets |= {("r2", k) for k in r2_keys}
-    return targets, set(asset_ids), prefixes
+    return targets, set(asset_ids), prefixes, lineage
+
+
+async def _lineage_targets(cur, schema, job_ids: set[str], seed_asset_ids: set[str]):
+    r2_keys: set[str] = set()
+    asset_ids = set(seed_asset_ids)
+    run_ids: set[str] = set()
+    output_ids: set[str] = set()
+    session_ids: set[str] = set()
+    if job_ids and _has(schema, "generation_runs", "id", "prompt_r2_key"):
+        await cur.execute(
+            "select id::text as id, prompt_r2_key as prompt_r2_key from generation_runs "
+            "where job_id = any(%s)",
+            (list(job_ids),),
+        )
+        for row in await cur.fetchall():
+            if row.get("id"):
+                run_ids.add(row["id"])
+            if row.get("prompt_r2_key"):
+                r2_keys.add(row["prompt_r2_key"])
+
+    changed = True
+    while changed:
+        changed = False
+        if _has(
+            schema,
+            "generation_outputs",
+            "id",
+            "asset_id",
+            "generation_run_id",
+            "parent_output_id",
+            "edit_session_id",
+        ):
+            await cur.execute(
+                "select id::text as id, asset_id::text as asset_id, "
+                "parent_output_id::text as parent_output_id, edit_session_id::text as edit_session_id "
+                "from generation_outputs where generation_run_id = any(%s) or id = any(%s) "
+                "or parent_output_id = any(%s) or edit_session_id = any(%s) or asset_id = any(%s)",
+                (
+                    list(run_ids),
+                    list(output_ids),
+                    list(output_ids),
+                    list(session_ids),
+                    list(asset_ids),
+                ),
+            )
+            for row in await cur.fetchall():
+                for target, key in (
+                    (output_ids, "id"),
+                    (asset_ids, "asset_id"),
+                    (output_ids, "parent_output_id"),
+                    (session_ids, "edit_session_id"),
+                ):
+                    value = row.get(key)
+                    if value and value not in target:
+                        target.add(value)
+                        changed = True
+        if _has(
+            schema,
+            "edit_sessions",
+            "id",
+            "source_asset_id",
+            "job_id",
+            "parent_output_id",
+            "output_id",
+            "prompt_r2_key",
+        ):
+            await cur.execute(
+                "select id::text as id, source_asset_id::text as source_asset_id, "
+                "parent_output_id::text as parent_output_id, output_id::text as output_id, "
+                "prompt_r2_key as prompt_r2_key from edit_sessions "
+                "where job_id = any(%s) or parent_output_id = any(%s) "
+                "or source_asset_id = any(%s) or output_id = any(%s)",
+                (list(job_ids), list(output_ids), list(asset_ids), list(output_ids)),
+            )
+            for row in await cur.fetchall():
+                for target, key in (
+                    (session_ids, "id"),
+                    (asset_ids, "source_asset_id"),
+                    (output_ids, "parent_output_id"),
+                    (output_ids, "output_id"),
+                ):
+                    value = row.get(key)
+                    if value and value not in target:
+                        target.add(value)
+                        changed = True
+                if row.get("prompt_r2_key"):
+                    r2_keys.add(row["prompt_r2_key"])
+
+    if asset_ids:
+        await cur.execute(
+            "select id::text as id, r2_key as k from assets where id = any(%s)",
+            (list(asset_ids),),
+        )
+        for row in await cur.fetchall():
+            if row.get("k"):
+                r2_keys.add(row["k"])
+    return r2_keys, asset_ids, {"run_ids": run_ids, "session_ids": session_ids}
 
 
 async def _list_targets(clients, prefixes) -> set[tuple[str, str]]:
@@ -402,8 +504,8 @@ async def _list_targets(clients, prefixes) -> set[tuple[str, str]]:
             for prefix in prefixes:
                 for key in await asyncio.to_thread(client.list_prefix, prefix):
                     targets.add((label, key))
-    except Exception as exc:
-        raise PurgeIncomplete("r2_list_failed") from exc
+    except Exception:
+        raise PurgeIncomplete("r2_list_failed") from None
     return targets
 
 
@@ -417,8 +519,8 @@ async def _delete_and_reconcile(clients, targets, prefixes):
     try:
         for label, key in sorted(targets):
             await asyncio.to_thread(clients[label].delete, key)
-    except Exception as exc:
-        raise PurgeIncomplete("r2_delete_failed") from exc
+    except Exception:
+        raise PurgeIncomplete("r2_delete_failed") from None
     try:
         survivors = await _list_targets(clients, prefixes)
         if survivors:
@@ -428,11 +530,11 @@ async def _delete_and_reconcile(clients, targets, prefixes):
                 raise PurgeIncomplete("r2_reconcile_failed")
     except PurgeIncomplete:
         raise
-    except Exception as exc:
-        raise PurgeIncomplete("r2_reconcile_failed") from exc
+    except Exception:
+        raise PurgeIncomplete("r2_reconcile_failed") from None
 
 
-async def _cleanup(conn, schema, scope, enrollment_ids, asset_ids, derived_jobs):
+async def _cleanup(conn, schema, scope, enrollment_ids, asset_ids, derived_jobs, lineage):
     model_ids = scope["model_ids"]
     license_ids = scope["license_ids"]
     profile_ids = scope["profile_ids"]
@@ -483,6 +585,16 @@ async def _cleanup(conn, schema, scope, enrollment_ids, asset_ids, derived_jobs)
                     "update edit_sessions set prompt_r2_key=null where job_id = any(%s)",
                     (list(job_ids),),
                 )
+        if lineage.get("run_ids") and _has(schema, "generation_runs", "prompt_r2_key"):
+            await cur.execute(
+                "update generation_runs set prompt_r2_key=null where id = any(%s)",
+                (list(lineage["run_ids"]),),
+            )
+        if lineage.get("session_ids") and _has(schema, "edit_sessions", "prompt_r2_key"):
+            await cur.execute(
+                "update edit_sessions set prompt_r2_key=null where id = any(%s)",
+                (list(lineage["session_ids"]),),
+            )
         if model_ids:
             await cur.execute("delete from fm_model_assets where model_id = any(%s)", (list(model_ids),))
             if _has(schema, "fm_model_asset_cleanup", "model_id"):
@@ -540,16 +652,21 @@ async def purge_biometric_scope(
     _validate_scope_args(user_id=user_id, batch_id=batch_id, reason=reason)
     clients = _require_storage(app)
     pool = app.state.pool
-    async with pool.connection() as conn:
-        schema = await _schema(conn)
-        scope = await _scope(conn, schema, user_id=user_id, batch_id=batch_id, reason=reason)
-        derived_jobs = await _derived_jobs(conn, schema, scope)
-        await _ensure_frozen(conn, schema, scope, derived_jobs)
-        enrollment_ids = await _enrollment_ids(conn, schema, scope)
-        known, asset_ids, prefixes = await _known_targets(
-            conn, schema, scope, enrollment_ids, derived_jobs
-        )
-        await conn.commit()
+    try:
+        async with pool.connection() as conn:
+            schema = await _schema(conn)
+            scope = await _scope(conn, schema, user_id=user_id, batch_id=batch_id, reason=reason)
+            derived_jobs = await _derived_jobs(conn, schema, scope)
+            await _ensure_frozen(conn, schema, scope, derived_jobs)
+            enrollment_ids = await _enrollment_ids(conn, schema, scope)
+            known, asset_ids, prefixes, lineage = await _known_targets(
+                conn, schema, scope, enrollment_ids, derived_jobs
+            )
+            await conn.commit()
+    except PurgeIncomplete:
+        raise
+    except Exception:
+        raise PurgeIncomplete("db_cleanup_failed") from None
 
     listed = await _list_targets(clients, prefixes)
     targets = known | listed
@@ -562,17 +679,19 @@ async def purge_biometric_scope(
             derived_jobs = await _derived_jobs(conn, schema, scope)
             await _ensure_frozen(conn, schema, scope, derived_jobs)
             enrollment_ids = await _enrollment_ids(conn, schema, scope)
-            _known, asset_ids, _prefixes2 = await _known_targets(
+            _known, asset_ids, _prefixes2, lineage = await _known_targets(
                 conn, schema, scope, enrollment_ids, derived_jobs
             )
-            await _cleanup(conn, schema, scope, enrollment_ids, asset_ids, derived_jobs)
+            if not _known.issubset(targets) or not set(_prefixes2).issubset(set(prefixes)):
+                raise PurgeIncomplete("r2_reconcile_failed")
+            await _cleanup(conn, schema, scope, enrollment_ids, asset_ids, derived_jobs, lineage)
             await conn.commit()
         except PurgeIncomplete:
             await conn.rollback()
             raise
-        except Exception as exc:
+        except Exception:
             await conn.rollback()
-            raise PurgeIncomplete("db_cleanup_failed") from exc
+            raise PurgeIncomplete("db_cleanup_failed") from None
 
     return PurgeResult(
         complete=True,
