@@ -185,3 +185,32 @@ def test_post_issue_finalization_finishes_before_request_cancellation_propagates
         assert completed.is_set()
 
     asyncio.run(scenario())
+
+
+def test_post_issue_finalization_survives_repeated_request_cancellation():
+    async def scenario():
+        started = asyncio.Event()
+        release = asyncio.Event()
+        completed = asyncio.Event()
+
+        async def finalize():
+            started.set()
+            await release.wait()
+            completed.set()
+
+        request = asyncio.create_task(
+            facemarket._await_post_issue_finalization(finalize())
+        )
+        await started.wait()
+        request.cancel()
+        await asyncio.sleep(0)
+        assert not request.done()
+        request.cancel()
+        await asyncio.sleep(0)
+        release.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await request
+        assert completed.is_set()
+
+    asyncio.run(scenario())

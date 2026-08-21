@@ -3,8 +3,8 @@ alter table public.fm_licenses
 
 create table if not exists public.fm_vc_revocation_jobs (
   id                uuid primary key default gen_random_uuid(),
-  license_id        uuid not null references public.fm_licenses(id) on delete restrict,
-  model_id          uuid not null references public.fm_models(id) on delete restrict,
+  license_id        uuid not null,
+  model_id          uuid not null,
   vc_id             text not null unique,
   status            text not null default 'pending'
                       check (status in ('pending', 'processing', 'retry', 'revoked')),

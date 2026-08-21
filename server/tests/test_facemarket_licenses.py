@@ -895,6 +895,37 @@ def test_final_activation_different_concurrent_winner_queues_loser_vc(
     assert set(store["revocations"]) == {"vc:dev:1"}
 
 
+def test_final_activation_queues_vc_after_license_and_model_are_deleted(
+    biometric_fm, make_token, holder_stub
+):
+    client, store, _ = biometric_fm
+    enrollment_id = _seed_license_pending_enrollment(store)
+    deleted = {}
+
+    def delete_activation_rows():
+        deleted["license_id"] = store["licenses"][0]["id"]
+        deleted["model_id"] = store["models"][0]["id"]
+        store["licenses"].clear()
+        store["models"].clear()
+
+    holder_stub.after_issue = delete_activation_rows
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body(enrollment_id),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 409
+    assert store["licenses"] == []
+    assert store["models"] == []
+    assert store["revocations"]["vc:dev:1"] == {
+        "license_id": deleted["license_id"],
+        "model_id": deleted["model_id"],
+        "vc_id": "vc:dev:1",
+        "status": "pending",
+    }
+
+
 @pytest.mark.parametrize(
     "winner_vc,expected_revocations",
     [("vc:dev:1", set()), ("vc:other", {"vc:dev:1"})],

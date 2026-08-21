@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 from psycopg import AsyncConnection
-from psycopg.errors import CheckViolation, ForeignKeyViolation, UniqueViolation
+from psycopg.errors import CheckViolation, UniqueViolation
 from psycopg.rows import dict_row
 
 
@@ -96,14 +96,10 @@ def test_revocation_queue_is_durable_idempotent_and_service_private():
     schema = sql.split(
         "create table if not exists public.fm_vc_revocation_jobs (", 1
     )[1].split(");", 1)[0]
-    assert (
-        "license_id uuid not null references public.fm_licenses(id) on delete restrict"
-        in schema
-    )
-    assert (
-        "model_id uuid not null references public.fm_models(id) on delete restrict"
-        in schema
-    )
+    assert "license_id uuid not null" in schema
+    assert "model_id uuid not null" in schema
+    assert "references public.fm_licenses" not in schema
+    assert "references public.fm_models" not in schema
     assert "vc_id text not null unique" in schema
     assert "status in ('pending', 'processing', 'retry', 'revoked')" in schema
     assert "attempts integer not null default 0 check (attempts >= 0)" in schema
@@ -190,14 +186,27 @@ def test_migration_executes_twice_and_enforces_queue_contract():
                         "(license_id, model_id, vc_id) values (%s, %s, %s)",
                         (license_row["id"], model_id, vc_id),
                     )
-            with pytest.raises(ForeignKeyViolation):
-                async with conn.transaction():
-                    await conn.execute(
-                        "delete from fm_licenses where id = %s", (license_row["id"],)
-                    )
-            with pytest.raises(ForeignKeyViolation):
-                async with conn.transaction():
-                    await conn.execute("delete from fm_models where id = %s", (model_id,))
+            await conn.execute(
+                "delete from fm_licenses where id = %s", (license_row["id"],)
+            )
+            await conn.execute("delete from fm_models where id = %s", (model_id,))
+
+            retained = await conn.execute(
+                "select license_id, model_id from fm_vc_revocation_jobs "
+                "where vc_id = %s",
+                (vc_id,),
+            )
+            assert await retained.fetchone() == {
+                "license_id": license_row["id"],
+                "model_id": model_id,
+            }
+
+            late_job = await conn.execute(
+                "insert into fm_vc_revocation_jobs (license_id, model_id, vc_id) "
+                "values (%s, %s, %s) returning status, attempts",
+                (license_row["id"], model_id, f"vc-{uuid.uuid4()}"),
+            )
+            assert await late_job.fetchone() == {"status": "pending", "attempts": 0}
 
             rls = await conn.execute(
                 "select c.relrowsecurity from pg_class c "

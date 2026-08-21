@@ -747,8 +747,15 @@ async def _await_post_issue_finalization(awaitable):
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
         try:
-            await task
+            task.result()
         except Exception:
             logger.exception("post_issue_finalization_failed_after_cancellation")
         raise
