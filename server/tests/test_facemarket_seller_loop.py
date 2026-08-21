@@ -279,8 +279,70 @@ def test_verify_current_runtime_gate_fails_closed_without_holder(
     assert calls == []
 
 
-# ── resolve_project_license (no-op 가드) ─────────────────────────
+# ── persisted use-policy shape 가드 ─────────────────────────────
 
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        None,
+        CATEGORY,
+        (CATEGORY,),
+        {CATEGORY: True},
+        [CATEGORY, "unknown-category"],
+        [CATEGORY, facemarket.FORBIDDEN_BRAND_USE_CATEGORIES[0]],
+        [
+            CATEGORY,
+            facemarket.ALLOWED_BRAND_USE_CATEGORIES[1],
+            "unknown-category",
+        ],
+        [],
+    ],
+    ids=(
+        "none", "string", "tuple", "dict", "unknown", "cross-list", "mixed", "empty"
+    ),
+)
+def test_verify_rejects_malformed_allowed_policy_before_holder(monkeypatch, malformed):
+    calls = _patch_holder(monkeypatch, error=AssertionError("must not call Holder"))
+
+    with pytest.raises(facemarket.HTTPException) as exc:
+        asyncio.run(_verify(
+            _app("http://holder", required=True),
+            _valid_gate_row(allowed_use=malformed),
+        ))
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "license_use_not_allowed"
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        None,
+        facemarket.FORBIDDEN_BRAND_USE_CATEGORIES[0],
+        (facemarket.FORBIDDEN_BRAND_USE_CATEGORIES[0],),
+        {facemarket.FORBIDDEN_BRAND_USE_CATEGORIES[0]: True},
+        ["unknown-category"],
+        [facemarket.ALLOWED_BRAND_USE_CATEGORIES[1]],
+        [facemarket.FORBIDDEN_BRAND_USE_CATEGORIES[0], "unknown-category"],
+    ],
+    ids=("none", "string", "tuple", "dict", "unknown", "cross-list", "mixed"),
+)
+def test_verify_rejects_malformed_forbidden_policy_before_holder(monkeypatch, malformed):
+    calls = _patch_holder(monkeypatch, error=AssertionError("must not call Holder"))
+
+    with pytest.raises(facemarket.HTTPException) as exc:
+        asyncio.run(_verify(
+            _app("http://holder", required=True),
+            _valid_gate_row(forbidden_use=malformed),
+        ))
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "license_use_forbidden"
+    assert calls == []
+
+
+# ── resolve_project_license (no-op 가드) ─────────────────────────
 class _Cur:
     def __init__(self, store):
         self.store = store

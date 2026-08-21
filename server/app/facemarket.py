@@ -1869,14 +1869,31 @@ async def verify_license(
             status=409,
         )
     forbidden = license_row.get("forbidden_use")
-    if isinstance(forbidden, list) and category in forbidden:
+    if (
+        not isinstance(forbidden, list)
+        or any(
+            not isinstance(value, str)
+            or value not in FORBIDDEN_BRAND_USE_CATEGORIES
+            for value in forbidden
+        )
+        or category in forbidden
+    ):
         raise _err(
             "license_use_forbidden",
             "이 라이선스에서 금지된 사용 카테고리입니다.",
             status=409,
         )
     allowed = license_row.get("allowed_use")
-    if not isinstance(allowed, list) or category not in allowed:
+    if (
+        not isinstance(allowed, list)
+        or not allowed
+        or any(
+            not isinstance(value, str)
+            or value not in ALLOWED_BRAND_USE_CATEGORIES
+            for value in allowed
+        )
+        or category not in allowed
+    ):
         raise _err(
             "license_use_not_allowed",
             "이 라이선스에서 허용된 사용 카테고리가 아닙니다.",
