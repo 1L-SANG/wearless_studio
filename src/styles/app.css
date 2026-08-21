@@ -247,6 +247,9 @@ input, textarea, select { font-family: inherit; }
 .iconbtn:hover { color: var(--fg-1); box-shadow: var(--elev-card); }
 .iconbtn.sm { width: 28px; height: 28px; border-radius: var(--r-3); }
 .iconbtn.active { color: var(--fg-1); background: var(--bg-2); box-shadow: 0 0 0 1px var(--ring-strong); }
+.iconbtn[disabled] { opacity: .42; cursor: not-allowed; }
+.iconbtn[disabled]:hover { color: inherit; box-shadow: none; }
+.ms-btn[disabled] { opacity: .6; cursor: default; }
 
 /* ====================== FIELDS ====================== */
 .lbl { font-size: 13px; font-weight: 700; color: var(--fg-1); display: flex; align-items: center; gap: 6px; }

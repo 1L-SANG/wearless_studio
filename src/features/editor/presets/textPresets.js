@@ -13,6 +13,7 @@
    node --test 에서 직접 import 되므로 Vite 별칭(@/) 대신 상대 경로만 쓴다.
    ============================================================= */
 import { uid } from '../../../lib/ids.js';
+import { nearestWeight } from '../fontWeights.js';
 
 /* 위계를 만드는 속성만 프리셋이 소유한다. 폰트·정렬·기울임 등은 셀러 몫이라
    빠른 스타일 전환에서도 건드리지 않는다. */
@@ -106,8 +107,10 @@ export function quickStylePatch(key) {
 /* 실효값 비교 — 렌더러(Editor.jsx)의 기본값과 색상 UI의 대문자 저장
    (normalizeHexColor·hsvToHex)을 흡수한다. 화면에 같게 그려지면 같은 프리셋이다:
    행간 0(자동)과 명시된 size×1.4, '#0e0d14'와 '#0E0D14'는 같은 상태다. */
-const effectiveOf = (style, prop) => {
-  if (prop === 'weight') return style.weight || 400;
+const effectiveOf = (style, prop, font) => {
+  // 굵기는 "이 폰트가 실제로 줄 수 있는 값"끼리 비교한다. 큰 제목(600)을 Gowun Dodum 에 적용하면
+  // 패널이 400 으로 붙여 저장하는데, 프리셋의 600 과 날것으로 비교하면 칩이 영원히 안 켜진다.
+  if (prop === 'weight') return nearestWeight(font, style.weight || 400);
   if (prop === 'color') return String(style.color || TEXT_INK).toLowerCase();
   if (prop === 'lineHeight') return style.lineHeight || Math.round((style.size || 18) * 1.4);
   if (prop === 'tracking') return style.tracking || 0;
@@ -119,7 +122,7 @@ const effectiveOf = (style, prop) => {
 export function activeTextPreset(style) {
   if (!style) return null;
   const found = TEXT_PRESETS.find((p) => HIERARCHY_PROPS.every(
-    (prop) => effectiveOf(p.style, prop) === effectiveOf(style, prop)));
+    (prop) => effectiveOf(p.style, prop, style.font) === effectiveOf(style, prop, style.font)));
   return found ? found.key : null;
 }
 

@@ -348,10 +348,10 @@ export const FRAME_LIBRARY_ITEMS = [
       templateShape(182, 337, 638, 82, '#000000'),
       templateShape(205, 419, 590, 51, '#000000'),
       templateShape(182, 470, 638, 124, '#000000'),
-      templateText(305, 395, 310, 130, '30', { font: 'Roboto Mono', size: 120, weight: 900, color: '#ffffff', align: 'center' }),
-      templateText(590, 438, 105, 82, '%', { font: 'Roboto Mono', size: 68, weight: 900, color: '#ffffff', align: 'center' }),
+      templateText(305, 395, 310, 130, '30', { font: 'Roboto Mono', size: 120, weight: 600, color: '#ffffff', align: 'center' }),
+      templateText(590, 438, 105, 82, '%', { font: 'Roboto Mono', size: 68, weight: 600, color: '#ffffff', align: 'center' }),
       templateShape(695, 470, 190, 190, '#fff51d', { shape: 'circle', stroke: '#000000', strokeWidth: 7 }),
-      templateText(735, 512, 110, 108, 'P', { font: 'Roboto Mono', size: 92, weight: 700, align: 'center' }),
+      templateText(735, 512, 110, 108, 'P', { font: 'Roboto Mono', size: 92, weight: 600, align: 'center' }),
     ],
   }),
   kiwiTemplate({

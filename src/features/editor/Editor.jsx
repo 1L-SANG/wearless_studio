@@ -48,8 +48,9 @@ import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, isPhotoSlotElement, nor
 import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from '@/lib/imageTranscode.js';
 import { CONTENT_ROLES, SECTION_ROLES, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
 import { withStoryboardSpaceSetExamples } from '@/lib/storyboardSpaceSetCatalog.js';
+import { cssWeight } from '@/features/editor/fontWeights.js';
 
-const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)' };
+const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)', 'Gowun Dodum': 'var(--font-soft)' };
 
 /* 스냅 엔진 상시 on — 포인터 이동은 editorSnap, Moveable 리사이즈는 elementGuidelines를 쓴다.
    DEV 게이트 없이 prod 배포에서도 같은 기준으로 동작한다. */
@@ -515,7 +516,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
           <div ref={textRef} className="el-speech-bubble-copy" style={{
             position: 'absolute', left: fit.padX, top: fit.padTop,
             width: Math.max(1, el.w - fit.padX * 2), height: 'auto',
-            fontFamily: FONT_MAP[s.font] || 'var(--font-body)', fontSize: s.size, fontWeight: s.weight || 400,
+            fontFamily: FONT_MAP[s.font] || 'var(--font-body)', fontSize: s.size, fontWeight: cssWeight(s.font, s.weight),
             color: s.color || '#0e0d14', letterSpacing: s.tracking, textAlign: s.align || 'left',
             lineHeight: s.lineHeight ? s.lineHeight + 'px' : 1.4, whiteSpace: 'pre-wrap',
             overflowWrap: 'anywhere', opacity: s.opacity ?? 1,
@@ -545,7 +546,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       /* 높이는 항상 auto — 고정폭 텍스트도 크기를 키우면 상자가 따라 자라야 하고,
          저장되는 el.h는 위의 h 동기화 효과가 실제 렌더 높이로 맞춘다. */
       <div ref={ref} data-elid={el.id} className={cls(`el-text${editing ? ' editing' : ''}`)} style={{ ...base, height: 'auto',
-        fontFamily: FONT_MAP[s.font] || 'var(--font-body)', fontSize: s.size, fontWeight: s.weight || 400,
+        fontFamily: FONT_MAP[s.font] || 'var(--font-body)', fontSize: s.size, fontWeight: cssWeight(s.font, s.weight),
         color: s.color || '#0e0d14', letterSpacing: s.tracking, textAlign: s.align || 'left',
         lineHeight: s.lineHeight ? s.lineHeight + 'px' : 1.4, whiteSpace: 'pre-wrap', opacity: (el.opacity ?? 1) * (s.opacity ?? 1),
         background: hasBg ? s.bg : undefined, padding: hasBg ? '2px 8px' : undefined, borderRadius: hasBg ? 4 : undefined,
@@ -737,7 +738,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
       {textGhost && (
         <div className="text-drop-ghost" style={{
           left: textGhost.x, top: textGhost.y, width: textGhost.box.w, minHeight: textGhost.box.h,
-          fontSize: textGhost.box.style.size, fontWeight: textGhost.box.style.weight || 400,
+          fontSize: textGhost.box.style.size, fontWeight: cssWeight(textGhost.box.style.font, textGhost.box.style.weight),
           color: textGhost.box.style.color,
           lineHeight: textGhost.box.style.lineHeight ? `${textGhost.box.style.lineHeight}px` : 1.4,
         }}>{textGhost.box.text}</div>
