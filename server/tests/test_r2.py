@@ -4,7 +4,7 @@
 """
 
 import pytest
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, ConnectTimeoutError
 
 from app.r2 import R2Client, ai_key, ext_for_mime, upload_key
 
@@ -97,18 +97,43 @@ def _client_with_head(result) -> R2Client:
     return client
 
 
-def _head_error(code: str) -> ClientError:
-    return ClientError({"Error": {"Code": code}}, "HeadObject")
+def _head_error(code: str | None = None, status: int | None = None) -> ClientError:
+    response = {}
+    if code is not None:
+        response["Error"] = {"Code": code}
+    if status is not None:
+        response["ResponseMetadata"] = {"HTTPStatusCode": status}
+    return ClientError(response, "HeadObject")
 
 
-def test_head_returns_none_only_for_missing_object():
-    client = _client_with_head(_head_error("404"))
+@pytest.mark.parametrize(
+    "error",
+    [
+        _head_error("404"),
+        _head_error("NoSuchKey"),
+        _head_error("NotFound"),
+        _head_error(status=404),
+    ],
+)
+def test_head_returns_none_for_confirmed_missing_object(error):
+    client = _client_with_head(error)
 
     assert client.head("private/key") is None
 
 
-def test_head_raises_non_missing_r2_errors():
-    client = _client_with_head(_head_error("500"))
+@pytest.mark.parametrize(
+    "error",
+    [_head_error("AccessDenied", 403), _head_error("InternalError", 500), _head_error()],
+)
+def test_head_raises_for_unconfirmed_absence(error):
+    client = _client_with_head(error)
 
     with pytest.raises(ClientError):
+        client.head("private/key")
+
+
+def test_head_raises_botocore_transport_errors():
+    client = _client_with_head(ConnectTimeoutError(endpoint_url="https://r2.example"))
+
+    with pytest.raises(ConnectTimeoutError):
         client.head("private/key")

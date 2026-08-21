@@ -131,8 +131,10 @@ class R2Client:
         try:
             r = self._s3.head_object(Bucket=self._bucket, Key=key)
         except ClientError as exc:
-            code = str(exc.response.get("Error", {}).get("Code"))
-            if code in {"404", "NoSuchKey", "NotFound"}:
+            response = exc.response or {}
+            code = str((response.get("Error") or {}).get("Code") or "")
+            status = int((response.get("ResponseMetadata") or {}).get("HTTPStatusCode") or 0)
+            if status == 404 or code in {"404", "NoSuchKey", "NotFound"}:
                 return None
             raise
         return {"size": r["ContentLength"], "mime": r.get("ContentType")}
