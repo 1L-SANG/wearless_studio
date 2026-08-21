@@ -1,8 +1,8 @@
-"""FM-31 상세페이지 워커 — FaceMarket 라이선스 얼굴 주입 + AI 고지 분기.
+"""FM-31 상세페이지 워커 — FaceMarket 현재 증거 주입 + AI 고지 분기.
 
 제품 핵심("가짜 얼굴의 시대에 진짜를 공급")이 출력에서 성립하는지를 지킨다:
-잠긴 라이선스의 얼굴이 **실제로** 컷 생성 입력에 들어가고, 그 사실이 고지에 정확히 반영되며,
-라이선스 없는 기존 경로는 한 톨도 변하지 않는다(해커톤 필수 경로).
+큐에 고정된 모델·라이선스의 현재 얼굴 증거가 컷 생성 입력에 들어가고, 그 사실이 고지에
+정확히 반영되며, 라이선스 없는 기존 경로는 한 톨도 변하지 않는다(해커톤 필수 경로).
 """
 
 import asyncio
@@ -23,6 +23,8 @@ ENROLLMENT_ID = "33333333-3333-4333-8333-333333333333"
 CATEGORY = "일반 여성 의류"
 FACE_KEY = "faces/model-1/lic-1.png"
 FACE_BYTES = b"\x89PNG-FACE-BYTES"
+CURRENT_FACE_KEY = "current/face_front.png"
+CURRENT_GRID_KEY = "current/grid_sedcard.png"
 
 
 def _license_row(status="active", days_left=30, key=FACE_KEY, name="김하늘"):
@@ -76,6 +78,28 @@ def _patch_snapshot_denial(monkeypatch, row):
 
     monkeypatch.setattr(facemarket, "resolve_model_license", fake_resolve)
     monkeypatch.setattr(identity_source, "resolve_real_model_assets", forbidden_assets)
+    monkeypatch.setattr(dpj, "_load_license_face", forbidden_legacy)
+
+
+def _patch_snapshot_success(monkeypatch, row):
+    async def fake_resolve(conn, model_id, *, license_id=None):
+        assert model_id == MODEL_ID and license_id == LIC_ID
+        return row
+
+    async def fake_assets(conn, model_id, *, enrollment_id, evidence_version):
+        assert model_id == MODEL_ID
+        assert enrollment_id == ENROLLMENT_ID
+        assert evidence_version == "policy-v1"
+        return [
+            {"key": CURRENT_FACE_KEY, "mime": "image/png", "bucket": "face"},
+            {"key": CURRENT_GRID_KEY, "mime": "image/png", "bucket": "face"},
+        ]
+
+    async def forbidden_legacy(*args, **kwargs):
+        raise AssertionError("snapshot-backed REAL must not load face_image_key")
+
+    monkeypatch.setattr(facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(identity_source, "resolve_real_model_assets", fake_assets)
     monkeypatch.setattr(dpj, "_load_license_face", forbidden_legacy)
 
 
@@ -147,6 +171,16 @@ class _FaceR2:
         return None
 
 
+class _MainR2(FakeR2):
+    """공개 결과 버킷 기록기 — REAL 거부 시 출력이 생기지 않음을 단언한다."""
+
+    def __init__(self):
+        self.puts: list[str] = []
+
+    def put_bytes(self, key, data, mime, cache=None):
+        self.puts.append(key)
+
+
 def _app(
     license_row,
     *,
@@ -155,7 +189,7 @@ def _app(
     with_face_storage=True,
     vc_required=False,
 ):
-    main_r2 = FakeR2()
+    main_r2 = _MainR2()
     state = types.SimpleNamespace(
         settings=make_settings(
             gemini_api_key="x",
@@ -259,34 +293,44 @@ def test_facemarket_disabled_never_loads_face(monkeypatch):
 
 
 # ── 얼굴 주입 ────────────────────────────────────────────────────────────────
-def test_licensed_project_injects_face_into_cut_input(monkeypatch):
-    """제품 핵심: 잠긴 라이선스의 얼굴이 실제 생성 입력에 들어간다."""
+def test_snapshot_real_job_injects_current_evidence_into_cut_input(monkeypatch):
+    """큐에 고정된 실존 모델의 현재 증거 2장이 실제 생성 입력에 들어간다."""
     captured = {}
     _patch_inputs(monkeypatch, captured,
-                  project={"copywriting": False, "facemarket_license_id": LIC_ID})
-    app, main_r2 = _app(_license_row())
+                  project={"copywriting": False, "facemarket_license_id": "later-lock"})
+    row = _license_row()
+    app, main_r2 = _app(row)
+    _patch_snapshot_success(monkeypatch, row)
 
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+    asyncio.run(dpj.run_detail_page_job(app, _snapshot_job()))
 
     call = captured["calls"][0]
     assert call["has_face"] is True
-    # 얼굴 바이트가 실제 첨부됐고, 위치는 옷 근거 뒤(매니페스트와 lockstep)
-    assert [im.data for im in call["images"]] == [b"\x89PNG-bytes", FACE_BYTES]
-    assert call["images"][-1].mime == "image/png"   # 키 확장자 역매핑(fm_licenses 에 mime 컬럼 부재)
-    assert "MODEL FACE" in call["manifest"]
-    assert call["manifest"].index("PRODUCT") < call["manifest"].index("MODEL FACE")
-    # 얼굴은 **비공개** 버킷에서만 — 공개 메인 버킷으로 얼굴 키를 찾지 않는다
-    assert app.state.r2_face.gets == [FACE_KEY]
+    # 현재 얼굴·그리드가 상품 근거 앞에 매니페스트와 lockstep으로 붙는다.
+    assert [im.data for im in call["images"]] == [
+        FACE_BYTES,
+        FACE_BYTES,
+        b"\x89PNG-bytes",
+    ]
+    assert all(im.mime == "image/png" for im in call["images"][:2])
+    assert "MODEL — frontal close-up" in call["manifest"]
+    assert "MODEL SHEET" in call["manifest"]
+    assert call["manifest"].index("MODEL —") < call["manifest"].index("PRODUCT")
+    # 현재 증거는 **비공개** 버킷에서만 — 레거시 얼굴 키와 공개 버킷은 권한이 아니다.
+    assert app.state.r2_face.gets == [CURRENT_FACE_KEY, CURRENT_GRID_KEY]
+    assert FACE_KEY not in app.state.r2_face.gets
     assert FACE_KEY not in getattr(main_r2, "gets", [])
 
 
-def test_licensed_project_ai_notice_states_real_model(monkeypatch):
+def test_snapshot_real_job_notice_states_masked_model(monkeypatch):
     captured = {}
     _patch_inputs(monkeypatch, captured,
-                  project={"copywriting": False, "facemarket_license_id": LIC_ID})
-    app, _ = _app(_license_row(name="김하늘"))
+                  project={"copywriting": False, "facemarket_license_id": "later-lock"})
+    row = _license_row(name="김하늘")
+    app, _ = _app(row)
+    _patch_snapshot_success(monkeypatch, row)
 
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+    asyncio.run(dpj.run_detail_page_job(app, _snapshot_job()))
 
     # faceCuts/totalCuts 는 고지의 **범위 주장** 근거다 — assembler 가 이 둘로
     # '가상인물 아님'(전 컷) vs '일부 컷' 을 가른다.
@@ -295,24 +339,26 @@ def test_licensed_project_ai_notice_states_real_model(monkeypatch):
     }
 
 
-def test_face_is_attached_only_to_cuts_that_show_it(monkeypatch):
-    # product 컷(사람 금지)·거울샷 기본(폰이 가림)에는 얼굴을 붙이지 않는다.
+def test_snapshot_real_identity_is_attached_only_to_worn_cuts(monkeypatch):
+    # product 컷에는 인물 증거를 붙이지 않는다. 거울샷은 일관성 그리드만 쓰고 배지는 숨긴다.
     captured = {}
     _patch_inputs(monkeypatch, captured,
-                  project={"copywriting": False, "facemarket_license_id": LIC_ID},
+                  project={"copywriting": False, "facemarket_license_id": "later-lock"},
                   storyboard=[
                       {"id": "b1", "source": "ai", "cutType": "styling", "shot": "full"},
                       {"id": "b2", "source": "ai", "cutType": "product", "shot": "ghost"},
                       {"id": "b3", "source": "ai", "cutType": "mirror", "shot": "full"},
                   ])
-    app, _ = _app(_license_row())
+    row = _license_row()
+    app, _ = _app(row)
+    _patch_snapshot_success(monkeypatch, row)
 
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=3)))
+    asyncio.run(dpj.run_detail_page_job(app, _snapshot_job(reserved=3)))
 
     by_block = {c["block"]: c for c in captured["calls"]}
-    assert by_block["b1"]["has_face"] is True and len(by_block["b1"]["images"]) == 2
+    assert by_block["b1"]["has_face"] is True and len(by_block["b1"]["images"]) == 3
     assert by_block["b2"]["has_face"] is False and len(by_block["b2"]["images"]) == 1
-    assert by_block["b3"]["has_face"] is False and len(by_block["b3"]["images"]) == 1
+    assert by_block["b3"]["has_face"] is False and len(by_block["b3"]["images"]) == 3
     # 얼굴이 담긴 컷이 하나라도 성공했으므로 고지는 실제 모델 문구
     assert captured["license_notice"] is not None
 
@@ -327,30 +373,13 @@ def test_snapshot_real_job_uses_current_evidence_not_legacy_face_key(monkeypatch
     )
     row = _license_row(key=FACE_KEY)
     app, _ = _app(row)
-
-    async def fake_resolve(conn, model_id, *, license_id=None):
-        return row
-
-    async def fake_assets(conn, model_id, *, enrollment_id, evidence_version):
-        assert enrollment_id == ENROLLMENT_ID
-        assert evidence_version == "policy-v1"
-        return [
-            {"key": "current/face_front.png", "mime": "image/png", "bucket": "face"},
-            {"key": "current/grid_sedcard.png", "mime": "image/png", "bucket": "face"},
-        ]
-
-    async def forbidden_legacy(*args, **kwargs):
-        raise AssertionError("snapshot-backed REAL must not load face_image_key")
-
-    monkeypatch.setattr(facemarket, "resolve_model_license", fake_resolve)
-    monkeypatch.setattr(identity_source, "resolve_real_model_assets", fake_assets)
-    monkeypatch.setattr(dpj, "_load_license_face", forbidden_legacy)
+    _patch_snapshot_success(monkeypatch, row)
 
     asyncio.run(dpj.run_detail_page_job(app, _snapshot_job()))
 
     assert app.state.r2_face.gets == [
-        "current/face_front.png",
-        "current/grid_sedcard.png",
+        CURRENT_FACE_KEY,
+        CURRENT_GRID_KEY,
     ]
     assert FACE_KEY not in app.state.r2_face.gets
     assert captured.get("failure") is None
@@ -452,20 +481,23 @@ def test_invalid_or_revoked_vc_at_worker_time_fails_before_face_read(monkeypatch
         assert app.state.r2_face.gets == []
 
 
-# ── 우아한 강등 (잡 전체 실패 금지) ──────────────────────────────────────────
-def test_dangling_face_key_degrades_to_faceless_generation(monkeypatch):
-    """개인화 파기가 얼굴 R2 객체만 지우면 face_image_key 가 dangling 이 된다
-    (마이그레이션 주석의 '의도된 우아한 강등'). 잡은 죽지 않고 얼굴 없이 완료."""
+# ── 현재 실존 모델 자산 실패 = 무출력·전액 환불 ─────────────────────────────
+def test_unavailable_current_real_asset_fails_without_faceless_fallback(monkeypatch):
     captured = {}
     _patch_inputs(monkeypatch, captured,
-                  project={"copywriting": False, "facemarket_license_id": LIC_ID})
-    app, _ = _app(_license_row(), face_r2=_FaceR2(raises=True))
+                  project={"copywriting": False, "facemarket_license_id": "later-lock"})
+    row = _license_row(key=FACE_KEY)
+    app, main_r2 = _app(row, face_r2=_FaceR2(raises=True))
+    _patch_snapshot_success(monkeypatch, row)
 
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+    asyncio.run(dpj.run_detail_page_job(app, _snapshot_job(reserved=7)))
 
-    assert captured["calls"][0]["has_face"] is False
-    assert captured["license_notice"] is None
-    assert captured["charge"] == 1                      # 완료 — 잡 전체 실패가 아니다
+    assert captured.get("calls") is None
+    assert captured.get("license_notice") is None
+    assert captured.get("charge") is None
+    assert captured["failure"]["code"] == "model_assets_unavailable"
+    assert captured["failure"]["reserved"] == 7
+    assert main_r2.puts == []
 
 
 def test_missing_face_storage_degrades_without_public_bucket_fallback(monkeypatch):
@@ -485,20 +517,23 @@ def test_all_face_cuts_failing_fails_the_job_without_false_notice(monkeypatch):
     """얼굴 컷이 전부 실패하면 빈 페이지를 완료하지 않고 실패·환불한다."""
     captured = {}
     _patch_inputs(monkeypatch, captured,
-                  project={"copywriting": False, "facemarket_license_id": LIC_ID})
+                  project={"copywriting": False, "facemarket_license_id": "later-lock"})
 
     async def failing_gen(settings, gemini, cut_spec, product, images, *,
                           analysis=None, manifest=None, has_face=False):
         raise RuntimeError("gen fail")
 
     monkeypatch.setattr(dpj.cut_generator, "generate", failing_gen)
-    app, _ = _app(_license_row())
+    row = _license_row()
+    app, main_r2 = _app(row)
+    _patch_snapshot_success(monkeypatch, row)
 
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+    asyncio.run(dpj.run_detail_page_job(app, _snapshot_job()))
 
     assert "license_notice" not in captured             # 조립 전에 중단 → 허위 고지 없음
     assert captured["failure"]["code"] == "all_cuts_failed"
     assert captured["failure"]["reserved"] == 1        # 실패 종결에서 예약액 전부 환불
+    assert main_r2.puts == []
 
 
 # ── 옷 근거 가드가 얼굴로 우회되지 않는다 (ADR-0004) ─────────────────────────
@@ -507,27 +542,35 @@ def test_face_never_bypasses_garment_truth_guard(monkeypatch):
     앞이나 빈 리스트에 넣으면 `if not images` 가드가 무력화돼 옷 근거 0으로 생성이 돈다."""
     captured = {}
     _patch_inputs(monkeypatch, captured,
-                  project={"copywriting": False, "facemarket_license_id": LIC_ID},
+                  project={"copywriting": False, "facemarket_license_id": "later-lock"},
                   product={"clothing_type": "top", "colors": []})  # 상품 이미지 0 · 마네킹 없음
-    app, _ = _app(_license_row())
+    row = _license_row()
+    app, main_r2 = _app(row)
+    _patch_snapshot_success(monkeypatch, row)
 
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+    asyncio.run(dpj.run_detail_page_job(app, _snapshot_job()))
 
     assert captured.get("calls") is None                # 생성 호출 자체가 없어야 한다
     assert "license_notice" not in captured
     assert captured["failure"]["code"] == "all_cuts_failed"
+    assert captured["failure"]["reserved"] == 1
+    assert main_r2.puts == []
 
 
 # ── PII: 얼굴 바이트·키가 이벤트에 새지 않는다 ───────────────────────────────
 def test_face_bytes_and_key_never_appear_in_job_events(monkeypatch):
     captured = {}
     _patch_inputs(monkeypatch, captured,
-                  project={"copywriting": False, "facemarket_license_id": LIC_ID})
-    app, _ = _app(_license_row())
+                  project={"copywriting": False, "facemarket_license_id": "later-lock"})
+    row = _license_row()
+    app, _ = _app(row)
+    _patch_snapshot_success(monkeypatch, row)
 
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+    asyncio.run(dpj.run_detail_page_job(app, _snapshot_job()))
 
     blob = repr(captured["events"])
     assert FACE_KEY not in blob
+    assert CURRENT_FACE_KEY not in blob
+    assert CURRENT_GRID_KEY not in blob
     assert "PNG-FACE-BYTES" not in blob
     assert "faces/" not in blob

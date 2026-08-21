@@ -1,7 +1,7 @@
-"""AG-06 상세페이지 인물 일관성 — 폴백 해석과 워커 fail-open 회귀 테스트.
+"""AG-06 상세페이지 인물 일관성 — 가상 모델 폴백과 manifest fail-open 회귀 테스트.
 
-버그: 실존 모델을 골랐는데 facemarket off 라 해석 불가(select_source=VIRTUAL 이지만 가상 registry
-밖) → 참조 0장 → 컷마다 인물 랜덤. 폴백으로 전 컷 동일 인물 보장하는지 검증."""
+발행 registry 밖의 non-UUID 가상 모델은 결정적 가상 모델로 폴백할 수 있다. UUID 실존 모델은
+별도 REAL 권한 경로에서 fail-closed하며 이 폴백 경로에 들어오지 않는다."""
 
 import asyncio
 
@@ -24,10 +24,10 @@ def test_virtual_selection_honored():
     assert resolve_effective_model_id("mE", fallback_model_id="mB", virtual_ids=VIRT) == ("mE", False)
 
 
-def test_real_uuid_dropped_falls_back_and_warns():
-    # 실존 UUID(가상 밖) → 폴백 + substituted=True(경고 대상) = 버그의 핵심 케이스
+def test_unknown_virtual_id_falls_back_and_warns():
+    # 발행 registry 밖 non-UUID 가상 모델 → 폴백 + substituted=True(경고 대상)
     eff, sub = resolve_effective_model_id(
-        "d2e74c66-1ea9-4113-a260-eafec115f36f", fallback_model_id="mB", virtual_ids=VIRT)
+        "customVirtual", fallback_model_id="mB", virtual_ids=VIRT)
     assert eff == "mB" and sub is True
 
 
@@ -38,13 +38,13 @@ def test_none_selection_falls_back_silently():
 
 def test_empty_fallback_keeps_existing_behavior():
     # 폴백 비활성(빈 문자열) → 기존 동작 유지(치환 안 함)
-    assert resolve_effective_model_id("real-uuid", fallback_model_id="", virtual_ids=VIRT) == ("real-uuid", False)
+    assert resolve_effective_model_id("customVirtual", fallback_model_id="", virtual_ids=VIRT) == ("customVirtual", False)
     assert resolve_effective_model_id(None, fallback_model_id="", virtual_ids=VIRT) == (None, False)
 
 
 def test_invalid_fallback_id_no_substitution():
     # 폴백 id 가 registry 밖이면 폴백 불가 → 기존 동작
-    assert resolve_effective_model_id("real-uuid", fallback_model_id="mZ", virtual_ids=VIRT) == ("real-uuid", False)
+    assert resolve_effective_model_id("customVirtual", fallback_model_id="mZ", virtual_ids=VIRT) == ("customVirtual", False)
 
 
 def _patch_worker(monkeypatch, captured):
@@ -61,7 +61,7 @@ def _patch_worker(monkeypatch, captured):
         }
 
     async def fake_analysis(conn, project_id):
-        return {"selectedModelId": "real-uuid"}
+        return {"selectedModelId": "mutable-analysis-must-not-win"}
 
     async def fake_asset(conn, user_id, asset_id):
         return {"mime_type": "image/png", "r2_key": "products/front.png"}
@@ -115,14 +115,17 @@ def test_worker_disabled_fallback_survives_unavailable_manifest(monkeypatch):
         detailpage_fallback_model_id="",
     ))
 
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+    asyncio.run(dpj.run_detail_page_job(
+        app,
+        worker_job({"mode": "generate", "modelId": "customVirtual"}, credits_reserved=1),
+    ))
 
     # 폴백 판정용 선행 로드는 하지 않는다. 이후 기존 가상 자산 resolver가 한 번 읽고
     # 자체 fail-open 처리하는 것은 정상 경로다.
     assert captured["registry_reads"] == 1
     assert "failure" not in captured
     assert captured["success"]["charge"] == 1
-    assert captured["cut_spec"]["modelId"] == "real-uuid"
+    assert captured["cut_spec"]["modelId"] == "customVirtual"
 
 
 def test_worker_missing_manifest_keeps_selected_model_without_substitution(monkeypatch):
@@ -141,13 +144,16 @@ def test_worker_missing_manifest_keeps_selected_model_without_substitution(monke
         detailpage_fallback_model_id="mB",
     ))
 
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+    asyncio.run(dpj.run_detail_page_job(
+        app,
+        worker_job({"mode": "generate", "modelId": "customVirtual"}, credits_reserved=1),
+    ))
 
     # 폴백 판정 1회 + 기존 가상 자산 resolver 1회. 둘 다 예외를 전파하지 않는다.
     assert captured["registry_reads"] == 2
     assert "failure" not in captured
     assert captured["success"]["charge"] == 1
-    assert captured["cut_spec"]["modelId"] == "real-uuid"
+    assert captured["cut_spec"]["modelId"] == "customVirtual"
 
 
 def test_worker_survives_malformed_manifest_encoding(monkeypatch):
@@ -168,11 +174,14 @@ def test_worker_survives_malformed_manifest_encoding(monkeypatch):
         detailpage_fallback_model_id="mB",
     ))
 
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+    asyncio.run(dpj.run_detail_page_job(
+        app,
+        worker_job({"mode": "generate", "modelId": "customVirtual"}, credits_reserved=1),
+    ))
 
     assert "failure" not in captured            # 잡 안 죽음
     assert captured["success"]["charge"] == 1
-    assert captured["cut_spec"]["modelId"] == "real-uuid"  # 폴백만 스킵, 기존 동작 유지
+    assert captured["cut_spec"]["modelId"] == "customVirtual"  # 폴백만 스킵, 기존 동작 유지
 # --- REAL 소스 identity 첨부 계획 (A4: mirror/back 참조 0장 회귀 방지) ---
 
 def test_real_face_shown_cut_attaches_grid_and_badge():
@@ -203,10 +212,10 @@ def test_real_unknown_cut_no_grid():
     assert real_identity_plan("bogus", wants_face=True) == (False, False)
 
 
-# --- prod 안전망: 착용컷 인물참조 0장 → 결정적 폴백 (REJECTED·REAL 로드실패) ---
+# --- 가상모델 안전망: 착용컷 인물참조 0장 → 결정적 폴백 ---
 
 def test_fallback_when_worn_cut_has_no_identity():
-    # REJECTED(무라이선스 실모델) 또는 REAL grid 로드 실패 → 착용컷 참조 0장 → 폴백 필요
+    # VIRTUAL registry 자산 없음 → 착용컷 참조 0장 → 폴백 필요
     assert needs_identity_fallback(cut_type="styling", has_model_images=False, face_slot=False) is True
     assert needs_identity_fallback(cut_type="mirror", has_model_images=False, face_slot=False) is True
     assert needs_identity_fallback(cut_type="horizon", has_model_images=False, face_slot=False) is True
