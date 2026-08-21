@@ -31,7 +31,7 @@ from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
 from pydantic import Field, ValidationError
 
-from . import cx_identity
+from . import cx_identity, holder_client
 from . import repo
 from .auth import require_user
 from .db import get_conn
@@ -608,11 +608,161 @@ def _checked_license_evidence(row: dict | None) -> tuple[str, str, str]:
     return str(row["model_id"]), row["front_key"], row["front_digest"]
 
 
+async def _enqueue_issued_vc_revocation(connect, *, license_id, model_id, vc_id) -> None:
+    async with connect() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """insert into fm_vc_revocation_jobs (license_id, model_id, vc_id)
+                   values (%s, %s, %s)
+                   on conflict (vc_id) do nothing""",
+                (license_id, model_id, vc_id),
+            )
+        await conn.commit()
+
+
+def _license_card(row: dict) -> dict:
+    return {key: row[key] for key in LicenseCard.model_fields}
+
+
+async def finalize_issued_face_vc(
+    connect,
+    *,
+    user_id,
+    license_id,
+    model_id,
+    enrollment_id,
+    issued,
+) -> dict:
+    """Bind one issued VC to current biometric evidence or durably revoke the loser."""
+    stale_error = None
+    winner = None
+    model_id = str(model_id)
+    async with connect() as conn:
+        try:
+            locked = await _find_license_for_update(conn, user_id, license_id)
+            if locked is None or str(locked.get("enrollment_id") or "") != enrollment_id:
+                raise _err(
+                    "license_activation_stale",
+                    "라이선스 활성화 상태가 변경되었습니다.",
+                    status=409,
+                )
+            if locked["status"] == "active":
+                winner = _license_card(locked)
+                await conn.commit()
+            elif locked["status"] != "pending" or locked.get("vc_id") is not None:
+                raise _err(
+                    "license_activation_stale",
+                    "라이선스 활성화 상태가 변경되었습니다.",
+                    status=409,
+                )
+            else:
+                evidence = await _load_activation_evidence_for_update(
+                    conn, user_id, license_id, enrollment_id
+                )
+                model_id, key, fresh_digest = _checked_license_evidence(evidence)
+                if evidence["model_status"] not in {"pending", "reverification_required"}:
+                    raise _err(
+                        "model_not_activatable",
+                        "활성화 가능한 모델 상태가 아닙니다.",
+                        status=409,
+                    )
+                if (
+                    locked["face_image_key"] != key
+                    or locked["face_image_digest"] != fresh_digest
+                ):
+                    raise _err(
+                        "license_activation_stale",
+                        "라이선스 활성화 상태가 변경되었습니다.",
+                        status=409,
+                    )
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        f"""update fm_licenses set status = 'active', vc_id = %s
+                            where id = %s and status = 'pending' and vc_id is null
+                            returning {_LICENSE_CARD_COLS}""",
+                        (issued.vc_id, license_id),
+                    )
+                    active = await cur.fetchone()
+                    await cur.execute(
+                        """update fm_models set status = 'verified',
+                                  did = coalesce(nullif(did, ''), %s)
+                            where id = %s and current_enrollment_id = %s
+                              and status in ('pending', 'reverification_required')
+                            returning id""",
+                        (issued.user_did, model_id, enrollment_id),
+                    )
+                    model_updated = await cur.fetchone()
+                    await cur.execute(
+                        """update fm_biometric_enrollments
+                              set status = 'passed', decision = 'passed',
+                                  vc_id = %s, completed_at = now()
+                            where id = %s and status = 'vc_pending'
+                            returning id""",
+                        (issued.vc_id, enrollment_id),
+                    )
+                    enrollment_updated = await cur.fetchone()
+                if active is None or model_updated is None or enrollment_updated is None:
+                    raise _err(
+                        "license_activation_stale",
+                        "라이선스 활성화 상태가 변경되었습니다.",
+                        status=409,
+                    )
+                await conn.commit()
+                return active
+        except HTTPException as error:
+            await conn.rollback()
+            stale_error = error
+        except Exception:
+            await conn.rollback()
+            raise
+
+    if winner is None and stale_error is not None:
+        async with connect() as conn:
+            current = await _find_license_for_update(conn, user_id, license_id)
+            if current is not None and current["status"] == "active":
+                winner = _license_card(current)
+            await conn.commit()
+
+    if winner is not None:
+        if winner.get("vc_id") != issued.vc_id:
+            await _enqueue_issued_vc_revocation(
+                connect,
+                license_id=license_id,
+                model_id=model_id,
+                vc_id=issued.vc_id,
+            )
+        return winner
+
+    await _enqueue_issued_vc_revocation(
+        connect,
+        license_id=license_id,
+        model_id=model_id,
+        vc_id=issued.vc_id,
+    )
+    raise stale_error
+
+
+async def _await_post_issue_finalization(awaitable):
+    task = asyncio.create_task(awaitable)
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        try:
+            await task
+        except Exception:
+            logger.exception("post_issue_finalization_failed_after_cancellation")
+        raise
+
+
 @router.post(
     "/licenses",
     response_model=LicenseCard,
     status_code=201,
-    responses={**_FM_RESPONSES, 502: {"model": ErrorResponse, "description": "VC 발급 지연"}},
+    responses={
+        **_FM_RESPONSES,
+        502: {"model": ErrorResponse, "description": "VC 발급 계약 오류"},
+        503: {"model": ErrorResponse, "description": "VC 발급 지연"},
+    },
     tags=["FaceMarket"],
     summary="등록 증거 기반 얼굴 라이선스 생성",
 )
@@ -709,72 +859,32 @@ async def create_license(
             allowed=allowed, forbidden=forbidden, unit_price=unit_price,
             valid_until=valid_until, digest=digest,
         )
-    except FaceVcIssueError:
-        raise _err("vc_issue_delayed", "VC 발급이 지연되었습니다. 잠시 후 다시 시도해 주세요.", status=502)
+    except FaceVcIssueError as error:
+        raise _err(
+            "vc_issue_delayed",
+            "VC 발급이 지연되었습니다. 잠시 후 다시 시도해 주세요.",
+            status=error.status_code,
+        )
 
-    async with get_conn(request) as conn:
-        try:
-            locked = await _find_license_for_update(conn, user_id, license_id)
-            if locked is None or str(locked.get("enrollment_id") or "") != enrollment_id:
-                await conn.rollback()
-                raise _err("license_activation_stale", "라이선스 활성화 상태가 변경되었습니다.", status=409)
-            if locked["status"] == "active":
-                await conn.commit()
-                return {k: locked[k] for k in LicenseCard.model_fields}
-            if locked["status"] != "pending":
-                await conn.rollback()
-                raise _err("license_activation_stale", "라이선스 활성화 상태가 변경되었습니다.", status=409)
-
-            evidence = await _load_activation_evidence_for_update(
-                conn, user_id, license_id, enrollment_id
+    try:
+        return await _await_post_issue_finalization(
+            finalize_issued_face_vc(
+                lambda: get_conn(request),
+                user_id=user_id,
+                license_id=license_id,
+                model_id=model_id,
+                enrollment_id=enrollment_id,
+                issued=issued,
             )
-            try:
-                model_id, key, fresh_digest = _checked_license_evidence(evidence)
-            except HTTPException:
-                await conn.rollback()
-                raise
-            if evidence["model_status"] not in {"pending", "reverification_required"}:
-                await conn.rollback()
-                raise _err("model_not_activatable", "활성화 가능한 모델 상태가 아닙니다.", status=409)
-            if locked["face_image_key"] != key or locked["face_image_digest"] != fresh_digest:
-                await conn.rollback()
-                raise _err("license_activation_stale", "라이선스 활성화 상태가 변경되었습니다.", status=409)
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    f"""update fm_licenses set status = 'active', vc_id = %s
-                        where id = %s and status = 'pending'
-                        returning {_LICENSE_CARD_COLS}""",
-                    (issued.vc_id, license_id),
-                )
-                active = await cur.fetchone()
-                await cur.execute(
-                        """update fm_models set status = 'verified',
-                              did = coalesce(nullif(did, ''), %s)
-                        where id = %s and current_enrollment_id = %s
-                          and status in ('pending', 'reverification_required')
-                        returning id""",
-                    (issued.user_did, model_id, enrollment_id),
-                )
-                model_updated = await cur.fetchone()
-                await cur.execute(
-                    """update fm_biometric_enrollments
-                          set status = 'passed', decision = 'passed',
-                              vc_id = %s, completed_at = now()
-                        where id = %s and status = 'vc_pending'
-                        returning id""",
-                    (issued.vc_id, enrollment_id),
-                )
-                enrollment_updated = await cur.fetchone()
-            if active is None or model_updated is None or enrollment_updated is None:
-                await conn.rollback()
-                existing = await _find_license_by_enrollment(conn, user_id, enrollment_id)
-                if existing and existing["status"] == "active":
-                    return existing
-                raise _err("license_activation_stale", "라이선스 활성화 상태가 변경되었습니다.", status=409)
-            await conn.commit()
-            return active
-        except HTTPException:
-            raise
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        raise _err(
+            "vc_issue_delayed",
+            "VC 발급이 지연되었습니다. 잠시 후 다시 시도해 주세요.",
+            status=503,
+        )
 
 
 @router.get(
@@ -1471,9 +1581,10 @@ class FaceVcIssueResult:
 
 
 class FaceVcIssueError(RuntimeError):
-    def __init__(self, code: str):
+    def __init__(self, code: str, *, status_code: int):
         super().__init__(code)
         self.code = code
+        self.status_code = status_code
 
 
 def build_face_vc_claims(*, allowed, forbidden, unit_price, valid_until, digest) -> dict:
@@ -1489,50 +1600,73 @@ def build_face_vc_claims(*, allowed, forbidden, unit_price, valid_until, digest)
 
 async def issue_face_vc(app, *, license_id, model_id, allowed, forbidden,
                         unit_price, valid_until, digest) -> FaceVcIssueResult:
-    base = app.state.settings.opendid_holder_url
-    if not base:
-        raise FaceVcIssueError("holder_unavailable")
-    headers = {"Idempotency-Key": f"fm-license:{license_id}"}
+    base = getattr(app.state.settings, "opendid_holder_url", None)
+    secret = getattr(app.state.settings, "opendid_holder_hmac_secret", None)
+    if not base or not base.strip() or not secret or not secret.strip():
+        raise FaceVcIssueError("holder_unavailable", status_code=503)
+
+    async def checked_post(client, path, payload, accepted):
+        response = await holder_client.post(
+            client,
+            base_url=base,
+            secret=secret,
+            path=path,
+            payload=payload,
+        )
+        if response.status_code not in accepted:
+            status = 503 if response.status_code >= 500 else 502
+            raise FaceVcIssueError("vc_issue_delayed", status_code=status)
+        return response
+
     try:
         async with httpx.AsyncClient(timeout=_HOLDER_TIMEOUT) as client:
-            wallet = await client.post(f"{base}/holder/models/{model_id}/wallet", headers=headers)
-            if wallet.status_code not in (200, 409):
-                raise FaceVcIssueError("holder_wallet_failed")
-            register = await client.post(
-                f"{base}/holder/models/{model_id}/register-did", headers=headers
+            await checked_post(
+                client, f"/holder/models/{model_id}/wallet", {}, {201, 409}
             )
-            if register.status_code != 200:
-                raise FaceVcIssueError("holder_register_failed")
+            register = await checked_post(
+                client, f"/holder/models/{model_id}/register-did", {}, {200}
+            )
             register_body = register.json()
             if not isinstance(register_body, Mapping):
-                raise FaceVcIssueError("holder_register_malformed")
+                raise FaceVcIssueError("vc_issue_delayed", status_code=502)
             user_did = register_body.get("userDid")
-            if not register_body.get("flowAComplete") and not user_did:
-                raise FaceVcIssueError("holder_register_incomplete")
-            issue = await client.post(
-                f"{base}/holder/models/{model_id}/issue-vc",
-                headers=headers,
-                json={
+            if user_did is not None and (
+                not isinstance(user_did, str) or not user_did.strip()
+            ):
+                raise FaceVcIssueError("vc_issue_delayed", status_code=502)
+            if register_body.get("flowAComplete") is not True and not user_did:
+                raise FaceVcIssueError("vc_issue_delayed", status_code=502)
+            issue = await checked_post(
+                client,
+                f"/holder/models/{model_id}/issue-vc",
+                {
                     "plan": "facelicense",
+                    "idempotencyKey": f"fm-license:{license_id}",
                     "claims": build_face_vc_claims(
                         allowed=allowed, forbidden=forbidden, unit_price=unit_price,
                         valid_until=valid_until, digest=digest,
                     ),
                 },
+                {200},
             )
-            if issue.status_code != 200:
-                raise FaceVcIssueError("holder_issue_failed")
             issue_body = issue.json()
             if not isinstance(issue_body, Mapping):
-                raise FaceVcIssueError("holder_issue_malformed")
+                raise FaceVcIssueError("vc_issue_delayed", status_code=502)
             vc_id = issue_body.get("vcId")
-            if not isinstance(vc_id, str) or not vc_id:
-                raise FaceVcIssueError("holder_issue_incomplete")
+            if not isinstance(vc_id, str) or not vc_id.strip():
+                raise FaceVcIssueError("vc_issue_delayed", status_code=502)
+            issue_user_did = issue_body.get("userDid")
+            if issue_user_did is not None and (
+                not isinstance(issue_user_did, str) or not issue_user_did.strip()
+            ):
+                raise FaceVcIssueError("vc_issue_delayed", status_code=502)
     except FaceVcIssueError:
         raise
+    except httpx.TransportError as exc:
+        raise FaceVcIssueError("vc_issue_delayed", status_code=503) from exc
     except Exception as exc:
-        raise FaceVcIssueError("holder_malformed_response") from exc
-    return FaceVcIssueResult(vc_id=vc_id, user_did=issue_body.get("userDid") or user_did)
+        raise FaceVcIssueError("vc_issue_delayed", status_code=502) from exc
+    return FaceVcIssueResult(vc_id=vc_id.strip(), user_did=issue_user_did or user_did)
 
 
 # ============================================================================
@@ -1617,8 +1751,8 @@ async def verify_license(app, license_row: dict) -> None:
       1. status == 'revoked'   → 409 license_revoked
       1'. status != 'active'   → 409 license_inactive (suspended 등)
       2. license_valid_until <= now → 409 license_expired
-      3. [FULL] 홀더 라이브 VC 검증(status != 'valid') → 409 license_unverified
-    3번은 best-effort: 홀더 미설정·vc_id 미발급(비동기)·홀더 불통이면 SKIP(막지 않음).
+      3. mandatory VC 누락/invalid/revoked → 409, Holder 장애/계약 오류 → 503
+    optional 개발 모드는 Holder 설정 또는 VC가 없을 때만 로컬 검사로 끝낸다.
     """
     status = license_row.get("status")
     if status == "revoked":
@@ -1637,22 +1771,70 @@ async def verify_license(app, license_row: dict) -> None:
             status=409,
         )
 
-    # [FULL] 온체인 VC 라이브 검증(선택과제). 홀더가 응답하고 status != valid 일 때만 차단.
-    # 홀더 미설정/vc_id 미발급/불통 → 판정 skip(로컬 status·만료 검사로 충분).
+    required = bool(getattr(app.state.settings, "fm_vc_required", False))
     base = getattr(app.state.settings, "opendid_holder_url", None)
+    secret = getattr(app.state.settings, "opendid_holder_hmac_secret", None)
     vc_id = license_row.get("vc_id")
-    if not base or not vc_id:
+    if required and not vc_id:
+        raise _err(
+            "license_unverified",
+            "라이선스 자격 증명(VC)이 준비되지 않았습니다.",
+            status=409,
+        )
+    if required and (
+        not base or not base.strip() or not secret or not secret.strip()
+    ):
+        raise _err(
+            "holder_unavailable",
+            "라이선스 자격 증명 확인 서비스를 사용할 수 없습니다.",
+            status=503,
+        )
+    if (
+        not base
+        or not base.strip()
+        or not secret
+        or not secret.strip()
+        or not vc_id
+    ):
         return
-    verify_result = None
     try:
         async with httpx.AsyncClient(timeout=_HOLDER_VERIFY_TIMEOUT) as client:
-            resp = await client.post(f"{base}/holder/vc/verify", json={"vcId": vc_id})
-        if resp.status_code == 200:
-            verify_result = resp.json()
+            response = await holder_client.post(
+                client,
+                base_url=base,
+                secret=secret,
+                path="/holder/vc/verify",
+                payload={"vcId": vc_id},
+            )
     except Exception:
-        logger.warning("holder_vc_verify_unreachable", extra={"vc_id": vc_id})
-    if verify_result is not None and (
-        verify_result.get("verified") is False
+        logger.warning("holder_vc_verify_unreachable")
+        raise _err(
+            "holder_unavailable",
+            "라이선스 자격 증명 확인 서비스를 사용할 수 없습니다.",
+            status=503,
+        )
+    if response.status_code != 200:
+        raise _err(
+            "holder_unavailable",
+            "라이선스 자격 증명 확인 서비스를 사용할 수 없습니다.",
+            status=503,
+        )
+    try:
+        verify_result = response.json()
+    except Exception:
+        raise _err(
+            "holder_unavailable",
+            "라이선스 자격 증명 확인 서비스를 사용할 수 없습니다.",
+            status=503,
+        )
+    if not isinstance(verify_result, Mapping):
+        raise _err(
+            "holder_unavailable",
+            "라이선스 자격 증명 확인 서비스를 사용할 수 없습니다.",
+            status=503,
+        )
+    if (
+        verify_result.get("verified") is not True
         or verify_result.get("status") != "valid"
     ):
         raise _err(

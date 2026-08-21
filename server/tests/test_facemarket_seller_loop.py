@@ -10,10 +10,11 @@ import contextlib
 import types
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app import facemarket
+from app import facemarket, holder_client
 from app.main import create_app
 from conftest import make_settings
 
@@ -22,10 +23,14 @@ FUTURE = NOW + timedelta(days=30)
 PAST = NOW - timedelta(days=1)
 
 
-def _app(opendid_holder_url=None):
+def _app(opendid_holder_url=None, *, required=False, secret="shared-secret"):
     return types.SimpleNamespace(
         state=types.SimpleNamespace(
-            settings=types.SimpleNamespace(opendid_holder_url=opendid_holder_url)
+            settings=types.SimpleNamespace(
+                fm_vc_required=required,
+                opendid_holder_url=opendid_holder_url,
+                opendid_holder_hmac_secret=secret,
+            )
         )
     )
 
@@ -67,70 +72,139 @@ def test_verify_naive_datetime_treated_as_utc():
 
 
 class _FakeResp:
-    def __init__(self, status_code, payload):
+    def __init__(self, status_code, payload, *, json_error=None):
         self.status_code = status_code
         self._payload = payload
+        self._json_error = json_error
 
     def json(self):
+        if self._json_error:
+            raise self._json_error
         return self._payload
 
 
-class _FakeClient:
-    def __init__(self, resp=None, boom=False):
-        self._resp = resp
-        self._boom = boom
+def _patch_holder(monkeypatch, resp=None, error=None):
+    calls = []
 
-    async def __aenter__(self):
-        return self
+    async def fake_post(_client, **kwargs):
+        calls.append(kwargs)
+        if error:
+            raise error
+        return resp
 
-    async def __aexit__(self, *exc):
-        return False
-
-    async def post(self, url, json=None):
-        if self._boom:
-            raise RuntimeError("holder down")
-        return self._resp
-
-
-def _patch_holder(monkeypatch, resp=None, boom=False):
-    monkeypatch.setattr(
-        facemarket.httpx, "AsyncClient", lambda *a, **k: _FakeClient(resp, boom)
-    )
+    monkeypatch.setattr(holder_client, "post", fake_post)
+    return calls
 
 
 def test_verify_holder_revoked_raises_license_unverified(monkeypatch):
     _patch_holder(monkeypatch, _FakeResp(200, {"verified": True, "status": "revoked"}))
     row = {"status": "active", "license_valid_until": FUTURE, "vc_id": "vc-1"}
     with pytest.raises(facemarket.HTTPException) as ei:
-        asyncio.run(facemarket.verify_license(_app("http://holder"), row))
+        asyncio.run(facemarket.verify_license(_app("http://holder", required=True), row))
     assert ei.value.status_code == 409 and ei.value.detail["code"] == "license_unverified"
 
 
 def test_verify_holder_valid_passes(monkeypatch):
-    _patch_holder(monkeypatch, _FakeResp(200, {"verified": True, "status": "valid"}))
+    calls = _patch_holder(
+        monkeypatch,
+        _FakeResp(200, {"verified": True, "status": "valid", "onChain": True}),
+    )
     row = {"status": "active", "license_valid_until": FUTURE, "vc_id": "vc-1"}
-    assert asyncio.run(facemarket.verify_license(_app("http://holder"), row)) is None
+    assert asyncio.run(
+        facemarket.verify_license(_app("http://holder", required=True), row)
+    ) is None
+    assert calls == [{
+        "base_url": "http://holder",
+        "secret": "shared-secret",
+        "path": "/holder/vc/verify",
+        "payload": {"vcId": "vc-1"},
+    }]
 
 
-def test_verify_holder_unreachable_skips_arm(monkeypatch):
-    # 홀더 불통(best-effort) → 라이브 arm skip → 로컬 검사만으로 통과.
-    _patch_holder(monkeypatch, boom=True)
+@pytest.mark.parametrize(
+    "error",
+    [httpx.ConnectError("holder down"), httpx.TimeoutException("holder timeout")],
+)
+def test_required_verify_holder_transport_failure_is_503(monkeypatch, error):
+    _patch_holder(monkeypatch, error=error)
     row = {"status": "active", "license_valid_until": FUTURE, "vc_id": "vc-1"}
-    assert asyncio.run(facemarket.verify_license(_app("http://holder"), row)) is None
+    with pytest.raises(facemarket.HTTPException) as ei:
+        asyncio.run(facemarket.verify_license(_app("http://holder", required=True), row))
+    assert ei.value.status_code == 503
+    assert ei.value.detail["code"] == "holder_unavailable"
 
 
-def test_verify_holder_set_but_no_vc_skips_arm(monkeypatch):
-    # vc_id 미발급(비동기 발급 대기) → 라이브 arm skip(막지 않음).
-    called = {"n": 0}
-
-    def _boom_client(*a, **k):
-        called["n"] += 1
-        return _FakeClient(boom=True)
-
-    monkeypatch.setattr(facemarket.httpx, "AsyncClient", _boom_client)
+def test_required_verify_without_vc_is_409(monkeypatch):
+    calls = _patch_holder(monkeypatch, error=AssertionError("must not call Holder"))
     row = {"status": "active", "license_valid_until": FUTURE, "vc_id": None}
-    assert asyncio.run(facemarket.verify_license(_app("http://holder"), row)) is None
-    assert called["n"] == 0  # vc 없으면 홀더 호출 자체를 안 한다
+    with pytest.raises(facemarket.HTTPException) as ei:
+        asyncio.run(facemarket.verify_license(_app("http://holder", required=True), row))
+    assert ei.value.status_code == 409
+    assert ei.value.detail["code"] == "license_unverified"
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "app",
+    [
+        _app(None, required=True),
+        _app(" ", required=True),
+        _app("http://holder", required=True, secret=None),
+        _app("http://holder", required=True, secret=" "),
+    ],
+)
+def test_required_verify_missing_runtime_config_is_503(monkeypatch, app):
+    calls = _patch_holder(monkeypatch, error=AssertionError("must not call Holder"))
+    row = {"status": "active", "license_valid_until": FUTURE, "vc_id": "vc-1"}
+    with pytest.raises(facemarket.HTTPException) as ei:
+        asyncio.run(facemarket.verify_license(app, row))
+    assert ei.value.status_code == 503
+    assert ei.value.detail["code"] == "holder_unavailable"
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        _FakeResp(500, {}),
+        _FakeResp(401, {}),
+        _FakeResp(200, []),
+        _FakeResp(200, None),
+        _FakeResp(200, {}, json_error=ValueError("bad json")),
+    ],
+)
+def test_required_verify_non_200_or_malformed_is_503(monkeypatch, response):
+    _patch_holder(monkeypatch, response)
+    row = {"status": "active", "license_valid_until": FUTURE, "vc_id": "vc-1"}
+    with pytest.raises(facemarket.HTTPException) as ei:
+        asyncio.run(facemarket.verify_license(_app("http://holder", required=True), row))
+    assert ei.value.status_code == 503
+    assert ei.value.detail["code"] == "holder_unavailable"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"verified": False, "status": "valid"},
+        {"verified": True, "status": "revoked"},
+        {"verified": True, "status": "unknown"},
+        {"verified": "true", "status": "valid"},
+        {"verified": True, "status": "VALID"},
+        {},
+    ],
+)
+def test_required_verify_non_valid_credential_is_409(monkeypatch, payload):
+    _patch_holder(monkeypatch, _FakeResp(200, payload))
+    row = {"status": "active", "license_valid_until": FUTURE, "vc_id": "vc-1"}
+    with pytest.raises(facemarket.HTTPException) as ei:
+        asyncio.run(facemarket.verify_license(_app("http://holder", required=True), row))
+    assert ei.value.status_code == 409
+    assert ei.value.detail["code"] == "license_unverified"
+
+
+def test_optional_dev_mode_preserves_local_only_behavior():
+    row = {"status": "active", "license_valid_until": FUTURE, "vc_id": None}
+    assert asyncio.run(facemarket.verify_license(_app(required=False), row)) is None
 
 
 # ── resolve_project_license (no-op 가드) ─────────────────────────

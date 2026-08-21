@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from app import facemarket
+from app import facemarket, holder_client
 from app import facemarket_enrollment
 from app.main import create_app
 from conftest import make_settings
@@ -222,6 +222,10 @@ class FakeCursor:
                 self.rowcount = 0
         elif s.startswith("update fm_models set status = 'verified'"):
             user_did, model_id, enrollment_id = params[:3]
+            if self.store.get("final_model_update_misses"):
+                self._result = None
+                self.rowcount = 0
+                return
             m = next(
                 (r for r in models
                  if r["id"] == model_id
@@ -240,6 +244,10 @@ class FakeCursor:
                 self.rowcount = 0
         elif s.startswith("update fm_biometric_enrollments set status = 'passed'"):
             vc_id, enrollment_id = params[:2]
+            if self.store.get("final_enrollment_update_misses"):
+                self._result = None
+                self.rowcount = 0
+                return
             e = next(
                 (r for r in self.store["enrollments"]
                  if r["id"] == enrollment_id and r["status"] == "vc_pending"),
@@ -255,6 +263,18 @@ class FakeCursor:
             else:
                 self._result = None
                 self.rowcount = 0
+        elif s.startswith("insert into fm_vc_revocation_jobs"):
+            license_id, model_id, vc_id = params[:3]
+            self.store.setdefault("revocations", {}).setdefault(
+                vc_id,
+                {
+                    "license_id": license_id,
+                    "model_id": model_id,
+                    "vc_id": vc_id,
+                    "status": "pending",
+                },
+            )
+            self.rowcount = 1
         elif s.startswith("select l.id::text as id, l.model_id::text as model_id"):
             # 목록: 소유 모델 경유
             owned = {m["id"] for m in models if m["user_id"] == params[0]}
@@ -332,6 +352,11 @@ class FakeConn:
     async def rollback(self):
         self.store.clear()
         self.store.update(copy.deepcopy(self._snapshot))
+        winner_vc = self.store.pop("winner_after_rollback", None)
+        if winner_vc:
+            self.store["licenses"][0].update(status="active", vc_id=winner_vc)
+            self.store["models"][0]["status"] = "verified"
+            self.store["enrollments"][0].update(status="passed", vc_id=winner_vc)
 
 
 @pytest.fixture()
@@ -354,6 +379,7 @@ def fm(keypair, monkeypatch):
         "profiles": [],     # 개인화 프로필 {id, user_id, status}
         "face_photos": [],  # 개인화 얼굴 슬롯 {profile_id, angle, r2_key, image_digest}
         "identities": [],   # fm_identity_verifications {model_id, birth_year}
+        "revocations": {},
     }
 
     @contextlib.asynccontextmanager
@@ -385,6 +411,7 @@ def biometric_fm(keypair, monkeypatch):
         fm_ci_pepper="pep",
         fm_face_qc_enabled=True,
         opendid_holder_url="http://holder.test",
+        opendid_holder_hmac_secret="shared-secret",
     ))
     app.state.jwt_key_resolver = lambda token: public_key
     app.state.r2_face = FakeR2Face()
@@ -403,6 +430,7 @@ def biometric_fm(keypair, monkeypatch):
         "profiles": [],
         "face_photos": [],
         "identities": [],
+        "revocations": {},
     }
 
     @contextlib.asynccontextmanager
@@ -417,7 +445,9 @@ class HolderStub:
     def __init__(self):
         self.calls = []
         self.fail_with_status = None
+        self.fail_path = None
         self.malformed_issue = False
+        self.wallet_status = 201
         self.register_body = {"flowAComplete": True, "userDid": "did:dev:user-1"}
         self.issue_body = {"vcId": "vc:dev:1", "userDid": "did:dev:user-1"}
         self.after_issue = None
@@ -433,35 +463,28 @@ class _HolderResponse:
         return self._body
 
 
-class _HolderClient:
-    def __init__(self, stub):
-        self.stub = stub
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc):
-        return False
-
-    async def post(self, url, headers=None, json=None):
-        self.stub.calls.append({"url": url, "headers": headers or {}, "json": json})
-        if self.stub.fail_with_status:
-            return _HolderResponse(self.stub.fail_with_status, {"error": "SECRET_CLAIM"})
-        if url.endswith("/wallet"):
-            return _HolderResponse(200, {"walletId": "wallet-1"})
-        if url.endswith("/register-did"):
-            return _HolderResponse(200, self.stub.register_body)
-        if self.stub.malformed_issue:
-            return _HolderResponse(200, {"userDid": "did:dev:user-1", "claims": "SECRET_CLAIM"})
-        if self.stub.after_issue:
-            self.stub.after_issue()
-        return _HolderResponse(200, self.stub.issue_body)
-
-
 @pytest.fixture()
 def holder_stub(monkeypatch):
     stub = HolderStub()
-    monkeypatch.setattr(facemarket.httpx, "AsyncClient", lambda *a, **k: _HolderClient(stub))
+
+    async def fake_post(_client, **kwargs):
+        stub.calls.append(kwargs)
+        path = kwargs["path"]
+        if stub.fail_with_status and (
+            stub.fail_path is None or path.endswith(stub.fail_path)
+        ):
+            return _HolderResponse(stub.fail_with_status, {"error": "SECRET_CLAIM"})
+        if path.endswith("/wallet"):
+            return _HolderResponse(stub.wallet_status, {"walletId": "wallet-1"})
+        if path.endswith("/register-did"):
+            return _HolderResponse(200, stub.register_body)
+        if stub.malformed_issue:
+            return _HolderResponse(200, {"userDid": "did:dev:user-1", "claims": "SECRET_CLAIM"})
+        if stub.after_issue:
+            stub.after_issue()
+        return _HolderResponse(200, stub.issue_body)
+
+    monkeypatch.setattr(holder_client, "post", fake_post)
     return stub
 
 
@@ -626,9 +649,9 @@ def test_license_starts_pending_and_activates_only_after_vc(
     assert store["licenses"][0]["face_image_key"] == APPROVED_FRONT_KEY
     assert store["models"][0]["status"] == "verified"
     assert store["enrollments"][0]["status"] == "passed"
-    assert {c["headers"]["Idempotency-Key"] for c in holder_stub.calls} == {
-        f"fm-license:{card['id']}"
-    }
+    issue_call = next(c for c in holder_stub.calls if c["path"].endswith("/issue-vc"))
+    assert issue_call["payload"]["idempotencyKey"] == f"fm-license:{card['id']}"
+    assert all(c["secret"] == "shared-secret" for c in holder_stub.calls)
 
 
 def test_holder_failure_leaves_everything_non_active(
@@ -636,13 +659,14 @@ def test_holder_failure_leaves_everything_non_active(
 ):
     client, store, _ = biometric_fm
     holder_stub.fail_with_status = 503
+    holder_stub.fail_path = "/issue-vc"
     enrollment_id = _seed_license_pending_enrollment(store)
     response = client.post(
         "/v1/facemarket/licenses",
         json=valid_license_body(enrollment_id),
         headers=_auth(make_token),
     )
-    assert response.status_code == 502
+    assert response.status_code == 503
     assert response.json()["error"]["code"] == "vc_issue_delayed"
     assert store["licenses"][0]["status"] == "pending"
     assert store["models"][0]["status"] != "verified"
@@ -656,6 +680,7 @@ def test_repeated_pending_post_reuses_license_and_holder_idempotency(
 ):
     client, store, _ = biometric_fm
     holder_stub.fail_with_status = 503
+    holder_stub.fail_path = "/issue-vc"
     enrollment_id = _seed_license_pending_enrollment(store)
     first = client.post(
         "/v1/facemarket/licenses",
@@ -667,13 +692,14 @@ def test_repeated_pending_post_reuses_license_and_holder_idempotency(
         json=valid_license_body(enrollment_id),
         headers=_auth(make_token),
     )
-    assert first.status_code == second.status_code == 502
+    assert first.status_code == second.status_code == 503
     assert len(store["licenses"]) == 1
     license_id = store["licenses"][0]["id"]
-    assert [c["headers"]["Idempotency-Key"] for c in holder_stub.calls] == [
-        f"fm-license:{license_id}",
-        f"fm-license:{license_id}",
-    ]
+    assert [
+        c["payload"]["idempotencyKey"]
+        for c in holder_stub.calls
+        if c["path"].endswith("/issue-vc")
+    ] == [f"fm-license:{license_id}", f"fm-license:{license_id}"]
 
 
 def test_active_retry_returns_existing_card_without_reissue(
@@ -778,6 +804,41 @@ def test_final_activation_rejects_suspended_model_and_rolls_back(
     assert store["licenses"][0]["vc_id"] is None
     assert store["models"][0]["status"] == "suspended"
     assert store["enrollments"][0]["status"] == "vc_pending"
+    assert set(store["revocations"]) == {"vc:dev:1"}
+
+
+@pytest.mark.parametrize(
+    "mutate_evidence",
+    [
+        lambda store: store["enrollment_photos"][0].update(
+            image_digest="sha256-replaced-front"
+        ),
+        lambda store: store["models"][0].update(
+            current_enrollment_id=OTHER_ENROLLMENT_ID
+        ),
+        lambda store: store["assets"][0].update(evidence_version="replaced-policy"),
+        lambda store: store["enrollments"][0].update(status="failed"),
+    ],
+    ids=["front-digest", "current-enrollment", "asset-version", "enrollment-status"],
+)
+def test_final_activation_rechecks_current_evidence_and_queues_issued_vc(
+    biometric_fm, make_token, holder_stub, mutate_evidence
+):
+    client, store, _ = biometric_fm
+    enrollment_id = _seed_license_pending_enrollment(store)
+    holder_stub.after_issue = lambda: mutate_evidence(store)
+
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body(enrollment_id),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 409
+    assert store["licenses"][0]["status"] == "pending"
+    assert store["licenses"][0]["vc_id"] is None
+    assert store["models"][0]["status"] != "verified"
+    assert set(store["revocations"]) == {"vc:dev:1"}
 
 
 def test_final_activation_concurrent_winner_returns_active_card(
@@ -805,6 +866,82 @@ def test_final_activation_concurrent_winner_returns_active_card(
     assert response.json()["id"] == store["licenses"][0]["id"]
     assert response.json()["status"] == "active"
     assert response.json()["vcId"] == "vc:dev:1"
+    assert store["revocations"] == {}
+
+
+def test_final_activation_different_concurrent_winner_queues_loser_vc(
+    biometric_fm, make_token, holder_stub
+):
+    client, store, _ = biometric_fm
+    enrollment_id = _seed_license_pending_enrollment(store)
+
+    def concurrent_winner():
+        license_row = store["licenses"][0]
+        license_row["status"] = "active"
+        license_row["vc_id"] = "vc:winner"
+        store["models"][0]["status"] = "verified"
+        store["enrollments"][0]["status"] = "passed"
+        store["enrollments"][0]["vc_id"] = "vc:winner"
+
+    holder_stub.after_issue = concurrent_winner
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body(enrollment_id),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 201
+    assert response.json()["vcId"] == "vc:winner"
+    assert set(store["revocations"]) == {"vc:dev:1"}
+
+
+@pytest.mark.parametrize(
+    "winner_vc,expected_revocations",
+    [("vc:dev:1", set()), ("vc:other", {"vc:dev:1"})],
+)
+def test_final_activation_cas_race_returns_winner_and_revokes_only_loser(
+    biometric_fm, make_token, holder_stub, winner_vc, expected_revocations
+):
+    client, store, _ = biometric_fm
+    enrollment_id = _seed_license_pending_enrollment(store)
+    store["final_license_update_misses"] = True
+    store["winner_after_rollback"] = winner_vc
+
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body(enrollment_id),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 201
+    assert response.json()["vcId"] == winner_vc
+    assert set(store["revocations"]) == expected_revocations
+
+
+@pytest.mark.parametrize(
+    "miss_flag",
+    ["final_model_update_misses", "final_enrollment_update_misses"],
+)
+def test_final_activation_cas_failure_rolls_back_all_updates_and_queues_vc(
+    biometric_fm, make_token, holder_stub, miss_flag
+):
+    client, store, _ = biometric_fm
+    enrollment_id = _seed_license_pending_enrollment(store)
+    store[miss_flag] = True
+
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body(enrollment_id),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 409
+    assert store["licenses"][0]["status"] == "pending"
+    assert store["licenses"][0]["vc_id"] is None
+    assert store["models"][0]["status"] == "pending"
+    assert store["enrollments"][0]["status"] == "vc_pending"
+    assert store["enrollments"][0]["vc_id"] is None
+    assert set(store["revocations"]) == {"vc:dev:1"}
 
 
 @pytest.mark.parametrize("register_body", [[], "not-object", None])
@@ -918,9 +1055,9 @@ def test_conflict_reload_uses_persisted_terms_for_holder_claims(
     )
 
     assert response.status_code == 502
-    issue_call = next(c for c in holder_stub.calls if c["url"].endswith("/issue-vc"))
-    assert issue_call["headers"]["Idempotency-Key"] == f"fm-license:{persisted['id']}"
-    assert issue_call["json"]["claims"] == {
+    issue_call = next(c for c in holder_stub.calls if c["path"].endswith("/issue-vc"))
+    assert issue_call["payload"]["idempotencyKey"] == f"fm-license:{persisted['id']}"
+    assert issue_call["payload"]["claims"] == {
         "allowedUse": "persisted runway",
         "forbiddenUse": "persisted adult",
         "unitPrice": 4321,
@@ -943,6 +1080,7 @@ def test_final_stale_transition_does_not_report_active(
     assert response.status_code == 409
     assert store["licenses"][0]["status"] == "pending"
     assert store["models"][0]["status"] != "verified"
+    assert set(store["revocations"]) == {"vc:dev:1"}
 
 
 def test_biometric_startup_requires_holder_url(monkeypatch):
