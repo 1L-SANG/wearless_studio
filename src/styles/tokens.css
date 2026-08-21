@@ -13,10 +13,14 @@
    Load in HTML <head>:
    <link rel="preconnect" href="https://fonts.googleapis.com">
    <link href="https://fonts.googleapis.com/css2?family=Cal+Sans&family=Inter:wght@300;400;500;600&family=Roboto+Mono:wght@500;600&display=swap" rel="stylesheet">
+   Soft = Gowun Dodum (고운돋움, self-hosted, 한글 11,172자 전체).
    Pretendard is bundled at fonts/PretendardVariable.woff2 — no
    network needed. NOTE: Cal Sans on Google Fonts ships a single
    weight (built to read as 600); we treat it as the display face
    at all sizes and never apply other weights to it.
+   Gowun Dodum 도 Regular(400) 한 굵기뿐이다 — 에디터에서 굵기를
+   올리면 브라우저 합성 볼드가 걸린다(Cal Sans 와 같은 상황).
+   번들 폰트의 라이선스 전문은 fonts/LICENSES/ 에 있다(OFL 1.1 조건).
    ------------------------------------------------------------ */
 
 @font-face {
@@ -34,10 +38,20 @@
   font-style: normal;
   font-display: swap;
 }
+/* Gowun Dodum — self-hosted humanist sans (한글 + Latin). Editor text-tool option.
+   Regular(400) 단일 굵기. 서브셋하지 않는다 — 셀러가 칠 글자를 알 수 없어서, 빠진 글자가
+   있으면 그 글자만 폴백 폰트로 튄다(최종 산출물의 결함). 전체 11,172자로 436KB. */
+@font-face {
+  font-family: "Gowun Dodum";
+  src: url("../fonts/GowunDodum-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
 /* Cormorant — self-hosted variable serif (Latin only). Editor text-tool option. */
 @font-face {
   font-family: "Cormorant";
-  src: url("../fonts/Cormorant-VariableFont_wght.ttf") format("truetype");
+  src: url("../fonts/Cormorant-VariableFont_wght.woff2") format("woff2");
   font-weight: 300 700;
   font-style: normal;
   font-display: swap;
@@ -49,6 +63,7 @@
   --font-body: "Pretendard Variable", "Inter", "Inter Placeholder", system-ui, sans-serif;
   --font-mono: "Roboto Mono", ui-monospace, "SF Mono", Menlo, monospace;
   --font-serif: "Cormorant", Georgia, "Times New Roman", serif;
+  --font-soft: "Gowun Dodum", "Pretendard Variable", system-ui, sans-serif;
 
   /* ---- Ink & surface (design.md overrides Cal's #242424) ---- */
   --fg-1: #0e0d14;   /* primary text, headings */

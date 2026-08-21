@@ -9,7 +9,7 @@ from psycopg.rows import dict_row
 
 
 MIGRATION = Path(__file__).resolve().parents[2] / (
-    "supabase/migrations/20260821000000_facemarket_biometric_runtime.sql"
+    "supabase/migrations/20260821010100_facemarket_biometric_runtime.sql"
 )
 TEST_DATABASE_URL = os.getenv("FACEMARKET_TEST_DATABASE_URL")
 requires_database = pytest.mark.skipif(

@@ -24,6 +24,7 @@ import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WID
 import { DEFAULT_EDITOR_COLOR_PRESETS, commitNumberDraft, hexToHsv, hsvToHex, speechBubblePath } from '@/features/editor/editorAppearance.js';
 import { DEFAULT_TEXT_PRESET, TEXT_MUTED, TEXT_PRESETS, activeTextPreset, quickStylePatch, textPresetBox } from '@/features/editor/presets/textPresets.js';
 import { TEXT_PRESET_DRAG_PREFIX } from '@/features/editor/editorImageDrop.js';
+import { boldToggle, fontChangePatch, isBold, nearestWeight, weightOptions } from '@/features/editor/fontWeights.js';
 import { speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 
@@ -81,7 +82,7 @@ function NumField({ icon, iconText, labelText, value, min = -9999, max = 9999, o
     </label>
   );
 }
-function MiniSelect({ value, options, onChange }) {
+function MiniSelect({ value, options, onChange, disabled = false }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -91,9 +92,9 @@ function MiniSelect({ value, options, onChange }) {
   const opts = options.map((o) => typeof o === 'string' ? { value: o, label: o } : o);
   const cur = opts.find((o) => o.value === value) || opts[0];
   return (
-    <div className={`mini-select${open ? ' open' : ''}`} ref={ref}>
-      <button type="button" className="ms-btn" onClick={() => setOpen((o) => !o)}><span>{cur?.label}</span><Icon name="chevDown" size={15} /></button>
-      {open && <div className="ms-menu">{opts.map((o) => (
+    <div className={`mini-select${open && !disabled ? ' open' : ''}`} ref={ref}>
+      <button type="button" className="ms-btn" disabled={disabled} onClick={() => setOpen((o) => !o)}><span>{cur?.label}</span>{!disabled && <Icon name="chevDown" size={15} />}</button>
+      {open && !disabled && <div className="ms-menu">{opts.map((o) => (
         <button type="button" key={o.value} className={`ms-opt${o.value === value ? ' on' : ''}`} onClick={() => { onChange(o.value); setOpen(false); }}>{o.label}{o.value === value && <Icon name="check" size={14} />}</button>
       ))}</div>}
     </div>
@@ -854,7 +855,7 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, lock = true, onLock 
 /* 회색 스와치는 프리셋 회색과 같은 값 — 다르면 "같은 회색으로 되돌릴" 길이 없다. */
 const TEXT_PALETTE = ['#0e0d14', TEXT_MUTED, '#ffffff', '#4f88c9', '#d92d20', '#067647'];
 const HL_PALETTE = ['#fef3c7', '#dbeafe', '#dcfce7', '#fee2e2', '#f3f4f6', '#0e0d14'];
-const WEIGHTS = [{ value: 300, label: 'Light' }, { value: 400, label: 'Regular' }, { value: 500, label: 'Medium' }, { value: 600, label: 'SemiBold' }, { value: 700, label: 'Bold' }];
+/* 굵기 옵션은 폰트마다 다르다 — fontWeights.js 가 유일한 출처. */
 /* 텍스트 프리셋 드래그 시작. 놓일 자리 미리보기는 **블록 안에서만** 그린다(.text-drop-ghost) —
    커서를 따라다니는 그림까지 같은 문구로 그렸더니 블록 위에서 글자가 둘로 겹쳐 보였다
    (오너 2026-08-16). 그래서 커서 그림은 투명한 1px 로 비우고, 위치·크기를 정확히 말해 주는
@@ -929,7 +930,12 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
               <Chips className="quad-chips" allowDeselect={false}
                 options={TEXT_PRESETS.map((p) => ({ value: p.key, label: p.label }))}
                 value={activePresetKey}
-                onChange={(key) => { if (key && key !== activePresetKey) setS(quickStylePatch(key)); }} />
+                onChange={(key) => {
+                  if (!key || key === activePresetKey) return;
+                  const patch = quickStylePatch(key);
+                  // 프리셋 굵기(큰 제목 600 등)를 현재 폰트가 못 주면 가장 가까운 지원 굵기로
+                  setS({ ...patch, weight: nearestWeight(s.font, patch.weight) });
+                }} />
               <div className="panel-sub" style={{ marginTop: 8, marginBottom: 0 }}>내용은 그대로, 크기·굵기·색만 한 번에 바뀌어요.</div>
             </PanelSection>
           )}
@@ -943,9 +949,11 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
           </PanelSection>
 
           <PanelSection title="타이포그래피">
-            <MiniSelect value={s.font || 'Pretendard'} options={catalogs.fonts} onChange={(v) => setS({ font: v })} />
+            <MiniSelect value={s.font || 'Pretendard'} options={catalogs.fonts} onChange={(v) => setS(fontChangePatch(s, v))} />
             <div className="field-2up" style={{ marginTop: 8 }}>
-              <MiniSelect value={s.weight || 400} options={WEIGHTS} onChange={(v) => setS({ weight: v })} />
+              {/* 이 폰트가 실제로 주는 굵기만. 단일 굵기 폰트(Gowun Dodum·Cal Sans)는 선택지 1개라 잠근다. */}
+              <MiniSelect value={nearestWeight(s.font, s.weight)} options={weightOptions(s.font)}
+                disabled={weightOptions(s.font).length < 2} onChange={(v) => setS({ weight: v })} />
               <NumStepper value={s.size || 18} min={8} max={200} onChange={(v) => setS({ size: v })} />
             </div>
             <div className="field-2up" style={{ marginTop: 8 }}>
@@ -957,7 +965,9 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
                 {['left', 'center', 'right'].map((a) => <IconButton key={a} name={'align' + a[0].toUpperCase() + a.slice(1)} size="sm" active={(s.align || 'left') === a} onClick={() => setS({ align: a })} />)}
               </div>
               <div className="seg-icons">
-                <IconButton name="bold" size="sm" active={s.weight >= 700} onClick={() => setS({ weight: s.weight >= 700 ? 400 : 700 })} />
+                <IconButton name="bold" size="sm" active={isBold(s.font, s.weight)} disabled={!boldToggle(s.font)}
+                  title={boldToggle(s.font) ? '굵게' : '이 글씨체는 굵기가 하나예요'}
+                  onClick={() => { const t = boldToggle(s.font); if (t) setS({ weight: isBold(s.font, s.weight) ? t.regular : t.bold }); }} />
                 <IconButton name="italic" size="sm" active={s.italic} onClick={() => setS({ italic: !s.italic })} />
                 <IconButton name="underline" size="sm" active={s.underline} onClick={() => setS({ underline: !s.underline })} />
                 <IconButton name="strike" size="sm" active={s.strike} onClick={() => setS({ strike: !s.strike })} />

@@ -109,9 +109,9 @@ export function Button({ children, variant = 'ghost', size, block, onClick, disa
     </button>
   );
 }
-export function IconButton({ name, onClick, active, size = 'md', title, stroke }) {
+export function IconButton({ name, onClick, active, size = 'md', title, stroke, disabled = false }) {
   return (
-    <button className={`iconbtn ${size === 'sm' ? 'sm ' : ''}${active ? 'active' : ''}`} onClick={onClick} title={title}>
+    <button className={`iconbtn ${size === 'sm' ? 'sm ' : ''}${active ? 'active' : ''}`} onClick={onClick} title={title} disabled={disabled}>
       <Icon name={name} size={size === 'sm' ? 15 : 17} stroke={stroke || 2} />
     </button>
   );

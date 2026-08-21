@@ -35,6 +35,36 @@ class SamUnavailable(RuntimeError):
     """
 
 
+
+#: sam2 온디맨드(2026-08-21): SamUnavailable 이 나는 순간 "지금 켜라"를 쏜다. 업로드 없이
+#: SAM 이 필요해지는 모든 경로(보관함 재진입 등)를 한 곳에서 덮는다. 훅은 실패해도 예외를
+#: 바꾸지 않는다 — 원래의 SamUnavailable 이 같은 메시지·같은 __cause__ 로 그대로 올라간다.
+PREWARM_HOOK = None
+
+
+def install_prewarm_hook(fn) -> None:
+    """lifespan 이 SamAutoscaler.prewarm 을 건다. None 이면 해제."""
+    global PREWARM_HOOK
+    PREWARM_HOOK = fn
+
+
+async def _fire_prewarm() -> None:
+    hook = PREWARM_HOOK
+    if hook is None:
+        return
+    try:
+        await hook()
+    except Exception:  # noqa: BLE001 - 훅 실패가 SamUnavailable 을 가리면 안 된다
+        log.warning("sam prewarm hook failed", exc_info=True)
+
+
+async def _raise_unavailable(msg: str, cause: BaseException | None = None):
+    """prewarm 을 먼저 쏘고 SamUnavailable 을 올린다. `from cause` 로 원인 체인을 그대로 보존한다."""
+    await _fire_prewarm()
+    if cause is not None:
+        raise SamUnavailable(msg) from cause
+    raise SamUnavailable(msg)
+
 @dataclass(frozen=True)
 class SamViewResult:
     """One view's outcome. `ready` False means this view has no usable cutout."""
@@ -152,7 +182,7 @@ async def segment_worn_garment(settings, *, source_key: str, base_key: str,
     and the coordinating garment is not (2026-08-18). Scoring evidence only — never a prompt.
     """
     if not configured(settings):
-        raise SamUnavailable("SAM service is not configured (SAM_SERVICE_URL / token)")
+        await _raise_unavailable("SAM service is not configured (SAM_SERVICE_URL / token)")
 
     url = f"{settings.sam_service_url}/segment-worn-garment"
     payload = {"sourceKey": source_key, "baseKey": base_key,
@@ -165,16 +195,16 @@ async def segment_worn_garment(settings, *, source_key: str, base_key: str,
                 url, json=payload,
                 headers={"Authorization": f"Bearer {settings.sam_internal_token}"})
     except httpx.TimeoutException as e:
-        raise SamUnavailable(f"SAM worn-garment request timed out after {timeout}s") from e
+        await _raise_unavailable(f"SAM worn-garment request timed out after {timeout}s", e)
     except httpx.HTTPError as e:
-        raise SamUnavailable(f"SAM worn-garment request failed: {type(e).__name__}") from e
+        await _raise_unavailable(f"SAM worn-garment request failed: {type(e).__name__}", e)
 
     if r.status_code != 200:
-        raise SamUnavailable(f"SAM worn-garment responded {r.status_code}")
+        await _raise_unavailable(f"SAM worn-garment responded {r.status_code}")
     try:
         body = r.json()
     except ValueError as e:
-        raise SamUnavailable("SAM worn-garment returned a non-JSON body") from e
+        await _raise_unavailable("SAM worn-garment returned a non-JSON body", e)
 
     result = WornGarmentResult.from_payload(body)
     log.info("sam worn-garment status=%s cached=%s area=%s",
@@ -190,7 +220,7 @@ async def segment_garment(settings, views: dict[str, str]) -> dict[str, SamViewR
     independent, and a broken Back photo must never discard a good Front cutout.
     """
     if not configured(settings):
-        raise SamUnavailable("SAM service is not configured (SAM_SERVICE_URL / token)")
+        await _raise_unavailable("SAM service is not configured (SAM_SERVICE_URL / token)")
     wanted = {v: k for v, k in views.items() if v in VIEWS and k}
     if not wanted:
         return {}
@@ -204,16 +234,16 @@ async def segment_garment(settings, views: dict[str, str]) -> dict[str, SamViewR
                 url, json=payload,
                 headers={"Authorization": f"Bearer {settings.sam_internal_token}"})
     except httpx.TimeoutException as e:
-        raise SamUnavailable(f"SAM request timed out after {timeout}s") from e
+        await _raise_unavailable(f"SAM request timed out after {timeout}s", e)
     except httpx.HTTPError as e:
-        raise SamUnavailable(f"SAM request failed: {type(e).__name__}") from e
+        await _raise_unavailable(f"SAM request failed: {type(e).__name__}", e)
 
     if r.status_code != 200:
-        raise SamUnavailable(f"SAM responded {r.status_code}")
+        await _raise_unavailable(f"SAM responded {r.status_code}")
     try:
         body = r.json()
     except ValueError as e:
-        raise SamUnavailable("SAM returned a non-JSON body") from e
+        await _raise_unavailable("SAM returned a non-JSON body", e)
 
     results = {v: SamViewResult.from_payload(v, d)
                for v, d in (body.get("views") or {}).items() if v in wanted}

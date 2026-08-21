@@ -275,7 +275,12 @@ def test_job_is_a_noop_when_sam_is_not_configured(monkeypatch):
 
 
 def test_job_reports_unavailable_without_raising_when_sam_is_down(monkeypatch):
-    """SAM 다운이 예외로 새면 디스패처가 잡을 죽인다 — 상태로 표현되어야 한다."""
+    """SAM 다운이 예외로 새면 디스패처가 잡을 죽인다 — 상태로 표현되어야 한다.
+
+    그리고 그 상태는 `error` 가 아니라 `done`+unavailable 이다(2026-08-21). error 로 적으면
+    이 잡이 멱등키를 문 채 종착해 같은 상품을 다시 저장해도 컷아웃이 영영 안 생긴다 —
+    sam_retry_pusher 가 다음 세대를 걸 수 있으려면 done 이어야 한다.
+    """
     from app.workers import sam_preprocess_job as spj
 
     async def _down(*_a, **_k):
@@ -287,7 +292,7 @@ def test_job_reports_unavailable_without_raising_when_sam_is_down(monkeypatch):
     monkeypatch.setattr(spj.repo, "get_asset_for_user",
                         lambda *_a, **_k: _async({"r2_key": "users/u/projects/p/uploads/f.jpg"}))
     asyncio.run(spj.run_sam_preprocess_job(app, _job()))
-    assert finished["status"] == "error"
+    assert finished["status"] == "done"
     assert finished["result"]["state"] == "unavailable"
 
 

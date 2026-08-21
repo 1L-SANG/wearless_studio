@@ -64,9 +64,13 @@ async def run_sam_preprocess_job(app, job: dict) -> None:
         results = await sam_client.segment_garment(
             s, {slot: a["key"] for slot, a in assets.items()})
     except sam_client.SamUnavailable as exc:
-        # Bounded dispatcher retry handles transient outages. Deterministic cutout keys make a
-        # retry cheap: views that already succeeded are served from R2 without re-inferring.
-        await finish("error", {"state": "unavailable", "reason": str(exc)})
+        # done + unavailable — error 가 아니다. 예전 주석은 "디스패처 재시도가 일시 장애를
+        # 처리한다"고 적혀 있었지만 그 재시도 코드는 존재하지 않는다(2026-08-18 톤 마스크가
+        # 같은 착각으로 사고). error 로 적으면 이 잡이 멱등키를 문 채 종착하고, 같은 상품을
+        # 다시 저장해도 그 시체에 합류만 한다 — 캐노니컬 컷아웃이 영영 안 생긴다(2026-08-21).
+        # 다음 세대는 sam_retry_pusher 가 건다. 재시도가 싼 이유는 그대로다: 컷아웃 키가
+        # 결정론적이라 이미 성공한 뷰는 R2 에서 재추론 없이 돌아온다.
+        await finish("done", {"state": "unavailable", "reason": str(exc)})
         return
 
     recorded, failed = {}, {}

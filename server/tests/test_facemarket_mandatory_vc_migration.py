@@ -12,11 +12,11 @@ from psycopg.rows import dict_row
 
 MIGRATION = (
     Path(__file__).resolve().parents[2]
-    / "supabase/migrations/20260821010000_facemarket_mandatory_vc.sql"
+    / "supabase/migrations/20260821010200_facemarket_mandatory_vc.sql"
 )
 PREDECESSOR = (
     Path(__file__).resolve().parents[2]
-    / "supabase/migrations/20260821000000_facemarket_biometric_runtime.sql"
+    / "supabase/migrations/20260821010100_facemarket_biometric_runtime.sql"
 )
 TEST_DATABASE_URL = os.getenv("FACEMARKET_TEST_DATABASE_URL")
 requires_database = pytest.mark.skipif(

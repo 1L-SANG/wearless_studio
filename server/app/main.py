@@ -24,6 +24,10 @@ from .routes import router as v1_router, COMMON_RESPONSES
 from .workers.dispatcher import JobDispatcher
 from .workers.draft_asset_reclaimer import DraftAssetReclaimer
 from .workers.fm_vc_revocation_reconciler import FaceVcRevocationReconciler
+from .workers.sam_retry_pusher import SamRetryPusher
+from .services import sam_client
+from .services.sam_autoscale import SamAutoscaleAdapter
+from .workers.sam_autoscaler import SamAutoscaler
 
 DEFAULT_ERROR_CODES = {
     401: "unauthorized",
@@ -114,6 +118,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dispatcher = None
         draft_asset_reclaimer = None
         vc_revocation_reconciler = None
+        sam_retry_pusher = None
+        sam_autoscaler = None
         if pool is not None:
             await pool.open()
             if settings.fm_vc_required:
@@ -122,6 +128,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if app.state.r2 is not None:
                 draft_asset_reclaimer = DraftAssetReclaimer(app)
                 await draft_asset_reclaimer.start()
+            # sam2 온디맨드 기동/종료(2026-08-21). 디스패처 조건(R2·AI provider)과 **독립** —
+            # DB 만 있으면 돈다. 디스패처 블록 안에 두면 provider 키가 빠진 환경에서 sam2 가
+            # 영영 안 켜진다. off 면 어댑터가 클라이언트를 안 만들고 prewarm 은 즉시 return.
+            # state 에는 off 여도 올려 둔다 — 라우트 훅이 getattr 분기 없이 부를 수 있게.
+            autoscale_adapter = SamAutoscaleAdapter(settings)
+            app.state.sam_autoscaler = SamAutoscaler(app, autoscale_adapter)
+            sam_client.install_prewarm_hook(app.state.sam_autoscaler.prewarm)
+            if autoscale_adapter.enabled:
+                sam_autoscaler = app.state.sam_autoscaler
+                await sam_autoscaler.start()
             # job dispatcher (§5) — DB·R2 + 최소 1개 AI provider(마네킹=Gemini, 분석=Gemini/OpenAI)
             # 가 있고 활성화일 때만 기동. provider 없는 job 은 워커가 실패 봉투로 종결.
             if (
@@ -132,9 +148,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 dispatcher = JobDispatcher(app)
                 await dispatcher.start()
                 app.state.dispatcher = dispatcher
+                # 폴링하는 화면이 없는 SAM 잡(sam_preprocess·matching_cutout)의 재시도를 민다.
+                # 디스패처와 **분리**한다 — 디스패처는 워커를 await 하므로 긴 잡이 도는 동안
+                # 타이머가 멈춘다(2026-08-21).
+                sam_retry_pusher = SamRetryPusher(app)
+                await sam_retry_pusher.start()
         yield
+        sam_client.install_prewarm_hook(None)
+        if sam_autoscaler is not None:
+            await sam_autoscaler.stop()
         if draft_asset_reclaimer is not None:
             await draft_asset_reclaimer.stop()
+        if sam_retry_pusher is not None:
+            await sam_retry_pusher.stop()      # 디스패처보다 먼저 — 새 잡을 더 걸지 않게
         if dispatcher is not None:
             await dispatcher.stop()
         if vc_revocation_reconciler is not None:

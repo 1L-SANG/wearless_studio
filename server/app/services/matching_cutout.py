@@ -13,6 +13,8 @@ from collections.abc import Sequence
 
 from PIL import Image
 
+from app.services import sam_retry
+
 #: 시드 카탈로그(seed/matching/*.png) 모서리에서 측정한 회색. 상수 하나로 고정.
 MATCHING_CUTOUT_BG = (232, 232, 230)
 #: 누끼 파생 asset 의 알고리즘 신원. 소스 해시와 함께 재처리 중복을 막는다.
@@ -116,6 +118,16 @@ def derived_asset_id(*, role: str, matching_item_id: str, source_hash: str) -> s
         f"wearless:matching-cutout:{role}:{matching_item_id}:{source_hash}"
         f":{ALGORITHM_VERSION}",
     ))
+
+
+def cutout_job_key(project_id: str, matching_item_id: str, *, retry: int = 0) -> str:
+    """누끼 잡의 신원. 등록 라우트와 재시도 푸셔가 **같은 함수**를 지나야 한다.
+
+    라우트에 문자열을 인라인으로 두면 푸셔가 만든 키와 갈라지고, 그 순간 재시도는 새 세대가
+    아니라 별개의 잡이 된다. `retry` 는 톤 마스크의 mask_job_key 와 같은 규칙(2026-08-21).
+    """
+    return sam_retry.generation_key(
+        f"{project_id}:matching_cutout:{matching_item_id}:{ALGORITHM_VERSION}", retry)
 
 
 def cutout_status_for(*, is_custom: bool, image_meta: dict | None,

@@ -230,8 +230,11 @@ async def run_matching_cutout_job(app, job: dict) -> None:
                 raise _CutoutFailed("item_gone")
             await conn.commit()
     except sam_client.SamUnavailable as exc:
-        await finish("error", {"state": "unavailable", "reason": str(exc),
-                               "matchingItemId": matching_item_id})
+        # done + unavailable — error 가 아니다. error 로 적으면 멱등키가 이 실패 잡에 묶여 그
+        # 옷은 영영 누끼가 없다 — 마네킹 생성이 셀러 원본(접힌 사진)을 그대로 입력으로 쓴다
+        # (2026-08-21). 다음 세대는 sam_retry_pusher 가 건다. 원본 자산은 여기서도 그대로다.
+        await finish("done", {"state": "unavailable", "reason": str(exc),
+                              "matchingItemId": matching_item_id})
         return
     except _CutoutFailed as exc:
         await finish("done", {"state": "failed", "reason": str(exc),

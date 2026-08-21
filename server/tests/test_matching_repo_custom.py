@@ -110,8 +110,25 @@ def test_active_cutout_job_query_bounds_stuck_pending_jobs_by_age():
     assert "kind = 'matching_cutout'" in lowered
     assert "status in ('pending', 'running')" in lowered
     assert "created_at > now() - (%s * interval '1 minute')" in lowered
-    assert params == ("project-1", repo.MATCHING_CUTOUT_ACTIVE_WINDOW_MINUTES)
+    assert params[:2] == ("project-1", repo.MATCHING_CUTOUT_ACTIVE_WINDOW_MINUTES)
     assert repo.MATCHING_CUTOUT_ACTIVE_WINDOW_MINUTES == 10
+
+
+# 2026-08-21 — 일시 장애로 done+unavailable 로 끝났고 예산이 남은 세대는 푸셔가 다음 세대를
+# 건다. 그 백오프 구간을 "끝남"으로 보면 카드가 실패→처리 중으로 깜빡인다.
+def test_active_cutout_job_query_counts_a_retry_pending_generation_as_active():
+    from app.services import sam_retry
+
+    cursor = _Cursor(row={"active": True})
+    asyncio.run(repo.has_active_matching_cutout_job(_Conn(cursor), "project-1"))
+
+    sql, params = cursor.calls[0]
+    lowered = sql.lower()
+    assert "result->>'state' = any(%s)" in lowered
+    # 숫자 패턴일 때만 캐스트 — 비숫자 한 행이 카드 조회를 22P02 로 죽이지 않게(PR #169 검토).
+    assert "case when payload->>'retry' ~ '^[0-9]+$' then (payload->>'retry')::int else 0 end" in lowered
+    assert params[2] == list(sam_retry.RETRYABLE_STATES)
+    assert params[3] == sam_retry.MAX_RETRIES
 
 
 def test_custom_asset_cleanup_covers_worker_derived_cutouts():

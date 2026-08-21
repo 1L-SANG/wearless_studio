@@ -42,12 +42,12 @@
 
 **Files:**
 
-- Create: `supabase/migrations/20260821010000_facemarket_mandatory_vc.sql`
+- Create: `supabase/migrations/20260821010200_facemarket_mandatory_vc.sql`
 - Create: `server/tests/test_facemarket_mandatory_vc_migration.py`
 
 **Interfaces:**
 
-- Consumes: `supabase/migrations/20260821000000_facemarket_biometric_runtime.sql`, which already expands the `fm_licenses_status_check` constraint to accept `pending` and `reverification_required`.
+- Consumes: `supabase/migrations/20260821010100_facemarket_biometric_runtime.sql`, which already expands the `fm_licenses_status_check` constraint to accept `pending` and `reverification_required`.
 - Consumes: existing `public.fm_licenses(id, model_id, status, vc_id)` rows and UUID support from PostgreSQL.
 - Produces: `fm_licenses.status` default `pending`; it does not replace or narrow the predecessor's status check.
 - Produces: `public.fm_vc_revocation_jobs` with one durable row per `vc_id` and claim/retry fields used by Task 5.
@@ -61,11 +61,11 @@ from pathlib import Path
 
 MIGRATION = (
     Path(__file__).resolve().parents[2]
-    / "supabase/migrations/20260821010000_facemarket_mandatory_vc.sql"
+    / "supabase/migrations/20260821010200_facemarket_mandatory_vc.sql"
 )
 PREDECESSOR = (
     Path(__file__).resolve().parents[2]
-    / "supabase/migrations/20260821000000_facemarket_biometric_runtime.sql"
+    / "supabase/migrations/20260821010100_facemarket_biometric_runtime.sql"
 )
 
 
@@ -104,11 +104,11 @@ cd server
 .venv/bin/pytest -q tests/test_facemarket_mandatory_vc_migration.py
 ```
 
-Expected: FAIL because `20260821010000_facemarket_mandatory_vc.sql` does not exist.
+Expected: FAIL because `20260821010200_facemarket_mandatory_vc.sql` does not exist.
 
 - [ ] **Step 3: Add the forward-only migration**
 
-Create `supabase/migrations/20260821010000_facemarket_mandatory_vc.sql` with this schema. Do not drop or recreate `fm_licenses_status_check`; migration `20260821000000_facemarket_biometric_runtime.sql` owns it.
+Create `supabase/migrations/20260821010200_facemarket_mandatory_vc.sql` with this schema. Do not drop or recreate `fm_licenses_status_check`; migration `20260821010100_facemarket_biometric_runtime.sql` owns it.
 
 ```sql
 alter table public.fm_licenses
@@ -158,7 +158,7 @@ Expected: 3 passed.
 - [ ] **Step 5: Commit the schema decision**
 
 ```bash
-git add supabase/migrations/20260821010000_facemarket_mandatory_vc.sql \
+git add supabase/migrations/20260821010200_facemarket_mandatory_vc.sql \
   server/tests/test_facemarket_mandatory_vc_migration.py
 git commit -m "Make VC state authoritative before model use
 

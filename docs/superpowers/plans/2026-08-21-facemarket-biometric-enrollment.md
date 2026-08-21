@@ -38,7 +38,7 @@
 
 ### New files
 
-- `supabase/migrations/20260821000000_facemarket_biometric_runtime.sql` — enrollment, quarantine photo, current-evidence linkage와 상태 제약의 forward migration. Revocation queue, `previous_status`, cutover batch는 별도 계획 소유다.
+- `supabase/migrations/20260821010100_facemarket_biometric_runtime.sql` — enrollment, quarantine photo, current-evidence linkage와 상태 제약의 forward migration. Revocation queue, `previous_status`, cutover batch는 별도 계획 소유다.
 - `server/app/facemarket_enrollment.py` — 요청/응답 모델, OACX/AWS orchestration, enrollment router, quarantine lifecycle, expiry cleanup.
 - `server/tests/test_facemarket_biometric_migration.py` — 정적 migration 계약과 선택적 실제 PostgreSQL 실행 검증.
 - `server/tests/test_facemarket_biometrics.py` — OACX parser, SFace 1:1 비교, Rekognition/STS adapter의 순수 계약.
@@ -94,7 +94,7 @@
 ### Task 1: Persist Enrollment Evidence Without Raw Biometrics
 
 **Files:**
-- Create: `supabase/migrations/20260821000000_facemarket_biometric_runtime.sql`
+- Create: `supabase/migrations/20260821010100_facemarket_biometric_runtime.sql`
 - Create: `server/tests/test_facemarket_biometric_migration.py`
 
 **Interfaces:**
@@ -107,7 +107,7 @@
 from pathlib import Path
 
 MIGRATION = Path(__file__).resolve().parents[2] / (
-    "supabase/migrations/20260821000000_facemarket_biometric_runtime.sql"
+    "supabase/migrations/20260821010100_facemarket_biometric_runtime.sql"
 )
 
 
@@ -139,7 +139,7 @@ def test_status_and_current_evidence_links_are_constrained():
 
 Run: `cd server && uv run pytest -q tests/test_facemarket_biometric_migration.py`
 
-Expected: FAIL with `FileNotFoundError` for `20260821000000_facemarket_biometric_runtime.sql`.
+Expected: FAIL with `FileNotFoundError` for `20260821010100_facemarket_biometric_runtime.sql`.
 
 - [ ] **Step 3: Add the forward-only schema**
 
@@ -284,7 +284,7 @@ Expected: PASS; the database test is SKIP only when `FACEMARKET_TEST_DATABASE_UR
 - [ ] **Step 6: Commit the schema boundary**
 
 ```bash
-git add supabase/migrations/20260821000000_facemarket_biometric_runtime.sql server/tests/test_facemarket_biometric_migration.py
+git add supabase/migrations/20260821010100_facemarket_biometric_runtime.sql server/tests/test_facemarket_biometric_migration.py
 git commit -m "Preserve enrollment evidence without retaining raw biometrics" \
   -m "Constraint: quarantine media remains service-private and scores are not persisted
 Confidence: high
@@ -884,7 +884,7 @@ Not-tested: real R2 lifecycle behavior"
 - Modify: `server/app/facemarket_enrollment.py`
 - Modify: `server/tests/test_facemarket_biometrics.py`
 - Modify: `server/tests/test_facemarket_biometric_enrollment.py`
-- Modify: `supabase/migrations/20260821000000_facemarket_biometric_runtime.sql`
+- Modify: `supabase/migrations/20260821010100_facemarket_biometric_runtime.sql`
 
 **Interfaces:**
 - Consumes: `app.state.fm_rekognition`, `app.state.fm_sts`, `Settings.fm_liveness_browser_role_arn`, owned `liveness_pending` enrollment.
@@ -1085,7 +1085,7 @@ Expected: PASS.
 - [ ] **Step 10: Commit the credential boundary**
 
 ```bash
-git add supabase/migrations/20260821000000_facemarket_biometric_runtime.sql server/app/facemarket_enrollment.py server/tests/test_facemarket_biometric_migration.py server/tests/test_facemarket_biometrics.py server/tests/test_facemarket_biometric_enrollment.py
+git add supabase/migrations/20260821010100_facemarket_biometric_runtime.sql server/app/facemarket_enrollment.py server/tests/test_facemarket_biometric_migration.py server/tests/test_facemarket_biometrics.py server/tests/test_facemarket_biometric_enrollment.py
 git commit -m "Limit browser liveness access to one short-lived session" \
   -m "Constraint: Amplify must sign StartFaceLivenessSession without receiving backend AWS credentials
 Rejected: Cognito migration | the existing Supabase identity remains authoritative and STS is the smaller boundary
@@ -2249,7 +2249,7 @@ Expected:
 Run:
 
 ```bash
-rg -n 'fm_vc_revocation_jobs|fm_cutover_batches|previous_status' supabase/migrations/20260821000000_facemarket_biometric_runtime.sql
+rg -n 'fm_vc_revocation_jobs|fm_cutover_batches|previous_status' supabase/migrations/20260821010100_facemarket_biometric_runtime.sql
 rg -n 'FM_BIOMETRIC_ENROLLMENT_ENABLED: "false"' copilot/api/manifest.yml
 ```
 
