@@ -489,11 +489,40 @@ class FakeConn:
 class FakePool:
     def __init__(self, store):
         self.store = store
+        self.fail_on_nested = False
+        self.nested_attempts = 0
+        self.max_checkout_depth = 0
+        self.active_checkouts = 0
+        self.max_active_checkouts = 0
+        self._checkout_depths = {}
 
     def connection(self):
         @contextlib.asynccontextmanager
         async def connection():
-            yield FakeConn(self.store)
+            task = asyncio.current_task()
+            depth = self._checkout_depths.get(task, 0)
+            if depth:
+                self.nested_attempts += 1
+                if self.fail_on_nested:
+                    raise RuntimeError("nested pool checkout")
+            self._checkout_depths[task] = depth + 1
+            self.max_checkout_depth = max(self.max_checkout_depth, depth + 1)
+            self.active_checkouts += 1
+            self.max_active_checkouts = max(
+                self.max_active_checkouts, self.active_checkouts
+            )
+            conn = FakeConn(self.store)
+            try:
+                yield conn
+            except Exception:
+                await conn.rollback()
+                raise
+            finally:
+                self.active_checkouts -= 1
+                if depth:
+                    self._checkout_depths[task] = depth
+                else:
+                    self._checkout_depths.pop(task, None)
 
         return connection()
 
@@ -549,7 +578,12 @@ def fake_r2():
 
 
 @pytest.fixture()
-def enrollment_client(keypair, monkeypatch, enrollment_store, fake_r2):
+def fake_pool(enrollment_store):
+    return FakePool(enrollment_store)
+
+
+@pytest.fixture()
+def enrollment_client(keypair, monkeypatch, enrollment_store, fake_r2, fake_pool):
     _private_key, public_key = keypair
     settings = make_settings(
         app_env="dev",
@@ -571,13 +605,14 @@ def enrollment_client(keypair, monkeypatch, enrollment_store, fake_r2):
 
     @contextlib.asynccontextmanager
     async def fake_get_conn(_request):
-        yield FakeConn(enrollment_store)
+        async with fake_pool.connection() as conn:
+            yield conn
 
     monkeypatch.setattr(facemarket_enrollment, "get_conn", fake_get_conn, raising=False)
     app = create_app(settings)
     app.state.jwt_key_resolver = lambda _token: public_key
     app.state.r2_face = fake_r2
-    app.state.pool = FakePool(enrollment_store)
+    app.state.pool = fake_pool
     return TestClient(app)
 
 
@@ -1487,6 +1522,59 @@ def test_failed_replacement_cleanup_is_tracked_and_retried_on_next_upload(
     assert retry.status_code == 201
     assert orphan_key not in fake_r2.objects
     assert enrollment_store.cleanup == []
+
+
+def test_upload_replacement_and_failure_cleanup_never_nest_pool_checkouts(
+    enrollment_client,
+    auth,
+    fake_pool,
+    fake_r2,
+    enrollment_store,
+    monkeypatch,
+):
+    stub_qc(monkeypatch)
+    fake_pool.fail_on_nested = True
+    enrollment_id = create_enrollment(enrollment_client, auth)
+
+    first = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"first", "image/jpeg")},
+        headers=auth(),
+    )
+    assert first.status_code == 201, first.text
+
+    replacement = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"second", "image/jpeg")},
+        headers=auth(),
+    )
+    assert replacement.status_code == 201, replacement.text
+
+    enrollment_store.fail_photo_upsert = True
+    fake_r2.fail_next_delete = True
+    failed = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"failed", "image/jpeg")},
+        headers=auth(),
+    )
+    assert failed.status_code == 503
+
+    enrollment_store.fail_photo_upsert = False
+    retry = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"retry", "image/jpeg")},
+        headers=auth(),
+    )
+
+    assert retry.status_code == 201, retry.text
+    assert fake_pool.nested_attempts == 0
+    assert fake_pool.max_checkout_depth == 1
+    assert fake_pool.max_active_checkouts == 1
+    assert fake_pool.active_checkouts == 0
 
 
 def test_cancel_is_idempotent_and_cleans_quarantine_photos(

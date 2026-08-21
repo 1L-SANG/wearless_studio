@@ -74,13 +74,30 @@ async def _load_owned_enrollment(conn, enrollment_id: str, user_id: str) -> dict
         await cur.execute(
             """
             select e.id::text as id, e.model_id::text as model_id, e.status,
-                   e.decision, e.reason, e.cooldown_until, e.expires_at
+                   e.decision, e.reason, e.cooldown_until, e.expires_at,
+                   e.liveness_session_digest
             from fm_biometric_enrollments e
             where e.id = %s and e.user_id = %s
             """,
             (enrollment_id, user_id),
         )
         return await cur.fetchone()
+
+
+def _validate_photo_mutation_enrollment(row: dict | None) -> dict:
+    if row is None:
+        raise _err("not_found", "등록을 찾을 수 없습니다.", status=404)
+    if row["status"] == "photos_pending":
+        return row
+    if row["status"] == "liveness_pending" and not row.get(
+        "liveness_session_digest"
+    ):
+        return row
+    raise _err(
+        "invalid_enrollment_state",
+        "현재 등록 단계에서는 사진을 변경할 수 없습니다.",
+        status=409,
+    )
 
 
 async def _lock_photo_mutation_enrollment(
@@ -97,36 +114,7 @@ async def _lock_photo_mutation_enrollment(
             (enrollment_id, user_id),
         )
         row = await cur.fetchone()
-    if row is None:
-        raise _err("not_found", "등록을 찾을 수 없습니다.", status=404)
-    if row["status"] == "photos_pending":
-        return row
-    if row["status"] == "liveness_pending" and not row.get(
-        "liveness_session_digest"
-    ):
-        return row
-    raise _err(
-        "invalid_enrollment_state",
-        "현재 등록 단계에서는 사진을 변경할 수 없습니다.",
-        status=409,
-    )
-
-
-async def _persist_upload_cleanup(
-    request: Request, enrollment_id: str, angle: str, key: str
-) -> None:
-    async with get_conn(request) as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                """
-                insert into fm_biometric_enrollment_photo_cleanup
-                    (enrollment_id, angle, r2_key, reason)
-                values (%s, %s, %s, 'upload_orphan')
-                on conflict (enrollment_id, r2_key) do nothing
-                """,
-                (enrollment_id, angle, key),
-            )
-        await conn.commit()
+    return _validate_photo_mutation_enrollment(row)
 
 
 def _is_r2_not_found(exc: Exception) -> bool:
@@ -468,13 +456,44 @@ async def upload_enrollment_photo(
         old_key = None
         try:
             async with get_conn(request) as conn:
+                row = await _load_owned_enrollment(conn, enrollment_id, user_id)
+                _validate_photo_mutation_enrollment(row)
+            await _drain_photo_cleanup(
+                request.app,
+                enrollment_id=enrollment_id,
+                angle=angle,
+                reason="upload_orphan",
+            )
+            async with get_conn(request) as conn:
                 await _lock_photo_mutation_enrollment(conn, enrollment_id, user_id)
-                await _drain_photo_cleanup(
-                    request.app,
-                    enrollment_id=enrollment_id,
-                    angle=angle,
-                    reason="upload_orphan",
-                )
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        select r2_key, storage_state
+                        from fm_biometric_enrollment_photos
+                        where enrollment_id = %s and angle = %s
+                        """,
+                        (enrollment_id, angle),
+                    )
+                    old = await cur.fetchone()
+                    if old and old["storage_state"] == "delete_pending":
+                        raise _err(
+                            "photo_cleanup_pending",
+                            "이전 사진 정리를 마친 뒤 다시 시도해 주세요.",
+                            status=409,
+                        )
+                    await cur.execute(
+                        """
+                        insert into fm_biometric_enrollment_photo_cleanup
+                            (enrollment_id, angle, r2_key, reason)
+                        values (%s, %s, %s, 'upload_orphan')
+                        on conflict (enrollment_id, r2_key) do nothing
+                        """,
+                        (enrollment_id, angle, new_key),
+                    )
+                await conn.commit()
+            async with get_conn(request) as conn:
+                await _lock_photo_mutation_enrollment(conn, enrollment_id, user_id)
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
@@ -492,7 +511,6 @@ async def upload_enrollment_photo(
                             status=409,
                         )
                     old_key = old["r2_key"] if old else None
-                await _persist_upload_cleanup(request, enrollment_id, angle, new_key)
                 try:
                     await asyncio.to_thread(r2.put_bytes, new_key, data, mime)
                 except Exception as exc:
