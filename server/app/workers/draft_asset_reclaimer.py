@@ -43,9 +43,24 @@ class DraftAssetReclaimer:
     async def _sweep_once(self):
         async with self.app.state.pool.connection() as conn:
             assets = await repo.reclaim_stale_unreferenced_draft_assets(conn)
+            outputs = await repo.claim_unpublished_ai_output_cleanup_intents(conn)
             await conn.commit()
         for asset in assets:
             try:
                 await asyncio.to_thread(self.app.state.r2.delete, asset["r2_key"])
             except Exception:
                 log.exception("stale draft asset R2 cleanup failed: %s", asset["id"])
+        for output in outputs:
+            try:
+                await asyncio.to_thread(self.app.state.r2.delete, output["r2_key"])
+                if await asyncio.to_thread(self.app.state.r2.head, output["r2_key"]) is not None:
+                    raise RuntimeError("R2 object remained after delete")
+            except Exception:
+                log.warning(
+                    "AI output cleanup retry deferred: %s",
+                    output["id"],
+                )
+                continue
+            async with self.app.state.pool.connection() as conn:
+                await repo.clear_ai_output_cleanup_intent(conn, output["id"])
+                await conn.commit()

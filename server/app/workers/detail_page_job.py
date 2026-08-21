@@ -570,6 +570,13 @@ async def _gen_cuts(app, job, prepared, product, analysis):
             ext = ext_for_mime(mime) or _EXT_FALLBACK.get(mime, "png")
             asset_id = str(uuid.uuid4())
             key = ai_key(user_id, project_id, job_id, asset_id, ext)
+            async with app.state.pool.connection() as conn:
+                cleanup_intent_id = await repo.create_ai_output_cleanup_intent(
+                    conn,
+                    job_id=job_id,
+                    r2_key=key,
+                )
+                await conn.commit()
             await asyncio.to_thread(r2.put_bytes, key, img, mime, cache=IMMUTABLE_CACHE)
             w, h = _dims(img)
             # 대기 화면 프리뷰 — asset 행은 finalize에서만 생기므로 /file 경로는 아직 404다.
@@ -584,7 +591,8 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                 {"blockId": b.get("id"), "imageUrl": f"/v1/assets/{asset_id}/file",
                  "width": w, "height": h},
                 {"asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
-                 "size": len(img), "width": w, "height": h},
+                 "size": len(img), "width": w, "height": h,
+                 "cleanup_intent_id": cleanup_intent_id},
                 has_face,
                 garment_qc,
                 cut_qc,
@@ -812,6 +820,26 @@ async def run_detail_page_job(app, job: dict) -> None:
                 await conn.commit()
         except Exception:
             log.exception("detail_page finalize_failure error for job %s", job_id)
+
+    async def _delete_output_candidate(c: dict) -> None:
+        key = c.get("key") if isinstance(c, dict) else None
+        if not key:
+            return
+        try:
+            await asyncio.to_thread(app.state.r2.delete, key)
+            head = getattr(app.state.r2, "head", None)
+            if head is None:
+                raise RuntimeError("R2 absence confirmation unavailable")
+            if await asyncio.to_thread(head, key) is not None:
+                raise RuntimeError("R2 object remained after delete")
+        except Exception:
+            log.warning("orphan R2 cleanup deferred after detail finalization rejection")
+            return
+        intent_id = c.get("cleanup_intent_id") if isinstance(c, dict) else None
+        if intent_id:
+            async with pool.connection() as conn:
+                await repo.clear_ai_output_cleanup_intent(conn, intent_id)
+                await conn.commit()
 
     try:
         # 1) 입력 로드 — 옷 레퍼런스 = (있으면) 선택 마네킹컷(핏·기장 기준, ADR-0004)
@@ -1675,10 +1703,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             await conn.commit()
         if out is None:  # lease 상실 → 방금 올린 R2 객체 best-effort 정리
             for c in cut_assets:
-                try:
-                    await asyncio.to_thread(app.state.r2.delete, c["key"])
-                except Exception:
-                    log.warning("orphan R2 cleanup failed: %s", c["key"])
+                await _delete_output_candidate(c)
         else:
             # FaceMarket 온체인 정산 훅(선택과제2). 이 잡이 얼굴 라이선스를 소비했으면
             # 성공 종결 지점에서 70/20/10 을 온체인 기록. 프로젝트에 과거 잠금이 남아도
@@ -1703,12 +1728,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     log.warning("facemarket settlement hook failed for job %s", job_id)
     except Exception as e:
         for c in locals().get("cut_assets") or ():
-            key = c.get("key") if isinstance(c, dict) else None
-            if key:
-                try:
-                    await asyncio.to_thread(app.state.r2.delete, key)
-                except Exception:
-                    log.warning("orphan R2 cleanup failed after detail finalization rejection")
+            await _delete_output_candidate(c)
         error = str(e)[:300]
         fm_detail = e.detail if isinstance(e, facemarket.HTTPException) else None
         fm_code = fm_detail.get("code") if isinstance(fm_detail, dict) else None

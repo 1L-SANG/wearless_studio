@@ -16,10 +16,12 @@ REAL_CATEGORY = "일반 여성 의류"
 
 
 class _TrackingR2(FakeR2):
-    def __init__(self):
+    def __init__(self, *, fail_delete=False):
         self.reads = []
         self.puts = []
         self.deletes = []
+        self.objects = set()
+        self.fail_delete = fail_delete
 
     def get_bytes(self, key):
         self.reads.append(key)
@@ -27,9 +29,16 @@ class _TrackingR2(FakeR2):
 
     def put_bytes(self, key, data, mime, cache=None):
         self.puts.append(key)
+        self.objects.add(key)
 
     def delete(self, key):
         self.deletes.append(key)
+        if self.fail_delete:
+            raise RuntimeError("delete failed")
+        self.objects.discard(key)
+
+    def head(self, key):
+        return {"size": 1, "mime": "image/png"} if key in self.objects else None
 
 
 def _patch_detail_terminal(monkeypatch, captured):
@@ -1138,3 +1147,246 @@ def test_editor_final_recheck_revoked_license_deletes_output_and_refunds(monkeyp
     assert captured["failure"]["reserved"] == 7
     assert captured["failure"]["code"] == "license_revoked"
     assert public_r2.puts and public_r2.deletes == public_r2.puts
+
+
+def test_editor_final_recheck_delete_failure_leaves_cleanup_intent(monkeypatch):
+    events = []
+    captured = {"resolve": 0, "settlement": 0}
+    _patch_editor_common(monkeypatch, captured)
+
+    def gate_row(status):
+        return {
+            "id": REAL_LICENSE_ID,
+            "model_id": REAL_MODEL_ID,
+            "model_status": "verified",
+            "status": status,
+            "license_valid_until": datetime.now(timezone.utc) + timedelta(days=1),
+            "unit_price": 10,
+            "vc_id": "vc-1",
+            "allowed_use": [REAL_CATEGORY],
+            "forbidden_use": [],
+            "assets_status": "ready",
+            "current_enrollment_id": REAL_ENROLLMENT_ID,
+            "license_enrollment_id": REAL_ENROLLMENT_ID,
+            "enrollment_status": "passed",
+            "match_policy_version": "policy-v1",
+            "has_face_front": True,
+            "has_grid_sedcard": True,
+            "assets_current_evidence": True,
+        }
+
+    async def fake_resolve(conn, model_id, *, license_id=None, **kwargs):
+        captured["resolve"] += 1
+        return gate_row("active" if captured["resolve"] == 1 else "revoked")
+
+    async def fake_verify(app, row, **kwargs):
+        assert row["status"] == "active"
+
+    async def fake_refs(conn, model_id, *, enrollment_id, evidence_version):
+        return [
+            {"key": "face-front", "mime": "image/png", "bucket": "face"},
+            {"key": "face-grid", "mime": "image/png", "bucket": "face"},
+        ]
+
+    async def fake_failure(conn, **kwargs):
+        captured["failure"] = kwargs
+        return True
+
+    async def fake_success(conn, **kwargs):
+        captured["success"] = kwargs
+        return {"id": "published"}
+
+    async def fake_settlement(*_args, **_kwargs):
+        captured["settlement"] += 1
+
+    async def fake_lock(conn):
+        captured["locked"] = True
+
+    async def fake_intent(conn, **kwargs):
+        events.append("intent")
+        return "intent-1"
+
+    async def forbidden_clear(conn, intent_id):
+        events.append(f"clear:{intent_id}")
+
+    monkeypatch.setattr(eij.facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(eij.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(eij.identity_source, "resolve_real_model_assets", fake_refs)
+    monkeypatch.setattr(eij.repo, "lock_facemarket_writer_boundary", fake_lock)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_failure)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_success)
+    monkeypatch.setattr(eij.facemarket, "record_license_settlement", fake_settlement)
+    monkeypatch.setattr(
+        eij.repo,
+        "create_ai_output_cleanup_intent",
+        fake_intent,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        eij.repo,
+        "clear_ai_output_cleanup_intent",
+        forbidden_clear,
+        raising=False,
+    )
+
+    public_r2 = _TrackingR2(fail_delete=True)
+    original_put = public_r2.put_bytes
+
+    def tracking_put(*args, **kwargs):
+        events.append("put")
+        return original_put(*args, **kwargs)
+
+    public_r2.put_bytes = tracking_put
+    face_r2 = _TrackingR2()
+    app = fake_worker_app(
+        make_settings(gemini_api_key="x", r2_bucket="b", facemarket_enabled=True),
+        r2=public_r2,
+    )
+    app.state.r2_face = face_r2
+    app.state.fm_chain = object()
+
+    asyncio.run(eij.run_editor_image_job(app, worker_job({
+        "mode": "new",
+        "cutType": "styling",
+        "shot": "full",
+        "modelId": REAL_MODEL_ID,
+        "brandUseCategory": REAL_CATEGORY,
+        "_facemarket": {"modelId": REAL_MODEL_ID, "licenseId": REAL_LICENSE_ID},
+    }, credits_reserved=7)))
+
+    assert events[:2] == ["intent", "put"]
+    assert public_r2.puts and public_r2.deletes == public_r2.puts
+    assert not any(event.startswith("clear:") for event in events)
+    assert "success" not in captured
+    assert captured["settlement"] == 0
+    assert captured["failure"]["code"] == "license_revoked"
+
+
+def test_editor_cancel_after_put_clears_cleanup_intent_after_confirmed_delete(monkeypatch):
+    events = []
+    captured = {}
+    _patch_editor_common(monkeypatch, captured)
+
+    async def cancelled_success(conn, **kwargs):
+        captured["success"] = kwargs
+        return None
+
+    async def fake_intent(conn, **kwargs):
+        events.append("intent")
+        return "intent-1"
+
+    async def fake_clear(conn, intent_id):
+        events.append(f"clear:{intent_id}")
+
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", cancelled_success)
+    monkeypatch.setattr(
+        eij.repo,
+        "create_ai_output_cleanup_intent",
+        fake_intent,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        eij.repo,
+        "clear_ai_output_cleanup_intent",
+        fake_clear,
+        raising=False,
+    )
+
+    public_r2 = _TrackingR2()
+    original_put = public_r2.put_bytes
+
+    def tracking_put(*args, **kwargs):
+        events.append("put")
+        return original_put(*args, **kwargs)
+
+    public_r2.put_bytes = tracking_put
+    app = fake_worker_app(
+        make_settings(gemini_api_key="x", r2_bucket="b", facemarket_enabled=True),
+        r2=public_r2,
+    )
+
+    asyncio.run(eij.run_editor_image_job(app, worker_job({
+        "mode": "new",
+        "cutType": "product",
+        "shot": "ghost",
+    })))
+
+    assert events[:2] == ["intent", "put"]
+    assert public_r2.puts and public_r2.deletes == public_r2.puts
+    assert events[-1] == "clear:intent-1"
+
+
+def test_editor_active_job_cleanup_claim_does_not_delete_published_output(monkeypatch):
+    from app.workers.draft_asset_reclaimer import DraftAssetReclaimer
+
+    events = []
+    captured = {}
+    _patch_editor_common(monkeypatch, captured)
+
+    async def reclaim_drafts(conn):
+        return []
+
+    async def active_job_claim(conn):
+        events.append("claim-active")
+        return []
+
+    async def fake_clear(conn, intent_id):
+        events.append(f"clear:{intent_id}")
+
+    async def publishing_success(conn, **kwargs):
+        events.append("finalize")
+        await eij.repo.clear_ai_output_cleanup_intent(
+            conn, kwargs["image"]["cleanup_intent_id"]
+        )
+        return {"id": "wardrobe"}
+
+    monkeypatch.setattr(eij.repo, "reclaim_stale_unreferenced_draft_assets", reclaim_drafts)
+    monkeypatch.setattr(
+        eij.repo,
+        "claim_unpublished_ai_output_cleanup_intents",
+        active_job_claim,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        eij.repo,
+        "clear_ai_output_cleanup_intent",
+        fake_clear,
+        raising=False,
+    )
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", publishing_success)
+
+    public_r2 = _TrackingR2()
+    original_put = public_r2.put_bytes
+
+    def tracking_put(*args, **kwargs):
+        events.append("put")
+        return original_put(*args, **kwargs)
+
+    public_r2.put_bytes = tracking_put
+    app = fake_worker_app(
+        make_settings(gemini_api_key="x", r2_bucket="b", facemarket_enabled=True),
+        r2=public_r2,
+    )
+
+    async def fake_intent(conn, **kwargs):
+        events.append("intent")
+        await DraftAssetReclaimer(app)._sweep_once()
+        return "intent-1"
+
+    monkeypatch.setattr(
+        eij.repo,
+        "create_ai_output_cleanup_intent",
+        fake_intent,
+        raising=False,
+    )
+
+    asyncio.run(eij.run_editor_image_job(app, worker_job({
+        "mode": "new",
+        "cutType": "product",
+        "shot": "ghost",
+    })))
+
+    assert events[:3] == ["intent", "claim-active", "put"]
+    assert "clear:intent-1" in events
+    assert public_r2.puts
+    assert public_r2.deletes == []

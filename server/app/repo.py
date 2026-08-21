@@ -281,6 +281,91 @@ async def reclaim_stale_unreferenced_draft_assets(
         return await cur.fetchall()
 
 
+async def create_ai_output_cleanup_intent(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    r2_key: str,
+) -> str | None:
+    """Persist cleanup ownership before writing a generated public AI object."""
+    if not hasattr(conn, "cursor"):
+        return None
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            insert into ai_output_cleanup_intents
+              (job_id, r2_key)
+            values (%s, %s)
+            on conflict (r2_key) do update
+            set status = 'pending', not_before = now(), updated_at = now()
+            returning id::text as id
+            """,
+            (job_id, r2_key),
+        )
+        return (await cur.fetchone())["id"]
+
+
+async def clear_ai_output_cleanup_intent(conn: AsyncConnection, intent_id: str) -> None:
+    if not intent_id or not hasattr(conn, "cursor"):
+        return
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "delete from ai_output_cleanup_intents where id = %s",
+            (intent_id,),
+        )
+
+
+async def claim_unpublished_ai_output_cleanup_intents(
+    conn: AsyncConnection, *, limit: int = 200
+) -> list[dict]:
+    """Claim generated output candidates that never became live assets.
+
+    Published assets neutralize stale intents here and are never returned for R2 deletion.
+    """
+    if not hasattr(conn, "cursor"):
+        return []
+    limit = max(1, min(int(limit), 500))
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            delete from ai_output_cleanup_intents i
+            where exists (
+              select 1 from assets a
+              where a.r2_key = i.r2_key and a.deleted_at is null
+            )
+            """
+        )
+        await cur.execute(
+            """
+            with due as (
+              select i.id
+              from ai_output_cleanup_intents i
+              where i.status in ('pending','delete_pending')
+                and i.not_before <= now()
+                and not exists (
+                  select 1 from jobs j
+                  where j.id = i.job_id
+                    and j.status in ('pending','running')
+                )
+                and not exists (
+                  select 1 from assets a
+                  where a.r2_key = i.r2_key and a.deleted_at is null
+                )
+              order by i.created_at
+              for update skip locked
+              limit %s
+            )
+            update ai_output_cleanup_intents i
+            set status = 'delete_pending', updated_at = now()
+            from due
+            where i.id = due.id
+            returning i.id::text as id, i.r2_key
+            """,
+            (limit,),
+        )
+        return await cur.fetchall()
+
+
 async def list_library(conn: AsyncConnection, user_id: str) -> list[dict]:
     async with conn.cursor() as cur:
         await cur.execute(
@@ -2329,6 +2414,11 @@ async def finalize_detail_page_success(
                 (c["asset_id"], user_id, project_id, c["bucket"], c["key"], c["mime"],
                  c.get("size"), c.get("width"), c.get("height")),
             )
+            if c.get("cleanup_intent_id"):
+                await cur.execute(
+                    "delete from ai_output_cleanup_intents where id = %s",
+                    (c["cleanup_intent_id"],),
+                )
         await cur.execute(
             "update projects set editor_blocks = %s, status = 'done' where id = %s",
             (Json(editor_blocks), project_id),
@@ -2449,6 +2539,11 @@ async def finalize_editor_image_success(
             (image["asset_id"], user_id, project_id, image["bucket"], image["key"], image["mime"],
              image.get("size"), image.get("width"), image.get("height")),
         )
+        if image.get("cleanup_intent_id"):
+            await cur.execute(
+                "delete from ai_output_cleanup_intents where id = %s",
+                (image["cleanup_intent_id"],),
+            )
         await cur.execute(
             "select coalesce(max(sort_order), -1) + 1 as v from wardrobe_images "
             "where project_id = %s and coalesce(color_id, 'misc') = %s",

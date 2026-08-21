@@ -82,8 +82,25 @@ async def run_editor_image_job(app, job: dict) -> None:
         except Exception:
             log.exception("editor_image finalize_failure error for job %s", job_id)
 
+    async def _delete_output_candidate(key: str, intent_id: str | None) -> None:
+        try:
+            await asyncio.to_thread(app.state.r2.delete, key)
+            head = getattr(app.state.r2, "head", None)
+            if head is None:
+                raise RuntimeError("R2 absence confirmation unavailable")
+            if await asyncio.to_thread(head, key) is not None:
+                raise RuntimeError("R2 object remained after delete")
+        except Exception:
+            log.warning("orphan R2 cleanup deferred after editor finalization rejection")
+            return
+        if intent_id:
+            async with pool.connection() as conn:
+                await repo.clear_ai_output_cleanup_intent(conn, intent_id)
+                await conn.commit()
+
     try:
         written_key: str | None = None
+        written_cleanup_intent_id: str | None = None
         image: bytes
         mime: str
         group: str | None
@@ -682,12 +699,21 @@ async def run_editor_image_job(app, job: dict) -> None:
         ext = ext_for_mime(mime) or _EXT_FALLBACK.get(mime, "png")
         asset_id = str(uuid.uuid4())
         key = ai_key(user_id, project_id, job_id, asset_id, ext)
+        async with pool.connection() as conn:
+            cleanup_intent_id = await repo.create_ai_output_cleanup_intent(
+                conn,
+                job_id=job_id,
+                r2_key=key,
+            )
+            await conn.commit()
         await asyncio.to_thread(app.state.r2.put_bytes, key, image, mime, cache=IMMUTABLE_CACHE)
         written_key = key
+        written_cleanup_intent_id = cleanup_intent_id
         w, h = _image_dims(image)
         image_row = {
             "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
             "size": len(image), "width": w, "height": h,
+            "cleanup_intent_id": cleanup_intent_id,
         }
 
         # 성공 종결 (원자·lease 펜스). charge = reserved — 예약 시점 견적 확정(부분 성공 없음.
@@ -729,15 +755,14 @@ async def run_editor_image_job(app, job: dict) -> None:
                 metadata=success_metadata)
             await conn.commit()
         if out is None:  # lease 상실(복구) → 결과 폐기 + 방금 저장한 R2 객체 best-effort 정리
-            try:
-                await asyncio.to_thread(app.state.r2.delete, key)
-            except Exception:
-                log.warning("orphan R2 cleanup failed: %s", key)
+            await _delete_output_candidate(key, cleanup_intent_id)
             written_key = None
+            written_cleanup_intent_id = None
         elif (fm_face_injected and fm_license_row is not None
               and fm_license_row.get("unit_price") is not None
               and getattr(app.state, "fm_chain", None) is not None):
             written_key = None
+            written_cleanup_intent_id = None
             # FaceMarket 온체인 정산 훅(선택과제2) — 에디터 컷도 얼굴 라이선스 1회 사용으로
             # detail_page 와 동일하게 70/20/10 기록. payment_key=job:{id} 멱등(컨트랙트 중복
             # revert + fm_settlements UNIQUE). best-effort: 정산 실패가 완료된 생성을 안 되돌림.
@@ -750,12 +775,10 @@ async def run_editor_image_job(app, job: dict) -> None:
                 log.exception("editor_image settlement hook failed for job %s", job_id)
         else:
             written_key = None
+            written_cleanup_intent_id = None
     except Exception as e:  # 예기치 못한 오류도 lease 펜스 종결로
         if written_key:
-            try:
-                await asyncio.to_thread(app.state.r2.delete, written_key)
-            except Exception:
-                log.warning("orphan R2 cleanup failed after editor finalization rejection")
+            await _delete_output_candidate(written_key, written_cleanup_intent_id)
         detail = e.detail if isinstance(e, facemarket.HTTPException) else None
         code = detail.get("code") if isinstance(detail, dict) else "generation_failed"
         message = (

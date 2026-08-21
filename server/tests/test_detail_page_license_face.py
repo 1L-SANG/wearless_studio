@@ -174,15 +174,24 @@ class _FaceR2:
 class _MainR2(FakeR2):
     """공개 결과 버킷 기록기 — REAL 거부 시 출력이 생기지 않음을 단언한다."""
 
-    def __init__(self):
+    def __init__(self, *, fail_delete=False):
         self.puts: list[str] = []
         self.deletes: list[str] = []
+        self.objects = set()
+        self.fail_delete = fail_delete
 
     def put_bytes(self, key, data, mime, cache=None):
         self.puts.append(key)
+        self.objects.add(key)
 
     def delete(self, key):
         self.deletes.append(key)
+        if self.fail_delete:
+            raise RuntimeError("delete failed")
+        self.objects.discard(key)
+
+    def head(self, key):
+        return {"size": 1, "mime": "image/png"} if key in self.objects else None
 
 
 def _app(
@@ -628,3 +637,133 @@ def test_detail_final_recheck_revoked_license_deletes_outputs_and_refunds(monkey
     assert captured["failure"]["reserved"] == 7
     assert captured["failure"]["code"] == "license_revoked"
     assert main_r2.puts and main_r2.deletes == main_r2.puts
+
+
+def test_detail_final_recheck_delete_failure_leaves_cleanup_intent(monkeypatch):
+    events = []
+    captured = {"resolve": 0, "settlement": 0}
+    _patch_inputs(
+        monkeypatch,
+        captured,
+        project={"copywriting": False},
+        storyboard=[{"id": "b1", "source": "ai", "cutType": "styling", "shot": "full"}],
+    )
+
+    def row(status):
+        return {**_license_row(status=status)}
+
+    async def fake_resolve(conn, model_id, *, license_id=None, **kwargs):
+        captured["resolve"] += 1
+        assert model_id == MODEL_ID and license_id == LIC_ID
+        return row("active" if captured["resolve"] == 1 else "revoked")
+
+    async def fake_verify(app, license_row, **kwargs):
+        assert license_row["status"] == "active"
+
+    async def fake_assets(conn, model_id, *, enrollment_id, evidence_version):
+        return [
+            {"key": CURRENT_FACE_KEY, "mime": "image/png", "bucket": "face"},
+            {"key": CURRENT_GRID_KEY, "mime": "image/png", "bucket": "face"},
+        ]
+
+    async def fake_settlement(*_args, **_kwargs):
+        captured["settlement"] += 1
+
+    async def fake_lock(conn):
+        captured["locked"] = True
+
+    async def fake_intent(conn, **kwargs):
+        events.append("intent")
+        return "intent-1"
+
+    async def forbidden_clear(conn, intent_id):
+        events.append(f"clear:{intent_id}")
+
+    monkeypatch.setattr(facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(identity_source, "resolve_real_model_assets", fake_assets)
+    monkeypatch.setattr(dpj.repo, "lock_facemarket_writer_boundary", fake_lock)
+    monkeypatch.setattr(dpj.facemarket, "record_license_settlement", fake_settlement)
+    monkeypatch.setattr(
+        dpj.repo,
+        "create_ai_output_cleanup_intent",
+        fake_intent,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        dpj.repo,
+        "clear_ai_output_cleanup_intent",
+        forbidden_clear,
+        raising=False,
+    )
+
+    app, main_r2 = _app(row("active"))
+    main_r2.fail_delete = True
+    original_put = main_r2.put_bytes
+
+    def tracking_put(*args, **kwargs):
+        events.append("put")
+        return original_put(*args, **kwargs)
+
+    main_r2.put_bytes = tracking_put
+    app.state.fm_chain = object()
+
+    asyncio.run(dpj.run_detail_page_job(app, _snapshot_job(reserved=7)))
+
+    assert events[:2] == ["intent", "put"]
+    assert main_r2.puts and main_r2.deletes == main_r2.puts
+    assert not any(event.startswith("clear:") for event in events)
+    assert "editor_blocks" not in captured
+    assert captured["settlement"] == 0
+    assert captured["failure"]["code"] == "license_revoked"
+
+
+def test_detail_cancel_after_put_clears_cleanup_intent_after_confirmed_delete(monkeypatch):
+    events = []
+    captured = {}
+    _patch_inputs(
+        monkeypatch,
+        captured,
+        project={"copywriting": False},
+        storyboard=[{"id": "b1", "source": "ai", "cutType": "product", "shot": "ghost"}],
+    )
+
+    async def cancelled_success(conn, **kwargs):
+        captured["success"] = kwargs
+        return None
+
+    async def fake_intent(conn, **kwargs):
+        events.append("intent")
+        return "intent-1"
+
+    async def fake_clear(conn, intent_id):
+        events.append(f"clear:{intent_id}")
+
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", cancelled_success)
+    monkeypatch.setattr(
+        dpj.repo,
+        "create_ai_output_cleanup_intent",
+        fake_intent,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        dpj.repo,
+        "clear_ai_output_cleanup_intent",
+        fake_clear,
+        raising=False,
+    )
+
+    app, main_r2 = _app(_license_row(), facemarket_enabled=False)
+    original_put = main_r2.put_bytes
+
+    def tracking_put(*args, **kwargs):
+        events.append("put")
+        return original_put(*args, **kwargs)
+
+    main_r2.put_bytes = tracking_put
+
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+
+    assert events[:2] == ["intent", "put"]
+    assert main_r2.puts and main_r2.deletes == main_r2.puts
+    assert events[-1] == "clear:intent-1"

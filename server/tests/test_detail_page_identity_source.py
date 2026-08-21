@@ -219,6 +219,12 @@ def _patch(monkeypatch, captured, *, project=None, analysis=None, storyboard=Non
         captured["failure"] = kw
         return {"status": "failed"}
 
+    async def fake_cleanup_intent(conn, **kw):
+        return "intent-identity"
+
+    async def fake_clear_cleanup(conn, intent_id):
+        return None
+
     async def fake_emit(pool, job_id, et, payload):
         return None
 
@@ -231,6 +237,8 @@ def _patch(monkeypatch, captured, *, project=None, analysis=None, storyboard=Non
     monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", fake_finalize_failure)
+    monkeypatch.setattr(dpj.repo, "create_ai_output_cleanup_intent", fake_cleanup_intent)
+    monkeypatch.setattr(dpj.repo, "clear_ai_output_cleanup_intent", fake_clear_cleanup)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
 
