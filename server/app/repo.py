@@ -1408,8 +1408,8 @@ async def requeue_personalization_purge(
         return await cur.fetchone() is not None
 
 
-async def user_account_delete_completed(conn: AsyncConnection, user_id: str) -> bool:
-    """Server-owned account-delete completion gate."""
+async def user_account_purge_closed(conn: AsyncConnection, user_id: str) -> bool:
+    """Server-owned biometric writer closure gate for active purge or completed account-delete."""
     async with conn.cursor() as cur:
         await cur.execute(
             """
@@ -1418,9 +1418,14 @@ async def user_account_delete_completed(conn: AsyncConnection, user_id: str) -> 
                 from jobs
                where user_id = %s
                  and kind = 'personalization_purge'
-                 and status = 'done'
-                 and payload->>'reason' = 'account_delete'
-                 and result->>'outcome' = 'ready_for_identity_delete'
+                 and (
+                       status in ('pending', 'running')
+                    or (
+                         status = 'done'
+                     and coalesce(nullif(payload->>'reason', ''), 'withdrawal') = 'account_delete'
+                     and result->>'outcome' = 'ready_for_identity_delete'
+                    )
+                 )
             ) as closed
             """,
             (user_id,),

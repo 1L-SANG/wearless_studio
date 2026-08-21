@@ -37,7 +37,7 @@ class AccountClosed(RuntimeError):
 
 
 async def _assert_account_open(conn, user_id: str) -> None:
-    if await repo.user_account_delete_completed(conn, user_id):
+    if await repo.user_account_purge_closed(conn, user_id):
         raise AccountClosed("account_closed")
 
 

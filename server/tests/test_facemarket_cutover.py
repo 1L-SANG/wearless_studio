@@ -102,10 +102,28 @@ class _Cursor:
                 "pending_count": self.store.pending_count,
                 "running_count": self.store.running_count,
             }
+        elif q.startswith("select id::text as id from fm_models where user_id"):
+            self.last = [
+                {"id": row["id"]}
+                for row in self.store.models
+                if row.get("user_id") == params[0]
+            ]
+        elif q.startswith("select id::text as id from fm_licenses where model_id = any"):
+            model_ids = set(params[0] or ())
+            self.last = [
+                {"id": row["id"]}
+                for row in self.store.licenses
+                if row["model_id"] in model_ids
+            ]
         elif "select id::text as id from fm_biometric_enrollments" in q:
             self.last = [{"id": eid} for eid in self.store.enrollment_ids]
         elif "select pg_try_advisory_lock" in q:
-            self.last = {"locked": self.store.photo_locks.pop(0) if self.store.photo_locks else False}
+            namespace = params[0]
+            if namespace == facemarket_cutover._MODEL_ASSET_FENCE_NAMESPACE:
+                locks = self.store.model_asset_locks
+            else:
+                locks = self.store.photo_locks
+            self.last = {"locked": locks.pop(0) if locks else True}
         elif q.startswith("select p.status from personalization_profiles"):
             self.last = {"status": self.store.profile_status}
         elif "from jobs j" in q and "j.status='pending'" in q:
@@ -185,6 +203,7 @@ class _Store:
         self.running_count = 0
         self.enrollment_ids = []
         self.photo_locks = []
+        self.model_asset_locks = []
         self.profile_status = "purging"
         self.personalization_pending = []
         self.generation_errors = 0
@@ -198,6 +217,7 @@ class _Store:
         self.models = [
             {
                 "id": "model-legacy",
+                "user_id": "user-1",
                 "status": "verified",
                 "previous_status": None,
                 "reverification_batch_id": None,
@@ -320,6 +340,85 @@ def test_quiesce_initial_cutover_times_out_on_running_or_locked_writers():
         ))
 
     assert exc.value.code == "writers_not_drained"
+
+
+def test_quiesce_user_facemarket_waits_for_user_photo_session_lock(monkeypatch):
+    """Break caught: account purge can delete R2 while an enrollment photo writer still owns the fence."""
+    store = _Store()
+    store.enrollment_ids = ["11111111-1111-1111-1111-111111111111"]
+    store.photo_locks = [False, True]
+
+    async def no_jobs(_conn, **_kwargs):
+        return []
+
+    monkeypatch.setattr(repo, "list_facemarket_scope_jobs", no_jobs)
+
+    result = asyncio.run(facemarket_cutover.quiesce_user_facemarket_writers(
+        _Pool(store),
+        user_id="user-1",
+        timeout_seconds=0.05,
+        poll_interval_seconds=0,
+    ))
+
+    assert result == facemarket_cutover.WriterQuiescence(0, 0, 0)
+    photo_lock_probes = [
+        params
+        for statement, params in store.statements
+        if "pg_try_advisory_lock" in statement
+        and params[0] == facemarket_cutover._PHOTO_FENCE_NAMESPACE
+    ]
+    assert len(photo_lock_probes) == 2
+
+
+def test_quiesce_user_facemarket_times_out_on_held_user_photo_session_lock(monkeypatch):
+    store = _Store()
+    store.enrollment_ids = ["11111111-1111-1111-1111-111111111111"]
+    store.photo_locks = [False] * 1000
+
+    async def no_jobs(_conn, **_kwargs):
+        return []
+
+    monkeypatch.setattr(repo, "list_facemarket_scope_jobs", no_jobs)
+
+    with pytest.raises(facemarket_cutover.CutoverBlocked) as exc:
+        asyncio.run(facemarket_cutover.quiesce_user_facemarket_writers(
+            _Pool(store),
+            user_id="user-1",
+            timeout_seconds=0.001,
+            poll_interval_seconds=0,
+        ))
+
+    assert exc.value.code == "writers_not_drained"
+
+
+def test_quiesce_user_facemarket_waits_for_user_model_asset_session_lock(monkeypatch):
+    """Break caught: account purge can race an in-flight model asset promotion for the same user."""
+    store = _Store()
+    store.model_asset_locks = [False, True]
+
+    async def no_jobs(_conn, **_kwargs):
+        return []
+
+    monkeypatch.setattr(repo, "list_facemarket_scope_jobs", no_jobs)
+
+    result = asyncio.run(facemarket_cutover.quiesce_user_facemarket_writers(
+        _Pool(store),
+        user_id="user-1",
+        timeout_seconds=0.05,
+        poll_interval_seconds=0,
+    ))
+
+    assert result == facemarket_cutover.WriterQuiescence(0, 0, 0)
+    model_asset_probes = [
+        params
+        for statement, params in store.statements
+        if "pg_try_advisory_lock" in statement
+        and params[0] == facemarket_cutover._MODEL_ASSET_FENCE_NAMESPACE
+    ]
+    assert model_asset_probes == [
+        (facemarket_cutover._MODEL_ASSET_FENCE_NAMESPACE, "model-legacy"),
+        (facemarket_cutover._MODEL_ASSET_FENCE_NAMESPACE, "model-legacy"),
+    ]
 
 
 def test_quiesce_personalization_requires_purging_profile_and_marks_pending_generations():

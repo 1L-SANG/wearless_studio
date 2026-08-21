@@ -479,7 +479,11 @@ class _RouteCur:
     async def execute(self, sql, params=None):
         normalized = " ".join(sql.split()).lower()
         params = params or ()
-        if "payload->>'reason' = 'account_delete'" in normalized and "ready_for_identity_delete" in normalized:
+        if (
+            "kind = 'personalization_purge'" in normalized
+            and "status in ('pending', 'running')" in normalized
+            and "ready_for_identity_delete" in normalized
+        ):
             self._one = {"closed": self.store.get("account_closed", False)}
         elif normalized.startswith("select") and "from fm_licenses l join fm_models m" in normalized and "l.vc_id" in normalized:
             lic = self.store["licenses"].get(params[0])

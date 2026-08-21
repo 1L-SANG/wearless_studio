@@ -10,7 +10,11 @@ from psycopg.types.json import Json
 
 from . import facemarket
 from . import repo
-from .facemarket_enrollment import BIOMETRIC_CONSENT_VERSION, _PHOTO_FENCE_NAMESPACE
+from .facemarket_enrollment import (
+    BIOMETRIC_CONSENT_VERSION,
+    _MODEL_ASSET_FENCE_NAMESPACE,
+    _PHOTO_FENCE_NAMESPACE,
+)
 
 _CUTOVER_CANCEL_MESSAGE = "실물 모델 보안 전환으로 작업을 취소하고 크레딧을 돌려드렸어요."
 _PERSONALIZATION_CANCEL_MESSAGE = "개인화 파기로 작업을 취소하고 크레딧을 돌려드렸어요."
@@ -310,6 +314,24 @@ async def _cutover_job_counts(conn) -> tuple[int, int]:
     return int(row["pending_count"]), int(row["running_count"])
 
 
+async def _session_lock_count(conn, namespace: int, ids: tuple[str, ...]) -> int:
+    locked = 0
+    async with conn.cursor() as cur:
+        for session_id in ids:
+            await cur.execute(
+                "select pg_try_advisory_lock(%s, hashtext(%s)) as locked",
+                (namespace, str(session_id).lower()),
+            )
+            if (await cur.fetchone())["locked"]:
+                await cur.execute(
+                    "select pg_advisory_unlock(%s, hashtext(%s))",
+                    (namespace, str(session_id).lower()),
+                )
+            else:
+                locked += 1
+    return locked
+
+
 async def _photo_lock_count(conn) -> int:
     async with conn.cursor() as cur:
         await cur.execute(
@@ -320,21 +342,34 @@ async def _photo_lock_count(conn) -> int:
             """
         )
         rows = await cur.fetchall()
-        locked = 0
-        for row in rows:
-            enrollment_id = str(row["id"]).lower()
-            await cur.execute(
-                "select pg_try_advisory_lock(%s, hashtext(%s)) as locked",
-                (_PHOTO_FENCE_NAMESPACE, enrollment_id),
-            )
-            if (await cur.fetchone())["locked"]:
-                await cur.execute(
-                    "select pg_advisory_unlock(%s, hashtext(%s))",
-                    (_PHOTO_FENCE_NAMESPACE, enrollment_id),
-                )
-            else:
-                locked += 1
-    return locked
+    return await _session_lock_count(
+        conn, _PHOTO_FENCE_NAMESPACE, tuple(row["id"] for row in rows)
+    )
+
+
+async def _user_photo_lock_count(conn, user_id: str) -> int:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select id::text as id
+              from fm_biometric_enrollments
+             where user_id = %s
+               and status in (
+                   'photos_pending',
+                   'liveness_pending',
+                   'processing',
+                   'asset_building',
+                   'license_pending',
+                   'vc_pending'
+               )
+             order by id
+            """,
+            (user_id,),
+        )
+        rows = await cur.fetchall()
+    return await _session_lock_count(
+        conn, _PHOTO_FENCE_NAMESPACE, tuple(row["id"] for row in rows)
+    )
 
 
 async def quiesce_initial_cutover_writers(
@@ -577,6 +612,8 @@ async def quiesce_user_facemarket_writers(
     cancelled = 0
     last_pending = 0
     last_running = 0
+    last_photo_locks = 0
+    last_model_asset_locks = 0
     while True:
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
@@ -605,8 +642,17 @@ async def quiesce_user_facemarket_writers(
                 cancelled += int(changed)
             last_pending = sum(1 for row in jobs if row.get("status") == "pending")
             last_running = sum(1 for row in jobs if row.get("status") == "running")
+            last_photo_locks = await _user_photo_lock_count(conn, user_id)
+            last_model_asset_locks = await _session_lock_count(
+                conn, _MODEL_ASSET_FENCE_NAMESPACE, model_ids
+            )
             await conn.commit()
-        if last_pending == 0 and last_running == 0:
+        if (
+            last_pending == 0
+            and last_running == 0
+            and last_photo_locks == 0
+            and last_model_asset_locks == 0
+        ):
             return WriterQuiescence(cancelled, 0, 0)
         if asyncio.get_running_loop().time() >= deadline:
             raise CutoverBlocked("writers_not_drained")

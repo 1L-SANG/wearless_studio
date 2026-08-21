@@ -52,7 +52,11 @@ class FakeCursor:
         s = " ".join(sql.split()).lower()
         params = params or ()
         models = self.store["models"]
-        if "payload->>'reason' = 'account_delete'" in s and "ready_for_identity_delete" in s:
+        if (
+            "kind = 'personalization_purge'" in s
+            and "status in ('pending', 'running')" in s
+            and "ready_for_identity_delete" in s
+        ):
             self._result = {"closed": self.store.get("account_closed", False)}
         elif s.startswith("select id, status from fm_models where ci_hash"):
             m = next((r for r in models if r["ci_hash"] == params[0]), None)

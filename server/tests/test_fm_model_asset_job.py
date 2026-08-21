@@ -46,6 +46,12 @@ class _Cur:
             self._last = {"?column?": None}
         elif "from fm_cutover_batches" in s and "status = any" in s:
             self._last = {"closed": self.store.cutover_closed}
+        elif (
+            "kind = 'personalization_purge'" in s
+            and "status in ('pending', 'running')" in s
+            and "ready_for_identity_delete" in s
+        ):
+            self._last = {"closed": self.store.account_closed}
         elif s.startswith("select pg_try_advisory_xact_lock"):
             self._last = {"locked": True}
         elif s.startswith("select pg_try_advisory_lock"):
@@ -269,6 +275,7 @@ class _Store:
         old_asset_keys=None,
         biometric_enabled=True,
         crash_after_done_commit=False,
+        account_closed=False,
     ):
         self.log = []
         self.initial_binding = initial_binding
@@ -288,6 +295,7 @@ class _Store:
         self.last_commit_index = 0
         self.crash_after_done_commit = crash_after_done_commit
         self.cutover_closed = False
+        self.account_closed = account_closed
         self.biometric_enabled = biometric_enabled
         self.old_asset_keys = old_asset_keys or {}
         self.legacy_rows = [
@@ -832,6 +840,21 @@ def test_flag_off_repeat_removes_prior_legacy_keys_without_touching_stable_keys(
     assert face_r2.deletes == [prior_front, prior_grid]
     assert not new_keys.intersection(face_r2.deletes)
     assert store.ready_updates == 1
+
+
+def test_account_closed_biometric_asset_job_stops_before_storage_and_asset_mutation():
+    app, _log, face_r2, store = build_worker_fixture(account_closed=True)
+
+    asyncio.run(run_fm_model_asset_job(app, _job()))
+
+    assert face_r2.get_order == []
+    assert face_r2.copies == []
+    assert face_r2.puts == []
+    assert face_r2.deletes == []
+    assert store.building_updates == 0
+    assert store.ready_updates == 0
+    assert store.asset_cleanup_refs == []
+    assert store.cleanup_refs == []
 
 
 def test_manual_build_rejects_when_biometric_enrollment_enabled(monkeypatch):

@@ -199,7 +199,7 @@ def _err(code: str, message: str, status: int = 400, **extra) -> HTTPException:
 
 
 async def _assert_account_open(conn, user_id: str) -> None:
-    if await repo.user_account_delete_completed(conn, user_id):
+    if await repo.user_account_purge_closed(conn, user_id):
         raise _err("account_closed", "계정 삭제가 완료되어 사용할 수 없습니다.", status=404)
 
 

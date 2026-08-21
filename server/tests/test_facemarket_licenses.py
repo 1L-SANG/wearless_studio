@@ -233,7 +233,11 @@ class FakeCursor:
 
         if s.startswith("select pg_advisory_xact_lock"):
             self._result = {"?column?": None}
-        elif "payload->>'reason' = 'account_delete'" in s and "ready_for_identity_delete" in s:
+        elif (
+            "kind = 'personalization_purge'" in s
+            and "status in ('pending', 'running')" in s
+            and "ready_for_identity_delete" in s
+        ):
             self._result = {"closed": self.store.get("account_closed", False)}
         elif "from fm_cutover_batches" in s and "status = any" in s:
             self._result = {"closed": False}
