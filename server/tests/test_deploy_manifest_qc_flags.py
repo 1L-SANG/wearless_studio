@@ -371,9 +371,16 @@ _CfnLoader.add_multi_constructor("!", _construct_cfn)
 
 
 def test_sam2_manifest_defaults_to_zero_tasks():
-    """온디맨드: 배포가 desiredCount 를 1로 되돌리면 상시 가동으로 복귀한다(월 $169)."""
+    """온디맨드: 배포가 desiredCount 를 0 으로 둬야 reconciler 가 수요에 맞춰 켠다.
+
+    평문 `0`(launchType)과 `{spot: 0}`(FARGATE_SPOT capacity provider) 둘 다 desiredCount 0
+    을 뜻한다. 서비스가 이미 Spot 으로 떠 있으면 평문 0 은 서비스 교체를 강제해 Service Connect
+    충돌로 배포가 깨지므로 `{spot: 0}` 을 쓴다 — manifest 주석 참고. 어느 형태든 0 대면 통과.
+    """
     doc = yaml.safe_load(SAM2_MANIFEST.read_text(encoding="utf-8"))
-    assert doc["count"] == 0
+    count = doc["count"]
+    desired = count.get("spot", count.get("range")) if isinstance(count, dict) else count
+    assert desired == 0
 
 
 def test_api_manifest_declares_idle_minutes_but_not_the_topic(manifest_vars):

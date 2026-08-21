@@ -51,10 +51,17 @@ cpu: 4096
 memory: 8192
 platform: linux/x86_64
 # 평소 0대(2026-08-21, 오너 승인). api 의 reconciler 가 수요에 따라 1대로 올리고 30분 유휴면
-# 내린다 — copilot/api/manifest.yml SAM_AUTOSCALE 참고. 여기를 1로 되돌리면 배포마다 상시
-# 가동(월 ~$169)으로 복귀한다(그게 의도라면 api 의 SAM_AUTOSCALE 도 off 로).
-# Copilot 의 Count 타입은 "0 is a valid value" 로 명시돼 있다(v1.34.1 소스).
-count: 0
+# 내린다 — copilot/api/manifest.yml SAM_AUTOSCALE 참고. spot 을 1 로 되돌리면 배포마다 상시
+# 가동으로 복귀한다(그게 의도라면 api 의 SAM_AUTOSCALE 도 off 로).
+#
+# spot 형태(`{spot: 0}`)로 쓰는 이유: 이 서비스는 이미 FARGATE_SPOT capacity provider 로
+# 떠 있다(#170). 평문 `count: 0` 은 launchType(온디맨드)를 뜻해서 capacityProvider→launchType
+# 전환 = ECS 서비스 **교체(replacement)** 를 강제하고, 새 서비스가 같은 Service Connect 이름을
+# 등록하려다 "SC service is already used by ...namespace" 로 깨진다(2026-08-21 deploy-sam2
+# UPDATE_ROLLBACK). `{spot: 0}` 은 capacity provider 를 그대로 두고 desiredCount 만 0 으로
+# 내리는 in-place 갱신이라 교체 없이 배포된다. 유휴 0.4% 구간의 Spot 리스크는 sam_retry(#169)가 흡수.
+count:
+  spot: 0
 exec: true
 
 network:
