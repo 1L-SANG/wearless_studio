@@ -146,61 +146,6 @@ def _dims(data: bytes):
         return None, None
 
 
-async def _load_license_face(app, conn, project: dict) -> dict | None:
-    """프로젝트에 잠긴 얼굴 라이선스의 얼굴 이미지 → {image, license_id, model_name}. 없으면 None.
-
-    FM-31 "라이선스 얼굴이 실제 상세컷에 나오게" 의 입력 로더. **잠금이 없으면 쿼리조차 돌지
-    않는다** — 라이선스 없는 기존 셀러 경로는 이 함수가 즉시 None 이라 완전 무변경.
-
-    verify-before-use 재확인: 게이트(routes.generate_detail_page)는 **요청 시점**에만 검증하므로
-    그 뒤 해지·만료된 라이선스가 큐에 남을 수 있다. 얼굴은 한 번 생성되면 공개 URL 로 나가
-    회수가 불가능하므로 워커에서 status/만료를 한 번 더 본다(게이트와 같은 판정 함수 _is_expired).
-
-    실패(r2_face 미설정·해지·만료·dangling 키)는 잡을 죽이지 않고 **얼굴 없이 생성**으로 강등한다:
-    상세페이지는 부분 성공 계약이고, 얼굴 게이트(get_license_face)도 같은 상황을 404 로
-    우아하게 강등한다. 강등 시 AI 고지도 기본 문구로 돌아가므로 허위 고지가 생기지 않는다.
-    로그에 얼굴 바이트·R2 키·digest 를 남기지 않는다(PII 룰).
-    """
-    s = app.state.settings
-    lic_id = project.get("facemarket_license_id") or project.get("facemarketLicenseId")
-    if not s.facemarket_enabled or not lic_id:
-        return None
-    r2_face = getattr(app.state, "r2_face", None)
-    if r2_face is None:  # 얼굴=생체 PII → 공개 버킷 폴백 금지(개인화 워커 선례)
-        log.warning("facemarket face skipped (no face storage) license %s", lic_id)
-        return None
-    # 지연 import — facemarket 모듈과의 순환 참조 회피(정산 훅 선례와 동일).
-    from ..facemarket import _EXT_TO_MIME, _is_expired, _mask_name
-
-    async with conn.cursor() as cur:
-        await cur.execute(
-            """select l.face_image_key, l.status, l.license_valid_until, m.display_name
-               from fm_licenses l join fm_models m on m.id = l.model_id
-               where l.id = %s""",
-            (str(lic_id),),
-        )
-        lic = await cur.fetchone()
-    if not lic or not lic["face_image_key"]:
-        return None
-    if lic["status"] != "active" or _is_expired(lic):
-        log.warning("facemarket face skipped (license %s status=%s)", lic_id, lic["status"])
-        return None
-    key = lic["face_image_key"]
-    mime = _EXT_TO_MIME.get(key.rsplit(".", 1)[-1].lower())
-    if not mime:  # 키 확장자 역매핑 실패(fm_licenses 에 mime 컬럼 부재) — 얼굴 없이 생성
-        return None
-    try:
-        data = await asyncio.to_thread(r2_face.get_bytes, key)
-    except Exception:  # 개인화 파기로 얼굴 객체만 지워진 dangling 키 등
-        log.warning("facemarket face skipped (object unavailable) license %s", lic_id)
-        return None
-    return {
-        "image": InlineImage(mime, data),
-        "license_id": str(lic_id),
-        "model_name": _mask_name(lic["display_name"] or ""),
-    }
-
-
 async def _gen_cuts(app, job, prepared, product, analysis):
     """준비된 블록별
     (block, images, manifest, has_face, product_images,
@@ -895,11 +840,9 @@ async def run_detail_page_job(app, job: dict) -> None:
                 selected_is_real = False
             else:
                 selected_is_real = True
-            selected_is_virtual = bool(selected_model_id) and not selected_is_real
             from ..agents import identity_source
             license_row = None
             real_refs = None
-            face_ref = None
             if selected_is_real and uses_model_identity:
                 snapshot = payload.get("_facemarket")
                 if (
@@ -933,23 +876,37 @@ async def run_detail_page_job(app, job: dict) -> None:
                         "현재 모델 자산을 사용할 수 없습니다.",
                         status=409,
                     )
-            elif not selected_model_id and uses_model_identity:
-                face_ref = await _load_license_face(app, conn, project)
+            elif (
+                not selected_model_id
+                and uses_model_identity
+                and s.facemarket_enabled
+                and (
+                    project.get("facemarket_license_id")
+                    or project.get("facemarketLicenseId")
+                )
+            ):
+                raise facemarket._err(
+                    "model_unavailable", "사용할 수 없는 모델입니다.", status=409
+                )
             source = identity_source.select_source(
                 selected_model_id=(selected_model_id if uses_model_identity else None),
                 license_row=license_row,
-                has_real_assets=real_refs is not None, has_license_face=face_ref is not None)
+                has_real_assets=real_refs is not None,
+                has_license_face=False,
+            )
             # 관측 로그(PII 없음 — 소스 enum·플래그만). 데모·검증에서 REAL 주입 확인용.
-            log.info("AG-06 identity source=%s job=%s hasReal=%s hasLicenseFace=%s",
-                     source, job_id, real_refs is not None, face_ref is not None)
+            log.info(
+                "AG-06 identity source=%s job=%s hasReal=%s",
+                source,
+                job_id,
+                real_refs is not None,
+            )
             if source == "REJECTED":
                 raise facemarket._err(
                     "model_unavailable", "사용할 수 없는 모델입니다.", status=409
                 )
             if source == "REAL" and license_row is not None:
                 notice_ctx = {"model_name": license_row["model_name"], "license_id": license_row["id"]}
-            elif source == "LEGACY" and face_ref is not None:
-                notice_ctx = {"model_name": face_ref["model_name"], "license_id": face_ref["license_id"]}
             else:
                 notice_ctx = None
             job["_suppress_detail_preview_urls"] = source == "REAL"
@@ -1194,7 +1151,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             cut_spec.pop("model_id", None)
             # 인물 일관성(AG-06): VIRTUAL 소스에서 선택 id 가 가상 registry 밖(facemarket off 상태의
             # 실존 UUID)이면 resolve_virtual_model_assets 가 None → 참조 0장 → 컷마다 인물 랜덤.
-            # 결정적 가상모델로 폴백해 전 컷 동일 인물 보장. REAL/LEGACY 는 얼굴을 별도 경로로
+            # 결정적 가상모델로 폴백해 전 컷 동일 인물 보장. REAL 은 얼굴을 별도 경로로
             # 붙이므로 건드리지 않는다(인물 이중 첨부 방지).
             if source == "VIRTUAL":
                 eff_model_id, _subbed = cut_generator.resolve_effective_model_id(
@@ -1289,17 +1246,14 @@ async def run_detail_page_job(app, job: dict) -> None:
             # MODEL FULL BODY는 진짜 전신 자산을 붙인 VIRTUAL 경로에만 선언한다.
             # REAL의 두 번째 이미지는 얼굴 시트이므로 체형 근거로 위장하지 않는다.
             model_has_full_body = False
-            # 컷당 아이덴티티 소스 1개(codex [P1]) — 셋 중 하나만 컷에 들어간다:
+            # 컷당 아이덴티티 소스 1개(codex [P1]) — 둘 중 하나만 컷에 들어간다:
             #  REAL    실존 모델 그리드(비공개 face 버킷) — 단일 라이선스 얼굴 미첨부
-            #  LEGACY  라이선스 단일 얼굴(비공개) — 어떤 그리드도 미첨부
             #  VIRTUAL 가상모델 얼굴·시트·체형 묶음(공개 버킷) — 라이선스 불요
-            # face_slot=단일 얼굴 슬롯(LEGACY만). has_identity=검증 얼굴이 실제 담기는 컷(REAL·LEGACY)
-            # → face_cuts·검증 배지 근거. 세 소스가 한 컷에 겹치지 않아 인물 혼합·이중주입이 없다.
+            # has_identity=검증 얼굴이 실제 담기는 REAL 컷 → face_cuts·검증 배지 근거.
             if not is_worn_cut:
-                # 상품컷에는 REAL/VIRTUAL 그리드와 LEGACY 단일 얼굴을 모두 구조적으로 차단한다.
+                # 상품컷에는 REAL/VIRTUAL 그리드를 구조적으로 차단한다.
                 model_images = []
                 has_identity = False
-                face_slot = False
             elif source == "REAL":
                 # 실존 모델 그리드는 얼굴 노출과 무관하게 모든 착용컷에 identity 앵커로 붙인다(A4).
                 # wants(얼굴 노출)로만 게이트하면 mirror/back 이 참조 0장 → 그 컷만 인물 랜덤이 된다
@@ -1308,11 +1262,6 @@ async def run_detail_page_job(app, job: dict) -> None:
                     normalized.get("cutType") if normalized else None, wants_face=wants)
                 model_images = real_model_images if attach_grid else []
                 has_identity = _badge and len(model_images) == 2
-                face_slot = False
-            elif source == "LEGACY":
-                model_images = []
-                has_identity = wants
-                face_slot = wants
             elif source == "VIRTUAL":
                 try:
                     model_images = list(
@@ -1330,11 +1279,9 @@ async def run_detail_page_job(app, job: dict) -> None:
                     continue
                 model_has_full_body = len(model_images) == 2
                 has_identity = False
-                face_slot = False
             else:  # NONE — 얼굴 없이 생성
                 model_images = []
                 has_identity = False
-                face_slot = False
             imgs = []
             product_images = []
             cut_mannequin_image = None
@@ -1347,9 +1294,6 @@ async def run_detail_page_job(app, job: dict) -> None:
                 imgs.append(product_image)
                 product_images.append(product_image)
             imgs.extend(matching_images)
-            if face_slot:
-                # 비공개 r2_face 바이트(LEGACY 단일 얼굴) — _img()(공개 버킷 하드코딩) 를 태우지 않는다.
-                imgs.append(face_ref["image"])
             # 무드는 장면 자산보다 앞에 와야 하지만, all/bg/대표 plate가 장면·조명을 소유하면
             # 아예 첨부하지 않는다. 예시를 해석한 뒤 이 위치에 필요한 경우에만 삽입한다.
             scene_suffix_start = len(imgs)
@@ -1541,14 +1485,14 @@ async def run_detail_page_job(app, job: dict) -> None:
                     has_model_face=len(model_images) == 2,
                     has_model_sheet=len(model_images) == 2 and not model_has_full_body,
                     has_model_full_body=model_has_full_body,
-                    has_face=face_slot,
+                    has_face=False,
                     example_scope=example_scope,
                     example_is_product=normalized is not None and normalized["cutType"] == "product",
                     has_space_set_plate=has_space_set_plate,
                     reference_direction_compatible=cut_generator.apply_reference_compatibility(
                         cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
                     )["_referenceDirectionCompatible"])
-            # 4번째 = has_identity: 검증 얼굴(REAL 그리드·LEGACY 단일)이 실제 담긴 컷 → face_cuts 계수·
+            # 4번째 = has_identity: 검증 얼굴(REAL 그리드)이 실제 담긴 컷 → face_cuts 계수·
             # generate has_face·검증 배지 근거. VIRTUAL 그리드는 검증 얼굴이 아니므로 False.
             prepared.append(
                 (
@@ -1635,8 +1579,7 @@ async def run_detail_page_job(app, job: dict) -> None:
 
         # 4) 조립(M-02) — 실패 컷은 빈 슬롯으로.
         # AI 고지 분기는 **얼굴이 실제로 들어간 컷이 성공했을 때만**(face_cuts > 0) —
-        # 라이선스만 잠기고 주입이 실패(전 컷 실패·얼굴 로드 강등)했는데 '실제 모델' 이라
-        # 쓰면 허위 고지가 된다. 라이선스 없는 경로는 face_ref=None → 항상 기본 문구.
+        # REAL 자산 주입이 실패했는데 '실제 모델'이라 쓰면 허위 고지가 된다.
         # 범위 주장 근거: totalCuts = **성공한 컷 수**(실패 컷은 빈 슬롯이라 인물이 없다).
         # face_cuts < totalCuts 면 얼굴 미첨부 컷(거울샷·뒷모습·하반신·상품컷)이 섞였다는 뜻이라
         # 페이지 전체를 '가상인물 아님' 으로 주장할 수 없다 → assembler 가 '일부 컷' 문구로 내린다.

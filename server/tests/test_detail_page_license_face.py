@@ -73,12 +73,8 @@ def _patch_snapshot_denial(monkeypatch, row):
     async def forbidden_assets(*args, **kwargs):
         raise AssertionError("verifier denial must precede current asset lookup")
 
-    async def forbidden_legacy(*args, **kwargs):
-        raise AssertionError("snapshot-backed REAL must not load face_image_key")
-
     monkeypatch.setattr(facemarket, "resolve_model_license", fake_resolve)
     monkeypatch.setattr(identity_source, "resolve_real_model_assets", forbidden_assets)
-    monkeypatch.setattr(dpj, "_load_license_face", forbidden_legacy)
 
 
 def _patch_snapshot_success(monkeypatch, row):
@@ -95,12 +91,8 @@ def _patch_snapshot_success(monkeypatch, row):
             {"key": CURRENT_GRID_KEY, "mime": "image/png", "bucket": "face"},
         ]
 
-    async def forbidden_legacy(*args, **kwargs):
-        raise AssertionError("snapshot-backed REAL must not load face_image_key")
-
     monkeypatch.setattr(facemarket, "resolve_model_license", fake_resolve)
     monkeypatch.setattr(identity_source, "resolve_real_model_assets", fake_assets)
-    monkeypatch.setattr(dpj, "_load_license_face", forbidden_legacy)
 
 
 class _Cur:
@@ -306,6 +298,35 @@ def test_facemarket_disabled_never_loads_face(monkeypatch):
 
 
 # ── 얼굴 주입 ────────────────────────────────────────────────────────────────
+def test_project_pinned_face_without_snapshot_fails_and_refunds(monkeypatch):
+    captured = {"settlements": 0}
+    _patch_inputs(
+        monkeypatch,
+        captured,
+        project={"copywriting": False, "facemarket_license_id": LIC_ID},
+    )
+
+    async def fake_settlement(*_args, **_kwargs):
+        captured["settlements"] += 1
+
+    monkeypatch.setattr(facemarket, "record_license_settlement", fake_settlement)
+    app, main_r2 = _app(_license_row())
+    app.state.fm_chain = object()
+
+    asyncio.run(dpj.run_detail_page_job(
+        app,
+        worker_job({"mode": "generate"}, credits_reserved=7),
+    ))
+
+    assert captured.get("calls") is None
+    assert captured.get("editor_blocks") is None
+    assert captured["settlements"] == 0
+    assert captured["failure"]["reserved"] == 7
+    assert captured["failure"]["code"] == "model_unavailable"
+    assert app.state.r2_face.gets == []
+    assert main_r2.puts == []
+
+
 def test_snapshot_real_job_injects_current_evidence_into_cut_input(monkeypatch):
     """큐에 고정된 실존 모델의 현재 증거 2장이 실제 생성 입력에 들어간다."""
     captured = {}
@@ -511,19 +532,6 @@ def test_unavailable_current_real_asset_fails_without_faceless_fallback(monkeypa
     assert captured["failure"]["code"] == "model_assets_unavailable"
     assert captured["failure"]["reserved"] == 7
     assert main_r2.puts == []
-
-
-def test_missing_face_storage_degrades_without_public_bucket_fallback(monkeypatch):
-    # 얼굴=생체 PII → r2_face 미설정 시 공개 버킷 폴백 금지. 얼굴 없이 생성으로 강등.
-    captured = {}
-    _patch_inputs(monkeypatch, captured,
-                  project={"copywriting": False, "facemarket_license_id": LIC_ID})
-    app, main_r2 = _app(_license_row(), with_face_storage=False)
-
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
-
-    assert captured["calls"][0]["has_face"] is False
-    assert captured["license_notice"] is None
 
 
 def test_all_face_cuts_failing_fails_the_job_without_false_notice(monkeypatch):
