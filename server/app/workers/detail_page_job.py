@@ -1649,6 +1649,25 @@ async def run_detail_page_job(app, job: dict) -> None:
         if example_warnings:
             success_metadata["warnings"] = example_warnings
         async with pool.connection() as conn:
+            if source == "REAL" and license_row is not None:
+                snapshot = payload.get("_facemarket") if isinstance(payload, dict) else None
+                if not isinstance(snapshot, dict):
+                    raise facemarket._err(
+                        "model_unavailable", "사용할 수 없는 모델입니다.", status=409
+                    )
+                await repo.lock_facemarket_writer_boundary(conn)
+                license_row = await facemarket.resolve_model_license(
+                    conn,
+                    str(snapshot.get("modelId") or ""),
+                    license_id=str(snapshot.get("licenseId") or ""),
+                    for_update=True,
+                )
+                facemarket.verify_license_local(
+                    app,
+                    license_row,
+                    model_id=str(snapshot.get("modelId") or ""),
+                    brand_use_category=payload.get("brandUseCategory"),
+                )
             out = await repo.finalize_detail_page_success(
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id, project_id=project_id,
                 editor_blocks=editor_blocks, cut_assets=cut_assets, reserved=reserved, charge=charge,
@@ -1683,6 +1702,13 @@ async def run_detail_page_job(app, job: dict) -> None:
                 except Exception:
                     log.warning("facemarket settlement hook failed for job %s", job_id)
     except Exception as e:
+        for c in locals().get("cut_assets") or ():
+            key = c.get("key") if isinstance(c, dict) else None
+            if key:
+                try:
+                    await asyncio.to_thread(app.state.r2.delete, key)
+                except Exception:
+                    log.warning("orphan R2 cleanup failed after detail finalization rejection")
         error = str(e)[:300]
         fm_detail = e.detail if isinstance(e, facemarket.HTTPException) else None
         fm_code = fm_detail.get("code") if isinstance(fm_detail, dict) else None

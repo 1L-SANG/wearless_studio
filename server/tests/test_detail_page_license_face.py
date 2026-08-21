@@ -66,7 +66,7 @@ def _snapshot_job(*, reserved=1):
 
 
 def _patch_snapshot_denial(monkeypatch, row):
-    async def fake_resolve(conn, model_id, *, license_id=None):
+    async def fake_resolve(conn, model_id, *, license_id=None, **_kwargs):
         assert model_id == MODEL_ID and license_id == LIC_ID
         return row
 
@@ -82,7 +82,7 @@ def _patch_snapshot_denial(monkeypatch, row):
 
 
 def _patch_snapshot_success(monkeypatch, row):
-    async def fake_resolve(conn, model_id, *, license_id=None):
+    async def fake_resolve(conn, model_id, *, license_id=None, **_kwargs):
         assert model_id == MODEL_ID and license_id == LIC_ID
         return row
 
@@ -176,9 +176,13 @@ class _MainR2(FakeR2):
 
     def __init__(self):
         self.puts: list[str] = []
+        self.deletes: list[str] = []
 
     def put_bytes(self, key, data, mime, cache=None):
         self.puts.append(key)
+
+    def delete(self, key):
+        self.deletes.append(key)
 
 
 def _app(
@@ -574,3 +578,53 @@ def test_face_bytes_and_key_never_appear_in_job_events(monkeypatch):
     assert CURRENT_GRID_KEY not in blob
     assert "PNG-FACE-BYTES" not in blob
     assert "faces/" not in blob
+
+
+def test_detail_final_recheck_revoked_license_deletes_outputs_and_refunds(monkeypatch):
+    captured = {"resolve": 0, "settlement": 0}
+    _patch_inputs(
+        monkeypatch,
+        captured,
+        project={"copywriting": False},
+        storyboard=[{"id": "b1", "source": "ai", "cutType": "styling", "shot": "full"}],
+    )
+
+    def row(status):
+        return {**_license_row(status=status)}
+
+    async def fake_resolve(conn, model_id, *, license_id=None, **kwargs):
+        captured["resolve"] += 1
+        assert model_id == MODEL_ID and license_id == LIC_ID
+        return row("active" if captured["resolve"] == 1 else "revoked")
+
+    async def fake_verify(app, license_row, **kwargs):
+        assert license_row["status"] == "active"
+
+    async def fake_assets(conn, model_id, *, enrollment_id, evidence_version):
+        return [
+            {"key": CURRENT_FACE_KEY, "mime": "image/png", "bucket": "face"},
+            {"key": CURRENT_GRID_KEY, "mime": "image/png", "bucket": "face"},
+        ]
+
+    async def fake_settlement(*_args, **_kwargs):
+        captured["settlement"] += 1
+
+    async def fake_lock(conn):
+        captured["locked"] = True
+
+    monkeypatch.setattr(facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(identity_source, "resolve_real_model_assets", fake_assets)
+    monkeypatch.setattr(dpj.repo, "lock_facemarket_writer_boundary", fake_lock)
+    monkeypatch.setattr(dpj.facemarket, "record_license_settlement", fake_settlement)
+
+    app, main_r2 = _app(row("active"))
+    app.state.fm_chain = object()
+    asyncio.run(dpj.run_detail_page_job(app, _snapshot_job(reserved=7)))
+
+    assert captured["resolve"] == 2
+    assert "editor_blocks" not in captured
+    assert captured["settlement"] == 0
+    assert captured["failure"]["reserved"] == 7
+    assert captured["failure"]["code"] == "license_revoked"
+    assert main_r2.puts and main_r2.deletes == main_r2.puts

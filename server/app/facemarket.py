@@ -1842,6 +1842,7 @@ async def resolve_model_license(
     model_id: str | None,
     *,
     license_id: str | None = None,
+    for_update: bool = False,
 ) -> dict | None:
     """Load a model's current runtime evidence, optionally pinned to one license."""
     if not model_id:
@@ -1851,6 +1852,8 @@ async def resolve_model_license(
     except (ValueError, TypeError):
         return None
 
+    lock = " for update of m, l, e" if for_update and license_id is not None else ""
+    join = "join" if lock else "left join"
     license_join = "l.model_id = m.id and l.enrollment_id = m.current_enrollment_id"
     where = "m.id = %s"
     params: tuple[str, ...] = (str(model_id),)
@@ -1897,11 +1900,11 @@ async def resolve_model_license(
                               and a.evidence_version = e.match_policy_version
                        ) as assets_current_evidence
                   from fm_models m
-                  left join fm_biometric_enrollments e
+                  {join} fm_biometric_enrollments e
                     on e.id = m.current_enrollment_id and e.model_id = m.id
-                  left join fm_licenses l on {license_join}
+                  {join} fm_licenses l on {license_join}
                  where {where}
-                 limit 1""",
+                 limit 1{lock}""",
             params,
         )
         row = await cur.fetchone()
@@ -1928,22 +1931,14 @@ def _is_expired(license_row: dict) -> bool:
     return vu <= datetime.now(timezone.utc)
 
 
-async def verify_license(
+def verify_license_local(
     app,
     license_row: dict | None,
     *,
     model_id: str | None,
     brand_use_category: str | None,
 ) -> None:
-    """얼굴 라이선스 사용 자격 검증. 실패 시 409 {code, message}(KR) 발생.
-
-    검사 순서(계약):
-      1. status == 'revoked'   → 409 license_revoked
-      1'. status != 'active'   → 409 license_inactive (suspended 등)
-      2. license_valid_until <= now → 409 license_expired
-      3. mandatory VC 누락/invalid/revoked → 409, Holder 장애/계약 오류 → 503
-    optional 개발 모드는 Holder 설정 또는 VC가 없을 때만 로컬 검사로 끝낸다.
-    """
+    """Local-only runtime gate. No Holder/network; safe while DB locks are held."""
     try:
         uuid.UUID(str(model_id))
     except (TypeError, ValueError):
@@ -2042,17 +2037,45 @@ async def verify_license(
             "현재 모델 자산을 사용할 수 없습니다.",
             status=409,
         )
-
-    required = bool(getattr(app.state.settings, "fm_vc_required", False))
-    base = getattr(app.state.settings, "opendid_holder_url", None)
-    secret = getattr(app.state.settings, "opendid_holder_hmac_secret", None)
-    vc_id = license_row.get("vc_id")
-    if required and not vc_id:
+    if bool(getattr(app.state.settings, "fm_vc_required", False)) and not license_row.get("vc_id"):
         raise _err(
             "license_unverified",
             "라이선스 자격 증명(VC)이 준비되지 않았습니다.",
             status=409,
         )
+
+
+async def verify_license(
+    app,
+    license_row: dict | None,
+    *,
+    model_id: str | None,
+    brand_use_category: str | None,
+) -> None:
+    """얼굴 라이선스 사용 자격 검증. 실패 시 409 {code, message}(KR) 발생.
+
+    검사 순서(계약):
+      1. status == 'revoked'   → 409 license_revoked
+      1'. status != 'active'   → 409 license_inactive (suspended 등)
+      2. license_valid_until <= now → 409 license_expired
+      3. mandatory VC 누락/invalid/revoked → 409, Holder 장애/계약 오류 → 503
+    optional 개발 모드는 Holder 설정 또는 VC가 없을 때만 로컬 검사로 끝낸다.
+    """
+    try:
+        uuid.UUID(str(model_id))
+    except (TypeError, ValueError):
+        return
+
+    required = bool(getattr(app.state.settings, "fm_vc_required", False))
+    base = getattr(app.state.settings, "opendid_holder_url", None)
+    secret = getattr(app.state.settings, "opendid_holder_hmac_secret", None)
+    verify_license_local(
+        app,
+        license_row,
+        model_id=model_id,
+        brand_use_category=brand_use_category,
+    )
+    vc_id = license_row.get("vc_id")
     if required and (
         not base or not base.strip() or not secret or not secret.strip()
     ):

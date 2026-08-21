@@ -83,6 +83,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             log.exception("editor_image finalize_failure error for job %s", job_id)
 
     try:
+        written_key: str | None = None
         image: bytes
         mime: str
         group: str | None
@@ -682,6 +683,7 @@ async def run_editor_image_job(app, job: dict) -> None:
         asset_id = str(uuid.uuid4())
         key = ai_key(user_id, project_id, job_id, asset_id, ext)
         await asyncio.to_thread(app.state.r2.put_bytes, key, image, mime, cache=IMMUTABLE_CACHE)
+        written_key = key
         w, h = _image_dims(image)
         image_row = {
             "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
@@ -701,6 +703,25 @@ async def run_editor_image_job(app, job: dict) -> None:
         if example_warnings:
             success_metadata["warnings"] = example_warnings
         async with pool.connection() as conn:
+            if fm_face_injected and fm_license_row is not None:
+                snapshot = payload.get("_facemarket") if isinstance(payload, dict) else None
+                if not isinstance(snapshot, dict):
+                    raise facemarket._err(
+                        "model_unavailable", "사용할 수 없는 모델입니다.", status=409
+                    )
+                await repo.lock_facemarket_writer_boundary(conn)
+                fm_license_row = await facemarket.resolve_model_license(
+                    conn,
+                    str(snapshot.get("modelId") or ""),
+                    license_id=str(snapshot.get("licenseId") or ""),
+                    for_update=True,
+                )
+                facemarket.verify_license_local(
+                    app,
+                    fm_license_row,
+                    model_id=str(snapshot.get("modelId") or ""),
+                    brand_use_category=payload.get("brandUseCategory"),
+                )
             out = await repo.finalize_editor_image_success(
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
                 project_id=project_id, image=image_row, group=group, cut_type=cut_type,
@@ -712,9 +733,11 @@ async def run_editor_image_job(app, job: dict) -> None:
                 await asyncio.to_thread(app.state.r2.delete, key)
             except Exception:
                 log.warning("orphan R2 cleanup failed: %s", key)
+            written_key = None
         elif (fm_face_injected and fm_license_row is not None
               and fm_license_row.get("unit_price") is not None
               and getattr(app.state, "fm_chain", None) is not None):
+            written_key = None
             # FaceMarket 온체인 정산 훅(선택과제2) — 에디터 컷도 얼굴 라이선스 1회 사용으로
             # detail_page 와 동일하게 70/20/10 기록. payment_key=job:{id} 멱등(컨트랙트 중복
             # revert + fm_settlements UNIQUE). best-effort: 정산 실패가 완료된 생성을 안 되돌림.
@@ -725,7 +748,14 @@ async def run_editor_image_job(app, job: dict) -> None:
                     total=int(fm_license_row["unit_price"]), job_id=job_id)
             except Exception:
                 log.exception("editor_image settlement hook failed for job %s", job_id)
+        else:
+            written_key = None
     except Exception as e:  # 예기치 못한 오류도 lease 펜스 종결로
+        if written_key:
+            try:
+                await asyncio.to_thread(app.state.r2.delete, written_key)
+            except Exception:
+                log.warning("orphan R2 cleanup failed after editor finalization rejection")
         detail = e.detail if isinstance(e, facemarket.HTTPException) else None
         code = detail.get("code") if isinstance(detail, dict) else "generation_failed"
         message = (

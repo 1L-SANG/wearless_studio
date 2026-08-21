@@ -658,6 +658,59 @@ def test_editor_denial_precedes_job_and_credit(client, make_token, monkeypatch):
     assert calls == {"create": 0, "reserve": 0}
 
 
+def test_editor_product_cut_strips_real_model_before_facemarket_gate(
+    client, make_token, monkeypatch
+):
+    client.app.state.settings = replace(
+        client.app.state.settings,
+        facemarket_enabled=True,
+    )
+    seen = {}
+
+    async def fake_project(conn, user_id, project_id):
+        return {"id": project_id, "facemarket_license_id": "stale"}
+
+    async def fake_analysis(conn, project_id):
+        return {"brandUseCategory": CATEGORY}
+
+    async def forbidden_resolve(*_args, **_kwargs):
+        raise AssertionError("product-only editor cuts must not enter FaceMarket gate")
+
+    async def fake_create(conn, **kwargs):
+        seen.update(kwargs)
+        return {"id": "job-product"}, True
+
+    async def fake_reserve(conn, user_id, amount):
+        return 9
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_project)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(routes.facemarket, "resolve_model_license", forbidden_resolve)
+    monkeypatch.setattr(routes.repo, "create_job", fake_create)
+    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
+    patch_route_db(monkeypatch, routes)
+
+    response = client.post(
+        "/v1/projects/p1/editor:generate-image",
+        headers=_auth(make_token),
+        json={
+            "mode": "new",
+            "cutType": "product",
+            "shot": "ghost",
+            "modelId": MODEL_ID,
+            "brandUseCategory": "정치·종교",
+            "_facemarket": {"modelId": "attacker", "licenseId": "attacker"},
+        },
+    )
+
+    assert response.status_code == 202, response.text
+    assert seen["payload"] == {
+        "mode": "new",
+        "cutType": "product",
+        "shot": "ghost",
+    }
+
+
 def test_editor_virtual_and_vary_strip_client_snapshot(
     client, make_token, monkeypatch
 ):

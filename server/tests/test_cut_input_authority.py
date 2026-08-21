@@ -18,10 +18,18 @@ REAL_CATEGORY = "일반 여성 의류"
 class _TrackingR2(FakeR2):
     def __init__(self):
         self.reads = []
+        self.puts = []
+        self.deletes = []
 
     def get_bytes(self, key):
         self.reads.append(key)
         return key.encode()
+
+    def put_bytes(self, key, data, mime, cache=None):
+        self.puts.append(key)
+
+    def delete(self, key):
+        self.deletes.append(key)
 
 
 def _patch_detail_terminal(monkeypatch, captured):
@@ -939,7 +947,7 @@ def test_editor_real_denials_refund_without_generation_output_or_settlement(
     captured = {"resolve": 0, "verify": 0, "assets": 0, "settlement": 0}
     _patch_editor_common(monkeypatch, captured)
 
-    async def fake_resolve(conn, model_id, *, license_id=None):
+    async def fake_resolve(conn, model_id, *, license_id=None, **_kwargs):
         captured["resolve"] += 1
         assert model_id == REAL_MODEL_ID and license_id == REAL_LICENSE_ID
         return {
@@ -1043,3 +1051,90 @@ def test_editor_real_denials_refund_without_generation_output_or_settlement(
         "mismatched_snapshot",
     }:
         assert captured["resolve"] == 0
+
+
+def test_editor_final_recheck_revoked_license_deletes_output_and_refunds(monkeypatch):
+    captured = {"resolve": 0, "settlement": 0}
+    _patch_editor_common(monkeypatch, captured)
+
+    def gate_row(status):
+        return {
+            "id": REAL_LICENSE_ID,
+            "model_id": REAL_MODEL_ID,
+            "model_status": "verified",
+            "status": status,
+            "license_valid_until": datetime.now(timezone.utc) + timedelta(days=1),
+            "unit_price": 10,
+            "vc_id": "vc-1",
+            "allowed_use": [REAL_CATEGORY],
+            "forbidden_use": [],
+            "assets_status": "ready",
+            "current_enrollment_id": REAL_ENROLLMENT_ID,
+            "license_enrollment_id": REAL_ENROLLMENT_ID,
+            "enrollment_status": "passed",
+            "match_policy_version": "policy-v1",
+            "has_face_front": True,
+            "has_grid_sedcard": True,
+            "assets_current_evidence": True,
+        }
+
+    async def fake_resolve(conn, model_id, *, license_id=None, **kwargs):
+        captured["resolve"] += 1
+        assert model_id == REAL_MODEL_ID and license_id == REAL_LICENSE_ID
+        return gate_row("active" if captured["resolve"] == 1 else "revoked")
+
+    async def fake_verify(app, row, **kwargs):
+        assert row["status"] == "active"
+
+    async def fake_refs(conn, model_id, *, enrollment_id, evidence_version):
+        return [
+            {"key": "face-front", "mime": "image/png", "bucket": "face"},
+            {"key": "face-grid", "mime": "image/png", "bucket": "face"},
+        ]
+
+    async def fake_failure(conn, **kwargs):
+        captured["failure"] = kwargs
+        return True
+
+    async def fake_success(conn, **kwargs):
+        captured["success"] = kwargs
+        return {"id": "published"}
+
+    async def fake_settlement(*_args, **_kwargs):
+        captured["settlement"] += 1
+
+    async def fake_lock(conn):
+        captured["locked"] = True
+
+    monkeypatch.setattr(eij.facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(eij.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(eij.identity_source, "resolve_real_model_assets", fake_refs)
+    monkeypatch.setattr(eij.repo, "lock_facemarket_writer_boundary", fake_lock)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_failure)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_success)
+    monkeypatch.setattr(eij.facemarket, "record_license_settlement", fake_settlement)
+
+    public_r2 = _TrackingR2()
+    face_r2 = _TrackingR2()
+    app = fake_worker_app(
+        make_settings(gemini_api_key="x", r2_bucket="b", facemarket_enabled=True),
+        r2=public_r2,
+    )
+    app.state.r2_face = face_r2
+    app.state.fm_chain = object()
+
+    asyncio.run(eij.run_editor_image_job(app, worker_job({
+        "mode": "new",
+        "cutType": "styling",
+        "shot": "full",
+        "modelId": REAL_MODEL_ID,
+        "brandUseCategory": REAL_CATEGORY,
+        "_facemarket": {"modelId": REAL_MODEL_ID, "licenseId": REAL_LICENSE_ID},
+    }, credits_reserved=7)))
+
+    assert captured["resolve"] == 2
+    assert "success" not in captured
+    assert captured["settlement"] == 0
+    assert captured["failure"]["reserved"] == 7
+    assert captured["failure"]["code"] == "license_revoked"
+    assert public_r2.puts and public_r2.deletes == public_r2.puts

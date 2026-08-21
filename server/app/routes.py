@@ -2772,9 +2772,17 @@ async def generate_editor_image(
             analysis = await repo.get_analysis(conn, project_id) or {}
             selected_model_id = payload.get("modelId") or payload.pop("model_id", None)
             payload.pop("model_id", None)
-            payload["modelId"] = selected_model_id
-            brand_use_category = analysis.get("brandUseCategory")
-            payload["brandUseCategory"] = brand_use_category
+            uses_model_identity = cut_generator.real_identity_plan(
+                payload.get("cutType"), wants_face=False
+            )[0]
+            if uses_model_identity:
+                payload["modelId"] = selected_model_id
+                brand_use_category = analysis.get("brandUseCategory")
+                payload["brandUseCategory"] = brand_use_category
+            else:
+                selected_model_id = None
+                payload.pop("modelId", None)
+                payload.pop("brandUseCategory", None)
         if (
             payload.get("mode") == "new"
             and str(payload.get("exampleId") or "").startswith("ss_")
@@ -2807,7 +2815,7 @@ async def generate_editor_image(
         # FaceMarket verify-before-use 게이트(FM-30) — 에디터 새 컷도 상세페이지와 동일하게,
         # 실존 모델(UUID modelId) 선택 시 라이선스 자격을 잡 생성 전에 검증한다(실패=409, 예약 없음).
         # 가상모델('mA' 등 비-UUID)·무라이선스 모델은 no-op → 기존 플로우 무영향.
-        if s.facemarket_enabled and payload.get("mode") == "new":
+        if s.facemarket_enabled and payload.get("mode") == "new" and selected_model_id:
             license_row = await facemarket.resolve_model_license(
                 conn, selected_model_id
             )
@@ -2860,16 +2868,27 @@ async def generate_detail_page(
             "selected_model_id"
         )
         brand_use_category = analysis.get("brandUseCategory")
-        payload = {
-            "mode": "generate",
-            "modelId": selected_model_id,
-            "brandUseCategory": brand_use_category,
-        }
+        storyboard = None
+        uses_model_identity = False
+        if selected_model_id and s.facemarket_enabled:
+            storyboard = await repo.get_storyboard(conn, project_id)
+            uses_model_identity = any(
+                isinstance(block, dict)
+                and block.get("source") == "ai"
+                and cut_generator.real_identity_plan(block.get("cutType"), wants_face=False)[0]
+                for block in storyboard
+            )
+        payload = {"mode": "generate"}
+        if uses_model_identity:
+            payload.update({
+                "modelId": selected_model_id,
+                "brandUseCategory": brand_use_category,
+            })
         license_row = None
         # FaceMarket verify-before-use 게이트(FM-30). **캐시 반환보다 먼저** — 해지·만료된
         # 라이선스가 이미 생성된 페이지의 재생성까지 막아야 하므로(장면⑤). facemarket off면
         # 미진입 → 기존 셀러 플로우 무영향. 선택 모델에 라이선스 없으면 no-op(비-FaceMarket 셀러).
-        if s.facemarket_enabled:
+        if s.facemarket_enabled and uses_model_identity:
             license_row = await facemarket.resolve_project_license(conn, project, analysis)
             await facemarket.verify_license(
                 request.app,
@@ -2889,7 +2908,8 @@ async def generate_detail_page(
         if license_row is not None:
             await _reject_facemarket_cutover_closed(conn)
             await facemarket.set_project_license(conn, project_id, license_row["id"])
-        storyboard = await repo.get_storyboard(conn, project_id)
+        if storyboard is None:
+            storyboard = await repo.get_storyboard(conn, project_id)
         _require_bg_examples_enabled(request, storyboard)
         # 크레딧 견적은 실제 생성 수 기준 — 생성 계약이 완전히 같은 복제 컷은 1장만
         # 생성해 복사하므로(ADR-0011, _duplicate_source_indexes) 예약에서도 접는다.

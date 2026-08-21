@@ -169,6 +169,64 @@ def _patch_counted_route_conn(monkeypatch, events):
     monkeypatch.setattr(routes.repo, "facemarket_writer_boundary_closed", fake_closed)
 
 
+def test_detail_product_only_storyboard_strips_real_model_before_facemarket_gate(
+    client, make_token, monkeypatch
+):
+    events = []
+    seen = {}
+    client.app.state.settings = replace(
+        client.app.state.settings,
+        facemarket_enabled=True,
+    )
+
+    async def fake_project(conn, user_id, project_id):
+        return {"id": project_id, "facemarket_license_id": "stale"}
+
+    async def fake_analysis(conn, project_id):
+        return {"selectedModelId": MODEL_ID, "brandUseCategory": CATEGORY}
+
+    async def fake_storyboard(conn, project_id):
+        return [{"id": "p1", "source": "ai", "cutType": "product", "shot": "ghost"}]
+
+    async def forbidden_resolve(*_args, **_kwargs):
+        raise AssertionError("product-only detail generation must not enter FaceMarket gate")
+
+    async def fake_editor(conn, project_id):
+        events.append("cache")
+        return []
+
+    async def fake_product(conn, project_id):
+        return {"clothing_type": "top"}
+
+    async def fake_create(conn, **kwargs):
+        seen.update(kwargs)
+        events.append("job")
+        return {"id": "job-product"}, True
+
+    async def fake_reserve(conn, user_id, amount):
+        events.append("reserve")
+        return 10
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_project)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(routes.repo, "get_storyboard", fake_storyboard)
+    monkeypatch.setattr(routes.facemarket, "resolve_project_license", forbidden_resolve)
+    monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_editor)
+    monkeypatch.setattr(routes.repo, "get_product", fake_product)
+    monkeypatch.setattr(routes.repo, "create_job", fake_create)
+    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
+    _patch_counted_route_conn(monkeypatch, events)
+
+    response = client.post(
+        "/v1/projects/p1/detail-page:generate",
+        headers=auth_headers(make_token),
+    )
+
+    assert response.status_code == 202, response.text
+    assert seen["payload"] == {"mode": "generate"}
+    assert events == ["cache", "job", "reserve", "commit"]
+
+
 def test_detail_current_selection_updates_lock_and_queues_snapshot_atomically(
     client, make_token, monkeypatch
 ):
@@ -267,6 +325,9 @@ def test_detail_denial_precedes_cache_job_and_credit(
     async def fake_analysis(conn, project_id):
         return {"selectedModelId": MODEL_ID, "brandUseCategory": CATEGORY}
 
+    async def fake_storyboard(conn, project_id):
+        return [{"id": "b1", "source": "ai", "cutType": "styling"}]
+
     async def fake_resolve(conn, project, analysis):
         return {"id": LICENSE_ID, "model_id": MODEL_ID}
 
@@ -282,6 +343,7 @@ def test_detail_denial_precedes_cache_job_and_credit(
 
     monkeypatch.setattr(routes.repo, "get_project", fake_project)
     monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(routes.repo, "get_storyboard", fake_storyboard)
     monkeypatch.setattr(routes.facemarket, "resolve_project_license", fake_resolve)
     monkeypatch.setattr(routes.facemarket, "verify_license", deny)
     monkeypatch.setattr(routes.repo, "get_editor_blocks",
@@ -316,6 +378,9 @@ def test_detail_reservation_failure_does_not_commit_new_lock(
     async def fake_analysis(conn, project_id):
         return {"selectedModelId": MODEL_ID, "brandUseCategory": CATEGORY}
 
+    async def fake_storyboard(conn, project_id):
+        return [{"id": "b1", "source": "ai", "cutType": "styling"}]
+
     async def fake_resolve(conn, project, analysis):
         return {"id": LICENSE_ID, "model_id": MODEL_ID}
 
@@ -342,6 +407,7 @@ def test_detail_reservation_failure_does_not_commit_new_lock(
 
     monkeypatch.setattr(routes.repo, "get_project", fake_project)
     monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(routes.repo, "get_storyboard", fake_storyboard)
     monkeypatch.setattr(routes.facemarket, "resolve_project_license", fake_resolve)
     monkeypatch.setattr(routes.facemarket, "verify_license", fake_verify)
     monkeypatch.setattr(routes.facemarket, "set_project_license", fake_lock)
@@ -376,6 +442,9 @@ def test_detail_cached_success_commits_verified_lock_immediately_before_return(
     async def fake_analysis(conn, project_id):
         return {"selectedModelId": MODEL_ID, "brandUseCategory": CATEGORY}
 
+    async def fake_storyboard(conn, project_id):
+        return [{"id": "b1", "source": "ai", "cutType": "styling"}]
+
     async def fake_resolve(conn, project, analysis):
         return {"id": LICENSE_ID, "model_id": MODEL_ID}
 
@@ -395,6 +464,7 @@ def test_detail_cached_success_commits_verified_lock_immediately_before_return(
 
     monkeypatch.setattr(routes.repo, "get_project", fake_project)
     monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(routes.repo, "get_storyboard", fake_storyboard)
     monkeypatch.setattr(routes.facemarket, "resolve_project_license", fake_resolve)
     monkeypatch.setattr(routes.facemarket, "verify_license", fake_verify)
     monkeypatch.setattr(routes.facemarket, "set_project_license", fake_lock)

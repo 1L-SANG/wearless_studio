@@ -41,10 +41,20 @@ def _runtime_row(**overrides):
         "model_id": MODEL_ID,
         "model_name": "홍*동",
         "status": "active",
+        "license_valid_until": datetime.now(timezone.utc) + timedelta(days=30),
         "unit_price": 100,
+        "vc_id": "vc-1",
+        "allowed_use": [CATEGORY],
+        "forbidden_use": [],
         "model_status": "verified",
+        "assets_status": "ready",
         "current_enrollment_id": ENROLLMENT_ID,
+        "license_enrollment_id": ENROLLMENT_ID,
+        "enrollment_status": "passed",
         "match_policy_version": "policy-v1",
+        "has_face_front": True,
+        "has_grid_sedcard": True,
+        "assets_current_evidence": True,
     }
     row.update(overrides)
     return row
@@ -230,7 +240,7 @@ def test_real_source_injects_grid_from_face_bucket_and_shows_badge(monkeypatch):
     _patch(monkeypatch, captured)
     app = _app(_asset_rows(), _license_meta(), face_r2)
 
-    async def fake_resolve(conn, model_id, *, license_id=None):
+    async def fake_resolve(conn, model_id, *, license_id=None, **_kwargs):
         return _runtime_row()
 
     async def fake_verify(app, row, **kwargs):
@@ -446,7 +456,7 @@ def test_real_worker_denials_refund_without_output_or_settlement(
         face_r2.get_bytes = fail_read
     app = _app([], None, face_r2)
 
-    async def fake_resolve(conn, model_id, *, license_id=None):
+    async def fake_resolve(conn, model_id, *, license_id=None, **_kwargs):
         captured["resolver"] += 1
         return _runtime_row()
 
@@ -504,7 +514,7 @@ def test_real_worker_snapshot_wins_and_notice_is_masked(monkeypatch):
     )
     app = _app([], None, _FaceR2())
 
-    async def fake_resolve(conn, model_id, *, license_id=None):
+    async def fake_resolve(conn, model_id, *, license_id=None, **_kwargs):
         assert model_id == MODEL_ID and license_id == LICENSE_ID
         return _runtime_row()
 
