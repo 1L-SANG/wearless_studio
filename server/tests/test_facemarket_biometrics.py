@@ -1,5 +1,9 @@
-import pytest
+from unittest.mock import Mock, call
 
+import pytest
+from fastapi import FastAPI
+
+from app.facemarket_enrollment import router as biometric_enrollment_router
 from app.main import create_app
 from conftest import make_settings
 
@@ -45,3 +49,28 @@ def test_disabled_feature_has_no_biometric_aws_clients():
 
     assert app.state.fm_rekognition is None
     assert app.state.fm_sts is None
+
+
+def test_enabled_dev_feature_builds_isolated_clients_and_includes_router(monkeypatch):
+    rekognition = object()
+    sts = object()
+    boto_client = Mock(side_effect=[rekognition, sts])
+    included_routers = []
+    include_router = FastAPI.include_router
+
+    def track_router(app, router, **kwargs):
+        included_routers.append(router)
+        return include_router(app, router, **kwargs)
+
+    monkeypatch.setattr("app.facemarket_enrollment.boto3.client", boto_client)
+    monkeypatch.setattr(FastAPI, "include_router", track_router)
+
+    app = create_app(biometric_settings())
+
+    assert boto_client.call_args_list == [
+        call("rekognition", region_name="us-east-1"),
+        call("sts", region_name="us-east-1"),
+    ]
+    assert app.state.fm_rekognition is rekognition
+    assert app.state.fm_sts is sts
+    assert biometric_enrollment_router in included_routers
