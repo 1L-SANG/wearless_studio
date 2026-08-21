@@ -12,6 +12,8 @@ import pytest
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
+from app import repo
+from app.services import biometric_purge
 from app.services.biometric_purge import PurgeIncomplete, purge_biometric_scope
 
 
@@ -162,6 +164,7 @@ class FakeDB:
         self.on_commit = None
         self.fail_select = {}
         self.fail_mutate = {}
+        self.queries = []
         self.tables = {
             "assets": [],
             "edit_sessions": [],
@@ -220,6 +223,7 @@ class FakeDB:
         return other
 
     def select(self, q, params):
+        self.queries.append(q)
         for needle, message in self.fail_select.items():
             if needle in q:
                 raise RuntimeError(message)
@@ -296,6 +300,50 @@ class FakeDB:
                 and r.get("status") in {"pending", "running"}
                 and (r.get("payload") or {}).get("profileId") in ids
             ][:1]
+        if "with scoped_jobs as" in q:
+            model_ids = set(params[0])
+            license_ids = set(params[1])
+            asset_model_ids = set(params[2])
+            settlement_license_ids = set(params[3])
+            rows_by_id = {}
+            for row in self.tables["jobs"]:
+                payload = row.get("payload") or {}
+                snapshot = payload.get("_facemarket") or {}
+                if (
+                    row.get("kind") in {"detail_page", "editor_image"}
+                    and (
+                        snapshot.get("modelId") in model_ids
+                        or snapshot.get("licenseId") in license_ids
+                    )
+                ):
+                    rows_by_id[row["id"]] = _job_row(row)
+                if (
+                    row.get("kind") == "fm_model_asset_build"
+                    and payload.get("modelId") in asset_model_ids
+                ):
+                    rows_by_id[row["id"]] = _job_row(row)
+            settled_job_ids = {
+                row.get("job_id")
+                for row in self.tables["fm_settlements"]
+                if row.get("license_id") in settlement_license_ids
+            }
+            for row in self.tables["jobs"]:
+                if row.get("id") in settled_job_ids:
+                    rows_by_id.setdefault(row["id"], _job_row(row))
+            if "join projects p" in q:
+                fallback_license_ids = set(params[4])
+                project_ids = {
+                    row["id"]
+                    for row in self.tables["projects"]
+                    if row.get("facemarket_license_id") in fallback_license_ids
+                }
+                for row in self.tables["jobs"]:
+                    if (
+                        row.get("project_id") in project_ids
+                        and row.get("kind") in {"detail_page", "editor_image"}
+                    ):
+                        rows_by_id.setdefault(row["id"], _job_row(row))
+            return sorted(rows_by_id.values(), key=lambda row: (row.get("created_at"), row["id"]))
         if "from jobs where kind = any" in q:
             kinds, model_ids = set(params[0]), set(params[1])
             return [
@@ -482,7 +530,7 @@ class FakeDB:
 
 
 def _job_row(row):
-    return {k: row.get(k) for k in ("id", "user_id", "project_id", "status", "kind")}
+    return {k: row.get(k) for k in ("id", "user_id", "project_id", "status", "kind", "created_at")}
 
 
 def _output_row(row):
@@ -526,6 +574,171 @@ def _delete_where_eq(rows, col, value):
     before = len(rows)
     rows[:] = [row for row in rows if row.get(col) != value]
     return before - len(rows)
+
+
+def test_fake_facemarket_scope_job_discovery_uses_only_canonical_evidence(caplog):
+    db = FakeDB()
+    model = "model-a"
+    license_id = "license-a"
+    stale_project = "project-stale"
+    for status in ("pending", "running", "done", "error", "cancelled"):
+        db.add(
+            "jobs",
+            id=f"snapshot-model-{status}",
+            user_id="user-a",
+            project_id="project-a",
+            kind="detail_page",
+            status=status,
+            created_at=f"2026-08-21T00:00:0{len(db.tables['jobs'])}Z",
+            payload={"_facemarket": {"modelId": model, "licenseId": "other-license"}},
+            result={"secret": "must-not-return"},
+        )
+    db.add(
+        "jobs",
+        id="snapshot-license",
+        user_id="user-a",
+        project_id="project-b",
+        kind="editor_image",
+        status="done",
+        created_at="2026-08-21T00:00:10Z",
+        payload={"_facemarket": {"modelId": "other-model", "licenseId": license_id}},
+    )
+    db.add(
+        "jobs",
+        id="flat-detail-ignored",
+        user_id="user-a",
+        project_id="project-flat",
+        kind="detail_page",
+        status="done",
+        created_at="2026-08-21T00:00:11Z",
+        payload={"modelId": model},
+    )
+    db.add(
+        "jobs",
+        id="asset-build",
+        user_id="user-a",
+        project_id=None,
+        kind="fm_model_asset_build",
+        status="error",
+        created_at="2026-08-21T00:00:12Z",
+        payload={"modelId": model},
+    )
+    db.add(
+        "jobs",
+        id="personalization-ignored",
+        user_id="user-a",
+        project_id=None,
+        kind="personalization_generation",
+        status="done",
+        created_at="2026-08-21T00:00:13Z",
+        payload={"profileId": model},
+    )
+    db.add(
+        "jobs",
+        id="settled-snapshotless",
+        user_id="user-a",
+        project_id="project-settled",
+        kind="detail_page",
+        status="done",
+        created_at="2026-08-21T00:00:14Z",
+        payload={},
+    )
+    db.add("fm_settlements", job_id="settled-snapshotless", license_id=license_id)
+    db.add(
+        "jobs",
+        id="project-fallback",
+        user_id="user-a",
+        project_id=stale_project,
+        kind="editor_image",
+        status="done",
+        created_at="2026-08-21T00:00:15Z",
+        payload={},
+    )
+    db.add("projects", id=stale_project, facemarket_license_id=license_id)
+    db.add(
+        "jobs",
+        id="overlap",
+        user_id="user-a",
+        project_id=stale_project,
+        kind="detail_page",
+        status="done",
+        created_at="2026-08-21T00:00:16Z",
+        payload={"_facemarket": {"modelId": model, "licenseId": license_id}},
+    )
+    db.add("fm_settlements", job_id="overlap", license_id=license_id)
+
+    rows = asyncio.run(
+        repo.list_facemarket_scope_jobs(
+            FakeConn(db),
+            model_ids=(model,),
+            license_ids=(license_id,),
+        )
+    )
+
+    assert [row["id"] for row in rows] == [
+        "snapshot-model-pending",
+        "snapshot-model-running",
+        "snapshot-model-done",
+        "snapshot-model-error",
+        "snapshot-model-cancelled",
+        "snapshot-license",
+        "asset-build",
+        "settled-snapshotless",
+        "overlap",
+    ]
+    assert all(set(row) == {"id", "user_id", "project_id", "kind", "status", "created_at"} for row in rows)
+    assert "flat-detail-ignored" not in {row["id"] for row in rows}
+    assert "personalization-ignored" not in {row["id"] for row in rows}
+    assert "project-fallback" not in {row["id"] for row in rows}
+    sql = " ".join(db.queries)
+    assert "for update" not in sql
+    assert "skip locked" not in sql
+    assert "payload ->> 'modelid'" not in sql
+    assert "analyses.selectedmodelid" not in sql
+    assert caplog.text == ""
+
+    fallback_rows = asyncio.run(
+        repo.list_facemarket_scope_jobs(
+            FakeConn(db),
+            model_ids=(model,),
+            license_ids=(license_id,),
+            initial_legacy_project_fallback=True,
+        )
+    )
+    assert [row["id"] for row in fallback_rows].count("overlap") == 1
+    assert "project-fallback" in {row["id"] for row in fallback_rows}
+
+
+def test_fake_purge_uses_shared_facemarket_scope_job_discovery_twice(monkeypatch):
+    ctx = _fake_case()
+    calls = []
+
+    async def fake_list(conn, *, model_ids, license_ids=(), initial_legacy_project_fallback=False):
+        calls.append(
+            {
+                "model_ids": model_ids,
+                "license_ids": license_ids,
+                "initial_legacy_project_fallback": initial_legacy_project_fallback,
+            }
+        )
+        return [_job_row(ctx.db.tables["jobs"][0])]
+
+    monkeypatch.setattr(biometric_purge.repo, "list_facemarket_scope_jobs", fake_list)
+
+    _run(ctx, user_id=ctx.user, reason="withdrawal")
+
+    assert calls == [
+        {
+            "model_ids": (ctx.model,),
+            "license_ids": (ctx.license,),
+            "initial_legacy_project_fallback": False,
+        },
+        {
+            "model_ids": (ctx.model,),
+            "license_ids": (ctx.license,),
+            "initial_legacy_project_fallback": False,
+        },
+    ]
 
 
 class StickyFakeR2(StrictFakeR2):
@@ -921,6 +1134,115 @@ def _require_live_schema(conn):
     }
     if missing:
         pytest.skip(f"FACEMARKET_TEST_DATABASE_URL schema missing: {missing}")
+
+
+def test_live_facemarket_scope_job_discovery_json_paths_and_joins():
+    if not LIVE_DB_URL:
+        pytest.skip("set FACEMARKET_TEST_DATABASE_URL for live job discovery test")
+
+    async def run():
+        user_id = str(uuid.uuid4())
+        model_id = str(uuid.uuid4())
+        license_id = str(uuid.uuid4())
+        project_id = str(uuid.uuid4())
+        snapshot_job_id = str(uuid.uuid4())
+        flat_job_id = str(uuid.uuid4())
+        settled_job_id = str(uuid.uuid4())
+        conn = await psycopg.AsyncConnection.connect(LIVE_DB_URL, row_factory=dict_row)
+        try:
+            rows = await conn.execute(
+                "select table_name, column_name from information_schema.columns "
+                "where table_schema='public' and table_name = any(%s)",
+                ([
+                    "fm_biometric_enrollments",
+                    "fm_biometric_enrollment_photos",
+                    "fm_biometric_enrollment_photo_cleanup",
+                    "fm_model_asset_cleanup",
+                    "fm_models",
+                    "fm_licenses",
+                    "fm_model_assets",
+                    "jobs",
+                    "projects",
+                    "fm_settlements",
+                ],),
+            )
+            rows = await rows.fetchall()
+            found = {}
+            for row in rows:
+                found.setdefault(row["table_name"], set()).add(row["column_name"])
+            for table, cols in {
+                "fm_biometric_enrollments": {"id", "user_id", "model_id"},
+                "fm_biometric_enrollment_photos": {"enrollment_id", "r2_key"},
+                "fm_biometric_enrollment_photo_cleanup": {"enrollment_id", "r2_key"},
+                "fm_model_asset_cleanup": {"model_id", "r2_key"},
+                "fm_models": {"reverification_batch_id", "current_enrollment_id"},
+                "fm_licenses": {"reverification_batch_id", "enrollment_id"},
+                "fm_model_assets": {"source_enrollment_id"},
+                "jobs": {"id", "user_id", "project_id", "kind", "status", "payload", "created_at"},
+                "projects": {"id", "user_id", "facemarket_license_id"},
+                "fm_settlements": {"job_id", "license_id"},
+            }.items():
+                missing = cols - found.get(table, set())
+                if missing:
+                    pytest.skip(f"FACEMARKET_TEST_DATABASE_URL schema missing {table}: {sorted(missing)}")
+
+            await conn.execute("insert into auth.users (id) values (%s)", (user_id,))
+            await conn.execute(
+                "insert into fm_models (id, user_id, display_name, status, ci_hash) "
+                "values (%s, %s, 'Scope Test', 'verified', %s)",
+                (model_id, user_id, f"ci-{uuid.uuid4()}"),
+            )
+            await conn.execute(
+                "insert into fm_licenses "
+                "(id, model_id, face_image_uri, face_image_key, face_image_digest, license_valid_until, status) "
+                "values (%s, %s, '/face', 'face-key', 'sha256-face', %s, 'revoked')",
+                (license_id, model_id, datetime.now(timezone.utc) + timedelta(days=1)),
+            )
+            await conn.execute(
+                "insert into projects (id, user_id, status, title, facemarket_license_id) "
+                "values (%s, %s, 'done', 'scope', %s)",
+                (project_id, user_id, license_id),
+            )
+            await conn.execute(
+                "insert into jobs (id, user_id, project_id, kind, status, payload) "
+                "values (%s, %s, %s, 'detail_page', 'done', %s)",
+                (
+                    snapshot_job_id,
+                    user_id,
+                    project_id,
+                    Json({"_facemarket": {"modelId": model_id, "licenseId": license_id}}),
+                ),
+            )
+            await conn.execute(
+                "insert into jobs (id, user_id, project_id, kind, status, payload) "
+                "values (%s, %s, %s, 'detail_page', 'done', %s)",
+                (flat_job_id, user_id, project_id, Json({"modelId": model_id})),
+            )
+            await conn.execute(
+                "insert into jobs (id, user_id, project_id, kind, status, payload) "
+                "values (%s, %s, %s, 'editor_image', 'done', '{}'::jsonb)",
+                (settled_job_id, user_id, project_id),
+            )
+            await conn.execute(
+                "insert into fm_settlements "
+                "(payment_id, job_id, license_id, model_ref, total_amount, model_amount, platform_amount, ops_amount) "
+                "values (%s, %s, %s, '0xscope', 100, 70, 20, 10)",
+                (f"payment-{uuid.uuid4()}", settled_job_id, license_id),
+            )
+
+            rows = await repo.list_facemarket_scope_jobs(
+                conn,
+                model_ids=(model_id,),
+                license_ids=(license_id,),
+            )
+
+            assert {row["id"] for row in rows} == {snapshot_job_id, settled_job_id}
+            assert all("payload" not in row for row in rows)
+        finally:
+            await conn.rollback()
+            await conn.close()
+
+    asyncio.run(run())
 
 
 @pytest.fixture()

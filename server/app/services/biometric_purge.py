@@ -5,6 +5,8 @@ import hashlib
 from dataclasses import dataclass
 from typing import Literal
 
+from app import repo
+
 
 PurgeReason = Literal["withdrawal", "reverification", "account_delete"]
 _CODES = {
@@ -18,13 +20,6 @@ _CODES = {
     "r2_reconcile_failed",
     "db_cleanup_failed",
 }
-_WRITER_KINDS = (
-    "detail_page",
-    "editor_image",
-    "personalization_generation",
-)
-
-
 class PurgeIncomplete(RuntimeError):
     def __init__(self, code: str):
         if code not in _CODES:
@@ -254,50 +249,11 @@ async def _ensure_frozen(conn, schema, scope, derived_jobs: list[dict]) -> None:
 
 
 async def _derived_jobs(conn, schema, scope) -> list[dict]:
-    model_ids = scope["model_ids"]
-    license_ids = scope["license_ids"]
-    if not model_ids and not license_ids:
-        return []
-    jobs: dict[str, dict] = {}
-    async with conn.cursor() as cur:
-        if model_ids:
-            await cur.execute(
-                "select id::text as id, user_id::text as user_id, project_id::text as project_id, "
-                "status, kind from jobs where kind = any(%s) "
-                "and payload #>> '{_facemarket,modelId}' = any(%s)",
-                (list(_WRITER_KINDS), list(model_ids)),
-            )
-            for row in await cur.fetchall():
-                jobs[row["id"]] = row
-            await cur.execute(
-                "select id::text as id, user_id::text as user_id, project_id::text as project_id, "
-                "status, kind from jobs where kind = 'fm_model_asset_build' "
-                "and payload->>'modelId' = any(%s)",
-                (list(model_ids),),
-            )
-            for row in await cur.fetchall():
-                jobs[row["id"]] = row
-        if license_ids and _has(schema, "fm_settlements", "job_id"):
-            await cur.execute(
-                "select j.id::text as id, j.user_id::text as user_id, j.project_id::text as project_id, "
-                "j.status, j.kind from fm_settlements s join jobs j on j.id=s.job_id "
-                "where s.license_id = any(%s)",
-                (list(license_ids),),
-            )
-            for row in await cur.fetchall():
-                jobs[row["id"]] = row
-        if scope["batch_id"] is not None and license_ids and _has(
-            schema, "projects", "facemarket_license_id"
-        ):
-            await cur.execute(
-                "select j.id::text as id, j.user_id::text as user_id, j.project_id::text as project_id, "
-                "j.status, j.kind from jobs j join projects p on p.id=j.project_id "
-                "where j.kind in ('detail_page','editor_image') and p.facemarket_license_id = any(%s)",
-                (list(license_ids),),
-            )
-            for row in await cur.fetchall():
-                jobs[row["id"]] = row
-    return list(jobs.values())
+    return await repo.list_facemarket_scope_jobs(
+        conn,
+        model_ids=tuple(sorted(scope["model_ids"])),
+        license_ids=tuple(sorted(scope["license_ids"])),
+    )
 
 
 async def _known_targets(conn, schema, scope, enrollment_ids, derived_jobs):

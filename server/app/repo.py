@@ -1134,6 +1134,70 @@ async def is_job_cancelled(conn: AsyncConnection, job_id: str) -> bool:
     return bool(row and row["cancelled"])
 
 
+async def list_facemarket_scope_jobs(
+    conn: AsyncConnection,
+    *,
+    model_ids: tuple[str, ...],
+    license_ids: tuple[str, ...] = (),
+    initial_legacy_project_fallback: bool = False,
+) -> list[dict]:
+    if not model_ids and not license_ids:
+        return []
+    fallback_sql = ""
+    if initial_legacy_project_fallback:
+        fallback_sql = """
+        union all
+        select j.id, j.user_id, j.project_id, j.kind, j.status, j.created_at
+          from jobs j
+          join projects p on p.id = j.project_id
+         where j.kind in ('detail_page','editor_image')
+           and p.facemarket_license_id::text = any(%s)
+        """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"""
+            with scoped_jobs as (
+                select id, user_id, project_id, kind, status, created_at
+                  from jobs
+                 where kind in ('detail_page','editor_image')
+                   and (
+                        payload #>> '{{_facemarket,modelId}}' = any(%s)
+                     or payload #>> '{{_facemarket,licenseId}}' = any(%s)
+                   )
+                union all
+                select id, user_id, project_id, kind, status, created_at
+                  from jobs
+                 where kind = 'fm_model_asset_build'
+                   and payload->>'modelId' = any(%s)
+                union all
+                select j.id, j.user_id, j.project_id, j.kind, j.status, j.created_at
+                  from fm_settlements s
+                  join jobs j on j.id = s.job_id
+                 where s.license_id::text = any(%s)
+                {fallback_sql}
+            )
+            select distinct on (id)
+                   id::text as id,
+                   user_id::text as user_id,
+                   project_id::text as project_id,
+                   kind,
+                   status,
+                   created_at
+              from scoped_jobs
+             order by id, created_at
+            """,
+            (
+                list(model_ids),
+                list(license_ids),
+                list(model_ids),
+                list(license_ids),
+                *([list(license_ids)] if initial_legacy_project_fallback else []),
+            ),
+        )
+        rows = await cur.fetchall()
+    return sorted(rows, key=lambda row: (row["created_at"], row["id"]))
+
+
 async def create_job(
     conn: AsyncConnection,
     *,
