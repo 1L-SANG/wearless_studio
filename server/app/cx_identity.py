@@ -47,6 +47,7 @@ class OacxBiometricContract:
     portrait_path: tuple[str, ...]
     portrait_mime_path: tuple[str, ...]
     issued_at_path: tuple[str, ...]
+    birth_path: tuple[str, ...]
     portrait_encoding: Literal["base64"]
     max_portrait_bytes: int
     ttl_seconds: int
@@ -74,6 +75,7 @@ DEV_MOCK_OACX_BIOMETRIC_CONTRACT = OacxBiometricContract(
     portrait_path=("idPortraitBase64",),
     portrait_mime_path=("idPortraitMime",),
     issued_at_path=("issuedAt",),
+    birth_path=("birth",),
     portrait_encoding="base64",
     max_portrait_bytes=5 * 1024 * 1024,
     ttl_seconds=300,
@@ -110,10 +112,9 @@ def parse_oacx_biometric_evidence(
     portrait = None
     try:
         ci = trans["ci"]
-        birth = trans["birth"]
         name = trans["nm"]
         transaction_id = trans.get("txId")
-        if not all(isinstance(value, str) and value for value in (ci, birth, name)):
+        if not all(isinstance(value, str) and value for value in (ci, name)):
             raise ValueError
         if transaction_id is not None and not isinstance(transaction_id, str):
             raise ValueError
@@ -121,9 +122,15 @@ def parse_oacx_biometric_evidence(
         encoded = _nested_value(trans, contract.portrait_path)
         portrait_mime = _nested_value(trans, contract.portrait_mime_path)
         issued_at = _nested_value(trans, contract.issued_at_path)
+        birth = _nested_value(trans, contract.birth_path)
         if contract.portrait_encoding != "base64" or not isinstance(encoded, str):
             raise ValueError
-        if portrait_mime not in _PORTRAIT_MIMES or not isinstance(issued_at, str):
+        if (
+            portrait_mime not in _PORTRAIT_MIMES
+            or not isinstance(issued_at, str)
+            or not isinstance(birth, str)
+            or not birth
+        ):
             raise ValueError
         max_encoded_length = 4 * ((contract.max_portrait_bytes + 2) // 3)
         if len(encoded) > max_encoded_length:

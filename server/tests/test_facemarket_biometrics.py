@@ -303,6 +303,34 @@ def test_oacx_validates_birth_after_contract_fields_and_ttl():
     assert error.value.reason == "id_portrait_unavailable"
 
 
+@pytest.mark.parametrize(
+    "identity,issued_at,reason",
+    [
+        ({"birth": "20100102"}, DEV_TRANS["issuedAt"], "minor_blocked"),
+        ({"birth": "20100102"}, "2026-08-21T02:54:59Z", "id_portrait_unavailable"),
+        ({}, DEV_TRANS["issuedAt"], "id_portrait_unavailable"),
+    ],
+)
+def test_oacx_birth_path_is_contract_owned_after_valid_ttl(
+    identity, issued_at, reason
+):
+    contract = replace(
+        DEV_MOCK_OACX_BIOMETRIC_CONTRACT,
+        birth_path=("identity", "birth"),
+    )
+    trans = {
+        key: value
+        for key, value in DEV_TRANS.items()
+        if key not in {"birth", "issuedAt"}
+    }
+    trans.update(identity=identity, issuedAt=issued_at)
+
+    with pytest.raises(OacxBiometricError) as error:
+        parse_oacx_biometric_evidence(trans, contract=contract, now=NOW)
+
+    assert error.value.reason == reason
+
+
 def test_oacx_oversized_portrait_fails_with_sanitized_reason():
     trans = {
         **DEV_TRANS,
