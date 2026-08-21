@@ -25,6 +25,7 @@ import { Icon, IconButton, Button, Modal, EmptyState, ErrorState, useToast } fro
 import { SmoothProgressTrack } from '@/components/SmoothProgress.jsx';
 import { EXPECTED_MS } from '@/lib/smoothProgress.js';
 import { exampleGenderFromAnalysis, hexFor } from '@/features/storyboard/Storyboard.jsx';
+import { isRealModelSelection } from '@/features/analysis/modelSelection.js';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isAutoManagedBlock, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
@@ -2194,6 +2195,11 @@ export function Editor() {
   };
   // req = NewCutRequest 필드 전체 (계약 §6) — 방향·샷·모델·예시 선택이 생성에 그대로 반영되어야 한다
   const generateImage = async (req) => {
+    if (isRealModelSelection(req.modelId)
+      && (!analysis?.brandUseCategory || brandUseCategorySaving)) {
+      toast.push('실제 모델을 사용할 브랜드 유형을 먼저 저장해 주세요.', { icon: 'alertTri' });
+      return null;
+    }
     const group = req.colorId || 'misc';             // wardrobe 그룹 키 = colorId | 'misc' (계약 §3.6)
     const loadingId = uid('w');
     setWardrobe((w) => ({ ...w, [group]: [...(w[group] || []), { id: loadingId, loading: true }] }));

@@ -4,6 +4,8 @@
 explicit-null PATCH가 500이 아니라 422 봉투로 떨어지는지 — 에러 핸들러 직렬화 버그 가드.
 """
 
+import pytest
+
 import app.routes as routes
 
 from conftest import patch_route_db
@@ -120,6 +122,30 @@ def test_save_analysis_rejects_unknown_brand_use_category_before_persistence(
         "/v1/projects/p1/analysis",
         headers=_auth(make_token),
         json={"brandUseCategory": "의류"},
+    )
+
+    assert res.status_code == 400, res.text
+    assert res.json()["error"]["code"] == "invalid_brand_use_category"
+    assert called is False
+
+
+@pytest.mark.parametrize("value", [False, 0, [], {}])
+def test_save_analysis_rejects_non_string_brand_use_category_before_persistence(
+    client, make_token, monkeypatch, value
+):
+    called = False
+
+    async def fake_save_analysis(conn, project_id, analysis):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(routes.repo, "save_analysis", fake_save_analysis)
+    patch_route_db(monkeypatch, routes)
+
+    res = client.patch(
+        "/v1/projects/p1/analysis",
+        headers=_auth(make_token),
+        json={"brandUseCategory": value},
     )
 
     assert res.status_code == 400, res.text

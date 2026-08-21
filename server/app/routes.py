@@ -889,7 +889,13 @@ async def save_analysis(
     # 3건 저장됐다. 나중에 누가 이 필드를 읽기 시작할 때 오염을 물려받지 않게 입구에서 막는다.
     analysis = product_photos.sanitize_analysis_colors(analysis)
     if "brandUseCategory" in analysis:
-        category = str(analysis.get("brandUseCategory") or "").strip()
+        category = analysis.get("brandUseCategory")
+        if category is not None and not isinstance(category, str):
+            raise _bad_request(
+                "invalid_brand_use_category",
+                "정해진 브랜드 사용 분류를 선택해 주세요.",
+            )
+        category = (category or "").strip()
         if not category:
             analysis = {**analysis, "brandUseCategory": None}
         elif category not in _BRAND_USE_CATEGORIES:

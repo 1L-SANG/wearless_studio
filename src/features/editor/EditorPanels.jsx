@@ -7,6 +7,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { Icon, Button, IconButton, Chips, EmptyState, UploadPendingTile } from '@/components/ui.jsx';
 import { UnderlineTabs, ColorDots, MoodGuide, OuterClosureIcon } from '@/features/storyboard/Storyboard.jsx';
 import { ModelThumb } from '@/features/analysis/AnalysisForm.jsx';
+import { isRealModelSelection } from '@/features/analysis/modelSelection.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import {
   ALL_CUT_TYPE_OPTIONS,
@@ -499,6 +500,19 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
       setDir(detailDirectionFromExample(example));
     }
   };
+  const categoryRequired = failedCutRetry
+    ? isRealModelSelection(failedCutRetry.request?.modelId)
+    : useFm;
+  const brandUseCategoryBlocked = categoryRequired
+    && (!brandUseCategory || brandUseCategorySaving);
+  const brandUseCategoryControl = categoryRequired && (
+    <div className="insp-sec">
+      <div className="lbl">사용 브랜드 유형</div>
+      <Chips options={BRAND_USE_CATEGORIES} value={brandUseCategory}
+        allowDeselect={false} onChange={(value) => onBrandUseCategoryChange?.(value)} />
+      <div className="hint">이 모델을 사용할 브랜드 유형을 하나 선택해 주세요.</div>
+    </div>
+  );
   if (failedCutRetry) {
     return (
       <div className="ai-failed-retry">
@@ -509,8 +523,9 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
         {failedCutRetry.thumb && (
           <img className="ai-failed-retry-thumb" src={failedCutRetry.thumb} alt="원래 선택한 생성 예시" />
         )}
+        {brandUseCategoryControl}
         <Button variant="primary" block icon="sparkles" className="btn-glowring"
-          onClick={onRetryFailedCut}>
+          disabled={brandUseCategoryBlocked} onClick={onRetryFailedCut}>
           {failedCutRetry.signature ? '시그니처 컷 다시 만들기' : '이 컷 다시 만들기'} · {catalogs.creditCosts?.editorImage ?? 1} 크레딧
         </Button>
         <p className="ai-failed-retry-hint">다른 사진으로 직접 채우려면 의류 탭에서 사진을 선택하세요.</p>
@@ -616,18 +631,11 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
                 </div>
               ))}
             </div>
-            {useFm && (
-              <div className="insp-sec">
-                <div className="lbl">사용 브랜드 유형</div>
-                <Chips options={BRAND_USE_CATEGORIES} value={brandUseCategory}
-                  allowDeselect={false} onChange={(value) => onBrandUseCategoryChange?.(value)} />
-                <div className="hint">이 모델을 사용할 브랜드 유형을 하나 선택해 주세요.</div>
-              </div>
-            )}
+            {brandUseCategoryControl}
           </details>}
 
           <Button variant="primary" block icon="sparkles" className="btn-glowring"
-            disabled={useFm && (!brandUseCategory || brandUseCategorySaving)} onClick={() => onGenerate({
+            disabled={brandUseCategoryBlocked} onClick={() => onGenerate({
             contentRole: effectiveRecipe.contentRole,
             colorId: colorVal, cutType: effectiveCutType, direction: isMirror ? null : effectiveDirectionVal, shot: effectiveShotVal, modelId: model, exampleId, refScope,
             outerClosureState: showOuterClosure ? outerClosure : null,

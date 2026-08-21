@@ -72,12 +72,23 @@ test('frontend analysis and new-cut contracts expose brandUseCategory', () => {
 
 test('Editor AI panel remediates a missing persisted category in place', () => {
   const aiPanel = editorPanelsSource.slice(editorPanelsSource.indexOf('export function AIPanel'));
+  const failedRetryStart = aiPanel.indexOf('if (failedCutRetry)');
+  const failedRetryBranch = aiPanel.slice(
+    failedRetryStart,
+    aiPanel.indexOf('\n\n  return (', failedRetryStart),
+  );
   assert.match(editorPanelsSource, /import \{ BRAND_USE_CATEGORIES \} from '@\/lib\/brandUseCategories\.js';/);
+  assert.match(editorPanelsSource, /import \{ isRealModelSelection \} from '@\/features\/analysis\/modelSelection\.js';/);
   assert.match(aiPanel, /brandUseCategory = null/);
   assert.match(aiPanel, /brandUseCategorySaving = false/);
   assert.match(aiPanel, /onBrandUseCategoryChange/);
-  assert.match(aiPanel, /useFm && \([\s\S]*?<Chips[\s\S]*?options=\{BRAND_USE_CATEGORIES\}[\s\S]*?value=\{brandUseCategory\}/);
-  assert.match(aiPanel, /disabled=\{useFm && \(!brandUseCategory \|\| brandUseCategorySaving\)\}/);
+  assert.match(aiPanel, /const categoryRequired = failedCutRetry[\s\S]*?isRealModelSelection\(failedCutRetry\.request\?\.modelId\)[\s\S]*?: useFm;/);
+  assert.match(aiPanel, /const brandUseCategoryBlocked = categoryRequired[\s\S]*?!brandUseCategory \|\| brandUseCategorySaving/);
+  assert.match(aiPanel, /const brandUseCategoryControl = categoryRequired && \([\s\S]*?<Chips[\s\S]*?options=\{BRAND_USE_CATEGORIES\}[\s\S]*?value=\{brandUseCategory\}/);
+  assert.match(failedRetryBranch, /\{brandUseCategoryControl\}/);
+  assert.match(failedRetryBranch, /disabled=\{brandUseCategoryBlocked\}/);
+  assert.equal(aiPanel.match(/\{brandUseCategoryControl\}/g)?.length, 2);
+  assert.match(aiPanel, /disabled=\{brandUseCategoryBlocked\} onClick=\{\(\) => onGenerate/);
 });
 
 test('Editor persists category selection and keeps persisted analysis request-authoritative', () => {
@@ -86,4 +97,18 @@ test('Editor persists category selection and keeps persisted analysis request-au
   assert.match(editorSource, /setAnalysis\(\(current\) => \(\{ \.\.\.\(current \|\| \{\}\), \.\.\.\(saved \|\| \{\}\), brandUseCategory: value \}\)\)/);
   assert.match(editorSource, /api\.generateImage\(projectId, \{ mode: 'new', \.\.\.req, colorId: group,\s*brandUseCategory: analysis\?\.brandUseCategory \}\)/);
   assert.match(editorSource, /<AIPanel[\s\S]*?brandUseCategory=\{analysis\?\.brandUseCategory\}[\s\S]*?brandUseCategorySaving=\{brandUseCategorySaving\}[\s\S]*?onBrandUseCategoryChange=\{saveBrandUseCategory\}/);
+});
+
+test('Editor image generation fails closed before side effects for an unready real-model category', () => {
+  const generateImageStart = editorSource.indexOf('const generateImage = async (req) =>');
+  const generateImage = editorSource.slice(
+    generateImageStart,
+    editorSource.indexOf('const failedCutRetry =', generateImageStart),
+  );
+  const beforeSideEffects = generateImage.slice(0, generateImage.indexOf('const group ='));
+
+  assert.match(editorSource, /import \{ isRealModelSelection \} from '@\/features\/analysis\/modelSelection\.js';/);
+  assert.match(beforeSideEffects, /isRealModelSelection\(req\.modelId\)/);
+  assert.match(beforeSideEffects, /!analysis\?\.brandUseCategory \|\| brandUseCategorySaving/);
+  assert.match(beforeSideEffects, /return null;/);
 });
