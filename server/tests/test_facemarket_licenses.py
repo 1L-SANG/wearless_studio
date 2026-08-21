@@ -19,6 +19,7 @@ from psycopg.adapt import Transformer
 
 from app import facemarket, holder_client
 from app import facemarket_enrollment
+from app.facemarket import LicenseCard
 from app.main import create_app
 from conftest import make_settings
 
@@ -43,6 +44,25 @@ _LICENSE_KEYS = (
     "id", "model_id", "face_image_uri", "face_image_digest", "allowed_use",
     "forbidden_use", "unit_price", "license_valid_until", "status", "vc_id", "created_at",
 )
+
+
+def test_license_card_allows_missing_face_digest_during_reverification_cutover():
+    card = LicenseCard.model_validate(
+        {
+            "id": "license-1",
+            "model_id": MODEL_ID,
+            "face_image_uri": "/v1/facemarket/licenses/license-1/face",
+            "face_image_digest": None,
+            "allowed_use": [],
+            "forbidden_use": [],
+            "unit_price": 5000,
+            "license_valid_until": NOW,
+            "status": "reverification_required",
+            "created_at": NOW,
+        }
+    )
+
+    assert card.face_image_digest is None
 
 
 def _compile_psycopg_query(sql, params):

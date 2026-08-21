@@ -528,7 +528,7 @@ class LicenseCard(CamelModel):
     id: str
     model_id: str
     face_image_uri: str        # 게이트 URL(GET /v1/facemarket/licenses/{id}/face)
-    face_image_digest: str     # 'sha256-...' SRI
+    face_image_digest: str | None  # 'sha256-...' SRI; nullable during reverification cutover
     allowed_use: list[str]
     forbidden_use: list[str]
     unit_price: int
