@@ -57,6 +57,20 @@ def face_key(model_id: str, license_id: str, ext: str) -> str:
     return f"facemarket/models/{model_id}/licenses/{license_id}/face.{ext}"
 
 
+def enrollment_quarantine_key(enrollment_id: str, angle: str, ext: str) -> str:
+    return f"facemarket/enrollments/{enrollment_id}/quarantine/{angle}.{ext}"
+
+
+def enrollment_original_key(
+    model_id: str, enrollment_id: str, angle: str, ext: str
+) -> str:
+    return f"facemarket/models/{model_id}/enrollments/{enrollment_id}/originals/{angle}.{ext}"
+
+
+def model_asset_key(model_id: str, enrollment_id: str, view: str, ext: str) -> str:
+    return f"facemarket/models/{model_id}/enrollments/{enrollment_id}/assets/{view}.{ext}"
+
+
 def sha256_sri(data: bytes) -> str:
     """SRI 무결성 digest 'sha256-<base64>'. fm_licenses.face_image_digest 포맷."""
     return "sha256-" + base64.b64encode(hashlib.sha256(data).digest()).decode()
@@ -117,6 +131,15 @@ class R2Client:
         seed/public 불변 자산은 cache='public, max-age=31536000, immutable' 권장."""
         extra = {"CacheControl": cache} if cache else {}
         self._s3.put_object(Bucket=self._bucket, Key=key, Body=data, ContentType=mime, **extra)
+
+    def copy(self, source_key: str, destination_key: str, mime: str) -> None:
+        self._s3.copy_object(
+            Bucket=self._bucket,
+            Key=destination_key,
+            CopySource={"Bucket": self._bucket, "Key": source_key},
+            ContentType=mime,
+            MetadataDirective="REPLACE",
+        )
 
     def get_bytes(self, key: str) -> bytes:
         """R2 객체 바이트 로드 (베이스 마네킹·상품사진 → Gemini 입력). 동기 → to_thread로 감쌀 것."""
