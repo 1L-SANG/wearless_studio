@@ -120,9 +120,10 @@ async def _scope(conn, schema, *, user_id: str | None, batch_id: str | None, rea
     license_ids: set[str] = set()
     async with conn.cursor() as cur:
         if user_id is not None:
+            profile_filter = "" if reason == "account_delete" else " and status <> 'purged'"
             await cur.execute(
                 "select id::text as id from personalization_profiles "
-                "where user_id=%s and status <> 'purged'",
+                f"where user_id=%s{profile_filter}",
                 (user_id,),
             )
             profile_ids = _ids(await cur.fetchall())
@@ -498,7 +499,20 @@ async def _delete_and_reconcile(clients, targets, prefixes):
         raise PurgeIncomplete(failed_code)
 
 
-async def _cleanup(conn, schema, scope, enrollment_ids, asset_ids, derived_jobs, lineage):
+async def _cleanup(
+    conn,
+    schema,
+    scope,
+    enrollment_ids,
+    asset_ids,
+    derived_jobs,
+    lineage,
+    *,
+    reason: PurgeReason,
+    source_job_id: str | None,
+    target_count: int,
+    confirmed_absent_count: int,
+):
     model_ids = scope["model_ids"]
     license_ids = scope["license_ids"]
     profile_ids = scope["profile_ids"]
@@ -604,6 +618,60 @@ async def _cleanup(conn, schema, scope, enrollment_ids, asset_ids, derived_jobs,
                 "clothing_size=null, status='purged', purged_at=now() where id = any(%s)",
                 (ids,),
             )
+        if reason == "account_delete" and scope["user_id"] is not None:
+            if license_ids:
+                await cur.execute(
+                    "update fm_licenses set status='revoked', face_image_key=null, "
+                    "face_image_digest=null where id = any(%s)",
+                    (list(license_ids),),
+                )
+            if model_ids:
+                await cur.execute(
+                    "delete from fm_identity_verifications where model_id = any(%s)",
+                    (list(model_ids),),
+                )
+                await cur.execute(
+                    "update fm_models set status='suspended', user_id=null, ci_hash=null, did=null, "
+                    "cover_image_url=null, display_name='삭제된 모델', assets_status='none', "
+                    "qc_score=null, assets_source_hash=null where id = any(%s)",
+                    (list(model_ids),),
+                )
+            await cur.execute(
+                "delete from personalization_identity_verifications where user_id=%s",
+                (scope["user_id"],),
+            )
+            await cur.execute(
+                "delete from personalization_consents where user_id=%s",
+                (scope["user_id"],),
+            )
+            await cur.execute(
+                "delete from personalization_audit_log where user_id=%s",
+                (scope["user_id"],),
+            )
+            if _has(schema, "profiles", "display_name", "avatar_asset_id"):
+                await cur.execute(
+                    "update profiles set display_name=null, avatar_asset_id=null where user_id=%s",
+                    (scope["user_id"],),
+                )
+            if _has(schema, "fm_biometric_purge_receipts", "target_count"):
+                await cur.execute(
+                    """
+                    insert into fm_biometric_purge_receipts
+                        (source_job_id, target_count, confirmed_absent_count,
+                         model_count, profile_count, enrollment_count, asset_count)
+                    values (%s, %s, %s, %s, %s, %s, %s)
+                    on conflict (source_job_id) do nothing
+                    """,
+                    (
+                        source_job_id,
+                        target_count,
+                        confirmed_absent_count,
+                        len(model_ids),
+                        len(profile_ids),
+                        len(enrollment_ids),
+                        len(asset_ids),
+                    ),
+                )
 
 
 async def purge_biometric_scope(
@@ -612,6 +680,7 @@ async def purge_biometric_scope(
     user_id: str | None = None,
     batch_id: str | None = None,
     reason: PurgeReason,
+    source_job_id: str | None = None,
 ) -> PurgeResult:
     _validate_scope_args(user_id=user_id, batch_id=batch_id, reason=reason)
     clients = _require_storage(app)
@@ -652,7 +721,19 @@ async def purge_biometric_scope(
             )
             if not _known.issubset(targets) or not set(_prefixes2).issubset(set(prefixes)):
                 raise PurgeIncomplete("r2_reconcile_failed")
-            await _cleanup(conn, schema, scope, enrollment_ids, asset_ids, derived_jobs, lineage)
+            await _cleanup(
+                conn,
+                schema,
+                scope,
+                enrollment_ids,
+                asset_ids,
+                derived_jobs,
+                lineage,
+                reason=reason,
+                source_job_id=source_job_id,
+                target_count=len(targets),
+                confirmed_absent_count=len(targets),
+            )
             await conn.commit()
         except PurgeIncomplete:
             await conn.rollback()

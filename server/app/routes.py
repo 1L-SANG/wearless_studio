@@ -17,7 +17,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPExcep
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from psycopg import errors
 
-from . import facemarket, repo
+from . import facemarket, personalization, repo
 from .agents import (
     color_harmony,
     content_roles,
@@ -499,6 +499,35 @@ async def get_account(request: Request, user_id: str = Depends(require_user)):
             detail={"code": "account_not_found", "message": "계정 정보를 찾을 수 없습니다."},
         )
     return row
+
+
+@router.delete(
+    "/me/account",
+    status_code=202,
+    tags=["User & Account"],
+    summary="계정 삭제 전 생체정보 파기 시작",
+)
+async def delete_account(request: Request, user_id: str = Depends(require_user)):
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                select id::text as id, status
+                  from personalization_profiles
+                 where user_id=%s and status <> 'purged'
+                 order by created_at desc
+                 limit 1
+                 for update
+                """,
+                (user_id,),
+            )
+            profile = await cur.fetchone()
+        job_id = await personalization._start_purge(
+            conn, user_id, profile, reason="account_delete"
+        )
+        await conn.commit()
+    _wake_dispatcher(request)
+    return {"jobId": job_id, "status": "purging"}
 
 
 # ---------- 크레딧 (credit_system_design.md §6) ----------

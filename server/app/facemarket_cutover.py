@@ -30,6 +30,14 @@ class FreezeSummary:
     revocation_target_count: int
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class FreezeResult:
+    profile_count: int
+    model_count: int
+    license_count: int
+    revocation_target_count: int
+
+
 class CutoverBlocked(RuntimeError):
     def __init__(self, code: str):
         super().__init__(code)
@@ -445,6 +453,158 @@ async def quiesce_personalization_writers(
                 row = await cur.fetchone()
             last_pending = int(row["pending_count"])
             last_running = int(row["running_count"])
+            await conn.commit()
+        if last_pending == 0 and last_running == 0:
+            return WriterQuiescence(cancelled, 0, 0)
+        if asyncio.get_running_loop().time() >= deadline:
+            raise CutoverBlocked("writers_not_drained")
+        await asyncio.sleep(poll_interval_seconds)
+
+
+async def freeze_user_biometric_scope(conn, *, user_id: str, reason: str) -> FreezeResult:
+    """Close one user's biometric scope before shared R2 purge."""
+    if reason not in {"withdrawal", "account_delete"}:
+        raise CutoverBlocked("invalid_purge_reason")
+    await repo.lock_facemarket_writer_boundary(conn)
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select id::text as id
+              from personalization_profiles
+             where user_id=%s and status <> 'purged'
+             order by created_at, id
+             for update
+            """,
+            (user_id,),
+        )
+        profiles = await cur.fetchall()
+        await cur.execute(
+            """
+            select id::text as id, status
+              from fm_models
+             where user_id=%s
+             order by id
+             for update
+            """,
+            (user_id,),
+        )
+        models = await cur.fetchall()
+    model_ids = [row["id"] for row in models]
+    licenses: list[dict] = []
+    if model_ids:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                select id::text as id, model_id::text as model_id, status,
+                       previous_status, vc_id
+                  from fm_licenses
+                 where model_id = any(%s)
+                 order by id
+                 for update
+                """,
+                (model_ids,),
+            )
+            licenses = await cur.fetchall()
+            license_ids = [row["id"] for row in licenses]
+            if license_ids:
+                await cur.execute(
+                    """
+                    update fm_licenses
+                       set previous_status=coalesce(previous_status,status),
+                           status=case
+                               when status in ('pending','active','reverification_required')
+                               then 'revoked'
+                               else status
+                           end
+                     where id = any(%s)
+                    """,
+                    (license_ids,),
+                )
+            targets = _vc_targets(licenses)
+            enqueue_failed = False
+            try:
+                for target in targets:
+                    await facemarket.enqueue_vc_revocation(conn, **target)
+            except Exception:
+                enqueue_failed = True
+            if enqueue_failed:
+                raise CutoverBlocked("vc_revocation_enqueue_failed")
+            if reason == "account_delete":
+                model_status = "suspended"
+            else:
+                model_status = "reverification_required"
+            await cur.execute(
+                """
+                update fm_models
+                   set previous_status=coalesce(previous_status,status),
+                       status=case
+                           when status='suspended' then status
+                           else %s
+                       end
+                 where id = any(%s)
+                """,
+                (model_status, model_ids),
+            )
+            await cur.execute(
+                """
+                update fm_biometric_enrollments
+                   set status='cancelled', reason=%s, completed_at=coalesce(completed_at, now())
+                 where user_id=%s
+                   and status in ('photos_pending','liveness_pending','processing',
+                                  'asset_building','license_pending','vc_pending')
+                """,
+                (reason, user_id),
+            )
+    else:
+        targets = []
+    return FreezeResult(
+        profile_count=len(profiles),
+        model_count=len(models),
+        license_count=len(licenses),
+        revocation_target_count=len(targets),
+    )
+
+
+async def quiesce_user_facemarket_writers(
+    pool,
+    *,
+    user_id: str,
+    timeout_seconds: float,
+    poll_interval_seconds: float = 0.25,
+) -> WriterQuiescence:
+    """Cancel pending and drain running FaceMarket writer jobs for one model owner."""
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    cancelled = 0
+    last_pending = 0
+    last_running = 0
+    while True:
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "select id::text as id from fm_models where user_id=%s order by id",
+                    (user_id,),
+                )
+                model_ids = tuple(row["id"] for row in await cur.fetchall())
+                license_ids = ()
+                if model_ids:
+                    await cur.execute(
+                        "select id::text as id from fm_licenses where model_id = any(%s)",
+                        (list(model_ids),),
+                    )
+                    license_ids = tuple(row["id"] for row in await cur.fetchall())
+            jobs = await repo.list_facemarket_scope_jobs(
+                conn, model_ids=model_ids, license_ids=license_ids
+            )
+            for row in [j for j in jobs if j.get("status") == "pending"]:
+                changed = await repo.cancel_pending_job_with_refund(
+                    conn,
+                    job_id=row["id"],
+                    code="personalization_purge",
+                    message=_PERSONALIZATION_CANCEL_MESSAGE,
+                )
+                cancelled += int(changed)
+            last_pending = sum(1 for row in jobs if row.get("status") == "pending")
+            last_running = sum(1 for row in jobs if row.get("status") == "running")
             await conn.commit()
         if last_pending == 0 and last_running == 0:
             return WriterQuiescence(cancelled, 0, 0)

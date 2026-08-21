@@ -178,6 +178,7 @@ class FakeDB:
             "fm_model_asset_cleanup": [],
             "fm_model_assets": [],
             "fm_models": [],
+            "fm_biometric_purge_receipts": [],
             "fm_settlements": [],
             "generation_outputs": [],
             "generation_runs": [],
@@ -207,6 +208,9 @@ class FakeDB:
                 "mime_type", "deleted_at", "result", "height_cm", "weight_kg",
                 "body_type", "body_type_custom", "gender", "age_range", "skin_tone",
                 "hair", "clothing_size", "assets_status", "qc_score", "assets_source_hash",
+                "ci_hash", "did", "cover_image_url", "display_name", "outcome",
+                "target_count", "confirmed_absent_count", "model_count", "profile_count",
+                "enrollment_count", "asset_count", "source_job_id", "completed_at",
             }
             for table, rows in self.tables.items()
         }
@@ -496,6 +500,15 @@ class FakeDB:
             for row in self.tables["fm_models"]:
                 if row.get("id") in set(params[0]):
                     row.update({"assets_status": "none", "qc_score": None, "assets_source_hash": None, "current_enrollment_id": None})
+                    if "display_name='삭제된 모델'" in q:
+                        row.update({
+                            "status": "suspended",
+                            "user_id": None,
+                            "ci_hash": None,
+                            "did": None,
+                            "cover_image_url": None,
+                            "display_name": "삭제된 모델",
+                        })
                     count += 1
             return count
         if q.startswith("update fm_licenses set"):
@@ -503,6 +516,8 @@ class FakeDB:
             for row in self.tables["fm_licenses"]:
                 if row.get("id") in set(params[0]):
                     row.update({"face_image_key": None, "face_image_digest": None, "enrollment_id": None})
+                    if "status='revoked'" in q:
+                        row["status"] = "revoked"
                     count += 1
             return count
         if q.startswith("delete from fm_biometric_enrollment_photo_cleanup"):
@@ -516,6 +531,30 @@ class FakeDB:
             return _delete_where_in(self.tables["personalization_generations"], "profile_id", params[0])
         if q.startswith("delete from personalization_identity_verifications"):
             return _delete_where_eq(self.tables["personalization_identity_verifications"], "user_id", params[0])
+        if q.startswith("delete from fm_identity_verifications"):
+            return _delete_where_in(self.tables["fm_identity_verifications"], "model_id", params[0])
+        if q.startswith("delete from personalization_consents"):
+            return _delete_where_eq(self.tables["personalization_consents"], "user_id", params[0])
+        if q.startswith("delete from personalization_audit_log"):
+            return _delete_where_eq(self.tables["personalization_audit_log"], "user_id", params[0])
+        if q.startswith("update profiles set"):
+            return 0
+        if q.startswith("insert into fm_biometric_purge_receipts"):
+            receipt = {
+                "id": f"receipt-{len(self.tables['fm_biometric_purge_receipts']) + 1}",
+                "source_job_id": params[0],
+                "reason": "account_delete",
+                "outcome": "ready_for_identity_delete",
+                "target_count": params[1],
+                "confirmed_absent_count": params[2],
+                "model_count": params[3],
+                "profile_count": params[4],
+                "enrollment_count": params[5],
+                "asset_count": params[6],
+                "completed_at": "now",
+            }
+            self.tables["fm_biometric_purge_receipts"].append(receipt)
+            return 1
         if q.startswith("update personalization_profiles set"):
             count = 0
             for row in self.tables["personalization_profiles"]:
@@ -799,7 +838,21 @@ def _fake_case():
     db.add("personalization_identity_verifications", id="piv-a", user_id=user, cx_tx_hash="cx-a")
     db.add("personalization_consents", id="consent-a", user_id=user, profile_id=profile)
     db.add("personalization_audit_log", id="audit-a", user_id=user, profile_id=profile, detail={"kept": True})
-    db.add("fm_models", id=model, user_id=user, status="reverification_required", current_enrollment_id=enrollment, reverification_batch_id=batch, assets_status="ready", qc_score=0.9, assets_source_hash="src")
+    db.add(
+        "fm_models",
+        id=model,
+        user_id=user,
+        status="reverification_required",
+        current_enrollment_id=enrollment,
+        reverification_batch_id=batch,
+        assets_status="ready",
+        qc_score=0.9,
+        assets_source_hash="src",
+        ci_hash="ci-a",
+        did="did:a",
+        cover_image_url="/cover-a.png",
+        display_name="모델A",
+    )
     db.add("fm_models", id=other_model, user_id=other, status="reverification_required", current_enrollment_id="enroll-b", reverification_batch_id=other_batch, assets_status="ready", qc_score=0.8, assets_source_hash="other")
     db.add("fm_identity_verifications", id="fmiv-a", model_id=model, fields={"birthYear": "1990"})
     db.add("fm_biometric_enrollments", id=enrollment, user_id=user, model_id=model)
@@ -817,6 +870,7 @@ def _fake_case():
     db.add("projects", id=project, user_id=user, facemarket_license_id=license_id, editor_blocks=[{"src": "secret"}], selected_mannequin_id="m1")
     db.add("jobs", id=job, user_id=user, project_id=project, kind="detail_page", status="done", payload={"_facemarket": {"modelId": model}}, result={"url": "secret"})
     db.add("job_events", id="event-a", job_id=job, payload={"url": "secret"})
+    db.add("fm_settlements", id="settlement-a", job_id=job, license_id=license_id)
     db.add("generation_runs", id=run, job_id=job, project_id=project, user_id=user, prompt_r2_key=f"users/{user}/projects/{project}/ai/{job}/prompt.txt")
     db.add("generation_outputs", id=output, generation_run_id=run, project_id=project, asset_id=asset, parent_output_id=None, edit_session_id=None)
     db.add("generation_outputs", id=child_output, generation_run_id=None, project_id=project, asset_id=child_asset, parent_output_id=output, edit_session_id=session)
@@ -936,6 +990,45 @@ def test_fake_user_purge_reconciles_both_buckets_and_tombstones_recursive_lineag
     assert ctx.db.tables["fm_identity_verifications"]
     assert ctx.db.tables["personalization_consents"]
     assert ctx.db.tables["personalization_audit_log"]
+    assert "facemarket/" not in caplog.text and ctx.user not in caplog.text
+
+
+def test_fake_account_delete_anonymizes_identity_and_writes_aggregate_receipt(caplog):
+    ctx = _fake_case()
+
+    result = _run(ctx, user_id=ctx.user, reason="account_delete")
+
+    assert result.complete is True
+    model = ctx.db.tables["fm_models"][0]
+    assert model["status"] == "suspended"
+    assert model["user_id"] is None
+    assert model["ci_hash"] is None
+    assert model["did"] is None
+    assert model["cover_image_url"] is None
+    assert model["display_name"] == "삭제된 모델"
+    assert ctx.db.tables["fm_identity_verifications"] == []
+    assert ctx.db.tables["personalization_identity_verifications"] == []
+    assert ctx.db.tables["personalization_consents"] == []
+    assert ctx.db.tables["personalization_audit_log"] == []
+    assert len(ctx.db.tables["fm_settlements"]) == 1
+    assert ctx.db.tables["fm_biometric_purge_receipts"] == [
+        {
+            "id": "receipt-1",
+            "source_job_id": None,
+            "reason": "account_delete",
+            "outcome": "ready_for_identity_delete",
+            "target_count": result.target_count,
+            "confirmed_absent_count": result.confirmed_absent_count,
+            "model_count": 1,
+            "profile_count": 1,
+            "enrollment_count": 1,
+            "asset_count": result.asset_count,
+            "completed_at": "now",
+        }
+    ]
+    receipt_blob = repr(ctx.db.tables["fm_biometric_purge_receipts"])
+    for secret in (ctx.user, ctx.model, ctx.profile, ctx.enrollment, "ci-a", "did:a", "vc-a"):
+        assert secret not in receipt_blob
     assert "facemarket/" not in caplog.text and ctx.user not in caplog.text
 
 

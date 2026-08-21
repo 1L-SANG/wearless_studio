@@ -22,7 +22,7 @@ PII 하드 룰(§1.4 — 위반 금지):
   · 생성 잡: kind='personalization_generation', project_id=None,
              payload={profileId, productImageAssetIds, options, generationId}.
              (얼굴 바이트/게이트URL payload 금지 — 워커가 profileId 로 서버측 로드.)
-  · 파기 잡: kind='personalization_purge', payload={profileId}.
+  · 파기 잡: kind='personalization_purge', payload={reason}.
 """
 
 import asyncio
@@ -36,7 +36,7 @@ from fastapi.responses import JSONResponse, Response
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
 
-from . import cx_identity, repo
+from . import cx_identity, facemarket_cutover, repo
 from .auth import require_user
 from .db import get_conn
 from .models import CamelModel, ErrorResponse
@@ -379,6 +379,24 @@ async def _readiness(conn, user_id: str, profile: dict) -> tuple[bool, list[dict
     return (not blockers, blockers)
 
 
+def _strongest_reason(current: str | None, requested: str) -> str:
+    if requested == "account_delete" or current == "account_delete":
+        return "account_delete"
+    return "withdrawal"
+
+
+async def _active_purge_job(conn, user_id: str) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id::text as id, status, payload, metadata from jobs "
+            "where user_id = %s and kind = 'personalization_purge' "
+            "and status in ('pending', 'running') order by created_at desc limit 1 "
+            "for update",
+            (user_id,),
+        )
+        return await cur.fetchone()
+
+
 async def _active_purge_job_id(conn, user_id: str) -> str | None:
     async with conn.cursor() as cur:
         await cur.execute(
@@ -390,16 +408,43 @@ async def _active_purge_job_id(conn, user_id: str) -> str | None:
     return row["id"] if row else None
 
 
-async def _start_purge(conn, user_id: str, profile: dict) -> str:
-    """프로필 status→purging + personalization_purge 잡 생성. 멱등(이미 purging 이면 기존 잡 id).
+async def _completed_account_delete_job_id(conn, user_id: str) -> str | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id::text as id from jobs where user_id=%s and kind='personalization_purge' "
+            "and status='done' and payload->>'reason'='account_delete' "
+            "order by finished_at desc nulls last, created_at desc limit 1",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+    return row["id"] if row else None
+
+
+async def _start_purge(conn, user_id: str, profile: dict | None = None, *, reason: str = "withdrawal") -> str:
+    """프로필 status→purging + reason-only personalization_purge 잡 생성/업그레이드.
 
     호출자는 profile 을 FOR UPDATE 로 잠근 뒤 호출(동시 요청 직렬화)하고, 반환 후 commit + wake.
-    payload 는 {profileId} 만 — PII 금지(워커가 profileId 로 서버측 로드).
+    payload 는 {reason} 만 — scope id/key/digest 금지(워커가 user_id 로 서버측 로드).
     """
-    if profile["status"] == "purging":
-        existing = await _active_purge_job_id(conn, user_id)
-        if existing:
-            return existing
+    if reason not in {"withdrawal", "account_delete"}:
+        raise ValueError("invalid purge reason")
+    await facemarket_cutover.freeze_user_biometric_scope(conn, user_id=user_id, reason=reason)
+    active = await _active_purge_job(conn, user_id)
+    if active is not None:
+        existing_reason = (active.get("payload") or {}).get("reason") or "withdrawal"
+        effective = _strongest_reason(existing_reason, reason)
+        if effective != existing_reason:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "update jobs set payload = payload || %s::jsonb, "
+                    "metadata = metadata || %s::jsonb where id=%s",
+                    (Json({"reason": effective}), Json({"reason": effective}), active["id"]),
+                )
+        return active["id"]
+    if reason == "account_delete":
+        completed = await _completed_account_delete_job_id(conn, user_id)
+        if completed is not None:
+            return completed
     # MAJOR-D: 전체 파기 시 현재 granted 인 동의를 전부 withdrawn 으로 기록(append-only).
     # 이렇게 하지 않으면 파기 후에도 동의가 user_id 스코프로 granted 잔존 → 재온보딩 시
     # 과거 동의로 얼굴 업로드 게이트가 통과되어 재동의 없이 생체정보가 재수집된다.
@@ -408,27 +453,28 @@ async def _start_purge(conn, user_id: str, profile: dict) -> str:
     async with conn.cursor() as cur:
         await cur.execute(
             "update personalization_profiles set status = 'purging', withdrawn_at = now() "
-            "where id = %s and status <> 'purged'",
-            (profile["id"],),
+            "where user_id = %s and status <> 'purged'",
+            (user_id,),
         )
-        for ctype in granted_types:
-            await cur.execute(
-                "insert into personalization_consents "
-                "(user_id, profile_id, consent_type, action, doc_version) "
-                "values (%s, %s, %s, 'withdrawn', %s)",
-                (user_id, profile["id"], ctype, consents[ctype]["docVersion"]),
-            )
-    job, _created = await repo.create_job(
-        conn,
-        user_id=user_id,
-        project_id=None,
-        kind="personalization_purge",
-        payload={"profileId": profile["id"]},
-        idempotency_key=None,
-        credits_reserved=0,
-        metadata={},
-    )
-    await _audit(conn, user_id, profile["id"], "purge_started", {})
+        if profile is not None:
+            for ctype in granted_types:
+                await cur.execute(
+                    "insert into personalization_consents "
+                    "(user_id, profile_id, consent_type, action, doc_version) "
+                    "values (%s, %s, %s, 'withdrawn', %s)",
+                    (user_id, profile["id"], ctype, consents[ctype]["docVersion"]),
+                )
+        await cur.execute(
+            """
+            insert into jobs (user_id, project_id, kind, status, payload, credits_reserved, metadata)
+            values (%s, null, 'personalization_purge', 'pending', %s, 0, %s)
+            returning id::text as id
+            """,
+            (user_id, Json({"reason": reason}), Json({"reason": reason})),
+        )
+        job = await cur.fetchone()
+    if profile is not None:
+        await _audit(conn, user_id, profile["id"], "purge_started", {"reason": reason})
     return job["id"]
 
 

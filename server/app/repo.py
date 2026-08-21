@@ -1301,6 +1301,10 @@ async def claim_next_job(conn: AsyncConnection, kinds: tuple[str, ...], worker_i
             with next_job as (
               select id as nid from jobs
               where status = 'pending' and kind = any(%s)
+                and (
+                  metadata->>'retryNotBefore' is null
+                  or (metadata->>'retryNotBefore')::timestamptz <= now()
+                )
                 and not (
                   kind = any(%s)
                   and exists (
@@ -1310,10 +1314,41 @@ async def claim_next_job(conn: AsyncConnection, kinds: tuple[str, ...], worker_i
                 )
                 and not (
                   kind = 'personalization_generation'
-                  and exists (
+                  and (
+                    exists (
                     select 1 from personalization_profiles p
                     where p.id::text = jobs.payload->>'profileId'
                       and p.status in ('purging', 'purged')
+                    )
+                    or exists (
+                      select 1 from jobs purge
+                      where purge.user_id = jobs.user_id
+                        and purge.kind = 'personalization_purge'
+                        and (
+                          purge.status in ('pending','running')
+                          or (
+                            purge.status = 'done'
+                            and purge.payload->>'reason' = 'account_delete'
+                          )
+                        )
+                    )
+                  )
+                )
+                and not (
+                  kind = any(%s)
+                  and exists (
+                    select 1
+                      from fm_models m
+                      join jobs purge on purge.user_id = m.user_id
+                     where m.id::text = jobs.payload #>> '{{_facemarket,modelId}}'
+                       and purge.kind = 'personalization_purge'
+                       and (
+                         purge.status in ('pending','running')
+                         or (
+                           purge.status = 'done'
+                           and purge.payload->>'reason' = 'account_delete'
+                         )
+                       )
                   )
                 )
               order by case when kind in ('sam_preprocess', 'matching_cutout') then 1 else 0 end,
@@ -1329,10 +1364,48 @@ async def claim_next_job(conn: AsyncConnection, kinds: tuple[str, ...], worker_i
                 list(kinds),
                 list(FACEMARKET_CUTOVER_JOB_KINDS),
                 list(FACEMARKET_CLOSED_BATCH_STATUSES),
+                list(FACEMARKET_CUTOVER_JOB_KINDS),
                 lease_token,
             ),
         )
         return await cur.fetchone()
+
+
+async def requeue_personalization_purge(
+    conn: AsyncConnection, *, job_id: str, lease_token: str, code: str
+) -> bool:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            with locked as (
+              select id, coalesce((metadata->>'attempt')::int, 0) + 1 as attempt
+                from jobs
+               where id=%s
+                 and kind='personalization_purge'
+                 and status='running'
+                 and locked_by=%s
+               for update
+            )
+            update jobs j
+               set status='pending',
+                   locked_by=null,
+                   locked_at=null,
+                   error_message=null,
+                   metadata = j.metadata
+                     || jsonb_build_object(
+                          'stage', 'retry',
+                          'attempt', locked.attempt,
+                          'code', %s::text,
+                          'retryNotBefore',
+                          (now() + make_interval(secs => least(900, power(2, least(locked.attempt - 1, 10))::int)))::text
+                        )
+              from locked
+             where j.id=locked.id
+             returning j.id
+            """,
+            (job_id, lease_token, code),
+        )
+        return await cur.fetchone() is not None
 
 
 async def lock_facemarket_writer_boundary(conn: AsyncConnection) -> None:
@@ -1456,17 +1529,33 @@ async def recover_stale_leases(conn: AsyncConnection, lease_timeout_seconds: int
             updated as (
               update jobs j
               set status = case
+                    when stale.kind = 'personalization_purge' then 'pending'
                     when stale.kind = 'detail_page' or stale.recoveries >= 1 then 'error'
                     else 'pending'
                   end,
                   locked_by = null, locked_at = null,
                   error_message = case
+                    when stale.kind = 'personalization_purge' then null
                     when stale.kind = 'detail_page' or stale.recoveries >= 1 then %s
                     else null
                   end,
-                  metadata = jsonb_set(j.metadata, '{leaseRecoveries}',
-                    to_jsonb(stale.recoveries + 1), true),
+                  metadata = case
+                    when stale.kind = 'personalization_purge'
+                    then jsonb_set(
+                      j.metadata
+                        || jsonb_build_object(
+                          'stage', 'retry',
+                          'code', 'stale_lease',
+                          'retryNotBefore',
+                          (now() + make_interval(secs => least(900, power(2, least(stale.recoveries, 10))::int)))::text
+                        ),
+                      '{leaseRecoveries}', to_jsonb(stale.recoveries + 1), true
+                    )
+                    else jsonb_set(j.metadata, '{leaseRecoveries}',
+                      to_jsonb(stale.recoveries + 1), true)
+                  end,
                   finished_at = case
+                    when stale.kind = 'personalization_purge' then null
                     when stale.kind = 'detail_page' or stale.recoveries >= 1 then now()
                     else null
                   end
