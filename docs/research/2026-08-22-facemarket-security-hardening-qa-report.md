@@ -13,7 +13,7 @@ Implemented scope verified here:
 - biometric enrollment and current-evidence authorization contracts;
 - mandatory local FaceLicense VC state binding and durable revoke queue contracts;
 - late runtime authorization for detail/editor workers;
-- strict purge/reconciliation, failed-resume, account deletion, and local cutover controller contracts;
+- strict purge/reconciliation, failed-resume, account deletion, and local cutover controller contracts, including a hermetic same-batch initial-cutover retry after partial object-store failure;
 - frontend enrollment/category/thumbnail contracts and production bundle build.
 
 Real payout remains explicitly excluded. Settlement rows and UI-visible settlement behavior are local audit/payment-intent evidence only, not a proof of live payout rail execution.
@@ -34,17 +34,18 @@ All commands below ran from `/Users/nojeong-un/devs/wearless_studio/.worktrees/f
 
 | Check | Result |
 | --- | --- |
-| Focused FaceMarket/personalization security pytest set | `301 passed, 104 skipped, 1 warning in 5.97s` |
+| New same-batch cutover retry integration test | `1 passed, 1 warning in 0.03s` on replacement base `b7d5bc5b` |
+| Focused FaceMarket/personalization security pytest set | `302 passed, 104 skipped, 1 warning in 7.51s` on replacement base `b7d5bc5b` |
 | Broader backend slice | `155 passed, 98 skipped, 1 warning in 3.07s` |
-| Full backend pytest | `3119 passed, 112 skipped, 391 warnings in 40.71s` |
-| Full backend pytest with skip summary | `3119 passed, 112 skipped, 391 warnings in 43.06s` |
+| Full backend pytest | `3120 passed, 112 skipped, 391 warnings in 41.00s` on replacement base `b7d5bc5b` |
+| Full backend pytest with skip summary | `3120 passed, 112 skipped, 391 warnings in 40.25s` on replacement base `b7d5bc5b` |
 | Python syntax | `cd server && .venv/bin/python -m compileall -q app scripts` exited 0 |
 | Whitespace | `git diff --check` produced no output |
-| Frontend test suite | `929 pass, 0 fail, 0 skipped` |
-| Production frontend build | `vite build` exited 0 |
+| Frontend test suite | `929 pass, 0 fail, 0 skipped`; earlier Task 9 evidence on 2026-08-22 KST, not rerun in this backend-only correction because frontend files were untouched and independent review revalidated it |
+| Production frontend build | `vite build` exited 0; earlier Task 9 evidence on 2026-08-22 KST, not rerun in this backend-only correction because frontend files were untouched and independent review revalidated it |
 | CLI validation | `python -m scripts.facemarket_security_cutover --help` exited 0 |
 | Dependency manifest diff | no diff in `package.json`, `pnpm-lock.yaml`, `server/pyproject.toml`, `server/sam_service/requirements.txt` |
-| Biometric log scan | `73 passed, 5 skipped, 1 warning`; grep found no forbidden biometric storage, VC, CI, or digest identifiers |
+| Biometric log scan | `74 passed, 5 skipped, 1 warning`; grep found no forbidden biometric storage, VC, CI, or digest identifiers |
 
 Expected environment-gated skips:
 
@@ -72,6 +73,7 @@ Measured local tests cover:
 - Mandatory VC: license activation is bound to VC issuance state, verification is fail-closed, local revoke/freeze transitions enqueue durable revoke jobs, and Holder outage does not reopen local real-model generation.
 - Durable revoke: owner revoke and cutover freeze/revoke paths keep one durable queue row per VC and preserve local non-active status across Holder failure.
 - Strict purge/reconciliation: both face and public buckets are discovered, deleted, relisted, and headed before DB cleanup; R2/list/head/delete failures preserve DB references for retry.
+- Same-batch initial-cutover retry: `test_fake_cutover_apply_resumes_same_batch_after_partial_r2_failure_without_duplicate_state` drives the real `apply_initial_cutover` through a hermetic partial object-store failure, verifies the batch fails without starting a second batch or duplicating revoke queue rows, then completes the same batch with durable terminal counts. The test explicitly treats idempotent retry delete attempts after unconfirmed list/head reconciliation as required fail-closed behavior, while confirming a third completed replay performs no additional deletes or revocation enqueue.
 - Owner-only face access: biometric file access tests assert other-user and purged states return not-found/unauthorized behavior rather than raw storage exposure.
 - Fixed non-biometric thumbnail: catalog/runtime paths avoid private face buckets for thumbnails and use non-biometric placeholders.
 - Allowed/forbidden category enforcement: forbidden categories take precedence, product-only and virtual/vary paths do not enter real FaceMarket settlement/purge/cleanup paths, and retained/malicious real-model UUIDs are stripped from product-only requests before enqueue.

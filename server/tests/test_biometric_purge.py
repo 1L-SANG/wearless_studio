@@ -12,7 +12,7 @@ import pytest
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
-from app import repo
+from app import facemarket_cutover, repo
 from app.services import biometric_purge
 from app.services.biometric_purge import PurgeIncomplete, purge_biometric_scope
 
@@ -117,8 +117,13 @@ class FakeCursor:
         self.rowcount = 0
         self.rows = self.db.select(q, params or ())
         if self.rows is None:
-            self.rowcount = self.db.mutate(q, params or ())
-            self.rows = []
+            mutated = self.db.mutate(q, params or ())
+            if isinstance(mutated, list):
+                self.rows = mutated
+                self.rowcount = len(mutated)
+            else:
+                self.rowcount = mutated
+                self.rows = []
 
     async def fetchall(self):
         return self.rows
@@ -165,6 +170,9 @@ class FakeDB:
         self.fail_select = {}
         self.fail_mutate = {}
         self.queries = []
+        self.controller_locked = False
+        self.controller_lock_attempts = 0
+        self.controller_unlocks = 0
         self.tables = {
             "assets": [],
             "edit_sessions": [],
@@ -238,6 +246,149 @@ class FakeDB:
                 for table, cols in self.columns.items()
                 for col in cols
             ]
+        if q.startswith("select pg_try_advisory_lock"):
+            self.controller_lock_attempts += 1
+            self.controller_locked = True
+            return [{"locked": True}]
+        if q.startswith("select pg_advisory_xact_lock"):
+            return [{"locked": True}]
+        if q.startswith("select pg_advisory_unlock"):
+            self.controller_unlocks += 1
+            self.controller_locked = False
+            return [{"unlocked": True}]
+        if "select id::text as id, status, target_digest" in q and "from fm_cutover_batches" in q:
+            return [
+                {
+                    "id": r["id"],
+                    "status": r["status"],
+                    "target_digest": r["target_digest"],
+                    "model_count": r.get("model_count", 0),
+                    "license_count": r.get("license_count", 0),
+                    "job_count": r.get("job_count", 0),
+                    "asset_count": r.get("asset_count", 0),
+                }
+                for r in self.tables["fm_cutover_batches"]
+                if r.get("id") == params[0]
+            ]
+        if "select id::text as id, status, started_at" in q and "from fm_cutover_batches" in q:
+            return [
+                {
+                    "id": r["id"],
+                    "status": r["status"],
+                    "started_at": r.get("started_at"),
+                    "target_digest": r["target_digest"],
+                    "model_count": r.get("model_count", 0),
+                    "license_count": r.get("license_count", 0),
+                    "job_count": r.get("job_count", 0),
+                }
+                for r in self.tables["fm_cutover_batches"]
+                if r.get("id") == params[0]
+            ]
+        if "select m.id::text as id" in q and "not exists" in q:
+            return [{"id": r["id"]} for r in self.tables["fm_models"] if r.get("legacy_target", True)]
+        if q.startswith("select id::text as id") and "from fm_licenses" in q and "where model_id = any" in q and "order by id" in q:
+            model_ids = set(params[0])
+            return [
+                {"id": r["id"]}
+                for r in sorted(self.tables["fm_licenses"], key=lambda row: row["id"])
+                if r.get("model_id") in model_ids
+            ]
+        if "from jobs where metadata->>%s = %s" in q:
+            batch_id = params[1]
+            return [
+                {"id": r["id"]}
+                for r in sorted(self.tables["jobs"], key=lambda row: (row.get("created_at"), row["id"]))
+                if (r.get("metadata") or {}).get(params[0]) == batch_id
+            ]
+        if "from jobs where id = any" in q:
+            ids = set(params[0])
+            return [
+                _job_row(r)
+                for r in sorted(self.tables["jobs"], key=lambda row: (row.get("created_at"), row["id"]))
+                if r.get("id") in ids
+            ]
+        if "from fm_models" in q and "where reverification_batch_id=%s" in q and "count(*)" in q:
+            return [{
+                "count": len([
+                    r for r in self.tables["fm_models"]
+                    if r.get("reverification_batch_id") == params[0]
+                    and r.get("status") == "reverification_required"
+                ])
+            }]
+        if "from fm_licenses" in q and "where reverification_batch_id=%s" in q and "count(*)" in q:
+            allowed = set(params[1])
+            return [{
+                "count": len([
+                    r for r in self.tables["fm_licenses"]
+                    if r.get("reverification_batch_id") == params[0]
+                    and r.get("status") in allowed
+                ])
+            }]
+        if "from fm_models" in q and "where reverification_batch_id = %s" in q and "status" in q:
+            return [
+                {
+                    "id": r["id"],
+                    "status": r["status"],
+                    "reverification_batch_id": r.get("reverification_batch_id"),
+                }
+                for r in sorted(self.tables["fm_models"], key=lambda row: row["id"])
+                if r.get("reverification_batch_id") == params[0]
+            ]
+        if "from fm_licenses" in q and "where reverification_batch_id = %s" in q and "status" in q:
+            return [
+                {
+                    "id": r["id"],
+                    "status": r["status"],
+                    "reverification_batch_id": r.get("reverification_batch_id"),
+                }
+                for r in sorted(self.tables["fm_licenses"], key=lambda row: row["id"])
+                if r.get("reverification_batch_id") == params[0]
+            ]
+        if "from fm_licenses l" in q and "for update" in q:
+            model_ids = set(params[0])
+            return [
+                {
+                    "id": r["id"],
+                    "model_id": r["model_id"],
+                    "status": r["status"],
+                    "previous_status": r.get("previous_status"),
+                    "reverification_batch_id": r.get("reverification_batch_id"),
+                    "vc_id": r.get("vc_id"),
+                }
+                for r in sorted(self.tables["fm_licenses"], key=lambda row: (row["model_id"], row["id"]))
+                if r.get("model_id") in model_ids
+            ]
+        if "select id::text as id, status, previous_status" in q and "from fm_models" in q:
+            ids = set(params[0])
+            return [
+                {
+                    "id": r["id"],
+                    "status": r["status"],
+                    "previous_status": r.get("previous_status"),
+                    "reverification_batch_id": r.get("reverification_batch_id"),
+                }
+                for r in sorted(self.tables["fm_models"], key=lambda row: row["id"])
+                if r.get("id") in ids
+            ]
+        if "select id::text as id from jobs" in q and "status='pending'" in q:
+            kinds = set(params[0])
+            return [
+                {"id": r["id"]}
+                for r in self.tables["jobs"]
+                if r.get("status") == "pending" and r.get("kind") in kinds
+            ]
+        if "pending_count" in q and "running_count" in q and "kind = any" in q:
+            kinds = set(params[0])
+            return [{
+                "pending_count": len([
+                    r for r in self.tables["jobs"]
+                    if r.get("kind") in kinds and r.get("status") == "pending"
+                ]),
+                "running_count": len([
+                    r for r in self.tables["jobs"]
+                    if r.get("kind") in kinds and r.get("status") == "running"
+                ]),
+            }]
         if "from personalization_profiles where user_id" in q:
             user_id = params[0]
             return [
@@ -460,6 +611,89 @@ class FakeDB:
         for needle, message in self.fail_mutate.items():
             if needle in q:
                 raise RuntimeError(message)
+        if q.startswith("update fm_cutover_batches") and "set status = 'draining'" in q:
+            for row in self.tables["fm_cutover_batches"]:
+                if row.get("id") == params[0] and row.get("status") == "approved":
+                    row["status"] = "draining"
+                    row["started_at"] = row.get("started_at") or "now"
+                    return [{"id": row["id"]}]
+            return []
+        if q.startswith("update fm_cutover_batches") and "set status='completed'" in q:
+            for row in self.tables["fm_cutover_batches"]:
+                if row.get("id") == params[0] and row.get("status") == "reconciling":
+                    row["status"] = "completed"
+                    row["last_error_code"] = None
+            return 1
+        if q.startswith("update fm_cutover_batches") and "set status='failed'" in q:
+            error_code, batch_id = params
+            for row in self.tables["fm_cutover_batches"]:
+                if row.get("id") == batch_id and row.get("status") in {"draining", "applying", "reconciling", "failed"}:
+                    row["status"] = "failed"
+                    row["last_error_code"] = error_code
+            return 1
+        if q.startswith("update fm_cutover_batches set status=%s"):
+            status, batch_id = params
+            for row in self.tables["fm_cutover_batches"]:
+                if row.get("id") == batch_id:
+                    row["status"] = status
+            return 1
+        if q.startswith("update fm_cutover_batches") and "set status = case when status = 'draining'" in q:
+            for row in self.tables["fm_cutover_batches"]:
+                if row.get("id") == params[0] and row.get("status") in {"draining", "applying"}:
+                    if row["status"] == "draining":
+                        row["status"] = "applying"
+            return 1
+        if q.startswith("update fm_cutover_batches") and "set status='reconciling'" in q:
+            for row in self.tables["fm_cutover_batches"]:
+                if row.get("id") == params[0] and row.get("status") == "applying":
+                    row["status"] = "reconciling"
+                    return 1
+            return 0
+        if q.startswith("update fm_cutover_batches") and "last_error_code='cutover_resume_state_invalid'" in q:
+            for row in self.tables["fm_cutover_batches"]:
+                if row.get("id") == params[0] and row.get("status") == "failed":
+                    row["last_error_code"] = "cutover_resume_state_invalid"
+            return 1
+        if q.startswith("update fm_licenses") and "previous_status=coalesce" in q and "reverification_batch_id" in q:
+            batch_id, ids = params
+            count = 0
+            for row in self.tables["fm_licenses"]:
+                if row.get("id") in set(ids):
+                    row["previous_status"] = row.get("previous_status") or row["status"]
+                    row["reverification_batch_id"] = row.get("reverification_batch_id") or batch_id
+                    if row["status"] in {"pending", "active"}:
+                        row["status"] = "reverification_required"
+                    count += 1
+            return count
+        if q.startswith("update fm_models") and "previous_status=coalesce" in q and "reverification_batch_id" in q:
+            batch_id, ids = params
+            count = 0
+            for row in self.tables["fm_models"]:
+                if row.get("id") in set(ids):
+                    row["previous_status"] = row.get("previous_status") or row["status"]
+                    row["reverification_batch_id"] = row.get("reverification_batch_id") or batch_id
+                    if row["status"] in {"pending", "verified"}:
+                        row["status"] = "reverification_required"
+                    count += 1
+            return count
+        if q.startswith("insert into fm_vc_revocation_jobs"):
+            license_id, model_id, vc_id = params
+            if not any(row.get("vc_id") == vc_id for row in self.tables["fm_vc_revocation_jobs"]):
+                self.add(
+                    "fm_vc_revocation_jobs",
+                    license_id=license_id,
+                    model_id=model_id,
+                    vc_id=vc_id,
+                    status="pending",
+                )
+                return 1
+            return 0
+        if q.startswith("update jobs set metadata = metadata ||"):
+            metadata, job_id = params
+            for row in self.tables["jobs"]:
+                if row.get("id") == job_id:
+                    row["metadata"] = {**(row.get("metadata") or {}), **dict(metadata)}
+            return 1
         if q.startswith("update matching_items set image_asset_id=null"):
             return _null(self.tables["matching_items"], "image_asset_id", params[0])
         if q.startswith("update matching_items set thumbnail_asset_id=null"):
@@ -988,6 +1222,102 @@ def _fake_case():
 
 def _run(ctx, **kwargs):
     return asyncio.run(purge_biometric_scope(ctx.app, **kwargs))
+
+
+def test_fake_cutover_apply_resumes_same_batch_after_partial_r2_failure_without_duplicate_state():
+    """Break caught: a failed cutover purge can require a new batch or duplicate durable state."""
+    ctx = _fake_case()
+    ctx.db.tables["fm_models"][1]["legacy_target"] = False
+    ctx.db.tables["jobs"][0]["metadata"] = {"facemarketManifestBatchId": ctx.batch}
+    batch_count = len(ctx.db.tables["fm_cutover_batches"])
+    manifest = asyncio.run(
+        facemarket_cutover.build_initial_cutover_manifest(ctx.app, batch_id=ctx.batch)
+    )
+    assert manifest.model_ids == (ctx.model,)
+    assert manifest.license_ids == (ctx.license,)
+    assert manifest.job_ids == (ctx.job,)
+    ctx.db.tables["fm_cutover_batches"][0].update(
+        status="approved",
+        started_at=None,
+        target_digest=manifest.target_digest,
+        model_count=1,
+        license_count=1,
+        job_count=1,
+        asset_count=manifest.asset_count,
+    )
+    failing_prefix = f"facemarket/models/{ctx.model}/"
+    ctx.r2_face.fail_after_delete.add(failing_prefix)
+
+    with pytest.raises(facemarket_cutover.CutoverBlocked) as exc:
+        asyncio.run(
+            facemarket_cutover.apply_initial_cutover(
+                ctx.app,
+                batch_id=ctx.batch,
+                confirmation=ctx.batch,
+                drain_timeout_seconds=1,
+            )
+        )
+
+    assert exc.value.code == "r2_list_failed"
+    assert ctx.db.tables["fm_cutover_batches"][0]["status"] == "failed"
+    assert ctx.db.tables["fm_models"][0]["status"] == "reverification_required"
+    assert ctx.db.tables["fm_licenses"][0]["status"] == "revoked"
+    assert ctx.db.tables["fm_model_assets"]
+    assert ctx.db.tables["fm_licenses"][0]["face_image_key"]
+    assert ctx.db.tables["jobs"][0]["metadata"] == {"facemarketManifestBatchId": ctx.batch}
+    assert len(ctx.db.tables["fm_cutover_batches"]) == batch_count
+    assert len(ctx.db.tables["fm_vc_revocation_jobs"]) == 1
+    assert {row["vc_id"] for row in ctx.db.tables["fm_vc_revocation_jobs"]} == {"vc-a"}
+    assert ctx.r2_face.deleted
+    failed_delete_set = set(ctx.r2.deleted) | set(ctx.r2_face.deleted)
+    first_delete_count = len(ctx.r2.deleted) + len(ctx.r2_face.deleted)
+
+    ctx.r2_face.fail_after_delete.clear()
+    completed = asyncio.run(
+        facemarket_cutover.apply_initial_cutover(
+            ctx.app,
+            batch_id=ctx.batch,
+            confirmation=ctx.batch,
+            drain_timeout_seconds=1,
+        )
+    )
+
+    assert completed == {
+        "targetDigest": manifest.target_digest,
+        "modelCount": 1,
+        "licenseCount": 1,
+        "jobCount": 1,
+        "assetCount": manifest.asset_count,
+    }
+    assert ctx.db.tables["fm_cutover_batches"][0]["status"] == "completed"
+    assert len(ctx.db.tables["fm_cutover_batches"]) == batch_count
+    assert len(ctx.db.tables["fm_vc_revocation_jobs"]) == 1
+    assert not ctx.db.tables["fm_model_assets"]
+    assert ctx.db.tables["fm_licenses"][0]["face_image_key"] is None
+    assert ctx.db.tables["fm_licenses"][0]["face_image_digest"] is None
+    assert ctx.db.tables["fm_licenses"][0]["enrollment_id"] is None
+    assert ctx.db.tables["fm_models"][0]["current_enrollment_id"] is None
+    assert not any(key.startswith("facemarket/") for key in ctx.r2.keys)
+    assert not any(key.startswith("facemarket/") for key in ctx.r2_face.keys)
+    resumed_deletes = (
+        ctx.r2.deleted + ctx.r2_face.deleted
+    )[first_delete_count:]
+    assert failed_delete_set.intersection(resumed_deletes)
+    terminal_delete_count = len(ctx.r2.deleted) + len(ctx.r2_face.deleted)
+
+    replay = asyncio.run(
+        facemarket_cutover.apply_initial_cutover(
+            ctx.app,
+            batch_id=ctx.batch,
+            confirmation=ctx.batch,
+            drain_timeout_seconds=1,
+        )
+    )
+
+    assert replay == completed
+    assert len(ctx.r2.deleted) + len(ctx.r2_face.deleted) == terminal_delete_count
+    assert len(ctx.db.tables["fm_vc_revocation_jobs"]) == 1
+    assert len(ctx.db.tables["fm_cutover_batches"]) == batch_count
 
 
 def _assert_public_error_is_sanitized(exc, raw):
