@@ -23,6 +23,7 @@
 - 정부 사진: OACX `/trans`가 제공하는 신분증 사진만 인정한다. 사진이 없으면 등록을 차단하며 사용자 신분증 업로드 fallback은 만들지 않는다.
 - Liveness: AWS Rekognition Face Liveness, `us-east-1`을 사용한다.
 - 1:1 match: 이미 설치된 OpenCV YuNet 검출/정렬과 SFace 비교를 재사용한다. SAM은 얼굴 신원 비교기가 아니므로 사용하지 않는다.
+- 모델 사진: 정면·45도·측면 보정사진을 생성용 자산으로 허용한다. 보정 방식을 분류하지 않고 각 사진이 live selfie와 SFace 동일인 판정을 통과하는지만 강제한다.
 - VC: OpenDID FaceLicense VC를 필수 조건으로 바꾸며 Holder 누락·장애·미발급은 실물 모델 사용을 차단한다.
 - 기존 모델: 신규 등록 E2E가 준비된 뒤 즉시 재검증 대상으로 freeze한다. 유예 기간은 두지 않는다.
 - 라이선스 용도: 기존 UI의 12개 분류를 닫힌 값으로 사용한다. 자유 입력이나 새 정책 엔진은 만들지 않는다.
@@ -36,11 +37,13 @@
 동의
   -> OACX 인증 및 /trans 검증
   -> 성인/CI/정부 사진 확인
+  -> 생성용 보정사진 3장 업로드 및 기본 QC
   -> Face Liveness session 생성
   -> Amplify FaceLivenessDetector 촬영
   -> liveness 결과/reference image 조회
-  -> YuNet 정렬 + SFace 1:1 비교
-  -> 마켓용 3장 QC/자산 빌드
+  -> 정부 사진 <-> live selfie SFace 비교
+  -> 보정사진 3장 각각 <-> live selfie SFace 비교
+  -> 마켓용 자산 빌드
   -> FaceLicense VC 발급
   -> model/license 활성화
 ```
@@ -52,15 +55,20 @@
 - `POST /v1/facemarket/enrollments/{id}/complete`: AWS 결과를 서버에서 직접 조회하고 match, asset build, VC issue를 진행한다.
 - 클라이언트는 AWS score, SFace score, 신분증 사진, reference image를 받지 않는다. `passed`, 재시도 가능 여부, 일반화된 사유 코드만 받는다.
 
-기존 `POST /licenses`의 직접 얼굴 업로드는 실물 모델에 대해 제거한다. 라이선스는 승인된 enrollment와 그 자산만 참조한다.
+기존 `POST /licenses`의 직접 얼굴 업로드는 실물 모델에 대해 제거한다. 생성용 보정사진은 enrollment에 먼저 올리고, 라이선스는 승인된 enrollment와 그 사진으로 빌드된 자산만 참조한다.
+
+검증 전 보정사진은 private quarantine prefix에만 두며 catalog, thumbnail, license, generation resolver가 읽을 수 없다. Enrollment 성공 시에만 현재 asset set으로 승격하고, 실패·취소·만료 시 원본까지 삭제한다.
 
 ### 3.2 판정과 보존
 
 - Liveness는 `Status=SUCCEEDED`, reference image 존재, 서버 정책 threshold 이상을 모두 요구한다.
-- SFace threshold는 기존 3장 QC의 `0.363`을 재사용하지 않는다. 정부 ID 사진/라이브 셀피 검증 표본으로 별도 보정하고 `match_policy_version`과 함께 배포한다.
+- SFace threshold는 기존 3장 QC의 `0.363`을 재사용하지 않는다. `정부 ID 사진 <-> live selfie`와 `보정사진 <-> live selfie`는 촬영 조건이 다르므로 각각 표본으로 보정하고 `match_policy_version`과 함께 배포한다.
+- 피부, 색감, 조명, 얼굴형 등 보정 종류나 강도를 별도로 추정하지 않는다. 단일 얼굴, 요구 각도, 해상도 QC와 live selfie 동일인 threshold를 모두 통과하면 생성용 사진으로 인정한다.
+- 세 보정사진은 FaceMarket 생성 자산의 원본이므로 명시적 동의 기간 동안 private R2에 보존한다. 정부 ID 사진, live selfie와 그 embedding은 생성 자산으로 저장하지 않는다.
 - AWS `AuditImagesLimit=0`, `OutputConfig` 미설정으로 별도 S3 사본을 만들지 않는다. reference image bytes는 응답 처리 메모리에서만 사용한다.
-- OACX portrait, liveness reference image, OpenCV crop, embedding은 성공·실패·timeout 모든 경로에서 `finally`로 폐기한다.
+- OACX portrait, liveness reference image와 이 둘의 OpenCV crop/embedding은 성공·실패·timeout 모든 경로에서 `finally`로 폐기한다. 보정사진 비교에 만든 임시 embedding도 폐기하고 원본 보정사진만 승인된 private 생성 자산으로 남긴다.
 - DB에는 provider, session/transaction digest, pass/fail, 정책 버전, 시간, 최소 사유 코드, raw 삭제 결과, 발급된 `vc_id`만 남긴다. 원본·embedding·상세 score는 남기지 않는다.
+- 보정사진 세트를 추가·교체하면 기존 자산과 VC를 먼저 non-active로 만들고 OACX 인증, Face Liveness, 두 종류의 SFace 비교를 다시 수행한다. 저장된 reference image나 embedding으로 재검증을 생략하지 않는다.
 - AWS 문서상 Rekognition 입력은 별도 opt-out 없이는 서비스 개선에 사용될 수 있으므로, 운영 전 AWS Organizations AI services opt-out과 법무의 국외이전/위탁 승인을 필수 gate로 둔다.
 
 ### 3.3 남은 외부 계약 gate
@@ -135,7 +143,7 @@ CI는 기존 digest 방식으로만 저장한다. 같은 CI의 다른 계정은 
 4. 대상 active license를 `reverification_required`로 전환한다.
 5. model을 `reverification_required`로 맞춘다.
 6. VC revoke job을 durable queue에 기록한다.
-7. personalization originals, license face, `face_front`, `grid_sedcard`와 모든 파생 객체를 삭제한다.
+7. personalization originals, quarantine/승인된 보정사진 원본, license face, `face_front`, `grid_sedcard`와 모든 파생 객체를 삭제한다.
 8. DB key/asset row를 정리하고 manifest와 R2를 reconcile한다.
 
 dry-run은 대상 수와 key digest만 출력하고 원본 key/CI/VC 전체값을 로그에 남기지 않는다. 실행에는 cutover batch와 명시적 admin 승인이 필요하다. 각 단계는 재실행 가능해야 하며 이미 삭제된 객체는 성공으로 취급한다.
@@ -173,7 +181,9 @@ Holder 발급은 더 이상 background best-effort가 아니다. license는 `pen
 - OACX portrait 누락/형식 오류/expired token/replay -> model 미검증
 - AWS session ownership/nonce/replay/timeout/liveness fail -> model 미검증
 - raw portrait/reference/embedding이 성공·실패·예외에서 보존되지 않음
-- SFace match 정책 version과 threshold 경계
+- ID/live 및 보정사진/live SFace 정책 version과 threshold 경계
+- 피부·색감·얼굴형이 보정돼도 threshold를 통과하는 동일인 표본과, 과도한 보정·타인 표본의 거절
+- 보정사진 교체 시 기존 자산/VC 즉시 non-active, 전체 재검증 전 새 자산 미사용
 - forbidden 우선, allowed 누락, unknown category 거절
 - Holder unset/unreachable/invalid/revoked -> job·credit 예약 전 차단
 - 요청 후 revoke/purge race -> worker 실패, 환불, 결과/정산 없음
@@ -199,6 +209,7 @@ Holder 발급은 더 이상 background best-effort가 아니다. license는 `pen
 - 등록 성공률, p50/p95 완료 시간
 - liveness 재시도율과 호출당 비용
 - match false accept/false reject 표본 결과
+- 보정 강도별 asset/live match 통과율과 재업로드율
 - VC issue/verify p50/p95와 장애 차단률
 - purge 대상/삭제/reconcile 불일치 수
 - real-model 생성 gate latency와 기존 virtual-model 생성 회귀
