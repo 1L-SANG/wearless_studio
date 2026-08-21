@@ -130,8 +130,11 @@ class R2Client:
         """객체 메타({size, mime}) 또는 None(미존재). complete 검증용."""
         try:
             r = self._s3.head_object(Bucket=self._bucket, Key=key)
-        except ClientError:
-            return None
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code"))
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                return None
+            raise
         return {"size": r["ContentLength"], "mime": r.get("ContentType")}
 
     def put_bytes(self, key: str, data: bytes, mime: str, cache: str | None = None) -> None:

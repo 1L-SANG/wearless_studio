@@ -63,6 +63,13 @@ def _err(code: str, message: str, status: int = 400, **extra) -> HTTPException:
     )
 
 
+def _canonical_enrollment_id(enrollment_id: str) -> str:
+    try:
+        return str(uuid.UUID(str(enrollment_id)))
+    except (AttributeError, TypeError, ValueError):
+        raise _err("not_found", "등록을 찾을 수 없습니다.", status=404)
+
+
 def _r2_face(request: Request):
     client = getattr(request.app.state, "r2_face", None)
     if client is None:
@@ -131,6 +138,7 @@ def _is_r2_not_found(exc: Exception) -> bool:
 
 
 async def _try_photo_fence(conn, enrollment_id: str) -> bool:
+    enrollment_id = _canonical_enrollment_id(enrollment_id)
     async with conn.cursor() as cur:
         await cur.execute(
             "select pg_try_advisory_lock(%s, hashtext(%s)) as locked",
@@ -139,14 +147,32 @@ async def _try_photo_fence(conn, enrollment_id: str) -> bool:
         return bool((await cur.fetchone())["locked"])
 
 
-async def _unlock_photo_fence(conn, enrollment_id: str) -> None:
+async def _unlock_photo_fence_once(conn, enrollment_id: str) -> None:
     await conn.rollback()
     async with conn.cursor() as cur:
         await cur.execute(
             "select pg_advisory_unlock(%s, hashtext(%s)) as unlocked",
             (_PHOTO_FENCE_NAMESPACE, enrollment_id),
         )
+        if not (await cur.fetchone())["unlocked"]:
+            raise RuntimeError("photo fence was not owned by this connection")
     await conn.rollback()
+
+
+async def _unlock_photo_fence(conn, enrollment_id: str) -> None:
+    enrollment_id = _canonical_enrollment_id(enrollment_id)
+    task = asyncio.create_task(_unlock_photo_fence_once(conn, enrollment_id))
+    try:
+        await asyncio.shield(task)
+    except asyncio.CancelledError:
+        try:
+            await task
+        except Exception:
+            await conn.close()
+        raise
+    except Exception:
+        await conn.close()
+        raise
 
 
 async def _run_r2_call_until_done(call, *args):
@@ -216,19 +242,33 @@ async def _drain_photo_cleanup_locked(
         else:
             delete_object = True
             try:
-                await _run_r2_call_until_done(r2.delete, row["r2_key"])
+                if row["reason"] == "upload_orphan":
+                    if (
+                        await _run_r2_call_until_done(r2.head, row["r2_key"])
+                        is None
+                    ):
+                        continue
+                try:
+                    await _run_r2_call_until_done(r2.delete, row["r2_key"])
+                except Exception as exc:
+                    if not _is_r2_not_found(exc):
+                        raise
+                if row["reason"] == "upload_orphan" and (
+                    await _run_r2_call_until_done(r2.head, row["r2_key"])
+                    is not None
+                ):
+                    raise RuntimeError("R2 object remained after delete")
             except Exception as exc:
-                if not _is_r2_not_found(exc):
-                    failed_count += 1
-                    logger.warning(
-                        "facemarket_enrollment_photo_cleanup_failed",
-                        extra={
-                            "enrollment_id": enrollment_id,
-                            "angle": row["angle"],
-                            "error_type": type(exc).__name__,
-                        },
-                    )
-                    continue
+                failed_count += 1
+                logger.warning(
+                    "facemarket_enrollment_photo_cleanup_failed",
+                    extra={
+                        "enrollment_id": enrollment_id,
+                        "angle": row["angle"],
+                        "error_type": type(exc).__name__,
+                    },
+                )
+                continue
         try:
             async with conn.cursor() as cur:
                 if delete_object:
@@ -277,6 +317,7 @@ async def _drain_photo_cleanup(
     if pool is None or r2 is None:
         return 0, 1
     try:
+        enrollment_id = _canonical_enrollment_id(enrollment_id)
         async with pool.connection() as conn:
             if not await _try_photo_fence(conn, enrollment_id):
                 return 0, 0
@@ -466,6 +507,7 @@ async def get_enrollment(
     enrollment_id: str,
     user_id: str = Depends(require_user),
 ):
+    enrollment_id = _canonical_enrollment_id(enrollment_id)
     async with get_conn(request) as conn:
         row = await _load_owned_enrollment(conn, enrollment_id, user_id)
         if row is None:
@@ -485,6 +527,7 @@ async def upload_enrollment_photo(
     photo: UploadFile = File(...),
     user_id: str = Depends(require_user),
 ):
+    enrollment_id = _canonical_enrollment_id(enrollment_id)
     if angle not in ANGLES:
         raise _err("invalid_angle", "사진 각도를 확인해 주세요.")
     mime = (photo.content_type or "").lower()
@@ -708,6 +751,7 @@ async def delete_enrollment_photo(
     angle: str,
     user_id: str = Depends(require_user),
 ):
+    enrollment_id = _canonical_enrollment_id(enrollment_id)
     if angle not in ANGLES:
         raise _err("invalid_angle", "사진 각도를 확인해 주세요.")
     r2 = _r2_face(request)
@@ -809,6 +853,7 @@ async def cleanup_terminal_enrollment(app, *, enrollment_id: str) -> bool:
         return False
 
     try:
+        enrollment_id = _canonical_enrollment_id(enrollment_id)
         async with pool.connection() as conn:
             if not await _try_photo_fence(conn, enrollment_id):
                 return False
@@ -932,6 +977,7 @@ async def cancel_enrollment(
     enrollment_id: str,
     user_id: str = Depends(require_user),
 ):
+    enrollment_id = _canonical_enrollment_id(enrollment_id)
     try:
         async with get_conn(request) as conn:
             async with conn.cursor() as cur:

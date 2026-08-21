@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import threading
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -28,6 +29,8 @@ ACTIVE_STATUSES = {
     "vc_pending",
 }
 PHOTO_FENCE_NAMESPACE = 0x464D5048
+TEST_ENROLLMENT_ID = "123e4567-e89b-12d3-a456-426614174000"
+TEST_MODEL_ID = "987fcdeb-51a2-43d7-9abc-def012345678"
 
 
 class EnrollmentStore:
@@ -43,6 +46,9 @@ class EnrollmentStore:
         self.fail_photo_upsert = False
         self.commit_attempts = 0
         self.fail_commit_attempts = set()
+        self.unlock_started = None
+        self.allow_unlock = None
+        self.fail_unlock = False
 
     def serialized(self):
         return json.dumps(
@@ -87,6 +93,11 @@ class FakeCursor:
                 self.conn.pool.failed_try_locks += 1
             self.result = {"locked": locked}
         elif query.startswith("select pg_advisory_unlock"):
+            if self.conn.store.unlock_started is not None:
+                self.conn.store.unlock_started.set()
+                await self.conn.store.allow_unlock.wait()
+            if self.conn.store.fail_unlock:
+                raise RuntimeError("unlock unavailable")
             lock_key = tuple(params)
             unlocked = self.conn.release_advisory_lock(lock_key)
             self.result = {"unlocked": unlocked}
@@ -144,7 +155,12 @@ class FakeCursor:
                 self.result = None
             else:
                 row = {
-                    "id": f"enrollment-{len(self.store.enrollments) + 1}",
+                    "id": str(
+                        uuid.UUID(
+                            int=uuid.UUID(TEST_ENROLLMENT_ID).int
+                            + len(self.store.enrollments)
+                        )
+                    ),
                     "user_id": user_id,
                     "model_id": model_id,
                     "device_digest": device_digest,
@@ -477,6 +493,7 @@ class FakeConn:
         self.cleanup_adds = {}
         self.cleanup_deletes = set()
         self.advisory_locks = set()
+        self.closed = False
 
     def _snapshot(self):
         working = EnrollmentStore()
@@ -487,9 +504,13 @@ class FakeConn:
         return working
 
     def cursor(self):
+        if self.closed:
+            raise RuntimeError("connection closed")
         return FakeCursor(self)
 
     async def commit(self):
+        if self.closed:
+            raise RuntimeError("connection closed")
         self.store.commit_attempts += 1
         if self.store.commit_attempts in self.store.fail_commit_attempts:
             self.working = self._snapshot()
@@ -512,6 +533,8 @@ class FakeConn:
         self.cleanup_deletes.clear()
 
     async def rollback(self):
+        if self.closed:
+            raise RuntimeError("connection closed")
         self.working = self._snapshot()
         self.cleanup_adds.clear()
         self.cleanup_deletes.clear()
@@ -524,6 +547,7 @@ class FakeConn:
         return True
 
     async def close(self):
+        self.closed = True
         for lock_key in tuple(self.advisory_locks):
             self.release_advisory_lock(lock_key)
 
@@ -578,6 +602,8 @@ class FakeR2:
         self.fail_delete_for = set()
         self.fail_next_delete = False
         self.not_found_for = set()
+        self.retain_on_delete_for = set()
+        self.heads = []
 
     def put_bytes(self, key, data, mime, cache=None):
         self.puts.append((key, data, mime))
@@ -594,7 +620,16 @@ class FakeR2:
             error.response = {"Error": {"Code": "404"}}
             raise error
         self.deletes.append(key)
-        self.objects.pop(key, None)
+        if key not in self.retain_on_delete_for:
+            self.objects.pop(key, None)
+
+    def head(self, key):
+        self.heads.append(key)
+        value = self.objects.get(key)
+        if value is None:
+            return None
+        data, mime = value
+        return {"size": len(data), "mime": mime}
 
 
 def _enrollment_db_view(row):
@@ -929,26 +964,36 @@ def test_current_and_status_return_only_the_owned_enrollment_view(
 
 def test_biometric_r2_keys_are_deterministic_and_private():
     assert r2.enrollment_quarantine_key(
-        "enrollment-1", "angle45", "jpg"
-    ) == "facemarket/enrollments/enrollment-1/quarantine/angle45.jpg"
+        TEST_ENROLLMENT_ID, "angle45", "jpg"
+    ) == f"facemarket/enrollments/{TEST_ENROLLMENT_ID}/quarantine/angle45.jpg"
     assert r2.enrollment_original_key(
-        "model-1", "enrollment-1", "front", "png"
-    ) == "facemarket/models/model-1/enrollments/enrollment-1/originals/front.png"
+        TEST_MODEL_ID, TEST_ENROLLMENT_ID, "front", "png"
+    ) == (
+        f"facemarket/models/{TEST_MODEL_ID}/enrollments/"
+        f"{TEST_ENROLLMENT_ID}/originals/front.png"
+    )
     assert r2.model_asset_key(
-        "model-1", "enrollment-1", "face_front", "webp"
-    ) == "facemarket/models/model-1/enrollments/enrollment-1/assets/face_front.webp"
+        TEST_MODEL_ID, TEST_ENROLLMENT_ID, "face_front", "webp"
+    ) == (
+        f"facemarket/models/{TEST_MODEL_ID}/enrollments/"
+        f"{TEST_ENROLLMENT_ID}/assets/face_front.webp"
+    )
 
 
 def test_replacement_quarantine_keys_are_versioned():
     first = r2.enrollment_quarantine_key(
-        "enrollment-1", "front", "jpg", version="upload-1"
+        TEST_ENROLLMENT_ID, "front", "jpg", version="upload-1"
     )
     second = r2.enrollment_quarantine_key(
-        "enrollment-1", "front", "jpg", version="upload-2"
+        TEST_ENROLLMENT_ID, "front", "jpg", version="upload-2"
     )
 
-    assert first == "facemarket/enrollments/enrollment-1/quarantine/front/upload-1.jpg"
-    assert second == "facemarket/enrollments/enrollment-1/quarantine/front/upload-2.jpg"
+    assert first == (
+        f"facemarket/enrollments/{TEST_ENROLLMENT_ID}/quarantine/front/upload-1.jpg"
+    )
+    assert second == (
+        f"facemarket/enrollments/{TEST_ENROLLMENT_ID}/quarantine/front/upload-2.jpg"
+    )
     assert first != second
 
 
@@ -997,6 +1042,25 @@ def test_upload_passed_photo_uses_quarantine_prefix(
     )
     assert fake_r2.puts[0][0].endswith(".jpg")
     assert "quarantine" not in response.text
+
+
+def test_upload_canonicalizes_uppercase_enrollment_uuid(
+    enrollment_client, auth, fake_r2, monkeypatch
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+
+    response = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id.upper()}/photos",
+        data={"angle": "front"},
+        files={"photo": ("face.jpg", b"image", "image/jpeg")},
+        headers=auth(),
+    )
+
+    assert response.status_code == 201, response.text
+    assert fake_r2.puts[0][0].startswith(
+        f"facemarket/enrollments/{enrollment_id}/quarantine/front/"
+    )
 
 
 def test_upload_rejects_invalid_angle(enrollment_client, auth, fake_r2, monkeypatch):
@@ -1618,6 +1682,178 @@ def test_upload_replacement_and_failure_cleanup_never_nest_pool_checkouts(
     assert fake_pool.max_checkout_depth == 1
     assert fake_pool.max_active_checkouts == 1
     assert fake_pool.active_checkouts == 0
+
+
+def test_equivalent_uuid_spellings_contend_on_one_photo_fence(
+    enrollment_client, auth, fake_pool
+):
+    enrollment_id = create_enrollment(enrollment_client, auth)
+
+    async def scenario():
+        async with fake_pool.connection() as owner:
+            assert await facemarket_enrollment._try_photo_fence(
+                owner, enrollment_id.upper()
+            )
+            try:
+                async with fake_pool.connection() as contender:
+                    contended = not await facemarket_enrollment._try_photo_fence(
+                        contender, enrollment_id
+                    )
+            finally:
+                await facemarket_enrollment._unlock_photo_fence(
+                    owner, enrollment_id.upper()
+                )
+
+        assert contended is True
+        assert fake_pool.failed_try_locks == 1
+        assert fake_pool.store.advisory_lock_owners == {}
+
+    asyncio.run(scenario())
+
+
+def test_cancellation_during_photo_fence_unlock_waits_for_release(
+    enrollment_client, auth, fake_pool, enrollment_store
+):
+    enrollment_id = create_enrollment(enrollment_client, auth)
+
+    async def scenario():
+        async with fake_pool.connection() as conn:
+            assert await facemarket_enrollment._try_photo_fence(conn, enrollment_id)
+            enrollment_store.unlock_started = asyncio.Event()
+            enrollment_store.allow_unlock = asyncio.Event()
+            release = asyncio.create_task(
+                facemarket_enrollment._unlock_photo_fence(conn, enrollment_id)
+            )
+            await enrollment_store.unlock_started.wait()
+            release.cancel()
+            await asyncio.sleep(0)
+            cancellation_waited_for_unlock = not release.done()
+            enrollment_store.allow_unlock.set()
+            with pytest.raises(asyncio.CancelledError):
+                await release
+
+        assert cancellation_waited_for_unlock is True
+        assert enrollment_store.advisory_lock_owners == {}
+
+    asyncio.run(scenario())
+
+
+def test_photo_fence_unlock_failure_closes_connection(
+    enrollment_client, auth, fake_pool, enrollment_store
+):
+    enrollment_id = create_enrollment(enrollment_client, auth)
+
+    async def scenario():
+        async with fake_pool.connection() as conn:
+            assert await facemarket_enrollment._try_photo_fence(conn, enrollment_id)
+            enrollment_store.fail_unlock = True
+            with pytest.raises(RuntimeError, match="unlock unavailable"):
+                await facemarket_enrollment._unlock_photo_fence(conn, enrollment_id)
+
+        assert conn.closed is True
+        assert enrollment_store.advisory_lock_owners == {}
+
+    asyncio.run(scenario())
+
+
+def test_connection_death_mid_put_keeps_upload_orphan_until_object_is_deleted(
+    enrollment_client,
+    auth,
+    fake_pool,
+    fake_r2,
+    enrollment_store,
+    monkeypatch,
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    put_started = threading.Event()
+    allow_put = threading.Event()
+    original_put = fake_r2.put_bytes
+
+    def wait_then_put(key, data, mime, cache=None):
+        put_started.set()
+        if not allow_put.wait(timeout=3):
+            raise RuntimeError("test barrier timed out")
+        original_put(key, data, mime, cache)
+
+    monkeypatch.setattr(fake_r2, "put_bytes", wait_then_put)
+
+    async def scenario():
+        request = facemarket_enrollment.Request(
+            {"type": "http", "app": enrollment_client.app}
+        )
+        photo = facemarket_enrollment.UploadFile(
+            io.BytesIO(b"image"),
+            filename="front.jpg",
+            headers=Headers({"content-type": "image/jpeg"}),
+        )
+        upload = asyncio.create_task(
+            facemarket_enrollment.upload_enrollment_photo(
+                request, enrollment_id, "front", photo, "user-1"
+            )
+        )
+        assert await asyncio.to_thread(put_started.wait, 3)
+        new_key = enrollment_store.cleanup[0]["r2_key"]
+        owner = enrollment_store.advisory_lock_owners[
+            (PHOTO_FENCE_NAMESPACE, enrollment_id)
+        ]
+        await owner.close()
+
+        absent_result = await facemarket_enrollment._drain_photo_cleanup(
+            enrollment_client.app,
+            enrollment_id=enrollment_id,
+            key=new_key,
+        )
+        intent_survived_absence = [
+            row["r2_key"] for row in enrollment_store.cleanup
+        ] == [new_key]
+        deletes_while_absent = list(fake_r2.deletes)
+
+        allow_put.set()
+        with pytest.raises(facemarket_enrollment.HTTPException) as exc_info:
+            await upload
+
+        assert absent_result == (0, 0)
+        assert intent_survived_absence is True
+        assert deletes_while_absent == []
+        assert exc_info.value.status_code == 503
+        assert new_key not in fake_r2.objects
+        assert enrollment_store.cleanup == []
+        assert fake_pool.max_checkout_depth == 1
+
+    asyncio.run(scenario())
+
+
+def test_upload_orphan_cleanup_requires_strict_post_delete_absence(
+    enrollment_client, auth, fake_r2, enrollment_store
+):
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    key = f"facemarket/enrollments/{enrollment_id}/quarantine/front/orphan.jpg"
+    fake_r2.objects[key] = (b"orphan", "image/jpeg")
+    fake_r2.retain_on_delete_for.add(key)
+    enrollment_store.cleanup.append(
+        {
+            "enrollment_id": enrollment_id,
+            "angle": "front",
+            "r2_key": key,
+            "reason": "upload_orphan",
+            "created_at": enrollment_store.now,
+            "not_before": enrollment_store.now,
+        }
+    )
+
+    result = asyncio.run(
+        facemarket_enrollment._drain_photo_cleanup(
+            enrollment_client.app,
+            enrollment_id=enrollment_id,
+            key=key,
+        )
+    )
+
+    assert result == (0, 1)
+    assert key in fake_r2.objects
+    assert [row["r2_key"] for row in enrollment_store.cleanup] == [key]
+    assert fake_r2.heads == [key, key]
 
 
 def test_upload_fence_blocks_due_orphan_cleanup_beyond_old_lease(

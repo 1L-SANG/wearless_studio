@@ -3,6 +3,9 @@
 네트워크(presigned/head/put)는 자격증명 필요 → 로컬 통합 검증으로 따로 확인.
 """
 
+import pytest
+from botocore.exceptions import ClientError
+
 from app.r2 import R2Client, ai_key, ext_for_mime, upload_key
 
 
@@ -75,3 +78,37 @@ def test_list_prefix_empty_when_no_contents_key():
     """빈 prefix 응답엔 Contents 키가 아예 없다 — KeyError 금지(정상 '고아 0건' 경로)."""
     client = _client_with_pages([{"KeyCount": 0}])
     assert client.list_prefix("p/") == []
+
+
+class _StubHeadS3:
+    def __init__(self, result):
+        self.result = result
+
+    def head_object(self, **kwargs):
+        if isinstance(self.result, Exception):
+            raise self.result
+        return self.result
+
+
+def _client_with_head(result) -> R2Client:
+    client = object.__new__(R2Client)
+    client._s3 = _StubHeadS3(result)
+    client._bucket = "test-bucket"
+    return client
+
+
+def _head_error(code: str) -> ClientError:
+    return ClientError({"Error": {"Code": code}}, "HeadObject")
+
+
+def test_head_returns_none_only_for_missing_object():
+    client = _client_with_head(_head_error("404"))
+
+    assert client.head("private/key") is None
+
+
+def test_head_raises_non_missing_r2_errors():
+    client = _client_with_head(_head_error("500"))
+
+    with pytest.raises(ClientError):
+        client.head("private/key")
