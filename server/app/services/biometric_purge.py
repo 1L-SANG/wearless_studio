@@ -251,6 +251,33 @@ async def _ensure_frozen(conn, schema, scope, derived_jobs: list[dict]) -> None:
 
 
 async def _derived_jobs(conn, schema, scope) -> list[dict]:
+    batch_id = scope.get("batch_id")
+    if batch_id is not None:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                select j.id::text as id,
+                       j.user_id::text as user_id,
+                       j.project_id::text as project_id,
+                       j.kind,
+                       j.status,
+                       j.created_at
+                  from jobs j
+                 where j.metadata->>'facemarketManifestBatchId' = %s
+                 order by j.created_at, j.id
+                """,
+                (batch_id,),
+            )
+            rows = await cur.fetchall()
+            if _has(schema, "fm_cutover_batches", "job_count"):
+                await cur.execute(
+                    "select job_count from fm_cutover_batches where id=%s",
+                    (batch_id,),
+                )
+                batch = await cur.fetchone()
+                if batch is not None and int(batch["job_count"]) != len({r["id"] for r in rows}):
+                    raise PurgeIncomplete("scope_not_quiesced")
+        return rows
     return await repo.list_facemarket_scope_jobs(
         conn,
         model_ids=tuple(sorted(scope["model_ids"])),
@@ -771,3 +798,49 @@ async def purge_biometric_scope(
         asset_count=len(asset_ids),
         target_digest=_digest(targets),
     )
+
+
+async def initial_cutover_asset_count(
+    app,
+    *,
+    model_ids: tuple[str, ...],
+    license_ids: tuple[str, ...],
+    job_ids: tuple[str, ...],
+) -> int:
+    """Read-only inventory count for Task8; deletion/reconcile still lives in purge."""
+    clients = _require_storage(app)
+    pool = app.state.pool
+    async with pool.connection() as conn:
+        schema = await _schema(conn)
+        scope = {
+            "user_id": None,
+            "batch_id": None,
+            "profile_ids": set(),
+            "model_ids": set(model_ids),
+            "license_ids": set(license_ids),
+        }
+        jobs = []
+        if job_ids:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    select id::text as id,
+                           user_id::text as user_id,
+                           project_id::text as project_id,
+                           kind,
+                           status,
+                           created_at
+                      from jobs
+                     where id = any(%s)
+                     order by created_at, id
+                    """,
+                    (list(job_ids),),
+                )
+                jobs = await cur.fetchall()
+        enrollment_ids = await _enrollment_ids(conn, schema, scope)
+        known, _asset_ids, prefixes, _lineage = await _known_targets(
+            conn, schema, scope, enrollment_ids, jobs
+        )
+        await conn.commit()
+    listed = await _list_targets(clients, prefixes)
+    return len(known | listed)

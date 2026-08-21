@@ -250,6 +250,12 @@ class FakeDB:
         if "from fm_licenses where model_id = any" in q and "face_image_key" not in q:
             model_ids = set(params[0])
             return [{"id": r["id"]} for r in self.tables["fm_licenses"] if r.get("model_id") in model_ids]
+        if "select job_count from fm_cutover_batches" in q:
+            return [
+                {"job_count": r.get("job_count", 0)}
+                for r in self.tables["fm_cutover_batches"]
+                if r.get("id") == params[0]
+            ]
         if "from fm_cutover_batches where id" in q:
             return [{"status": r["status"]} for r in self.tables["fm_cutover_batches"] if r.get("id") == params[0]]
         if "from fm_models where reverification_batch_id" in q:
@@ -315,6 +321,13 @@ class FakeDB:
                 and r.get("status") in {"pending", "running"}
                 and (r.get("payload") or {}).get("profileId") in ids
             ][:1]
+        if "metadata->>'facemarketmanifestbatchid'" in q:
+            batch_id = params[0]
+            return [
+                _job_row(r)
+                for r in self.tables["jobs"]
+                if (r.get("metadata") or {}).get("facemarketManifestBatchId") == batch_id
+            ]
         if "with scoped_jobs as" in q:
             model_ids = set(params[0])
             license_ids = set(params[1])
@@ -789,6 +802,51 @@ def test_fake_purge_uses_shared_facemarket_scope_job_discovery_twice(monkeypatch
             "initial_legacy_project_fallback": False,
         },
     ]
+
+
+def test_fake_batch_purge_uses_manifest_tagged_jobs_not_project_fallback(monkeypatch):
+    """Break caught: initial cutover purge rediscovers a different job after project pointer drift."""
+    ctx = _fake_case()
+    ctx.db.tables["fm_cutover_batches"][0]["job_count"] = 2
+    ctx.db.tables["jobs"][0]["metadata"] = {"facemarketManifestBatchId": ctx.batch}
+    ctx.db.add(
+        "jobs",
+        id="legacy-tagged-error",
+        user_id=ctx.user,
+        project_id="project-drifted",
+        kind="editor_image",
+        status="error",
+        created_at=datetime(2026, 8, 21, tzinfo=timezone.utc) + timedelta(seconds=1),
+        payload={},
+        result={},
+        metadata={"facemarketManifestBatchId": ctx.batch},
+    )
+    calls = []
+
+    async def forbidden_helper(*_args, **kwargs):
+        calls.append(kwargs)
+        return []
+
+    monkeypatch.setattr(biometric_purge.repo, "list_facemarket_scope_jobs", forbidden_helper)
+    schema = {
+        "fm_cutover_batches": {"status", "job_count"},
+        "fm_models": {"reverification_batch_id"},
+        "fm_licenses": {"reverification_batch_id"},
+        "jobs": {"metadata"},
+    }
+    scope = {
+        "user_id": None,
+        "batch_id": ctx.batch,
+        "profile_ids": set(),
+        "model_ids": {ctx.model},
+        "license_ids": {ctx.license},
+    }
+
+    rows = asyncio.run(biometric_purge._derived_jobs(FakeConn(ctx.db), schema, scope))
+
+    assert [row["id"] for row in rows] == [ctx.job, "legacy-tagged-error"]
+    assert calls == []
+    assert any("facemarketmanifestbatchid" in q for q in ctx.db.queries)
 
 
 class StickyFakeR2(StrictFakeR2):
