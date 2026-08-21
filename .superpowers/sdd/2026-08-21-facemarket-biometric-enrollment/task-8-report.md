@@ -239,3 +239,77 @@ Result: compile and diff checks exited 0; both leak/QC scans returned no product
 ### Remaining concerns
 
 No live R2 crash harness was run. The rollback path intentionally uses the stable-key plus `assets_status='building'` fence direction from the controller note; interrupted rollback builds are resolver-closed until a later rollback job completes the same stable keys and marks the model ready.
+
+---
+
+## Fix round 3 — legacy rollback model session fence
+
+Status: complete in the Task 8 scope. This round closes the remaining flag-off rollback race: stable legacy keys are now protected by a per-model PostgreSQL session advisory fence held across the rollback branch’s DB commits, R2 reads/writes, final lease/model revalidation, final commit, and cancellation-safe unlock. The feature-on enrollment path behavior is unchanged.
+
+Root cause: round 2 set `assets_status='building'` and committed before R2 writes, then released row locks. Because stable rollback keys are shared by every legacy job for a model, a stale same-model worker could write after a newer job committed, fail its final lease check, and corrupt the newer usable key contents. The same stale window could delete prior committed keys before proving the final lease/model fence.
+
+### RED evidence
+
+Focused command:
+
+```text
+cd server && uv run pytest -q tests/test_fm_model_asset_job.py tests/test_identity_source.py
+```
+
+Result before the fix: `4 failed, 32 passed, 1 warning`.
+
+Expected failures covered:
+
+- second same-model flag-off worker R2-wrote while the first worker was blocked mid-write;
+- lost final lease with old assets deleted the prior committed key;
+- prior legacy key deletion happened before the final `jobs done` commit;
+- cancellation did not release any model advisory fence because no fence existed.
+
+### GREEN / fix evidence
+
+Minimum root-cause fixes:
+
+- added a model-scoped session advisory fence using the existing Task4 `pg_try_advisory_lock(namespace, hashtext(canonical_id))` / shielded `pg_advisory_unlock` pattern;
+- acquired the fence before legacy job/model validation and kept the same checked-out connection across building commit, personalization input load, R2 reads/writes, final lease/model revalidation, final ready/job-done commit, and unlock;
+- made contended lock acquisition fail closed on the same connection, avoiding nested pool checkout;
+- moved prior legacy key deletion strictly after the successful final commit and skipped keys equal to the new stable set;
+- kept unlock cancellation-safe and connection-discarding on unlock failure, matching Task4’s session-lock safety boundary.
+
+Focused command:
+
+```text
+cd server && uv run pytest -q tests/test_fm_model_asset_job.py tests/test_identity_source.py
+```
+
+Result: `36 passed, 1 warning`.
+
+Affected command:
+
+```text
+cd server && uv run pytest -q tests/test_fm_model_asset_job.py tests/test_identity_source.py tests/test_detail_page_identity_source.py tests/test_detail_page_license_face.py tests/test_facemarket_identity.py tests/test_facemarket_biometric_cleanup.py tests/test_facemarket_biometric_enrollment.py tests/test_cut_input_authority.py
+```
+
+Result: `174 passed, 1 warning`.
+
+Full server command:
+
+```text
+cd server && uv run pytest -q
+```
+
+Result: `2714 passed, 103 skipped, 391 warnings in 51.68s`.
+
+Compile/diff/leak checks:
+
+```text
+git diff --check
+cd server && uv run python -m compileall -q app/workers/fm_model_asset_job.py app/agents/identity_source.py tests/test_fm_model_asset_job.py tests/test_identity_source.py
+cd server && rg -n "pairwise_min_similarity|load_face_qc|qc_score|str\\(exc\\)" app/workers/fm_model_asset_job.py
+cd server && rg -n "provider leaked/key\\.png|legacy-job-old|legacy-job-1|old/front\\.png|quarantine/front\\.png" app/workers/fm_model_asset_job.py app/agents/identity_source.py app/workers/detail_page_job.py app/workers/editor_image_job.py app/facemarket.py app/facemarket_enrollment.py
+```
+
+Result: compile and diff checks exited 0; both leak/QC scans returned no production matches.
+
+### Remaining concerns
+
+No live PostgreSQL/R2 concurrent-worker crash harness was run. Deterministic fakes cover same-model contention, stale lease before and after the fence, lost final lease with prior assets, post-commit-only prior-key deletion, cancellation unlock, and resolver-closed interruption.

@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import io
+import threading
 import types
 from dataclasses import dataclass
 
@@ -32,14 +33,26 @@ class CopyCall:
 
 
 class _Cur:
-    def __init__(self, store):
-        self.store = store
+    def __init__(self, conn):
+        self.conn = conn
+        self.store = conn.store
         self._last = None
 
     async def execute(self, sql, params=None):
         self.store.log.append((sql, params))
         s = " ".join(sql.split()).lower()
-        if "from fm_biometric_enrollment_photos" in s and "join fm_biometric_enrollments" in s:
+        if s.startswith("select pg_try_advisory_lock"):
+            lock_key = tuple(params)
+            owner = self.store.advisory_lock_owners.get(lock_key)
+            locked = owner is None or owner is self.conn
+            if locked:
+                self.store.advisory_lock_owners[lock_key] = self.conn
+                self.conn.advisory_locks.add(lock_key)
+            self._last = {"locked": locked}
+        elif s.startswith("select pg_advisory_unlock"):
+            lock_key = tuple(params)
+            self._last = {"unlocked": self.conn.release_advisory_lock(lock_key)}
+        elif "from fm_biometric_enrollment_photos" in s and "join fm_biometric_enrollments" in s:
             self._last = self.store.enrollment_rows if self.store.initial_binding else []
         elif "from fm_models m join personalization_profiles" in s:
             self._last = {"status": "verified", "profile_id": "prof-1"}
@@ -105,8 +118,12 @@ class _Cur:
 class _Conn:
     def __init__(self, store):
         self.store = store
+        self.advisory_locks = set()
+        self.closed = False
 
     async def commit(self):
+        if self.closed:
+            raise RuntimeError("connection closed")
         new_statements = [
             " ".join(sql.split()).lower()
             for sql, _ in self.store.log[self.store.last_commit_index:]
@@ -122,10 +139,26 @@ class _Conn:
         return None
 
     async def rollback(self):
+        if self.closed:
+            raise RuntimeError("connection closed")
         return None
 
     def cursor(self):
-        return _Cur(self.store)
+        if self.closed:
+            raise RuntimeError("connection closed")
+        return _Cur(self)
+
+    def release_advisory_lock(self, lock_key):
+        if self.store.advisory_lock_owners.get(lock_key) is not self:
+            return False
+        self.store.advisory_lock_owners.pop(lock_key)
+        self.advisory_locks.discard(lock_key)
+        return True
+
+    async def close(self):
+        self.closed = True
+        for lock_key in tuple(self.advisory_locks):
+            self.release_advisory_lock(lock_key)
 
 
 class _Pool:
@@ -146,8 +179,13 @@ class _FaceR2:
         self.copies: list[CopyCall] = []
         self.puts: list[tuple[str, str]] = []
         self.deletes: list[str] = []
+        self.delete_log_indexes: list[int] = []
         self.fail_delete = fail_delete
         self.fail_put = fail_put
+        self.store = None
+        self.block_first_put = False
+        self.first_put_started = threading.Event()
+        self.release_first_put = threading.Event()
 
     def get_bytes(self, key):
         angle = key.split("/")[-1].split(".")[0]
@@ -159,11 +197,16 @@ class _FaceR2:
 
     def put_bytes(self, key, data, mime, cache=None):
         self.puts.append((key, mime))
+        if self.block_first_put and len(self.puts) == 1:
+            self.first_put_started.set()
+            self.release_first_put.wait(timeout=5)
         if self.fail_put and self.fail_put in key:
             raise RuntimeError("provider leaked/key.png")
 
     def delete(self, key):
         self.deletes.append(key)
+        if self.store is not None:
+            self.delete_log_indexes.append(len(self.store.log))
         if key == self.fail_delete:
             raise RuntimeError("provider leaked/key.png")
 
@@ -193,6 +236,7 @@ class _Store:
         self.failed_updates = 0
         self.enrollment_failed_updates = 0
         self.cleanup_refs = []
+        self.advisory_lock_owners = {}
         self.commits = []
         self.last_commit_index = 0
         self.crash_after_done_commit = crash_after_done_commit
@@ -254,6 +298,7 @@ def _job(payload=None):
 def build_worker_fixture(**store_kwargs):
     store = _Store(**store_kwargs)
     face_r2 = _FaceR2()
+    face_r2.store = store
     app = types.SimpleNamespace(state=types.SimpleNamespace(
         pool=_Pool(store),
         r2_face=face_r2,
@@ -455,6 +500,117 @@ def test_flag_off_lost_final_lease_after_writes_leaves_resolver_closed():
     assert store.building_updates == 1
     assert store.ready_updates == 0
     assert store.failed_updates == 0
+
+
+def test_flag_off_same_model_second_worker_cannot_write_while_first_holds_fence():
+    store = _Store(biometric_enabled=False)
+    face_r2 = _FaceR2()
+    face_r2.store = store
+    face_r2.block_first_put = True
+    app = types.SimpleNamespace(state=types.SimpleNamespace(
+        pool=_Pool(store),
+        r2_face=face_r2,
+        settings=make_settings(
+            fm_face_qc_enabled=False,
+            fm_biometric_enrollment_enabled=False,
+        ),
+    ))
+
+    async def run_two():
+        first = asyncio.create_task(
+            run_fm_model_asset_job(app, _job({"modelId": MODEL_ID}))
+        )
+        await asyncio.to_thread(face_r2.first_put_started.wait, 5)
+        writes_after_first_started = len(face_r2.puts)
+        await run_fm_model_asset_job(app, _job({"modelId": MODEL_ID}))
+        writes_after_second = len(face_r2.puts)
+        face_r2.release_first_put.set()
+        await first
+        return writes_after_first_started, writes_after_second
+
+    writes_after_first_started, writes_after_second = asyncio.run(run_two())
+
+    assert writes_after_first_started == 1
+    assert writes_after_second == 1
+
+
+def test_flag_off_stale_lease_before_write_does_not_touch_r2_or_prior_keys():
+    app, _log, face_r2, store = build_worker_fixture(
+        biometric_enabled=False,
+        lease_sequence=[False],
+        old_asset_keys={"face_front": "old/front.png"},
+    )
+
+    asyncio.run(run_fm_model_asset_job(app, _job({"modelId": MODEL_ID})))
+
+    assert face_r2.puts == []
+    assert face_r2.deletes == []
+    assert store.building_updates == 0
+    assert store.ready_updates == 0
+
+
+def test_flag_off_lost_final_lease_with_old_assets_deletes_nothing():
+    app, _log, face_r2, store = build_worker_fixture(
+        biometric_enabled=False,
+        lease_sequence=[True, False],
+        old_asset_keys={"face_front": "old/front.png"},
+    )
+
+    asyncio.run(run_fm_model_asset_job(app, _job({"modelId": MODEL_ID})))
+
+    assert face_r2.puts
+    assert face_r2.deletes == []
+    assert store.ready_updates == 0
+
+
+def test_flag_off_prior_keys_delete_only_after_final_commit():
+    app, _log, face_r2, store = build_worker_fixture(
+        biometric_enabled=False,
+        old_asset_keys={"face_front": "old/front.png"},
+    )
+
+    asyncio.run(run_fm_model_asset_job(app, _job({"modelId": MODEL_ID})))
+
+    done_commit_index = next(
+        index for index, commit in enumerate(store.commits, start=1)
+        if any("update jobs set status='done'" in statement for statement in commit)
+    )
+    assert face_r2.delete_log_indexes
+    assert min(face_r2.delete_log_indexes) >= store.last_commit_index
+    assert done_commit_index < len(store.commits) or done_commit_index == len(store.commits)
+
+
+def test_flag_off_cancellation_releases_model_fence_and_keeps_resolver_closed():
+    store = _Store(biometric_enabled=False)
+    face_r2 = _FaceR2()
+    face_r2.store = store
+    face_r2.block_first_put = True
+    app = types.SimpleNamespace(state=types.SimpleNamespace(
+        pool=_Pool(store),
+        r2_face=face_r2,
+        settings=make_settings(
+            fm_face_qc_enabled=False,
+            fm_biometric_enrollment_enabled=False,
+        ),
+    ))
+
+    async def run_cancel():
+        task = asyncio.create_task(
+            run_fm_model_asset_job(app, _job({"modelId": MODEL_ID}))
+        )
+        await asyncio.to_thread(face_r2.first_put_started.wait, 5)
+        task.cancel()
+        face_r2.release_first_put.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run_cancel())
+
+    sql = " | ".join(" ".join(statement.split()) for statement, _ in store.log)
+    assert "pg_advisory_unlock" in sql
+    assert store.advisory_lock_owners == {}
+    assert store.ready_updates == 0
+    assert face_r2.deletes == []
 
 
 def test_flag_off_repeat_removes_prior_legacy_keys_without_touching_stable_keys():
