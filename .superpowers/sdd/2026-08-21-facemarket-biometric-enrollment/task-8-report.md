@@ -313,3 +313,84 @@ Result: compile and diff checks exited 0; both leak/QC scans returned no product
 ### Remaining concerns
 
 No live PostgreSQL/R2 concurrent-worker crash harness was run. Deterministic fakes cover same-model contention, stale lease before and after the fence, lost final lease with prior assets, post-commit-only prior-key deletion, cancellation unlock, and resolver-closed interruption.
+
+---
+
+## Fix round 4 — durable legacy asset cleanup outbox
+
+Status: complete in the Task 8 scope. The feature-off legacy swap now persists every superseded prior asset in a dedicated private model cleanup outbox inside the final ready/job-done transaction. Post-commit cleanup and the existing biometric recovery sweep share one bounded drain; failures retain and defer the row, missing objects succeed, and a key currently referenced by `fm_model_assets` is resolved without deleting R2. The enrollment-owned cleanup table and feature-on enrollment path are unchanged.
+
+Repository search found no general cleanup/outbox table suitable for a legacy model UUID. The not-yet-deployed biometric migration therefore adds only `fm_model_asset_cleanup(model_id, r2_key, reason, not_before, created_at)`, its primary key, one due index, and private RLS with no policies. Raw R2 keys remain confined to the private row and provider call; job payload/result/event/log metadata remain key-free.
+
+### RED evidence
+
+```text
+cd server && uv run pytest -q tests/test_fm_model_asset_job.py tests/test_facemarket_biometric_migration.py
+```
+
+Result before the fix: `6 failed, 26 passed, 1 skipped, 1 warning in 0.42s`.
+
+Expected failures proved:
+
+- the final legacy transaction had no cleanup outbox insert;
+- a synthetic crash immediately after the done commit left no sweep-selectable row;
+- delete failure had no retained/rescheduled durable row;
+- a stale row for a currently referenced key was not explicitly resolved without deletion;
+- the scheduled sweep had no bounded `for update skip locked` claim or model fence;
+- the migration had no private model asset cleanup table.
+
+The existing closed-metadata regression for result/event/log leakage remained green.
+
+### GREEN / fix evidence
+
+Minimum root-cause fix:
+
+- inserted superseded legacy keys into `fm_model_asset_cleanup` before the final ready/job-done commit;
+- moved immediate deletion to the shared post-commit drain after releasing the existing write-spanning session fence;
+- reused the same per-model advisory namespace with transaction-scoped locks during sweep reconciliation;
+- selected at most 100 due rows with `for update skip locked`, then re-read `fm_model_assets` before each delete;
+- deleted the outbox row without touching R2 when the key is currently referenced;
+- treated R2 not-found as success and rescheduled provider failures by a bounded five-minute delay;
+- logged only closed event names, `model_id`, and exception type;
+- reused `sweep_terminal_enrollments`, already called by dispatcher recovery, instead of adding a service/class.
+
+Focused command:
+
+```text
+cd server && uv run pytest -q tests/test_fm_model_asset_job.py tests/test_facemarket_biometric_migration.py
+```
+
+Result: `32 passed, 1 skipped, 1 warning in 0.30s`.
+
+Affected command:
+
+```text
+cd server && uv run pytest -q tests/test_fm_model_asset_job.py tests/test_facemarket_biometric_cleanup.py tests/test_facemarket_biometric_enrollment.py tests/test_facemarket_biometric_migration.py tests/test_identity_source.py tests/test_detail_page_identity_source.py tests/test_detail_page_license_face.py tests/test_facemarket_identity.py tests/test_cut_input_authority.py
+```
+
+Result: `185 passed, 1 skipped, 1 warning in 10.62s`.
+
+Full server command:
+
+```text
+cd server && uv run pytest -q
+```
+
+Result: `2721 passed, 103 skipped, 391 warnings in 42.88s`.
+
+Compile/diff/leak checks:
+
+```text
+cd server && uv run python -m compileall -q app/workers/fm_model_asset_job.py app/facemarket_enrollment.py tests/test_fm_model_asset_job.py tests/test_facemarket_biometric_cleanup.py tests/test_facemarket_biometric_migration.py
+cd server && git diff --check
+cd server && ! rg -n "pairwise_min_similarity|qc_score|str\\(exc\\)" app/workers/fm_model_asset_job.py
+cd server && ! rg -n "provider leaked/key\\.png|private/legacy-prior\\.png|private/current\\.png|private/stale\\.png" app/workers/fm_model_asset_job.py app/facemarket_enrollment.py app/agents/identity_source.py app/workers/detail_page_job.py app/workers/editor_image_job.py app/facemarket.py
+```
+
+Result: all commands exited 0 with no matches/output.
+
+Optional Ruff checks were attempted with `uv run ruff check ...` and `uv run ruff format --check ...`; both were unavailable with `Failed to spawn: ruff` because Ruff is not installed in the server environment. Compileall, the full test suite, and diff checks are the available project checks.
+
+### Remaining concerns
+
+No live PostgreSQL multi-instance claim race, migration execution, or live R2 crash harness was run; the migration execution test remained skipped because `FACEMARKET_TEST_DATABASE_URL` is not configured. Deterministic regressions cover final-transaction persistence, after-commit crash recovery, failure rescheduling and later deletion, current-reference non-deletion, bounded multi-instance SQL shape, same-model lock/cancel/lost-lease behavior, and metadata redaction.

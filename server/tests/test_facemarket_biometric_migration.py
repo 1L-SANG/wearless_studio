@@ -59,6 +59,25 @@ def test_photo_deletion_and_superseded_keys_have_durable_retry_state():
     assert "primary key (enrollment_id, r2_key)" in cleanup_schema
 
 
+def test_legacy_model_asset_cleanup_has_a_private_bounded_due_outbox():
+    sql = " ".join(MIGRATION.read_text().split()).lower()
+    assert "create table if not exists public.fm_model_asset_cleanup" in sql
+    schema = sql.split(
+        "create table if not exists public.fm_model_asset_cleanup", 1
+    )[1].split(");", 1)[0]
+    assert "model_id uuid not null" in schema
+    assert "r2_key text not null" in schema
+    assert "reason text not null check (reason in ('superseded'))" in schema
+    assert "not_before timestamptz not null default now()" in schema
+    assert "created_at timestamptz not null default now()" in schema
+    assert "primary key (model_id, r2_key)" in schema
+    assert "fm_model_asset_cleanup_due" in sql
+    assert "alter table public.fm_model_asset_cleanup enable row level security" in sql
+    assert "policy" not in sql.split(
+        "alter table public.fm_model_asset_cleanup enable row level security", 1
+    )[1]
+
+
 def test_liveness_nonce_and_session_digests_are_unique():
     sql = " ".join(MIGRATION.read_text().split()).lower()
     assert "fm_biometric_liveness_nonce_unique" in sql

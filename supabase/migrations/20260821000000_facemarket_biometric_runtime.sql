@@ -59,6 +59,15 @@ create table if not exists public.fm_biometric_enrollment_photo_cleanup (
   primary key (enrollment_id, r2_key)
 );
 
+create table if not exists public.fm_model_asset_cleanup (
+  model_id uuid not null,
+  r2_key text not null,
+  reason text not null check (reason in ('superseded')),
+  not_before timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  primary key (model_id, r2_key)
+);
+
 alter table public.fm_models
   add column if not exists current_enrollment_id uuid
     references public.fm_biometric_enrollments(id) on delete set null;
@@ -89,10 +98,13 @@ create index if not exists fm_biometric_failure_user_window
   on public.fm_biometric_enrollments(user_id, completed_at desc);
 create unique index if not exists fm_licenses_enrollment_unique
   on public.fm_licenses(enrollment_id) where enrollment_id is not null;
+create index if not exists fm_model_asset_cleanup_due
+  on public.fm_model_asset_cleanup(not_before, created_at);
 
 alter table public.fm_biometric_enrollments enable row level security;
 alter table public.fm_biometric_enrollment_photos enable row level security;
 alter table public.fm_biometric_enrollment_photo_cleanup enable row level security;
+alter table public.fm_model_asset_cleanup enable row level security;
 
 drop trigger if exists fm_biometric_enrollments_set_updated_at
   on public.fm_biometric_enrollments;

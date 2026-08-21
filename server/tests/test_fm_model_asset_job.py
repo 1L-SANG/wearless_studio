@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import io
+import json
 import threading
 import types
 from dataclasses import dataclass
@@ -12,7 +13,7 @@ import pytest
 from fastapi import HTTPException
 from PIL import Image
 
-from app import facemarket
+from app import facemarket, facemarket_enrollment
 from app.workers.fm_model_asset_job import run_fm_model_asset_job
 from conftest import make_settings
 
@@ -41,7 +42,9 @@ class _Cur:
     async def execute(self, sql, params=None):
         self.store.log.append((sql, params))
         s = " ".join(sql.split()).lower()
-        if s.startswith("select pg_try_advisory_lock"):
+        if s.startswith("select pg_try_advisory_xact_lock"):
+            self._last = {"locked": True}
+        elif s.startswith("select pg_try_advisory_lock"):
             lock_key = tuple(params)
             owner = self.store.advisory_lock_owners.get(lock_key)
             locked = owner is None or owner is self.conn
@@ -72,11 +75,25 @@ class _Cur:
                 if self.store.final_binding
                 else None
             )
+        elif s.startswith("select c.model_id::text as model_id"):
+            rows = [ref.copy() for ref in self.store.asset_cleanup_refs if ref["due"]]
+            self._last = rows[: params[-1]]
+        elif s.startswith("select 1 from fm_model_assets"):
+            _model_id, key = params
+            self._last = (
+                {"?column?": 1}
+                if key in self.store.old_asset_keys.values()
+                else None
+            )
         elif "from fm_model_assets" in s:
             self._last = [
                 {"view": view, "r2_key": key}
                 for view, key in self.store.old_asset_keys.items()
             ]
+        elif s.startswith("insert into fm_model_assets"):
+            _model_id, view, key, *_rest = params
+            self.store.old_asset_keys[view] = key
+            self._last = None
         elif s.startswith("update fm_models") and "assets_status='ready'" in s:
             self.store.ready_updates += 1
             self._last = None
@@ -91,6 +108,30 @@ class _Cur:
             self._last = None
         elif s.startswith("insert into fm_biometric_enrollment_photo_cleanup"):
             self.store.cleanup_refs.append({"angle": params[1], "key": params[2], "reason": "delete"})
+            self._last = None
+        elif s.startswith("insert into fm_model_asset_cleanup"):
+            model_id, key = params
+            self.store.asset_cleanup_refs = [
+                ref for ref in self.store.asset_cleanup_refs
+                if (ref["model_id"], ref["r2_key"]) != (model_id, key)
+            ]
+            self.store.asset_cleanup_refs.append(
+                {"model_id": model_id, "r2_key": key, "reason": "superseded", "due": True}
+            )
+            self._last = None
+        elif s.startswith("update fm_model_asset_cleanup"):
+            model_id, key = params
+            for ref in self.store.asset_cleanup_refs:
+                if (ref["model_id"], ref["r2_key"]) == (model_id, key):
+                    ref["due"] = False
+                    self.store.asset_cleanup_reschedules += 1
+            self._last = None
+        elif s.startswith("delete from fm_model_asset_cleanup"):
+            model_id, key = params
+            self.store.asset_cleanup_refs = [
+                ref for ref in self.store.asset_cleanup_refs
+                if (ref["model_id"], ref["r2_key"]) != (model_id, key)
+            ]
             self._last = None
         elif s.startswith("delete from fm_biometric_enrollment_photo_cleanup"):
             enrollment_id, key = params
@@ -236,6 +277,8 @@ class _Store:
         self.failed_updates = 0
         self.enrollment_failed_updates = 0
         self.cleanup_refs = []
+        self.asset_cleanup_refs = []
+        self.asset_cleanup_reschedules = 0
         self.advisory_lock_owners = {}
         self.commits = []
         self.last_commit_index = 0
@@ -571,13 +614,145 @@ def test_flag_off_prior_keys_delete_only_after_final_commit():
 
     asyncio.run(run_fm_model_asset_job(app, _job({"modelId": MODEL_ID})))
 
-    done_commit_index = next(
-        index for index, commit in enumerate(store.commits, start=1)
-        if any("update jobs set status='done'" in statement for statement in commit)
+    done_statement_index = next(
+        index for index, (statement, _params) in enumerate(store.log)
+        if "update jobs set status='done'" in " ".join(statement.split()).lower()
     )
     assert face_r2.delete_log_indexes
-    assert min(face_r2.delete_log_indexes) >= store.last_commit_index
-    assert done_commit_index < len(store.commits) or done_commit_index == len(store.commits)
+    assert min(face_r2.delete_log_indexes) > done_statement_index
+
+
+def test_flag_off_final_swap_persists_prior_key_cleanup_before_done_commit():
+    app, _log, _face_r2, store = build_worker_fixture(
+        biometric_enabled=False,
+        old_asset_keys={"face_front": "private/legacy-prior.png"},
+        crash_after_done_commit=True,
+    )
+
+    asyncio.run(run_fm_model_asset_job(app, _job({"modelId": MODEL_ID})))
+
+    done_commit = next(
+        commit for commit in store.commits
+        if any("update jobs set status='done'" in statement for statement in commit)
+    )
+    assert any("insert into fm_model_asset_cleanup" in statement for statement in done_commit)
+    assert store.asset_cleanup_refs == [{
+        "model_id": MODEL_ID,
+        "r2_key": "private/legacy-prior.png",
+        "reason": "superseded",
+        "due": True,
+    }]
+
+
+def test_flag_off_post_commit_crash_leaves_prior_key_selectable_by_sweep():
+    app, _log, face_r2, store = build_worker_fixture(
+        biometric_enabled=False,
+        old_asset_keys={"face_front": "private/legacy-prior.png"},
+        crash_after_done_commit=True,
+    )
+
+    asyncio.run(run_fm_model_asset_job(app, _job({"modelId": MODEL_ID})))
+    assert store.asset_cleanup_refs
+
+    cleaned = asyncio.run(facemarket_enrollment.sweep_terminal_enrollments(app, limit=10))
+
+    assert cleaned == 1
+    assert face_r2.deletes == ["private/legacy-prior.png"]
+    assert store.asset_cleanup_refs == []
+
+
+def test_flag_off_delete_failure_reschedules_then_sweep_deletes_without_key_leak(caplog):
+    store = _Store(
+        biometric_enabled=False,
+        old_asset_keys={"face_front": "private/legacy-prior.png"},
+    )
+    face_r2 = _FaceR2(fail_delete="private/legacy-prior.png")
+    face_r2.store = store
+    app = types.SimpleNamespace(state=types.SimpleNamespace(
+        pool=_Pool(store),
+        r2_face=face_r2,
+        settings=make_settings(fm_biometric_enrollment_enabled=False),
+    ))
+
+    asyncio.run(run_fm_model_asset_job(app, _job({"modelId": MODEL_ID})))
+
+    assert store.asset_cleanup_refs
+    assert store.asset_cleanup_reschedules == 1
+    assert "private/legacy-prior.png" not in caplog.text
+    assert "provider leaked/key.png" not in caplog.text
+
+    store.asset_cleanup_refs[0]["due"] = True
+    face_r2.fail_delete = None
+    assert asyncio.run(facemarket_enrollment.sweep_terminal_enrollments(app, limit=10)) == 1
+    assert face_r2.deletes == ["private/legacy-prior.png", "private/legacy-prior.png"]
+    assert store.asset_cleanup_refs == []
+
+
+def test_model_asset_cleanup_resolves_current_reference_without_deleting_it():
+    app, _log, face_r2, store = build_worker_fixture(
+        biometric_enabled=False,
+        old_asset_keys={"face_front": "private/current.png"},
+    )
+    store.asset_cleanup_refs.append({
+        "model_id": MODEL_ID,
+        "r2_key": "private/current.png",
+        "reason": "superseded",
+        "due": True,
+    })
+
+    assert asyncio.run(facemarket_enrollment.sweep_terminal_enrollments(app, limit=10)) == 1
+
+    assert face_r2.deletes == []
+    assert store.asset_cleanup_refs == []
+
+
+def test_model_asset_cleanup_sweep_claim_is_bounded_and_multi_instance_safe():
+    app, log, _face_r2, store = build_worker_fixture(biometric_enabled=False)
+    store.asset_cleanup_refs.append({
+        "model_id": MODEL_ID,
+        "r2_key": "private/stale.png",
+        "reason": "superseded",
+        "due": True,
+    })
+
+    asyncio.run(facemarket_enrollment.sweep_terminal_enrollments(app, limit=7))
+
+    claim_sql, claim_params = next(
+        (" ".join(sql.split()).lower(), params)
+        for sql, params in log
+        if "from fm_model_asset_cleanup" in sql.lower()
+    )
+    assert "for update skip locked" in claim_sql
+    assert "limit %s" in claim_sql
+    assert claim_params[-1] == 7
+    assert any("pg_try_advisory_xact_lock" in sql.lower() for sql, _ in log)
+
+
+def test_flag_off_done_result_event_and_failure_logs_never_expose_prior_key(caplog):
+    store = _Store(
+        biometric_enabled=False,
+        old_asset_keys={"face_front": "private/legacy-prior.png"},
+    )
+    face_r2 = _FaceR2(fail_delete="private/legacy-prior.png")
+    face_r2.store = store
+    app = types.SimpleNamespace(state=types.SimpleNamespace(
+        pool=_Pool(store),
+        r2_face=face_r2,
+        settings=make_settings(fm_biometric_enrollment_enabled=False),
+    ))
+
+    asyncio.run(run_fm_model_asset_job(app, _job({"modelId": MODEL_ID})))
+
+    public_metadata = [
+        getattr(value, "obj", value)
+        for sql, params in store.log
+        if ("update jobs set status='done'" in " ".join(sql.split()).lower()
+            or "insert into job_events" in " ".join(sql.split()).lower())
+        for value in (params or ())
+    ]
+    assert "private/legacy-prior.png" not in json.dumps(public_metadata)
+    assert "private/legacy-prior.png" not in caplog.text
+    assert "provider leaked/key.png" not in caplog.text
 
 
 def test_flag_off_cancellation_releases_model_fence_and_keeps_resolver_closed():

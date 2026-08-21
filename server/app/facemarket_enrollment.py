@@ -32,6 +32,7 @@ router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket biometric enrollme
 BIOMETRIC_CONSENT_VERSION = "2026-08-v1"
 ENROLLMENT_TTL = timedelta(hours=24)
 _PHOTO_FENCE_NAMESPACE = 0x464D5048
+_MODEL_ASSET_FENCE_NAMESPACE = 0x464D4D41
 ANGLES = ("front", "angle45", "side")
 MAX_FACE_BYTES = 25 * 1024 * 1024
 ALLOWED_FACE_MIME = {"image/png", "image/jpeg", "image/webp"}
@@ -486,6 +487,83 @@ async def _drain_photo_cleanup(
             },
         )
         return 0, 1
+
+
+async def _drain_model_asset_cleanup(
+    app, *, limit: int = 100, model_id: str | None = None
+) -> int:
+    pool = getattr(app.state, "pool", None)
+    r2 = getattr(app.state, "r2_face", None)
+    if pool is None or r2 is None:
+        return 0
+    limit = max(1, min(int(limit), 100))
+    clauses = ["c.not_before <= now()"]
+    params: list[object] = []
+    if model_id is not None:
+        clauses.append("c.model_id = %s")
+        params.append(model_id)
+    params.append(limit)
+    try:
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"""
+                    select c.model_id::text as model_id, c.r2_key
+                    from fm_model_asset_cleanup c
+                    where {' and '.join(clauses)}
+                    order by c.created_at
+                    for update skip locked
+                    limit %s
+                    """,
+                    tuple(params),
+                )
+                rows = await cur.fetchall()
+                resolved = 0
+                for row in rows:
+                    await cur.execute(
+                        "select pg_try_advisory_xact_lock(%s, hashtext(%s)) as locked",
+                        (_MODEL_ASSET_FENCE_NAMESPACE, row["model_id"].lower()),
+                    )
+                    if not (await cur.fetchone())["locked"]:
+                        continue
+                    await cur.execute(
+                        "select 1 from fm_model_assets where model_id=%s and r2_key=%s limit 1",
+                        (row["model_id"], row["r2_key"]),
+                    )
+                    if await cur.fetchone() is None:
+                        try:
+                            await _run_r2_call_until_done(r2.delete, row["r2_key"])
+                        except Exception as exc:
+                            if not _is_r2_not_found(exc):
+                                await cur.execute(
+                                    """
+                                    update fm_model_asset_cleanup
+                                    set not_before = now() + interval '5 minutes'
+                                    where model_id=%s and r2_key=%s
+                                    """,
+                                    (row["model_id"], row["r2_key"]),
+                                )
+                                logger.warning(
+                                    "facemarket_model_asset_cleanup_failed",
+                                    extra={
+                                        "model_id": row["model_id"],
+                                        "error_type": type(exc).__name__,
+                                    },
+                                )
+                                continue
+                    await cur.execute(
+                        "delete from fm_model_asset_cleanup where model_id=%s and r2_key=%s",
+                        (row["model_id"], row["r2_key"]),
+                    )
+                    resolved += 1
+            await conn.commit()
+            return resolved
+    except Exception as exc:
+        logger.warning(
+            "facemarket_model_asset_cleanup_sweep_failed",
+            extra={"error_type": type(exc).__name__},
+        )
+        return 0
 
 
 async def _load_current_enrollment(conn, user_id: str) -> dict | None:
@@ -1344,6 +1422,7 @@ async def sweep_terminal_enrollments(app, *, limit: int = 100) -> int:
             app, enrollment_id=row["id"], reason="delete"
         )
         cleaned += int(deleted > 0 and failed == 0)
+    cleaned += await _drain_model_asset_cleanup(app, limit=limit)
     return cleaned
 
 

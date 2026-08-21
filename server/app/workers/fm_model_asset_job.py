@@ -12,7 +12,11 @@ from psycopg.types.json import Json
 
 from .. import repo
 from ..agents.face_grid import compose_sedcard
-from ..facemarket_enrollment import _run_r2_call_until_done
+from ..facemarket_enrollment import (
+    _MODEL_ASSET_FENCE_NAMESPACE,
+    _drain_model_asset_cleanup,
+    _run_r2_call_until_done,
+)
 from ..r2 import IMMUTABLE_CACHE, enrollment_original_key, ext_for_mime, model_asset_key
 from ._common import emit_job_event as _emit
 
@@ -20,7 +24,6 @@ log = logging.getLogger("wearless.fm_model_asset_job")
 
 _ANGLES = ("front", "angle45", "side")
 _OLD_ASSET_ANGLE = {"face_front": "front", "grid_sedcard": "side"}
-_MODEL_ASSET_FENCE_NAMESPACE = 0x464D4D41
 
 
 def _ordered_faces(rows: list[dict]) -> list[dict] | None:
@@ -172,6 +175,7 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
             return
         if not enrollment_id:
             old_assets: list[dict] = []
+            cleanup_targets: list[str] = []
             async with pool.connection() as conn:
                 locked = False
                 try:
@@ -272,6 +276,17 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                         )
                         if await cur.fetchone() is None:
                             raise RuntimeError("legacy_model_binding_lost")
+                        for old_key in cleanup_targets:
+                            await cur.execute(
+                                """
+                                insert into fm_model_asset_cleanup
+                                    (model_id, r2_key, reason)
+                                values (%s, %s, 'superseded')
+                                on conflict (model_id, r2_key) do update set
+                                    reason='superseded', not_before=now()
+                                """,
+                                (model_id, old_key),
+                            )
                         for view, key, mime in registered:
                             await cur.execute(
                                 """
@@ -307,11 +322,13 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
                             ),
                         )
                     await conn.commit()
-                    for old_key in cleanup_targets:
-                        await _run_r2_call_until_done(r2_face.delete, old_key)
                 finally:
                     if locked:
                         await _unlock_model_asset_fence(conn, model_id)
+            if cleanup_targets:
+                await _drain_model_asset_cleanup(
+                    app, model_id=model_id, limit=len(cleanup_targets)
+                )
             return
 
         async with pool.connection() as conn:
