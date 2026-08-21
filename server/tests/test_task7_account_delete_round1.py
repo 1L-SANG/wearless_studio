@@ -1,4 +1,6 @@
 import asyncio
+import ast
+import contextlib
 import types
 
 import pytest
@@ -378,17 +380,115 @@ def test_facemarket_license_create_rejects_closed_account_before_license_or_hold
     assert store["revocations"] == {}
 
 
-def test_account_closed_producer_scan_covers_personalization_and_facemarket_writers():
-    personalization_source = personalization.__loader__.get_source(personalization.__name__)
-    facemarket_source = facemarket.__loader__.get_source(facemarket.__name__)
-    enrollment_source = facemarket_enrollment.__loader__.get_source(facemarket_enrollment.__name__)
-    asset_worker_source = fm_model_asset_job.__loader__.get_source(fm_model_asset_job.__name__)
+def test_facemarket_build_assets_rejects_active_purge_before_job_or_wake(monkeypatch):
+    mutations = []
+    created = []
+    wakes = []
 
-    assert personalization_source.count("_assert_account_open(") >= 6
-    assert facemarket_source.count("_assert_account_open(") >= 4
-    assert enrollment_source.count("_assert_account_open(") >= 6
-    assert asset_worker_source.count("_assert_account_open(") >= 1
-    assert "user_account_purge_closed" in personalization_source
-    assert "user_account_purge_closed" in facemarket_source
-    assert "user_account_purge_closed" in enrollment_source
-    assert "user_account_purge_closed" in asset_worker_source
+    class ClosedBuildCursor:
+        async def execute(self, sql, params=None):
+            mutations.append(("execute", " ".join(sql.split()).lower(), params))
+            raise AssertionError("closed account must not read or mutate build-assets state")
+
+        async def fetchone(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    class ClosedBuildConn:
+        def cursor(self):
+            return ClosedBuildCursor()
+
+        async def commit(self):
+            mutations.append(("commit",))
+
+    async def closed(_conn, user_id):
+        assert user_id == "user-1"
+        return True
+
+    async def create_job(*_args, **_kwargs):
+        created.append(_kwargs)
+        raise AssertionError("closed account must not create model asset jobs")
+
+    class Dispatcher:
+        def wake(self):
+            wakes.append("wake")
+
+    @contextlib.asynccontextmanager
+    async def fake_conn(_request):
+        yield ClosedBuildConn()
+
+    monkeypatch.setattr(facemarket, "get_conn", fake_conn)
+    monkeypatch.setattr(repo, "user_account_purge_closed", closed, raising=False)
+    monkeypatch.setattr(repo, "create_job", create_job)
+    request = types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace(
+        settings=types.SimpleNamespace(fm_biometric_enrollment_enabled=False),
+        dispatcher=Dispatcher(),
+    )))
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(facemarket.build_my_model_assets(request, user_id="user-1"))
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail["code"] == "account_closed"
+    assert set(exc.value.detail) == {"code", "message"}
+    assert mutations == []
+    assert created == []
+    assert wakes == []
+
+
+def _functions_calling_assert_account_open(module) -> set[str]:
+    source = module.__loader__.get_source(module.__name__)
+    tree = ast.parse(source)
+    guarded = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) and any(
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id == "_assert_account_open"
+            for call in ast.walk(node)
+        ):
+            guarded.add(node.name)
+    return guarded
+
+
+def test_account_closed_named_writer_gates_cover_task7_surfaces():
+    expected = {
+        personalization: {
+            "_ensure_profile",
+            "identity_verify",
+            "withdraw_consent",
+            "upload_face_photo",
+            "get_face_photo_file",
+            "delete_face_photo",
+            "withdraw_all",
+            "start_generation",
+            "refine_generation",
+        },
+        facemarket: {
+            "identity_verify",
+            "list_models",
+            "build_my_model_assets",
+            "finalize_issued_face_vc",
+            "create_license",
+            "simulate_settlement",
+            "revoke_license",
+        },
+        facemarket_enrollment: {
+            "create_enrollment",
+            "upload_enrollment_photo",
+            "start_enrollment_liveness",
+            "delete_enrollment_photo",
+            "_initial_completion_checks",
+            "process_enrollment_completion",
+            "cancel_enrollment",
+        },
+        fm_model_asset_job: {"run_fm_model_asset_job"},
+    }
+
+    for module, names in expected.items():
+        assert names <= _functions_calling_assert_account_open(module)

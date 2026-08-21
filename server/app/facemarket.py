@@ -458,6 +458,7 @@ async def build_my_model_assets(request: Request, user_id: str = Depends(require
             status=409,
         )
     async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
         async with conn.cursor() as cur:
             await cur.execute(
                 "select id::text as id from fm_models "
