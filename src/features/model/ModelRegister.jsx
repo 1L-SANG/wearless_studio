@@ -31,6 +31,7 @@ let cxLoader;
 function loadCxWidget() {
   if (window.OACX) return Promise.resolve();
   if (cxLoader) return cxLoader;
+  const loaderScripts = [];
   const addScript = (id, src) => new Promise((resolve, reject) => {
     if (document.getElementById(id)) return resolve();
     const element = document.createElement('script');
@@ -41,6 +42,7 @@ function loadCxWidget() {
       element.remove();
       reject(new Error('인증 모듈을 불러오지 못했어요.'));
     };
+    loaderScripts.push(element);
     document.head.appendChild(element);
   });
   const pending = new Promise((resolve, reject) => {
@@ -68,6 +70,7 @@ function loadCxWidget() {
       .catch(reject);
   });
   cxLoader = pending.catch((error) => {
+    loaderScripts.forEach((element) => element.remove());
     cxLoader = undefined;
     throw error;
   });
@@ -219,12 +222,28 @@ export function ModelRegister() {
   useEffect(() => {
     if (step !== 'processing' || !enrollment?.id) return undefined;
     let active = true;
+    let requestController;
+    const deadline = Date.now() + 120000;
+    const stopForTimeout = () => {
+      if (!active) return;
+      active = false;
+      requestController?.abort();
+      setError('처리가 지연되고 있어요. 다시 확인해 주세요.');
+      setStep('poll_timeout');
+    };
+    const deadlineTimer = setTimeout(stopForTimeout, 120000);
     (async () => {
       let consecutiveFailures = 0;
-      for (let elapsed = 0; active && elapsed <= 120000; elapsed += 2500) {
+      while (active) {
+        if (Date.now() >= deadline) {
+          stopForTimeout();
+          return;
+        }
         let current;
+        const controller = new AbortController();
+        requestController = controller;
         try {
-          current = await getEnrollment(enrollment.id);
+          current = await getEnrollment(enrollment.id, { signal: controller.signal });
           consecutiveFailures = 0;
         } catch (requestError) {
           if (!active) return;
@@ -236,6 +255,8 @@ export function ModelRegister() {
           }
           await wait(2500);
           continue;
+        } finally {
+          if (requestController === controller) requestController = undefined;
         }
         if (!active) return;
         setEnrollment(current);
@@ -247,12 +268,12 @@ export function ModelRegister() {
         }
         await wait(2500);
       }
-      if (active) {
-        setError('처리가 지연되고 있어요. 다시 확인해 주세요.');
-        setStep('poll_timeout');
-      }
     })();
-    return () => { active = false; };
+    return () => {
+      active = false;
+      clearTimeout(deadlineTimer);
+      requestController?.abort();
+    };
   }, [enrollment?.id, step]);
 
   const finishIdentity = useCallback(async () => {

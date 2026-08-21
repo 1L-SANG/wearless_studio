@@ -665,15 +665,24 @@ class FakeCursor:
         elif query.startswith(
             "update fm_biometric_enrollments set status = 'failed'"
         ):
-            reason, cooldown_until, enrollment_id = params
+            reason, cooldown_until, enrollment_id, expected_status = params
             row = next(item for item in self.store.enrollments if item["id"] == enrollment_id)
-            row.update(
-                status="failed",
-                decision="failed",
-                reason=reason,
-                completed_at=row.get("completed_at") or NOW,
-                cooldown_until=cooldown_until or row.get("cooldown_until"),
+            if row["status"] == expected_status:
+                row.update(
+                    status="failed",
+                    decision="failed",
+                    reason=reason,
+                    completed_at=row.get("completed_at") or NOW,
+                    cooldown_until=cooldown_until or row.get("cooldown_until"),
+                )
+                self.result = {"status": "failed"}
+        elif query.startswith("select status from fm_biometric_enrollments where id"):
+            enrollment_id = params[0]
+            row = next(
+                (item for item in self.store.enrollments if item["id"] == enrollment_id),
+                None,
             )
+            self.result = {"status": row["status"]} if row else None
         elif query.startswith("update fm_biometric_enrollments set status = 'expired'"):
             enrollment_id = params[0]
             row = next(item for item in self.store.enrollments if item["id"] == enrollment_id)
@@ -1348,6 +1357,80 @@ def test_cancel_wins_before_completion_finalization_without_resurrection(
     asyncio.run(run_race())
 
     assert enrollment_store.enrollments[0]["status"] == "cancelled"
+    assert enrollment_store.identities == []
+    assert enrollment_store.models == []
+    assert enrollment_store.jobs == []
+
+
+def test_cancel_wins_before_provider_failure_without_cooldown_or_resurrection(
+    enrollment_client,
+    auth,
+    enrollment_store,
+    fake_r2,
+    fake_rekognition,
+    completion_fakes,
+    monkeypatch,
+):
+    enrollment_id = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
+    )
+    for index in range(4):
+        enrollment_store.enrollments.append(
+            {
+                "id": f"00000000-0000-0000-0000-00000000000{index}",
+                "user_id": "user-1",
+                "model_id": None,
+                "device_digest": enrollment_store.enrollments[0]["device_digest"],
+                "consent_version": "2026-08-v1",
+                "status": "failed",
+                "decision": "failed",
+                "reason": "face_match_failed",
+                "cooldown_until": None,
+                "expires_at": NOW,
+                "completed_at": NOW - timedelta(minutes=1),
+                "raw_deletion_evidence": {},
+            }
+        )
+    provider_started = threading.Event()
+    release_provider = threading.Event()
+
+    def fail_after_cancel(*_args, **_kwargs):
+        provider_started.set()
+        assert release_provider.wait(timeout=2)
+        raise facemarket_enrollment.BiometricProviderError("liveness_failed")
+
+    monkeypatch.setattr(facemarket_enrollment, "get_liveness_result", fail_after_cancel)
+    request = types.SimpleNamespace(app=enrollment_client.app)
+
+    async def run_race():
+        completion = asyncio.create_task(
+            facemarket_enrollment.process_enrollment_completion(
+                request,
+                enrollment_id=enrollment_id,
+                user_id="user-1",
+                session_id=fake_rekognition.session_id,
+                token="oacx-token-used-only-now",
+            )
+        )
+        assert await asyncio.to_thread(provider_started.wait, 2)
+        assert enrollment_store.enrollments[0]["status"] == "processing"
+        try:
+            cancelled = await facemarket_enrollment.cancel_enrollment(
+                request, enrollment_id, "user-1"
+            )
+            assert cancelled.status == "cancelled"
+        finally:
+            release_provider.set()
+        return await completion
+
+    decision = asyncio.run(run_race())
+
+    assert decision == facemarket_enrollment.EnrollmentDecision(
+        False, False, "liveness_failed", "cancelled"
+    )
+    current = enrollment_store.enrollments[0]
+    assert current["status"] == "cancelled"
+    assert current["cooldown_until"] is None
     assert enrollment_store.identities == []
     assert enrollment_store.models == []
     assert enrollment_store.jobs == []

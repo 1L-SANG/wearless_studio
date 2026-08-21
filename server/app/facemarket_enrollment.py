@@ -1479,6 +1479,7 @@ async def _fail_enrollment(
     enrollment_id: str,
     reason: str,
     retryable: bool,
+    expected_status: str,
 ) -> EnrollmentDecision:
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
@@ -1509,10 +1510,25 @@ async def _fail_enrollment(
                 set status = 'failed', decision = 'failed', reason = %s,
                     completed_at = coalesce(completed_at, now()),
                     cooldown_until = coalesce(%s, cooldown_until)
-                where id = %s
+                where id = %s and status = %s
+                returning status
                 """,
-                (reason, cooldown_until, enrollment_id),
+                (reason, cooldown_until, enrollment_id, expected_status),
             )
+            updated = await cur.fetchone()
+            if updated is None:
+                await cur.execute(
+                    "select status from fm_biometric_enrollments where id = %s",
+                    (enrollment_id,),
+                )
+                closed = await cur.fetchone()
+                await conn.commit()
+                return EnrollmentDecision(
+                    False,
+                    retryable,
+                    reason,
+                    (closed or {}).get("status") or "failed",
+                )
         await conn.commit()
     await cleanup_terminal_enrollment(request.app, enrollment_id=enrollment_id)
     return EnrollmentDecision(False, retryable, reason, "failed")
@@ -1615,6 +1631,7 @@ async def process_enrollment_completion(
     liveness = None
     evidence = None
     photo_buffers: list[bytearray] = []
+    processing_started = False
     try:
         row, photos = await _initial_completion_checks(
             request,
@@ -1623,6 +1640,7 @@ async def process_enrollment_completion(
             session_id=session_id,
             token=token,
         )
+        processing_started = True
         try:
             liveness = await asyncio.to_thread(
                 get_liveness_result,
@@ -1797,6 +1815,7 @@ async def process_enrollment_completion(
             enrollment_id=enrollment_id,
             reason=exc.reason,
             retryable=exc.reason in RETRYABLE_REASONS,
+            expected_status="processing" if processing_started else "liveness_pending",
         )
     finally:
         if evidence is not None:

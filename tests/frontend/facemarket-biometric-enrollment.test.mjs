@@ -193,6 +193,10 @@ test('the browser wizard keeps raw authentication material in memory only', () =
   assert.doesNotMatch(registerSource, /console\.(?:log|info|warn|error)/);
   assert.match(registerSource, /cxLoader = pending\.catch[\s\S]*cxLoader = undefined/);
   assert.match(registerSource, /role="alert"/);
+  assert.match(
+    read('../../src/lib/api/facemarket.js'),
+    /getEnrollment\(id, \{ signal \} = \{\}\)[\s\S]*?http\([^;]+\{ signal \}\)/,
+  );
   assert.match(livenessSource, /FaceLivenessDetectorCore/);
   assert.match(livenessSource, /region="us-east-1"/);
   assert.match(livenessSource, /config=\{config\}/);
@@ -267,7 +271,11 @@ test('processing polling retries a transient GET failure and reaches the termina
   const originalSetTimeout = globalThis.setTimeout;
   try {
     harness.render();
-    globalThis.setTimeout = (callback) => { queueMicrotask(callback); return 1; };
+    globalThis.setTimeout = (callback, delay) => {
+      if (delay >= 100_000) return { callback, delay };
+      queueMicrotask(callback);
+      return 1;
+    };
     harness.runtime.effects[2]();
     await eventually(() => harness.runtime.states[0] === 'terms', 'polling should recover and restore terms');
 
@@ -291,7 +299,11 @@ test('processing polling stops after four consecutive GET failures', async () =>
   const originalSetTimeout = globalThis.setTimeout;
   try {
     harness.render();
-    globalThis.setTimeout = (callback) => { queueMicrotask(callback); return 1; };
+    globalThis.setTimeout = (callback, delay) => {
+      if (delay >= 100_000) return { callback, delay };
+      queueMicrotask(callback);
+      return 1;
+    };
     harness.runtime.effects[2]();
     await eventually(() => harness.runtime.states[0] === 'poll_error', 'polling must stop');
     assert.equal(calls, 4);
@@ -335,6 +347,138 @@ test('processing timeout exposes a restore action that resumes without reloading
   } finally {
     globalThis.setTimeout = originalSetTimeout;
     await harness.close();
+  }
+});
+
+test('an absolute processing deadline aborts a never-settling GET and exposes restore', async () => {
+  let requestOptions;
+  const timers = [];
+  const harness = await modelComponentHarness({
+    initialStates: ['processing', { id: 'enrollment-1', status: 'processing' }, null, '', false, false],
+    api: {
+      getEnrollment: (_id, options) => {
+        requestOptions = options;
+        return new Promise(() => {});
+      },
+      getCurrentEnrollment: async () => ({ id: 'enrollment-1', status: 'license_pending' }),
+    },
+  });
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  try {
+    globalThis.setTimeout = (callback, delay) => {
+      const timer = { callback, delay };
+      timers.push(timer);
+      return timer;
+    };
+    globalThis.clearTimeout = (timer) => {
+      const index = timers.indexOf(timer);
+      if (index >= 0) timers.splice(index, 1);
+    };
+    harness.render();
+    const cleanup = harness.runtime.effects[2]();
+    await flush();
+
+    assert.equal(requestOptions.signal.aborted, false);
+    const deadline = timers.find(({ delay }) => delay >= 119_000);
+    assert.ok(deadline, 'the effect must own an absolute 120 second deadline');
+    deadline.callback();
+
+    assert.equal(requestOptions.signal.aborted, true);
+    assert.equal(harness.runtime.states[0], 'poll_timeout');
+    cleanup();
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+    await harness.close();
+  }
+});
+
+test('unmount aborts the in-flight processing GET without showing timeout recovery', async () => {
+  let requestOptions;
+  const harness = await modelComponentHarness({
+    initialStates: ['processing', { id: 'enrollment-1', status: 'processing' }, null, '', false, false],
+    api: {
+      getEnrollment: (_id, options) => {
+        requestOptions = options;
+        return new Promise(() => {});
+      },
+      getCurrentEnrollment: () => new Promise(() => {}),
+    },
+  });
+  try {
+    harness.render();
+    const cleanup = harness.runtime.effects[2]();
+    await flush();
+    cleanup();
+
+    assert.equal(requestOptions.signal.aborted, true);
+    assert.equal(harness.runtime.states[0], 'processing');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('OACX readiness timeout removes loader-owned scripts and retries without touching existing tags', async () => {
+  const elements = new Map();
+  const existingVendor = { id: 'oacx-vendor', tagName: 'script' };
+  elements.set(existingVendor.id, existingVendor);
+  const appended = [];
+  let intervalCallback;
+  const originals = {
+    window: globalThis.window,
+    document: globalThis.document,
+    setInterval: globalThis.setInterval,
+    clearInterval: globalThis.clearInterval,
+  };
+  globalThis.window = {};
+  globalThis.document = {
+    getElementById: (id) => elements.get(id) || null,
+    createElement: (tagName) => ({
+      tagName,
+      remove() { elements.delete(this.id); },
+    }),
+    head: {
+      appendChild(element) {
+        elements.set(element.id, element);
+        if (element.tagName === 'script') {
+          appended.push(element.id);
+          queueMicrotask(() => element.onload?.());
+        }
+      },
+    },
+  };
+  globalThis.setInterval = (callback) => { intervalCallback = callback; return callback; };
+  globalThis.clearInterval = () => {};
+  const harness = await modelComponentHarness({
+    initialStates: [
+      'liveness', { id: 'enrollment-1' }, { sessionId: 'session-1' }, '', false, false,
+    ],
+    api: { cancelEnrollment: async () => {} },
+  });
+  try {
+    const tree = harness.render();
+    const liveness = findTree(tree, (node) => node.type === 'Lazy');
+    const first = liveness.props.onAnalysisComplete();
+    await eventually(() => intervalCallback, 'OACX readiness timer should start');
+    for (let attempt = 0; attempt <= 50; attempt += 1) intervalCallback();
+    await first;
+
+    assert.equal(elements.get('oacx-vendor'), existingVendor);
+    assert.equal(elements.has('oacx-ux'), false);
+
+    intervalCallback = undefined;
+    const second = liveness.props.onAnalysisComplete();
+    await eventually(() => intervalCallback, 'a fresh OACX readiness timer should start');
+    assert.deepEqual(appended, ['oacx-ux', 'oacx-ux']);
+    for (let attempt = 0; attempt <= 50; attempt += 1) intervalCallback();
+    await second;
+  } finally {
+    await harness.close();
+    for (const [key, value] of Object.entries(originals)) {
+      if (value === undefined) delete globalThis[key];
+      else globalThis[key] = value;
+    }
   }
 });
 

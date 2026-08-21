@@ -74,8 +74,8 @@ export function getCurrentEnrollment() {
   return http('/v1/facemarket/enrollments/current');
 }
 
-export function getEnrollment(id) {
-  return http(`/v1/facemarket/enrollments/${encodeURIComponent(id)}`);
+export function getEnrollment(id, { signal } = {}) {
+  return http(`/v1/facemarket/enrollments/${encodeURIComponent(id)}`, { signal });
 }
 
 export async function uploadEnrollmentPhoto({ enrollmentId, angle, fileBlob, filename }) {
