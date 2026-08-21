@@ -27,6 +27,7 @@ ACTIVE_STATUSES = {
     "license_pending",
     "vc_pending",
 }
+PHOTO_FENCE_NAMESPACE = 0x464D5048
 
 
 class EnrollmentStore:
@@ -36,6 +37,8 @@ class EnrollmentStore:
         self.models = []
         self.licenses = []
         self.cleanup = []
+        self.advisory_lock_owners = {}
+        self.terminal_cleanup_loads = 0
         self.now = NOW
         self.fail_photo_upsert = False
         self.commit_attempts = 0
@@ -73,7 +76,21 @@ class FakeCursor:
         self.result = None
         self.many = []
 
-        if query.startswith("select count(*) filter"):
+        if query.startswith("select pg_try_advisory_lock"):
+            lock_key = tuple(params)
+            owner = self.conn.store.advisory_lock_owners.get(lock_key)
+            locked = owner is None or owner is self.conn
+            if locked:
+                self.conn.store.advisory_lock_owners[lock_key] = self.conn
+                self.conn.advisory_locks.add(lock_key)
+            else:
+                self.conn.pool.failed_try_locks += 1
+            self.result = {"locked": locked}
+        elif query.startswith("select pg_advisory_unlock"):
+            lock_key = tuple(params)
+            unlocked = self.conn.release_advisory_lock(lock_key)
+            self.result = {"unlocked": unlocked}
+        elif query.startswith("select count(*) filter"):
             user_id, device_digest = params
             matching = [
                 row
@@ -283,23 +300,6 @@ class FakeCursor:
                         "current_state": photo["storage_state"] if photo else None,
                     }
                 )
-        elif query.startswith(
-            "update fm_biometric_enrollment_photo_cleanup set not_before = now()"
-        ):
-            enrollment_id, key = params
-            cleanup_key = (enrollment_id, key)
-            cleanup = next(
-                (
-                    item
-                    for item in self.store.cleanup
-                    if (item["enrollment_id"], item["r2_key"]) == cleanup_key
-                    and item["reason"] == "upload_orphan"
-                ),
-                None,
-            )
-            if cleanup:
-                cleanup["not_before"] = self.store.now
-                self.conn.cleanup_adds[cleanup_key] = copy.deepcopy(cleanup)
         elif query.startswith("delete from fm_biometric_enrollment_photo_cleanup"):
             enrollment_id, key = params
             cleanup_key = (enrollment_id, key)
@@ -404,6 +404,7 @@ class FakeCursor:
                 row["completed_at"] = row.get("completed_at") or NOW
                 self.result = {"id": row["id"]}
         elif query.startswith("select e.status, p.angle, p.r2_key"):
+            self.conn.store.terminal_cleanup_loads += 1
             enrollment_id = params[0]
             enrollment = next(
                 (
@@ -469,11 +470,13 @@ class FakeCursor:
 
 
 class FakeConn:
-    def __init__(self, store):
-        self.store = store
+    def __init__(self, pool):
+        self.pool = pool
+        self.store = pool.store
         self.working = self._snapshot()
         self.cleanup_adds = {}
         self.cleanup_deletes = set()
+        self.advisory_locks = set()
 
     def _snapshot(self):
         working = EnrollmentStore()
@@ -513,6 +516,17 @@ class FakeConn:
         self.cleanup_adds.clear()
         self.cleanup_deletes.clear()
 
+    def release_advisory_lock(self, lock_key):
+        if self.store.advisory_lock_owners.get(lock_key) is not self:
+            return False
+        self.store.advisory_lock_owners.pop(lock_key)
+        self.advisory_locks.discard(lock_key)
+        return True
+
+    async def close(self):
+        for lock_key in tuple(self.advisory_locks):
+            self.release_advisory_lock(lock_key)
+
 
 class FakePool:
     def __init__(self, store):
@@ -522,6 +536,7 @@ class FakePool:
         self.max_checkout_depth = 0
         self.active_checkouts = 0
         self.max_active_checkouts = 0
+        self.failed_try_locks = 0
         self._checkout_depths = {}
 
     def connection(self):
@@ -539,7 +554,7 @@ class FakePool:
             self.max_active_checkouts = max(
                 self.max_active_checkouts, self.active_checkouts
             )
-            conn = FakeConn(self.store)
+            conn = FakeConn(self)
             try:
                 yield conn
             except Exception:
@@ -1605,9 +1620,10 @@ def test_upload_replacement_and_failure_cleanup_never_nest_pool_checkouts(
     assert fake_pool.active_checkouts == 0
 
 
-def test_upload_orphan_lease_blocks_cleanup_after_put_until_metadata_commit(
+def test_upload_fence_blocks_due_orphan_cleanup_beyond_old_lease(
     enrollment_client,
     auth,
+    fake_pool,
     fake_r2,
     enrollment_store,
     monkeypatch,
@@ -1642,6 +1658,7 @@ def test_upload_orphan_lease_blocks_cleanup_after_put_until_metadata_commit(
         )
         assert await asyncio.to_thread(object_stored.wait, 3)
         new_key = fake_r2.puts[-1][0]
+        enrollment_store.now += timedelta(minutes=5, seconds=1)
 
         drained = asyncio.create_task(
             facemarket_enrollment._drain_photo_cleanup(
@@ -1654,6 +1671,8 @@ def test_upload_orphan_lease_blocks_cleanup_after_put_until_metadata_commit(
         assert new_key in fake_r2.objects
         assert [row["r2_key"] for row in enrollment_store.cleanup] == [new_key]
         assert new_key not in fake_r2.deletes
+        assert fake_pool.failed_try_locks == 1
+        assert fake_pool.max_checkout_depth == 1
 
         allow_metadata.set()
         result = await upload
@@ -1665,9 +1684,10 @@ def test_upload_orphan_lease_blocks_cleanup_after_put_until_metadata_commit(
     asyncio.run(scenario())
 
 
-def test_upload_orphan_lease_survives_cancel_before_put_and_expires_for_cleanup(
+def test_cancelled_upload_keeps_fence_until_put_finishes_then_cleans_orphan(
     enrollment_client,
     auth,
+    fake_pool,
     fake_r2,
     enrollment_store,
     monkeypatch,
@@ -1704,10 +1724,9 @@ def test_upload_orphan_lease_survives_cancel_before_put_and_expires_for_cleanup(
         )
         assert await asyncio.to_thread(put_started.wait, 3)
         new_key = enrollment_store.cleanup[0]["r2_key"]
-        assert (
-            enrollment_store.cleanup[0]["not_before"] - enrollment_store.now
-            == facemarket_enrollment.UPLOAD_ORPHAN_LEASE
-        )
+
+        upload.cancel()
+        await asyncio.sleep(0)
 
         drained = asyncio.create_task(
             facemarket_enrollment._drain_photo_cleanup(
@@ -1720,18 +1739,15 @@ def test_upload_orphan_lease_survives_cancel_before_put_and_expires_for_cleanup(
         assert [row["r2_key"] for row in enrollment_store.cleanup] == [new_key]
         assert new_key not in fake_r2.objects
         assert new_key not in fake_r2.deletes
+        assert fake_pool.failed_try_locks == 1
 
-        upload.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await upload
         allow_put.set()
         assert await asyncio.to_thread(put_finished.wait, 3)
+        with pytest.raises(asyncio.CancelledError):
+            await upload
         assert new_key in fake_r2.objects
         assert [row["r2_key"] for row in enrollment_store.cleanup] == [new_key]
 
-        enrollment_store.now = enrollment_store.cleanup[0]["not_before"] + timedelta(
-            seconds=1
-        )
         assert await facemarket_enrollment._drain_photo_cleanup(
             enrollment_client.app,
             enrollment_id=enrollment_id,
@@ -1739,6 +1755,193 @@ def test_upload_orphan_lease_survives_cancel_before_put_and_expires_for_cleanup(
         ) == (1, 0)
         assert new_key not in fake_r2.objects
         assert enrollment_store.cleanup == []
+        assert fake_pool.max_checkout_depth == 1
+
+    asyncio.run(scenario())
+
+
+def test_due_upload_orphan_cleanup_resumes_after_fence_connection_dies(
+    enrollment_client,
+    fake_pool,
+    fake_r2,
+    enrollment_store,
+    auth,
+):
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    key = f"facemarket/enrollments/{enrollment_id}/quarantine/front/orphan.jpg"
+    fake_r2.objects[key] = (b"orphan", "image/jpeg")
+    enrollment_store.cleanup.append(
+        {
+            "enrollment_id": enrollment_id,
+            "angle": "front",
+            "r2_key": key,
+            "reason": "upload_orphan",
+            "created_at": enrollment_store.now,
+            "not_before": enrollment_store.now,
+        }
+    )
+
+    async def scenario():
+        async with fake_pool.connection() as dead_owner:
+            async with dead_owner.cursor() as cur:
+                await cur.execute(
+                    "select pg_try_advisory_lock(%s, hashtext(%s)) as locked",
+                    (PHOTO_FENCE_NAMESPACE, enrollment_id),
+                )
+                assert (await cur.fetchone())["locked"] is True
+
+            skipped = asyncio.create_task(
+                facemarket_enrollment._drain_photo_cleanup(
+                    enrollment_client.app,
+                    enrollment_id=enrollment_id,
+                    key=key,
+                )
+            )
+            assert await asyncio.wait_for(skipped, timeout=0.2) == (0, 0)
+            assert fake_r2.deletes == []
+            assert [row["r2_key"] for row in enrollment_store.cleanup] == [key]
+
+            await dead_owner.close()
+            cleaned = asyncio.create_task(
+                facemarket_enrollment._drain_photo_cleanup(
+                    enrollment_client.app,
+                    enrollment_id=enrollment_id,
+                    key=key,
+                )
+            )
+            assert await asyncio.wait_for(cleaned, timeout=0.2) == (1, 0)
+
+        assert fake_r2.deletes == [key]
+        assert enrollment_store.cleanup == []
+        assert fake_pool.failed_try_locks == 1
+        assert fake_pool.max_checkout_depth == 1
+
+    asyncio.run(scenario())
+
+
+def test_delete_photo_skips_immediately_while_upload_owns_fence(
+    enrollment_client,
+    auth,
+    fake_pool,
+    fake_r2,
+    enrollment_store,
+    monkeypatch,
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    first = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"first", "image/jpeg")},
+        headers=auth(),
+    )
+    assert first.status_code == 201
+    put_started = threading.Event()
+    allow_put = threading.Event()
+    original_put = fake_r2.put_bytes
+
+    def wait_then_put(key, data, mime, cache=None):
+        put_started.set()
+        if not allow_put.wait(timeout=3):
+            raise RuntimeError("test barrier timed out")
+        original_put(key, data, mime, cache)
+
+    monkeypatch.setattr(fake_r2, "put_bytes", wait_then_put)
+
+    async def scenario():
+        request = facemarket_enrollment.Request(
+            {"type": "http", "app": enrollment_client.app}
+        )
+        photo = facemarket_enrollment.UploadFile(
+            io.BytesIO(b"replacement"),
+            filename="front.jpg",
+            headers=Headers({"content-type": "image/jpeg"}),
+        )
+        upload = asyncio.create_task(
+            facemarket_enrollment.upload_enrollment_photo(
+                request, enrollment_id, "front", photo, "user-1"
+            )
+        )
+        assert await asyncio.to_thread(put_started.wait, 3)
+        try:
+            deletion = asyncio.create_task(
+                facemarket_enrollment.delete_enrollment_photo(
+                    request, enrollment_id, "front", "user-1"
+                )
+            )
+            with pytest.raises(facemarket_enrollment.HTTPException) as exc_info:
+                await asyncio.wait_for(deletion, timeout=0.2)
+            assert exc_info.value.status_code == 409
+            assert enrollment_store.photos[0]["storage_state"] == "quarantine"
+            assert fake_r2.deletes == []
+            assert fake_pool.failed_try_locks == 1
+        finally:
+            allow_put.set()
+            await upload
+
+        assert fake_pool.max_checkout_depth == 1
+
+    asyncio.run(scenario())
+
+
+def test_terminal_cleanup_skips_before_row_lock_while_upload_owns_fence(
+    enrollment_client,
+    auth,
+    fake_pool,
+    fake_r2,
+    enrollment_store,
+    monkeypatch,
+):
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    put_started = threading.Event()
+    allow_put = threading.Event()
+    original_put = fake_r2.put_bytes
+
+    def wait_then_put(key, data, mime, cache=None):
+        put_started.set()
+        if not allow_put.wait(timeout=3):
+            raise RuntimeError("test barrier timed out")
+        original_put(key, data, mime, cache)
+
+    monkeypatch.setattr(fake_r2, "put_bytes", wait_then_put)
+
+    async def scenario():
+        request = facemarket_enrollment.Request(
+            {"type": "http", "app": enrollment_client.app}
+        )
+        photo = facemarket_enrollment.UploadFile(
+            io.BytesIO(b"image"),
+            filename="front.jpg",
+            headers=Headers({"content-type": "image/jpeg"}),
+        )
+        upload = asyncio.create_task(
+            facemarket_enrollment.upload_enrollment_photo(
+                request, enrollment_id, "front", photo, "user-1"
+            )
+        )
+        assert await asyncio.to_thread(put_started.wait, 3)
+        enrollment_store.enrollments[0]["status"] = "cancelled"
+
+        cleanup = asyncio.create_task(
+            facemarket_enrollment.cleanup_terminal_enrollment(
+                enrollment_client.app, enrollment_id=enrollment_id
+            )
+        )
+        assert await asyncio.wait_for(cleanup, timeout=0.2) is False
+        assert enrollment_store.terminal_cleanup_loads == 0
+        assert fake_r2.deletes == []
+        assert fake_pool.failed_try_locks == 1
+
+        upload.cancel()
+        allow_put.set()
+        with pytest.raises(asyncio.CancelledError):
+            await upload
+        assert await facemarket_enrollment._drain_photo_cleanup(
+            enrollment_client.app,
+            enrollment_id=enrollment_id,
+        ) == (1, 0)
+        assert fake_pool.max_checkout_depth == 1
 
     asyncio.run(scenario())
 

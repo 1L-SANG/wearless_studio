@@ -22,8 +22,7 @@ router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket biometric enrollme
 
 BIOMETRIC_CONSENT_VERSION = "2026-08-v1"
 ENROLLMENT_TTL = timedelta(hours=24)
-# Longer than the private R2 client's bounded connect/read retry budget.
-UPLOAD_ORPHAN_LEASE = timedelta(minutes=5)
+_PHOTO_FENCE_NAMESPACE = 0x464D5048
 ANGLES = ("front", "angle45", "side")
 MAX_FACE_BYTES = 25 * 1024 * 1024
 ALLOWED_FACE_MIME = {"image/png", "image/jpeg", "image/webp"}
@@ -131,18 +130,46 @@ def _is_r2_not_found(exc: Exception) -> bool:
     }
 
 
-async def _drain_photo_cleanup(
-    app,
+async def _try_photo_fence(conn, enrollment_id: str) -> bool:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select pg_try_advisory_lock(%s, hashtext(%s)) as locked",
+            (_PHOTO_FENCE_NAMESPACE, enrollment_id),
+        )
+        return bool((await cur.fetchone())["locked"])
+
+
+async def _unlock_photo_fence(conn, enrollment_id: str) -> None:
+    await conn.rollback()
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select pg_advisory_unlock(%s, hashtext(%s)) as unlocked",
+            (_PHOTO_FENCE_NAMESPACE, enrollment_id),
+        )
+    await conn.rollback()
+
+
+async def _run_r2_call_until_done(call, *args):
+    task = asyncio.create_task(asyncio.to_thread(call, *args))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        try:
+            await task
+        except Exception:
+            pass
+        raise
+
+
+async def _drain_photo_cleanup_locked(
+    conn,
+    r2,
     *,
     enrollment_id: str,
     angle: str | None = None,
     key: str | None = None,
     reason: str | None = None,
 ) -> tuple[int, int]:
-    pool = getattr(app.state, "pool", None)
-    r2 = getattr(app.state, "r2_face", None)
-    if pool is None or r2 is None:
-        return 0, 1
     clauses = ["c.enrollment_id = %s", "c.not_before <= now()"]
     params: list[str] = [enrollment_id]
     if angle is not None:
@@ -155,22 +182,22 @@ async def _drain_photo_cleanup(
         clauses.append("c.reason = %s")
         params.append(reason)
     try:
-        async with pool.connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    f"""
-                    select c.angle, c.r2_key, c.reason, p.storage_state as current_state
-                    from fm_biometric_enrollment_photo_cleanup c
-                    left join fm_biometric_enrollment_photos p
-                      on p.enrollment_id = c.enrollment_id
-                     and p.angle = c.angle and p.r2_key = c.r2_key
-                    where {' and '.join(clauses)}
-                    order by c.created_at
-                    """,
-                    tuple(params),
-                )
-                rows = await cur.fetchall()
+        async with conn.cursor() as cur:
+            await cur.execute(
+                f"""
+                select c.angle, c.r2_key, c.reason, p.storage_state as current_state
+                from fm_biometric_enrollment_photo_cleanup c
+                left join fm_biometric_enrollment_photos p
+                  on p.enrollment_id = c.enrollment_id
+                 and p.angle = c.angle and p.r2_key = c.r2_key
+                where {' and '.join(clauses)}
+                order by c.created_at
+                """,
+                tuple(params),
+            )
+            rows = await cur.fetchall()
     except Exception as exc:
+        await conn.rollback()
         logger.warning(
             "facemarket_enrollment_photo_cleanup_load_failed",
             extra={
@@ -189,7 +216,7 @@ async def _drain_photo_cleanup(
         else:
             delete_object = True
             try:
-                await asyncio.to_thread(r2.delete, row["r2_key"])
+                await _run_r2_call_until_done(r2.delete, row["r2_key"])
             except Exception as exc:
                 if not _is_r2_not_found(exc):
                     failed_count += 1
@@ -203,26 +230,26 @@ async def _drain_photo_cleanup(
                     )
                     continue
         try:
-            async with pool.connection() as conn:
-                async with conn.cursor() as cur:
-                    if delete_object:
-                        await cur.execute(
-                            """
-                            delete from fm_biometric_enrollment_photos
-                            where enrollment_id = %s and angle = %s and r2_key = %s
-                              and storage_state = 'delete_pending'
-                            """,
-                            (enrollment_id, row["angle"], row["r2_key"]),
-                        )
+            async with conn.cursor() as cur:
+                if delete_object:
                     await cur.execute(
                         """
-                        delete from fm_biometric_enrollment_photo_cleanup
-                        where enrollment_id = %s and r2_key = %s
+                        delete from fm_biometric_enrollment_photos
+                        where enrollment_id = %s and angle = %s and r2_key = %s
+                          and storage_state = 'delete_pending'
                         """,
-                        (enrollment_id, row["r2_key"]),
+                        (enrollment_id, row["angle"], row["r2_key"]),
                     )
-                await conn.commit()
+                await cur.execute(
+                    """
+                    delete from fm_biometric_enrollment_photo_cleanup
+                    where enrollment_id = %s and r2_key = %s
+                    """,
+                    (enrollment_id, row["r2_key"]),
+                )
+            await conn.commit()
         except Exception as exc:
+            await conn.rollback()
             failed_count += 1
             logger.warning(
                 "facemarket_enrollment_photo_cleanup_commit_failed",
@@ -237,35 +264,43 @@ async def _drain_photo_cleanup(
     return deleted_count, failed_count
 
 
-async def _make_upload_cleanup_due(
-    app, *, enrollment_id: str, key: str
-) -> bool:
+async def _drain_photo_cleanup(
+    app,
+    *,
+    enrollment_id: str,
+    angle: str | None = None,
+    key: str | None = None,
+    reason: str | None = None,
+) -> tuple[int, int]:
     pool = getattr(app.state, "pool", None)
-    if pool is None:
-        return False
+    r2 = getattr(app.state, "r2_face", None)
+    if pool is None or r2 is None:
+        return 0, 1
     try:
         async with pool.connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    update fm_biometric_enrollment_photo_cleanup
-                    set not_before = now()
-                    where enrollment_id = %s and r2_key = %s
-                      and reason = 'upload_orphan'
-                    """,
-                    (enrollment_id, key),
+            if not await _try_photo_fence(conn, enrollment_id):
+                return 0, 0
+            try:
+                return await _drain_photo_cleanup_locked(
+                    conn,
+                    r2,
+                    enrollment_id=enrollment_id,
+                    angle=angle,
+                    key=key,
+                    reason=reason,
                 )
-            await conn.commit()
-        return True
+            finally:
+                await _unlock_photo_fence(conn, enrollment_id)
     except Exception as exc:
         logger.warning(
-            "facemarket_enrollment_photo_cleanup_release_failed",
+            "facemarket_enrollment_photo_cleanup_load_failed",
             extra={
                 "enrollment_id": enrollment_id,
+                "angle": angle,
                 "error_type": type(exc).__name__,
             },
         )
-        return False
+        return 0, 1
 
 
 async def _load_current_enrollment(conn, user_id: str) -> dict | None:
@@ -487,6 +522,7 @@ async def upload_enrollment_photo(
             enrollment_id, angle, ext, version=uuid.uuid4().hex
         )
         old_key = None
+        intent_committed = False
         try:
             async with get_conn(request) as conn:
                 row = await _load_owned_enrollment(conn, enrollment_id, user_id)
@@ -498,129 +534,143 @@ async def upload_enrollment_photo(
                 reason="upload_orphan",
             )
             async with get_conn(request) as conn:
-                await _lock_photo_mutation_enrollment(conn, enrollment_id, user_id)
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        select r2_key, storage_state
-                        from fm_biometric_enrollment_photos
-                        where enrollment_id = %s and angle = %s
-                        """,
-                        (enrollment_id, angle),
-                    )
-                    old = await cur.fetchone()
-                    if old and old["storage_state"] == "delete_pending":
-                        raise _err(
-                            "photo_cleanup_pending",
-                            "이전 사진 정리를 마친 뒤 다시 시도해 주세요.",
-                            status=409,
-                        )
-                    await cur.execute(
-                        """
-                        insert into fm_biometric_enrollment_photo_cleanup
-                            (enrollment_id, angle, r2_key, reason, not_before)
-                        values (%s, %s, %s, 'upload_orphan', now() + %s)
-                        on conflict (enrollment_id, r2_key) do nothing
-                        """,
-                        (enrollment_id, angle, new_key, UPLOAD_ORPHAN_LEASE),
-                    )
-                await conn.commit()
-            async with get_conn(request) as conn:
-                await _lock_photo_mutation_enrollment(conn, enrollment_id, user_id)
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        select r2_key, storage_state
-                        from fm_biometric_enrollment_photos
-                        where enrollment_id = %s and angle = %s
-                        """,
-                        (enrollment_id, angle),
-                    )
-                    old = await cur.fetchone()
-                    if old and old["storage_state"] == "delete_pending":
-                        raise _err(
-                            "photo_cleanup_pending",
-                            "이전 사진 정리를 마친 뒤 다시 시도해 주세요.",
-                            status=409,
-                        )
-                    old_key = old["r2_key"] if old else None
-                try:
-                    await asyncio.to_thread(r2.put_bytes, new_key, data, mime)
-                except Exception as exc:
-                    logger.warning(
-                        "facemarket_enrollment_photo_store_failed",
-                        extra={
-                            "enrollment_id": enrollment_id,
-                            "angle": angle,
-                            "error_type": type(exc).__name__,
-                        },
-                    )
+                if not await _try_photo_fence(conn, enrollment_id):
                     raise _err(
-                        "storage_unavailable",
-                        "얼굴 저장소를 사용할 수 없습니다.",
-                        status=503,
+                        "photo_cleanup_pending",
+                        "이전 사진 정리를 마친 뒤 다시 시도해 주세요.",
+                        status=409,
                     )
-                async with conn.cursor() as cur:
-                    if old_key and old_key != new_key:
+                try:
+                    await _lock_photo_mutation_enrollment(conn, enrollment_id, user_id)
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            """
+                            select r2_key, storage_state
+                            from fm_biometric_enrollment_photos
+                            where enrollment_id = %s and angle = %s
+                            """,
+                            (enrollment_id, angle),
+                        )
+                        old = await cur.fetchone()
+                        if old and old["storage_state"] == "delete_pending":
+                            raise _err(
+                                "photo_cleanup_pending",
+                                "이전 사진 정리를 마친 뒤 다시 시도해 주세요.",
+                                status=409,
+                            )
                         await cur.execute(
                             """
                             insert into fm_biometric_enrollment_photo_cleanup
                                 (enrollment_id, angle, r2_key, reason)
-                            values (%s, %s, %s, 'superseded')
-                            on conflict (enrollment_id, r2_key) do update
-                            set reason = 'superseded'
+                            values (%s, %s, %s, 'upload_orphan')
+                            on conflict (enrollment_id, r2_key) do nothing
                             """,
-                            (enrollment_id, angle, old_key),
+                            (enrollment_id, angle, new_key),
                         )
-                    await cur.execute(
-                        """
-                        insert into fm_biometric_enrollment_photos
-                            (enrollment_id, angle, r2_key, image_digest, mime_type, byte_size)
-                        values (%s, %s, %s, %s, %s, %s)
-                        on conflict (enrollment_id, angle) do update set
-                            r2_key = excluded.r2_key,
-                            image_digest = excluded.image_digest,
-                            mime_type = excluded.mime_type,
-                            byte_size = excluded.byte_size,
-                            qc_status = 'passed',
-                            storage_state = 'quarantine',
-                            uploaded_at = now(),
-                            approved_at = null
-                        returning uploaded_at
-                        """,
-                        (enrollment_id, angle, new_key, sha256_sri(data), mime, len(data)),
-                    )
-                    uploaded_at = (await cur.fetchone())["uploaded_at"]
-                    await cur.execute(
-                        """
-                        delete from fm_biometric_enrollment_photo_cleanup
-                        where enrollment_id = %s and r2_key = %s
-                        """,
-                        (enrollment_id, new_key),
-                    )
-                    await cur.execute(
-                        """
-                        select count(*) as passed_count
-                        from fm_biometric_enrollment_photos
-                        where enrollment_id = %s and qc_status = 'passed'
-                          and storage_state = 'quarantine'
-                        """,
-                        (enrollment_id,),
-                    )
-                    if (await cur.fetchone())["passed_count"] == len(ANGLES):
+                    await conn.commit()
+                    intent_committed = True
+                    try:
+                        await _run_r2_call_until_done(r2.put_bytes, new_key, data, mime)
+                    except Exception as exc:
+                        logger.warning(
+                            "facemarket_enrollment_photo_store_failed",
+                            extra={
+                                "enrollment_id": enrollment_id,
+                                "angle": angle,
+                                "error_type": type(exc).__name__,
+                            },
+                        )
+                        raise _err(
+                            "storage_unavailable",
+                            "얼굴 저장소를 사용할 수 없습니다.",
+                            status=503,
+                        )
+
+                    await _lock_photo_mutation_enrollment(conn, enrollment_id, user_id)
+                    async with conn.cursor() as cur:
                         await cur.execute(
                             """
-                            update fm_biometric_enrollments set status = 'liveness_pending'
-                            where id = %s and user_id = %s and status = 'photos_pending'
+                            select r2_key, storage_state
+                            from fm_biometric_enrollment_photos
+                            where enrollment_id = %s and angle = %s
                             """,
-                            (enrollment_id, user_id),
+                            (enrollment_id, angle),
                         )
-                await conn.commit()
+                        old = await cur.fetchone()
+                        if old and old["storage_state"] == "delete_pending":
+                            raise _err(
+                                "photo_cleanup_pending",
+                                "이전 사진 정리를 마친 뒤 다시 시도해 주세요.",
+                                status=409,
+                            )
+                        old_key = old["r2_key"] if old else None
+                        if old_key and old_key != new_key:
+                            await cur.execute(
+                                """
+                                insert into fm_biometric_enrollment_photo_cleanup
+                                    (enrollment_id, angle, r2_key, reason)
+                                values (%s, %s, %s, 'superseded')
+                                on conflict (enrollment_id, r2_key) do update
+                                set reason = 'superseded'
+                                """,
+                                (enrollment_id, angle, old_key),
+                            )
+                        await cur.execute(
+                            """
+                            insert into fm_biometric_enrollment_photos
+                                (enrollment_id, angle, r2_key, image_digest, mime_type, byte_size)
+                            values (%s, %s, %s, %s, %s, %s)
+                            on conflict (enrollment_id, angle) do update set
+                                r2_key = excluded.r2_key,
+                                image_digest = excluded.image_digest,
+                                mime_type = excluded.mime_type,
+                                byte_size = excluded.byte_size,
+                                qc_status = 'passed',
+                                storage_state = 'quarantine',
+                                uploaded_at = now(),
+                                approved_at = null
+                            returning uploaded_at
+                            """,
+                            (
+                                enrollment_id,
+                                angle,
+                                new_key,
+                                sha256_sri(data),
+                                mime,
+                                len(data),
+                            ),
+                        )
+                        uploaded_at = (await cur.fetchone())["uploaded_at"]
+                        await cur.execute(
+                            """
+                            delete from fm_biometric_enrollment_photo_cleanup
+                            where enrollment_id = %s and r2_key = %s
+                            """,
+                            (enrollment_id, new_key),
+                        )
+                        await cur.execute(
+                            """
+                            select count(*) as passed_count
+                            from fm_biometric_enrollment_photos
+                            where enrollment_id = %s and qc_status = 'passed'
+                              and storage_state = 'quarantine'
+                            """,
+                            (enrollment_id,),
+                        )
+                        if (await cur.fetchone())["passed_count"] == len(ANGLES):
+                            await cur.execute(
+                                """
+                                update fm_biometric_enrollments set status = 'liveness_pending'
+                                where id = %s and user_id = %s and status = 'photos_pending'
+                                """,
+                                (enrollment_id, user_id),
+                            )
+                    await conn.commit()
+                    intent_committed = False
+                finally:
+                    await _unlock_photo_fence(conn, enrollment_id)
         except Exception as db_error:
-            if new_key is not None:
-                await _make_upload_cleanup_due(
-                    request.app, enrollment_id=enrollment_id, key=new_key
-                )
+            if intent_committed:
                 await _drain_photo_cleanup(
                     request.app, enrollment_id=enrollment_id, key=new_key
                 )
@@ -660,58 +710,79 @@ async def delete_enrollment_photo(
 ):
     if angle not in ANGLES:
         raise _err("invalid_angle", "사진 각도를 확인해 주세요.")
-    _r2_face(request)
+    r2 = _r2_face(request)
     try:
         async with get_conn(request) as conn:
-            await _lock_photo_mutation_enrollment(conn, enrollment_id, user_id)
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    select r2_key, storage_state
-                    from fm_biometric_enrollment_photos
-                    where enrollment_id = %s and angle = %s
-                    """,
-                    (enrollment_id, angle),
+            if not await _try_photo_fence(conn, enrollment_id):
+                raise _err(
+                    "photo_cleanup_pending",
+                    "이전 사진 정리를 마친 뒤 다시 시도해 주세요.",
+                    status=409,
                 )
-                photo = await cur.fetchone()
-                if photo is not None:
-                    if photo["storage_state"] not in {
-                        "quarantine",
-                        "delete_pending",
-                    }:
-                        raise _err(
-                            "invalid_enrollment_state",
-                            "현재 등록 단계에서는 사진을 변경할 수 없습니다.",
-                            status=409,
+            try:
+                await _lock_photo_mutation_enrollment(conn, enrollment_id, user_id)
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        select r2_key, storage_state
+                        from fm_biometric_enrollment_photos
+                        where enrollment_id = %s and angle = %s
+                        """,
+                        (enrollment_id, angle),
+                    )
+                    photo = await cur.fetchone()
+                    if photo is not None:
+                        if photo["storage_state"] not in {
+                            "quarantine",
+                            "delete_pending",
+                        }:
+                            raise _err(
+                                "invalid_enrollment_state",
+                                "현재 등록 단계에서는 사진을 변경할 수 없습니다.",
+                                status=409,
+                            )
+                        await cur.execute(
+                            """
+                            update fm_biometric_enrollment_photos
+                            set storage_state = 'delete_pending'
+                            where enrollment_id = %s and angle = %s and r2_key = %s
+                            """,
+                            (enrollment_id, angle, photo["r2_key"]),
                         )
-                    await cur.execute(
-                        """
-                        update fm_biometric_enrollment_photos
-                        set storage_state = 'delete_pending'
-                        where enrollment_id = %s and angle = %s and r2_key = %s
-                        """,
-                        (enrollment_id, angle, photo["r2_key"]),
+                        await cur.execute(
+                            """
+                            insert into fm_biometric_enrollment_photo_cleanup
+                                (enrollment_id, angle, r2_key, reason)
+                            values (%s, %s, %s, 'delete')
+                            on conflict (enrollment_id, r2_key) do update
+                            set reason = 'delete'
+                            """,
+                            (enrollment_id, angle, photo["r2_key"]),
+                        )
+                        await cur.execute(
+                            """
+                            update fm_biometric_enrollments set status = 'photos_pending'
+                            where id = %s and user_id = %s
+                              and status = 'liveness_pending'
+                              and liveness_session_digest is null
+                            """,
+                            (enrollment_id, user_id),
+                        )
+                await conn.commit()
+                _, failed_count = await _drain_photo_cleanup_locked(
+                    conn,
+                    r2,
+                    enrollment_id=enrollment_id,
+                    angle=angle,
+                )
+                if failed_count:
+                    raise _err(
+                        "storage_unavailable",
+                        "얼굴 저장소를 사용할 수 없습니다.",
+                        status=503,
                     )
-                    await cur.execute(
-                        """
-                        insert into fm_biometric_enrollment_photo_cleanup
-                            (enrollment_id, angle, r2_key, reason)
-                        values (%s, %s, %s, 'delete')
-                        on conflict (enrollment_id, r2_key) do update
-                        set reason = 'delete'
-                        """,
-                        (enrollment_id, angle, photo["r2_key"]),
-                    )
-                    await cur.execute(
-                        """
-                        update fm_biometric_enrollments set status = 'photos_pending'
-                        where id = %s and user_id = %s
-                          and status = 'liveness_pending'
-                          and liveness_session_digest is null
-                        """,
-                        (enrollment_id, user_id),
-                    )
-            await conn.commit()
+            finally:
+                await _unlock_photo_fence(conn, enrollment_id)
     except HTTPException:
         raise
     except Exception as exc:
@@ -728,15 +799,6 @@ async def delete_enrollment_photo(
             "서버가 잠시 응답하지 않아요. 잠시 후 다시 시도해 주세요.",
             status=503,
         )
-    _, failed_count = await _drain_photo_cleanup(
-        request.app, enrollment_id=enrollment_id, angle=angle
-    )
-    if failed_count:
-        raise _err(
-            "storage_unavailable",
-            "얼굴 저장소를 사용할 수 없습니다.",
-            status=503,
-        )
     return Response(status_code=204)
 
 
@@ -748,45 +810,111 @@ async def cleanup_terminal_enrollment(app, *, enrollment_id: str) -> bool:
 
     try:
         async with pool.connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    select e.status, p.angle, p.r2_key, p.storage_state
-                    from fm_biometric_enrollments e
-                    left join fm_biometric_enrollment_photos p
-                      on p.enrollment_id = e.id
-                     and p.storage_state in ('quarantine', 'delete_pending')
-                    where e.id = %s
-                      and e.status in ('failed', 'cancelled', 'expired')
-                    for update of e
-                    """,
-                    (enrollment_id,),
-                )
-                rows = await cur.fetchall()
-                if not rows:
+            if not await _try_photo_fence(conn, enrollment_id):
+                return False
+            try:
+                try:
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            """
+                            select e.status, p.angle, p.r2_key, p.storage_state
+                            from fm_biometric_enrollments e
+                            left join fm_biometric_enrollment_photos p
+                              on p.enrollment_id = e.id
+                             and p.storage_state in ('quarantine', 'delete_pending')
+                            where e.id = %s
+                              and e.status in ('failed', 'cancelled', 'expired')
+                            for update of e
+                            """,
+                            (enrollment_id,),
+                        )
+                        rows = await cur.fetchall()
+                        if not rows:
+                            return False
+                        for row in rows:
+                            if row.get("r2_key") is None:
+                                continue
+                            await cur.execute(
+                                """
+                                update fm_biometric_enrollment_photos
+                                set storage_state = 'delete_pending'
+                                where enrollment_id = %s and angle = %s and r2_key = %s
+                                """,
+                                (enrollment_id, row["angle"], row["r2_key"]),
+                            )
+                            await cur.execute(
+                                """
+                                insert into fm_biometric_enrollment_photo_cleanup
+                                    (enrollment_id, angle, r2_key, reason)
+                                values (%s, %s, %s, 'delete')
+                                on conflict (enrollment_id, r2_key) do update
+                                set reason = 'delete'
+                                """,
+                                (enrollment_id, row["angle"], row["r2_key"]),
+                            )
+                    await conn.commit()
+                except Exception as exc:
+                    await conn.rollback()
+                    logger.warning(
+                        "facemarket_enrollment_cleanup_prepare_failed",
+                        extra={
+                            "enrollment_id": enrollment_id,
+                            "error_type": type(exc).__name__,
+                        },
+                    )
                     return False
-                for row in rows:
-                    if row.get("r2_key") is None:
-                        continue
-                    await cur.execute(
-                        """
-                        update fm_biometric_enrollment_photos
-                        set storage_state = 'delete_pending'
-                        where enrollment_id = %s and angle = %s and r2_key = %s
-                        """,
-                        (enrollment_id, row["angle"], row["r2_key"]),
+
+                deleted_count, failed_count = await _drain_photo_cleanup_locked(
+                    conn,
+                    r2,
+                    enrollment_id=enrollment_id,
+                )
+                try:
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            """
+                            select (
+                                select count(*) from fm_biometric_enrollment_photos
+                                where enrollment_id = %s
+                                  and storage_state in ('quarantine', 'delete_pending')
+                            ) + (
+                                select count(*) from fm_biometric_enrollment_photo_cleanup
+                                where enrollment_id = %s
+                            ) as remaining
+                            """,
+                            (enrollment_id, enrollment_id),
+                        )
+                        remaining = (await cur.fetchone())["remaining"]
+                        await cur.execute(
+                            """
+                            update fm_biometric_enrollments
+                            set raw_deletion_evidence = coalesce(raw_deletion_evidence, '{}'::jsonb)
+                                || jsonb_build_object(
+                                    'quarantineDeleted', %s,
+                                    'quarantineDeletedCount',
+                                        coalesce((raw_deletion_evidence->>'quarantineDeletedCount')::int, 0) + %s,
+                                    'quarantineDeleteFailedCount',
+                                        coalesce((raw_deletion_evidence->>'quarantineDeleteFailedCount')::int, 0) + %s,
+                                    'quarantineCleanupAt', now()
+                                )
+                            where id = %s and status in ('failed', 'cancelled', 'expired')
+                            """,
+                            (remaining == 0, deleted_count, failed_count, enrollment_id),
+                        )
+                    await conn.commit()
+                except Exception as exc:
+                    await conn.rollback()
+                    logger.warning(
+                        "facemarket_enrollment_cleanup_evidence_failed",
+                        extra={
+                            "enrollment_id": enrollment_id,
+                            "error_type": type(exc).__name__,
+                        },
                     )
-                    await cur.execute(
-                        """
-                        insert into fm_biometric_enrollment_photo_cleanup
-                            (enrollment_id, angle, r2_key, reason)
-                        values (%s, %s, %s, 'delete')
-                        on conflict (enrollment_id, r2_key) do update
-                        set reason = 'delete'
-                        """,
-                        (enrollment_id, row["angle"], row["r2_key"]),
-                    )
-            await conn.commit()
+                    return False
+                return remaining == 0
+            finally:
+                await _unlock_photo_fence(conn, enrollment_id)
     except Exception as exc:
         logger.warning(
             "facemarket_enrollment_cleanup_prepare_failed",
@@ -796,54 +924,6 @@ async def cleanup_terminal_enrollment(app, *, enrollment_id: str) -> bool:
             },
         )
         return False
-
-    deleted_count, failed_count = await _drain_photo_cleanup(
-        app, enrollment_id=enrollment_id
-    )
-    try:
-        async with pool.connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    select (
-                        select count(*) from fm_biometric_enrollment_photos
-                        where enrollment_id = %s
-                          and storage_state in ('quarantine', 'delete_pending')
-                    ) + (
-                        select count(*) from fm_biometric_enrollment_photo_cleanup
-                        where enrollment_id = %s
-                    ) as remaining
-                    """,
-                    (enrollment_id, enrollment_id),
-                )
-                remaining = (await cur.fetchone())["remaining"]
-                await cur.execute(
-                    """
-                    update fm_biometric_enrollments
-                    set raw_deletion_evidence = coalesce(raw_deletion_evidence, '{}'::jsonb)
-                        || jsonb_build_object(
-                            'quarantineDeleted', %s,
-                            'quarantineDeletedCount',
-                                coalesce((raw_deletion_evidence->>'quarantineDeletedCount')::int, 0) + %s,
-                            'quarantineDeleteFailedCount',
-                                coalesce((raw_deletion_evidence->>'quarantineDeleteFailedCount')::int, 0) + %s,
-                            'quarantineCleanupAt', now()
-                        )
-                    where id = %s and status in ('failed', 'cancelled', 'expired')
-                    """,
-                    (remaining == 0, deleted_count, failed_count, enrollment_id),
-                )
-            await conn.commit()
-    except Exception as exc:
-        logger.warning(
-            "facemarket_enrollment_cleanup_evidence_failed",
-            extra={
-                "enrollment_id": enrollment_id,
-                "error_type": type(exc).__name__,
-            },
-        )
-        return False
-    return remaining == 0
 
 
 @router.post("/enrollments/{enrollment_id}/cancel", response_model=EnrollmentView)
