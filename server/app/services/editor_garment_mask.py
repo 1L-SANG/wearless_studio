@@ -25,6 +25,7 @@ import logging
 import uuid
 
 from app import repo
+from app.services import sam_retry
 
 log = logging.getLogger(__name__)
 
@@ -62,17 +63,13 @@ KNOWN_CATEGORIES = ("top", "outer", "bottom", "dress")
 MATCH_GUARD_VERSION = "main-garment-guard-v1"
 
 
-#: 일시 장애(unavailable·unverified) 재시도 상한. 상한이 없으면 죽은 SAM 을 향해 잡이
-#: 계속 쌓여 복구 순간 몰매를 놓는다(2026-08-18).
-TONE_MASK_MAX_RETRIES = 3
-
-#: 직전 세대 종결 뒤 다음 세대를 허용하기까지의 최소 간격. 연결 거부처럼 1초 안에 끝나는
-#: 장애도 4초 폴링마다 예산을 태우지 않도록 세대가 오를수록 복구 시간을 더 준다.
-TONE_MASK_RETRY_BACKOFF_SECONDS = (15, 60, 120)
-
-#: 이 상태로 끝난 잡은 판정이 아니라 인프라 장애다 — 같은 입력을 다시 돌리면 답이 바뀔 수
-#: 있다. 반대로 no_garment 류 판정 실패는 재시도해도 같은 답이므로 여기 없다.
-TONE_MASK_RETRYABLE_STATES = ("unavailable", "unverified")
+#: 재시도 정책(상한·백오프·재시도 가능 상태)은 `sam_retry` 가 단일 출처다 — 세 SAM 잡
+#: (톤 마스크·sam_preprocess·matching_cutout)이 같은 예산을 써야 한다(2026-08-21). 값의
+#: 근거(5분 상한 = 오너 결정, 콜드스타트 실측)는 그 모듈 주석에 있다.
+#: 이 이름들은 기존 호출부·테스트 호환을 위해 남긴다.
+TONE_MASK_MAX_RETRIES = sam_retry.MAX_RETRIES
+TONE_MASK_RETRY_BACKOFF_SECONDS = sam_retry.BACKOFF_SECONDS
+TONE_MASK_RETRYABLE_STATES = sam_retry.RETRYABLE_STATES
 
 #: SAM 서비스가 HTTP 200 안에서 돌려주는 실패 중 다시 실행하면 회복될 수 있는 것들.
 #: 입력 자체의 판정인 source_rejected·no_garment_candidate 는 의도적으로 제외한다.

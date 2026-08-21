@@ -50,7 +50,11 @@ image:
 cpu: 4096
 memory: 8192
 platform: linux/x86_64
-count: 1
+# 평소 0대(2026-08-21, 오너 승인). api 의 reconciler 가 수요에 따라 1대로 올리고 30분 유휴면
+# 내린다 — copilot/api/manifest.yml SAM_AUTOSCALE 참고. 여기를 1로 되돌리면 배포마다 상시
+# 가동(월 ~$169)으로 복귀한다(그게 의도라면 api 의 SAM_AUTOSCALE 도 off 로).
+# Copilot 의 Count 타입은 "0 is a valid value" 로 명시돼 있다(v1.34.1 소스).
+count: 0
 exec: true
 
 network:

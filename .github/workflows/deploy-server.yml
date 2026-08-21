@@ -16,6 +16,7 @@ on:
             - "server/.dockerignore"
             - "supabase/migrations/**"
             - "copilot/api/manifest.yml"
+            - "copilot/api/addons/**"
             - ".github/workflows/deploy-server.yml"
     pull_request:
         branches: [main]
@@ -30,6 +31,7 @@ on:
             - "server/.dockerignore"
             - "supabase/migrations/**"
             - "copilot/api/manifest.yml"
+            - "copilot/api/addons/**"
             - ".github/workflows/deploy-server.yml"
     workflow_dispatch: {} # 수동 배포 버튼
 
@@ -89,6 +91,7 @@ jobs:
                         - 'server/Dockerfile'
                         - 'server/.dockerignore'
                         - 'copilot/api/manifest.yml'
+                        - 'copilot/api/addons/**'
                         - 'supabase/migrations/**'
                         - '.github/workflows/deploy-server.yml'
 
@@ -111,7 +114,7 @@ jobs:
             - name: Copilot CLI 설치
               run: |
                   curl -Lo /usr/local/bin/copilot \
-                    https://github.com/aws/copilot-cli/releases/latest/download/copilot-linux
+                    https://github.com/aws/copilot-cli/releases/download/v1.34.1/copilot-linux
                   chmod +x /usr/local/bin/copilot
 
             # DB 마이그레이션이 **가장 먼저**다. 새 job kind 는 코드(워커·라우트)와 DB

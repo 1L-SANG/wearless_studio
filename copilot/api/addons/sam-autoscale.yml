@@ -1,0 +1,92 @@
+# sam2 온디맨드 기동/종료(2026-08-21)가 api 태스크에 요구하는 권한과 알림 토픽.
+#
+# 수동으로 만들지 않는다 — 이 저장소는 raw `aws ssm put-parameter` 로 만든 시크릿에 Copilot 태그가
+# 없어 태스크가 못 읽던 사고를 겪었다(copilot/api/manifest.yml, 2026-07-17). addon 은 Copilot 이
+# 같은 스택 안에서 만들고 지운다.
+#
+# Copilot workload addon 규약:
+#   - Parameters App/Env/Name 필수
+#   - Outputs 중 `PolicyArn` 으로 끝나는 ManagedPolicy ARN → task role 에 자동 부착
+#   - 그 외 Outputs → 컨테이너 환경변수로 자동 주입 (SamAlertTopicArn → SAM_ALERT_TOPIC_ARN)
+#
+# 정본: docs/superpowers/specs/2026-08-21-sam2-on-demand-scaling-design.md §8~§9
+Parameters:
+  App:
+    Type: String
+  Env:
+    Type: String
+  Name:
+    Type: String
+
+Resources:
+  SamAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${App}-${Env}-sam-autoscale-alerts'
+
+  # Topic 에 임베드하지 않고 별도 리소스로 — 임베드하면 Topic 삭제 시 구독이 같이 안 지워질 수 있다.
+  # 배포 시점에 확인 메일이 간다. 오너가 링크를 1회 클릭해야 알림이 살아난다.
+  SamAlertEmail:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref SamAlertTopic
+      Protocol: email
+      Endpoint: dlftkd3269@gmail.com
+
+  SamAutoscalePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # ListClusters/ListServices 는 ARN 리소스가 없는 액션. 클러스터부터 나열하는 이유는
+          # COPILOT_* 환경변수에 클러스터 ARN 이 없기 때문이다(실측 2026-08-21).
+          - Sid: Discover
+            Effect: Allow
+            Action:
+              - ecs:ListClusters
+              - ecs:ListServices
+            Resource: '*'
+          # ListTasks 도 ARN 리소스가 없는 액션 — ecs:cluster 조건으로 이 환경 클러스터만.
+          - Sid: ListTasksInEnvCluster
+            Effect: Allow
+            Action: ecs:ListTasks
+            Resource: '*'
+            Condition:
+              ArnLike:
+                ecs:cluster: !Sub 'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:cluster/${App}-${Env}-Cluster-*'
+          # 읽기는 이 클러스터의 서비스·태스크로. Copilot 클러스터명은 스택마다 접미사가 붙으므로
+          # 패턴으로 건다.
+          - Sid: Inspect
+            Effect: Allow
+            Action:
+              - ecs:DescribeServices
+              - ecs:DescribeTasks
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:cluster/${App}-${Env}-Cluster-*'
+              - !Sub 'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:service/${App}-${Env}-Cluster-*/*'
+              - !Sub 'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${App}-${Env}-Cluster-*/*'
+          # 대수 변경은 **sam2 서비스 하나**만. 태그 조건이 api 자신을 포함한 다른 서비스를 막는다
+          # (IAM 정책 시뮬레이터 실측 2026-08-21: sam2 allowed / api implicitDeny).
+          - Sid: ScaleSam2Only
+            Effect: Allow
+            Action: ecs:UpdateService
+            Resource: !Sub 'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:service/${App}-${Env}-Cluster-*/*'
+            Condition:
+              StringEquals:
+                aws:ResourceTag/copilot-application: !Ref App
+                aws:ResourceTag/copilot-environment: !Ref Env
+                aws:ResourceTag/copilot-service: sam2
+          - Sid: Alert
+            Effect: Allow
+            Action: sns:Publish
+            Resource: !Ref SamAlertTopic
+
+Outputs:
+  # `PolicyArn` 으로 끝나는 ManagedPolicy Output 은 Copilot 이 task role 에 자동 부착한다.
+  SamAutoscalePolicyArn:
+    Value: !Ref SamAutoscalePolicy
+  # 일반 Output 은 Copilot 이 **SAM_ALERT_TOPIC_ARN 환경변수로 자동 주입**한다 — 매니페스트에
+  # 따로 쓰지 않는다. config.py 가 그 이름을 읽는다.
+  SamAlertTopicArn:
+    Value: !Ref SamAlertTopic

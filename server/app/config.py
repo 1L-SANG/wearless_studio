@@ -174,6 +174,11 @@ class Settings:
     #: 톤 에디터(색감·밝기). off = 마스크 전처리도, 에디터 API 도 열리지 않는다.
     mannequin_tone_editor: str = "off"
     matching_cutout: str = "off"  # 커스텀 매칭 의류 누끼(배경 제거). off면 잡 안 돎.
+    # sam2 온디맨드 기동/종료(2026-08-21). off 면 ECS/SNS 클라이언트를 만들지도 않는다 —
+    # 로컬·테스트는 AWS 를 모른다. 정본: docs/superpowers/specs/2026-08-21-sam2-on-demand-scaling-design.md
+    sam_autoscale: str = "off"
+    sam_autoscale_idle_minutes: int = 30   # 마지막 수요로부터 이 시간 지나면 0대 (오너 결정)
+    sam_alert_topic_arn: str | None = None # addon Output 이 환경변수로 주입. 없으면 알림만 조용히 생략
     # 누끼 성공본을 시드 카탈로그와 같은 정면 flat-lay 로 재렌더(카드 썸네일 1장, 무과금
     # 잡 안에서 이미지 호출 1회). off면 생성 자체가 없다. matching_cutout 이 켜져 있고
     # 누끼가 성공한 경우에만 의미가 있다.
@@ -348,6 +353,17 @@ def _flag(env: str, default: str, allowed: set[str]) -> str:
     return v if v in allowed else default
 
 
+def _int_env(env: str, default: int) -> int:
+    """보조 기능의 정수 설정 — 오타가 API 기동을 죽이면 안 되므로 기본값으로 폴백한다."""
+    raw = (os.getenv(env) or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 def load_settings() -> Settings:
     app_env = os.getenv("APP_ENV", "dev")
     supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
@@ -377,6 +393,9 @@ def load_settings() -> Settings:
         r2_face_bucket=os.getenv("R2_FACE_BUCKET") or None,
         sam_service_url=(os.getenv("SAM_SERVICE_URL") or "").rstrip("/") or None,
         sam_internal_token=os.getenv("SAM_INTERNAL_TOKEN") or None,
+        sam_autoscale=_flag("SAM_AUTOSCALE", "off", {"off", "on"}),
+        sam_autoscale_idle_minutes=_int_env("SAM_AUTOSCALE_IDLE_MINUTES", 30),
+        sam_alert_topic_arn=os.getenv("SAM_ALERT_TOPIC_ARN") or None,
         sam_request_timeout_s=float(os.getenv("SAM_REQUEST_TIMEOUT_S") or 90.0),
         example_asset_base_url=(os.getenv("EXAMPLE_ASSET_BASE_URL") or "").rstrip("/") or None,
         genexample_bg_enabled=(
