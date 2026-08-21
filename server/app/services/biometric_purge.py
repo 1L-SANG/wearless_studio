@@ -499,13 +499,16 @@ async def _lineage_targets(cur, schema, job_ids: set[str], seed_asset_ids: set[s
 
 async def _list_targets(clients, prefixes) -> set[tuple[str, str]]:
     targets: set[tuple[str, str]] = set()
+    failed = False
     try:
         for label, client in clients.items():
             for prefix in prefixes:
                 for key in await asyncio.to_thread(client.list_prefix, prefix):
                     targets.add((label, key))
     except Exception:
-        raise PurgeIncomplete("r2_list_failed") from None
+        failed = True
+    if failed:
+        raise PurgeIncomplete("r2_list_failed")
     return targets
 
 
@@ -516,11 +519,14 @@ async def _head(client, key):
 
 
 async def _delete_and_reconcile(clients, targets, prefixes):
+    failed_code = None
     try:
         for label, key in sorted(targets):
             await asyncio.to_thread(clients[label].delete, key)
     except Exception:
-        raise PurgeIncomplete("r2_delete_failed") from None
+        failed_code = "r2_delete_failed"
+    if failed_code:
+        raise PurgeIncomplete(failed_code)
     try:
         survivors = await _list_targets(clients, prefixes)
         if survivors:
@@ -531,7 +537,9 @@ async def _delete_and_reconcile(clients, targets, prefixes):
     except PurgeIncomplete:
         raise
     except Exception:
-        raise PurgeIncomplete("r2_reconcile_failed") from None
+        failed_code = "r2_reconcile_failed"
+    if failed_code:
+        raise PurgeIncomplete(failed_code)
 
 
 async def _cleanup(conn, schema, scope, enrollment_ids, asset_ids, derived_jobs, lineage):
@@ -652,6 +660,7 @@ async def purge_biometric_scope(
     _validate_scope_args(user_id=user_id, batch_id=batch_id, reason=reason)
     clients = _require_storage(app)
     pool = app.state.pool
+    db_failed = False
     try:
         async with pool.connection() as conn:
             schema = await _schema(conn)
@@ -666,12 +675,15 @@ async def purge_biometric_scope(
     except PurgeIncomplete:
         raise
     except Exception:
-        raise PurgeIncomplete("db_cleanup_failed") from None
+        db_failed = True
+    if db_failed:
+        raise PurgeIncomplete("db_cleanup_failed")
 
     listed = await _list_targets(clients, prefixes)
     targets = known | listed
     await _delete_and_reconcile(clients, targets, prefixes)
 
+    db_failed = False
     async with pool.connection() as conn:
         try:
             schema = await _schema(conn)
@@ -691,7 +703,9 @@ async def purge_biometric_scope(
             raise
         except Exception:
             await conn.rollback()
-            raise PurgeIncomplete("db_cleanup_failed") from None
+            db_failed = True
+    if db_failed:
+        raise PurgeIncomplete("db_cleanup_failed")
 
     return PurgeResult(
         complete=True,

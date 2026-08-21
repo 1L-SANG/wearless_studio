@@ -27,6 +27,7 @@ Implemented and verified the controller-ruling scope only:
   - clears related lineage prompt keys and editor/project/job URL-bearing state.
 - Leaves status transitions, consent/audit/account anonymization, settlements, and VC queue behavior untouched for later tasks.
 - Suppresses raw DB/R2 exception chaining from public `PurgeIncomplete` tracebacks.
+- Does not retain raw DB/R2 exceptions in public `PurgeIncomplete.__cause__` or `.__context__`; bounded errors are raised only after leaving raw `except` frames.
 
 ## TDD evidence
 
@@ -96,9 +97,48 @@ exit 0
 131 passed, 4 skipped, 1 warning
 ```
 
+Fix-round 2 RED:
+
+```text
+.venv/bin/pytest tests/test_biometric_purge.py -q
+6 failed, 11 passed, 2 skipped, 1 warning
+```
+
+Failures proved that `raise PurgeIncomplete(...) from None` still retained raw sentinel exceptions in `PurgeIncomplete.__context__` for list, delete, reconcile/head, initial DB, and final DB bounded error paths.
+
+Fix-round 2 GREEN:
+
+```text
+.venv/bin/pytest tests/test_biometric_purge.py -q
+17 passed, 2 skipped, 1 warning
+```
+
+```text
+.venv/bin/python -m py_compile app/services/biometric_purge.py tests/test_biometric_purge.py
+exit 0
+```
+
+```text
+.venv/bin/pytest tests/test_biometric_purge.py tests/test_r2.py \
+  tests/test_facemarket_biometric_migration.py \
+  tests/test_facemarket_biometric_enrollment.py \
+  tests/test_facemarket_cutover_migration.py -q
+136 passed, 4 skipped, 1 warning
+```
+
+Leak scan:
+
+```text
+rg -n "raise PurgeIncomplete|from None|except Exception|__context__|RAW-SENTINEL" \
+  server/app/services/biometric_purge.py server/tests/test_biometric_purge.py
+```
+
+No `from None` remains in the service; raw sentinel strings appear only in deterministic tests.
+
 ## Notes / concerns
 
 - Root `AGENTS.md` was requested but absent in the worktree/root checkout; only dependency copies under `node_modules` exist. I followed the AGENTS payload supplied with the task.
 - The always-on fake DB/R2 suite now covers the corrected brief matrix: user/batch isolation, enrollment rows and both cleanup outboxes, both buckets with the same key, partial delete retry, relist/head/list uncertainty, unfrozen/active/unfenced preflight, recursive lineage, tombstone sanitization, second-pass expansion, status/VC/audit untouched, idempotence, and result/exception/repr/log redaction.
+- Round2 extends that redaction coverage to assert `__cause__ is None`, `__context__ is None`, and raw sentinel/key absence from `str`, `repr`, formatted traceback, and context for all current bounded list/delete/reconcile/DB failure sites.
 - Actual schema/FK trace confirmed `fm_biometric_enrollment_photos.enrollment_id` is `ON DELETE CASCADE`; the deterministic fake now models that cascade.
 - No real R2, Holder, VC, route, worker, or migration action was performed.

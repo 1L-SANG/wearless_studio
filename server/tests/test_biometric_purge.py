@@ -160,6 +160,8 @@ class FakeDB:
         self.commits = 0
         self.rollbacks = 0
         self.on_commit = None
+        self.fail_select = {}
+        self.fail_mutate = {}
         self.tables = {
             "assets": [],
             "edit_sessions": [],
@@ -218,6 +220,9 @@ class FakeDB:
         return other
 
     def select(self, q, params):
+        for needle, message in self.fail_select.items():
+            if needle in q:
+                raise RuntimeError(message)
         if "information_schema.columns" in q:
             return [
                 {"table_name": table, "column_name": col}
@@ -376,6 +381,9 @@ class FakeDB:
         return None
 
     def mutate(self, q, params):
+        for needle, message in self.fail_mutate.items():
+            if needle in q:
+                raise RuntimeError(message)
         if q.startswith("update matching_items set image_asset_id=null"):
             return _null(self.tables["matching_items"], "image_asset_id", params[0])
         if q.startswith("update matching_items set thumbnail_asset_id=null"):
@@ -524,22 +532,28 @@ class StickyFakeR2(StrictFakeR2):
     def __init__(self, keys=()):
         super().__init__(keys)
         self.sticky = set()
+        self.fail_after_delete = set()
+        self.fail_delete_message = None
+        self.fail_list_message = None
+        self.fail_head_message = None
 
     def delete(self, key):
         if key in self.fail_delete:
-            raise RuntimeError(f"delete_failed:{key}")
+            raise RuntimeError(self.fail_delete_message or f"delete_failed:{key}")
         self.deleted.append(key)
         if key not in self.sticky:
             self.keys.discard(key)
 
     def list_prefix(self, prefix):
         if prefix in self.fail_list:
-            raise RuntimeError(f"list_failed:{prefix}")
+            raise RuntimeError(self.fail_list_message or f"list_failed:{prefix}")
+        if self.deleted and prefix in self.fail_after_delete:
+            raise RuntimeError(self.fail_list_message or f"list_failed:{prefix}")
         return super().list_prefix(prefix)
 
     def head(self, key):
         if key in self.fail_head:
-            raise RuntimeError(f"head_failed:{key}")
+            raise RuntimeError(self.fail_head_message or f"head_failed:{key}")
         return super().head(key)
 
 
@@ -638,6 +652,17 @@ def _fake_case():
 
 def _run(ctx, **kwargs):
     return asyncio.run(purge_biometric_scope(ctx.app, **kwargs))
+
+
+def _assert_public_error_is_sanitized(exc, raw):
+    formatted = "".join(traceback.format_exception(exc))
+    context = repr(exc.__context__)
+    assert exc.__cause__ is None
+    assert exc.__context__ is None
+    assert raw not in str(exc)
+    assert raw not in repr(exc)
+    assert raw not in formatted
+    assert raw not in context
 
 
 def test_fake_user_purge_reconciles_both_buckets_and_tombstones_recursive_lineage(caplog):
@@ -813,20 +838,46 @@ def test_fake_idempotent_replay_after_success_has_empty_targets():
     assert second.confirmed_absent_count == 0
 
 
-def test_fake_public_errors_and_repr_do_not_expose_raw_exception_text_or_keys():
+@pytest.mark.parametrize(
+    ("mode", "want_code"),
+    [
+        ("initial_list", "r2_list_failed"),
+        ("delete", "r2_delete_failed"),
+        ("reconcile_list", "r2_list_failed"),
+        ("head", "r2_reconcile_failed"),
+        ("initial_db", "db_cleanup_failed"),
+        ("final_db", "db_cleanup_failed"),
+    ],
+)
+def test_fake_public_errors_do_not_retain_raw_exception_context(mode, want_code):
     ctx = _fake_case()
-    raw_key = f"facemarket/models/{ctx.model}/licenses/{ctx.license}/face.png"
-    ctx.r2_face.fail_delete.add(raw_key)
+    raw = f"RAW-SENTINEL-{mode}-{ctx.shared_key}"
+    if mode == "initial_list":
+        ctx.r2_face.fail_list_message = raw
+        ctx.r2_face.fail_list.add(f"facemarket/models/{ctx.model}/")
+    elif mode == "delete":
+        ctx.r2_face.fail_delete_message = raw
+        ctx.r2_face.fail_delete.add(
+            f"facemarket/models/{ctx.model}/licenses/{ctx.license}/face.png"
+        )
+    elif mode == "reconcile_list":
+        ctx.r2_face.fail_list_message = raw
+        ctx.r2_face.fail_after_delete.add(f"facemarket/models/{ctx.model}/")
+    elif mode == "head":
+        ctx.r2_face.fail_head_message = raw
+        ctx.r2_face.fail_head.add(
+            f"facemarket/models/{ctx.model}/licenses/{ctx.license}/face.png"
+        )
+    elif mode == "initial_db":
+        ctx.db.fail_select["information_schema.columns"] = raw
+    else:
+        ctx.db.fail_mutate["update assets set r2_key='purged/'"] = raw
 
     with pytest.raises(PurgeIncomplete) as exc:
         _run(ctx, user_id=ctx.user, reason="withdrawal")
 
-    tb = "".join(traceback.format_exception(exc.value))
-    assert exc.value.code == "r2_delete_failed"
-    assert exc.value.__cause__ is None
-    assert raw_key not in str(exc.value)
-    assert raw_key not in repr(exc.value)
-    assert raw_key not in tb
+    assert exc.value.code == want_code
+    _assert_public_error_is_sanitized(exc.value, raw)
 
 
 class _LivePool:
