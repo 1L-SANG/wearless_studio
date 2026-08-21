@@ -39,6 +39,8 @@ async def post(
     timestamp: str | None = None,
     nonce: str | None = None,
 ) -> httpx.Response:
+    if not path.startswith("/") or path.startswith("//"):
+        raise ValueError("invalid Holder path")
     body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     timestamp = timestamp or str(int(time.time()))
     nonce = nonce or secrets.token_urlsafe(24)

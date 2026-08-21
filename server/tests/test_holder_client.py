@@ -45,6 +45,30 @@ def test_signature_changes_when_a_canonical_field_changes(field, value):
     assert holder_client.signature(SECRET, **request) != SIGNATURE
 
 
+def test_post_rejects_non_relative_holder_paths_before_serialization_or_transport():
+    requests = []
+
+    async def handler(request: httpx.Request):
+        requests.append(request)
+        return httpx.Response(200)
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            for path in ("@evil.test/x", "https://evil.test/x", "//evil.test/x", ""):
+                with pytest.raises(ValueError, match="^invalid Holder path$"):
+                    await holder_client.post(
+                        client,
+                        base_url="http://holder:8100",
+                        secret=SECRET,
+                        path=path,
+                        payload={"not-json": object()},
+                    )
+
+    asyncio.run(scenario())
+
+    assert requests == []
+
+
 def test_post_sends_and_signs_the_exact_json_bytes():
     observed = {}
 
