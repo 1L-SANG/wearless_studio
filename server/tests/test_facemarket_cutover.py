@@ -118,7 +118,8 @@ class _Cursor:
         elif q.startswith("select count(*)::int as count") and "from fm_models" in q:
             self.last = {"count": len([r for r in self.store.models if r.get("reverification_batch_id") == params[0] and r["status"] == "reverification_required"])}
         elif q.startswith("select count(*)::int as count") and "from fm_licenses" in q:
-            self.last = {"count": len([r for r in self.store.licenses if r.get("reverification_batch_id") == params[0] and r["status"] != "active"])}
+            allowed = set(params[1] if params and len(params) > 1 else facemarket_cutover._FROZEN_LICENSE_STATUSES)
+            self.last = {"count": len([r for r in self.store.licenses if r.get("reverification_batch_id") == params[0] and r["status"] in allowed])}
         elif "from fm_licenses l" in q and "for update" in q:
             model_ids = set(params[0] or ())
             self.last = [
@@ -847,13 +848,13 @@ def test_approve_initial_batch_requires_admin_and_tags_exact_jobs(monkeypatch):
         "asset_count": 3,
     }
 
-    async def build(_app, *, batch_id=None):
-        return manifest
+    async def identity(_conn, *, batch_id=None):
+        return manifest.model_ids, manifest.license_ids, manifest.job_ids
 
     async def is_admin(_conn, user_id):
         return user_id == "admin-user"
 
-    monkeypatch.setattr(facemarket_cutover, "build_initial_cutover_manifest", build)
+    monkeypatch.setattr(facemarket_cutover, "_manifest_identity", identity)
     monkeypatch.setattr(facemarket_cutover.repo, "is_admin", is_admin)
     app = type("App", (), {"state": type("State", (), {"pool": _Pool(store)})()})()
 
@@ -894,13 +895,13 @@ def test_approve_initial_batch_rolls_back_when_exact_job_tagging_fails(monkeypat
         "asset_count": 3,
     }
 
-    async def build(_app, *, batch_id=None):
-        return manifest
+    async def identity(_conn, *, batch_id=None):
+        return manifest.model_ids, manifest.license_ids, manifest.job_ids
 
     async def is_admin(_conn, _user_id):
         return True
 
-    monkeypatch.setattr(facemarket_cutover, "build_initial_cutover_manifest", build)
+    monkeypatch.setattr(facemarket_cutover, "_manifest_identity", identity)
     monkeypatch.setattr(facemarket_cutover.repo, "is_admin", is_admin)
     app = type("App", (), {"state": type("State", (), {"pool": _Pool(store)})()})()
 
@@ -912,6 +913,54 @@ def test_approve_initial_batch_rolls_back_when_exact_job_tagging_fails(monkeypat
     assert exc.value.code == "manifest_job_tag_conflict"
     assert store.batch_status == "planned"
     assert store.rollbacks == 1
+
+
+def test_approve_initial_batch_uses_locked_current_identity_not_stale_prelock_manifest(monkeypatch):
+    """Break caught: stale pre-lock manifest can drive approval job tagging."""
+    store = _Store()
+    store.batch_status = "planned"
+    current = facemarket_cutover.CutoverManifest(
+        model_ids=("model-legacy",),
+        license_ids=("license-a", "license-b"),
+        job_ids=("job-current",),
+        asset_count=0,
+    )
+    store.manifest_batch = {
+        "id": store.batch_id,
+        "status": "planned",
+        "target_digest": current.target_digest,
+        "model_count": 1,
+        "license_count": 2,
+        "job_count": 1,
+        "asset_count": 99,
+    }
+
+    async def stale_build(_app, *, batch_id=None):
+        return facemarket_cutover.CutoverManifest(
+            model_ids=("model-legacy",),
+            license_ids=("license-a", "license-b"),
+            job_ids=("job-stale",),
+            asset_count=99,
+        )
+
+    async def current_jobs(_conn, **_kwargs):
+        return [{"id": "job-current", "created_at": 1}]
+
+    async def is_admin(_conn, _user_id):
+        return True
+
+    monkeypatch.setattr(facemarket_cutover, "build_initial_cutover_manifest", stale_build)
+    monkeypatch.setattr(facemarket_cutover.repo, "list_facemarket_scope_jobs", current_jobs)
+    monkeypatch.setattr(facemarket_cutover.repo, "is_admin", is_admin)
+    app = type("App", (), {"state": type("State", (), {"pool": _Pool(store)})()})()
+
+    asyncio.run(facemarket_cutover.approve_initial_cutover_batch(
+        app, batch_id=store.batch_id, admin_user_id="admin-user"
+    ))
+
+    assert store.batch_status == "approved"
+    assert store.tagged_jobs == ["job-current"]
+    assert store.tagged_jobs != ["job-stale"]
 
 
 def test_batch_aware_manifest_uses_tagged_jobs_without_legacy_project_fallback(monkeypatch):
@@ -1027,6 +1076,110 @@ def test_failed_resume_classifies_linked_state_before_restarting(monkeypatch):
     assert exc.value.code == "cutover_resume_state_invalid"
     assert invalid.batch_status == "failed"
     assert invalid.last_error_code == "cutover_resume_state_invalid"
+
+
+def test_failed_resume_rejects_pending_license_status(monkeypatch):
+    """Break caught: pending linked licenses can be treated as purge-ready on failed resume."""
+    manifest = facemarket_cutover.CutoverManifest(
+        model_ids=("model-legacy",),
+        license_ids=("license-a", "license-b"),
+        job_ids=(),
+        asset_count=0,
+    )
+    store = _Store()
+    store.batch_status = "failed"
+    store.manifest_batch = {
+        "id": store.batch_id,
+        "status": "failed",
+        "target_digest": manifest.target_digest,
+        "model_count": 1,
+        "license_count": 2,
+        "job_count": 0,
+        "asset_count": 0,
+    }
+    store.models[0].update(status="reverification_required", reverification_batch_id=store.batch_id)
+    store.licenses[0].update(status="pending", reverification_batch_id=store.batch_id)
+    store.licenses[1].update(status="revoked", reverification_batch_id=store.batch_id)
+    app = type("App", (), {"state": type("State", (), {"pool": _Pool(store)})()})()
+
+    with pytest.raises(facemarket_cutover.CutoverBlocked) as exc:
+        asyncio.run(facemarket_cutover._resume_failed_batch(app, store.batch_id))
+
+    assert exc.value.code == "cutover_resume_state_invalid"
+    assert store.batch_status == "failed"
+    assert store.last_error_code == "cutover_resume_state_invalid"
+
+
+def test_failed_resume_rejects_unknown_license_status(monkeypatch):
+    """Break caught: unknown linked license statuses can be treated as purge-ready on failed resume."""
+    manifest = facemarket_cutover.CutoverManifest(
+        model_ids=("model-legacy",),
+        license_ids=("license-a", "license-b"),
+        job_ids=(),
+        asset_count=0,
+    )
+    store = _Store()
+    store.batch_status = "failed"
+    store.manifest_batch = {
+        "id": store.batch_id,
+        "status": "failed",
+        "target_digest": manifest.target_digest,
+        "model_count": 1,
+        "license_count": 2,
+        "job_count": 0,
+        "asset_count": 0,
+    }
+    store.models[0].update(status="reverification_required", reverification_batch_id=store.batch_id)
+    store.licenses[0].update(status="unknown", reverification_batch_id=store.batch_id)
+    store.licenses[1].update(status="expired", reverification_batch_id=store.batch_id)
+    app = type("App", (), {"state": type("State", (), {"pool": _Pool(store)})()})()
+
+    with pytest.raises(facemarket_cutover.CutoverBlocked) as exc:
+        asyncio.run(facemarket_cutover._resume_failed_batch(app, store.batch_id))
+
+    assert exc.value.code == "cutover_resume_state_invalid"
+    assert store.batch_status == "failed"
+    assert store.last_error_code == "cutover_resume_state_invalid"
+
+
+def test_failed_resume_accepts_explicit_frozen_license_statuses(monkeypatch):
+    """Break caught: valid frozen license statuses are narrower than every non-active status."""
+    manifest = facemarket_cutover.CutoverManifest(
+        model_ids=("model-legacy",),
+        license_ids=("license-a", "license-b", "license-c"),
+        job_ids=(),
+        asset_count=0,
+    )
+    store = _Store()
+    store.batch_status = "failed"
+    store.manifest_batch = {
+        "id": store.batch_id,
+        "status": "failed",
+        "target_digest": manifest.target_digest,
+        "model_count": 1,
+        "license_count": 3,
+        "job_count": 0,
+        "asset_count": 0,
+    }
+    store.licenses.append(
+        {
+            "id": "license-c",
+            "model_id": "model-legacy",
+            "status": "revoked",
+            "previous_status": None,
+            "reverification_batch_id": store.batch_id,
+            "vc_id": "vc-c",
+        }
+    )
+    store.models[0].update(status="reverification_required", reverification_batch_id=store.batch_id)
+    store.licenses[0].update(status="reverification_required", reverification_batch_id=store.batch_id)
+    store.licenses[1].update(status="expired", reverification_batch_id=store.batch_id)
+    app = type("App", (), {"state": type("State", (), {"pool": _Pool(store)})()})()
+
+    status = asyncio.run(facemarket_cutover._resume_failed_batch(app, store.batch_id))
+
+    assert status == "reconciling"
+    assert store.batch_status == "reconciling"
 
 
 def test_apply_holds_and_releases_controller_lock_on_same_connection(monkeypatch):

@@ -23,6 +23,7 @@ _CUTOVER_CANCEL_MESSAGE = "실물 모델 보안 전환으로 작업을 취소하
 _PERSONALIZATION_CANCEL_MESSAGE = "개인화 파기로 작업을 취소하고 크레딧을 돌려드렸어요."
 _MANIFEST_BATCH_TAG = "facemarketManifestBatchId"
 _MANIFEST_DIGEST_VERSION = "facemarket-cutover-v1"
+_FROZEN_LICENSE_STATUSES = ("reverification_required", "revoked", "expired")
 _CONTROLLER_LOCK_NAMESPACE = 89123017
 _CONTROLLER_LOCK_KEY = 8
 
@@ -364,7 +365,6 @@ async def create_initial_cutover_batch(app) -> str:
 
 
 async def approve_initial_cutover_batch(app, *, batch_id: str, admin_user_id: str) -> None:
-    manifest = await build_initial_cutover_manifest(app)
     async with app.state.pool.connection() as conn:
         try:
             await repo.lock_facemarket_writer_boundary(conn)
@@ -373,7 +373,9 @@ async def approve_initial_cutover_batch(app, *, batch_id: str, admin_user_id: st
             batch = await _load_batch(conn, batch_id)
             if batch["status"] != "planned":
                 raise CutoverBlocked("cutover_batch_not_planned")
-            _require_matching_manifest(batch, manifest, include_assets=True)
+            model_ids, license_ids, job_ids = await _manifest_identity(conn)
+            manifest = CutoverManifest(model_ids, license_ids, job_ids, asset_count=0)
+            _require_matching_manifest(batch, manifest, include_assets=False)
             async with conn.cursor() as cur:
                 if manifest.job_ids:
                     await cur.execute(
@@ -538,7 +540,7 @@ async def _resume_failed_batch(app, batch_id: str) -> str:
                 linked_model_ids == manifest.model_ids
                 and linked_license_ids == manifest.license_ids
                 and all(row["status"] == "reverification_required" for row in models)
-                and all(row["status"] != "active" for row in licenses)
+                and all(row["status"] in _FROZEN_LICENSE_STATUSES for row in licenses)
             ):
                 status = "reconciling"
             else:
@@ -578,9 +580,9 @@ async def _verify_reconciling_links(pool, batch_id: str, manifest: CutoverManife
                 select count(*)::int as count
                   from fm_licenses
                  where reverification_batch_id=%s
-                   and status <> 'active'
+                   and status = any(%s)
                 """,
-                (batch_id,),
+                (batch_id, list(_FROZEN_LICENSE_STATUSES)),
             )
             license_count = int((await cur.fetchone() or {}).get("count") or 0)
             if model_count != len(manifest.model_ids) or license_count != len(manifest.license_ids):
