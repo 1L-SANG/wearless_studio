@@ -303,6 +303,26 @@ class FakeCursor:
                 }
                 self.store.enrollments.append(row)
                 self.result = {"id": row["id"]}
+        elif query.startswith("with due as ( select id from fm_biometric_enrollments"):
+            limit = params[0]
+            due = sorted(
+                [
+                    row
+                    for row in self.store.enrollments
+                    if row["expires_at"] <= self.store.now
+                    and row["status"]
+                    in {"photos_pending", "liveness_pending", "processing"}
+                ],
+                key=lambda row: row["expires_at"],
+            )[:limit]
+            self.many = [{"id": row["id"]} for row in due]
+            for row in due:
+                row.update(
+                    status="expired",
+                    decision="failed",
+                    reason="enrollment_expired",
+                    completed_at=self.store.now,
+                )
         elif query.startswith("select id::text as id from fm_biometric_enrollments"):
             user_id = params[0]
             row = next(
@@ -314,6 +334,35 @@ class FakeCursor:
                 None,
             )
             self.result = {"id": row["id"]} if row else None
+        elif (
+            query.startswith("select e.id::text as id from fm_biometric_enrollments e")
+            and "raw_deletion_evidence" in query
+        ):
+            limit = params[0]
+            candidates = []
+            for row in self.store.enrollments:
+                if row["status"] not in {"failed", "cancelled", "expired"}:
+                    continue
+                if row["raw_deletion_evidence"].get("quarantineDeleted") is True:
+                    continue
+                has_photo = any(
+                    photo["enrollment_id"] == row["id"]
+                    and photo["storage_state"] in {"quarantine", "delete_pending"}
+                    for photo in self.store.photos
+                )
+                has_cleanup = any(
+                    cleanup["enrollment_id"] == row["id"]
+                    for cleanup in self.store.cleanup
+                )
+                if has_photo or has_cleanup:
+                    candidates.append(row)
+            candidates.sort(
+                key=lambda row: (
+                    row.get("completed_at") is not None,
+                    row.get("completed_at") or self.store.now,
+                )
+            )
+            self.many = [{"id": row["id"]} for row in candidates[:limit]]
         elif query.startswith("select e.id::text as id") and "where e.user_id = %s" in query:
             user_id = params[0]
             row = next(

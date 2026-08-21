@@ -1254,6 +1254,80 @@ async def cleanup_terminal_enrollment(app, *, enrollment_id: str) -> bool:
         return False
 
 
+async def sweep_terminal_enrollments(app, *, limit: int = 100) -> int:
+    pool = getattr(app.state, "pool", None)
+    if pool is None:
+        return 0
+    limit = max(1, min(int(limit), 100))
+    try:
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    with due as (
+                        select id from fm_biometric_enrollments
+                        where expires_at <= now()
+                          and status in ('photos_pending', 'liveness_pending', 'processing')
+                        order by expires_at
+                        for update skip locked
+                        limit %s
+                    )
+                    update fm_biometric_enrollments e
+                    set status='expired', decision='failed',
+                        reason='enrollment_expired', completed_at=now()
+                    from due where e.id=due.id
+                    returning e.id::text as id
+                    """,
+                    (limit,),
+                )
+                await cur.fetchall()
+            await conn.commit()
+
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    select e.id::text as id
+                    from fm_biometric_enrollments e
+                    where e.status in ('failed', 'cancelled', 'expired')
+                      and coalesce(
+                            (e.raw_deletion_evidence->>'quarantineDeleted')::boolean,
+                            false
+                          ) is not true
+                      and (
+                            exists (
+                                select 1 from fm_biometric_enrollment_photos p
+                                where p.enrollment_id = e.id
+                                  and p.storage_state in ('quarantine', 'delete_pending')
+                            )
+                            or exists (
+                                select 1 from fm_biometric_enrollment_photo_cleanup c
+                                where c.enrollment_id = e.id
+                            )
+                          )
+                    order by e.completed_at nulls first, e.created_at
+                    for update skip locked
+                    limit %s
+                    """,
+                    (limit,),
+                )
+                candidates = await cur.fetchall()
+            await conn.commit()
+    except Exception as exc:
+        logger.warning(
+            "facemarket_enrollment_cleanup_sweep_failed",
+            extra={"error_type": type(exc).__name__},
+        )
+        return 0
+
+    cleaned = 0
+    for row in candidates:
+        cleaned += int(
+            await cleanup_terminal_enrollment(app, enrollment_id=row["id"])
+        )
+    return cleaned
+
+
 def _decision_body(decision: EnrollmentDecision) -> dict:
     body = {
         "passed": decision.passed,

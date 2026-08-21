@@ -166,3 +166,7 @@ class JobDispatcher:
                     await conn.commit()
             except Exception:
                 log.exception("stale credit release failed for job %s", j["id"])
+        if getattr(self.app.state.settings, "fm_biometric_enrollment_enabled", False):
+            from ..facemarket_enrollment import sweep_terminal_enrollments
+
+            await sweep_terminal_enrollments(self.app, limit=100)
