@@ -216,6 +216,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
     # 불변 Settings 복사본의 image_high를 상세컷 snapshot으로 치환한다.
     detail_settings = replace(s, model_image_high=resolve_detail_cut_model(s))
     job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
+    suppress_preview_urls = bool(job.get("_suppress_detail_preview_urls"))
     # 동시성: 설정값(0=제한 없음 → 컷 수만큼). 구 상수 3은 429 실측 없는 보수적 추정이라
     # 오너 결정(2026-08-03)으로 전부 병렬 + 제출 간격(stagger) + 429 백오프가 기본이 됐다.
     _limit = getattr(s, "detail_cut_concurrency", 0) or max(1, len(prepared))
@@ -580,11 +581,12 @@ async def _gen_cuts(app, job, prepared, product, analysis):
             await asyncio.to_thread(r2.put_bytes, key, img, mime, cache=IMMUTABLE_CACHE)
             w, h = _dims(img)
             # 대기 화면 프리뷰 — asset 행은 finalize에서만 생기므로 /file 경로는 아직 404다.
-            # 항상 만료 있는 서명 URL(preview_url)을 이벤트에 실어 보낸다(잡 상한 15분 ≪ 1h,
-            # DB 무변경 · public 도메인 배포에서도 영구 URL이 이벤트 원장에 남지 않게 — codex F3).
-            await _emit(app.state.pool, job_id, "step",
-                        {"blockId": b.get("id"), "status": "cut_done",
-                         "previewUrl": r2.preview_url(key), "width": w, "height": h})
+            # REAL FaceMarket 컷은 최종 권한 펜스 전까지 출력 위치를 이벤트 원장에 남기지 않는다.
+            step = {"blockId": b.get("id"), "status": "cut_done",
+                    "width": w, "height": h}
+            if not suppress_preview_urls:
+                step["previewUrl"] = r2.preview_url(key)
+            await _emit(app.state.pool, job_id, "step", step)
             return (
                 # width/height 는 조립(M-02)이 요소 박스를 **이미지 비율대로** 잡는 근거다.
                 # 없으면 page_assembler 가 기본 비율로 폴백한다(생성 실패·구 데이터 안전).
@@ -647,7 +649,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
             continue
         step = {"blockId": block.get("id"), "status": "cut_done",
                 "width": base[0].get("width"), "height": base[0].get("height")}
-        if base[1] is not None:
+        if base[1] is not None and not suppress_preview_urls:
             step["previewUrl"] = r2.preview_url(base[1]["key"])
         await _emit(app.state.pool, job_id, "step", step)
         outcomes.append((
@@ -950,6 +952,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                 notice_ctx = {"model_name": face_ref["model_name"], "license_id": face_ref["license_id"]}
             else:
                 notice_ctx = None
+            job["_suppress_detail_preview_urls"] = source == "REAL"
 
             mannequin_asset = None
             sel = project.get("selected_mannequin_id") or project.get("selectedMannequinId")

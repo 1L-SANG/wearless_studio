@@ -589,6 +589,172 @@ def test_face_bytes_and_key_never_appear_in_job_events(monkeypatch):
     assert "faces/" not in blob
 
 
+def _assert_no_prefinal_output_reference(events):
+    blob = repr(events)
+    lower_blob = blob.lower()
+    assert "previewUrl" not in blob
+    assert "/v1/assets/" not in blob
+    assert "https://r2.test/" not in blob
+    assert "users/" not in blob
+    assert "cleanup_intent" not in blob
+    assert "intent-" not in blob
+    assert "bearer" not in lower_blob
+    assert "token" not in lower_blob
+
+
+def test_real_prefinal_events_hide_original_cut_output_before_late_revoke(monkeypatch):
+    captured = {"resolve": 0, "settlement": 0}
+    _patch_inputs(
+        monkeypatch,
+        captured,
+        project={"copywriting": False, "facemarket_license_id": "later-lock"},
+        storyboard=[{"id": "b1", "source": "ai", "cutType": "styling", "shot": "full"}],
+    )
+
+    def row(status):
+        return {**_license_row(status=status)}
+
+    async def fake_resolve(conn, model_id, *, license_id=None, **kwargs):
+        captured["resolve"] += 1
+        assert model_id == MODEL_ID and license_id == LIC_ID
+        return row("active" if captured["resolve"] == 1 else "revoked")
+
+    async def fake_verify(app, license_row, **kwargs):
+        assert license_row["status"] == "active"
+
+    async def fake_assets(conn, model_id, *, enrollment_id, evidence_version):
+        return [
+            {"key": CURRENT_FACE_KEY, "mime": "image/png", "bucket": "face"},
+            {"key": CURRENT_GRID_KEY, "mime": "image/png", "bucket": "face"},
+        ]
+
+    async def fake_lock(conn):
+        captured["pre_final_events"] = list(captured["events"])
+
+    async def fake_settlement(*_args, **_kwargs):
+        captured["settlement"] += 1
+
+    monkeypatch.setattr(facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(identity_source, "resolve_real_model_assets", fake_assets)
+    monkeypatch.setattr(dpj.repo, "lock_facemarket_writer_boundary", fake_lock)
+    monkeypatch.setattr(dpj.facemarket, "record_license_settlement", fake_settlement)
+
+    app, main_r2 = _app(row("active"))
+    main_r2.fail_delete = True
+    app.state.fm_chain = object()
+
+    asyncio.run(dpj.run_detail_page_job(app, _snapshot_job(reserved=7)))
+
+    assert captured["resolve"] == 2
+    assert main_r2.puts and main_r2.deletes == main_r2.puts
+    assert captured["settlement"] == 0
+    assert captured["failure"]["code"] == "license_revoked"
+    _assert_no_prefinal_output_reference(captured["pre_final_events"])
+    _assert_no_prefinal_output_reference(captured["events"])
+
+
+def test_real_prefinal_events_hide_duplicate_cut_output_before_late_revoke(monkeypatch):
+    captured = {"resolve": 0, "settlement": 0}
+    base = {
+        "source": "ai",
+        "sectionId": "section-a",
+        "sectionRole": "studio",
+        "cutType": "horizon",
+        "shot": "full",
+        "direction": "front",
+        "pose": "auto",
+        "refScope": "all",
+    }
+    _patch_inputs(
+        monkeypatch,
+        captured,
+        project={"copywriting": False, "facemarket_license_id": "later-lock"},
+        storyboard=[{**base, "id": "original"}, {**base, "id": "copy"}],
+    )
+
+    def row(status):
+        return {**_license_row(status=status)}
+
+    async def fake_resolve(conn, model_id, *, license_id=None, **kwargs):
+        captured["resolve"] += 1
+        assert model_id == MODEL_ID and license_id == LIC_ID
+        return row("active" if captured["resolve"] == 1 else "revoked")
+
+    async def fake_verify(app, license_row, **kwargs):
+        assert license_row["status"] == "active"
+
+    async def fake_assets(conn, model_id, *, enrollment_id, evidence_version):
+        return [
+            {"key": CURRENT_FACE_KEY, "mime": "image/png", "bucket": "face"},
+            {"key": CURRENT_GRID_KEY, "mime": "image/png", "bucket": "face"},
+        ]
+
+    async def fake_lock(conn):
+        captured["pre_final_events"] = list(captured["events"])
+
+    async def fake_settlement(*_args, **_kwargs):
+        captured["settlement"] += 1
+
+    monkeypatch.setattr(facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(identity_source, "resolve_real_model_assets", fake_assets)
+    monkeypatch.setattr(dpj.repo, "lock_facemarket_writer_boundary", fake_lock)
+    monkeypatch.setattr(dpj.facemarket, "record_license_settlement", fake_settlement)
+
+    app, main_r2 = _app(row("active"))
+    main_r2.fail_delete = True
+    app.state.fm_chain = object()
+
+    asyncio.run(dpj.run_detail_page_job(app, _snapshot_job(reserved=7)))
+
+    dones = [
+        payload for event_type, payload in captured["pre_final_events"]
+        if event_type == "step" and payload.get("status") == "cut_done"
+    ]
+    assert [done["blockId"] for done in dones] == ["original", "copy"]
+    assert captured["resolve"] == 2
+    assert main_r2.puts and main_r2.deletes == main_r2.puts
+    assert captured["settlement"] == 0
+    assert captured["failure"]["code"] == "license_revoked"
+    _assert_no_prefinal_output_reference(captured["pre_final_events"])
+    _assert_no_prefinal_output_reference(captured["events"])
+
+
+def test_successful_real_result_keeps_stable_asset_url_after_finalization(monkeypatch):
+    captured = {}
+    _patch_inputs(
+        monkeypatch,
+        captured,
+        project={"copywriting": False, "facemarket_license_id": "later-lock"},
+    )
+    row = _license_row()
+    app, _ = _app(row)
+    _patch_snapshot_success(monkeypatch, row)
+
+    asyncio.run(dpj.run_detail_page_job(app, _snapshot_job()))
+
+    _assert_no_prefinal_output_reference(captured["events"])
+    assert captured["cut_results"][0]["imageUrl"].startswith("/v1/assets/")
+    assert captured["cut_results"][0]["imageUrl"].endswith("/file")
+    assert captured.get("failure") is None
+
+
+def test_non_real_detail_cut_done_keeps_preview_url_before_finalize(monkeypatch):
+    captured = {}
+    _patch_inputs(monkeypatch, captured, project={"copywriting": False})
+    app, _ = _app(_license_row())
+
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+
+    dones = [
+        payload for event_type, payload in captured["events"]
+        if event_type == "step" and payload.get("status") == "cut_done"
+    ]
+    assert len(dones) == 1
+    assert dones[0]["previewUrl"].startswith("https://r2.test/users/")
+
+
 def test_detail_final_recheck_revoked_license_deletes_outputs_and_refunds(monkeypatch):
     captured = {"resolve": 0, "settlement": 0}
     _patch_inputs(
