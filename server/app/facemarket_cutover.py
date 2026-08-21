@@ -8,8 +8,9 @@ from dataclasses import dataclass
 
 from psycopg.types.json import Json
 
+from . import facemarket
 from . import repo
-from .facemarket_enrollment import _PHOTO_FENCE_NAMESPACE
+from .facemarket_enrollment import BIOMETRIC_CONSENT_VERSION, _PHOTO_FENCE_NAMESPACE
 
 _CUTOVER_CANCEL_MESSAGE = "실물 모델 보안 전환으로 작업을 취소하고 크레딧을 돌려드렸어요."
 _PERSONALIZATION_CANCEL_MESSAGE = "개인화 파기로 작업을 취소하고 크레딧을 돌려드렸어요."
@@ -22,10 +23,87 @@ class WriterQuiescence:
     running_count: int
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class FreezeSummary:
+    model_count: int
+    license_count: int
+    revocation_target_count: int
+
+
 class CutoverBlocked(RuntimeError):
     def __init__(self, code: str):
         super().__init__(code)
         self.code = code
+
+
+_INITIAL_LEGACY_MODEL_SCOPE_SQL = """
+select m.id::text as id
+  from fm_models m
+ where not exists (
+       select 1
+         from fm_biometric_enrollments e
+         join fm_licenses l
+           on l.model_id = m.id and l.enrollment_id = e.id
+         join fm_biometric_enrollment_photos p
+           on p.enrollment_id = e.id and p.angle = 'front'
+         join fm_model_assets fa
+           on fa.model_id = m.id and fa.view = 'face_front'
+         join fm_model_assets ga
+           on ga.model_id = m.id and ga.view = 'grid_sedcard'
+        where e.id = m.current_enrollment_id
+          and e.model_id = m.id
+          and e.status = 'passed'
+          and e.decision = 'passed'
+          and e.consent_version = %s
+          and nullif(btrim(e.match_policy_version), '') is not null
+          and m.assets_status = 'ready'
+          and nullif(btrim(l.vc_id), '') is not null
+          and l.vc_id = e.vc_id
+          and p.storage_state = 'approved'
+          and p.mime_type like 'image/%%'
+          and nullif(btrim(p.r2_key), '') is not null
+          and nullif(btrim(l.face_image_key), '') is not null
+          and p.r2_key = l.face_image_key
+          and nullif(btrim(fa.r2_key), '') is not null
+          and fa.bucket = 'face'
+          and fa.mime like 'image/%%'
+          and fa.source_enrollment_id = e.id
+          and fa.evidence_version = e.match_policy_version
+          and nullif(btrim(ga.r2_key), '') is not null
+          and ga.bucket = 'face'
+          and ga.mime like 'image/%%'
+          and ga.source_enrollment_id = e.id
+          and ga.evidence_version = e.match_policy_version
+ )
+ order by m.id
+"""
+
+
+def _ids(rows: list[dict]) -> list[str]:
+    return [str(row["id"]) for row in rows]
+
+
+def _foreign_batch(row: dict, batch_id: str) -> bool:
+    linked = row.get("reverification_batch_id")
+    return linked is not None and str(linked) != str(batch_id)
+
+
+def _vc_targets(licenses: list[dict]) -> list[dict]:
+    out = []
+    seen = set()
+    for row in sorted(licenses, key=lambda item: str(item["id"])):
+        vc_id = str(row.get("vc_id") or "").strip()
+        if not vc_id or vc_id in seen:
+            continue
+        seen.add(vc_id)
+        out.append(
+            {
+                "license_id": str(row["id"]),
+                "model_id": str(row["model_id"]),
+                "vc_id": vc_id,
+            }
+        )
+    return out
 
 
 async def close_initial_cutover_writers(pool, *, batch_id: str) -> None:
@@ -51,6 +129,146 @@ async def close_initial_cutover_writers(pool, *, batch_id: str) -> None:
                 if row is None or row["status"] not in {"draining", "failed"}:
                     raise CutoverBlocked("cutover_batch_not_approved")
         await conn.commit()
+
+
+async def _lock_freeze_batch(conn, batch_id: str) -> dict:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select id::text as id, status, started_at, model_count, license_count
+              from fm_cutover_batches
+             where id = %s
+             for update
+            """,
+            (batch_id,),
+        )
+        batch = await cur.fetchone()
+    if batch is None:
+        raise CutoverBlocked("cutover_batch_not_found")
+    if batch["started_at"] is None:
+        raise CutoverBlocked("cutover_batch_not_started")
+    if batch["status"] not in {"draining", "applying"}:
+        raise CutoverBlocked("cutover_batch_not_draining")
+    return batch
+
+
+async def _initial_legacy_model_ids(conn) -> list[str]:
+    async with conn.cursor() as cur:
+        await cur.execute(_INITIAL_LEGACY_MODEL_SCOPE_SQL, (BIOMETRIC_CONSENT_VERSION,))
+        return _ids(await cur.fetchall())
+
+
+async def _lock_target_licenses(conn, model_ids: list[str]) -> list[dict]:
+    if not model_ids:
+        return []
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select id::text as id, model_id::text as model_id, status, previous_status,
+                   reverification_batch_id::text as reverification_batch_id, vc_id
+              from fm_licenses l
+             where l.model_id = any(%s)
+             order by l.model_id, l.id
+             for update
+            """,
+            (model_ids,),
+        )
+        return await cur.fetchall()
+
+
+async def _lock_target_models(conn, model_ids: list[str]) -> list[dict]:
+    if not model_ids:
+        return []
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select id::text as id, status, previous_status,
+                   reverification_batch_id::text as reverification_batch_id
+              from fm_models
+             where id = any(%s)
+             order by id
+             for update
+            """,
+            (model_ids,),
+        )
+        return await cur.fetchall()
+
+
+async def freeze_initial_cutover_batch(pool, *, batch_id: str) -> FreezeSummary:
+    """Freeze the server-discovered initial legacy scope in one local transaction."""
+    async with pool.connection() as conn:
+        try:
+            await repo.lock_facemarket_writer_boundary(conn)
+            batch = await _lock_freeze_batch(conn, batch_id)
+            model_ids = await _initial_legacy_model_ids(conn)
+            licenses = await _lock_target_licenses(conn, model_ids)
+            models = await _lock_target_models(conn, model_ids)
+            if len(models) != int(batch["model_count"]) or len(licenses) != int(batch["license_count"]):
+                raise CutoverBlocked("target_scope_changed")
+            if any(_foreign_batch(row, batch_id) for row in (*models, *licenses)):
+                raise CutoverBlocked("target_scope_link_conflict")
+
+            license_ids = _ids(licenses)
+            if license_ids:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        update fm_licenses
+                           set previous_status=coalesce(previous_status,status),
+                               reverification_batch_id=coalesce(reverification_batch_id,%s),
+                               status=case
+                                   when status in ('pending','active')
+                                   then 'reverification_required'
+                                   else status
+                               end
+                         where id = any(%s)
+                        """,
+                        (batch_id, license_ids),
+                    )
+            targets = _vc_targets(licenses)
+            enqueue_failed = False
+            try:
+                for target in targets:
+                    await facemarket.enqueue_vc_revocation(conn, **target)
+            except Exception:
+                enqueue_failed = True
+            if enqueue_failed:
+                raise CutoverBlocked("vc_revocation_enqueue_failed")
+
+            if model_ids:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        update fm_models
+                           set previous_status=coalesce(previous_status,status),
+                               reverification_batch_id=coalesce(reverification_batch_id,%s),
+                               status=case
+                                   when status in ('pending','verified')
+                                   then 'reverification_required'
+                                   else status
+                               end
+                         where id = any(%s)
+                        """,
+                        (batch_id, model_ids),
+                    )
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    update fm_cutover_batches
+                       set status = case when status = 'draining' then 'applying' else status end
+                     where id = %s and status in ('draining','applying')
+                    """,
+                    (batch_id,),
+                )
+            await conn.commit()
+            return FreezeSummary(
+                model_count=len(models),
+                license_count=len(licenses),
+                revocation_target_count=len(targets),
+            )
+        except Exception:
+            await conn.rollback()
+            raise
 
 
 async def _pending_cutover_jobs(conn) -> list[dict]:
