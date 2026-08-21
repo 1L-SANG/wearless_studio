@@ -26,7 +26,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
 from pydantic import Field, ValidationError
@@ -35,8 +35,8 @@ from . import cx_identity, holder_client
 from . import repo
 from .auth import require_user
 from .db import get_conn
+from .facemarket_enrollment import BIOMETRIC_CONSENT_VERSION
 from .models import CamelModel, ErrorResponse
-from .r2 import MIME_EXT
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket"])
@@ -69,9 +69,8 @@ class IdentityVerifyResult(CamelModel):
 class ModelCard(CamelModel):
     """카탈로그/마이페이지 카드 — 공개 화이트리스트 컬럼만(PII·ci_hash 제외).
 
-    라이선스 필드(license_id·unit_price·has_active_license·vc_id)는 카탈로그(list_models)에서
-    모델의 가장 최근 active 라이선스를 LEFT JOIN LATERAL 로 합쳐 채운다. 라이선스 없는 모델은
-    기본값(None/False) — 셀러 프론트가 '라이선스 가능/단가/검증 VC' 배지를 이 shape로 소비.
+    카탈로그(list_models)는 현재 생체 등록·VC·라이선스·비공개 자산 증거가 모두 유효한 모델만
+    반환한다. 얼굴/레거시 cover는 내보내지 않고 고정 placeholder URI만 제공한다.
     """
 
     id: str
@@ -84,7 +83,7 @@ class ModelCard(CamelModel):
     has_active_license: bool = False
     vc_id: str | None = None
     assets_ready: bool = False  # 실존 모델 그리드 자산 빌드 완료 → 셀러 선택 가능(assetsReady)
-    # 활성 라이선스 얼굴의 게이트 URL(공개 URL 아님 — 인증 fetch 로만 로드). 카탈로그 썸네일용.
+    # 비생체 고정 placeholder 게이트 URL. 모델별 얼굴/cover 바이트를 뜻하지 않는다.
     face_thumb_uri: str | None = None
 
 
@@ -308,16 +307,72 @@ async def identity_verify(
 _MODEL_CARD_COLS = ("id::text as id, display_name, status, cover_image_url, created_at, "
                     "(assets_status = 'ready') as assets_ready")
 
-# 카탈로그 전용 — 모델(m) + 가장 최근 active 라이선스(l) LEFT JOIN LATERAL.
-# 라이선스 없는 모델은 l.* NULL → has_active_license False, unit_price/license_id/vc_id None.
-_MODEL_CARD_COLS_ENRICHED = (
-    "m.id::text as id, m.display_name, m.status, m.cover_image_url, m.created_at, "
-    "l.id::text as license_id, l.unit_price, l.vc_id, (l.id is not null) as has_active_license, "
-    "(m.assets_status = 'ready') as assets_ready, "
-    # 마켓 썸네일 = 빌드된 face_front 게이트(인증 셀러 누구나). 자산 없으면 null → 프론트 placeholder.
-    "(case when m.assets_status = 'ready' "
-    " then '/v1/facemarket/models/' || m.id::text || '/thumbnail' end) as face_thumb_uri"
+_CURRENT_CARD_JOINS = """
+join fm_biometric_enrollments e
+  on e.id = m.current_enrollment_id and e.model_id = m.id
+join fm_licenses l
+  on l.model_id = m.id and l.enrollment_id = e.id
+join fm_biometric_enrollment_photos p
+  on p.enrollment_id = e.id and p.angle = 'front'
+"""
+
+_CURRENT_CARD_ELIGIBILITY = """
+m.status = 'verified'
+and m.assets_status = 'ready'
+and e.status = 'passed'
+and e.decision = 'passed'
+and e.consent_version = %s
+and nullif(btrim(e.match_policy_version), '') is not null
+and l.status = 'active'
+and (l.license_valid_until is null or l.license_valid_until > now())
+and nullif(btrim(l.vc_id), '') is not null
+and l.vc_id = e.vc_id
+and p.storage_state = 'approved'
+and p.mime_type like 'image/%'
+and nullif(btrim(p.r2_key), '') is not null
+and nullif(btrim(l.face_image_key), '') is not null
+and p.r2_key = l.face_image_key
+and exists (
+  select 1 from fm_model_assets a
+  where a.model_id = m.id and a.view = 'face_front'
+    and nullif(btrim(a.r2_key), '') is not null
+    and a.bucket = 'face' and a.mime like 'image/%'
+    and a.source_enrollment_id = e.id
+    and a.evidence_version = e.match_policy_version
 )
+and exists (
+  select 1 from fm_model_assets a
+  where a.model_id = m.id and a.view = 'grid_sedcard'
+    and nullif(btrim(a.r2_key), '') is not null
+    and a.bucket = 'face' and a.mime like 'image/%'
+    and a.source_enrollment_id = e.id
+    and a.evidence_version = e.match_policy_version
+)
+"""
+
+_MODEL_CARD_COLS_ENRICHED = (
+    "m.id::text as id, m.display_name, m.status, "
+    "null::text as cover_image_url, m.created_at, "
+    "l.id::text as license_id, l.unit_price, l.vc_id, "
+    "true as has_active_license, true as assets_ready, "
+    "('/v1/facemarket/models/' || m.id::text || '/thumbnail') as face_thumb_uri"
+)
+
+_MODEL_PLACEHOLDER_SVG = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" '
+    b'viewBox="0 0 400 400"><rect width="400" height="400" fill="#efeef0"/>'
+    b'<circle cx="200" cy="142" r="58" fill="#aaa8b2"/>'
+    b'<path d="M92 352c12-82 55-124 108-124s96 42 108 124" '
+    b'fill="#aaa8b2"/></svg>'
+)
+
+
+def _private_not_found() -> JSONResponse:
+    return JSONResponse(
+        status_code=404,
+        content={"error": {"code": "not_found", "message": "찾을 수 없습니다."}},
+        headers={"Cache-Control": "no-store, private"},
+    )
 
 
 @router.get(
@@ -327,7 +382,11 @@ _MODEL_CARD_COLS_ENRICHED = (
     tags=["FaceMarket"],
     summary="검증 모델 카탈로그 (셀러용)",
 )
-async def list_models(request: Request, user_id: str = Depends(require_user)):
+async def list_models(
+    request: Request,
+    response: Response,
+    user_id: str = Depends(require_user),
+):
     """검증(verified) 모델 목록. 셀러가 상세페이지 제작 시 고르는 카탈로그 피드.
 
     화이트리스트 컬럼만 반환 — `ci_hash`·`user_id`·`did` 등 PII/식별자는 노출하지 않는다.
@@ -337,16 +396,14 @@ async def list_models(request: Request, user_id: str = Depends(require_user)):
         async with conn.cursor() as cur:
             await cur.execute(
                 f"""select {_MODEL_CARD_COLS_ENRICHED} from fm_models m
-                    left join lateral (
-                      select id, unit_price, vc_id
-                      from fm_licenses
-                      where model_id = m.id and status = 'active'
-                      order by created_at desc limit 1
-                    ) l on true
-                    where m.status = 'verified'
-                    order by m.created_at desc limit 200"""
+                    {_CURRENT_CARD_JOINS}
+                    where {_CURRENT_CARD_ELIGIBILITY}
+                    order by m.created_at desc limit 200""",
+                (BIOMETRIC_CONSENT_VERSION,),
             )
-            return await cur.fetchall()
+            rows = await cur.fetchall()
+    response.headers["Cache-Control"] = "no-store, private"
+    return rows
 
 
 @router.get(
@@ -448,8 +505,6 @@ FORBIDDEN_BRAND_USE_CATEGORIES = (
     "의료·성형",
     "정치·종교",
 )
-_EXT_TO_MIME = {ext: mime for mime, ext in MIME_EXT.items()}  # 게이트 응답 Content-Type 역매핑
-
 # 응답 화이트리스트 — face_image_key(비공개)·모델 PII 제외. uuid(id/model_id)는 ::text 캐스트
 # (psycopg→uuid.UUID, CamelModel str 필드가 거부 → 500 방지, repo.py 관례).
 # RETURNING 용(단일 테이블, 별칭 없음).
@@ -954,39 +1009,41 @@ async def get_license_face(
     license_id: str,
     user_id: str = Depends(require_user),
 ):
-    """얼굴 이미지 바이트 스트림. 소유자(검증 모델 본인)만·active·미만료일 때만.
+    """현재 생체 등록의 승인 정면 얼굴을 검증 모델 본인에게만 스트림한다.
 
     비존재/비소유/폐기·만료 모두 **404**(존재 노출 방지). 공개 URL을 절대 만들지 않고
     인증된 이 라우트로만 바이트를 흘린다(<img>는 Bearer 불가 → 프론트는 fetch+objectURL).
     """
-    r2 = _r2_face(request)
+    try:
+        license_id = str(uuid.UUID(str(license_id)))
+    except (TypeError, ValueError):
+        return _private_not_found()
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                """select l.face_image_key, l.status, l.license_valid_until
-                   from fm_licenses l
-                   join fm_models m on m.id = l.model_id
-                   where l.id = %s and m.user_id = %s""",
-                (license_id, user_id),
+                f"""select l.face_image_key, p.mime_type from fm_models m
+                    {_CURRENT_CARD_JOINS}
+                    where {_CURRENT_CARD_ELIGIBILITY}
+                      and l.id = %s and m.user_id = %s
+                    limit 1""",
+                (BIOMETRIC_CONSENT_VERSION, license_id, user_id),
             )
             row = await cur.fetchone()
 
-    if not row or not row["face_image_key"]:
-        raise _err("not_found", "찾을 수 없습니다.", status=404)
-    if row["status"] != "active":
-        raise _err("not_found", "찾을 수 없습니다.", status=404)  # revoked/expired = 접근 차단
-    valid_until = row["license_valid_until"]
-    if valid_until and valid_until <= datetime.now(timezone.utc):
-        raise _err("not_found", "찾을 수 없습니다.", status=404)
+    if not row:
+        return _private_not_found()
 
+    r2 = _r2_face(request)
     key = row["face_image_key"]
-    mime = _EXT_TO_MIME.get(key.rsplit(".", 1)[-1].lower(), "application/octet-stream")
     try:
         data = await asyncio.to_thread(r2.get_bytes, key)
     except Exception:
-        raise _err("not_found", "찾을 수 없습니다.", status=404)
-    # 비공개 — 캐시·색인 금지
-    return Response(content=data, media_type=mime, headers={"Cache-Control": "no-store, private"})
+        return _private_not_found()
+    return Response(
+        content=data,
+        media_type=row["mime_type"],
+        headers={"Cache-Control": "no-store, private"},
+    )
 
 
 @router.get(
@@ -1000,33 +1057,29 @@ async def get_model_thumbnail(
     model_id: str,
     user_id: str = Depends(require_user),
 ):
-    """마켓 카탈로그 썸네일 — 검증 모델의 face_front(비공개 버킷)를 **인증 셀러 누구나** 볼 수 있게
-    서빙한다. 모델이 자산 빌드로 마켓 등록에 동의한 제품이므로 소유자 스코프가 아니다(라이선스 얼굴
-    게이트와 다름). 공개 URL은 만들지 않고 이 인증 라우트로만 바이트를 흘린다(no-store).
-    비존재/미검증/자산없음 = 404(존재 노출 방지). 얼굴 키는 응답·로그 미노출.
-    """
-    r2 = _r2_face(request)
+    """현재 사용 가능한 모델에 동일한 서버 소유 비생체 placeholder를 반환한다."""
     try:  # uuid 형식 가드 — 쓰레기 입력은 500 아닌 404
-        uuid.UUID(str(model_id))
-    except ValueError:
-        raise _err("not_found", "찾을 수 없습니다.", status=404)
+        model_id = str(uuid.UUID(str(model_id)))
+    except (TypeError, ValueError):
+        return _private_not_found()
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                """select a.r2_key, a.mime from fm_model_assets a
-                   join fm_models m on m.id = a.model_id
-                   where a.model_id = %s and a.view = 'face_front' and m.status = 'verified'""",
-                (model_id,),
+                f"""select 1 as eligible from fm_models m
+                    {_CURRENT_CARD_JOINS}
+                    where {_CURRENT_CARD_ELIGIBILITY}
+                      and m.id = %s
+                    limit 1""",
+                (BIOMETRIC_CONSENT_VERSION, model_id),
             )
             row = await cur.fetchone()
-    if not row or not row["r2_key"]:
-        raise _err("not_found", "찾을 수 없습니다.", status=404)
-    try:
-        data = await asyncio.to_thread(r2.get_bytes, row["r2_key"])
-    except Exception:
-        raise _err("not_found", "찾을 수 없습니다.", status=404)
-    return Response(content=data, media_type=row["mime"] or "image/png",
-                    headers={"Cache-Control": "no-store, private"})
+    if not row:
+        return _private_not_found()
+    return Response(
+        content=_MODEL_PLACEHOLDER_SVG,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "no-store, private"},
+    )
 
 
 # ============================================================================

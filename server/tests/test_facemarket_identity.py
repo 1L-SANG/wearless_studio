@@ -6,7 +6,7 @@ CX `trans` 호출·DB를 페이크로 대체해 순수 로직(HMAC dedup·리플
 
 import contextlib
 import hashlib
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -29,9 +29,11 @@ SAMPLE_TRANS = {
 
 _CARD_KEYS = ("id", "display_name", "status", "cover_image_url", "created_at")
 # 카탈로그(enriched) 추가 라이선스 필드 — store 에 라이선스 없으면 None/False.
-_LICENSE_ENRICH = {
-    "license_id": None, "unit_price": None, "vc_id": None, "has_active_license": False,
-}
+ELIGIBLE_MODEL_ID = "11111111-1111-1111-1111-111111111111"
+STALE_MODEL_ID = "22222222-2222-2222-2222-222222222222"
+ENROLLMENT_ID = "33333333-3333-3333-3333-333333333333"
+LICENSE_ID = "44444444-4444-4444-4444-444444444444"
+EVIDENCE_VERSION = "test-policy-v1"
 
 
 class FakeCursor:
@@ -78,11 +80,45 @@ class FakeCursor:
             rows = [r for r in models if r["user_id"] == params[0]]
             self._many = [{k: r[k] for k in _CARD_KEYS} for r in rows]
         elif s.startswith("select m.id::text as id"):
-            # 카탈로그(enriched) = verified 만 + 최근 active 라이선스 LEFT JOIN LATERAL.
+            self.store["catalog_sql"] = s
+            self.store["catalog_params"] = params
             rows = [r for r in models if r["status"] == "verified"]
-            self._many = [
-                {**{k: r[k] for k in _CARD_KEYS}, **_LICENSE_ENRICH} for r in rows
-            ]
+            if "join fm_biometric_enrollments e" in s:
+                rows = [r for r in rows if _is_current_catalog_card(self.store, r)]
+            cards = []
+            for row in rows:
+                enrollment = next(
+                    (e for e in self.store["enrollments"] if e["id"] == row.get("current_enrollment_id")),
+                    None,
+                )
+                license_row = next(
+                    (
+                        lic
+                        for lic in self.store["licenses"]
+                        if enrollment
+                        and lic["model_id"] == row["id"]
+                        and lic.get("enrollment_id") == enrollment["id"]
+                        and lic["status"] == "active"
+                    ),
+                    None,
+                )
+                cards.append(
+                    {
+                        **{k: row[k] for k in _CARD_KEYS},
+                        "cover_image_url": None if "null::text as cover_image_url" in s else row["cover_image_url"],
+                        "license_id": (license_row or {}).get("id"),
+                        "unit_price": (license_row or {}).get("unit_price"),
+                        "vc_id": (license_row or {}).get("vc_id"),
+                        "has_active_license": license_row is not None,
+                        "assets_ready": row.get("assets_status") == "ready",
+                        "face_thumb_uri": (
+                            f"/v1/facemarket/models/{row['id']}/thumbnail"
+                            if row.get("assets_status") == "ready"
+                            else None
+                        ),
+                    }
+                )
+            self._many = cards
         else:  # pragma: no cover
             raise AssertionError(f"unexpected SQL: {s}")
 
@@ -111,7 +147,18 @@ def fm(keypair, monkeypatch):
     app = create_app(make_settings(facemarket_enabled=True, fm_ci_pepper="pep"))
     app.state.jwt_key_resolver = lambda token: public_key
 
-    store = {"models": [], "tx": set(), "identity_insert_sql": "", "identity_insert_format": None}
+    store = {
+        "models": [],
+        "licenses": [],
+        "enrollments": [],
+        "enrollment_photos": [],
+        "assets": [],
+        "tx": set(),
+        "identity_insert_sql": "",
+        "identity_insert_format": None,
+        "catalog_sql": "",
+        "catalog_params": (),
+    }
 
     @contextlib.asynccontextmanager
     async def fake_get_conn(_request):
@@ -241,25 +288,194 @@ def test_identity_only_cannot_activate_model_when_biometrics_are_enabled(
 # ---- FM-13 카탈로그 ----------------------------------------------------------
 
 
+def _is_current_catalog_card(store, model):
+    enrollment = next(
+        (
+            row
+            for row in store["enrollments"]
+            if row["id"] == model.get("current_enrollment_id") and row["model_id"] == model["id"]
+        ),
+        None,
+    )
+    license_row = next(
+        (
+            row
+            for row in store["licenses"]
+            if enrollment
+            and row["model_id"] == model["id"]
+            and row.get("enrollment_id") == enrollment["id"]
+        ),
+        None,
+    )
+    evidence = {
+        row["view"]: row
+        for row in store["assets"]
+        if enrollment and row["model_id"] == model["id"]
+    }
+    front = next(
+        (
+            row
+            for row in store["enrollment_photos"]
+            if enrollment
+            and row["enrollment_id"] == enrollment["id"]
+            and row["angle"] == "front"
+        ),
+        None,
+    )
+    return bool(
+        enrollment
+        and license_row
+        and model.get("assets_status") == "ready"
+        and enrollment["status"] == "passed"
+        and enrollment["decision"] == "passed"
+        and enrollment["consent_version"] == facemarket_enrollment.BIOMETRIC_CONSENT_VERSION
+        and enrollment["match_policy_version"]
+        and license_row["status"] == "active"
+        and license_row["license_valid_until"] > datetime.now(timezone.utc)
+        and license_row["vc_id"] == enrollment["vc_id"]
+        and front
+        and front["storage_state"] == "approved"
+        and front["mime_type"].startswith("image/")
+        and front["r2_key"].strip()
+        and license_row["face_image_key"].strip()
+        and license_row["face_image_key"] == front["r2_key"]
+        and all(
+            evidence.get(view, {}).get("bucket") == "face"
+            and evidence[view]["mime"].startswith("image/")
+            and evidence[view]["r2_key"].strip()
+            and evidence[view]["source_enrollment_id"] == enrollment["id"]
+            and evidence[view]["evidence_version"] == enrollment["match_policy_version"]
+            for view in ("face_front", "grid_sedcard")
+        )
+    )
+
+
 def test_catalog_lists_verified_without_pii(fm, make_token):
-    client, _, _ = fm
-    client.post("/v1/facemarket/identity/verify", json={"token": "tok-c"}, headers=_headers(make_token))
+    client, store, _ = fm
+    created_at = datetime(2026, 8, 21, 12, 0, 0, tzinfo=timezone.utc)
+    store["models"].extend(
+        [
+            {
+                "id": ELIGIBLE_MODEL_ID,
+                "user_id": "model-owner",
+                "display_name": "홍*동",
+                "status": "verified",
+                "ci_hash": "ci-eligible",
+                "cover_image_url": "https://legacy.example/eligible-face.jpg",
+                "created_at": created_at,
+                "assets_status": "ready",
+                "current_enrollment_id": ENROLLMENT_ID,
+            },
+            {
+                "id": STALE_MODEL_ID,
+                "user_id": "stale-owner",
+                "display_name": "김*수",
+                "status": "verified",
+                "ci_hash": "ci-stale",
+                "cover_image_url": "https://legacy.example/stale-face.jpg",
+                "created_at": created_at - timedelta(seconds=1),
+                "assets_status": "ready",
+                "current_enrollment_id": None,
+            },
+        ]
+    )
+    store["enrollments"].append(
+        {
+            "id": ENROLLMENT_ID,
+            "model_id": ELIGIBLE_MODEL_ID,
+            "status": "passed",
+            "decision": "passed",
+            "consent_version": facemarket_enrollment.BIOMETRIC_CONSENT_VERSION,
+            "match_policy_version": EVIDENCE_VERSION,
+            "vc_id": "vc:test:eligible",
+        }
+    )
+    store["licenses"].append(
+        {
+            "id": LICENSE_ID,
+            "model_id": ELIGIBLE_MODEL_ID,
+            "enrollment_id": ENROLLMENT_ID,
+            "status": "active",
+            "license_valid_until": datetime.now(timezone.utc) + timedelta(days=1),
+            "unit_price": 5000,
+            "vc_id": "vc:test:eligible",
+            "face_image_key": "facemarket/approved/front.png",
+        }
+    )
+    store["enrollment_photos"].append(
+        {
+            "enrollment_id": ENROLLMENT_ID,
+            "angle": "front",
+            "storage_state": "approved",
+            "mime_type": "image/png",
+            "r2_key": "facemarket/approved/front.png",
+        }
+    )
+    store["assets"].extend(
+        {
+            "model_id": ELIGIBLE_MODEL_ID,
+            "view": view,
+            "bucket": "face",
+            "mime": "image/png",
+            "r2_key": f"facemarket/assets/{view}.png",
+            "source_enrollment_id": ENROLLMENT_ID,
+            "evidence_version": EVIDENCE_VERSION,
+        }
+        for view in ("face_front", "grid_sedcard")
+    )
+
     r = client.get("/v1/facemarket/models", headers=_headers(make_token))
     assert r.status_code == 200, r.text
     cards = r.json()
-    assert len(cards) == 1
+    assert [card["id"] for card in cards] == [ELIGIBLE_MODEL_ID]
     card = cards[0]
-    # T2 enriched — 기본 카드 + 라이선스 필드(store 무라이선스 → None/False).
     assert set(card) == {
         "id", "displayName", "status", "coverImageUrl", "createdAt",
         "licenseId", "unitPrice", "hasActiveLicense", "vcId", "assetsReady", "faceThumbUri",
     }
     assert card["status"] == "verified"
-    assert card["assetsReady"] is False  # 자산 미빌드 → 셀러 선택 불가 표식
-    assert card["hasActiveLicense"] is False
-    assert card["licenseId"] is None and card["unitPrice"] is None and card["vcId"] is None
+    assert card["coverImageUrl"] is None
+    assert card["faceThumbUri"] == f"/v1/facemarket/models/{ELIGIBLE_MODEL_ID}/thumbnail"
+    assert card["assetsReady"] is True
+    assert card["hasActiveLicense"] is True
+    assert card["licenseId"] == LICENSE_ID
+    assert card["unitPrice"] == 5000
+    assert card["vcId"] == "vc:test:eligible"
+    assert r.headers["cache-control"] == "no-store, private"
     # PII/식별자 미노출
     assert "ciHash" not in card and "userId" not in card and "ci_hash" not in r.text
+    sql = store["catalog_sql"]
+    assert store["catalog_params"] == (facemarket_enrollment.BIOMETRIC_CONSENT_VERSION,)
+    for required in (
+        "m.current_enrollment_id",
+        "l.enrollment_id = e.id",
+        "p.enrollment_id = e.id and p.angle = 'front'",
+        "m.status = 'verified'",
+        "m.assets_status = 'ready'",
+        "e.status = 'passed'",
+        "e.decision = 'passed'",
+        "e.consent_version = %s",
+        "nullif(btrim(e.match_policy_version), '') is not null",
+        "l.status = 'active'",
+        "l.license_valid_until > now()",
+        "nullif(btrim(l.vc_id), '') is not null",
+        "l.vc_id = e.vc_id",
+        "p.storage_state = 'approved'",
+        "p.mime_type like 'image/%'",
+        "nullif(btrim(p.r2_key), '') is not null",
+        "nullif(btrim(l.face_image_key), '') is not null",
+        "a.view = 'face_front'",
+        "a.view = 'grid_sedcard'",
+        "a.bucket = 'face'",
+        "a.mime like 'image/%'",
+        "a.source_enrollment_id = e.id",
+        "a.evidence_version = e.match_policy_version",
+        "p.r2_key = l.face_image_key",
+        "nullif(btrim(a.r2_key), '') is not null",
+    ):
+        assert required in sql
+    assert "m.cover_image_url" not in sql
+    assert "r2_key" not in sql.split(" from fm_models m", 1)[0]
 
 
 def test_my_models_scoped_to_owner(fm, make_token):
