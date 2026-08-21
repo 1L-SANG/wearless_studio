@@ -15,8 +15,11 @@ facemarket.py 의 동명 헬퍼와 소폭 중복되나 의도적이다 — 해�
 않기 위함. 추후 통합 시 이 모듈을 단일 원천으로 삼는다.
 """
 
+import base64
 import logging
-from datetime import date, datetime
+from dataclasses import dataclass
+from datetime import date, datetime, timezone
+from typing import Literal
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -36,6 +39,132 @@ ADULT_MIN_AGE = 19
 
 class CxIdentityError(RuntimeError):
     """CX 조회·판별 실패. 라우트가 사용자 안내 에러로 매핑한다(원문·birth 미포함)."""
+
+
+@dataclass(frozen=True, slots=True)
+class OacxBiometricContract:
+    version: str
+    portrait_path: tuple[str, ...]
+    portrait_mime_path: tuple[str, ...]
+    issued_at_path: tuple[str, ...]
+    portrait_encoding: Literal["base64"]
+    max_portrait_bytes: int
+    ttl_seconds: int
+
+
+@dataclass(slots=True)
+class OacxBiometricEvidence:
+    ci: bytearray
+    birth: str
+    name_masked: str
+    transaction_id: str | None
+    portrait: bytearray
+    portrait_mime: str
+    contract_version: str
+
+
+class OacxBiometricError(CxIdentityError):
+    def __init__(self, reason: str = "id_portrait_unavailable"):
+        self.reason = reason
+        super().__init__(reason)
+
+
+DEV_MOCK_OACX_BIOMETRIC_CONTRACT = OacxBiometricContract(
+    version="dev-mock-v1",
+    portrait_path=("idPortraitBase64",),
+    portrait_mime_path=("idPortraitMime",),
+    issued_at_path=("issuedAt",),
+    portrait_encoding="base64",
+    max_portrait_bytes=5 * 1024 * 1024,
+    ttl_seconds=300,
+)
+
+_PORTRAIT_MIMES = {"image/jpeg", "image/png", "image/webp"}
+
+
+def _nested_value(data: dict, path: tuple[str, ...]):
+    value = data
+    for key in path:
+        if not isinstance(value, dict):
+            raise KeyError
+        value = value[key]
+    return value
+
+
+def _mask_name(name: str) -> str:
+    name = name.strip()
+    if len(name) <= 1:
+        return name or "익명"
+    if len(name) == 2:
+        return name[0] + "*"
+    return name[0] + "*" * (len(name) - 2) + name[-1]
+
+
+def parse_oacx_biometric_evidence(
+    trans: dict,
+    *,
+    contract: OacxBiometricContract,
+    now: datetime | None = None,
+) -> OacxBiometricEvidence:
+    """Parse only an injected, reviewed OACX portrait contract; sanitize every failure."""
+    try:
+        ci = trans["ci"]
+        birth = trans["birth"]
+        name = trans["nm"]
+        transaction_id = trans.get("txId")
+        if not all(isinstance(value, str) and value for value in (ci, birth, name)):
+            raise ValueError
+        if transaction_id is not None and not isinstance(transaction_id, str):
+            raise ValueError
+
+        encoded = _nested_value(trans, contract.portrait_path)
+        portrait_mime = _nested_value(trans, contract.portrait_mime_path)
+        issued_at = _nested_value(trans, contract.issued_at_path)
+        if contract.portrait_encoding != "base64" or not isinstance(encoded, str):
+            raise ValueError
+        if portrait_mime not in _PORTRAIT_MIMES or not isinstance(issued_at, str):
+            raise ValueError
+
+        portrait = bytearray(base64.b64decode(encoded, validate=True))
+        if not portrait or len(portrait) > contract.max_portrait_bytes:
+            raise ValueError
+
+        issued = datetime.fromisoformat(issued_at.replace("Z", "+00:00"))
+        if issued.tzinfo is None:
+            raise ValueError
+        current = now or datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            raise ValueError
+        age_seconds = (
+            current.astimezone(timezone.utc) - issued.astimezone(timezone.utc)
+        ).total_seconds()
+        if not 0 <= age_seconds <= contract.ttl_seconds:
+            raise ValueError
+        if not is_adult_from_birth(birth, today=current.astimezone(_KST).date()):
+            raise ValueError
+
+        return OacxBiometricEvidence(
+            ci=bytearray(ci.encode()),
+            birth=birth,
+            name_masked=_mask_name(name),
+            transaction_id=transaction_id,
+            portrait=portrait,
+            portrait_mime=portrait_mime,
+            contract_version=contract.version,
+        )
+    except Exception:
+        raise OacxBiometricError() from None
+
+
+def get_oacx_biometric_contract(settings) -> OacxBiometricContract:
+    if settings.app_env == "dev" and settings.fm_oacx_contract_mode == "dev-mock-v1":
+        return DEV_MOCK_OACX_BIOMETRIC_CONTRACT
+    raise OacxBiometricError("oacx_contract_unavailable")
+
+
+def wipe_bytearray(value: bytearray | None) -> None:
+    if value is not None:
+        value[:] = b"\x00" * len(value)
 
 
 async def fetch_trans(base_url: str, token: str) -> dict:

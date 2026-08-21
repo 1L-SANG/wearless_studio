@@ -1,11 +1,32 @@
+import base64
+from datetime import datetime, timezone
 from unittest.mock import Mock, call
 
 import pytest
 from fastapi import FastAPI
 
+from app.cx_identity import (
+    DEV_MOCK_OACX_BIOMETRIC_CONTRACT,
+    OacxBiometricError,
+    get_oacx_biometric_contract,
+    parse_oacx_biometric_evidence,
+    wipe_bytearray,
+)
 from app.facemarket_enrollment import router as biometric_enrollment_router
 from app.main import create_app
 from conftest import make_settings
+
+
+DEV_TRANS = {
+    "ci": "dev-ci-value",
+    "birth": "19900102",
+    "nm": "홍길동",
+    "txId": "tx-dev-1",
+    "idPortraitBase64": base64.b64encode(b"portrait-bytes").decode(),
+    "idPortraitMime": "image/jpeg",
+    "issuedAt": "2026-08-21T03:00:00Z",
+}
+NOW = datetime(2026, 8, 21, 3, 2, tzinfo=timezone.utc)
 
 
 def biometric_settings(**overrides):
@@ -74,3 +95,69 @@ def test_enabled_dev_feature_builds_isolated_clients_and_includes_router(monkeyp
     assert app.state.fm_rekognition is rekognition
     assert app.state.fm_sts is sts
     assert biometric_enrollment_router in included_routers
+
+
+def test_oacx_dev_contract_extracts_mutable_sensitive_buffers():
+    evidence = parse_oacx_biometric_evidence(
+        DEV_TRANS, contract=DEV_MOCK_OACX_BIOMETRIC_CONTRACT, now=NOW
+    )
+
+    assert evidence.ci == bytearray(b"dev-ci-value")
+    assert evidence.portrait == bytearray(b"portrait-bytes")
+    assert evidence.name_masked == "홍*동"
+    assert evidence.contract_version == "dev-mock-v1"
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"idPortraitBase64": None},
+        {"idPortraitBase64": "not-base64"},
+        {"idPortraitMime": "application/pdf"},
+        {"issuedAt": "2026-08-21T02:54:59Z"},
+        {"birth": "20100102"},
+    ],
+)
+def test_oacx_unusable_portrait_fails_with_one_sanitized_reason(patch):
+    trans = {**DEV_TRANS, **patch}
+
+    with pytest.raises(OacxBiometricError) as error:
+        parse_oacx_biometric_evidence(
+            trans, contract=DEV_MOCK_OACX_BIOMETRIC_CONTRACT, now=NOW
+        )
+
+    assert error.value.reason == "id_portrait_unavailable"
+    assert "dev-ci-value" not in str(error.value)
+    assert "idPortraitBase64" not in str(error.value)
+
+
+def test_oacx_oversized_portrait_fails_with_sanitized_reason():
+    trans = {
+        **DEV_TRANS,
+        "idPortraitBase64": base64.b64encode(b"x" * (5 * 1024 * 1024 + 1)).decode(),
+    }
+
+    with pytest.raises(OacxBiometricError) as error:
+        parse_oacx_biometric_evidence(
+            trans, contract=DEV_MOCK_OACX_BIOMETRIC_CONTRACT, now=NOW
+        )
+
+    assert error.value.reason == "id_portrait_unavailable"
+
+
+def test_oacx_production_cannot_select_dev_contract():
+    with pytest.raises(OacxBiometricError) as error:
+        get_oacx_biometric_contract(
+            make_settings(app_env="prod", fm_oacx_contract_mode="dev-mock-v1")
+        )
+
+    assert error.value.reason == "oacx_contract_unavailable"
+
+
+def test_oacx_sensitive_bytearrays_can_be_wiped():
+    value = bytearray(b"sensitive")
+
+    wipe_bytearray(value)
+    wipe_bytearray(None)
+
+    assert value == bytearray(len(value))

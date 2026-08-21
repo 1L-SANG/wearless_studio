@@ -47,7 +47,7 @@ class FaceQc:
         self._det = cv2.FaceDetectorYN.create(det_path, "", (320, 320), score_threshold=0.7)
         self._rec = cv2.FaceRecognizerSF.create(rec_path, "")
 
-    def _embed(self, data: bytes) -> np.ndarray:
+    def _embed(self, data: bytes | bytearray) -> np.ndarray:
         arr = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
         if arr is None:
             raise QcFailed("decode_failed")
@@ -56,9 +56,28 @@ class FaceQc:
         _, faces = self._det.detect(arr)
         if faces is None or len(faces) == 0:
             raise QcFailed("no_face_detected")
-        face = max(faces, key=lambda f: float(f[2]) * float(f[3]))  # 가장 큰 얼굴 선택
+        if len(faces) != 1:
+            raise QcFailed("multiple_faces")
+        face = faces[0]
         aligned = self._rec.alignCrop(arr, face)
         return self._rec.feature(aligned).flatten()
+
+    def one_to_one_similarity(
+        self, reference: bytes | bytearray, candidate: bytes | bytearray
+    ) -> float:
+        left = right = None
+        try:
+            left = self._embed(reference)
+            right = self._embed(candidate)
+            denominator = float(np.linalg.norm(left)) * float(np.linalg.norm(right))
+            if denominator <= 0:
+                raise QcFailed("embedding_invalid")
+            return float(np.dot(left, right)) / denominator
+        finally:
+            if left is not None:
+                left.fill(0)
+            if right is not None:
+                right.fill(0)
 
     def pairwise_min_similarity(self, images: list[bytes]) -> float:
         """모든 쌍의 코사인 유사도 중 최소값. 얼굴 미검출 시 QcFailed."""
@@ -75,13 +94,16 @@ class FaceQc:
         return mn
 
 
-def load_face_qc(settings) -> "FaceQc | None":
+def load_face_qc(settings, *, required: bool = False) -> "FaceQc | None":
     """설정에 따라 FaceQc 를 생성. disabled 이거나 weights 부재면 None(QC 스킵)."""
     if not getattr(settings, "fm_face_qc_enabled", False):
+        if required:
+            raise QcFailed("qc_unavailable")
         return None
-    model_dir = getattr(settings, "fm_face_qc_dir", None) or _DEFAULT_DIR
     try:
-        return FaceQc(model_dir)
-    except Exception as e:  # weights 부재 등 — 초기화 실패는 QC 스킵으로 강등(생성 자체는 막지 않음)
-        log.warning("face QC init failed: %s", type(e).__name__)
+        return FaceQc(getattr(settings, "fm_face_qc_dir", None) or _DEFAULT_DIR)
+    except Exception:  # weights 부재 등 — 초기화 실패는 QC 스킵으로 강등(생성 자체는 막지 않음)
+        log.warning("face QC init failed")
+        if required:
+            raise QcFailed("qc_unavailable")
         return None

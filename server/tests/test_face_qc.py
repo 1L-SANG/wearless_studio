@@ -31,6 +31,26 @@ def _blank_png() -> bytes:
     return buf.tobytes()
 
 
+class FakeDetector:
+    def __init__(self, face_count: int):
+        self.face_count = face_count
+
+    def setInputSize(self, size):
+        pass
+
+    def detect(self, image):
+        faces = np.ones((self.face_count, 15), dtype=np.float32)
+        return 1, faces
+
+
+class FakeRecognizer:
+    def alignCrop(self, image, face):
+        return image
+
+    def feature(self, image):
+        return np.array([[1.0, 0.0]], dtype=np.float32)
+
+
 def test_qc_disabled_returns_none():
     assert load_face_qc(make_settings(fm_face_qc_enabled=False)) is None
 
@@ -45,6 +65,22 @@ def test_qc_enabled_without_weights_degrades_to_none(monkeypatch):
     # weights 부재/초기화 실패는 QC 스킵(None)으로 강등 — 생성 자체를 막지 않는다.
     monkeypatch.setattr(face_qc, "FaceQc", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError()))
     assert load_face_qc(make_settings(fm_face_qc_enabled=True)) is None
+
+
+def test_required_loader_fails_closed_when_weights_are_missing(monkeypatch):
+    monkeypatch.setattr(face_qc, "FaceQc", lambda *args: (_ for _ in ()).throw(FileNotFoundError()))
+
+    with pytest.raises(QcFailed) as error:
+        load_face_qc(make_settings(fm_face_qc_enabled=True), required=True)
+
+    assert error.value.reason == "qc_unavailable"
+
+
+def test_required_loader_fails_closed_when_disabled():
+    with pytest.raises(QcFailed) as error:
+        load_face_qc(make_settings(fm_face_qc_enabled=False), required=True)
+
+    assert error.value.reason == "qc_unavailable"
 
 
 @_needs_weights
@@ -72,6 +108,29 @@ def test_pairwise_min_similarity_math(monkeypatch):
     monkeypatch.setattr(FaceQc, "_embed", lambda self, d: vecs[d])
     assert qc.pairwise_min_similarity([b"a", b"b"]) == pytest.approx(1.0)
     assert qc.pairwise_min_similarity([b"a", b"b", b"c"]) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_one_to_one_similarity_wipes_both_embeddings(monkeypatch):
+    qc = FaceQc.__new__(FaceQc)
+    first = np.array([1.0, 0.0])
+    second = np.array([1.0, 0.0])
+    values = iter((first, second))
+    monkeypatch.setattr(FaceQc, "_embed", lambda self, data: next(values))
+
+    assert qc.one_to_one_similarity(b"id", b"live") == pytest.approx(1.0)
+    assert np.count_nonzero(first) == 0
+    assert np.count_nonzero(second) == 0
+
+
+def test_embed_rejects_multiple_faces():
+    qc = FaceQc.__new__(FaceQc)
+    qc._det = FakeDetector(face_count=2)
+    qc._rec = FakeRecognizer()
+
+    with pytest.raises(QcFailed) as error:
+        qc._embed(_blank_png())
+
+    assert error.value.reason == "multiple_faces"
 
 
 def test_default_model_dir_points_at_bundle():
