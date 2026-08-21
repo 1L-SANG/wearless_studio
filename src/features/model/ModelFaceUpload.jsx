@@ -1,15 +1,5 @@
-/* =============================================================
-   features/model — ②③ 얼굴 3장 업로드 + 동기 품질검사
-   (/model/face)
-   슬롯(front/side/angle45)당 1장, 업로드는 동기 QC 응답을 그대로 반영한다
-   (api-spec §3.2). 통과 슬롯은 게이트(fetchFacePhotoUrl)로만 표시 — 공개
-   URL 금지(§1.4). 불합격은 사유코드별 재업로드 안내를 보여준다.
-
-   embedded 모드 — step02 라이선스 여정(/model/license)의 2단계로 재사용
-   (ModelConsent 와 동일 패턴). 라이선스 얼굴은 여기 통과한 **front 슬롯**을
-   그대로 참조하므로(서버 _resolve_profile_face), 이 화면이 곧 라이선스 얼굴
-   등록이다 — 3장이 다 통과해야(프로필 ready) 발급이 열린다.
-   ============================================================= */
+/* 얼굴 3장 업로드 + 동기 품질검사. 기본 개인화 API와 생체 enrollment adapter를
+   같은 슬롯 UI로 처리하며 순서는 front → angle45 → side로 고정한다. */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, ErrorState, Icon, useToast } from '@/components/ui.jsx';
@@ -17,13 +7,23 @@ import {
   deleteFacePhoto, fetchFacePhotoUrl, getStatus, listFacePhotos, uploadFacePhoto,
 } from '@/lib/api/personalization.js';
 import { toUploadableImage } from '@/lib/imageTranscode.js';
+import { ENROLLMENT_ANGLES } from './biometricEnrollment.js';
 import s from './ModelPersonalization.module.css';
 
-const ANGLES = [
-  { value: 'front', label: '정면', guide: '정면을 바라보고 얼굴 전체가 나오게 찍어주세요.' },
-  { value: 'side', label: '측면', guide: '고개를 완전히 옆으로 돌려 옆모습 윤곽이 보이게 찍어주세요. 왼쪽·오른쪽 편한 방향으로요.' },
-  { value: 'angle45', label: '45도', guide: '정면에서 살짝만 돌려, 정면과 옆모습 사이 각도로 찍어주세요.' },
-];
+const personalizationPhotoApi = {
+  async load() {
+    const [status, result] = await Promise.all([getStatus(), listFacePhotos()]);
+    return {
+      photos: result.photos || [],
+      blocked: (status.blockers || []).some((blocker) => blocker.code === 'consent_missing')
+        ? '업로드 전에 필수 동의를 먼저 완료해주세요.'
+        : null,
+    };
+  },
+  upload: uploadFacePhoto,
+  remove: deleteFacePhoto,
+  fetchUrl: fetchFacePhotoUrl,
+};
 
 // api-spec §3.2 qc_reason 카피(ux-flow §3.2 와 단일 소스) — 서버가 보낸 reasons 배열을 매핑한다.
 const QC_COPY = {
@@ -33,7 +33,7 @@ const QC_COPY = {
   angle_mismatch: '선택한 각도와 달라요. 안내에 맞춰 정면/측면/45도로 찍어주세요.',
 };
 
-function SlotCard({ index, angle, label, guide, slot, onPicked, onDelete, checking, locked }) {
+function SlotCard({ index, angle, label, guide, slot, onPicked, onDelete, checking, locked, fetchUrl }) {
   const fileRef = useRef(null);
   const [url, setUrl] = useState(null);
   const passed = slot?.qcStatus === 'passed';
@@ -41,15 +41,15 @@ function SlotCard({ index, angle, label, guide, slot, onPicked, onDelete, checki
   useEffect(() => {
     let alive = true;
     let u;
-    if (passed && slot?.imageUri) {
-      fetchFacePhotoUrl(slot.imageUri)
+    if (passed && slot?.imageUri && fetchUrl) {
+      fetchUrl(slot.imageUri)
         .then((v) => { if (!alive) { URL.revokeObjectURL(v); return; } u = v; setUrl(v); })
         .catch(() => { /* 표시 실패 — 플레이스홀더 유지 */ });
     } else {
       setUrl(null);
     }
     return () => { alive = false; if (u) URL.revokeObjectURL(u); };
-  }, [passed, slot?.imageUri]);
+  }, [fetchUrl, passed, slot?.imageUri]);
 
   const disabled = checking || locked;
   const stateLabel = checking ? '검사 중' : passed ? '확인 완료' : '사진 필요';
@@ -70,9 +70,13 @@ function SlotCard({ index, angle, label, guide, slot, onPicked, onDelete, checki
         <button type="button" className={`${s.slotUpload}${passed ? ' ' + s.slotHas : ''}`}
           onClick={() => !disabled && fileRef.current?.click()} disabled={disabled}
           aria-label={passed ? `${label} 사진 바꾸기` : `${label} 사진 올리기`}>
-          {passed && url ? (
-            <img src={url} alt={`${label} 얼굴`} />
-          ) : (
+          {passed ? (url ? <img src={url} alt={`${label} 얼굴`} /> : (
+            <div className={s.slotEmpty}>
+              <span className={s.slotUploadIcon}><Icon name="check" size={19} /></span>
+              <span className={s.slotUploadTitle}>{label} 업로드 완료</span>
+              <span className={s.slotUploadHint}>클릭해서 바꾸기</span>
+            </div>
+          )) : (
             <div className={s.slotEmpty}>
               <span className={s.slotUploadIcon}><Icon name="upload" size={19} /></span>
               <span className={s.slotUploadTitle}>{label} 사진 선택</span>
@@ -81,7 +85,7 @@ function SlotCard({ index, angle, label, guide, slot, onPicked, onDelete, checki
           )}
           {checking && <div className={s.slotBusy}>품질 확인 중…</div>}
         </button>
-        {passed && url && (
+        {passed && (
           <button type="button" className={s.slotDel} onClick={() => onDelete(angle)}
             title={`${label} 사진 삭제`} aria-label={`${label} 사진 삭제`} disabled={disabled}>
             <Icon name="x" size={14} />
@@ -103,7 +107,13 @@ function SlotCard({ index, angle, label, guide, slot, onPicked, onDelete, checki
   );
 }
 
-export function ModelFaceUpload({ embedded = false, onDone }) {
+export function ModelFaceUpload({
+  embedded = false,
+  onDone,
+  photoApi = personalizationPhotoApi,
+  angles = ENROLLMENT_ANGLES,
+  nextLabel = '다음 · 신체 정보',
+}) {
   const navigate = useNavigate();
   const { push } = useToast();
   const [phase, setPhase] = useState('loading'); // loading|ready|error
@@ -114,10 +124,8 @@ export function ModelFaceUpload({ embedded = false, onDone }) {
   const load = useCallback(async () => {
     setPhase('loading');
     try {
-      const status = await getStatus();
-      setBlocked((status.blockers || []).some((b) => b.code === 'consent_missing')
-        ? '업로드 전에 필수 동의를 먼저 완료해주세요.' : null);
-      const r = await listFacePhotos();
+      const r = await photoApi.load();
+      setBlocked(r.blocked || null);
       const map = {};
       (r.photos || []).forEach((p) => { map[p.angle] = p; });
       setSlots(map);
@@ -126,7 +134,7 @@ export function ModelFaceUpload({ embedded = false, onDone }) {
       push?.(e.message, { icon: 'alertCircle' });
       setPhase('error');
     }
-  }, [push]);
+  }, [photoApi, push]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -146,7 +154,7 @@ export function ModelFaceUpload({ embedded = false, onDone }) {
         setBusyAngle(null);
         return;
       }
-      const res = await uploadFacePhoto({ angle, fileBlob: file, filename: file.name });
+      const res = await photoApi.upload({ angle, fileBlob: file, filename: file.name });
       setSlots((m) => ({ ...m, [angle]: res }));
       push?.('사진이 등록됐어요.', { icon: 'check' });
     } catch (e) {
@@ -167,7 +175,7 @@ export function ModelFaceUpload({ embedded = false, onDone }) {
   const onDelete = async (angle) => {
     if (!window.confirm('이 사진을 삭제할까요?')) return;
     try {
-      await deleteFacePhoto(angle);
+      await photoApi.remove(angle);
       setSlots((m) => ({ ...m, [angle]: { angle, qcStatus: 'none', qcReasons: [], imageUri: null, uploadedAt: null } }));
       push?.('삭제했어요.', { icon: 'check' });
     } catch (e) {
@@ -180,8 +188,8 @@ export function ModelFaceUpload({ embedded = false, onDone }) {
   if (phase === 'loading') return <Wrap><div className="surface">불러오는 중…</div></Wrap>;
   if (phase === 'error') return <Wrap><div className="surface"><ErrorState desc="얼굴 사진 정보를 불러오지 못했어요." onRetry={load} /></div></Wrap>;
 
-  const completeCount = ANGLES.filter((a) => slots[a.value]?.qcStatus === 'passed').length;
-  const canContinue = completeCount === ANGLES.length && !busyAngle && !blocked;
+  const completeCount = angles.filter((a) => slots[a.value]?.qcStatus === 'passed').length;
+  const canContinue = completeCount === angles.length && !busyAngle && !blocked;
 
   return (
     <Wrap>
@@ -200,10 +208,11 @@ export function ModelFaceUpload({ embedded = false, onDone }) {
 
       <div className="surface">
         <div className={s.slotGrid}>
-          {ANGLES.map((a, index) => (
+          {angles.map((a, index) => (
             <SlotCard key={a.value} index={index} angle={a.value} label={a.label} guide={a.guide}
               slot={slots[a.value]} onPicked={onPicked} onDelete={onDelete}
-              checking={busyAngle === a.value} locked={!!blocked || (busyAngle && busyAngle !== a.value)} />
+              checking={busyAngle === a.value} locked={!!blocked || (busyAngle && busyAngle !== a.value)}
+              fetchUrl={photoApi.fetchUrl} />
           ))}
         </div>
         <p className="hint" style={{ marginTop: 16 }}>{completeCount}/3장 품질 확인 완료</p>
@@ -216,7 +225,7 @@ export function ModelFaceUpload({ embedded = false, onDone }) {
         <Button variant="primary" block iconRight="arrowRight" style={{ marginTop: 18 }}
           disabled={!canContinue}
           onClick={() => { if (onDone) onDone(); else navigate('/model/body'); }}>
-          {embedded ? '다음 · 신체 정보' : '다음 · 신체 정보 입력'}
+          {embedded ? nextLabel : '다음 · 신체 정보 입력'}
         </Button>
       </div>
     </Wrap>

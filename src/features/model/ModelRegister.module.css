@@ -114,6 +114,29 @@
   margin-top: 1px;
 }
 
+.consentCheck {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 18px 0;
+  color: var(--fg-1);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.consentCheck input { margin-top: 4px; }
+
+.livenessWrap {
+  min-height: 420px;
+  overflow: hidden;
+}
+
+.stateTitle {
+  margin: 0 0 8px;
+  color: var(--fg-1);
+  font-family: var(--font-display);
+  font-size: 20px;
+}
+
 /* ---- 성공 상태 ---- */
 .successWrap {
   background: #fff;

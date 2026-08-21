@@ -24,6 +24,24 @@ async function _authFetch(path, opts = {}) {
   });
 }
 
+async function checkedJson(res, fallback = '요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.') {
+  if (res.ok) return res.status === 204 ? null : res.json();
+  let message = fallback;
+  let code;
+  let reasons;
+  try {
+    const payload = await res.json();
+    message = payload?.error?.message || message;
+    code = payload?.error?.code;
+    reasons = payload?.error?.reasons;
+  } catch { /* 비 JSON 응답 — 일반화된 카피 유지 */ }
+  const error = new Error(message);
+  error.status = res.status;
+  if (code) error.code = code;
+  if (Array.isArray(reasons)) error.reasons = reasons;
+  throw error;
+}
+
 // POST /v1/facemarket/identity/verify → { verified, modelId, status, nameMasked }.
 // 실패 시 http() 가 서버 에러봉투의 한국어 message 를 throw(409 재사용·400 CI누락 등).
 export function verifyIdentity(token) {
@@ -42,42 +60,64 @@ export function listMyModels() {
   return http('/v1/facemarket/models/me');
 }
 
-// POST /v1/facemarket/models/me/build-assets — 내 얼굴 3장 → 2×2 그리드 자산 빌드 잡 큐잉.
-// → 202 { jobId, modelId }. 진행 중이면 기존 jobId 재사용(멱등). 얼굴 대조 QC 통과 시에만 등록.
-// 완료 여부는 listMyModels()의 assetsReady 폴링으로 판단(잡 결과에 얼굴 키 미노출).
-export function buildMyModelAssets() {
-  return http('/v1/facemarket/models/me/build-assets', { method: 'POST' });
+export function createEnrollment({ documentVersion, deviceId }) {
+  return http('/v1/facemarket/enrollments', {
+    method: 'POST',
+    body: {
+      biometricConsent: { accepted: true, documentVersion },
+      deviceId,
+    },
+  });
 }
 
-// POST /v1/facemarket/licenses (멀티파트) — 얼굴 + 라이선스 조건 → LicenseCard.
-// 얼굴 바이트는 비공개 R2 로만 가고, 응답엔 게이트 URL(faceImageUri)만 실린다.
-// Content-Type 은 브라우저가 multipart boundary 로 자동 설정(수동 지정 금지).
-//
-// 얼굴 출처는 **둘 중 하나**(서버가 동시 지정을 400 `face_and_profile_conflict` 로 거절 —
-// facemarket.create_license. 우선순위로 조용히 무시하지 않는 이유 = 어느 얼굴을 라이선스했는지
-// 모호해지면 안 되고, 무시된 생체 업로드를 남기지 않기 위함):
-//   · `profileId` — 개인화 프로필(ready = 3각도 QC 통과+필수동의+신체)의 front 슬롯을 참조(step02 정식 경로).
-//   · `faceBlob`  — 얼굴 1장 직접 업로드(레거시 경로. profileId 없을 때만).
-// profileId 가 있으면 그것만 보낸다 — 둘 다 실으면 400.
-export async function createLicense({
-  faceBlob, filename, profileId,
-  allowedUse = [], forbiddenUse = [], unitPrice = 10000, validDays = 365,
-}) {
-  const fd = new FormData();
-  if (profileId) fd.append('profile_id', profileId);
-  else fd.append('face', faceBlob, filename || 'face');
-  allowedUse.forEach((v) => fd.append('allowed_use', v));
-  forbiddenUse.forEach((v) => fd.append('forbidden_use', v));
-  fd.append('unit_price', String(unitPrice));
-  fd.append('valid_days', String(validDays));
+export function getCurrentEnrollment() {
+  return http('/v1/facemarket/enrollments/current');
+}
 
-  const res = await _authFetch('/v1/facemarket/licenses', { method: 'POST', body: fd });
-  if (!res.ok) {
-    let message = '라이선스 등록에 실패했어요. 잠시 후 다시 시도해 주세요.';
-    try { const p = await res.json(); if (p?.error?.message) message = p.error.message; } catch { /* 비 JSON */ }
-    throw new Error(message);
-  }
-  return res.json();
+export function getEnrollment(id) {
+  return http(`/v1/facemarket/enrollments/${encodeURIComponent(id)}`);
+}
+
+export async function uploadEnrollmentPhoto({ enrollmentId, angle, fileBlob, filename }) {
+  const form = new FormData();
+  form.append('angle', angle);
+  form.append('photo', fileBlob, filename || 'face');
+  return checkedJson(await _authFetch(
+    `/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/photos`,
+    { method: 'POST', body: form },
+  ), '얼굴 사진 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
+}
+
+export async function deleteEnrollmentPhoto(enrollmentId, angle) {
+  return checkedJson(await _authFetch(
+    `/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/photos/${encodeURIComponent(angle)}`,
+    { method: 'DELETE' },
+  ), '얼굴 사진 삭제에 실패했어요.');
+}
+
+export function createLivenessSession(enrollmentId, nonce) {
+  return http(`/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/liveness-session`, {
+    method: 'POST', body: { nonce },
+  });
+}
+
+export function completeEnrollment(enrollmentId, { sessionId, token }) {
+  return http(`/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/complete`, {
+    method: 'POST', body: { sessionId, token },
+  });
+}
+
+export function cancelEnrollment(enrollmentId) {
+  return http(`/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/cancel`, { method: 'POST' });
+}
+
+export function createLicense({
+  enrollmentId, allowedUse = [], forbiddenUse = [], unitPrice = 10000, validDays = 365,
+}) {
+  return http('/v1/facemarket/licenses', {
+    method: 'POST',
+    body: { enrollmentId, allowedUse, forbiddenUse, unitPrice, validDays },
+  });
 }
 
 // GET /v1/facemarket/licenses — 내 라이선스 목록. [{ id, faceImageUri, allowedUse, ... }].

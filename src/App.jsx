@@ -181,10 +181,9 @@ function RequireEditorProject() {
   return <Outlet />;
 }
 
-/* 모델 섹션 보호 — 로그인만으로는 얼굴·라이선스·생성 경로에 들어갈 수 없다.
-   서버에 본인 소유 verified 모델이 있을 때만 /model/register 이외의 모든 하위 경로를 연다. */
-function RequireVerifiedModel() {
-  const [phase, setPhase] = useState('loading'); // loading | verified | unverified | error
+/* 모델 섹션 보호 — 등록 중 모델은 허브·라이선스에 접근할 수 있지만 생성은 verified만 허용한다. */
+function RequireModel({ verifiedOnly = false }) {
+  const [phase, setPhase] = useState('loading'); // loading | allowed | denied | error
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
@@ -193,16 +192,19 @@ function RequireVerifiedModel() {
     listMyModels()
       .then((models) => {
         if (!alive) return;
-        setPhase(models.some((model) => model.status === 'verified') ? 'verified' : 'unverified');
+        const allowed = verifiedOnly
+          ? models.some((model) => model.status === 'verified')
+          : models.length > 0;
+        setPhase(allowed ? 'allowed' : 'denied');
       })
       .catch(() => {
         if (alive) setPhase('error');
       });
     return () => { alive = false; };
-  }, [attempt]);
+  }, [attempt, verifiedOnly]);
 
   if (phase === 'loading') return <div className="route-loading">본인확인 상태를 확인하고 있어요…</div>;
-  if (phase === 'unverified') return <Navigate to="/model/register" replace />;
+  if (phase === 'denied') return <Navigate to="/model/register" replace />;
   if (phase === 'error') {
     return (
       <div className="wizard narrow">
@@ -213,6 +215,14 @@ function RequireVerifiedModel() {
     );
   }
   return <Outlet />;
+}
+
+function RequireOwnedModel() {
+  return <RequireModel />;
+}
+
+function RequireVerifiedModel() {
+  return <RequireModel verifiedOnly />;
 }
 
 /* 상세페이지 제작 플로우에서 현재 머문 경로를 store 에 기록 → '이어서 작업' 재개 목표(resumePath).
@@ -577,17 +587,18 @@ export default function App() {
                 1회가 개인화 성인 확인도 함께 기록하므로 별도 identity 라우트가 없다.
                 /model 은 섹션 허브(체크리스트) — register·license 의 URL 은 종전 그대로. */}
             <Route path="model">
-              {/* 본인확인 화면만 공개하고, 나머지 모든 모델 경로는 verified 모델을 요구한다. */}
+              {/* 등록은 모델 생성 전에도 열고, 등록 중 모델은 상태·라이선스 화면까지 복구한다. */}
               <Route path="register" element={<ModelRegister />} />
-              <Route element={<RequireVerifiedModel />}>
+              <Route element={<RequireOwnedModel />}>
                 <Route index element={<ModelHub />} />
                 <Route path="license" element={<ModelLicense />} />
-                {/* 개인화 세부 단계는 라이선스 발급 여정 하나로 통합한다.
-                    기존 북마크·외부 링크는 대응 단계로 안전하게 이어준다. */}
-                <Route path="consent" element={<Navigate to="/model/license?step=consent" replace />} />
-                <Route path="face" element={<Navigate to="/model/license?step=face" replace />} />
-                <Route path="body" element={<Navigate to="/model/license?step=body" replace />} />
-                <Route path="generate" element={<ModelGenerate />} />
+                {/* 폐기된 직접 업로드 북마크는 신규 등록 경계로 되돌린다. */}
+                <Route path="consent" element={<Navigate to="/model/register" replace />} />
+                <Route path="face" element={<Navigate to="/model/register" replace />} />
+                <Route path="body" element={<Navigate to="/model/register" replace />} />
+                <Route path="generate" element={<RequireVerifiedModel />}>
+                  <Route index element={<ModelGenerate />} />
+                </Route>
                 <Route path="withdraw" element={<ModelWithdraw />} />
                 {/* 알 수 없는 /model/* 경로도 가드를 거친 뒤 허브로만 복귀한다. */}
                 <Route path="*" element={<Navigate to="/model" replace />} />

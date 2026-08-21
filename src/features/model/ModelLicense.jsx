@@ -2,18 +2,15 @@
    features/model — 얼굴 라이선스 (/model/license) · step02
    "모델이 얼굴과 사용 조건을 직접 정하면 검증 가능한 라이선스(VC)로 발행된다".
 
-   하나의 여정 — 동의 → 얼굴 3장(QC) → 신체 → 라이선스 조건 → [발급] → 📱 얼굴 VC 카드.
-   1~3 단계는 개인화 온보딩 컴포넌트(ModelConsent/ModelFaceUpload/ModelBodyProfile)를
-   embedded 로 **재사용**한다 — 로직을 복제하면 /model/consent 단독 경로와 판정이 갈린다.
-   그 3단계가 끝나면 개인화 프로필이 ready 가 되고, 발급은 그 프로필의 front 슬롯을
-   라이선스 얼굴로 **참조**한다(POST /v1/facemarket/licenses + profile_id).
+   생체 등록을 통과한 enrollment만 라이선스 조건 단계에 들어온다. 브라우저는 얼굴을
+   다시 올리지 않고 enrollment id와 사용 조건만 JSON으로 전송한다.
 
    생체 하드룰 — 얼굴은 Bearer fetch + objectURL 로만 표시한다. <img src> 로 공개 URL 을
    만들지 않는다. QR 이 싣는 건 검증 페이지 주소({origin}/verify/{id})뿐이고, 그 페이지는
    얼굴을 아예 렌더하지 않는다(PublicVerify).
    ============================================================= */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import QRCode from "qrcode";
 import {
     Button,
@@ -26,14 +23,12 @@ import {
 import {
     createLicense,
     fetchLicenseFaceUrl,
+    getEnrollment,
     listLicenses,
     revokeLicense,
     verifyLicensePublic,
 } from "@/lib/api/facemarket.js";
-import { getProfile, getStatus } from "@/lib/api/personalization.js";
-import { ModelConsent } from "./ModelConsent.jsx";
-import { ModelFaceUpload } from "./ModelFaceUpload.jsx";
-import { ModelBodyProfile } from "./ModelBodyProfile.jsx";
+import { enrollmentReasonMessage } from "./biometricEnrollment.js";
 import s from "./ModelLicense.module.css";
 
 // 브랜드 유형(카테고리) 기준 — 모델이 자기 얼굴이 쓰일 브랜드 종류를 허용/금지로 통제.
@@ -59,13 +54,6 @@ const VALIDITY = [
     { value: 730, label: "2년" },
 ];
 
-const STEPS = [
-    { key: "consent", label: "동의" },
-    { key: "face", label: "얼굴" },
-    { key: "body", label: "신체" },
-    { key: "terms", label: "조건" },
-];
-
 const won = (n) => `₩${Number(n || 0).toLocaleString("ko-KR")}`;
 const fmtDate = (iso) => {
     try {
@@ -89,33 +77,6 @@ const shortVc = (vc) => {
     if (vc.length <= 24) return vc;
     return `${vc.slice(0, 14)}…${vc.slice(-4)}`;
 };
-
-/* ── 진행 스테퍼 ───────────────────────────────────────────── */
-function Stepper({ index }) {
-    return (
-        <ol className={s.stepper} aria-label="라이선스 발급 진행 단계">
-            {STEPS.map((st, i) => {
-                const state = i < index ? s.stDone : i === index ? s.stNow : "";
-                return (
-                    <li
-                        key={st.key}
-                        className={`${s.stepDot} ${state}`}
-                        aria-current={i === index ? "step" : undefined}
-                    >
-                        <span className={s.stepNum}>
-                            {i < index ? (
-                                <Icon name="check" size={11} />
-                            ) : (
-                                i + 1
-                            )}
-                        </span>
-                        <span className={s.stepText}>{st.label}</span>
-                    </li>
-                );
-            })}
-        </ol>
-    );
-}
 
 /* ── 얼굴 VC 카드 (PDF step02 — 파란 카드, 모바일 폭 기준) ────────
    앞면 = 얼굴 + 신원(마스킹) + VC ID + 용도 + 단가 + 유효기간, 뒷면 = QR.
@@ -365,7 +326,7 @@ function VcCard({ license, onRevoked, push }) {
 }
 
 /* ── 4단계: 라이선스 조건 + 발급 ──────────────────────────── */
-function TermsStep({ profileId, onIssued, push }) {
+function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued, push }) {
     const [allowed, setAllowed] = useState([ALLOWED_PRESETS[0]]);
     const [forbidden, setForbidden] = useState([FORBIDDEN_PRESETS[0]]);
     const [unitPrice, setUnitPrice] = useState(10000);
@@ -373,20 +334,11 @@ function TermsStep({ profileId, onIssued, push }) {
     const [submitting, setSubmitting] = useState(false);
 
     const onSubmit = async () => {
+        if (!enrollmentId || !["license_pending", "vc_pending"].includes(enrollmentStatus)) return;
         setSubmitting(true);
         try {
-            // 오래 열린 탭이나 백엔드 재시작 직후에는 페이지 진입 때의 profileId=null 이
-            // 남을 수 있다. 발급 시점에 한 번 더 조회해 완료된 프로필을 놓치지 않는다.
-            const resolvedProfileId = profileId || (await getProfile()).id;
-            if (!resolvedProfileId) {
-                push(
-                    "개인화 프로필을 찾지 못했어요. 앞 단계를 먼저 완료해 주세요.",
-                    { icon: "alertCircle" },
-                );
-                return;
-            }
             const lic = await createLicense({
-                profileId: resolvedProfileId,
+                enrollmentId,
                 allowedUse: allowed,
                 forbiddenUse: forbidden,
                 unitPrice: Number(unitPrice) || 0,
@@ -406,10 +358,16 @@ function TermsStep({ profileId, onIssued, push }) {
             <div className={s.termsIntro}>
                 <Icon name="checkSquare" size={15} />
                 <span>
-                    QC 를 통과한 정면 얼굴이 이 라이선스의 얼굴로 쓰여요. 사용
-                    조건을 정하면 VC 로 발행돼요.
+                    현재 생체 등록에 결속된 얼굴 자산만 이 라이선스에 쓰여요.
+                    사용 조건을 정하면 VC 로 발행돼요.
                 </span>
             </div>
+
+            {(!enrollmentId || !["license_pending", "vc_pending"].includes(enrollmentStatus)) && (
+                <p className={s.privacy}>
+                    {enrollmentReasonMessage(enrollmentReason)} 먼저 모델 등록을 완료해 주세요.
+                </p>
+            )}
 
             <div className={s.sectionLabel}>허용 브랜드 유형</div>
             <Chips
@@ -453,7 +411,7 @@ function TermsStep({ profileId, onIssued, push }) {
                 variant="primary"
                 block
                 onClick={onSubmit}
-                disabled={submitting}
+                disabled={submitting || !enrollmentId || !["license_pending", "vc_pending"].includes(enrollmentStatus)}
                 iconRight="arrowRight"
             >
                 {submitting ? "발급 중…" : "라이선스 발급"}
@@ -473,111 +431,55 @@ function TermsStep({ profileId, onIssued, push }) {
 /* ── 페이지 ───────────────────────────────────────────────── */
 export function ModelLicense() {
     const { push } = useToast(); // 안정 useCallback 만 구조분해 — 불안정한 toast 객체 의존 배제(리로드 루프 방지)
+    const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
-    const requestedStep = STEPS.findIndex(
-        (item) => item.key === searchParams.get("step"),
-    );
+    const requestedEnrollmentId = searchParams.get("enrollment");
+    const termsRequested = searchParams.get("step") === "terms" && !!requestedEnrollmentId;
     const [phase, setPhase] = useState("loading"); // loading | ready | error
     const [view, setView] = useState("cards"); // cards | flow
-    const [step, setStep] = useState(0);
-    const [profileId, setProfileId] = useState(null);
-    // 개인화 라우터 생존 여부(PERSONALIZATION_ENABLED off → 404). 발급 흐름만 잠그고 카드 뷰는 살린다.
-    const [personalizationUp, setPersonalizationUp] = useState(true);
+    const [enrollmentRecord, setEnrollmentRecord] = useState(null);
     const [licenses, setLicenses] = useState([]);
     const [issuedId, setIssuedId] = useState(null); // 방금 발급 — 카드로 스크롤·강조
     const issuedRef = useRef(null);
 
-    // 진행 상태(blockers) → 어느 단계부터 이어갈지. 서버가 온보딩 게이트의 단일 소스다.
-    const load = useCallback(
-        async (options = {}) => {
-            const forceCards = options?.forceCards === true;
-            setPhase("loading");
-            try {
-                // 라이선스 목록만이 이 화면의 필수 데이터다 — 실패하면 보여줄 게 없으니 error.
-                const list = await listLicenses();
-                setLicenses(list);
-
-                // 발급 흐름(동의·얼굴·신체)은 개인화 라우터에 의존하는데, PERSONALIZATION_ENABLED 는
-                // 프로드 기본 off 라 라우터가 아예 미등록(404)일 수 있다. 이걸 Promise.all 로 묶으면
-                // 개인화 404 하나가 **FaceMarket 라이선스 목록·revoke 까지 통째로 죽인다**(해커톤 기능 사망).
-                // → 개인화 조회는 전부 best-effort. 실패 시 발급 흐름만 잠그고 카드 뷰는 그대로 산다.
-                let onboardingReady = false;
+    const load = useCallback(async () => {
+        setPhase("loading");
+        try {
+            setLicenses(await listLicenses());
+            if (termsRequested) {
                 try {
-                    const status = await getStatus();
-                    const has = (c) =>
-                        (status.blockers || []).some((b) => b.code === c);
-                    const resumeStep = has("consent_missing")
-                        ? 0
-                        : has("photos_incomplete")
-                          ? 1
-                          : has("body_profile_missing")
-                            ? 2
-                            : 3;
-                    // 쿼리는 완료한 단계 안에서만 직접 이동을 허용한다. 미완료 단계를 건너뛰는 요청은
-                    // 서버 blocker 가 가리키는 첫 단계로 제한해 순서를 보장한다.
-                    setStep(
-                        requestedStep >= 0
-                            ? Math.min(requestedStep, resumeStep)
-                            : resumeStep,
-                    );
-                    onboardingReady = true;
-                } catch {
-                    setStep(0);
+                    setEnrollmentRecord(await getEnrollment(requestedEnrollmentId));
+                } catch (requestError) {
+                    setEnrollmentRecord({
+                        id: requestedEnrollmentId,
+                        status: "unavailable",
+                        reason: requestError?.code,
+                    });
                 }
-                setPersonalizationUp(onboardingReady);
-
-                // 발급에 쓸 프로필 id. 프로필이 아직 없으면(none) 404 라 조용히 넘긴다 — 동의 단계에서 생성된다.
-                try {
-                    const p = await getProfile();
-                    setProfileId(p.id ?? null);
-                } catch {
-                    setProfileId(null);
-                }
-
-                // 개인화가 죽어 있으면 발급 흐름을 띄워도 첫 단계에서 막힌다 → 카드 뷰 고정.
-                setView(
-                    !forceCards &&
-                        onboardingReady &&
-                        (requestedStep >= 0 || list.length === 0)
-                        ? "flow"
-                        : "cards",
-                );
-                setPhase("ready");
-            } catch (e) {
-                push(e.message, { icon: "alertCircle" });
-                setPhase("error");
+                setView("flow");
+            } else {
+                setEnrollmentRecord(null);
+                setView("cards");
             }
-        },
-        [push, requestedStep],
-    );
+            setPhase("ready");
+        } catch (requestError) {
+            push(requestError.message, { icon: "alertCircle" });
+            setPhase("error");
+        }
+    }, [push, requestedEnrollmentId, termsRequested]);
 
     useEffect(() => {
         load();
     }, [load]);
-
-    // 단계 완료 — 프로필 id 는 동의 직후에 생기므로 매 단계 갱신한다.
-    const advance = useCallback(
-        async (next) => {
-            try {
-                const p = await getProfile();
-                setProfileId(p.id ?? null);
-            } catch {
-                /* 아직 없음 */
-            }
-            setStep(next);
-            setSearchParams({ step: STEPS[next].key }, { replace: true });
-        },
-        [setSearchParams],
-    );
 
     const onIssued = useCallback(
         async (lic) => {
             setIssuedId(lic?.id ?? null);
             setView("cards");
             setSearchParams({}, { replace: true });
-            await load({ forceCards: true });
+            setLicenses(await listLicenses());
         },
-        [load, setSearchParams],
+        [setSearchParams],
     );
 
     // 발급 직후 카드로 데려간다(모바일에선 목록이 길어 새 카드가 화면 밖에 있을 수 있다).
@@ -619,41 +521,13 @@ export function ModelLicense() {
 
             {view === "flow" ? (
                 <>
-                    <Stepper index={step} />
-                    {step === 0 && (
-                        <ModelConsent embedded onDone={() => advance(1)} />
-                    )}
-                    {step === 1 && (
-                        <ModelFaceUpload embedded onDone={() => advance(2)} />
-                    )}
-                    {step === 2 && (
-                        <ModelBodyProfile embedded onDone={() => advance(3)} />
-                    )}
-                    {step === 3 && (
-                        <TermsStep
-                            profileId={profileId}
-                            onIssued={onIssued}
-                            push={push}
-                        />
-                    )}
-
-                    {step > 0 && (
-                        <button
-                            type="button"
-                            className={s.stepBack}
-                            onClick={() => {
-                                const previous = Math.max(0, step - 1);
-                                setStep(previous);
-                                setSearchParams(
-                                    { step: STEPS[previous].key },
-                                    { replace: true },
-                                );
-                            }}
-                        >
-                            <Icon name="chevLeft" size={14} />
-                            이전 단계
-                        </button>
-                    )}
+                    <TermsStep
+                        enrollmentId={enrollmentRecord?.id}
+                        enrollmentStatus={enrollmentRecord?.status}
+                        enrollmentReason={enrollmentRecord?.reason}
+                        onIssued={onIssued}
+                        push={push}
+                    />
                     {licenses.length > 0 && (
                         <button
                             type="button"
@@ -687,31 +561,15 @@ export function ModelLicense() {
                             </div>
                         ))}
                     </div>
-                    {/* 개인화 라우터가 없으면(플래그 off) 발급 흐름 1단계부터 막히므로 버튼을 띄우지 않는다 —
-              눌러야만 실패하는 버튼은 안 보이는 것만 못하다. 목록·해지는 그대로 쓸 수 있다. */}
-                    {personalizationUp ? (
-                        <Button
-                            variant="ghost"
-                            block
-                            icon="plus"
-                            style={{ marginTop: 40 }}
-                            onClick={() => {
-                                setIssuedId(null);
-                                setView("flow");
-                                setSearchParams(
-                                    { step: STEPS[step].key },
-                                    { replace: true },
-                                );
-                            }}
-                        >
-                            새 라이선스 발급
-                        </Button>
-                    ) : (
-                        <p className={s.privacy} style={{ marginTop: 16 }}>
-                            지금은 새 라이선스를 발급할 수 없어요. 기존 라이선스
-                            확인·해지는 그대로 가능해요.
-                        </p>
-                    )}
+                    <Button
+                        variant="ghost"
+                        block
+                        icon="plus"
+                        style={{ marginTop: 40 }}
+                        onClick={() => navigate("/model/register")}
+                    >
+                        새 생체 등록으로 라이선스 발급
+                    </Button>
                 </>
             )}
         </div>

@@ -12,9 +12,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@aws-amplify/ui-react": "^6.15.5",
+    "@aws-amplify/ui-react-liveness": "^3.6.8",
     "@supabase/supabase-js": "^2.108.2",
     "@tanstack/react-query": "^5.101.0",
     "@tosspayments/tosspayments-sdk": "^2.7.1",
+    "aws-amplify": "^6.20.0",
     "heic-to": "^1.5.2",
     "html-to-image": "^1.11.13",
     "jszip": "^3.10.1",
