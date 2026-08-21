@@ -81,6 +81,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     _configure_logging()
     settings = settings or load_settings()
 
+    from .facemarket_enrollment import build_biometric_aws_clients, validate_biometric_settings
+
+    validate_biometric_settings(settings)
+
     pool = create_pool(settings.database_url) if settings.database_url else None
 
     @asynccontextmanager
@@ -122,6 +126,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.pool = pool
+    if settings.fm_biometric_enrollment_enabled:
+        app.state.fm_rekognition, app.state.fm_sts = build_biometric_aws_clients(settings)
+    else:
+        app.state.fm_rekognition = None
+        app.state.fm_sts = None
     # R2는 필수 설정이 모두 있을 때만 — 일부만 설정된 채 워커가 도는 것을 막는다
     _r2_ready = all((
         settings.r2_bucket, settings.r2_access_key_id, settings.r2_secret_access_key,
@@ -255,6 +264,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.include_router(facemarket_router)
         # 온체인 정산 recorder(선택과제2). 체인 env 미설정이면 None → 정산 훅 no-op.
         app.state.fm_chain = FaceMarketChain.from_settings(settings)
+        if settings.fm_biometric_enrollment_enabled:
+            from .facemarket_enrollment import router as biometric_enrollment_router
+
+            app.include_router(biometric_enrollment_router)
     else:
         app.state.fm_chain = None
 

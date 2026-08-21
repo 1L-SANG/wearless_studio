@@ -254,6 +254,15 @@ class Settings:
     # ---- FaceMarket (해커톤, 검증 실명 모델 마켓) — 기본 off 로 프로드 보호(FACEMARKET_ENABLED) ----
     # off면 라우터 자체가 미등록 → 기존 셀러 플로우 무영향(main.py 조건부 include).
     facemarket_enabled: bool = False
+    # 생체 등록은 FaceMarket 안에서도 별도 dark launch. 임계값은 캘리브 증거 없이는 기본값을 두지 않는다.
+    fm_biometric_enrollment_enabled: bool = False
+    fm_oacx_contract_mode: str = "disabled"
+    fm_liveness_region: str = "us-east-1"
+    fm_liveness_browser_role_arn: str | None = None
+    fm_liveness_confidence_threshold: float | None = None
+    fm_id_live_threshold: float | None = None
+    fm_retouched_live_threshold: float | None = None
+    fm_match_policy_version: str | None = None
     fm_ci_pepper: str | None = None  # HMAC-SHA256(CI, pepper) dedup용 secret. 없으면 verify 503
     # 상세페이지 착용컷 인물 일관성(AG-06): 실존 모델을 골랐는데 facemarket off 라 해석 불가하면
     # 컷마다 인물 참조가 0장이 되어 사람이 랜덤이 된다 → 결정적 가상모델로 폴백해 전 컷 동일 인물
@@ -482,6 +491,25 @@ def load_settings() -> Settings:
         matching_cutout=_flag("MATCHING_CUTOUT", "off", {"off", "on"}),
         matching_flatlay=_flag("MATCHING_FLATLAY", "off", {"off", "on", "full"}),
         facemarket_enabled=(os.getenv("FACEMARKET_ENABLED", "false").lower() == "true"),
+        fm_biometric_enrollment_enabled=(
+            os.getenv("FM_BIOMETRIC_ENROLLMENT_ENABLED", "false").lower() == "true"
+        ),
+        fm_oacx_contract_mode=os.getenv("FM_OACX_CONTRACT_MODE", "disabled"),
+        fm_liveness_region=os.getenv("FM_LIVENESS_REGION", "us-east-1"),
+        fm_liveness_browser_role_arn=os.getenv("FM_LIVENESS_BROWSER_ROLE_ARN") or None,
+        fm_liveness_confidence_threshold=(
+            float(os.environ["FM_LIVENESS_CONFIDENCE_THRESHOLD"])
+            if os.getenv("FM_LIVENESS_CONFIDENCE_THRESHOLD") else None
+        ),
+        fm_id_live_threshold=(
+            float(os.environ["FM_ID_LIVE_THRESHOLD"])
+            if os.getenv("FM_ID_LIVE_THRESHOLD") else None
+        ),
+        fm_retouched_live_threshold=(
+            float(os.environ["FM_RETOUCHED_LIVE_THRESHOLD"])
+            if os.getenv("FM_RETOUCHED_LIVE_THRESHOLD") else None
+        ),
+        fm_match_policy_version=os.getenv("FM_MATCH_POLICY_VERSION") or None,
         detailpage_fallback_model_id=os.getenv("DETAILPAGE_FALLBACK_MODEL_ID", "mB"),
         personalization_enabled=(
             os.getenv("PERSONALIZATION_ENABLED", "false").lower() == "true"

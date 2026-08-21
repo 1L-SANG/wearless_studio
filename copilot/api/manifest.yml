@@ -192,6 +192,10 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 이걸 안 켜면 배포는 성공해도 프로드에 FaceMarket 기능이 조용히 없다(에러도 안 남 = 설계).
   FACEMARKET_ENABLED: "true"
   PERSONALIZATION_ENABLED: "true"
+  # Biometric enrollment stays dark until all external contracts and calibration artifacts are live.
+  FM_BIOMETRIC_ENROLLMENT_ENABLED: "false"
+  FM_OACX_CONTRACT_MODE: disabled
+  FM_LIVENESS_REGION: us-east-1
   # 얼굴=생체 PII 전용 비공개 버킷(공개 도메인 미연결). 위 둘을 켜면 non-dev 에서 main.py 의
   # fail-fast 가드가 이 값을 요구한다(미설정 시 얼굴이 공개 메인버킷으로 새는 걸 기동 실패로 막음).
   R2_FACE_BUCKET: wearless-face
@@ -218,6 +222,7 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   # CX 본인확인 HMAC pepper. 없으면 /v1/facemarket/identity/verify 가 503.
   # ⚠️ 배포 전 값 저장 필요: copilot secret init --name FM_CI_PEPPER (프로드 SSM).
   FM_CI_PEPPER: /copilot/wearless/prod/secrets/FM_CI_PEPPER
+  FM_LIVENESS_BROWSER_ROLE_ARN: /copilot/wearless/prod/secrets/FM_LIVENESS_BROWSER_ROLE_ARN
   # 온체인 정산 시크릿. RPC URL 은 쿼리에 게이트웨이 auth 토큰이 박혀 있어 URL 전체가 시크릿.
   # ⚠️ 배포 전 값 저장 필요(없으면 ECS 태스크 기동 실패): scripts/fm-chain-secrets.sh 참고.
   FM_CHAIN_RPC_URL: /copilot/wearless/prod/secrets/FM_CHAIN_RPC_URL
