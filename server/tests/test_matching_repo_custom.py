@@ -125,7 +125,8 @@ def test_active_cutout_job_query_counts_a_retry_pending_generation_as_active():
     sql, params = cursor.calls[0]
     lowered = sql.lower()
     assert "result->>'state' = any(%s)" in lowered
-    assert "(payload->>'retry')::int, 0) < %s" in lowered
+    # 숫자 패턴일 때만 캐스트 — 비숫자 한 행이 카드 조회를 22P02 로 죽이지 않게(PR #169 검토).
+    assert "case when payload->>'retry' ~ '^[0-9]+$' then (payload->>'retry')::int else 0 end" in lowered
     assert params[2] == list(sam_retry.RETRYABLE_STATES)
     assert params[3] == sam_retry.MAX_RETRIES
 

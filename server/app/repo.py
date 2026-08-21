@@ -717,7 +717,7 @@ async def has_active_matching_cutout_job(conn: AsyncConnection, project_id: str)
             "and created_at > now() - (%s * interval '1 minute') "
             "and (status in ('pending', 'running') "
             "     or (status = 'done' and result->>'state' = any(%s) "
-            "         and coalesce((payload->>'retry')::int, 0) < %s))) as active",
+            "         and (case when payload->>'retry' ~ '^[0-9]+$' then (payload->>'retry')::int else 0 end) < %s))) as active",
             (project_id, MATCHING_CUTOUT_ACTIVE_WINDOW_MINUTES,
              list(sam_retry.RETRYABLE_STATES), sam_retry.MAX_RETRIES),
         )
@@ -1120,12 +1120,17 @@ async def get_job(conn: AsyncConnection, user_id: str, job_id: str) -> dict | No
 async def get_latest_job_generation(
     conn: AsyncConnection, user_id: str, base_idempotency_key: str,
 ) -> dict | None:
-    """base 또는 ``base:rN`` 중 가장 높은 재시도 세대 하나를 조회한다."""
+    """base 또는 ``base:rN`` 중 가장 높은 재시도 세대 하나를 조회한다.
+
+    retry 캐스트는 숫자 패턴일 때만 — 비숫자 한 행이 `22P02` 로 조회를 통째로 죽이면 톤 에디터
+    상태 라우트가 500 이 된다(2026-08-21 PR #169 검토에서 실측). 쓰는 쪽은 전부 int 를 넣지만
+    DB 행은 코드보다 오래 산다.
+    """
     async with conn.cursor() as cur:
         await cur.execute(
             f"select {_JOB_COLS} from jobs where user_id = %s "
             "and (idempotency_key = %s or idempotency_key like %s) "
-            "order by coalesce((payload->>'retry')::int, 0) desc limit 1",
+            "order by (case when payload->>'retry' ~ '^[0-9]+$' then (payload->>'retry')::int else 0 end) desc limit 1",
             (user_id, base_idempotency_key, f"{base_idempotency_key}:r%"),
         )
         return await cur.fetchone()
@@ -1148,7 +1153,7 @@ async def list_retryable_sam_jobs(
             "where kind = any(%s) and status = any(%s) "
             "and finished_at is not null "
             "and finished_at < now() - make_interval(secs => %s) "
-            "and coalesce((payload->>'retry')::int, 0) < %s "
+            "and (case when payload->>'retry' ~ '^[0-9]+$' then (payload->>'retry')::int else 0 end) < %s "
             "order by finished_at desc limit %s",
             (list(kinds), ["done", "error"], float(min_age_seconds),
              int(max_retries), int(limit)),
