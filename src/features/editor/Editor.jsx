@@ -2195,7 +2195,8 @@ export function Editor() {
   };
   // req = NewCutRequest 필드 전체 (계약 §6) — 방향·샷·모델·예시 선택이 생성에 그대로 반영되어야 한다
   const generateImage = async (req) => {
-    if (isRealModelSelection(req.modelId)
+    if (req.cutType !== 'product'
+      && isRealModelSelection(req.modelId)
       && (!analysis?.brandUseCategory || brandUseCategorySaving)) {
       toast.push('실제 모델을 사용할 브랜드 유형을 먼저 저장해 주세요.', { icon: 'alertTri' });
       return null;
@@ -2206,6 +2207,7 @@ export function Editor() {
     genCount.current += 1; setGenDot('busy'); toast.push('이미지를 생성하는 중이에요', { icon: 'sparkles' });
     try {
       const { data: img, credits } = await api.generateImage(projectId, { mode: 'new', ...req, colorId: group,
+        modelId: req.cutType === 'product' ? null : req.modelId,
         brandUseCategory: analysis?.brandUseCategory });
       placeGeneratedImage(group, loadingId, img);
       toast.push('이미지 생성을 완료했어요', { icon: 'check' });

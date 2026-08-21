@@ -82,7 +82,7 @@ test('Editor AI panel remediates a missing persisted category in place', () => {
   assert.match(aiPanel, /brandUseCategory = null/);
   assert.match(aiPanel, /brandUseCategorySaving = false/);
   assert.match(aiPanel, /onBrandUseCategoryChange/);
-  assert.match(aiPanel, /const categoryRequired = failedCutRetry[\s\S]*?isRealModelSelection\(failedCutRetry\.request\?\.modelId\)[\s\S]*?: useFm;/);
+  assert.match(aiPanel, /const categoryRequired = failedCutRetry[\s\S]*?failedCutRetry\.request\?\.cutType !== 'product'[\s\S]*?isRealModelSelection\(failedCutRetry\.request\?\.modelId\)[\s\S]*?: !isProduct && useFm;/);
   assert.match(aiPanel, /const brandUseCategoryBlocked = categoryRequired[\s\S]*?!brandUseCategory \|\| brandUseCategorySaving/);
   assert.match(aiPanel, /const brandUseCategoryControl = categoryRequired && \([\s\S]*?<Chips[\s\S]*?options=\{BRAND_USE_CATEGORIES\}[\s\S]*?value=\{brandUseCategory\}/);
   assert.match(failedRetryBranch, /\{brandUseCategoryControl\}/);
@@ -95,7 +95,7 @@ test('Editor persists category selection and keeps persisted analysis request-au
   assert.match(editorSource, /const \[brandUseCategorySaving, setBrandUseCategorySaving\] = useState\(false\);/);
   assert.match(editorSource, /api\.saveAnalysis\(projectId, \{ brandUseCategory: value \}\)/);
   assert.match(editorSource, /setAnalysis\(\(current\) => \(\{ \.\.\.\(current \|\| \{\}\), \.\.\.\(saved \|\| \{\}\), brandUseCategory: value \}\)\)/);
-  assert.match(editorSource, /api\.generateImage\(projectId, \{ mode: 'new', \.\.\.req, colorId: group,\s*brandUseCategory: analysis\?\.brandUseCategory \}\)/);
+  assert.match(editorSource, /api\.generateImage\(projectId, \{ mode: 'new', \.\.\.req,[^}]*brandUseCategory: analysis\?\.brandUseCategory \}\)/);
   assert.match(editorSource, /<AIPanel[\s\S]*?brandUseCategory=\{analysis\?\.brandUseCategory\}[\s\S]*?brandUseCategorySaving=\{brandUseCategorySaving\}[\s\S]*?onBrandUseCategoryChange=\{saveBrandUseCategory\}/);
 });
 
@@ -108,7 +108,17 @@ test('Editor image generation fails closed before side effects for an unready re
   const beforeSideEffects = generateImage.slice(0, generateImage.indexOf('const group ='));
 
   assert.match(editorSource, /import \{ isRealModelSelection \} from '@\/features\/analysis\/modelSelection\.js';/);
-  assert.match(beforeSideEffects, /isRealModelSelection\(req\.modelId\)/);
+  assert.match(beforeSideEffects, /req\.cutType !== 'product'[\s\S]*?isRealModelSelection\(req\.modelId\)/);
   assert.match(beforeSideEffects, /!analysis\?\.brandUseCategory \|\| brandUseCategorySaving/);
   assert.match(beforeSideEffects, /return null;/);
+});
+
+test('Editor product cuts discard retained model identity without requiring a category', () => {
+  const generateImageStart = editorSource.indexOf('const generateImage = async (req) =>');
+  const generateImage = editorSource.slice(
+    generateImageStart,
+    editorSource.indexOf('const failedCutRetry =', generateImageStart),
+  );
+
+  assert.match(generateImage, /api\.generateImage\(projectId, \{ mode: 'new', \.\.\.req, colorId: group,\s*modelId: req\.cutType === 'product' \? null : req\.modelId,\s*brandUseCategory: analysis\?\.brandUseCategory \}\)/);
 });

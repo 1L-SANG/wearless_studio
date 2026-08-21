@@ -501,8 +501,9 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
     }
   };
   const categoryRequired = failedCutRetry
-    ? isRealModelSelection(failedCutRetry.request?.modelId)
-    : useFm;
+    ? failedCutRetry.request?.cutType !== 'product'
+      && isRealModelSelection(failedCutRetry.request?.modelId)
+    : !isProduct && useFm;
   const brandUseCategoryBlocked = categoryRequired
     && (!brandUseCategory || brandUseCategorySaving);
   const brandUseCategoryControl = categoryRequired && (
