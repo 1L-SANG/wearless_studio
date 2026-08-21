@@ -5,11 +5,15 @@ Wants=network-online.target
 Requires=opendid-infra.service opendid-tas.service opendid-cas.service opendid-issuer.service
 
 [Service]
+Type=exec
 User=opendid
 Group=opendid
 WorkingDirectory=/opt/opendid
 EnvironmentFile=/opt/opendid/opendid.env
-ExecStart=java -jar /opt/opendid/jars/Holder/fm-holder-0.1.0.jar --server.port=8100 --spring.config.additional-location=file:/opt/opendid/config/holder.yml
+ExecStartPre=/usr/bin/test -n "${FM_HOLDER_BIND_ADDRESS}"
+ExecStart=java -jar /opt/opendid/jars/Holder/fm-holder-0.1.0.jar --server.address=${FM_HOLDER_BIND_ADDRESS} --server.port=8100 --spring.config.additional-location=file:/opt/opendid/config/holder.yml
+KillMode=control-group
+TimeoutStopSec=60
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

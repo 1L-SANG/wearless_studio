@@ -242,10 +242,18 @@ test -z "$(sudo find /opt/opendid/secrets /opt/opendid/state/holder -type f \( !
 
 ## 4. Target 기동과 health
 
-먼저 [OpenDID Besu 시계 런북](opendid-besu-clock.md)의 Linux UTC/NTP preflight를 통과시킨다. 그 다음 infra → TAS → Issuer/CAS → Holder 순서로 시작한다.
+먼저 [OpenDID Besu 시계 런북](opendid-besu-clock.md)의 Linux UTC/NTP preflight를 통과시킨다. Server 3 private IP를 `/opt/opendid/opendid.env`의 `FM_HOLDER_BIND_ADDRESS`에 설정하고, host firewall과 Security Group에서 Server 1만 그 주소의 `8100`에 접근하도록 허용한다. PostgreSQL, Besu, TAS, Issuer, CAS는 loopback 전용이다. 그 다음 infra → TAS → Issuer/CAS → Holder 순서로 시작한다.
 
 ```bash
 set -euo pipefail
+: "${SERVER3_PRIVATE_BIND_ADDRESS:?set approved Server 3 private IP}"
+set -a
+. /opt/opendid/opendid.env
+set +a
+: "${FM_HOLDER_HMAC_SECRET:?set Holder HMAC secret in /opt/opendid/opendid.env}"
+: "${FM_HOLDER_BIND_ADDRESS:?set Holder private bind in /opt/opendid/opendid.env}"
+test "$FM_HOLDER_BIND_ADDRESS" = "$SERVER3_PRIVATE_BIND_ADDRESS"
+
 wait_http() {
   local url=$1 name=$2
   for _ in $(seq 1 60); do
@@ -272,8 +280,19 @@ wait_http http://127.0.0.1:8091/actuator/health Issuer
 wait_http http://127.0.0.1:8094/actuator/health CAS
 
 sudo systemctl start fm-holder
-wait_http http://127.0.0.1:8100/holder/health Holder
+wait_http http://${FM_HOLDER_BIND_ADDRESS}:8100/holder/health Holder
 ```
+
+Holder는 non-templated unit 하나와 data directory 하나만 사용한다. 새 jar/config 배포 시 `systemctl stop fm-holder`가 끝난 뒤 `systemctl start fm-holder`를 실행한다. rolling overlap, 두 번째 Holder, `flock`, 분산 lock은 nonce cleanup에 프로세스 간 조정이 생기기 전까지 금지한다.
+
+위 systemd 기동이 모두 끝난 뒤 target에서는 managed smoke만 실행한다. 이 모드는 기존 서비스를 health-check하고 Holder만 한 번 재시작한다. Java를 직접 실행하거나 Docker/PostgreSQL/Besu를 중지·시작하지 않는다.
+
+```bash
+sudo --preserve-env=FM_HOLDER_HMAC_SECRET,FM_HOLDER_BIND_ADDRESS \
+  env OPENDID_SMOKE_MODE=managed deploy/opendid/smoke.sh
+```
+
+성공 출력은 `holder_unsigned=blocked`, `holder_valid=valid`, `holder_revoked=revoked`, `restart_holder_revoked=revoked`, `smoke_result=ok` 집계만 보존한다. 전체 infra 재시작과 power-loss 검증은 별도 승인된 운영 창에서만 수행한다.
 
 ## 5. 상태 일치 검증
 

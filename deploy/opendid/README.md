@@ -43,7 +43,24 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now opendid-infra opendid-tas opendid-cas opendid-issuer fm-holder
 ```
 
-Only localhost ports are bound: PostgreSQL `5432`, Besu RPC `8545/8546`, OpenDID apps `8090/8091/8094`, Holder `8100`. Block external access at the host firewall if Docker is configured to publish beyond loopback.
+Set `FM_HOLDER_BIND_ADDRESS` to Server 3's private IP before starting services. PostgreSQL `5432`, Besu RPC `8545/8546`, TAS `8090`, Issuer `8091`, and CAS `8094` bind loopback only. Holder `8100` binds only that private address; its HMAC authentication is an additional boundary, not a replacement for host and security-group rules allowing only Server 1.
+
+Holder is a singleton: keep one non-templated `fm-holder.service` and one `FM_HOLDER_DATA_DIR`. Deploy with a bounded stop-then-start, never rolling overlap:
+
+```bash
+sudo systemctl stop fm-holder
+sudo systemctl start fm-holder
+```
+
+Do not add a second Holder process until nonce cleanup has inter-process coordination.
+
+`smoke.sh` defaults to the self-managed closed-port local fixture and requires an explicit `FM_HOLDER_HMAC_SECRET`. On an already-running Server 3, use only managed mode after systemd startup:
+
+```bash
+OPENDID_SMOKE_MODE=managed deploy/opendid/smoke.sh
+```
+
+Managed mode also requires `FM_HOLDER_BIND_ADDRESS`; it health-checks existing services and restarts only `fm-holder`.
 
 `opendid-infra.service` runs `docker compose ... up -d --wait`; Java services require it before startup.
 

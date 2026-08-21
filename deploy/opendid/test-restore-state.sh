@@ -210,6 +210,13 @@ exit 3
 SH
 chmod +x "$fakebin/systemctl"
 
+cat >"$fakebin/lsof" <<'SH'
+#!/usr/bin/env bash
+printf 'lsof %s\n' "$*" >>"${FAKE_LSOF_LOG:?}"
+exit 1
+SH
+chmod +x "$fakebin/lsof"
+
 cat >"$fakebin/id" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -250,6 +257,7 @@ chmod +x "$fakebin/install"
 
 export PATH="$fakebin:$PATH"
 export FAKE_LOG="$tmp/docker.log"
+export FAKE_LSOF_LOG="$tmp/lsof.log"
 export FAKE_VOLUMES="$tmp/volumes"
 export FAKE_VOLUME_LABELS="$tmp/volume-labels"
 export FAKE_DB_FIXTURE="$tmp/database.sql"
@@ -541,6 +549,7 @@ want_grep 'id fixture_owner' "$FAKE_INSTALL_LOG" 'runtime owner is validated'
 want_grep 'id -Gn fixture_owner' "$FAKE_INSTALL_LOG" 'runtime group membership is validated'
 want_grep 'ALTER ROLE.*NOLOGIN PASSWORD NULL' "$FAKE_SQL_LOG" 'bootstrap PostgreSQL role is locked, not dropped'
 want_grep 'SELECT 1' "$FAKE_SQL_LOG" 'restored operational PostgreSQL role is verified'
+want_grep 'lsof .*8090' "$FAKE_LSOF_LOG" 'export test uses fake closed listener state'
 if grep -q 'DROP ROLE' "$FAKE_SQL_LOG"; then bad 'bootstrap PostgreSQL role is never dropped'; else ok 'bootstrap PostgreSQL role is never dropped'; fi
 
 exit "$fail"

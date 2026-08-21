@@ -2,24 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SOURCE=${OPENDID_LOCAL_SOURCE:-/Users/nojeong-un/devs/did-orchestrator-server/source/did-orchestrator-server}
-PGC=${OPENDID_POSTGRES_CONTAINER:-postgre-opendid}
-BESU=${OPENDID_BESU_CONTAINER:-opendid-besu-node}
-PGUSER=${OPENDID_POSTGRES_USER:-}
-ISSUER_DB=${OPENDID_ISSUER_DB:-issuer}
-TAS_DB=${OPENDID_TAS_DB:-tas}
-BESU_RPC=${OPENDID_BESU_RPC_URL:-http://127.0.0.1:8545}
-CONTRACT_FILE=${OPENDID_BLOCKCHAIN_PROPERTIES:-$SOURCE/shells/Besu/blockchain.properties}
-HOLDER_JAR=${FM_HOLDER_JAR:-$ROOT/services/fm-holder/build/libs/fm-holder-0.1.0.jar}
-PLAN=${FL_VC_PLAN:-vcplanface0000000001}
+MODE=${OPENDID_SMOKE_MODE:-self-managed}
 MODEL_ID=${FM_SMOKE_MODEL_ID:-fm-smoke-$(date +%s)-$$}
-if [ -n "${JAVA_CMD:-}" ]; then
-  JAVA=$JAVA_CMD
-elif [ -x /opt/homebrew/opt/openjdk@21/bin/java ]; then
-  JAVA=/opt/homebrew/opt/openjdk@21/bin/java
-else
-  JAVA=java
-fi
 
 if [ -n "${OPENDID_SMOKE_TMP:-}" ]; then
   tmp=$OPENDID_SMOKE_TMP
@@ -53,40 +37,72 @@ log() { printf '%s=%s\n' "$1" "$2"; }
 die() { log smoke_error "$1"; exit 1; }
 
 require_file() { [ -f "$1" ] || die "$2"; }
-require_file "$SOURCE/jars/TA/did-ta-server-2.0.0.jar" missing_tas_jar
-require_file "$SOURCE/jars/Issuer/did-issuer-server-2.0.0.jar" missing_issuer_jar
-require_file "$SOURCE/jars/CA/did-ca-server-2.0.0.jar" missing_cas_jar
-require_file "$HOLDER_JAR" missing_holder_jar
-require_file "$CONTRACT_FILE" missing_blockchain_properties
+export FM_HOLDER_HMAC_SECRET=${FM_HOLDER_HMAC_SECRET:-}
+[ -n "$FM_HOLDER_HMAC_SECRET" ] || die FM_HOLDER_HMAC_SECRET_missing
 
-if [ -z "$PGUSER" ]; then
-  PGUSER=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$PGC" 2>/dev/null | sed -n 's/^POSTGRES_USER=//p' | head -1 || true)
-fi
-PGPASSWORD_VALUE=${OPENDID_POSTGRES_PASSWORD:-$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$PGC" 2>/dev/null | sed -n 's/^POSTGRES_PASSWORD=//p' | head -1 || true)}
-[ -n "$PGUSER" ] || die postgres_user_missing
-[ -n "$PGPASSWORD_VALUE" ] || die postgres_password_missing
+case "$MODE" in
+  managed)
+    FM_HOLDER_BIND_ADDRESS=${FM_HOLDER_BIND_ADDRESS:-}
+    [ -n "$FM_HOLDER_BIND_ADDRESS" ] || die FM_HOLDER_BIND_ADDRESS_missing
+    ;;
+  self-managed)
+    SOURCE=${OPENDID_LOCAL_SOURCE:-/Users/nojeong-un/devs/did-orchestrator-server/source/did-orchestrator-server}
+    PGC=${OPENDID_POSTGRES_CONTAINER:-postgre-opendid}
+    BESU=${OPENDID_BESU_CONTAINER:-opendid-besu-node}
+    PGUSER=${OPENDID_POSTGRES_USER:-}
+    ISSUER_DB=${OPENDID_ISSUER_DB:-issuer}
+    TAS_DB=${OPENDID_TAS_DB:-tas}
+    BESU_RPC=${OPENDID_BESU_RPC_URL:-http://127.0.0.1:8545}
+    CONTRACT_FILE=${OPENDID_BLOCKCHAIN_PROPERTIES:-$SOURCE/shells/Besu/blockchain.properties}
+    HOLDER_JAR=${FM_HOLDER_JAR:-$ROOT/services/fm-holder/build/libs/fm-holder-0.1.0.jar}
+    PLAN=${FL_VC_PLAN:-vcplanface0000000001}
+    if [ -n "${JAVA_CMD:-}" ]; then
+      JAVA=$JAVA_CMD
+    elif [ -x /opt/homebrew/opt/openjdk@21/bin/java ]; then
+      JAVA=/opt/homebrew/opt/openjdk@21/bin/java
+    else
+      JAVA=java
+    fi
+    FM_HOLDER_BIND_ADDRESS=127.0.0.1
+    require_file "$SOURCE/jars/TA/did-ta-server-2.0.0.jar" missing_tas_jar
+    require_file "$SOURCE/jars/Issuer/did-issuer-server-2.0.0.jar" missing_issuer_jar
+    require_file "$SOURCE/jars/CA/did-ca-server-2.0.0.jar" missing_cas_jar
+    require_file "$HOLDER_JAR" missing_holder_jar
+    require_file "$CONTRACT_FILE" missing_blockchain_properties
 
-OPENDID_DB_HOST=${OPENDID_DB_HOST:-127.0.0.1:5430}
-OPENDID_DB_USER=${OPENDID_DB_USER:-$PGUSER}
-OPENDID_DB_PASSWORD=${OPENDID_DB_PASSWORD:-$PGPASSWORD_VALUE}
-OPENDID_TAS_DB=${OPENDID_TAS_DB:-$TAS_DB}
-OPENDID_ISSUER_DB=${OPENDID_ISSUER_DB:-$ISSUER_DB}
-OPENDID_CAS_DB=${OPENDID_CAS_DB:-cas}
-export OPENDID_DB_HOST OPENDID_DB_USER OPENDID_DB_PASSWORD OPENDID_TAS_DB OPENDID_ISSUER_DB OPENDID_CAS_DB
-export OPENDID_TAS_WALLET_PW=${OPENDID_TAS_WALLET_PW:-${OPENDID_WALLET_PW:-}}
-export OPENDID_ISSUER_WALLET_PW=${OPENDID_ISSUER_WALLET_PW:-${OPENDID_WALLET_PW:-}}
-export OPENDID_ISSUER_ZKP_WALLET_PW=${OPENDID_ISSUER_ZKP_WALLET_PW:-${OPENDID_WALLET_PW:-}}
-export OPENDID_CAS_WALLET_PW=${OPENDID_CAS_WALLET_PW:-${OPENDID_WALLET_PW:-}}
-export FM_HOLDER_DATA_DIR=${FM_HOLDER_DATA_DIR:-$holder_data}
-export FM_HOLDER_PEPPER=${FM_HOLDER_PEPPER:-}
-export FM_WALLET_PROVIDER_PATH=${FM_WALLET_PROVIDER_PATH:-$SOURCE/jars/Wallet/wallet.wallet}
-export FM_CAS_PROVIDER_PATH=${FM_CAS_PROVIDER_PATH:-$SOURCE/jars/CA/cas.wallet}
-export FM_WALLET_PROVIDER_PW=${FM_WALLET_PROVIDER_PW:-}
-export FM_CAS_PROVIDER_PW=${FM_CAS_PROVIDER_PW:-}
+    if [ -z "$PGUSER" ]; then
+      PGUSER=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$PGC" 2>/dev/null | sed -n 's/^POSTGRES_USER=//p' | head -1 || true)
+    fi
+    PGPASSWORD_VALUE=${OPENDID_POSTGRES_PASSWORD:-$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$PGC" 2>/dev/null | sed -n 's/^POSTGRES_PASSWORD=//p' | head -1 || true)}
+    [ -n "$PGUSER" ] || die postgres_user_missing
+    [ -n "$PGPASSWORD_VALUE" ] || die postgres_password_missing
 
-for name in OPENDID_TAS_WALLET_PW OPENDID_ISSUER_WALLET_PW OPENDID_ISSUER_ZKP_WALLET_PW OPENDID_CAS_WALLET_PW FM_HOLDER_PEPPER FM_WALLET_PROVIDER_PW FM_CAS_PROVIDER_PW; do
-  [ -n "${!name}" ] || die "${name}_missing"
-done
+    OPENDID_DB_HOST=${OPENDID_DB_HOST:-127.0.0.1:5430}
+    OPENDID_DB_USER=${OPENDID_DB_USER:-$PGUSER}
+    OPENDID_DB_PASSWORD=${OPENDID_DB_PASSWORD:-$PGPASSWORD_VALUE}
+    OPENDID_TAS_DB=${OPENDID_TAS_DB:-$TAS_DB}
+    OPENDID_ISSUER_DB=${OPENDID_ISSUER_DB:-$ISSUER_DB}
+    OPENDID_CAS_DB=${OPENDID_CAS_DB:-cas}
+    export OPENDID_DB_HOST OPENDID_DB_USER OPENDID_DB_PASSWORD OPENDID_TAS_DB OPENDID_ISSUER_DB OPENDID_CAS_DB
+    export OPENDID_TAS_WALLET_PW=${OPENDID_TAS_WALLET_PW:-${OPENDID_WALLET_PW:-}}
+    export OPENDID_ISSUER_WALLET_PW=${OPENDID_ISSUER_WALLET_PW:-${OPENDID_WALLET_PW:-}}
+    export OPENDID_ISSUER_ZKP_WALLET_PW=${OPENDID_ISSUER_ZKP_WALLET_PW:-${OPENDID_WALLET_PW:-}}
+    export OPENDID_CAS_WALLET_PW=${OPENDID_CAS_WALLET_PW:-${OPENDID_WALLET_PW:-}}
+    export FM_HOLDER_DATA_DIR=${FM_HOLDER_DATA_DIR:-$holder_data}
+    export FM_HOLDER_PEPPER=${FM_HOLDER_PEPPER:-}
+    export FM_WALLET_PROVIDER_PATH=${FM_WALLET_PROVIDER_PATH:-$SOURCE/jars/Wallet/wallet.wallet}
+    export FM_CAS_PROVIDER_PATH=${FM_CAS_PROVIDER_PATH:-$SOURCE/jars/CA/cas.wallet}
+    export FM_WALLET_PROVIDER_PW=${FM_WALLET_PROVIDER_PW:-}
+    export FM_CAS_PROVIDER_PW=${FM_CAS_PROVIDER_PW:-}
+
+    for name in OPENDID_TAS_WALLET_PW OPENDID_ISSUER_WALLET_PW OPENDID_ISSUER_ZKP_WALLET_PW OPENDID_CAS_WALLET_PW FM_HOLDER_PEPPER FM_WALLET_PROVIDER_PW FM_CAS_PROVIDER_PW; do
+      [ -n "${!name}" ] || die "${name}_missing"
+    done
+    ;;
+  *) die invalid_smoke_mode ;;
+esac
+export FM_HOLDER_BIND_ADDRESS
+HOLDER_BASE="http://${FM_HOLDER_BIND_ADDRESS}:8100"
 
 psql_scalar() {
   local db=$1 sql=$2
@@ -117,6 +133,7 @@ track_start() {
   untrack_started "$1"
 }
 
+if [ "$MODE" = self-managed ]; then
 contract=$(sed -n 's/^evm\.contract\.address=//p' "$CONTRACT_FILE" | head -1)
 case "$contract" in 0x????????????????????????????????????????) : ;; *) die contract_invalid ;; esac
 
@@ -160,9 +177,6 @@ issuer_plan=$(psql_scalar "$ISSUER_DB" "select count(*) from public.issue_profil
 tas_plan=$(psql_scalar "$TAS_DB" "select count(*) from public.list_vc_plan where vc_plan_id = :'plan';" -v "plan=$PLAN")
 [ "$issuer_plan" -gt 0 ] && [ "$tas_plan" -gt 0 ] || die facelicense_plan_missing
 log facelicense_plan present
-
-if curl -fsS --max-time 2 http://127.0.0.1:9001/ >/dev/null 2>&1; then die orchestrator_open; fi
-log orchestrator closed
 
 write_config() {
   local file=$1 service=$2 port=$3 chain=$4 wallet=$5 extra=${6:-}
@@ -221,6 +235,7 @@ start_java "$SOURCE/jars/TA/did-ta-server-2.0.0.jar" "$tmp/ta.yml" 8090 tas
 start_java "$SOURCE/jars/Issuer/did-issuer-server-2.0.0.jar" "$tmp/issuer.yml" 8091 issuer
 start_java "$SOURCE/jars/CA/did-ca-server-2.0.0.jar" "$tmp/cas.yml" 8094 cas
 start_java "$HOLDER_JAR" "$ROOT/deploy/opendid/config/holder.yml" 8100 holder
+fi
 
 wait_url() {
   local url=$1 label=$2
@@ -230,69 +245,107 @@ wait_url() {
   done
   die "${label}_health_timeout"
 }
+if [ "$MODE" = managed ]; then
+  for unit in opendid-tas opendid-issuer opendid-cas fm-holder; do
+    systemctl is-active --quiet "$unit.service" || die "${unit}_inactive"
+  done
+fi
+if curl -fsS --max-time 2 http://127.0.0.1:9001/ >/dev/null 2>&1; then die orchestrator_open; fi
+log orchestrator closed
 wait_url http://127.0.0.1:8090/actuator/health tas
 wait_url http://127.0.0.1:8091/actuator/health issuer
 wait_url http://127.0.0.1:8094/actuator/health cas
-wait_url http://127.0.0.1:8100/holder/health holder
+wait_url "$HOLDER_BASE/holder/health" holder
 
-post_json() {
-  local url=$1 body=${2:-{}}
-  printf '%s' "$body" | curl -fsS --max-time 60 -X POST -H 'Content-Type: application/json' -d @- "$url"
+write_body() {
+  local body=$1
+  BODY_FILE=$(mktemp "$tmp/body.XXXXXX")
+  chmod 600 "$BODY_FILE"
+  printf '%s' "$body" >"$BODY_FILE"
+}
+post_holder() {
+  local path=$1 body='{}' timestamp nonce signature
+  [ "$#" -lt 2 ] || body=$2
+  write_body "$body"
+  read -r timestamp nonce signature < <(python3 - "$path" "$BODY_FILE" <<'PY'
+import hashlib, hmac, os, pathlib, secrets, sys, time
+
+path, body_path = sys.argv[1:]
+timestamp = str(int(time.time()))
+nonce = secrets.token_urlsafe(24)
+body_hash = hashlib.sha256(pathlib.Path(body_path).read_bytes()).hexdigest()
+canonical = "\n".join(("v1", "POST", path, timestamp, nonce, body_hash)).encode()
+signature = hmac.new(
+    os.environ["FM_HOLDER_HMAC_SECRET"].encode(), canonical, hashlib.sha256
+).hexdigest()
+print(timestamp, nonce, signature)
+PY
+)
+  curl -fsS --max-time 60 -X POST -H 'Content-Type: application/json' \
+    -H "X-FM-Timestamp: $timestamp" -H "X-FM-Nonce: $nonce" \
+    -H "X-FM-Signature: $signature" --data-binary "@$BODY_FILE" "$HOLDER_BASE$path"
 }
 json_value() {
   python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1], ""))' "$1"
 }
 
-post_json "http://127.0.0.1:8100/holder/models/$MODEL_ID/wallet" >/dev/null
+write_body '{}'
+unsigned_response=$(mktemp "$tmp/unsigned.XXXXXX")
+chmod 600 "$unsigned_response"
+unsigned_status=$(curl -sS --max-time 60 -o "$unsigned_response" -w '%{http_code}' \
+  -X POST -H 'Content-Type: application/json' --data-binary "@$BODY_FILE" \
+  "$HOLDER_BASE/holder/models/$MODEL_ID/wallet")
+[ "$unsigned_status" = 401 ] || die holder_unsigned_not_blocked
+log holder_unsigned blocked
+
+post_holder "/holder/models/$MODEL_ID/wallet" '{}' >/dev/null
 log lifecycle_wallet created
-register_res=$(post_json "http://127.0.0.1:8100/holder/models/$MODEL_ID/register-did")
+register_res=$(post_holder "/holder/models/$MODEL_ID/register-did" '{}')
 register_status=$(printf '%s' "$register_res" | json_value status)
 [ "$register_status" = registered ] || die register_did_not_registered
 log lifecycle_register_did registered
-claims='{"plan":"facelicense","claims":{"allowed_use":"smoke","forbidden_use":"resale","unit_price":"0","license_valid_until":"2099-12-31","face_image_digest":"sha256:opaque","model_name":"smoke"}}'
-issue1=$(post_json "http://127.0.0.1:8100/holder/models/$MODEL_ID/issue-vc" "$claims")
+idempotency_uuid=$(python3 -c 'import uuid; print(uuid.uuid4())')
+claims="{\"plan\":\"facelicense\",\"idempotencyKey\":\"fm-license:$idempotency_uuid\",\"claims\":{\"allowed_use\":\"smoke\",\"forbidden_use\":\"resale\",\"unit_price\":0,\"license_valid_until\":\"2099-12-31\",\"face_image_digest\":\"sha256:opaque\",\"model_name\":\"smoke\"}}"
+issue1=$(post_holder "/holder/models/$MODEL_ID/issue-vc" "$claims")
 vc1=$(printf '%s' "$issue1" | json_value vcId)
 [ -n "$vc1" ] || die issue_vc_missing_id
 log lifecycle_issue_vc issued
 
-chain_status_of() {
-  python3 - "$ROOT/deploy/opendid/verify-vcmeta.py" "$CONTRACT_FILE" "$BESU_RPC" "$1" <<'PY'
-import importlib.util, pathlib, sys
-module_path, config_path, rpc_url, vc_id = sys.argv[1:]
-spec = importlib.util.spec_from_file_location("verify_vcmeta", module_path)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-contract = module.properties(pathlib.Path(config_path)).get("evm.contract.address", "")
-print(module.decode_vcmeta_status(module.eth_call(rpc_url, contract, module.encode_vcmeta_call(vc_id))))
-PY
-}
-[ "$(chain_status_of "$vc1")" = ACTIVE ] || die lifecycle_valid_status
-log lifecycle_valid active
-revoke_res=$(post_json "http://127.0.0.1:8100/holder/models/$MODEL_ID/revoke-vc" "{\"vcId\":\"$vc1\"}")
+verify_res=$(post_holder /holder/vc/verify "{\"vcId\":\"$vc1\"}")
+verify_status=$(printf '%s' "$verify_res" | json_value status)
+[ "$verify_status" = valid ] || die holder_valid_status
+log holder_valid valid
+
+revoke_res=$(post_holder "/holder/models/$MODEL_ID/revoke-vc" "{\"vcId\":\"$vc1\"}")
 revoke_status=$(printf '%s' "$revoke_res" | json_value status)
 [ "$revoke_status" = revoked ] || die revoke_not_revoked
-[ "$(chain_status_of "$vc1")" = REVOKED ] || die lifecycle_revoked_status
-log lifecycle_1 revoked
+verify_res=$(post_holder /holder/vc/verify "{\"vcId\":\"$vc1\"}")
+verify_status=$(printf '%s' "$verify_res" | json_value status)
+[ "$verify_status" = revoked ] || die holder_revoked_status
+log holder_revoked revoked
 
-for pid in $pids; do kill "$pid" >/dev/null 2>&1 || true; done
-wait $pids >/dev/null 2>&1 || true
-pids=''
-track_stop "$BESU"
-track_stop "$PGC"
-track_start "$PGC"
-track_start "$BESU"
-start_java "$SOURCE/jars/TA/did-ta-server-2.0.0.jar" "$tmp/ta.yml" 8090 tas2
-start_java "$SOURCE/jars/Issuer/did-issuer-server-2.0.0.jar" "$tmp/issuer.yml" 8091 issuer2
-start_java "$SOURCE/jars/CA/did-ca-server-2.0.0.jar" "$tmp/cas.yml" 8094 cas2
-start_java "$HOLDER_JAR" "$ROOT/deploy/opendid/config/holder.yml" 8100 holder2
-wait_url http://127.0.0.1:8090/actuator/health tas
-wait_url http://127.0.0.1:8091/actuator/health issuer
-wait_url http://127.0.0.1:8094/actuator/health cas
-wait_url http://127.0.0.1:8100/holder/health holder
-[ "$(chain_status_of "$vc1")" = REVOKED ] || die restart_revoked_status
-log restart_persistence revoked
-issue2=$(post_json "http://127.0.0.1:8100/holder/models/$MODEL_ID/issue-vc" "$claims")
-vc2=$(printf '%s' "$issue2" | json_value vcId)
-[ -n "$vc2" ] || die second_issue_missing_id
-log lifecycle_2 issued
+if [ "$MODE" = managed ]; then
+  systemctl restart fm-holder
+  systemctl is-active --quiet fm-holder.service || die fm-holder_inactive
+else
+  for pid in $pids; do kill "$pid" >/dev/null 2>&1 || true; done
+  wait $pids >/dev/null 2>&1 || true
+  pids=''
+  track_stop "$BESU"
+  track_stop "$PGC"
+  track_start "$PGC"
+  track_start "$BESU"
+  start_java "$SOURCE/jars/TA/did-ta-server-2.0.0.jar" "$tmp/ta.yml" 8090 tas2
+  start_java "$SOURCE/jars/Issuer/did-issuer-server-2.0.0.jar" "$tmp/issuer.yml" 8091 issuer2
+  start_java "$SOURCE/jars/CA/did-ca-server-2.0.0.jar" "$tmp/cas.yml" 8094 cas2
+  start_java "$HOLDER_JAR" "$ROOT/deploy/opendid/config/holder.yml" 8100 holder2
+  wait_url http://127.0.0.1:8090/actuator/health tas
+  wait_url http://127.0.0.1:8091/actuator/health issuer
+  wait_url http://127.0.0.1:8094/actuator/health cas
+fi
+wait_url "$HOLDER_BASE/holder/health" holder
+verify_res=$(post_holder /holder/vc/verify "{\"vcId\":\"$vc1\"}")
+verify_status=$(printf '%s' "$verify_res" | json_value status)
+[ "$verify_status" = revoked ] || die restart_holder_revoked_status
+log restart_holder_revoked revoked
 log smoke_result ok

@@ -9,7 +9,7 @@ User=opendid
 Group=opendid
 WorkingDirectory=/opt/opendid
 EnvironmentFile=/opt/opendid/opendid.env
-ExecStart=java -jar /opt/opendid/jars/TA/did-ta-server-2.0.0.jar --server.port=8090 --spring.config.additional-location=file:/opt/opendid/config/ta.yml
+ExecStart=java -jar /opt/opendid/jars/TA/did-ta-server-2.0.0.jar --server.address=127.0.0.1 --server.port=8090 --spring.config.additional-location=file:/opt/opendid/config/ta.yml
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
