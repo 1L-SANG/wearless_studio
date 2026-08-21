@@ -50,7 +50,13 @@ image:
 cpu: 4096
 memory: 8192
 platform: linux/x86_64
-count: 1
+# Fargate Spot: ~70% cheaper. Safe here — sam2 is fail-open, stateless (weights baked
+# into the image), and every job is a short (~25-50s) segmentation. A Spot interruption or
+# capacity gap fails that single job open (api falls back to RAW for that one image); it
+# never corrupts data or takes the site down. On-demand scale-to-0 still applies: the
+# capacity provider is set at the service level and survives desiredCount 0<->1 changes.
+count:
+  spot: 1
 exec: true
 
 network:
