@@ -7,7 +7,8 @@ from unittest.mock import Mock
 import pytest
 from fastapi import FastAPI
 
-from app import cx_identity, facemarket_enrollment
+from app import cx_identity, facemarket_enrollment, main
+from app.config import load_settings
 from app.cx_identity import (
     DEV_MOCK_OACX_BIOMETRIC_CONTRACT,
     OacxBiometricError,
@@ -106,6 +107,96 @@ def test_production_rejects_dev_mock_contract():
 def test_enabled_feature_requires_three_calibrated_settings():
     with pytest.raises(RuntimeError, match="biometric thresholds"):
         create_app(biometric_settings(fm_id_live_threshold=None))
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("fm_liveness_confidence_threshold", ""),
+        ("fm_liveness_confidence_threshold", float("nan")),
+        ("fm_liveness_confidence_threshold", float("inf")),
+        ("fm_liveness_confidence_threshold", float("-inf")),
+        ("fm_liveness_confidence_threshold", -0.01),
+        ("fm_liveness_confidence_threshold", 100.01),
+        ("fm_id_live_threshold", ""),
+        ("fm_id_live_threshold", float("nan")),
+        ("fm_id_live_threshold", float("inf")),
+        ("fm_id_live_threshold", float("-inf")),
+        ("fm_id_live_threshold", -0.01),
+        ("fm_id_live_threshold", 1.01),
+        ("fm_retouched_live_threshold", ""),
+        ("fm_retouched_live_threshold", float("nan")),
+        ("fm_retouched_live_threshold", float("inf")),
+        ("fm_retouched_live_threshold", float("-inf")),
+        ("fm_retouched_live_threshold", -0.01),
+        ("fm_retouched_live_threshold", 1.01),
+    ],
+)
+def test_enabled_feature_rejects_unsafe_threshold_before_clients_or_pool(
+    monkeypatch, field, value
+):
+    monkeypatch.setattr(
+        main,
+        "create_pool",
+        lambda *_args: pytest.fail("invalid threshold reached DB pool"),
+    )
+    monkeypatch.setattr(
+        facemarket_enrollment.boto3,
+        "client",
+        lambda *_args, **_kwargs: pytest.fail("invalid threshold reached AWS client"),
+    )
+
+    with pytest.raises(RuntimeError, match="biometric thresholds"):
+        create_app(
+            biometric_settings(database_url="postgresql://unused", **{field: value})
+        )
+
+
+@pytest.mark.parametrize(
+    "thresholds",
+    [
+        {
+            "fm_liveness_confidence_threshold": 0.0,
+            "fm_id_live_threshold": 0.0,
+            "fm_retouched_live_threshold": 0.0,
+        },
+        {
+            "fm_liveness_confidence_threshold": 100.0,
+            "fm_id_live_threshold": 1.0,
+            "fm_retouched_live_threshold": 1.0,
+        },
+    ],
+)
+def test_enabled_feature_accepts_threshold_boundaries(monkeypatch, thresholds):
+    monkeypatch.setattr(
+        facemarket_enrollment,
+        "build_biometric_aws_clients",
+        lambda _settings: (object(), object()),
+    )
+
+    app = create_app(biometric_settings(**thresholds))
+
+    assert app.state.fm_rekognition is not None
+    assert app.state.fm_sts is not None
+
+
+@pytest.mark.parametrize(
+    "env,field",
+    [
+        ("FM_LIVENESS_CONFIDENCE_THRESHOLD", "fm_liveness_confidence_threshold"),
+        ("FM_ID_LIVE_THRESHOLD", "fm_id_live_threshold"),
+        ("FM_RETOUCHED_LIVE_THRESHOLD", "fm_retouched_live_threshold"),
+    ],
+)
+def test_disabled_feature_treats_whitespace_threshold_as_unset(
+    monkeypatch, env, field
+):
+    monkeypatch.setenv(env, "   ")
+
+    settings = load_settings()
+
+    assert settings.fm_biometric_enrollment_enabled is False
+    assert getattr(settings, field) is None
 
 
 def test_disabled_feature_has_no_biometric_aws_clients():

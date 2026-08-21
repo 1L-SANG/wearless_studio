@@ -375,6 +375,11 @@ def _int_env(env: str, default: int) -> int:
         return default
 
 
+def _optional_float_env(env: str) -> float | None:
+    raw = (os.getenv(env) or "").strip()
+    return float(raw) if raw else None
+
+
 def load_settings() -> Settings:
     app_env = os.getenv("APP_ENV", "dev")
     supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
@@ -518,17 +523,12 @@ def load_settings() -> Settings:
         fm_oacx_contract_mode=os.getenv("FM_OACX_CONTRACT_MODE", "disabled"),
         fm_liveness_region=os.getenv("FM_LIVENESS_REGION", "us-east-1"),
         fm_liveness_browser_role_arn=os.getenv("FM_LIVENESS_BROWSER_ROLE_ARN") or None,
-        fm_liveness_confidence_threshold=(
-            float(os.environ["FM_LIVENESS_CONFIDENCE_THRESHOLD"])
-            if os.getenv("FM_LIVENESS_CONFIDENCE_THRESHOLD") else None
+        fm_liveness_confidence_threshold=_optional_float_env(
+            "FM_LIVENESS_CONFIDENCE_THRESHOLD"
         ),
-        fm_id_live_threshold=(
-            float(os.environ["FM_ID_LIVE_THRESHOLD"])
-            if os.getenv("FM_ID_LIVE_THRESHOLD") else None
-        ),
-        fm_retouched_live_threshold=(
-            float(os.environ["FM_RETOUCHED_LIVE_THRESHOLD"])
-            if os.getenv("FM_RETOUCHED_LIVE_THRESHOLD") else None
+        fm_id_live_threshold=_optional_float_env("FM_ID_LIVE_THRESHOLD"),
+        fm_retouched_live_threshold=_optional_float_env(
+            "FM_RETOUCHED_LIVE_THRESHOLD"
         ),
         fm_match_policy_version=os.getenv("FM_MATCH_POLICY_VERSION") or None,
         detailpage_fallback_model_id=os.getenv("DETAILPAGE_FALLBACK_MODEL_ID", "mB"),

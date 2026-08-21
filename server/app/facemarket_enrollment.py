@@ -1980,6 +1980,21 @@ def validate_biometric_settings(settings: Settings) -> None:
     )
     if any(value is None for value in thresholds):
         raise RuntimeError("calibrated biometric thresholds and policy version are required")
+    bounded_thresholds = (
+        (settings.fm_liveness_confidence_threshold, 100.0),
+        (settings.fm_id_live_threshold, 1.0),
+        (settings.fm_retouched_live_threshold, 1.0),
+    )
+    if any(
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or not 0.0 <= value <= upper
+        for value, upper in bounded_thresholds
+    ):
+        raise RuntimeError(
+            "calibrated biometric thresholds must be finite and within provider domains"
+        )
     if settings.fm_oacx_contract_mode == "dev-mock-v1" and settings.app_env != "dev":
         raise RuntimeError("verified OACX biometric contract is required outside dev")
     if settings.fm_oacx_contract_mode != "dev-mock-v1":
