@@ -266,16 +266,16 @@ def test_oacx_dev_contract_extracts_mutable_sensitive_buffers():
 
 
 @pytest.mark.parametrize(
-    "patch",
+    "patch,reason",
     [
-        {"idPortraitBase64": None},
-        {"idPortraitBase64": "not-base64"},
-        {"idPortraitMime": "application/pdf"},
-        {"issuedAt": "2026-08-21T02:54:59Z"},
-        {"birth": "20100102"},
+        ({"idPortraitBase64": None}, "id_portrait_unavailable"),
+        ({"idPortraitBase64": "not-base64"}, "id_portrait_unavailable"),
+        ({"idPortraitMime": "application/pdf"}, "id_portrait_unavailable"),
+        ({"issuedAt": "2026-08-21T02:54:59Z"}, "id_portrait_unavailable"),
+        ({"birth": "20100102"}, "minor_blocked"),
     ],
 )
-def test_oacx_unusable_portrait_fails_with_one_sanitized_reason(patch):
+def test_oacx_unusable_portrait_fails_with_sanitized_reason(patch, reason):
     trans = {**DEV_TRANS, **patch}
 
     with pytest.raises(OacxBiometricError) as error:
@@ -283,9 +283,24 @@ def test_oacx_unusable_portrait_fails_with_one_sanitized_reason(patch):
             trans, contract=DEV_MOCK_OACX_BIOMETRIC_CONTRACT, now=NOW
         )
 
-    assert error.value.reason == "id_portrait_unavailable"
+    assert error.value.reason == reason
     assert "dev-ci-value" not in str(error.value)
     assert "idPortraitBase64" not in str(error.value)
+
+
+def test_oacx_validates_birth_after_contract_fields_and_ttl():
+    trans = {
+        **DEV_TRANS,
+        "birth": "20100102",
+        "issuedAt": "2026-08-21T02:54:59Z",
+    }
+
+    with pytest.raises(OacxBiometricError) as error:
+        parse_oacx_biometric_evidence(
+            trans, contract=DEV_MOCK_OACX_BIOMETRIC_CONTRACT, now=NOW
+        )
+
+    assert error.value.reason == "id_portrait_unavailable"
 
 
 def test_oacx_oversized_portrait_fails_with_sanitized_reason():

@@ -67,6 +67,10 @@ class EnrollmentMappedError(RuntimeError):
         super().__init__(reason)
 
 
+class EnrollmentExpiredError(RuntimeError):
+    pass
+
+
 @dataclass(slots=True)
 class LivenessResult:
     reference_image: bytearray
@@ -1370,6 +1374,19 @@ async def _initial_completion_checks(
                 )
             if row.get("cooldown_until") and row["cooldown_until"] > datetime.now(timezone.utc):
                 raise _err("liveness_cooldown", "잠시 후 다시 시도해 주세요.", status=429)
+            if row["expires_at"] <= datetime.now(timezone.utc):
+                await cur.execute(
+                    """
+                    update fm_biometric_enrollments
+                    set status = 'expired', decision = 'failed',
+                        reason = 'enrollment_expired',
+                        completed_at = coalesce(completed_at, now())
+                    where id = %s
+                    """,
+                    (enrollment_id,),
+                )
+                await conn.commit()
+                raise EnrollmentExpiredError
             if row["liveness_session_digest"] != hashlib.sha256(session_id.encode()).hexdigest():
                 await conn.commit()
                 raise EnrollmentMappedError("liveness_retry")
@@ -1446,8 +1463,6 @@ async def process_enrollment_completion(
 
         try:
             trans = await cx_identity.fetch_trans(settings.cx_trans_base_url, token)
-            if not cx_identity.is_adult_from_birth(trans.get("birth")):
-                raise EnrollmentMappedError("minor_blocked")
             evidence = cx_identity.parse_oacx_biometric_evidence(
                 trans,
                 contract=cx_identity.get_oacx_biometric_contract(settings),
@@ -1486,9 +1501,8 @@ async def process_enrollment_completion(
             raise EnrollmentMappedError("qc_unavailable") from None
 
         token_digest = f"cxsha256:{hashlib.sha256(token.encode()).hexdigest()}"
-        ci = evidence.ci.decode()
         ci_hash = hmac.new(
-            settings.fm_ci_pepper.encode(), ci.encode(), hashlib.sha256
+            settings.fm_ci_pepper.encode(), evidence.ci, hashlib.sha256
         ).hexdigest()
         async with get_conn(request) as conn:
             async with conn.cursor() as cur:
@@ -1581,6 +1595,9 @@ async def process_enrollment_completion(
                 )
             await conn.commit()
         return EnrollmentDecision(True, False, None, "asset_building", model_id)
+    except EnrollmentExpiredError:
+        await cleanup_terminal_enrollment(request.app, enrollment_id=enrollment_id)
+        return EnrollmentDecision(False, False, "enrollment_expired", "expired")
     except EnrollmentMappedError as exc:
         return await _fail_enrollment(
             request,
@@ -1597,21 +1614,20 @@ async def process_enrollment_completion(
         for buffer in photo_buffers:
             cx_identity.wipe_bytearray(buffer)
         photo_buffers.clear()
+        release_task = asyncio.create_task(
+            record_raw_release_evidence(
+                request,
+                enrollment_id,
+                oacx_portrait_released=True,
+                liveness_reference_released=True,
+                temporary_embeddings_released=True,
+            )
+        )
         try:
-            await asyncio.shield(
-                record_raw_release_evidence(
-                    request,
-                    enrollment_id,
-                    oacx_portrait_released=True,
-                    liveness_reference_released=True,
-                    temporary_embeddings_released=True,
-                )
-            )
-        except Exception:
-            logger.warning(
-                "facemarket_enrollment_raw_release_evidence_failed",
-                extra={"enrollment_id": enrollment_id},
-            )
+            await asyncio.shield(release_task)
+        except asyncio.CancelledError:
+            await release_task
+            raise
 
 
 @router.post("/enrollments/{enrollment_id}/complete")

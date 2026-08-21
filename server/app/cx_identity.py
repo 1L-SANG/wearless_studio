@@ -144,8 +144,12 @@ def parse_oacx_biometric_evidence(
         ).total_seconds()
         if not 0 <= age_seconds <= contract.ttl_seconds:
             raise ValueError
-        if not is_adult_from_birth(birth, today=current.astimezone(_KST).date()):
-            raise ValueError
+        try:
+            adult = is_adult_from_birth(birth, today=current.astimezone(_KST).date())
+        except CxIdentityError:
+            raise ValueError from None
+        if not adult:
+            raise OacxBiometricError("minor_blocked")
 
         return OacxBiometricEvidence(
             ci=bytearray(ci.encode()),
@@ -156,6 +160,9 @@ def parse_oacx_biometric_evidence(
             portrait_mime=portrait_mime,
             contract_version=contract.version,
         )
+    except OacxBiometricError:
+        wipe_bytearray(portrait)
+        raise
     except Exception:
         wipe_bytearray(portrait)
         raise OacxBiometricError() from None

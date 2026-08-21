@@ -7,6 +7,7 @@ import hmac
 import io
 import json
 import threading
+import types
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -54,6 +55,7 @@ class EnrollmentStore:
         self.terminal_cleanup_loads = 0
         self.now = NOW
         self.fail_photo_upsert = False
+        self.fail_raw_release_evidence = False
         self.commit_attempts = 0
         self.fail_commit_attempts = set()
         self.unlock_started = None
@@ -594,6 +596,15 @@ class FakeCursor:
                 completed_at=row.get("completed_at") or NOW,
                 cooldown_until=cooldown_until or row.get("cooldown_until"),
             )
+        elif query.startswith("update fm_biometric_enrollments set status = 'expired'"):
+            enrollment_id = params[0]
+            row = next(item for item in self.store.enrollments if item["id"] == enrollment_id)
+            row.update(
+                status="expired",
+                decision="failed",
+                reason="enrollment_expired",
+                completed_at=row.get("completed_at") or NOW,
+            )
         elif query.startswith("update fm_biometric_enrollments set status = 'liveness_pending'"):
             enrollment_id, user_id = params
             row = next(
@@ -676,6 +687,8 @@ class FakeCursor:
             query.startswith("update fm_biometric_enrollments set raw_deletion_evidence")
             and "oacxportraitreleased" in query
         ):
+            if self.store.fail_raw_release_evidence:
+                raise RuntimeError("release evidence unavailable")
             portrait, liveness, embeddings, enrollment_id = params
             row = next(item for item in self.store.enrollments if item["id"] == enrollment_id)
             row["raw_deletion_evidence"].update(
@@ -788,6 +801,7 @@ class FakeConn:
             setattr(working, name, copy.deepcopy(getattr(self.store, name)))
         working.now = self.store.now
         working.fail_photo_upsert = self.store.fail_photo_upsert
+        working.fail_raw_release_evidence = self.store.fail_raw_release_evidence
         return working
 
     def cursor(self):
@@ -1200,6 +1214,141 @@ def test_complete_uses_distinct_thresholds_and_queues_bound_asset_job(
     assert "private/" not in json.dumps(enrollment_store.jobs)
 
 
+def test_complete_expires_liveness_pending_without_provider_oacx_or_job(
+    enrollment_client,
+    auth,
+    enrollment_store,
+    fake_r2,
+    fake_rekognition,
+    completion_fakes,
+):
+    enrollment_id = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
+    )
+    enrollment_store.enrollments[0]["expires_at"] = datetime.now(timezone.utc) - timedelta(
+        seconds=1
+    )
+
+    response = complete_enrollment(
+        enrollment_client, auth, enrollment_id, fake_rekognition.session_id
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "passed": False,
+        "retryable": False,
+        "reason": "enrollment_expired",
+        "status": "expired",
+    }
+    row = enrollment_store.enrollments[0]
+    assert row["status"] == "expired"
+    assert row["decision"] == "failed"
+    assert row["reason"] == "enrollment_expired"
+    assert fake_rekognition.result_calls == []
+    assert completion_fakes["face_qc"].calls == []
+    assert enrollment_store.jobs == []
+    assert all(photo["storage_state"] != "quarantine" for photo in enrollment_store.photos)
+    assert enrollment_store.terminal_cleanup_loads >= 1
+
+
+def test_complete_surfaces_raw_release_evidence_write_failure(
+    enrollment_client,
+    auth,
+    enrollment_store,
+    fake_r2,
+    fake_rekognition,
+    completion_fakes,
+):
+    enrollment_id = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
+    )
+    enrollment_store.fail_raw_release_evidence = True
+
+    response = complete_enrollment(
+        enrollment_client, auth, enrollment_id, fake_rekognition.session_id
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "enrollment_unavailable"
+    assert enrollment_store.enrollments[0]["raw_deletion_evidence"] == {}
+    assert "oacx-token-used-only-now" not in response.text
+    assert fake_rekognition.session_id not in response.text
+
+
+def test_complete_waits_for_raw_release_evidence_before_cancellation_exits(
+    enrollment_client,
+    auth,
+    enrollment_store,
+    fake_r2,
+    fake_rekognition,
+    completion_fakes,
+    monkeypatch,
+):
+    enrollment_id = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
+    )
+    release_started = asyncio.Event()
+    release_can_finish = asyncio.Event()
+    released = asyncio.Event()
+
+    async def slow_release(_request, _enrollment_id, **_evidence):
+        release_started.set()
+        await release_can_finish.wait()
+        released.set()
+
+    monkeypatch.setattr(facemarket_enrollment, "record_raw_release_evidence", slow_release)
+
+    async def run_and_cancel():
+        task = asyncio.create_task(
+            facemarket_enrollment.process_enrollment_completion(
+                types.SimpleNamespace(app=enrollment_client.app),
+                enrollment_id=enrollment_id,
+                user_id="user-1",
+                session_id=fake_rekognition.session_id,
+                token="oacx-token-used-only-now",
+            )
+        )
+        await release_started.wait()
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        release_can_finish.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert released.is_set()
+
+    asyncio.run(run_and_cancel())
+
+
+def test_complete_hmacs_owned_ci_buffer_without_immutable_copy(
+    enrollment_client,
+    auth,
+    enrollment_store,
+    fake_r2,
+    fake_rekognition,
+    completion_fakes,
+    monkeypatch,
+):
+    seen_message_types = []
+    original_hmac_new = hmac.new
+
+    def track_hmac_new(key, msg=None, digestmod=""):
+        seen_message_types.append(type(msg))
+        return original_hmac_new(key, msg, digestmod)
+
+    monkeypatch.setattr(facemarket_enrollment.hmac, "new", track_hmac_new)
+    enrollment_id = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
+    )
+
+    response = complete_enrollment(
+        enrollment_client, auth, enrollment_id, fake_rekognition.session_id
+    )
+
+    assert response.status_code == 202, response.text
+    assert bytearray in seen_message_types
+
+
 def test_complete_rejects_session_digest_mismatch_without_provider_call(
     enrollment_client,
     auth,
@@ -1285,6 +1434,31 @@ def test_complete_maps_oacx_portrait_and_minor_failures(
         retryable=reason == "id_portrait_unavailable",
     )
     assert enrollment_store.enrollments[0]["cooldown_until"] is None
+
+
+def test_complete_maps_expired_oacx_contract_before_minor_birth(
+    enrollment_client,
+    auth,
+    enrollment_store,
+    fake_r2,
+    fake_rekognition,
+    completion_fakes,
+):
+    enrollment_id = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
+    )
+    completion_fakes["trans"] = dev_trans(
+        birth="20100102",
+        issuedAt="2026-08-21T02:54:59Z",
+    )
+
+    response = complete_enrollment(
+        enrollment_client, auth, enrollment_id, fake_rekognition.session_id
+    )
+
+    assert_completion_failure(
+        response, enrollment_store, "id_portrait_unavailable", retryable=True
+    )
 
 
 @pytest.mark.parametrize(
