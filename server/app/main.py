@@ -122,7 +122,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         sam_autoscaler = None
         if pool is not None:
             await pool.open()
-            if settings.fm_vc_required:
+            # revoke_license/cutover 는 fm_vc_required 와 무관하게 vc_id 가 있으면
+            # 내구성 폐기 잡을 적재한다 — Holder 가 설정돼 있으면(그 잡을 드레인할 대상이
+            # 있으면) 리컨실러를 켠다. fm_vc_required 는 배포 게이트가 이미 Holder
+            # URL+secret 존재를 강제하므로 holder-configured 를 함의한다.
+            holder_configured = bool(
+                settings.opendid_holder_url
+                and settings.opendid_holder_url.strip()
+                and settings.opendid_holder_hmac_secret
+                and settings.opendid_holder_hmac_secret.strip()
+            )
+            if holder_configured or settings.fm_vc_required:
                 vc_revocation_reconciler = FaceVcRevocationReconciler(app)
                 await vc_revocation_reconciler.start()
             if app.state.r2 is not None:

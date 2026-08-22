@@ -428,3 +428,43 @@ def test_main_does_not_start_reconciler_when_vc_is_optional(monkeypatch):
 
     with TestClient(app):
         pass
+
+
+def test_main_starts_reconciler_when_holder_configured_even_if_vc_optional(monkeypatch):
+    """revoke_license/cutover enqueue a durable revoke job whenever a license has a
+    vc_id — regardless of fm_vc_required. If the Holder is configured, those jobs
+    must get drained, or they orphan forever once fm_vc_required=false."""
+    events = []
+
+    class Pool:
+        async def open(self):
+            events.append("pool.open")
+
+        async def close(self):
+            events.append("pool.close")
+
+    class Reconciler:
+        def __init__(self, _app):
+            events.append("reconciler.init")
+
+        async def start(self):
+            events.append("reconciler.start")
+
+        async def stop(self):
+            events.append("reconciler.stop")
+
+    monkeypatch.setattr(main, "create_pool", lambda _url: Pool())
+    monkeypatch.setattr(main, "FaceVcRevocationReconciler", Reconciler)
+    app = main.create_app(make_settings(
+        database_url="postgresql://unused",
+        fm_vc_required=False,
+        opendid_holder_url="http://holder",
+        opendid_holder_hmac_secret="shared-secret",
+        job_dispatcher_enabled=False,
+    ))
+
+    with TestClient(app):
+        pass
+
+    assert "reconciler.init" in events
+    assert "reconciler.start" in events
