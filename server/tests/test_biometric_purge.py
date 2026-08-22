@@ -1502,6 +1502,54 @@ def test_fake_account_delete_anonymizes_identity_and_writes_aggregate_receipt(ca
     assert "facemarket/" not in caplog.text and ctx.user not in caplog.text
 
 
+def test_fake_account_delete_erases_ownership_scoped_biometrics_without_personalization_profile(caplog):
+    """Task 1: a user with no personalization profile (never onboarded, or already-purged)
+    must still get their owned FaceMarket model/enrollment/assets erased and an aggregate
+    receipt written, driven off fm_models/fm_biometric_enrollments ownership alone.
+    """
+    ctx = _fake_case()
+    ctx.db.add("fm_vc_revocation_jobs", vc_id="vc-a", license_id=ctx.license, model_id=ctx.model)
+    ctx.db.tables["personalization_profiles"] = [
+        row for row in ctx.db.tables["personalization_profiles"] if row["user_id"] != ctx.user
+    ]
+
+    result = _run(ctx, user_id=ctx.user, reason="account_delete")
+
+    assert result.complete is True
+    assert result.profile_count == 0
+    assert result.model_count == 1
+    assert result.enrollment_count == 1
+    model = ctx.db.tables["fm_models"][0]
+    assert model["status"] == "suspended"
+    assert model["user_id"] is None
+    assert model["ci_hash"] is None
+    assert model["did"] is None
+    assert model["cover_image_url"] is None
+    assert model["display_name"] == "삭제된 모델"
+    assert ctx.db.tables["fm_biometric_enrollments"] == []
+    assert ctx.db.tables["fm_model_assets"] == []
+    assert ctx.db.tables["fm_identity_verifications"] == []
+    assert ctx.db.tables["fm_biometric_purge_receipts"] == [
+        {
+            "id": "receipt-1",
+            "source_job_id": None,
+            "reason": "account_delete",
+            "outcome": "ready_for_identity_delete",
+            "target_count": result.target_count,
+            "confirmed_absent_count": result.confirmed_absent_count,
+            "model_count": 1,
+            "profile_count": 0,
+            "enrollment_count": 1,
+            "asset_count": result.asset_count,
+            "completed_at": "now",
+        }
+    ]
+    receipt_blob = repr(ctx.db.tables["fm_biometric_purge_receipts"])
+    for secret in (ctx.user, ctx.model, ctx.enrollment, "ci-a", "did:a", "vc-a"):
+        assert secret not in receipt_blob
+    assert "facemarket/" not in caplog.text and ctx.user not in caplog.text
+
+
 def test_fake_account_delete_requires_vc_revocation_job_before_receipt_or_anonymization():
     ctx = _fake_case()
 
