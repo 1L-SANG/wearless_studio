@@ -5,13 +5,13 @@ photos that already passed, records evidence binding, and never emits R2 keys.
 """
 
 import asyncio
-import hashlib
 import logging
 
 from psycopg.types.json import Json
 
 from .. import repo
 from ..agents.face_grid import compose_sedcard
+from ..agents.identity_source import compute_assets_source_hash
 from ..facemarket_enrollment import (
     _MODEL_ASSET_FENCE_NAMESPACE,
     _drain_model_asset_cleanup,
@@ -53,13 +53,7 @@ def _ordered_faces(rows: list[dict]) -> list[dict] | None:
     return faces
 
 
-def _source_hash(faces: list[dict]) -> str:
-    return hashlib.sha256(
-        "|".join(
-            str(face.get("image_digest") or face.get("r2_key") or "")
-            for face in faces
-        ).encode()
-    ).hexdigest()
+_source_hash = compute_assets_source_hash
 
 
 async def _register_cleanup(conn, enrollment_id: str, angle: str, key: str) -> None:

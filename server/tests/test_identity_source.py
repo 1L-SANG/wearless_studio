@@ -3,13 +3,25 @@
 import asyncio
 import pytest
 
-from app.agents.identity_source import resolve_real_model_assets, select_source
+from app.agents.identity_source import (
+    compute_assets_source_hash,
+    resolve_real_model_assets,
+    select_source,
+)
 
 
 _FM_UUID = "11111111-1111-1111-1111-111111111111"
 _OTHER_UUID = "22222222-2222-2222-2222-222222222222"
 _ENROLLMENT_ID = "33333333-3333-3333-3333-333333333333"
 _POLICY_VERSION = "policy-v1"
+
+# fm_biometric_enrollment_photos 의 현재 소스 사진 지문(front/angle45/side 순).
+_DEFAULT_PHOTOS = [
+    {"angle": "front", "image_digest": "sha256-front", "r2_key": "enroll/front.png"},
+    {"angle": "angle45", "image_digest": "sha256-angle45", "r2_key": "enroll/angle45.png"},
+    {"angle": "side", "image_digest": "sha256-side", "r2_key": "enroll/side.png"},
+]
+_DEFAULT_SOURCE_HASH = compute_assets_source_hash(_DEFAULT_PHOTOS)
 
 
 def test_real_requires_active_license():
@@ -79,16 +91,21 @@ class _Cur:
 
 
 class _Conn:
-    def __init__(self, rows):
+    def __init__(self, rows, photo_rows=None):
         self._rows = rows
+        self._photo_rows = _DEFAULT_PHOTOS if photo_rows is None else photo_rows
+        self._call = 0
 
     def cursor(self):
-        return _Cur(self._rows)
+        # 1번째 호출 = fm_models/fm_model_assets 조인, 2번째 호출 = 소스 사진 지문 재계산.
+        self._call += 1
+        return _Cur(self._rows if self._call == 1 else self._photo_rows)
 
 
 def _run(rows, **kwargs):
+    photo_rows = kwargs.pop("photo_rows", None)
     return asyncio.run(resolve_real_model_assets(
-        _Conn(rows), _FM_UUID,
+        _Conn(rows, photo_rows=photo_rows), _FM_UUID,
         enrollment_id=kwargs.pop("enrollment_id", _ENROLLMENT_ID),
         evidence_version=kwargs.pop("evidence_version", _POLICY_VERSION),
         **kwargs,
@@ -127,16 +144,19 @@ def _asset_rows(
     grid_key="facemarket/models/m1/grid_sedcard.png",
     bucket="face",
     mime="image/png",
+    assets_source_hash=_DEFAULT_SOURCE_HASH,
 ):
     return [
         {"model_status": model_status, "assets_status": assets_status,
          "current_enrollment_id": current_enrollment_id,
+         "assets_source_hash": assets_source_hash,
          "enrollment_status": enrollment_status,
          "match_policy_version": match_policy_version, "view": "face_front",
          "r2_key": face_key, "mime": mime, "bucket": bucket,
          "source_enrollment_id": asset_source_enrollment_id, "evidence_version": evidence_version},
         {"model_status": model_status, "assets_status": assets_status,
          "current_enrollment_id": current_enrollment_id,
+         "assets_source_hash": assets_source_hash,
          "enrollment_status": enrollment_status,
          "match_policy_version": match_policy_version, "view": "grid_sedcard",
          "r2_key": grid_key, "mime": mime, "bucket": bucket,
@@ -208,3 +228,64 @@ def test_resolver_unconditionally_rejects_legacy_personalization_assets():
         evidence_version="legacy-personalization-v1",
     )
     assert _run(rows) is None
+
+
+# ── assets_source_hash 무결성 강제(Task 5) ──
+# fm_model_asset_job._source_hash 가 자산 빌드 시점에 새긴 지문. 조회 시점에
+# fm_biometric_enrollment_photos(현재 소스)에서 동일 알고리즘으로 재계산해 비교한다.
+# 비교 결과가 다르면(=자산이 지금의 소스 사진과 더 이상 일치하지 않으면) fail-closed.
+
+
+def test_stale_assets_source_hash_rejects_even_when_everything_else_matches():
+    # 나머지 상태(모델/등록/정책버전/뷰)는 전부 정상이지만 assets_source_hash 만
+    # 현재 소스 사진 지문과 어긋난다 — DB 직접 변조나 원본 사진 교체를 가정한
+    # 시나리오. 조용히 낡은 얼굴을 신뢰하면 안 되므로 None(REJECTED) 이어야 한다.
+    rows = _asset_rows(assets_source_hash="deadbeef" * 8)
+    assert _run(rows) is None
+
+
+def test_matching_assets_source_hash_still_resolves_no_false_reject():
+    # 하드 가드레일: 지금 소스와 정확히 일치하는 자산은 절대 false-reject 되면
+    # 안 된다. 기본 photo_rows(_DEFAULT_PHOTOS)로 계산한 해시와 asset row 의
+    # assets_source_hash(_DEFAULT_SOURCE_HASH)가 일치하는 정상 케이스.
+    refs = _run(_asset_rows(assets_source_hash=_DEFAULT_SOURCE_HASH))
+    assert refs is not None and len(refs) == 2
+
+
+def test_matching_assets_source_hash_with_explicit_photo_rows_resolves():
+    # photo_rows 를 명시적으로 다른(그러나 서로 일치하는) 지문 세트로 줘도
+    # 정확히 재계산되어 통과해야 한다 — 순서(front/angle45/side)에 의존하지
+    # 않고 각도 키로 매칭됨을 증명(입력 순서를 뒤섞음).
+    photos = [
+        {"angle": "side", "image_digest": "sha256-s2", "r2_key": "k-side"},
+        {"angle": "front", "image_digest": "sha256-f2", "r2_key": "k-front"},
+        {"angle": "angle45", "image_digest": "sha256-a2", "r2_key": "k-angle45"},
+    ]
+    expected_hash = compute_assets_source_hash(
+        [{"angle": "front", "image_digest": "sha256-f2"},
+         {"angle": "angle45", "image_digest": "sha256-a2"},
+         {"angle": "side", "image_digest": "sha256-s2"}]
+    )
+    refs = _run(
+        _asset_rows(assets_source_hash=expected_hash),
+        photo_rows=photos,
+    )
+    assert refs is not None and len(refs) == 2
+
+
+def test_incomplete_current_photo_set_rejects():
+    # 소스 사진 3장 중 일부가 사라진 경우(예: 예상 밖 데이터 유실) — 지문을
+    # 재계산할 수 없으므로 fail-closed. 자산 빌드가 성공했던 REAL 모델이라면
+    # 정상 상태에서는 절대 도달하지 않는 분기(front/angle45/side 3장은 자산
+    # 빌드 불변식이 보장).
+    photos = [
+        {"angle": "front", "image_digest": "sha256-front", "r2_key": "k"},
+        {"angle": "angle45", "image_digest": "sha256-angle45", "r2_key": "k"},
+    ]
+    assert _run(_asset_rows(), photo_rows=photos) is None
+
+
+def test_missing_assets_source_hash_rejects():
+    # assets_status='ready' 인데 assets_source_hash 가 비어 있으면(이론상
+    # 발생 불가해야 하는 상태) 검증 불가로 간주해 fail-closed.
+    assert _run(_asset_rows(assets_source_hash=None)) is None
