@@ -35,10 +35,10 @@ All commands below ran from `/Users/nojeong-un/devs/wearless_studio/.worktrees/f
 
 | Check | Result |
 | --- | --- |
-| Full backend pytest | `3266 passed, 112 skipped`; 3378 collected, exit 0 on `5f4aa61d` |
+| Full backend pytest | `3281 passed, 112 skipped`; 3393 collected, exit 0 on `0a7f33f6` |
 | Python syntax | `cd server && .venv/bin/python -m compileall -q app scripts` exited 0 |
 | Whitespace | `git diff --check` produced no output |
-| Frontend test suite | `939 pass, 0 fail, 0 skipped` |
+| Frontend test suite | `941 pass, 0 fail, 0 skipped` |
 | Production frontend build | `vite build` transformed 3166 modules and exited 0; existing chunk-size warnings only |
 | Holder clean build/test | `./gradlew clean test`: 37 tests, 0 failures/errors/skips |
 | OpenDID local harness | export, provision, restore, managed/self-managed smoke suites all exited 0; live PostgreSQL integration remained explicitly gated |
@@ -58,9 +58,9 @@ Expected environment-gated skips:
 
 Measured frontend bundle facts from this run:
 
-- `dist/assets/index-er3XbjJy.js`: 1,157.48 kB, gzip 307.17 kB.
-- `dist/assets/FaceLivenessStep-B2cRkHOs.js`: 1,634.93 kB, gzip 324.81 kB.
-- `dist/assets/Editor-CZ5EEq9D.js`: 586.24 kB, gzip 191.45 kB.
+- `dist/assets/index-CWHfCLW4.js`: 1,157.71 kB, gzip 307.27 kB.
+- `dist/assets/FaceLivenessStep-BHGEVsjd.js`: 1,634.93 kB, gzip 324.81 kB.
+- `dist/assets/Editor-BhxQJzJ1.js`: 586.25 kB, gzip 191.46 kB.
 
 The initial-bundle reduction from the enrollment work was not remeasured against a pre-hardening baseline in this task. Face-match/liveness accuracy remains unmeasured; measuring it requires a consented gold set and live provider evaluation.
 
@@ -70,12 +70,14 @@ Measured local tests cover:
 
 - Current-evidence authorization: real-model API and worker gates require active license, verified model, passed current enrollment, current asset evidence, allowed category, and VC-valid local/Holder status.
 - AWS liveness enrollment contracts: local/dev adapters keep raw session IDs, browser-issued AWS credential material, raw portraits, live references, and embeddings out of durable payloads/logs; production enablement remains gated.
+- Biometric threshold startup gates: liveness and SFace thresholds must be finite and strictly greater than zero; invalid configuration stops startup before DB or AWS client creation.
 - Mandatory VC: license activation is bound to VC issuance state, verification is fail-closed, local revoke/freeze transitions enqueue durable revoke jobs, and Holder outage does not reopen local real-model generation.
 - Durable revoke: owner revoke and cutover freeze/revoke paths keep one durable queue row per VC and preserve local non-active status across Holder failure.
 - Strict purge/reconciliation: both face and public buckets are discovered, deleted, relisted, and headed before DB cleanup; R2/list/head/delete failures preserve DB references for retry.
-- Durable cache purge: the complete DB/prefix-discovered target set is committed to a service-private manifest before origin deletion. Retry unions saved and newly discovered targets; the manifest is removed only in the same transaction as DB cleanup and the completion receipt.
-- REAL-derived cache policy: detail and editor outputs that consumed REAL identity references are marked by the server and return `private, no-store` from R2, `/file`, and `/bytes`. Mirror/back cuts use attached identity evidence rather than the visible-face badge; virtual/product/non-REAL output remains immutable.
-- Cloudflare eviction: public R2 keys use host/path prefix purge, bounded batches, sanitized failure handling, and bounded `429 Retry-After` retries. Missing zone/token fails before origin deletion.
+- Durable cache purge: the complete DB/prefix-discovered target set is committed to a service-private manifest before origin deletion. A monotonic manifest revision and one scope lock prevent a stale worker from deleting targets discovered by a newer worker. Retry unions saved and newly discovered targets; the manifest is removed only in the same transaction as DB cleanup and the completion receipt.
+- REAL-derived cache policy: detail and editor outputs that consumed REAL identity references are marked by the server and return `private, no-store` from R2, `/file`, and `/bytes`. Mirror/back cuts use attached identity evidence rather than the visible-face badge. Unmarked legacy AI output is conservatively sensitive; newly created virtual/product/non-REAL output records an explicit non-sensitive marker and remains immutable.
+- Browser cache boundary: current clients use the `e=2` asset capability. Sensitive `/file?e=2` redirects to the API `/bytes?e=2` response with `private, no-store`, without appending unsigned query parameters to presigned R2 URLs.
+- Cloudflare eviction: public R2 keys use host/path prefix purge, paced batches, sanitized failure handling, and bounded `429 Retry-After` retries. Missing zone/token fails before origin deletion.
 - Same-batch initial-cutover retry: `test_fake_cutover_apply_resumes_same_batch_after_partial_r2_failure_without_duplicate_state` drives the real `apply_initial_cutover` through a hermetic partial object-store failure, verifies the batch fails without starting a second batch or duplicating revoke queue rows, then completes the same batch with durable terminal counts. The test explicitly treats idempotent retry delete attempts after unconfirmed list/head reconciliation as required fail-closed behavior, while confirming a third completed replay performs no additional deletes or revocation enqueue.
 - Owner-only face access: biometric file access tests assert other-user and purged states return not-found/unauthorized behavior rather than raw storage exposure.
 - Fixed non-biometric thumbnail: catalog/runtime paths avoid private face buckets for thumbnails and use non-biometric placeholders.
@@ -93,9 +95,10 @@ Production cutover remains STOP until all of these are complete and reviewed:
 4. Isolated live PostgreSQL migration/integration tests with `FACEMARKET_TEST_DATABASE_URL` set to a disposable database.
 5. Holder/OpenDID Server 3 bootstrap, data migration, private networking/firewall rules, secret distribution, and restart persistence validation.
 6. Live issue-valid-revoke-revoked-restart smoke through Server 1 to Server 3.
-7. Apply `20260822020000_facemarket_purge_manifests.sql` before enabling any destructive biometric purge path.
-8. Provision and validate `CLOUDFLARE_ZONE_ID` and the SSM-backed cache-purge token, confirm any Transform Rule post-transform paths, and prove a real `HIT -> origin delete -> prefix purge -> no body` cycle. Confirm no Edge TTL rule overrides `private, no-store`.
-9. Destructive cutover approval, reviewed target batch, operator confirmation, and change window.
+7. Apply `20260822020000_facemarket_purge_manifests.sql` and then `20260822030000_facemarket_purge_manifest_revision.sql` before enabling any destructive biometric purge path.
+8. Deploy the backend before releasing the frontend that emits `e=2` asset capabilities; do not reverse this order.
+9. Provision and validate `CLOUDFLARE_ZONE_ID` and the SSM-backed cache-purge token, confirm any Transform Rule post-transform paths, and prove a real `HIT -> origin delete -> prefix purge -> no body` cycle. Confirm no Edge TTL rule overrides `private, no-store`.
+10. Destructive cutover approval, reviewed target batch, operator confirmation, and change window.
 
 ## Local QA boundary
 
