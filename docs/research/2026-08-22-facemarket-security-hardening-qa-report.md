@@ -35,10 +35,10 @@ All commands below ran from `/Users/nojeong-un/devs/wearless_studio/.worktrees/f
 
 | Check | Result |
 | --- | --- |
-| Full backend pytest | `3281 passed, 112 skipped`; 3393 collected, exit 0 on `0a7f33f6` |
+| Full backend pytest | `3291 passed, 112 skipped`; 3403 collected, exit 0 on `a1a65cf8` |
 | Python syntax | `cd server && .venv/bin/python -m compileall -q app scripts` exited 0 |
 | Whitespace | `git diff --check` produced no output |
-| Frontend test suite | `941 pass, 0 fail, 0 skipped` |
+| Frontend test suite | `944 pass, 0 fail, 0 skipped` |
 | Production frontend build | `vite build` transformed 3166 modules and exited 0; existing chunk-size warnings only |
 | Holder clean build/test | `./gradlew clean test`: 37 tests, 0 failures/errors/skips |
 | OpenDID local harness | export, provision, restore, managed/self-managed smoke suites all exited 0; live PostgreSQL integration remained explicitly gated |
@@ -58,9 +58,9 @@ Expected environment-gated skips:
 
 Measured frontend bundle facts from this run:
 
-- `dist/assets/index-CWHfCLW4.js`: 1,157.71 kB, gzip 307.27 kB.
-- `dist/assets/FaceLivenessStep-BHGEVsjd.js`: 1,634.93 kB, gzip 324.81 kB.
-- `dist/assets/Editor-BhxQJzJ1.js`: 586.25 kB, gzip 191.46 kB.
+- `dist/assets/index-DIfwlKH8.js`: 1,158.07 kB, gzip 307.47 kB.
+- `dist/assets/FaceLivenessStep-CpGUWBp4.js`: 1,634.93 kB, gzip 324.81 kB.
+- `dist/assets/Editor-CrCSRgn3.js`: 586.25 kB, gzip 191.46 kB.
 
 The initial-bundle reduction from the enrollment work was not remeasured against a pre-hardening baseline in this task. Face-match/liveness accuracy remains unmeasured; measuring it requires a consented gold set and live provider evaluation.
 
