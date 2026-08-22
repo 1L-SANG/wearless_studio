@@ -35,7 +35,7 @@ from ..agents import (
 from ..agents.gemini_image import InlineImage
 from ..agents.model_routing import resolve_detail_cut_model
 from ..agents.vision_llm import VisionError
-from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
+from ..r2 import IMMUTABLE_CACHE, PRIVATE_NO_STORE, ai_key, ext_for_mime
 from ._common import emit_job_event as _emit
 
 log = logging.getLogger("wearless.detail_page_job")
@@ -523,7 +523,15 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                     r2_key=key,
                 )
                 await conn.commit()
-            await asyncio.to_thread(r2.put_bytes, key, img, mime, cache=IMMUTABLE_CACHE)
+            await asyncio.to_thread(
+                r2.put_bytes,
+                key,
+                img,
+                mime,
+                # `/v1/assets/.../file`의 302는 URL만 캐시한다. 대상 R2 응답의
+                # no-store가 REAL 이미지 본문 저장을 막고, 파기는 그 URL을 CDN에서 제거한다.
+                cache=PRIVATE_NO_STORE if has_face else IMMUTABLE_CACHE,
+            )
             w, h = _dims(img)
             # 대기 화면 프리뷰 — asset 행은 finalize에서만 생기므로 /file 경로는 아직 404다.
             # REAL FaceMarket 컷은 최종 권한 펜스 전까지 출력 위치를 이벤트 원장에 남기지 않는다.

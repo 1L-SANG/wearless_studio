@@ -26,7 +26,7 @@ from ..agents import (
 )
 from ..agents.gemini_image import GeminiError, InlineImage
 from ..agents.vision_llm import VisionError
-from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
+from ..r2 import IMMUTABLE_CACHE, PRIVATE_NO_STORE, ai_key, ext_for_mime
 from ._common import emit_job_event as _emit
 
 log = logging.getLogger("wearless.editor_image_job")
@@ -706,7 +706,15 @@ async def run_editor_image_job(app, job: dict) -> None:
                 r2_key=key,
             )
             await conn.commit()
-        await asyncio.to_thread(app.state.r2.put_bytes, key, image, mime, cache=IMMUTABLE_CACHE)
+        await asyncio.to_thread(
+            app.state.r2.put_bytes,
+            key,
+            image,
+            mime,
+            # asset route의 캐시 가능한 302에는 본문이 없다. 대상 R2 응답을 no-store로
+            # 만들어 REAL 이미지 본문은 CDN/브라우저에 새로 저장되지 않게 한다.
+            cache=PRIVATE_NO_STORE if fm_face_injected else IMMUTABLE_CACHE,
+        )
         written_key = key
         written_cleanup_intent_id = cleanup_intent_id
         w, h = _image_dims(image)

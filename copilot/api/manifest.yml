@@ -64,6 +64,7 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   R2_BUCKET: wearless
   R2_ENDPOINT: https://2b7c948b56f129faaa10e5076b9e9a66.r2.cloudflarestorage.com
   R2_PUBLIC_BASE: https://images.wearless.kr
+  CLOUDFLARE_ZONE_ID: ""          # 운영 생체 파기 전 실제 zone id로 설정
   MANNEQUIN_BASE_WOMEN_ASSET_ID: 486937ac-7cb3-4597-b563-d185d378a10d
   MANNEQUIN_BASE_MEN_ASSET_ID: 736ff2ab-0f15-4f9a-b2ee-c40cd0ed7ee0
   # shadow 모드(판정·metrics 로그만, 게이팅 X). 2026-07-07: 실 gemini-3-pro 출력에서 QC pass율
@@ -222,6 +223,7 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   SUPABASE_SERVICE_ROLE_KEY: /copilot/wearless/prod/secrets/SUPABASE_SERVICE_ROLE_KEY
   R2_ACCESS_KEY_ID: /copilot/wearless/prod/secrets/R2_ACCESS_KEY_ID
   R2_SECRET_ACCESS_KEY: /copilot/wearless/prod/secrets/R2_SECRET_ACCESS_KEY
+  CLOUDFLARE_CACHE_PURGE_TOKEN: /copilot/wearless/prod/secrets/CLOUDFLARE_CACHE_PURGE_TOKEN
   GEMINI_API_KEY: /copilot/wearless/prod/secrets/GEMINI_API_KEY
   # 첫 화면 시그니처 컷과 AG-06 상세컷 GPT 경로가 함께 사용한다.
   # 배포 전 SSM SecureString이 실제로 존재하는지 확인한다.

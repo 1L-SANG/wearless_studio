@@ -12,7 +12,8 @@ import pytest
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
-from app import facemarket_cutover, repo
+from app import facemarket_cutover, repo, r2 as r2_module
+from app.r2 import R2Client
 from app.services import biometric_purge
 from app.services.biometric_purge import PurgeIncomplete, purge_biometric_scope
 
@@ -24,6 +25,8 @@ class StrictFakeR2:
     def __init__(self, keys=()):
         self.keys = set(keys)
         self.deleted = []
+        self.purged = []
+        self.fail_purge = False
         self.fail_delete = set()
         self.fail_list = set()
         self.fail_head = set()
@@ -43,6 +46,11 @@ class StrictFakeR2:
         if key in self.fail_head:
             raise RuntimeError("head_failed")
         return {"size": 1, "mime": "image/png"} if key in self.keys else None
+
+    def purge_public_cache(self, keys):
+        self.purged.append(tuple(keys))
+        if self.fail_purge:
+            raise RuntimeError("provider dumped bearer secret")
 
 
 class _NoPool:
@@ -1512,6 +1520,78 @@ def test_fake_partial_delete_preserves_references_then_retry_succeeds():
     result = _run(ctx, user_id=ctx.user, reason="withdrawal")
     assert result.complete is True
     assert ctx.db.tables["fm_model_assets"] == []
+
+
+def test_fake_partial_cdn_batch_preserves_references_then_retry_succeeds(monkeypatch):
+    ctx = _fake_case()
+    ctx.db.add(
+        "fm_vc_revocation_jobs",
+        vc_id="vc-a",
+        license_id=ctx.license,
+        model_id=ctx.model,
+    )
+    for index in range(205):
+        asset_id = f"bulk-asset-{index:03d}"
+        asset = copy.deepcopy(ctx.db.tables["assets"][0])
+        asset.update(
+            id=asset_id,
+            r2_key=(
+                f"users/{ctx.user}/projects/{ctx.project}/ai/{ctx.job}/"
+                f"{asset_id}.png"
+            ),
+        )
+        ctx.db.tables["assets"].append(asset)
+        ctx.db.add(
+            "generation_outputs",
+            id=f"bulk-output-{index:03d}",
+            generation_run_id="run-a",
+            project_id=ctx.project,
+            asset_id=asset_id,
+            parent_output_id=None,
+            edit_session_id=None,
+        )
+        ctx.r2.keys.add(asset["r2_key"])
+
+    ctx.r2._public_base = "https://images.example.test"
+    ctx.r2._cloudflare_zone_id = "zone-1"
+    ctx.r2._cloudflare_cache_purge_token = "never-log-this-token"
+    ctx.r2.purge_public_cache = types.MethodType(R2Client.purge_public_cache, ctx.r2)
+    calls = []
+    fail_second_batch = True
+
+    def fake_post(_url, **kwargs):
+        nonlocal fail_second_batch
+        calls.append(tuple(kwargs["json"]["files"]))
+        success = not (fail_second_batch and len(calls) == 2)
+        return types.SimpleNamespace(status_code=200, json=lambda: {"success": success})
+
+    monkeypatch.setattr(r2_module.httpx, "post", fake_post)
+
+    with pytest.raises(PurgeIncomplete) as exc:
+        _run(ctx, user_id=ctx.user, reason="account_delete")
+
+    assert exc.value.code == "cdn_purge_failed"
+    assert [len(batch) for batch in calls] == [100, 100]
+    assert ctx.r2_face.purged == []
+    assert ctx.db.tables["fm_model_assets"]
+    assert ctx.db.tables["fm_biometric_purge_receipts"] == []
+    assert ctx.db.tables["fm_models"][0]["user_id"] == ctx.user
+
+    first_attempt = list(calls)
+    fail_second_batch = False
+    result = _run(ctx, user_id=ctx.user, reason="account_delete")
+
+    assert result.complete is True
+    retry_urls = {url for batch in calls[2:] for url in batch}
+    assert set(first_attempt[1]).issubset(retry_urls)
+    assert all(
+        f"https://images.example.test/users/{ctx.user}/projects/{ctx.project}/"
+        f"ai/{ctx.job}/bulk-asset-{index:03d}.png" in retry_urls
+        for index in range(205)
+    )
+    assert ctx.db.tables["fm_model_assets"] == []
+    assert len(ctx.db.tables["fm_biometric_purge_receipts"]) == 1
+    assert ctx.db.tables["fm_models"][0]["user_id"] is None
 
 
 @pytest.mark.parametrize("mode", ["survivor", "head_error", "list_error"])

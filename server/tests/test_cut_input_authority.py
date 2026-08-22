@@ -19,6 +19,7 @@ class _TrackingR2(FakeR2):
     def __init__(self, *, fail_delete=False):
         self.reads = []
         self.puts = []
+        self.caches = []
         self.deletes = []
         self.objects = set()
         self.fail_delete = fail_delete
@@ -29,6 +30,7 @@ class _TrackingR2(FakeR2):
 
     def put_bytes(self, key, data, mime, cache=None):
         self.puts.append(key)
+        self.caches.append(cache)
         self.objects.add(key)
 
     def delete(self, key):
@@ -757,6 +759,7 @@ def test_editor_real_product_prunes_identity_and_never_sets_settlement_flag(monk
     assert "MOOD —" not in generated["manifest"]
     assert face_r2.reads == []
     assert captured["settlements"] == 0
+    assert public_r2.caches == ["public, max-age=31536000, immutable"]
 
 
 def test_editor_real_visible_worn_cut_enables_identity_contract(monkeypatch):
@@ -789,9 +792,10 @@ def test_editor_real_visible_worn_cut_enables_identity_contract(monkeypatch):
     monkeypatch.setattr(eij.facemarket, "resolve_model_license", fake_license)
     monkeypatch.setattr(eij.facemarket, "verify_license", fake_verify)
 
+    public_r2 = _TrackingR2()
     app = fake_worker_app(
         make_settings(gemini_api_key="x", r2_bucket="b", facemarket_enabled=True),
-        r2=_TrackingR2(),
+        r2=public_r2,
     )
     app.state.r2_face = _TrackingR2()
     asyncio.run(eij.run_editor_image_job(app, worker_job({
@@ -811,6 +815,7 @@ def test_editor_real_visible_worn_cut_enables_identity_contract(monkeypatch):
     assert "MODEL — frontal close-up" in generated["manifest"]
     assert "MODEL SHEET" in generated["manifest"]
     assert "MODEL FULL BODY" not in generated["manifest"]
+    assert public_r2.caches == ["private, no-store"]
 
 
 class _HolderResponse:

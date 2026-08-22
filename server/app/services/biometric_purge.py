@@ -18,6 +18,7 @@ _CODES = {
     "r2_list_failed",
     "r2_delete_failed",
     "r2_reconcile_failed",
+    "cdn_purge_failed",
     "db_cleanup_failed",
     "vc_revocation_missing",
 }
@@ -751,6 +752,13 @@ async def purge_biometric_scope(
     listed = await _list_targets(clients, prefixes)
     targets = known | listed
     await _delete_and_reconcile(clients, targets, prefixes)
+    try:
+        await asyncio.to_thread(
+            clients["r2"].purge_public_cache,
+            [key for label, key in sorted(targets) if label == "r2"],
+        )
+    except Exception:
+        raise PurgeIncomplete("cdn_purge_failed") from None
 
     db_failed = False
     async with pool.connection() as conn:

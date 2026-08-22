@@ -168,12 +168,14 @@ class _MainR2(FakeR2):
 
     def __init__(self, *, fail_delete=False):
         self.puts: list[str] = []
+        self.caches: list[str | None] = []
         self.deletes: list[str] = []
         self.objects = set()
         self.fail_delete = fail_delete
 
     def put_bytes(self, key, data, mime, cache=None):
         self.puts.append(key)
+        self.caches.append(cache)
         self.objects.add(key)
 
     def delete(self, key):
@@ -270,7 +272,7 @@ def test_no_license_project_attaches_no_face_and_keeps_default_notice(monkeypatc
     has_face=False, license_notice=None, 정산·차감 그대로."""
     captured = {}
     _patch_inputs(monkeypatch, captured, project={"copywriting": False})  # facemarket_license_id 없음
-    app, _ = _app(_license_row())
+    app, main_r2 = _app(_license_row())
 
     asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
 
@@ -281,6 +283,7 @@ def test_no_license_project_attaches_no_face_and_keeps_default_notice(monkeypatc
     assert captured["license_notice"] is None           # 기존 AI 고지 문구 유지
     assert captured["charge"] == 1                      # 차감 계약 그대로
     assert app.state.r2_face.gets == []                 # 얼굴 버킷 접근조차 없음
+    assert main_r2.caches == ["public, max-age=31536000, immutable"]
 
 
 def test_facemarket_disabled_never_loads_face(monkeypatch):
@@ -354,6 +357,7 @@ def test_snapshot_real_job_injects_current_evidence_into_cut_input(monkeypatch):
     assert app.state.r2_face.gets == [CURRENT_FACE_KEY, CURRENT_GRID_KEY]
     assert FACE_KEY not in app.state.r2_face.gets
     assert FACE_KEY not in getattr(main_r2, "gets", [])
+    assert main_r2.caches == ["private, no-store"]
 
 
 def test_snapshot_real_job_notice_states_masked_model(monkeypatch):
@@ -384,7 +388,7 @@ def test_snapshot_real_identity_is_attached_only_to_worn_cuts(monkeypatch):
                       {"id": "b3", "source": "ai", "cutType": "mirror", "shot": "full"},
                   ])
     row = _license_row()
-    app, _ = _app(row)
+    app, main_r2 = _app(row)
     _patch_snapshot_success(monkeypatch, row)
 
     asyncio.run(dpj.run_detail_page_job(app, _snapshot_job(reserved=3)))
@@ -395,6 +399,8 @@ def test_snapshot_real_identity_is_attached_only_to_worn_cuts(monkeypatch):
     assert by_block["b3"]["has_face"] is False and len(by_block["b3"]["images"]) == 3
     # 얼굴이 담긴 컷이 하나라도 성공했으므로 고지는 실제 모델 문구
     assert captured["license_notice"] is not None
+    assert main_r2.caches.count("private, no-store") == 1
+    assert main_r2.caches.count("public, max-age=31536000, immutable") == 2
 
 
 # ── verify-before-use 시점 갭 (해지된 얼굴이 생성돼 나가면 회수 불가) ────────

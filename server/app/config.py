@@ -22,6 +22,8 @@ class Settings:
     # FaceMarket 얼굴 라이선스 = 생체 PII → 공개 도메인 미연결 전용 비공개 버킷.
     # 미설정이면 메인 버킷 폴백(개발). 게이트 라우트가 바이트 스트림 → public_url 미사용.
     r2_face_bucket: str | None = None
+    cloudflare_zone_id: str | None = None
+    cloudflare_cache_purge_token: str | None = None
     # 내부 SAM2 세그멘테이션 서비스. 미설정이면 캐노니컬 전처리는 그냥 비활성 —
     # 없다고 업로드·분석·생성이 막히면 안 되는 보조 인프라다.
     sam_service_url: str | None = None
@@ -407,6 +409,8 @@ def load_settings() -> Settings:
         r2_endpoint=(os.getenv("R2_ENDPOINT") or "").rstrip("/") or None,
         r2_public_base=(os.getenv("R2_PUBLIC_BASE") or "").rstrip("/") or None,
         r2_face_bucket=os.getenv("R2_FACE_BUCKET") or None,
+        cloudflare_zone_id=os.getenv("CLOUDFLARE_ZONE_ID") or None,
+        cloudflare_cache_purge_token=os.getenv("CLOUDFLARE_CACHE_PURGE_TOKEN") or None,
         sam_service_url=(os.getenv("SAM_SERVICE_URL") or "").rstrip("/") or None,
         sam_internal_token=os.getenv("SAM_INTERNAL_TOKEN") or None,
         sam_autoscale=_flag("SAM_AUTOSCALE", "off", {"off", "on"}),

@@ -14,6 +14,7 @@ import base64
 import hashlib
 
 import boto3
+import httpx
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
@@ -21,6 +22,7 @@ from .config import Settings
 
 # 불변 자산(asset id = content, 재생성은 새 asset id) 공용 Cache-Control 값.
 IMMUTABLE_CACHE = "public, max-age=31536000, immutable"
+PRIVATE_NO_STORE = "private, no-store"
 
 # 업로드 허용 이미지 MIME → 확장자. 화이트리스트(임의 타입 업로드 차단).
 MIME_EXT = {
@@ -97,6 +99,8 @@ class R2Client:
         # public_base 기본 "" = 센티널(미지정 → settings 값 사용). None 명시 = 공개도메인 강제 차단.
         self._bucket = bucket or settings.r2_bucket
         self._public_base = settings.r2_public_base if public_base == "" else public_base
+        self._cloudflare_zone_id = settings.cloudflare_zone_id
+        self._cloudflare_cache_purge_token = settings.cloudflare_cache_purge_token
         endpoint = settings.r2_endpoint or (
             f"https://{settings.r2_account_id}.r2.cloudflarestorage.com"
         )
@@ -189,6 +193,37 @@ class R2Client:
             Params={"Bucket": self._bucket, "Key": key},
             ExpiresIn=3600,
         )
+
+    def purge_public_cache(self, keys: list[str]) -> None:
+        """커스텀 도메인의 정확한 URL만 Cloudflare cache에서 제거한다."""
+        keys = list(dict.fromkeys(keys))
+        if not self._public_base or not keys:
+            return
+        if not self._cloudflare_zone_id or not self._cloudflare_cache_purge_token:
+            raise RuntimeError("cdn_purge_failed")
+        endpoint = (
+            "https://api.cloudflare.com/client/v4/zones/"
+            f"{self._cloudflare_zone_id}/purge_cache"
+        )
+        headers = {"Authorization": f"Bearer {self._cloudflare_cache_purge_token}"}
+        for start in range(0, len(keys), 100):
+            files = [f"{self._public_base}/{key}" for key in keys[start : start + 100]]
+            try:
+                response = httpx.post(
+                    endpoint,
+                    headers=headers,
+                    json={"files": files},
+                    timeout=10,
+                )
+                payload = response.json()
+            except Exception:
+                raise RuntimeError("cdn_purge_failed") from None
+            if (
+                not 200 <= response.status_code < 300
+                or not isinstance(payload, dict)
+                or payload.get("success") is not True
+            ):
+                raise RuntimeError("cdn_purge_failed")
 
     def preview_url(self, key: str, expires: int = 3600) -> str:
         """생성 중 프리뷰 전용 — public 도메인 설정과 무관하게 **항상 만료 있는** 서명 GET.
