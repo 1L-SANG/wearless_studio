@@ -1,0 +1,474 @@
+<meta charset="utf-8">
+<title>초상 사용권의 공백</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&family=Roboto+Mono:wght@500;700&display=swap">
+
+<style>
+  /* ============================================================
+     Wearless 발표 — 문제점 슬라이드 (B+D 통합)
+     팔레트·타이포는 src/styles/tokens.css 의 모노크롬 시스템을 따른다.
+     슬라이드 카드는 실제 인쇄·투사물이므로 항상 흰 캔버스로 고정하고,
+     주변 페이지 크롬만 뷰어 테마를 따른다.
+     ============================================================ */
+
+  :root {
+    /* 페이지 크롬 (테마 반응) */
+    --page-bg:    #ececed;
+    --page-fg:    #0e0d14;
+    --page-muted: #6f6f74;
+    --page-line:  #d6d6d8;
+    --page-card:  #ffffff;
+
+    /* 슬라이드 잉크 (테마 무관 고정 — 투사물) */
+    --ink:     #0e0d14;
+    --ink-mid: #55555c;
+    --ink-mut: #898989;
+    --ink-fnt: #b4b4b4;
+    --surface: #ffffff;
+    --tint:    #f5f5f5;
+    --rule:    #e4e4e6;
+    --accent:  #0099ff;
+    --accent-ink: #005c99;
+    --accent-tint: #eef7ff;
+
+    --font-kr:   "Noto Sans KR", system-ui, sans-serif;
+    --font-mono: "Roboto Mono", ui-monospace, Menlo, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --page-bg:    #131316;
+      --page-fg:    #f2f2f3;
+      --page-muted: #9a9aa0;
+      --page-line:  #2c2c31;
+      --page-card:  #1a1a1e;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --page-bg:    #131316;
+    --page-fg:    #f2f2f3;
+    --page-muted: #9a9aa0;
+    --page-line:  #2c2c31;
+    --page-card:  #1a1a1e;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 40px 24px 72px;
+    background: var(--page-bg);
+    color: var(--page-fg);
+    font-family: var(--font-kr);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1120px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 36px;
+  }
+
+  /* ---- 슬라이드 카드 --------------------------------------- */
+
+  .slide {
+    container-type: inline-size;
+    aspect-ratio: 16 / 9;
+    background: var(--surface);
+    color: var(--ink);
+    border-radius: 4px;
+    box-shadow: 0 1px 2px rgba(14, 13, 20, .12), 0 12px 32px rgba(14, 13, 20, .10);
+    overflow: hidden;
+  }
+
+  .slide-inner {
+    height: 100%;
+    padding: 5.4cqw 5.4cqw 3.4cqw;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 1.05cqw;
+    font-weight: 700;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--ink-mut);
+    margin-bottom: 1.5cqw;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 3.35cqw;
+    font-weight: 900;
+    line-height: 1.28;
+    letter-spacing: -.02em;
+    text-wrap: balance;
+  }
+
+  .lede {
+    margin: 1.5cqw 0 0;
+    font-size: 1.5cqw;
+    font-weight: 400;
+    line-height: 1.6;
+    color: var(--ink-mid);
+    max-width: 62ch;
+  }
+
+  .lede b {
+    font-weight: 700;
+    color: var(--ink);
+  }
+
+  /* ---- 2열: 같은 결함, 두 시대 ------------------------------ */
+
+  .eras {
+    margin-top: 3.2cqw;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3.4cqw;
+    position: relative;
+  }
+
+  .eras::before {
+    content: "";
+    position: absolute;
+    top: .2cqw;
+    bottom: .2cqw;
+    left: 50%;
+    border-left: 1px solid var(--rule);
+  }
+
+  .era-tag {
+    display: flex;
+    align-items: baseline;
+    gap: .8cqw;
+    margin-bottom: 1.4cqw;
+  }
+
+  .era-tag .yr {
+    font-family: var(--font-mono);
+    font-size: 1cqw;
+    font-weight: 700;
+    letter-spacing: .1em;
+    color: var(--ink-fnt);
+  }
+
+  .era-tag .nm {
+    font-size: 1.35cqw;
+    font-weight: 700;
+    letter-spacing: -.01em;
+  }
+
+  .facts {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 1.35cqw;
+  }
+
+  .facts li {
+    font-size: 1.32cqw;
+    line-height: 1.62;
+    color: var(--ink-mid);
+    padding-left: 1.5cqw;
+    position: relative;
+  }
+
+  .facts li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: .78cqw;
+    width: .5cqw;
+    height: 1px;
+    background: var(--ink-fnt);
+  }
+
+  .facts strong {
+    font-weight: 700;
+    color: var(--ink);
+  }
+
+  sup {
+    font-family: var(--font-mono);
+    font-size: .85cqw;
+    font-weight: 700;
+    color: var(--ink-fnt);
+    vertical-align: super;
+    line-height: 0;
+    margin-left: .15cqw;
+  }
+
+  /* ---- 규제 밴드: 슬라이드에서 유일한 컬러 ------------------ */
+
+  .band {
+    margin-top: auto;
+    background: var(--accent-tint);
+    border-left: .3cqw solid var(--accent);
+    border-radius: 2px;
+    padding: 1.7cqw 2cqw;
+    display: flex;
+    align-items: center;
+    gap: 2cqw;
+  }
+
+  .band-date {
+    flex: none;
+    font-family: var(--font-mono);
+    font-size: 1.05cqw;
+    font-weight: 700;
+    letter-spacing: .04em;
+    color: var(--accent-ink);
+    line-height: 1.5;
+  }
+
+  .band-body {
+    font-size: 1.3cqw;
+    line-height: 1.6;
+    color: var(--ink);
+  }
+
+  .band-body .four {
+    font-weight: 900;
+    color: var(--accent-ink);
+    letter-spacing: .01em;
+  }
+
+  .band-body .sub {
+    display: block;
+    margin-top: .35cqw;
+    font-size: 1.1cqw;
+    color: var(--ink-mid);
+  }
+
+  /* ---- 각주 -------------------------------------------------- */
+
+  .notes {
+    margin-top: 1.5cqw;
+    padding-top: 1cqw;
+    border-top: 1px solid var(--rule);
+    display: flex;
+    flex-wrap: wrap;
+    gap: .4cqw 1.6cqw;
+    font-size: .88cqw;
+    line-height: 1.5;
+    color: var(--ink-fnt);
+  }
+
+  .notes span { white-space: nowrap; }
+
+  .notes b {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--ink-mut);
+    margin-right: .25cqw;
+  }
+
+  /* ---- 슬라이드 밖: 대본과 출처 ------------------------------ */
+
+  .aside {
+    background: var(--page-card);
+    border: 1px solid var(--page-line);
+    border-radius: 4px;
+    padding: 32px 34px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  .aside h2 {
+    margin: 0 0 12px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--page-muted);
+    font-family: var(--font-mono);
+  }
+
+  .script {
+    margin: 0;
+    font-size: 16px;
+    line-height: 1.85;
+    max-width: 66ch;
+  }
+
+  .script p { margin: 0 0 12px; }
+  .script p:last-child { margin-bottom: 0; }
+  .script em {
+    font-style: normal;
+    color: var(--page-muted);
+    font-size: 14px;
+  }
+  .script b { font-weight: 700; }
+
+  .meta {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px 28px;
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--page-muted);
+  }
+  .meta div b {
+    display: block;
+    color: var(--page-fg);
+    font-weight: 700;
+    margin-bottom: 2px;
+  }
+
+  ol.src {
+    margin: 0;
+    padding-left: 20px;
+    font-size: 13.5px;
+    line-height: 1.85;
+    color: var(--page-muted);
+  }
+  ol.src a { color: inherit; }
+  ol.src a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  ol.src .tag {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    color: var(--page-fg);
+    margin-right: 6px;
+  }
+
+  /* ---- 인쇄: 슬라이드 한 장만 ------------------------------- */
+
+  @page { size: 297mm 167mm; margin: 0; }
+
+  @media print {
+    body { padding: 0; background: #fff; }
+    .wrap { max-width: none; gap: 0; }
+    .aside { display: none; }
+    .slide {
+      box-shadow: none;
+      border-radius: 0;
+      aspect-ratio: auto;
+      width: 297mm;
+      height: 167mm;
+    }
+  }
+
+  @media (max-width: 720px) {
+    body { padding: 20px 12px 48px; }
+    .aside { padding: 24px 20px; }
+  }
+</style>
+
+<div class="wrap">
+
+  <section class="slide" aria-label="문제점 슬라이드">
+    <div class="slide-inner">
+
+      <div class="eyebrow">문제 · 모델 시장</div>
+
+      <h1>얼굴을 쓰는 데 필요한 네 가지가,<br>어디에도 기록되지 않습니다</h1>
+
+      <p class="lede">
+        누군가의 얼굴을 상업적으로 쓰려면 <b>어디까지 · 무엇에 · 얼마에 · 언제까지</b>가 정해져야 합니다.
+        지금 이 네 가지는 구두 합의와 서랍 속 계약서에만 있습니다.
+      </p>
+
+      <div class="eras">
+        <div>
+          <div class="era-tag">
+            <span class="yr">기존</span>
+            <span class="nm">촬영으로 해결할 때</span>
+          </div>
+          <ul class="facts">
+            <li>
+              모델료에 사용 범위와 기간이 포함되지만 — 관행은 <strong>6개월·국내 비전속</strong> — 그 만료일을 추적하는 주체가 없습니다<sup>1</sup>
+            </li>
+            <li>
+              기간을 안 정하면 나중에 법원이 정합니다. 장기 사용 분쟁에서 <strong>“2년 6개월까지”</strong> 판결<sup>2</sup>
+            </li>
+          </ul>
+        </div>
+
+        <div>
+          <div class="era-tag">
+            <span class="yr">지금</span>
+            <span class="nm">AI로 해결할 때</span>
+          </div>
+          <ul class="facts">
+            <li>
+              현장에 모델이 없어도 <strong>얼굴 3장이면 무한 재현</strong>됩니다. 범위 없는 동의가 사실상 무제한 사용이 됩니다
+            </li>
+            <li>
+              H&amp;M은 모델 30명의 디지털 트윈에 권리와 보수를 줬는데도 논란이었습니다. <strong>기댈 기준이 없어서</strong>입니다<sup>3</sup>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="band">
+        <div class="band-date">2025.06.19<br>NY, USA</div>
+        <div class="band-body">
+          뉴욕주는 AI 초상 복제에 서면 동의를 의무화하면서, 적어야 할 항목을 못박았습니다 —
+          <span class="four">범위 · 목적 · 보수 · 기간</span><sup>4</sup>
+          <span class="sub">한국도 인격표지영리권 신설 민법 개정안이 입법예고된 상태입니다<sup>5</sup> · 법이 뒤늦게 같은 네 가지를 지목했습니다</span>
+        </div>
+      </div>
+
+      <div class="notes">
+        <span><b>1</b>스포트라이트 모델 섭외 비용 가이드</span>
+        <span><b>2</b>서울고법 2021나2027933</span>
+        <span><b>3</b>CNN·FashionUnited (2025)</span>
+        <span><b>4</b>NY Fashion Workers Act</span>
+        <span><b>5</b>법무부 민법 개정안 입법예고</span>
+      </div>
+
+    </div>
+  </section>
+
+  <aside class="aside">
+
+    <div>
+      <h2>발표 대본 · 30초</h2>
+      <div class="script">
+        <p>모델을 쓰는 방식에는 원래 네 가지가 정해져야 합니다. <b>어디까지 쓸 건지, 무엇에 쓸 건지, 얼마를 낼 건지, 언제까지 쓸 건지.</b> 그런데 지금은 이게 구두로 합의되고 서랍 속 계약서에만 있습니다.</p>
+        <p>그래서 촬영으로 해결하면 분쟁이 남습니다. 기간을 안 정해두면 나중에 법원이 “2년 6개월까지”라고 정해 줍니다.</p>
+        <p>AI로 해결하면 더 커집니다. 얼굴 사진 세 장이면 무한히 만들어지니까요. H&amp;M이 모델들에게 권리도 주고 보수도 줬는데 논란이 됐던 건, 기댈 기준이 아예 없어서였습니다.</p>
+        <p><em>[밴드를 가리키며]</em> 작년 6월 뉴욕주가 법으로 못박았습니다. 적어야 할 네 가지 — 범위, 목적, 보수, 기간. <b>제가 맨 처음 말씀드린 그 네 가지입니다.</b></p>
+      </div>
+    </div>
+
+    <div>
+      <h2>구성 의도</h2>
+      <div class="meta">
+        <div><b>왜 좌우 2열인가</b>촬영 시대와 AI 시대가 다른 문제가 아니라 같은 결함이라는 걸 대칭으로 보여주기 위해서입니다. 순서가 아니라 대비라서 번호를 붙이지 않았습니다.</div>
+        <div><b>왜 컬러가 한 곳뿐인가</b>두 칼럼은 무채색으로 두고 규제 밴드에만 액센트를 썼습니다. 이 네 항목이 뒤에 FaceMarket으로 이어지는 지점이라, 눈으로 먼저 구분되게 했습니다.</div>
+        <div><b>말할 때 유일한 장치</b>헤드라인의 네 가지와 밴드의 네 가지를 같은 말로 반복하세요. 청중이 “아까 그거네”라고 알아채는 순간이 이 슬라이드의 전부입니다.</div>
+        <div><b>쓰지 말아야 할 것</b>“410만 원 vs 2만 원” 같은 경쟁사 마케팅 수치는 넣지 않았습니다. 반박당하면 이 슬라이드의 신뢰가 통째로 흔들립니다.</div>
+      </div>
+    </div>
+
+    <div>
+      <h2>인용 출처</h2>
+      <ol class="src">
+        <li><span class="tag">업계</span>모델 섭외 비용 — 사용 범위·기간에 따른 모델료 산정 관행. <a href="https://spotlite.global/blog-kr/model-casting-cost-comparison">스포트라이트</a></li>
+        <li><span class="tag">판례</span>모델 사진 무단 사용 초상권 침해 손해배상 — 사용 기간 2년 6개월 제한. <a href="https://lfind.kr/cases/%EC%84%9C%EC%9A%B8%EA%B3%A0%EB%93%B1%EB%B2%95%EC%9B%90/2021%EB%82%982027933">서울고법 2021나2027933</a></li>
+        <li><span class="tag">언론</span>H&amp;M 디지털 트윈 30명, 2025년 7월 캠페인 공개와 논란. <a href="https://www.cnn.com/2025/03/28/style/h-and-m-ai-models-intl-scli">CNN</a> · <a href="https://fashionunited.com/news/fashion/h-m-turns-to-ai-digital-twins-in-new-campaign-as-fashion-grapples-with-blurred-realities/2025070466982">FashionUnited</a></li>
+        <li><span class="tag">법령</span>New York Fashion Workers Act, 2025-06-19 시행 — 디지털 복제본 서면 동의에 scope·purpose·rate of pay·length of time 명시 의무. <a href="https://www.beneschlaw.com/insight/seeing-double-new-york-fashion-workers-act-creates-new-consent-requirements-for-use-of-generative-ai-tools-to-create-models-digital-replicas/">Benesch</a> · <a href="https://www.dglaw.com/the-future-of-fashion-understanding-the-new-york-fashion-workers-act/">Davis+Gilbert</a></li>
+        <li><span class="tag">입법</span>인격표지영리권 신설 민법 개정안 입법예고 — 유명세 무관 전 개인, 사후 30년 상속. <a href="https://lawtimes.co.kr/news/184408">법률신문</a> · <em>발표일 기준 국회 계류 단계 재확인 필요</em></li>
+      </ol>
+    </div>
+
+  </aside>
+
+</div>
