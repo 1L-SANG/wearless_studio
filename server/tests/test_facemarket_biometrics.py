@@ -116,18 +116,24 @@ def test_enabled_feature_requires_three_calibrated_settings():
         ("fm_liveness_confidence_threshold", float("nan")),
         ("fm_liveness_confidence_threshold", float("inf")),
         ("fm_liveness_confidence_threshold", float("-inf")),
+        ("fm_liveness_confidence_threshold", True),
+        ("fm_liveness_confidence_threshold", 0.0),
         ("fm_liveness_confidence_threshold", -0.01),
         ("fm_liveness_confidence_threshold", 100.01),
         ("fm_id_live_threshold", ""),
         ("fm_id_live_threshold", float("nan")),
         ("fm_id_live_threshold", float("inf")),
         ("fm_id_live_threshold", float("-inf")),
+        ("fm_id_live_threshold", True),
+        ("fm_id_live_threshold", 0.0),
         ("fm_id_live_threshold", -0.01),
         ("fm_id_live_threshold", 1.01),
         ("fm_retouched_live_threshold", ""),
         ("fm_retouched_live_threshold", float("nan")),
         ("fm_retouched_live_threshold", float("inf")),
         ("fm_retouched_live_threshold", float("-inf")),
+        ("fm_retouched_live_threshold", True),
+        ("fm_retouched_live_threshold", 0.0),
         ("fm_retouched_live_threshold", -0.01),
         ("fm_retouched_live_threshold", 1.01),
     ],
@@ -156,9 +162,9 @@ def test_enabled_feature_rejects_unsafe_threshold_before_clients_or_pool(
     "thresholds",
     [
         {
-            "fm_liveness_confidence_threshold": 0.0,
-            "fm_id_live_threshold": 0.0,
-            "fm_retouched_live_threshold": 0.0,
+            "fm_liveness_confidence_threshold": 5e-324,
+            "fm_id_live_threshold": 5e-324,
+            "fm_retouched_live_threshold": 5e-324,
         },
         {
             "fm_liveness_confidence_threshold": 100.0,
@@ -167,7 +173,7 @@ def test_enabled_feature_rejects_unsafe_threshold_before_clients_or_pool(
         },
     ],
 )
-def test_enabled_feature_accepts_threshold_boundaries(monkeypatch, thresholds):
+def test_enabled_feature_accepts_positive_threshold_boundaries(monkeypatch, thresholds):
     monkeypatch.setattr(
         facemarket_enrollment,
         "build_biometric_aws_clients",

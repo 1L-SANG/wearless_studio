@@ -1989,7 +1989,7 @@ def validate_biometric_settings(settings: Settings) -> None:
         isinstance(value, bool)
         or not isinstance(value, (int, float))
         or not math.isfinite(value)
-        or not 0.0 <= value <= upper
+        or not 0.0 < value <= upper
         for value, upper in bounded_thresholds
     ):
         raise RuntimeError(
