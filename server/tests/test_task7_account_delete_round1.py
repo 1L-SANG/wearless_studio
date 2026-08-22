@@ -65,6 +65,18 @@ class _WorkerCursor:
         elif query.startswith("with locked as") and "update jobs j set status='pending'" in query:
             job.update(status="pending", locked_by=None, locked_at=None)
             self.rows = [{"id": job["id"]}]
+        elif query.startswith("select p.status from personalization_profiles"):
+            status = self.store.get("profile_status", "purging")
+            self.rows = [{"status": status}] if status is not None else []
+        elif query.startswith("select j.id::text as id, g.id::text as generation_id"):
+            self.rows = list(self.store.get("personalization_pending", []))
+        elif query.startswith("select count(*) filter (where status='pending')"):
+            self.rows = [
+                self.store.get(
+                    "personalization_generation_counts",
+                    {"pending_count": 0, "running_count": 0},
+                )
+            ]
         else:
             raise AssertionError(f"unhandled worker SQL: {query}")
 
@@ -247,6 +259,54 @@ def test_purge_worker_retries_before_biometric_purge_when_user_writers_not_drain
     assert store["events"] == []
     assert store["audits"] == []
     assert not any("fm_biometric_purge_receipts" in query for query in store["sql"])
+
+
+@pytest.mark.parametrize("profile_status", [None, "purged"])
+def test_purge_worker_reaches_ready_for_identity_delete_for_profile_less_or_purged_user(
+    monkeypatch, profile_status,
+):
+    """Break caught: account delete for a user with no (or already-purged) personalization
+    profile must still erase FaceMarket biometrics owned by the user, write the aggregate
+    receipt, and reach ready_for_identity_delete instead of freezing forever.
+
+    `quiesce_personalization_writers` is exercised for REAL here (not monkeypatched) because
+    the confirmed defect lives in its `_load_purging_profile` gate, which required a
+    personalization_profiles row with status='purging' -- a state profile-less/already-purged
+    users never reach.
+    """
+    store = _claimed_purge_store(payload_reason="account_delete")
+    store["profile_status"] = profile_status
+    store["profile_ids"] = [] if profile_status is None else ["profile-1"]
+    calls = []
+
+    async def noop(*_args, **_kwargs):
+        return None
+
+    async def fake_purge(_app, *, user_id, reason, source_job_id=None, **_kwargs):
+        calls.append((user_id, reason, source_job_id))
+        return types.SimpleNamespace(
+            target_count=2,
+            confirmed_absent_count=2,
+            model_count=1,
+            profile_count=0,
+            enrollment_count=1,
+            asset_count=1,
+        )
+
+    monkeypatch.setattr(personalization_purge_job.facemarket_cutover, "quiesce_user_facemarket_writers", noop)
+    monkeypatch.setattr(personalization_purge_job, "purge_biometric_scope", fake_purge)
+
+    asyncio.run(
+        personalization_purge_job.run_personalization_purge_job(
+            _worker_app(store), _job_arg("account_delete")
+        )
+    )
+
+    assert calls == [("user-1", "account_delete", "job-1")]
+    assert store["job"]["status"] == "done"
+    assert store["job"]["result"]["outcome"] == "ready_for_identity_delete"
+    assert store["job"]["result"]["receiptId"] == "receipt-1"
+    assert store["events"] == [store["job"]["result"]]
 
 
 class _ClosedCursor:

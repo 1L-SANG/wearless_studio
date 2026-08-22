@@ -905,13 +905,22 @@ async def quiesce_initial_cutover_writers(
 
 
 async def _load_purging_profile(conn, user_id: str) -> str:
+    """Lock+validate the user's personalization profile (if any) before draining writers.
+
+    FaceMarket biometric erase on account deletion is driven off model/enrollment
+    ownership, not personalization-profile state (see Task 1). A missing profile
+    (never onboarded) or an already-`purged` one (prior withdrawal) are both valid
+    states for an in-flight account-delete purge -- only an active, non-purging
+    profile status indicates the writer-drain would be racing a purge that never
+    actually started.
+    """
     async with conn.cursor() as cur:
         await cur.execute(
             "select p.status from personalization_profiles p where p.user_id = %s for update",
             (user_id,),
         )
         row = await cur.fetchone()
-    if row is None or row["status"] != "purging":
+    if row is not None and row["status"] not in {"purging", "purged"}:
         raise CutoverBlocked("personalization_profile_not_purging")
     return user_id
 
