@@ -4,6 +4,7 @@
 (마네킹컷·에디터 이미지가 화면에 뜨는 유일한 경로). 회귀 방지:
 ① 무인증 302 + Location=R2 public URL ② 형식이상 id 404 ③ 없는 asset 404.
 """
+import asyncio
 import contextlib
 import uuid
 
@@ -26,6 +27,35 @@ class _FakeR2:
         return f"https://pub.example.com/{key}"
 
 
+def test_public_asset_lookup_loads_server_written_privacy_marker():
+    seen = {}
+
+    class Cursor:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def execute(self, sql, params):
+            seen["sql"] = " ".join(sql.split()).lower()
+            seen["params"] = params
+
+        async def fetchone(self):
+            return {"metadata": {"facemarket_real_derived": True}}
+
+    class Conn:
+        def cursor(self):
+            return Cursor()
+
+    asset_id = str(uuid.uuid4())
+    row = asyncio.run(routes.repo.get_asset_public(Conn(), asset_id))
+
+    assert "source, metadata from assets" in seen["sql"]
+    assert seen["params"] == (asset_id,)
+    assert row["metadata"]["facemarket_real_derived"] is True
+
+
 def test_asset_file_serves_without_auth(client, monkeypatch):
     async def fake_get_asset_public(conn, asset_id):
         return {"id": asset_id, "r2_key": "u1/p1/cut.png", "mime_type": "image/png", "source": "ai"}
@@ -38,6 +68,27 @@ def test_asset_file_serves_without_auth(client, monkeypatch):
     res = client.get(f"/v1/assets/{aid}/file", follow_redirects=False)  # Authorization 헤더 없음
     assert res.status_code == 302, res.text
     assert res.headers["location"] == "https://pub.example.com/u1/p1/cut.png"
+    assert "immutable" in res.headers["cache-control"]
+
+
+def test_real_derived_asset_file_redirect_is_never_cached(client, monkeypatch):
+    async def fake_get_asset_public(conn, asset_id):
+        return {
+            "id": asset_id,
+            "r2_key": "u1/p1/real-cut.png",
+            "mime_type": "image/png",
+            "source": "ai",
+            "metadata": {"facemarket_real_derived": True},
+        }
+
+    monkeypatch.setattr(routes.repo, "get_asset_public", fake_get_asset_public)
+    _no_db(monkeypatch)
+    client.app.state.r2 = _FakeR2()
+
+    res = client.get(f"/v1/assets/{uuid.uuid4()}/file", follow_redirects=False)
+
+    assert res.status_code == 302
+    assert res.headers["cache-control"] == "private, no-store"
 
 
 def test_asset_file_invalid_id_is_404_before_db(client):

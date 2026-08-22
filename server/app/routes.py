@@ -62,7 +62,14 @@ from .models import (
     ToneApplyRequest,
     ToneEditorState,
 )
-from .r2 import IMMUTABLE_CACHE, R2Client, derived_key, ext_for_mime, upload_key
+from .r2 import (
+    IMMUTABLE_CACHE,
+    PRIVATE_NO_STORE,
+    R2Client,
+    derived_key,
+    ext_for_mime,
+    upload_key,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1")
@@ -2948,7 +2955,7 @@ async def get_asset_file(request: Request, asset_id: str):
     return RedirectResponse(
         _r2(request).public_url(asset["r2_key"]),
         status_code=302,
-        headers={"Cache-Control": IMMUTABLE_CACHE},
+        headers={"Cache-Control": _asset_cache_control(asset)},
     )
 
 
@@ -2967,6 +2974,17 @@ def _immutable_cors_safe_headers() -> dict:
     있지만 HTTP 상 유효하고(중복 필드명 무시), 캐시 정합성이 보기 좋음보다 중요하다.
     """
     return {"Cache-Control": IMMUTABLE_CACHE, "Vary": "Origin"}
+
+
+def _asset_cache_control(asset: dict) -> str:
+    metadata = asset.get("metadata")
+    if isinstance(metadata, dict) and metadata.get("facemarket_real_derived") is True:
+        return PRIVATE_NO_STORE
+    return IMMUTABLE_CACHE
+
+
+def _asset_cors_safe_headers(asset: dict) -> dict:
+    return {"Cache-Control": _asset_cache_control(asset), "Vary": "Origin"}
 
 
 async def _public_asset_or_404(request: Request, asset_id: str) -> dict:
@@ -3013,7 +3031,7 @@ async def get_asset_bytes(request: Request, asset_id: str):
     return Response(
         content=data,
         media_type=asset.get("mime_type") or "application/octet-stream",
-        headers=_immutable_cors_safe_headers(),
+        headers=_asset_cors_safe_headers(asset),
     )
 
 

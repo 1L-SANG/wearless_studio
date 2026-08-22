@@ -399,8 +399,16 @@ def test_snapshot_real_identity_is_attached_only_to_worn_cuts(monkeypatch):
     assert by_block["b3"]["has_face"] is False and len(by_block["b3"]["images"]) == 3
     # 얼굴이 담긴 컷이 하나라도 성공했으므로 고지는 실제 모델 문구
     assert captured["license_notice"] is not None
-    assert main_r2.caches.count("private, no-store") == 1
-    assert main_r2.caches.count("public, max-age=31536000, immutable") == 2
+    # mirror는 얼굴 노출 배지는 꺼져도 REAL identity 두 장을 생성 근거로 쓴다. 따라서
+    # 결과 본문과 asset API 모두 styling과 같은 생체 파생물로 취급해야 한다.
+    assert main_r2.caches.count("private, no-store") == 2
+    assert main_r2.caches.count("public, max-age=31536000, immutable") == 1
+    markers = [
+        asset.get("metadata", {}).get("facemarket_real_derived", False)
+        for asset in captured["cut_assets"]
+    ]
+    assert markers.count(True) == 2
+    assert markers.count(False) == 1
 
 
 # ── verify-before-use 시점 갭 (해지된 얼굴이 생성돼 나가면 회수 불가) ────────

@@ -52,6 +52,9 @@ class StrictFakeR2:
         if self.fail_purge:
             raise RuntimeError("provider dumped bearer secret")
 
+    def preflight_public_cache_purge(self, keys):
+        return None
+
 
 class _NoPool:
     @contextlib.asynccontextmanager
@@ -194,6 +197,7 @@ class FakeDB:
             "fm_model_asset_cleanup": [],
             "fm_model_assets": [],
             "fm_models": [],
+            "fm_biometric_purge_manifests": [],
             "fm_biometric_purge_receipts": [],
             "fm_vc_revocation_jobs": [],
             "fm_settlements": [],
@@ -228,6 +232,7 @@ class FakeDB:
                 "ci_hash", "did", "cover_image_url", "display_name", "outcome",
                 "target_count", "confirmed_absent_count", "model_count", "profile_count",
                 "enrollment_count", "asset_count", "source_job_id", "completed_at",
+                "scope_key", "target_manifest", "created_at", "updated_at",
             }
             for table, rows in self.tables.items()
         }
@@ -253,6 +258,12 @@ class FakeDB:
                 {"table_name": table, "column_name": col}
                 for table, cols in self.columns.items()
                 for col in cols
+            ]
+        if q.startswith("select target_manifest from fm_biometric_purge_manifests"):
+            return [
+                {"target_manifest": copy.deepcopy(row["target_manifest"])}
+                for row in self.tables["fm_biometric_purge_manifests"]
+                if row.get("scope_key") == params[0]
             ]
         if q.startswith("select pg_try_advisory_lock"):
             self.controller_lock_attempts += 1
@@ -619,6 +630,26 @@ class FakeDB:
         for needle, message in self.fail_mutate.items():
             if needle in q:
                 raise RuntimeError(message)
+        if q.startswith("insert into fm_biometric_purge_manifests"):
+            self.add(
+                "fm_biometric_purge_manifests",
+                scope_key=params[0],
+                target_manifest=copy.deepcopy(params[1].obj),
+                created_at="now",
+                updated_at="now",
+            )
+            return 1
+        if q.startswith("update fm_biometric_purge_manifests set target_manifest"):
+            for row in self.tables["fm_biometric_purge_manifests"]:
+                if row.get("scope_key") == params[1]:
+                    row["target_manifest"] = copy.deepcopy(params[0].obj)
+                    row["updated_at"] = "now"
+                    return 1
+            return 0
+        if q.startswith("delete from fm_biometric_purge_manifests"):
+            return _delete_where_eq(
+                self.tables["fm_biometric_purge_manifests"], "scope_key", params[0]
+            )
         if q.startswith("update fm_cutover_batches") and "set status = 'draining'" in q:
             for row in self.tables["fm_cutover_batches"]:
                 if row.get("id") == params[0] and row.get("status") == "approved":
@@ -1522,6 +1553,69 @@ def test_fake_partial_delete_preserves_references_then_retry_succeeds():
     assert ctx.db.tables["fm_model_assets"] == []
 
 
+def test_missing_cloudflare_config_fails_before_manifest_or_origin_delete():
+    ctx = _fake_case()
+    ctx.r2._public_base = "https://images.example.test"
+    ctx.r2._cloudflare_zone_id = None
+    ctx.r2._cloudflare_cache_purge_token = None
+    ctx.r2.preflight_public_cache_purge = types.MethodType(
+        R2Client.preflight_public_cache_purge, ctx.r2
+    )
+
+    with pytest.raises(PurgeIncomplete) as exc:
+        _run(ctx, user_id=ctx.user, reason="withdrawal")
+
+    assert exc.value.code == "cdn_purge_failed"
+    assert ctx.r2.deleted == [] and ctx.r2_face.deleted == []
+    assert ctx.db.tables["fm_biometric_purge_manifests"] == []
+
+
+def test_durable_manifest_select_is_serialized_by_scope_advisory_lock():
+    ctx = _fake_case()
+
+    _run(ctx, user_id=ctx.user, reason="withdrawal")
+
+    lock_index = next(
+        index
+        for index, query in enumerate(ctx.db.queries)
+        if query.startswith("select pg_advisory_xact_lock")
+        and "fm-biometric-purge-manifest" in query
+    )
+    select_index = next(
+        index
+        for index, query in enumerate(ctx.db.queries)
+        if query.startswith("select target_manifest from fm_biometric_purge_manifests")
+    )
+    assert lock_index < select_index
+
+
+def test_cdn_failure_keeps_db_less_orphan_in_durable_manifest_for_retry():
+    ctx = _fake_case()
+    orphan = f"users/{ctx.user}/projects/{ctx.project}/ai/{ctx.job}/db-less.png"
+    ctx.r2.keys.add(orphan)
+    ctx.r2.fail_purge = True
+
+    with pytest.raises(PurgeIncomplete) as exc:
+        _run(ctx, user_id=ctx.user, reason="withdrawal")
+
+    assert exc.value.code == "cdn_purge_failed"
+    assert orphan not in ctx.r2.keys
+    assert ctx.db.tables["fm_model_assets"]
+    manifests = ctx.db.tables["fm_biometric_purge_manifests"]
+    assert len(manifests) == 1
+    assert ["r2", orphan] in manifests[0]["target_manifest"]["targets"]
+
+    # 프로세스가 사라졌다고 가정하고 in-memory 호출 기록을 버린다. R2 list에서도 이미
+    # 사라진 orphan은 durable manifest를 읽지 않으면 두 번째 실행에서 복원할 수 없다.
+    ctx.r2.purged.clear()
+    ctx.r2.fail_purge = False
+    result = _run(ctx, user_id=ctx.user, reason="withdrawal")
+
+    assert result.complete is True
+    assert any(orphan in batch for batch in ctx.r2.purged)
+    assert ctx.db.tables["fm_biometric_purge_manifests"] == []
+
+
 def test_fake_partial_cdn_batch_preserves_references_then_retry_succeeds(monkeypatch):
     ctx = _fake_case()
     ctx.db.add(
@@ -1530,7 +1624,7 @@ def test_fake_partial_cdn_batch_preserves_references_then_retry_succeeds(monkeyp
         license_id=ctx.license,
         model_id=ctx.model,
     )
-    for index in range(205):
+    for index in range(65):
         asset_id = f"bulk-asset-{index:03d}"
         asset = copy.deepcopy(ctx.db.tables["assets"][0])
         asset.update(
@@ -1561,7 +1655,7 @@ def test_fake_partial_cdn_batch_preserves_references_then_retry_succeeds(monkeyp
 
     def fake_post(_url, **kwargs):
         nonlocal fail_second_batch
-        calls.append(tuple(kwargs["json"]["files"]))
+        calls.append(tuple(kwargs["json"]["prefixes"]))
         success = not (fail_second_batch and len(calls) == 2)
         return types.SimpleNamespace(status_code=200, json=lambda: {"success": success})
 
@@ -1571,10 +1665,11 @@ def test_fake_partial_cdn_batch_preserves_references_then_retry_succeeds(monkeyp
         _run(ctx, user_id=ctx.user, reason="account_delete")
 
     assert exc.value.code == "cdn_purge_failed"
-    assert [len(batch) for batch in calls] == [100, 100]
+    assert [len(batch) for batch in calls] == [30, 30]
     assert ctx.r2_face.purged == []
     assert ctx.db.tables["fm_model_assets"]
     assert ctx.db.tables["fm_biometric_purge_receipts"] == []
+    assert ctx.db.tables["fm_biometric_purge_manifests"]
     assert ctx.db.tables["fm_models"][0]["user_id"] == ctx.user
 
     first_attempt = list(calls)
@@ -1582,15 +1677,17 @@ def test_fake_partial_cdn_batch_preserves_references_then_retry_succeeds(monkeyp
     result = _run(ctx, user_id=ctx.user, reason="account_delete")
 
     assert result.complete is True
-    retry_urls = {url for batch in calls[2:] for url in batch}
-    assert set(first_attempt[1]).issubset(retry_urls)
+    retry_prefixes = {prefix for batch in calls[2:] for prefix in batch}
+    assert set(first_attempt[0]).issubset(retry_prefixes)
+    assert set(first_attempt[1]).issubset(retry_prefixes)
     assert all(
-        f"https://images.example.test/users/{ctx.user}/projects/{ctx.project}/"
-        f"ai/{ctx.job}/bulk-asset-{index:03d}.png" in retry_urls
-        for index in range(205)
+        f"images.example.test/users/{ctx.user}/projects/{ctx.project}/"
+        f"ai/{ctx.job}/bulk-asset-{index:03d}.png" in retry_prefixes
+        for index in range(65)
     )
     assert ctx.db.tables["fm_model_assets"] == []
     assert len(ctx.db.tables["fm_biometric_purge_receipts"]) == 1
+    assert ctx.db.tables["fm_biometric_purge_manifests"] == []
     assert ctx.db.tables["fm_models"][0]["user_id"] is None
 
 

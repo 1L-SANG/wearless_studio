@@ -12,6 +12,8 @@ asyncio.to_thread 로 감싸 이벤트 루프를 막지 않는다(§5). presigne
 
 import base64
 import hashlib
+import time
+from urllib.parse import urlsplit
 
 import boto3
 import httpx
@@ -195,35 +197,69 @@ class R2Client:
         )
 
     def purge_public_cache(self, keys: list[str]) -> None:
-        """커스텀 도메인의 정확한 URL만 Cloudflare cache에서 제거한다."""
+        """커스텀 도메인의 R2 경로를 Cloudflare cache에서 제거한다.
+
+        Prefix purge는 query string·Origin 등 custom cache-key 변형에도 모두 적용된다.
+        Cloudflare 계약상 payload는 scheme 없는 ``host/path``이고 요청당 최대 30개다.
+        """
         keys = list(dict.fromkeys(keys))
+        self.preflight_public_cache_purge(keys)
         if not self._public_base or not keys:
             return
-        if not self._cloudflare_zone_id or not self._cloudflare_cache_purge_token:
-            raise RuntimeError("cdn_purge_failed")
+        base = urlsplit(self._public_base)
+        base_path = base.path.rstrip("/")
+        prefixes = [
+            f"{base.netloc}{base_path}/{key.lstrip('/')}"
+            for key in keys
+        ]
         endpoint = (
             "https://api.cloudflare.com/client/v4/zones/"
             f"{self._cloudflare_zone_id}/purge_cache"
         )
         headers = {"Authorization": f"Bearer {self._cloudflare_cache_purge_token}"}
-        for start in range(0, len(keys), 100):
-            files = [f"{self._public_base}/{key}" for key in keys[start : start + 100]]
-            try:
-                response = httpx.post(
-                    endpoint,
-                    headers=headers,
-                    json={"files": files},
-                    timeout=10,
-                )
-                payload = response.json()
-            except Exception:
-                raise RuntimeError("cdn_purge_failed") from None
-            if (
-                not 200 <= response.status_code < 300
-                or not isinstance(payload, dict)
-                or payload.get("success") is not True
-            ):
-                raise RuntimeError("cdn_purge_failed")
+        for start in range(0, len(prefixes), 30):
+            batch = prefixes[start : start + 30]
+            for attempt in range(3):
+                try:
+                    response = httpx.post(
+                        endpoint,
+                        headers=headers,
+                        json={"prefixes": batch},
+                        timeout=10,
+                    )
+                    if response.status_code == 429 and attempt < 2:
+                        retry_after = (getattr(response, "headers", {}) or {}).get(
+                            "Retry-After"
+                        )
+                        try:
+                            delay = float(retry_after)
+                        except (TypeError, ValueError):
+                            delay = 0.25 * (2**attempt)
+                        time.sleep(min(2.0, max(0.0, delay)))
+                        continue
+                    payload = response.json()
+                except Exception:
+                    raise RuntimeError("cdn_purge_failed") from None
+                if (
+                    not 200 <= response.status_code < 300
+                    or not isinstance(payload, dict)
+                    or payload.get("success") is not True
+                ):
+                    raise RuntimeError("cdn_purge_failed")
+                break
+
+    def preflight_public_cache_purge(self, keys: list[str]) -> None:
+        """삭제 전에 CDN purge 설정 완결성을 확인한다. 네트워크 호출은 하지 않는다."""
+        if not self._public_base or not keys:
+            return
+        base = urlsplit(self._public_base)
+        if (
+            not self._cloudflare_zone_id
+            or not self._cloudflare_cache_purge_token
+            or base.scheme not in {"http", "https"}
+            or not base.netloc
+        ):
+            raise RuntimeError("cdn_purge_failed")
 
     def preview_url(self, key: str, expires: int = 3600) -> str:
         """생성 중 프리뷰 전용 — public 도메인 설정과 무관하게 **항상 만료 있는** 서명 GET.

@@ -51,6 +51,24 @@ def test_asset_bytes_serves_without_auth(client, monkeypatch):
     assert "immutable" in res.headers.get("cache-control", "")
 
 
+def test_real_derived_asset_bytes_and_export_variant_are_never_cached(client, monkeypatch):
+    _stub_asset(monkeypatch, {
+        "r2_key": "u1/p1/real-cut.png",
+        "mime_type": "image/png",
+        "source": "ai",
+        "metadata": {"facemarket_real_derived": True},
+    })
+    _no_db(monkeypatch)
+    client.app.state.r2 = _FakeR2(data=b"real-derived")
+
+    asset_id = uuid.uuid4()
+    bare = client.get(f"/v1/assets/{asset_id}/bytes")
+    exported = client.get(f"/v1/assets/{asset_id}/bytes?e=1")
+
+    assert bare.headers["cache-control"] == "private, no-store"
+    assert exported.headers["cache-control"] == "private, no-store"
+
+
 def test_asset_bytes_invalid_id_is_404_before_db(client):
     client.app.state.r2 = _FakeR2()
     res = client.get("/v1/assets/not-a-uuid/bytes")

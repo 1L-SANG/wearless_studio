@@ -149,7 +149,8 @@ def _dims(data: bytes):
 async def _gen_cuts(app, job, prepared, product, analysis):
     """준비된 블록별
     (block, images, manifest, has_face, product_images,
-    space_set_plate, strict_space_scene_qc, passthrough, confirmed_packet)로 AG-06 컷 생성
+    space_set_plate, strict_space_scene_qc, passthrough, confirmed_packet,
+    real_identity_attached)로 AG-06 컷 생성
     → (cut_results, cut_assets, face_cuts, garment_qcs, cut_qcs, page_qc, warnings).
     face_cuts = 라이선스 얼굴이 실제로 들어가고
     **성공까지 한** 컷 수 — AI 고지 문구 분기의 사실 근거(주입 0건이면 기본 문구).
@@ -196,6 +197,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
         strict_space_scene_qc = bool(item[6]) if len(item) > 6 else False
         passthrough = item[7] if len(item) > 7 else None
         confirmed_packet = item[8] if len(item) > 8 else None
+        real_identity_attached = bool(item[9]) if len(item) > 9 else False
         # 최신 main의 첫 화면 시그니처 컷은 자체 모델/폴백 계약을 가진다. AG-06 일반
         # 컷용 GPT 설정을 덮어씌우지 않고 원래 Settings를 써서 그 경계를 보존한다.
         generation_settings = (
@@ -528,9 +530,9 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                 key,
                 img,
                 mime,
-                # `/v1/assets/.../file`의 302는 URL만 캐시한다. 대상 R2 응답의
-                # no-store가 REAL 이미지 본문 저장을 막고, 파기는 그 URL을 CDN에서 제거한다.
-                cache=PRIVATE_NO_STORE if has_face else IMMUTABLE_CACHE,
+                # 얼굴 노출 배지(`has_face`)가 꺼진 mirror/back도 REAL identity 두 장을
+                # 생성 근거로 쓴다. 본문 민감도는 노출 추정이 아니라 입력 증거로 분류한다.
+                cache=PRIVATE_NO_STORE if real_identity_attached else IMMUTABLE_CACHE,
             )
             w, h = _dims(img)
             # 대기 화면 프리뷰 — asset 행은 finalize에서만 생기므로 /file 경로는 아직 404다.
@@ -547,7 +549,12 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                  "width": w, "height": h},
                 {"asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
                  "size": len(img), "width": w, "height": h,
-                 "cleanup_intent_id": cleanup_intent_id},
+                 "cleanup_intent_id": cleanup_intent_id,
+                 "metadata": (
+                     {"facemarket_real_derived": True}
+                     if real_identity_attached
+                     else {}
+                 )},
                 has_face,
                 garment_qc,
                 cut_qc,
@@ -1119,7 +1126,8 @@ async def run_detail_page_job(app, job: dict) -> None:
                 ) from exc
 
         # (runtime block, images, manifest, has_face, product_images,
-        #  space_set_plate, strict_space_scene_qc, passthrough, confirmed_packet)
+        #  space_set_plate, strict_space_scene_qc, passthrough, confirmed_packet,
+        #  real_identity_attached)
         # — images 순서는 manifest 계약과 동일. 대표 plate는 같은 세트에서 1회만 로드해 공유한다.
         prepared = []
         _example_cache: dict[str, InlineImage | None] = {}
@@ -1502,6 +1510,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     )["_referenceDirectionCompatible"])
             # 4번째 = has_identity: 검증 얼굴(REAL 그리드)이 실제 담긴 컷 → face_cuts 계수·
             # generate has_face·검증 배지 근거. VIRTUAL 그리드는 검증 얼굴이 아니므로 False.
+            real_identity_attached = source == "REAL" and len(model_images) == 2
             prepared.append(
                 (
                     cut_spec,
@@ -1513,6 +1522,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     space_binding is not None and space_set_plate is not None,
                     _detail_passthrough(b, asset_key),
                     confirmed_packet,
+                    real_identity_attached,
                 )
             )
 

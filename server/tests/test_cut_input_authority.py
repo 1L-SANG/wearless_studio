@@ -521,6 +521,7 @@ def _patch_editor_common(monkeypatch, captured):
         return {"verdict": "pass", "mismatches": [], "correctionPrompt": None}
 
     async def fake_finalize(conn, **kwargs):
+        captured["finalize"] = kwargs
         return {"id": "wardrobe"}
 
     async def fake_emit(*_args, **_kwargs):
@@ -704,7 +705,7 @@ def test_editor_real_product_prunes_identity_and_never_sets_settlement_flag(monk
             {"key": "face-sheet", "mime": "image/png", "bucket": "face"},
         ]
 
-    async def fake_license(conn, selected_model_id, *, license_id=None):
+    async def fake_license(conn, selected_model_id, *, license_id=None, **_kwargs):
         assert license_id == REAL_LICENSE_ID
         return {
             "id": license_id,
@@ -719,6 +720,9 @@ def test_editor_real_product_prunes_identity_and_never_sets_settlement_flag(monk
     async def fake_verify(app, row, **kwargs):
         return None
 
+    async def fake_writer_boundary(_conn):
+        return None
+
     async def fake_example(settings, example_id, scope="all", clothing_type=None):
         return eij.InlineImage("image/png", b"example:all")
 
@@ -728,6 +732,8 @@ def test_editor_real_product_prunes_identity_and_never_sets_settlement_flag(monk
     monkeypatch.setattr(eij.identity_source, "resolve_real_model_assets", fake_real_refs)
     monkeypatch.setattr(eij.facemarket, "resolve_model_license", fake_license)
     monkeypatch.setattr(eij.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(eij.facemarket, "verify_license_local", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(eij.repo, "lock_facemarket_writer_boundary", fake_writer_boundary)
     monkeypatch.setattr(eij.facemarket, "record_license_settlement", fake_settlement)
     monkeypatch.setattr(eij.cut_generator, "example_asset_status", lambda *_args: "available")
     monkeypatch.setattr(eij.cut_generator, "load_example_image", fake_example)
@@ -760,6 +766,9 @@ def test_editor_real_product_prunes_identity_and_never_sets_settlement_flag(monk
     assert face_r2.reads == []
     assert captured["settlements"] == 0
     assert public_r2.caches == ["public, max-age=31536000, immutable"]
+    assert captured["finalize"]["image"].get("metadata", {}).get(
+        "facemarket_real_derived", False
+    ) is False
 
 
 def test_editor_real_visible_worn_cut_enables_identity_contract(monkeypatch):
@@ -773,7 +782,7 @@ def test_editor_real_visible_worn_cut_enables_identity_contract(monkeypatch):
             {"key": "face-sheet", "mime": "image/png", "bucket": "face"},
         ]
 
-    async def fake_license(conn, selected_model_id, *, license_id=None):
+    async def fake_license(conn, selected_model_id, *, license_id=None, **_kwargs):
         assert license_id == REAL_LICENSE_ID
         return {
             "id": license_id,
@@ -788,9 +797,14 @@ def test_editor_real_visible_worn_cut_enables_identity_contract(monkeypatch):
     async def fake_verify(app, row, **kwargs):
         return None
 
+    async def fake_writer_boundary(_conn):
+        return None
+
     monkeypatch.setattr(eij.identity_source, "resolve_real_model_assets", fake_real_refs)
     monkeypatch.setattr(eij.facemarket, "resolve_model_license", fake_license)
     monkeypatch.setattr(eij.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(eij.facemarket, "verify_license_local", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(eij.repo, "lock_facemarket_writer_boundary", fake_writer_boundary)
 
     public_r2 = _TrackingR2()
     app = fake_worker_app(
@@ -816,6 +830,9 @@ def test_editor_real_visible_worn_cut_enables_identity_contract(monkeypatch):
     assert "MODEL SHEET" in generated["manifest"]
     assert "MODEL FULL BODY" not in generated["manifest"]
     assert public_r2.caches == ["private, no-store"]
+    assert captured["finalize"]["image"]["metadata"] == {
+        "facemarket_real_derived": True,
+    }
 
 
 class _HolderResponse:

@@ -722,6 +722,9 @@ async def run_editor_image_job(app, job: dict) -> None:
             "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
             "size": len(image), "width": w, "height": h,
             "cleanup_intent_id": cleanup_intent_id,
+            "metadata": (
+                {"facemarket_real_derived": True} if fm_face_injected else {}
+            ),
         }
 
         # 성공 종결 (원자·lease 펜스). charge = reserved — 예약 시점 견적 확정(부분 성공 없음.

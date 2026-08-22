@@ -5,6 +5,8 @@ import hashlib
 from dataclasses import dataclass
 from typing import Literal
 
+from psycopg.types.json import Json
+
 from app import repo
 
 
@@ -112,6 +114,101 @@ def _has(schema: dict[str, set[str]], table: str, *cols: str) -> bool:
 
 def _ids(rows, key="id") -> set[str]:
     return {str(r[key]) for r in rows if r.get(key) is not None}
+
+
+def _manifest_scope_key(*, user_id: str | None, batch_id: str | None) -> str:
+    if batch_id is not None:
+        return f"batch:{batch_id}"
+    return f"user:{user_id}"
+
+
+def _decode_target_manifest(value) -> tuple[set[tuple[str, str]], set[str], set[str]]:
+    if not isinstance(value, dict):
+        raise PurgeIncomplete("db_cleanup_failed")
+    raw_targets = value.get("targets")
+    raw_asset_ids = value.get("assetIds")
+    raw_prefixes = value.get("prefixes")
+    if not all(isinstance(part, list) for part in (raw_targets, raw_asset_ids, raw_prefixes)):
+        raise PurgeIncomplete("db_cleanup_failed")
+    targets: set[tuple[str, str]] = set()
+    for target in raw_targets:
+        if (
+            not isinstance(target, list)
+            or len(target) != 2
+            or target[0] not in {"r2", "r2_face"}
+            or not isinstance(target[1], str)
+            or not target[1]
+        ):
+            raise PurgeIncomplete("db_cleanup_failed")
+        targets.add((target[0], target[1]))
+    if not all(isinstance(value, str) and value for value in raw_asset_ids):
+        raise PurgeIncomplete("db_cleanup_failed")
+    if not all(isinstance(value, str) and value for value in raw_prefixes):
+        raise PurgeIncomplete("db_cleanup_failed")
+    return targets, set(raw_asset_ids), set(raw_prefixes)
+
+
+async def _persist_target_manifest(
+    conn,
+    schema,
+    *,
+    scope_key: str,
+    targets: set[tuple[str, str]],
+    asset_ids: set[str],
+    prefixes: tuple[str, ...],
+) -> tuple[set[tuple[str, str]], set[str], tuple[str, ...]]:
+    if not _has(
+        schema,
+        "fm_biometric_purge_manifests",
+        "scope_key",
+        "target_manifest",
+    ):
+        raise PurgeIncomplete("db_cleanup_failed")
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select pg_advisory_xact_lock(hashtextextended("
+            "'fm-biometric-purge-manifest:' || %s, 0))",
+            (scope_key,),
+        )
+        await cur.execute(
+            "select target_manifest from fm_biometric_purge_manifests "
+            "where scope_key=%s for update",
+            (scope_key,),
+        )
+        existing = await cur.fetchone()
+        if existing is not None:
+            saved_targets, saved_asset_ids, saved_prefixes = _decode_target_manifest(
+                existing.get("target_manifest")
+            )
+            targets |= saved_targets
+            asset_ids |= saved_asset_ids
+            prefixes = tuple(sorted(set(prefixes) | saved_prefixes))
+        payload = {
+            "targets": [list(target) for target in sorted(targets)],
+            "assetIds": sorted(asset_ids),
+            "prefixes": list(prefixes),
+        }
+        if existing is None:
+            await cur.execute(
+                "insert into fm_biometric_purge_manifests (scope_key, target_manifest) "
+                "values (%s, %s)",
+                (scope_key, Json(payload)),
+            )
+        else:
+            await cur.execute(
+                "update fm_biometric_purge_manifests set target_manifest=%s "
+                "where scope_key=%s",
+                (Json(payload), scope_key),
+            )
+    return targets, asset_ids, prefixes
+
+
+async def _clear_target_manifest(conn, scope_key: str) -> None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "delete from fm_biometric_purge_manifests where scope_key=%s",
+            (scope_key,),
+        )
 
 
 async def _scope(conn, schema, *, user_id: str | None, batch_id: str | None, reason: str):
@@ -751,6 +848,47 @@ async def purge_biometric_scope(
 
     listed = await _list_targets(clients, prefixes)
     targets = known | listed
+    r2_keys = [key for label, key in sorted(targets) if label == "r2"]
+    try:
+        preflight = getattr(clients["r2"], "preflight_public_cache_purge", None)
+        if preflight is not None:
+            await asyncio.to_thread(preflight, r2_keys)
+    except Exception:
+        raise PurgeIncomplete("cdn_purge_failed") from None
+
+    scope_key = _manifest_scope_key(user_id=user_id, batch_id=batch_id)
+    db_failed = False
+    try:
+        async with pool.connection() as conn:
+            schema = await _schema(conn)
+            targets, asset_ids, prefixes = await _persist_target_manifest(
+                conn,
+                schema,
+                scope_key=scope_key,
+                targets=targets,
+                asset_ids=asset_ids,
+                prefixes=prefixes,
+            )
+            await conn.commit()
+    except PurgeIncomplete:
+        raise
+    except Exception:
+        db_failed = True
+    if db_failed:
+        raise PurgeIncomplete("db_cleanup_failed")
+
+    # Retry에서 R2 list에는 사라진 orphan이 durable manifest union으로만 복원될 수 있다.
+    # 그 saved target까지 포함해 설정을 다시 확인한 뒤에만 origin delete를 시작한다.
+    try:
+        preflight = getattr(clients["r2"], "preflight_public_cache_purge", None)
+        if preflight is not None:
+            await asyncio.to_thread(
+                preflight,
+                [key for label, key in sorted(targets) if label == "r2"],
+            )
+    except Exception:
+        raise PurgeIncomplete("cdn_purge_failed") from None
+
     await _delete_and_reconcile(clients, targets, prefixes)
     try:
         await asyncio.to_thread(
@@ -786,6 +924,7 @@ async def purge_biometric_scope(
                 target_count=len(targets),
                 confirmed_absent_count=len(targets),
             )
+            await _clear_target_manifest(conn, scope_key)
             await conn.commit()
         except PurgeIncomplete:
             await conn.rollback()

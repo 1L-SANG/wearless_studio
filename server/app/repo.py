@@ -689,7 +689,7 @@ async def get_asset_public(conn: AsyncConnection, asset_id: str) -> dict | None:
     새 노출을 만들지 않는다. 브라우저 <img>는 Bearer를 못 붙이므로 무인증이 필수."""
     async with conn.cursor() as cur:
         await cur.execute(
-            "select id::text as id, r2_bucket, r2_key, mime_type, source "
+            "select id::text as id, r2_bucket, r2_key, mime_type, source, metadata "
             "from assets where id = %s and deleted_at is null",
             (asset_id,),
         )
@@ -2485,10 +2485,10 @@ async def finalize_detail_page_success(
         for c in cut_assets:  # 컷 이미지 asset 행 (editor_blocks 가 /v1/assets/{id}/file 로 참조)
             await cur.execute(
                 "insert into assets (id, user_id, project_id, source, visibility, r2_bucket, "
-                "r2_key, mime_type, byte_size, width, height) "
-                "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s) on conflict (id) do nothing",
+                "r2_key, mime_type, byte_size, width, height, metadata) "
+                "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s, %s) on conflict (id) do nothing",
                 (c["asset_id"], user_id, project_id, c["bucket"], c["key"], c["mime"],
-                 c.get("size"), c.get("width"), c.get("height")),
+                 c.get("size"), c.get("width"), c.get("height"), Json(c.get("metadata") or {})),
             )
             if c.get("cleanup_intent_id"):
                 await cur.execute(
@@ -2610,10 +2610,11 @@ async def finalize_editor_image_success(
             return None  # lease 빼앗김 — 부수효과 0 (워커는 폐기)
         await cur.execute(
             "insert into assets (id, user_id, project_id, source, visibility, r2_bucket, "
-            "r2_key, mime_type, byte_size, width, height) "
-            "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s)",
+            "r2_key, mime_type, byte_size, width, height, metadata) "
+            "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s, %s)",
             (image["asset_id"], user_id, project_id, image["bucket"], image["key"], image["mime"],
-             image.get("size"), image.get("width"), image.get("height")),
+             image.get("size"), image.get("width"), image.get("height"),
+             Json(image.get("metadata") or {})),
         )
         if image.get("cleanup_intent_id"):
             await cur.execute(
