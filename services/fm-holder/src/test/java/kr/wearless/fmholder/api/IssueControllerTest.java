@@ -149,9 +149,15 @@ class IssueControllerTest {
                         "facelicense", claims(), key);
                 IssueIdempotencyStore setup = new IssueIdempotencyStore(caseDir);
                 if (suffix.equals(".intent")) {
-                    assertThrows(IllegalStateException.class,
+                    // An Error, unlike a caught Exception, is never routed
+                    // through the first-attempt cleanup path, so it genuinely
+                    // leaves the intent file behind on disk — matching a real
+                    // crash mid-issuance rather than an in-process thrown
+                    // exception (which is now cleaned up so it can be
+                    // retried).
+                    assertThrows(Error.class,
                             () -> setup.execute(MODEL, request, () -> {
-                                throw new IllegalStateException("simulated crash");
+                                throw new Error("simulated crash");
                             }));
                 } else {
                     setup.execute(MODEL, request, () -> result("vc-1"));

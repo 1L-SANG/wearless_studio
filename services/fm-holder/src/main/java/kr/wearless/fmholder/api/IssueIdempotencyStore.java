@@ -102,7 +102,20 @@ public final class IssueIdempotencyStore {
             }
 
             persistAtomically(intentPath, mapper.writeValueAsBytes(expected), true);
-            IssueVcService.IssueResult result = action.call();
+            IssueVcService.IssueResult result;
+            try {
+                result = action.call();
+            } catch (Exception error) {
+                // The call returned control to us and we KNOW it did not
+                // succeed, so this is not the crash scenario the pending
+                // intent guards against. Clear it so a legitimate retry of
+                // this idempotency key is not permanently rejected as an
+                // unresolved duplicate. A genuine process crash never reaches
+                // this catch block (no Java code runs), so the pending intent
+                // still stands guard in that case.
+                clearIntent(intentPath);
+                throw error;
+            }
             if (!isIssued(result)) {
                 throw unavailable();
             }
@@ -166,6 +179,18 @@ public final class IssueIdempotencyStore {
             return mapper.readValue(Files.readAllBytes(path), type);
         } catch (IOException error) {
             throw unavailable();
+        }
+    }
+
+    private void clearIntent(Path intentPath) {
+        try {
+            Files.deleteIfExists(intentPath);
+            directoryForce.run();
+        } catch (IOException | RuntimeException cleanupError) {
+            // Best-effort: if the intent cannot be durably cleared, it remains
+            // as a conservative tombstone until an operator/sweeper resolves
+            // it. The original failure from action.call() still takes
+            // precedence and is rethrown by the caller regardless.
         }
     }
 

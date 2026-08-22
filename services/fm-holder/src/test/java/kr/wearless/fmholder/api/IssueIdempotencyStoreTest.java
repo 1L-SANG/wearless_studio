@@ -155,14 +155,42 @@ class IssueIdempotencyStoreTest {
     }
 
     @Test
-    void unresolvedIntentAfterFailureBlocksRestartRetry(@TempDir Path dataDir) throws Exception {
+    void thrownFirstAttemptClearsIntentAndAllowsRestartRetryToSucceed(@TempDir Path dataDir)
+            throws Exception {
         AtomicInteger calls = new AtomicInteger();
         IssueVcDtos.IssueRequest request = faceLicense(KEY, "allowed-a");
         IssueIdempotencyStore first = new IssueIdempotencyStore(dataDir);
 
         assertThrows(IllegalStateException.class, () -> first.execute(MODEL, request, () -> {
             calls.incrementAndGet();
-            throw new IllegalStateException("simulated Flow B crash");
+            throw new IllegalStateException("simulated transient holder/wallet outage");
+        }));
+
+        IssueVcService.IssueResult retried = new IssueIdempotencyStore(dataDir)
+                .execute(MODEL, request, () -> {
+                    calls.incrementAndGet();
+                    return result("vc-1");
+                });
+
+        assertEquals("vc-1", retried.vcId());
+        assertEquals(2, calls.get());
+    }
+
+    @Test
+    void uncaughtErrorDuringIssuanceSimulatingCrashLeavesIntentPendingAndBlocksRetry(
+            @TempDir Path dataDir) throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        IssueVcDtos.IssueRequest request = faceLicense(KEY, "allowed-a");
+        IssueIdempotencyStore first = new IssueIdempotencyStore(dataDir);
+
+        // An Error (unlike a caught Exception) is never routed through the
+        // first-attempt cleanup path added by the fix below, standing in for a
+        // real process crash where no in-process cleanup code gets to run at
+        // all. The pending intent must remain, so a blind retry after a crash
+        // cannot double-issue a VC.
+        assertThrows(Error.class, () -> first.execute(MODEL, request, () -> {
+            calls.incrementAndGet();
+            throw new Error("simulated crash mid-issuance");
         }));
         assertThrows(IssueIdempotencyStore.UnavailableException.class,
                 () -> new IssueIdempotencyStore(dataDir).execute(MODEL, request, () -> {
