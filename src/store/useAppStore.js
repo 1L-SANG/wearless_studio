@@ -18,6 +18,7 @@ import { clearDraftPromotionSession } from '@/lib/draftPromotionSession.js';
 import { forgetDraftSyncProject } from '@/lib/draftSync.js';
 import { clearFlowSession, markProductInfoConfirmed, readFlowSession } from '@/lib/flowSession.js';
 import { clearDetailPageJobMarker, loadDetailPageJobMarker, saveDetailPageJobMarker } from '@/lib/detailPageJobPersistence.js';
+import { assetFileUrl } from '@/lib/assetUrl.js';
 import {
   adoptGenerationRelevantEdits,
   clearGenerationRelevantEdits as clearGenerationRelevantEditsSession,
@@ -160,7 +161,7 @@ function applyDetailJobEvents(job, events) {
       if (p.status === 'cut_passthrough') {
         live.delete(p.blockId);
         // 셀러 원본 재사용 — asset 행이 이미 있어 안정 /file 경로가 즉시 유효
-        next.cuts[p.blockId] = { url: p.assetId ? `/v1/assets/${p.assetId}/file` : null };
+        next.cuts[p.blockId] = { url: p.assetId ? assetFileUrl(p.assetId) : null };
       }
       if (p.status === 'cut_failed') { live.delete(p.blockId); failed.add(p.blockId); }
       if (p.status === 'copy_ready') next.copy[p.blockId] = p.texts || [];

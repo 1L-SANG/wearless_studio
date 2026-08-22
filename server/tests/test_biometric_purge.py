@@ -3,6 +3,7 @@ import asyncio
 import copy
 import traceback
 import os
+import threading
 import types
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -232,7 +233,7 @@ class FakeDB:
                 "ci_hash", "did", "cover_image_url", "display_name", "outcome",
                 "target_count", "confirmed_absent_count", "model_count", "profile_count",
                 "enrollment_count", "asset_count", "source_job_id", "completed_at",
-                "scope_key", "target_manifest", "created_at", "updated_at",
+                "scope_key", "target_manifest", "revision", "created_at", "updated_at",
             }
             for table, rows in self.tables.items()
         }
@@ -259,9 +260,18 @@ class FakeDB:
                 for table, cols in self.columns.items()
                 for col in cols
             ]
-        if q.startswith("select target_manifest from fm_biometric_purge_manifests"):
+        if q.startswith("select target_manifest, revision from fm_biometric_purge_manifests"):
             return [
-                {"target_manifest": copy.deepcopy(row["target_manifest"])}
+                {
+                    "target_manifest": copy.deepcopy(row["target_manifest"]),
+                    "revision": row["revision"],
+                }
+                for row in self.tables["fm_biometric_purge_manifests"]
+                if row.get("scope_key") == params[0]
+            ]
+        if q.startswith("select revision from fm_biometric_purge_manifests"):
+            return [
+                {"revision": row["revision"]}
                 for row in self.tables["fm_biometric_purge_manifests"]
                 if row.get("scope_key") == params[0]
             ]
@@ -635,21 +645,42 @@ class FakeDB:
                 "fm_biometric_purge_manifests",
                 scope_key=params[0],
                 target_manifest=copy.deepcopy(params[1].obj),
+                revision=1,
                 created_at="now",
                 updated_at="now",
             )
-            return 1
+            return [{"revision": 1}]
         if q.startswith("update fm_biometric_purge_manifests set target_manifest"):
             for row in self.tables["fm_biometric_purge_manifests"]:
                 if row.get("scope_key") == params[1]:
                     row["target_manifest"] = copy.deepcopy(params[0].obj)
+                    row["revision"] += 1
                     row["updated_at"] = "now"
-                    return 1
-            return 0
+                    return [{"revision": row["revision"]}]
+            return []
+        if q.startswith("update assets set metadata ="):
+            asset_ids = set(params[0])
+            updated = 0
+            for row in self.tables["assets"]:
+                if row.get("id") in asset_ids and row.get("deleted_at") is None:
+                    row["metadata"] = {
+                        **(row.get("metadata") or {}),
+                        "facemarket_real_derived": True,
+                    }
+                    updated += 1
+            return updated
         if q.startswith("delete from fm_biometric_purge_manifests"):
-            return _delete_where_eq(
-                self.tables["fm_biometric_purge_manifests"], "scope_key", params[0]
-            )
+            scope_key, revision = params
+            before = len(self.tables["fm_biometric_purge_manifests"])
+            self.tables["fm_biometric_purge_manifests"] = [
+                row
+                for row in self.tables["fm_biometric_purge_manifests"]
+                if not (
+                    row.get("scope_key") == scope_key
+                    and row.get("revision") == revision
+                )
+            ]
+            return before - len(self.tables["fm_biometric_purge_manifests"])
         if q.startswith("update fm_cutover_batches") and "set status = 'draining'" in q:
             for row in self.tables["fm_cutover_batches"]:
                 if row.get("id") == params[0] and row.get("status") == "approved":
@@ -1584,9 +1615,138 @@ def test_durable_manifest_select_is_serialized_by_scope_advisory_lock():
     select_index = next(
         index
         for index, query in enumerate(ctx.db.queries)
-        if query.startswith("select target_manifest from fm_biometric_purge_manifests")
+        if query.startswith("select target_manifest, revision from fm_biometric_purge_manifests")
     )
     assert lock_index < select_index
+
+
+def test_final_revision_check_uses_same_scope_lock_before_row_lock():
+    ctx = _fake_case()
+    schema = asyncio.run(biometric_purge._schema(FakeConn(ctx.db)))
+    persisted = asyncio.run(
+        biometric_purge._persist_target_manifest(
+            FakeConn(ctx.db),
+            schema,
+            scope_key=f"user:{ctx.user}",
+            targets={("r2", "asset.png")},
+            asset_ids={ctx.asset},
+            prefixes=(f"users/{ctx.user}/",),
+        )
+    )
+    revision = persisted[3]
+    before = len(ctx.db.queries)
+
+    asyncio.run(
+        biometric_purge._assert_target_manifest_revision(
+            FakeConn(ctx.db), f"user:{ctx.user}", revision
+        )
+    )
+
+    final_queries = ctx.db.queries[before:]
+    advisory_index = next(
+        index
+        for index, query in enumerate(final_queries)
+        if query.startswith("select pg_advisory_xact_lock")
+    )
+    revision_index = next(
+        index
+        for index, query in enumerate(final_queries)
+        if query.startswith("select revision from fm_biometric_purge_manifests")
+    )
+    assert advisory_index < revision_index
+
+
+def test_same_scope_workers_use_revision_cas_before_any_cleanup():
+    """A가 purge 중일 때 B가 union한 revision을 A가 지우거나 DB cleanup하면 안 된다."""
+    ctx = _fake_case()
+    schema = asyncio.run(biometric_purge._schema(FakeConn(ctx.db)))
+    scope_key = f"user:{ctx.user}"
+
+    async def persist(target):
+        conn = FakeConn(ctx.db)
+        result = await biometric_purge._persist_target_manifest(
+            conn,
+            schema,
+            scope_key=scope_key,
+            targets={target},
+            asset_ids={ctx.asset},
+            prefixes=(f"users/{ctx.user}/",),
+        )
+        await conn.commit()
+        return result
+
+    worker_a = asyncio.run(persist(("r2", "worker-a.png")))
+    worker_b = asyncio.run(persist(("r2", "worker-b.png")))
+    revision_a = worker_a[3]
+    revision_b = worker_b[3]
+    cleanup_before = [q for q in ctx.db.queries if q.startswith("update assets set r2_key='purged/'")]
+
+    with pytest.raises(PurgeIncomplete) as stale:
+        asyncio.run(
+            biometric_purge._assert_target_manifest_revision(
+                FakeConn(ctx.db), scope_key, revision_a
+            )
+        )
+
+    assert stale.value.code == "purge_manifest_changed"
+    assert revision_b > revision_a
+    assert [q for q in ctx.db.queries if q.startswith("update assets set r2_key='purged/'")] == cleanup_before
+    manifest = ctx.db.tables["fm_biometric_purge_manifests"][0]
+    assert ["r2", "worker-a.png"] in manifest["target_manifest"]["targets"]
+    assert ["r2", "worker-b.png"] in manifest["target_manifest"]["targets"]
+
+
+def test_two_same_scope_purge_workers_interleave_without_stale_cleanup():
+    """A가 CDN purge 중 B가 revision을 올리면 A는 cleanup 전 실패하고 B만 종결한다."""
+    ctx = _fake_case()
+    first_at_cdn = threading.Event()
+    second_at_cdn = threading.Event()
+    release_first = threading.Event()
+    release_second = threading.Event()
+    call_lock = threading.Lock()
+    call_count = 0
+
+    def coordinated_purge(self, keys):
+        nonlocal call_count
+        self.purged.append(tuple(keys))
+        with call_lock:
+            call_count += 1
+            call_number = call_count
+        if call_number == 1:
+            first_at_cdn.set()
+            assert release_first.wait(5)
+        elif call_number == 2:
+            second_at_cdn.set()
+            assert release_second.wait(5)
+
+    ctx.r2.purge_public_cache = types.MethodType(coordinated_purge, ctx.r2)
+
+    async def interleave():
+        worker_a = asyncio.create_task(
+            purge_biometric_scope(ctx.app, user_id=ctx.user, reason="withdrawal")
+        )
+        assert await asyncio.to_thread(first_at_cdn.wait, 5)
+        worker_b = asyncio.create_task(
+            purge_biometric_scope(ctx.app, user_id=ctx.user, reason="withdrawal")
+        )
+        assert await asyncio.to_thread(second_at_cdn.wait, 5)
+
+        release_first.set()
+        with pytest.raises(PurgeIncomplete) as stale:
+            await worker_a
+        assert stale.value.code == "purge_manifest_changed"
+        assert ctx.db.tables["fm_model_assets"]
+        assert ctx.db.tables["fm_biometric_purge_manifests"][0]["revision"] == 2
+
+        release_second.set()
+        completed = await worker_b
+        return completed
+
+    result = asyncio.run(interleave())
+
+    assert result.complete is True
+    assert ctx.db.tables["fm_model_assets"] == []
+    assert ctx.db.tables["fm_biometric_purge_manifests"] == []
 
 
 def test_cdn_failure_keeps_db_less_orphan_in_durable_manifest_for_retry():
@@ -1614,6 +1774,22 @@ def test_cdn_failure_keeps_db_less_orphan_in_durable_manifest_for_retry():
     assert result.complete is True
     assert any(orphan in batch for batch in ctx.r2.purged)
     assert ctx.db.tables["fm_biometric_purge_manifests"] == []
+
+
+def test_legacy_assets_are_marked_sensitive_in_committed_manifest_tx_before_delete():
+    ctx = _fake_case()
+    ctx.r2.fail_delete.add(ctx.db.tables["assets"][0]["r2_key"])
+
+    with pytest.raises(PurgeIncomplete) as exc:
+        _run(ctx, user_id=ctx.user, reason="withdrawal")
+
+    assert exc.value.code == "r2_delete_failed"
+    assert ctx.db.tables["assets"][0]["metadata"] == {
+        "secret": True,
+        "facemarket_real_derived": True,
+    }
+    assert ctx.db.tables["assets"][0]["r2_key"] != f"purged/{ctx.asset}"
+    assert ctx.db.tables["fm_biometric_purge_manifests"]
 
 
 def test_fake_partial_cdn_batch_preserves_references_then_retry_succeeds(monkeypatch):
@@ -1660,6 +1836,7 @@ def test_fake_partial_cdn_batch_preserves_references_then_retry_succeeds(monkeyp
         return types.SimpleNamespace(status_code=200, json=lambda: {"success": success})
 
     monkeypatch.setattr(r2_module.httpx, "post", fake_post)
+    monkeypatch.setattr(r2_module.time, "sleep", lambda _seconds: None)
 
     with pytest.raises(PurgeIncomplete) as exc:
         _run(ctx, user_id=ctx.user, reason="account_delete")

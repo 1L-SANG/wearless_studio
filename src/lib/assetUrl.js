@@ -16,19 +16,30 @@
    ============================================================= */
 
 const BASE_URL = import.meta.env?.VITE_API_BASE_URL ?? '';
+export const ASSET_CACHE_VERSION = '2';
 
 // `http(s)://<host>/v1/assets/...` → 캡처그룹 1 = `/v1/assets/...`
 const ASSET_HOST_RE = /^https?:\/\/[^/]+(\/v1\/assets\/.*)$/;
+const ASSET_CAPABILITY_RE = /^(.*\/v1\/assets\/[^/?#]+\/(?:file|bytes))(\?[^#]*)?(#.*)?$/;
+
+/** 현재 클라이언트가 과거 immutable capability cache를 재사용하지 않도록 버전을 올린다. */
+export function versionAssetCapabilityUrl(value) {
+  const match = ASSET_CAPABILITY_RE.exec(value);
+  if (!match) return value;
+  const params = new URLSearchParams((match[2] || '').slice(1));
+  params.set('e', ASSET_CACHE_VERSION);
+  return `${match[1]}?${params.toString()}${match[3] || ''}`;
+}
 
 function rebaseOne(s) {
-  if (s.startsWith('/v1/assets/')) return `${BASE_URL}${s}`;
+  if (s.startsWith('/v1/assets/')) return versionAssetCapabilityUrl(`${BASE_URL}${s}`);
   const m = ASSET_HOST_RE.exec(s);
-  return m ? `${BASE_URL}${m[1]}` : s;
+  return m ? versionAssetCapabilityUrl(`${BASE_URL}${m[1]}`) : s;
 }
 
 function relativizeOne(s) {
   const m = ASSET_HOST_RE.exec(s);
-  return m ? m[1] : s;
+  return versionAssetCapabilityUrl(m ? m[1] : s);
 }
 
 function deepMap(v, fn) {
@@ -44,6 +55,9 @@ function deepMap(v, fn) {
 
 /** 에셋 URL(상대경로 또는 잘못된 호스트의 절대 URL)을 현재 BASE_URL 로 재기준화. */
 export const rebaseAssetUrls = (v) => deepMap(v, rebaseOne);
+
+/** 새 클라이언트가 직접 만드는 file capability도 공용 버전 계약을 통과시킨다. */
+export const assetFileUrl = (assetId) => rebaseOne(`/v1/assets/${assetId}/file`);
 
 /** 에셋 URL 의 호스트를 벗겨 상대경로로 되돌린다(저장 전 정규화). */
 export const relativizeAssetUrls = (v) => deepMap(v, relativizeOne);

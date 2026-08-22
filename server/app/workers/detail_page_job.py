@@ -550,11 +550,9 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                 {"asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
                  "size": len(img), "width": w, "height": h,
                  "cleanup_intent_id": cleanup_intent_id,
-                 "metadata": (
-                     {"facemarket_real_derived": True}
-                     if real_identity_attached
-                     else {}
-                 )},
+                 "metadata": {
+                     "facemarket_real_derived": real_identity_attached,
+                 }},
                 has_face,
                 garment_qc,
                 cut_qc,

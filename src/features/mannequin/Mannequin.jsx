@@ -10,6 +10,7 @@ import { CREDIT_COSTS } from '@/lib/limits.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import { fitExampleImage } from '@/lib/fitExampleImages.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
+import { assetFileUrl } from '@/lib/assetUrl.js';
 import { genderForClothingType } from '@/lib/productGender.js';
 import {
   matchingFitDefinition,
@@ -946,7 +947,7 @@ export function Mannequin() {
     if (!assetId) return;
     setCuts((prev) => prev.map((cut) => (
       cut.id === state.cutId
-        ? { ...cut, src: `/v1/assets/${assetId}/file`, imageUrl: `/v1/assets/${assetId}/file` }
+        ? { ...cut, src: assetFileUrl(assetId), imageUrl: assetFileUrl(assetId) }
         : cut
     )));
   }, []);

@@ -23,6 +23,7 @@ def test_cloudflare_prefix_purge_batches_at_thirty_and_covers_query_variants(mon
         return types.SimpleNamespace(status_code=200, json=lambda: {"success": True})
 
     monkeypatch.setattr(r2_module.httpx, "post", fake_post)
+    monkeypatch.setattr(r2_module.time, "sleep", lambda _seconds: None)
     client = _client()
     client.purge_public_cache([f"users/u/ai/{i}.png" for i in range(65)])
 
@@ -64,7 +65,7 @@ def test_cloudflare_purge_requires_config_only_when_public_targets_exist(monkeyp
         _client(zone=None, token=None).purge_public_cache(["must-purge.png"])
 
 
-def test_cloudflare_prefix_purge_retries_429_with_bounded_retry_after(monkeypatch):
+def test_cloudflare_prefix_purge_respects_bounded_retry_after(monkeypatch):
     calls = []
     sleeps = []
 
@@ -73,7 +74,7 @@ def test_cloudflare_prefix_purge_retries_429_with_bounded_retry_after(monkeypatc
         if len(calls) == 1:
             return types.SimpleNamespace(
                 status_code=429,
-                headers={"Retry-After": "999"},
+                headers={"Retry-After": "45"},
                 json=lambda: {"success": False},
             )
         return types.SimpleNamespace(
@@ -88,7 +89,44 @@ def test_cloudflare_prefix_purge_retries_429_with_bounded_retry_after(monkeypatc
     _client().purge_public_cache(["private/result.png"])
 
     assert len(calls) == 2
-    assert sleeps == [2.0]
+    assert sleeps == [45.0]
+
+
+def test_cloudflare_prefix_purge_progresses_past_one_thousand_keys_under_free_tier_bucket(monkeypatch):
+    calls = []
+    sleeps = []
+    clock = 0.0
+    tokens = 5.0
+    last_refill = 0.0
+
+    def fake_post(_url, **kwargs):
+        nonlocal tokens, last_refill
+        tokens = min(5.0, tokens + ((clock - last_refill) / 12.0))
+        last_refill = clock
+        assert tokens >= 1.0, "modeled Free-tier prefix token bucket exhausted"
+        tokens -= 1.0
+        calls.append(tuple(kwargs["json"]["prefixes"]))
+        return types.SimpleNamespace(
+            status_code=200,
+            headers={},
+            json=lambda: {"success": True},
+        )
+
+    monkeypatch.setattr(r2_module.httpx, "post", fake_post)
+    def fake_sleep(seconds):
+        nonlocal clock
+        sleeps.append(seconds)
+        clock += seconds
+
+    monkeypatch.setattr(r2_module.time, "sleep", fake_sleep)
+    keys = [f"users/u/ai/{index:04d}.png" for index in range(1005)]
+
+    _client().purge_public_cache(keys)
+
+    assert len(calls) == 34
+    assert [len(batch) for batch in calls] == [30] * 33 + [15]
+    assert calls[-1][-1] == "images.example.test/users/u/ai/1004.png"
+    assert sleeps == [12.0] * 33
 
 
 def test_cloudflare_purge_settings_load_from_environment(monkeypatch):

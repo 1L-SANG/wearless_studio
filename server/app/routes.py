@@ -63,6 +63,7 @@ from .models import (
     ToneEditorState,
 )
 from .r2 import (
+    ASSET_CACHE_VERSION,
     IMMUTABLE_CACHE,
     PRIVATE_NO_STORE,
     R2Client,
@@ -2953,7 +2954,7 @@ async def get_asset_file(request: Request, asset_id: str):
     """
     asset = await _public_asset_or_404(request, asset_id)
     return RedirectResponse(
-        _r2(request).public_url(asset["r2_key"]),
+        _asset_file_location(request, asset_id, asset),
         status_code=302,
         headers={"Cache-Control": _asset_cache_control(asset)},
     )
@@ -2976,11 +2977,25 @@ def _immutable_cors_safe_headers() -> dict:
     return {"Cache-Control": IMMUTABLE_CACHE, "Vary": "Origin"}
 
 
-def _asset_cache_control(asset: dict) -> str:
+def _asset_is_real_derived(asset: dict) -> bool:
     metadata = asset.get("metadata")
-    if isinstance(metadata, dict) and metadata.get("facemarket_real_derived") is True:
-        return PRIVATE_NO_STORE
-    return IMMUTABLE_CACHE
+    if isinstance(metadata, dict) and "facemarket_real_derived" in metadata:
+        return metadata["facemarket_real_derived"] is True
+    # 구 finalizer는 AI 산출물에 marker를 쓰지 않았다. 누락값을 public/immutable로
+    # 추정하면 purge 전에 새 cache version도 브라우저에 고정될 수 있어 보수적으로 막는다.
+    return asset.get("source") == "ai"
+
+
+def _asset_cache_control(asset: dict) -> str:
+    return PRIVATE_NO_STORE if _asset_is_real_derived(asset) else IMMUTABLE_CACHE
+
+
+def _asset_file_location(request: Request, asset_id: str, asset: dict) -> str:
+    if _asset_is_real_derived(asset):
+        # 민감 파생물은 public/presigned R2로 보내지 않는다. API bytes 경로가 본문까지
+        # no-store를 집행하고, 새 capability version이 기존 /file 캐시를 우회한다.
+        return f"/v1/assets/{asset_id}/bytes?e={ASSET_CACHE_VERSION}"
+    return _r2(request).public_url(asset["r2_key"])
 
 
 def _asset_cors_safe_headers(asset: dict) -> dict:

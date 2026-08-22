@@ -23,8 +23,15 @@ def _no_db(monkeypatch):
 
 
 class _FakeR2:
+    def __init__(self):
+        self.public_url_calls = []
+
     def public_url(self, key):
+        self.public_url_calls.append(key)
         return f"https://pub.example.com/{key}"
+
+    def get_bytes(self, key):
+        return f"bytes:{key}".encode()
 
 
 def test_public_asset_lookup_loads_server_written_privacy_marker():
@@ -58,7 +65,13 @@ def test_public_asset_lookup_loads_server_written_privacy_marker():
 
 def test_asset_file_serves_without_auth(client, monkeypatch):
     async def fake_get_asset_public(conn, asset_id):
-        return {"id": asset_id, "r2_key": "u1/p1/cut.png", "mime_type": "image/png", "source": "ai"}
+        return {
+            "id": asset_id,
+            "r2_key": "u1/p1/cut.png",
+            "mime_type": "image/png",
+            "source": "ai",
+            "metadata": {"facemarket_real_derived": False},
+        }
 
     monkeypatch.setattr(routes.repo, "get_asset_public", fake_get_asset_public)
     _no_db(monkeypatch)
@@ -84,11 +97,61 @@ def test_real_derived_asset_file_redirect_is_never_cached(client, monkeypatch):
     monkeypatch.setattr(routes.repo, "get_asset_public", fake_get_asset_public)
     _no_db(monkeypatch)
     client.app.state.r2 = _FakeR2()
+    asset_id = uuid.uuid4()
 
-    res = client.get(f"/v1/assets/{uuid.uuid4()}/file", follow_redirects=False)
+    res = client.get(f"/v1/assets/{asset_id}/file?e=2", follow_redirects=False)
 
     assert res.status_code == 302
     assert res.headers["cache-control"] == "private, no-store"
+    assert res.headers["location"] == f"/v1/assets/{asset_id}/bytes?e=2"
+    assert client.app.state.r2.public_url_calls == []
+
+
+def test_legacy_unmarked_ai_asset_is_conservatively_never_cached(client, monkeypatch):
+    async def fake_get_asset_public(conn, asset_id):
+        return {
+            "id": asset_id,
+            "r2_key": "u1/p1/legacy-ai.png",
+            "mime_type": "image/png",
+            "source": "ai",
+            "metadata": {"legacy": True},
+        }
+
+    monkeypatch.setattr(routes.repo, "get_asset_public", fake_get_asset_public)
+    _no_db(monkeypatch)
+    client.app.state.r2 = _FakeR2()
+    asset_id = uuid.uuid4()
+
+    res = client.get(f"/v1/assets/{asset_id}/file?e=2", follow_redirects=False)
+
+    assert res.status_code == 302
+    assert res.headers["cache-control"] == "private, no-store"
+    assert res.headers["location"] == f"/v1/assets/{asset_id}/bytes?e=2"
+    assert client.app.state.r2.public_url_calls == []
+
+
+def test_sensitive_file_redirect_reaches_no_store_bytes_without_loop(client, monkeypatch):
+    async def fake_get_asset_public(conn, asset_id):
+        return {
+            "id": asset_id,
+            "r2_key": "u1/p1/real-cut.png",
+            "mime_type": "image/png",
+            "source": "ai",
+            "metadata": {"facemarket_real_derived": True},
+        }
+
+    monkeypatch.setattr(routes.repo, "get_asset_public", fake_get_asset_public)
+    _no_db(monkeypatch)
+    client.app.state.r2 = _FakeR2()
+    asset_id = uuid.uuid4()
+
+    res = client.get(f"/v1/assets/{asset_id}/file?e=2")
+
+    assert res.status_code == 200
+    assert res.content == b"bytes:u1/p1/real-cut.png"
+    assert res.headers["cache-control"] == "private, no-store"
+    assert len(res.history) == 1
+    assert res.history[0].headers["location"] == f"/v1/assets/{asset_id}/bytes?e=2"
 
 
 def test_asset_file_invalid_id_is_404_before_db(client):
@@ -104,7 +167,9 @@ def test_asset_file_missing_asset_404(client, monkeypatch):
 
     monkeypatch.setattr(routes.repo, "get_asset_public", fake_get_asset_public)
     _no_db(monkeypatch)
-    client.app.state.r2 = _FakeR2()
+    fake_r2 = _FakeR2()
+    client.app.state.r2 = fake_r2
 
-    res = client.get(f"/v1/assets/{uuid.uuid4()}/file", follow_redirects=False)
+    res = client.get(f"/v1/assets/{uuid.uuid4()}/file?e=2", follow_redirects=False)
     assert res.status_code == 404
+    assert fake_r2.public_url_calls == []

@@ -766,9 +766,9 @@ def test_editor_real_product_prunes_identity_and_never_sets_settlement_flag(monk
     assert face_r2.reads == []
     assert captured["settlements"] == 0
     assert public_r2.caches == ["public, max-age=31536000, immutable"]
-    assert captured["finalize"]["image"].get("metadata", {}).get(
-        "facemarket_real_derived", False
-    ) is False
+    assert captured["finalize"]["image"]["metadata"] == {
+        "facemarket_real_derived": False,
+    }
 
 
 def test_editor_real_visible_worn_cut_enables_identity_contract(monkeypatch):

@@ -403,10 +403,7 @@ def test_snapshot_real_identity_is_attached_only_to_worn_cuts(monkeypatch):
     # 결과 본문과 asset API 모두 styling과 같은 생체 파생물로 취급해야 한다.
     assert main_r2.caches.count("private, no-store") == 2
     assert main_r2.caches.count("public, max-age=31536000, immutable") == 1
-    markers = [
-        asset.get("metadata", {}).get("facemarket_real_derived", False)
-        for asset in captured["cut_assets"]
-    ]
+    markers = [asset["metadata"]["facemarket_real_derived"] for asset in captured["cut_assets"]]
     assert markers.count(True) == 2
     assert markers.count(False) == 1
 

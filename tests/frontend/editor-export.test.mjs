@@ -14,21 +14,21 @@ import {
 const AID = '123e4567-e89b-42d3-a456-426614174000';
 
 test('toBytesUrl: /file 자산 URL을 /bytes로 바꾼다 (상대·절대·비uuid id — id 검증은 서버 몫)', () => {
-  // ?e=1 은 CORS 캐시 오염 탈출용 1회성 버스터 — 예전 빌드가 허가 헤더 없는 사본을
+  // ?e=2 는 과거 immutable 사본을 우회하는 현재 capability 버전이다.
   // 1년짜리로 캐시에 박아 둬서, 주소를 갈지 않으면 서버를 고쳐도 계속 차단된다.
-  assert.equal(toBytesUrl(`/v1/assets/${AID}/file`), `/v1/assets/${AID}/bytes?e=1`);
+  assert.equal(toBytesUrl(`/v1/assets/${AID}/file`), `/v1/assets/${AID}/bytes?e=2`);
   assert.equal(
     toBytesUrl(`https://api.wearless.app/v1/assets/${AID}/file`),
-    `https://api.wearless.app/v1/assets/${AID}/bytes?e=1`,
+    `https://api.wearless.app/v1/assets/${AID}/bytes?e=2`,
   );
   // 프론트가 서버보다 엄격하면 어긋난다 — id 모양은 경로 수준만 본다 (리뷰 반영)
-  assert.equal(toBytesUrl('/v1/assets/stable-1/file'), '/v1/assets/stable-1/bytes?e=1');
-  assert.equal(toBytesUrl(`/v1/assets/${AID}/file?v=2`), `/v1/assets/${AID}/bytes?e=1`);
+  assert.equal(toBytesUrl('/v1/assets/stable-1/file'), '/v1/assets/stable-1/bytes?e=2');
+  assert.equal(toBytesUrl(`/v1/assets/${AID}/file?e=1`), `/v1/assets/${AID}/bytes?e=2`);
 });
 
 test('isAssetBytesUrl: 쿼리가 붙어도 핵심 자산으로 판정한다', () => {
   // 이 판정이 깨지면 상품컷 실패가 soft 로 강등돼 빈 이미지인 채 "저장 완료" 로 속인다.
-  assert.equal(isAssetBytesUrl(`/v1/assets/${AID}/bytes?e=1`), true);
+  assert.equal(isAssetBytesUrl(`/v1/assets/${AID}/bytes?e=2`), true);
   assert.equal(isAssetBytesUrl(`/v1/assets/${AID}/bytes`), true);
   assert.equal(isAssetBytesUrl(toBytesUrl(`/v1/assets/${AID}/file`)), true);
   assert.equal(isAssetBytesUrl(`/v1/assets/${AID}/file`), false);

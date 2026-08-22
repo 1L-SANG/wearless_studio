@@ -21,6 +21,7 @@ _CODES = {
     "r2_delete_failed",
     "r2_reconcile_failed",
     "cdn_purge_failed",
+    "purge_manifest_changed",
     "db_cleanup_failed",
     "vc_revocation_missing",
 }
@@ -156,12 +157,13 @@ async def _persist_target_manifest(
     targets: set[tuple[str, str]],
     asset_ids: set[str],
     prefixes: tuple[str, ...],
-) -> tuple[set[tuple[str, str]], set[str], tuple[str, ...]]:
+) -> tuple[set[tuple[str, str]], set[str], tuple[str, ...], int]:
     if not _has(
         schema,
         "fm_biometric_purge_manifests",
         "scope_key",
         "target_manifest",
+        "revision",
     ):
         raise PurgeIncomplete("db_cleanup_failed")
     async with conn.cursor() as cur:
@@ -171,7 +173,7 @@ async def _persist_target_manifest(
             (scope_key,),
         )
         await cur.execute(
-            "select target_manifest from fm_biometric_purge_manifests "
+            "select target_manifest, revision from fm_biometric_purge_manifests "
             "where scope_key=%s for update",
             (scope_key,),
         )
@@ -191,24 +193,57 @@ async def _persist_target_manifest(
         if existing is None:
             await cur.execute(
                 "insert into fm_biometric_purge_manifests (scope_key, target_manifest) "
-                "values (%s, %s)",
+                "values (%s, %s) returning revision",
                 (scope_key, Json(payload)),
             )
         else:
             await cur.execute(
-                "update fm_biometric_purge_manifests set target_manifest=%s "
-                "where scope_key=%s",
+                "update fm_biometric_purge_manifests set target_manifest=%s, "
+                "revision=revision+1 where scope_key=%s returning revision",
                 (Json(payload), scope_key),
             )
-    return targets, asset_ids, prefixes
+        revision_row = await cur.fetchone()
+        if revision_row is None or not isinstance(revision_row.get("revision"), int):
+            raise PurgeIncomplete("db_cleanup_failed")
+        revision = revision_row["revision"]
+        if asset_ids:
+            await cur.execute(
+                "update assets set metadata = coalesce(metadata, '{}'::jsonb) || "
+                "'{\"facemarket_real_derived\": true}'::jsonb "
+                "where id = any(%s) and deleted_at is null",
+                (sorted(asset_ids),),
+            )
+    return targets, asset_ids, prefixes, revision
 
 
-async def _clear_target_manifest(conn, scope_key: str) -> None:
+async def _assert_target_manifest_revision(
+    conn, scope_key: str, revision: int
+) -> None:
     async with conn.cursor() as cur:
         await cur.execute(
-            "delete from fm_biometric_purge_manifests where scope_key=%s",
+            "select pg_advisory_xact_lock(hashtextextended("
+            "'fm-biometric-purge-manifest:' || %s, 0))",
             (scope_key,),
         )
+        await cur.execute(
+            "select revision from fm_biometric_purge_manifests "
+            "where scope_key=%s for update",
+            (scope_key,),
+        )
+        row = await cur.fetchone()
+    if row is None or row.get("revision") != revision:
+        raise PurgeIncomplete("purge_manifest_changed")
+
+
+async def _clear_target_manifest(conn, scope_key: str, revision: int) -> None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "delete from fm_biometric_purge_manifests "
+            "where scope_key=%s and revision=%s",
+            (scope_key, revision),
+        )
+        if cur.rowcount != 1:
+            raise PurgeIncomplete("purge_manifest_changed")
 
 
 async def _scope(conn, schema, *, user_id: str | None, batch_id: str | None, reason: str):
@@ -861,7 +896,12 @@ async def purge_biometric_scope(
     try:
         async with pool.connection() as conn:
             schema = await _schema(conn)
-            targets, asset_ids, prefixes = await _persist_target_manifest(
+            (
+                targets,
+                asset_ids,
+                prefixes,
+                manifest_revision,
+            ) = await _persist_target_manifest(
                 conn,
                 schema,
                 scope_key=scope_key,
@@ -902,6 +942,9 @@ async def purge_biometric_scope(
     async with pool.connection() as conn:
         try:
             schema = await _schema(conn)
+            # manifest row lock + exact revision 검증을 cleanup/receipt보다 먼저 잡는다.
+            # 다른 worker가 CDN 작업 중 target을 union했다면 이 tx 전체를 중단한다.
+            await _assert_target_manifest_revision(conn, scope_key, manifest_revision)
             scope = await _scope(conn, schema, user_id=user_id, batch_id=batch_id, reason=reason)
             derived_jobs = await _derived_jobs(conn, schema, scope)
             await _ensure_frozen(conn, schema, scope, derived_jobs)
@@ -924,7 +967,7 @@ async def purge_biometric_scope(
                 target_count=len(targets),
                 confirmed_absent_count=len(targets),
             )
-            await _clear_target_manifest(conn, scope_key)
+            await _clear_target_manifest(conn, scope_key, manifest_revision)
             await conn.commit()
         except PurgeIncomplete:
             await conn.rollback()

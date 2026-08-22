@@ -26,8 +26,10 @@ class _FakeR2:
     def __init__(self, data=b"png-bytes", fail=False):
         self._data = data
         self._fail = fail
+        self.get_calls = []
 
     def get_bytes(self, key):
+        self.get_calls.append(key)
         if self._fail:
             raise RuntimeError("r2 down")
         return self._data
@@ -40,7 +42,12 @@ def _stub_asset(monkeypatch, row):
 
 
 def test_asset_bytes_serves_without_auth(client, monkeypatch):
-    _stub_asset(monkeypatch, {"r2_key": "u1/p1/cut.png", "mime_type": "image/png", "source": "ai"})
+    _stub_asset(monkeypatch, {
+        "r2_key": "u1/p1/cut.png",
+        "mime_type": "image/png",
+        "source": "ai",
+        "metadata": {"facemarket_real_derived": False},
+    })
     _no_db(monkeypatch)
     client.app.state.r2 = _FakeR2(data=b"fake-png")
 
@@ -63,10 +70,26 @@ def test_real_derived_asset_bytes_and_export_variant_are_never_cached(client, mo
 
     asset_id = uuid.uuid4()
     bare = client.get(f"/v1/assets/{asset_id}/bytes")
-    exported = client.get(f"/v1/assets/{asset_id}/bytes?e=1")
+    exported = client.get(f"/v1/assets/{asset_id}/bytes?e=2")
 
     assert bare.headers["cache-control"] == "private, no-store"
     assert exported.headers["cache-control"] == "private, no-store"
+
+
+def test_legacy_unmarked_ai_asset_bytes_are_never_cached(client, monkeypatch):
+    _stub_asset(monkeypatch, {
+        "r2_key": "u1/p1/legacy-ai.png",
+        "mime_type": "image/png",
+        "source": "ai",
+        "metadata": {"legacy": True},
+    })
+    _no_db(monkeypatch)
+    client.app.state.r2 = _FakeR2(data=b"legacy-derived")
+
+    res = client.get(f"/v1/assets/{uuid.uuid4()}/bytes?e=2")
+
+    assert res.status_code == 200
+    assert res.headers["cache-control"] == "private, no-store"
 
 
 def test_asset_bytes_invalid_id_is_404_before_db(client):
@@ -79,10 +102,12 @@ def test_asset_bytes_invalid_id_is_404_before_db(client):
 def test_asset_bytes_missing_asset_404(client, monkeypatch):
     _stub_asset(monkeypatch, None)
     _no_db(monkeypatch)
-    client.app.state.r2 = _FakeR2()
+    fake_r2 = _FakeR2()
+    client.app.state.r2 = fake_r2
 
-    res = client.get(f"/v1/assets/{uuid.uuid4()}/bytes")
+    res = client.get(f"/v1/assets/{uuid.uuid4()}/bytes?e=2")
     assert res.status_code == 404
+    assert fake_r2.get_calls == []
 
 
 def test_asset_bytes_storage_failure_is_503(client, monkeypatch):

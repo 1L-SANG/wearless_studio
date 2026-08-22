@@ -25,6 +25,10 @@ from .config import Settings
 # 불변 자산(asset id = content, 재생성은 새 asset id) 공용 Cache-Control 값.
 IMMUTABLE_CACHE = "public, max-age=31536000, immutable"
 PRIVATE_NO_STORE = "private, no-store"
+ASSET_CACHE_VERSION = "2"
+_CLOUDFLARE_PREFIX_BATCH_SIZE = 30
+_CLOUDFLARE_PREFIX_INTERVAL_SECONDS = 12.0
+_CLOUDFLARE_MAX_RETRY_AFTER_SECONDS = 60.0
 
 # 업로드 허용 이미지 MIME → 확장자. 화이트리스트(임의 타입 업로드 차단).
 MIME_EXT = {
@@ -217,8 +221,12 @@ class R2Client:
             f"{self._cloudflare_zone_id}/purge_cache"
         )
         headers = {"Authorization": f"Bearer {self._cloudflare_cache_purge_token}"}
-        for start in range(0, len(prefixes), 30):
-            batch = prefixes[start : start + 30]
+        for start in range(0, len(prefixes), _CLOUDFLARE_PREFIX_BATCH_SIZE):
+            if start:
+                # Free-tier prefix purge token bucket(5 requests/minute)에 맞춘다.
+                # 이 구간에는 DB connection을 보유하지 않는다.
+                time.sleep(_CLOUDFLARE_PREFIX_INTERVAL_SECONDS)
+            batch = prefixes[start : start + _CLOUDFLARE_PREFIX_BATCH_SIZE]
             for attempt in range(3):
                 try:
                     response = httpx.post(
@@ -234,8 +242,13 @@ class R2Client:
                         try:
                             delay = float(retry_after)
                         except (TypeError, ValueError):
-                            delay = 0.25 * (2**attempt)
-                        time.sleep(min(2.0, max(0.0, delay)))
+                            delay = _CLOUDFLARE_PREFIX_INTERVAL_SECONDS * (2**attempt)
+                        time.sleep(
+                            min(
+                                _CLOUDFLARE_MAX_RETRY_AFTER_SECONDS,
+                                max(0.0, delay),
+                            )
+                        )
                         continue
                     payload = response.json()
                 except Exception:

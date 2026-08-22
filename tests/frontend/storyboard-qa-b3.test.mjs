@@ -127,7 +127,7 @@ test('1-01 HTTP image picker uploads the selected file once and returns assetId 
   try {
     const uploaded = await httpAdapter.pickAnyImage('project-upload');
     assert.equal(uploaded.assetId, 'asset-mine');
-    assert.match(uploaded.url, /\/v1\/assets\/asset-mine\/file$/);
+    assert.match(uploaded.url, /\/v1\/assets\/asset-mine\/file\?e=2$/);
   } finally {
     restoreGlobal('document', originalDocument);
     restoreGlobal('fetch', originalFetch);
