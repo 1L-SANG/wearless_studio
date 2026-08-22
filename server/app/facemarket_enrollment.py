@@ -6,6 +6,7 @@ import hmac
 import json
 import logging
 import math
+import os
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -18,7 +19,7 @@ from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
 
 from . import cx_identity, repo
-from .agents.face_qc import QcFailed, load_face_qc
+from .agents.face_qc import QcFailed, load_face_qc, weight_paths
 from .auth import require_user
 from .config import Settings
 from .db import get_conn
@@ -1972,6 +1973,13 @@ def validate_biometric_settings(settings: Settings) -> None:
         raise RuntimeError("FM_LIVENESS_BROWSER_ROLE_ARN is required")
     if not settings.fm_face_qc_enabled:
         raise RuntimeError("FM_FACE_QC_ENABLED is required")
+    if not settings.fm_ci_pepper or not settings.fm_ci_pepper.strip():
+        raise RuntimeError("FM_CI_PEPPER is required for biometric enrollment")
+    det_path, rec_path = weight_paths(settings)
+    if not (os.path.exists(det_path) and os.path.exists(rec_path)):
+        raise RuntimeError(
+            "SFace/YuNet face QC weight files are required for biometric enrollment"
+        )
     thresholds = (
         settings.fm_liveness_confidence_threshold,
         settings.fm_id_live_threshold,

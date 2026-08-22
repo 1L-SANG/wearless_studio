@@ -109,6 +109,19 @@ def test_enabled_feature_requires_three_calibrated_settings():
         create_app(biometric_settings(fm_id_live_threshold=None))
 
 
+@pytest.mark.parametrize("pepper", [None, "", "   "])
+def test_enabled_feature_requires_ci_pepper(pepper):
+    with pytest.raises(RuntimeError, match="FM_CI_PEPPER"):
+        create_app(biometric_settings(fm_ci_pepper=pepper))
+
+
+def test_enabled_feature_requires_face_qc_weights_on_disk(tmp_path):
+    with pytest.raises(RuntimeError, match="SFace|YuNet|face QC weight"):
+        create_app(
+            biometric_settings(fm_ci_pepper="pep", fm_face_qc_dir=str(tmp_path))
+        )
+
+
 @pytest.mark.parametrize(
     "field,value",
     [

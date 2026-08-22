@@ -1,3 +1,5 @@
+import os
+import tempfile
 import time
 import contextlib
 import types
@@ -7,10 +9,36 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
 
+from app.agents.face_qc import default_model_dir
 from app.config import Settings
 from app.main import create_app
 
 AUDIENCE = "authenticated"
+
+_FACE_QC_TEST_WEIGHTS_DIR = None
+
+
+def _face_qc_test_weights_dir() -> str:
+    """SFace/YuNet 자리표시(placeholder) 파일을 담은 임시 디렉터리.
+
+    validate_biometric_settings 가 startup 에 weight 파일 '존재'만 확인하고(내용을 로드하지
+    않음), 실제 QC 호출은 각 테스트가 load_face_qc/FaceQc 를 monkeypatch 하므로 내용은 비어
+    있어도 된다. real weights(server/app/data/face_models/*.onnx) 는 gitignore 되어 이
+    저장소·테스트 환경에는 없다.
+    """
+    global _FACE_QC_TEST_WEIGHTS_DIR
+    if _FACE_QC_TEST_WEIGHTS_DIR is None:
+        model_dir = default_model_dir()
+        names = ("face_detection_yunet_2023mar.onnx", "face_recognition_sface_2021dec.onnx")
+        if all(os.path.exists(os.path.join(model_dir, name)) for name in names):
+            # 실제 weights 가 이미 존재하면(로컬 빌드 등) 그대로 재사용한다.
+            _FACE_QC_TEST_WEIGHTS_DIR = model_dir
+        else:
+            d = tempfile.mkdtemp(prefix="fm_face_qc_test_weights_")
+            for name in names:
+                open(os.path.join(d, name), "wb").close()
+            _FACE_QC_TEST_WEIGHTS_DIR = d
+    return _FACE_QC_TEST_WEIGHTS_DIR
 
 
 def auth_headers(make_token):
@@ -113,6 +141,15 @@ def make_settings(**overrides) -> Settings:
         # 테스트 기본만 명시적으로 off로 두고 QC 테스트에서 모드를 개별 활성화한다.
         garment_qc_mode="off",
     )
+    if overrides.get("fm_biometric_enrollment_enabled"):
+        # validate_biometric_settings 는 이제 fm_ci_pepper 와 SFace/YuNet weight 파일 존재를
+        # startup 에 요구한다(2026-08-23). 대부분의 기존 테스트는 그 자체를 검증 대상으로
+        # 삼지 않으므로 여기서 안전한 기본값을 깔아 준다 — 호출자가 명시적으로 override 하면
+        # (None 포함) 그 값이 우선한다.
+        if "fm_ci_pepper" not in overrides:
+            base["fm_ci_pepper"] = "test-pepper"
+        if "fm_face_qc_dir" not in overrides:
+            base["fm_face_qc_dir"] = _face_qc_test_weights_dir()
     base.update(overrides)
     return Settings(**base)
 

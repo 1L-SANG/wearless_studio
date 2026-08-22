@@ -25,6 +25,14 @@ def default_model_dir() -> str:
     return _DEFAULT_DIR
 
 
+def weight_paths(settings) -> tuple[str, str]:
+    """SFace/YuNet onnx 경로. FaceQc 생성 시 쓰는 것과 동일한 모델 디렉터리 규칙(fm_face_qc_dir
+    미지정 시 default_model_dir())을 startup 검증에서도 재사용하기 위한 것 — 경로 계산을
+    중복시키지 않는다."""
+    model_dir = getattr(settings, "fm_face_qc_dir", None) or _DEFAULT_DIR
+    return os.path.join(model_dir, _YUNET), os.path.join(model_dir, _SFACE)
+
+
 class QcFailed(Exception):
     """얼굴 검출 실패 또는 임베딩 오류 — 자산 등록 차단 사유. score 는 부재 시 0.0."""
 
