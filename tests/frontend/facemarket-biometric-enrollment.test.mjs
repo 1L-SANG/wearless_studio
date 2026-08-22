@@ -220,8 +220,74 @@ test('a liveness interruption cancels the enrollment before a fresh retry', () =
   assert.match(registerSource, /setStep\('cancel_failed'\)/);
   assert.match(registerSource, /등록 취소 다시 시도/);
   assert.doesNotMatch(registerSource, /서버 sweep이 재시도/);
-  assert.match(finishIdentitySource, /catch(?: \(requestError\))? \{\s*await abandonLiveness\(\);/);
+  assert.match(finishIdentitySource, /if \(isTransientIdentityError\(requestError\)\)/);
+  assert.match(finishIdentitySource, /setStep\('identity_failed'\)/);
+  assert.match(finishIdentitySource, /await abandonLiveness\(\);/);
   assert.doesNotMatch(registerSource, /resetLiveness|reuse(?:Photos|Enrollment)/i);
+});
+
+test('a transient identity-completion error retries in place instead of abandoning the enrollment', async () => {
+  const cancelled = [];
+  let completeAttempts = 0;
+  const originalWindow = globalThis.window;
+  const originalRaf = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (cb) => { cb(); return 1; };
+  globalThis.window = {
+    OACX: {
+      LOAD_MODULE: (_url, _options, callback) => {
+        queueMicrotask(() => callback(JSON.stringify({ token: `cx-token-${completeAttempts + 1}` })));
+      },
+    },
+  };
+  const harness = await modelComponentHarness({
+    initialStates: [
+      'liveness',
+      { id: 'enrollment-1', status: 'liveness_pending' },
+      { sessionId: 'session-1' },
+      '',
+      false,
+      false,
+    ],
+    api: {
+      cancelEnrollment: async (id) => { cancelled.push(id); },
+      completeEnrollment: async () => {
+        completeAttempts += 1;
+        if (completeAttempts === 1) throw new Error('서버에 연결하지 못했어요.');
+        return { passed: true, retryable: false, reason: null, status: 'asset_building', modelId: 'model-1' };
+      },
+      getCurrentEnrollment: () => new Promise(() => {}),
+    },
+  });
+  try {
+    let tree = harness.render();
+    const liveness = findTree(tree, (node) => node.type === 'Lazy');
+    await liveness.props.onAnalysisComplete();
+    await flush();
+
+    assert.equal(completeAttempts, 1, 'identity completion must have been attempted once');
+    assert.equal(cancelled.length, 0, 'a network failure must not cancel the retained enrollment');
+    assert.equal(harness.runtime.states[0], 'identity_failed');
+    assert.equal(harness.runtime.states[1]?.id, 'enrollment-1', 'the enrollment id must be retained, not discarded');
+    assert.ok(harness.runtime.states[2], 'the liveness session must be retained so photos/consent are not re-required');
+
+    tree = harness.render();
+    const retry = findTree(
+      tree,
+      (node) => node.type === 'Button' && node.props?.children === '다시 시도',
+    );
+    assert.ok(retry, 'a transient identity failure must expose a retry action');
+    await retry.props.onClick();
+    await flush();
+
+    assert.equal(completeAttempts, 2, 'retry must re-drive identity completion using the retained session');
+    assert.equal(cancelled.length, 0, 'the retained enrollment must never be cancelled by a transient retry');
+    assert.equal(harness.runtime.states[0], 'processing');
+    assert.equal(harness.runtime.states[1]?.id, 'enrollment-1');
+  } finally {
+    globalThis.window = originalWindow;
+    globalThis.requestAnimationFrame = originalRaf;
+    await harness.close();
+  }
 });
 
 test('a liveness-session rejection after unmount cancels once without showing a retry CTA', async () => {

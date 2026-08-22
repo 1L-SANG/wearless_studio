@@ -88,6 +88,14 @@ function getDeviceId() {
 
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
+// finishIdentity 도중 던져지는 에러 중 서버가 실제로 응답해 거절한 경우(err.status 존재 —
+// httpAdapter/facemarket.js 가 실제 HTTP 응답에만 status 를 싣는다)만 터미널로 다룬다.
+// CX 위젯 로딩 실패·토큰 누락·네트워크 왕복 실패(응답 자체를 못 받음)는 서버 쪽 등록 상태가
+// 그대로이므로, 등록을 버리지 않고 같은 단계를 안전하게 재시도할 수 있다.
+function isTransientIdentityError(error) {
+  return !(error && typeof error.status === 'number');
+}
+
 export function ModelRegister() {
   const [step, setStep] = useState('loading');
   const [enrollment, setEnrollment] = useState(null);
@@ -303,14 +311,20 @@ export function ModelRegister() {
         });
       });
       issuedLivenessEnrollmentRef.current = null;
+      if (mounted.current) setSession(null);
       if (!mounted.current) return;
       setEnrollment((current) => ({ ...current, ...decision }));
       setStep(nextEnrollmentStep(decision));
       if (!decision.passed) setError(enrollmentReasonMessage(decision.reason));
-    } catch {
+    } catch (requestError) {
+      if (!mounted.current) return;
+      if (isTransientIdentityError(requestError)) {
+        // 등록·세션을 그대로 두고 신원 확인만 재시도한다 — 사진·동의 재입력 없이.
+        setError(requestError?.message || '일시적인 오류가 발생했어요. 다시 시도해 주세요.');
+        setStep('identity_failed');
+        return;
+      }
       await abandonLiveness();
-    } finally {
-      if (mounted.current) setSession(null);
     }
   }, [abandonLiveness, enrollment?.id, session]);
 
@@ -444,6 +458,13 @@ export function ModelRegister() {
         </div>
       )}
 
+      {step === 'identity_failed' && (
+        <div className="surface">
+          <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {error}</p>
+          <Button variant="primary" block onClick={finishIdentity}>다시 시도</Button>
+        </div>
+      )}
+
       {step === 'processing' && (
         <div className="surface">
           <h2 className={s.stateTitle}>모델 자산을 준비하고 있어요</h2>
@@ -460,7 +481,7 @@ export function ModelRegister() {
         </div>
       )}
 
-      {error && !['failed', 'error'].includes(step) && (
+      {error && !['failed', 'error', 'identity_failed'].includes(step) && (
         <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {error}</p>
       )}
     </div>
