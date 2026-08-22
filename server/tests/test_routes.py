@@ -22,6 +22,15 @@ def _auth(make_token):
     return {"Authorization": f"Bearer {make_token()}"}
 
 
+def test_editor_source_capability_parser_accepts_api_urls_and_rejects_malformed_hosts():
+    asset_id = "33333333-3333-3333-3333-333333333333"
+
+    assert routes._asset_id_from_file_capability(
+        f"https://api.wearless.kr/v1/assets/{asset_id}/file?e=2"
+    ) == asset_id
+    assert routes._asset_id_from_file_capability("http://[") is None
+
+
 def test_patch_explicit_null_compose_mode_is_422_not_500(client, make_token):
     res = client.patch(
         "/v1/projects/any-id", headers=_auth(make_token), json={"composeMode": None}
@@ -612,6 +621,133 @@ def test_editor_new_owns_category_model_and_license_snapshot(
     assert fence == ["lock", "closed"]
 
 
+def test_editor_vary_inherits_trusted_source_license_snapshot(
+    client, make_token, monkeypatch
+):
+    seen = {}
+    fence = []
+    source_asset_id = "33333333-3333-3333-3333-333333333333"
+    client.app.state.settings = replace(
+        client.app.state.settings,
+        facemarket_enabled=True,
+    )
+
+    async def fake_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_analysis(conn, project_id):
+        return {"brandUseCategory": CATEGORY}
+
+    async def fake_provenance(conn, user_id, asset_id):
+        assert asset_id == source_asset_id
+        return {
+            "real_derived": True,
+            "facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
+        }
+
+    async def fake_resolve(conn, model_id, **kwargs):
+        assert model_id == MODEL_ID
+        assert kwargs == {"license_id": LICENSE_ID}
+        return {"id": LICENSE_ID, "model_id": MODEL_ID}
+
+    async def fake_verify(app, row, **kwargs):
+        assert kwargs == {"model_id": MODEL_ID, "brand_use_category": CATEGORY}
+
+    async def fake_create(conn, **kwargs):
+        seen.update(kwargs)
+        return {"id": "job-vary-real"}, True
+
+    async def fake_reserve(conn, user_id, amount):
+        return 9
+
+    async def fake_lock(conn):
+        fence.append("lock")
+
+    async def fake_closed(conn):
+        fence.append("closed")
+        return False
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_project)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(
+        routes.repo,
+        "get_asset_facemarket_provenance",
+        fake_provenance,
+        raising=False,
+    )
+    monkeypatch.setattr(routes.facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(routes.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(routes.repo, "create_job", fake_create)
+    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
+    monkeypatch.setattr(routes.repo, "lock_facemarket_writer_boundary", fake_lock)
+    monkeypatch.setattr(routes.repo, "facemarket_writer_boundary_closed", fake_closed)
+    patch_route_db(monkeypatch, routes)
+
+    response = client.post(
+        "/v1/projects/p1/editor:generate-image",
+        headers=_auth(make_token),
+        json={
+            "mode": "vary",
+            "source": {
+                "src": f"/v1/assets/{source_asset_id}/file?e=2",
+                "cutType": "styling",
+            },
+            "_facemarket": {"modelId": "attacker", "licenseId": "attacker"},
+        },
+    )
+
+    assert response.status_code == 202, response.text
+    assert seen["payload"]["_facemarket"] == {
+        "modelId": MODEL_ID,
+        "licenseId": LICENSE_ID,
+    }
+    assert seen["payload"]["brandUseCategory"] == CATEGORY
+    assert fence == ["lock", "closed"]
+
+
+def test_editor_vary_real_marker_without_trusted_lineage_fails_before_charge(
+    client, make_token, monkeypatch
+):
+    calls = {"create": 0, "reserve": 0}
+    source_asset_id = "33333333-3333-3333-3333-333333333333"
+
+    async def fake_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_provenance(conn, user_id, asset_id):
+        return {"real_derived": True, "facemarket": None}
+
+    async def fake_create(*args, **kwargs):
+        calls["create"] += 1
+
+    async def fake_reserve(*args, **kwargs):
+        calls["reserve"] += 1
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_project)
+    monkeypatch.setattr(
+        routes.repo,
+        "get_asset_facemarket_provenance",
+        fake_provenance,
+        raising=False,
+    )
+    monkeypatch.setattr(routes.repo, "create_job", fake_create)
+    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
+    patch_route_db(monkeypatch, routes)
+
+    response = client.post(
+        "/v1/projects/p1/editor:generate-image",
+        headers=_auth(make_token),
+        json={
+            "mode": "vary",
+            "source": {"src": f"/v1/assets/{source_asset_id}/file"},
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "model_unavailable"
+    assert calls == {"create": 0, "reserve": 0}
+
+
 def test_editor_denial_precedes_job_and_credit(client, make_token, monkeypatch):
     client.app.state.settings = replace(
         client.app.state.settings,
@@ -726,6 +862,12 @@ def test_editor_virtual_and_vary_strip_client_snapshot(
     async def fake_analysis(conn, project_id):
         return {"brandUseCategory": CATEGORY}
 
+    async def fake_provenance(conn, user_id, asset_id):
+        return {
+            "real_derived": False,
+            "facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
+        }
+
     async def fake_create(conn, **kwargs):
         payloads.append(kwargs["payload"])
         return {"id": f"job-{len(payloads)}"}, True
@@ -735,6 +877,12 @@ def test_editor_virtual_and_vary_strip_client_snapshot(
 
     monkeypatch.setattr(routes.repo, "get_project", fake_project)
     monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(
+        routes.repo,
+        "get_asset_facemarket_provenance",
+        fake_provenance,
+        raising=False,
+    )
     monkeypatch.setattr(routes.repo, "create_job", fake_create)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
     patch_route_db(monkeypatch, routes)
@@ -748,7 +896,13 @@ def test_editor_virtual_and_vary_strip_client_snapshot(
     vary = client.post(
         "/v1/projects/p1/editor:generate-image",
         headers=_auth(make_token),
-        json={"mode": "vary", "source": {"src": "/v1/assets/a/file"}, **common},
+        json={
+            "mode": "vary",
+            "source": {
+                "src": "/v1/assets/33333333-3333-3333-3333-333333333333/file"
+            },
+            **common,
+        },
     )
 
     assert virtual.status_code == 202 and vary.status_code == 202

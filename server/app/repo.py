@@ -675,12 +675,56 @@ async def get_asset_for_user(conn: AsyncConnection, user_id: str, asset_id: str)
     """asset 메타(소유 or seed). 베이스 마네킹 로드·파일 서빙·검증용."""
     async with conn.cursor() as cur:
         await cur.execute(
-            "select id::text as id, r2_bucket, r2_key, mime_type, source "
+            "select id::text as id, r2_bucket, r2_key, mime_type, source, metadata "
             "from assets where id = %s and deleted_at is null "
             "and (user_id = %s or source = 'seed')",
             (asset_id, user_id),
         )
         return await cur.fetchone()
+
+
+async def get_asset_facemarket_provenance(
+    conn: AsyncConnection, user_id: str, asset_id: str
+) -> dict | None:
+    """Resolve server-owned REAL lineage for an editor source asset.
+
+    The producing job id is embedded by ``ai_key`` in the asset key.  Joining that job keeps
+    model/license provenance out of the client-controlled vary request.
+    """
+    try:
+        uuid.UUID(str(asset_id))
+    except (TypeError, ValueError):
+        return None
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select a.metadata,
+                   case when jsonb_typeof(j.payload->'_facemarket') = 'object'
+                        then j.payload->'_facemarket'
+                        else null
+                   end as facemarket
+              from assets a
+              left join jobs j
+                on j.id::text = split_part(a.r2_key, '/', 6)
+               and j.user_id = a.user_id
+               and j.project_id = a.project_id
+               and j.kind in ('detail_page', 'editor_image')
+             where a.id = %s
+               and a.user_id = %s
+               and a.deleted_at is null
+            """,
+            (asset_id, user_id),
+        )
+        row = await cur.fetchone()
+    if row is None:
+        return None
+    metadata = row.get("metadata")
+    snapshot = row.get("facemarket")
+    if isinstance(metadata, dict) and "facemarket_real_derived" in metadata:
+        real_derived = metadata["facemarket_real_derived"] is True
+    else:
+        real_derived = isinstance(snapshot, dict)
+    return {"real_derived": real_derived, "facemarket": snapshot}
 
 
 async def get_asset_public(conn: AsyncConnection, asset_id: str) -> dict | None:

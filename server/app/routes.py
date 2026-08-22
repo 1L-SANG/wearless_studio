@@ -12,6 +12,7 @@ import logging
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
@@ -226,6 +227,21 @@ def _generation_in_progress() -> HTTPException:
             "message": "이미 다른 마네킹 생성이 진행 중이에요. 잠시 뒤 다시 시도해 주세요.",
         },
     )
+
+
+def _asset_id_from_file_capability(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parts = urlsplit(value).path.strip("/").split("/")
+    except ValueError:
+        return None
+    if len(parts) != 4 or parts[:2] != ["v1", "assets"] or parts[3] != "file":
+        return None
+    try:
+        return str(uuid.UUID(parts[2]))
+    except (TypeError, ValueError):
+        return None
 
 
 async def _reject_facemarket_cutover_closed(conn) -> None:
@@ -2764,6 +2780,49 @@ async def generate_editor_image(
         analysis = None
         selected_model_id = None
         brand_use_category = None
+        if payload.get("mode") == "vary":
+            source = payload.get("source") or {}
+            source_asset_id = _asset_id_from_file_capability(source.get("src"))
+            provenance = (
+                await repo.get_asset_facemarket_provenance(
+                    conn, user_id, source_asset_id
+                )
+                if source_asset_id
+                else None
+            )
+            if provenance and provenance.get("real_derived") is True:
+                snapshot = provenance.get("facemarket")
+                model_id = (
+                    str(snapshot.get("modelId") or "")
+                    if isinstance(snapshot, dict)
+                    else ""
+                )
+                license_id = (
+                    str(snapshot.get("licenseId") or "")
+                    if isinstance(snapshot, dict)
+                    else ""
+                )
+                if not model_id or not license_id:
+                    raise facemarket._err(
+                        "model_unavailable", "사용할 수 없는 모델입니다.", status=409
+                    )
+                analysis = await repo.get_analysis(conn, project_id) or {}
+                brand_use_category = analysis.get("brandUseCategory")
+                license_row = await facemarket.resolve_model_license(
+                    conn, model_id, license_id=license_id
+                )
+                await facemarket.verify_license(
+                    request.app,
+                    license_row,
+                    model_id=model_id,
+                    brand_use_category=brand_use_category,
+                )
+                await _reject_facemarket_cutover_closed(conn)
+                payload["brandUseCategory"] = brand_use_category
+                payload["_facemarket"] = {
+                    "modelId": str(license_row["model_id"]),
+                    "licenseId": str(license_row["id"]),
+                }
         if payload.get("mode") == "new":
             analysis = await repo.get_analysis(conn, project_id) or {}
             selected_model_id = payload.get("modelId") or payload.pop("model_id", None)

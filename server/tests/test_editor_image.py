@@ -5,7 +5,12 @@ import pytest
 import app.routes as routes
 from app.agents import cut_variator
 from app.workers import editor_image_job as eij
-from conftest import auth_headers, fake_worker_app, make_settings, patch_route_db, worker_job
+from conftest import FakeR2, auth_headers, fake_worker_app, make_settings, patch_route_db, worker_job
+
+
+MODEL_ID = "11111111-1111-1111-1111-111111111111"
+LICENSE_ID = "22222222-2222-2222-2222-222222222222"
+CATEGORY = "일반 여성 의류"
 
 
 # ---------- 라우트 ----------
@@ -216,6 +221,116 @@ def test_run_editor_image_job_vary_charges_cost_and_group_misc(monkeypatch):
     assert captured["group"] is None  # AG-07 결과는 misc 그룹(color_id=None)
     assert captured["cut_type"] == "styling"
     assert captured["image"]["mime"] == "image/png"
+    assert captured["image"]["metadata"] == {
+        "facemarket_real_derived": False,
+    }
+
+
+@pytest.mark.parametrize("late_revoke", [False, True])
+def test_run_editor_image_job_vary_propagates_real_privacy_and_rechecks_license(
+    monkeypatch, late_revoke,
+):
+    captured = {"resolve": 0}
+
+    class CacheR2(FakeR2):
+        def __init__(self):
+            self.caches = []
+            self.keys = []
+            self.objects = set()
+            self.deletes = []
+
+        def put_bytes(self, key, data, mime, cache=None):
+            self.keys.append(key)
+            self.caches.append(cache)
+            self.objects.add(key)
+
+        def delete(self, key):
+            self.deletes.append(key)
+            self.objects.discard(key)
+
+        def head(self, key):
+            return {"size": 1} if key in self.objects else None
+
+    async def fake_get_asset(conn, uid, aid):
+        return {
+            "id": aid,
+            "r2_key": "k/source-real",
+            "mime_type": "image/png",
+            "metadata": {"facemarket_real_derived": True},
+        }
+
+    async def fake_generate(*_args, **_kwargs):
+        return b"VARIED", "image/png"
+
+    async def fake_resolve(conn, model_id, *, license_id=None, **kwargs):
+        captured["resolve"] += 1
+        assert model_id == MODEL_ID and license_id == LICENSE_ID
+        return {
+            "id": LICENSE_ID,
+            "model_id": MODEL_ID,
+            "unit_price": None,
+        }
+
+    async def fake_verify(app, row, **kwargs):
+        captured["verified"] = kwargs
+
+    def fake_verify_local(app, row, **kwargs):
+        captured["verified_local"] = kwargs
+        if late_revoke:
+            raise eij.facemarket._err(
+                "license_revoked", "해지된 라이선스입니다.", status=409
+            )
+
+    async def fake_lock(conn):
+        captured["locked"] = True
+
+    async def fake_finalize(conn, **kwargs):
+        captured["finalize"] = kwargs
+        return {"id": "wardrobe-real-vary"}
+
+    async def fake_failure(conn, **kwargs):
+        captured["failure"] = kwargs
+        return True
+
+    async def fake_emit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(eij.cut_variator, "generate", fake_generate)
+    monkeypatch.setattr(eij.facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(eij.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(eij.facemarket, "verify_license_local", fake_verify_local)
+    monkeypatch.setattr(eij.repo, "lock_facemarket_writer_boundary", fake_lock)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_failure)
+    monkeypatch.setattr(eij, "_emit", fake_emit)
+
+    r2 = CacheR2()
+    app = fake_worker_app(
+        make_settings(gemini_api_key="x", r2_bucket="b", facemarket_enabled=True),
+        r2=r2,
+    )
+    asyncio.run(eij.run_editor_image_job(app, worker_job({
+        "mode": "vary",
+        "source": {"src": "/v1/assets/a1/file", "cutType": "styling"},
+        "changes": [],
+        "brandUseCategory": CATEGORY,
+        "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
+    })))
+
+    assert captured["resolve"] == 2
+    assert captured["locked"] is True
+    assert r2.caches == ["private, no-store"]
+    assert "/ai/j1/" in r2.keys[0]
+    if late_revoke:
+        assert "finalize" not in captured
+        assert captured["failure"]["code"] == "license_revoked"
+        assert r2.deletes == r2.keys
+    else:
+        assert captured["finalize"]["image"]["metadata"] == {
+            "facemarket_real_derived": True,
+        }
+        assert r2.deletes == []
 
 
 def test_run_editor_image_job_vary_missing_source_fails(monkeypatch):

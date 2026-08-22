@@ -143,6 +143,34 @@ async def run_editor_image_job(app, job: dict) -> None:
                 await _fail("변형할 컷을 찾을 수 없어요. 다시 시도해 주세요.",
                             {"error": "source_asset_missing", "src": source.get("src")})
                 return
+            snapshot = payload.get("_facemarket")
+            source_real_derived = (
+                isinstance(src_asset.get("metadata"), dict)
+                and src_asset["metadata"].get("facemarket_real_derived") is True
+            )
+            snapshot_is_complete = (
+                isinstance(snapshot, dict)
+                and bool(str(snapshot.get("modelId") or "").strip())
+                and bool(str(snapshot.get("licenseId") or "").strip())
+            )
+            if source_real_derived or snapshot_is_complete:
+                if not snapshot_is_complete:
+                    raise facemarket._err(
+                        "model_unavailable", "사용할 수 없는 모델입니다.", status=409
+                    )
+                async with pool.connection() as conn:
+                    fm_license_row = await facemarket.resolve_model_license(
+                        conn,
+                        str(snapshot["modelId"]),
+                        license_id=str(snapshot["licenseId"]),
+                    )
+                    await facemarket.verify_license(
+                        app,
+                        fm_license_row,
+                        model_id=str(snapshot["modelId"]),
+                        brand_use_category=payload.get("brandUseCategory"),
+                    )
+                fm_face_injected = True
             src_img = InlineImage(
                 src_asset["mime_type"],
                 await asyncio.to_thread(app.state.r2.get_bytes, src_asset["r2_key"]))

@@ -9,6 +9,7 @@ import contextlib
 import uuid
 
 import app.routes as routes
+import pytest
 
 
 class _Conn:
@@ -61,6 +62,84 @@ def test_public_asset_lookup_loads_server_written_privacy_marker():
     assert "source, metadata from assets" in seen["sql"]
     assert seen["params"] == (asset_id,)
     assert row["metadata"]["facemarket_real_derived"] is True
+
+
+def test_owned_asset_lookup_loads_server_written_privacy_marker():
+    seen = {}
+
+    class Cursor:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def execute(self, sql, params):
+            seen["sql"] = " ".join(sql.split()).lower()
+            seen["params"] = params
+
+        async def fetchone(self):
+            return {"metadata": {"facemarket_real_derived": True}}
+
+    class Conn:
+        def cursor(self):
+            return Cursor()
+
+    asset_id = str(uuid.uuid4())
+    row = asyncio.run(routes.repo.get_asset_for_user(Conn(), "user-1", asset_id))
+
+    assert "mime_type, source, metadata from assets" in seen["sql"]
+    assert seen["params"] == (asset_id, "user-1")
+    assert row["metadata"]["facemarket_real_derived"] is True
+
+
+@pytest.mark.parametrize(
+    ("metadata", "snapshot", "expected"),
+    [
+        ({"facemarket_real_derived": True}, {"modelId": "model-1", "licenseId": "license-1"}, True),
+        ({"facemarket_real_derived": False}, {"modelId": "model-1", "licenseId": "license-1"}, False),
+        ({}, {"modelId": "model-1", "licenseId": "license-1"}, True),
+        ({}, None, False),
+    ],
+)
+def test_asset_facemarket_provenance_prefers_explicit_marker_and_falls_back_to_producer(
+    metadata, snapshot, expected
+):
+    seen = {}
+
+    class Cursor:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def execute(self, sql, params):
+            seen["sql"] = " ".join(sql.split()).lower()
+            seen["params"] = params
+
+        async def fetchone(self):
+            return {
+                "metadata": metadata,
+                "facemarket": snapshot,
+            }
+
+    class Conn:
+        def cursor(self):
+            return Cursor()
+
+    asset_id = str(uuid.uuid4())
+    row = asyncio.run(
+        routes.repo.get_asset_facemarket_provenance(Conn(), "user-1", asset_id)
+    )
+
+    assert "join jobs" in seen["sql"]
+    assert "j.payload->'_facemarket'" in seen["sql"]
+    assert "split_part(a.r2_key, '/', 6)" in seen["sql"]
+    assert "a.user_id = %s" in seen["sql"]
+    assert seen["params"] == (asset_id, "user-1")
+    assert row["real_derived"] is expected
+    assert row["facemarket"] == snapshot
 
 
 def test_asset_file_serves_without_auth(client, monkeypatch):

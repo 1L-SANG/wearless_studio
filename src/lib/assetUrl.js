@@ -16,18 +16,27 @@
    ============================================================= */
 
 const BASE_URL = import.meta.env?.VITE_API_BASE_URL ?? '';
-export const ASSET_CACHE_VERSION = '2';
+
+export function resolveAssetCacheVersion(value) {
+  return value === '2' ? '2' : '1';
+}
+
+// Backend privacy marker/backfill must land before a client can request the new capability.
+// Unset and unexpected values deliberately stay on the legacy version.
+export const ASSET_CACHE_VERSION = resolveAssetCacheVersion(
+  import.meta.env?.VITE_ASSET_CACHE_VERSION,
+);
 
 // `http(s)://<host>/v1/assets/...` → 캡처그룹 1 = `/v1/assets/...`
 const ASSET_HOST_RE = /^https?:\/\/[^/]+(\/v1\/assets\/.*)$/;
 const ASSET_CAPABILITY_RE = /^(.*\/v1\/assets\/[^/?#]+\/(?:file|bytes))(\?[^#]*)?(#.*)?$/;
 
 /** 현재 클라이언트가 과거 immutable capability cache를 재사용하지 않도록 버전을 올린다. */
-export function versionAssetCapabilityUrl(value) {
+export function versionAssetCapabilityUrl(value, version = ASSET_CACHE_VERSION) {
   const match = ASSET_CAPABILITY_RE.exec(value);
   if (!match) return value;
   const params = new URLSearchParams((match[2] || '').slice(1));
-  params.set('e', ASSET_CACHE_VERSION);
+  params.set('e', version);
   return `${match[1]}?${params.toString()}${match[3] || ''}`;
 }
 
