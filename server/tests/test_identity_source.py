@@ -1,6 +1,8 @@
 """아이덴티티-소스 상태머신 + 실존 자산 resolve 검증(codex [P1])."""
 
 import asyncio
+import logging
+
 import pytest
 
 from app.agents.identity_source import (
@@ -289,3 +291,48 @@ def test_missing_assets_source_hash_rejects():
     # assets_status='ready' 인데 assets_source_hash 가 비어 있으면(이론상
     # 발생 불가해야 하는 상태) 검증 불가로 간주해 fail-closed.
     assert _run(_asset_rows(assets_source_hash=None)) is None
+
+
+# ── final-review Minor M1: mismatch reject 관측성 ──
+# Task 5 로 assets_source_hash 가 ENFORCED 됐지만, mismatch 때도 다른 REJECTED
+# 사유와 똑같은 bare None 만 반환한다 — 실제 데이터 이상(변조·유실)이 터져도
+# 운영에서 흔한 REJECTED 와 구분할 신호가 없다. mismatch 발생 지점에서만 distinct
+# 사유를 로그로 남기고(PII 없음: reason·model_id·enrollment_id 만, 해시 값 자체는
+# 남기지 않음), 다른 reject 경로에는 노이즈를 추가하지 않는다.
+
+
+def test_hash_mismatch_logs_distinct_reason(caplog):
+    with caplog.at_level(logging.WARNING, logger="wearless.identity_source"):
+        result = _run(_asset_rows(assets_source_hash="deadbeef" * 8))
+    assert result is None
+    matches = [
+        r for r in caplog.records if "assets_source_hash_mismatch" in r.getMessage()
+    ]
+    assert len(matches) == 1
+    rec = matches[0]
+    assert getattr(rec, "model_id", None) == _FM_UUID
+    assert getattr(rec, "enrollment_id", None) == _ENROLLMENT_ID
+    # PII/비밀 금지: 실제 해시 값이 로그 어디에도 나타나면 안 된다.
+    assert "deadbeef" not in rec.getMessage()
+    assert "deadbeef" not in repr(rec.__dict__)
+
+
+def test_matching_hash_does_not_log_mismatch(caplog):
+    with caplog.at_level(logging.WARNING, logger="wearless.identity_source"):
+        refs = _run(_asset_rows(assets_source_hash=_DEFAULT_SOURCE_HASH))
+    assert refs is not None and len(refs) == 2
+    assert not any(
+        "assets_source_hash_mismatch" in r.getMessage() for r in caplog.records
+    )
+
+
+def test_other_reject_reasons_do_not_log_hash_mismatch(caplog):
+    # state check(모델 상태 불량)와 per-view check(자산 뷰 필드 결손)는 hash 비교
+    # 지점과 별개 분기다 — mismatch 로그가 여기까지 새어 나오면 안 된다.
+    with caplog.at_level(logging.WARNING, logger="wearless.identity_source"):
+        state_reject = _run(_asset_rows(model_status="pending"))
+        view_reject = _run(_asset_rows(face_key=""))
+    assert state_reject is None and view_reject is None
+    assert not any(
+        "assets_source_hash_mismatch" in r.getMessage() for r in caplog.records
+    )

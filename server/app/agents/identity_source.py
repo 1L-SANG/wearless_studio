@@ -20,8 +20,11 @@ angle45/side)의 지문을 fm_models.assets_source_hash 에 새긴다. resolve_r
 """
 
 import hashlib
+import logging
 import uuid
 
+
+log = logging.getLogger("wearless.identity_source")
 
 _ANGLES = ("front", "angle45", "side")
 
@@ -125,6 +128,17 @@ async def resolve_real_model_assets(
         [by_angle[angle] for angle in _ANGLES]
     )
     if current_source_hash != str(state.get("assets_source_hash") or ""):
+        # 관측 로그(PII 없음 — 사유 코드·model_id·enrollment_id 만, 해시/다이제스트
+        # 값 자체는 남기지 않는다). 다른 REJECTED 사유와 같은 bare None 만 반환하면
+        # 운영에서 진짜 데이터 이상(변조·유실)과 흔한 REJECTED 를 구분할 수 없다.
+        log.warning(
+            "assets_source_hash_mismatch",
+            extra={
+                "reason": "assets_source_hash_mismatch",
+                "model_id": str(model_id),
+                "enrollment_id": str(enrollment_id),
+            },
+        )
         return None
     by_view = {r["view"]: r for r in rows if r.get("view")}
     out = []
