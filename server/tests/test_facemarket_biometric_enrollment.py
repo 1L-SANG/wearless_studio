@@ -238,6 +238,12 @@ class FakeCursor:
                     "expires_at": row["expires_at"],
                     "liveness_session_digest": row.get("liveness_session_digest"),
                     "device_digest": row["device_digest"],
+                    # Task3: /complete 의 바인딩이 읽는 저장된 신분증 증거 컬럼.
+                    "identity_ci_hash": row.get("identity_ci_hash"),
+                    "identity_name_masked": row.get("identity_name_masked"),
+                    "identity_birth_year": row.get("identity_birth_year"),
+                    "identity_tx_digest": row.get("identity_tx_digest"),
+                    "identity_contract_version": row.get("identity_contract_version"),
                 }
                 if row
                 else None
@@ -1383,10 +1389,10 @@ def complete_enrollment(
     auth,
     enrollment_id,
     session_id,
-    token="oacx-token-used-only-now",
     id_photo_hex=PORTRAIT_HEX,
 ):
-    body = {"sessionId": session_id, "token": token}
+    # Task3: /complete 는 더 이상 OACX token 을 받지 않는다(신분증 게이트는 /identity 가 전담).
+    body = {"sessionId": session_id}
     if id_photo_hex is not None:
         body["idPhotoHex"] = id_photo_hex
     return client.post(
@@ -1394,6 +1400,20 @@ def complete_enrollment(
         json=body,
         headers=auth(),
     )
+
+
+def test_complete_binds_using_stored_identity_without_token(
+    enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition, completion_fakes
+):
+    eid = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
+    )
+    res = complete_enrollment(enrollment_client, auth, eid, fake_rekognition.session_id)
+    assert res.status_code == 202, res.text
+    body = res.json()
+    assert body["passed"] is True and body["status"] == "asset_building"
+    # 바인딩된 모델 display_name 이 저장된 identity_name_masked 에서 온다(재조회 없이).
+    assert enrollment_store.models[0]["display_name"]
 
 
 def assert_completion_failure(response, store, reason, *, retryable):
@@ -1464,7 +1484,6 @@ def test_complete_uses_distinct_thresholds_and_queues_bound_asset_job(
     }
     serialized = enrollment_store.serialized()
     for secret in (
-        "oacx-token-used-only-now",
         "portrait-bytes",
         "live-reference",
         fake_rekognition.session_id,
@@ -1514,7 +1533,6 @@ def test_cancel_wins_before_completion_finalization_without_resurrection(
                 enrollment_id=enrollment_id,
                 user_id="user-1",
                 session_id=fake_rekognition.session_id,
-                token="oacx-token-used-only-now",
                 id_photo_hex=PORTRAIT_HEX,
             )
         )
@@ -1583,7 +1601,6 @@ def test_cancel_wins_before_provider_failure_without_cooldown_or_resurrection(
                 enrollment_id=enrollment_id,
                 user_id="user-1",
                 session_id=fake_rekognition.session_id,
-                token="oacx-token-used-only-now",
                 id_photo_hex=PORTRAIT_HEX,
             )
         )
@@ -1668,7 +1685,6 @@ def test_complete_surfaces_raw_release_evidence_write_failure(
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "enrollment_unavailable"
     assert enrollment_store.enrollments[0]["raw_deletion_evidence"] == {}
-    assert "oacx-token-used-only-now" not in response.text
     assert fake_rekognition.session_id not in response.text
 
 
@@ -1702,7 +1718,6 @@ def test_complete_waits_for_raw_release_evidence_before_cancellation_exits(
                 enrollment_id=enrollment_id,
                 user_id="user-1",
                 session_id=fake_rekognition.session_id,
-                token="oacx-token-used-only-now",
                 id_photo_hex=PORTRAIT_HEX,
             )
         )
@@ -1718,15 +1733,11 @@ def test_complete_waits_for_raw_release_evidence_before_cancellation_exits(
     asyncio.run(run_and_cancel())
 
 
-def test_complete_hmacs_owned_ci_buffer_without_immutable_copy(
-    enrollment_client,
-    auth,
-    enrollment_store,
-    fake_r2,
-    fake_rekognition,
-    completion_fakes,
-    monkeypatch,
+def test_identity_hmacs_owned_ci_buffer_without_immutable_copy(
+    enrollment_client, auth, enrollment_store, completion_fakes, monkeypatch
 ):
+    # Task3: 원시 CI 의 HMAC 계산은 /complete 가 아니라 앞단 /identity 로 이동했다. CI 는 폐기
+    # 가능한 가변 버퍼(bytearray)에서 바로 해시돼야 한다 — 불변 복사본이 생기면 wipe 가 무의미.
     seen_message_types = []
     original_hmac_new = hmac.new
 
@@ -1735,15 +1746,11 @@ def test_complete_hmacs_owned_ci_buffer_without_immutable_copy(
         return original_hmac_new(key, msg, digestmod)
 
     monkeypatch.setattr(facemarket_enrollment.hmac, "new", track_hmac_new)
-    enrollment_id = create_complete_ready_enrollment(
-        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
-    )
+    eid = create_enrollment(enrollment_client, auth, verify_identity=False)
 
-    response = complete_enrollment(
-        enrollment_client, auth, enrollment_id, fake_rekognition.session_id
-    )
+    response = verify_identity(enrollment_client, auth, eid)
 
-    assert response.status_code == 202, response.text
+    assert response.status_code == 200, response.text
     assert bytearray in seen_message_types
 
 
@@ -1774,52 +1781,49 @@ def test_complete_rejects_session_digest_mismatch_without_provider_call(
     assert enrollment_store.enrollments[0]["cooldown_until"] is None
 
 
-def test_complete_rejects_same_oacx_token_replay(
-    enrollment_client,
-    auth,
-    enrollment_store,
-    fake_r2,
-    fake_rekognition,
-    completion_fakes,
+# Task3 참고: 토큰 재사용(replay)·미성년 차단·교차유저 CI 검증은 이제 /complete 가 아니라
+# 앞단 /identity 게이트가 전담한다. 아래 두 테스트가 실 /identity 엔드포인트에서 replay 와
+# 교차유저 CI 를 각각 검증한다(미성년은 test_identity_verify_blocks_minor 가 커버).
+
+
+def test_identity_verify_rejects_replayed_token(
+    enrollment_client, auth, enrollment_store, completion_fakes
 ):
-    enrollment_id = create_complete_ready_enrollment(
-        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
-    )
-    token = "already-used-oacx-token"
-    enrollment_store.identities.append(
-        {"cx_tx_id": f"cxsha256:{hashlib.sha256(token.encode()).hexdigest()}"}
-    )
+    # 같은 OACX token 이 이미 소비됐다면(digest 가 fm_identity_verifications 에 존재) 재사용 거절.
+    eid = create_enrollment(enrollment_client, auth, verify_identity=False)
+    token_digest = f"cxsha256:{hashlib.sha256(IDENTITY_TOKEN.encode()).hexdigest()}"
+    enrollment_store.identities.append({"cx_tx_id": token_digest})
 
-    response = complete_enrollment(
-        enrollment_client, auth, enrollment_id, fake_rekognition.session_id, token
-    )
+    res = verify_identity(enrollment_client, auth, eid)
 
-    assert_completion_failure(
-        response, enrollment_store, "identity_replay", retryable=False
-    )
+    assert res.status_code == 400, res.text
+    assert res.json()["error"]["code"] == "identity_replay"
+    assert enrollment_store.enrollments[0]["status"] == "identity_pending"
 
 
-def test_complete_maps_minor_birth_failure(
-    enrollment_client,
-    auth,
-    enrollment_store,
-    fake_r2,
-    fake_rekognition,
-    completion_fakes,
+def test_identity_verify_rejects_cross_user_ci(
+    enrollment_client, auth, enrollment_store, completion_fakes
 ):
-    enrollment_id = create_complete_ready_enrollment(
-        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
+    # CI 가 다른 유저 모델에 이미 묶여 있으면(소유권 불일치) 회복 플로우로 보낸다.
+    # ci_hash 는 엔드포인트와 동일하게 계산: hmac(pepper="pep", evidence.ci=b"dev-ci-value").
+    enrollment_store.models.append(
+        {
+            "id": "other-model",
+            "user_id": "other-user",
+            "display_name": "다른 사람",
+            "status": "verified",
+            "ci_hash": hmac.new(b"pep", b"dev-ci-value", hashlib.sha256).hexdigest(),
+            "assets_status": "ready",
+            "current_enrollment_id": None,
+        }
     )
-    completion_fakes["trans"] = dev_trans(birth="20100102")
+    eid = create_enrollment(enrollment_client, auth, verify_identity=False)
 
-    response = complete_enrollment(
-        enrollment_client, auth, enrollment_id, fake_rekognition.session_id
-    )
+    res = verify_identity(enrollment_client, auth, eid)
 
-    assert_completion_failure(
-        response, enrollment_store, "minor_blocked", retryable=False
-    )
-    assert enrollment_store.enrollments[0]["cooldown_until"] is None
+    assert res.status_code == 400, res.text
+    assert res.json()["error"]["code"] == "identity_recovery_required"
+    assert enrollment_store.enrollments[0]["status"] == "identity_pending"
 
 
 @pytest.mark.parametrize(
@@ -1913,15 +1917,15 @@ def test_complete_requires_identity_recovery_for_ci_owned_by_another_account(
     enrollment_id = create_complete_ready_enrollment(
         enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
     )
+    # Task3: /complete 는 저장된 identity_ci_hash 를 그대로 읽어 소유권을 재확인한다(방어선).
+    # _fast_forward_identity 가 채운 더미 ci_hash 와 같은 값을 다른 유저 모델에 심어 충돌을 유발.
     enrollment_store.models.append(
         {
             "id": "other-model",
             "user_id": "other-user",
             "display_name": "다른 사람",
             "status": "verified",
-            "ci_hash": hmac.new(
-                b"pep", b"dev-ci-value", hashlib.sha256
-            ).hexdigest(),
+            "ci_hash": enrollment_store.enrollments[0]["identity_ci_hash"],
             "assets_status": "ready",
             "current_enrollment_id": None,
         }

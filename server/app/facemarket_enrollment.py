@@ -171,7 +171,8 @@ class LivenessSessionBody(CamelModel):
 
 class CompleteEnrollmentBody(CamelModel):
     session_id: str
-    token: str
+    # Task3: 신분증(CI) 검증은 앞단 /identity 가 전담한다 — /complete 는 SFace 매칭만 하고
+    # OACX token 을 더 이상 받지 않는다(저장된 identity_* 증거를 읽어 모델을 바인딩).
     # D1: OACX RESULT-step 신분증 초상(`data.dlphotoimage`, HEX JPEG) — 프론트가 위젯 콜백에서
     # 그대로 릴레이한다. 스키마 레벨에서는 optional(구버전 클라·계약 모드 무관하게 요청 자체는
     # 받아준다) — 실제 요구 여부는 process_enrollment_completion 이 fail-closed 로 강제한다.
@@ -1662,9 +1663,8 @@ async def _fail_enrollment(
 
 
 async def _initial_completion_checks(
-    request: Request, *, enrollment_id: str, user_id: str, session_id: str, token: str
+    request: Request, *, enrollment_id: str, user_id: str, session_id: str
 ) -> tuple[dict, list[dict]]:
-    token_digest = f"cxsha256:{hashlib.sha256(token.encode()).hexdigest()}"
     async with get_conn(request) as conn:
         await _assert_account_open(conn, user_id)
         async with conn.cursor() as cur:
@@ -1672,7 +1672,9 @@ async def _initial_completion_checks(
                 """
                 select e.id::text as id, e.user_id::text as user_id,
                        e.model_id::text as model_id, e.status, e.cooldown_until,
-                       e.expires_at, e.liveness_session_digest, e.device_digest
+                       e.expires_at, e.liveness_session_digest, e.device_digest,
+                       e.identity_ci_hash, e.identity_name_masked, e.identity_birth_year,
+                       e.identity_tx_digest, e.identity_contract_version
                 from fm_biometric_enrollments e
                 where e.id = %s and e.user_id = %s
                 for update
@@ -1686,6 +1688,14 @@ async def _initial_completion_checks(
                 raise _err(
                     "invalid_enrollment_state",
                     "현재 등록 단계에서는 인증을 완료할 수 없습니다.",
+                    status=409,
+                )
+            # Task3 방어선: 신분증 게이트(/identity)를 통과한 등록만 완료할 수 있다.
+            # identity_tx_digest 가 없다면 앞단 CI 증거가 저장된 적이 없다는 뜻 → 완료 불가.
+            if not row.get("identity_tx_digest"):
+                raise _err(
+                    "invalid_enrollment_state",
+                    "본인확인을 먼저 완료해 주세요.",
                     status=409,
                 )
             if row.get("cooldown_until") and row["cooldown_until"] > datetime.now(timezone.utc):
@@ -1706,21 +1716,6 @@ async def _initial_completion_checks(
             if row["liveness_session_digest"] != hashlib.sha256(session_id.encode()).hexdigest():
                 await conn.commit()
                 raise EnrollmentMappedError("liveness_retry")
-            await cur.execute(
-                """
-                select exists(
-                  select 1 from fm_identity_verifications
-                  where cx_tx_id = %s and cx_tx_id_format = 'sha256-v1'
-                  union all
-                  select 1 from fm_biometric_enrollments
-                  where oacx_tx_digest = %s
-                ) as replayed
-                """,
-                (token_digest, token_digest),
-            )
-            if (await cur.fetchone())["replayed"]:
-                await conn.commit()
-                raise EnrollmentMappedError("identity_replay")
             await cur.execute(
                 """
                 select angle, r2_key, mime_type
@@ -1753,12 +1748,10 @@ async def process_enrollment_completion(
     enrollment_id: str,
     user_id: str,
     session_id: str,
-    token: str,
     id_photo_hex: str | None = None,
 ) -> EnrollmentDecision:
     settings = request.app.state.settings
     liveness = None
-    evidence = None
     portrait: bytearray | None = None
     photo_buffers: list[bytearray] = []
     processing_started = False
@@ -1768,7 +1761,6 @@ async def process_enrollment_completion(
             enrollment_id=enrollment_id,
             user_id=user_id,
             session_id=session_id,
-            token=token,
         )
         processing_started = True
         try:
@@ -1782,10 +1774,9 @@ async def process_enrollment_completion(
             raise EnrollmentMappedError(exc.reason) from None
 
         try:
+            # Task3: CI·이름·생년월일 검증은 앞단 /identity 가 이미 마쳤다(저장 컬럼을 아래에서
+            # 읽는다). 여기서는 SFace 매칭에 쓸 신분증 초상만 파싱한다 — trans 재조회 없음.
             contract = cx_identity.get_oacx_biometric_contract(settings)
-            trans = await cx_identity.fetch_trans(settings.cx_trans_base_url, token)
-            # CI·이름·생년월일은 trans/{token}(서버발 조회) 에서만 온다 — 서버검증 완료.
-            evidence = cx_identity.parse_oacx_biometric_evidence(trans, contract=contract)
             # 초상은 D1부터 trans 필드가 아니라 클라가 OACX RESULT-step(`data.dlphotoimage`)
             # 콜백에서 그대로 릴레이한 HEX 다 — cx_identity.parse_oacx_portrait_hex 의
             # 모듈 docstring 에 이 릴레이의 보안 경계(client-relayed, bounded)를 기록해 두었다.
@@ -1823,10 +1814,13 @@ async def process_enrollment_completion(
         except Exception:
             raise EnrollmentMappedError("qc_unavailable") from None
 
-        token_digest = f"cxsha256:{hashlib.sha256(token.encode()).hexdigest()}"
-        ci_hash = hmac.new(
-            settings.fm_ci_pepper.encode(), evidence.ci, hashlib.sha256
-        ).hexdigest()
+        # Task3: 바인딩 증거는 앞단 /identity 가 fm_biometric_enrollments 에 저장한 값을 읽는다.
+        # CI 는 재계산할 원본 token 이 없다 — 저장된 HMAC(identity_ci_hash)을 그대로 쓴다.
+        ci_hash = row["identity_ci_hash"]
+        identity_tx_digest = row["identity_tx_digest"]
+        identity_name_masked = row["identity_name_masked"]
+        identity_birth_year = row["identity_birth_year"]
+        identity_contract_version = row["identity_contract_version"]
         async with get_conn(request) as conn:
             await _assert_account_open(conn, user_id)
             await _reject_cutover_closed(conn)
@@ -1869,7 +1863,7 @@ async def process_enrollment_completion(
                         set ci_hash = %s, display_name = %s, user_id = %s
                         where id = %s
                         """,
-                        (ci_hash, evidence.name_masked, user_id, model_id),
+                        (ci_hash, identity_name_masked, user_id, model_id),
                     )
                 else:
                     await cur.execute(
@@ -1878,7 +1872,7 @@ async def process_enrollment_completion(
                         values (%s, %s, 'pending', %s)
                         returning id::text as id
                         """,
-                        (user_id, evidence.name_masked, ci_hash),
+                        (user_id, identity_name_masked, ci_hash),
                     )
                     model_id = (await cur.fetchone())["id"]
                 try:
@@ -1890,10 +1884,10 @@ async def process_enrollment_completion(
                         """,
                         (
                             model_id,
-                            token_digest,
+                            identity_tx_digest,
                             Json({
-                                "nameMasked": evidence.name_masked,
-                                "birthYear": evidence.birth[:4],
+                                "nameMasked": identity_name_masked,
+                                "birthYear": identity_birth_year,
                                 "biometric": True,
                             }),
                         ),
@@ -1919,11 +1913,11 @@ async def process_enrollment_completion(
                     """,
                     (
                         model_id,
-                        token_digest,
+                        identity_tx_digest,
                         settings.fm_match_policy_version,
                         Json({
                             "faceLiveness": liveness.provider_version,
-                            "oacx": evidence.contract_version,
+                            "oacx": identity_contract_version,
                             "faceMatch": "sface-one-to-one",
                         }),
                         enrollment_id,
@@ -1953,8 +1947,7 @@ async def process_enrollment_completion(
             expected_status="processing" if processing_started else "liveness_pending",
         )
     finally:
-        if evidence is not None:
-            cx_identity.wipe_bytearray(evidence.ci)
+        # Task3: 원시 CI(evidence.ci)는 앞단 /identity 가 이미 폐기했다 — 여기서 다룰 게 없다.
         if portrait is not None:
             cx_identity.wipe_bytearray(portrait)
         if liveness is not None:
@@ -1990,16 +1983,12 @@ async def complete_enrollment(
         session_id = str(uuid.UUID(str(body.session_id)))
     except (AttributeError, TypeError, ValueError):
         raise _err("invalid_liveness_session", "인증 세션을 확인할 수 없습니다.")
-    token = (body.token or "").strip()
-    if not token:
-        raise _err("token_required", "인증 토큰이 없습니다.")
     try:
         decision = await process_enrollment_completion(
             request,
             enrollment_id=enrollment_id,
             user_id=user_id,
             session_id=session_id,
-            token=token,
             id_photo_hex=body.id_photo_hex,
         )
     except HTTPException:
