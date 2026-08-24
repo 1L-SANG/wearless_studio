@@ -1,4 +1,3 @@
-import base64
 import json
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -11,9 +10,11 @@ from app import cx_identity, facemarket_enrollment, main
 from app.config import load_settings
 from app.cx_identity import (
     DEV_MOCK_OACX_BIOMETRIC_CONTRACT,
+    PROD_DLPHOTO_OACX_BIOMETRIC_CONTRACT,
     OacxBiometricError,
     get_oacx_biometric_contract,
     parse_oacx_biometric_evidence,
+    parse_oacx_portrait_hex,
     wipe_bytearray,
 )
 from app.facemarket_enrollment import router as biometric_enrollment_router
@@ -21,16 +22,19 @@ from app.main import create_app
 from conftest import make_settings
 
 
+# trans/{token} 응답에는 CI·이름·생년월일만 남는다 — 초상은 D1부터 클라가 릴레이하는
+# OACX RESULT-step data.dlphotoimage(hex) 에서 오지, trans 필드가 아니다.
 DEV_TRANS = {
     "ci": "dev-ci-value",
     "birth": "19900102",
     "nm": "홍길동",
     "txId": "tx-dev-1",
-    "idPortraitBase64": base64.b64encode(b"portrait-bytes").decode(),
-    "idPortraitMime": "image/jpeg",
-    "issuedAt": "2026-08-21T03:00:00Z",
 }
 NOW = datetime(2026, 8, 21, 3, 2, tzinfo=timezone.utc)
+
+# 진짜 JPEG 매직바이트(ffd8ff)로 시작하는 최소 픽스처 — 실제 신분증 사진이 아니라 포맷 검증용.
+PORTRAIT_JPEG_BYTES = b"\xff\xd8\xff" + b"portrait-bytes"
+PORTRAIT_HEX = PORTRAIT_JPEG_BYTES.hex()
 
 
 class RecordingRekognition:
@@ -102,6 +106,28 @@ def test_biometric_settings_defaults_off():
 def test_production_rejects_dev_mock_contract():
     with pytest.raises(RuntimeError, match="verified OACX biometric contract"):
         create_app(biometric_settings(app_env="production"))
+
+
+def test_production_accepts_real_prod_contract(monkeypatch):
+    # D1: prod-dlphoto-v1 은 실 프로덕션 계약이라 app_env=='dev' 게이트 없이 통과해야 한다.
+    monkeypatch.setattr(
+        facemarket_enrollment,
+        "build_biometric_aws_clients",
+        lambda _settings: (object(), object()),
+    )
+
+    app = create_app(
+        biometric_settings(
+            app_env="production",
+            fm_oacx_contract_mode="prod-dlphoto-v1",
+            # 이 테스트의 관심사는 OACX 계약 게이트뿐 — production 의 별도 VC 필수 게이트
+            # (main.py::_validate_facemarket_vc_settings)는 여기서 무관하니 충족만 시켜둔다.
+            fm_vc_required=True,
+            opendid_holder_hmac_secret="holder-secret",
+        )
+    )
+
+    assert app.state.fm_rekognition is not None
 
 
 def test_enabled_feature_requires_three_calibrated_settings():
@@ -364,130 +390,53 @@ def test_sts_credentials_are_fifteen_minutes_start_only_and_region_locked():
     }
 
 
-def test_oacx_dev_contract_extracts_mutable_sensitive_buffers():
+def test_oacx_dev_contract_extracts_ci_name_birth_from_trans():
     evidence = parse_oacx_biometric_evidence(
-        DEV_TRANS, contract=DEV_MOCK_OACX_BIOMETRIC_CONTRACT, now=NOW
+        DEV_TRANS, contract=DEV_MOCK_OACX_BIOMETRIC_CONTRACT
     )
 
     assert evidence.ci == bytearray(b"dev-ci-value")
-    assert evidence.portrait == bytearray(b"portrait-bytes")
+    assert evidence.birth == "19900102"
     assert evidence.name_masked == "홍*동"
     assert evidence.contract_version == "dev-mock-v1"
+    assert not hasattr(evidence, "portrait")  # 초상은 trans/evidence 가 아니라 클라 HEX 에서 온다
 
 
 @pytest.mark.parametrize(
     "patch,reason",
     [
-        ({"idPortraitBase64": None}, "id_portrait_unavailable"),
-        ({"idPortraitBase64": "not-base64"}, "id_portrait_unavailable"),
-        ({"idPortraitMime": "application/pdf"}, "id_portrait_unavailable"),
-        ({"issuedAt": "2026-08-21T02:54:59Z"}, "id_portrait_unavailable"),
+        ({"ci": None}, "id_portrait_unavailable"),
+        ({"nm": ""}, "id_portrait_unavailable"),
+        ({"birth": "not-a-birth"}, "id_portrait_unavailable"),
         ({"birth": "20100102"}, "minor_blocked"),
     ],
 )
-def test_oacx_unusable_portrait_fails_with_sanitized_reason(patch, reason):
+def test_oacx_unusable_identity_fails_with_sanitized_reason(patch, reason):
     trans = {**DEV_TRANS, **patch}
 
     with pytest.raises(OacxBiometricError) as error:
-        parse_oacx_biometric_evidence(
-            trans, contract=DEV_MOCK_OACX_BIOMETRIC_CONTRACT, now=NOW
-        )
+        parse_oacx_biometric_evidence(trans, contract=DEV_MOCK_OACX_BIOMETRIC_CONTRACT)
 
     assert error.value.reason == reason
     assert "dev-ci-value" not in str(error.value)
-    assert "idPortraitBase64" not in str(error.value)
-
-
-def test_oacx_validates_birth_after_contract_fields_and_ttl():
-    trans = {
-        **DEV_TRANS,
-        "birth": "20100102",
-        "issuedAt": "2026-08-21T02:54:59Z",
-    }
-
-    with pytest.raises(OacxBiometricError) as error:
-        parse_oacx_biometric_evidence(
-            trans, contract=DEV_MOCK_OACX_BIOMETRIC_CONTRACT, now=NOW
-        )
-
-    assert error.value.reason == "id_portrait_unavailable"
 
 
 @pytest.mark.parametrize(
-    "identity,issued_at,reason",
+    "identity,reason",
     [
-        ({"birth": "20100102"}, DEV_TRANS["issuedAt"], "minor_blocked"),
-        ({"birth": "20100102"}, "2026-08-21T02:54:59Z", "id_portrait_unavailable"),
-        ({}, DEV_TRANS["issuedAt"], "id_portrait_unavailable"),
+        ({"birth": "20100102"}, "minor_blocked"),
+        ({}, "id_portrait_unavailable"),
     ],
 )
-def test_oacx_birth_path_is_contract_owned_after_valid_ttl(
-    identity, issued_at, reason
-):
-    contract = replace(
-        DEV_MOCK_OACX_BIOMETRIC_CONTRACT,
-        birth_path=("identity", "birth"),
-    )
-    trans = {
-        key: value
-        for key, value in DEV_TRANS.items()
-        if key not in {"birth", "issuedAt"}
-    }
-    trans.update(identity=identity, issuedAt=issued_at)
+def test_oacx_birth_path_is_contract_owned(identity, reason):
+    contract = replace(DEV_MOCK_OACX_BIOMETRIC_CONTRACT, birth_path=("identity", "birth"))
+    trans = {key: value for key, value in DEV_TRANS.items() if key != "birth"}
+    trans.update(identity=identity)
 
     with pytest.raises(OacxBiometricError) as error:
-        parse_oacx_biometric_evidence(trans, contract=contract, now=NOW)
+        parse_oacx_biometric_evidence(trans, contract=contract)
 
     assert error.value.reason == reason
-
-
-def test_oacx_oversized_portrait_fails_with_sanitized_reason():
-    trans = {
-        **DEV_TRANS,
-        "idPortraitBase64": base64.b64encode(b"x" * (5 * 1024 * 1024 + 1)).decode(),
-    }
-
-    with pytest.raises(OacxBiometricError) as error:
-        parse_oacx_biometric_evidence(
-            trans, contract=DEV_MOCK_OACX_BIOMETRIC_CONTRACT, now=NOW
-        )
-
-    assert error.value.reason == "id_portrait_unavailable"
-
-
-def test_oacx_oversized_encoding_is_rejected_before_decode(monkeypatch):
-    contract = replace(DEV_MOCK_OACX_BIOMETRIC_CONTRACT, max_portrait_bytes=3)
-    trans = {**DEV_TRANS, "idPortraitBase64": base64.b64encode(b"four").decode()}
-    monkeypatch.setattr(
-        cx_identity.base64,
-        "b64decode",
-        lambda *args, **kwargs: pytest.fail("oversized base64 reached decoder"),
-    )
-
-    with pytest.raises(OacxBiometricError) as error:
-        parse_oacx_biometric_evidence(trans, contract=contract, now=NOW)
-
-    assert error.value.reason == "id_portrait_unavailable"
-
-
-def test_oacx_post_decode_failure_wipes_portrait(monkeypatch):
-    wiped = []
-
-    def track_wipe(value):
-        wipe_bytearray(value)
-        if value is not None:
-            wiped.append(value)
-
-    monkeypatch.setattr(cx_identity, "wipe_bytearray", track_wipe)
-    trans = {**DEV_TRANS, "issuedAt": "2026-08-21T02:54:59Z"}
-
-    with pytest.raises(OacxBiometricError):
-        parse_oacx_biometric_evidence(
-            trans, contract=DEV_MOCK_OACX_BIOMETRIC_CONTRACT, now=NOW
-        )
-
-    assert len(wiped) == 1
-    assert wiped[0] == bytearray(len(b"portrait-bytes"))
 
 
 def test_oacx_production_cannot_select_dev_contract():
@@ -499,6 +448,17 @@ def test_oacx_production_cannot_select_dev_contract():
     assert error.value.reason == "oacx_contract_unavailable"
 
 
+def test_oacx_prod_contract_is_available_outside_dev():
+    # D1: 실 프로덕션 계약은 app_env=='dev' 게이트가 없다 — dev-mock-v1 만 dev 전용.
+    contract = get_oacx_biometric_contract(
+        make_settings(app_env="production", fm_oacx_contract_mode="prod-dlphoto-v1")
+    )
+
+    assert contract is PROD_DLPHOTO_OACX_BIOMETRIC_CONTRACT
+    assert contract.version == "prod-dlphoto-v1"
+    assert contract.portrait_encoding == "hex"
+
+
 def test_oacx_sensitive_bytearrays_can_be_wiped():
     value = bytearray(b"sensitive")
 
@@ -506,3 +466,66 @@ def test_oacx_sensitive_bytearrays_can_be_wiped():
     wipe_bytearray(None)
 
     assert value == bytearray(len(value))
+
+
+def test_portrait_hex_decodes_valid_jpeg():
+    portrait = parse_oacx_portrait_hex(
+        PORTRAIT_HEX, contract=DEV_MOCK_OACX_BIOMETRIC_CONTRACT
+    )
+
+    assert portrait == bytearray(PORTRAIT_JPEG_BYTES)
+
+
+def test_portrait_hex_tolerates_uppercase():
+    portrait = parse_oacx_portrait_hex(
+        PORTRAIT_HEX.upper(), contract=DEV_MOCK_OACX_BIOMETRIC_CONTRACT
+    )
+
+    assert portrait == bytearray(PORTRAIT_JPEG_BYTES)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, "", "   ", "not-hex-zz", "fff"],
+)
+def test_portrait_hex_rejects_missing_or_malformed_input(value):
+    with pytest.raises(OacxBiometricError) as error:
+        parse_oacx_portrait_hex(value, contract=DEV_MOCK_OACX_BIOMETRIC_CONTRACT)
+
+    assert error.value.reason == "id_portrait_unavailable"
+
+
+def test_portrait_hex_rejects_non_jpeg_magic_bytes():
+    not_jpeg = (b"\x89PNG\r\n\x1a\n" + b"not-a-jpeg").hex()
+
+    with pytest.raises(OacxBiometricError) as error:
+        parse_oacx_portrait_hex(not_jpeg, contract=DEV_MOCK_OACX_BIOMETRIC_CONTRACT)
+
+    assert error.value.reason == "id_portrait_unavailable"
+
+
+def test_portrait_hex_rejects_oversized_input_before_decode():
+    contract = replace(DEV_MOCK_OACX_BIOMETRIC_CONTRACT, max_portrait_bytes=2)
+    oversized = (b"\xff\xd8\xff").hex()  # 3 bytes > max_portrait_bytes=2
+
+    with pytest.raises(OacxBiometricError) as error:
+        parse_oacx_portrait_hex(oversized, contract=contract)
+
+    assert error.value.reason == "id_portrait_unavailable"
+
+
+def test_portrait_hex_failure_wipes_partial_buffer(monkeypatch):
+    wiped = []
+
+    def track_wipe(value):
+        wipe_bytearray(value)
+        if value is not None:
+            wiped.append(value)
+
+    monkeypatch.setattr(cx_identity, "wipe_bytearray", track_wipe)
+    not_jpeg = (b"\x00\x00\x00" + b"not-a-jpeg").hex()
+
+    with pytest.raises(OacxBiometricError):
+        parse_oacx_portrait_hex(not_jpeg, contract=DEV_MOCK_OACX_BIOMETRIC_CONTRACT)
+
+    assert len(wiped) == 1

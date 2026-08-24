@@ -297,6 +297,9 @@ export function ModelRegister() {
           contentInfo: { signType: 'ENT_MID' },
           compareCI: false,
           isBirth: true,
+          // useConvertor:true 없이는 위젯이 RESULT 스텝에서 신분증 사진(dlphotoimage)을
+          // 만들지 않는다 — D1: 생체 등록 SFace 매치의 유일한 초상 출처.
+          useConvertor: true,
         };
         window.OACX.LOAD_MODULE(CX_CONFIG_URL, options, async (response) => {
           try {
@@ -304,7 +307,10 @@ export function ModelRegister() {
             const token = parsed?.token;
             if (!token) throw new Error('인증 토큰을 받지 못했어요. 다시 시도해 주세요.');
             if (!mounted.current) throw new Error('등록 화면이 닫혔어요.');
-            resolve(await completeEnrollment(enrollment.id, { sessionId, token }));
+            // 신분증 사진(HEX JPEG) — 위젯 콜백에서 받은 그대로 서버로만 전달한다.
+            // 저장(local/session storage)·로그 금지 — 메모리에서 이 클로저를 벗어나지 않는다.
+            const idPhotoHex = parsed?.data?.dlphotoimage;
+            resolve(await completeEnrollment(enrollment.id, { sessionId, token, idPhotoHex }));
           } catch (requestError) {
             reject(requestError);
           }

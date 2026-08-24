@@ -15,7 +15,6 @@ facemarket.py 의 동명 헬퍼와 소폭 중복되나 의도적이다 — 해�
 않기 위함. 추후 통합 시 이 모듈을 단일 원천으로 삼는다.
 """
 
-import base64
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -43,24 +42,30 @@ class CxIdentityError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class OacxBiometricContract:
+    """정체성(CI·이름·생년월일)은 trans/{token}, 초상은 클라 릴레이 HEX — 출처가 다르다(D1).
+
+    D1 이전에는 이 계약이 trans 응답 안의 `idPortraitBase64`(발명된, 실존하지 않는 필드)를
+    가리켰다 — 실 OACX 응답에는 그 필드가 없어 초상을 영영 얻을 수 없었다. 실측(라이브 콜백)
+    결과 진짜 신분증 얼굴 사진은 `OACX.LOAD_MODULE(...) → res.data.dlphotoimage` (RESULT
+    스텝, `useConvertor:true` 필요) 로 프론트 콜백에 직접 온다 — trans 필드가 아니다.
+    그래서 이 계약은 이제 trans 필드 경로(`birth_path`)만 갖고, 초상 포맷(encoding·크기 상한)은
+    별도로 `parse_oacx_portrait_hex` 가 클라가 넘긴 HEX 문자열에 적용한다.
+    """
+
     version: str
-    portrait_path: tuple[str, ...]
-    portrait_mime_path: tuple[str, ...]
-    issued_at_path: tuple[str, ...]
     birth_path: tuple[str, ...]
-    portrait_encoding: Literal["base64"]
+    portrait_encoding: Literal["hex"]
     max_portrait_bytes: int
-    ttl_seconds: int
 
 
 @dataclass(slots=True)
 class OacxBiometricEvidence:
+    """trans/{token} 에서만 유래 — 초상은 여기 없다(별도로 `parse_oacx_portrait_hex` 참조)."""
+
     ci: bytearray
     birth: str
     name_masked: str
     transaction_id: str | None
-    portrait: bytearray
-    portrait_mime: str
     contract_version: str
 
 
@@ -70,18 +75,24 @@ class OacxBiometricError(CxIdentityError):
         super().__init__(reason)
 
 
+# dev 전용 — get_oacx_biometric_contract() 가 app_env=='dev' 일 때만 선택한다(아래).
 DEV_MOCK_OACX_BIOMETRIC_CONTRACT = OacxBiometricContract(
     version="dev-mock-v1",
-    portrait_path=("idPortraitBase64",),
-    portrait_mime_path=("idPortraitMime",),
-    issued_at_path=("issuedAt",),
     birth_path=("birth",),
-    portrait_encoding="base64",
+    portrait_encoding="hex",
     max_portrait_bytes=5 * 1024 * 1024,
-    ttl_seconds=300,
 )
 
-_PORTRAIT_MIMES = {"image/jpeg", "image/png", "image/webp"}
+# D1: 실 프로덕션 계약 — OmniOne 매뉴얼 실측(dlphotoimage, HEX JPEG, RESULT 스텝) 기반.
+# dev-mock-v1 과 달리 app_env=='dev' 게이트가 없다 — prod 에서도 유효해야 하는 계약이다.
+PROD_DLPHOTO_OACX_BIOMETRIC_CONTRACT = OacxBiometricContract(
+    version="prod-dlphoto-v1",
+    birth_path=("birth",),
+    portrait_encoding="hex",
+    max_portrait_bytes=5 * 1024 * 1024,
+)
+
+_JPEG_MAGIC = b"\xff\xd8\xff"
 
 
 def _nested_value(data: dict, path: tuple[str, ...]):
@@ -106,10 +117,12 @@ def parse_oacx_biometric_evidence(
     trans: dict,
     *,
     contract: OacxBiometricContract,
-    now: datetime | None = None,
 ) -> OacxBiometricEvidence:
-    """Parse only an injected, reviewed OACX portrait contract; sanitize every failure."""
-    portrait = None
+    """trans/{token} 에서 CI·이름·생년월일만 파싱한다 — 초상은 여기 없다(D1 이후).
+
+    실패는 전부 `OacxBiometricError`(기본 사유 `id_portrait_unavailable`)로 정규화해
+    CI·원문 생년월일이 예외 메시지·로그로 새지 않게 한다. 미성년만 별도 사유(`minor_blocked`).
+    """
     try:
         ci = trans["ci"]
         name = trans["nm"]
@@ -119,40 +132,11 @@ def parse_oacx_biometric_evidence(
         if transaction_id is not None and not isinstance(transaction_id, str):
             raise ValueError
 
-        encoded = _nested_value(trans, contract.portrait_path)
-        portrait_mime = _nested_value(trans, contract.portrait_mime_path)
-        issued_at = _nested_value(trans, contract.issued_at_path)
         birth = _nested_value(trans, contract.birth_path)
-        if contract.portrait_encoding != "base64" or not isinstance(encoded, str):
-            raise ValueError
-        if (
-            portrait_mime not in _PORTRAIT_MIMES
-            or not isinstance(issued_at, str)
-            or not isinstance(birth, str)
-            or not birth
-        ):
-            raise ValueError
-        max_encoded_length = 4 * ((contract.max_portrait_bytes + 2) // 3)
-        if len(encoded) > max_encoded_length:
-            raise ValueError
-
-        portrait = bytearray(base64.b64decode(encoded, validate=True))
-        if not portrait or len(portrait) > contract.max_portrait_bytes:
-            raise ValueError
-
-        issued = datetime.fromisoformat(issued_at.replace("Z", "+00:00"))
-        if issued.tzinfo is None:
-            raise ValueError
-        current = now or datetime.now(timezone.utc)
-        if current.tzinfo is None:
-            raise ValueError
-        age_seconds = (
-            current.astimezone(timezone.utc) - issued.astimezone(timezone.utc)
-        ).total_seconds()
-        if not 0 <= age_seconds <= contract.ttl_seconds:
+        if not isinstance(birth, str) or not birth:
             raise ValueError
         try:
-            adult = is_adult_from_birth(birth, today=current.astimezone(_KST).date())
+            adult = is_adult_from_birth(birth)
         except CxIdentityError:
             raise ValueError from None
         if not adult:
@@ -163,19 +147,59 @@ def parse_oacx_biometric_evidence(
             birth=birth,
             name_masked=_mask_name(name),
             transaction_id=transaction_id,
-            portrait=portrait,
-            portrait_mime=portrait_mime,
             contract_version=contract.version,
         )
+    except OacxBiometricError:
+        raise
+    except Exception:
+        raise OacxBiometricError() from None
+
+
+def parse_oacx_portrait_hex(
+    hex_value: str | None, *, contract: OacxBiometricContract
+) -> bytearray:
+    """OACX RESULT-step 신분증 초상(`data.dlphotoimage`) — 클라가 릴레이한 HEX 를 검증한다(D1).
+
+    보안 메모(고치지 않고 기록만 — out of scope): 이 초상은 OACX 가 발급했지만 클라가
+    "중계"한다 — 즉 클라가 자기 자신의(서버검증된) CI 아래 자기-일관적인 가짜 초상을 넣을
+    여지가 이론상 있다. 위험은 제한적이다 — 그러려면 (a) 진짜 모바일 신분증으로 token→CI
+    까지 서버검증을 통과해야 하고, (b) AWS 라이브니스로 살아있는 사람 얼굴까지 통과해야
+    한다. 근본적으로 막으려면 서버가 trans 응답의 `uncommitted.caInfo.faceAccessToken` 으로
+    초상을 직접 재조회하거나, RESULT 스텝을 서버에서 한 번 더 부르는 방법이 있다 — 둘 다
+    D1 범위 밖(후속 하드닝)이라 여기서는 구현하지 않는다.
+
+    HEX 대소문자는 관용(`bytes.fromhex` 자체가 대소문자 무관) — 디코드 후 JPEG 매직바이트
+    (`ffd8ff`)와 크기 상한만 검사한다. 얼굴 존재/일치 자체는 호출자가 SFace 로 확인한다.
+    """
+    portrait = None
+    try:
+        if contract.portrait_encoding != "hex" or not isinstance(hex_value, str):
+            raise ValueError
+        cleaned = hex_value.strip()
+        if not cleaned:
+            raise ValueError
+        # 디코드 전에 길이로 상한을 걸어 과대 입력이 fromhex 까지 가지 않게 한다.
+        if len(cleaned) > contract.max_portrait_bytes * 2:
+            raise ValueError
+
+        portrait = bytearray(bytes.fromhex(cleaned))
+        if not portrait or len(portrait) > contract.max_portrait_bytes:
+            raise ValueError
+        if bytes(portrait[: len(_JPEG_MAGIC)]) != _JPEG_MAGIC:
+            raise ValueError
+
+        return portrait
     except OacxBiometricError:
         wipe_bytearray(portrait)
         raise
     except Exception:
         wipe_bytearray(portrait)
-        raise OacxBiometricError() from None
+        raise OacxBiometricError("id_portrait_unavailable") from None
 
 
 def get_oacx_biometric_contract(settings) -> OacxBiometricContract:
+    if settings.fm_oacx_contract_mode == "prod-dlphoto-v1":
+        return PROD_DLPHOTO_OACX_BIOMETRIC_CONTRACT
     if settings.app_env == "dev" and settings.fm_oacx_contract_mode == "dev-mock-v1":
         return DEV_MOCK_OACX_BIOMETRIC_CONTRACT
     raise OacxBiometricError("oacx_contract_unavailable")

@@ -101,9 +101,11 @@ export function createLivenessSession(enrollmentId, nonce) {
   });
 }
 
-export function completeEnrollment(enrollmentId, { sessionId, token }) {
+// idPhotoHex: OACX RESULT-step 신분증 사진(data.dlphotoimage) — 위젯 콜백에서 받은 HEX
+// 그대로 전달(재인코딩 금지). 서버가 hex-decode+SFace 1:1 매치에 쓰고, 매칭 후 폐기한다.
+export function completeEnrollment(enrollmentId, { sessionId, token, idPhotoHex }) {
   return http(`/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/complete`, {
-    method: 'POST', body: { sessionId, token },
+    method: 'POST', body: { sessionId, token, idPhotoHex },
   });
 }
 

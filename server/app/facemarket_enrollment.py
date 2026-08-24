@@ -172,6 +172,10 @@ class LivenessSessionBody(CamelModel):
 class CompleteEnrollmentBody(CamelModel):
     session_id: str
     token: str
+    # D1: OACX RESULT-step 신분증 초상(`data.dlphotoimage`, HEX JPEG) — 프론트가 위젯 콜백에서
+    # 그대로 릴레이한다. 스키마 레벨에서는 optional(구버전 클라·계약 모드 무관하게 요청 자체는
+    # 받아준다) — 실제 요구 여부는 process_enrollment_completion 이 fail-closed 로 강제한다.
+    id_photo_hex: str | None = None
 
 
 class EnrollmentPhotoView(CamelModel):
@@ -1655,10 +1659,12 @@ async def process_enrollment_completion(
     user_id: str,
     session_id: str,
     token: str,
+    id_photo_hex: str | None = None,
 ) -> EnrollmentDecision:
     settings = request.app.state.settings
     liveness = None
     evidence = None
+    portrait: bytearray | None = None
     photo_buffers: list[bytearray] = []
     processing_started = False
     try:
@@ -1681,11 +1687,14 @@ async def process_enrollment_completion(
             raise EnrollmentMappedError(exc.reason) from None
 
         try:
+            contract = cx_identity.get_oacx_biometric_contract(settings)
             trans = await cx_identity.fetch_trans(settings.cx_trans_base_url, token)
-            evidence = cx_identity.parse_oacx_biometric_evidence(
-                trans,
-                contract=cx_identity.get_oacx_biometric_contract(settings),
-            )
+            # CI·이름·생년월일은 trans/{token}(서버발 조회) 에서만 온다 — 서버검증 완료.
+            evidence = cx_identity.parse_oacx_biometric_evidence(trans, contract=contract)
+            # 초상은 D1부터 trans 필드가 아니라 클라가 OACX RESULT-step(`data.dlphotoimage`)
+            # 콜백에서 그대로 릴레이한 HEX 다 — cx_identity.parse_oacx_portrait_hex 의
+            # 모듈 docstring 에 이 릴레이의 보안 경계(client-relayed, bounded)를 기록해 두었다.
+            portrait = cx_identity.parse_oacx_portrait_hex(id_photo_hex, contract=contract)
         except EnrollmentMappedError:
             raise
         except cx_identity.OacxBiometricError as exc:
@@ -1703,7 +1712,7 @@ async def process_enrollment_completion(
         try:
             qc = load_face_qc(settings, required=True)
             _assert_match(
-                qc.one_to_one_similarity(evidence.portrait, liveness.reference_image),
+                qc.one_to_one_similarity(portrait, liveness.reference_image),
                 settings.fm_id_live_threshold,
             )
             for buffer in photo_buffers:
@@ -1851,7 +1860,8 @@ async def process_enrollment_completion(
     finally:
         if evidence is not None:
             cx_identity.wipe_bytearray(evidence.ci)
-            cx_identity.wipe_bytearray(evidence.portrait)
+        if portrait is not None:
+            cx_identity.wipe_bytearray(portrait)
         if liveness is not None:
             cx_identity.wipe_bytearray(liveness.reference_image)
         for buffer in photo_buffers:
@@ -1895,6 +1905,7 @@ async def complete_enrollment(
             user_id=user_id,
             session_id=session_id,
             token=token,
+            id_photo_hex=body.id_photo_hex,
         )
     except HTTPException:
         raise
@@ -2005,7 +2016,9 @@ def validate_biometric_settings(settings: Settings) -> None:
         )
     if settings.fm_oacx_contract_mode == "dev-mock-v1" and settings.app_env != "dev":
         raise RuntimeError("verified OACX biometric contract is required outside dev")
-    if settings.fm_oacx_contract_mode != "dev-mock-v1":
+    # D1: prod-dlphoto-v1 은 실 프로덕션 계약(cx_identity.PROD_DLPHOTO_OACX_BIOMETRIC_CONTRACT)
+    # 이라 dev-mock-v1 처럼 app_env=='dev' 로 가둘 필요가 없다 — prod 에서도 유효해야 한다.
+    if settings.fm_oacx_contract_mode not in ("dev-mock-v1", "prod-dlphoto-v1"):
         raise RuntimeError("verified OACX biometric contract is required")
 
 

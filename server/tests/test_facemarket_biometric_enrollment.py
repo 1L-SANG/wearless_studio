@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import contextlib
 import copy
 import hashlib
@@ -26,6 +25,10 @@ from conftest import make_settings
 
 NOW = datetime(2026, 8, 21, 6, 0, tzinfo=timezone.utc)
 DEVICE_ID = "device-id-with-at-least-32-characters"
+# D1: 초상은 trans 가 아니라 클라가 릴레이하는 OACX RESULT-step dlphotoimage(hex) 에서 온다.
+# 진짜 JPEG 매직바이트(ffd8ff)로 시작하는 최소 픽스처 — 실제 신분증 사진이 아니라 포맷 검증용.
+PORTRAIT_JPEG_BYTES = b"\xff\xd8\xff" + b"portrait-bytes"
+PORTRAIT_HEX = PORTRAIT_JPEG_BYTES.hex()
 ACTIVE_STATUSES = {
     "photos_pending",
     "liveness_pending",
@@ -1183,9 +1186,6 @@ def dev_trans(**patch):
         "birth": "19900102",
         "nm": "홍길동",
         "txId": "tx-dev-1",
-        "idPortraitBase64": base64.b64encode(b"portrait-bytes").decode(),
-        "idPortraitMime": "image/jpeg",
-        "issuedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
     trans.update(patch)
     return trans
@@ -1199,7 +1199,7 @@ class RecordingFaceQc:
 
     def one_to_one_similarity(self, reference, candidate):
         labels = {
-            b"portrait-bytes": "id",
+            PORTRAIT_JPEG_BYTES: "id",
             b"front-bytes": "front",
             b"angle45-bytes": "angle45",
             b"side-bytes": "side",
@@ -1232,10 +1232,20 @@ def completion_fakes(monkeypatch):
     return state
 
 
-def complete_enrollment(client, auth, enrollment_id, session_id, token="oacx-token-used-only-now"):
+def complete_enrollment(
+    client,
+    auth,
+    enrollment_id,
+    session_id,
+    token="oacx-token-used-only-now",
+    id_photo_hex=PORTRAIT_HEX,
+):
+    body = {"sessionId": session_id, "token": token}
+    if id_photo_hex is not None:
+        body["idPhotoHex"] = id_photo_hex
     return client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/complete",
-        json={"sessionId": session_id, "token": token},
+        json=body,
         headers=auth(),
     )
 
@@ -1359,6 +1369,7 @@ def test_cancel_wins_before_completion_finalization_without_resurrection(
                 user_id="user-1",
                 session_id=fake_rekognition.session_id,
                 token="oacx-token-used-only-now",
+                id_photo_hex=PORTRAIT_HEX,
             )
         )
         await finalization_started.wait()
@@ -1427,6 +1438,7 @@ def test_cancel_wins_before_provider_failure_without_cooldown_or_resurrection(
                 user_id="user-1",
                 session_id=fake_rekognition.session_id,
                 token="oacx-token-used-only-now",
+                id_photo_hex=PORTRAIT_HEX,
             )
         )
         assert await asyncio.to_thread(provider_started.wait, 2)
@@ -1545,6 +1557,7 @@ def test_complete_waits_for_raw_release_evidence_before_cancellation_exits(
                 user_id="user-1",
                 session_id=fake_rekognition.session_id,
                 token="oacx-token-used-only-now",
+                id_photo_hex=PORTRAIT_HEX,
             )
         )
         await release_started.wait()
@@ -1640,64 +1653,66 @@ def test_complete_rejects_same_oacx_token_replay(
     )
 
 
-@pytest.mark.parametrize(
-    "patch,reason",
-    [
-        ({"idPortraitBase64": None}, "id_portrait_unavailable"),
-        ({"birth": "20100102"}, "minor_blocked"),
-    ],
-)
-def test_complete_maps_oacx_portrait_and_minor_failures(
+def test_complete_maps_minor_birth_failure(
     enrollment_client,
     auth,
     enrollment_store,
     fake_r2,
     fake_rekognition,
     completion_fakes,
-    patch,
-    reason,
 ):
     enrollment_id = create_complete_ready_enrollment(
         enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
     )
-    completion_fakes["trans"] = dev_trans(**patch)
+    completion_fakes["trans"] = dev_trans(birth="20100102")
 
     response = complete_enrollment(
         enrollment_client, auth, enrollment_id, fake_rekognition.session_id
     )
 
     assert_completion_failure(
-        response,
-        enrollment_store,
-        reason,
-        retryable=reason == "id_portrait_unavailable",
+        response, enrollment_store, "minor_blocked", retryable=False
     )
     assert enrollment_store.enrollments[0]["cooldown_until"] is None
 
 
-def test_complete_maps_expired_oacx_contract_before_minor_birth(
+@pytest.mark.parametrize(
+    "id_photo_hex",
+    [
+        None,  # 클라가 아예 보내지 않음(구버전 클라·통신 실패 등)
+        "",
+        "not-hex-zz",
+        (b"\x89PNG\r\n\x1a\n" + b"not-a-jpeg").hex(),  # PNG 매직바이트 — JPEG 아님
+    ],
+)
+def test_complete_fails_closed_on_missing_or_invalid_photo_hex(
     enrollment_client,
     auth,
     enrollment_store,
     fake_r2,
     fake_rekognition,
     completion_fakes,
+    id_photo_hex,
 ):
+    # D1: 초상은 이제 trans 가 아니라 클라 릴레이 HEX 에서 온다 — 없거나 JPEG 이 아니면
+    # SFace 매치를 절대 시도하지 않고 여기서 fail-closed 해야 한다(얼굴 없는 통과 금지).
     enrollment_id = create_complete_ready_enrollment(
         enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
     )
-    completion_fakes["trans"] = dev_trans(
-        birth="20100102",
-        issuedAt="2026-08-21T02:54:59Z",
-    )
 
     response = complete_enrollment(
-        enrollment_client, auth, enrollment_id, fake_rekognition.session_id
+        enrollment_client,
+        auth,
+        enrollment_id,
+        fake_rekognition.session_id,
+        id_photo_hex=id_photo_hex,
     )
 
     assert_completion_failure(
         response, enrollment_store, "id_portrait_unavailable", retryable=True
     )
+    assert completion_fakes["face_qc"].calls == []
+    assert enrollment_store.enrollments[0]["cooldown_until"] is None
 
 
 @pytest.mark.parametrize(

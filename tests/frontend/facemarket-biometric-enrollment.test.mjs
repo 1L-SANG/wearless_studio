@@ -185,18 +185,26 @@ test('the browser wizard keeps raw authentication material in memory only', () =
   const registerSource = read('../../src/features/model/ModelRegister.jsx');
   const livenessSource = read('../../src/features/model/FaceLivenessStep.jsx');
 
-  assert.match(registerSource, /completeEnrollment\(enrollment\.id, \{ sessionId, token \}\)/);
+  assert.match(registerSource, /completeEnrollment\(enrollment\.id, \{ sessionId, token, idPhotoHex \}\)/);
+  assert.match(registerSource, /useConvertor:\s*true/);
+  assert.match(registerSource, /idPhotoHex\s*=\s*parsed\?\.data\?\.dlphotoimage/);
   assert.match(registerSource, /새 생체 등록 시작/);
   assert.match(registerSource, /localStorage\.setItem\([^,]+,\s*deviceId\)/);
-  assert.doesNotMatch(registerSource, /localStorage\.setItem\([^)]*(token|session|credentials|image)/i);
+  assert.doesNotMatch(registerSource, /localStorage\.setItem\([^)]*(token|session|credentials|image|dlphotoimage|idPhotoHex)/i);
   assert.doesNotMatch(registerSource, /sessionStorage|indexedDB/i);
   assert.doesNotMatch(registerSource, /console\.(?:log|info|warn|error)/);
   assert.match(registerSource, /cxLoader = pending\.catch[\s\S]*cxLoader = undefined/);
   assert.match(registerSource, /role="alert"/);
+  const facemarketApiSource = read('../../src/lib/api/facemarket.js');
   assert.match(
-    read('../../src/lib/api/facemarket.js'),
+    facemarketApiSource,
     /getEnrollment\(id, \{ signal \} = \{\}\)[\s\S]*?http\([^;]+\{ signal \}\)/,
   );
+  assert.match(
+    facemarketApiSource,
+    /completeEnrollment\(enrollmentId, \{ sessionId, token, idPhotoHex \}\)/,
+  );
+  assert.doesNotMatch(facemarketApiSource, /console\.(?:log|info|warn|error)/);
   assert.match(livenessSource, /FaceLivenessDetectorCore/);
   assert.match(livenessSource, /region="us-east-1"/);
   assert.match(livenessSource, /config=\{config\}/);
