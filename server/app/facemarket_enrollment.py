@@ -801,10 +801,12 @@ async def upload_enrollment_photo(
                 status=503,
             )
         if not qc.passed:
+            # 차단 사유만 노출(angle_mismatch advisory 는 여기 도달 못하지만, 혼재 시에도
+            # 거절 카피에 각도 안내가 섞이지 않게 blocking_reasons 로 한정한다).
             raise _err(
                 "face_quality",
-                qc_reason_message(qc.reasons),
-                reasons=qc.reasons,
+                qc_reason_message(qc.blocking_reasons),
+                reasons=qc.blocking_reasons,
             )
         ext = ext_for_mime(mime)
         new_key = enrollment_quarantine_key(

@@ -2290,6 +2290,50 @@ def test_failed_basic_qc_never_writes_to_r2(enrollment_client, auth, fake_r2, mo
     assert fake_r2.puts == []
 
 
+def test_angle_mismatch_is_advisory_and_photo_is_stored(
+    enrollment_client, auth, fake_r2, monkeypatch
+):
+    # angle_mismatch 는 비차단(advisory). 45↔측면 LLM 각도 오탐이 정상 사용자를 막지
+    # 않도록, 각도만 어긋난 사진은 저장·통과시킨다(실 신원 게이트는 하류 SFace 1:1).
+    stub_qc(monkeypatch, "reject", ["angle_mismatch"])
+    enrollment_id = create_enrollment(enrollment_client, auth)
+
+    response = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"image", "image/jpeg")},
+        headers=auth(),
+    )
+
+    assert response.status_code == 201, response.text
+    assert len(fake_r2.puts) == 1
+    status = enrollment_client.get(
+        f"/v1/facemarket/enrollments/{enrollment_id}", headers=auth()
+    )
+    assert [p["angle"] for p in status.json()["photos"]] == ["front"]
+
+
+def test_blocking_qc_still_rejects_even_with_angle_advisory(
+    enrollment_client, auth, fake_r2, monkeypatch
+):
+    # 차단 사유(occlusion)가 angle_mismatch 와 함께 오면 여전히 차단하고, 에러 reasons 는
+    # 차단 사유만 노출한다(각도 advisory 는 거절 카피에 섞이지 않는다).
+    stub_qc(monkeypatch, "reject", ["angle_mismatch", "occlusion"])
+    enrollment_id = create_enrollment(enrollment_client, auth)
+
+    response = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"image", "image/jpeg")},
+        headers=auth(),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "face_quality"
+    assert response.json()["error"]["reasons"] == ["occlusion"]
+    assert fake_r2.puts == []
+
+
 def test_three_passed_angles_transition_to_liveness_pending(
     enrollment_client, auth, monkeypatch
 ):

@@ -787,11 +787,13 @@ async def upload_face_photo(
         raise _err("qc_unavailable", "얼굴 검사를 지금 수행할 수 없어요. 잠시 후 다시 시도해 주세요.", status=503)
     if not qc.passed:
         # 불합격 → 원본 즉시 파기(data 는 스코프 종료로 GC, 저장·로그 0). 사유코드만 반환/감사.
+        # 감사에는 전체 사유(각도 advisory 포함) 기록, 사용자 카피는 차단 사유만 노출.
         async with get_conn(request) as conn:
             await _audit(conn, user_id, profile["id"], "qc_rejected",
                          {"angle": angle, "reasons": qc.reasons})
             await conn.commit()
-        raise _err("face_quality", qc_reason_message(qc.reasons), reasons=qc.reasons)
+        raise _err("face_quality", qc_reason_message(qc.blocking_reasons),
+                   reasons=qc.blocking_reasons)
 
     # 4) 통과 → 비공개 R2 put + 슬롯 upsert(구 객체 즉시 delete). digest 는 DB 내부용(응답 미노출).
     r2 = _r2_face(request)

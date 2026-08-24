@@ -27,6 +27,15 @@ logger = logging.getLogger("wearless.personalization_qc")
 # 허용 QC 사유코드(api-spec §3.2). 'no_face' 는 확정 전까지 occlusion 으로 수렴(스펙 비고).
 QC_CODES = ("occlusion", "low_resolution", "multiple_faces", "angle_mismatch")
 
+# 차단(blocking) vs 권고(advisory) 분리.
+# occlusion/low_resolution/multiple_faces 는 실제 품질 결함 → 저장 거부(차단).
+# angle_mismatch 는 45↔측면 경계가 비결정적 vision-LLM 단발 분류(temperature/seed 미고정)라
+# 정상 사용자를 오탐 거절하기 쉽다. 실 신원 게이트는 하류 SFace 1:1 매칭이고 각도 라벨은
+# 하류 어떤 보안 비교에도 쓰이지 않으므로(세 각도에 동일 임계값 적용), 각도 불일치만으로는
+# 업로드를 막지 않고 저장하되 advisory 로만 surface 한다. QC_CODES 전체를 정확히 분할한다.
+BLOCKING_QC_CODES = ("occlusion", "low_resolution", "multiple_faces")
+ADVISORY_QC_CODES = ("angle_mismatch",)
+
 _ANGLE_DESC = {
     "front": "정면(카메라를 똑바로 응시, 얼굴 좌우 대칭)",
     "side": "측면(얼굴을 옆으로 약 90도 돌린 프로필)",
@@ -72,12 +81,24 @@ class FaceQcUnavailable(RuntimeError):
 
 @dataclass
 class FaceQcResult:
-    verdict: str  # 'pass' | 'reject'
+    verdict: str  # 'pass' | 'reject' (원본 LLM 판정 — 관측/로그용으로 보존)
     reasons: list[str] = field(default_factory=list)
 
     @property
+    def blocking_reasons(self) -> list[str]:
+        """저장을 막는 실제 품질 결함(occlusion/low_resolution/multiple_faces)."""
+        return [r for r in self.reasons if r in BLOCKING_QC_CODES]
+
+    @property
+    def advisory_reasons(self) -> list[str]:
+        """차단하지 않고 경고만 하는 사유(angle_mismatch)."""
+        return [r for r in self.reasons if r in ADVISORY_QC_CODES]
+
+    @property
     def passed(self) -> bool:
-        return self.verdict == "pass"
+        # 차단 사유가 하나도 없으면 통과. verdict=='pass' 는 reasons=[] 이므로 자동 포함되고,
+        # verdict=='reject' 라도 사유가 angle_mismatch 뿐이면 통과시킨다(advisory).
+        return not self.blocking_reasons
 
 
 async def evaluate_face_qc(
