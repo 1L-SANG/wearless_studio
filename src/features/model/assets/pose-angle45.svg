@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="45도 포즈 예시">
+  <ellipse cx="30" cy="24" rx="11" ry="13" fill="#cbd5e1"/>
+  <path d="M12 60c0-11 9-18 20-18s20 7 20 18z" fill="#cbd5e1"/>
+  <path d="M40 20l6-4" stroke="#94a3b8" stroke-width="2" fill="none"/>
+</svg>

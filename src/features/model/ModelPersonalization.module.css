@@ -271,6 +271,13 @@
 .slotDel:hover:not(:disabled) { background: rgba(14,13,20,.9); transform: scale(1.04); }
 .slotDel:disabled { cursor: default; opacity: .6; }
 .slotDel:focus-visible { outline: 2px solid var(--bg-1); outline-offset: 2px; }
+.slotExample {
+  display: block;
+  width: 28px;
+  height: 28px;
+  margin: 10px 2px 0;
+  opacity: .85;
+}
 .slotGuide {
   min-height: 54px;
   margin: 12px 2px 0;

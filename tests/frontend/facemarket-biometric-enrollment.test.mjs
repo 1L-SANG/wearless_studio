@@ -1,13 +1,35 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
+import { registerHooks } from 'node:module';
 
-import {
+// Plain `node --test` (no bundler) doesn't understand `.svg` specifiers the way Vite does.
+// biometricEnrollment.js imports the pose SVGs as real Vite assets (so they resolve in a
+// production build) — register an in-thread hook so this file can still exercise that module
+// directly, mirroring Vite's own behavior (an asset import resolves to its URL string). Must
+// load via dynamic import: static imports resolve the whole graph before any top-level code
+// (including this registerHooks() call) executes.
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (specifier.endsWith('.svg')) {
+      return { url: new URL(specifier, context.parentURL).href, shortCircuit: true };
+    }
+    return nextResolve(specifier, context);
+  },
+  load(url, context, nextLoad) {
+    if (url.endsWith('.svg')) {
+      return { format: 'module', shortCircuit: true, source: `export default ${JSON.stringify(url)};` };
+    }
+    return nextLoad(url, context);
+  },
+});
+
+const {
   ENROLLMENT_ANGLES,
   ENROLLMENT_STEPS,
   enrollmentReasonMessage,
   nextEnrollmentStep,
-} from '../../src/features/model/biometricEnrollment.js';
+} = await import('../../src/features/model/biometricEnrollment.js');
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 
@@ -695,6 +717,18 @@ test('ModelHub reaches ready using FaceMarket state when personalization is unav
     await harness.close();
   }
 });
+
+test('SlotCard renders a pose example image from the angle', () => {
+  const upload = read('../../src/features/model/ModelFaceUpload.jsx');
+  assert.match(upload, /exampleImage|example/);
+  assert.match(upload, /<img[^>]+(example|pose)/i);
+});
+
+for (const p of ['pose-front', 'pose-angle45', 'pose-side']) {
+  test(`asset ${p}.svg exists`, () => {
+    assert.ok(existsSync(new URL(`../../src/features/model/assets/${p}.svg`, import.meta.url)));
+  });
+}
 
 test('enrollment terms and routes cannot revive direct face licensing', () => {
   const apiSource = read('../../src/lib/api/facemarket.js');

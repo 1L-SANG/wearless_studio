@@ -33,7 +33,7 @@ const QC_COPY = {
   angle_mismatch: '선택한 각도와 달라요. 안내에 맞춰 정면/측면/45도로 찍어주세요.',
 };
 
-function SlotCard({ index, angle, label, guide, slot, onPicked, onDelete, checking, locked, fetchUrl }) {
+function SlotCard({ index, angle, label, guide, exampleImage, slot, onPicked, onDelete, checking, locked, fetchUrl }) {
   const fileRef = useRef(null);
   const [url, setUrl] = useState(null);
   const passed = slot?.qcStatus === 'passed';
@@ -94,6 +94,7 @@ function SlotCard({ index, angle, label, guide, slot, onPicked, onDelete, checki
       </div>
       <input ref={fileRef} type="file" accept="image/*,.heic,.heif,.hif" hidden
         onChange={(e) => { const f = e.target.files?.[0]; if (f) onPicked(angle, f); e.target.value = ''; }} />
+      {exampleImage && <img className={s.slotExample} src={exampleImage} alt="" aria-hidden="true" />}
       <p className={s.slotGuide}>{guide}</p>
       {slot?.lastFail && (
         <div className={s.slotFail}>
@@ -210,6 +211,7 @@ export function ModelFaceUpload({
         <div className={s.slotGrid}>
           {angles.map((a, index) => (
             <SlotCard key={a.value} index={index} angle={a.value} label={a.label} guide={a.guide}
+              exampleImage={a.exampleImage}
               slot={slots[a.value]} onPicked={onPicked} onDelete={onDelete}
               checking={busyAngle === a.value} locked={!!blocked || (busyAngle && busyAngle !== a.value)}
               fetchUrl={photoApi.fetchUrl} />
