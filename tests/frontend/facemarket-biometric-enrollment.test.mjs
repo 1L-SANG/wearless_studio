@@ -162,7 +162,7 @@ test('retouched photos are presented front, 45 degrees, then side', () => {
 
 test('server status restores the next safe enrollment step', () => {
   assert.deepEqual(ENROLLMENT_STEPS, [
-    'consent', 'photos', 'liveness', 'identity', 'processing', 'terms', 'done',
+    'consent', 'identity', 'photos', 'profile', 'liveness', 'processing', 'terms', 'done',
   ]);
   assert.equal(nextEnrollmentStep(null), 'consent');
   assert.equal(nextEnrollmentStep({ status: 'photos_pending', photos: [] }), 'photos');
@@ -179,6 +179,40 @@ test('raw biometric reasons collapse to actionable copy', () => {
   assert.equal(enrollmentReasonMessage('id_portrait_unavailable'), '신분증 사진을 확인할 수 없어요.');
   assert.equal(enrollmentReasonMessage('face_match_failed'), '얼굴 일치 확인에 실패했어요.');
   assert.equal(enrollmentReasonMessage('unknown-provider-detail'), '인증을 완료하지 못했어요. 다시 시도해 주세요.');
+});
+
+test('ENROLLMENT_STEPS puts identity right after consent, before photos', () => {
+  const i = ENROLLMENT_STEPS.indexOf('identity');
+  assert.equal(ENROLLMENT_STEPS[0], 'consent');
+  assert.equal(ENROLLMENT_STEPS[1], 'identity');
+  assert.ok(i < ENROLLMENT_STEPS.indexOf('photos'));
+  assert.ok(ENROLLMENT_STEPS.indexOf('profile') > ENROLLMENT_STEPS.indexOf('photos'));
+});
+
+test('nextEnrollmentStep maps identity_pending to identity', () => {
+  assert.equal(nextEnrollmentStep({ status: 'identity_pending' }), 'identity');
+});
+
+test('ENROLLMENT_ANGLES carry pose example images', () => {
+  for (const a of ENROLLMENT_ANGLES) assert.ok(a.exampleImage, a.value);
+});
+
+test('createIdentity posts token to enrollment-scoped identity route', () => {
+  const apiSrc = read('../../src/lib/api/facemarket.js');
+  assert.match(apiSrc, /createIdentity\(\s*enrollmentId\s*,\s*\{\s*token\s*\}\s*\)/);
+  assert.match(apiSrc, /enrollments\/\$\{encodeURIComponent\(enrollmentId\)\}\/identity/);
+});
+
+test('completeEnrollment no longer sends token', () => {
+  const apiSrc = read('../../src/lib/api/facemarket.js');
+  assert.match(apiSrc, /completeEnrollment\(enrollmentId,\s*\{\s*sessionId,\s*idPhotoHex\s*\}\)/);
+  assert.doesNotMatch(apiSrc, /body:\s*\{\s*sessionId,\s*token,\s*idPhotoHex\s*\}/);
+});
+
+test('uploadProfileImage mirrors multipart pattern', () => {
+  const apiSrc = read('../../src/lib/api/facemarket.js');
+  assert.match(apiSrc, /uploadProfileImage\(\{\s*enrollmentId,\s*fileBlob,\s*filename\s*\}\)/);
+  assert.match(apiSrc, /profile-image/);
 });
 
 test('the browser wizard keeps raw authentication material in memory only', () => {
@@ -202,7 +236,7 @@ test('the browser wizard keeps raw authentication material in memory only', () =
   );
   assert.match(
     facemarketApiSource,
-    /completeEnrollment\(enrollmentId, \{ sessionId, token, idPhotoHex \}\)/,
+    /completeEnrollment\(enrollmentId, \{ sessionId, idPhotoHex \}\)/,
   );
   assert.doesNotMatch(facemarketApiSource, /console\.(?:log|info|warn|error)/);
   assert.match(livenessSource, /FaceLivenessDetectorCore/);

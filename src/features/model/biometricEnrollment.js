@@ -1,11 +1,14 @@
 export const ENROLLMENT_ANGLES = Object.freeze([
-  { value: 'front', label: '정면', guide: '정면을 바라보고 얼굴 전체가 나오게 찍어주세요.' },
-  { value: 'angle45', label: '45도', guide: '정면에서 약 45도만 돌려 반측면이 보이게 찍어주세요.' },
-  { value: 'side', label: '측면', guide: '고개를 약 90도 돌려 옆모습 윤곽이 보이게 찍어주세요.' },
+  { value: 'front', label: '정면', guide: '정면을 바라보고 얼굴 전체가 나오게 찍어주세요.',
+    exampleImage: '/src/features/model/assets/pose-front.svg' },
+  { value: 'angle45', label: '45도', guide: '정면에서 약 45도만 돌려 반측면이 보이게 찍어주세요.',
+    exampleImage: '/src/features/model/assets/pose-angle45.svg' },
+  { value: 'side', label: '측면', guide: '고개를 약 90도 돌려 옆모습 윤곽이 보이게 찍어주세요.',
+    exampleImage: '/src/features/model/assets/pose-side.svg' },
 ]);
 
 export const ENROLLMENT_STEPS = Object.freeze([
-  'consent', 'photos', 'liveness', 'identity', 'processing', 'terms', 'done',
+  'consent', 'identity', 'photos', 'profile', 'liveness', 'processing', 'terms', 'done',
 ]);
 
 const REASON_COPY = Object.freeze({
@@ -24,6 +27,7 @@ export function enrollmentReasonMessage(reason) {
 
 export function nextEnrollmentStep(enrollment) {
   if (!enrollment) return 'consent';
+  if (enrollment.status === 'identity_pending') return 'identity';
   if (enrollment.status === 'photos_pending') return 'photos';
   if (enrollment.status === 'liveness_pending') return 'liveness';
   if (enrollment.status === 'processing' || enrollment.status === 'asset_building') return 'processing';

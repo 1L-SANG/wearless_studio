@@ -48,6 +48,14 @@ export function verifyIdentity(token) {
   return http('/v1/facemarket/identity/verify', { method: 'POST', body: { token } });
 }
 
+// POST /v1/facemarket/enrollments/{id}/identity — 등록 스코프 CI 게이트. CX 표준인증창
+// 성공 token 만 전달(원문 신원은 서버가 CX trans 에서 직접 받는다). 성공 시 photos_pending 전이.
+export function createIdentity(enrollmentId, { token }) {
+  return http(`/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/identity`, {
+    method: 'POST', body: { token },
+  });
+}
+
 // GET /v1/facemarket/models — 검증 모델 카탈로그(셀러용). [FM-13 팀원 계약]
 // → [{ id, displayName, status, coverImageUrl, createdAt }] (PII·ci_hash 없음).
 export function listModels() {
@@ -95,6 +103,17 @@ export async function deleteEnrollmentPhoto(enrollmentId, angle) {
   ), '얼굴 사진 삭제에 실패했어요.');
 }
 
+// image: 대표(커버) 이미지 — 셀러 카탈로그 카드에 노출. 응답에 저장된 key 는 실리지 않으므로
+// 201 자체를 성공 신호로 신뢰한다(별도로 읽어오지 않는다).
+export async function uploadProfileImage({ enrollmentId, fileBlob, filename }) {
+  const form = new FormData();
+  form.append('image', fileBlob, filename || 'cover');
+  return checkedJson(await _authFetch(
+    `/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/profile-image`,
+    { method: 'POST', body: form },
+  ), '대표 이미지 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
+}
+
 export function createLivenessSession(enrollmentId, nonce) {
   return http(`/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/liveness-session`, {
     method: 'POST', body: { nonce },
@@ -103,9 +122,10 @@ export function createLivenessSession(enrollmentId, nonce) {
 
 // idPhotoHex: OACX RESULT-step 신분증 사진(data.dlphotoimage) — 위젯 콜백에서 받은 HEX
 // 그대로 전달(재인코딩 금지). 서버가 hex-decode+SFace 1:1 매치에 쓰고, 매칭 후 폐기한다.
-export function completeEnrollment(enrollmentId, { sessionId, token, idPhotoHex }) {
+// token 은 더 이상 여기서 전달하지 않는다 — CI 게이트는 identity 단계(createIdentity)에서 끝난다.
+export function completeEnrollment(enrollmentId, { sessionId, idPhotoHex }) {
   return http(`/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/complete`, {
-    method: 'POST', body: { sessionId, token, idPhotoHex },
+    method: 'POST', body: { sessionId, idPhotoHex },
   });
 }
 
