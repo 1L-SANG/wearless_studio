@@ -1092,6 +1092,48 @@ async def upload_enrollment_photo(
         data = b""
 
 
+@router.post(
+    "/enrollments/{enrollment_id}/profile-image",
+    response_model=EnrollmentView,
+    status_code=201,
+)
+async def upload_profile_image(
+    request: Request,
+    enrollment_id: str,
+    image: UploadFile = File(...),
+    user_id: str = Depends(require_user),
+):
+    # 대표이미지(cover)는 표시용일 뿐 컷 파이프라인·상태머신을 게이팅하지 않는다 —
+    # SFace/QC 없음, 상태 전이 없음. 바인딩 시 fm_models.cover_image_url 로 승격만 한다.
+    enrollment_id = _canonical_enrollment_id(enrollment_id)
+    mime = (image.content_type or "").lower()
+    if mime not in ALLOWED_FACE_MIME:
+        raise _err("unsupported_type", "PNG, JPEG, WebP 이미지만 사용할 수 있습니다.")
+    data = await image.read()
+    if not data:
+        raise _err("empty_upload", "빈 파일은 사용할 수 없습니다.")
+    if len(data) > MAX_FACE_BYTES:
+        raise _err("file_too_large", "이미지는 25MB 이하만 가능합니다.", status=413)
+    r2 = _r2_face(request)
+    ext = ext_for_mime(mime)
+    key = f"private/fm-profile/{enrollment_id}.{ext}"
+    async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
+        row = await _load_owned_enrollment(conn, enrollment_id, user_id)
+        if row is None:
+            raise _err("not_found", "등록을 찾을 수 없습니다.", status=404)
+        r2.put_bytes(key, data, mime)
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "update fm_biometric_enrollments set profile_image_r2_key = %s "
+                "where id = %s and user_id = %s",
+                (key, enrollment_id, user_id),
+            )
+        await conn.commit()
+        row = await _load_owned_enrollment(conn, enrollment_id, user_id)
+        return await _enrollment_view(conn, row)
+
+
 @router.post("/enrollments/{enrollment_id}/liveness-session", status_code=201)
 async def start_enrollment_liveness(
     request: Request,
@@ -1674,7 +1716,8 @@ async def _initial_completion_checks(
                        e.model_id::text as model_id, e.status, e.cooldown_until,
                        e.expires_at, e.liveness_session_digest, e.device_digest,
                        e.identity_ci_hash, e.identity_name_masked, e.identity_birth_year,
-                       e.identity_tx_digest, e.identity_contract_version
+                       e.identity_tx_digest, e.identity_contract_version,
+                       e.profile_image_r2_key
                 from fm_biometric_enrollments e
                 where e.id = %s and e.user_id = %s
                 for update
@@ -1902,6 +1945,14 @@ async def process_enrollment_completion(
                     """,
                     (enrollment_id, model_id),
                 )
+                # Task4: 등록 중 올린 대표이미지가 있으면 바인딩 시 모델 커버로 승격한다.
+                # cover_image_url 은 기존 관례상 별도 URL 변환 없이 그대로 읽히므로(facemarket.py
+                # _MODEL_CARD_COLS 참조) R2 키를 그대로 저장한다 — 노출 URL화는 범위 밖.
+                if row.get("profile_image_r2_key"):
+                    await cur.execute(
+                        "update fm_models set cover_image_url = %s where id = %s",
+                        (row["profile_image_r2_key"], model_id),
+                    )
                 await cur.execute(
                     """
                     update fm_biometric_enrollments

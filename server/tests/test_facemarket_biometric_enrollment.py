@@ -244,6 +244,8 @@ class FakeCursor:
                     "identity_birth_year": row.get("identity_birth_year"),
                     "identity_tx_digest": row.get("identity_tx_digest"),
                     "identity_contract_version": row.get("identity_contract_version"),
+                    # Task4: 바인딩때 승격할 대표이미지 키.
+                    "profile_image_r2_key": row.get("profile_image_r2_key"),
                 }
                 if row
                 else None
@@ -885,6 +887,16 @@ class FakeCursor:
                 + failed_count,
                 quarantineCleanupAt=NOW.isoformat(),
             )
+        elif query.startswith(
+            "update fm_biometric_enrollments set profile_image_r2_key"
+        ):
+            key, enrollment_id, user_id = params
+            row = next(
+                item
+                for item in self.store.enrollments
+                if item["id"] == enrollment_id and item["user_id"] == user_id
+            )
+            row["profile_image_r2_key"] = key
         elif query.startswith("select user_id::text as user_id from fm_models"):
             # /identity 게이트의 교차유저 CI 충돌 조회(ci_hash → 소유 user_id).
             ci_hash = params[0]
@@ -934,6 +946,10 @@ class FakeCursor:
             enrollment_id, model_id = params
             model = next(row for row in self.store.models if row["id"] == model_id)
             model.update(assets_status="building", current_enrollment_id=enrollment_id)
+        elif query.startswith("update fm_models set cover_image_url"):
+            cover_image_url, model_id = params
+            model = next(row for row in self.store.models if row["id"] == model_id)
+            model["cover_image_url"] = cover_image_url
         elif query.startswith("update fm_biometric_enrollments set model_id"):
             model_id, token_digest, policy_version, provider_versions, enrollment_id = params
             row = next(item for item in self.store.enrollments if item["id"] == enrollment_id)
@@ -1414,6 +1430,52 @@ def test_complete_binds_using_stored_identity_without_token(
     assert body["passed"] is True and body["status"] == "asset_building"
     # 바인딩된 모델 display_name 이 저장된 identity_name_masked 에서 온다(재조회 없이).
     assert enrollment_store.models[0]["display_name"]
+
+
+def test_profile_image_upload_is_non_gating(
+    enrollment_client, auth, enrollment_store, fake_r2, completion_fakes
+):
+    eid = create_enrollment(enrollment_client, auth)  # photos_pending
+    res = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{eid}/profile-image",
+        files={"image": ("cover.jpg", b"cover-bytes", "image/jpeg")},
+        headers=auth(),
+    )
+    assert res.status_code == 201, res.text
+    assert enrollment_store.enrollments[0]["status"] == "photos_pending"  # 불변
+    assert enrollment_store.enrollments[0]["profile_image_r2_key"]
+    assert len(fake_r2.objects) >= 1
+
+
+def test_profile_image_rejects_bad_mime(enrollment_client, auth, completion_fakes):
+    eid = create_enrollment(enrollment_client, auth)
+    res = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{eid}/profile-image",
+        files={"image": ("x.txt", b"nope", "text/plain")},
+        headers=auth(),
+    )
+    assert res.status_code == 400
+    assert res.json()["error"]["code"] == "unsupported_type"
+
+
+def test_complete_promotes_profile_image_to_model_cover(
+    enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition, completion_fakes
+):
+    # Task4: 대표이미지가 저장돼 있으면 바인딩 시 fm_models.cover_image_url 로 승격된다.
+    eid = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
+    )
+    res = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{eid}/profile-image",
+        files={"image": ("cover.jpg", b"cover-bytes", "image/jpeg")},
+        headers=auth(),
+    )
+    assert res.status_code == 201, res.text
+    profile_key = enrollment_store.enrollments[0]["profile_image_r2_key"]
+    assert profile_key
+    res = complete_enrollment(enrollment_client, auth, eid, fake_rekognition.session_id)
+    assert res.status_code == 202, res.text
+    assert enrollment_store.models[0]["cover_image_url"] == profile_key
 
 
 def assert_completion_failure(response, store, reason, *, retryable):
