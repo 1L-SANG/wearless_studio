@@ -10,13 +10,24 @@
 
 ---
 
-## 🔴 HARD EXTERNAL BLOCKER (gates D1 — cannot be coded around)
+## D1 blocker — RESOLVED by investigation (2026-08-24): NOT a vendor blocker, an internal integration fix
 
-**A vendor-verified production OACX biometric contract does not exist yet.** The only OACX biometric contract in the code is `dev-mock-v1`, gated to `app_env=="dev"` (`cx_identity.py:178-181`, `facemarket_enrollment.py:1998-2001`) and INERT in production. To enable biometric in prod, OmniOne must confirm the real OACX `/trans` portrait contract:
-- the portrait field path + encoding in the trans-parse response,
-- max bytes, TTL, allowed retention/use of the government-ID portrait.
+Investigated the vendor manual (`OmniOne CX_VC-Verifier_v1.0 API 매뉴얼`) + samples directly. The government-ID face portrait DOES exist and is fully specified — no vendor question needed:
 
-Until that spec is obtained and a `prod` contract is implemented against it, `FM_BIOMETRIC_ENROLLMENT_ENABLED=true` in prod would fail closed (no shippable prod path). **This is the critical path for D1.** Action: get the OACX portrait contract from the OmniOne vendor channel.
+- **Field: `data.dlphotoimage`** — "면허증 사진 / 주민증 사진" (the ID card face photo), base64 **JPEG** (magic `ffd8ff`). (`converterimage` is the full rendered card image, PNG.) Manual result-response spec lines 405-449, 620-634, 725-728.
+- **Location: the RESULT step** — `POST /oacx/api/v1.0/authen/qr/result` (or `app/result`), under `data.dlphotoimage`. NOT the trans-parse (`GET /trans/{token}`) response — the portrait is never in trans.
+- **Gate: `useConvertor: true`** must be sent in the result request ("검증 후 운전면허증 이미지 생성 여부", manual line 403-404), else the image isn't generated.
+
+**The code targets the wrong place.** `cx_identity.OacxBiometricContract` / `parse_oacx_biometric_evidence` expect `portrait_path=("idPortraitBase64",)` inside the TRANS response — a field that does not exist and a response that never carries the photo. The dev-mock invented `idPortraitBase64`; the real portrait is `data.dlphotoimage` from the RESULT step.
+
+**The current biometric OACX flow cannot retrieve the portrait as built.** Frontend `ModelRegister.jsx` uses `OACX.LOAD_MODULE(...) → res.token → backend trans/{token}` — the LOAD_MODULE callback surfaces only `token` (confirmed in `hackerton/index.html`), and trans-parse has no image. The result-step image path is the separate manual API flow (`모바일신분증API 샘플` sample: getToken → qr/request → user sign → qr/result with `useConvertor:true` → `data.dlphotoimage`).
+
+### D1 remaining work = internal integration (no vendor dependency)
+1. Capture the RESULT-step response with `useConvertor: true` and extract `data.dlphotoimage` (JPEG). Either (a) confirm — with one DEV live test — whether `OACX.LOAD_MODULE` with `useConvertor:true` surfaces `res.dlphotoimage`/`res.data.dlphotoimage` in its callback (simplest if it does), or (b) rewire the enrollment identity step to the manual `qr/result`/`app/result` flow to obtain it.
+2. Replace the `prod` `OacxBiometricContract` to read `dlphotoimage` from the result payload (base64 JPEG, MIME `image/jpeg`) instead of `idPortraitBase64` from trans; feed it to the SFace 1:1 match; wipe as today.
+3. The ONE genuinely-open item is a DEV-testable question (LOAD_MODULE-vs-manual for the result image), NOT a vendor question. No OmniOne dependency remains for D1.
+
+Note: manual states no explicit TTL/size cap for `dlphotoimage`; the JWT tokens are 5-min. Memory-only match-then-discard (current design) is consistent; treat retention as an internal policy choice, not a vendor gate.
 
 ---
 
