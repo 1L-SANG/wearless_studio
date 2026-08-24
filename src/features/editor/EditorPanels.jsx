@@ -1020,7 +1020,48 @@ const FRAME_LIBRARY_TABS = [
   { value: 'guide', label: '안내 프레임' },
 ];
 
-export function FramePanel({ onAdd, onDragStart, onDragEnd, recommendGender, onPickInfo }) {
+function DetailTemplateGallery({ sets, onApply }) {
+  return (
+    <div className="dp-template-gallery">
+      <div className="dp-tg-head">상세페이지 템플릿 <span>한 벌 통째로 추가</span></div>
+      <div className="dp-tg-list">
+        {sets.map((set) => {
+          const cover = set.frames?.[0];
+          return (
+            <button type="button" key={set.id} className="dp-tg-card" title={`${set.label} 템플릿 추가`}
+              onClick={() => onApply(set.id)}>
+              <span className="dp-tg-thumb" style={{ background: cover?.bg || set.accent }} aria-hidden="true">
+                {(cover?.slots || []).map((slot, i) => (
+                  <i key={i} style={{
+                    left: `${slot.x / 10}%`, top: `${slot.y / cover.h * 100}%`,
+                    width: `${slot.w / 10}%`, height: `${slot.h / cover.h * 100}%`,
+                    borderRadius: slot.radius ? `${Math.min(50, slot.radius / Math.min(slot.w, slot.h) * 100)}%` : undefined,
+                  }} />
+                ))}
+                {(cover?.elements || []).filter((element) => element.type === 'text').slice(0, 4).map((element, index) => (
+                  <b key={index} style={{
+                    left: `${element.x / 10}%`, top: `${element.y / cover.h * 100}%`,
+                    width: `${element.w / 10}%`, height: `${element.h / cover.h * 100}%`,
+                    fontSize: `${Math.max(2, (element.style?.size || 20) / 14)}px`,
+                    fontWeight: element.style?.weight || 400,
+                    color: element.style?.color || '#222',
+                    textAlign: element.style?.align || 'left',
+                  }}>{element.text}</b>
+                ))}
+              </span>
+              <span className="dp-tg-meta">
+                <span className="dp-tg-label">{set.label}</span>
+                <span className="dp-tg-desc">{set.desc}</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export function FramePanel({ onAdd, onApplyTemplate, templateSets, onDragStart, onDragEnd, recommendGender, onPickInfo }) {
   const [category, setCategory] = useState('blank');
   const frames = FRAME_LIBRARY_ITEMS.filter((frame) => (
     category === 'blank' ? !frame.template : frame.template
@@ -1028,6 +1069,13 @@ export function FramePanel({ onAdd, onDragStart, onDragEnd, recommendGender, onP
   return (
     <div>
       {/* 제목은 좌측 패널 래퍼가 그린다(Editor.jsx) — 여기서 또 그리면 "프레임 프레임"이 된다 */}
+      {onApplyTemplate && templateSets?.length ? (
+        <DetailTemplateGallery sets={templateSets} onApply={onApplyTemplate} />
+      ) : onApplyTemplate && (
+        <button type="button" className="frame-template-apply" onClick={() => onApplyTemplate()}>
+          상세페이지 템플릿 한 번에 적용
+        </button>
+      )}
       <div className="panel-sub">종류를 고른 뒤 끌어 놓거나 클릭해 추가하세요.</div>
       <div className="frame-category-tabs">
         <UnderlineTabs options={FRAME_LIBRARY_TABS} value={category} onChange={setCategory} />
