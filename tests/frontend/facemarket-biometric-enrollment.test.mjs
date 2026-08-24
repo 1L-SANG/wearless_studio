@@ -120,12 +120,14 @@ async function modelComponentHarness({
           export const cancelEnrollment = (...args) => api.cancelEnrollment(...args);
           export const completeEnrollment = (...args) => api.completeEnrollment(...args);
           export const createEnrollment = (...args) => api.createEnrollment(...args);
+          export const createIdentity = (...args) => api.createIdentity(...args);
           export const createLivenessSession = (...args) => api.createLivenessSession(...args);
           export const deleteEnrollmentPhoto = (...args) => api.deleteEnrollmentPhoto(...args);
           export const getCurrentEnrollment = (...args) => api.getCurrentEnrollment(...args);
           export const getEnrollment = (...args) => api.getEnrollment(...args);
           export const listMyModels = (...args) => api.listMyModels(...args);
           export const uploadEnrollmentPhoto = (...args) => api.uploadEnrollmentPhoto(...args);
+          export const uploadProfileImage = (...args) => api.uploadProfileImage(...args);
         `;
         if (id === '\0fm-test-personalization') return `
           export const getStatus = (...args) => ${access}.api.getStatus(...args);
@@ -215,13 +217,40 @@ test('uploadProfileImage mirrors multipart pattern', () => {
   assert.match(apiSrc, /profile-image/);
 });
 
+test('identity step runs OACX widget at the FRONT and calls createIdentity with token', () => {
+  const reg = read('../../src/features/model/ModelRegister.jsx');
+  assert.match(reg, /createIdentity\(/);
+  // completeEnrollment 호출은 token 없이 sessionId+idPhotoHex(ref)
+  assert.match(reg, /completeEnrollment\(\s*[^,]+,\s*\{\s*sessionId[^}]*idPhotoHex[^}]*\}\s*\)/);
+  assert.doesNotMatch(reg, /completeEnrollment\([^)]*token/);
+});
+
+test('portrait is held in a ref, never stored/logged', () => {
+  const reg = read('../../src/features/model/ModelRegister.jsx');
+  assert.match(reg, /useRef\(/);
+  assert.doesNotMatch(reg, /localStorage\.setItem\([^)]*dlphoto/i);
+});
+
+test('profile step wired between photos and liveness', () => {
+  const reg = read('../../src/features/model/ModelRegister.jsx');
+  assert.match(reg, /uploadProfileImage\(/);
+  assert.match(reg, /step === 'profile'/);
+});
+
+test('lost portrait after identity routes back to identity re-auth', () => {
+  const reg = read('../../src/features/model/ModelRegister.jsx');
+  assert.match(reg, /idPhotoHex.*current|portraitRef\.current/s);
+});
+
 test('the browser wizard keeps raw authentication material in memory only', () => {
   const registerSource = read('../../src/features/model/ModelRegister.jsx');
   const livenessSource = read('../../src/features/model/FaceLivenessStep.jsx');
 
-  assert.match(registerSource, /completeEnrollment\(enrollment\.id, \{ sessionId, token, idPhotoHex \}\)/);
+  // 재정렬 후: complete 는 token 없이 sessionId+idPhotoHex(ref) 만 전달한다.
+  assert.match(registerSource, /completeEnrollment\(enrollmentId, \{ sessionId, idPhotoHex \}\)/);
+  assert.doesNotMatch(registerSource, /completeEnrollment\([^)]*token/);
   assert.match(registerSource, /useConvertor:\s*true/);
-  assert.match(registerSource, /idPhotoHex\s*=\s*parsed\?\.data\?\.dlphotoimage/);
+  assert.match(registerSource, /portraitRef\.current\s*=\s*parsed\?\.data\?\.dlphotoimage/);
   assert.match(registerSource, /새 생체 등록 시작/);
   assert.match(registerSource, /localStorage\.setItem\([^,]+,\s*deviceId\)/);
   assert.doesNotMatch(registerSource, /localStorage\.setItem\([^)]*(token|session|credentials|image|dlphotoimage|idPhotoHex)/i);
@@ -248,8 +277,9 @@ test('the browser wizard keeps raw authentication material in memory only', () =
 test('a liveness interruption cancels the enrollment before a fresh retry', () => {
   const apiSource = read('../../src/lib/api/facemarket.js');
   const registerSource = read('../../src/features/model/ModelRegister.jsx');
-  const finishIdentitySource = registerSource.slice(
-    registerSource.indexOf('const finishIdentity'),
+  // 재정렬 후: 라이브니스 후 매치는 finishMatch 가 담당한다(위젯 없이 저장된 세션+초상 ref).
+  const finishMatchSource = registerSource.slice(
+    registerSource.indexOf('const finishMatch'),
     registerSource.indexOf("if (step === 'loading')"),
   );
 
@@ -262,25 +292,17 @@ test('a liveness interruption cancels the enrollment before a fresh retry', () =
   assert.match(registerSource, /setStep\('cancel_failed'\)/);
   assert.match(registerSource, /등록 취소 다시 시도/);
   assert.doesNotMatch(registerSource, /서버 sweep이 재시도/);
-  assert.match(finishIdentitySource, /if \(isTransientIdentityError\(requestError\)\)/);
-  assert.match(finishIdentitySource, /setStep\('identity_failed'\)/);
-  assert.match(finishIdentitySource, /await abandonLiveness\(\);/);
+  assert.match(finishMatchSource, /if \(isTransientIdentityError\(requestError\)\)/);
+  assert.match(finishMatchSource, /setStep\('identity_failed'\)/);
+  assert.match(finishMatchSource, /await abandonLiveness\(\);/);
   assert.doesNotMatch(registerSource, /resetLiveness|reuse(?:Photos|Enrollment)/i);
 });
 
 test('a transient identity-completion error retries in place instead of abandoning the enrollment', async () => {
+  // 재정렬 후: 라이브니스 후 매치(finishMatch)는 위젯을 다시 띄우지 않고, 앞단에서 담아 둔
+  // 초상 ref + 저장된 세션으로 completeEnrollment 만 재시도한다.
   const cancelled = [];
   let completeAttempts = 0;
-  const originalWindow = globalThis.window;
-  const originalRaf = globalThis.requestAnimationFrame;
-  globalThis.requestAnimationFrame = (cb) => { cb(); return 1; };
-  globalThis.window = {
-    OACX: {
-      LOAD_MODULE: (_url, _options, callback) => {
-        queueMicrotask(() => callback(JSON.stringify({ token: `cx-token-${completeAttempts + 1}` })));
-      },
-    },
-  };
   const harness = await modelComponentHarness({
     initialStates: [
       'liveness',
@@ -300,6 +322,8 @@ test('a transient identity-completion error retries in place instead of abandoni
       getCurrentEnrollment: () => new Promise(() => {}),
     },
   });
+  // 앞단 identity 스텝에서 초상을 담아 둔 상태를 재현한다(portraitRef 는 세 번째 ref).
+  harness.runtime.refs[2] = { current: 'a1b2c3d4' };
   try {
     let tree = harness.render();
     const liveness = findTree(tree, (node) => node.type === 'Lazy');
@@ -311,6 +335,7 @@ test('a transient identity-completion error retries in place instead of abandoni
     assert.equal(harness.runtime.states[0], 'identity_failed');
     assert.equal(harness.runtime.states[1]?.id, 'enrollment-1', 'the enrollment id must be retained, not discarded');
     assert.ok(harness.runtime.states[2], 'the liveness session must be retained so photos/consent are not re-required');
+    assert.equal(harness.runtime.refs[2].current, 'a1b2c3d4', 'the id portrait ref survives a transient failure for retry');
 
     tree = harness.render();
     const retry = findTree(
@@ -325,6 +350,48 @@ test('a transient identity-completion error retries in place instead of abandoni
     assert.equal(cancelled.length, 0, 'the retained enrollment must never be cancelled by a transient retry');
     assert.equal(harness.runtime.states[0], 'processing');
     assert.equal(harness.runtime.states[1]?.id, 'enrollment-1');
+    assert.equal(harness.runtime.refs[2].current, null, 'the id portrait is discarded once the match completes');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('the front identity step authenticates via OACX then advances to photos', async () => {
+  const originalWindow = globalThis.window;
+  const originalRaf = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (cb) => { cb(); return 1; };
+  globalThis.window = {
+    OACX: {
+      LOAD_MODULE: (_url, _options, callback) => {
+        queueMicrotask(() => callback(JSON.stringify({ token: 'cx-token', data: { dlphotoimage: 'a1b2c3' } })));
+      },
+    },
+  };
+  const identityCalls = [];
+  const harness = await modelComponentHarness({
+    initialStates: ['identity', { id: 'enrollment-1', status: 'identity_pending' }, null, '', false, false],
+    api: {
+      createIdentity: async (id, body) => { identityCalls.push([id, body]); return {}; },
+      getEnrollment: async () => ({ id: 'enrollment-1', status: 'photos_pending', photos: [] }),
+      cancelEnrollment: async () => {},
+      getCurrentEnrollment: () => new Promise(() => {}),
+    },
+  });
+  try {
+    const tree = harness.render();
+    const start = findTree(
+      tree,
+      (node) => node.type === 'Button' && node.props?.children === '모바일 신분증으로 인증',
+    );
+    assert.ok(start, 'the front identity step exposes an authenticate control');
+    await start.props.onClick();
+    await flush();
+
+    assert.equal(identityCalls.length, 1, 'createIdentity must be called once with the widget token');
+    assert.equal(identityCalls[0][0], 'enrollment-1');
+    assert.equal(identityCalls[0][1]?.token, 'cx-token', 'the CX token — not raw PII — is posted to createIdentity');
+    assert.equal(harness.runtime.states[0], 'photos', 'a passed identity check advances to photos');
+    assert.equal(harness.runtime.refs[2].current, 'a1b2c3', 'the id portrait is captured into a ref, not storage');
   } finally {
     globalThis.window = originalWindow;
     globalThis.requestAnimationFrame = originalRaf;
@@ -558,16 +625,20 @@ test('OACX readiness timeout removes loader-owned scripts and retries without to
   };
   globalThis.setInterval = (callback) => { intervalCallback = callback; return callback; };
   globalThis.clearInterval = () => {};
+  // 재정렬 후: CX 위젯은 앞단 identity 스텝(runIdentity)에서 로드된다.
   const harness = await modelComponentHarness({
     initialStates: [
-      'liveness', { id: 'enrollment-1' }, { sessionId: 'session-1' }, '', false, false,
+      'identity', { id: 'enrollment-1', status: 'identity_pending' }, null, '', false, false,
     ],
-    api: { cancelEnrollment: async () => {} },
+    api: { cancelEnrollment: async () => {}, createIdentity: async () => ({}) },
   });
   try {
     const tree = harness.render();
-    const liveness = findTree(tree, (node) => node.type === 'Lazy');
-    const first = liveness.props.onAnalysisComplete();
+    const start = findTree(
+      tree,
+      (node) => node.type === 'Button' && node.props?.children === '모바일 신분증으로 인증',
+    );
+    const first = start.props.onClick();
     await eventually(() => intervalCallback, 'OACX readiness timer should start');
     for (let attempt = 0; attempt <= 50; attempt += 1) intervalCallback();
     await first;
@@ -576,7 +647,7 @@ test('OACX readiness timeout removes loader-owned scripts and retries without to
     assert.equal(elements.has('oacx-ux'), false);
 
     intervalCallback = undefined;
-    const second = liveness.props.onAnalysisComplete();
+    const second = start.props.onClick();
     await eventually(() => intervalCallback, 'a fresh OACX readiness timer should start');
     assert.deepEqual(appended, ['oacx-ux', 'oacx-ux']);
     for (let attempt = 0; attempt <= 50; attempt += 1) intervalCallback();
