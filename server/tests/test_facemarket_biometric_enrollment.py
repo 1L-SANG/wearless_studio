@@ -352,7 +352,12 @@ class FakeCursor:
                     for row in self.store.enrollments
                     if row["expires_at"] <= self.store.now
                     and row["status"]
-                    in {"photos_pending", "liveness_pending", "processing"}
+                    in {
+                        "identity_pending",
+                        "photos_pending",
+                        "liveness_pending",
+                        "processing",
+                    }
                 ],
                 key=lambda row: row["expires_at"],
             )[:limit]
@@ -3638,6 +3643,42 @@ def test_cancel_is_idempotent_and_cleans_quarantine_photos(
     assert evidence["quarantineDeleted"] is True
     assert evidence["quarantineDeletedCount"] == 1
     assert "facemarket/" not in json.dumps(evidence)
+
+
+def test_cancel_allows_identity_pending_enrollment(
+    enrollment_client, auth, enrollment_store
+):
+    # 신분증-먼저 재배치(Task1): identity_pending 도 사용자의 단일 활성 슬롯을 차지하므로
+    # 취소 가능해야 한다(아니면 슬롯을 영구 점유해 재등록이 막힌다).
+    enrollment_id = create_enrollment(enrollment_client, auth, verify_identity=False)
+    assert enrollment_store.enrollments[0]["status"] == "identity_pending"
+
+    response = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/cancel", headers=auth()
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "cancelled"
+    assert enrollment_store.enrollments[0]["status"] == "cancelled"
+
+
+def test_sweep_expires_identity_pending_enrollment(
+    enrollment_client, auth, enrollment_store
+):
+    # identity_pending 도 만료 스윕 대상이어야 한다 — 아니면 만료돼도 활성 슬롯을 영구 점유한다.
+    enrollment_id = create_enrollment(enrollment_client, auth, verify_identity=False)
+    row = enrollment_store.enrollments[0]
+    assert row["status"] == "identity_pending"
+    row["expires_at"] = NOW - timedelta(seconds=1)
+
+    asyncio.run(
+        facemarket_enrollment.sweep_terminal_enrollments(enrollment_client.app)
+    )
+
+    swept = enrollment_store.enrollments[0]
+    assert swept["id"] == enrollment_id
+    assert swept["status"] == "expired"
+    assert swept["reason"] == "enrollment_expired"
 
 
 def test_cancel_cleanup_failure_remains_delete_pending_until_retry(

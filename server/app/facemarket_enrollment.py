@@ -1519,7 +1519,7 @@ async def sweep_terminal_enrollments(app, *, limit: int = 100) -> int:
                     with due as (
                         select id from fm_biometric_enrollments
                         where expires_at <= now()
-                          and status in ('photos_pending', 'liveness_pending', 'processing')
+                          and status in ('identity_pending', 'photos_pending', 'liveness_pending', 'processing')
                         order by expires_at
                         for update skip locked
                         limit %s
@@ -2074,8 +2074,8 @@ async def cancel_enrollment(
                     update fm_biometric_enrollments e
                     set status = 'cancelled', completed_at = coalesce(completed_at, now())
                     where e.id = %s and e.user_id = %s and e.status in (
-                        'photos_pending', 'liveness_pending', 'processing', 'asset_building',
-                        'license_pending', 'vc_pending', 'cancelled'
+                        'identity_pending', 'photos_pending', 'liveness_pending', 'processing',
+                        'asset_building', 'license_pending', 'vc_pending', 'cancelled'
                     )
                     returning e.id::text as id
                     """,

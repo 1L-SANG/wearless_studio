@@ -377,9 +377,11 @@ export function ModelRegister() {
     if (!sessionId || !enrollmentId) return;
     const idPhotoHex = portraitRef.current;
     if (!idPhotoHex) {
-      // 새로고침 등으로 초상 ref 유실 — 조용한 실패 금지. 단회용 토큰이라 앞단 재인증이 필요하다.
-      setError('신원 확인 정보가 만료됐어요. 처음 화면에서 모바일 신분증 인증을 다시 진행해 주세요.');
-      setStep('identity');
+      // 새로고침 등으로 초상 ref 유실 — 조용한 실패 금지. 이 시점 등록은 이미 liveness_pending 이라
+      // /identity(identity_pending 만 허용) 재인증이 409 로 막혀 제자리 재인증이 불가능하다.
+      // 등록을 취소하고 처음부터 다시 시작한다(abandonLiveness 가 세션·상태까지 정리).
+      await abandonLiveness();
+      if (mounted.current) setError('인증 정보가 만료되어 처음부터 다시 진행해야 해요.');
       return;
     }
     setError('');

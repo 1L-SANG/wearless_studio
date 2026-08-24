@@ -259,9 +259,50 @@ test('profile step wired between photos and liveness', () => {
   assert.match(reg, /step === 'profile'/);
 });
 
-test('lost portrait after identity routes back to identity re-auth', () => {
-  const reg = read('../../src/features/model/ModelRegister.jsx');
-  assert.match(reg, /idPhotoHex.*current|portraitRef\.current/s);
+test('a lost portrait after identity cleanly restarts instead of promising in-place re-auth', async () => {
+  // 재정렬 후: 라이브니스 후 매치(finishMatch) 시점의 등록은 이미 liveness_pending 이라
+  // /identity(identity_pending 만 허용) 재인증이 409 로 막힌다. 초상 ref 를 잃으면 제자리
+  // 재인증(setStep('identity'))이 아니라 등록을 취소하고 처음부터 다시 시작해야 한다.
+  const cancelled = [];
+  let completeAttempts = 0;
+  const harness = await modelComponentHarness({
+    initialStates: [
+      'liveness',
+      { id: 'enrollment-1', status: 'liveness_pending' },
+      { sessionId: 'session-1' },
+      '',
+      false,
+      false,
+    ],
+    api: {
+      cancelEnrollment: async (id) => { cancelled.push(id); },
+      completeEnrollment: async () => { completeAttempts += 1; return {}; },
+      getCurrentEnrollment: () => new Promise(() => {}),
+    },
+  });
+  // 초상 ref(세 번째 ref)를 잃은 상태를 재현한다.
+  harness.runtime.refs[2] = { current: null };
+  try {
+    const tree = harness.render();
+    const liveness = findTree(tree, (node) => node.type === 'Lazy');
+    await liveness.props.onAnalysisComplete();
+    await flush();
+
+    assert.equal(completeAttempts, 0, 'a lost portrait must never attempt server completion');
+    assert.deepEqual(cancelled, ['enrollment-1'], 'the stale enrollment must be cancelled for a clean restart');
+    assert.notEqual(harness.runtime.states[0], 'identity', 'must not route to in-place identity re-auth');
+    assert.equal(harness.runtime.states[0], 'failed', 'a lost portrait routes to the clean restart state');
+    assert.equal(harness.runtime.states[1], null, 'the stale enrollment must be discarded');
+    assert.equal(harness.runtime.states[2], null, 'the stale liveness session must be cleared');
+    assert.match(harness.runtime.states[3], /처음부터 다시/, 'the copy tells the user to start over');
+    assert.doesNotMatch(
+      harness.runtime.states[3],
+      /신분증 인증을 다시 진행/,
+      'the copy must no longer promise in-place re-auth',
+    );
+  } finally {
+    await harness.close();
+  }
 });
 
 test('the browser wizard keeps raw authentication material in memory only', () => {
