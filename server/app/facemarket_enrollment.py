@@ -178,6 +178,10 @@ class CompleteEnrollmentBody(CamelModel):
     id_photo_hex: str | None = None
 
 
+class IdentityVerifyBody(CamelModel):
+    token: str
+
+
 class EnrollmentPhotoView(CamelModel):
     angle: str
     qc_status: str
@@ -594,8 +598,8 @@ async def _load_current_enrollment(conn, user_id: str) -> dict | None:
                    e.decision, e.reason, e.cooldown_until, e.expires_at
             from fm_biometric_enrollments e
             where e.user_id = %s and e.status in (
-                'photos_pending', 'liveness_pending', 'processing', 'asset_building',
-                'license_pending', 'vc_pending'
+                'identity_pending', 'photos_pending', 'liveness_pending', 'processing',
+                'asset_building', 'license_pending', 'vc_pending'
             )
             order by e.created_at desc limit 1
             """,
@@ -706,8 +710,8 @@ async def create_enrollment(
                     (user_id, model_id, device_digest, consent_version, expires_at)
                 values (%s, %s, %s, %s, %s)
                 on conflict (user_id) where status in (
-                    'photos_pending', 'liveness_pending', 'processing', 'asset_building',
-                    'license_pending', 'vc_pending'
+                    'identity_pending', 'photos_pending', 'liveness_pending', 'processing',
+                    'asset_building', 'license_pending', 'vc_pending'
                 ) do nothing
                 returning id::text as id
                 """,
@@ -721,13 +725,102 @@ async def create_enrollment(
                     """
                     select id::text as id from fm_biometric_enrollments
                     where user_id = %s and status in (
-                        'photos_pending', 'liveness_pending', 'processing', 'asset_building',
-                        'license_pending', 'vc_pending'
+                        'identity_pending', 'photos_pending', 'liveness_pending', 'processing',
+                        'asset_building', 'license_pending', 'vc_pending'
                     ) order by created_at desc limit 1
                     """,
                     (user_id,),
                 )
                 enrollment_id = (await cur.fetchone())["id"]
+        await conn.commit()
+        row = await _load_owned_enrollment(conn, enrollment_id, user_id)
+        return await _enrollment_view(conn, row)
+
+
+@router.post("/enrollments/{enrollment_id}/identity", response_model=EnrollmentView)
+async def verify_enrollment_identity(
+    request: Request,
+    enrollment_id: str,
+    body: IdentityVerifyBody,
+    user_id: str = Depends(require_user),
+):
+    enrollment_id = _canonical_enrollment_id(enrollment_id)
+    token = (body.token or "").strip()
+    if not token:
+        raise _err("token_required", "인증 토큰이 없습니다.")
+    settings: Settings = request.app.state.settings
+    token_digest = f"cxsha256:{hashlib.sha256(token.encode()).hexdigest()}"
+    contract = cx_identity.get_oacx_biometric_contract(settings)
+    try:
+        # CI·이름·생년월일은 trans/{token}(서버발 조회)에서만 온다 — 서버검증 완료.
+        trans = await cx_identity.fetch_trans(settings.cx_trans_base_url, token)
+        evidence = cx_identity.parse_oacx_biometric_evidence(trans, contract=contract)
+    except cx_identity.OacxBiometricError as exc:
+        raise _err(exc.reason, "본인확인에 실패했어요. 다시 시도해 주세요.")
+    except cx_identity.CxIdentityError:
+        raise _err("id_portrait_unavailable", "신분증 확인에 실패했어요. 다시 시도해 주세요.")
+    try:
+        # 원시 CI 는 HMAC(ci_hash)만 장기저장하고 raw 는 즉시 폐기한다.
+        ci_hash = hmac.new(
+            settings.fm_ci_pepper.encode(), evidence.ci, hashlib.sha256
+        ).hexdigest()
+    finally:
+        cx_identity.wipe_bytearray(evidence.ci)
+    async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
+        await _reject_cutover_closed(conn)
+        async with conn.cursor() as cur:
+            # 소유·상태 검사(identity_pending 만 허용)
+            await cur.execute(
+                "select status from fm_biometric_enrollments "
+                "where id = %s and user_id = %s for update",
+                (enrollment_id, user_id),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                raise _err("not_found", "등록을 찾을 수 없습니다.", status=404)
+            if row["status"] != "identity_pending":
+                raise _err(
+                    "invalid_enrollment_state",
+                    "이미 본인확인이 완료됐거나 진행할 수 없는 상태입니다.",
+                    status=409,
+                )
+            # replay(토큰 재사용) 차단
+            await cur.execute(
+                """
+                select exists(
+                  select 1 from fm_identity_verifications
+                  where cx_tx_id = %s and cx_tx_id_format = 'sha256-v1'
+                  union all
+                  select 1 from fm_biometric_enrollments where identity_tx_digest = %s
+                ) as replayed
+                """,
+                (token_digest, token_digest),
+            )
+            if (await cur.fetchone())["replayed"]:
+                await conn.commit()
+                raise _err("identity_replay", "이미 사용된 인증입니다. 새로 시작해 주세요.")
+            # 교차유저 CI 충돌(다른 유저 모델이면 소유권 확인 필요)
+            await cur.execute(
+                "select user_id::text as user_id from fm_models where ci_hash = %s",
+                (ci_hash,),
+            )
+            owner = await cur.fetchone()
+            if owner is not None and owner["user_id"] != user_id:
+                raise _err("identity_recovery_required", "기존 모델 소유권 확인이 필요해요.")
+            # 증거 저장 + 상태 전이
+            await cur.execute(
+                """
+                update fm_biometric_enrollments
+                set status = 'photos_pending',
+                    identity_ci_hash = %s, identity_name_masked = %s,
+                    identity_birth_year = %s, identity_tx_digest = %s,
+                    identity_contract_version = %s
+                where id = %s and user_id = %s and status = 'identity_pending'
+                """,
+                (ci_hash, evidence.name_masked, evidence.birth[:4], token_digest,
+                 evidence.contract_version, enrollment_id, user_id),
+            )
         await conn.commit()
         row = await _load_owned_enrollment(conn, enrollment_id, user_id)
         return await _enrollment_view(conn, row)

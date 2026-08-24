@@ -30,6 +30,7 @@ DEVICE_ID = "device-id-with-at-least-32-characters"
 PORTRAIT_JPEG_BYTES = b"\xff\xd8\xff" + b"portrait-bytes"
 PORTRAIT_HEX = PORTRAIT_JPEG_BYTES.hex()
 ACTIVE_STATUSES = {
+    "identity_pending",
     "photos_pending",
     "liveness_pending",
     "processing",
@@ -261,6 +262,19 @@ class FakeCursor:
                 if row
                 else None
             )
+        elif query.startswith("select exists(") and "identity_tx_digest" in query:
+            # 신분증-먼저 게이트(/identity)의 replay 차단 — identity_tx_digest 컬럼을 본다
+            # (complete 경로의 oacx_tx_digest replay 와 별개의 SQL 이라 먼저 분기).
+            token_digest = params[0]
+            self.result = {
+                "replayed": any(
+                    row.get("cx_tx_id") == token_digest for row in self.store.identities
+                )
+                or any(
+                    row.get("identity_tx_digest") == token_digest
+                    for row in self.store.enrollments
+                )
+            }
         elif query.startswith("select exists(") and "fm_identity_verifications" in query:
             token_digest = params[0]
             self.result = {
@@ -304,7 +318,8 @@ class FakeCursor:
                     "model_id": model_id,
                     "device_digest": device_digest,
                     "consent_version": consent_version,
-                    "status": "photos_pending",
+                    # Task1 migration: 새 등록의 status DEFAULT 는 identity_pending.
+                    "status": "identity_pending",
                     "decision": None,
                     "reason": None,
                     "provider_versions": {},
@@ -312,6 +327,12 @@ class FakeCursor:
                     "expires_at": expires_at,
                     "completed_at": None,
                     "raw_deletion_evidence": {},
+                    # Task1 evidence 컬럼(신분증-먼저 게이트가 채운다) — 기본 None.
+                    "identity_ci_hash": None,
+                    "identity_name_masked": None,
+                    "identity_birth_year": None,
+                    "identity_tx_digest": None,
+                    "identity_contract_version": None,
                 }
                 self.store.enrollments.append(row)
                 self.result = {"id": row["id"]}
@@ -696,6 +717,21 @@ class FakeCursor:
                     cooldown_until=cooldown_until or row.get("cooldown_until"),
                 )
                 self.result = {"status": "failed"}
+        elif (
+            query.startswith("select status from fm_biometric_enrollments where id")
+            and "for update" in query
+        ):
+            # /identity 게이트의 소유·상태 잠금 조회(id + user_id + for update).
+            enrollment_id, user_id = params
+            row = next(
+                (
+                    item
+                    for item in self.store.enrollments
+                    if item["id"] == enrollment_id and item["user_id"] == user_id
+                ),
+                None,
+            )
+            self.result = {"status": row["status"]} if row else None
         elif query.startswith("select status from fm_biometric_enrollments where id"):
             enrollment_id = params[0]
             row = next(
@@ -721,6 +757,34 @@ class FakeCursor:
             )
             if row["status"] == "photos_pending":
                 row["status"] = "liveness_pending"
+        elif (
+            query.startswith("update fm_biometric_enrollments set status = 'photos_pending'")
+            and "identity_ci_hash" in query
+        ):
+            # /identity 게이트: identity_pending → photos_pending + CI 증거 컬럼 저장.
+            (
+                ci_hash,
+                name_masked,
+                birth_year,
+                tx_digest,
+                contract_version,
+                enrollment_id,
+                user_id,
+            ) = params
+            row = next(
+                item
+                for item in self.store.enrollments
+                if item["id"] == enrollment_id and item["user_id"] == user_id
+            )
+            if row["status"] == "identity_pending":
+                row.update(
+                    status="photos_pending",
+                    identity_ci_hash=ci_hash,
+                    identity_name_masked=name_masked,
+                    identity_birth_year=birth_year,
+                    identity_tx_digest=tx_digest,
+                    identity_contract_version=contract_version,
+                )
         elif query.startswith("update fm_biometric_enrollments set status = 'photos_pending'"):
             enrollment_id, user_id = params
             row = next(
@@ -815,6 +879,14 @@ class FakeCursor:
                 + failed_count,
                 quarantineCleanupAt=NOW.isoformat(),
             )
+        elif query.startswith("select user_id::text as user_id from fm_models"):
+            # /identity 게이트의 교차유저 CI 충돌 조회(ci_hash → 소유 user_id).
+            ci_hash = params[0]
+            model = next(
+                (row for row in self.store.models if row.get("ci_hash") == ci_hash),
+                None,
+            )
+            self.result = {"user_id": model["user_id"]} if model else None
         elif query.startswith("select id::text as id, user_id::text as user_id from fm_models"):
             ci_hash = params[0]
             model = next(
@@ -1134,7 +1206,34 @@ def auth(make_token):
     return headers
 
 
-def create_enrollment(client, auth, *, device_id=DEVICE_ID):
+IDENTITY_TOKEN = "oacx-identity-token-1"
+
+
+def verify_identity(client, auth, enrollment_id, *, token=IDENTITY_TOKEN):
+    return client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/identity",
+        json={"token": token},
+        headers=auth(),
+    )
+
+
+def _fast_forward_identity(store, enrollment_id):
+    # 컨트롤러 결정 1: 기존 사진/liveness/complete 테스트(~35개)는 cx_identity.fetch_trans 를
+    # 스텁하지 않으므로, 실 /identity HTTP 를 태우면 깨진다. 대신 store 를 직접 변이해
+    # identity 게이트를 통과(photos_pending)시키고, Task3 의 바인딩이 읽을 identity_* 증거
+    # 컬럼을 더미로 채운다. 실 엔드포인트는 전용 identity-gate 테스트만 태운다.
+    enrollment = next(
+        row for row in store.enrollments if row["id"] == enrollment_id
+    )
+    enrollment["status"] = "photos_pending"
+    enrollment["identity_ci_hash"] = "identity-ci-hash-dummy"
+    enrollment["identity_name_masked"] = "홍*동"
+    enrollment["identity_birth_year"] = "1990"
+    enrollment["identity_tx_digest"] = "cxsha256:identity-dummy"
+    enrollment["identity_contract_version"] = "dev-mock-v1"
+
+
+def create_enrollment(client, auth, *, device_id=DEVICE_ID, verify_identity=True):
     response = client.post(
         "/v1/facemarket/enrollments",
         json={
@@ -1147,7 +1246,54 @@ def create_enrollment(client, auth, *, device_id=DEVICE_ID):
         headers=auth(),
     )
     assert response.status_code == 201, response.text
-    return response.json()["id"]
+    enrollment_id = response.json()["id"]
+    if verify_identity:
+        _fast_forward_identity(client.app.state.pool.store, enrollment_id)
+    return enrollment_id
+
+
+def test_identity_verify_advances_to_photos_pending(
+    enrollment_client, auth, enrollment_store, completion_fakes
+):
+    eid = create_enrollment(enrollment_client, auth, verify_identity=False)
+    assert enrollment_store.enrollments[0]["status"] == "identity_pending"
+    res = verify_identity(enrollment_client, auth, eid)
+    assert res.status_code == 200, res.text
+    assert enrollment_store.enrollments[0]["status"] == "photos_pending"
+    # ci_hash 저장, 원시 CI 미저장
+    row = enrollment_store.enrollments[0]
+    assert row["identity_ci_hash"] and "dev-ci-value" not in enrollment_store.serialized()
+
+
+def test_identity_verify_blocks_minor(
+    enrollment_client, auth, enrollment_store, monkeypatch
+):
+    async def minor_trans(*_a, **_k):
+        return {"ci": "dev-ci-value", "birth": "20200101", "nm": "홍길동", "txId": "tx-m"}
+
+    monkeypatch.setattr(facemarket_enrollment.cx_identity, "fetch_trans", minor_trans)
+    eid = create_enrollment(enrollment_client, auth, verify_identity=False)
+    res = verify_identity(enrollment_client, auth, eid)
+    assert res.status_code == 400
+    assert res.json()["error"]["code"] == "minor_blocked"
+    assert enrollment_store.enrollments[0]["status"] == "identity_pending"
+
+
+def test_photos_require_identity_first(
+    enrollment_client, auth, enrollment_store, monkeypatch
+):
+    # QC 를 통과시켜, 거절이 QC 가 아니라 상태 게이트(identity_pending)에서 나옴을 확인한다.
+    # (upload_enrollment_photo 는 QC 를 먼저 돌리고 그 뒤 _validate_photo_mutation_enrollment 로 상태를 본다.)
+    stub_qc(monkeypatch)
+    eid = create_enrollment(enrollment_client, auth, verify_identity=False)
+    res = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{eid}/photos",
+        data={"angle": "front"},
+        files={"photo": ("front.jpg", b"image", "image/jpeg")},
+        headers=auth(),
+    )
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "invalid_enrollment_state"
 
 
 def create_ready_enrollment(client, auth, store):
@@ -1887,7 +2033,8 @@ def test_create_enrollment_records_consent_without_oacx_token(
     )
 
     assert response.status_code == 201
-    assert response.json()["status"] == "photos_pending"
+    # 신분증-먼저 재배치(Task1 DEFAULT): 새 등록은 identity_pending 부터 시작한다.
+    assert response.json()["status"] == "identity_pending"
     assert response.json()["requiredAngles"] == ["front", "angle45", "side"]
     assert "token" not in response.text
     assert "r2Key" not in response.text
