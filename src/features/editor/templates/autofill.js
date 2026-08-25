@@ -46,6 +46,8 @@ export function buildRoledCutPool(wardrobe, storyboard) {
         cutType: img.cutType || null,
         sourceBlockId: img.sourceBlockId || null,
         wardrobeGroup: img.wardrobeGroup || group || null,
+        width: Number(img.width || img.w) || undefined,
+        height: Number(img.height || img.h) || undefined,
       });
     }
   }
@@ -100,4 +102,21 @@ export function autofillBlocks(blocks, cuts) {
     });
     return touched ? { ...block, elements } : block;
   });
+}
+
+// 안전 교체(손실 0)용 헬퍼 — 자동채움으로 슬롯에 실제 들어간 src 집합.
+export function filledSrcSet(blocks) {
+  const set = new Set();
+  for (const block of blocks || []) {
+    for (const el of block?.elements || []) {
+      if (el?.type === 'image' && typeof el.src === 'string' && el.src.trim()) set.add(el.src.trim());
+    }
+  }
+  return set;
+}
+
+// 컷(생성 착장컷) 블록 판정 — 이미지 요소가 sourceBlockId(콘티 조인키)를 가지면 컷 블록.
+// 정보 블록(사이즈/케어/안내)·업로드 블록은 sourceBlockId 가 없어 false → 안전 교체 시 보존한다.
+export function isGeneratedCutBlock(block) {
+  return (block?.elements || []).some((el) => el?.type === 'image' && el.sourceBlockId);
 }

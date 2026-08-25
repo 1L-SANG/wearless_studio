@@ -1117,15 +1117,15 @@ function DetailSetView({ set, onBack, onOverwrite, onAddFrame, onDragStart, onDr
       <div className="dp-set-overwrite">
         {confirming ? (
           <div className="dp-set-confirm">
-            <span>기존 편집 내용이 모두 사라져요. 이 템플릿으로 덮어쓸까요?</span>
+            <span>컷 배치가 이 템플릿으로 바뀌어요. 못 담은 사진·정보 블록은 아래에 그대로 남겨둬요. 적용할까요?</span>
             <div className="dp-set-confirm-actions">
               <Button variant="ghost" onClick={() => setConfirming(false)}>취소</Button>
-              <Button variant="danger" onClick={() => { onOverwrite(set.id); setConfirming(false); }}>덮어쓰기</Button>
+              <Button variant="primary" onClick={() => { onOverwrite(set.id); setConfirming(false); }}>적용</Button>
             </div>
           </div>
         ) : (
           <>
-            <button type="button" className="dp-set-overwrite-btn" onClick={() => setConfirming(true)}>이 템플릿으로 덮어쓰기</button>
+            <button type="button" className="dp-set-overwrite-btn" onClick={() => setConfirming(true)}>이 템플릿으로 적용</button>
             <span className="dp-set-hint">또는 아래 프레임을 클릭·드래그해 하나씩 추가하세요.</span>
           </>
         )}
