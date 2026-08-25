@@ -186,6 +186,10 @@ function ProfileMenu() {
           </div>
           <div className="profile-sep" />
           <button className="profile-item" role="menuitem"
+            onClick={() => { setOpen(false); navigate('/model/register'); }}>
+            <Icon name="user" size={16} stroke={1.8} />모델 등록
+          </button>
+          <button className="profile-item" role="menuitem"
             onClick={() => { setOpen(false); navigate('/pricing'); }}>
             <Icon name="star" size={16} stroke={1.8} />요금제 관리
           </button>

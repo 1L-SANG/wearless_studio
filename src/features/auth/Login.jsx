@@ -5,8 +5,15 @@
    ============================================================= */
 import { useState } from 'react';
 import { useAuth } from './AuthProvider.jsx';
+import { supabase } from '@/lib/supabase.js';
 import { Modal } from '@/components/ui.jsx';
 import styles from './Login.module.css';
+
+/* 로컬 supabase(127.0.0.1/localhost)일 때만 이메일·비밀번호 로그인을 노출한다.
+   운영은 소셜 OAuth 만 쓰므로 prod 에서는 절대 렌더되지 않는다(로컬 QA 전용). */
+const IS_LOCAL_SUPABASE = /127\.0\.0\.1|localhost/.test(
+  import.meta.env.VITE_SUPABASE_URL || '',
+);
 
 /* 브랜드 로고 — Lucide(단색 스트로크) 세트와 성격이 달라 인라인 SVG 로 둔다. */
 function GoogleIcon() {
@@ -30,6 +37,17 @@ function KakaoIcon() {
 export function LoginGate() {
   const { signIn, closeLogin } = useAuth();
   const [pending, setPending] = useState(null); // 'google' | 'kakao' | null
+  const [email, setEmail] = useState('qa@local.test');
+  const [password, setPassword] = useState('');
+  const [localErr, setLocalErr] = useState('');
+
+  const handleLocal = async (e) => {
+    e.preventDefault();
+    setPending('local'); setLocalErr('');
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) { setLocalErr(error.message || '로그인 실패'); setPending(null); }
+    else closeLogin(); // 세션은 AuthProvider 의 onAuthStateChange 가 반영
+  };
 
   // 복귀 지점(sessionStorage 'wl_postLogin')은 openLogin 이 이미 심어둠 — 여기선 redirect 만.
   const handle = async (provider) => {
@@ -73,6 +91,23 @@ export function LoginGate() {
             {pending === 'kakao' ? '이동 중…' : '카카오로 계속하기'}
           </button>
         </div>
+
+        {IS_LOCAL_SUPABASE && (
+          <form onSubmit={handleLocal} style={{ marginTop: 16, display: 'grid', gap: 8 }}>
+            <div style={{ fontSize: 12, opacity: 0.6, textAlign: 'center' }}>로컬 QA 전용 · 이메일 로그인</div>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+              placeholder="이메일" autoComplete="username"
+              style={{ padding: '8px 10px', border: '1px solid #ccc', borderRadius: 6 }} />
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+              placeholder="비밀번호" autoComplete="current-password"
+              style={{ padding: '8px 10px', border: '1px solid #ccc', borderRadius: 6 }} />
+            {localErr && <div style={{ color: '#c0392b', fontSize: 12 }}>{localErr}</div>}
+            <button type="submit" disabled={pending !== null}
+              style={{ padding: '9px 12px', borderRadius: 6, cursor: 'pointer' }}>
+              {pending === 'local' ? '로그인 중…' : '이메일로 로그인'}
+            </button>
+          </form>
+        )}
 
         <p className={styles.hint}>계속하면 서비스 약관에 동의하는 것으로 간주됩니다.</p>
       </div>
