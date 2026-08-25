@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildRoledCutPool, autofillBlocks } from '../../src/features/editor/templates/autofill.js';
+import { buildRoledCutPool, autofillBlocks, filledSrcSet, isGeneratedCutBlock } from '../../src/features/editor/templates/autofill.js';
 
 // storyboard 블록: content_role 은 블록에, 컷은 sourceBlockId 로 조인해 역할 복원.
 const storyboard = [
@@ -99,4 +99,44 @@ test('autofillBlocks: 이미 채워진 슬롯·frameSlot 아닌 요소·텍스�
   assert.equal(out[0].elements[0].src, 'keep.jpg');
   assert.equal(out[0].elements[1].src, 'plain.jpg');
   assert.equal(out[0].elements[2].text, 'DETAIL');
+});
+
+// ---- 안전 교체(손실 0) 헬퍼 ----
+test('filledSrcSet: 블록들 이미지 src 집합', () => {
+  const built = [block('t', [{ id: 'a', type: 'image', frameSlot: true, src: 'hero.jpg' }, { id: 'b', type: 'text', text: 'x' }])];
+  const set = filledSrcSet(built);
+  assert.ok(set.has('hero.jpg'));
+  assert.equal(set.size, 1);
+});
+
+test('isGeneratedCutBlock: sourceBlockId 이미지 있으면 컷 블록, 없으면 정보/업로드', () => {
+  const cutBlock = block('c', [{ id: 'i', type: 'image', src: 'c.jpg', sourceBlockId: 'sb-1' }, { id: 't', type: 'text', text: '카피' }]);
+  const infoBlock = block('info', [{ id: 't', type: 'text', text: '사이즈' }, { id: 'im', type: 'image', src: 'diagram.jpg' }]); // sourceBlockId 없음
+  const uploadBlock = block('up', [{ id: 'u', type: 'image', src: 'mine.jpg', userUploaded: true }]);
+  assert.equal(isGeneratedCutBlock(cutBlock), true);
+  assert.equal(isGeneratedCutBlock(infoBlock), false);
+  assert.equal(isGeneratedCutBlock(uploadBlock), false);
+});
+
+test('안전 교체 시나리오: 컷은 슬롯/뒤로 보존, 정보블록 유지, 컷섹션만 드롭', () => {
+  // 컷 2개, 템플릿 슬롯 1개 → 1개 채우고 1개 남김. 정보블록 1개는 보존.
+  const pool = [
+    { id: 'c1', src: 'c1.jpg', role: 'hero', sectionRole: 'hooking', width: 800, height: 1200 },
+    { id: 'c2', src: 'c2.jpg', role: 'detail', sectionRole: 'product', width: 800, height: 1200 },
+  ];
+  const template = [block('tpl', [slot('s1', 'hero')])];
+  const built = autofillBlocks(template, pool);
+  const placed = filledSrcSet(built);
+  const leftover = pool.filter((c) => !placed.has(c.src));
+  assert.equal(built[0].elements[0].src, 'c1.jpg');   // hero 채움
+  assert.equal(leftover.length, 1);                    // c2 남음
+  assert.equal(leftover[0].src, 'c2.jpg');
+  // 원본: 컷섹션(sourceBlockId) 1 + 정보블록 1 → keep = 정보블록만
+  const originals = [
+    block('cut', [{ id: 'i', type: 'image', src: 'c1.jpg', sourceBlockId: 'sb1' }, { id: 'tx', type: 'text', text: '카피' }]),
+    block('size', [{ id: 'tt', type: 'text', text: '사이즈 표' }]),
+  ];
+  const keep = originals.filter((b) => !isGeneratedCutBlock(b));
+  assert.equal(keep.length, 1);
+  assert.equal(keep[0].id, 'size');
 });

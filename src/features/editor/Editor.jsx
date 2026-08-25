@@ -43,7 +43,7 @@ import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WID
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { imageResizeRect, lineHitStrokeWidth, resizePolicyForElement, shouldShowRotationHandle, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
 import { isWardrobeImageUsed, mergeEditorImagesIntoWardrobe } from '@/features/editor/editorWardrobe.js';
-import { autofillBlocks, buildRoledCutPool } from '@/features/editor/templates/autofill.js';
+import { autofillBlocks, buildRoledCutPool, filledSrcSet, isGeneratedCutBlock } from '@/features/editor/templates/autofill.js';
 import { buildFailedCutRetry } from '@/features/editor/failedCutRetry.js';
 import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, isPhotoSlotElement, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, reorderElements, selectableElementBelowBlankText, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPreserveMultiSelectionOnPointerDown, shouldStartTextOnlyDrag } from '@/features/editor/editorSelection.js';
 import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from '@/lib/imageTranscode.js';
@@ -1873,14 +1873,23 @@ export function Editor() {
     setBlocks((bs) => { const n = [...bs]; n.splice(idx == null ? n.length : idx, 0, nb); return n; });
     setSelBlock(nb.id); setBlockFocused(true); setSelEl(null); setSelEls([]);
   };
-  // 상세페이지 "한 벌" 템플릿 — 세트 전체 프레임으로 문서를 덮어쓴다(기존 편집 내용 교체).
-  // 경고 확인은 호출부(세트 모달)에서 처리한다. 개별 프레임은 addFrame 으로 가산 삽입.
+  // 상세페이지 "한 벌" 템플릿 안전 적용(손실 0). 컷 배치는 템플릿으로 바뀌되:
+  //  ① 템플릿 슬롯을 생성 착장컷으로 자동채움 ② 슬롯에 못 담은 컷은 이미지 블록으로 뒤에 유지
+  //  ③ 정보·업로드 등 컷 아닌 원본 블록은 그대로 보존. 컷-섹션 블록만 드롭(사진은 슬롯/뒤에 남아 손실 0).
   const overwriteDetailPageTemplate = (setId) => {
-    const built = autofillBlocks(buildDetailPageTemplateSet(setId, uid), roledCutsNow());
+    const pool = roledCutsNow();
+    const built = autofillBlocks(buildDetailPageTemplateSet(setId, uid), pool);
     if (!built.length) return;
-    setBlocks(built);
-    if (built[0]) { setSelBlock(built[0].id); setBlockFocused(true); setSelEl(null); setSelEls([]); }
-    toast.push('상세페이지 템플릿으로 덮어썼어요');
+    const originals = latestBlocks.current || blocks;
+    const placed = filledSrcSet(built);
+    const leftoverPhotos = pool
+      .filter((cut) => !placed.has(cut.src))
+      .map((cut) => buildImageBlock({ src: cut.src, width: cut.width, height: cut.height, cutType: cut.cutType }, uid));
+    const keep = (originals || []).filter((block) => !isGeneratedCutBlock(block));
+    const next = [...built, ...leftoverPhotos, ...keep];
+    setBlocks(next);
+    if (next[0]) { setSelBlock(next[0].id); setBlockFocused(true); setSelEl(null); setSelEls([]); }
+    toast.push('템플릿을 적용했어요 (남은 사진·정보는 아래에 보존)');
   };
   const addImageBlock = (image, idx) => {
     const nb = buildImageBlock(image, uid);
