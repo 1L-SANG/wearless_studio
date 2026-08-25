@@ -1,16 +1,13 @@
 # FaceMarket OpenDID 단일 서버 이전 — 설계
 
 - 날짜: 2026-08-20
-- 상태: 인프라 설계 완료, 보안 cutover는 외부 계약·법무·재등록 준비도 승인 전까지 차단
+- 상태: 구현 준비
 - 배경 조사: `docs/research/facemarket-opendid-vc-deployment-audit.md`
-- 선행 게이트: `docs/research/2026-08-20-facemarket-external-contract-and-biometric-legal-gates.md`
 - 배포 목표: 기존 API 서버 1대 + SAM 서버 1대 + FaceMarket/OpenDID 서버 1대, 총 3대
 
 ## 1. 목표와 완료 기준
 
 FaceMarket/OpenDID 서버 한 대에 VC 데이터면을 묶고, 기존에 프로비저닝된 OpenDID 상태를 이전한다. Orchestrator는 상시 실행하지 않는다.
-
-이 문서는 VC 인프라 배포 설계다. 기존 FaceMarket 모델 freeze, 얼굴 자산 purge, 운영 재등록 cutover를 승인하지 않는다. 해당 작업은 외부 portrait/liveness/matcher 계약, 개인정보 법무 승인, 실제 enrollment E2E와 dry-run sign-off 이후에만 수행한다.
 
 완료 조건:
 

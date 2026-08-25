@@ -1,0 +1,4 @@
+jars/
+*.wallet
+*.env
+secrets/

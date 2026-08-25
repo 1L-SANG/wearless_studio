@@ -1,177 +1,131 @@
 #!/usr/bin/env bash
+# export-state.sh <new-empty-output-dir>
+#
+# Cold, consistent export of the OpenDID source state for the single-server move.
+# Contract (plan Task 3, Step 2):
+#   1. Refuse unless Holder/TAS/Issuer/CAS/Besu writers are stopped.
+#      (PostgreSQL stays UP — it is the dump source; all WRITERS are quiesced.)
+#   2. pg_dumpall of the whole cluster (roles + all databases).
+#   3. Read-only archive of the Besu volume.
+#   4. Archive of entity wallet/DID + blockchain config.
+#   5. Archive Holder data if present, else record holder_data=missing.
+#   6. Sensitive artifacts are 0600.
+#   7. sha256 MANIFEST over every artifact.
+# Refuses to overwrite an existing output dir. Reads source volumes read-only;
+# never mutates source state. Prints only IDs/status — never secrets or PII.
+#
+# Env overrides: see inventory-state.sh, plus:
+#   OPENDID_WRITER_PORTS  (default "8090 8091 8094 8100 8545") ports that must be closed
+#   OPENDID_UTIL_IMAGE    (default postgres:16.4) small image used for volume tar (has tar+sh)
 set -euo pipefail
 
-POSTGRES_CONTAINER=${OPENDID_POSTGRES_CONTAINER:-postgre-opendid}
-BESU_CONTAINER=${OPENDID_BESU_CONTAINER:-opendid-besu-node}
-POSTGRES_VOLUME=${OPENDID_POSTGRES_VOLUME:-postgre_opendid_data}
-BESU_VOLUME=${OPENDID_BESU_VOLUME:-besu_opendid_data}
-POSTGRES_VOLUME_FALLBACKS=${OPENDID_POSTGRES_VOLUME_FALLBACKS:-postgre_postgre_opendid_data}
-BESU_VOLUME_FALLBACKS=${OPENDID_BESU_VOLUME_FALLBACKS:-besu_besu_opendid_data}
-POSTGRES_USER=${OPENDID_POSTGRES_USER:-${OPENDID_DB_USER:-}}
-OPENDID_ROOT=${OPENDID_ROOT:-/opt/opendid}
-SECRETS_DIR=${OPENDID_SECRETS_DIR:-$OPENDID_ROOT/secrets}
-CONFIG_DIR=${OPENDID_CONFIG_DIR:-$OPENDID_ROOT/config}
-HOLDER_DATA_DIR=${OPENDID_HOLDER_DATA_DIR:-$OPENDID_ROOT/state/holder}
-APP_SERVICES=${OPENDID_APP_SERVICES:-opendid-tas opendid-issuer opendid-cas fm-holder}
-WRITER_PORTS="8090 8091 8094 8100 9001"
+PG_CONTAINER="${OPENDID_PG_CONTAINER:-postgre-opendid}"
+BESU_CONTAINER="${OPENDID_BESU_CONTAINER:-opendid-besu-node}"
+BESU_VOLUME="${OPENDID_BESU_VOLUME:-besu_besu_opendid_data}"
+SECRETS_DIR="${OPENDID_SECRETS_DIR:-/opt/opendid/secrets}"
+HOLDER_DATA_DIR="${OPENDID_HOLDER_DATA_DIR:-/opt/opendid/state/holder}"
+WRITER_PORTS="${OPENDID_WRITER_PORTS-8090 8091 8094 8100 8545}"
+UTIL_IMAGE="${OPENDID_UTIL_IMAGE:-postgres:16.4}"
 
-die() { printf 'REFUSING: %s\n' "$*" >&2; exit 2; }
-need() { command -v "$1" >/dev/null 2>&1 || die "$1 not found"; }
-resolve_volume() {
-  local volume=$1
-  shift || true
-  if docker volume inspect "$volume" >/dev/null 2>&1; then
-    printf '%s\n' "$volume"
-    return 0
-  fi
-  for volume in "$@"; do
-    if docker volume inspect "$volume" >/dev/null 2>&1; then
-      printf '%s\n' "$volume"
-      return 0
-    fi
-  done
-  return 1
-}
-sha256_one() {
-  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi
-}
-container_env_value() {
-  docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$POSTGRES_CONTAINER" 2>/dev/null |
-    sed -n "s/^$1=//p" | head -1
-}
-check_writers_stopped() {
-  local svc port systemd_checked=0
-  if command -v systemctl >/dev/null 2>&1; then
-    for svc in $APP_SERVICES; do
-      if systemctl is-active "$svc" >/dev/null 2>&1; then
-        die "$svc is active; stop Holder/TAS/Issuer/CAS before export"
-      fi
-    done
-    systemd_checked=1
-  fi
-  if command -v lsof >/dev/null 2>&1; then
-    for port in $WRITER_PORTS; do
-      if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-        die "port $port is listening; stop Holder/TAS/Issuer/CAS before export"
-      fi
-    done
-    return 0
-  fi
-  [ "$systemd_checked" = 1 ] && return 0
-  die "systemctl or lsof not found; install lsof or run on a systemd host to verify OpenDID writers are stopped"
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+[ "$#" -eq 1 ] || die "usage: export-state.sh <new-empty-output-dir>"
+OUT="$1"
+command -v docker >/dev/null 2>&1 || die "docker not available"
+
+# ---- refuse to overwrite --------------------------------------------------
+[ -e "$OUT" ] && die "output dir already exists: $OUT (refusing to overwrite)"
+
+container_running() { [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null || echo false)" = "true" ]; }
+port_open() { (exec 3<>"/dev/tcp/127.0.0.1/$1") >/dev/null 2>&1 && { exec 3>&- 3<&- 2>/dev/null; return 0; } || return 1; }
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum   >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'
+  else die "no sha256 tool (sha256sum/shasum)"; fi
 }
 
-[ "$#" = 1 ] || die "usage: $0 <new-empty-output-dir>"
-OUT_INPUT=$1
-OUT_PARENT=$(dirname -- "$OUT_INPUT")
-OUT_BASE=$(basename -- "$OUT_INPUT")
-[ "$OUT_BASE" != "." ] && [ "$OUT_BASE" != ".." ] || die "unsafe output path: $OUT_INPUT"
-[ -d "$OUT_PARENT" ] || die "output parent does not exist: $OUT_PARENT"
-[ ! -e "$OUT_INPUT" ] && [ ! -L "$OUT_INPUT" ] || die "output path already exists: $OUT_INPUT"
-OUT_PARENT_REAL="$(cd -P "$OUT_PARENT" && pwd)"
-OUT="$OUT_PARENT_REAL/$OUT_BASE"
-
-need docker
-need tar
-mkdir -m 700 "$OUT" || die "could not create output directory: $OUT"
-[ -d "$OUT" ] && [ ! -L "$OUT" ] || die "output path is not a real directory: $OUT"
-OUT="$(cd -P "$OUT" && pwd)"
-case "$OUT" in
-  "$OUT_PARENT_REAL"/*) : ;;
-  *) die "output escaped parent: $OUT" ;;
-esac
-
-check_writers_stopped
-
-besu_running=$(docker inspect -f '{{.State.Running}}' "$BESU_CONTAINER" 2>/dev/null || echo false)
-[ "$besu_running" != "true" ] || die "$BESU_CONTAINER is running; stop Besu before export"
-
-POSTGRES_VOLUME=$(resolve_volume "$POSTGRES_VOLUME" $POSTGRES_VOLUME_FALLBACKS) || die "PostgreSQL volume not found"
-BESU_VOLUME=$(resolve_volume "$BESU_VOLUME" $BESU_VOLUME_FALLBACKS) || die "Besu volume not found"
-[ -n "$POSTGRES_USER" ] || POSTGRES_USER=$(container_env_value POSTGRES_USER)
-POSTGRES_USER=${POSTGRES_USER:-postgres}
-
-manifest="$OUT/EXPORT-MANIFEST.txt"
-{
-  printf 'postgres_container=%s\n' "$POSTGRES_CONTAINER"
-  printf 'postgres_volume=%s\n' "$POSTGRES_VOLUME"
-  printf 'besu_container=%s\n' "$BESU_CONTAINER"
-  printf 'besu_volume=%s\n' "$BESU_VOLUME"
-} >"$manifest"
-
-dump="$OUT/postgres.dump.sql"
-docker exec -i "$POSTGRES_CONTAINER" pg_dumpall -U "$POSTGRES_USER" >"$dump"
-chmod 600 "$dump"
-
-docker run --rm -v "$BESU_VOLUME:/source:ro" -v "$OUT:/out" alpine:3.20 \
-  tar -C /source -cf /out/besu-data.tar .
-chmod 600 "$OUT/besu-data.tar"
-
-tmp_stage=$(mktemp -d)
-cleanup() { rm -rf "$tmp_stage"; }
-trap cleanup EXIT
-stage_file() {
-  local source=$1 rel=$2 dest="$tmp_stage/$2"
-  case "$rel" in /*|..|../*|*/..|*/../*) die "unsafe staged path: $rel" ;; esac
-  [ ! -e "$dest" ] && [ ! -L "$dest" ] || die "multiple source files map to $rel"
-  mkdir -p "$(dirname "$dest")"
-  cp -p "$source" "$dest"
-}
-stage_normalized() {
-  local root=$1 file rel
-  [ -d "$root" ] || return 0
-  find "$root" -type f \( -name '*.wallet' -o -name '*.zkpwallet' -o -name '*.did' -o -name 'blockchain.properties' -o -name 'besu.dat' \) -print0 |
-    while IFS= read -r -d '' file; do
-      case "$file" in
-        "$OPENDID_ROOT"/*) rel=${file#$OPENDID_ROOT/} ;;
-        *) continue ;;
-      esac
-      case "$rel" in
-        /*|../*|*/../*) continue ;;
-      esac
-      stage_file "$file" "$rel"
-    done
-}
-stage_entity() {
-  local entity=$1 root="$OPENDID_ROOT/jars/$1" file rel
-  [ -d "$root" ] || return 0
-  find "$root" -type f \( -name '*.wallet' -o -name '*.zkpwallet' -o -name '*.did' \) -print0 |
-    while IFS= read -r -d '' file; do
-      rel=${file#$root/}
-      stage_file "$file" "secrets/$entity/$rel"
-    done
-}
-for entity in TA Issuer CA Wallet Verifier; do stage_entity "$entity"; done
-[ ! -f "$OPENDID_ROOT/shells/Besu/TA/blockchain.properties" ] || \
-  stage_file "$OPENDID_ROOT/shells/Besu/TA/blockchain.properties" secrets/TA/blockchain.properties
-[ ! -f "$OPENDID_ROOT/shells/Besu/Issuer/blockchain.properties" ] || \
-  stage_file "$OPENDID_ROOT/shells/Besu/Issuer/blockchain.properties" secrets/Issuer/blockchain.properties
-[ ! -f "$OPENDID_ROOT/shells/Besu/blockchain.properties" ] || \
-  stage_file "$OPENDID_ROOT/shells/Besu/blockchain.properties" secrets/CA/blockchain.properties
-[ ! -f "$OPENDID_ROOT/shells/Besu/besu.dat" ] || \
-  stage_file "$OPENDID_ROOT/shells/Besu/besu.dat" config/besu.dat
-stage_normalized "$SECRETS_DIR"
-stage_normalized "$CONFIG_DIR"
-tar -C "$tmp_stage" -cf "$OUT/opendid-files.tar" .
-chmod 600 "$OUT/opendid-files.tar"
-
-if [ -d "$HOLDER_DATA_DIR" ] && [ -n "$(find "$HOLDER_DATA_DIR" -mindepth 1 -print -quit 2>/dev/null)" ]; then
-  tar -C "$HOLDER_DATA_DIR" -cf "$OUT/holder-data.tar" .
-  chmod 600 "$OUT/holder-data.tar"
-  printf 'holder_data=present\n' >>"$manifest"
-else
-  printf 'holder_data=missing\n' >>"$manifest"
+# ---- preconditions: writers must be stopped -------------------------------
+container_running "$PG_CONTAINER" || die "postgres container '$PG_CONTAINER' is not running (needed for pg_dumpall)"
+if container_running "$BESU_CONTAINER"; then
+  die "Besu container '$BESU_CONTAINER' is still running — stop it before export"
 fi
-chmod 600 "$manifest"
+for p in $WRITER_PORTS; do
+  if port_open "$p"; then die "a writer is still listening on 127.0.0.1:$p — stop Holder/TAS/Issuer/CAS/Besu first"; fi
+done
 
-(
-  cd "$OUT"
-  : >SHA256SUMS
-  for f in EXPORT-MANIFEST.txt postgres.dump.sql besu-data.tar opendid-files.tar holder-data.tar; do
-    [ -f "$f" ] && sha256_one "$f" >>SHA256SUMS
+# secrets must exist to be worth exporting
+[ -d "$SECRETS_DIR" ] && [ -n "$(ls -A "$SECRETS_DIR" 2>/dev/null)" ] || \
+  die "secrets dir '$SECRETS_DIR' is missing/empty — nothing to archive (set OPENDID_SECRETS_DIR)"
+
+# ---- detect postgres superuser -------------------------------------------
+SU="${OPENDID_PG_SUPERUSER:-}"
+if [ -z "$SU" ]; then
+  env_user="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$PG_CONTAINER" 2>/dev/null | sed -n 's/^POSTGRES_USER=//p' | head -n1)"
+  for cand in "$env_user" omn opendid postgres; do
+    [ -n "$cand" ] || continue
+    if docker exec "$PG_CONTAINER" psql -U "$cand" -d postgres -tAc 'SELECT 1' >/dev/null 2>&1; then SU="$cand"; break; fi
   done
-  chmod 600 SHA256SUMS
-)
+fi
+[ -n "$SU" ] || die "could not detect postgres superuser (set OPENDID_PG_SUPERUSER)"
 
-printf 'export_dir=%s\n' "$OUT"
-printf 'holder_data=%s\n' "$(grep '^holder_data=' "$manifest" | cut -d= -f2)"
+# ---- create output dir (0700) --------------------------------------------
+umask 077
+mkdir -p "$OUT"
+chmod 0700 "$OUT"
+echo "==> exporting to $OUT (superuser=$SU)"
+
+# ---- 1) pg_dumpall (0600; may contain role password hashes) ---------------
+echo "--> pg_dumpall"
+docker exec "$PG_CONTAINER" pg_dumpall -U "$SU" > "$OUT/pg_dumpall.sql"
+chmod 0600 "$OUT/pg_dumpall.sql"
+
+# ---- 2) besu volume archive (read-only mount, streamed to host) -----------
+echo "--> besu volume archive"
+docker run --rm --entrypoint sh -v "$BESU_VOLUME":/vol:ro "$UTIL_IMAGE" \
+  -c 'tar czf - -C /vol .' > "$OUT/besu-volume.tgz"
+chmod 0600 "$OUT/besu-volume.tgz"
+
+# ---- 3) wallet / DID / blockchain config archive --------------------------
+echo "--> secrets (wallet/DID/blockchain config) archive"
+tar czf "$OUT/secrets.tgz" -C "$SECRETS_DIR" .
+chmod 0600 "$OUT/secrets.tgz"
+
+# ---- 4) holder data archive OR record missing -----------------------------
+HOLDER_STATUS="missing"
+if [ -d "$HOLDER_DATA_DIR" ] && [ -n "$(ls -A "$HOLDER_DATA_DIR" 2>/dev/null)" ]; then
+  echo "--> holder data archive"
+  tar czf "$OUT/holder-data.tgz" -C "$HOLDER_DATA_DIR" .
+  chmod 0600 "$OUT/holder-data.tgz"
+  HOLDER_STATUS="present"
+else
+  echo "--> holder data: missing (recording holder_data=missing)"
+fi
+
+# ---- 5) metadata (no secrets) --------------------------------------------
+{
+  echo "generated=$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  echo "pg_superuser=$SU"
+  echo "pg_container=$PG_CONTAINER"
+  echo "besu_container=$BESU_CONTAINER"
+  echo "besu_volume=$BESU_VOLUME"
+  echo "besu_image=$(docker inspect -f '{{.Config.Image}}' "$BESU_CONTAINER" 2>/dev/null || echo unknown)"
+  echo "pg_image=$(docker inspect -f '{{.Config.Image}}' "$PG_CONTAINER" 2>/dev/null || echo unknown)"
+  echo "holder_data=$HOLDER_STATUS"
+  echo "secrets=present"
+} > "$OUT/metadata.txt"
+chmod 0644 "$OUT/metadata.txt"
+
+# ---- 6) sha256 manifest over every artifact -------------------------------
+echo "--> sha256 manifest"
+: > "$OUT/MANIFEST.sha256"
+( cd "$OUT" && for f in pg_dumpall.sql besu-volume.tgz secrets.tgz holder-data.tgz metadata.txt; do
+    [ -f "$f" ] || continue
+    printf '%s  %s\n' "$(sha256_of "$f")" "$f"
+  done ) >> "$OUT/MANIFEST.sha256"
+chmod 0644 "$OUT/MANIFEST.sha256"
+
+echo "==> export complete. holder_data=$HOLDER_STATUS"
+echo "    files:"
+( cd "$OUT" && ls -l | awk 'NR>1{printf "      %s %s\n", $1, $NF}' )
+echo "    (no secrets, keys, or PII printed above)"

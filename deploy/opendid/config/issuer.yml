@@ -1,24 +1,11 @@
 spring:
   profiles:
     active: dev
-  liquibase:
-    change-log: classpath:/db/changelog/master.xml
-    enabled: true
   datasource:
     driver-class-name: org.postgresql.Driver
-    url: jdbc:postgresql://${OPENDID_DB_HOST}/${OPENDID_ISSUER_DB}
+    url: jdbc:postgresql://127.0.0.1:5432/issuer
     username: ${OPENDID_DB_USER}
     password: ${OPENDID_DB_PASSWORD}
-  jpa:
-    open-in-view: true
-    show-sql: false
-    hibernate:
-      ddl-auto: none
-      naming:
-        physical-strategy: org.hibernate.boot.model.naming.CamelCaseToUnderscoresNamingStrategy
-    properties:
-      hibernate:
-        format_sql: false
 blockchain:
   file-path: /opt/opendid/secrets/Issuer/blockchain.properties
 setup:
@@ -28,7 +15,7 @@ tas:
   url: http://127.0.0.1:8090
 wallet:
   file-path: /opt/opendid/secrets/Issuer/issuer.wallet
-  password: ${OPENDID_ISSUER_WALLET_PW}
+  password: ${OPENDID_ISSUER_WALLET_PASSWORD}
 zkp-wallet:
   file-path: /opt/opendid/secrets/Issuer/issuer.zkpwallet
-  password: ${OPENDID_ISSUER_ZKP_WALLET_PW}
+  password: ${OPENDID_ISSUER_ZKP_WALLET_PASSWORD}

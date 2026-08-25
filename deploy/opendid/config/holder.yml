@@ -6,9 +6,8 @@ spring:
     name: fm-holder
 
 holder:
-  data-dir: ${FM_HOLDER_DATA_DIR}
+  data-dir: /opt/opendid/state/holder
   wallet-pepper: ${FM_HOLDER_PEPPER}
-  api-hmac-secret: ${FM_HOLDER_HMAC_SECRET}
 
 opendid:
   tas-url: http://127.0.0.1:8090

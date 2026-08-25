@@ -1,169 +1,156 @@
 #!/usr/bin/env bash
+# inventory-state.sh — read-only inventory of the OpenDID source state.
+#
+# Prints ONLY non-sensitive facts needed to plan the single-server move:
+#   - container / volume existence + image versions
+#   - database names, sizes, public-table counts
+#   - FaceLicense namespace / schema / plan counts
+#   - entity / issuer / CAS row counts
+#   - wallet / DID / config file EXISTENCE (never contents)
+#   - Holder data existence
+#
+# It NEVER prints passwords, private keys, PII, wallet contents, or any row data.
+# It is strictly read-only: no docker exec writes, no volume mounts other than
+# the running containers' own read paths, no filesystem writes.
+#
+# Env overrides (source-server specific):
+#   OPENDID_PG_CONTAINER    (default postgre-opendid)
+#   OPENDID_BESU_CONTAINER  (default opendid-besu-node)
+#   OPENDID_PG_VOLUME       (default postgre_postgre_opendid_data)
+#   OPENDID_BESU_VOLUME     (default besu_besu_opendid_data)
+#   OPENDID_PG_SUPERUSER    (default: auto-detect from POSTGRES_USER, then omn/opendid/postgres)
+#   OPENDID_SECRETS_DIR     (default /opt/opendid/secrets)
+#   OPENDID_CONFIG_DIR      (default /opt/opendid/config)
+#   OPENDID_HOLDER_DATA_DIR (default /opt/opendid/state/holder)
+#   FL_NAMESPACE_ID / FL_VC_SCHEMA / FL_VC_PLAN
 set -euo pipefail
 
-POSTGRES_CONTAINER=${OPENDID_POSTGRES_CONTAINER:-postgre-opendid}
-BESU_CONTAINER=${OPENDID_BESU_CONTAINER:-opendid-besu-node}
-POSTGRES_VOLUME=${OPENDID_POSTGRES_VOLUME:-postgre_opendid_data}
-BESU_VOLUME=${OPENDID_BESU_VOLUME:-besu_opendid_data}
-POSTGRES_VOLUME_FALLBACKS=${OPENDID_POSTGRES_VOLUME_FALLBACKS:-postgre_postgre_opendid_data}
-BESU_VOLUME_FALLBACKS=${OPENDID_BESU_VOLUME_FALLBACKS:-besu_besu_opendid_data}
-POSTGRES_USER=${OPENDID_POSTGRES_USER:-${OPENDID_DB_USER:-}}
-POSTGRES_DB=${OPENDID_POSTGRES_DB:-${OPENDID_DB_NAME:-}}
-OPENDID_ROOT=${OPENDID_ROOT:-/opt/opendid}
-SECRETS_DIR=${OPENDID_SECRETS_DIR:-$OPENDID_ROOT/secrets}
-CONFIG_DIR=${OPENDID_CONFIG_DIR:-$OPENDID_ROOT/config}
-HOLDER_DATA_DIR=${OPENDID_HOLDER_DATA_DIR:-$OPENDID_ROOT/state/holder}
+PG_CONTAINER="${OPENDID_PG_CONTAINER:-postgre-opendid}"
+BESU_CONTAINER="${OPENDID_BESU_CONTAINER:-opendid-besu-node}"
+PG_VOLUME="${OPENDID_PG_VOLUME:-postgre_postgre_opendid_data}"
+BESU_VOLUME="${OPENDID_BESU_VOLUME:-besu_besu_opendid_data}"
+SECRETS_DIR="${OPENDID_SECRETS_DIR:-/opt/opendid/secrets}"
+CONFIG_DIR="${OPENDID_CONFIG_DIR:-/opt/opendid/config}"
+HOLDER_DATA_DIR="${OPENDID_HOLDER_DATA_DIR:-/opt/opendid/state/holder}"
 
-docker_image() { docker inspect -f '{{.Config.Image}}' "$1" 2>/dev/null || true; }
-resolve_volume() {
-  local volume=$1
-  shift || true
-  if docker volume inspect "$volume" >/dev/null 2>&1; then
-    printf '%s\n' "$volume"
-    return 0
-  fi
-  for volume in "$@"; do
-    if docker volume inspect "$volume" >/dev/null 2>&1; then
-      printf '%s\n' "$volume"
-      return 0
+FL_NS="${FL_NAMESPACE_ID:-kr.wearless.facelicense}"
+FL_SCHEMA="${FL_VC_SCHEMA:-facelicense}"
+FL_PLAN="${FL_VC_PLAN:-vcplanface0000000001}"
+
+have_docker() { command -v docker >/dev/null 2>&1; }
+container_exists() { docker inspect "$1" >/dev/null 2>&1; }
+container_running() { [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null || echo false)" = "true" ]; }
+container_image() { docker inspect -f '{{.Config.Image}}' "$1" 2>/dev/null || echo "unknown"; }
+volume_exists() { docker volume inspect "$1" >/dev/null 2>&1; }
+
+SU=""
+detect_pg_superuser() {
+  [ -n "$SU" ] && return 0
+  if [ -n "${OPENDID_PG_SUPERUSER:-}" ]; then SU="$OPENDID_PG_SUPERUSER"; return 0; fi
+  local env_user cand
+  env_user="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$PG_CONTAINER" 2>/dev/null | sed -n 's/^POSTGRES_USER=//p' | head -n1)"
+  for cand in "$env_user" omn opendid postgres; do
+    [ -n "$cand" ] || continue
+    if docker exec "$PG_CONTAINER" psql -U "$cand" -d postgres -tAc 'SELECT 1' >/dev/null 2>&1; then
+      SU="$cand"; return 0
     fi
   done
   return 1
 }
-container_env_value() {
-  docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$POSTGRES_CONTAINER" 2>/dev/null |
-    sed -n "s/^$1=//p" | head -1
+
+psql_scalar() { # db query -> single scalar; trims leading/trailing space only; silent on error
+  docker exec "$PG_CONTAINER" psql -U "$SU" -d "$1" -tAc "$2" 2>/dev/null \
+    | tr -d '\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
 }
-count_files() {
-  local dir=$1
-  shift
-  local count=0
-  if [ -d "$dir" ]; then
-    while IFS= read -r -d '' _file; do
-      count=$((count + 1))
-    done < <(find "$dir" -type f "$@" -print0 2>/dev/null)
-  fi
-  printf '%s\n' "$count"
+regclass_exists() { # db relation
+  [ "$(psql_scalar "$1" "SELECT to_regclass('$2') IS NOT NULL")" = "t" ]
 }
-psql_value() {
-  docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA -c "$1" 2>/dev/null | head -1 || true
-}
-psql_value_db() {
-  docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "$1" -tA -c "$2" 2>/dev/null | head -1
-}
-count_rows_exact() {
-  local dbs=$1
-  shift
-  [ -n "$dbs" ] || { printf 'unknown\n'; return; }
-  local total=0 found=0 db spec target_db table where sql count reg
-  while IFS= read -r db; do
-    [ -n "$db" ] || continue
-    for spec in "$@"; do
-      target_db=''
-      case "$spec" in
-        *:*) target_db=${spec%%:*}; spec=${spec#*:} ;;
-      esac
-      [ -z "$target_db" ] || [ "$target_db" = "$db" ] || continue
-      table=${spec%%|*}
-      where=''
-      [ "$table" != "$spec" ] && where=${spec#*|}
-      if reg=$(psql_value_db "$db" "select to_regclass('public.$table');"); then
-        [ -n "$reg" ] || continue
-      else
-        printf 'unknown\n'
-        return
-      fi
-      sql="select count(*) from public.$table"
-      [ -n "$where" ] && sql="$sql where $where"
-      if count=$(psql_value_db "$db" "$sql;"); then
-        :
-      else
-        printf 'unknown\n'
-        return
-      fi
-      if printf '%s' "$count" | grep -Eq '^[0-9]+$'; then
-        total=$((total + count))
-        found=1
-      else
-        printf 'unknown\n'
-        return
-      fi
-    done
-  done <<EOF
-$dbs
-EOF
-  [ "$found" = "1" ] && printf '%s\n' "$total" || printf '0\n'
+guarded_count() { # db relation where-clause(optional)
+  local db="$1" rel="$2" where="${3:-}"
+  regclass_exists "$db" "public.$rel" || { echo "0 (table absent)"; return 0; }
+  local n
+  n="$(psql_scalar "$db" "SELECT count(*) FROM \"$rel\"${where:+ WHERE $where}")"
+  echo "${n:-?}"
 }
 
-if ! command -v docker >/dev/null 2>&1; then
-  echo 'docker=absent'
+echo "OpenDID source-state inventory (read-only)"
+echo "generated: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+echo "note: no passwords, private keys, PII, or wallet/DID contents are shown."
+echo
+
+if ! have_docker; then
+  echo "docker: NOT AVAILABLE — container/DB inventory skipped."
 else
-  pg_image=$(docker_image "$POSTGRES_CONTAINER")
-  besu_image=$(docker_image "$BESU_CONTAINER")
-  printf 'postgres_container=%s\n' "$([ -n "$pg_image" ] && echo present || echo absent)"
-  [ -n "$pg_image" ] && printf 'postgres_image=%s\n' "$pg_image"
-  printf 'besu_container=%s\n' "$([ -n "$besu_image" ] && echo present || echo absent)"
-  [ -n "$besu_image" ] && printf 'besu_image=%s\n' "$besu_image"
-  if pg_volume=$(resolve_volume "$POSTGRES_VOLUME" $POSTGRES_VOLUME_FALLBACKS); then
-    printf 'postgres_volume=present\npostgres_volume_name=%s\n' "$pg_volume"
-  else
-    printf 'postgres_volume=absent\n'
-  fi
-  if besu_volume=$(resolve_volume "$BESU_VOLUME" $BESU_VOLUME_FALLBACKS); then
-    printf 'besu_volume=present\nbesu_volume_name=%s\n' "$besu_volume"
-  else
-    printf 'besu_volume=absent\n'
-  fi
-
-  if [ -n "$pg_image" ]; then
-    [ -n "$POSTGRES_USER" ] || POSTGRES_USER=$(container_env_value POSTGRES_USER)
-    [ -n "$POSTGRES_DB" ] || POSTGRES_DB=$(container_env_value POSTGRES_DB)
-    POSTGRES_USER=${POSTGRES_USER:-postgres}
-    POSTGRES_DB=${POSTGRES_DB:-postgres}
-    version=$(psql_value "select current_setting('server_version');")
-    [ -n "$version" ] && printf 'postgres_version=%s\n' "$version"
-    db_lines=$(docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA -F '|' -c \
-      "select datname, pg_database_size(datname) from pg_database where datistemplate=false order by datname;" 2>/dev/null || true)
-    if [ -n "$db_lines" ]; then
-      db_names=$(printf '%s\n' "$db_lines" | cut -d '|' -f 1)
-      printf '%s\n' "$db_lines" | while IFS='|' read -r db size _; do
-          [ -n "$db" ] || continue
-          tables=$(docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "$db" -tA -c \
-            "select count(*) from information_schema.tables where table_schema='public';" 2>/dev/null | head -1 || true)
-          printf 'db=%s size_bytes=%s public_tables=%s\n' "$db" "$size" "${tables:-unknown}"
-        done
+  echo "== Containers =="
+  for pair in "postgres:$PG_CONTAINER" "besu:$BESU_CONTAINER"; do
+    role="${pair%%:*}"; name="${pair#*:}"
+    if container_exists "$name"; then
+      run="no"; container_running "$name" && run="yes"
+      printf "  %-9s %-22s present=yes running=%-3s image=%s\n" "$role" "$name" "$run" "$(container_image "$name")"
     else
-      db_names=''
-      printf 'db_metadata=unknown\n'
+      printf "  %-9s %-22s present=no\n" "$role" "$name"
     fi
-    printf 'facelicense_namespace_rows=%s\n' "$(count_rows_exact "$db_names" "issuer:namespace|namespace_id='kr.wearless.facelicense'")"
-    printf 'facelicense_schema_rows=%s\n' "$(count_rows_exact "$db_names" "issuer:vc_schema|vc_schema_id='facelicense'")"
-    printf 'facelicense_plan_rows=%s\n' "$(count_rows_exact "$db_names" "issuer:issue_profile|vc_plan_id='vcplanface0000000001'" "tas:list_vc_plan|vc_plan_id='vcplanface0000000001'")"
-    printf 'entity_rows=%s\n' "$(count_rows_exact "$db_names" tas:entity)"
-    printf 'issuer_rows=%s\n' "$(count_rows_exact "$db_names" issuer:issuer)"
-    printf 'cas_rows=%s\n' "$(count_rows_exact "$db_names" cas:cas cas:ca)"
+  done
+  echo
+  echo "== Volumes =="
+  for pair in "pg:$PG_VOLUME" "besu:$BESU_VOLUME"; do
+    role="${pair%%:*}"; name="${pair#*:}"
+    if volume_exists "$name"; then printf "  %-5s %-32s present=yes\n" "$role" "$name"
+    else printf "  %-5s %-32s present=no\n" "$role" "$name"; fi
+  done
+  echo
+
+  if container_exists "$PG_CONTAINER" && container_running "$PG_CONTAINER" && detect_pg_superuser; then
+    echo "== Databases (name / size / public_tables) — superuser=$SU =="
+    while IFS= read -r db; do
+      db="$(printf '%s' "$db" | tr -d '[:space:]')"
+      [ -n "$db" ] || continue
+      size="$(psql_scalar "$db" "SELECT pg_size_pretty(pg_database_size('$db'))")"
+      tcount="$(psql_scalar "$db" "SELECT count(*) FROM pg_tables WHERE schemaname='public'")"
+      printf "  %-12s %-10s %s tables\n" "$db" "${size:-?}" "${tcount:-?}"
+    done < <(docker exec "$PG_CONTAINER" psql -U "$SU" -d postgres -tAc \
+              "SELECT datname FROM pg_database WHERE datistemplate=false ORDER BY datname" 2>/dev/null)
+    echo
+    echo "== Entity / Issuer / CAS counts =="
+    printf "  tas.entity    : %s\n" "$(guarded_count tas entity)"
+    printf "  issuer.issuer : %s\n" "$(guarded_count issuer issuer)"
+    printf "  cas.cas       : %s\n" "$(guarded_count cas cas)"
+    echo
+    echo "== FaceLicense (issuer db) =="
+    printf "  namespace  %-30s : %s\n" "$FL_NS"     "$(guarded_count issuer namespace     "namespace_id='$FL_NS'")"
+    printf "  vc_schema  %-30s : %s\n" "$FL_SCHEMA"  "$(guarded_count issuer vc_schema     "vc_schema_id='$FL_SCHEMA'")"
+    printf "  plan       %-30s : %s\n" "$FL_PLAN"    "$(guarded_count issuer issue_profile "vc_plan_id='$FL_PLAN'")"
+    echo
+  else
+    echo "== Databases =="
+    echo "  postgres not running (or superuser undetected) — DB inventory skipped."
+    echo
   fi
 fi
 
-wallets=$((
-  $(count_files "$SECRETS_DIR" \( -name '*.wallet' -o -name '*.zkpwallet' \)) +
-  $(count_files "$OPENDID_ROOT/jars" \( -name '*.wallet' -o -name '*.zkpwallet' \))
-))
-dids=$((
-  $(count_files "$SECRETS_DIR" -name '*.did') +
-  $(count_files "$OPENDID_ROOT/jars" -name '*.did')
-))
-blockchain=$((
-  $(count_files "$SECRETS_DIR" -name 'blockchain.properties') +
-  $(count_files "$OPENDID_ROOT/shells/Besu" -name 'blockchain.properties')
-))
-configs=$(count_files "$CONFIG_DIR")
-printf 'wallet_files=%s\n' "$wallets"
-printf 'did_files=%s\n' "$dids"
-printf 'blockchain_config_files=%s\n' "$blockchain"
-printf 'app_config_files=%s\n' "$configs"
-if [ -d "$HOLDER_DATA_DIR" ] && [ -n "$(find "$HOLDER_DATA_DIR" -mindepth 1 -print -quit 2>/dev/null)" ]; then
-  printf 'holder_data=present\n'
+echo "== Secrets / config / Holder (existence only) =="
+if [ -d "$SECRETS_DIR" ]; then
+  echo "  secrets dir $SECRETS_DIR : present"
+  for sub in TA Issuer CA Wallet; do
+    d="$SECRETS_DIR/$sub"
+    if [ -d "$d" ]; then
+      n="$(find "$d" -type f 2>/dev/null | wc -l | tr -d ' ')"
+      printf "    %-8s present (%s files)\n" "$sub" "$n"
+    else
+      printf "    %-8s absent\n" "$sub"
+    fi
+  done
 else
-  printf 'holder_data=missing\n'
+  echo "  secrets dir $SECRETS_DIR : absent"
+fi
+if [ -d "$CONFIG_DIR" ]; then
+  n="$(find "$CONFIG_DIR" -maxdepth 1 -name '*.yml' -type f 2>/dev/null | wc -l | tr -d ' ')"
+  echo "  config dir $CONFIG_DIR : present ($n yml files)"
+else
+  echo "  config dir $CONFIG_DIR : absent"
+fi
+if [ -d "$HOLDER_DATA_DIR" ] && [ -n "$(ls -A "$HOLDER_DATA_DIR" 2>/dev/null)" ]; then
+  echo "  holder data $HOLDER_DATA_DIR : present"
+else
+  echo "  holder data $HOLDER_DATA_DIR : missing"
 fi

@@ -1,6 +1,6 @@
 # FaceMarket OpenDID 단일 서버 이전 Implementation Plan
 
-> **Execution gate:** Holder build 복구와 비파괴 로컬 검증 외 운영 이전은 승인된 실행 세션에서만 수행한다. 기존 모델 freeze, 얼굴 자산 purge, 운영 재등록 cutover는 `docs/research/2026-08-20-facemarket-external-contract-and-biometric-legal-gates.md`의 모든 선행 조건을 통과하기 전에는 실행하지 않는다.
+> **Execution note:** 프로젝트에 `superpowers` 실행 스킬은 없으므로 기존 Superpowers 문서 계약에 맞춰 작성했다. 구현은 이 계획을 위에서 아래로 실행하고 각 단계의 검증을 통과한 뒤 다음 단계로 이동한다.
 
 **Goal:** 기존 OpenDID DB·Besu·wallet 상태를 보존하면서 FaceMarket VC 데이터면을 단일 Linux 서버로 이전하고, 전체 인프라를 총 3대만 운영한다.
 

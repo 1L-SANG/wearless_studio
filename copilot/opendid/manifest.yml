@@ -1,0 +1,63 @@
+# OpenDID VC 스택 — TA+Issuer+CAS+fm-holder 한 컨테이너(localhost 배선). besu 없음(체인은
+# OmniOne Chain 외부 RPC). sam2 와 동일 패턴: Fargate SPOT + scale-to-zero(count {spot:0}),
+# api 가 수요 시 깨우고(SamAutoscaler 확장) 30분 유휴면 끈다. 상태는 컨테이너 밖:
+#   - postgres(tas/issuer/cas) → RDS (addons/rds.yml 로 프로비저닝, 접속정보 secret 주입)
+#   - wallet 파일 → EFS(암호화) 마운트 (/mnt/wallets 에 tas/issuer/cas/wallet.wallet 업로드)
+# → stateless → Spot 재확보·scale-to-zero 안전. holder(:8100)만 노출, api 가 http://opendid:8100.
+#
+# 배포 전 준비(런북): (1) OmniOne Chain 에 DID 컨트랙트 배포 → 주소/RPC/키 확보,
+#   (2) deploy/opendid/container 에서 JAR 수집(build.sh 의 gather 단계 — 공식 V2.0.0 3개+fm-holder),
+#   (3) wallet 파일을 EFS 로 업로드, (4) 아래 secrets 를 SSM 에 등록, (5) copilot svc deploy.
+name: opendid
+type: Backend Service
+
+image:
+  build:
+    dockerfile: deploy/opendid/container/Dockerfile
+    context: deploy/opendid/container
+  port: 8100                      # holder — api 가 여기로 VC 요청
+  healthcheck:
+    command: ["CMD-SHELL", "curl -fsS http://localhost:8100/actuator/health || exit 1"]
+    interval: 20s
+    retries: 4
+    timeout: 5s
+    start_period: 120s            # 4 JVM 콜드스타트 여유
+
+cpu: 2048       # 4 JVM(각 -Xmx384m) + 여유
+memory: 4096
+platform: linux/x86_64
+exec: true
+
+count:
+  spot: 0       # 평소 0대(Fargate SPOT). SamAutoscaler(opendid) 가 수요 시 1대로, 30분 유휴면 0.
+
+network:
+  connect: true # service discovery: api -> opendid:8100
+
+# wallet 파일 영구저장(암호화 EFS). 배포 시 이 볼륨에 tas/issuer/cas/wallet.wallet 업로드.
+storage:
+  volumes:
+    wallets:
+      path: /mnt/wallets
+      read_only: true
+      efs: true
+
+variables:
+  APP_ENV: production
+  OMNIONE_CHAIN_ID: "201210"                 # OmniOne Chain(stage). 로컬 besu 는 1337.
+  WALLET_SECRETS_DIR: /mnt/wallets
+  # OMNIONE_CHAIN_RPC_URL / OMNIONE_DID_CONTRACT_ADDRESS 는 배포 시 값 확정(유저 OmniOne 배포 후).
+  # 비밀 아니면 여기로, 키는 secrets 로. 우선 secret 로 둔다(토큰 포함 RPC 대비).
+
+secrets:
+  # RDS 접속(addons/rds.yml 산출) + 체인 키 + 월렛 pw + holder pepper + RPC(토큰 포함).
+  OPENDID_DB_HOST: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENDID_DB_HOST
+  OPENDID_DB_PORT: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENDID_DB_PORT
+  OPENDID_DB_USER: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENDID_DB_USER
+  OPENDID_DB_PASSWORD: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENDID_DB_PASSWORD
+  OMNIONE_CHAIN_RPC_URL: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OMNIONE_CHAIN_RPC_URL
+  OMNIONE_DID_CONTRACT_ADDRESS: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OMNIONE_DID_CONTRACT_ADDRESS
+  OMNIONE_TAS_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OMNIONE_TAS_KEY
+  OMNIONE_ISSUER_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OMNIONE_ISSUER_KEY
+  WALLET_PASSWORD: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENDID_WALLET_PASSWORD
+  FM_HOLDER_PEPPER: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_HOLDER_PEPPER

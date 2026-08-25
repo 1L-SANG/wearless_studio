@@ -1,4 +1,6 @@
 build/
 .gradle/
+# Root-level runtime data dir only — must NOT match the vendored
+# org/omnione/did/base/datamodel/data source package.
 /data/
 !gradle/wrapper/gradle-wrapper.jar

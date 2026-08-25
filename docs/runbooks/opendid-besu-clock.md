@@ -22,19 +22,6 @@ sntp time.apple.com                          # 호스트 시계 오프셋 확인
 docker logs opendid-besu-node 2>&1 | grep -c "Illegal block mined"   # 최근 발생 여부
 ```
 
-### Linux Server 3 preflight
-
-Besu를 시작하기 전에 UTC/NTP와 hardware clock 모드를 확인한다. 세 검사가 모두 통과하지 않으면 Besu를 시작하지 않는다.
-
-```bash
-timedatectl show -p Timezone --value | grep -qx UTC
-timedatectl show -p NTPSynchronized --value | grep -qx yes
-timedatectl show -p LocalRTC --value | grep -qx no
-date -u --iso-8601=seconds
-```
-
-동기화가 실패하면 해당 Linux 배포판의 승인된 time-sync 서비스(`systemd-timesyncd` 또는 운영 NTP agent)를 복구하고 다시 검사한다. OpenDID 서비스 재시작으로 시계 문제를 덮지 않는다.
-
 ## 복구 (순서 중요: besu 먼저, 엔티티 나중)
 
 1. besu 컨테이너 재시작 → healthy 대기.
@@ -43,42 +30,53 @@ date -u --iso-8601=seconds
 
 (2026-07-17 실증: besu 12:50 재시작 + 엔티티 13:33 재시작 → 13:34:45 발급 성공, vc_id DB 기록 확인.)
 
-Linux Server 3에서는 위 preflight를 통과한 뒤 systemd 의존 순서대로 복구한다.
-
-```bash
-set -euo pipefail
-wait_http() {
-  local url=$1 name=$2
-  for _ in $(seq 1 60); do
-    if curl -fsS --max-time 2 "$url" >/dev/null; then
-      return 0
-    fi
-    sleep 2
-  done
-  echo "FAILED: $name readiness timed out: $url" >&2
-  return 1
-}
-
-sudo systemctl stop fm-holder opendid-cas opendid-issuer opendid-tas
-sudo systemctl restart opendid-infra
-docker inspect -f '{{.State.Health.Status}}' opendid-besu-node | grep -qx healthy
-sudo systemctl start opendid-tas
-wait_http http://127.0.0.1:8090/actuator/health TAS
-sudo systemctl start opendid-issuer opendid-cas
-wait_http http://127.0.0.1:8091/actuator/health Issuer
-wait_http http://127.0.0.1:8094/actuator/health CAS
-sudo systemctl start fm-holder
-wait_http http://127.0.0.1:8100/holder/health Holder
-```
-
-TAS보다 Issuer/CAS/Holder를 먼저 시작하거나, Besu health 실패 상태에서 발급을 재시도하지 않는다.
-
 ## 예방
 
 - 시스템 설정 > 날짜와 시간 자동 동기화 확인.
 - `sudo sntp -sS time.apple.com` (수동 동기, 사용자 권한).
 - NTP 가 막힌 네트워크(사내망 등)면 다른 네트워크에서 동기 후 진행.
-- Linux Server 3은 UTC timezone, `NTPSynchronized=yes`, `LocalRTC=no`를 배포 preflight와 재시작 점검에 포함한다.
+
+## Linux 대상 preflight (단일 서버 이전 이후)
+
+macOS 로컬뿐 아니라 세 번째 Linux 서버(`docs/runbooks/facemarket-opendid-single-server.md`)에서도
+같은 시계 역행 함정이 재현된다. **Besu 를 켜기 전에** host 시계/NTP 를 먼저 확인한다.
+
+### Besu 시작 전 점검
+
+```bash
+timedatectl                      # System clock synchronized: yes, NTP service: active 여야 함
+timedatectl show -p NTPSynchronized --value   # -> yes
+date -u                          # UTC 가 실제 시각과 일치하는지 육안 확인
+chronyc tracking 2>/dev/null || ntpq -p 2>/dev/null   # 드리프트/오프셋 확인
+```
+
+- `System clock synchronized: no` 또는 NTP 비활성이면 **Besu 를 켜지 말 것**.
+  먼저 동기화한다:
+  ```bash
+  sudo timedatectl set-ntp true
+  sudo systemctl restart chronyd 2>/dev/null || sudo systemctl restart systemd-timesyncd
+  sudo chronyc makestep 2>/dev/null || true    # 큰 오프셋을 한 번에 스텝(역행 유발 방지)
+  ```
+- 컨테이너는 host 시계를 그대로 물려받는다. host 가 UTC 동기 상태여야 Besu 채굴 timestamp 가 안정된다.
+- 사내망 등 NTP(UDP 123)가 막힌 네트워크면 다른 경로로 동기 후 진행한다(로컬 함정과 동일).
+
+### 재시작 순서 (Linux, 순서 중요: besu 먼저, 엔티티 나중)
+
+증상(issue-vc 150초 hang → 500, `Illegal block mined`)이 재발하면:
+
+```bash
+# 1) 시계부터 바로잡는다
+sudo chronyc makestep 2>/dev/null || sudo timedatectl set-ntp true
+# 2) besu 재시작 → healthy 대기
+docker compose -f deploy/opendid/infra.compose.yml restart besu
+docker compose -f deploy/opendid/infra.compose.yml ps    # besu healthy 확인
+# 3) 엔티티 서버 재시작 (TAS → Issuer → CAS → Holder)
+sudo systemctl restart opendid-tas opendid-issuer opendid-cas fm-holder
+# 4) issue-vc 재시도
+```
+
+postgres 는 재시작하지 않아도 된다(시계 함정의 당사자가 아니다). besu → 엔티티 순서를 지키는
+이유는 로컬과 같다: 엔티티가 꼬인 besu 에 물리면 다시 hang 된다.
 
 ## 별개 함정 — hang 없는 즉시 500
 

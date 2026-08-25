@@ -1,21 +1,21 @@
 [Unit]
-Description=OpenDID CA Server
-After=network-online.target opendid-infra.service opendid-tas.service
-Wants=network-online.target
-Requires=opendid-infra.service opendid-tas.service
+Description=OpenDID CAS
+Requires=opendid-tas.service
+After=network-online.target docker.service opendid-tas.service
 
 [Service]
+Type=simple
 User=opendid
 Group=opendid
 WorkingDirectory=/opt/opendid
-EnvironmentFile=/opt/opendid/opendid.env
-ExecStart=java -jar /opt/opendid/jars/CA/did-ca-server-2.0.0.jar --server.address=127.0.0.1 --server.port=8094 --spring.config.additional-location=file:/opt/opendid/config/cas.yml
+Environment=JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+Environment=PATH=/usr/lib/jvm/java-21-openjdk/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+EnvironmentFile=/opt/opendid/secrets/CA/cas.env
+ExecStart=java -jar /opt/opendid/jars/CA/did-ca-server-2.0.0.jar --server.port=8094 --spring.config.additional-location=file:/opt/opendid/config/cas.yml
 Restart=on-failure
-RestartSec=5
+RestartSec=10
 NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/opt/opendid/state /opt/opendid/secrets
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target

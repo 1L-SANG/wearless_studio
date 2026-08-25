@@ -1,25 +1,21 @@
 [Unit]
 Description=FaceMarket OpenDID Holder
-After=network-online.target opendid-infra.service opendid-tas.service opendid-cas.service opendid-issuer.service
-Wants=network-online.target
-Requires=opendid-infra.service opendid-tas.service opendid-cas.service opendid-issuer.service
+Requires=opendid-tas.service opendid-issuer.service opendid-cas.service
+After=network-online.target docker.service opendid-tas.service opendid-issuer.service opendid-cas.service
 
 [Service]
-Type=exec
+Type=simple
 User=opendid
 Group=opendid
 WorkingDirectory=/opt/opendid
-EnvironmentFile=/opt/opendid/opendid.env
-ExecStartPre=/usr/bin/test -n "${FM_HOLDER_BIND_ADDRESS}"
-ExecStart=java -jar /opt/opendid/jars/Holder/fm-holder-0.1.0.jar --server.address=${FM_HOLDER_BIND_ADDRESS} --server.port=8100 --spring.config.additional-location=file:/opt/opendid/config/holder.yml
-KillMode=control-group
-TimeoutStopSec=60
+Environment=JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+Environment=PATH=/usr/lib/jvm/java-21-openjdk/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+EnvironmentFile=/opt/opendid/secrets/Wallet/fm-holder.env
+ExecStart=java -jar /opt/opendid/jars/Holder/fm-holder-0.1.0.jar --server.port=8100 --spring.config.additional-location=file:/opt/opendid/config/holder.yml
 Restart=on-failure
-RestartSec=5
+RestartSec=10
 NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/opt/opendid/state /opt/opendid/secrets
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
