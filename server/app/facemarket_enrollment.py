@@ -1164,10 +1164,10 @@ async def start_enrollment_liveness(
             enrollment = await cur.fetchone()
             if enrollment is None:
                 raise _err("not_found", "등록을 찾을 수 없습니다.", status=404)
-            if (
-                enrollment["status"] != "liveness_pending"
-                or enrollment.get("liveness_session_digest") is not None
-            ):
+            # status 만 검사한다 — 이미 세션을 한 번 발급받았어도(liveness_session_digest 존재)
+            # 라이브니스 에러/취소 후 재시도를 허용해 신분증·사진 재입력 없이 라이브 인증만 다시
+            # 진행하게 한다. 새 nonce 라 아래 nonce 재사용 검사는 여전히 새 세션을 강제한다.
+            if enrollment["status"] != "liveness_pending":
                 raise _err(
                     "invalid_enrollment_state",
                     "현재 등록 단계에서는 인증 세션을 시작할 수 없습니다.",

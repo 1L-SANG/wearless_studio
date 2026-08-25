@@ -2508,11 +2508,11 @@ def test_failed_basic_qc_never_writes_to_r2(enrollment_client, auth, fake_r2, mo
     assert fake_r2.puts == []
 
 
-def test_angle_mismatch_is_advisory_and_photo_is_stored(
+def test_angle_mismatch_now_blocks_upload(
     enrollment_client, auth, fake_r2, monkeypatch
 ):
-    # angle_mismatch 는 비차단(advisory). 45↔측면 LLM 각도 오탐이 정상 사용자를 막지
-    # 않도록, 각도만 어긋난 사진은 저장·통과시킨다(실 신원 게이트는 하류 SFace 1:1).
+    # angle_mismatch 는 차단이다(front↔turned 불일치). 측면 칸에 정면 등 방향 어긋난 사진은
+    # 저장하지 않고 거절한다 — 45˚/측면 구분은 QC 가 안 하므로 이 케이스는 오탐이 아니다.
     stub_qc(monkeypatch, "reject", ["angle_mismatch"])
     enrollment_id = create_enrollment(enrollment_client, auth)
 
@@ -2523,19 +2523,16 @@ def test_angle_mismatch_is_advisory_and_photo_is_stored(
         headers=auth(),
     )
 
-    assert response.status_code == 201, response.text
-    assert len(fake_r2.puts) == 1
-    status = enrollment_client.get(
-        f"/v1/facemarket/enrollments/{enrollment_id}", headers=auth()
-    )
-    assert [p["angle"] for p in status.json()["photos"]] == ["front"]
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "face_quality"
+    assert response.json()["error"]["reasons"] == ["angle_mismatch"]
+    assert fake_r2.puts == []
 
 
-def test_blocking_qc_still_rejects_even_with_angle_advisory(
+def test_blocking_qc_rejects_with_all_blocking_reasons(
     enrollment_client, auth, fake_r2, monkeypatch
 ):
-    # 차단 사유(occlusion)가 angle_mismatch 와 함께 오면 여전히 차단하고, 에러 reasons 는
-    # 차단 사유만 노출한다(각도 advisory 는 거절 카피에 섞이지 않는다).
+    # occlusion + angle_mismatch 둘 다 차단 사유라 거절하고, 두 사유 모두 노출한다.
     stub_qc(monkeypatch, "reject", ["angle_mismatch", "occlusion"])
     enrollment_id = create_enrollment(enrollment_client, auth)
 
@@ -2548,7 +2545,7 @@ def test_blocking_qc_still_rejects_even_with_angle_advisory(
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "face_quality"
-    assert response.json()["error"]["reasons"] == ["occlusion"]
+    assert set(response.json()["error"]["reasons"]) == {"occlusion", "angle_mismatch"}
     assert fake_r2.puts == []
 
 
@@ -3934,9 +3931,11 @@ def test_liveness_session_is_bound_to_owner_nonce_and_three_photos(
     assert len(fake_rekognition.calls) == len(fake_sts.calls) == 1
 
 
-def test_liveness_session_is_issued_only_once_per_enrollment(
+def test_liveness_session_can_be_reissued_with_new_nonce_for_retry(
     enrollment_client, auth, enrollment_store, fake_rekognition
 ):
+    # 라이브니스 에러/취소 후 신분증·사진 재입력 없이 라이브 인증만 다시 시도할 수 있어야 한다 —
+    # liveness_pending 이면 새 nonce 로 세션을 재발급받는다(같은 nonce 재사용은 아래 replay 테스트가 막음).
     enrollment_id = create_ready_enrollment(
         enrollment_client, auth, enrollment_store
     )
@@ -3953,9 +3952,8 @@ def test_liveness_session_is_issued_only_once_per_enrollment(
     )
 
     assert first.status_code == 201
-    assert second.status_code == 409
-    assert second.json()["error"]["code"] == "invalid_enrollment_state"
-    assert len(fake_rekognition.calls) == 1
+    assert second.status_code == 201
+    assert len(fake_rekognition.calls) == 2
 
 
 def test_liveness_session_requires_all_three_quarantine_photos(

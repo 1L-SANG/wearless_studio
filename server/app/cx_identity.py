@@ -124,15 +124,17 @@ def parse_oacx_biometric_evidence(
     CI·원문 생년월일이 예외 메시지·로그로 새지 않게 한다. 미성년만 별도 사유(`minor_blocked`).
     """
     try:
-        ci = trans["ci"]
-        name = trans["nm"]
-        transaction_id = trans.get("txId")
+        # 실 OACX trans/{token} 응답은 신원 필드를 data/result 아래에 중첩하고 이름은 name,
+        # 테스트 목은 flat 에 nm 을 쓴다 — dig() 로 두 구조·두 키 이름을 모두 흡수한다.
+        ci = dig(trans, "ci")
+        name = dig(trans, "name", "nm")
+        transaction_id = dig(trans, "txId")
         if not all(isinstance(value, str) and value for value in (ci, name)):
             raise ValueError
         if transaction_id is not None and not isinstance(transaction_id, str):
             raise ValueError
 
-        birth = _nested_value(trans, contract.birth_path)
+        birth = dig(trans, *contract.birth_path)
         if not isinstance(birth, str) or not birth:
             raise ValueError
         try:
