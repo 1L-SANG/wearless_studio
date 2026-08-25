@@ -781,14 +781,19 @@ async def _cleanup(
                 )
             if _has(schema, "fm_biometric_enrollments", "id"):
                 await cur.execute("delete from fm_biometric_enrollments where id = any(%s)", (ids,))
-        if profile_ids and scope["user_id"] is not None:
-            ids = list(profile_ids)
-            await cur.execute("delete from personalization_face_photos where profile_id = any(%s)", (ids,))
-            await cur.execute("delete from personalization_generations where profile_id = any(%s)", (ids,))
+        # 개인화 연령인증행(personalization_identity_verifications)은 user_id 키라 프로필 유무와
+        # 무관하게 파기한다 — 인증만 하고 프로필을 안 만든 유저(verify 훅은 이 행만 남기고
+        # 프로필은 프로필 제출 시에만 생김)도 철회 시 이 행이 남으면 파기 격리가 깨진다.
+        # 아래 프로필 게이트 안에 두면 profile_ids 가 비어 스킵돼 인증행이 살아남았다.
+        if scope["user_id"] is not None:
             await cur.execute(
                 "delete from personalization_identity_verifications where user_id=%s",
                 (scope["user_id"],),
             )
+        if profile_ids and scope["user_id"] is not None:
+            ids = list(profile_ids)
+            await cur.execute("delete from personalization_face_photos where profile_id = any(%s)", (ids,))
+            await cur.execute("delete from personalization_generations where profile_id = any(%s)", (ids,))
             await cur.execute(
                 "update personalization_profiles set height_cm=null, weight_kg=null, body_type=null, "
                 "body_type_custom=null, gender=null, age_range=null, skin_tone=null, hair=null, "
