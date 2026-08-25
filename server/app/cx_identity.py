@@ -134,7 +134,7 @@ def parse_oacx_biometric_evidence(
         if transaction_id is not None and not isinstance(transaction_id, str):
             raise ValueError
 
-        birth = dig(trans, *contract.birth_path)
+        birth = dig_path(trans, contract.birth_path)
         if not isinstance(birth, str) or not birth:
             raise ValueError
         try:
@@ -246,6 +246,30 @@ def dig(data: dict, *keys):
             v = scope.get(k)
             if v not in (None, ""):
                 return v
+    return None
+
+
+def dig_path(data: dict, path: tuple[str, ...]):
+    """계약이 소유한 '경로'(contract.birth_path)를 판다 — dig() 의 대체키 의미와 달리
+    다단계 중첩을 따라간다. flat/result/data 세 스코프에서 경로를 시도해 첫 비어있지 않은
+    str 을 반환한다. 실 계약은 단일 키(``("birth",)``)라 dig() 와 동일하게 동작하고,
+    계약이 중첩 경로(``("identity","birth")``)를 지정하면 그 경로대로 파고든다."""
+    if not path:
+        return None
+    scopes = [data]
+    for wrap in ("result", "data"):
+        inner = data.get(wrap)
+        if isinstance(inner, dict):
+            scopes.append(inner)
+    for scope in scopes:
+        cur = scope
+        for key in path:
+            if not isinstance(cur, dict):
+                cur = None
+                break
+            cur = cur.get(key)
+        if isinstance(cur, str) and cur:
+            return cur
     return None
 
 
