@@ -1497,6 +1497,14 @@ export function buildDetailPageTemplateSet(setId, idFn) {
   return set.frames.map((frame) => buildFrameBlock(frame, idFn));
 }
 
+// 상세페이지 세트의 개별 프레임을 id 로 찾는다(모달에서 프레임 하나씩 클릭·드래그 삽입할 때).
+const DETAIL_PAGE_FRAME_BY_ID = new Map(
+  DETAIL_PAGE_TEMPLATE_SETS.flatMap((set) => set.frames.map((frame) => [frame.id, frame])),
+);
+export function getDetailPageFrame(id) {
+  return DETAIL_PAGE_FRAME_BY_ID.get(id) || null;
+}
+
 
 /* 13프레임을 순서대로 EditorBlock 으로 만든다(문서 삽입용). */
 export function buildDetailPageTemplateBlocks(idFn) {

@@ -5,6 +5,8 @@ dist-ssr
 .DS_Store
 .vite
 *.log
+# 로컬 QA/실험 산출물 (커밋 대상 아님)
+artifacts/
 npm-debug.log*
 .env
 .env.*

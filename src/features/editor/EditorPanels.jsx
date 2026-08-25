@@ -3,7 +3,7 @@
    Ported verbatim from reference/prototype/features/editor-panels.jsx.
    Only change: ES imports/exports (was window globals).
    ============================================================= */
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Icon, Button, IconButton, Chips, EmptyState, UploadPendingTile } from '@/components/ui.jsx';
 import { UnderlineTabs, ColorDots, MoodGuide, OuterClosureIcon } from '@/features/storyboard/Storyboard.jsx';
 import { ModelThumb } from '@/features/analysis/AnalysisForm.jsx';
@@ -1017,72 +1017,162 @@ export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, on
 const FRAME_LIBRARY_TABS = [
   { value: 'blank', label: '빈 프레임' },
   { value: 'example', label: '예시 프레임' },
+  { value: 'detail', label: '상세페이지' },
   { value: 'guide', label: '안내 프레임' },
 ];
 
-function DetailTemplateGallery({ sets, onApply }) {
+/* 프레임 한 장의 충실 미니 미리보기 — 1000×h 실좌표로 요소(도형·이미지 슬롯·텍스트·선)를
+   그대로 그린 뒤 컨테이너 폭에 맞춰 transform:scale 로 축소한다. 폰트 크기·색·정렬·라운드가
+   실제 캔버스와 동일해 미리캔버스식 썸네일처럼 보인다. 부모 박스를 꽉 채운다(카드=크롭, 상세=정비율).
+   fontMap: 세리프(Cormorant 등)는 그대로, 기본은 Pretendard. */
+function fminiFont(name) {
+  if (!name || name === 'Pretendard') return "'Pretendard','Apple SD Gothic Neo',sans-serif";
+  if (/cormorant|playfair|garamond|georgia|serif/i.test(name)) return `'${name}',Georgia,serif`;
+  return `'${name}',sans-serif`;
+}
+function FrameMini({ frame }) {
+  const ref = useRef(null);
+  const [scale, setScale] = useState(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === 'undefined') { if (el) setScale(el.clientWidth / 1000); return undefined; }
+    const measure = () => setScale(el.clientWidth / 1000);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   return (
-    <div className="dp-template-gallery">
-      <div className="dp-tg-head">상세페이지 템플릿 <span>한 벌 통째로 추가</span></div>
-      <div className="dp-tg-list">
-        {sets.map((set) => {
-          const cover = set.frames?.[0];
-          return (
-            <button type="button" key={set.id} className="dp-tg-card" title={`${set.label} 템플릿 추가`}
-              onClick={() => onApply(set.id)}>
-              <span className="dp-tg-thumb" style={{ background: cover?.bg || set.accent }} aria-hidden="true">
-                {(cover?.slots || []).map((slot, i) => (
-                  <i key={i} style={{
-                    left: `${slot.x / 10}%`, top: `${slot.y / cover.h * 100}%`,
-                    width: `${slot.w / 10}%`, height: `${slot.h / cover.h * 100}%`,
-                    borderRadius: slot.radius ? `${Math.min(50, slot.radius / Math.min(slot.w, slot.h) * 100)}%` : undefined,
-                  }} />
-                ))}
-                {(cover?.elements || []).filter((element) => element.type === 'text').slice(0, 4).map((element, index) => (
-                  <b key={index} style={{
-                    left: `${element.x / 10}%`, top: `${element.y / cover.h * 100}%`,
-                    width: `${element.w / 10}%`, height: `${element.h / cover.h * 100}%`,
-                    fontSize: `${Math.max(2, (element.style?.size || 20) / 14)}px`,
-                    fontWeight: element.style?.weight || 400,
-                    color: element.style?.color || '#222',
-                    textAlign: element.style?.align || 'left',
-                  }}>{element.text}</b>
-                ))}
-              </span>
-              <span className="dp-tg-meta">
-                <span className="dp-tg-label">{set.label}</span>
-                <span className="dp-tg-desc">{set.desc}</span>
-              </span>
-            </button>
-          );
+    <div ref={ref} className="fmini" style={{ background: frame.bg || '#ffffff' }}>
+      <div className="fmini-stage" style={{ width: 1000, height: frame.h, transform: `scale(${scale})` }}>
+        {(frame.elements || []).map((el, i) => {
+          const base = { position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h };
+          if (el.type === 'image') {
+            return <div key={i} className="fmini-slot" style={{ ...base, borderRadius: el.radius || 0 }} />;
+          }
+          if (el.type === 'shape') {
+            return <div key={i} style={{
+              ...base, background: el.fill && el.fill !== 'transparent' ? el.fill : 'transparent',
+              opacity: el.opacity ?? 1,
+              borderRadius: el.shape === 'circle' ? '50%' : (el.radius || 0),
+              border: el.stroke ? `${el.strokeWidth || 2}px solid ${el.stroke}` : undefined,
+              transform: el.rotate ? `rotate(${el.rotate}deg)` : undefined,
+            }} />;
+          }
+          if (el.type === 'line') {
+            return <div key={i} style={{
+              position: 'absolute', left: el.x, top: el.y + (el.h || 24) / 2 - (el.strokeWidth || 2) / 2,
+              width: el.w, height: el.strokeWidth || 2, background: el.stroke || '#0e0d14',
+              transform: el.rotate ? `rotate(${el.rotate}deg)` : undefined,
+            }} />;
+          }
+          const s = el.style || {};
+          return <div key={i} style={{
+            ...base, fontFamily: fminiFont(s.font), fontSize: s.size || 20, fontWeight: s.weight || 400,
+            color: s.color || '#222', textAlign: s.align || 'left',
+            lineHeight: `${s.lineHeight || Math.round((s.size || 20) * 1.4)}px`,
+            fontStyle: s.italic ? 'italic' : 'normal',
+            textDecoration: [s.underline && 'underline', s.strike && 'line-through'].filter(Boolean).join(' ') || 'none',
+            whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflow: 'hidden',
+          }}>{el.text}</div>;
         })}
       </div>
     </div>
   );
 }
 
-export function FramePanel({ onAdd, onApplyTemplate, templateSets, onDragStart, onDragEnd, recommendGender, onPickInfo }) {
+/* 상세페이지 탭 — 5세트 카드 그리드. 카드를 누르면 세트 모달을 연다. */
+function DetailTemplateTab({ sets, onOpen }) {
+  if (!sets.length) return <div className="panel-sub">상세페이지 템플릿이 없어요.</div>;
+  return (
+    <div className="dp-tg-list">
+      {sets.map((set) => (
+        <button type="button" key={set.id} className="dp-tg-card" title={`${set.label} 미리보기`} onClick={() => onOpen(set)}>
+          <span className="dp-tg-thumb" style={{ background: set.frames?.[0]?.bg || set.accent }} aria-hidden="true">
+            {set.frames?.[0] && <FrameMini frame={set.frames[0]} textLimit={4} />}
+          </span>
+          <span className="dp-tg-meta">
+            <span className="dp-tg-label">{set.label}</span>
+            <span className="dp-tg-desc">{set.desc}</span>
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* 세트 상세 — 모달 오버레이가 아니라 프레임 패널 안에서 라우팅처럼 드릴다운.
+   상단 뒤로가기 + "덮어쓰기"(경고 확인), 아래에 세트의 전체 프레임을 세로로.
+   프레임은 클릭(개별 가산) / 드래그(캔버스로 끌어 삽입)로 하나씩 쓸 수 있다. */
+function DetailSetView({ set, onBack, onOverwrite, onAddFrame, onDragStart, onDragEnd }) {
+  const [confirming, setConfirming] = useState(false);
+  return (
+    <div className="dp-setview">
+      <div className="dp-setview-head">
+        <button type="button" className="dp-setview-back" onClick={onBack}>
+          <Icon name="chevLeft" size={16} /> 목록
+        </button>
+        <div className="dp-setview-title">{set.label}</div>
+      </div>
+      <div className="dp-set-overwrite">
+        {confirming ? (
+          <div className="dp-set-confirm">
+            <span>기존 편집 내용이 모두 사라져요. 이 템플릿으로 덮어쓸까요?</span>
+            <div className="dp-set-confirm-actions">
+              <Button variant="ghost" onClick={() => setConfirming(false)}>취소</Button>
+              <Button variant="danger" onClick={() => { onOverwrite(set.id); setConfirming(false); }}>덮어쓰기</Button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <button type="button" className="dp-set-overwrite-btn" onClick={() => setConfirming(true)}>이 템플릿으로 덮어쓰기</button>
+            <span className="dp-set-hint">또는 아래 프레임을 클릭·드래그해 하나씩 추가하세요.</span>
+          </>
+        )}
+      </div>
+      <div className="dp-setview-frames">
+        {(set.frames || []).map((frame) => (
+          <div className="dp-setview-frame" key={frame.id} title={`${frame.label} 추가`}
+            onClick={() => onAddFrame(frame)} draggable
+            onDragStart={(e) => { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/frame', frame.id); onDragStart && onDragStart(); }}
+            onDragEnd={() => onDragEnd && onDragEnd()}>
+            <div className="dp-setview-frame-canvas" style={{ aspectRatio: `1000 / ${frame.h}` }}>
+              <FrameMini frame={frame} />
+            </div>
+            <div className="dp-setview-frame-label">{frame.label}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function FramePanel({ onAdd, onOverwriteTemplate, templateSets, onDragStart, onDragEnd, recommendGender, onPickInfo }) {
   const [category, setCategory] = useState('blank');
+  const [openSet, setOpenSet] = useState(null);
   const frames = FRAME_LIBRARY_ITEMS.filter((frame) => (
     category === 'blank' ? !frame.template : frame.template
   ));
+  const switchCategory = (next) => { setOpenSet(null); setCategory(next); };
+  // 세트 상세는 패널 안 드릴다운이라(오버레이 아님) 프레임을 캔버스로 바로 끌 수 있다.
   return (
     <div>
       {/* 제목은 좌측 패널 래퍼가 그린다(Editor.jsx) — 여기서 또 그리면 "프레임 프레임"이 된다 */}
-      {onApplyTemplate && templateSets?.length ? (
-        <DetailTemplateGallery sets={templateSets} onApply={onApplyTemplate} />
-      ) : onApplyTemplate && (
-        <button type="button" className="frame-template-apply" onClick={() => onApplyTemplate()}>
-          상세페이지 템플릿 한 번에 적용
-        </button>
-      )}
       <div className="panel-sub">종류를 고른 뒤 끌어 놓거나 클릭해 추가하세요.</div>
       <div className="frame-category-tabs">
-        <UnderlineTabs options={FRAME_LIBRARY_TABS} value={category} onChange={setCategory} />
+        <UnderlineTabs options={FRAME_LIBRARY_TABS} value={category} onChange={switchCategory} />
       </div>
       {category === 'guide' ? (
         <ContentPanel recommendGender={recommendGender} onPick={onPickInfo} showIntro={false}
           onDragStart={onDragStart} onDragEnd={onDragEnd} />
+      ) : category === 'detail' ? (
+        openSet ? (
+          <DetailSetView set={openSet} onBack={() => setOpenSet(null)}
+            onOverwrite={onOverwriteTemplate} onAddFrame={onAdd}
+            onDragStart={onDragStart} onDragEnd={onDragEnd} />
+        ) : (
+          <DetailTemplateTab sets={templateSets || []} onOpen={setOpenSet} />
+        )
       ) : (
         <div className="frame-list">
           {frames.map((f) => (
