@@ -43,6 +43,7 @@ import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WID
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { imageResizeRect, lineHitStrokeWidth, resizePolicyForElement, shouldShowRotationHandle, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
 import { isWardrobeImageUsed, mergeEditorImagesIntoWardrobe } from '@/features/editor/editorWardrobe.js';
+import { autofillBlocks, buildRoledCutPool } from '@/features/editor/templates/autofill.js';
 import { buildFailedCutRetry } from '@/features/editor/failedCutRetry.js';
 import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, isPhotoSlotElement, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, reorderElements, selectableElementBelowBlankText, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPreserveMultiSelectionOnPointerDown, shouldStartTextOnlyDrag } from '@/features/editor/editorSelection.js';
 import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from '@/lib/imageTranscode.js';
@@ -1864,15 +1865,18 @@ export function Editor() {
   const moveBlock = (idx, dir) => setBlocks((bs) => { const n = [...bs]; const j = idx + dir; if (j < 0 || j >= n.length) return n; [n[idx], n[j]] = [n[j], n[idx]]; return n; });
   const addEmpty = (idx) => setBlocks((bs) => { const n = [...bs]; const nb = { id: uid('b'), name: '직접 구성', kind: SECTION_ROLES.STYLING, contentRole: CONTENT_ROLES.CUSTOM, bg: '#ffffff', h: 300, elements: [] }; n.splice(idx + 1, 0, nb); return n; });
   const deleteBlock = (id) => { setBlocks((bs) => bs.filter((b) => b.id !== id)); toast.push('블록을 삭제했어요'); };
+  // 삽입 즉시 빈 프레임 슬롯을 생성 착장컷으로 역할 맞춰 자동 채운다(templates/autofill).
+  // 컷풀 = wardrobe(생성컷) ⨝ wardrobeContext.storyboard(블록 contentRole). 컷 없으면 no-op(빈 슬롯).
+  const roledCutsNow = () => buildRoledCutPool(wardrobe || {}, wardrobeContext.current.storyboard);
   const addFrame = (f, idx) => {
-    const nb = buildFrameBlock(f, uid);
+    const nb = autofillBlocks([buildFrameBlock(f, uid)], roledCutsNow())[0];
     setBlocks((bs) => { const n = [...bs]; n.splice(idx == null ? n.length : idx, 0, nb); return n; });
     setSelBlock(nb.id); setBlockFocused(true); setSelEl(null); setSelEls([]);
   };
   // 상세페이지 "한 벌" 템플릿 — 세트 전체 프레임으로 문서를 덮어쓴다(기존 편집 내용 교체).
   // 경고 확인은 호출부(세트 모달)에서 처리한다. 개별 프레임은 addFrame 으로 가산 삽입.
   const overwriteDetailPageTemplate = (setId) => {
-    const built = buildDetailPageTemplateSet(setId, uid);
+    const built = autofillBlocks(buildDetailPageTemplateSet(setId, uid), roledCutsNow());
     if (!built.length) return;
     setBlocks(built);
     if (built[0]) { setSelBlock(built[0].id); setBlockFocused(true); setSelEl(null); setSelEls([]); }
