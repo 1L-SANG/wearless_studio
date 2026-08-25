@@ -1832,23 +1832,39 @@ async def process_enrollment_completion(
             raise EnrollmentMappedError("id_portrait_unavailable") from None
 
         r2 = _r2_face(request)
+        photo_items: list[tuple[str, bytearray]] = []  # (angle, buffer)
         for photo in photos:
             try:
-                photo_buffers.append(bytearray(await asyncio.to_thread(r2.get_bytes, photo["r2_key"])))
+                buffer = bytearray(await asyncio.to_thread(r2.get_bytes, photo["r2_key"]))
             except Exception:
                 raise EnrollmentMappedError("id_portrait_unavailable") from None
+            photo_items.append((photo["angle"], buffer))
+            photo_buffers.append(buffer)  # 아래 finally 에서 일괄 wipe
 
         try:
             qc = load_face_qc(settings, required=True)
+            # 신원 앵커: 신분증 초상 ↔ 라이브 프레임(둘 다 정면 → SFace 유효). 차단.
             _assert_match(
                 qc.one_to_one_similarity(portrait, liveness.reference_image),
                 settings.fm_id_live_threshold,
             )
-            for buffer in photo_buffers:
-                _assert_match(
-                    qc.one_to_one_similarity(buffer, liveness.reference_image),
-                    settings.fm_retouched_live_threshold,
-                )
+            # 업로드 사진 ↔ 라이브: 정면 얼굴 인식기(YuNet 검출 + SFace)는 측면·프로필을
+            # 신뢰성 있게 다루지 못한다 — 옆모습은 검출(YuNet) 자체가 실패한다. 그래서 정면 얼굴이
+            # 잡히는 사진만 매칭해 "모델 사진 = 검증된 라이브 인물"을 확인하고, 검출 불가한 각도
+            # (45/측면)는 자산용 앵글 소스로만 취급해 건너뛴다. 검출된 사진은 모두 매칭돼야 하고,
+            # 최소 1장은 매칭돼야 한다(정면·신분증·라이브 앵커에 더해 스왑 방지).
+            matched_any = False
+            for _angle, buffer in photo_items:
+                try:
+                    score = qc.one_to_one_similarity(buffer, liveness.reference_image)
+                except QcFailed as exc:
+                    if exc.reason == "no_face_detected":
+                        continue  # 정면 검출기가 못 잡는 각도(측면/프로필) — 매칭 대상 아님
+                    raise
+                _assert_match(score, settings.fm_retouched_live_threshold)
+                matched_any = True
+            if not matched_any:
+                raise EnrollmentMappedError("face_match_failed")
         except EnrollmentMappedError:
             raise
         except QcFailed as exc:
