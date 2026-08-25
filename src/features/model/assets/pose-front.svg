@@ -1,4 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="정면 포즈 예시">
-  <circle cx="32" cy="24" r="13" fill="#cbd5e1"/>
-  <path d="M12 60c0-11 9-18 20-18s20 7 20 18z" fill="#cbd5e1"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 100" role="img" aria-label="정면 예시 — 카메라를 똑바로 바라본 얼굴">
+  <g fill="none" stroke="#64748b" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M13 98 C15 82 27 76 40 76 C53 76 65 82 67 98"/>
+    <path d="M40 18 C53 18 59 29 59 42 C59 57 50 69 40 69 C30 69 21 57 21 42 C21 29 27 18 40 18 Z"/>
+    <path d="M21 44 C16 43 16 50 21 51"/>
+    <path d="M59 44 C64 43 64 50 59 51"/>
+    <path d="M29 41 h6"/>
+    <path d="M45 41 h6"/>
+    <path d="M40 44 v9 M40 53 h3"/>
+    <path d="M33 60 q7 5 14 0"/>
+  </g>
 </svg>

@@ -3,11 +3,11 @@ import poseAngle45 from './assets/pose-angle45.svg';
 import poseSide from './assets/pose-side.svg';
 
 export const ENROLLMENT_ANGLES = Object.freeze([
-  { value: 'front', label: '정면', guide: '정면을 바라보고 얼굴 전체가 나오게 찍어주세요.',
+  { value: 'front', label: '정면', guide: '카메라를 정면으로 바라보세요. 두 눈·두 귀가 모두 보여요.',
     exampleImage: poseFront },
-  { value: 'angle45', label: '45도', guide: '정면에서 약 45도만 돌려 반측면이 보이게 찍어주세요.',
+  { value: 'angle45', label: '45도(반측면)', guide: '고개를 살짝만 돌린 반측면. 두 눈은 여전히 다 보여요.',
     exampleImage: poseAngle45 },
-  { value: 'side', label: '측면', guide: '고개를 약 90도 돌려 옆모습 윤곽이 보이게 찍어주세요.',
+  { value: 'side', label: '측면(옆모습)', guide: '고개를 끝까지 돌린 완전 옆모습. 한쪽 얼굴과 귀 하나만 보여요.',
     exampleImage: poseSide },
 ]);
 

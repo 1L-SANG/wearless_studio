@@ -79,12 +79,35 @@
 }
 .purposeList li { margin: 2px 0; }
 
-/* ---- 표준인증창 컨테이너 ---- */
-.widget:not(:empty) {
-  margin-bottom: 16px;
-  padding: 8px;
-  border-radius: var(--r-5);
-  background: var(--bg-2);
+/* ---- 표준인증창(OACX) 컨테이너 — 카드 안에 그대로 인라인 렌더 ---- */
+/* 빈 상태에도 아래 버튼이 힌트에 붙지 않게 여백만, 폭 넘치면 가로 스크롤. */
+.widget { margin: 12px 0 20px; }
+.widget:not(:empty) { overflow-x: auto; border-radius: var(--r-5); }
+
+/* 힌트와 인증 버튼 사이 여백. */
+.identityAction { margin-top: 22px; }
+
+/* 인증 오버레이 — 전체화면 딤 + 가로·세로 정중앙(닫기 버튼·배경 클릭 없음).
+   취소 시엔 위젯 DOM 이 비고, 그걸 관측한 컴포넌트가 busy 를 풀어 오버레이가 사라진다. */
+.authOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.45);
+  overflow: auto;
+}
+.authModal {
+  background: #fff;
+  border-radius: var(--r-6);
+  box-shadow: var(--elev-lift);
+  padding: 14px;
+  max-width: min(840px, 96vw);
+  max-height: 92vh;
+  overflow: auto;
 }
 
 /* ---- 상태 메시지 ---- */
@@ -225,6 +248,143 @@
   margin-top: 3px;
 }
 
+/* ---- 진행 레일(6단계, 모노크롬) ---- */
+.rail {
+  display: flex;
+  align-items: flex-start;
+  list-style: none;
+  margin: 4px 0 22px;
+  padding: 0;
+}
+.railStep {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+}
+/* 노드 사이 연결선 — 왼쪽 절반에 그려 이전 단계와 잇는다 */
+.railStep::before {
+  content: '';
+  position: absolute;
+  top: 13px;
+  left: -50%;
+  width: 100%;
+  height: 2px;
+  background: var(--bg-2);
+  z-index: 0;
+}
+.railStep:first-child::before { display: none; }
+.rail_done::before,
+.rail_active::before { background: var(--fg-1); }
+.railNode {
+  position: relative;
+  z-index: 1;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-pill);
+  display: grid;
+  place-items: center;
+  background: var(--bg-2);
+  color: var(--fg-3);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+  transition: background .18s, color .18s, box-shadow .18s;
+}
+.rail_done .railNode { background: var(--fg-1); color: #fff; }
+.rail_active .railNode {
+  background: #fff;
+  color: var(--fg-1);
+  box-shadow: inset 0 0 0 2px var(--fg-1), var(--elev-card);
+}
+.railLabel {
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: center;
+  color: var(--fg-3);
+}
+.rail_done .railLabel { color: var(--fg-2); }
+.rail_active .railLabel { color: var(--fg-1); font-weight: 600; }
+
+/* ---- 단계 헤더(메달리온 + eyebrow + 제목) ---- */
+.stepHead {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.medallion {
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border-radius: var(--r-pill);
+  background: var(--bg-2);
+  color: var(--fg-1);
+  display: grid;
+  place-items: center;
+}
+.medallionSpin svg { animation: medSpin 1s linear infinite; }
+@keyframes medSpin { to { transform: rotate(360deg); } }
+.stepEyebrow {
+  font-family: var(--font-display);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  margin-bottom: 4px;
+}
+.stepHead .stateTitle { margin: 0; }
+
+/* ---- 대표 이미지 업로드 존 ---- */
+.uploadZone {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: 16px 0 8px;
+  padding: 26px 16px;
+  border-radius: var(--r-5);
+  background: var(--bg-2);
+  cursor: pointer;
+  transition: background .15s;
+}
+.uploadZone:hover { background: var(--bg-1); box-shadow: var(--elev-card); }
+.uploadInput {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.uploadIcon {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--fg-1);
+  display: grid;
+  place-items: center;
+  box-shadow: var(--elev-card);
+  margin-bottom: 2px;
+}
+.uploadText { font-size: 14.5px; font-weight: 500; color: var(--fg-1); }
+.uploadHint { font-size: 12px; color: var(--fg-3); font-family: var(--font-mono); }
+
+.retryNote {
+  margin: 12px 0 0;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--fg-3);
+  line-height: 1.5;
+}
+
 /* ---- 모바일 ---- */
 @media (max-width: 560px) {
   .steps {
@@ -235,4 +395,7 @@
   .stepArrow {
     display: none;
   }
+  .railLabel { font-size: 10px; }
+  .stepHead { gap: 12px; }
+  .medallion { width: 46px; height: 46px; }
 }

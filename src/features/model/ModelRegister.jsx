@@ -99,6 +99,44 @@ function isTransientIdentityError(error) {
   return !(error && typeof error.status === 'number');
 }
 
+// 진행 레일 — 등록은 실제 순차 KYC 흐름이라 번호 마커가 의미를 갖는다(장식 아님).
+// 인라인 렌더(중첩 컴포넌트 아님)로 두어 테스트 하네스 트리에 그대로 펼쳐지게 한다.
+const FLOW_STEPS = [
+  { key: 'consent', label: '동의' },
+  { key: 'identity', label: '신분증' },
+  { key: 'photos', label: '사진' },
+  { key: 'profile', label: '대표' },
+  { key: 'liveness', label: '라이브' },
+  { key: 'done', label: '완료' },
+];
+const RAIL_INDEX = {
+  consent: 0, identity: 1, identity_failed: 1, photos: 2,
+  profile: 3, liveness: 4, liveness_failed: 4, reidentify: 4, processing: 5, terms: 5,
+};
+function renderStepRail(step) {
+  const current = RAIL_INDEX[step];
+  if (current == null) return null;
+  return (
+    <ol className={s.rail} aria-label="등록 진행 단계">
+      {FLOW_STEPS.map((f, i) => {
+        const state = i < current ? 'done' : i === current ? 'active' : 'todo';
+        return (
+          <li
+            key={f.key}
+            className={`${s.railStep} ${s[`rail_${state}`]}`}
+            aria-current={state === 'active' ? 'step' : undefined}
+          >
+            <span className={s.railNode}>
+              {state === 'done' ? <Icon name="check" size={13} stroke={2.6} /> : i + 1}
+            </span>
+            <span className={s.railLabel}>{f.label}</span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 export function ModelRegister() {
   const [step, setStep] = useState('loading');
   const [enrollment, setEnrollment] = useState(null);
@@ -150,9 +188,10 @@ export function ModelRegister() {
     restore();
     return () => {
       mounted.current = false;
-      const enrollmentId = issuedLivenessEnrollmentRef.current;
+      // 언마운트(라우트 이동·HMR·StrictMode 이중 마운트)로는 등록을 취소하지 않는다.
+      // 취소는 사용자가 명시적으로 할 때(abandonLiveness)만 한다 — 진행상황(신분증·사진) 보존.
+      // (dev HMR 이 리마운트할 때마다 라이브니스 세션 발급 등록이 조용히 취소되던 버그를 막는다.)
       issuedLivenessEnrollmentRef.current = null;
-      if (enrollmentId) cancelEnrollment(enrollmentId).catch(() => {});
     };
   }, [restore]);
 
@@ -181,6 +220,40 @@ export function ModelRegister() {
 
   // 앞단 identity 스텝: CX 표준인증창(ENT_MID)으로 본인 명의 신원을 먼저 확인한다.
   // 성공 token → createIdentity(등록 스코프 CI 게이트), 신분증 초상(dlphotoimage)은 ref 로만 보관.
+  // OACX(모바일 신분증) 위젯을 #oacxDiv 에 띄워 신분증 초상(dlphotoimage HEX)을 portraitRef 에
+  // 담고 인증 토큰을 돌려준다. runIdentity(앞단 CI 게이트)와 reCaptureIdentity(초상 재확보) 공용.
+  const runCxWidget = useCallback(async () => {
+    // 이전 시도(취소 포함)의 위젯 DOM 을 비워 재시도 시 깨끗한 창이 뜨게 한다.
+    const oacxHost = typeof document !== 'undefined' ? document.getElementById('oacxDiv') : null;
+    if (oacxHost) oacxHost.replaceChildren();
+    await loadCxWidget();
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    return new Promise((resolve, reject) => {
+      const options = {
+        contentInfo: { signType: 'ENT_MID' },
+        compareCI: false,
+        isBirth: true,
+        // useConvertor:true 없이는 위젯이 RESULT 스텝에서 신분증 사진(dlphotoimage)을
+        // 만들지 않는다 — D1: 생체 등록 SFace 매치의 유일한 초상 출처.
+        useConvertor: true,
+      };
+      window.OACX.LOAD_MODULE(CX_CONFIG_URL, options, (response) => {
+        try {
+          const parsed = typeof response === 'string' ? JSON.parse(response) : response;
+          const authToken = parsed?.token;
+          if (!authToken) throw new Error('인증 토큰을 받지 못했어요. 다시 시도해 주세요.');
+          if (!mounted.current) throw new Error('등록 화면이 닫혔어요.');
+          // 신분증 사진(HEX JPEG) — 위젯 콜백에서 받은 그대로 ref(메모리)에만 담는다.
+          // 저장(local/session storage)·로그 금지 — 라이브니스 후 매치에만 서버로 전달한다.
+          portraitRef.current = parsed?.data?.dlphotoimage;
+          resolve(authToken);
+        } catch (requestError) {
+          reject(requestError);
+        }
+      });
+    });
+  }, []);
+
   const runIdentity = useCallback(async () => {
     const enrollmentId = enrollment?.id;
     if (!enrollmentId) return;
@@ -188,32 +261,7 @@ export function ModelRegister() {
     setError('');
     setBusy(true);
     try {
-      await loadCxWidget();
-      await new Promise((resolve) => requestAnimationFrame(resolve));
-      const token = await new Promise((resolve, reject) => {
-        const options = {
-          contentInfo: { signType: 'ENT_MID' },
-          compareCI: false,
-          isBirth: true,
-          // useConvertor:true 없이는 위젯이 RESULT 스텝에서 신분증 사진(dlphotoimage)을
-          // 만들지 않는다 — D1: 생체 등록 SFace 매치의 유일한 초상 출처.
-          useConvertor: true,
-        };
-        window.OACX.LOAD_MODULE(CX_CONFIG_URL, options, (response) => {
-          try {
-            const parsed = typeof response === 'string' ? JSON.parse(response) : response;
-            const authToken = parsed?.token;
-            if (!authToken) throw new Error('인증 토큰을 받지 못했어요. 다시 시도해 주세요.');
-            if (!mounted.current) throw new Error('등록 화면이 닫혔어요.');
-            // 신분증 사진(HEX JPEG) — 위젯 콜백에서 받은 그대로 ref(메모리)에만 담는다.
-            // 저장(local/session storage)·로그 금지 — 라이브니스 후 매치에만 서버로 전달한다.
-            portraitRef.current = parsed?.data?.dlphotoimage;
-            resolve(authToken);
-          } catch (requestError) {
-            reject(requestError);
-          }
-        });
-      });
+      const token = await runCxWidget();
       await createIdentity(enrollmentId, { token });
       if (!mounted.current) return;
       const current = await getEnrollment(enrollmentId);
@@ -237,7 +285,30 @@ export function ModelRegister() {
     } finally {
       if (mounted.current) setBusy(false);
     }
-  }, [enrollment?.id]);
+  }, [enrollment?.id, runCxWidget]);
+
+  // 새로고침·복귀로 초상 ref(메모리)를 잃었을 때: 사진은 서버에 저장돼 있으므로 신분증만 다시
+  // 확인해 초상을 되찾고 라이브니스로 넘어간다(사진 재촬영 없음). 서버 identity 게이트를 다시
+  // 부르지 않는다 — CI 는 앞단에서 이미 확정됐고, 최종 매치(completeEnrollment)의 SFace 대조가
+  // 초상↔라이브 동일인 여부를 강제하므로 재확보한 초상이 남이면 거기서 걸러진다.
+  const reCaptureIdentity = useCallback(async () => {
+    const enrollmentId = enrollment?.id;
+    if (!enrollmentId) return;
+    setStep('reidentify');
+    setError('');
+    setBusy(true);
+    try {
+      await runCxWidget();
+      if (!mounted.current) return;
+      setStep('liveness');
+    } catch (requestError) {
+      if (!mounted.current) return;
+      setError(requestError?.message || '본인 확인에 실패했어요. 다시 시도해 주세요.');
+      setStep('reidentify');
+    } finally {
+      if (mounted.current) setBusy(false);
+    }
+  }, [enrollment?.id, runCxWidget]);
 
   const finishPhotos = async () => {
     try {
@@ -293,24 +364,38 @@ export function ModelRegister() {
     setStep('failed');
   }, [enrollment?.id]);
 
+  // 라이브니스가 에러/취소돼도 등록(신분증·사진)은 버리지 않고 라이브 인증만 다시 시도한다.
+  // AWS 위젯 에러는 콘솔에 안 남으므로 메시지를 화면에 띄워 원인을 보이게 한다(진행상황 보존).
+  const onLivenessError = useCallback((err) => {
+    if (!mounted.current) return;
+    const detail = err?.error?.message || err?.message || err?.state?.message
+      || (err && typeof err === 'object' ? JSON.stringify(err) : String(err ?? ''));
+    setSession(null); // 이 라이브니스 세션은 재사용 불가 — 재시도 시 새 세션을 발급한다.
+    setError(detail ? ('라이브 인증 오류: ' + String(detail).slice(0, 300)) : '라이브 인증이 중단됐어요.');
+    setStep('liveness_failed');
+  }, []);
+
   useEffect(() => {
     if (step !== 'liveness' || !enrollment?.id || session) return undefined;
+    // 새로고침·복귀로 초상 ref 를 잃었으면(사진은 서버에 저장됨) 라이브니스 세션을 만들기 전에
+    // 신분증만 다시 확인해 초상을 되찾는다 — 사진 재촬영 없이 이어서 진행한다.
+    if (!portraitRef.current) { setStep('reidentify'); return undefined; }
     let active = true;
     createLivenessSession(enrollment.id, crypto.randomUUID())
       .then((created) => {
-        if (!active) {
-          cancelEnrollment(enrollment.id).catch(() => {});
-          return;
-        }
+        // 이펙트가 정리됨(리렌더·스텝 이동) — 만든 세션만 버리고 등록은 그대로 둔다.
+        if (!active) return;
         issuedLivenessEnrollmentRef.current = enrollment.id;
         setSession(created);
       })
-      .catch(() => {
-        if (active) abandonLiveness();
-        else cancelEnrollment(enrollment.id).catch(() => {});
+      .catch((sessionError) => {
+        // 세션 생성 실패(일시적)로 등록을 취소하지 않는다 — 라이브 인증만 다시 시도.
+        if (!active) return;
+        setError(sessionError?.message || '라이브 인증 세션을 시작하지 못했어요. 다시 시도해 주세요.');
+        setStep('liveness_failed');
       });
     return () => { active = false; };
-  }, [abandonLiveness, enrollment?.id, session, step]);
+  }, [enrollment?.id, session, step]);
 
   useEffect(() => {
     if (step !== 'processing' || !enrollment?.id) return undefined;
@@ -369,6 +454,22 @@ export function ModelRegister() {
     };
   }, [enrollment?.id, step]);
 
+  // OACX 위젯은 #oacxDiv 에 Vue 앱을 마운트하며 그 노드를 갈아치우고, 자체 '취소'(class="popup-close",
+  // click→closeApp) 는 우리 콜백을 주지 않는다. 그래서 document 캡처 리스너로 popup-close 클릭을 잡아
+  // 취소로 처리하고 페이지를 새로고침한다(새로고침하면 identity_pending 이라 신분증 카드로 복귀).
+  useEffect(() => {
+    if (step !== 'identity' || !busy) return undefined;
+    if (typeof document === 'undefined') return undefined;
+    const onClick = (event) => {
+      const target = event.target;
+      if (target && target.closest && target.closest('.popup-close')) {
+        if (typeof window !== 'undefined') window.location.reload();
+      }
+    };
+    document.addEventListener('click', onClick, true);
+    return () => document.removeEventListener('click', onClick, true);
+  }, [step, busy]);
+
   // 라이브니스 통과 후 최종 매치: 저장된 세션 + 앞단에서 담아 둔 신분증 초상(ref)으로 완료한다.
   // token 은 전달하지 않는다 — CI 게이트는 앞단 identity 에서 이미 끝났다.
   const finishMatch = useCallback(async () => {
@@ -377,11 +478,12 @@ export function ModelRegister() {
     if (!sessionId || !enrollmentId) return;
     const idPhotoHex = portraitRef.current;
     if (!idPhotoHex) {
-      // 새로고침 등으로 초상 ref 유실 — 조용한 실패 금지. 이 시점 등록은 이미 liveness_pending 이라
-      // /identity(identity_pending 만 허용) 재인증이 409 로 막혀 제자리 재인증이 불가능하다.
-      // 등록을 취소하고 처음부터 다시 시작한다(abandonLiveness 가 세션·상태까지 정리).
-      await abandonLiveness();
-      if (mounted.current) setError('인증 정보가 만료되어 처음부터 다시 진행해야 해요.');
+      // 초상 ref 유실(라이브니스 도중 새로고침 등) — 조용한 실패 금지. 등록·사진은 서버에 보존돼
+      // 있으니 취소하지 않고, 신분증만 다시 확인(reCaptureIdentity)해 초상을 되찾아 이어서 진행한다.
+      if (mounted.current) {
+        setError('본인 확인 정보가 만료됐어요. 신분증만 다시 확인하면 사진 그대로 이어서 진행돼요.');
+        setStep('reidentify');
+      }
       return;
     }
     setError('');
@@ -483,10 +585,19 @@ export function ModelRegister() {
         <p>동의, 모바일 신분증 확인, 얼굴 사진, 라이브 촬영을 순서대로 진행해요.</p>
       </div>
 
+      {renderStepRail(step)}
+
       {step === 'consent' && (
         <div className="surface">
+          <div className={s.stepHead}>
+            <div className={s.medallion}><Icon name="checkSquare" size={22} /></div>
+            <div>
+              <div className={s.stepEyebrow}>STEP 1 / 6</div>
+              <h2 className={s.stateTitle}>생체정보 처리 동의</h2>
+            </div>
+          </div>
           <div className={s.purposeNotice}>
-            <div className={s.purposeNoticeHead}><Icon name="info" size={15} /> 생체정보 처리 동의</div>
+            <div className={s.purposeNoticeHead}><Icon name="info" size={15} /> 이렇게 처리돼요</div>
             <ul className={s.purposeList}>
               <li>먼저 본인 명의 모바일 신분증으로 신원을 확인해요.</li>
               <li>정면·45도·측면 사진과 라이브 얼굴을 동일인 확인에 사용해요.</li>
@@ -507,12 +618,48 @@ export function ModelRegister() {
 
       {step === 'identity' && (
         <div className="surface">
-          <h2 className={s.stateTitle}>모바일 신분증 확인</h2>
+          <div className={s.stepHead}>
+            <div className={s.medallion}><Icon name="lock" size={22} /></div>
+            <div>
+              <div className={s.stepEyebrow}>STEP 2 / 6</div>
+              <h2 className={s.stateTitle}>모바일 신분증 확인</h2>
+            </div>
+          </div>
           <p className="hint">본인 명의 모바일 신분증으로 신원을 먼저 확인해요. 확인 후 얼굴 사진을 등록해요.</p>
-          <div id="oacxDiv" className={s.widget} />
-          <Button variant="primary" block disabled={busy} onClick={runIdentity}>
-            {busy ? '신원 확인 중…' : '모바일 신분증으로 인증'}
-          </Button>
+          <div className={s.identityAction}>
+            <Button variant="primary" block onClick={runIdentity}>
+              {busy ? '인증 창 다시 열기' : '모바일 신분증으로 인증'}
+            </Button>
+          </div>
+          <p className={s.retryNote}>인증 창을 닫았거나 취소했다면 위 버튼으로 다시 열 수 있어요.</p>
+        </div>
+      )}
+
+      {(step === 'identity' || step === 'reidentify') && busy && (
+        <div className={s.authOverlay}>
+          <div className={s.authModal}>
+            <div id="oacxDiv" className={s.widget} />
+          </div>
+        </div>
+      )}
+
+      {step === 'reidentify' && (
+        <div className="surface">
+          <div className={s.stepHead}>
+            <div className={s.medallion}><Icon name="lock" size={22} /></div>
+            <div>
+              <div className={s.stepEyebrow}>본인 확인만 다시</div>
+              <h2 className={s.stateTitle}>신분증만 다시 확인해요</h2>
+            </div>
+          </div>
+          <p className="hint">등록한 얼굴 사진은 그대로 저장돼 있어요. 보안을 위해 본인 확인만 다시 하면 라이브 얼굴 확인으로 바로 넘어가요.</p>
+          {error && <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {error}</p>}
+          <div className={s.identityAction}>
+            <Button variant="primary" block onClick={reCaptureIdentity}>
+              {busy ? '인증 창 다시 열기' : '모바일 신분증으로 다시 확인'}
+            </Button>
+          </div>
+          <p className={s.retryNote}>사진은 다시 올리지 않아도 돼요. 본인 확인 후 바로 라이브 촬영이에요.</p>
         </div>
       )}
 
@@ -535,15 +682,25 @@ export function ModelRegister() {
 
       {step === 'profile' && (
         <div className="surface">
-          <h2 className={s.stateTitle}>대표 이미지 선택 (선택)</h2>
+          <div className={s.stepHead}>
+            <div className={s.medallion}><Icon name="image" size={22} /></div>
+            <div>
+              <div className={s.stepEyebrow}>STEP 4 / 6 · 선택</div>
+              <h2 className={s.stateTitle}>대표 이미지</h2>
+            </div>
+          </div>
           <p className="hint">셀러 카탈로그 카드에 노출할 대표 이미지를 올려요. 원하지 않으면 건너뛸 수 있어요.</p>
-          <label className={s.consentCheck}>
+          <label className={s.uploadZone}>
             <input
               type="file"
               accept="image/*"
               disabled={busy}
+              className={s.uploadInput}
               onChange={(event) => submitProfileImage(event.target.files?.[0])}
             />
+            <div className={s.uploadIcon}><Icon name="imagePlus" size={20} /></div>
+            <div className={s.uploadText}>대표 이미지 선택</div>
+            <div className={s.uploadHint}>JPG · PNG · WebP</div>
           </label>
           <Button variant="secondary" block disabled={busy} onClick={() => setStep('liveness')}>
             {busy ? '업로드 중…' : '건너뛰고 라이브 얼굴 확인'}
@@ -558,17 +715,33 @@ export function ModelRegister() {
               <FaceLivenessStep
                 session={session}
                 onAnalysisComplete={finishMatch}
-                onCancel={abandonLiveness}
-                onError={abandonLiveness}
+                onCancel={onLivenessError}
+                onError={onLivenessError}
               />
             </Suspense>
           ) : '라이브 인증 세션을 준비하고 있어요…'}
         </div>
       )}
 
+      {step === 'liveness_failed' && (
+        <div className="surface">
+          <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {error}</p>
+          <Button variant="primary" block onClick={() => { setError(''); setStep('liveness'); }}>
+            라이브 인증 다시 시도
+          </Button>
+          <p className={s.retryNote}>신분증 확인·얼굴 사진은 그대로 유지돼요. 라이브 인증만 다시 진행해요.</p>
+        </div>
+      )}
+
       {step === 'processing' && (
         <div className="surface">
-          <h2 className={s.stateTitle}>모델 자산을 준비하고 있어요</h2>
+          <div className={s.stepHead}>
+            <div className={`${s.medallion} ${s.medallionSpin}`}><Icon name="loader" size={22} /></div>
+            <div>
+              <div className={s.stepEyebrow}>STEP 6 / 6</div>
+              <h2 className={s.stateTitle}>모델 자산을 준비하고 있어요</h2>
+            </div>
+          </div>
           <p className="hint">현재 등록에 결속된 private 자산만 만들어요. 이 화면은 닫았다가 다시 열어도 이어집니다.</p>
         </div>
       )}
@@ -582,7 +755,7 @@ export function ModelRegister() {
         </div>
       )}
 
-      {error && !['failed', 'error', 'identity_failed'].includes(step) && (
+      {error && !['failed', 'error', 'identity_failed', 'liveness_failed', 'reidentify'].includes(step) && (
         <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {error}</p>
       )}
     </div>

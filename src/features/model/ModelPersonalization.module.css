@@ -273,10 +273,10 @@
 .slotDel:focus-visible { outline: 2px solid var(--bg-1); outline-offset: 2px; }
 .slotExample {
   display: block;
-  width: 28px;
-  height: 28px;
-  margin: 10px 2px 0;
-  opacity: .85;
+  width: 62px;
+  height: 78px;
+  margin: 12px auto 2px;
+  opacity: .9;
 }
 .slotGuide {
   min-height: 54px;

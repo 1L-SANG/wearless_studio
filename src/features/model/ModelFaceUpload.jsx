@@ -33,7 +33,7 @@ const QC_COPY = {
   angle_mismatch: '선택한 각도와 달라요. 안내에 맞춰 정면/측면/45도로 찍어주세요.',
 };
 
-function SlotCard({ index, angle, label, guide, exampleImage, slot, onPicked, onDelete, checking, locked, fetchUrl }) {
+function SlotCard({ index, angle, label, guide, exampleImage, slot, onPicked, onDelete, checking, queued, locked, fetchUrl }) {
   const fileRef = useRef(null);
   const [url, setUrl] = useState(null);
   const passed = slot?.qcStatus === 'passed';
@@ -51,8 +51,8 @@ function SlotCard({ index, angle, label, guide, exampleImage, slot, onPicked, on
     return () => { alive = false; if (u) URL.revokeObjectURL(u); };
   }, [fetchUrl, passed, slot?.imageUri]);
 
-  const disabled = checking || locked;
-  const stateLabel = checking ? '검사 중' : passed ? '확인 완료' : '사진 필요';
+  const disabled = checking || queued || locked;
+  const stateLabel = queued ? '대기 중' : checking ? '검사 중' : passed ? '확인 완료' : '사진 필요';
 
   return (
     <div className={`${s.slotCard}${passed ? ` ${s.slotCardDone}` : ''}`}>
@@ -83,7 +83,7 @@ function SlotCard({ index, angle, label, guide, exampleImage, slot, onPicked, on
               <span className={s.slotUploadHint}>클릭해서 업로드</span>
             </div>
           )}
-          {checking && <div className={s.slotBusy}>품질 확인 중…</div>}
+          {(checking || queued) && <div className={s.slotBusy}>{checking ? '품질 확인 중…' : '대기 중…'}</div>}
         </button>
         {passed && (
           <button type="button" className={s.slotDel} onClick={() => onDelete(angle)}
@@ -119,7 +119,8 @@ export function ModelFaceUpload({
   const { push } = useToast();
   const [phase, setPhase] = useState('loading'); // loading|ready|error
   const [slots, setSlots] = useState({});          // angle -> {qcStatus, qcReasons, imageUri, uploadedAt, lastFail}
-  const [busyAngle, setBusyAngle] = useState(null);
+  const [slotBusy, setSlotBusy] = useState({});    // angle -> 'queued' | 'checking' (슬롯별 진행 — 다른 슬롯을 잠그지 않는다)
+  const uploadQueueRef = useRef(Promise.resolve()); // 업로드 직렬화(백엔드 photo-fence 는 enrollment 스코프라 동시요청 금지)
   const [blocked, setBlocked] = useState(null);    // 동의 미완료·미성년 등 전제조건 미충족 안내
 
   const load = useCallback(async () => {
@@ -139,38 +140,42 @@ export function ModelFaceUpload({
 
   useEffect(() => { load(); }, [load]);
 
-  const onPicked = async (angle, picked) => {
+  const onPicked = (angle, picked) => {
     // 아이폰 HEIC 는 File.type 이 비어 오기도 한다 — type 만 보고 막으면 아이폰 사진이 전부 거절된다.
     const looksImage = picked.type ? picked.type.startsWith('image/') : /\.(hei[cf]|hif|jpe?g|png|webp)$/i.test(picked.name || '');
     if (!looksImage) { push?.('이미지 파일만 올릴 수 있어요.', { icon: 'alertCircle' }); return; }
-    setBusyAngle(angle);
+    // 고른 즉시 이 슬롯을 '대기 중'으로 표시(다른 슬롯은 안 잠금 — 탭이 무시되지 않게).
+    setSlotBusy((m) => ({ ...m, [angle]: 'queued' }));
     setSlots((m) => ({ ...m, [angle]: { ...(m[angle] || {}), lastFail: null } }));
-    try {
-      // HEIC → JPEG(+긴 변 축소). 서버·QC(SFace)가 HEIC 를 못 읽으므로 업로드 전에 바꾼다.
-      let file;
+    // 실제 업로드는 큐에 직렬로(백엔드 fence 가 enrollment 스코프라 동시요청 금지). 순번이 되면 '검사 중'.
+    uploadQueueRef.current = uploadQueueRef.current.then(async () => {
+      setSlotBusy((m) => ({ ...m, [angle]: 'checking' }));
       try {
-        file = await toUploadableImage(picked);
-      } catch {
-        push?.('이 사진은 불러오지 못했어요. JPG·PNG 로 저장해 올려주세요.', { icon: 'alertCircle' });
-        setBusyAngle(null);
-        return;
+        // HEIC → JPEG(+긴 변 축소). 서버·QC(SFace)가 HEIC 를 못 읽으므로 업로드 전에 바꾼다.
+        let file;
+        try {
+          file = await toUploadableImage(picked);
+        } catch {
+          push?.('이 사진은 불러오지 못했어요. JPG·PNG 로 저장해 올려주세요.', { icon: 'alertCircle' });
+          return;
+        }
+        const res = await photoApi.upload({ angle, fileBlob: file, filename: file.name });
+        setSlots((m) => ({ ...m, [angle]: res }));
+        push?.('사진이 등록됐어요.', { icon: 'check' });
+      } catch (e) {
+        if (e.code === 'consent_required' || e.code === 'minor_blocked') {
+          setBlocked(e.message);
+        } else {
+          setSlots((m) => ({
+            ...m,
+            [angle]: { ...(m[angle] || { angle, qcStatus: 'none', qcReasons: [], imageUri: null }), lastFail: { message: e.message, reasons: e.reasons || [] } },
+          }));
+          push?.(e.message || '업로드에 실패했어요.', { icon: 'alertCircle' });
+        }
+      } finally {
+        setSlotBusy((m) => { const next = { ...m }; delete next[angle]; return next; });
       }
-      const res = await photoApi.upload({ angle, fileBlob: file, filename: file.name });
-      setSlots((m) => ({ ...m, [angle]: res }));
-      push?.('사진이 등록됐어요.', { icon: 'check' });
-    } catch (e) {
-      if (e.code === 'consent_required' || e.code === 'minor_blocked') {
-        setBlocked(e.message);
-      } else {
-        setSlots((m) => ({
-          ...m,
-          [angle]: { ...(m[angle] || { angle, qcStatus: 'none', qcReasons: [], imageUri: null }), lastFail: { message: e.message, reasons: e.reasons || [] } },
-        }));
-        push?.(e.message || '업로드에 실패했어요.', { icon: 'alertCircle' });
-      }
-    } finally {
-      setBusyAngle(null);
-    }
+    });
   };
 
   const onDelete = async (angle) => {
@@ -190,7 +195,7 @@ export function ModelFaceUpload({
   if (phase === 'error') return <Wrap><div className="surface"><ErrorState desc="얼굴 사진 정보를 불러오지 못했어요." onRetry={load} /></div></Wrap>;
 
   const completeCount = angles.filter((a) => slots[a.value]?.qcStatus === 'passed').length;
-  const canContinue = completeCount === angles.length && !busyAngle && !blocked;
+  const canContinue = completeCount === angles.length && Object.keys(slotBusy).length === 0 && !blocked;
 
   return (
     <Wrap>
@@ -213,7 +218,8 @@ export function ModelFaceUpload({
             <SlotCard key={a.value} index={index} angle={a.value} label={a.label} guide={a.guide}
               exampleImage={a.exampleImage}
               slot={slots[a.value]} onPicked={onPicked} onDelete={onDelete}
-              checking={busyAngle === a.value} locked={!!blocked || (busyAngle && busyAngle !== a.value)}
+              checking={slotBusy[a.value] === 'checking'} queued={slotBusy[a.value] === 'queued'}
+              locked={!!blocked}
               fetchUrl={photoApi.fetchUrl} />
           ))}
         </div>

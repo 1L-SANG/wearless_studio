@@ -178,10 +178,10 @@ test('retouched photos are presented front, 45 degrees, then side', () => {
   assert.deepEqual(ENROLLMENT_ANGLES.map(({ value }) => value), [
     'front', 'angle45', 'side',
   ]);
-  assert.equal(ENROLLMENT_ANGLES[1].label, '45도');
-  assert.match(ENROLLMENT_ANGLES[1].guide, /45도|반측면/);
-  assert.equal(ENROLLMENT_ANGLES[2].label, '측면');
-  assert.match(ENROLLMENT_ANGLES[2].guide, /90도|옆모습/);
+  assert.match(ENROLLMENT_ANGLES[1].label, /45도/);
+  assert.match(ENROLLMENT_ANGLES[1].guide, /45도|반측면|두 눈/);
+  assert.match(ENROLLMENT_ANGLES[2].label, /측면/);
+  assert.match(ENROLLMENT_ANGLES[2].guide, /90도|옆모습|한쪽/);
 });
 
 test('server status restores the next safe enrollment step', () => {
@@ -259,10 +259,10 @@ test('profile step wired between photos and liveness', () => {
   assert.match(reg, /step === 'profile'/);
 });
 
-test('a lost portrait after identity cleanly restarts instead of promising in-place re-auth', async () => {
-  // 재정렬 후: 라이브니스 후 매치(finishMatch) 시점의 등록은 이미 liveness_pending 이라
-  // /identity(identity_pending 만 허용) 재인증이 409 로 막힌다. 초상 ref 를 잃으면 제자리
-  // 재인증(setStep('identity'))이 아니라 등록을 취소하고 처음부터 다시 시작해야 한다.
+test('a lost portrait after liveness re-fetches identity in place, keeping the photos', async () => {
+  // 진행상황 보존: 라이브니스 후 매치(finishMatch) 시점에 초상 ref 를 잃어도(새로고침 등)
+  // 등록을 취소하지 않는다. 사진은 서버에 저장돼 있으니 신분증만 다시 확인(reidentify)해 초상을
+  // 되찾아 이어서 진행한다. 보안은 최종 매치의 SFace 대조(초상↔라이브 동일인)가 지킨다.
   const cancelled = [];
   let completeAttempts = 0;
   const harness = await modelComponentHarness({
@@ -289,17 +289,11 @@ test('a lost portrait after identity cleanly restarts instead of promising in-pl
     await flush();
 
     assert.equal(completeAttempts, 0, 'a lost portrait must never attempt server completion');
-    assert.deepEqual(cancelled, ['enrollment-1'], 'the stale enrollment must be cancelled for a clean restart');
-    assert.notEqual(harness.runtime.states[0], 'identity', 'must not route to in-place identity re-auth');
-    assert.equal(harness.runtime.states[0], 'failed', 'a lost portrait routes to the clean restart state');
-    assert.equal(harness.runtime.states[1], null, 'the stale enrollment must be discarded');
-    assert.equal(harness.runtime.states[2], null, 'the stale liveness session must be cleared');
-    assert.match(harness.runtime.states[3], /처음부터 다시/, 'the copy tells the user to start over');
-    assert.doesNotMatch(
-      harness.runtime.states[3],
-      /신분증 인증을 다시 진행/,
-      'the copy must no longer promise in-place re-auth',
-    );
+    assert.deepEqual(cancelled, [], 'the enrollment must NOT be cancelled — progress is preserved');
+    assert.equal(harness.runtime.states[0], 'reidentify', 'a lost portrait routes to in-place identity re-fetch');
+    assert.equal(harness.runtime.states[1]?.id, 'enrollment-1', 'the enrollment (and its saved photos) are retained');
+    assert.notEqual(harness.runtime.states[1], null, 'the enrollment must not be discarded');
+    assert.match(harness.runtime.states[3], /사진 그대로/, 'the copy reassures the photos are kept');
   } finally {
     await harness.close();
   }
@@ -351,7 +345,10 @@ test('a liveness interruption cancels the enrollment before a fresh retry', () =
   assert.match(registerSource, /setEnrollment\(null\)/);
   assert.match(registerSource, /enrollmentReasonMessage\('liveness_retry'\)/);
   assert.match(registerSource, /issuedLivenessEnrollmentRef/);
-  assert.match(registerSource, /if \(enrollmentId\) cancelEnrollment\(enrollmentId\)\.catch/);
+  // 언마운트(라우트 이동·HMR·StrictMode 이중 마운트)로는 등록을 취소하지 않는다 — 진행상황 보존.
+  // (예전엔 unmount cleanup 이 cancelEnrollment 를 불러 HMR 리마운트마다 등록이 조용히 취소됐다.)
+  assert.doesNotMatch(registerSource, /if \(enrollmentId\) cancelEnrollment\(enrollmentId\)\.catch/);
+  assert.match(registerSource, /언마운트[^\n]*취소하지 않는다/);
   assert.match(registerSource, /setStep\('cancel_failed'\)/);
   assert.match(registerSource, /등록 취소 다시 시도/);
   assert.doesNotMatch(registerSource, /서버 sweep이 재시도/);
@@ -462,7 +459,8 @@ test('the front identity step authenticates via OACX then advances to photos', a
   }
 });
 
-test('a liveness-session rejection after unmount cancels once without showing a retry CTA', async () => {
+test('a liveness-session rejection after the effect is torn down preserves the enrollment', async () => {
+  // 정리(언마운트·리렌더) 이후 도착한 세션 실패는 등록을 취소하지 않고 어떤 상태도 바꾸지 않는다.
   let rejectSession;
   const cancelled = [];
   const harness = await modelComponentHarness({
@@ -473,6 +471,8 @@ test('a liveness-session rejection after unmount cancels once without showing a 
       getCurrentEnrollment: () => new Promise(() => {}),
     },
   });
+  // 초상 ref 가 있어야 라이브니스 이펙트가 세션 생성까지 진행한다(없으면 reidentify 로 빠짐).
+  harness.runtime.refs[2] = { current: 'portrait-hex' };
   try {
     harness.render();
     const cleanup = harness.runtime.effects[1]();
@@ -480,11 +480,67 @@ test('a liveness-session rejection after unmount cancels once without showing a 
     rejectSession(new Error('response lost after server commit'));
     await flush();
 
-    assert.deepEqual(cancelled, ['enrollment-1']);
+    assert.deepEqual(cancelled, [], 'a torn-down session failure must never cancel the retained enrollment');
     assert.equal(
-      harness.runtime.updates.some(([index, value]) => index === 0 && value === 'failed'),
+      harness.runtime.updates.some(([index, value]) => index === 0 && (value === 'failed' || value === 'liveness_failed')),
       false,
+      'a torn-down session failure changes no step',
     );
+  } finally {
+    await harness.close();
+  }
+});
+
+test('an active liveness-session rejection retries in place instead of cancelling the enrollment', async () => {
+  // 활성 상태의 세션 생성 실패는 등록(신분증·사진)을 버리지 않고 liveness_failed 로 보내 재시도만 시킨다.
+  let rejectSession;
+  const cancelled = [];
+  const harness = await modelComponentHarness({
+    initialStates: ['liveness', { id: 'enrollment-1' }, null, '', false, false],
+    api: {
+      cancelEnrollment: async (id) => { cancelled.push(id); },
+      createLivenessSession: () => new Promise((_resolve, reject) => { rejectSession = reject; }),
+      getCurrentEnrollment: () => new Promise(() => {}),
+    },
+  });
+  harness.runtime.refs[2] = { current: 'portrait-hex' };
+  try {
+    harness.render();
+    harness.runtime.effects[1]();
+    rejectSession(new Error('rekognition session start failed'));
+    await flush();
+
+    assert.deepEqual(cancelled, [], 'a transient session failure must never cancel the retained enrollment');
+    assert.equal(harness.runtime.states[0], 'liveness_failed', 'an active session failure routes to the retry state');
+    assert.equal(harness.runtime.states[1]?.id, 'enrollment-1', 'the enrollment is retained for retry');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('resuming at liveness without a portrait re-fetches identity instead of creating a session', async () => {
+  // 새로고침·복귀로 초상 ref 를 잃은 채 라이브니스에 진입하면, 세션을 만들기 전에 reidentify 로
+  // 보내 신분증만 다시 확인시킨다 — 사진(서버 저장)은 그대로. 라이브니스 세션은 만들지 않는다.
+  let sessionCalls = 0;
+  const cancelled = [];
+  const harness = await modelComponentHarness({
+    initialStates: ['liveness', { id: 'enrollment-1', status: 'liveness_pending' }, null, '', false, false],
+    api: {
+      cancelEnrollment: async (id) => { cancelled.push(id); },
+      createLivenessSession: async () => { sessionCalls += 1; return { sessionId: 's1' }; },
+      getCurrentEnrollment: () => new Promise(() => {}),
+    },
+  });
+  // 초상 ref 유실 재현.
+  harness.runtime.refs[2] = { current: null };
+  try {
+    harness.render();
+    harness.runtime.effects[1]();
+    await flush();
+
+    assert.equal(sessionCalls, 0, 'no liveness session is created while the portrait is missing');
+    assert.deepEqual(cancelled, [], 'the enrollment (and its photos) must be preserved, not cancelled');
+    assert.equal(harness.runtime.states[0], 'reidentify', 'a missing portrait routes to in-place identity re-fetch');
   } finally {
     await harness.close();
   }
