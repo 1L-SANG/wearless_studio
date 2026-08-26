@@ -105,7 +105,7 @@ pids+=($!)
 
 # 3) holder(:8100) 헬스 대기 = 스택 준비 신호(오토스케일러가 이 포트로 깨움 확인).
 for i in $(seq 1 60); do
-  if curl -fsS "http://localhost:${HOLDER_PORT:-8100}/actuator/health" >/dev/null 2>&1; then
+  if curl -fsS "http://localhost:${HOLDER_PORT:-8100}/holder/health" >/dev/null 2>&1; then
     echo "[opendid] stack ready (holder healthy)"; break
   fi
   sleep 2

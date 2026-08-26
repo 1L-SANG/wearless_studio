@@ -17,7 +17,7 @@ image:
     context: deploy/opendid/container
   port: 8100                      # holder — api 가 여기로 VC 요청
   healthcheck:
-    command: ["CMD-SHELL", "curl -fsS http://localhost:8100/actuator/health || exit 1"]
+    command: ["CMD-SHELL", "curl -fsS http://localhost:8100/holder/health || exit 1"]
     interval: 20s
     retries: 6                    # 4 JVM 동시 콜드부팅이 CPU 경쟁으로 홀더 헬스를
     timeout: 8s                   # 순간 늦추므로(실측 ~93s 부팅) 넉넉히 — 안 그러면 첫
