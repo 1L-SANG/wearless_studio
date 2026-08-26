@@ -104,6 +104,14 @@ def _wake_dispatcher(request: Request) -> None:
         dispatcher.wake()
 
 
+def _wake_opendid(app) -> None:
+    """holder(opendid)가 필요해졌다 — scale-to-zero 로 0대면 지금 깨운다(reconciler 60초 대기 스킵).
+    autoscaler 는 off 여도 state 에 올라 있고 prewarm_soon 은 즉시 return 하므로 분기 없이 부른다."""
+    autoscaler = getattr(app.state, "opendid_autoscaler", None)
+    if autoscaler is not None:
+        autoscaler.prewarm_soon()
+
+
 async def _fetch_trans(base_url: str, token: str) -> dict:
     """CX `trans/{token}` 서버발 호출 → 실 신원 필드(dict). 테스트 monkeypatch 지점.
 
@@ -1006,6 +1014,9 @@ async def create_license(
                 raise _err("enrollment_not_ready", "라이선스 발급 가능한 등록 상태가 아닙니다.", status=409)
         await conn.commit()
 
+    # opendid 가 scale-to-zero(0대)면 지금 깨운다 — reconciler 60초 대기를 앞당긴다. off/미설정이면
+    # 무해. 콜드스타트(4 JVM ~2분)는 아래 vc_issue_delayed 재시도 UX 가 흡수한다.
+    _wake_opendid(request.app)
     try:
         issued = await issue_face_vc(
             request.app, license_id=license_id, model_id=str(model_id),
@@ -1013,6 +1024,7 @@ async def create_license(
             valid_until=valid_until, digest=digest,
         )
     except FaceVcIssueError as error:
+        _wake_opendid(request.app)   # 콜드/재확보로 실패했다면 재시도가 홀더를 찾게 다시 깨운다
         raise _err(
             "vc_issue_delayed",
             "VC 발급이 지연되었습니다. 잠시 후 다시 시도해 주세요.",

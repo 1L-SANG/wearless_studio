@@ -120,6 +120,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         vc_revocation_reconciler = None
         sam_retry_pusher = None
         sam_autoscaler = None
+        opendid_autoscaler = None
         if pool is not None:
             await pool.open()
             # revoke_license/cutover 는 fm_vc_required 와 무관하게 vc_id 가 있으면
@@ -148,6 +149,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if autoscale_adapter.enabled:
                 sam_autoscaler = app.state.sam_autoscaler
                 await sam_autoscaler.start()
+            # opendid(fm-holder) 온디맨드 — 같은 reconciler/어댑터를 service·demand·lock_key 만 바꿔
+            # 재사용. 수요 = license_pending·vc_pending 등록. wake 는 issue_face_vc 지연 경로가
+            # app.state.opendid_autoscaler.prewarm_soon() 으로 부른다(off 여도 즉시 return).
+            opendid_adapter = SamAutoscaleAdapter(
+                settings, service="opendid",
+                enabled_attr="opendid_autoscale", topic_attr="sam_alert_topic_arn")
+            app.state.opendid_autoscaler = SamAutoscaler(
+                app, opendid_adapter,
+                demand_fn=lambda repo, conn: repo.opendid_demand_snapshot(conn),
+                idle_attr="opendid_autoscale_idle_minutes",
+                name="opendid", lock_key="opendid_autoscaler")
+            if opendid_adapter.enabled:
+                opendid_autoscaler = app.state.opendid_autoscaler
+                await opendid_autoscaler.start()
             # job dispatcher (§5) — DB·R2 + 최소 1개 AI provider(마네킹=Gemini, 분석=Gemini/OpenAI)
             # 가 있고 활성화일 때만 기동. provider 없는 job 은 워커가 실패 봉투로 종결.
             if (
@@ -167,6 +182,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         sam_client.install_prewarm_hook(None)
         if sam_autoscaler is not None:
             await sam_autoscaler.stop()
+        if opendid_autoscaler is not None:
+            await opendid_autoscaler.stop()
         if draft_asset_reclaimer is not None:
             await draft_asset_reclaimer.stop()
         if sam_retry_pusher is not None:

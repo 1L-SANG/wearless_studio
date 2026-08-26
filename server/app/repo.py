@@ -1320,6 +1320,32 @@ async def sam_demand_snapshot(conn: AsyncConnection, kinds: tuple[str, ...]):
     )
 
 
+async def opendid_demand_snapshot(conn: AsyncConnection):
+    """opendid(fm-holder) 가 켜져 있어야 하는지 판단. sam 과 같은 DemandSnapshot 모양을 재사용한다.
+
+    수요 = api 가 holder 를 부르는 등록 단계(license_pending·vc_pending: wallet/register-did/VC 발급).
+    active 가 0이라도 방금 통과(passed+vc_id)했거나 asset_building 로 홀더 단계에 근접한 등록이
+    idle 창 안이면 켜 둔다 — scale-to-zero 콜드스타트(4 JVM ~2분)를 재시도 UX 앞에서 미리 흡수한다.
+    """
+    from app.services.sam_autoscale import DemandSnapshot
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select "
+            "  (select count(*) from fm_biometric_enrollments "
+            "     where status in ('license_pending', 'vc_pending')) as active, "
+            "  (select max(completed_at) from fm_biometric_enrollments "
+            "     where status = 'passed' and vc_id is not null) as last_finished, "
+            "  (select max(updated_at) from fm_biometric_enrollments "
+            "     where status in ('asset_building', 'license_pending', 'vc_pending')) as last_activity"
+        )
+        row = await cur.fetchone() or {}
+    return DemandSnapshot(
+        active_sam_jobs=int(row.get("active") or 0),
+        last_sam_finished_at=row.get("last_finished"),
+        last_upload_at=row.get("last_activity"),
+    )
+
+
 async def try_advisory_lock(conn: AsyncConnection, key: str) -> bool:
     """트랜잭션 범위 advisory lock 을 **기다리지 않고** 시도한다. 못 잡으면 False.
 

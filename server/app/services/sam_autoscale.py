@@ -18,8 +18,13 @@ SAM_KINDS = ("sam_preprocess", "matching_cutout", "editor_garment_mask")
 
 #: 세 태그 모두 정확히 일치해야 한다. 실측(2026-08-21): Copilot 이 ECS 서비스에 이 태그를 단다.
 #: 서비스명에는 랜덤 접미사가 붙어(…-6uWul9L25eM7) 박아 두면 스택 재생성 시 조용히 깨진다.
-_REQUIRED_TAGS = {"copilot-application": "wearless", "copilot-environment": "prod",
-                  "copilot-service": "sam2"}
+#: service 만 바꿔 sam2·opendid 등 다른 scale-to-zero 서비스에 재사용한다(어댑터 인스턴스별).
+def _required_tags(service: str) -> dict:
+    return {"copilot-application": "wearless", "copilot-environment": "prod",
+            "copilot-service": service}
+
+
+_REQUIRED_TAGS = _required_tags("sam2")  # 하위호환(직접 참조하는 외부 코드 대비)
 
 
 # ── want 판정 (순수) ──────────────────────────────────────────────────────────
@@ -78,9 +83,13 @@ class SamAutoscaleAdapter:
     예외는 삼키지 않고 올린다: 훅·reconciler 가 각자 맥락에 맞게 삼킨다.
     """
 
-    def __init__(self, settings, *, ecs=None, sns=None):
+    def __init__(self, settings, *, service="sam2", enabled_attr="sam_autoscale",
+                 topic_attr="sam_alert_topic_arn", ecs=None, sns=None):
         self._settings = settings
-        self.enabled = getattr(settings, "sam_autoscale", "off") == "on"
+        self._service = service
+        self._required_tags = _required_tags(service)
+        self._topic_attr = topic_attr
+        self.enabled = getattr(settings, enabled_attr, "off") == "on"
         self._ecs = ecs
         self._sns = sns
         self._target: EcsTarget | None = None
@@ -133,12 +142,12 @@ class SamAutoscaleAdapter:
                     cluster=cluster, services=arns[i:i + 10], include=["TAGS"])
                 for svc in desc.get("services", []):
                     tags = {t.get("key"): t.get("value") for t in (svc.get("tags") or [])}
-                    if all(tags.get(k) == v for k, v in _REQUIRED_TAGS.items()):
+                    if all(tags.get(k) == v for k, v in self._required_tags.items()):
                         matches.append(EcsTarget(cluster_arn=cluster,
                                                  service_arn=svc["serviceArn"]))
         if len(matches) != 1:
-            log.warning("sam2 service discovery matched %d services — autoscale disabled",
-                        len(matches))
+            log.warning("%s service discovery matched %d services — autoscale disabled",
+                        self._service, len(matches))
             return None
         return matches[0]
 
@@ -168,7 +177,7 @@ class SamAutoscaleAdapter:
             service=target.service_arn, desiredCount=int(count))
 
     async def notify(self, subject: str, body: str) -> None:
-        topic = getattr(self._settings, "sam_alert_topic_arn", None)
+        topic = getattr(self._settings, self._topic_attr, None)
         if not self.enabled or not topic or self._sns is None:
             return
         await asyncio.to_thread(self._sns.publish, TopicArn=topic,

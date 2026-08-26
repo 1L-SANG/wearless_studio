@@ -405,10 +405,14 @@ def test_autoscale_addon_exists_with_scoped_permissions():
     assert {"ecs:ListClusters", "ecs:ListServices", "ecs:DescribeServices", "ecs:ListTasks",
             "ecs:DescribeTasks", "ecs:UpdateService", "sns:Publish"} <= actions
     assert not any(a.startswith("iam:") for a in actions)
-    # UpdateService 는 sam2 태그 조건이 있어야 한다 — api 가 자기 자신을 내리면 안 된다
-    # (IAM 시뮬레이터 실측 2026-08-21: sam2 allowed / api implicitDeny).
+    # UpdateService 는 온디맨드 서비스(sam2·opendid)로만 스코프돼야 한다 — api 가 자기 자신을
+    # 내리면 안 된다(IAM 시뮬레이터 실측 2026-08-21: sam2 allowed / api implicitDeny).
     upd = next(st for st in statements if st["Action"] == "ecs:UpdateService")
-    assert upd["Condition"]["StringEquals"]["aws:ResourceTag/copilot-service"] == "sam2"
+    allowed_services = upd["Condition"]["StringEquals"]["aws:ResourceTag/copilot-service"]
+    if isinstance(allowed_services, str):
+        allowed_services = [allowed_services]
+    assert set(allowed_services) == {"sam2", "opendid"}
+    assert "api" not in allowed_services  # api 자기 자신·타 서비스는 막힌다
     # PolicyArn 접미사 Output 은 Copilot 이 task role 에 자동 부착, 일반 Output 은 env 로 주입.
     assert "SamAutoscalePolicyArn" in addon["Outputs"]
     assert "SamAlertTopicArn" in addon["Outputs"]

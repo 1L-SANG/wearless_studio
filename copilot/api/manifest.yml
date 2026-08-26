@@ -142,6 +142,13 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 정본: docs/superpowers/specs/2026-08-21-sam2-on-demand-scaling-design.md
   SAM_AUTOSCALE: "on"
   SAM_AUTOSCALE_IDLE_MINUTES: "30"
+  # ── opendid(fm-holder) 온디맨드 기동/종료 ──
+  # opendid 는 평소 0대(copilot/opendid/manifest.yml count {spot:0}). 등록이 holder 단계
+  # (license_pending·vc_pending)에 오면 api 가 깨우고, 30분 유휴면 reconciler 가 끈다.
+  # sam 과 같은 SNS 토픽(SAM_ALERT_TOPIC_ARN)을 쓴다. off 로 바꾸면 자동 기동이 멈추니
+  # opendid count 도 같이 되돌릴 것. 첫 VC 발급은 콜드스타트(~2분) → vc_issue_delayed 재시도.
+  OPENDID_AUTOSCALE: "on"
+  OPENDID_AUTOSCALE_IDLE_MINUTES: "30"
   # ── 커스텀 매칭 의류(내 옷) 파이프라인 (2026-08-16 활성화, PR #129/#131/#143) ──
   # 셀러가 올린 매칭 의류의 배경을 SAM2 로 제거해 시드 카탈로그와 같은 회색 컷으로 만든다.
   # 무과금·이미지 생성 없음. SAM 이 죽어도 원본을 그대로 두고 등록·선택은 계속된다(fail-open).

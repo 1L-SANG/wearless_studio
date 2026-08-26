@@ -181,6 +181,10 @@ class Settings:
     sam_autoscale: str = "off"
     sam_autoscale_idle_minutes: int = 30   # 마지막 수요로부터 이 시간 지나면 0대 (오너 결정)
     sam_alert_topic_arn: str | None = None # addon Output 이 환경변수로 주입. 없으면 알림만 조용히 생략
+    # opendid(fm-holder) scale-to-zero — sam 과 같은 reconciler·어댑터를 서비스만 바꿔 재사용.
+    # 수요 = license_pending·vc_pending 등록(holder 호출 단계). 알림은 sam 과 같은 SNS 토픽 공유.
+    opendid_autoscale: str = "off"
+    opendid_autoscale_idle_minutes: int = 30
     # 누끼 성공본을 시드 카탈로그와 같은 정면 flat-lay 로 재렌더(카드 썸네일 1장, 무과금
     # 잡 안에서 이미지 호출 1회). off면 생성 자체가 없다. matching_cutout 이 켜져 있고
     # 누끼가 성공한 경우에만 의미가 있다.
@@ -416,6 +420,8 @@ def load_settings() -> Settings:
         sam_autoscale=_flag("SAM_AUTOSCALE", "off", {"off", "on"}),
         sam_autoscale_idle_minutes=_int_env("SAM_AUTOSCALE_IDLE_MINUTES", 30),
         sam_alert_topic_arn=os.getenv("SAM_ALERT_TOPIC_ARN") or None,
+        opendid_autoscale=_flag("OPENDID_AUTOSCALE", "off", {"off", "on"}),
+        opendid_autoscale_idle_minutes=_int_env("OPENDID_AUTOSCALE_IDLE_MINUTES", 30),
         sam_request_timeout_s=float(os.getenv("SAM_REQUEST_TIMEOUT_S") or 90.0),
         example_asset_base_url=(os.getenv("EXAMPLE_ASSET_BASE_URL") or "").rstrip("/") or None,
         genexample_bg_enabled=(

@@ -32,10 +32,19 @@ PREWARM_DEBOUNCE_SECONDS = 60.0
 ALERT_DEBOUNCE_SECONDS = 600.0
 
 
+async def _sam_demand(repo, conn):
+    return await repo.sam_demand_snapshot(conn, sam_autoscale.SAM_KINDS)
+
+
 class SamAutoscaler:
-    def __init__(self, app, adapter: SamAutoscaleAdapter):
+    def __init__(self, app, adapter: SamAutoscaleAdapter, *, demand_fn=None,
+                 idle_attr="sam_autoscale_idle_minutes", name="sam2", lock_key=None):
         self.app = app
         self.adapter = adapter
+        self._demand_fn = demand_fn or _sam_demand
+        self._idle_attr = idle_attr
+        self._name = name
+        self._lock_key = lock_key or LOCK_KEY
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
         self._disabled_reason: str | None = None
@@ -48,7 +57,7 @@ class SamAutoscaler:
     # ── lifecycle ─────────────────────────────────────────────────────────
     async def start(self):
         self._stop.clear()
-        self._task = asyncio.create_task(self._run(), name="sam-autoscaler")
+        self._task = asyncio.create_task(self._run(), name=f"{self._name}-autoscaler")
 
     async def stop(self):
         self._stop.set()
@@ -82,10 +91,10 @@ class SamAutoscaler:
         target = await self.adapter.discover()
         if target is None:
             self._disabled_reason = "service not found"
-            log.error("sam2 autoscale disabled: service not found by tags")
-            await self._alert("sam2 autoscale: service not found",
-                              "copilot-service=sam2 태그로 ECS 서비스를 찾지 못해 자동 기동/종료를 "
-                              "껐습니다. sam2 스택을 확인하세요.")
+            log.error("%s autoscale disabled: service not found by tags", self._name)
+            await self._alert(f"{self._name} autoscale: service not found",
+                              f"copilot-service={self._name} 태그로 ECS 서비스를 찾지 못해 자동 "
+                              f"기동/종료를 껐습니다. {self._name} 스택을 확인하세요.")
         return target
 
     async def reconcile_once(self, repo, conn) -> str:
@@ -93,18 +102,18 @@ class SamAutoscaler:
         target = await self._target()
         if target is None:
             return "skip"
-        if not await repo.try_advisory_lock(conn, LOCK_KEY):
+        if not await repo.try_advisory_lock(conn, self._lock_key):
             return "skip"
 
-        idle = int(getattr(self.app.state.settings, "sam_autoscale_idle_minutes", 30))
-        snap = await repo.sam_demand_snapshot(conn, sam_autoscale.SAM_KINDS)
+        idle = int(getattr(self.app.state.settings, self._idle_attr, 30))
+        snap = await self._demand_fn(repo, conn)
         want = sam_autoscale.want_running(snap, idle_minutes=idle, now=self._now())
         try:
             state = await self.adapter.describe(target)
         except Exception as exc:
             if "ServiceNotFound" in type(exc).__name__ or "ServiceNotFound" in str(exc):
                 self.adapter.forget_target()      # 스택 재생성 — 다음 주기에 한 번 더 찾는다
-            log.exception("sam2 describe failed")
+            log.exception("%s describe failed", self._name)
             return "skip"
 
         await self._check_long_run(state, want)
@@ -123,12 +132,12 @@ class SamAutoscaler:
         try:
             await self.adapter.set_desired(target, count)
         except Exception as exc:
-            log.exception("sam2 scale to %s failed", count)
-            await self._alert(f"sam2 autoscale: scale to {count} failed",
+            log.exception("%s scale to %s failed", self._name, count)
+            await self._alert(f"{self._name} autoscale: scale to {count} failed",
                               f"ECS UpdateService 실패: {type(exc).__name__}: {exc}",
                               debounce_seconds=ALERT_DEBOUNCE_SECONDS)
             return "skip"
-        log.info("sam2 autoscale %s → desired=%s", label, count)
+        log.info("%s autoscale %s → desired=%s", self._name, label, count)
         return label
 
     async def _check_long_run(self, state, want: bool) -> None:
@@ -142,8 +151,8 @@ class SamAutoscaler:
         # 바뀌면 새 가동이고, 다시 3시간이 지나면 다시 알린다.
         if hours > LONG_RUN_ALERT_HOURS and self._long_run_alerted_for != started:
             self._long_run_alerted_for = started
-            await self._alert(f"sam2 autoscale: running over {LONG_RUN_ALERT_HOURS}h",
-                              f"sam2 가 {hours:.1f}시간째 켜져 있고 아직 수요가 있습니다. "
+            await self._alert(f"{self._name} autoscale: running over {LONG_RUN_ALERT_HOURS}h",
+                              f"{self._name} 가 {hours:.1f}시간째 켜져 있고 아직 수요가 있습니다. "
                               "버그인지 실제 사용인지 확인하세요. 강제 종료는 하지 않습니다.")
 
     async def _alert(self, subject: str, body: str, *, debounce_seconds: float = 0.0) -> None:
@@ -172,15 +181,15 @@ class SamAutoscaler:
             state = await self.adapter.describe(target)
             if state.desired == 0:
                 await self.adapter.set_desired(target, 1)
-                log.info("sam2 prewarm → desired=1")
+                log.info("%s prewarm → desired=1", self._name)
         except Exception:
-            log.warning("sam2 prewarm failed (reconciler will retry)", exc_info=True)
+            log.warning("%s prewarm failed (reconciler will retry)", self._name, exc_info=True)
 
     def prewarm_soon(self) -> None:
         """라우트용 fire-and-forget. task 참조를 set 에 들고 있어야 GC 에 안 먹힌다
         (저장소 선례: facemarket.py 의 app.state task set, image_usage.py 의 _tasks)."""
         if not self.adapter.enabled or self._disabled_reason:
             return
-        t = asyncio.create_task(self.prewarm(), name="sam-prewarm")
+        t = asyncio.create_task(self.prewarm(), name=f"{self._name}-prewarm")
         self._inflight.add(t)
         t.add_done_callback(self._inflight.discard)
