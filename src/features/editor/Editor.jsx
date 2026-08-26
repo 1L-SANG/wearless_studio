@@ -40,10 +40,11 @@ import { exportBlockPng, exportBlocksZip, exportLongPng } from '@/features/edito
 import { snapEditorDragDelta } from '@/features/editor/editorSnap.js';
 import { copyEditorElements, pasteEditorElements } from '@/features/editor/editorClipboard.js';
 import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, textPresetKeyFromDragTypes, findImageDropSlot, fitImageToFrameBlock, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
-import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage, objectPresetInitialSelectionIds, upgradeLegacyKiwiTemplateBlocks } from '@/features/editor/editorLibrary.js';
+import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, DETAIL_PAGE_TEMPLATE_SETS, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildDetailPageTemplateSet, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage, getDetailPageFrame, objectPresetInitialSelectionIds, upgradeLegacyKiwiTemplateBlocks } from '@/features/editor/editorLibrary.js';
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { imageResizeRect, lineHitStrokeWidth, resizePolicyForElement, shouldShowRotationHandle, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
 import { isWardrobeImageUsed, mergeEditorImagesIntoWardrobe } from '@/features/editor/editorWardrobe.js';
+import { autofillBlocks, buildRoledCutPool, filledSrcSet, isGeneratedCutBlock } from '@/features/editor/templates/autofill.js';
 import { buildFailedCutRetry } from '@/features/editor/failedCutRetry.js';
 import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, isPhotoSlotElement, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, reorderElements, selectableElementBelowBlankText, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPreserveMultiSelectionOnPointerDown, shouldStartTextOnlyDrag } from '@/features/editor/editorSelection.js';
 import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from '@/lib/imageTranscode.js';
@@ -1866,10 +1867,31 @@ export function Editor() {
   const moveBlock = (idx, dir) => setBlocks((bs) => { const n = [...bs]; const j = idx + dir; if (j < 0 || j >= n.length) return n; [n[idx], n[j]] = [n[j], n[idx]]; return n; });
   const addEmpty = (idx) => setBlocks((bs) => { const n = [...bs]; const nb = { id: uid('b'), name: '직접 구성', kind: SECTION_ROLES.STYLING, contentRole: CONTENT_ROLES.CUSTOM, bg: '#ffffff', h: 300, elements: [] }; n.splice(idx + 1, 0, nb); return n; });
   const deleteBlock = (id) => { setBlocks((bs) => bs.filter((b) => b.id !== id)); toast.push('블록을 삭제했어요'); };
+  // 삽입 즉시 빈 프레임 슬롯을 생성 착장컷으로 역할 맞춰 자동 채운다(templates/autofill).
+  // 컷풀 = wardrobe(생성컷) ⨝ wardrobeContext.storyboard(블록 contentRole). 컷 없으면 no-op(빈 슬롯).
+  const roledCutsNow = () => buildRoledCutPool(wardrobe || {}, wardrobeContext.current.storyboard);
   const addFrame = (f, idx) => {
-    const nb = buildFrameBlock(f, uid);
+    const nb = autofillBlocks([buildFrameBlock(f, uid)], roledCutsNow())[0];
     setBlocks((bs) => { const n = [...bs]; n.splice(idx == null ? n.length : idx, 0, nb); return n; });
     setSelBlock(nb.id); setBlockFocused(true); setSelEl(null); setSelEls([]);
+  };
+  // 상세페이지 "한 벌" 템플릿 안전 적용(손실 0). 컷 배치는 템플릿으로 바뀌되:
+  //  ① 템플릿 슬롯을 생성 착장컷으로 자동채움 ② 슬롯에 못 담은 컷은 이미지 블록으로 뒤에 유지
+  //  ③ 정보·업로드 등 컷 아닌 원본 블록은 그대로 보존. 컷-섹션 블록만 드롭(사진은 슬롯/뒤에 남아 손실 0).
+  const overwriteDetailPageTemplate = (setId) => {
+    const pool = roledCutsNow();
+    const built = autofillBlocks(buildDetailPageTemplateSet(setId, uid), pool);
+    if (!built.length) return;
+    const originals = latestBlocks.current || blocks;
+    const placed = filledSrcSet(built);
+    const leftoverPhotos = pool
+      .filter((cut) => !placed.has(cut.src))
+      .map((cut) => buildImageBlock({ src: cut.src, width: cut.width, height: cut.height, cutType: cut.cutType }, uid));
+    const keep = (originals || []).filter((block) => !isGeneratedCutBlock(block));
+    const next = [...built, ...leftoverPhotos, ...keep];
+    setBlocks(next);
+    if (next[0]) { setSelBlock(next[0].id); setBlockFocused(true); setSelEl(null); setSelEls([]); }
+    toast.push('템플릿을 적용했어요 (남은 사진·정보는 아래에 보존)');
   };
   const addImageBlock = (image, idx) => {
     const nb = buildImageBlock(image, uid);
@@ -1884,7 +1906,7 @@ export function Editor() {
     const presetType = e.dataTransfer.getData(EDITOR_INFO_PRESET_DRAG_TYPE);
     if (presetType) { addInfoPresetBlock(presetType, idx); return; }
     const id = e.dataTransfer.getData(EDITOR_FRAME_DRAG_TYPE); if (!id) return;
-    const f = FRAME_LIBRARY_ITEMS.find((x) => x.id === id); if (f) addFrame(f, idx);
+    const f = FRAME_LIBRARY_ITEMS.find((x) => x.id === id) || getDetailPageFrame(id); if (f) addFrame(f, idx);
   };
   const addShape = (type, shapeId, bId, dropEvent) => {
     const target = bId || visibleBlock();
@@ -2828,6 +2850,7 @@ export function Editor() {
         onVary={varyImage} />;
       case 'frame': return (
         <FramePanel onAdd={addFrame} recommendGender={recommendGender} onPickInfo={openInfoPreset}
+          onOverwriteTemplate={overwriteDetailPageTemplate} templateSets={DETAIL_PAGE_TEMPLATE_SETS}
           onDragStart={() => setFrameDragging(true)} onDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />
       );
       case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onBubbleAppearanceChange={patchBubbleAppearance} onLayer={layerEl} onAddText={addText} />;

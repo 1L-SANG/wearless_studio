@@ -178,7 +178,11 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 새 hard-gate가 garment 동일성까지 포함하므로 구 best-of 후보 생성은 중복 비용을 막기 위해 끈다.
   MODEL_ROUTING_IMAGE_HIGH: gemini-3-pro-image
   MODEL_ROUTING_DETAIL_CUT: gpt-image-2-2026-04-21
-  DETAIL_CUT_IMAGE_SIZE: "4K"
+  # 상세페이지 컷 출고 해상도 4K → 2K (2026-08-26 오너 결정). GPT Image 2 에서 이 값은
+  # 2:3 캔버스 2336×3504 → 1536×2304 로 바뀐다(gemini_image._OPENAI_2K_SIZE).
+  # 출력 토큰이 줄어 컷당 실비도 함께 내려가고, 4K 가 원인이던 메모리 압박(아래
+  # DETAIL_CUT_CONCURRENCY 주석)도 같이 완화된다. 되돌리기: 이 줄을 "4K" 로.
+  DETAIL_CUT_IMAGE_SIZE: "2K"
   # 동시 컷 수 — 메모리와 **짝으로** 움직인다(아래 memory 주석 참고). 올리기 전에 반드시
   # CloudWatch MemoryUtilization 을 보고, 최악 입력(색상당 사진 6장·장당 25MB 상한)에서의
   # reference 총량까지 감안한다. 잡 단위 reference 상한이 아직 없어 최악치는 계산으로만

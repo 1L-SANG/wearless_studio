@@ -105,8 +105,10 @@ resolved 마네킹컷, 대체되지 않은 선택 가상모델과 큐레이션�
 exact 프롬프트는 과거 선호 실험에서 확정한 기존 iPhone 기본 Photo 계약과 Adjacent V4 문구를
 `cut_generate_confirmed_gpt_v1.txt`에 그대로 고정한다. 모델은
 `gpt-image-2-2026-04-21`, 품질은 `medium`, 출력은 PNG다. 서비스의 `4K` 요청은 GPT가 허용하는
-정확한 2:3 최대 크기 `2336x3504`로 변환한다. 이것만 과거 실험의 `1024x1536`에서 의도적으로
-바꾼 provider-level 조건이다. PL-4의 exact가 아닌 블록도 generic 입력·프롬프트는 유지하되
+정확한 2:3 최대 크기 `2336x3504`로, `2K` 요청은 같은 조건(정확한 2:3·양 변 16의 배수)의
+`1536x2304`로 변환한다. 이것만 과거 실험의 `1024x1536`에서 의도적으로
+바꾼 provider-level 조건이다. 프로덕션 출고 해상도는 2026-08-26 오너 결정으로 `2K`다
+(`DETAIL_CUT_IMAGE_SIZE`). PL-4의 exact가 아닌 블록도 generic 입력·프롬프트는 유지하되
 `detail_cut` GPT를 사용한다. 첫 시그니처 컷은 별도 `image_signature`, 에디터와 AG-07의 공유
 `image_high`는 기존 Gemini 경로를 유지한다.
 

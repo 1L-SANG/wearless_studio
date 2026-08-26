@@ -253,18 +253,25 @@ class GeminiImageClient:
         )
 
     #: 기본(1K) 캔버스는 기존 배선을 보존한다. GPT Image 2의 임의 유효 해상도 지원을
-    #: 이용하는 4K 2:3만 별도로 승급한다. 2336×3504는 정확히 2:3이고, 양 변이 16의
+    #: 이용하는 2K·4K 2:3만 별도로 승급한다. 2336×3504는 정확히 2:3이고, 양 변이 16의
     #: 배수이며, 8,185,344 픽셀로 API의 8,294,400 픽셀 상한 안에 드는 최대 크기다.
+    #: 1536×2304 도 같은 조건(정확한 2:3, 양 변 16의 배수)의 2K 급 캔버스로, Gemini 의
+    #: imageSize="2K" 처럼 1K 와 4K 사이를 채운다. 이 표가 없으면 "2K" 요청이 조용히
+    #: 1K(1024×1536)로 떨어져 해상도를 내린 게 아니라 **두 단계** 내리게 된다.
     _OPENAI_SIZE = {"2:3": "1024x1536", "9:16": "1024x1536", "3:4": "1024x1536",
                     "3:2": "1536x1024", "16:9": "1536x1024", "4:3": "1536x1024",
                     "1:1": "1024x1024"}
+    _OPENAI_2K_SIZE = {"2:3": "1536x2304", "3:2": "2304x1536"}
     _OPENAI_4K_SIZE = {"2:3": "2336x3504", "3:2": "3504x2336"}
 
     @classmethod
     def _openai_size(cls, image_size: str, aspect_ratio: str | None) -> str:
         ratio = aspect_ratio or ""
-        if image_size.upper() == "4K" and ratio in cls._OPENAI_4K_SIZE:
+        size = image_size.upper()
+        if size == "4K" and ratio in cls._OPENAI_4K_SIZE:
             return cls._OPENAI_4K_SIZE[ratio]
+        if size == "2K" and ratio in cls._OPENAI_2K_SIZE:
+            return cls._OPENAI_2K_SIZE[ratio]
         return cls._OPENAI_SIZE.get(ratio, "1024x1536")
 
     async def _openai_generate(
