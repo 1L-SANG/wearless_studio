@@ -167,6 +167,10 @@ def test_purge_worker_reloads_account_delete_upgrade_before_shared_purge(
             profile_count=1,
             enrollment_count=0,
             asset_count=0,
+            generation_results=0,
+            generation_results_r2_deleted=0,
+            generation_orphans_deleted=0,
+            generation_orphan_scan="ok",
         )
 
     monkeypatch.setattr(personalization_purge_job.facemarket_cutover, "quiesce_personalization_writers", noop)
@@ -205,6 +209,10 @@ def test_purge_worker_loops_when_account_delete_upgrade_arrives_after_withdrawal
             profile_count=1,
             enrollment_count=0,
             asset_count=0,
+            generation_results=0,
+            generation_results_r2_deleted=0,
+            generation_orphans_deleted=0,
+            generation_orphan_scan="ok",
         )
 
     monkeypatch.setattr(personalization_purge_job.facemarket_cutover, "quiesce_personalization_writers", noop)
@@ -291,6 +299,10 @@ def test_purge_worker_reaches_ready_for_identity_delete_for_profile_less_or_purg
             profile_count=0,
             enrollment_count=1,
             asset_count=1,
+            generation_results=0,
+            generation_results_r2_deleted=0,
+            generation_orphans_deleted=0,
+            generation_orphan_scan="ok",
         )
 
     monkeypatch.setattr(personalization_purge_job.facemarket_cutover, "quiesce_user_facemarket_writers", noop)

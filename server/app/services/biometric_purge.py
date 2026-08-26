@@ -43,6 +43,15 @@ class PurgeResult:
     enrollment_count: int
     asset_count: int
     target_digest: str
+    # 생성물(personalization_generations) 회계 — 감사 카운트만(§1.4: 키·경로 미기록).
+    #  · generation_results          = result_keys 가 있는(종결된) generation 행 수
+    #  · generation_results_r2_deleted = 그 result_keys 로 실삭제된 R2 객체 수(4a)
+    #  · generation_orphans_deleted  = generations prefix 스캔에서 result_keys 밖 고아 삭제 수(4c)
+    #  · generation_orphan_scan      = "ok" | "failed"(스캔 실패는 비파괴 — 완전파기 미보장을 기록)
+    generation_results: int = 0
+    generation_results_r2_deleted: int = 0
+    generation_orphans_deleted: int = 0
+    generation_orphan_scan: str = "ok"
 
 
 def _digest(targets: set[tuple[str, str]]) -> str:
@@ -58,17 +67,53 @@ def _prefixes(
     enrollment_ids: set[str],
     jobs: list[dict],
 ) -> tuple[str, ...]:
+    # 얼굴 원본(personalization/profiles/{pid}/faces/)과 생성물(personalization/{uid}/generations/)은
+    # 이 fatal prefix 스윕에서 뺀다. 얼굴은 DB 행(known key)으로만 지운다 — 얼굴은 DB 와 원자적으로
+    # 쓰이므로 고아가 없고, prefix 를 넓게 스윕하면 스캔 범위 밖 원본까지 지우는 데이터 파괴가 된다.
+    # 생성물은 워커 크래시로 고아가 생길 수 있어 별도 비파괴 스캔(_scan_generation_orphans)이 맡는다.
     values = [f"facemarket/models/{model_id}/" for model_id in model_ids]
     values.extend(f"facemarket/enrollments/{eid}/" for eid in enrollment_ids)
-    values.extend(f"personalization/profiles/{pid}/faces/" for pid in profile_ids)
-    if user_id is not None:
-        values.append(f"personalization/{user_id}/generations/")
     values.extend(
         f"users/{j['user_id']}/projects/{j['project_id']}/ai/{j['id']}/"
         for j in jobs
         if j.get("user_id") and j.get("project_id") and j.get("id")
     )
     return tuple(sorted(set(values)))
+
+
+async def _generation_result_info(conn, schema, profile_ids: set[str]) -> tuple[set[str], int]:
+    """(result_key 집합, 종결된 generation 행 수). 종결 = result_keys 가 비어있지 않은 행."""
+    if not profile_ids or not _has(schema, "personalization_generations", "result_keys"):
+        return set(), 0
+    keys: set[str] = set()
+    rows = 0
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select result_keys from personalization_generations where profile_id = any(%s)",
+            (list(profile_ids),),
+        )
+        for r in await cur.fetchall():
+            rk = r.get("result_keys") or []
+            if rk:
+                rows += 1
+                keys |= {k for k in rk if k}
+    return keys, rows
+
+
+async def _scan_generation_orphans(clients, user_id: str | None):
+    """generations prefix 를 두 버킷에서 비파괴로 나열한다. 나열 실패는 fatal 이 아니라
+    (빈 집합, scan_ok=False)로 기록해 파기가 계속되게 한다 — 스캔 실패와 '고아 0건'을 구분한다."""
+    if user_id is None:
+        return set(), True
+    prefix = f"personalization/{user_id}/generations/"
+    present: set[tuple[str, str]] = set()
+    try:
+        for label, client in clients.items():
+            for key in await asyncio.to_thread(client.list_prefix, prefix):
+                present.add((label, key))
+    except Exception:
+        return set(), False
+    return present, True
 
 
 def _require_storage(app):
@@ -878,6 +923,9 @@ async def purge_biometric_scope(
             known, asset_ids, prefixes, lineage = await _known_targets(
                 conn, schema, scope, enrollment_ids, derived_jobs
             )
+            gen_result_keys, gen_result_rows = await _generation_result_info(
+                conn, schema, scope["profile_ids"]
+            )
             await conn.commit()
     except PurgeIncomplete:
         raise
@@ -887,7 +935,12 @@ async def purge_biometric_scope(
         raise PurgeIncomplete("db_cleanup_failed")
 
     listed = await _list_targets(clients, prefixes)
-    targets = known | listed
+    # 생성물 고아 스캔은 비파괴다(나열 실패=fatal 아님). result_key 객체와 고아를 분리 계수한다.
+    gen_present, gen_scan_ok = await _scan_generation_orphans(clients, user_id)
+    gen_results_deleted = len({k for _label, k in gen_present if k in gen_result_keys})
+    gen_orphans_deleted = len({k for _label, k in gen_present if k not in gen_result_keys})
+    gen_scan_status = "ok" if gen_scan_ok else "failed"
+    targets = known | listed | gen_present
     r2_keys = [key for label, key in sorted(targets) if label == "r2"]
     try:
         preflight = getattr(clients["r2"], "preflight_public_cache_purge", None)
@@ -992,6 +1045,10 @@ async def purge_biometric_scope(
         enrollment_count=len(enrollment_ids),
         asset_count=len(asset_ids),
         target_digest=_digest(targets),
+        generation_results=gen_result_rows,
+        generation_results_r2_deleted=gen_results_deleted,
+        generation_orphans_deleted=gen_orphans_deleted,
+        generation_orphan_scan=gen_scan_status,
     )
 
 

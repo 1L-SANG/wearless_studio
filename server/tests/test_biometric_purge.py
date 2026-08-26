@@ -588,6 +588,9 @@ class FakeDB:
         if q.startswith("select") and "from personalization_face_photos" in q:
             ids = set(params[0])
             return [{"k": r.get("r2_key")} for r in self.tables["personalization_face_photos"] if r.get("profile_id") in ids]
+        if "select result_keys from personalization_generations" in q:
+            ids = set(params[0])
+            return [{"result_keys": r.get("result_keys", [])} for r in self.tables["personalization_generations"] if r.get("profile_id") in ids]
         if "unnest(result_keys)" in q:
             ids = set(params[0])
             return [{"k": k} for r in self.tables["personalization_generations"] if r.get("profile_id") in ids for k in r.get("result_keys", [])]

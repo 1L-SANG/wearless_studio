@@ -80,6 +80,18 @@ class FakeR2Face:
     def list_prefix(self, prefix):
         return [k for k in self.objects if k.startswith(prefix)]
 
+    def head(self, key):
+        # 파기 검증(_delete_and_reconcile)이 삭제 후 head 로 부재를 확인 — 있으면 tuple, 없으면 None.
+        return self.objects.get(key)
+
+    def purge_public_cache(self, keys):
+        # 엔진이 삭제 후 CDN 캐시를 무조건 무효화한다(무설정이면 AttributeError→cdn_purge_failed).
+        # 테스트에선 no-op 로 성공 처리(엔진 StrictFakeR2 선례).
+        return None
+
+    def preflight_public_cache_purge(self, keys):
+        return None
+
 
 def _qc_stub(verdict: str, reasons: list[str] | None = None):
     async def _inner(settings, *, image_bytes, mime, angle):
@@ -400,7 +412,12 @@ class _RealPool:
 
 
 def _purge_app(r2_face):
-    return types.SimpleNamespace(state=types.SimpleNamespace(pool=_RealPool(), r2_face=r2_face))
+    # 파기 워커(_require_storage)는 r2(메인: generations)와 r2_face(얼굴) 두 클라이언트를 모두
+    # 요구한다. 테스트는 fake 하나에 prefix 로 네임스페이스 분리된 키를 담으므로 같은 fake 를
+    # 두 라벨에 배선한다(코드가 prefix 로 대상을 좁히므로 버킷 혼선 없음).
+    return types.SimpleNamespace(
+        state=types.SimpleNamespace(pool=_RealPool(), r2=r2_face, r2_face=r2_face)
+    )
 
 
 def _count_consent_actions(user_id: str, consent_type: str, action: str) -> int:

@@ -149,6 +149,11 @@ async def run_personalization_purge_job(app, job: dict) -> None:
                         "profileCount": result.profile_count,
                         "enrollmentCount": result.enrollment_count,
                         "assetCount": result.asset_count,
+                        # 생성물 회계(카운트만 — §1.4: 키·경로 미기록). 스캔 실패는 '고아 0건'과 구분.
+                        "generationResults": result.generation_results,
+                        "generationResultsR2Deleted": result.generation_results_r2_deleted,
+                        "generationOrphansDeleted": result.generation_orphans_deleted,
+                        "generationOrphanScan": result.generation_orphan_scan,
                         "backupPurgeDueAt": (
                             datetime.now(timezone.utc) + timedelta(days=_BACKUP_RETENTION_DAYS)
                         ).isoformat(),
