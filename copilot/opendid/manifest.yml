@@ -34,18 +34,13 @@ count:
 network:
   connect: true # service discovery: api -> opendid:8100
 
-# wallet 파일 영구저장(암호화 EFS). 배포 시 이 볼륨에 tas/issuer/cas/wallet.wallet 업로드.
-storage:
-  volumes:
-    wallets:
-      path: /mnt/wallets
-      read_only: true
-      efs: true
+# 월렛은 EFS 대신 base64 시크릿(SSM)으로 주입 — 엔트리포인트가 부팅 시 tmpfs 로 복원한다.
+# 파일이 작고(<2.2KB base64) 개수가 적어 EFS 업로드 춤 없이 stateless 유지가 더 간단·안전하다.
 
 variables:
   APP_ENV: production
   OMNIONE_CHAIN_ID: "201210"                 # OmniOne Chain(stage). 로컬 besu 는 1337.
-  WALLET_SECRETS_DIR: /mnt/wallets
+  # WALLET_SECRETS_DIR 는 미설정 — 엔트리포인트가 base64 시크릿을 tmpfs 로 풀고 알아서 세팅한다.
   # OMNIONE_CHAIN_RPC_URL / OMNIONE_DID_CONTRACT_ADDRESS 는 배포 시 값 확정(유저 OmniOne 배포 후).
   # 비밀 아니면 여기로, 키는 secrets 로. 우선 secret 로 둔다(토큰 포함 RPC 대비).
 
@@ -64,3 +59,10 @@ secrets:
   # api 의 X-FM-Signature 를 holder(HolderHmacFilter)가 검증하는 공유 HMAC — api manifest 의
   # OPENDID_HOLDER_HMAC_SECRET 과 **같은 SSM 파라미터**. 없으면 holder 기동 실패(required).
   OPENDID_HOLDER_HMAC_SECRET: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENDID_HOLDER_HMAC_SECRET
+  # 월렛 파일(base64). 엔트리포인트가 부팅 시 tmpfs 로 복원한다(EFS 대체). 값은
+  #   base64 < tas.wallet   → WALLET_TAS_B64,   base64 < issuer.wallet → WALLET_ISSUER_B64,
+  #   base64 < cas.wallet   → WALLET_CAS_B64,    base64 < wallet.wallet → WALLET_HOLDER_B64.
+  WALLET_TAS_B64: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/WALLET_TAS_B64
+  WALLET_ISSUER_B64: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/WALLET_ISSUER_B64
+  WALLET_CAS_B64: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/WALLET_CAS_B64
+  WALLET_HOLDER_B64: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/WALLET_HOLDER_B64

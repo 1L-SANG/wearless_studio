@@ -19,11 +19,29 @@ JARS=/opt/opendid/jars
 J() { echo "java -Xms128m -Xmx${JVM_HEAP:-384m} -jar"; }
 : "${OPENDID_DB_HOST:?}" "${OPENDID_DB_USER:?}" "${OPENDID_DB_PASSWORD:?}"
 : "${OMNIONE_CHAIN_RPC_URL:?}" "${OMNIONE_DID_CONTRACT_ADDRESS:?}" "${OMNIONE_TAS_KEY:?}" "${OMNIONE_ISSUER_KEY:?}"
-: "${WALLET_SECRETS_DIR:?}" "${WALLET_PASSWORD:?}"
+: "${WALLET_PASSWORD:?}"
 DBPORT="${OPENDID_DB_PORT:-5432}"
 CHAINID="${OMNIONE_CHAIN_ID:-201210}"
 RUN=/run/opendid
 mkdir -p "$RUN"
+
+# 0) 월렛 파일을 base64 시크릿(SSM)에서 컨테이너 안 tmpfs 로 복원한다 — EFS 없이 stateless 유지.
+#    WALLET_SECRETS_DIR 를 이미 넘겨줬으면(예: EFS 마운트) 그걸 그대로 쓴다(하위호환).
+if [ -z "${WALLET_SECRETS_DIR:-}" ]; then
+  WALLET_SECRETS_DIR="$RUN/wallets"
+  mkdir -p "$WALLET_SECRETS_DIR"; chmod 700 "$WALLET_SECRETS_DIR"
+  decode_wallet() {  # $1=env-var-name $2=out-filename
+    local b64="${!1:-}"
+    [ -n "$b64" ] || { echo "[opendid] MISSING $1 (base64 wallet secret)"; exit 1; }
+    echo "$b64" | base64 -d > "$WALLET_SECRETS_DIR/$2"
+    chmod 600 "$WALLET_SECRETS_DIR/$2"
+  }
+  decode_wallet WALLET_TAS_B64    tas.wallet
+  decode_wallet WALLET_ISSUER_B64 issuer.wallet
+  decode_wallet WALLET_CAS_B64    cas.wallet
+  decode_wallet WALLET_HOLDER_B64 wallet.wallet
+fi
+export WALLET_SECRETS_DIR
 
 # 1) 체인 properties 를 서버별로 렌더 — 같은 컨트랙트·RPC 지만 evm.contract.privateKey 는 그 서버의
 #    regist 역할 키(OmniOne 은 Tas/Issuer 역할이 서로 다른 주소에 부여됨). CAS 는 조회만이라 TAS 키 재사용.
