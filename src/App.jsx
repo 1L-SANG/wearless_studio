@@ -29,6 +29,7 @@ import { Storyboard } from '@/features/storyboard/Storyboard.jsx';
 import { Generating } from '@/features/generating/Generating.jsx';
 import { LazyEditor } from '@/features/editor/lazyEditor.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
+import { IS_FACEMARKET } from '@/lib/host.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
 import { loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
@@ -61,13 +62,24 @@ import {
 draftSlot.configure(api);
 
 /* 보호 라우트 — 세션 없으면 공개 입력 페이지로. 입력은 공개라 리다이렉트 루프 없음. */
+// facemarket 도메인(등록 전용)에서 미인증 진입 시 — /create/input(메인 앱)로 보내면
+// 등록 전용 사이트에 편집기가 뜬다. 대신 로그인 모달을 열고 등록으로 복귀시킨다.
+function FacemarketLoginPrompt() {
+  const { openLogin } = useAuth();
+  useEffect(() => { openLogin?.('/model/register'); }, [openLogin]);
+  return <div className="route-loading">모델 등록은 로그인이 필요해요 — 로그인 창을 열었어요.</div>;
+}
+
 function RequireAuth() {
   const { session, loading } = useAuth();
   // mock 데모 샌드박스 — 로그인 없이 전 플로우 확인(주소창 직접 진입 포함).
   // mock api 는 토큰을 쓰지 않으므로 세션 부재가 기능에 영향 없다. http 모드는 기존 가드 유지.
   if (isMockMode) return <Outlet />;
   if (loading) return <div className="route-loading">불러오는 중이에요</div>;
-  if (!session) return <Navigate to="/create/input" replace />;
+  if (!session) {
+    if (IS_FACEMARKET) return <FacemarketLoginPrompt />;
+    return <Navigate to="/create/input" replace />;
+  }
   return <Outlet />;
 }
 
@@ -496,12 +508,16 @@ const DRAFT_SYNC_TIMEOUT_MS = 20000;
 function RootRedirect() {
   const { session, loading } = useAuth();
   const [returnIntent] = useState(() => sessionStorage.getItem('wl_postLogin'));
-  const target = returnIntent || '/create/input';
+  // facemarket 도메인은 등록 전용 — 루트 진입은 모델 등록으로 랜딩한다.
+  const target = returnIntent || (IS_FACEMARKET ? '/model/register' : '/create/input');
   const [phase, setPhase] = useState('init');   // init | syncing | done
   const [dest, setDest] = useState(null);
   const [destState, setDestState] = useState(null);
 
   useEffect(() => {
+    // facemarket(등록 전용 도메인)은 루트에서 곧장 모델 등록으로 — create 플로우의 draft
+    // 승격/프로젝트 부트스트랩 로직을 타지 않는다(그 로직은 편집 플로우 전용).
+    if (IS_FACEMARKET) { setDest('/model/register'); setPhase('done'); return; }
     // 일반 첫 진입(/create/input)은 인증 확인과 무관하게 연다. 로그인 복귀처럼 세션이
     // 실제로 필요한 목표만 bootstrap 완료를 기다린다. AuthProvider는 session을 확정한 뒤
     // loading=false로 내리므로 그 전환에서 한 번만 실행한다(토큰 갱신 때 sync 재시작 금지).

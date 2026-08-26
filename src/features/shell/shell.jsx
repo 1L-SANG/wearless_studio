@@ -10,6 +10,7 @@ import { api } from '@/lib/api/index.js';
 import { Icon, Modal, Button, useToast } from '@/components/ui.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { hasEditorEntered } from '@/lib/editorEntered.js';
+import { IS_FACEMARKET } from '@/lib/host.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { WIZARD_STEPS, STEP_INDEX } from '@/lib/wizardSteps.js';
 import { flushProductDraftSave } from '@/lib/draftStore.js';
@@ -85,9 +86,10 @@ export function TopNav() {
         <img className="brand-wordmark" src="/assets/brand/wordmark.png" alt="Wearless" />
       </span>
       <div className="nav-links">
-        {/* 비로그인 숨김: 보관함/제작 탭은 로그인 사용자용. 비로그인 입력·분석은 '/' 공개 진입. */}
-        {session && <button disabled={inputPromotionLocked} className={`nav-link${route === 'create' ? ' active' : ''}`} onClick={() => onNav('create')}>상세페이지 제작</button>}
-        {session && <button disabled={inputPromotionLocked} className={`nav-link${route === 'library' ? ' active' : ''}`} onClick={() => onNav('library')}>보관함</button>}
+        {/* 비로그인 숨김: 보관함/제작 탭은 로그인 사용자용. 비로그인 입력·분석은 '/' 공개 진입.
+            facemarket(등록 전용 도메인)에서는 메인 앱 탭을 숨긴다. */}
+        {!IS_FACEMARKET && session && <button disabled={inputPromotionLocked} className={`nav-link${route === 'create' ? ' active' : ''}`} onClick={() => onNav('create')}>상세페이지 제작</button>}
+        {!IS_FACEMARKET && session && <button disabled={inputPromotionLocked} className={`nav-link${route === 'library' ? ' active' : ''}`} onClick={() => onNav('library')}>보관함</button>}
       </div>
       {STEPPER_STEPS.includes(step) && <div className="nav-stepper"><Stepper current={step} /></div>}
       <div className="nav-right">
@@ -185,10 +187,13 @@ function ProfileMenu() {
             </div>
           </div>
           <div className="profile-sep" />
-          <button className="profile-item" role="menuitem"
-            onClick={() => { setOpen(false); navigate('/model/register'); }}>
-            <Icon name="user" size={16} stroke={1.8} />모델 등록
-          </button>
+          {/* 모델 등록은 facemarket.wearless.kr 전용 — ai 프로필 메뉴에서는 숨긴다(도메인 분리). */}
+          {IS_FACEMARKET && (
+            <button className="profile-item" role="menuitem"
+              onClick={() => { setOpen(false); navigate('/model/register'); }}>
+              <Icon name="user" size={16} stroke={1.8} />모델 등록
+            </button>
+          )}
           <button className="profile-item" role="menuitem"
             onClick={() => { setOpen(false); navigate('/pricing'); }}>
             <Icon name="star" size={16} stroke={1.8} />요금제 관리
