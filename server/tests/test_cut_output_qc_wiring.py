@@ -336,16 +336,16 @@ def test_detail_repair_mode_keeps_stage1_when_stage2_regresses(monkeypatch):
     assert repair["regressions"] == ["modelIdentity"]
 
 
-def test_detail_repair_pipelines_keep_storyboard_blocks_parallel(monkeypatch):
+def test_detail_repair_keeps_five_provider_calls_in_flight(monkeypatch):
     state = {"active": 0, "peak": 0}
-    both_started = asyncio.Event()
+    all_started = asyncio.Event()
 
     async def fake_generate(settings, gemini, block, product, images, **kwargs):
         state["active"] += 1
         state["peak"] = max(state["peak"], state["active"])
-        if state["active"] == 2:
-            both_started.set()
-        await asyncio.wait_for(both_started.wait(), timeout=1)
+        if state["active"] == 5:
+            all_started.set()
+        await asyncio.wait_for(all_started.wait(), timeout=1)
         state["active"] -= 1
         return f"IMAGE-{block['id']}".encode(), "image/png"
 
@@ -369,26 +369,28 @@ def test_detail_repair_pipelines_keep_storyboard_blocks_parallel(monkeypatch):
         r2_bucket="b",
         garment_qc_mode="off",
         cut_output_qc_mode="repair",
-        detail_cut_concurrency=0,
+        detail_cut_concurrency=5,
         detail_cut_stagger_ms=0,
     ), r2=r2)
     product_image = InlineImage("image/png", b"PRODUCT")
-    front = _detail_spec()
-    back = {**_detail_spec(), "id": "b2", "direction": "back"}
+    blocks = [
+        {**_detail_spec(), "id": f"b{i}", "colorId": f"c{i}"}
+        for i in range(5)
+    ]
     result = asyncio.run(dpj._gen_cuts(
         app,
         worker_job(),
         [
-            (front, [product_image], "1. PRODUCT — front", False, [product_image]),
-            (back, [product_image], "1. PRODUCT — back", False, [product_image]),
+            (block, [product_image], f"1. PRODUCT — {block['id']}", False, [product_image])
+            for block in blocks
         ],
         {"clothingType": "top"},
         {},
     ))
 
-    assert state["peak"] == 2
-    assert len(result[0]) == len(result[1]) == 2
-    assert len(r2.saved) == 2
+    assert state["peak"] == 5
+    assert len(result[0]) == len(result[1]) == 5
+    assert len(r2.saved) == 5
 
 
 @pytest.mark.parametrize("failure", ["provider", "manifest", "plan"])

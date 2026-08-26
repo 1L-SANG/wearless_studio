@@ -106,3 +106,33 @@ def test_stale_paid_detail_page_is_not_automatically_requeued():
     assert "then 'error'" in source
     assert source.count("stale.kind = 'detail_page' or stale.recoveries >= 1") == 3
     assert "finished_at = case" in source
+    assert "kind = any(%s)" in source
+
+
+def test_dispatcher_stop_waits_for_cancelled_worker_finalizer(monkeypatch):
+    finalized = False
+
+    async def fake_wait_for(_task, timeout):
+        assert timeout == 10
+        raise asyncio.TimeoutError
+
+    async def running_worker():
+        nonlocal finalized
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            await asyncio.sleep(0)
+            finalized = True
+            raise
+
+    async def scenario():
+        dispatcher = dispatcher_mod.JobDispatcher.__new__(dispatcher_mod.JobDispatcher)
+        dispatcher._stop = asyncio.Event()
+        dispatcher._task = asyncio.create_task(running_worker())
+        await asyncio.sleep(0)
+        await dispatcher.stop()
+        assert dispatcher._task.done()
+        assert finalized is True
+
+    monkeypatch.setattr(dispatcher_mod.asyncio, "wait_for", fake_wait_for)
+    asyncio.run(scenario())

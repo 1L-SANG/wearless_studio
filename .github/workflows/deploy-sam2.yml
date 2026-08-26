@@ -44,9 +44,9 @@ permissions:
     contents: read
 
 env:
-    AWS_REGION: ap-northeast-2
+    AWS_REGION: us-east-1
     COPILOT_APP: wearless
-    COPILOT_ENV: prod
+    COPILOT_ENV: use1
 
 jobs:
     test:

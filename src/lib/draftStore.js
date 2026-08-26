@@ -63,7 +63,31 @@ async function withStore(mode, run) {
  * 유일한 문지기다.
  *
  * fetchBlob 주입은 테스트용 — 화면·IndexedDB 없이 이 판정만 검증한다. */
-export async function collectDraftPhotos(product, fetchBlob = (src) => fetch(src).then((r) => r.blob())) {
+
+/** 사진 1장을 blob 으로. CORS 로 막히면 캐시를 건너뛰고 한 번만 다시 받는다.
+ *
+ * 이미 올라간 사진의 src 는 R2 공개 URL(images.wearless.kr)이다. R2 는 Origin 없는
+ * 요청에 **Vary 를 안 붙이면서** `max-age=31536000` 을 준다. 그래서 화면이 그 사진을
+ * 평범한 `<img src>`(Origin 없음)로 먼저 받아 두면, 허가 헤더가 없는 사본이 브라우저
+ * 캐시에 1년치로 눌러앉고, 뒤이은 이 fetch(CORS 필수)가 Vary 가 없으니 같은 사본을
+ * 재사용해 'No Access-Control-Allow-Origin' 으로 막힌다 — 서버는 멀쩡한데 그 브라우저만
+ * 실패한다(2026-08-26 실서버 재현: curl 은 매번 통과, 브라우저만 차단).
+ *
+ * `cache: 'reload'` 는 캐시를 건너뛰고 네트워크로 가므로 Origin 이 실려 정상 응답을 받는다.
+ * 성공 경로에서는 쓰지 않는다 — 사진은 장당 수 MB 라 매번 재다운로드하면 draft 저장이
+ * 그만큼 느려진다. 오염된 캐시에서만 한 번 더 받는다.
+ * 근본 해결은 화면의 `<img>` 에 crossorigin 을 붙이거나(editorExport 가 이미 하는 방식)
+ * R2 응답에 Vary 를 강제하는 것이고, 이건 이미 오염된 캐시까지 푸는 우회다. */
+const fetchPhotoBlob = async (src) => {
+  try {
+    return await fetch(src).then((r) => r.blob());
+  } catch (e) {
+    if (!/^https?:/i.test(String(src || ''))) throw e;  // objectURL·data: 는 캐시 문제가 아니다
+    return fetch(src, { cache: 'reload' }).then((r) => r.blob());
+  }
+};
+
+export async function collectDraftPhotos(product, fetchBlob = fetchPhotoBlob) {
   const photos = [];
   const okIds = new Set();
   let failed = 0;

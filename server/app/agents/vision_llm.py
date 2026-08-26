@@ -17,7 +17,7 @@ import logging
 import httpx
 
 from ..config import Settings
-from .gemini_image import InlineImage
+from .gemini_image import InlineImage, run_cpu_bound
 
 logger = logging.getLogger("wearless.vision_llm")
 
@@ -54,17 +54,12 @@ def _parse_json(text: str, provider: str) -> dict:
     return parsed
 
 
-async def _call_gpt(settings: Settings, model: str, prompt: str,
-                    images: list[InlineImage], schema: dict, timeout: float,
-                    thinking_level: str | None = None) -> dict:  # thinking_level: Gemini 전용(GPT 미사용)
-    """OpenAI chat/completions — Structured Outputs(strict json_schema). content 는 문자열 JSON."""
-    if not settings.openai_api_key:
-        raise VisionError("OPENAI_API_KEY 미설정")
+def _gpt_body(model: str, prompt: str, images: list[InlineImage], schema: dict) -> dict:
     content = [{"type": "text", "text": prompt}]
     for im in images:
         content.append({"type": "image_url",
                         "image_url": {"url": f"data:{im.mime};base64,{_b64(im.data)}"}})
-    body = {
+    return {
         "model": model,
         "messages": [{"role": "user", "content": content}],
         "response_format": {
@@ -72,15 +67,28 @@ async def _call_gpt(settings: Settings, model: str, prompt: str,
             "json_schema": {"name": "product_analysis", "strict": True, "schema": schema},
         },
     }
+
+
+def _parse_gpt_response(res) -> dict:
+    data = _envelope_json(res, "OpenAI")
+    msg = ((data.get("choices") or [{}])[0].get("message") or {})
+    return _parse_json(msg.get("content") or "", "OpenAI")
+
+
+async def _call_gpt(settings: Settings, model: str, prompt: str,
+                    images: list[InlineImage], schema: dict, timeout: float,
+                    thinking_level: str | None = None) -> dict:  # thinking_level: Gemini 전용(GPT 미사용)
+    """OpenAI chat/completions — Structured Outputs(strict json_schema). content 는 문자열 JSON."""
+    if not settings.openai_api_key:
+        raise VisionError("OPENAI_API_KEY 미설정")
+    body = await run_cpu_bound(_gpt_body, model, prompt, images, schema)
     async with httpx.AsyncClient(timeout=timeout) as client:
         res = await client.post(
             _OPENAI_URL, json=body,
             headers={"Authorization": f"Bearer {settings.openai_api_key}"})
     if res.status_code != 200:
         raise VisionError(f"OpenAI {res.status_code}: {res.text[:300]}")
-    data = _envelope_json(res, "OpenAI")
-    msg = ((data.get("choices") or [{}])[0].get("message") or {})
-    return _parse_json(msg.get("content") or "", "OpenAI")
+    return await run_cpu_bound(_parse_gpt_response, res)
 
 
 def _to_gemini_schema(node: dict) -> dict:
@@ -113,12 +121,12 @@ def _to_gemini_schema(node: dict) -> dict:
     return out
 
 
-async def _call_gemini(settings: Settings, model: str, prompt: str,
-                       images: list[InlineImage], schema: dict, timeout: float,
-                       thinking_level: str | None = None) -> dict:
-    """Gemini generateContent — responseSchema + responseMimeType json. 텍스트 파트 합쳐 파싱."""
-    if not settings.gemini_api_key:
-        raise VisionError("GEMINI_API_KEY 미설정")
+def _gemini_body(
+    prompt: str,
+    images: list[InlineImage],
+    schema: dict,
+    thinking_level: str,
+) -> dict:
     parts: list = [{"text": prompt}]
     for im in images:
         parts.append({"inline_data": {"mime_type": im.mime, "data": _b64(im.data)}})
@@ -126,27 +134,40 @@ async def _call_gemini(settings: Settings, model: str, prompt: str,
         "responseMimeType": "application/json",
         "responseSchema": _to_gemini_schema(schema),
     }
+    if thinking_level != "off":
+        gen["thinkingConfig"] = {"thinkingLevel": thinking_level}
+    return {
+        "contents": [{"role": "user", "parts": parts}],
+        "generationConfig": gen,
+    }
+
+
+def _parse_gemini_response(res) -> dict:
+    data = _envelope_json(res, "Gemini")
+    parts_out = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts")) or []
+    text = "".join(p.get("text", "") for p in parts_out)
+    return _parse_json(text, "Gemini")
+
+
+async def _call_gemini(settings: Settings, model: str, prompt: str,
+                       images: list[InlineImage], schema: dict, timeout: float,
+                       thinking_level: str | None = None) -> dict:
+    """Gemini generateContent — responseSchema + responseMimeType json. 텍스트 파트 합쳐 파싱."""
+    if not settings.gemini_api_key:
+        raise VisionError("GEMINI_API_KEY 미설정")
     # 분류·추출 작업엔 low 로 충분 — 미지정 시 모델 기본(깊은 추론)이 수 초를 낭비한다
     # (2026-07-07 속도 개선, 실측: gemini-3.5-flash v1beta 가 thinkingLevel 수용 확인.
     #  2026-08-14 gemini-3.7-flash 로 교체하며 low/medium 둘 다 200 재확인).
     # 콜별 오버라이드(thinking_level 인자) > 전역 설정 — AG-08 특징 발굴은 medium (후보 선별).
     level = thinking_level or settings.analysis_thinking_level
-    if level != "off":
-        gen["thinkingConfig"] = {"thinkingLevel": level}
-    body = {
-        "contents": [{"role": "user", "parts": parts}],
-        "generationConfig": gen,
-    }
+    body = await run_cpu_bound(_gemini_body, prompt, images, schema, level)
     async with httpx.AsyncClient(timeout=timeout) as client:
         res = await client.post(
             _GEMINI_URL.format(model=model), json=body,
             headers={"x-goog-api-key": settings.gemini_api_key})
     if res.status_code != 200:
         raise VisionError(f"Gemini {res.status_code}: {res.text[:300]}")
-    data = _envelope_json(res, "Gemini")
-    parts_out = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts")) or []
-    text = "".join(p.get("text", "") for p in parts_out)
-    return _parse_json(text, "Gemini")
+    return await run_cpu_bound(_parse_gemini_response, res)
 
 
 # provider 이름 → (호출 함수, 모델 selector, 키 selector). ANALYSIS_MODEL_ORDER 가 순서를 정한다.

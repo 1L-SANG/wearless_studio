@@ -18,6 +18,9 @@ import yaml
 from app.config import load_settings
 
 MANIFEST = pathlib.Path(__file__).resolve().parents[2] / "copilot/api/manifest.yml"
+DETAIL_WORKER_MANIFEST = (
+    pathlib.Path(__file__).resolve().parents[2] / "copilot/detail-worker/manifest.yml"
+)
 
 # (매니페스트 변수명, Settings 속성명) — 값이 로더를 통과해 살아남아야 하는 플래그.
 QC_FLAGS = [
@@ -58,6 +61,36 @@ def test_production_db_pool_leaves_room_during_rolling_deploy(manifest_vars):
         f"DB_POOL_MAX_SIZE={pool_max} — 롤링 배포의 두 태스크가 session pooler 한도 15를 "
         "잠식하지 않도록 프로세스당 최대 3으로 고정한다"
     )
+
+
+def test_detail_worker_is_x86_spot_zero_without_load_balancer(manifest_vars):
+    worker = yaml.safe_load(DETAIL_WORKER_MANIFEST.read_text(encoding="utf-8"))
+    assert worker["name"] == "detail-worker"
+    assert worker["type"] == "Backend Service"
+    assert worker["platform"] == "linux/x86_64"
+    assert worker["cpu"] == 1024 and worker["memory"] == 4096
+    assert worker["count"] == {"spot": 0}
+    assert "http" not in worker
+    assert worker["network"]["vpc"]["placement"] == "public"
+    assert worker["variables"]["JOB_KINDS"] == "detail_page"
+    assert worker["variables"]["DB_POOL_MAX_SIZE"] == "3"
+    assert worker["variables"]["DETAIL_CUT_CONCURRENCY"] == "5"
+    assert worker["variables"]["DETAIL_CUT_STAGGER_MS"] == "3000"
+    assert worker["variables"]["DETAIL_CUT_IMAGE_SIZE"] == "2K"
+    assert worker["variables"]["GENEXAMPLE_BG_ENABLED"] == "true"
+    assert manifest_vars["JOB_KINDS"] == "-detail_page"
+    assert manifest_vars["DETAIL_WORKER_AUTOSCALE"] == "on"
+    # SIGTERM 후 잡 error 종결 + 크레딧 환불이 끝날 시간. 기본 30s 는 dispatcher.stop()
+    # 대기 10s + finalize DB 쓰기(풀 타임아웃 10s)와 겹치면 여유가 없다.
+    #
+    # Copilot 에는 stop_timeout 필드가 없어서 그냥 적으면 **조용히 무시된다**(실측:
+    # 배포된 태스크 정의 stopTimeout=None). taskdef_overrides 로만 들어가므로 이 테스트도
+    # 매니페스트에 문자열이 있는지가 아니라 override 항목이 있는지를 본다.
+    assert "stop_timeout" not in worker, "Copilot 이 무시하는 필드 — taskdef_overrides 를 쓸 것"
+    overrides = {o["path"]: o["value"] for o in worker.get("taskdef_overrides", [])}
+    assert overrides.get("ContainerDefinitions[0].StopTimeout") == 60
+    # 0 이면 잡마다 콜드스타트를 다시 물고, 스케일다운과 claim 이 겹치면 그 잡이 죽는다.
+    assert int(manifest_vars["DETAIL_WORKER_AUTOSCALE_IDLE_MINUTES"]) >= 5
 
 
 @pytest.mark.parametrize("env_name,attr", QC_FLAGS)
@@ -174,6 +207,7 @@ CHANGE_MATRIX = [
     ("server/uv.lock", True, False),
     ("server/Dockerfile", True, False),
     ("copilot/api/manifest.yml", True, False),
+    ("copilot/detail-worker/manifest.yml", True, False),
     ("supabase/migrations/20260812010000_base_fidelity_observe_job_kind.sql", True, False),
     ("server/sam_service/segmentation.py", False, True),
     ("server/sam_service/requirements.txt", False, True),
@@ -232,6 +266,7 @@ def test_workflow_triggers_are_service_scoped():
     assert any(_matches(g, "server/sam_service/model.py") for g in sam_paths)
     assert not any(_matches(g, "server/sam_service/model.py") for g in api_paths)
     assert any(_matches(g, "copilot/api/manifest.yml") for g in api_paths)
+    assert any(_matches(g, "copilot/detail-worker/manifest.yml") for g in api_paths)
     assert not any(_matches(g, "copilot/sam2/manifest.yml") for g in api_paths)
 
 
@@ -258,6 +293,14 @@ def test_migrations_run_before_the_api_deploy():
     mig = next(i for i, n in enumerate(steps) if "마이그레이션" in n)
     api = next(i for i, n in enumerate(steps) if n.startswith("배포"))
     assert mig < api, steps
+
+
+def test_detail_worker_deploys_before_api_stops_claiming_detail_jobs():
+    """worker 0대 서비스가 먼저 존재해야 API 파티셔닝이 잡을 고립시키지 않는다."""
+    steps = _step_names("deploy-api")
+    worker = next(i for i, n in enumerate(steps) if n.startswith("상세 워커 배포"))
+    api = next(i for i, n in enumerate(steps) if n.startswith("배포"))
+    assert worker < api, steps
 
 
 def test_sam_deployment_is_a_separate_workflow():
@@ -405,13 +448,13 @@ def test_autoscale_addon_exists_with_scoped_permissions():
     assert {"ecs:ListClusters", "ecs:ListServices", "ecs:DescribeServices", "ecs:ListTasks",
             "ecs:DescribeTasks", "ecs:UpdateService", "sns:Publish"} <= actions
     assert not any(a.startswith("iam:") for a in actions)
-    # UpdateService 는 온디맨드 서비스(sam2·opendid)로만 스코프돼야 한다 — api 가 자기 자신을
+    # UpdateService 는 온디맨드 서비스로만 스코프돼야 한다 — api 가 자기 자신을
     # 내리면 안 된다(IAM 시뮬레이터 실측 2026-08-21: sam2 allowed / api implicitDeny).
     upd = next(st for st in statements if st["Action"] == "ecs:UpdateService")
     allowed_services = upd["Condition"]["StringEquals"]["aws:ResourceTag/copilot-service"]
     if isinstance(allowed_services, str):
         allowed_services = [allowed_services]
-    assert set(allowed_services) == {"sam2", "opendid"}
+    assert set(allowed_services) == {"sam2", "opendid", "detail-worker"}
     assert "api" not in allowed_services  # api 자기 자신·타 서비스는 막힌다
     # PolicyArn 접미사 Output 은 Copilot 이 task role 에 자동 부착, 일반 Output 은 env 로 주입.
     assert "SamAutoscalePolicyArn" in addon["Outputs"]

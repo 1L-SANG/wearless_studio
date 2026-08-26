@@ -126,7 +126,7 @@ def test_reusing_an_existing_mask_row_restamps_its_provenance(monkeypatch):
     """
     stamped = {}
 
-    async def find_by_key(_conn, *, project_id, r2_key):
+    async def find_by_key(_conn, *, user_id, r2_key):
         return {"id": "asset-1", "r2_key": r2_key, "metadata": {"stale": True}}
 
     async def set_metadata(_conn, *, asset_id, metadata):

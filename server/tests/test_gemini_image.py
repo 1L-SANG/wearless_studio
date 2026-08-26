@@ -1,5 +1,7 @@
 import asyncio
 import base64
+import threading
+import time
 from types import SimpleNamespace
 
 import httpx
@@ -15,6 +17,104 @@ def settings():
         vertex_project=None,
         vertex_location="global",
     )
+
+
+def test_image_cpu_work_runs_off_loop_with_process_concurrency_one():
+    active = 0
+    peak = 0
+    lock = threading.Lock()
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_work(value):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        started.set()
+        release.wait(timeout=1)
+        with lock:
+            active -= 1
+        return value
+
+    async def scenario():
+        ticks = 0
+        running = True
+
+        async def heartbeat():
+            nonlocal ticks
+            while running:
+                ticks += 1
+                await asyncio.sleep(0)
+
+        beat = asyncio.create_task(heartbeat())
+        work = asyncio.gather(*[
+            gemini_image.run_cpu_bound(blocking_work, value)
+            for value in range(3)
+        ])
+        while not started.is_set():
+            await asyncio.sleep(0)
+        before = ticks
+        for _ in range(20):
+            await asyncio.sleep(0)
+        during = ticks
+        release.set()
+        values = await work
+        running = False
+        await beat
+        return values, before, during
+
+    values, before, during = asyncio.run(scenario())
+    assert values == [0, 1, 2]
+    assert peak == 1
+    assert during > before
+
+
+def test_openai_reference_normalization_reuses_job_cache(monkeypatch):
+    calls = 0
+
+    def fake_png(image):
+        nonlocal calls
+        calls += 1
+        return b"png:" + image.data
+
+    monkeypatch.setattr(gemini_image, "_as_openai_png", fake_png)
+    source = gemini_image.InlineImage("image/jpeg", b"same-reference")
+    cache = {}
+
+    first = asyncio.run(gemini_image.normalize_openai_images([source, source], cache))
+    second = asyncio.run(gemini_image.normalize_openai_images([source], cache))
+
+    assert calls == 1
+    assert first == [gemini_image.InlineImage("image/png", b"png:same-reference")] * 2
+    assert second == first[:1]
+
+
+def test_gemini_request_and_response_cpu_work_is_offloaded(monkeypatch):
+    calls = []
+
+    async def immediate(func, *args, **kwargs):
+        calls.append(func)
+        return func(*args, **kwargs)
+
+    payload = base64.b64encode(b"image-bytes").decode()
+    response = SimpleNamespace(
+        status_code=200,
+        text="ok",
+        json=lambda: {"candidates": [{"content": {"parts": [{"inlineData": {
+            "data": payload, "mimeType": "image/png"
+        }}]}}]},
+    )
+    _wire_response(monkeypatch, response)
+    monkeypatch.setattr(gemini_image, "run_cpu_bound", immediate)
+    monkeypatch.setattr(gemini_image.image_usage, "record", lambda **kw: None)
+
+    result = asyncio.run(gemini_image.GeminiImageClient(settings()).generate_content_image(
+        "gemini-3-pro-image", "prompt",
+        [gemini_image.InlineImage("image/jpeg", b"reference")], "2K"))
+
+    assert result.image == b"image-bytes"
+    assert len(calls) >= 2  # request base64 + response JSON/base64
 
 
 def test_transport_error_is_wrapped_as_gemini_error(monkeypatch):
@@ -434,6 +534,11 @@ def test_confirmed_openai_profile_preserves_original_multipart_bytes_and_mime(
 
     monkeypatch.setattr(gemini_image.httpx, "AsyncClient", Client)
     monkeypatch.setattr(gemini_image.image_usage, "record", lambda **kw: None)
+    monkeypatch.setattr(
+        gemini_image,
+        "_as_openai_png",
+        lambda _image: (_ for _ in ()).throw(AssertionError("confirmed bytes converted")),
+    )
     historical_jpeg = b"\xff\xd8historical-mannequin-bytes\xff\xd9"
     historical_png = b"\x89PNG\r\n\x1a\nhistorical-sheet-bytes"
 

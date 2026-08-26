@@ -95,3 +95,24 @@ def test_ratio_fallback_upscales_to_minimum_medium_resolution(monkeypatch):
     ))
 
     assert _size(result) == (640, 960)
+
+
+def test_pose_decode_and_crop_encode_are_offloaded(monkeypatch):
+    calls = []
+
+    async def immediate(func, *args, **kwargs):
+        calls.append(func)
+        return func(*args, **kwargs)
+
+    async def fake_detect(*_args, **_kwargs):
+        return {"head_top": 90, "waist": 600, "hem": 850, "upper_thigh": 1050}
+
+    monkeypatch.setattr(pose_crop, "run_cpu_bound", immediate)
+    monkeypatch.setattr(pose_crop, "_detect_landmarks", fake_detect)
+
+    result, _mime = asyncio.run(pose_crop.crop_pose_medium(
+        make_settings(), _png(), "image/png"
+    ))
+
+    assert _size(result) == (664, 996)
+    assert len(calls) == 2  # decode/copy, then crop/resize/encode

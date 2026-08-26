@@ -5,6 +5,7 @@ import types
 from dataclasses import replace
 
 import app.routes as routes
+import pytest
 from app import repo
 from app.workers import detail_page_job as dpj
 from conftest import auth_headers, fake_worker_app, make_settings, patch_route_db, worker_job
@@ -28,6 +29,12 @@ def test_detail_404(client, make_token, monkeypatch):
 
 def test_detail_creates_job_and_reserves(client, make_token, monkeypatch):
     seen = {}
+
+    class Scaler:
+        def prewarm_soon(self):
+            seen["prewarmed"] = seen.get("prewarmed", 0) + 1
+
+    client.app.state.detail_worker_autoscaler = Scaler()
 
     async def fake_gp(conn, uid, pid):
         return {"id": pid}
@@ -70,6 +77,7 @@ def test_detail_creates_job_and_reserves(client, make_token, monkeypatch):
     # 예약 시점 단가 스냅샷 — 워커 정산의 단일 기준(정산 불변식)
     assert seen["metadata"]["perCutCost"] == 1
     assert seen["metadata"]["aiCount"] == 2
+    assert seen["prewarmed"] == 1
 
 
 def test_detail_rejects_saved_bg_example_before_job_or_credit(
@@ -568,6 +576,80 @@ def test_run_detail_page_job_rejects_bg_example_when_pilot_disabled(monkeypatch)
     assert captured["metadata"] == {"error": "genexample_bg_disabled"}
     assert captured["code"] == "genexample_bg_disabled"
     assert captured["reserved"] == 1
+
+
+def test_run_detail_page_job_cancellation_finalizes_refund_then_reraises(monkeypatch):
+    captured = {}
+
+    async def cancelled(*_args, **_kwargs):
+        raise asyncio.CancelledError
+
+    async def fake_failure(conn, **kwargs):
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(dpj.repo, "get_project", cancelled)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", fake_failure)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(dpj.run_detail_page_job(_app(_settings()), _job(reserved=5)))
+
+    assert captured["reserved"] == 5
+    assert captured["code"] == "worker_shutdown"
+    assert captured["metadata"] == {"error": "worker_shutdown"}
+
+
+def test_detail_openai_references_are_normalized_once_per_job(monkeypatch):
+    calls = []
+    shared = dpj.InlineImage("image/jpeg", b"shared")
+    other = dpj.InlineImage("image/webp", b"other")
+    exact = dpj.InlineImage("image/jpeg", b"confirmed-exact")
+
+    async def fake_normalize(images, cache=None):
+        calls.append(list(images))
+        return [dpj.InlineImage("image/png", b"png:" + image.data) for image in images]
+
+    monkeypatch.setattr(dpj, "normalize_openai_images", fake_normalize)
+    generic = ({"source": "ai", "cutType": "horizon"}, [shared, shared, other], "", False, [])
+    confirmed = ({"source": "ai", "cutType": "styling"}, [exact], "", False, [], None,
+                 False, None, object())
+
+    normalized = asyncio.run(dpj._normalize_detail_openai_refs(
+        [generic, generic, confirmed], "gpt-image-2"
+    ))
+
+    assert calls == [[shared, other]]
+    assert [image.data for image in normalized[0][1]] == [b"png:shared", b"png:shared", b"png:other"]
+    assert normalized[1][1] == normalized[0][1]
+    assert normalized[2][1] == [exact]  # confirmed packet keeps exact MIME/bytes
+    # 판정 입력은 정규화 전 원본이다. PNG 는 같은 사진의 ~4.7배라(JPEG 4.3MB → PNG 20MB)
+    # 컷마다 도는 독립 QC 가 그 배수만큼 부풀지 않게 원본을 인덱스 10 에 남겨 둔다.
+    assert normalized[0][10] == [shared, shared, other]
+    # confirmed 컷은 정규화를 건너뛰므로 원본 자리를 만들지 않는다 → images 가 곧 원본.
+    assert len(normalized[2]) <= 10
+
+
+def test_detail_refs_keep_provider_and_qc_inputs_at_stable_indexes(monkeypatch):
+    """정규화한 컷은 원본이 인덱스 10, 안 한 컷은 그 자리가 비어 images 로 폴백한다.
+
+    _one_impl 의 `qc_images = item[10] if len(item) > 10 else images` 가 두 경우 모두
+    원본 바이트를 고르는 근거다.
+    """
+    original = dpj.InlineImage("image/jpeg", b"jpeg-original")
+    item = ({"source": "ai", "cutType": "horizon"}, [original], "1. X", False,
+            [original], None, False, None, None, False)
+
+    async def fake_normalize(images, cache=None):
+        return [dpj.InlineImage("image/png", b"png:" + image.data) for image in images]
+
+    monkeypatch.setattr(dpj, "normalize_openai_images", fake_normalize)
+    gpt = asyncio.run(dpj._normalize_detail_openai_refs([item], "gpt-image-2"))[0]
+    assert [i.data for i in gpt[1]] == [b"png:jpeg-original"]   # 프로바이더가 받는 입력
+    assert gpt[10] == [original]                                # 판정기가 받는 입력
+
+    # Gemini 라우트는 JPEG 를 그대로 받으므로 정규화 자체를 하지 않는다 → 폴백 경로.
+    gemini = asyncio.run(dpj._normalize_detail_openai_refs([item], "gemini-3-pro-image"))[0]
+    assert len(gemini) == 10 and gemini[1] == [original]
 
 
 def test_run_detail_page_job_reports_space_set_binding_error_without_generation(

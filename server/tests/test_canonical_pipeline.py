@@ -567,3 +567,72 @@ def test_every_registered_worker_kind_is_allowed_by_the_db_constraint():
 
 def test_sam_preprocess_is_in_the_kind_constraint():
     assert "sam_preprocess" in _latest_kind_constraint()
+
+
+# ── r2_key 는 전역 unique 인데 키는 내용 해시다 ───────────────────────────────────────
+#
+# 2026-08-26 프로드: 같은 사진이 두 번째 프로젝트에 올라오자 record() 가
+# assets_r2_key_key 로 죽고, 그 예외가 dispatcher 루프까지 올라갔다. 조회는 프로젝트
+# 범위인데 제약은 전역이라 생긴 어긋남이다.
+
+class _SavepointCursor:
+    def __init__(self, owner): self.owner = owner
+    async def __aenter__(self): return self
+    async def __aexit__(self, *a): return False
+    async def execute(self, sql, params=None): self.owner.sql.append(sql.strip().split()[0].lower())
+    async def fetchone(self): return None
+
+
+class _SavepointConn:
+    def __init__(self): self.sql = []
+    def cursor(self): return _SavepointCursor(self)
+
+
+def _ready_result(key="derived/v1/model/abc.png"):
+    return sam_client.SamViewResult.from_payload(
+        "Front", {"status": "ready", "cutoutKey": key, "byteSize": 10})
+
+
+def test_record_reuses_the_row_when_the_same_owner_already_has_that_cutout(monkeypatch):
+    """같은 셀러가 같은 사진을 다른 프로젝트에 또 올려도 새 행을 만들지 않는다."""
+    seen = {}
+
+    async def find_by_key(_conn, *, user_id, r2_key):
+        seen["user_id"] = user_id           # 프로젝트가 아니라 소유자로 찾아야 한다
+        return {"id": "asset-existing", "r2_key": r2_key}
+
+    async def create_asset(*a, **k):
+        raise AssertionError("기존 행이 있으면 INSERT 하면 안 된다")
+
+    monkeypatch.setattr(cr, "find_by_key", find_by_key)
+    monkeypatch.setattr(cr.repo, "create_asset", create_asset)
+    row = asyncio.run(cr.record(
+        _SavepointConn(), user_id="u1", project_id="p2", view="Front",
+        result=_ready_result(), source_asset_id="src-1"))
+    assert row["id"] == "asset-existing"
+    assert seen["user_id"] == "u1"
+
+
+def test_record_gives_up_one_cutout_instead_of_killing_the_dispatcher(monkeypatch):
+    """다른 셀러가 같은 사진의 컷아웃을 이미 가진 경우.
+
+    남의 asset 행을 이 프로젝트로 끌어올 수는 없다(테넌트 격리). 그렇다고 예외를 올리면
+    dispatcher 루프가 죽는다 — 이 컷아웃만 포기하고 None 을 돌려준다(생성은 RAW 폴백).
+    SAVEPOINT 로 되감아 같은 커넥션의 뒷 슬롯(Back)이 abort 된 tx 에 끌려가지 않게 한다.
+    """
+    from psycopg import errors
+
+    async def find_by_key(_conn, *, user_id, r2_key):
+        return None                          # 내 것 중엔 없다
+
+    async def create_asset(*a, **k):
+        raise errors.UniqueViolation("duplicate key ... assets_r2_key_key")
+
+    monkeypatch.setattr(cr, "find_by_key", find_by_key)
+    monkeypatch.setattr(cr.repo, "create_asset", create_asset)
+    conn = _SavepointConn()
+    row = asyncio.run(cr.record(
+        conn, user_id="u2", project_id="p1", view="Front",
+        result=_ready_result(), source_asset_id="src-1"))
+    assert row is None
+    assert "rollback" in conn.sql, "SAVEPOINT 를 되감지 않으면 다음 슬롯까지 tx abort 로 죽는다"

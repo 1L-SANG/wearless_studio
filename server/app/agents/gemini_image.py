@@ -8,8 +8,10 @@ async httpx로 호출해 이벤트 루프를 막지 않는다 (§5).
 import asyncio
 import base64
 import binascii
+import functools
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import httpx
@@ -18,6 +20,20 @@ from .. import image_usage
 from ..config import Settings
 
 log = logging.getLogger(__name__)
+
+#: 이미지 CPU 작업 전용 풀. max_workers=1 이 곧 프로세스 전체 동시성 상한이다.
+#: asyncio.to_thread(=기본 executor)로 세마포어를 잡으면 **대기 중인 작업도 기본 풀의
+#: 슬롯을 점유**해서, 같은 풀을 쓰는 R2 get/put 이 이미지 작업 뒤에 줄선다. 실측: 풀
+#: 워커 5개(Fargate 1 vCPU 에서 os.cpu_count()==1 이면 min(32,1+4)=5)에 컷 5개가 몰리면
+#: R2 업로드가 0.23s → 1.14s. 전용 풀은 대기를 큐에 두므로 기본 풀이 I/O 로 남는다.
+_IMAGE_CPU_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="image-cpu")
+
+
+async def run_cpu_bound(func, *args, **kwargs):
+    """Keep image CPU work off the event loop and cap its local concurrency."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _IMAGE_CPU_POOL, functools.partial(func, *args, **kwargs))
 
 
 @dataclass(frozen=True)
@@ -84,6 +100,33 @@ def _as_openai_png(image: "InlineImage") -> bytes:
             return buf.getvalue()
     except Exception:  # noqa: BLE001 — 변환 실패 시 원본을 그대로 보내 기존 동작 유지
         return image.data
+
+
+async def normalize_openai_images(
+    images: list[InlineImage],
+    cache: dict[tuple[str, int], InlineImage] | None = None,
+) -> list[InlineImage]:
+    """Normalize each distinct in-memory reference once for one caller/job."""
+    cache = cache if cache is not None else {}
+    missing: dict[tuple[str, int], InlineImage] = {}
+    for image in images:
+        if image.mime != "image/png":
+            key = (image.mime, id(image.data))
+            if key not in cache:
+                missing.setdefault(key, image)
+    if missing:
+        converted = await run_cpu_bound(
+            lambda rows: {
+                key: InlineImage("image/png", _as_openai_png(image))
+                for key, image in rows
+            },
+            list(missing.items()),
+        )
+        cache.update(converted)
+    return [
+        image if image.mime == "image/png" else cache[(image.mime, id(image.data))]
+        for image in images
+    ]
 
 
 class GeminiImageClient:
@@ -160,7 +203,9 @@ class GeminiImageClient:
             )
         if not self._key:
             raise GeminiError("GEMINI_API_KEY 미설정")
-        body = self._body(prompt, images, image_size, temperature, aspect_ratio)
+        body = await run_cpu_bound(
+            self._body, prompt, images, image_size, temperature, aspect_ratio
+        )
         t0 = time.perf_counter()
         # 429(레이트리밋) 백오프 재시도 — 전부-병렬 제출(detail_cut_concurrency=0)의 안전망.
         # 재시도 없이는 스로틀된 컷이 곧장 실패(빈 슬롯·미차감)로 떨어진다. 다른 상태코드는
@@ -206,31 +251,39 @@ class GeminiImageClient:
         usage = None
         parts = []
         image_parts = []
-        try:
-            data = res.json()
-            if not isinstance(data, dict):
-                raise ValueError("response root is not an object")
-            usage = data.get("usageMetadata")
-            candidates = data.get("candidates") or []
-            if not isinstance(candidates, list):
-                raise ValueError("candidates is not a list")
-            first = candidates[0] if candidates else {}
-            if not isinstance(first, dict):
-                raise ValueError("candidate is not an object")
-            content = first.get("content") or {}
-            if not isinstance(content, dict):
-                raise ValueError("candidate content is not an object")
-            raw_parts = content.get("parts") or []
-            if not isinstance(raw_parts, list):
-                raise ValueError("candidate parts is not a list")
-            parts = [part for part in raw_parts if isinstance(part, dict)]
-            image_parts = [
-                part for part in parts
-                if isinstance(part.get("inlineData"), dict)
-                and part["inlineData"].get("data")
-            ]
-        except (TypeError, ValueError) as exc:
-            parse_error = exc
+        def _parse_response():
+            parsed_usage = None
+            parsed_parts = []
+            parsed_images = []
+            error = None
+            try:
+                data = res.json()
+                if not isinstance(data, dict):
+                    raise ValueError("response root is not an object")
+                parsed_usage = data.get("usageMetadata")
+                candidates = data.get("candidates") or []
+                if not isinstance(candidates, list):
+                    raise ValueError("candidates is not a list")
+                first = candidates[0] if candidates else {}
+                if not isinstance(first, dict):
+                    raise ValueError("candidate is not an object")
+                content = first.get("content") or {}
+                if not isinstance(content, dict):
+                    raise ValueError("candidate content is not an object")
+                raw_parts = content.get("parts") or []
+                if not isinstance(raw_parts, list):
+                    raise ValueError("candidate parts is not a list")
+                parsed_parts = [part for part in raw_parts if isinstance(part, dict)]
+                parsed_images = [
+                    part for part in parsed_parts
+                    if isinstance(part.get("inlineData"), dict)
+                    and part["inlineData"].get("data")
+                ]
+            except (TypeError, ValueError) as exc:
+                error = exc
+            return parsed_usage, parsed_parts, parsed_images, error
+
+        usage, parts, image_parts, parse_error = await run_cpu_bound(_parse_response)
         # 200 이면 이미지가 없어도 요금은 나간다 — 채택 여부·QC 결과와 무관하게 여기서 기록한다.
         image_usage.record(
             model=model, image_size=image_size, usage=usage,
@@ -245,8 +298,9 @@ class GeminiImageClient:
             raise GeminiError(f"응답에 이미지 없음. 텍스트: {text or '(없음)'}")
         # 가장 큰 image part 채택 (4K 응답은 프리뷰+본체 2개일 수 있음 — spike 노트)
         best = max(image_parts, key=lambda p: len(p["inlineData"]["data"]))
+        decoded = await run_cpu_bound(base64.b64decode, best["inlineData"]["data"])
         return GeminiImageResult(
-            image=base64.b64decode(best["inlineData"]["data"]),
+            image=decoded,
             mime=best["inlineData"].get("mimeType") or "image/png",
             latency_ms=latency_ms,
             usage=usage,
@@ -304,9 +358,10 @@ class GeminiImageClient:
                 )
         else:
             # 일반·시그니처 경로의 아이폰 MPO/CMYK 호환성 보정은 기존대로 유지한다.
+            images = await normalize_openai_images(images)
             files = [
-                ("image[]", (f"ref{i}.png", data, "image/png"))
-                for i, data in enumerate(_as_openai_png(im) for im in images)
+                ("image[]", (f"ref{i}.png", image.data, "image/png"))
+                for i, image in enumerate(images)
             ]
         # 선정 실험의 GPT Image 2 레시피: medium + PNG. GPT Image 2는
         # 모든 입력 이미지를 high-fidelity로 처리하므로 input_fidelity는 보내지 않는다.
@@ -344,20 +399,28 @@ class GeminiImageClient:
         usage = None
         img = None
         parse_error = None
-        try:
-            payload = res.json()
-            if not isinstance(payload, dict):
-                raise ValueError("response root is not an object")
-            usage = payload.get("usage")
-            rows = payload.get("data") or []
-            if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
-                raise ValueError("no image row in response")
-            b64 = rows[0].get("b64_json")
-            if not isinstance(b64, str) or not b64:
-                raise ValueError("no b64_json in response")
-            img = base64.b64decode(b64, validate=True)
-        except (TypeError, ValueError, KeyError, binascii.Error) as exc:
-            parse_error = exc
+        def _parse_response():
+            parsed_payload = None
+            parsed_usage = None
+            parsed_image = None
+            error = None
+            try:
+                parsed_payload = res.json()
+                if not isinstance(parsed_payload, dict):
+                    raise ValueError("response root is not an object")
+                parsed_usage = parsed_payload.get("usage")
+                rows = parsed_payload.get("data") or []
+                if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+                    raise ValueError("no image row in response")
+                b64 = rows[0].get("b64_json")
+                if not isinstance(b64, str) or not b64:
+                    raise ValueError("no b64_json in response")
+                parsed_image = base64.b64decode(b64, validate=True)
+            except (TypeError, ValueError, KeyError, binascii.Error) as exc:
+                error = exc
+            return parsed_payload, parsed_usage, parsed_image, error
+
+        payload, usage, img, parse_error = await run_cpu_bound(_parse_response)
 
         # 200이면 이미지 파싱이 실패해도 이미 과금됐을 수 있다. usage를 먼저
         # 기록해야 원장에서 조용히 사라지지 않는다.

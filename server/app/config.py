@@ -180,6 +180,8 @@ class Settings:
     # 로컬·테스트는 AWS 를 모른다. 정본: docs/superpowers/specs/2026-08-21-sam2-on-demand-scaling-design.md
     sam_autoscale: str = "off"
     sam_autoscale_idle_minutes: int = 30   # 마지막 수요로부터 이 시간 지나면 0대 (오너 결정)
+    detail_worker_autoscale: str = "off"
+    detail_worker_autoscale_idle_minutes: int = 10
     sam_alert_topic_arn: str | None = None # addon Output 이 환경변수로 주입. 없으면 알림만 조용히 생략
     # opendid(fm-holder) scale-to-zero — sam 과 같은 reconciler·어댑터를 서비스만 바꿔 재사용.
     # 수요 = license_pending·vc_pending 등록(holder 호출 단계). 알림은 sam 과 같은 SNS 토픽 공유.
@@ -419,6 +421,8 @@ def load_settings() -> Settings:
         sam_internal_token=os.getenv("SAM_INTERNAL_TOKEN") or None,
         sam_autoscale=_flag("SAM_AUTOSCALE", "off", {"off", "on"}),
         sam_autoscale_idle_minutes=_int_env("SAM_AUTOSCALE_IDLE_MINUTES", 30),
+        detail_worker_autoscale=_flag("DETAIL_WORKER_AUTOSCALE", "off", {"off", "on"}),
+        detail_worker_autoscale_idle_minutes=_int_env("DETAIL_WORKER_AUTOSCALE_IDLE_MINUTES", 10),
         sam_alert_topic_arn=os.getenv("SAM_ALERT_TOPIC_ARN") or None,
         opendid_autoscale=_flag("OPENDID_AUTOSCALE", "off", {"off", "on"}),
         opendid_autoscale_idle_minutes=_int_env("OPENDID_AUTOSCALE_IDLE_MINUTES", 30),

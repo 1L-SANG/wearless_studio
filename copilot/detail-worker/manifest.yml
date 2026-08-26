@@ -1,0 +1,78 @@
+# 상세페이지 전용 워커. HTTP 진입점이 없는 Backend Service라 ALB를 추가하지 않는다.
+name: detail-worker
+type: Backend Service
+
+image:
+  build:
+    dockerfile: server/Dockerfile
+    context: server
+  port: 8080
+  healthcheck:
+    command: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=5)\" || exit 1"]
+    interval: 30s
+    retries: 3
+    timeout: 10s
+    start_period: 30s
+
+cpu: 1024
+memory: 4096
+platform: linux/x86_64
+count:
+  spot: 0
+exec: true
+# SIGTERM 후 잡을 error 로 종결하고 크레딧을 환불할 시간. 기본 30s 는 dispatcher.stop()
+# (최대 10s 대기) + finalize DB 쓰기(풀 타임아웃 10s)가 겹치면 여유가 없다. Spot 중단은
+# 2분 예고라 60s 를 써도 남는다.
+#
+# Copilot 매니페스트에는 stop_timeout 필드가 **없다** — 그냥 적으면 조용히 무시되고
+# 태스크 정의는 기본 30s 로 남는다(실측: 첫 배포 태스크 정의 stopTimeout=None).
+# taskdef_overrides 로 렌더된 CloudFormation 을 직접 고쳐야 한다.
+taskdef_overrides:
+  - path: ContainerDefinitions[0].StopTimeout
+    value: 60
+
+network:
+  connect: true
+  # 외부 AI·R2를 불러야 하므로 public subnet에 두고 NAT Gateway 고정비를 피한다.
+  vpc:
+    placement: public
+
+variables:
+  APP_ENV: production
+  JOB_KINDS: detail_page
+  # 컷 5개가 각자 step/progress 이벤트를 쓰고 lease heartbeat·image_usage 적재가 겹친다.
+  # 2 면 그 6~7개 짧은 쓰기가 커넥션 두 개를 두고 줄서서 PoolTimeout(10s) 여지가 생긴다.
+  # Supabase 한도 15: api 롤링 2×3 + worker 롤링 2×3 = 12 로 여전히 여유가 있다.
+  DB_POOL_MAX_SIZE: "3"
+  SUPABASE_URL: https://pedonlvyhoyedzdmmwco.supabase.co
+  R2_ACCOUNT_ID: 2b7c948b56f129faaa10e5076b9e9a66
+  R2_BUCKET: wearless
+  R2_ENDPOINT: https://2b7c948b56f129faaa10e5076b9e9a66.r2.cloudflarestorage.com
+  R2_PUBLIC_BASE: https://images.wearless.kr
+  R2_FACE_BUCKET: wearless-face
+  MODEL_ROUTING_IMAGE_HIGH: gemini-3-pro-image
+  MODEL_ROUTING_DETAIL_CUT: gpt-image-2-2026-04-21
+  MODEL_ROUTING_TEXT_GEMINI: gemini-3.1-pro-preview
+  DETAIL_CUT_IMAGE_SIZE: "2K"
+  DETAIL_CUT_CONCURRENCY: "5"
+  DETAIL_CUT_STAGGER_MS: "3000"
+  DETAIL_CUT_MAX_ATTEMPTS: "1"
+  GARMENT_QC_MODE: "off"
+  CUT_OUTPUT_QC_MODE: repair
+  GENEXAMPLE_BG_ENABLED: "true"
+  FACEMARKET_ENABLED: "true"
+  FACEMARKET_VC_REQUIRED: "true"
+  OPENDID_HOLDER_URL: http://opendid:8100
+  FM_CHAIN_ID: "201210"
+  FM_SETTLEMENT_ADDRESS: "0x39445B04d8F588Ea5E447ff03D8A4b253a6d67A3"
+
+secrets:
+  DATABASE_URL: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/DATABASE_URL
+  SUPABASE_SERVICE_ROLE_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/SUPABASE_SERVICE_ROLE_KEY
+  R2_ACCESS_KEY_ID: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/R2_ACCESS_KEY_ID
+  R2_SECRET_ACCESS_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/R2_SECRET_ACCESS_KEY
+  GEMINI_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/GEMINI_API_KEY
+  OPENAI_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENAI_API_KEY
+  OPENDID_HOLDER_HMAC_SECRET: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENDID_HOLDER_HMAC_SECRET
+  FM_CHAIN_RPC_URL: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_CHAIN_RPC_URL
+  FM_CHAIN_PRIVATE_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_CHAIN_PRIVATE_KEY
