@@ -29,7 +29,7 @@ image:
     # GitHub hosted runner는 매 배포마다 비어 있으므로 직전 성공 이미지의
     # 원격 BuildKit 레이어 캐시를 가져온다. CD가 성공 후 buildcache 태그를 갱신한다.
     cache_from:
-      - 439328746001.dkr.ecr.ap-northeast-2.amazonaws.com/wearless/api:buildcache
+      - 439328746001.dkr.ecr.us-east-1.amazonaws.com/wearless/api:buildcache
     args:
       BUILDKIT_INLINE_CACHE: "1" # 다음 배포가 레지스트리 이미지에서 캐시 메타데이터를 복원
   port: 8080
@@ -260,33 +260,33 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   FM_SETTLEMENT_ADDRESS: "0x39445B04d8F588Ea5E447ff03D8A4b253a6d67A3"
 
 secrets:                         # SSM Parameter Store (SecureString). copilot secret init 로 값 저장.
-  DATABASE_URL: /copilot/wearless/prod/secrets/DATABASE_URL
-  SUPABASE_SERVICE_ROLE_KEY: /copilot/wearless/prod/secrets/SUPABASE_SERVICE_ROLE_KEY
-  R2_ACCESS_KEY_ID: /copilot/wearless/prod/secrets/R2_ACCESS_KEY_ID
-  R2_SECRET_ACCESS_KEY: /copilot/wearless/prod/secrets/R2_SECRET_ACCESS_KEY
-  CLOUDFLARE_CACHE_PURGE_TOKEN: /copilot/wearless/prod/secrets/CLOUDFLARE_CACHE_PURGE_TOKEN
-  GEMINI_API_KEY: /copilot/wearless/prod/secrets/GEMINI_API_KEY
+  DATABASE_URL: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/DATABASE_URL
+  SUPABASE_SERVICE_ROLE_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/SUPABASE_SERVICE_ROLE_KEY
+  R2_ACCESS_KEY_ID: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/R2_ACCESS_KEY_ID
+  R2_SECRET_ACCESS_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/R2_SECRET_ACCESS_KEY
+  CLOUDFLARE_CACHE_PURGE_TOKEN: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/CLOUDFLARE_CACHE_PURGE_TOKEN
+  GEMINI_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/GEMINI_API_KEY
   # 첫 화면 시그니처 컷과 AG-06 상세컷 GPT 경로가 함께 사용한다.
   # 배포 전 SSM SecureString이 실제로 존재하는지 확인한다.
-  OPENAI_API_KEY: /copilot/wearless/prod/secrets/OPENAI_API_KEY
+  OPENAI_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENAI_API_KEY
   # CX 본인확인 HMAC pepper. 없으면 /v1/facemarket/identity/verify 가 503.
   # ⚠️ 배포 전 값 저장 필요: copilot secret init --name FM_CI_PEPPER (프로드 SSM).
-  FM_CI_PEPPER: /copilot/wearless/prod/secrets/FM_CI_PEPPER
-  FM_LIVENESS_BROWSER_ROLE_ARN: /copilot/wearless/prod/secrets/FM_LIVENESS_BROWSER_ROLE_ARN
+  FM_CI_PEPPER: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_CI_PEPPER
+  FM_LIVENESS_BROWSER_ROLE_ARN: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_LIVENESS_BROWSER_ROLE_ARN
   # api 가 fm-holder 로 보내는 VC 요청 서명용 HMAC. 홀더도 같은 값을 봐야 검증된다(opendid manifest
   # 와 동일 SSM 파라미터). 미설정이면 issue_face_vc 게이트가 503(라이선스는 나오되 VC 스킵).
   # ⚠️ 배포 전 값 저장 필요: copilot-aws secret init --name OPENDID_HOLDER_HMAC_SECRET (프로드 SSM).
-  OPENDID_HOLDER_HMAC_SECRET: /copilot/wearless/prod/secrets/OPENDID_HOLDER_HMAC_SECRET
+  OPENDID_HOLDER_HMAC_SECRET: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENDID_HOLDER_HMAC_SECRET
   # 온체인 정산 시크릿. RPC URL 은 쿼리에 게이트웨이 auth 토큰이 박혀 있어 URL 전체가 시크릿.
   # ⚠️ 배포 전 값 저장 필요(없으면 ECS 태스크 기동 실패): scripts/fm-chain-secrets.sh 참고.
-  FM_CHAIN_RPC_URL: /copilot/wearless/prod/secrets/FM_CHAIN_RPC_URL
+  FM_CHAIN_RPC_URL: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_CHAIN_RPC_URL
   # 토스페이먼츠 결제 승인 API 시크릿(WS3). 없으면 /v1/payments/toss/checkout 이 503
   # payment_not_configured — 키 없이 '목 성공'을 주지 않는 설계라 결제만 비활성된다.
   # ⚠️ 이 줄을 배포하기 **전에** SSM 값을 먼저 만들어야 한다(없으면 ECS 기동 실패→롤백):
   #     copilot-aws secret init --name TOSS_SECRET_KEY
   #   raw `aws ssm put-parameter` 로 만들면 copilot 태그가 없어 태스크가 못 읽는다(2026-07-17 실경험).
-  TOSS_SECRET_KEY: /copilot/wearless/prod/secrets/TOSS_SECRET_KEY
-  FM_CHAIN_PRIVATE_KEY: /copilot/wearless/prod/secrets/FM_CHAIN_PRIVATE_KEY
+  TOSS_SECRET_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/TOSS_SECRET_KEY
+  FM_CHAIN_PRIVATE_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_CHAIN_PRIVATE_KEY
   # 내부 SAM2 서비스 호출용 공유 시크릿. sam2 매니페스트가 **같은 파라미터**를 읽으므로
   # 양쪽이 한 값을 보고, 값은 저장소에 절대 들어오지 않는다. 이미 생성돼 있고 copilot 태그도
   # 붙어 있다(copilot-application=wearless, copilot-environment=prod).

@@ -1,0 +1,25 @@
+# The manifest for the "use1" environment.
+# Read the full specification for the "Environment" type at:
+#  https://aws.github.io/copilot-cli/docs/manifest/environment/
+
+# Your environment name will be used in naming your resources like VPC, cluster, etc.
+name: use1
+type: Environment
+
+# Import your own VPC and subnets or configure how they should be created.
+# network:
+#   vpc:
+#     id:
+
+# Configure the load balancers in your environment, once created.
+http:
+  public:
+    certificates:
+      # api.wearless.kr — us-east-1 ACM(8120f0ff). ALB 리스너는 같은 리전 인증서만 받는다.
+      # 서울 인증서(c878a5bb)는 ap-northeast-2 전용이라 여기 쓸 수 없다. 검증 CNAME 은
+      # 두 인증서가 같은 이름/값을 공유해 Cloudflare 에 이미 있던 레코드로 즉시 ISSUED 됐다.
+      - arn:aws:acm:us-east-1:439328746001:certificate/8120f0ff-bb02-4348-b1de-92ede7939d14
+
+# Configure observability for your environment resources.
+observability:
+  container_insights: false
