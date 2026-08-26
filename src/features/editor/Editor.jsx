@@ -7,7 +7,7 @@
    model + patchElById. Everything else (blocks, panels, mini-preview,
    layers, undo/redo, frames, download/preview) keeps prototype logic.
    ============================================================= */
-import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import Moveable from 'react-moveable';
 import QRCode from 'qrcode';
