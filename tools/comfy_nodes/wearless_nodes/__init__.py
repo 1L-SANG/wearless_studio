@@ -59,32 +59,70 @@ _SERVER = _find_server_dir()
 _IMPORT_ERROR = None
 _DOTENV_LOADED = _load_dotenv(_SERVER) if _SERVER else 0
 
-if _SERVER and str(_SERVER) not in sys.path:
-    sys.path.insert(0, str(_SERVER))
-
-# psycopg 은 image_usage 가 타입 하나 때문에 import 한다. DB 는 쓰지 않으므로 스텁으로 대체.
+# image_usage 가 타입 하나 때문에 psycopg 를 import 한다. DB 는 쓰지 않으므로 스텁으로 대체.
 if "psycopg" not in sys.modules:
     try:
         import psycopg  # noqa: F401
-    except Exception:
+    except Exception:  # noqa: BLE001
         _m = types.ModuleType("psycopg")
         _t = types.ModuleType("psycopg.types")
         _j = types.ModuleType("psycopg.types.json")
         _j.Json = lambda x: x
+        _m.__path__ = []          # 패키지로 인식되게
+        _t.__path__ = []
         _t.json = _j
         _m.types = _t
         sys.modules.update({"psycopg": _m, "psycopg.types": _t, "psycopg.types.json": _j})
 
-try:
-    from app.config import Settings, load_settings
-    from app.agents.gemini_image import GeminiImageClient, InlineImage
-    from app.agents import image_qc as _image_qc
-    from app import image_usage as _image_usage
 
-    _image_usage.configure(pool=None, persist=False)  # 실험 환경: 원장 기록 끔
-except Exception as exc:  # noqa: BLE001
-    _IMPORT_ERROR = exc
+# ComfyUI 자체에도 `app` 패키지가 있어 이름이 충돌한다.
+# 서버 패키지를 `wearless_app` 이라는 별도 이름으로 로드해서 충돌을 피한다.
+# (server/app 안의 agents/config/image_usage 는 전부 상대 import 라 이름이 바뀌어도 동작한다.)
+_PKG = "wearless_app"
+
+
+def _load_server_pkg(server_dir: Path):
+    import importlib
+    import importlib.util
+
+    if _PKG not in sys.modules:
+        pkg_dir = server_dir / "app"
+        spec = importlib.util.spec_from_file_location(
+            _PKG, pkg_dir / "__init__.py", submodule_search_locations=[str(pkg_dir)]
+        )
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[_PKG] = mod
+        spec.loader.exec_module(mod)
+    return importlib.import_module
+
+
+if _SERVER:
+    try:
+        _imp = _load_server_pkg(_SERVER)
+        _config = _imp(f"{_PKG}.config")
+        _gi = _imp(f"{_PKG}.agents.gemini_image")
+        _image_qc = _imp(f"{_PKG}.agents.image_qc")
+        _image_usage = _imp(f"{_PKG}.image_usage")
+
+        Settings = _config.Settings
+        load_settings = _config.load_settings
+        GeminiImageClient = _gi.GeminiImageClient
+        InlineImage = _gi.InlineImage
+
+        _image_usage.configure(pool=None, persist=False)  # 실험 환경: 원장 기록 끔
+    except Exception as exc:  # noqa: BLE001
+        _IMPORT_ERROR = exc
+        Settings = None
+else:
+    _IMPORT_ERROR = RuntimeError("server 디렉터리를 찾지 못했습니다 (WEARLESS_SERVER_DIR 확인)")
     Settings = None
+
+
+def _srv(name: str):
+    """서버 서브모듈 지연 로드. 예: _srv("agents.cut_generator")"""
+    import importlib
+
+    return importlib.import_module(f"{_PKG}.{name}")
 
 
 def _settings():
@@ -308,7 +346,7 @@ class WearlessCutGenerate:
 
     def run(self, cut_spec_json, product_json, images, analysis_json="", manifest="",
             has_face=False, prompt_only=False):
-        from app.agents import cut_generator
+        cut_generator = _srv("agents.cut_generator")
 
         s = _settings()
         spec = _json_or({}, cut_spec_json)
@@ -354,8 +392,10 @@ class WearlessMannequinPrompt:
     CATEGORY = CAT
 
     def run(self, product_json, analysis_json, image_manifest="", product_count=1):
-        from app.agents import mannequin as mq
-        from app.agents.prompts import load_prompt_template, render_mannequin_prompt
+        mq = _srv("agents.mannequin")
+        _p = _srv("agents.prompts")
+        load_prompt_template = _p.load_prompt_template
+        render_mannequin_prompt = _p.render_mannequin_prompt
 
         s = _settings()
         product = _json_or({}, product_json)
@@ -391,6 +431,7 @@ class WearlessStatus:
     def run(self):
         info = {
             "server_dir": str(_SERVER) if _SERVER else None,
+            "pkg_alias": _PKG,
             "import_error": repr(_IMPORT_ERROR) if _IMPORT_ERROR else None,
             "dotenv_vars_loaded": _DOTENV_LOADED,
             "gemini_key": bool(os.environ.get("GEMINI_API_KEY")),
