@@ -19,9 +19,9 @@ image:
   healthcheck:
     command: ["CMD-SHELL", "curl -fsS http://localhost:8100/actuator/health || exit 1"]
     interval: 20s
-    retries: 4
-    timeout: 5s
-    start_period: 120s            # 4 JVM 콜드스타트 여유
+    retries: 6                    # 4 JVM 동시 콜드부팅이 CPU 경쟁으로 홀더 헬스를
+    timeout: 8s                   # 순간 늦추므로(실측 ~93s 부팅) 넉넉히 — 안 그러면 첫
+    start_period: 300s            # 태스크가 unhealthy 로 교체되는 콜드스타트 churn 발생
 
 cpu: 2048       # 4 JVM(각 -Xmx384m) + 여유
 memory: 4096
