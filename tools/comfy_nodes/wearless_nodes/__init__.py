@@ -451,8 +451,149 @@ class WearlessStatus:
         return (json.dumps(info, ensure_ascii=False, indent=1),)
 
 
+
+# ---------------------------------------------------------------- 모델 다운로드
+
+_DL_STATE = {}
+_DL_LOCK = threading.Lock()
+_DL_HOSTS = ("huggingface.co", "cdn-lfs.huggingface.co", "cdn-lfs-us-1.hf.co", "github.com",
+             "objects.githubusercontent.com")
+_DL_DIRS = ("unet", "diffusion_models", "text_encoders", "clip", "vae", "loras", "controlnet", "upscale_models")
+
+
+def _models_root() -> Path:
+    try:
+        import folder_paths  # ComfyUI 제공
+        return Path(folder_paths.models_dir)
+    except Exception:  # noqa: BLE001
+        return Path(__file__).resolve().parents[3] / "models"
+
+
+def _dl_worker(url: str, dest: Path, key: str):
+    import urllib.request
+
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    try:
+        done = tmp.stat().st_size if tmp.exists() else 0
+        req = urllib.request.Request(url, headers={"User-Agent": "wearless-comfy/1.0"})
+        if done:
+            req.add_header("Range", f"bytes={done}-")
+        with urllib.request.urlopen(req, timeout=60) as r:
+            total = int(r.headers.get("Content-Length") or 0) + done
+            mode = "ab" if done and r.status == 206 else "wb"
+            if mode == "wb":
+                done = 0
+            with open(tmp, mode) as f:
+                last = 0
+                while True:
+                    chunk = r.read(1 << 20)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    done += len(chunk)
+                    if done - last > (32 << 20):
+                        last = done
+                        with _DL_LOCK:
+                            _DL_STATE[key] = {"state": "downloading", "done": done, "total": total,
+                                              "pct": round(done * 100 / total, 1) if total else None}
+        tmp.replace(dest)
+        with _DL_LOCK:
+            _DL_STATE[key] = {"state": "done", "done": done, "total": done, "pct": 100.0,
+                              "path": str(dest)}
+    except Exception as e:  # noqa: BLE001
+        with _DL_LOCK:
+            _DL_STATE[key] = {"state": "error", "error": f"{type(e).__name__}: {e}"}
+
+
+class WearlessDownloadModel:
+    """모델 파일을 백그라운드로 내려받는다 (ComfyUI 를 멈추지 않는다)."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "url": ("STRING", {"default": ""}),
+                "subfolder": (list(_DL_DIRS), {"default": "unet"}),
+            },
+            "optional": {"filename": ("STRING", {"default": ""})},
+        }
+
+    RETURN_TYPES = ("STRING",)
+    FUNCTION = "run"
+    CATEGORY = CAT
+    OUTPUT_NODE = True
+
+    @classmethod
+    def IS_CHANGED(cls, **kw):
+        return float("nan")   # 항상 재실행
+
+    def run(self, url, subfolder, filename=""):
+        from urllib.parse import urlparse
+
+        u = urlparse(url)
+        if u.scheme != "https" or u.hostname not in _DL_HOSTS:
+            return (json.dumps({"state": "rejected", "reason": f"허용되지 않은 주소: {u.hostname}"},
+                               ensure_ascii=False),)
+        if subfolder not in _DL_DIRS:
+            return (json.dumps({"state": "rejected", "reason": "허용되지 않은 폴더"}, ensure_ascii=False),)
+
+        name = filename.strip() or Path(u.path).name
+        dest = _models_root() / subfolder / name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        key = f"{subfolder}/{name}"
+
+        if dest.exists():
+            st = {"state": "already", "done": dest.stat().st_size, "path": str(dest)}
+            with _DL_LOCK:
+                _DL_STATE[key] = st
+            return (json.dumps(st, ensure_ascii=False),)
+
+        with _DL_LOCK:
+            cur = _DL_STATE.get(key, {})
+            if cur.get("state") == "downloading":
+                return (json.dumps(cur, ensure_ascii=False),)
+            _DL_STATE[key] = {"state": "downloading", "done": 0, "total": 0, "pct": 0.0}
+
+        threading.Thread(target=_dl_worker, args=(url, dest, key), daemon=True).start()
+        return (json.dumps({"state": "started", "dest": str(dest)}, ensure_ascii=False),)
+
+
+class WearlessDownloadStatus:
+    """진행 중/완료된 다운로드 상태."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {}}
+
+    RETURN_TYPES = ("STRING",)
+    FUNCTION = "run"
+    CATEGORY = CAT
+    OUTPUT_NODE = True
+
+    @classmethod
+    def IS_CHANGED(cls, **kw):
+        return float("nan")
+
+    def run(self):
+        with _DL_LOCK:
+            snap = dict(_DL_STATE)
+        root = _models_root()
+        files = {}
+        for d in _DL_DIRS:
+            p = root / d
+            if p.exists():
+                got = [(f.name, f.stat().st_size) for f in p.rglob("*")
+                       if f.is_file() and not f.name.endswith(".part")]
+                if got:
+                    files[d] = [f"{n} ({sz/1e9:.2f}GB)" for n, sz in got]
+        return (json.dumps({"downloads": snap, "models_root": str(root), "installed": files},
+                           ensure_ascii=False, indent=1),)
+
+
 NODE_CLASS_MAPPINGS = {
     "WearlessStatus": WearlessStatus,
+    "WearlessDownloadModel": WearlessDownloadModel,
+    "WearlessDownloadStatus": WearlessDownloadStatus,
     "WearlessGenerateImage": WearlessGenerateImage,
     "WearlessImageQC": WearlessImageQC,
     "WearlessBestOf": WearlessBestOf,
@@ -461,6 +602,8 @@ NODE_CLASS_MAPPINGS = {
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "WearlessStatus": "Wearless: 상태 점검",
+    "WearlessDownloadModel": "Wearless: 모델 내려받기",
+    "WearlessDownloadStatus": "Wearless: 내려받기 상태",
     "WearlessGenerateImage": "Wearless: 이미지 생성 (Gemini/GPT)",
     "WearlessImageQC": "Wearless: QC 판정",
     "WearlessBestOf": "Wearless: best-of 게이트",
