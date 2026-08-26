@@ -63,8 +63,12 @@ export function hsvToHex({ h = 0, s = 0, v = 0 } = {}) {
 const PHOTO_ROW_KINDS = new Set(['twocol', 'threecol', 'grid2x2', 'colorcmp']);
 
 function isGeneratedPhotoBlock(block) {
+  // 상세페이지 템플릿 프레임(templateId)은 카피가 프레임 저작물이라 절대 걷지 않는다.
+  if (block?.templateId) return false;
   const elements = block?.elements || [];
-  if (elements.some((element) => element.type === 'image' && element.sourceBlockId)) return true;
+  // 자동채움으로 채운 프레임 슬롯(frameSlot)은 sourceBlockId 가 붙어도 생성 카피 블록이 아니다 —
+  // frameSlot 을 제외해야 템플릿·프레임의 저작 텍스트가 재로드 때 걷히지 않는다.
+  if (elements.some((element) => element.type === 'image' && element.sourceBlockId && !element.frameSlot)) return true;
   if (PHOTO_ROW_KINDS.has(block?.kind) && elements.some((element) => element.type === 'image')) return true;
   return Boolean(
     block?.contentRole

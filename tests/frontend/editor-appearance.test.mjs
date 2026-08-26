@@ -366,3 +366,40 @@ test('speech bubble path keeps a clearly visible tail at compact sizes', () => {
   assert.ok(tailTip, 'the tail reaches the bottom edge of the bubble box');
   assert.ok(Number(tailTip[1]) < 32, 'the tail tip extends clearly beyond its left base');
 });
+
+test('상세페이지 템플릿 프레임(templateId)은 자동채움으로 sourceBlockId 붙어도 텍스트 보존', () => {
+  const templateBlock = {
+    id: 'b', templateId: 'kiwi-t5-01-cover', kind: 'styling', contentRole: 'custom',
+    elements: [
+      { id: 'img', type: 'image', frameSlot: true, src: 'cut.jpg', sourceBlockId: 'sb-1' }, // 자동채움된 슬롯
+      { id: 'txt', type: 'text', text: 'Fashion Cover' },
+    ],
+  };
+  const out = stripPhotoBlockTextElements([templateBlock]);
+  assert.equal(out[0].elements.length, 2, '템플릿 텍스트가 걷히지 않는다');
+  assert.ok(out[0].elements.some((el) => el.type === 'text'));
+});
+
+test('프레임 슬롯 채움(frameSlot+sourceBlockId)은 templateId 없어도 텍스트 보존', () => {
+  const frameBlock = {
+    id: 'b', kind: 'styling', contentRole: 'custom',
+    elements: [
+      { id: 'img', type: 'image', frameSlot: true, src: 'cut.jpg', sourceBlockId: 'sb-1' },
+      { id: 'txt', type: 'text', text: '라벨' },
+    ],
+  };
+  const out = stripPhotoBlockTextElements([frameBlock]);
+  assert.ok(out[0].elements.some((el) => el.type === 'text'), 'frameSlot 채움은 생성 카피 블록이 아니다');
+});
+
+test('진짜 생성 컷 블록(frameSlot 아님 + sourceBlockId)의 카피는 여전히 걷는다', () => {
+  const cutBlock = {
+    id: 'b', kind: 'styling', contentRole: 'hero',
+    elements: [
+      { id: 'img', type: 'image', src: 'cut.jpg', sourceBlockId: 'sb-1' }, // frameSlot 없음 = native 컷
+      { id: 'copy', type: 'text', text: 'AI 카피' },
+    ],
+  };
+  const out = stripPhotoBlockTextElements([cutBlock]);
+  assert.ok(!out[0].elements.some((el) => el.type === 'text'), 'native 생성 블록 카피는 걷힌다');
+});
