@@ -98,10 +98,22 @@ async def analyze_image_bytes(
         }
     if on_prepared is not None:
         await on_prepared(sum(len(image.data) for image in images))
+    # 셋은 동시에 돌지만 **응답 시간은 그중 제일 느린 하나가 정한다**. AG-01(analyze)만
+    # 필수고 나머지 둘은 부가 정보다 — 특징 후보가 없으면 칩이 덜 뜨고, 일관성 판정이
+    # 없으면 경고가 안 뜰 뿐 분석 자체는 성립한다. 그런데 실측(2026-08-26, 프로드 태스크)
+    # 에서 input_consistency 가 3회 중 2회 가장 느려 전체를 끌었다:
+    #   analyst 6.6s  feature 4.6s  consist 9.8s → 전체 9.8s
+    #   analyst 3.5s  feature 3.3s  consist 7.7s → 전체 7.7s
+    # 그래서 부가 둘에만 짧은 예산을 준다. 넘기면 그 둘만 버리고 진행한다 — 아래
+    # isinstance(BaseException) 분기가 이미 실패를 흡수하므로 새 실패 경로는 없다.
+    aux_budget = settings.analysis_aux_timeout_seconds
     analyze_res, feature_res, consistency_res = await asyncio.gather(
         product_analyst.analyze(settings, analysis_product, images),
-        feature_extractor.extract(settings, product, images, slots=slots),
-        _judge_input_consistency(settings, images, slots),
+        asyncio.wait_for(
+            feature_extractor.extract(settings, product, images, slots=slots),
+            timeout=aux_budget),
+        asyncio.wait_for(
+            _judge_input_consistency(settings, images, slots), timeout=aux_budget),
         return_exceptions=True,
     )
     if isinstance(analyze_res, BaseException):

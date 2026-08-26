@@ -1,0 +1,19 @@
+# ALB idle timeout 을 60초(AWS 기본) → 180초로.
+#
+# Copilot 환경 매니페스트에는 이 필드가 없다(공식 문서 확인). 그래서 렌더된
+# CloudFormation 을 여기서 직접 패치한다. CLI 로 modify-load-balancer-attributes 를
+# 부르면 IaC 밖으로 새어 나가 다음 env deploy 때 사라질 수 있다.
+#
+# 왜 필요한가 — 공개 상품 분석(POST /v1/public/analyze)은 비전 모델 3콜을 동시에 돌리는
+# **동기** 요청이고, 프로덕션 태스크에서 실측한 소요가 7.7~29.7초로 편차가 크다.
+# 실사용 최대치는 53.5초까지 찍혔다(2026-08-26 18:49 TargetResponseTime). 60초 기본값은
+# 여유가 6초뿐이라, 모델이 평소보다 느린 날 그대로 504 가 된다 — 서버는 분석을
+# 끝냈는데 브라우저만 실패로 보는, 돈은 쓰고 결과는 못 받는 실패다.
+#
+# 180 은 provider 상한과 짝을 이룬다: analysis_timeout_seconds=30 이므로 1차 30 +
+# 폴백 30 + 부가 호출·직렬화 여유까지 담고도 남는다. 이 값을 줄이려면 그 상한부터 본다.
+- op: add
+  path: /Resources/PublicLoadBalancer/Properties/LoadBalancerAttributes/-
+  value:
+    Key: 'idle_timeout.timeout_seconds'
+    Value: '180'

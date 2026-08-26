@@ -72,7 +72,13 @@ class Settings:
     model_text_gemini_analysis: str = ""
     analysis_model_order: str = "gemini,gpt"  # 폴백 순서(기본=Gemini-first, 2026-07-02 결정). 'gpt,gemini' 등
     analysis_spike: str = "off"  # off | on — 동기 관측 하니스(임시). production 은 job
-    analysis_timeout_seconds: float = 60.0  # provider 1콜 상한(폴백 트리거)
+    # provider 1콜 상한(폴백 트리거). ALB idle timeout 과 **같으면 폴백이 무의미하다** —
+    # 1차가 상한을 다 쓰는 순간 ALB 는 이미 504 를 내보낸 뒤라 2차가 돌 시간이 없다.
+    # ALB 180s 아래에서 1차 30 + 2차 30 이면 폴백까지 끝나고도 여유가 남는다.
+    analysis_timeout_seconds: float = 30.0
+    # 부가 호출(AG-08 특징·입력 일관성) 예산. 이 둘은 없어도 분석이 성립하는데 실측에서
+    # 전체 응답 시간을 좌우했다(analyze_job 의 gather 주석 참고).
+    analysis_aux_timeout_seconds: float = 12.0
     # Gemini thinking 수준 — 분석은 분류·추출 작업이라 low로 충분(미지정 시 모델 기본이
     # 깊은 추론을 돌려 수 초 낭비). off=미전송(모델 기본). 2026-07-07 속도 개선.
     analysis_thinking_level: str = "low"  # low | medium | high | off
@@ -447,7 +453,8 @@ def load_settings() -> Settings:
         model_text_gemini_analysis=os.getenv("MODEL_ROUTING_TEXT_GEMINI_ANALYSIS", ""),
         analysis_model_order=os.getenv("ANALYSIS_MODEL_ORDER", "gemini,gpt"),
         analysis_spike=_flag("ANALYSIS_SPIKE", "off", {"off", "on"}),
-        analysis_timeout_seconds=float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "60")),
+        analysis_timeout_seconds=float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "30")),
+        analysis_aux_timeout_seconds=float(os.getenv("ANALYSIS_AUX_TIMEOUT_SECONDS", "12")),
         analysis_thinking_level=_flag(
             "ANALYSIS_THINKING_LEVEL", "low", {"low", "medium", "high", "off"}),
         mannequin_tier=_mannequin_tier(),

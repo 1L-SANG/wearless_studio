@@ -523,3 +523,65 @@ def test_analyze_survives_a_failing_sam_preprocess_enqueue(client, make_token, m
     res = client.post("/v1/projects/p1/analyze", headers=auth_headers(make_token))
     assert res.status_code == 202, res.text
     assert res.json()["jobId"] == "job-analyze-1"
+
+
+def test_aux_agents_cannot_stall_the_analysis_response(monkeypatch):
+    """부가 호출(AG-08 특징·입력 일관성)은 응답 시간을 좌우하면 안 된다.
+
+    셋은 동시에 돌지만 응답 시간은 제일 느린 하나가 정한다. 실측(2026-08-26 프로드
+    태스크)에서 input_consistency 가 3회 중 2회 가장 느려 전체를 끌었고, 공개 분석은
+    동기 요청이라 그대로 ALB 60초 벽에 부딪혔다. 부가 둘에만 예산을 걸어, 넘기면
+    그 둘을 버리고 AG-01 결과로 진행한다.
+    """
+    slow_cancelled = {"feature": False, "consistency": False}
+
+    async def fast_analyze(settings, product, images):
+        return ({
+            "product": {"clothingType": "top", "colors": []},
+            "analysis": {"subCategory": "tshirt", "fit": "regular",
+                         "targetGenders": ["women"], "materials": [],
+                         "aiSuggestedPoints": ["원래 값"], "suggestedName": None},
+            "intermediate": {"styleTags": [], "swatchSuggestions": []},
+        }, "gemini")
+
+    async def never_finishes(*a, **k):
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            slow_cancelled["feature"] = True
+            raise
+
+    async def never_judges(*a, **k):
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            slow_cancelled["consistency"] = True
+            raise
+
+    monkeypatch.setattr(analyze_job, "shrink_for_vision", lambda d, m: (d, m))
+    monkeypatch.setattr(analyze_job.product_analyst, "analyze", fast_analyze)
+    monkeypatch.setattr(analyze_job.feature_extractor, "extract", never_finishes)
+    monkeypatch.setattr(analyze_job, "_judge_input_consistency", never_judges)
+
+    out = asyncio.run(analyze_job.analyze_image_bytes(
+        make_settings(analysis_aux_timeout_seconds=0.05),
+        [(b"front", "image/jpeg")],
+        slots=["Front"],
+    ))
+
+    # 부가 호출이 영영 안 끝나도 분석은 AG-01 결과로 응답한다.
+    assert out["result_data"]["subCategory"] == "tshirt"
+    assert out["result_data"]["aiSuggestedPoints"] == ["원래 값"]
+    assert slow_cancelled == {"feature": True, "consistency": True}, (
+        "예산을 넘긴 부가 호출은 취소돼야 한다 — 안 그러면 응답 뒤에도 계속 돈다")
+
+
+def test_provider_timeout_leaves_room_for_the_fallback_under_the_alb_limit():
+    """provider 상한이 ALB idle timeout 과 같으면 폴백이 구조적으로 무의미하다.
+
+    1차가 상한을 다 쓰는 순간 ALB 는 이미 504 를 내보낸 뒤라 2차가 돌 시간이 없다.
+    ALB 는 copilot/environments/overrides/cfn.patches.yml 에서 180 으로 올려 두었다.
+    """
+    s = make_settings()
+    alb_idle_timeout = 180
+    assert s.analysis_timeout_seconds * 2 + s.analysis_aux_timeout_seconds < alb_idle_timeout
