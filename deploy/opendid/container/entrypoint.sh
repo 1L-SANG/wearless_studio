@@ -43,12 +43,18 @@ render_bc "$RUN/bc-tas.properties"    "${OMNIONE_TAS_KEY}"
 render_bc "$RUN/bc-issuer.properties" "${OMNIONE_ISSUER_KEY}"
 render_bc "$RUN/bc-cas.properties"    "${OMNIONE_TAS_KEY}"
 
-# 2) 공통 Spring override — dev 프로파일(실 config) + RDS 데이터소스 + 체인/월렛 파일경로.
+# 2) 공통 Spring override — dev 프로파일(실 config) + 데이터소스 + 체인/월렛 파일경로.
+#    OPENDID_DB_HOST 는 공유 Supabase postgres(직결 5432 권장 — pgbouncer pooler 는 api 전용)라
+#    HikariCP 풀을 서버당 소수로 묶는다. 기본 10 × 3서버면 최악 30커넥션이 인스턴스 max_connections
+#    를 잠식해 앱 DB 까지 PGRST002/503 이 될 수 있다(2026-08-18 pooler 장애 선례). 서버당
+#    HIKARI_MAX(기본 3)로 상한을 둔다 — TA/Issuer/CAS 합 ≤ 9.
 common() {  # $1=db-name  $2=wallet-file  $3=bc-file
   echo "--spring.profiles.active=dev \
 --spring.datasource.url=jdbc:postgresql://${OPENDID_DB_HOST}:${DBPORT}/$1 \
 --spring.datasource.username=${OPENDID_DB_USER} \
 --spring.datasource.password=${OPENDID_DB_PASSWORD} \
+--spring.datasource.hikari.maximum-pool-size=${HIKARI_MAX:-3} \
+--spring.datasource.hikari.minimum-idle=0 \
 --blockchain.file-path=$3 \
 --wallet.file-path=${WALLET_SECRETS_DIR}/$2 \
 --wallet.password=${WALLET_PASSWORD}"
