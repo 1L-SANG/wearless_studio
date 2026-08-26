@@ -24,6 +24,8 @@ import hashlib
 import logging
 import uuid
 
+from psycopg import errors
+
 from app import repo
 from app.services import sam_retry
 
@@ -286,7 +288,7 @@ async def record(conn, *, user_id: str, project_id: str, cut_id: str, source_ass
         result, cut_id=cut_id, source_asset_id=source_asset_id,
         category=category, sub_category=sub_category,
         matching_side=matching_side, match_share=match_share, product_key=product_key)
-    existing = await find_by_key(conn, project_id=project_id, r2_key=result.mask_key)
+    existing = await find_by_key(conn, user_id=user_id, r2_key=result.mask_key)
     if existing:
         if (existing.get("metadata") or {}) != meta:
             await set_metadata(conn, asset_id=existing["id"], metadata=meta)
@@ -294,22 +296,38 @@ async def record(conn, *, user_id: str, project_id: str, cut_id: str, source_ass
         return existing
 
     asset_id = str(uuid.uuid4())
-    row = await repo.create_asset(
-        conn, asset_id=asset_id, user_id=user_id, project_id=project_id,
-        source="derived", bucket="", key=result.mask_key, mime="image/png",
-        size=result.byte_size, original_filename=None)
-    await set_metadata(conn, asset_id=asset_id, metadata=meta)
+    # canonical_reference.record 와 같은 이유의 SAVEPOINT — assets.r2_key 는 전역 unique 인데
+    # 키는 내용 해시라 소유자·프로젝트를 담지 않는다. 남의 동일 사진과 충돌하면 tx 가 abort 돼
+    # 같은 커넥션의 뒷작업까지 끌려가므로, 이 컷 안에서 끝낸다.
+    async with conn.cursor() as cur:
+        await cur.execute("savepoint mask_record")
+    try:
+        row = await repo.create_asset(
+            conn, asset_id=asset_id, user_id=user_id, project_id=project_id,
+            source="derived", bucket="", key=result.mask_key, mime="image/png",
+            size=result.byte_size, original_filename=None)
+        await set_metadata(conn, asset_id=asset_id, metadata=meta)
+    except errors.UniqueViolation:
+        async with conn.cursor() as cur:
+            await cur.execute("rollback to savepoint mask_record")
+        log.warning(
+            "editor garment mask key already owned by another seller — skipping record "
+            "project=%s cut=%s key=%s", project_id, cut_id, result.mask_key)
+        return None
+    async with conn.cursor() as cur:
+        await cur.execute("release savepoint mask_record")
     log.info("editor garment mask recorded project=%s cut=%s asset=%s key=%s",
              project_id, cut_id, asset_id, result.mask_key)
     return row
 
 
-async def find_by_key(conn, *, project_id: str, r2_key: str) -> dict | None:
+async def find_by_key(conn, *, user_id: str, r2_key: str) -> dict | None:
+    """소유자 범위로 찾는다 — r2_key 는 전역 unique 이고 내용 해시라 프로젝트를 안 담는다."""
     async with conn.cursor() as cur:
         await cur.execute(
             "select id::text as id, r2_key, mime_type, byte_size, metadata from assets "
-            "where project_id = %s and r2_key = %s and deleted_at is null limit 1",
-            (project_id, r2_key))
+            "where user_id = %s and r2_key = %s and deleted_at is null limit 1",
+            (user_id, r2_key))
         return await cur.fetchone()
 
 

@@ -22,6 +22,8 @@ import hashlib
 import logging
 import uuid
 
+from psycopg import errors
+
 from app import repo
 from app.services import sam_retry
 from app.agents.product_reference import ProductReference
@@ -105,35 +107,61 @@ async def record(conn, *, user_id: str, project_id: str, view: str, result,
                  source_asset_id: str) -> dict | None:
     """Create — or reuse — the asset row for one produced cutout. Idempotent.
 
-    Idempotency is by lookup-before-create on (project, r2Key): the SAM service derives that
+    Idempotency is by lookup-before-create on (owner, r2Key): the SAM service derives that
     key deterministically from source content + view + model + algorithm, so a retried job that
     re-produces the same cutout finds the same key and reuses the existing row. Without this, a
     dispatcher retry after a timeout would leave duplicate rows pointing at one object.
+
+    The lookup is scoped to the **owner, not the project**, because `assets.r2_key` is globally
+    unique while the key itself is content-derived and carries no project. The same photograph
+    re-uploaded into a second project produces the same cutout key, so a project-scoped lookup
+    missed the existing row and the INSERT died on `assets_r2_key_key` — taking the whole
+    dispatcher iteration with it (2026-08-26, prod). Another seller's identical photograph is a
+    different matter: we must not pull their asset row into this project, so that collision
+    gives up this one cutout (generation falls back to RAW) instead of raising.
     """
     if not result.ready or not result.cutout_key:
         return None
-    existing = await find_by_key(conn, project_id=project_id, r2_key=result.cutout_key)
+    existing = await find_by_key(conn, user_id=user_id, r2_key=result.cutout_key)
     if existing:
         return existing
 
     asset_id = str(uuid.uuid4())
-    row = await repo.create_asset(
-        conn, asset_id=asset_id, user_id=user_id, project_id=project_id,
-        source="derived", bucket="", key=result.cutout_key, mime="image/png",
-        size=result.byte_size, original_filename=None)
-    await set_metadata(conn, asset_id=asset_id,
-                       metadata=metadata_for(view, result, source_asset_id))
+    # 직접 SAVEPOINT — 충돌로 tx 가 abort 되면 같은 커넥션의 **다음 슬롯**(Front 실패 →
+    # Back)까지 "current transaction is aborted" 로 끌려간다. 앞뒤 뷰의 독립성이 이 워커의
+    # 계약이므로(sam_preprocess_job 주석) 충돌은 이 슬롯 안에서 끝내야 한다.
+    # conn.transaction() 은 쓰지 않는다 — 열린 tx 가 없으면 스스로 커밋해 호출자의 커밋
+    # 제어를 빼앗는다(repo.create_job 의 같은 이유).
+    async with conn.cursor() as cur:
+        await cur.execute("savepoint canonical_record")
+    try:
+        row = await repo.create_asset(
+            conn, asset_id=asset_id, user_id=user_id, project_id=project_id,
+            source="derived", bucket="", key=result.cutout_key, mime="image/png",
+            size=result.byte_size, original_filename=None)
+        await set_metadata(conn, asset_id=asset_id,
+                           metadata=metadata_for(view, result, source_asset_id))
+    except errors.UniqueViolation:
+        async with conn.cursor() as cur:
+            await cur.execute("rollback to savepoint canonical_record")
+        log.warning(
+            "canonical cutout key already owned by another seller — skipping record "
+            "project=%s view=%s key=%s", project_id, view, result.cutout_key)
+        return None
+    async with conn.cursor() as cur:
+        await cur.execute("release savepoint canonical_record")
     log.info("canonical cutout recorded project=%s view=%s asset=%s key=%s",
              project_id, view, asset_id, result.cutout_key)
     return row
 
 
-async def find_by_key(conn, *, project_id: str, r2_key: str) -> dict | None:
+async def find_by_key(conn, *, user_id: str, r2_key: str) -> dict | None:
+    """소유자 범위로 찾는다 — r2_key 는 전역 unique 이고 내용 해시라 프로젝트를 안 담는다."""
     async with conn.cursor() as cur:
         await cur.execute(
             "select id::text as id, r2_key, mime_type, byte_size, metadata from assets "
-            "where project_id = %s and r2_key = %s and deleted_at is null limit 1",
-            (project_id, r2_key))
+            "where user_id = %s and r2_key = %s and deleted_at is null limit 1",
+            (user_id, r2_key))
         return await cur.fetchone()
 
 
