@@ -1614,7 +1614,10 @@ async def requeue_personalization_purge(
 
 
 async def user_account_purge_closed(conn: AsyncConnection, user_id: str) -> bool:
-    """Server-owned biometric writer closure gate for active purge or completed account-delete."""
+    """Server-owned account-closure gate: True only for an active or completed account-delete
+    purge. An active *withdrawal* purge is NOT account closure — writers hit the 409
+    purge_in_progress gate and repeat withdrawals stay idempotent (202), so it must not
+    surface here as a 404 account_closed."""
     async with conn.cursor() as cur:
         await cur.execute(
             """
@@ -1624,7 +1627,10 @@ async def user_account_purge_closed(conn: AsyncConnection, user_id: str) -> bool
                where user_id = %s
                  and kind = 'personalization_purge'
                  and (
-                       status in ('pending', 'running')
+                       (
+                         status in ('pending', 'running')
+                     and coalesce(nullif(payload->>'reason', ''), 'withdrawal') = 'account_delete'
+                       )
                     or (
                          status = 'done'
                      and coalesce(nullif(payload->>'reason', ''), 'withdrawal') = 'account_delete'
