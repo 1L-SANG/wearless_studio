@@ -1676,10 +1676,9 @@
 .text-drop-ghost { position: absolute; z-index: 30; pointer-events: none;
   padding: 0; background: transparent; white-space: pre-wrap;
   outline: calc(1.5px * var(--inv, 1)) solid var(--link); outline-offset: calc(2px * var(--inv, 1)); }
-/* 오브젝트 놓일 자리 미리보기 — 실제 크기 상자(연한 채움 + 링크색 아웃라인) */
-.obj-drop-ghost { position: absolute; z-index: 30; pointer-events: none;
-  background: rgba(35, 131, 226, .07); border-radius: calc(4px * var(--inv, 1));
-  outline: calc(1.5px * var(--inv, 1)) solid var(--link); outline-offset: calc(2px * var(--inv, 1)); }
+/* 오브젝트 놓일 자리 미리보기 — 실제 도형/선 모양을 그대로(텍스트가 실제 글자를 보이는 것과 같은 결) */
+.obj-drop-ghost { position: absolute; z-index: 30; pointer-events: none; opacity: .9; }
+.obj-drop-ghost > svg, .obj-drop-ghost > div { display: block; width: 100%; height: 100%; }
 /* 프레임 놓일 자리 미리보기 — 삽입 갭에 프레임 미니 레이아웃을 반투명으로 */
 .frame-drop-ghost { position: relative; width: 300px; overflow: hidden;
   margin: calc(8px * var(--canvas-inv, 1)) auto; border-radius: 10px; opacity: .72;

@@ -651,6 +651,37 @@ function ImageImportWait({ item, scale }) {
   );
 }
 
+// 오브젝트 드래그 놓일 자리 미리보기 — 실제 도형/선 모양을 그린다(텍스트가 실제 글자를
+// 보여주는 것과 같은 결). 캔버스 도형 렌더와 같은 SHAPE_D·기본 흰채움/잉크테두리를 쓴다.
+function DragObjectGhost({ kind, id, w, h }) {
+  const fill = '#ffffff';
+  const stroke = '#0e0d14';
+  const sw = 2;
+  if (kind === 'line') {
+    const my = h / 2;
+    return (
+      <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ overflow: 'visible' }}>
+        <line x1={id === 'arrow-l' ? 12 : 0} y1={my} x2={id === 'arrow-r' ? w - 12 : w} y2={my} stroke={stroke} strokeWidth={sw} strokeLinecap="round" />
+        {id === 'arrow-l' && <polyline points={`14,${my - 8} 2,${my} 14,${my + 8}`} fill="none" stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />}
+        {id === 'arrow-r' && <polyline points={`${w - 14},${my - 8} ${w - 2},${my} ${w - 14},${my + 8}`} fill="none" stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />}
+      </svg>
+    );
+  }
+  const box = (radius) => <div style={{ width: '100%', height: '100%', borderRadius: radius, background: fill, boxShadow: `inset 0 0 0 ${sw}px ${stroke}` }} />;
+  if (kind === 'shape') {
+    if (id === 'circle') return box('50%');
+    if (id === 'rect') return box(12);
+    if (id === 'triangle') return <svg width={w} height={h}><polygon points={`${w / 2},${sw / 2} ${w - sw / 2},${h - sw / 2} ${sw / 2},${h - sw / 2}`} fill={fill} stroke={stroke} strokeWidth={sw} strokeLinejoin="round" /></svg>;
+    if (SHAPE_D[id]) return <svg width={w} height={h} viewBox="0 0 100 100" preserveAspectRatio="none"><path d={SHAPE_D[id]} fill={fill} stroke={stroke} strokeWidth={sw} strokeLinejoin="round" vectorEffect="non-scaling-stroke" /></svg>;
+    return box(8);
+  }
+  // preset(오브젝트 탭) 대표 형태
+  if (id === 'divider') { const my = h / 2; return <svg width={w} height={h}><line x1={0} y1={my} x2={w} y2={my} stroke={stroke} strokeWidth={3} strokeLinecap="round" /></svg>; }
+  if (id === 'single-bubble' || id === 'qa-bubbles') return <svg width={w} height={h} viewBox="0 0 100 100" preserveAspectRatio="none"><path d={SHAPE_D.bubble} fill={fill} stroke={stroke} strokeWidth={sw} strokeLinejoin="round" vectorEffect="non-scaling-stroke" /></svg>;
+  if (id === 'label-badge') return box(h / 2);
+  return box(8);
+}
+
 function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onTextCommit, onElementDragStart, shouldSuppressBlankClick, onAddImage, onDropImage, onDropBlockImage, onDropImageFiles, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropCancel, onCropReset, idx }) {
   // 블록 높이는 콘텐츠보다 작아지지 않는다 — 이미지를 블록보다 크게 리사이즈하면 블록도 따라 커져 클립 방지.
   // (기존: block.h 있으면 고정 → 이미지 키워도 block-clip 이 잘라 "안 커보이던" 버그)
@@ -729,7 +760,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
         if (objDesc) {
           const box = objectDropBox(objDesc.type, objDesc.id);
           setTextGhost(null);
-          setObjGhost({ ...textPresetDropPlacement({ ...point, w: box.w, h: box.h, blockH }), box });
+          setObjGhost({ ...textPresetDropPlacement({ ...point, w: box.w, h: box.h, blockH }), box, kind: objDesc.type, id: objDesc.id });
           return;
         }
         setTextGhost(null); setObjGhost(null);
@@ -756,7 +787,9 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
         }}>{textGhost.box.text}</div>
       )}
       {objGhost && (
-        <div className="obj-drop-ghost" style={{ left: objGhost.x, top: objGhost.y, width: objGhost.box.w, height: objGhost.box.h }} aria-hidden="true" />
+        <div className="obj-drop-ghost" style={{ left: objGhost.x, top: objGhost.y, width: objGhost.box.w, height: objGhost.box.h }} aria-hidden="true">
+          <DragObjectGhost kind={objGhost.kind} id={objGhost.id} w={objGhost.box.w} h={objGhost.box.h} />
+        </div>
       )}
       <div className="block-clip">
         {block.elements.map((el) => (
