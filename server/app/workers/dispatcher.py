@@ -8,6 +8,7 @@ lease 초과(고착) job을 복구하고, 복구로 error 처리된 job의 예�
 import asyncio
 import contextlib
 import logging
+import os
 import time
 
 from .. import image_usage, repo
@@ -49,9 +50,30 @@ _KINDS = tuple(_WORKERS)
 _SWEEP_INTERVAL = 60.0  # lease 복구 점검 주기(초)
 
 
+def configured_job_kinds(raw: str | None = None) -> tuple[str, ...]:
+    """Resolve JOB_KINDS: all/default, include list, or one exclusion list."""
+    raw = os.getenv("JOB_KINDS", "") if raw is None else raw
+    tokens = [token.strip().lower() for token in raw.split(",") if token.strip()]
+    if not tokens or tokens == ["all"]:
+        return _KINDS
+    includes = [token for token in tokens if not token.startswith("-")]
+    excludes = [token[1:] for token in tokens if token.startswith("-")]
+    if includes and excludes:
+        raise ValueError("JOB_KINDS cannot mix included and excluded kinds")
+    selected = excludes or includes
+    unknown = [kind for kind in selected if kind not in _WORKERS]
+    if unknown:
+        raise ValueError(f"JOB_KINDS contains unknown kinds: {', '.join(unknown)}")
+    kinds = tuple(kind for kind in _KINDS if kind not in excludes) if excludes else tuple(includes)
+    if not kinds:
+        raise ValueError("JOB_KINDS selects no workers")
+    return kinds
+
+
 class JobDispatcher:
-    def __init__(self, app):
+    def __init__(self, app, *, kinds=None):
         self.app = app
+        self.kinds = tuple(kinds) if kinds is not None else configured_job_kinds()
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
         self._wake = asyncio.Event()
@@ -87,7 +109,7 @@ class JobDispatcher:
                     last_sweep = now
                     await self._recover_stale(s, pool)
                 async with pool.connection() as conn:
-                    job = await repo.claim_next_job(conn, _KINDS, s.job_worker_id)
+                    job = await repo.claim_next_job(conn, self.kinds, s.job_worker_id)
                     await conn.commit()
                 if job is None:
                     # 고정 sleep 대신 wake 이벤트 대기(상한 = poll_interval) — 라우트가
@@ -150,7 +172,9 @@ class JobDispatcher:
 
     async def _recover_stale(self, s, pool):
         async with pool.connection() as conn:
-            await repo.recover_stale_leases(conn, s.job_lease_timeout_seconds)
+            await repo.recover_stale_leases(
+                conn, s.job_lease_timeout_seconds, self.kinds
+            )
             await conn.commit()
         # 예약 크레딧 미정산 error job 해제 — 이번 복구분 + 과거 해제 실패분까지 재시도.
         # release는 settle_key 멱등이라 중복 안전. 해제 실패 시 다음 sweep이 다시 잡는다.

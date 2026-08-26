@@ -1346,6 +1346,25 @@ async def opendid_demand_snapshot(conn: AsyncConnection):
     )
 
 
+async def detail_worker_demand_snapshot(conn: AsyncConnection):
+    """Keep the Spot detail worker alive while a detail job is pending or running."""
+    from app.services.sam_autoscale import DemandSnapshot
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select "
+            "  count(*) filter (where status in ('pending', 'running')) as active, "
+            "  max(finished_at) filter (where finished_at is not null) as last_finished "
+            "from jobs where kind = %s",
+            ("detail_page",),
+        )
+        row = await cur.fetchone() or {}
+    return DemandSnapshot(
+        active_sam_jobs=int(row.get("active") or 0),
+        last_sam_finished_at=row.get("last_finished"),
+        last_upload_at=None,
+    )
+
+
 async def try_advisory_lock(conn: AsyncConnection, key: str) -> bool:
     """트랜잭션 범위 advisory lock 을 **기다리지 않고** 시도한다. 못 잡으면 False.
 
@@ -1772,7 +1791,9 @@ async def renew_job_lease(conn: AsyncConnection, job_id: str, lease_token: str) 
         return cur.rowcount > 0
 
 
-async def recover_stale_leases(conn: AsyncConnection, lease_timeout_seconds: int) -> list[dict]:
+async def recover_stale_leases(
+    conn: AsyncConnection, lease_timeout_seconds: int, kinds: tuple[str, ...]
+) -> list[dict]:
     """lease 초과 running job을 복구한다.
 
     유료 상세페이지 잡은 provider 응답 여부를 알 수 없는 상태에서 전체를 재큐하면 중복
@@ -1786,7 +1807,9 @@ async def recover_stale_leases(conn: AsyncConnection, lease_timeout_seconds: int
             with stale as (
               select id, kind, coalesce((metadata->>'leaseRecoveries')::int, 0) as recoveries
               from jobs
-              where status = 'running' and locked_at < now() - make_interval(secs => %s)
+              where status = 'running'
+                and locked_at < now() - make_interval(secs => %s)
+                and kind = any(%s)
               for update skip locked
             ),
             updated as (
@@ -1836,7 +1859,7 @@ async def recover_stale_leases(conn: AsyncConnection, lease_timeout_seconds: int
             select id::text as id, user_id::text as user_id, status, credits_reserved
             from updated
             """,
-            (lease_timeout_seconds, msg, msg),
+            (lease_timeout_seconds, list(kinds), msg, msg),
         )
         return await cur.fetchall()
 

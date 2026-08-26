@@ -121,6 +121,12 @@ def _wake_dispatcher(request: Request) -> None:
         dispatcher.wake()
 
 
+def _prewarm_detail_worker(request: Request) -> None:
+    scaler = getattr(request.app.state, "detail_worker_autoscaler", None)
+    if scaler is not None:
+        scaler.prewarm_soon()
+
+
 async def _fit_profile_snapshot(
     conn,
     user_id: str,
@@ -2993,6 +2999,7 @@ async def generate_detail_page(
                     detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
         await conn.commit()
     _wake_dispatcher(request)
+    _prewarm_detail_worker(request)
     return JSONResponse(status_code=202, content={"jobId": job["id"]})
 
 

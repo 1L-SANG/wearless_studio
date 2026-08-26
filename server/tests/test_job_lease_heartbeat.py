@@ -106,6 +106,7 @@ def test_stale_paid_detail_page_is_not_automatically_requeued():
     assert "then 'error'" in source
     assert source.count("stale.kind = 'detail_page' or stale.recoveries >= 1") == 3
     assert "finished_at = case" in source
+    assert "kind = any(%s)" in source
 
 
 def test_dispatcher_stop_waits_for_cancelled_worker_finalizer(monkeypatch):

@@ -66,7 +66,7 @@ Resources:
               - !Sub 'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:cluster/${App}-${Env}-Cluster-*'
               - !Sub 'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:service/${App}-${Env}-Cluster-*/*'
               - !Sub 'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${App}-${Env}-Cluster-*/*'
-          # 대수 변경은 **sam2·opendid 두 서비스**만. 태그 조건이 api 자신을 포함한 다른 서비스를
+          # 대수 변경은 **sam2·opendid·detail-worker**만. 태그 조건이 api 자신을 포함한 다른 서비스를
           # 막는다(StringEquals 의 값 리스트 = OR; api 는 copilot-service=api 라 implicitDeny).
           - Sid: ScaleOnDemandServices
             Effect: Allow
@@ -79,6 +79,7 @@ Resources:
                 aws:ResourceTag/copilot-service:
                   - sam2
                   - opendid
+                  - detail-worker
           - Sid: Alert
             Effect: Allow
             Action: sns:Publish

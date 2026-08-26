@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -19,9 +20,13 @@ SAM_KINDS = ("sam_preprocess", "matching_cutout", "editor_garment_mask")
 #: 세 태그 모두 정확히 일치해야 한다. 실측(2026-08-21): Copilot 이 ECS 서비스에 이 태그를 단다.
 #: 서비스명에는 랜덤 접미사가 붙어(…-6uWul9L25eM7) 박아 두면 스택 재생성 시 조용히 깨진다.
 #: service 만 바꿔 sam2·opendid 등 다른 scale-to-zero 서비스에 재사용한다(어댑터 인스턴스별).
-def _required_tags(service: str) -> dict:
-    return {"copilot-application": "wearless", "copilot-environment": "prod",
+def _required_tags(service: str, application="wearless", environment="prod") -> dict:
+    return {"copilot-application": application, "copilot-environment": environment,
             "copilot-service": service}
+
+
+def aws_region() -> str:
+    return os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
 
 
 _REQUIRED_TAGS = _required_tags("sam2")  # 하위호환(직접 참조하는 외부 코드 대비)
@@ -87,7 +92,11 @@ class SamAutoscaleAdapter:
                  topic_attr="sam_alert_topic_arn", ecs=None, sns=None):
         self._settings = settings
         self._service = service
-        self._required_tags = _required_tags(service)
+        self._required_tags = _required_tags(
+            service,
+            os.getenv("COPILOT_APPLICATION_NAME", "wearless"),
+            os.getenv("COPILOT_ENVIRONMENT_NAME", "prod"),
+        )
         self._topic_attr = topic_attr
         self.enabled = getattr(settings, enabled_attr, "off") == "on"
         self._ecs = ecs
@@ -98,7 +107,7 @@ class SamAutoscaleAdapter:
             from botocore.config import Config
             # reconciler 가 느려도 잡 처리에 영향이 없도록 짧게. 재시도는 boto 기본 대신 2회.
             cfg = Config(connect_timeout=3, read_timeout=5, retries={"max_attempts": 2})
-            region = "ap-northeast-2"
+            region = aws_region()
             self._ecs = ecs or boto3.client("ecs", region_name=region, config=cfg)
             self._sns = sns or boto3.client("sns", region_name=region, config=cfg)
 

@@ -55,6 +55,11 @@ network:
 
 variables:                       # 평문 (민감하지 않음). 시크릿은 아래 secrets 블록.
   APP_ENV: production
+  # 상세페이지는 0대 Spot 전용 워커가 소유한다. API는 나머지 잡만 claim하고,
+  # pending detail_page가 생기면 아래 autoscaler가 detail-worker를 1대로 깨운다.
+  JOB_KINDS: "-detail_page"
+  DETAIL_WORKER_AUTOSCALE: "on"
+  DETAIL_WORKER_AUTOSCALE_IDLE_MINUTES: "0"
   # Supabase session pooler 전체 한도(15)를 롤링 배포의 구·신 태스크가 함께 잠식하지 않게 한다.
   # dispatcher는 프로세스당 1개 직렬 실행이므로 3개면 충분하고, 10개 기본값을 두 태스크가
   # 동시에 잡아 PostgREST까지 PGRST002/503이 되던 2026-08-18 장애를 방지한다.

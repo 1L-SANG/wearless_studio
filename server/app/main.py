@@ -21,7 +21,7 @@ from .db import create_pool
 from . import image_usage
 from .r2 import R2Client
 from .routes import router as v1_router, COMMON_RESPONSES
-from .workers.dispatcher import JobDispatcher
+from .workers.dispatcher import JobDispatcher, configured_job_kinds
 from .workers.draft_asset_reclaimer import DraftAssetReclaimer
 from .workers.fm_vc_revocation_reconciler import FaceVcRevocationReconciler
 from .workers.sam_retry_pusher import SamRetryPusher
@@ -105,6 +105,8 @@ def _validate_facemarket_vc_settings(settings: Settings) -> None:
 def create_app(settings: Settings | None = None) -> FastAPI:
     _configure_logging()
     settings = settings or load_settings()
+    job_kinds = configured_job_kinds()
+    detail_worker_only = job_kinds == ("detail_page",)
 
     from .facemarket_enrollment import build_biometric_aws_clients, validate_biometric_settings
 
@@ -121,6 +123,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         sam_retry_pusher = None
         sam_autoscaler = None
         opendid_autoscaler = None
+        detail_worker_autoscaler = None
         if pool is not None:
             await pool.open()
             # revoke_license/cutover 는 fm_vc_required 와 무관하게 vc_id 가 있으면
@@ -133,36 +136,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 and settings.opendid_holder_hmac_secret
                 and settings.opendid_holder_hmac_secret.strip()
             )
-            if holder_configured or settings.fm_vc_required:
+            if not detail_worker_only and (holder_configured or settings.fm_vc_required):
                 vc_revocation_reconciler = FaceVcRevocationReconciler(app)
                 await vc_revocation_reconciler.start()
-            if app.state.r2 is not None:
+            if not detail_worker_only and app.state.r2 is not None:
                 draft_asset_reclaimer = DraftAssetReclaimer(app)
                 await draft_asset_reclaimer.start()
             # sam2 온디맨드 기동/종료(2026-08-21). 디스패처 조건(R2·AI provider)과 **독립** —
             # DB 만 있으면 돈다. 디스패처 블록 안에 두면 provider 키가 빠진 환경에서 sam2 가
             # 영영 안 켜진다. off 면 어댑터가 클라이언트를 안 만들고 prewarm 은 즉시 return.
             # state 에는 off 여도 올려 둔다 — 라우트 훅이 getattr 분기 없이 부를 수 있게.
-            autoscale_adapter = SamAutoscaleAdapter(settings)
-            app.state.sam_autoscaler = SamAutoscaler(app, autoscale_adapter)
-            sam_client.install_prewarm_hook(app.state.sam_autoscaler.prewarm)
-            if autoscale_adapter.enabled:
-                sam_autoscaler = app.state.sam_autoscaler
-                await sam_autoscaler.start()
-            # opendid(fm-holder) 온디맨드 — 같은 reconciler/어댑터를 service·demand·lock_key 만 바꿔
-            # 재사용. 수요 = license_pending·vc_pending 등록. wake 는 issue_face_vc 지연 경로가
-            # app.state.opendid_autoscaler.prewarm_soon() 으로 부른다(off 여도 즉시 return).
-            opendid_adapter = SamAutoscaleAdapter(
-                settings, service="opendid",
-                enabled_attr="opendid_autoscale", topic_attr="sam_alert_topic_arn")
-            app.state.opendid_autoscaler = SamAutoscaler(
-                app, opendid_adapter,
-                demand_fn=lambda repo, conn: repo.opendid_demand_snapshot(conn),
-                idle_attr="opendid_autoscale_idle_minutes",
-                name="opendid", lock_key="opendid_autoscaler")
-            if opendid_adapter.enabled:
-                opendid_autoscaler = app.state.opendid_autoscaler
-                await opendid_autoscaler.start()
+            if not detail_worker_only:
+                autoscale_adapter = SamAutoscaleAdapter(settings)
+                app.state.sam_autoscaler = SamAutoscaler(app, autoscale_adapter)
+                sam_client.install_prewarm_hook(app.state.sam_autoscaler.prewarm)
+                if autoscale_adapter.enabled:
+                    sam_autoscaler = app.state.sam_autoscaler
+                    await sam_autoscaler.start()
+                # opendid(fm-holder) 온디맨드 — 같은 reconciler/어댑터를 service·demand·lock_key 만 바꿔
+                # 재사용. 수요 = license_pending·vc_pending 등록. wake 는 issue_face_vc 지연 경로가
+                # app.state.opendid_autoscaler.prewarm_soon() 으로 부른다(off 여도 즉시 return).
+                opendid_adapter = SamAutoscaleAdapter(
+                    settings, service="opendid",
+                    enabled_attr="opendid_autoscale", topic_attr="sam_alert_topic_arn")
+                app.state.opendid_autoscaler = SamAutoscaler(
+                    app, opendid_adapter,
+                    demand_fn=lambda repo, conn: repo.opendid_demand_snapshot(conn),
+                    idle_attr="opendid_autoscale_idle_minutes",
+                    name="opendid", lock_key="opendid_autoscaler")
+                if opendid_adapter.enabled:
+                    opendid_autoscaler = app.state.opendid_autoscaler
+                    await opendid_autoscaler.start()
+                detail_adapter = SamAutoscaleAdapter(
+                    settings, service="detail-worker",
+                    enabled_attr="detail_worker_autoscale",
+                    topic_attr="sam_alert_topic_arn")
+                app.state.detail_worker_autoscaler = SamAutoscaler(
+                    app, detail_adapter,
+                    demand_fn=lambda repo, conn: repo.detail_worker_demand_snapshot(conn),
+                    idle_attr="detail_worker_autoscale_idle_minutes",
+                    name="detail-worker", lock_key="detail_worker_autoscaler")
+                if detail_adapter.enabled:
+                    detail_worker_autoscaler = app.state.detail_worker_autoscaler
+                    await detail_worker_autoscaler.start()
             # job dispatcher (§5) — DB·R2 + 최소 1개 AI provider(마네킹=Gemini, 분석=Gemini/OpenAI)
             # 가 있고 활성화일 때만 기동. provider 없는 job 은 워커가 실패 봉투로 종결.
             if (
@@ -170,20 +186,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 and app.state.r2 is not None
                 and (app.state.gemini is not None or settings.openai_api_key)
             ):
-                dispatcher = JobDispatcher(app)
+                dispatcher = JobDispatcher(app, kinds=job_kinds)
                 await dispatcher.start()
                 app.state.dispatcher = dispatcher
                 # 폴링하는 화면이 없는 SAM 잡(sam_preprocess·matching_cutout)의 재시도를 민다.
                 # 디스패처와 **분리**한다 — 디스패처는 워커를 await 하므로 긴 잡이 도는 동안
                 # 타이머가 멈춘다(2026-08-21).
-                sam_retry_pusher = SamRetryPusher(app)
-                await sam_retry_pusher.start()
+                if not detail_worker_only:
+                    sam_retry_pusher = SamRetryPusher(app)
+                    await sam_retry_pusher.start()
         yield
         sam_client.install_prewarm_hook(None)
         if sam_autoscaler is not None:
             await sam_autoscaler.stop()
         if opendid_autoscaler is not None:
             await opendid_autoscaler.stop()
+        if detail_worker_autoscaler is not None:
+            await detail_worker_autoscaler.stop()
         if draft_asset_reclaimer is not None:
             await draft_asset_reclaimer.stop()
         if sam_retry_pusher is not None:
@@ -238,6 +257,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # 이미지 실비 계측 — 풀이 없으면(테스트·DB 미설정) 자동으로 로그 전용이 된다.
     image_usage.configure(pool=pool, persist=settings.image_usage_persist)
     app.state.dispatcher = None
+    app.state.detail_worker_autoscaler = None
     # 캐노니컬 컷아웃 조회기. 마네킹 워커가 이걸 통해 준비된 컷아웃을 읽는다 —
     # 없으면 None 을 돌려주고 베이스라인 경로가 그대로 돈다(보조 인프라).
     from .services.canonical_reference import load as _canonical_load

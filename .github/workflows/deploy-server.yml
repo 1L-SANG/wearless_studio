@@ -17,6 +17,7 @@ on:
             - "supabase/migrations/**"
             - "copilot/api/manifest.yml"
             - "copilot/api/addons/**"
+            - "copilot/detail-worker/manifest.yml"
             - ".github/workflows/deploy-server.yml"
     pull_request:
         branches: [main]
@@ -32,6 +33,7 @@ on:
             - "supabase/migrations/**"
             - "copilot/api/manifest.yml"
             - "copilot/api/addons/**"
+            - "copilot/detail-worker/manifest.yml"
             - ".github/workflows/deploy-server.yml"
     workflow_dispatch: {} # 수동 배포 버튼
 
@@ -92,6 +94,7 @@ jobs:
                         - 'server/.dockerignore'
                         - 'copilot/api/manifest.yml'
                         - 'copilot/api/addons/**'
+                        - 'copilot/detail-worker/manifest.yml'
                         - 'supabase/migrations/**'
                         - '.github/workflows/deploy-server.yml'
 
@@ -139,6 +142,16 @@ jobs:
                     exit 1
                   fi
                   supabase db push --db-url "$SUPABASE_DB_URL"
+
+            # API가 detail_page claim을 끊기 전에 desiredCount=0 서비스를 먼저 만든다.
+            # 역순이면 첫 detail 잡이 아무도 claim하지 않는 배포 공백이 생긴다.
+            - name: 상세 워커 배포 (Spot 0대)
+              run: |
+                  copilot svc deploy \
+                    --app "$COPILOT_APP" \
+                    --name detail-worker \
+                    --env "$COPILOT_ENV" \
+                    --tag "$GITHUB_SHA"
 
             - name: 배포 (이미지 빌드→ECR→ECS 롤링)
               run: |

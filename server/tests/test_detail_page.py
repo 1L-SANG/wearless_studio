@@ -30,6 +30,12 @@ def test_detail_404(client, make_token, monkeypatch):
 def test_detail_creates_job_and_reserves(client, make_token, monkeypatch):
     seen = {}
 
+    class Scaler:
+        def prewarm_soon(self):
+            seen["prewarmed"] = seen.get("prewarmed", 0) + 1
+
+    client.app.state.detail_worker_autoscaler = Scaler()
+
     async def fake_gp(conn, uid, pid):
         return {"id": pid}
 
@@ -71,6 +77,7 @@ def test_detail_creates_job_and_reserves(client, make_token, monkeypatch):
     # 예약 시점 단가 스냅샷 — 워커 정산의 단일 기준(정산 불변식)
     assert seen["metadata"]["perCutCost"] == 1
     assert seen["metadata"]["aiCount"] == 2
+    assert seen["prewarmed"] == 1
 
 
 def test_detail_rejects_saved_bg_example_before_job_or_credit(
