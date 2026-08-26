@@ -82,7 +82,13 @@ def test_detail_worker_is_x86_spot_zero_without_load_balancer(manifest_vars):
     assert manifest_vars["DETAIL_WORKER_AUTOSCALE"] == "on"
     # SIGTERM 후 잡 error 종결 + 크레딧 환불이 끝날 시간. 기본 30s 는 dispatcher.stop()
     # 대기 10s + finalize DB 쓰기(풀 타임아웃 10s)와 겹치면 여유가 없다.
-    assert worker["stop_timeout"] == "60s"
+    #
+    # Copilot 에는 stop_timeout 필드가 없어서 그냥 적으면 **조용히 무시된다**(실측:
+    # 배포된 태스크 정의 stopTimeout=None). taskdef_overrides 로만 들어가므로 이 테스트도
+    # 매니페스트에 문자열이 있는지가 아니라 override 항목이 있는지를 본다.
+    assert "stop_timeout" not in worker, "Copilot 이 무시하는 필드 — taskdef_overrides 를 쓸 것"
+    overrides = {o["path"]: o["value"] for o in worker.get("taskdef_overrides", [])}
+    assert overrides.get("ContainerDefinitions[0].StopTimeout") == 60
     # 0 이면 잡마다 콜드스타트를 다시 물고, 스케일다운과 claim 이 겹치면 그 잡이 죽는다.
     assert int(manifest_vars["DETAIL_WORKER_AUTOSCALE_IDLE_MINUTES"]) >= 5
 

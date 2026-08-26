@@ -23,7 +23,13 @@ exec: true
 # SIGTERM 후 잡을 error 로 종결하고 크레딧을 환불할 시간. 기본 30s 는 dispatcher.stop()
 # (최대 10s 대기) + finalize DB 쓰기(풀 타임아웃 10s)가 겹치면 여유가 없다. Spot 중단은
 # 2분 예고라 60s 를 써도 남는다.
-stop_timeout: 60s
+#
+# Copilot 매니페스트에는 stop_timeout 필드가 **없다** — 그냥 적으면 조용히 무시되고
+# 태스크 정의는 기본 30s 로 남는다(실측: 첫 배포 태스크 정의 stopTimeout=None).
+# taskdef_overrides 로 렌더된 CloudFormation 을 직접 고쳐야 한다.
+taskdef_overrides:
+  - path: ContainerDefinitions[0].StopTimeout
+    value: 60
 
 network:
   connect: true

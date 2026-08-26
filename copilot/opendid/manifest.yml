@@ -12,9 +12,13 @@ name: opendid
 type: Backend Service
 
 image:
-  build:
-    dockerfile: deploy/opendid/container/Dockerfile
-    context: deploy/opendid/container
+  # 빌드가 아니라 **이미 만들어진 이미지**를 참조한다. Dockerfile 이 요구하는 JAR 4개
+  # (공식 V2.0.0 3개 + fm-holder)는 외부 OpenDID 소스 트리에서 build.sh 가 모아오는
+  # 산출물이라 이 저장소만으로는 재빌드가 되지 않는다("/jars": not found 로 실패).
+  # us-east-1 이전 때 서울 ECR 의 유일본을 그대로 복사해 왔다(digest 3e5fd0e6…).
+  # 이미지를 새로 만들려면 build.sh gather 단계를 먼저 돌린 뒤 이 블록을 build: 로
+  # 되돌리고 새 태그를 여기 적는다.
+  location: 439328746001.dkr.ecr.us-east-1.amazonaws.com/wearless/opendid:9feee494
   port: 8100                      # holder — api 가 여기로 VC 요청
   healthcheck:
     command: ["CMD-SHELL", "curl -fsS http://localhost:8100/holder/health || exit 1"]
