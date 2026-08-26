@@ -64,7 +64,7 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   R2_BUCKET: wearless
   R2_ENDPOINT: https://2b7c948b56f129faaa10e5076b9e9a66.r2.cloudflarestorage.com
   R2_PUBLIC_BASE: https://images.wearless.kr
-  CLOUDFLARE_ZONE_ID: ""          # 운영 생체 파기 전 실제 zone id로 설정
+  CLOUDFLARE_ZONE_ID: "cc7b2bd968c6eb89fe30e45333c9ebd9"  # wearless.kr zone — images.wearless.kr CDN 캐시 파기용
   MANNEQUIN_BASE_WOMEN_ASSET_ID: 486937ac-7cb3-4597-b563-d185d378a10d
   MANNEQUIN_BASE_MEN_ASSET_ID: 736ff2ab-0f15-4f9a-b2ee-c40cd0ed7ee0
   # shadow 모드(판정·metrics 로그만, 게이팅 X). 2026-07-07: 실 gemini-3-pro 출력에서 QC pass율
