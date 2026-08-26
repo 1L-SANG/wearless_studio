@@ -13,6 +13,7 @@
 import base64
 import json
 import logging
+import time
 
 import httpx
 
@@ -202,6 +203,7 @@ async def analyze_with_fallback(
             attempts.append(f"{name}:no_key")
             continue
         model = (models or {}).get(name) or model_of(settings)
+        started = time.perf_counter()
         try:
             raw = await call(settings, model, prompt, images, schema, timeout,
                              thinking_level=thinking_level)
@@ -211,7 +213,15 @@ async def analyze_with_fallback(
         except (VisionError, httpx.HTTPError) as e:
             last_error = e
             attempts.append(f"{name}:err")
-            logger.warning("vision_llm provider failed: %s (%s)", name, str(e)[:200])
+            # 예외 **타입**과 경과 시간을 함께 남긴다. httpx 의 전송 계층 예외
+            # (ReadError·ConnectError·RemoteProtocolError)는 str() 이 비어 있어서,
+            # 메시지만 찍던 기존 로그는 프로드에서 'gemini ()' 로만 보였고 원인을
+            # 좁힐 수가 없었다(2026-08-26). 타입이 있으면 연결 실패인지 읽기
+            # 타임아웃인지가 갈리고, 경과 시간은 타임아웃 여부를 바로 준다.
+            logger.warning(
+                "vision_llm provider failed: %s model=%s %s(%s) after %.1fs images=%d",
+                name, model, type(e).__name__, str(e)[:200],
+                time.perf_counter() - started, len(images))
             continue
     if last_error is None:  # 시도할 provider 자체가 없었음(키 전무)
         raise VisionError("분석 AI 키가 설정되지 않았어요. 관리자에게 문의해 주세요.")
