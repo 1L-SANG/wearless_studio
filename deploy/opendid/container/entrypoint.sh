@@ -10,7 +10,8 @@
 #   OMNIONE_TAS_KEY OMNIONE_ISSUER_KEY  (서버별 regist 역할 키 — OmniOne 은 역할이 주소별이라 분리 필수)
 #   WALLET_SECRETS_DIR   (tas.wallet issuer.wallet cas.wallet wallet.wallet 가 있는 마운트 경로 — Secrets/EFS)
 #   WALLET_PASSWORD      (파일 월렛 공통 비번)
-#   FM_HOLDER_PEPPER
+#   FM_HOLDER_PEPPER          (holder 월렛 pepper)
+#   OPENDID_HOLDER_HMAC_SECRET (api↔holder 요청 서명 검증 공유 HMAC — api manifest 와 동일값)
 # 선택: JVM_HEAP(각 서버 -Xmx, 기본 384m), *_PORT override
 set -euo pipefail
 
@@ -71,6 +72,10 @@ export FM_CAS_PROVIDER_PATH="${WALLET_SECRETS_DIR}/cas.wallet"
 export FM_WALLET_PROVIDER_PW="${WALLET_PASSWORD}"
 export FM_CAS_PROVIDER_PW="${WALLET_PASSWORD}"
 export FM_HOLDER_PEPPER="${FM_HOLDER_PEPPER:?}"
+# api 가 X-FM-Signature 로 서명한 요청을 holder 의 HolderHmacFilter(${holder.api-hmac-secret}
+# = env FM_HOLDER_HMAC_SECRET)가 같은 시크릿으로 검증한다 — api manifest 의
+# OPENDID_HOLDER_HMAC_SECRET 과 반드시 같은 값. 없으면 holder 가 기동 실패(required)한다.
+export FM_HOLDER_HMAC_SECRET="${OPENDID_HOLDER_HMAC_SECRET:?}"
 $(J) "$JARS/fm-holder-0.1.0.jar" --server.port="${HOLDER_PORT:-8100}" > "$RUN/fm-holder.log" 2>&1 &
 pids+=($!)
 

@@ -200,10 +200,25 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 이걸 안 켜면 배포는 성공해도 프로드에 FaceMarket 기능이 조용히 없다(에러도 안 남 = 설계).
   FACEMARKET_ENABLED: "true"
   PERSONALIZATION_ENABLED: "true"
-  # Biometric enrollment stays dark until all external contracts and calibration artifacts are live.
-  FM_BIOMETRIC_ENROLLMENT_ENABLED: "false"
-  FM_OACX_CONTRACT_MODE: disabled
+  # 생체등록 활성화. ⚠️ 배포 순서: 이 값이 "true"인 api 를 배포하기 **전에** 반드시
+  #   (1) opendid 서비스가 떠서 healthy(holder :8100 도달 가능), (2) 아래 secrets 의
+  #   OPENDID_HOLDER_HMAC_SECRET·FM_CI_PEPPER·FM_LIVENESS_BROWSER_ROLE_ARN 가 SSM 에 존재해야 한다.
+  #   validate_biometric_settings(facemarket_enrollment.py) 가 기동 시 이 전제를 fail-fast 로 검사하므로
+  #   빠지면 api 태스크가 안 뜬다. opendid 먼저 → 그다음 이 api 재배포.
+  FM_BIOMETRIC_ENROLLMENT_ENABLED: "true"
+  # 실 OACX 모바일신분증 계약(D1 dlphotoimage). dev-mock 은 dev 전용이라 prod 는 이 값이어야 한다.
+  FM_OACX_CONTRACT_MODE: prod-dlphoto-v1
   FM_LIVENESS_REGION: us-east-1
+  # 캘리브 임계 — 출발값(합리적이나 골든셋 경험 캘리브 전 잠정, 발화율·오탈락 관측 후 튜닝).
+  #  · liveness confidence: AWS Face Liveness 0~100. 75 = 스푸핑 방어와 실사용자 오탈락(QA 79.8 사례)
+  #    사이 밴드. 높이면 더 엄격(오탈락↑), 낮추면 느슨(스푸핑↑). QA 느슨값(1) 절대 금지.
+  #  · id_live / retouched_live: SFace 코사인(0~1). 0.363 = 동일인 권장 기준선(fm_face_qc_threshold 와 동일).
+  FM_LIVENESS_CONFIDENCE_THRESHOLD: "75"
+  FM_ID_LIVE_THRESHOLD: "0.363"
+  FM_RETOUCHED_LIVE_THRESHOLD: "0.363"
+  FM_MATCH_POLICY_VERSION: prod-2026-08
+  # OpenDID 홀더(fm-holder) — 같은 VPC service discovery. VC 발급 요청 대상. opendid 서비스 필요.
+  OPENDID_HOLDER_URL: http://opendid:8100
   # 얼굴=생체 PII 전용 비공개 버킷(공개 도메인 미연결). 위 둘을 켜면 non-dev 에서 main.py 의
   # fail-fast 가드가 이 값을 요구한다(미설정 시 얼굴이 공개 메인버킷으로 새는 걸 기동 실패로 막음).
   R2_FACE_BUCKET: wearless-face
@@ -211,8 +226,6 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 3장 pairwise 코사인 최소값 < threshold 면 자산 등록 차단. 임계는 골드셋 캘리브 후 조정.
   FM_FACE_QC_ENABLED: "true"
   FM_FACE_QC_THRESHOLD: "0.363"
-  # OPENDID_HOLDER_URL: 프로드 홀더 미배포 → 미설정. VC 발급은 비치명적으로 스킵(라이선스는 정상,
-  # vc_id 만 null). 데모는 로컬 터널로 진행. 홀더를 프로드에 배포하면 여기에 그 주소를 넣는다.
   # ---- FaceMarket 온체인 정산(선택과제2). 넷 다 있어야 recorder 활성(facemarket_chain.from_settings),
   # 하나라도 없으면 정산 훅 no-op(settlement_skipped_no_chain). 주소·chainId 는 공개값이라 평문.
   FM_CHAIN_ID: "201210"
@@ -232,6 +245,10 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   # ⚠️ 배포 전 값 저장 필요: copilot secret init --name FM_CI_PEPPER (프로드 SSM).
   FM_CI_PEPPER: /copilot/wearless/prod/secrets/FM_CI_PEPPER
   FM_LIVENESS_BROWSER_ROLE_ARN: /copilot/wearless/prod/secrets/FM_LIVENESS_BROWSER_ROLE_ARN
+  # api 가 fm-holder 로 보내는 VC 요청 서명용 HMAC. 홀더도 같은 값을 봐야 검증된다(opendid manifest
+  # 와 동일 SSM 파라미터). 미설정이면 issue_face_vc 게이트가 503(라이선스는 나오되 VC 스킵).
+  # ⚠️ 배포 전 값 저장 필요: copilot-aws secret init --name OPENDID_HOLDER_HMAC_SECRET (프로드 SSM).
+  OPENDID_HOLDER_HMAC_SECRET: /copilot/wearless/prod/secrets/OPENDID_HOLDER_HMAC_SECRET
   # 온체인 정산 시크릿. RPC URL 은 쿼리에 게이트웨이 auth 토큰이 박혀 있어 URL 전체가 시크릿.
   # ⚠️ 배포 전 값 저장 필요(없으면 ECS 태스크 기동 실패): scripts/fm-chain-secrets.sh 참고.
   FM_CHAIN_RPC_URL: /copilot/wearless/prod/secrets/FM_CHAIN_RPC_URL
