@@ -25,7 +25,7 @@ import { Icon, IconButton, Button, Modal, EmptyState, ErrorState, useToast } fro
 import { SmoothProgressTrack } from '@/components/SmoothProgress.jsx';
 import { EXPECTED_MS } from '@/lib/smoothProgress.js';
 import { exampleGenderFromAnalysis, hexFor } from '@/features/storyboard/Storyboard.jsx';
-import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
+import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel, FrameMini } from '@/features/editor/EditorPanels.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isAutoManagedBlock, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { DEFAULT_TEXT_BODY, buildTextPresetElement, dropUntouchedPlaceholders, textPresetBox, textPresetDropPlacement } from '@/features/editor/presets/textPresets.js';
@@ -38,7 +38,7 @@ import { blockHeightFromBottom, clampDragDelta, clampElementRect, expandBlockHei
 import { exportBlockPng, exportBlocksZip, exportLongPng } from '@/features/editor/editorExport.js';
 import { snapEditorDragDelta } from '@/features/editor/editorSnap.js';
 import { copyEditorElements, pasteEditorElements } from '@/features/editor/editorClipboard.js';
-import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, textPresetKeyFromDragTypes, findImageDropSlot, fitImageToFrameBlock, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
+import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, textPresetKeyFromDragTypes, objectDescriptorFromDragTypes, objectDropBox, findImageDropSlot, fitImageToFrameBlock, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, DETAIL_PAGE_TEMPLATE_SETS, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildDetailPageTemplateSet, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage, getDetailPageFrame, objectPresetInitialSelectionIds, upgradeLegacyKiwiTemplateBlocks } from '@/features/editor/editorLibrary.js';
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { imageResizeRect, lineHitStrokeWidth, resizePolicyForElement, shouldShowRotationHandle, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
@@ -662,6 +662,8 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
   const [objOver, setObjOver] = useState(false);
   // 텍스트 프리셋을 끌고 지나가는 동안만 사는 '놓일 자리' 미리보기(저장 대상 아님).
   const [textGhost, setTextGhost] = useState(null);
+  // 오브젝트(도형·선·프리셋)를 끌고 지나가는 동안만 사는 놓일 자리 상자 미리보기.
+  const [objGhost, setObjGhost] = useState(null);
 
   const pickBelowBlankText = (event, currentElement) => {
     const candidateIds = [];
@@ -713,23 +715,32 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
         e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setObjOver(true);
         // 텍스트 프리셋만 놓일 자리를 실제 상자로 미리 그린다 — 어디에 어떤 크기로
         // 들어갈지 손을 떼기 전에 보여야 한다(오너 2026-08-16).
-        const presetKey = textPresetKeyFromDragTypes(types);
-        if (!presetKey) return;
         const rect = e.currentTarget.getBoundingClientRect();
-        const box = textPresetBox(presetKey);
         const point = viewportPointToBlock({ clientX: e.clientX, clientY: e.clientY, blockLeft: rect.left, blockTop: rect.top, scale });
-        setTextGhost({
-          ...textPresetDropPlacement({ ...point, w: box.w, h: box.h, blockH }),
-          box,
-        });
+        const presetKey = textPresetKeyFromDragTypes(types);
+        if (presetKey) {
+          const box = textPresetBox(presetKey);
+          setObjGhost(null);
+          setTextGhost({ ...textPresetDropPlacement({ ...point, w: box.w, h: box.h, blockH }), box });
+          return;
+        }
+        // 오브젝트(도형·선·프리셋)도 놓일 자리를 실제 크기 상자로 미리 그린다.
+        const objDesc = objectDescriptorFromDragTypes(types);
+        if (objDesc) {
+          const box = objectDropBox(objDesc.type, objDesc.id);
+          setTextGhost(null);
+          setObjGhost({ ...textPresetDropPlacement({ ...point, w: box.w, h: box.h, blockH }), box });
+          return;
+        }
+        setTextGhost(null); setObjGhost(null);
       }}
-      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) { setObjOver(false); setTextGhost(null); } }}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) { setObjOver(false); setTextGhost(null); setObjGhost(null); } }}
       onDrop={(e) => {
         const draggedImage = decodeWardrobeImage(e.dataTransfer.getData(WARDROBE_IMAGE_MIME));
         const files = [...(e.dataTransfer.files || [])];
         const objectData = e.dataTransfer.getData('text/object');
         if (!draggedImage && !files.length && !objectData) return;
-        e.preventDefault(); setObjOver(false); setTextGhost(null);
+        e.preventDefault(); setObjOver(false); setTextGhost(null); setObjGhost(null);
         const rect = e.currentTarget.getBoundingClientRect();
         const point = viewportPointToBlock({ clientX: e.clientX, clientY: e.clientY, blockLeft: rect.left, blockTop: rect.top, scale });
         if (draggedImage) onDropBlockImage(block.id, draggedImage, point);
@@ -743,6 +754,9 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
           color: textGhost.box.style.color,
           lineHeight: textGhost.box.style.lineHeight ? `${textGhost.box.style.lineHeight}px` : 1.4,
         }}>{textGhost.box.text}</div>
+      )}
+      {objGhost && (
+        <div className="obj-drop-ghost" style={{ left: objGhost.x, top: objGhost.y, width: objGhost.box.w, height: objGhost.box.h }} aria-hidden="true" />
       )}
       <div className="block-clip">
         {block.elements.map((el) => (
@@ -1028,6 +1042,8 @@ export function Editor() {
   const genCount = useRef(0); // 동시 생성 수 — 주황(busy) 점은 마지막 생성이 끝날 때까지 유지
   const [frameOver, setFrameOver] = useState(null);
   const [frameDragging, setFrameDragging] = useState(false);
+  // 드래그 중인 프레임(패널→캔버스) — 삽입 갭에 미니 미리보기를 그린다. 저장 대상 아님.
+  const [dragFrame, setDragFrame] = useState(null);
   const [pendingSlot, setPendingSlot] = useState(null);
   const [imageImports, setImageImports] = useState([]);
   const [wardrobeUploadLoading, setWardrobeUploadLoading] = useState(false);
@@ -1898,7 +1914,7 @@ export function Editor() {
     setSelBlock(nb.id); setBlockFocused(true); setSelEl(element.id); setSelEls([element.id]); setTab('image');
   };
   const onCanvasInsertDrop = (e, idx) => {
-    e.preventDefault(); setFrameOver(null); setFrameDragging(false);
+    e.preventDefault(); setFrameOver(null); setFrameDragging(false); setDragFrame(null);
     const image = decodeWardrobeImage(e.dataTransfer.getData(WARDROBE_IMAGE_MIME));
     if (image) { addImageBlock(image, idx); return; }
     const presetType = e.dataTransfer.getData(EDITOR_INFO_PRESET_DRAG_TYPE);
@@ -2827,7 +2843,7 @@ export function Editor() {
       case 'frame': return (
         <FramePanel onAdd={addFrame} recommendGender={recommendGender} onPickInfo={openInfoPreset}
           onOverwriteTemplate={overwriteDetailPageTemplate} templateSets={DETAIL_PAGE_TEMPLATE_SETS}
-          onDragStart={() => setFrameDragging(true)} onDragEnd={() => { setFrameDragging(false); setFrameOver(null); }} />
+          onDragStart={(f) => { setFrameDragging(true); setDragFrame(f || null); }} onDragEnd={() => { setFrameDragging(false); setFrameOver(null); setDragFrame(null); }} />
       );
       case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onBubbleAppearanceChange={patchBubbleAppearance} onLayer={layerEl} onAddText={addText} />;
       case 'shape': return <ShapePanel catalogs={catalogs} onAdd={addShape} block={(selEls.length === 0 && selBlock) ? blocks.find((b) => b.id === selBlock) : null} onBgChange={changeBg} />;
@@ -3209,6 +3225,9 @@ export function Editor() {
                 <div className="canvas-droprow" onDragOver={(e) => { if (acceptsEditorBlockInsert(e.dataTransfer.types)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setFrameOver(i); } }}
                   onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setFrameOver((o) => o === i ? null : o); }} onDrop={(e) => onCanvasInsertDrop(e, i)}>
                   <div className={`canvas-dropline${frameOver === i ? ' on' : ''}`} />
+                  {dragFrame && frameOver === i && (
+                    <div className="frame-drop-ghost" aria-hidden="true" style={{ aspectRatio: `1000 / ${dragFrame.h}` }}><FrameMini frame={dragFrame} /></div>
+                  )}
                 </div>
                 <CanvasBlock block={b} scale={scale} idx={i} imageImports={imageImports.filter((item) => item.blockId === b.id)}
                   selectedBlockId={blockFocused ? selBlock : null} selEls={selEls} editEl={editEl} onEdit={setEditEl}
@@ -3228,6 +3247,9 @@ export function Editor() {
             <div className="canvas-droprow" onDragOver={(e) => { if (acceptsEditorBlockInsert(e.dataTransfer.types)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setFrameOver(blocks.length); } }}
               onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setFrameOver((o) => o === blocks.length ? null : o); }} onDrop={(e) => onCanvasInsertDrop(e, blocks.length)}>
               <div className={`canvas-dropline${frameOver === blocks.length ? ' on' : ''}`} />
+              {dragFrame && frameOver === blocks.length && (
+                <div className="frame-drop-ghost" aria-hidden="true" style={{ aspectRatio: `1000 / ${dragFrame.h}` }}><FrameMini frame={dragFrame} /></div>
+              )}
             </div>
             {/* Phase0 스파이크: 캔버스 세로 센티넬(좌40/중앙500/우960) — elementGuidelines 소스.
                 zero-width·투명, .ed-canvas(언스케일 좌표) 안이라 x 는 언스케일 px. */}

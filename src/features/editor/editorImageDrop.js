@@ -16,6 +16,32 @@ export const textPresetKeyFromDragTypes = (types) => {
   const found = Array.from(types || []).find((type) => String(type).startsWith(TEXT_PRESET_DRAG_PREFIX));
   return found ? found.slice(TEXT_PRESET_DRAG_PREFIX.length) : null;
 };
+/* 오브젝트(도형·선·프리셋) 드래그의 '종류 표식'. 텍스트 프리셋과 같은 이유로 타입 이름에
+   `<type>:<id>` 를 실어, 드래그 도중 블록이 어떤 오브젝트가 어디에 놓일지 미리 그린다. */
+export const OBJECT_DRAG_PREFIX = 'text/objdrag-';
+export const objectDescriptorFromDragTypes = (types) => {
+  const found = Array.from(types || []).find((type) => String(type).startsWith(OBJECT_DRAG_PREFIX));
+  if (!found) return null;
+  const [type, id] = found.slice(OBJECT_DRAG_PREFIX.length).split(':');
+  return type ? { type, id: id || null } : null;
+};
+
+// 오브젝트 드롭 미리보기 상자 크기 — addShape / buildObjectPreset 기본 치수와 맞춘다.
+const OBJECT_PRESET_BOX = {
+  'text-box': { w: 520, h: 150 },
+  'single-bubble': { w: 320, h: 100 },
+  'qa-bubbles': { w: 630, h: 254 },
+  divider: { w: 620, h: 24 },
+  'arrow-callout': { w: 390, h: 41 },
+  'label-badge': { w: 190, h: 62 },
+};
+export function objectDropBox(type, id) {
+  if (type === 'preset') return OBJECT_PRESET_BOX[id] || { w: 300, h: 120 };
+  if (type === 'line') return { w: 240, h: 24 };
+  if (id === 'bubble') return { w: 320, h: 100 };
+  return { w: 140, h: 140 };
+}
+
 export const encodeEditorImageDrag = encodeWardrobeImage;
 export const decodeEditorImageDrag = decodeWardrobeImage;
 

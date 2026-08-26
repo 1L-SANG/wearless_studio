@@ -8,6 +8,7 @@ import { Icon, Button, IconButton, Chips, EmptyState, UploadPendingTile } from '
 import { UnderlineTabs, ColorDots, MoodGuide, OuterClosureIcon } from '@/features/storyboard/Storyboard.jsx';
 import { ModelThumb } from '@/features/analysis/AnalysisForm.jsx';
 import { SHAPE_D } from '@/features/editor/shapes.js';
+import { OBJECT_DRAG_PREFIX } from '@/features/editor/editorImageDrop.js';
 import {
   ALL_CUT_TYPE_OPTIONS,
   inferContentRole,
@@ -856,6 +857,21 @@ function startTextPresetDrag(event, presetKey) {
   setTimeout(() => blank.remove(), 0);
 }
 
+// 프레임 드래그 시작 — 어떤 프레임인지 onDragStart(frame) 로 알려 캔버스 갭에 미니 미리보기를
+// 그리게 하고, 기본 카드 고스트는 감춘다(텍스트·오브젝트와 동일 규칙).
+function startFrameDrag(event, frame, onDragStart) {
+  event.dataTransfer.effectAllowed = 'copy';
+  event.dataTransfer.setData('text/frame', frame.id);
+  if (typeof document !== 'undefined' && event.dataTransfer.setDragImage) {
+    const blank = document.createElement('div');
+    blank.className = 'text-drag-ghost';
+    document.body.appendChild(blank);
+    event.dataTransfer.setDragImage(blank, 0, 0);
+    setTimeout(() => blank.remove(), 0);
+  }
+  onDragStart && onDragStart(frame);
+}
+
 export function TextPanel({ el, catalogs, onChange, onBubbleAppearanceChange, onLayer, onAddText }) {
   const has = el && el.type === 'text';
   const isBubble = has && el.shape === 'bubble';
@@ -1030,7 +1046,7 @@ function fminiFont(name) {
   if (/cormorant|playfair|garamond|georgia|serif/i.test(name)) return `'${name}',Georgia,serif`;
   return `'${name}',sans-serif`;
 }
-function FrameMini({ frame }) {
+export function FrameMini({ frame }) {
   const ref = useRef(null);
   const [scale, setScale] = useState(0);
   useLayoutEffect(() => {
@@ -1134,7 +1150,7 @@ function DetailSetView({ set, onBack, onOverwrite, onAddFrame, onDragStart, onDr
         {(set.frames || []).map((frame) => (
           <div className="dp-setview-frame" key={frame.id} title={`${frame.label} 추가`}
             onClick={() => onAddFrame(frame)} draggable
-            onDragStart={(e) => { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/frame', frame.id); onDragStart && onDragStart(); }}
+            onDragStart={(e) => startFrameDrag(e, frame, onDragStart)}
             onDragEnd={() => onDragEnd && onDragEnd()}>
             <div className="dp-setview-frame-canvas" style={{ aspectRatio: `1000 / ${frame.h}` }}>
               <FrameMini frame={frame} />
@@ -1177,7 +1193,7 @@ export function FramePanel({ onAdd, onOverwriteTemplate, templateSets, onDragSta
         <div className="frame-list">
           {frames.map((f) => (
             <div className="frame-item" key={f.id} onClick={() => onAdd(f)} draggable
-              onDragStart={(e) => { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/frame', f.id); onDragStart && onDragStart(); }}
+              onDragStart={(e) => startFrameDrag(e, f, onDragStart)}
               onDragEnd={() => onDragEnd && onDragEnd()}>
               <div className={`frame-prev frame-layout-prev${f.preview ? ' template' : ''}`}>
                 {f.slots.map((slot, i) => (
@@ -1238,7 +1254,20 @@ const BLOCK_BG_OPTS = [
 ];
 export function ShapePanel({ catalogs, onAdd, block, onBgChange }) {
   const [tab, setTab] = useState('preset');
-  const dragStart = (e, type, id) => { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/object', `${type}:${id}`); };
+  const dragStart = (e, type, id) => {
+    e.dataTransfer.effectAllowed = 'copy';
+    e.dataTransfer.setData('text/object', `${type}:${id}`);
+    // 드래그 중엔 getData 가 막혀 types 만 읽히므로, 종류를 타입 이름에 실어 보낸다(텍스트 프리셋과 동일).
+    e.dataTransfer.setData(`${OBJECT_DRAG_PREFIX}${type}:${id}`, `${type}:${id}`);
+    // 기본 브라우저 고스트를 감추고 블록 안 미리보기 상자 하나만 남긴다.
+    if (typeof document !== 'undefined' && e.dataTransfer.setDragImage) {
+      const blank = document.createElement('div');
+      blank.className = 'text-drag-ghost';
+      document.body.appendChild(blank);
+      e.dataTransfer.setDragImage(blank, 0, 0);
+      setTimeout(() => blank.remove(), 0);
+    }
+  };
   return (
     <div>
       {/* 제목은 좌측 패널 래퍼가 그린다(Editor.jsx) — 중복 방지 */}
