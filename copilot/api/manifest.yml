@@ -208,6 +208,10 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # ---- FaceMarket(해커톤, PR #22) — 얼굴 라이선스·개인화·연령게이트. off면 라우터 자체가 미등록.
   # 이걸 안 켜면 배포는 성공해도 프로드에 FaceMarket 기능이 조용히 없다(에러도 안 남 = 설계).
   FACEMARKET_ENABLED: "true"
+  # production+FaceMarket 이면 VC 발급이 필수다(main.py _validate_facemarket_vc_settings 기동검사).
+  # holder(opendid) 배포·배선을 마쳤으므로 이제 켠다 — 안 켜면 api 가 기동 실패(RuntimeError).
+  # 이게 켜지면 revoke/cutover 리컨실러도 함께 활성(mandatory VC 폐기 큐).
+  FACEMARKET_VC_REQUIRED: "true"
   PERSONALIZATION_ENABLED: "true"
   # 생체등록 활성화. ⚠️ 배포 순서: 이 값이 "true"인 api 를 배포하기 **전에** 반드시
   #   (1) opendid 서비스가 떠서 healthy(holder :8100 도달 가능), (2) 아래 secrets 의
