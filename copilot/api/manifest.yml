@@ -59,7 +59,11 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # pending detail_page가 생기면 아래 autoscaler가 detail-worker를 1대로 깨운다.
   JOB_KINDS: "-detail_page"
   DETAIL_WORKER_AUTOSCALE: "on"
-  DETAIL_WORKER_AUTOSCALE_IDLE_MINUTES: "0"
+  # 0 이면 잡이 끝나는 즉시 0대로 내려가 **다음 잡마다 콜드스타트**(태스크 프로비저닝 +
+  # 이미지 풀 + uvicorn 기동)를 다시 문다. 게다가 수요 스냅샷을 읽고 desired=0 을 쏘는
+  # 사이에 새 잡이 claim 되면 그 잡이 worker_shutdown 으로 죽는다. 10분이면 연속 생성이
+  # 같은 태스크를 재사용하고, 유휴 꼬리 비용은 $0.0186/h 로 무시할 수준이다.
+  DETAIL_WORKER_AUTOSCALE_IDLE_MINUTES: "10"
   # Supabase session pooler 전체 한도(15)를 롤링 배포의 구·신 태스크가 함께 잠식하지 않게 한다.
   # dispatcher는 프로세스당 1개 직렬 실행이므로 3개면 충분하고, 10개 기본값을 두 태스크가
   # 동시에 잡아 PostgREST까지 PGRST002/503이 되던 2026-08-18 장애를 방지한다.

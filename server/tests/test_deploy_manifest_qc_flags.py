@@ -73,13 +73,18 @@ def test_detail_worker_is_x86_spot_zero_without_load_balancer(manifest_vars):
     assert "http" not in worker
     assert worker["network"]["vpc"]["placement"] == "public"
     assert worker["variables"]["JOB_KINDS"] == "detail_page"
-    assert worker["variables"]["DB_POOL_MAX_SIZE"] == "2"
+    assert worker["variables"]["DB_POOL_MAX_SIZE"] == "3"
     assert worker["variables"]["DETAIL_CUT_CONCURRENCY"] == "5"
     assert worker["variables"]["DETAIL_CUT_STAGGER_MS"] == "3000"
     assert worker["variables"]["DETAIL_CUT_IMAGE_SIZE"] == "2K"
     assert worker["variables"]["GENEXAMPLE_BG_ENABLED"] == "true"
     assert manifest_vars["JOB_KINDS"] == "-detail_page"
     assert manifest_vars["DETAIL_WORKER_AUTOSCALE"] == "on"
+    # SIGTERM 후 잡 error 종결 + 크레딧 환불이 끝날 시간. 기본 30s 는 dispatcher.stop()
+    # 대기 10s + finalize DB 쓰기(풀 타임아웃 10s)와 겹치면 여유가 없다.
+    assert worker["stop_timeout"] == "60s"
+    # 0 이면 잡마다 콜드스타트를 다시 물고, 스케일다운과 claim 이 겹치면 그 잡이 죽는다.
+    assert int(manifest_vars["DETAIL_WORKER_AUTOSCALE_IDLE_MINUTES"]) >= 5
 
 
 @pytest.mark.parametrize("env_name,attr", QC_FLAGS)

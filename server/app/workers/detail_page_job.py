@@ -147,13 +147,23 @@ def _dims(data: bytes):
 
 
 async def _normalize_detail_openai_refs(prepared, model: str):
-    """Normalize shared generic GPT references once before five cut tasks fan out."""
+    """Normalize shared generic GPT references once before five cut tasks fan out.
+
+    item[1] 은 프로바이더가 받을 PNG 로 바뀌고, **원본 바이트는 item[10] 에 남는다**.
+    독립 컷 QC 와 장소 QC 는 그 원본을 본다 — PNG 는 같은 사진의 4.7배라(실측 JPEG
+    4.3MB → PNG 20.0MB), 판정 입력까지 갈아끼우면 컷마다 판정 요청이 그만큼 부풀고
+    base64 인코딩도 CPU 상한 하나를 더 오래 잡는다. 판정 결과는 두 표현이 같다.
+    """
     if not model.startswith("gpt-image"):
         return prepared
     unique: dict[tuple[str, int], InlineImage] = {}
     eligible: list[int] = []
     for index, item in enumerate(prepared):
         block, images = item[:2]
+        # 실패 슬롯(7-튜플)은 레퍼런스가 없다 — 정규화할 것도 없고, 여기에 항목을 덧붙이면
+        # item[7](passthrough) 자리가 밀려 다른 값으로 읽힌다.
+        if not images:
+            continue
         confirmed_packet = item[8] if len(item) > 8 else None
         if confirmed_packet is not None or cut_generator.is_signature_cut(block):
             continue
@@ -170,12 +180,16 @@ async def _normalize_detail_openai_refs(prepared, model: str):
     result = list(prepared)
     for index in eligible:
         item = list(result[index])
+        originals = list(item[1])
         item[1] = [
             image if image.mime == "image/png"
             else by_key[(image.mime, id(image.data))]
-            for image in item[1]
+            for image in originals
         ]
-        result[index] = tuple(item)
+        # 원본은 **항상 인덱스 10**에 온다 — 짧은 튜플을 그냥 이어붙이면 원본이
+        # item[5](space_set_plate) 같은 다른 자리로 들어간다.
+        padded = tuple(item) + (None,) * max(0, 10 - len(item))
+        result[index] = padded + (originals,)
     return result
 
 
@@ -233,6 +247,9 @@ async def _gen_cuts(app, job, prepared, product, analysis):
         passthrough = item[7] if len(item) > 7 else None
         confirmed_packet = item[8] if len(item) > 8 else None
         real_identity_attached = bool(item[9]) if len(item) > 9 else False
+        # 판정 입력은 정규화 전 원본 바이트다(_normalize_detail_openai_refs 주석 참고).
+        # 정규화가 없었던 경로(Gemini·confirmed·시그니처)는 images 가 곧 원본이다.
+        qc_images = item[10] if len(item) > 10 else images
         # 최신 main의 첫 화면 시그니처 컷은 자체 모델/폴백 계약을 가진다. AG-06 일반
         # 컷용 GPT 설정을 덮어씌우지 않고 원래 Settings를 써서 그 경계를 보존한다.
         generation_settings = (
@@ -332,7 +349,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                 and b.get("refScope") == "bg"
                 and manifest.startswith("1. EXAMPLE REFERENCE (scope: bg)")
             ):
-                plate = images[0]
+                plate = qc_images[0]
             # 장소일치 QC 게이트. 불일치면 재생성, 상한 초과면 이 컷만 빈 슬롯(부분 성공).
             # 일반 bg 편집은 기존 fail-open, 발행 공간세트는 QC 불능도 fail-closed다.
             if plate is not None:
@@ -450,7 +467,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                         fit_profile=(analysis or {}).get("fitProfile"),
                     )
                     qc_references = cut_output_qc.references_from_manifest(
-                        manifest, images
+                        manifest, qc_images
                     )
                     authority_profile = (
                         "confirmed_gpt_v1"

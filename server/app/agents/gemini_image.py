@@ -8,9 +8,10 @@ async httpx로 호출해 이벤트 루프를 막지 않는다 (§5).
 import asyncio
 import base64
 import binascii
+import functools
 import logging
-import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import httpx
@@ -20,17 +21,19 @@ from ..config import Settings
 
 log = logging.getLogger(__name__)
 
-_IMAGE_CPU = threading.Semaphore(1)
-
-
-def _run_cpu_limited(func, args, kwargs):
-    with _IMAGE_CPU:
-        return func(*args, **kwargs)
+#: 이미지 CPU 작업 전용 풀. max_workers=1 이 곧 프로세스 전체 동시성 상한이다.
+#: asyncio.to_thread(=기본 executor)로 세마포어를 잡으면 **대기 중인 작업도 기본 풀의
+#: 슬롯을 점유**해서, 같은 풀을 쓰는 R2 get/put 이 이미지 작업 뒤에 줄선다. 실측: 풀
+#: 워커 5개(Fargate 1 vCPU 에서 os.cpu_count()==1 이면 min(32,1+4)=5)에 컷 5개가 몰리면
+#: R2 업로드가 0.23s → 1.14s. 전용 풀은 대기를 큐에 두므로 기본 풀이 I/O 로 남는다.
+_IMAGE_CPU_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="image-cpu")
 
 
 async def run_cpu_bound(func, *args, **kwargs):
     """Keep image CPU work off the event loop and cap its local concurrency."""
-    return await asyncio.to_thread(_run_cpu_limited, func, args, kwargs)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _IMAGE_CPU_POOL, functools.partial(func, *args, **kwargs))
 
 
 @dataclass(frozen=True)
