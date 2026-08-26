@@ -32,7 +32,7 @@ from ..agents import (
     page_output_qc,
     space_set_assets,
 )
-from ..agents.gemini_image import InlineImage
+from ..agents.gemini_image import InlineImage, normalize_openai_images
 from ..agents.model_routing import resolve_detail_cut_model
 from ..agents.vision_llm import VisionError
 from ..r2 import IMMUTABLE_CACHE, PRIVATE_NO_STORE, ai_key, ext_for_mime
@@ -146,6 +146,39 @@ def _dims(data: bytes):
         return None, None
 
 
+async def _normalize_detail_openai_refs(prepared, model: str):
+    """Normalize shared generic GPT references once before five cut tasks fan out."""
+    if not model.startswith("gpt-image"):
+        return prepared
+    unique: dict[tuple[str, int], InlineImage] = {}
+    eligible: list[int] = []
+    for index, item in enumerate(prepared):
+        block, images = item[:2]
+        confirmed_packet = item[8] if len(item) > 8 else None
+        if confirmed_packet is not None or cut_generator.is_signature_cut(block):
+            continue
+        eligible.append(index)
+        for image in images:
+            if image.mime != "image/png":
+                unique.setdefault((image.mime, id(image.data)), image)
+    if not unique:
+        return prepared
+    normalized = await normalize_openai_images(list(unique.values()))
+    by_key = {
+        key: image for key, image in zip(unique, normalized, strict=True)
+    }
+    result = list(prepared)
+    for index in eligible:
+        item = list(result[index])
+        item[1] = [
+            image if image.mime == "image/png"
+            else by_key[(image.mime, id(image.data))]
+            for image in item[1]
+        ]
+        result[index] = tuple(item)
+    return result
+
+
 async def _gen_cuts(app, job, prepared, product, analysis):
     """준비된 블록별
     (block, images, manifest, has_face, product_images,
@@ -160,7 +193,9 @@ async def _gen_cuts(app, job, prepared, product, analysis):
     # AG-06만 상세컷 전용 모델을 사용한다. 공용 cut_generator의 기본 라우트를
     # 바꾸면 에디터의 '새 이미지'까지 함께 GPT로 전환되므로, 이 워커 안에서만
     # 불변 Settings 복사본의 image_high를 상세컷 snapshot으로 치환한다.
-    detail_settings = replace(s, model_image_high=resolve_detail_cut_model(s))
+    detail_model = resolve_detail_cut_model(s)
+    detail_settings = replace(s, model_image_high=detail_model)
+    prepared = await _normalize_detail_openai_refs(prepared, detail_model)
     job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
     suppress_preview_urls = bool(job.get("_suppress_detail_preview_urls"))
     # 동시성: 설정값(0=제한 없음 → 컷 수만큼). 구 상수 3은 429 실측 없는 보수적 추정이라
@@ -1688,6 +1723,13 @@ async def run_detail_page_job(app, job: dict) -> None:
                     )
                 except Exception:
                     log.warning("facemarket settlement hook failed for job %s", job_id)
+    except asyncio.CancelledError:
+        await asyncio.shield(_fail(
+            "작업 서버가 종료되어 생성이 중단됐어요. 다시 시도해 주세요.",
+            {"error": "worker_shutdown"},
+            code="worker_shutdown",
+        ))
+        raise
     except Exception as e:
         for c in locals().get("cut_assets") or ():
             await _delete_output_candidate(c)

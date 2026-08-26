@@ -5,6 +5,7 @@ import types
 from dataclasses import replace
 
 import app.routes as routes
+import pytest
 from app import repo
 from app.workers import detail_page_job as dpj
 from conftest import auth_headers, fake_worker_app, make_settings, patch_route_db, worker_job
@@ -568,6 +569,52 @@ def test_run_detail_page_job_rejects_bg_example_when_pilot_disabled(monkeypatch)
     assert captured["metadata"] == {"error": "genexample_bg_disabled"}
     assert captured["code"] == "genexample_bg_disabled"
     assert captured["reserved"] == 1
+
+
+def test_run_detail_page_job_cancellation_finalizes_refund_then_reraises(monkeypatch):
+    captured = {}
+
+    async def cancelled(*_args, **_kwargs):
+        raise asyncio.CancelledError
+
+    async def fake_failure(conn, **kwargs):
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(dpj.repo, "get_project", cancelled)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", fake_failure)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(dpj.run_detail_page_job(_app(_settings()), _job(reserved=5)))
+
+    assert captured["reserved"] == 5
+    assert captured["code"] == "worker_shutdown"
+    assert captured["metadata"] == {"error": "worker_shutdown"}
+
+
+def test_detail_openai_references_are_normalized_once_per_job(monkeypatch):
+    calls = []
+    shared = dpj.InlineImage("image/jpeg", b"shared")
+    other = dpj.InlineImage("image/webp", b"other")
+    exact = dpj.InlineImage("image/jpeg", b"confirmed-exact")
+
+    async def fake_normalize(images, cache=None):
+        calls.append(list(images))
+        return [dpj.InlineImage("image/png", b"png:" + image.data) for image in images]
+
+    monkeypatch.setattr(dpj, "normalize_openai_images", fake_normalize)
+    generic = ({"source": "ai", "cutType": "horizon"}, [shared, shared, other], "", False, [])
+    confirmed = ({"source": "ai", "cutType": "styling"}, [exact], "", False, [], None,
+                 False, None, object())
+
+    normalized = asyncio.run(dpj._normalize_detail_openai_refs(
+        [generic, generic, confirmed], "gpt-image-2"
+    ))
+
+    assert calls == [[shared, other]]
+    assert [image.data for image in normalized[0][1]] == [b"png:shared", b"png:shared", b"png:other"]
+    assert normalized[1][1] == normalized[0][1]
+    assert normalized[2][1] == [exact]  # confirmed packet keeps exact MIME/bytes
 
 
 def test_run_detail_page_job_reports_space_set_binding_error_without_generation(

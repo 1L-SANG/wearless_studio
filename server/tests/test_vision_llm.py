@@ -71,6 +71,25 @@ def test_gpt_success(monkeypatch):
     assert raw["clothingType"] == "top"
 
 
+def test_gpt_request_and_response_cpu_work_is_offloaded(monkeypatch):
+    calls = []
+
+    async def immediate(func, *args, **kwargs):
+        calls.append(func)
+        return func(*args, **kwargs)
+
+    s = make_settings(openai_api_key="sk-x", gemini_api_key=None,
+                      analysis_model_order="gpt,gemini")
+    monkeypatch.setattr(vision_llm, "run_cpu_bound", immediate)
+    monkeypatch.setattr(vision_llm.httpx, "AsyncClient",
+                        fake_client_factory(lambda url: _gpt_ok()))
+
+    raw, provider = run(_run(s, None))
+
+    assert provider == "gpt" and raw["clothingType"] == "top"
+    assert len(calls) == 2  # request base64/schema + response JSON parsing
+
+
 def test_gemini_success(monkeypatch):
     s = make_settings(openai_api_key=None, gemini_api_key="AIza-x", analysis_model_order="gpt,gemini")
     # gpt 키 없음 → skip → gemini 사용

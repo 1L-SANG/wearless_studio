@@ -12,7 +12,7 @@ from io import BytesIO
 
 from PIL import Image
 
-from .gemini_image import InlineImage
+from .gemini_image import InlineImage, run_cpu_bound
 from .vision_llm import VisionError, analyze_with_fallback
 
 
@@ -130,24 +130,13 @@ def _encode(image: Image.Image, mime: str) -> tuple[bytes, str]:
     return output.getvalue(), mime
 
 
-async def crop_pose_medium(
-    settings,
-    image_bytes: bytes,
-    mime: str,
-    clothing_type: str = "top",
-) -> tuple[bytes, str]:
+def _load_image(image_bytes: bytes) -> Image.Image:
     with Image.open(BytesIO(image_bytes)) as source:
         source.load()
-        image = source.copy()
-    try:
-        landmarks = await _detect_landmarks(settings, image_bytes, mime)
-        box = landmark_crop_box(
-            image.width, image.height, landmarks, clothing_type
-        )
-    except (VisionError, ValueError, TypeError) as exc:
-        log.warning("pose medium landmark crop unavailable; using ratio fallback: %s", exc)
-        box = fallback_crop_box(image.width, image.height, clothing_type)
+        return source.copy()
 
+
+def _crop_encode(image: Image.Image, box: tuple[int, int, int, int], mime: str):
     cropped = image.crop(box)
     scale = max(
         1.0,
@@ -160,3 +149,22 @@ async def crop_pose_medium(
             Image.Resampling.LANCZOS,
         )
     return _encode(cropped, mime)
+
+
+async def crop_pose_medium(
+    settings,
+    image_bytes: bytes,
+    mime: str,
+    clothing_type: str = "top",
+) -> tuple[bytes, str]:
+    image = await run_cpu_bound(_load_image, image_bytes)
+    try:
+        landmarks = await _detect_landmarks(settings, image_bytes, mime)
+        box = landmark_crop_box(
+            image.width, image.height, landmarks, clothing_type
+        )
+    except (VisionError, ValueError, TypeError) as exc:
+        log.warning("pose medium landmark crop unavailable; using ratio fallback: %s", exc)
+        box = fallback_crop_box(image.width, image.height, clothing_type)
+
+    return await run_cpu_bound(_crop_encode, image, box, mime)

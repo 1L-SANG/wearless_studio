@@ -73,6 +73,8 @@ class JobDispatcher:
                 await asyncio.wait_for(self._task, timeout=10)
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 self._task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._task
 
     async def _run(self):
         s = self.app.state.settings
