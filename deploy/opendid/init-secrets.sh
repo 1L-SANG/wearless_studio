@@ -46,9 +46,9 @@ put() {  # $1=name $2=value  (opendid 서비스 스코프)
 }
 
 echo "== copilot 시크릿 등록(app=$APP env=$ENV) =="
-put OPENDID_DB_HOST     "db.pedonlvyhoyedzdmmwco.supabase.co"
+put OPENDID_DB_HOST     "aws-1-ap-southeast-1.pooler.supabase.com"  # pooler(IPv4) — 직결은 IPv6-only 라 ECS 못 닿음
 put OPENDID_DB_PORT     "5432"
-put OPENDID_DB_USER     "postgres"
+put OPENDID_DB_USER     "postgres.pedonlvyhoyedzdmmwco"  # pooler 는 .{ref} 접미사 필요
 put OPENDID_DB_PASSWORD "$DB_PW"
 put OMNIONE_CHAIN_RPC_URL        "$RPC_URL"
 put OMNIONE_DID_CONTRACT_ADDRESS "$OMNIONE_DID_CONTRACT_ADDRESS"
