@@ -88,7 +88,13 @@ def test_production_manifest_bounds_4k_gpt_repair_concurrency_without_moving_sha
         assert manifest["memory"] <= 4096
 
     secrets = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))["secrets"]
-    assert secrets["OPENAI_API_KEY"] == "/copilot/wearless/prod/secrets/OPENAI_API_KEY"
+    # 경로에 환경명을 하드코딩하지 않는다 — us-east-1 이전에서 환경이 prod 가 아니라
+    # use1 이 됐고(Copilot 환경명은 앱 내 유일해야 한다), 하드코딩이면 새 환경의 태스크가
+    # 존재하지 않는 파라미터를 읽으려다 기동에 실패한다. 확인할 것은 "OPENAI 키를
+    # 현재 환경의 SSM 에서 읽는가"이지 그 환경이 prod 라는 사실이 아니다.
+    assert secrets["OPENAI_API_KEY"] == (
+        "/copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENAI_API_KEY"
+    )
 
 
 def test_detail_cut_image_size_inherits_mannequin_size_when_unset(monkeypatch):
