@@ -651,35 +651,32 @@ function ImageImportWait({ item, scale }) {
   );
 }
 
-// 오브젝트 드래그 놓일 자리 미리보기 — 실제 도형/선 모양을 그린다(텍스트가 실제 글자를
-// 보여주는 것과 같은 결). 캔버스 도형 렌더와 같은 SHAPE_D·기본 흰채움/잉크테두리를 쓴다.
-function DragObjectGhost({ kind, id, w, h }) {
-  const fill = '#ffffff';
-  const stroke = '#0e0d14';
-  const sw = 2;
+// 오브젝트 드래그 놓일 자리 미리보기 — 실제로 삽입될 요소를 그대로 만들어 캔버스 렌더러
+// (CanvasElement, preview 모드)로 그린다. 도형·선·프리셋 모두 삽입 결과와 100% 동일.
+// addShape / buildObjectPreset 의 기본값을 그대로 미러링한다.
+function buildGhostElements(kind, id, w, h) {
+  if (kind === 'preset') {
+    let n = 0;
+    return buildObjectPreset(id, { x: 0, y: 0, idFn: () => `ghost-${n++}` });
+  }
   if (kind === 'line') {
-    const my = h / 2;
-    return (
-      <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ overflow: 'visible' }}>
-        <line x1={id === 'arrow-l' ? 12 : 0} y1={my} x2={id === 'arrow-r' ? w - 12 : w} y2={my} stroke={stroke} strokeWidth={sw} strokeLinecap="round" />
-        {id === 'arrow-l' && <polyline points={`14,${my - 8} 2,${my} 14,${my + 8}`} fill="none" stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />}
-        {id === 'arrow-r' && <polyline points={`${w - 14},${my - 8} ${w - 2},${my} ${w - 14},${my + 8}`} fill="none" stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />}
-      </svg>
-    );
+    return [{ id: 'ghost', type: 'line', shape: id, x: 0, y: 0, w, h: 24 }];
   }
-  const box = (radius) => <div style={{ width: '100%', height: '100%', borderRadius: radius, background: fill, boxShadow: `inset 0 0 0 ${sw}px ${stroke}` }} />;
-  if (kind === 'shape') {
-    if (id === 'circle') return box('50%');
-    if (id === 'rect') return box(12);
-    if (id === 'triangle') return <svg width={w} height={h}><polygon points={`${w / 2},${sw / 2} ${w - sw / 2},${h - sw / 2} ${sw / 2},${h - sw / 2}`} fill={fill} stroke={stroke} strokeWidth={sw} strokeLinejoin="round" /></svg>;
-    if (SHAPE_D[id]) return <svg width={w} height={h} viewBox="0 0 100 100" preserveAspectRatio="none"><path d={SHAPE_D[id]} fill={fill} stroke={stroke} strokeWidth={sw} strokeLinejoin="round" vectorEffect="non-scaling-stroke" /></svg>;
-    return box(8);
+  if (id === 'bubble') {
+    return [{
+      id: 'ghost', type: 'text', shape: 'bubble', x: 0, y: 0, w, h,
+      text: '내용을 입력하세요', style: { size: 20, weight: 500, color: '#000000', lineHeight: 29 },
+      fill: '#FFFFFF', stroke: '#000000', strokeWidth: 2, radius: 28,
+      bubbleFit: { maxWidth: 560, padX: 24, padTop: 20, padBottom: 38, anchor: 'left' },
+    }];
   }
-  // preset(오브젝트 탭) 대표 형태
-  if (id === 'divider') { const my = h / 2; return <svg width={w} height={h}><line x1={0} y1={my} x2={w} y2={my} stroke={stroke} strokeWidth={3} strokeLinecap="round" /></svg>; }
-  if (id === 'single-bubble' || id === 'qa-bubbles') return <svg width={w} height={h} viewBox="0 0 100 100" preserveAspectRatio="none"><path d={SHAPE_D.bubble} fill={fill} stroke={stroke} strokeWidth={sw} strokeLinejoin="round" vectorEffect="non-scaling-stroke" /></svg>;
-  if (id === 'label-badge') return box(h / 2);
-  return box(8);
+  return [{ id: 'ghost', type: 'shape', shape: id, x: 0, y: 0, w, h, fill: '#FFFFFF', stroke: '#0e0d14', strokeWidth: 2 }];
+}
+function DragObjectGhost({ kind, id, w, h }) {
+  const elements = useMemo(() => buildGhostElements(kind, id, w, h), [kind, id, w, h]);
+  return elements.map((element) => (
+    <CanvasElement key={element.id} el={element} preview scale={1} selected={false} editing={false} />
+  ));
 }
 
 function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onTextCommit, onElementDragStart, shouldSuppressBlankClick, onAddImage, onDropImage, onDropBlockImage, onDropImageFiles, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropCancel, onCropReset, idx }) {
