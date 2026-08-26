@@ -44,7 +44,15 @@ permissions:
     contents: read
 
 env:
-    AWS_REGION: us-east-1
+    # Copilot 은 **앱 메타데이터**(/copilot/applications/wearless)를 이 리전 SSM 에서 찾는다.
+    # 앱은 ap-northeast-2 에 등록돼 있고 Copilot 은 앱을 옮기는 기능이 없다. 여기를
+    # us-east-1 로 바꿨더니 CI 가 통째로 죽었다(2026-08-26):
+    #   ✘ get application wearless configuration: ... ssm:GetParameter on
+    #     arn:aws:ssm:us-east-1:...:parameter/copilot/applications/wearless
+    # 실제 배포 대상 리전은 이 값이 아니라 **환경(use1)의 정의**가 결정한다 — 여기는
+    # 앱을 찾는 리전이므로 ap-northeast-2 로 둔다. (배포 역할 gha-wearless-deploy 의
+    # 정책은 두 리전 ARN 을 모두 허용하도록 확장해 두었다.)
+    AWS_REGION: ap-northeast-2
     COPILOT_APP: wearless
     COPILOT_ENV: use1
 
