@@ -458,7 +458,8 @@ _DL_STATE = {}
 _DL_LOCK = threading.Lock()
 _DL_HOSTS = ("huggingface.co", "cdn-lfs.huggingface.co", "cdn-lfs-us-1.hf.co", "github.com",
              "objects.githubusercontent.com")
-_DL_DIRS = ("unet", "diffusion_models", "text_encoders", "clip", "vae", "loras", "controlnet", "upscale_models")
+_DL_DIRS = ("unet", "diffusion_models", "checkpoints", "text_encoders", "clip", "clip_vision",
+            "vae", "loras", "controlnet", "ipadapter", "upscale_models", "insightface", "sams")
 
 
 def _models_root() -> Path:
