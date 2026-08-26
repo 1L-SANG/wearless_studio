@@ -15,7 +15,9 @@ __pycache__
 .pytest_cache
 .omc
 .env
-.env.example
+# `.env` 는 정확히 그 이름만 막는다 — `.env.local`·`.env.bak.*` 가 새어 나간다
+# (2026-08-26 api 이미지에서 실제로 발생). 글로브로 전부 막는다.
+.env*
 .python-version
 .dockerignore
 

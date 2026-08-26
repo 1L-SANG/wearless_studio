@@ -8,8 +8,24 @@ scripts
 # 들어가지 않도록 소스 자체를 제외한다.
 sam_service
 .omc
+# `.env` 는 **정확히 그 이름 하나만** 막는다. 그래서 `.env.local` 과 `.env.bak.111124`
+# 가 그대로 이미지에 실려 프로덕션까지 올라갔다(2026-08-26, us-east-1). 두 파일에는
+# DATABASE_URL·R2 키·GEMINI_API_KEY·SUPABASE_SERVICE_ROLE_KEY·TOSS_SECRET_KEY·
+# FM_CHAIN_PRIVATE_KEY 가 들어 있었다. .gitignore 는 `.env.*` 로 막고 있어서 CI 빌드는
+# 깨끗했고, 로컬에서 돌린 배포만 새어 나갔다 — 두 파일은 별개이므로 한쪽만 고치면 안 된다.
+# 글로브로 전부 막고, 예시 파일도 굳이 이미지에 넣지 않는다.
 .env
-.env.example
+.env*
 .python-version
 # 얼굴 QC weights는 이미지 빌드시 pin+checksum으로 받는다(로컬 stale 방지)
 app/data/face_models/
+# ── 로컬 실험 산출물 ────────────────────────────────────────────────────────────
+# .gitignore 에 있다고 안전한 게 아니다. .dockerignore 는 별개 파일이고, 빌드
+# 컨텍스트는 git 이 아니라 **디스크**에서 온다. ab_out 은 4.7GB 짜리 A/B 출력
+# 디렉터리인데 여기 없어서, 로컬에서 돌린 copilot svc deploy 가 그걸 통째로
+# 이미지에 실어 프로덕션까지 올려보냈다 — CI 빌드 이미지가 197MB 인데 로컬
+# 빌드본은 2,390MB 였다(2026-08-26 실측, us-east-1 첫 배포). 이미지가 크면
+# Spot 워커 콜드스타트(이미지 pull)와 ECR 요금이 같이 커진다.
+ab_out/
+path/
+.omx
