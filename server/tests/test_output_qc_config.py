@@ -49,7 +49,9 @@ def test_production_manifest_bounds_4k_gpt_repair_concurrency_without_moving_sha
 
     assert variables["MODEL_ROUTING_IMAGE_HIGH"] == "gemini-3-pro-image"
     assert variables["MODEL_ROUTING_DETAIL_CUT"] == "gpt-image-2-2026-04-21"
-    assert variables["DETAIL_CUT_IMAGE_SIZE"] == "4K"
+    # 상세페이지 컷 출고 해상도 2K (2026-08-26 오너 결정, 4K 에서 내림). 마네킹 핀과 같은
+    # 이유로 못 박는다 — manifest 병합 사고 때 소리 없이 4K 로 되돌아가면 컷당 실비가 오른다.
+    assert variables["DETAIL_CUT_IMAGE_SIZE"] == "2K"
     assert variables["DETAIL_CUT_STAGGER_MS"] == "3000"
     assert variables["DETAIL_CUT_MAX_ATTEMPTS"] == "1"
     assert variables["GARMENT_QC_MODE"] == "off"
@@ -68,7 +70,8 @@ def test_production_manifest_bounds_4k_gpt_repair_concurrency_without_moving_sha
     concurrency = int(variables["DETAIL_CUT_CONCURRENCY"])
     assert 1 <= concurrency <= 5, "실측 전까지 5 가 상한 — 올리려면 CloudWatch 사용률부터"
 
-    # 4K 컷 하나가 잡는 최대치: repair 가 1차를 살려둔 채 2차를 만들어 이미지가 두 장이고
+    # 컷 하나가 잡는 최대치(4K 실측 기준 — 2K 로 내린 지금은 보수적인 상한이다):
+    # repair 가 1차를 살려둔 채 2차를 만들어 이미지가 두 장이고
     # (detail_page_job.py 의 chosen 교체 지점), 각 장이 응답 base64 + 디코딩본 + QC 입력을
     # 함께 붙든다. 실측 대조 — 9컷: 700+9×360=3940MB ≫ 2048 (죽음, 2026-08-18)
     #                  2컷: 700+2×360=1420MB < 2048 (버팀)

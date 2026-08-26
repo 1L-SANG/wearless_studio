@@ -320,6 +320,31 @@ def test_openai_1k_keeps_the_existing_canvas_mapping(ratio, expected):
     assert gemini_image.GeminiImageClient._openai_size("1K", ratio) == expected
 
 
+@pytest.mark.parametrize(
+    "ratio,expected",
+    [("2:3", "1536x2304"), ("3:2", "2304x1536")],
+)
+def test_openai_2k_uses_its_own_canvas_not_the_1k_fallback(ratio, expected):
+    """2K 요청이 1K 로 조용히 떨어지면 해상도가 두 단계 내려간다."""
+    assert gemini_image.GeminiImageClient._openai_size("2K", ratio) == expected
+
+
+def test_openai_2k_canvas_is_exact_2_by_3_and_within_the_pixel_ceiling():
+    w, h = (int(v) for v in
+            gemini_image.GeminiImageClient._OPENAI_2K_SIZE["2:3"].split("x"))
+    assert w * 3 == h * 2          # 정확한 2:3
+    assert w % 16 == 0 and h % 16 == 0
+    assert w * h <= 8_294_400      # API 픽셀 상한
+    # 1K 와 4K 사이를 채운다 — 이 순서가 깨지면 "2K 로 내렸다"가 거짓말이 된다.
+    assert 1024 * 1536 < w * h < 2336 * 3504
+
+
+@pytest.mark.parametrize("ratio", ["9:16", "3:4", "1:1"])
+def test_openai_2k_falls_back_to_the_base_canvas_for_unmapped_ratios(ratio):
+    assert (gemini_image.GeminiImageClient._openai_size("2K", ratio)
+            == gemini_image.GeminiImageClient._OPENAI_SIZE[ratio])
+
+
 def test_openai_gpt_image_2_uses_exact_2_by_3_4k_recipe(monkeypatch):
     posted = {}
     usage = {
