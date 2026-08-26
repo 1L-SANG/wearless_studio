@@ -43,10 +43,12 @@ cpu: 512        # Pillow 이미지 처리 여유
 memory: 4096
 platform: linux/x86_64
 count: 1        # 항상 1개 상주 → in-process JobDispatcher 계속 살아있음
-# 첫 signer-intent 릴리스는 구버전 task가 DB lock/fence를 모르므로 겹치면 안 된다.
-# 이 릴리스 안정화 후 rolling: default로 되돌려도 이후 버전끼리는 공유 fence로 안전하다.
+# signer-intent fence 는 이제 공유되어 구·신 task 겹침이 안전하므로 default 로 되돌린다
+# (원래 주석: 안정화 후 default 안전). recreate(maxPercent=100)는 ECS Availability Zone
+# Rebalancing(신규 기본기능)과 비호환 — "maximumPercent <= 100%" InvalidRequest 로 배포가
+# 실패했다(2026-08-26). default 는 maxPercent=200 이라 롤링 중 새 task 를 먼저 띄운다.
 deployment:
-  rolling: recreate
+  rolling: default
 exec: true
 network:
   connect: true
