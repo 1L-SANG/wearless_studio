@@ -1844,10 +1844,12 @@ async def process_enrollment_completion(
         try:
             qc = load_face_qc(settings, required=True)
             # 신원 앵커: 신분증 초상 ↔ 라이브 프레임(둘 다 정면 → SFace 유효). 차단.
-            _assert_match(
-                qc.one_to_one_similarity(portrait, liveness.reference_image),
-                settings.fm_id_live_threshold,
+            id_live_score = qc.one_to_one_similarity(portrait, liveness.reference_image)
+            logger.info(
+                "fm_match_id_live score=%.4f threshold=%.4f",
+                float(id_live_score), settings.fm_id_live_threshold,
             )
+            _assert_match(id_live_score, settings.fm_id_live_threshold)
             # 업로드 사진 ↔ 라이브: 정면 얼굴 인식기(YuNet 검출 + SFace)는 측면·프로필을
             # 신뢰성 있게 다루지 못한다 — 옆모습은 검출(YuNet) 자체가 실패한다. 그래서 정면 얼굴이
             # 잡히는 사진만 매칭해 "모델 사진 = 검증된 라이브 인물"을 확인하고, 검출 불가한 각도
@@ -1861,6 +1863,10 @@ async def process_enrollment_completion(
                     if exc.reason == "no_face_detected":
                         continue  # 정면 검출기가 못 잡는 각도(측면/프로필) — 매칭 대상 아님
                     raise
+                logger.info(
+                    "fm_match_photo_live angle=%s score=%.4f threshold=%.4f",
+                    _angle, float(score), settings.fm_retouched_live_threshold,
+                )
                 _assert_match(score, settings.fm_retouched_live_threshold)
                 matched_any = True
             if not matched_any:

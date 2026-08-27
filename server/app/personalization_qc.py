@@ -115,8 +115,18 @@ async def evaluate_face_qc(
         raise FaceQcUnavailable("qc_provider_unconfigured")
 
     images = [InlineImage(mime=mime, data=image_bytes)]
+    # 각도 인지 프롬프트: turned(angle45/side) 슬롯은 고개를 돌려 한쪽 눈/얼굴 일부가 자연스럽게
+    # 안 보인다. 각도 무관 프롬프트로는 Gemini 가 이 자연스러운 self-occlusion 을 occlusion 으로
+    # 비결정적 오탐(측면 '됐다 안됐다')한다 → turned 각도엔 외부 가림만 occlusion 으로 명시한다.
+    prompt = _QC_PROMPT
+    if _ANGLE_BUCKET.get(angle, "turned") == "turned":
+        prompt = prompt + (
+            "\n\n[중요] 이 사진은 고개를 돌린 옆모습/반측면입니다. 고개를 돌려 한쪽 눈이나 "
+            "얼굴 일부가 자연스럽게 안 보이는 것은 occlusion 이 아닙니다(정상). 마스크·손·머리카락·"
+            "선글라스 등 외부 물체가 얼굴을 가린 경우에만 occlusion 으로 판정하세요."
+        )
     try:
-        raw, provider = await analyze_with_fallback(settings, _QC_PROMPT, images, FACE_QC_SCHEMA)
+        raw, provider = await analyze_with_fallback(settings, prompt, images, FACE_QC_SCHEMA)
     except VisionError as e:
         # provider 불통/비순응(파싱 실패 포함) → fail-safe 503. 에러 문자열에 얼굴 바이트 없음.
         raise FaceQcUnavailable(str(e)[:200]) from e

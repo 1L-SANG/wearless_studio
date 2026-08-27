@@ -242,13 +242,21 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   FM_BIOMETRIC_ENROLLMENT_ENABLED: "true"
   # 실 OACX 모바일신분증 계약(D1 dlphotoimage). dev-mock 은 dev 전용이라 prod 는 이 값이어야 한다.
   FM_OACX_CONTRACT_MODE: prod-dlphoto-v1
+  # CX trans 서버조회(cx.raonsecure.co.kr:18543)는 RaonSecure 방화벽이 **한국 IP만** 허용한다.
+  # api 가 us-east-1(env use1)로 옮겨진 뒤 미국 egress 는 ConnectTimeout → /identity 500.
+  # 해결: ap-northeast-2(서울)의 얇은 프록시(API GW→Lambda, fm-cx-proxy)로 우회해 한국 IP 로 나간다.
+  # Lambda 는 /oacx/... 를 cx.raonsecure.co.kr:18543 로 그대로 forward. api 리전이 한국이면 이 값을
+  # 지우고 CX 를 직접 호출해도 된다(기본값 https://cx.raonsecure.co.kr:18543).
+  CX_TRANS_BASE_URL: https://93vhif0l14.execute-api.ap-northeast-2.amazonaws.com
   FM_LIVENESS_REGION: us-east-1
   # 캘리브 임계 — 출발값(합리적이나 골든셋 경험 캘리브 전 잠정, 발화율·오탈락 관측 후 튜닝).
   #  · liveness confidence: AWS Face Liveness 0~100. 75 = 스푸핑 방어와 실사용자 오탈락(QA 79.8 사례)
   #    사이 밴드. 높이면 더 엄격(오탈락↑), 낮추면 느슨(스푸핑↑). QA 느슨값(1) 절대 금지.
   #  · id_live / retouched_live: SFace 코사인(0~1). 0.363 = 동일인 권장 기준선(fm_face_qc_threshold 와 동일).
+  #  · id_live 0.25: 신분증 초상(옛날·인쇄)↔라이브 셀카는 도메인 갭이 커 0.363 이 오탈락한다(실측 동일인
+  #    0.2816). 0.25 = 관측 통과 + 임포스터(<0.15)와 0.10 여유 + OACX 실명·라이브니스·사진매칭 다중방어.
   FM_LIVENESS_CONFIDENCE_THRESHOLD: "75"
-  FM_ID_LIVE_THRESHOLD: "0.363"
+  FM_ID_LIVE_THRESHOLD: "0.25"
   FM_RETOUCHED_LIVE_THRESHOLD: "0.363"
   FM_MATCH_POLICY_VERSION: prod-2026-08
   # OpenDID 홀더(fm-holder) — 같은 VPC service discovery. VC 발급 요청 대상. opendid 서비스 필요.
