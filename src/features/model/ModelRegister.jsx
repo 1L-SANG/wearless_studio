@@ -142,12 +142,13 @@ export function ModelRegister() {
   const [step, setStep] = useState('loading');
   const [enrollment, setEnrollment] = useState(null);
   const [session, setSession] = useState(null);
-  // 라이브니스 필요 여부 — 서버 /config 가 authoritative. false 면 라이브 단계를 건너뛰고
-  // 사진 → 완료로 직행(매칭 앵커는 신분증 초상). 조회 전 기본 true(보수적).
-  const [livenessRequired, setLivenessRequired] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [consentAccepted, setConsentAccepted] = useState(false);
+  // 라이브니스 필요 여부 — 서버 /config 가 authoritative. false 면 라이브 단계를 건너뛰고
+  // 사진 → 완료로 직행(매칭 앵커는 신분증 초상). 조회 전 기본 true(보수적).
+  // 주의: 위 상태들 뒤에 둔다 — 테스트가 useState 를 위치(index)로 프리셋하므로 순서 보존.
+  const [livenessRequired, setLivenessRequired] = useState(true);
   const mounted = useRef(true);
   const issuedLivenessEnrollmentRef = useRef(null);
   // 신분증 초상(dlphotoimage HEX) — 앞단 identity 스텝에서 위젯 콜백으로 받아 라이브니스 후
@@ -156,15 +157,6 @@ export function ModelRegister() {
   // finishMatch 는 아래에서 정의되지만 그 위의 이펙트가 참조해야 한다(라이브니스 off 자동완료).
   // dep-array forward-reference 를 피하려고 ref 로 최신 함수를 넘긴다.
   const finishMatchRef = useRef(null);
-
-  // 마운트 시 라이브니스 필요 여부 조회. 실패해도 기본 true 유지(라이브 단계를 보수적으로 노출).
-  useEffect(() => {
-    let active = true;
-    getFacemarketConfig()
-      .then((cfg) => { if (active) setLivenessRequired(cfg?.livenessRequired !== false); })
-      .catch(() => { /* 기본 true 유지 */ });
-    return () => { active = false; };
-  }, []);
 
   const restore = useCallback(async () => {
     setStep('loading');
@@ -530,6 +522,16 @@ export function ModelRegister() {
   }, [abandonLiveness, enrollment?.id, session, livenessRequired]);
   // 위 이펙트(라이브니스 off 자동완료)가 forward-reference 없이 최신 finishMatch 를 부르게 한다.
   finishMatchRef.current = finishMatch;
+
+  // 마운트 시 라이브니스 필요 여부 조회. 실패해도 기본 true 유지(라이브 단계를 보수적으로 노출).
+  // 기존 이펙트 순서를 흩뜨리지 않도록 맨 마지막 useEffect 로 둔다.
+  useEffect(() => {
+    let active = true;
+    getFacemarketConfig()
+      .then((cfg) => { if (active) setLivenessRequired(cfg?.livenessRequired !== false); })
+      .catch(() => { /* 기본 true 유지 */ });
+    return () => { active = false; };
+  }, []);
 
   if (step === 'loading') return <div className="wizard narrow"><div className="surface">등록 상태를 확인하고 있어요…</div></div>;
 
