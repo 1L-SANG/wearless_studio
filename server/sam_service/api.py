@@ -20,10 +20,12 @@ spending ~25s on inference, which is what makes job retries cheap instead of dup
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import heapq
 import hashlib
 import hmac
 import logging
+import os
 import time
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -193,9 +195,46 @@ def _process_memory_kb() -> dict:
         return {}
 
 
+async def _preload_model() -> None:
+    """Load the weights during the cold start's dead time instead of on the first request.
+
+    Measured 2026-08-27: a scaled-from-zero task is listening at +59.6s but the first request
+    only arrives at +157s, because ECS/Service Connect take that long to declare it routable.
+    That whole window is idle, so the load is free there and the first seller request no longer
+    pays for the torch/transformers import.
+
+    Never fatal. A failure is already remembered by `model_registry` and every request will
+    report it the same way it did before this existed.
+    """
+    try:
+        settings = load_settings()
+        await model_registry.get_segmenter(settings.model_id or None)
+        log.info("sam2 model preloaded")
+    except SegmentationUnavailable as e:
+        log.warning("sam2 model preload failed: %s", e)
+    except Exception:                            # noqa: BLE001 - preload must not kill startup
+        log.exception("sam2 model preload crashed")
+
+
+@contextlib.asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Kick the preload off as a task — never awaited here, or uvicorn would not be listening
+    and the health check clock (which gates ECS readiness) would not even have started."""
+    task = None
+    if (os.getenv("SAM_MODEL_PRELOAD", "on") or "on").strip().lower() != "off":
+        task = asyncio.create_task(_preload_model(), name="sam2-model-preload")
+        app.state.preload_task = task
+    yield
+    if task is not None and not task.done():
+        task.cancel()
+        with contextlib.suppress(BaseException):
+            await task
+
+
 def create_app(*, source_factory=_source_reader) -> FastAPI:
     """`source_factory` is the one seam tests use, so they never touch boto3 or R2."""
-    app = FastAPI(title="wearless SAM2 segmentation", docs_url=None, redoc_url=None)
+    app = FastAPI(title="wearless SAM2 segmentation", docs_url=None, redoc_url=None,
+                  lifespan=_lifespan)
 
     @app.get("/health")
     async def health() -> dict:

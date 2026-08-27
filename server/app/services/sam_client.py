@@ -65,6 +65,76 @@ async def _raise_unavailable(msg: str, cause: BaseException | None = None):
         raise SamUnavailable(msg) from cause
     raise SamUnavailable(msg)
 
+#: sam2 콜드스타트(2026-08-27 실측): Service Connect 이름은 +146.7초에야 통하는데 uvicorn 은
+#: +59.6초에 이미 듣고 있다. 그 87초를 회수하려고 전송 실패 때 task IP 로 한 번 더 간다.
+#: lifespan 이 SamEndpointResolver 를 건다. 안 걸리면 아무것도 달라지지 않는다.
+ENDPOINT_RESOLVER = None
+
+
+def install_endpoint_resolver(resolver) -> None:
+    """lifespan 이 `SamEndpointResolver` 를 건다. None 이면 해제(테스트·종료)."""
+    global ENDPOINT_RESOLVER
+    ENDPOINT_RESOLVER = resolver
+
+
+async def _direct_base() -> str | None:
+    resolver = ENDPOINT_RESOLVER
+    if resolver is None:
+        return None
+    try:
+        return await resolver.direct_url()
+    except Exception:  # noqa: BLE001 - 최적화 경로가 잡을 죽이면 안 된다
+        log.warning("sam endpoint resolver failed", exc_info=True)
+        return None
+
+
+def _forget_direct() -> None:
+    resolver = ENDPOINT_RESOLVER
+    if resolver is None:
+        return
+    try:
+        resolver.invalidate()
+    except Exception:  # noqa: BLE001
+        log.warning("sam endpoint invalidate failed", exc_info=True)
+
+
+async def _post(settings, path: str, payload: dict, label: str):
+    """Service Connect 이름으로 먼저, **전송이 끊겼을 때만** task IP 로 한 번 더.
+
+    재시도 대상을 전송 오류로 좁힌 이유:
+      - 타임아웃은 sam2 가 받아서 오래 도는 중이라는 뜻이다. 다시 걸면 90초를 두 번 쓴다.
+      - 4xx/5xx 는 이미 sam2 가 답한 것이다. 주소를 바꿔도 같은 답이 온다.
+    콜드스타트의 지문만 정확히 `httpx.ReadError`/`ConnectError` 다 — 실측에서 gen0·gen1 이
+    전부 `SAM request failed: ReadError` 로 죽었다.
+    """
+    timeout = float(getattr(settings, "sam_request_timeout_s", 90.0) or 90.0)
+    headers = {"Authorization": f"Bearer {settings.sam_internal_token}"}
+    base = settings.sam_service_url
+    transport_error: BaseException | None = None
+    for attempt in (0, 1):
+        if attempt:
+            direct = await _direct_base()
+            if not direct or direct == base:
+                break
+            base = direct
+            log.info("sam %sretrying via task ip %s", label, direct)
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                r = await client.post(f"{base}{path}", json=payload, headers=headers)
+        except httpx.TimeoutException as e:
+            await _raise_unavailable(f"SAM {label}request timed out after {timeout}s", e)
+        except httpx.HTTPError as e:
+            transport_error = e
+            if attempt:
+                _forget_direct()          # 캐시해 둔 IP 도 죽었다 — 다음엔 다시 찾는다
+            continue
+        if r.status_code != 200:
+            await _raise_unavailable(f"SAM {label}responded {r.status_code}")
+        return r
+    await _raise_unavailable(
+        f"SAM {label}request failed: {type(transport_error).__name__}", transport_error)
+
+
 @dataclass(frozen=True)
 class SamViewResult:
     """One view's outcome. `ready` False means this view has no usable cutout."""
@@ -184,23 +254,10 @@ async def segment_worn_garment(settings, *, source_key: str, base_key: str,
     if not configured(settings):
         await _raise_unavailable("SAM service is not configured (SAM_SERVICE_URL / token)")
 
-    url = f"{settings.sam_service_url}/segment-worn-garment"
     payload = {"sourceKey": source_key, "baseKey": base_key,
                "clothingType": clothing_type, "subCategory": sub_category,
                "matchingSide": matching_side, "productKey": product_key}
-    timeout = float(getattr(settings, "sam_request_timeout_s", 90.0) or 90.0)
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            r = await client.post(
-                url, json=payload,
-                headers={"Authorization": f"Bearer {settings.sam_internal_token}"})
-    except httpx.TimeoutException as e:
-        await _raise_unavailable(f"SAM worn-garment request timed out after {timeout}s", e)
-    except httpx.HTTPError as e:
-        await _raise_unavailable(f"SAM worn-garment request failed: {type(e).__name__}", e)
-
-    if r.status_code != 200:
-        await _raise_unavailable(f"SAM worn-garment responded {r.status_code}")
+    r = await _post(settings, "/segment-worn-garment", payload, "worn-garment ")
     try:
         body = r.json()
     except ValueError as e:
@@ -225,21 +282,8 @@ async def segment_garment(settings, views: dict[str, str]) -> dict[str, SamViewR
     if not wanted:
         return {}
 
-    url = f"{settings.sam_service_url}/segment-garment"
     payload = {"views": {v: {"key": k} for v, k in wanted.items()}}
-    timeout = float(getattr(settings, "sam_request_timeout_s", 90.0) or 90.0)
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            r = await client.post(
-                url, json=payload,
-                headers={"Authorization": f"Bearer {settings.sam_internal_token}"})
-    except httpx.TimeoutException as e:
-        await _raise_unavailable(f"SAM request timed out after {timeout}s", e)
-    except httpx.HTTPError as e:
-        await _raise_unavailable(f"SAM request failed: {type(e).__name__}", e)
-
-    if r.status_code != 200:
-        await _raise_unavailable(f"SAM responded {r.status_code}")
+    r = await _post(settings, "/segment-garment", payload, "")
     try:
         body = r.json()
     except ValueError as e:

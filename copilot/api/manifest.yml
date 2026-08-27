@@ -155,6 +155,12 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 정본: docs/superpowers/specs/2026-08-21-sam2-on-demand-scaling-design.md
   SAM_AUTOSCALE: "on"
   SAM_AUTOSCALE_IDLE_MINUTES: "30"
+  # 콜드스타트 87초 회수(2026-08-27 실측). sam2 는 uvicorn 이 +59.6초에 이미 듣고 있는데
+  # Service Connect 로 호출 가능해지는 건 +146.7초다. 전송이 끊겼을 때만 task 사설 IP
+  # (DescribeTasks 가 +5초, 아직 PROVISIONING 일 때 이미 준다)로 한 번 더 간다.
+  # 따뜻한 경로는 그대로 http://sam2:8080 이고, SAM_AUTOSCALE 이 off 면 효력이 없다.
+  # 정본: server/app/services/sam_endpoint.py
+  SAM_DIRECT_ENDPOINT: "on"
   # ── opendid(fm-holder) 온디맨드 기동/종료 ──
   # opendid 는 평소 0대(copilot/opendid/manifest.yml count {spot:0}). 등록이 holder 단계
   # (license_pending·vc_pending)에 오면 api 가 깨우고, 30분 유휴면 reconciler 가 끈다.

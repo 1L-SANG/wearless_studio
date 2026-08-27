@@ -179,6 +179,33 @@ class SamAutoscaleAdapter:
                             pending=int(svc.get("pendingCount") or 0),
                             oldest_started_at=oldest)
 
+    async def task_ips(self, target: EcsTarget) -> list[str]:
+        """이 서비스 태스크들의 사설 IP. Service Connect 등록을 기다리지 않기 위한 것이다.
+
+        실측(2026-08-27): `DescribeTasks` 는 태스크가 아직 **PROVISIONING** 인 +5초에 이미
+        `privateIPv4Address` 를 준다. 같은 태스크가 RUNNING 이 되는 건 +112.7초, Service
+        Connect 로 호출 가능해지는 건 +146.7초다. 그래서 여기서 얻은 IP 가 100초 이상 빠르다.
+
+        `desiredStatus="RUNNING"` 은 **지금 RUNNING 인 것**이 아니라 RUNNING 을 향하는 것을
+        고른다 — PROVISIONING·PENDING 이 그래서 같이 잡힌다.
+        """
+        return await asyncio.to_thread(self._task_ips_sync, target)
+
+    def _task_ips_sync(self, target: EcsTarget) -> list[str]:
+        arns = self._ecs.list_tasks(cluster=target.cluster_arn, serviceName=target.service_arn,
+                                    desiredStatus="RUNNING").get("taskArns", [])
+        ips: list[str] = []
+        # DescribeTasks 는 한 번에 100개까지.
+        for i in range(0, len(arns), 100):
+            tasks = self._ecs.describe_tasks(
+                cluster=target.cluster_arn, tasks=arns[i:i + 100]).get("tasks", [])
+            for task in tasks:
+                for att in task.get("attachments") or []:
+                    for detail in att.get("details") or []:
+                        if detail.get("name") == "privateIPv4Address" and detail.get("value"):
+                            ips.append(detail["value"])
+        return ips
+
     async def set_desired(self, target: EcsTarget, count: int) -> None:
         """UpdateService 는 같은 값을 다시 넣어도 no-op 이다(태스크 재시작 없음)."""
         await asyncio.to_thread(

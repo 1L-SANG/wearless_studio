@@ -170,3 +170,42 @@ def test_aws_errors_surface_as_exceptions_for_the_caller_to_swallow():
     a = _adapter(ecs=_Boom())
     with pytest.raises(RuntimeError):
         asyncio.run(a.discover())
+
+
+# ── task IP (콜드스타트 직결) ─────────────────────────────────────────────────
+#
+# 실측(2026-08-27 prod use1): DescribeTasks 는 태스크가 아직 PROVISIONING 인 +5초에 이미
+# privateIPv4Address 를 준다. 같은 태스크가 RUNNING 이 되는 건 +112.7초, Service Connect 로
+# 호출 가능해지는 건 +146.7초다 — 그래서 이 조회가 100초 이상 빠르다.
+
+def _task(arn, ip=None, extra_attachments=()):
+    details = [{"name": "networkInterfaceId", "value": "eni-1"}]
+    if ip:
+        details.append({"name": "privateIPv4Address", "value": ip})
+    return {"taskArn": arn,
+            "attachments": [*extra_attachments,
+                            {"type": "ElasticNetworkInterface", "status": "ATTACHED",
+                             "details": details}]}
+
+
+def test_task_ips_reads_the_private_ip():
+    ecs = _Ecs(tasks=[_task("t1", "10.0.0.205")])
+    a = _adapter(ecs=ecs)
+    target = EcsTarget(cluster_arn=CLUSTER, service_arn=SAM2)
+    assert asyncio.run(a.task_ips(target)) == ["10.0.0.205"]
+
+
+def test_task_ips_is_empty_when_the_service_is_at_zero():
+    a = _adapter(ecs=_Ecs(tasks=[]))
+    target = EcsTarget(cluster_arn=CLUSTER, service_arn=SAM2)
+    assert asyncio.run(a.task_ips(target)) == []
+
+
+def test_task_ips_ignores_attachments_without_an_ip():
+    """Service Connect 첨부는 details 가 비어 있다 — 그걸 IP 로 착각하면 안 된다."""
+    sc = {"type": "ServiceConnect", "status": "ATTACHED", "details": []}
+    ecs = _Ecs(tasks=[_task("t1", "10.0.0.7", extra_attachments=(sc,)),
+                      _task("t2", None)])
+    a = _adapter(ecs=ecs)
+    target = EcsTarget(cluster_arn=CLUSTER, service_arn=SAM2)
+    assert asyncio.run(a.task_ips(target)) == ["10.0.0.7"]
