@@ -1,0 +1,39 @@
+# FaceMarket 생체등록 라이브니스(AWS Face Liveness) 백엔드 권한.
+# 백엔드(api TaskRole)는 us-east-1 Rekognition 으로 세션을 만들고 결과를 조회하며,
+# 브라우저 SDK 용 스코프-다운 임시 크레덴셜을 facemarket-liveness-browser 역할을
+# assume 해서 발급한다. 이 addon 이 출력하는 ManagedPolicy 를 copilot 이 TaskRole 에
+# 자동으로 붙인다. (facemarket-liveness-browser 역할 자체는 copilot 외부에서 관리 —
+# 신뢰정책이 이 서비스의 TaskRole 을 가리킨다.)
+Parameters:
+  App:
+    Type: String
+  Env:
+    Type: String
+  Name:
+    Type: String
+
+Resources:
+  FaceLivenessPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: FaceLivenessBackend
+            Effect: Allow
+            Action:
+              - rekognition:CreateFaceLivenessSession
+              - rekognition:GetFaceLivenessSessionResults
+            Resource: '*'
+            Condition:
+              StringEquals:
+                aws:RequestedRegion: us-east-1
+          - Sid: AssumeLivenessBrowserRole
+            Effect: Allow
+            Action: sts:AssumeRole
+            Resource: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/facemarket-liveness-browser'
+
+Outputs:
+  FaceLivenessPolicyArn:
+    Description: Managed policy granting the API task Face Liveness backend permissions.
+    Value: !Ref FaceLivenessPolicy
