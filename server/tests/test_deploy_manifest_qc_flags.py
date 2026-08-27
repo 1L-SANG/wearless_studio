@@ -74,8 +74,11 @@ def test_detail_worker_is_x86_spot_zero_without_load_balancer(manifest_vars):
     assert worker["network"]["vpc"]["placement"] == "public"
     assert worker["variables"]["JOB_KINDS"] == "detail_page"
     assert worker["variables"]["DB_POOL_MAX_SIZE"] == "3"
-    assert worker["variables"]["DETAIL_CUT_CONCURRENCY"] == "5"
-    assert worker["variables"]["DETAIL_CUT_STAGGER_MS"] == "3000"
+    # 컷 동시 생성은 2026-08-27 실험으로 5 → 8 로 올렸다. 잡 356초의
+    # 45%(약 160초)가 슬롯 리필 지연으로 버려지는 것을 프로덕션 로그로 역산해 확인했고,
+    # 그 상한을 재기 위한 값이다. 되돌릴 때는 "5"/"3000" 으로.
+    assert worker["variables"]["DETAIL_CUT_CONCURRENCY"] == "8"
+    assert worker["variables"]["DETAIL_CUT_STAGGER_MS"] == "1000"
     assert worker["variables"]["DETAIL_CUT_IMAGE_SIZE"] == "2K"
     assert worker["variables"]["GENEXAMPLE_BG_ENABLED"] == "true"
     assert manifest_vars["JOB_KINDS"] == "-detail_page"

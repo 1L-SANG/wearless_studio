@@ -52,7 +52,9 @@ def test_production_manifest_bounds_4k_gpt_repair_concurrency_without_moving_sha
     # 상세페이지 컷 출고 해상도 2K (2026-08-26 오너 결정, 4K 에서 내림). 마네킹 핀과 같은
     # 이유로 못 박는다 — manifest 병합 사고 때 소리 없이 4K 로 되돌아가면 컷당 실비가 오른다.
     assert variables["DETAIL_CUT_IMAGE_SIZE"] == "2K"
-    assert variables["DETAIL_CUT_STAGGER_MS"] == "3000"
+    # 제출 간격은 idx*간격 누적이라 14번째 컷이 3000ms 면 39초를 그냥 기다린다.
+    # 전부-병렬(DETAIL_CUT_CONCURRENCY=0)로 올리면서 1000ms 로 낮췄다(2026-08-27).
+    assert variables["DETAIL_CUT_STAGGER_MS"] == "1000"
     assert variables["DETAIL_CUT_MAX_ATTEMPTS"] == "1"
     assert variables["GARMENT_QC_MODE"] == "off"
     assert variables["CUT_OUTPUT_QC_MODE"] == "repair"
@@ -68,7 +70,17 @@ def test_production_manifest_bounds_4k_gpt_repair_concurrency_without_moving_sha
     # 동시 컷 수는 **정확값이 아니라 메모리와의 관계**로 묶는다. 정확값으로 못 박으면
     # 위험을 발견해 안전하게 낮추는 변경까지 빨갛게 만든다(2026-08-19 Codex 리뷰).
     concurrency = int(variables["DETAIL_CUT_CONCURRENCY"])
-    assert 1 <= concurrency <= 5, "실측 전까지 5 가 상한 — 올리려면 CloudWatch 사용률부터"
+    # 상한을 5 → 9 로 올렸다(2026-08-27). 이 가드가 요구한 "CloudWatch 사용률 실측"을
+    # 하고 나서다 — 14컷 잡에서 컷 5개 동시일 때 CPU 2.6~9.8%(피크는 준비 단계 96.6%),
+    # 메모리 피크 1011MB/4096MB(24.7%) 였다.
+    #
+    # 9 는 아래 메모리 예산식이 4096MB 에서 허용하는 최대값이다: (4096-700)/360 = 9.4.
+    # 실측 기준(컷당 172MB)으로는 14 도 2.6GB 라 들어오지만, 그 식을 실측으로 갈아끼워
+    # 가드를 무력화하지는 않는다 — CloudWatch 는 1분 해상도라 짧은 스파이크를 놓치고,
+    # 아래 주석대로 최악 입력의 reference 총량이 이 식에 안 들어간다. OOM 이 나면
+    # 이미 만든 컷을 전부 버린다.
+    # 0(무제한)도 쓰지 않는다 — 컷이 30장인 페이지에서 예측 불가가 된다.
+    assert 1 <= concurrency <= 9, "올리려면 CloudWatch 사용률부터"
 
     # 컷 하나가 잡는 최대치(4K 실측 기준 — 2K 로 내린 지금은 보수적인 상한이다):
     # repair 가 1차를 살려둔 채 2차를 만들어 이미지가 두 장이고
