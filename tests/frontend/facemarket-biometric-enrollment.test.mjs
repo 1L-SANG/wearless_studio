@@ -145,6 +145,9 @@ async function modelComponentHarness({
           export const createIdentity = (...args) => api.createIdentity(...args);
           export const createLivenessSession = (...args) => api.createLivenessSession(...args);
           export const deleteEnrollmentPhoto = (...args) => api.deleteEnrollmentPhoto(...args);
+          export const getFacemarketConfig = (...args) => (
+            api.getFacemarketConfig ? api.getFacemarketConfig(...args) : Promise.resolve({ livenessRequired: true })
+          );
           export const getCurrentEnrollment = (...args) => api.getCurrentEnrollment(...args);
           export const getEnrollment = (...args) => api.getEnrollment(...args);
           export const listMyModels = (...args) => api.listMyModels(...args);
@@ -513,6 +516,35 @@ test('an active liveness-session rejection retries in place instead of cancellin
     assert.deepEqual(cancelled, [], 'a transient session failure must never cancel the retained enrollment');
     assert.equal(harness.runtime.states[0], 'liveness_failed', 'an active session failure routes to the retry state');
     assert.equal(harness.runtime.states[1]?.id, 'enrollment-1', 'the enrollment is retained for retry');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('liveness disabled auto-completes without a session, anchoring on the id portrait', async () => {
+  // FM_LIVENESS_ENABLED=false: 라이브 단계에서 세션/위젯 없이 신분증 초상 앵커로 바로 완료.
+  let completeArgs = null;
+  const harness = await modelComponentHarness({
+    // 마지막 상태(index 6) = livenessRequired=false.
+    initialStates: ['liveness', { id: 'enrollment-1', status: 'liveness_pending' }, null, '', false, false, false],
+    api: {
+      completeEnrollment: async (id, body) => {
+        completeArgs = { id, body };
+        return { passed: true, retryable: false, reason: null, status: 'asset_building', modelId: 'model-1' };
+      },
+      createLivenessSession: () => { throw new Error('createLivenessSession must not run when liveness is disabled'); },
+      getCurrentEnrollment: () => new Promise(() => {}),
+    },
+  });
+  harness.runtime.refs[2] = { current: 'portrait-hex' };
+  try {
+    harness.render();
+    harness.runtime.effects[1]();  // 라이브니스 이펙트 — off 면 세션 없이 finishMatch 자동완료
+    await flush();
+    assert.ok(completeArgs, 'completeEnrollment must run without a liveness session');
+    assert.equal(completeArgs.body?.sessionId, undefined, 'no session id is sent when liveness is disabled');
+    assert.equal(completeArgs.body?.idPhotoHex, 'portrait-hex', 'the match anchors on the OACX id portrait');
+    assert.equal(harness.runtime.states[0], 'processing', 'a passing match moves to processing');
   } finally {
     await harness.close();
   }

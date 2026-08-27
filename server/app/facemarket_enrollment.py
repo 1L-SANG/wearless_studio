@@ -170,7 +170,8 @@ class LivenessSessionBody(CamelModel):
 
 
 class CompleteEnrollmentBody(CamelModel):
-    session_id: str
+    # 라이브니스 off 면 세션이 없으므로 optional. 실제 요구는 라우트가 flag 로 강제한다.
+    session_id: str | None = None
     # Task3: 신분증(CI) 검증은 앞단 /identity 가 전담한다 — /complete 는 SFace 매칭만 하고
     # OACX token 을 더 이상 받지 않는다(저장된 identity_* 증거를 읽어 모델을 바인딩).
     # D1: OACX RESULT-step 신분증 초상(`data.dlphotoimage`, HEX JPEG) — 프론트가 위젯 콜백에서
@@ -636,6 +637,17 @@ async def _enrollment_view(conn, row: dict) -> EnrollmentView:
         reason=row.get("reason"),
         expires_at=row["expires_at"],
     )
+
+
+@router.get("/config")
+async def facemarket_config(request: Request):
+    """등록 위저드 런타임 설정 — 프론트가 라이브니스 단계를 렌더할지 판정한다(서버 authoritative).
+
+    인증 불필요(민감정보 없음, boolean 플래그 하나). livenessRequired=false 면 프론트는
+    라이브니스 세션/위젯을 건너뛰고 사진 → 완료로 직행한다.
+    """
+    settings: Settings = request.app.state.settings
+    return {"livenessRequired": settings.fm_liveness_enabled}
 
 
 @router.post("/enrollments", response_model=EnrollmentView, status_code=201)
@@ -1142,6 +1154,11 @@ async def start_enrollment_liveness(
     user_id: str = Depends(require_user),
 ):
     enrollment_id = _canonical_enrollment_id(enrollment_id)
+    settings: Settings = request.app.state.settings
+    if not settings.fm_liveness_enabled:
+        # 라이브니스 off — 세션을 만들 필요가 없다(stale 프론트 방어). 프론트는 /config 로
+        # livenessRequired=false 를 보고 이 호출을 건너뛰어야 한다.
+        raise _err("liveness_disabled", "라이브 인증이 필요하지 않습니다.", status=409)
     nonce = body.nonce.strip()
     nonce_bytes = nonce.encode()
     if not 32 <= len(nonce_bytes) <= 512:
@@ -1705,8 +1722,9 @@ async def _fail_enrollment(
 
 
 async def _initial_completion_checks(
-    request: Request, *, enrollment_id: str, user_id: str, session_id: str
+    request: Request, *, enrollment_id: str, user_id: str, session_id: str | None
 ) -> tuple[dict, list[dict]]:
+    settings = request.app.state.settings
     async with get_conn(request) as conn:
         await _assert_account_open(conn, user_id)
         async with conn.cursor() as cur:
@@ -1756,7 +1774,9 @@ async def _initial_completion_checks(
                 )
                 await conn.commit()
                 raise EnrollmentExpiredError
-            if row["liveness_session_digest"] != hashlib.sha256(session_id.encode()).hexdigest():
+            if settings.fm_liveness_enabled and (
+                row["liveness_session_digest"] != hashlib.sha256(session_id.encode()).hexdigest()
+            ):
                 await conn.commit()
                 raise EnrollmentMappedError("liveness_retry")
             await cur.execute(
@@ -1806,15 +1826,16 @@ async def process_enrollment_completion(
             session_id=session_id,
         )
         processing_started = True
-        try:
-            liveness = await asyncio.to_thread(
-                get_liveness_result,
-                request.app.state.fm_rekognition,
-                session_id=session_id,
-                minimum_confidence=settings.fm_liveness_confidence_threshold,
-            )
-        except BiometricProviderError as exc:
-            raise EnrollmentMappedError(exc.reason) from None
+        if settings.fm_liveness_enabled:
+            try:
+                liveness = await asyncio.to_thread(
+                    get_liveness_result,
+                    request.app.state.fm_rekognition,
+                    session_id=session_id,
+                    minimum_confidence=settings.fm_liveness_confidence_threshold,
+                )
+            except BiometricProviderError as exc:
+                raise EnrollmentMappedError(exc.reason) from None
 
         try:
             # Task3: CI·이름·생년월일 검증은 앞단 /identity 가 이미 마쳤다(저장 컬럼을 아래에서
@@ -1843,24 +1864,30 @@ async def process_enrollment_completion(
 
         try:
             qc = load_face_qc(settings, required=True)
-            # 신원 앵커: 신분증 초상 ↔ 라이브 프레임(둘 다 정면 → SFace 유효). 차단.
-            id_live_score = qc.one_to_one_similarity(portrait, liveness.reference_image)
-            # score 는 float 이거나 None(검출 실패) — %s 로 로깅해 None 도 안전하게 찍고,
-            # None 판정(fail-closed)은 _assert_match 가 face_match_failed 로 처리한다.
-            logger.info(
-                "fm_match_id_live score=%s threshold=%.4f",
-                id_live_score, settings.fm_id_live_threshold,
-            )
-            _assert_match(id_live_score, settings.fm_id_live_threshold)
-            # 업로드 사진 ↔ 라이브: 정면 얼굴 인식기(YuNet 검출 + SFace)는 측면·프로필을
+            # 매칭 앵커: 라이브니스 on 이면 라이브 프레임, off 면 신분증 초상.
+            #  - on: 신분증 초상 ↔ 라이브(신원 앵커, 차단) + 업로드 사진 ↔ 라이브(스왑 방지).
+            #  - off: 업로드 사진 ↔ 신분증 초상. 신분증 초상이 앵커 = OACX 모바일신분증(실시간 폰
+            #    인증)으로 실명검증된 본인. id↔live 는 라이브 프레임이 없으니 생략(신분증이 곧 앵커).
+            match_anchor = liveness.reference_image if settings.fm_liveness_enabled else portrait
+            if settings.fm_liveness_enabled:
+                # 신원 앵커: 신분증 초상 ↔ 라이브 프레임(둘 다 정면 → SFace 유효). 차단.
+                id_live_score = qc.one_to_one_similarity(portrait, match_anchor)
+                # score 는 float 이거나 None(검출 실패) — %s 로 로깅해 None 도 안전하게 찍고,
+                # None 판정(fail-closed)은 _assert_match 가 face_match_failed 로 처리한다.
+                logger.info(
+                    "fm_match_id_live score=%s threshold=%.4f",
+                    id_live_score, settings.fm_id_live_threshold,
+                )
+                _assert_match(id_live_score, settings.fm_id_live_threshold)
+            # 업로드 사진 ↔ 앵커: 정면 얼굴 인식기(YuNet 검출 + SFace)는 측면·프로필을
             # 신뢰성 있게 다루지 못한다 — 옆모습은 검출(YuNet) 자체가 실패한다. 그래서 정면 얼굴이
-            # 잡히는 사진만 매칭해 "모델 사진 = 검증된 라이브 인물"을 확인하고, 검출 불가한 각도
+            # 잡히는 사진만 매칭해 "모델 사진 = 검증된 본인"을 확인하고, 검출 불가한 각도
             # (45/측면)는 자산용 앵글 소스로만 취급해 건너뛴다. 검출된 사진은 모두 매칭돼야 하고,
-            # 최소 1장은 매칭돼야 한다(정면·신분증·라이브 앵커에 더해 스왑 방지).
+            # 최소 1장은 매칭돼야 한다(스왑 방지).
             matched_any = False
             for _angle, buffer in photo_items:
                 try:
-                    score = qc.one_to_one_similarity(buffer, liveness.reference_image)
+                    score = qc.one_to_one_similarity(buffer, match_anchor)
                 except QcFailed as exc:
                     if exc.reason == "no_face_detected":
                         continue  # 정면 검출기가 못 잡는 각도(측면/프로필) — 매칭 대상 아님
@@ -1892,20 +1919,27 @@ async def process_enrollment_completion(
             await _assert_account_open(conn, user_id)
             await _reject_cutover_closed(conn)
             async with conn.cursor() as cur:
+                # 라이브니스 off 면 세션 다이제스트가 없다(NULL) — 예측어를 빼야 잠금이 걸린다.
+                if settings.fm_liveness_enabled:
+                    _digest_predicate = "and e.liveness_session_digest = %s"
+                    _lock_params = (
+                        enrollment_id,
+                        user_id,
+                        hashlib.sha256(session_id.encode()).hexdigest(),
+                    )
+                else:
+                    _digest_predicate = ""
+                    _lock_params = (enrollment_id, user_id)
                 await cur.execute(
-                    """
+                    f"""
                     select e.id::text as id
                     from fm_biometric_enrollments e
                     where e.id = %s and e.user_id = %s
                       and e.status = 'processing'
-                      and e.liveness_session_digest = %s
+                      {_digest_predicate}
                     for update
                     """,
-                    (
-                        enrollment_id,
-                        user_id,
-                        hashlib.sha256(session_id.encode()).hexdigest(),
-                    ),
+                    _lock_params,
                 )
                 if await cur.fetchone() is None:
                     raise _err(
@@ -1991,7 +2025,10 @@ async def process_enrollment_completion(
                         identity_tx_digest,
                         settings.fm_match_policy_version,
                         Json({
-                            "faceLiveness": liveness.provider_version,
+                            "faceLiveness": (
+                                liveness.provider_version
+                                if liveness is not None else "disabled"
+                            ),
                             "oacx": identity_contract_version,
                             "faceMatch": "sface-one-to-one",
                         }),
@@ -2054,10 +2091,14 @@ async def complete_enrollment(
     user_id: str = Depends(require_user),
 ):
     enrollment_id = _canonical_enrollment_id(enrollment_id)
-    try:
-        session_id = str(uuid.UUID(str(body.session_id)))
-    except (AttributeError, TypeError, ValueError):
-        raise _err("invalid_liveness_session", "인증 세션을 확인할 수 없습니다.")
+    settings: Settings = request.app.state.settings
+    if settings.fm_liveness_enabled:
+        try:
+            session_id = str(uuid.UUID(str(body.session_id)))
+        except (AttributeError, TypeError, ValueError):
+            raise _err("invalid_liveness_session", "인증 세션을 확인할 수 없습니다.")
+    else:
+        session_id = None  # 라이브니스 off — 세션 없이 신분증 초상 앵커로 매칭
     try:
         decision = await process_enrollment_completion(
             request,
@@ -2137,10 +2178,13 @@ def validate_biometric_settings(settings: Settings) -> None:
         raise RuntimeError("FACEMARKET_ENABLED is required for biometric enrollment")
     if not settings.opendid_holder_url:
         raise RuntimeError("OPENDID_HOLDER_URL is required for biometric enrollment")
-    if settings.fm_liveness_region != "us-east-1":
-        raise RuntimeError("Face Liveness region must be us-east-1")
-    if not settings.fm_liveness_browser_role_arn:
-        raise RuntimeError("FM_LIVENESS_BROWSER_ROLE_ARN is required")
+    # 라이브니스 관련 요구는 on 일 때만 — off 면 매칭 앵커가 신분증 초상이라 리전·브라우저 role·
+    # liveness confidence·id_live 임계가 쓰이지 않는다.
+    if settings.fm_liveness_enabled:
+        if settings.fm_liveness_region != "us-east-1":
+            raise RuntimeError("Face Liveness region must be us-east-1")
+        if not settings.fm_liveness_browser_role_arn:
+            raise RuntimeError("FM_LIVENESS_BROWSER_ROLE_ARN is required")
     if not settings.fm_face_qc_enabled:
         raise RuntimeError("FM_FACE_QC_ENABLED is required")
     if not settings.fm_ci_pepper or not settings.fm_ci_pepper.strip():
@@ -2150,19 +2194,24 @@ def validate_biometric_settings(settings: Settings) -> None:
         raise RuntimeError(
             "SFace/YuNet face QC weight files are required for biometric enrollment"
         )
-    thresholds = (
-        settings.fm_liveness_confidence_threshold,
-        settings.fm_id_live_threshold,
+    # retouched_live·match_policy 는 항상 필요(사진 ↔ 앵커 매칭). liveness_confidence·id_live 는
+    # 라이브니스 on 일 때만 필요.
+    required = [
         settings.fm_retouched_live_threshold,
         settings.fm_match_policy_version,
-    )
-    if any(value is None for value in thresholds):
+    ]
+    bounded_thresholds = [(settings.fm_retouched_live_threshold, 1.0)]
+    if settings.fm_liveness_enabled:
+        required += [
+            settings.fm_liveness_confidence_threshold,
+            settings.fm_id_live_threshold,
+        ]
+        bounded_thresholds += [
+            (settings.fm_liveness_confidence_threshold, 100.0),
+            (settings.fm_id_live_threshold, 1.0),
+        ]
+    if any(value is None for value in required):
         raise RuntimeError("calibrated biometric thresholds and policy version are required")
-    bounded_thresholds = (
-        (settings.fm_liveness_confidence_threshold, 100.0),
-        (settings.fm_id_live_threshold, 1.0),
-        (settings.fm_retouched_live_threshold, 1.0),
-    )
     if any(
         isinstance(value, bool)
         or not isinstance(value, (int, float))
