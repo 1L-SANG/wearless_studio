@@ -1845,9 +1845,11 @@ async def process_enrollment_completion(
             qc = load_face_qc(settings, required=True)
             # 신원 앵커: 신분증 초상 ↔ 라이브 프레임(둘 다 정면 → SFace 유효). 차단.
             id_live_score = qc.one_to_one_similarity(portrait, liveness.reference_image)
+            # score 는 float 이거나 None(검출 실패) — %s 로 로깅해 None 도 안전하게 찍고,
+            # None 판정(fail-closed)은 _assert_match 가 face_match_failed 로 처리한다.
             logger.info(
-                "fm_match_id_live score=%.4f threshold=%.4f",
-                float(id_live_score), settings.fm_id_live_threshold,
+                "fm_match_id_live score=%s threshold=%.4f",
+                id_live_score, settings.fm_id_live_threshold,
             )
             _assert_match(id_live_score, settings.fm_id_live_threshold)
             # 업로드 사진 ↔ 라이브: 정면 얼굴 인식기(YuNet 검출 + SFace)는 측면·프로필을
@@ -1864,8 +1866,8 @@ async def process_enrollment_completion(
                         continue  # 정면 검출기가 못 잡는 각도(측면/프로필) — 매칭 대상 아님
                     raise
                 logger.info(
-                    "fm_match_photo_live angle=%s score=%.4f threshold=%.4f",
-                    _angle, float(score), settings.fm_retouched_live_threshold,
+                    "fm_match_photo_live angle=%s score=%s threshold=%.4f",
+                    _angle, score, settings.fm_retouched_live_threshold,
                 )
                 _assert_match(score, settings.fm_retouched_live_threshold)
                 matched_any = True
