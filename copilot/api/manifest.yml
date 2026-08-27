@@ -68,11 +68,11 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # dispatcher는 프로세스당 1개 직렬 실행이므로 3개면 충분하고, 10개 기본값을 두 태스크가
   # 동시에 잡아 PostgREST까지 PGRST002/503이 되던 2026-08-18 장애를 방지한다.
   DB_POOL_MAX_SIZE: "3"
-  SUPABASE_URL: https://pedonlvyhoyedzdmmwco.supabase.co
+  SUPABASE_URL: https://ftjxwxuactfjopbokbni.supabase.co
   # facemarket.wearless.kr = 모델 등록 전용 도메인(Vercel). ai.wearless.kr = 메인 앱.
   # 등록 프론트가 facemarket 도메인서 api.wearless.kr 를 부르므로 CORS 허용 필요.
   CORS_ORIGINS: https://ai.wearless.kr,https://facemarket.wearless.kr,http://localhost:5173
-  SUPABASE_ANON_KEY: sb_publishable_iY1-8oAlYRJitM09dPGJnw_fs44eUzs
+  SUPABASE_ANON_KEY: sb_publishable_XRs0Dk22fSqf1UmraA70wg_RGw_3zYx
   R2_ACCOUNT_ID: 2b7c948b56f129faaa10e5076b9e9a66
   R2_BUCKET: wearless
   R2_ENDPOINT: https://2b7c948b56f129faaa10e5076b9e9a66.r2.cloudflarestorage.com
