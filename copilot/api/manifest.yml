@@ -248,6 +248,11 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # Lambda 는 /oacx/... 를 cx.raonsecure.co.kr:18543 로 그대로 forward. api 리전이 한국이면 이 값을
   # 지우고 CX 를 직접 호출해도 된다(기본값 https://cx.raonsecure.co.kr:18543).
   CX_TRANS_BASE_URL: https://93vhif0l14.execute-api.ap-northeast-2.amazonaws.com
+  # AWS Face Liveness off. OACX 모바일신분증(실시간 폰 인증)이 본인확인+내재적 라이브니스를
+  # 담당하고, 얼굴 스왑방지는 업로드 사진 ↔ 신분증 초상 SFace 매칭으로 한다. AWS 라이브니스는
+  # 프레임 품질에 따라 매칭이 불안정(신분증 초상↔실물 0.46 vs 라이브프레임 0.25 실측)했고
+  # 애드온이라 제거. 되돌리려면 "true"(브라우저 role·리전·confidence 임계 SSM/설정 필요).
+  FM_LIVENESS_ENABLED: "false"
   FM_LIVENESS_REGION: us-east-1
   # 캘리브 임계 — 출발값(합리적이나 골든셋 경험 캘리브 전 잠정, 발화율·오탈락 관측 후 튜닝).
   #  · liveness confidence: AWS Face Liveness 0~100. 75 = 스푸핑 방어와 실사용자 오탈락(QA 79.8 사례)

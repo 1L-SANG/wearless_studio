@@ -237,7 +237,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.pool = pool
-    if settings.fm_biometric_enrollment_enabled:
+    if settings.fm_biometric_enrollment_enabled and settings.fm_liveness_enabled:
         app.state.fm_rekognition, app.state.fm_sts = build_biometric_aws_clients(settings)
     else:
         app.state.fm_rekognition = None

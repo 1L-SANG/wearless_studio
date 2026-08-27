@@ -78,6 +78,11 @@ export function createEnrollment({ documentVersion, deviceId }) {
   });
 }
 
+// 등록 위저드 런타임 설정(라이브니스 필요 여부 등) — 서버 authoritative.
+export function getFacemarketConfig() {
+  return http('/v1/facemarket/config');
+}
+
 export function getCurrentEnrollment() {
   return http('/v1/facemarket/enrollments/current');
 }

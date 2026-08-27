@@ -409,6 +409,24 @@ class FakeCursor:
             self.result = {"id": row["id"]} if row else None
         elif (
             query.startswith("select e.id::text as id from fm_biometric_enrollments e")
+            and "e.status = 'processing'" in query
+            and "e.liveness_session_digest" not in query
+        ):
+            # 라이브니스 off 2차 lock — 세션 다이제스트 예측어 없이 processing 만 확인.
+            enrollment_id, user_id = params
+            row = next(
+                (
+                    item
+                    for item in self.store.enrollments
+                    if item["id"] == enrollment_id
+                    and item["user_id"] == user_id
+                    and item["status"] == "processing"
+                ),
+                None,
+            )
+            self.result = {"id": row["id"]} if row else None
+        elif (
+            query.startswith("select e.id::text as id from fm_biometric_enrollments e")
             and "raw_deletion_evidence" in query
         ):
             limit = params[0]
@@ -1421,6 +1439,106 @@ def complete_enrollment(
         json=body,
         headers=auth(),
     )
+
+
+# ── FM_LIVENESS_ENABLED=false: 라이브니스 없이 신분증 초상 앵커 매칭 ──────────────────────
+
+def _make_liveness_off_settings():
+    # 라이브니스 off — browser role·confidence·id_live 는 None 이어도 기동검증을 통과해야 한다.
+    return make_settings(
+        app_env="dev",
+        facemarket_enabled=True,
+        fm_biometric_enrollment_enabled=True,
+        fm_liveness_enabled=False,
+        fm_oacx_contract_mode="dev-mock-v1",
+        fm_liveness_browser_role_arn=None,
+        fm_liveness_confidence_threshold=None,
+        fm_id_live_threshold=None,
+        fm_retouched_live_threshold=0.40,
+        fm_match_policy_version="dev-gold-v1",
+        fm_ci_pepper="pep",
+        fm_face_qc_enabled=True,
+        opendid_holder_url="http://holder.test",
+    )
+
+
+@pytest.fixture()
+def liveness_off_client(
+    keypair, monkeypatch, enrollment_store, fake_r2, fake_pool, fake_rekognition, fake_sts
+):
+    _private_key, public_key = keypair
+    settings = _make_liveness_off_settings()
+    monkeypatch.setattr(
+        facemarket_enrollment,
+        "build_biometric_aws_clients",
+        lambda _settings: (fake_rekognition, fake_sts),
+    )
+
+    @contextlib.asynccontextmanager
+    async def fake_get_conn(_request):
+        async with fake_pool.connection() as conn:
+            yield conn
+
+    monkeypatch.setattr(facemarket_enrollment, "get_conn", fake_get_conn, raising=False)
+    app = create_app(settings)
+    app.state.jwt_key_resolver = lambda _token: public_key
+    app.state.r2_face = fake_r2
+    app.state.pool = fake_pool
+    app.state.fm_rekognition = None  # 라이브니스 off — 클라 없음
+    app.state.fm_sts = None
+    return TestClient(app)
+
+
+def test_liveness_disabled_validate_passes_without_liveness_settings(monkeypatch):
+    # 기동검증: 라이브니스 off 면 role/confidence/id_live 가 None 이어도 통과해야 한다.
+    settings = _make_liveness_off_settings()
+    monkeypatch.setattr(
+        facemarket_enrollment, "weight_paths", lambda _s: (__file__, __file__)
+    )
+    facemarket_enrollment.validate_biometric_settings(settings)  # raise 없어야 함
+
+
+def test_config_reports_liveness_not_required(liveness_off_client):
+    res = liveness_off_client.get("/v1/facemarket/config")
+    assert res.status_code == 200, res.text
+    assert res.json() == {"livenessRequired": False}
+
+
+def test_liveness_session_rejected_when_disabled(
+    liveness_off_client, auth, enrollment_store
+):
+    eid = create_ready_enrollment(liveness_off_client, auth, enrollment_store)
+    res = liveness_off_client.post(
+        f"/v1/facemarket/enrollments/{eid}/liveness-session",
+        json={"nonce": "n" * 40},
+        headers=auth(),
+    )
+    assert res.status_code == 409, res.text
+    assert res.json()["error"]["code"] == "liveness_disabled"
+
+
+def test_complete_without_liveness_matches_photos_against_portrait(
+    liveness_off_client, auth, enrollment_store, fake_r2, fake_rekognition, completion_fakes
+):
+    eid = create_complete_ready_enrollment(
+        liveness_off_client, auth, enrollment_store, fake_r2, fake_rekognition
+    )
+    # 세션 없이 완료 — 신분증 초상 앵커.
+    res = liveness_off_client.post(
+        f"/v1/facemarket/enrollments/{eid}/complete",
+        json={"idPhotoHex": PORTRAIT_HEX},
+        headers=auth(),
+    )
+    assert res.status_code == 202, res.text
+    assert res.json()["passed"] is True
+    # AWS Rekognition 호출 0.
+    assert fake_rekognition.calls == []
+    assert fake_rekognition.result_calls == []
+    # 매칭은 업로드 사진 ↔ 신분증 초상("id") — 라이브 프레임("live")·id↔live 페어 없음.
+    pairs = completion_fakes["face_qc"].calls
+    assert pairs, "매칭 호출이 있어야 한다"
+    assert all(candidate == "id" for _ref, candidate in pairs), pairs
+    assert all(ref != "live" and candidate != "live" for ref, candidate in pairs), pairs
 
 
 def test_complete_binds_using_stored_identity_without_token(

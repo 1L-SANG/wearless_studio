@@ -8,6 +8,7 @@ import {
   createIdentity,
   createLivenessSession,
   deleteEnrollmentPhoto,
+  getFacemarketConfig,
   getCurrentEnrollment,
   getEnrollment,
   listMyModels,
@@ -141,6 +142,9 @@ export function ModelRegister() {
   const [step, setStep] = useState('loading');
   const [enrollment, setEnrollment] = useState(null);
   const [session, setSession] = useState(null);
+  // 라이브니스 필요 여부 — 서버 /config 가 authoritative. false 면 라이브 단계를 건너뛰고
+  // 사진 → 완료로 직행(매칭 앵커는 신분증 초상). 조회 전 기본 true(보수적).
+  const [livenessRequired, setLivenessRequired] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [consentAccepted, setConsentAccepted] = useState(false);
@@ -149,6 +153,18 @@ export function ModelRegister() {
   // 신분증 초상(dlphotoimage HEX) — 앞단 identity 스텝에서 위젯 콜백으로 받아 라이브니스 후
   // SFace 매치 때까지 메모리에서만 보관한다. local/session storage 금지·로그 금지.
   const portraitRef = useRef(null);
+  // finishMatch 는 아래에서 정의되지만 그 위의 이펙트가 참조해야 한다(라이브니스 off 자동완료).
+  // dep-array forward-reference 를 피하려고 ref 로 최신 함수를 넘긴다.
+  const finishMatchRef = useRef(null);
+
+  // 마운트 시 라이브니스 필요 여부 조회. 실패해도 기본 true 유지(라이브 단계를 보수적으로 노출).
+  useEffect(() => {
+    let active = true;
+    getFacemarketConfig()
+      .then((cfg) => { if (active) setLivenessRequired(cfg?.livenessRequired !== false); })
+      .catch(() => { /* 기본 true 유지 */ });
+    return () => { active = false; };
+  }, []);
 
   const restore = useCallback(async () => {
     setStep('loading');
@@ -380,6 +396,8 @@ export function ModelRegister() {
     // 새로고침·복귀로 초상 ref 를 잃었으면(사진은 서버에 저장됨) 라이브니스 세션을 만들기 전에
     // 신분증만 다시 확인해 초상을 되찾는다 — 사진 재촬영 없이 이어서 진행한다.
     if (!portraitRef.current) { setStep('reidentify'); return undefined; }
+    // 라이브니스 off — 세션/위젯 없이 신분증 초상 앵커로 바로 완료한다.
+    if (!livenessRequired) { finishMatchRef.current?.(); return undefined; }
     let active = true;
     createLivenessSession(enrollment.id, crypto.randomUUID())
       .then((created) => {
@@ -395,7 +413,7 @@ export function ModelRegister() {
         setStep('liveness_failed');
       });
     return () => { active = false; };
-  }, [enrollment?.id, session, step]);
+  }, [enrollment?.id, session, step, livenessRequired]);
 
   useEffect(() => {
     if (step !== 'processing' || !enrollment?.id) return undefined;
@@ -475,7 +493,9 @@ export function ModelRegister() {
   const finishMatch = useCallback(async () => {
     const sessionId = session?.sessionId;
     const enrollmentId = enrollment?.id;
-    if (!sessionId || !enrollmentId) return;
+    // 라이브니스 off 면 세션이 없다 — enrollmentId·초상만 있으면 완료(신분증 초상 앵커).
+    if (!enrollmentId) return;
+    if (livenessRequired && !sessionId) return;
     const idPhotoHex = portraitRef.current;
     if (!idPhotoHex) {
       // 초상 ref 유실(라이브니스 도중 새로고침 등) — 조용한 실패 금지. 등록·사진은 서버에 보존돼
@@ -507,7 +527,9 @@ export function ModelRegister() {
       }
       await abandonLiveness();
     }
-  }, [abandonLiveness, enrollment?.id, session]);
+  }, [abandonLiveness, enrollment?.id, session, livenessRequired]);
+  // 위 이펙트(라이브니스 off 자동완료)가 forward-reference 없이 최신 finishMatch 를 부르게 한다.
+  finishMatchRef.current = finishMatch;
 
   if (step === 'loading') return <div className="wizard narrow"><div className="surface">등록 상태를 확인하고 있어요…</div></div>;
 
@@ -703,23 +725,25 @@ export function ModelRegister() {
             <div className={s.uploadHint}>JPG · PNG · WebP</div>
           </label>
           <Button variant="secondary" block disabled={busy} onClick={() => setStep('liveness')}>
-            {busy ? '업로드 중…' : '건너뛰고 라이브 얼굴 확인'}
+            {busy ? '업로드 중…' : (livenessRequired ? '건너뛰고 라이브 얼굴 확인' : '건너뛰고 본인 확인 완료')}
           </Button>
         </div>
       )}
 
       {step === 'liveness' && (
         <div className={`surface ${s.livenessWrap}`}>
-          {session ? (
-            <Suspense fallback="라이브 인증 화면을 불러오고 있어요…">
-              <FaceLivenessStep
-                session={session}
-                onAnalysisComplete={finishMatch}
-                onCancel={onLivenessError}
-                onError={onLivenessError}
-              />
-            </Suspense>
-          ) : '라이브 인증 세션을 준비하고 있어요…'}
+          {!livenessRequired
+            ? '본인 확인을 마치고 있어요…'
+            : session ? (
+              <Suspense fallback="라이브 인증 화면을 불러오고 있어요…">
+                <FaceLivenessStep
+                  session={session}
+                  onAnalysisComplete={finishMatch}
+                  onCancel={onLivenessError}
+                  onError={onLivenessError}
+                />
+              </Suspense>
+            ) : '라이브 인증 세션을 준비하고 있어요…'}
         </div>
       )}
 

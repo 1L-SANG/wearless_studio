@@ -287,6 +287,10 @@ class Settings:
     # 생체 등록은 FaceMarket 안에서도 별도 dark launch. 임계값은 캘리브 증거 없이는 기본값을 두지 않는다.
     fm_biometric_enrollment_enabled: bool = False
     fm_oacx_contract_mode: str = "disabled"
+    # AWS Face Liveness 사용 여부. off 면 라이브니스 세션을 만들지 않고 SFace 매칭 앵커를
+    # OACX 신분증 초상으로 쓴다(업로드 사진 ↔ 신분증 초상). 본인확인은 OACX 모바일신분증(실시간
+    # 폰 인증)이 담당하므로 라이브니스는 애드온. 기본 true = 기존 동작 보존.
+    fm_liveness_enabled: bool = True
     fm_liveness_region: str = "us-east-1"
     fm_liveness_browser_role_arn: str | None = None
     fm_liveness_confidence_threshold: float | None = None
@@ -556,6 +560,9 @@ def load_settings() -> Settings:
             os.getenv("FM_BIOMETRIC_ENROLLMENT_ENABLED", "false").lower() == "true"
         ),
         fm_oacx_contract_mode=os.getenv("FM_OACX_CONTRACT_MODE", "disabled"),
+        fm_liveness_enabled=(
+            os.getenv("FM_LIVENESS_ENABLED", "true").lower() == "true"
+        ),
         fm_liveness_region=os.getenv("FM_LIVENESS_REGION", "us-east-1"),
         fm_liveness_browser_role_arn=os.getenv("FM_LIVENESS_BROWSER_ROLE_ARN") or None,
         fm_liveness_confidence_threshold=_optional_float_env(
