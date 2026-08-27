@@ -16,6 +16,17 @@ log = logging.getLogger("wearless.personalization_purge_job")
 _BACKUP_RETENTION_DAYS = 30
 _REASON_STRENGTH = {"withdrawal": 0, "account_delete": 1}
 
+#: 스코프가 비었다 = 지울 대상이 없다. 파기 실패가 아니라 파기 의무가 이미 충족된
+#: 상태라, 재시도하면 결과가 영원히 안 바뀐다. 실제로 프로덕션에서 백오프 상한(900s)에
+#: 걸린 채 20시간 동안 attempt=88 까지 도는 무한 루프가 됐다(2026-08-26 실측).
+#: 확인했다는 사실을 감사에 남기고 done 으로 종결한다.
+_EMPTY_SCOPE_CODES = {"scope_not_found"}
+#: 계약 위반 — 같은 입력이면 재시도해도 같은 결과다. error 로 종결해 운영자가 본다.
+_CONTRACT_CODES = {"invalid_scope"}
+#: 일시적 코드(스토리지 장애 등)의 재시도 상한. 넘으면 error 로 종결한다 —
+#: 상한이 없으면 영구 장애가 큐에 영원히 남는다.
+_MAX_RETRY_ATTEMPTS = 20
+
 
 async def _audit(cur, user_id: str, profile_id: str, event_type: str, detail: dict) -> None:
     await cur.execute(
@@ -59,20 +70,102 @@ async def run_personalization_purge_job(app, job: dict) -> None:
         except Exception:
             log.warning("personalization_purge retry update failed for job %s", job_id)
 
-    async def _fatal(code: str) -> None:
+    async def _fatal(code: str, message: str = "개인화 파기 계약이 올바르지 않아요.") -> None:
         try:
             async with pool.connection() as conn:
                 await repo._finalize_job_failure(
                     conn,
                     job_id=job_id,
                     lease_token=lease_token,
-                    message="개인화 파기 계약이 올바르지 않아요.",
+                    message=message,
                     metadata={"code": code},
                     code=code,
                 )
                 await conn.commit()
         except Exception:
             log.warning("personalization_purge fatal update failed for job %s", job_id)
+
+    async def _attempts_so_far() -> int:
+        """이 잡이 지금까지 재시도된 횟수. 읽기 실패는 0으로 봐서 재시도를 막지 않는다."""
+        try:
+            async with pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "select coalesce((metadata->>'attempt')::int, 0) as attempt "
+                        "from jobs where id = %s",
+                        (job_id,),
+                    )
+                    row = await cur.fetchone()
+            return int((row or {}).get("attempt") or 0)
+        except Exception:
+            log.warning("personalization_purge attempt read failed for job %s", job_id)
+            return 0
+
+    async def _complete_empty_scope() -> None:
+        """지울 대상이 없는 파기를 done 으로 종결하고 감사에 남긴다.
+
+        event_type 은 'purge_completed' 를 쓴다 — personalization_audit_log 의 CHECK 가
+        허용 값을 고정하고 있어 새 값은 마이그레이션이 필요한데, 의미상으로도 "파기가
+        완료됐다(지울 것이 없었다)"가 맞다. 구분은 detail.code='scope_empty' 로 한다.
+        """
+        counts = {
+            "code": "scope_empty",
+            "targetCount": 0,
+            "confirmedAbsentCount": 0,
+            "modelCount": 0,
+            "profileCount": 0,
+            "enrollmentCount": 0,
+            "assetCount": 0,
+            "generationResults": 0,
+            "generationResultsR2Deleted": 0,
+            "generationOrphansDeleted": 0,
+            "generationOrphanScan": "skipped",
+        }
+        envelope = {
+            "status": "done",
+            "reason": reason,
+            "outcome": "scope_empty",
+            "receiptId": None,
+            "counts": counts,
+        }
+        try:
+            async with pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    # lease 펜스 — 회수된 잡을 옛 워커가 done 으로 덮지 않게 한다.
+                    await cur.execute(
+                        "update jobs set status = 'done', result = %s, progress = 100, "
+                        "locked_by = null, locked_at = null, finished_at = now(), "
+                        "metadata = metadata || jsonb_build_object("
+                        "  'stage', 'done', 'code', 'scope_empty') "
+                        "where id = %s and kind = 'personalization_purge' "
+                        "  and status = 'running' and locked_by = %s",
+                        (Json(envelope), job_id, lease_token),
+                    )
+                    if cur.rowcount == 0:
+                        await conn.rollback()
+                        return
+                    await _audit(cur, user_id, None, "purge_completed", counts)
+                    await cur.execute(
+                        "insert into job_events (job_id, event_type, payload) "
+                        "values (%s, 'done', %s)",
+                        (job_id, Json(envelope)),
+                    )
+                await conn.commit()
+        except Exception:
+            log.warning("personalization_purge empty-scope finalize failed for job %s", job_id)
+
+    async def _dispatch_failure(code: str) -> None:
+        """실패 코드를 재시도/종결로 라우팅한다 — 무조건 재시도가 무한 루프의 원인이었다."""
+        if code in _EMPTY_SCOPE_CODES:
+            await _complete_empty_scope()
+            return
+        if code in _CONTRACT_CODES:
+            await _fatal(code)
+            return
+        if await _attempts_so_far() >= _MAX_RETRY_ATTEMPTS:
+            await _fatal(code, "개인화 파기가 반복 실패해 중단했어요.")
+            return
+        await _retry(code)
 
     try:
         if reason not in {"withdrawal", "account_delete"}:
@@ -159,8 +252,14 @@ async def run_personalization_purge_job(app, job: dict) -> None:
                         ).isoformat(),
                     }
                     if reason == "withdrawal":
-                        for profile_id in profile_ids:
-                            await _audit(cur, user_id, profile_id, "purge_completed", counts)
+                        if profile_ids:
+                            for profile_id in profile_ids:
+                                await _audit(cur, user_id, profile_id, "purge_completed", counts)
+                        else:
+                            # 프로필이 없어도 파기는 수행됐다(인증행·enrollment 는 user_id 로
+                            # 지운다). 프로필 루프에만 기대면 그 파기가 감사에서 통째로
+                            # 사라져 "했는지 안 했는지" 증명할 수 없다.
+                            await _audit(cur, user_id, None, "purge_completed", counts)
                     envelope = {
                         "status": "done",
                         "reason": reason,
@@ -184,6 +283,6 @@ async def run_personalization_purge_job(app, job: dict) -> None:
                 await conn.commit()
                 return
     except PurgeIncomplete as exc:
-        await _retry(exc.code)
+        await _dispatch_failure(exc.code)
     except Exception:
-        await _retry("unexpected_purge_failure")
+        await _dispatch_failure("unexpected_purge_failure")

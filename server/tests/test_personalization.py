@@ -33,6 +33,7 @@ from psycopg.types.json import Json
 from app import cx_identity, facemarket, personalization
 from app.main import create_app
 from app.personalization_qc import FaceQcResult, FaceQcUnavailable
+from app.services.biometric_purge import PurgeIncomplete
 from app.workers.personalization_purge_job import run_personalization_purge_job
 from conftest import make_settings
 
@@ -2275,3 +2276,129 @@ def test_withdraw_purge_age_gate_passes_via_facemarket_fallback_but_upload_block
     )
     assert upload.status_code == 403, upload.text
     assert upload.json()["error"]["code"] == "consent_required"
+
+
+# ── 빈 스코프 파기 종결 (프로덕션 회귀: attempt=88 무한 재시도) ─────────────
+def _fetch_job_row(job_id: str) -> dict:
+    conn = _sync_conn()
+    row = conn.execute(
+        "select status, metadata, result from jobs where id = %s", (job_id,)
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def test_purge_with_empty_scope_terminates_instead_of_retrying_forever(raw_uid):
+    """지울 데이터가 하나도 없으면 파기 잡은 done 으로 끝난다.
+
+    회귀 대상(프로덕션 2026-08-26 실측): 스코프가 비면 _scope 가 scope_not_found 를
+    던지고 워커가 코드 구분 없이 재시도해, 15분 백오프 상한에 걸린 채 20시간 동안
+    attempt=88 까지 도는 무한 루프가 됐다. 파기 대상이 없는 것은 파기 실패가 아니라
+    파기 의무가 이미 충족된 상태다 — 종결 상태로 끝나야 한다.
+    """
+    # raw_uid = 인증행조차 없는 원시 유저 = 진짜로 지울 게 0건.
+    # uid 픽스처는 성인 인증행을 심으므로 '빈 스코프'가 아니다(아래 인증행 테스트 참조).
+    r2 = FakeR2Face()
+    job = _seed_purge_job(raw_uid, str(uuid.uuid4()))
+
+    asyncio.run(run_personalization_purge_job(_purge_app(r2), job))
+
+    row = _fetch_job_row(job["id"])
+    assert row["status"] == "done", f"빈 스코프인데 종결 안 됨: {row}"
+    assert (row["metadata"] or {}).get("stage") != "retry", "재시도로 되돌아감"
+
+
+def test_purge_empty_scope_records_audit_trail(raw_uid):
+    """빈 스코프 종결은 '확인했고 지울 게 없었다'를 감사 로그에 남긴다.
+
+    event_type 은 'purge_completed' — personalization_audit_log 의 CHECK 가 허용 값을
+    고정하고 있어 새 값은 마이그레이션이 필요하다. 구분은 detail.code 로 한다.
+    """
+    r2 = FakeR2Face()
+    job = _seed_purge_job(raw_uid, str(uuid.uuid4()))
+
+    asyncio.run(run_personalization_purge_job(_purge_app(r2), job))
+
+    conn = _sync_conn()
+    row = conn.execute(
+        "select detail from personalization_audit_log "
+        "where user_id = %s and event_type = 'purge_completed' "
+        "order by created_at desc limit 1",
+        (raw_uid,),
+    ).fetchone()
+    conn.close()
+    assert row is not None, "빈 스코프 종결의 감사 기록이 없다"
+    # 카운트 0 자체가 "수행했고 지울 것이 없었다"의 증거다. 프로필이 없으면 프로필별
+    # 감사 루프가 한 번도 안 돌아 기록이 통째로 사라지던 것을 막는 게 이 테스트의 요지.
+    assert row["detail"]["profileCount"] == 0
+    assert row["detail"]["modelCount"] == 0
+
+
+def test_purge_retryable_failure_stops_after_attempt_cap(uid):
+    """일시적 실패도 무한 재시도하지 않는다 — 상한을 넘기면 error 로 종결한다."""
+    profile_id = _seed_profile(uid)
+    job = _seed_purge_job(uid, profile_id)
+    conn = _sync_conn()
+    conn.execute(
+        "update jobs set metadata = jsonb_build_object('attempt', 20) where id = %s",
+        (job["id"],),
+    )
+    conn.close()
+
+    # r2 미배선 = _require_storage 가 storage_unavailable(일시적 코드)로 실패시킨다.
+    asyncio.run(run_personalization_purge_job(_purge_app(None), job))
+
+    row = _fetch_job_row(job["id"])
+    assert row["status"] == "error", f"상한을 넘겼는데 계속 재시도: {row}"
+
+
+def test_purge_retryable_failure_below_cap_still_retries(uid):
+    """상한 아래의 일시적 실패는 기존대로 재시도로 되돌린다(회귀 방지)."""
+    profile_id = _seed_profile(uid)
+    job = _seed_purge_job(uid, profile_id)
+
+    asyncio.run(run_personalization_purge_job(_purge_app(None), job))
+
+    row = _fetch_job_row(job["id"])
+    assert row["status"] == "pending"
+    assert (row["metadata"] or {}).get("code") == "storage_unavailable"
+
+
+def test_purge_deletes_identity_verification_even_without_profile(uid):
+    """프로필 없이 본인확인만 한 유저도 철회하면 인증행이 지워진다.
+
+    회귀 대상: _scope 게이트가 profile/model/license 만 세어 '스코프 비었다'로 판정하면,
+    01f01e1e 가 프로필 게이트 밖으로 빼둔 personalization_identity_verifications 삭제에
+    영영 도달하지 못한다. 그 상태에서 빈 스코프를 done 으로 종결하면 '파기 완료'로
+    기록되면서 인증행은 살아남는다 — 파기 격리가 깨진 채 완료로 남는 최악의 조합이다.
+    """
+    assert _fetch_identity_verifications(uid), "픽스처 전제: 인증행이 심겨 있다"
+    r2 = FakeR2Face()
+    job = _seed_purge_job(uid, str(uuid.uuid4()))
+
+    asyncio.run(run_personalization_purge_job(_purge_app(r2), job))
+
+    assert _fetch_identity_verifications(uid) == [], "파기 후에도 인증행이 남았다"
+    assert _fetch_job_row(job["id"])["status"] == "done"
+
+
+def test_purge_scope_not_found_terminates_without_retry(uid, monkeypatch):
+    """scope_not_found 는 재시도가 아니라 종결로 라우팅된다(무한 루프 방어선).
+
+    게이트 수정 이후 사용자 경로에서는 이 코드가 안 나오지만, 다른 경로가 던지더라도
+    15분 간격 영구 루프로 돌아가지 않게 라우팅 자체를 고정한다.
+    """
+    from app.workers import personalization_purge_job as purge_mod
+
+    async def _boom(*_a, **_kw):
+        raise PurgeIncomplete("scope_not_found")
+
+    monkeypatch.setattr(purge_mod, "purge_biometric_scope", _boom)
+    job = _seed_purge_job(uid, str(uuid.uuid4()))
+
+    asyncio.run(run_personalization_purge_job(_purge_app(FakeR2Face()), job))
+
+    row = _fetch_job_row(job["id"])
+    assert row["status"] == "done"
+    assert (row["metadata"] or {}).get("code") == "scope_empty"
+    assert (row["metadata"] or {}).get("stage") != "retry"
