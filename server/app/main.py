@@ -181,7 +181,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     app, detail_adapter,
                     demand_fn=lambda repo, conn: repo.detail_worker_demand_snapshot(conn),
                     idle_attr="detail_worker_autoscale_idle_minutes",
-                    name="detail-worker", lock_key="detail_worker_autoscaler")
+                    name="detail-worker", lock_key="detail_worker_autoscaler",
+                    # 이 워커만 태스크당 잡 여러 개를 처리한다. 두 값 모두 기본 1 이라
+                    # env 를 안 주면 sam2·opendid 와 똑같이 0↔1 로만 움직인다.
+                    capacity_attr="job_concurrency",
+                    max_tasks_attr="detail_worker_max_tasks")
                 if detail_adapter.enabled:
                     detail_worker_autoscaler = app.state.detail_worker_autoscaler
                     await detail_worker_autoscaler.start()

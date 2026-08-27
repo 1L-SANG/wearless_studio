@@ -38,7 +38,8 @@ async def _sam_demand(repo, conn):
 
 class SamAutoscaler:
     def __init__(self, app, adapter: SamAutoscaleAdapter, *, demand_fn=None,
-                 idle_attr="sam_autoscale_idle_minutes", name="sam2", lock_key=None):
+                 idle_attr="sam_autoscale_idle_minutes", name="sam2", lock_key=None,
+                 capacity_attr=None, max_tasks_attr=None):
         self.app = app
         self.adapter = adapter
         self._demand_fn = demand_fn or _sam_demand
@@ -51,6 +52,10 @@ class SamAutoscaler:
         self._long_run_alerted_for: datetime | None = None   # 그 가동(startedAt)에 알렸는가
         self._last_alert_at: dict[str, float] = {}           # subject → monotonic (디바운스)
         self._last_prewarm = 0.0
+        # 대수 산출용. 미지정이면 1/1 — sam2·opendid 는 want_running 과 동일하게 굴러간다.
+        # detail-worker 만 태스크당 잡 N개를 처리하므로 이 둘을 설정 키로 받는다.
+        self._capacity_attr = capacity_attr
+        self._max_tasks_attr = max_tasks_attr
         self._inflight: set[asyncio.Task] = set()            # 라우트 fire-and-forget 참조 보관
         self._now = lambda: datetime.now(timezone.utc)
 
@@ -107,7 +112,15 @@ class SamAutoscaler:
 
         idle = int(getattr(self.app.state.settings, self._idle_attr, 30))
         snap = await self._demand_fn(repo, conn)
-        want = sam_autoscale.want_running(snap, idle_minutes=idle, now=self._now())
+        settings = self.app.state.settings
+        capacity = max(1, int(getattr(settings, self._capacity_attr, 1) or 1)
+                       ) if self._capacity_attr else 1
+        max_tasks = max(1, int(getattr(settings, self._max_tasks_attr, 1) or 1)
+                        ) if self._max_tasks_attr else 1
+        want_n = sam_autoscale.want_count(
+            snap, idle_minutes=idle, per_task_capacity=capacity,
+            max_tasks=max_tasks, now=self._now())
+        want = want_n > 0
         try:
             state = await self.adapter.describe(target)
         except Exception as exc:
@@ -118,8 +131,11 @@ class SamAutoscaler:
 
         await self._check_long_run(state, want)
 
-        if want and state.desired == 0:
-            return await self._scale(target, 1, "up")
+        if want and state.desired < want_n:
+            return await self._scale(target, want_n, "up")
+        if want and state.desired > want_n and state.running > 0:
+            # 밀린 잡이 줄면 대수도 줄인다. running==0 이면 켜는 중이라 건드리지 않는다.
+            return await self._scale(target, want_n, "down")
         if not want and state.desired > 0:
             if state.running == 0:
                 # 켜는 중에 내리면 콜드스타트를 버린다. pending>0 만 보면 안 된다 — 실측

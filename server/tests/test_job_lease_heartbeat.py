@@ -86,8 +86,12 @@ def test_heartbeat_is_a_noop_without_a_lease_token():
 
 
 def test_worker_run_is_wrapped_by_the_heartbeat():
-    """워커가 끝나면(성공·실패 무관) 하트비트도 반드시 멈춘다."""
-    source = inspect.getsource(dispatcher_mod.JobDispatcher._run)
+    """워커가 끝나면(성공·실패 무관) 하트비트도 반드시 멈춘다.
+
+    잡 동시 실행(2026-08-27)을 넣으면서 이 블록이 _run 에서 잡 단위 태스크인 _run_job 으로
+    옮겨졌다. 계약은 그대로다 — 하트비트를 띄우고, finally 에서 반드시 멈춘다.
+    """
+    source = inspect.getsource(dispatcher_mod.JobDispatcher._run_job)
     assert "heartbeat = asyncio.create_task(self._keep_lease(s, pool, job))" in source
     assert "finally:" in source and "heartbeat.cancel()" in source
 

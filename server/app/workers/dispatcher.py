@@ -48,6 +48,9 @@ _WORKERS = {
 }
 _KINDS = tuple(_WORKERS)
 _SWEEP_INTERVAL = 60.0  # lease 복구 점검 주기(초)
+#: stop() 이 실행 중인 잡을 기다리는 상한. 컨테이너 StopTimeout(detail-worker 60s) 안에서
+#: 끝나야 하므로 그보다 짧게 잡는다 — 남는 시간은 워커의 finalize·크레딧 정산 몫이다.
+_DRAIN_TIMEOUT = 45.0
 
 
 def configured_job_kinds(raw: str | None = None) -> tuple[str, ...]:
@@ -77,6 +80,8 @@ class JobDispatcher:
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
         self._wake = asyncio.Event()
+        #: 실행 중인 잡 태스크. stop() 이 드레인 대상으로 쓴다.
+        self._running: set[asyncio.Task] = set()
 
     def wake(self):
         """job 생성 직후 라우트가 호출 — 유휴 폴링 대기(최대 poll_interval초)를 건너뛰고
@@ -97,51 +102,109 @@ class JobDispatcher:
                 self._task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._task
+        # 실행 중인 잡을 기다린다. 안 기다리면 배포·Spot 중단마다 잡이 통째로 죽는다 —
+        # 2026-08-27 실측: 배포가 겹쳐 컷 8장을 만든 잡이 중단되고 $1.24 가 날아갔다.
+        # 동시 실행에서는 그 손실이 N 배가 되므로 드레인이 필수다.
+        #
+        # 상한은 컨테이너 StopTimeout(detail-worker 60s) 안에서 끝나야 한다. 넘긴 잡은
+        # 취소하고 lease 복구에 맡긴다 — 여기서 무한정 기다리면 SIGKILL 로 더 나쁘게 끝난다.
+        # __init__ 을 거치지 않고 만들어진 인스턴스(테스트 대역)에서도 stop 이 터지지
+        # 않아야 한다 — 종료 경로가 새 속성 유무로 깨지면 배포 중 드레인이 통째로 죽는다.
+        running = getattr(self, "_running", None)
+        if running:
+            pending = list(running)
+            log.info("draining %d running job(s)", len(pending))
+            done, still = await asyncio.wait(pending, timeout=_DRAIN_TIMEOUT)
+            for t in still:
+                log.warning("drain timeout — cancelling job task")
+                t.cancel()
+            if still:
+                await asyncio.gather(*still, return_exceptions=True)
 
     async def _run(self):
         s = self.app.state.settings
         pool = self.app.state.pool
         last_sweep = 0.0
+        # 동시 실행 상한. 기본 1 = 지금까지의 직렬 동작 그대로 — 배포만으로는 아무것도
+        # 안 바뀌고 env 한 줄로 켠다(SAM_AUTOSCALE·CUT_OUTPUT_QC_MODE 와 같은 관례).
+        limit = max(1, int(getattr(s, "job_concurrency", 1) or 1))
+        slots = asyncio.Semaphore(limit)
         while not self._stop.is_set():
             try:
                 now = time.monotonic()
                 if now - last_sweep >= _SWEEP_INTERVAL:
                     last_sweep = now
                     await self._recover_stale(s, pool)
-                async with pool.connection() as conn:
-                    job = await repo.claim_next_job(conn, self.kinds, s.job_worker_id)
-                    await conn.commit()
-                if job is None:
-                    # 고정 sleep 대신 wake 이벤트 대기(상한 = poll_interval) — 라우트가
-                    # wake()를 쏘면 즉시 다음 claim, 아니면 기존 주기 폴링과 동일.
-                    try:
-                        await asyncio.wait_for(
-                            self._wake.wait(), timeout=s.job_poll_interval_seconds)
-                    except asyncio.TimeoutError:
-                        pass
-                    self._wake.clear()
-                    continue
-                worker = _WORKERS.get(job["kind"])
-                if worker is None:  # _KINDS 로 claim 을 걸러도 방어(설정 오류 대비)
-                    log.error("no worker for job kind=%s (job %s)", job["kind"], job["id"])
-                    continue
-                # 이 잡이 도는 동안 일어난 이미지 호출에 job·user·kind 를 붙인다
-                # (워커 시그니처를 바꾸지 않고 실비를 잡별로 귀속시키는 유일한 지점).
-                heartbeat = asyncio.create_task(self._keep_lease(s, pool, job))
+                # 슬롯을 **claim 보다 먼저** 잡는다. 순서를 뒤집으면 자리가 없는데 claim 한
+                # 잡을 running 으로 뒤집어 놓고 방치하게 된다.
+                await slots.acquire()
+                released = False
                 try:
-                    with image_usage.job_scope(
-                        job_id=job["id"], user_id=job.get("user_id"), stage=job["kind"]
-                    ):
-                        await worker(self.app, job)
-                finally:
-                    heartbeat.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await heartbeat
+                    async with pool.connection() as conn:
+                        job = await repo.claim_next_job(conn, self.kinds, s.job_worker_id)
+                        await conn.commit()
+                    if job is None:
+                        slots.release()
+                        released = True
+                        # 고정 sleep 대신 wake 이벤트 대기(상한 = poll_interval) — 라우트가
+                        # wake()를 쏘면 즉시 다음 claim, 아니면 기존 주기 폴링과 동일.
+                        try:
+                            await asyncio.wait_for(
+                                self._wake.wait(), timeout=s.job_poll_interval_seconds)
+                        except asyncio.TimeoutError:
+                            pass
+                        self._wake.clear()
+                        continue
+                    worker = _WORKERS.get(job["kind"])
+                    if worker is None:  # _KINDS 로 claim 을 걸러도 방어(설정 오류 대비)
+                        log.error("no worker for job kind=%s (job %s)",
+                                  job["kind"], job["id"])
+                        slots.release()
+                        released = True
+                        continue
+                except BaseException:
+                    if not released:
+                        slots.release()
+                    raise
+                # 잡 실행은 별도 태스크로 띄우고 루프는 곧장 다음 claim 으로 간다.
+                # 슬롯 반납은 _run_job 이 책임진다.
+                task = asyncio.create_task(self._run_job(s, pool, job, worker, slots))
+                self._running.add(task)
+                task.add_done_callback(self._running.discard)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 log.exception("dispatcher loop error")
                 await asyncio.sleep(s.job_poll_interval_seconds)
+
+    async def _run_job(self, s, pool, job, worker, slots):
+        """잡 하나를 끝까지 돌린다. 예외는 여기서 잡아 루프로 올리지 않는다.
+
+        예외를 루프까지 올리면 디스패처 한 바퀴가 통째로 날아간다 — 2026-08-26
+        프로덕션에서 sam_preprocess 의 UniqueViolation 3회로 실제 겪었다. 동시 실행에서는
+        그 피해가 나머지 잡까지 번지므로 잡 단위로 가둔다.
+
+        image_usage.job_scope 를 **이 태스크 안에서** 잡는 것이 중요하다. _ctx 는
+        ContextVar 이고 asyncio 태스크는 생성 시점의 컨텍스트를 복사하므로, 루프에서 잡으면
+        동시에 도는 잡들이 서로의 job_id 를 덮어써 실비가 엉뚱한 잡에 붙는다.
+        """
+        try:
+            heartbeat = asyncio.create_task(self._keep_lease(s, pool, job))
+            try:
+                with image_usage.job_scope(
+                    job_id=job["id"], user_id=job.get("user_id"), stage=job["kind"]
+                ):
+                    await worker(self.app, job)
+            finally:
+                heartbeat.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await heartbeat
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("job %s (%s) failed", job["id"], job["kind"])
+        finally:
+            slots.release()
 
     async def _keep_lease(self, s, pool, job):
         """잡이 도는 동안 lease 시각을 갱신한다.
