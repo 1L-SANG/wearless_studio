@@ -39,6 +39,8 @@ QC_FLAGS = [
     ("MANNEQUIN_TONE_EDITOR", "mannequin_tone_editor"),
     # sam2 온디맨드(2026-08-21). 미선언이면 reconciler 가 매 주기 skip — sam2 가 영영 안 켜진다.
     ("SAM_AUTOSCALE", "sam_autoscale"),
+    # 콜드스타트 직결 폴백(2026-08-27). 미선언이면 87초를 그대로 기다린다.
+    ("SAM_DIRECT_ENDPOINT", "sam_direct_endpoint"),
 ]
 
 

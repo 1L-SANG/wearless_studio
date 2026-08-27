@@ -142,3 +142,99 @@ def test_one_bad_candidate_does_not_block_the_rest():
 
 def test_poll_interval_follows_the_shortest_backoff():
     assert sam_retry_pusher.POLL_SECONDS == min(sam_retry.BACKOFF_SECONDS)
+
+
+# ── 준비 신호로 백오프 건너뛰기 ─────────────────────────────────────────────────
+#
+# 백오프 사다리(15/60/90/120)는 "sam2 가 언제 살아날지 모른다"를 대신하는 추측이었다.
+# 실측(2026-08-27): sam2 가 +146.7초에 준비됐는데 다음 시도는 사다리 격자에 걸려 있었다.
+# 살아난 걸 확인했으면 더 기다릴 이유가 없다. 예산(MAX_RETRIES=4)은 그대로 지킨다.
+
+class _State:
+    def __init__(self, resolver):
+        self.sam_endpoint = resolver
+
+
+class _App:
+    def __init__(self, resolver):
+        self.state = _State(resolver)
+
+
+class _Resolver:
+    def __init__(self, ready=True, boom=False):
+        self._ready = ready
+        self._boom = boom
+        self.asked = 0
+
+    async def ready(self):
+        self.asked += 1
+        if self._boom:
+            raise RuntimeError("aws down")
+        return self._ready
+
+
+def _fresh(**over):
+    """방금 끝난 잡 — 15초 백오프가 아직 안 지났다."""
+    return _job(finished_at=datetime.now(timezone.utc) - timedelta(seconds=1), **over)
+
+
+def _push_with(rec, resolver):
+    pusher = SamRetryPusher(app=_App(resolver))
+    return asyncio.run(pusher._push_once(rec, None))
+
+
+def test_a_live_sam_skips_the_backoff():
+    rec = _Recorder([_fresh()])
+    resolver = _Resolver(ready=True)
+    assert _push_with(rec, resolver) == 1
+    assert rec.created[0]["payload"]["retry"] == 1
+
+
+def test_a_dead_sam_still_waits_for_the_backoff():
+    rec = _Recorder([_fresh()])
+    assert _push_with(rec, _Resolver(ready=False)) == 0
+    assert rec.created == []
+
+
+def test_readiness_is_asked_once_per_cycle():
+    """후보가 여러 개여도 AWS·HTTP 는 주기당 한 번이다."""
+    jobs = [_fresh(id="j1", idempotency_key="p:matching_cutout:i1:v1"),
+            _fresh(id="j2", idempotency_key="p:matching_cutout:i2:v1")]
+    rec = _Recorder(jobs, latest=None)
+    rec.get_latest_job_generation = lambda conn, user_id, base_key: _latest_for(jobs, base_key)
+    resolver = _Resolver(ready=True)
+    _push_with(rec, resolver)
+    assert resolver.asked == 1
+
+
+async def _latest_for(jobs, base_key):
+    for j in jobs:
+        if j["idempotency_key"] == base_key:
+            return j
+    return None
+
+
+def test_readiness_is_not_asked_when_the_backoff_already_passed():
+    """이미 시도할 때가 된 잡은 신호가 필요 없다 — 조용한 주기엔 호출이 0이다."""
+    rec = _Recorder([_job()])                  # finished_at 이 600초 전
+    resolver = _Resolver(ready=True)
+    assert _push_with(rec, resolver) == 1
+    assert resolver.asked == 0
+
+
+def test_a_broken_readiness_probe_falls_back_to_the_backoff():
+    rec = _Recorder([_fresh()])
+    assert _push_with(rec, _Resolver(boom=True)) == 0
+
+
+def test_no_resolver_behaves_exactly_as_before():
+    """플래그 off·리졸버 미설치. 백오프가 그대로 지배한다."""
+    rec = _Recorder([_fresh()])
+    pusher = SamRetryPusher(app=None)
+    assert asyncio.run(pusher._push_once(rec, None)) == 0
+
+
+def test_the_budget_still_wins_over_a_live_sam():
+    """살아 있다고 예산을 넘겨 쓰면 안 된다 — 285초/4회는 오너 결정이다."""
+    rec = _Recorder([_fresh(payload={"retry": sam_retry.MAX_RETRIES})])
+    assert _push_with(rec, _Resolver(ready=True)) == 0

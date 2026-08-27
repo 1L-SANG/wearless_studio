@@ -186,6 +186,11 @@ class Settings:
     # 로컬·테스트는 AWS 를 모른다. 정본: docs/superpowers/specs/2026-08-21-sam2-on-demand-scaling-design.md
     sam_autoscale: str = "off"
     sam_autoscale_idle_minutes: int = 30   # 마지막 수요로부터 이 시간 지나면 0대 (오너 결정)
+    # 콜드스타트 중 Service Connect 등록(+146.7초)을 기다리지 않고 task 사설 IP(+5초에 조회
+    # 가능)로 직접 부른다. 전송 실패 때만 쓰는 폴백이라 따뜻한 경로는 그대로다.
+    # sam_autoscale 이 off 면 ECS 탐색 자체가 없으므로 이 플래그도 효력이 없다.
+    # 정본: server/app/services/sam_endpoint.py
+    sam_direct_endpoint: str = "off"
     detail_worker_autoscale: str = "off"
     detail_worker_autoscale_idle_minutes: int = 10
     sam_alert_topic_arn: str | None = None # addon Output 이 환경변수로 주입. 없으면 알림만 조용히 생략
@@ -426,6 +431,7 @@ def load_settings() -> Settings:
         sam_service_url=(os.getenv("SAM_SERVICE_URL") or "").rstrip("/") or None,
         sam_internal_token=os.getenv("SAM_INTERNAL_TOKEN") or None,
         sam_autoscale=_flag("SAM_AUTOSCALE", "off", {"off", "on"}),
+        sam_direct_endpoint=_flag("SAM_DIRECT_ENDPOINT", "off", {"off", "on"}),
         sam_autoscale_idle_minutes=_int_env("SAM_AUTOSCALE_IDLE_MINUTES", 30),
         detail_worker_autoscale=_flag("DETAIL_WORKER_AUTOSCALE", "off", {"off", "on"}),
         detail_worker_autoscale_idle_minutes=_int_env("DETAIL_WORKER_AUTOSCALE_IDLE_MINUTES", 10),

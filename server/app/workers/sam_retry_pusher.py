@@ -77,19 +77,46 @@ class SamRetryPusher:
             conn, PUSH_KINDS, max_retries=sam_retry.MAX_RETRIES,
             min_age_seconds=min(sam_retry.BACKOFF_SECONDS))
         pushed = 0
+        ready_cache: list[bool] = []
+
+        async def sam_ready() -> bool:
+            """주기당 한 번만 묻는다. 후보가 백오프에 걸렸을 때만 불리므로 조용한 주기에는
+            AWS·HTTP 호출이 0이다."""
+            if not ready_cache:
+                ready_cache.append(await self._sam_ready())
+            return ready_cache[0]
+
         for job in candidates:
             try:
-                if await self._push_one(repo, conn, job):
+                if await self._push_one(repo, conn, job, sam_ready):
                     pushed += 1
             except Exception:  # noqa: BLE001 - 한 행의 문제가 전체 주기를 막지 않는다
                 log.exception("sam retry push failed job=%s", (job or {}).get("id"))
         return pushed
 
-    async def _push_one(self, repo, conn, job: dict) -> bool:
+    async def _sam_ready(self) -> bool:
+        """sam2 가 지금 답하는가. 리졸버가 없으면(플래그 off·테스트) 모른다 = False."""
+        resolver = getattr(getattr(self.app, "state", None), "sam_endpoint", None)
+        if resolver is None:
+            return False
+        try:
+            return await resolver.ready()
+        except Exception:  # noqa: BLE001 - 최적화 신호가 재시도를 막으면 안 된다
+            log.warning("sam readiness probe failed", exc_info=True)
+            return False
+
+    async def _push_one(self, repo, conn, job: dict, sam_ready=None) -> bool:
         if not sam_retry.job_is_retryable(job):
             return False                       # 판정 실패 — 다시 돌려도 같은 답이다
         if not sam_retry.backoff_elapsed(job):
-            return False
+            # 백오프는 "sam2 가 언제 살아날지 모른다"를 대신하는 추측이었다. 살아난 걸 실제로
+            # 확인했으면 더 기다릴 이유가 없다 — 예산(MAX_RETRIES)은 그대로 지킨다.
+            # 실측(2026-08-27): 사다리가 15/60/90/120 이라 sam2 가 준비된 뒤에도 최대 80초를
+            # 그냥 흘려보냈다.
+            if sam_ready is None or not await sam_ready():
+                return False
+            log.info("sam retry backoff skipped — sam2 is answering (job=%s)",
+                     (job or {}).get("id"))
         base = sam_retry.base_key(job.get("idempotency_key"))
         if not base:
             return False

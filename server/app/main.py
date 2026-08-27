@@ -27,6 +27,7 @@ from .workers.fm_vc_revocation_reconciler import FaceVcRevocationReconciler
 from .workers.sam_retry_pusher import SamRetryPusher
 from .services import sam_client
 from .services.sam_autoscale import SamAutoscaleAdapter
+from .services.sam_endpoint import SamEndpointResolver
 from .workers.sam_autoscaler import SamAutoscaler
 
 DEFAULT_ERROR_CODES = {
@@ -150,6 +151,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 autoscale_adapter = SamAutoscaleAdapter(settings)
                 app.state.sam_autoscaler = SamAutoscaler(app, autoscale_adapter)
                 sam_client.install_prewarm_hook(app.state.sam_autoscaler.prewarm)
+                # 콜드스타트 87초 회수(2026-08-27 실측) — 같은 어댑터의 ECS 탐색을 빌려
+                # task IP 를 찾는다. 플래그 off 면 리졸버가 항상 None 을 돌려주므로
+                # 훅을 걸어 두어도 동작이 달라지지 않는다.
+                app.state.sam_endpoint = SamEndpointResolver(settings, autoscale_adapter)
+                sam_client.install_endpoint_resolver(app.state.sam_endpoint)
                 if autoscale_adapter.enabled:
                     sam_autoscaler = app.state.sam_autoscaler
                     await sam_autoscaler.start()
@@ -197,6 +203,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     await sam_retry_pusher.start()
         yield
         sam_client.install_prewarm_hook(None)
+        sam_client.install_endpoint_resolver(None)
         if sam_autoscaler is not None:
             await sam_autoscaler.stop()
         if opendid_autoscaler is not None:
