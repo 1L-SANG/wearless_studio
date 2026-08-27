@@ -65,6 +65,26 @@ def want_running(snap: DemandSnapshot, *, idle_minutes: int,
     return False
 
 
+def want_count(snap: DemandSnapshot, *, idle_minutes: int,
+               per_task_capacity: int = 1, max_tasks: int = 1,
+               now: datetime | None = None) -> int:
+    """지금 몇 **대** 여야 하는가. want_running 의 대수 확장.
+
+    기본값(1/1)에서는 want_running 과 결과가 같다 — sam2·opendid 는 이 함수로 갈아타도
+    동작이 한 치도 안 바뀐다. detail-worker 만 태스크당 잡을 여러 개 처리하므로
+    대기 잡 수를 capacity 로 나눠 대수를 정한다.
+
+    수요가 없으면(want_running False) capacity·max 와 무관하게 0 — scale-to-zero 를
+    깨지 않는다. 활성 잡이 없어도 유휴 창 안이면 1대를 남긴다(콜드스타트 재부담 회피).
+    """
+    if not want_running(snap, idle_minutes=idle_minutes, now=now):
+        return 0
+    capacity = max(1, int(per_task_capacity or 1))   # 설정 오타(0·음수)에 0 나눗셈 방어
+    ceiling = max(1, int(max_tasks or 1))
+    needed = -(-int(snap.active_sam_jobs) // capacity)  # 올림 나눗셈
+    return min(ceiling, max(1, needed))
+
+
 # ── ECS/SNS 어댑터 ────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)

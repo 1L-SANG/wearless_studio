@@ -44,6 +44,12 @@ def configure(pool=None, persist: bool = True) -> None:
     _persist = persist
 
 
+def current_job_id() -> str | None:
+    """지금 컨텍스트에 붙어 있는 job_id. 잡을 동시에 돌릴 때 귀속이 섞이지 않는지
+    검증할 수 있게 노출한다 — ContextVar 를 테스트가 직접 들추지 않게 하는 창구다."""
+    return _ctx.get().job_id
+
+
 @contextmanager
 def job_scope(job_id: str | None = None, user_id: str | None = None, stage: str | None = None):
     """이 블록 안에서 일어난 이미지 호출에 job 문맥을 붙인다. 중첩 시 지정한 필드만 덮어쓴다."""

@@ -193,6 +193,9 @@ class Settings:
     sam_direct_endpoint: str = "off"
     detail_worker_autoscale: str = "off"
     detail_worker_autoscale_idle_minutes: int = 10
+    #: detail-worker 태스크 대수 상한. 기본 1 = 지금 동작(0↔1). 올리면 대기 잡이
+    #: job_concurrency 를 넘칠 때 태스크를 더 띄운다.
+    detail_worker_max_tasks: int = 1
     sam_alert_topic_arn: str | None = None # addon Output 이 환경변수로 주입. 없으면 알림만 조용히 생략
     # opendid(fm-holder) scale-to-zero — sam 과 같은 reconciler·어댑터를 서비스만 바꿔 재사용.
     # 수요 = license_pending·vc_pending 등록(holder 호출 단계). 알림은 sam 과 같은 SNS 토픽 공유.
@@ -248,6 +251,9 @@ class Settings:
     base_mannequin_men_asset_id: str | None = None
     job_dispatcher_enabled: bool = True  # §5
     job_poll_interval_seconds: float = 3.0
+    #: 디스패처가 동시에 돌리는 잡 수. 기본 1 = 직렬(지금까지의 동작). 워커 태스크는
+    #: 실측상 CPU 3~16%·메모리 21% 로 놀고 있어 올릴 여지가 크지만, 켜는 것은 env 로 한다.
+    job_concurrency: int = 1
     job_lease_timeout_seconds: int = 900
     job_worker_id: str = "web"
     credit_cost_version: str = "v1"  # §6 임시 단가
@@ -435,6 +441,7 @@ def load_settings() -> Settings:
         sam_autoscale_idle_minutes=_int_env("SAM_AUTOSCALE_IDLE_MINUTES", 30),
         detail_worker_autoscale=_flag("DETAIL_WORKER_AUTOSCALE", "off", {"off", "on"}),
         detail_worker_autoscale_idle_minutes=_int_env("DETAIL_WORKER_AUTOSCALE_IDLE_MINUTES", 10),
+        detail_worker_max_tasks=_int_env("DETAIL_WORKER_MAX_TASKS", 1),
         sam_alert_topic_arn=os.getenv("SAM_ALERT_TOPIC_ARN") or None,
         opendid_autoscale=_flag("OPENDID_AUTOSCALE", "off", {"off", "on"}),
         opendid_autoscale_idle_minutes=_int_env("OPENDID_AUTOSCALE_IDLE_MINUTES", 30),
@@ -491,6 +498,7 @@ def load_settings() -> Settings:
         base_mannequin_men_asset_id=os.getenv("MANNEQUIN_BASE_MEN_ASSET_ID") or None,
         job_dispatcher_enabled=(os.getenv("JOB_DISPATCHER_ENABLED", "true").lower() != "false"),
         job_poll_interval_seconds=float(os.getenv("JOB_POLL_INTERVAL_SECONDS", "3")),
+        job_concurrency=_int_env("JOB_CONCURRENCY", 1),
         job_lease_timeout_seconds=int(os.getenv("JOB_LEASE_TIMEOUT_SECONDS", "900")),
         job_worker_id=os.getenv("JOB_WORKER_ID", f"web-{os.getpid()}"),
         credit_cost_version=os.getenv("CREDIT_COST_VERSION", "v1"),
