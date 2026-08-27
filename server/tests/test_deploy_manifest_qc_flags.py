@@ -57,11 +57,20 @@ def test_qc_flags_are_declared(manifest_vars):
 
 
 def test_production_db_pool_leaves_room_during_rolling_deploy(manifest_vars):
-    """구·신 API 태스크와 Supabase REST가 동시에 DB에 붙을 여유를 남긴다."""
+    """구·신 API 태스크와 Supabase REST가 동시에 DB에 붙을 여유를 남긴다.
+
+    상한을 3 → 12 로 올렸다(2026-08-27). 근거였던 "session pooler 상한 15" 가 틀린 값이라서다
+    — us-east-1 이전 후 실측하니 max_connections=60, Supavisor 클라이언트 상한 200,
+    당시 사용 18 이었다(Micro 인스턴스 실사양). 잡 동시 실행이 켜지면 잡 하나가 컷 8개를
+    병렬로 돌리며 커넥션을 잡으므로 3 으로는 즉시 경합한다.
+
+    12 는 롤링 중 두 태스크(api 구·신) × 10 = 20 에 worker·REST 를 더해도 60 안에 남는
+    선이다. 무한정 열지 않는 것이 이 가드의 요지다.
+    """
     pool_max = int(manifest_vars.get("DB_POOL_MAX_SIZE", "0"))
-    assert 1 <= pool_max <= 3, (
-        f"DB_POOL_MAX_SIZE={pool_max} — 롤링 배포의 두 태스크가 session pooler 한도 15를 "
-        "잠식하지 않도록 프로세스당 최대 3으로 고정한다"
+    assert 1 <= pool_max <= 12, (
+        f"DB_POOL_MAX_SIZE={pool_max} — 롤링 배포의 두 태스크가 커넥션 한도(실측 60)를 "
+        "잠식하지 않도록 프로세스당 최대 12로 묶는다"
     )
 
 
@@ -75,7 +84,7 @@ def test_detail_worker_is_x86_spot_zero_without_load_balancer(manifest_vars):
     assert "http" not in worker
     assert worker["network"]["vpc"]["placement"] == "public"
     assert worker["variables"]["JOB_KINDS"] == "detail_page"
-    assert worker["variables"]["DB_POOL_MAX_SIZE"] == "3"
+    assert worker["variables"]["DB_POOL_MAX_SIZE"] == "10"
     # 컷 동시 생성은 2026-08-27 실험으로 5 → 8 로 올렸다. 잡 356초의
     # 45%(약 160초)가 슬롯 리필 지연으로 버려지는 것을 프로덕션 로그로 역산해 확인했고,
     # 그 상한을 재기 위한 값이다. 되돌릴 때는 "5"/"3000" 으로.

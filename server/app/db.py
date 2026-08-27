@@ -23,10 +23,11 @@ def create_pool(database_url: str) -> AsyncConnectionPool:
     # open=False → lifespan에서 명시적 open (psycopg_pool 권장).
     # timeout/connect_timeout: DB 불가 시 기본 30s 대기 대신 ~10s 안에 빨리 실패
     # (정상 연결은 <1s라 false-positive 없음 — 오설정·DB 다운만 잡힌다).
-    # max_size env 오버라이드 — Supabase session pooler 는 프로젝트 전체 상한이 15라,
-    # 로컬 QA 인스턴스(기본 10)가 prod 인스턴스(10)와 같은 풀을 나누면 양쪽 다 고갈된다
-    # (2026-08-14 실측: EMAXCONNSESSION 플러드 → 로컬 API 가 5분간 DB 미획득). 로컬은
-    # DB_POOL_MAX_SIZE=3 으로 줄여 prod 몫을 남긴다. 미설정이면 기존 10 그대로.
+    # max_size env 오버라이드. "session pooler 상한 15" 라는 옛 근거는 틀렸다 —
+    # 2026-08-27 실측(us-east-1 이전 후 Micro 인스턴스): max_connections=60,
+    # Supavisor 클라이언트 상한 200, 당시 사용 18. 잡 동시 실행(JOB_CONCURRENCY)이
+    # 켜지면 잡 하나가 컷 8개를 병렬로 돌리며 emit_job_event·image_usage 마다 커넥션을
+    # 잡으므로 풀이 3 이면 즉시 경합한다. 여유는 2N+4 를 기준으로 잡는다.
     return AsyncConnectionPool(
         conninfo=database_url,
         min_size=1,
