@@ -252,8 +252,14 @@ async def run_personalization_purge_job(app, job: dict) -> None:
                         ).isoformat(),
                     }
                     if reason == "withdrawal":
-                        for profile_id in profile_ids:
-                            await _audit(cur, user_id, profile_id, "purge_completed", counts)
+                        if profile_ids:
+                            for profile_id in profile_ids:
+                                await _audit(cur, user_id, profile_id, "purge_completed", counts)
+                        else:
+                            # 프로필이 없어도 파기는 수행됐다(인증행·enrollment 는 user_id 로
+                            # 지운다). 프로필 루프에만 기대면 그 파기가 감사에서 통째로
+                            # 사라져 "했는지 안 했는지" 증명할 수 없다.
+                            await _audit(cur, user_id, None, "purge_completed", counts)
                     envelope = {
                         "status": "done",
                         "reason": reason,

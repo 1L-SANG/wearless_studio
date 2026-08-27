@@ -343,7 +343,14 @@ async def _scope(conn, schema, *, user_id: str | None, batch_id: str | None, rea
                 rows = await cur.fetchall()
                 license_ids |= _ids(rows)
                 model_ids |= {r["model_id"] for r in rows if r.get("model_id")}
-    if not profile_ids and not model_ids and not license_ids:
+    # 배치(재검증) 경로만 "비면 실패"다 — 배치는 대상 집합이 곧 계약이라 비면 계약 위반이다.
+    #
+    # 사용자 경로는 비어도 진행한다. profile/model/license 는 파기 대상의 전부가 아니다:
+    # _cleanup 은 personalization_identity_verifications 와 fm_biometric_enrollments 를
+    # user_id 로도 지운다(01f01e1e — 인증만 하고 프로필을 안 만든 유저). 여기서 세 집합만
+    # 보고 잘라내면 그 삭제에 영영 도달하지 못한 채 "지울 게 없다"로 판정된다.
+    # 실제로 지울 것이 정말 없으면 _cleanup 이 무해하게 0건을 지우고 카운트 0으로 끝난다.
+    if user_id is None and not profile_ids and not model_ids and not license_ids:
         raise PurgeIncomplete("scope_not_found")
     return {
         "user_id": user_id,
