@@ -198,8 +198,8 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # CloudWatch MemoryUtilization 을 보고, 최악 입력(색상당 사진 6장·장당 25MB 상한)에서의
   # reference 총량까지 감안한다. 잡 단위 reference 상한이 아직 없어 최악치는 계산으로만
   # 보장되지 않는다(2026-08-19 Codex 리뷰) — 실측 전까지 5 를 상한으로 둔다.
-  DETAIL_CUT_CONCURRENCY: "5"
-  DETAIL_CUT_STAGGER_MS: "3000"
+  DETAIL_CUT_CONCURRENCY: "0"
+  DETAIL_CUT_STAGGER_MS: "1000"
   # 오너가 확정한 1차 baseline은 best-of/provider 재호출이 없는 first-result 계약이다.
   DETAIL_CUT_MAX_ATTEMPTS: "1"
   GARMENT_QC_MODE: "off"
