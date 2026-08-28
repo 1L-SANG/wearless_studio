@@ -41,6 +41,10 @@ _BODY_LABELS: dict[str, tuple[str, str]] = {
 }
 _GENDER_PHRASE = {"male": "male presentation", "female": "female presentation"}
 
+# Drift-prevention: HEIGHT_BUCKETS and _HEIGHT_LABELS must stay in sync
+assert set(_HEIGHT_LABELS) == {b for buckets in HEIGHT_BUCKETS.values() for b in buckets}, \
+    "_HEIGHT_LABELS keys must match HEIGHT_BUCKETS"
+
 
 class PhysiqueError(Exception):
     def __init__(self, code: str, message: str):
@@ -59,12 +63,14 @@ def _bucket_gender(bucket: str) -> str | None:
 
 def validate_physique(*, height_bucket: str | None, body_type: str | None, gender: str | None) -> None:
     """부분 입력 허용(각 필드 독립). 위반 시 PhysiqueError('invalid_physique')."""
-    if gender is not None and gender not in GENDERS:
-        raise PhysiqueError("invalid_physique", "성별 값이 올바르지 않습니다.")
-    if body_type is not None and body_type not in BODY_TYPES:
-        raise PhysiqueError("invalid_physique", "체형 값이 올바르지 않습니다.")
+    if gender is not None:
+        if not isinstance(gender, str) or gender not in GENDERS:
+            raise PhysiqueError("invalid_physique", "성별 값이 올바르지 않습니다.")
+    if body_type is not None:
+        if not isinstance(body_type, str) or body_type not in BODY_TYPES:
+            raise PhysiqueError("invalid_physique", "체형 값이 올바르지 않습니다.")
     if height_bucket is not None:
-        if height_bucket not in _HEIGHT_LABELS:
+        if not isinstance(height_bucket, str) or height_bucket not in _HEIGHT_LABELS:
             raise PhysiqueError("invalid_physique", "키 구간 값이 올바르지 않습니다.")
         bg = _bucket_gender(height_bucket)
         if gender is None:
@@ -80,13 +86,13 @@ def build_body_profile_block(profile: Mapping | None) -> str:
         return ""
     parts: list[str] = []
     height = profile.get("heightBucket")
-    if height in _HEIGHT_LABELS:
+    if isinstance(height, str) and height in _HEIGHT_LABELS:
         parts.append(_HEIGHT_LABELS[height][1])
     body = profile.get("bodyType")
-    if body in _BODY_LABELS:
+    if isinstance(body, str) and body in _BODY_LABELS:
         parts.append(_BODY_LABELS[body][1])
     gender = profile.get("gender")
-    if gender in _GENDER_PHRASE:
+    if isinstance(gender, str) and gender in _GENDER_PHRASE:
         parts.append(_GENDER_PHRASE[gender])
     if not parts:
         return ""
