@@ -263,12 +263,14 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   #  · id_live / retouched_live: SFace 코사인(0~1). 0.363 = 동일인 권장 기준선(fm_face_qc_threshold 와 동일).
   #  · id_live 0.25: 신분증 초상(옛날·인쇄)↔라이브 셀카는 도메인 갭이 커 0.363 이 오탈락한다(실측 동일인
   #    0.2816). 0.25 = 관측 통과 + 임포스터(<0.15)와 0.10 여유 + OACX 실명·라이브니스·사진매칭 다중방어.
-  #  · retouched_live 0.25: 업로드 사진이 보정(뷰티/필터)되면 SFace 임베딩이 원본서 밀려 라이브
-  #    매칭이 낮아진다(실측 동일인 보정사진 0.2835, 0.363 오탈락). 이름이 'retouched' 인데 값이
-  #    0.363(무보정 동일)이던 것을 의도대로 완화. id_live 와 통일. 스왑방어는 id_live·라이브니스가 주.
+  #  · retouched_live 0.15: 라이브니스 off 면 매칭 앵커 = OACX 신분증 초상. 이 초상은 오래된/작은
+  #    공식 증명사진이라 동일인 현재 얼굴이랑도 SFace 0.19 수준으로 낮게 나온다(실측). 0.15 는
+  #    이 도메인 갭을 수용하면서도 스왑 방어를 유지한다 — **다른 사람** 사진 ↔ 본인 신분증은 무관
+  #    얼굴이라 ~0.05~0.10 로 0.15 에서 여전히 차단된다(동일인 0.19 는 통과). 유일한 누수 = 신분증
+  #    초상과 쌍둥이급으로 닮은 사람(0.15~0.19)이며 그 경우도 본인 유효 모바일신분증이 필요하다.
   FM_LIVENESS_CONFIDENCE_THRESHOLD: "75"
   FM_ID_LIVE_THRESHOLD: "0.25"
-  FM_RETOUCHED_LIVE_THRESHOLD: "0.25"
+  FM_RETOUCHED_LIVE_THRESHOLD: "0.15"
   FM_MATCH_POLICY_VERSION: prod-2026-08
   # OpenDID 홀더(fm-holder) — 같은 VPC service discovery. VC 발급 요청 대상. opendid 서비스 필요.
   OPENDID_HOLDER_URL: http://opendid:8100
