@@ -607,8 +607,10 @@ async def _load_current_enrollment(conn, user_id: str) -> dict | None:
         await cur.execute(
             """
             select e.id::text as id, e.model_id::text as model_id, e.status,
-                   e.decision, e.reason, e.cooldown_until, e.expires_at
+                   e.decision, e.reason, e.cooldown_until, e.expires_at,
+                   e.height_bucket, e.body_type, m.gender as model_gender
             from fm_biometric_enrollments e
+            left join fm_models m on m.id = e.model_id
             where e.user_id = %s and e.status in (
                 'identity_pending', 'photos_pending', 'liveness_pending', 'processing',
                 'asset_building', 'license_pending', 'vc_pending'

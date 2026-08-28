@@ -475,7 +475,17 @@ class FakeCursor:
                 ),
                 None,
             )
-            self.result = _enrollment_db_view(row) if row else None
+            model_gender = None
+            if row and row.get("model_id") and "m.gender" in query:
+                # Task4 round1: _load_current_enrollment 도 fm_models 를 조인해
+                # model_gender 를 본다(/enrollments/current 가 physique 를 반영하도록).
+                model = next(
+                    (m for m in self.store.models if m["id"] == row["model_id"]), None
+                )
+                model_gender = model.get("gender") if model else None
+            self.result = (
+                _enrollment_db_view(row, model_gender=model_gender) if row else None
+            )
         elif query.startswith("select e.id::text as id"):
             enrollment_id, user_id = params
             row = next(
@@ -1663,6 +1673,37 @@ def test_physique_rejects_gender_mismatch(
     assert res.status_code == 400, res.text
     assert res.json()["error"]["code"] == "invalid_physique"
     assert enrollment_store.enrollments[0].get("height_bucket") is None
+
+
+def test_physique_round_trips_through_current_enrollment(
+    enrollment_client, auth, enrollment_store, completion_fakes
+):
+    # Round1 회귀: /enrollments/current 도 /enrollments/{id} 와 동일하게
+    # physique(height_bucket/body_type) + fm_models 조인 gender 를 반영해야 한다
+    # (위저드 리로드/복원 경로가 마운트 시 getCurrentEnrollment() 를 호출한다).
+    _seed_model_with_gender(enrollment_store, "female")
+    eid = create_enrollment(enrollment_client, auth)
+    res = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{eid}/physique",
+        json={"heightBucket": "f_165_170", "bodyType": "toned"},
+        headers=auth(),
+    )
+    assert res.status_code == 200, res.text
+
+    current = enrollment_client.get(
+        "/v1/facemarket/enrollments/current", headers=auth()
+    )
+    status = enrollment_client.get(
+        f"/v1/facemarket/enrollments/{eid}", headers=auth()
+    )
+
+    assert current.status_code == 200, current.text
+    assert status.status_code == 200, status.text
+    assert current.json() == status.json()
+    body = current.json()
+    assert body["heightBucket"] == "f_165_170"
+    assert body["bodyType"] == "toned"
+    assert body["gender"] == "female"
 
 
 def test_complete_promotes_profile_image_to_model_cover(
