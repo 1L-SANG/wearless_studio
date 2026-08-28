@@ -1903,6 +1903,7 @@ async def resolve_model_license(
                        l.license_valid_until, l.unit_price, l.vc_id,
                        l.allowed_use, l.forbidden_use,
                        m.status as model_status, m.assets_status,
+                       m.gender, m.height_bucket, m.body_type,
                        m.current_enrollment_id::text as current_enrollment_id,
                        l.enrollment_id::text as license_enrollment_id,
                        e.status as enrollment_status, e.match_policy_version,

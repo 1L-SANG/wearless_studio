@@ -193,6 +193,96 @@ def _current_card(store, *, model_id=None, license_id=None, user_id=None, consen
     return (model, enrollment, license_row, front) if eligible else None
 
 
+def _runtime_license_row(store, model_id, license_id=None):
+    """resolve_model_license 의 left-join SQL 을 흉내낸다: 모델 존재만 있으면 row 는
+    항상 나오고(license/enrollment 는 null 허용), license_id 가 지정되면 그 라이선스와
+    정확히 매칭될 때만 row 가 나온다(WHERE l.id = %s 가 미스면 통째로 미스)."""
+    model = next((m for m in store["models"] if m["id"] == model_id), None)
+    if model is None:
+        return None
+    enrollment = next(
+        (
+            e for e in store["enrollments"]
+            if e["id"] == model.get("current_enrollment_id") and e["model_id"] == model["id"]
+        ),
+        None,
+    )
+    if license_id is not None:
+        license_row = next(
+            (
+                r for r in store["licenses"]
+                if r["model_id"] == model["id"] and r["id"] == license_id
+            ),
+            None,
+        )
+        if license_row is None:
+            return None
+    else:
+        license_row = next(
+            (
+                r for r in store["licenses"]
+                if r["model_id"] == model["id"]
+                and r.get("enrollment_id") == model.get("current_enrollment_id")
+            ),
+            None,
+        )
+
+    def _asset(view):
+        return next(
+            (
+                a for a in store["assets"]
+                if a["model_id"] == model["id"] and a["view"] == view
+            ),
+            None,
+        )
+
+    def _asset_ok(asset):
+        return bool(
+            asset
+            and str(asset.get("r2_key") or "").strip()
+            and asset.get("bucket") == "face"
+            and str(asset.get("mime") or "").startswith("image/")
+        )
+
+    face_asset = _asset("face_front")
+    grid_asset = _asset("grid_sedcard")
+    has_face_front = _asset_ok(face_asset)
+    has_grid_sedcard = _asset_ok(grid_asset)
+    match_policy_version = (enrollment or {}).get("match_policy_version")
+    assets_current_evidence = bool(
+        str(match_policy_version or "").strip()
+        and has_face_front
+        and face_asset.get("source_enrollment_id") == model.get("current_enrollment_id")
+        and face_asset.get("evidence_version") == match_policy_version
+        and has_grid_sedcard
+        and grid_asset.get("source_enrollment_id") == model.get("current_enrollment_id")
+        and grid_asset.get("evidence_version") == match_policy_version
+    )
+    return {
+        "id": (license_row or {}).get("id"),
+        "model_id": model["id"],
+        "_model_name_raw": model.get("display_name", ""),
+        "status": (license_row or {}).get("status"),
+        "license_valid_until": (license_row or {}).get("license_valid_until"),
+        "unit_price": (license_row or {}).get("unit_price"),
+        "vc_id": (license_row or {}).get("vc_id"),
+        "allowed_use": (license_row or {}).get("allowed_use"),
+        "forbidden_use": (license_row or {}).get("forbidden_use"),
+        "model_status": model.get("status"),
+        "assets_status": model.get("assets_status"),
+        "current_enrollment_id": model.get("current_enrollment_id"),
+        "license_enrollment_id": (license_row or {}).get("enrollment_id"),
+        "enrollment_status": (enrollment or {}).get("status"),
+        "match_policy_version": match_policy_version,
+        "has_face_front": has_face_front,
+        "has_grid_sedcard": has_grid_sedcard,
+        "assets_current_evidence": assets_current_evidence,
+        "gender": model.get("gender"),
+        "height_bucket": model.get("height_bucket"),
+        "body_type": model.get("body_type"),
+    }
+
+
 def _assert_current_card_sql(sql):
     for required in (
         "e.id = m.current_enrollment_id",
@@ -260,6 +350,9 @@ class FakeCursor:
         elif s.startswith("select l.id::text as id, m.id::text as model_id"):
             self.store["runtime_license_sql"] = sql
             self.store["runtime_license_params"] = params
+            model_id = params[0]
+            license_id = params[1] if len(params) > 1 else None
+            self._result = _runtime_license_row(self.store, model_id, license_id)
         elif s.startswith("select l.face_image_key, p.mime_type from fm_models m"):
             consent_version, license_id, user_id = params
             current = _current_card(
@@ -1899,7 +1992,9 @@ def test_runtime_license_query_escapes_mime_wildcards_for_psycopg(biometric_fm):
 
     result = asyncio.run(facemarket.resolve_model_license(FakeConn(store), MODEL_ID))
 
-    assert result is None
+    # 모델은 존재하지만(left join) 라이선스가 없으므로 라이선스 필드만 비어 있다.
+    assert result["model_id"] == MODEL_ID
+    assert result["id"] is None
     raw_sql = " ".join(store["runtime_license_sql"].split()).lower()
     assert raw_sql.count("like 'image/%%'") == 4
     compiled = _compile_psycopg_query(
@@ -1907,6 +2002,19 @@ def test_runtime_license_query_escapes_mime_wildcards_for_psycopg(biometric_fm):
     )
     assert compiled.count("like 'image/%'") == 4
     assert "image/%%" not in compiled
+
+
+def test_resolve_model_license_includes_physique(biometric_fm):
+    _, store, _ = biometric_fm
+    store["models"][0].update(
+        gender="male", height_bucket="m_180_185", body_type="toned",
+    )
+
+    row = asyncio.run(facemarket.resolve_model_license(FakeConn(store), MODEL_ID))
+
+    assert row["gender"] == "male"
+    assert row["height_bucket"] == "m_180_185"
+    assert row["body_type"] == "toned"
 
 
 def test_detail_page_worker_mime_extension_contract_remains_importable():
