@@ -247,6 +247,9 @@ class FakeCursor:
                     "identity_contract_version": row.get("identity_contract_version"),
                     # Task4: 바인딩때 승격할 대표이미지 키.
                     "profile_image_r2_key": row.get("profile_image_r2_key"),
+                    # Task5: 바인딩때 승격할 키·체형 속성.
+                    "height_bucket": row.get("height_bucket"),
+                    "body_type": row.get("body_type"),
                 }
                 if row
                 else None
@@ -1004,6 +1007,14 @@ class FakeCursor:
             cover_image_url, model_id = params
             model = next(row for row in self.store.models if row["id"] == model_id)
             model["cover_image_url"] = cover_image_url
+        elif query.startswith("update fm_models set height_bucket = coalesce"):
+            # Task5: 바인딩때 키·체형을 모델로 승격한다.
+            height_bucket, body_type, model_id = params
+            model = next(row for row in self.store.models if row["id"] == model_id)
+            if height_bucket is not None:
+                model["height_bucket"] = height_bucket
+            if body_type is not None:
+                model["body_type"] = body_type
         elif query.startswith("update fm_biometric_enrollments set model_id"):
             model_id, token_digest, policy_version, provider_versions, enrollment_id = params
             row = next(item for item in self.store.enrollments if item["id"] == enrollment_id)
@@ -1724,6 +1735,25 @@ def test_complete_promotes_profile_image_to_model_cover(
     res = complete_enrollment(enrollment_client, auth, eid, fake_rekognition.session_id)
     assert res.status_code == 202, res.text
     assert enrollment_store.models[0]["cover_image_url"] == profile_key
+
+
+def test_complete_promotes_physique_to_model(
+    enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition, completion_fakes
+):
+    # Task5: 등록 중 입력받은 키·체형이 있으면 바인딩 시 fm_models 로 승격된다.
+    eid = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
+    )
+    # 등록에 키·체형을 설정한다.
+    enrollment_store.enrollments[0]["height_bucket"] = "f_165_170"
+    enrollment_store.enrollments[0]["body_type"] = "toned"
+
+    res = complete_enrollment(enrollment_client, auth, eid, fake_rekognition.session_id)
+    assert res.status_code == 202, res.text
+
+    # 바인딩 시 model로 승격된 것을 확인한다.
+    assert enrollment_store.models[0]["height_bucket"] == "f_165_170"
+    assert enrollment_store.models[0]["body_type"] == "toned"
 
 
 def assert_completion_failure(response, store, reason, *, retryable):

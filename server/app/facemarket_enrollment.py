@@ -1786,7 +1786,7 @@ async def _initial_completion_checks(
                        e.expires_at, e.liveness_session_digest, e.device_digest,
                        e.identity_ci_hash, e.identity_name_masked, e.identity_birth_year,
                        e.identity_tx_digest, e.identity_contract_version,
-                       e.profile_image_r2_key
+                       e.profile_image_r2_key, e.height_bucket, e.body_type
                 from fm_biometric_enrollments e
                 where e.id = %s and e.user_id = %s
                 for update
@@ -2061,6 +2061,14 @@ async def process_enrollment_completion(
                     await cur.execute(
                         "update fm_models set cover_image_url = %s where id = %s",
                         (row["profile_image_r2_key"], model_id),
+                    )
+                # Task5: 등록 중 입력받은 키·체형(height_bucket·body_type)이 있으면 바인딩 시
+                # 모델로 승격한다. gender는 identity 단계에서 이미 설정됨.
+                if row.get("height_bucket") or row.get("body_type"):
+                    await cur.execute(
+                        "update fm_models set height_bucket = coalesce(%s, height_bucket), "
+                        "body_type = coalesce(%s, body_type) where id = %s",
+                        (row.get("height_bucket"), row.get("body_type"), model_id),
                     )
                 await cur.execute(
                     """
