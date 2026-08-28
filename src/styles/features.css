@@ -1349,19 +1349,50 @@
   font-size: 14px; font-weight: 600; color: var(--fg-1); pointer-events: none; }
 /* compact (row) toolbar buttons for Undo/Redo */
 .ed-tool.compact { flex-direction: row; gap: 6px; font-size: 12px; padding: 7px 10px; }
-/* toolbar nav — tabs sit directly on the white toolbar (NO gray container — Wearless:
-   white canvas always, depth via shadow only). Active tab is a '떠 있는 흰 칩'
-   (흰 배경 + 소프트 글로우 rgba(143,191,237,.6) + #3F86D3 아이콘·라벨). */
-.ed-toolgroup { display: inline-flex; align-items: center; gap: 4px; padding: 0;
-  background: transparent; box-shadow: none; }
-.ed-tool { display: inline-flex; flex-direction: column; align-items: center; gap: 4px; padding: 7px 17px; border-radius: 12px;
-  color: #8B93A3; cursor: pointer; background: transparent; border: 0; font-size: 12.5px; font-weight: 500; transition: box-shadow .16s; }
+/* toolbar nav — '흰 툴바 위 떠오른 키캡 + 구분선' (2026-08-27 오너 확정, 홈 제거 B안).
+   회색 홈(트랙 배경+inset 그림자)은 뺐다 — 흰 캔버스 원칙 유지. 도구 묶음 경계는 탭 사이
+   헤어라인 구분선이 대신하고(활성·호버·포커스 탭 양옆은 자동 숨김, iOS 세그먼트 규칙),
+   활성 탭은 접지 그림자를 보강한 흰 키캡(잉크 라벨)으로 떠오른다.
+   시안: mockups/editor_nav_keycap_notrack_20260827.html (B안, 홈 있는 A안과 비교본). */
+.ed-toolgroup { display: inline-flex; align-items: center; gap: 3px; padding: 4px; border-radius: 16px; }
+.ed-tool { display: inline-flex; flex-direction: column; align-items: center; gap: 3px; padding: 5px 16px; border-radius: 12px;
+  color: #8B93A3; cursor: pointer; background: transparent; border: 0; font-size: 12.5px; font-weight: 500; line-height: 1.15;
+  position: relative; transition: background .18s, color .18s, box-shadow .2s, transform .16s cubic-bezier(.3, .7, .4, 1.3); }
 .ed-tool:hover { color: #5b6270; }
-.ed-toolgroup .ed-tool:hover { background: rgba(255,255,255,.55); }
-.ed-tool.on, .ed-toolgroup .ed-tool.on { background: #FFFFFF; color: #3F86D3;
-  box-shadow: 0 8px 20px -4px rgba(143,191,237,.6), 0 2px 6px rgba(143,191,237,.4); }
-.ed-tool.on:hover { color: #3F86D3; }
+.ed-toolgroup .ed-tool:hover { background: #F2F4F7; }
+.ed-toolgroup .ed-tool:active { transform: translateY(1px) scale(.985); }
+/* 탭 사이 구분선 — 이웃 탭의 왼쪽 홈에 새김. 활성·호버 탭 양옆은 투명하게. */
+.ed-toolgroup .ed-tool + .ed-tool::after { content: ''; position: absolute; left: -2px; top: 50%; transform: translateY(-50%);
+  width: 1px; height: 24px; border-radius: 1px; pointer-events: none; transition: opacity .18s;
+  background: linear-gradient(180deg, transparent, rgba(34, 42, 53, .15) 22%, rgba(34, 42, 53, .15) 78%, transparent); }
+.ed-toolgroup .ed-tool.on::after, .ed-toolgroup .ed-tool.on + .ed-tool::after,
+.ed-toolgroup .ed-tool:hover::after, .ed-toolgroup .ed-tool:hover + .ed-tool::after { opacity: 0; }
+/* 활성 = 떠오른 키캡: 위가 밝은 면 + 겹층 그림자 + 상단 하이라이트.
+   흰 바탕이라 접지 그림자·윤곽(1px 링)을 홈 버전보다 살짝 진하게 잡아 '떠 있음'을 유지한다. */
+.ed-toolgroup .ed-tool.on { color: #17191D; font-weight: 700;
+  background: linear-gradient(180deg, #FFFFFF 0%, #FAFBFC 55%, #F0F2F5 100%);
+  box-shadow: 0 1px 2px rgba(34, 42, 53, .10), 0 5px 10px -2px rgba(34, 42, 53, .18), 0 12px 24px -6px rgba(34, 42, 53, .16),
+    inset 0 1px 0 #fff, inset 0 -1.5px 2.5px rgba(34, 42, 53, .06), 0 0 0 1px rgba(34, 42, 53, .07);
+  transform: translateY(-1.5px); animation: ed-keycap-rise .3s cubic-bezier(.3, .7, .35, 1.35); }
+.ed-toolgroup .ed-tool.on:hover { color: #17191D; }
+.ed-toolgroup .ed-tool.on:active { transform: translateY(.5px) scale(.985); }
+@keyframes ed-keycap-rise { 0% { transform: translateY(1.5px); } 55% { transform: translateY(-2.5px); } 100% { transform: translateY(-1.5px); } }
+@media (prefers-reduced-motion: reduce) {
+  .ed-toolgroup .ed-tool.on { animation: none; transform: none; }
+  .ed-toolgroup .ed-tool:active, .ed-toolgroup .ed-tool.on:active { transform: none; }
+}
+/* 활성 굵기(700)의 폭을 미리 확보(bold ghost) — 탭 전환 시 이웃 탭들이 밀리는 것 방지 */
+.ed-tool-lbl { display: inline-flex; flex-direction: column; align-items: center; }
+.ed-tool-lbl::after { content: attr(data-label); height: 0; overflow: hidden; visibility: hidden; font-weight: 700; }
+/* 키보드 포커스 — 공용 포커스 링 + 호버와 동일하게 인접 구분선 숨김 */
+.ed-toolgroup .ed-tool:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.ed-toolgroup .ed-tool:focus-visible::after, .ed-toolgroup .ed-tool:focus-visible + .ed-tool::after { opacity: 0; }
+/* compact 토글(이어보기)의 켜짐 표시 — 키캡과 별개로 담백한 눌림 */
+.ed-tool.compact.on { background: #EEF1F4; color: #222A35; }
+.ed-tool.compact.on:hover { color: #222A35; }
 .ed-tool .dotwrap { position: relative; }
+/* 인라인 svg의 베이스라인 여백 제거 — 키캡 높이가 60px 툴바 안에 들어가기 위한 필수 조건 */
+.ed-tool .dotwrap svg { display: block; }
 .ed-divider { width: 1px; height: 28px; background: var(--ring-strong); margin: 0 4px; }
 .ed-body { flex: 1; display: grid; grid-template-columns: var(--lcol, 320px) 1fr var(--rcol, 200px); min-height: 0; }
 .ed-body { grid-template-columns: var(--lcol, 320px) 1fr var(--rcol, 200px); }
