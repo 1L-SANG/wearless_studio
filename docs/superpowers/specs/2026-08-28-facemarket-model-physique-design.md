@@ -17,8 +17,9 @@
 ## 2. 확정된 결정 (사용자)
 
 1. **입력 방식:** 구간 버킷 선택(슬라이더/핫존 아님). 성별별 키 구간 + 체형 프리셋.
-2. **반영 방식:** cut_generator 프롬프트에 텍스트 주입. FaceMarket 모델은 몸이 생성물(얼굴만 앵커)이라 얼굴 보존과 충돌 없음.
-3. **적용 시점:** 앞으로 생성되는 컷만. 기존 컷/자산 재생성은 안 함.
+2. **성별:** OACX 신원확인에서 **자동 유도**(수동 선택 없음). 신원확인 시 모델이 생성되므로 그때 gender를 세팅한다. physique 스텝은 키·체형만.
+3. **반영 방식:** cut_generator 프롬프트에 텍스트 주입. FaceMarket 모델은 몸이 생성물(얼굴만 앵커)이라 얼굴 보존과 충돌 없음.
+4. **적용 시점:** 앞으로 생성되는 컷만. 기존 컷/자산 재생성은 안 함.
 
 ---
 
@@ -49,24 +50,23 @@
 
 ### 4.1 마이그레이션 (supabase/migrations)
 
-두 테이블에 동일 3컬럼을 추가한다. 모두 nullable(선택 입력 — 안 골라도 등록 진행).
+모두 nullable(선택 입력 — 안 골라도 등록 진행).
 
-- `fm_models`: `gender text`, `height_bucket text`, `body_type text`
-- `fm_biometric_enrollments`: `gender text`, `height_bucket text`, `body_type text`
+- `fm_models`: `gender text`, `height_bucket text`, `body_type text` — gender는 identity 단계, 나머지는 physique 승격.
+- `fm_biometric_enrollments`: `height_bucket text`, `body_type text` — physique 스테이징(gender는 모델 소유라 여기 없음).
 
 CHECK 제약으로 허용값을 못박는다(§4.2). NULL 허용(미입력). 기존 행은 NULL로 남는다(하위호환).
 
 ### 4.2 허용 어휘 (enum via CHECK)
 
-**gender:** `male` | `female`
-(OACX 신원확인이 성별을 주면 프리필 가능 — 후속. 우선은 physique 스텝에서 명시 선택.)
+**gender:** `male` | `female` — **OACX 신원확인에서 자동**. `identity_verify`가 CX 응답에서 성별 필드를 추출(`_dig(trans, "gender"/"sex"/"sexCode"/...)` — 정확한 CX 필드명은 구현 시 실응답으로 확정)해 모델 생성 시 `fm_models.gender`에 세팅한다. 사용자 선택 없음. (CX가 성별을 안 주면 gender NULL → 키 버킷은 남녀 통합 목록으로 폴백.)
 
 **height_bucket** (성별 접두사로 구간 인코딩):
 - male: `m_lt170` · `m_170_175` · `m_175_180` · `m_180_185` · `m_185_190` · `m_gte190`
 - female: `f_lt155` · `f_155_160` · `f_160_165` · `f_165_170` · `f_170_175` · `f_gte175`
 
-**body_type** (성별 공통 프리셋):
-- `slim` (마름) · `regular` (보통) · `athletic` (탄탄·운동형) · `muscular` (근육질) · `curvy` (글래머)
+**body_type** (7종 프리셋, 사용자 확정):
+- `delicate` (여리여리) · `slim` (마름) · `regular` (보통) · `plump` (통통) · `toned` (잔잔한 근육) · `bulk` (벌크업) · `glamorous` (글래머러스)
 
 값→표시 라벨·프롬프트 문구 매핑은 서버 상수 한 곳(§6 참조)에서 소유한다. 코드에 문장을 흩뿌리지 않는다(personalization.py 검증 관례 재사용).
 
@@ -83,15 +83,16 @@ CHECK 제약으로 허용값을 못박는다(§4.2). NULL 허용(미입력). 기
 
 - 현재 스텝: identity → photos → **profile(대표 이미지, STEP 4/6)** → liveness → complete.
 - **새 스텝 "체형·키"**를 **photos 다음, profile(대표 이미지) 앞**에 삽입한다: identity → photos → **physique** → profile → liveness → complete. 총 스텝 수 6→7, STEP 라벨 재계산. 선택 스텝(건너뛰기 가능, 대표 이미지와 동일 톤).
-- UI: 성별 토글 → 성별에 맞는 키 구간 버킷(라디오/칩) → 체형 프리셋 칩. 모두 큰 터치 타깃.
-- 제출: `POST /enrollments/{id}/physique` (프로필 이미지 업로드와 같은 패턴). 성공 시 다음 스텝.
+- UI: 성별은 **이미 신원확인에서 유도됨** → 토글 없음. 모델 gender에 맞는 키 구간 버킷(라디오/칩) + 체형 프리셋 칩. gender NULL이면 남녀 통합 버킷. 모두 큰 터치 타깃.
+- 제출: `POST /enrollments/{id}/physique` (프로필 이미지 업로드와 같은 패턴). Body: `{ heightBucket?, bodyType? }` (gender 없음). 성공 시 다음 스텝.
 - **테스트 안정성:** 기존 훅 순서(useState/useEffect 위치 인덱스)에 걸린 테스트가 있으므로([[facemarket-biometric-shipped]] 관례), 새 state/effect는 **마지막에** 추가한다.
 
 ### 5.2 백엔드 API
 
-- 새 라우트 `POST /enrollments/{enrollment_id}/physique` (facemarket_enrollment.py). Body: `{ gender?, heightBucket?, bodyType? }`. §4.2/§4.3 검증. `fm_biometric_enrollments`에 저장. 상태 전이 없음(SFace/QC 없음 — profile-image 라우트 미러).
-- `EnrollmentView` 응답에 physique 필드 추가(위저드가 재로드 시 선택값 복원 — 대표 이미지 유실 방지 관례와 동일).
-- **승격:** finalization 지점(facemarket_enrollment.py ~2010, cover 승격 옆)에서 enrollment의 physique 3필드를 `fm_models`로 복사. cover 승격과 같은 트랜잭션.
+- **gender 캡처:** `identity_verify`(facemarket.py ~270 fields, 291 모델 insert)에서 CX 응답의 성별을 추출해 `fm_models.gender`에 세팅(모델이 여기서 생성됨). fields JSON에도 남긴다(감사·복원용).
+- **physique 라우트:** 새 라우트 `POST /enrollments/{enrollment_id}/physique` (facemarket_enrollment.py). Body: `{ heightBucket?, bodyType? }`. §4.2/§4.3 검증(gender는 모델에서 읽어 버킷 접두사 일치 확인). `fm_biometric_enrollments`에 저장. 상태 전이 없음(SFace/QC 없음 — profile-image 라우트 미러).
+- `EnrollmentView` 응답에 physique 필드 + 모델 gender 추가(위저드가 재로드 시 선택값 복원 + 버킷 목록 필터 — 대표 이미지 유실 방지 관례와 동일).
+- **승격:** finalization 지점(facemarket_enrollment.py ~2010, cover 승격 옆)에서 enrollment의 height_bucket·body_type를 `fm_models`로 복사(gender는 이미 identity 단계에서 세팅됨). cover 승격과 같은 트랜잭션.
 
 ### 5.3 모델 응답 노출
 
