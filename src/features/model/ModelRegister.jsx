@@ -12,6 +12,7 @@ import {
   getCurrentEnrollment,
   getEnrollment,
   listMyModels,
+  submitPhysique,
   uploadEnrollmentPhoto,
   uploadProfileImage,
 } from '@/lib/api/facemarket.js';
@@ -21,6 +22,9 @@ import {
   enrollmentReasonMessage,
   nextEnrollmentStep,
 } from './biometricEnrollment.js';
+// 상대경로 — 이 테스트 하네스(configFile:false)는 `@/` alias 를 해석하지 않고, 이 파일은
+// (ModelFaceUpload.jsx 와 달리) 전체가 스텁으로 치환되지 않으므로 alias import 는 실렌더 전부를 깨뜨린다.
+import { BODY_TYPES, heightBucketOptions } from '../../lib/facemarketPhysique.js';
 import s from './ModelRegister.module.css';
 
 const CX_ORIGIN = 'https://cx.raonsecure.co.kr:17543';
@@ -106,13 +110,14 @@ const FLOW_STEPS = [
   { key: 'consent', label: '동의' },
   { key: 'identity', label: '신분증' },
   { key: 'photos', label: '사진' },
+  { key: 'physique', label: '체형' },
   { key: 'profile', label: '대표' },
   { key: 'liveness', label: '라이브' },
   { key: 'done', label: '완료' },
 ];
 const RAIL_INDEX = {
-  consent: 0, identity: 1, identity_failed: 1, photos: 2,
-  profile: 3, liveness: 4, liveness_failed: 4, reidentify: 4, processing: 5, terms: 5,
+  consent: 0, identity: 1, identity_failed: 1, photos: 2, physique: 3,
+  profile: 4, liveness: 5, liveness_failed: 5, reidentify: 5, processing: 6, terms: 6,
 };
 function renderStepRail(step) {
   const current = RAIL_INDEX[step];
@@ -322,11 +327,35 @@ export function ModelRegister() {
     try {
       const current = await getEnrollment(enrollment.id);
       setEnrollment(current);
-      // profile 은 서버 상태가 없는 UI 전용 스텝 — 사진 완료 후 명시적으로 진입한다.
+      // physique·profile 은 서버 상태가 없는 UI 전용 스텝 — 사진 완료 후 명시적으로 진입한다.
       // (서버 상태는 이미 liveness_pending 이라 nextEnrollmentStep 은 liveness 를 반환한다.)
-      setStep('profile');
+      setStep('physique');
     } catch (requestError) {
       setError(requestError?.message || '사진 상태를 확인하지 못했어요.');
+    }
+  };
+
+  // physique 스텝(선택): 체형·키 메타데이터. 컷 파이프라인·상태머신을 게이팅하지 않는다 —
+  // 저장/건너뛰기 모두 profile 스텝으로 이어간다. 로컬 선택값(physiqueHeightBucket/BodyType)은
+  // 훅 순서 보존을 위해 컴포넌트 맨 끝에서 선언한다(아래 참고).
+  const submitPhysiqueStep = async () => {
+    if (!enrollment?.id) return;
+    setBusy(true);
+    setError('');
+    try {
+      const updated = await submitPhysique({
+        enrollmentId: enrollment.id,
+        heightBucket: physiqueHeightBucket,
+        bodyType: physiqueBodyType,
+      });
+      if (!mounted.current) return;
+      setEnrollment(updated);
+      setStep('profile');
+    } catch (requestError) {
+      if (!mounted.current) return;
+      setError(requestError?.message || '체형 정보를 저장하지 못했어요.');
+    } finally {
+      if (mounted.current) setBusy(false);
     }
   };
 
@@ -533,6 +562,13 @@ export function ModelRegister() {
     return () => { active = false; };
   }, []);
 
+  // physique 스텝 로컬 선택값 — 서버 상태 없는 UI 전용(제출 시에만 서버로). 기존 테스트가
+  // useState 를 위치(index)로 프리셋하므로, 새 useState 는 반드시 컴포넌트 맨 끝(모든
+  // 기존 useState/useEffect 뒤)에 추가한다 — livenessRequired 위 주석과 같은 관례.
+  const [physiqueHeightBucket, setPhysiqueHeightBucket] = useState(null);
+  const [physiqueBodyType, setPhysiqueBodyType] = useState(null);
+  const heightOptions = heightBucketOptions(enrollment?.gender);
+
   if (step === 'loading') return <div className="wizard narrow"><div className="surface">등록 상태를 확인하고 있어요…</div></div>;
 
   if (step === 'error') {
@@ -616,7 +652,7 @@ export function ModelRegister() {
           <div className={s.stepHead}>
             <div className={s.medallion}><Icon name="checkSquare" size={22} /></div>
             <div>
-              <div className={s.stepEyebrow}>STEP 1 / 6</div>
+              <div className={s.stepEyebrow}>STEP 1 / 7</div>
               <h2 className={s.stateTitle}>생체정보 처리 동의</h2>
             </div>
           </div>
@@ -645,7 +681,7 @@ export function ModelRegister() {
           <div className={s.stepHead}>
             <div className={s.medallion}><Icon name="lock" size={22} /></div>
             <div>
-              <div className={s.stepEyebrow}>STEP 2 / 6</div>
+              <div className={s.stepEyebrow}>STEP 2 / 7</div>
               <h2 className={s.stateTitle}>모바일 신분증 확인</h2>
             </div>
           </div>
@@ -699,9 +735,66 @@ export function ModelRegister() {
           embedded
           photoApi={photoApi}
           angles={ENROLLMENT_ANGLES}
-          nextLabel="다음 · 대표 이미지"
+          nextLabel="다음 · 체형·키"
           onDone={finishPhotos}
         />
+      )}
+
+      {step === 'physique' && (
+        <div className="surface">
+          <div className={s.stepHead}>
+            <div className={s.medallion}><Icon name="person" size={22} /></div>
+            <div>
+              <div className={s.stepEyebrow}>STEP 4 / 7 · 선택</div>
+              <h2 className={s.stateTitle}>체형·키</h2>
+            </div>
+          </div>
+          <p className="hint">모델의 체형과 키를 알려주시면 컷 생성에 참고돼요. 원하지 않으면 건너뛸 수 있어요.</p>
+          {heightOptions.length > 0 && (
+            <div className={s.physiqueGroup}>
+              <div className={s.physiqueLabel}>키</div>
+              <div className="chips">
+                {heightOptions.map((bucket) => (
+                  <button
+                    key={bucket.value}
+                    type="button"
+                    className={`chip${physiqueHeightBucket === bucket.value ? ' on' : ''}`}
+                    disabled={busy}
+                    onClick={() => setPhysiqueHeightBucket(
+                      physiqueHeightBucket === bucket.value ? null : bucket.value,
+                    )}
+                  >
+                    {bucket.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className={s.physiqueGroup}>
+            <div className={s.physiqueLabel}>체형</div>
+            <div className="chips">
+              {BODY_TYPES.map((body) => (
+                <button
+                  key={body.value}
+                  type="button"
+                  className={`chip${physiqueBodyType === body.value ? ' on' : ''}`}
+                  disabled={busy}
+                  onClick={() => setPhysiqueBodyType(
+                    physiqueBodyType === body.value ? null : body.value,
+                  )}
+                >
+                  {body.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <Button variant="primary" block disabled={busy} onClick={submitPhysiqueStep}>
+            {busy ? '저장 중…' : '저장하고 계속'}
+          </Button>
+          <Button variant="secondary" block disabled={busy} onClick={() => setStep('profile')}>
+            건너뛰기
+          </Button>
+        </div>
       )}
 
       {step === 'profile' && (
@@ -709,7 +802,7 @@ export function ModelRegister() {
           <div className={s.stepHead}>
             <div className={s.medallion}><Icon name="image" size={22} /></div>
             <div>
-              <div className={s.stepEyebrow}>STEP 4 / 6 · 선택</div>
+              <div className={s.stepEyebrow}>STEP 5 / 7 · 선택</div>
               <h2 className={s.stateTitle}>대표 이미지</h2>
             </div>
           </div>
@@ -764,7 +857,7 @@ export function ModelRegister() {
           <div className={s.stepHead}>
             <div className={`${s.medallion} ${s.medallionSpin}`}><Icon name="loader" size={22} /></div>
             <div>
-              <div className={s.stepEyebrow}>STEP 6 / 6</div>
+              <div className={s.stepEyebrow}>STEP 7 / 7</div>
               <h2 className={s.stateTitle}>모델 자산을 준비하고 있어요</h2>
             </div>
           </div>

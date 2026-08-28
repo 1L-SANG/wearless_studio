@@ -151,6 +151,7 @@ async function modelComponentHarness({
           export const getCurrentEnrollment = (...args) => api.getCurrentEnrollment(...args);
           export const getEnrollment = (...args) => api.getEnrollment(...args);
           export const listMyModels = (...args) => api.listMyModels(...args);
+          export const submitPhysique = (...args) => api.submitPhysique(...args);
           export const uploadEnrollmentPhoto = (...args) => api.uploadEnrollmentPhoto(...args);
           export const uploadProfileImage = (...args) => api.uploadProfileImage(...args);
         `;
@@ -260,6 +261,104 @@ test('profile step wired between photos and liveness', () => {
   const reg = read('../../src/features/model/ModelRegister.jsx');
   assert.match(reg, /uploadProfileImage\(/);
   assert.match(reg, /step === 'profile'/);
+});
+
+test('physique 스텝: 키·체형 선택→제출→대표이미지 스텝', async () => {
+  // photos 완료 상태로 진입(physique) → 성별(female)로 좁혀진 키 구간 + 체형 7종 렌더 확인 →
+  // 각각 하나씩 선택 → 제출 → fakeApi.submitPhysique 호출 + 다음 스텝(profile) 확인.
+  const physiqueCalls = [];
+  const harness = await modelComponentHarness({
+    initialStates: [
+      'physique',
+      { id: 'enrollment-1', status: 'liveness_pending', gender: 'female' },
+      null, '', false, false,
+    ],
+    api: {
+      submitPhysique: async (args) => {
+        physiqueCalls.push(args);
+        return {
+          id: 'enrollment-1', status: 'liveness_pending', gender: 'female',
+          heightBucket: args.heightBucket, bodyType: args.bodyType,
+        };
+      },
+      getCurrentEnrollment: () => new Promise(() => {}),
+    },
+  });
+  try {
+    const tree = harness.render();
+    const heightChip = findTree(
+      tree,
+      (node) => node.type === 'button' && node.props?.children === '155cm 미만',
+    );
+    assert.ok(heightChip, 'the physique step must render female height buckets');
+    assert.equal(
+      findTree(tree, (node) => node.type === 'button' && node.props?.children === '180–185cm'),
+      null,
+      'male-only height buckets must not render for a female enrollment',
+    );
+    const bodyChip = findTree(
+      tree,
+      (node) => node.type === 'button' && node.props?.children === '마름',
+    );
+    assert.ok(bodyChip, 'the physique step must render the body-type chips');
+    heightChip.props.onClick();
+    bodyChip.props.onClick();
+
+    const submitTree = harness.render();
+    const submit = findTree(
+      submitTree,
+      (node) => node.type === 'Button' && node.props?.children === '저장하고 계속',
+    );
+    assert.ok(submit, 'the physique step exposes a save-and-continue action');
+    await submit.props.onClick();
+    await flush();
+
+    assert.equal(physiqueCalls.length, 1, 'submitPhysique must be called once');
+    assert.equal(physiqueCalls[0].enrollmentId, 'enrollment-1');
+    assert.equal(physiqueCalls[0].heightBucket, 'f_lt155');
+    assert.equal(physiqueCalls[0].bodyType, 'slim');
+    assert.equal(harness.runtime.states[0], 'profile', 'submitting physique advances to the profile step');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('physique 스텝 건너뛰기는 서버를 부르지 않고 바로 대표이미지 스텝으로', async () => {
+  const physiqueCalls = [];
+  const harness = await modelComponentHarness({
+    initialStates: [
+      'physique',
+      { id: 'enrollment-1', status: 'liveness_pending', gender: null },
+      null, '', false, false,
+    ],
+    api: {
+      submitPhysique: async (args) => { physiqueCalls.push(args); return {}; },
+      getCurrentEnrollment: () => new Promise(() => {}),
+    },
+  });
+  try {
+    const tree = harness.render();
+    // gender 가 null 이면 남녀 통합 목록(양쪽 다 렌더)이어야 한다.
+    assert.ok(
+      findTree(tree, (node) => node.type === 'button' && node.props?.children === '155cm 미만'),
+      'a null gender shows the unified bucket list (female buckets present)',
+    );
+    assert.ok(
+      findTree(tree, (node) => node.type === 'button' && node.props?.children === '180–185cm'),
+      'a null gender shows the unified bucket list (male buckets present)',
+    );
+    const skip = findTree(
+      tree,
+      (node) => node.type === 'Button' && node.props?.children === '건너뛰기',
+    );
+    assert.ok(skip, 'the physique step exposes a skip action');
+    skip.props.onClick();
+
+    assert.equal(physiqueCalls.length, 0, 'skipping must not call submitPhysique');
+    assert.equal(harness.runtime.states[0], 'profile', 'skipping physique advances to the profile step');
+  } finally {
+    await harness.close();
+  }
 });
 
 test('a lost portrait after liveness re-fetches identity in place, keeping the photos', async () => {
