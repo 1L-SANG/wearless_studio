@@ -24,7 +24,7 @@ PAST = NOW - timedelta(days=1)
 MODEL_ID = "11111111-1111-1111-1111-111111111111"
 LICENSE_ID = "22222222-2222-2222-2222-222222222222"
 ENROLLMENT_ID = "33333333-3333-3333-3333-333333333333"
-CATEGORY = "일반 여성 의류"
+CATEGORY = "상의"
 
 
 def _valid_gate_row(**overrides):
@@ -251,7 +251,7 @@ def test_optional_dev_mode_preserves_local_only_behavior():
         ({"forbidden_use": [CATEGORY]}, MODEL_ID, CATEGORY, "license_use_forbidden"),
         ({"allowed_use": None}, MODEL_ID, CATEGORY, "license_use_not_allowed"),
         ({"allowed_use": "not-a-list"}, MODEL_ID, CATEGORY, "license_use_not_allowed"),
-        ({"allowed_use": ["남성 의류"]}, MODEL_ID, CATEGORY, "license_use_not_allowed"),
+        ({"allowed_use": ["하의"]}, MODEL_ID, CATEGORY, "license_use_not_allowed"),
         ({"current_enrollment_id": None}, MODEL_ID, CATEGORY, "model_enrollment_unavailable"),
         ({"enrollment_status": "pending"}, MODEL_ID, CATEGORY, "model_enrollment_unavailable"),
         ({"match_policy_version": " "}, MODEL_ID, CATEGORY, "model_enrollment_unavailable"),

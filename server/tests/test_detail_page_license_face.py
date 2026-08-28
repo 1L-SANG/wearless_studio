@@ -20,7 +20,7 @@ from conftest import FakeR2, make_settings, worker_job
 LIC_ID = "11111111-1111-4111-8111-111111111111"
 MODEL_ID = "22222222-2222-4222-8222-222222222222"
 ENROLLMENT_ID = "33333333-3333-4333-8333-333333333333"
-CATEGORY = "일반 여성 의류"
+CATEGORY = "상의"
 FACE_KEY = "faces/model-1/lic-1.png"
 FACE_BYTES = b"\x89PNG-FACE-BYTES"
 CURRENT_FACE_KEY = "current/face_front.png"
