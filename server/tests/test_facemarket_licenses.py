@@ -19,7 +19,7 @@ from psycopg.adapt import Transformer
 
 from app import facemarket, holder_client
 from app import facemarket_enrollment
-from app.facemarket import LicenseCard
+from app.facemarket import LicenseCard, _license_card
 from app.main import create_app
 from conftest import make_settings
 
@@ -63,6 +63,22 @@ def test_license_card_allows_missing_face_digest_during_reverification_cutover()
     )
 
     assert card.face_image_digest is None
+
+
+def test_license_card_helper_tolerates_missing_cover_and_passes_it_through():
+    # RETURNING(단일 fm_licenses) row 엔 cover_image_url 이 없다 — KeyError 없이 None 이어야 한다.
+    base = {
+        "id": "license-1", "model_id": MODEL_ID,
+        "face_image_uri": "/v1/facemarket/licenses/license-1/face",
+        "face_image_digest": "sha256-x", "allowed_use": [], "forbidden_use": [],
+        "unit_price": 5000, "license_valid_until": NOW, "status": "active",
+        "vc_id": None, "created_at": NOW,
+    }
+    assert "cover_image_url" not in base
+    assert _license_card(base)["cover_image_url"] is None
+    # 목록(_L) row 는 m.cover_image_url 을 실어 온다 — 그대로 통과.
+    with_cover = {**base, "cover_image_url": "private/fm-profile/abc.png"}
+    assert _license_card(with_cover)["cover_image_url"] == "private/fm-profile/abc.png"
 
 
 def _compile_psycopg_query(sql, params):
