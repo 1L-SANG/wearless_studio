@@ -77,6 +77,9 @@ function VcCard({ license, onRevoked, push }) {
     const [revoking, setRevoking] = useState(false);
 
     const verifyUrl = `${window.location.origin}/verify/${license.id}`;
+    // 카드 프로필 = 모델 대표 이미지(셀러가 고른 사진). 없으면(구 라이선스·생성 직후 RETURNING)
+    // 검증 얼굴로 폴백한다. 검증된 얼굴+digest 는 신뢰 핵심이라 사라지지 않고 코너 배지로 남는다.
+    const coverUrl = license.coverImageUrl || null;
 
     // 얼굴 — 인증 게이트로만(공개 URL 금지). 언마운트가 fetch 보다 빠르면 즉시 해제(누수 방지).
     useEffect(() => {
@@ -210,12 +213,21 @@ function VcCard({ license, onRevoked, push }) {
                 <>
                     <div className={s.vcId}>
                         {/* 얼굴 — objectURL 만. 파기 시 게이트가 닫히면 플레이스홀더로 강등된다. */}
-                        <div className={s.vcFace}>
-                            {faceUrl ? (
-                                <img src={faceUrl} alt="라이선스 얼굴" />
-                            ) : (
-                                <span className={s.vcFaceEmpty}>
-                                    <Icon name="person" size={22} />
+                        <div className={s.vcFaceWrap}>
+                            <div className={s.vcFace}>
+                                {coverUrl ? (
+                                    <img src={coverUrl} alt="모델 대표 이미지" />
+                                ) : faceUrl ? (
+                                    <img src={faceUrl} alt="라이선스 얼굴" />
+                                ) : (
+                                    <span className={s.vcFaceEmpty}>
+                                        <Icon name="person" size={22} />
+                                    </span>
+                                )}
+                            </div>
+                            {coverUrl && faceUrl && (
+                                <span className={s.vcVerifiedBadge} title="검증된 얼굴">
+                                    <img src={faceUrl} alt="검증된 얼굴" />
                                 </span>
                             )}
                         </div>

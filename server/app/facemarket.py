@@ -530,14 +530,18 @@ _EXT_TO_MIME = {ext: mime for mime, ext in MIME_EXT.items()}  # 상세컷 워커
 # 응답 화이트리스트 — face_image_key(비공개)·모델 PII 제외. uuid(id/model_id)는 ::text 캐스트
 # (psycopg→uuid.UUID, CamelModel str 필드가 거부 → 500 방지, repo.py 관례).
 # RETURNING 용(단일 테이블, 별칭 없음).
+# RETURNING 용(단일 테이블, 별칭 없음). cover_image_url 은 fm_models 소유라 여기(조인 없음)엔 없다 —
+# LicenseCard.cover_image_url 기본값(None)으로 직렬화되고, 대표 이미지는 목록 조회(_L)에서 실린다.
 _LICENSE_CARD_COLS = (
     "id::text as id, model_id::text as model_id, face_image_uri, face_image_digest, "
     "allowed_use, forbidden_use, unit_price, license_valid_until, status, vc_id, created_at"
 )
 # 목록 조인 쿼리용 — 모든 컬럼 l. 한정(fm_models 와 id/status/created_at 등 이름 충돌 → 모호성 500 방지).
+# cover_image_url 만 m. — 대표 이미지는 fm_models 소유(조인 전제, 아래 3개 사용처 모두 join fm_models).
 _LICENSE_CARD_COLS_L = (
     "l.id::text as id, l.model_id::text as model_id, l.face_image_uri, l.face_image_digest, "
-    "l.allowed_use, l.forbidden_use, l.unit_price, l.license_valid_until, l.status, l.vc_id, l.created_at"
+    "l.allowed_use, l.forbidden_use, l.unit_price, l.license_valid_until, l.status, l.vc_id, l.created_at, "
+    "m.cover_image_url"
 )
 
 
@@ -555,6 +559,7 @@ class LicenseCard(CamelModel):
     status: str
     vc_id: str | None = None
     created_at: datetime
+    cover_image_url: str | None = None  # 모델 대표 이미지 — VC 카드 프로필. RETURNING 경로는 null(목록 조회 시 채워짐)
 
 
 class CreateLicenseRequest(CamelModel):
@@ -737,7 +742,9 @@ async def _enqueue_issued_vc_revocation(connect, *, license_id, model_id, vc_id)
 
 
 def _license_card(row: dict) -> dict:
-    return {key: row[key] for key in LicenseCard.model_fields}
+    # .get — cover_image_url 은 fm_models 소유라 RETURNING(단일 테이블) row 엔 없다. 없으면 None
+    # (LicenseCard 기본값). 필수 필드가 빠지면 response_model 검증이 잡는다.
+    return {key: row.get(key) for key in LicenseCard.model_fields}
 
 
 async def finalize_issued_face_vc(
