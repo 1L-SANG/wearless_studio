@@ -3091,12 +3091,25 @@ export function Editor() {
           </span>
         </button>
         <div className="ed-divider" />
-        <div className="ed-toolgroup">
+        {/* 도구 탭 = ARIA tabs 패턴: 좌우 화살표·Home/End 로 이동하면 즉시 그 패널로 전환.
+            stopPropagation 필수 — 전역 방향키 nudge(캔버스 요소 이동)가 같은 키를 쓴다. */}
+        <div className="ed-toolgroup" role="tablist" aria-label="편집 도구"
+          onKeyDown={(e) => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+            e.preventDefault(); e.stopPropagation();
+            const i = TOOLS.findIndex((t) => t.id === tab); const n = TOOLS.length;
+            const next = e.key === 'Home' ? 0 : e.key === 'End' ? n - 1
+              : e.key === 'ArrowLeft' ? (i - 1 + n) % n : (i + 1) % n;
+            setTab(TOOLS[next].id);
+            e.currentTarget.children[next]?.focus?.();
+          }}>
           {TOOLS.map((t) => (
-            <button key={t.id} className={`ed-tool${tab === t.id ? ' on' : ''}`} onClick={() => setTab(t.id)}>
+            <button key={t.id} id={`ed-tab-${t.id}`} role="tab" aria-selected={tab === t.id}
+              tabIndex={tab === t.id ? 0 : -1}
+              className={`ed-tool${tab === t.id ? ' on' : ''}`} onClick={() => setTab(t.id)}>
               <span className="dotwrap"><Icon name={t.icon} size={22} />
                 {t.dot && genDot !== 'none' && <span className="dot" style={{ position: 'absolute', top: -2, right: -3, background: genDot === 'busy' ? '#e6b800' : 'var(--link)', boxShadow: '0 0 0 1.5px #fff' }} />}
-              </span>{t.label}
+              </span><span className="ed-tool-lbl" data-label={t.label}>{t.label}</span>
             </button>
           ))}
         </div>
@@ -3222,7 +3235,7 @@ export function Editor() {
 
       {/* body */}
       <div className="ed-body" style={{ '--lcol': '320px', '--rcol': rightHidden ? '0px' : '208px' }}>
-        <div className="ed-left">
+        <div className="ed-left" role="tabpanel" aria-labelledby={`ed-tab-${tab}`}>
           <div style={{ marginBottom: 14 }}><span className="panel-h" style={{ marginBottom: 0 }}>{panelTitle}</span></div>
           {renderPanel()}
         </div>
