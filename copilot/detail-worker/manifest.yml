@@ -46,9 +46,9 @@ variables:
   DB_POOL_MAX_SIZE: "10"
   # 태스크당 동시 처리 잡 수. 실측(2026-08-27): 잡 1건이 CPU 2.6~9.8%, 메모리 864MB/4096MB
   # 라 3개는 150+3×714 ≈ 2.3GB(56%)로 들어온다. 4 는 73% 라 빠듯해 3 으로 둔다.
-  JOB_CONCURRENCY: "3"
+  JOB_CONCURRENCY: "1"
   # 밀린 잡이 JOB_CONCURRENCY 를 넘칠 때 띄울 태스크 상한.
-  DETAIL_WORKER_MAX_TASKS: "2"
+  DETAIL_WORKER_MAX_TASKS: "1"
   SUPABASE_URL: https://ftjxwxuactfjopbokbni.supabase.co
   R2_ACCOUNT_ID: 2b7c948b56f129faaa10e5076b9e9a66
   R2_BUCKET: wearless
@@ -59,7 +59,7 @@ variables:
   MODEL_ROUTING_DETAIL_CUT: gpt-image-2-2026-04-21
   MODEL_ROUTING_TEXT_GEMINI: gemini-3.1-pro-preview
   DETAIL_CUT_IMAGE_SIZE: "2K"
-  DETAIL_CUT_CONCURRENCY: "8"
+  DETAIL_CUT_CONCURRENCY: "5"
   DETAIL_CUT_STAGGER_MS: "1000"
   DETAIL_CUT_MAX_ATTEMPTS: "1"
   GARMENT_QC_MODE: "off"
