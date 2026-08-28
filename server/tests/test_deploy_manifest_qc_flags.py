@@ -85,10 +85,12 @@ def test_detail_worker_is_x86_spot_zero_without_load_balancer(manifest_vars):
     assert worker["network"]["vpc"]["placement"] == "public"
     assert worker["variables"]["JOB_KINDS"] == "detail_page"
     assert worker["variables"]["DB_POOL_MAX_SIZE"] == "10"
-    # 컷 동시 생성은 2026-08-27 실험으로 5 → 8 로 올렸다. 잡 356초의
+    # 컷 동시 생성은 2026-08-27 실험으로 5 → 8 로 올렸다가, 2026-08-28 OpenAI 계정이
+    # 바뀌면서 5 로 되돌렸다. 새 조직의 한도가 input-images 분당 5장이라 8장을 한꺼번에
+    # 쏘면 초과분이 429 로 떨어진다(14컷 중 4컷 유실). 한도가 올라가면 다시 8 로. 잡 356초의
     # 45%(약 160초)가 슬롯 리필 지연으로 버려지는 것을 프로덕션 로그로 역산해 확인했고,
     # 그 상한을 재기 위한 값이다. 되돌릴 때는 "5"/"3000" 으로.
-    assert worker["variables"]["DETAIL_CUT_CONCURRENCY"] == "8"
+    assert worker["variables"]["DETAIL_CUT_CONCURRENCY"] == "5"
     assert worker["variables"]["DETAIL_CUT_STAGGER_MS"] == "1000"
     assert worker["variables"]["DETAIL_CUT_IMAGE_SIZE"] == "2K"
     assert worker["variables"]["GENEXAMPLE_BG_ENABLED"] == "true"

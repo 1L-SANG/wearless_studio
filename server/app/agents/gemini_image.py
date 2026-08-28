@@ -10,6 +10,7 @@ import base64
 import binascii
 import functools
 import logging
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -48,6 +49,44 @@ class GeminiImageResult:
     mime: str
     latency_ms: int
     usage: dict | None
+
+
+#: 429 재시도 상한. 프로바이더가 비정상적으로 긴 값을 줘도 잡을 무한정 붙들지 않는다.
+#: 429 재시도 횟수(최초 시도 포함). 한도가 낮은 계정에서 컷이 통째로 빠지는 것을 막되,
+#: 잡이 UI 예산(900초)을 넘기지 않게 제한한다.
+_OPENAI_MAX_ATTEMPTS = 4
+_OPENAI_RETRY_CAP_SECONDS = 60.0
+#: 대기 시간을 못 읽었을 때. 0 으로 즉시 재시도하면 같은 429 를 한 번 더 받는다.
+_OPENAI_RETRY_FALLBACK_SECONDS = 5.0
+#: 기다려도 안 풀리는 429. 잔액 소진은 재시도가 잡만 길게 만든다
+#: (2026-08-27 프로덕션에서 실제로 겪었다).
+_OPENAI_TERMINAL_429_CODES = ("credit_balance_exhausted", "insufficient_quota")
+
+
+def openai_retry_delay(res) -> float | None:
+    """429 응답에서 '얼마나 기다렸다 다시 보낼지'. 재시도 대상이 아니면 None.
+
+    OpenAI 는 본문에 `Please try again in 12s` 로, 헤더에 `retry-after` 로 알려준다.
+    헤더가 더 권위 있으므로 우선한다. 상세페이지 컷은 MODEL_ROUTING_DETAIL_CUT 이
+    gpt-image 라 전부 이 경로를 타는데, 2026-08-28 까지 여기엔 백오프가 없어서
+    레이트리밋에 걸린 컷이 그대로 빈 슬롯이 됐다(14컷 중 4컷 유실).
+    """
+    if getattr(res, "status_code", None) != 429:
+        return None
+    body = (getattr(res, "text", "") or "")
+    low = body.lower()
+    if any(code in low for code in _OPENAI_TERMINAL_429_CODES):
+        return None
+    header = (getattr(res, "headers", {}) or {}).get("retry-after")
+    if header:
+        try:
+            return min(_OPENAI_RETRY_CAP_SECONDS, max(0.0, float(str(header).strip())))
+        except ValueError:
+            pass
+    m = re.search(r"try again in ([0-9]+(?:\.[0-9]+)?)\s*s", body, re.I)
+    if m:
+        return min(_OPENAI_RETRY_CAP_SECONDS, max(0.0, float(m.group(1))))
+    return _OPENAI_RETRY_FALLBACK_SECONDS
 
 
 def _record_unbilled_failure(model: str, image_size: str, t0: float, reason: str) -> None:
@@ -374,21 +413,32 @@ class GeminiImageClient:
             "n": "1",
         }
         t0 = time.perf_counter()
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                res = await client.post(
-                    "https://api.openai.com/v1/images/edits",
-                    headers={"Authorization": f"Bearer {self._openai_key}"},
-                    data=data, files=files)
-        except httpx.RequestError as exc:
-            # Gemini 경로와 같은 규칙 — 연결이 안 선 경우만 '아직 안 그려졌다'로 본다.
-            # 안 맞추면 이미지 모델을 바꾸는 순간 이중 과금 방어가 통째로 사라진다
-            # (2026-08-17 검증: 프로바이더별 비대칭).
-            billable = not isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
-            if billable:
-                _record_unbilled_failure(model, size, t0, type(exc).__name__)
-            raise GeminiError(
-                f"OpenAI request failed: {type(exc).__name__}: {exc}", billable=billable) from exc
+        # 429 백오프. 상세페이지 컷은 전부 이 경로라, 없으면 레이트리밋에 걸린 컷이
+        # 그대로 빈 슬롯이 된다(2026-08-28: 14컷 중 4컷 유실). 대기 시간은 프로바이더가
+        # 알려주는 값을 그대로 쓴다 — 임의 백오프보다 정확하고 짧다.
+        for attempt in range(_OPENAI_MAX_ATTEMPTS):
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    res = await client.post(
+                        "https://api.openai.com/v1/images/edits",
+                        headers={"Authorization": f"Bearer {self._openai_key}"},
+                        data=data, files=files)
+            except httpx.RequestError as exc:
+                # Gemini 경로와 같은 규칙 — 연결이 안 선 경우만 '아직 안 그려졌다'로 본다.
+                # 안 맞추면 이미지 모델을 바꾸는 순간 이중 과금 방어가 통째로 사라진다
+                # (2026-08-17 검증: 프로바이더별 비대칭).
+                billable = not isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
+                if billable:
+                    _record_unbilled_failure(model, size, t0, type(exc).__name__)
+                raise GeminiError(
+                    f"OpenAI request failed: {type(exc).__name__}: {exc}",
+                    billable=billable) from exc
+            delay = openai_retry_delay(res)
+            if delay is None or attempt == _OPENAI_MAX_ATTEMPTS - 1:
+                break
+            log.warning("OpenAI 429 — %.1fs 대기 후 재시도 (%d/%d)",
+                        delay, attempt + 1, _OPENAI_MAX_ATTEMPTS - 1)
+            await asyncio.sleep(delay)
         latency_ms = int((time.perf_counter() - t0) * 1000)
         if res.status_code != 200:
             billable = res.status_code in (502, 504)
