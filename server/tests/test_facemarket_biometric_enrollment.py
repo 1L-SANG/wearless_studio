@@ -487,7 +487,16 @@ class FakeCursor:
                 ),
                 None,
             )
-            self.result = _enrollment_db_view(row) if row else None
+            model_gender = None
+            if row and row.get("model_id") and "m.gender" in query:
+                # Task4: _load_owned_enrollment 가 fm_models 를 조인해 model_gender 를 본다.
+                model = next(
+                    (m for m in self.store.models if m["id"] == row["model_id"]), None
+                )
+                model_gender = model.get("gender") if model else None
+            self.result = (
+                _enrollment_db_view(row, model_gender=model_gender) if row else None
+            )
         elif query.startswith("select p.angle, p.qc_status, p.uploaded_at"):
             enrollment_id = params[0]
             self.many = [
@@ -921,6 +930,17 @@ class FakeCursor:
                 if item["id"] == enrollment_id and item["user_id"] == user_id
             )
             row["profile_image_r2_key"] = key
+        elif query.startswith(
+            "update fm_biometric_enrollments set height_bucket"
+        ):
+            height_bucket, body_type, enrollment_id, user_id = params
+            row = next(
+                item
+                for item in self.store.enrollments
+                if item["id"] == enrollment_id and item["user_id"] == user_id
+            )
+            row["height_bucket"] = height_bucket
+            row["body_type"] = body_type
         elif query.startswith("select user_id::text as user_id from fm_models"):
             # /identity 게이트의 교차유저 CI 충돌 조회(ci_hash → 소유 user_id).
             ci_hash = params[0]
@@ -1162,7 +1182,7 @@ class FakeR2:
         return {"size": len(data), "mime": mime}
 
 
-def _enrollment_db_view(row):
+def _enrollment_db_view(row, *, model_gender=None):
     return {
         "id": row["id"],
         "model_id": row["model_id"],
@@ -1172,6 +1192,10 @@ def _enrollment_db_view(row):
         "cooldown_until": row["cooldown_until"],
         "expires_at": row["expires_at"],
         "liveness_session_digest": row.get("liveness_session_digest"),
+        # Task4: physique(체형·키) + fm_models 조인으로 얻는 모델 성별.
+        "height_bucket": row.get("height_bucket"),
+        "body_type": row.get("body_type"),
+        "model_gender": model_gender,
     }
 
 
@@ -1580,6 +1604,65 @@ def test_profile_image_rejects_bad_mime(enrollment_client, auth, completion_fake
     )
     assert res.status_code == 400
     assert res.json()["error"]["code"] == "unsupported_type"
+
+
+def _seed_model_with_gender(store, gender, *, user_id="user-1"):
+    # Task3: 성별은 fm_models.gender(OACX 신원확인이 세팅) — physique 검증이 이걸 읽는다.
+    # create_enrollment 는 유저의 기존(가장 최근) fm_models 행을 골라 model_id 로 붙이므로,
+    # 여기서 미리 심어두면 이어서 만든 등록이 이 모델·성별에 자동으로 연결된다.
+    model_id = f"model-{gender}-seed"
+    store.models.append(
+        {
+            "id": model_id,
+            "user_id": user_id,
+            "display_name": "테스트 모델",
+            "status": "pending",
+            "ci_hash": f"ci-hash-{gender}",
+            "assets_status": "none",
+            "current_enrollment_id": None,
+            "gender": gender,
+        }
+    )
+    return model_id
+
+
+def test_physique_saves_and_returns(
+    enrollment_client, auth, enrollment_store, completion_fakes
+):
+    _seed_model_with_gender(enrollment_store, "female")
+    eid = create_enrollment(enrollment_client, auth)  # photos_pending, model_id→여성 모델
+
+    res = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{eid}/physique",
+        json={"heightBucket": "f_165_170", "bodyType": "toned"},
+        headers=auth(),
+    )
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["heightBucket"] == "f_165_170"
+    assert body["bodyType"] == "toned"
+    assert body["gender"] == "female"
+    assert enrollment_store.enrollments[0]["height_bucket"] == "f_165_170"
+    assert enrollment_store.enrollments[0]["body_type"] == "toned"
+
+
+def test_physique_rejects_gender_mismatch(
+    enrollment_client, auth, enrollment_store, completion_fakes
+):
+    # 모델 gender=female 인 등록에 male 전용 키 구간을 저장하려 하면 400 invalid_physique.
+    _seed_model_with_gender(enrollment_store, "female")
+    eid = create_enrollment(enrollment_client, auth)
+
+    res = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{eid}/physique",
+        json={"heightBucket": "m_180_185"},
+        headers=auth(),
+    )
+
+    assert res.status_code == 400, res.text
+    assert res.json()["error"]["code"] == "invalid_physique"
+    assert enrollment_store.enrollments[0].get("height_bucket") is None
 
 
 def test_complete_promotes_profile_image_to_model_cover(
@@ -2440,6 +2523,10 @@ def test_current_and_status_return_only_the_owned_enrollment_view(
         "retryable",
         "reason",
         "expiresAt",
+        # Task4: physique(체형·키) + 검증용 모델 성별.
+        "heightBucket",
+        "bodyType",
+        "gender",
     }
     assert "digest" not in status.text.lower()
     assert "r2" not in status.text.lower()
