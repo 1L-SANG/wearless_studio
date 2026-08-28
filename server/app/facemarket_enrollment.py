@@ -200,6 +200,14 @@ class EnrollmentView(CamelModel):
     retryable: bool | None = None
     reason: str | None = None
     expires_at: datetime
+    height_bucket: str | None = None
+    body_type: str | None = None
+    gender: str | None = None
+
+
+class PhysiqueBody(CamelModel):
+    height_bucket: str | None = None
+    body_type: str | None = None
 
 
 def _err(code: str, message: str, status: int = 400, **extra) -> HTTPException:
@@ -240,8 +248,10 @@ async def _load_owned_enrollment(conn, enrollment_id: str, user_id: str) -> dict
             """
             select e.id::text as id, e.model_id::text as model_id, e.status,
                    e.decision, e.reason, e.cooldown_until, e.expires_at,
-                   e.liveness_session_digest
+                   e.liveness_session_digest, e.height_bucket, e.body_type,
+                   m.gender as model_gender
             from fm_biometric_enrollments e
+            left join fm_models m on m.id = e.model_id
             where e.id = %s and e.user_id = %s
             """,
             (enrollment_id, user_id),
@@ -597,8 +607,10 @@ async def _load_current_enrollment(conn, user_id: str) -> dict | None:
         await cur.execute(
             """
             select e.id::text as id, e.model_id::text as model_id, e.status,
-                   e.decision, e.reason, e.cooldown_until, e.expires_at
+                   e.decision, e.reason, e.cooldown_until, e.expires_at,
+                   e.height_bucket, e.body_type, m.gender as model_gender
             from fm_biometric_enrollments e
+            left join fm_models m on m.id = e.model_id
             where e.user_id = %s and e.status in (
                 'identity_pending', 'photos_pending', 'liveness_pending', 'processing',
                 'asset_building', 'license_pending', 'vc_pending'
@@ -636,6 +648,9 @@ async def _enrollment_view(conn, row: dict) -> EnrollmentView:
         retryable=retryable,
         reason=row.get("reason"),
         expires_at=row["expires_at"],
+        height_bucket=row.get("height_bucket"),
+        body_type=row.get("body_type"),
+        gender=row.get("model_gender"),
     )
 
 
@@ -1140,6 +1155,42 @@ async def upload_profile_image(
                 "update fm_biometric_enrollments set profile_image_r2_key = %s "
                 "where id = %s and user_id = %s",
                 (key, enrollment_id, user_id),
+            )
+        await conn.commit()
+        row = await _load_owned_enrollment(conn, enrollment_id, user_id)
+        return await _enrollment_view(conn, row)
+
+
+@router.post("/enrollments/{enrollment_id}/physique", response_model=EnrollmentView)
+async def set_physique(
+    request: Request,
+    enrollment_id: str,
+    body: PhysiqueBody,
+    user_id: str = Depends(require_user),
+):
+    # 체형·키(physique)는 표시·프롬프트 문구용 메타데이터일 뿐 컷 파이프라인·상태머신을
+    # 게이팅하지 않는다 — 검증은 값 자체(enum·성별 일치)만 본다(app.facemarket_physique 단일소스).
+    from .facemarket_physique import PhysiqueError, validate_physique
+
+    enrollment_id = _canonical_enrollment_id(enrollment_id)
+    async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
+        row = await _load_owned_enrollment(conn, enrollment_id, user_id)
+        if row is None:
+            raise _err("not_found", "등록을 찾을 수 없습니다.", status=404)
+        try:
+            validate_physique(
+                height_bucket=body.height_bucket,
+                body_type=body.body_type,
+                gender=row.get("model_gender"),
+            )
+        except PhysiqueError as e:
+            raise _err(e.code, e.message, status=400)
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "update fm_biometric_enrollments set height_bucket = %s, body_type = %s "
+                "where id = %s and user_id = %s",
+                (body.height_bucket, body.body_type, enrollment_id, user_id),
             )
         await conn.commit()
         row = await _load_owned_enrollment(conn, enrollment_id, user_id)
@@ -1735,7 +1786,7 @@ async def _initial_completion_checks(
                        e.expires_at, e.liveness_session_digest, e.device_digest,
                        e.identity_ci_hash, e.identity_name_masked, e.identity_birth_year,
                        e.identity_tx_digest, e.identity_contract_version,
-                       e.profile_image_r2_key
+                       e.profile_image_r2_key, e.height_bucket, e.body_type
                 from fm_biometric_enrollments e
                 where e.id = %s and e.user_id = %s
                 for update
@@ -2010,6 +2061,14 @@ async def process_enrollment_completion(
                     await cur.execute(
                         "update fm_models set cover_image_url = %s where id = %s",
                         (row["profile_image_r2_key"], model_id),
+                    )
+                # Task5: 등록 중 입력받은 키·체형(height_bucket·body_type)이 있으면 바인딩 시
+                # 모델로 승격한다. gender는 identity 단계에서 이미 설정됨.
+                if row.get("height_bucket") or row.get("body_type"):
+                    await cur.execute(
+                        "update fm_models set height_bucket = coalesce(%s, height_bucket), "
+                        "body_type = coalesce(%s, body_type) where id = %s",
+                        (row.get("height_bucket"), row.get("body_type"), model_id),
                     )
                 await cur.execute(
                     """

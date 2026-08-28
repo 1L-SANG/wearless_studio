@@ -12,7 +12,7 @@ export const ENROLLMENT_ANGLES = Object.freeze([
 ]);
 
 export const ENROLLMENT_STEPS = Object.freeze([
-  'consent', 'identity', 'photos', 'profile', 'liveness', 'processing', 'terms', 'done',
+  'consent', 'identity', 'photos', 'physique', 'profile', 'liveness', 'processing', 'terms', 'done',
 ]);
 
 const REASON_COPY = Object.freeze({

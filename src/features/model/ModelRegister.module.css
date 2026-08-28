@@ -377,6 +377,21 @@
 .uploadText { font-size: 14.5px; font-weight: 500; color: var(--fg-1); }
 .uploadHint { font-size: 12px; color: var(--fg-3); font-family: var(--font-mono); }
 
+/* ---- 체형·키(physique) 스텝 — 선택 칩은 전역 .chips/.chip(app.css)을 그대로 재사용,
+   여기선 그룹 간격/라벨만 더한다. ---- */
+.physiqueGroup {
+  margin: 16px 0 20px;
+}
+.physiqueGroup:last-of-type {
+  margin-bottom: 22px;
+}
+.physiqueLabel {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg-2);
+  margin-bottom: 10px;
+}
+
 .retryNote {
   margin: 12px 0 0;
   text-align: center;

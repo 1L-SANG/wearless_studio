@@ -33,6 +33,7 @@ from .model_routing import resolve_model
 from .fit_axes import build_fit_profile_block
 from .prompts import _product_block, _sanitize
 from . import pose_crop
+from ..facemarket_physique import build_body_profile_block
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
 _DEFAULT_PROMPT = os.path.join(_SERVER_DIR, "prompts", "cut_generate_v1.txt")
@@ -615,6 +616,7 @@ def render_cut_prompt(
     clothing_type: str, image_manifest: str, has_face: bool = False,
     authority_plan_line: str | None = None,
     directing_profile: dict | None = None,
+    body_profile: dict | None = None,
 ) -> str:
     """섹션 선택 + ${토큰} 치환 + PRODUCT CONTEXT(ground truth) 자동 주입.
 
@@ -898,8 +900,11 @@ def render_cut_prompt(
             k: v for k, v in fit_profile.items() if k not in ("matchCut", "matchingFit")
         }
     fit_block = build_fit_profile_block(fit_profile)
+    body_block = build_body_profile_block(body_profile)
     block = _product_block(product, analysis or {}, include_legacy_fit=fit_profile is None)
-    return "\n\n".join(part for part in (text, directing_block, fit_block, block) if part)
+    return "\n\n".join(
+        part for part in (text, directing_block, fit_block, body_block, block) if part
+    )
 
 
 def _base_color(colors: list[dict]) -> dict | None:
@@ -1217,6 +1222,7 @@ def build_prompt(
     cut_spec: dict, product: dict, *,
     analysis: dict | None = None, manifest: str | None = None, has_face: bool = False,
     directing_profile: dict | None = None,
+    body_profile: dict | None = None,
     qc_corrections: tuple[str, ...] = (),
 ) -> str:
     """스펙 정규화(ValueError=unknown_cut_type) + 템플릿 렌더. manifest 미지정 시
@@ -1255,7 +1261,8 @@ def build_prompt(
     prompt = render_cut_prompt(
         load_cut_template(), spec, product, analysis or {}, clothing_type, manifest, has_face,
         authority_plan_line=authority_plan_line,
-        directing_profile=directing_profile)
+        directing_profile=directing_profile,
+        body_profile=body_profile)
     if qc_corrections:
         prompt += (
             "\n\nINDEPENDENT QC CORRECTION — regenerate from the original authority "
@@ -1334,6 +1341,7 @@ async def generate(
     manifest: str | None = None,
     has_face: bool = False,
     directing_profile: dict | None = None,
+    body_profile: dict | None = None,
     qc_corrections: tuple[str, ...] = (),
     confirmed_prompt_input: ConfirmedGptPromptInput | None = None,
 ) -> tuple[bytes, str]:
@@ -1358,7 +1366,10 @@ async def generate(
         and _is_bottom(clothing_type)
     )
     if confirmed_prompt_input is not None:
-        if analysis is not None or manifest is not None or has_face or directing_profile is not None:
+        if (
+            analysis is not None or manifest is not None or has_face
+            or directing_profile is not None or body_profile is not None
+        ):
             raise ValueError("confirmed_gpt_forbids_generic_prompt_inputs")
         prompt = compile_confirmed_gpt_prompt(
             confirmed_prompt_input, qc_corrections=qc_corrections
@@ -1371,6 +1382,7 @@ async def generate(
             manifest=manifest,
             has_face=has_face,
             directing_profile=directing_profile,
+            body_profile=body_profile,
             qc_corrections=qc_corrections,
         )
     provider_kwargs = {"aspect_ratio": settings.mannequin_aspect_ratio}

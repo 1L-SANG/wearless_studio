@@ -439,6 +439,15 @@ async def run_editor_image_job(app, job: dict) -> None:
                 and normalized["cutType"] != "product"
                 and len(model_images) == 2
             )
+            body_profile = None
+            if fm_face_injected and isinstance(fm_license_row, dict):
+                _bp = {
+                    "gender": fm_license_row.get("gender"),
+                    "heightBucket": fm_license_row.get("height_bucket"),
+                    "bodyType": fm_license_row.get("body_type"),
+                }
+                if _bp["heightBucket"] or _bp["bodyType"]:
+                    body_profile = _bp
             mannequin_images = (
                 [InlineImage(
                     cut_mannequin_asset["mime_type"],
@@ -598,6 +607,11 @@ async def run_editor_image_job(app, job: dict) -> None:
                     cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
                 )["_referenceDirectionCompatible"])
             generate_kwargs = {"analysis": analysis, "manifest": manifest}
+            # 실존 모델 그리드가 실제 첨부된 착장 컷에만 체형 블록을 얹는다(product·VIRTUAL·NONE
+            # 소스는 body_profile 이 이미 None) — 키 자체를 생략해 기존 generate() 목(mock) 중
+            # body_profile 인자를 모르는 strict-signature 스텁을 깨지 않는다(has_face와 동일 관례).
+            if body_profile is not None:
+                generate_kwargs["body_profile"] = body_profile
             # REAL identity pair는 manifest에서 MODEL/MODEL SHEET로 표시된다. 얼굴이 실제로
             # 보이는 컷이면 단일 MODEL FACE와 같은 강한 identity 계약을 켠다. 뒷면·얼굴가림은
             # pair를 컷 간 인물 연속성 앵커로만 유지하고 얼굴 노출을 강제하지 않는다.

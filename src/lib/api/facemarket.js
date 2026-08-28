@@ -119,6 +119,14 @@ export async function uploadProfileImage({ enrollmentId, fileBlob, filename }) {
   ), '대표 이미지 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
 }
 
+// POST /v1/facemarket/enrollments/{id}/physique — 체형·키(선택, 비게이팅) 저장. 서버가
+// enum·성별 일치를 검증(app.facemarket_physique)하고 갱신된 EnrollmentView 를 돌려준다.
+export function submitPhysique({ enrollmentId, heightBucket, bodyType }) {
+  return http(`/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/physique`, {
+    method: 'POST', body: { heightBucket, bodyType },
+  });
+}
+
 export function createLivenessSession(enrollmentId, nonce) {
   return http(`/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/liveness-session`, {
     method: 'POST', body: { nonce },
