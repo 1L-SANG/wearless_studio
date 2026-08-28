@@ -67,7 +67,7 @@ def _row(n):
         "model_id": f"model-{n}",
         "user_id": f"user-{n}",
         "enrollment_id": f"enrollment-{n}",
-        "allowed_use": ["일반 여성 의류"],
+        "allowed_use": ["상의"],
         "forbidden_use": [],
         "unit_price": 1000,
         "license_valid_until": "2027-01-01",

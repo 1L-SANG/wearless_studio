@@ -510,20 +510,21 @@ async def build_my_model_assets(request: Request, user_id: str = Depends(require
 # 얼굴 이미지 = 생체 PII. 공개 R2 URL 절대 노출 금지 → 비공개 버킷 저장 + 게이트 스트림.
 # face_image_uri = 게이트 라우트 URL(공개 URL 아님). face_image_key = 내부 비공개 키(응답 제외).
 ALLOWED_BRAND_USE_CATEGORIES = (
-    "일반 여성 의류",
-    "남성 의류",
-    "캐주얼·스트릿",
-    "스포츠·애슬레저",
+    "상의",
+    "하의",
+    "아우터",
+    "원피스",
+    "니트·스웨터",
+    "데님",
+    "셋업·수트",
+    "스커트",
+    "트레이닝·애슬레저",
+    "잡화·액세서리",
     "뷰티·화장품",
-    "액세서리·잡화",
 )
 FORBIDDEN_BRAND_USE_CATEGORIES = (
     "속옷·란제리",
     "수영복·비키니",
-    "성인용품",
-    "주류·담배",
-    "의료·성형",
-    "정치·종교",
 )
 _EXT_TO_MIME = {ext: mime for mime, ext in MIME_EXT.items()}  # 상세컷 워커 Content-Type 역매핑
 

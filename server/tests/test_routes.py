@@ -15,7 +15,7 @@ from conftest import patch_route_db
 
 MODEL_ID = "11111111-1111-1111-1111-111111111111"
 LICENSE_ID = "22222222-2222-2222-2222-222222222222"
-CATEGORY = "일반 여성 의류"
+CATEGORY = "상의"
 
 
 def _auth(make_token):
@@ -114,12 +114,12 @@ def test_save_analysis_normalizes_brand_use_category(client, make_token, monkeyp
     res = client.patch(
         "/v1/projects/p1/analysis",
         headers=_auth(make_token),
-        json={"brandUseCategory": "  일반 여성 의류  "},
+        json={"brandUseCategory": "  상의  "},
     )
 
     assert res.status_code == 200, res.text
-    assert seen["analysis"]["brandUseCategory"] == "일반 여성 의류"
-    assert res.json()["brandUseCategory"] == "일반 여성 의류"
+    assert seen["analysis"]["brandUseCategory"] == "상의"
+    assert res.json()["brandUseCategory"] == "상의"
 
 
 def test_save_analysis_rejects_unknown_brand_use_category_before_persistence(
@@ -605,7 +605,7 @@ def test_editor_new_owns_category_model_and_license_snapshot(
             "mode": "new",
             "cutType": "styling",
             model_key: MODEL_ID,
-            "brandUseCategory": "정치·종교",
+            "brandUseCategory": "속옷·란제리",
             "_facemarket": {"modelId": "attacker", "licenseId": "attacker"},
         },
     )
@@ -834,7 +834,7 @@ def test_editor_product_cut_strips_real_model_before_facemarket_gate(
             "cutType": "product",
             "shot": "ghost",
             "modelId": MODEL_ID,
-            "brandUseCategory": "정치·종교",
+            "brandUseCategory": "속옷·란제리",
             "_facemarket": {"modelId": "attacker", "licenseId": "attacker"},
         },
     )

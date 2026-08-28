@@ -10,7 +10,7 @@ from conftest import FakeR2, auth_headers, fake_worker_app, make_settings, patch
 
 MODEL_ID = "11111111-1111-1111-1111-111111111111"
 LICENSE_ID = "22222222-2222-2222-2222-222222222222"
-CATEGORY = "일반 여성 의류"
+CATEGORY = "상의"
 
 
 # ---------- 라우트 ----------
