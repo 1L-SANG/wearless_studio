@@ -306,7 +306,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None):
                     generate_kwargs["has_face"] = True
                 # 실존 모델 그리드가 실제 첨부된 착장 컷에만 체형 블록을 얹는다(product/ghost
                 # 컷·VIRTUAL·NONE 소스는 제외) — 얼굴 노출 여부와는 무관하다(A4와 동일 원칙).
-                if real_identity_attached:
+                if real_identity_attached and body_profile is not None:
                     generate_kwargs["body_profile"] = body_profile
             # 컷 생성 재시도 — 안전필터·응답 누락처럼 "다시 부르면 달라질 수 있는" 실패는
             # 한 번 더 시도한다. 빈 슬롯은 셀러에게 그냥 못 만든 페이지이고, 그 값은 우리가
@@ -1183,11 +1183,13 @@ async def run_detail_page_job(app, job: dict) -> None:
         # 뽑아 _gen_cuts 에 넘긴다(REAL이 아니면 license_row 가 None → body_profile None).
         body_profile = None
         if isinstance(license_row, dict):
-            body_profile = {
+            _bp = {
                 "gender": license_row.get("gender"),
                 "heightBucket": license_row.get("height_bucket"),
                 "bodyType": license_row.get("body_type"),
             }
+            if _bp["heightBucket"] or _bp["bodyType"]:
+                body_profile = _bp
 
         # (runtime block, images, manifest, has_face, product_images,
         #  space_set_plate, strict_space_scene_qc, passthrough, confirmed_packet,
@@ -1634,6 +1636,11 @@ async def run_detail_page_job(app, job: dict) -> None:
                     log.warning("feature copy persist failed for job %s: %r", job_id, e)
 
         # 3) 컷 생성 (부분 성공) — 컷 단위 progress(20→80)는 _gen_cuts 안에서 emit
+        # body_profile 이 None 이면 키 자체를 생략한다 — _gen_cuts() 목(mock) 중
+        # body_profile 인자를 모르는 strict-signature 스텁을 깨지 않는다(A4/A5와 동일 관례).
+        _gen_cuts_kwargs = {}
+        if body_profile is not None:
+            _gen_cuts_kwargs["body_profile"] = body_profile
         (
             cut_results,
             cut_assets,
@@ -1642,7 +1649,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             cut_qcs,
             page_qc,
             garment_warnings,
-        ) = await _gen_cuts(app, job, prepared, product, analysis, body_profile=body_profile)
+        ) = await _gen_cuts(app, job, prepared, product, analysis, **_gen_cuts_kwargs)
         example_warnings.extend(garment_warnings)
         # 판정 기준은 **컷이 하나라도 나왔는가**(cut_results)다. cut_assets 로 보면 전 블록이
         # 원본 패스스루인 상세페이지가 "전멸"로 오인된다 — 그 경우 컷은 멀쩡히 있다.

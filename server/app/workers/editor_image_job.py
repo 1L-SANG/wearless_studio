@@ -441,11 +441,13 @@ async def run_editor_image_job(app, job: dict) -> None:
             )
             body_profile = None
             if fm_face_injected and isinstance(fm_license_row, dict):
-                body_profile = {
+                _bp = {
                     "gender": fm_license_row.get("gender"),
                     "heightBucket": fm_license_row.get("height_bucket"),
                     "bodyType": fm_license_row.get("body_type"),
                 }
+                if _bp["heightBucket"] or _bp["bodyType"]:
+                    body_profile = _bp
             mannequin_images = (
                 [InlineImage(
                     cut_mannequin_asset["mime_type"],
