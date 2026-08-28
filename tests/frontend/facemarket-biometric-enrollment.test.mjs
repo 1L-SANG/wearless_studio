@@ -190,7 +190,7 @@ test('retouched photos are presented front, 45 degrees, then side', () => {
 
 test('server status restores the next safe enrollment step', () => {
   assert.deepEqual(ENROLLMENT_STEPS, [
-    'consent', 'identity', 'photos', 'profile', 'liveness', 'processing', 'terms', 'done',
+    'consent', 'identity', 'photos', 'physique', 'profile', 'liveness', 'processing', 'terms', 'done',
   ]);
   assert.equal(nextEnrollmentStep(null), 'consent');
   assert.equal(nextEnrollmentStep({ status: 'photos_pending', photos: [] }), 'photos');

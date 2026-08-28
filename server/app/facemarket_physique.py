@@ -80,7 +80,9 @@ def validate_physique(*, height_bucket: str | None, body_type: str | None, gende
 
 
 def build_body_profile_block(profile: Mapping | None) -> str:
-    """profile={"gender","heightBucket","bodyType"} → 영문 프롬프트 블록. 아무것도 없으면 ''.
+    """profile={"gender","heightBucket","bodyType"} → 영문 프롬프트 블록.
+    gender 는 트리거가 아니라 수식어 — height/body 중 하나라도 있어야 블록을 낸다
+    (§6.3/§7: 미입력 → 절 생략; OACX 자동 gender만 있는 모델까지 블록이 붙는 것을 방지).
     자유문자열 미방출 — enum→고정 문구만."""
     if not isinstance(profile, Mapping):
         return ""
@@ -91,11 +93,12 @@ def build_body_profile_block(profile: Mapping | None) -> str:
     body = profile.get("bodyType")
     if isinstance(body, str) and body in _BODY_LABELS:
         parts.append(_BODY_LABELS[body][1])
+    if not parts:
+        # height/body 둘 다 없음 — gender 혼자서는 블록을 못 낸다(트리거 아님, 수식어일 뿐).
+        return ""
     gender = profile.get("gender")
     if isinstance(gender, str) and gender in _GENDER_PHRASE:
         parts.append(_GENDER_PHRASE[gender])
-    if not parts:
-        return ""
     desc = ", ".join(parts)
     return (
         "SUBJECT BUILD (generated body identity; the face is owned separately and "

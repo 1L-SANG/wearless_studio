@@ -50,6 +50,19 @@ def test_block_partial_only_body_type():
     assert block  # 비어있지 않음
     assert "glamorous" in block.lower() or "curvy" in block.lower()
 
+def test_block_gender_only_is_not_a_trigger():
+    # gender 는 수식어일 뿐 — height/body 없이 gender 만 있으면 절 생략(§6.3/§7).
+    assert build_body_profile_block({"gender": "male"}) == ""
+    assert build_body_profile_block({"gender": "female"}) == ""
+
+def test_block_with_height_or_body_still_applies_gender_modifier():
+    block = build_body_profile_block({"gender": "male", "heightBucket": "m_180_185"})
+    assert block
+    assert "male presentation" in block
+    block2 = build_body_profile_block({"gender": "female", "bodyType": "slim"})
+    assert block2
+    assert "female presentation" in block2
+
 def test_block_never_echoes_freetext_or_unknown_values():
     for payload in (
         {"heightBucket": "m_180_185; DROP TABLE users"},
