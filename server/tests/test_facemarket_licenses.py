@@ -19,7 +19,28 @@ from psycopg.adapt import Transformer
 
 from app import facemarket, holder_client
 from app import facemarket_enrollment
-from app.facemarket import LicenseCard, _license_card
+from types import SimpleNamespace
+
+from app.facemarket import LicenseCard, _cover_serving_url, _license_card
+
+
+def _req_with_r2(r2):
+    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(r2_face=r2)))
+
+
+def test_cover_serving_url_transforms_private_key_to_signed_url():
+    class _R2:
+        def public_url(self, key):
+            return f"https://signed.example/{key}?sig=x"
+    req = _req_with_r2(_R2())
+    # raw private 키 → presigned 서빙 URL(브라우저 <img src> 로드 가능)
+    assert _cover_serving_url(req, "private/fm-profile/abc.png") == \
+        "https://signed.example/private/fm-profile/abc.png?sig=x"
+    # 키 없으면 None
+    assert _cover_serving_url(req, None) is None
+    assert _cover_serving_url(req, "") is None
+    # r2_face 미설정 → None(그레이스풀, 크래시 아님)
+    assert _cover_serving_url(_req_with_r2(None), "private/fm-profile/abc.png") is None
 from app.main import create_app
 from conftest import make_settings
 
@@ -105,6 +126,10 @@ class FakeR2Face:
 
     def delete(self, key):
         self.objects.pop(key, None)
+
+    def public_url(self, key):
+        # 실제 r2_face 는 public_base=None → presigned GET URL. 테스트는 결정적 대역.
+        return f"https://signed.example/{key}?sig=test"
 
 
 def _current_card(store, *, model_id=None, license_id=None, user_id=None, consent_version=None):

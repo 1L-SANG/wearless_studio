@@ -442,7 +442,10 @@ async def my_models(request: Request, user_id: str = Depends(require_user)):
                     order by created_at desc""",
                 (user_id,),
             )
-            return await cur.fetchall()
+            rows = await cur.fetchall()
+    for row in rows:
+        row["cover_image_url"] = _cover_serving_url(request, row.get("cover_image_url"))
+    return rows
 
 
 @router.post(
@@ -577,6 +580,18 @@ def _r2_face(request: Request):
     if r2 is None:
         raise _err("storage_unavailable", "얼굴 저장소가 설정되지 않았습니다.", status=503)
     return r2
+
+
+def _cover_serving_url(request: Request, key: str | None) -> str | None:
+    """대표 이미지(cover)는 FaceMarket 비공개 R2 버킷(r2_face, 공개도메인 차단)에 저장되므로 raw 키로는
+    브라우저 <img src> 가 못 읽는다(§ r2_face public_base=None). 서빙용 presigned GET URL(1h)로 변환한다.
+    r2 미설정이거나 키가 없으면 None(그레이스풀 — 카드가 placeholder/폴백으로 강등)."""
+    if not key:
+        return None
+    r2 = getattr(request.app.state, "r2_face", None)
+    if r2 is None:
+        return None
+    return r2.public_url(key)
 
 
 def _clean_uses(items: list[str], accepted: tuple[str, ...]) -> list[str]:
@@ -1078,7 +1093,10 @@ async def list_licenses(request: Request, user_id: str = Depends(require_user)):
                     order by l.created_at desc limit 200""",
                 (user_id,),
             )
-            return await cur.fetchall()
+            rows = await cur.fetchall()
+    for row in rows:
+        row["cover_image_url"] = _cover_serving_url(request, row.get("cover_image_url"))
+    return rows
 
 
 @router.get(
