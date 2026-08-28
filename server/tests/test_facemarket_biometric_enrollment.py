@@ -18,6 +18,7 @@ from psycopg.errors import UniqueViolation
 from starlette.datastructures import Headers
 
 from app import cx_identity, facemarket_enrollment, r2
+from app.facemarket import _gender_from_trans
 from app.main import create_app
 from app.personalization_qc import FaceQcResult
 from conftest import make_settings
@@ -4242,3 +4243,16 @@ def test_liveness_provider_failure_is_sanitized_and_not_a_biometric_failure(
     assert stored["liveness_nonce_digest"] == hashlib.sha256(
         nonce.encode()
     ).hexdigest()
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ({"gender": "M"}, "male"),
+    ({"gender": "F"}, "female"),
+    ({"sexCd": "1"}, "male"),
+    ({"sexCd": "2"}, "female"),
+    ({"gender": "male"}, "male"),
+    ({}, None),
+    ({"gender": "x"}, None),
+])
+def test_gender_from_trans(raw, expected):
+    assert _gender_from_trans(raw) == expected

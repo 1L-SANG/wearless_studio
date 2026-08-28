@@ -145,6 +145,19 @@ def _dig(data: dict, *keys):
     return None
 
 
+def _gender_from_trans(trans) -> str | None:
+    """OACX 응답에서 성별을 정규화(M/F/1/2/남/여 → male/female)."""
+    raw = _dig(trans, "gender", "sex", "sexCd", "sexCode", "genderCd")
+    if raw is None:
+        return None
+    s = str(raw).strip().lower()
+    if s in ("m", "male", "1", "남", "남자"):
+        return "male"
+    if s in ("f", "female", "2", "여", "여자"):
+        return "female"
+    return None
+
+
 def _mask_name(name: str) -> str:
     name = (name or "").strip()
     if len(name) <= 1:
@@ -267,10 +280,12 @@ async def identity_verify(
     raw_name = _dig(trans, "utf8Nm", "nm", "name", "userName", "engnm") or ""
     name_masked = _mask_name(raw_name)
     birth = _dig(trans, "birth", "birthdate")
+    gender = _gender_from_trans(trans)
     fields = {
         "nameMasked": name_masked,
         "birthYear": str(birth)[:4] if birth else None,
         "vcType": _dig(trans, "vcTypeCodeList"),
+        "gender": gender,
     }
 
     async with get_conn(request) as conn:
@@ -284,14 +299,14 @@ async def identity_verify(
             if existing:
                 model_id = existing["id"]
                 await cur.execute(
-                    "update fm_models set status = 'verified', user_id = %s where id = %s",
-                    (user_id, model_id),
+                    "update fm_models set status = 'verified', user_id = %s, gender = coalesce(%s, gender) where id = %s",
+                    (user_id, gender, model_id),
                 )
             else:
                 await cur.execute(
-                    """insert into fm_models (user_id, display_name, status, ci_hash)
-                       values (%s, %s, 'verified', %s) returning id""",
-                    (user_id, name_masked, ci_hash),
+                    """insert into fm_models (user_id, display_name, status, ci_hash, gender)
+                       values (%s, %s, 'verified', %s, %s) returning id""",
+                    (user_id, name_masked, ci_hash, gender),
                 )
                 model_id = (await cur.fetchone())["id"]
 

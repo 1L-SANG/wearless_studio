@@ -64,11 +64,12 @@ class FakeCursor:
         elif s.startswith("update fm_models set status"):
             self._result = None
         elif s.startswith("insert into fm_models"):
-            user_id, name, ci_hash = params
+            user_id, name, ci_hash, *rest = params
+            gender = rest[0] if rest else None
             mid = f"model-{len(models) + 1}"
             models.append({
                 "id": mid, "user_id": user_id, "display_name": name,
-                "status": "verified", "ci_hash": ci_hash,
+                "status": "verified", "ci_hash": ci_hash, "gender": gender,
                 "cover_image_url": None, "created_at": FIXED_DT,
             })
             self._result = {"id": mid}
