@@ -331,24 +331,48 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
     const [unitPrice, setUnitPrice] = useState(10000);
     const [validDays, setValidDays] = useState(365);
     const [submitting, setSubmitting] = useState(false);
+    const [issuePhase, setIssuePhase] = useState(null); // null | 'preparing' | 'issuing'
 
     const onSubmit = async () => {
         if (!enrollmentId || !["license_pending", "vc_pending"].includes(enrollmentStatus)) return;
         setSubmitting(true);
+        // VC 발급은 opendid(체인·홀더)를 거친다. 유휴 시 scale-to-zero 라 첫 요청이 콜드스타트
+        // (code=vc_issue_delayed)로 돌아온다. 원시 503 을 그대로 던지지 말고, 준비될 때까지 자동
+        // 재시도하며 "준비 중 → 진행 중" 진행표시로 사용자가 기다리면 된다는 걸 알게 한다.
+        const deadline = Date.now() + 4 * 60 * 1000; // 최대 4분(콜드부트 ~2-3분 + 여유)
         try {
-            const lic = await createLicense({
-                enrollmentId,
-                allowedUse: allowed,
-                forbiddenUse: forbidden,
-                unitPrice: Number(unitPrice) || 0,
-                validDays,
-            });
-            push("라이선스가 발급됐어요.", { icon: "check" });
-            onIssued(lic);
-        } catch (e) {
-            push(e.message, { icon: "alertCircle" });
+            while (true) {
+                setIssuePhase("issuing");
+                try {
+                    const lic = await createLicense({
+                        enrollmentId,
+                        allowedUse: allowed,
+                        forbiddenUse: forbidden,
+                        unitPrice: Number(unitPrice) || 0,
+                        validDays,
+                    });
+                    push("라이선스가 발급됐어요.", { icon: "check" });
+                    onIssued(lic);
+                    return;
+                } catch (e) {
+                    const warming = e?.code === "vc_issue_delayed";
+                    if (warming && Date.now() < deadline) {
+                        setIssuePhase("preparing"); // opendid 깨우는 중 — 자동 재시도
+                        await new Promise((r) => setTimeout(r, 8000));
+                        continue;
+                    }
+                    push(
+                        warming
+                            ? "VC 발급 서버 준비가 늦어지고 있어요. 잠시 후 다시 시도해 주세요."
+                            : e.message,
+                        { icon: "alertCircle" },
+                    );
+                    return;
+                }
+            }
         } finally {
             setSubmitting(false);
+            setIssuePhase(null);
         }
     };
 
@@ -413,8 +437,17 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
                 disabled={submitting || !enrollmentId || !["license_pending", "vc_pending"].includes(enrollmentStatus)}
                 iconRight="arrowRight"
             >
-                {submitting ? "발급 중…" : "라이선스 발급"}
+                {submitting
+                    ? (issuePhase === "preparing" ? "발급 준비 중…" : "발급 진행 중…")
+                    : "라이선스 발급"}
             </Button>
+            {submitting && (
+                <p className="hint" role="status" aria-live="polite">
+                    {issuePhase === "preparing"
+                        ? "VC 발급 서버를 준비하고 있어요… 최대 3분 정도 걸릴 수 있어요. 이 화면을 유지해 주세요."
+                        : "VC 발급을 진행하고 있어요…"}
+                </p>
+            )}
 
             <div className={s.privacy}>
                 <Icon name="lock" size={15} />
