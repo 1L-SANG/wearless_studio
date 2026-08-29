@@ -25,9 +25,18 @@ def test_validate_bucket_gender_prefix_mismatch():
         validate_physique(height_bucket="m_180_185", body_type=None, gender="female")
     assert e.value.code == "invalid_physique"
 
-def test_validate_bucket_requires_gender():
-    with pytest.raises(PhysiqueError):
-        validate_physique(height_bucket="m_180_185", body_type=None, gender=None)
+def test_validate_bucket_without_gender_is_allowed():
+    # 키 구간은 접두사로 성별을 스스로 인코딩하므로 gender=None 이어도 저장 가능(OACX 미제공 대비).
+    validate_physique(height_bucket="m_180_185", body_type=None, gender=None)
+    validate_physique(height_bucket="f_165_170", body_type="toned", gender=None)
+
+
+def test_bucket_gender_derives_from_prefix():
+    from app.facemarket_physique import bucket_gender
+    assert bucket_gender("m_180_185") == "male"
+    assert bucket_gender("f_165_170") == "female"
+    assert bucket_gender(None) is None
+    assert bucket_gender("nonsense") is None
 
 def test_block_empty_when_nothing():
     assert build_body_profile_block(None) == ""

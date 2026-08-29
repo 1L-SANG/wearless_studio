@@ -53,6 +53,14 @@ class PhysiqueError(Exception):
         self.message = message
 
 
+def bucket_gender(height_bucket: str | None) -> str | None:
+    """키 구간 접두사(m_/f_)에서 성별을 유도한다. 유효한 버킷이 아니면 None.
+    OACX 가 성별을 안 줄 때, 모델이 고른 키 구간에서 성별을 채우는 데 쓴다."""
+    if not isinstance(height_bucket, str) or height_bucket not in _HEIGHT_LABELS:
+        return None
+    return _bucket_gender(height_bucket)
+
+
 def _bucket_gender(bucket: str) -> str | None:
     if bucket.startswith("m_"):
         return "male"
@@ -72,10 +80,11 @@ def validate_physique(*, height_bucket: str | None, body_type: str | None, gende
     if height_bucket is not None:
         if not isinstance(height_bucket, str) or height_bucket not in _HEIGHT_LABELS:
             raise PhysiqueError("invalid_physique", "키 구간 값이 올바르지 않습니다.")
+        # 키 구간은 접두사(m_/f_)로 성별을 스스로 인코딩한다 — 별도 gender 없이도 저장 가능.
+        # 모델 gender 가 이미 있을 때만 접두사와 일치하는지 교차검증한다(OACX 가 성별을 안 주는
+        # 경우가 있어, gender 를 필수로 요구하면 키 구간을 아예 못 고른다).
         bg = _bucket_gender(height_bucket)
-        if gender is None:
-            raise PhysiqueError("invalid_physique", "키 구간을 저장하려면 성별이 필요합니다.")
-        if bg != gender:
+        if gender is not None and bg != gender:
             raise PhysiqueError("invalid_physique", "키 구간이 성별과 일치하지 않습니다.")
 
 
