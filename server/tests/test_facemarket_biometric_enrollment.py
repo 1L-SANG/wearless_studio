@@ -1008,13 +1008,15 @@ class FakeCursor:
             model = next(row for row in self.store.models if row["id"] == model_id)
             model["cover_image_url"] = cover_image_url
         elif query.startswith("update fm_models set height_bucket = coalesce"):
-            # Task5: 바인딩때 키·체형을 모델로 승격한다.
-            height_bucket, body_type, model_id = params
+            # Task5: 바인딩때 키·체형을 모델로 승격. gender는 없으면 버킷서 유도(coalesce).
+            height_bucket, body_type, derived_gender, model_id = params
             model = next(row for row in self.store.models if row["id"] == model_id)
             if height_bucket is not None:
                 model["height_bucket"] = height_bucket
             if body_type is not None:
                 model["body_type"] = body_type
+            if not model.get("gender") and derived_gender is not None:
+                model["gender"] = derived_gender
         elif query.startswith("update fm_biometric_enrollments set model_id"):
             model_id, token_digest, policy_version, provider_versions, enrollment_id = params
             row = next(item for item in self.store.enrollments if item["id"] == enrollment_id)

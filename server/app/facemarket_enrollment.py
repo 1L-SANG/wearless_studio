@@ -2063,12 +2063,21 @@ async def process_enrollment_completion(
                         (row["profile_image_r2_key"], model_id),
                     )
                 # Task5: 등록 중 입력받은 키·체형(height_bucket·body_type)이 있으면 바인딩 시
-                # 모델로 승격한다. gender는 identity 단계에서 이미 설정됨.
+                # 모델로 승격한다. gender는 identity(OACX)에서 설정되지만, CX가 성별을 안 주면
+                # NULL로 남으므로 — 모델이 고른 키 구간 접두사(m_/f_)에서 유도해 채운다(coalesce).
                 if row.get("height_bucket") or row.get("body_type"):
+                    from .facemarket_physique import bucket_gender
+
                     await cur.execute(
                         "update fm_models set height_bucket = coalesce(%s, height_bucket), "
-                        "body_type = coalesce(%s, body_type) where id = %s",
-                        (row.get("height_bucket"), row.get("body_type"), model_id),
+                        "body_type = coalesce(%s, body_type), "
+                        "gender = coalesce(gender, %s) where id = %s",
+                        (
+                            row.get("height_bucket"),
+                            row.get("body_type"),
+                            bucket_gender(row.get("height_bucket")),
+                            model_id,
+                        ),
                     )
                 await cur.execute(
                     """
