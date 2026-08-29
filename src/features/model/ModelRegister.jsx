@@ -31,7 +31,7 @@ const CX_ORIGIN = 'https://cx.raonsecure.co.kr:17543';
 const CX_CONFIG_URL = import.meta.env.VITE_CX_CONFIG_URL
   || `${CX_ORIGIN}/ent/esign/config/config.mid.json`;
 const DEVICE_KEY = 'wearless.fmDeviceId';
-const CONSENT_VERSION = '2026-08-v1';
+const CONSENT_VERSION = '2026-08-v2';
 const FaceLivenessStep = lazy(() => import('./FaceLivenessStep.jsx'));
 
 let cxLoader;
@@ -664,10 +664,10 @@ export function ModelRegister() {
             <div className={s.purposeNoticeHead}><Icon name="info" size={15} /> 이렇게 처리돼요</div>
             <ul className={s.purposeList}>
               <li>먼저 본인 명의 모바일 신분증으로 신원을 확인해요.</li>
-              <li>정면·45도·측면 사진과 라이브 얼굴을 동일인 확인에 사용해요.</li>
-              <li>AWS Face Liveness는 미국 동부(us-east-1)에서 처리돼요.</li>
-              <li>정부 신분증 사진과 라이브 촬영 원본은 대조 후 저장하지 않아요.</li>
-              <li>이번 해커톤 버전에는 라이브 촬영을 대신할 수동 심사가 없어요.</li>
+              <li>정면·45도·측면 얼굴 사진을 신분증 초상과 대조해 동일인인지 확인해요.</li>
+              <li>얼굴 대조는 미국 동부(us-east-1) 서버에서 처리돼요.</li>
+              <li>신분증에서 받은 얼굴(초상)은 대조에만 쓰고 저장하지 않아요.</li>
+              <li>모델의 체형·키(선택 입력)는 컷 생성 참고용으로 저장돼요.</li>
             </ul>
           </div>
           <label className={s.consentCheck}>
