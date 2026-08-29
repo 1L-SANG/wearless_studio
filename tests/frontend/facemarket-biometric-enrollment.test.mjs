@@ -338,17 +338,30 @@ test('physique 스텝 건너뛰기는 서버를 부르지 않고 바로 대표�
   });
   try {
     const tree = harness.render();
-    // gender 가 null 이면 남녀 통합 목록(양쪽 다 렌더)이어야 한다.
+    // gender 가 null 이면 성별 토글이 뜨고, 키 구간은 성별을 고르기 전엔 안 보인다
+    // (남녀 12개 통합목록은 라벨이 겹쳐 뒤죽박죽이라 — 성별 먼저 고르게 한다).
+    const maleToggle = findTree(
+      tree,
+      (node) => node.type === 'button' && node.props?.children === '남성',
+    );
+    assert.ok(maleToggle, 'a null gender shows a gender toggle');
     assert.ok(
-      findTree(tree, (node) => node.type === 'button' && node.props?.children === '155cm 미만'),
-      'a null gender shows the unified bucket list (female buckets present)',
+      !findTree(tree, (node) => node.type === 'button' && node.props?.children === '155cm 미만'),
+      'no height buckets are shown before a gender is picked',
+    );
+    // 성별을 고르면 그 성별의 키 구간 6개만 렌더된다.
+    maleToggle.props.onClick();
+    const afterGender = harness.render();
+    assert.ok(
+      findTree(afterGender, (node) => node.type === 'button' && node.props?.children === '180–185cm'),
+      'picking 남성 shows male buckets',
     );
     assert.ok(
-      findTree(tree, (node) => node.type === 'button' && node.props?.children === '180–185cm'),
-      'a null gender shows the unified bucket list (male buckets present)',
+      !findTree(afterGender, (node) => node.type === 'button' && node.props?.children === '155cm 미만'),
+      'female buckets are not shown after a male selection',
     );
     const skip = findTree(
-      tree,
+      afterGender,
       (node) => node.type === 'Button' && node.props?.children === '건너뛰기',
     );
     assert.ok(skip, 'the physique step exposes a skip action');

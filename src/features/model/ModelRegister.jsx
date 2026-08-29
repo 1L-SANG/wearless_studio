@@ -567,7 +567,11 @@ export function ModelRegister() {
   // 기존 useState/useEffect 뒤)에 추가한다 — livenessRequired 위 주석과 같은 관례.
   const [physiqueHeightBucket, setPhysiqueHeightBucket] = useState(null);
   const [physiqueBodyType, setPhysiqueBodyType] = useState(null);
-  const heightOptions = heightBucketOptions(enrollment?.gender);
+  // OACX 가 성별을 안 주는 경우가 있어 모델 gender 가 NULL 로 남는다. 그러면 키 구간을
+  // 남녀 12개로 다 보여줘 라벨이 겹치고 뒤죽박죽이 된다. 성별 토글로 6개만 보이게 한다.
+  const [physiqueGender, setPhysiqueGender] = useState(null);
+  const genderForBuckets = enrollment?.gender || physiqueGender || null;
+  const heightOptions = genderForBuckets ? heightBucketOptions(genderForBuckets) : [];
 
   if (step === 'loading') return <div className="wizard narrow"><div className="surface">등록 상태를 확인하고 있어요…</div></div>;
 
@@ -750,6 +754,27 @@ export function ModelRegister() {
             </div>
           </div>
           <p className="hint">모델의 체형과 키를 알려주시면 컷 생성에 참고돼요. 원하지 않으면 건너뛸 수 있어요.</p>
+          {!enrollment?.gender && (
+            <div className={s.physiqueGroup}>
+              <div className={s.physiqueLabel}>성별</div>
+              <div className="chips">
+                {[{ value: 'male', label: '남성' }, { value: 'female', label: '여성' }].map((g) => (
+                  <button
+                    key={g.value}
+                    type="button"
+                    className={`chip${physiqueGender === g.value ? ' on' : ''}`}
+                    disabled={busy}
+                    onClick={() => {
+                      setPhysiqueGender(g.value);
+                      setPhysiqueHeightBucket(null);
+                    }}
+                  >
+                    {g.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           {heightOptions.length > 0 && (
             <div className={s.physiqueGroup}>
               <div className={s.physiqueLabel}>키</div>
