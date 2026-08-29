@@ -30,7 +30,10 @@ from .r2 import enrollment_quarantine_key, ext_for_mime, sha256_sri
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket biometric enrollment"])
 
-BIOMETRIC_CONSENT_VERSION = "2026-08-v1"
+BIOMETRIC_CONSENT_VERSION = "2026-08-v2"
+# 동의문 텍스트를 바꾸면 버전을 올린다. 프론트(Vercel)·백엔드(CI) 배포 시점이 어긋나는
+# 동안 stale_consent_version 400 으로 등록이 막히지 않게, 직전 버전도 함께 수락한다.
+ACCEPTED_CONSENT_VERSIONS = ("2026-08-v2", "2026-08-v1")
 ENROLLMENT_TTL = timedelta(hours=24)
 _PHOTO_FENCE_NAMESPACE = 0x464D5048
 _MODEL_ASSET_FENCE_NAMESPACE = 0x464D4D41
@@ -677,7 +680,7 @@ async def create_enrollment(
         raise _err("invalid_device", "기기 식별자를 확인할 수 없습니다.")
     if not consent.accepted:
         raise _err("biometric_consent_required", "생체정보 처리 동의가 필요합니다.")
-    if consent.document_version != BIOMETRIC_CONSENT_VERSION:
+    if consent.document_version not in ACCEPTED_CONSENT_VERSIONS:
         raise _err("stale_consent_version", "최신 생체정보 처리 동의를 확인해 주세요.")
     device_digest = hashlib.sha256(device_id.encode()).hexdigest()
     now = datetime.now(timezone.utc)
