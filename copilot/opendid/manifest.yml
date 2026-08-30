@@ -38,18 +38,19 @@ count:
 network:
   connect: true # service discovery: api -> opendid:8100
 
-# 유저별(모델별) 홀더 지갑은 EFS 로 영구화한다. holder.data-dir(/opt/opendid/state/holder)
-# 아래 data/wallets/{modelId}.wallet 는 SECP256r1 랜덤키로 생성되고, 그 지갑 DID(modelId 에서
-# 결정적 파생)는 register-wallet 시 OmniOne 체인에 **영구** 앵커된다. 이 디렉터리가 tmpfs 면
-# 컨테이너 재시작(scale-to-zero·Spot 재확보·배포)마다 지갑이 소멸 → 재생성 시 **같은 DID·다른 키**
-# → 체인 앵커(옛 키)와 서명 불일치로 register-did 가 SSDKCRT04006("RecoveryKey and publicKey do
-# not match")로 영구 실패한다(2026-08-28 실측). 등록~VC발급이 한 컨테이너 수명을 못 넘기는
-# 구조라, 유저 지갑만은 반드시 영구 저장이 필요하다. 엔티티 지갑(tas/issuer/cas/wallet)은 아래
-# base64 시크릿 경로가 따로 처리하므로 EFS 대상이 아니다.
+# 유저별(모델별) 홀더 지갑을 EFS 로 영구화한다. fm-holder 는 holder.data-dir 기본값 ./data 로
+# 동작해 실제로는 **/opt/opendid/data/wallets/{modelId}.wallet** 에 쓴다(WORKDIR=/opt/opendid).
+# 그 지갑 키는 SECP256r1 랜덤이고 지갑 DID(modelId 결정적)는 register-wallet 시 OmniOne 체인에
+# **영구** 앵커된다. 이 디렉터리가 tmpfs 면 컨테이너 재시작(scale-to-zero·Spot·배포)마다 지갑이
+# 소멸 → 재생성 시 **같은 DID·다른 키** → 체인 앵커(옛 키)와 서명 불일치(SSDKCRT04006
+# "RecoveryKey and publicKey do not match")로 register-did 영구 실패(2026-08-28~30 실측).
+# ⚠️ 반드시 fm-holder 가 실제 쓰는 경로(/opt/opendid/data)에 마운트해야 한다 — 이전엔
+# /opt/opendid/state/holder 에 마운트해 EFS 가 비어있고 지갑은 계속 tmpfs 에 떨어졌다(무효).
+# 엔티티 지갑(tas/issuer/cas/wallet)은 /run/opendid/wallets 에 base64 시크릿서 복원되므로 무관.
 storage:
   volumes:
     holder-state:
-      path: /opt/opendid/state/holder
+      path: /opt/opendid/data
       read_only: false
       # BYO(직접 만든) EFS. Copilot 관리형(efs: true)은 env KMS 키를 us-east-1 에서 못 찾아
       # 실패했다(2026-08-28: "specified KMS key could not be found"). 그래서 파일시스템·마운트타깃·
