@@ -4416,3 +4416,104 @@ def test_liveness_provider_failure_is_sanitized_and_not_a_biometric_failure(
 ])
 def test_gender_from_trans(raw, expected):
     assert _gender_from_trans(raw) == expected
+
+
+# ── opendid prewarm 훅 ─────────────────────────────────────────────────────────
+# VC 발급(holder)은 scale-to-zero 라 첫 요청이 콜드부트 ~2분을 그대로 사용자에게 물린다.
+# 발급 버튼보다 먼저, 발급이 사실상 확정되는 두 지점(라이브니스 시작·등록 완료)에서 깨운다.
+
+
+class _PrewarmSpy:
+    """opendid autoscaler 대역 — 라우트는 prewarm_soon 만 부른다(sam 훅과 같은 계약)."""
+
+    def __init__(self, fail=False):
+        self.calls = 0
+        self.fail = fail
+
+    def prewarm_soon(self):
+        self.calls += 1
+        if self.fail:
+            raise RuntimeError("aws down")
+
+
+def test_liveness_session_prewarms_opendid(
+    enrollment_client, auth, enrollment_store, fake_rekognition, fake_sts
+):
+    scaler = _PrewarmSpy()
+    enrollment_client.app.state.opendid_autoscaler = scaler
+    eid = create_ready_enrollment(enrollment_client, auth, enrollment_store)
+
+    res = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{eid}/liveness-session",
+        json={"nonce": "browser-nonce-with-at-least-32-bytes"},
+        headers=auth(),
+    )
+
+    assert res.status_code == 201, res.text
+    assert scaler.calls == 1
+
+
+def test_rejected_liveness_session_does_not_prewarm_opendid(
+    enrollment_client, auth, enrollment_store, fake_rekognition, fake_sts
+):
+    # 거절된 요청(짧은 nonce)은 발급으로 이어지지 않는다 — 태스크를 띄우지 않는다.
+    scaler = _PrewarmSpy()
+    enrollment_client.app.state.opendid_autoscaler = scaler
+    eid = create_ready_enrollment(enrollment_client, auth, enrollment_store)
+
+    res = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{eid}/liveness-session",
+        json={"nonce": "too-short"},
+        headers=auth(),
+    )
+
+    assert res.status_code == 400, res.text
+    assert scaler.calls == 0
+
+
+def test_liveness_session_succeeds_even_when_the_prewarm_hook_raises(
+    enrollment_client, auth, enrollment_store, fake_rekognition, fake_sts
+):
+    enrollment_client.app.state.opendid_autoscaler = _PrewarmSpy(fail=True)
+    eid = create_ready_enrollment(enrollment_client, auth, enrollment_store)
+
+    res = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{eid}/liveness-session",
+        json={"nonce": "browser-nonce-with-at-least-32-bytes"},
+        headers=auth(),
+    )
+
+    assert res.status_code == 201, res.text
+
+
+def test_complete_prewarms_opendid_when_enrollment_passes(
+    enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition, completion_fakes
+):
+    scaler = _PrewarmSpy()
+    enrollment_client.app.state.opendid_autoscaler = scaler
+    eid = create_complete_ready_enrollment(
+        enrollment_client, auth, enrollment_store, fake_r2, fake_rekognition
+    )
+
+    res = complete_enrollment(enrollment_client, auth, eid, fake_rekognition.session_id)
+
+    assert res.status_code == 202, res.text
+    assert res.json()["passed"] is True
+    assert scaler.calls == 1
+
+
+def test_prewarm_hook_is_optional_on_app_state(
+    enrollment_client, auth, enrollment_store, fake_rekognition, fake_sts
+):
+    # 오토스케일러가 state 에 없어도(로컬·테스트) 라우트는 그대로 동작해야 한다.
+    if hasattr(enrollment_client.app.state, "opendid_autoscaler"):
+        del enrollment_client.app.state.opendid_autoscaler
+    eid = create_ready_enrollment(enrollment_client, auth, enrollment_store)
+
+    res = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{eid}/liveness-session",
+        json={"nonce": "browser-nonce-with-at-least-32-bytes"},
+        headers=auth(),
+    )
+
+    assert res.status_code == 201, res.text

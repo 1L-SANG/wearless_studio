@@ -1320,23 +1320,35 @@ async def sam_demand_snapshot(conn: AsyncConnection, kinds: tuple[str, ...]):
     )
 
 
+#: license_pending/vc_pending 을 "지금 발급 중"으로 셀 시간 창. 만료 스윕은 앞 단계(identity/
+#: photos/liveness/processing)만 24h TTL 로 정리하므로, 발급 버튼을 안 누르고 이탈한
+#: license_pending 행은 영구히 남는다. 창이 없으면 그 한 행이 holder 를 24/7 켜 둔다.
+#: 창 밖에서 뒤늦게 발급을 누르면 콜드스타트로 돌아가지만 그건 재시도 UX 가 흡수한다.
+OPENDID_PENDING_ACTIVE_HOURS = 2
+
+
 async def opendid_demand_snapshot(conn: AsyncConnection):
     """opendid(fm-holder) 가 켜져 있어야 하는지 판단. sam 과 같은 DemandSnapshot 모양을 재사용한다.
 
-    수요 = api 가 holder 를 부르는 등록 단계(license_pending·vc_pending: wallet/register-did/VC 발급).
-    active 가 0이라도 방금 통과(passed+vc_id)했거나 asset_building 로 홀더 단계에 근접한 등록이
-    idle 창 안이면 켜 둔다 — scale-to-zero 콜드스타트(4 JVM ~2분)를 재시도 UX 앞에서 미리 흡수한다.
+    수요 = api 가 holder 를 부르는 등록 단계(license_pending·vc_pending: wallet/register-did/VC 발급),
+    단 최근 OPENDID_PENDING_ACTIVE_HOURS 안에 움직인 것만(위 상수 참고).
+    active 가 0이라도 방금 통과(passed+vc_id)했거나 라이브니스·매칭·자산빌드로 홀더 단계에
+    다가가는 등록이 idle 창 안이면 켜 둔다 — scale-to-zero 콜드스타트(4 JVM ~2분)를 발급
+    버튼 앞에서 미리 흡수한다(라우트 프리워밍 훅이 실패해도 이 루프가 60초 안에 수렴).
     """
     from app.services.sam_autoscale import DemandSnapshot
     async with conn.cursor() as cur:
         await cur.execute(
             "select "
             "  (select count(*) from fm_biometric_enrollments "
-            "     where status in ('license_pending', 'vc_pending')) as active, "
+            "     where status in ('license_pending', 'vc_pending') "
+            "       and updated_at > now() - make_interval(hours => %s)) as active, "
             "  (select max(completed_at) from fm_biometric_enrollments "
             "     where status = 'passed' and vc_id is not null) as last_finished, "
             "  (select max(updated_at) from fm_biometric_enrollments "
-            "     where status in ('asset_building', 'license_pending', 'vc_pending')) as last_activity"
+            "     where status in ('liveness_pending', 'processing', 'asset_building', "
+            "                      'license_pending', 'vc_pending')) as last_activity",
+            (OPENDID_PENDING_ACTIVE_HOURS,),
         )
         row = await cur.fetchone() or {}
     return DemandSnapshot(

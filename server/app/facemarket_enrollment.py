@@ -1,6 +1,7 @@
 """Fail-closed FaceMarket biometric enrollment and quarantine lifecycle."""
 
 import asyncio
+import contextlib
 import hashlib
 import hmac
 import json
@@ -243,6 +244,20 @@ def _wake_dispatcher(request: Request) -> None:
     dispatcher = getattr(request.app.state, "dispatcher", None)
     if dispatcher is not None:
         dispatcher.wake()
+
+
+def _prewarm_opendid(request: Request) -> None:
+    """VC 발급이 사실상 확정된 지점에서 holder(opendid)를 미리 깨운다.
+
+    holder 는 scale-to-zero 라 콜드부트가 ~2분(4 JVM)이다. 발급 버튼에서 처음 깨우면
+    사용자가 그 2분을 그대로 기다린다(#201 의 재시도 진행표시가 버텨줄 뿐이다). 라이브니스
+    시작·등록 완료는 발급까지 몇 분 남은 가장 이른 확실한 신호라, 여기서 켜 두면 부팅이
+    등록 뒷단계에 가려진다. 실패·중복은 무해 — reconciler 가 60초 안에 덮고, 오토스케일이
+    off 면 prewarm_soon 이 즉시 return 한다."""
+    scaler = getattr(request.app.state, "opendid_autoscaler", None)
+    if scaler is not None:
+        with contextlib.suppress(Exception):   # 훅은 등록 응답을 절대 막지 않는다
+            scaler.prewarm_soon()
 
 
 async def _load_owned_enrollment(conn, enrollment_id: str, user_id: str) -> dict | None:
@@ -1341,6 +1356,8 @@ async def start_enrollment_liveness(
             )
         await conn.commit()
 
+    # 라이브 인증에 들어왔다 = 몇 분 뒤 VC 발급이다. holder 콜드부트를 지금 시작해 둔다.
+    _prewarm_opendid(request)
     return {
         "sessionId": session_id,
         "region": "us-east-1",
@@ -2188,6 +2205,7 @@ async def complete_enrollment(
         raise _err("enrollment_unavailable", "등록을 완료할 수 없습니다.", status=503)
     if decision.passed:
         _wake_dispatcher(request)
+        _prewarm_opendid(request)   # 자산빌드(1~3분) 뒤가 발급 — 그 사이에 holder 를 띄운다
     return JSONResponse(
         status_code=202 if decision.passed else 200,
         content=_decision_body(decision),

@@ -69,6 +69,40 @@ def test_opendid_demand_snapshot_queries_holder_stage_states():
     assert "fm_biometric_enrollments" in captured["sql"]
 
 
+def _capture_demand_sql():
+    captured = {}
+
+    class _CaptureCur(_Cur):
+        async def execute(self, sql, params=()):
+            captured["sql"] = sql
+            captured["params"] = params
+
+    class _CaptureConn:
+        def cursor(self):
+            return _CaptureCur({"active": 0, "last_finished": None, "last_activity": None})
+
+    asyncio.run(repo_mod.opendid_demand_snapshot(_CaptureConn()))
+    return captured
+
+
+def test_opendid_demand_counts_only_fresh_pending_enrollments():
+    """발급 안 누르고 이탈한 license_pending 은 만료 스윕이 안 건드린다(24h TTL 은 앞 단계만).
+    신선도 창이 없으면 그 행 하나가 holder 를 영구히 1대로 붙든다."""
+    captured = _capture_demand_sql()
+    assert "make_interval" in captured["sql"]
+    assert captured["params"] == (repo_mod.OPENDID_PENDING_ACTIVE_HOURS,)
+
+
+def test_opendid_demand_treats_pre_holder_stages_as_recent_activity():
+    """라이브니스·매칭 단계면 몇 분 뒤 발급이다 — 콜드부트(~2분)를 그 앞에서 흡수하려면
+    유휴창 근거(last_activity)에 이 단계들이 들어와야 한다(프리워밍 훅이 실패해도 수렴)."""
+    sql = _capture_demand_sql()["sql"]
+    activity = sql.split("as last_activity")[0].rsplit("max(updated_at)", 1)[1]
+    for stage in ("liveness_pending", "processing", "asset_building",
+                  "license_pending", "vc_pending"):
+        assert stage in activity, stage
+
+
 # ── (2) 어댑터가 opendid 태그로 찾는지 ────────────────────────────────────────
 
 def _tags(service):
