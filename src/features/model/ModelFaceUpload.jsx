@@ -30,7 +30,7 @@ const QC_COPY = {
   occlusion: '얼굴이 가려져 있어요. 얼굴 전체가 보이게 다시 찍어주세요.',
   low_resolution: '사진이 흐리거나 작아요. 더 선명한 사진으로 올려주세요.',
   multiple_faces: '사진에 여러 명이 있어요. 본인만 나온 사진으로 올려주세요.',
-  angle_mismatch: '선택한 각도와 달라요. 안내에 맞춰 정면/측면/45도로 찍어주세요.',
+  angle_mismatch: '선택한 각도와 달라요. 안내에 맞춰 정면·45도·측면으로 찍어 주세요.',
 };
 
 function SlotCard({ index, angle, label, guide, exampleImage, examplePhoto, slot, onPicked, onDelete, checking, queued, locked, fetchUrl, localUrl }) {
@@ -242,7 +242,7 @@ export function ModelFaceUpload({
       {!embedded && (
         <div className="page-head">
           <h1>얼굴 3장을 올려주세요</h1>
-          <p>조명이 밝고 배경이 단순한 곳에서, 가리는 것 없이 본인 1인만 나오게 찍어주세요.</p>
+          <p>조명이 밝고 배경이 단순한 곳에서 가리는 것 없이 혼자만 나오게 찍어 주세요.</p>
         </div>
       )}
 

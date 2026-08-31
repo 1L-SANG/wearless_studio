@@ -11,9 +11,27 @@ HEIGHT_BUCKETS: dict[str, tuple[str, ...]] = {
     "female": ("f_lt155", "f_155_160", "f_160_165", "f_165_170", "f_170_175", "f_gte175"),
 }
 
-BODY_TYPES: tuple[str, ...] = (
+#: 단일 축(살집)만 표현하던 원래 7종. 남성 목록과 기존 저장값이 계속 이 값을 쓴다.
+#: `glamorous` 는 사실 살집이 아니라 분포라 축이 섞여 있었다 — 아래 매트릭스 값이 그 자리를
+#: `regular_both` 로 정확히 대체한다(기존 행 이전은 하지 않는다. 값은 계속 유효하다).
+_BODY_TYPES_FLAT: tuple[str, ...] = (
     "delicate", "slim", "regular", "plump", "toned", "bulk", "glamorous",
 )
+
+#: 볼륨(살집) × 실루엣(볼륨이 어디에 몰렸나) 매트릭스. 여성 목록이 쓴다.
+#: "마른데 상체가 있는" 같은 조합은 단일 축으로는 표현이 안 된다 — 마름을 고르면 상체 정보가
+#: 사라지고 glamorous 를 고르면 살집이 과장됐다. 값 하나에 두 축을 담아 컬럼 추가를 피한다.
+#: plump_both 는 없다 — 통통은 이미 전체 볼륨이라 그 칸이 옆 칸과 시각적으로 갈리지 않는다.
+_BODY_VOLUMES: tuple[str, ...] = ("delicate", "slim", "regular", "plump")
+_BODY_SHAPES: tuple[str, ...] = ("basic", "upper", "hip", "both")
+_BODY_TYPES_MATRIX: tuple[str, ...] = tuple(
+    f"{volume}_{shape}"
+    for volume in _BODY_VOLUMES
+    for shape in _BODY_SHAPES
+    if not (volume == "plump" and shape == "both")
+)
+
+BODY_TYPES: tuple[str, ...] = _BODY_TYPES_FLAT + _BODY_TYPES_MATRIX
 
 # 값 → (한국어 UI 라벨, 영문 프롬프트 문구)
 _HEIGHT_LABELS: dict[str, tuple[str, str]] = {
@@ -39,9 +57,34 @@ _BODY_LABELS: dict[str, tuple[str, str]] = {
     "bulk": ("벌크업", "a muscular, bulked-up build"),
     "glamorous": ("글래머러스", "a curvy, glamorous build"),
 }
+
+# 매트릭스 값의 라벨·문구는 두 축을 조합해 만든다(수작업 30줄을 두 표로 줄인다).
+_VOLUME_PARTS: dict[str, tuple[str, str]] = {
+    "delicate": ("여리여리", "a delicate, slender build"),
+    "slim": ("마름", "a slim build"),
+    "regular": ("보통", "an average build"),
+    "plump": ("통통", "a fuller, soft build"),
+}
+_SHAPE_PARTS: dict[str, tuple[str, str]] = {
+    "basic": ("기본", ""),
+    "upper": ("상체 볼륨", " with a fuller bust"),
+    "hip": ("골반 볼륨", " with fuller hips"),
+    "both": ("상하 볼륨", " with a fuller bust and hips, clearly defined waist"),
+}
+for _value in _BODY_TYPES_MATRIX:
+    _volume, _shape = _value.split("_", 1)
+    _vol_ko, _vol_en = _VOLUME_PARTS[_volume]
+    _shape_ko, _shape_en = _SHAPE_PARTS[_shape]
+    _BODY_LABELS[_value] = (
+        _vol_ko if _shape == "basic" else f"{_vol_ko} · {_shape_ko}",
+        f"{_vol_en}{_shape_en}",
+    )
+del _value, _volume, _shape, _vol_ko, _vol_en, _shape_ko, _shape_en
 _GENDER_PHRASE = {"male": "male presentation", "female": "female presentation"}
 
 # Drift-prevention: HEIGHT_BUCKETS and _HEIGHT_LABELS must stay in sync
+assert set(_BODY_LABELS) == set(BODY_TYPES), \
+    "_BODY_LABELS keys must match BODY_TYPES"
 assert set(_HEIGHT_LABELS) == {b for buckets in HEIGHT_BUCKETS.values() for b in buckets}, \
     "_HEIGHT_LABELS keys must match HEIGHT_BUCKETS"
 

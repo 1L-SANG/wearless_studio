@@ -417,7 +417,7 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
                         step={1000}
                         value={unitPrice}
                         onChange={(e) => setUnitPrice(e.target.value)}
-                        hint="셀러가 1회 사용할 때마다 지불"
+                        hint="셀러가 1회 사용할 때마다 지불하는 금액이에요."
                     />
                 </div>
                 <div>
@@ -444,7 +444,7 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
             {submitting && (
                 <p className="hint" role="status" aria-live="polite">
                     {issuePhase === "preparing"
-                        ? "VC 발급 서버를 준비하고 있어요… 최대 3분 정도 걸릴 수 있어요. 이 화면을 유지해 주세요."
+                        ? "VC 발급 서버를 준비하고 있어요… 최대 3분 정도 걸릴 수 있어요. 이 화면을 닫지 말아 주세요."
                         : "VC 발급을 진행하고 있어요…"}
                 </p>
             )}

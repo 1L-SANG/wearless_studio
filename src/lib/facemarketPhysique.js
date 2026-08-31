@@ -47,6 +47,41 @@ const BODY_TYPES_BY_GENDER = Object.freeze({
   female: Object.freeze(['delicate', 'slim', 'regular', 'plump', 'glamorous']),
 });
 
+// 여성 체형은 볼륨(살집) 한 축으로는 표현이 안 된다 — "마른데 상체가 있는" 사람은 마름을
+// 고르면 상체 정보가 사라지고, 글래머러스를 고르면 살집이 과장된다. 행=볼륨 / 열=실루엣
+// 매트릭스로 깔고 카드 하나만 고르게 한다(선택은 한 번, 구조는 눈에 보인다).
+// 값은 서버 BODY_TYPES 의 `{volume}_{shape}` 와 문자 그대로 일치한다.
+const BODY_VOLUMES = Object.freeze([
+  { value: 'delicate', label: '여리여리' },
+  { value: 'slim', label: '마름' },
+  { value: 'regular', label: '보통' },
+  { value: 'plump', label: '통통' },
+]);
+const BODY_SHAPES = Object.freeze([
+  { value: 'basic', label: '기본' },
+  { value: 'upper', label: '상체 볼륨' },
+  { value: 'hip', label: '골반 볼륨' },
+  { value: 'both', label: '상하 볼륨' },
+]);
+// 통통 · 상하 볼륨은 뺀다 — 통통은 이미 전체 볼륨이라 그 칸이 옆 칸과 시각적으로 안 갈린다.
+const OMITTED = new Set(['plump_both']);
+
+/** 성별별 체형 매트릭스(행=볼륨). 매트릭스가 없는 성별이면 null → 기존 칩 목록을 쓴다. */
+export function bodyTypeMatrix(gender) {
+  if (gender !== 'female') return null;
+  return BODY_VOLUMES.map((volume) => ({
+    value: volume.value,
+    label: volume.label,
+    options: BODY_SHAPES
+      .filter((shape) => !OMITTED.has(`${volume.value}_${shape.value}`))
+      .map((shape) => ({
+        value: `${volume.value}_${shape.value}`,
+        label: shape.label,
+        image: `/models/physique/female/${volume.value}_${shape.value}.webp`,
+      })),
+  }));
+}
+
 export function bodyTypeOptions(gender) {
   const values = BODY_TYPES_BY_GENDER[gender];
   // 성별을 아직 모르면(OACX 미제공·미선택) 7종 전부 — 고를 수단 자체를 뺏지 않는다.

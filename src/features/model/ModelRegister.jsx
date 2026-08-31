@@ -24,7 +24,7 @@ import {
 } from './biometricEnrollment.js';
 // 상대경로 — 이 테스트 하네스(configFile:false)는 `@/` alias 를 해석하지 않고, 이 파일은
 // (ModelFaceUpload.jsx 와 달리) 전체가 스텁으로 치환되지 않으므로 alias import 는 실렌더 전부를 깨뜨린다.
-import { bodyTypeOptions, heightBucketOptions } from '../../lib/facemarketPhysique.js';
+import { bodyTypeMatrix, bodyTypeOptions, heightBucketOptions } from '../../lib/facemarketPhysique.js';
 import s from './ModelRegister.module.css';
 
 const CX_ORIGIN = 'https://cx.raonsecure.co.kr:17543';
@@ -47,7 +47,7 @@ function loadCxWidget() {
     element.onload = resolve;
     element.onerror = () => {
       element.remove();
-      reject(new Error('인증 모듈을 불러오지 못했어요.'));
+      reject(new Error('인증 화면을 불러오지 못했어요.'));
     };
     loaderScripts.push(element);
     document.head.appendChild(element);
@@ -70,7 +70,7 @@ function loadCxWidget() {
             resolve();
           } else if (++tries > 50) {
             clearInterval(timer);
-            reject(new Error('인증 모듈이 준비되지 않았어요.'));
+            reject(new Error('인증 화면이 아직 준비되지 않았어요.'));
           }
         }, 100);
       })
@@ -254,7 +254,7 @@ export function ModelRegister() {
         try {
           const parsed = typeof response === 'string' ? JSON.parse(response) : response;
           const authToken = parsed?.token;
-          if (!authToken) throw new Error('인증 토큰을 받지 못했어요. 다시 시도해 주세요.');
+          if (!authToken) throw new Error('본인 확인 정보를 받지 못했어요. 다시 시도해 주세요.');
           if (!mounted.current) throw new Error('등록 화면이 닫혔어요.');
           // 신분증 사진(HEX JPEG) — 위젯 콜백에서 받은 그대로 ref(메모리)에만 담는다.
           // 저장(local/session storage)·로그 금지 — 라이브니스 후 매치에만 서버로 전달한다.
@@ -292,7 +292,7 @@ export function ModelRegister() {
       // 서버가 실제로 신원을 거절(터미널) — 등록을 정리하고 처음부터 다시 시작.
       portraitRef.current = null;
       setEnrollment(null);
-      setError(requestError?.message || '신원 확인에 실패했어요. 다시 시도해 주세요.');
+      setError(requestError?.message || '본인 확인에 실패했어요. 다시 시도해 주세요.');
       setStep('failed');
       cancelEnrollment(enrollmentId).catch(() => {});
     } finally {
@@ -370,7 +370,7 @@ export function ModelRegister() {
       setStep('liveness');
     } catch (requestError) {
       if (!mounted.current) return;
-      setError(requestError?.message || '대표 이미지 업로드에 실패했어요.');
+      setError(requestError?.message || '대표 이미지를 올리지 못했어요.');
     } finally {
       if (mounted.current) setBusy(false);
     }
@@ -445,7 +445,7 @@ export function ModelRegister() {
       if (!active) return;
       active = false;
       requestController?.abort();
-      setError('처리가 지연되고 있어요. 다시 확인해 주세요.');
+      setError('처리가 예상보다 오래 걸리고 있어요. 다시 확인해 주세요.');
       setStep('poll_timeout');
     };
     const deadlineTimer = setTimeout(stopForTimeout, 120000);
@@ -577,6 +577,8 @@ export function ModelRegister() {
   const heightOptions = genderForBuckets ? heightBucketOptions(genderForBuckets) : [];
   // 체형도 같은 성별 기준으로 좁힌다(값은 서버 enum 그대로). 성별 미상이면 7종 전부.
   const bodyOptions = bodyTypeOptions(genderForBuckets);
+  // 여성은 볼륨×실루엣 매트릭스(행 단위 가로 스크롤). 없으면 위 칩 목록으로 떨어진다.
+  const bodyMatrix = bodyTypeMatrix(genderForBuckets);
 
   if (step === 'loading') return <div className="wizard narrow"><div className="surface">등록 상태를 확인하고 있어요…</div></div>;
 
@@ -592,7 +594,7 @@ export function ModelRegister() {
   if (step === 'cancelling' || step === 'cancel_failed') {
     return (
       <div className="wizard narrow"><div className="surface">
-        <h1 className={s.stateTitle}>현재 등록을 종료하고 있어요</h1>
+        <h1 className={s.stateTitle}>등록을 종료하고 있어요</h1>
         <p className={error ? s.error : 'hint'} role={error ? 'alert' : undefined}>
           {error || '사용한 라이브 인증 세션과 사진을 안전하게 정리하고 있어요.'}
         </p>
@@ -636,12 +638,12 @@ export function ModelRegister() {
 
   if (step === 'terms') {
     return (
-      <div className="wizard narrow"><div className={s.successWrap}>
+      <div className={`wizard narrow ${s.centeredWizard}`}><div className={s.successWrap}>
         <div className={s.successIcon}><Icon name="check" size={30} stroke={2.4} /></div>
-        <h1 className={s.successTitle}>본인 확인 완료 · 마지막 단계예요</h1>
+        <h1 className={s.successTitle}>모델 정보 등록 완료</h1>
         <p className={s.successLead}>마지막으로 얼굴 사용 조건을 정해 주세요.</p>
         <Link to={`/model/license?step=terms&enrollment=${encodeURIComponent(enrollment.id)}`} className={s.nextCard}>
-          라이선스 조건 설정 <Icon name="chevRight" size={18} />
+          VC 발급 하러 가기 <Icon name="chevRight" size={18} />
         </Link>
       </div></div>
     );
@@ -680,7 +682,7 @@ export function ModelRegister() {
             생체정보 수집·이용과 국외 처리 내용을 확인하고 동의합니다.
           </label>
           <Button variant="primary" block disabled={!consentAccepted || busy} onClick={startEnrollment}>
-            {busy ? '등록 시작 중…' : '동의하고 신원 확인 시작'}
+            {busy ? '등록 시작 중…' : '동의하고 본인 확인 시작'}
           </Button>
         </div>
       )}
@@ -694,7 +696,7 @@ export function ModelRegister() {
               <h2 className={s.stateTitle}>모바일 신분증 확인</h2>
             </div>
           </div>
-          <p className="hint">본인 명의 모바일 신분증으로 신원을 먼저 확인해요. 확인 후 얼굴 사진을 등록해요.</p>
+          <p className="hint">본인 명의 모바일 신분증으로 본인 확인을 먼저 해요. 확인한 뒤 얼굴 사진을 올려요.</p>
           <div className={s.identityAction}>
             <Button variant="primary" block onClick={runIdentity}>
               {busy ? '인증 창 다시 열기' : '모바일 신분증으로 인증'}
@@ -802,6 +804,40 @@ export function ModelRegister() {
           )}
           <div className={s.physiqueGroup}>
             <div className={s.physiqueLabel}>체형</div>
+            {bodyMatrix ? (
+              // 행 하나가 볼륨 한 단계다. 행 안에서는 볼륨이 고정이라 실루엣 차이만 남아
+              // 비교가 쉬워지고, 행 제목이 카드의 볼륨 라벨을 대신한다.
+              bodyMatrix.map((row) => (
+                <div key={row.value} className={s.bodyRow}>
+                  <div className={s.bodyRowLabel}>{row.label}</div>
+                  <div className={s.bodyRowScroller}>
+                    {row.options.map((body) => (
+                      <button
+                        key={body.value}
+                        type="button"
+                        className={`chip${physiqueBodyType === body.value ? ' on' : ''} ${s.bodyCard}`}
+                        disabled={busy}
+                        onClick={() => setPhysiqueBodyType(
+                          physiqueBodyType === body.value ? null : body.value,
+                        )}
+                      >
+                        {!brokenBodyImages.includes(body.value) && (
+                          <img
+                            className={s.bodyCardImage}
+                            src={body.image}
+                            alt=""
+                            onError={() => setBrokenBodyImages((broken) => (
+                              broken.includes(body.value) ? broken : [...broken, body.value]
+                            ))}
+                          />
+                        )}
+                        {body.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))
+            ) : (
             <div className={`chips${bodyOptions.some((b) => b.image) ? ` ${s.bodyCards}` : ''}`}>
               {bodyOptions.map((body) => {
                 const withPhoto = !!body.image && !brokenBodyImages.includes(body.value);
@@ -830,6 +866,7 @@ export function ModelRegister() {
                 );
               })}
             </div>
+            )}
           </div>
           <Button variant="primary" block disabled={busy} onClick={submitPhysiqueStep}>
             {busy ? '저장 중…' : '저장하고 계속'}
@@ -863,7 +900,7 @@ export function ModelRegister() {
             <div className={s.uploadHint}>JPG · PNG · WebP</div>
           </label>
           <Button variant="secondary" block disabled={busy} onClick={() => setStep('liveness')}>
-            {busy ? '업로드 중…' : (livenessRequired ? '건너뛰고 라이브 얼굴 확인' : '건너뛰고 본인 확인 완료')}
+            {busy ? '업로드 중…' : (livenessRequired ? '건너뛰고 라이브 얼굴 확인' : '건너뛰고 본인 확인 마치기')}
           </Button>
         </div>
       )}
@@ -901,10 +938,10 @@ export function ModelRegister() {
             <div className={`${s.medallion} ${s.medallionSpin}`}><Icon name="loader" size={22} /></div>
             <div>
               <div className={s.stepEyebrow}>STEP 7 / 7</div>
-              <h2 className={s.stateTitle}>모델 자산을 준비하고 있어요</h2>
+              <h2 className={s.stateTitle}>모델 이미지를 준비하고 있어요</h2>
             </div>
           </div>
-          <p className="hint">현재 등록에 결속된 private 자산만 만들어요. 이 화면은 닫았다가 다시 열어도 이어집니다.</p>
+          <p className="hint">이번 등록에만 쓰이는 비공개 이미지를 만들어요. 이 화면을 닫았다가 다시 열어도 이어서 진행돼요.</p>
         </div>
       )}
 
