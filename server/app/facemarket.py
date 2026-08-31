@@ -71,7 +71,9 @@ class ModelCard(CamelModel):
     """카탈로그/마이페이지 카드 — 공개 화이트리스트 컬럼만(PII·ci_hash 제외).
 
     카탈로그(list_models)는 현재 생체 등록·VC·라이선스·비공개 자산 증거가 모두 유효한 모델만
-    반환한다. 얼굴/레거시 cover는 내보내지 않고 고정 placeholder URI만 제공한다.
+    반환한다. 생체 원본(face_front·라이선스 얼굴)은 여전히 내보내지 않는다 — 카드에 실리는
+    얼굴은 모델이 등록 profile 스텝에서 "셀러 카탈로그 카드에 노출할 대표 이미지"로 직접 올린
+    cover 뿐이고, cover 가 없으면 고정 placeholder URI(face_thumb_uri)로 강등된다.
     """
 
     id: str
@@ -383,9 +385,14 @@ and exists (
 )
 """
 
+# cover_image_url = 모델이 등록 profile 스텝에서 직접 올린 대표 이미지(생체 원본 아님).
+# 그 스텝의 안내가 "셀러 카탈로그 카드에 노출할 대표 이미지를 올려요"라 노출 동의가 수집 시점에
+# 이미 있다. 셀러가 얼굴을 못 보면 모델을 고를 수 없어 카탈로그가 성립하지 않는다.
+# 생체 원본(face_front·라이선스 얼굴)은 계속 미노출 — 여기 실리는 건 cover 하나뿐이다.
+# raw R2 키는 비공개 버킷이라 <img> 가 못 읽으므로 핸들러가 _cover_serving_url 로 presign 한다.
 _MODEL_CARD_COLS_ENRICHED = (
     "m.id::text as id, m.display_name, m.status, "
-    "null::text as cover_image_url, m.created_at, "
+    "m.cover_image_url, m.created_at, "
     "l.id::text as license_id, l.unit_price, l.vc_id, "
     "true as has_active_license, true as assets_ready, "
     "('/v1/facemarket/models/' || m.id::text || '/thumbnail') as face_thumb_uri"
@@ -424,6 +431,10 @@ async def list_models(
 
     화이트리스트 컬럼만 반환 — `ci_hash`·`user_id`·`did` 등 PII/식별자는 노출하지 않는다.
     (FM-13 팀원 계약: 프론트 카탈로그가 이 shape를 소비.)
+
+    카드 얼굴은 모델이 올린 대표 이미지(cover) — 비공개 R2 키를 presigned GET(1h)으로 변환해
+    싣는다(my_models·list_licenses 와 동일 처리). cover 가 없는 모델은 None 이 되고 프론트가
+    face_thumb_uri placeholder 로 강등한다.
     """
     async with get_conn(request) as conn:
         await _assert_account_open(conn, user_id)
@@ -436,6 +447,8 @@ async def list_models(
                 (BIOMETRIC_CONSENT_VERSION,),
             )
             rows = await cur.fetchall()
+    for row in rows:
+        row["cover_image_url"] = _cover_serving_url(request, row.get("cover_image_url"))
     response.headers["Cache-Control"] = "no-store, private"
     return rows
 

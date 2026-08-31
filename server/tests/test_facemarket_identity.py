@@ -7,6 +7,7 @@ CX `trans` 호출·DB를 페이크로 대체해 순수 로직(HMAC dedup·리플
 import contextlib
 import hashlib
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -153,6 +154,9 @@ def fm(keypair, monkeypatch):
     _priv, public_key = keypair
     app = create_app(make_settings(facemarket_enabled=True, fm_ci_pepper="pep"))
     app.state.jwt_key_resolver = lambda token: public_key
+    # cover(대표 이미지)는 비공개 R2 키로 저장되고 핸들러가 presigned GET 으로 바꿔 싣는다.
+    # 실제 r2_face 는 public_base=None → 1h presigned URL. 테스트는 결정적 대역.
+    app.state.r2_face = SimpleNamespace(public_url=lambda key: f"https://signed.example/{key}?sig=x")
 
     store = {
         "models": [],
@@ -358,8 +362,11 @@ def _is_current_catalog_card(store, model):
     )
 
 
-def test_catalog_lists_verified_without_pii(fm, make_token):
-    client, store, _ = fm
+def _seed_eligible_catalog(store, *, cover_image_url="private/fm-profile/eligible.png"):
+    """카탈로그 자격(_CURRENT_CARD_ELIGIBILITY)을 전부 충족하는 모델 1건 + 탈락 1건을 심는다.
+
+    ELIGIBLE_MODEL_ID 만 노출되고 STALE_MODEL_ID(current_enrollment_id 없음)는 걸러져야 한다.
+    """
     created_at = datetime(2026, 8, 21, 12, 0, 0, tzinfo=timezone.utc)
     store["models"].extend(
         [
@@ -369,7 +376,7 @@ def test_catalog_lists_verified_without_pii(fm, make_token):
                 "display_name": "홍*동",
                 "status": "verified",
                 "ci_hash": "ci-eligible",
-                "cover_image_url": "https://legacy.example/eligible-face.jpg",
+                "cover_image_url": cover_image_url,
                 "created_at": created_at,
                 "assets_status": "ready",
                 "current_enrollment_id": ENROLLMENT_ID,
@@ -380,7 +387,7 @@ def test_catalog_lists_verified_without_pii(fm, make_token):
                 "display_name": "김*수",
                 "status": "verified",
                 "ci_hash": "ci-stale",
-                "cover_image_url": "https://legacy.example/stale-face.jpg",
+                "cover_image_url": "private/fm-profile/stale.png",
                 "created_at": created_at - timedelta(seconds=1),
                 "assets_status": "ready",
                 "current_enrollment_id": None,
@@ -432,6 +439,11 @@ def test_catalog_lists_verified_without_pii(fm, make_token):
         for view in ("face_front", "grid_sedcard")
     )
 
+
+def test_catalog_lists_verified_without_pii(fm, make_token):
+    client, store, _ = fm
+    _seed_eligible_catalog(store)
+
     r = client.get("/v1/facemarket/models", headers=_headers(make_token))
     assert r.status_code == 200, r.text
     cards = r.json()
@@ -442,7 +454,9 @@ def test_catalog_lists_verified_without_pii(fm, make_token):
         "licenseId", "unitPrice", "hasActiveLicense", "vcId", "assetsReady", "faceThumbUri",
     }
     assert card["status"] == "verified"
-    assert card["coverImageUrl"] is None
+    # 셀러가 얼굴을 봐야 모델을 고를 수 있다 — 모델이 등록 profile 스텝에서 "셀러 카탈로그
+    # 카드에 노출할 대표 이미지"로 직접 올린 cover 를 presigned GET 으로 싣는다.
+    assert card["coverImageUrl"] == "https://signed.example/private/fm-profile/eligible.png?sig=x"
     assert card["faceThumbUri"] == f"/v1/facemarket/models/{ELIGIBLE_MODEL_ID}/thumbnail"
     assert card["assetsReady"] is True
     assert card["hasActiveLicense"] is True
@@ -482,8 +496,38 @@ def test_catalog_lists_verified_without_pii(fm, make_token):
         "nullif(btrim(a.r2_key), '') is not null",
     ):
         assert required in sql
-    assert "m.cover_image_url" not in sql
+    assert "m.cover_image_url" in sql
+    # 생체 원본은 여전히 미조회 — 카드에 실리는 얼굴은 cover 하나뿐이다(face_front·라이선스
+    # 얼굴 r2_key 는 select 절에 없다. 안 읽으면 못 샌다).
     assert "r2_key" not in sql.split(" from fm_models m", 1)[0]
+
+
+def test_catalog_cover_absent_degrades_to_placeholder(fm, make_token):
+    """대표 이미지를 건너뛴 모델(profile 스텝은 선택)은 coverImageUrl=None.
+
+    프론트가 그때만 face_thumb_uri(고정 placeholder)로 강등한다 — 카드가 깨지지 않는다.
+    """
+    client, store, _ = fm
+    _seed_eligible_catalog(store, cover_image_url=None)
+
+    r = client.get("/v1/facemarket/models", headers=_headers(make_token))
+    assert r.status_code == 200, r.text
+    card = r.json()[0]
+    assert card["coverImageUrl"] is None
+    assert card["faceThumbUri"] == f"/v1/facemarket/models/{ELIGIBLE_MODEL_ID}/thumbnail"
+
+
+def test_catalog_cover_without_r2_is_graceful(fm, make_token):
+    """r2_face 미설정이면 raw R2 키를 흘리지 않고 None 으로 내린다(크래시·키 노출 금지)."""
+    client, store, _ = fm
+    client.app.state.r2_face = None
+    _seed_eligible_catalog(store)
+
+    r = client.get("/v1/facemarket/models", headers=_headers(make_token))
+    assert r.status_code == 200, r.text
+    card = r.json()[0]
+    assert card["coverImageUrl"] is None
+    assert "private/fm-profile" not in r.text
 
 
 def test_my_models_scoped_to_owner(fm, make_token):

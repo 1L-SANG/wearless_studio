@@ -911,13 +911,20 @@ function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
 const hexForCol = (col) => hexFor(col);
 
 /* 프로젝트가 실제 사용 중인 모델(마네킹/분석 단계 선택, analysis.selectedModelId 정본).
-   FaceMarket 실존 모델 우선. ⚠️ faceThumbUri 는 인증 게이트 URL(공개 아님) — 문서에
-   저장하면 <img> 401 로 깨진다. 저장 가능한 공개 coverImageUrl 만 쓴다. */
+   FaceMarket 실존 모델 우선.
+
+   ⚠️ 여기서 나온 thumb 은 model_info 블록의 data.src 로 **문서에 저장**된다(infoPresets).
+   그래서 수명이나 인증이 붙은 URL 은 실을 수 없다 — 실존 모델의 얼굴 URL 은 둘 다 그렇다:
+     - faceThumbUri = Bearer 인증 게이트 → <img> 가 401.
+     - coverImageUrl = 비공개 R2 버킷의 presigned GET(1h, _cover_serving_url) → 1시간 뒤 403.
+   relativizeAssetUrls 는 `/v1/assets/` 만 정규화해서 presigned 를 못 걸러낸다(lib/assetUrl.js)
+   — 저장되면 그대로 썩는다. 그래서 실존 모델은 빈 슬롯으로 두고 사용자가 채우게 한다.
+   카탈로그 카드·에디터 피커는 매 로드마다 새로 받으므로 presigned 로 정상 표시된다. */
 function resolveSelectedModel(analysis, fmModels, catalogs) {
   const id = analysis?.selectedModelId;
   if (!id) return null;
   const fm = (fmModels || []).find((m) => m.id === id);
-  if (fm) return { name: fm.displayName || '실제 모델', thumb: fm.coverImageUrl || null };
+  if (fm) return { name: fm.displayName || '실제 모델', thumb: null };
   const cat = ((catalogs && catalogs.models) || []).find((m) => m.id === id);
   if (cat) return { name: cat.name, thumb: cat.thumb || null };
   const am = ((analysis && analysis.models) || []).find((m) => m.id === id);
