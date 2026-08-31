@@ -310,11 +310,18 @@ test('physique 스텝: 키·체형 선택→제출→대표이미지 스텝', as
       null,
       'male-only height buckets must not render for a female enrollment',
     );
-    const bodyChip = findTree(
-      tree,
-      (node) => node.type === 'button' && node.props?.children === '마름',
+    // 체형 카드는 사진이 붙으면 children 이 [img, 라벨] 배열이 된다 — 라벨 포함으로 찾는다.
+    const hasLabel = (node, label) => (
+      node.type === 'button'
+      && [].concat(node.props?.children ?? []).includes(label)
     );
+    const bodyChip = findTree(tree, (node) => hasLabel(node, '마름'));
     assert.ok(bodyChip, 'the physique step must render the body-type chips');
+    assert.equal(
+      findTree(tree, (node) => hasLabel(node, '벌크업')),
+      null,
+      'male-only body types must not render for a female enrollment',
+    );
     heightChip.props.onClick();
     bodyChip.props.onClick();
 
@@ -1146,4 +1153,63 @@ test('the register wizard header says the enrollment is in progress', () => {
   const source = read('../../src/features/model/ModelRegister.jsx');
   assert.match(source, /<h1>모델 등록 진행 중<\/h1>/);
   assert.doesNotMatch(source, /<h1>FaceMarket 모델 등록<\/h1>/);
+});
+
+
+// ── 각도 예시: 실사진 우선, 없으면 라인 일러스트 ──────────────────────────────
+
+test('each angle offers a photo example with the pose drawing as fallback', () => {
+  for (const angle of ENROLLMENT_ANGLES) {
+    assert.equal(angle.examplePhoto, `/models/pose/${angle.value}.webp`,
+      `${angle.value} must point at its example photo slot`);
+    assert.ok(angle.exampleImage, `${angle.value} must keep the drawing as fallback`);
+  }
+  const upload = read('../../src/features/model/ModelFaceUpload.jsx');
+  // 사진 파일이 아직 없으면 404 → onError 로 일러스트로 되돌아가야 한다(코드 수정 없이 교체).
+  assert.match(upload, /onError/);
+  // 예시 사진과 "내가 올린 사진"이 헷갈리면 안 된다.
+  assert.match(upload, /예시/);
+});
+
+// ── 체형: 성별 분리 + 이미지 ────────────────────────────────────────────────
+
+const { BODY_TYPES, bodyTypeOptions } = await import('../../src/lib/facemarketPhysique.js');
+
+test('body types are split by gender without inventing new server values', () => {
+  const serverValues = new Set(BODY_TYPES.map((b) => b.value));
+  const male = bodyTypeOptions('male');
+  const female = bodyTypeOptions('female');
+  assert.ok(male.length > 0 && female.length > 0);
+  for (const option of [...male, ...female]) {
+    assert.ok(serverValues.has(option.value), `${option.value} must exist in the server enum`);
+  }
+  assert.notDeepEqual(male.map((b) => b.value), female.map((b) => b.value),
+    'the two lists must actually differ');
+  assert.ok(female.some((b) => b.value === 'glamorous'));
+  assert.ok(male.some((b) => b.value === 'bulk'));
+  assert.deepEqual(bodyTypeOptions(null).map((b) => b.value), BODY_TYPES.map((b) => b.value),
+    'unknown gender keeps every option — a choice must stay possible');
+});
+
+test('gendered body types carry an image path, the unknown-gender list does not', () => {
+  for (const gender of ['male', 'female']) {
+    for (const option of bodyTypeOptions(gender)) {
+      assert.equal(option.image, `/models/physique/${gender}/${option.value}.webp`);
+    }
+  }
+  assert.ok(bodyTypeOptions(null).every((b) => !b.image),
+    'without a gender there is no image to show — text chips stay');
+});
+
+// ── 문구: 사용자 화면에서 "생체 확인" 걷어내기 ───────────────────────────────
+
+test('user-facing copy says 본인/얼굴 확인, and the legal consent wording is untouched', () => {
+  const register = read('../../src/features/model/ModelRegister.jsx');
+  const hub = read('../../src/features/model/ModelHub.jsx');
+  assert.doesNotMatch(register, /생체 확인/);
+  assert.doesNotMatch(hub, /생체 확인/);
+  assert.match(register, /본인 확인 완료/);
+  // 법적 문구는 그대로 — 동의문 용어를 바꾸면 동의 버전 계약이 깨진다.
+  assert.match(register, /생체정보 처리 동의/);
+  assert.match(hub, /생체정보 처리 동의/);
 });

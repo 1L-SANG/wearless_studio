@@ -278,6 +278,33 @@
   margin: 12px auto 2px;
   opacity: .9;
 }
+/* 실사진 예시 — 라인 일러스트보다 크게 두되 업로드 영역보다는 작게 둬서 위계를 지킨다. */
+.slotExampleFigure {
+  position: relative;
+  width: 84px;
+  margin: 12px auto 2px;
+}
+.slotExamplePhoto {
+  display: block;
+  width: 84px;
+  height: 105px;
+  object-fit: cover;
+  border-radius: 10px;
+  background: var(--bg-2);
+}
+.slotExampleTag {
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  transform: translateX(-50%);
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .58);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .02em;
+}
 .slotGuide {
   min-height: 54px;
   margin: 12px 2px 0;

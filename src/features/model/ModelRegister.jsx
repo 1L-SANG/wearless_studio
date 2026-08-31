@@ -24,7 +24,7 @@ import {
 } from './biometricEnrollment.js';
 // 상대경로 — 이 테스트 하네스(configFile:false)는 `@/` alias 를 해석하지 않고, 이 파일은
 // (ModelFaceUpload.jsx 와 달리) 전체가 스텁으로 치환되지 않으므로 alias import 는 실렌더 전부를 깨뜨린다.
-import { BODY_TYPES, heightBucketOptions } from '../../lib/facemarketPhysique.js';
+import { bodyTypeOptions, heightBucketOptions } from '../../lib/facemarketPhysique.js';
 import s from './ModelRegister.module.css';
 
 const CX_ORIGIN = 'https://cx.raonsecure.co.kr:17543';
@@ -570,8 +570,13 @@ export function ModelRegister() {
   // OACX 가 성별을 안 주는 경우가 있어 모델 gender 가 NULL 로 남는다. 그러면 키 구간을
   // 남녀 12개로 다 보여줘 라벨이 겹치고 뒤죽박죽이 된다. 성별 토글로 6개만 보이게 한다.
   const [physiqueGender, setPhysiqueGender] = useState(null);
+  // 체형 사진이 아직 없는 값들(404) — 그 카드만 텍스트 칩으로 되돌린다. 사진을
+  // /models/physique/{gender}/{value}.webp 에 떨구면 코드 수정 없이 이미지로 바뀐다.
+  const [brokenBodyImages, setBrokenBodyImages] = useState([]);
   const genderForBuckets = enrollment?.gender || physiqueGender || null;
   const heightOptions = genderForBuckets ? heightBucketOptions(genderForBuckets) : [];
+  // 체형도 같은 성별 기준으로 좁힌다(값은 서버 enum 그대로). 성별 미상이면 7종 전부.
+  const bodyOptions = bodyTypeOptions(genderForBuckets);
 
   if (step === 'loading') return <div className="wizard narrow"><div className="surface">등록 상태를 확인하고 있어요…</div></div>;
 
@@ -611,8 +616,8 @@ export function ModelRegister() {
     return (
       <div className="wizard narrow"><div className={s.successWrap}>
         <div className={s.successIcon}><Icon name="check" size={30} stroke={2.4} /></div>
-        <h1 className={s.successTitle}>검증 완료</h1>
-        <p className={s.successLead}>현재 라이선스와 생체 확인이 모두 활성 상태예요.</p>
+        <h1 className={s.successTitle}>등록 완료</h1>
+        <p className={s.successLead}>라이선스와 얼굴 등록이 모두 활성 상태예요.</p>
         <Button
           variant="secondary"
           block
@@ -633,7 +638,7 @@ export function ModelRegister() {
     return (
       <div className="wizard narrow"><div className={s.successWrap}>
         <div className={s.successIcon}><Icon name="check" size={30} stroke={2.4} /></div>
-        <h1 className={s.successTitle}>생체 확인 완료 · 라이선스 발급 대기</h1>
+        <h1 className={s.successTitle}>본인 확인 완료 · 마지막 단계예요</h1>
         <p className={s.successLead}>마지막으로 얼굴 사용 조건을 정해 주세요.</p>
         <Link to={`/model/license?step=terms&enrollment=${encodeURIComponent(enrollment.id)}`} className={s.nextCard}>
           라이선스 조건 설정 <Icon name="chevRight" size={18} />
@@ -797,20 +802,33 @@ export function ModelRegister() {
           )}
           <div className={s.physiqueGroup}>
             <div className={s.physiqueLabel}>체형</div>
-            <div className="chips">
-              {BODY_TYPES.map((body) => (
-                <button
-                  key={body.value}
-                  type="button"
-                  className={`chip${physiqueBodyType === body.value ? ' on' : ''}`}
-                  disabled={busy}
-                  onClick={() => setPhysiqueBodyType(
-                    physiqueBodyType === body.value ? null : body.value,
-                  )}
-                >
-                  {body.label}
-                </button>
-              ))}
+            <div className={`chips${bodyOptions.some((b) => b.image) ? ` ${s.bodyCards}` : ''}`}>
+              {bodyOptions.map((body) => {
+                const withPhoto = !!body.image && !brokenBodyImages.includes(body.value);
+                return (
+                  <button
+                    key={body.value}
+                    type="button"
+                    className={`chip${physiqueBodyType === body.value ? ' on' : ''}${withPhoto ? ` ${s.bodyCard}` : ''}`}
+                    disabled={busy}
+                    onClick={() => setPhysiqueBodyType(
+                      physiqueBodyType === body.value ? null : body.value,
+                    )}
+                  >
+                    {withPhoto && (
+                      <img
+                        className={s.bodyCardImage}
+                        src={body.image}
+                        alt=""
+                        onError={() => setBrokenBodyImages((broken) => (
+                          broken.includes(body.value) ? broken : [...broken, body.value]
+                        ))}
+                      />
+                    )}
+                    {body.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
           <Button variant="primary" block disabled={busy} onClick={submitPhysiqueStep}>

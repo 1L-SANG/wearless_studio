@@ -33,9 +33,11 @@ const QC_COPY = {
   angle_mismatch: '선택한 각도와 달라요. 안내에 맞춰 정면/측면/45도로 찍어주세요.',
 };
 
-function SlotCard({ index, angle, label, guide, exampleImage, slot, onPicked, onDelete, checking, queued, locked, fetchUrl, localUrl }) {
+function SlotCard({ index, angle, label, guide, exampleImage, examplePhoto, slot, onPicked, onDelete, checking, queued, locked, fetchUrl, localUrl }) {
   const fileRef = useRef(null);
   const [url, setUrl] = useState(null);
+  // 예시 사진이 아직 없으면(파일 미투입 → 404) 라인 일러스트로 되돌린다.
+  const [photoBroken, setPhotoBroken] = useState(false);
   const passed = slot?.qcStatus === 'passed';
 
   useEffect(() => {
@@ -97,7 +99,16 @@ function SlotCard({ index, angle, label, guide, exampleImage, slot, onPicked, on
       </div>
       <input ref={fileRef} type="file" accept="image/*,.heic,.heif,.hif" hidden
         onChange={(e) => { const f = e.target.files?.[0]; if (f) onPicked(angle, f); e.target.value = ''; }} />
-      {exampleImage && <img className={s.slotExample} src={exampleImage} alt="" aria-hidden="true" />}
+      {(examplePhoto && !photoBroken) ? (
+        <figure className={s.slotExampleFigure}>
+          <img className={s.slotExamplePhoto} src={examplePhoto} alt={`${label} 촬영 예시`}
+            onError={() => setPhotoBroken(true)} />
+          {/* 위 업로드 영역의 내 사진과 헷갈리지 않게 예시임을 명시한다. */}
+          <figcaption className={s.slotExampleTag}>예시</figcaption>
+        </figure>
+      ) : exampleImage ? (
+        <img className={s.slotExample} src={exampleImage} alt="" aria-hidden="true" />
+      ) : null}
       <p className={s.slotGuide}>{guide}</p>
       {slot?.lastFail && (
         <div className={s.slotFail}>
@@ -245,7 +256,7 @@ export function ModelFaceUpload({
         <div className={s.slotGrid}>
           {angles.map((a, index) => (
             <SlotCard key={a.value} index={index} angle={a.value} label={a.label} guide={a.guide}
-              exampleImage={a.exampleImage}
+              exampleImage={a.exampleImage} examplePhoto={a.examplePhoto}
               slot={slots[a.value]} onPicked={onPicked} onDelete={onDelete}
               checking={slotBusy[a.value] === 'checking'} queued={slotBusy[a.value] === 'queued'}
               locked={!!blocked}

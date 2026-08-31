@@ -6,7 +6,7 @@ import { getCurrentEnrollment, listMyModels } from '@/lib/api/facemarket.js';
 import s from './ModelPersonalization.module.css';
 
 const MODEL_STATUS_LABEL = {
-  pending: '생체 확인 진행 중',
+  pending: '본인 확인 진행 중',
   reverification_required: '재검증 필요',
   verified: '검증 완료',
 };
@@ -14,7 +14,7 @@ const MODEL_STATUS_LABEL = {
 const ENROLLMENT_STATUS_LABEL = {
   photos_pending: '사진 등록 대기',
   liveness_pending: '라이브 얼굴 확인 대기',
-  processing: '생체 확인 처리 중',
+  processing: '얼굴 확인 처리 중',
   asset_building: '모델 준비 중',
   license_pending: '라이선스 조건 입력 대기',
   vc_pending: 'VC 발급 대기',
@@ -116,7 +116,7 @@ export function ModelHub() {
                 </Button>
               </div>
             ) : (
-              <p className="hint" style={{ marginTop: 16 }}>생체 확인과 라이선스 발급을 마치면 내 모델로 생성할 수 있어요.</p>
+              <p className="hint" style={{ marginTop: 16 }}>본인 확인과 라이선스 발급을 마치면 내 모델로 생성할 수 있어요.</p>
             )}
           </div>
 
