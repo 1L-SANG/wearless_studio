@@ -645,7 +645,7 @@ export function ModelRegister() {
   return (
     <div className="wizard narrow">
       <div className="page-head">
-        <h1>FaceMarket 모델 등록</h1>
+        <h1>모델 등록 진행 중</h1>
         <p>동의, 모바일 신분증 확인, 얼굴 사진, 라이브 촬영을 순서대로 진행해요.</p>
       </div>
 

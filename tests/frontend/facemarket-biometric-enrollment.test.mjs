@@ -61,6 +61,8 @@ async function modelComponentHarness({
   api,
   entry = '/src/features/model/ModelRegister.jsx',
   exportName = 'ModelRegister',
+  // ModelFaceUpload 자체를 렌더하는 테스트는 스텁 치환을 꺼야 한다(등록 마법사 테스트는 계속 스텁).
+  stubUpload = true,
 }) {
   const key = `__fmRegisterTest${Math.random().toString(36).slice(2)}`;
   const runtime = {
@@ -93,7 +95,8 @@ async function modelComponentHarness({
         if (id === '@/components/ui.jsx') return '\0fm-test-ui';
         if (id === '@/lib/api/facemarket.js') return '\0fm-test-api';
         if (id === '@/lib/api/personalization.js') return '\0fm-test-personalization';
-        if (id.endsWith('ModelFaceUpload.jsx')) return '\0fm-test-upload';
+        if (stubUpload && id.endsWith('ModelFaceUpload.jsx')) return '\0fm-test-upload';
+        if (id.endsWith('imageTranscode.js')) return '\0fm-test-transcode';
         if (id.endsWith('.module.css')) return '\0fm-test-css';
         return null;
       },
@@ -156,7 +159,18 @@ async function modelComponentHarness({
           export const uploadProfileImage = (...args) => api.uploadProfileImage(...args);
         `;
         if (id === '\0fm-test-personalization') return `
-          export const getStatus = (...args) => ${access}.api.getStatus(...args);
+          const api = ${access}.api;
+          export const getStatus = (...args) => api.getStatus(...args);
+          export const listFacePhotos = (...args) => api.listFacePhotos(...args);
+          export const uploadFacePhoto = (...args) => api.uploadFacePhoto(...args);
+          export const deleteFacePhoto = (...args) => api.deleteFacePhoto(...args);
+          export const fetchFacePhotoUrl = (...args) => api.fetchFacePhotoUrl(...args);
+        `;
+        // 변환(HEIC→JPEG)은 canvas 를 쓰므로 노드에서 못 돈다 — 기본은 원본 통과, 필요하면 런타임이 교체.
+        if (id === '\0fm-test-transcode') return `
+          export const toUploadableImage = (file) => (
+            ${access}.toUploadableImage ? ${access}.toUploadableImage(file) : Promise.resolve(file)
+          );
         `;
         return null;
       },
@@ -165,11 +179,11 @@ async function modelComponentHarness({
   const module = await server.ssrLoadModule(entry);
   return {
     runtime,
-    render() {
+    render(props = {}) {
       runtime.stateCursor = 0;
       runtime.refCursor = 0;
       runtime.effects = [];
-      return module[exportName]();
+      return module[exportName](props);
     },
     async close() {
       await server.close();
@@ -987,4 +1001,149 @@ test('enrollment terms and routes cannot revive direct face licensing', () => {
   assert.doesNotMatch(hubSource, /buildMyModelAssets|onBuildAssets|자산 생성 중/);
   assert.match(appSource, /function RequireOwnedModel\(\)/);
   assert.match(appSource, /path="generate" element=\{<RequireVerifiedModel \/>\}/);
+});
+
+
+// ── 업로드한 사진을 사용자에게 되보여준다 ────────────────────────────────────
+// 생체등록 어댑터에는 서버 프리뷰(fetchUrl)가 없다 — 격리 사진 바이트를 내주는 라우트가
+// 없기 때문이다. 그래서 방금 올린 파일로 로컬 프리뷰를 만들어 슬롯에 그린다.
+
+function findSlot(tree, angle) {
+  return findTree(tree, (node) => node?.props?.angle === angle && typeof node.type === 'function');
+}
+
+async function uploadHarness({ states, api, urls }) {
+  const originals = {
+    create: globalThis.URL.createObjectURL,
+    revoke: globalThis.URL.revokeObjectURL,
+  };
+  let seq = 0;
+  globalThis.URL.createObjectURL = (file) => {
+    const url = `blob:${file?.name || 'file'}-${(seq += 1)}`;
+    urls.created.push(url);
+    return url;
+  };
+  globalThis.URL.revokeObjectURL = (url) => { urls.revoked.push(url); };
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelFaceUpload.jsx',
+    exportName: 'ModelFaceUpload',
+    stubUpload: false,
+    initialStates: states,
+    api,
+  });
+  const close = harness.close;
+  harness.close = async () => {
+    globalThis.URL.createObjectURL = originals.create;
+    globalThis.URL.revokeObjectURL = originals.revoke;
+    await close();
+  };
+  return harness;
+}
+
+const PASSED_PHOTO = { angle: 'front', qcStatus: 'passed', qcReasons: [], uploadedAt: '2026-08-31T00:00:00Z' };
+
+test('an uploaded photo is shown back in its slot even without a server preview URL', async () => {
+  const urls = { created: [], revoked: [] };
+  const harness = await uploadHarness({
+    // phase, slots, previews, slotBusy, blocked
+    states: ['ready', {}, {}, {}, null],
+    urls,
+    api: { uploadFacePhoto: async () => PASSED_PHOTO },
+  });
+  try {
+    const props = { embedded: true, photoApi: { load: async () => ({ photos: [] }), upload: async () => PASSED_PHOTO } };
+    let tree = harness.render(props);
+    const slot = findSlot(tree, 'front');
+    assert.ok(slot, 'the front slot must render');
+    assert.equal(slot.props.localUrl, undefined, 'nothing is shown before a photo is picked');
+
+    slot.props.onPicked('front', { name: 'front.jpg', type: 'image/jpeg' });
+    await eventually(() => urls.created.length === 1, 'the picked photo must become a preview URL');
+    await flush();
+
+    tree = harness.render(props);
+    assert.equal(findSlot(tree, 'front').props.localUrl, urls.created[0],
+      'the slot must show the photo the user just uploaded');
+    assert.equal(findSlot(tree, 'angle45').props.localUrl, undefined,
+      'the preview belongs to its own angle only');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('a photo rejected by QC is still shown so the user can see what to retake', async () => {
+  const urls = { created: [], revoked: [] };
+  const harness = await uploadHarness({
+    states: ['ready', {}, {}, {}, null],
+    urls,
+    api: {},
+  });
+  try {
+    const failure = Object.assign(new Error('얼굴이 가려져 있어요.'), { reasons: ['occlusion'] });
+    const props = {
+      embedded: true,
+      photoApi: { load: async () => ({ photos: [] }), upload: async () => { throw failure; } },
+    };
+    let tree = harness.render(props);
+    findSlot(tree, 'front').props.onPicked('front', { name: 'front.jpg', type: 'image/jpeg' });
+    await eventually(() => urls.created.length === 1, 'a preview is made before the upload is judged');
+    await flush();
+
+    tree = harness.render(props);
+    const slot = findSlot(tree, 'front');
+    assert.equal(slot.props.localUrl, urls.created[0], 'the rejected photo stays visible');
+    assert.equal(slot.props.slot?.lastFail?.message, '얼굴이 가려져 있어요.');
+    assert.deepEqual(urls.revoked, [], 'the preview must not be revoked while it is on screen');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('replacing or deleting a photo releases the preview it was holding', async () => {
+  const urls = { created: [], revoked: [] };
+  const harness = await uploadHarness({
+    states: ['ready', {}, {}, {}, null],
+    urls,
+    api: {},
+  });
+  const originalWindow = globalThis.window;
+  globalThis.window = { ...(originalWindow || {}), confirm: () => true };
+  try {
+    const props = {
+      embedded: true,
+      photoApi: {
+        load: async () => ({ photos: [] }),
+        upload: async () => PASSED_PHOTO,
+        remove: async () => {},
+      },
+    };
+    let tree = harness.render(props);
+    findSlot(tree, 'front').props.onPicked('front', { name: 'front.jpg', type: 'image/jpeg' });
+    await eventually(() => urls.created.length === 1, 'first upload must make a preview');
+    await flush();
+
+    // 같은 각도를 다시 올리면 앞의 objectURL 은 회수돼야 한다(누수 금지).
+    tree = harness.render(props);
+    findSlot(tree, 'front').props.onPicked('front', { name: 'front-2.jpg', type: 'image/jpeg' });
+    await eventually(() => urls.created.length === 2, 'the replacement must make its own preview');
+    await flush();
+    assert.deepEqual(urls.revoked, [urls.created[0]], 'the replaced preview must be revoked');
+
+    tree = harness.render(props);
+    await findSlot(tree, 'front').props.onDelete('front');
+    await flush();
+
+    tree = harness.render(props);
+    assert.equal(findSlot(tree, 'front').props.localUrl, undefined, 'deleting clears the preview');
+    assert.deepEqual(urls.revoked, [urls.created[0], urls.created[1]], 'the deleted preview must be revoked too');
+  } finally {
+    if (originalWindow === undefined) delete globalThis.window; else globalThis.window = originalWindow;
+    await harness.close();
+  }
+});
+
+test('the register wizard header says the enrollment is in progress', () => {
+  const source = read('../../src/features/model/ModelRegister.jsx');
+  assert.match(source, /<h1>모델 등록 진행 중<\/h1>/);
+  assert.doesNotMatch(source, /<h1>FaceMarket 모델 등록<\/h1>/);
 });
