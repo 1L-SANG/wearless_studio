@@ -413,7 +413,8 @@
 .bodyCardImage {
   display: block;
   width: 100%;
-  aspect-ratio: 3 / 4;
+  /* 기존 모델 자산(360×450)과 같은 4:5 — 생성·크롭 규격을 하나로 유지한다. */
+  aspect-ratio: 4 / 5;
   object-fit: cover;
   border-radius: 8px;
   background: var(--bg-2);
