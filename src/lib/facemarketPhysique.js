@@ -35,6 +35,29 @@ export const BODY_TYPES = Object.freeze([
   { value: 'glamorous', label: '글래머러스' },
 ]);
 
+// 성별별로 보여줄 체형 목록. **값은 위 BODY_TYPES(서버 enum)에서만 고른다** — 목록을
+// 나누는 건 UI 뿐이고, 새 값을 만들면 서버 validate_physique 가 거절한다.
+// 이미지는 /models/physique/{gender}/{value}.webp 규약. 파일이 없으면 카드가 텍스트 칩으로
+// 되돌아가므로, 나중에 사진만 그 경로에 떨구면 코드 수정 없이 이미지 선택으로 바뀐다.
+const BODY_TYPE_LABEL = Object.freeze(
+  Object.fromEntries(BODY_TYPES.map((b) => [b.value, b.label])),
+);
+const BODY_TYPES_BY_GENDER = Object.freeze({
+  male: Object.freeze(['slim', 'regular', 'toned', 'bulk', 'plump']),
+  female: Object.freeze(['delicate', 'slim', 'regular', 'plump', 'glamorous']),
+});
+
+export function bodyTypeOptions(gender) {
+  const values = BODY_TYPES_BY_GENDER[gender];
+  // 성별을 아직 모르면(OACX 미제공·미선택) 7종 전부 — 고를 수단 자체를 뺏지 않는다.
+  if (!values) return BODY_TYPES.map((b) => ({ ...b, image: null }));
+  return values.map((value) => ({
+    value,
+    label: BODY_TYPE_LABEL[value],
+    image: `/models/physique/${gender}/${value}.webp`,
+  }));
+}
+
 // gender('male'|'female')로 보여줄 키 구간을 좁힌다. gender 가 없으면(OACX 신원에서 아직
 // 못 받았거나 null) 남녀 통합 목록을 보여준다 — 선택 자체가 잘못된 값을 만들진 않는다
 // (서버 validate_physique 가 gender 불일치를 다시 막는다).
