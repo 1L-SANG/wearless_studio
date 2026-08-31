@@ -278,30 +278,30 @@
   margin: 12px auto 2px;
   opacity: .9;
 }
-/* 실사진 예시 — 라인 일러스트보다 크게 두되 업로드 영역보다는 작게 둬서 위계를 지킨다. */
+/* 실사진 예시 — 위 업로드 영역(.slotUpload)과 같은 폭·비율. 각도 차이는 작게 줄이면
+   읽히지 않는다(45도와 측면 구분이 특히). "예시" 뱃지가 내 사진과의 구분을 맡는다. */
 .slotExampleFigure {
   position: relative;
-  width: 84px;
-  margin: 12px auto 2px;
+  width: 100%;
+  margin: 12px 0 2px;
 }
 .slotExamplePhoto {
   display: block;
-  width: 84px;
-  height: 105px;
+  width: 100%;
+  aspect-ratio: 4 / 5;
   object-fit: cover;
-  border-radius: 10px;
+  border-radius: var(--r-5);
   background: var(--bg-2);
 }
 .slotExampleTag {
   position: absolute;
-  left: 50%;
-  bottom: 4px;
-  transform: translateX(-50%);
-  padding: 1px 7px;
+  left: 8px;
+  bottom: 8px;
+  padding: 2px 9px;
   border-radius: 999px;
-  background: rgba(0, 0, 0, .58);
+  background: rgba(0, 0, 0, .62);
   color: #fff;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: .02em;
 }
