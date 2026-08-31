@@ -131,7 +131,7 @@ export function ModelConsent({ embedded = false, onDone }) {
                 <div className={s.consentTitleRow}>
                   <span className={s.consentTitle}>{it.title}</span>
                   <span className={`${s.consentTag} ${done ? s.tagDone : it.required ? s.tagRequired : s.tagOptional}`}>
-                    {done ? '동의완료' : it.required ? '필수' : '선택'}
+                    {done ? '동의 완료' : it.required ? '필수' : '선택'}
                   </span>
                 </div>
                 <div className={s.consentDesc}>{it.desc}</div>
@@ -142,10 +142,10 @@ export function ModelConsent({ embedded = false, onDone }) {
 
         {notice && (
           <div className={s.noticeLinks}>
-            {notice.retentionDays != null && <span className="hint">보관기간 {notice.retentionDays}일</span>}
-            {notice.noticeUris.retention && <a href={notice.noticeUris.retention} target="_blank" rel="noreferrer">보관기간 안내</a>}
+            {notice.retentionDays != null && <span className="hint">보관 기간 {notice.retentionDays}일</span>}
+            {notice.noticeUris.retention && <a href={notice.noticeUris.retention} target="_blank" rel="noreferrer">보관 기간 안내</a>}
             {notice.noticeUris.thirdParty && <a href={notice.noticeUris.thirdParty} target="_blank" rel="noreferrer">제3자 제공 안내</a>}
-            {notice.noticeUris.crossBorder && <a href={notice.noticeUris.crossBorder} target="_blank" rel="noreferrer">국외이전 고지</a>}
+            {notice.noticeUris.crossBorder && <a href={notice.noticeUris.crossBorder} target="_blank" rel="noreferrer">국외 이전 고지</a>}
           </div>
         )}
 

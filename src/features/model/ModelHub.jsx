@@ -96,7 +96,7 @@ export function ModelHub() {
             {(ownedModel?.status !== 'verified' || enrollment) && (
               <div className={s.hubCta}>
                 <Button variant="secondary" block iconRight="arrowRight" onClick={() => navigate(registrationPath)}>
-                  {enrollmentNeedsTerms ? '라이선스 조건 설정 이어가기' : '안전한 모델 등록 이어가기'}
+                  {enrollmentNeedsTerms ? '라이선스 조건 설정 이어가기' : '모델 등록 이어가기'}
                 </Button>
               </div>
             )}

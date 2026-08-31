@@ -6,7 +6,16 @@ from app.facemarket_physique import (
 
 def test_vocab_shapes():
     assert GENDERS == ("male", "female")
-    assert BODY_TYPES == ("delicate","slim","regular","plump","toned","bulk","glamorous")
+    # 원래 단일 축 7종은 그대로 유효하다(남성 목록·기존 저장값이 쓴다).
+    assert BODY_TYPES[:7] == ("delicate","slim","regular","plump","toned","bulk","glamorous")
+    # 그 뒤는 볼륨×실루엣 매트릭스 15종 — 통통·상하 볼륨은 시각적으로 안 갈려 뺐다.
+    assert BODY_TYPES[7:] == (
+        "delicate_basic","delicate_upper","delicate_hip","delicate_both",
+        "slim_basic","slim_upper","slim_hip","slim_both",
+        "regular_basic","regular_upper","regular_hip","regular_both",
+        "plump_basic","plump_upper","plump_hip",
+    )
+    assert "plump_both" not in BODY_TYPES
     assert HEIGHT_BUCKETS["male"] == ("m_lt170","m_170_175","m_175_180","m_180_185","m_185_190","m_gte190")
     assert HEIGHT_BUCKETS["female"] == ("f_lt155","f_155_160","f_160_165","f_165_170","f_170_175","f_gte175")
 

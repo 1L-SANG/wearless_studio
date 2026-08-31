@@ -45,6 +45,14 @@ async function eventually(predicate, message) {
 
 function findTree(node, predicate) {
   if (!node || typeof node !== 'object') return null;
+  // map 결과가 children 배열 안에 배열로 들어가는 경우(행 → 카드들)를 뚫는다.
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findTree(child, predicate);
+      if (found) return found;
+    }
+    return null;
+  }
   if (predicate(node)) return node;
   const children = Array.isArray(node.props?.children)
     ? node.props.children
@@ -315,8 +323,9 @@ test('physique 스텝: 키·체형 선택→제출→대표이미지 스텝', as
       node.type === 'button'
       && [].concat(node.props?.children ?? []).includes(label)
     );
-    const bodyChip = findTree(tree, (node) => hasLabel(node, '마름'));
-    assert.ok(bodyChip, 'the physique step must render the body-type chips');
+    // 여성은 볼륨×실루엣 매트릭스다 — 볼륨은 행 제목이 맡고 카드 라벨엔 실루엣만 남는다.
+    const bodyChip = findTree(tree, (node) => hasLabel(node, '상체 볼륨'));
+    assert.ok(bodyChip, 'the physique step must render the body matrix cards');
     assert.equal(
       findTree(tree, (node) => hasLabel(node, '벌크업')),
       null,
@@ -337,7 +346,8 @@ test('physique 스텝: 키·체형 선택→제출→대표이미지 스텝', as
     assert.equal(physiqueCalls.length, 1, 'submitPhysique must be called once');
     assert.equal(physiqueCalls[0].enrollmentId, 'enrollment-1');
     assert.equal(physiqueCalls[0].heightBucket, 'f_lt155');
-    assert.equal(physiqueCalls[0].bodyType, 'slim');
+    // 첫 행(여리여리)의 상체 볼륨 카드를 눌렀으므로 두 축이 한 값에 실려 나간다.
+    assert.equal(physiqueCalls[0].bodyType, 'delicate_upper');
     assert.equal(harness.runtime.states[0], 'profile', 'submitting physique advances to the profile step');
   } finally {
     await harness.close();
@@ -1173,7 +1183,7 @@ test('each angle offers a photo example with the pose drawing as fallback', () =
 
 // ── 체형: 성별 분리 + 이미지 ────────────────────────────────────────────────
 
-const { BODY_TYPES, bodyTypeOptions } = await import('../../src/lib/facemarketPhysique.js');
+const { BODY_TYPES, bodyTypeOptions, bodyTypeMatrix } = await import('../../src/lib/facemarketPhysique.js');
 
 test('body types are split by gender without inventing new server values', () => {
   const serverValues = new Set(BODY_TYPES.map((b) => b.value));
@@ -1208,8 +1218,51 @@ test('user-facing copy says 본인/얼굴 확인, and the legal consent wording 
   const hub = read('../../src/features/model/ModelHub.jsx');
   assert.doesNotMatch(register, /생체 확인/);
   assert.doesNotMatch(hub, /생체 확인/);
-  assert.match(register, /본인 확인 완료/);
+  assert.match(register, /모델 정보 등록 완료/);
   // 법적 문구는 그대로 — 동의문 용어를 바꾸면 동의 버전 계약이 깨진다.
   assert.match(register, /생체정보 처리 동의/);
   assert.match(hub, /생체정보 처리 동의/);
+});
+
+
+// ── 체형 매트릭스(볼륨 × 실루엣) ────────────────────────────────────────────
+
+test('the female body matrix pairs every volume with its silhouettes', () => {
+  const rows = bodyTypeMatrix('female');
+  assert.ok(rows, 'female must get a matrix');
+  assert.deepEqual(rows.map((r) => r.value), ['delicate', 'slim', 'regular', 'plump']);
+  // 통통 · 상하 볼륨은 옆 칸과 시각적으로 안 갈려 일부러 뺐다.
+  assert.deepEqual(rows.at(-1).options.map((o) => o.value),
+    ['plump_basic', 'plump_upper', 'plump_hip']);
+  for (const row of rows) {
+    for (const option of row.options) {
+      assert.match(option.value, new RegExp(`^${row.value}_`));
+      assert.equal(option.image, `/models/physique/female/${option.value}.webp`);
+    }
+  }
+  assert.equal(rows.flatMap((r) => r.options).length, 15);
+});
+
+test('men keep the flat chip list — a matrix is female-only for now', () => {
+  assert.equal(bodyTypeMatrix('male'), null);
+  assert.equal(bodyTypeMatrix(null), null);
+  assert.ok(bodyTypeOptions('male').length > 0);
+});
+
+test('every matrix photo referenced by the UI actually exists', () => {
+  for (const row of bodyTypeMatrix('female')) {
+    for (const option of row.options) {
+      assert.ok(
+        existsSync(new URL(`../../public${option.image}`, import.meta.url)),
+        `${option.image} must be present`,
+      );
+    }
+  }
+});
+
+test('the terms screen sends the model on to VC issuance from a centered card', () => {
+  const register = read('../../src/features/model/ModelRegister.jsx');
+  assert.match(register, /VC 발급 하러 가기/);
+  assert.match(register, /centeredWizard/);
+  assert.doesNotMatch(register, /라이선스 조건 설정 <Icon/);
 });
