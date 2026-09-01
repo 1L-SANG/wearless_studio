@@ -29,7 +29,7 @@ import { Storyboard } from '@/features/storyboard/Storyboard.jsx';
 import { Generating } from '@/features/generating/Generating.jsx';
 import { LazyEditor } from '@/features/editor/lazyEditor.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
-import { IS_FACEMARKET } from '@/lib/host.js';
+import { domainRouteRedirect, IS_FACEMARKET } from '@/lib/host.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
 import { loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
@@ -573,6 +573,9 @@ function RootRedirect() {
 }
 
 export default function App() {
+  const { pathname } = useLocation();
+  const domainRedirect = domainRouteRedirect(pathname);
+
   // 환경변수 미설정(예: Vercel env 누락)이면 화이트스크린 대신 원인을 보여준다.
   if (!isSupabaseConfigured) {
     return (
@@ -581,6 +584,7 @@ export default function App() {
       </div>
     );
   }
+  if (domainRedirect) return <Navigate to={domainRedirect} replace />;
 
   return (
     <>
