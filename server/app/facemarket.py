@@ -902,6 +902,26 @@ async def finalize_issued_face_vc(
                         (issued.vc_id, enrollment_id),
                     )
                     enrollment_updated = await cur.fetchone()
+                    # 재등록으로 갈아탄 옛 라이선스 정리. 새 등록을 시작할 때 active →
+                    # reverification_required 로 강등만 해 두고 여기서 아무도 치우지 않아,
+                    # 등록을 다시 할 때마다 목록에 VC 카드가 한 장씩 쌓였다. 라이선스만
+                    # 죽이면 체인의 옛 VC 는 유효한 채 남으므로 폐기 큐에도 같이 넣는다.
+                    await cur.execute(
+                        """update fm_licenses set status = 'revoked'
+                            where model_id = %s and id <> %s
+                              and status = 'reverification_required'
+                            returning id::text as id, vc_id""",
+                        (model_id, license_id),
+                    )
+                    superseded = await cur.fetchall()
+                for old in superseded:
+                    if old.get("vc_id"):
+                        await enqueue_vc_revocation(
+                            conn,
+                            license_id=old["id"],
+                            model_id=model_id,
+                            vc_id=old["vc_id"],
+                        )
                 if active is None or model_updated is None or enrollment_updated is None:
                     raise _err(
                         "license_activation_stale",
@@ -1115,9 +1135,11 @@ async def list_licenses(request: Request, user_id: str = Depends(require_user)):
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
+                # revoked 는 뺀다 — 사용자가 폐기했거나 재등록으로 갈아탄 죽은 카드다.
+                # 남겨두면 등록을 다시 할 때마다 목록에 VC 카드가 쌓인다(행은 이력으로 보존).
                 f"""select {_LICENSE_CARD_COLS_L} from fm_licenses l
                     join fm_models m on m.id = l.model_id
-                    where m.user_id = %s
+                    where m.user_id = %s and l.status <> 'revoked'
                     order by l.created_at desc limit 200""",
                 (user_id,),
             )
