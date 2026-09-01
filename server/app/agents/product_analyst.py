@@ -12,6 +12,7 @@
 계약 토큰은 전부 `common_data_contract.md §4`. styleTags 는 `style_tags.STYLE_TAGS` 단일 정본.
 """
 
+import logging
 import os
 import re
 
@@ -21,6 +22,8 @@ from .gemini_image import InlineImage
 from .prompts import _sanitize
 from .style_tags import STYLE_TAGS, is_style_tag
 from .vision_llm import VisionError, analyze_with_fallback, complete_json
+
+log = logging.getLogger("wearless.product_analyst")
 
 # ── 계약 §4 enum 토큰 (검증·스키마 단일 참조) ────────────────────────────────
 CLOTHING_TYPES = ("top", "bottom", "outer", "dress")
@@ -489,6 +492,13 @@ async def analyze(settings: Settings, product: dict, images: list[InlineImage]) 
     except product_evidence_contract.ProductEvidenceContractError as exc:
         # The ordinary analysis must never silently persist a partial/guessed contract:
         # a missing contract later looks like permission to reconstruct evidence.
+        # 원인을 여기서 찍는다 — 위층(public_routes)이 `from None` 으로 체인을 끊어 502 를
+        # 내므로, 안 찍으면 프로드 로그에 `status=502` 한 줄만 남고 어느 계약 조건이
+        # 깨졌는지 알 방법이 없다(2026-09-01 /v1/public/analyze 502 를 소거법으로 추적해야
+        # 했다). provider 실패 경로가 같은 이유로 이미 로그를 갖고 있다(vision_llm:220).
+        log.warning(
+            "product evidence contract rejected: provider=%s %s(%s) images=%d",
+            provider, type(exc).__name__, str(exc)[:200], len(images))
         raise VisionError("상품 사진 근거를 안전하게 확정하지 못했어요. 다시 분석해 주세요.") from exc
     return distribute(validated), provider
 
