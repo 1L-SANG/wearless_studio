@@ -57,6 +57,20 @@ class _MemoryReconciler(FaceVcRevocationReconciler):
             last_error_code=code,
         )
 
+    async def _mark_dead(self, job, code):
+        assert job["lease_token"] == self.job["lease_token"]
+        log = __import__("logging").getLogger("wearless.fm_vc_revocation_reconciler")
+        log.warning(
+            "facemarket VC revocation gave up (dead) after %s attempts: vc=%s",
+            self.job["attempts"] + 1, job["vc_id"],
+        )
+        self.job.update(
+            status="dead",
+            attempts=self.job["attempts"] + 1,
+            lease_token=None,
+            last_error_code=code,
+        )
+
     async def _mark_revoked(self, job):
         assert job["lease_token"] == self.job["lease_token"]
         self.job.update(status="revoked", lease_token=None)
@@ -509,3 +523,36 @@ def test_reconciler_survives_a_missing_or_failing_autoscaler(monkeypatch):
     ])
     assert asyncio.run(reconciler2._sweep_once()) is True
     assert reconciler2.job["status"] == "revoked", "훅 실패가 폐기를 막으면 안 된다"
+
+
+def test_repeated_failures_give_up_and_dead_letter(monkeypatch, caplog):
+    """포기 규칙이 없어서 고아 잡 하나가 880회까지 조용히 재시도했다(2026-09-01 prod 실측).
+    8/29 사고 복구 때 모델·라이선스는 지워졌는데 폐기 잡만 남았고, 폐기 API 가
+    /holder/models/{model_id}/revoke-vc 라 모델이 없으면 영영 성공할 수 없다.
+    #210 이후로는 이런 잡이 수요로 잡혀 홀더까지 24/7 켜 둔다 — 상한이 필요하다."""
+    reconciler = _MemoryReconciler()
+    reconciler.job["attempts"] = reconciler_module._MAX_ATTEMPTS - 1
+    _patch_holder(monkeypatch, [_Response(500, {})])
+
+    with caplog.at_level("WARNING"):
+        asyncio.run(reconciler._sweep_once())
+
+    assert reconciler.job["status"] == "dead", "상한을 넘으면 재시도를 멈춘다"
+    assert any("dead" in r.message or "dead" in str(r.args) for r in caplog.records), \
+        "조용히 죽이면 안 된다 — 사람이 볼 수 있게 남긴다"
+
+
+def test_failures_below_the_cap_still_retry(monkeypatch):
+    reconciler = _MemoryReconciler()
+    reconciler.job["attempts"] = reconciler_module._MAX_ATTEMPTS - 5
+    _patch_holder(monkeypatch, [_Response(500, {})])
+
+    asyncio.run(reconciler._sweep_once())
+
+    assert reconciler.job["status"] == "retry"
+
+
+def test_dead_jobs_are_never_claimed_again():
+    reconciler = _MemoryReconciler()
+    reconciler.job["status"] = "dead"
+    assert asyncio.run(reconciler._claim_one()) is None
