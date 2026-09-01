@@ -271,6 +271,10 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   FM_LIVENESS_CONFIDENCE_THRESHOLD: "75"
   FM_ID_LIVE_THRESHOLD: "0.25"
   FM_RETOUCHED_LIVE_THRESHOLD: "0.15"
+  # 측면은 정면 인식기(YuNet+SFace)에 구조적으로 불리하다 — 실측 front 0.18 / 45도 0.26 /
+  # 측면 0.148 로, 공통 0.15 에 0.002 모자라 등록 전체가 face_match_failed 로 날아갔다.
+  # 측면만 낮춰 그 구조적 불리함을 보정한다(정면·45도 보안은 그대로).
+  FM_SIDE_LIVE_THRESHOLD: "0.10"
   FM_MATCH_POLICY_VERSION: prod-2026-08
   # OpenDID 홀더(fm-holder) — 같은 VPC service discovery. VC 발급 요청 대상. opendid 서비스 필요.
   OPENDID_HOLDER_URL: http://opendid:8100

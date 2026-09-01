@@ -246,6 +246,19 @@ def _wake_dispatcher(request: Request) -> None:
         dispatcher.wake()
 
 
+def match_threshold_for_angle(settings: Settings, angle: str) -> float | None:
+    """각도별 매칭 임계. 측면만 따로 둔다.
+
+    정면 얼굴 인식기(YuNet 검출 + SFace)는 측면에서 유사도가 구조적으로 낮게 나온다.
+    prod 실측(2026-09-01): 같은 사람 사진인데 front 0.1806 / angle45 0.2605 / side 0.14825 —
+    측면만 공통 임계 0.15 에 0.0017 모자라 등록 전체가 face_match_failed 로 날아갔다(3회 반복,
+    매칭이 결정적이라 같은 사진은 늘 같은 점수였다). 측면 전용 임계가 없으면 기존 값을 쓴다.
+    """
+    if angle == "side" and settings.fm_side_live_threshold is not None:
+        return settings.fm_side_live_threshold
+    return settings.fm_retouched_live_threshold
+
+
 def _prewarm_opendid(request: Request) -> None:
     """VC 발급이 사실상 확정된 지점에서 holder(opendid)를 미리 깨운다.
 
@@ -1132,6 +1145,10 @@ async def upload_enrollment_photo(
             angle=angle,
             reason="superseded",
         )
+        # 사진을 올리기 시작했다 = 발급까지 아직 몇 분 남았다. 여기서 깨우는 게 가장 이르다.
+        # prod 실측(2026-09-01): 사진 3장에 3분 26초가 걸렸고, 그동안 홀더(~2분 부팅)를 띄우면
+        # 발급 시점엔 이미 따뜻하다. 라이브니스 훅은 발급까지 1분도 안 남아 부팅을 못 가렸다.
+        _prewarm_opendid(request)
         return EnrollmentPhotoView(angle=angle, qc_status="passed", uploaded_at=uploaded_at)
     finally:
         data = b""
@@ -1963,11 +1980,12 @@ async def process_enrollment_completion(
                     if exc.reason == "no_face_detected":
                         continue  # 정면 검출기가 못 잡는 각도(측면/프로필) — 매칭 대상 아님
                     raise
+                threshold = match_threshold_for_angle(settings, _angle)
                 logger.info(
                     "fm_match_photo_live angle=%s score=%s threshold=%.4f",
-                    _angle, score, settings.fm_retouched_live_threshold,
+                    _angle, score, threshold,
                 )
-                _assert_match(score, settings.fm_retouched_live_threshold)
+                _assert_match(score, threshold)
                 matched_any = True
             if not matched_any:
                 raise EnrollmentMappedError("face_match_failed")

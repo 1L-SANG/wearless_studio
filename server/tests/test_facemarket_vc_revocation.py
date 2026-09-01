@@ -468,3 +468,44 @@ def test_main_starts_reconciler_when_holder_configured_even_if_vc_optional(monke
 
     assert "reconciler.init" in events
     assert "reconciler.start" in events
+
+
+def test_reconciler_wakes_the_holder_before_calling_it(monkeypatch):
+    """opendid 는 scale-to-zero 라 0대일 때 폐기가 transport 로 영원히 실패한다.
+    실측(2026-09-01 prod): 한 잡이 attempts=859, last_error_code='transport'.
+    프리워밍 훅이 발급 경로에만 붙어 있어서 폐기 워커는 홀더를 못 깨웠다."""
+    woken = []
+
+    class _Scaler:
+        def prewarm_soon(self):
+            woken.append(True)
+
+    reconciler = _MemoryReconciler()
+    reconciler.app.state.opendid_autoscaler = _Scaler()
+    _patch_holder(monkeypatch, [
+        _Response(200, {"verified": False, "status": "revoked", "onChain": True}),
+    ])
+
+    assert asyncio.run(reconciler._sweep_once()) is True
+    assert woken, "폐기를 시도하기 전에 홀더를 깨워야 한다"
+
+
+def test_reconciler_survives_a_missing_or_failing_autoscaler(monkeypatch):
+    reconciler = _MemoryReconciler()   # state 에 autoscaler 없음(로컬·테스트)
+    _patch_holder(monkeypatch, [
+        _Response(200, {"verified": False, "status": "revoked", "onChain": True}),
+    ])
+    assert asyncio.run(reconciler._sweep_once()) is True
+    assert reconciler.job["status"] == "revoked"
+
+    class _Boom:
+        def prewarm_soon(self):
+            raise RuntimeError("aws down")
+
+    reconciler2 = _MemoryReconciler()
+    reconciler2.app.state.opendid_autoscaler = _Boom()
+    _patch_holder(monkeypatch, [
+        _Response(200, {"verified": False, "status": "revoked", "onChain": True}),
+    ])
+    assert asyncio.run(reconciler2._sweep_once()) is True
+    assert reconciler2.job["status"] == "revoked", "훅 실패가 폐기를 막으면 안 된다"
