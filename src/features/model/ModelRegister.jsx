@@ -360,13 +360,33 @@ export function ModelRegister() {
   };
 
   // profile 스텝(선택): 셀러 카탈로그 대표 이미지. 비게이팅 — 업로드/건너뛰기 모두 liveness 로.
-  const submitProfileImage = async (file) => {
+  // 고른 사진은 바로 올리지 않는다 — 먼저 보여주고 확인을 받는다. 예전엔 파일을 고르는
+  // 순간 업로드하고 다음 단계로 넘어가버려서, 잘못 고르면 되돌릴 방법이 아예 없었다.
+  const pickProfileImage = (file) => {
+    if (!file) return;
+    setError('');
+    setProfilePreview((previous) => {
+      if (previous?.url) URL.revokeObjectURL(previous.url);
+      return { file, url: URL.createObjectURL(file) };
+    });
+  };
+
+  const clearProfileImage = () => {
+    setProfilePreview((previous) => {
+      if (previous?.url) URL.revokeObjectURL(previous.url);
+      return null;
+    });
+  };
+
+  const submitProfileImage = async () => {
+    const file = profilePreview?.file;
     if (!file || !enrollment?.id) return;
     setBusy(true);
     setError('');
     try {
       await uploadProfileImage({ enrollmentId: enrollment.id, fileBlob: file, filename: file.name });
       if (!mounted.current) return;
+      clearProfileImage();
       setStep('liveness');
     } catch (requestError) {
       if (!mounted.current) return;
@@ -573,6 +593,8 @@ export function ModelRegister() {
   // 체형 사진이 아직 없는 값들(404) — 그 카드만 텍스트 칩으로 되돌린다. 사진을
   // /models/physique/{gender}/{value}.webp 에 떨구면 코드 수정 없이 이미지로 바뀐다.
   const [brokenBodyImages, setBrokenBodyImages] = useState([]);
+  // 대표 이미지 확인용 로컬 프리뷰 {file, url} — 확인을 눌러야 실제로 올라간다.
+  const [profilePreview, setProfilePreview] = useState(null);
   const genderForBuckets = enrollment?.gender || physiqueGender || null;
   const heightOptions = genderForBuckets ? heightBucketOptions(genderForBuckets) : [];
   // 체형도 같은 성별 기준으로 좁힌다(값은 서버 enum 그대로). 성별 미상이면 7종 전부.
@@ -874,6 +896,11 @@ export function ModelRegister() {
           <Button variant="secondary" block disabled={busy} onClick={() => setStep('profile')}>
             건너뛰기
           </Button>
+          {/* 사진을 잘못 올렸으면 여기서 되돌아가 다시 올릴 수 있어야 한다. */}
+          <button type="button" className={s.backLink} disabled={busy}
+            onClick={() => setStep('photos')}>
+            이전 · 얼굴 사진
+          </button>
         </div>
       )}
 
@@ -887,21 +914,40 @@ export function ModelRegister() {
             </div>
           </div>
           <p className="hint">셀러 카탈로그 카드에 노출할 대표 이미지를 올려요. 원하지 않으면 건너뛸 수 있어요.</p>
-          <label className={s.uploadZone}>
-            <input
-              type="file"
-              accept="image/*"
-              disabled={busy}
-              className={s.uploadInput}
-              onChange={(event) => submitProfileImage(event.target.files?.[0])}
-            />
-            <div className={s.uploadIcon}><Icon name="imagePlus" size={20} /></div>
-            <div className={s.uploadText}>대표 이미지 선택</div>
-            <div className={s.uploadHint}>JPG · PNG · WebP</div>
-          </label>
-          <Button variant="secondary" block disabled={busy} onClick={() => setStep('liveness')}>
-            {busy ? '업로드 중…' : (livenessRequired ? '건너뛰고 라이브 얼굴 확인' : '건너뛰고 본인 확인 마치기')}
-          </Button>
+          {profilePreview ? (
+            <>
+              <img className={s.profilePreview} src={profilePreview.url} alt="선택한 대표 이미지" />
+              <Button variant="primary" block disabled={busy} onClick={submitProfileImage}>
+                {busy ? '업로드 중…' : '이 사진으로 할게요'}
+              </Button>
+              <Button variant="secondary" block disabled={busy} onClick={clearProfileImage}>
+                다시 고르기
+              </Button>
+            </>
+          ) : (
+            <>
+              <label className={s.uploadZone}>
+                <input
+                  type="file"
+                  accept="image/*"
+                  disabled={busy}
+                  className={s.uploadInput}
+                  onChange={(event) => { pickProfileImage(event.target.files?.[0]); event.target.value = ''; }}
+                />
+                <div className={s.uploadIcon}><Icon name="imagePlus" size={20} /></div>
+                <div className={s.uploadText}>대표 이미지 선택</div>
+                <div className={s.uploadHint}>JPG · PNG · WebP</div>
+              </label>
+              <Button variant="secondary" block disabled={busy} onClick={() => setStep('liveness')}>
+                {busy ? '업로드 중…' : (livenessRequired ? '건너뛰고 라이브 얼굴 확인' : '건너뛰고 본인 확인 마치기')}
+              </Button>
+            </>
+          )}
+          {/* 선택 단계(체형·대표이미지)는 서버 상태를 바꾸지 않아 되돌아가도 안전하다. */}
+          <button type="button" className={s.backLink} disabled={busy}
+            onClick={() => { clearProfileImage(); setStep('physique'); }}>
+            이전 · 체형·키
+          </button>
         </div>
       )}
 

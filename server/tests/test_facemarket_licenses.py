@@ -622,6 +622,19 @@ class FakeCursor:
             else:
                 self._result = None
                 self.rowcount = 0
+        elif s.startswith("update fm_licenses set status = 'revoked'"):
+            # 재등록으로 갈아탄 옛 라이선스 정리(같은 모델, 자기 자신 제외).
+            model_id, keep_id = params[:2]
+            rows = [
+                r for r in licenses
+                if r["model_id"] == model_id
+                and r["id"] != keep_id
+                and r["status"] == "reverification_required"
+            ]
+            for r in rows:
+                r["status"] = "revoked"
+            self._many = [{"id": r["id"], "vc_id": r.get("vc_id")} for r in rows]
+            self.rowcount = len(rows)
         elif s.startswith("update fm_models set status = 'verified'"):
             user_did, model_id, enrollment_id = params[:3]
             if self.store.get("final_model_update_misses"):
@@ -678,9 +691,13 @@ class FakeCursor:
             )
             self.rowcount = 1
         elif s.startswith("select l.id::text as id, l.model_id::text as model_id"):
-            # 목록: 소유 모델 경유
+            # 목록: 소유 모델 경유. revoked 는 죽은 카드라 목록에서 빠진다.
             owned = {m["id"] for m in models if m["user_id"] == params[0]}
-            rows = [r for r in licenses if r["model_id"] in owned]
+            rows = [
+                r for r in licenses
+                if r["model_id"] in owned
+                and not ("l.status <> 'revoked'" in s and r["status"] == "revoked")
+            ]
             self._many = [{k: r[k] for k in _LICENSE_KEYS} for r in rows]
         elif s.startswith("select l.face_image_key, l.status"):
             # 게이트: license id + 소유자 조인
@@ -2439,3 +2456,70 @@ def test_enabled_face_features_reject_main_bucket_fallback_in_dev():
     )
     with pytest.raises(RuntimeError, match="R2_FACE_BUCKET"):
         create_app(settings)
+
+
+# ── 재등록으로 갈아탄 옛 라이선스 정리 ────────────────────────────────────────
+# 새 등록을 시작하면 기존 active 라이선스가 reverification_required 로 강등된다. 그런데 새
+# 라이선스가 발급돼도 그 옛 행을 정리하는 코드가 없어, 등록을 다시 할 때마다 목록에 VC 카드가
+# 한 장씩 쌓였다(실측 2026-08-31 prod: 한 모델에 2장). 체인 쪽은 더 나빴다 — 라이선스는 죽었는데
+# 옛 VC 는 폐기되지 않고 유효한 채 남았다.
+
+def _seed_superseded_license(store, *, vc_id="vc:dev:old", user_id="user-1"):
+    """같은 모델에 딸린, 재검증 대기 상태의 옛 라이선스 한 건."""
+    old = dict(store["licenses"][0]) if store["licenses"] else {}
+    old.update(
+        {
+            "id": "11111111-1111-4111-8111-111111111111",
+            "model_id": MODEL_ID,
+            "enrollment_id": "22222222-2222-4222-8222-222222222222",
+            "status": "reverification_required",
+            "vc_id": vc_id,
+        }
+    )
+    store["licenses"].append(old)
+    return old["id"]
+
+
+def test_new_license_revokes_the_superseded_one_and_queues_its_vc(
+    biometric_fm, make_token, holder_stub
+):
+    client, store, _ = biometric_fm
+    old_id = _seed_superseded_license(store)
+    enrollment_id = _seed_license_pending_enrollment(store)
+
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body(enrollment_id),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 201, response.text
+    new_card = response.json()
+    assert new_card["status"] == "active"
+
+    old = next(row for row in store["licenses"] if row["id"] == old_id)
+    assert old["status"] == "revoked", "재등록으로 갈아탄 라이선스는 죽은 채로 남으면 안 된다"
+    # 체인에 남은 옛 VC 도 같이 폐기 큐에 들어가야 한다(라이선스만 죽이면 VC 는 유효한 채 남는다).
+    queued = set(store["revocations"])
+    assert "vc:dev:old" in queued, queued
+    assert new_card["vcId"] not in queued, "방금 발급한 VC 를 폐기하면 안 된다"
+
+
+def test_license_list_hides_revoked_cards(biometric_fm, make_token, holder_stub):
+    client, store, _ = biometric_fm
+    _seed_superseded_license(store)
+    enrollment_id = _seed_license_pending_enrollment(store)
+    created = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body(enrollment_id),
+        headers=_auth(make_token),
+    )
+    assert created.status_code == 201, created.text
+
+    listed = client.get("/v1/facemarket/licenses", headers=_auth(make_token))
+
+    assert listed.status_code == 200, listed.text
+    ids = [card["id"] for card in listed.json()]
+    assert created.json()["id"] in ids
+    assert "11111111-1111-4111-8111-111111111111" not in ids, \
+        "폐기된 라이선스는 카드 목록에 남지 않는다"

@@ -1266,3 +1266,56 @@ test('the terms screen sends the model on to VC issuance from a centered card', 
   assert.match(register, /centeredWizard/);
   assert.doesNotMatch(register, /라이선스 조건 설정 <Icon/);
 });
+
+
+// ── 대표 이미지: 올리기 전에 확인, 그리고 되돌아가기 ──────────────────────────
+// 예전엔 파일을 고르는 순간 업로드하고 다음 단계로 넘어가버려, 잘못 고르면 되돌릴 방법이
+// 아예 없었다(위저드에 뒤로가기가 하나도 없었다).
+
+test('a picked profile image waits for confirmation instead of uploading on select', async () => {
+  const uploads = [];
+  const created = [];
+  const originals = { create: globalThis.URL.createObjectURL, revoke: globalThis.URL.revokeObjectURL };
+  globalThis.URL.createObjectURL = () => { const u = `blob:profile-${created.length}`; created.push(u); return u; };
+  globalThis.URL.revokeObjectURL = () => {};
+  const harness = await modelComponentHarness({
+    initialStates: ['profile', { id: 'enrollment-1', status: 'liveness_pending' }, null, '', false, false],
+    api: {
+      uploadProfileImage: async (args) => { uploads.push(args); return {}; },
+      getCurrentEnrollment: () => new Promise(() => {}),
+    },
+  });
+  try {
+    let tree = harness.render();
+    const input = findTree(tree, (node) => node.type === 'input' && node.props?.type === 'file');
+    assert.ok(input, 'the profile step must expose a file input');
+    input.props.onChange({ target: { files: [{ name: 'cover.jpg' }], value: 'x' } });
+    await flush();
+    assert.deepEqual(uploads, [], 'picking a file must not upload it yet');
+
+    tree = harness.render();
+    const preview = findTree(tree, (node) => node.type === 'img' && node.props?.src === created[0]);
+    assert.ok(preview, 'the picked image must be shown back before upload');
+    const confirm = findTree(
+      tree,
+      (node) => node.type === 'Button' && node.props?.children === '이 사진으로 할게요',
+    );
+    assert.ok(confirm, 'the model confirms the picked image explicitly');
+
+    await confirm.props.onClick();
+    await flush();
+    assert.equal(uploads.length, 1, 'confirming uploads exactly once');
+    assert.equal(harness.runtime.states[0], 'liveness', 'confirming advances to the next step');
+  } finally {
+    globalThis.URL.createObjectURL = originals.create;
+    globalThis.URL.revokeObjectURL = originals.revoke;
+    await harness.close();
+  }
+});
+
+test('the optional steps can go back so a wrong photo is fixable', () => {
+  const source = read('../../src/features/model/ModelRegister.jsx');
+  assert.match(source, /이전 · 체형·키/);
+  assert.match(source, /이전 · 얼굴 사진/);
+  assert.match(source, /setStep\('photos'\)/);
+});
