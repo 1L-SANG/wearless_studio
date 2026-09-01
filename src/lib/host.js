@@ -16,3 +16,15 @@ function detectFacemarket() {
 }
 
 export const IS_FACEMARKET = detectFacemarket();
+
+const matchesRoute = (pathname, route) => pathname === route || pathname.startsWith(`${route}/`);
+
+export function domainRouteRedirect(pathname, isFacemarket = IS_FACEMARKET) {
+  if (isFacemarket) {
+    const allowed = pathname === '/'
+      || ['/model', '/pricing', '/credits/history', '/payments', '/verify']
+        .some((route) => matchesRoute(pathname, route));
+    return allowed ? null : '/model/register';
+  }
+  return matchesRoute(pathname, '/model') ? '/create/input' : null;
+}
