@@ -279,6 +279,9 @@
 .flowWizard { --fm-wizard-max: 68rem; }
 
 .pageEyebrow {
+  /* <span> 이라 블록으로 세워야 아래 margin 이 먹는다(요소를 <p> 에서 바꾼 이유는
+     ModelRegister.jsx 의 주석 참고 — `.fm-theme .page-head p` 와의 특이도 충돌). */
+  display: block;
   margin: 0 0 0.9rem;
   color: var(--fm-muted);
   font: 500 0.76rem/1 var(--font-body);
@@ -624,5 +627,5 @@
   border: 1px solid var(--fm-line);
   border-radius: var(--fm-card-radius);
   background: var(--fm-card-bg);
-  box-shadow: none;
+  box-shadow: var(--fm-elev-card);
 }

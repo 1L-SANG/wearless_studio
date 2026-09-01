@@ -671,10 +671,18 @@ export function ModelRegister() {
     );
   }
 
+  // 레일을 한 번만 계산한다 — 아래에서 "레일이 있는가"로 레이아웃을 가르기 때문에
+  // 렌더 중 두 번 부르면 두 판단이 어긋날 수 있다.
+  const rail = renderStepRail(step);
+
   return (
     <div className={`wizard ${s.flowWizard}`}>
       <div className="page-head">
-        <p className={s.pageEyebrow}>모델 등록</p>
+        {/* <p> 가 아니라 <span> 이다. `.fm-theme .page-head p`(0,2,1)가 해시된 단일
+            클래스 .pageEyebrow(0,1,0)를 이겨서, <p> 로 두면 eyebrow 가 리드문과 같은
+            크기·굵기로 렌더돼 eyebrow→제목→리드 위계가 통째로 사라진다.
+            요소를 갈라 그 충돌을 아예 없앤다(ModelLicense.jsx 도 같은 이유로 span 이다). */}
+        <span className={s.pageEyebrow}>모델 등록</span>
         <h1>모델 등록 진행 중</h1>
         <p>동의, 모바일 신분증 확인, 얼굴 사진, 라이브 촬영을 순서대로 진행해요.</p>
       </div>
@@ -684,8 +692,11 @@ export function ModelRegister() {
           길어질수록(사진 3장·체형 매트릭스) 레일이 화면 밖으로 밀려 그 요구가 깨졌다.
           세로 레일을 sticky 로 두면 스크롤과 무관하게 위치가 남는다.
           좁은 화면에서는 CSS 가 다시 가로띠로 접고 상단에 sticky 로 붙인다. */}
-      <div className={s.flowGrid}>
-        <aside className={s.railColumn}>{renderStepRail(step)}</aside>
+      {/* 레일이 없는 단계('failed' 는 RAIL_INDEX 에 없다)에서는 그리드도 접는다.
+          안 그러면 12rem 짜리 빈 열이 남고, 모바일에서는 아무것도 안 든 sticky 바가
+          화면 위에 붙는다. */}
+      <div className={rail ? s.flowGrid : undefined}>
+        {rail ? <aside className={s.railColumn}>{rail}</aside> : null}
         <div className={s.flowBody}>
 
       {step === 'consent' && (

@@ -9,8 +9,9 @@
    만든 이유 자체가 없어진다. 인증 라우트로는 각 페이지 끝 CTA 가 보낸다.
    ============================================================= */
 import { useEffect, useRef, useState } from 'react';
-import { Link, NavLink } from 'react-router-dom';
+import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { Icon } from '@/components/ui.jsx';
+import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import s from './FacemarketLanding.module.css';
 
 const NAV = [
@@ -29,6 +30,20 @@ const DESKTOP_QUERY = '(min-width: 48rem)';
 export function LandingHeader({ onPrimary, primaryLabel }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const headerRef = useRef(null);
+  const { session, signOut } = useAuth();
+  const navigate = useNavigate();
+
+  /* 로그아웃은 이 상단바가 유일한 출구다. facemarket 의 /model/* 은 셀러 크롬
+     (shell.jsx 의 ProfileMenu)을 쓰지 않으므로, 여기 없으면 로그인한 모델이 세션을
+     닫을 방법이 UI 에 하나도 없다.
+     착지점을 먼저 '/' 로 옮기고 세션을 끊는다 — 순서를 바꾸면 /model/* 에 선 채로
+     세션이 사라져 RequireAuth 가 FacemarketLoginPrompt 를 그리고 그 effect 가 로그인
+     모달을 연다(방금 로그아웃한 사람에게 로그인 창). shell.jsx 의 로그아웃과 같은 규율. */
+  const handleSignOut = () => {
+    setMenuOpen(false);
+    navigate('/');
+    signOut?.();
+  };
 
   // 메뉴를 닫는 길을 세 개 둔다. 토글 버튼만으로는 갇히는 경우가 있었다:
   // (1) 데스크톱 폭이 되면 햄버거가 display:none 이라 누를 대상 자체가 없어진다,
@@ -85,6 +100,12 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
           <button className={s.headerCta} onClick={onPrimary} type="button">
             {primaryLabel}
             <Icon name="arrowRight" size={16} stroke={2} />
+          </button>
+        ) : null}
+        {session ? (
+          <button className={s.headerQuiet} onClick={handleSignOut} type="button">
+            <Icon name="logOut" size={16} stroke={1.8} />
+            로그아웃
           </button>
         ) : null}
         <button

@@ -501,3 +501,21 @@
 .footerBrand { margin: 0 0 0.4rem; font: 600 0.95rem/1.4 var(--font-body); }
 .footerNote { margin: 0; color: var(--fm-muted); font: 400 0.85rem/1.6 var(--font-body); }
 .footerLink { color: var(--fm-accent); }
+
+/* 상단바의 조용한 보조 액션(로그아웃). 주 CTA(.headerCta)와 나란히 서지만 잉크 pill 이
+   아니라 테두리만 있는 형태다 — 로그아웃이 이 화면에서 권장 행동이 아니기 때문이다.
+   facemarket 의 /model/* 은 셀러 크롬(ProfileMenu)을 안 쓰므로 이게 유일한 출구다. */
+.headerQuiet {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.62rem 0.95rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--fm-muted);
+  font: 500 0.85rem/1 var(--font-body);
+  cursor: pointer;
+  transition: color 140ms ease, background 140ms ease;
+}
+.headerQuiet:hover { background: #fff; color: var(--fm-ink); }
