@@ -91,7 +91,8 @@ VC                라이선스를 담은 검증 가능한 자격증명. 체인�
 - 성공하면 토큰 + **신분증 초상**(`data.dlphotoimage`, HEX JPEG)을 받는다
 - 초상은 **메모리(ref)에만** 둔다. localStorage·sessionStorage·로그 금지
 - 서버는 CI 를 HMAC-SHA256(pepper) 해서 저장한다. 원문 CI 는 저장하지 않는다
-- ⚠️ 현재 prod 는 us-east-1 이고 OACX 는 한국 IP 전용이라 해외 IP 에서 실패한다(§12)
+- ⚠️ OACX 는 한국 IP 전용이고 prod api 는 us-east-1 이다. 서울 리전 프록시(`CX_TRANS_BASE_URL`
+  → `fm-cx-proxy`)로 우회해 지금은 통과한다 — **그 env 를 지우면 이 단계가 다시 전원 차단된다**(§12)
 
 ### STEP 3/7 — 얼굴 사진 3장
 `src/features/model/ModelFaceUpload.jsx`. 순서 고정: **정면 → 45도(반측면) → 측면(옆모습)**
@@ -275,7 +276,7 @@ Gemini → GPT 폴백. 판정 불가면 **503 으로 막는다**(검증 안 된 
 ### 알려진 제약
 | 항목 | 내용 |
 |---|---|
-| **OACX 지역 차단** | prod 가 us-east-1 이라 한국 IP 전용인 OACX 가 막힌다. 해외 IP 허용 요청이 미해결 |
+| ~~**OACX 지역 차단**~~ | **해소됨(2026-09-01 확인).** us-east-1 egress 가 RaonSecure 한국 IP 방화벽에 막히던 건, 서울 리전 프록시(`fm-cx-proxy`, API GW→Lambda)로 우회해 해결됐다 — `copilot/api/manifest.yml` 의 `CX_TRANS_BASE_URL`. **그 env 가 지워지면 기본값(cx.raonsecure.co.kr 직접)으로 떨어져 다시 막힌다.** 2026-08-30·08-31 prod 신원확인 2건 통과로 실증 |
 | **발급 속도** | holder 콜드부트 ~2분. 프리워밍으로 가리지만 근본 해결은 아니다. `fm_vc_issue elapsed_s` 계측 로그로 판단 중 |
 | **발급 동시성** | holder 호출이 DB 락 밖이라 같은 라이선스에 동시 요청이 오면 issue-vc 가 두 번 나갈 수 있다. holder 멱등키에 의존하는데 **실측된 적 없다** |
 | **체형 사진 구분력** | 전신 컷이라 카드 크기(106px)에서 볼륨 차이가 약하다. 무릎 위 크롭 + 붙는 옷으로 재생성하면 개선 |

@@ -1,0 +1,397 @@
+/* 랜딩 전용 토큰. 앱 전역 토큰(tokens.css)은 건드리지 않고 여기서만 덮는다 —
+   spotlight 원본의 차가운 오프화이트와 파랑이 앱의 순백·링크블루와 다르다. */
+.shell {
+  --fm-page-bg: #edf3f8;
+  --fm-ink: #10151a;
+  /* 원본 --muted 는 #727c86 인데, 이 페이지 배경(#edf3f8, .record 위에선 #e4ecf8)에서
+     명도비 3.8:1 로 WCAG AA 4.5:1 에 못 미친다. 본문 보조 텍스트(리드·카드 본문·고지)가
+     전부 이 토큰을 쓰므로 같은 한색 계열을 유지한 채 한 단계만 어둡게 잡았다 —
+     #5f6b76 은 가장 어두운 배경(#e4ecf8)에서도 4.57:1, 흰 카드 위에서 5.45:1 이다. */
+  --fm-muted: #5f6b76;
+  --fm-line: rgba(16, 21, 26, 0.12);
+  --fm-accent: #2d63ff;
+  --fm-stage-height: clamp(19rem, 25vw, 32rem);
+  --fm-pad: clamp(1.25rem, 3.1vw, 4.25rem);
+
+  position: relative;
+  min-height: 100vh;
+  padding: 0 var(--fm-pad) 4rem;
+  color: var(--fm-ink);
+  background:
+    radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.72), transparent 32rem),
+    linear-gradient(180deg, #f8fbfd 0%, var(--fm-page-bg) 100%);
+  font-family: var(--font-body);
+}
+
+/* 스테이지 높이는 원본 styles.css 의 미디어쿼리 세 개를 그대로 가져온다(:437/:455/:565).
+   값 자체가 예쁘라고 있는 게 아니다 — 스테이지의 폭/높이 비가 metricsForAspect 의
+   버킷(폰 <1.1 / 태블릿 <2.3 / 데스크톱)을 고르기 때문에, 기본값 한 줄만 두면
+   폰에서 태블릿 버킷, 태블릿에서 데스크톱 버킷이 잡혀 카드 크기·간격·페이드가
+   한 단계씩 어긋난다. sceneLayout.js 상수를 원본 그대로 보존한 의미가 여기서 난다. */
+@media (max-width: 1199px) {
+  .shell { --fm-stage-height: clamp(22rem, 51vw, 34rem); }
+}
+
+/* 폰은 vw 가 아니라 78vh 기준이다 — 좁은 화면에서 스테이지가 세로로 커져야
+   aspect 가 1.1 밑으로 떨어지고 폰 버킷(cardWidth 2.05, depthScale 0.55)이 잡힌다. */
+@media (max-width: 767px) {
+  .shell { --fm-stage-height: clamp(24rem, 78vh, 35rem); }
+}
+
+/* 낮고 넓은 창(노트북 가로·태블릿 가로)에서 스테이지가 화면을 다 먹지 않게. */
+@media (max-height: 699px) and (min-width: 768px) {
+  .shell { --fm-stage-height: clamp(18rem, 34vw, 29rem); }
+}
+
+/* ---- 상단바 ---- */
+.header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  height: clamp(4.5rem, 8vw, 6.5rem);
+}
+
+.brand { display: inline-flex; align-items: center; gap: 0.55rem; color: inherit; text-decoration: none; }
+.brandLogo { width: 1.4rem; height: 1.4rem; }
+.brandName { font: 600 1.05rem/1 var(--font-body); letter-spacing: -0.01em; }
+
+.nav { display: none; gap: 1.6rem; }
+.navLink {
+  padding: 0.35rem 0;
+  border: 0;
+  background: none;
+  color: var(--fm-muted);
+  font: 500 0.92rem/1 var(--font-body);
+  cursor: pointer;
+  transition: color 140ms ease;
+}
+.navLink:hover { color: var(--fm-ink); }
+
+.headerActions { display: inline-flex; align-items: center; gap: 0.6rem; }
+
+.headerCta,
+.heroCta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--fm-ink);
+  color: #fff;
+  font: 500 0.92rem/1 var(--font-body);
+  cursor: pointer;
+  transition: opacity 140ms ease;
+}
+.headerCta { padding: 0.68rem 1.1rem; }
+.heroCta { padding: 0.95rem 1.6rem; font-size: 1rem; }
+.headerCta:hover, .heroCta:hover { opacity: 0.86; }
+
+.menuButton {
+  display: inline-flex;
+  padding: 0.4rem;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.mobileNav {
+  position: absolute;
+  inset: 100% 0 auto;
+  z-index: 20;
+  display: grid;
+  gap: 0.4rem;
+  padding: 1rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 1rem;
+  background: #fff;
+  box-shadow: 0 1.4rem 3rem rgba(16, 21, 26, 0.14);
+}
+
+@media (min-width: 48rem) {
+  .nav { display: inline-flex; }
+  .menuButton { display: none; }
+  /* 햄버거가 사라지는 폭에서는 드롭다운도 같이 사라져야 한다. 안 그러면 메뉴를 연 채
+     창을 넓혔을 때(가로 회전 포함) 패널만 남고 닫을 버튼이 없어 갇힌다.
+     상태 자체는 LandingHeader 의 matchMedia 리스너가 정리한다 — 여기 규칙은
+     그 사이 한 프레임도 어긋나 보이지 않게 하는 보험이다. */
+  .mobileNav { display: none; }
+}
+
+/* ---- 히어로 ---- */
+.hero { padding: clamp(2rem, 6vw, 4.5rem) 0 clamp(1rem, 3vw, 2rem); text-align: center; }
+.eyebrow {
+  margin: 0 0 1rem;
+  color: var(--fm-muted);
+  font: 500 0.76rem/1 var(--font-body);
+  letter-spacing: 0.22em;
+}
+.heroTitle {
+  margin: 0 0 1.1rem;
+  font-family: var(--font-serif);
+  font-size: clamp(2.6rem, 8vw, 5.5rem);
+  font-weight: 600;
+  line-height: 1.02;
+  letter-spacing: -0.015em;
+}
+.heroLead {
+  max-width: 34rem;
+  margin: 0 auto 1.8rem;
+  color: var(--fm-muted);
+  font: 400 clamp(0.95rem, 1.4vw, 1.05rem)/1.7 var(--font-body);
+}
+
+/* ---- 캐러셀 ---- */
+/* 스테이지는 원본 .gallery-band 처럼 full-bleed 다. 셸 좌우 패딩을 음수 마진으로
+   되돌려 스테이지 폭 = 뷰포트 폭으로 만든다 — 패딩 안에 갇히면 폭이 줄어 종횡비가
+   커지고(폰 390px 에서 1.15), 위 미디어쿼리로 맞춰 놓은 버킷이 다시 틀어진다. */
+.gallery {
+  margin-inline: calc(var(--fm-pad) * -1);
+  padding: clamp(1rem, 3vw, 2rem) 0 clamp(2rem, 5vw, 4rem);
+}
+
+/* full-bleed 는 스테이지만이다 — 바·고지는 본문 열로 다시 들여쓴다. */
+.galleryBar,
+.galleryNotice { padding-inline: var(--fm-pad); }
+
+/* margin-top 이 0.7rem 인 건 스테이지가 아래로 4rem 여유를 갖게 됐기 때문이다
+   (CarouselStage.module.css 의 --fm-stage-slack-bottom — 카드 그림자가 스테이지
+   경계에서 수평선으로 잘리지 않게 둔 자리). 그 4rem 중 3.3rem 은 그림자가 채우고
+   0.7rem 이 빈다. 여기에 0.7rem 을 더해 카드 그림자 끝과 바 사이가 1.4rem —
+   여유를 넣기 전의 리듬 그대로다. 1.4rem 을 그대로 두면 바가 4rem 만큼 떠 있다. */
+.galleryBar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 0.7rem;
+}
+
+.galleryArrow {
+  display: inline-flex;
+  padding: 0.55rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--fm-ink);
+  cursor: pointer;
+}
+.galleryArrow:hover { background: #fff; }
+
+/* 점 14개에 24px 히트 영역이면 336px 다. 좁은 화면에서 한 줄에 들어가는지 계산해 두자:
+   화살표 하나가 20(아이콘) + 0.55rem×2(패딩) + 1px×2(테두리) = 39.6px 이고 바의
+   gap 이 16px×2 이므로, 점에 남는 폭은 (뷰포트 − 좌우 패딩 20px×2) − 79.2 − 32
+   = 뷰포트 − 151.2px 다. 336px 를 담으려면 뷰포트가 487.2px 이상이어야 한다.
+   그보다 좁으면 가로 스크롤바를 만드는 대신 줄바꿈으로 흘린다 — 페이지가 옆으로
+   밀리는 것보다 점 바가 두 줄이 되는 게 낫다. flex-wrap 이 그 안전장치고,
+   아래 미디어쿼리가 접히는 모양을 7 + 7 로 잡아준다. */
+.dots {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0;
+}
+
+/* 10.5rem = 24px × 7. 폭을 7칸으로 묶어 9 + 5 로 지저분하게 접히는 대신 7 + 7 로
+   접는다. 320px(가장 좁은 실사용 폭)에서도 점에 168.8px 가 남아 7칸이 들어간다. */
+@media (max-width: 30.5rem) {
+  .dots { max-width: 10.5rem; }
+}
+
+/* 보이는 점은 원본 크기(0.42rem)를 유지하되, 누르는 대상은 버튼 박스다.
+   6.7px 정사각형은 손가락 접촉면(~9mm)으로 이웃과 구분해 누를 수 없었다.
+   색 점을 ::before 로 내리고 버튼을 24×24 로 잡아 WCAG 2.2 SC 2.5.8(최소 타깃
+   24×24 CSS px)을 크기로 만족시킨다 — gap 이 0 이라 '간격 예외'(타깃 중심에 그린
+   24px 원이 서로 안 겹칠 것)는 성립할 수 없어서, 폭을 줄이는 절충은 불가능하다.
+   접히더라도 24px 를 지키는 쪽이 맞다(줄바꿈 계산은 .dots 주석 참고). */
+.dot, .dotActive {
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.dot::before, .dotActive::before {
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 999px;
+  content: '';
+  transition: background 160ms ease, transform 160ms ease;
+}
+.dot::before { background: rgba(16, 21, 26, 0.2); }
+.dotActive::before { background: var(--fm-accent); transform: scale(1.5); }
+
+/* 고지는 스테이지 **위**에 있다(GallerySection.jsx). 아래에 두면 모바일에서 스테이지가
+   화면을 다 채워 고지가 뷰포트 밖으로 밀린다 — '가상 모델 예시' 라는 말이 사진과 같은
+   화면에 있어야 하는 고지라 그건 못 쓴다. 그래서 여백도 위가 아니라 아래다. */
+.galleryNotice {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  margin: 0 0 0.9rem;
+  color: var(--fm-muted);
+  font: 400 0.8rem/1.5 var(--font-body);
+}
+
+/* ---- 공통 섹션 ---- */
+.section { padding: clamp(3rem, 8vw, 6.5rem) 0; border-top: 1px solid var(--fm-line); }
+/* 섹션 대제목은 셋 다 한글이다('내 얼굴, 내가 정한 조건으로만' 등). --font-serif 는
+   Cormorant 인데 tokens.css:51 이 못박은 대로 **라틴 전용**이라(폰트 파일 167KB —
+   한글 11,172자가 들어갈 수 없는 크기다) 여기 쓰면 한글이 폴백으로 떨어진다.
+   Georgia·Times New Roman 에도 한글이 없어 결국 OS generic serif 까지 내려가고,
+   페이지에서 가장 큰 글자가 윈도우는 바탕, 맥은 Times 계열, 안드로이드는 Noto Serif CJK
+   로 제각각 그려진다 — 브랜드 통제 밖의 서체다.
+
+   그래서 세리프는 영문 히어로 한 줄(.heroTitle "Your face, your terms.")에만 남기고
+   한글 제목은 Pretendard 로 그린다. 세리프가 페이지에 딱 한 번만 나오면 그 대비는
+   사고가 아니라 의도로 읽힌다 — 영문 브랜드 선언은 세리프, 한글 설명은 산세리프.
+   설계 스펙(:250)이 "Cormorant(디스플레이 세리프) + Pretendard(한글 본문)" 두 벌만
+   쓰기로 한 것과도 같은 결론이다.
+
+   한글 세리프 대안인 Gowun Dodum(--font-soft)은 두 가지 이유로 뺐다. (1) 제목 세 개를
+   위해 이 랜딩에서만 446KB 를 더 받아야 하고, (2) Regular(400) 한 굵기뿐이라
+   3.2rem 짜리 제목에 브라우저 합성 볼드가 걸린다(tokens.css:21 이 경고하는 그 상황).
+   본문(.sectionLead, 400)과 갈라지는 일은 크기·굵기 600·자간 -0.02em 이 맡는다.
+   행간은 1.1 → 1.25 로 연다 — 라틴 대문자보다 세로로 꽉 찬 한글이 모바일에서 두 줄로
+   접힐 때(1.9rem × 15자는 폰 본문 폭을 넘는다) 1.1 이면 위아래 줄이 서로 닿는다. */
+.sectionTitle {
+  margin: 0 0 0.9rem;
+  font-family: var(--font-body);
+  font-size: clamp(1.9rem, 4.5vw, 3.2rem);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+.sectionLead {
+  max-width: 38rem;
+  margin: 0 0 2.4rem;
+  color: var(--fm-muted);
+  font: 400 clamp(0.92rem, 1.3vw, 1rem)/1.75 var(--font-body);
+}
+
+.cardGrid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+}
+
+.card {
+  display: grid;
+  gap: 0.6rem;
+  align-content: start;
+  padding: 1.5rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 1.1rem;
+  background: rgba(255, 255, 255, 0.62);
+}
+.cardTitle { margin: 0; font: 600 1rem/1.4 var(--font-body); }
+.cardBody { margin: 0; color: var(--fm-muted); font: 400 0.9rem/1.65 var(--font-body); }
+
+/* ---- 검증 가능한 기록 ---- */
+.record {
+  display: grid;
+  gap: 2rem;
+  margin-top: 2.5rem;
+  padding: clamp(1.6rem, 4vw, 2.8rem);
+  border-radius: 1.4rem;
+  background: rgba(45, 99, 255, 0.05);
+}
+.recordHead { max-width: 40rem; }
+.recordTitle { margin: 0 0 0.7rem; font: 600 clamp(1.15rem, 2vw, 1.5rem)/1.35 var(--font-body); }
+.recordLead { margin: 0; color: var(--fm-muted); font: 400 0.92rem/1.7 var(--font-body); }
+
+.recordSteps {
+  display: grid;
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  list-style: none;
+}
+.recordStep {
+  display: grid;
+  gap: 0.45rem;
+  align-content: start;
+  padding: 1.15rem;
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.8);
+}
+.recordNumber { color: var(--fm-accent); font: 600 0.72rem/1 var(--font-body); letter-spacing: 0.14em; }
+.recordStepTitle { margin: 0; font: 600 0.95rem/1.4 var(--font-body); }
+.recordStepBody { margin: 0; color: var(--fm-muted); font: 400 0.85rem/1.6 var(--font-body); }
+
+/* ---- 모델 등록 레일 ---- */
+.rail {
+  display: grid;
+  gap: 0.7rem;
+  margin: 0 0 2.2rem;
+  padding: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr));
+  list-style: none;
+  counter-reset: rail;
+}
+.railStep {
+  display: grid;
+  gap: 0.3rem;
+  align-content: start;
+  padding: 1rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 0.85rem;
+  background: rgba(255, 255, 255, 0.62);
+}
+.railNumber {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 999px;
+  background: var(--fm-ink);
+  color: #fff;
+  font: 600 0.75rem/1 var(--font-body);
+}
+.railLabel { font: 600 0.95rem/1.4 var(--font-body); }
+.railNote { color: var(--fm-muted); font: 400 0.8rem/1.5 var(--font-body); }
+
+/* ---- 모델 정보(프라이버시 하드룰) ---- */
+.ruleList {
+  display: grid;
+  gap: 0.9rem;
+  margin: 0 0 2.2rem;
+  padding: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr));
+  list-style: none;
+}
+.rule {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  padding: 1.2rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.62);
+}
+.ruleTitle { margin: 0 0 0.3rem; font: 600 0.95rem/1.45 var(--font-body); }
+.ruleBody { margin: 0; color: var(--fm-muted); font: 400 0.87rem/1.65 var(--font-body); }
+
+.exit { padding: 1.5rem; border-radius: 1rem; background: rgba(45, 99, 255, 0.05); }
+.exitTitle { margin: 0 0 0.5rem; font: 600 1rem/1.4 var(--font-body); }
+.exitBody { margin: 0; color: var(--fm-muted); font: 400 0.9rem/1.7 var(--font-body); }
+
+/* ---- 푸터 ---- */
+.footer {
+  display: grid;
+  gap: 0.4rem;
+  padding: clamp(2.5rem, 6vw, 4rem) 0 0;
+  border-top: 1px solid var(--fm-line);
+}
+.footerBrand { margin: 0 0 0.4rem; font: 600 0.95rem/1.4 var(--font-body); }
+.footerNote { margin: 0; color: var(--fm-muted); font: 400 0.85rem/1.6 var(--font-body); }
+.footerLink { color: var(--fm-accent); }

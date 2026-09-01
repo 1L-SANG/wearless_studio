@@ -1,0 +1,102 @@
+/* 카드가 모두 같은 그리드 칸에 겹쳐 놓이고, transform 이 각자를 밀어낸다.
+   perspective 는 인라인으로 들어온다(스테이지 높이에서 계산). */
+.stage {
+  /* 위아래 여유. overflow 클립은 padding 상자에서 일어나므로 이만큼이 그림자·확대된
+     카드가 잘리지 않고 그려질 자리다.
+     아래 4rem: 그림자 `0 1.6rem 3.4rem` 은 카드 아래로 1.6rem + 3.4rem/2 = 3.3rem 까지
+     뻗고, 원근으로 커진 바깥 카드와 rotateZ 기울기가 0.5rem 쯤 더 넘친다.
+     위 1rem: 그림자는 위로 0.1rem 밖에 안 가고 카드 넘침만 받아내면 된다.
+     이 여유가 없으면 스테이지 경계에서 모든 카드의 그림자가 수평선 하나로 끊긴다. */
+  --fm-stage-slack-top: 1rem;
+  --fm-stage-slack-bottom: 4rem;
+
+  position: relative;
+  display: grid;
+  place-items: center;
+  /* 카드가 투영되는 상자는 콘텐츠 상자다. 전역 리셋이 box-sizing: border-box 라
+     그대로 두면 위아래 여유만큼 투영 높이가 줄어든다. */
+  box-sizing: content-box;
+  /* min-height 가 아니라 고정 height 인 게 중요하다. min-height 면 카드가 그리드 행을
+     밀어올리고 그 높이가 ResizeObserver → setState → 카드 크기로 되돌아오는 되먹임이
+     생겨, 첫 로드에 스테이지 높이가 두세 번 눈에 띄게 튄다. */
+  height: var(--fm-stage-height);
+  padding: var(--fm-stage-slack-top) 0 var(--fm-stage-slack-bottom);
+  /* 소실점은 테두리 상자 기준이라, 위아래 여유가 다르면 기본값 50% 가 카드 격자 중심에서
+     벗어나 투영이 뒤틀린다(cssProjection 의 불변식은 소실점이 격자 중심일 때만 성립).
+     콘텐츠 상자 중심을 길이로 다시 찍어준다. */
+  perspective-origin: 50% calc(var(--fm-stage-slack-top) + var(--fm-stage-height) / 2);
+  overflow: hidden;      /* 좌우는 잘려야 한다 — 아크 양끝이 페이지 폭을 넘어간다 */
+  touch-action: pan-y;   /* 세로 스크롤을 뺏지 않는다 — 랜딩은 한 장 스크롤 페이지다 */
+  user-select: none;
+  outline: none;
+}
+
+.stage:focus-visible {
+  outline: 2px solid var(--fm-accent);
+  outline-offset: -4px;
+}
+
+.card {
+  grid-area: 1 / 1;
+  position: relative;
+  padding: 0;
+  border: 0;
+  border-radius: 5.5%;          /* 원본 셰이더의 uRadius 0.055 */
+  background: transparent;
+  overflow: hidden;
+  cursor: inherit;
+  box-shadow: 0 1.6rem 3.4rem rgba(24, 34, 46, 0.34);
+  /* 첫 페인트 방어. ResizeObserver 가 스테이지 크기를 주기 전까지 카드에는 인라인 크기도
+     transform 도 없다 — 기본값이 없으면 14장이 이미지 고유 크기(360×450)로 한 칸에
+     불투명하게 겹쳐 한 프레임 번쩍인다. 크기는 데스크톱 비율(2.3 / 3.656 ≈ 63%)로 미리
+     잡아두고, 보이는 건 rAF paint() 가 인라인으로 켠 뒤부터다. */
+  height: 63%;
+  aspect-ratio: 1.64 / 2.3;
+  opacity: 0;
+  visibility: hidden;
+}
+
+/* will-change 는 애니메이션이 실제로 도는 동안에만 켠다(CarouselStage 가 data-animating 을
+   토글한다). 클래스에 상시로 두면 화면에 한 번도 안 나오는 카드까지 합성 레이어를 물고
+   있고, 캐러셀이 뷰포트를 벗어나도 해제되지 않는다. */
+.stage[data-animating='true'] .card {
+  will-change: transform, opacity;
+}
+
+.card:focus-visible {
+  outline: 2px solid var(--fm-accent);
+  outline-offset: 3px;
+}
+
+.photo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;   /* 이미지 기본 드래그가 포인터 캡처를 가로채지 않게 */
+}
+
+.badge {
+  position: absolute;
+  top: 0.85rem;
+  left: 1rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: rgba(255, 255, 255, 0.92);
+  font: 500 0.8rem/1 var(--font-body);
+  letter-spacing: 0.06em;
+}
+
+.badgeNumber {
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+
+/* 사진 위 아무 색에서나 읽혀야 하는 고지라 글자 그림자가 아니라 알약 배경을 깐다. */
+.badgeNotice {
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(16, 21, 26, 0.62);
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+}

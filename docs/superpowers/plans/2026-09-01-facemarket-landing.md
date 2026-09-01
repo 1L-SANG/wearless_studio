@@ -1,8 +1,27 @@
 # FaceMarket 랜딩페이지 구현 계획
 
+> **상태: 구현 완료 (2026-09-01). 이 문서는 착수 시점의 계획이고, 아래 코드 블록 몇 개는
+> 실제로 머지된 코드와 다르다.** 구현이 다섯 라운드의 감사·수리를 거치며 갈라졌다. 갈라진
+> 자리에는 그 자리에 `> **[구현과 다름]**` 블록을 달아 뒀고, 전체 목록은 문서 끝
+> [§Self-Review > 계획과 구현이 갈라진 곳](#계획과-구현이-갈라진-곳-감사-후-갱신)에 있다.
+> **이 계획서의 코드 블록을 복사해 되돌리지 마라 — 그중 하나(Task 4 Step 5)는 이 도메인의
+> 로그인을 통째로 깨뜨린 critical 버그였다.** 현행 설계의 정본은 스펙 문서다.
+
+> ## ✅ 한때 출시 게이트였던 것 — 해소됨 (2026-09-01)
+>
+> 이 자리에 "prod api 가 us-east-1 이라 OACX 가 한국 IP 방화벽에 막혀 등록 STEP 2 에서
+> 전원이 차단되니 공개하지 마라"는 게이트가 적혀 있었다. **사실이 아니었다.**
+> `documents/FACEMARKET_PRD.md` §12 표가 배포 설정보다 오래된 것이었고, 실제로는
+> `copilot/api/manifest.yml` 의 `CX_TRANS_BASE_URL` 이 서울 리전 프록시(`fm-cx-proxy`,
+> API GW→Lambda)로 이미 우회한다. 2026-08-30·08-31 prod 신원확인 2건 통과로 실증했다.
+> 즉 Task 7 의 "일곱 단계면 끝납니다"는 원래부터 맞는 말이었다.
+>
+> **다만 그 우회는 env 값 하나에 매달려 있다** — 지워지면 기본값(CX 직접 호출)으로 떨어져
+> 2단계가 다시 막힌다. 자세한 내용과 교훈은 스펙 문서 맨 위 §해소됨 절에 있다.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** `facemarket.wearless.kr` 루트에 모델 대상 랜딩페이지를 만든다. 지금 그 자리는 랜딩 없이 `/model/register` 로 직행한다.
+**Goal:** `facemarket.wearless.kr` 루트에 모델 대상 랜딩페이지를 만든다. 이 작업 전까지 그 자리는 랜딩 없이 `/model/register` 로 직행했다.
 
 **Architecture:** spotlight-webgl-gallery 프로토타입의 캐러셀을 CSS 3D 로 재구현해(three 없이) 랜딩 한 장에 얹는다. 상단바 세 항목은 실제 라우트가 아니라 같은 페이지 섹션 앵커다. 랜딩은 `ChromeLayout` 밖 독립 surface 이고, 로그인 복귀 경로(`wl_postLogin`) 소비를 `RootRedirect` 에게서 이어받는다.
 
@@ -20,8 +39,8 @@
 - **테스트는 `node:test` + `node:assert/strict`**, 파일은 `tests/frontend/*.test.mjs`, 실행은 `pnpm test:frontend`. 새 테스트 러너를 들이지 않는다. 렌더 테스트 인프라는 이 레포에 없다 — DOM 상호작용은 브라우저에서 육안 확인한다.
 - **패키지 매니저는 pnpm** (`pnpm-lock.yaml`).
 - **얼굴 프라이버시 하드룰**(`documents/FACEMARKET_PRD.md` §10): 랜딩은 `public/models` 정적 가상모델 이미지만 쓴다. 실제 등록 모델의 얼굴을 `<img src>` 로 렌더하는 코드를 절대 넣지 않는다. `listModels`·`fetchLicenseFaceUrl` 을 랜딩에서 호출하지 않는다.
-- **카드 메타는 번호만.** 이름·연도·평점·카테고리를 지어내지 않는다. 이건 사용자가 따로 지시할 항목이다.
-- **"예시 이미지 — 실제 등록 모델이 아닙니다"** 고지가 캐러셀 근처에 상시 보여야 한다.
+- **카드 메타는 번호만.** 이름·연도·평점·카테고리를 지어내지 않는다. 이건 사용자가 따로 지시할 항목이다. (구현: 번호 옆에 '예시' 배지가 함께 박힌다 — 그건 **메타가 아니라 고지**다. 이미지만 잘려 공유돼도 가상 모델이라는 사실이 같이 나가야 해서 카드 안에 둔다. `facemarket-landing-models.test.mjs` 가 데이터 쪽 메타가 `id/src/alt` 밖으로 늘지 않는지 지킨다.)
+- **"예시 이미지 — 실제 등록 모델이 아닙니다"** 고지가 캐러셀 근처에 상시 보여야 한다. (구현: **스테이지 위**다. 아래에 두면 폰에서 스테이지 높이 때문에 고지가 뷰포트 밖으로 밀린다.)
 - **법정 문구는 그대로.** `생체정보 처리 동의` 라는 표현을 다른 말로 바꾸지 않는다(하드룰 7).
 - **브랜치는 `feat/facemarket-landing`.** 이미 만들어져 있고 스펙 커밋 `7700c5e8` 이 올라가 있다.
 - 로컬 확인은 `pnpm dev` 후 `http://localhost:5173/?facemarket=1` (호스트 분기 강제, `src/lib/host.js`).
@@ -43,26 +62,44 @@
 | `src/features/facemarket-landing/data/landingModels.js` | 가상모델 이미지 14장 목록 |
 | `src/features/facemarket-landing/facemarketRootTarget.js` | 로그인 복귀 경로 판정. 순수 |
 | `src/features/facemarket-landing/registerCta.js` | 등록 상태 → CTA 문구·경로. 순수 |
-| `src/features/facemarket-landing/FacemarketRoot.jsx` | `/` 진입점. 복귀 경로면 이동, 아니면 랜딩 |
-| `src/features/facemarket-landing/FacemarketLanding.jsx` | 섹션 조립 |
-| `src/features/facemarket-landing/LandingHeader.jsx` | 상단바(brand · 앵커 3개 · 로그인/CTA) |
-| `src/features/facemarket-landing/FacemarketLanding.module.css` | 랜딩 토큰 스코프 + 섹션 스타일 |
+| `src/features/facemarket-landing/FacemarketRoot.jsx` | `/` 진입점. 복귀 경로면 이동, 아니면 랜딩. **플래그 삭제는 `settled && target` + 값 대조로 좁혀져 있다** — 넓히면 자식이 방금 심은 복귀 목표를 먹는다(아래 갈라진 곳 표) |
+| `src/features/facemarket-landing/FacemarketLanding.jsx` | **섹션 조립만이 아니다.** head 교체(마운트 중 title·description, **복원은 `IS_FACEMARKET` 으로 가른다**)·등록 상태별 CTA 조회·부트스트랩 중 클릭 보류함(`pendingPrimary`, **ref 아니라 state**)까지 여기 산다. `onPrimary`·`primaryLabel` 한 쌍을 상단바·히어로·등록 섹션·모델 정보 섹션 **넷**에 내려보낸다 |
+| `src/features/facemarket-landing/LandingHeader.jsx` | 상단바(brand · 앵커 3개 · 상태별 CTA — 비로그인이면 이 버튼이 로그인 모달을 연다). **CTA 를 `disabled` 로 잠그지 않는 건 의도다** — 헤더 주석과 스펙 §1 참고 |
+| `src/features/facemarket-landing/FacemarketLanding.module.css` | 랜딩 토큰 스코프 + 섹션 스타일. **상단바와 섹션 6개가 전부 이 한 벌을 import 한다**(섹션별 CSS 모듈은 없다). 캐러셀만 자기 것(`CarouselStage.module.css`)을 쓴다 |
 | `src/features/facemarket-landing/sections/HeroSection.jsx` | 히어로 |
 | `src/features/facemarket-landing/sections/GallerySection.jsx` | 캐러셀 + 컨트롤 + 예시 고지 |
-| `src/features/facemarket-landing/sections/LicensingSection.jsx` | 카드 6장 + 검증 가능한 기록 |
+| `src/features/facemarket-landing/sections/LicensingSection.jsx` | 카드 6장 + "확인할 수 있는 기록" 4칸 (계획 원안은 3칸 "검증 가능한 기록") |
 | `src/features/facemarket-landing/sections/RegisterSection.jsx` | 7단계 레일 + 상태별 CTA |
-| `src/features/facemarket-landing/sections/ModelInfoSection.jsx` | 프라이버시 하드룰 7개 |
+| `src/features/facemarket-landing/sections/ModelInfoSection.jsx` | 프라이버시 하드룰 7개 + '그만두고 싶을 때' + **페이지의 마지막 CTA**(prop 은 `RegisterSection` 과 같은 `ctaLabel`·`onPrimary` 둘. 새 이름을 만들지 마라) |
 | `src/features/facemarket-landing/sections/FooterSection.jsx` | 푸터 |
 | `tests/frontend/facemarket-carousel-math.test.mjs` | Task 1 테스트 |
 | `tests/frontend/facemarket-css-projection.test.mjs` | Task 2 테스트 |
+| `tests/frontend/facemarket-landing-models.test.mjs` | **계획 밖 추가.** 캐러셀 이미지 목록의 계약 — 가상모델 정적 경로만, 카드 메타는 번호만(프라이버시 하드룰 1이 순수 상수라 런타임 검증이 없다) |
 | `tests/frontend/facemarket-landing-routing.test.mjs` | Task 4 테스트 |
 | `tests/frontend/facemarket-register-cta.test.mjs` | Task 7 테스트 |
 
 **수정**
 
+계획 시점에는 `src/App.jsx` 하나였다. 감사·수리를 거치며 인증 경로까지 번졌다 —
+랜딩이 로그인 복귀 계약을 넘겨받은 이상 그 계약의 반대편(플래그를 심고 지우는 쪽)을
+안 건드릴 수 없었다.
+
 | 파일 | 무엇을 |
 |---|---|
-| `src/App.jsx` | facemarket 루트 라우트 추가, `RootRedirect` 의 facemarket 분기 제거, catch-all 목적지 분기 |
+| `src/App.jsx` | facemarket 루트 라우트 추가, `RootRedirect` 의 facemarket 분기 제거, catch-all 목적지 분기, `FacemarketLoginPrompt` 의 1회성 모달 열기 + 탈출 링크(모달을 닫은 사람이 주소창을 고치는 수밖에 없었다) |
+| `src/features/auth/AuthProvider.jsx` | `openLogin` 을 `useCallback` 으로 안정화 — 매 렌더 새 identity 라 이 함수를 effect deps 에 둔 `FacemarketLoginPrompt` 가 "닫으면 즉시 다시 열리는" 모달이 됐다. `closeLogin({ cancelled })` 로 **취소일 때만** 복귀 플래그를 버린다. `sessionStorage` 접근을 전부 try/catch 로 감싼다(접근 자체가 던지는 브라우저가 있다 — 쓰기를 무방비로 두면 랜딩은 뜨는데 CTA 만 예외로 죽는 반쪽 하드닝이 된다) |
+| `src/features/auth/Login.jsx` | 닫기에서 **취소와 성공을 가른다.** 로컬 이메일 로그인 성공과 진행 중 Esc 는 `cancelled: false` — 안 그러면 성공한 로그인의 복귀 목표가 지워져 ai 도메인의 콘티 승격이 스킵된다. 세션이 도착하면 모달이 스스로 닫힌다(단, **열릴 때 이미 세션이 있었으면 안 닫는다** — Editor 의 401 '다시 로그인'은 세션이 산 채로 뜨므로 토큰 갱신 한 번에 사라지면 회귀다). **그리고 모달 카피에 `IS_FACEMARKET` 분기가 생겼다** — 이 모달은 셀러 스튜디오 문구("Studio" 접미, "마네킹컷 생성으로 이어가세요")를 달고 있어서, 랜딩의 유일한 전환 버튼이 여는 첫 화면에서 **이 랜딩이 고치려던 실패(모델에게 셀러 제품을 보여주는 것)** 가 CTA 한 번 만에 재현됐다. `host.js` 의 `IS_FACEMARKET` 은 `App.jsx`·`shell.jsx` 가 이미 쓰는 검증된 분기점이다 |
+| `src/features/shell/shell.jsx` | `openTopNavLogin` 이 도메인 가드 없이 항상 `'/create/input'` 을 심었다. 그 TopNav 는 facemarket 의 `/model/*` 에서도 렌더되므로 등록하러 온 모델의 복귀 의도가 셀러 경로로 덮이고, 랜딩의 화이트리스트가 그 값을 버려 등록이 아니라 랜딩으로 떨어졌다 → `IS_FACEMARKET ? '/model/register' : '/create/input'` |
+| `index.html` | `og:*` · `meta[description]` 추가. **다만 두 도메인 공통(중립) 값이다** — 아래 참고 |
+
+> **`index.html` 의 한계를 오해하지 마라.** 빌드 산출물은 `dist/index.html` 한 벌이고
+> (vite 진입점 1개), `vercel.json` 이 전 경로를 그 한 벌로 rewrite 한다. 도메인 분기는
+> `src/lib/host.js` 가 브라우저에서 hostname 을 읽는 **런타임** 분기라 정적 head 에 닿지
+> 않는다. 그래서 og 값은 두 도메인 공통이고, `<title>` 은 셀러 것으로 남는다(크롤러는
+> `og:title` 을 우선하고, facemarket 탭 제목은 `FacemarketLanding` 이 마운트 시 교체한다).
+> **호스트별 미리보기는 여전히 미해결**이고, 하려면 (a) `rollupOptions.input` 으로
+> `facemarket.html` 을 추가해 산출물을 두 벌 내고 (b) `vercel.json` rewrites 에 host 조건을
+> 걸어야 한다 — (a) 없이 (b) 만 넣으면 facemarket 루트가 404 다. 또는 Edge Middleware.
 
 ---
 
@@ -82,9 +119,19 @@
   - `shortestWrappedOffset(index: number, position: number, count: number) => number`
   - `targetForIndex(current: number, index: number, count: number) => number`
   - `snapTarget(position: number, velocityItemsPerSecond: number) => number`
-  - `rebaseTarget(position: number, count: number) => number`
+  - ~~`rebaseTarget(position: number, count: number) => number`~~ — **채택하지 않음** (아래 참고)
   - `metricsForAspect(aspect: number) => { cardWidth, cardHeight, spacing, depthScale, edgeFade }`
   - `layoutForOffset(offset: number, metrics) => { x, y, z, rotationY, rotationZ, scale, opacity }`
+
+> **[구현과 다름] `rebaseTarget` 은 이식하지 않았다 — 리베이스 가드 미채택.**
+> 이 태스크의 Step 1 테스트 두 줄, Step 3 의 함수 정의, Task 3 의 import·호출이 전부
+> 지워졌다. 사유: `CarouselStage` 의 렌더 위치는 `target` 을 감쇠로 쫓아가는 연속값이고
+> **리베이스되지 않는다.** `target` 만 705 → 5 로 접으면 화면이 그 700칸(=50바퀴)을
+> 실제로 훑고 내려간다 — layout 상 "같은 위치"인 것과 애니메이션이 같은 건 다르다.
+> 안 잘라도 되는 이유: 정밀도가 상하려면 `|position|` 이 1e15 근처여야 하는데 한 칸이
+> 드래그 170px 이라 1.7e17px 를 한 방향으로 끌어야 나온다. 되살릴 거면 `target` 과
+> `CarouselStage` 의 `positionRef` 를 **같은 프레임에 같은 정수배만큼 함께** 접어야 한다
+> (둘의 차이가 보존돼야 감쇠가 안 튄다). 현재 사유는 `carouselMath.js` 하단 주석이 정본.
 
 - [ ] **Step 1: 실패하는 테스트를 쓴다**
 
@@ -95,8 +142,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  modulo,
-  rebaseTarget,
+  modulo,                 // (실제 구현: rebaseTarget import 는 지워졌다)
   shortestWrappedOffset,
   snapTarget,
   targetForIndex,
@@ -129,10 +175,11 @@ test('스냅 전에 속도를 반영한다', () => {
   assert.equal(snapTarget(2.2, -1.4), 2);
 });
 
-test('누적 위치가 커지면 한 바퀴 단위로 되돌린다', () => {
-  assert.equal(rebaseTarget(705, COUNT), 5);
-  assert.equal(rebaseTarget(12, COUNT), 12);   // 임계 아래면 그대로
-});
+// [구현과 다름] 이 테스트는 쓰지 않았다 — rebaseTarget 미채택(위 블록 참고).
+// test('누적 위치가 커지면 한 바퀴 단위로 되돌린다', () => {
+//   assert.equal(rebaseTarget(705, COUNT), 5);
+//   assert.equal(rebaseTarget(12, COUNT), 12);   // 임계 아래면 그대로
+// });
 
 test('가운데 카드는 정면이고 원점이다', () => {
   const layout = layoutForOffset(0, metricsForAspect(1.6));
@@ -213,11 +260,11 @@ export function snapTarget(position, velocityItemsPerSecond) {
   return Math.round(position + velocityItemsPerSecond * 0.24);
 }
 
-/* 한 방향으로 계속 돌리면 위치가 무한히 커진다. 부동소수 정밀도가 상하기 전에
-   한 바퀴 단위로 되돌린다 — 화면상 위치는 같다. */
+/* [구현과 다름] 이 함수는 만들지 않았다 — 리베이스 가드 미채택(위 블록 참고).
+   실제 carouselMath.js 는 이 자리에 "왜 안 자르는지"를 적은 주석만 둔다.
 export function rebaseTarget(position, count) {
   return Math.abs(position) < count * 50 ? position : modulo(position, count);
-}
+} */
 ```
 
 - [ ] **Step 4: `sceneLayout.js` 를 만든다**
@@ -367,10 +414,19 @@ test('배치값에 계수를 곱해 픽셀 변환 문자열을 만든다', () =>
   const layout = { x: 2.25, y: 0, z: 1.19, rotationY: -0.26, rotationZ: -0.028 };
   assert.equal(
     cardTransform(layout, 100),
+    // [구현과 다름] 실제 기대값은 rotateZ 가 **양수** 0.0280 이다 — 아래 블록 참고.
     'translate3d(225.00px, 0.00px, 119.00px) rotateY(-0.2600rad) rotateZ(-0.0280rad)',
   );
 });
 ```
+
+> **[구현과 다름] 이 태스크는 부호를 빠뜨렸다 — 손대칭(F = diag(1, -1, 1)).**
+> three 는 +y 가 위, CSS 는 +y 가 아래라 두 좌표계가 y 축으로 어긋나 있고, CSS 행렬은
+> `M_css = F·M·F` 로 옮겨야 한다. 풀면 **이동 y 와 `rotateZ` 는 부호가 뒤집히고,
+> `rotateY` 와 이동 x·z 는 그대로**다. 계획대로 그냥 곱하면 아래 "CSS 배율 == three 배율"
+> 불변식은 멀쩡히 통과하면서 화면의 부채꼴만 좌우 반전된다(offset +2 카드가 시계방향이어야
+> 하는데 반시계로 기운다). `rotateY` 까지 같이 뒤집으면 카드가 반대쪽을 보며 오목 아크가
+> 볼록이 된다. 실제 테스트 파일에는 손대칭 단언 넷과 `-0.0000` 표기 방어가 더 들어갔다.
 
 - [ ] **Step 2: 실패를 확인한다**
 
@@ -409,6 +465,12 @@ export function perspectivePx(stageHeightPx) {
   return CAMERA_Z * worldToPixelScale(stageHeightPx);
 }
 
+// [구현과 다름] 아래는 부호를 빠뜨린 계획 원안이다. 실제 구현은 y 와 rotationZ 를 뒤집고,
+// toFixed 가 만드는 "-0.0000" 을 0 으로 정규화한다(stripNegativeZero).
+//
+//   `translate3d(${px(layout.x)}px, ${px(-layout.y)}px, ${px(layout.z)}px)` +
+//   ` rotateY(${rad(layout.rotationY)}rad) rotateZ(${rad(-layout.rotationZ)}rad)`
+//
 export function cardTransform(layout, k) {
   const px = (value) => (value * k).toFixed(2);
   const rad = (value) => value.toFixed(4);
@@ -445,7 +507,7 @@ git commit -m "feat(facemarket): three 카메라 좌표를 CSS 원근으로 옮�
 - Create: `src/features/facemarket-landing/data/landingModels.js`
 
 **Interfaces:**
-- Consumes: Task 1 의 `shortestWrappedOffset` · `layoutForOffset` · `metricsForAspect` · `targetForIndex` · `snapTarget` · `rebaseTarget` · `modulo`, Task 2 의 `cardTransform` · `perspectivePx` · `worldToPixelScale`
+- Consumes: Task 1 의 `shortestWrappedOffset` · `layoutForOffset` · `metricsForAspect` · `targetForIndex` · `snapTarget` · `modulo` (~~`rebaseTarget`~~ 미채택), Task 2 의 `cardTransform` · `perspectivePx` · `worldToPixelScale`
 - Produces:
   - `LANDING_MODELS: ReadonlyArray<{ id: string, src: string, alt: string }>` — 14개
   - `useCarouselController(itemCount: number, initialIndex?: number) => { target, activeIndex, isDragging, bind, goBy, goTo, handleKeyDown, consumeDragClick }`
@@ -512,10 +574,13 @@ export const LANDING_MODELS = Object.freeze(
    엉뚱한 카드로 점프하던 걸 consumeDragClick 으로 막는다.
    ============================================================= */
 import { useCallback, useRef, useState } from 'react';
+// [구현과 다름] 실제 import 는 `{ modulo, snapTarget, targetForIndex }` — rebaseTarget 미채택.
 import { modulo, rebaseTarget, snapTarget, targetForIndex } from './carouselMath.js';
 
 const DRAG_PIXELS_PER_ITEM = 170;
 const HORIZONTAL_INTENT_PIXELS = 8;
+// [구현과 다름] 상수가 셋 늘었다 — MIN_DELTA_SECONDS(1/240), STALE_VELOCITY_MS(100),
+// DRAG_CLICK_WINDOW_MS(500). 사유는 이 Step 끝의 블록 참고.
 
 export function useCarouselController(itemCount, initialIndex = 0) {
   const pointer = useRef({
@@ -605,6 +670,8 @@ export function useCarouselController(itemCount, initialIndex = 0) {
       if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
+      // [구현과 다름] 실제 구현은 `setTarget((current) => snapTarget(current, releaseVelocity))`
+      // 이고 deps 도 `[resetPointer]` 뿐이다 — rebaseTarget 미채택.
       setTarget((current) => rebaseTarget(snapTarget(current, releaseVelocity), itemCount));
       setDragging(false);
       resetPointer();
@@ -613,6 +680,8 @@ export function useCarouselController(itemCount, initialIndex = 0) {
   );
 
   // 드래그 끝의 click 인지 확인하고 표식을 지운다. true 면 클릭을 무시해야 한다.
+  // [구현과 다름] 실제 구현은 `consumeDragClick(event)` 로 click 이벤트를 받고,
+  // 표식도 boolean 이 아니라 **시각**(dragEndedAt)이다. 아래 블록 참고.
   const consumeDragClick = useCallback(() => {
     const wasDragged = dragged.current;
     dragged.current = false;
@@ -636,6 +705,44 @@ export function useCarouselController(itemCount, initialIndex = 0) {
   };
 }
 ```
+
+> **[구현과 다름] 이 컨트롤러는 감사 후 일곱 군데가 바뀌었다. 되돌리지 마라.**
+>
+> 1. **포인터 캡처를 `onPointerDown` 이 아니라 `onPointerMove`(가로 의도 확정 시점)에
+>    건다.** `pointerdown` 에서 걸면 `pointerup` 이 캡처 대상(`.stage`)으로 리타깃되고,
+>    `click` 은 down/up 타깃의 최근접 공통 조상에 발화하므로 공통 조상이 `.stage` 가 된다
+>    → 자식인 카드 `button` 의 `onClick(goTo)` 이 영영 안 불린다. **데스크톱 마우스
+>    클릭만 죽고 터치 탭은 살아서 QA 에서 놓치기 쉽다.**
+> 2. **드래그 표식이 boolean 이 아니라 시각(`dragEndedAt`)이고 500ms 뒤 스스로 만료된다.**
+>    `pointercancel` 이나 스테이지 여백에서 손을 뗀 경우엔 뒤따르는 click 이 없어서, 영구
+>    표식은 아무도 소비하지 않고 남아 **다음 카드 활성화를 통째로 삼킨다.**
+> 3. **`consumeDragClick(event)` 는 click 이벤트를 받는다** — 키보드 활성화(Enter/Space)를
+>    `event.detail === 0` 으로 걸러 드래그 표식과 무관하게 통과시킨다. 호출부(카드 onClick)가
+>    이벤트를 안 넘기면 그 예외가 통째로 죽는다.
+> 4. **속도 dt 하한 1/60 → 1/240 초.** 원본 값을 그대로 두면 120Hz 기기(`pointermove`
+>    간격 ≈8.3ms)의 플릭 속도가 정확히 절반으로 측정돼 같은 손동작이 60Hz 의 절반만
+>    넘어간다. 그리고 마지막 move 뒤 100ms 넘게 있다가 뗐으면 속도를 0 으로 본다.
+> 5. **`target` 은 반드시 React state 로 남는다.** 스테이지의 rAF 루프는 도착하면 스스로
+>    멈추고 `useEffect(…, [controller.target, …])` 로만 깨어나므로, 드래그 중 재렌더를
+>    줄이겠다고 `target` 을 ref 로 돌리면 그 wake 이펙트가 영영 발화하지 않아 **캐러셀이
+>    통째로 안 움직인다.** 옮기려면 tick state 나 `subscribe(listener)` 를 함께 내보내라.
+> 6. **무장 해제 탈출구가 셋이다(1의 대가).** 캡처를 8px 뒤로 미룬 구간에는 `pointerup` 을
+>    스테이지로 끌어올 장치가 없어서, 스테이지 밖에서 손을 떼면 `pointer.current.id` 가
+>    사장되고 **그 뒤로는 버튼을 안 누른 맨 호버가 드래그가 된다**(마우스는 hover 만으로도
+>    `pointermove` 가 온다). 그래서 무장하는 곳은 `onPointerDown` 하나지만 푸는 길은 셋이고,
+>    셋 다 `resetPointer` 로 모인다 — ① `onPointerMove` 첫머리의
+>    `pointerType === 'mouse' && buttons === 0` 가드, ② `window` 의
+>    `pointerup`/`pointercancel`(상시 등록), ③ `.stage` 의 `onLostPointerCapture`.
+>    **하나라도 지우기 전에 "그 경로로 무장이 남지 않는가"를 먼저 답해라.** 캡처를
+>    `pointerdown` 으로 되돌리는 건 해법이 아니다 — 1 이 그대로 돌아온다.
+> 7. **중복 릴리스는 `releasePointer` 첫 줄의 `pointerId` 대조가 막는다.** 같은 릴리스가
+>    셋 중 둘 이상으로 도착해도, 먼저 온 쪽이 id 를 -1 로 돌려놓아 뒤따르는 쪽은 거기서
+>    끝난다. **그 한 줄을 지우면 한 번의 릴리스가 `snapTarget` 을 두 번 먹인다.**
+>    (같은 이유로 ① 가드 안에서는 `releasePointerCapture` 를 부르지 않는다 — 부르면
+>    `lostpointercapture` 가 ③ 을 태워 두 번 먹는다.)
+>
+> 테스트에서 드래그를 흉내 낼 땐 `pointermove` 에 `buttons: 1` 을 반드시 넣어라 —
+> 합성 이벤트의 기본값이 0 이라 ① 가드에 걸린다.
 
 - [ ] **Step 3: 스테이지 컴포넌트를 만든다**
 
@@ -790,6 +897,30 @@ export function CarouselStage({ items, controller }) {
   );
 }
 ```
+
+> **[구현과 다름] 스테이지도 감사 후 여섯 군데가 바뀌었다.**
+>
+> 1. **rAF 루프가 목표에 닿으면 스스로 멈춘다.** 위 코드처럼 무조건 다음 프레임을 예약하면
+>    아무도 안 만지는 랜딩에서도 초당 14장×스타일 4개를 영원히 덮어쓴다(캐러셀이 화면 밖으로
+>    스크롤돼도). 다시 켜는 건 `useEffect(…, [controller.target, controller.isDragging,
+>    reducedMotion])` 뿐이고, 그 이펙트는 루프 이펙트보다 **뒤에** 선언돼야 첫 마운트에서
+>    `wakeRef` 가 채워져 있다.
+> 2. **`prefers-reduced-motion` 은 lambda 를 올리는 게 아니라 그 프레임에 확정한다.**
+>    `DAMP_REDUCED = 24` 로도 원근 회전이 160ms 재생된다 — 그건 '동작 줄이기'를 켠 사람이
+>    정확히 막으려는 종류의 모션이다.
+> 3. **포커스를 쥔 카드는 `visibility: hidden` 으로 만들지 않는다.** 숨기는 순간 브라우저가
+>    포커스를 body 로 회수해 방향키 조작이 통째로 죽는다. 대신 `pointer-events: none` 만
+>    준다. 카드는 로빙 탭인덱스(활성 카드만 `tabIndex 0`)이고 활성 인덱스가 바뀌면 포커스도
+>    따라간다(`focus({ preventScroll: true })` — 카드는 화면 밖까지 밀려나 있어서 기본
+>    focus 가 페이지를 옆으로 끌고 간다).
+> 4. **카드 onClick 은 `event` 를 넘긴다** — `controller.consumeDragClick(event)`.
+>    안 넘기면 키보드 활성화 예외(`detail === 0`)가 도달 불가 데드코드가 된다.
+> 5. **ref 콜백을 인덱스별로 캐시한다.** 인라인 화살표는 렌더마다 새 함수라 React 가 카드
+>    14개의 ref 를 (null → node)로 다시 붙인다 — 드래그 중에는 그게 프레임마다다.
+> 6. **`ready` 전에는 `perspective` 를 걸지 않고**(k=0 이면 `perspective: 0px` 이라 원근이
+>    꺼지고 모든 카드가 원점으로 붕괴한다), 배지에는 번호와 함께 **'예시' 고지**가 들어가고
+>    `aria-hidden` 이다(`img` 의 alt 가 이미 "가상 모델 예시 이미지 01" 이라 안 가리면
+>    스크린리더가 "…01 01 예시"로 더듬는다).
 
 - [ ] **Step 4: 스타일을 만든다**
 
@@ -959,6 +1090,19 @@ export function facemarketRootTarget(returnIntent) {
 }
 ```
 
+> **[구현과 다름] 이 필터는 두 겹으로 늘었다.**
+>
+> - **오픈 리다이렉트 방어 보강.** 역슬래시(URL 파서는 http(s) 에서 `/\evil.com` 을
+>   `//evil.com` 으로 읽는다), 인코딩된 슬래시(`/%2f%2fevil.com`), 제어문자(파서가 조용히
+>   지워서 검사한 문자열과 실제 이동 경로가 달라진다), 과대 길이를 추가로 막는다.
+> - **도메인 화이트리스트 `['/model', '/verify']` 추가.** 플래그를 *심는* 쪽에는 도메인
+>   가드가 없다 — `shell.jsx` 의 TopNav 로그인은 `/create/input` 을, `ProductInput` 은
+>   `/create/storyboard` 를 심고, 그 TopNav 는 facemarket 에서도 렌더된다. 통과시키면
+>   등록 전용 도메인에 셀러 스튜디오가 열린다. 랜딩 도입 전 `RootRedirect` 는 facemarket
+>   복귀 의도를 통째로 무시해서 이 문이 아예 없었다 — 그 봉쇄를 이어받는 것이다.
+>   접두사만 겹치는 `/models-evil` 은 막고, `'/model/register?step=2'` 같은 쿼리·해시는
+>   통과시킨다(화이트리스트는 pathname 에만 건다).
+
 - [ ] **Step 4: 테스트 통과를 확인한다**
 
 Run: `pnpm test:frontend`
@@ -1019,8 +1163,30 @@ export function FacemarketLanding() {
 
 `src/features/facemarket-landing/FacemarketRoot.jsx`:
 
+> ### ⚠️ 아래 코드를 쓰지 마라 — 이 도메인의 로그인을 통째로 깨뜨린 critical 버그다
+>
+> **`FacemarketRoot` 가 첫 렌더에 `<Navigate>` 를 반환하면 OAuth `?code=` 가 죽는다.**
+> `supabase` 는 `detectSessionInUrl: false` 라 code 교환처가 `AuthProvider` 한 곳뿐인데,
+> `AuthProvider` 는 `BrowserRouter` 의 **조상**이다(`main.jsx`). React 의 passive effect 는
+> **자식 → 부모** 순으로 돌기 때문에, `Navigate` 의 `history.replaceState` 가 code 교환보다
+> 먼저 돌아 쿼리스트링을 통째로 지운다 — 읽기도 전에. 그러면 facemarket 도메인에서는
+> 아무도 로그인할 수 없다. `RootRedirect` 가 `if (loading && …) return;` 으로 지키던 계약이
+> 정확히 이것인데, 이 계획은 그걸 옮겨 적지 않았다.
+>
+> **실제 구현의 계약:**
+> - 이동 조건은 "플래그가 있다"가 아니라 **`!loading && session`** 이다. 세션 없이 이동하면
+>   `/model/register` 의 `RequireAuth` 가 로그인 프롬프트를 띄우고 그게 `openLogin` 으로
+>   플래그를 **다시 심어서**, 그 탭에서는 랜딩을 영영 못 본다. 세션이 없으면(=로그인을
+>   취소했다) 플래그를 버리고 랜딩을 그린다.
+> - 플래그 **읽기는 렌더**에서(`useState` 초기화), **지우기는 커밋 뒤 effect** 에서,
+>   그것도 `!loading` 인 뒤에만. dev StrictMode 는 마운트 렌더를 두 번 돌리고 두 번째를
+>   커밋하므로 렌더에서 지우면 두 번째 렌더가 빈 값을 읽어 복귀 목표가 사라진다.
+> - **플래그가 없는 평범한 방문은 인증을 기다리지 않는다.** 스펙의 성공 기준이 "루트는
+>   로그인 여부와 무관하게 랜딩"이라, 기다리는 건 플래그를 들고 온 진입뿐이다.
+
 ```jsx
-/* =============================================================
+/* [구현과 다름 — 위 경고 참고] 아래는 계획 원안이고, 머지된 코드가 아니다.
+   =============================================================
    facemarket-landing/FacemarketRoot.jsx
    facemarket 도메인의 '/' 진입점. 로그인 복귀 목표가 있으면 그리로 보내고,
    없으면 랜딩을 그린다.
@@ -1038,12 +1204,12 @@ export function FacemarketRoot() {
     let intent = null;
     try {
       intent = sessionStorage.getItem('wl_postLogin');
-      sessionStorage.removeItem('wl_postLogin');
+      sessionStorage.removeItem('wl_postLogin');   // ← 렌더에서 지우면 StrictMode 에서 유실
     } catch { /* 저장소가 막힌 브라우저에서도 랜딩은 떠야 한다. */ }
     return facemarketRootTarget(intent);
   });
 
-  if (target) return <Navigate replace to={target} />;
+  if (target) return <Navigate replace to={target} />;   // ← 첫 렌더 이동 = OAuth code 파괴
   return <FacemarketLanding />;
 }
 ```
@@ -1095,8 +1261,10 @@ Run: `pnpm dev`
 확인 항목:
 1. `http://localhost:5173/?facemarket=1` → 랜딩 뼈대(플레이스홀더 문구)가 뜬다. TopNav 가 **안** 보인다.
 2. `http://localhost:5173/` → 기존대로 `/create/input` 으로 간다(셀러 앱 회귀 없음).
-3. 브라우저 콘솔에서 `sessionStorage.setItem('wl_postLogin', '/model/register')` 실행 후 `/?facemarket=1` 새로고침 → `/model/register` 로 이동한다.
-4. `http://localhost:5173/없는경로?facemarket=1` → 랜딩으로 돌아온다.
+3. 브라우저 콘솔에서 `sessionStorage.setItem('wl_postLogin', '/model/register')` 실행 후 `/?facemarket=1` 새로고침 → **로그인 상태면** `/model/register` 로 이동한다. (구현 갱신: 비로그인이면 플래그를 버리고 랜딩을 그린다 — 위 경고 블록 참고.)
+4. 같은 방법으로 `'/create/input'` 을 심으면 화이트리스트에 걸려 **랜딩**이 뜬다.
+5. `http://localhost:5173/없는경로?facemarket=1` → 랜딩으로 돌아온다.
+6. **OAuth 왕복이 살아 있는지 반드시 확인한다** — 랜딩 CTA → 로그인 → `/` 복귀에서 세션이 붙어야 한다. 이 라우트에서 가장 깨지기 쉬운 자리다.
 
 - [ ] **Step 8: 커밋한다**
 
@@ -1110,6 +1278,18 @@ git commit -m "feat(facemarket): 도메인 루트를 랜딩으로 바꾸고 로�
 ### Task 5: 상단바·히어로·캐러셀 섹션
 
 랜딩의 위 절반. 상단바 세 항목이 섹션 앵커로 동작하고, 캐러셀이 실제로 돈다.
+
+> **[구현과 다름] 상단바·섹션 배치가 넷 바뀌었다.**
+> - **앵커 스크롤도 `prefers-reduced-motion` 을 존중한다.** '모델 정보'는 히어로+캐러셀+
+>   라이선싱 아래라 스크롤 거리가 수천 px 인데, 그 전체가 흘러가는 건 '동작 줄이기'를 켠
+>   사람이 정확히 막으려는 모션이다. 캐러셀만 조용하고 내비게이션만 움직이면 같은 기능
+>   안에서 처리가 어긋난다. 설정은 페이지를 연 뒤에도 바뀌므로 클릭할 때마다 읽는다.
+> - **모바일 메뉴를 닫는 길이 셋이다**(바깥 클릭·Escape·데스크톱 폭 진입). 토글 버튼만
+>   두면 데스크톱 폭에서 햄버거가 `display:none` 이라 누를 대상 자체가 없어져 갇힌다.
+> - **`header`·`footer` 는 `<main>` 밖**이다. HTML-AAM 상 `main`/`section`/`article` 안에
+>   중첩된 `header`/`footer` 는 banner·contentinfo 랜드마크를 잃고 generic 이 된다.
+> - **점(dot)은 `role="tab"` 이 아니다.** 자기가 여는 tabpanel 이 없으니 스크린리더가
+>   "탭 1/14, 선택 안 됨"으로 없는 구조를 안내한다. 카드와 같은 `aria-current` 를 쓴다.
 
 **Files:**
 - Create: `src/features/facemarket-landing/LandingHeader.jsx`
@@ -1500,6 +1680,29 @@ git commit -m "feat(facemarket): 랜딩 상단바·히어로·캐러셀 섹션"
 
 Mirror Mirror AI 라이선싱 페이지의 정보 구조(카드 6장 + 검증 가능한 기록)를 빌리고 내용은 우리 것으로 채운다. C2PA 로고 자리에 OpenDID VC → OmniOne Chain 앵커 → 공개 검증이 들어간다.
 
+> **[구현과 다름 — 이 Task 의 카피는 전부 하향됐다. 아래 블록의 문장을 그대로 복사하지 마라.]**
+> 정본은 `LicensingSection.jsx` 의 헤더 주석이다(각 문장의 코드 근거가 거기 적혀 있다).
+> - **"검증 가능한 기록"은 세 칸이 아니라 네 칸**이고, 두 번째 칸 이름은 "체인 앵커"가 아니라
+>   **"체인 기록"** 이다 — 체인에 올라가는 건 사용 1건짜리 `recordSettlement` 뿐이고
+>   라이선스 자체의 지문을 올리는 코드는 없다.
+> - **공개 검증은 `fm_licenses` 화이트리스트 SELECT 한 방**이다. VC 서명 대조도 체인 조회도
+>   하지 않는다 — 문장에 "지금은 Wearless 기록 조회"라고 남긴다.
+> - **정산 기록의 단위는 컷이 아니라 잡(상세페이지) 1건**이다(`workers/detail_page_job.py`
+>   의 `payment_key=f"job:{job_id}"`). "컷마다"로 적으면 모델이 컷 수만큼 곱해 기대한다.
+>   그리고 지급 기능이 없으므로 "정산받습니다"가 아니라 "기록됩니다 · 지급은 준비 중"이다.
+> - 조건은 **넷뿐**(허용 품목·금지 품목·건당 단가·유효기간) — **채널 조건은 제품에 없다.**
+> - 유효기간 선택지는 **90일·1년·2년** 셋이다.
+> - 금지 품목을 이어 붙일 땐 구분자가 `', '` 다 — 품목명이 `속옷·란제리` 처럼 `·` 를 품어서
+>   `·` 로 이으면 2개가 4개로 읽힌다.
+> - **여섯째 카드의 단어는 '폐기'가 아니라 '해지'다.** 제품 화면의 말이 전부 '해지'라
+>   (`ModelLicense.jsx` 버튼·확인창·상태, `PublicVerify.jsx`), 랜딩만 '폐기'라고 부르면
+>   되돌릴 수 없는 조치를 앞둔 모델이 그 버튼을 못 찾는다. PRD 의 '폐기'는 내부 용어지
+>   사용자 대면 문자열이 아니다. **아래 카피 블록에는 '폐기'가 남아 있다 — 원안이다.**
+> - **'체인 기록' 칸은 무조건형이 아니라 상한형이다.** `record_license_settlement` 는
+>   best-effort 라(체인 미설정·RPC 실패·조회 실패면 `return None`) 실패한 건은 체인에도
+>   `fm_settlements` 에도 행이 없다. 그래서 "올리기가 실패한 건은 기록이 남지 않습니다"가
+>   문장에 붙는다. 이 상한을 지우려면 카피가 아니라 코드를 바꿔라.
+
 **Files:**
 - Create: `src/features/facemarket-landing/sections/LicensingSection.jsx`
 - Modify: `src/features/facemarket-landing/FacemarketLanding.jsx`
@@ -1713,6 +1916,32 @@ git commit -m "feat(facemarket): 랜딩 라이선싱 섹션 — 조건 카드와
 ### Task 7: 모델 등록 섹션과 상태별 CTA
 
 7단계 레일을 미리 보여준다. CTA 문구는 등록 상태에 따라 바뀌되, 상태 조회가 늦거나 실패해도 랜딩 렌더를 막지 않는다.
+
+> **[구현과 다름] 세 가지가 붙었다.**
+> - 레일의 각 단계 설명은 **그 단계가 실제로 하는 일**이어야 한다. prod 는
+>   `FM_LIVENESS_ENABLED=false` 라 '라이브' 단계에 카메라 라이브니스가 돌지 않으므로,
+>   "실제 본인인지 확인"이라고 적으면 하지 않는 검사를 약속하는 셈이다.
+> - CTA 핸들러는 **인증 부트스트랩 중(`loading`)에 아무 분기도 태우지 않는다.** 그때의
+>   `session === null` 은 '비로그인'이 아니라 '아직 모름'이라, 분기하면 이미 로그인한
+>   사람에게 로그인 모달이 뜨고 복귀 플래그까지 심는다.
+>
+>   > **⚠️ 그 대기를 `disabled` + `aria-busy` 로 드러내라는 앞 판의 요구는 폐기됐다.
+>   > 이 자리에서 두 라운드가 반대 방향으로 왕복했으니 여기서 끝낸다.**
+>   >
+>   > 분기는 미루되 **의도는 버리지 않는다** — `loading` 중에 눌린 클릭은
+>   > `FacemarketLanding.jsx` 의 보류함 `pendingPrimary` 에 담겼다가 `loading` 이 내려가면
+>   > **한 번만** 실행된다. `disabled` 를 걸면 **그 클릭이 DOM 에 아예 도달하지 않아**
+>   > 보류함이 통째로 도달 불가능한 죽은 코드가 되고, 토큰 갱신이 긴 회선에서는 사용자가
+>   > 눌리지도 않는 버튼을 몇 초간 마주한다. 즉 "고장 난 버튼처럼 보인다"는 걱정을
+>   > `disabled` 로 풀면 걱정하던 그 고장을 **진짜로** 만든다.
+>   >
+>   > 대기 표시는 **버튼을 잠그지 않는 방법으로만** 한다. 이미 그렇게 돼 있다 — 보류함이
+>   > `useState` 라서 눌리면 네 CTA 의 라벨이 함께 `'확인 중이에요…'` 로 바뀐다.
+>   > `useRef` 로 되돌리면 눌린 사실이 화면에 하나도 안 남는다.
+>   > 이 결정은 세 곳에 못 박혀 있다 — 스펙 §1 히어로의 경고 블록(정본),
+>   > `LandingHeader.jsx` 의 헤더 주석, 그리고 이 블록. **한 곳만 고치지 마라.**
+> - 상태 조회는 `session` 객체가 아니라 **사용자 id** 로 묶는다. `session` 은 토큰 갱신마다
+>   새 객체가 되는데 같은 사람이면 CTA 도 같다.
 
 **Files:**
 - Create: `src/features/facemarket-landing/registerCta.js`
@@ -1969,6 +2198,48 @@ git commit -m "feat(facemarket): 랜딩 등록 섹션과 상태별 CTA"
 
 프라이버시 하드룰 7개를 모델이 읽을 언어로 옮긴다. 이 섹션이 랜딩의 신뢰 축이다 — 방문자가 등록 전에 가장 알고 싶은 건 자기 상태가 아니라 얼굴이 어떻게 취급되는지다.
 
+> **[구현과 다름 — 하드룰을 직역하면 거짓이 되는 자리가 둘 있다.]**
+> - **하드룰 1(얼굴은 공개 URL 없음)은 등록 사진에만 참이다.** 대표 이미지는 의도적 예외 —
+>   셀러 카탈로그에 얼굴이 보여야 모델을 고를 수 있어서 `coverImageUrl` 은 비공개 R2 의
+>   presigned GET(1시간)이고, 카드 HTML 에 무인증 주소가 그대로 실린다. 예외를 안 적으면
+>   문장이 거짓말이 된다(대표 이미지가 건너뛸 수 있는 선택 단계라는 것도 같이 적는다).
+> - **하드룰 2 는 "생체정보 0픽셀"이지 "조건과 유효 여부만"이 아니다.** 공개 검증 응답에는
+>   마스킹 이름(`홍*동`)과 만 나이도 실린다.
+>
+> 푸터도 다르다. **개인정보처리방침·이용약관 링크를 넣지 않았다 — 걸 곳이 없다.** 레포에
+> 그 페이지가 없고(`/legal/…` 라우트 부재) 서버 `NOTICE_URIS` 도 "법무 확정 URI 자리"
+> 플레이스홀더라 지금 걸면 catch-all 로 튕긴다. 없는 주소를 지어 거는 것보다 없다고 말하는
+> 편이 낫다. 문의 창구와 사업자 정보도 확인할 소스가 레포에 없어 비웠다.
+>
+> **철회 경로도 다르다 — 3라운드 감사의 유일한 critical 이다.** 스펙·계획이 지목한
+> `/model/withdraw`(`ModelWithdraw.jsx`)는 **개인화(personalization) 도메인 전용**이다.
+> `GET /v1/personalization/status` 를 보고 `personalization_profiles` 행이 없으면 "등록된
+> 데이터가 없어요." 한 줄만 그리는데, FaceMarket 7단계 위저드는 그 테이블에 행을 만들지
+> 않는다(`facemarket.py` 가 쓰는 건 `personalization_identity_verifications` 뿐).
+> FaceMarket 모델에게 그 화면은 빈 화면이고 `POST /v1/personalization:withdraw` 도 404 다.
+> facemarket 라우트에도 등록 철회·삭제는 없다(있는 건 `/licenses/{id}/revoke` 와 진행 중
+> 등록 `cancel`). 그래서 이 문단은 **라이선스 해지까지만 약속하고 등록 파기 화면은 아직
+> 없다고 밝힌다.** 등록 파기 진입점이 생기기 전까지 `/model/withdraw` 를 여기 적지 마라.
+>
+> **어휘도 다르다 — 랜딩은 '폐기'가 아니라 '해지'라고 쓴다.** 제품 화면의 말이 전부
+> '해지'다(`ModelLicense.jsx` 의 버튼 "해지" · 확인창 "이 라이선스를 해지하면…" · 상태
+> "해지됨", `PublicVerify.jsx` "해지된 라이선스예요"). PRD 는 '폐기'를 쓰지만 **PRD 는
+> 사용자 대면 문자열이 아니다.** 랜딩만 '폐기'라고 부르면, 되돌릴 수 없는 조치를 앞둔
+> 모델이 `/model/license` 에서 그 단어를 못 찾고 멈춘다. 아래 코드 블록과 Task 6 의
+> 카피 원안에는 '폐기'가 남아 있다 — **그건 계획 원안이지 머지된 문자열이 아니다.**
+>
+> **푸터 문구는 "약관이 없다"고 단정하지 않는다.** 이 랜딩 CTA 가 여는 로그인 모달이 두
+> 클릭 거리에 있고 그쪽은 "계속하면 서비스 약관에 동의하는 것으로 간주됩니다"라고 말한다 —
+> 한쪽이 부재를 단정하면 두 화면이 서로를 부정한다. 그래서 푸터는 "공개 문서가 준비되면
+> 여기에 겁니다"까지만 적고, **모달의 `IS_FACEMARKET` 분기도 같은 말로 맞췄다**(셀러 쪽
+> 문자열은 그대로). 한쪽만 고치지 마라. 그리고 근거로 `ModelConsent.jsx` 를 들지 마라 —
+> 그 컴포넌트는 어디에도 마운트되지 않는다(import 하는 파일 0개).
+>
+> **푸터의 예시 이미지 고지는 지웠다(셋째 사본).** 정본은 캐러셀 바로 위 고지와 카드 안
+> '예시' 배지 둘이고, 그 둘은 지우지 마라 — PRD §13-5 를 지키는 게 그 둘이다.
+>
+> `생체정보 처리 동의` 는 동의문 버전 계약이라 다른 말로 바꾸지 않는다(하드룰 7).
+
 **Files:**
 - Create: `src/features/facemarket-landing/sections/ModelInfoSection.jsx`
 - Create: `src/features/facemarket-landing/sections/FooterSection.jsx`
@@ -2057,6 +2328,13 @@ export function ModelInfoSection() {
 
       <div className={s.exit}>
         <h3 className={s.exitTitle}>그만두고 싶을 때</h3>
+        {/* [구현과 다름] 아래 둘째 문장은 거짓이고, 첫 문장은 어휘가 틀렸다.
+            (1) 등록 자체를 지우는 화면이 레포에 없다(위 경고 블록) — 실제 구현은
+                /model/license 까지만 약속하고 "등록 자체를 지우는 화면은 아직 없습니다"
+                라고 밝힌다.
+            (2) 단어는 '폐기'가 아니라 **'해지'** 다 — 제품 화면의 버튼·확인창·검증
+                페이지가 전부 '해지'라서, 랜딩만 다른 말을 쓰면 모델이 그 버튼을 못 찾는다.
+            아래 블록을 그대로 복사하지 마라. */}
         <p className={s.exitBody}>
           발급한 라이선스는 언제든 폐기할 수 있고, 폐기하면 그 즉시 무효로 표시됩니다.
           모델 등록 자체를 철회하는 것도 계정에서 직접 할 수 있습니다.
@@ -2146,7 +2424,7 @@ import { FooterSection } from './sections/FooterSection.jsx';
 - [ ] **Step 4: 전체 검증**
 
 Run: `pnpm test:frontend`
-Expected: PASS — 신규 4개 파일의 테스트와 기존 테스트 전부
+Expected: PASS — 신규 **5개** 파일의 테스트와 기존 테스트 전부
 
 Run: `pnpm build`
 Expected: 성공
@@ -2160,6 +2438,15 @@ Run: `pnpm dev` → `http://localhost:5173/?facemarket=1`
 4. `http://localhost:5173/` (facemarket 아님) → `/create/input`. 셀러 앱 회귀 없음.
 5. 콘솔 에러·경고 없음.
 6. 캐러셀이 Task 5 의 육안 항목 10개를 여전히 만족한다.
+
+감사 후 추가된 필수 항목 — 자동 테스트가 못 잡는 자리다:
+
+7. **OAuth 왕복.** 랜딩 CTA → 로그인 → `/` 복귀에서 세션이 붙는다. (`FacemarketRoot` 가
+   첫 렌더에 이동하면 여기서 죽는다.)
+8. **데스크톱 마우스로 옆 카드를 클릭하면 그 카드로 이동한다.** 터치만 확인하면 못 잡는다.
+9. **바깥 카드의 기울기 방향이 원본과 좌우 같다.** 부호를 뒤집어도 배율 테스트는 통과한다.
+10. `prefers-reduced-motion: reduce` 를 켠 상태에서 캐러셀도 **앵커 스크롤도** 즉시 확정된다.
+11. 드래그로 넘긴 직후 Enter/Space 가 삼켜지지 않는다.
 
 - [ ] **Step 5: 커밋한다**
 
@@ -2187,7 +2474,7 @@ git commit -m "feat(facemarket): 랜딩 모델 정보 섹션과 푸터"
 | 모델 등록 7단계 레일 + 상태별 CTA | 7 |
 | 모델 정보(하드룰 7개) | 8 |
 | 푸터 | 8 |
-| 테스트 (순수함수) | 1·2·4·7 |
+| 테스트 (순수함수) | 1·2·4·7 (+ 계획 밖 `facemarket-landing-models.test.mjs`) |
 | 신규 의존성 0 | Global Constraints |
 | 확인 방법 `?facemarket=1` | 4·5·6·7·8 |
 
@@ -2195,8 +2482,82 @@ git commit -m "feat(facemarket): 랜딩 모델 정보 섹션과 푸터"
 
 스펙은 `getJobSettlement` 를 "처음으로 화면에 붙인다"고 썼다. 이 계획은 라이선싱 섹션에 **정산 설명 칸**을 넣되 실제 API 호출은 하지 않는다. 랜딩 방문자는 미등록 상태라 조회할 `jobId` 가 없고, 로그인한 모델에게도 랜딩은 설명 화면이지 조회 화면이 아니다. 실제 정산 영수증 UI 는 `/model` 허브나 라이선스 화면에 붙는 게 맞고, 그건 이 랜딩의 범위 밖이다. 계획 승인 시 이 축소를 함께 승인하는 것으로 본다.
 
+> **(2026-09-01 갱신)** 이 축소는 그대로 유효하고, 이제 스펙 문서에도 §범위>제외 로 반영돼
+> 있다. `LicensingSection.jsx` 는 `@/lib/brandUseCategories.js` 외에 어떤 API 도 import 하지
+> 않는다. **랜딩에 정산 조회를 다시 붙이지 마라 — 없는 회귀다.**
+
+## 계획과 구현이 갈라진 곳 (감사 후 갱신)
+
+구현 뒤 다섯 라운드의 감사가 돌았다. 갈라진 자리는 전부 해당 Task 에 `[구현과 다름]`
+블록으로 표시해 뒀고, 여기 목록이 색인이다. **원인의 절반은 앞 라운드의 수리가 만든 새
+결함이다** — 특히 카피를 사실에 맞게 낮추는 과정에서 다른 문장이 새로 어긋났고, 뒤로 갈수록
+"옳은 수리 둘이 같은 커밋에서 서로를 상쇄하는" 종류가 늘었다. 되풀이 금지 함정의 전체
+목록은 스펙 문서 §감사에서 나온 것에 있다(열하나).
+
+| 자리 | 계획 | 구현 | 왜 |
+|---|---|---|---|
+| Task 4 Step 5 `FacemarketRoot` | 첫 렌더에 `<Navigate>`, 렌더에서 플래그 삭제 | `!loading && session` 게이트, 삭제는 커밋 뒤 effect | **critical.** 첫 렌더 이동이 OAuth `?code=` 를 지운다(effect 는 자식→부모). 렌더 삭제는 StrictMode 에서 플래그를 잃는다 |
+| Task 4 Step 3 `facemarketRootTarget` | 절대경로 + `//` 만 검사 | 역슬래시·인코딩 슬래시·제어문자·길이 + `/model`·`/verify` 화이트리스트 | 플래그를 심는 쪽에 도메인 가드가 없다 — 통과시키면 등록 도메인에 셀러 스튜디오가 열린다 |
+| Task 1·3 `rebaseTarget` | 정의·테스트·호출 | **미채택**, 잔재까지 제거 | 렌더 위치는 리베이스되지 않아 화면이 700칸을 실제로 훑는다 |
+| Task 2 `cardTransform` | 부호 그대로 | `y`·`rotationZ` 부호 반전 + `-0.0000` 정규화 | three(+y 위) ↔ CSS(+y 아래) 손대칭. 배율 테스트는 통과하면서 부채꼴만 거울이 된다 |
+| Task 3 Step 2 포인터 캡처 | `pointerdown` | `pointermove`(가로 의도 확정 시) | 캡처가 `click` 타깃을 `.stage` 로 올려 **데스크톱 카드 클릭이 죽는다**(터치는 살아서 놓치기 쉽다) |
+| Task 3 Step 2 `consumeDragClick` | 무인자, boolean 표식 | `(event)` 를 받고 표식은 시각 + 500ms 만료 | 키보드 활성화(`detail === 0`)를 통과시키고, click 이 안 오는 `pointercancel` 경로에서 표식이 굳지 않게 |
+| Task 3 Step 2 속도 dt 하한 | 1/60 | 1/240 + 100ms idle 시 속도 0 | 120Hz 기기에서 플릭이 절반으로 측정된다 |
+| Task 3 Step 3 rAF 루프 | 무조건 계속 | 도착하면 정지, `target`·드래그·모션설정 변화로만 기상 | 아무도 안 만지는 랜딩에서 프레임을 영원히 태운다. **그 대가로 `target` 은 state 로 남아야 한다** |
+| Task 3 Step 3 reduced-motion | `DAMP_REDUCED = 24` | 그 프레임에 즉시 확정 | lambda 24 로도 원근 회전이 160ms 재생된다 |
+| Task 3 Step 3 포커스 | 없음 | 로빙 탭인덱스 + 포커스 이동, 포커스 쥔 카드는 안 숨김 | 숨기는 순간 포커스가 body 로 회수돼 방향키가 죽는다 |
+| Task 6 라이선싱 카피 | 계획 문장 그대로 | 구현 눈금으로 하향 | 채널 조건 없음 / 유효기간 90일·1년·2년 / "체인 앵커"→"체인 기록" / 공개 검증은 DB 조회 / 정산 단위는 컷이 아니라 **잡 1건** |
+| Task 8 모델 정보 카피 | 하드룰 직역 | 예외 두 개를 문장에 명시 | 대표 이미지는 presigned 공개 주소이고, 공개 검증에는 마스킹 이름·나이가 함께 뜬다 |
+| Task 8 철회 경로 | `/model/withdraw` 를 탈출구로 안내 | **라이선스 해지(`/model/license`)까지만 약속** | **critical.** `ModelWithdraw.jsx` 는 개인화 도메인 전용이라 FaceMarket 모델에게는 빈 화면이고 withdraw API 도 404 다. 등록 파기 진입점이 레포에 없다. (단어가 '폐기'에서 '해지'로 바뀐 사유는 아래 마감 라운드 표) |
+| Task 8 푸터 | "법적 고지, 문의" | 걸 링크가 **아직 없다**는 사실까지만 | 레포에 그 페이지가 없고 서버 `NOTICE_URIS` 도 플레이스홀더다 — 없는 주소를 지어 걸지 않는다. **부재를 단정하지도 않는다**(아래 마감 라운드 표) |
+| File Structure **수정** | `src/App.jsx` 하나 | `AuthProvider.jsx` · `Login.jsx` · `shell.jsx` · `index.html` | 랜딩이 로그인 복귀 계약을 넘겨받으면 플래그를 심고 지우는 반대편도 같이 봐야 한다 |
+| File Structure **신규**의 소유 구조 | `FacemarketLanding.jsx` = "섹션 조립" | head 교체 · 상태별 CTA 조회 · 보류 클릭까지 여기 | CTA 핸들러가 **넷**(상단바·히어로·등록·모델 정보)에 공유돼야 해서 한 곳으로 모였다. CSS 도 섹션별로 안 갈리고 `FacemarketLanding.module.css` 한 벌을 7개 파일이 공유한다 |
+| File Structure **수정**의 `Login.jsx` | 계획에 없음 | 취소/성공 분리 + 세션 도착 시 자동 닫기 + **`IS_FACEMARKET` 카피 분기 세 곳** | 랜딩이 복귀 계약을 넘겨받으니 플래그를 심고 지우는 반대편이 따라왔고, 랜딩의 유일한 전환 버튼이 여는 첫 화면이라 카피까지 도메인을 가르게 됐다 |
+| 테스트 | 4개 | 5개 | `facemarket-landing-models.test.mjs` — 이미지 목록이 순수 상수라 하드룰 1 에 런타임 검증이 없다 |
+
+**4라운드(마감)에서 더 갈라진 곳** — 전부 **앞 라운드의 옳은 수리가 다른 옳은 수리를
+잡아먹은** 종류다. 한쪽을 되돌려 풀지 말고 범위·조건으로 풀어라.
+
+| 자리 | 앞 라운드 | 마감 라운드 | 왜 |
+|---|---|---|---|
+| 히어로 CTA 의 `loading` 처리 | 스펙이 `disabled` + `aria-busy` 를 요구 | **잠그지 않는다.** 보류함 `pendingPrimary` 에 담았다가 `loading` 이 내려가면 한 번 실행 | **major.** `disabled` 를 걸면 그 클릭이 DOM 에 도달하지 않아 보류함이 통째로 죽은 코드가 된다. **이 자리에서 두 라운드가 반대 방향으로 왕복했다** — 스펙 §1 히어로의 경고 블록이 정본이다 |
+| `FacemarketRoot` 의 플래그 정리 | `settled` 되면 무조건 삭제 | `settled && target` + **값 대조** 후 삭제 | **major.** effect 는 자식→부모 순이라, 부트스트랩 중 눌린 CTA 가 심은 복귀 목표를 부모가 나중에 지운다. 로그인 후 등록이 아니라 랜딩으로 되돌아온다 |
+| 포인터 캡처 지연의 뒷정리 | 캡처만 `pointermove` 로 미룸 | 사장 상태 무장 해제 가드를 추가 | **major.** 캡처 전 구간에서 스테이지 밖 릴리스가 나면 `pointer.current.id` 가 남아 **맨 호버가 드래그**가 된다. 캡처를 `pointerdown` 으로 되돌리는 건 해법이 아니다(데스크톱 클릭이 다시 죽는다) |
+| 로그인 모달 카피 | 셀러 스튜디오 문구 그대로 | `IS_FACEMARKET` 분기 | **major.** 랜딩의 유일한 전환 버튼이 여는 첫 화면이 셀러 제품 설명이면 이 랜딩의 존재 이유가 CTA 한 번에 무너진다 |
+| 섹션 카피의 하한 | 사실성 감사로 계속 하향 | 참인 편익은 **복원** | **major(과잉수정).** 편익 문장이 한 줄도 안 남고 마지막 CTA 뒤에 부정문만 이어지는 상태가 됐다. 생체정보를 넘기라고 설득하는 페이지에서 설득이 사라진 것도 회귀다 — **상한은 코드, 하한은 목적** |
+| 스펙의 캐러셀 재렌더 서술 | "활성 인덱스가 바뀔 때만 재렌더" | idle 에서만 참, 드래그 중에는 프레임마다 재렌더 | minor. 이 문장을 믿고 `target` 을 ref 로 옮기면 wake 이펙트가 안 발화해 캐러셀이 통째로 멈춘다 |
+
+**마감 라운드에서 더 갈라진 곳**
+
+| 자리 | 앞 라운드 | 마감 라운드 | 왜 |
+|---|---|---|---|
+| 보류함 `pendingPrimary` | `useRef` | **`useState` + 라벨 '확인 중이에요…'** | 눌린 사실이 화면에 하나도 안 남아 "고장 난 버튼"으로 읽히고 연타를 불렀다. 대기 표시는 **라벨로만** 준다 — `disabled`·`aria-busy` 는 여전히 금지(보류함이 죽는다) |
+| 포인터 무장 해제 | 탈출구 하나(`buttons === 0` 가드) | **탈출구 셋** — 가드 + `window` 릴리스 리스너 + `onLostPointerCapture`, 전부 `resetPointer` 로 수렴 | 캡처를 8px 뒤로 미룬 대가. 중복 도착은 `releasePointer` 첫 줄의 `pointerId` 대조가 막는다 — **그 줄을 지우면 한 번의 릴리스가 `snapTarget` 을 두 번 먹인다** |
+| `document.title` 복원 | 언마운트에서 무조건 복원 | **`IS_FACEMARKET` 이면 복원하지 않음** | 랜딩을 떠나는 순간 모델 전용 도메인 전체가 셀러 제목이 된다 — 등록 7단계 내내, 북마크까지. 복원의 근거가 이 도메인에선 성립하지 않는다(catch-all·TopNav 가 셀러 화면을 막는다) |
+| 라이선스 해지의 어휘 | 랜딩만 '폐기' | **'해지'로 통일** | 제품 화면 버튼·확인창·검증 페이지가 전부 '해지'다. PRD 는 '폐기'를 쓰지만 사용자 대면 문자열이 아니다 — 랜딩만 다르면 모델이 그 버튼을 못 찾는다 |
+| 푸터 약관 문구 | "방침·약관이 **없다**" 고 공표 | "공개 문서가 준비되면 **여기에 겁니다**" + 로그인 모달의 facemarket 분기를 같은 말로 | 두 클릭 거리의 모달이 "서비스 약관에 동의한 것으로 간주"라 두 화면이 서로를 부정했다. **한쪽만 고치지 마라** |
+| 푸터의 예시 이미지 고지 | 푸터에도 한 벌 | **삭제(셋째 사본)** | 남은 둘 — 캐러셀 상단 고지 + 카드 안 '예시' 배지 — 이 정본이고 PRD §13-5 를 지킨다. 푸터 사본은 캐러셀과 한 화면에 있지도 않았다. **남은 둘은 지우지 마라** |
+| 체인 기록 카피 | "사용 1건이 생길 때마다 남습니다" | 상한형 — "올리기가 실패한 건은 기록이 남지 않습니다" | `record_license_settlement` 는 best-effort 다. 실패하면 체인에도 `fm_settlements` 에도 행이 없고, 호출부는 과금·종결 **뒤에** 부르며 예외를 삼킨다 |
+| `sessionStorage` 하드닝 | facemarket 쪽만 try/catch | **`AuthProvider` 의 `readPostLogin`/`forgetPostLogin` 로 단일화**(ai·facemarket 둘 다) | 반쪽 하드닝이 매출 도는 셀러 도메인 루트만 흰 화면으로 만들었다(렌더 중 접근 + 레포에 `ErrorBoundary` 0개). 키의 주인은 `AuthProvider` 하나다 |
+
+**아직 안 닫힌 것 (이 브랜치 밖)**
+
+- **호스트별 공유 미리보기.** `og:*` 는 들어갔지만 **두 도메인 공통(중립)** 값이다.
+  facemarket 링크를 공유하면 모델용 문구가 아니라 중립 문구가 나간다. 정적 head 는 빌드
+  산출물이 한 벌이라 도메인으로 못 가른다(위 `index.html` 블록의 (a)+(b) 또는 Edge
+  Middleware 가 필요하다). 정식 1200×630 OG 이미지도 아직 없어 256×256 브랜드 마크를
+  쓰는 중이다 — `public/assets/brand/temp-nav-logo.png` 를 지우면 썸네일이 깨진다.
+- **FaceMarket 등록 파기 진입점.** `ModelWithdraw.jsx` 는 개인화 도메인 전용이고
+  (`personalization_profiles` 행이 없으면 빈 화면 + withdraw API 404), facemarket 라우트에도
+  등록 철회·삭제가 없다 — 있는 건 `/licenses/{id}/revoke` 와 진행 중 등록 `cancel` 뿐이다.
+  **랜딩에 `/model/withdraw` 를 다시 적지 마라.**
+- **모델용 사용 내역·정산 화면**, **법무 문서(방침·약관·사업자 정보)**.
+
 **알려진 제약 (구현 중 확인할 것)**
 
 - `public/models` 이미지가 **360×450** 이다. 데스크톱 최대 카드 크기가 약 230×322 CSS px 이라 1x 에서는 충분하지만 2x DPR 화면에서는 살짝 무를 수 있다. Task 5 육안 확인에서 판단하고, 문제가 되면 이미지 재생성은 별건으로 뺀다.
 - Cormorant 는 라틴 전용이라 대형 세리프 헤드라인이 영문이다. 한글 헤드라인을 원하면 Pretendard 로 내려야 하고 에디토리얼 인상이 약해진다. Task 5 에서 실물을 보고 조정한다.
-- 섹션 카피는 이 계획의 문장을 그대로 쓴다. 최종 문구 다듬기는 구현 후 별건.
+- ~~섹션 카피는 이 계획의 문장을 그대로 쓴다.~~ **결과적으로 그렇게 되지 않았다.** 카피가
+  구현보다 세게 말하는 자리가 여러 곳에서 나와 전부 하향됐다(위 표). 이 계획서의 카피
+  블록은 참고용이고, 정본은 각 섹션 파일의 헤더 주석이다 — 거기 "왜 이 문장을 못 세게
+  쓰는지"의 코드 근거가 적혀 있다.
