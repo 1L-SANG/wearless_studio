@@ -204,3 +204,30 @@ def test_opendid_scales_down_when_no_holder_demand():
                            last_upload_at=NOW - timedelta(hours=2))
     assert asyncio.run(_opendid_scaler(a).reconcile_once(_Repo(quiet), None)) == "down"
     assert a.set_calls == [0]
+
+
+def test_opendid_demand_counts_pending_revocations():
+    """폐기 대기 잡도 수요다. 프리워밍이 desired=1 로 올려도 60초 뒤 reconciler 가 '수요 없음'
+    으로 0 을 다시 써 버려서, 홀더가 2분 부팅을 못 끝내고 죽었다 — prod 에서 한 잡이
+    attempts=867 까지 재시도한 진짜 이유(2026-09-01 실측: desired 1 → 0 을 눈으로 확인)."""
+    captured = {}
+
+    class _CaptureCur(_Cur):
+        async def execute(self, sql, params=()):
+            captured["sql"] = sql
+            captured["params"] = params
+
+    class _CaptureConn:
+        def cursor(self):
+            return _CaptureCur({"active": 0, "last_finished": None, "last_activity": None})
+
+    asyncio.run(repo_mod.opendid_demand_snapshot(_CaptureConn()))
+    assert "fm_vc_revocation_jobs" in captured["sql"], \
+        "폐기 큐가 수요에 안 들어가면 워커가 홀더를 깨워도 60초 뒤 다시 꺼진다"
+    assert "'pending'" in captured["sql"] and "'retry'" in captured["sql"]
+
+
+def test_opendid_demand_adds_revocations_to_active_count():
+    row = {"active": 1, "last_finished": None, "last_activity": None}
+    snap = asyncio.run(repo_mod.opendid_demand_snapshot(_Conn(row)))
+    assert snap.active_sam_jobs == 1
