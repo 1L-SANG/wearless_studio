@@ -6,6 +6,7 @@ Phase 1: /me/account · /projects(library) · projects CRUD (routes.py).
 
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -300,6 +301,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "message": "서버 오류가 발생했어요. 잠시 후 다시 시도해 주세요.",
                 }},
             )
+
+    @app.middleware("http")
+    async def http_error_log(request: Request, call_next):
+        """실패 응답을 status·method·path 와 함께 한 줄로 남긴다.
+
+        위 봉투는 **파이썬 예외가 터진 경우**만 로그를 남긴다. 그래서
+        HTTPException(503 payment_not_configured 등)으로 의도해서 돌려준 5xx 는
+        여태 로그가 한 줄도 없었고, 로그를 보는 Slack 알림에도 잡히지 않았다.
+        이 미들웨어가 그 구멍을 막고, 알림에 상태코드·경로·소요시간을 준다.
+
+        5xx 만 ERROR 다. 4xx 는 만료 토큰·오탈자 URL 같은 일상적인 실패라
+        ERROR 로 올리면 알림 채널이 죽는다 — WARNING 으로 남겨 CloudWatch 에는
+        보이되 알림 필터에는 걸리지 않게 한다.
+
+        봉투보다 **나중에** 등록해야 봉투가 만든 500 응답까지 본다(Starlette 은
+        나중에 등록한 미들웨어가 바깥). CORS 는 그 바깥에 그대로 남는다.
+        """
+        started = time.perf_counter()
+        response = await call_next(request)
+        status = response.status_code
+        if status >= 400 and request.url.path != "/healthz":
+            logging.getLogger("wearless.api").log(
+                logging.ERROR if status >= 500 else logging.WARNING,
+                "http error status=%s method=%s path=%s duration_ms=%d trace=%s",
+                status,
+                request.method,
+                request.url.path,
+                (time.perf_counter() - started) * 1000,
+                # ALB 가 붙이는 추적 헤더. ALB 액세스 로그와 대조할 때 쓴다.
+                request.headers.get("x-amzn-trace-id", "-"),
+            )
+        return response
 
     # CORS를 예외 봉투 밖쪽에 두어 정상 응답뿐 아니라 500에도 ACAO를 붙인다.
     app.add_middleware(
