@@ -1342,7 +1342,12 @@ async def opendid_demand_snapshot(conn: AsyncConnection):
             "select "
             "  (select count(*) from fm_biometric_enrollments "
             "     where status in ('license_pending', 'vc_pending') "
-            "       and updated_at > now() - make_interval(hours => %s)) as active, "
+            "       and updated_at > now() - make_interval(hours => %s)) "
+            # 폐기 대기 잡도 수요다. 이게 빠져 있어서, 폐기 워커가 홀더를 깨워도(desired=1)
+            # 60초 뒤 이 루프가 "수요 없음"으로 0 을 다시 써 버렸다 — 홀더는 2분 부팅을
+            # 못 끝내고 죽었고 폐기는 영원히 transport 로 실패했다(prod 실측 attempts=867).
+            "  + (select count(*) from fm_vc_revocation_jobs "
+            "       where status in ('pending', 'retry', 'processing')) as active, "
             "  (select max(completed_at) from fm_biometric_enrollments "
             "     where status = 'passed' and vc_id is not null) as last_finished, "
             "  (select max(updated_at) from fm_biometric_enrollments "
