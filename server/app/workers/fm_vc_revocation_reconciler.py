@@ -76,10 +76,20 @@ class FaceVcRevocationReconciler:
             except asyncio.TimeoutError:
                 pass
 
+    def _prewarm_holder(self):
+        """홀더는 scale-to-zero 라 0대면 폐기가 transport 로 계속 실패한다. 프리워밍 훅이
+        발급 경로에만 붙어 있어서 이 워커는 홀더를 못 깨웠고, prod 에서 한 잡이 attempts=859
+        까지 재시도했다(2026-09-01 실측). 실패·중복은 무해 — 재시도가 다음 턴에 다시 깨운다."""
+        scaler = getattr(self.app.state, "opendid_autoscaler", None)
+        if scaler is not None:
+            with contextlib.suppress(Exception):
+                scaler.prewarm_soon()
+
     async def _sweep_once(self):
         job = await self._claim_one()
         if job is None:
             return False
+        self._prewarm_holder()
         try:
             async with asyncio.timeout(_OPERATION_SECONDS):
                 status = await self._holder_status(job)

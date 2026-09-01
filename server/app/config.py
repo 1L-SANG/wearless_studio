@@ -296,6 +296,10 @@ class Settings:
     fm_liveness_confidence_threshold: float | None = None
     fm_id_live_threshold: float | None = None
     fm_retouched_live_threshold: float | None = None
+    # 측면 전용 임계. 측면은 정면 인식기(YuNet+SFace)에 구조적으로 불리해 유사도가
+    # 낮게 나온다(prod 실측: front 0.18 / 45도 0.26 / 측면 0.148). 미설정이면
+    # fm_retouched_live_threshold 를 그대로 쓴다 — 기존 환경 동작 불변.
+    fm_side_live_threshold: float | None = None
     fm_match_policy_version: str | None = None
     fm_ci_pepper: str | None = None  # HMAC-SHA256(CI, pepper) dedup용 secret. 없으면 verify 503
     # 상세페이지 착용컷 인물 일관성(AG-06): 실존 모델을 골랐는데 facemarket off 라 해석 불가하면
@@ -572,6 +576,7 @@ def load_settings() -> Settings:
         fm_retouched_live_threshold=_optional_float_env(
             "FM_RETOUCHED_LIVE_THRESHOLD"
         ),
+        fm_side_live_threshold=_optional_float_env("FM_SIDE_LIVE_THRESHOLD"),
         fm_match_policy_version=os.getenv("FM_MATCH_POLICY_VERSION") or None,
         detailpage_fallback_model_id=os.getenv("DETAILPAGE_FALLBACK_MODEL_ID", "mB"),
         personalization_enabled=(

@@ -97,3 +97,23 @@ def test_non_string_values_do_not_crash():
     assert build_body_profile_block({"heightBucket": ["x"], "bodyType": "slim"})  # no TypeError
     with pytest.raises(PhysiqueError):
         validate_physique(height_bucket=None, body_type=["x"], gender=None)
+
+
+def test_side_photos_get_their_own_match_threshold():
+    """측면은 정면 얼굴 인식기(YuNet+SFace)에 구조적으로 불리해 유사도가 낮게 나온다.
+    실측(2026-09-01 prod): front 0.1806 / angle45 0.2605 / side 0.14825 — 측면만 0.15 에
+    0.0017 모자라 등록 전체가 face_match_failed 로 날아갔다(3회 반복)."""
+    from app.facemarket_enrollment import match_threshold_for_angle
+    from conftest import make_settings
+
+    settings = make_settings(
+        fm_retouched_live_threshold=0.15,
+        fm_side_live_threshold=0.10,
+    )
+    assert match_threshold_for_angle(settings, "front") == 0.15
+    assert match_threshold_for_angle(settings, "angle45") == 0.15
+    assert match_threshold_for_angle(settings, "side") == 0.10
+
+    # 측면 임계가 없으면 기존 값 그대로 — 설정을 안 준 환경의 동작이 바뀌면 안 된다.
+    legacy = make_settings(fm_retouched_live_threshold=0.15, fm_side_live_threshold=None)
+    assert match_threshold_for_angle(legacy, "side") == 0.15

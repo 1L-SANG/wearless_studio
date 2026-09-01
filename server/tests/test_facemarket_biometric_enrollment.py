@@ -4517,3 +4517,30 @@ def test_prewarm_hook_is_optional_on_app_state(
     )
 
     assert res.status_code == 201, res.text
+
+
+def test_photo_upload_prewarms_opendid(
+    enrollment_client, auth, fake_r2, monkeypatch
+):
+    """사진 업로드가 홀더를 깨우는 가장 이른 지점이다. prod 실측(2026-09-01): 사진 3장에
+    3분 26초 — 그동안 홀더(~2분 부팅)를 띄우면 발급 시점엔 따뜻하다. 라이브니스 훅만으로는
+    발급까지 1분도 안 남아 콜드부트를 못 가렸다."""
+    calls = []
+
+    class _Scaler:
+        def prewarm_soon(self):
+            calls.append(True)
+
+    stub_qc(monkeypatch)
+    enrollment_client.app.state.opendid_autoscaler = _Scaler()
+    enrollment_id = create_enrollment(enrollment_client, auth)
+
+    response = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/photos",
+        data={"angle": "front"},
+        files={"photo": ("face.jpg", b"image", "image/jpeg")},
+        headers=auth(),
+    )
+
+    assert response.status_code == 201, response.text
+    assert calls, "첫 사진 업로드에서 홀더를 깨워야 한다"

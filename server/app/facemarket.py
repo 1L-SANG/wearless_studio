@@ -16,6 +16,7 @@ import asyncio
 import hashlib
 import hmac
 import logging
+import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -1088,6 +1089,9 @@ async def create_license(
     # opendid 가 scale-to-zero(0대)면 지금 깨운다 — reconciler 60초 대기를 앞당긴다. off/미설정이면
     # 무해. 콜드스타트(4 JVM ~2분)는 아래 vc_issue_delayed 재시도 UX 가 흡수한다.
     _wake_opendid(request.app)
+    # 발급 소요를 남긴다 — "느리다"가 홀더 콜드부트인지 홀더 처리 자체인지 이 숫자로만 갈린다.
+    # 얼굴·클레임은 절대 안 찍는다(§1.4): 소요시간과 결과만.
+    issue_started = time.monotonic()
     try:
         issued = await issue_face_vc(
             request.app, license_id=license_id, model_id=str(model_id),
@@ -1095,6 +1099,10 @@ async def create_license(
             valid_until=valid_until, digest=digest,
         )
     except FaceVcIssueError as error:
+        logger.info(
+            "fm_vc_issue outcome=failed elapsed_s=%.1f status=%s",
+            time.monotonic() - issue_started, error.status_code,
+        )
         _wake_opendid(request.app)   # 콜드/재확보로 실패했다면 재시도가 홀더를 찾게 다시 깨운다
         raise _err(
             "vc_issue_delayed",
@@ -1102,6 +1110,7 @@ async def create_license(
             status=error.status_code,
         )
 
+    logger.info("fm_vc_issue outcome=issued elapsed_s=%.1f", time.monotonic() - issue_started)
     try:
         return await _await_post_issue_finalization(
             finalize_issued_face_vc(
