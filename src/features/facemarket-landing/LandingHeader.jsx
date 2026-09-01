@@ -1,35 +1,29 @@
 /* =============================================================
    facemarket-landing/LandingHeader.jsx
-   랜딩 상단바. 세 항목은 라우트가 아니라 같은 페이지 섹션 앵커다 —
-   /model/* 은 전부 인증이 필요해서, 라우트로 걸면 첫 클릭이 곧바로
-   로그인 모달이 된다(설명을 읽기 전에 가입을 요구하는 순서).
+   랜딩 상단바. 세 항목은 각자 자기 라우트를 갖는다(SPA — 새 페이지처럼 보이되
+   문서 재적재 없이 전환).
+
+   ⚠️ 목적지는 **공개 라우트**여야 한다. /model/license·/model/register·/model 로
+   직행하게 바꾸지 마라 — 셋 다 RequireAuth 아래라(App.jsx) 비로그인 방문자가 첫
+   클릭에 로그인 모달을 맞는다. 설명을 읽기 전에 가입을 요구하는 순서가 되어, 랜딩을
+   만든 이유 자체가 없어진다. 인증 라우트로는 각 페이지 끝 CTA 가 보낸다.
    ============================================================= */
 import { useEffect, useRef, useState } from 'react';
+import { Link, NavLink } from 'react-router-dom';
 import { Icon } from '@/components/ui.jsx';
 import s from './FacemarketLanding.module.css';
 
 const NAV = [
-  { id: 'licensing', label: '라이선싱' },
-  { id: 'register', label: '모델 등록' },
-  { id: 'model-info', label: '모델 정보' },
+  { to: '/licensing', label: '라이선싱' },
+  { to: '/register', label: '모델 등록' },
+  { to: '/model-info', label: '모델 정보' },
 ];
 
 /* CSS 의 `@media (min-width: 48rem)` 과 같은 폭이어야 한다 — 그 폭에서 햄버거가
    사라지므로, 같은 지점에서 메뉴 상태도 접어야 '열린 채 닫을 수 없는' 상태가 안 생긴다. */
 const DESKTOP_QUERY = '(min-width: 48rem)';
 
-/* 앵커 스크롤도 캐러셀과 같은 사용자 설정을 따른다. '모델 정보'는 히어로+캐러셀+
-   라이선싱 아래라 스크롤 거리가 수천 px 인데, 그 전체가 애니메이션으로 흘러가는 건
-   '동작 줄이기'를 켠 사람이 정확히 막으려는 종류의 모션이다. 캐러셀만 조용하고
-   내비게이션만 움직이면 같은 기능 안에서 처리가 어긋난다(CarouselStage 의
-   usePrefersReducedMotion 과 같은 판단 — 여기는 클릭 때 한 번 읽으면 되는 자리라
-   훅이 아니다. 설정은 페이지를 연 뒤에도 바뀔 수 있으므로 매번 읽는다). */
-function scrollToSection(id) {
-  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false;
-  document.getElementById(id)?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
-}
-
-/* CTA 를 인증 부트스트랩 중에 disabled 로 잠그지 않는 건 의도다 — FacemarketLanding 의
+/* CTA 를 인증 부트스트랩 중에 disabled 로 잠그지 않는 건 의도다 — LandingShell 의
    onPrimary 는 그 시간에 눌린 클릭을 보류함(pendingPrimary)에 담았다가 loading 이
    내려가면 한 번 실행한다. 버튼을 잠그면 그 클릭이 아예 안 들어와 보류함이 죽는다. */
 export function LandingHeader({ onPrimary, primaryLabel }) {
@@ -61,23 +55,25 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
     };
   }, [menuOpen]);
 
-  const go = (id) => {
-    setMenuOpen(false);
-    scrollToSection(id);
-  };
+  // 라우트가 바뀌면 모바일 메뉴는 닫힌다 — 링크를 눌러 페이지가 넘어갔는데 드롭다운이
+  // 새 페이지 위에 그대로 떠 있으면 안 된다.
+  const closeMenu = () => setMenuOpen(false);
+  const linkClass = ({ isActive }) => (isActive ? `${s.navLink} ${s.navLinkActive}` : s.navLink);
 
   return (
     <header className={s.header} ref={headerRef}>
-      <a className={s.brand} href="#top">
+      {/* 브랜드는 홈('/') 링크다. 예전엔 같은 문서 안 앵커(#top)였는데, 이제 상단바가
+          다른 라우트로 넘어가므로 앵커면 현재 페이지 맨 위로만 가고 홈으로 못 돌아온다. */}
+      <Link className={s.brand} onClick={closeMenu} to="/">
         <img alt="" className={s.brandLogo} src="/assets/brand/logo.svg" />
         <span className={s.brandName}>FaceMarket</span>
-      </a>
+      </Link>
 
-      <nav aria-label="랜딩 섹션" className={s.nav}>
+      <nav aria-label="랜딩 내비게이션" className={s.nav}>
         {NAV.map((item) => (
-          <button className={s.navLink} key={item.id} onClick={() => go(item.id)} type="button">
+          <NavLink className={linkClass} key={item.to} onClick={closeMenu} to={item.to}>
             {item.label}
-          </button>
+          </NavLink>
         ))}
       </nav>
 
@@ -100,9 +96,9 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
       {menuOpen && (
         <nav aria-label="모바일 메뉴" className={s.mobileNav}>
           {NAV.map((item) => (
-            <button className={s.navLink} key={item.id} onClick={() => go(item.id)} type="button">
+            <NavLink className={linkClass} key={item.to} onClick={closeMenu} to={item.to}>
               {item.label}
-            </button>
+            </NavLink>
           ))}
         </nav>
       )}

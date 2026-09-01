@@ -101,7 +101,11 @@ const RECORD = [
   { icon: 'coins', title: '사용 기록', body: '기록의 단위는 내 얼굴이 쓰인 상세페이지 한 건입니다 — 그 안에서 컷이 몇 장 나오든 사용 1건과 모델 몫 금액이 함께 올라갑니다. 체인 기록에 실패한 건은 남지 않고, 실제 지급 기능도 아직 준비 중입니다.' },
 ];
 
-export function LicensingSection() {
+/* ctaLabel·onPrimary 는 ModelInfoSection·RegisterSection 과 같은 계약이다 — 같은 버튼이
+   파일마다 다른 prop 이름을 갖지 않게. 이 섹션이 자기 라우트(/licensing)를 갖게 되면서
+   페이지 끝에 전환 지점이 필요해졌다. prop 이 없으면 버튼을 그리지 않는다(눌러도 아무
+   일 없는 버튼이 더 나쁘다). */
+export function LicensingSection({ ctaLabel, onPrimary }) {
   return (
     <section className={s.section} id="licensing">
       <p className={s.eyebrow}>라이선싱</p>
@@ -146,6 +150,17 @@ export function LicensingSection() {
           ))}
         </ol>
       </div>
+
+      {ctaLabel && onPrimary ? (
+        // 여백 규칙은 ModelInfoSection 의 CTA 와 같다(앞 요소가 자기 아래 여백을 갖는
+        // 스타일시트인데 .record 에는 그 여백이 없다). 클래스가 생기면 둘 다 옮겨라.
+        <div style={{ marginTop: '2.2rem' }}>
+          <button className={s.heroCta} onClick={onPrimary} type="button">
+            {ctaLabel}
+            <Icon name="arrowRight" size={18} stroke={2} />
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }

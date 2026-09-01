@@ -34,6 +34,9 @@ import { PublicVerify } from '@/features/verify/PublicVerify.jsx';
 // 아래 LazyEditor 와 저울이 다르다: 에디터는 수백 kB 에 로그인 뒤 화면이고, 랜딩은 32kB 에
 // 이 도메인의 첫 화면(=유일한 유입 경로)이다. ErrorBoundary 가 생기면 그때 lazy 가 맞다.
 import { FacemarketRoot } from '@/features/facemarket-landing/FacemarketRoot.jsx';
+import { LicensingPage } from '@/features/facemarket-landing/pages/LicensingPage.jsx';
+import { RegisterPage } from '@/features/facemarket-landing/pages/RegisterPage.jsx';
+import { ModelInfoPage } from '@/features/facemarket-landing/pages/ModelInfoPage.jsx';
 import { ProductInput } from '@/features/product-input/ProductInput.jsx';
 import { Mannequin } from '@/features/mannequin/Mannequin.jsx';
 import { Storyboard } from '@/features/storyboard/Storyboard.jsx';
@@ -626,10 +629,16 @@ export default function App() {
     <>
       <ResumeTracker />
       <Routes>
-        {/* facemarket 루트는 앱 크롬 밖 랜딩이다 — 등록 전 방문자에게 TopNav(크레딧·스테퍼)는
-            셀러 스튜디오 잡음이고, 랜딩 상단바는 섹션 앵커라 성격이 겹치지 않는다.
-            로그인 복귀(wl_postLogin) 소비는 FacemarketRoot 가 이어받는다. */}
+        {/* facemarket 랜딩은 앱 크롬 밖이다 — 등록 전 방문자에게 TopNav(크레딧·스테퍼)는
+            셀러 스튜디오 잡음이고, 랜딩은 자기 상단바를 갖는다.
+            로그인 복귀(wl_postLogin) 소비는 FacemarketRoot 가 이어받는다.
+            상단바 세 항목은 각자 라우트다(SPA). 넷 다 **RequireAuth 밖 = 무인증 공개**여야
+            한다 — 설명을 읽기 전에 로그인 모달을 띄우지 않는 게 랜딩의 존재 이유다.
+            인증이 필요한 곳(/model/*)으로는 각 페이지 끝 CTA 가 보낸다. */}
         {IS_FACEMARKET && <Route index element={<FacemarketRoot />} />}
+        {IS_FACEMARKET && <Route path="licensing" element={<LicensingPage />} />}
+        {IS_FACEMARKET && <Route path="register" element={<RegisterPage />} />}
+        {IS_FACEMARKET && <Route path="model-info" element={<ModelInfoPage />} />}
         <Route element={<ChromeLayout />}>
           {!IS_FACEMARKET && <Route index element={<RootRedirect />} />}
           {/* 보관함은 로그인 필요 */}

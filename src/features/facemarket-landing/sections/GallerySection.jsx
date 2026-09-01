@@ -11,6 +11,11 @@ export function GallerySection() {
   // 보이므로, 카드 배지·점 번호와 어긋나지 않는 0 으로 연다.
   const controller = useCarouselController(LANDING_MODELS.length, 0);
 
+  // 두 자리 고정. 원본이 '04 / 07' 처럼 앞을 0 으로 채워 자릿수가 흔들리지 않게 했고,
+  // 여기서도 1↔10 을 오갈 때 큰 숫자의 폭이 바뀌면 옆 요소가 밀린다.
+  const indexLabel = String(controller.activeIndex + 1).padStart(2, '0');
+  const totalLabel = String(LANDING_MODELS.length).padStart(2, '0');
+
   return (
     <section aria-label="예시 이미지 갤러리" className={s.gallery} id="gallery">
       {/* 고지는 스테이지보다 **위**다. 아래에 두면 모바일에서 스테이지 높이가
@@ -23,42 +28,66 @@ export function GallerySection() {
 
       <CarouselStage controller={controller} items={LANDING_MODELS} />
 
+      {/* 원본 spotlight 의 메타 바(ArtworkMeta + GalleryControls)를 옮긴 것이다:
+          좌측 큰 인덱스 · 가운데 조작 힌트 + 점 · 우측 화살표.
+          원본에 있던 작품명·연도·카테고리·평점 줄은 **뺐다** — 카드가 가상 모델이라
+          채울 실명·실적이 없고, 지어내면 실재하는 모델 정보로 읽힌다. 그 자리는
+          사용자가 무엇을 붙일지 정한 뒤에 되살린다. */}
       <div className={s.galleryBar}>
-        <button
-          aria-label="이전 이미지"
-          className={s.galleryArrow}
-          onClick={() => controller.goBy(-1)}
-          type="button"
-        >
-          <Icon name="chevLeft" size={20} stroke={2} />
-        </button>
+        <p className={s.galleryIndex} aria-hidden="true">
+          <span className={s.galleryIndexNow}>{indexLabel}</span>
+          <span className={s.galleryIndexTotal}>/ {totalLabel}</span>
+        </p>
 
-        {/* 점은 탭이 아니다 — role="tab" 은 자기가 여는 tabpanel 을 가리켜야 하는데 여기엔
-            패널이 없고 카드 14장이 한 스테이지 안에서 돌 뿐이다. 그대로 두면 스크린리더가
-            "탭 1/14, 선택 안 됨"으로 읽어 없는 구조를 안내한다. 지금 위치는 스테이지의
-            카드와 같은 방식(aria-current)으로 알린다. */}
-        <div className={s.dots}>
-          {LANDING_MODELS.map((item, index) => (
-            <button
-              aria-current={index === controller.activeIndex ? 'true' : undefined}
-              aria-label={`${index + 1}번 이미지 보기`}
-              className={index === controller.activeIndex ? s.dotActive : s.dot}
-              key={item.id}
-              onClick={() => controller.goTo(index)}
-              type="button"
-            />
-          ))}
+        <div className={s.galleryCenter}>
+          <p className={`${s.galleryHint} ${s.eyebrowLatin}`} aria-hidden="true">
+            DRAG · SWIPE · ARROW KEYS
+          </p>
+
+          {/* 점은 탭이 아니다 — role="tab" 은 자기가 여는 tabpanel 을 가리켜야 하는데 여기엔
+              패널이 없고 카드 14장이 한 스테이지 안에서 돌 뿐이다. 그대로 두면 스크린리더가
+              "탭 1/14, 선택 안 됨"으로 읽어 없는 구조를 안내한다. 지금 위치는 스테이지의
+              카드와 같은 방식(aria-current)으로 알린다. */}
+          <div className={s.dots}>
+            {LANDING_MODELS.map((item, index) => (
+              <button
+                aria-current={index === controller.activeIndex ? 'true' : undefined}
+                aria-label={`${index + 1}번 이미지 보기`}
+                className={index === controller.activeIndex ? s.dotActive : s.dot}
+                key={item.id}
+                onClick={() => controller.goTo(index)}
+                type="button"
+              />
+            ))}
+          </div>
         </div>
 
-        <button
-          aria-label="다음 이미지"
-          className={s.galleryArrow}
-          onClick={() => controller.goBy(1)}
-          type="button"
-        >
-          <Icon name="chevRight" size={20} stroke={2} />
-        </button>
+        <div className={s.galleryArrows}>
+          <button
+            aria-label="이전 이미지"
+            className={s.galleryArrow}
+            onClick={() => controller.goBy(-1)}
+            type="button"
+          >
+            <Icon name="chevLeft" size={20} stroke={2} />
+          </button>
+          <button
+            aria-label="다음 이미지"
+            className={s.galleryArrow}
+            onClick={() => controller.goBy(1)}
+            type="button"
+          >
+            <Icon name="chevRight" size={20} stroke={2} />
+          </button>
+        </div>
       </div>
+
+      {/* 큰 인덱스는 aria-hidden 이다(숫자 두 덩이로 쪼개져 있어 그대로 읽히면 어수선하다).
+          대신 위치 변화를 여기서 한 문장으로 알린다 — 드래그·키보드로 옮겨도 스크린리더
+          사용자가 현재 위치를 안다. */}
+      <p className={s.srOnly} aria-live="polite" aria-atomic="true">
+        {`${LANDING_MODELS.length}장 중 ${controller.activeIndex + 1}번째 이미지`}
+      </p>
     </section>
   );
 }

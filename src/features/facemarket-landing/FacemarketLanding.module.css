@@ -58,16 +58,28 @@
 .brandName { font: 600 1.05rem/1 var(--font-body); letter-spacing: -0.01em; }
 
 .nav { display: none; gap: 1.6rem; }
+/* 이제 <button> 이 아니라 <NavLink>(=<a>)다. 이 레포의 전역 스타일에는 링크 리셋이
+   없고(app.css 는 `a.link` 클래스 한정) UA 기본 밑줄이 그대로 나오므로 여기서 끈다. */
 .navLink {
   padding: 0.35rem 0;
   border: 0;
   background: none;
   color: var(--fm-muted);
   font: 500 0.92rem/1 var(--font-body);
+  text-decoration: none;
   cursor: pointer;
   transition: color 140ms ease;
 }
 .navLink:hover { color: var(--fm-ink); }
+
+/* 현재 페이지 표시. 색만으로 알리지 않는다 — 색각 이상이나 저대비 환경에서 구분이
+   사라진다(WCAG 1.4.1). 밑줄을 함께 둬서 형태로도 읽히게 한다. */
+.navLinkActive {
+  color: var(--fm-ink);
+  text-decoration: underline;
+  text-underline-offset: 0.45rem;
+  text-decoration-thickness: 2px;
+}
 
 .headerActions { display: inline-flex; align-items: center; gap: 0.6rem; }
 
@@ -169,12 +181,83 @@
    경계에서 수평선으로 잘리지 않게 둔 자리). 그 4rem 중 3.3rem 은 그림자가 채우고
    0.7rem 이 빈다. 여기에 0.7rem 을 더해 카드 그림자 끝과 바 사이가 1.4rem —
    여유를 넣기 전의 리듬 그대로다. 1.4rem 을 그대로 두면 바가 4rem 만큼 떠 있다. */
+/* 원본 spotlight 의 메타 바 배치 — 좌: 큰 인덱스 / 가운데: 힌트 + 점 / 우: 화살표.
+   가운데를 진짜 화면 중앙에 두려면 좌우 열이 같은 폭을 차지해야 한다. 1fr auto 1fr 로
+   양끝을 같은 몫으로 잡고 가운데만 내용 폭으로 둔다(좌측 숫자가 길어져도 점이 안 밀린다). */
 .galleryBar {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: center;
   gap: 1rem;
   margin-top: 0.7rem;
+}
+
+.galleryCenter {
+  display: grid;
+  justify-items: center;
+  gap: 0.7rem;
+}
+
+/* 조작 힌트. 라틴 대문자라 .eyebrowLatin 과 같은 넓은 자간을 함께 건다. */
+.galleryHint {
+  margin: 0;
+  color: var(--fm-muted);
+  font: 500 0.7rem/1 var(--font-body);
+}
+
+/* 큰 인덱스는 히어로와 같은 세리프다 — 원본에서 이 숫자가 페이지의 두 번째 디스플레이
+   요소였다. Cormorant 는 라틴 전용이지만 숫자는 라틴 자소라 정상으로 그려진다. */
+.galleryIndex {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  margin: 0;
+  font-family: var(--font-serif);
+  line-height: 1;
+}
+.galleryIndexNow {
+  font-size: clamp(2rem, 4vw, 3.4rem);
+  font-weight: 500;
+  color: var(--fm-ink);
+}
+.galleryIndexTotal {
+  font-size: clamp(0.8rem, 1.2vw, 1rem);
+  color: var(--fm-muted);
+}
+
+.galleryArrows {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
+/* 좁은 화면에서는 세 덩이를 한 줄에 못 넣는다(점 14개가 이미 두 줄로 접히는 폭이다).
+   인덱스를 위로 빼고 힌트+점, 화살표를 아래로 쌓는다. */
+@media (max-width: 40rem) {
+  .galleryBar {
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+      'index arrows'
+      'center center';
+    row-gap: 0.9rem;
+  }
+  .galleryIndex { grid-area: index; }
+  .galleryArrows { grid-area: arrows; }
+  .galleryCenter { grid-area: center; }
+}
+
+/* 스크린리더 전용. 화면에서 지우되 접근성 트리에는 남긴다(display:none 은 트리에서도
+   사라져 aria-live 가 발화하지 않는다). */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .galleryArrow {
@@ -232,7 +315,14 @@
   transition: background 160ms ease, transform 160ms ease;
 }
 .dot::before { background: rgba(16, 21, 26, 0.2); }
-.dotActive::before { background: var(--fm-accent); transform: scale(1.5); }
+/* 활성 점은 원본처럼 가로로 늘어난 pill 이다. 크기만 키우면(scale) 이웃 점과 같은
+   모양이라 어느 게 활성인지 형태로 안 읽힌다. 버튼 박스(1.5rem)는 그대로라
+   히트 영역과 줄바꿈 계산(.dots 주석)에 영향이 없다 — 늘어나는 건 ::before 뿐이다. */
+.dotActive::before {
+  width: 1.05rem;
+  background: var(--fm-accent);
+  transition: background 160ms ease, width 160ms ease;
+}
 
 /* 고지는 스테이지 **위**에 있다(GallerySection.jsx). 아래에 두면 모바일에서 스테이지가
    화면을 다 채워 고지가 뷰포트 밖으로 밀린다 — '가상 모델 예시' 라는 말이 사진과 같은
@@ -248,7 +338,11 @@
 }
 
 /* ---- 공통 섹션 ---- */
+/* 구분선은 섹션 **사이**를 나누려고 있다. 상단바 바로 아래 첫 섹션에 그으면 헤더에
+   붙은 의미 없는 헤어라인이 된다 — 세 섹션이 각자 라우트를 갖게 되면서(/licensing 등)
+   각 페이지의 첫 섹션이 곧 유일한 섹션인 경우가 생겼다. */
 .section { padding: clamp(3rem, 8vw, 6.5rem) 0; border-top: 1px solid var(--fm-line); }
+.section:first-child { border-top: 0; padding-top: clamp(2rem, 5vw, 4rem); }
 /* 섹션 대제목은 셋 다 한글이다('내 얼굴, 내가 정한 조건으로만' 등). --font-serif 는
    Cormorant 인데 tokens.css:51 이 못박은 대로 **라틴 전용**이라(폰트 파일 167KB —
    한글 11,172자가 들어갈 수 없는 크기다) 여기 쓰면 한글이 폴백으로 떨어진다.
