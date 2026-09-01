@@ -34,6 +34,7 @@ import { PublicVerify } from '@/features/verify/PublicVerify.jsx';
 // 아래 LazyEditor 와 저울이 다르다: 에디터는 수백 kB 에 로그인 뒤 화면이고, 랜딩은 32kB 에
 // 이 도메인의 첫 화면(=유일한 유입 경로)이다. ErrorBoundary 가 생기면 그때 lazy 가 맞다.
 import { FacemarketRoot } from '@/features/facemarket-landing/FacemarketRoot.jsx';
+import { FacemarketModelLayout } from '@/features/facemarket-shell/FacemarketModelLayout.jsx';
 import { LicensingPage } from '@/features/facemarket-landing/pages/LicensingPage.jsx';
 import { RegisterPage } from '@/features/facemarket-landing/pages/RegisterPage.jsx';
 import { ModelInfoPage } from '@/features/facemarket-landing/pages/ModelInfoPage.jsx';
@@ -615,6 +616,36 @@ function RootRedirect() {
   return <div className="route-loading">불러오는 중이에요</div>;
 }
 
+/* FaceMarket 모델 섹션 — 본인확인·라이선스(FM-10)와 개인화(사용자 얼굴·신체)가 한
+   섹션이다. 본인확인(성인 인증, T2-1)은 register 하나로 흡수됐다 — FaceMarket 실명 인증
+   1회가 개인화 성인 확인도 함께 기록하므로 별도 identity 라우트가 없다.
+   /model 은 섹션 허브(체크리스트) — register·license 의 URL 은 종전 그대로.
+
+   이 서브트리를 상수로 뽑은 이유: 껍데기가 도메인마다 다르다. ai 는 ChromeLayout(TopNav·
+   크레딧·잡 리본), facemarket 은 FacemarketModelLayout(랜딩 상단바). 두 곳에 JSX 를
+   복사해 두면 한쪽만 고치는 사고가 난다. IS_FACEMARKET 이 모듈 로드 시 상수라 실제로는
+   둘 중 하나만 라우터에 등록된다. */
+const MODEL_SECTION_ROUTES = (
+  <Route path="model">
+    {/* 등록은 모델 생성 전에도 열고, 등록 중 모델은 상태·라이선스 화면까지 복구한다. */}
+    <Route path="register" element={<ModelRegister />} />
+    <Route element={<RequireOwnedModel />}>
+      <Route index element={<ModelHub />} />
+      <Route path="license" element={<ModelLicense />} />
+      {/* 폐기된 직접 업로드 북마크는 신규 등록 경계로 되돌린다. */}
+      <Route path="consent" element={<Navigate to="/model/register" replace />} />
+      <Route path="face" element={<Navigate to="/model/register" replace />} />
+      <Route path="body" element={<Navigate to="/model/register" replace />} />
+      <Route path="generate" element={<RequireVerifiedModel />}>
+        <Route index element={<ModelGenerate />} />
+      </Route>
+      <Route path="withdraw" element={<ModelWithdraw />} />
+      {/* 알 수 없는 /model/* 경로도 가드를 거친 뒤 허브로만 복귀한다. */}
+      <Route path="*" element={<Navigate to="/model" replace />} />
+    </Route>
+  </Route>
+);
+
 export default function App() {
   // 환경변수 미설정(예: Vercel env 누락)이면 화이트스크린 대신 원인을 보여준다.
   if (!isSupabaseConfigured) {
@@ -639,6 +670,16 @@ export default function App() {
         {IS_FACEMARKET && <Route path="licensing" element={<LicensingPage />} />}
         {IS_FACEMARKET && <Route path="register" element={<RegisterPage />} />}
         {IS_FACEMARKET && <Route path="model-info" element={<ModelInfoPage />} />}
+        {/* facemarket 의 /model/* 은 셀러 크롬이 아니라 랜딩 상단바를 입는다. 이 도메인에
+            온 사람은 얼굴을 등록하러 온 모델이고, TopNav 의 크레딧·요금제·플로우 스테퍼는
+            전부 상품컷 만드는 사람 물건이라 잡음이다. 인증 가드는 종전과 같다. */}
+        {IS_FACEMARKET && (
+          <Route element={<FacemarketModelLayout />}>
+            <Route element={<RequireAuth />}>
+              {MODEL_SECTION_ROUTES}
+            </Route>
+          </Route>
+        )}
         <Route element={<ChromeLayout />}>
           {!IS_FACEMARKET && <Route index element={<RootRedirect />} />}
           {/* 보관함은 로그인 필요 */}
@@ -655,24 +696,10 @@ export default function App() {
                 본인확인(성인 인증, T2-1)은 register 하나로 흡수됐다 — FaceMarket 실명 인증
                 1회가 개인화 성인 확인도 함께 기록하므로 별도 identity 라우트가 없다.
                 /model 은 섹션 허브(체크리스트) — register·license 의 URL 은 종전 그대로. */}
-            <Route path="model">
-              {/* 등록은 모델 생성 전에도 열고, 등록 중 모델은 상태·라이선스 화면까지 복구한다. */}
-              <Route path="register" element={<ModelRegister />} />
-              <Route element={<RequireOwnedModel />}>
-                <Route index element={<ModelHub />} />
-                <Route path="license" element={<ModelLicense />} />
-                {/* 폐기된 직접 업로드 북마크는 신규 등록 경계로 되돌린다. */}
-                <Route path="consent" element={<Navigate to="/model/register" replace />} />
-                <Route path="face" element={<Navigate to="/model/register" replace />} />
-                <Route path="body" element={<Navigate to="/model/register" replace />} />
-                <Route path="generate" element={<RequireVerifiedModel />}>
-                  <Route index element={<ModelGenerate />} />
-                </Route>
-                <Route path="withdraw" element={<ModelWithdraw />} />
-                {/* 알 수 없는 /model/* 경로도 가드를 거친 뒤 허브로만 복귀한다. */}
-                <Route path="*" element={<Navigate to="/model" replace />} />
-              </Route>
-            </Route>
+            {/* facemarket 에서는 이 섹션이 아래 FacemarketModelLayout 아래로 옮겨간다.
+                IS_FACEMARKET 은 모듈 로드 시 상수라 둘 중 하나만 등록된다 — ai 도메인의
+                라우트 트리는 종전과 완전히 같고, ChromeLayout 이 리마운트될 일도 없다. */}
+            {!IS_FACEMARKET && MODEL_SECTION_ROUTES}
           </Route>
           <Route path="create">
             <Route index element={<Navigate to="/create/input" replace />} />

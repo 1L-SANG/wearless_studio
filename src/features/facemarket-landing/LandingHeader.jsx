@@ -78,10 +78,15 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
       </nav>
 
       <div className={s.headerActions}>
-        <button className={s.headerCta} onClick={onPrimary} type="button">
-          {primaryLabel}
-          <Icon name="arrowRight" size={16} stroke={2} />
-        </button>
+        {/* CTA 는 선택이다. 등록 위저드(/model/register)처럼 **이미 그 CTA 의 목적지에 서
+            있는** 화면에서는 상단바에 같은 버튼을 또 두지 않는다 — 누르면 자기 자신으로
+            가는 버튼이라 아무 일도 안 일어나고, KYC 진행 중에 다른 데로 튀는 것처럼 보인다. */}
+        {primaryLabel && onPrimary ? (
+          <button className={s.headerCta} onClick={onPrimary} type="button">
+            {primaryLabel}
+            <Icon name="arrowRight" size={16} stroke={2} />
+          </button>
+        ) : null}
         <button
           aria-expanded={menuOpen}
           aria-label={menuOpen ? '메뉴 닫기' : '메뉴 열기'}

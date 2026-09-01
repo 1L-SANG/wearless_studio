@@ -7,6 +7,10 @@ import { AuthProvider } from '@/features/auth/AuthProvider.jsx';
 import { ToastProvider } from '@/components/ui.jsx';
 import '@/styles/tokens.css';
 import '@/styles/app.css';
+/* FaceMarket 도메인 테마. 규칙이 전부 `.fm-theme` 하위라 그 클래스를 쓰지 않는
+   ai.wearless.kr 화면에는 한 줄도 적용되지 않는다. app.css 뒤에 와야 전역
+   레이아웃 클래스(.wizard·.surface 등)를 이 스코프에서 덮을 수 있다. */
+import '@/styles/facemarketTheme.css';
 import '@/styles/features.css';
 import '@/styles/moveable.css';
 

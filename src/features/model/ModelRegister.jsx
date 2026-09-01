@@ -672,13 +672,21 @@ export function ModelRegister() {
   }
 
   return (
-    <div className="wizard narrow">
+    <div className={`wizard ${s.flowWizard}`}>
       <div className="page-head">
+        <p className={s.pageEyebrow}>모델 등록</p>
         <h1>모델 등록 진행 중</h1>
         <p>동의, 모바일 신분증 확인, 얼굴 사진, 라이브 촬영을 순서대로 진행해요.</p>
       </div>
 
-      {renderStepRail(step)}
+      {/* 레일과 본문을 2열로 나눈다. PRD §13 1번이 "7단계 진행 레일은 장식이 아니다 —
+          현재 위치가 늘 보여야 한다" 인데, 종전처럼 본문 위에 가로띠로 얹으면 단계 내용이
+          길어질수록(사진 3장·체형 매트릭스) 레일이 화면 밖으로 밀려 그 요구가 깨졌다.
+          세로 레일을 sticky 로 두면 스크롤과 무관하게 위치가 남는다.
+          좁은 화면에서는 CSS 가 다시 가로띠로 접고 상단에 sticky 로 붙인다. */}
+      <div className={s.flowGrid}>
+        <aside className={s.railColumn}>{renderStepRail(step)}</aside>
+        <div className={s.flowBody}>
 
       {step === 'consent' && (
         <div className="surface">
@@ -1003,6 +1011,9 @@ export function ModelRegister() {
       {error && !['failed', 'error', 'identity_failed', 'liveness_failed', 'reidentify'].includes(step) && (
         <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {error}</p>
       )}
+
+        </div>
+      </div>
     </div>
   );
 }
