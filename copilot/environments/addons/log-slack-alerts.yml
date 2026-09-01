@@ -1,0 +1,260 @@
+# 크리티컬 앱 로그 → Slack 알림 (2026-09-01)
+#
+# CloudWatch Logs SubscriptionFilter 가 ERROR/CRITICAL/Traceback 줄만 골라 Lambda 로 보내고,
+# Lambda 가 Slack Incoming Webhook 으로 **로그 본문 그대로** 던진다.
+#
+# 왜 CloudWatch 알람(SNS→Chatbot)이 아니라 이 구조인가:
+#   알람은 "에러 N건 발생"까지만 알려주고 무슨 에러인지는 콘솔에 다시 들어가야 안다.
+#   장애 때 필요한 건 카운트가 아니라 첫 줄이라 구독 필터 경로를 쓴다.
+# 왜 앱 안에서 직접 Slack POST 하지 않는가:
+#   (1) 동기 HTTP 가 이벤트루프를 얼린 사고 이력(2026-08-26 ALB 장애)
+#   (2) OOM·태스크 킬로 프로세스가 죽으면 그 로그는 영영 안 나간다 — 컨테이너 밖에서 잡아야 한다
+#
+# ── 비용 ──
+#   구독 필터 = 무과금. Lambda 는 128MB × ~0.3s, 월 수천 호출이라 프리티어(400,000 GB-s) 안.
+#   ECS 태스크는 이 경로에 관여하지 않으므로 서버비 증가는 0.
+#   유일한 상방 리스크는 로그 폭주인데 ReservedConcurrentExecutions=2 로 상한을 박아
+#   최악(한 달 내내 풀가동)에도 $5 미만이다. 이 값을 지우면 상한이 사라진다.
+#
+# ── 배포 전 1회 준비 ──
+#   1) Slack 워크스페이스에서 앱 생성 → Incoming Webhooks 켜고 대상 채널의 Webhook URL 발급
+#   2) 그 URL 을 SecureString 으로 저장:
+#        aws ssm put-parameter --region us-east-1 --profile wearless \
+#          --name /copilot/wearless/use1/secrets/SLACK_ALERT_WEBHOOK_URL \
+#          --type SecureString --value 'https://hooks.slack.com/services/...'
+#      (이 파라미터는 ECS 태스크가 읽는 시크릿이 아니라 Lambda 가 직접 읽으므로
+#       copilot 태그가 필요 없다 — 2026-07-17 태그 누락 사고와는 다른 경로다.)
+#   3) copilot-aws env deploy --name use1
+#
+# ── 알아둘 제약 ──
+#   * 로그가 평문 포맷(main.py _ExtraFormatter)이라 필터가 substring 매칭이다. 오탐이 보이면
+#     아래 FilterPattern 만 조이면 되고 앱 재배포는 필요 없다.
+#   * 파이썬 트레이스백은 CloudWatch 에서 줄마다 별개 이벤트라, 헤더 줄("ERROR ...",
+#     "Traceback (most recent call last):")은 오지만 스택 프레임은 안 온다. Slack 은 신호이고
+#     전문은 CloudWatch 에서 본다.
+#   * SubscriptionFilter 가 **서비스 스택이 만든 로그 그룹**을 이름으로 참조한다. `svc delete`
+#     후 재생성처럼 로그 그룹이 지워졌다 다시 생기면 이 env 스택을 다시 배포해야 필터가 붙는다.
+Parameters:
+  App:
+    Type: String
+  Env:
+    Type: String
+
+Resources:
+  # ─────────────────────────── Lambda ───────────────────────────
+  LogSlackAlertRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LogSlackAlert
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: OwnLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${App}-${Env}-log-slack-alert:*'
+              - Sid: ReadWebhook
+                Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/copilot/${App}/${Env}/secrets/SLACK_ALERT_WEBHOOK_URL'
+              # SecureString 복호화. aws/ssm 관리형 키라 ViaService 조건으로 SSM 경유만 허용한다.
+              - Sid: DecryptViaSsm
+                Effect: Allow
+                Action: kms:Decrypt
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub 'ssm.${AWS::Region}.amazonaws.com'
+
+  # Lambda 가 알아서 만들게 두면 retention 이 무한이라 명시적으로 만든다(이름 규약 고정).
+  LogSlackAlertOwnLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${App}-${Env}-log-slack-alert'
+      RetentionInDays: 14
+
+  LogSlackAlertFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: LogSlackAlertOwnLogGroup
+    Properties:
+      FunctionName: !Sub '${App}-${Env}-log-slack-alert'
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt LogSlackAlertRole.Arn
+      Timeout: 20
+      MemorySize: 128
+      # 폭주 상한. 이 줄이 비용 가드다 — 지우면 상한이 없어진다.
+      ReservedConcurrentExecutions: 2
+      Environment:
+        Variables:
+          WEBHOOK_PARAM: !Sub '/copilot/${App}/${Env}/secrets/SLACK_ALERT_WEBHOOK_URL'
+          # 로그 그룹명에서 서비스명만 떼어내는 접두사 (/copilot/wearless-use1-api → api)
+          GROUP_PREFIX: !Sub '/copilot/${App}-${Env}-'
+          # 배치당 Slack 에 실어보낼 최대 줄 수. 나머지는 "+N more" 로 접는다.
+          MAX_LINES: '5'
+      Code:
+        ZipFile: |
+          import base64, gzip, json, os, urllib.error, urllib.request
+          from datetime import datetime, timedelta, timezone
+          import boto3
+
+          PREFIX = os.environ["GROUP_PREFIX"]
+          MAX_LINES = int(os.environ.get("MAX_LINES", "5"))
+          # 컨테이너 TZ 가 UTC 라 로그 본문 시각도 UTC 다. 헤더는 KST 로 보여주고 UTC 를 괄호로
+          # 같이 적어, Slack 에서 본 시각과 CloudWatch 원본 줄을 눈으로 맞출 수 있게 한다.
+          # KST 는 DST 가 없으므로 고정 +9 오프셋이면 되고 tzdata 의존이 생기지 않는다.
+          KST = timezone(timedelta(hours=9))
+          _hook = None
+
+
+          def _webhook():
+              # 웜 컨테이너에서 재사용 -> SSM 호출은 콜드스타트당 1회.
+              global _hook
+              if _hook is None:
+                  _hook = boto3.client("ssm").get_parameter(
+                      Name=os.environ["WEBHOOK_PARAM"], WithDecryption=True
+                  )["Parameter"]["Value"]
+              return _hook
+
+
+          def handler(event, _context):
+              payload = json.loads(
+                  gzip.decompress(base64.b64decode(event["awslogs"]["data"]))
+              )
+              group = payload["logGroup"]
+              events = payload.get("logEvents") or []
+              if not events:
+                  return
+
+              svc = group[len(PREFIX):] if group.startswith(PREFIX) else group
+              shown = []
+              for e in events[:MAX_LINES]:
+                  msg = e["message"].strip()
+                  shown.append(msg[:900] + " ...(truncated)" if len(msg) > 900 else msg)
+              body = "\n".join(shown)
+              hidden = len(events) - len(shown)
+              if hidden > 0:
+                  body += "\n... +%d more in this batch" % hidden
+
+              # 이벤트의 epoch ms 를 쓴다 -- 로그 본문 포맷을 파싱하지 않으므로
+              # 파이썬/자바/uvicorn 어느 포맷이 와도 시각은 항상 정확하다.
+              at = datetime.fromtimestamp(events[0]["timestamp"] / 1000, KST)
+              head = ":rotating_light: *%s* - %d error log(s)\n%s KST (%s UTC)\n`%s`" % (
+                  svc,
+                  len(events),
+                  at.strftime("%Y-%m-%d %H:%M:%S"),
+                  at.astimezone(timezone.utc).strftime("%H:%M:%S"),
+                  group,
+              )
+              msg = {
+                  "text": ":rotating_light: %s: %d error log(s)" % (svc, len(events)),
+                  "blocks": [
+                      {"type": "section",
+                       "text": {"type": "mrkdwn", "text": head}},
+                      {"type": "section",
+                       "text": {"type": "mrkdwn",
+                                "text": "```%s```" % body[:2800]}},
+                  ],
+              }
+              req = urllib.request.Request(
+                  _webhook(),
+                  data=json.dumps(msg).encode("utf-8"),
+                  headers={"Content-Type": "application/json"},
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=10) as resp:
+                      resp.read()
+              except urllib.error.HTTPError as exc:
+                  # 429(Slack rate limit)에 재시도를 걸면 폭주 때 비용만 늘고 채널은 어차피
+                  # 막혀 있다. 알림 유실은 감수하고 삼킨다 -- 원본 로그는 CloudWatch 에 그대로.
+                  print("slack_post_failed status=%s body=%r" % (exc.code, exc.read()[:200]))
+
+  # ─────────────────────── 구독 필터 (서비스별) ───────────────────────
+  # FilterPattern 해설: 텍스트 패턴에서 `?` 는 OR.
+  #   " ERROR " / " CRITICAL " -> 앱 포맷 `<시각> <레벨> <로거> <메시지>` 의 레벨 토큰.
+  #                                앞뒤 공백이 메시지 본문 안의 같은 단어 오탐을 줄인다.
+  #   "ERROR:" / "CRITICAL:"   -> uvicorn 자체 로거 포맷(`ERROR:    ...`). 앱 포맷과 달라서 별도.
+  #   "Traceback"              -> 스택 헤더 줄.
+  # WARNING 은 일부러 뺐다 -- 켜면 fail-open 경로(SAM/QC 스킵)가 상시로 울려서 채널이 죽는다.
+  LogSlackAlertPermissionApi:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt LogSlackAlertFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: !Sub 'logs.${AWS::Region}.amazonaws.com'
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/copilot/${App}-${Env}-api:*'
+
+  LogSlackAlertFilterApi:
+    Type: AWS::Logs::SubscriptionFilter
+    DependsOn: LogSlackAlertPermissionApi
+    Properties:
+      LogGroupName: !Sub '/copilot/${App}-${Env}-api'
+      DestinationArn: !GetAtt LogSlackAlertFunction.Arn
+      FilterPattern: '?" ERROR " ?" CRITICAL " ?"ERROR:" ?"CRITICAL:" ?"Traceback"'
+
+  LogSlackAlertPermissionDetailWorker:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt LogSlackAlertFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: !Sub 'logs.${AWS::Region}.amazonaws.com'
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/copilot/${App}-${Env}-detail-worker:*'
+
+  LogSlackAlertFilterDetailWorker:
+    Type: AWS::Logs::SubscriptionFilter
+    DependsOn: LogSlackAlertPermissionDetailWorker
+    Properties:
+      LogGroupName: !Sub '/copilot/${App}-${Env}-detail-worker'
+      DestinationArn: !GetAtt LogSlackAlertFunction.Arn
+      FilterPattern: '?" ERROR " ?" CRITICAL " ?"ERROR:" ?"CRITICAL:" ?"Traceback"'
+
+  LogSlackAlertPermissionOpendid:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt LogSlackAlertFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: !Sub 'logs.${AWS::Region}.amazonaws.com'
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/copilot/${App}-${Env}-opendid:*'
+
+  LogSlackAlertFilterOpendid:
+    Type: AWS::Logs::SubscriptionFilter
+    DependsOn: LogSlackAlertPermissionOpendid
+    Properties:
+      LogGroupName: !Sub '/copilot/${App}-${Env}-opendid'
+      DestinationArn: !GetAtt LogSlackAlertFunction.Arn
+      # opendid(fm-holder)는 자바 스택이라 포맷이 다르다. 레벨 토큰 + 자바 예외 꼬리를 함께 본다.
+      FilterPattern: '?" ERROR " ?" FATAL " ?"ERROR:" ?"Exception" ?"Traceback"'
+
+  LogSlackAlertPermissionSam2:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt LogSlackAlertFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: !Sub 'logs.${AWS::Region}.amazonaws.com'
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/copilot/${App}-${Env}-sam2:*'
+
+  LogSlackAlertFilterSam2:
+    Type: AWS::Logs::SubscriptionFilter
+    DependsOn: LogSlackAlertPermissionSam2
+    Properties:
+      LogGroupName: !Sub '/copilot/${App}-${Env}-sam2'
+      DestinationArn: !GetAtt LogSlackAlertFunction.Arn
+      FilterPattern: '?" ERROR " ?" CRITICAL " ?"ERROR:" ?"CRITICAL:" ?"Traceback"'
+
+Outputs:
+  LogSlackAlertFunctionName:
+    Description: 크리티컬 로그를 Slack 으로 중계하는 Lambda
+    Value: !Ref LogSlackAlertFunction
