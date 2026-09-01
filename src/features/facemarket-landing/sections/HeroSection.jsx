@@ -6,7 +6,9 @@ import s from '../FacemarketLanding.module.css';
 export function HeroSection({ onPrimary, primaryLabel }) {
   return (
     <section className={s.hero}>
-      <p className={s.eyebrow}>FACEMARKET</p>
+      {/* 라틴 대문자라 넓은 자간을 쓴다. 한글 섹션 eyebrow 는 기본값(좁은 자간)이다 —
+          같은 자간을 한글에 걸면 음절이 흩어진다(FacemarketLanding.module.css 주석 참고). */}
+      <p className={`${s.eyebrow} ${s.eyebrowLatin}`}>FACEMARKET</p>
       <h1 className={s.heroTitle}>Your face, your terms.</h1>
       {/* 리드는 "절차 한 줄 + 편익 한 줄"이다. 아래 두 문장은 라운드마다 반대로
           왕복한 자리라 근거를 박아 둔다.

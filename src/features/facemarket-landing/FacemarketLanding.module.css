@@ -122,10 +122,18 @@
 
 /* ---- 히어로 ---- */
 .hero { padding: clamp(2rem, 6vw, 4.5rem) 0 clamp(1rem, 3vw, 2rem); text-align: center; }
+/* eyebrow 는 라틴 대문자('FACEMARKET')와 한글('라이선싱'·'모델 등록'·'모델 정보')을
+   둘 다 쓴다. 넓은 자간은 대문자 라틴에서만 에디토리얼로 읽히고, 한글에서는 음절이
+   흩어져 '라 이 선 싱' 처럼 낱글자로 깨진다(브라우저 실측). 한글 조판은 자간을 벌리지
+   않는 게 기본이라 기본값을 한글 기준으로 두고, 라틴 전용 자리에만 .eyebrowLatin 을
+   덧붙인다. 기본값을 0.22em 으로 되돌리지 마라 — 그러면 섹션 eyebrow 세 개가 깨진다. */
 .eyebrow {
   margin: 0 0 1rem;
   color: var(--fm-muted);
   font: 500 0.76rem/1 var(--font-body);
+  letter-spacing: 0.02em;
+}
+.eyebrowLatin {
   letter-spacing: 0.22em;
 }
 .heroTitle {
@@ -278,7 +286,11 @@
 .cardGrid {
   display: grid;
   gap: 1rem;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+  /* 카드가 6장이라 열 수가 3이어야 3×2 로 떨어진다(Mirror Mirror 레퍼런스와 같은 배치).
+     17rem 이면 1440px 에서 4열이 잡혀 4+2 로 흘러 마지막 줄에 두 장만 남는다.
+     22rem = 352px: 4열은 4×352+3×16 = 1456 > 본문폭(≈1350)이라 3열로 떨어지고,
+     좁은 화면에서는 min(100%, …) 이 1열을 보장한다. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
 }
 
 .card {
