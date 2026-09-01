@@ -21,6 +21,12 @@ _OPERATION_SECONDS = 210
 _VERIFY_TIMEOUT = 5.0
 _REVOKE_TIMEOUT = 180.0
 _ERROR_CODES = frozenset({"transport", "http_status", "invalid_body", "not_revoked"})
+#: 이 횟수를 넘기면 재시도를 멈추고 dead 로 뺀다. 상한이 없어서 고아 잡 하나가 880회까지
+#: 조용히 재시도했다(2026-09-01 prod 실측). 8/29 사고 복구 때 모델·라이선스는 지워졌는데
+#: 폐기 잡만 남았고, 폐기 API 가 /holder/models/{model_id}/revoke-vc 라 모델이 없으면
+#: 영영 성공할 수 없다. 게다가 폐기 대기 잡은 opendid 수요로 잡히므로(#210) 그런 잡 하나가
+#: 홀더를 24/7 켜 둔다. 5분 백오프 상한 기준 50회면 하루 이상 재시도한 뒤 포기하는 셈이다.
+_MAX_ATTEMPTS = 50
 
 
 class _ReconcileFailure(Exception):
@@ -100,11 +106,11 @@ class FaceVcRevocationReconciler:
         except asyncio.CancelledError:
             raise
         except _ReconcileFailure as error:
-            await self._mark_retry(job, error.code)
+            await self._fail(job, error.code)
         except (httpx.HTTPError, TimeoutError):
-            await self._mark_retry(job, "transport")
+            await self._fail(job, "transport")
         except Exception:
-            await self._mark_retry(job, "transport")
+            await self._fail(job, "transport")
         else:
             await self._mark_revoked(job)
         return True
@@ -190,6 +196,14 @@ class FaceVcRevocationReconciler:
         ):
             raise _ReconcileFailure("invalid_body")
 
+    async def _fail(self, job, code) -> None:
+        """상한을 넘긴 잡은 재시도를 멈춘다 — 성공할 수 없는 잡이 큐에 남아 있으면 홀더가
+        내려가지 못한다(폐기 대기 잡이 opendid 수요다)."""
+        if job["attempts"] + 1 >= _MAX_ATTEMPTS:
+            await self._mark_dead(job, code)
+            return
+        await self._mark_retry(job, code)
+
     async def _mark_retry(self, job, code) -> None:
         code = code if code in _ERROR_CODES else "transport"
         async with self.app.state.pool.connection() as conn:
@@ -201,6 +215,24 @@ class FaceVcRevocationReconciler:
                                   make_interval(secs => least(
                                       300, power(2, least(attempts + 1, 9))
                                   )::double precision),
+                              lease_token = null, lease_expires_at = null,
+                              last_error_code = %s
+                        where id = %s and status = 'processing' and lease_token = %s""",
+                    (code, job["id"], job["lease_token"]),
+                )
+            await conn.commit()
+
+    async def _mark_dead(self, job, code) -> None:
+        code = code if code in _ERROR_CODES else "transport"
+        log.warning(
+            "facemarket VC revocation gave up (dead) after %s attempts: vc=%s model=%s code=%s",
+            job["attempts"] + 1, job["vc_id"], job["model_id"], code,
+        )
+        async with self.app.state.pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """update fm_vc_revocation_jobs
+                          set status = 'dead', attempts = attempts + 1,
                               lease_token = null, lease_expires_at = null,
                               last_error_code = %s
                         where id = %s and status = 'processing' and lease_token = %s""",
