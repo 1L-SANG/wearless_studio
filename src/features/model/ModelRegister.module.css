@@ -261,6 +261,200 @@
 }
 
 /* ---- 진행 레일(6단계, 모노크롬) ---- */
+
+/* ---- 위저드 카드 내부(단계 헤더·체형 매트릭스·대표 이미지 업로드) ----
+   진행 레일을 가로로 다시 짜면서 블록을 통째로 교체했는데, 그때 이 규칙들이
+   같이 지워져 체형·대표 단계가 스타일 없이 렌더됐다. 원본(ad1bf48b)에서 되살린다.
+   아래 "단계 카드 내부" 블록이 이 중 일부를 다시 덮는다(그쪽이 나중이라 이긴다). */
+
+/* ---- 단계 헤더(메달리온 + eyebrow + 제목) ---- */
+.stepHead {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.medallion {
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border-radius: var(--r-pill);
+  background: var(--bg-2);
+  color: var(--fg-1);
+  display: grid;
+  place-items: center;
+}
+
+.medallionSpin svg { animation: medSpin 1s linear infinite; }
+
+.stepEyebrow {
+  font-family: var(--font-display);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  margin-bottom: 4px;
+}
+
+.stepHead .stateTitle { margin: 0; }
+
+/* ---- 대표 이미지 업로드 존 ---- */
+.uploadZone {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: 16px 0 8px;
+  padding: 26px 16px;
+  border-radius: var(--r-5);
+  background: var(--bg-2);
+  cursor: pointer;
+  transition: background .15s;
+}
+
+.uploadZone:hover { background: var(--bg-1); box-shadow: var(--elev-card); }
+
+.uploadInput {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.uploadIcon {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--fg-1);
+  display: grid;
+  place-items: center;
+  box-shadow: var(--elev-card);
+  margin-bottom: 2px;
+}
+
+.uploadText { font-size: 14.5px; font-weight: 500; color: var(--fg-1); }
+
+.uploadHint { font-size: 12px; color: var(--fg-3); font-family: var(--font-mono); }
+
+/* 올리기 전 확인용 프리뷰 — 카탈로그 카드와 같은 4:5 로 보여줘야 잘린 모습이 미리 보인다. */
+.profilePreview {
+  display: block;
+  width: 100%;
+  max-width: 260px;
+  margin: 0 auto 16px;
+  aspect-ratio: 4 / 5;
+  object-fit: cover;
+  border-radius: var(--r-5);
+  background: var(--bg-2);
+}
+
+/* 되돌아가기 — 주 동작(저장·건너뛰기)보다 약하게 둔다. */
+.backLink {
+  display: block;
+  margin: 14px auto 0;
+  padding: 6px 10px;
+  border: 0;
+  background: none;
+  color: var(--fg-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.backLink:disabled { opacity: .5; cursor: default; }
+
+/* ---- 체형·키(physique) 스텝 — 선택 칩은 전역 .chips/.chip(app.css)을 그대로 재사용,
+   여기선 그룹 간격/라벨만 더한다. ---- */
+.physiqueGroup {
+  margin: 16px 0 20px;
+}
+
+.physiqueGroup:last-of-type {
+  margin-bottom: 22px;
+}
+
+.physiqueLabel {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg-2);
+  margin-bottom: 10px;
+}
+
+/* 체형 선택 — 사진이 있으면 칩이 세로형 카드가 된다(사진 위, 라벨 아래).
+   사진이 아직 없는 값은 그대로 기존 칩으로 남아 두 형태가 섞여도 깨지지 않는다. */
+.bodyCards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.bodyCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  /* 전신 사진이라 좁으면 체형 차이(마름/보통/통통)가 구분되지 않는다 — 칩보다 넉넉히 준다. */
+  width: 106px;
+  height: auto;
+  padding: 8px 8px 10px;
+  border-radius: 12px;
+  line-height: 1.3;
+}
+
+/* 볼륨×실루엣 매트릭스 — 행 하나가 볼륨 한 단계다. 세로 그리드로 4열을 깔면 좁은 화면에서
+   카드가 80px로 쪼그라들어 체형 차이가 안 보인다. 행마다 가로 스크롤로 두면 카드 크기를
+   지킬 수 있고, 행 안에서는 볼륨이 같아 실루엣 차이만 비교된다. */
+.bodyRow {
+  margin-bottom: 14px;
+}
+
+.bodyRowLabel {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg-1);
+  margin-bottom: 7px;
+}
+
+.bodyRowScroller {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+  scroll-snap-type: x proximity;
+}
+
+.bodyRowScroller > * {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+}
+
+.bodyCardImage {
+  display: block;
+  width: 100%;
+  /* 기존 모델 자산(360×450)과 같은 4:5 — 생성·크롭 규격을 하나로 유지한다. */
+  aspect-ratio: 4 / 5;
+  object-fit: cover;
+  border-radius: 8px;
+  background: var(--bg-2);
+}
+
+.retryNote {
+  margin: 12px 0 0;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--fg-3);
+  line-height: 1.5;
+}
+
 /* ================= FaceMarket 랜딩 디자인 — 등록 진행 레일 =================
    레일은 본문 위에 가로로 눕는다. 세로 사이드 레일도 만들어 봤지만 이 사이트의
    리듬(랜딩이 전부 중앙 한 열)과 어긋나 위저드만 다른 제품처럼 보였다.
@@ -413,14 +607,20 @@
   color: var(--fm-ink);
 }
 
-/* STEP n / 7 — 라틴+숫자라 랜딩의 .eyebrowLatin 과 같은 넓은 자간을 쓴다. */
+/* 단계 eyebrow. 기본 자간은 **한글 기준**이다 — 이 자리에는 'STEP 1 / 7' 같은 라틴만
+   오는 게 아니라 '본인 확인만 다시'(순한글)와 'STEP 4 / 7 · 선택'(라틴+한글 혼합)도 온다.
+   0.22em 을 통째로 걸면 한글이 '본 인 확 인 만' 처럼 낱글자로 흩어진다(브라우저 실측).
+   넓은 자간은 라틴 조각에만 .stepEyebrowLatin 으로 따로 건다 — 랜딩 .eyebrow/.eyebrowLatin
+   과 같은 처방이고, 같은 실수를 여기서 한 번 더 했다. */
 .stepEyebrow {
   font-family: var(--font-body);
   font-size: 0.7rem;
   font-weight: 500;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.02em;
+  text-transform: none;   /* 원본의 uppercase 를 끈다 — 한글엔 대문자가 없고 라틴은 이미 대문자다 */
   color: var(--fm-muted);
 }
+.stepEyebrowLatin { letter-spacing: 0.22em; }
 
 /* 단계 제목 — 랜딩 카드 제목(.cardTitle)과 같은 눈금. --font-display(Cal Sans)는
    한글이 없어 폴백으로 떨어지므로 본문 폰트(Pretendard)를 쓴다. */

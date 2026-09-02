@@ -711,7 +711,7 @@ export function ModelRegister() {
           <div className={s.stepHead}>
             <div className={s.medallion}><Icon name="checkSquare" size={22} /></div>
             <div>
-              <div className={s.stepEyebrow}>STEP 1 / 7</div>
+              <div className={s.stepEyebrow}><span className={s.stepEyebrowLatin}>STEP 1 / 7</span></div>
               <h2 className={s.stateTitle}>생체정보 처리 동의</h2>
             </div>
           </div>
@@ -740,7 +740,7 @@ export function ModelRegister() {
           <div className={s.stepHead}>
             <div className={s.medallion}><Icon name="lock" size={22} /></div>
             <div>
-              <div className={s.stepEyebrow}>STEP 2 / 7</div>
+              <div className={s.stepEyebrow}><span className={s.stepEyebrowLatin}>STEP 2 / 7</span></div>
               <h2 className={s.stateTitle}>모바일 신분증 확인</h2>
             </div>
           </div>
@@ -804,7 +804,7 @@ export function ModelRegister() {
           <div className={s.stepHead}>
             <div className={s.medallion}><Icon name="person" size={22} /></div>
             <div>
-              <div className={s.stepEyebrow}>STEP 4 / 7 · 선택</div>
+              <div className={s.stepEyebrow}><span className={s.stepEyebrowLatin}>STEP 4 / 7</span> · 선택</div>
               <h2 className={s.stateTitle}>체형·키</h2>
             </div>
           </div>
@@ -935,7 +935,7 @@ export function ModelRegister() {
           <div className={s.stepHead}>
             <div className={s.medallion}><Icon name="image" size={22} /></div>
             <div>
-              <div className={s.stepEyebrow}>STEP 5 / 7 · 선택</div>
+              <div className={s.stepEyebrow}><span className={s.stepEyebrowLatin}>STEP 5 / 7</span> · 선택</div>
               <h2 className={s.stateTitle}>대표 이미지</h2>
             </div>
           </div>
@@ -1009,7 +1009,7 @@ export function ModelRegister() {
           <div className={s.stepHead}>
             <div className={`${s.medallion} ${s.medallionSpin}`}><Icon name="loader" size={22} /></div>
             <div>
-              <div className={s.stepEyebrow}>STEP 7 / 7</div>
+              <div className={s.stepEyebrow}><span className={s.stepEyebrowLatin}>STEP 7 / 7</span></div>
               <h2 className={s.stateTitle}>모델 이미지를 준비하고 있어요</h2>
             </div>
           </div>
