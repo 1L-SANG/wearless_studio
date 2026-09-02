@@ -5,25 +5,25 @@ import { readFileSync } from 'node:fs';
 import { registerCta } from '../../src/features/facemarket-landing/registerCta.js';
 
 test('아무것도 없으면 등록을 시작하게 한다', () => {
-  assert.deepEqual(registerCta(null, null), { label: '모델 등록 시작', to: '/model/register' });
-  assert.deepEqual(registerCta(undefined, undefined), { label: '모델 등록 시작', to: '/model/register' });
+  assert.deepEqual(registerCta(null, null), { label: '모델 등록하기', to: '/model/register' });
+  assert.deepEqual(registerCta(undefined, undefined), { label: '모델 등록하기', to: '/model/register' });
 });
 
 test('등록이 진행 중이면 이어서 하게 한다', () => {
   assert.deepEqual(
     registerCta(null, { id: 'e1', status: 'photos_pending' }),
-    { label: '이어서 등록하기', to: '/model/register' },
+    { label: '모델 등록하기', to: '/model/register' },
   );
   assert.deepEqual(
     registerCta({ id: 'm1', status: 'pending' }, null),
-    { label: '이어서 등록하기', to: '/model/register' },
+    { label: '모델 등록하기', to: '/model/register' },
   );
 });
 
 test('재검증이 필요한 모델도 등록으로 보낸다', () => {
   assert.deepEqual(
     registerCta({ id: 'm1', status: 'reverification_required' }, null),
-    { label: '이어서 등록하기', to: '/model/register' },
+    { label: '모델 등록하기', to: '/model/register' },
   );
 });
 
@@ -51,7 +51,7 @@ test('모델 상태 네 가지를 전부 판정한다 — verified 만 내 모�
     assert.ok(cta.label, `${status} 에 문구가 없다`);
     assert.ok(cta.to.startsWith('/model'), `${status} 의 경로가 이상하다: ${cta.to}`);
     if (status === 'verified') assert.deepEqual(cta, { label: '내 모델 정보', to: '/model' });
-    else assert.deepEqual(cta, { label: '이어서 등록하기', to: '/model/register' });
+    else assert.deepEqual(cta, { label: '모델 등록하기', to: '/model/register' });
   }
 });
 
@@ -76,17 +76,17 @@ const IN_PROGRESS_ENROLLMENT_STATUSES = [
   'asset_building', 'license_pending', 'vc_pending',
 ];
 
-test('진행 중인 등록 상태는 전부 이어서 등록하기다', () => {
+test('진행 중인 등록 상태도 같은 문구다', () => {
   for (const status of IN_PROGRESS_ENROLLMENT_STATUSES) {
     assert.deepEqual(
       registerCta(null, { id: 'e1', status }),
-      { label: '이어서 등록하기', to: '/model/register' },
+      { label: '모델 등록하기', to: '/model/register' },
       `${status} 에서 CTA 가 어긋났다`,
     );
   }
 });
 
-test('재등록 중이면 이어서 등록하기다', () => {
+test('재등록 중이어도 같은 문구다', () => {
   /* 재등록(갈아타기)은 새 모델 행을 만들지 않는다. server/app/facemarket_enrollment.py
      의 create_enrollment 가 등록을 넣는 것과 **같은 트랜잭션**에서 기존 모델 행을
      `status = 'reverification_required'` 로 강등한다. /models/me 는 created_at desc 라
@@ -94,7 +94,7 @@ test('재등록 중이면 이어서 등록하기다', () => {
      그래서 랜딩이 실제로 만나는 재등록 조합은 verified 가 아니라 이쪽이다. */
   assert.deepEqual(
     registerCta({ id: 'm1', status: 'reverification_required' }, { id: 'e1', status: 'photos_pending' }),
-    { label: '이어서 등록하기', to: '/model/register' },
+    { label: '모델 등록하기', to: '/model/register' },
   );
 });
 
@@ -108,6 +108,6 @@ test('verified 와 진행 중 등록이 함께 오면 모델 정보가 이긴다
 });
 
 test('빈 객체나 상태 없는 값에도 문구가 나온다', () => {
-  assert.deepEqual(registerCta({}, null), { label: '이어서 등록하기', to: '/model/register' });
-  assert.deepEqual(registerCta(null, {}), { label: '이어서 등록하기', to: '/model/register' });
+  assert.deepEqual(registerCta({}, null), { label: '모델 등록하기', to: '/model/register' });
+  assert.deepEqual(registerCta(null, {}), { label: '모델 등록하기', to: '/model/register' });
 });
