@@ -21,6 +21,8 @@
    CSS 행렬은 M_css = F·M_three·F 로 옮겨야 한다. cardTransform 이 그 일을 한다.
    ============================================================= */
 
+import { layoutForOffset } from './sceneLayout.js';
+
 export const CAMERA_Z = 11;
 
 /* 카메라가 z=0 평면에서 세로로 담는 world 높이 = 2 · 8.6 · tan(12°). 코덱스 원본 카메라가
@@ -41,6 +43,53 @@ export function worldToPixelScale(stageHeightPx) {
 
 export function perspectivePx(stageHeightPx) {
   return CAMERA_Z * worldToPixelScale(stageHeightPx);
+}
+
+/* 정지 상태에서 온전히 보이는 가장 바깥 카드(edgeFade − 1 칸)의 **바깥 가장자리**가 화면에서
+   얼마나 멀리 나가는지 — halfSpan 은 z=0 기준 world 단위(× k = px), outerHeight 는 그 가장자리의
+   높이(world, 원근 배율 포함). 프로파일(sceneLayout)에서 계산하므로 상수를 손대면 같이 움직인다. */
+export function visibleArcExtent(metrics) {
+  const outermost = Math.max(0, Math.ceil(metrics.edgeFade) - 1);
+  const layout = layoutForOffset(outermost, metrics);
+  const halfWidth = metrics.cardWidth / 2;
+  const lean = Math.abs(layout.rotationY);
+  const zOuter = layout.z + halfWidth * Math.sin(lean);
+  const magnification = CAMERA_Z / (CAMERA_Z - zOuter);
+  return {
+    halfSpan: (layout.x + halfWidth * Math.cos(lean)) * magnification,
+    outerHeight: metrics.cardHeight * magnification,
+  };
+}
+
+/* 바깥 카드가 스테이지 행을 넘어도 되는 비율. 행은 세로로 안 자르므로(CarouselStage.module.css)
+   위아래 여백으로 조금 나가도 되지만, 히어로 제목·메타 바 글자와 겹치기 전에 멈춰야 한다 —
+   바깥 카드는 화면 좌우 끝에 있고 제목·힌트는 가운데라 14% 까지는 실측상 안 닿는다(1280×720). */
+const OUTER_OVERFLOW = 1.14;
+
+/* 폭 3% 는 비워 둔다 — 셸 좌우 패딩(--fm-pad ≈ 3.1vw)과 같은 눈금. */
+function edgeMargin(stageWidthPx) {
+  return Math.max(20, stageWidthPx * 0.03);
+}
+
+/* world→px 계수. 원래는 스테이지 **높이**만 봤다(worldToPixelScale) — 원본 three 카메라가
+   세로 fov 로 씬을 담는 방식 그대로. 그러면 폭이 남는 화면(2000×1135: 카드 5장이 폭의 84%)에서
+   양옆이 비고, 사용자가 "5장이 자연스럽게 화면을 꽉 채우게"를 요구했다.
+
+   데스크톱 버킷에서는 폭에서도 잰다: 온전히 보이는 5장의 아크(visibleArcExtent)가 좌우 여백을
+   뺀 폭에 딱 차는 계수(byWidth). 다만 그 계수로 바깥 카드(±2, 원근 1.29배)가 행을 OUTER_OVERFLOW
+   넘게 커지면 거기서 멈춘다(cap) — 낮고 넓은 창(1280×720)이 이 경우다. 높이 기준값(byHeight)
+   보다 작아지는 것도 허용한다: 좁고 높은 창에서 5장이 잘리는 대신 작아져서 들어온다.
+   폰·태블릿 버킷은 그대로 높이 기준이다 — 가운데 한두 장이 폭을 이미 채우고 있다. */
+export function fillScale(stageWidthPx, stageHeightPx, metrics) {
+  const byHeight = worldToPixelScale(stageHeightPx);
+  if (!(byHeight > 0) || !(stageWidthPx > 0) || !metrics || metrics.edgeFade < 3) return byHeight;
+
+  const { halfSpan, outerHeight } = visibleArcExtent(metrics);
+  if (!(halfSpan > 0) || !(outerHeight > 0)) return byHeight;
+
+  const byWidth = (stageWidthPx / 2 - edgeMargin(stageWidthPx)) / halfSpan;
+  const cap = (stageHeightPx * OUTER_OVERFLOW) / outerHeight;
+  return Math.min(byWidth, cap);
 }
 
 /* toFixed 는 -0.00003 처럼 반올림하면 0이 되는 음수를 "-0.0000" 으로 찍는다.

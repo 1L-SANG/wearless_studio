@@ -28,7 +28,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { shortestWrappedOffset } from './carouselMath.js';
 import { layoutForOffset, metricsForAspect } from './sceneLayout.js';
-import { cardTransform, perspectivePx, worldToPixelScale } from './cssProjection.js';
+import { CAMERA_Z, cardTransform, fillScale } from './cssProjection.js';
 import s from './CarouselStage.module.css';
 
 const DAMP_IDLE = 9;
@@ -103,8 +103,10 @@ export function CarouselStage({ items, controller }) {
   useEffect(() => {
     if (!(stage.height > 0)) return undefined;
 
-    const k = worldToPixelScale(stage.height);
     const metrics = metricsForAspect(stage.width / stage.height);
+    // 계수는 높이만이 아니라 폭에서도 잰다(cssProjection.js fillScale 머리말) — 데스크톱에서
+    // 보이는 5장이 폭을 채운다. perspective 도 같은 k 로 걸어야 원근 불변식이 선다.
+    const k = fillScale(stage.width, stage.height, metrics);
     const count = items.length;
     let frame = 0;
     let previous = 0;
@@ -235,8 +237,8 @@ export function CarouselStage({ items, controller }) {
   }, [controller.activeIndex]);
 
   const ready = stage.height > 0;
-  const k = worldToPixelScale(stage.height);
   const metrics = ready ? metricsForAspect(stage.width / stage.height) : null;
+  const k = ready ? fillScale(stage.width, stage.height, metrics) : 0;
 
   return (
     <div
@@ -249,7 +251,8 @@ export function CarouselStage({ items, controller }) {
         cursor: controller.isDragging ? 'grabbing' : 'grab',
         // ready 전에는 perspective 를 걸지 않는다. k=0 이면 perspective:0px 이 되어
         // 원근이 사실상 꺼지고 모든 카드 transform 이 원점으로 붕괴한다.
-        perspective: ready ? `${perspectivePx(stage.height)}px` : undefined,
+        // 카메라 거리 × k — 배율 불변식 D/(D−z) = P/(P−z·k) 는 P = D·k 일 때만 성립한다.
+        perspective: ready ? `${CAMERA_Z * k}px` : undefined,
       }}
       tabIndex={0}
       {...controller.bind}

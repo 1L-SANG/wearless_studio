@@ -5,7 +5,9 @@ import {
   CAMERA_Z,
   VISIBLE_WORLD_HEIGHT,
   cardTransform,
+  fillScale,
   perspectivePx,
+  visibleArcExtent,
   worldToPixelScale,
 } from '../../src/features/facemarket-landing/carousel/cssProjection.js';
 import {
@@ -150,4 +152,51 @@ test('반올림하면 0인 음수가 "-0.0000" 으로 새지 않는다', () => {
     cardTransform(layout, 100),
     'translate3d(0.00px, 0.00px, 0.00px) rotateY(0.0000rad) rotateZ(0.0000rad)',
   );
+});
+
+/* ---- 폭 맞춤 계수(fillScale) — 데스크톱에서 보이는 5장이 폭을 채운다 ---- */
+
+test('visibleArcExtent 는 온전히 보이는 가장 바깥 카드(edgeFade−1)의 바깥 가장자리다', () => {
+  const metrics = metricsForAspect(3.5);           // 데스크톱: edgeFade 3 → offset 2
+  const layout = layoutForOffset(2, metrics);
+  const half = metrics.cardWidth / 2;
+  const zOuter = layout.z + half * Math.sin(Math.abs(layout.rotationY));
+  const m = CAMERA_Z / (CAMERA_Z - zOuter);
+  const { halfSpan, outerHeight } = visibleArcExtent(metrics);
+  assert.ok(Math.abs(halfSpan - (layout.x + half * Math.cos(Math.abs(layout.rotationY))) * m) < 1e-9);
+  assert.ok(Math.abs(outerHeight - metrics.cardHeight * m) < 1e-9);
+  assert.ok(halfSpan > 5 && halfSpan < 6.5, `halfSpan ${halfSpan}`);   // 접선 현 프로파일 기준 ≈ 5.6
+});
+
+test('폭이 남는 데스크톱에서는 5장 아크가 좌우 3% 여백을 빼고 폭에 딱 찬다', () => {
+  const metrics = metricsForAspect(2000 / 544);
+  const k = fillScale(2000, 544, metrics);
+  const { halfSpan } = visibleArcExtent(metrics);
+  assert.ok(Math.abs(halfSpan * k - (1000 - 60)) < 1e-6);
+  assert.ok(k > worldToPixelScale(544), '높이 기준(3.656 로 나눈 값)보다 커야 폭이 찬다');
+});
+
+test('낮고 넓은 창에서는 바깥 카드가 행을 14% 넘는 지점에서 멈춘다', () => {
+  const metrics = metricsForAspect(1280 / 225);
+  const k = fillScale(1280, 225, metrics);
+  const { halfSpan, outerHeight } = visibleArcExtent(metrics);
+  assert.ok(Math.abs(outerHeight * k - 225 * 1.14) < 1e-6);
+  assert.ok(halfSpan * k < 640 - 38, '폭을 다 못 채우는 게 맞다 — 높이가 상한');
+});
+
+test('좁고 높은 창에서는 높이 기준보다 작아져 5장이 잘리지 않고 들어온다', () => {
+  const metrics = metricsForAspect(900 / 380);     // 데스크톱 버킷이지만 폭이 모자란다
+  const k = fillScale(900, 380, metrics);
+  assert.ok(k < worldToPixelScale(380));
+  assert.ok(Math.abs(visibleArcExtent(metrics).halfSpan * k - (450 - 27)) < 1e-6);
+});
+
+test('폰·태블릿 버킷은 높이 기준 그대로다', () => {
+  assert.equal(fillScale(390, 600, metricsForAspect(0.65)), worldToPixelScale(600));
+  assert.equal(fillScale(800, 420, metricsForAspect(1.9)), worldToPixelScale(420));
+});
+
+test('fillScale 은 크기가 아직 없으면 0 이다(첫 렌더 방어)', () => {
+  assert.equal(fillScale(0, 0, metricsForAspect(3)), 0);
+  assert.equal(fillScale(800, 0, metricsForAspect(3)), 0);
 });
