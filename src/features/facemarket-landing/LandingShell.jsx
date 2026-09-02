@@ -48,37 +48,26 @@ function applyHead(title, description) {
   };
 }
 
-/* 안내 띠를 닫았다는 사실은 브라우저에 남긴다 — 한 번 읽고 닫은 방향 안내를 라우트를
-   옮길 때마다 다시 띄우면 닫기 버튼이 무의미하다. 저장이 막힌 환경(사파리 사생활 보호,
-   서드파티 차단)에서는 조용히 '안 닫음'으로 시작한다. */
-const NOTICE_KEY = 'wl_fmNoticeDismissed';
+/* 안내 띠를 닫았다는 사실은 **이 모듈의 메모리에만** 둔다(2026-09-02 사용자 지시:
+   "X 누르면 아예 없어지니까 새로고침 하거나 다시 나갔다 들어오면 다시 뜨게").
 
-function readNoticeDismissed() {
-  try {
-    return window.localStorage.getItem(NOTICE_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-function writeNoticeDismissed() {
-  try {
-    window.localStorage.setItem(NOTICE_KEY, '1');
-  } catch {
-    // 저장이 막혀도 이번 세션 동안은 닫힌 채로 둔다(상태는 메모리에 있다).
-  }
-}
+   왜 컴포넌트 state 가 아니라 모듈 변수인가 — 랜딩 네 페이지가 각자 LandingShell 을
+   그리므로 라우트를 옮길 때마다 셸이 새로 마운트된다. state 에 두면 '라이선스' 를 누르는
+   순간 방금 닫은 띠가 다시 뜬다. 모듈 변수는 그 사이를 살아남고, 새로고침·새 탭에서는
+   모듈이 다시 평가되므로 초기화된다 — 요구사항이 정확히 그 수명이다.
+   localStorage 로 남기지 마라(한 번 쓴 적이 있다). 그러면 영영 안 뜬다. */
+let noticeDismissed = false;
 
 export function LandingShell({ title, description, children }) {
   const { session, loading, openLogin } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const [cta, setCta] = useState(() => registerCta(null, null));
-  const [noticeOpen, setNoticeOpen] = useState(() => !readNoticeDismissed());
+  const [noticeOpen, setNoticeOpen] = useState(() => !noticeDismissed);
 
   const closeNotice = () => {
+    noticeDismissed = true;
     setNoticeOpen(false);
-    writeNoticeDismissed();
   };
 
   // 라우터는 전환할 때 스크롤을 건드리지 않는다. 문서가 그대로라 홈에서 캐러셀까지

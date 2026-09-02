@@ -1,0 +1,258 @@
+/* =============================================================
+   모델 둘러보기(/models)와 상세 창.
+   색·글자·간격은 랜딩 토큰(--fm-*)을 그대로 쓴다 — 그 토큰은 .shell 이 정의하고
+   이 화면도 LandingShell 안에서 그려지므로 여기서 다시 정의하지 않는다.
+   ============================================================= */
+
+.browse { padding: clamp(2rem, 5vw, 4rem) 0 clamp(3rem, 6vw, 5rem); }
+
+.browseHead { max-width: 44rem; margin: 0 0 clamp(1.75rem, 4vw, 2.75rem); }
+
+.eyebrow {
+  display: block;
+  margin: 0 0 0.7rem;
+  color: var(--fm-muted);
+  font: 500 0.76rem/1 var(--font-body);
+  letter-spacing: 0.02em;
+}
+
+.browseTitle {
+  margin: 0 0 0.9rem;
+  font-family: var(--font-body);
+  font-size: clamp(1.9rem, 4.5vw, 3.2rem);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+
+.browseNotice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  margin: 0;
+  color: var(--fm-muted);
+  font: 400 0.9rem/1.6 var(--font-body);
+}
+.browseNotice svg { flex: none; margin-top: 0.25rem; }
+
+/* 카드 격자. 최소 14rem 이면 1440 에서 5열, 1024 에서 4열, 폰에서 2열이 된다 —
+   레퍼런스의 5열 리듬을 좁은 화면까지 자연스럽게 접는다. */
+.grid {
+  display: grid;
+  gap: clamp(0.75rem, 1.4vw, 1.15rem);
+  margin: 0;
+  padding: 0;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr));
+  list-style: none;
+}
+
+.card {
+  display: grid;
+  gap: 0.7rem;
+  align-content: start;
+}
+
+/* 사진 칸이 곧 버튼이다(BrowseSection 머리말 — hover 전용 버튼을 두지 않는 이유). */
+.cardMedia {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  padding: 0;
+  border: 1px solid var(--fm-line);
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.5);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.cardImage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 320ms ease;
+}
+.cardMedia:hover .cardImage,
+.cardMedia:focus-visible .cardImage { transform: scale(1.03); }
+
+.cardBadge {
+  position: absolute;
+  top: 0.6rem;
+  left: 0.6rem;
+  padding: 0.18rem 0.42rem;
+  border-radius: 999px;
+  background: rgba(16, 21, 26, 0.62);
+  color: rgba(255, 255, 255, 0.92);
+  font: 500 0.68rem/1 var(--font-body);
+  letter-spacing: 0.02em;
+}
+
+/* 덮개는 hover·focus 에서만 뜬다. 터치에는 hover 가 없지만 카드 자체가 버튼이라
+   탭하면 같은 창이 열린다 — 덮개는 마우스 사용자에게 '누를 수 있다'를 알리는 장치다. */
+.cardOverlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(180deg, rgba(16, 21, 26, 0) 40%, rgba(16, 21, 26, 0.45) 100%);
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+.cardMedia:hover .cardOverlay,
+.cardMedia:focus-visible .cardOverlay { opacity: 1; }
+
+.cardOverlayButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.6rem 0.95rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--fm-ink);
+  font: 500 0.85rem/1 var(--font-body);
+  box-shadow: 0 0.6rem 1.6rem rgba(16, 21, 26, 0.22);
+  translate: 0 0.4rem;
+  transition: translate 200ms ease;
+}
+.cardMedia:hover .cardOverlayButton,
+.cardMedia:focus-visible .cardOverlayButton { translate: 0 0; }
+
+.cardMeta { display: grid; gap: 0.15rem; }
+.cardName { margin: 0; font: 600 0.95rem/1.4 var(--font-body); }
+.cardSpec { margin: 0; color: var(--fm-muted); font: 400 0.85rem/1.5 var(--font-body); }
+
+/* ---- 상세 창 ---- */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;                  /* 상단바(30)보다 위 */
+  display: grid;
+  /* safe 를 빼지 마라 — 창이 뷰포트보다 길면 가운데 정렬이 넘치는 쪽을 **양쪽으로** 밀어
+     위가 스크롤 범위 밖으로 잘린다(닫기 버튼이 손에 안 닿는다). safe 는 그때 start 로 물러난다. */
+  place-items: safe center;
+  padding: clamp(0.75rem, 3vw, 2.5rem);
+  background: rgba(16, 21, 26, 0.42);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  overflow-y: auto;
+}
+
+/* 바깥 클릭으로 닫는 판. 버튼이지만 보이지 않고 탭 순서에도 없다(창 안의 닫기 버튼이
+   그 역할을 한다) — 마우스로 바깥을 누르는 길만 열어 두는 요소다. */
+.backdropHit {
+  position: fixed;
+  inset: 0;
+  border: 0;
+  background: none;
+  cursor: default;
+}
+
+.dialog {
+  position: relative;
+  width: min(46rem, 100%);
+  padding: clamp(1.25rem, 3vw, 2rem);
+  border-radius: 1.25rem;
+  background: var(--fm-page-bg);
+  box-shadow: 0 2rem 5rem rgba(16, 21, 26, 0.28);
+}
+
+.dialogClose {
+  position: absolute;
+  top: 0.85rem;
+  right: 0.85rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--fm-ink);
+  cursor: pointer;
+}
+.dialogClose:hover { background: #fff; }
+
+/* 얼굴은 있는 만큼만 놓는다 — 한 장뿐인 모델은 그 한 장이 칸을 채운다. */
+.dialogFaces {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
+}
+.dialogFace {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 0.75rem;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.dialogHead { display: flex; align-items: center; gap: 0.6rem; margin: 1.35rem 0 1.1rem; }
+.dialogName { margin: 0; font: 600 clamp(1.35rem, 2.4vw, 1.75rem)/1.3 var(--font-body); }
+
+/* 창 안에도 예시 배지를 둔다 — 목록의 고지는 이 창만 캡처하면 같이 안 나간다. */
+.exampleBadge {
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(16, 21, 26, 0.08);
+  color: var(--fm-muted);
+  font: 500 0.72rem/1 var(--font-body);
+}
+
+/* 두 칸 사이의 세로 선은 스케치 그대로. 접히면(폰) 선이 위아래를 가르게 둔다. */
+.dialogCols {
+  display: grid;
+  gap: clamp(1rem, 2.5vw, 2rem);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+}
+.dialogCol + .dialogCol {
+  padding-left: clamp(1rem, 2.5vw, 2rem);
+  border-left: 1px solid var(--fm-line);
+}
+@media (max-width: 34rem) {
+  .dialogCol + .dialogCol {
+    padding-left: 0;
+    padding-top: 1rem;
+    border-left: 0;
+    border-top: 1px solid var(--fm-line);
+  }
+}
+
+.dialogColTitle { margin: 0 0 0.7rem; font: 600 0.95rem/1.4 var(--font-body); }
+
+.specList { display: grid; gap: 0.5rem; margin: 0; }
+.specRow {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: 5rem 1fr;
+  align-items: baseline;
+}
+.specRow dt { color: var(--fm-muted); font: 400 0.85rem/1.5 var(--font-body); }
+.specRow dd { margin: 0; font: 500 0.9rem/1.5 var(--font-body); }
+
+.dialogExamples { margin-top: clamp(1.25rem, 3vw, 1.75rem); }
+.exampleGrid {
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr));
+}
+.exampleImage {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  border-radius: 0.6rem;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+/* '동작 줄이기'를 켠 사용자에게는 확대·떠오름을 재생하지 않는다. */
+@media (prefers-reduced-motion: reduce) {
+  .cardImage,
+  .cardOverlay,
+  .cardOverlayButton { transition: none; }
+  .cardMedia:hover .cardImage,
+  .cardMedia:focus-visible .cardImage { transform: none; }
+}
