@@ -9,6 +9,11 @@ on:
             - "src/**"
             - "tests/frontend/**"
             - "index.html"
+            # facemarket.wearless.kr 이 받는 문서. 이게 빠져 있으면 그 파일만 고친 PR 에서
+            # CI 가 통째로 건너뛰고, 문서↔진입점 짝을 지키는 테스트도 안 돈다.
+            - "facemarket.html"
+            # 호스트별 배급 규칙. facemarket.html 과 한 쌍이라 같이 검사해야 한다.
+            - "vercel.json"
             - "package.json"
             - "pnpm-lock.yaml"
             - "vite.config.js"
@@ -23,6 +28,11 @@ on:
             - "src/**"
             - "tests/frontend/**"
             - "index.html"
+            # facemarket.wearless.kr 이 받는 문서. 이게 빠져 있으면 그 파일만 고친 PR 에서
+            # CI 가 통째로 건너뛰고, 문서↔진입점 짝을 지키는 테스트도 안 돈다.
+            - "facemarket.html"
+            # 호스트별 배급 규칙. facemarket.html 과 한 쌍이라 같이 검사해야 한다.
+            - "vercel.json"
             - "package.json"
             - "pnpm-lock.yaml"
             - "vite.config.js"
