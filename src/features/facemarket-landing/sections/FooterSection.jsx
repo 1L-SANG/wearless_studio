@@ -19,10 +19,10 @@ export function FooterSection() {
     <footer className={s.footer}>
       <p className={s.footerBrand}>FaceMarket · Wearless</p>
       {/* 여기 있던 "캐러셀 이미지는 모두 예시" 고지는 지웠다. 지운 이유는 사실이 아니라서가
-          아니라 **셋째 사본**이라서다 — 같은 고지가 (1) 캐러셀 바로 위(GallerySection 의
-          .galleryNotice)와 (2) 카드 안 배지(CarouselStage 의 .badgeNotice "예시")에 이미
-          있다. 그 둘은 지우지 마라: (1)은 스테이지보다 위라 모바일에서도 사진과 함께 보이고,
-          (2)는 이미지만 잘려 공유돼도 가상 모델이라는 사실이 같이 나가게 한다. 푸터 사본은
+          아니라 **셋째 사본**이라서다 — 같은 고지가 (1) 캐러셀 메타 바(GallerySection 의
+          .galleryNotice, 조작 힌트 바로 밑)와 (2) 카드 안 배지(CarouselStage 의 .badgeNotice
+          "예시")에 이미 있다. 그 둘은 지우지 마라: (2)는 사진마다 박혀 있어 이미지만 잘려
+          공유돼도 가상 모델이라는 사실이 같이 나가고, (1)은 그걸 문장으로 한 번 더 못박는다. 푸터 사본은
           스크롤 끝이라 캐러셀과 한 화면에 있지도 않아 고지로서 하는 일이 없었다.
           PRD §13-5("예시 사진과 내 사진의 구분 장치가 사라지면 안 된다")는 (1)+(2)로 지켜진다. */}
       {/* 등록 첫 단계(ModelRegister.jsx STEP 1/7)에서 실제로 보이는 건 처리 안내 5줄
