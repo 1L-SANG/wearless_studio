@@ -306,7 +306,12 @@ export function ModelHub() {
             block(전폭)은 뺐다. 1344px 짜리 패널에서 가로로 늘어난 버튼은 CTA 가 아니라
             구분선처럼 읽힌다. 목적지·라벨은 종전과 같다.
             '이어가기' 는 예전에 secondary 였는데, 이 자리에서는 그게 유일한 다음 행동이라
-            primary 로 올렸다(모양만 바뀐다). */}
+            primary 로 올렸다(모양만 바뀐다).
+
+            처음 오는 사람의 문구는 랜딩 CTA 와 같다(registerCta.js — 게이트 on '모델 지원하기',
+            off '모델 등록하기'). 같은 행동이 화면마다 다른 이름을 갖지 않게 맞춘 것이다(#218).
+            아래 '이어가기'·'계속하기' 는 그대로 둔다 — 같은 버튼이 글자를 바꾸는 게 아니라
+            **어느 단계로 돌아가는지**를 알려 주는 라벨이라, 통일하면 오히려 정보가 사라진다. */}
         <div className={s.hubNextActions}>
           {appUnderReview && (
             <Button variant="secondary" onClick={onCancelApplication}>지원 취소</Button>
@@ -324,7 +329,7 @@ export function ModelHub() {
 
           {!showApplicationNext && isNew && (
             <Button variant="primary" iconRight="arrowRight" onClick={() => navigate(newEntryPath)}>
-              {applicationRequired ? '모델 지원 시작하기' : '모델 등록 시작하기'}
+              {applicationRequired ? '모델 지원하기' : '모델 등록하기'}
             </Button>
           )}
           {!showApplicationNext && !isNew && !isDone && (

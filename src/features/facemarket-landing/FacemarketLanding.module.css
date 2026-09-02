@@ -295,10 +295,10 @@
    적어야 한다. auto 끝 선은 컨테이너 패딩 가장자리로 읽혀 3행까지 늘어난다(실측). */
 
 /* 히어로 — 원본 .hero(kicker + 두 줄 세리프 제목). 위아래 여백은 원본 값이다.
-   overflow: clip 은 오브가 이 상자를 넘지 않게 하는 마지막 방어선이다(아래 .heroOrb 참고). */
+   **overflow 로 자르지 않는다** — 오브가 이 상자 아래로 흘러 카드와 겹쳐야 한다
+   (아래 .heroOrb 참고). 자르면 카드 바로 위에서 빛이 직선으로 끊긴다. */
 .hero {
   position: relative;
-  overflow: clip;
   display: grid;
   justify-items: center;
   padding: clamp(1.75rem, 2.2vw, 3rem) var(--fm-pad) clamp(2rem, 2.8vw, 4rem);
@@ -314,34 +314,42 @@
    55% 쯤에서 자르면 그 고리가 잘린 자리에 뚜렷한 테두리가 생긴다(실측). 고리는 온전히
    두고 바깥 흰 여백만 지운다.
 
-   **히어로 상자 안에 가둔다.** 처음엔 정사각형으로 폭에 맞춰 키웠는데(52rem), 그러면 높이도
-   52rem 이라 위로는 상단바 뒤까지, 아래로는 카드 위까지 뻗었다 — 상단바가 반투명 + 블러라
-   그 빛이 그대로 비쳐 "윗부분이 하얗다"는 상태가 됐다(사용자 보고). 지금은 높이를 히어로
-   상자에 맞추고(100%) 폭만 넓혀 납작한 타원으로 쓴다. 원본이 원형이지만 흐린 빛이라
-   늘려도 티가 안 난다.
+   **원형이고, 아래로 흘러 카드와 겹친다**(2026-09-02 사용자 지시: "더 밑으로 내려와서
+   카드 부분 겹쳐도 되니까 더 동그랗게"). 히어로 상자보다 크고 그 아래로 넘치므로 .hero 를
+   자르면 안 된다.
 
-   mask 를 `ellipse closest-side` 로 쓰는 게 이 배치의 핵심이다. 기본값(원)으로 두면 짧은
-   변(높이)이 반지름이 되어 폭의 가운데 원 하나만 남고 좌우가 통째로 잘린다. 타원으로 두면
-   네 변 모두에서 알파가 0 이 되므로 상자 경계에서 잘려도 이음매가 안 보인다 —
-   .hero 의 overflow: clip 은 그래서 아무것도 자르지 않는 보험이다. */
+   크기를 **높이 기준**(히어로 높이의 2.85배)으로 잡고 aspect-ratio 로 정원을 만든다. 폭
+   기준으로 잡으면 창이 넓어질수록 위로도 그만큼 커져 상단바 뒤까지 번진다 — 처음에 그렇게
+   했다가 "윗부분이 하얗다"는 상태가 됐다(상단바가 반투명+블러라 그 빛이 그대로 비친다).
+   세로 중심을 제목보다 아래(66%)에 두어 위쪽 여유를 남기고 아래로 흘려보낸다.
+
+   mask 는 원형이고 안쪽 정지점이 낮다(42%) — 가장자리를 길게 끌어 경계가 안 보이게 한다.
+   그래서 상자 밖으로 '넘치는' 부분은 이미 알파가 0 에 가깝고, '잘렸다'로 읽히지 않는다.
+   z-index 0 이라 카드(스테이지 z 1)가 이 빛 위에 그려진다 — 그래서 겹침이 자연스럽다. */
 .heroOrb {
   position: absolute;
   z-index: 0;
-  top: 0;
+  top: 66%;
   left: 50%;
-  width: min(46rem, 96vw);
-  height: 100%;
-  translate: -50% 0;
+  height: 285%;
+  aspect-ratio: 1;
+  translate: -50% -50%;
   /* 색을 진하게 — 사용자 요청. 원본 파일은 알파가 전체 30% 로 구워져 있어서 그냥 올리면
      배경과 4~8 레벨밖에 차이가 안 난다(실측). 알파는 손 못 대니 채도로 민다: saturate 가
      휘도는 두고 색만 벌리므로 흐린 빛이라는 성격은 그대로 두고 파란 기만 진해진다.
      여기 숫자를 더 올릴 거면 제목 글자와의 대비를 같이 봐라 — 글자는 #07090c 라 여유가
      있지만, 배경이 진해질수록 kicker(회색 0.85)가 먼저 묻힌다. */
+  opacity: 0.9;
   filter: saturate(2.8) contrast(1.05);
-  mask-image: radial-gradient(ellipse closest-side, #000 62%, transparent 100%);
-  -webkit-mask-image: radial-gradient(ellipse closest-side, #000 62%, transparent 100%);
+  mask-image: radial-gradient(circle closest-side, #000 42%, transparent 100%);
+  -webkit-mask-image: radial-gradient(circle closest-side, #000 42%, transparent 100%);
   pointer-events: none;
   user-select: none;
+}
+
+/* 폰은 히어로가 낮고 왼쪽 정렬이라 210% 면 화면을 다 덮는다. */
+@media (max-width: 47.99rem) {
+  .heroOrb { height: 190%; top: 60%; }
 }
 
 /* 글자는 오브 위에. .hero 안에서 z-index 를 명시하지 않으면 오브(절대 위치, z 0)와
