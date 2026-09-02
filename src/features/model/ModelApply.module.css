@@ -5,10 +5,10 @@
 .loading { padding: 80px 20px; text-align: center; color: var(--muted); }
 
 .section { max-width: 1120px; margin: 0 auto; padding: 72px 24px; }
-/* 준비물: 배경만 전폭 다크, 내용은 다른 섹션보다 좁은 컨테이너에 가운데로 모은다(카드가
-   화면 끝까지 퍼지지 않게). 제목·카드 좌측선이 같은 컨테이너에 맞는다. */
-.sectionDark { max-width: none; background: var(--dark); color: #fff; }
-.sectionDark > * { max-width: 920px; margin-left: auto; margin-right: auto; }
+/* 준비물: 배경만 전폭 다크, 내용은 다른 섹션과 같은 1120px 컨테이너(.inner)에 가운데로 —
+   제목·카드 좌측선이 위아래 섹션과 정렬된다. */
+.sectionDark { max-width: none; background: var(--dark); color: #fff; padding: 88px 24px 96px; }
+.inner { max-width: 1120px; margin: 0 auto; }
 .sectionDark .lead { color: #a7a7a7; }
 
 .eyebrow { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: 0 0 14px; font-family: 'Roboto Mono', monospace; }
@@ -38,11 +38,15 @@
 .qualCardMuted .qualList li { color: var(--muted); }
 
 /* 준비물 */
-.needGrid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; justify-content: center; }
-.needCard { border: 1px solid #333; padding: 30px 30px 34px; }
-.needNum { display: block; font-size: 44px; font-weight: 300; color: #3a3a3a; line-height: 1; margin-bottom: 26px; }
-.needCard h3 { font-size: 15px; letter-spacing: .08em; text-transform: uppercase; margin: 0 0 12px; }
-.needCard p { margin: 0; font-size: 14px; line-height: 1.6; color: #a7a7a7; }
+/* 카드: 레퍼런스 결 — 얇은 선, 큰 흐린 번호, 최소 높이로 카드답게. hover 시 선·배경이 살짝 살아난다. */
+.needGrid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 26px; }
+.needCard { border: 1px solid #353535; padding: 38px 36px 42px; min-height: 250px; box-sizing: border-box; border-radius: 2px;
+  transition: border-color .18s ease, background-color .18s ease, transform .18s ease; }
+.needCard:hover { border-color: #6f6f6f; background-color: #1d1d1d; transform: translateY(-2px); }
+.needNum { display: block; font-size: 52px; font-weight: 600; color: #2c2c2c; line-height: 1; margin-bottom: 32px; transition: color .18s ease; }
+.needCard:hover .needNum { color: #3a3a3a; }
+.needCard h3 { font-size: 17px; letter-spacing: .06em; font-weight: 700; margin: 0 0 14px; }
+.needCard p { margin: 0; font-size: 15px; line-height: 1.65; color: #a7a7a7; }
 
 /* 폼 */
 .grid2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 28px; }

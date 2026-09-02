@@ -310,17 +310,22 @@ export function ModelApply() {
 
       {/* ── 준비물 (다크) ──────────────────────────────────────── */}
       <section className={`${s.section} ${s.sectionDark}`}>
-        <h2 className={s.h2}>준비물</h2>
-        <p className={s.lead}>지원을 시작하기 전에 아래를 준비해 주세요. 약 5분 걸려요.</p>
-        <ul className={s.needGrid}>
-          {NEED_ITEMS.map((n) => (
-            <li key={n.n} className={s.needCard}>
-              <span className={s.needNum}>{n.n}</span>
-              <h3>{n.title}</h3>
-              <p>{n.desc}</p>
-            </li>
-          ))}
-        </ul>
+        {/* 다크 섹션은 배경만 전폭 — 내용은 다른 섹션과 같은 컨테이너에 가운데로.
+            (자식에 `> *` 로 margin:auto 를 주면 .h2/.lead 의 margin 단축 속성이 덮어써 왼쪽으로
+            붙는다 — 2026-09-02 실측. 래퍼 div 하나가 정답.) */}
+        <div className={s.inner}>
+          <h2 className={s.h2}>준비물</h2>
+          <p className={s.lead}>지원을 시작하기 전에 아래를 준비해 주세요. 약 5분 걸려요.</p>
+          <ul className={s.needGrid}>
+            {NEED_ITEMS.map((n) => (
+              <li key={n.n} className={s.needCard}>
+                <span className={s.needNum}>{n.n}</span>
+                <h3>{n.title}</h3>
+                <p>{n.desc}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
       </section>
 
       {/* ── 지원서 ───────────────────────────────────────────── */}
