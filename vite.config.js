@@ -10,9 +10,15 @@ import { fileURLToPath, URL } from 'node:url';
 const htmlEntry = (name) => fileURLToPath(new URL(`./${name}.html`, import.meta.url));
 
 /* dev 서버에서 어느 **문서**를 줄지 고른다. 프로덕션은 vercel.json 의 host rewrite 가 하는
-   일인데, dev 서버에는 그게 없어서 무조건 index.html(셀러)이 나간다 — 번들을 가른 뒤로는
-   그러면 ?facemarket=1 을 붙여도 셀러 앱이 뜬다(그 앱에는 랜딩 라우트가 아예 없다).
-   ?facemarket=1 이 붙었거나 Host 가 facemarket.* 이면(cloudflared 터널) 그 문서로 돌린다.
+   일인데 dev 서버에는 그게 없다.
+
+   두 문서를 다 여기서 배급한다 — index.html 이라는 이름을 쓰지 않기 때문이다.
+   그 이름을 피한 이유가 이 파일 밖에 있으니 적어 둔다: **Vercel 은 rewrite 보다 파일
+   시스템을 먼저 본다.** dist/index.html 이 있으면 `/` 요청이 그 파일로 곧장 나가고 host
+   rewrite 는 아예 돌지 않는다 — facemarket.wearless.kr 루트가 셀러 문서를 받아
+   /create/input 으로 튕겼다(프로덕션에서 실제로 그랬다). `/` 에 응답할 정적 파일이 없어야
+   두 호스트 모두 rewrite 를 탄다. 그래서 셀러 문서는 seller.html 이다 — index.html 로
+   되돌리지 마라.
 
    주의: 쿼리 없이 새로고침하면 셀러 문서가 나간다. IS_FACEMARKET 의 sessionStorage 기억은
    브라우저 안에 있어 서버가 볼 수 없기 때문이다 — 로컬에서는 주소에 ?facemarket=1 을
@@ -29,7 +35,9 @@ const facemarketDevDocument = {
       const host = (req.headers.host || '').toLowerCase();
       const wantsFacemarket = url.searchParams.get('facemarket') === '1'
         || /(^|\.)facemarket\./.test(host);
-      if (wantsFacemarket) req.url = `/facemarket.html${url.search}`;
+      req.url = wantsFacemarket
+        ? `/facemarket.html${url.search}`
+        : `/seller.html${url.search}`;
       return next();
     });
   },
@@ -42,7 +50,7 @@ export default defineConfig({
   build: {
     rollupOptions: {
       input: {
-        index: htmlEntry('index'),
+        seller: htmlEntry('seller'),
         facemarket: htmlEntry('facemarket'),
       },
     },
@@ -52,14 +60,14 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
-  // 의존성 사전번들 스캔 대상 = **이 앱의 유일한 진입점** index.html.
+  // 의존성 사전번들 스캔 대상 = 진입 문서 둘(seller.html·facemarket.html).
   // vite 기본값은 루트의 모든 *.html 을 진입점으로 훑는데, 이 저장소에는 리포트·목업 HTML 이
   // 수십 개 있어 애초에 스캔 대상이 아니다. 게다가 그중 qa-review-gate.html →
   // qa/reviewGateHarness.jsx 가 이미 삭제된 모듈(VaryReviewModal.jsx·reviewGate.js)을 물고
   // 있어 스캔이 통째로 실패했고, 사전번들이 안 만들어져 브라우저가 504
   // (Outdated Optimize Dep) → 흰 화면이 됐다(2026-08-16 재현·수정).
   // ※ 앱 진입점을 새로 추가하면 이 목록에도 반드시 넣어야 한다(안 넣으면 같은 504 가 난다).
-  // dev 전용이라 프로덕션 빌드(rollup 진입점 index.html)에는 영향이 없다.
+  // dev 전용이라 프로덕션 빌드(rollup 진입점 = 위 두 문서)에는 영향이 없다.
   // Amplify liveness(@aws-amplify/ui-react-liveness)는 lazy(FaceLivenessStep)로만 쓰인다.
   // 사전번들(include)이 필요한 이유: 하위에 CommonJS 인 use-sync-external-store(@xstate/react 가
   //   named import: useSyncExternalStoreWithSelector)가 있어, 번들 없이 raw 로 서빙되면 named
@@ -77,7 +85,7 @@ export default defineConfig({
   //   할 수 없다(resolve 실패) — 그래서 직접 의존인 amplify 를 include 해 하위로 번들한다.
   // dev 전용이다 — 프로덕션 빌드는 Rollup 이라 이 트리를 정상 번들한다(영향 없음).
   optimizeDeps: {
-    entries: ['index.html', 'facemarket.html'],
+    entries: ['seller.html', 'facemarket.html'],
     include: ['@aws-amplify/ui-react-liveness', '@aws-amplify/ui-react'],
     exclude: ['@smithy/core', '@aws-sdk/core'],
   },

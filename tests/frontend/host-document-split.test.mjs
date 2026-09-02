@@ -28,10 +28,19 @@ test('facemarket 문서가 존재하고 자기 head 를 갖는다', () => {
 test('vite 가 두 문서를 모두 진입점으로 낸다', () => {
   const config = read('vite.config.js');
   assert.match(config, /rollupOptions/);
-  assert.match(config, /htmlEntry\('index'\)/);
+  assert.match(config, /htmlEntry\('seller'\)/);
   assert.match(config, /htmlEntry\('facemarket'\)/);
   // dev 사전번들 스캔 목록에도 들어가야 한다(빠지면 dev 에서 504 → 흰 화면).
-  assert.match(config, /entries: \['index\.html', 'facemarket\.html'\]/);
+  assert.match(config, /entries: \['seller\.html', 'facemarket\.html'\]/);
+});
+
+/* Vercel 은 rewrite 보다 **파일 시스템을 먼저** 본다. dist 에 index.html 이 있으면 `/`
+   요청이 그 파일로 곧장 나가고 host rewrite 가 돌지 않는다 — facemarket 루트가 셀러 문서를
+   받아 /create/input 으로 튕겼다(프로덕션 실측). 셀러 문서 이름이 index.html 로 돌아오면
+   같은 사고가 재발하므로 여기서 막는다. */
+test('루트에 응답할 정적 문서가 없어야 host rewrite 가 돈다', () => {
+  assert.throws(() => read('index.html'), /ENOENT/);
+  assert.match(read('seller.html'), /<title>Wearless/);
 });
 
 test('vercel 이 facemarket 호스트만 그 문서로 보낸다', () => {
@@ -43,6 +52,6 @@ test('vercel 이 facemarket 호스트만 그 문서로 보낸다', () => {
 
   // 순서가 중요하다 — 전 경로 catch-all 이 앞에 오면 호스트 규칙에 닿지 못한다.
   const fallback = rest.at(-1);
-  assert.equal(fallback.destination, '/index.html');
+  assert.equal(fallback.destination, '/seller.html');
   assert.equal(fallback.has, undefined);
 });

@@ -6,6 +6,6 @@
       "has": [{ "type": "host", "value": "facemarket.wearless.kr" }],
       "destination": "/facemarket.html"
     },
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/(.*)", "destination": "/seller.html" }
   ]
 }
