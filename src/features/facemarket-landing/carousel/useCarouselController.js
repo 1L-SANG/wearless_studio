@@ -14,9 +14,14 @@
        정지 상태가 없다: 감쇠의 정상 지연이 0.014칸이라 SETTLE_EPSILON(1e-4)에 영원히 못 닿아
        rAF 루프도 잠들지 않는다(그게 의도다 — 계속 도는 게 요구사항이다). 속도를 더 낮출 거면
        그 지연(속도 × 0.111)이 1e-4 위에 남는지 확인해라 — 밑으로 내려가면 툭툭 끊긴다.
-     · 멈추는 조건 넷: 사용자 조작(suspendAutoplay — 5초 뒤 자동 재개) / 스테이지 안에
+     · 멈추는 조건 넷: 사용자 조작(suspendAutoplay — 3초 뒤 자동 재개) / 스테이지 안에
        포커스가 있음 / 캐러셀이 화면 밖 / '동작 줄이기'. 뒤 셋은 5초 타이머가 아니라
        조건이 풀릴 때 곧바로 재개한다.
+     · 포커스로 멈추는 건 **키보드로 들어온 포커스뿐**이다. 마우스로 카드를 클릭해도 그
+       버튼은 포커스를 받는데, 그것까지 세면 클릭 뒤 3초가 지나도 영영 안 돈다 — 실제로 그
+       증상("안 움직이는데")이 났다. 마지막 입력이 키보드였는지는 우리가 직접 센다
+       (keyboardModality) — :focus-visible 은 브라우저마다 답이 갈려 못 믿는다.
+       마우스 조작으로 인한 정지는 3초 타이머가 맡는다.
      · 포커스를 왜 세느냐 — 자동 회전이 activeIndex 를 바꾸면 스테이지의 포커스 추종
        이펙트가 키보드 사용자의 포커스를 다른 카드로 끌고 간다. 탭으로 들어와 있는 동안은
        돌지 않는다.
@@ -51,14 +56,16 @@ const STALE_VELOCITY_MS = 100;
 // 손을 뗀 경우) 표식이 계속 남아 다음 카드 활성화를 통째로 삼킨다.
 const DRAG_CLICK_WINDOW_MS = 500;
 
-/* 자동 회전. 8초에 한 장(0.125칸/초). 처음엔 4초에 한 장이었는데 사용자가 절반으로 낮췄다
-   ("지금보다 0.5배속") — 눈에 띄되 읽는 걸 방해하지 않는 속도다.
+/* 자동 회전 속도 — 카드 한 장에 8초. 4초로 시작해 사용자가 "0.5배속"으로 절반 낮춘 값이다.
+   한 번 3초로 올렸다가 "갑자기 너무 빨라졌다"고 되돌아왔다 — 이 값은 이제 만지지 마라.
+   (그때의 "3초"는 속도가 아니라 아래 재개 대기 시간을 가리킨 말이었다.)
    틱 간격은 10Hz — 이보다 촘촘하면 재렌더가 늘고, 성기면(예: 500ms) 감쇠가 틱 사이에
    수렴을 마쳐 흐르는 게 아니라 툭툭 끊겨 보인다(시정수 111ms 의 5배 = 555ms 가 경계). */
-const AUTOPLAY_ITEMS_PER_SECOND = 0.125;
+const AUTOPLAY_SECONDS_PER_ITEM = 8;
+const AUTOPLAY_ITEMS_PER_SECOND = 1 / AUTOPLAY_SECONDS_PER_ITEM;
 const AUTOPLAY_TICK_MS = 100;
-/* 조작 뒤 재개까지. 사용자가 말한 "5초 정도". */
-const AUTOPLAY_RESUME_MS = 5000;
+/* 조작 뒤 재개까지. 처음엔 5초였는데 사용자가 3초로 줄였다. */
+const AUTOPLAY_RESUME_MS = 3000;
 
 const now = () =>
   (typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -94,10 +101,10 @@ export function useCarouselController(itemCount, initialIndex = 0) {
   const reducedMotion = usePrefersReducedMotion();
   const resumeTimer = useRef(0);
 
-  /* 조작이 있었다 — 자동 회전을 끄고 5초 뒤 재개를 예약한다. 조작이 이어지면 그때마다
-     타이머를 새로 잡으므로 "마지막 조작으로부터 5초"가 된다.
+  /* 조작이 있었다 — 자동 회전을 끄고 3초 뒤 재개를 예약한다. 조작이 이어지면 그때마다
+     타이머를 새로 잡으므로 "마지막 조작으로부터 3초"가 된다.
      드래그 중 pointermove 마다 부르지는 않는다: pointerdown 에서 한 번 끄고, 손을 뗄 때
-     (releasePointer) 다시 불러 거기서부터 5초를 센다. */
+     (releasePointer) 다시 불러 거기서부터 3초를 센다. */
   const suspendAutoplay = useCallback(() => {
     setAutoplayOn(false);
     clearTimeout(resumeTimer.current);
@@ -143,9 +150,35 @@ export function useCarouselController(itemCount, initialIndex = 0) {
     return () => clearInterval(id);
   }, [autoplayOn, focusHeld, inView, reducedMotion, itemCount]);
 
-  /* 스테이지 안으로 포커스가 들어오면 멈춘다(머리말 참고). blur 는 캡처 단계에서 받되
-     스테이지 **안에서 안으로** 옮겨 다니는 경우(카드 → 옆 카드)는 나간 게 아니다. */
-  const onFocusCapture = useCallback(() => setFocusHeld(true), []);
+  /* 마지막 입력이 키보드였나. 포커스가 스테이지로 들어올 때 그게 '탭으로 들어온 것'인지
+     '마우스로 카드를 누른 것'인지 가르는 데 쓴다.
+
+     :focus-visible 로 가르지 않는 이유: 그건 브라우저 휴리스틱이라 같은 동작에도 답이
+     갈린다 — 헤드리스 크롬에서는 스크립트 `focus()` 에도 true 가 나왔다(실측). 이 판정이
+     틀리는 쪽으로 기울면 마우스 사용자에게 자동 회전이 영영 안 돌아온다. 실제로 그
+     증상("안 움직이는데")이 났고, 그래서 판정을 우리가 직접 한다.
+     캡처 단계로 듣는다 — 카드가 stopPropagation 을 하지 않지만, 나중에 누가 걸어도
+     이 판정만은 놓치지 않게. */
+  const keyboardModality = useRef(false);
+  useEffect(() => {
+    const markKeyboard = () => { keyboardModality.current = true; };
+    const markPointer = () => { keyboardModality.current = false; };
+    window.addEventListener('keydown', markKeyboard, true);
+    window.addEventListener('pointerdown', markPointer, true);
+    return () => {
+      window.removeEventListener('keydown', markKeyboard, true);
+      window.removeEventListener('pointerdown', markPointer, true);
+    };
+  }, []);
+
+  /* 스테이지 안으로 **키보드** 포커스가 들어오면 멈춘다(머리말 참고). 마우스로 누른 경우는
+     그 pointerdown 이 이미 modality 를 false 로 돌려놨으므로 여기서 붙잡지 않는다 —
+     그쪽 정지는 3초 타이머(suspendAutoplay)가 맡는다.
+     blur 는 캡처 단계에서 받되 스테이지 **안에서 안으로** 옮겨 다니는 경우(카드 → 옆 카드)는
+     나간 게 아니다. */
+  const onFocusCapture = useCallback(() => {
+    if (keyboardModality.current) setFocusHeld(true);
+  }, []);
   const onBlurCapture = useCallback((event) => {
     if (event.currentTarget.contains(event.relatedTarget)) return;
     setFocusHeld(false);
