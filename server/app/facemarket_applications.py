@@ -272,6 +272,13 @@ async def _require_admin(conn, user_id: str) -> None:
 # --- 지원자 엔드포인트 -------------------------------------------------------
 
 
+@router.get("/applications/config")
+async def application_config(request: Request):
+    """지원서 게이트 활성 여부 — 프론트가 신규 진입을 /model/apply 로 보낼지 판정.
+    생체등록 라우터(/config)와 독립적으로 항상 제공된다(지원서는 생체 스택과 무관)."""
+    return {"applicationRequired": _settings(request).fm_application_required}
+
+
 @router.post("/applications/photo-staging", status_code=201)
 async def stage_application_photo(
     request: Request,

@@ -136,6 +136,11 @@ export function submitApplication(body) {
   return http('/v1/facemarket/applications', { method: 'POST', body });
 }
 
+// 지원서 게이트 활성 여부(신규 진입을 /model/apply 로 보낼지) — 생체 /config 와 독립.
+export function getApplicationConfig() {
+  return http('/v1/facemarket/applications/config');
+}
+
 // 현재(활성 또는 최근 터미널) 지원서 — 상태 허브·재지원 프리필용. 없으면 404.
 export function getCurrentApplication() {
   return http('/v1/facemarket/applications/current');

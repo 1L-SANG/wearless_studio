@@ -18,8 +18,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button, ErrorState, Icon, useToast } from '@/components/ui.jsx';
 import {
-  cancelApplication, getCurrentApplication, getCurrentEnrollment,
-  getFacemarketConfig, listMyModels,
+  cancelApplication, getApplicationConfig, getCurrentApplication, getCurrentEnrollment,
+  listMyModels,
 } from '@/lib/api/facemarket.js';
 import s from './ModelPersonalization.module.css';
 
@@ -157,7 +157,7 @@ export function ModelHub() {
       // 지원서·설정·등록을 함께 조회한다(404 는 "없음"으로 흡수, loadOptional).
       const [mine, cfg, app, enr] = await Promise.all([
         listMyModels(),
-        loadOptional(getFacemarketConfig),
+        loadOptional(getApplicationConfig),
         loadOptional(getCurrentApplication),
         loadOptional(getCurrentEnrollment),
       ]);
