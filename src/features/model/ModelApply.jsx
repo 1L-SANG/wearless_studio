@@ -191,7 +191,7 @@ export function ModelApply() {
       .then((app) => {
         if (!alive) return;
         if (app && ['under_review', 'approved'].includes(app.status)) {
-          navigate('/model', { replace: true });
+          navigate('/status', { replace: true });
           return;
         }
         if (app) {
@@ -272,7 +272,7 @@ export function ModelApply() {
         privacyConsent: { accepted: true, documentVersion: PRIVACY_CONSENT_VERSION },
       });
       push?.('지원서를 제출했어요. 관리자 검토를 기다려 주세요.', { icon: 'check' });
-      navigate('/model', { replace: true });
+      navigate('/status', { replace: true });
     } catch (err) {
       push?.(err.message, { icon: 'alertCircle' });
       setPhase('ready');

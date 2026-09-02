@@ -4,9 +4,43 @@ import { readFileSync } from 'node:fs';
 
 import { registerCta } from '../../src/features/facemarket-landing/registerCta.js';
 
-test('아무것도 없으면 등록을 시작하게 한다', () => {
-  assert.deepEqual(registerCta(null, null), { label: '모델 등록 시작', to: '/model/register' });
-  assert.deepEqual(registerCta(undefined, undefined), { label: '모델 등록 시작', to: '/model/register' });
+/* 2026-09-02: 지원서 게이트(applicationRequired)가 기본 true 다. 아무것도 없는 방문자의 CTA 는
+   허브를 거치지 않고 곧장 지원서(/model/apply)로 간다(사용자 지시). 게이트를 끄면 종전 등록 시작. */
+test('아무것도 없으면 지원서로 보낸다 — 게이트 기본값', () => {
+  assert.deepEqual(registerCta(null, null), { label: '모델 지원하기', to: '/model/apply' });
+  assert.deepEqual(registerCta(undefined, undefined), { label: '모델 지원하기', to: '/model/apply' });
+  assert.deepEqual(registerCta(null, null, {}), { label: '모델 지원하기', to: '/model/apply' });
+});
+
+test('게이트를 끄면 종전처럼 등록을 시작하게 한다', () => {
+  assert.deepEqual(
+    registerCta(null, null, { applicationRequired: false }),
+    { label: '모델 등록 시작', to: '/model/register' },
+  );
+  // 게이트가 꺼져 있으면 지원서 상태는 보지 않는다.
+  assert.deepEqual(
+    registerCta(null, null, { applicationRequired: false, application: { status: 'under_review' } }),
+    { label: '모델 등록 시작', to: '/model/register' },
+  );
+});
+
+test('지원서 상태별 다음 행동 — 검토 중은 상태 보기, 승인은 등록, 거절·취소는 다시 지원', () => {
+  const cta = (status) => registerCta(null, null, { application: { id: 'a1', status } });
+  assert.deepEqual(cta('under_review'), { label: '지원 상태 보기', to: '/status' });
+  assert.deepEqual(cta('approved'), { label: '모델 등록 계속하기', to: '/model/register' });
+  assert.deepEqual(cta('rejected'), { label: '다시 지원하기', to: '/model/apply' });
+  assert.deepEqual(cta('cancelled'), { label: '모델 지원하기', to: '/model/apply' });
+});
+
+test('진행 중 등록·모델이 있으면 지원서 상태보다 등록 여정이 우선이다', () => {
+  assert.deepEqual(
+    registerCta(null, { id: 'e1', status: 'photos_pending' }, { application: { status: 'approved' } }),
+    { label: '이어서 등록하기', to: '/model/register' },
+  );
+  assert.deepEqual(
+    registerCta({ id: 'm1', status: 'verified' }, null, { application: { status: 'approved' } }),
+    { label: '내 모델 정보', to: '/status' },
+  );
 });
 
 test('등록이 진행 중이면 이어서 하게 한다', () => {
@@ -27,10 +61,11 @@ test('재검증이 필요한 모델도 등록으로 보낸다', () => {
   );
 });
 
-test('검증된 모델은 자기 정보로 보낸다', () => {
+test('검증된 모델은 자기 정보(등록 상태 페이지)로 보낸다', () => {
+  // /model 허브는 /status 로 옮겨 갔다(StatusPage) — 직접 그리로 보낸다.
   assert.deepEqual(
     registerCta({ id: 'm1', status: 'verified' }, null),
-    { label: '내 모델 정보', to: '/model' },
+    { label: '내 모델 정보', to: '/status' },
   );
 });
 
@@ -49,8 +84,8 @@ test('모델 상태 네 가지를 전부 판정한다 — verified 만 내 모�
   for (const status of MODEL_STATUSES) {
     const cta = registerCta({ id: 'm1', status }, null);
     assert.ok(cta.label, `${status} 에 문구가 없다`);
-    assert.ok(cta.to.startsWith('/model'), `${status} 의 경로가 이상하다: ${cta.to}`);
-    if (status === 'verified') assert.deepEqual(cta, { label: '내 모델 정보', to: '/model' });
+    assert.ok(cta.to.startsWith('/model') || cta.to === '/status', `${status} 의 경로가 이상하다: ${cta.to}`);
+    if (status === 'verified') assert.deepEqual(cta, { label: '내 모델 정보', to: '/status' });
     else assert.deepEqual(cta, { label: '이어서 등록하기', to: '/model/register' });
   }
 });
@@ -103,7 +138,7 @@ test('verified 와 진행 중 등록이 함께 오면 모델 정보가 이긴다
   // 뒤집히면(등록 먼저 보기) verified 모델이 등록 위저드로 끌려가므로 여기서 묶어 둔다.
   assert.deepEqual(
     registerCta({ id: 'm1', status: 'verified' }, { id: 'e1', status: 'photos_pending' }),
-    { label: '내 모델 정보', to: '/model' },
+    { label: '내 모델 정보', to: '/status' },
   );
 });
 

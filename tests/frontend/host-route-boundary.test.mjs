@@ -19,7 +19,7 @@ test('Wearless redirects FaceMarket-only routes to product input', () => {
 /* 랜딩 라우트가 이 목록에서 빠지면 상단바 링크가 전부 /model/register 로 튕긴다.
    화면은 멀쩡한데 링크만 죽는 종류의 사고라 눈으로는 늦게 발견된다 — 여기서 막는다. */
 test('FaceMarket landing routes stay put', () => {
-  for (const pathname of ['/models', '/license', '/payout', '/register', '/model-info', '/licensing']) {
+  for (const pathname of ['/models', '/status', '/license', '/payout', '/register', '/model-info', '/licensing']) {
     assert.equal(host.domainRouteRedirect(pathname, true), null, pathname);
   }
 });

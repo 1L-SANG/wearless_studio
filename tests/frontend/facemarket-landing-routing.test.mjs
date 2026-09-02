@@ -19,6 +19,9 @@ test('facemarket 도메인의 화면이면 그리로 보낸다', () => {
   assert.equal(facemarketRootTarget('/model/license'), '/model/license');
   assert.equal(facemarketRootTarget('  /model  '), '/model');
   assert.equal(facemarketRootTarget('/verify/abc-123'), '/verify/abc-123');
+  // 등록 상태 페이지의 로그인 프롬프트가 심는 복귀 경로(StatusPage).
+  assert.equal(facemarketRootTarget('/status'), '/status');
+  assert.equal(facemarketRootTarget('/status-evil'), null);
 });
 
 test('루트 자기 자신이면 랜딩을 그린다 — 리다이렉트 루프 금지', () => {

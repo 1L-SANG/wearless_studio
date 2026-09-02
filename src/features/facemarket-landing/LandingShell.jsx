@@ -15,7 +15,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { IS_FACEMARKET } from '@/lib/host.js';
-import { getCurrentEnrollment, listMyModels } from '@/lib/api/facemarket.js';
+import {
+  getApplicationConfig, getCurrentApplication, getCurrentEnrollment, listMyModels,
+} from '@/lib/api/facemarket.js';
 import { Icon } from '@/components/ui.jsx';
 import { LandingHeader } from './LandingHeader.jsx';
 import { registerCta } from './registerCta.js';
@@ -63,6 +65,9 @@ export function LandingShell({ title, description, children }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const [cta, setCta] = useState(() => registerCta(null, null));
+  // 지원서 게이트. 기본 true(registerCta 머리말) — 서버 설정이 오면 그 값으로 바꾼다.
+  // /applications/config 는 무인증 공개라 로그인 전에도 읽는다.
+  const [applicationRequired, setApplicationRequired] = useState(true);
   const [noticeOpen, setNoticeOpen] = useState(() => !noticeDismissed);
 
   const closeNotice = () => {
@@ -97,26 +102,37 @@ export function LandingShell({ title, description, children }) {
   // (TOKEN_REFRESHED, 기본 1시간)마다 새 객체로 바뀌는데, 같은 사람이면 CTA 도 같다.
   const userId = session?.user?.id ?? null;
 
+  useEffect(() => {
+    let alive = true;
+    getApplicationConfig()
+      .then((cfg) => { if (alive && typeof cfg?.applicationRequired === 'boolean') setApplicationRequired(cfg.applicationRequired); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
   // 등록 상태로 CTA 문구를 바꾼다. 조회는 렌더를 막지 않는다 —
   // 기본 문구로 먼저 그리고, 결과가 오면 교체한다. 실패하면 기본 문구로 남는다.
   useEffect(() => {
-    if (!userId) { setCta(registerCta(null, null)); return undefined; }
+    if (!userId) { setCta(registerCta(null, null, { applicationRequired })); return undefined; }
 
     let alive = true;
     void (async () => {
-      const [models, enrollment] = await Promise.all([
+      const [models, enrollment, application] = await Promise.all([
         listMyModels().catch(() => null),
         getCurrentEnrollment().catch(() => null),
+        getCurrentApplication().catch(() => null),   // 404 = 지원서 없음
       ]);
       if (!alive) return;
-      setCta(registerCta(models?.[0] || null, enrollment));
+      setCta(registerCta(models?.[0] || null, enrollment, { application, applicationRequired }));
     })();
     return () => { alive = false; };
-  }, [userId]);
+  }, [userId, applicationRequired]);
 
+  // 비로그인은 CTA 의 목적지를 복귀 경로로 심는다 — 게이트가 켜져 있으면 '/model/apply' 라
+  // 로그인을 마치는 순간 허브 없이 지원서가 열린다(사용자 지시 2026-09-02).
   const runPrimary = useCallback(() => {
     if (session) navigate(cta.to);
-    else openLogin('/model/register');
+    else openLogin(cta.to);
   }, [session, cta.to, navigate, openLogin]);
 
   // 부트스트랩 중 눌린 클릭을 담아 두는 보류함. FacemarketRoot 는 복귀 플래그가 없는

@@ -10,7 +10,7 @@
    얼굴을 아예 렌더하지 않는다(PublicVerify).
 
    ── 2026-09-02 디자인 리뉴얼 ────────────────────────────────
-   facemarket 랜딩(FacemarketLanding.module.css · LicensingSection)과 같은 언어로
+   facemarket 랜딩(FacemarketLanding.module.css)과 같은 언어로
    외형·레이아웃만 다시 짰다. 랜딩의 라이선싱 설명 페이지를 읽고 온 사람이 여기서
    같은 화면의 연장으로 느껴야 해서, 랜딩의 네 가지 눈금을 그대로 가져왔다 —
    eyebrow(한글 자간 0.02em) / 섹션 제목 / 카드 재질(1px 선 + 반투명 흰 면) /

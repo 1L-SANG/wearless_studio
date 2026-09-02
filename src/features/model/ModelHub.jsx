@@ -1,5 +1,9 @@
 /* FaceMarket 모델 등록 상태와 다음 안전한 진입점만 보여주는 허브.
 
+   2026-09-02 지시로 /model 이 아니라 랜딩 상단바의 '등록 상태'(/status, StatusPage)에 실린다.
+   LandingShell 안이라 좌우 여백은 셸이 주고(.hubPage 는 가로 패딩 0), 상단바·푸터도 셸 것이다.
+   /model 은 여기로 리다이렉트한다.
+
    외형은 facemarket 랜딩(FacemarketLanding.module.css)의 디자인 언어를 따른다 —
    eyebrow + 큰 제목 + 리드문, 얇은 선 카드, 잉크색 pill CTA. 조회 함수·상태 라벨·
    네비게이션 목적지는 종전 그대로다. 바뀐 건 배치와 스타일뿐이다.
@@ -109,8 +113,8 @@ function licenseCell(ownedModel, enrollment, needsTerms) {
 function HubHead() {
   return (
     <header className={s.hubHead}>
-      <p className={s.hubEyebrow}>모델 허브</p>
-      <h1 className={s.hubTitle}>내 얼굴로 만드는 모델</h1>
+      <p className={s.hubEyebrow}>FaceMarket 모델</p>
+      <h1 className={s.hubTitle}>등록 상태</h1>
       {/* 순서에서 '모바일 신분증'만 앞으로 옮겼다. 예전 문장은 신분증을 라이브 얼굴 뒤에
           뒀는데 실제 위저드는 STEP 2 가 신분증, STEP 6 이 라이브다(PRD §5 / 랜딩
           RegisterSection 의 레일 '동의·신분증·사진·체형·대표·라이브·완료' — 2026-09-01
@@ -346,7 +350,7 @@ export function ModelHub() {
           "지금 알 수 있는 것"만 적는다(licenseCell 주석). 신규 사용자에게도 세 칸을
           그린다 — 앞으로 뭘 거치는지가 이 화면의 나머지 절반이다. */}
       <section className={s.hubStatus}>
-        <h2 className={s.hubStatusLabel}>FaceMarket 등록 상태</h2>
+        <h2 className={s.hubStatusLabel}>단계별 현황</h2>
         <ul className={s.hubGrid}>
           <StatusCard cell={registrationCell(ownedModel, enrollment)} index="01" name="모델 등록" />
           <StatusCard cell={modelCell(ownedModel)} index="02" name="내 모델" />

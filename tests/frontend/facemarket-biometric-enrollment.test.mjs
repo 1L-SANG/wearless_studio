@@ -160,6 +160,16 @@ async function modelComponentHarness({
             api.getFacemarketConfig ? api.getFacemarketConfig(...args) : Promise.resolve({ livenessRequired: true })
           );
           export const getCurrentEnrollment = (...args) => api.getCurrentEnrollment(...args);
+          // 지원서 리뉴얼(2026-09-02) — ModelHub 가 설정·지원서를 함께 조회한다. 테스트가 안 주면
+          // "게이트 꺼짐 · 지원서 없음(404)" 으로 떨어져 종전 등록 여정만 검사한다.
+          export const getApplicationConfig = (...args) => (
+            api.getApplicationConfig ? api.getApplicationConfig(...args) : Promise.resolve({ applicationRequired: false })
+          );
+          export const getCurrentApplication = (...args) => (
+            api.getCurrentApplication ? api.getCurrentApplication(...args)
+              : Promise.reject(Object.assign(new Error('no application'), { status: 404 }))
+          );
+          export const cancelApplication = (...args) => api.cancelApplication(...args);
           export const getEnrollment = (...args) => api.getEnrollment(...args);
           export const listMyModels = (...args) => api.listMyModels(...args);
           export const submitPhysique = (...args) => api.submitPhysique(...args);
