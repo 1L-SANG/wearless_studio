@@ -237,11 +237,16 @@ export function ModelHub() {
             block(전폭)은 뺐다. 1344px 짜리 패널에서 가로로 늘어난 버튼은 CTA 가 아니라
             구분선처럼 읽힌다. 목적지·라벨은 종전과 같다.
             '이어가기' 는 예전에 secondary 였는데, 이 자리에서는 그게 유일한 다음 행동이라
-            primary 로 올렸다(모양만 바뀐다). */}
+            primary 로 올렸다(모양만 바뀐다).
+
+            처음 오는 사람의 문구는 랜딩 CTA 와 같은 '모델 등록하기'다(registerCta.js). 같은
+            행동이 화면마다 다른 이름을 갖지 않게 맞춘 것이다. 아래 '이어가기' 둘은 그대로
+            둔다 — 그건 같은 버튼이 글자를 바꾸는 게 아니라 **어느 단계로 돌아가는지**를
+            알려 주는 라벨이라, 통일하면 오히려 정보가 사라진다. */}
         <div className={s.hubNextActions}>
           {isNew && (
             <Button variant="primary" iconRight="arrowRight" onClick={() => navigate('/model/register')}>
-              모델 등록 시작하기
+              모델 등록하기
             </Button>
           )}
           {!isNew && !isDone && (
