@@ -30,8 +30,10 @@ const facemarketDevDocument = {
     server.middlewares.use((req, _res, next) => {
       if (req.method !== 'GET') return next();
       const url = new URL(req.url, 'http://localhost');
-      // 문서 요청만 건드린다 — 모듈(/src/…, /@vite/…)과 확장자 있는 파일은 그대로 흘린다.
-      if (url.pathname.includes('.') || url.pathname.startsWith('/@')) return next();
+      // 문서 요청만 건드린다 — 모듈(/src/…, /@vite/…)과 확장자 있는 파일, 그리고 API 프록시
+      // 경로(/v1)는 그대로 흘린다. /v1 을 빼지 않으면 이 미들웨어가 프록시보다 먼저 돌아
+      // API 요청에 셀러 문서를 돌려준다(2026-09-02 실측 — same-origin 프록시가 조용히 죽어 있었다).
+      if (url.pathname.includes('.') || url.pathname.startsWith('/@') || url.pathname.startsWith('/v1')) return next();
       const host = (req.headers.host || '').toLowerCase();
       const wantsAdmin = url.searchParams.get('admin') === '1'
         || /(^|\.)admin\./.test(host);
@@ -96,11 +98,14 @@ export default defineConfig({
   // vite의 Host 검사가 막지 않게 허용(로컬 폰 CX E2E용, dev 전용 — 빌드 산출물엔 무영향).
   // proxy: same-origin('') API 호출을 localhost 직접 접근에서도 백엔드로 넘긴다.
   // (터널 경유는 cloudflared가 /v1→:8000 라우팅하므로 이 프록시는 localhost 직접용.)
+  // 포트·API 프록시 타깃은 env 로 바꿀 수 있다 — 같은 레포를 여러 워크트리/세션이 동시에 띄울 때
+  // 5173 이 점유돼 있으면 `VITE_DEV_PORT=5174 VITE_API_BASE_URL= VITE_DEV_API_PROXY=http://localhost:8001`
+  // 처럼 다른 포트 + same-origin 프록시로 띄운다(백엔드 CORS 재설정 없이). 기본값은 종전과 같다.
   server: {
-    port: 5173,
+    port: Number(process.env.VITE_DEV_PORT) || 5173,
     strictPort: true,
     open: false,
     allowedHosts: ['facemarket.wearless.kr'],
-    proxy: { '/v1': 'http://localhost:8000' },
+    proxy: { '/v1': process.env.VITE_DEV_API_PROXY || 'http://localhost:8000' },
   },
 });
