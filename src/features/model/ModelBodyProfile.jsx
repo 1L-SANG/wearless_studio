@@ -28,6 +28,21 @@ const GENDERS = [
   { value: 'male', label: '남성' },
   { value: 'other', label: '기타' },
 ];
+// 컴카드 스펙(선택) — 입력 안 해도 등록·촬영은 계속 진행(6-1B).
+const HAIR_COLORS = [
+  { value: 'black', label: '블랙' }, { value: 'dark_brown', label: '다크브라운' },
+  { value: 'brown', label: '브라운' }, { value: 'light_brown', label: '라이트브라운' },
+  { value: 'blonde', label: '블론드' }, { value: 'red', label: '레드' },
+  { value: 'gray', label: '그레이' }, { value: 'other', label: '기타' },
+];
+const HAIR_LENGTHS = [
+  { value: 'short', label: '숏' }, { value: 'medium', label: '미디엄' }, { value: 'long', label: '롱' },
+];
+const EYE_COLORS = [
+  { value: 'black', label: '블랙' }, { value: 'brown', label: '브라운' },
+  { value: 'hazel', label: '헤이즐' }, { value: 'green', label: '그린' },
+  { value: 'blue', label: '블루' }, { value: 'gray', label: '그레이' }, { value: 'other', label: '기타' },
+];
 
 function BodyPageWrap({ embedded, children }) {
   return embedded ? <>{children}</> : <div className="wizard narrow">{children}</div>;
@@ -43,6 +58,13 @@ export function ModelBodyProfile({ embedded = false, onDone }) {
   const [customDraft, setCustomDraft] = useState('');
   const [gender, setGender] = useState(null);
   const [saving, setSaving] = useState(false);
+  // 컴카드 스펙(선택)
+  const [bust, setBust] = useState('');
+  const [waist, setWaist] = useState('');
+  const [hip, setHip] = useState('');
+  const [hairColor, setHairColor] = useState(null);
+  const [hairLength, setHairLength] = useState(null);
+  const [eyeColor, setEyeColor] = useState(null);
 
   const load = useCallback(async () => {
     setPhase('loading');
@@ -54,6 +76,12 @@ export function ModelBodyProfile({ embedded = false, onDone }) {
       setBodyType(b.bodyType || null);
       setCustomDraft(b.bodyType === 'custom' ? (b.bodyTypeCustom || '') : '');
       setGender(b.gender || null);
+      setBust(b.bustCm != null ? String(b.bustCm) : '');
+      setWaist(b.waistCm != null ? String(b.waistCm) : '');
+      setHip(b.hipCm != null ? String(b.hipCm) : '');
+      setHairColor(b.hairColor || null);
+      setHairLength(b.hairLength || null);
+      setEyeColor(b.eyeColor || null);
       setPhase('ready');
     } catch (e) {
       push?.(e.message, { icon: 'alertCircle' });
@@ -79,6 +107,12 @@ export function ModelBodyProfile({ embedded = false, onDone }) {
         heightCm: h, weightKg: w, bodyType,
         bodyTypeCustom: isCustom ? customDraft.trim() : null,
         gender: gender || null,
+        bustCm: bust ? Number(bust) : null,
+        waistCm: waist ? Number(waist) : null,
+        hipCm: hip ? Number(hip) : null,
+        hairColor: hairColor || null,
+        hairLength: hairLength || null,
+        eyeColor: eyeColor || null,
       });
       push?.('신체 정보를 저장했어요.', { icon: 'check' });
       if (onDone) onDone(); else navigate('/model');
@@ -125,6 +159,22 @@ export function ModelBodyProfile({ embedded = false, onDone }) {
 
         <div className={s.sectionLabel}>성별 (선택)</div>
         <Chips options={GENDERS} value={gender} onChange={setGender} />
+
+        <div className={s.sectionLabel}>컴카드 스펙 (선택)</div>
+        <div className="basic-fields">
+          <Field label="가슴(cm)" opt="선택" type="number" min={40} max={200} value={bust}
+            onChange={(e) => setBust(e.target.value)} />
+          <Field label="허리(cm)" opt="선택" type="number" min={40} max={200} value={waist}
+            onChange={(e) => setWaist(e.target.value)} />
+          <Field label="엉덩이(cm)" opt="선택" type="number" min={40} max={200} value={hip}
+            onChange={(e) => setHip(e.target.value)} />
+        </div>
+        <label className="lbl">헤어 컬러 <span className="opt">선택</span></label>
+        <Chips options={HAIR_COLORS} value={hairColor} onChange={setHairColor} />
+        <label className="lbl">헤어 길이 <span className="opt">선택</span></label>
+        <Chips options={HAIR_LENGTHS} value={hairLength} onChange={setHairLength} />
+        <label className="lbl">눈 색상 <span className="opt">선택</span></label>
+        <Chips options={EYE_COLORS} value={eyeColor} onChange={setEyeColor} />
 
         <Button variant="primary" block onClick={onSubmit} disabled={saving || !valid} iconRight="arrowRight" style={{ marginTop: 22 }}>
           {saving ? '저장 중…' : embedded ? '저장하고 다음' : '저장하고 상태 확인하기'}

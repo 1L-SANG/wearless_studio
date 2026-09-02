@@ -68,7 +68,9 @@ _DEFAULT_GENERATION_COST = 3
 # 프로필 화이트리스트 컬럼 — r2_key/image_digest 등 내부 식별자는 절대 비노출(§1.4).
 _PROFILE_COLS = (
     "id::text as id, status, height_cm, weight_kg, body_type, body_type_custom, "
-    "gender, age_range, skin_tone, hair, clothing_size, created_at, updated_at, purged_at"
+    "gender, age_range, skin_tone, hair, clothing_size, "
+    "bust_cm, waist_cm, hip_cm, hair_color, hair_length, eye_color, "
+    "created_at, updated_at, purged_at"
 )
 
 
@@ -100,6 +102,13 @@ class BodyProfileBody(CamelModel):
     skin_tone: str | None = None
     hair: str | None = None
     clothing_size: str | None = None
+    # 컴카드 스펙(선택·비게이팅, T11/6-1B) — 3사이즈·헤어컬러·헤어길이·눈색.
+    bust_cm: float | None = None
+    waist_cm: float | None = None
+    hip_cm: float | None = None
+    hair_color: str | None = None
+    hair_length: str | None = None
+    eye_color: str | None = None
 
 
 class GenerationBody(CamelModel):
@@ -526,6 +535,12 @@ def _body_view(profile: dict) -> dict | None:
         "skinTone": profile["skin_tone"],
         "hair": profile["hair"],
         "clothingSize": profile["clothing_size"],
+        "bustCm": float(profile["bust_cm"]) if profile.get("bust_cm") is not None else None,
+        "waistCm": float(profile["waist_cm"]) if profile.get("waist_cm") is not None else None,
+        "hipCm": float(profile["hip_cm"]) if profile.get("hip_cm") is not None else None,
+        "hairColor": profile.get("hair_color"),
+        "hairLength": profile.get("hair_length"),
+        "eyeColor": profile.get("eye_color"),
     }
 
 
@@ -1002,6 +1017,9 @@ async def delete_face_photo(
 _BODY_TYPES = {"slim", "normal", "muscular", "chubby", "custom"}
 _GENDERS = {"female", "male", "other"}
 _AGE_RANGES = {"20s", "30s", "40s", "50s_plus"}
+_HAIR_COLORS = {"black", "dark_brown", "brown", "light_brown", "blonde", "red", "gray", "other"}
+_HAIR_LENGTHS = {"short", "medium", "long"}
+_EYE_COLORS = {"black", "brown", "hazel", "green", "blue", "gray", "other"}
 
 
 @router.put(
@@ -1041,6 +1059,16 @@ async def put_body_profile(
     if clothing is not None and len(clothing) > 10:
         raise _err("invalid_body_profile", "의류 사이즈는 10자 이하로 적어주세요.")
     skin = (body.skin_tone or None)
+    # 컴카드 스펙(선택·비게이팅) — 3사이즈 범위 + 헤어·눈 enum 검증.
+    for label, value in (("가슴", body.bust_cm), ("허리", body.waist_cm), ("엉덩이", body.hip_cm)):
+        if value is not None and not (40.0 <= value <= 200.0):
+            raise _err("invalid_body_profile", f"{label} 둘레는 40~200cm 범위로 입력해 주세요.")
+    if body.hair_color is not None and body.hair_color not in _HAIR_COLORS:
+        raise _err("invalid_body_profile", "헤어 컬러 값이 올바르지 않습니다.")
+    if body.hair_length is not None and body.hair_length not in _HAIR_LENGTHS:
+        raise _err("invalid_body_profile", "헤어 길이 값이 올바르지 않습니다.")
+    if body.eye_color is not None and body.eye_color not in _EYE_COLORS:
+        raise _err("invalid_body_profile", "눈 색상 값이 올바르지 않습니다.")
 
     async with get_conn(request) as conn:
         profile, _created = await _ensure_profile(conn, user_id)
@@ -1050,10 +1078,14 @@ async def put_body_profile(
             await cur.execute(
                 f"""update personalization_profiles set
                     height_cm = %s, weight_kg = %s, body_type = %s, body_type_custom = %s,
-                    gender = %s, age_range = %s, skin_tone = %s, hair = %s, clothing_size = %s
+                    gender = %s, age_range = %s, skin_tone = %s, hair = %s, clothing_size = %s,
+                    bust_cm = %s, waist_cm = %s, hip_cm = %s,
+                    hair_color = %s, hair_length = %s, eye_color = %s
                     where id = %s returning {_PROFILE_COLS}""",
                 (body.height_cm, body.weight_kg, body.body_type, custom, body.gender,
-                 body.age_range, skin, hair, clothing, profile["id"]),
+                 body.age_range, skin, hair, clothing,
+                 body.bust_cm, body.waist_cm, body.hip_cm,
+                 body.hair_color, body.hair_length, body.eye_color, profile["id"]),
             )
             profile = await cur.fetchone()
         status = await _sync_status_row(conn, user_id, profile)
