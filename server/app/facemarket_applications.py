@@ -153,6 +153,50 @@ def _application_photo_key(application_id: str, ext: str) -> str:
     return f"private/fm-application/{application_id}/profile.{ext}"
 
 
+def _mime_for_key(key: str) -> str:
+    """저장 키 확장자 → mime(스테이징 없이 이전 지원서 사진을 복사할 때 필요)."""
+    if key.endswith(".png"):
+        return "image/png"
+    if key.endswith(".webp"):
+        return "image/webp"
+    return "image/jpeg"
+
+
+async def sweep_application_photo_staging(app, *, max_age_hours: int = 24, limit: int = 100) -> int:
+    """미제출 스테이징 사진 회수(스펙 9/E11). 제출 시 스테이징 행은 지워지므로 오래 남은 행은
+    지원서를 안 내고 나간 사용자의 사진이다. dispatcher 의 주기 sweep 에서 호출된다."""
+    r2 = getattr(app.state, "r2_face", None)
+    pool = getattr(app.state, "pool", None)
+    if r2 is None or pool is None:
+        return 0
+    removed = 0
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select user_id::text as user_id, r2_key from fm_model_application_photo_staging "
+                "where created_at < now() - make_interval(hours => %s) "
+                "order by created_at limit %s for update skip locked",
+                (max_age_hours, limit),
+            )
+            rows = await cur.fetchall()
+            for row in rows:
+                try:
+                    r2.delete(row["r2_key"])
+                except Exception:
+                    logger.warning("stale application staging photo delete failed: %s", row["r2_key"])
+                    continue
+                await cur.execute(
+                    "delete from fm_model_application_photo_staging "
+                    "where user_id = %s and r2_key = %s",
+                    (row["user_id"], row["r2_key"]),
+                )
+                removed += 1
+        await conn.commit()
+    if removed:
+        logger.info("fm application staging sweep removed=%d", removed)
+    return removed
+
+
 def _validate_categories(values: list[str]) -> list[str]:
     seen: list[str] = []
     for raw in values:
@@ -362,19 +406,36 @@ async def submit_application(
 
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
-            # 스테이징 사진을 지원서 키로 승격(제출 원자성, E11). 사진은 필수.
+            # 스테이징 사진을 지원서 키로 승격(제출 원자성, E11). 스테이징이 없으면 재지원
+            # 프리필(스펙 5): 최근 터미널(거절/취소) 지원서의 사진을 30일 내면 새 키로 복사한다 —
+            # 이전 지원서의 30일 익명화가 새 지원서 사진을 지우지 않게 수명을 분리한다.
             await cur.execute(
                 "select r2_key, mime_type from fm_model_application_photo_staging "
                 "where user_id = %s for update",
                 (user_id,),
             )
             staged = await cur.fetchone()
+            source_key = staged["r2_key"] if staged else None
+            source_mime = staged["mime_type"] if staged else None
             if not staged:
+                await cur.execute(
+                    "select profile_image_r2_key from fm_model_applications "
+                    "where user_id = %s and status in ('rejected', 'cancelled') "
+                    "and profile_image_r2_key is not null "
+                    "and terminated_at >= now() - interval '30 days' "
+                    "order by terminated_at desc limit 1",
+                    (user_id,),
+                )
+                prev = await cur.fetchone()
+                if prev and prev["profile_image_r2_key"]:
+                    source_key = prev["profile_image_r2_key"]
+                    source_mime = _mime_for_key(source_key)
+            if not source_key:
                 raise _err("profile_image_required", "프로필 사진을 먼저 업로드해 주세요.")
-            photo_ext = ext_for_mime(staged["mime_type"])
+            photo_ext = ext_for_mime(source_mime)
             photo_key = _application_photo_key(new_id, photo_ext)
-            # 스테이징 → application 귀속 키로 복사(수명 분리, E11). 원자성 위해 커밋 전.
-            r2.copy(staged["r2_key"], photo_key, staged["mime_type"])
+            # 원본(스테이징 또는 이전 지원서) → application 귀속 키로 복사. 원자성 위해 커밋 전.
+            r2.copy(source_key, photo_key, source_mime)
             try:
                 await cur.execute(
                     """

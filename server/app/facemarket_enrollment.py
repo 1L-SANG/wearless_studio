@@ -22,7 +22,7 @@ from psycopg.types.json import Json
 from . import cx_identity, repo
 from .agents.face_qc import QcFailed, load_face_qc, weight_paths
 from .auth import require_user
-from .facemarket_applications import MAX_IDENTITY_MISMATCH
+from .facemarket_applications import MAX_IDENTITY_MISMATCH, _dispatch_decision_email
 from .config import Settings
 from .db import get_conn
 from .models import CamelModel
@@ -905,7 +905,7 @@ async def verify_enrollment_identity(
             # 종료를 한 트랜잭션으로(E7). 실패 시도도 token 을 소비해(E8) 같은 token 재전송을 막는다.
             if row["application_id"]:
                 await cur.execute(
-                    "select applicant_name, birthdate, identity_mismatch_count "
+                    "select applicant_name, birthdate, identity_mismatch_count, contact_email "
                     "from fm_model_applications where id = %s for update",
                     (row["application_id"],),
                 )
@@ -939,6 +939,14 @@ async def verify_enrollment_identity(
                                 (enrollment_id, user_id),
                             )
                             await conn.commit()
+                            # 자동 거절 메일(스펙 7·10) — 상태는 이미 커밋됨, 발송 실패는 뱃지+재발송.
+                            await _dispatch_decision_email(
+                                request,
+                                application_id=row["application_id"],
+                                to=approw["contact_email"],
+                                email_type="auto_rejected",
+                                reject_reason="정보 불일치",
+                            )
                             raise _err(
                                 "identity_claim_rejected",
                                 "지원서 정보와 신분증이 3회 일치하지 않아 지원이 거절됐어요. "

@@ -259,3 +259,10 @@ class JobDispatcher:
             from ..facemarket_enrollment import sweep_terminal_enrollments
 
             await sweep_terminal_enrollments(self.app, limit=100)
+            # 미제출 지원서 스테이징 사진 회수(리뉴얼, 스펙 9). 실패는 무해 — 다음 주기에 재시도.
+            try:
+                from ..facemarket_applications import sweep_application_photo_staging
+
+                await sweep_application_photo_staging(self.app, limit=100)
+            except Exception:
+                log.exception("application staging sweep failed")

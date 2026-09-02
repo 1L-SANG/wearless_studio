@@ -17,7 +17,9 @@
 import { useEffect, useState } from 'react';
 import { Navigate, Outlet, Route } from 'react-router-dom';
 import { ErrorState } from '@/components/ui.jsx';
-import { listMyModels } from '@/lib/api/facemarket.js';
+import {
+  getApplicationConfig, getCurrentApplication, getCurrentEnrollment, listMyModels,
+} from '@/lib/api/facemarket.js';
 import { ModelHub } from '@/features/model/ModelHub.jsx';
 import { ModelApply } from '@/features/model/ModelApply.jsx';
 import { ModelRegister } from '@/features/model/ModelRegister.jsx';
@@ -61,6 +63,58 @@ function RequireModel({ verifiedOnly = false }) {
   return <Outlet />;
 }
 
+async function loadOptional(fn) {
+  try { return await fn(); }
+  catch (e) { if (e?.status === 404) return null; throw e; }
+}
+
+/* 지원서 게이트(리뉴얼, 스펙 12). FM_APPLICATION_REQUIRED 가 켜져 있으면 승인된 지원서가
+   없는 신규 사용자는 등록 화면(/model/register)에 들어갈 수 없다 — "검증된 사람만 등록".
+   백엔드 create_enrollment 의 403 과 같은 규칙을 UI 에서 먼저 적용해, 동의 폼을 보여줬다가
+   막는 일이 없게 한다. 기존 검증 모델(verified/reverification_required)·진행 중 등록 보유자는
+   grandfathered(백엔드 E6 과 동일 조건). 거부되면 허브로 — 허브가 "지원 시작하기"를 안내한다. */
+function RequireApprovedApplication() {
+  const [phase, setPhase] = useState('loading'); // loading | allowed | denied | error
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let alive = true;
+    setPhase('loading');
+    (async () => {
+      try {
+        const [cfg, app, models, enrollment] = await Promise.all([
+          loadOptional(getApplicationConfig),
+          loadOptional(getCurrentApplication),
+          listMyModels(),
+          loadOptional(getCurrentEnrollment),
+        ]);
+        if (!alive) return;
+        const required = !!cfg?.applicationRequired;
+        const legacyExempt = (models || []).some((m) => ['verified', 'reverification_required'].includes(m.status));
+        const inProgress = !!enrollment;
+        const approved = app?.status === 'approved';
+        setPhase(!required || legacyExempt || inProgress || approved ? 'allowed' : 'denied');
+      } catch {
+        if (alive) setPhase('error');
+      }
+    })();
+    return () => { alive = false; };
+  }, [attempt]);
+
+  if (phase === 'loading') return <div className="route-loading">지원 상태를 확인하고 있어요…</div>;
+  if (phase === 'denied') return <Navigate to="/model" replace />;
+  if (phase === 'error') {
+    return (
+      <div className="wizard narrow">
+        <div className="surface">
+          <ErrorState desc="지원 상태를 불러오지 못했어요." onRetry={() => setAttempt((value) => value + 1)} />
+        </div>
+      </div>
+    );
+  }
+  return <Outlet />;
+}
+
 function RequireOwnedModel() {
   return <RequireModel />;
 }
@@ -75,7 +129,10 @@ export const MODEL_SECTION_ROUTES = (
         한다 — 지원자(fm_models 행 없음)의 지원 상태를 허브가 진실원천으로 보여주기 때문이다.
         그래서 apply·register·index 는 RequireOwnedModel 밖에 둔다. */}
     <Route path="apply" element={<ModelApply />} />
-    <Route path="register" element={<ModelRegister />} />
+    {/* 등록 화면은 승인된 지원서(또는 기존 모델·진행 중 등록)가 있어야 열린다 — 검증된 사람만. */}
+    <Route element={<RequireApprovedApplication />}>
+      <Route path="register" element={<ModelRegister />} />
+    </Route>
     <Route index element={<ModelHub />} />
     <Route element={<RequireOwnedModel />}>
       <Route path="license" element={<ModelLicense />} />

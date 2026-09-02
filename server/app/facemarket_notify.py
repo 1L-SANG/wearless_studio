@@ -30,6 +30,15 @@ def _email_content(email_type: str, *, public_base: str, reject_reason: str | No
             "<p>버튼이 열리지 않으면 FaceMarket 에 로그인해 상태를 확인할 수 있어요.</p>"
         )
         return subject, html
+    if email_type == "auto_rejected":
+        # 신분증 대조 3회 불일치 자동 거절(스펙 7·10). 관리자 거절과 구분되는 별도 메일.
+        subject = "[FaceMarket] 신분증 정보 불일치로 지원이 거절됐어요"
+        html = (
+            "<p>지원서에 적은 이름·생년월일이 신분증과 3회 일치하지 않아 지원이 자동으로 "
+            "<b>거절</b>됐어요.</p>"
+            f'<p>정보를 수정해 다시 지원할 수 있어요: <a href="{apply}">다시 지원하기</a></p>'
+        )
+        return subject, html
     # rejected
     subject = "[FaceMarket] 모델 지원 결과 안내"
     reason_html = f"<p>사유: {_escape(reject_reason)}</p>" if reject_reason else ""
