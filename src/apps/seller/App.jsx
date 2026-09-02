@@ -27,7 +27,7 @@ import { Storyboard } from '@/features/storyboard/Storyboard.jsx';
 import { Generating } from '@/features/generating/Generating.jsx';
 import { LazyEditor } from '@/features/editor/lazyEditor.js';
 import { forgetPostLogin, readPostLogin, useAuth } from '@/features/auth/AuthProvider.jsx';
-import { domainRouteRedirect } from '@/lib/host.js';
+import { IS_FACEMARKET, domainRouteRedirect, redirectToOwnDocumentHost } from '@/lib/host.js';
 import { RequireAuth } from '../guards.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
@@ -522,6 +522,38 @@ function RootRedirect() {
 
 export default function App() {
   const { pathname } = useLocation();
+
+  /* 문서↔오버라이드 불일치 가드(로컬·프리뷰). 탭이 ?facemarket=1 을 sessionStorage 에
+     기억한 채 쿼리 없이 새로고침하면 서버는 셀러 문서(이 번들)를 주는데 IS_FACEMARKET 은
+     true 다. 그러면 아래 domainRouteRedirect 가 facemarket 규칙으로 /model/register 로 보내고,
+     이 번들엔 /model 이 없어 catch-all 이 /create/input 으로 되돌리고, 그건 또 facemarket 이
+     불허해 /model/register 로 — 무한 Navigate("Maximum update depth"·"Throttling
+     navigation"). 앱 전체가 흰 화면이 됐다(2026-09-02 로컬 QA 실측). 렌더 루프 대신
+     올바른 문서를 한 번 하드 로드한다(프로덕션은 호스트명만 근거라 여기 안 걸린다). */
+  if (IS_FACEMARKET) {
+    /* 프로덕션에서는 어느 문서를 줄지 **경로**가 정한다(쿼리가 아니다). facemarket 호스트에서
+       /seller.html 을 직접 열면 파일이 실제로 있어 rewrite 를 안 타고 이 번들이 뜨는데,
+       그때 ?facemarket=1 을 붙여봐야 두 번째 로드도 같은 문서라 '이동 중' 화면에 영영 멈춘다.
+       그래서 프로덕션 호스트에서는 루트로 한 번 보낸다 — 거기서 rewrite 가 올바른 문서를 준다.
+       (아래 쿼리 토글은 로컬·프리뷰 전용 경로다: 탭이 기억한 오버라이드와 서버가 준 문서가
+       어긋나 무한 Navigate 가 나던 2026-09-02 로컬 QA 사고를 막는다.) */
+    if (redirectToOwnDocumentHost('facemarket.wearless.kr')) {
+      return <div className="route-loading">FaceMarket 으로 이동 중이에요…</div>;
+    }
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('facemarket') !== '1') {
+      url.searchParams.set('facemarket', '1');
+      window.location.replace(url.toString());
+      return <div className="route-loading">모델 화면으로 이동 중이에요…</div>;
+    }
+    // 쿼리가 이미 붙어 있는데도 여기라면 문서·오버라이드가 계속 어긋난 상태다. 정지 화면 대신
+    // 이 호스트의 루트로 보내 올바른 문서를 다시 받는다.
+    if (window.location.pathname !== '/') {
+      window.location.replace(`${window.location.origin}/?facemarket=1`);
+    }
+    return <div className="route-loading">모델 화면으로 이동 중이에요…</div>;
+  }
+
   const domainRedirect = domainRouteRedirect(pathname);
 
   // 환경변수 미설정(예: Vercel env 누락)이면 화이트스크린 대신 원인을 보여준다.

@@ -259,3 +259,17 @@ class JobDispatcher:
             from ..facemarket_enrollment import sweep_terminal_enrollments
 
             await sweep_terminal_enrollments(self.app, limit=100)
+            # 미제출 지원서 스테이징 사진 회수(리뉴얼, 스펙 9). 실패는 무해 — 다음 주기에 재시도.
+            try:
+                from ..facemarket_applications import sweep_application_photo_staging
+
+                await sweep_application_photo_staging(self.app, limit=100)
+            except Exception:
+                log.exception("application staging sweep failed")
+            # 터미널 지원서(거절·취소) 30일 PII 익명화(스펙 11 / 3A). 승인 건은 운영 데이터로 남는다.
+            try:
+                from ..facemarket_applications import sweep_terminal_application_pii
+
+                await sweep_terminal_application_pii(self.app, limit=100)
+            except Exception:
+                log.exception("terminal application pii sweep failed")

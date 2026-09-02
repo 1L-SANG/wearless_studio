@@ -1,0 +1,350 @@
+/* 모델 지원서 페이지 — facemarket 랜딩(FacemarketLanding.module.css)·ModelHub 와 같은 언어.
+   차가운 오프화이트 바탕, 잉크색 pill CTA, 얇은 선의 반투명 흰 카드, 강조색(파랑)은
+   준비물 번호·필수 표시·포커스 링에만. 대문자·트래킹 라벨, 다크 전폭 섹션, 다크레드는 쓰지 않는다.
+
+   ⚠️ --fm-* 토큰에 전부 폴백을 단 이유: 이 화면은 MODEL_SECTION_ROUTES 로 seller App 안에도
+   실리는데 거기엔 .fm-theme 래퍼가 없다(ModelHub 와 같은 사정). 값은 랜딩 .shell 과 같다. */
+.page {
+  --fm-page-bg: #edf3f8;
+  --fm-ink: #10151a;
+  --fm-muted: #5f6b76;
+  --fm-line: rgba(16, 21, 26, 0.12);
+  --fm-accent: #2d63ff;
+  --fm-tint: rgba(45, 99, 255, 0.05);
+  --fm-card-bg: rgba(255, 255, 255, 0.62);
+  --fm-pad: clamp(1.25rem, 3.1vw, 4.25rem);
+  min-height: 100vh;
+  padding: 0 var(--fm-pad) clamp(3rem, 8vw, 5rem);
+  color: var(--fm-ink);
+  background:
+    radial-gradient(circle at 50% 20%, rgba(255, 255, 255, 0.72), transparent 32rem),
+    linear-gradient(180deg, #f8fbfd 0%, var(--fm-page-bg) 100%);
+  font-family: var(--font-body);
+}
+.loading {
+  padding: clamp(3rem, 8vw, 5rem) 0;
+  color: var(--fm-muted);
+  font: 400 0.95rem/1.6 var(--font-body);
+  text-align: center;
+}
+
+/* 섹션: 허브와 같은 84rem 컨테이너, 랜딩 .section 처럼 위쪽 얇은 선으로만 나눈다. */
+.section {
+  max-width: 84rem;
+  margin: 0 auto;
+  padding: clamp(3rem, 7vw, 5.5rem) 0;
+  border-top: 1px solid var(--fm-line);
+}
+.section:first-child { border-top: 0; padding-top: clamp(2rem, 5vw, 3.5rem); }
+
+.eyebrow {
+  margin: 0 0 1rem;
+  color: var(--fm-muted);
+  font: 500 0.76rem/1 var(--font-body);
+  letter-spacing: 0.02em;
+}
+.h1, .h2 {
+  margin: 0 0 0.9rem;
+  color: var(--fm-ink);
+  font-family: var(--font-body);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+.h1 { font-size: clamp(1.9rem, 4.5vw, 3.2rem); max-width: 22ch; }
+.h2 { font-size: clamp(1.5rem, 3vw, 2.2rem); }
+.lead {
+  max-width: 40rem;
+  margin: 0 0 clamp(1.4rem, 3vw, 2.2rem);
+  color: var(--fm-muted);
+  font: 400 clamp(0.92rem, 1.3vw, 1rem)/1.75 var(--font-body);
+}
+
+/* ---- 이용 원칙 ---- */
+/* 랜딩 .rule 과 같은 카드. 마지막(정산) 카드만 잉크로 채워 한 장을 도드라지게 — 이 페이지에서
+   힘을 주는 곳은 여기 하나다. */
+.rules {
+  display: grid;
+  gap: 0.9rem;
+  margin: 0;
+  padding: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr));
+  list-style: none;
+}
+.rule {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  padding: 1.2rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 1rem;
+  background: var(--fm-card-bg);
+}
+.rule strong { display: block; margin-bottom: 0.3rem; font: 600 0.95rem/1.45 var(--font-body); }
+.rule p { margin: 0; color: var(--fm-muted); font: 400 0.87rem/1.65 var(--font-body); }
+.ruleIcon {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.8);
+  color: var(--fm-muted);
+  font: 600 0.8rem/1 var(--font-body);
+}
+.ruleDark { border-color: var(--fm-ink); background: var(--fm-ink); color: #fff; }
+.ruleDark p { color: rgba(255, 255, 255, 0.72); }
+.ruleIconPay { border-color: rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.14); color: #fff; }
+
+/* ---- 지원 자격 ---- */
+.qualGrid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+}
+.qualCard {
+  padding: 1.5rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 1.1rem;
+  background: var(--fm-card-bg);
+}
+.qualCardMuted { background: rgba(255, 255, 255, 0.3); }
+.qualHead { margin: 0 0 0.6rem; font: 600 1rem/1.4 var(--font-body); }
+.qualList { margin: 0; padding: 0; list-style: none; }
+.qualList li {
+  position: relative;
+  padding: 0.7rem 0 0.7rem 1.1rem;
+  border-top: 1px solid var(--fm-line);
+  font: 400 0.95rem/1.55 var(--font-body);
+}
+.qualList li:first-child { border-top: 0; }
+.qualList li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 1.25rem;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--fm-ink);
+}
+.qualCardMuted .qualList li { color: var(--fm-muted); }
+.qualCardMuted .qualList li::before { background: var(--fm-muted); }
+
+/* ---- 준비물 ---- */
+/* 랜딩 "등록 절차"(.record) 블록 그대로: 옅은 파랑 판 안에 흰 단계 카드. 번호는 준비 순서 =
+   폼 순서라 작은 강조색 라벨로만. 카드 hover 는 사용자 요청(2026-09-02) — 선·배경·들림만. */
+.needBlock {
+  padding: clamp(1.6rem, 4vw, 2.8rem);
+  border-radius: 1.4rem;
+  background: var(--fm-tint);
+}
+.needBlock .h2 { margin-bottom: 0.6rem; }
+.needBlock .lead { margin-bottom: 1.6rem; }
+.needGrid {
+  display: grid;
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  list-style: none;
+}
+.needCard {
+  display: grid;
+  gap: 0.5rem;
+  align-content: start;
+  padding: 1.35rem 1.35rem 1.5rem;
+  border: 1px solid transparent;
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.8);
+  transition: border-color 160ms ease, background-color 160ms ease, transform 160ms ease;
+}
+.needCard:hover { border-color: rgba(16, 21, 26, 0.18); background: #fff; transform: translateY(-2px); }
+.needNum { color: var(--fm-accent); font: 600 0.72rem/1 var(--font-body); letter-spacing: 0.14em; }
+.needCard h3 { margin: 0.2rem 0 0; font: 600 0.98rem/1.4 var(--font-body); }
+.needCard p { margin: 0; color: var(--fm-muted); font: 400 0.87rem/1.65 var(--font-body); }
+
+/* ---- 지원서 폼 ---- */
+/* 입력 열은 46rem 로 잡는다 — 84rem 을 다 쓰면 입력이 한 줄로 늘어져 읽기 힘들다. */
+.form { max-width: 46rem; }
+.grid2 { display: grid; gap: 0 1.25rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.field { display: flex; flex-direction: column; gap: 0.45rem; margin-bottom: 1.35rem; }
+.label { color: var(--fm-ink); font: 500 0.85rem/1.4 var(--font-body); }
+.label i { margin-left: 0.2rem; color: var(--fm-accent); font-style: normal; }
+.input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.8rem 0.95rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--fm-ink);
+  font: 400 0.95rem/1.4 var(--font-body);
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.input:focus { border-color: var(--fm-ink); box-shadow: 0 0 0 3px rgba(45, 99, 255, 0.16); }
+select.input {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 2.6rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4' fill='none' stroke='%235f6b76' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.95rem center;
+}
+.textarea { min-height: 7.5rem; resize: vertical; }
+.groupTitle { margin: 1.6rem 0 1rem; font: 600 1.05rem/1.4 var(--font-body); }
+
+/* 칩: fm-theme .chip 과 같은 모양 — 얇은 선 pill, 선택은 잉크로 채움. */
+.pills, .checks { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.pill, .check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.6rem 1.1rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--fm-ink);
+  font: 500 0.9rem/1 var(--font-body);
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.pill:hover, .check:hover { background: #fff; }
+.pillOn, .checkOn, .pillOn:hover, .checkOn:hover { border-color: var(--fm-ink); background: var(--fm-ink); color: #fff; }
+.check { position: relative; }
+.check input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.pill:focus-visible, .check:focus-within { outline: 2px solid var(--fm-accent); outline-offset: 2px; }
+
+/* ---- 사진 ---- */
+.photoGrid { display: grid; gap: 1rem; margin-bottom: 0.5rem; grid-template-columns: 14rem; }
+.photoSlot { display: flex; flex-direction: column; gap: 0.45rem; }
+.photoBox {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 3 / 4;
+  padding: 0;
+  border: 1px solid var(--fm-line);
+  border-radius: 1.1rem;
+  background: var(--fm-card-bg);
+  overflow: hidden;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+.photoBox:hover { background: #fff; }
+.photoBox:focus-visible { outline: 2px solid var(--fm-accent); outline-offset: 2px; }
+.photoBoxOn { border-color: var(--fm-ink); }
+.silhouette { width: 52%; height: auto; }
+.photoPreview { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.photoPlus {
+  position: absolute;
+  left: 50%;
+  bottom: 0.9rem;
+  transform: translateX(-50%);
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  background: var(--fm-ink);
+  color: #fff;
+  font: 500 1.1rem/1 var(--font-body);
+}
+.photoKeep {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  right: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.5rem;
+  background: rgba(16, 21, 26, 0.82);
+  color: #fff;
+  font: 500 0.7rem/1.3 var(--font-body);
+}
+
+/* ---- 확인 · 고지 ---- */
+.attests { display: flex; flex-direction: column; gap: 0.8rem; margin: 0 0 1.6rem; }
+.attest {
+  display: flex;
+  gap: 0.7rem;
+  align-items: flex-start;
+  color: var(--fm-ink);
+  font: 400 0.92rem/1.6 var(--font-body);
+  cursor: pointer;
+}
+.attest input { flex: none; width: 1rem; height: 1rem; margin-top: 0.25rem; accent-color: var(--fm-ink); }
+.attestDisabled { color: var(--fm-muted); opacity: 0.6; cursor: not-allowed; }
+.noticeTitle { margin: 0 0 0.6rem; font: 600 0.95rem/1.4 var(--font-body); }
+.notice {
+  max-height: 12rem;
+  margin-bottom: 0.6rem;
+  padding: 1rem 1.15rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.7);
+  overflow-y: auto;
+  font: 400 0.9rem/1.7 var(--font-body);
+}
+.noticeBlock { margin-bottom: 0.9rem; }
+.noticeBlock:last-child { margin-bottom: 0; }
+.noticeBlock strong { display: block; margin-bottom: 0.15rem; font-weight: 600; }
+.noticeBlock p { margin: 0; color: var(--fm-muted); }
+.noticeGate { margin: 0 0 0.8rem; color: var(--fm-muted); font: 400 0.85rem/1.5 var(--font-body); }
+
+/* 제출: 랜딩 .heroCta 와 같은 잉크색 pill. 비활성은 회색이 아니라 잉크를 흐린다(fm-theme 규칙). */
+.submit {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 1.6rem;
+  padding: 0.95rem 1.6rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--fm-ink);
+  color: #fff;
+  font: 500 1rem/1 var(--font-body);
+  cursor: pointer;
+  transition: opacity 140ms ease;
+}
+.submit:hover:not([disabled]) { opacity: 0.86; }
+.submit:focus-visible { outline: 2px solid var(--fm-accent); outline-offset: 3px; }
+.submit:disabled { opacity: 0.36; cursor: not-allowed; }
+
+/* ---- FAQ ---- */
+.faq { max-width: 52rem; margin: 0; padding: 0; list-style: none; }
+.faqItem { border-top: 1px solid var(--fm-line); }
+.faqItem:first-child { border-top: 0; }
+.faqQ {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+  padding: 1.15rem 0;
+  border: 0;
+  background: none;
+  color: var(--fm-ink);
+  font: 500 1rem/1.5 var(--font-body);
+  text-align: left;
+  cursor: pointer;
+}
+.faqQ:focus-visible { outline: 2px solid var(--fm-accent); outline-offset: 2px; border-radius: 0.4rem; }
+.faqToggle { flex: none; color: var(--fm-muted); font: 300 1.4rem/1 var(--font-body); }
+.faqA {
+  max-width: 46rem;
+  margin: -0.3rem 0 1.15rem;
+  color: var(--fm-muted);
+  font: 400 0.95rem/1.7 var(--font-body);
+}
+
+@media (max-width: 720px) {
+  .grid2 { grid-template-columns: 1fr; }
+  .photoGrid { grid-template-columns: minmax(11rem, 14rem); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .needCard, .input, .pill, .check, .photoBox, .submit { transition: none; }
+  .needCard:hover { transform: none; }
+}

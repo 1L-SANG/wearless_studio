@@ -15,12 +15,14 @@ import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import s from './FacemarketLanding.module.css';
 
 /* 2026-09-02 사용자 지시로 세 항목을 갈았다: 라이선싱·모델 등록·모델 정보 →
-   모델 둘러보기·라이선스·정산. 앞뒤 둘은 아직 화면이 없어 자리만 잡아 뒀다(PlaceholderPage).
+   모델 둘러보기·라이선스·정산. 같은 날 저녁 다시: 라이선스 페이지를 지우고 그 자리에
+   **등록 상태**(/status — 예전 /model 허브의 내용, 공개 라우트에 로그인 프롬프트 내장).
+   앞뒤 둘은 아직 화면이 없어 자리만 잡아 뒀다(PlaceholderPage).
    내려간 두 화면(등록 안내 /register, 프라이버시 /model-info)은 지우지 않았다 —
    내용은 그대로 살아 있고 푸터에서 들어간다. */
 const NAV = [
   { to: '/models', label: '모델 둘러보기' },
-  { to: '/license', label: '라이선스' },
+  { to: '/status', label: '등록 상태' },
   { to: '/payout', label: '정산' },
 ];
 

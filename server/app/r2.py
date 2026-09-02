@@ -190,6 +190,25 @@ class R2Client:
             keys.extend(o["Key"] for o in page.get("Contents", []))
         return keys
 
+    def list_prefix_aged(self, prefix: str, *, older_than_seconds: int) -> list[str]:
+        """prefix 하위에서 **일정 시간보다 오래된** 객체 키만. 동기 → to_thread.
+
+        list_prefix 와 달리 LastModified 를 보고 자른다. 고아 스윕이 '방금 올라왔지만 아직 DB
+        행이 안 생긴' 객체를 지우지 않으려면 나이 기준이 필요하다 — 키만 보면 진행 중 업로드와
+        영구 고아를 구분할 수 없다. 반환 키는 삭제 대상으로만 쓰고 로그엔 카운트만 남긴다(§1.4).
+        """
+        from datetime import datetime, timedelta, timezone
+
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=older_than_seconds)
+        keys: list[str] = []
+        paginator = self._s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self._bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                modified = obj.get("LastModified")
+                if modified is not None and modified <= cutoff:
+                    keys.append(obj["Key"])
+        return keys
+
     def public_url(self, key: str) -> str:
         """서빙 URL. 커스텀 도메인 있으면 공개 URL, 없으면 1h signed GET."""
         if self._public_base:

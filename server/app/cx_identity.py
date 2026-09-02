@@ -157,6 +157,68 @@ def parse_oacx_biometric_evidence(
         raise OacxBiometricError() from None
 
 
+@dataclass(frozen=True, slots=True)
+class IdentityClaimMatch:
+    """지원서 이름·생년월일 대조 결과 — raw 값은 담지 않는다(불리언·정밀도만, E13)."""
+
+    matched: bool
+    name_matched: bool
+    birth_precision: Literal["full", "year", "none"]
+
+
+def _normalize_name(name: str) -> str:
+    """대조용 이름 정규화: 모든 공백 제거 + casefold(라틴 대소문자 무시).
+
+    'KIM MIN SU' == 'KimMinsu' (E13). 한글은 공백만 제거되고 casefold 는 무영향.
+    """
+    return "".join(ch for ch in str(name or "") if not ch.isspace()).casefold()
+
+
+def compare_identity_claim(
+    trans: dict,
+    *,
+    contract: OacxBiometricContract,
+    expected_name: str,
+    expected_birthdate: date,
+) -> IdentityClaimMatch:
+    """OACX trans 의 이름·생년월일을 지원서 주장과 대조한다 — raw 는 이 함수 밖으로 나가지 않는다.
+
+    E13(4A 의 안전한 구현): 기대값(지원서 이름·생년월일)을 파서에 넘기고 match 결과만 반환.
+    - 이름: 공백 제거 + casefold 후 완전일치(라틴 대소문자·공백 무시).
+    - 생년월일: 8자리면 연·월·일 전체 비교. 4자리(year-only, `cx_birth_year_only` 실존)면
+      **이름 일치 + 연도 일치**만으로 통과(약한 보장, precision='year'). 미성년 차단은 파서가 담당.
+    실패·형식오류는 matched=False 로 흡수(원문·birth 를 예외·로그로 흘리지 않는다).
+    """
+    try:
+        raw_name = dig(trans, "name", "nm")
+        raw_birth = dig_path(trans, contract.birth_path)
+        if not isinstance(raw_name, str) or not raw_name:
+            return IdentityClaimMatch(False, False, "none")
+        if not isinstance(raw_birth, str) or not raw_birth:
+            return IdentityClaimMatch(False, False, "none")
+
+        name_matched = _normalize_name(raw_name) == _normalize_name(expected_name)
+
+        digits = "".join(ch for ch in raw_birth if ch.isdigit())
+        expected = expected_birthdate
+        if len(digits) == 8:
+            birth_matched = (
+                int(digits[:4]) == expected.year
+                and int(digits[4:6]) == expected.month
+                and int(digits[6:8]) == expected.day
+            )
+            precision: Literal["full", "year", "none"] = "full"
+        elif len(digits) == 4:
+            birth_matched = int(digits) == expected.year
+            precision = "year"
+        else:
+            return IdentityClaimMatch(False, name_matched, "none")
+
+        return IdentityClaimMatch(name_matched and birth_matched, name_matched, precision)
+    except Exception:
+        return IdentityClaimMatch(False, False, "none")
+
+
 def parse_oacx_portrait_hex(
     hex_value: str | None, *, contract: OacxBiometricContract
 ) -> bytearray:

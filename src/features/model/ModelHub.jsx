@@ -1,5 +1,9 @@
 /* FaceMarket 모델 등록 상태와 다음 안전한 진입점만 보여주는 허브.
 
+   2026-09-02 지시로 /model 이 아니라 랜딩 상단바의 '등록 상태'(/status, StatusPage)에 실린다.
+   LandingShell 안이라 좌우 여백은 셸이 주고(.hubPage 는 가로 패딩 0), 상단바·푸터도 셸 것이다.
+   /model 은 여기로 리다이렉트한다.
+
    외형은 facemarket 랜딩(FacemarketLanding.module.css)의 디자인 언어를 따른다 —
    eyebrow + 큰 제목 + 리드문, 얇은 선 카드, 잉크색 pill CTA. 조회 함수·상태 라벨·
    네비게이션 목적지는 종전 그대로다. 바뀐 건 배치와 스타일뿐이다.
@@ -17,8 +21,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button, ErrorState, Icon, useToast } from '@/components/ui.jsx';
-import { getCurrentEnrollment, listMyModels } from '@/lib/api/facemarket.js';
+import {
+  cancelApplication, getApplicationConfig, getCurrentApplication, getCurrentEnrollment,
+  listMyModels,
+} from '@/lib/api/facemarket.js';
 import s from './ModelPersonalization.module.css';
+
+async function loadOptional(fn) {
+  try { return await fn(); }
+  catch (e) { if (e?.status === 404) return null; throw e; }
+}
 
 const MODEL_STATUS_LABEL = {
   pending: '본인 확인 진행 중',
@@ -101,8 +113,8 @@ function licenseCell(ownedModel, enrollment, needsTerms) {
 function HubHead() {
   return (
     <header className={s.hubHead}>
-      <p className={s.hubEyebrow}>모델 허브</p>
-      <h1 className={s.hubTitle}>내 얼굴로 만드는 모델</h1>
+      <p className={s.hubEyebrow}>FaceMarket 모델</p>
+      <h1 className={s.hubTitle}>등록 상태</h1>
       {/* 순서에서 '모바일 신분증'만 앞으로 옮겼다. 예전 문장은 신분증을 라이브 얼굴 뒤에
           뒀는데 실제 위저드는 STEP 2 가 신분증, STEP 6 이 라이브다(PRD §5 / 랜딩
           RegisterSection 의 레일 '동의·신분증·사진·체형·대표·라이브·완료' — 2026-09-01
@@ -140,17 +152,23 @@ export function ModelHub() {
   const [phase, setPhase] = useState('loading'); // loading|ready|error
   const [ownedModel, setOwnedModel] = useState(null);
   const [enrollment, setEnrollment] = useState(null);
+  const [application, setApplication] = useState(null);
+  const [applicationRequired, setApplicationRequired] = useState(false);
 
   const load = useCallback(async () => {
     setPhase('loading');
     try {
-      const mine = await listMyModels();
+      // 지원서·설정·등록을 함께 조회한다(404 는 "없음"으로 흡수, loadOptional).
+      const [mine, cfg, app, enr] = await Promise.all([
+        listMyModels(),
+        loadOptional(getApplicationConfig),
+        loadOptional(getCurrentApplication),
+        loadOptional(getCurrentEnrollment),
+      ]);
       setOwnedModel(mine?.[0] || null);
-      try { setEnrollment(await getCurrentEnrollment()); }
-      catch (requestError) {
-        if (requestError?.status !== 404) throw requestError;
-        setEnrollment(null);
-      }
+      setApplicationRequired(!!cfg?.applicationRequired);
+      setApplication(app);
+      setEnrollment(enr);
       setPhase('ready');
     } catch (e) {
       push?.(e.message, { icon: 'alertCircle' });
@@ -159,6 +177,15 @@ export function ModelHub() {
   }, [push]);
 
   useEffect(() => { load(); }, [load]);
+
+  const onCancelApplication = useCallback(async () => {
+    if (!application) return;
+    try {
+      await cancelApplication(application.id);
+      push?.('지원을 취소했어요.', { icon: 'check' });
+      load();
+    } catch (e) { push?.(e.message, { icon: 'alertCircle' }); }
+  }, [application, load, push]);
 
   /* 로딩·오류에서도 머리글을 유지한다. 예전에는 세 화면이 서로 다른 껍데기라
      불러오기가 끝나는 순간 제목이 튀어나왔다. */
@@ -181,11 +208,40 @@ export function ModelHub() {
     );
   }
 
-  const isNew = !ownedModel && !enrollment;
   const enrollmentNeedsTerms = ['license_pending', 'vc_pending'].includes(enrollment?.status);
   const registrationPath = enrollmentNeedsTerms
     ? `/model/license?step=terms&enrollment=${encodeURIComponent(enrollment.id)}`
     : '/model/register';
+
+  // 진행 중 등록·검증 모델이 있으면 기존 여정이 우선(승인 지원서는 이미 소비됨).
+  const hasProgress = !!(ownedModel || enrollment);
+  // 지원 여정 상태 — 진행 중 등록이 없을 때만 hubNext 를 차지한다.
+  const appState = !hasProgress ? application?.status : null;
+  const appUnderReview = appState === 'under_review';
+  const appRejected = appState === 'rejected';
+  const appApprovedIdle = appState === 'approved';
+  const showApplicationNext = appUnderReview || appRejected || appApprovedIdle;
+
+  // 등록 화면에 들어갈 수 있는가 — RequireApprovedApplication(modelSectionRoutes)·서버
+  // create_enrollment 게이트와 **같은 판정**이다. 어긋나면 '이어가기' 버튼이 가드에 막혀
+  // 이 화면으로 되돌아오는 왕복이 생긴다(2026-09-02 리뷰에서 실제로 잡힌 결함).
+  const registrationAllowed = !applicationRequired
+    || !!enrollment
+    || application?.status === 'approved'
+    || ['pending', 'verified', 'reverification_required'].includes(ownedModel?.status);
+
+  // "완전 신규": 진행 중 등록·모델·활성 지원서 전부 없음.
+  const hasActiveApplication = application?.status === 'under_review' || application?.status === 'approved';
+  const isNew = !hasProgress && !hasActiveApplication;
+  // 모델은 있는데 등록이 막힌 경우(정지된 모델 등). 두 갈래를 **분리**한다 — 예전에는
+  // '활성 지원서 없음'까지 한 조건에 묶어서, 차단된 사용자가 재지원해 under_review 가 되는
+  // 순간 이 분기가 꺼지고 다시 '등록 이어가기'가 떠서 가드에 막히는 왕복이 남았다.
+  const blocked = hasProgress && !registrationAllowed;
+  const blockedNeedsApply = blocked && !hasActiveApplication;
+  const blockedUnderReview = blocked && application?.status === 'under_review';
+  const blockedApproved = blocked && application?.status === 'approved';
+  // 신규 진입 목적지: 게이트 on 이면 지원서, off 면 기존 즉시 등록.
+  const newEntryPath = applicationRequired ? '/model/apply' : '/model/register';
 
   /* 종전 분기와 **같은 조건**이다. 예전 코드의 "생성·라이선스 버튼" 블록 조건이
      `ownedModel?.status === 'verified' && !enrollment` 였고, "이어가기" 블록 조건이
@@ -202,22 +258,74 @@ export function ModelHub() {
       <section className={s.hubNext}>
         <div className={s.hubNextHead}>
           <p className={s.hubNextEyebrow}>다음 단계</p>
-          {isNew && <h2 className={s.hubNextTitle}>생체정보 처리 동의부터 시작해요</h2>}
-          {!isNew && isDone && <h2 className={s.hubNextTitle}>내 모델로 컷을 만들 수 있어요</h2>}
-          {!isNew && !isDone && enrollmentNeedsTerms && (
+
+          {/* 지원 여정(진행 중 등록이 없을 때). 이 화면이 지원 상태의 진실원천이다(메일 무관). */}
+          {appUnderReview && <h2 className={s.hubNextTitle}>지원서를 검토하고 있어요</h2>}
+          {appRejected && <h2 className={s.hubNextTitle}>다시 지원할 수 있어요</h2>}
+          {appApprovedIdle && <h2 className={s.hubNextTitle}>지원이 승인됐어요</h2>}
+
+          {appUnderReview && (
+            <p className={s.hubNextBody}>
+              제출한 지원서를 관리자가 검토하고 있어요. 승인되면 이메일과 이 화면으로 알려드려요.
+            </p>
+          )}
+          {appRejected && (
+            <p className={s.hubNextBody}>
+              지원이 거절됐어요.{application?.rejectReason ? ` 사유: ${application.rejectReason}` : ''} 정보를 수정해 다시 지원해 주세요.
+            </p>
+          )}
+          {appApprovedIdle && (
+            <p className={s.hubNextBody}>
+              신분증 인증부터 모델 등록을 이어가 주세요. 등록이 만료·중단돼도 승인은 유지돼요.
+            </p>
+          )}
+
+          {/* 기존 여정(진행 중 등록·검증 모델) — 지원 상태를 표시 중이 아닐 때만. */}
+          {!showApplicationNext && isNew && (
+            <h2 className={s.hubNextTitle}>
+              {applicationRequired ? '모델 지원서부터 작성해요' : '생체정보 처리 동의부터 시작해요'}
+            </h2>
+          )}
+          {!showApplicationNext && !isNew && isDone && <h2 className={s.hubNextTitle}>내 모델로 컷을 만들 수 있어요</h2>}
+          {!showApplicationNext && blockedNeedsApply && (
+            <h2 className={s.hubNextTitle}>모델 지원서부터 작성해요</h2>
+          )}
+          {!showApplicationNext && blockedUnderReview && (
+            <h2 className={s.hubNextTitle}>지원서를 검토하고 있어요</h2>
+          )}
+          {!showApplicationNext && blockedApproved && (
+            <h2 className={s.hubNextTitle}>지원이 승인됐어요</h2>
+          )}
+          {!showApplicationNext && !blocked && !isNew && !isDone && enrollmentNeedsTerms && (
             <h2 className={s.hubNextTitle}>마지막으로 라이선스 단계가 남았어요</h2>
           )}
-          {!isNew && !isDone && !enrollmentNeedsTerms && (
+          {!showApplicationNext && !blocked && !isNew && !isDone && !enrollmentNeedsTerms && (
             <h2 className={s.hubNextTitle}>등록을 이어서 마치면 돼요</h2>
           )}
 
-          {/* 아래 두 문장은 예전 화면의 문구를 그대로 옮긴 것이다 — 자리만 바뀌었다. */}
-          {isNew && (
+          {!showApplicationNext && isNew && (
             <p className={s.hubNextBody}>
-              아직 등록된 내 모델이 없어요. 생체정보 처리 동의부터 시작해 주세요.
+              {applicationRequired
+                ? '지원서를 제출하면 관리자 검토 후 승인된 분만 모델 등록을 진행할 수 있어요.'
+                : '아직 등록된 내 모델이 없어요. 생체정보 처리 동의부터 시작해 주세요.'}
             </p>
           )}
-          {!isNew && !isDone && (
+          {!showApplicationNext && blockedNeedsApply && (
+            <p className={s.hubNextBody}>
+              지금 계정으로는 등록을 이어갈 수 없어요. 지원서를 제출하면 관리자 검토 후 다시 진행할 수 있어요.
+            </p>
+          )}
+          {!showApplicationNext && blockedUnderReview && (
+            <p className={s.hubNextBody}>
+              제출한 지원서를 관리자가 검토하고 있어요. 승인되면 이메일과 이 화면으로 알려드려요.
+            </p>
+          )}
+          {!showApplicationNext && blockedApproved && (
+            <p className={s.hubNextBody}>
+              신분증 인증부터 모델 등록을 이어가 주세요.
+            </p>
+          )}
+          {!showApplicationNext && !blocked && !isNew && !isDone && (
             <p className={s.hubNextBody}>
               본인 확인과 라이선스 발급을 마치면 내 모델로 생성할 수 있어요.
               {/* PRD §7.3·§13-2 — holder 콜드부트가 ~2분이라 대기가 정상 경로에 있다.
@@ -225,7 +333,7 @@ export function ModelHub() {
               {enrollmentNeedsTerms && ' 발급에는 몇 분이 걸릴 수 있어요 — 기다리면 됩니다.'}
             </p>
           )}
-          {isDone && (
+          {!showApplicationNext && isDone && (
             <p className={s.hubNextBody}>
               내 모델로 컷을 만들거나, 발급한 얼굴 라이선스의 조건과 QR 을 확인할 수 있어요.
             </p>
@@ -239,22 +347,54 @@ export function ModelHub() {
             '이어가기' 는 예전에 secondary 였는데, 이 자리에서는 그게 유일한 다음 행동이라
             primary 로 올렸다(모양만 바뀐다).
 
-            처음 오는 사람의 문구는 랜딩 CTA 와 같은 '모델 등록하기'다(registerCta.js). 같은
-            행동이 화면마다 다른 이름을 갖지 않게 맞춘 것이다. 아래 '이어가기' 둘은 그대로
-            둔다 — 그건 같은 버튼이 글자를 바꾸는 게 아니라 **어느 단계로 돌아가는지**를
-            알려 주는 라벨이라, 통일하면 오히려 정보가 사라진다. */}
+            처음 오는 사람의 문구는 랜딩 CTA 와 같다(registerCta.js — 게이트 on '모델 지원하기',
+            off '모델 등록하기'). 같은 행동이 화면마다 다른 이름을 갖지 않게 맞춘 것이다(#218).
+            아래 '이어가기'·'계속하기' 는 그대로 둔다 — 같은 버튼이 글자를 바꾸는 게 아니라
+            **어느 단계로 돌아가는지**를 알려 주는 라벨이라, 통일하면 오히려 정보가 사라진다. */}
         <div className={s.hubNextActions}>
-          {isNew && (
+          {appUnderReview && (
+            <Button variant="secondary" onClick={onCancelApplication}>지원 취소</Button>
+          )}
+          {/* 진행 중 등록이 있어서 지원 상태 패널을 안 띄우는 경우에도 취소 버튼은 남긴다.
+              플래그를 끈 뒤(구 경로) 등록을 마친 사용자의 검토 중 지원서가 화면에서 사라져
+              사용자는 취소할 수 없고 관리자 큐에는 영구 잔류하던 문제(2026-09-02 리뷰). */}
+          {!appUnderReview && application?.status === 'under_review' && (
+            <Button variant="ghost" onClick={onCancelApplication}>검토 중인 지원 취소</Button>
+          )}
+          {appRejected && (
+            <Button variant="primary" iconRight="arrowRight" onClick={() => navigate('/model/apply')}>
+              다시 지원하기
+            </Button>
+          )}
+          {appApprovedIdle && (
+            <Button variant="primary" iconRight="arrowRight" onClick={() => navigate('/model/register')}>
+              모델 등록 계속하기
+            </Button>
+          )}
+
+          {!showApplicationNext && isNew && (
+            <Button variant="primary" iconRight="arrowRight" onClick={() => navigate(newEntryPath)}>
+              {applicationRequired ? '모델 지원하기' : '모델 등록하기'}
+            </Button>
+          )}
+          {!showApplicationNext && blockedNeedsApply && (
+            <Button variant="primary" iconRight="arrowRight" onClick={() => navigate('/model/apply')}>
+              모델 지원하기
+            </Button>
+          )}
+          {/* 차단 + 검토 중이면 등록 CTA 를 아예 내지 않는다(눌러도 가드에 막혀 되돌아온다).
+              남는 행동은 아래 '검토 중인 지원 취소' 하나뿐이고, 그게 유일한 탈출구다. */}
+          {!showApplicationNext && blockedApproved && (
             <Button variant="primary" iconRight="arrowRight" onClick={() => navigate('/model/register')}>
               모델 등록하기
             </Button>
           )}
-          {!isNew && !isDone && (
+          {!showApplicationNext && !blocked && !isNew && !isDone && (
             <Button variant="primary" iconRight="arrowRight" onClick={() => navigate(registrationPath)}>
               {enrollmentNeedsTerms ? '라이선스 조건 설정 이어가기' : '모델 등록 이어가기'}
             </Button>
           )}
-          {isDone && (
+          {!showApplicationNext && isDone && (
             <>
               <Button variant="primary" iconRight="arrowRight" onClick={() => navigate('/model/generate')}>
                 내 모델로 생성하기
@@ -272,7 +412,7 @@ export function ModelHub() {
           "지금 알 수 있는 것"만 적는다(licenseCell 주석). 신규 사용자에게도 세 칸을
           그린다 — 앞으로 뭘 거치는지가 이 화면의 나머지 절반이다. */}
       <section className={s.hubStatus}>
-        <h2 className={s.hubStatusLabel}>FaceMarket 등록 상태</h2>
+        <h2 className={s.hubStatusLabel}>단계별 현황</h2>
         <ul className={s.hubGrid}>
           <StatusCard cell={registrationCell(ownedModel, enrollment)} index="01" name="모델 등록" />
           <StatusCard cell={modelCell(ownedModel)} index="02" name="내 모델" />
@@ -284,9 +424,9 @@ export function ModelHub() {
         </ul>
       </section>
 
-      {/* 삭제 링크는 종전처럼 등록을 시작한 사람에게만 보인다 — 지울 게 없는 사람에게
-          삭제 링크를 보이면 잘못 들어온 화면처럼 읽힌다. */}
-      {!isNew && (
+      {/* 삭제 링크는 실제 얼굴·신체 데이터가 있는 사람에게만 — 지원서만 낸 단계에는
+          지울 생체 데이터가 없다(지원서 PII 는 지원 취소로 처리). */}
+      {hasProgress && (
         <div className={s.hubFoot}>
           <Link to="/model/withdraw" className={s.hubFootLink}>
             <Icon name="trash" size={14} />얼굴·신체 데이터 삭제

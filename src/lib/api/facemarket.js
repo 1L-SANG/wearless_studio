@@ -119,6 +119,78 @@ export async function uploadProfileImage({ enrollmentId, fileBlob, filename }) {
   ), '대표 이미지 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
 }
 
+// ── 모델 지원서(리뉴얼) ─────────────────────────────────────────────────────
+
+// 제출 전 지원 사진 임시 저장 — kind: profile|closeup|waist_up|full_length (슬롯당 1장, 재업로드 시 교체).
+export async function stageApplicationPhoto({ kind = 'profile', fileBlob, filename }) {
+  const form = new FormData();
+  form.append('kind', kind);
+  form.append('image', fileBlob, filename || kind);
+  return checkedJson(await _authFetch(
+    '/v1/facemarket/applications/photo-staging',
+    { method: 'POST', body: form },
+  ), '사진 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
+}
+
+// 지원서 제출. 성공 시 검토 중(auto-approve 면 승인) ApplicationView 반환. 중복이면 409.
+export function submitApplication(body) {
+  return http('/v1/facemarket/applications', { method: 'POST', body });
+}
+
+// 지원서 게이트 활성 여부(신규 진입을 /model/apply 로 보낼지) — 생체 /config 와 독립.
+export function getApplicationConfig() {
+  return http('/v1/facemarket/applications/config');
+}
+
+// 현재(활성 또는 최근 터미널) 지원서 — 상태 허브·재지원 프리필용. 없으면 404.
+export function getCurrentApplication() {
+  return http('/v1/facemarket/applications/current');
+}
+
+export function cancelApplication(applicationId) {
+  return http(`/v1/facemarket/applications/${encodeURIComponent(applicationId)}/cancel`, {
+    method: 'POST',
+  });
+}
+
+// ── 관리자: 지원서 검토 ─────────────────────────────────────────────────────
+// 서버가 repo.is_admin 을 강제한다(호스트 라우팅은 UX 경계일 뿐, 비관리자는 403).
+
+export function adminListApplications(status) {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+  return http(`/v1/facemarket/admin/applications${qs}`);
+}
+
+export function adminApproveApplication(applicationId) {
+  return http(`/v1/facemarket/admin/applications/${encodeURIComponent(applicationId)}/approve`, {
+    method: 'POST',
+  });
+}
+
+export function adminRejectApplication(applicationId, reason) {
+  return http(`/v1/facemarket/admin/applications/${encodeURIComponent(applicationId)}/reject`, {
+    method: 'POST', body: { reason },
+  });
+}
+
+// 결정 메일 재발송(2A '메일 미발송' 복구).
+export function adminResendEmail(applicationId) {
+  return http(`/v1/facemarket/admin/applications/${encodeURIComponent(applicationId)}/resend-email`, {
+    method: 'POST',
+  });
+}
+
+// 관리자 프로필 사진: 게이트 라우트는 Authorization 헤더가 필요해 <img src> 로 못 건다.
+// 바이트를 인증 fetch 로 받아 objectURL 을 만든다(호출자가 revokeObjectURL 로 해제).
+export async function adminFetchApplicationPhotoUrl(applicationId, kind = 'profile') {
+  const res = await _authFetch(
+    `/v1/facemarket/admin/applications/${encodeURIComponent(applicationId)}/profile-image?kind=${encodeURIComponent(kind)}`,
+  );
+  if (!res.ok) throw new Error('사진을 불러오지 못했어요.');
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
 // POST /v1/facemarket/enrollments/{id}/physique — 체형·키(선택, 비게이팅) 저장. 서버가
 // enum·성별 일치를 검증(app.facemarket_physique)하고 갱신된 EnrollmentView 를 돌려준다.
 export function submitPhysique({ enrollmentId, heightBucket, bodyType }) {

@@ -409,6 +409,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.include_router(facemarket_router)
         # 온체인 정산 recorder(선택과제2). 체인 env 미설정이면 None → 정산 훅 no-op.
         app.state.fm_chain = FaceMarketChain.from_settings(settings)
+        # 모델 지원서·관리자 검토(리뉴얼). 지원서 제출·검토는 생체등록 스택(face QC·라이브니스)에
+        # 의존하지 않는 프리스테이지라 biometric 플래그와 무관하게 등록한다. create_enrollment
+        # 게이트(승인 지원서 요구)만 FM_APPLICATION_REQUIRED + 생체등록 활성일 때 동작한다.
+        from .facemarket_applications import router as applications_router
+
+        app.include_router(applications_router)
         if settings.fm_biometric_enrollment_enabled:
             from .facemarket_enrollment import router as biometric_enrollment_router
 

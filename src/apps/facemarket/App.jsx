@@ -20,9 +20,9 @@
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { FacemarketRoot } from '@/features/facemarket-landing/FacemarketRoot.jsx';
 import { FacemarketModelLayout } from '@/features/facemarket-shell/FacemarketModelLayout.jsx';
-import { LicensingPage } from '@/features/facemarket-landing/pages/LicensingPage.jsx';
 import { ModelsPage } from '@/features/facemarket-landing/pages/ModelsPage.jsx';
 import { PayoutPage } from '@/features/facemarket-landing/pages/PayoutPage.jsx';
+import { StatusPage } from '@/features/facemarket-landing/pages/StatusPage.jsx';
 import { RegisterPage } from '@/features/facemarket-landing/pages/RegisterPage.jsx';
 import { ModelInfoPage } from '@/features/facemarket-landing/pages/ModelInfoPage.jsx';
 import { Pricing } from '@/features/pricing/Pricing.jsx';
@@ -31,12 +31,15 @@ import { PaymentSuccess, PaymentFail } from '@/features/payments/PaymentResult.j
 import { PublicVerify } from '@/features/verify/PublicVerify.jsx';
 import { RequireAuth } from '../guards.jsx';
 import { MODEL_SECTION_ROUTES } from './modelSectionRoutes.jsx';
-import { domainRouteRedirect } from '@/lib/host.js';
+import { domainRouteRedirect, redirectToOwnDocumentHost } from '@/lib/host.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
 
 export default function AppFacemarket() {
   const { pathname } = useLocation();
+  // 셀러 도메인에서 /facemarket.html 을 직접 연 경우 이 도메인으로 되돌린다(host.js).
+  const wrongHost = redirectToOwnDocumentHost('facemarket.wearless.kr');
   const domainRedirect = domainRouteRedirect(pathname);
+  if (wrongHost) return <div className="route-loading">FaceMarket 으로 이동 중이에요…</div>;
 
   // 환경변수 미설정(예: Vercel env 누락)이면 화이트스크린 대신 원인을 보여준다.
   if (!isSupabaseConfigured) {
@@ -60,15 +63,19 @@ export default function AppFacemarket() {
           존재 이유다. 인증이 필요한 곳(/model/*)으로는 각 페이지 끝 CTA 가 보낸다. */}
       <Route index element={<FacemarketRoot />} />
       <Route path="models" element={<ModelsPage />} />
-      <Route path="license" element={<LicensingPage />} />
+      {/* 등록 상태 — 예전 /model 허브의 내용. 공개 라우트지만 내용은 로그인 뒤에 보인다
+          (StatusPage 머리말). 라이선스 페이지는 2026-09-02 지시로 지웠다. */}
+      <Route path="status" element={<StatusPage />} />
       <Route path="payout" element={<PayoutPage />} />
       {/* 상단바에서 내려왔지만 화면은 그대로 살아 있다 — 푸터에서 들어간다.
           지우지 않는 이유: 등록 7단계 안내와 프라이버시 하드룰 설명은 승인받은 내용이고,
           생체정보를 넘기기 전에 읽을 자리가 사이트에 하나는 있어야 한다. */}
       <Route path="register" element={<RegisterPage />} />
       <Route path="model-info" element={<ModelInfoPage />} />
-      {/* 옛 주소. 상단바 개편 전에 공유된 링크가 404 로 떨어지지 않게. */}
-      <Route path="licensing" element={<Navigate to="/license" replace />} />
+      {/* 옛 주소. 지워진 라이선스 페이지(/license·/licensing)로 공유된 링크가 404 로 떨어지지 않게
+          그 자리를 이어받은 등록 상태로 보낸다. */}
+      <Route path="license" element={<Navigate to="/status" replace />} />
+      <Route path="licensing" element={<Navigate to="/status" replace />} />
 
       {/* /model/* 과 결제·크레딧은 랜딩 상단바를 입는다. 이 도메인에 온 사람은 얼굴을
           등록하러 온 모델이고, 셀러 TopNav 의 크레딧 배지·요금제·플로우 스테퍼는 전부

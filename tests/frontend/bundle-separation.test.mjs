@@ -48,14 +48,29 @@ test('모델 앱(AppFacemarket.jsx)은 셀러 전용 화면을 import 하지 않
   }
 });
 
-test('진입점 두 개가 각자 자기 앱을 마운트한다', () => {
+test('관리자 앱(admin/App.jsx)은 셀러·모델 등록·랜딩 화면을 import 하지 않는다', () => {
+  const paths = importPaths(read('src/apps/admin/App.jsx'));
+  for (const path of paths) {
+    assert.ok(!path.includes('features/model/'), `모델 등록 화면이 admin 번들로 들어온다: ${path}`);
+    assert.ok(!path.includes('facemarket-landing'), `랜딩이 admin 번들로 들어온다: ${path}`);
+    assert.ok(!path.includes('facemarket-shell'), `랜딩 껍데기가 admin 번들로 들어온다: ${path}`);
+    assert.ok(!path.includes('facemarket/modelSectionRoutes'), `모델 라우트가 admin 번들로 들어온다: ${path}`);
+    for (const sellerOnly of SELLER_ONLY) {
+      assert.ok(path !== sellerOnly, `셀러 화면이 admin 번들로 들어온다: ${path}`);
+    }
+  }
+});
+
+test('진입점 세 개가 각자 자기 앱을 마운트한다', () => {
   assert.match(read('src/apps/seller/main.jsx'), /import App from '\.\/App\.jsx'/);
   assert.match(read('src/apps/facemarket/main.jsx'), /import AppFacemarket from '\.\/App\.jsx'/);
-  // 부트스트랩은 한 벌이어야 한다 — 두 진입점이 같은 mountApp 을 쓴다.
-  for (const entry of ['src/apps/seller/main.jsx', 'src/apps/facemarket/main.jsx']) {
+  assert.match(read('src/apps/admin/main.jsx'), /import AppAdmin from '\.\/App\.jsx'/);
+  // 부트스트랩은 한 벌이어야 한다 — 세 진입점이 같은 mountApp 을 쓴다.
+  for (const entry of ['src/apps/seller/main.jsx', 'src/apps/facemarket/main.jsx', 'src/apps/admin/main.jsx']) {
     assert.match(read(entry), /from '\.\.\/mountApp\.jsx'/, entry);
   }
   // 문서가 무는 진입점도 서로 달라야 한다.
   assert.match(read('seller.html'), /src="\/src\/apps\/seller\/main\.jsx"/);
   assert.match(read('facemarket.html'), /src="\/src\/apps\/facemarket\/main\.jsx"/);
+  assert.match(read('admin.html'), /src="\/src\/apps\/admin\/main\.jsx"/);
 });

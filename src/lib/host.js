@@ -67,17 +67,68 @@ function detectFacemarket() {
 
 export const IS_FACEMARKET = detectFacemarket();
 
+/* admin.wearless.kr 감지 — 모델 지원서 검토 콘솔(별도 진입 문서 admin.html).
+   로컬·프리뷰는 ?admin=1 로 강제한다(facemarket 오버라이드와 같은 이유·같은 허용 호스트).
+   보안 경계가 아니다 — 서버가 repo.is_admin 을 강제한다. 이 플래그는 진입 문서 배급과
+   RequireAuth 의 미로그인 목적지 분기에만 쓴다. */
+function detectAdmin() {
+  if (typeof window === 'undefined') return false;
+  const host = (window.location.hostname || '').toLowerCase();
+  if (isOverrideAllowedHost(host)) {
+    try {
+      if (new URLSearchParams(window.location.search).get('admin') === '1') return true;
+    } catch { /* no-op */ }
+  }
+  return /(^|\.)admin\./.test(host);
+}
+
+export const IS_ADMIN = detectAdmin();
+
+/* 진입 문서 ↔ 호스트 불일치 가드.
+
+   Vercel 은 **파일이 실제로 있는 경로**에 rewrite 를 태우지 않는다. 그래서 셀러 도메인에서
+   /facemarket.html(또는 /admin.html)을 직접 열면 그 번들이 그대로 뜬다(2026-09-02 프로덕션
+   실측: ai.wearless.kr/facemarket.html → 200, FaceMarket 문서). 그 문서에서 IS_FACEMARKET·
+   IS_ADMIN 은 호스트 기준이라 false 이므로, 앱이 남의 도메인 규칙으로 돌며 '/facemarket.html'
+   같은 라우트 아닌 경로에서 catch-all 로 튕기는 이상 동작을 한다.
+
+   **프로덕션 호스트에서만** 건다. 판정을 '로컬처럼 생겼나'로 하면 안 된다 — 이 레포의 정상
+   로컬 QA 는 cloudflared 터널로 실도메인을 쓰고(vite.config.js allowedHosts, OACX 모바일
+   신분증이 한국 IP·실도메인을 요구한다) 폰 QA 는 LAN IP 를 쓴다. 그 호스트들은 localhost
+   목록 밖이라, 호스트명으로 추정하면 개발 서버를 떠나 프로덕션으로 튕겨 QA 자체가 불가능해진다.
+   그래서 dev 빌드는 무조건 면제하고, 그 밖에는 **알려진 프로덕션 호스트일 때만** 건다. */
+const PRODUCTION_DOCUMENT_HOSTS = ['ai.wearless.kr', 'facemarket.wearless.kr', 'admin.wearless.kr'];
+
+export function redirectToOwnDocumentHost(expected) {
+  // 훅이 아니다 — 렌더 중 한 번 호출해 "이 문서가 남의 호스트에서 열렸는가"만 답한다.
+  if (typeof window === 'undefined') return false;
+  if (import.meta.env?.DEV) return false;                    // dev 서버(터널·LAN IP 포함)
+  const host = (window.location.hostname || '').toLowerCase();
+  if (isOverrideAllowedHost(host, import.meta.env?.VITE_FACEMARKET_HOST || '')) return false;
+  if (!PRODUCTION_DOCUMENT_HOSTS.includes(host)) return false;   // 프리뷰·미지의 호스트는 건드리지 않는다
+  if (host === expected) return false;
+  // 문서 파일 경로(/facemarket.html)는 루트로 정규화한다. `.html` 만 떼면 '/facemarket' 이라는
+  // 존재하지 않는 라우트가 되어 랜딩 대신 domainRouteRedirect 가 등록 게이트로 보낸다.
+  // 쿼리·해시는 보존한다(결제 복귀처럼 쿼리를 들고 오는 경로가 이 가드에 닿을 수 있다).
+  const path = window.location.pathname.replace(/\/[^/]*\.html$/, '/') || '/';
+  window.location.replace(
+    `https://${expected}${path}${window.location.search}${window.location.hash}`,
+  );
+  return true;
+}
+
+
 const matchesRoute = (pathname, route) => pathname === route || pathname.startsWith(`${route}/`);
 
 /* facemarket 도메인에서 열리는 경로.
-     · 랜딩 — '/' 와 상단바 세 항목(/models·/license·/payout), 상단바에서 내려왔지만 살아
-       있는 두 화면(/register·/model-info), 옛 주소 /licensing.
+     · 랜딩 — '/' 와 상단바 세 항목(/models·/status·/payout), 상단바에서 내려왔지만 살아
+       있는 두 화면(/register·/model-info), 옛 주소 /license·/licensing(→ /status).
      · 등록·라이선스 — /model/*
      · 공유 경로 — 결제·크레딧·공개 검증.
    ⚠️ 랜딩 라우트를 추가하면 **여기에도 같이 넣어라.** 안 넣으면 그 주소는 곧바로
    /model/register 로 튕겨 상단바가 죽는다 — 화면은 잘 만들어 놓고 링크만 안 열린다. */
 const FACEMARKET_ROUTES = [
-  '/models', '/license', '/payout', '/register', '/model-info', '/licensing',
+  '/models', '/status', '/license', '/payout', '/register', '/model-info', '/licensing',
   '/model', '/pricing', '/credits/history', '/payments', '/verify',
 ];
 

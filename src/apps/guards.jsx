@@ -7,14 +7,20 @@
    그 순간 listMyModels·모델 화면이 셀러 번들로 딸려 들어가 분리한 의미가 없어진다.
    ============================================================= */
 import { useEffect, useRef } from 'react';
-import { Link, Navigate, Outlet } from 'react-router-dom';
+import { Link, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui.jsx';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
-import { IS_FACEMARKET } from '@/lib/host.js';
+import { IS_ADMIN, IS_FACEMARKET } from '@/lib/host.js';
 import { isMockMode } from '@/lib/api/index.js';
 
 export function FacemarketLoginPrompt() {
   const { openLogin } = useAuth();
+  // 로그인 뒤에는 **지금 서 있던 화면**으로 돌아간다 — 승인 메일의 딥링크(/model/register)나
+  // 상단바 '모델 지원'(/model/apply)으로 온 사람이 로그인 뒤 엉뚱한 곳(예전엔 무조건
+  // /model/register → 지원서 게이트에 막혀 /status)으로 튀지 않게. /model/* 밖(admin 등)은
+  // 종전 기본값을 쓴다(facemarketRootTarget 화이트리스트가 /model·/status·/verify 만 통과).
+  const { pathname, search } = useLocation();
+  const returnTo = pathname.startsWith('/model') ? `${pathname}${search}` : '/model/register';
   // 모달을 딱 한 번만 연다. openLogin 은 AuthProvider 가 매 렌더 새로 만드는 함수라
   // deps 에 두면, 사용자가 모달을 닫아(closeLogin → AuthProvider 리렌더) identity 가
   // 바뀌는 순간 effect 가 다시 돌아 모달이 곧장 다시 열린다 — 닫을 수 없는 모달이 된다.
@@ -23,8 +29,8 @@ export function FacemarketLoginPrompt() {
   useEffect(() => {
     if (opened.current) return;
     opened.current = true;
-    openLogin?.('/model/register');
-  }, [openLogin]);
+    openLogin?.(returnTo);
+  }, [openLogin, returnTo]);
   return (
     <div className="route-loading">
       모델 등록은 로그인이 필요해요 — 로그인 창을 열었어요.
@@ -38,7 +44,7 @@ export function FacemarketLoginPrompt() {
           소개 링크는 Button 이 아니라 <Link> 로 남긴다: 이동이지 동작이 아니라서
           가운데클릭·새 탭 열기가 살아야 한다. */}
       <div style={{ marginTop: 12, display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'center' }}>
-        <Button variant="primary" size="sm" onClick={() => openLogin?.('/model/register')}>로그인 다시 열기</Button>
+        <Button variant="primary" size="sm" onClick={() => openLogin?.(returnTo)}>로그인 다시 열기</Button>
         <Link className="link" to="/">FaceMarket 소개 보기</Link>
       </div>
     </div>
@@ -52,9 +58,11 @@ export function RequireAuth() {
   if (isMockMode) return <Outlet />;
   if (loading) return <div className="route-loading">불러오는 중이에요</div>;
   if (!session) {
-    // 번들이 갈라졌어도 이 분기는 남는다 — 로그인 모달은 두 도메인이 함께 쓰고,
+    // 번들이 갈라졌어도 이 분기는 남는다 — 로그인 모달은 세 도메인이 함께 쓰고,
     // 여기서 갈리는 건 '로그인 안 된 사람을 어디로 보내나' 하나다.
-    if (IS_FACEMARKET) return <FacemarketLoginPrompt />;
+    // admin 은 셀러(/create/input)로 튕기면 안 된다(그 라우트가 admin 번들에 없다) —
+    // facemarket 과 같은 로그인 프롬프트를 쓴다.
+    if (IS_FACEMARKET || IS_ADMIN) return <FacemarketLoginPrompt />;
     return <Navigate to="/create/input" replace />;
   }
   return <Outlet />;

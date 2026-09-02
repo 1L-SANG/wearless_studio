@@ -445,7 +445,9 @@
   width: 100%;
   max-width: 84rem;
   margin: 0 auto;
-  padding: 0 var(--fm-pad, 24px) clamp(3rem, 8vw, 5rem);
+  /* 가로 패딩은 0 — 이 화면은 랜딩 셸(.shell, 좌우 --fm-pad) 안에 실린다(StatusPage).
+     셸이 이미 여백을 주므로 여기서 또 주면 다른 랜딩 페이지보다 안으로 들어간다. */
+  padding: 0 0 clamp(3rem, 8vw, 5rem);
 }
 
 /* ---- 머리글: eyebrow + 큰 제목 + 리드문 (랜딩 섹션과 같은 리듬) ---- */

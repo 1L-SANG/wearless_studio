@@ -17,8 +17,10 @@
 import { useEffect, useState } from 'react';
 import { Navigate, Outlet, Route } from 'react-router-dom';
 import { ErrorState } from '@/components/ui.jsx';
-import { listMyModels } from '@/lib/api/facemarket.js';
-import { ModelHub } from '@/features/model/ModelHub.jsx';
+import {
+  getApplicationConfig, getCurrentApplication, getCurrentEnrollment, listMyModels,
+} from '@/lib/api/facemarket.js';
+import { ModelApply } from '@/features/model/ModelApply.jsx';
 import { ModelRegister } from '@/features/model/ModelRegister.jsx';
 import { ModelLicense } from '@/features/model/ModelLicense.jsx';
 import { ModelGenerate } from '@/features/model/ModelGenerate.jsx';
@@ -60,6 +62,64 @@ function RequireModel({ verifiedOnly = false }) {
   return <Outlet />;
 }
 
+async function loadOptional(fn) {
+  try { return await fn(); }
+  catch (e) { if (e?.status === 404) return null; throw e; }
+}
+
+/* 지원서 게이트(리뉴얼, 스펙 12). FM_APPLICATION_REQUIRED 가 켜져 있으면 승인된 지원서가
+   없는 신규 사용자는 등록 화면(/model/register)에 들어갈 수 없다 — "검증된 사람만 등록".
+   백엔드 create_enrollment 의 403 과 같은 규칙을 UI 에서 먼저 적용해, 동의 폼을 보여줬다가
+   막는 일이 없게 한다. 기존 모델(pending/verified/reverification_required)·진행 중 등록 보유자는
+   grandfathered(백엔드 E6 과 동일 조건). 거부되면 허브로 — 허브가 "지원 시작하기"를 안내한다. */
+function RequireApprovedApplication() {
+  const [phase, setPhase] = useState('loading'); // loading | allowed | denied | error
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let alive = true;
+    setPhase('loading');
+    (async () => {
+      try {
+        const [cfg, app, models, enrollment] = await Promise.all([
+          loadOptional(getApplicationConfig),
+          loadOptional(getCurrentApplication),
+          listMyModels(),
+          loadOptional(getCurrentEnrollment),
+        ]);
+        if (!alive) return;
+        const required = !!cfg?.applicationRequired;
+        // 서버 게이트(facemarket_enrollment.create_enrollment)와 **같은 목록**이어야 한다.
+        // pending 이 빠져 있으면: 신분증까지 마치고 사진 단계에서 이탈한 사람은 모델 행이
+        // pending 인 채 활성 등록도 지원서도 없어 여기서 막히고 /status 로 되돌려지는데,
+        // 허브는 모델이 있으니 '등록 이어가기'를 띄워 다시 여기로 보낸다 — 나갈 길 없는 왕복.
+        const legacyExempt = (models || []).some(
+          (m) => ['pending', 'verified', 'reverification_required'].includes(m.status),
+        );
+        const inProgress = !!enrollment;
+        const approved = app?.status === 'approved';
+        setPhase(!required || legacyExempt || inProgress || approved ? 'allowed' : 'denied');
+      } catch {
+        if (alive) setPhase('error');
+      }
+    })();
+    return () => { alive = false; };
+  }, [attempt]);
+
+  if (phase === 'loading') return <div className="route-loading">지원 상태를 확인하고 있어요…</div>;
+  if (phase === 'denied') return <Navigate to="/status" replace />;
+  if (phase === 'error') {
+    return (
+      <div className="wizard narrow">
+        <div className="surface">
+          <ErrorState desc="지원 상태를 불러오지 못했어요." onRetry={() => setAttempt((value) => value + 1)} />
+        </div>
+      </div>
+    );
+  }
+  return <Outlet />;
+}
+
 function RequireOwnedModel() {
   return <RequireModel />;
 }
@@ -70,10 +130,16 @@ function RequireVerifiedModel() {
 
 export const MODEL_SECTION_ROUTES = (
   <Route path="model">
-    {/* 등록은 모델 생성 전에도 열고, 등록 중 모델은 상태·라이선스 화면까지 복구한다. */}
-    <Route path="register" element={<ModelRegister />} />
+    {/* 지원서(리뉴얼)·등록은 모델 생성 전에도 연다. 그래서 apply·register 는 RequireOwnedModel
+        밖에 둔다. 허브(index)는 2026-09-02 지시로 랜딩 상단바의 '등록 상태'(/status, StatusPage)로
+        옮겼다 — /model 로 오는 옛 링크·복귀 경로는 전부 거기로 넘긴다. */}
+    <Route path="apply" element={<ModelApply />} />
+    {/* 등록 화면은 승인된 지원서(또는 기존 모델·진행 중 등록)가 있어야 열린다 — 검증된 사람만. */}
+    <Route element={<RequireApprovedApplication />}>
+      <Route path="register" element={<ModelRegister />} />
+    </Route>
+    <Route index element={<Navigate to="/status" replace />} />
     <Route element={<RequireOwnedModel />}>
-      <Route index element={<ModelHub />} />
       <Route path="license" element={<ModelLicense />} />
       {/* 폐기된 직접 업로드 북마크는 신규 등록 경계로 되돌린다. */}
       <Route path="consent" element={<Navigate to="/model/register" replace />} />
@@ -83,8 +149,8 @@ export const MODEL_SECTION_ROUTES = (
         <Route index element={<ModelGenerate />} />
       </Route>
       <Route path="withdraw" element={<ModelWithdraw />} />
-      {/* 알 수 없는 /model/* 경로도 가드를 거친 뒤 허브로만 복귀한다. */}
-      <Route path="*" element={<Navigate to="/model" replace />} />
+      {/* 알 수 없는 /model/* 경로도 가드를 거친 뒤 등록 상태로만 복귀한다. */}
+      <Route path="*" element={<Navigate to="/status" replace />} />
     </Route>
   </Route>
 );

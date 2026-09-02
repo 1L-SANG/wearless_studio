@@ -3,6 +3,11 @@
   "rewrites": [
     {
       "source": "/(.*)",
+      "has": [{ "type": "host", "value": "admin.wearless.kr" }],
+      "destination": "/admin.html"
+    },
+    {
+      "source": "/(.*)",
       "has": [{ "type": "host", "value": "facemarket.wearless.kr" }],
       "destination": "/facemarket.html"
     },

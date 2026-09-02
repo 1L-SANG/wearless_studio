@@ -1,0 +1,68 @@
+/* 관리자 지원 검토 콘솔 — 내부 도구라 앱 토큰만 쓰고 fm-theme 에 의존하지 않는다. */
+.page { max-width: 960px; margin: 0 auto; padding: 32px 20px 80px; }
+
+.head { margin-bottom: 24px; }
+.eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: #6b7684; margin: 0 0 6px; }
+.title { font-size: 28px; font-weight: 600; margin: 0 0 8px; color: #1a2430; }
+.lead { font-size: 14px; color: #5a6472; margin: 0; line-height: 1.5; }
+
+.filters { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+
+.state { padding: 40px 0; text-align: center; color: #6b7684; font-size: 14px; }
+
+.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 16px; }
+
+.card {
+  display: flex; gap: 18px; padding: 18px;
+  border: 1px solid #e3e8ee; border-radius: 14px; background: #fff;
+}
+.photos { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+.photoFig { margin: 0; display: flex; flex-direction: column; gap: 3px; }
+.photoCap { font-size: 10px; color: #8a94a0; text-align: center; }
+.photo { width: 120px; height: 150px; object-fit: cover; border-radius: 10px; background: #f0f3f6; }
+.photoEmpty {
+  width: 120px; height: 150px; border-radius: 10px;
+  background: #f0f3f6; display: flex; align-items: center; justify-content: center;
+  color: #aab4c0; font-size: 12px;
+}
+
+.body { flex: 1; min-width: 0; }
+.cardHead { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.name { font-size: 18px; font-weight: 600; color: #1a2430; }
+.badge { font-size: 11px; padding: 3px 9px; border-radius: 999px; background: #eef1f5; color: #5a6472; }
+.badge_under_review { background: #fff4e0; color: #a8710a; }
+.badge_approved { background: #e3f6ea; color: #1c8a4a; }
+.badge_rejected { background: #fce8e8; color: #c0392b; }
+.badge_cancelled { background: #eef1f5; color: #6b7684; }
+
+.fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 16px; margin: 0 0 12px; }
+.fields div { min-width: 0; }
+.fields dt { font-size: 11px; color: #8a94a0; margin-bottom: 2px; }
+.fields dd { font-size: 13px; color: #2c3540; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.cats { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.cat { font-size: 12px; padding: 3px 10px; border-radius: 999px; background: #eef3fb; color: #3a5a8a; }
+
+.links { display: flex; gap: 14px; margin-bottom: 10px; }
+.links a { font-size: 13px; color: #2a6fd6; text-decoration: none; }
+.links a:hover { text-decoration: underline; }
+
+.bio { font-size: 13px; color: #4a5563; line-height: 1.5; margin: 0 0 10px; white-space: pre-wrap; }
+.rejectReason { font-size: 13px; color: #c0392b; margin: 0 0 8px; }
+.mismatch { font-size: 12px; color: #a8710a; margin: 0 0 8px; }
+
+.emailRow { display: flex; align-items: center; gap: 10px; margin: 4px 0 8px; }
+.emailBadge { font-size: 11px; padding: 3px 9px; border-radius: 999px; background: #fce8e8; color: #c0392b; }
+
+.actions { display: flex; gap: 8px; margin-top: 6px; }
+.rejectBox { margin-top: 10px; }
+.reasonInput {
+  width: 100%; border: 1px solid #d7dde4; border-radius: 8px; padding: 8px 10px;
+  font-family: inherit; font-size: 13px; resize: vertical; margin-bottom: 8px;
+}
+
+@media (max-width: 640px) {
+  .card { flex-direction: column; }
+  .photo, .photoEmpty { width: 100%; height: 200px; }
+  .fields { grid-template-columns: repeat(2, 1fr); }
+}
