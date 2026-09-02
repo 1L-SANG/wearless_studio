@@ -92,7 +92,6 @@ function ApplicationCard({ app, onApprove, onReject, onResend, busy }) {
           <div><dt>지역</dt><dd>{app.region}</dd></div>
           <div><dt>성별</dt><dd>{app.gender === 'male' ? '남성' : app.gender === 'female' ? '여성' : '-'}</dd></div>
           <div><dt>키</dt><dd>{app.heightCm ? `${app.heightCm}cm` : '-'}</dd></div>
-          <div><dt>에이전시</dt><dd>{app.agencyContracted ? '소속 경험 있음' : '없음'}</dd></div>
           <div><dt>전화</dt><dd>{app.phone || '-'}</dd></div>
           <div><dt>경력</dt><dd>{EXPERIENCE_LABEL[app.experienceLevel] || '-'}</dd></div>
         </dl>

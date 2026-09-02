@@ -42,7 +42,8 @@ PHOTO_KINDS = ("profile", "closeup", "waist_up", "full_length")
 REQUIRED_PHOTO_KINDS = ("profile",)
 EXPERIENCE_LEVELS = {"none", "beginner", "intermediate", "professional"}
 # 제출 시 확인 서명 3종(전부 true 여야 함) — 에이전시 미소속·성인/진실·사진 본인·최신·무보정.
-ATTESTATION_KEYS = ("noAgency", "adultAndTruthful", "photosAreMine")
+# 에이전시 관련 확인(noAgency)은 뺐다(2026-09-02 사용자 결정) — 옛 지원서 행에 남아 있어도 무시한다.
+ATTESTATION_KEYS = ("adultAndTruthful", "photosAreMine")
 # 개인정보 수집·이용 동의(생체 동의와 별개, E3). 문구 변경 시 버전을 올린다.
 PRIVACY_CONSENT_VERSION = "2026-09-v1"
 ACCEPTED_PRIVACY_VERSIONS = ("2026-09-v1",)

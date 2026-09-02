@@ -1,10 +1,11 @@
 /* =============================================================
    features/model — 모델 지원서 (/model/apply)
 
-   레퍼런스(MirrorMirror 지원 페이지) 구조를 따른다:
-     이용 원칙(금지 5카드) → 지원 자격(필수/우대) → 준비물(01~05, 다크) → 지원서 폼 →
-     사진 4장(프로필·클로즈업·상반신·전신) → 확인 3개 → 개인정보 고지(끝까지 스크롤해야
-     동의 가능) → 제출 → FAQ 아코디언.
+   구조(MirrorMirror 지원 페이지에서 가져옴), 외형은 facemarket 랜딩·ModelHub 언어:
+     이용 원칙(5카드) → 지원 자격(필수/우대) → 준비물(3카드) → 지원서 폼 → 프로필 사진 1장 →
+     확인 2개 → 개인정보 고지(끝까지 스크롤해야 동의 가능) → 제출 → FAQ 아코디언.
+   에이전시 관련 문항·확인·FAQ 는 두지 않는다(2026-09-02 사용자 결정). 키는 승인 뒤 프로필
+   단계(컴카드)에서 받으므로 지원서에는 없다. 입력 안 힌트(placeholder)도 두지 않는다.
    지원 → 관리자 검토 → 승인 → 신분증 인증 → 등록. 제출 전 사진은 종류별로 임시 저장하고
    제출 시 서버가 지원서에 연결한다. 재지원이면 이전 값·사진(30일 내)으로 프리필.
    설계: docs/designs/facemarket-application-renewal.md
@@ -31,7 +32,6 @@ const HOUSE_RULES = [
 
 const QUAL_REQUIRED = [
   '만 18세 이상',
-  '현재 모델 에이전시에 소속되어 있지 않을 것',
   '제출하는 사진의 권리를 본인이 보유할 것 (동의 없는 스튜디오 저작물 불가)',
   'AI 생성 방식의 초상 활용에 동의할 것',
   '정확한 신체 치수 제공 (키·가슴·허리·엉덩이)',
@@ -66,11 +66,10 @@ const EXPERIENCE_OPTIONS = [
 
 // 지원 사진은 프로필 1장(2026-09-02 사용자 결정). 백엔드는 종류별 슬롯을 지원하지만 요구는 프로필만.
 const PHOTO_SLOTS = [
-  { kind: 'profile', label: '프로필 사진', hint: '정면 헤드샷 · 필터·보정 없이' },
+  { kind: 'profile', label: '프로필 사진' },
 ];
 
 const ATTESTATIONS = [
-  { key: 'noAgency', text: '현재 어떤 모델 에이전시에도 소속되어 있지 않음을 확인합니다. 기존 에이전시 계약이 발견되면 FaceMarket 에서 제외될 수 있음을 이해합니다.' },
   { key: 'adultAndTruthful', text: '만 18세 이상이며, 제공한 모든 정보가 사실이고 정확함을 확인합니다.' },
   { key: 'photosAreMine', text: '이 사진은 본인의 것이며, 최신 상태이고 변형되지 않았으며, 제출할 권리가 있음을 확인합니다.' },
 ];
@@ -88,30 +87,47 @@ const FAQ = [
   { q: '초상 라이선싱이란 무엇인가요?', a: '당신의 얼굴을 쓰는 조건(용도·단가·기간)을 정해 두고, 브랜드가 그 조건 안에서만 쓰게 하는 계약이에요. 조건은 누구나 확인할 수 있는 라이선스로 남고, 언제든 철회할 수 있어요.' },
   { q: '승인 절차는 어떻게 진행되나요?', a: '지원서 제출 → 관리자 검토(사진·정보) → 승인/거절 안내(이메일 + 이 화면) → 승인되면 모바일 신분증으로 본인확인 → 얼굴 등록 → 라이선스 조건 설정 순서예요. 지원서의 이름·생년월일은 신분증과 대조돼요.' },
   { q: '보상은 어떻게 이루어지나요?', a: '상업적 사용이 발생할 때마다 당신이 정한 단가로 정산돼요. 대가 없는 사용은 없어요.' },
-  { q: '전 에이전시 소속 모델도 지원할 수 있나요?', a: '현재 소속이 아니라면 지원할 수 있어요. 지원 시 현재 에이전시 미소속 여부를 확인받고, 이후 계약이 발견되면 제외될 수 있어요.' },
   { q: '해외 거주자도 지원할 수 있나요?', a: '본인확인에 모바일 신분증(한국)이 필요해 현재는 국내 신분증 보유자만 등록을 마칠 수 있어요.' },
   { q: '지원서에 어떤 사진이 필요한가요?', a: '정면 헤드샷 프로필 사진 1장이에요. 필터·보정·AI 생성 사진은 안 돼요. 폰 화질이면 충분해요. 얼굴 등록용 각도별 사진은 승인 후 등록 단계에서 따로 받아요.' },
   { q: '모델 경력이 없어도 지원할 수 있나요?', a: '네. 경력은 우대 사항이지 필수가 아니에요. 사진과 기본 정보로 검토해요.' },
 ];
 
 const EMPTY = {
-  contactEmail: '', applicantName: '', phone: '', birthdate: '', region: '',
-  gender: null, heightCm: '', experienceLevel: '', agencyContracted: null, categories: [],
+  contactEmail: '', lastName: '', firstName: '', phone: '', birthdate: '', region: '',
+  gender: null, experienceLevel: '', categories: [],
   portfolioUrl: '', snsUrl: '', bio: '',
 };
 
+/* 이름은 성·이름 두 칸으로 받고 서버에는 한 문자열(applicant_name)로 보낸다 — 신분증 대조
+   (cx_identity.compare_identity_claim)가 공백을 전부 지우고 비교하므로 한글은 붙여 쓰고
+   라틴은 공백으로 잇는다("KIM MINSU" == "KimMinsu"). 프리필은 역으로 나눈다: 공백이 있으면
+   첫 공백, 한글만이면 첫 글자를 성으로(두 글자 성은 사용자가 고친다). */
+const HANGUL_ONLY = /^[\u3131-\u318E\uAC00-\uD7A3]+$/;
+function joinName(last, first) {
+  const l = last.trim(); const f = first.trim();
+  return HANGUL_ONLY.test(l) && HANGUL_ONLY.test(f) ? `${l}${f}` : `${l} ${f}`.trim();
+}
+function splitName(name) {
+  const n = (name || '').trim();
+  if (!n) return ['', ''];
+  const i = n.indexOf(' ');
+  if (i > 0) return [n.slice(0, i), n.slice(i + 1).trim()];
+  if (HANGUL_ONLY.test(n) && n.length >= 2) return [n[0], n.slice(1)];
+  return [n, ''];
+}
+
 function prefillFrom(app) {
   if (!app) return EMPTY;
+  const [lastName, firstName] = splitName(app.applicantName);
   return {
     contactEmail: app.contactEmail || '',
-    applicantName: app.applicantName || '',
+    lastName,
+    firstName,
     phone: app.phone || '',
     birthdate: app.birthdate || '',
     region: app.region || '',
     gender: app.gender || null,
-    heightCm: app.heightCm != null ? String(app.heightCm) : '',
     experienceLevel: app.experienceLevel || '',
-    agencyContracted: typeof app.agencyContracted === 'boolean' ? app.agencyContracted : null,
     categories: Array.isArray(app.categories) ? app.categories : [],
     portfolioUrl: app.portfolioUrl || '',
     snsUrl: app.snsUrl || '',
@@ -162,7 +178,7 @@ export function ModelApply() {
   const [form, setForm] = useState(EMPTY);
   // kind → { staged, previewUrl, name, fromPrevious }
   const [photos, setPhotos] = useState({});
-  const [attest, setAttest] = useState({ noAgency: false, adultAndTruthful: false, photosAreMine: false });
+  const [attest, setAttest] = useState({ adultAndTruthful: false, photosAreMine: false });
   const [noticeRead, setNoticeRead] = useState(false);
   const [privacyConsent, setPrivacyConsent] = useState(false);
   const [openFaq, setOpenFaq] = useState(null);
@@ -232,8 +248,8 @@ export function ModelApply() {
 
   const allPhotos = PHOTO_SLOTS.every((p) => photos[p.kind]?.staged);
   const allAttest = ATTESTATIONS.every((a) => attest[a.key]);
-  const canSubmit = form.applicantName && form.contactEmail && form.birthdate && form.region
-    && form.experienceLevel && form.agencyContracted !== null && form.categories.length > 0
+  const canSubmit = form.lastName.trim() && form.firstName.trim() && form.contactEmail && form.birthdate
+    && form.region && form.experienceLevel && form.categories.length > 0
     && allPhotos && allAttest && privacyConsent;
 
   const submit = useCallback(async () => {
@@ -242,14 +258,12 @@ export function ModelApply() {
     try {
       await submitApplication({
         contactEmail: form.contactEmail.trim(),
-        applicantName: form.applicantName.trim(),
+        applicantName: joinName(form.lastName, form.firstName),
         phone: form.phone.trim() || null,
         birthdate: form.birthdate,
         region: form.region.trim(),
         gender: form.gender || null,
-        heightCm: form.heightCm ? Number(form.heightCm) : null,
         experienceLevel: form.experienceLevel || null,
-        agencyContracted: !!form.agencyContracted,
         categories: form.categories,
         portfolioUrl: form.portfolioUrl.trim() || null,
         snsUrl: form.snsUrl.trim() || null,
@@ -274,7 +288,7 @@ export function ModelApply() {
       {/* ── 이용 원칙 ─────────────────────────────────────────── */}
       <section className={s.section}>
         <p className={s.eyebrow}>이용 원칙</p>
-        <h1 className={s.h1}>모든 모델을 <em>현장의 배우처럼</em> 대합니다.<br />예외는 없습니다.</h1>
+        <h1 className={s.h1}>모든 모델을 현장의 배우처럼 대합니다. 예외는 없습니다.</h1>
         <p className={s.lead}>
           이 제한은 FaceMarket 의 모든 라이선스에 적용돼요 — 누가 사든, 얼마를 내든, 무엇을 만들든.
           라이선스를 철회하면 이후 사용은 정해진 기준에 따라 중단되고 전부 기록돼요. 당신이 멈추라고 하면, 멈춥니다.
@@ -309,11 +323,9 @@ export function ModelApply() {
       </section>
 
       {/* ── 준비물 (다크) ──────────────────────────────────────── */}
-      <section className={`${s.section} ${s.sectionDark}`}>
-        {/* 다크 섹션은 배경만 전폭 — 내용은 다른 섹션과 같은 컨테이너에 가운데로.
-            (자식에 `> *` 로 margin:auto 를 주면 .h2/.lead 의 margin 단축 속성이 덮어써 왼쪽으로
-            붙는다 — 2026-09-02 실측. 래퍼 div 하나가 정답.) */}
-        <div className={s.inner}>
+      <section className={s.section}>
+        {/* 랜딩 "등록 절차" 블록과 같은 옅은 파랑 판. 컨테이너는 다른 섹션과 같아 좌측선이 맞는다. */}
+        <div className={s.needBlock}>
           <h2 className={s.h2}>준비물</h2>
           <p className={s.lead}>지원을 시작하기 전에 아래를 준비해 주세요. 약 5분 걸려요.</p>
           <ul className={s.needGrid}>
@@ -331,22 +343,31 @@ export function ModelApply() {
       {/* ── 지원서 ───────────────────────────────────────────── */}
       <section className={s.section} id="apply-form">
         <h2 className={s.h2}>지원서 작성</h2>
-        <p className={s.lead}>필수 항목은 표시되어 있어요. 지원서는 접수 순서대로 검토돼요.</p>
+        <p className={s.lead}>
+          이름과 생년월일은 승인 뒤 신분증과 대조돼요 — 신분증과 같게 적어 주세요.
+          지원서는 접수 순서대로 검토돼요.
+        </p>
 
+        <div className={s.form}>
         <div className={s.grid2}>
           <label className={s.field}>
+            <span className={s.label}>성<i>*</i></span>
+            <input className={s.input} value={form.lastName} autoComplete="family-name"
+              onChange={(e) => set('lastName', e.target.value)} />
+          </label>
+          <label className={s.field}>
             <span className={s.label}>이름<i>*</i></span>
-            <input className={s.input} value={form.applicantName} placeholder="신분증과 동일하게"
-              onChange={(e) => set('applicantName', e.target.value)} />
+            <input className={s.input} value={form.firstName} autoComplete="given-name"
+              onChange={(e) => set('firstName', e.target.value)} />
           </label>
           <label className={s.field}>
             <span className={s.label}>이메일<i>*</i></span>
-            <input className={s.input} type="email" value={form.contactEmail} placeholder="승인·거절 안내를 받을 이메일"
+            <input className={s.input} type="email" value={form.contactEmail} autoComplete="email"
               onChange={(e) => set('contactEmail', e.target.value)} />
           </label>
           <label className={s.field}>
             <span className={s.label}>전화번호</span>
-            <input className={s.input} type="tel" value={form.phone} placeholder="010-0000-0000"
+            <input className={s.input} type="tel" value={form.phone} autoComplete="tel"
               onChange={(e) => set('phone', e.target.value)} />
           </label>
           <label className={s.field}>
@@ -356,13 +377,8 @@ export function ModelApply() {
           </label>
           <label className={s.field}>
             <span className={s.label}>지역 (시, 국가)<i>*</i></span>
-            <input className={s.input} value={form.region} placeholder="예: 서울, 대한민국"
+            <input className={s.input} value={form.region}
               onChange={(e) => set('region', e.target.value)} />
-          </label>
-          <label className={s.field}>
-            <span className={s.label}>키 (cm)</span>
-            <input className={s.input} type="number" min={100} max={250} value={form.heightCm} placeholder="예: 175"
-              onChange={(e) => set('heightCm', e.target.value)} />
           </label>
         </div>
 
@@ -376,7 +392,7 @@ export function ModelApply() {
           </div>
         </div>
 
-        <p className={s.groupHead}>경력</p>
+        <p className={s.groupTitle}>경력</p>
 
         <label className={s.field}>
           <span className={s.label}>경력 수준<i>*</i></span>
@@ -385,16 +401,6 @@ export function ModelApply() {
             {EXPERIENCE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </label>
-
-        <div className={s.field}>
-          <span className={s.label}>모델 에이전시에 소속된 적이 있나요?<i>*</i></span>
-          <div className={s.pills}>
-            <button type="button" className={`${s.pill}${form.agencyContracted === true ? ` ${s.pillOn}` : ''}`}
-              onClick={() => set('agencyContracted', true)}>예</button>
-            <button type="button" className={`${s.pill}${form.agencyContracted === false ? ` ${s.pillOn}` : ''}`}
-              onClick={() => set('agencyContracted', false)}>아니오</button>
-          </div>
-        </div>
 
         <div className={s.field}>
           <span className={s.label}>관심 있는 모델 카테고리<i>*</i></span>
@@ -411,12 +417,12 @@ export function ModelApply() {
         <div className={s.grid2}>
           <label className={s.field}>
             <span className={s.label}>포트폴리오 링크</span>
-            <input className={s.input} value={form.portfolioUrl} placeholder="https://yourportfolio.com"
+            <input className={s.input} type="url" value={form.portfolioUrl}
               onChange={(e) => set('portfolioUrl', e.target.value)} />
           </label>
           <label className={s.field}>
             <span className={s.label}>SNS 링크</span>
-            <input className={s.input} value={form.snsUrl} placeholder="https://instagram.com/yourhandle"
+            <input className={s.input} type="url" value={form.snsUrl}
               onChange={(e) => set('snsUrl', e.target.value)} />
           </label>
         </div>
@@ -424,13 +430,11 @@ export function ModelApply() {
         <label className={s.field}>
           <span className={s.label}>자기소개</span>
           <textarea className={`${s.input} ${s.textarea}`} rows={5} value={form.bio}
-            placeholder="당신이 누구인지, 왜 FaceMarket 에 지원하는지 짧게 알려주세요."
             onChange={(e) => set('bio', e.target.value)} />
         </label>
 
         {/* ── 사진 ─────────────────────────────────────────── */}
-        <p className={s.groupHead}>사진</p>
-        <p className={s.hint}>JPG, PNG, WebP · 파일당 최대 25MB</p>
+        <p className={s.groupTitle}>사진</p>
         <div className={s.photoGrid}>
           {PHOTO_SLOTS.map((slot) => {
             const p = photos[slot.kind];
@@ -438,14 +442,13 @@ export function ModelApply() {
               <div key={slot.kind} className={s.photoSlot}>
                 <span className={s.label}>{slot.label}<i>*</i></span>
                 <button type="button" className={`${s.photoBox}${p?.staged ? ` ${s.photoBoxOn}` : ''}`}
-                  onClick={() => fileInputs.current[slot.kind]?.click()} title={slot.hint}>
+                  onClick={() => fileInputs.current[slot.kind]?.click()}>
                   {p?.previewUrl
                     ? <img src={p.previewUrl} alt={`${slot.label} 미리보기`} className={s.photoPreview} />
                     : <Silhouette kind={slot.kind} />}
                   <span className={s.photoPlus} aria-hidden="true">{p?.staged ? '✓' : '+'}</span>
                   {p?.fromPrevious && !p?.previewUrl && <span className={s.photoKeep}>이전 지원서 사진 유지</span>}
                 </button>
-                <span className={s.photoHint}>{slot.hint}</span>
                 <input ref={(el) => { fileInputs.current[slot.kind] = el; }} type="file"
                   accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => onPickPhoto(slot.kind, e)} />
               </div>
@@ -454,6 +457,7 @@ export function ModelApply() {
         </div>
 
         {/* ── 확인 ─────────────────────────────────────────── */}
+        <p className={s.groupTitle}>확인</p>
         <div className={s.attests}>
           {ATTESTATIONS.map((a) => (
             <label key={a.key} className={s.attest}>
@@ -484,8 +488,9 @@ export function ModelApply() {
         </label>
 
         <button type="button" className={s.submit} disabled={!canSubmit || phase === 'submitting'} onClick={submit}>
-          {phase === 'submitting' ? '제출 중…' : '( 지원서 제출하기 )'}
+          {phase === 'submitting' ? '제출 중…' : '지원서 제출하기'}
         </button>
+        </div>
       </section>
 
       {/* ── FAQ ──────────────────────────────────────────────── */}
