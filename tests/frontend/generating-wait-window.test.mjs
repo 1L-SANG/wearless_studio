@@ -166,7 +166,7 @@ test('실패 후 다시 시도는 임시 작업본을 지키고, 이탈은 앞 �
 
 test('편집을 시작한 프로젝트는 초안 단계로 되돌아갈 수 없다', () => {
   const shell = readFileSync(new URL('../../src/features/shell/shell.jsx', import.meta.url), 'utf8');
-  const app = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
+  const app = readFileSync(new URL('../../src/apps/seller/App.jsx', import.meta.url), 'utf8');
   // 서버 status='done' 만으로는 부족하다 — 생성이 실패·차단으로 끝나면 done 이 아니다.
   // 단 프로젝트가 실제로 열리는지 확인한 뒤에만 막는다(사라진 프로젝트를 막으면 무한 왕복).
   // 돌아온 프로젝트가 **그 프로젝트가 맞는지**까지 본다 — mock 은 id 를 무시하고 현재

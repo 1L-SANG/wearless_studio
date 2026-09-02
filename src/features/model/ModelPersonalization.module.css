@@ -6,6 +6,10 @@
    /model/register 로 흡수되어 이 목록에서 빠졌다.
    ModelRegister/ModelLicense 와는 별도 모듈로 유지한다 — .stepIcon/.stepArrow/
    .stepDesc/.widget/.sectionLabel 이 이름만 같고 정의가 달라, 합치면 충돌한다.
+
+   예외 하나: 파일 맨 아래 `hub*` 블록은 ModelHub 한 화면만 쓴다. 허브가 facemarket
+   랜딩 디자인으로 넘어가면서 톤(선 없는 그림자 카드)이 달라졌는데, 공유 클래스를
+   그쪽으로 끌고 가면 나머지 다섯 화면이 함께 바뀌어서 새 이름으로 분리했다.
    ============================================================= */
 
 .sectionLabel {
@@ -70,6 +74,9 @@
 .stepDesc { font-size: 12.5px; color: var(--fg-3); margin-top: 2px; }
 .stepArrow { flex: none; color: var(--fg-3); }
 
+/* ModelHub 가 랜딩 디자인으로 재구성되면서 이 클래스는 쓰이지 않는다(전폭 버튼을
+   내용 폭 pill 로 바꿨다). 지우지 않고 남겨 둔 이유는 이름이 hub 전용이라 다른 화면이
+   집어 쓸 일이 없고, 되돌릴 때 근거가 되기 때문이다. 새 규칙은 파일 맨 아래 ModelHub 블록. */
 .hubCta { margin-top: 20px; }
 
 .footerLink {
@@ -409,3 +416,250 @@
 }
 .mildBtn:hover { background: var(--bg-1); box-shadow: var(--elev-card); }
 .mildBtn:disabled { opacity: .6; cursor: default; }
+
+/* =============================================================
+   ---- ModelHub 전용 (hub* 접두사) ----------------------------
+   이 모듈은 화면 6개가 공유한다. 그래서 허브를 랜딩 디자인으로 갈아엎으면서
+   **기존 클래스는 한 줄도 건드리지 않았다** — .sectionLabel·.banner·.footerLink 는
+   ModelGenerate/ModelFaceUpload/ModelBodyProfile/ModelConsent/ModelWithdraw 가
+   같이 쓰고 있어서, 그중 하나라도 고치면 다섯 화면이 함께 움직인다.
+   허브가 필요한 모양은 전부 아래에 새 이름(hub*)으로 만들었다.
+
+   눈금은 facemarket 랜딩(FacemarketLanding.module.css)에서 가져온다 —
+   제목 clamp(1.9rem,4.5vw,3.2rem)/600/-0.02em, 카드 1px 선 + 1.1rem 라운드,
+   eyebrow 0.76rem(한글이라 자간 0.02em. 0.22em 은 라틴 대문자 전용이다).
+
+   ⚠️ `--fm-*` 토큰에 전부 폴백을 단 이유: ModelHub 는 App.jsx 의 MODEL_SECTION_ROUTES
+   를 통해 **ai.wearless.kr(셀러) 에도 등록된다**(IS_FACEMARKET 이 false 인 쪽).
+   거기엔 `.fm-theme` 래퍼가 없어 --fm-ink·--fm-line·--fm-pad 가 정의되지 않는다.
+   미정의 커스텀 속성은 계산 시점에 그 선언 자체를 무효로 만들기 때문에(테두리색이
+   currentColor 로, --fm-pad 를 쓴 좌우 여백이 0 으로 떨어진다) 폴백이 없으면 그
+   도메인에서 화면이 어긋난다. 앱 토큰(--fg-1·--ring·--r-6)으로 받아 둔 이유다.
+   ============================================================= */
+
+/* 페이지 폭. 랜딩 셸(.shell)은 max-width 없이 좌우 --fm-pad 만 주는 full-bleed 인데,
+   허브도 같은 자를 쓰되 84rem(1344px) 상한만 둔다. 1440px 에서 랜딩의 본문 폭
+   (1440 − 44.6×2 ≈ 1351)과 사실상 같아 두 화면을 오갈 때 열이 흔들리지 않고,
+   초광폭(2560px)에서 리드문이 한 줄로 늘어지는 것만 막는다. */
+.hubPage {
+  width: 100%;
+  max-width: 84rem;
+  margin: 0 auto;
+  padding: 0 var(--fm-pad, 24px) clamp(3rem, 8vw, 5rem);
+}
+
+/* ---- 머리글: eyebrow + 큰 제목 + 리드문 (랜딩 섹션과 같은 리듬) ---- */
+.hubHead { padding: clamp(2rem, 5vw, 3.5rem) 0 clamp(1.4rem, 3vw, 2.2rem); }
+.hubEyebrow {
+  margin: 0 0 1rem;
+  color: var(--fm-muted, var(--fg-2));
+  font: 500 0.76rem/1 var(--font-body);
+  letter-spacing: 0.02em;
+}
+/* 제목은 랜딩 .sectionTitle 과 같은 값이다. 세리프(Cormorant)를 쓰지 않는 이유도 같다 —
+   라틴 전용 폰트라 한글이 OS 기본 명조로 떨어진다(랜딩 CSS 의 .sectionTitle 주석). */
+.hubTitle {
+  margin: 0;
+  color: var(--fm-ink, var(--fg-1));
+  font-family: var(--font-body);
+  font-size: clamp(1.9rem, 4.5vw, 3.2rem);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+.hubLead {
+  max-width: 38rem;
+  margin: 0.9rem 0 0;
+  color: var(--fm-muted, var(--fg-2));
+  font: 400 clamp(0.92rem, 1.3vw, 1rem)/1.75 var(--font-body);
+}
+
+/* ---- 다음에 할 일 패널 ----
+   랜딩 .record·.exit 과 같은 옅은 파랑 블록. 본문에서 유일하게 색을 띤 덩어리라
+   (아래 상태 카드는 흰색이다) "여기부터가 행동" 이 위치만으로 읽힌다. */
+.hubNext {
+  display: grid;
+  gap: 1.6rem;
+  align-items: center;
+  padding: clamp(1.6rem, 4vw, 2.8rem);
+  border-radius: 1.4rem;
+  background: rgba(45, 99, 255, 0.05);
+}
+/* 72rem(1152px)부터 글과 버튼을 좌우로 가른다. 세로로만 쌓으면 1440px 에서 오른쪽
+   700px 가 통째로 빈다. auto 열이라 버튼이 자기 폭만 차지한다.
+   64rem 이 아니라 72rem 인 이유: 완료 상태에서는 버튼이 둘이라 오른쪽 열이 ~370px 다.
+   1024px 에서 가르면 왼쪽 글이 460px 로 눌려 리드문이 다섯 줄로 접힌다. */
+@media (min-width: 72rem) {
+  .hubNext {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 2.5rem;
+  }
+}
+.hubNextHead { max-width: 42rem; }
+/* eyebrow 를 강조색(--fm-accent)으로 칠하지 않았다. #2d63ff 는 이 옅은 파랑 위에서
+   명도비 4.2:1 로 작은 글자 기준(4.5:1)에 못 미친다 — 랜딩 .eyebrow 와 같은 --fm-muted
+   를 쓴다(테마 주석: 이 값은 가장 어두운 배경에서도 4.57:1). */
+.hubNextEyebrow {
+  margin: 0 0 0.7rem;
+  color: var(--fm-muted, var(--fg-2));
+  font: 500 0.76rem/1 var(--font-body);
+  letter-spacing: 0.02em;
+}
+.hubNextTitle {
+  margin: 0;
+  color: var(--fm-ink, var(--fg-1));
+  font: 600 clamp(1.15rem, 2vw, 1.5rem)/1.35 var(--font-body);
+  letter-spacing: -0.01em;
+}
+.hubNextBody {
+  margin: 0.7rem 0 0;
+  color: var(--fm-muted, var(--fg-2));
+  font: 400 0.92rem/1.7 var(--font-body);
+  word-break: keep-all;
+}
+/* 버튼은 Button 컴포넌트(.btn) 그대로다 — facemarketTheme.css 가 `.fm-theme .btn` 을
+   pill 로 재정의해 둬서 여기서 버튼 모양을 다시 만들 필요가 없다. 이 규칙은 배치만 한다. */
+.hubNextActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.hubLoading {
+  margin: 0;
+  padding: clamp(1.6rem, 4vw, 2.8rem);
+  border-radius: 1.4rem;
+  background: rgba(45, 99, 255, 0.05);
+  color: var(--fm-muted, var(--fg-2));
+  font: 400 0.95rem/1.6 var(--font-body);
+}
+
+/* ---- 상태 세 칸 ---- */
+.hubStatus { margin-top: clamp(2rem, 5vw, 3rem); }
+.hubStatusLabel {
+  margin: 0 0 1rem;
+  color: var(--fm-muted, var(--fg-2));
+  font: 500 0.76rem/1 var(--font-body);
+  letter-spacing: 0.02em;
+}
+/* 17rem 최소폭 + auto-fit. 칸이 셋뿐이라 넓은 화면에서 3열로 떨어지고(1344px 에서
+   한 칸 ≈ 437px, 랜딩 .cardGrid 와 같은 체감 폭), 좁아지면 min(100%,…) 이 1열을 보장한다. */
+.hubGrid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.hubCard {
+  display: grid;
+  gap: 0.75rem;
+  align-content: start;
+  justify-items: start;
+  padding: 1.5rem;
+  border: 1px solid var(--fm-line, var(--ring));
+  border-radius: var(--fm-card-radius, var(--r-6));
+  background: var(--fm-card-bg, #fff);
+}
+.hubCardTop {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+}
+.hubCardName {
+  min-width: 0;
+  color: var(--fm-ink, var(--fg-1));
+  font: 600 1rem/1.4 var(--font-body);
+}
+/* 큰 세리프 숫자 — 랜딩 .galleryIndexNow 의 결. Cormorant 는 라틴 전용이지만
+   숫자는 라틴 자소라 정상으로 그려진다. 장식이라 aria-hidden 이다(JSX). */
+.hubCardIndex {
+  margin-left: auto;
+  color: var(--fm-muted, var(--fg-2));
+  font-family: var(--font-serif);
+  font-size: 1.6rem;
+  font-weight: 500;
+  line-height: 1;
+}
+
+/* 상태 마크. 색이 아니라 **테두리 모양과 채움**이 상태를 나른다 —
+   완료=꽉 찬 잉크 원, 진행 중=잉크 테두리 원, 확인 필요=경고색 테두리 + 삼각 아이콘,
+   아직=점선 원. 흑백으로 인쇄해도 넷이 구분된다. */
+.hubMark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  border: 1px solid var(--fm-line, var(--ring));
+  border-radius: 999px;
+  background: #fff;
+  color: var(--fm-muted, var(--fg-2));
+}
+.hubMarkDone {
+  border-color: var(--fm-ink, var(--fg-1));
+  background: var(--fm-ink, var(--fg-1));
+  color: #fff;
+}
+.hubMarkActive {
+  border-color: var(--fm-ink, var(--fg-1));
+  color: var(--fm-ink, var(--fg-1));
+}
+.hubMarkAttention {
+  border-color: var(--accent-error);
+  color: var(--accent-error);
+}
+.hubMarkTodo { border-style: dashed; }
+
+/* 상태 칩. 마크와 같은 뜻을 글자로 한 번 더 말한다 — 아이콘만으로는 '진행 중'과
+   '확인 가능'(시계·눈)의 차이가 안 읽힌다. */
+.hubChip {
+  padding: 0.25rem 0.62rem;
+  border: 1px solid var(--fm-line, var(--ring));
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--fm-ink, var(--fg-1));
+  font: 600 0.72rem/1.35 var(--font-body);
+}
+.hubChipDone {
+  border-color: var(--fm-ink, var(--fg-1));
+  background: var(--fm-ink, var(--fg-1));
+  color: #fff;
+}
+.hubChipAttention {
+  border-color: var(--accent-error);
+  background: #fff;
+  color: var(--accent-error);
+}
+.hubCardText {
+  margin: 0;
+  color: var(--fm-muted, var(--fg-2));
+  font: 400 0.9rem/1.65 var(--font-body);
+  word-break: keep-all;
+}
+
+/* ---- 바닥 ---- */
+.hubFoot {
+  margin-top: clamp(2rem, 5vw, 3rem);
+  padding-top: 1.4rem;
+  border-top: 1px solid var(--fm-line, var(--ring));
+}
+/* 공용 .footerLink 를 그대로 쓰지 않은 이유: 그 클래스는 --fg-3(#b4b4b4)라
+   이 페이지 배경에서 명도비가 2:1 대로 떨어진다. 게다가 다섯 화면이 공유하는
+   클래스라 색을 바꾸면 그쪽까지 같이 움직인다. */
+.hubFootLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--fm-muted, var(--fg-2));
+  font: 500 0.85rem/1 var(--font-body);
+  text-decoration: none;
+}
+.hubFootLink:hover {
+  color: var(--fm-ink, var(--fg-1));
+  text-decoration: underline;
+  text-underline-offset: 0.3rem;
+}

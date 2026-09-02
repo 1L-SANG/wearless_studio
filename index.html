@@ -6,12 +6,64 @@
   <link rel="icon" type="image/svg+xml" href="/assets/brand/logo.svg" />
   <meta name="theme-color" content="#1F68A0" />
   <title>Wearless — AI 상세페이지 스튜디오</title>
+
+  <!-- ============================================================
+       공유 미리보기(og:*)는 **이 정적 head 가 전부**다.
+       카카오톡·슬랙·트위터·디스코드 크롤러는 JS 를 실행하지 않으므로
+       FacemarketLanding.jsx 의 런타임 head 교체(applyLandingHead)는 보이지 않는다.
+
+       ▶ 이 파일은 이제 **ai.wearless.kr 전용**이다(2026-09-02).
+         facemarket.wearless.kr 은 facemarket.html 을 받는다 — vite 가 진입점 두 벌을
+         내고(rollupOptions.input), vercel.json 의 rewrites 가 host 조건으로 갈라 준다.
+         둘은 한 쌍이라 하나만 바꾸면 깨진다(input 만 → 아무도 안 봄, rewrite 만 → 404).
+         tests/frontend/host-document-split.test.mjs 가 그 쌍을 지킨다.
+         배포는 여전히 한 벌이다 — 프로젝트도 번들도 하나고, 두 문서가 같은
+         /assets/main-*.js 를 문다. 갈라지는 건 head 뿐이다.
+         → 그래서 아래 og 값은 이제 셀러 기준으로 적어도 된다. 다만 사람이 아직
+           facemarket 을 이 문서로 볼 수 있는 경로가 하나 있다: 프리뷰 배포(*.vercel.app)는
+           호스트가 안 맞아 index.html 이 나간다. 프리뷰에서 facemarket head 를 보려면
+           /facemarket.html 을 직접 열어라.
+
+       ▶ og:url 은 일부러 뺐다.
+         카카오톡은 og:url 을 **카드의 이동 대상**으로 쓴다. 한쪽 호스트를 박으면
+         다른 쪽에서 공유된 카드가 엉뚱한 도메인으로 사람을 보낸다 — 지금 고치려는
+         실패(모델에게 셀러 제품을 보여줌)를 오히려 키운다. 없으면 크롤러가
+         실제 요청 URL 로 폴백하므로 이게 맞다.
+         반면 og:image 는 절대 URL 로 박았다. 카카오는 상대경로 og:image 를
+         잘 못 읽는데, **두 호스트가 같은 빌드를 서빙하므로 어느 쪽 절대 URL이든
+         같은 파일이 나온다**. 이동 대상이 아니라 그림 출처라서 안전하다.
+
+       ▶ <title> 은 셀러 것이다. 이 문서가 셀러 도메인 전용이므로 그게 맞고,
+         facemarket 쪽 제목은 facemarket.html 이 자기 것을 갖는다.
+
+       ▶ og:image 는 public/assets/brand/temp-nav-logo.png (256×256) 다.
+         public/ 에 실재하는 유일한 정사각 래스터 브랜드 마크라서 골랐다
+         (logo.svg 는 SVG 라 크롤러가 못 읽고, wordmark.png 는 384×121 로
+         트위터 summary 카드 최소 144×144 에 미달한다).
+         **이 파일을 지우면 미리보기 썸네일이 깨진다.** 정식 1200×630 OG 이미지를
+         만들면 그걸로 교체할 것.
+       ============================================================ -->
+  <meta name="description" content="Wearless 는 AI 로 상품 상세페이지를 만드는 셀러 스튜디오(ai.wearless.kr)와, 얼굴을 라이선스로 등록하는 모델용 FaceMarket(facemarket.wearless.kr)으로 나뉩니다." />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Wearless" />
+  <meta property="og:locale" content="ko_KR" />
+  <meta property="og:title" content="Wearless — AI 상세페이지 스튜디오와 FaceMarket" />
+  <meta property="og:description" content="Wearless 는 AI 로 상품 상세페이지를 만드는 셀러 스튜디오(ai.wearless.kr)와, 얼굴을 라이선스로 등록하는 모델용 FaceMarket(facemarket.wearless.kr)으로 나뉩니다." />
+  <meta property="og:image" content="https://facemarket.wearless.kr/assets/brand/temp-nav-logo.png" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="256" />
+  <meta property="og:image:height" content="256" />
+  <meta property="og:image:alt" content="Wearless 로고" />
+  <!-- twitter:title/description/image 는 생략한다 — 트위터는 없으면 og:* 로 폴백하므로
+       같은 문구를 두 벌 두면 갱신할 때 한쪽만 바뀌어 어긋난다. -->
+  <meta name="twitter:card" content="summary" />
+
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cal+Sans&family=Inter:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,500;0,600;1,500;1,600&family=Roboto+Mono:wght@500;600&display=swap" rel="stylesheet" />
 </head>
 <body>
   <div id="root"></div>
-  <script type="module" src="/src/main.jsx"></script>
+  <script type="module" src="/src/apps/seller/main.jsx"></script>
 </body>
 </html>

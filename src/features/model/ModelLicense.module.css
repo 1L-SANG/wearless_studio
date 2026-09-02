@@ -1,138 +1,276 @@
-/* 얼굴 라이선스 (step02) — 4단계 여정 폼 + 얼굴 VC 카드(모바일 폭 기준).
+/* 얼굴 라이선스 (step02) — 발급 조건 폼 + 얼굴 VC 카드.
+
+   ── 디자인 근거 (2026-09-02 리뉴얼) ─────────────────────────────
+   이 화면은 facemarket 랜딩의 라이선싱 설명 페이지(/licensing)와 한 흐름으로 읽혀야 한다.
+   그래서 값을 새로 만들지 않고 랜딩 정본(FacemarketLanding.module.css)에서 가져왔다 —
+     · eyebrow      500 0.76rem / 자간 0.02em (한글이라 넓히지 않는다)
+     · 카드 재질     1px var(--fm-line) · 1.1rem · rgba(255,255,255,.62)
+     · 강조 블록     rgba(45,99,255,.05) · 0.9~1.4rem 라운드
+     · 번호 배지     var(--fm-accent) 600 0.72rem / 자간 0.14em (.recordNumber)
+     · CTA          잉크색 pill + arrowRight (.heroCta)
+     · 큰 세리프 숫자 var(--font-serif) — Cormorant 는 라틴 전용이라 **숫자에만** 쓴다
+   토큰은 facemarketTheme.css 의 `.fm-theme` 스코프에서 온다(--fm-ink·--fm-muted·
+   --fm-line·--fm-accent·--fm-card-bg·--fm-card-radius). 여기서 전역 토큰을 덮지 않는다.
 
    VC 카드의 파랑에 대하여: tokens.css 는 accent 를 "large fill 금지"로 못박고 있다.
    그 규칙은 앱 크롬(버튼·필·텍스트)을 위한 것이고, VC 카드는 크롬이 아니라 **신분증 객체**다
    (결제카드·멤버십카드처럼 그 자체가 사물). PDF step02 도 파란 카드로 그린다. 전역 토큰을
-   덮지 않고 카드 스코프 안에서만 로컬 변수로 정의해 시스템을 오염시키지 않는다. */
+   덮지 않고 카드 스코프 안에서만 로컬 변수로 정의해 시스템을 오염시키지 않는다.
+   리뉴얼에서 그라데이션을 랜딩 accent(#2d63ff) 계열로 옮기되 **더 밝게 하지는 않았다** —
+   보조 텍스트(--vc-dim)가 카드 위에서 WCAG AA 4.5:1 을 넘어야 해서다. 실측:
+     · 카드 가장 밝은 지점 #2148d6 위에서 --vc-dim(.86) = 5.09:1, 흰 글자 = 7.09:1
+     · 해지·만료 카드의 #525c6a 위에서 --vc-dim = 4.97:1
+   그라데이션 첫 색을 #2d63ff 로 되돌리면 --vc-dim 이 3.48:1 로 떨어져 AA 를 깬다. */
 
-.sectionLabel {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--fg-2);
-  margin: 18px 0 8px;
+/* ── 공통 조판 ─────────────────────────────────────────────── */
+
+/* 랜딩 .eyebrow 와 같은 값. `.page-head` 안에서는 <span> 으로 써야 한다 —
+   facemarketTheme 의 `.fm-theme .page-head p`(0,2,1)가 <p> 를 본문 리드로 잡아
+   여기 0,1,0 규칙을 이긴다. 요소를 갈라 그 충돌을 아예 없앤다. */
+.eyebrow {
+  display: block;
+  margin: 0 0 0.7rem;
+  color: var(--fm-muted);
+  font: 500 0.76rem/1 var(--font-body);
+  letter-spacing: 0.02em;
+}
+
+/* ── 발급 조건 폼 ──────────────────────────────────────────── */
+.formHead { margin-bottom: 1.7rem; }
+/* 페이지 h1 이 이미 랜딩 .sectionTitle 스케일이라, 카드 안 제목은 한 단 내린
+   .recordTitle 값을 쓴다(clamp 1.15~1.5rem). */
+.formTitle {
+  margin: 0 0 0.6rem;
+  font: 600 clamp(1.15rem, 2vw, 1.5rem)/1.35 var(--font-body);
+  letter-spacing: -0.01em;
+  color: var(--fm-ink);
+}
+.formLead {
+  margin: 0;
+  max-width: 34rem;
+  color: var(--fm-muted);
+  font: 400 0.92rem/1.7 var(--font-body);
+}
+
+/* 발급 불가 안내(등록 미완료 등). 오류가 아니라 다음 할 일을 알려주는 칸이라
+   빨강이 아니라 랜딩 accent 계열로 둔다. */
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  margin: 0 0 1.6rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(45, 99, 255, 0.22);
+  border-radius: 0.85rem;
+  background: rgba(45, 99, 255, 0.06);
+  color: var(--fm-ink);
+  font: 400 0.87rem/1.6 var(--font-body);
+}
+.notice svg { flex: none; margin-top: 0.12rem; color: var(--fm-accent); }
+
+/* 조건 4칸 — 랜딩 .record 의 번호 붙은 스텝과 같은 형태. 서버 enum 과 묶인 값(품목·
+   유효기간)은 그대로 두고 번호와 설명만 얹었다. */
+.terms { display: grid; gap: 1.6rem; }
+.term { display: grid; gap: 0.45rem; align-content: start; }
+.termNo {
+  color: var(--fm-accent);
+  font: 600 0.72rem/1 var(--font-body);
+  letter-spacing: 0.14em;
+}
+.termLabel {
+  margin: 0;
+  color: var(--fm-ink);
+  font: 600 1rem/1.4 var(--font-body);
+}
+.termNote {
+  margin: 0 0 0.3rem;
+  color: var(--fm-muted);
+  font: 400 0.85rem/1.6 var(--font-body);
+}
+
+/* 입력칸도 랜딩 카드와 같은 재질로. 앱 기본 .field 는 순백 + 그림자라 이 배경에서 뜬다.
+   :global 은 이 모듈 안(.term 하위)으로만 새고, 셀러 스튜디오에는 닿지 않는다. */
+.term :global(.field-row) { gap: 0.4rem; }
+.term :global(.field) {
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 0.7rem;
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: var(--fm-elev-card);
+  font: 400 0.95rem/1.4 var(--font-body);
+}
+.term :global(.field):focus {
+  outline: 2px solid var(--fm-accent);
+  outline-offset: 1px;
+  border-color: transparent;
 }
 
 .row2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: 1.6rem;
   align-items: start;
 }
-@media (max-width: 560px) { .row2 { grid-template-columns: 1fr; } }
+@media (max-width: 34rem) { .row2 { grid-template-columns: 1fr; } }
 
+.submit { margin-top: 2rem; }
+
+/* 발급 CTA = 랜딩 .heroCta(잉크색 pill). 클래스를 **세 번** 쓴다(0,3,0).
+   두 번(0,2,0)으로는 부족하다 — facemarketTheme.css 의 `.fm-theme .btn`(0,2,0)과
+   동점인데, main.jsx 가 App 을 먼저 import 해서 모듈 CSS 가 테마보다 **먼저** 주입되므로
+   동점이면 테마가 이긴다. 그러면 이 CTA 의 min-height·padding·font 가 통째로 무시된다.
+   (같은 함정을 .flowWizard 는 `--fm-wizard-max` 변수로 피했다 — 그쪽은 테마가 읽어
+   가는 값이라 변수로 풀렸고, 여기는 테마가 안 읽는 속성이라 특이도로 푼다.) */
+.cta.cta.cta {
+  min-height: 3rem;
+  padding: 0.95rem 1.6rem;
+  border-radius: 999px;
+  background: var(--fm-ink);
+  color: #fff;
+  font: 500 1rem/1 var(--font-body);
+  box-shadow: var(--fm-elev-btn);
+}
+.cta.cta.cta:hover:not([disabled]) { background: var(--fm-ink); opacity: 0.86; }
+.cta.cta.cta:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--fm-ink);
+}
+
+/* 보조 CTA(새 등록으로 발급) — 같은 알약이되 채우지 않는다. */
+.ctaQuiet.ctaQuiet {
+  min-height: 3rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--fm-ink);
+  font: 500 0.95rem/1 var(--font-body);
+  box-shadow: var(--fm-elev-card);
+}
+.ctaQuiet.ctaQuiet:hover:not([disabled]) { background: #fff; box-shadow: var(--fm-elev-card); }
+
+/* ── 발급 대기 (PRD §7.3 · §13-2) ──────────────────────────────
+   holder 콜드부트 ~2분이 **정상 경로**에 있다. 버튼 라벨만 바뀌면 "멈춘 건가"로 읽혀서
+   진행 중이라는 신호를 형태로도 준다 — 맥동하는 점 + 불확정 진행바. 진행률을 아는 척하지
+   않는다(실제로 모른다). 남은 시간·닫지 말라는 지시는 문장이 맡는다. */
+.wait {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.7rem 0.7rem;
+  align-items: start;
+  margin-top: 1rem;
+  padding: 0.95rem 1.1rem;
+  border-radius: 0.9rem;
+  background: rgba(45, 99, 255, 0.05);
+}
+.waitText { grid-column: 2; min-width: 0; }
+.waitTitle {
+  margin: 0 0 0.2rem;
+  color: var(--fm-ink);
+  font: 600 0.9rem/1.5 var(--font-body);
+}
+.waitNote {
+  margin: 0;
+  color: var(--fm-muted);
+  font: 400 0.85rem/1.6 var(--font-body);
+}
+
+.waitPulse {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: var(--fm-accent);
+  animation: fmPulse 1.5s ease-in-out infinite;
+}
+.wait .waitPulse { margin-top: 0.35rem; }
+
+.waitBar {
+  position: relative;
+  grid-column: 1 / -1;
+  height: 0.2rem;
+  border-radius: 999px;
+  background: rgba(45, 99, 255, 0.14);
+  overflow: hidden;
+}
+.waitBar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 34%;
+  border-radius: 999px;
+  background: var(--fm-accent);
+  animation: fmSlide 1.6s ease-in-out infinite;
+}
+
+@keyframes fmPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.42; transform: scale(0.78); }
+}
+@keyframes fmSlide {
+  from { transform: translateX(-105%); }
+  to { transform: translateX(320%); }
+}
+
+/* 로딩 화면 — 대기 표현을 한 벌로 쓴다(같은 사이트에서 같은 뜻이면 같은 모양). */
+.loading {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0;
+  color: var(--fm-muted);
+  font: 400 0.95rem/1.6 var(--font-body);
+}
+
+/* ── 프라이버시 고지 ───────────────────────────────────────── */
 .privacy {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 16px;
-  padding: 10px 12px;
-  border-radius: var(--r-4);
-  background: var(--bg-2);
-  color: var(--fg-3);
-  font-size: 12.5px;
-}
-
-.termsIntro {
-  display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 11px 12px;
-  border-radius: var(--r-4);
-  background: var(--bg-2);
-  color: var(--fg-2);
-  font-size: 12.5px;
-  line-height: 1.5;
+  gap: 0.55rem;
+  margin: 1.6rem 0 0;
+  padding: 0.85rem 1rem;
+  border-radius: 0.85rem;
+  background: rgba(16, 21, 26, 0.04);
+  color: var(--fm-muted);
+  font: 400 0.83rem/1.6 var(--font-body);
 }
-.termsIntro svg { flex: none; margin-top: 1px; }
+.privacy svg { flex: none; margin-top: 0.12rem; }
 
-/* ── 스테퍼 ─────────────────────────────────────────────── */
-.stepper {
+/* ── 라이선스 목록 ─────────────────────────────────────────── */
+/* 랜딩 .galleryIndex 의 배치 — 큰 세리프 숫자 + 작은 라벨. 숫자만 Cormorant 다
+   (한글 라벨을 같이 넣으면 OS generic serif 로 떨어져 브랜드 통제 밖 서체가 된다). */
+.listHead {
   display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-bottom: 16px;
-  padding: 0;
-  list-style: none;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem 1.6rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1.1rem;
+  border-bottom: 1px solid var(--fm-line);
 }
-.stepDot {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 5px;
-  position: relative;
+.listCount { display: flex; align-items: baseline; gap: 0.3rem; margin: 0; }
+.listCountNow {
+  font-family: var(--font-serif);
+  font-size: clamp(2rem, 4vw, 3.4rem);
+  font-weight: 500;
+  line-height: 1;
+  color: var(--fm-ink);
 }
-/* 단계 사이 연결선 — 첫 항목 제외 */
-.stepDot::before {
-  content: '';
-  position: absolute;
-  top: 11px;
-  right: 50%;
-  left: -50%;
-  height: 1.5px;
-  background: var(--bg-2);
+.listCountLabel { color: var(--fm-muted); font: 500 0.85rem/1 var(--font-body); }
+.listNote {
+  flex: 1 1 17rem;
+  max-width: 26rem;
+  margin: 0;
+  color: var(--fm-muted);
+  font: 400 0.85rem/1.65 var(--font-body);
 }
-.stepDot:first-child::before { display: none; }
-.stepDot.stDone::before, .stepDot.stNow::before { background: var(--fg-1); }
 
-.stepNum {
-  position: relative;
-  z-index: 1;
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--bg-2);
-  color: var(--fg-3);
-  font-size: 11.5px;
-  font-weight: 700;
-}
-.stepText { font-size: 11.5px; font-weight: 600; color: var(--fg-3); }
-.stDone .stepNum { background: var(--fg-1); color: #fff; }
-.stDone .stepText { color: var(--fg-2); }
-.stNow .stepNum { background: var(--fg-1); color: #fff; }
-.stNow .stepText { color: var(--fg-1); }
-
-.stepBack {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  margin: 14px auto 0;
-  padding: 6px 4px;
-  background: none;
-  border: none;
-  color: var(--fg-3);
-  font-size: 13px;
-  cursor: pointer;
-}
-.stepBack:hover { color: var(--fg-1); }
-
-.switchLink {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  width: 100%;
-  margin-top: 8px;
-  padding: 10px 0;
-  background: none;
-  border: none;
-  color: var(--fg-2);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.switchLink:hover { color: var(--fg-1); }
-
-/* ── VC 카드 목록 — 모바일 폭 기준. 데스크톱에선 가운데 정렬 카드. ── */
+/* 카드는 신분증 크기(≈19rem)를 지키되, 넓은 화면에서는 지갑처럼 2열로 눕는다.
+   좁은 화면에서는 min(100%, …) 이 1열을 보장한다. */
 .cards {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 18px;
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr));
 }
-.cards > * { width: 100%; max-width: 380px; }
+.cards > * { display: grid; }
 
 /* 방금 발급된 카드 — 잠깐 띄워 눈에 들어오게 */
 .cardNew { animation: pop .5s ease-out; }
@@ -140,216 +278,374 @@
   from { transform: scale(.96); opacity: .4; }
   to { transform: scale(1); opacity: 1; }
 }
-@media (prefers-reduced-motion: reduce) { .cardNew { animation: none; } }
+
+.listFoot { margin-top: 2.2rem; }
+
+/* 발급 이력이 없을 때. 예전엔 버튼 하나만 뜬 빈 화면이었다. */
+.empty {
+  display: grid;
+  justify-items: center;
+  gap: 0.5rem;
+  padding: clamp(2.4rem, 7vw, 3.6rem) 1.5rem;
+  border: 1px solid var(--fm-line);
+  border-radius: var(--fm-card-radius);
+  background: var(--fm-card-bg);
+  color: var(--fm-muted);
+  text-align: center;
+}
+.emptyTitle {
+  margin: 0.35rem 0 0;
+  color: var(--fm-ink);
+  font: 600 1.05rem/1.4 var(--font-body);
+}
+.emptyBody {
+  max-width: 26rem;
+  margin: 0;
+  color: var(--fm-muted);
+  font: 400 0.9rem/1.65 var(--font-body);
+}
+
+.switchLink {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  width: 100%;
+  margin-top: 1rem;
+  padding: 0.7rem 0;
+  border: 0;
+  background: none;
+  color: var(--fm-muted);
+  font: 500 0.9rem/1 var(--font-body);
+  cursor: pointer;
+}
+.switchLink:hover { color: var(--fm-ink); }
 
 /* ── 얼굴 VC 카드 ─────────────────────────────────────────── */
 .vc {
-  --vc-ink: #eaf2ff;          /* 카드 위 본문 */
-  --vc-dim: rgba(234, 242, 255, .62);
-  --vc-line: rgba(255, 255, 255, .16);
+  --vc-ink: #f2f6ff;          /* 카드 위 본문 */
+  /* .86 아래로 내리지 마라 — 파일 상단 대비 실측 참고(AA 4.5:1 이 걸려 있다). */
+  --vc-dim: rgba(236, 243, 255, .86);
+  --vc-line: rgba(255, 255, 255, .18);
 
   display: flex;
   flex-direction: column;
-  padding: 16px 16px 12px;
-  border-radius: 18px;
-  background: linear-gradient(155deg, #1d4ed8 0%, #1e3a8a 58%, #172554 100%);
-  box-shadow: 0 10px 30px rgba(23, 37, 84, .28), 0 1px 2px rgba(23, 37, 84, .3);
+  height: 100%;
+  padding: 1.15rem 1.15rem 0.85rem;
+  border-radius: 1.4rem;      /* 랜딩 .record 와 같은 라운드 */
+  background: linear-gradient(155deg, #2148d6 0%, #17307d 56%, #0e1a45 100%);
+  box-shadow: 0 1.1rem 2.4rem rgba(14, 26, 69, .22);
   color: var(--vc-ink);
 }
 /* 해지·만료 — 채도를 죽여 "살아있지 않은 카드"로 읽히게 */
 .vcOff {
-  background: linear-gradient(155deg, #64748b 0%, #475569 58%, #334155 100%);
-  box-shadow: 0 6px 18px rgba(51, 65, 85, .2);
+  background: linear-gradient(155deg, #525c6a 0%, #3c4552 56%, #272e39 100%);
+  box-shadow: 0 0.7rem 1.6rem rgba(39, 46, 57, .18);
 }
 
 .vcTop {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding-bottom: 12px;
+  gap: 0.5rem;
+  padding-bottom: 0.9rem;
 }
 .vcBrand {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 11.5px;
-  font-weight: 700;
-  letter-spacing: .02em;
+  gap: 0.35rem;
   color: var(--vc-dim);
+  font: 600 0.72rem/1 var(--font-body);
+  letter-spacing: 0.02em;
 }
+/* 상태는 색만으로 알리지 않는다 — 점(형태) + 글자를 함께 둔다(WCAG 1.4.1). */
 .vcStatus {
-  font-size: 11px;
-  font-weight: 700;
-  padding: 3px 9px;
-  border-radius: var(--r-pill);
-  background: rgba(255, 255, 255, .16);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.26rem 0.6rem 0.26rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .18);
   color: #fff;
+  font: 600 0.72rem/1 var(--font-body);
 }
-.vcStatusOff { background: rgba(0, 0, 0, .22); }
+.vcStatusDot {
+  width: 0.38rem;
+  height: 0.38rem;
+  border-radius: 999px;
+  background: #7ee2a8;
+  box-shadow: 0 0 0 0.16rem rgba(126, 226, 168, .22);
+}
+.vcStatusOff { background: rgba(0, 0, 0, .26); }
+.vcStatusOff .vcStatusDot { background: rgba(255, 255, 255, .55); box-shadow: none; }
+
+/* 앞면(신원+조건)과 뒷면(QR)의 높이가 달라 토글할 때 카드가 튀었다. 최소 높이로 묶는다.
+   16.5rem = QR 면(11rem 코드 + 안내 두 줄 + 주소)이 차지하는 높이. 앞면은 이보다 낮아서
+   이 값이 두 면의 공통 바닥이 된다. QR 크기를 키우면 여기도 같이 올려라. */
+.vcBody {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 16.5rem;
+}
 
 /* 신원 행 — 얼굴 + 이름·나이 + VC ID */
 .vcId {
   display: flex;
   align-items: center;
-  gap: 13px;
-  padding-bottom: 14px;
+  gap: 0.8rem;
+  padding-bottom: 0.2rem;
 }
 /* 대표 이미지(프로필) 원형 + 우하단 검증-얼굴 배지. 래퍼는 배지가 원형 크롭에 잘리지 않게 non-clip. */
-.vcFaceWrap { position: relative; flex: none; width: 58px; height: 58px; }
+.vcFaceWrap { position: relative; flex: none; width: 3.6rem; height: 3.6rem; }
 .vcFace {
-  width: 58px;
-  height: 58px;
+  width: 3.6rem;
+  height: 3.6rem;
   border-radius: 50%;
   overflow: hidden;
   background: rgba(255, 255, 255, .12);
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, .28);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, .3);
 }
 .vcFace img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .vcFaceEmpty { width: 100%; height: 100%; display: grid; place-items: center; color: var(--vc-dim); }
 /* 검증된 얼굴 = 신뢰 핵심. 프로필을 대표 이미지로 바꿔도 사라지지 않고 배지로 남는다. */
 .vcVerifiedBadge {
   position: absolute;
-  right: -3px;
-  bottom: -3px;
-  width: 24px;
-  height: 24px;
+  right: -0.2rem;
+  bottom: -0.2rem;
+  width: 1.5rem;
+  height: 1.5rem;
   border-radius: 50%;
   overflow: hidden;
   background: rgba(0, 0, 0, .3);
-  box-shadow: 0 0 0 2px rgba(20, 40, 80, .95), 0 0 0 3.5px rgba(120, 200, 140, .9);
+  box-shadow: 0 0 0 2px rgba(20, 40, 80, .95), 0 0 0 3.5px rgba(126, 226, 168, .9);
 }
 .vcVerifiedBadge img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
 .vcWho { min-width: 0; }
 .vcName {
-  font-size: 19px;
-  font-weight: 700;
   color: #fff;
-  letter-spacing: -.01em;
+  font: 700 1.15rem/1.25 var(--font-body);
+  letter-spacing: -0.01em;
 }
-.vcAge { font-weight: 600; color: var(--vc-dim); font-size: 15px; }
+.vcAge { color: var(--vc-dim); font-weight: 600; font-size: 0.9rem; }
 .vcVcid {
   display: flex;
   align-items: baseline;
-  gap: 5px;
-  margin-top: 3px;
-  font-size: 11px;
-  color: var(--vc-dim);
+  gap: 0.3rem;
+  margin-top: 0.2rem;
   min-width: 0;
+  color: var(--vc-dim);
+  font-size: 0.7rem;
 }
-.vcVcid span { font-weight: 700; letter-spacing: .03em; flex: none; }
+.vcVcid span { flex: none; font-weight: 700; letter-spacing: .03em; }
 .vcVcid code {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 0.7rem;
   color: var(--vc-ink);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* 조건 행 */
+/* 두 숫자(단가·유효기간)를 나란히. 카드에서 가장 먼저 읽히는 자리라 목록 한 줄이 아니라
+   각자 칸을 준다 — 값·라벨은 리뉴얼 전과 같다. */
+.vcFigures {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.8rem;
+  margin: 0;
+  padding: 0.9rem 0;
+  border-top: 1px solid var(--vc-line);
+}
+.vcFigures dt {
+  margin: 0 0 0.25rem;
+  color: var(--vc-dim);
+  font: 600 0.7rem/1 var(--font-body);
+  letter-spacing: 0.02em;
+}
+.vcFigures dd { margin: 0; }
+.vcFigure:last-child { text-align: right; }
+.vcPrice {
+  color: #fff;
+  font: 700 1.25rem/1.15 var(--font-body);
+  letter-spacing: -0.01em;
+}
+.vcPrice em {
+  margin-left: 0.1rem;
+  color: var(--vc-dim);
+  font: 500 0.72rem/1 var(--font-body);
+  font-style: normal;
+}
+.vcValid { color: #fff; font: 700 1.05rem/1.2 var(--font-body); }
+.vcDim { color: var(--vc-dim); font: 500 0.7rem/1.4 var(--font-body); }
+.vcValid .vcDim { display: block; margin-top: 0.15rem; }
+
+/* 용도 태그 행. 허용·금지가 둘 다 비면 <dl> 이 자식 없이 남아 테두리만 그린다 —
+   JSX 에 조건을 하나 더 얹는 대신 :empty 로 접는다(렌더 흐름 무변경). */
 .vcRows {
   display: flex;
   flex-direction: column;
-  gap: 9px;
-  padding: 13px 0;
-  border-top: 1px solid var(--vc-line);
+  gap: 0.6rem;
   margin: 0;
+  padding: 0.85rem 0 0.25rem;
+  border-top: 1px solid var(--vc-line);
 }
+.vcRows:empty { display: none; }
 .vcRow {
   display: grid;
-  grid-template-columns: 62px 1fr;
-  gap: 10px;
+  grid-template-columns: 4.1rem 1fr;
+  gap: 0.6rem;
   align-items: baseline;
 }
-.vcRow dt {
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--vc-dim);
-}
-.vcRow dd {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--vc-ink);
-  min-width: 0;
-}
-.vcDim { color: var(--vc-dim); font-weight: 500; font-size: 11.5px; }
-.vcPrice { font-size: 16px; font-weight: 700; color: #fff; }
-.vcPrice em { font-style: normal; font-size: 11.5px; font-weight: 500; color: var(--vc-dim); margin-left: 1px; }
+.vcRow dt { color: var(--vc-dim); font: 600 0.7rem/1.5 var(--font-body); }
+.vcRow dd { margin: 0; min-width: 0; }
 
-.vcTags { display: flex; flex-wrap: wrap; gap: 4px; }
+.vcTags { display: flex; flex-wrap: wrap; gap: 0.25rem; }
 .tagAllow, .tagDeny {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 3px 7px;
-  border-radius: var(--r-pill);
+  gap: 0.2rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  font: 600 0.7rem/1.35 var(--font-body);
 }
-.tagAllow { background: rgba(255, 255, 255, .18); color: #fff; }
-.tagDeny { background: rgba(0, 0, 0, .26); color: rgba(255, 255, 255, .82); }
+.tagAllow { background: rgba(255, 255, 255, .2); color: #fff; }
+.tagDeny { background: rgba(0, 0, 0, .28); color: rgba(255, 255, 255, .9); }
 
-/* QR 면 */
+/* QR 면 — 싣는 건 검증 페이지 주소뿐이다(얼굴·개인정보 없음). */
 .vcQr {
   display: flex;
+  flex: 1;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 6px 0 14px;
+  justify-content: center;
+  gap: 0.65rem;
+  padding: 0.4rem 0 0.9rem;
 }
 .vcQrImg, .vcQrSkel {
-  width: 190px;
-  height: 190px;
-  border-radius: 12px;
-  background: #fff;
-  padding: 8px;
   display: block;
+  width: 11rem;
+  height: 11rem;
+  padding: 0.5rem;
+  border-radius: 0.85rem;
+  background: #fff;
 }
 .vcQrSkel { opacity: .3; }
 .vcQrHint {
+  max-width: 16rem;
   margin: 0;
-  font-size: 12px;
   color: var(--vc-dim);
+  font: 400 0.76rem/1.55 var(--font-body);
   text-align: center;
-  line-height: 1.5;
-  max-width: 250px;
 }
 .vcQrUrl {
-  font-family: var(--font-mono);
-  font-size: 10px;
+  padding: 0 0.25rem;
   color: var(--vc-dim);
+  font-family: var(--font-mono);
+  font-size: 0.63rem;
   word-break: break-all;
   text-align: center;
-  padding: 0 4px;
 }
 
-/* 액션 — 최소 44px 터치 타깃(모바일 우선) */
+/* 액션 — 44px 터치 타깃(모바일 우선). margin-top:auto 로 카드 높이가 달라도 바닥에 붙는다. */
 .vcActions {
   display: flex;
-  gap: 8px;
-  padding-top: 10px;
+  gap: 0.5rem;
+  margin-top: auto;
+  padding-top: 0.75rem;
   border-top: 1px solid var(--vc-line);
 }
 .vcBtn {
   flex: 1;
-  min-height: 40px;
+  min-height: 2.75rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  border: none;
-  border-radius: var(--r-4);
-  background: rgba(255, 255, 255, .14);
+  gap: 0.35rem;
+  border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .12);
   color: #fff;
-  font-size: 12.5px;
-  font-weight: 600;
+  font: 600 0.8rem/1 var(--font-body);
   cursor: pointer;
-  transition: background .14s;
+  transition: background 140ms ease, border-color 140ms ease;
 }
 .vcBtn:hover { background: rgba(255, 255, 255, .24); }
+.vcBtn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .vcBtn:disabled { opacity: .55; cursor: default; }
-.vcBtnDanger { background: rgba(0, 0, 0, .28); }
-.vcBtnDanger:hover { background: rgba(0, 0, 0, .4); }
+.vcBtnDanger { background: rgba(0, 0, 0, .3); border-color: rgba(255, 255, 255, .16); }
+.vcBtnDanger:hover { background: rgba(0, 0, 0, .42); }
+
+/* ── 스테퍼 (현재 이 파일의 JSX 에서 참조하지 않음) ───────────────
+   등록 위저드에서 넘어오던 4단계 표시의 잔재다. 지금은 렌더되지 않지만 승인된 UI 를
+   임의로 지우지 않는다는 규율(DESIGN 리뉴얼 원칙)에 따라 남기고, 다시 켰을 때 이 화면과
+   같은 눈금으로 그려지도록 랜딩 언어로 맞춰만 뒀다. */
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-bottom: 1.2rem;
+  padding: 0;
+  list-style: none;
+}
+.stepDot {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+/* 단계 사이 연결선 — 첫 항목 제외 */
+.stepDot::before {
+  content: '';
+  position: absolute;
+  top: 0.7rem;
+  right: 50%;
+  left: -50%;
+  height: 1px;
+  background: var(--fm-line);
+}
+.stepDot:first-child::before { display: none; }
+.stepDot.stDone::before, .stepDot.stNow::before { background: var(--fm-ink); }
+
+.stepNum {
+  position: relative;
+  z-index: 1;
+  width: 1.4rem;
+  height: 1.4rem;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(16, 21, 26, .07);
+  color: var(--fm-muted);
+  font: 600 0.72rem/1 var(--font-body);
+}
+.stepText { color: var(--fm-muted); font: 500 0.72rem/1 var(--font-body); }
+.stDone .stepNum, .stNow .stepNum { background: var(--fm-ink); color: #fff; }
+.stDone .stepText { color: var(--fm-muted); }
+.stNow .stepText { color: var(--fm-ink); }
+
+.stepBack {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  margin: 0.9rem auto 0;
+  padding: 0.4rem 0.25rem;
+  border: none;
+  background: none;
+  color: var(--fm-muted);
+  font: 500 0.85rem/1 var(--font-body);
+  cursor: pointer;
+}
+.stepBack:hover { color: var(--fm-ink); }
+
+/* ── 모션 축소 ─────────────────────────────────────────────
+   대기 표현은 애니메이션이 꺼져도 "진행 중"이 읽혀야 한다 — 점은 남기고 맥동만 멈추고,
+   진행바는 흐르는 대신 accent 로 가득 찬 띠가 된다(정보가 사라지지 않게). */
+@media (prefers-reduced-motion: reduce) {
+  .cardNew { animation: none; }
+  .waitPulse { animation: none; }
+  .waitBar i { animation: none; width: 100%; opacity: .55; }
+}

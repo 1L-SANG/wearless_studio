@@ -1,0 +1,117 @@
+/* 카드는 전부 스테이지 한가운데에 겹쳐 놓이고(절대 위치 + inset 0 + margin auto),
+   transform 이 각자를 밀어낸다. perspective 는 인라인으로 들어온다(스테이지 높이에서 계산).
+
+   스테이지는 **세로로 자르지 않는다**(overflow: visible). 가로 클립은 셸(.shell 의
+   overflow: clip)이 뷰포트 가장자리에서 한다. 아크 바깥 카드(offset 3)는 원근으로
+   1.68배까지 커져 스테이지 높이를 살짝 넘는데(105%), 여기서 잘랐다간 카드 위아래가
+   수평선으로 끊긴다. 예전엔 그림자 자리로 위 1rem·아래 4rem 패딩까지 뒀었다 — 그림자가
+   없어졌고 세로도 안 자르니 패딩도 없다. 같은 행 높이에서 카드가 그만큼 더 크다.
+
+   높이는 **부모가 준다** — 스테이지는 첫 화면 그리드(FacemarketLanding.module.css .screen)의
+   2행을 stretch 로 채운다. 그 행은 minmax(하한, 1fr) 또는 폰의 고정 clamp 라 카드 크기와
+   무관하게 정해지고, 그래서 카드 크기 → 스테이지 높이 → ResizeObserver → 카드 크기의
+   되먹임(CarouselStage.jsx 머리말)이 없다. 그 불변식이 서는 조건 둘:
+   카드가 position:absolute 라 스테이지의 내재 높이에 안 잡힌다 — 스테이지의 흐름 내
+   콘텐츠가 비어 있어 최소 높이 기여가 0 이다. 카드를 다시 정적 그리드 아이템으로 돌리면
+   1fr 행의 하한이 카드 높이가 되어 되먹임이 되살아난다. */
+.stage {
+  position: relative;
+  z-index: 1;            /* 히어로(z auto) 위, 메타 바(z 2) 아래 */
+  box-sizing: border-box;
+  /* 높이 = 그리드 행(그리드 영역은 퍼센트 해석에 definite 다). align-self 를 center 로 두면
+     stretch 가 풀려 height:auto 가 0 으로 무너지므로(흐름 내 콘텐츠가 없다 — 카드는 절대
+     위치) 100% 를 명시한다. 실제로 그렇게 사라졌었다. */
+  height: 100%;
+  min-height: 0;
+  /* 상한. 큰 모니터(2560×1440)에서 1fr 행이 850px 까지 자라면 카드가 뷰포트의 37% 를 먹는다 —
+     원본 녹화·스크린샷에서 가운데 카드는 뷰포트 높이의 22~23% 다. 34rem(카드 343px)에서
+     멈추고 남는 높이는 행 안에서 위아래로 나눈다(align-self: center). 메타 바는 그대로
+     첫 화면 바닥에 남는다 — 남는 공간을 먹는 건 행이지 스테이지가 아니라서. */
+  max-height: 34rem;
+  align-self: center;
+  width: 100%;
+  padding: 0;
+  /* 소실점 = 스테이지 중심 = 카드 격자 중심. cssProjection 의 불변식은 소실점이 격자
+     중심일 때만 성립한다 — 위아래 패딩을 다시 넣게 되면 perspective-origin 도 같이
+     콘텐츠 상자 중심으로 옮겨야 한다. */
+  perspective-origin: 50% 50%;
+  overflow: visible;
+  touch-action: pan-y;   /* 세로 스크롤을 뺏지 않는다 — 랜딩은 한 장 스크롤 페이지다 */
+  user-select: none;
+  outline: none;
+}
+
+.stage:focus-visible {
+  outline: 2px solid var(--fm-accent);
+  outline-offset: -4px;
+}
+
+.card {
+  /* 스테이지 한가운데. inset 0 + margin auto 로 가운데 맞춘다 — 인라인 width/height 가
+     있어야 성립하고, 그건 rAF paint() 전에도 아래 기본 크기가 준다. */
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 5.5%;          /* 원본 셰이더의 uRadius 0.055 */
+  background: transparent;
+  overflow: hidden;
+  cursor: inherit;
+  /* 그림자는 카드 **아래에만** 깔린다. 코덱스 포트의 사방 그림자(`0 1.6rem 3.4rem`, 0.34)는
+     사용자가 "카드 밑 그림자 효과 다 없애"로 지웠고, 이어서 "카드 밑에만 그림자 있으면
+     되겠다"로 바닥 그림자 하나만 되살렸다. 음수 spread(-1.2rem)가 그림자 상자를 사방으로
+     19px 줄여 옆·위로는 blur(±16px)가 카드 밖으로 못 나가고, 아래로만 y 오프셋(1.6rem)
+     만큼 나와 카드 밑에서 23px 까지 흐려진다. 카드가 3D 로 돌아서면 그림자도 카드 평면을
+     따라 도니 '그 카드 밑'으로 읽힌다. */
+  box-shadow: 0 1.6rem 2rem -1.2rem rgba(24, 34, 46, 0.35);
+  /* 첫 페인트 방어. ResizeObserver 가 스테이지 크기를 주기 전까지 카드에는 인라인 크기도
+     transform 도 없다 — 기본값이 없으면 14장이 이미지 고유 크기(360×450)로 한 칸에
+     불투명하게 겹쳐 한 프레임 번쩍인다. 크기는 데스크톱 비율(2.3 / 3.656 ≈ 63%)로 미리
+     잡아두고, 보이는 건 rAF paint() 가 인라인으로 켠 뒤부터다. */
+  height: 63%;
+  aspect-ratio: 1.64 / 2.3;
+  opacity: 0;
+  visibility: hidden;
+}
+
+/* will-change 는 애니메이션이 실제로 도는 동안에만 켠다(CarouselStage 가 data-animating 을
+   토글한다). 클래스에 상시로 두면 화면에 한 번도 안 나오는 카드까지 합성 레이어를 물고
+   있고, 캐러셀이 뷰포트를 벗어나도 해제되지 않는다. */
+.stage[data-animating='true'] .card {
+  will-change: transform, opacity;
+}
+
+.card:focus-visible {
+  outline: 2px solid var(--fm-accent);
+  outline-offset: 3px;
+}
+
+.photo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;   /* 이미지 기본 드래그가 포인터 캡처를 가로채지 않게 */
+}
+
+.badge {
+  position: absolute;
+  top: 0.85rem;
+  left: 1rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: rgba(255, 255, 255, 0.92);
+  font: 500 0.8rem/1 var(--font-body);
+  letter-spacing: 0.06em;
+}
+
+/* 사진 위 아무 색에서나 읽혀야 하는 고지라 글자 그림자가 아니라 알약 배경을 깐다. */
+.badgeNotice {
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(16, 21, 26, 0.62);
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+}

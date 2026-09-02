@@ -1,0 +1,295 @@
+/* =============================================================
+   모델 둘러보기(/models)와 상세 창.
+   색·글자·간격은 랜딩 토큰(--fm-*)을 그대로 쓴다 — 그 토큰은 .shell 이 정의하고
+   이 화면도 LandingShell 안에서 그려지므로 여기서 다시 정의하지 않는다.
+   ============================================================= */
+
+.browse { padding: clamp(2rem, 5vw, 4rem) 0 clamp(3rem, 6vw, 5rem); }
+
+.browseHead { max-width: 44rem; margin: 0 0 clamp(1.75rem, 4vw, 2.75rem); }
+
+.eyebrow {
+  display: block;
+  margin: 0 0 0.7rem;
+  color: var(--fm-muted);
+  font: 500 0.76rem/1 var(--font-body);
+  letter-spacing: 0.02em;
+}
+
+.browseTitle {
+  margin: 0 0 0.9rem;
+  font-family: var(--font-body);
+  font-size: clamp(1.9rem, 4.5vw, 3.2rem);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+
+.browseNotice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  margin: 0;
+  color: var(--fm-muted);
+  font: 400 0.9rem/1.6 var(--font-body);
+}
+.browseNotice svg { flex: none; margin-top: 0.25rem; }
+
+/* 카드 격자 — 데스크톱 **가로 4개**(사용자 지시). auto-fill 로 두면 창 폭에 따라 5열·6열이
+   되므로 열 수를 단계로 못박는다. minmax(0, 1fr) 의 0 이 중요하다: 기본값 auto 면 사진의
+   내재 폭이 하한이 되어 좁은 화면에서 열이 넘친다. */
+.grid {
+  display: grid;
+  gap: clamp(0.75rem, 1.4vw, 1.15rem);
+  margin: 0;
+  padding: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  list-style: none;
+}
+@media (min-width: 48rem) { .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 64rem) { .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+.card {
+  display: grid;
+  gap: 0.7rem;
+  align-content: start;
+}
+
+/* 사진 칸이 곧 버튼이다(BrowseSection 머리말 — hover 전용 버튼을 두지 않는 이유). */
+.cardMedia {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  padding: 0;
+  border: 1px solid var(--fm-line);
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.5);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.cardImage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 320ms ease;
+}
+.cardMedia:hover .cardImage,
+.cardMedia:focus-visible .cardImage { transform: scale(1.03); }
+
+.cardBadge {
+  position: absolute;
+  top: 0.6rem;
+  left: 0.6rem;
+  padding: 0.18rem 0.42rem;
+  border-radius: 999px;
+  background: rgba(16, 21, 26, 0.62);
+  color: rgba(255, 255, 255, 0.92);
+  font: 500 0.68rem/1 var(--font-body);
+  letter-spacing: 0.02em;
+}
+
+/* 덮개는 hover·focus 에서만 뜬다. 터치에는 hover 가 없지만 카드 자체가 버튼이라
+   탭하면 같은 창이 열린다 — 덮개는 마우스 사용자에게 '누를 수 있다'를 알리는 장치다. */
+.cardOverlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  align-items: end;              /* 버튼은 사진 맨 아래(사용자 지시) */
+  background: linear-gradient(180deg, rgba(16, 21, 26, 0) 45%, rgba(16, 21, 26, 0.5) 100%);
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+.cardMedia:hover .cardOverlay,
+.cardMedia:focus-visible .cardOverlay { opacity: 1; }
+
+/* 사진 아래 모서리에 딱 붙는 띠. 카드가 overflow: hidden 이라 아래쪽 둥근 모서리를 따라
+   잘린다 — 그래서 버튼 자체에는 반경을 주지 않는다. */
+.cardOverlayButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  width: 100%;
+  padding: 0.7rem 0.9rem;
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--fm-ink);
+  font: 500 0.85rem/1 var(--font-body);
+  translate: 0 100%;
+  transition: translate 220ms ease;
+}
+.cardMedia:hover .cardOverlayButton,
+.cardMedia:focus-visible .cardOverlayButton { translate: 0 0; }
+
+.cardMeta { display: grid; gap: 0.15rem; }
+.cardName { margin: 0; font: 600 0.95rem/1.4 var(--font-body); }
+.cardSpec { margin: 0; color: var(--fm-muted); font: 400 0.85rem/1.5 var(--font-body); }
+
+/* ---- 상세 서랍 ---- */
+/* 가운데 팝업이 아니라 **오른쪽에서 나오는 창**이다(사용자 지시). 뒤 화면은 어둡게 + 흐리게.
+   서랍이 스크롤을 갖고(overflow-y) 배경은 안 움직인다 — 배경 잠금은 컴포넌트가 건다. */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;                  /* 상단바(30)보다 위 */
+  background: rgba(16, 21, 26, 0.42);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: fmFade 220ms ease;
+}
+
+@keyframes fmFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fmSlideIn {
+  from { translate: 100% 0; }
+  to { translate: 0 0; }
+}
+
+/* 바깥 클릭으로 닫는 판. 버튼이지만 보이지 않고 탭 순서에도 없다(창 안의 닫기 버튼이
+   그 역할을 한다) — 마우스로 바깥을 누르는 길만 열어 두는 요소다. */
+.backdropHit {
+  position: fixed;
+  inset: 0;
+  border: 0;
+  background: none;
+  cursor: default;
+}
+
+.dialog {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  /* 화면 가로의 3분의 2(사용자 지시 — 처음엔 34rem 이라 1440 에서 38% 밖에 안 됐다).
+     상한 64rem 은 와이드 모니터에서 서랍이 끝없이 넓어지지 않게. 폰에서는 아래 미디어쿼리가
+     100% 로 덮는다 — 66vw 면 390px 화면에서 257px 라 두 칸이 성립하지 않는다. */
+  width: min(64rem, 66vw);
+  padding: clamp(1.25rem, 3vw, 2rem);
+  background: var(--fm-page-bg);
+  box-shadow: -1rem 0 3rem rgba(16, 21, 26, 0.22);
+  overflow-y: auto;
+  overscroll-behavior: contain;   /* 서랍 끝에서 뒤 페이지로 스크롤이 새지 않게 */
+  animation: fmSlideIn 260ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+@media (max-width: 47.99rem) {
+  .dialog { width: 100%; }
+}
+
+/* '동작 줄이기'를 켰으면 미끄러지지 않고 그 자리에 나타난다. */
+@media (prefers-reduced-motion: reduce) {
+  .backdrop, .dialog { animation: none; }
+}
+
+.dialogClose {
+  position: absolute;
+  top: 0.85rem;
+  right: 0.85rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--fm-ink);
+  cursor: pointer;
+}
+.dialogClose:hover { background: #fff; }
+
+/* 얼굴은 있는 만큼만 놓는다 — 한 장뿐인 모델은 그 한 장이 칸을 채운다. */
+.dialogFaces {
+  display: grid;
+  gap: 0.75rem;
+  /* 서랍이 넓어져도 얼굴이 한없이 커지지 않게. 이게 없으면 1440 에서 한 장이 460px 정사각형이
+     되어 아래 내용이 전부 스크롤 밖으로 밀린다. */
+  max-width: 36rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+/* 얼굴이 한 장뿐인 모델(w1·m1·m2)은 그 한 장이 두 칸을 다 쓴다 — 안 그러면 반쪽만 차고
+   옆이 빈다. */
+.dialogFace:only-child { grid-column: 1 / -1; }
+.dialogFace {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 0.75rem;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.dialogHead { display: flex; align-items: center; gap: 0.6rem; margin: 1.35rem 0 1.1rem; }
+.dialogName { margin: 0; font: 600 clamp(1.35rem, 2.4vw, 1.75rem)/1.3 var(--font-body); }
+
+/* 창 안에도 예시 배지를 둔다 — 목록의 고지는 이 창만 캡처하면 같이 안 나간다. */
+.exampleBadge {
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(16, 21, 26, 0.08);
+  color: var(--fm-muted);
+  font: 500 0.72rem/1 var(--font-body);
+}
+
+/* 두 칸(신체 사이즈 | 라이선스 조건)과 그 사이 세로선은 스케치 그대로. 열 수를 못박는
+   이유: 미디어쿼리는 뷰포트를 보는데 이 창은 34rem 짜리 서랍이라, auto-fit 으로 두면
+   데스크톱에서도 한 칸으로 접혀 스케치의 세로선이 사라진다. */
+.dialogCols {
+  display: grid;
+  gap: clamp(0.75rem, 2vw, 1.5rem);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.dialogCol + .dialogCol {
+  padding-left: clamp(1rem, 2.5vw, 2rem);
+  border-left: 1px solid var(--fm-line);
+}
+/* 아주 좁은 폰에서는 두 칸이 각각 8rem 도 안 되므로 위아래로 쌓고 선을 가로로 눕힌다. */
+@media (max-width: 26rem) {
+  .dialogCols { grid-template-columns: minmax(0, 1fr); }
+  .dialogCol + .dialogCol {
+    padding-left: 0;
+    padding-top: 1rem;
+    border-left: 0;
+    border-top: 1px solid var(--fm-line);
+  }
+}
+
+.dialogColTitle { margin: 0 0 0.7rem; font: 600 0.95rem/1.4 var(--font-body); }
+
+.specList { display: grid; gap: 0.5rem; margin: 0; }
+/* 서랍이 좁아 라벨 열을 5rem 으로 고정하면 '허용 품목' 값이 두세 줄로 접힌다.
+   라벨을 값 위에 쌓는다. */
+.specRow { display: grid; gap: 0.1rem; }
+.specRow dt { color: var(--fm-muted); font: 400 0.85rem/1.5 var(--font-body); }
+.specRow dd { margin: 0; font: 500 0.9rem/1.5 var(--font-body); }
+
+.dialogExamples { margin-top: clamp(1.25rem, 3vw, 1.75rem); }
+.exampleGrid {
+  display: grid;
+  gap: 0.6rem;
+  max-width: 44rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.exampleImage {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  border-radius: 0.6rem;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+/* '동작 줄이기'를 켠 사용자에게는 확대·떠오름을 재생하지 않는다. */
+@media (prefers-reduced-motion: reduce) {
+  .cardImage,
+  .cardOverlay,
+  .cardOverlayButton { transition: none; }
+  .cardMedia:hover .cardImage,
+  .cardMedia:focus-visible .cardImage { transform: none; }
+}

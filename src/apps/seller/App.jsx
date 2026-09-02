@@ -7,29 +7,28 @@
    로그인 없이 공개. 분석 CTA 에서 로그인 게이트(LoginGate 모달)를 띄우고,
    로그인 후 콘티부터 진행한다. storyboard·mannequin·generating·library·
    editor 는 RequireAuth 로 보호(비세션 직접 URL 진입 → 입력으로 리다이렉트).
-   OAuth 복귀('/')의 리다이렉트는 RootRedirect 단일 주인이 담당(복귀 목표 있으면 그곳, 없으면 입력).
+   OAuth 복귀('/')의 리다이렉트는 도메인마다 주인이 하나씩이다 — ai 는 RootRedirect(복귀 목표
+   있으면 그곳, 없으면 입력). facemarket 쪽 루트는 이제 다른 앱(src/AppFacemarket.jsx)이다.
+   두 주인 모두 인증 부트스트랩(loading)이 끝나기 전에는 이동하지 않는다 — 첫 렌더에 이동하면
+   그 replaceState 가 AuthProvider 보다 먼저 돌아 `?code=` 를 지워 로그인이 완성되지 않는다.
    Editor 는 app chrome 밖의 전체화면 surface (stub in phase 1).
    ============================================================= */
-import { Suspense, useEffect, useState } from 'react';
-import { Routes, Route, Navigate, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Suspense, useEffect, useRef, useState } from 'react';
+import { Link, Routes, Route, Navigate, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ChromeLayout } from '@/features/shell/ChromeLayout.jsx';
 import { Library } from '@/features/library/Library.jsx';
 import { Pricing } from '@/features/pricing/Pricing.jsx';
 import { CreditsHistory } from '@/features/credits/CreditsHistory.jsx';
 import { PaymentSuccess, PaymentFail } from '@/features/payments/PaymentResult.jsx';
-import { ModelHub } from '@/features/model/ModelHub.jsx';
-import { ModelRegister } from '@/features/model/ModelRegister.jsx';
-import { ModelLicense } from '@/features/model/ModelLicense.jsx';
-import { ModelGenerate } from '@/features/model/ModelGenerate.jsx';
-import { ModelWithdraw } from '@/features/model/ModelWithdraw.jsx';
 import { PublicVerify } from '@/features/verify/PublicVerify.jsx';
 import { ProductInput } from '@/features/product-input/ProductInput.jsx';
 import { Mannequin } from '@/features/mannequin/Mannequin.jsx';
 import { Storyboard } from '@/features/storyboard/Storyboard.jsx';
 import { Generating } from '@/features/generating/Generating.jsx';
 import { LazyEditor } from '@/features/editor/lazyEditor.js';
-import { useAuth } from '@/features/auth/AuthProvider.jsx';
-import { domainRouteRedirect, IS_FACEMARKET } from '@/lib/host.js';
+import { forgetPostLogin, readPostLogin, useAuth } from '@/features/auth/AuthProvider.jsx';
+import { domainRouteRedirect } from '@/lib/host.js';
+import { RequireAuth } from '../guards.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
 import { loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
@@ -39,8 +38,7 @@ import {
   retryDraftPromotion,
 } from '@/lib/draftSync.js';
 import { api, isMockMode } from '@/lib/api/index.js';
-import { listMyModels } from '@/lib/api/facemarket.js';
-import { ErrorState, useToast } from '@/components/ui.jsx';
+import { Button, ErrorState, useToast } from '@/components/ui.jsx';
 import { shouldAdoptRouteProject } from '@/lib/projectRoute.js';
 import { markEditorEntered } from '@/lib/editorEntered.js';
 import {
@@ -64,24 +62,9 @@ draftSlot.configure(api);
 /* 보호 라우트 — 세션 없으면 공개 입력 페이지로. 입력은 공개라 리다이렉트 루프 없음. */
 // facemarket 도메인(등록 전용)에서 미인증 진입 시 — /create/input(메인 앱)로 보내면
 // 등록 전용 사이트에 편집기가 뜬다. 대신 로그인 모달을 열고 등록으로 복귀시킨다.
-function FacemarketLoginPrompt() {
-  const { openLogin } = useAuth();
-  useEffect(() => { openLogin?.('/model/register'); }, [openLogin]);
-  return <div className="route-loading">모델 등록은 로그인이 필요해요 — 로그인 창을 열었어요.</div>;
-}
-
-function RequireAuth() {
-  const { session, loading } = useAuth();
-  // mock 데모 샌드박스 — 로그인 없이 전 플로우 확인(주소창 직접 진입 포함).
-  // mock api 는 토큰을 쓰지 않으므로 세션 부재가 기능에 영향 없다. http 모드는 기존 가드 유지.
-  if (isMockMode) return <Outlet />;
-  if (loading) return <div className="route-loading">불러오는 중이에요</div>;
-  if (!session) {
-    if (IS_FACEMARKET) return <FacemarketLoginPrompt />;
-    return <Navigate to="/create/input" replace />;
-  }
-  return <Outlet />;
-}
+/* FacemarketLoginPrompt·RequireAuth 는 두 앱이 함께 쓰므로 src/routes/guards.jsx 로
+   옮겼다. 모델 소유 가드(RequireModel 계열)는 facemarket 전용이라 modelSectionRoutes.jsx
+   안에 있다 — 여기로 다시 가져오면 모델 화면이 셀러 번들로 딸려 들어온다. */
 
 // 현재 문서 수명 동안 create/editor 흐름이 한 번이라도 실제 렌더됐는지 기억한다. 새로고침은
 // 모듈 변수가 초기화되므로 project-scoped sessionStorage 표식(flowSession)으로 별도 판별한다.
@@ -191,50 +174,6 @@ function RequireEditorProject() {
     return <div className="route-loading">에디터 프로젝트를 확인하고 있어요…</div>;
   }
   return <Outlet />;
-}
-
-/* 모델 섹션 보호 — 등록 중 모델은 허브·라이선스에 접근할 수 있지만 생성은 verified만 허용한다. */
-function RequireModel({ verifiedOnly = false }) {
-  const [phase, setPhase] = useState('loading'); // loading | allowed | denied | error
-  const [attempt, setAttempt] = useState(0);
-
-  useEffect(() => {
-    let alive = true;
-    setPhase('loading');
-    listMyModels()
-      .then((models) => {
-        if (!alive) return;
-        const allowed = verifiedOnly
-          ? models.some((model) => model.status === 'verified')
-          : models.length > 0;
-        setPhase(allowed ? 'allowed' : 'denied');
-      })
-      .catch(() => {
-        if (alive) setPhase('error');
-      });
-    return () => { alive = false; };
-  }, [attempt, verifiedOnly]);
-
-  if (phase === 'loading') return <div className="route-loading">본인확인 상태를 확인하고 있어요…</div>;
-  if (phase === 'denied') return <Navigate to="/model/register" replace />;
-  if (phase === 'error') {
-    return (
-      <div className="wizard narrow">
-        <div className="surface">
-          <ErrorState desc="본인확인 상태를 불러오지 못했어요." onRetry={() => setAttempt((value) => value + 1)} />
-        </div>
-      </div>
-    );
-  }
-  return <Outlet />;
-}
-
-function RequireOwnedModel() {
-  return <RequireModel />;
-}
-
-function RequireVerifiedModel() {
-  return <RequireModel verifiedOnly />;
 }
 
 /* 상세페이지 제작 플로우에서 현재 머문 경로를 store 에 기록 → '이어서 작업' 재개 목표(resumePath).
@@ -507,22 +446,25 @@ const DRAFT_SYNC_TIMEOUT_MS = 20000;
 
 function RootRedirect() {
   const { session, loading } = useAuth();
-  const [returnIntent] = useState(() => sessionStorage.getItem('wl_postLogin'));
-  // facemarket 도메인은 등록 전용 — 루트 진입은 모델 등록으로 랜딩한다.
-  const target = returnIntent || (IS_FACEMARKET ? '/model/register' : '/create/input');
+  // 저장소 접근은 AuthProvider 의 헬퍼를 지난다. **이 읽기는 useState 초기화 함수라 렌더
+  // 중에 돈다** — 쿠키·사이트 데이터를 막은 브라우저(사파리 프라이빗, Chrome 사이트별 차단,
+  // 일부 인앱 웹뷰)에서 sessionStorage 는 접근만으로 SecurityError 를 던지고, 이 레포엔
+  // ErrorBoundary 가 하나도 없어 그 예외가 곧장 ai.wearless.kr 루트의 흰 화면이 됐다.
+  // (facemarket 쪽 FacemarketRoot 는 이미 try/catch 라 랜딩이 멀쩡히 떴다 — 매출이 도는
+  //  셀러 도메인만 죽는 반쪽 하드닝이었다.) 못 읽으면 null → target 이 기본 경로로 떨어진다.
+  const [returnIntent] = useState(readPostLogin);
+  // facemarket 루트는 FacemarketRoot 가 가져갔다 — 여기 오는 건 ai 도메인뿐이다.
+  const target = returnIntent || '/create/input';
   const [phase, setPhase] = useState('init');   // init | syncing | done
   const [dest, setDest] = useState(null);
   const [destState, setDestState] = useState(null);
 
   useEffect(() => {
-    // facemarket(등록 전용 도메인)은 루트에서 곧장 모델 등록으로 — create 플로우의 draft
-    // 승격/프로젝트 부트스트랩 로직을 타지 않는다(그 로직은 편집 플로우 전용).
-    if (IS_FACEMARKET) { setDest('/model/register'); setPhase('done'); return; }
     // 일반 첫 진입(/create/input)은 인증 확인과 무관하게 연다. 로그인 복귀처럼 세션이
     // 실제로 필요한 목표만 bootstrap 완료를 기다린다. AuthProvider는 session을 확정한 뒤
     // loading=false로 내리므로 그 전환에서 한 번만 실행한다(토큰 갱신 때 sync 재시작 금지).
     if (loading && target !== '/create/input') return;
-    sessionStorage.removeItem('wl_postLogin');
+    forgetPostLogin();   // 읽기와 같은 규율 — 던져도 승격 경로가 멈추지 않는다.
     if (returnIntent?.startsWith('/create/')) {
       flowRouteSeenThisSession = true;
       markFlowSession(useAppStore.getState().projectId, returnIntent);
@@ -572,6 +514,12 @@ function RootRedirect() {
   return <div className="route-loading">불러오는 중이에요</div>;
 }
 
+/* 모델 섹션(/model/*)은 이 앱에 없다. facemarket 도메인 전용이고, 그쪽 진입점
+   (src/AppFacemarket.jsx)이 src/routes/modelSectionRoutes.jsx 를 문다.
+   ai 에서 /model/* 은 domainRouteRedirect 가 라우터보다 먼저 /create/input 으로 돌리므로
+   (host.js, #214) 여기 등록해 두던 서브트리는 도달 불가능한 죽은 가지였다 — 번들만
+   무겁게 했다. 되살리지 마라. */
+
 export default function App() {
   const { pathname } = useLocation();
   const domainRedirect = domainRouteRedirect(pathname);
@@ -601,29 +549,6 @@ export default function App() {
             {/* 토스 결제 리다이렉트 착지점(WS3) — 승인은 success 화면이 서버에 위임한다 */}
             <Route path="payments/success" element={<PaymentSuccess />} />
             <Route path="payments/fail" element={<PaymentFail />} />
-            {/* FaceMarket 모델 섹션 — 본인확인·라이선스(FM-10)와 개인화(사용자 얼굴·신체)가
-                한 섹션이다. 개인화 화면 순서는 docs/personalization/phase0-ux-flow.md.
-                본인확인(성인 인증, T2-1)은 register 하나로 흡수됐다 — FaceMarket 실명 인증
-                1회가 개인화 성인 확인도 함께 기록하므로 별도 identity 라우트가 없다.
-                /model 은 섹션 허브(체크리스트) — register·license 의 URL 은 종전 그대로. */}
-            <Route path="model">
-              {/* 등록은 모델 생성 전에도 열고, 등록 중 모델은 상태·라이선스 화면까지 복구한다. */}
-              <Route path="register" element={<ModelRegister />} />
-              <Route element={<RequireOwnedModel />}>
-                <Route index element={<ModelHub />} />
-                <Route path="license" element={<ModelLicense />} />
-                {/* 폐기된 직접 업로드 북마크는 신규 등록 경계로 되돌린다. */}
-                <Route path="consent" element={<Navigate to="/model/register" replace />} />
-                <Route path="face" element={<Navigate to="/model/register" replace />} />
-                <Route path="body" element={<Navigate to="/model/register" replace />} />
-                <Route path="generate" element={<RequireVerifiedModel />}>
-                  <Route index element={<ModelGenerate />} />
-                </Route>
-                <Route path="withdraw" element={<ModelWithdraw />} />
-                {/* 알 수 없는 /model/* 경로도 가드를 거친 뒤 허브로만 복귀한다. */}
-                <Route path="*" element={<Navigate to="/model" replace />} />
-              </Route>
-            </Route>
           </Route>
           <Route path="create">
             <Route index element={<Navigate to="/create/input" replace />} />

@@ -261,66 +261,11 @@
 }
 
 /* ---- 진행 레일(6단계, 모노크롬) ---- */
-.rail {
-  display: flex;
-  align-items: flex-start;
-  list-style: none;
-  margin: 4px 0 22px;
-  padding: 0;
-}
-.railStep {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 9px;
-}
-/* 노드 사이 연결선 — 왼쪽 절반에 그려 이전 단계와 잇는다 */
-.railStep::before {
-  content: '';
-  position: absolute;
-  top: 13px;
-  left: -50%;
-  width: 100%;
-  height: 2px;
-  background: var(--bg-2);
-  z-index: 0;
-}
-.railStep:first-child::before { display: none; }
-.rail_done::before,
-.rail_active::before { background: var(--fg-1); }
-.railNode {
-  position: relative;
-  z-index: 1;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--r-pill);
-  display: grid;
-  place-items: center;
-  background: var(--bg-2);
-  color: var(--fg-3);
-  font-family: var(--font-display);
-  font-size: 12px;
-  font-weight: 600;
-  transition: background .18s, color .18s, box-shadow .18s;
-}
-.rail_done .railNode { background: var(--fg-1); color: #fff; }
-.rail_active .railNode {
-  background: #fff;
-  color: var(--fg-1);
-  box-shadow: inset 0 0 0 2px var(--fg-1), var(--elev-card);
-}
-.railLabel {
-  font-size: 11.5px;
-  font-weight: 500;
-  line-height: 1.2;
-  text-align: center;
-  color: var(--fg-3);
-}
-.rail_done .railLabel { color: var(--fg-2); }
-.rail_active .railLabel { color: var(--fg-1); font-weight: 600; }
+
+/* ---- 위저드 카드 내부(단계 헤더·체형 매트릭스·대표 이미지 업로드) ----
+   진행 레일을 가로로 다시 짜면서 블록을 통째로 교체했는데, 그때 이 규칙들이
+   같이 지워져 체형·대표 단계가 스타일 없이 렌더됐다. 원본(ad1bf48b)에서 되살린다.
+   아래 "단계 카드 내부" 블록이 이 중 일부를 다시 덮는다(그쪽이 나중이라 이긴다). */
 
 /* ---- 단계 헤더(메달리온 + eyebrow + 제목) ---- */
 .stepHead {
@@ -329,6 +274,7 @@
   gap: 14px;
   margin-bottom: 20px;
 }
+
 .medallion {
   flex: none;
   width: 52px;
@@ -339,8 +285,9 @@
   display: grid;
   place-items: center;
 }
+
 .medallionSpin svg { animation: medSpin 1s linear infinite; }
-@keyframes medSpin { to { transform: rotate(360deg); } }
+
 .stepEyebrow {
   font-family: var(--font-display);
   font-size: 11.5px;
@@ -350,6 +297,7 @@
   color: var(--fg-3);
   margin-bottom: 4px;
 }
+
 .stepHead .stateTitle { margin: 0; }
 
 /* ---- 대표 이미지 업로드 존 ---- */
@@ -366,7 +314,9 @@
   cursor: pointer;
   transition: background .15s;
 }
+
 .uploadZone:hover { background: var(--bg-1); box-shadow: var(--elev-card); }
+
 .uploadInput {
   position: absolute;
   inset: 0;
@@ -375,6 +325,7 @@
   opacity: 0;
   cursor: pointer;
 }
+
 .uploadIcon {
   width: 44px;
   height: 44px;
@@ -386,7 +337,9 @@
   box-shadow: var(--elev-card);
   margin-bottom: 2px;
 }
+
 .uploadText { font-size: 14.5px; font-weight: 500; color: var(--fg-1); }
+
 .uploadHint { font-size: 12px; color: var(--fg-3); font-family: var(--font-mono); }
 
 /* 올리기 전 확인용 프리뷰 — 카탈로그 카드와 같은 4:5 로 보여줘야 잘린 모습이 미리 보인다. */
@@ -400,6 +353,7 @@
   border-radius: var(--r-5);
   background: var(--bg-2);
 }
+
 /* 되돌아가기 — 주 동작(저장·건너뛰기)보다 약하게 둔다. */
 .backLink {
   display: block;
@@ -414,6 +368,7 @@
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+
 .backLink:disabled { opacity: .5; cursor: default; }
 
 /* ---- 체형·키(physique) 스텝 — 선택 칩은 전역 .chips/.chip(app.css)을 그대로 재사용,
@@ -421,9 +376,11 @@
 .physiqueGroup {
   margin: 16px 0 20px;
 }
+
 .physiqueGroup:last-of-type {
   margin-bottom: 22px;
 }
+
 .physiqueLabel {
   font-size: 12.5px;
   font-weight: 600;
@@ -438,6 +395,7 @@
   flex-wrap: wrap;
   gap: 10px;
 }
+
 .bodyCard {
   display: flex;
   flex-direction: column;
@@ -450,18 +408,21 @@
   border-radius: 12px;
   line-height: 1.3;
 }
+
 /* 볼륨×실루엣 매트릭스 — 행 하나가 볼륨 한 단계다. 세로 그리드로 4열을 깔면 좁은 화면에서
    카드가 80px로 쪼그라들어 체형 차이가 안 보인다. 행마다 가로 스크롤로 두면 카드 크기를
    지킬 수 있고, 행 안에서는 볼륨이 같아 실루엣 차이만 비교된다. */
 .bodyRow {
   margin-bottom: 14px;
 }
+
 .bodyRowLabel {
   font-size: 12.5px;
   font-weight: 600;
   color: var(--fg-1);
   margin-bottom: 7px;
 }
+
 .bodyRowScroller {
   display: flex;
   gap: 10px;
@@ -470,10 +431,12 @@
   scrollbar-width: thin;
   scroll-snap-type: x proximity;
 }
+
 .bodyRowScroller > * {
   flex: 0 0 auto;
   scroll-snap-align: start;
 }
+
 .bodyCardImage {
   display: block;
   width: 100%;
@@ -492,17 +455,187 @@
   line-height: 1.5;
 }
 
-/* ---- 모바일 ---- */
-@media (max-width: 560px) {
-  .steps {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 14px;
+/* ================= FaceMarket 랜딩 디자인 — 등록 진행 레일 =================
+   레일은 본문 위에 가로로 눕는다. 세로 사이드 레일도 만들어 봤지만 이 사이트의
+   리듬(랜딩이 전부 중앙 한 열)과 어긋나 위저드만 다른 제품처럼 보였다.
+
+   번호는 Cormorant 세리프다 — 랜딩의 캐러셀 인덱스(01 / 14)와 라이선스 발급 조건
+   01~04 가 쓰는 그 표식이고, 이 사이트에서 '순서'를 뜻한다. 등록은 실제 순차 KYC 라
+   번호가 정보를 실어 나른다(장식이 아니다).
+
+   sticky 로 두는 이유는 PRD §13 1번이다 — 사진 3장·체형 매트릭스처럼 단계 내용이
+   길어져도 현재 위치가 화면에서 사라지면 안 된다.
+   ============================================================================ */
+
+.flowWizard { --fm-wizard-max: 60rem; }
+
+.pageEyebrow {
+  /* <span> 이라 블록으로 세워야 아래 margin 이 먹는다(요소를 <p> 에서 바꾼 이유는
+     ModelRegister.jsx 의 주석 참고 — `.fm-theme .page-head p` 와의 특이도 충돌). */
+  display: block;
+  margin: 0 0 0.9rem;
+  color: var(--fm-muted, var(--fg-2));
+  font: 500 0.76rem/1 var(--font-body);
+  letter-spacing: 0.02em;   /* 한글이라 자간을 벌리지 않는다 — 랜딩 .eyebrow 와 같은 판단 */
+}
+
+.flowBody { min-width: 0; }
+
+/* 배경 띠도 sticky 도 쓰지 않는다. 띠를 깔면 본문 폭에 갇힌 네모 판이 떠서
+   페이지 위에 얹힌 다른 부품처럼 보이고(실측), 화면 폭까지 늘리면 이번엔 상단바와
+   두 겹으로 겹친다. 레일은 제목 아래 자기 자리에 조용히 눕는 편이 낫다 —
+   원래 디자인도 그랬고 사용자가 그걸 고른 이유이기도 하다.
+   PRD §13 1번("현재 위치가 늘 보여야 한다")은 카드 안 STEP n/7 표기가 함께 받는다. */
+.rail {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  list-style: none;
+  margin: 0 0 2rem;
+  padding: 0;
+}
+
+.railStep {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+/* 단계 사이 실선 — 번호 줄의 세로 중앙에 걸린다. 지나온 구간만 잉크색이라
+   "여기까지 왔다"가 색이 아니라 길이로 읽힌다. */
+.railStep::before {
+  content: '';
+  position: absolute;
+  top: 0.62rem;
+  right: 50%;
+  width: 100%;
+  height: 1px;
+  background: var(--fm-line, var(--ring));
+}
+.railStep:first-child::before { display: none; }
+.rail_done::before,
+.rail_active::before { background: var(--fm-ink, var(--fg-1)); }
+
+.railNode {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: rgba(248, 251, 253, 0.98);
+  color: var(--fm-muted, var(--fg-3));
+  font-family: var(--font-serif);
+  font-size: 0.95rem;
+  font-weight: 500;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;   /* 01↔07 폭이 흔들리지 않게 */
+  transition: color .18s;
+}
+/* 끝난 단계는 숫자 대신 체크다. 잉크 원으로 채워 지나온 구간의 실선과 이어 보인다. */
+.rail_done .railNode {
+  min-width: 1.25rem;
+  padding: 0;
+  background: var(--fm-ink, var(--fg-1));
+  color: #fff;
+}
+.rail_active .railNode { color: var(--fm-ink, var(--fg-1)); }
+
+.railLabel {
+  color: var(--fm-muted, var(--fg-3));
+  font: 500 0.8rem/1.3 var(--font-body);
+  text-align: center;
+}
+.rail_done .railLabel { color: var(--fm-muted, var(--fg-2)); }
+.rail_active .railLabel { color: var(--fm-ink, var(--fg-1)); font-weight: 600; }
+
+/* '선택' 은 건너뛸 수 있다는 사실을 레일에서 말한다. 활성 단계에서만 보인다 —
+   일곱 칸에 상시로 달면 잡음이고, 정작 그 단계에 섰을 때 필요한 정보다. */
+.railOptional {
+  display: none;
+  color: var(--fm-muted, var(--fg-3));
+  font: 500 0.68rem/1 var(--font-body);
+}
+.rail_active .railOptional { display: block; }
+
+/* 좁은 화면: 일곱 칸을 다 눕히면 320px 에서 한 칸이 45px 이라 라벨이 겹친다.
+   가로 스크롤 대신 라벨을 활성 단계만 남기고 접는다 — 번호와 실선은 그대로라
+   "몇 번째 / 얼마나 왔나"는 유지된다. */
+@media (max-width: 40rem) {
+  .rail { padding-top: 0.8rem; margin-bottom: 1.2rem; }
+  .railLabel { font-size: 0.7rem; }
+  .railStep:not(.rail_active) .railLabel,
+  .railStep:not(.rail_active) .railOptional {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
-  .stepArrow {
-    display: none;
-  }
-  .railLabel { font-size: 10px; }
-  .stepHead { gap: 12px; }
-  .medallion { width: 46px; height: 46px; }
+}
+
+/* ================= FaceMarket 랜딩 디자인 — 단계 카드 내부 =================
+   위 규칙들은 셀러 스튜디오 토큰(--bg-2·--fg-2·--font-display)으로 짜여 있었다.
+   파일 끝에서 랜딩 토큰으로 덮는다 — 원본 규칙을 지우지 않고 남겨 둔 이유는,
+   이 모듈이 ai 도메인에서도(현재는 안 쓰지만) 재사용될 수 있고 무엇이 바뀌었는지
+   diff 로 보이는 편이 낫기 때문이다.
+   ============================================================================ */
+
+/* 안내 블록. 랜딩의 '확인할 수 있는 기록'(.record)이 쓰는 옅은 파랑과 같은 결로.
+   회색 블록은 "비활성"으로 읽히는데 이건 읽으라고 둔 내용이다. */
+.purposeNotice {
+  border-radius: 0.9rem;
+  background: rgba(45, 99, 255, 0.05);
+}
+.purposeNoticeHead { color: var(--fm-ink); font-family: var(--font-body); }
+.purposeNoticeHead svg { color: var(--fm-accent); }
+.purposeList { color: var(--fm-muted); font-family: var(--font-body); line-height: 1.7; }
+
+/* 메달리온 — 52px 회색 원은 이 디자인에서 과하다. 랜딩 카드가 아이콘을 배경 없이
+   그대로 놓는 결을 따르되, 단계 헤더의 시각 앵커라 얇은 테두리만 남긴다. */
+.medallion {
+  width: 2.6rem;
+  height: 2.6rem;
+  border: 1px solid var(--fm-line);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--fm-ink);
+}
+
+/* 단계 eyebrow. 기본 자간은 **한글 기준**이다 — 이 자리에는 'STEP 1 / 7' 같은 라틴만
+   오는 게 아니라 '본인 확인만 다시'(순한글)와 'STEP 4 / 7 · 선택'(라틴+한글 혼합)도 온다.
+   0.22em 을 통째로 걸면 한글이 '본 인 확 인 만' 처럼 낱글자로 흩어진다(브라우저 실측).
+   넓은 자간은 라틴 조각에만 .stepEyebrowLatin 으로 따로 건다 — 랜딩 .eyebrow/.eyebrowLatin
+   과 같은 처방이고, 같은 실수를 여기서 한 번 더 했다. */
+.stepEyebrow {
+  font-family: var(--font-body);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: none;   /* 원본의 uppercase 를 끈다 — 한글엔 대문자가 없고 라틴은 이미 대문자다 */
+  color: var(--fm-muted);
+}
+.stepEyebrowLatin { letter-spacing: 0.22em; }
+
+/* 단계 제목 — 랜딩 카드 제목(.cardTitle)과 같은 눈금. --font-display(Cal Sans)는
+   한글이 없어 폴백으로 떨어지므로 본문 폰트(Pretendard)를 쓴다. */
+.stateTitle {
+  font-family: var(--font-body);
+  font-size: clamp(1.15rem, 2vw, 1.4rem);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fm-ink);
+}
+
+/* 완료·에러 화면의 흰 카드도 같은 재질로. */
+.successWrap {
+  border: 1px solid var(--fm-line);
+  border-radius: var(--fm-card-radius);
+  background: var(--fm-card-bg);
+  box-shadow: var(--fm-elev-card);
 }

@@ -8,6 +8,16 @@
    생체 하드룰 — 얼굴은 Bearer fetch + objectURL 로만 표시한다. <img src> 로 공개 URL 을
    만들지 않는다. QR 이 싣는 건 검증 페이지 주소({origin}/verify/{id})뿐이고, 그 페이지는
    얼굴을 아예 렌더하지 않는다(PublicVerify).
+
+   ── 2026-09-02 디자인 리뉴얼 ────────────────────────────────
+   facemarket 랜딩(FacemarketLanding.module.css · LicensingSection)과 같은 언어로
+   외형·레이아웃만 다시 짰다. 랜딩의 라이선싱 설명 페이지를 읽고 온 사람이 여기서
+   같은 화면의 연장으로 느껴야 해서, 랜딩의 네 가지 눈금을 그대로 가져왔다 —
+   eyebrow(한글 자간 0.02em) / 섹션 제목 / 카드 재질(1px 선 + 반투명 흰 면) /
+   번호 붙은 스텝(.recordNumber 의 accent 0.72rem·자간 0.14em).
+
+   호출·상태 머신은 한 줄도 건드리지 않았다. createLicense·listLicenses·revokeLicense·
+   verifyLicensePublic·fetchLicenseFaceUrl 과 그 처리 흐름은 리뉴얼 전과 동일하다.
    ============================================================= */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -35,6 +45,7 @@ import {
 import { enrollmentReasonMessage } from "./biometricEnrollment.js";
 import s from "./ModelLicense.module.css";
 
+// 서버 enum 과 묶인 값이다 — 표시만 바꾸고 value 는 건드리지 않는다.
 const VALIDITY = [
     { value: 90, label: "90일" },
     { value: 365, label: "1년" },
@@ -63,6 +74,23 @@ const shortVc = (vc) => {
     if (!vc) return null;
     if (vc.length <= 24) return vc;
     return `${vc.slice(0, 14)}…${vc.slice(-4)}`;
+};
+
+// 조건 4칸의 번호·설명. 랜딩 .record 의 번호 붙은 칸과 같은 형태로 읽히게 한다.
+// 설명 문장은 랜딩 LicensingSection 의 카드 카피와 같은 눈금이다 — 없는 걸 약속하지 않는다.
+const TERM_STEPS = {
+    allowed: { no: "01", note: "여기서 고른 품목의 컷에만 내 얼굴이 쓰여요." },
+    forbidden: { no: "02", note: "고른 품목에는 쓸 수 없어요." },
+    // 원래 Field 의 hint(입력칸 아래)였다. 문장은 그대로 두고 자리만 다른 세 칸과 같은
+    // 곳(라벨 아래)으로 옮겼다 — 네 칸이 같은 구조여야 2열로 놓았을 때 줄이 맞는다.
+    // '지불하는' 이라고 쓰지 마라 — 지급(payout) 기능이 아직 없다. 랜딩이 네 라운드
+    // 사실성 감사 끝에 "실제 지급 기능도 아직 준비 중입니다"로 못박은 것과 같은 눈금이어야
+    // 하고, 여기는 모델이 그 숫자를 실제로 정하는 자리라 더 정확해야 한다.
+    price: { no: "03", note: "사용 1건마다 기록되는 내 몫 금액이에요. 실제 지급 기능은 아직 준비 중이에요." },
+    validity: {
+        no: "04",
+        note: "기간이 끝나면 이 라이선스로는 컷을 만들 수 없어요.",
+    },
 };
 
 /* ── 얼굴 VC 카드 (PDF step02 — 파란 카드, 모바일 폭 기준) ────────
@@ -185,124 +213,150 @@ function VcCard({ license, onRevoked, push }) {
                     <Icon name="checkSquare" size={13} />
                     얼굴 라이선스 VC
                 </span>
+                {/* 상태는 색만으로 알리지 않는다 — 점(형태) + 글자를 함께 둔다(WCAG 1.4.1). */}
                 <span
                     className={`${s.vcStatus}${isActive ? "" : " " + s.vcStatusOff}`}
                 >
+                    <i className={s.vcStatusDot} aria-hidden="true" />
                     {statusLabel}
                 </span>
             </header>
 
-            {showQr ? (
-                <div className={s.vcQr}>
-                    {qrUrl ? (
-                        <img
-                            src={qrUrl}
-                            alt="라이선스 검증 QR 코드"
-                            className={s.vcQrImg}
-                        />
-                    ) : (
-                        <div className={s.vcQrSkel} />
-                    )}
-                    <p className={s.vcQrHint}>
-                        스캔하면 이 라이선스가 유효한지 로그인 없이 확인할 수
-                        있어요.
-                    </p>
-                    <code className={s.vcQrUrl}>{verifyUrl}</code>
-                </div>
-            ) : (
-                <>
-                    <div className={s.vcId}>
-                        {/* 얼굴 — objectURL 만. 파기 시 게이트가 닫히면 플레이스홀더로 강등된다. */}
-                        <div className={s.vcFaceWrap}>
-                            <div className={s.vcFace}>
-                                {coverUrl ? (
-                                    <img src={coverUrl} alt="모델 대표 이미지" />
-                                ) : faceUrl ? (
-                                    <img src={faceUrl} alt="라이선스 얼굴" />
-                                ) : (
-                                    <span className={s.vcFaceEmpty}>
-                                        <Icon name="person" size={22} />
-                                    </span>
-                                )}
-                            </div>
-                            {coverUrl && faceUrl && (
-                                <span className={s.vcVerifiedBadge} title="검증된 얼굴">
-                                    <img src={faceUrl} alt="검증된 얼굴" />
-                                </span>
-                            )}
-                        </div>
-                        <div className={s.vcWho}>
-                            <div className={s.vcName}>
-                                {pub?.model?.nameMasked ?? "—"}
-                                {pub?.model?.age != null && (
-                                    <span className={s.vcAge}>
-                                        {" "}
-                                        · {pub.model.age}세
-                                    </span>
-                                )}
-                            </div>
-                            {vcShort ? (
-                                <div className={s.vcVcid} title={license.vcId}>
-                                    <span>VC ID</span> <code>{vcShort}</code>
-                                </div>
-                            ) : (
-                                <div className={s.vcVcid}>
-                                    <span>VC 발급 대기</span>
-                                </div>
-                            )}
-                        </div>
+            {/* 앞면·뒷면 높이가 달라 토글할 때 카드가 튀었다. 최소 높이를 주는 자리. */}
+            <div className={s.vcBody}>
+                {showQr ? (
+                    <div className={s.vcQr}>
+                        {qrUrl ? (
+                            <img
+                                src={qrUrl}
+                                alt="라이선스 검증 QR 코드"
+                                className={s.vcQrImg}
+                            />
+                        ) : (
+                            <div className={s.vcQrSkel} />
+                        )}
+                        <p className={s.vcQrHint}>
+                            스캔하면 이 라이선스가 유효한지 로그인 없이 확인할 수
+                            있어요.
+                        </p>
+                        <code className={s.vcQrUrl}>{verifyUrl}</code>
                     </div>
+                ) : (
+                    <>
+                        <div className={s.vcId}>
+                            {/* 얼굴 — objectURL 만. 파기 시 게이트가 닫히면 플레이스홀더로 강등된다. */}
+                            <div className={s.vcFaceWrap}>
+                                <div className={s.vcFace}>
+                                    {coverUrl ? (
+                                        <img
+                                            src={coverUrl}
+                                            alt="모델 대표 이미지"
+                                        />
+                                    ) : faceUrl ? (
+                                        <img src={faceUrl} alt="라이선스 얼굴" />
+                                    ) : (
+                                        <span className={s.vcFaceEmpty}>
+                                            <Icon name="person" size={22} />
+                                        </span>
+                                    )}
+                                </div>
+                                {coverUrl && faceUrl && (
+                                    <span
+                                        className={s.vcVerifiedBadge}
+                                        title="검증된 얼굴"
+                                    >
+                                        <img src={faceUrl} alt="검증된 얼굴" />
+                                    </span>
+                                )}
+                            </div>
+                            <div className={s.vcWho}>
+                                <div className={s.vcName}>
+                                    {pub?.model?.nameMasked ?? "—"}
+                                    {pub?.model?.age != null && (
+                                        <span className={s.vcAge}>
+                                            {" "}
+                                            · {pub.model.age}세
+                                        </span>
+                                    )}
+                                </div>
+                                {vcShort ? (
+                                    <div
+                                        className={s.vcVcid}
+                                        title={license.vcId}
+                                    >
+                                        <span>VC ID</span>{" "}
+                                        <code>{vcShort}</code>
+                                    </div>
+                                ) : (
+                                    <div className={s.vcVcid}>
+                                        <span>VC 발급 대기</span>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
 
-                    <dl className={s.vcRows}>
-                        {license.allowedUse?.length > 0 && (
-                            <div className={s.vcRow}>
-                                <dt>허용 용도</dt>
-                                <dd className={s.vcTags}>
-                                    {license.allowedUse.map((u) => (
-                                        <span key={u} className={s.tagAllow}>
-                                            {u}
-                                        </span>
-                                    ))}
+                        {/* 단가·유효기간은 이 카드에서 가장 먼저 읽혀야 하는 두 숫자다.
+                            조건 목록 안의 한 줄이 아니라 나란한 두 칸으로 올렸다(정보는 그대로). */}
+                        <dl className={s.vcFigures}>
+                            <div className={s.vcFigure}>
+                                <dt>건당 단가</dt>
+                                <dd className={s.vcPrice}>
+                                    {won(license.unitPrice)}
+                                    <em>/건</em>
                                 </dd>
                             </div>
-                        )}
-                        {license.forbiddenUse?.length > 0 && (
-                            <div className={s.vcRow}>
-                                <dt>금지 용도</dt>
-                                <dd className={s.vcTags}>
-                                    {license.forbiddenUse.map((u) => (
-                                        <span key={u} className={s.tagDeny}>
-                                            <Icon name="ban" size={10} />
-                                            {u}
-                                        </span>
-                                    ))}
+                            <div className={s.vcFigure}>
+                                <dt>유효기간</dt>
+                                <dd className={s.vcValid}>
+                                    ~{fmtYm(license.licenseValidUntil)}
+                                    <span className={s.vcDim}>
+                                        {fmtDate(license.licenseValidUntil)}까지
+                                    </span>
                                 </dd>
                             </div>
-                        )}
-                        <div className={s.vcRow}>
-                            <dt>단가</dt>
-                            <dd className={s.vcPrice}>
-                                {won(license.unitPrice)}
-                                <em>/건</em>
-                            </dd>
-                        </div>
-                        <div className={s.vcRow}>
-                            <dt>유효</dt>
-                            <dd>
-                                ~{fmtYm(license.licenseValidUntil)}{" "}
-                                <span className={s.vcDim}>
-                                    ({fmtDate(license.licenseValidUntil)}까지)
-                                </span>
-                            </dd>
-                        </div>
-                    </dl>
-                </>
-            )}
+                        </dl>
+
+                        {/* 허용/금지가 둘 다 비면 이 <dl> 은 자식이 없다 — :empty 로 접는다.
+                            JSX 에 조건을 하나 더 얹는 대신 CSS 로 처리해 렌더 흐름을 그대로 뒀다. */}
+                        <dl className={s.vcRows}>
+                            {license.allowedUse?.length > 0 && (
+                                <div className={s.vcRow}>
+                                    <dt>허용 용도</dt>
+                                    <dd className={s.vcTags}>
+                                        {license.allowedUse.map((u) => (
+                                            <span
+                                                key={u}
+                                                className={s.tagAllow}
+                                            >
+                                                {u}
+                                            </span>
+                                        ))}
+                                    </dd>
+                                </div>
+                            )}
+                            {license.forbiddenUse?.length > 0 && (
+                                <div className={s.vcRow}>
+                                    <dt>금지 용도</dt>
+                                    <dd className={s.vcTags}>
+                                        {license.forbiddenUse.map((u) => (
+                                            <span key={u} className={s.tagDeny}>
+                                                <Icon name="ban" size={10} />
+                                                {u}
+                                            </span>
+                                        ))}
+                                    </dd>
+                                </div>
+                            )}
+                        </dl>
+                    </>
+                )}
+            </div>
 
             <footer className={s.vcActions}>
                 <button
                     type="button"
                     className={s.vcBtn}
+                    aria-pressed={showQr}
                     onClick={() => setShowQr((v) => !v)}
                 >
                     <Icon name={showQr ? "person" : "grid"} size={14} />
@@ -332,6 +386,12 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
     const [validDays, setValidDays] = useState(365);
     const [submitting, setSubmitting] = useState(false);
     const [issuePhase, setIssuePhase] = useState(null); // null | 'preparing' | 'issuing'
+
+    // 발급 가능 여부 — 아래 세 곳(안내문·버튼 disabled)이 같은 판정을 쓰게 이름만 붙였다.
+    // onSubmit 의 가드는 리뉴얼 전 표현 그대로 둔다(판정이 갈릴 여지를 만들지 않는다).
+    const blocked =
+        !enrollmentId ||
+        !["license_pending", "vc_pending"].includes(enrollmentStatus);
 
     const onSubmit = async () => {
         if (!enrollmentId || !["license_pending", "vc_pending"].includes(enrollmentStatus)) return;
@@ -378,84 +438,130 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
 
     return (
         <div className="surface">
-            <div className={s.termsIntro}>
-                <Icon name="checkSquare" size={15} />
-                <span>
-                    현재 생체 등록에 결속된 얼굴 자산만 이 라이선스에 쓰여요.
-                    사용 조건을 정하면 VC 로 발행돼요.
-                </span>
+            <div className={s.formHead}>
+                <span className={s.eyebrow}>발급 조건</span>
+                <h2 className={s.formTitle}>네 가지를 정하면 발급돼요</h2>
+                {/* DESIGN.md:309 — '결속'·'자산' 은 화면에 쓰지 않는 개발자 언어라
+                    '이번 등록에서 확인한 얼굴 이미지' 로 바꿨다(사실은 같다). */}
+                <p className={s.formLead}>
+                    이번 등록에서 확인한 얼굴 이미지만 이 라이선스에 쓰여요.
+                    사용 조건을 정하면 서명된 자격증명(VC)으로 발급돼요.
+                </p>
             </div>
 
-            {(!enrollmentId || !["license_pending", "vc_pending"].includes(enrollmentStatus)) && (
-                <p className={s.privacy}>
-                    {enrollmentReasonMessage(enrollmentReason)} 먼저 모델 등록을 완료해 주세요.
+            {blocked && (
+                <p className={s.notice}>
+                    <Icon name="alertCircle" size={16} />
+                    <span>
+                        {enrollmentReasonMessage(enrollmentReason)} 먼저 모델
+                        등록을 완료해 주세요.
+                    </span>
                 </p>
             )}
 
-            <div className={s.sectionLabel}>허용 브랜드 유형</div>
-            <Chips
-                options={ALLOWED_BRAND_USE_CATEGORIES}
-                value={allowed}
-                onChange={setAllowed}
-                multi
-            />
-
-            <div className={s.sectionLabel}>금지 브랜드 유형</div>
-            <Chips
-                options={FORBIDDEN_BRAND_USE_CATEGORIES}
-                value={forbidden}
-                onChange={setForbidden}
-                multi
-            />
-
-            <div className={s.row2}>
-                <div>
-                    <div className={s.sectionLabel}>건당 단가</div>
-                    <Field
-                        type="number"
-                        min={0}
-                        step={1000}
-                        value={unitPrice}
-                        onChange={(e) => setUnitPrice(e.target.value)}
-                        hint="셀러가 1회 사용할 때마다 지불하는 금액이에요."
-                    />
-                </div>
-                <div>
-                    <div className={s.sectionLabel}>유효기간</div>
+            <div className={s.terms}>
+                <section className={s.term}>
+                    <span className={s.termNo}>{TERM_STEPS.allowed.no}</span>
+                    <h3 className={s.termLabel}>허용 브랜드 유형</h3>
+                    <p className={s.termNote}>{TERM_STEPS.allowed.note}</p>
                     <Chips
-                        options={VALIDITY}
-                        value={validDays}
-                        onChange={(v) => v && setValidDays(v)}
+                        options={ALLOWED_BRAND_USE_CATEGORIES}
+                        value={allowed}
+                        onChange={setAllowed}
+                        multi
                     />
+                </section>
+
+                <section className={s.term}>
+                    <span className={s.termNo}>{TERM_STEPS.forbidden.no}</span>
+                    <h3 className={s.termLabel}>금지 브랜드 유형</h3>
+                    <p className={s.termNote}>{TERM_STEPS.forbidden.note}</p>
+                    <Chips
+                        options={FORBIDDEN_BRAND_USE_CATEGORIES}
+                        value={forbidden}
+                        onChange={setForbidden}
+                        multi
+                    />
+                </section>
+
+                <div className={s.row2}>
+                    <section className={s.term}>
+                        <span className={s.termNo}>{TERM_STEPS.price.no}</span>
+                        <h3 className={s.termLabel}>건당 단가</h3>
+                        <p className={s.termNote}>{TERM_STEPS.price.note}</p>
+                        <Field
+                            type="number"
+                            min={0}
+                            step={1000}
+                            value={unitPrice}
+                            onChange={(e) => setUnitPrice(e.target.value)}
+                        />
+                    </section>
+                    <section className={s.term}>
+                        <span className={s.termNo}>
+                            {TERM_STEPS.validity.no}
+                        </span>
+                        <h3 className={s.termLabel}>유효기간</h3>
+                        <p className={s.termNote}>{TERM_STEPS.validity.note}</p>
+                        <Chips
+                            options={VALIDITY}
+                            value={validDays}
+                            onChange={(v) => v && setValidDays(v)}
+                        />
+                    </section>
                 </div>
             </div>
 
-            <Button
-                variant="primary"
-                block
-                onClick={onSubmit}
-                disabled={submitting || !enrollmentId || !["license_pending", "vc_pending"].includes(enrollmentStatus)}
-                iconRight="arrowRight"
-            >
-                {submitting
-                    ? (issuePhase === "preparing" ? "발급 준비 중…" : "발급 진행 중…")
-                    : "라이선스 발급"}
-            </Button>
-            {submitting && (
-                <p className="hint" role="status" aria-live="polite">
-                    {issuePhase === "preparing"
-                        ? "VC 발급 서버를 준비하고 있어요… 최대 3분 정도 걸릴 수 있어요. 이 화면을 닫지 말아 주세요."
-                        : "VC 발급을 진행하고 있어요…"}
-                </p>
-            )}
+            <div className={s.submit}>
+                <Button
+                    variant="primary"
+                    block
+                    className={s.cta}
+                    onClick={onSubmit}
+                    disabled={submitting || blocked}
+                    iconRight="arrowRight"
+                >
+                    {submitting
+                        ? (issuePhase === "preparing" ? "발급 준비 중…" : "발급 진행 중…")
+                        : "라이선스 발급"}
+                </Button>
 
-            <div className={s.privacy}>
+                {/* 대기 화면이 제품의 일부다(PRD §13-2). holder 콜드부트 ~2분이 정상
+                    경로에 있어서, 버튼 라벨만으로는 "멈춘 건가"로 읽힌다. 진행 중이라는
+                    걸 형태(맥동 점 + 불확정 바)로도 보여주고, 얼마나 걸리는지와 화면을
+                    닫지 말라는 지시를 같이 둔다. 문장의 사실(최대 3분)은 그대로다. */}
+                {submitting && (
+                    <div className={s.wait} role="status" aria-live="polite">
+                        <span className={s.waitPulse} aria-hidden="true" />
+                        <div className={s.waitText}>
+                            <p className={s.waitTitle}>
+                                {issuePhase === "preparing"
+                                    ? "VC 발급 서버를 준비하고 있어요"
+                                    : "VC 발급을 진행하고 있어요"}
+                            </p>
+                            <p className={s.waitNote}>
+                                {/* 남은 시간을 아는 척하지 않는다 — 발급 단계는 홀더
+                                    응답에 달려 있어 예측값이 없다. 대신 끝나면 무엇이
+                                    보이는지(발급 직후 카드로 이동)를 적는다. */}
+                                {issuePhase === "preparing"
+                                    ? "최대 3분 정도 걸릴 수 있어요. 이 화면을 닫지 말아 주세요."
+                                    : "발급이 끝나면 라이선스 카드가 바로 보여요. 이 화면을 닫지 말아 주세요."}
+                            </p>
+                        </div>
+                        <span className={s.waitBar} aria-hidden="true">
+                            <i />
+                        </span>
+                    </div>
+                )}
+            </div>
+
+            <p className={s.privacy}>
                 <Icon name="lock" size={15} />
                 <span>
                     얼굴 이미지는 비공개로 저장되고, 검증된 본인만 열람할 수
                     있어요. QR 에는 검증 주소만 담겨요.
                 </span>
-            </div>
+            </p>
         </div>
     );
 }
@@ -526,7 +632,12 @@ export function ModelLicense() {
     if (phase === "loading")
         return (
             <div className="wizard narrow">
-                <div className="surface">불러오는 중…</div>
+                <div className="surface">
+                    <p className={s.loading} role="status" aria-live="polite">
+                        <span className={s.waitPulse} aria-hidden="true" />
+                        불러오는 중…
+                    </p>
+                </div>
             </div>
         );
     if (phase === "error")
@@ -543,11 +654,17 @@ export function ModelLicense() {
 
     return (
         <div className="wizard narrow">
+            {/* eyebrow 는 <span> 이다 — facemarketTheme 의 `.page-head p` 규칙(본문 리드)이
+                이 줄까지 잡아 muted 리드로 만들어 버려서 요소를 갈랐다. */}
             <div className="page-head">
+                <span className={s.eyebrow}>라이선싱</span>
                 <h1>얼굴 라이선스</h1>
+                {/* '발급'으로 통일한다. 같은 화면 아래(발급 조건·라이선스 발급 버튼)와
+                    랜딩·허브가 전부 '발급'인데 여기만 '발행'이었다. 한 사이트에서 같은
+                    동작을 두 단어로 부르면 다른 일로 읽힌다. */}
                 <p>
                     얼굴과 사용 조건을 직접 정하면, 검증 가능한 라이선스(VC)로
-                    발행돼요.
+                    발급돼요.
                 </p>
             </div>
 
@@ -576,32 +693,76 @@ export function ModelLicense() {
                 </>
             ) : (
                 <>
-                    <div className={s.cards}>
-                        {licenses.map((lic) => (
-                            <div
-                                key={lic.id}
-                                ref={lic.id === issuedId ? issuedRef : null}
-                                className={
-                                    lic.id === issuedId ? s.cardNew : undefined
-                                }
-                            >
-                                <VcCard
-                                    license={lic}
-                                    onRevoked={load}
-                                    push={push}
-                                />
+                    {licenses.length > 0 ? (
+                        <>
+                            {/* 큰 세리프 숫자 = 랜딩 .galleryIndexNow 의 자리표시.
+                                Cormorant 는 라틴 전용이라 숫자만 이 서체로 그리고
+                                뒤 라벨은 본문 서체로 둔다(한글이 폴백으로 안 떨어지게). */}
+                            <div className={s.listHead}>
+                                <p className={s.listCount}>
+                                    <span className={s.listCountNow}>
+                                        {licenses.length}
+                                    </span>
+                                    <span className={s.listCountLabel}>
+                                        건 발급됨
+                                    </span>
+                                </p>
+                                <p className={s.listNote}>
+                                    QR 을 찍으면 로그인 없이 조건과 유효 여부를
+                                    확인할 수 있어요. 그 화면에 얼굴은 나오지
+                                    않아요.
+                                </p>
                             </div>
-                        ))}
+                            <div className={s.cards}>
+                                {licenses.map((lic) => (
+                                    <div
+                                        key={lic.id}
+                                        ref={
+                                            lic.id === issuedId
+                                                ? issuedRef
+                                                : null
+                                        }
+                                        className={
+                                            lic.id === issuedId
+                                                ? s.cardNew
+                                                : undefined
+                                        }
+                                    >
+                                        <VcCard
+                                            license={lic}
+                                            onRevoked={load}
+                                            push={push}
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+                        </>
+                    ) : (
+                        // 발급 이력이 없으면 예전엔 버튼 하나만 뜬 빈 화면이었다.
+                        // 다음에 뭘 해야 하는지 한 줄로 말해 준다(없는 기능은 약속하지 않는다).
+                        <div className={s.empty}>
+                            <Icon name="checkSquare" size={22} stroke={1.7} />
+                            <h2 className={s.emptyTitle}>
+                                아직 발급된 라이선스가 없어요
+                            </h2>
+                            <p className={s.emptyBody}>
+                                모델 등록을 마치면 허용 품목·금지 품목·건당
+                                단가·유효기간을 정하고 라이선스를 발급할 수
+                                있어요.
+                            </p>
+                        </div>
+                    )}
+                    <div className={s.listFoot}>
+                        <Button
+                            variant="ghost"
+                            block
+                            icon="plus"
+                            className={s.ctaQuiet}
+                            onClick={() => navigate("/model/register")}
+                        >
+                            새 생체 등록으로 라이선스 발급
+                        </Button>
                     </div>
-                    <Button
-                        variant="ghost"
-                        block
-                        icon="plus"
-                        style={{ marginTop: 40 }}
-                        onClick={() => navigate("/model/register")}
-                    >
-                        새 생체 등록으로 라이선스 발급
-                    </Button>
                 </>
             )}
         </div>

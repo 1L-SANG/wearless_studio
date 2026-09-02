@@ -5,7 +5,7 @@
    React Router (prototype used props + a single App state machine).
    ============================================================= */
 import { useState, useEffect, useRef } from 'react';
-import { NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { Link, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { Icon, Modal, Button, useToast } from '@/components/ui.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
@@ -72,7 +72,12 @@ export function TopNav() {
   const openTopNavLogin = async () => {
     try {
       await flushProductDraftSave();
-      openLogin(pathname === '/create/input' ? pathname : '/create/input');
+      // 복귀 목표는 도메인마다 다르다. 이 TopNav 는 facemarket 의 /model/* 에서도 렌더되는데
+      // (ChromeLayout 이 항상 그린다 — 위 탭들만 숨는다), 거기서 셀러 경로를 심으면
+      // facemarketRootTarget 화이트리스트가 그 값을 버려 등록 위저드가 아니라 랜딩으로
+      // 떨어진다. 등록하러 온 모델이 CTA 를 한 번 더 눌러야 제자리로 오는 셈이라 여기서 가른다.
+      // (ai 도메인 값은 그대로 '/create/input' — 기존 삼항이 두 갈래 모두 같은 값이었다.)
+      openLogin(IS_FACEMARKET ? '/model/register' : '/create/input');
     } catch (error) {
       toast.push(error?.message || '입력한 내용을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     }
@@ -81,10 +86,22 @@ export function TopNav() {
   return (
     <>
     <nav className="topnav">
-      <span className="brand">
-        <img className="brand-logo" src="/assets/brand/logo.svg" alt="" />
-        <img className="brand-wordmark" src="/assets/brand/wordmark.png" alt="Wearless" />
-      </span>
+      {/* facemarket 은 '/' 가 랜딩이라 브랜드가 홈 진입점이어야 한다. 이게 없으면 등록에
+          들어간 모델이 랜딩(제품 설명 전체)으로 돌아갈 길이 주소창뿐이다 — 앱 안의 '/' 링크는
+          비로그인 전용 화면(FacemarketLoginPrompt)에 하나 있는 게 전부라 로그인 사용자에겐 0개다.
+          ai 도메인은 '/' 가 RootRedirect(입력 화면으로 튕김)라 브랜드를 링크로 만들면 작업 중
+          플로우를 이탈시킨다 — 종전대로 링크 없는 span 을 유지한다. */}
+      {IS_FACEMARKET ? (
+        <Link className="brand" to="/" aria-label="FaceMarket 홈">
+          <img className="brand-logo" src="/assets/brand/logo.svg" alt="" />
+          <img className="brand-wordmark" src="/assets/brand/wordmark.png" alt="Wearless" />
+        </Link>
+      ) : (
+        <span className="brand">
+          <img className="brand-logo" src="/assets/brand/logo.svg" alt="" />
+          <img className="brand-wordmark" src="/assets/brand/wordmark.png" alt="Wearless" />
+        </span>
+      )}
       <div className="nav-links">
         {/* 비로그인 숨김: 보관함/제작 탭은 로그인 사용자용. 비로그인 입력·분석은 '/' 공개 진입.
             facemarket(등록 전용 도메인)에서는 메인 앱 탭을 숨긴다. */}
@@ -202,8 +219,13 @@ function ProfileMenu() {
             onClick={() => { setOpen(false); navigate('/credits/history'); }}>
             <Icon name="coins" size={16} stroke={1.8} />크레딧 사용 내역
           </button>
+          {/* facemarket 은 로그아웃 착지점을 먼저 랜딩으로 옮기고 세션을 끊는다. 순서를
+              바꾸면 안 된다 — /model/* 에 선 채로 세션이 사라지면 RequireAuth 가
+              FacemarketLoginPrompt 를 그리고 그 effect 가 로그인 모달을 연다. 방금
+              로그아웃한 사람에게 로그인 창을 띄우는 셈이다. '/' 는 공개 라우트라 먼저
+              옮겨도 안전하다. ai 도메인은 종전대로 라우트를 그대로 둔다. */}
           <button className="profile-item" role="menuitem"
-            onClick={() => { setOpen(false); signOut(); }}>
+            onClick={() => { setOpen(false); if (IS_FACEMARKET) navigate('/'); signOut(); }}>
             <Icon name="logOut" size={16} stroke={1.8} />로그아웃
           </button>
         </div>

@@ -1,0 +1,849 @@
+/* 랜딩 전용 토큰. 앱 전역 토큰(tokens.css)은 건드리지 않고 여기서만 덮는다 —
+   spotlight 원본의 차가운 오프화이트와 파랑이 앱의 순백·링크블루와 다르다. */
+.shell {
+  --fm-page-bg: #edf3f8;
+  --fm-ink: #10151a;
+  /* 원본 --muted 는 #727c86 인데, 이 페이지 배경(#edf3f8, .record 위에선 #e4ecf8)에서
+     명도비 3.8:1 로 WCAG AA 4.5:1 에 못 미친다. 본문 보조 텍스트(리드·카드 본문·고지)가
+     전부 이 토큰을 쓰므로 같은 한색 계열을 유지한 채 한 단계만 어둡게 잡았다 —
+     #5f6b76 은 가장 어두운 배경(#e4ecf8)에서도 4.57:1, 흰 카드 위에서 5.45:1 이다. */
+  --fm-muted: #5f6b76;
+  --fm-line: rgba(16, 21, 26, 0.12);
+  --fm-accent: #2d63ff;
+  --fm-pad: clamp(1.25rem, 3.1vw, 4.25rem);
+  /* 상단바 높이. .header 가 쓰고, 첫 화면 그리드(.screen)가 '뷰포트 − 상단바 − 안내 띠'를
+     계산할 때 같은 값을 빼야 하므로 변수로 못박는다. 원본(--header-height, 최대 6.5rem)보다
+     낮다 — 상단바가 스크롤 내내 화면에 남게 되면서(sticky) 그 높이가 계속 뷰포트를 먹기
+     때문이다. 사용자 지시(2026-09-02)이기도 하다. */
+  --fm-header-h: clamp(3.5rem, 4.6vw, 4.5rem);
+  /* 맨 위 안내 띠 높이(데스크톱 한 줄). 첫 화면 그리드가 '뷰포트 − 상단바 − 띠'를 계산할 때 뺀다.
+     캡처 실측 비율(글자 12px, 띠 ≈34px)에 맞춘 값이다.
+     폰에서는 두 줄로 접혀 더 높지만 폰은 첫 화면 min-height 규칙을 안 쓴다. */
+  --fm-notice-h: 2.1rem;
+
+  position: relative;
+  min-height: 100vh;
+  padding: 0 var(--fm-pad) 4rem;
+  /* 원본 .spotlight-shell 의 overflow: hidden. 캐러셀 아크 양끝 카드가 뷰포트 폭을 넘어가는
+     걸 여기서 자른다 — 스테이지 자신은 세로로 자르면 안 돼서(CarouselStage.module.css
+     머리말) 가로 클립을 셸이 맡는다. 셸은 내용만큼 자라므로 세로로는 아무것도 안 잘린다.
+     **`hidden` 으로 되돌리지 마라 — 상단바 sticky 가 죽는다.** hidden 은 스크롤 컨테이너를
+     만들고, sticky 는 가장 가까운 스크롤 컨테이너를 기준으로 붙는데 그 컨테이너 자신은
+     스크롤되지 않으므로 상단바가 그냥 흘러가 버린다(실측). clip 은 스크롤 컨테이너를
+     만들지 않아 sticky 가 뷰포트 기준으로 산다. 부수 효과로 화면 밖 카드에 focus() 가 가도
+     셸이 옆으로 밀리지 않는다. */
+  overflow: clip;
+  color: var(--fm-ink);
+  background:
+    radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.72), transparent 32rem),
+    linear-gradient(180deg, #f8fbfd 0%, var(--fm-page-bg) 100%);
+  font-family: var(--font-body);
+}
+
+/* 히어로 제목의 이탤릭 한 단어("your *terms*")용 face. tokens.css 의 "Cormorant" 는 정체
+   가변 폰트 하나뿐이라 <em> 이 합성 기울임(oblique)으로 그려진다 — 5rem 에서는 진짜
+   이탤릭과 확연히 다르다(원본 "framed in *light*" 는 Cormorant Garamond 500 Italic).
+   "Cormorant" 패밀리에 이탤릭 face 로 얹지 않고 **별도 패밀리명**으로 두는 이유:
+   셀러 에디터의 이탤릭 토글(Editor.jsx `s.italic`)이 Cormorant 를 고른 텍스트에 걸리면
+   미리보기가 진짜 이탤릭으로 바뀌는데, 최종 PNG 를 그리는 백엔드 page_assembler 는
+   그 파일이 없어 둘이 어긋난다. 이 face 는 이 모듈을 실은 화면에서만 존재한다.
+   파일 출처·라이선스는 src/fonts/LICENSES/README.md. */
+@font-face {
+  font-family: 'Cormorant Garamond FM Italic';
+  src: url('../../fonts/CormorantGaramond-Italic-500-latin.woff2') format('woff2');
+  font-weight: 500;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* ---- 맨 위 안내 띠 ---- */
+/* 사용자 캡처(2026-09-02) 그대로: 어두운 띠(#1a1b1d) 한 줄, 작은 글자, 좌 안내 · 우 링크.
+   띠 자체는 full-bleed(셸 패딩을 음수 마진으로 되돌림)지만 **글자는 가운데 정렬된 좁은 열**에
+   선다 — 캡처를 재 보니 양쪽 글자가 폭의 20.2% / 79.7% 지점에서 시작·끝났다(대칭). 상단바 폭
+   (셸 패딩 ~3vw)까지 벌리면 캡처보다 훨씬 넓게 퍼진다. 열 폭 75rem 은 캡처의 비율(2000px
+   창에서 ≈1190px)에 맞춘 값이다.
+   데스크톱 한 줄 높이는 --fm-notice-h 로 못박는다(첫 화면 계산과 같은 값). */
+.topNotice {
+  position: relative;   /* 닫기 버튼의 기준 */
+  box-sizing: border-box;
+  min-height: var(--fm-notice-h);
+  margin-inline: calc(var(--fm-pad) * -1);
+  padding: 0.35rem var(--fm-pad);
+  background: #1a1b1d;
+  color: rgba(255, 255, 255, 0.72);
+  /* 0.85rem — 캡처의 글자 폭에서 역산했다(왼쪽 안내가 2000px 폭에서 190px, 0.75rem 이면 168px). */
+  font: 400 0.85rem/1.4 var(--font-body);
+}
+
+/* 닫기 버튼은 가운데 열 바깥, 띠의 오른쪽 끝에. 히트 영역은 24px 를 지킨다(WCAG 2.2 SC 2.5.8). */
+.topNoticeClose {
+  position: absolute;
+  top: 50%;
+  right: calc(var(--fm-pad) / 2);
+  translate: 0 -50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  transition: color 140ms ease, background 140ms ease;
+}
+.topNoticeClose:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+.topNoticeClose:focus-visible { outline: 2px solid rgba(255, 255, 255, 0.8); outline-offset: 1px; }
+.topNoticeInner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem 1.5rem;
+  max-width: 75rem;
+  margin-inline: auto;
+}
+.topNotice strong { color: #fff; font-weight: 600; }
+.topNoticeLink {
+  color: rgba(255, 255, 255, 0.85);
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 255, 255, 0.45);
+  text-underline-offset: 0.18em;
+  white-space: nowrap;
+  transition: color 140ms ease, text-decoration-color 140ms ease;
+}
+.topNoticeLink:hover { color: #fff; text-decoration-color: #fff; }
+/* 폰은 한 줄에 안 들어간다(안내 190px + 링크 330px) — 두 줄로 쌓는다. */
+@media (max-width: 47.99rem) {
+  .topNotice { padding-block: 0.45rem; padding-right: 2.25rem; }   /* 닫기 버튼 자리 */
+  .topNoticeInner { flex-direction: column; align-items: flex-start; gap: 0.15rem; }
+  .topNoticeLink { white-space: normal; }
+}
+
+/* ---- 상단바 ---- */
+/* 원본 .site-header 처럼 1fr auto 1fr 이다. flex space-between 이면 오른쪽 열(CTA +
+   로그아웃)이 왼쪽(브랜드)보다 넓어 가운데 내비가 화면 중앙에서 왼쪽으로 밀린다 —
+   로그인하면 로그아웃 버튼이 생겨 그 편차가 더 커진다.
+
+   스크롤해도 화면에 남는다(sticky, 사용자 지시 2026-09-02). 맨 위 안내 띠는 같이 안 붙는다 —
+   한 번 읽고 지나가는 방향 안내라 계속 자리를 차지할 이유가 없다.
+   sticky 는 흐름에서 자리를 그대로 차지하므로 .screen 의 '뷰포트 − 상단바 − 띠' 계산은
+   그대로 맞는다. 배경은 반투명 + 블러다: 이 페이지 배경이 그라데이션이라 불투명 단색을
+   깔면 어느 스크롤 위치에서든 색이 어긋나고, 맨 위에서는 띠 아래 이음매로 보인다.
+   좌우 패딩은 셸이 이미 주고 있어(--fm-pad) 여기서 다시 주지 않는다 — 대신 음수 마진으로
+   배경만 화면 끝까지 늘린다. 안 그러면 카드가 상단바 좌우 여백으로 비쳐 지나간다. */
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 1rem;
+  height: var(--fm-header-h);
+  margin-inline: calc(var(--fm-pad) * -1);
+  padding-inline: var(--fm-pad);
+  background: rgba(248, 251, 253, 0.72);
+  backdrop-filter: blur(14px) saturate(1.6);
+  -webkit-backdrop-filter: blur(14px) saturate(1.6);
+}
+
+/* 블러를 못 쓰는 환경에서는 반투명이 아니라 불투명으로 — 글자 뒤로 카드가 지나가면
+   읽을 수 없다. 색은 페이지 그라데이션 맨 위 색이라 첫 화면에서는 이음매가 안 보인다. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .header { background: #f8fbfd; }
+}
+
+.brand { display: inline-flex; align-items: center; gap: 0.55rem; color: inherit; text-decoration: none; }
+.brandLogo { width: 1.4rem; height: 1.4rem; }
+.brandName { font: 600 1.05rem/1 var(--font-body); letter-spacing: -0.01em; }
+
+.nav { display: none; gap: clamp(1.5rem, 3vw, 3.4rem); justify-self: center; }
+/* 이제 <button> 이 아니라 <NavLink>(=<a>)다. 이 레포의 전역 스타일에는 링크 리셋이
+   없고(app.css 는 `a.link` 클래스 한정) UA 기본 밑줄이 그대로 나오므로 여기서 끈다. */
+.navLink {
+  padding: 0.35rem 0;
+  border: 0;
+  background: none;
+  color: var(--fm-muted);
+  font: 500 0.92rem/1 var(--font-body);
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 140ms ease;
+}
+.navLink:hover { color: var(--fm-ink); }
+
+/* 현재 페이지 표시. 색만으로 알리지 않는다 — 색각 이상이나 저대비 환경에서 구분이
+   사라진다(WCAG 1.4.1). 밑줄을 함께 둬서 형태로도 읽히게 한다. */
+.navLinkActive {
+  color: var(--fm-ink);
+  text-decoration: underline;
+  text-underline-offset: 0.45rem;
+  text-decoration-thickness: 2px;
+}
+
+.headerActions { display: inline-flex; align-items: center; justify-self: end; gap: 0.6rem; }
+
+.headerCta,
+.heroCta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--fm-ink);
+  color: #fff;
+  font: 500 0.92rem/1 var(--font-body);
+  cursor: pointer;
+  transition: opacity 140ms ease;
+}
+.headerCta { padding: 0.68rem 1.1rem; }
+.heroCta { padding: 0.95rem 1.6rem; font-size: 1rem; }
+.headerCta:hover, .heroCta:hover { opacity: 0.86; }
+
+.menuButton {
+  display: inline-flex;
+  padding: 0.4rem;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.mobileNav {
+  position: absolute;
+  inset: 100% 0 auto;
+  z-index: 20;
+  display: grid;
+  gap: 0.4rem;
+  padding: 1rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 1rem;
+  background: #fff;
+  box-shadow: 0 1.4rem 3rem rgba(16, 21, 26, 0.14);
+}
+
+@media (min-width: 48rem) {
+  .header { grid-template-columns: 1fr auto 1fr; }
+  .nav { display: inline-flex; }
+  .menuButton { display: none; }
+  /* 햄버거가 사라지는 폭에서는 드롭다운도 같이 사라져야 한다. 안 그러면 메뉴를 연 채
+     창을 넓혔을 때(가로 회전 포함) 패널만 남고 닫을 버튼이 없어 갇힌다.
+     상태 자체는 LandingHeader 의 matchMedia 리스너가 정리한다 — 여기 규칙은
+     그 사이 한 프레임도 어긋나 보이지 않게 하는 보험이다. */
+  .mobileNav { display: none; }
+}
+
+/* ---- 첫 화면(히어로 + 스테이지 + 메타 바) ---- */
+/* 원본 spotlight 의 한 뷰포트 구성을 그리드 한 장으로 옮긴 것이다.
+   행: 히어로(auto) / 스테이지(1fr) / 메타 바(auto). 데스크톱에서는 min-height 를
+   '뷰포트 − 상단바'로 잡아 남는 높이가 전부 스테이지 행으로 간다 — 그래서 상단바·kicker·
+   제목·캐러셀·힌트·점·인덱스·화살표가 스크롤 없이 첫 화면에 다 들어온다. 스테이지 높이를
+   vw 로 못박던 예전 방식은 히어로 밑에 문단·버튼이 끼자 캐러셀이 밀려 내려가 메타 바가
+   화면 밖으로 잘렸다(사용자 스크린샷). 높이를 뷰포트에서 역산하니 그 일이 없다.
+
+   1fr 행이 카드 크기를 따라 커지지 않는 근거(되먹임 방지 — CarouselStage.jsx 머리말 참고):
+   카드가 position:absolute 라 스테이지의 내재 높이에 안 잡히고, 스테이지의 흐름 내 콘텐츠는
+   비어 있다. 남는 공간이 없을 만큼 낮은 창에서는 minmax 의 하한이 잡히고 페이지가 그만큼
+   스크롤된다.
+
+   스테이지는 원본 .gallery-band 처럼 full-bleed 다 — 셸 좌우 패딩을 음수 마진으로
+   되돌려 폭 = 뷰포트 폭으로 만들고, 히어로·메타 바는 본문 열로 다시 들여쓴다. 폭이
+   줄면 종횡비가 커져 metricsForAspect 버킷이 틀어진다. */
+.screen {
+  --fm-stage-track: clamp(24rem, 78vh, 35rem);   /* 폰: 원본 --stage-height 그대로 */
+
+  position: relative;
+  display: grid;
+  grid-template-rows: auto var(--fm-stage-track) auto;
+  grid-template-columns: minmax(0, 1fr);
+  margin-inline: calc(var(--fm-pad) * -1);
+}
+
+/* 폰은 세로가 남지 않아 한 화면에 안 들어간다(원본도 폰은 스크롤이다). 스테이지가 78vh
+   여야 aspect 가 1.1 밑으로 떨어져 폰 버킷(cardWidth 2.05, depthScale 0.55)이 잡힌다.
+   태블릿부터 뷰포트 맞춤이다. */
+@media (min-width: 48rem) {
+  .screen {
+    --fm-stage-track: minmax(19rem, 1fr);
+
+    min-height: calc(100vh - var(--fm-header-h) - var(--fm-notice-h));
+    min-height: calc(100svh - var(--fm-header-h) - var(--fm-notice-h));
+  }
+}
+
+/* 낮은 창(1366×768·1280×720 노트북). 하한을 내리고 히어로·메타 바 여백을 조여 메타 바가
+   첫 화면 안에 남게 한다. 820px 은 1440×900 은 건드리지 않고 768 급만 잡는 선이다 —
+   실측: 720 높이에서 조이기 전엔 상단바 102 + 히어로 250 + 스테이지 하한 304 + 메타 170
+   = 826 > 720 이라 점·화살표 줄이 접혔다. 조인 뒤 102 + 206 + 224 + 126 = 658. */
+@media (max-height: 820px) and (min-width: 48rem) {
+  .screen { --fm-stage-track: minmax(14rem, 1fr); }
+  .hero { padding-top: 1.5rem; padding-bottom: 1rem; }
+  .kicker { margin-bottom: 0.6rem; }
+  .heroTitle { font-size: clamp(3.4rem, 6.2vw, 5rem); }
+  .galleryMeta { gap: 0.5rem; padding-top: 0.4rem; padding-bottom: 1rem; }
+  .galleryLines { gap: 0.4rem; }
+}
+@media (max-height: 699px) and (min-width: 48rem) {
+  .screen { --fm-stage-track: minmax(12rem, 1fr); }
+}
+
+/* 코덱스 포트의 .spotlight-shell::before 워터마크('SPOT' 거대 세리프)는 **안 옮긴다**.
+   한 번 'FACE' 로 옮겼다가 사용자가 "뒤에 FACE 글씨는 지우고"로 되돌렸다 — 원본 녹화에도
+   카드 뒤는 비어 있다. 다시 넣게 되면: 절대 위치 + grid-area 는 끝 선까지(2 / 1 / 3 / 2)
+   적어야 한다. auto 끝 선은 컨테이너 패딩 가장자리로 읽혀 3행까지 늘어난다(실측). */
+
+/* 히어로 — 원본 .hero(kicker + 두 줄 세리프 제목). 위아래 여백은 원본 값이다.
+   overflow: clip 은 오브가 이 상자를 넘지 않게 하는 마지막 방어선이다(아래 .heroOrb 참고). */
+.hero {
+  position: relative;
+  overflow: clip;
+  display: grid;
+  justify-items: center;
+  padding: clamp(1.75rem, 2.2vw, 3rem) var(--fm-pad) clamp(2rem, 2.8vw, 4rem);
+  text-align: center;
+}
+
+/* 제목 뒤 브랜드 오브. 제목 덩어리 중앙에 놓고 뒤로 깐다 — 글자가 그 위에 선다.
+
+   원본 그림(public/assets/brand/orb.png, 514²)은 정사각형 전체에 **균일한 30% 알파**가
+   깔려 있다 — 바깥이 투명한 게 아니라 흰색이 얇게 덮여 있어서, 그냥 올리면 배경
+   그라데이션 위에 옅은 사각형이 뜬다. 방사형 mask 로 바깥을 지워 원형만 남긴다.
+   mask 의 안쪽 정지점은 78% 다: 이 그림의 색은 반지름 47~58% 의 푸른 고리에 몰려 있어서
+   55% 쯤에서 자르면 그 고리가 잘린 자리에 뚜렷한 테두리가 생긴다(실측). 고리는 온전히
+   두고 바깥 흰 여백만 지운다.
+
+   **히어로 상자 안에 가둔다.** 처음엔 정사각형으로 폭에 맞춰 키웠는데(52rem), 그러면 높이도
+   52rem 이라 위로는 상단바 뒤까지, 아래로는 카드 위까지 뻗었다 — 상단바가 반투명 + 블러라
+   그 빛이 그대로 비쳐 "윗부분이 하얗다"는 상태가 됐다(사용자 보고). 지금은 높이를 히어로
+   상자에 맞추고(100%) 폭만 넓혀 납작한 타원으로 쓴다. 원본이 원형이지만 흐린 빛이라
+   늘려도 티가 안 난다.
+
+   mask 를 `ellipse closest-side` 로 쓰는 게 이 배치의 핵심이다. 기본값(원)으로 두면 짧은
+   변(높이)이 반지름이 되어 폭의 가운데 원 하나만 남고 좌우가 통째로 잘린다. 타원으로 두면
+   네 변 모두에서 알파가 0 이 되므로 상자 경계에서 잘려도 이음매가 안 보인다 —
+   .hero 의 overflow: clip 은 그래서 아무것도 자르지 않는 보험이다. */
+.heroOrb {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  left: 50%;
+  width: min(46rem, 96vw);
+  height: 100%;
+  translate: -50% 0;
+  /* 색을 진하게 — 사용자 요청. 원본 파일은 알파가 전체 30% 로 구워져 있어서 그냥 올리면
+     배경과 4~8 레벨밖에 차이가 안 난다(실측). 알파는 손 못 대니 채도로 민다: saturate 가
+     휘도는 두고 색만 벌리므로 흐린 빛이라는 성격은 그대로 두고 파란 기만 진해진다.
+     여기 숫자를 더 올릴 거면 제목 글자와의 대비를 같이 봐라 — 글자는 #07090c 라 여유가
+     있지만, 배경이 진해질수록 kicker(회색 0.85)가 먼저 묻힌다. */
+  filter: saturate(2.8) contrast(1.05);
+  mask-image: radial-gradient(ellipse closest-side, #000 62%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse closest-side, #000 62%, transparent 100%);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* 글자는 오브 위에. .hero 안에서 z-index 를 명시하지 않으면 오브(절대 위치, z 0)와
+   같은 층에 놓여 그리는 순서에 따라 덮인다. */
+.kicker,
+.heroTitle { position: relative; z-index: 1; }
+
+/* 원본 .kicker — 양옆 헤어라인 사이 라틴 대문자. 자간 0.3em 은 라틴 대문자 전용이다. */
+.kicker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  width: min(36rem, 100%);
+  margin: 0 0 clamp(0.8rem, 1.5vw, 1.25rem);
+  color: rgba(95, 107, 118, 0.85);
+  font: 600 clamp(0.72rem, 1vw, 0.9rem)/1.2 var(--font-body);
+  letter-spacing: 0.3em;
+}
+.kicker span { flex: 1 1 3rem; height: 1px; background: var(--fm-line); }
+/* eyebrow 는 라틴 대문자('FACEMARKET')와 한글('라이선싱'·'모델 등록'·'모델 정보')을
+   둘 다 쓴다. 넓은 자간은 대문자 라틴에서만 에디토리얼로 읽히고, 한글에서는 음절이
+   흩어져 '라 이 선 싱' 처럼 낱글자로 깨진다(브라우저 실측). 한글 조판은 자간을 벌리지
+   않는 게 기본이라 기본값을 한글 기준으로 두고, 라틴 전용 자리에만 .eyebrowLatin 을
+   덧붙인다. 기본값을 0.22em 으로 되돌리지 마라 — 그러면 섹션 eyebrow 세 개가 깨진다. */
+.eyebrow {
+  margin: 0 0 1rem;
+  color: var(--fm-muted);
+  font: 500 0.76rem/1 var(--font-body);
+  letter-spacing: 0.02em;
+}
+.eyebrowLatin {
+  letter-spacing: 0.22em;
+}
+/* 원본 .hero h1 — 세리프 500, 행간 0.9, 두 줄. 크기 clamp 도 원본 세 단계 그대로다.
+   두 줄이 세로 예산의 큰 몫이라 행간을 넓히면 그만큼 스테이지가 준다. */
+.heroTitle {
+  margin: 0;
+  color: #07090c;
+  font-family: var(--font-serif);
+  font-size: clamp(3.9rem, 6.2vw, 5.8rem);
+  font-weight: 500;
+  line-height: 0.9;
+  letter-spacing: 0;
+}
+/* 이탤릭 한 단어. 전용 face 가 못 오면 var(--font-serif) 의 합성 기울임으로 떨어진다. */
+.heroTitle em {
+  font-family: 'Cormorant Garamond FM Italic', var(--font-serif);
+  font-style: italic;
+  font-weight: 500;
+}
+
+@media (max-width: 1199px) {
+  .hero { padding-top: clamp(2.2rem, 5vw, 4.4rem); }
+  .heroTitle { font-size: clamp(3.75rem, 8.2vw, 5.8rem); }
+}
+
+/* 폰은 원본처럼 왼쪽 정렬이고 헤어라인은 접는다(폭이 없다). */
+@media (max-width: 47.99rem) {
+  .hero { justify-items: start; padding: 2rem var(--fm-pad) 1rem; text-align: left; }
+  .kicker { justify-content: flex-start; margin-bottom: 0.75rem; font-size: 0.66rem; letter-spacing: 0.18em; }
+  .kicker span { display: none; }
+  .heroTitle { font-size: clamp(3.1rem, 17vw, 4.75rem); }
+}
+
+/* ---- 리드 + CTA(첫 화면 아래) ---- */
+.intro {
+  display: grid;
+  justify-items: center;
+  gap: 1.7rem;
+  padding: clamp(3rem, 7vw, 6rem) 0 clamp(1.5rem, 4vw, 3rem);
+  text-align: center;
+}
+.introLead {
+  max-width: 34rem;
+  margin: 0;
+  color: var(--fm-muted);
+  font: 400 clamp(1rem, 1.5vw, 1.15rem)/1.75 var(--font-body);
+}
+
+/* ---- 메타 바(첫 화면 3행) ---- */
+/* 원본 .artwork-meta + .gallery-controls. 위: 힌트 + 고지(가운데) / 아래: 좌 인덱스 ·
+   가운데 점 · 우 화살표. 위 패딩은 원본 .artwork-meta 의 margin-top, 아래 패딩은 원본
+   --controls-bottom(첫 화면 바닥과의 간격)이다. z-index 는 스테이지(z 1 — 바깥 카드가
+   행을 살짝 넘는다) 위에 서기 위해서. */
+.galleryMeta {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  gap: clamp(0.6rem, 1.4vw, 1.1rem);
+  padding: clamp(0.4rem, 1.2vw, 1rem) var(--fm-pad) clamp(1rem, 2vw, 2.25rem);
+}
+
+.galleryLines {
+  display: grid;
+  justify-items: center;
+  gap: 0.55rem;
+  text-align: center;
+}
+
+/* 조작 힌트 — 원본 .interaction-hint. 라틴 대문자 전용 자간(0.42em). */
+.galleryHint {
+  margin: 0;
+  color: rgba(95, 107, 118, 0.8);
+  font: 600 clamp(0.68rem, 0.9vw, 0.85rem)/1.2 var(--font-body);
+  letter-spacing: 0.42em;
+}
+
+/* 가상 모델 고지 — 원본에서 작품명·연도가 서던 자리. 한글이라 기본 자간이다. */
+.galleryNotice {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  margin: 0;
+  color: var(--fm-muted);
+  font: 400 clamp(0.8rem, 1vw, 0.9rem)/1.5 var(--font-body);
+}
+
+/* 가운데(점)를 진짜 화면 중앙에 두려면 좌우 열이 같은 폭을 차지해야 한다. 1fr auto 1fr 로
+   양끝을 같은 몫으로 잡고 가운데만 내용 폭으로 둔다(좌측 숫자가 길어져도 점이 안 밀린다). */
+.galleryControls {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 1rem;
+}
+
+/* 큰 인덱스 — 원본 .sequence-counter. 히어로와 같은 세리프다(원본에서 이 숫자가 페이지의
+   두 번째 디스플레이 요소였다). Cormorant 는 라틴 전용이지만 숫자는 라틴 자소라 정상으로
+   그려진다. 원본은 position:fixed 로 화면 바닥에 붙였는데 우리는 첫 화면 아래에 리드·푸터가
+   있어 스크롤하면 그 위에 떠다니게 되므로 메타 바 안에 정적으로 둔다. */
+.galleryIndex {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  justify-self: start;
+  margin: 0;
+  color: rgba(16, 21, 26, 0.52);
+  font: 600 0.95rem/1 var(--font-body);
+}
+.galleryIndexNow {
+  color: var(--fm-ink);
+  font-family: var(--font-serif);
+  font-size: clamp(2.6rem, 4vw, 4.3rem);
+  font-weight: 500;
+  line-height: 0.8;
+}
+
+.galleryArrows {
+  display: flex;
+  justify-self: end;
+  gap: clamp(0.65rem, 1vw, 1rem);
+}
+
+/* 좁은 화면에서는 세 덩이를 한 줄에 못 넣는다(점 14개가 이미 두 줄로 접히는 폭이다).
+   인덱스와 화살표를 한 줄에, 점을 그 아래 줄에 쌓는다. */
+@media (max-width: 40rem) {
+  .galleryControls {
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+      'index arrows'
+      'dots dots';
+    row-gap: 0.9rem;
+  }
+  .galleryIndex { grid-area: index; }
+  .galleryArrows { grid-area: arrows; }
+  .dots { grid-area: dots; }
+}
+
+/* 스크린리더 전용. 화면에서 지우되 접근성 트리에는 남긴다(display:none 은 트리에서도
+   사라져 aria-live 가 발화하지 않는다). */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* 원본 .arrow-button — 흰 원 + 안쪽 흰 링 + 부드러운 그림자. 폰은 44px 고정(터치 타깃). */
+.galleryArrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: clamp(3.05rem, 4vw, 4rem);
+  height: clamp(3.05rem, 4vw, 4rem);
+  padding: 0;
+  border: 1px solid rgba(16, 21, 26, 0.1);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--fm-ink);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.72),
+    0 1.1rem 2.4rem rgba(38, 54, 72, 0.12);
+  cursor: pointer;
+  transition: transform 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+.galleryArrow:hover,
+.galleryArrow:focus-visible {
+  background: #fff;
+  transform: translateY(-2px);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.9),
+    0 1.25rem 2.8rem rgba(38, 54, 72, 0.16);
+}
+@media (max-width: 47.99rem) {
+  .galleryArrow { width: 44px; height: 44px; }
+}
+
+/* 점 14개에 24px 히트 영역이면 336px 다. 40rem(640px) 아래에서는 점이 자기 줄
+   (grid-area dots, 폭 = 본문 폭)을 통째로 쓰므로 한 줄 조건은 '본문 폭 ≥ 336px' 이고,
+   320px 폰(패딩 20px×2 → 본문 280px)에서만 접힌다. 그때 가로 스크롤바를 만드는 대신
+   줄바꿈으로 흘린다 — 페이지가 옆으로 밀리는 것보다 점 바가 두 줄이 되는 게 낫다.
+   flex-wrap 이 그 안전장치고, 아래 미디어쿼리가 접히는 모양을 7 + 7 로 잡아준다. */
+.dots {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  justify-self: center;
+  gap: 0;
+}
+
+/* 10.5rem = 24px × 7. 폭을 7칸으로 묶어 9 + 5 로 지저분하게 접히는 대신 7 + 7 로
+   접는다. 320px(가장 좁은 실사용 폭)에서도 점에 168.8px 가 남아 7칸이 들어간다. */
+@media (max-width: 30.5rem) {
+  .dots { max-width: 10.5rem; }
+}
+
+/* 보이는 점은 0.55rem(원본 0.66rem 보다 한 치수 작게 — 24px 칸에 gap 없이 14개를 놓으면
+   원본 크기는 서로 붙어 보인다)이되, 누르는 대상은 버튼 박스다.
+   9px 정사각형은 손가락 접촉면(~9mm)으로 이웃과 구분해 누를 수 없었다.
+   색 점을 ::before 로 내리고 버튼을 24×24 로 잡아 WCAG 2.2 SC 2.5.8(최소 타깃
+   24×24 CSS px)을 크기로 만족시킨다 — gap 이 0 이라 '간격 예외'(타깃 중심에 그린
+   24px 원이 서로 안 겹칠 것)는 성립할 수 없어서, 폭을 줄이는 절충은 불가능하다.
+   접히더라도 24px 를 지키는 쪽이 맞다(줄바꿈 계산은 .dots 주석 참고). */
+.dot, .dotActive {
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.dot::before, .dotActive::before {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  content: '';
+  transition: background 160ms ease, transform 160ms ease;
+}
+.dot::before { background: rgba(16, 21, 26, 0.16); }
+.dot:hover::before, .dot:focus-visible::before { background: rgba(45, 99, 255, 0.44); }
+/* 활성 점은 원본처럼 가로로 늘어난 pill 이다. 크기만 키우면(scale) 이웃 점과 같은
+   모양이라 어느 게 활성인지 형태로 안 읽힌다. 버튼 박스(1.5rem)는 그대로라
+   히트 영역과 줄바꿈 계산(.dots 주석)에 영향이 없다 — 늘어나는 건 ::before 뿐이다. */
+.dotActive::before {
+  width: 1.5rem;
+  background: var(--fm-accent);
+  transition: background 160ms ease, width 160ms ease;
+}
+
+/* ---- 공통 섹션 ---- */
+/* 구분선은 섹션 **사이**를 나누려고 있다. 상단바 바로 아래 첫 섹션에 그으면 헤더에
+   붙은 의미 없는 헤어라인이 된다 — 세 섹션이 각자 라우트를 갖게 되면서(/licensing 등)
+   각 페이지의 첫 섹션이 곧 유일한 섹션인 경우가 생겼다. */
+.section { padding: clamp(3rem, 8vw, 6.5rem) 0; border-top: 1px solid var(--fm-line); }
+.section:first-child { border-top: 0; padding-top: clamp(2rem, 5vw, 4rem); }
+/* 섹션 대제목은 셋 다 한글이다('내 얼굴, 내가 정한 조건으로만' 등). --font-serif 는
+   Cormorant 인데 tokens.css:51 이 못박은 대로 **라틴 전용**이라(폰트 파일 167KB —
+   한글 11,172자가 들어갈 수 없는 크기다) 여기 쓰면 한글이 폴백으로 떨어진다.
+   Georgia·Times New Roman 에도 한글이 없어 결국 OS generic serif 까지 내려가고,
+   페이지에서 가장 큰 글자가 윈도우는 바탕, 맥은 Times 계열, 안드로이드는 Noto Serif CJK
+   로 제각각 그려진다 — 브랜드 통제 밖의 서체다.
+
+   그래서 세리프는 영문 히어로 한 줄(.heroTitle "Your face, your terms.")에만 남기고
+   한글 제목은 Pretendard 로 그린다. 세리프가 페이지에 딱 한 번만 나오면 그 대비는
+   사고가 아니라 의도로 읽힌다 — 영문 브랜드 선언은 세리프, 한글 설명은 산세리프.
+   설계 스펙(:250)이 "Cormorant(디스플레이 세리프) + Pretendard(한글 본문)" 두 벌만
+   쓰기로 한 것과도 같은 결론이다.
+
+   한글 세리프 대안인 Gowun Dodum(--font-soft)은 두 가지 이유로 뺐다. (1) 제목 세 개를
+   위해 이 랜딩에서만 446KB 를 더 받아야 하고, (2) Regular(400) 한 굵기뿐이라
+   3.2rem 짜리 제목에 브라우저 합성 볼드가 걸린다(tokens.css:21 이 경고하는 그 상황).
+   본문(.sectionLead, 400)과 갈라지는 일은 크기·굵기 600·자간 -0.02em 이 맡는다.
+   행간은 1.1 → 1.25 로 연다 — 라틴 대문자보다 세로로 꽉 찬 한글이 모바일에서 두 줄로
+   접힐 때(1.9rem × 15자는 폰 본문 폭을 넘는다) 1.1 이면 위아래 줄이 서로 닿는다. */
+.sectionTitle {
+  margin: 0 0 0.9rem;
+  font-family: var(--font-body);
+  font-size: clamp(1.9rem, 4.5vw, 3.2rem);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+.sectionLead {
+  max-width: 38rem;
+  margin: 0 0 2.4rem;
+  color: var(--fm-muted);
+  font: 400 clamp(0.92rem, 1.3vw, 1rem)/1.75 var(--font-body);
+}
+
+.cardGrid {
+  display: grid;
+  gap: 1rem;
+  /* 카드가 6장이라 열 수가 3이어야 3×2 로 떨어진다(Mirror Mirror 레퍼런스와 같은 배치).
+     17rem 이면 1440px 에서 4열이 잡혀 4+2 로 흘러 마지막 줄에 두 장만 남는다.
+     22rem = 352px: 4열은 4×352+3×16 = 1456 > 본문폭(≈1350)이라 3열로 떨어지고,
+     좁은 화면에서는 min(100%, …) 이 1열을 보장한다. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+}
+
+.card {
+  display: grid;
+  gap: 0.6rem;
+  align-content: start;
+  padding: 1.5rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 1.1rem;
+  background: rgba(255, 255, 255, 0.62);
+}
+.cardTitle { margin: 0; font: 600 1rem/1.4 var(--font-body); }
+.cardBody { margin: 0; color: var(--fm-muted); font: 400 0.9rem/1.65 var(--font-body); }
+
+/* ---- 검증 가능한 기록 ---- */
+.record {
+  display: grid;
+  gap: 2rem;
+  margin-top: 2.5rem;
+  padding: clamp(1.6rem, 4vw, 2.8rem);
+  border-radius: 1.4rem;
+  background: rgba(45, 99, 255, 0.05);
+}
+.recordHead { max-width: 40rem; }
+.recordTitle { margin: 0 0 0.7rem; font: 600 clamp(1.15rem, 2vw, 1.5rem)/1.35 var(--font-body); }
+.recordLead { margin: 0; color: var(--fm-muted); font: 400 0.92rem/1.7 var(--font-body); }
+
+.recordSteps {
+  display: grid;
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  list-style: none;
+}
+.recordStep {
+  display: grid;
+  gap: 0.45rem;
+  align-content: start;
+  padding: 1.15rem;
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.8);
+}
+.recordNumber { color: var(--fm-accent); font: 600 0.72rem/1 var(--font-body); letter-spacing: 0.14em; }
+.recordStepTitle { margin: 0; font: 600 0.95rem/1.4 var(--font-body); }
+.recordStepBody { margin: 0; color: var(--fm-muted); font: 400 0.85rem/1.6 var(--font-body); }
+
+/* ---- 모델 등록 레일 ---- */
+.rail {
+  display: grid;
+  gap: 0.7rem;
+  margin: 0 0 2.2rem;
+  padding: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr));
+  list-style: none;
+  counter-reset: rail;
+}
+.railStep {
+  display: grid;
+  gap: 0.3rem;
+  align-content: start;
+  padding: 1rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 0.85rem;
+  background: rgba(255, 255, 255, 0.62);
+}
+.railNumber {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 999px;
+  background: var(--fm-ink);
+  color: #fff;
+  font: 600 0.75rem/1 var(--font-body);
+}
+.railLabel { font: 600 0.95rem/1.4 var(--font-body); }
+.railNote { color: var(--fm-muted); font: 400 0.8rem/1.5 var(--font-body); }
+
+/* ---- 모델 정보(프라이버시 하드룰) ---- */
+.ruleList {
+  display: grid;
+  gap: 0.9rem;
+  margin: 0 0 2.2rem;
+  padding: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr));
+  list-style: none;
+}
+.rule {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  padding: 1.2rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.62);
+}
+.ruleTitle { margin: 0 0 0.3rem; font: 600 0.95rem/1.45 var(--font-body); }
+.ruleBody { margin: 0; color: var(--fm-muted); font: 400 0.87rem/1.65 var(--font-body); }
+
+.exit { padding: 1.5rem; border-radius: 1rem; background: rgba(45, 99, 255, 0.05); }
+.exitTitle { margin: 0 0 0.5rem; font: 600 1rem/1.4 var(--font-body); }
+.exitBody { margin: 0; color: var(--fm-muted); font: 400 0.9rem/1.7 var(--font-body); }
+
+/* ---- FAQ ---- */
+/* <details>/<summary> 를 그대로 꾸민다(FaqSection 머리말 — 직접 만든 아코디언으로 바꾸지
+   마라). 기본 삼각형 마커는 지우고 오른쪽에 +/− 를 직접 그린다. */
+.faqList {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.faqItem {
+  padding: 0 1.25rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.faqQuestion {
+  position: relative;
+  padding: 1.05rem 2.25rem 1.05rem 0;
+  font: 600 0.98rem/1.5 var(--font-body);
+  cursor: pointer;
+  list-style: none;              /* 파이어폭스 */
+}
+.faqQuestion::-webkit-details-marker { display: none; }   /* 사파리·구형 크롬 */
+
+/* +/− 표시. ::after 하나로 가로줄, ::before 로 세로줄을 그리고 열리면 세로줄만 지운다. */
+.faqQuestion::before,
+.faqQuestion::after {
+  position: absolute;
+  right: 0.15rem;
+  top: 50%;
+  background: var(--fm-muted);
+  content: '';
+  transition: opacity 160ms ease, rotate 200ms ease;
+}
+.faqQuestion::after { width: 0.75rem; height: 1.5px; translate: 0 -50%; }
+/* 세로줄은 가로줄 **한가운데**에 겹쳐야 +가 된다. 둘 다 right 기준이라, 가로줄 중심
+   (right 0.525rem)까지 왼쪽으로 밀어 준다 — 부호를 뒤집으면 ㅡ 옆에 ㅣ 가 따로 서서
+   '—|' 처럼 보인다(실제로 그렇게 났다). */
+.faqQuestion::before { width: 1.5px; height: 0.75rem; translate: -0.37rem -50%; }
+.faqItem[open] .faqQuestion::before { opacity: 0; rotate: 90deg; }
+
+.faqAnswer {
+  margin: 0;
+  padding: 0 0 1.15rem;
+  color: var(--fm-muted);
+  font: 400 0.92rem/1.75 var(--font-body);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .faqQuestion::before, .faqQuestion::after { transition: none; }
+}
+
+/* ---- 푸터 ---- */
+.footer {
+  display: grid;
+  gap: 0.4rem;
+  padding: clamp(2.5rem, 6vw, 4rem) 0 0;
+  border-top: 1px solid var(--fm-line);
+}
+.footerBrand { margin: 0 0 0.4rem; font: 600 0.95rem/1.4 var(--font-body); }
+.footerNote { margin: 0; color: var(--fm-muted); font: 400 0.85rem/1.6 var(--font-body); }
+.footerLink { color: var(--fm-accent); }
+
+/* 상단바의 조용한 보조 액션(로그아웃). 주 CTA(.headerCta)와 나란히 서지만 잉크 pill 이
+   아니라 테두리만 있는 형태다 — 로그아웃이 이 화면에서 권장 행동이 아니기 때문이다.
+   facemarket 의 /model/* 은 셀러 크롬(ProfileMenu)을 안 쓰므로 이게 유일한 출구다. */
+.headerQuiet {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.62rem 0.95rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--fm-muted);
+  font: 500 0.85rem/1 var(--font-body);
+  cursor: pointer;
+  transition: color 140ms ease, background 140ms ease;
+}
+.headerQuiet:hover { background: #fff; color: var(--fm-ink); }

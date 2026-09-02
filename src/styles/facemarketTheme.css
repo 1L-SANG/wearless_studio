@@ -1,0 +1,191 @@
+/* =============================================================
+   styles/facemarketTheme.css — FaceMarket 도메인 공용 테마
+
+   랜딩(`/`·`/licensing`·`/register`·`/model-info`)과 모델 화면(`/model/*`)이
+   같은 눈금을 쓰게 하는 토큰 한 벌. 원래 이 값들은 FacemarketLanding.module.css 의
+   `.shell` 안에만 있었는데, 등록 위저드까지 같은 디자인으로 가면서 두 벌이 되면
+   반드시 갈라진다(한쪽만 고치는 일이 생긴다). 그래서 여기로 올렸다.
+
+   전역 클래스(`.fm-theme`)로 두는 이유: CSS Module 은 클래스명을 해시하는데,
+   `.wizard`·`.surface`·`.hint` 처럼 **문자열로 쓰이는 전역 클래스**를 이 테마 안에서
+   덮어야 한다. 모듈 안에서 `:global(...)` 로 감싸는 것보다 여기 한곳에 모으는 편이
+   "무엇이 전역을 건드리는가"가 눈에 보인다.
+
+   ⚠️ 앱 전역 토큰(tokens.css)은 건드리지 않는다. 이 파일의 규칙은 전부
+   `.fm-theme` 하위로만 적용되므로 ai.wearless.kr(셀러)에는 닿지 않는다.
+   ============================================================= */
+
+/* ---- --fm-* 기본값 (앱 토큰) --------------------------------------------
+   ⚠️ 이게 없으면 실제 회귀가 난다. /model/* 세 화면(등록·허브·라이선스)은 facemarket
+   전용이 아니다 — App.jsx 의 MODEL_SECTION_ROUTES 가 ai.wearless.kr 에서는
+   ChromeLayout 아래에 붙는데 거기엔 `.fm-theme` 이 없다. 그 상태에서 CSS 가
+   `background: var(--fm-ink)` 처럼 미정의 변수를 쓰면 CSS Custom Properties L1 §3.2 에
+   따라 그 선언이 **invalid-at-computed-value-time** 이 되어 `unset`(=transparent)으로
+   계산된다. 캐스케이드에서는 이미 그 선언이 이겼기 때문에 `.btn-primary` 의 앱 값으로
+   **되돌아가지 않는다** — 라이선스 발급 버튼이 흰 배경 위 흰 글자로 통째로 사라진다.
+
+   호출부 67곳에 `var(--fm-ink, var(--fg-1))` 을 일일이 다는 대신 여기서 한 번 정의한다.
+   `.fm-theme` 이 아래에서 덮으므로 facemarket 의 모양은 그대로다. 새 --fm-* 토큰을
+   추가할 때는 **반드시 이 :root 블록에도 앱 기본값을 같이 넣어라.**
+   ------------------------------------------------------------------------ */
+:root {
+  --fm-page-bg: var(--bg-1);
+  --fm-ink: var(--fg-1);
+  --fm-muted: var(--fg-2);
+  --fm-line: var(--ring);
+  --fm-accent: var(--link);
+  --fm-pad: 24px;              /* app.css 의 .wizard 좌우 패딩과 같은 값 */
+  /* LandingHeader 의 높이. 랜딩 셸(.shell)과 같은 값이어야 두 영역의 상단바가 같은 자다.
+     여기 없으면 /model/* 에서 var() 가 무효가 되어 height 선언이 통째로 죽는다. */
+  --fm-header-h: clamp(3.5rem, 4.6vw, 4.5rem);
+  --fm-card-bg: var(--bg-1);
+  --fm-card-radius: var(--r-6);
+  /* 랜딩은 그림자 대신 얇은 선으로 깊이를 낸다. 그래서 아래 .fm-theme 에서 none 이 되는데,
+     `box-shadow: none` 을 모듈에 직접 쓰면 변수가 아니라 값이라 폴백이 안 걸린다 —
+     ai 도메인에서 앱 카드·입력칸·버튼의 그림자를 그대로 지워 버린다. 토큰으로 받는다. */
+  --fm-elev-card: var(--elev-card);
+  --fm-elev-btn: var(--elev-btn-hi);
+}
+
+.fm-theme {
+  --fm-page-bg: #edf3f8;
+  --fm-ink: #10151a;
+  /* 원본 spotlight 의 --muted 는 #727c86 인데, 이 배경(#edf3f8, 강조 블록 위에선 #e4ecf8)에서
+     명도비 3.8:1 로 WCAG AA 4.5:1 에 못 미친다. 같은 한색 계열을 유지한 채 한 단계만
+     어둡게 잡았다 — #5f6b76 은 가장 어두운 배경(#e4ecf8)에서도 4.57:1, 흰 카드 위 5.45:1. */
+  --fm-muted: #5f6b76;
+  --fm-line: rgba(16, 21, 26, 0.12);
+  --fm-accent: #2d63ff;
+  --fm-pad: clamp(1.25rem, 3.1vw, 4.25rem);
+  --fm-header-h: clamp(3.5rem, 4.6vw, 4.5rem);
+
+  /* 카드 표면. 랜딩의 .card/.rule 과 같은 값이라 위저드 카드가 같은 재질로 읽힌다. */
+  --fm-card-bg: rgba(255, 255, 255, 0.62);
+  --fm-card-radius: 1.1rem;
+  --fm-elev-card: none;
+  --fm-elev-btn: none;
+
+  color: var(--fm-ink);
+  font-family: var(--font-body);
+}
+
+/* 페이지 바탕. 랜딩 셸이 쓰던 그라데이션 그대로 — 두 영역을 오갈 때 배경이 바뀌면
+   같은 사이트로 안 읽힌다. */
+.fm-theme-page {
+  position: relative;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.72), transparent 32rem),
+    linear-gradient(180deg, #f8fbfd 0%, var(--fm-page-bg) 100%);
+}
+
+/* LandingHeader 는 좌우 여백을 바깥(랜딩의 `.shell`)에서 받는다. 셸 밖에서 재사용할 때
+   같은 자를 대주는 래퍼 — 없으면 상단바가 화면 끝에 붙어 본문과 어긋난다.
+   헤더 자신이 그 패딩을 음수 마진으로 되돌렸다가 자기 패딩으로 다시 주므로(모듈 CSS),
+   배경만 화면 끝까지 가고 글자는 같은 자리에 선다. 여기에 `overflow: hidden` 을 붙이지
+   마라 — 헤더 sticky 가 죽는다(랜딩 .shell 주석 참고). */
+.fm-theme-inset { padding-inline: var(--fm-pad); }
+
+/* sticky 헤더가 위저드 카드 위에 서야 한다. /model/* 화면들엔 자체 z-index 를 가진
+   요소가 있다(진행 레일·모달). 랜딩 모듈이 헤더에 z-index 30 을 주므로 같은 눈금이면
+   되지만, 이 래퍼가 스택 컨텍스트를 만들면 그 30 이 래퍼 안에 갇힌다 — 만들지 않는다. */
+
+/* ---- 전역 레이아웃 클래스 재정의 (이 테마 안에서만) ----------------------
+   /model/* 화면들은 앱 공용 클래스(.wizard·.surface·.hint·.page-head·.chips)로
+   짜여 있다. JSX 1,000줄을 갈아엎는 대신 이 스코프 안에서 그 다섯 개의 모양만
+   랜딩 쪽으로 옮긴다 — 상태 머신·검증 로직·버튼 동작에 손대지 않고 외형만 바뀐다.
+   (PRD §13: 승인된 UI·기능은 지우지 말고 원인만 고친다는 규율과 같은 방향)
+   ------------------------------------------------------------------------ */
+
+/* 최대폭을 변수로 받는다. 화면이 자기 폭을 정해야 할 때가 있는데(등록 위저드는 레일
+   열이 붙어 본문이 60rem 보다 좁아진다), 모듈에서 `.flowWizard { max-width: … }` 로
+   덮으려 하면 특이도(0,1,0)가 여기(0,2,0)를 못 이겨 조용히 무시된다. 게다가 main.jsx 가
+   App 을 먼저 import 해서 모듈 CSS 가 이 파일보다 **먼저** 주입되므로 동점이어도 진다.
+   변수는 그 싸움을 피한다 — 이 파일이 안 건드리는 속성이라 낮은 특이도로도 덮인다. */
+.fm-theme .wizard {
+  width: 100%;
+  max-width: var(--fm-wizard-max, 60rem);
+  margin: 0 auto;
+  padding: 0 var(--fm-pad) 5rem;
+}
+.fm-theme .wizard.narrow { max-width: var(--fm-wizard-max, 48rem); }
+
+/* 앱 기본 .surface 는 순백 + 큰 그림자다. 랜딩은 반투명 흰 카드 + 얇은 선이라
+   배경 그라데이션이 카드 뒤로 비친다 — 그 재질을 맞춘다. */
+.fm-theme .surface {
+  padding: clamp(1.4rem, 3vw, 2rem);
+  border: 1px solid var(--fm-line);
+  border-radius: var(--fm-card-radius);
+  background: var(--fm-card-bg);
+  box-shadow: none;
+}
+.fm-theme .surface + .surface { margin-top: 1rem; }
+
+.fm-theme .page-head {
+  padding: clamp(2rem, 5vw, 3.5rem) 0 clamp(1.2rem, 3vw, 2rem);
+  text-align: left;
+}
+.fm-theme .page-head h1 {
+  font-family: var(--font-body);
+  font-size: clamp(1.9rem, 4.5vw, 3.2rem);
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--fm-ink);
+}
+.fm-theme .page-head p {
+  max-width: 38rem;
+  margin-top: 0.9rem;
+  color: var(--fm-muted);
+  font: 400 clamp(0.92rem, 1.3vw, 1rem)/1.75 var(--font-body);
+}
+
+.fm-theme .hint {
+  color: var(--fm-muted);
+  font: 400 0.85rem/1.65 var(--font-body);
+}
+
+/* 버튼. 랜딩의 CTA(.heroCta/.headerCta)는 잉크색 pill 인데 앱 기본 .btn 은 각진 사각이라
+   같은 화면에 두 언어가 섞였다. 여기서 모양만 맞춘다 — Button 컴포넌트(ui.jsx)의 API 와
+   variant 이름은 그대로라 JSX 는 한 줄도 안 바뀐다.
+   `.fx-sheen .btn-primary` 의 광택 애니메이션은 ChromeLayout 이 그 클래스를 달아야
+   걸리는데 facemarket 은 ChromeLayout 밖이라 여기엔 애초에 오지 않는다. */
+.fm-theme .btn {
+  border-radius: 999px;
+  padding: 0.85rem 1.5rem;
+  font: 500 0.95rem/1 var(--font-body);
+}
+.fm-theme .btn-sm { padding: 0.55rem 1rem; font-size: 0.85rem; }
+.fm-theme .btn-primary {
+  min-height: 0;
+  background: var(--fm-ink);
+  color: #fff;
+  box-shadow: none;
+}
+.fm-theme .btn-primary:hover:not([disabled]) { background: var(--fm-ink); opacity: 0.86; }
+.fm-theme .btn-sm.btn-primary { border-radius: 999px; }
+.fm-theme .btn-ghost,
+.fm-theme .btn-secondary {
+  border: 1px solid var(--fm-line);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--fm-ink);
+  box-shadow: none;
+}
+.fm-theme .btn-ghost:hover:not([disabled]),
+.fm-theme .btn-secondary:hover:not([disabled]) { background: #fff; box-shadow: none; }
+/* 비활성은 회색으로 칠하지 않고 잉크색을 흐린다 — 회색 사각이 되면 "고장난 버튼"으로
+   읽히고, 이 화면들은 체크박스 하나 때문에 비활성인 상태가 정상 경로에 있다. */
+.fm-theme .btn[disabled] { opacity: 0.36; }
+
+/* 칩은 랜딩 카드와 같은 테두리·라운드로. 선택 상태만 잉크색으로 채운다. */
+.fm-theme .chip {
+  border: 1px solid var(--fm-line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--fm-ink);
+}
+.fm-theme .chip.on {
+  border-color: var(--fm-ink);
+  background: var(--fm-ink);
+  color: #fff;
+}
