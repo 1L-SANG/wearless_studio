@@ -273,11 +273,43 @@
 
 /* 히어로 — 원본 .hero(kicker + 두 줄 세리프 제목). 위아래 여백은 원본 값이다. */
 .hero {
+  position: relative;
   display: grid;
   justify-items: center;
   padding: clamp(1.75rem, 2.2vw, 3rem) var(--fm-pad) clamp(2rem, 2.8vw, 4rem);
   text-align: center;
 }
+
+/* 제목 뒤 브랜드 오브. 제목 덩어리 중앙에 놓고 뒤로 깐다 — 글자가 그 위에 선다.
+
+   원본 그림(public/assets/brand/orb.png, 514²)은 정사각형 전체에 **균일한 30% 알파**가
+   깔려 있다 — 바깥이 투명한 게 아니라 흰색이 얇게 덮여 있어서, 그냥 올리면 배경
+   그라데이션 위에 옅은 사각형이 뜬다. 방사형 mask 로 바깥을 지워 원형만 남긴다.
+   mask 의 안쪽 정지점은 78% 다: 이 그림의 색은 반지름 47~58% 의 푸른 고리에 몰려 있어서
+   55% 쯤에서 자르면 그 고리가 잘린 자리에 뚜렷한 테두리가 생긴다(실측). 고리는 온전히
+   두고 바깥 흰 여백만 지운다.
+
+   크기는 제목 두 줄을 감쌀 만큼이고, 세로 중심은 제목 쪽으로 살짝 내렸다 — kicker 까지
+   덮으면 헤어라인이 흐려진다. */
+.heroOrb {
+  position: absolute;
+  z-index: 0;
+  top: 50%;
+  left: 50%;
+  width: min(52rem, 96vw);
+  aspect-ratio: 1;
+  translate: -50% -44%;
+  opacity: 0.85;
+  mask-image: radial-gradient(closest-side, #000 78%, transparent 100%);
+  -webkit-mask-image: radial-gradient(closest-side, #000 78%, transparent 100%);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* 글자는 오브 위에. .hero 안에서 z-index 를 명시하지 않으면 오브(절대 위치, z 0)와
+   같은 층에 놓여 그리는 순서에 따라 덮인다. */
+.kicker,
+.heroTitle { position: relative; z-index: 1; }
 
 /* 원본 .kicker — 양옆 헤어라인 사이 라틴 대문자. 자간 0.3em 은 라틴 대문자 전용이다. */
 .kicker {

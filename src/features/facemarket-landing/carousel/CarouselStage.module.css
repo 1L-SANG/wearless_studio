@@ -107,10 +107,6 @@
   letter-spacing: 0.06em;
 }
 
-.badgeNumber {
-  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
-}
-
 /* 사진 위 아무 색에서나 읽혀야 하는 고지라 글자 그림자가 아니라 알약 배경을 깐다. */
 .badgeNotice {
   padding: 0.2rem 0.45rem;

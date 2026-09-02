@@ -9,6 +9,10 @@ import s from '../FacemarketLanding.module.css';
 export function HeroSection() {
   return (
     <section aria-labelledby="fm-hero-title" className={s.hero}>
+      {/* 제목 뒤에 깔리는 브랜드 오브. 장식이라 접근성 트리에서 뺀다(alt="").
+          <img> 로 두는 이유: CSS background-image 는 프리로드 힌트를 못 주고, 이 그림이
+          늦게 뜨면 제목이 한 번 민얼굴로 보였다가 배경만 나중에 켜진다. */}
+      <img alt="" aria-hidden="true" className={s.heroOrb} src="/assets/brand/orb.png" />
       {/* 원본 .kicker — 양옆 헤어라인 사이의 라틴 대문자. 넓은 자간은 라틴 대문자에서만
           에디토리얼로 읽힌다(한글에 걸면 음절이 흩어진다 — .eyebrow 주석 참고). */}
       <p className={s.kicker}>
