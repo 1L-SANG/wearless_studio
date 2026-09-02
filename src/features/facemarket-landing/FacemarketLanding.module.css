@@ -10,12 +10,22 @@
   --fm-muted: #5f6b76;
   --fm-line: rgba(16, 21, 26, 0.12);
   --fm-accent: #2d63ff;
-  --fm-stage-height: clamp(19rem, 25vw, 32rem);
   --fm-pad: clamp(1.25rem, 3.1vw, 4.25rem);
+  /* 상단바 높이. .header 가 쓰고, 첫 화면 그리드(.screen)가 '뷰포트 − 상단바'를 계산할 때
+     같은 값을 빼야 하므로 변수로 못박는다. 원본 --header-height 그대로. */
+  --fm-header-h: clamp(4.5rem, 8vw, 6.5rem);
 
   position: relative;
   min-height: 100vh;
   padding: 0 var(--fm-pad) 4rem;
+  /* 원본 .spotlight-shell 의 overflow: hidden. 캐러셀 아크 양끝 카드가 뷰포트 폭을 넘어가는
+     걸 여기서 자른다 — 스테이지 자신은 세로로 자르면 안 돼서(CarouselStage.module.css
+     머리말) 가로 클립을 셸이 맡는다. 셸은 내용만큼 자라므로 세로로는 아무것도 안 잘린다.
+     clip 을 쓰는 이유: hidden 은 스크롤 컨테이너를 만들어 화면 밖 카드에 focus() 가 가면
+     셸이 옆으로 밀린다(카드 쪽은 preventScroll 로 막지만 다른 경로가 생길 수 있다).
+     clip 을 모르는 옛 브라우저(Safari ≤15)는 앞 줄의 hidden 으로 떨어진다. */
+  overflow: hidden;
+  overflow: clip;
   color: var(--fm-ink);
   background:
     radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.72), transparent 32rem),
@@ -23,41 +33,40 @@
   font-family: var(--font-body);
 }
 
-/* 스테이지 높이는 원본 styles.css 의 미디어쿼리 세 개를 그대로 가져온다(:437/:455/:565).
-   값 자체가 예쁘라고 있는 게 아니다 — 스테이지의 폭/높이 비가 metricsForAspect 의
-   버킷(폰 <1.1 / 태블릿 <2.3 / 데스크톱)을 고르기 때문에, 기본값 한 줄만 두면
-   폰에서 태블릿 버킷, 태블릿에서 데스크톱 버킷이 잡혀 카드 크기·간격·페이드가
-   한 단계씩 어긋난다. sceneLayout.js 상수를 원본 그대로 보존한 의미가 여기서 난다. */
-@media (max-width: 1199px) {
-  .shell { --fm-stage-height: clamp(22rem, 51vw, 34rem); }
-}
-
-/* 폰은 vw 가 아니라 78vh 기준이다 — 좁은 화면에서 스테이지가 세로로 커져야
-   aspect 가 1.1 밑으로 떨어지고 폰 버킷(cardWidth 2.05, depthScale 0.55)이 잡힌다. */
-@media (max-width: 767px) {
-  .shell { --fm-stage-height: clamp(24rem, 78vh, 35rem); }
-}
-
-/* 낮고 넓은 창(노트북 가로·태블릿 가로)에서 스테이지가 화면을 다 먹지 않게. */
-@media (max-height: 699px) and (min-width: 768px) {
-  .shell { --fm-stage-height: clamp(18rem, 34vw, 29rem); }
+/* 히어로 제목의 이탤릭 한 단어("your *terms*")용 face. tokens.css 의 "Cormorant" 는 정체
+   가변 폰트 하나뿐이라 <em> 이 합성 기울임(oblique)으로 그려진다 — 5rem 에서는 진짜
+   이탤릭과 확연히 다르다(원본 "framed in *light*" 는 Cormorant Garamond 500 Italic).
+   "Cormorant" 패밀리에 이탤릭 face 로 얹지 않고 **별도 패밀리명**으로 두는 이유:
+   셀러 에디터의 이탤릭 토글(Editor.jsx `s.italic`)이 Cormorant 를 고른 텍스트에 걸리면
+   미리보기가 진짜 이탤릭으로 바뀌는데, 최종 PNG 를 그리는 백엔드 page_assembler 는
+   그 파일이 없어 둘이 어긋난다. 이 face 는 이 모듈을 실은 화면에서만 존재한다.
+   파일 출처·라이선스는 src/fonts/LICENSES/README.md. */
+@font-face {
+  font-family: 'Cormorant Garamond FM Italic';
+  src: url('../../fonts/CormorantGaramond-Italic-500-latin.woff2') format('woff2');
+  font-weight: 500;
+  font-style: italic;
+  font-display: swap;
 }
 
 /* ---- 상단바 ---- */
+/* 원본 .site-header 처럼 1fr auto 1fr 이다. flex space-between 이면 오른쪽 열(CTA +
+   로그아웃)이 왼쪽(브랜드)보다 넓어 가운데 내비가 화면 중앙에서 왼쪽으로 밀린다 —
+   로그인하면 로그아웃 버튼이 생겨 그 편차가 더 커진다. */
 .header {
   position: relative;
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto;
   align-items: center;
-  justify-content: space-between;
   gap: 1rem;
-  height: clamp(4.5rem, 8vw, 6.5rem);
+  height: var(--fm-header-h);
 }
 
 .brand { display: inline-flex; align-items: center; gap: 0.55rem; color: inherit; text-decoration: none; }
 .brandLogo { width: 1.4rem; height: 1.4rem; }
 .brandName { font: 600 1.05rem/1 var(--font-body); letter-spacing: -0.01em; }
 
-.nav { display: none; gap: 1.6rem; }
+.nav { display: none; gap: clamp(1.5rem, 3vw, 3.4rem); justify-self: center; }
 /* 이제 <button> 이 아니라 <NavLink>(=<a>)다. 이 레포의 전역 스타일에는 링크 리셋이
    없고(app.css 는 `a.link` 클래스 한정) UA 기본 밑줄이 그대로 나오므로 여기서 끈다. */
 .navLink {
@@ -81,7 +90,7 @@
   text-decoration-thickness: 2px;
 }
 
-.headerActions { display: inline-flex; align-items: center; gap: 0.6rem; }
+.headerActions { display: inline-flex; align-items: center; justify-self: end; gap: 0.6rem; }
 
 .headerCta,
 .heroCta {
@@ -123,6 +132,7 @@
 }
 
 @media (min-width: 48rem) {
+  .header { grid-template-columns: 1fr auto 1fr; }
   .nav { display: inline-flex; }
   .menuButton { display: none; }
   /* 햄버거가 사라지는 폭에서는 드롭다운도 같이 사라져야 한다. 안 그러면 메뉴를 연 채
@@ -132,8 +142,86 @@
   .mobileNav { display: none; }
 }
 
-/* ---- 히어로 ---- */
-.hero { padding: clamp(2rem, 6vw, 4.5rem) 0 clamp(1rem, 3vw, 2rem); text-align: center; }
+/* ---- 첫 화면(히어로 + 스테이지 + 메타 바) ---- */
+/* 원본 spotlight 의 한 뷰포트 구성을 그리드 한 장으로 옮긴 것이다.
+   행: 히어로(auto) / 스테이지(1fr) / 메타 바(auto). 데스크톱에서는 min-height 를
+   '뷰포트 − 상단바'로 잡아 남는 높이가 전부 스테이지 행으로 간다 — 그래서 상단바·kicker·
+   제목·캐러셀·힌트·점·인덱스·화살표가 스크롤 없이 첫 화면에 다 들어온다. 스테이지 높이를
+   vw 로 못박던 예전 방식은 히어로 밑에 문단·버튼이 끼자 캐러셀이 밀려 내려가 메타 바가
+   화면 밖으로 잘렸다(사용자 스크린샷). 높이를 뷰포트에서 역산하니 그 일이 없다.
+
+   1fr 행이 카드 크기를 따라 커지지 않는 근거(되먹임 방지 — CarouselStage.jsx 머리말 참고):
+   카드가 position:absolute 라 스테이지의 내재 높이에 안 잡히고, 스테이지의 흐름 내 콘텐츠는
+   비어 있다. 남는 공간이 없을 만큼 낮은 창에서는 minmax 의 하한이 잡히고 페이지가 그만큼
+   스크롤된다.
+
+   스테이지는 원본 .gallery-band 처럼 full-bleed 다 — 셸 좌우 패딩을 음수 마진으로
+   되돌려 폭 = 뷰포트 폭으로 만들고, 히어로·메타 바는 본문 열로 다시 들여쓴다. 폭이
+   줄면 종횡비가 커져 metricsForAspect 버킷이 틀어진다. */
+.screen {
+  --fm-stage-track: clamp(24rem, 78vh, 35rem);   /* 폰: 원본 --stage-height 그대로 */
+
+  position: relative;
+  display: grid;
+  grid-template-rows: auto var(--fm-stage-track) auto;
+  grid-template-columns: minmax(0, 1fr);
+  margin-inline: calc(var(--fm-pad) * -1);
+}
+
+/* 폰은 세로가 남지 않아 한 화면에 안 들어간다(원본도 폰은 스크롤이다). 스테이지가 78vh
+   여야 aspect 가 1.1 밑으로 떨어져 폰 버킷(cardWidth 2.05, depthScale 0.55)이 잡힌다.
+   태블릿부터 뷰포트 맞춤이다. */
+@media (min-width: 48rem) {
+  .screen {
+    --fm-stage-track: minmax(19rem, 1fr);
+
+    min-height: calc(100vh - var(--fm-header-h));
+    min-height: calc(100svh - var(--fm-header-h));
+  }
+}
+
+/* 낮은 창(1366×768·1280×720 노트북). 하한을 내리고 히어로·메타 바 여백을 조여 메타 바가
+   첫 화면 안에 남게 한다. 820px 은 1440×900 은 건드리지 않고 768 급만 잡는 선이다 —
+   실측: 720 높이에서 조이기 전엔 상단바 102 + 히어로 250 + 스테이지 하한 304 + 메타 170
+   = 826 > 720 이라 점·화살표 줄이 접혔다. 조인 뒤 102 + 206 + 224 + 126 = 658. */
+@media (max-height: 820px) and (min-width: 48rem) {
+  .screen { --fm-stage-track: minmax(14rem, 1fr); }
+  .hero { padding-top: 1.5rem; padding-bottom: 1rem; }
+  .kicker { margin-bottom: 0.6rem; }
+  .heroTitle { font-size: clamp(3.4rem, 6.2vw, 5rem); }
+  .galleryMeta { gap: 0.5rem; padding-top: 0.4rem; padding-bottom: 1rem; }
+  .galleryLines { gap: 0.4rem; }
+}
+@media (max-height: 699px) and (min-width: 48rem) {
+  .screen { --fm-stage-track: minmax(12rem, 1fr); }
+}
+
+/* 코덱스 포트의 .spotlight-shell::before 워터마크('SPOT' 거대 세리프)는 **안 옮긴다**.
+   한 번 'FACE' 로 옮겼다가 사용자가 "뒤에 FACE 글씨는 지우고"로 되돌렸다 — 원본 녹화에도
+   카드 뒤는 비어 있다. 다시 넣게 되면: 절대 위치 + grid-area 는 끝 선까지(2 / 1 / 3 / 2)
+   적어야 한다. auto 끝 선은 컨테이너 패딩 가장자리로 읽혀 3행까지 늘어난다(실측). */
+
+/* 히어로 — 원본 .hero(kicker + 두 줄 세리프 제목). 위아래 여백은 원본 값이다. */
+.hero {
+  display: grid;
+  justify-items: center;
+  padding: clamp(1.75rem, 2.2vw, 3rem) var(--fm-pad) clamp(2rem, 2.8vw, 4rem);
+  text-align: center;
+}
+
+/* 원본 .kicker — 양옆 헤어라인 사이 라틴 대문자. 자간 0.3em 은 라틴 대문자 전용이다. */
+.kicker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  width: min(36rem, 100%);
+  margin: 0 0 clamp(0.8rem, 1.5vw, 1.25rem);
+  color: rgba(95, 107, 118, 0.85);
+  font: 600 clamp(0.72rem, 1vw, 0.9rem)/1.2 var(--font-body);
+  letter-spacing: 0.3em;
+}
+.kicker span { flex: 1 1 3rem; height: 1px; background: var(--fm-line); }
 /* eyebrow 는 라틴 대문자('FACEMARKET')와 한글('라이선싱'·'모델 등록'·'모델 정보')을
    둘 다 쓴다. 넓은 자간은 대문자 라틴에서만 에디토리얼로 읽히고, 한글에서는 음절이
    흩어져 '라 이 선 싱' 처럼 낱글자로 깨진다(브라우저 실측). 한글 조판은 자간을 벌리지
@@ -148,102 +236,140 @@
 .eyebrowLatin {
   letter-spacing: 0.22em;
 }
+/* 원본 .hero h1 — 세리프 500, 행간 0.9, 두 줄. 크기 clamp 도 원본 세 단계 그대로다.
+   두 줄이 세로 예산의 큰 몫이라 행간을 넓히면 그만큼 스테이지가 준다. */
 .heroTitle {
-  margin: 0 0 1.1rem;
+  margin: 0;
+  color: #07090c;
   font-family: var(--font-serif);
-  font-size: clamp(2.6rem, 8vw, 5.5rem);
-  font-weight: 600;
-  line-height: 1.02;
-  letter-spacing: -0.015em;
+  font-size: clamp(3.9rem, 6.2vw, 5.8rem);
+  font-weight: 500;
+  line-height: 0.9;
+  letter-spacing: 0;
 }
-.heroLead {
+/* 이탤릭 한 단어. 전용 face 가 못 오면 var(--font-serif) 의 합성 기울임으로 떨어진다. */
+.heroTitle em {
+  font-family: 'Cormorant Garamond FM Italic', var(--font-serif);
+  font-style: italic;
+  font-weight: 500;
+}
+
+@media (max-width: 1199px) {
+  .hero { padding-top: clamp(2.2rem, 5vw, 4.4rem); }
+  .heroTitle { font-size: clamp(3.75rem, 8.2vw, 5.8rem); }
+}
+
+/* 폰은 원본처럼 왼쪽 정렬이고 헤어라인은 접는다(폭이 없다). */
+@media (max-width: 47.99rem) {
+  .hero { justify-items: start; padding: 2rem var(--fm-pad) 1rem; text-align: left; }
+  .kicker { justify-content: flex-start; margin-bottom: 0.75rem; font-size: 0.66rem; letter-spacing: 0.18em; }
+  .kicker span { display: none; }
+  .heroTitle { font-size: clamp(3.1rem, 17vw, 4.75rem); }
+}
+
+/* ---- 리드 + CTA(첫 화면 아래) ---- */
+.intro {
+  display: grid;
+  justify-items: center;
+  gap: 1.7rem;
+  padding: clamp(3rem, 7vw, 6rem) 0 clamp(1.5rem, 4vw, 3rem);
+  text-align: center;
+}
+.introLead {
   max-width: 34rem;
-  margin: 0 auto 1.8rem;
+  margin: 0;
   color: var(--fm-muted);
-  font: 400 clamp(0.95rem, 1.4vw, 1.05rem)/1.7 var(--font-body);
+  font: 400 clamp(1rem, 1.5vw, 1.15rem)/1.75 var(--font-body);
 }
 
-/* ---- 캐러셀 ---- */
-/* 스테이지는 원본 .gallery-band 처럼 full-bleed 다. 셸 좌우 패딩을 음수 마진으로
-   되돌려 스테이지 폭 = 뷰포트 폭으로 만든다 — 패딩 안에 갇히면 폭이 줄어 종횡비가
-   커지고(폰 390px 에서 1.15), 위 미디어쿼리로 맞춰 놓은 버킷이 다시 틀어진다. */
-.gallery {
-  margin-inline: calc(var(--fm-pad) * -1);
-  padding: clamp(1rem, 3vw, 2rem) 0 clamp(2rem, 5vw, 4rem);
+/* ---- 메타 바(첫 화면 3행) ---- */
+/* 원본 .artwork-meta + .gallery-controls. 위: 힌트 + 고지(가운데) / 아래: 좌 인덱스 ·
+   가운데 점 · 우 화살표. 위 패딩은 원본 .artwork-meta 의 margin-top, 아래 패딩은 원본
+   --controls-bottom(첫 화면 바닥과의 간격)이다. z-index 는 스테이지(z 1 — 바깥 카드가
+   행을 살짝 넘는다) 위에 서기 위해서. */
+.galleryMeta {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  gap: clamp(0.6rem, 1.4vw, 1.1rem);
+  padding: clamp(0.4rem, 1.2vw, 1rem) var(--fm-pad) clamp(1rem, 2vw, 2.25rem);
 }
 
-/* full-bleed 는 스테이지만이다 — 바·고지는 본문 열로 다시 들여쓴다. */
-.galleryBar,
-.galleryNotice { padding-inline: var(--fm-pad); }
+.galleryLines {
+  display: grid;
+  justify-items: center;
+  gap: 0.55rem;
+  text-align: center;
+}
 
-/* margin-top 이 0.7rem 인 건 스테이지가 아래로 4rem 여유를 갖게 됐기 때문이다
-   (CarouselStage.module.css 의 --fm-stage-slack-bottom — 카드 그림자가 스테이지
-   경계에서 수평선으로 잘리지 않게 둔 자리). 그 4rem 중 3.3rem 은 그림자가 채우고
-   0.7rem 이 빈다. 여기에 0.7rem 을 더해 카드 그림자 끝과 바 사이가 1.4rem —
-   여유를 넣기 전의 리듬 그대로다. 1.4rem 을 그대로 두면 바가 4rem 만큼 떠 있다. */
-/* 원본 spotlight 의 메타 바 배치 — 좌: 큰 인덱스 / 가운데: 힌트 + 점 / 우: 화살표.
-   가운데를 진짜 화면 중앙에 두려면 좌우 열이 같은 폭을 차지해야 한다. 1fr auto 1fr 로
+/* 조작 힌트 — 원본 .interaction-hint. 라틴 대문자 전용 자간(0.42em). */
+.galleryHint {
+  margin: 0;
+  color: rgba(95, 107, 118, 0.8);
+  font: 600 clamp(0.68rem, 0.9vw, 0.85rem)/1.2 var(--font-body);
+  letter-spacing: 0.42em;
+}
+
+/* 가상 모델 고지 — 원본에서 작품명·연도가 서던 자리. 한글이라 기본 자간이다. */
+.galleryNotice {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  margin: 0;
+  color: var(--fm-muted);
+  font: 400 clamp(0.8rem, 1vw, 0.9rem)/1.5 var(--font-body);
+}
+
+/* 가운데(점)를 진짜 화면 중앙에 두려면 좌우 열이 같은 폭을 차지해야 한다. 1fr auto 1fr 로
    양끝을 같은 몫으로 잡고 가운데만 내용 폭으로 둔다(좌측 숫자가 길어져도 점이 안 밀린다). */
-.galleryBar {
+.galleryControls {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 1rem;
-  margin-top: 0.7rem;
 }
 
-.galleryCenter {
-  display: grid;
-  justify-items: center;
-  gap: 0.7rem;
-}
-
-/* 조작 힌트. 라틴 대문자라 .eyebrowLatin 과 같은 넓은 자간을 함께 건다. */
-.galleryHint {
-  margin: 0;
-  color: var(--fm-muted);
-  font: 500 0.7rem/1 var(--font-body);
-}
-
-/* 큰 인덱스는 히어로와 같은 세리프다 — 원본에서 이 숫자가 페이지의 두 번째 디스플레이
-   요소였다. Cormorant 는 라틴 전용이지만 숫자는 라틴 자소라 정상으로 그려진다. */
+/* 큰 인덱스 — 원본 .sequence-counter. 히어로와 같은 세리프다(원본에서 이 숫자가 페이지의
+   두 번째 디스플레이 요소였다). Cormorant 는 라틴 전용이지만 숫자는 라틴 자소라 정상으로
+   그려진다. 원본은 position:fixed 로 화면 바닥에 붙였는데 우리는 첫 화면 아래에 리드·푸터가
+   있어 스크롤하면 그 위에 떠다니게 되므로 메타 바 안에 정적으로 둔다. */
 .galleryIndex {
   display: flex;
   align-items: baseline;
-  gap: 0.35rem;
+  gap: 0.4rem;
+  justify-self: start;
   margin: 0;
-  font-family: var(--font-serif);
-  line-height: 1;
+  color: rgba(16, 21, 26, 0.52);
+  font: 600 0.95rem/1 var(--font-body);
 }
 .galleryIndexNow {
-  font-size: clamp(2rem, 4vw, 3.4rem);
-  font-weight: 500;
   color: var(--fm-ink);
-}
-.galleryIndexTotal {
-  font-size: clamp(0.8rem, 1.2vw, 1rem);
-  color: var(--fm-muted);
+  font-family: var(--font-serif);
+  font-size: clamp(2.6rem, 4vw, 4.3rem);
+  font-weight: 500;
+  line-height: 0.8;
 }
 
 .galleryArrows {
   display: flex;
-  justify-content: flex-end;
-  gap: 0.6rem;
+  justify-self: end;
+  gap: clamp(0.65rem, 1vw, 1rem);
 }
 
 /* 좁은 화면에서는 세 덩이를 한 줄에 못 넣는다(점 14개가 이미 두 줄로 접히는 폭이다).
-   인덱스를 위로 빼고 힌트+점, 화살표를 아래로 쌓는다. */
+   인덱스와 화살표를 한 줄에, 점을 그 아래 줄에 쌓는다. */
 @media (max-width: 40rem) {
-  .galleryBar {
+  .galleryControls {
     grid-template-columns: auto 1fr;
     grid-template-areas:
       'index arrows'
-      'center center';
+      'dots dots';
     row-gap: 0.9rem;
   }
   .galleryIndex { grid-area: index; }
   .galleryArrows { grid-area: arrows; }
-  .galleryCenter { grid-area: center; }
+  .dots { grid-area: dots; }
 }
 
 /* 스크린리더 전용. 화면에서 지우되 접근성 트리에는 남긴다(display:none 은 트리에서도
@@ -260,28 +386,46 @@
   white-space: nowrap;
 }
 
+/* 원본 .arrow-button — 흰 원 + 안쪽 흰 링 + 부드러운 그림자. 폰은 44px 고정(터치 타깃). */
 .galleryArrow {
   display: inline-flex;
-  padding: 0.55rem;
-  border: 1px solid var(--fm-line);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.7);
+  align-items: center;
+  justify-content: center;
+  width: clamp(3.05rem, 4vw, 4rem);
+  height: clamp(3.05rem, 4vw, 4rem);
+  padding: 0;
+  border: 1px solid rgba(16, 21, 26, 0.1);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.72);
   color: var(--fm-ink);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.72),
+    0 1.1rem 2.4rem rgba(38, 54, 72, 0.12);
   cursor: pointer;
+  transition: transform 180ms ease, background 180ms ease, box-shadow 180ms ease;
 }
-.galleryArrow:hover { background: #fff; }
+.galleryArrow:hover,
+.galleryArrow:focus-visible {
+  background: #fff;
+  transform: translateY(-2px);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.9),
+    0 1.25rem 2.8rem rgba(38, 54, 72, 0.16);
+}
+@media (max-width: 47.99rem) {
+  .galleryArrow { width: 44px; height: 44px; }
+}
 
-/* 점 14개에 24px 히트 영역이면 336px 다. 좁은 화면에서 한 줄에 들어가는지 계산해 두자:
-   화살표 하나가 20(아이콘) + 0.55rem×2(패딩) + 1px×2(테두리) = 39.6px 이고 바의
-   gap 이 16px×2 이므로, 점에 남는 폭은 (뷰포트 − 좌우 패딩 20px×2) − 79.2 − 32
-   = 뷰포트 − 151.2px 다. 336px 를 담으려면 뷰포트가 487.2px 이상이어야 한다.
-   그보다 좁으면 가로 스크롤바를 만드는 대신 줄바꿈으로 흘린다 — 페이지가 옆으로
-   밀리는 것보다 점 바가 두 줄이 되는 게 낫다. flex-wrap 이 그 안전장치고,
-   아래 미디어쿼리가 접히는 모양을 7 + 7 로 잡아준다. */
+/* 점 14개에 24px 히트 영역이면 336px 다. 40rem(640px) 아래에서는 점이 자기 줄
+   (grid-area dots, 폭 = 본문 폭)을 통째로 쓰므로 한 줄 조건은 '본문 폭 ≥ 336px' 이고,
+   320px 폰(패딩 20px×2 → 본문 280px)에서만 접힌다. 그때 가로 스크롤바를 만드는 대신
+   줄바꿈으로 흘린다 — 페이지가 옆으로 밀리는 것보다 점 바가 두 줄이 되는 게 낫다.
+   flex-wrap 이 그 안전장치고, 아래 미디어쿼리가 접히는 모양을 7 + 7 로 잡아준다. */
 .dots {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
+  justify-self: center;
   gap: 0;
 }
 
@@ -291,8 +435,9 @@
   .dots { max-width: 10.5rem; }
 }
 
-/* 보이는 점은 원본 크기(0.42rem)를 유지하되, 누르는 대상은 버튼 박스다.
-   6.7px 정사각형은 손가락 접촉면(~9mm)으로 이웃과 구분해 누를 수 없었다.
+/* 보이는 점은 0.55rem(원본 0.66rem 보다 한 치수 작게 — 24px 칸에 gap 없이 14개를 놓으면
+   원본 크기는 서로 붙어 보인다)이되, 누르는 대상은 버튼 박스다.
+   9px 정사각형은 손가락 접촉면(~9mm)으로 이웃과 구분해 누를 수 없었다.
    색 점을 ::before 로 내리고 버튼을 24×24 로 잡아 WCAG 2.2 SC 2.5.8(최소 타깃
    24×24 CSS px)을 크기로 만족시킨다 — gap 이 0 이라 '간격 예외'(타깃 중심에 그린
    24px 원이 서로 안 겹칠 것)는 성립할 수 없어서, 폭을 줄이는 절충은 불가능하다.
@@ -308,33 +453,21 @@
   cursor: pointer;
 }
 .dot::before, .dotActive::before {
-  width: 0.42rem;
-  height: 0.42rem;
+  width: 0.55rem;
+  height: 0.55rem;
   border-radius: 999px;
   content: '';
   transition: background 160ms ease, transform 160ms ease;
 }
-.dot::before { background: rgba(16, 21, 26, 0.2); }
+.dot::before { background: rgba(16, 21, 26, 0.16); }
+.dot:hover::before, .dot:focus-visible::before { background: rgba(45, 99, 255, 0.44); }
 /* 활성 점은 원본처럼 가로로 늘어난 pill 이다. 크기만 키우면(scale) 이웃 점과 같은
    모양이라 어느 게 활성인지 형태로 안 읽힌다. 버튼 박스(1.5rem)는 그대로라
    히트 영역과 줄바꿈 계산(.dots 주석)에 영향이 없다 — 늘어나는 건 ::before 뿐이다. */
 .dotActive::before {
-  width: 1.05rem;
+  width: 1.5rem;
   background: var(--fm-accent);
   transition: background 160ms ease, width 160ms ease;
-}
-
-/* 고지는 스테이지 **위**에 있다(GallerySection.jsx). 아래에 두면 모바일에서 스테이지가
-   화면을 다 채워 고지가 뷰포트 밖으로 밀린다 — '가상 모델 예시' 라는 말이 사진과 같은
-   화면에 있어야 하는 고지라 그건 못 쓴다. 그래서 여백도 위가 아니라 아래다. */
-.galleryNotice {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.35rem;
-  margin: 0 0 0.9rem;
-  color: var(--fm-muted);
-  font: 400 0.8rem/1.5 var(--font-body);
 }
 
 /* ---- 공통 섹션 ---- */

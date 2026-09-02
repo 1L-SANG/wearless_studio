@@ -349,6 +349,9 @@ git commit -m "feat(facemarket): 랜딩 캐러셀의 루프 산술과 배치 프
 - Consumes: Task 1 의 `layoutForOffset` 반환 형태 `{ x, y, z, rotationY, rotationZ }`
 - Produces:
   - `CAMERA_Z = 8.6` · `CAMERA_FOV_DEG = 24` · `VISIBLE_WORLD_HEIGHT` (상수)
+    — **[구현과 다름 — 2026-09-02]** `CAMERA_Z` 는 **11** 이다. `VISIBLE_WORLD_HEIGHT` 는
+    `2·8.6·tan 12°` 상수로 못박고 `CAMERA_FOV_DEG` 는 거기서 역산(≈18.9°)한다. 사용자가 준
+    원본 녹화를 핀홀 모델로 피팅한 결과다(`cssProjection.js` 머리말).
   - `worldToPixelScale(stageHeightPx: number) => number`
   - `perspectivePx(stageHeightPx: number) => number`
   - `cardTransform(layout, k: number) => string`
@@ -1279,6 +1282,22 @@ git commit -m "feat(facemarket): 도메인 루트를 랜딩으로 바꾸고 로�
 
 랜딩의 위 절반. 상단바 세 항목이 섹션 앵커로 동작하고, 캐러셀이 실제로 돈다.
 
+> **[구현과 다름 — 2026-09-02] 첫 화면이 원본 spotlight 의 한 뷰포트 구성으로 바뀌었다.**
+> 아래 Task 5 의 코드(히어로 = eyebrow + 제목 + 리드 + CTA, 캐러셀 섹션 = 고지 + 스테이지 +
+> 바)는 계획 원안이고 머지된 코드가 아니다. 지금은:
+> - `FacemarketLanding.jsx` 가 `.screen` 그리드(행: 히어로 / 스테이지 `minmax(하한, 1fr)` /
+>   메타 바, `min-height: 100svh − 상단바`)를 그리고, `GallerySection` 은 래퍼 없이
+>   `<CarouselStage>` 와 `.galleryMeta` 를 프래그먼트로 돌려준다(그리드 직접 자식이어야
+>   스테이지가 1fr 행을 채운다).
+> - `HeroSection` 은 kicker(헤어라인) + 두 줄 제목(`your <em>terms</em>.`, 랜딩 전용
+>   이탤릭 face)뿐이고, 리드문 + CTA 는 `IntroSection`(첫 화면 아래)이다.
+> - 고지는 스테이지 위가 아니라 메타 바 안(힌트 밑)이다 — 카드 배지가 사진과 같은 화면의
+>   고지를 맡는다.
+> - 스테이지는 `--fm-stage-height` 고정 높이가 아니라 부모 행이 높이를 준다(`height: 100%`,
+>   `max-height: 34rem`, `overflow: visible`, 카드 `position: absolute`). 셸이 `overflow: clip`.
+> - 카메라 z 8.6 → **11**, 회전 프로파일 ×3(원본 녹화 실측), 워터마크 없음, 그림자는 카드
+>   아래에만. 근거는 스펙 §1·§2 와 `sceneLayout.js`·`cssProjection.js` 머리말.
+>
 > **[구현과 다름] 상단바·섹션 배치가 넷 바뀌었다.**
 > - **앵커 스크롤도 `prefers-reduced-motion` 을 존중한다.** '모델 정보'는 히어로+캐러셀+
 >   라이선싱 아래라 스크롤 거리가 수천 px 인데, 그 전체가 흘러가는 건 '동작 줄이기'를 켠

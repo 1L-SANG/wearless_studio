@@ -27,9 +27,11 @@ function translateY(transform) {
   return Number(match[1]);
 }
 
-test('카메라가 z=0 평면에서 보는 세로 높이를 fov 로 계산한다', () => {
-  // 2 · 8.6 · tan(12°)
+test('z=0 평면에서 보이는 세로 높이는 코덱스 원본 카메라 값(2 · 8.6 · tan 12°)이다', () => {
+  // 카메라 거리를 11 로 물렸어도(cssProjection.js 머리말) 이 값은 그대로다 —
+  // 카드가 스테이지에서 차지하는 비율(2.3 / 3.656)이 여기에 걸려 있다.
   assert.ok(Math.abs(VISIBLE_WORLD_HEIGHT - 3.65597) < 0.0001);
+  assert.equal(CAMERA_Z, 11);
 });
 
 test('스테이지 높이가 world→px 계수를 결정한다', () => {

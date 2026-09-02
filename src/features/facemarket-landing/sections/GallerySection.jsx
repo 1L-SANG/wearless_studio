@@ -1,5 +1,10 @@
-/* 캐러셀 섹션. 이미지는 전부 가상 모델이고, 그 사실이 화면에 상시 보인다 —
-   고지가 없으면 이미 등록된 실존 모델 목록으로 읽힌다. */
+/* 캐러셀 + 메타 바. 이미지는 전부 가상 모델이고, 그 사실이 화면에 상시 보인다 —
+   고지가 없으면 이미 등록된 실존 모델 목록으로 읽힌다.
+
+   래퍼 없이 프래그먼트로 돌려준다. 스테이지와 메타 바는 FacemarketLanding.jsx 의
+   첫 화면 그리드(.screen — 행: 히어로 / 스테이지 / 메타 바)의 **직접 자식**이어야
+   스테이지가 1fr 행을 채우고 메타 바가 그 밑에 붙는다. 컨트롤러는 둘이 같이 써야
+   하므로 이 컴포넌트가 만든다. */
 import { Icon } from '@/components/ui.jsx';
 import { CarouselStage } from '../carousel/CarouselStage.jsx';
 import { useCarouselController } from '../carousel/useCarouselController.js';
@@ -17,31 +22,35 @@ export function GallerySection() {
   const totalLabel = String(LANDING_MODELS.length).padStart(2, '0');
 
   return (
-    <section aria-label="예시 이미지 갤러리" className={s.gallery} id="gallery">
-      {/* 고지는 스테이지보다 **위**다. 아래에 두면 모바일에서 스테이지 높이가
-          clamp(24rem, 78vh…)이라 사진 14장만 화면에 들어오고 고지는 뷰포트 밖으로 밀린다.
-          여백도 그 배치에 맞춰 .galleryNotice 안에서 아래로 잡혀 있다(margin: 0 0 0.9rem). */}
-      <p className={s.galleryNotice}>
-        <Icon name="info" size={14} stroke={2} />
-        아래 이미지는 전부 가상 모델 예시입니다. 실제 등록된 모델이 아닙니다.
-      </p>
-
+    <>
       <CarouselStage controller={controller} items={LANDING_MODELS} />
 
-      {/* 원본 spotlight 의 메타 바(ArtworkMeta + GalleryControls)를 옮긴 것이다:
-          좌측 큰 인덱스 · 가운데 조작 힌트 + 점 · 우측 화살표.
-          원본에 있던 작품명·연도·카테고리·평점 줄은 **뺐다** — 카드가 가상 모델이라
-          채울 실명·실적이 없고, 지어내면 실재하는 모델 정보로 읽힌다. 그 자리는
-          사용자가 무엇을 붙일지 정한 뒤에 되살린다. */}
-      <div className={s.galleryBar}>
-        <p className={s.galleryIndex} aria-hidden="true">
-          <span className={s.galleryIndexNow}>{indexLabel}</span>
-          <span className={s.galleryIndexTotal}>/ {totalLabel}</span>
-        </p>
-
-        <div className={s.galleryCenter}>
-          <p className={`${s.galleryHint} ${s.eyebrowLatin}`} aria-hidden="true">
+      {/* 원본 spotlight 의 ArtworkMeta + GalleryControls 를 옮긴 것이다:
+          가운데 위에 조작 힌트, 아래 줄에 좌: 큰 인덱스 / 가운데: 점 / 우: 화살표.
+          원본에서 힌트와 점 사이에 있던 작품명·연도·카테고리·평점 줄은 **뺐다** — 카드가
+          가상 모델이라 채울 실명·실적이 없고, 지어내면 실재하는 모델 정보로 읽힌다.
+          그 자리에는 가상 모델 고지가 선다. 사용자가 카드에 무엇을 붙일지 정하면 그때
+          되살린다. */}
+      <section aria-label="예시 이미지 갤러리 조작" className={s.galleryMeta}>
+        <div className={s.galleryLines}>
+          <p className={s.galleryHint} aria-hidden="true">
             DRAG · SWIPE · ARROW KEYS
+          </p>
+          {/* 고지는 스테이지 **아래**, 원본의 작품명 자리다. 예전엔 스테이지 위에 뒀다
+              (폰에서 스테이지가 78vh 라 아래 두면 첫 화면 밖으로 밀린다는 이유) — 지금은
+              사진 한 장 한 장에 '예시' 배지(CarouselStage 의 .badgeNotice)가 박혀 있어
+              사진과 같은 화면에 고지가 있다는 조건은 그쪽이 지키고, 이 줄은 문장으로
+              한 번 더 못박는 역할이다. */}
+          <p className={s.galleryNotice}>
+            <Icon name="info" size={14} stroke={2} />
+            위 이미지는 전부 가상 모델 예시입니다. 실제 등록된 모델이 아닙니다.
+          </p>
+        </div>
+
+        <div className={s.galleryControls}>
+          <p className={s.galleryIndex} aria-hidden="true">
+            <span className={s.galleryIndexNow}>{indexLabel}</span>
+            <span className={s.galleryIndexTotal}>/ {totalLabel}</span>
           </p>
 
           {/* 점은 탭이 아니다 — role="tab" 은 자기가 여는 tabpanel 을 가리켜야 하는데 여기엔
@@ -60,34 +69,34 @@ export function GallerySection() {
               />
             ))}
           </div>
+
+          <div className={s.galleryArrows}>
+            <button
+              aria-label="이전 이미지"
+              className={s.galleryArrow}
+              onClick={() => controller.goBy(-1)}
+              type="button"
+            >
+              <Icon name="chevLeft" size={22} stroke={2.2} />
+            </button>
+            <button
+              aria-label="다음 이미지"
+              className={s.galleryArrow}
+              onClick={() => controller.goBy(1)}
+              type="button"
+            >
+              <Icon name="chevRight" size={22} stroke={2.2} />
+            </button>
+          </div>
         </div>
 
-        <div className={s.galleryArrows}>
-          <button
-            aria-label="이전 이미지"
-            className={s.galleryArrow}
-            onClick={() => controller.goBy(-1)}
-            type="button"
-          >
-            <Icon name="chevLeft" size={20} stroke={2} />
-          </button>
-          <button
-            aria-label="다음 이미지"
-            className={s.galleryArrow}
-            onClick={() => controller.goBy(1)}
-            type="button"
-          >
-            <Icon name="chevRight" size={20} stroke={2} />
-          </button>
-        </div>
-      </div>
-
-      {/* 큰 인덱스는 aria-hidden 이다(숫자 두 덩이로 쪼개져 있어 그대로 읽히면 어수선하다).
-          대신 위치 변화를 여기서 한 문장으로 알린다 — 드래그·키보드로 옮겨도 스크린리더
-          사용자가 현재 위치를 안다. */}
-      <p className={s.srOnly} aria-live="polite" aria-atomic="true">
-        {`${LANDING_MODELS.length}장 중 ${controller.activeIndex + 1}번째 이미지`}
-      </p>
-    </section>
+        {/* 큰 인덱스는 aria-hidden 이다(숫자 두 덩이로 쪼개져 있어 그대로 읽히면 어수선하다).
+            대신 위치 변화를 여기서 한 문장으로 알린다 — 드래그·키보드로 옮겨도 스크린리더
+            사용자가 현재 위치를 안다. */}
+        <p className={s.srOnly} aria-live="polite" aria-atomic="true">
+          {`${LANDING_MODELS.length}장 중 ${controller.activeIndex + 1}번째 이미지`}
+        </p>
+      </section>
+    </>
   );
 }

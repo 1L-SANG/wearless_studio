@@ -83,10 +83,11 @@ export function CarouselStage({ items, controller }) {
   };
 
   // 원본이 three viewport 로 읽던 값 — 여기선 스테이지 DOM 의 실제 크기.
-  // .stage 높이는 CSS 에서 고정이라(CarouselStage.module.css 의 `height: var(--fm-stage-height)`.
-  // min-height 가 아니다 — 감사에서 두 번 "실은 min-height" 로 지적됐지만 두 번 다 오독이었으니
-  // 이 문장을 되돌리지 마라) 카드 크기 → 스테이지 높이 되먹임이 없다. min-height 로 바꾸면
-  // 카드가 그리드 행을 밀어올리고 그 높이가 ResizeObserver → setState → 카드 크기로 되돌아온다.
+  // .stage 높이는 **부모 그리드 행**이 정한다(FacemarketLanding.module.css .screen 의
+  // minmax(하한, 1fr) / 폰 clamp). 그 행은 카드 크기와 무관하다 — 스테이지가 overflow:hidden
+  // 이라 자동 최소 높이가 0 이고 카드가 position:absolute 라 내재 높이에 안 잡히므로 —
+  // 그래서 카드 크기 → 스테이지 높이 → 여기 setState → 카드 크기로 도는 되먹임이 없다.
+  // 카드를 정적 그리드 아이템으로 되돌리면 그 되먹임이 되살아나 첫 로드에 높이가 두세 번 튄다.
   useEffect(() => {
     const node = stageRef.current;
     if (!node) return undefined;

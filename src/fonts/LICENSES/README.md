@@ -21,6 +21,7 @@ OFL이 요구하는 조건은 셋이다.
 |---|---|---|---|
 | Pretendard | `../PretendardVariable.woff2` | [OFL 1.1](./OFL-Pretendard.txt) | Kil Hyung-jin 외 (Source·Inter·M PLUS 1 포함) |
 | Cormorant | `../Cormorant-VariableFont_wght.woff2` | [OFL 1.1](./OFL-Cormorant.txt) | The Cormorant Project Authors |
+| Cormorant Garamond Italic (500, 라틴 서브셋) | `../CormorantGaramond-Italic-500-latin.woff2` | [OFL 1.1](./OFL-Cormorant.txt) | The Cormorant Project Authors |
 | Gowun Dodum (고운돋움) | `../GowunDodum-Regular.woff2` | [OFL 1.1](./OFL-GowunDodum.txt) | The Gowun Dodum Project Authors (류양희) |
 
 **Reserved Font Name 주의** — Pretendard의 OFL에는 예약 폰트명(`Pretendard`, `Source`, `Inter`,
@@ -28,6 +29,14 @@ OFL이 요구하는 조건은 셋이다.
 Cormorant·Gowun Dodum의 OFL에는 예약 폰트명 문구가 없다.
 
 **Cormorant 파일 출처** — 원본 가변 TTF(539KB)를 형식만 woff2로 변환한 것이다(164KB). 글리프 3,138개·굵기 축 300~700 그대로.
+
+**Cormorant Garamond Italic 파일 출처** — `@fontsource/cormorant-garamond@5.3.0` 의
+`files/cormorant-garamond-latin-500-italic.woff2` 를 그대로 가져온 것이다(24KB, 라틴 기본 서브셋).
+같은 저작자(The Cormorant Project Authors)·같은 OFL 이라 라이선스 전문은 `OFL-Cormorant.txt` 하나로 충분하다.
+쓰임은 FaceMarket 랜딩 히어로의 이탤릭 한 단어("your *terms*")뿐이라, `tokens.css` 의 `"Cormorant"` 패밀리에
+이탤릭 face 로 얹지 않고 랜딩 CSS 모듈에서 별도 패밀리명으로 선언한다 — `"Cormorant"` 에 이탤릭을 더하면
+셀러 에디터의 이탤릭 토글(Editor.jsx `s.italic`)이 그리는 글자가 합성 기울임에서 진짜 이탤릭으로 바뀌어,
+백엔드 page_assembler 가 그리는 최종 PNG 와 미리보기가 어긋난다.
 
 **Gowun Dodum 파일 출처** — 구글 폰트 공식 저장소의 원본 TTF
 (`google/fonts` → `ofl/gowundodum/GowunDodum-Regular.ttf`, 6.89MB)를 **형식만 woff2로 변환**한 것이다

@@ -1,7 +1,16 @@
 /* =============================================================
    facemarket-landing/carousel/cssProjection.js
-   three world 좌표 → CSS 픽셀. 원본은 PerspectiveCamera(fov 24, z 8.6)로
+   three world 좌표 → CSS 픽셀. 코덱스 포트 원본은 PerspectiveCamera(fov 24, z 8.6)로
    씬을 봤고, 우리는 CSS perspective 로 같은 그림을 만든다.
+
+   카메라 거리는 8.6 이 아니라 11 이다. 사용자가 준 **원본 디자인 녹화**(화면 기록
+   2026-09-01 오후 4.10.02.mov, 2248×1584)에서 카드 네 귀퉁이를 재고 핀홀 모델을
+   맞추니(scratch: fit.py) 카메라 거리 10.5~11.1 에서만 잔차가 2px 안에 들어왔다 —
+   8.6 으로는 offset 2 카드의 폭·양끝 높이(304 / 452·401px)를 동시에 못 맞춘다(잔차 11px).
+   z=0 평면에서 보이는 세로 높이는 원래 카메라(8.6·fov 24)가 보던 3.656 을 그대로 둬서
+   카드가 스테이지에서 차지하는 비율(2.3/3.656 = 63%)은 변하지 않는다 — 대신 fov 가
+   24° → 18.9° 로 좁아진 셈이다. sceneLayout.js 의 깊이·회전 프로파일은 이 카메라 기준이라
+   둘을 따로 바꾸면 안 된다.
 
    두 원근이 같은 이유: 원근 카메라의 배율은 D/(D-z), CSS perspective 의
    배율은 P/(P-zpx) 다. P = D·k, zpx = z·k 로 두면 두 식이 같아진다.
@@ -12,13 +21,16 @@
    CSS 행렬은 M_css = F·M_three·F 로 옮겨야 한다. cardTransform 이 그 일을 한다.
    ============================================================= */
 
-export const CAMERA_Z = 8.6;
-export const CAMERA_FOV_DEG = 24;
+export const CAMERA_Z = 11;
 
-/* 카메라가 z=0 평면에서 세로로 담는 world 높이. 스테이지 픽셀 높이를 이 값으로 나누면
-   world→px 계수가 된다. */
-export const VISIBLE_WORLD_HEIGHT =
-  2 * CAMERA_Z * Math.tan(((CAMERA_FOV_DEG / 2) * Math.PI) / 180);
+/* 카메라가 z=0 평면에서 세로로 담는 world 높이 = 2 · 8.6 · tan(12°). 코덱스 원본 카메라가
+   보던 값을 상수로 못박는다(머리말 참고). 스테이지 픽셀 높이를 이 값으로 나누면 world→px
+   계수가 된다. */
+export const VISIBLE_WORLD_HEIGHT = 2 * 8.6 * Math.tan((12 * Math.PI) / 180);
+
+/* 지금 카메라의 세로 fov — 위 두 값에서 역산한다(≈ 18.9°). 참고용. */
+export const CAMERA_FOV_DEG =
+  (2 * Math.atan(VISIBLE_WORLD_HEIGHT / 2 / CAMERA_Z) * 180) / Math.PI;
 
 export function worldToPixelScale(stageHeightPx) {
   // 첫 렌더에는 ResizeObserver 가 아직 크기를 안 줘서 0/NaN 이 들어온다.

@@ -56,10 +56,15 @@ test('양옆 카드는 가운데를 향해 돌아선다', () => {
   assert.ok(layoutForOffset(2, metrics).rotationY < 0);
 });
 
-test('가까운 이웃은 거의 정면이고 바깥 카드가 크게 돌아선다', () => {
+/* 원본 녹화 실측(sceneLayout.js 머리말): offset 1 ≈ 17°(0.30rad), offset 2 ≈ 47°, offset 3 ≈ 66°.
+   예전 기대값 '이웃은 거의 정면(< 0.15)'은 코덱스 포트의 납작한 프로파일을 박제한 것이라 지웠다. */
+test('이웃부터 눈에 띄게 돌아서고 바깥으로 갈수록 더 돌아선다', () => {
   const metrics = metricsForAspect(3.5);
-  assert.ok(Math.abs(layoutForOffset(1, metrics).rotationY) < 0.15);
-  assert.ok(Math.abs(layoutForOffset(3, metrics).rotationY) > 0.35);
+  const at = (offset) => Math.abs(layoutForOffset(offset, metrics).rotationY);
+  assert.ok(at(1) > 0.2 && at(1) < 0.45, `offset 1: ${at(1)}`);
+  assert.ok(at(2) > 0.7 && at(2) < 1.0, `offset 2: ${at(2)}`);
+  assert.ok(at(3) > 1.0 && at(3) < Math.PI / 2, `offset 3: ${at(3)}`);
+  assert.ok(at(1) < at(2) && at(2) < at(3));
 });
 
 test('오목 아크 — 바깥으로 갈수록 카메라 쪽으로 나온다', () => {
