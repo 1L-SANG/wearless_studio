@@ -31,12 +31,15 @@ import { PaymentSuccess, PaymentFail } from '@/features/payments/PaymentResult.j
 import { PublicVerify } from '@/features/verify/PublicVerify.jsx';
 import { RequireAuth } from '../guards.jsx';
 import { MODEL_SECTION_ROUTES } from './modelSectionRoutes.jsx';
-import { domainRouteRedirect } from '@/lib/host.js';
+import { domainRouteRedirect, redirectToOwnDocumentHost } from '@/lib/host.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
 
 export default function AppFacemarket() {
   const { pathname } = useLocation();
+  // 셀러 도메인에서 /facemarket.html 을 직접 연 경우 이 도메인으로 되돌린다(host.js).
+  const wrongHost = redirectToOwnDocumentHost('facemarket.wearless.kr');
   const domainRedirect = domainRouteRedirect(pathname);
+  if (wrongHost) return <div className="route-loading">FaceMarket 으로 이동 중이에요…</div>;
 
   // 환경변수 미설정(예: Vercel env 누락)이면 화이트스크린 대신 원인을 보여준다.
   if (!isSupabaseConfigured) {

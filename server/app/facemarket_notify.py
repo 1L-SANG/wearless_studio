@@ -100,20 +100,31 @@ async def send_application_email(
         return False, None, "send_error"
 
 
+def _slack_escape(text: str) -> str:
+    """Slack mrkdwn 특수문자 이스케이프. 지역(region)은 지원자가 자유입력하는 값이라 그대로
+    넣으면 `<https://evil/|검토 콘솔>` 같은 가짜 링크를 알림에 심을 수 있다 — 바로 아래에
+    진짜 관리자 콘솔 링크가 붙으므로 관리자가 구분하기 어렵다. Slack 권장대로 & < > 만 바꾼다."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 async def notify_slack_new_application(
     settings, *, categories: list[str], region: str | None
 ) -> None:
     """새 지원서 도착 알림. 신원정보 없이 카테고리·지역만(검토 유도용). 실패는 무해."""
     if not settings.fm_slack_webhook_url:
         return
-    cats = ", ".join(categories) if categories else "-"
-    text = f":inbox_tray: 새 모델 지원서 · 카테고리: {cats} · 지역: {region or '-'}"
+    cats = _slack_escape(", ".join(categories)) if categories else "-"
+    text = f":inbox_tray: 새 모델 지원서 · 카테고리: {cats} · 지역: {_slack_escape(region or '-')}"
     admin_link = f"{settings.fm_application_public_base}".replace(
         "facemarket.", "admin."
     )
     text += f"\n<{admin_link}|관리자 검토 콘솔 열기>"
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            await client.post(settings.fm_slack_webhook_url, json={"text": text})
+            res = await client.post(settings.fm_slack_webhook_url, json={"text": text})
+        # 상태를 안 보면 웹훅 폐기(404/410)·레이트리밋(429)이 성공과 구분되지 않는다. 이 알림은
+        # 원장이 없어 로그가 유일한 관측점이다 — 조용히 끊기면 관리자는 지원서가 없다고 믿는다.
+        if res.status_code >= 400:
+            logger.error("slack notify rejected status=%s", res.status_code)
     except Exception as exc:
         logger.warning("slack notify failed: %s", exc)

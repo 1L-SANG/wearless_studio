@@ -84,6 +84,28 @@ function detectAdmin() {
 
 export const IS_ADMIN = detectAdmin();
 
+/* 진입 문서 ↔ 호스트 불일치 가드.
+
+   Vercel 은 **파일이 실제로 있는 경로**에 rewrite 를 태우지 않는다. 그래서 셀러 도메인에서
+   /facemarket.html(또는 /admin.html)을 직접 열면 그 번들이 그대로 뜬다(2026-09-02 프로덕션
+   실측: ai.wearless.kr/facemarket.html → 200, FaceMarket 문서). 그 문서에서 IS_FACEMARKET·
+   IS_ADMIN 은 호스트 기준이라 false 이므로, 앱이 남의 도메인 규칙으로 돌며 '/facemarket.html'
+   같은 라우트 아닌 경로에서 catch-all 로 튕기는 이상 동작을 한다.
+
+   프로덕션 호스트에서만 건다(로컬·프리뷰는 ?facemarket=1·?admin=1 로 문서를 고르는 게 정상이라
+   여기 걸리면 QA 가 불가능하다). 렌더 루프 대신 한 번 하드 이동한다. */
+export function redirectToOwnDocumentHost(expected) {
+  // 훅이 아니다 — 렌더 중 한 번 호출해 "이 문서가 남의 호스트에서 열렸는가"만 답한다.
+  if (typeof window === 'undefined') return false;
+  const host = (window.location.hostname || '').toLowerCase();
+  if (isOverrideAllowedHost(host)) return false;   // 로컬·프리뷰
+  if (host === expected || host.endsWith(`.${expected}`)) return false;
+  const target = `https://${expected}${window.location.pathname.replace(/\.html$/, '')}`;
+  window.location.replace(target.endsWith('/') ? target : `${target}`);
+  return true;
+}
+
+
 const matchesRoute = (pathname, route) => pathname === route || pathname.startsWith(`${route}/`);
 
 /* facemarket 도메인에서 열리는 경로.

@@ -69,3 +69,10 @@ test('vercel 이 호스트별로 그 문서를 보낸다(admin·facemarket 먼�
   assert.ok(rewrites.indexOf(adminRule) < rewrites.length - 1);
   assert.ok(rewrites.indexOf(facemarketRule) < rewrites.length - 1);
 });
+
+/* 진입 문서 ↔ 호스트 불일치 가드(2026-09-02 리뷰). Vercel 은 실제로 존재하는 파일 경로에
+   rewrite 를 태우지 않으므로 ai.wearless.kr/facemarket.html 이 그대로 열린다. */
+test('남의 호스트에서 열린 진입 문서는 자기 호스트로 되돌린다', async () => {
+  const host = await import('../../src/lib/host.js');
+  assert.equal(typeof host.redirectToOwnDocumentHost, 'function');
+});

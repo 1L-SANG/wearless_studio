@@ -10,8 +10,13 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { RequireAuth } from '../guards.jsx';
 import { AdminApplications } from '@/features/admin/AdminApplications.jsx';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
+import { redirectToOwnDocumentHost } from '@/lib/host.js';
 
 export default function AppAdmin() {
+  // 셀러·facemarket 도메인에서 /admin.html 을 직접 연 경우 관리자 호스트로 되돌린다(host.js).
+  if (redirectToOwnDocumentHost('admin.wearless.kr')) {
+    return <div className="route-loading">관리자 콘솔로 이동 중이에요…</div>;
+  }
   if (!isSupabaseConfigured) {
     return (
       <div className="route-loading">

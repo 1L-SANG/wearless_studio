@@ -102,3 +102,42 @@ def test_env_loader_is_inert_under_pytest():
     전체 스위트 50건 실패, 더 나쁜 경우 원격 DB 에 테스트 데이터가 쓰인다)."""
     assert "_running_under_pytest" in ENV_LOADER
     assert "PYTEST_CURRENT_TEST" in ENV_LOADER
+
+
+NOTIFY = (APP / "facemarket_notify.py").read_text()
+DISPATCHER = (APP / "workers" / "dispatcher.py").read_text()
+
+
+def test_slack_message_escapes_user_supplied_text():
+    """region 은 지원자 자유입력이다. 이스케이프하지 않으면 알림에 `<https://evil/|검토 콘솔>`
+    같은 가짜 mrkdwn 링크를 심을 수 있고, 바로 아래 진짜 콘솔 링크와 구분되지 않는다."""
+    assert "_slack_escape" in NOTIFY
+    assert "_slack_escape(region or '-')" in NOTIFY
+
+
+def test_slack_delivery_failure_is_observable():
+    """이 알림은 원장이 없어 로그가 유일한 관측점이다. 상태를 안 보면 웹훅 폐기(404/410)나
+    레이트리밋(429)이 성공과 구분되지 않고 지원서 알림이 조용히 끊긴다."""
+    assert "res.status_code >= 400" in NOTIFY
+
+
+def test_terminal_application_pii_sweep_exists_and_is_scheduled():
+    """스펙 11/3A: 거절·취소 지원서는 30일 뒤 익명화한다. sweep 이 없던 동안 실명·생년월일이
+    무기한 남았다(승인 건은 운영 데이터로 유지 — 지우면 안 된다)."""
+    assert "async def sweep_terminal_application_pii" in APPLICATIONS
+    assert "status in ('rejected', 'cancelled')" in APPLICATIONS
+    assert "sweep_terminal_application_pii" in DISPATCHER
+
+
+def test_pii_sweep_never_touches_approved_applications():
+    """승인 지원서는 운영 데이터다(스펙 11). 조건에 approved 가 섞이면 검토 이력이 사라진다."""
+    body = APPLICATIONS.split("async def sweep_terminal_application_pii")[1].split("@router.")[0]
+    assert "'approved'" not in body
+
+
+def test_r2_keys_are_not_written_to_logs():
+    """스테이징 키는 private/fm-application/staging/{user_id}/... 라 user_id 를 담는다.
+    레포 원칙은 '키는 삭제 대상으로만 쓰고 로그엔 카운트만'이다."""
+    for line in APPLICATIONS.splitlines():
+        if "logger." in line and "r2_key" in line:
+            raise AssertionError(f"R2 키를 로그에 남긴다: {line.strip()}")

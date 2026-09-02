@@ -220,7 +220,7 @@ async def sweep_application_photo_staging(app, *, max_age_hours: int = 24, limit
         try:
             await asyncio.to_thread(r2.delete, row["r2_key"])
         except Exception:
-            logger.warning("stale application staging photo delete failed")
+            logger.warning("stale application staging photo delete failed")  # 키는 남기지 않는다(user_id 포함)
             continue
         deleted_keys.append((row["user_id"], row["r2_key"]))
 
@@ -426,8 +426,85 @@ async def stage_application_photo(
             try:
                 await asyncio.to_thread(r2.delete, existing["r2_key"])
             except Exception:
-                logger.warning("stale application staging photo not deleted: %s", existing["r2_key"])
+                # 키에는 user_id 가 들어 있다(_staging_key) — 카운트/사실만 남긴다.
+                logger.warning("stale application staging photo not deleted")
     return {"staged": True, "kind": kind}
+
+
+PII_RETENTION_DAYS = 30
+PURGED_NAME = "삭제된 지원자"
+PURGED_EMAIL = "purged@invalid"
+
+
+async def sweep_terminal_application_pii(app, *, retention_days: int = PII_RETENTION_DAYS,
+                                         limit: int = 100) -> int:
+    """터미널 지원서(거절·취소)의 PII 를 30일 뒤 익명화하고 사진을 지운다(스펙 11 / 3A).
+
+    승인된 지원서는 운영 데이터로 남긴다 — 지우는 건 rejected·cancelled 뿐이다. 계정 삭제 경로
+    (biometric_purge)와는 별개다: 저쪽은 '이 사람 것 전부', 이쪽은 '심사가 끝나고 시간이 지난 건'.
+
+    이 sweep 이 없던 동안 실명·생년월일·연락처가 무기한 남았다. 마이그레이션이 이 스캔을 위해
+    부분 인덱스(fm_model_applications_terminated_due)를 미리 만들어 뒀다.
+    행을 지우지 않고 익명화하는 이유는 처리 이력(검토 건수)과 유니크 제약을 깨지 않기 위해서다.
+    """
+    r2 = getattr(app.state, "r2_face", None)
+    pool = getattr(app.state, "pool", None)
+    if pool is None:
+        return 0
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                select id::text as id, photo_keys, profile_image_r2_key
+                  from fm_model_applications
+                 where status in ('rejected', 'cancelled')
+                   and terminated_at is not null
+                   and terminated_at < now() - make_interval(days => %s)
+                   and contact_email <> %s
+                 order by terminated_at
+                 limit %s
+                """,
+                (retention_days, PURGED_EMAIL, limit),
+            )
+            rows = await cur.fetchall()
+        await conn.commit()
+    if not rows:
+        return 0
+
+    # R2 삭제는 트랜잭션 밖에서, 동기 boto3 라 to_thread 로(r2.py §5). 삭제가 실패해도 익명화는
+    # 진행한다 — 텍스트 PII 를 남기는 것보다 낫고, 남은 오브젝트는 계정 삭제 파기의 접두사
+    # 스윕이 회수한다. 키는 로그에 남기지 않는다(user_id·지원서 id 가 들어 있다).
+    for row in rows:
+        keys = set(_photo_keys(row).values())
+        if row.get("profile_image_r2_key"):
+            keys.add(row["profile_image_r2_key"])
+        for key in keys:
+            if not key or r2 is None:
+                continue
+            try:
+                await asyncio.to_thread(r2.delete, key)
+            except Exception:
+                logger.warning("terminal application photo delete failed")
+
+    anonymized = 0
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                update fm_model_applications
+                   set contact_email = %s, applicant_name = %s,
+                       birthdate = null, phone = null, region = null, bio = null,
+                       portfolio_url = null, sns_url = null,
+                       profile_image_r2_key = null, photo_keys = '{}'::jsonb
+                 where id = any(%s)
+                """,
+                (PURGED_EMAIL, PURGED_NAME, [r["id"] for r in rows]),
+            )
+            anonymized = cur.rowcount or 0
+        await conn.commit()
+    if anonymized:
+        logger.info("fm terminal application pii sweep anonymized=%d", anonymized)
+    return anonymized
 
 
 @router.post("/applications", response_model=ApplicationView, status_code=201)

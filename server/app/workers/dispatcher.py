@@ -266,3 +266,10 @@ class JobDispatcher:
                 await sweep_application_photo_staging(self.app, limit=100)
             except Exception:
                 log.exception("application staging sweep failed")
+            # 터미널 지원서(거절·취소) 30일 PII 익명화(스펙 11 / 3A). 승인 건은 운영 데이터로 남는다.
+            try:
+                from ..facemarket_applications import sweep_terminal_application_pii
+
+                await sweep_terminal_application_pii(self.app, limit=100)
+            except Exception:
+                log.exception("terminal application pii sweep failed")

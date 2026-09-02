@@ -334,6 +334,12 @@ export function ModelHub() {
           {appUnderReview && (
             <Button variant="secondary" onClick={onCancelApplication}>지원 취소</Button>
           )}
+          {/* 진행 중 등록이 있어서 지원 상태 패널을 안 띄우는 경우에도 취소 버튼은 남긴다.
+              플래그를 끈 뒤(구 경로) 등록을 마친 사용자의 검토 중 지원서가 화면에서 사라져
+              사용자는 취소할 수 없고 관리자 큐에는 영구 잔류하던 문제(2026-09-02 리뷰). */}
+          {!appUnderReview && application?.status === 'under_review' && (
+            <Button variant="ghost" onClick={onCancelApplication}>검토 중인 지원 취소</Button>
+          )}
           {appRejected && (
             <Button variant="primary" iconRight="arrowRight" onClick={() => navigate('/model/apply')}>
               다시 지원하기
