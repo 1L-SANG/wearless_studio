@@ -764,6 +764,61 @@
 .exitTitle { margin: 0 0 0.5rem; font: 600 1rem/1.4 var(--font-body); }
 .exitBody { margin: 0; color: var(--fm-muted); font: 400 0.9rem/1.7 var(--font-body); }
 
+/* ---- FAQ ---- */
+/* <details>/<summary> 를 그대로 꾸민다(FaqSection 머리말 — 직접 만든 아코디언으로 바꾸지
+   마라). 기본 삼각형 마커는 지우고 오른쪽에 +/− 를 직접 그린다. */
+.faqList {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.faqItem {
+  padding: 0 1.25rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.faqQuestion {
+  position: relative;
+  padding: 1.05rem 2.25rem 1.05rem 0;
+  font: 600 0.98rem/1.5 var(--font-body);
+  cursor: pointer;
+  list-style: none;              /* 파이어폭스 */
+}
+.faqQuestion::-webkit-details-marker { display: none; }   /* 사파리·구형 크롬 */
+
+/* +/− 표시. ::after 하나로 가로줄, ::before 로 세로줄을 그리고 열리면 세로줄만 지운다. */
+.faqQuestion::before,
+.faqQuestion::after {
+  position: absolute;
+  right: 0.15rem;
+  top: 50%;
+  background: var(--fm-muted);
+  content: '';
+  transition: opacity 160ms ease, rotate 200ms ease;
+}
+.faqQuestion::after { width: 0.75rem; height: 1.5px; translate: 0 -50%; }
+/* 세로줄은 가로줄 **한가운데**에 겹쳐야 +가 된다. 둘 다 right 기준이라, 가로줄 중심
+   (right 0.525rem)까지 왼쪽으로 밀어 준다 — 부호를 뒤집으면 ㅡ 옆에 ㅣ 가 따로 서서
+   '—|' 처럼 보인다(실제로 그렇게 났다). */
+.faqQuestion::before { width: 1.5px; height: 0.75rem; translate: -0.37rem -50%; }
+.faqItem[open] .faqQuestion::before { opacity: 0; rotate: 90deg; }
+
+.faqAnswer {
+  margin: 0;
+  padding: 0 0 1.15rem;
+  color: var(--fm-muted);
+  font: 400 0.92rem/1.75 var(--font-body);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .faqQuestion::before, .faqQuestion::after { transition: none; }
+}
+
 /* ---- 푸터 ---- */
 .footer {
   display: grid;
