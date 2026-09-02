@@ -23,17 +23,22 @@
    ============================================================= */
 
 /* 스테이지가 납작하고 넓어서 aspect 가 화면 형태를 그대로 따라간다.
-   폰 ~0.8, 태블릿 ~1.9, 데스크톱 3+ */
+   폰 ~0.8, 태블릿 ~1.9, 데스크톱 3+
+
+   edgeFade 는 "몇 칸까지 보이나"다 — opacity = edgeFade − |offset| (0..1 로 자름).
+   데스크톱 3: ±2 까지 온전히, ±3 부터 안 보인다 → 첫 화면에 카드 **5장**. 원본(코덱스 4)은
+   ±3 이 화면 양끝에 잘린 조각으로 걸려 7장이었는데, 사용자가 5장으로 줄여 달라고 했다.
+   넘길 때는 들어오는 카드가 3→2 로 움직이는 동안 페이드인한다(원본이 4→3 에서 하던 것). */
 export function metricsForAspect(aspect) {
   if (aspect < 1.1) return { cardWidth: 2.05, cardHeight: 2.87, spacing: 1.95, depthScale: 0.55, edgeFade: 1.9 };
   if (aspect < 2.3) return { cardWidth: 1.7, cardHeight: 2.38, spacing: 1.98, depthScale: 0.8, edgeFade: 2.6 };
-  return { cardWidth: 1.64, cardHeight: 2.3, spacing: 2.25, depthScale: 1, edgeFade: 4 };
+  return { cardWidth: 1.64, cardHeight: 2.3, spacing: 2.25, depthScale: 1, edgeFade: 3 };
 }
 
 /* |offset| 0..4. X 는 spacing 배수, Z 는 depthScale 배수(world), ROT 는 라디안.
    0·1·2 는 원본 스크린샷 실측(머리말 3), 3 은 화면 밖으로 반쯤 나간 카드의 보이는 안쪽
-   가장자리(높이 1.37·x)로 역산, 4 는 추세 연장 — 4 는 edgeFade 밖이라 opacity 0 이고
-   3→4 페이드 중에만 잠깐 보인다. X 는 이웃과의 화면 간격이 카드 폭의 0.4 배쯤 되도록 잡았다
+   가장자리(높이 1.37·x)로 역산, 4 는 추세 연장. 데스크톱 edgeFade 가 3 이라 3·4 는 정지 상태에선
+   안 보이고, 카드가 3→2 로 들어오는 동안 페이드인하면서 지나가는 자리다. X 는 이웃과의 화면 간격이 카드 폭의 0.4 배쯤 되도록 잡았다
    (원본 0.35~0.43). */
 const X_STEPS = [0, 0.964, 1.733, 2.164, 2.53];
 const Z_STEPS = [0, 0.41, 1.75, 3.75, 5.2];
