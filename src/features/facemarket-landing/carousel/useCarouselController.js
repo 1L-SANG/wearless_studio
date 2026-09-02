@@ -6,6 +6,23 @@
    원본과 다른 점 하나: 드래그로 끝난 포인터가 카드의 click 까지 발화시켜
    엉뚱한 카드로 점프하던 걸 consumeDragClick 으로 막는다.
 
+   자동 회전(2026-09-02 사용자 지시: "평소에는 계속 천천히 돌아가는데 클릭해서 움직이면
+   꺼지고, 안 만지면 5초쯤 뒤에 다시"):
+     · 목표값을 100ms 마다 0.0125칸씩 민다(한 장에 8초). 매 프레임(60Hz) setState 하면
+       카드 14장이 그만큼 재렌더되므로(파일 머리말의 그 이유) 10Hz 로만 밀고, 사이는
+       스테이지의 감쇠(λ=9, 시정수 111ms)가 메운다 — 화면에는 끊김 없이 흐르는 것으로 보인다.
+       정지 상태가 없다: 감쇠의 정상 지연이 0.014칸이라 SETTLE_EPSILON(1e-4)에 영원히 못 닿아
+       rAF 루프도 잠들지 않는다(그게 의도다 — 계속 도는 게 요구사항이다). 속도를 더 낮출 거면
+       그 지연(속도 × 0.111)이 1e-4 위에 남는지 확인해라 — 밑으로 내려가면 툭툭 끊긴다.
+     · 멈추는 조건 넷: 사용자 조작(suspendAutoplay — 5초 뒤 자동 재개) / 스테이지 안에
+       포커스가 있음 / 캐러셀이 화면 밖 / '동작 줄이기'. 뒤 셋은 5초 타이머가 아니라
+       조건이 풀릴 때 곧바로 재개한다.
+     · 포커스를 왜 세느냐 — 자동 회전이 activeIndex 를 바꾸면 스테이지의 포커스 추종
+       이펙트가 키보드 사용자의 포커스를 다른 카드로 끌고 간다. 탭으로 들어와 있는 동안은
+       돌지 않는다.
+     · '동작 줄이기'에서 아예 안 도는 건 접근성 요구다(WCAG 2.2.2 의 자동 재생 모션).
+       속도를 늦추는 걸로 대신하지 마라.
+
    불변식(깨지면 랜딩이 커서를 따라 도는 유령 캐러셀이 된다):
    pointer.current.id 로 무장하는 곳은 onPointerDown 한 곳이지만, 무장을 푸는 길은
    반드시 여럿이어야 한다. 캡처가 pointerdown 이 아니라 가로 8px 확정 시점에 걸리기
@@ -18,6 +35,7 @@
    ============================================================= */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { modulo, snapTarget, targetForIndex } from './carouselMath.js';
+import { usePrefersReducedMotion } from './usePrefersReducedMotion.js';
 
 const DRAG_PIXELS_PER_ITEM = 170;
 const HORIZONTAL_INTENT_PIXELS = 8;
@@ -32,6 +50,15 @@ const STALE_VELOCITY_MS = 100;
 // 스스로 무효가 된다 — 안 그러면 (click 이 없는 pointercancel 이나 스테이지 여백에서
 // 손을 뗀 경우) 표식이 계속 남아 다음 카드 활성화를 통째로 삼킨다.
 const DRAG_CLICK_WINDOW_MS = 500;
+
+/* 자동 회전. 8초에 한 장(0.125칸/초). 처음엔 4초에 한 장이었는데 사용자가 절반으로 낮췄다
+   ("지금보다 0.5배속") — 눈에 띄되 읽는 걸 방해하지 않는 속도다.
+   틱 간격은 10Hz — 이보다 촘촘하면 재렌더가 늘고, 성기면(예: 500ms) 감쇠가 틱 사이에
+   수렴을 마쳐 흐르는 게 아니라 툭툭 끊겨 보인다(시정수 111ms 의 5배 = 555ms 가 경계). */
+const AUTOPLAY_ITEMS_PER_SECOND = 0.125;
+const AUTOPLAY_TICK_MS = 100;
+/* 조작 뒤 재개까지. 사용자가 말한 "5초 정도". */
+const AUTOPLAY_RESUME_MS = 5000;
 
 const now = () =>
   (typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -59,15 +86,37 @@ export function useCarouselController(itemCount, initialIndex = 0) {
   const [isDragging, setDragging] = useState(false);
   const activeIndex = itemCount > 0 ? modulo(Math.round(target), itemCount) : 0;
 
-  const goBy = useCallback((delta) => {
-    setTarget((current) => current + delta);
+  /* 자동 회전 게이트 넷. autoplayOn 만 타이머로 되돌아오고(조작 뒤 5초), 나머지 셋은
+     조건이 풀리는 즉시 재개한다. */
+  const [autoplayOn, setAutoplayOn] = useState(true);
+  const [focusHeld, setFocusHeld] = useState(false);
+  const [inView, setInView] = useState(true);
+  const reducedMotion = usePrefersReducedMotion();
+  const resumeTimer = useRef(0);
+
+  /* 조작이 있었다 — 자동 회전을 끄고 5초 뒤 재개를 예약한다. 조작이 이어지면 그때마다
+     타이머를 새로 잡으므로 "마지막 조작으로부터 5초"가 된다.
+     드래그 중 pointermove 마다 부르지는 않는다: pointerdown 에서 한 번 끄고, 손을 뗄 때
+     (releasePointer) 다시 불러 거기서부터 5초를 센다. */
+  const suspendAutoplay = useCallback(() => {
+    setAutoplayOn(false);
+    clearTimeout(resumeTimer.current);
+    resumeTimer.current = setTimeout(() => setAutoplayOn(true), AUTOPLAY_RESUME_MS);
   }, []);
+
+  useEffect(() => () => clearTimeout(resumeTimer.current), []);
+
+  const goBy = useCallback((delta) => {
+    suspendAutoplay();
+    setTarget((current) => current + delta);
+  }, [suspendAutoplay]);
 
   const goTo = useCallback(
     (index) => {
+      suspendAutoplay();
       setTarget((current) => targetForIndex(current, index, itemCount));
     },
-    [itemCount],
+    [itemCount, suspendAutoplay],
   );
 
   const handleKeyDown = useCallback(
@@ -78,6 +127,30 @@ export function useCarouselController(itemCount, initialIndex = 0) {
     [goBy],
   );
 
+  /* 목표값을 조금씩 민다. 여기서 goBy 를 쓰면 안 된다 — goBy 는 suspendAutoplay 를 부르므로
+     자동 회전이 자기 자신을 매 틱 꺼 버린다.
+     document.hidden 을 보는 이유: 백그라운드 탭에서는 setInterval 이 1Hz 로 눌리는데 그동안
+     목표값만 쌓이면 탭으로 돌아온 순간 그만큼을 한 번에 훑고 지나간다(rAF 는 멈춰 있어서
+     화면은 그 사이 아무것도 안 그렸다). 안 밀면 돌아왔을 때 있던 자리에서 이어진다. */
+  useEffect(() => {
+    if (!autoplayOn || focusHeld || !inView || reducedMotion || itemCount < 2) return undefined;
+
+    const step = (AUTOPLAY_ITEMS_PER_SECOND * AUTOPLAY_TICK_MS) / 1000;
+    const id = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      setTarget((current) => current + step);
+    }, AUTOPLAY_TICK_MS);
+    return () => clearInterval(id);
+  }, [autoplayOn, focusHeld, inView, reducedMotion, itemCount]);
+
+  /* 스테이지 안으로 포커스가 들어오면 멈춘다(머리말 참고). blur 는 캡처 단계에서 받되
+     스테이지 **안에서 안으로** 옮겨 다니는 경우(카드 → 옆 카드)는 나간 게 아니다. */
+  const onFocusCapture = useCallback(() => setFocusHeld(true), []);
+  const onBlurCapture = useCallback((event) => {
+    if (event.currentTarget.contains(event.relatedTarget)) return;
+    setFocusHeld(false);
+  }, []);
+
   const resetPointer = useCallback(() => {
     pointer.current.id = -1;
     pointer.current.velocity = 0;
@@ -86,6 +159,9 @@ export function useCarouselController(itemCount, initialIndex = 0) {
 
   const onPointerDown = useCallback(
     (event) => {
+      // 누른 순간 자동 회전을 끈다. 카드를 집으려는 손 밑에서 카드가 계속 흐르면
+      // 드래그 시작점과 목표가 어긋난다.
+      suspendAutoplay();
       // 새 포인터가 시작하면 지난 드래그 흔적을 지운다 — 스테이지 밖에서 손을 뗀 뒤
       // 다음에 진짜로 누른 클릭이 삼켜지지 않게.
       dragEndedAt.current = 0;
@@ -104,7 +180,7 @@ export function useCarouselController(itemCount, initialIndex = 0) {
       // button 의 onClick(goTo)이 영영 안 불린다. 마우스만 죽고 터치 탭은 살아서
       // QA 에서 놓치기 쉽다. 캡처는 가로 드래그가 확정되는 onPointerMove 로 미룬다.
     },
-    [target],
+    [target, suspendAutoplay],
   );
 
   const onPointerMove = useCallback((event) => {
@@ -189,8 +265,10 @@ export function useCarouselController(itemCount, initialIndex = 0) {
       setTarget((current) => snapTarget(current, releaseVelocity));
       setDragging(false);
       resetPointer();
+      // 손을 뗀 시점부터 5초를 다시 센다.
+      suspendAutoplay();
     },
-    [resetPointer],
+    [resetPointer, suspendAutoplay],
   );
 
   /* 탈출구 ② — 스테이지 밖에서 뗀 손도 같은 정리 경로(releasePointer)로 흘린다.
@@ -241,10 +319,16 @@ export function useCarouselController(itemCount, initialIndex = 0) {
          돌려놓으므로 여기는 no-op 이 되고, releasePointer 안의 releasePointerCapture 도
          hasPointerCapture 가 false 라 건너뛴다 — 이중 실행이 아니다. */
       onLostPointerCapture: releasePointer,
+      onFocusCapture,
+      onBlurCapture,
     },
     goBy,
     goTo,
     handleKeyDown,
     consumeDragClick,
+    /* 캐러셀이 화면에 있는지 — 스테이지가 IntersectionObserver 로 알려준다. 컨트롤러는
+       DOM 노드를 모르니 관측은 스테이지가 하고 판단만 여기서 한다. useState 의 setter 라
+       참조가 고정이므로 이펙트 의존성에 넣어도 안전하다. */
+    setInView,
   };
 }

@@ -29,6 +29,7 @@ import { useEffect, useRef, useState } from 'react';
 import { shortestWrappedOffset } from './carouselMath.js';
 import { layoutForOffset, metricsForAspect } from './sceneLayout.js';
 import { CAMERA_Z, cardTransform, fillScale } from './cssProjection.js';
+import { usePrefersReducedMotion } from './usePrefersReducedMotion.js';
 import s from './CarouselStage.module.css';
 
 const DAMP_IDLE = 9;
@@ -42,21 +43,9 @@ const SETTLE_EPSILON = 1e-4;
    rAF 를 무한히 돌리지 않기 위해서다. */
 const FOCUS_RETRY_FRAMES = 120;
 
-function usePrefersReducedMotion() {
-  const [reduced, setReduced] = useState(false);
-
-  useEffect(() => {
-    const query = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const update = () => setReduced(query.matches);
-    update();
-    query.addEventListener('change', update);
-    return () => query.removeEventListener('change', update);
-  }, []);
-
-  return reduced;
-}
-
 export function CarouselStage({ items, controller }) {
+  // 컨트롤러가 자동 회전을 멈출 수 있게 화면 안/밖을 알려 준다(아래 IntersectionObserver).
+  const { setInView } = controller;
   const stageRef = useRef(null);
   const cardRefs = useRef([]);
   const cardRefSetters = useRef([]);
@@ -99,6 +88,22 @@ export function CarouselStage({ items, controller }) {
     observer.observe(node);
     return () => observer.disconnect();
   }, []);
+
+  /* 화면 밖으로 스크롤되면 자동 회전을 멈춘다 — 안 그러면 아무도 안 보는 캐러셀 때문에
+     rAF 루프와 컨트롤러의 10Hz 타이머가 계속 돈다(이 파일 머리말 3번이 경계하는 그 상태).
+     rootMargin 으로 조금 일찍 켜서, 스크롤해 올라오는 순간 이미 돌고 있게 한다.
+     관측은 노드를 가진 여기서 하고 판단은 컨트롤러가 한다. */
+  useEffect(() => {
+    const node = stageRef.current;
+    if (!node || typeof IntersectionObserver !== 'function') return undefined;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => setInView(entry.isIntersecting),
+      { rootMargin: '200px 0px' },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [setInView]);
 
   useEffect(() => {
     if (!(stage.height > 0)) return undefined;
