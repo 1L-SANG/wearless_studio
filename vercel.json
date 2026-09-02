@@ -1,5 +1,11 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "facemarket.wearless.kr" }],
+      "destination": "/facemarket.html"
+    },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

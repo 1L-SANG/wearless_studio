@@ -2,10 +2,25 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { fileURLToPath, URL } from 'node:url';
 
+/* 문서 진입점 두 벌 — 같은 앱(src/main.jsx)을 물지만 head 가 다르다.
+   공유 미리보기(og:*)와 <title> 은 정적 head 가 전부이고 크롤러는 JS 를 실행하지 않아서,
+   호스트별로 다른 문서를 내보내야 카카오톡·슬랙 카드가 맞는다. 배급은 vercel.json 의
+   rewrites 가 host 조건으로 한다 — **이 input 과 그 rewrite 는 한 쌍이다.**
+   (input 만 두면 아무도 안 보고, rewrite 만 걸면 facemarket 루트가 404 다.) */
+const htmlEntry = (name) => fileURLToPath(new URL(`./${name}.html`, import.meta.url));
+
 // Vite handles .ts/.tsx out of the box, so TS can be adopted incrementally
 // (contracts → store → api) without a full migration. JS/JSX stays default.
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      input: {
+        index: htmlEntry('index'),
+        facemarket: htmlEntry('facemarket'),
+      },
+    },
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -36,7 +51,7 @@ export default defineConfig({
   //   할 수 없다(resolve 실패) — 그래서 직접 의존인 amplify 를 include 해 하위로 번들한다.
   // dev 전용이다 — 프로덕션 빌드는 Rollup 이라 이 트리를 정상 번들한다(영향 없음).
   optimizeDeps: {
-    entries: ['index.html'],
+    entries: ['index.html', 'facemarket.html'],
     include: ['@aws-amplify/ui-react-liveness', '@aws-amplify/ui-react'],
     exclude: ['@smithy/core', '@aws-sdk/core'],
   },
