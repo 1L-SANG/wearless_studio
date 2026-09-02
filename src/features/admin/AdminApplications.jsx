@@ -59,11 +59,13 @@ function ApplicantPhoto({ applicationId, kind, label, hasPhoto }) {
 }
 
 function ApplicantPhotos({ app }) {
-  const kinds = Array.isArray(app.photoKinds) ? app.photoKinds : (app.hasProfileImage ? ['profile'] : []);
+  // 지원서는 프로필 1장이 기본. 추가 종류가 저장돼 있으면 그것만 더 보여준다(빈 슬롯 4개 X).
+  const present = Array.isArray(app.photoKinds) ? app.photoKinds : (app.hasProfileImage ? ['profile'] : []);
+  const slots = PHOTO_KINDS.filter((k) => k.kind === 'profile' || present.includes(k.kind));
   return (
     <div className={s.photos}>
-      {PHOTO_KINDS.map((k) => (
-        <ApplicantPhoto key={k.kind} applicationId={app.id} kind={k.kind} label={k.label} hasPhoto={kinds.includes(k.kind)} />
+      {slots.map((k) => (
+        <ApplicantPhoto key={k.kind} applicationId={app.id} kind={k.kind} label={k.label} hasPhoto={present.includes(k.kind)} />
       ))}
     </div>
   );

@@ -38,6 +38,8 @@ CATEGORY_VALUES = {"fashion", "commercial", "fitness", "lifestyle"}
 # 지원 사진 4종(레퍼런스 정합): 프로필(정면 헤드샷)·클로즈업(측면/3/4)·상반신·전신. 전부 필수.
 # 'profile' 이 관리자 썸네일·카탈로그 커버(profile_image_r2_key)로 승격된다.
 PHOTO_KINDS = ("profile", "closeup", "waist_up", "full_length")
+# 제출에 필수인 종류 — 프로필 1장만(2026-09-02 사용자 결정). 나머지는 올리면 저장하되 요구하지 않는다.
+REQUIRED_PHOTO_KINDS = ("profile",)
 EXPERIENCE_LEVELS = {"none", "beginner", "intermediate", "professional"}
 # 제출 시 확인 서명 3종(전부 true 여야 함) — 에이전시 미소속·성인/진실·사진 본인·최신·무보정.
 ATTESTATION_KEYS = ("noAgency", "adultAndTruthful", "photosAreMine")
@@ -479,11 +481,11 @@ async def submit_application(
                     sources[kind] = (staged[kind]["r2_key"], staged[kind]["mime_type"])
                 elif prev_keys.get(kind):
                     sources[kind] = (prev_keys[kind], _mime_for_key(prev_keys[kind]))
-            missing = [k for k in PHOTO_KINDS if k not in sources]
+            missing = [k for k in REQUIRED_PHOTO_KINDS if k not in sources]
             if missing:
                 raise _err(
-                    "photos_required",
-                    "지원 사진 4장(프로필·클로즈업·상반신·전신)을 모두 올려 주세요.",
+                    "profile_image_required",
+                    "프로필 사진을 올려 주세요.",
                     missing=missing,
                 )
             photo_keys: dict[str, str] = {}
