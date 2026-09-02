@@ -165,13 +165,20 @@
   top: 0;
   right: 0;
   bottom: 0;
-  width: min(34rem, 100%);
+  /* 화면 가로의 3분의 2(사용자 지시 — 처음엔 34rem 이라 1440 에서 38% 밖에 안 됐다).
+     상한 64rem 은 와이드 모니터에서 서랍이 끝없이 넓어지지 않게. 폰에서는 아래 미디어쿼리가
+     100% 로 덮는다 — 66vw 면 390px 화면에서 257px 라 두 칸이 성립하지 않는다. */
+  width: min(64rem, 66vw);
   padding: clamp(1.25rem, 3vw, 2rem);
   background: var(--fm-page-bg);
   box-shadow: -1rem 0 3rem rgba(16, 21, 26, 0.22);
   overflow-y: auto;
   overscroll-behavior: contain;   /* 서랍 끝에서 뒤 페이지로 스크롤이 새지 않게 */
   animation: fmSlideIn 260ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+@media (max-width: 47.99rem) {
+  .dialog { width: 100%; }
 }
 
 /* '동작 줄이기'를 켰으면 미끄러지지 않고 그 자리에 나타난다. */
@@ -201,6 +208,9 @@
 .dialogFaces {
   display: grid;
   gap: 0.75rem;
+  /* 서랍이 넓어져도 얼굴이 한없이 커지지 않게. 이게 없으면 1440 에서 한 장이 460px 정사각형이
+     되어 아래 내용이 전부 스크롤 밖으로 밀린다. */
+  max-width: 36rem;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 /* 얼굴이 한 장뿐인 모델(w1·m1·m2)은 그 한 장이 두 칸을 다 쓴다 — 안 그러면 반쪽만 차고
@@ -263,6 +273,7 @@
 .exampleGrid {
   display: grid;
   gap: 0.6rem;
+  max-width: 44rem;
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 .exampleImage {
