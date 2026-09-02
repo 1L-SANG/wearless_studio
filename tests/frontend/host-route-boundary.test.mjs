@@ -32,3 +32,20 @@ test('shared and domain-owned routes stay on their current host', () => {
     assert.equal(host.domainRouteRedirect(pathname, false), null);
   }
 });
+
+/* 쿼리 강제(?facemarket=1)는 로컬·프리뷰 전용이다. 프로덕션에서 열려 있으면
+   ai.wearless.kr?facemarket=1 한 번으로 그 탭이 모델 등록 화면이 되고, 세션스토리지에
+   남아 쿼리를 지운 뒤에도 유지된다 — 라우트로 막아 둔 도메인 경계를 우회하는 구멍이다. */
+test('facemarket 쿼리 강제는 프로덕션 호스트에서 통하지 않는다', () => {
+  for (const hostname of ['ai.wearless.kr', 'facemarket.wearless.kr', 'wearless.kr']) {
+    assert.equal(host.isOverrideAllowedHost(hostname), false, hostname);
+  }
+});
+
+test('로컬·프리뷰에서는 통한다', () => {
+  for (const hostname of ['localhost', '127.0.0.1', 'wearless-git-feat-x.vercel.app', 'mac.local']) {
+    assert.equal(host.isOverrideAllowedHost(hostname), true, hostname);
+  }
+  // VITE_FACEMARKET_HOST 를 지정한 환경은 그 자체가 테스트 지정이라 허용한다.
+  assert.equal(host.isOverrideAllowedHost('staging.example.com', 'staging.example.com'), true);
+});
