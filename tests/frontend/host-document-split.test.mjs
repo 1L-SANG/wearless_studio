@@ -20,8 +20,9 @@ test('facemarket 문서가 존재하고 자기 head 를 갖는다', () => {
   const html = read('facemarket.html');
   assert.match(html, /<title>FaceMarket/);
   assert.match(html, /property="og:title" content="FaceMarket/);
-  // 같은 앱을 물어야 한다 — 여기서 갈라지는 건 head 뿐이다.
-  assert.match(html, /src="\/src\/main\.jsx"/);
+  // 자기 진입점을 물어야 한다. 번들도 갈라졌으므로 셀러 진입점(main.jsx)이면 안 된다 —
+  // 그러면 이 문서로 들어온 사람이 셀러 앱을 받는다(랜딩 라우트가 없어 등록으로 튕긴다).
+  assert.match(html, /src="\/src\/mainFacemarket\.jsx"/);
 });
 
 test('vite 가 두 문서를 모두 진입점으로 낸다', () => {

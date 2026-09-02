@@ -9,10 +9,36 @@ import { fileURLToPath, URL } from 'node:url';
    (input 만 두면 아무도 안 보고, rewrite 만 걸면 facemarket 루트가 404 다.) */
 const htmlEntry = (name) => fileURLToPath(new URL(`./${name}.html`, import.meta.url));
 
+/* dev 서버에서 어느 **문서**를 줄지 고른다. 프로덕션은 vercel.json 의 host rewrite 가 하는
+   일인데, dev 서버에는 그게 없어서 무조건 index.html(셀러)이 나간다 — 번들을 가른 뒤로는
+   그러면 ?facemarket=1 을 붙여도 셀러 앱이 뜬다(그 앱에는 랜딩 라우트가 아예 없다).
+   ?facemarket=1 이 붙었거나 Host 가 facemarket.* 이면(cloudflared 터널) 그 문서로 돌린다.
+
+   주의: 쿼리 없이 새로고침하면 셀러 문서가 나간다. IS_FACEMARKET 의 sessionStorage 기억은
+   브라우저 안에 있어 서버가 볼 수 없기 때문이다 — 로컬에서는 주소에 ?facemarket=1 을
+   달고 다녀라. */
+const facemarketDevDocument = {
+  name: 'facemarket-dev-document',
+  apply: 'serve',
+  configureServer(server) {
+    server.middlewares.use((req, _res, next) => {
+      if (req.method !== 'GET') return next();
+      const url = new URL(req.url, 'http://localhost');
+      // 문서 요청만 건드린다 — 모듈(/src/…, /@vite/…)과 확장자 있는 파일은 그대로 흘린다.
+      if (url.pathname.includes('.') || url.pathname.startsWith('/@')) return next();
+      const host = (req.headers.host || '').toLowerCase();
+      const wantsFacemarket = url.searchParams.get('facemarket') === '1'
+        || /(^|\.)facemarket\./.test(host);
+      if (wantsFacemarket) req.url = `/facemarket.html${url.search}`;
+      return next();
+    });
+  },
+};
+
 // Vite handles .ts/.tsx out of the box, so TS can be adopted incrementally
 // (contracts → store → api) without a full migration. JS/JSX stays default.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), facemarketDevDocument],
   build: {
     rollupOptions: {
       input: {
