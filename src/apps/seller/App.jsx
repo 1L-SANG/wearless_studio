@@ -27,7 +27,7 @@ import { Storyboard } from '@/features/storyboard/Storyboard.jsx';
 import { Generating } from '@/features/generating/Generating.jsx';
 import { LazyEditor } from '@/features/editor/lazyEditor.js';
 import { forgetPostLogin, readPostLogin, useAuth } from '@/features/auth/AuthProvider.jsx';
-import { domainRouteRedirect } from '@/lib/host.js';
+import { IS_FACEMARKET, domainRouteRedirect } from '@/lib/host.js';
 import { RequireAuth } from '../guards.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
@@ -522,6 +522,23 @@ function RootRedirect() {
 
 export default function App() {
   const { pathname } = useLocation();
+
+  /* 문서↔오버라이드 불일치 가드(로컬·프리뷰). 탭이 ?facemarket=1 을 sessionStorage 에
+     기억한 채 쿼리 없이 새로고침하면 서버는 셀러 문서(이 번들)를 주는데 IS_FACEMARKET 은
+     true 다. 그러면 아래 domainRouteRedirect 가 facemarket 규칙으로 /model/register 로 보내고,
+     이 번들엔 /model 이 없어 catch-all 이 /create/input 으로 되돌리고, 그건 또 facemarket 이
+     불허해 /model/register 로 — 무한 Navigate("Maximum update depth"·"Throttling
+     navigation"). 앱 전체가 흰 화면이 됐다(2026-09-02 로컬 QA 실측). 렌더 루프 대신
+     올바른 문서를 한 번 하드 로드한다(프로덕션은 호스트명만 근거라 여기 안 걸린다). */
+  if (IS_FACEMARKET) {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('facemarket') !== '1') {
+      url.searchParams.set('facemarket', '1');
+      window.location.replace(url.toString());
+    }
+    return <div className="route-loading">모델 화면으로 이동 중이에요…</div>;
+  }
+
   const domainRedirect = domainRouteRedirect(pathname);
 
   // 환경변수 미설정(예: Vercel env 누락)이면 화이트스크린 대신 원인을 보여준다.
