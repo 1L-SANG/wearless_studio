@@ -953,7 +953,10 @@ async def _cleanup(
                     update fm_model_applications
                        set contact_email = 'purged@invalid',
                            applicant_name = '삭제된 지원자',
-                           birthdate = null, phone = null, region = null, bio = null,
+                           -- birthdate·region 은 NOT NULL 이라 센티널로 민다. null 로 밀면
+                           -- NotNullViolation 이 파기 트랜잭션을 통째로 깨뜨린다(실측).
+                           birthdate = date '1900-01-01', region = '-',
+                           phone = null, bio = null,
                            portfolio_url = null, sns_url = null,
                            profile_image_r2_key = null, photo_keys = '{}'::jsonb,
                            status = case when status in ('under_review', 'approved')

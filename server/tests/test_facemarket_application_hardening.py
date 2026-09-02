@@ -141,3 +141,15 @@ def test_r2_keys_are_not_written_to_logs():
     for line in APPLICATIONS.splitlines():
         if "logger." in line and "r2_key" in line:
             raise AssertionError(f"R2 키를 로그에 남긴다: {line.strip()}")
+
+
+def test_anonymization_uses_sentinels_for_not_null_columns():
+    """birthdate·region 은 NOT NULL 이다(마이그 20260902120000). null 로 밀면 NotNullViolation 으로
+    sweep 과 계정 삭제 파기가 통째로 실패하고 PII 가 그대로 남는다 — 2026-09-02 로컬 E2E 에서
+    실제로 터졌다. 두 경로 모두 센티널을 쓴다."""
+    assert 'PURGED_BIRTHDATE = "1900-01-01"' in APPLICATIONS
+    assert "birthdate = %s, region = %s" in APPLICATIONS
+    assert "birthdate = date '1900-01-01', region = '-'" in PURGE
+    for source, label in ((APPLICATIONS, "sweep"), (PURGE, "purge")):
+        assert "birthdate = null" not in source, f"{label} 가 NOT NULL 컬럼을 null 로 민다"
+        assert "region = null" not in source, f"{label} 가 NOT NULL 컬럼을 null 로 민다"

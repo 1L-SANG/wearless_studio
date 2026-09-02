@@ -434,6 +434,10 @@ async def stage_application_photo(
 PII_RETENTION_DAYS = 30
 PURGED_NAME = "삭제된 지원자"
 PURGED_EMAIL = "purged@invalid"
+# birthdate·region 은 NOT NULL 이다(마이그 20260902120000). 익명화는 null 이 아니라 센티널로
+# 밀어야 한다 — null 로 밀면 NotNullViolation 으로 sweep 전체가 실패하고 PII 가 그대로 남는다.
+PURGED_BIRTHDATE = "1900-01-01"
+PURGED_REGION = "-"
 
 
 async def sweep_terminal_application_pii(app, *, retention_days: int = PII_RETENTION_DAYS,
@@ -493,12 +497,14 @@ async def sweep_terminal_application_pii(app, *, retention_days: int = PII_RETEN
                 """
                 update fm_model_applications
                    set contact_email = %s, applicant_name = %s,
-                       birthdate = null, phone = null, region = null, bio = null,
+                       birthdate = %s, region = %s,
+                       phone = null, bio = null,
                        portfolio_url = null, sns_url = null,
                        profile_image_r2_key = null, photo_keys = '{}'::jsonb
                  where id = any(%s)
                 """,
-                (PURGED_EMAIL, PURGED_NAME, [r["id"] for r in rows]),
+                (PURGED_EMAIL, PURGED_NAME, PURGED_BIRTHDATE, PURGED_REGION,
+                 [r["id"] for r in rows]),
             )
             anonymized = cur.rowcount or 0
         await conn.commit()
