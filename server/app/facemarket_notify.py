@@ -1,0 +1,109 @@
+"""지원서 승인/거절 메일(Resend) + 새 지원서 Slack 알림(webhook). 전부 best-effort.
+
+메일 본문에는 신원정보(이름·생년월일)를 담지 않는다(E4): 지원서 이메일은 미검증이라
+오타 시 제3자 메일함으로 갈 수 있어 심사 결과·PII 노출이 된다. 거절 사유는 UX 가치가 크고
+유출 민감도가 낮아 포함하되, 상세는 앱 상태 화면이 진실이다(2A). 링크는 권한 없는 딥링크다
+(로그인 필수, 1A). 발송·알림 실패는 절대 승인/거절 트랜잭션을 막지 않는다 — 이미 커밋된 뒤
+호출되고, 대시보드 '미발송' 뱃지·재발송으로 복구한다.
+"""
+
+import logging
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+_RESEND_URL = "https://api.resend.com/emails"
+_TIMEOUT = httpx.Timeout(5.0, connect=3.0)
+
+
+def _email_content(email_type: str, *, public_base: str, reject_reason: str | None) -> tuple[str, str]:
+    """(subject, html). 신원정보 없음. 딥링크는 로그인 게이트 뒤 상태 허브로 보낸다."""
+    hub = f"{public_base}/model"
+    apply = f"{public_base}/model/apply"
+    if email_type == "approved":
+        subject = "[FaceMarket] 모델 지원이 승인됐어요"
+        html = (
+            "<p>모델 지원이 <b>승인</b>됐어요. 아래 버튼에서 로그인 후 신분증 인증부터 "
+            "모델 등록을 이어가 주세요.</p>"
+            f'<p><a href="{hub}">모델 등록 계속하기</a></p>'
+            "<p>버튼이 열리지 않으면 FaceMarket 에 로그인해 상태를 확인할 수 있어요.</p>"
+        )
+        return subject, html
+    # rejected
+    subject = "[FaceMarket] 모델 지원 결과 안내"
+    reason_html = f"<p>사유: {_escape(reject_reason)}</p>" if reject_reason else ""
+    html = (
+        "<p>모델 지원이 <b>거절</b>됐어요.</p>"
+        f"{reason_html}"
+        f'<p>정보를 수정해 다시 지원할 수 있어요: <a href="{apply}">다시 지원하기</a></p>'
+    )
+    return subject, html
+
+
+def _escape(text: str | None) -> str:
+    if not text:
+        return ""
+    return (
+        text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    )
+
+
+async def send_application_email(
+    settings,
+    *,
+    to: str,
+    email_type: str,
+    reject_reason: str | None = None,
+) -> tuple[bool, str | None, str | None]:
+    """(ok, provider_message_id, error). 키 미설정이면 (False, None, 'not_configured')."""
+    if not settings.resend_api_key:
+        return False, None, "not_configured"
+    subject, html = _email_content(
+        email_type,
+        public_base=settings.fm_application_public_base,
+        reject_reason=reject_reason,
+    )
+    payload = {
+        "from": settings.fm_application_from_email,
+        "to": [to],
+        "subject": subject,
+        "html": html,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            res = await client.post(
+                _RESEND_URL,
+                headers={"Authorization": f"Bearer {settings.resend_api_key}"},
+                json=payload,
+            )
+        if res.status_code >= 400:
+            return False, None, f"resend_{res.status_code}"
+        message_id = None
+        try:
+            message_id = res.json().get("id")
+        except Exception:
+            pass
+        return True, message_id, None
+    except Exception as exc:  # 네트워크·타임아웃 — best-effort
+        logger.warning("resend send failed (%s): %s", email_type, exc)
+        return False, None, "send_error"
+
+
+async def notify_slack_new_application(
+    settings, *, categories: list[str], region: str | None
+) -> None:
+    """새 지원서 도착 알림. 신원정보 없이 카테고리·지역만(검토 유도용). 실패는 무해."""
+    if not settings.fm_slack_webhook_url:
+        return
+    cats = ", ".join(categories) if categories else "-"
+    text = f":inbox_tray: 새 모델 지원서 · 카테고리: {cats} · 지역: {region or '-'}"
+    admin_link = f"{settings.fm_application_public_base}".replace(
+        "facemarket.", "admin."
+    )
+    text += f"\n<{admin_link}|관리자 검토 콘솔 열기>"
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            await client.post(settings.fm_slack_webhook_url, json={"text": text})
+    except Exception as exc:
+        logger.warning("slack notify failed: %s", exc)

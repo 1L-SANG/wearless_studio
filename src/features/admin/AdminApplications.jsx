@@ -10,7 +10,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button, Chips, ErrorState, Icon, useToast } from '@/components/ui.jsx';
 import {
   adminApproveApplication, adminFetchApplicationPhotoUrl,
-  adminListApplications, adminRejectApplication,
+  adminListApplications, adminRejectApplication, adminResendEmail,
 } from '@/lib/api/facemarket.js';
 import s from './AdminApplications.module.css';
 
@@ -43,10 +43,12 @@ function ApplicantPhoto({ applicationId, hasPhoto }) {
   return <img className={s.photo} src={url} alt="지원자 프로필 사진" />;
 }
 
-function ApplicationCard({ app, onApprove, onReject, busy }) {
+function ApplicationCard({ app, onApprove, onReject, onResend, busy }) {
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState('');
   const pending = app.status === 'under_review';
+  const decided = app.status === 'approved' || app.status === 'rejected';
+  const emailFailed = app.lastEmailStatus === 'failed' || (decided && !app.lastEmailStatus);
 
   return (
     <li className={s.card}>
@@ -79,6 +81,12 @@ function ApplicationCard({ app, onApprove, onReject, busy }) {
         {app.rejectReason && <p className={s.rejectReason}>거절 사유: {app.rejectReason}</p>}
         {app.identityMismatchCount > 0 && (
           <p className={s.mismatch}>신분증 대조 실패 {app.identityMismatchCount}회</p>
+        )}
+        {decided && emailFailed && (
+          <div className={s.emailRow}>
+            <span className={s.emailBadge}>메일 미발송</span>
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => onResend(app)}>메일 다시 보내기</Button>
+          </div>
         )}
 
         {pending && !rejecting && (
@@ -150,6 +158,16 @@ export function AdminApplications() {
     } finally { setBusyId(null); }
   }, [load, push]);
 
+  const resend = useCallback(async (app) => {
+    setBusyId(app.id);
+    try {
+      await adminResendEmail(app.id);
+      push?.('메일을 다시 보냈어요.', { icon: 'check' });
+      load();
+    } catch (e) { push?.(e.message, { icon: 'alertCircle' }); }
+    finally { setBusyId(null); }
+  }, [load, push]);
+
   return (
     <div className={s.page}>
       <header className={s.head}>
@@ -174,7 +192,8 @@ export function AdminApplications() {
       {phase === 'ready' && apps.length > 0 && (
         <ul className={s.list}>
           {apps.map((app) => (
-            <ApplicationCard key={app.id} app={app} onApprove={approve} onReject={reject} busy={busyId === app.id} />
+            <ApplicationCard key={app.id} app={app} onApprove={approve} onReject={reject}
+              onResend={resend} busy={busyId === app.id} />
           ))}
         </ul>
       )}

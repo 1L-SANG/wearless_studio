@@ -167,6 +167,13 @@ export function adminRejectApplication(applicationId, reason) {
   });
 }
 
+// 결정 메일 재발송(2A '메일 미발송' 복구).
+export function adminResendEmail(applicationId) {
+  return http(`/v1/facemarket/admin/applications/${encodeURIComponent(applicationId)}/resend-email`, {
+    method: 'POST',
+  });
+}
+
 // 관리자 프로필 사진: 게이트 라우트는 Authorization 헤더가 필요해 <img src> 로 못 건다.
 // 바이트를 인증 fetch 로 받아 objectURL 을 만든다(호출자가 revokeObjectURL 로 해제).
 export async function adminFetchApplicationPhotoUrl(applicationId) {

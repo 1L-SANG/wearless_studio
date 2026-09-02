@@ -23,7 +23,7 @@ from fastapi.responses import Response
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
 
-from . import repo
+from . import facemarket_notify, repo
 from .auth import require_user
 from .config import Settings
 from .db import get_conn
@@ -113,6 +113,9 @@ class AdminApplicationCard(CamelModel):
     reviewed_by: str | None = None
     reviewed_at: datetime | None = None
     created_at: datetime
+    # 최근 결정 메일 발송 상태(pending/sent/failed/None) — 대시보드 '미발송' 뱃지·재발송용(2A).
+    last_email_status: str | None = None
+    last_email_type: str | None = None
 
 
 class AdminRejectBody(CamelModel):
@@ -232,6 +235,8 @@ def _admin_card(row: dict) -> AdminApplicationCard:
         reviewed_by=row.get("reviewed_by"),
         reviewed_at=row.get("reviewed_at"),
         created_at=row["created_at"],
+        last_email_status=row.get("last_email_status"),
+        last_email_type=row.get("last_email_type"),
     )
 
 
@@ -395,9 +400,11 @@ async def submit_application(
             )
         await conn.commit()
         row = await _load_current(conn, user_id)
-    # post-commit 훅: 새 지원서 Slack 알림(T10) — 승인 상태면 스킵.
+    # post-commit: 새 지원서 Slack 알림 — auto-approve(관리자 검토 우회)면 스킵.
     if not auto_approved:
-        _notify_new_application(request, application_id=new_id)
+        await _dispatch_new_application_slack(
+            request, categories=categories, region=region
+        )
     return _application_view(row)
 
 
@@ -449,20 +456,31 @@ async def admin_list_applications(
         "under_review", "approved", "rejected", "cancelled"
     ):
         raise _err("invalid_status", "상태 필터가 올바르지 않습니다.")
+    # 최근 결정 메일 상태를 lateral 로 붙인다(대시보드 '미발송' 뱃지·재발송, 2A).
+    base = f"""
+        select a.id::text as id, a.user_id::text as user_id, a.status, a.contact_email,
+               a.applicant_name, a.birthdate, a.region, a.gender, a.height_cm,
+               a.agency_contracted, a.categories, a.portfolio_url, a.sns_url, a.bio,
+               a.profile_image_r2_key, a.identity_mismatch_count,
+               a.reviewed_by::text as reviewed_by, a.reviewed_at, a.reject_reason,
+               a.created_at, em.last_email_status, em.last_email_type
+        from fm_model_applications a
+        left join lateral (
+            select status as last_email_status, email_type as last_email_type
+            from fm_model_application_emails e
+            where e.application_id = a.id order by e.created_at desc limit 1
+        ) em on true
+    """
     async with get_conn(request) as conn:
         await _require_admin(conn, user_id)
         async with conn.cursor() as cur:
             if status:
                 await cur.execute(
-                    f"select {_APPLICATION_COLUMNS} from fm_model_applications "
-                    "where status = %s order by created_at desc limit 200",
+                    base + " where a.status = %s order by a.created_at desc limit 200",
                     (status,),
                 )
             else:
-                await cur.execute(
-                    f"select {_APPLICATION_COLUMNS} from fm_model_applications "
-                    "order by created_at desc limit 200"
-                )
+                await cur.execute(base + " order by a.created_at desc limit 200")
             rows = await cur.fetchall()
     return [_admin_card(r) for r in rows]
 
@@ -494,8 +512,11 @@ async def admin_approve_application(
             )
             row = await cur.fetchone()
         await conn.commit()
-    # post-commit: 승인 메일(T4). 상태는 이미 커밋됨(진실원천, 2A).
-    _notify_decision(request, application_id=application_id, decision="approved")
+    # post-commit: 승인 메일. 상태는 이미 커밋됨(진실원천, 2A).
+    await _dispatch_decision_email(
+        request, application_id=application_id, to=row["contact_email"],
+        email_type="approved", reject_reason=None,
+    )
     return _admin_card(row)
 
 
@@ -529,8 +550,37 @@ async def admin_reject_application(
             )
             row = await cur.fetchone()
         await conn.commit()
-    _notify_decision(request, application_id=application_id, decision="rejected")
+    await _dispatch_decision_email(
+        request, application_id=application_id, to=row["contact_email"],
+        email_type="rejected", reject_reason=row.get("reject_reason"),
+    )
     return _admin_card(row)
+
+
+@router.post("/admin/applications/{application_id}/resend-email")
+async def admin_resend_email(
+    request: Request, application_id: str, user_id: str = Depends(require_user)
+):
+    """결정 메일 재발송(2A '메일 미발송' 복구). 현재 상태(approved/rejected)에 맞는 메일을 다시 보낸다."""
+    application_id = _canonical_id(application_id)
+    async with get_conn(request) as conn:
+        await _require_admin(conn, user_id)
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select status, contact_email, reject_reason "
+                "from fm_model_applications where id = %s",
+                (application_id,),
+            )
+            row = await cur.fetchone()
+    if row is None:
+        raise _err("not_found", "지원서를 찾을 수 없습니다.", status=404)
+    if row["status"] not in ("approved", "rejected"):
+        raise _err("no_decision_email", "발송할 결정 메일이 없는 상태입니다.", status=409)
+    await _dispatch_decision_email(
+        request, application_id=application_id, to=row["contact_email"],
+        email_type=row["status"], reject_reason=row.get("reject_reason"),
+    )
+    return {"resent": True}
 
 
 @router.get("/admin/applications/{application_id}/profile-image")
@@ -562,14 +612,47 @@ async def admin_application_photo(
     return Response(content=data, media_type=mime, headers={"Cache-Control": "private, no-store"})
 
 
-# --- post-commit 알림 훅 (T4 메일 / T10 Slack 에서 배선) -----------------------
+# --- post-commit 알림 (전부 best-effort — 이미 커밋된 뒤 호출, 절대 예외를 올리지 않는다) ----
 
 
-def _notify_new_application(request: Request, *, application_id: str) -> None:
-    """새 지원서 Slack 알림(T10). 실패는 무해 — 검토는 대시보드가 진실."""
-    logger.info("fm_application submitted id=%s (slack notify: T10)", application_id)
+async def _dispatch_new_application_slack(
+    request: Request, *, categories: list[str], region: str | None
+) -> None:
+    settings = _settings(request)
+    try:
+        await facemarket_notify.notify_slack_new_application(
+            settings, categories=categories, region=region
+        )
+    except Exception:
+        logger.warning("slack dispatch failed", exc_info=True)
 
 
-def _notify_decision(request: Request, *, application_id: str, decision: str) -> None:
-    """승인/거절 메일(T4, Resend). 상태는 이미 커밋됨 — 발송 실패는 뱃지+재발송으로 복구(2A)."""
-    logger.info("fm_application %s id=%s (email: T4)", decision, application_id)
+async def _dispatch_decision_email(
+    request: Request, *, application_id: str, to: str, email_type: str,
+    reject_reason: str | None,
+) -> None:
+    """메일 발송 원장(pending→sent/failed) + Resend 발송. 실패해도 상태는 유지(2A)."""
+    settings = _settings(request)
+    try:
+        async with get_conn(request) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "insert into fm_model_application_emails (application_id, email_type) "
+                    "values (%s, %s) returning id::text as id",
+                    (application_id, email_type),
+                )
+                email_id = (await cur.fetchone())["id"]
+            await conn.commit()
+        ok, message_id, error = await facemarket_notify.send_application_email(
+            settings, to=to, email_type=email_type, reject_reason=reject_reason,
+        )
+        async with get_conn(request) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "update fm_model_application_emails "
+                    "set status = %s, provider_message_id = %s, error = %s where id = %s",
+                    ("sent" if ok else "failed", message_id, error, email_id),
+                )
+            await conn.commit()
+    except Exception:
+        logger.warning("email dispatch failed for %s", application_id, exc_info=True)

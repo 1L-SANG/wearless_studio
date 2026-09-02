@@ -293,6 +293,14 @@ class Settings:
     # auto-approve: 데모 리허설·비상용. on 이면 제출 즉시 approved 전이(관리자 검토 우회) —
     # 큐레이션 서사를 우회하므로 기본 off, on 이면 기동 로그로 감사 흔적을 남긴다(E14).
     fm_application_auto_approve: bool = False
+    # 지원서 승인/거절 메일(Resend). 키 없으면 발송 스킵(상태는 그대로 커밋 — 2A, 앱이 진실).
+    # from_email 은 인증된 도메인(wearless.kr)이어야 실제 발송된다. public_base 는 메일 딥링크의
+    # 오리진(facemarket.wearless.kr) — 링크는 권한 없는 딥링크다(로그인 필수, 1A).
+    resend_api_key: str | None = None
+    fm_application_from_email: str = "FaceMarket <noreply@wearless.kr>"
+    fm_application_public_base: str = "https://facemarket.wearless.kr"
+    # 새 지원서 Slack 알림(서버 → incoming webhook 직접). 없으면 스킵. Lambda 재사용 아님(별도 웹훅).
+    fm_slack_webhook_url: str | None = None
     fm_oacx_contract_mode: str = "disabled"
     # AWS Face Liveness 사용 여부. off 면 라이브니스 세션을 만들지 않고 SFace 매칭 앵커를
     # OACX 신분증 초상으로 쓴다(업로드 사진 ↔ 신분증 초상). 본인확인은 OACX 모바일신분증(실시간
@@ -576,6 +584,14 @@ def load_settings() -> Settings:
         fm_application_auto_approve=(
             os.getenv("FM_APPLICATION_AUTO_APPROVE", "false").lower() == "true"
         ),
+        resend_api_key=os.getenv("RESEND_API_KEY") or None,
+        fm_application_from_email=os.getenv(
+            "FM_APPLICATION_FROM_EMAIL", "FaceMarket <noreply@wearless.kr>"
+        ),
+        fm_application_public_base=(
+            os.getenv("FM_APPLICATION_PUBLIC_BASE") or "https://facemarket.wearless.kr"
+        ).rstrip("/"),
+        fm_slack_webhook_url=os.getenv("FM_SLACK_WEBHOOK_URL") or None,
         fm_oacx_contract_mode=os.getenv("FM_OACX_CONTRACT_MODE", "disabled"),
         fm_liveness_enabled=(
             os.getenv("FM_LIVENESS_ENABLED", "true").lower() == "true"
