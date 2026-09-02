@@ -12,6 +12,7 @@
    대체됐고 import 하는 파일이 0개다). 죽은 화면을 살아 있는 고지로 세면 안 된다.
    사업자 정보도 여기 들어가야 하는데, 값을 확인할 소스가 레포에 없어 비워 뒀다.
    ============================================================= */
+import { Link } from 'react-router-dom';
 import s from '../FacemarketLanding.module.css';
 
 export function FooterSection() {
@@ -43,6 +44,14 @@ export function FooterSection() {
       </p>
       <p className={s.footerNote}>
         상품 상세페이지를 만드는 셀러라면 <a className={s.footerLink} href="https://ai.wearless.kr">ai.wearless.kr</a> 로 오세요.
+      </p>
+      {/* 상단바가 모델 둘러보기·라이선스·정산으로 바뀌면서 자리를 잃은 두 화면. 지우지 않은
+          이유는 App.jsx 라우트 주석에 있다 — 생체정보를 넘기기 전에 등록 절차와 취급 규칙을
+          읽을 자리가 사이트에 하나는 있어야 한다. 여기가 그 자리다. */}
+      <p className={s.footerNote}>
+        <Link className={s.footerLink} to="/register">모델 등록 안내</Link>
+        {' · '}
+        <Link className={s.footerLink} to="/model-info">내 얼굴이 어떻게 다뤄지나요</Link>
       </p>
     </footer>
   );

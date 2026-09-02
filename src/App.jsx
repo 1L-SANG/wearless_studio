@@ -36,6 +36,8 @@ import { PublicVerify } from '@/features/verify/PublicVerify.jsx';
 import { FacemarketRoot } from '@/features/facemarket-landing/FacemarketRoot.jsx';
 import { FacemarketModelLayout } from '@/features/facemarket-shell/FacemarketModelLayout.jsx';
 import { LicensingPage } from '@/features/facemarket-landing/pages/LicensingPage.jsx';
+import { ModelsPage } from '@/features/facemarket-landing/pages/ModelsPage.jsx';
+import { PayoutPage } from '@/features/facemarket-landing/pages/PayoutPage.jsx';
 import { RegisterPage } from '@/features/facemarket-landing/pages/RegisterPage.jsx';
 import { ModelInfoPage } from '@/features/facemarket-landing/pages/ModelInfoPage.jsx';
 import { ProductInput } from '@/features/product-input/ProductInput.jsx';
@@ -667,9 +669,16 @@ export default function App() {
             한다 — 설명을 읽기 전에 로그인 모달을 띄우지 않는 게 랜딩의 존재 이유다.
             인증이 필요한 곳(/model/*)으로는 각 페이지 끝 CTA 가 보낸다. */}
         {IS_FACEMARKET && <Route index element={<FacemarketRoot />} />}
-        {IS_FACEMARKET && <Route path="licensing" element={<LicensingPage />} />}
+        {IS_FACEMARKET && <Route path="models" element={<ModelsPage />} />}
+        {IS_FACEMARKET && <Route path="license" element={<LicensingPage />} />}
+        {IS_FACEMARKET && <Route path="payout" element={<PayoutPage />} />}
+        {/* 상단바에서 내려왔지만 화면은 그대로 살아 있다 — 푸터에서 들어간다.
+            지우지 않는 이유: 등록 7단계 안내와 프라이버시 하드룰 설명은 승인받은 내용이고,
+            생체정보를 넘기기 전에 읽을 자리가 사이트에 하나는 있어야 한다. */}
         {IS_FACEMARKET && <Route path="register" element={<RegisterPage />} />}
         {IS_FACEMARKET && <Route path="model-info" element={<ModelInfoPage />} />}
+        {/* 옛 주소. 상단바 개편 전에 공유된 링크가 404 로 떨어지지 않게. */}
+        {IS_FACEMARKET && <Route path="licensing" element={<Navigate to="/license" replace />} />}
         {/* facemarket 의 /model/* 은 셀러 크롬이 아니라 랜딩 상단바를 입는다. 이 도메인에
             온 사람은 얼굴을 등록하러 온 모델이고, TopNav 의 크레딧·요금제·플로우 스테퍼는
             전부 상품컷 만드는 사람 물건이라 잡음이다. 인증 가드는 종전과 같다. */}

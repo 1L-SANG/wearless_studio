@@ -3,8 +3,11 @@
    랜딩 홈('/') — 히어로 + 예시 캐러셀.
 
    상단바 세 항목은 각자 자기 라우트를 갖는다(SPA, 새 페이지처럼):
-   /licensing · /register · /model-info. 넷 다 무인증 공개라 설명을 다 읽고 나서
-   전환하게 되고, 각 페이지 CTA 가 실제 인증 라우트(/model/*)로 보낸다.
+   /models · /license · /payout. 전부 무인증 공개라 설명을 다 읽고 나서 전환하게 되고,
+   각 페이지 CTA 가 실제 인증 라우트(/model/*)로 보낸다.
+   /models 와 /payout 은 아직 화면이 없어 자리만 잡아 뒀다(PlaceholderPage).
+   상단바에서 내려온 /register(등록 7단계 안내)와 /model-info(프라이버시)는 살아 있고
+   푸터에서 들어간다.
    ============================================================= */
 import { LandingShell } from './LandingShell.jsx';
 import { HeroSection } from './sections/HeroSection.jsx';
