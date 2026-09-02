@@ -56,6 +56,6 @@ test('진입점 두 개가 각자 자기 앱을 마운트한다', () => {
     assert.match(read(entry), /from '\.\.\/mountApp\.jsx'/, entry);
   }
   // 문서가 무는 진입점도 서로 달라야 한다.
-  assert.match(read('index.html'), /src="\/src\/apps\/seller\/main\.jsx"/);
+  assert.match(read('seller.html'), /src="\/src\/apps\/seller\/main\.jsx"/);
   assert.match(read('facemarket.html'), /src="\/src\/apps\/facemarket\/main\.jsx"/);
 });
