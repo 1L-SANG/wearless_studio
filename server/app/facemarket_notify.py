@@ -18,8 +18,9 @@ _TIMEOUT = httpx.Timeout(5.0, connect=3.0)
 
 
 def _email_content(email_type: str, *, public_base: str, reject_reason: str | None) -> tuple[str, str]:
-    """(subject, html). 신원정보 없음. 딥링크는 로그인 게이트 뒤 상태 허브로 보낸다."""
-    hub = f"{public_base}/model"
+    """(subject, html). 신원정보 없음. 딥링크는 로그인 게이트 뒤 등록 상태(/status)로 보낸다 —
+    예전 /model 허브는 2026-09-02 부터 /status 로 넘어가므로 처음부터 그리로."""
+    hub = f"{public_base}/status"
     apply = f"{public_base}/model/apply"
     if email_type == "approved":
         subject = "[FaceMarket] 모델 지원이 승인됐어요"

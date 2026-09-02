@@ -243,6 +243,17 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   #   validate_biometric_settings(facemarket_enrollment.py) 가 기동 시 이 전제를 fail-fast 로 검사하므로
   #   빠지면 api 태스크가 안 뜬다. opendid 먼저 → 그다음 이 api 재배포.
   FM_BIOMETRIC_ENROLLMENT_ENABLED: "true"
+  # ---- 모델 지원서 리뉴얼(2026-09-02, docs/designs/facemarket-application-renewal.md) ----
+  # 켜면 신규 사용자는 지원서 → 관리자 승인 → 신분증 대조 뒤에만 등록할 수 있다. 기존
+  # verified/reverification_required 모델과 진행 중 등록은 면제. 끄면 종전 즉시 등록 플로우.
+  FM_APPLICATION_REQUIRED: "true"
+  # 관리자 검토 없이 자동 승인 — 데모 비상용. prod 는 반드시 false(라이브 관리자 시연이 기본).
+  FM_APPLICATION_AUTO_APPROVE: "false"
+  # 승인/거절 메일의 딥링크와 Slack 알림의 관리자 콘솔 링크(facemarket. → admin. 치환) 뿌리.
+  FM_APPLICATION_PUBLIC_BASE: https://facemarket.wearless.kr
+  # Resend 발신자. 이 도메인(wearless.kr)이 Resend 에서 검증돼 있어야 한다(DKIM/SPF TXT).
+  # 검증 전 스모크는 Resend 가 주는 onboarding@resend.dev 로 바꿔 계정 소유자 메일에만 보낼 수 있다.
+  FM_APPLICATION_FROM_EMAIL: "FaceMarket <noreply@wearless.kr>"
   # 실 OACX 모바일신분증 계약(D1 dlphotoimage). dev-mock 은 dev 전용이라 prod 는 이 값이어야 한다.
   FM_OACX_CONTRACT_MODE: prod-dlphoto-v1
   # CX trans 서버조회(cx.raonsecure.co.kr:18543)는 RaonSecure 방화벽이 **한국 IP만** 허용한다.
@@ -318,6 +329,14 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   #   raw `aws ssm put-parameter` 로 만들면 copilot 태그가 없어 태스크가 못 읽는다(2026-07-17 실경험).
   TOSS_SECRET_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/TOSS_SECRET_KEY
   FM_CHAIN_PRIVATE_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_CHAIN_PRIVATE_KEY
+  # ---- 모델 지원서 리뉴얼 ----
+  # 새 지원서 Slack 알림. 크리티컬 로그 알림(addons/log-slack-alerts.yml)과 **같은 웹훅·같은 채널**을
+  # 재사용한다 — 새 시크릿 없이 켜진다. 채널을 따로 두고 싶으면 다른 SSM 이름으로 바꾼다.
+  FM_SLACK_WEBHOOK_URL: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/SLACK_ALERT_WEBHOOK_URL
+  # ⚠️ 배포 전 값 저장 필요: copilot-aws secret init --name RESEND_API_KEY (프로드 SSM). 없으면 배포가
+  #   "secret not found" 로 실패한다(앱은 키가 없어도 뜨지만 — 메일은 원장에 failed 로 남고 "메일 미발송"
+  #   뱃지·재발송으로 복구 — copilot 이 참조를 먼저 검사한다).
+  RESEND_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/RESEND_API_KEY
   # 내부 SAM2 서비스 호출용 공유 시크릿. sam2 매니페스트가 **같은 파라미터**를 읽으므로
   # 양쪽이 한 값을 보고, 값은 저장소에 절대 들어오지 않는다. 이미 생성돼 있고 copilot 태그도
   # 붙어 있다(copilot-application=wearless, copilot-environment=prod).
