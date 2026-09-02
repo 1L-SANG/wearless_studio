@@ -11,9 +11,11 @@
   --fm-line: rgba(16, 21, 26, 0.12);
   --fm-accent: #2d63ff;
   --fm-pad: clamp(1.25rem, 3.1vw, 4.25rem);
-  /* 상단바 높이. .header 가 쓰고, 첫 화면 그리드(.screen)가 '뷰포트 − 상단바'를 계산할 때
-     같은 값을 빼야 하므로 변수로 못박는다. 원본 --header-height 그대로. */
-  --fm-header-h: clamp(4.5rem, 8vw, 6.5rem);
+  /* 상단바 높이. .header 가 쓰고, 첫 화면 그리드(.screen)가 '뷰포트 − 상단바 − 안내 띠'를
+     계산할 때 같은 값을 빼야 하므로 변수로 못박는다. 원본(--header-height, 최대 6.5rem)보다
+     낮다 — 상단바가 스크롤 내내 화면에 남게 되면서(sticky) 그 높이가 계속 뷰포트를 먹기
+     때문이다. 사용자 지시(2026-09-02)이기도 하다. */
+  --fm-header-h: clamp(3.5rem, 4.6vw, 4.5rem);
   /* 맨 위 안내 띠 높이(데스크톱 한 줄). 첫 화면 그리드가 '뷰포트 − 상단바 − 띠'를 계산할 때 뺀다.
      캡처 실측 비율(글자 12px, 띠 ≈34px)에 맞춘 값이다.
      폰에서는 두 줄로 접혀 더 높지만 폰은 첫 화면 min-height 규칙을 안 쓴다. */
@@ -25,10 +27,11 @@
   /* 원본 .spotlight-shell 의 overflow: hidden. 캐러셀 아크 양끝 카드가 뷰포트 폭을 넘어가는
      걸 여기서 자른다 — 스테이지 자신은 세로로 자르면 안 돼서(CarouselStage.module.css
      머리말) 가로 클립을 셸이 맡는다. 셸은 내용만큼 자라므로 세로로는 아무것도 안 잘린다.
-     clip 을 쓰는 이유: hidden 은 스크롤 컨테이너를 만들어 화면 밖 카드에 focus() 가 가면
-     셸이 옆으로 밀린다(카드 쪽은 preventScroll 로 막지만 다른 경로가 생길 수 있다).
-     clip 을 모르는 옛 브라우저(Safari ≤15)는 앞 줄의 hidden 으로 떨어진다. */
-  overflow: hidden;
+     **`hidden` 으로 되돌리지 마라 — 상단바 sticky 가 죽는다.** hidden 은 스크롤 컨테이너를
+     만들고, sticky 는 가장 가까운 스크롤 컨테이너를 기준으로 붙는데 그 컨테이너 자신은
+     스크롤되지 않으므로 상단바가 그냥 흘러가 버린다(실측). clip 은 스크롤 컨테이너를
+     만들지 않아 sticky 가 뷰포트 기준으로 산다. 부수 효과로 화면 밖 카드에 focus() 가 가도
+     셸이 옆으로 밀리지 않는다. */
   overflow: clip;
   color: var(--fm-ink);
   background:
@@ -98,14 +101,35 @@
 /* ---- 상단바 ---- */
 /* 원본 .site-header 처럼 1fr auto 1fr 이다. flex space-between 이면 오른쪽 열(CTA +
    로그아웃)이 왼쪽(브랜드)보다 넓어 가운데 내비가 화면 중앙에서 왼쪽으로 밀린다 —
-   로그인하면 로그아웃 버튼이 생겨 그 편차가 더 커진다. */
+   로그인하면 로그아웃 버튼이 생겨 그 편차가 더 커진다.
+
+   스크롤해도 화면에 남는다(sticky, 사용자 지시 2026-09-02). 맨 위 안내 띠는 같이 안 붙는다 —
+   한 번 읽고 지나가는 방향 안내라 계속 자리를 차지할 이유가 없다.
+   sticky 는 흐름에서 자리를 그대로 차지하므로 .screen 의 '뷰포트 − 상단바 − 띠' 계산은
+   그대로 맞는다. 배경은 반투명 + 블러다: 이 페이지 배경이 그라데이션이라 불투명 단색을
+   깔면 어느 스크롤 위치에서든 색이 어긋나고, 맨 위에서는 띠 아래 이음매로 보인다.
+   좌우 패딩은 셸이 이미 주고 있어(--fm-pad) 여기서 다시 주지 않는다 — 대신 음수 마진으로
+   배경만 화면 끝까지 늘린다. 안 그러면 카드가 상단바 좌우 여백으로 비쳐 지나간다. */
 .header {
-  position: relative;
+  position: sticky;
+  top: 0;
+  z-index: 30;
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: center;
   gap: 1rem;
   height: var(--fm-header-h);
+  margin-inline: calc(var(--fm-pad) * -1);
+  padding-inline: var(--fm-pad);
+  background: rgba(248, 251, 253, 0.72);
+  backdrop-filter: blur(14px) saturate(1.6);
+  -webkit-backdrop-filter: blur(14px) saturate(1.6);
+}
+
+/* 블러를 못 쓰는 환경에서는 반투명이 아니라 불투명으로 — 글자 뒤로 카드가 지나가면
+   읽을 수 없다. 색은 페이지 그라데이션 맨 위 색이라 첫 화면에서는 이음매가 안 보인다. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .header { background: #f8fbfd; }
 }
 
 .brand { display: inline-flex; align-items: center; gap: 0.55rem; color: inherit; text-decoration: none; }
