@@ -15,6 +15,7 @@ const root = new URL('../../', import.meta.url);
 const read = (name) => readFileSync(fileURLToPath(new URL(name, root)), 'utf8');
 
 const FACEMARKET_HOST = 'facemarket.wearless.kr';
+const ADMIN_HOST = 'admin.wearless.kr';
 
 test('facemarket 문서가 존재하고 자기 head 를 갖는다', () => {
   const html = read('facemarket.html');
@@ -25,13 +26,20 @@ test('facemarket 문서가 존재하고 자기 head 를 갖는다', () => {
   assert.match(html, /src="\/src\/apps\/facemarket\/main\.jsx"/);
 });
 
-test('vite 가 두 문서를 모두 진입점으로 낸다', () => {
+test('admin 문서가 존재하고 자기 진입점을 문다', () => {
+  const html = read('admin.html');
+  assert.match(html, /<title>Wearless 관리자/);
+  assert.match(html, /src="\/src\/apps\/admin\/main\.jsx"/);
+});
+
+test('vite 가 세 문서를 모두 진입점으로 낸다', () => {
   const config = read('vite.config.js');
   assert.match(config, /rollupOptions/);
   assert.match(config, /htmlEntry\('seller'\)/);
   assert.match(config, /htmlEntry\('facemarket'\)/);
+  assert.match(config, /htmlEntry\('admin'\)/);
   // dev 사전번들 스캔 목록에도 들어가야 한다(빠지면 dev 에서 504 → 흰 화면).
-  assert.match(config, /entries: \['seller\.html', 'facemarket\.html'\]/);
+  assert.match(config, /entries: \['seller\.html', 'facemarket\.html', 'admin\.html'\]/);
 });
 
 /* Vercel 은 rewrite 보다 **파일 시스템을 먼저** 본다. dist 에 index.html 이 있으면 `/`
@@ -43,15 +51,21 @@ test('루트에 응답할 정적 문서가 없어야 host rewrite 가 돈다', (
   assert.match(read('seller.html'), /<title>Wearless/);
 });
 
-test('vercel 이 facemarket 호스트만 그 문서로 보낸다', () => {
+test('vercel 이 호스트별로 그 문서를 보낸다(admin·facemarket 먼저, 셀러 폴백)', () => {
   const vercel = JSON.parse(read('vercel.json'));
-  const [first, ...rest] = vercel.rewrites;
+  const rewrites = vercel.rewrites;
 
-  assert.equal(first.destination, '/facemarket.html');
-  assert.deepEqual(first.has, [{ type: 'host', value: FACEMARKET_HOST }]);
+  // 호스트 규칙(has)은 전부 catch-all 폴백보다 앞에 와야 한다.
+  const adminRule = rewrites.find((r) => r.destination === '/admin.html');
+  assert.deepEqual(adminRule.has, [{ type: 'host', value: ADMIN_HOST }]);
+
+  const facemarketRule = rewrites.find((r) => r.destination === '/facemarket.html');
+  assert.deepEqual(facemarketRule.has, [{ type: 'host', value: FACEMARKET_HOST }]);
 
   // 순서가 중요하다 — 전 경로 catch-all 이 앞에 오면 호스트 규칙에 닿지 못한다.
-  const fallback = rest.at(-1);
+  const fallback = rewrites.at(-1);
   assert.equal(fallback.destination, '/seller.html');
   assert.equal(fallback.has, undefined);
+  assert.ok(rewrites.indexOf(adminRule) < rewrites.length - 1);
+  assert.ok(rewrites.indexOf(facemarketRule) < rewrites.length - 1);
 });

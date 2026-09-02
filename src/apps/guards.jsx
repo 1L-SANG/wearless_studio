@@ -10,7 +10,7 @@ import { useEffect, useRef } from 'react';
 import { Link, Navigate, Outlet } from 'react-router-dom';
 import { Button } from '@/components/ui.jsx';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
-import { IS_FACEMARKET } from '@/lib/host.js';
+import { IS_ADMIN, IS_FACEMARKET } from '@/lib/host.js';
 import { isMockMode } from '@/lib/api/index.js';
 
 export function FacemarketLoginPrompt() {
@@ -52,9 +52,11 @@ export function RequireAuth() {
   if (isMockMode) return <Outlet />;
   if (loading) return <div className="route-loading">불러오는 중이에요</div>;
   if (!session) {
-    // 번들이 갈라졌어도 이 분기는 남는다 — 로그인 모달은 두 도메인이 함께 쓰고,
+    // 번들이 갈라졌어도 이 분기는 남는다 — 로그인 모달은 세 도메인이 함께 쓰고,
     // 여기서 갈리는 건 '로그인 안 된 사람을 어디로 보내나' 하나다.
-    if (IS_FACEMARKET) return <FacemarketLoginPrompt />;
+    // admin 은 셀러(/create/input)로 튕기면 안 된다(그 라우트가 admin 번들에 없다) —
+    // facemarket 과 같은 로그인 프롬프트를 쓴다.
+    if (IS_FACEMARKET || IS_ADMIN) return <FacemarketLoginPrompt />;
     return <Navigate to="/create/input" replace />;
   }
   return <Outlet />;

@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" type="image/svg+xml" href="/assets/brand/logo.svg" />
+  <meta name="theme-color" content="#f8fbfd" />
+  <title>Wearless 관리자 — 모델 지원 검토</title>
+
+  <!-- ============================================================
+       admin.wearless.kr 전용 문서(모델 지원서 검토).
+
+       seller.html·facemarket.html 과 같은 다중 진입 패턴이다:
+         vite.config.js  rollupOptions.input.admin = admin.html   ← 산출물
+         vercel.json     host rewrite(admin.wearless.kr)          ← 배급
+       셋은 한 벌 배포다. body 는 admin 진입 청크만 다르다.
+       크롤러 미리보기가 필요 없는 내부 콘솔이라 og:* 는 두지 않는다(검색·공유 대상 아님).
+       ============================================================ -->
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/apps/admin/main.jsx"></script>
+</body>
+</html>

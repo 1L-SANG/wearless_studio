@@ -33,11 +33,13 @@ const facemarketDevDocument = {
       // 문서 요청만 건드린다 — 모듈(/src/…, /@vite/…)과 확장자 있는 파일은 그대로 흘린다.
       if (url.pathname.includes('.') || url.pathname.startsWith('/@')) return next();
       const host = (req.headers.host || '').toLowerCase();
+      const wantsAdmin = url.searchParams.get('admin') === '1'
+        || /(^|\.)admin\./.test(host);
       const wantsFacemarket = url.searchParams.get('facemarket') === '1'
         || /(^|\.)facemarket\./.test(host);
-      req.url = wantsFacemarket
-        ? `/facemarket.html${url.search}`
-        : `/seller.html${url.search}`;
+      if (wantsAdmin) req.url = `/admin.html${url.search}`;
+      else if (wantsFacemarket) req.url = `/facemarket.html${url.search}`;
+      else req.url = `/seller.html${url.search}`;
       return next();
     });
   },
@@ -52,6 +54,7 @@ export default defineConfig({
       input: {
         seller: htmlEntry('seller'),
         facemarket: htmlEntry('facemarket'),
+        admin: htmlEntry('admin'),
       },
     },
   },
@@ -85,7 +88,7 @@ export default defineConfig({
   //   할 수 없다(resolve 실패) — 그래서 직접 의존인 amplify 를 include 해 하위로 번들한다.
   // dev 전용이다 — 프로덕션 빌드는 Rollup 이라 이 트리를 정상 번들한다(영향 없음).
   optimizeDeps: {
-    entries: ['seller.html', 'facemarket.html'],
+    entries: ['seller.html', 'facemarket.html', 'admin.html'],
     include: ['@aws-amplify/ui-react-liveness', '@aws-amplify/ui-react'],
     exclude: ['@smithy/core', '@aws-sdk/core'],
   },

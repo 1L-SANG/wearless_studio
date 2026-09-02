@@ -67,6 +67,23 @@ function detectFacemarket() {
 
 export const IS_FACEMARKET = detectFacemarket();
 
+/* admin.wearless.kr 감지 — 모델 지원서 검토 콘솔(별도 진입 문서 admin.html).
+   로컬·프리뷰는 ?admin=1 로 강제한다(facemarket 오버라이드와 같은 이유·같은 허용 호스트).
+   보안 경계가 아니다 — 서버가 repo.is_admin 을 강제한다. 이 플래그는 진입 문서 배급과
+   RequireAuth 의 미로그인 목적지 분기에만 쓴다. */
+function detectAdmin() {
+  if (typeof window === 'undefined') return false;
+  const host = (window.location.hostname || '').toLowerCase();
+  if (isOverrideAllowedHost(host)) {
+    try {
+      if (new URLSearchParams(window.location.search).get('admin') === '1') return true;
+    } catch { /* no-op */ }
+  }
+  return /(^|\.)admin\./.test(host);
+}
+
+export const IS_ADMIN = detectAdmin();
+
 const matchesRoute = (pathname, route) => pathname === route || pathname.startsWith(`${route}/`);
 
 /* facemarket 도메인에서 열리는 경로.
