@@ -106,12 +106,14 @@ function isTransientIdentityError(error) {
 
 // 진행 레일 — 등록은 실제 순차 KYC 흐름이라 번호 마커가 의미를 갖는다(장식 아님).
 // 인라인 렌더(중첩 컴포넌트 아님)로 두어 테스트 하네스 트리에 그대로 펼쳐지게 한다.
+// optional — 체형·대표는 건너뛸 수 있다(PRD §13 4번). 레일이 그걸 말해 주지 않으면
+// 일곱 개가 전부 필수로 읽혀 시작 전에 이탈한다.
 const FLOW_STEPS = [
   { key: 'consent', label: '동의' },
   { key: 'identity', label: '신분증' },
   { key: 'photos', label: '사진' },
-  { key: 'physique', label: '체형' },
-  { key: 'profile', label: '대표' },
+  { key: 'physique', label: '체형', optional: true },
+  { key: 'profile', label: '대표', optional: true },
   { key: 'liveness', label: '라이브' },
   { key: 'done', label: '완료' },
 ];
@@ -132,10 +134,19 @@ function renderStepRail(step) {
             className={`${s.railStep} ${s[`rail_${state}`]}`}
             aria-current={state === 'active' ? 'step' : undefined}
           >
+            {/* 번호는 Cormorant(라틴 전용 세리프)다 — 랜딩의 캐러셀 인덱스·라이선스
+                01~04 와 같은 자리이고, 이 사이트에서 '순서'를 뜻하는 표식이다.
+                끝난 단계는 숫자를 체크로 바꾼다: 번호는 '몇 번째'를, 체크는 '지났다'를
+                말하므로 같은 자리에 다른 뜻을 겹쳐 쓰지 않는다. */}
             <span className={s.railNode}>
-              {state === 'done' ? <Icon name="check" size={13} stroke={2.6} /> : i + 1}
+              {state === 'done'
+                ? <Icon name="check" size={13} stroke={2.6} />
+                : String(i + 1).padStart(2, '0')}
             </span>
             <span className={s.railLabel}>{f.label}</span>
+            {/* 건너뛸 수 있는 단계는 그 사실이 레일에 있어야 한다 — 카드 안까지
+                들어가야 알 수 있으면 일곱 개가 전부 필수로 읽힌다. */}
+            {f.optional ? <span className={s.railOptional}>선택</span> : null}
           </li>
         );
       })}
@@ -687,17 +698,13 @@ export function ModelRegister() {
         <p>동의, 모바일 신분증 확인, 얼굴 사진, 라이브 촬영을 순서대로 진행해요.</p>
       </div>
 
-      {/* 레일과 본문을 2열로 나눈다. PRD §13 1번이 "7단계 진행 레일은 장식이 아니다 —
-          현재 위치가 늘 보여야 한다" 인데, 종전처럼 본문 위에 가로띠로 얹으면 단계 내용이
-          길어질수록(사진 3장·체형 매트릭스) 레일이 화면 밖으로 밀려 그 요구가 깨졌다.
-          세로 레일을 sticky 로 두면 스크롤과 무관하게 위치가 남는다.
-          좁은 화면에서는 CSS 가 다시 가로띠로 접고 상단에 sticky 로 붙인다. */}
-      {/* 레일이 없는 단계('failed' 는 RAIL_INDEX 에 없다)에서는 그리드도 접는다.
-          안 그러면 12rem 짜리 빈 열이 남고, 모바일에서는 아무것도 안 든 sticky 바가
-          화면 위에 붙는다. */}
-      <div className={rail ? s.flowGrid : undefined}>
-        {rail ? <aside className={s.railColumn}>{rail}</aside> : null}
-        <div className={s.flowBody}>
+      {/* 레일은 본문 **위**에 가로로 눕는다. 세로 사이드 레일도 만들어 봤는데,
+          이 사이트의 리듬(랜딩이 전부 중앙 한 열)과 어긋나서 위저드만 다른 제품처럼
+          보였다. sticky 로 두어 단계 내용이 길어져도 현재 위치가 남는다 —
+          PRD §13 1번("7단계 진행 레일은 장식이 아니다")은 그렇게 지킨다.
+          'failed' 는 RAIL_INDEX 에 없어 rail 이 null 이고, 그때는 아무것도 안 그린다. */}
+      {rail}
+      <div className={s.flowBody}>
 
       {step === 'consent' && (
         <div className="surface">
@@ -1023,7 +1030,6 @@ export function ModelRegister() {
         <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {error}</p>
       )}
 
-        </div>
       </div>
     </div>
   );
