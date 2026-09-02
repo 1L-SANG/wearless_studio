@@ -18,7 +18,7 @@ import uuid
 
 from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
@@ -35,6 +35,12 @@ router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket model applications
 
 # 지원서 카테고리(활동하고 싶은 모델 분야). 앱 레벨 검증(DB 는 jsonb).
 CATEGORY_VALUES = {"fashion", "commercial", "fitness", "lifestyle"}
+# 지원 사진 4종(레퍼런스 정합): 프로필(정면 헤드샷)·클로즈업(측면/3/4)·상반신·전신. 전부 필수.
+# 'profile' 이 관리자 썸네일·카탈로그 커버(profile_image_r2_key)로 승격된다.
+PHOTO_KINDS = ("profile", "closeup", "waist_up", "full_length")
+EXPERIENCE_LEVELS = {"none", "beginner", "intermediate", "professional"}
+# 제출 시 확인 서명 3종(전부 true 여야 함) — 에이전시 미소속·성인/진실·사진 본인·최신·무보정.
+ATTESTATION_KEYS = ("noAgency", "adultAndTruthful", "photosAreMine")
 # 개인정보 수집·이용 동의(생체 동의와 별개, E3). 문구 변경 시 버전을 올린다.
 PRIVACY_CONSENT_VERSION = "2026-09-v1"
 ACCEPTED_PRIVACY_VERSIONS = ("2026-09-v1",)
@@ -60,11 +66,15 @@ class ApplicationSubmitBody(CamelModel):
     region: str
     gender: str | None = None
     height_cm: int | None = None
+    phone: str | None = None
+    experience_level: str | None = None
     agency_contracted: bool = False
     categories: list[str] = []
     portfolio_url: str | None = None
     sns_url: str | None = None
     bio: str | None = None
+    # 확인 서명 3종 — 전부 true 필수(에이전시 미소속·성인/진실·사진 본인).
+    attestations: dict[str, bool] = {}
     privacy_consent: ApplicationConsent
 
 
@@ -84,11 +94,15 @@ class ApplicationView(CamelModel):
     region: str
     gender: str | None = None
     height_cm: int | None = None
+    phone: str | None = None
+    experience_level: str | None = None
     agency_contracted: bool = False
     categories: list[str] = []
     portfolio_url: str | None = None
     sns_url: str | None = None
     bio: str | None = None
+    # 보유 사진 종류(재지원 시 어떤 슬롯이 이전 사진으로 채워지는지).
+    photo_kinds: list[str] = []
 
 
 class AdminApplicationCard(CamelModel):
@@ -102,12 +116,16 @@ class AdminApplicationCard(CamelModel):
     region: str
     gender: str | None = None
     height_cm: int | None = None
+    phone: str | None = None
+    experience_level: str | None = None
     agency_contracted: bool = False
     categories: list[str] = []
     portfolio_url: str | None = None
     sns_url: str | None = None
     bio: str | None = None
     has_profile_image: bool = False
+    photo_kinds: list[str] = []
+    attestations: dict[str, bool] = {}
     identity_mismatch_count: int = 0
     reject_reason: str | None = None
     reviewed_by: str | None = None
@@ -144,13 +162,23 @@ def _canonical_id(application_id: str) -> str:
         raise _err("not_found", "지원서를 찾을 수 없습니다.", status=404)
 
 
-def _staging_key(user_id: str, ext: str) -> str:
-    # 사용자당 1슬롯이지만 키에 uuid 를 넣어 교체 시 옛 오브젝트를 명시적으로 지운다.
-    return f"private/fm-application/staging/{user_id}/{uuid.uuid4().hex}.{ext}"
+def _staging_key(user_id: str, kind: str, ext: str) -> str:
+    # 종류별 1슬롯이지만 키에 uuid 를 넣어 교체 시 옛 오브젝트를 명시적으로 지운다.
+    return f"private/fm-application/staging/{user_id}/{kind}-{uuid.uuid4().hex}.{ext}"
 
 
-def _application_photo_key(application_id: str, ext: str) -> str:
-    return f"private/fm-application/{application_id}/profile.{ext}"
+def _application_photo_key(application_id: str, kind: str, ext: str) -> str:
+    return f"private/fm-application/{application_id}/{kind}.{ext}"
+
+
+def _photo_keys(row: dict) -> dict:
+    keys = row.get("photo_keys") or {}
+    if not isinstance(keys, dict):
+        return {}
+    # 구버전 행(사진 1장 시절)은 profile_image_r2_key 만 있다 — profile 로 승격해 노출.
+    if not keys and row.get("profile_image_r2_key"):
+        return {"profile": row["profile_image_r2_key"]}
+    return keys
 
 
 def _mime_for_key(key: str) -> str:
@@ -249,11 +277,14 @@ def _application_view(row: dict) -> ApplicationView:
         region=row["region"],
         gender=row.get("gender"),
         height_cm=row.get("height_cm"),
+        phone=row.get("phone"),
+        experience_level=row.get("experience_level"),
         agency_contracted=row.get("agency_contracted", False),
         categories=list(row.get("categories") or []),
         portfolio_url=row.get("portfolio_url"),
         sns_url=row.get("sns_url"),
         bio=row.get("bio"),
+        photo_kinds=sorted(_photo_keys(row).keys(), key=PHOTO_KINDS.index),
     )
 
 
@@ -268,12 +299,16 @@ def _admin_card(row: dict) -> AdminApplicationCard:
         region=row["region"],
         gender=row.get("gender"),
         height_cm=row.get("height_cm"),
+        phone=row.get("phone"),
+        experience_level=row.get("experience_level"),
         agency_contracted=row.get("agency_contracted", False),
         categories=list(row.get("categories") or []),
         portfolio_url=row.get("portfolio_url"),
         sns_url=row.get("sns_url"),
         bio=row.get("bio"),
         has_profile_image=bool(row.get("profile_image_r2_key")),
+        photo_kinds=sorted(_photo_keys(row).keys(), key=PHOTO_KINDS.index),
+        attestations=dict(row.get("attestations") or {}),
         identity_mismatch_count=row.get("identity_mismatch_count", 0),
         reject_reason=row.get("reject_reason"),
         reviewed_by=row.get("reviewed_by"),
@@ -286,9 +321,9 @@ def _admin_card(row: dict) -> AdminApplicationCard:
 
 _APPLICATION_COLUMNS = """
     id::text as id, user_id::text as user_id, status, contact_email, applicant_name,
-    birthdate, region, gender, height_cm, agency_contracted, categories,
-    portfolio_url, sns_url, bio, profile_image_r2_key, identity_mismatch_count,
-    reviewed_by::text as reviewed_by, reviewed_at, reject_reason,
+    birthdate, region, gender, height_cm, phone, experience_level, agency_contracted,
+    categories, portfolio_url, sns_url, bio, profile_image_r2_key, photo_keys, attestations,
+    identity_mismatch_count, reviewed_by::text as reviewed_by, reviewed_at, reject_reason,
     created_at, updated_at
 """
 
@@ -327,9 +362,14 @@ async def application_config(request: Request):
 async def stage_application_photo(
     request: Request,
     image: UploadFile = File(...),
+    kind: str = Form("profile"),
     user_id: str = Depends(require_user),
 ):
-    """제출 전 프로필 사진을 임시 저장(사용자당 1슬롯, 재업로드 시 교체). 미제출 시 orphan cleanup 회수(E11)."""
+    """제출 전 지원 사진을 종류별(profile/closeup/waist_up/full_length)로 임시 저장 — 슬롯당 1장,
+    재업로드 시 교체. 미제출 시 orphan cleanup 회수(E11)."""
+    kind = (kind or "").strip().lower()
+    if kind not in PHOTO_KINDS:
+        raise _err("invalid_photo_kind", "사진 종류가 올바르지 않습니다.")
     mime = (image.content_type or "").lower()
     if mime not in ALLOWED_PHOTO_MIME:
         raise _err("unsupported_type", "PNG, JPEG, WebP 이미지만 사용할 수 있습니다.")
@@ -340,24 +380,25 @@ async def stage_application_photo(
         raise _err("file_too_large", "이미지는 25MB 이하만 가능합니다.", status=413)
     r2 = _r2_face(request)
     ext = ext_for_mime(mime)
-    new_key = _staging_key(user_id, ext)
+    new_key = _staging_key(user_id, kind, ext)
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "select r2_key from fm_model_application_photo_staging where user_id = %s for update",
-                (user_id,),
+                "select r2_key from fm_model_application_photo_staging "
+                "where user_id = %s and kind = %s for update",
+                (user_id, kind),
             )
             existing = await cur.fetchone()
             r2.put_bytes(new_key, data, mime)
             await cur.execute(
                 """
-                insert into fm_model_application_photo_staging (user_id, r2_key, mime_type, byte_size)
-                values (%s, %s, %s, %s)
-                on conflict (user_id) do update
+                insert into fm_model_application_photo_staging (user_id, kind, r2_key, mime_type, byte_size)
+                values (%s, %s, %s, %s, %s)
+                on conflict (user_id, kind) do update
                   set r2_key = excluded.r2_key, mime_type = excluded.mime_type,
                       byte_size = excluded.byte_size, created_at = now()
                 """,
-                (user_id, new_key, mime, len(data)),
+                (user_id, kind, new_key, mime, len(data)),
             )
         await conn.commit()
         # 옛 스테이징 오브젝트는 커밋 후 정리(실패해도 orphan cleanup 이 나중에 회수).
@@ -366,7 +407,7 @@ async def stage_application_photo(
                 r2.delete(existing["r2_key"])
             except Exception:
                 logger.warning("stale application staging photo not deleted: %s", existing["r2_key"])
-    return {"staged": True}
+    return {"staged": True, "kind": kind}
 
 
 @router.post("/applications", response_model=ApplicationView, status_code=201)
@@ -395,6 +436,14 @@ async def submit_application(
         raise _err("invalid_gender", "성별 값이 올바르지 않습니다.")
     if body.height_cm is not None and not (100 <= body.height_cm <= 250):
         raise _err("invalid_height", "키는 100~250cm 범위로 입력해 주세요.")
+    if body.experience_level is not None and body.experience_level not in EXPERIENCE_LEVELS:
+        raise _err("invalid_experience", "경력 수준 값이 올바르지 않습니다.")
+    phone = _clean_text(body.phone, "전화번호", required=False, max_len=40)
+    # 확인 서명 3종(레퍼런스 정합): 에이전시 미소속·성인/진실·사진 본인. 전부 동의해야 제출.
+    for key in ATTESTATION_KEYS:
+        if not body.attestations.get(key):
+            raise _err("attestation_required", "제출 전 확인 항목에 모두 동의해 주세요.")
+    attestations = {key: True for key in ATTESTATION_KEYS}
 
     r2 = _r2_face(request)
     auto_approved = settings.fm_application_auto_approve
@@ -406,52 +455,59 @@ async def submit_application(
 
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
-            # 스테이징 사진을 지원서 키로 승격(제출 원자성, E11). 스테이징이 없으면 재지원
-            # 프리필(스펙 5): 최근 터미널(거절/취소) 지원서의 사진을 30일 내면 새 키로 복사한다 —
+            # 사진 4종 전부 필수(레퍼런스 정합). 종류별 원본 = 스테이징, 없으면 재지원 프리필
+            # (스펙 5): 최근 터미널(거절/취소) 지원서의 같은 종류 사진을 30일 내면 새 키로 복사한다 —
             # 이전 지원서의 30일 익명화가 새 지원서 사진을 지우지 않게 수명을 분리한다.
             await cur.execute(
-                "select r2_key, mime_type from fm_model_application_photo_staging "
+                "select kind, r2_key, mime_type from fm_model_application_photo_staging "
                 "where user_id = %s for update",
                 (user_id,),
             )
-            staged = await cur.fetchone()
-            source_key = staged["r2_key"] if staged else None
-            source_mime = staged["mime_type"] if staged else None
-            if not staged:
-                await cur.execute(
-                    "select profile_image_r2_key from fm_model_applications "
-                    "where user_id = %s and status in ('rejected', 'cancelled') "
-                    "and profile_image_r2_key is not null "
-                    "and terminated_at >= now() - interval '30 days' "
-                    "order by terminated_at desc limit 1",
-                    (user_id,),
+            staged = {r["kind"]: r for r in await cur.fetchall()}
+            await cur.execute(
+                "select photo_keys, profile_image_r2_key from fm_model_applications "
+                "where user_id = %s and status in ('rejected', 'cancelled') "
+                "and terminated_at >= now() - interval '30 days' "
+                "order by terminated_at desc limit 1",
+                (user_id,),
+            )
+            prev_row = await cur.fetchone()
+            prev_keys = _photo_keys(prev_row) if prev_row else {}
+            sources: dict[str, tuple[str, str]] = {}
+            for kind in PHOTO_KINDS:
+                if kind in staged:
+                    sources[kind] = (staged[kind]["r2_key"], staged[kind]["mime_type"])
+                elif prev_keys.get(kind):
+                    sources[kind] = (prev_keys[kind], _mime_for_key(prev_keys[kind]))
+            missing = [k for k in PHOTO_KINDS if k not in sources]
+            if missing:
+                raise _err(
+                    "photos_required",
+                    "지원 사진 4장(프로필·클로즈업·상반신·전신)을 모두 올려 주세요.",
+                    missing=missing,
                 )
-                prev = await cur.fetchone()
-                if prev and prev["profile_image_r2_key"]:
-                    source_key = prev["profile_image_r2_key"]
-                    source_mime = _mime_for_key(source_key)
-            if not source_key:
-                raise _err("profile_image_required", "프로필 사진을 먼저 업로드해 주세요.")
-            photo_ext = ext_for_mime(source_mime)
-            photo_key = _application_photo_key(new_id, photo_ext)
-            # 원본(스테이징 또는 이전 지원서) → application 귀속 키로 복사. 원자성 위해 커밋 전.
-            r2.copy(source_key, photo_key, source_mime)
+            photo_keys: dict[str, str] = {}
+            for kind, (src_key, src_mime) in sources.items():
+                dst = _application_photo_key(new_id, kind, ext_for_mime(src_mime))
+                # 원본(스테이징 또는 이전 지원서) → application 귀속 키로 복사. 원자성 위해 커밋 전.
+                r2.copy(src_key, dst, src_mime)
+                photo_keys[kind] = dst
             try:
                 await cur.execute(
                     """
                     insert into fm_model_applications (
                         id, user_id, status, contact_email, applicant_name, birthdate,
-                        region, gender, height_cm, agency_contracted, categories,
-                        portfolio_url, sns_url, bio, profile_image_r2_key,
-                        privacy_consent_version, reviewed_at
-                    ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        region, gender, height_cm, phone, experience_level, agency_contracted,
+                        categories, portfolio_url, sns_url, bio, profile_image_r2_key, photo_keys,
+                        attestations, privacy_consent_version, reviewed_at
+                    ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         new_id, user_id, "approved" if auto_approved else "under_review",
                         contact_email, applicant_name, body.birthdate, region, body.gender,
-                        body.height_cm, body.agency_contracted, Json(categories),
-                        portfolio_url, sns_url, bio, photo_key,
-                        consent.document_version,
+                        body.height_cm, phone, body.experience_level, body.agency_contracted,
+                        Json(categories), portfolio_url, sns_url, bio, photo_keys["profile"],
+                        Json(photo_keys), Json(attestations), consent.document_version,
                         datetime.now(timezone.utc) if auto_approved else None,
                     ),
                 )
@@ -528,8 +584,9 @@ async def admin_list_applications(
     base = f"""
         select a.id::text as id, a.user_id::text as user_id, a.status, a.contact_email,
                a.applicant_name, a.birthdate, a.region, a.gender, a.height_cm,
+               a.phone, a.experience_level,
                a.agency_contracted, a.categories, a.portfolio_url, a.sns_url, a.bio,
-               a.profile_image_r2_key, a.identity_mismatch_count,
+               a.profile_image_r2_key, a.photo_keys, a.attestations, a.identity_mismatch_count,
                a.reviewed_by::text as reviewed_by, a.reviewed_at, a.reject_reason,
                a.created_at, em.last_email_status, em.last_email_type
         from fm_model_applications a
@@ -653,20 +710,26 @@ async def admin_resend_email(
 
 @router.get("/admin/applications/{application_id}/profile-image")
 async def admin_application_photo(
-    request: Request, application_id: str, user_id: str = Depends(require_user)
+    request: Request,
+    application_id: str,
+    kind: str = "profile",
+    user_id: str = Depends(require_user),
 ):
+    """관리자 지원 사진 스트림. ?kind=profile|closeup|waist_up|full_length (기본 profile)."""
     application_id = _canonical_id(application_id)
+    if kind not in PHOTO_KINDS:
+        raise _err("invalid_photo_kind", "사진 종류가 올바르지 않습니다.")
     async with get_conn(request) as conn:
         await _require_admin(conn, user_id)
         async with conn.cursor() as cur:
             await cur.execute(
-                "select profile_image_r2_key from fm_model_applications where id = %s",
+                "select profile_image_r2_key, photo_keys from fm_model_applications where id = %s",
                 (application_id,),
             )
             row = await cur.fetchone()
-    if row is None or not row["profile_image_r2_key"]:
+    key = _photo_keys(row).get(kind) if row else None
+    if not key:
         raise _err("not_found", "사진을 찾을 수 없습니다.", status=404)
-    key = row["profile_image_r2_key"]
     r2 = _r2_face(request)
     try:
         data = r2.get_bytes(key)

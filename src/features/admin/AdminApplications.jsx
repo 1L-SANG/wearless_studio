@@ -26,21 +26,47 @@ const STATUS_LABEL = {
 const CATEGORY_LABEL = {
   fashion: '패션', commercial: '커머셜', fitness: '피트니스', lifestyle: '라이프스타일',
 };
+const EXPERIENCE_LABEL = {
+  none: '경력 없음', beginner: '입문', intermediate: '중급', professional: '전문',
+};
 
-function ApplicantPhoto({ applicationId, hasPhoto }) {
+const PHOTO_KINDS = [
+  { kind: 'profile', label: '프로필' },
+  { kind: 'closeup', label: '클로즈업' },
+  { kind: 'waist_up', label: '상반신' },
+  { kind: 'full_length', label: '전신' },
+];
+
+function ApplicantPhoto({ applicationId, kind, label, hasPhoto }) {
   const [url, setUrl] = useState(null);
   useEffect(() => {
     if (!hasPhoto) return undefined;
     let alive = true;
     let objectUrl = null;
-    adminFetchApplicationPhotoUrl(applicationId)
+    adminFetchApplicationPhotoUrl(applicationId, kind)
       .then((u) => { if (alive) { objectUrl = u; setUrl(u); } else { URL.revokeObjectURL(u); } })
       .catch(() => {});
     return () => { alive = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
-  }, [applicationId, hasPhoto]);
-  if (!hasPhoto) return <div className={s.photoEmpty}><Icon name="person" size={28} /></div>;
-  if (!url) return <div className={s.photoEmpty}>불러오는 중…</div>;
-  return <img className={s.photo} src={url} alt="지원자 프로필 사진" />;
+  }, [applicationId, kind, hasPhoto]);
+  return (
+    <figure className={s.photoFig}>
+      {!hasPhoto && <div className={s.photoEmpty}><Icon name="person" size={22} /></div>}
+      {hasPhoto && !url && <div className={s.photoEmpty}>…</div>}
+      {hasPhoto && url && <img className={s.photo} src={url} alt={`지원자 ${label} 사진`} />}
+      <figcaption className={s.photoCap}>{label}</figcaption>
+    </figure>
+  );
+}
+
+function ApplicantPhotos({ app }) {
+  const kinds = Array.isArray(app.photoKinds) ? app.photoKinds : (app.hasProfileImage ? ['profile'] : []);
+  return (
+    <div className={s.photos}>
+      {PHOTO_KINDS.map((k) => (
+        <ApplicantPhoto key={k.kind} applicationId={app.id} kind={k.kind} label={k.label} hasPhoto={kinds.includes(k.kind)} />
+      ))}
+    </div>
+  );
 }
 
 function ApplicationCard({ app, onApprove, onReject, onResend, busy }) {
@@ -52,7 +78,7 @@ function ApplicationCard({ app, onApprove, onReject, onResend, busy }) {
 
   return (
     <li className={s.card}>
-      <ApplicantPhoto applicationId={app.id} hasPhoto={app.hasProfileImage} />
+      <ApplicantPhotos app={app} />
       <div className={s.body}>
         <div className={s.cardHead}>
           <span className={s.name}>{app.applicantName}</span>
@@ -64,7 +90,9 @@ function ApplicationCard({ app, onApprove, onReject, onResend, busy }) {
           <div><dt>지역</dt><dd>{app.region}</dd></div>
           <div><dt>성별</dt><dd>{app.gender === 'male' ? '남성' : app.gender === 'female' ? '여성' : '-'}</dd></div>
           <div><dt>키</dt><dd>{app.heightCm ? `${app.heightCm}cm` : '-'}</dd></div>
-          <div><dt>에이전시</dt><dd>{app.agencyContracted ? '계약함' : '계약 안 함'}</dd></div>
+          <div><dt>에이전시</dt><dd>{app.agencyContracted ? '소속 경험 있음' : '없음'}</dd></div>
+          <div><dt>전화</dt><dd>{app.phone || '-'}</dd></div>
+          <div><dt>경력</dt><dd>{EXPERIENCE_LABEL[app.experienceLevel] || '-'}</dd></div>
         </dl>
         <div className={s.cats}>
           {(app.categories || []).map((c) => (

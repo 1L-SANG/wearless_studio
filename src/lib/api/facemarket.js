@@ -121,10 +121,11 @@ export async function uploadProfileImage({ enrollmentId, fileBlob, filename }) {
 
 // ── 모델 지원서(리뉴얼) ─────────────────────────────────────────────────────
 
-// 제출 전 프로필 사진 임시 저장(사용자당 1슬롯, 재업로드 시 교체). 멀티파트.
-export async function stageApplicationPhoto({ fileBlob, filename }) {
+// 제출 전 지원 사진 임시 저장 — kind: profile|closeup|waist_up|full_length (슬롯당 1장, 재업로드 시 교체).
+export async function stageApplicationPhoto({ kind = 'profile', fileBlob, filename }) {
   const form = new FormData();
-  form.append('image', fileBlob, filename || 'profile');
+  form.append('kind', kind);
+  form.append('image', fileBlob, filename || kind);
   return checkedJson(await _authFetch(
     '/v1/facemarket/applications/photo-staging',
     { method: 'POST', body: form },
@@ -181,9 +182,9 @@ export function adminResendEmail(applicationId) {
 
 // 관리자 프로필 사진: 게이트 라우트는 Authorization 헤더가 필요해 <img src> 로 못 건다.
 // 바이트를 인증 fetch 로 받아 objectURL 을 만든다(호출자가 revokeObjectURL 로 해제).
-export async function adminFetchApplicationPhotoUrl(applicationId) {
+export async function adminFetchApplicationPhotoUrl(applicationId, kind = 'profile') {
   const res = await _authFetch(
-    `/v1/facemarket/admin/applications/${encodeURIComponent(applicationId)}/profile-image`,
+    `/v1/facemarket/admin/applications/${encodeURIComponent(applicationId)}/profile-image?kind=${encodeURIComponent(kind)}`,
   );
   if (!res.ok) throw new Error('사진을 불러오지 못했어요.');
   const blob = await res.blob();

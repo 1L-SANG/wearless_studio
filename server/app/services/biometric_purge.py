@@ -534,6 +534,15 @@ async def _known_targets(conn, schema, scope, enrollment_ids, derived_jobs):
                 (scope["user_id"],),
             )
             face_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
+        # 지원 사진 4종(photo_keys jsonb: kind → r2_key) — profile 외 3종도 함께 지운다.
+        if scope["user_id"] and _has(schema, "fm_model_applications", "photo_keys"):
+            await cur.execute(
+                "select v as k from fm_model_applications a, "
+                "jsonb_each_text(coalesce(a.photo_keys, '{}'::jsonb)) as p(kind, v) "
+                "where a.user_id = %s and v is not null and v <> ''",
+                (scope["user_id"],),
+            )
+            face_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
         if scope["user_id"] and _has(schema, "fm_model_application_photo_staging", "r2_key"):
             await cur.execute(
                 "select r2_key as k from fm_model_application_photo_staging where user_id = %s",

@@ -1,20 +1,57 @@
 /* =============================================================
    features/model — 모델 지원서 (/model/apply)
 
-   지원 → 관리자 검토 → 승인 → 신분증 인증 → 등록. 이 화면은 여정의 첫 관문이다.
-   제출 전 프로필 사진은 임시 저장(스테이징)하고, 제출 시 서버가 지원서에 연결한다.
-   재지원(거절 후)이면 이전 지원서 값으로 프리필한다(사진은 30일 내면 서버가 보존).
+   레퍼런스(MirrorMirror 지원 페이지) 구조를 따른다:
+     이용 원칙(금지 5카드) → 지원 자격(필수/우대) → 준비물(01~05, 다크) → 지원서 폼 →
+     사진 4장(프로필·클로즈업·상반신·전신) → 확인 3개 → 개인정보 고지(끝까지 스크롤해야
+     동의 가능) → 제출 → FAQ 아코디언.
+   지원 → 관리자 검토 → 승인 → 신분증 인증 → 등록. 제출 전 사진은 종류별로 임시 저장하고
+   제출 시 서버가 지원서에 연결한다. 재지원이면 이전 값·사진(30일 내)으로 프리필.
    설계: docs/designs/facemarket-application-renewal.md
    ============================================================= */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Chips, ErrorState, Field, Icon, useToast } from '@/components/ui.jsx';
+import { useToast } from '@/components/ui.jsx';
 import {
   getCurrentApplication, stageApplicationPhoto, submitApplication,
 } from '@/lib/api/facemarket.js';
-import s from './ModelPersonalization.module.css';
+import s from './ModelApply.module.css';
 
 const PRIVACY_CONSENT_VERSION = '2026-09-v1';
+
+/* ── 정적 카피 ─────────────────────────────────────────────────────────────── */
+
+const HOUSE_RULES = [
+  { title: '성인물 생성 금지', desc: '얼굴이 성적이거나 성적으로 암시적인 콘텐츠 생성에 쓰이지 않아요. 누구도, 언제라도.' },
+  { title: '정치적 설득 금지', desc: '선거 캠페인 콘텐츠, 후보 지지, 조작된 정치적 발언에 쓰이지 않아요.' },
+  { title: '허위 보증 금지', desc: '하지 않은 말·사용하지 않은 제품·지지하지 않은 것을 했다고 주장하는 데 쓰이지 않아요.' },
+  { title: '종교·혐오 콘텐츠 금지', desc: '종교적 지지, 혐오 콘텐츠, 괴롭힘, 오해를 부르는 추천에 쓰이지 않아요.' },
+  { title: '대가 없는 사용 없음', desc: '모든 상업적 사용은 건마다 정산돼요. 항상, 매번, 당신에게.', dark: true },
+];
+
+const QUAL_REQUIRED = [
+  '만 18세 이상',
+  '현재 모델 에이전시에 소속되어 있지 않을 것',
+  '제출하는 사진의 권리를 본인이 보유할 것 (동의 없는 스튜디오 저작물 불가)',
+  'AI 생성 방식의 초상 활용에 동의할 것',
+  '정확한 신체 치수 제공 (키·가슴·허리·엉덩이)',
+  '본인확인을 위한 유효한 신분증(모바일 신분증)',
+  '보정·AI 생성이 아닌 실제 사진 제출',
+];
+const QUAL_PREFERRED = [
+  '모델 경력 (에디토리얼·커머셜·런웨이 등)',
+  '포트폴리오 또는 컴카드',
+  '활발한 SNS 활동',
+  '브랜드 파트너 콘텐츠 참여 의향',
+];
+
+const NEED_ITEMS = [
+  { n: '01', title: '정면 헤드샷', desc: '자연광, 최소한의 메이크업, 머리를 넘긴 정면 사진. 필터 없이. 폰 화질이면 충분해요 — 있는 그대로를 보고 싶어요.' },
+  { n: '02', title: '전신 사진', desc: '몸에 맞는 옷을 입은 전신 사진. 단색 배경 권장. 비율과 체형을 파악하는 데 쓰여요.' },
+  { n: '03', title: '측면·3/4 얼굴', desc: '옆모습 또는 3/4 각도의 얼굴. AI 렌더링 정확도에 결정적이고 브랜드에게 더 온전한 인상을 줘요.' },
+  { n: '04', title: '상반신', desc: '허리 위 사진으로 비율과 전체적인 분위기를 보여주세요. 자연스러운 자세, 단색 배경 권장.' },
+  { n: '05', title: '기본 정보', desc: '기본 정보, 경력 수준, 관심 있는 모델 카테고리. 그리고 당신이 누구인지 알려주는 짧은 소개.' },
+];
 
 const CATEGORY_OPTIONS = [
   { value: 'fashion', label: '패션' },
@@ -22,28 +59,63 @@ const CATEGORY_OPTIONS = [
   { value: 'fitness', label: '피트니스' },
   { value: 'lifestyle', label: '라이프스타일' },
 ];
-const GENDER_OPTIONS = [
-  { value: 'female', label: '여성' },
-  { value: 'male', label: '남성' },
+const EXPERIENCE_OPTIONS = [
+  { value: 'none', label: '경력 없음' },
+  { value: 'beginner', label: '입문 (1년 미만)' },
+  { value: 'intermediate', label: '중급 (1~3년)' },
+  { value: 'professional', label: '전문 (3년 이상)' },
+];
+
+const PHOTO_SLOTS = [
+  { kind: 'profile', label: '프로필', hint: '정면 헤드샷' },
+  { kind: 'closeup', label: '클로즈업', hint: '측면·3/4 얼굴' },
+  { kind: 'waist_up', label: '상반신', hint: '허리 위' },
+  { kind: 'full_length', label: '전신', hint: '머리부터 발끝까지' },
+];
+
+const ATTESTATIONS = [
+  { key: 'noAgency', text: '현재 어떤 모델 에이전시에도 소속되어 있지 않음을 확인합니다. 기존 에이전시 계약이 발견되면 FaceMarket 에서 제외될 수 있음을 이해합니다.' },
+  { key: 'adultAndTruthful', text: '만 18세 이상이며, 제공한 모든 정보가 사실이고 정확함을 확인합니다.' },
+  { key: 'photosAreMine', text: '이 사진들은 본인의 것이며, 최신 상태이고 변형되지 않았으며, 제출할 권리가 있음을 확인합니다.' },
+];
+
+const PRIVACY_NOTICE = [
+  { h: null, p: '지원하기 전에, 제출한 내용이 어떻게 처리되는지 알려드립니다.' },
+  { h: '우리가 그것을 사용하는 이유', p: '저희는 귀하의 정보와 사진을 검토하여 FaceMarket 모델 스튜디오에 초대할지 여부를 결정합니다. 이 자료들은 상업적으로 사용되거나, 어떤 브랜드나 고객과 공유되거나, 현재 단계에서 스튜디오에 등록되지 않습니다.' },
+  { h: '당신의 사진들', p: '업로드하는 사진은 본인의 것이어야 하며, 최신 상태이고 원본이 변형되지 않아야 합니다. 우리는 오직 귀하의 신청서를 평가하기 위해서만 이들을 사용합니다.' },
+  { h: '승인되지 않았다면', p: '신청이 승인되지 않으면 30일 이내에 정보와 사진을 삭제합니다. 우리는 검토를 완료하는 데 필요한 것 외에는 아무것도 보관하지 않습니다.' },
+  { h: '승인되었다면', p: '모델 등록을 시작할 수 있는 개인 링크가 포함된 이메일을 받게 됩니다. 그 단계는 이 지원서와 별개입니다. 그때 본인이 직접 생체 정보 처리에 동의해야 하며, 이는 본인만 할 수 있고 기관이나 대리인이 대신할 수 없습니다.' },
+];
+
+const FAQ = [
+  { q: 'AI 생성 방식의 초상 활용이란 실제로 무엇을 뜻하나요?', a: '브랜드가 촬영 없이 당신의 얼굴로 상품 착용컷·캠페인 이미지를 생성해요. 어떤 품목에, 건당 얼마로, 얼마 동안 쓸 수 있는지는 당신이 라이선스 조건으로 직접 정하고, 그 조건 밖의 사용은 막혀요.' },
+  { q: '초상 라이선싱이란 무엇인가요?', a: '당신의 얼굴을 쓰는 조건(용도·단가·기간)을 정해 두고, 브랜드가 그 조건 안에서만 쓰게 하는 계약이에요. 조건은 누구나 확인할 수 있는 라이선스로 남고, 언제든 철회할 수 있어요.' },
+  { q: '승인 절차는 어떻게 진행되나요?', a: '지원서 제출 → 관리자 검토(사진·정보) → 승인/거절 안내(이메일 + 이 화면) → 승인되면 모바일 신분증으로 본인확인 → 얼굴 등록 → 라이선스 조건 설정 순서예요. 지원서의 이름·생년월일은 신분증과 대조돼요.' },
+  { q: '보상은 어떻게 이루어지나요?', a: '상업적 사용이 발생할 때마다 당신이 정한 단가로 정산돼요. 대가 없는 사용은 없어요.' },
+  { q: '전 에이전시 소속 모델도 지원할 수 있나요?', a: '현재 소속이 아니라면 지원할 수 있어요. 지원 시 현재 에이전시 미소속 여부를 확인받고, 이후 계약이 발견되면 제외될 수 있어요.' },
+  { q: '해외 거주자도 지원할 수 있나요?', a: '본인확인에 모바일 신분증(한국)이 필요해 현재는 국내 신분증 보유자만 등록을 마칠 수 있어요.' },
+  { q: '지원서에 어떤 사진이 필요한가요?', a: '정면 헤드샷(프로필), 측면·3/4 얼굴(클로즈업), 상반신, 전신 — 총 4장이에요. 필터·보정·AI 생성 사진은 안 돼요. 폰 화질이면 충분해요.' },
+  { q: '모델 경력이 없어도 지원할 수 있나요?', a: '네. 경력은 우대 사항이지 필수가 아니에요. 사진과 기본 정보로 검토해요.' },
 ];
 
 const EMPTY = {
-  contactEmail: '', applicantName: '', birthdate: '', region: '',
-  gender: null, heightCm: '', agencyContracted: false, categories: [],
+  contactEmail: '', applicantName: '', phone: '', birthdate: '', region: '',
+  gender: null, heightCm: '', experienceLevel: '', agencyContracted: null, categories: [],
   portfolioUrl: '', snsUrl: '', bio: '',
 };
 
-// 거절/취소된 이전 지원서에서 프리필 가능한 필드(사진 제외 — 서버가 보존).
 function prefillFrom(app) {
   if (!app) return EMPTY;
   return {
     contactEmail: app.contactEmail || '',
     applicantName: app.applicantName || '',
+    phone: app.phone || '',
     birthdate: app.birthdate || '',
     region: app.region || '',
     gender: app.gender || null,
     heightCm: app.heightCm != null ? String(app.heightCm) : '',
-    agencyContracted: !!app.agencyContracted,
+    experienceLevel: app.experienceLevel || '',
+    agencyContracted: typeof app.agencyContracted === 'boolean' ? app.agencyContracted : null,
     categories: Array.isArray(app.categories) ? app.categories : [],
     portfolioUrl: app.portfolioUrl || '',
     snsUrl: app.snsUrl || '',
@@ -51,17 +123,56 @@ function prefillFrom(app) {
   };
 }
 
+/* ── 실루엣(사진 슬롯 플레이스홀더) ────────────────────────────────────────── */
+function Silhouette({ kind }) {
+  const c = '#cfd2d6';
+  if (kind === 'profile') {
+    return (
+      <svg viewBox="0 0 120 140" className={s.silhouette} aria-hidden="true">
+        <ellipse cx="60" cy="52" rx="30" ry="36" fill={c} />
+        <path d="M14 140c4-34 24-50 46-50s42 16 46 50z" fill={c} />
+      </svg>
+    );
+  }
+  if (kind === 'closeup') {
+    return (
+      <svg viewBox="0 0 120 140" className={s.silhouette} aria-hidden="true">
+        <path d="M40 22c22-12 46 2 48 30 1 14-4 24-10 32l6 10c-14 6-32 6-46 0l4-10C30 74 24 60 26 44c1-10 6-18 14-22z" fill={c} />
+        <path d="M18 140c6-30 24-44 42-44s36 14 42 44z" fill={c} />
+      </svg>
+    );
+  }
+  if (kind === 'waist_up') {
+    return (
+      <svg viewBox="0 0 120 140" className={s.silhouette} aria-hidden="true">
+        <ellipse cx="60" cy="26" rx="16" ry="20" fill={c} />
+        <path d="M30 140V80c0-20 12-32 30-32s30 12 30 32v60z" fill={c} />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 120 140" className={s.silhouette} aria-hidden="true">
+      <ellipse cx="60" cy="16" rx="10" ry="12" fill={c} />
+      <path d="M44 34h32l8 44-10 2v60h-10V88h-8v52H46V80l-10-2z" fill={c} />
+    </svg>
+  );
+}
+
+/* ── 페이지 ────────────────────────────────────────────────────────────────── */
 export function ModelApply() {
   const navigate = useNavigate();
   const { push } = useToast();
   const [phase, setPhase] = useState('loading'); // loading | ready | submitting
   const [form, setForm] = useState(EMPTY);
-  const [photoName, setPhotoName] = useState('');
-  const [photoStaged, setPhotoStaged] = useState(false);
-  const [reapplyFromPhoto, setReapplyFromPhoto] = useState(false);
+  // kind → { staged, previewUrl, name, fromPrevious }
+  const [photos, setPhotos] = useState({});
+  const [attest, setAttest] = useState({ noAgency: false, adultAndTruthful: false, photosAreMine: false });
+  const [noticeRead, setNoticeRead] = useState(false);
   const [privacyConsent, setPrivacyConsent] = useState(false);
+  const [openFaq, setOpenFaq] = useState(null);
+  const fileInputs = useRef({});
+  const noticeRef = useRef(null);
 
-  // 활성 지원서가 있으면 상태 허브로, 터미널(거절/취소)이면 프리필해 재지원.
   useEffect(() => {
     let alive = true;
     getCurrentApplication()
@@ -73,52 +184,81 @@ export function ModelApply() {
         }
         if (app) {
           setForm(prefillFrom(app));
-          if (app.hasProfileImage) { setReapplyFromPhoto(true); setPhotoStaged(true); }
+          const kinds = Array.isArray(app.photoKinds) ? app.photoKinds : (app.hasProfileImage ? ['profile'] : []);
+          setPhotos(Object.fromEntries(kinds.map((k) => [k, { staged: true, fromPrevious: true }])));
         }
         setPhase('ready');
       })
       .catch((e) => {
         if (!alive) return;
-        if (e?.status === 404) { setPhase('ready'); return; }
-        push?.(e.message, { icon: 'alertCircle' });
+        if (e?.status !== 404) push?.(e.message, { icon: 'alertCircle' });
         setPhase('ready');
       });
     return () => { alive = false; };
   }, [navigate, push]);
 
-  const set = useCallback((k, v) => setForm((f) => ({ ...f, [k]: v })), []);
+  // 프리뷰 objectURL 해제
+  useEffect(() => () => {
+    Object.values(photos).forEach((p) => { if (p?.previewUrl) URL.revokeObjectURL(p.previewUrl); });
+  }, [photos]);
 
-  const onPickPhoto = useCallback(async (e) => {
+  const set = useCallback((k, v) => setForm((f) => ({ ...f, [k]: v })), []);
+  const toggleCategory = useCallback((v) => setForm((f) => {
+    const next = new Set(f.categories);
+    next.has(v) ? next.delete(v) : next.add(v);
+    return { ...f, categories: [...next] };
+  }), []);
+
+  const onPickPhoto = useCallback(async (kind, e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
     try {
-      await stageApplicationPhoto({ fileBlob: file, filename: file.name });
-      setPhotoStaged(true);
-      setReapplyFromPhoto(false);
-      setPhotoName(file.name);
+      await stageApplicationPhoto({ kind, fileBlob: file, filename: file.name });
+      setPhotos((p) => {
+        if (p[kind]?.previewUrl) URL.revokeObjectURL(p[kind].previewUrl);
+        return { ...p, [kind]: { staged: true, previewUrl: URL.createObjectURL(file), name: file.name } };
+      });
     } catch (err) {
       push?.(err.message, { icon: 'alertCircle' });
     }
   }, [push]);
 
+  const onNoticeScroll = useCallback((e) => {
+    const el = e.currentTarget;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 4) setNoticeRead(true);
+  }, []);
+  // 고지가 짧아 스크롤이 없으면 바로 읽은 것으로.
+  useEffect(() => {
+    const el = noticeRef.current;
+    if (phase === 'ready' && el && el.scrollHeight <= el.clientHeight + 4) setNoticeRead(true);
+  }, [phase]);
+
+  const allPhotos = PHOTO_SLOTS.every((p) => photos[p.kind]?.staged);
+  const allAttest = ATTESTATIONS.every((a) => attest[a.key]);
+  const canSubmit = form.applicantName && form.contactEmail && form.birthdate && form.region
+    && form.experienceLevel && form.agencyContracted !== null && form.categories.length > 0
+    && allPhotos && allAttest && privacyConsent;
+
   const submit = useCallback(async () => {
-    if (!privacyConsent) { push?.('개인정보 수집·이용 동의가 필요해요.', { icon: 'alertCircle' }); return; }
-    if (!photoStaged) { push?.('프로필 사진을 업로드해 주세요.', { icon: 'alertCircle' }); return; }
+    if (!canSubmit) { push?.('필수 항목을 모두 채워 주세요.', { icon: 'alertCircle' }); return; }
     setPhase('submitting');
     try {
       await submitApplication({
         contactEmail: form.contactEmail.trim(),
         applicantName: form.applicantName.trim(),
+        phone: form.phone.trim() || null,
         birthdate: form.birthdate,
         region: form.region.trim(),
         gender: form.gender || null,
         heightCm: form.heightCm ? Number(form.heightCm) : null,
-        agencyContracted: form.agencyContracted,
+        experienceLevel: form.experienceLevel || null,
+        agencyContracted: !!form.agencyContracted,
         categories: form.categories,
         portfolioUrl: form.portfolioUrl.trim() || null,
         snsUrl: form.snsUrl.trim() || null,
         bio: form.bio.trim() || null,
+        attestations: attest,
         privacyConsent: { accepted: true, documentVersion: PRIVACY_CONSENT_VERSION },
       });
       push?.('지원서를 제출했어요. 관리자 검토를 기다려 주세요.', { icon: 'check' });
@@ -127,84 +267,242 @@ export function ModelApply() {
       push?.(err.message, { icon: 'alertCircle' });
       setPhase('ready');
     }
-  }, [form, photoStaged, privacyConsent, navigate, push]);
+  }, [canSubmit, form, attest, navigate, push]);
 
   if (phase === 'loading') {
-    return <div className="wizard narrow"><div className="surface">불러오는 중…</div></div>;
+    return <div className={s.page}><p className={s.loading}>불러오는 중…</p></div>;
   }
 
-  const canSubmit = form.contactEmail && form.applicantName && form.birthdate
-    && form.region && form.categories.length > 0 && photoStaged && privacyConsent;
-
   return (
-    <div className="wizard narrow">
-      <div className="page-head">
-        <h1>모델 지원서</h1>
-        <p>지원서를 제출하면 관리자 검토 후 승인된 분만 모델 등록을 진행할 수 있어요.</p>
-      </div>
+    <div className={s.page}>
+      {/* ── 이용 원칙 ─────────────────────────────────────────── */}
+      <section className={s.section}>
+        <p className={s.eyebrow}>이용 원칙</p>
+        <h1 className={s.h1}>모든 모델을 <em>현장의 배우처럼</em> 대합니다.<br />예외는 없습니다.</h1>
+        <p className={s.lead}>
+          이 제한은 FaceMarket 의 모든 라이선스에 적용돼요 — 누가 사든, 얼마를 내든, 무엇을 만들든.
+          라이선스를 철회하면 이후 사용은 정해진 기준에 따라 중단되고 전부 기록돼요. 당신이 멈추라고 하면, 멈춥니다.
+        </p>
+        <ul className={s.rules}>
+          {HOUSE_RULES.map((r) => (
+            <li key={r.title} className={`${s.rule}${r.dark ? ` ${s.ruleDark}` : ''}`}>
+              <span className={`${s.ruleIcon}${r.dark ? ` ${s.ruleIconPay}` : ''}`}>{r.dark ? '₩' : '✕'}</span>
+              <div>
+                <strong>{r.title}</strong>
+                <p>{r.desc}</p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </section>
 
-      <div className="surface">
-        <div className={s.sectionLabel}>프로필 사진</div>
-        <label className="field-row" style={{ cursor: 'pointer' }}>
-          <span className="lbl">사진 1장 {photoStaged && <span className="opt">업로드됨</span>}</span>
-          <input type="file" accept="image/png,image/jpeg,image/webp" onChange={onPickPhoto} />
-          {reapplyFromPhoto && <span className="hint">이전 지원서 사진이 유지돼요. 바꾸려면 새로 올려주세요.</span>}
-          {photoName && <span className="hint">{photoName}</span>}
+      {/* ── 지원 자격 ─────────────────────────────────────────── */}
+      <section className={s.section}>
+        <h2 className={s.h2}>지원 자격</h2>
+        <p className={s.lead}>FaceMarket 모델로 등록하려면 아래 조건을 충족해야 해요.</p>
+        <div className={s.qualGrid}>
+          <div className={s.qualCard}>
+            <h3 className={s.qualHead}>필수</h3>
+            <ul className={s.qualList}>{QUAL_REQUIRED.map((t) => <li key={t}>{t}</li>)}</ul>
+          </div>
+          <div className={`${s.qualCard} ${s.qualCardMuted}`}>
+            <h3 className={s.qualHead}>우대 (필수 아님)</h3>
+            <ul className={s.qualList}>{QUAL_PREFERRED.map((t) => <li key={t}>{t}</li>)}</ul>
+          </div>
+        </div>
+      </section>
+
+      {/* ── 준비물 (다크) ──────────────────────────────────────── */}
+      <section className={`${s.section} ${s.sectionDark}`}>
+        <h2 className={s.h2}>준비물</h2>
+        <p className={s.lead}>지원을 시작하기 전에 아래를 준비해 주세요. 약 10분 걸려요.</p>
+        <ul className={s.needGrid}>
+          {NEED_ITEMS.map((n) => (
+            <li key={n.n} className={s.needCard}>
+              <span className={s.needNum}>{n.n}</span>
+              <h3>{n.title}</h3>
+              <p>{n.desc}</p>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      {/* ── 지원서 ───────────────────────────────────────────── */}
+      <section className={s.section} id="apply-form">
+        <h2 className={s.h2}>지원서 작성</h2>
+        <p className={s.lead}>필수 항목은 표시되어 있어요. 지원서는 접수 순서대로 검토돼요.</p>
+
+        <div className={s.grid2}>
+          <label className={s.field}>
+            <span className={s.label}>이름<i>*</i></span>
+            <input className={s.input} value={form.applicantName} placeholder="신분증과 동일하게"
+              onChange={(e) => set('applicantName', e.target.value)} />
+          </label>
+          <label className={s.field}>
+            <span className={s.label}>이메일<i>*</i></span>
+            <input className={s.input} type="email" value={form.contactEmail} placeholder="승인·거절 안내를 받을 이메일"
+              onChange={(e) => set('contactEmail', e.target.value)} />
+          </label>
+          <label className={s.field}>
+            <span className={s.label}>전화번호</span>
+            <input className={s.input} type="tel" value={form.phone} placeholder="010-0000-0000"
+              onChange={(e) => set('phone', e.target.value)} />
+          </label>
+          <label className={s.field}>
+            <span className={s.label}>생년월일<i>*</i></span>
+            <input className={s.input} type="date" value={form.birthdate}
+              onChange={(e) => set('birthdate', e.target.value)} />
+          </label>
+          <label className={s.field}>
+            <span className={s.label}>지역 (시, 국가)<i>*</i></span>
+            <input className={s.input} value={form.region} placeholder="예: 서울, 대한민국"
+              onChange={(e) => set('region', e.target.value)} />
+          </label>
+          <label className={s.field}>
+            <span className={s.label}>키 (cm)</span>
+            <input className={s.input} type="number" min={100} max={250} value={form.heightCm} placeholder="예: 175"
+              onChange={(e) => set('heightCm', e.target.value)} />
+          </label>
+        </div>
+
+        <div className={s.field}>
+          <span className={s.label}>성별</span>
+          <div className={s.pills}>
+            {[{ v: 'female', l: '여성' }, { v: 'male', l: '남성' }].map((g) => (
+              <button key={g.v} type="button" className={`${s.pill}${form.gender === g.v ? ` ${s.pillOn}` : ''}`}
+                onClick={() => set('gender', form.gender === g.v ? null : g.v)}>{g.l}</button>
+            ))}
+          </div>
+        </div>
+
+        <p className={s.groupHead}>경력</p>
+
+        <label className={s.field}>
+          <span className={s.label}>경력 수준<i>*</i></span>
+          <select className={s.input} value={form.experienceLevel} onChange={(e) => set('experienceLevel', e.target.value)}>
+            <option value="">경력 수준을 선택하세요</option>
+            {EXPERIENCE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
         </label>
-      </div>
 
-      <div className="surface">
-        <div className={s.sectionLabel}>기본 정보</div>
-        <Field label="이메일" type="email" value={form.contactEmail}
-          onChange={(e) => set('contactEmail', e.target.value)} placeholder="승인·거절 안내를 받을 이메일" />
-        <Field label="이름" value={form.applicantName}
-          onChange={(e) => set('applicantName', e.target.value)} placeholder="신분증과 동일하게" />
-        <Field label="생년월일" type="date" value={form.birthdate}
-          onChange={(e) => set('birthdate', e.target.value)} />
-        <Field label="지역" value={form.region}
-          onChange={(e) => set('region', e.target.value)} placeholder="예: 서울" />
-        <label className="lbl">성별 <span className="opt">선택</span></label>
-        <Chips options={GENDER_OPTIONS} value={form.gender} onChange={(v) => set('gender', v)} />
-        <Field label="키(cm)" opt="선택" type="number" value={form.heightCm}
-          onChange={(e) => set('heightCm', e.target.value)} placeholder="예: 175" />
-      </div>
+        <div className={s.field}>
+          <span className={s.label}>모델 에이전시에 소속된 적이 있나요?<i>*</i></span>
+          <div className={s.pills}>
+            <button type="button" className={`${s.pill}${form.agencyContracted === true ? ` ${s.pillOn}` : ''}`}
+              onClick={() => set('agencyContracted', true)}>예</button>
+            <button type="button" className={`${s.pill}${form.agencyContracted === false ? ` ${s.pillOn}` : ''}`}
+              onClick={() => set('agencyContracted', false)}>아니오</button>
+          </div>
+        </div>
 
-      <div className="surface">
-        <div className={s.sectionLabel}>모델 활동</div>
-        <label className="lbl">활동하고 싶은 카테고리</label>
-        <Chips multi options={CATEGORY_OPTIONS} value={form.categories}
-          onChange={(v) => set('categories', v)} />
-        <label className="field-row" style={{ marginTop: 12 }}>
-          <span className="lbl">에이전시 계약 여부</span>
-          <Chips options={[{ value: 'yes', label: '계약함' }, { value: 'no', label: '계약 안 함' }]}
-            value={form.agencyContracted ? 'yes' : 'no'}
-            onChange={(v) => set('agencyContracted', v === 'yes')} allowDeselect={false} />
+        <div className={s.field}>
+          <span className={s.label}>관심 있는 모델 카테고리<i>*</i></span>
+          <div className={s.checks}>
+            {CATEGORY_OPTIONS.map((c) => (
+              <label key={c.value} className={`${s.check}${form.categories.includes(c.value) ? ` ${s.checkOn}` : ''}`}>
+                <input type="checkbox" checked={form.categories.includes(c.value)} onChange={() => toggleCategory(c.value)} />
+                {c.label}
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div className={s.grid2}>
+          <label className={s.field}>
+            <span className={s.label}>포트폴리오 링크</span>
+            <input className={s.input} value={form.portfolioUrl} placeholder="https://yourportfolio.com"
+              onChange={(e) => set('portfolioUrl', e.target.value)} />
+          </label>
+          <label className={s.field}>
+            <span className={s.label}>SNS 링크</span>
+            <input className={s.input} value={form.snsUrl} placeholder="https://instagram.com/yourhandle"
+              onChange={(e) => set('snsUrl', e.target.value)} />
+          </label>
+        </div>
+
+        <label className={s.field}>
+          <span className={s.label}>자기소개</span>
+          <textarea className={`${s.input} ${s.textarea}`} rows={5} value={form.bio}
+            placeholder="당신이 누구인지, 왜 FaceMarket 에 지원하는지 짧게 알려주세요."
+            onChange={(e) => set('bio', e.target.value)} />
         </label>
-        <Field label="포트폴리오 링크" opt="선택" value={form.portfolioUrl}
-          onChange={(e) => set('portfolioUrl', e.target.value)} placeholder="https://" />
-        <Field label="SNS 링크" opt="선택" value={form.snsUrl}
-          onChange={(e) => set('snsUrl', e.target.value)} placeholder="https://" />
-        <label className="lbl">자기소개 <span className="opt">선택</span></label>
-        <textarea className="field" rows={4} value={form.bio}
-          onChange={(e) => set('bio', e.target.value)} placeholder="간단한 소개를 남겨주세요." />
-      </div>
 
-      <div className="surface">
-        <label className={s.consentRow} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer' }}>
-          <input type="checkbox" checked={privacyConsent} onChange={(e) => setPrivacyConsent(e.target.checked)} />
-          <span className="hint">
-            개인정보(이름·생년월일·연락처·사진) 수집·이용에 동의해요. 거절·취소 시 30일 후 익명화되고,
-            승인되면 모델 운영 정보로 보관돼요.
+        {/* ── 사진 ─────────────────────────────────────────── */}
+        <p className={s.groupHead}>사진</p>
+        <p className={s.hint}>JPG, PNG, WebP · 파일당 최대 25MB</p>
+        <div className={s.photoGrid}>
+          {PHOTO_SLOTS.map((slot) => {
+            const p = photos[slot.kind];
+            return (
+              <div key={slot.kind} className={s.photoSlot}>
+                <span className={s.label}>{slot.label}<i>*</i></span>
+                <button type="button" className={`${s.photoBox}${p?.staged ? ` ${s.photoBoxOn}` : ''}`}
+                  onClick={() => fileInputs.current[slot.kind]?.click()} title={slot.hint}>
+                  {p?.previewUrl
+                    ? <img src={p.previewUrl} alt={`${slot.label} 미리보기`} className={s.photoPreview} />
+                    : <Silhouette kind={slot.kind} />}
+                  <span className={s.photoPlus} aria-hidden="true">{p?.staged ? '✓' : '+'}</span>
+                  {p?.fromPrevious && !p?.previewUrl && <span className={s.photoKeep}>이전 지원서 사진 유지</span>}
+                </button>
+                <span className={s.photoHint}>{slot.hint}</span>
+                <input ref={(el) => { fileInputs.current[slot.kind] = el; }} type="file"
+                  accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => onPickPhoto(slot.kind, e)} />
+              </div>
+            );
+          })}
+        </div>
+
+        {/* ── 확인 ─────────────────────────────────────────── */}
+        <div className={s.attests}>
+          {ATTESTATIONS.map((a) => (
+            <label key={a.key} className={s.attest}>
+              <input type="checkbox" checked={!!attest[a.key]} onChange={(e) => setAttest((x) => ({ ...x, [a.key]: e.target.checked }))} />
+              <span>{a.text}</span>
+            </label>
+          ))}
+        </div>
+
+        {/* ── 개인정보 고지 (끝까지 스크롤) ───────────────────── */}
+        <p className={s.noticeTitle}>지원서 개인정보 고지</p>
+        <div ref={noticeRef} className={s.notice} onScroll={onNoticeScroll}>
+          {PRIVACY_NOTICE.map((n, i) => (
+            <div key={i} className={s.noticeBlock}>
+              {n.h && <strong>{n.h}</strong>}
+              <p>{n.p}</p>
+            </div>
+          ))}
+        </div>
+        {!noticeRead && <p className={s.noticeGate}>고지를 끝까지 스크롤하면 동의할 수 있어요</p>}
+        <label className={`${s.attest}${noticeRead ? '' : ` ${s.attestDisabled}`}`}>
+          <input type="checkbox" disabled={!noticeRead} checked={privacyConsent}
+            onChange={(e) => setPrivacyConsent(e.target.checked)} />
+          <span>
+            지원서 개인정보 고지를 읽었으며, 제출한 정보와 사진이 지원 검토에만 사용됨을 이해합니다.
+            현재 단계에서는 상업적으로 사용되거나, 브랜드·제3자에게 공개되거나, 모델로 등록되지 않습니다.
           </span>
         </label>
-      </div>
 
-      <div style={{ marginTop: 16 }}>
-        <Button variant="primary" block iconRight="arrowRight"
-          disabled={!canSubmit || phase === 'submitting'} onClick={submit}>
-          {phase === 'submitting' ? '제출 중…' : '지원서 제출하기'}
-        </Button>
-      </div>
+        <button type="button" className={s.submit} disabled={!canSubmit || phase === 'submitting'} onClick={submit}>
+          {phase === 'submitting' ? '제출 중…' : '( 지원서 제출하기 )'}
+        </button>
+      </section>
+
+      {/* ── FAQ ──────────────────────────────────────────────── */}
+      <section className={s.section}>
+        <h2 className={s.h2}>FAQ</h2>
+        <ul className={s.faq}>
+          {FAQ.map((f, i) => (
+            <li key={f.q} className={s.faqItem}>
+              <button type="button" className={s.faqQ} aria-expanded={openFaq === i}
+                onClick={() => setOpenFaq(openFaq === i ? null : i)}>
+                <span>{f.q}</span>
+                <span className={s.faqToggle} aria-hidden="true">{openFaq === i ? '−' : '+'}</span>
+              </button>
+              {openFaq === i && <p className={s.faqA}>{f.a}</p>}
+            </li>
+          ))}
+        </ul>
+      </section>
     </div>
   );
 }
