@@ -153,3 +153,79 @@ def test_anonymization_uses_sentinels_for_not_null_columns():
     for source, label in ((APPLICATIONS, "sweep"), (PURGE, "purge")):
         assert "birthdate = null" not in source, f"{label} 가 NOT NULL 컬럼을 null 로 민다"
         assert "region = null" not in source, f"{label} 가 NOT NULL 컬럼을 null 로 민다"
+
+
+HOST_JS = (Path(__file__).resolve().parents[2] / "src" / "lib" / "host.js").read_text()
+HUB_JSX = (Path(__file__).resolve().parents[2] / "src" / "features" / "model" / "ModelHub.jsx").read_text()
+
+
+def test_staging_sweep_skips_rows_locked_by_an_in_flight_submit():
+    """제출은 스테이징 행을 for update 로 잠근 채 r2.copy 를 돈다. sweep 이 잠금을 무시하면
+    그 원본을 지워 copy 가 NoSuchKey 로 터지고 제출이 500 + 사진 유실로 끝난다.
+    삭제를 한 문장으로 끝내 잠금 구간에 네트워크 I/O 도 넣지 않는다."""
+    body = APPLICATIONS.split("async def sweep_application_photo_staging")[1].split("PII_RETENTION_DAYS")[0]
+    assert "for update skip locked" in body
+    assert "delete from fm_model_application_photo_staging" in body
+    assert "returning r2_key" in body
+    # 잠금이 걸린 select 와 R2 삭제가 같은 트랜잭션에 있으면 안 된다.
+    txn = body.split("await conn.commit()")[0]
+    assert "r2.delete" not in txn
+
+
+def test_staging_sweep_also_reclaims_row_less_orphans_by_age():
+    """업로드가 트랜잭션 밖에서 먼저 일어나므로 행 없는 객체가 생길 수 있다(커넥션 확보 실패 등).
+    행 기반 스캔으로는 영영 못 잡는다. 나이 기준으로만 지워 진행 중 업로드는 건드리지 않는다."""
+    assert "_sweep_orphan_staging_objects" in APPLICATIONS
+    assert "list_prefix_aged" in APPLICATIONS
+    assert "older_than_seconds" in (APP / "r2.py").read_text()
+
+
+def test_purge_guard_covers_every_column_the_update_writes():
+    """가드가 확인하지 않는 컬럼(phone·photo_keys 는 나중 마이그에서 붙었다)을 쓰면, 앱이
+    마이그보다 앞선 DB 에서 UndefinedColumn 으로 파기가 죽는다 — 그 시점은 이미 R2 를 지운
+    뒤라 사진은 못 되돌리는데 PII 는 남는다."""
+    guard = PURGE.split('if _has(\n                schema, "fm_model_applications",')[1].split("):")[0]
+    for column in ("contact_email", "applicant_name", "birthdate", "region", "phone", "bio", "photo_keys"):
+        assert f'"{column}"' in guard, f"{column} 이 가드에 없다"
+
+
+def test_purge_manifest_is_partitioned_by_reason():
+    """withdrawal 과 account_delete 가 같은 manifest 를 공유하면, 실패한 계정 삭제가 남긴
+    지원서 접두사가 다음 철회 파기의 합집합에 섞여 심사 중 지원서 사진을 지운다."""
+    assert 'f"user:{user_id}:{reason}" if reason else' in PURGE
+    assert "_manifest_scope_key(user_id=user_id, batch_id=batch_id, reason=reason)" in PURGE
+
+
+def test_purge_also_clears_identifying_leftovers():
+    """거절 사유는 관리자 자유입력이라 지원자를 특정하는 문장이 들어간다. 성별·키도 신체 정보다."""
+    block = PURGE.split('if reason == "account_delete" and scope["user_id"] is not None:')[1]
+    assert "reject_reason = null, gender = null, height_cm = null" in block
+
+
+def test_anonymized_rows_do_not_prefill_a_new_application():
+    """30일 익명화 뒤 재지원하면 센티널(purged@invalid·1900-01-01)이 폼에 채워지고, 그대로 내면
+    invalid_email 로 막힌다 — 자기가 넣지 않은 값 때문에 제출이 실패하는 화면이 된다."""
+    body = APPLICATIONS.split("async def _load_current")[1].split("async def _require_admin")[0]
+    assert "contact_email <> %s" in body and "PURGED_EMAIL" in body
+
+
+def test_document_host_guard_never_fires_in_dev_or_on_unknown_hosts():
+    """로컬 QA 는 cloudflared 터널로 실도메인을, 폰 QA 는 LAN IP 를 쓴다. 호스트명으로 '로컬'을
+    추정하면 개발 서버를 떠나 프로덕션으로 튕겨 QA 자체가 불가능해진다."""
+    assert "import.meta.env?.DEV" in HOST_JS
+    assert "PRODUCTION_DOCUMENT_HOSTS" in HOST_JS
+    assert "!PRODUCTION_DOCUMENT_HOSTS.includes(host)" in HOST_JS
+
+
+def test_document_host_guard_normalizes_the_html_path_and_keeps_the_query():
+    """'.html' 만 떼면 '/facemarket' 이라는 없는 라우트가 되어 랜딩 대신 등록 게이트로 떨어진다."""
+    assert "replace(/\\/[^/]*\\.html$/, '/')" in HOST_JS
+    assert "window.location.search" in HOST_JS and "window.location.hash" in HOST_JS
+
+
+def test_hub_separates_blocked_from_no_application():
+    """차단된 사용자가 재지원해 under_review 가 되는 순간 '등록 이어가기'가 다시 떠서 가드에
+    막히는 왕복이 남았다. 차단 판정과 '지원서 없음' 판정은 분리해야 한다."""
+    assert "const blocked = hasProgress && !registrationAllowed;" in HUB_JSX
+    assert "const blockedUnderReview = blocked && application?.status === 'under_review';" in HUB_JSX
+    assert "!showApplicationNext && !blocked && !isNew && !isDone" in HUB_JSX

@@ -170,10 +170,14 @@ def _ids(rows, key="id") -> set[str]:
     return {str(r[key]) for r in rows if r.get(key) is not None}
 
 
-def _manifest_scope_key(*, user_id: str | None, batch_id: str | None) -> str:
+def _manifest_scope_key(*, user_id: str | None, batch_id: str | None, reason: str | None = None) -> str:
     if batch_id is not None:
         return f"batch:{batch_id}"
-    return f"user:{user_id}"
+    # reason 을 키에 넣는다. 안 넣으면 withdrawal 과 account_delete 가 같은 durable manifest 를
+    # 공유하는데, R2 단계에서 실패한 account_delete 는 manifest 를 남긴 채 끝나므로
+    # (_clear_target_manifest 는 성공 경로에서만 불린다) 그 지원서 접두사·타깃이 다음
+    # withdrawal 파기의 합집합에 섞여 심사 중인 지원서 사진을 지운다.
+    return f"user:{user_id}:{reason}" if reason else f"user:{user_id}"
 
 
 def _decode_target_manifest(value) -> tuple[set[tuple[str, str]], set[str], set[str]]:
@@ -947,7 +951,16 @@ async def _cleanup(
             # 파기 완료 후 별도 단계다). 그래서 사진만 지워지고 이름·생년월일은 남아 있었다.
             # 행을 지우지 않고 익명화하는 이유: 관리자 큐의 처리 이력(승인/거절 건수)과
             # 활성 지원서 유니크 제약을 깨지 않으면서 사람을 식별할 수 없게 만드는 게 목적이다.
-            if _has(schema, "fm_model_applications", "contact_email", "applicant_name"):
+            # 가드는 이 UPDATE 가 **실제로 쓰는 컬럼 전부**를 확인해야 한다. phone·photo_keys 는
+            # 나중 마이그(20260902160000)에서 붙은 컬럼이라, 앱이 마이그보다 앞서 배포된 DB
+            # (2026-08-29 CI 사고 전례)에서는 UndefinedColumn 으로 이 문장이 터진다. 그 시점은
+            # 이미 R2 객체를 지운 뒤라 사진은 못 되돌리는데 트랜잭션만 롤백돼, PII 는 남고
+            # 영수증도 안 써지고 파기 잡이 같은 자리에서 계속 실패한다.
+            if _has(
+                schema, "fm_model_applications",
+                "contact_email", "applicant_name", "birthdate", "region",
+                "phone", "bio", "photo_keys", "terminated_at",
+            ):
                 await cur.execute(
                     """
                     update fm_model_applications
@@ -958,6 +971,10 @@ async def _cleanup(
                            birthdate = date '1900-01-01', region = '-',
                            phone = null, bio = null,
                            portfolio_url = null, sns_url = null,
+                           -- 거절 사유는 관리자 자유입력이라 '신분증 이름 OOO 과 불일치' 처럼
+                           -- 지원자를 특정하는 문장이 들어간다. 성별·키도 신체 정보이고, 같은
+                           -- 파기가 personalization_profiles 에서는 이미 널로 민다.
+                           reject_reason = null, gender = null, height_cm = null,
                            profile_image_r2_key = null, photo_keys = '{}'::jsonb,
                            status = case when status in ('under_review', 'approved')
                                          then 'cancelled' else status end,
@@ -1045,7 +1062,7 @@ async def purge_biometric_scope(
     except Exception:
         raise PurgeIncomplete("cdn_purge_failed") from None
 
-    scope_key = _manifest_scope_key(user_id=user_id, batch_id=batch_id)
+    scope_key = _manifest_scope_key(user_id=user_id, batch_id=batch_id, reason=reason)
     db_failed = False
     try:
         async with pool.connection() as conn:

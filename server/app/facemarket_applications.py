@@ -194,6 +194,47 @@ def _mime_for_key(key: str) -> str:
     return "image/jpeg"
 
 
+async def _sweep_orphan_staging_objects(r2, pool, *, max_age_hours: int, limit: int) -> int:
+    """스테이징 접두사에서 **DB 행이 참조하지 않는** 오래된 객체를 지운다.
+
+    나열이 실패하면 0을 돌려주고 조용히 넘어간다(다음 주기에 재시도) — 이 스윕은 보조 경로이고,
+    실패로 주 sweep 을 깨뜨릴 이유가 없다. 나열은 버킷 전체가 아니라 스테이징 접두사만 훑는다.
+    """
+    lister = getattr(r2, "list_prefix_aged", None)
+    if lister is None:
+        return 0
+    try:
+        keys = await asyncio.to_thread(
+            lister, "private/fm-application/staging/", older_than_seconds=max_age_hours * 3600,
+        )
+    except Exception:
+        logger.warning("application staging orphan scan failed")
+        return 0
+    if not keys:
+        return 0
+    keys = keys[: limit * 4]
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select r2_key from fm_model_application_photo_staging where r2_key = any(%s)",
+                (keys,),
+            )
+            referenced = {r["r2_key"] for r in await cur.fetchall()}
+        await conn.commit()
+    removed = 0
+    for key in keys:
+        if key in referenced:
+            continue
+        try:
+            await asyncio.to_thread(r2.delete, key)
+            removed += 1
+        except Exception:
+            logger.warning("orphan application staging object delete failed")
+    if removed:
+        logger.info("fm application staging orphan sweep removed=%d", removed)
+    return removed
+
+
 async def sweep_application_photo_staging(app, *, max_age_hours: int = 24, limit: int = 100) -> int:
     """미제출 스테이징 사진 회수(스펙 9/E11). 제출 시 스테이징 행은 지워지므로 오래 남은 행은
     지원서를 안 내고 나간 사용자의 사진이다. dispatcher 의 주기 sweep 에서 호출된다."""
@@ -201,41 +242,44 @@ async def sweep_application_photo_staging(app, *, max_age_hours: int = 24, limit
     pool = getattr(app.state, "pool", None)
     if r2 is None or pool is None:
         return 0
-    # 2단계로 나눈다: (1) 대상 행을 읽고 트랜잭션을 닫는다 (2) R2 삭제 후 별도 트랜잭션으로 행 삭제.
-    # 예전에는 for update skip locked 로 최대 100행을 잠근 채 동기 boto3 delete 를 순차로 돌려서,
-    # 잠금 시간이 네트워크 지연에 묶이고 이벤트 루프까지 막혔다(r2.py §5 규약 위반).
+    # 순서가 중요하다: **행을 먼저 지우고 커밋한 뒤** R2 객체를 지운다.
+    #  · skip locked 를 유지해야 in-flight 제출(스테이징 행을 for update 로 잠근 채 r2.copy 를
+    #    도는 중)이 건너뛰어진다. 잠금을 안 보면 sweep 이 그 원본을 지워 copy 가 NoSuchKey 로
+    #    터지고 제출이 500 으로 실패한다(행까지 사라져 사진을 다시 올려야 한다).
+    #  · 삭제를 한 문장으로 끝내 잠금 구간에 네트워크 I/O 를 넣지 않는다(r2.py §5).
+    #  · 행을 먼저 지우므로 R2 삭제가 실패하면 객체가 남지만, 그건 계정 삭제 파기의 접두사
+    #    스윕이 회수한다. 반대 순서(객체 먼저)는 제출과 경합해 사진을 잃을 수 있어 더 나쁘다.
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "select user_id::text as user_id, r2_key from fm_model_application_photo_staging "
-                "where created_at < now() - make_interval(hours => %s) "
-                "order by created_at limit %s",
+                """
+                delete from fm_model_application_photo_staging
+                 where ctid in (
+                    select ctid from fm_model_application_photo_staging
+                     where created_at < now() - make_interval(hours => %s)
+                     order by created_at limit %s
+                     for update skip locked
+                 )
+                 returning r2_key
+                """,
                 (max_age_hours, limit),
             )
             rows = await cur.fetchall()
         await conn.commit()
 
-    deleted_keys: list[tuple[str, str]] = []
+    removed = 0
     for row in rows:
         try:
             await asyncio.to_thread(r2.delete, row["r2_key"])
+            removed += 1
         except Exception:
             logger.warning("stale application staging photo delete failed")  # 키는 남기지 않는다(user_id 포함)
-            continue
-        deleted_keys.append((row["user_id"], row["r2_key"]))
 
-    removed = 0
-    if deleted_keys:
-        async with pool.connection() as conn:
-            async with conn.cursor() as cur:
-                for user_id, key in deleted_keys:
-                    await cur.execute(
-                        "delete from fm_model_application_photo_staging "
-                        "where user_id = %s and r2_key = %s",
-                        (user_id, key),
-                    )
-                    removed += cur.rowcount or 0
-            await conn.commit()
+    # 행이 아예 없는 고아도 회수한다. 업로드는 트랜잭션 밖에서 먼저 일어나므로(이벤트 루프를
+    # 막지 않으려면 그래야 한다), 커넥션 확보 실패·같은 kind 동시 업로드 경합에서는 객체만
+    # 남고 행이 없는 상태가 생긴다. 그건 행 기반 스캔으로 영영 못 잡는다.
+    # 나이 기준(max_age_hours)을 넘긴 것만 본다 — 진행 중 업로드를 지우지 않기 위해서다.
+    removed += await _sweep_orphan_staging_objects(r2, pool, max_age_hours=max_age_hours, limit=limit)
     if removed:
         logger.info("fm application staging sweep removed=%d", removed)
     return removed
@@ -345,16 +389,22 @@ _APPLICATION_COLUMNS = """
 
 
 async def _load_current(conn, user_id: str) -> dict | None:
-    """유저의 활성 지원서(있으면), 없으면 가장 최근 터미널 지원서(상태 허브·재지원 프리필용)."""
+    """유저의 활성 지원서(있으면), 없으면 가장 최근 터미널 지원서(상태 허브·재지원 프리필용).
+
+    30일 sweep 으로 익명화된 행은 **프리필 후보에서 뺀다**. 안 빼면 재지원 화면에 성 '삭제된',
+    이름 '지원자', 이메일 purged@invalid, 생년월일 1900-01-01 이 미리 채워지고, 그대로 내면
+    invalid_email 로 막힌다 — 자기가 넣은 적 없는 값 때문에 제출이 실패하는 화면이 된다.
+    활성 지원서는 익명화 대상이 아니므로(터미널만 스윕) 상태 허브 표시에는 영향이 없다.
+    """
     async with conn.cursor() as cur:
         await cur.execute(
             f"""
             select {_APPLICATION_COLUMNS} from fm_model_applications
-            where user_id = %s
+            where user_id = %s and contact_email <> %s
             order by (status in ('under_review','approved')) desc, created_at desc
             limit 1
             """,
-            (user_id,),
+            (user_id, PURGED_EMAIL),
         )
         return await cur.fetchone()
 
@@ -399,8 +449,9 @@ async def stage_application_photo(
     new_key = _staging_key(user_id, kind, ext)
     # 업로드는 트랜잭션 **밖**에서 끝낸다 — 25MB 업로드를 FOR UPDATE 를 쥔 채로 하면 그 시간만큼
     # 행이 잠기고, 동기 boto3 라 to_thread 없이는 이벤트 루프까지 멈춘다(2026-08-26 ECS 동결).
-    # 업로드가 성공했는데 아래 INSERT 가 실패하면 오브젝트만 남지만, 그건 스테이징 접두사라
-    # 파기 스윕(biometric_purge._prefixes)과 sweep 이 회수한다.
+    # 업로드가 성공했는데 아래 INSERT 가 실패하면(풀 고갈로 커넥션을 못 잡는 경우 등) 행 없는
+    # 객체가 남는다. 그건 아래 _sweep_orphan_staging_objects 가 나이 기준으로 회수하고,
+    # 계정 삭제 파기의 접두사 스윕도 같은 경로를 훑는다.
     await asyncio.to_thread(r2.put_bytes, new_key, data, mime)
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:

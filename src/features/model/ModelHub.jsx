@@ -233,8 +233,13 @@ export function ModelHub() {
   // "완전 신규": 진행 중 등록·모델·활성 지원서 전부 없음.
   const hasActiveApplication = application?.status === 'under_review' || application?.status === 'approved';
   const isNew = !hasProgress && !hasActiveApplication;
-  // 모델은 있는데 등록이 막힌 경우(정지된 모델 등) — 지원서부터 다시 받는다.
-  const blockedNeedsApply = hasProgress && !registrationAllowed && !hasActiveApplication;
+  // 모델은 있는데 등록이 막힌 경우(정지된 모델 등). 두 갈래를 **분리**한다 — 예전에는
+  // '활성 지원서 없음'까지 한 조건에 묶어서, 차단된 사용자가 재지원해 under_review 가 되는
+  // 순간 이 분기가 꺼지고 다시 '등록 이어가기'가 떠서 가드에 막히는 왕복이 남았다.
+  const blocked = hasProgress && !registrationAllowed;
+  const blockedNeedsApply = blocked && !hasActiveApplication;
+  const blockedUnderReview = blocked && application?.status === 'under_review';
+  const blockedApproved = blocked && application?.status === 'approved';
   // 신규 진입 목적지: 게이트 on 이면 지원서, off 면 기존 즉시 등록.
   const newEntryPath = applicationRequired ? '/model/apply' : '/model/register';
 
@@ -285,10 +290,16 @@ export function ModelHub() {
           {!showApplicationNext && blockedNeedsApply && (
             <h2 className={s.hubNextTitle}>모델 지원서부터 작성해요</h2>
           )}
-          {!showApplicationNext && !blockedNeedsApply && !isNew && !isDone && enrollmentNeedsTerms && (
+          {!showApplicationNext && blockedUnderReview && (
+            <h2 className={s.hubNextTitle}>지원서를 검토하고 있어요</h2>
+          )}
+          {!showApplicationNext && blockedApproved && (
+            <h2 className={s.hubNextTitle}>지원이 승인됐어요</h2>
+          )}
+          {!showApplicationNext && !blocked && !isNew && !isDone && enrollmentNeedsTerms && (
             <h2 className={s.hubNextTitle}>마지막으로 라이선스 단계가 남았어요</h2>
           )}
-          {!showApplicationNext && !blockedNeedsApply && !isNew && !isDone && !enrollmentNeedsTerms && (
+          {!showApplicationNext && !blocked && !isNew && !isDone && !enrollmentNeedsTerms && (
             <h2 className={s.hubNextTitle}>등록을 이어서 마치면 돼요</h2>
           )}
 
@@ -304,7 +315,17 @@ export function ModelHub() {
               지금 계정으로는 등록을 이어갈 수 없어요. 지원서를 제출하면 관리자 검토 후 다시 진행할 수 있어요.
             </p>
           )}
-          {!showApplicationNext && !blockedNeedsApply && !isNew && !isDone && (
+          {!showApplicationNext && blockedUnderReview && (
+            <p className={s.hubNextBody}>
+              제출한 지원서를 관리자가 검토하고 있어요. 승인되면 이메일과 이 화면으로 알려드려요.
+            </p>
+          )}
+          {!showApplicationNext && blockedApproved && (
+            <p className={s.hubNextBody}>
+              신분증 인증부터 모델 등록을 이어가 주세요.
+            </p>
+          )}
+          {!showApplicationNext && !blocked && !isNew && !isDone && (
             <p className={s.hubNextBody}>
               본인 확인과 라이선스 발급을 마치면 내 모델로 생성할 수 있어요.
               {/* PRD §7.3·§13-2 — holder 콜드부트가 ~2분이라 대기가 정상 경로에 있다.
@@ -361,7 +382,14 @@ export function ModelHub() {
               모델 지원하기
             </Button>
           )}
-          {!showApplicationNext && !blockedNeedsApply && !isNew && !isDone && (
+          {/* 차단 + 검토 중이면 등록 CTA 를 아예 내지 않는다(눌러도 가드에 막혀 되돌아온다).
+              남는 행동은 아래 '검토 중인 지원 취소' 하나뿐이고, 그게 유일한 탈출구다. */}
+          {!showApplicationNext && blockedApproved && (
+            <Button variant="primary" iconRight="arrowRight" onClick={() => navigate('/model/register')}>
+              모델 등록하기
+            </Button>
+          )}
+          {!showApplicationNext && !blocked && !isNew && !isDone && (
             <Button variant="primary" iconRight="arrowRight" onClick={() => navigate(registrationPath)}>
               {enrollmentNeedsTerms ? '라이선스 조건 설정 이어가기' : '모델 등록 이어가기'}
             </Button>

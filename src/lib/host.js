@@ -92,16 +92,28 @@ export const IS_ADMIN = detectAdmin();
    IS_ADMIN 은 호스트 기준이라 false 이므로, 앱이 남의 도메인 규칙으로 돌며 '/facemarket.html'
    같은 라우트 아닌 경로에서 catch-all 로 튕기는 이상 동작을 한다.
 
-   프로덕션 호스트에서만 건다(로컬·프리뷰는 ?facemarket=1·?admin=1 로 문서를 고르는 게 정상이라
-   여기 걸리면 QA 가 불가능하다). 렌더 루프 대신 한 번 하드 이동한다. */
+   **프로덕션 호스트에서만** 건다. 판정을 '로컬처럼 생겼나'로 하면 안 된다 — 이 레포의 정상
+   로컬 QA 는 cloudflared 터널로 실도메인을 쓰고(vite.config.js allowedHosts, OACX 모바일
+   신분증이 한국 IP·실도메인을 요구한다) 폰 QA 는 LAN IP 를 쓴다. 그 호스트들은 localhost
+   목록 밖이라, 호스트명으로 추정하면 개발 서버를 떠나 프로덕션으로 튕겨 QA 자체가 불가능해진다.
+   그래서 dev 빌드는 무조건 면제하고, 그 밖에는 **알려진 프로덕션 호스트일 때만** 건다. */
+const PRODUCTION_DOCUMENT_HOSTS = ['ai.wearless.kr', 'facemarket.wearless.kr', 'admin.wearless.kr'];
+
 export function redirectToOwnDocumentHost(expected) {
   // 훅이 아니다 — 렌더 중 한 번 호출해 "이 문서가 남의 호스트에서 열렸는가"만 답한다.
   if (typeof window === 'undefined') return false;
+  if (import.meta.env?.DEV) return false;                    // dev 서버(터널·LAN IP 포함)
   const host = (window.location.hostname || '').toLowerCase();
-  if (isOverrideAllowedHost(host)) return false;   // 로컬·프리뷰
-  if (host === expected || host.endsWith(`.${expected}`)) return false;
-  const target = `https://${expected}${window.location.pathname.replace(/\.html$/, '')}`;
-  window.location.replace(target.endsWith('/') ? target : `${target}`);
+  if (isOverrideAllowedHost(host, import.meta.env?.VITE_FACEMARKET_HOST || '')) return false;
+  if (!PRODUCTION_DOCUMENT_HOSTS.includes(host)) return false;   // 프리뷰·미지의 호스트는 건드리지 않는다
+  if (host === expected) return false;
+  // 문서 파일 경로(/facemarket.html)는 루트로 정규화한다. `.html` 만 떼면 '/facemarket' 이라는
+  // 존재하지 않는 라우트가 되어 랜딩 대신 domainRouteRedirect 가 등록 게이트로 보낸다.
+  // 쿼리·해시는 보존한다(결제 복귀처럼 쿼리를 들고 오는 경로가 이 가드에 닿을 수 있다).
+  const path = window.location.pathname.replace(/\/[^/]*\.html$/, '/') || '/';
+  window.location.replace(
+    `https://${expected}${path}${window.location.search}${window.location.hash}`,
+  );
   return true;
 }
 
