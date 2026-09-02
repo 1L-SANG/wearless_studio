@@ -307,7 +307,8 @@ class FakeCursor:
                 )
             }
         elif query.startswith("insert into fm_biometric_enrollments"):
-            user_id, model_id, device_digest, consent_version, expires_at = params
+            # 지원서 게이트(E5): insert 에 application_id 컬럼이 추가됐다(플래그 off 면 None).
+            user_id, model_id, device_digest, consent_version, expires_at, application_id = params
             existing = next(
                 (
                     row
@@ -345,6 +346,7 @@ class FakeCursor:
                     "identity_birth_year": None,
                     "identity_tx_digest": None,
                     "identity_contract_version": None,
+                    "application_id": application_id,
                 }
                 self.store.enrollments.append(row)
                 self.result = {"id": row["id"]}
@@ -772,10 +774,11 @@ class FakeCursor:
                 )
                 self.result = {"status": "failed"}
         elif (
-            query.startswith("select status from fm_biometric_enrollments where id")
+            query.startswith("select status, application_id")
+            and "fm_biometric_enrollments where id" in query
             and "for update" in query
         ):
-            # /identity 게이트의 소유·상태 잠금 조회(id + user_id + for update).
+            # /identity 게이트의 소유·상태 잠금 조회(id + user_id + for update). 대조용 application_id 포함(E5).
             enrollment_id, user_id = params
             row = next(
                 (
@@ -785,7 +788,11 @@ class FakeCursor:
                 ),
                 None,
             )
-            self.result = {"status": row["status"]} if row else None
+            self.result = (
+                {"status": row["status"], "application_id": row.get("application_id")}
+                if row
+                else None
+            )
         elif query.startswith("select status from fm_biometric_enrollments where id"):
             enrollment_id = params[0]
             row = next(
