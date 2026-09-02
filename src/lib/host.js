@@ -46,3 +46,26 @@ function detectFacemarket() {
 }
 
 export const IS_FACEMARKET = detectFacemarket();
+
+const matchesRoute = (pathname, route) => pathname === route || pathname.startsWith(`${route}/`);
+
+/* facemarket 도메인에서 열리는 경로.
+     · 랜딩 — '/' 와 상단바 세 항목(/models·/license·/payout), 상단바에서 내려왔지만 살아
+       있는 두 화면(/register·/model-info), 옛 주소 /licensing.
+     · 등록·라이선스 — /model/*
+     · 공유 경로 — 결제·크레딧·공개 검증.
+   ⚠️ 랜딩 라우트를 추가하면 **여기에도 같이 넣어라.** 안 넣으면 그 주소는 곧바로
+   /model/register 로 튕겨 상단바가 죽는다 — 화면은 잘 만들어 놓고 링크만 안 열린다. */
+const FACEMARKET_ROUTES = [
+  '/models', '/license', '/payout', '/register', '/model-info', '/licensing',
+  '/model', '/pricing', '/credits/history', '/payments', '/verify',
+];
+
+export function domainRouteRedirect(pathname, isFacemarket = IS_FACEMARKET) {
+  if (isFacemarket) {
+    const allowed = pathname === '/'
+      || FACEMARKET_ROUTES.some((route) => matchesRoute(pathname, route));
+    return allowed ? null : '/model/register';
+  }
+  return matchesRoute(pathname, '/model') ? '/create/input' : null;
+}
