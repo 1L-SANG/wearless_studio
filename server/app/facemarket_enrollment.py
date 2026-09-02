@@ -22,6 +22,7 @@ from psycopg.types.json import Json
 from . import cx_identity, repo
 from .agents.face_qc import QcFailed, load_face_qc, weight_paths
 from .auth import require_user
+from .facemarket_applications import MAX_IDENTITY_MISMATCH
 from .config import Settings
 from .db import get_conn
 from .models import CamelModel
@@ -702,6 +703,7 @@ async def create_enrollment(
     body: CreateEnrollmentBody,
     user_id: str = Depends(require_user),
 ):
+    settings: Settings = request.app.state.settings
     device_id = body.device_id.strip()
     consent = body.biometric_consent
     if len(device_id) < 32:
@@ -746,6 +748,31 @@ async def create_enrollment(
             )
             model = await cur.fetchone()
             model_id = model["id"] if model else None
+            # 지원서 게이트(E1/E5/E6): 플래그 on 이면 신규 등록은 승인 지원서가 있어야 한다.
+            # 면제 = 이미 검증 이력이 있는 모델 보유자(verified/reverification_required) — 재검증
+            # 경로는 지원서 없이 통과(pending·suspended 는 우회 불가). 승인 지원서로 진입하는
+            # 경우 enrollment 에 application_id 를 박아 대조·strike 대상을 고정한다(E5).
+            application_id = None
+            if settings.fm_application_required:
+                legacy_exempt = model is not None and model["status"] in (
+                    "verified",
+                    "reverification_required",
+                )
+                if not legacy_exempt:
+                    await cur.execute(
+                        "select id::text as id from fm_model_applications "
+                        "where user_id = %s and status = 'approved' "
+                        "order by reviewed_at desc nulls last limit 1",
+                        (user_id,),
+                    )
+                    approved = await cur.fetchone()
+                    if approved is None:
+                        raise _err(
+                            "application_required",
+                            "모델 지원서 승인 후 등록을 시작할 수 있어요.",
+                            status=403,
+                        )
+                    application_id = approved["id"]
             if model and model["status"] == "verified":
                 await cur.execute(
                     """
@@ -766,15 +793,16 @@ async def create_enrollment(
             await cur.execute(
                 """
                 insert into fm_biometric_enrollments
-                    (user_id, model_id, device_digest, consent_version, expires_at)
-                values (%s, %s, %s, %s, %s)
+                    (user_id, model_id, device_digest, consent_version, expires_at, application_id)
+                values (%s, %s, %s, %s, %s, %s)
                 on conflict (user_id) where status in (
                     'identity_pending', 'photos_pending', 'liveness_pending', 'processing',
                     'asset_building', 'license_pending', 'vc_pending'
                 ) do nothing
                 returning id::text as id
                 """,
-                (user_id, model_id, device_digest, consent.document_version, expires_at),
+                (user_id, model_id, device_digest, consent.document_version, expires_at,
+                 application_id),
             )
             inserted = await cur.fetchone()
             if inserted:
@@ -831,7 +859,8 @@ async def verify_enrollment_identity(
         async with conn.cursor() as cur:
             # 소유·상태 검사(identity_pending 만 허용)
             await cur.execute(
-                "select status from fm_biometric_enrollments "
+                "select status, application_id::text as application_id "
+                "from fm_biometric_enrollments "
                 "where id = %s and user_id = %s for update",
                 (enrollment_id, user_id),
             )
@@ -867,6 +896,63 @@ async def verify_enrollment_identity(
             owner = await cur.fetchone()
             if owner is not None and owner["user_id"] != user_id:
                 raise _err("identity_recovery_required", "기존 모델 소유권 확인이 필요해요.")
+            # 지원서 대조(E13): enrollment 에 승인 지원서가 연결돼 있으면 이름·생년월일을 대조한다.
+            # 불일치는 지원서에 누적(E2, enrollment 재생성과 무관), 3회면 지원서 거절 + enrollment
+            # 종료를 한 트랜잭션으로(E7). 실패 시도도 token 을 소비해(E8) 같은 token 재전송을 막는다.
+            if row["application_id"]:
+                await cur.execute(
+                    "select applicant_name, birthdate, identity_mismatch_count "
+                    "from fm_model_applications where id = %s for update",
+                    (row["application_id"],),
+                )
+                approw = await cur.fetchone()
+                if approw is not None:
+                    claim = cx_identity.compare_identity_claim(
+                        trans,
+                        contract=contract,
+                        expected_name=approw["applicant_name"],
+                        expected_birthdate=approw["birthdate"],
+                    )
+                    if not claim.matched:
+                        new_count = approw["identity_mismatch_count"] + 1
+                        # 실패 token 소비(attempt ledger, E8): 같은 token 재전송은 replay 로 차단.
+                        await cur.execute(
+                            "update fm_biometric_enrollments set identity_tx_digest = %s "
+                            "where id = %s and user_id = %s",
+                            (token_digest, enrollment_id, user_id),
+                        )
+                        if new_count >= MAX_IDENTITY_MISMATCH:
+                            await cur.execute(
+                                "update fm_model_applications set status = 'rejected', "
+                                "identity_mismatch_count = %s, reject_reason = '정보 불일치', "
+                                "terminated_at = now() where id = %s",
+                                (new_count, row["application_id"]),
+                            )
+                            await cur.execute(
+                                "update fm_biometric_enrollments set status = 'cancelled', "
+                                "reason = 'identity_claim_mismatch', completed_at = now() "
+                                "where id = %s and user_id = %s",
+                                (enrollment_id, user_id),
+                            )
+                            await conn.commit()
+                            raise _err(
+                                "identity_claim_rejected",
+                                "지원서 정보와 신분증이 3회 일치하지 않아 지원이 거절됐어요. "
+                                "지원서를 다시 작성해 주세요.",
+                                status=409,
+                            )
+                        await cur.execute(
+                            "update fm_model_applications set identity_mismatch_count = %s "
+                            "where id = %s",
+                            (new_count, row["application_id"]),
+                        )
+                        await conn.commit()
+                        raise _err(
+                            "identity_claim_mismatch",
+                            "지원서 정보와 신분증이 일치하지 않아요. "
+                            f"{MAX_IDENTITY_MISMATCH - new_count}회 더 시도할 수 있어요.",
+                            status=422,
+                        )
             # 증거 저장 + 상태 전이
             await cur.execute(
                 """
