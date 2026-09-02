@@ -1556,7 +1556,8 @@ def test_liveness_disabled_validate_passes_without_liveness_settings(monkeypatch
 def test_config_reports_liveness_not_required(liveness_off_client):
     res = liveness_off_client.get("/v1/facemarket/config")
     assert res.status_code == 200, res.text
-    assert res.json() == {"livenessRequired": False}
+    # applicationRequired 는 기본 off(기존 즉시 등록). 지원서 게이트는 별도 플래그로 켠다.
+    assert res.json() == {"livenessRequired": False, "applicationRequired": False}
 
 
 def test_liveness_session_rejected_when_disabled(

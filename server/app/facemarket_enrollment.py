@@ -694,7 +694,11 @@ async def facemarket_config(request: Request):
     라이브니스 세션/위젯을 건너뛰고 사진 → 완료로 직행한다.
     """
     settings: Settings = request.app.state.settings
-    return {"livenessRequired": settings.fm_liveness_enabled}
+    return {
+        "livenessRequired": settings.fm_liveness_enabled,
+        # 지원서 게이트 on 이면 프론트는 신규 진입을 /model/apply 로 보낸다.
+        "applicationRequired": settings.fm_application_required,
+    }
 
 
 @router.post("/enrollments", response_model=EnrollmentView, status_code=201)

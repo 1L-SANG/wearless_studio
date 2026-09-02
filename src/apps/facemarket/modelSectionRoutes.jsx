@@ -19,6 +19,7 @@ import { Navigate, Outlet, Route } from 'react-router-dom';
 import { ErrorState } from '@/components/ui.jsx';
 import { listMyModels } from '@/lib/api/facemarket.js';
 import { ModelHub } from '@/features/model/ModelHub.jsx';
+import { ModelApply } from '@/features/model/ModelApply.jsx';
 import { ModelRegister } from '@/features/model/ModelRegister.jsx';
 import { ModelLicense } from '@/features/model/ModelLicense.jsx';
 import { ModelGenerate } from '@/features/model/ModelGenerate.jsx';
@@ -70,10 +71,13 @@ function RequireVerifiedModel() {
 
 export const MODEL_SECTION_ROUTES = (
   <Route path="model">
-    {/* 등록은 모델 생성 전에도 열고, 등록 중 모델은 상태·라이선스 화면까지 복구한다. */}
+    {/* 지원서(리뉴얼)·등록은 모델 생성 전에도 연다. 허브(index)는 모델이 없어도 접근 가능해야
+        한다 — 지원자(fm_models 행 없음)의 지원 상태를 허브가 진실원천으로 보여주기 때문이다.
+        그래서 apply·register·index 는 RequireOwnedModel 밖에 둔다. */}
+    <Route path="apply" element={<ModelApply />} />
     <Route path="register" element={<ModelRegister />} />
+    <Route index element={<ModelHub />} />
     <Route element={<RequireOwnedModel />}>
-      <Route index element={<ModelHub />} />
       <Route path="license" element={<ModelLicense />} />
       {/* 폐기된 직접 업로드 북마크는 신규 등록 경계로 되돌린다. */}
       <Route path="consent" element={<Navigate to="/model/register" replace />} />
