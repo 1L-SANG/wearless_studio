@@ -517,6 +517,29 @@ async def _known_targets(conn, schema, scope, enrollment_ids, derived_jobs):
                 (list(enrollment_ids),),
             )
             face_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
+        # 대표(커버) 이미지 — 종전엔 수집되지 않아 계정 삭제 후에도 남았다(private/fm-profile/).
+        if enrollment_ids and _has(schema, "fm_biometric_enrollments", "profile_image_r2_key"):
+            await cur.execute(
+                "select profile_image_r2_key as k from fm_biometric_enrollments "
+                "where id = any(%s) and profile_image_r2_key is not null",
+                (list(enrollment_ids),),
+            )
+            face_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
+        # 모델 지원서 프로필 사진 + 미제출 스테이징(리뉴얼). 지원서 PII 는 계정에 종속(3A/E12):
+        # 계정 삭제 시 사진도 함께 지운다. 30일 익명화 sweep(터미널 지원서)과는 별개 경로다.
+        if scope["user_id"] and _has(schema, "fm_model_applications", "profile_image_r2_key"):
+            await cur.execute(
+                "select profile_image_r2_key as k from fm_model_applications "
+                "where user_id = %s and profile_image_r2_key is not null",
+                (scope["user_id"],),
+            )
+            face_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
+        if scope["user_id"] and _has(schema, "fm_model_application_photo_staging", "r2_key"):
+            await cur.execute(
+                "select r2_key as k from fm_model_application_photo_staging where user_id = %s",
+                (scope["user_id"],),
+            )
+            face_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
         if scope["profile_ids"]:
             await cur.execute(
                 "select r2_key as k from personalization_face_photos where profile_id = any(%s)",
