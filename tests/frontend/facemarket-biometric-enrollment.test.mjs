@@ -1009,7 +1009,7 @@ test('enrollment terms and routes cannot revive direct face licensing', () => {
   const hubSource = read('../../src/features/model/ModelHub.jsx');
   // 모델 섹션 라우트와 그 가드는 App.jsx 에서 나왔다 — 셀러 번들에 모델 화면이 실리지
   // 않게 진입점을 가르면서 facemarket 전용 모듈로 옮겼다(src/routes/modelSectionRoutes.jsx).
-  const appSource = read('../../src/routes/modelSectionRoutes.jsx');
+  const appSource = read('../../src/apps/facemarket/modelSectionRoutes.jsx');
 
   assert.match(apiSource, /body:\s*\{ enrollmentId, allowedUse, forbiddenUse, unitPrice, validDays \}/);
   assert.doesNotMatch(apiSource, /fd\.append\(['"]face['"]/);

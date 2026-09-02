@@ -28,7 +28,7 @@ import { Generating } from '@/features/generating/Generating.jsx';
 import { LazyEditor } from '@/features/editor/lazyEditor.js';
 import { forgetPostLogin, readPostLogin, useAuth } from '@/features/auth/AuthProvider.jsx';
 import { domainRouteRedirect } from '@/lib/host.js';
-import { RequireAuth } from '@/routes/guards.jsx';
+import { RequireAuth } from '../guards.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
 import { loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';

@@ -32,30 +32,30 @@ const SELLER_ONLY = [
 ];
 
 test('셀러 앱(App.jsx)은 모델·랜딩 화면을 import 하지 않는다', () => {
-  const paths = importPaths(read('src/App.jsx'));
+  const paths = importPaths(read('src/apps/seller/App.jsx'));
   for (const path of paths) {
     assert.ok(!path.includes('features/model/'), `모델 화면이 셀러 번들로 들어온다: ${path}`);
     assert.ok(!path.includes('facemarket-landing'), `랜딩이 셀러 번들로 들어온다: ${path}`);
     assert.ok(!path.includes('facemarket-shell'), `랜딩 껍데기가 셀러 번들로 들어온다: ${path}`);
-    assert.ok(!path.includes('routes/modelSectionRoutes'), `모델 라우트가 셀러 번들로 들어온다: ${path}`);
+    assert.ok(!path.includes('facemarket/modelSectionRoutes'), `모델 라우트가 셀러 번들로 들어온다: ${path}`);
   }
 });
 
 test('모델 앱(AppFacemarket.jsx)은 셀러 전용 화면을 import 하지 않는다', () => {
-  const paths = importPaths(read('src/AppFacemarket.jsx'));
+  const paths = importPaths(read('src/apps/facemarket/App.jsx'));
   for (const sellerOnly of SELLER_ONLY) {
     assert.ok(!paths.includes(sellerOnly), `셀러 화면이 모델 번들로 들어온다: ${sellerOnly}`);
   }
 });
 
 test('진입점 두 개가 각자 자기 앱을 마운트한다', () => {
-  assert.match(read('src/main.jsx'), /import App from '@\/App\.jsx'/);
-  assert.match(read('src/mainFacemarket.jsx'), /import AppFacemarket from '@\/AppFacemarket\.jsx'/);
+  assert.match(read('src/apps/seller/main.jsx'), /import App from '\.\/App\.jsx'/);
+  assert.match(read('src/apps/facemarket/main.jsx'), /import AppFacemarket from '\.\/App\.jsx'/);
   // 부트스트랩은 한 벌이어야 한다 — 두 진입점이 같은 mountApp 을 쓴다.
-  for (const entry of ['src/main.jsx', 'src/mainFacemarket.jsx']) {
-    assert.match(read(entry), /from '@\/mountApp\.jsx'/, entry);
+  for (const entry of ['src/apps/seller/main.jsx', 'src/apps/facemarket/main.jsx']) {
+    assert.match(read(entry), /from '\.\.\/mountApp\.jsx'/, entry);
   }
   // 문서가 무는 진입점도 서로 달라야 한다.
-  assert.match(read('index.html'), /src="\/src\/main\.jsx"/);
-  assert.match(read('facemarket.html'), /src="\/src\/mainFacemarket\.jsx"/);
+  assert.match(read('index.html'), /src="\/src\/apps\/seller\/main\.jsx"/);
+  assert.match(read('facemarket.html'), /src="\/src\/apps\/facemarket\/main\.jsx"/);
 });

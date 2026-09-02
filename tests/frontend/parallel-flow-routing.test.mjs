@@ -7,7 +7,7 @@ const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const mannequinSource = read('../../src/features/mannequin/Mannequin.jsx');
 const productInputSource = read('../../src/features/product-input/ProductInput.jsx');
 const storeSource = read('../../src/store/useAppStore.js');
-const appSource = read('../../src/App.jsx');
+const appSource = read('../../src/apps/seller/App.jsx');
 const librarySource = read('../../src/features/library/Library.jsx');
 const storyboardSource = read('../../src/features/storyboard/Storyboard.jsx');
 const shellSource = read('../../src/features/shell/shell.jsx');

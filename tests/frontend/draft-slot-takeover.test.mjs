@@ -753,7 +753,7 @@ test('logout invalidates an in-flight failure so it cannot schedule an old-draft
 });
 
 test('logged-in and mock entry use one priority-4 modal with local and remote timestamps', () => {
-  const app = read('../../src/App.jsx');
+  const app = read('../../src/apps/seller/App.jsx');
   const shell = read('../../src/features/shell/shell.jsx');
   assert.match(app, /const slotEnabled = Boolean\(session\) \|\| isMockMode/);
   assert.match(app, /Promise\.all\(\[[\s\S]*?draftSlot\.get\(\)[\s\S]*?loadDraft\(\)/);
@@ -765,7 +765,7 @@ test('logged-in and mock entry use one priority-4 modal with local and remote ti
 });
 
 test('a device-local draft opens without waiting for the server, and phantom slots stay hidden', () => {
-  const app = read('../../src/App.jsx');
+  const app = read('../../src/apps/seller/App.jsx');
   const input = read('../../src/features/product-input/ProductInput.jsx');
   // 로컬 카드 열기: 복원을 먼저 확정하고 작업권 인수는 뒤에서 — 서버 장애가 복원을 막지 않는다
   assert.match(app, /draftSlot\.stage\(\{ payload: draft, meta: source\.meta \}\);\s*\n\s*void draftSlot\.takeover\(\)\.catch/);
@@ -786,7 +786,7 @@ test('a device-local draft opens without waiting for the server, and phantom slo
 });
 
 test('photo pending is hidden while editing but warned when a remote draft may omit photos', () => {
-  const app = read('../../src/App.jsx');
+  const app = read('../../src/apps/seller/App.jsx');
   const input = read('../../src/features/product-input/ProductInput.jsx');
   const shell = read('../../src/features/shell/shell.jsx');
   const slot = read('../../src/lib/draftSlot.js');
@@ -797,21 +797,21 @@ test('photo pending is hidden while editing but warned when a remote draft may o
 });
 
 test('resume choice dismissal cannot silently choose or take over a draft', () => {
-  const app = read('../../src/App.jsx');
+  const app = read('../../src/apps/seller/App.jsx');
   const routeChoice = app.slice(app.indexOf("if (entryDecision === 'ask')"), app.indexOf("if (entryDecision !== 'continue')"));
   assert.doesNotMatch(routeChoice, /onClose/);
   assert.doesNotMatch(routeChoice, /chooseSource/);
 });
 
 test('input entry transition leaves the persistent header and background unobstructed', () => {
-  const app = read('../../src/App.jsx');
+  const app = read('../../src/apps/seller/App.jsx');
   const inputRoute = app.slice(app.indexOf('function ProductInputRoute()'), app.indexOf('function RootRedirect()'));
   assert.match(inputRoute, /if \(entryDecision !== 'continue'\) return null/);
   assert.doesNotMatch(inputRoute, /이동하고 있어요/);
 });
 
 test('logout clears slot identity and remounts input for the next user', () => {
-  const app = read('../../src/App.jsx');
+  const app = read('../../src/apps/seller/App.jsx');
   const auth = read('../../src/features/auth/AuthProvider.jsx');
   assert.match(auth, /draftSlot\.resetIdentity\(\)/);
   assert.match(auth, /await useAppStore\.getState\(\)\.beginProject\(\)\.catch/);

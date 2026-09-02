@@ -57,7 +57,7 @@ test('an auth-expiry redirect is not counted as a confirmed-input re-entry', () 
 
 test('http flow persistence restores the confirmed flag and project resets clear it', () => {
   const storeSource = readFileSync(new URL('../../src/store/useAppStore.js', import.meta.url), 'utf8');
-  const appSource = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
+  const appSource = readFileSync(new URL('../../src/apps/seller/App.jsx', import.meta.url), 'utf8');
   assert.match(storeSource, /productInfoConfirmed: s\.productInfoConfirmed/);
   assert.match(storeSource, /productInfoConfirmed: false/);
   assert.match(storeSource, /confirmProductInfo\(projectId = get\(\)\.projectId\)/);

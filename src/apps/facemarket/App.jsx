@@ -29,8 +29,8 @@ import { Pricing } from '@/features/pricing/Pricing.jsx';
 import { CreditsHistory } from '@/features/credits/CreditsHistory.jsx';
 import { PaymentSuccess, PaymentFail } from '@/features/payments/PaymentResult.jsx';
 import { PublicVerify } from '@/features/verify/PublicVerify.jsx';
-import { RequireAuth } from '@/routes/guards.jsx';
-import { MODEL_SECTION_ROUTES } from '@/routes/modelSectionRoutes.jsx';
+import { RequireAuth } from '../guards.jsx';
+import { MODEL_SECTION_ROUTES } from './modelSectionRoutes.jsx';
 import { domainRouteRedirect } from '@/lib/host.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
 
