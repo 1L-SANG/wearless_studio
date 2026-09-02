@@ -138,17 +138,20 @@ export function LandingShell({ title, description, children }) {
     // 중첩된 header/footer 는 banner·contentinfo 랜드마크를 잃고 generic 이 된다
     // (스크린리더 랜드마크 점프가 안 된다).
     <div className={s.shell} id="top">
-      {/* 맨 위 안내 띠 — 사용자 캡처 그대로(2026-09-02): 왼쪽 '이 페이지는 **모델을 위한**
-          안내입니다.', 오른쪽 셀러용 스튜디오 링크. 셀러가 facemarket 도메인에 잘못 들어와도
-          첫 줄에서 갈라진다. 랜딩 네 페이지(이 셸)에만 있고 /model/* 은 없다 — 거긴 이미
-          모델이 서 있는 화면이다. 링크는 푸터와 같은 ai.wearless.kr, 같은 탭이다. */}
+      {/* 맨 위 안내 띠 — 왼쪽 '**모델을 위한** 안내 페이지입니다.', 오른쪽 셀러용 스튜디오 링크
+          (문구는 2026-09-02 사용자 지시). 셀러가 facemarket 도메인에 잘못 들어와도 첫 줄에서
+          갈라진다. 랜딩 네 페이지(이 셸)에만 있고 /model/* 은 없다 — 거긴 이미 모델이 서 있는
+          화면이다. 링크는 푸터와 같은 ai.wearless.kr, 같은 탭이다.
+          띄어쓰기는 지시받은 문구에서 두 군데 고쳤다: '안내페이지 입니다' → '안내 페이지입니다',
+          '만들러가기' → '만들러 가기'(보조용언은 띄고 서술격 조사는 붙인다). 브랜드는
+          'Wearless' 로 대문자 유지 — 푸터·로고와 같은 표기여야 한다. */}
       <div className={s.topNotice}>
         <div className={s.topNoticeInner}>
           <span>
-            이 페이지는 <strong>모델을 위한</strong> 안내입니다.
+            <strong>모델을 위한</strong> 안내 페이지입니다.
           </span>
           <a className={s.topNoticeLink} href="https://ai.wearless.kr">
-            쇼핑몰(셀러)이신가요? 착용컷 만들기는 Wearless Studio →
+            셀러이신가요? 상세페이지 만들러 가기 Wearless →
           </a>
         </div>
       </div>
