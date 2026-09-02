@@ -56,15 +56,33 @@ test('양옆 카드는 가운데를 향해 돌아선다', () => {
   assert.ok(layoutForOffset(2, metrics).rotationY < 0);
 });
 
-/* 원본 녹화 실측(sceneLayout.js 머리말): offset 1 ≈ 17°(0.30rad), offset 2 ≈ 47°, offset 3 ≈ 66°.
+/* 원본 스크린샷 실측(sceneLayout.js 머리말): offset 1 ≈ 30°(0.52rad), offset 2 ≈ 54°, offset 3 ≈ 72°.
    예전 기대값 '이웃은 거의 정면(< 0.15)'은 코덱스 포트의 납작한 프로파일을 박제한 것이라 지웠다. */
 test('이웃부터 눈에 띄게 돌아서고 바깥으로 갈수록 더 돌아선다', () => {
   const metrics = metricsForAspect(3.5);
   const at = (offset) => Math.abs(layoutForOffset(offset, metrics).rotationY);
-  assert.ok(at(1) > 0.2 && at(1) < 0.45, `offset 1: ${at(1)}`);
-  assert.ok(at(2) > 0.7 && at(2) < 1.0, `offset 2: ${at(2)}`);
-  assert.ok(at(3) > 1.0 && at(3) < Math.PI / 2, `offset 3: ${at(3)}`);
+  assert.ok(at(1) > 0.4 && at(1) < 0.65, `offset 1: ${at(1)}`);
+  assert.ok(at(2) > 0.8 && at(2) < 1.05, `offset 2: ${at(2)}`);
+  assert.ok(at(3) > 1.1 && at(3) < Math.PI / 2, `offset 3: ${at(3)}`);
   assert.ok(at(1) < at(2) && at(2) < at(3));
+});
+
+/* 접선 현 원칙(sceneLayout.js 머리말 3): 카드의 안쪽 가장자리 깊이 ≈ 더 안쪽 이웃의 바깥
+   가장자리 깊이. 이게 깨지면 이웃 사이에서 실루엣이 계단처럼 꺾인다. 허용 오차는 원본
+   스크린샷의 접점 불일치(높이의 ~3%)에 맞춘 깊이 0.35. */
+test('이웃 카드의 가장자리 깊이가 이어진다 — 실루엣이 계단이 아니라 곡선', () => {
+  const metrics = metricsForAspect(3.5);
+  const HALF_WIDTH = metrics.cardWidth / 2;
+  const edgeDepths = (offset) => {
+    const { z, rotationY } = layoutForOffset(offset, metrics);
+    const lean = HALF_WIDTH * Math.sin(Math.abs(rotationY));
+    return { inner: z - lean, outer: z + lean };
+  };
+  assert.ok(Math.abs(edgeDepths(1).inner - edgeDepths(0).outer) < 0.35, 'offset 0→1');
+  assert.ok(Math.abs(edgeDepths(2).inner - edgeDepths(1).outer) < 0.35, 'offset 1→2');
+  // 2→3 은 원본도 접점이 12px(높이의 4.5%, 깊이 ≈ 0.55) 벌어진다 — 가장자리 카드는 화면 밖으로
+  // 반쯤 나가 있어 그 계단이 안 보인다. 그 값을 그대로 좇되 더 벌어지지는 않게.
+  assert.ok(Math.abs(edgeDepths(3).inner - edgeDepths(2).outer) < 0.7, 'offset 2→3');
 });
 
 test('오목 아크 — 바깥으로 갈수록 카메라 쪽으로 나온다', () => {
