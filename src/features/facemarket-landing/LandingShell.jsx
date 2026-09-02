@@ -16,6 +16,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { IS_FACEMARKET } from '@/lib/host.js';
 import { getCurrentEnrollment, listMyModels } from '@/lib/api/facemarket.js';
+import { Icon } from '@/components/ui.jsx';
 import { LandingHeader } from './LandingHeader.jsx';
 import { registerCta } from './registerCta.js';
 import { FooterSection } from './sections/FooterSection.jsx';
@@ -47,11 +48,38 @@ function applyHead(title, description) {
   };
 }
 
+/* 안내 띠를 닫았다는 사실은 브라우저에 남긴다 — 한 번 읽고 닫은 방향 안내를 라우트를
+   옮길 때마다 다시 띄우면 닫기 버튼이 무의미하다. 저장이 막힌 환경(사파리 사생활 보호,
+   서드파티 차단)에서는 조용히 '안 닫음'으로 시작한다. */
+const NOTICE_KEY = 'wl_fmNoticeDismissed';
+
+function readNoticeDismissed() {
+  try {
+    return window.localStorage.getItem(NOTICE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeNoticeDismissed() {
+  try {
+    window.localStorage.setItem(NOTICE_KEY, '1');
+  } catch {
+    // 저장이 막혀도 이번 세션 동안은 닫힌 채로 둔다(상태는 메모리에 있다).
+  }
+}
+
 export function LandingShell({ title, description, children }) {
   const { session, loading, openLogin } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const [cta, setCta] = useState(() => registerCta(null, null));
+  const [noticeOpen, setNoticeOpen] = useState(() => !readNoticeDismissed());
+
+  const closeNotice = () => {
+    setNoticeOpen(false);
+    writeNoticeDismissed();
+  };
 
   // 라우터는 전환할 때 스크롤을 건드리지 않는다. 문서가 그대로라 홈에서 캐러셀까지
   // 내려간 뒤 '모델 정보'를 누르면 새 페이지가 중간부터 보인다 — 새 페이지처럼 보여야
@@ -137,7 +165,10 @@ export function LandingShell({ title, description, children }) {
     // header/footer 는 <main> 밖에 둔다. HTML-AAM 상 main·section·article 안에
     // 중첩된 header/footer 는 banner·contentinfo 랜드마크를 잃고 generic 이 된다
     // (스크린리더 랜드마크 점프가 안 된다).
-    <div className={s.shell} id="top">
+    /* 띠를 닫으면 그 높이를 0 으로 돌려준다 — 첫 화면 그리드가 '뷰포트 − 상단바 − 띠'로
+       높이를 잡으므로(FacemarketLanding.module.css .screen), 안 돌려주면 캐러셀과 메타 바가
+       사라진 띠 높이만큼 아래로 밀린 채 남는다. */
+    <div className={s.shell} id="top" style={noticeOpen ? undefined : { '--fm-notice-h': '0px' }}>
       {/* 맨 위 안내 띠 — 왼쪽 '**모델을 위한** 안내 페이지입니다.', 오른쪽 셀러용 스튜디오 링크
           (문구는 2026-09-02 사용자 지시). 셀러가 facemarket 도메인에 잘못 들어와도 첫 줄에서
           갈라진다. 랜딩 네 페이지(이 셸)에만 있고 /model/* 은 없다 — 거긴 이미 모델이 서 있는
@@ -145,16 +176,28 @@ export function LandingShell({ title, description, children }) {
           띄어쓰기는 지시받은 문구에서 두 군데 고쳤다: '안내페이지 입니다' → '안내 페이지입니다',
           '만들러가기' → '만들러 가기'(보조용언은 띄고 서술격 조사는 붙인다). 브랜드는
           'Wearless' 로 대문자 유지 — 푸터·로고와 같은 표기여야 한다. */}
-      <div className={s.topNotice}>
-        <div className={s.topNoticeInner}>
-          <span>
-            <strong>모델을 위한</strong> 안내 페이지입니다.
-          </span>
-          <a className={s.topNoticeLink} href="https://ai.wearless.kr">
-            셀러이신가요? 상세페이지 만들러 가기 Wearless →
-          </a>
+      {noticeOpen && (
+        <div className={s.topNotice}>
+          <div className={s.topNoticeInner}>
+            <span>
+              <strong>모델을 위한</strong> 안내 페이지입니다.
+            </span>
+            <a className={s.topNoticeLink} href="https://ai.wearless.kr">
+              셀러이신가요? 상세페이지 만들러 가기 Wearless →
+            </a>
+          </div>
+          {/* 닫기는 가운데 열(75rem) 바깥, 띠의 오른쪽 끝에 절대 위치로 둔다. 열 안에 넣으면
+              링크가 열의 오른쪽 끝에서 밀려 좌우 대칭(20% / 80%)이 깨진다. */}
+          <button
+            aria-label="안내 닫기"
+            className={s.topNoticeClose}
+            onClick={closeNotice}
+            type="button"
+          >
+            <Icon name="x" size={14} stroke={2} />
+          </button>
         </div>
-      </div>
+      )}
       <LandingHeader onPrimary={onPrimary} primaryLabel={primaryLabel} />
       <main>{children({ ctaLabel: primaryLabel, onPrimary })}</main>
       <FooterSection />
