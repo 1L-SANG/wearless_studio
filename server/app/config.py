@@ -286,6 +286,13 @@ class Settings:
     facemarket_enabled: bool = False
     # 생체 등록은 FaceMarket 안에서도 별도 dark launch. 임계값은 캘리브 증거 없이는 기본값을 두지 않는다.
     fm_biometric_enrollment_enabled: bool = False
+    # 모델 지원서·관리자 검토 게이트(리뉴얼). off = 기존 즉시 등록(구 경로는 지원서 테이블을
+    # 아예 안 본다 → 진짜 클린 롤백). on = 신규 등록은 승인된 지원서 필요(기존 모델 보유자·진행
+    # 중 등록은 grandfathered). 설계: docs/designs/facemarket-application-renewal.md (9-1A).
+    fm_application_required: bool = False
+    # auto-approve: 데모 리허설·비상용. on 이면 제출 즉시 approved 전이(관리자 검토 우회) —
+    # 큐레이션 서사를 우회하므로 기본 off, on 이면 기동 로그로 감사 흔적을 남긴다(E14).
+    fm_application_auto_approve: bool = False
     fm_oacx_contract_mode: str = "disabled"
     # AWS Face Liveness 사용 여부. off 면 라이브니스 세션을 만들지 않고 SFace 매칭 앵커를
     # OACX 신분증 초상으로 쓴다(업로드 사진 ↔ 신분증 초상). 본인확인은 OACX 모바일신분증(실시간
@@ -562,6 +569,12 @@ def load_settings() -> Settings:
         facemarket_enabled=(os.getenv("FACEMARKET_ENABLED", "false").lower() == "true"),
         fm_biometric_enrollment_enabled=(
             os.getenv("FM_BIOMETRIC_ENROLLMENT_ENABLED", "false").lower() == "true"
+        ),
+        fm_application_required=(
+            os.getenv("FM_APPLICATION_REQUIRED", "false").lower() == "true"
+        ),
+        fm_application_auto_approve=(
+            os.getenv("FM_APPLICATION_AUTO_APPROVE", "false").lower() == "true"
         ),
         fm_oacx_contract_mode=os.getenv("FM_OACX_CONTRACT_MODE", "disabled"),
         fm_liveness_enabled=(

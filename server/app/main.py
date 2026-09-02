@@ -413,6 +413,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             from .facemarket_enrollment import router as biometric_enrollment_router
 
             app.include_router(biometric_enrollment_router)
+            # 모델 지원서·관리자 검토(리뉴얼). 게이트는 FM_APPLICATION_REQUIRED 로 별도 제어 —
+            # 라우터는 항상 등록(지원서 제출·검토 자체는 플래그와 무관하게 동작).
+            from .facemarket_applications import router as applications_router
+
+            app.include_router(applications_router)
     else:
         app.state.fm_chain = None
 
