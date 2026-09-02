@@ -70,7 +70,7 @@ async function loadOptional(fn) {
 /* 지원서 게이트(리뉴얼, 스펙 12). FM_APPLICATION_REQUIRED 가 켜져 있으면 승인된 지원서가
    없는 신규 사용자는 등록 화면(/model/register)에 들어갈 수 없다 — "검증된 사람만 등록".
    백엔드 create_enrollment 의 403 과 같은 규칙을 UI 에서 먼저 적용해, 동의 폼을 보여줬다가
-   막는 일이 없게 한다. 기존 검증 모델(verified/reverification_required)·진행 중 등록 보유자는
+   막는 일이 없게 한다. 기존 모델(pending/verified/reverification_required)·진행 중 등록 보유자는
    grandfathered(백엔드 E6 과 동일 조건). 거부되면 허브로 — 허브가 "지원 시작하기"를 안내한다. */
 function RequireApprovedApplication() {
   const [phase, setPhase] = useState('loading'); // loading | allowed | denied | error
@@ -89,7 +89,13 @@ function RequireApprovedApplication() {
         ]);
         if (!alive) return;
         const required = !!cfg?.applicationRequired;
-        const legacyExempt = (models || []).some((m) => ['verified', 'reverification_required'].includes(m.status));
+        // 서버 게이트(facemarket_enrollment.create_enrollment)와 **같은 목록**이어야 한다.
+        // pending 이 빠져 있으면: 신분증까지 마치고 사진 단계에서 이탈한 사람은 모델 행이
+        // pending 인 채 활성 등록도 지원서도 없어 여기서 막히고 /status 로 되돌려지는데,
+        // 허브는 모델이 있으니 '등록 이어가기'를 띄워 다시 여기로 보낸다 — 나갈 길 없는 왕복.
+        const legacyExempt = (models || []).some(
+          (m) => ['pending', 'verified', 'reverification_required'].includes(m.status),
+        );
         const inProgress = !!enrollment;
         const approved = app?.status === 'approved';
         setPhase(!required || legacyExempt || inProgress || approved ? 'allowed' : 'denied');

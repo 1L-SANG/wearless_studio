@@ -66,6 +66,7 @@ def _prefixes(
     model_ids: set[str],
     enrollment_ids: set[str],
     jobs: list[dict],
+    application_ids: set[str] | None = None,
 ) -> tuple[str, ...]:
     # 얼굴 원본(personalization/profiles/{pid}/faces/)과 생성물(personalization/{uid}/generations/)은
     # 이 fatal prefix 스윕에서 뺀다. 얼굴은 DB 행(known key)으로만 지운다 — 얼굴은 DB 와 원자적으로
@@ -73,6 +74,13 @@ def _prefixes(
     # 생성물은 워커 크래시로 고아가 생길 수 있어 별도 비파괴 스캔(_scan_generation_orphans)이 맡는다.
     values = [f"facemarket/models/{model_id}/" for model_id in model_ids]
     values.extend(f"facemarket/enrollments/{eid}/" for eid in enrollment_ids)
+    # 지원서 사진은 DB 행 없이 남을 수 있다(제출 중 크래시, 409 경합, 스테이징 업로드 후 이탈).
+    # 그 고아는 known key 수집으로는 절대 안 잡히므로 사용자 소유 접두사를 통째로 스윕한다.
+    # 다른 사용자의 오브젝트가 섞이지 않게 접두사에 user_id 가 들어간 경로만 넣는다.
+    if user_id:
+        values.append(f"private/fm-application/staging/{user_id}/")
+    for application_id in sorted(application_ids or ()):
+        values.append(f"private/fm-application/{application_id}/")
     values.extend(
         f"users/{j['user_id']}/projects/{j['project_id']}/ai/{j['id']}/"
         for j in jobs
@@ -358,6 +366,9 @@ async def _scope(conn, schema, *, user_id: str | None, batch_id: str | None, rea
         "profile_ids": profile_ids,
         "model_ids": model_ids,
         "license_ids": license_ids,
+        # 지원서(fm_model_applications)는 계정 삭제일 때만 파기 대상이다 — _known_targets 가
+        # 이걸 보고 갈라진다. 생체 철회는 심사 중인 지원서를 건드리지 않는다.
+        "reason": reason,
     }
 
 
@@ -476,12 +487,25 @@ async def _known_targets(conn, schema, scope, enrollment_ids, derived_jobs):
     asset_ids: set[str] = set()
     project_ids = {j["project_id"] for j in derived_jobs if j.get("project_id")}
     job_ids = {j["id"] for j in derived_jobs if j.get("id")}
+    reason = scope.get("reason")
+    applications_in_scope = reason == "account_delete" and bool(scope["user_id"])
+    # 이 사용자의 지원서 id — 사진 접두사(private/fm-application/{application_id}/)를 만들 때 쓴다.
+    # DB 행 없이 남은 고아(제출 중 크래시·409 경합)는 key 수집으로 못 잡으므로 접두사로 훑는다.
+    application_ids: set[str] = set()
+    if applications_in_scope and _has(schema, "fm_model_applications", "user_id"):
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select id::text as id from fm_model_applications where user_id = %s",
+                (scope["user_id"],),
+            )
+            application_ids = {r["id"] for r in await cur.fetchall() if r.get("id")}
     prefixes = _prefixes(
-        user_id=scope["user_id"],
+        user_id=scope["user_id"] if applications_in_scope else None,
         profile_ids=scope["profile_ids"],
         model_ids=scope["model_ids"],
         enrollment_ids=enrollment_ids,
         jobs=derived_jobs,
+        application_ids=application_ids,
     )
     async with conn.cursor() as cur:
         if scope["license_ids"]:
@@ -526,8 +550,11 @@ async def _known_targets(conn, schema, scope, enrollment_ids, derived_jobs):
             )
             face_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
         # 모델 지원서 프로필 사진 + 미제출 스테이징(리뉴얼). 지원서 PII 는 계정에 종속(3A/E12):
-        # 계정 삭제 시 사진도 함께 지운다. 30일 익명화 sweep(터미널 지원서)과는 별개 경로다.
-        if scope["user_id"] and _has(schema, "fm_model_applications", "profile_image_r2_key"):
+        # **계정 삭제일 때만** 지운다. 생체정보 철회(withdrawal)는 얼굴·신체 데이터를 지우는
+        # 것이지 심사 중인 지원서를 취소하는 행위가 아니다 — 예전에는 철회만 해도 검토 중인
+        # 지원서의 사진이 사라져 관리자 화면에 빈 카드가 남고 승인 판단이 불가능했다.
+        # 30일 익명화 sweep(터미널 지원서)과도 별개 경로다.
+        if applications_in_scope and scope["user_id"] and _has(schema, "fm_model_applications", "profile_image_r2_key"):
             await cur.execute(
                 "select profile_image_r2_key as k from fm_model_applications "
                 "where user_id = %s and profile_image_r2_key is not null",
@@ -535,7 +562,7 @@ async def _known_targets(conn, schema, scope, enrollment_ids, derived_jobs):
             )
             face_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
         # 지원 사진 4종(photo_keys jsonb: kind → r2_key) — profile 외 3종도 함께 지운다.
-        if scope["user_id"] and _has(schema, "fm_model_applications", "photo_keys"):
+        if applications_in_scope and scope["user_id"] and _has(schema, "fm_model_applications", "photo_keys"):
             await cur.execute(
                 "select v as k from fm_model_applications a, "
                 "jsonb_each_text(coalesce(a.photo_keys, '{}'::jsonb)) as p(kind, v) "
@@ -543,7 +570,7 @@ async def _known_targets(conn, schema, scope, enrollment_ids, derived_jobs):
                 (scope["user_id"],),
             )
             face_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
-        if scope["user_id"] and _has(schema, "fm_model_application_photo_staging", "r2_key"):
+        if applications_in_scope and scope["user_id"] and _has(schema, "fm_model_application_photo_staging", "r2_key"):
             await cur.execute(
                 "select r2_key as k from fm_model_application_photo_staging where user_id = %s",
                 (scope["user_id"],),
@@ -914,6 +941,33 @@ async def _cleanup(
                 "delete from personalization_audit_log where user_id=%s",
                 (scope["user_id"],),
             )
+            # 지원서 PII(실명·생년월일·연락처·자기소개·지역)를 지운다. 예전에는 마이그레이션의
+            # `user_id references auth.users on delete cascade` 에 맡겼는데, 이 코드베이스는
+            # auth.users 행을 지우지 않는다(계정 삭제 엔드포인트는 파기 잡만 띄우고 IdP 삭제는
+            # 파기 완료 후 별도 단계다). 그래서 사진만 지워지고 이름·생년월일은 남아 있었다.
+            # 행을 지우지 않고 익명화하는 이유: 관리자 큐의 처리 이력(승인/거절 건수)과
+            # 활성 지원서 유니크 제약을 깨지 않으면서 사람을 식별할 수 없게 만드는 게 목적이다.
+            if _has(schema, "fm_model_applications", "contact_email", "applicant_name"):
+                await cur.execute(
+                    """
+                    update fm_model_applications
+                       set contact_email = 'purged@invalid',
+                           applicant_name = '삭제된 지원자',
+                           birthdate = null, phone = null, region = null, bio = null,
+                           portfolio_url = null, sns_url = null,
+                           profile_image_r2_key = null, photo_keys = '{}'::jsonb,
+                           status = case when status in ('under_review', 'approved')
+                                         then 'cancelled' else status end,
+                           terminated_at = coalesce(terminated_at, now())
+                     where user_id = %s
+                    """,
+                    (scope["user_id"],),
+                )
+            if _has(schema, "fm_model_application_photo_staging", "user_id"):
+                await cur.execute(
+                    "delete from fm_model_application_photo_staging where user_id=%s",
+                    (scope["user_id"],),
+                )
             if _has(schema, "profiles", "display_name", "avatar_asset_id"):
                 await cur.execute(
                     "update profiles set display_name=null, avatar_asset_id=null where user_id=%s",

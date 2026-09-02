@@ -222,9 +222,19 @@ export function ModelHub() {
   const appApprovedIdle = appState === 'approved';
   const showApplicationNext = appUnderReview || appRejected || appApprovedIdle;
 
+  // 등록 화면에 들어갈 수 있는가 — RequireApprovedApplication(modelSectionRoutes)·서버
+  // create_enrollment 게이트와 **같은 판정**이다. 어긋나면 '이어가기' 버튼이 가드에 막혀
+  // 이 화면으로 되돌아오는 왕복이 생긴다(2026-09-02 리뷰에서 실제로 잡힌 결함).
+  const registrationAllowed = !applicationRequired
+    || !!enrollment
+    || application?.status === 'approved'
+    || ['pending', 'verified', 'reverification_required'].includes(ownedModel?.status);
+
   // "완전 신규": 진행 중 등록·모델·활성 지원서 전부 없음.
   const hasActiveApplication = application?.status === 'under_review' || application?.status === 'approved';
   const isNew = !hasProgress && !hasActiveApplication;
+  // 모델은 있는데 등록이 막힌 경우(정지된 모델 등) — 지원서부터 다시 받는다.
+  const blockedNeedsApply = hasProgress && !registrationAllowed && !hasActiveApplication;
   // 신규 진입 목적지: 게이트 on 이면 지원서, off 면 기존 즉시 등록.
   const newEntryPath = applicationRequired ? '/model/apply' : '/model/register';
 
@@ -272,10 +282,13 @@ export function ModelHub() {
             </h2>
           )}
           {!showApplicationNext && !isNew && isDone && <h2 className={s.hubNextTitle}>내 모델로 컷을 만들 수 있어요</h2>}
-          {!showApplicationNext && !isNew && !isDone && enrollmentNeedsTerms && (
+          {!showApplicationNext && blockedNeedsApply && (
+            <h2 className={s.hubNextTitle}>모델 지원서부터 작성해요</h2>
+          )}
+          {!showApplicationNext && !blockedNeedsApply && !isNew && !isDone && enrollmentNeedsTerms && (
             <h2 className={s.hubNextTitle}>마지막으로 라이선스 단계가 남았어요</h2>
           )}
-          {!showApplicationNext && !isNew && !isDone && !enrollmentNeedsTerms && (
+          {!showApplicationNext && !blockedNeedsApply && !isNew && !isDone && !enrollmentNeedsTerms && (
             <h2 className={s.hubNextTitle}>등록을 이어서 마치면 돼요</h2>
           )}
 
@@ -286,7 +299,12 @@ export function ModelHub() {
                 : '아직 등록된 내 모델이 없어요. 생체정보 처리 동의부터 시작해 주세요.'}
             </p>
           )}
-          {!showApplicationNext && !isNew && !isDone && (
+          {!showApplicationNext && blockedNeedsApply && (
+            <p className={s.hubNextBody}>
+              지금 계정으로는 등록을 이어갈 수 없어요. 지원서를 제출하면 관리자 검토 후 다시 진행할 수 있어요.
+            </p>
+          )}
+          {!showApplicationNext && !blockedNeedsApply && !isNew && !isDone && (
             <p className={s.hubNextBody}>
               본인 확인과 라이선스 발급을 마치면 내 모델로 생성할 수 있어요.
               {/* PRD §7.3·§13-2 — holder 콜드부트가 ~2분이라 대기가 정상 경로에 있다.
@@ -332,7 +350,12 @@ export function ModelHub() {
               {applicationRequired ? '모델 지원하기' : '모델 등록하기'}
             </Button>
           )}
-          {!showApplicationNext && !isNew && !isDone && (
+          {!showApplicationNext && blockedNeedsApply && (
+            <Button variant="primary" iconRight="arrowRight" onClick={() => navigate('/model/apply')}>
+              모델 지원하기
+            </Button>
+          )}
+          {!showApplicationNext && !blockedNeedsApply && !isNew && !isDone && (
             <Button variant="primary" iconRight="arrowRight" onClick={() => navigate(registrationPath)}>
               {enrollmentNeedsTerms ? '라이선스 조건 설정 이어가기' : '모델 등록 이어가기'}
             </Button>

@@ -13,6 +13,7 @@ docs/designs/facemarket-application-renewal.md
     활성 = {under_review, approved}, 유저당 1개(E9). 터미널이면 재지원 허용.
 """
 
+import asyncio
 import logging
 import uuid
 
@@ -200,29 +201,41 @@ async def sweep_application_photo_staging(app, *, max_age_hours: int = 24, limit
     pool = getattr(app.state, "pool", None)
     if r2 is None or pool is None:
         return 0
-    removed = 0
+    # 2단계로 나눈다: (1) 대상 행을 읽고 트랜잭션을 닫는다 (2) R2 삭제 후 별도 트랜잭션으로 행 삭제.
+    # 예전에는 for update skip locked 로 최대 100행을 잠근 채 동기 boto3 delete 를 순차로 돌려서,
+    # 잠금 시간이 네트워크 지연에 묶이고 이벤트 루프까지 막혔다(r2.py §5 규약 위반).
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
                 "select user_id::text as user_id, r2_key from fm_model_application_photo_staging "
                 "where created_at < now() - make_interval(hours => %s) "
-                "order by created_at limit %s for update skip locked",
+                "order by created_at limit %s",
                 (max_age_hours, limit),
             )
             rows = await cur.fetchall()
-            for row in rows:
-                try:
-                    r2.delete(row["r2_key"])
-                except Exception:
-                    logger.warning("stale application staging photo delete failed: %s", row["r2_key"])
-                    continue
-                await cur.execute(
-                    "delete from fm_model_application_photo_staging "
-                    "where user_id = %s and r2_key = %s",
-                    (row["user_id"], row["r2_key"]),
-                )
-                removed += 1
         await conn.commit()
+
+    deleted_keys: list[tuple[str, str]] = []
+    for row in rows:
+        try:
+            await asyncio.to_thread(r2.delete, row["r2_key"])
+        except Exception:
+            logger.warning("stale application staging photo delete failed")
+            continue
+        deleted_keys.append((row["user_id"], row["r2_key"]))
+
+    removed = 0
+    if deleted_keys:
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                for user_id, key in deleted_keys:
+                    await cur.execute(
+                        "delete from fm_model_application_photo_staging "
+                        "where user_id = %s and r2_key = %s",
+                        (user_id, key),
+                    )
+                    removed += cur.rowcount or 0
+            await conn.commit()
     if removed:
         logger.info("fm application staging sweep removed=%d", removed)
     return removed
@@ -384,6 +397,11 @@ async def stage_application_photo(
     r2 = _r2_face(request)
     ext = ext_for_mime(mime)
     new_key = _staging_key(user_id, kind, ext)
+    # 업로드는 트랜잭션 **밖**에서 끝낸다 — 25MB 업로드를 FOR UPDATE 를 쥔 채로 하면 그 시간만큼
+    # 행이 잠기고, 동기 boto3 라 to_thread 없이는 이벤트 루프까지 멈춘다(2026-08-26 ECS 동결).
+    # 업로드가 성공했는데 아래 INSERT 가 실패하면 오브젝트만 남지만, 그건 스테이징 접두사라
+    # 파기 스윕(biometric_purge._prefixes)과 sweep 이 회수한다.
+    await asyncio.to_thread(r2.put_bytes, new_key, data, mime)
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
@@ -392,7 +410,6 @@ async def stage_application_photo(
                 (user_id, kind),
             )
             existing = await cur.fetchone()
-            r2.put_bytes(new_key, data, mime)
             await cur.execute(
                 """
                 insert into fm_model_application_photo_staging (user_id, kind, r2_key, mime_type, byte_size)
@@ -407,7 +424,7 @@ async def stage_application_photo(
         # 옛 스테이징 오브젝트는 커밋 후 정리(실패해도 orphan cleanup 이 나중에 회수).
         if existing and existing["r2_key"] and existing["r2_key"] != new_key:
             try:
-                r2.delete(existing["r2_key"])
+                await asyncio.to_thread(r2.delete, existing["r2_key"])
             except Exception:
                 logger.warning("stale application staging photo not deleted: %s", existing["r2_key"])
     return {"staged": True, "kind": kind}
@@ -492,8 +509,9 @@ async def submit_application(
             photo_keys: dict[str, str] = {}
             for kind, (src_key, src_mime) in sources.items():
                 dst = _application_photo_key(new_id, kind, ext_for_mime(src_mime))
-                # 원본(스테이징 또는 이전 지원서) → application 귀속 키로 복사. 원자성 위해 커밋 전.
-                r2.copy(src_key, dst, src_mime)
+                # 원본(스테이징 또는 이전 지원서) → application 귀속 키로 복사. 행보다 먼저 만들어야
+                # INSERT 가 성공한 순간 사진이 이미 제자리에 있다. 동기 boto3 라 to_thread 로 감싼다.
+                await asyncio.to_thread(r2.copy, src_key, dst, src_mime)
                 photo_keys[kind] = dst
             try:
                 await cur.execute(
@@ -515,18 +533,34 @@ async def submit_application(
                     ),
                 )
             except UniqueViolation:
+                # 동시 이중 제출. 이 행은 안 생기므로 방금 복사한 사본은 참조가 없다 — 바로 지운다.
+                # 안 지우면 어떤 파기 경로도 도달 못 하는 고아 얼굴 사진이 된다.
+                for orphan in photo_keys.values():
+                    try:
+                        await asyncio.to_thread(r2.delete, orphan)
+                    except Exception:
+                        logger.warning("orphan application photo not deleted after 409")
                 raise _err(
                     "application_active",
                     "이미 검토 중이거나 승인된 지원서가 있습니다.",
                     status=409,
                 )
-            # 스테이징 행 제거(오브젝트는 photo_key 로 복사됨 — 원본은 orphan cleanup 이 회수).
+            # 스테이징 행 제거. 오브젝트 원본은 커밋 뒤 아래에서 지운다.
             await cur.execute(
                 "delete from fm_model_application_photo_staging where user_id = %s",
                 (user_id,),
             )
         await conn.commit()
         row = await _load_current(conn, user_id)
+    # 커밋 후: 복사에 쓴 스테이징 **원본**을 지운다. r2.copy 는 copy_object 라 원본이 남는데,
+    # 위에서 스테이징 행을 지웠으므로 sweep 은 그 오브젝트에 영영 도달하지 못한다(행 기반 스캔).
+    # 여기서 안 지우면 제출 한 건마다 얼굴 사진이 R2 에 영구 고아로 쌓인다.
+    # 실패해도 제출은 유효하다 — 남은 고아는 파기 경로가 접두사 스윕으로 회수한다.
+    for staged_row in staged.values():
+        try:
+            await asyncio.to_thread(r2.delete, staged_row["r2_key"])
+        except Exception:
+            logger.warning("staged source photo not deleted after submit")
     # post-commit: 새 지원서 Slack 알림 — auto-approve(관리자 검토 우회)면 스킵.
     if not auto_approved:
         await _dispatch_new_application_slack(
@@ -594,7 +628,13 @@ async def admin_list_applications(
                a.created_at, em.last_email_status, em.last_email_type
         from fm_model_applications a
         left join lateral (
-            select status as last_email_status, email_type as last_email_type
+            -- 오래 pending 인 행은 '미발송'으로 본다. 원장은 pending 으로 넣고 발송 뒤 sent/failed 로
+            -- 바꾸는데, 그 사이에 태스크가 죽거나 요청이 취소되면(CancelledError 는 BaseException 이라
+            -- except Exception 이 못 잡는다) pending 으로 굳는다. 그러면 대시보드에 '미발송' 뱃지도
+            -- 재발송 버튼도 안 떠서 메일이 안 갔다는 사실 자체가 보이지 않는다.
+            select case when status = 'pending' and created_at < now() - interval '2 minutes'
+                        then 'failed' else status end as last_email_status,
+                   email_type as last_email_type
             from fm_model_application_emails e
             where e.application_id = a.id order by e.created_at desc limit 1
         ) em on true
@@ -695,8 +735,13 @@ async def admin_resend_email(
         await _require_admin(conn, user_id)
         async with conn.cursor() as cur:
             await cur.execute(
-                "select status, contact_email, reject_reason "
-                "from fm_model_applications where id = %s",
+                """
+                select a.status, a.contact_email, a.reject_reason,
+                       (select email_type from fm_model_application_emails e
+                        where e.application_id = a.id order by e.created_at desc limit 1)
+                       as last_email_type
+                from fm_model_applications a where a.id = %s
+                """,
                 (application_id,),
             )
             row = await cur.fetchone()
@@ -704,9 +749,15 @@ async def admin_resend_email(
         raise _err("not_found", "지원서를 찾을 수 없습니다.", status=404)
     if row["status"] not in ("approved", "rejected"):
         raise _err("no_decision_email", "발송할 결정 메일이 없는 상태입니다.", status=409)
+    # 종류는 원장의 마지막 메일을 따른다. status 로만 고르면 신분증 대조 3회 실패로 자동 거절된
+    # 지원서(auto_rejected)의 재발송이 관리자 거절 템플릿으로 바뀌어, 사유가 없는데 사유 자리가
+    # 빈 메일이 나간다.
+    email_type = row.get("last_email_type") or row["status"]
+    if email_type not in ("approved", "rejected", "auto_rejected"):
+        email_type = row["status"]
     await _dispatch_decision_email(
         request, application_id=application_id, to=row["contact_email"],
-        email_type=row["status"], reject_reason=row.get("reject_reason"),
+        email_type=email_type, reject_reason=row.get("reject_reason"),
     )
     return {"resent": True}
 
@@ -735,7 +786,7 @@ async def admin_application_photo(
         raise _err("not_found", "사진을 찾을 수 없습니다.", status=404)
     r2 = _r2_face(request)
     try:
-        data = r2.get_bytes(key)
+        data = await asyncio.to_thread(r2.get_bytes, key)
     except Exception:
         raise _err("not_found", "사진을 찾을 수 없습니다.", status=404)
     mime = "image/jpeg"

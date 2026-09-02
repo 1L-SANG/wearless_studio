@@ -758,7 +758,13 @@ async def create_enrollment(
             # 경우 enrollment 에 application_id 를 박아 대조·strike 대상을 고정한다(E5).
             application_id = None
             if settings.fm_application_required:
+                # pending 도 면제다. fm_models 행은 **신분증 인증 성공 시점**에 status='pending'
+                # 으로 먼저 생기므로(아래 _upsert_model), 게이트 도입 전에 신분증까지 마치고 사진
+                # 단계에서 이탈한 사람은 모델 행은 있는데 활성 enrollment 도 지원서도 없다.
+                # 이들을 막으면 등록도 못 하고 지원서 화면도 안 뜨는 막다른 골목에 갇힌다.
+                # suspended 는 뺀다 — 정지된 모델이 심사 없이 재등록하는 우회로가 되면 안 된다.
                 legacy_exempt = model is not None and model["status"] in (
+                    "pending",
                     "verified",
                     "reverification_required",
                 )
@@ -903,7 +909,12 @@ async def verify_enrollment_identity(
             # 지원서 대조(E13): enrollment 에 승인 지원서가 연결돼 있으면 이름·생년월일을 대조한다.
             # 불일치는 지원서에 누적(E2, enrollment 재생성과 무관), 3회면 지원서 거절 + enrollment
             # 종료를 한 트랜잭션으로(E7). 실패 시도도 token 을 소비해(E8) 같은 token 재전송을 막는다.
-            if row["application_id"]:
+            #
+            # 플래그(fm_application_required)도 함께 본다. 안 보면 롤백이 반쪽이 된다 — 플래그가
+            # 켜져 있던 동안 만들어진 enrollment 는 application_id 가 박혀 있어서, 운영자가 문제를
+            # 보고 플래그를 false 로 되돌린 뒤에도 그 사용자는 대조에 걸려 422 를 받고 3회면
+            # 지원서 자동 거절 + 등록 취소 + 거절 메일까지 나간다. '끄면 구 경로'가 되어야 한다.
+            if settings.fm_application_required and row["application_id"]:
                 await cur.execute(
                     "select applicant_name, birthdate, identity_mismatch_count, contact_email "
                     "from fm_model_applications where id = %s for update",

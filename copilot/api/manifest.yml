@@ -330,9 +330,10 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   TOSS_SECRET_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/TOSS_SECRET_KEY
   FM_CHAIN_PRIVATE_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_CHAIN_PRIVATE_KEY
   # ---- 모델 지원서 리뉴얼 ----
-  # 새 지원서 Slack 알림. 크리티컬 로그 알림(addons/log-slack-alerts.yml)과 **같은 웹훅·같은 채널**을
-  # 재사용한다 — 새 시크릿 없이 켜진다. 채널을 따로 두고 싶으면 다른 SSM 이름으로 바꾼다.
-  FM_SLACK_WEBHOOK_URL: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/SLACK_ALERT_WEBHOOK_URL
+  # 새 지원서 Slack 알림 — 전용 채널 #facemarket-모델인증 의 Incoming Webhook(2026-09-02).
+  # 크리티컬 로그 알림(addons/log-slack-alerts.yml)의 SLACK_ALERT_WEBHOOK_URL 과 **다른 파라미터**다.
+  # 운영 장애 알림과 지원서 접수 알림이 한 채널에 섞이면 둘 다 안 보게 된다.
+  FM_SLACK_WEBHOOK_URL: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_SLACK_WEBHOOK_URL
   # ⚠️ 배포 전 값 저장 필요: copilot-aws secret init --name RESEND_API_KEY (프로드 SSM). 없으면 배포가
   #   "secret not found" 로 실패한다(앱은 키가 없어도 뜨지만 — 메일은 원장에 failed 로 남고 "메일 미발송"
   #   뱃지·재발송으로 복구 — copilot 이 참조를 먼저 검사한다).
