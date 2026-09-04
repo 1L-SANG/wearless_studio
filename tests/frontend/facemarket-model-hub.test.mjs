@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 const termsUrl = new URL('../../src/features/facemarket-landing/facemarketTerms.js', import.meta.url);
 const journeyUrl = new URL('../../src/features/model/modelHubState.js', import.meta.url);
@@ -112,4 +112,17 @@ test('verified 모델은 거래가 없어도 활동 중 화면이다', async () 
   assert.equal(journey.currentIndex, 6);
   assert.equal(journey.steps.every((step) => step.state === 'done'), true);
   assert.equal(journey.action, null);
+});
+
+test('1280px 활동 중 허브는 트윈·규칙·이번 달 요약을 같은 행에 둔다', () => {
+  const css = readFileSync(
+    new URL('../../src/features/model/ModelPersonalization.module.css', import.meta.url),
+    'utf8',
+  );
+  const start = css.indexOf('@media (min-width: 64rem)');
+  assert.notEqual(start, -1, '데스크톱 활동 중 레이아웃 구간이 필요합니다');
+  const nextMedia = css.indexOf('@media', start + 1);
+  const desktop = css.slice(start, nextMedia === -1 ? css.length : nextMedia);
+  assert.match(desktop, /\.hubActiveGrid\s*\{[\s\S]*grid-template-columns:\s*repeat\(3,/);
+  assert.match(desktop, /\.hubActiveCardWide\s*\{\s*grid-column:\s*auto;/);
 });

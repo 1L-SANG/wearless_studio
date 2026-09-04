@@ -757,7 +757,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 1.5rem;
-  padding: clamp(1.5rem, 4vw, 2.4rem);
+  padding: clamp(1.25rem, 2.5vw, 1.8rem);
   border-radius: 1.4rem;
   background: rgba(45, 99, 255, 0.06);
 }
@@ -888,6 +888,15 @@
 .hubTextLink:hover,
 .hubSignature:hover { text-decoration: underline; text-underline-offset: 0.25rem; }
 .hubCardHint { margin: 1rem 0 0; color: var(--fm-muted, var(--fg-2)); font: 400 0.8rem/1.5 var(--font-body); }
+
+@media (min-width: 64rem) {
+  .hubActiveGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .hubActiveCardWide { grid-column: auto; }
+  .hubRuleList {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 0.8rem;
+  }
+}
 
 @media (max-width: 47.99rem) {
   .hubTimeline { padding-inline: 1rem; }
