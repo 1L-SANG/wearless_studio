@@ -415,6 +415,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from .facemarket_applications import router as applications_router
 
         app.include_router(applications_router)
+        # 관리자 콘솔(집계·모델 조회·권한 관리). 지원서 라우트와 같은 플래그 아래 산다.
+        from .facemarket_admin import router as admin_console_router
+
+        app.include_router(admin_console_router)
         if settings.fm_biometric_enrollment_enabled:
             from .facemarket_enrollment import router as biometric_enrollment_router
 
