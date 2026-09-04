@@ -1864,10 +1864,19 @@ export function Editor() {
   const reorderBlock = (from, to) => setBlocks((bs) => { const n = [...bs]; const [it] = n.splice(from, 1); n.splice(to, 0, it); return n; });
 
   /* ---- 다운로드 — 화면의 블록 DOM 을 그대로 PNG 캡처 (editorExport.js).
-     dlBusy 는 퀵바·모달 두 경로가 공유 — 캡처가 겹치면 메모리·중복 저장 사고(리뷰 반영). ---- */
-  const finishExport = (successMsg, { softFailed }) => {
+     dlBusy 는 퀵바·모달 두 경로가 공유 — 캡처가 겹치면 메모리·중복 저장 사고(리뷰 반영).
+
+     공증(출처증명)은 REAL 소스(실제 모델 라이선스 소비)일 때만 붙인다 — VIRTUAL(AI 모델)
+     은 소비한 라이선스가 없어 서버에 원장 행이 없고, 매 다운로드마다 404 만 돌아온다.
+     실패해도 다운로드는 절대 막지 않는다: exportX 는 notarize 가 실패해도 원본 blob 을
+     그대로 저장하고 notarizeWarning 만 얹어 돌려준다 — 여기선 그 경고를 토스트로만 보여준다. */
+  const provenanceOpts = () => (isRealModelSelection(analysis?.selectedModelId)
+    ? { provenance: { projectId } } : {});
+  const finishExport = (successMsg, { softFailed, notarizeWarning }) => {
     if (softFailed > 0) {
       toast.push(`저장했지만 외부 이미지 ${softFailed}장은 불러오지 못해 빈 자리로 남았어요`, { icon: 'x' });
+    } else if (notarizeWarning) {
+      toast.push(notarizeWarning, { icon: 'alertTri' });
     } else {
       toast.push(successMsg, { icon: 'download' });
     }
@@ -1879,7 +1888,7 @@ export function Editor() {
     if (!node) { toast.push('블록을 찾지 못했어요. 다시 시도해 주세요.', { icon: 'x' }); return; }
     setDlBusy(true);
     try {
-      finishExport('이 블록을 PNG로 저장했어요', await exportBlockPng(node, productName, idx));
+      finishExport('이 블록을 PNG로 저장했어요', await exportBlockPng(node, productName, idx, provenanceOpts()));
     } catch (e) {
       toast.push(e?.message || '블록 저장에 실패했어요. 다시 시도해 주세요.', { icon: 'x' });
     } finally {
@@ -1894,7 +1903,7 @@ export function Editor() {
     const onProgress = (done, total) => setDlProg(`${done + 1}/${total}`);
     try {
       const run = dlFormat === 'zip' ? exportBlocksZip : exportLongPng;
-      const result = await run(nodes, productName, onProgress);
+      const result = await run(nodes, productName, onProgress, provenanceOpts());
       setDownload(false);
       finishExport(dlFormat === 'zip' ? '블록별 PNG를 ZIP으로 저장했어요' : '전체 상세페이지를 PNG로 저장했어요', result);
     } catch (e) {

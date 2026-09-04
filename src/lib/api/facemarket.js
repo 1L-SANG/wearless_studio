@@ -300,6 +300,21 @@ export async function verifyPublicationPublic(publicationId) {
   return res.json();
 }
 
+// POST /v1/facemarket/publications/presign — 배포본 업로드 URL. 행은 아직 안 만든다.
+export function presignPublication({ projectId, kind, byteSize }) {
+  return http('/v1/facemarket/publications/presign', {
+    method: 'POST', body: { projectId, kind, byteSize },
+  });
+}
+
+// POST /v1/facemarket/publications/sign — 해시·원장·C2PA 서명. 응답의 publicationId 가 정본.
+// projectId·kind 는 uploadToken 안에 서명돼 있다 — 여기서 다시 보내지 않는다.
+export function signPublication({ uploadToken }) {
+  return http('/v1/facemarket/publications/sign', {
+    method: 'POST', body: { uploadToken },
+  });
+}
+
 // 게이트 얼굴 이미지 → objectURL. <img> 는 Bearer 를 못 보내므로 fetch+blob 로 인증해 받는다.
 // 호출부는 표시 후 URL.revokeObjectURL 로 해제할 것.
 export async function fetchLicenseFaceUrl(faceImageUri) {
