@@ -25,6 +25,13 @@ import {
   cancelApplication, getApplicationConfig, getCurrentApplication, getCurrentEnrollment,
   listMyModels,
 } from '@/lib/api/facemarket.js';
+/* 처음 오는 사람의 지원 문구는 랜딩 CTA 와 같은 출처(registerCta.APPLY_LABEL)를 쓴다 —
+   2026-09-03 얼리버드 문구로 바뀌면서 두 화면이 갈라지지 않게 상수로 묶었다. */
+/* 상대 경로인 이유: tests/frontend/facemarket-biometric-enrollment.test.mjs 의 하네스가
+   configFile:false 로 vite 를 띄워 '@' 별칭이 없고, '@/…' 는 스텁한 몇 개만 통과한다.
+   '@/features/facemarket-landing/registerCta.js' 로 쓰면 "Cannot find module" 로 ModelHub
+   테스트가 깨진다. */
+import { APPLY_LABEL } from '../facemarket-landing/registerCta.js';
 import s from './ModelPersonalization.module.css';
 
 async function loadOptional(fn) {
@@ -114,7 +121,7 @@ function HubHead() {
   return (
     <header className={s.hubHead}>
       <p className={s.hubEyebrow}>FaceMarket 모델</p>
-      <h1 className={s.hubTitle}>등록 상태</h1>
+      <h1 className={s.hubTitle}>Digital DNA 관리</h1>
       {/* 순서에서 '모바일 신분증'만 앞으로 옮겼다. 예전 문장은 신분증을 라이브 얼굴 뒤에
           뒀는데 실제 위저드는 STEP 2 가 신분증, STEP 6 이 라이브다(PRD §5 / 랜딩
           RegisterSection 의 레일 '동의·신분증·사진·체형·대표·라이브·완료' — 2026-09-01
@@ -374,7 +381,7 @@ export function ModelHub() {
 
           {!showApplicationNext && isNew && (
             <Button variant="primary" iconRight="arrowRight" onClick={() => navigate(newEntryPath)}>
-              {applicationRequired ? '모델 지원하기' : '모델 등록하기'}
+              {applicationRequired ? APPLY_LABEL : '모델 등록하기'}
             </Button>
           )}
           {!showApplicationNext && blockedNeedsApply && (

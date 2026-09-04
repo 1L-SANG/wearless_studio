@@ -16,7 +16,7 @@ import { ModelHub } from '@/features/model/ModelHub.jsx';
 import { LandingShell } from '../LandingShell.jsx';
 import s from '../FacemarketLanding.module.css';
 
-const TITLE = '등록 상태 — FaceMarket';
+const TITLE = 'Digital DNA 관리 — FaceMarket'; /* 2026-09-04 오너 지시: '등록 상태' → 'Digital DNA 관리' */
 const DESCRIPTION = '지원서 검토부터 얼굴 등록, 라이선스까지 지금 어디까지 왔는지 확인합니다.';
 
 export function StatusPage() {
@@ -29,8 +29,8 @@ export function StatusPage() {
         if (!session) {
           return (
             <section className={s.section}>
-              <span className={s.eyebrow}>등록 상태</span>
-              <h1 className={s.sectionTitle}>로그인하면 내 등록 상태를 볼 수 있어요</h1>
+              <span className={s.eyebrow}>Digital DNA 관리</span>
+              <h1 className={s.sectionTitle}>로그인하면 내 Digital DNA를 관리할 수 있어요</h1>
               <p className={s.sectionLead}>
                 지원서 검토 결과, 얼굴 등록 진행 단계, 라이선스 준비 여부를 한 화면에서 확인해요.
               </p>

@@ -7,9 +7,9 @@ import { registerCta } from '../../src/features/facemarket-landing/registerCta.j
 /* 2026-09-02: 지원서 게이트(applicationRequired)가 기본 true 다. 아무것도 없는 방문자의 CTA 는
    허브를 거치지 않고 곧장 지원서(/model/apply)로 간다(사용자 지시). 게이트를 끄면 종전 등록 시작. */
 test('아무것도 없으면 지원서로 보낸다 — 게이트 기본값', () => {
-  assert.deepEqual(registerCta(null, null), { label: '모델 지원하기', to: '/model/apply' });
-  assert.deepEqual(registerCta(undefined, undefined), { label: '모델 지원하기', to: '/model/apply' });
-  assert.deepEqual(registerCta(null, null, {}), { label: '모델 지원하기', to: '/model/apply' });
+  assert.deepEqual(registerCta(null, null), { label: '얼리버드 지원하기', to: '/model/apply' });
+  assert.deepEqual(registerCta(undefined, undefined), { label: '얼리버드 지원하기', to: '/model/apply' });
+  assert.deepEqual(registerCta(null, null, {}), { label: '얼리버드 지원하기', to: '/model/apply' });
 });
 
 test('게이트를 끄면 종전처럼 등록으로 보낸다 — 문구는 통일된 모델 등록하기', () => {
@@ -29,7 +29,7 @@ test('지원서 상태별 다음 행동 — 검토 중은 상태 보기, 승인�
   assert.deepEqual(cta('under_review'), { label: '지원 상태 보기', to: '/status' });
   assert.deepEqual(cta('approved'), { label: '모델 등록하기', to: '/model/register' });
   assert.deepEqual(cta('rejected'), { label: '다시 지원하기', to: '/model/apply' });
-  assert.deepEqual(cta('cancelled'), { label: '모델 지원하기', to: '/model/apply' });
+  assert.deepEqual(cta('cancelled'), { label: '얼리버드 지원하기', to: '/model/apply' });
 });
 
 test('진행 중 등록·모델이 있으면 지원서 상태보다 등록 여정이 우선이다', () => {
