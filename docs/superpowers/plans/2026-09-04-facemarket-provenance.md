@@ -564,6 +564,11 @@ async def insert_output_records(cur, *, records: list[dict]) -> None:
                 for c in cut_assets:
                     c["provenance"] = prov
             out = await repo.finalize_detail_page_success(
+                conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
+                project_id=project_id, editor_blocks=editor_blocks,
+                cut_assets=cut_assets, reserved=reserved, charge=charge,
+                metadata=success_metadata, product_name=generated_name)
+```
 
 `server/app/workers/editor_image_job.py:742` 근처는 **단일 함수**(`run_editor_image_job`, 56행)라
 `fm_license_row`(162·358행)·`fm_face_injected`(110·173·437행)가 그 자리에서 스코프에 있다.
