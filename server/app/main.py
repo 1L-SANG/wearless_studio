@@ -142,7 +142,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not detail_worker_only and (holder_configured or settings.fm_vc_required):
                 vc_revocation_reconciler = FaceVcRevocationReconciler(app)
                 await vc_revocation_reconciler.start()
-            if settings.fm_provenance_enabled:
+            # sibling(vc_revocation_reconciler·draft_asset_reclaimer)과 같은 게이트: detail-worker
+            # 전용 프로세스에서는 안 돈다. 이 자체가 nonce 충돌을 막지는 않는다(advisory lock 이
+            # 진짜 방어 — anchor_one 참고) — 다만 오늘 이 워커가 detail-worker 에서 돌 이유가
+            # 없는데도 그러고 있었던 비대칭을 없앤다.
+            if not detail_worker_only and settings.fm_provenance_enabled:
                 from .workers.fm_publication_anchor import PublicationAnchorReconciler
 
                 publication_anchor = PublicationAnchorReconciler(app)

@@ -9,6 +9,12 @@ import asyncio
 import contextlib
 import logging
 
+# 정산과 같은 advisory lock id — nonce 는 owner 개인키 계정에 속하지 오퍼레이션 종류에
+# 속하지 않는다. 서로 다른 id 를 쓰면 앵커와 정산이 동시에 서명해 같은 충돌이 재발한다.
+# facemarket.py 는 app.workers.* 를 import 하지 않으므로 순환 없음(다른 워커들도 이미
+# `from .. import facemarket` 을 쓴다 — editor_image_job.py·detail_page_job.py).
+from ..facemarket import _SETTLEMENT_SIGNER_LOCK_ID
+
 log = logging.getLogger("wearless.fm_publication_anchor")
 
 _IDLE_SECONDS = 5
@@ -25,76 +31,122 @@ _RETRY_BACKOFF_SECONDS = 15
 
 
 async def anchor_one(conn, chain, job: dict) -> str:
-    """앵커 1건. 반환 = 'anchored' | 'retry' | 'dead'."""
+    """앵커 1건. 반환 = 'anchored' | 'retry' | 'dead'.
+
+    체인 서명 구간을 fm_settlement_signer_intents 와 같은 advisory lock 으로 감싼다
+    (_SETTLEMENT_SIGNER_LOCK_ID — facemarket.py record_license_settlement 와 동일 id, 다른
+    id 가 아니다). nonce 는 owner 개인키 "계정"에 속하지 "오퍼레이션 종류"에 속하지 않는다.
+    FaceMarketChain._nonce_lock 은 threading.Lock 이라 프로세스 내부에서만 직렬화된다 —
+    api 와 detail-worker 가 같은 개인키로 서명하는 두 프로세스라면(둘 다 체인 secret 을
+    갖고 있다) 각자 자기 프로세스 lock 만 보고 get_transaction_count 를 읽어 같은 nonce 로
+    서명할 수 있다. 하나는 조용히 유실된다 — 에러도, 로그도 없다. 같은 키로 서명하는
+    정산 경로와도 충돌한다: 별도 lock id 를 쓰면 앵커와 정산이 동시에 브로드캐스트할 수
+    있어 이 충돌을 전혀 막지 못한다.
+    """
     publication_id = str(job["publication_id"])
-    try:
-        result = await asyncio.to_thread(
-            chain.record_publication,
-            publication_id=publication_id,
-            image_sha256=job["image_sha256"],
-            license_id=str(job["license_ref"]),
-        )
-    except Exception:
-        # 중복 revert 는 "이미 기록됨"이다. 재기록하지 말고 저장값으로 화해한다.
-        # 실서비스 wait_for_publication(facemarket_chain.py)은 폴링 중 RPC 예외를 자체적으로
-        # {"exists": False} 로 삼켜 raise 하지 않는다고 문서화돼 있지만, 그 보장을 이 함수가
-        # 신뢰하고 자기 방어를 안 하면 chain 구현이 바뀌거나 그 내부 가드가 깨지는 순간
-        # 예외가 그대로 밖으로 새어나가 _run 의 바깥 except 에 먹히고, 잡은 attempts 증가도
-        # last_error 도 없이 lease_until 만료(240s)까지 조용히 processing 에 멈춘다.
-        # get_publication 폴백도 같은 장애(체인 엔드포인트 다운)로 raise 할 수 있다. 두 읽기
-        # 모두 같은 fail-safe 로 감싼다 — 어느 쪽이 raise 하든 결과는 항상 하나(존재 안 함)로
-        # 수렴해야 attempts/retry/dead 회계가 절대 우회되지 않는다.
-        try:
-            stored = await asyncio.to_thread(chain.wait_for_publication, publication_id, 5.0)
-        except Exception:
-            stored = None
-        if not stored or not stored.get("exists"):
-            try:
-                stored = await asyncio.to_thread(chain.get_publication, publication_id)
-            except Exception:
-                stored = {"exists": False}
-        if not stored or not stored.get("exists"):
-            attempts = int(job.get("attempts") or 0) + 1
-            # fm_vc_revocation_reconciler 와 같은 경계: job["attempts"] + 1 >= _MAX_ATTEMPTS.
-            # 두 큐에서 "상한"이 같은 총 시도 횟수(50)를 뜻하게 맞춘다.
-            status = "dead" if attempts >= _MAX_ATTEMPTS else "retry"
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """update fm_publication_anchor_jobs
-                          set status = %s, attempts = %s, last_error = %s, lease_until = null
-                        where publication_id = %s""",
-                    (status, attempts, "record_failed", publication_id),
-                )
-            if status == "dead":
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        "update fm_publication_records set chain_status = 'failed' "
-                        "where id = %s",
-                        (publication_id,),
-                    )
-                log.error("publication anchor gave up (dead): %s", publication_id)
-            await conn.commit()
-            return status
-        result = {
-            "tx_hash": None, "block": stored["block"], "chain_id": chain.chain_id,
-        }
 
     async with conn.cursor() as cur:
         await cur.execute(
-            """update fm_publication_records
-                  set chain_status = %s, tx_hash = %s, chain_id = %s,
-                      recorded_block = %s
-                where id = %s""",
-            ("confirmed", result.get("tx_hash"), str(result.get("chain_id")),
-             result.get("block"), publication_id),
+            "select pg_try_advisory_lock(%s) as locked", (_SETTLEMENT_SIGNER_LOCK_ID,)
         )
-        await cur.execute(
-            "update fm_publication_anchor_jobs set status = 'anchored', lease_until = null "
-            "where publication_id = %s",
-            (publication_id,),
-        )
-    await conn.commit()
-    return "anchored"
+        locked = (await cur.fetchone())["locked"]
+    if not locked:
+        # 다른 프로세스(정산이든 다른 앵커 워커든)가 지금 같은 키로 서명 중이다. 스핀하지
+        # 않는다 — attempts 를 태우지 않고 row 를 큐로 돌려준다. lock 경합은 실패한 시도가
+        # 아니다: 50번을 다 태우면 살아있는 배포본이 dead 로 떨어진다. _claim 의 retry
+        # 백오프(_RETRY_BACKOFF_SECONDS, attempted_at 은 claim 시점 그대로)가 바로 다음
+        # 루프에서 같은 row 를 다시 집는 걸 막아 바쁜 루프가 되지 않는다.
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """update fm_publication_anchor_jobs
+                      set status = 'retry', lease_until = null
+                    where publication_id = %s""",
+                (publication_id,),
+            )
+        await conn.commit()
+        return "retry"
+
+    try:
+        try:
+            result = await asyncio.to_thread(
+                chain.record_publication,
+                publication_id=publication_id,
+                image_sha256=job["image_sha256"],
+                license_id=str(job["license_ref"]),
+            )
+        except Exception:
+            # 중복 revert 는 "이미 기록됨"이다. 재기록하지 말고 저장값으로 화해한다.
+            # 실서비스 wait_for_publication(facemarket_chain.py)은 폴링 중 RPC 예외를
+            # 자체적으로 {"exists": False} 로 삼켜 raise 하지 않는다고 문서화돼 있지만, 그
+            # 보장을 이 함수가 신뢰하고 자기 방어를 안 하면 chain 구현이 바뀌거나 그 내부
+            # 가드가 깨지는 순간 예외가 그대로 밖으로 새어나가 이 try 의 finally(unlock)만
+            # 타고 _run 의 바깥 except 에 먹히며, 잡은 attempts 증가도 last_error 도 없이
+            # lease_until 만료(240s)까지 조용히 processing 에 멈춘다. get_publication 폴백도
+            # 같은 장애(체인 엔드포인트 다운)로 raise 할 수 있다. 두 읽기 모두 같은
+            # fail-safe 로 감싼다 — 어느 쪽이 raise 하든 결과는 항상 하나(존재 안 함)로
+            # 수렴해야 attempts/retry/dead 회계가 절대 우회되지 않는다.
+            try:
+                stored = await asyncio.to_thread(
+                    chain.wait_for_publication, publication_id, 5.0
+                )
+            except Exception:
+                stored = None
+            if not stored or not stored.get("exists"):
+                try:
+                    stored = await asyncio.to_thread(chain.get_publication, publication_id)
+                except Exception:
+                    stored = {"exists": False}
+            if not stored or not stored.get("exists"):
+                attempts = int(job.get("attempts") or 0) + 1
+                # fm_vc_revocation_reconciler 와 같은 경계: job["attempts"] + 1 >= _MAX_ATTEMPTS.
+                # 두 큐에서 "상한"이 같은 총 시도 횟수(50)를 뜻하게 맞춘다.
+                status = "dead" if attempts >= _MAX_ATTEMPTS else "retry"
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """update fm_publication_anchor_jobs
+                              set status = %s, attempts = %s, last_error = %s,
+                                  lease_until = null
+                            where publication_id = %s""",
+                        (status, attempts, "record_failed", publication_id),
+                    )
+                if status == "dead":
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            "update fm_publication_records set chain_status = 'failed' "
+                            "where id = %s",
+                            (publication_id,),
+                        )
+                    log.error("publication anchor gave up (dead): %s", publication_id)
+                await conn.commit()
+                return status
+            result = {
+                "tx_hash": None, "block": stored["block"], "chain_id": chain.chain_id,
+            }
+
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """update fm_publication_records
+                      set chain_status = %s, tx_hash = %s, chain_id = %s,
+                          recorded_block = %s
+                    where id = %s""",
+                ("confirmed", result.get("tx_hash"), str(result.get("chain_id")),
+                 result.get("block"), publication_id),
+            )
+            await cur.execute(
+                "update fm_publication_anchor_jobs set status = 'anchored', "
+                "lease_until = null where publication_id = %s",
+                (publication_id,),
+            )
+        await conn.commit()
+        return "anchored"
+    finally:
+        # session advisory lock은 commit 뒤에도 유지된다(record_license_settlement 와 동일
+        # 전제) — 위 여러 commit() 을 거쳐도 여기서 반드시 명시적으로 풀어야 한다.
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select pg_advisory_unlock(%s) as unlocked", (_SETTLEMENT_SIGNER_LOCK_ID,)
+            )
+        await conn.commit()
 
 
 class PublicationAnchorReconciler:

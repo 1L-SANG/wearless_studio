@@ -1,6 +1,6 @@
 """층③ 앵커 워커 — 상한 없는 재시도가 고아 잡 하나를 880회 돌린 전례가 있다(2026-09-01).
 
-검증 5개:
+검증 6개:
   1. 성공하면 chain_status='confirmed' 로 미러된다.
   2. 이미 체인에 있으면(중복 revert) 재기록 없이 화해한다.
   3. 진짜로 체인에 없으면(중복이 아닌 실패) retry 로 빠진다 — anchored 로 오판하지 않는다.
@@ -8,7 +8,11 @@
   4. 화해 읽기(wait_for_publication·get_publication) 자체가 raise 해도 anchor_one 밖으로
      새지 않고 retry 로 흡수된다 — 체인 엔드포인트가 죽어 있을 때의 실제 장애 모드.
      (fix round 2: get_publication 폴백의 try/except 만 지워도 이 테스트만 raise 로 깨진다.)
-  5. attempts 상한을 넘으면 dead 로 빠진다 — 무한 재시도 금지.
+  5. 정산과 같은 advisory lock 을 다른 프로세스가 쥐고 있으면 서명하지 않는다 — attempts 를
+     안 태우고 retry 로 큐에 돌려준다. api 와 detail-worker 가 같은 owner 키로 동시에
+     서명하면(threading.Lock 은 프로세스 내부에서만 직렬화) nonce 가 충돌해 하나가 조용히
+     유실된다(fix round 3, 2026-09-04 교차-task 리뷰).
+  6. attempts 상한을 넘으면 dead 로 빠진다 — 무한 재시도 금지.
 """
 import asyncio
 
@@ -56,10 +60,13 @@ class FakeChain:
 
 
 class Cur:
-    def __init__(self, job):
+    def __init__(self, job, lock_result=True):
         self.job = job
         self.statements = []
         self._last = job
+        # pg_try_advisory_lock 시뮬레이션 — 기존 5개 테스트는 손대지 않아도 되도록 기본은
+        # "잡힘"(True). 경합 테스트만 False 를 넘긴다(fix round 3).
+        self.lock_result = lock_result
 
     async def __aenter__(self):
         return self
@@ -68,8 +75,12 @@ class Cur:
         return False
 
     async def execute(self, sql, params=None):
-        self.statements.append((" ".join(sql.split()), params))
-        self._last = self.job
+        normalized = " ".join(sql.split())
+        self.statements.append((normalized, params))
+        if "pg_try_advisory_lock" in normalized:
+            self._last = {"locked": self.lock_result}
+        else:
+            self._last = self.job
 
     async def fetchone(self):
         return self._last
@@ -148,6 +159,31 @@ def test_anchor_one_retries_when_chain_reads_raise():
     assert "attempts" in job_update[0] and "last_error" in job_update[0]
     assert job_update[1] == ("retry", 1, "record_failed", "p1")
     # 재기록도 anchored 미러도 없어야 한다 — fm_publication_records 는 손대지 않는다.
+    assert not any("chain_status" in s[0] for s in cur.statements)
+
+
+def test_anchor_one_yields_without_signing_when_lock_held():
+    """다른 프로세스(정산이든 다른 앵커든)가 같은 advisory lock 을 쥐고 있으면 서명하지
+    않는다 — attempts 를 태우지 않고 row 를 retry 로 돌려 다음 스윕이 다시 집게 한다.
+
+    api 와 detail-worker 가 같은 owner 개인키로 서명하는 두 프로세스인데
+    FaceMarketChain._nonce_lock 은 threading.Lock(프로세스 내부에서만 직렬화)이라, advisory
+    lock 없이는 둘이 동시에 같은 nonce 로 서명해 하나가 조용히 유실된다 — 정산 브로드캐스트와
+    도 충돌한다(같은 키). fix round 3, 2026-09-04 교차-task 리뷰가 잡은 결함.
+    """
+    chain = FakeChain()
+    cur = Cur(JOB, lock_result=False)
+    status = asyncio.run(anchor.anchor_one(Conn(cur), chain, dict(JOB)))
+    assert status == "retry"
+    # 서명 시도 자체가 없어야 한다 — record_publication 을 호출하지 않는다.
+    assert chain.record_calls == []
+    job_update = next(
+        s for s in cur.statements if "fm_publication_anchor_jobs" in s[0]
+    )
+    # lock 경합은 실패한 시도가 아니다 — attempts 컬럼을 건드리지 않는다.
+    assert "attempts" not in job_update[0]
+    assert job_update[1] == ("p1",)
+    # 서명도, chain_status 갱신도 없어야 한다.
     assert not any("chain_status" in s[0] for s in cur.statements)
 
 
