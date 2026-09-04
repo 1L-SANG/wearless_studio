@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from . import admin_guard
 from .auth import require_user
 from .db import get_conn
+from .models import CamelModel
 
 router = APIRouter(prefix="/v1/facemarket/admin", tags=["FaceMarket admin console"])
 
@@ -345,3 +346,99 @@ async def admin_model_detail(
     async with get_conn(request) as conn:
         await admin_guard.require_admin(conn, user_id)
         return JSONResponse(await model_detail(conn, model_id=model_id))
+
+
+class SuspendRequest(CamelModel):
+    reason: str
+
+
+async def _model_status(cur, model_id: str) -> str:
+    await cur.execute("select status from fm_models where id = %s", (model_id,))
+    row = await cur.fetchone()
+    if row is None:
+        raise _err("not_found", "모델을 찾을 수 없어요.", status=404)
+    return row["status"]
+
+
+async def suspend_model(conn, *, model_id: str, actor: str, reason: str) -> dict:
+    note = (reason or "").strip()
+    if not note:
+        raise _err("reason_required", "정지 사유를 입력해 주세요.")
+    async with conn.cursor() as cur:
+        previous = await _model_status(cur, model_id)
+        await cur.execute(
+            "update fm_models set status = 'suspended', updated_at = now() where id = %s",
+            (model_id,),
+        )
+    await admin_guard.write_audit(
+        conn,
+        actor_user_id=actor,
+        action="model.suspend",
+        target_type="model",
+        target_id=model_id,
+        before={"status": previous},
+        after={"status": "suspended"},
+        note=note,
+    )
+    return {"id": model_id, "status": "suspended"}
+
+
+async def unsuspend_model(conn, *, model_id: str, actor: str) -> dict:
+    """정지 직전 상태로 되돌린다.
+
+    콘솔은 verified 를 **새로 만들지 못한다** — 그 배지는 생체등록 통과가 붙이는 것이다.
+    다만 정지 한 번으로 검증된 모델이 배지를 영구히 잃는 것도 틀렸다. 그래서 원장에 남은
+    정지 직전 값만 복원한다. 기록이 없으면(콘솔 밖에서 정지된 경우) pending 으로 내린다.
+    """
+    async with conn.cursor() as cur:
+        current = await _model_status(cur, model_id)
+        if current != "suspended":
+            raise _err("not_suspended", "정지 상태인 모델만 해제할 수 있어요.")
+        await cur.execute(
+            "select before->>'status' as prev from admin_audit_log "
+            "where action = 'model.suspend' and target_type = 'model' and target_id = %s "
+            "order by created_at desc limit 1",
+            (model_id,),
+        )
+        row = await cur.fetchone()
+        restored = (row or {}).get("prev")
+        # 원장 값이 오염됐거나 기록이 없으면 pending — 스키마 밖 값을 넣으면 check 제약이 터진다.
+        if restored not in ("pending", "verified"):
+            restored = "pending"
+        await cur.execute(
+            "update fm_models set status = %s, updated_at = now() where id = %s",
+            (restored, model_id),
+        )
+    await admin_guard.write_audit(
+        conn,
+        actor_user_id=actor,
+        action="model.unsuspend",
+        target_type="model",
+        target_id=model_id,
+        before={"status": "suspended"},
+        after={"status": restored},
+    )
+    return {"id": model_id, "status": restored}
+
+
+@router.post("/models/{model_id}/suspend")
+async def admin_suspend_model(
+    request: Request, model_id: str, body: SuspendRequest,
+    user_id: str = Depends(require_user),
+):
+    async with get_conn(request) as conn:
+        await admin_guard.require_admin(conn, user_id)
+        result = await suspend_model(conn, model_id=model_id, actor=user_id, reason=body.reason)
+        await conn.commit()
+    return JSONResponse(result)
+
+
+@router.post("/models/{model_id}/unsuspend")
+async def admin_unsuspend_model(
+    request: Request, model_id: str, user_id: str = Depends(require_user)
+):
+    async with get_conn(request) as conn:
+        await admin_guard.require_admin(conn, user_id)
+        result = await unsuspend_model(conn, model_id=model_id, actor=user_id)
+        await conn.commit()
+    return JSONResponse(result)
