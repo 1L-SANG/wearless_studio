@@ -67,3 +67,42 @@ test('서명본 내려받기가 실패해도 검증 URL 은 살린다', async ()
   assert.equal(out.blob, blob);
   assert.equal(out.verifyUrl, 'https://w/verify/p/p1');
 });
+
+/* ── 리뷰 라운드 1 — C1(무한 대기) · C2(throw 시 verifyUrl 유실) ─────────────
+   deps.timeouts 는 프로덕션 기본값(8s/60s)을 테스트에서만 짧게 갈아 끼우기 위한
+   주입 지점이다 — 진짜로 60초를 기다리면서 "멈춤"을 증명할 수는 없다. */
+
+test('네트워크 leg 이 응답 없이 멈춰도(하프오픈 등) notarize 는 타임아웃 안에 원본과 경고를 돌려준다 — C1', { timeout: 3000 }, async () => {
+  const api = {
+    presignPublication: async () => ({ uploadToken: 't', uploadUrl: 'https://r2/put' }),
+    signPublication: async () => assert.fail('타임아웃으로 끊겼어야 할 단계에서 sign 을 부르면 안 된다'),
+  };
+  // PUT 이 영원히 응답하지 않는 상황을 흉내낸다 — resolve/reject 를 절대 안 부르는 프라미스.
+  const fetchImpl = () => new Promise(() => {});
+  const out = await notarize(blob, { projectId: 'p', kind: 'long_png' },
+    { api, fetchImpl, timeouts: { network: 20, transfer: 20 } });
+  assert.equal(out.blob, blob);
+  assert.equal(out.verifyUrl, null);
+  assert.ok(out.warning);
+});
+
+test('서명 이후 재다운로드가 throw 해도(네트워크 끊김 등) 검증 URL 은 살아남는다 — C2', async () => {
+  const fetchImpl = async (url) => {
+    if (url === 'https://r2/put') return { ok: true };
+    throw new TypeError('network drop');
+  };
+  const out = await notarize(blob, { projectId: 'p', kind: 'long_png' },
+    { api: okApi(), fetchImpl });
+  assert.equal(out.blob, blob);
+  assert.equal(out.verifyUrl, 'https://w/verify/p/p1');
+});
+
+test('서명본 blob() 파싱이 throw 해도 검증 URL 은 살아남는다 — C2', async () => {
+  const fetchImpl = async (url) => (url === 'https://r2/put'
+    ? { ok: true }
+    : { ok: true, blob: async () => { throw new Error('malformed body'); } });
+  const out = await notarize(blob, { projectId: 'p', kind: 'long_png' },
+    { api: okApi(), fetchImpl });
+  assert.equal(out.blob, blob);
+  assert.equal(out.verifyUrl, 'https://w/verify/p/p1');
+});
