@@ -36,13 +36,18 @@ async def anchor_one(conn, chain, job: dict) -> str:
         )
     except Exception:
         # 중복 revert 는 "이미 기록됨"이다. 재기록하지 말고 저장값으로 화해한다.
-        # wait_for_publication 은 폴링 중 RPC 예외를 자체적으로 {"exists": False} 로 삼킨다
-        # (facemarket_chain.py). get_publication 폴백은 그런 가드가 없어 체인 엔드포인트가
-        # 죽어 있으면(같은 장애로 앞선 wait 도 이미 실패했을 가능성이 높다) 여기서 raise 가
-        # 밖으로 새어나가 _run 의 바깥 except 에 먹히고, 잡은 attempts 증가도 last_error 도
-        # 없이 lease_until 만료(240s)까지 조용히 processing 에 멈춘다. 같은 fail-safe 로
-        # 감싼다 — 두 호출이 서로 다른 실패 모드를 갖지 않게.
-        stored = await asyncio.to_thread(chain.wait_for_publication, publication_id, 5.0)
+        # 실서비스 wait_for_publication(facemarket_chain.py)은 폴링 중 RPC 예외를 자체적으로
+        # {"exists": False} 로 삼켜 raise 하지 않는다고 문서화돼 있지만, 그 보장을 이 함수가
+        # 신뢰하고 자기 방어를 안 하면 chain 구현이 바뀌거나 그 내부 가드가 깨지는 순간
+        # 예외가 그대로 밖으로 새어나가 _run 의 바깥 except 에 먹히고, 잡은 attempts 증가도
+        # last_error 도 없이 lease_until 만료(240s)까지 조용히 processing 에 멈춘다.
+        # get_publication 폴백도 같은 장애(체인 엔드포인트 다운)로 raise 할 수 있다. 두 읽기
+        # 모두 같은 fail-safe 로 감싼다 — 어느 쪽이 raise 하든 결과는 항상 하나(존재 안 함)로
+        # 수렴해야 attempts/retry/dead 회계가 절대 우회되지 않는다.
+        try:
+            stored = await asyncio.to_thread(chain.wait_for_publication, publication_id, 5.0)
+        except Exception:
+            stored = None
         if not stored or not stored.get("exists"):
             try:
                 stored = await asyncio.to_thread(chain.get_publication, publication_id)

@@ -1,11 +1,14 @@
 """층③ 앵커 워커 — 상한 없는 재시도가 고아 잡 하나를 880회 돌린 전례가 있다(2026-09-01).
 
-검증 4개:
+검증 5개:
   1. 성공하면 chain_status='confirmed' 로 미러된다.
   2. 이미 체인에 있으면(중복 revert) 재기록 없이 화해한다.
   3. 진짜로 체인에 없으면(중복이 아닌 실패) retry 로 빠진다 — anchored 로 오판하지 않는다.
      (fix round 1: 이 테스트가 없으면 화해 검사를 통째로 지운 뮤턴트도 나머지 3개를 통과한다.)
-  4. attempts 상한을 넘으면 dead 로 빠진다 — 무한 재시도 금지.
+  4. 화해 읽기(wait_for_publication·get_publication) 자체가 raise 해도 anchor_one 밖으로
+     새지 않고 retry 로 흡수된다 — 체인 엔드포인트가 죽어 있을 때의 실제 장애 모드.
+     (fix round 2: get_publication 폴백의 try/except 만 지워도 이 테스트만 raise 로 깨진다.)
+  5. attempts 상한을 넘으면 dead 로 빠진다 — 무한 재시도 금지.
 """
 import asyncio
 
@@ -15,11 +18,14 @@ from app.workers import fm_publication_anchor as anchor
 
 
 class FakeChain:
-    def __init__(self, fail_record=False, already=False):
+    def __init__(self, fail_record=False, already=False, raise_on_read=False):
         self.chain_id = 1337
         self.provenance_enabled = True
         self.record_calls = []
         self.fail_record = fail_record
+        # 화해 읽기(wait_for_publication·get_publication) 둘 다를 raise 시킨다 — 체인
+        # 엔드포인트 자체가 죽어 있는 장애 모드를 재현한다(fix round 2).
+        self.raise_on_read = raise_on_read
         self._store = {}
         if already:
             self._store["p1"] = {
@@ -39,9 +45,13 @@ class FakeChain:
                 "image_hash": image_sha256, "license_ref": "0x" + "bb" * 32}
 
     def wait_for_publication(self, publication_id, timeout=None):
+        if self.raise_on_read:
+            raise ConnectionError("rpc endpoint unreachable")
         return self._store.get(publication_id)
 
     def get_publication(self, publication_id):
+        if self.raise_on_read:
+            raise ConnectionError("rpc endpoint unreachable")
         return self._store.get(publication_id, {"exists": False})
 
 
@@ -107,6 +117,28 @@ def test_anchor_one_retries_when_genuinely_not_on_chain():
     깨진다(나머지 3개는 그대로 통과). task-6-report.md Fix round 1 참고.
     """
     chain = FakeChain(fail_record=True, already=False)
+    cur = Cur(JOB)
+    status = asyncio.run(anchor.anchor_one(Conn(cur), chain, dict(JOB)))
+    assert status == "retry"
+    job_update = next(
+        s for s in cur.statements if "fm_publication_anchor_jobs" in s[0]
+    )
+    assert "attempts" in job_update[0] and "last_error" in job_update[0]
+    assert job_update[1] == ("retry", 1, "record_failed", "p1")
+    # 재기록도 anchored 미러도 없어야 한다 — fm_publication_records 는 손대지 않는다.
+    assert not any("chain_status" in s[0] for s in cur.statements)
+
+
+def test_anchor_one_retries_when_chain_reads_raise():
+    """체인 엔드포인트 자체가 죽어 있으면 wait_for_publication·get_publication 둘 다
+    raise 할 수 있다 — 그래도 anchor_one 밖으로 새면 안 된다. retry 로 흡수해 attempts 를
+    올리고 lease 를 풀어야 다음 스윕이 다시 시도한다.
+
+    fix round 1 에서 추가한 get_publication 폴백의 try/except 만 지우면(wait_for_publication
+    가드는 그대로 두고) 이 테스트는 raise 로 깨진다 — assert 실패가 아니라 예외 자체가
+    pytest 를 뚫고 나온다. task-6-report.md Fix round 2 참고.
+    """
+    chain = FakeChain(fail_record=True, raise_on_read=True)
     cur = Cur(JOB)
     status = asyncio.run(anchor.anchor_one(Conn(cur), chain, dict(JOB)))
     assert status == "retry"
