@@ -141,6 +141,22 @@ def test_staff_search_is_exact_email_match():
     assert search and "ilike" not in search[-1]
 
 
+def test_staff_search_is_case_insensitive_but_still_exact():
+    """저장된 이메일 대소문자가 검색어와 다르면 실존 계정이 "가입 안 한 사람"처럼 보인다.
+
+    list_staff 는 검색어를 lower() 해서 넘긴다 — 컬럼도 lower() 로 비교해야 한다. 여전히
+    정확일치다: lower(u.email) = %(email)s 이지 ilike 가 아니다.
+    """
+    conn = FakeConn([[], []])
+    asyncio.run(facemarket_admin.list_staff(conn, q="Foo@Example.com"))
+    search = [(sql, p) for sql, p in conn.executed if "u.email" in sql]
+    assert search, "이메일 검색 쿼리를 못 찾았다"
+    sql, params = search[-1]
+    assert "lower(u.email)" in sql
+    assert "ilike" not in sql
+    assert params["email"] == "foo@example.com"
+
+
 def test_audit_listing_is_newest_first_and_capped():
     conn = FakeConn([[]])
     asyncio.run(facemarket_admin.list_audit(conn, limit=9999, target_type=None, target_id=None))

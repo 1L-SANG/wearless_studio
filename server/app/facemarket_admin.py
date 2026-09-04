@@ -504,7 +504,10 @@ where p.role = 'admin' order by p.created_at
 SEARCH_USER_SQL = """
 select p.user_id::text as user_id, p.display_name, p.role, u.email
 from profiles p join auth.users u on u.id = p.user_id
-where u.email = %(email)s limit 5
+-- 대소문자만 다르게 저장된 이메일도 찾아야 한다. list_staff 가 검색어를 lower() 해서
+-- 넘기는데 컬럼 값과 그대로 %s = 비교하면, 다른 대소문자로 가입한 진짜 계정이 "가입 안
+-- 한 사람"처럼 보인다 — 여전히 정확일치다(부분일치 아님), 대소문자만 무시한다.
+where lower(u.email) = %(email)s limit 5
 """
 
 
