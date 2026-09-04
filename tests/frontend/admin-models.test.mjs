@@ -56,6 +56,33 @@ test('모델 목록 조회 실패는 빈 배열이 아니라 에러 상태로 �
   assert.ok(/setListError/.test(loadBlock), '목록 조회 실패를 담을 에러 상태 세터가 없다');
 });
 
+test('fm_models 가 허용하는 네 상태 모두 라벨·필터·변형을 갖고, 모르는 값은 원문자열로 낮춘다', () => {
+  // fm_models_status_check 는 pending·verified·suspended·reverification_required 넷을
+  // 허용한다(facemarket_admin.py MODEL_STATUSES). reverification_required 가 STATUS_LABEL/
+  // STATUS_VARIANT 에 없으면 undefined → 빈 배지(내용 없이 verified 와 같은 색)로 렌더되고,
+  // STATUS_FILTERS 에 없으면 그 상태만 목록에서 걸러낼 방법이 없다.
+  const source = read('src/features/admin/AdminModels.jsx');
+
+  assert.ok(
+    source.includes("reverification_required: '재검증 필요'"),
+    "STATUS_LABEL 에 reverification_required 라벨이 없다 — ModelHub.jsx 의 라벨('재검증 필요')과 맞춰야 한다",
+  );
+  assert.ok(
+    /STATUS_VARIANT\s*=\s*\{[^}]*reverification_required\s*:/.test(source),
+    'STATUS_VARIANT 에 reverification_required 가 없다 — 빈 배지가 verified 와 같은 색으로 보인다',
+  );
+  assert.ok(
+    /STATUS_FILTERS\s*=\s*\[[\s\S]*?value:\s*'reverification_required'[\s\S]*?\];/.test(source),
+    'STATUS_FILTERS 에 reverification_required 칩이 없다 — 재검증 필요 모델을 목록에서 걸러낼 수 없다',
+  );
+  // fm_models_status_check 에 다섯 번째 값이 늘어나도, 라벨 조회가 undefined 를 그대로
+  // 배지에 넘기는 대신 원문자열로 낮춰야 한다 — 안 보이는 빈 배지보다 못생긴 원문자열이 낫다.
+  assert.ok(
+    /STATUS_LABEL\[[^\]]+\]\s*\|\|\s*[a-zA-Z.]+/.test(source),
+    'STATUS_LABEL 조회에 || 폴백이 없다 — 다음에 상태가 하나 더 늘면 다시 빈 배지가 나온다',
+  );
+});
+
 test('상세 패널은 실패해도 카드 틀을 그대로 그리고, 다시 시도를 준다', () => {
   // 예전엔 실패해도 data 가 계속 null 이라 패널 전체가 <Skeleton> 하나로 영원히 멈췄다
   // (카드 틀조차 없이) — 여기서는 에러 분기가 실제로 Card 로 감싸져 있고 다시 시도

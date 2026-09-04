@@ -16,14 +16,25 @@ import {
 } from '@/components/admin-ui/table.jsx';
 import { useToast } from '@/components/ui.jsx';
 
+// fm_models_status_check(백엔드 MODEL_STATUSES)가 허용하는 네 값 전부를 다뤄야 한다.
+// reverification_required 라벨은 ModelHub.jsx 의 MODEL_STATUS_LABEL 과 맞춘다 — 운영자
+// 화면과 모델 본인 화면이 같은 상태를 다른 말로 부르면 안 된다.
 const STATUS_FILTERS = [
   { value: '', label: '전체' },
   { value: 'pending', label: '대기' },
   { value: 'verified', label: '검증됨' },
+  { value: 'reverification_required', label: '재검증 필요' },
   { value: 'suspended', label: '정지' },
 ];
-const STATUS_LABEL = { pending: '대기', verified: '검증됨', suspended: '정지' };
-const STATUS_VARIANT = { pending: 'secondary', verified: 'default', suspended: 'destructive' };
+const STATUS_LABEL = {
+  pending: '대기', verified: '검증됨', reverification_required: '재검증 필요', suspended: '정지',
+};
+const STATUS_VARIANT = {
+  pending: 'secondary', verified: 'default', reverification_required: 'secondary', suspended: 'destructive',
+};
+// check 제약에 다섯 번째 값이 늘어나도, 빈 배지(undefined → 스타일 없이 텅 빈 pill)
+// 대신 원문자열을 보여준다 — 안 보이는 것보다 못생긴 게 낫다.
+const statusLabel = (status) => STATUS_LABEL[status] || status;
 const won = (n) => `${Number(n || 0).toLocaleString('ko-KR')}원`;
 const day = (iso) => (iso ? iso.slice(0, 10) : '-');
 
@@ -97,7 +108,7 @@ function Detail({ modelId, onChanged }) {
       <CardHeader>
         <div className="flex items-center gap-2">
           <CardTitle className="text-base">{model.displayName}</CardTitle>
-          <Badge variant={STATUS_VARIANT[model.status]}>{STATUS_LABEL[model.status]}</Badge>
+          <Badge variant={STATUS_VARIANT[model.status]}>{statusLabel(model.status)}</Badge>
         </div>
         <CardDescription>{model.email || '연결된 계정 없음 (플랫폼 온보딩)'}</CardDescription>
       </CardHeader>
@@ -231,7 +242,7 @@ export function AdminModels() {
                     >
                       <TableCell>{m.displayName}</TableCell>
                       <TableCell>
-                        <Badge variant={STATUS_VARIANT[m.status]}>{STATUS_LABEL[m.status]}</Badge>
+                        <Badge variant={STATUS_VARIANT[m.status]}>{statusLabel(m.status)}</Badge>
                       </TableCell>
                       <TableCell className="text-muted-foreground">{m.email || '-'}</TableCell>
                       <TableCell>{m.licenseCount}</TableCell>
