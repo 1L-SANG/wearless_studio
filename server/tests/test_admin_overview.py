@@ -116,6 +116,22 @@ def test_email_failed_counts_latest_row_per_application_not_ever_failed():
     assert "count(distinct application_id)" not in sql, (
         "이력 전체를 세는 옛 방식이 남아 있다 — 재발송 성공해도 큐가 안 줄어든다"
     )
+    # 여기까지는 "최신 행만 본다"만 확인한다 — 그 최신 행 자체가 아예 없는 지원서(이메일
+    # INSERT 가 한 번도 성공한 적 없는 경우)를 어떻게 세는지는 안 본다. join lateral(inner)
+    # 이면 그 지원서는 조인 결과에서 통째로 사라져 카운트에 안 잡힌다. admin_list_applications
+    # 는 left join lateral 이라 em 이 전부 null 이어도 행이 살아남고, 화면은 "결정됐는데
+    # 메일 행이 없다"를 미발송으로 취급한다(:88, applications.py). 큐도 같은 말을 해야 한다.
+    assert "left join lateral" in sql, (
+        "join lateral 이 inner 다 — 이메일 행이 0개인 지원서가 조인에서 사라져 큐가 "
+        "0을 보고한다. 결정 메일 INSERT 자체가 실패했을 때(풀 고갈·DB 블립·태스크 취소)가 "
+        "바로 이 경우이고, 그게 이 배지가 잡아야 할 사례다."
+    )
+    assert (
+        "a.status in ('approved', 'rejected') and em.last_status is null" in sql
+    ), (
+        "이메일 행이 아예 없는 결정된 지원서(em.last_status is null)를 세는 절이 없다 — "
+        "목록 배지의 두 번째 조건(admin_list_applications)과 한 글자도 달라선 안 된다"
+    )
 
 
 def test_payload_shape_is_camel_case():

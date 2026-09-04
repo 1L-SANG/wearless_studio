@@ -59,15 +59,21 @@ select
   -- 지원서를 목록 배지(admin_list_applications 의 lateral, 최신 행만 봄)는 '발송됨'이라 하는데
   -- 이 큐는 영원히 센다 — 고쳐도 안 줄어드는 큐는 없는 큐보다 나쁘다. 그래서 여기도 신청서당
   -- 최신 메일 행만 lateral 로 보고, 그 행이 실패(또는 2분 넘은 pending)일 때만 센다. 목록의
-  -- 규칙과 한 글자도 다르면 안 된다.
+  -- 규칙과 한 글자도 다르면 안 된다 — 그래서 join 도 반드시 left 다: _dispatch_decision_email
+  -- 은 결정 커밋 뒤 별도 커넥션에서 pending 행을 직접 INSERT 하는데, 그 INSERT 자체가
+  -- 실패하면(풀 고갈·DB 블립·태스크 취소) 이메일 행이 0개인 채로 지원서가 결정된다. inner
+  -- join lateral 은 그 지원서를 조인에서 통째로 지워 큐가 0을 보고한다 — 정작 손댈 일이
+  -- 가장 많은 사례를 큐가 못 본다. left join 이면 em 이 전부 null 로 살아남으니, "결정됐는데
+  -- 최신 메일 행이 없다"도 목록 배지처럼 미발송으로 센다.
   (select count(*) from fm_model_applications a
-     join lateral (
+     left join lateral (
        select case when status = 'pending' and created_at < now() - interval '2 minutes'
                    then 'failed' else status end as last_status
        from fm_model_application_emails e
        where e.application_id = a.id order by e.created_at desc limit 1
      ) em on true
-    where em.last_status = 'failed') as email_failed,
+    where em.last_status = 'failed'
+       or (a.status in ('approved', 'rejected') and em.last_status is null)) as email_failed,
   (select count(*) from refund_requests where status = 'pending') as refunds_pending
 """
 
