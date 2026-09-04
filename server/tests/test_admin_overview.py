@@ -101,6 +101,23 @@ def test_series_uses_kst_day_boundaries():
     assert "generate_series" in sql, "빈 날짜가 0 으로 채워지지 않는다"
 
 
+def test_email_failed_counts_latest_row_per_application_not_ever_failed():
+    """admin_resend_email 은 실패한 행을 고치지 않고 새 행을 INSERT 한다(facemarket_applications.py).
+
+    지원서 목록 배지(admin_list_applications)는 신청서당 최신 메일 행만 lateral 로 본다.
+    큐가 "한 번이라도 실패한 적 있으면" count(distinct application_id) 로 세면, 첫 발송이
+    실패하고 재발송이 성공한 지원서를 카드는 '발송됨'이라 하는데 큐는 영원히 센다 — 고쳐도
+    안 줄어드는 큐는 없는 큐보다 나쁘다. 최신 행 기준 lateral 이어야 두 화면이 같은 말을 한다.
+    """
+    sql = " ".join(facemarket_admin.QUEUE_SQL.split())
+    assert "order by e.created_at desc limit 1" in sql, (
+        "최신 메일 행만 보는 lateral 이 없다 — 목록 배지와 큐가 어긋난다"
+    )
+    assert "count(distinct application_id)" not in sql, (
+        "이력 전체를 세는 옛 방식이 남아 있다 — 재발송 성공해도 큐가 안 줄어든다"
+    )
+
+
 def test_payload_shape_is_camel_case():
     import asyncio
     payload = asyncio.run(facemarket_admin.build_overview(_conn(), days=30))

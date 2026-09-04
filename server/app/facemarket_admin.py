@@ -54,11 +54,20 @@ select
     as applications_under_review,
   (select count(*) from fm_model_applications
      where status = 'under_review' and identity_mismatch_count > 0) as identity_mismatch,
-  -- 'pending 인 채 2분 넘은 행'을 미발송으로 보는 규칙은 목록 라우트(admin_list_applications)의
-  -- lateral 과 같아야 한다. 두 곳이 갈라지면 대시보드 숫자와 배지가 서로 다른 말을 한다.
-  (select count(distinct application_id) from fm_model_application_emails
-     where status = 'failed'
-        or (status = 'pending' and created_at < now() - interval '2 minutes')) as email_failed,
+  -- admin_resend_email 은 실패한 행을 고치지 않고 새 행을 INSERT 한다. 그래서 "이력 전체에서
+  -- failed 가 한 번이라도 있었는지"로 세는 옛 방식으로는, 첫 발송이 실패하고 재발송이 성공한
+  -- 지원서를 목록 배지(admin_list_applications 의 lateral, 최신 행만 봄)는 '발송됨'이라 하는데
+  -- 이 큐는 영원히 센다 — 고쳐도 안 줄어드는 큐는 없는 큐보다 나쁘다. 그래서 여기도 신청서당
+  -- 최신 메일 행만 lateral 로 보고, 그 행이 실패(또는 2분 넘은 pending)일 때만 센다. 목록의
+  -- 규칙과 한 글자도 다르면 안 된다.
+  (select count(*) from fm_model_applications a
+     join lateral (
+       select case when status = 'pending' and created_at < now() - interval '2 minutes'
+                   then 'failed' else status end as last_status
+       from fm_model_application_emails e
+       where e.application_id = a.id order by e.created_at desc limit 1
+     ) em on true
+    where em.last_status = 'failed') as email_failed,
   (select count(*) from refund_requests where status = 'pending') as refunds_pending
 """
 
