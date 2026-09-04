@@ -889,6 +889,23 @@ async def _cleanup(
                 "update fm_models set " + ", ".join(model_sets) + " where id = any(%s)",
                 (list(model_ids),),
             )
+        if model_ids and _has(schema, "fm_publication_records", "revoked_at"):
+            # 모든 파기 사유(withdrawal·reverification·account_delete)에서 실행돼야 한다 —
+            # 이건 계정 삭제가 아니라 "모델이 동의를 철회하면" 이 트리거인 시나리오다(§9).
+            # account_delete 게이트 안에 두면 계정은 안 지우고 동의만 철회하는(실제
+            # POST /v1/personalization:withdraw 경로, reason="withdrawal") 진짜 케이스에서
+            # 이 UPDATE 가 영영 안 돌아 revoked_at 이 null 로 남고 검증 페이지가 철회를 알릴
+            # 유일한 수단을 잃는다. 행은 남긴다 — 지우면 무단 사용과 정당한 과거 사용을
+            # 구별할 수 없다. 파기(생체정보 제거)는 r2_key 를 null 로 미는 것으로 달성된다.
+            # image_sha256 은 파일 지문이지 생체정보가 아니므로 건드리지 않는다.
+            # coalesce 로 재실행해도 revoked_at 이 밀리지 않게 한다 — 파기는 재시도되고,
+            # 철회일이 재시도마다 흘러가면 그건 증거가 아니다.
+            await cur.execute(
+                "update fm_publication_records "
+                "set r2_key = null, revoked_at = coalesce(revoked_at, now()) "
+                "where model_id = any(%s)",
+                (list(model_ids),),
+            )
         if license_ids:
             sets = ["face_image_key=null", "face_image_digest=null"]
             if _has(schema, "fm_licenses", "enrollment_id"):
@@ -941,18 +958,6 @@ async def _cleanup(
                     "update fm_models set status='suspended', user_id=null, ci_hash=null, did=null, "
                     "cover_image_url=null, display_name='삭제된 모델', assets_status='none', "
                     "qc_score=null, assets_source_hash=null where id = any(%s)",
-                    (list(model_ids),),
-                )
-            if model_ids and _has(schema, "fm_publication_records", "revoked_at"):
-                # 행은 남긴다 — 지우면 무단 사용과 정당한 과거 사용을 구별할 수 없다. 파기(생체
-                # 정보 제거)는 r2_key 를 null 로 미는 것으로 달성된다. image_sha256 은 파일
-                # 지문이지 생체정보가 아니므로 건드리지 않는다(§9). coalesce 로 재실행해도
-                # revoked_at 이 밀리지 않게 한다 — 파기는 재시도되고, 철회일이 재시도마다
-                # 흘러가면 그건 증거가 아니다.
-                await cur.execute(
-                    "update fm_publication_records "
-                    "set r2_key = null, revoked_at = coalesce(revoked_at, now()) "
-                    "where model_id = any(%s)",
                     (list(model_ids),),
                 )
             await cur.execute(
