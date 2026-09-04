@@ -45,6 +45,8 @@ test('거절 사유는 여러 줄 textarea 로 받는다 — 한 줄 Input 으�
   // 좁혀졌던 적이 있다 — 거절 사유는 지원자에게 메일로 전달되는 프로즈라 한 줄 입력이 아니다.
   // reason 상태만 보는 위 테스트는 이 폭을 못 잡는다(Input 이든 Textarea 든 'reason' 은 있다).
   assert.ok(source.includes('@/components/admin-ui/textarea.jsx'), 'Textarea 컴포넌트를 안 쓴다');
-  const reasonBlock = source.slice(source.indexOf('rejecting &&'));
+  // 'pending && rejecting &&' 로 정확히 자른다 — 'rejecting &&' 만 찾으면 그 앞줄의
+  // '!rejecting &&'(승인/거절 버튼 행)에도 부분 일치해 시작점이 한 블록 위로 밀린다.
+  const reasonBlock = source.slice(source.indexOf('pending && rejecting &&'));
   assert.ok(/<Textarea\b/.test(reasonBlock), '거절 사유 입력이 Textarea 가 아니다');
 });
