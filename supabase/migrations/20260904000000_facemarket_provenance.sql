@@ -71,7 +71,7 @@ create table if not exists public.fm_publication_anchor_jobs (
                    references public.fm_publication_records(id) on delete cascade,
   status         text not null default 'pending'
                    check (status in ('pending', 'processing', 'retry', 'anchored', 'dead')),
-  attempts       integer not null default 0,
+  attempts       integer not null default 0 check (attempts >= 0),
   lease_until    timestamptz,
   attempted_at   timestamptz,
   last_error     text,
