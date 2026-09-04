@@ -276,6 +276,30 @@ export async function verifyLicensePublic(licenseId) {
   return res.json();
 }
 
+// GET /v1/facemarket/publications/verify/{id} — 배포본 공개 검증. **무인증**.
+// C2PA 매니페스트의 verifyUrl 이 여기로 온다(파일 안에 박혀 배포된 뒤 회수 불가).
+// 응답은 서버 화이트리스트(PublicationVerifyResult) 그대로:
+//   { valid, status, publishedAt, imageHashPrefix, kind, allowedUse, forbiddenUse,
+//     licenseValidUntil, chain, model:{ nameMasked, age } }
+// 얼굴·CI·생년월일·user_id·model_id·seller_id·내부 R2 키·전체 image_sha256 은 서버가
+// 애초에 싣지 않는다. 해지가 즉시 반영돼야 하므로 캐시 금지(위 verifyLicensePublic 과 동일 패턴).
+export async function verifyPublicationPublic(publicationId) {
+  const res = await fetch(
+    `${BASE_URL}/v1/facemarket/publications/verify/${encodeURIComponent(publicationId)}`,
+    { headers: { Accept: 'application/json' }, cache: 'no-store' },
+  );
+  if (!res.ok) {
+    let message = res.status === 404
+      ? '찾을 수 없는 기록이에요.'
+      : '확인하지 못했어요. 잠시 후 다시 시도해 주세요.';
+    try { const p = await res.json(); if (p?.error?.message) message = p.error.message; } catch { /* 비 JSON */ }
+    const err = new Error(message);
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
 // 게이트 얼굴 이미지 → objectURL. <img> 는 Bearer 를 못 보내므로 fetch+blob 로 인증해 받는다.
 // 호출부는 표시 후 URL.revokeObjectURL 로 해제할 것.
 export async function fetchLicenseFaceUrl(faceImageUri) {

@@ -29,6 +29,7 @@ import { Pricing } from '@/features/pricing/Pricing.jsx';
 import { CreditsHistory } from '@/features/credits/CreditsHistory.jsx';
 import { PaymentSuccess, PaymentFail } from '@/features/payments/PaymentResult.jsx';
 import { PublicVerify } from '@/features/verify/PublicVerify.jsx';
+import { PublicVerifyPublication } from '@/features/verify/PublicVerifyPublication.jsx';
 import { RequireAuth } from '../guards.jsx';
 import { MODEL_SECTION_ROUTES } from './modelSectionRoutes.jsx';
 import { domainRouteRedirect, redirectToOwnDocumentHost } from '@/lib/host.js';
@@ -98,6 +99,9 @@ export default function AppFacemarket() {
           두면 QR 이 무의미해진다). 상단바 밖에도 둔다 — 스캔으로 진입한 사람에게 앱
           내비게이션은 잡음이다. 얼굴은 이 페이지에 렌더되지 않는다(PublicVerify 주석). */}
       <Route path="verify/:licenseId" element={<PublicVerify />} />
+      {/* 배포본 공개 검증(step07) — C2PA 매니페스트의 verifyUrl 종착지. 위와 같은 이유로
+          RequireAuth 밖·앱 크롬 밖(PublicVerifyPublication 주석). */}
+      <Route path="verify/p/:publicationId" element={<PublicVerifyPublication />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

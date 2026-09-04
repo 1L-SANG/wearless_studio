@@ -21,6 +21,7 @@ import { Pricing } from '@/features/pricing/Pricing.jsx';
 import { CreditsHistory } from '@/features/credits/CreditsHistory.jsx';
 import { PaymentSuccess, PaymentFail } from '@/features/payments/PaymentResult.jsx';
 import { PublicVerify } from '@/features/verify/PublicVerify.jsx';
+import { PublicVerifyPublication } from '@/features/verify/PublicVerifyPublication.jsx';
 import { ProductInput } from '@/features/product-input/ProductInput.jsx';
 import { Mannequin } from '@/features/mannequin/Mannequin.jsx';
 import { Storyboard } from '@/features/storyboard/Storyboard.jsx';
@@ -607,6 +608,9 @@ export default function App() {
             두면 QR 이 무의미해진다). 크롬(TopNav) 밖에도 둔다 — 스캔으로 진입한 사람에게
             앱 내비게이션은 잡음이다. 얼굴은 이 페이지에 렌더되지 않는다(PublicVerify 주석). */}
         <Route path="verify/:licenseId" element={<PublicVerify />} />
+        {/* 배포본 공개 검증(step07) — C2PA 매니페스트의 verifyUrl 종착지. 위와 같은 이유로
+            RequireAuth 밖·크롬 밖(PublicVerifyPublication 주석). */}
+        <Route path="verify/p/:publicationId" element={<PublicVerifyPublication />} />
         <Route path="*" element={<Navigate to="/create/input" replace />} />
       </Routes>
     </>

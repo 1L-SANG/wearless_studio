@@ -15,15 +15,20 @@ import json
 import logging
 import time
 import uuid
+from datetime import datetime
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from psycopg.types.json import Json
 
 from .auth import require_user
 from .facemarket import (
     CamelModel,
     ErrorResponse,
+    PublicVerifyModel,
+    _age_from_birth_year,
     _err,
+    _is_expired,
+    _mask_name,
     get_conn,
     resolve_model_license,
     verify_license_local,
@@ -339,4 +344,107 @@ async def sign(request: Request, body: SignRequest, user_id: str = Depends(requi
         "publicationId": publication_id, "downloadUrl": download_url,
         "verifyUrl": verify_url, "c2paStatus": c2pa_status,
         "chainStatus": row["chain_status"],
+    }
+
+
+# ============================================================================
+# 공개 검증 (무인증) — C2PA 매니페스트의 verifyUrl 이 여기를 가리킨다.
+#
+# 🔴 하드룰: facemarket.py:1249 와 동일. 무인증이라 한 번 나가면 회수 불가다.
+#   절대 미노출 — 얼굴·face_image_*·CI·ci_hash·생년월일 원문·실명·user_id·model_id·
+#   seller_id·내부 R2 키·전체 image_sha256·source_asset_ids.
+#   3중 방어: ① SELECT 화이트리스트 ② response_model 이 선언 밖 필드 탈락
+#            ③ 신원은 파생값만(마스킹 이름·만 나이)
+#   필드 추가 요청이 오면 이 주석을 먼저 읽을 것. 확장은 계약 변경이다.
+# ============================================================================
+
+
+class PublicationChain(CamelModel):
+    status: str
+    tx_hash: str | None = None
+    chain_id: str | None = None
+    block: int | None = None
+
+
+class PublicationVerifyResult(CamelModel):
+    """공개 검증 응답 화이트리스트. **이 필드가 전부** — 확장 금지."""
+
+    valid: bool
+    status: str                 # 'active' | 'revoked' | 'expired'
+    published_at: datetime
+    image_hash_prefix: str      # sha256 앞 12자. 전체는 안 싣는다
+    kind: str
+    allowed_use: list[str]
+    forbidden_use: list[str]
+    license_valid_until: datetime | None = None
+    chain: PublicationChain | None = None
+    model: PublicVerifyModel
+
+
+@router.get(
+    "/verify/{publication_id}",
+    response_model=PublicationVerifyResult,
+    responses={404: {"model": ErrorResponse, "description": "없음/잘못된 id"}},
+    summary="배포본 공개 검증 (무인증)",
+)
+async def verify_publication(request: Request, publication_id: str, response: Response):
+    """C2PA 매니페스트의 verifyUrl 종착지. **인증 없음**(누구나 파일 출처를 확인한다)."""
+    try:
+        pub_uuid = uuid.UUID(str(publication_id))
+    except (ValueError, TypeError):
+        raise _err("not_found", "기록을 찾을 수 없습니다.", status=404)
+
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            # 방어 ① — 화이트리스트 SELECT. r2_key·seller_id·source_asset_ids·signed_sha256 미조회.
+            await cur.execute(
+                """select p.kind, p.image_sha256, p.created_at, p.revoked_at,
+                          p.chain_status, p.tx_hash, p.chain_id, p.recorded_block,
+                          l.status as license_status, l.allowed_use, l.forbidden_use,
+                          l.license_valid_until, m.display_name,
+                          (select v.fields->>'birthYear' from fm_identity_verifications v
+                            where v.model_id = m.id
+                            order by v.verified_at desc limit 1) as birth_year
+                     from fm_publication_records p
+                     left join fm_licenses l on l.id = p.license_id
+                     left join fm_models m on m.id = p.model_id
+                    where p.id = %s""",
+                (str(pub_uuid),),
+            )
+            row = await cur.fetchone()
+    if row is None:
+        raise _err("not_found", "기록을 찾을 수 없습니다.", status=404)
+
+    if row["revoked_at"] is not None:
+        status = "revoked"
+    elif row["license_status"] == "revoked":
+        status = "revoked"
+    elif row["license_status"] is None:
+        status = "revoked"        # 라이선스가 사라졌다 = 더 이상 권한을 확인할 수 없다
+    elif _is_expired(row):
+        status = "expired"
+    else:
+        status = row["license_status"]
+
+    response.headers["Cache-Control"] = "no-store"   # 철회가 즉시 반영돼야 한다
+    chain = None
+    if row["chain_status"]:
+        chain = {
+            "status": row["chain_status"], "txHash": row["tx_hash"],
+            "chainId": row["chain_id"], "block": row["recorded_block"],
+        }
+    return {
+        "valid": status == "active",
+        "status": status,
+        "publishedAt": row["created_at"],
+        "imageHashPrefix": (row["image_sha256"] or "")[:12],
+        "kind": row["kind"],
+        "allowedUse": row["allowed_use"] or [],
+        "forbiddenUse": row["forbidden_use"] or [],
+        "licenseValidUntil": row["license_valid_until"],
+        "chain": chain,
+        "model": {
+            "nameMasked": _mask_name(row["display_name"] or ""),
+            "age": _age_from_birth_year(row["birth_year"]),
+        },
     }
