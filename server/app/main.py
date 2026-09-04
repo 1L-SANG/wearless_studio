@@ -419,8 +419,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             from .facemarket_enrollment import router as biometric_enrollment_router
 
             app.include_router(biometric_enrollment_router)
+        if settings.fm_provenance_enabled:
+            from .facemarket_provenance import router as provenance_router
+            from .services.c2pa_signer import C2paSigner
+
+            app.include_router(provenance_router)
+            app.state.fm_c2pa_signer = C2paSigner.from_settings(settings)
+        else:
+            app.state.fm_c2pa_signer = None
     else:
         app.state.fm_chain = None
+        app.state.fm_c2pa_signer = None
 
     # 개인화(사용자 본인 얼굴·신체) — 플래그 on일 때만 등록. off(프로드 기본)면 라우트 미존재
     # → 생체정보 처리 코드가 프로드에 배포되지 않는다(api-spec §1.1).
