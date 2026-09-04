@@ -69,8 +69,10 @@ test('admin.css 는 최상위 규칙을 전부 @layer 블록이나 @import ... l
     if (ch === '{') {
       if (depth === 0) {
         const trimmedHead = head.trim();
+        // '@import' 는 여기 안 넣는다 — @import 문은 항상 ';' 로 끝나고 '{' 를 절대 안 연다.
+        // 그래서 넣어 놔도 이 분기가 실행될 일이 없다(죽은 코드) — 아래 ';' 분기에서
+        // 따로, 진짜로 검사한다.
         const isAllowed = trimmedHead.startsWith('@layer')
-          || trimmedHead.startsWith('@import')
           || ALLOWED_UNLAYERED_HEADS.some((h) => trimmedHead === h || trimmedHead.startsWith(`${h} `));
         if (!isAllowed) violations.push(trimmedHead || '(빈 셀렉터)');
       }
@@ -80,7 +82,20 @@ test('admin.css 는 최상위 규칙을 전부 @layer 블록이나 @import ... l
       depth = Math.max(0, depth - 1);
       head = '';
     } else if (ch === ';' && depth === 0) {
-      head = ''; // @layer 선언 줄·@import 문 등 세미콜론으로 끝나는 최상위 문장
+      // ';' 로 끝나는 최상위 문장 — admin.css 에 실제로 나타나는 세 종류만 허용한다:
+      //   1) '@layer theme, base, ...;'  레이어 순서 선언 — 자기 자신은 아무것도 안 지운다.
+      //   2) '@import "..." layer(NAME);'  반드시 layer(...) 를 달아야 한다. 이게 없으면
+      //      그 스타일시트 전체가 레이어 밖으로 들어온다 — 바로 이 파일이 막으려는 사고다.
+      //   3) '@source "...";'  Tailwind 클래스 스캔 지시자, CSS 를 한 줄도 안 낸다.
+      // 예전엔 여기서 무슨 문장이든 검사 없이 head 만 비웠다 — @import 뒤 layer(...) 를
+      // 지워도(진짜 unlayered 스타일시트가 돼도) 통과했다. 지금은 세 형태 중 하나가
+      // 아니면 실패한다.
+      const trimmedHead = head.trim();
+      const isAllowedStatement = trimmedHead.startsWith('@layer ')
+        || (trimmedHead.startsWith('@import ') && /\blayer\([^)]+\)\s*$/.test(trimmedHead))
+        || trimmedHead.startsWith('@source ');
+      if (!isAllowedStatement) violations.push(trimmedHead || '(빈 문장)');
+      head = '';
     } else {
       head += ch;
     }
