@@ -19,6 +19,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, Request, Response
 from psycopg.types.json import Json
+from pydantic import Field
 
 from .auth import require_user
 from .facemarket import (
@@ -48,6 +49,31 @@ _MIME = {"long_png": "image/png", "block_png": "image/png", "zip": "application/
 
 class TokenInvalid(Exception):
     """업로드 토큰이 위조·만료됐거나 다른 시크릿으로 만들어졌다."""
+
+
+def _token_secret(settings) -> str:
+    """업로드 토큰 HMAC 시크릿.
+
+    fm_ci_pepper 는 생체 CI(주민등록번호 계열) 해시 전용 시크릿이다 — 이 시스템이 들고
+    있는 가장 민감한 PII 를 보호한다. 재사용하면 그 시크릿의 blast radius 가 훨씬 더
+    노출된 경로(모든 배포 액션, 공격자 영향 입력에 가까운 presign/sign 왕복)로 번진다.
+    HMAC-SHA256 은 관측된 MAC 에서 키가 새지 않으니 오늘 당장의 익스플로잇은 없지만,
+    "TokenInvalid 를 디버그 로그로 찍자"는 아주 흔한 후속 변경 하나가 이 시크릿을,
+    fm_ci_pepper 를 재사용했다면 CI 해시 전체까지 함께 새게 만든다(리뷰 I1, 2026-09-04).
+
+    미설정이면 **폐쇄 실패**(503) 한다 — fm_ci_pepper 로 조용히 되돌아가는 건 I1 이
+    끊으려는 바로 그 결합을 다시 붙이는 것이라 선택하지 않았다. 이 라우트는
+    fm_provenance_enabled 뒤에 있는 옵트인 기능이라, 503 은 "이 기능은 아직 설정이 끝나지
+    않았다"는 정확한 신호이지 이미 쓰고 있던 사용자에게 가는 피해가 아니다.
+    """
+    secret = settings.fm_provenance_token_secret
+    if not secret:
+        raise _err(
+            "provenance_unconfigured",
+            "배포본 공증 기능이 아직 설정되지 않았습니다.",
+            status=503,
+        )
+    return secret
 
 
 def make_upload_token(
@@ -124,7 +150,12 @@ class SignResult(CamelModel):
     publication_id: str
     download_url: str
     verify_url: str
-    c2pa_status: str
+    # CamelModel 의 alias_generator(pydantic to_camel)가 "c2pa_status" 를 "c2PaStatus" 로
+    # 잘못 변환한다("2" 뒤 경계를 토큰 분리로 오인) — 실측: to_camel("c2pa_status") ==
+    # "c2PaStatus". 라우트는 브리핑·프론트(Task 8)가 합의한 "c2paStatus" 를 돌려주므로,
+    # 둘이 어긋나 모든 성공 응답이 ResponseValidationError 500 이 났다(리뷰 I5 라우트
+    # 테스트가 처음 잡음). alias 를 명시로 고정해 자동생성기를 우회한다.
+    c2pa_status: str = Field(alias="c2paStatus")
     chain_status: str
 
 
@@ -169,6 +200,24 @@ async def _resolve_project_license(conn, *, user_id: str, project_id: str) -> di
     return lic
 
 
+def _verify_license_or_raise(app, lic: dict) -> None:
+    """verify_license_local 호출 단일 지점 — presign·sign 양쪽이 동일하게 통과해야
+    한다(리뷰 I2: sign 이 이 게이트를 빠뜨리면 presign→sign 사이 _UPLOAD_TTL(5분) 창에서
+    라이선스가 철회돼도 그 스테일 상태가 회수 불가능한 파일 안에 그대로 박힌다).
+
+    brand_use_category 는 라이선스 자신이 허용하는 카테고리 중 하나를 그대로 넘긴다 —
+    여기서는 특정 브랜드 카테고리로 "생성" 중이 아니라 이미 끝난 생성이 실제로 소비한
+    라이선스가 지금도 유효한지(활성·미만료·모델 verified·enrollment passed·자산 ready)만
+    확인하면 되기 때문이다. None 을 넘기면 verify_license_local 이 매번
+    brand_use_category_required 로 막는다 — 실호출 경로 중 None 을 넘기는 경로는 없다.
+    """
+    allowed_use = lic.get("allowed_use") or []
+    verify_license_local(
+        app, lic, model_id=lic["model_id"],
+        brand_use_category=allowed_use[0] if allowed_use else None,
+    )
+
+
 @router.post(
     "/presign",
     response_model=PresignResult,
@@ -182,26 +231,19 @@ async def _resolve_project_license(conn, *, user_id: str, project_id: str) -> di
 async def presign(
     request: Request, body: PresignRequest, user_id: str = Depends(require_user)
 ):
+    s = request.app.state.settings
+    # 설정 게이트(미설정 시 503)를 DB 조회보다 먼저 확인한다 — 이 기능이 아예 설정 안
+    # 됐으면 라이선스 사용 내역을 찾겠다고 DB 를 굳이 건드릴 이유가 없다.
+    secret = _token_secret(s)
     if body.kind not in _KINDS:
         raise _err("invalid_kind", "지원하지 않는 형식입니다.")
     if body.byte_size <= 0 or body.byte_size > _MAX_UPLOAD_BYTES:
         raise _err("too_large", "파일이 너무 큽니다.")
     async with get_conn(request) as conn:
         lic = await _resolve_project_license(conn, user_id=user_id, project_id=body.project_id)
-    # verify_license_local 은 brand_use_category 도 게이트한다(라이선스가 허용하는 카테고리
-    # 중 하나여야 함). 여기서는 특정 브랜드 카테고리로 "생성"하는 게 아니라 이미 끝난 생성이
-    # 실제로 소비한 라이선스가 지금도 유효한지(활성·미만료·모델 verified)만 확인하면 되므로,
-    # 그 라이선스 자신이 허용하는 카테고리 중 하나를 그대로 넘긴다 — None 을 넘기면 매번
-    # brand_use_category_required 로 막힌다(모든 실호출 경로가 실제 카테고리 문자열을 넘기지,
-    # None 을 넘기는 경로가 없다).
-    allowed_use = lic.get("allowed_use") or []
-    verify_license_local(
-        request.app, lic, model_id=lic["model_id"],
-        brand_use_category=allowed_use[0] if allowed_use else None,
-    )
+    _verify_license_or_raise(request.app, lic)
 
     key = f"publications/{user_id}/{uuid.uuid4()}/upload"
-    secret = request.app.state.settings.fm_ci_pepper
     token = make_upload_token(
         secret, seller_id=user_id, key=key, project_id=body.project_id,
         kind=body.kind, expires_at=time.time() + _UPLOAD_TTL,
@@ -213,18 +255,26 @@ async def presign(
 
 
 async def _upsert_publication(conn, *, seller_id, project_id, lic, kind, sha, size) -> dict:
-    """(seller_id, image_sha256) 멱등. 이미 있으면 기존 행을 돌려준다 — 그 id 가 정본."""
+    """(seller_id, image_sha256) 멱등. 이미 있으면 기존 행을 돌려준다 — 그 id 가 정본.
+
+    source_asset_ids 를 INSERT 값에 싣는다(리뷰 I4) — 마이그레이션이 1급 컬럼으로 선언한
+    걸 이전에는 빠뜨려서 모든 행에서 영구히 비어 있었다. zip 처럼 매니페스트가 아예 없는
+    kind 에서는 이 컬럼이 "어떤 원본 컷들이 이 배포본을 만들었는가"의 유일한 기록이라
+    분쟁·정산 조회가 c2pa_manifest jsonb 를 파헤치지 않아도 되게 한다. `on conflict ...
+    do nothing` 이라 충돌 시 이 INSERT 문 자체가 통째로 스킵된다 — 기존 행의
+    source_asset_ids 는 절대 건드리지 않는다(클로버링 없음)."""
     cols = ("id::text as id, c2pa_status, chain_status, r2_key, signed_sha256")
+    asset_ids = list(lic.get("asset_ids") or [])
     async with conn.cursor() as cur:
         await cur.execute(
             f"""insert into fm_publication_records
                   (project_id, seller_id, license_id, license_ref, model_id,
-                   kind, image_sha256, byte_size)
-                values (%s, %s, %s, %s, %s, %s, %s, %s)
+                   kind, image_sha256, byte_size, source_asset_ids)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 on conflict (seller_id, image_sha256) do nothing
                 returning {cols}""",
             (project_id, seller_id, lic.get("license_id"), lic["license_ref"],
-             lic["model_id"], kind, sha, size),
+             lic["model_id"], kind, sha, size, asset_ids),
         )
         row = await cur.fetchone()
         if row is None:
@@ -242,16 +292,19 @@ async def _upsert_publication(conn, *, seller_id, project_id, lic, kind, sha, si
     "/sign",
     response_model=SignResult,
     responses={
+        400: {"model": ErrorResponse, "description": "잘못된 요청"},
         401: {"model": ErrorResponse, "description": "인증 실패"},
         403: {"model": ErrorResponse, "description": "업로드 토큰 무효"},
         404: {"model": ErrorResponse, "description": "업로드 객체 없음"},
+        409: {"model": ErrorResponse, "description": "라이선스 사용 불가"},
+        503: {"model": ErrorResponse, "description": "공증 기능 미설정"},
     },
     summary="배포본 공증 — 해시·원장·C2PA 서명",
 )
 async def sign(request: Request, body: SignRequest, user_id: str = Depends(require_user)):
     s = request.app.state.settings
     try:
-        parsed = parse_upload_token(s.fm_ci_pepper, body.upload_token)
+        parsed = parse_upload_token(_token_secret(s), body.upload_token)
     except TokenInvalid:
         raise _err("invalid_token", "업로드 토큰이 유효하지 않습니다.", status=403)
     if parsed["seller_id"] != user_id:
@@ -259,17 +312,39 @@ async def sign(request: Request, body: SignRequest, user_id: str = Depends(requi
 
     r2 = request.app.state.r2
     key = parsed["key"]
+
+    # I3 — presign 에 실린 byte_size 는 클라이언트 자기신고값이라 강제력이 없다(presigned
+    # PUT 은 ContentType 만 고정하지 ContentLength 는 고정하지 않는다). get_bytes 로 전체
+    # 바이트를 메모리에 올리기 전에 HEAD 로 실제 크기를 먼저 본다 — 그래야 무권한이거나
+    # 초과용량인 요청이 바이트 전송 비용을 물지 않는다. 라이선스 게이트(아래)도 같은 이유로
+    # get_bytes 이전에 끝낸다.
+    meta = await asyncio.to_thread(r2.head, key)
+    if meta is None:
+        raise _err("not_found", "업로드된 파일을 찾을 수 없습니다.", status=404)
+    actual_size = meta.get("size")
+    if actual_size is None or actual_size <= 0 or actual_size > _MAX_UPLOAD_BYTES:
+        raise _err("too_large", "파일이 너무 큽니다.", status=400)
+
+    project_id = parsed["project_id"]
+    kind = parsed["kind"]
+    mime = _MIME[kind]
+
+    async with get_conn(request) as conn:
+        lic = await _resolve_project_license(conn, user_id=user_id, project_id=project_id)
+    # I2 — presign 이 통과했더라도 업로드 대기 TTL(_UPLOAD_TTL=300초) 동안 라이선스가
+    # 철회될 수 있다. 산출물(서명된 파일)은 여기, sign 에서 "만들어진다" — 이미 나간 바이트는
+    # 회수할 수 없지만, 아직 안 만든 바이트를 만들지 않는 건 지금 우리가 통제할 수 있다.
+    # 그래서 매니페스트를 조립하기 전에 다시 게이트를 통과해야 한다(리뷰 I2 판정) — 여기서
+    # 막히면 스테일 licenseId/allowedUse/forbiddenUse 가 회수 불가 파일에 안 박힌다.
+    _verify_license_or_raise(request.app, lic)
+
     try:
         data = await asyncio.to_thread(r2.get_bytes, key)
     except Exception:
         raise _err("not_found", "업로드된 파일을 찾을 수 없습니다.", status=404)
 
     sha = hashlib.sha256(data).hexdigest()
-    project_id = parsed["project_id"]
-    kind = parsed["kind"]
-    mime = _MIME[kind]
     async with get_conn(request) as conn:
-        lic = await _resolve_project_license(conn, user_id=user_id, project_id=project_id)
         row = await _upsert_publication(
             conn, seller_id=user_id, project_id=project_id, lic=lic,
             kind=kind, sha=sha, size=len(data),

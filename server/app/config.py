@@ -347,6 +347,12 @@ class Settings:
     fm_c2pa_key_pem: str | None = None
     # 배포된 FaceMarketProvenance 주소(0x…). 없으면 앵커 no-op.
     fm_provenance_address: str | None = None
+    # 배포본 업로드 토큰 HMAC 시크릿. fm_ci_pepper(생체 CI 해시 전용)를 재사용하지 않는다 —
+    # 재사용하면 CI 해시를 보호하는 시크릿의 blast radius 가 presign/sign 왕복이라는 훨씬
+    # 더 노출된 경로로 번진다(리뷰 I1, 2026-09-04). 미설정이면 fm_provenance_enabled 라우트가
+    # 503(provenance_unconfigured)으로 폐쇄 실패한다 — fm_ci_pepper 로 조용히 되돌아가는 건
+    # 끊으려는 결합을 다시 붙이는 것이라 선택하지 않았다.
+    fm_provenance_token_secret: str | None = None
     # C2PA 매니페스트의 verifyUrl 과 공개 검증 링크의 출처. 틀리면 이미 배포된 파일 안
     # 링크가 잘못된 곳을 가리키고 회수할 수 없다.
     public_web_origin: str = "https://wearless.kr"
@@ -647,6 +653,7 @@ def load_settings() -> Settings:
         fm_c2pa_cert_pem=os.getenv("FM_C2PA_CERT_PEM") or None,
         fm_c2pa_key_pem=os.getenv("FM_C2PA_KEY_PEM") or None,
         fm_provenance_address=os.getenv("FM_PROVENANCE_ADDRESS") or None,
+        fm_provenance_token_secret=os.getenv("FM_PROVENANCE_TOKEN_SECRET") or None,
         public_web_origin=(
             os.getenv("PUBLIC_WEB_ORIGIN") or "https://wearless.kr"
         ).rstrip("/"),
