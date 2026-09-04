@@ -28,6 +28,23 @@ test('큐 카드는 처리 화면으로 이어진다', () => {
   assert.ok(source.includes('/applications?status=under_review'), '검토 대기가 목록으로 안 이어진다');
 });
 
+test('모델 상태 카드는 재검증 필요 버킷도 읽는다 — fm_models.status 가 허용하는 네 번째 값', () => {
+  // fm_models.status 는 pending·verified·suspended 말고 reverification_required 도
+  // 허용한다(생체등록 재검증 컷오버가 실제로 이 상태로 옮긴다). 이 칸이 없으면 그 모델은
+  // 어느 버킷에도 안 잡혀 대시보드에서 안 보이고 합계도 조용히 안 맞는다.
+  const source = read('src/features/admin/AdminDashboard.jsx');
+  assert.ok(
+    source.includes('distribution.models.reverificationRequired'),
+    'distribution.models.reverificationRequired 를 안 읽는다',
+  );
+  // 이 브랜치에서 백엔드 API 변경(다른 브랜치 feat/admin-console)을 볼 수 없다 — 아직
+  // 이 필드를 안 주는 구버전 응답에도 undefined 를 그대로 렌더하면 안 된다.
+  assert.ok(
+    /distribution\.models\.reverificationRequired\s*\?\?\s*0/.test(source),
+    '필드가 없을 때(구버전 백엔드) undefined 를 그대로 렌더할 수 있다 — ?? 0 가드가 없다',
+  );
+});
+
 test('다시 시도는 자기 자신을 돌려주는 no-op 함수형 업데이트가 아니고, 실제로 effect 를 재실행시킨다', () => {
   // setDays((d) => d) 처럼 함수형 업데이트가 이전과 같은 값을 돌려주면 리액트는
   // bail-out 해서 리렌더도 useEffect([days]) 재실행도 안 한다 — 버튼이 눌려도 아무 일도

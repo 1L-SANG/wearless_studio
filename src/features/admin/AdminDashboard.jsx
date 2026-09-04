@@ -150,6 +150,12 @@ export function AdminDashboard() {
             <span>대기 {distribution.models.pending}</span>
             <span>검증됨 {distribution.models.verified}</span>
             <span>정지 {distribution.models.suspended}</span>
+            {/* fm_models.status 는 reverification_required 도 허용하고(생체등록 재검증
+                컷오버가 실제로 이 상태로 옮긴다), 이 넷째 칸이 없으면 그 모델은 어느
+                버킷에도 안 잡혀 대시보드에서 안 보이면서 합계도 조용히 안 맞았다.
+                ?? 0 은 이 필드가 아직 없는 구버전 백엔드 응답을 방어한다(다른 세 필드는
+                항상 있었던 계약이라 그대로 둔다). */}
+            <span>재검증 필요 {distribution.models.reverificationRequired ?? 0}</span>
           </CardContent>
         </Card>
         <Card>
