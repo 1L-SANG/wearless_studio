@@ -1,0 +1,119 @@
+import { SETTLEMENT_DAY } from './facemarketTerms.js';
+
+const SEOUL_TIME_ZONE = 'Asia/Seoul';
+const DATE_PARTS = new Intl.DateTimeFormat('en-CA', {
+  timeZone: SEOUL_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+const OPTIONAL_FIELDS = {
+  shop: ['shopName', 'mallName', 'storeName', 'merchantName'],
+  item: ['itemName', 'productName', 'productTitle', 'item'],
+  thumbnail: ['thumbnailUrl', 'productThumbnailUrl', 'itemThumbnailUrl'],
+};
+
+function seoulParts(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = Object.fromEntries(
+    DATE_PARTS.formatToParts(date).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]),
+  );
+  return { year: Number(parts.year), month: Number(parts.month), day: Number(parts.day) };
+}
+
+function compactDate(value) {
+  const parts = seoulParts(value);
+  if (!parts) return '—';
+  return `${parts.year}.${String(parts.month).padStart(2, '0')}.${String(parts.day).padStart(2, '0')}`;
+}
+
+function nextSettlement(now) {
+  const parts = seoulParts(now) || seoulParts(new Date());
+  let year = parts.year;
+  let month = parts.month;
+  if (parts.day >= SETTLEMENT_DAY) {
+    month += 1;
+    if (month === 13) { year += 1; month = 1; }
+  }
+  return { year, month, day: SETTLEMENT_DAY };
+}
+
+export function summarizeSettlements(rows = [], now = new Date()) {
+  const current = seoulParts(now) || seoulParts(new Date());
+  return rows.reduce((summary, row) => {
+    const amount = Number(row?.modelAmount || 0);
+    const created = seoulParts(row?.createdAt);
+    summary.totalAmount += Number.isFinite(amount) ? amount : 0;
+    if (created && created.year === current.year && created.month === current.month) {
+      summary.monthCount += 1;
+      summary.monthAmount += Number.isFinite(amount) ? amount : 0;
+    }
+    return summary;
+  }, {
+    monthCount: 0,
+    monthAmount: 0,
+    totalAmount: 0,
+    nextSettlement: nextSettlement(now),
+  });
+}
+
+function hasOwnField(rows, fields) {
+  return rows.some((row) => fields.some((field) => Object.prototype.hasOwnProperty.call(row || {}, field)));
+}
+
+export function settlementColumns(rows = []) {
+  const hasShop = hasOwnField(rows, OPTIONAL_FIELDS.shop);
+  const hasItem = hasOwnField(rows, OPTIONAL_FIELDS.item)
+    || rows.some((row) => Object.prototype.hasOwnProperty.call(row || {}, 'billingType'));
+  const hasThumbnail = hasOwnField(rows, OPTIONAL_FIELDS.thumbnail);
+  return [
+    { key: 'date', label: '날짜' },
+    ...(hasShop ? [{ key: 'shop', label: '쇼핑몰' }] : []),
+    ...(hasItem ? [{ key: 'item', label: '품목' }] : []),
+    ...(hasThumbnail ? [{ key: 'thumbnail', label: '썸네일' }] : []),
+    { key: 'share', label: '내 몫' },
+    { key: 'status', label: '상태' },
+  ];
+}
+
+function firstValue(row, fields) {
+  for (const field of fields) {
+    if (row?.[field] != null && row[field] !== '') return row[field];
+  }
+  return null;
+}
+
+function settlementStatus(row, license, now) {
+  const raw = row?.licenseStatus || row?.status || license?.status;
+  const validUntil = row?.licenseValidUntil || license?.licenseValidUntil;
+  if (['expired', 'revoked', 'inactive'].includes(raw)) return '만료';
+  if (validUntil) {
+    const expiry = new Date(validUntil);
+    if (!Number.isNaN(expiry.getTime()) && expiry <= now) return '만료';
+  }
+  if (raw === 'active') return '활성';
+  return '—';
+}
+
+export function normalizeSettlementRow(row, licenses = [], now = new Date()) {
+  const license = licenses.find((candidate) => candidate.id === row?.licenseId) || null;
+  const billingType = row?.billingType || 'per_use';
+  const periodStart = row?.periodStart;
+  const periodEnd = row?.periodEnd;
+  const billingLabel = billingType === 'monthly'
+    ? `월정액${periodStart && periodEnd ? ` · ${compactDate(periodStart)}~${compactDate(periodEnd)}` : ''}`
+    : '건당';
+
+  return {
+    id: row?.id || row?.paymentId,
+    date: compactDate(row?.createdAt),
+    shop: firstValue(row, OPTIONAL_FIELDS.shop),
+    item: firstValue(row, OPTIONAL_FIELDS.item),
+    thumbnail: firstValue(row, OPTIONAL_FIELDS.thumbnail),
+    share: Number.isFinite(Number(row?.modelAmount)) ? Number(row.modelAmount) : 0,
+    status: settlementStatus(row, license, now),
+    billingLabel,
+  };
+}
