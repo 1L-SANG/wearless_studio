@@ -545,24 +545,32 @@ async def set_role(conn, *, target_user_id: str, actor: str, role: str) -> dict:
         raise _err("cannot_demote_self", "자기 자신의 관리자 권한은 내릴 수 없어요.")
 
     async with conn.cursor() as cur:
+        # 관리자 전원 + 대상 행을 한 쿼리로, user_id 순으로 정렬해 한 번에 잠근다.
+        # 예전에는 대상 행을 먼저 잠그고(강등일 때만) 관리자 집합을 그 다음에 잠갔다 —
+        # A 가 B 를, 동시에 B 가 A 를 내리면 각자 상대의 대상 행을 쥔 채 상대가 쥔
+        # 관리자-집합 잠금을 기다리게 되어 순환이 생기고, Postgres 가 한 쪽을 데드락으로
+        # 죽인다. "관리자 0명 방지" 불변식 자체는 지켜지지만, 죽는 쪽은 의도한 last_admin
+        # 400 이 아니라 처리 안 된 500 을 받는다 — 무슨 일이 있었는지, 처리가 됐는지조차
+        # 알 수 없다. 필요한 행을 전부 같은 순서로 한 번에 잠그면 동시 트랜잭션들은 죽지
+        # 않고 그 순서대로 줄을 선다.
         await cur.execute(
-            "select role from profiles where user_id = %s for update", (target_user_id,)
+            "select user_id::text as user_id, role from profiles "
+            "where role = 'admin' or user_id = %s order by user_id for update",
+            (target_user_id,),
         )
-        row = await cur.fetchone()
+        rows = await cur.fetchall() or []
+        target_row = next((r for r in rows if r["user_id"] == target_user_id), None)
         # 가드 3: 미가입 계정 승격 금지 — 초대 흐름을 만들지 않기로 했다(설계 §4.1).
-        if row is None:
+        if target_row is None:
             raise _err("user_not_found", "가입된 계정을 찾을 수 없어요.", status=404)
-        previous = row.get("role") or "user"
+        previous = target_row.get("role") or "user"
 
-        # 가드 2: 최후 관리자 강등 금지. count 를 for update 로 잠그지 않으면 두 관리자가
-        # 서로를 동시에 내려 0명이 될 수 있다(둘 다 "나 말고 하나 더 있다"를 읽는다).
+        # 가드 2: 최후 관리자 강등 금지. 위 쿼리가 이미 관리자 전원을 잠갔으니 그 결과
+        # 집합에서 그대로 센다 — 별도 count 쿼리를 다시 던지면 그 쿼리가 또 다른 잠금
+        # 순서를 만들어 데드락 위험이 되돌아온다.
         if role == "user" and previous == "admin":
-            await cur.execute(
-                "select count(*) as count from (select 1 from profiles "
-                "where role = 'admin' for update) as locked"
-            )
-            counted = await cur.fetchone() or {"count": 0}
-            if counted["count"] <= 1:
+            admin_count = sum(1 for r in rows if r.get("role") == "admin")
+            if admin_count <= 1:
                 raise _err("last_admin", "마지막 관리자는 내릴 수 없어요.")
 
         await cur.execute(

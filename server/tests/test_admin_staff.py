@@ -58,8 +58,8 @@ def test_cannot_demote_self():
 
 
 def test_cannot_demote_the_last_admin():
-    # 1) 대상 조회 → 관리자, 2) 관리자 수 → 1
-    conn = FakeConn([{"role": "admin"}, {"count": 1}])
+    # 관리자 전원 + 대상 행을 한 쿼리로 조회 → admin-2 혼자뿐이다.
+    conn = FakeConn([[{"user_id": "admin-2", "role": "admin"}]])
     with pytest.raises(Exception) as exc:
         asyncio.run(facemarket_admin.set_role(
             conn, target_user_id="admin-2", actor="admin-1", role="user",
@@ -67,14 +67,21 @@ def test_cannot_demote_the_last_admin():
     assert exc.value.detail["code"] == "last_admin"
 
 
-def test_last_admin_check_locks_the_rows():
-    """잠금 없이 세면 두 관리자가 서로를 동시에 내려 0명이 된다."""
-    conn = FakeConn([{"role": "admin"}, {"count": 2}, None])
+def test_role_change_locks_admins_and_target_in_one_ordered_pass():
+    """따로따로(대상 먼저, 관리자 집합 나중) 잠그면 두 관리자가 서로를 동시에 내릴 때
+    서로의 대상 행을 쥔 채 서로의 관리자-집합 잠금을 기다려 데드락이 난다. 한 쿼리로,
+    정렬해서, 한 번에 잠가야 동시 트랜잭션이 죽지 않고 줄을 선다.
+    """
+    conn = FakeConn([
+        [{"user_id": "admin-1", "role": "admin"}, {"user_id": "admin-2", "role": "admin"}],
+    ])
     asyncio.run(facemarket_admin.set_role(
         conn, target_user_id="admin-2", actor="admin-1", role="user",
     ))
-    counting = [sql for sql, _ in conn.executed if "count(" in sql]
-    assert counting and "for update" in counting[0]
+    selects = [sql for sql, _ in conn.executed if sql.startswith("select")]
+    assert len(selects) == 1, "관리자 집합과 대상 행을 여전히 따로 잠그고 있다"
+    assert "for update" in selects[0]
+    assert "order by user_id" in selects[0], "정렬 없이 잠그면 트랜잭션마다 잠금 순서가 갈려 데드락 위험이 남는다"
 
 
 def test_cannot_promote_a_user_without_a_profile():
@@ -88,7 +95,8 @@ def test_cannot_promote_a_user_without_a_profile():
 
 
 def test_promotion_updates_role_and_writes_audit():
-    conn = FakeConn([{"role": "user"}, None])
+    # 승격 대상은 관리자가 아니므로 role='admin' 조건으로는 안 잡히고, or user_id = %s 로 잡힌다.
+    conn = FakeConn([[{"user_id": "u2", "role": "user"}]])
     asyncio.run(facemarket_admin.set_role(
         conn, target_user_id="u2", actor="admin-1", role="admin",
     ))
@@ -101,7 +109,13 @@ def test_promotion_updates_role_and_writes_audit():
 
 
 def test_demotion_audit_action_is_revoke():
-    conn = FakeConn([{"role": "admin"}, {"count": 3}, None])
+    conn = FakeConn([
+        [
+            {"user_id": "admin-1", "role": "admin"},
+            {"user_id": "admin-2", "role": "admin"},
+            {"user_id": "admin-3", "role": "admin"},
+        ],
+    ])
     asyncio.run(facemarket_admin.set_role(
         conn, target_user_id="admin-2", actor="admin-1", role="user",
     ))
