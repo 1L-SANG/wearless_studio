@@ -2322,7 +2322,20 @@ async def list_models(conn, *, q: str | None, status: str | None, limit: int) ->
     return {"items": [_model_row(r) for r in rows]}
 
 
-DETAIL_MODEL_SQL = LIST_MODELS_SQL.split("where")[0] + " where m.id = %(model_id)s"
+# LIST_MODELS_SQL 을 문자열로 잘라 재사용하지 않는다 — 그 SQL 의 첫 where 는 서브쿼리
+# (select count(*) from fm_licenses l where ...) 안에 있어서, split("where")[0] 은 본문
+# where 가 아니라 서브쿼리 중간에서 잘린다. 전문을 따로 적는다.
+DETAIL_MODEL_SQL = """
+select m.id::text as id, m.display_name, m.status, m.created_at,
+       u.email as email,
+       (select count(*) from fm_licenses l where l.model_id = m.id) as license_count,
+       (select max(s.created_at) from fm_settlements s
+          join fm_licenses l2 on l2.id = s.license_id
+         where l2.model_id = m.id) as last_settlement_at
+from fm_models m
+left join auth.users u on u.id = m.user_id
+where m.id = %(model_id)s
+"""
 
 DETAIL_LICENSES_SQL = """
 select id::text as id, status, unit_price, license_valid_until, vc_id
