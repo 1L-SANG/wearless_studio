@@ -20,6 +20,7 @@ import {
 import { ModelFaceUpload } from './ModelFaceUpload.jsx';
 import {
   ENROLLMENT_ANGLES,
+  initialRegistrationStep,
   enrollmentReasonMessage,
   nextEnrollmentStep,
 } from './biometricEnrollment.js';
@@ -169,7 +170,8 @@ function renderStepRail(step) {
 
 export function ModelRegister() {
   const { state: routeState } = useLocation();
-  const [step, setStep] = useState('loading');
+  const completionHandoff = routeState?.completionSummary || null;
+  const [step, setStep] = useState(() => initialRegistrationStep(completionHandoff));
   const [enrollment, setEnrollment] = useState(null);
   const [session, setSession] = useState(null);
   const [error, setError] = useState('');
@@ -223,7 +225,7 @@ export function ModelRegister() {
 
   useEffect(() => {
     mounted.current = true;
-    restore();
+    if (!completionHandoff) restore();
     return () => {
       mounted.current = false;
       // 언마운트(라우트 이동·HMR·StrictMode 이중 마운트)로는 등록을 취소하지 않는다.
@@ -231,7 +233,7 @@ export function ModelRegister() {
       // (dev HMR 이 리마운트할 때마다 라이브니스 세션 발급 등록이 조용히 취소되던 버그를 막는다.)
       issuedLivenessEnrollmentRef.current = null;
     };
-  }, [restore]);
+  }, [completionHandoff, restore]);
 
   const photoApi = useMemo(() => enrollment ? ({
     load: () => getEnrollment(enrollment.id),
@@ -623,38 +625,49 @@ export function ModelRegister() {
   // 완료 카드에 필요한 모델·조건. 기존 useState 인덱스를 쓰는 등록 테스트를 깨뜨리지 않도록
   // 모든 기존 state 뒤에 둔다. 조회 실패 시 조건표 기본값으로 안전하게 표시한다.
   const [completionDetails, setCompletionDetails] = useState(() => ({
-    phase: routeState?.issuedLicense ? 'ready' : 'loading',
+    phase: 'loading',
     model: null,
-    license: routeState?.issuedLicense || null,
+    summary: null,
   }));
-
-  const completedEnrollment = routeState?.completedEnrollment || enrollment;
 
   useEffect(() => {
     if (step !== 'done') return undefined;
     let active = true;
-    if (!routeState?.issuedLicense) {
-      setCompletionDetails((details) => ({ ...details, phase: 'loading' }));
-    }
+    setCompletionDetails((details) => ({ ...details, phase: 'loading' }));
     void (async () => {
       try {
-        const models = await listMyModels().catch(() => []);
-        const licenses = routeState?.issuedLicense ? [routeState.issuedLicense] : await listLicenses();
+        const [models, licenses] = await Promise.all([listMyModels(), listLicenses()]);
         if (!active) return;
-        const model = models.find((candidate) => candidate.status === 'verified')
-          || models.find((candidate) => candidate.id === completedEnrollment?.modelId)
-          || models[0]
-          || null;
-        const license = licenses.find((candidate) => candidate.modelId === model?.id)
-          || licenses[0]
-          || null;
-        setCompletionDetails({ phase: license ? 'ready' : 'error', model, license });
+        const targetModelId = completionHandoff?.modelId || enrollment?.modelId || null;
+        const model = targetModelId
+          ? models.find((candidate) => candidate.id === targetModelId) || null
+          : models.find((candidate) => candidate.status === 'verified') || null;
+        const license = model
+          ? licenses.find((candidate) => candidate.modelId === model.id) || null
+          : null;
+        if (!model || !license) {
+          setCompletionDetails({ phase: 'error', model: null, summary: null });
+          return;
+        }
+        setCompletionDetails({
+          phase: 'ready',
+          model,
+          summary: {
+            gender: completionHandoff?.gender || enrollment?.gender || null,
+            heightBucket: completionHandoff?.heightBucket || enrollment?.heightBucket || null,
+            bodyType: completionHandoff?.bodyType || enrollment?.bodyType || null,
+            allowedUseCount: license.allowedUse?.length || 0,
+            unitPrice: license.unitPrice,
+            validityDays: license.validityDays,
+            licenseValidUntil: license.licenseValidUntil,
+          },
+        });
       } catch {
-        if (active) setCompletionDetails({ phase: 'error', model: null, license: null });
+        if (active) setCompletionDetails({ phase: 'error', model: null, summary: null });
       }
     })();
     return () => { active = false; };
-  }, [completedEnrollment?.modelId, routeState?.issuedLicense, step]);
+  }, [completionHandoff, enrollment?.bodyType, enrollment?.gender, enrollment?.heightBucket, enrollment?.modelId, step]);
 
   const genderForBuckets = enrollment?.gender || physiqueGender || null;
   const heightOptions = genderForBuckets ? heightBucketOptions(genderForBuckets) : [];
@@ -663,16 +676,16 @@ export function ModelRegister() {
   // 여성은 볼륨×실루엣 매트릭스(행 단위 가로 스크롤). 없으면 위 칩 목록으로 떨어진다.
   const bodyMatrix = bodyTypeMatrix(genderForBuckets);
   const completionModel = completionDetails.model;
-  const completionLicense = completionDetails.license;
-  const completionBody = bodyTypeLabel(completedEnrollment?.bodyType);
-  const completionHeight = heightBucketLabel(completedEnrollment?.heightBucket);
+  const completionSummary = completionDetails.summary;
+  const completionBody = bodyTypeLabel(completionSummary?.bodyType);
+  const completionHeight = heightBucketLabel(completionSummary?.heightBucket);
   const completionBodyBand = [completionHeight, completionBody].filter(Boolean).join(' · ') || '선택 안 함';
-  const completionUnitPrice = completionLicense?.unitPrice;
-  const completionValidity = completionLicense?.validityDays != null
-    ? validityLabel(completionLicense.validityDays)
-    : completionLicense?.licenseValidUntil
-      ? `${new Date(completionLicense.licenseValidUntil).toLocaleDateString('ko-KR')}까지`
-      : completionLicense ? validityLabel(null) : null;
+  const completionUnitPrice = completionSummary?.unitPrice;
+  const completionValidity = completionSummary?.validityDays != null
+    ? validityLabel(completionSummary.validityDays)
+    : completionSummary?.licenseValidUntil
+      ? `${new Date(completionSummary.licenseValidUntil).toLocaleDateString('ko-KR')}까지`
+      : completionSummary ? validityLabel(null) : null;
 
   if (step === 'loading') return <div className="wizard narrow"><div className="surface">등록 상태를 확인하고 있어요…</div></div>;
 
@@ -720,7 +733,7 @@ export function ModelRegister() {
         ) : <dl className={s.completionSummary}>
           <div><dt>활동명</dt><dd>{completionModel?.displayName || '내 Digital DNA'}</dd></div>
           <div><dt>체형 밴드</dt><dd>{completionBodyBand}</dd></div>
-          <div><dt>허용 품목</dt><dd>{completionLicense?.allowedUse?.length || 0}개</dd></div>
+          <div><dt>허용 품목</dt><dd>{completionSummary.allowedUseCount}개</dd></div>
           <div><dt>건당 가격</dt><dd>{formatKrw(completionUnitPrice)}</dd></div>
           <div><dt>월정액</dt><dd>{formatKrw(monthlyPriceFor(completionUnitPrice))}</dd></div>
           <div><dt>유효기간</dt><dd>{completionValidity}</dd></div>

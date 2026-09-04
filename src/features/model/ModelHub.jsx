@@ -18,7 +18,7 @@ import {
   validityLabel,
 } from '../facemarket-landing/facemarketTerms.js';
 import { summarizeSettlements } from '../facemarket-landing/payoutData.js';
-import { resolveHubJourney } from './modelHubState.js';
+import { hasCurrentEnrollmentLicense, resolveHubJourney } from './modelHubState.js';
 import s from './ModelPersonalization.module.css';
 
 async function loadOptional(fn) {
@@ -246,7 +246,7 @@ export function ModelHub() {
     enrollment,
     application,
     applicationRequired,
-    hasLicense: licenses.length > 0,
+    hasLicense: hasCurrentEnrollmentLicense(licenses),
   });
   const onJourneyAction = () => {
     if (journey.action?.kind === 'route') navigate(journey.action.to);

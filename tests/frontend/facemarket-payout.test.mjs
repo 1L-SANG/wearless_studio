@@ -179,6 +179,22 @@ test('정산 화면은 준비 칩·세 숫자·빈 상태와 가변 열 표를 �
       assert.ok(findTree(enriched, (node) => node.type === 'th' && node.props?.children === label), label);
     }
     assert.equal(findTree(enriched, (node) => node.type === 'th' && node.props?.children === '증빙'), null);
+
+    const monthlyWithoutItem = module.PayoutView({
+      settlements: [{
+        id: 'monthly', createdAt: '2026-09-03T00:00:00Z', modelAmount: 17_500,
+        billingType: 'monthly', periodStart: '2026-09-01T00:00:00Z', periodEnd: '2026-09-30T00:00:00Z',
+        licenseId: 'l1',
+      }],
+      licenses: [{ id: 'l1', status: 'active', licenseValidUntil: '2027-01-01T00:00:00Z' }],
+      now: new Date('2026-09-04T00:00:00Z'),
+    });
+    const dateCell = findTree(
+      monthlyWithoutItem,
+      (node) => node.type?.name === 'TableCell' && node.props?.column?.key === 'date',
+    );
+    const renderedDate = dateCell.type(dateCell.props);
+    assert.ok(findTree(renderedDate, (node) => node.props?.children === '월정액 · 2026.09.01~2026.09.30'));
   } finally {
     await server.close();
   }

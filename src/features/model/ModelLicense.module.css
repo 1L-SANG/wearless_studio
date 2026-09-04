@@ -136,18 +136,6 @@
   box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--fm-ink);
 }
 
-/* 보조 CTA(새 등록으로 발급) — 같은 알약이되 채우지 않는다. */
-.ctaQuiet.ctaQuiet {
-  min-height: 3rem;
-  border: 1px solid var(--fm-line);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.7);
-  color: var(--fm-ink);
-  font: 500 0.95rem/1 var(--font-body);
-  box-shadow: var(--fm-elev-card);
-}
-.ctaQuiet.ctaQuiet:hover:not([disabled]) { background: #fff; box-shadow: var(--fm-elev-card); }
-
 /* ── 발급 대기 (PRD §7.3 · §13-2) ──────────────────────────────
    holder 콜드부트 ~2분이 **정상 경로**에 있다. 버튼 라벨만 바뀌면 "멈춘 건가"로 읽혀서
    진행 중이라는 신호를 형태로도 준다 — 맥동하는 점 + 불확정 진행바. 진행률을 아는 척하지
@@ -278,8 +266,6 @@
   from { transform: scale(.96); opacity: .4; }
   to { transform: scale(1); opacity: 1; }
 }
-
-.listFoot { margin-top: 2.2rem; }
 
 /* 발급 이력이 없을 때. 예전엔 버튼 하나만 뜬 빈 화면이었다. */
 .empty {

@@ -32,6 +32,24 @@ export function enrollmentReasonMessage(reason) {
   return REASON_COPY[reason] || '인증을 완료하지 못했어요. 다시 시도해 주세요.';
 }
 
+export function buildRegistrationCompletion(enrollment, license) {
+  const enrollmentModelId = enrollment?.modelId || null;
+  const licenseModelId = license?.modelId || null;
+  if (enrollmentModelId && licenseModelId && enrollmentModelId !== licenseModelId) return null;
+  const modelId = licenseModelId || enrollmentModelId;
+  if (!modelId) return null;
+  return {
+    modelId,
+    gender: enrollment?.gender || null,
+    heightBucket: enrollment?.heightBucket || null,
+    bodyType: enrollment?.bodyType || null,
+  };
+}
+
+export function initialRegistrationStep(completionSummary) {
+  return completionSummary?.modelId ? 'done' : 'loading';
+}
+
 export function nextEnrollmentStep(enrollment) {
   if (!enrollment) return 'consent';
   if (enrollment.status === 'identity_pending') return 'identity';

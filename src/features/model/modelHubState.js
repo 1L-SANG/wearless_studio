@@ -13,6 +13,10 @@ export const HUB_STEPS = Object.freeze([
 const route = (label, to) => ({ label, kind: 'route', to });
 const reload = (label) => ({ label, kind: 'reload' });
 
+export function hasCurrentEnrollmentLicense(licenses = []) {
+  return licenses.some((license) => ['pending', 'active'].includes(license?.status));
+}
+
 function journeyAt(currentIndex, action) {
   return {
     mode: 'onboarding',

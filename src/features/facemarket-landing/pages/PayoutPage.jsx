@@ -21,7 +21,15 @@ function SummaryCard({ children, label, value }) {
   );
 }
 
-function TableCell({ column, row }) {
+function TableCell({ column, row, showBillingInDate = false }) {
+  if (column.key === 'date') {
+    return (
+      <td>
+        <span className={s.itemName}>{row.date}</span>
+        {showBillingInDate && row.billingLabel.startsWith('월정액') ? <small>{row.billingLabel}</small> : null}
+      </td>
+    );
+  }
   if (column.key === 'thumbnail') {
     return (
       <td>
@@ -51,6 +59,7 @@ export function PayoutView({ settlements = [], licenses = [], now = new Date() }
   const summary = summarizeSettlements(settlements, now);
   const columns = settlementColumns(settlements);
   const rows = settlements.map((row) => normalizeSettlementRow(row, licenses, now));
+  const showBillingInDate = !columns.some((column) => column.key === 'item');
   const next = summary.nextSettlement;
 
   return (
@@ -93,7 +102,9 @@ export function PayoutView({ settlements = [], licenses = [], now = new Date() }
               <thead><tr>{columns.map((column) => <th key={column.key} scope="col">{column.label}</th>)}</tr></thead>
               <tbody>
                 {rows.map((row) => (
-                  <tr key={row.id}>{columns.map((column) => <TableCell column={column} key={column.key} row={row} />)}</tr>
+                  <tr key={row.id}>{columns.map((column) => (
+                    <TableCell column={column} key={column.key} row={row} showBillingInDate={showBillingInDate} />
+                  ))}</tr>
                 ))}
               </tbody>
             </table>

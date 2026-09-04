@@ -100,7 +100,10 @@ test('등록 상태는 검수·생성·확정 단계와 도달 가능한 행동�
 });
 
 test('현재 서버와 Phase B의 processing은 라이선스 존재 여부로 구분해 타임라인이 후퇴하지 않는다', async () => {
-  const { resolveHubJourney } = await loadRequired(journeyUrl, '허브 상태');
+  const { hasCurrentEnrollmentLicense, resolveHubJourney } = await loadRequired(journeyUrl, '허브 상태');
+  assert.equal(hasCurrentEnrollmentLicense([{ status: 'reverification_required' }]), false);
+  assert.equal(hasCurrentEnrollmentLicense([{ status: 'pending' }]), true);
+  assert.equal(hasCurrentEnrollmentLicense([{ status: 'active' }]), true);
   for (const status of ['processing', 'asset_building']) {
     const currentServer = resolveHubJourney({ enrollment: { id: 'e1', status }, hasLicense: false });
     assert.equal(currentServer.currentIndex, 2, status);

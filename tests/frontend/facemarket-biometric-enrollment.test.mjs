@@ -27,7 +27,9 @@ registerHooks({
 const {
   ENROLLMENT_ANGLES,
   ENROLLMENT_STEPS,
+  buildRegistrationCompletion,
   enrollmentReasonMessage,
+  initialRegistrationStep,
   nextEnrollmentStep,
 } = await import('../../src/features/model/biometricEnrollment.js');
 
@@ -245,6 +247,23 @@ test('server status restores the next safe enrollment step', () => {
   assert.equal(nextEnrollmentStep({ status: 'vc_pending', photos: [{}, {}, {}] }), 'terms');
   assert.equal(nextEnrollmentStep({ status: 'passed', photos: [{}, {}, {}] }), 'done');
   assert.equal(nextEnrollmentStep({ status: 'failed', reason: 'face_match_failed' }), 'failed');
+});
+
+test('완료 전달값은 최소 체형 정보만 남기고 완료 화면을 먼저 선택한다', () => {
+  assert.equal(typeof buildRegistrationCompletion, 'function');
+  assert.equal(typeof initialRegistrationStep, 'function');
+  const handoff = buildRegistrationCompletion(
+    {
+      id: 'e1', modelId: 'm1', gender: 'female', heightBucket: 'f_160_165',
+      bodyType: 'slim_upper', photos: [{ angle: 'front' }], reason: 'private',
+    },
+    { id: 'l1', modelId: 'm1', unitPrice: 10_000, faceImageDigest: 'secret-digest' },
+  );
+  assert.deepEqual(handoff, {
+    modelId: 'm1', gender: 'female', heightBucket: 'f_160_165', bodyType: 'slim_upper',
+  });
+  assert.equal(initialRegistrationStep(handoff), 'done');
+  assert.equal(initialRegistrationStep(null), 'loading');
 });
 
 test('raw biometric reasons collapse to actionable copy', () => {
@@ -1388,7 +1407,7 @@ test('등록 완료 화면은 조건 요약과 Digital DNA 관리 CTA 하나만 
   const harness = await modelComponentHarness({
     initialStates: [
       'done',
-      { id: 'e1', modelId: 'm1', status: 'passed', bodyType: 'slim_straight' },
+      { id: 'e1', modelId: 'm1', status: 'passed', bodyType: 'slim' },
       null,
       '',
       false,
@@ -1402,9 +1421,8 @@ test('등록 완료 화면은 조건 요약과 Digital DNA 관리 CTA 하나만 
       {
         phase: 'ready',
         model: { id: 'm1', displayName: '김*나', status: 'verified' },
-        license: {
-          id: 'l1', modelId: 'm1', allowedUse: ['상의', '하의'], unitPrice: 10_000,
-          validityDays: 730, status: 'active',
+        summary: {
+          bodyType: 'slim', allowedUseCount: 2, unitPrice: 10_000, validityDays: 730,
         },
       },
     ],
@@ -1430,8 +1448,9 @@ test('라이선스 발급은 등록 완료 화면으로 체형과 발급 조건�
   const source = read('../../src/features/model/ModelLicense.jsx');
   assert.match(
     source,
-    /navigate\(\s*["']\/model\/register["'][\s\S]*completedEnrollment:\s*enrollmentRecord[\s\S]*issuedLicense:\s*lic/,
+    /navigate\(\s*["']\/model\/register["'][\s\S]*completionSummary:\s*buildRegistrationCompletion\(enrollmentRecord,\s*lic\)/,
   );
+  assert.doesNotMatch(source, /새 생체 등록으로 라이선스 발급/);
 });
 
 test('등록 완료 화면은 발급 경로로 전달된 체형을 되살린다', async () => {
@@ -1444,18 +1463,20 @@ test('등록 완료 화면은 발급 경로로 전달된 체형을 되살린다'
       {
         phase: 'ready',
         model: { id: 'm1', displayName: '김*나', status: 'verified' },
-        license: { id: 'l1', modelId: 'm1', allowedUse: ['상의'], unitPrice: 10_000, validityDays: 730 },
+        summary: {
+          heightBucket: 'f_160_165', bodyType: 'slim_upper',
+          allowedUseCount: 1, unitPrice: 10_000, validityDays: 730,
+        },
       },
     ],
     api: { getCurrentEnrollment: () => new Promise(() => {}) },
   });
   harness.runtime.location = {
     state: {
-      completedEnrollment: {
-        id: 'e1', modelId: 'm1', status: 'passed', gender: 'female',
+      completionSummary: {
+        modelId: 'm1', gender: 'female',
         heightBucket: 'f_160_165', bodyType: 'slim_upper',
       },
-      issuedLicense: { id: 'l1', modelId: 'm1', unitPrice: 10_000 },
     },
   };
   try {
@@ -1474,7 +1495,7 @@ test('등록 완료 조건 조회 실패는 기본 가격과 영구 조건을 �
     initialStates: [
       'done', { modelId: 'm1', status: 'passed' }, null, '', false, false, true,
       null, null, null, [], null,
-      { phase: 'error', model: null, license: null },
+      { phase: 'error', model: null, summary: null },
     ],
     api: { getCurrentEnrollment: () => new Promise(() => {}) },
   });
