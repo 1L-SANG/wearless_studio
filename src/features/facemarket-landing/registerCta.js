@@ -20,6 +20,10 @@
    ============================================================= */
 
 const REGISTER_LABEL = '모델 등록하기';
+/* 신규 방문자 지원 CTA 문구. 2026-09-03 오너 지시로 '모델 지원하기' → 얼리버드 문구.
+   export 하는 이유: HeroSection 이 이 라벨과 같을 때만 얼리버드 혜택 칩을 그린다(상태
+   판정을 두 벌로 만들지 않기 위해 라벨을 키로 쓴다). */
+export const APPLY_LABEL = '얼리버드 지원하기';
 
 export function registerCta(ownedModel, enrollment, { application = null, applicationRequired = true } = {}) {
   if (ownedModel?.status === 'verified') {
@@ -33,7 +37,7 @@ export function registerCta(ownedModel, enrollment, { application = null, applic
     if (application?.status === 'under_review') return { label: '지원 상태 보기', to: '/status' };
     if (application?.status === 'approved') return { label: REGISTER_LABEL, to: '/model/register' };
     if (application?.status === 'rejected') return { label: '다시 지원하기', to: '/model/apply' };
-    return { label: '모델 지원하기', to: '/model/apply' };
+    return { label: APPLY_LABEL, to: '/model/apply' };
   }
   return { label: REGISTER_LABEL, to: '/model/register' };
 }

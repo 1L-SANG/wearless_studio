@@ -18,8 +18,6 @@ export function GallerySection() {
 
   // 두 자리 고정. 원본이 '04 / 07' 처럼 앞을 0 으로 채워 자릿수가 흔들리지 않게 했고,
   // 여기서도 1↔10 을 오갈 때 큰 숫자의 폭이 바뀌면 옆 요소가 밀린다.
-  const indexLabel = String(controller.activeIndex + 1).padStart(2, '0');
-  const totalLabel = String(LANDING_MODELS.length).padStart(2, '0');
 
   return (
     <>
@@ -31,11 +29,11 @@ export function GallerySection() {
           가상 모델이라 채울 실명·실적이 없고, 지어내면 실재하는 모델 정보로 읽힌다.
           그 자리에는 가상 모델 고지가 선다. 사용자가 카드에 무엇을 붙일지 정하면 그때
           되살린다. */}
-      <section aria-label="예시 이미지 갤러리 조작" className={s.galleryMeta}>
+      <section aria-label="예시 이미지 안내" className={s.galleryMeta}>
         <div className={s.galleryLines}>
-          <p className={s.galleryHint} aria-hidden="true">
-            DRAG · SWIPE · ARROW KEYS
-          </p>
+          {/* 조작 힌트(DRAG · SWIPE · ARROW KEYS)·큰 인덱스(01/14)·점 내비·좌우 화살표 버튼은
+              2026-09-03 오너 지시로 차례로 전부 제거됐다. 드래그·스와이프·키보드 조작 자체는
+              useCarouselController 에 그대로 살아 있다(버튼만 없다). */}
           {/* 고지는 스테이지 **아래**, 원본의 작품명 자리다. 예전엔 스테이지 위에 뒀다
               (폰에서 스테이지가 78vh 라 아래 두면 첫 화면 밖으로 밀린다는 이유) — 지금은
               사진 한 장 한 장에 '예시' 배지(CarouselStage 의 .badgeNotice)가 박혀 있어
@@ -45,49 +43,14 @@ export function GallerySection() {
             <Icon name="info" size={14} stroke={2} />
             위 이미지는 전부 가상 모델 예시입니다. 실제 등록된 모델이 아닙니다.
           </p>
-        </div>
-
-        <div className={s.galleryControls}>
-          <p className={s.galleryIndex} aria-hidden="true">
-            <span className={s.galleryIndexNow}>{indexLabel}</span>
-            <span className={s.galleryIndexTotal}>/ {totalLabel}</span>
-          </p>
-
-          {/* 점은 탭이 아니다 — role="tab" 은 자기가 여는 tabpanel 을 가리켜야 하는데 여기엔
-              패널이 없고 카드 14장이 한 스테이지 안에서 돌 뿐이다. 그대로 두면 스크린리더가
-              "탭 1/14, 선택 안 됨"으로 읽어 없는 구조를 안내한다. 지금 위치는 스테이지의
-              카드와 같은 방식(aria-current)으로 알린다. */}
-          <div className={s.dots}>
-            {LANDING_MODELS.map((item, index) => (
-              <button
-                aria-current={index === controller.activeIndex ? 'true' : undefined}
-                aria-label={`${index + 1}번 이미지 보기`}
-                className={index === controller.activeIndex ? s.dotActive : s.dot}
-                key={item.id}
-                onClick={() => controller.goTo(index)}
-                type="button"
-              />
-            ))}
-          </div>
-
-          <div className={s.galleryArrows}>
-            <button
-              aria-label="이전 이미지"
-              className={s.galleryArrow}
-              onClick={() => controller.goBy(-1)}
-              type="button"
-            >
-              <Icon name="chevLeft" size={22} stroke={2.2} />
-            </button>
-            <button
-              aria-label="다음 이미지"
-              className={s.galleryArrow}
-              onClick={() => controller.goBy(1)}
-              type="button"
-            >
-              <Icon name="chevRight" size={22} stroke={2.2} />
-            </button>
-          </div>
+          {/* 신뢰 pill 3개 — 화살표 버튼이 서던 자리(2026-09-03 저녁 오너 지시: 제목 위 → 여기).
+              보호 장치를 사람 말로: 문구는 blueprint §7·§9 의 실제 장치(사용 원장·규칙 게이트·
+              철회)와 1:1 이라 과장이 없다. C2PA·블록체인은 첫 항목의 작은 글씨로만. */}
+          <ul aria-label="보호 장치" className={s.trustPills}>
+            <li>위조 불가 사용 기록 <small>C2PA · 블록체인</small></li>
+            <li>정해진 범위 외 사용 불가</li>
+            <li>언제든지 라이선스 철회 가능</li>
+          </ul>
         </div>
 
         {/* 큰 인덱스는 aria-hidden 이다(숫자 두 덩이로 쪼개져 있어 그대로 읽히면 어수선하다).

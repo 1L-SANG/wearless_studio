@@ -5,9 +5,10 @@
    이 사이트 것을 쓴다 — 랜딩·라이선스·등록이 전부 밝은 화면이라 여기만 검으면 다른 서비스로
    읽힌다.
 
-   카드 위에 마우스를 올리면 '모델 정보 보기'가 뜨지만, **버튼은 hover 로만 존재하지 않는다.**
-   카드 자체가 button 이라 터치·키보드로도 같은 창이 열린다. hover 로만 만들면 폰에서
-   상세를 볼 길이 사라진다.
+   카드 아래에는 이름(주)·키·몸무게(보조)가 항상 보이고, 마우스를 올리면 **사진 안쪽 아래**에서
+   검정 pill "모델 정보 확인"이 살짝 떠오른다(2026-09-04 오너 지시 — 예전의 사진 아래 모서리에
+   딱 붙는 흰 띠는 내렸다). **버튼은 hover 로만 존재하지 않는다**: 카드 자체가 button 이라
+   터치·키보드로도 같은 창이 열린다. hover 로만 만들면 폰에서 상세를 볼 길이 사라진다.
    ============================================================= */
 import { useState } from 'react';
 import { Icon } from '@/components/ui.jsx';
@@ -44,13 +45,11 @@ export function BrowseSection() {
             >
               <img alt={model.alt} className={s.cardImage} src={model.portrait} />
               <span aria-hidden="true" className={s.cardBadge}>예시</span>
-              {/* hover·focus 에서 떠오르는 덮개. aria-hidden 인 이유는 위 aria-label 이
-                  같은 말을 이미 하고 있어서다 — 안 그러면 "모델 정보 보기"를 두 번 읽는다. */}
-              <span aria-hidden="true" className={s.cardOverlay}>
-                <span className={s.cardOverlayButton}>
-                  모델 정보 보기
-                  <Icon name="arrowRight" size={15} stroke={2} />
-                </span>
+              {/* hover·focus 에서 사진 안쪽 아래로 떠오르는 검정 pill. aria-hidden 인 이유는 위
+                  aria-label 이 같은 말을 이미 하고 있어서다 — 안 그러면 "모델 정보"를 두 번 읽는다. */}
+              <span aria-hidden="true" className={s.cardPill}>
+                모델 정보 확인
+                <Icon name="arrowRight" size={14} stroke={2} />
               </span>
             </button>
             <div className={s.cardMeta}>

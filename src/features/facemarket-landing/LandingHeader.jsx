@@ -20,9 +20,16 @@ import s from './FacemarketLanding.module.css';
    앞뒤 둘은 아직 화면이 없어 자리만 잡아 뒀다(PlaceholderPage).
    내려간 두 화면(등록 안내 /register, 프라이버시 /model-info)은 지우지 않았다 —
    내용은 그대로 살아 있고 푸터에서 들어간다. */
-const NAV = [
-  { to: '/models', label: '모델 둘러보기' },
-  { to: '/status', label: '등록 상태' },
+/* 상단바 항목은 두 묶음이다(2026-09-04 오너 지시). 누구에게나 보이는 것과, 로그인한 모델
+   본인 것만 보이는 것. '등록 상태'는 'Digital DNA 관리'로(같은 날 오너 2차 지시 — '나의 …'
+   대신 '관리' 어투) — 히어로 제목("create your own digital DNA")과 같은 말이라 상단바에서
+   이어진다. 비로그인에게 관리·정산은 남의 집 문패라 숨긴다(눌러도 로그인 벽). 부트스트랩 중
+   (session 미확정)에도 공개 묶음만 그리고, 세션이 확인되면 두 항목이 들어온다. */
+const NAV_PUBLIC = [
+  { to: '/models', label: '모델 리스트' }, /* 2026-09-03 오너 지시로 '모델 둘러보기' → '모델 리스트' */
+];
+const NAV_MEMBER = [
+  { to: '/status', label: 'Digital DNA 관리' },
   { to: '/payout', label: '정산' },
 ];
 
@@ -38,6 +45,7 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
   const headerRef = useRef(null);
   const { session, signOut } = useAuth();
   const navigate = useNavigate();
+  const nav = session ? [...NAV_PUBLIC, ...NAV_MEMBER] : NAV_PUBLIC;
 
   /* 로그아웃은 이 상단바가 유일한 출구다. facemarket 의 /model/* 은 셀러 크롬
      (shell.jsx 의 ProfileMenu)을 쓰지 않으므로, 여기 없으면 로그인한 모델이 세션을
@@ -85,13 +93,17 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
     <header className={s.header} ref={headerRef}>
       {/* 브랜드는 홈('/') 링크다. 예전엔 같은 문서 안 앵커(#top)였는데, 이제 상단바가
           다른 라우트로 넘어가므로 앵커면 현재 페이지 맨 위로만 가고 홈으로 못 돌아온다. */}
+      {/* facemarket 전용 워드마크(2026-09-03 오너 지급 SVG). 공유 로고(/assets/brand/logo.svg)는
+          셀러 앱(shell·Login·ChromeLayout)이 그대로 쓰므로 건드리지 않고, 이 헤더만 간다 —
+          이 헤더가 facemarket 도메인(랜딩+/model/*)에만 얹히므로 그 경계가 곧 노출 범위다.
+          워드마크에 'facemarket' 글자가 포함돼 있어 텍스트 span 은 중복이라 내렸고,
+          접근성 이름은 alt 가 승계한다. */}
       <Link className={s.brand} onClick={closeMenu} to="/">
-        <img alt="" className={s.brandLogo} src="/assets/brand/logo.svg" />
-        <span className={s.brandName}>FaceMarket</span>
+        <img alt="FaceMarket" className={s.brandWordmark} src="/assets/brand/facemarket-wordmark.svg" />
       </Link>
 
       <nav aria-label="랜딩 내비게이션" className={s.nav}>
-        {NAV.map((item) => (
+        {nav.map((item) => (
           <NavLink className={linkClass} key={item.to} onClick={closeMenu} to={item.to}>
             {item.label}
           </NavLink>
@@ -127,7 +139,7 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
 
       {menuOpen && (
         <nav aria-label="모바일 메뉴" className={s.mobileNav}>
-          {NAV.map((item) => (
+          {nav.map((item) => (
             <NavLink className={linkClass} key={item.to} onClick={closeMenu} to={item.to}>
               {item.label}
             </NavLink>

@@ -158,6 +158,9 @@
 .brand { display: inline-flex; align-items: center; gap: 0.55rem; color: inherit; text-decoration: none; }
 .brandLogo { width: 1.4rem; height: 1.4rem; }
 .brandName { font: 600 1.05rem/1 var(--font-body); letter-spacing: -0.01em; }
+/* facemarket 워드마크(viewBox 1330×312 ≈ 4.26:1). 높이만 정하고 폭은 비율을 따른다 —
+   종전 아이콘(1.4rem)+글자(1.05rem) 조합과 같은 시각 무게가 되는 눈금. */
+.brandWordmark { height: 1.9rem; width: auto; display: block; }
 
 .nav { display: none; gap: clamp(1.5rem, 3vw, 3.4rem); justify-self: center; }
 /* 이제 <button> 이 아니라 <NavLink>(=<a>)다. 이 레포의 전역 스타일에는 링크 리셋이
@@ -200,7 +203,48 @@
 }
 .headerCta { padding: 0.68rem 1.1rem; }
 .heroCta { padding: 0.95rem 1.6rem; font-size: 1rem; }
-.headerCta:hover, .heroCta:hover { opacity: 0.86; }
+
+/* 320px 폰에서는 워드마크(약 130px) + 긴 얼리버드 CTA + 햄버거가 한 줄의 가로 예산을
+   넘긴다. CTA 글자가 단어 안에서 세 줄로 깨지면 버튼 높이가 고정 헤더(56px)보다 커져
+   바로 아래 히어로를 덮는다. 전환 버튼은 숨기지 않고, 이 폭에서만 세 요소의 가로 예산을
+   줄여 두 단어가 각각 한 줄씩 서게 한다. 22rem 밖의 현재 헤더 눈금은 그대로다. */
+@media (max-width: 22rem) {
+  .header { gap: 0.5rem; }
+  .brandWordmark { height: 1.55rem; }
+  .headerActions { gap: 0.35rem; }
+  .headerCta { padding: 0.6rem 0.75rem; font-size: 0.85rem; }
+}
+/* 2026-09-03 오너 지시: 호버를 셀러 앱 분석 페이지의 CTA(app.css .btn-primary + .fx-sheen)와
+   같게. 그쪽 동작 = ① 배경이 150ms 에 한 단계 어두워짐(--cta-bg → --cta-bg-hover)
+   ② 빛 띠가 왼쪽→오른쪽으로 0.72s 스윕(fxSheen) ③ 상단 안쪽 1px 하이라이트(--elev-btn-hi).
+   facemarket 버튼은 잉크색(#10151a)이라 '더 어둡게'는 순검정으로 간다. 예전 opacity .86
+   페이드는 앱 어디에도 없는 동작이라 지웠다. 전역 .fx-sheen 은 ChromeLayout 에만 걸리므로
+   여기서 규칙을 다시 적는다(값은 app.css 와 동일). */
+.headerCta, .heroCta {
+  position: relative;
+  overflow: hidden;
+  /* 토큰(--fm-elev-btn)은 이 테마에서 none 이라(랜딩은 그림자 대신 선) 일부러 값을 직접 쓴다 —
+     이 1px 안쪽 하이라이트가 곧 '분석 페이지 버튼과 같은 느낌'의 일부다. */
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.15);
+  transition: background-color 150ms, box-shadow 0.16s, transform 0.12s;
+}
+.headerCta::after, .heroCta::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -60%;
+  width: 42%;
+  background: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.25), transparent);
+  transform: skewX(-18deg);
+  pointer-events: none;
+}
+.headerCta:hover:not([disabled]), .heroCta:hover:not([disabled]) { background: #000; opacity: 1; }
+.headerCta:hover:not([disabled])::after, .heroCta:hover:not([disabled])::after { animation: fmSheen 0.72s ease; }
+@keyframes fmSheen { to { left: 130%; } }
+@media (prefers-reduced-motion: reduce) {
+  .headerCta:hover:not([disabled])::after, .heroCta:hover:not([disabled])::after { animation: none; }
+}
 
 .menuButton {
   display: inline-flex;
@@ -278,10 +322,13 @@
    실측: 720 높이에서 조이기 전엔 상단바 102 + 히어로 250 + 스테이지 하한 304 + 메타 170
    = 826 > 720 이라 점·화살표 줄이 접혔다. 조인 뒤 102 + 206 + 224 + 126 = 658. */
 @media (max-height: 820px) and (min-width: 48rem) {
-  .screen { --fm-stage-track: minmax(14rem, 1fr); }
+  /* 2026-09-03 히어로에 리드·혜택 칩·CTA 가 들어와 세로 예산이 늘었다 — 짧은 화면에서는
+     스테이지 하한을 12rem 으로 내려 메타 바(화살표)가 첫 화면 안에 들어오게 한다. */
+  .screen { --fm-stage-track: minmax(12rem, 1fr); }
+  .heroLead { margin-top: 0.7rem; }
   .hero { padding-top: 1.5rem; padding-bottom: 1rem; }
   .kicker { margin-bottom: 0.6rem; }
-  .heroTitle { font-size: clamp(3.4rem, 6.2vw, 5rem); }
+  .heroTitle { font-size: clamp(2.4rem, 3.8vw, 3.4rem); }
   .galleryMeta { gap: 0.5rem; padding-top: 0.4rem; padding-bottom: 1rem; }
   .galleryLines { gap: 0.4rem; }
 }
@@ -305,51 +352,76 @@
   text-align: center;
 }
 
-/* 제목 뒤 브랜드 오브. 제목 덩어리 중앙에 놓고 뒤로 깐다 — 글자가 그 위에 선다.
+/* 제목 뒤 브랜드 오브 — 셀러 앱 배경과 **같은 물건**을 얹는다.
+   app.css 의 .orb-bg 4겹(l1/l2/l3/hi = 두 겹의 conic 그라데이션 + 흰 코어 + 하이라이트,
+   각 겹이 12s·17s 로 반대 방향 색 회전)이 정의의 유일한 출처이고, 팔레트는 tokens.css 의
+   --glow-sky/--glow-mauve/--glow-sage/--glow-sun 이다. 여기서는 **위치와 크기만** 덮는다.
 
-   원본 그림(public/assets/brand/orb.png, 514²)은 정사각형 전체에 **균일한 30% 알파**가
-   깔려 있다 — 바깥이 투명한 게 아니라 흰색이 얇게 덮여 있어서, 그냥 올리면 배경
-   그라데이션 위에 옅은 사각형이 뜬다. 방사형 mask 로 바깥을 지워 원형만 남긴다.
-   mask 의 안쪽 정지점은 78% 다: 이 그림의 색은 반지름 47~58% 의 푸른 고리에 몰려 있어서
-   55% 쯤에서 자르면 그 고리가 잘린 자리에 뚜렷한 테두리가 생긴다(실측). 고리는 온전히
-   두고 바깥 흰 여백만 지운다.
+   왜 PNG(/assets/brand/orb.png, 514²)를 버렸나 — 그건 오브를 한 번 구워 놓은 래스터라
+   (1) 정사각형 전체에 균일한 30% 알파가 깔려 배경 위에 옅은 사각형이 떴고(그래서
+   radial mask 로 도려내야 했다), (2) 그 알파를 못 고치니 saturate(2.8) 로 채도를 밀어
+   보정했는데 그 과정에서 색이 브랜드 팔레트를 벗어나 청록으로 틀어졌으며, (3) 구울 때의
+   얼룩·비대칭이 그대로 남아 '빛'이 아니라 '자국'으로 읽혔다(2026-09-03 사용자 지적).
+   라이브 오브는 알파도 색도 살아 있어 mask 도 saturate 도 필요 없다.
 
-   **원형이고, 아래로 흘러 카드와 겹친다**(2026-09-02 사용자 지시: "더 밑으로 내려와서
-   카드 부분 겹쳐도 되니까 더 동그랗게"). 히어로 상자보다 크고 그 아래로 넘치므로 .hero 를
-   자르면 안 된다.
-
-   크기를 **높이 기준**(히어로 높이의 2.85배)으로 잡고 aspect-ratio 로 정원을 만든다. 폭
-   기준으로 잡으면 창이 넓어질수록 위로도 그만큼 커져 상단바 뒤까지 번진다 — 처음에 그렇게
-   했다가 "윗부분이 하얗다"는 상태가 됐다(상단바가 반투명+블러라 그 빛이 그대로 비친다).
-   세로 중심을 제목보다 아래(66%)에 두어 위쪽 여유를 남기고 아래로 흘려보낸다.
-
-   mask 는 원형이고 안쪽 정지점이 낮다(42%) — 가장자리를 길게 끌어 경계가 안 보이게 한다.
-   그래서 상자 밖으로 '넘치는' 부분은 이미 알파가 0 에 가깝고, '잘렸다'로 읽히지 않는다.
-   z-index 0 이라 카드(스테이지 z 1)가 이 빛 위에 그려진다 — 그래서 겹침이 자연스럽다. */
+   자리 — 코어를 제목 덩어리보다 아래(64%)에 두어, 흰 코어는 제목 뒤에서 지면을
+   밝히고 **색이 도는 고리가 제목을 두른다**. 오브는 이 상자 밖으로 흘러 아래 카드 위까지
+   번진다(z-index 0, 스테이지는 z 1이라 카드가 빛 위에 그려진다) — 원본 spotlight 레이아웃
+   그대로 '빛 속에 놓인 얼굴'이 된다. 그래서 .hero 를 overflow 로 자르면 안 된다. */
 .heroOrb {
   position: absolute;
   z-index: 0;
-  top: 66%;
+  top: 64%;
   left: 50%;
-  height: 285%;
-  aspect-ratio: 1;
+  /* .orb-bg 는 inset:0 로 이 상자를 채우고 겹들을 **가운데 정렬만** 한다 — 겹의 실제 크기는
+     px 고정값 × --orb-scale 이라 이 상자를 키워도 오브는 안 커진다. 그래서 상자는 두 가지
+     일만 한다: 중심 잡기, 그리고 아래 mask 의 좌표계 제공.
+     오브 지름(≈294px × scale)보다 넉넉히 크게 잡아야 mask 의 페이드 구간이 오브 바깥에
+     생긴다 — 상자가 오브보다 작으면 mask 가 오브를 직선으로 잘라 먹는다. */
+  width: 900px;
+  height: 900px;
   translate: -50% -50%;
-  /* 색을 진하게 — 사용자 요청. 원본 파일은 알파가 전체 30% 로 구워져 있어서 그냥 올리면
-     배경과 4~8 레벨밖에 차이가 안 난다(실측). 알파는 손 못 대니 채도로 민다: saturate 가
-     휘도는 두고 색만 벌리므로 흐린 빛이라는 성격은 그대로 두고 파란 기만 진해진다.
-     여기 숫자를 더 올릴 거면 제목 글자와의 대비를 같이 봐라 — 글자는 #07090c 라 여유가
-     있지만, 배경이 진해질수록 kicker(회색 0.85)가 먼저 묻힌다. */
-  opacity: 0.9;
-  filter: saturate(2.8) contrast(1.05);
-  mask-image: radial-gradient(circle closest-side, #000 42%, transparent 100%);
-  -webkit-mask-image: radial-gradient(circle closest-side, #000 42%, transparent 100%);
+  /* 바깥으로 길게 끌어 지우는 방사형 mask. 오브 자체의 blur 만으로는 큰 배율에서 가장자리가
+     '원반'으로 읽히고, 그 빛이 상단바(반투명+블러)까지 올라가 머리가 물든다 — 실제로
+     그렇게 됐다. 안쪽 정지점을 낮게(30%) 두어 페이드를 길게 끈다: 코어와 색 고리는 손대지
+     않으면서 바깥 테두리만 서서히 0 이 된다. */
+  mask-image: radial-gradient(circle closest-side, #000 30%, transparent 100%);
+  -webkit-mask-image: radial-gradient(circle closest-side, #000 30%, transparent 100%);
   pointer-events: none;
   user-select: none;
 }
 
-/* 폰은 히어로가 낮고 왼쪽 정렬이라 210% 면 화면을 다 덮는다. */
+/* app.css 의 기본값은 전면 배경용이다(위로 32% 올리고 2.7배). 히어로에서는 중심을 0 으로
+   되돌리고 크기를 다시 잡는다. 선택자가 `.heroOrb .orb-bg`(0,2,0)라 app.css 의 반응형
+   미디어쿼리(`.orb-bg`, 0,1,0)보다 세다 — 그래서 여기 눈금이 확실히 이긴다. */
+.heroOrb :global(.orb-bg) {
+  --orb-shift: 0%;
+  --orb-scale: 1.7;
+  /* 이 랜딩 배경(#f8fbfd→#edf3f8)은 셀러 앱의 순백보다 어둡고 푸르다. 앱 기본 농도(0.7)로
+     얹으면 배경에 묻혀 다시 얼룩처럼 읽힌다 — PNG 시절 saturate 로 때우려던 문제의 본질이
+     이거다. 알파로 세운다(색은 안 건드린다). 1.0 까지 올리지 마라: kicker(회색 0.85)가
+     먼저 묻힌다.
+     2026-09-03: 0.85 → 0.43(현재의 50%). 히어로에 리드·혜택 칩·CTA 가 들어오면서 빛이
+     UI 를 번잡하게 만들고 카드 사진 톤까지 물들여, 오너가 6단계 비교
+     (mockups/facemarket_orb_intensity_20260903.html) 후 50% 로 확정 → 실화면 확인 후
+     60%(0.51)로 한 단계 올림. */
+  --glow-a: 0.51;
+}
+@media (min-width: 48rem)  { .heroOrb :global(.orb-bg) { --orb-scale: 2.0; } }
+@media (min-width: 80rem)  { .heroOrb :global(.orb-bg) { --orb-scale: 2.3; } }
+@media (min-width: 100rem) { .heroOrb :global(.orb-bg) { --orb-scale: 3.0; } }
+
+/* 폰은 히어로가 낮고 **왼쪽 정렬**이다(.hero 가 justify-items: start / text-align: left).
+   가운데(50%)에 두면 빛이 제목 오른쪽 여백만 밝히고 정작 글자 뒤는 비어 보인다 — 중심을
+   제목 덩어리 쪽으로 끌어온다. 크기는 48rem 미만 기본값(1.7)이 이미 한 단계 작다. */
 @media (max-width: 47.99rem) {
-  .heroOrb { height: 190%; top: 60%; }
+  .heroOrb { top: 58%; left: 34%; }
+}
+
+/* 색 회전은 아주 느리지만 이 첫 화면은 캐러셀이 이미 움직인다. 모션을 줄여 달라고 한
+   사람에게는 정지한 빛으로 준다 — 빛 자체는 남긴다(장식이 아니라 브랜드 표식이다). */
+@media (prefers-reduced-motion: reduce) {
+  .heroOrb :global(.orb-bg) > div { animation: none; }
 }
 
 /* 글자는 오브 위에. .hero 안에서 z-index 를 명시하지 않으면 오브(절대 위치, z 0)와
@@ -389,22 +461,124 @@
 .heroTitle {
   margin: 0;
   color: #07090c;
-  font-family: var(--font-serif);
-  font-size: clamp(3.9rem, 6.2vw, 5.8rem);
-  font-weight: 500;
-  line-height: 0.9;
-  letter-spacing: 0;
+  /* 2026-09-03 밤: 제목이 영문 한 줄("create your own digital DNA")로 확정되면서 원본
+     spotlight 의 세리프 디스플레이(Cormorant, 굵기 500)로 **복귀**(오너 "예전처럼 메인 폰트").
+     낮에 Pretendard 로 바꿨던 건 한글 제목에 명조가 이상하다는 이유였고, 영문에는 해당 없음.
+     크기는 원본(두 줄 3.9~5.8rem)보다 한 단계 낮춘 5rem 상한 — 27자 한 줄이 1280px 본문 폭
+     안에 들어오는 값. 좁아져 접히면 balance 로 두 줄을 고르게 나눈다. Cormorant 는 라틴
+     전용 자체 호스팅 가변 서체라 한글 폴백은 없어도 된다(제목이 영문). */
+  /* 같은 날 밤 최종(오너 확정, 16종 비교의 10번): **Playfair Display 600**, 두 줄
+     ("create your own / digital DNA"), 둘째 줄만 이탤릭 500. 그날 거쳐 간 것 — Pretendard
+     (한글 제목 시절) → Cormorant(원본 세리프) → Cal Sans(--font-display) → 실화면 A/B
+     (Playfair vs Instrument Serif) → Playfair. facemarket.html 이 Playfair 500/600 + 이탤릭을
+     로드한다. 두 줄이라 크기 상한은 4rem — 원본(두 줄 5.8rem·행간 0.9)보다 낮게 잡아
+     리드·버튼·캡션이 들어온 세로 예산을 지킨다. */
+  font-family: 'Playfair Display', var(--font-serif);
+  font-size: clamp(2.8rem, 4.4vw, 4rem);
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
 }
-/* 이탤릭 한 단어. 전용 face 가 못 오면 var(--font-serif) 의 합성 기울임으로 떨어진다. */
-.heroTitle em {
-  font-family: 'Cormorant Garamond FM Italic', var(--font-serif);
-  font-style: italic;
-  font-weight: 500;
+.heroTitle em { font-style: italic; font-weight: 500; }
+/* 히어로 리드(2026-09-03). 제목 아래 사실 두 줄 — 폭을 제한해 제목보다 좁게 앉힌다. */
+.heroLead {
+  margin: 0.9rem 0 0;
+  max-width: 38rem;
+  /* 2026-09-03 밤 오너 지시 "좀 더 진하게": 회색(--fm-muted) → 잉크 80% + 굵기 500.
+     캡션(.heroCaption)은 그대로 회색이라 리드와 캡션의 층이 생긴다. */
+  color: rgba(16, 21, 26, 0.8);
+  font: 500 clamp(0.95rem, 1.2vw, 1.08rem)/1.65 var(--font-body);
+  text-align: center;
 }
+/* 히어로 안 CTA(2026-09-03 오너 지시로 kicker 자리에 재도입). 제목과의 간격만 여기서 준다 —
+   .heroCta 자체는 IntroSection 과 공유라 거기 마진을 주면 두 자리가 같이 밀린다.
+   오브(.heroOrb, z-index:0 의 positioned 레이어)가 정적 배치 형제 위에 그려지므로,
+   버튼이 그 반투명 흰 빛에 덮여 회색으로 바래 보였다 — 버튼을 같은 스택 위로 올린다. */
+.hero .heroCta { margin-top: 0.95rem; position: relative; z-index: 1; }
+
+/* 얼리버드 링(2026-09-03 오너 선택 10안). 검정 버튼 둘레 2px 원뿔 그라디언트 — 배경 오브와
+   같은 색이라 '한 세트'로 읽힌다. 색값은 tokens.css 의 --glow-sky/--glow-mauve/--glow-sage 와
+   같게 **복사**했다: 그쪽 주석이 glow 토큰을 버튼·테두리에 쓰지 말라고 못박아서 참조 대신
+   값을 두고, 오브 색을 바꾸면 여기도 같이 바꾼다(오너가 이 예외를 알고 고른 안). */
+.heroCtaRing {
+  --fm-ring-sky: #7fd0f0;
+  --fm-ring-mauve: #5fa7dd;
+  --fm-ring-sage: #b9a5e8;
+
+  display: inline-block;
+  padding: 2px;
+  border-radius: 999px;
+  background: conic-gradient(from 200deg, var(--fm-ring-sky), var(--fm-ring-mauve), var(--fm-ring-sage), var(--fm-ring-sky));
+  position: relative;
+  z-index: 1;
+}
+.heroCtaRing .heroCta { display: inline-flex; margin: 0; }
+/* 버튼 + 그 아래 혜택 캡션(2026-09-03 밤 오너 결정 — 오른쪽 위 손그림 메모 안은 되돌림).
+   세로로 가운데 정렬 한 덩이. */
+.heroCtaRow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.65rem;
+  margin-top: 0.95rem;
+  position: relative;
+  z-index: 1;
+}
+.heroCtaRow .heroCta { margin-top: 0; }
+/* 혜택 캡션(2026-09-03 밤 오너 선택 D안) — 잉크색 문장, 정가는 회색 취소선, '무료'는 액센트
+   배경의 작은 도장(살짝 기울임). 회색 캡션은 약관 문법이라 혜택이 목소리를 낮춘다는 지적. */
+.heroCaption {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  color: var(--fm-ink);
+  font: 500 0.9rem/1 var(--font-body);
+  text-align: center;
+}
+.heroCaption s { color: var(--fm-muted); font-weight: 400; }
+.heroCaptionFree {
+  display: inline-block;
+  padding: 0.3rem 0.55rem;
+  border-radius: 6px;
+  background: var(--fm-accent);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  transform: rotate(-3deg);
+}
+
+/* 신뢰 pill 3개 — 캐러셀 아래, 예전 화살표 버튼 자리(2026-09-03 저녁 오너 지시; 낮에는
+   제목 위였다). 흰 pill + 얇은 선, 체크는 액센트. 세로 간격은 .galleryLines 의 gap 이 준다. */
+.trustPills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.6rem;
+  margin: 0.15rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.trustPills li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.95rem 0.5rem 0.8rem;
+  border: 1px solid var(--fm-line);
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(16, 21, 26, 0.04);
+  font: 600 0.86rem/1 var(--font-body);
+  color: var(--fm-ink);
+}
+.trustPills li::before { content: '✓'; color: var(--fm-accent); font-weight: 800; }
+.trustPills small { font: 500 0.72rem/1 var(--font-body); color: var(--fm-muted); }
 
 @media (max-width: 1199px) {
   .hero { padding-top: clamp(2.2rem, 5vw, 4.4rem); }
-  .heroTitle { font-size: clamp(3.75rem, 8.2vw, 5.8rem); }
+  .heroTitle { font-size: clamp(2.6rem, 5.2vw, 4rem); }
 }
 
 /* 폰은 원본처럼 왼쪽 정렬이고 헤어라인은 접는다(폭이 없다). */
@@ -412,7 +586,13 @@
   .hero { justify-items: start; padding: 2rem var(--fm-pad) 1rem; text-align: left; }
   .kicker { justify-content: flex-start; margin-bottom: 0.75rem; font-size: 0.66rem; letter-spacing: 0.18em; }
   .kicker span { display: none; }
-  .heroTitle { font-size: clamp(3.1rem, 17vw, 4.75rem); }
+  /* 폰: 27자 영문이 두 줄("create your own / digital DNA")로 접히는 크기. 원본 17vw 는
+     두 단어 제목 기준이라 세 줄로 갈라진다. */
+  .heroTitle { font-size: clamp(2.4rem, 10vw, 3.2rem); }
+  /* 폰은 히어로가 왼쪽 정렬이라 리드문도 왼쪽. 데스크탑의 center 가 그대로 오면 <br> 뒤
+     둘째 줄만 상자 안에서 가운데로 밀려 들쭉날쭉해 보인다(실측). 캡션 줄도 같은 이유. */
+  .heroLead, .heroCaption { text-align: left; }
+  .heroCtaRow { align-items: flex-start; }
 }
 
 /* ---- 리드 + CTA(첫 화면 아래) ---- */
@@ -469,14 +649,8 @@
   font: 400 clamp(0.8rem, 1vw, 0.9rem)/1.5 var(--font-body);
 }
 
-/* 가운데(점)를 진짜 화면 중앙에 두려면 좌우 열이 같은 폭을 차지해야 한다. 1fr auto 1fr 로
-   양끝을 같은 몫으로 잡고 가운데만 내용 폭으로 둔다(좌측 숫자가 길어져도 점이 안 밀린다). */
-.galleryControls {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 1rem;
-}
+/* (2026-09-03 저녁) 좌우 화살표 버튼까지 오너 지시로 빠져 .galleryControls 줄은 사라졌다 —
+   메타 바는 고지문 + 신뢰 pill(.trustPills) 두 줄이다. 조작은 드래그·스와이프·키보드. */
 
 /* 큰 인덱스 — 원본 .sequence-counter. 히어로와 같은 세리프다(원본에서 이 숫자가 페이지의
    두 번째 디스플레이 요소였다). Cormorant 는 라틴 전용이지만 숫자는 라틴 자소라 정상으로
@@ -499,27 +673,6 @@
   line-height: 0.8;
 }
 
-.galleryArrows {
-  display: flex;
-  justify-self: end;
-  gap: clamp(0.65rem, 1vw, 1rem);
-}
-
-/* 좁은 화면에서는 세 덩이를 한 줄에 못 넣는다(점 14개가 이미 두 줄로 접히는 폭이다).
-   인덱스와 화살표를 한 줄에, 점을 그 아래 줄에 쌓는다. */
-@media (max-width: 40rem) {
-  .galleryControls {
-    grid-template-columns: auto 1fr;
-    grid-template-areas:
-      'index arrows'
-      'dots dots';
-    row-gap: 0.9rem;
-  }
-  .galleryIndex { grid-area: index; }
-  .galleryArrows { grid-area: arrows; }
-  .dots { grid-area: dots; }
-}
-
 /* 스크린리더 전용. 화면에서 지우되 접근성 트리에는 남긴다(display:none 은 트리에서도
    사라져 aria-live 가 발화하지 않는다). */
 .srOnly {
@@ -532,36 +685,6 @@
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
-}
-
-/* 원본 .arrow-button — 흰 원 + 안쪽 흰 링 + 부드러운 그림자. 폰은 44px 고정(터치 타깃). */
-.galleryArrow {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: clamp(3.05rem, 4vw, 4rem);
-  height: clamp(3.05rem, 4vw, 4rem);
-  padding: 0;
-  border: 1px solid rgba(16, 21, 26, 0.1);
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.72);
-  color: var(--fm-ink);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.72),
-    0 1.1rem 2.4rem rgba(38, 54, 72, 0.12);
-  cursor: pointer;
-  transition: transform 180ms ease, background 180ms ease, box-shadow 180ms ease;
-}
-.galleryArrow:hover,
-.galleryArrow:focus-visible {
-  background: #fff;
-  transform: translateY(-2px);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.9),
-    0 1.25rem 2.8rem rgba(38, 54, 72, 0.16);
-}
-@media (max-width: 47.99rem) {
-  .galleryArrow { width: 44px; height: 44px; }
 }
 
 /* 점 14개에 24px 히트 영역이면 336px 다. 40rem(640px) 아래에서는 점이 자기 줄

@@ -12,7 +12,6 @@
 import { LandingShell } from './LandingShell.jsx';
 import { HeroSection } from './sections/HeroSection.jsx';
 import { GallerySection } from './sections/GallerySection.jsx';
-import { IntroSection } from './sections/IntroSection.jsx';
 import { HowItWorksSection } from './sections/HowItWorksSection.jsx';
 import { FaqSection } from './sections/FaqSection.jsx';
 import s from './FacemarketLanding.module.css';
@@ -41,12 +40,13 @@ export function FacemarketLanding() {
               전부 받아(행: 히어로 / 스테이지 1fr / 메타 바) 캐러셀이 남는 만큼 커지고, 메타 바
               (힌트·점·인덱스·화살표)가 스크롤 없이 첫 화면 바닥에 선다. GallerySection 은
               래퍼 없이 스테이지와 메타 바를 이 그리드의 직접 자식으로 돌려준다.
-              리드문·CTA 는 그 아래(IntroSection)다 — 첫 화면에 끼우면 캐러셀이 밀려난다. */}
+              리드문·CTA 는 2026-09-03 부터 히어로 안에 있다(HeroSection 머리말 참고). */}
           <div className={s.screen}>
-            <HeroSection />
+            <HeroSection onPrimary={onPrimary} primaryLabel={ctaLabel} />
             <GallerySection />
           </div>
-          <IntroSection onPrimary={onPrimary} primaryLabel={ctaLabel} />
+          {/* IntroSection(리드문+CTA)은 2026-09-03 오너 지시로 내렸다 — 리드와 CTA 가 히어로로
+              올라가 같은 내용이 두 번 서던 것. 파일은 남겨 둔다(등록 안내 등 다른 자리 후보). */}
           {/* 서비스 설명과 FAQ 는 홈에만 둔다(사용자 지시 2026-09-02). 두 섹션 모두
               **아직 코드에 없는 지원·검토 절차**를 설명한다 — 각 파일 머리말의 경고 참고. */}
           <HowItWorksSection />
