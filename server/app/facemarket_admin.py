@@ -379,10 +379,22 @@ async def suspend_model(conn, *, model_id: str, actor: str, reason: str) -> dict
         raise _err("reason_required", "정지 사유를 입력해 주세요.")
     async with conn.cursor() as cur:
         previous = await _model_status(cur, model_id)
+        # 이미 정지된 모델을 또 정지시키면 이번 read 의 previous 가 'suspended' 가 되어,
+        # 감사 원장에 남을 before.status 가 진짜 이전 상태(예: verified)를 덮어써 버린다.
+        # 그러면 해제할 때 복원할 값 자체가 사라진다 — 여기서 미리 막는다.
+        if previous == "suspended":
+            raise _err("already_suspended", "이미 정지된 모델이에요.", status=409)
+        # 가드 UPDATE — where 에 방금 읽은 이전 상태를 그대로 건다(admin_approve_application
+        # 과 같은 낙관적 동시성 모양). 그 사이 다른 요청이 상태를 바꿨으면(동시 정지) 0-row 가
+        # 되어 충돌로 걸린다. 안 걸면 두 요청 다 "성공"한 것처럼 보이면서 감사 원장의 before
+        # 중 하나는 거짓이 되고, 그 거짓 값이 나중에 해제가 복원할 상태가 되어 버린다.
         await cur.execute(
-            "update fm_models set status = 'suspended', updated_at = now() where id = %s",
-            (model_id,),
+            "update fm_models set status = 'suspended', updated_at = now() "
+            "where id = %s and status = %s returning 1",
+            (model_id, previous),
         )
+        if await cur.fetchone() is None:
+            raise _err("already_suspended", "이미 정지된 모델이에요.", status=409)
     await admin_guard.write_audit(
         conn,
         actor_user_id=actor,
@@ -418,10 +430,16 @@ async def unsuspend_model(conn, *, model_id: str, actor: str) -> dict:
         # 원장 값이 오염됐거나 기록이 없으면 pending — 스키마 밖 값을 넣으면 check 제약이 터진다.
         if restored not in ("pending", "verified"):
             restored = "pending"
+        # 가드 UPDATE — suspend 와 같은 이유다. 방금 확인한 'suspended' 를 where 에 다시
+        # 건다: 그 사이 다른 요청이 먼저 해제했으면(동시 해제) 0-row 로 걸려 조용한 이중
+        # 성공을 막는다.
         await cur.execute(
-            "update fm_models set status = %s, updated_at = now() where id = %s",
+            "update fm_models set status = %s, updated_at = now() "
+            "where id = %s and status = 'suspended' returning 1",
             (restored, model_id),
         )
+        if await cur.fetchone() is None:
+            raise _err("not_suspended", "정지 상태인 모델만 해제할 수 있어요.")
     await admin_guard.write_audit(
         conn,
         actor_user_id=actor,
