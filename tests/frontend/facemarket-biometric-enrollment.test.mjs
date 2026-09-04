@@ -178,6 +178,8 @@ async function modelComponentHarness({
           export const listSettlements = (...args) => (
             api.listSettlements ? api.listSettlements(...args) : Promise.resolve([])
           );
+          export const stageApplicationPhoto = (...args) => api.stageApplicationPhoto(...args);
+          export const submitApplication = (...args) => api.submitApplication(...args);
           export const fetchLicenseFaceUrl = (...args) => (
             api.fetchLicenseFaceUrl ? api.fetchLicenseFaceUrl(...args) : Promise.reject(new Error('no face'))
           );
@@ -1365,6 +1367,57 @@ test('등록 완료 화면은 조건 요약과 Digital DNA 관리 CTA 하나만 
       findTree(tree, (node) => node.type === 'Button' && node.props?.children === '새 생체 등록 시작'),
       null,
     );
+  } finally {
+    await harness.close();
+  }
+});
+
+test('지원서 제출 성공 뒤 완료 화면에 머물고 모델 리스트로 이어진다', async () => {
+  const navigations = [];
+  const submissions = [];
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelApply.jsx',
+    exportName: 'ModelApply',
+    initialStates: [
+      'ready',
+      {
+        contactEmail: 'model@example.com', lastName: '김', firstName: '하나', phone: '',
+        birthdate: '2000-01-01', region: '서울, 대한민국', gender: 'female',
+        experienceLevel: 'beginner', categories: ['fashion'], portfolioUrl: '', snsUrl: '', bio: '',
+      },
+      { profile: { staged: true, name: 'profile.jpg' } },
+      { adultAndTruthful: true, photosAreMine: true },
+      true,
+      true,
+      null,
+    ],
+    api: {
+      getCurrentApplication: () => new Promise(() => {}),
+      stageApplicationPhoto: async () => ({}),
+      submitApplication: async (body) => { submissions.push(body); return { id: 'a1', status: 'under_review' }; },
+    },
+  });
+  harness.runtime.navigate = (...args) => navigations.push(args);
+  try {
+    const form = harness.render();
+    const submit = findTree(
+      form,
+      (node) => node.type === 'button' && node.props?.children === '지원서 제출하기',
+    );
+    assert.ok(submit, '완성된 지원서는 제출할 수 있어야 한다');
+    await submit.props.onClick();
+    await flush();
+
+    assert.equal(submissions.length, 1);
+    assert.equal(harness.runtime.states[0], 'complete');
+    assert.deepEqual(navigations, [], '제출 직후 상태 허브로 자동 이동하지 않는다');
+
+    const complete = harness.render();
+    assert.ok(findTree(complete, (node) => node.props?.children === '지원서 접수가 끝났어요'));
+    assert.ok(findTree(complete, (node) => node.props?.children === '승인되면 메일로 등록 링크가 가요 · 보통 1시간 안'));
+    assert.ok(findTree(complete, (node) => node.props?.children === '정부 모바일 신분증 앱'));
+    assert.ok(findTree(complete, (node) => node.props?.children === '본인 사진'));
+    assert.ok(findTree(complete, (node) => node.type === 'Link' && node.props?.to === '/models'));
   } finally {
     await harness.close();
   }
