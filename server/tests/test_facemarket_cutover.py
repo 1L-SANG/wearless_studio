@@ -855,7 +855,7 @@ def test_approve_initial_batch_requires_admin_and_tags_exact_jobs(monkeypatch):
         return user_id == "admin-user"
 
     monkeypatch.setattr(facemarket_cutover, "_manifest_identity", identity)
-    monkeypatch.setattr(facemarket_cutover.repo, "is_admin", is_admin)
+    monkeypatch.setattr(facemarket_cutover.admin_guard, "is_admin_user", is_admin)
     app = type("App", (), {"state": type("State", (), {"pool": _Pool(store)})()})()
 
     with pytest.raises(facemarket_cutover.CutoverBlocked) as exc:
@@ -902,7 +902,7 @@ def test_approve_initial_batch_rolls_back_when_exact_job_tagging_fails(monkeypat
         return True
 
     monkeypatch.setattr(facemarket_cutover, "_manifest_identity", identity)
-    monkeypatch.setattr(facemarket_cutover.repo, "is_admin", is_admin)
+    monkeypatch.setattr(facemarket_cutover.admin_guard, "is_admin_user", is_admin)
     app = type("App", (), {"state": type("State", (), {"pool": _Pool(store)})()})()
 
     with pytest.raises(facemarket_cutover.CutoverBlocked) as exc:
@@ -951,7 +951,7 @@ def test_approve_initial_batch_uses_locked_current_identity_not_stale_prelock_ma
 
     monkeypatch.setattr(facemarket_cutover, "build_initial_cutover_manifest", stale_build)
     monkeypatch.setattr(facemarket_cutover.repo, "list_facemarket_scope_jobs", current_jobs)
-    monkeypatch.setattr(facemarket_cutover.repo, "is_admin", is_admin)
+    monkeypatch.setattr(facemarket_cutover.admin_guard, "is_admin_user", is_admin)
     app = type("App", (), {"state": type("State", (), {"pool": _Pool(store)})()})()
 
     asyncio.run(facemarket_cutover.approve_initial_cutover_batch(

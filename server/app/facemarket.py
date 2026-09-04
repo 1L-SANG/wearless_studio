@@ -32,7 +32,7 @@ from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
 from pydantic import Field, ValidationError
 
-from . import cx_identity, holder_client
+from . import admin_guard, cx_identity, holder_client
 from . import repo
 from .auth import require_user
 from .db import get_conn
@@ -1770,8 +1770,7 @@ async def simulate_settlement(
     """
     async with get_conn(request) as conn:
         await _assert_account_open(conn, user_id)
-        if not await repo.is_admin(conn, user_id):
-            raise _err("forbidden", "관리자만 가능해요.", status=403)
+        await admin_guard.require_admin(conn, user_id)
         chain = getattr(request.app.state, "fm_chain", None)
         if chain is None:
             raise _err("chain_unavailable", "체인이 설정되지 않았습니다.", status=404)

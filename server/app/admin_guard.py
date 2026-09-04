@@ -24,6 +24,11 @@ async def require_admin(conn, user_id: str) -> None:
         raise forbidden()
 
 
+async def is_admin_user(conn, user_id: str) -> bool:
+    """예외 대신 판정만 필요한 호출자(cutover 는 자체 예외 타입을 쓴다)."""
+    return await repo.is_admin(conn, user_id)
+
+
 async def write_audit(
     conn,
     *,
