@@ -233,7 +233,7 @@ async def write_audit(conn, *, actor_user_id, action, target_type, target_id,
 - **Tailwind v4 + `@tailwindcss/vite`.** `src/apps/admin/admin.css` 하나가 `@import "tailwindcss";` 와 `@source` 로 스캔 범위를 `src/apps/admin`·`src/features/admin`·`src/components/admin-ui` 로 제한한다. 다른 앱 파일을 스캔하면 안 나가는 클래스가 붙는다.
 - **shadcn 컴포넌트는 `src/components/admin-ui/` 에 복사.** JSX 모드(`tsx: false`), 별칭은 기존 `@/` 를 쓴다. 필요한 것만: button, card, table, badge, dialog, input, select, tabs, dropdown-menu, toast(sonner), skeleton, tooltip.
 - **새 의존성:** `tailwindcss`, `@tailwindcss/vite`, `clsx`, `tailwind-merge`, `class-variance-authority`, 해당 Radix 패키지들. `lucide-react` 는 이미 있다.
-- **admin 은 공용 `@/components/ui.jsx` 를 더 이상 쓰지 않는다.** 두 디자인 시스템이 한 화면에 섞이면 지금보다 지저분해진다. `AdminApplications` 도 함께 이관한다(결정 7) — **동작·API 호출·상태 처리는 그대로 두고 마크업만 교체**한다.
+- **admin 은 공용 `@/components/ui.jsx` 의 시각 컴포넌트를 더 이상 쓰지 않는다.** 두 디자인 시스템이 한 화면에 섞이면 지금보다 지저분해진다. 예외는 `useToast` 훅 하나다 — `ToastProvider` 는 진입 공통이고 스타일은 studio 레이어가 주므로, 훅 하나를 위해 토스트를 다시 구현하지 않는다. `AdminApplications` 도 함께 이관한다(결정 7) — **동작·API 호출·상태 처리는 그대로 두고 마크업만 교체**한다.
 - 색은 CSS 변수(zinc 기반, 라이트 전용)로 정의한다. 다크는 나중에 변수 블록 하나 추가로 끝나게(결정 8).
 - `vite.config.js` 의 `optimizeDeps.entries` 에 `admin.html` 은 이미 있다. Tailwind 플러그인은 전역 등록이지만 CSS 를 import 하는 진입만 영향을 받는다.
 
