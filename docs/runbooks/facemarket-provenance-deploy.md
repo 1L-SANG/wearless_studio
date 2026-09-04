@@ -74,7 +74,37 @@ FM_C2PA_CERT_PEM`(대화형, 태그 자동)을 쓴다.
 나머지 삭제)로 지운다. 커밋 전에 `git status` 로 `server/c2pa/` 가 스테이징되지
 않았는지 직접 확인할 것 — 개인키 커밋은 즉시 회전(재발급) 대상이다.
 
-### 2. `FaceMarketProvenance` 컨트랙트 배포
+### 2. 업로드 토큰 HMAC 시크릿 (`FM_PROVENANCE_TOKEN_SECRET`)
+
+`server/app/facemarket_provenance.py` 의 `presign`·`sign` 라우트는 시작하자마자
+`_token_secret(settings)` 를 부른다. 이 값이 없으면 **폐쇄 실패**(503
+`provenance_unconfigured`)로 즉시 끝난다 — C2PA 인증서·체인이 전부 맞아도 공증
+파이프라인이 열리자마자 막힌다. 이 토큰은 seller_id·R2 키·project_id·kind 를 하나로
+묶어 서명해, 임의 R2 키를 presign 대상으로 밀어 넣는 걸 막는 HMAC 이다
+(`make_upload_token`/`parse_upload_token`).
+
+**`FM_CI_PEPPER`(생체 신분증 CI 해시 전용 — 이 시스템이 들고 있는 가장 민감한 PII 를
+보호하는 시크릿)를 절대 재사용하지 않는다.** 코드가 이유를 명시한다(`_token_secret()`
+docstring, 리뷰 I1 2026-09-04): 재사용하면 그 시크릿의 blast radius 가 CI 해시 경로에서
+훨씬 더 노출된 경로(모든 공증 왕복, presign/sign)로 번진다 — "TokenInvalid 를 디버그
+로그로 찍자" 같은 아주 흔한 후속 변경 하나가, 재사용했다면 CI 해시 전체까지 함께 새게
+만든다. 두 시크릿이 같은 종류(HMAC 시크릿)로 보여도 **하나로 합치지 말 것** — 다음에
+이걸 "단순화"하고 싶어지는 사람은 이 문단부터 읽는다.
+
+새로 생성한다(다른 시크릿 재사용 금지, 무작위 32바이트 — 이 저장소가 다른 HMAC 시크릿에
+쓰는 것과 같은 방식):
+
+```bash
+openssl rand -hex 32
+```
+
+```bash
+aws ssm put-parameter --profile wearless --region us-east-1 \
+  --name /copilot/wearless/use1/secrets/FM_PROVENANCE_TOKEN_SECRET \
+  --type SecureString --value "<위 명령으로 생성한 값>"
+```
+
+### 3. `FaceMarketProvenance` 컨트랙트 배포
 
 `contracts/FaceMarketProvenance.sol` 은 CI 가 없다 — `FaceMarketSettlement.sol` 과
 같은 방식으로, OmniOne Chain 콘솔에 **단일 파일**을 그대로 업로드해서 배포한다.
@@ -96,12 +126,14 @@ aws ssm put-parameter --profile wearless --region us-east-1 \
 반영할 수 있어야 하므로 평문 `variables:` 대신 `secrets:`(SSM SecureString 참조)로
 배선한다. 기존 `FM_SETTLEMENT_ADDRESS`(**별개 컨트랙트** — 정산용,
 `FaceMarketSettlement.sol`)는 이미 평문 `variables:` 로 배선돼 있으니 혼동하지 말 것;
-이번 태스크는 그 값을 건드리지 않는다.
+이번 태스크는 그 값을 건드리지 않는다 — 두 매니페스트의 `FM_SETTLEMENT_ADDRESS` 줄에도
+이 문단을 가리키는 짧은 주석을 남겨서, 다음 사람이 "같은 성격의 값인데 왜 다르게
+배선했지"를 이 런북 없이도 알 수 있게 했다.
 
 RPC 호스트 함정(실측 2026-07-13): OmniOne Chain 게이트웨이 호스트는 `test.` 를 **뺀**
 주소다. chainId 는 **`201210`**.
 
-### 3. ⚠️ 체인 3종 — "prod 에 없다"가 지금도 참인지 직접 확인할 것
+### 4. ⚠️ 체인 3종 — "prod 에 없다"가 지금도 참인지 직접 확인할 것
 
 `FM_CHAIN_RPC_URL` · `FM_SETTLEMENT_ADDRESS` · `FM_CHAIN_PRIVATE_KEY` 셋 다 있어야
 `FaceMarketChain.from_settings`(`server/app/facemarket_chain.py`)가 활성 recorder 를
@@ -124,7 +156,7 @@ RPC 호스트 함정(실측 2026-07-13): OmniOne Chain 게이트웨이 호스트
    에서 이미 정상 기동 중이라는 사실은(다른 필수 시크릿도 같은 경로 규칙을 쓰므로)
    이 값도 SSM 에 **존재는** 한다는 강한 정황이지만, 그 값이 **지금도 유효한
    RPC/개인키인지**는 컷오버 작업이 체인 시크릿까지 챙겼는지에 달려 있고, 이 태스크는
-   AWS 를 조회할 권한이 없어 직접 확인하지 못했다 — 배선 검증(§켠 뒤 확인) 전까지
+   AWS 를 조회할 권한이 없어 직접 확인하지 못했다 — 아래 "켠 뒤 확인" 절 전까지
    가정하지 말 것.
 2. **기존 프로비저닝 스크립트가 옛 환경을 하드코딩하고 있다.** `scripts/fm-chain-secrets.sh`
    는 `REGION=ap-northeast-2`·`PREFIX=/copilot/wearless/prod/secrets` 를
@@ -144,11 +176,11 @@ aws ssm get-parameter --profile wearless --region us-east-1 \
   --query Parameter.LastModifiedDate
 ```
 
-날짜만으로는 "작동하는 값인지"까지 보장 못 한다 — 최종 확인은 반드시 **켠 뒤 확인(§7)**
-에서 `chain_status: pending → confirmed` 전환을 직접 눈으로 보는 것이다. 그게 유일한
+날짜만으로는 "작동하는 값인지"까지 보장 못 한다 — 최종 확인은 반드시 아래 **켠 뒤 확인**
+절에서 `chain_status: pending → confirmed` 전환을 직접 눈으로 보는 것이다. 그게 유일한
 진짜 증거다.
 
-### 4. R2 버킷 CORS
+### 5. R2 버킷 CORS
 
 브라우저가 배포본을 presigned PUT 으로 직접 R2 에 올린다(`server/app/r2.py:131
 presigned_put()`, 버킷 `wearless`). 버킷에 **CORS** 규칙이 없으면 브라우저 preflight
@@ -172,7 +204,7 @@ Cloudflare R2 대시보드(또는 API)에서 버킷 `wearless` 에 CORS 규칙�
 배선까지는 확인하지 못했다. CORS 는 origin 을 넉넉히 허용해도 보안 위험이 크지 않은
 쪽이니 좁혀서 재발 위험을 만들지 말 것.
 
-### 5. `PUBLIC_WEB_ORIGIN` — 아무것도 켜기 전에 먼저 확인
+### 6. `PUBLIC_WEB_ORIGIN` — 아무것도 켜기 전에 먼저 확인
 
 `server/app/facemarket_provenance.py` 가 서명 시점에 아래 값을 만들어 C2PA 매니페스트
 안에 **영구히** 박는다:
@@ -202,9 +234,9 @@ open https://wearless.kr/verify/p/00000000-0000-0000-0000-000000000000
 PUBLIC_WEB_ORIGIN: "https://wearless.kr"
 ```
 
-### 6. `FM_PROVENANCE_ENABLED=true` — 맨 마지막
+### 7. `FM_PROVENANCE_ENABLED=true` — 맨 마지막
 
-위 1~5 를 전부 확인한 뒤에만 켠다. `server/app/main.py` 가 이 플래그 하나로 세 가지를
+위 1~6 을 전부 확인한 뒤에만 켠다. `server/app/main.py` 가 이 플래그 하나로 세 가지를
 동시에 켠다:
 
 - `/v1/facemarket/publications/*` 라우트 등록(꺼져 있으면 404 — 회귀 테스트
@@ -212,6 +244,21 @@ PUBLIC_WEB_ORIGIN: "https://wearless.kr"
 - `PublicationAnchorReconciler` 워커 기동(층③ 앵커 폴링)
 - `C2paSigner.from_settings` 로 서명기 활성화(cert/key 둘 다 있어야 진짜 활성 — 하나만
   있으면 `c2pa_status='skipped'` 로 조용히 넘어간다)
+
+⚠️ **이 플래그는 `FACEMARKET_ENABLED` 안에 중첩돼 있다** — `main.py:413-439` 확인:
+라우트 등록과 `C2paSigner.from_settings` 호출 둘 다 `if settings.facemarket_enabled:`
+블록 안에서만 일어난다. `FACEMARKET_ENABLED=false` 인 환경에서 `FM_PROVENANCE_ENABLED=true`
+만 켜면 라우트도 서명기도 없이 또 다른 조용한 no-op 이 생긴다 — 체인 3종 no-op(§4)과
+똑같은 모양이다. 지금 prod 는 두 매니페스트 다 `FACEMARKET_ENABLED: "true"` 라 문제가
+없다(`copilot/api/manifest.yml`, `copilot/detail-worker/manifest.yml`) — 다만 이 값을
+유지보수 등으로 잠깐 끄는 사람이 이 의존을 몰랐다가 놀랄 수 있으니 여기 적어 둔다.
+
+한 가지 비대칭: 앵커 워커(`PublicationAnchorReconciler`)의 기동 조건은 `main.py:145`,
+`if pool is not None:` 블록 안에 있고 `facemarket_enabled` 를 아예 보지 않는다 —
+`FACEMARKET_ENABLED=false` 여도 `FM_PROVENANCE_ENABLED=true` 면 이 워커는 뜬다. 다만
+라우트가 없으면 공증 자체가 절대 일어나지 않으므로(REAL 모델 라이선스 흐름도
+`facemarket_enabled` 를 전제한다) 실전에서는 할 일 없이 유휴 폴링만 한다 — 해는 없지만
+"라우트·서명기가 없으면 이 워커도 안 돈다"고 착각하지 말 것.
 
 **층①(컷 원장 `fm_output_records`)은 이 플래그와 무관하게 이미 항상 켜져 있다** — REAL
 라이선스 컷이 생성될 때마다 `finalize_detail_page_success` 트랜잭션 안에서 insert
@@ -225,7 +272,7 @@ PUBLIC_WEB_ORIGIN: "https://wearless.kr"
 FM_PROVENANCE_ENABLED: "false"   # 배선 검증 후 true 로 올린다
 ```
 
-### 7. 마이그레이션
+### 8. 마이그레이션
 
 `supabase/migrations/20260904000000_facemarket_provenance.sql` 이 층①②③ 테이블을
 만든다. ⚠️ **2026-08-29 에 CI 시크릿 `SUPABASE_DB_URL`**(`.github/workflows/deploy-server.yml`
@@ -261,35 +308,49 @@ ref 가 `ftjxwxuactfjopbokbni` 인지 확인한다. GitHub UI 는 시크릿 값�
    읽히고 변조 감지는 그대로 동작한다 — 이걸 "서명 실패"·"배포 실패"로 오판하지 말 것.
 4. `fm_publication_records.chain_status` 를 몇 초 ~ 최대 90여 초 간격으로 재조회한다 —
    `pending` → `confirmed` 로 바뀌는가(`PublicationAnchorReconciler` 유휴 주기 5초 +
-   `FaceMarketChain._CONFIRM_TIMEOUT` 최대 90초가 상한). 안 바뀌면 §3 의 체인 3종부터
+   `FaceMarketChain._CONFIRM_TIMEOUT` 최대 90초가 상한). 안 바뀌면 §4 의 체인 3종부터
    의심한다 — 조용한 no-op 의 유일한 관측 가능한 증상이 이것이다.
 5. 매니페스트 안 `verifyUrl` 을 실제 publicationId 로 열어 공개 검증 페이지가 뜨는지
-   최종 확인한다(§5 에서 미리 한 확인의 실전 재확인).
+   최종 확인한다(§6 에서 미리 한 확인의 실전 재확인).
+
+**증상별로 어디부터 볼지:**
+
+| 증상 | 먼저 볼 곳 |
+|---|---|
+| presign/sign 이 즉시 `provenance_unconfigured`(503) | §2 `FM_PROVENANCE_TOKEN_SECRET` — C2PA·체인이 아니라 이거다 |
+| `/v1/facemarket/publications/*` 가 전부 404 | §7 `FACEMARKET_ENABLED`/`FM_PROVENANCE_ENABLED` 둘 다 `true` 인지 |
+| 다운로드는 되는데 서명이 `c2pa_status='skipped'` | §1 인증서 두 장이 SSM 에 실제로 있는지 |
+| `chain_status` 가 `pending` 에서 안 바뀜 | §4 체인 3종 |
+| 검증 페이지가 404/DNS 에러/다른 앱 화면 | §6 `PUBLIC_WEB_ORIGIN` |
 
 ## 롤백
 
 `FM_PROVENANCE_ENABLED=false` 로 되돌리면 `/v1/facemarket/publications/*` 라우트가
-다시 미등록되고, 앵커 워커가 뜨지 않고, 서명기가 비활성화된다 — 이 기능이 없던
-이전(prior) 동작으로 정확히 돌아간다. **되돌린다고 데이터가 지워지지는 않는다**: 이미
-쓰인 `fm_output_records`·`fm_publication_records` 행, 이미 체인에 기록된
-`recordPublication` 트랜잭션은 전부 그대로 남는다 — 깨끗한 되돌리기를 기대하지 말 것.
-롤백은 "더 이상 새로 만들지 않는다"이지 "지금까지 만든 걸 지운다"가 아니다. 또한 §6 에서
-적었듯 층①(원장 insert)은 이 플래그와 무관하게 계속 동작한다 — 롤백해도 REAL 라이선스
-컷의 `fm_output_records` 적재는 멈추지 않는다.
+다시 미등록되고, 서명기가 비활성화된다 — 이 기능이 없던 이전(prior) 동작으로 정확히
+돌아간다(앵커 워커는 §7 의 비대칭 때문에 `FACEMARKET_ENABLED` 상태에 따라 계속 뜰 수도
+있다 — 해는 없다, 위 표 참고). **되돌린다고 데이터가 지워지지는 않는다**: 이미 쓰인
+`fm_output_records`·`fm_publication_records` 행, 이미 체인에 기록된 `recordPublication`
+트랜잭션은 전부 그대로 남는다 — 깨끗한 되돌리기를 기대하지 말 것. 롤백은 "더 이상 새로
+만들지 않는다"이지 "지금까지 만든 걸 지운다"가 아니다. 또한 §7 에서 적었듯 층①(원장
+insert)은 이 플래그와 무관하게 계속 동작한다 — 롤백해도 REAL 라이선스 컷의
+`fm_output_records` 적재는 멈추지 않는다.
 
 ---
 
 ## 부록 — 매니페스트에 실제로 추가/확인한 항목
 
-`copilot/api/manifest.yml`·`copilot/detail-worker/manifest.yml` 둘 다 동일하게(라우트는
-api 가, 앵커 reconciler 는 api 의 lifespan 이 돌지만 detail-worker 도 같은 이미지·같은
-설정 로딩 경로를 쓰므로 한쪽만 넣으면 기동 시 두 서비스의 설정이 갈린다):
+`copilot/api/manifest.yml`·`copilot/detail-worker/manifest.yml` 둘 다 동일하게 배선한다.
+라우트는 `api` 에만 등록되지만, 앵커 reconciler 는 `facemarket_enabled` 와 무관하게
+`fm_provenance_enabled` 만 보고 뜨므로(§7) 두 서비스 **모두**에서 실제로 기동할 수 있다
+— 게다가 두 서비스가 같은 이미지·같은 설정 로딩 경로(`app/config.py`)를 쓰므로 한쪽만
+넣으면 기동 시 두 서비스의 설정이 갈린다:
 
 ```yaml
 secrets:
   FM_C2PA_CERT_PEM: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_C2PA_CERT_PEM
   FM_C2PA_KEY_PEM: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_C2PA_KEY_PEM
   FM_PROVENANCE_ADDRESS: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_PROVENANCE_ADDRESS
+  FM_PROVENANCE_TOKEN_SECRET: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_PROVENANCE_TOKEN_SECRET
 
 variables:
   FM_PROVENANCE_ENABLED: "false"   # 배선 검증 후 true 로 올린다
@@ -299,4 +360,10 @@ variables:
 **이미 있던 것(이번 태스크에서 손대지 않음, 2026-07-20 커밋 `bd70d267`/`d1fa9dd4`부터):**
 `FM_CHAIN_RPC_URL`·`FM_CHAIN_PRIVATE_KEY`(`secrets:`), `FM_CHAIN_ID`·
 `FM_SETTLEMENT_ADDRESS`(`variables:`, 값 `"201210"`/`"0x39445B04d8F588Ea5E447ff03D8A4b253a6d67A3"`).
-§3 이 설명하듯 "매니페스트 참조 존재"와 "SSM 값이 `use1` 환경에서 유효"는 별개 질문이다.
+§4 이 설명하듯 "매니페스트 참조 존재"와 "SSM 값이 `use1` 환경에서 유효"는 별개 질문이다.
+
+**`FM_CHAIN_ID` 를 이 문서가 필수 목록에 안 넣는 이유:** `FaceMarketChain.from_settings`
+가 요구하는 필수 3종은 `FM_CHAIN_RPC_URL`·`FM_SETTLEMENT_ADDRESS`·`FM_CHAIN_PRIVATE_KEY`
+뿐이다 — `FM_CHAIN_ID` 는 없으면 `eth_chainId` 로 자동 조회한다
+(`server/app/facemarket_chain.py`). 이미 두 매니페스트에 평문 `"201210"` 으로 고정
+배선돼 있어 손댈 이유가 없었다.
