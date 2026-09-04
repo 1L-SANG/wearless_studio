@@ -33,7 +33,7 @@ function nextSettlement(now) {
   const parts = seoulParts(now) || seoulParts(new Date());
   let year = parts.year;
   let month = parts.month;
-  if (parts.day >= SETTLEMENT_DAY) {
+  if (parts.day > SETTLEMENT_DAY) {
     month += 1;
     if (month === 13) { year += 1; month = 1; }
   }
@@ -65,8 +65,7 @@ function hasOwnField(rows, fields) {
 
 export function settlementColumns(rows = []) {
   const hasShop = hasOwnField(rows, OPTIONAL_FIELDS.shop);
-  const hasItem = hasOwnField(rows, OPTIONAL_FIELDS.item)
-    || rows.some((row) => Object.prototype.hasOwnProperty.call(row || {}, 'billingType'));
+  const hasItem = hasOwnField(rows, OPTIONAL_FIELDS.item);
   const hasThumbnail = hasOwnField(rows, OPTIONAL_FIELDS.thumbnail);
   return [
     { key: 'date', label: '날짜' },
@@ -88,12 +87,15 @@ function firstValue(row, fields) {
 function settlementStatus(row, license, now) {
   const raw = row?.licenseStatus || row?.status || license?.status;
   const validUntil = row?.licenseValidUntil || license?.licenseValidUntil;
-  if (['expired', 'revoked', 'inactive'].includes(raw)) return '만료';
+  if (['expired', 'revoked', 'inactive', 'reverification_required', 'suspended'].includes(raw)) return '만료';
   if (validUntil) {
     const expiry = new Date(validUntil);
     if (!Number.isNaN(expiry.getTime()) && expiry <= now) return '만료';
   }
   if (raw === 'active') return '활성';
+  // /licenses는 revoked 행을 의도적으로 제외한다. 목록 조회가 성공했는데 정산의 licenseId가
+  // 보이지 않으면 과거 라이선스가 끝난 경우이므로, 알 수 없음이 아니라 만료로 표시한다.
+  if (row?.licenseId && !license) return '만료';
   return '—';
 }
 

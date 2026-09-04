@@ -611,13 +611,17 @@ export function ModelLicense() {
     }, [load]);
 
     const onIssued = useCallback(
-        async (lic) => {
+        (lic) => {
             setIssuedId(lic?.id ?? null);
-            setView("cards");
-            setSearchParams({}, { replace: true });
-            setLicenses(await listLicenses());
+            navigate("/model/register", {
+                replace: true,
+                state: {
+                    completedEnrollment: enrollmentRecord,
+                    issuedLicense: lic,
+                },
+            });
         },
-        [setSearchParams],
+        [enrollmentRecord, navigate],
     );
 
     // 발급 직후 카드로 데려간다(모바일에선 목록이 길어 새 카드가 화면 밖에 있을 수 있다).

@@ -114,7 +114,7 @@ function PayoutContent() {
     try {
       const [settlementRows, licenseRows] = await Promise.all([
         listSettlements(),
-        listLicenses().catch(() => []),
+        listLicenses(),
       ]);
       setSettlements(Array.isArray(settlementRows) ? settlementRows : []);
       setLicenses(Array.isArray(licenseRows) ? licenseRows : []);

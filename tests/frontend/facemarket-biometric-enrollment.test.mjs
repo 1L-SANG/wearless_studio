@@ -139,6 +139,7 @@ async function modelComponentHarness({
         if (id === '\0fm-test-router') return `
           export const Link = 'Link';
           export const useNavigate = () => ${access}.navigate;
+          export const useLocation = () => ${access}.location || ({ state: null });
         `;
         if (id === '\0fm-test-ui') return `
           export const Button = 'Button';
@@ -1050,6 +1051,47 @@ test('verified ModelHub shows the active dashboard even with zero settlements', 
   }
 });
 
+test('ModelHub treats license API failure as unavailable instead of real zero/default terms', async () => {
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelHub.jsx',
+    exportName: 'ModelHub',
+    initialStates: ['loading', null, null, null, true, [], []],
+    api: {
+      listMyModels: async () => [{ id: 'model-1', status: 'verified' }],
+      getCurrentEnrollment: async () => { throw Object.assign(new Error('none'), { status: 404 }); },
+      listLicenses: async () => { throw Object.assign(new Error('license unavailable'), { status: 500 }); },
+      listSettlements: async () => [],
+    },
+  });
+  try {
+    harness.render();
+    harness.runtime.effects[0]();
+    await eventually(() => harness.runtime.states[0] !== 'loading', 'hub load should settle');
+    assert.equal(harness.runtime.states[0], 'error');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('verified ModelHub without a license does not invent default rules', async () => {
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelHub.jsx',
+    exportName: 'ModelHub',
+    initialStates: ['ready', { id: 'model-1', status: 'verified', displayName: '김*나' }, null, null, true, [], []],
+    api: { getCurrentEnrollment: () => new Promise(() => {}) },
+  });
+  try {
+    const tree = harness.render();
+    const active = findTree(tree, (node) => node.type?.name === 'ActiveDashboard');
+    const dashboard = active.type(active.props);
+    assert.equal(findTree(dashboard, (node) => node.props?.children === '10,000원'), null);
+    assert.equal(findTree(dashboard, (node) => node.props?.children === '25,000원'), null);
+    assert.ok(findTree(dashboard, (node) => node.type === 'dd' && node.props?.children === '—'));
+  } finally {
+    await harness.close();
+  }
+});
+
 test('SlotCard renders a pose example image from the angle', () => {
   const upload = read('../../src/features/model/ModelFaceUpload.jsx');
   assert.match(upload, /exampleImage|example/);
@@ -1245,7 +1287,18 @@ test('each angle offers a photo example with the pose drawing as fallback', () =
 
 // ── 체형: 성별 분리 + 이미지 ────────────────────────────────────────────────
 
-const { BODY_TYPES, bodyTypeOptions, bodyTypeMatrix } = await import('../../src/lib/facemarketPhysique.js');
+const {
+  BODY_TYPES, bodyTypeLabel, bodyTypeOptions, bodyTypeMatrix, heightBucketLabel,
+} = await import('../../src/lib/facemarketPhysique.js');
+
+test('완료 요약은 저장된 키·복합 체형 코드를 사람말로 바꾼다', () => {
+  assert.equal(typeof bodyTypeLabel, 'function');
+  assert.equal(typeof heightBucketLabel, 'function');
+  assert.equal(heightBucketLabel('f_160_165'), '160–165cm');
+  assert.equal(bodyTypeLabel('slim'), '마름');
+  assert.equal(bodyTypeLabel('slim_upper'), '마름 · 상체 볼륨');
+  assert.equal(bodyTypeLabel(null), null);
+});
 
 test('body types are split by gender without inventing new server values', () => {
   const serverValues = new Set(BODY_TYPES.map((b) => b.value));
@@ -1347,6 +1400,7 @@ test('등록 완료 화면은 조건 요약과 Digital DNA 관리 CTA 하나만 
       [],
       null,
       {
+        phase: 'ready',
         model: { id: 'm1', displayName: '김*나', status: 'verified' },
         license: {
           id: 'l1', modelId: 'm1', allowedUse: ['상의', '하의'], unitPrice: 10_000,
@@ -1367,6 +1421,68 @@ test('등록 완료 화면은 조건 요약과 Digital DNA 관리 CTA 하나만 
       findTree(tree, (node) => node.type === 'Button' && node.props?.children === '새 생체 등록 시작'),
       null,
     );
+  } finally {
+    await harness.close();
+  }
+});
+
+test('라이선스 발급은 등록 완료 화면으로 체형과 발급 조건을 전달한다', () => {
+  const source = read('../../src/features/model/ModelLicense.jsx');
+  assert.match(
+    source,
+    /navigate\(\s*["']\/model\/register["'][\s\S]*completedEnrollment:\s*enrollmentRecord[\s\S]*issuedLicense:\s*lic/,
+  );
+});
+
+test('등록 완료 화면은 발급 경로로 전달된 체형을 되살린다', async () => {
+  const harness = await modelComponentHarness({
+    initialStates: [
+      'done',
+      { modelId: 'm1', status: 'passed' },
+      null, '', false, false, true,
+      null, null, null, [], null,
+      {
+        phase: 'ready',
+        model: { id: 'm1', displayName: '김*나', status: 'verified' },
+        license: { id: 'l1', modelId: 'm1', allowedUse: ['상의'], unitPrice: 10_000, validityDays: 730 },
+      },
+    ],
+    api: { getCurrentEnrollment: () => new Promise(() => {}) },
+  });
+  harness.runtime.location = {
+    state: {
+      completedEnrollment: {
+        id: 'e1', modelId: 'm1', status: 'passed', gender: 'female',
+        heightBucket: 'f_160_165', bodyType: 'slim_upper',
+      },
+      issuedLicense: { id: 'l1', modelId: 'm1', unitPrice: 10_000 },
+    },
+  };
+  try {
+    const tree = harness.render();
+    assert.ok(findTree(
+      tree,
+      (node) => node.type === 'dd' && node.props?.children === '160–165cm · 마름 · 상체 볼륨',
+    ));
+  } finally {
+    await harness.close();
+  }
+});
+
+test('등록 완료 조건 조회 실패는 기본 가격과 영구 조건을 실제 값처럼 보여 주지 않는다', async () => {
+  const harness = await modelComponentHarness({
+    initialStates: [
+      'done', { modelId: 'm1', status: 'passed' }, null, '', false, false, true,
+      null, null, null, [], null,
+      { phase: 'error', model: null, license: null },
+    ],
+    api: { getCurrentEnrollment: () => new Promise(() => {}) },
+  });
+  try {
+    const tree = harness.render();
+    assert.ok(findTree(tree, (node) => node.props?.children === '조건 요약을 불러오지 못했어요.'));
+    assert.equal(findTree(tree, (node) => node.props?.children === '10,000원'), null);
+    assert.equal(findTree(tree, (node) => node.props?.children === '영구'), null);
   } finally {
     await harness.close();
   }

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { Button, Icon } from '@/components/ui.jsx';
 import {
   cancelEnrollment,
@@ -25,10 +25,15 @@ import {
 } from './biometricEnrollment.js';
 // 상대경로 — 이 테스트 하네스(configFile:false)는 `@/` alias 를 해석하지 않고, 이 파일은
 // (ModelFaceUpload.jsx 와 달리) 전체가 스텁으로 치환되지 않으므로 alias import 는 실렌더 전부를 깨뜨린다.
-import { bodyTypeMatrix, bodyTypeOptions, heightBucketOptions } from '../../lib/facemarketPhysique.js';
+import {
+  bodyTypeLabel,
+  bodyTypeMatrix,
+  bodyTypeOptions,
+  heightBucketLabel,
+  heightBucketOptions,
+} from '../../lib/facemarketPhysique.js';
 import {
   APPROVAL_MODE,
-  UNIT_PRICE_DEFAULT_KRW,
   formatKrw,
   monthlyPriceFor,
   validityLabel,
@@ -163,6 +168,7 @@ function renderStepRail(step) {
 }
 
 export function ModelRegister() {
+  const { state: routeState } = useLocation();
   const [step, setStep] = useState('loading');
   const [enrollment, setEnrollment] = useState(null);
   const [session, setSession] = useState(null);
@@ -616,27 +622,39 @@ export function ModelRegister() {
   const [profilePreview, setProfilePreview] = useState(null);
   // 완료 카드에 필요한 모델·조건. 기존 useState 인덱스를 쓰는 등록 테스트를 깨뜨리지 않도록
   // 모든 기존 state 뒤에 둔다. 조회 실패 시 조건표 기본값으로 안전하게 표시한다.
-  const [completionDetails, setCompletionDetails] = useState({ model: null, license: null });
+  const [completionDetails, setCompletionDetails] = useState(() => ({
+    phase: routeState?.issuedLicense ? 'ready' : 'loading',
+    model: null,
+    license: routeState?.issuedLicense || null,
+  }));
+
+  const completedEnrollment = routeState?.completedEnrollment || enrollment;
 
   useEffect(() => {
     if (step !== 'done') return undefined;
     let active = true;
-    void Promise.all([
-      listMyModels().catch(() => []),
-      listLicenses().catch(() => []),
-    ]).then(([models, licenses]) => {
-      if (!active) return;
-      const model = models.find((candidate) => candidate.status === 'verified')
-        || models.find((candidate) => candidate.id === enrollment?.modelId)
-        || models[0]
-        || null;
-      const license = licenses.find((candidate) => candidate.modelId === model?.id)
-        || licenses[0]
-        || null;
-      setCompletionDetails({ model, license });
-    });
+    if (!routeState?.issuedLicense) {
+      setCompletionDetails((details) => ({ ...details, phase: 'loading' }));
+    }
+    void (async () => {
+      try {
+        const models = await listMyModels().catch(() => []);
+        const licenses = routeState?.issuedLicense ? [routeState.issuedLicense] : await listLicenses();
+        if (!active) return;
+        const model = models.find((candidate) => candidate.status === 'verified')
+          || models.find((candidate) => candidate.id === completedEnrollment?.modelId)
+          || models[0]
+          || null;
+        const license = licenses.find((candidate) => candidate.modelId === model?.id)
+          || licenses[0]
+          || null;
+        setCompletionDetails({ phase: license ? 'ready' : 'error', model, license });
+      } catch {
+        if (active) setCompletionDetails({ phase: 'error', model: null, license: null });
+      }
+    })();
     return () => { active = false; };
-  }, [enrollment?.modelId, step]);
+  }, [completedEnrollment?.modelId, routeState?.issuedLicense, step]);
 
   const genderForBuckets = enrollment?.gender || physiqueGender || null;
   const heightOptions = genderForBuckets ? heightBucketOptions(genderForBuckets) : [];
@@ -646,18 +664,15 @@ export function ModelRegister() {
   const bodyMatrix = bodyTypeMatrix(genderForBuckets);
   const completionModel = completionDetails.model;
   const completionLicense = completionDetails.license;
-  const completionBody = bodyTypeOptions(enrollment?.gender || null)
-    .find((option) => option.value === enrollment?.bodyType)?.label;
-  const completionHeight = enrollment?.gender
-    ? heightBucketOptions(enrollment.gender).find((option) => option.value === enrollment?.heightBucket)?.label
-    : null;
+  const completionBody = bodyTypeLabel(completedEnrollment?.bodyType);
+  const completionHeight = heightBucketLabel(completedEnrollment?.heightBucket);
   const completionBodyBand = [completionHeight, completionBody].filter(Boolean).join(' · ') || '선택 안 함';
-  const completionUnitPrice = completionLicense?.unitPrice ?? UNIT_PRICE_DEFAULT_KRW;
+  const completionUnitPrice = completionLicense?.unitPrice;
   const completionValidity = completionLicense?.validityDays != null
     ? validityLabel(completionLicense.validityDays)
     : completionLicense?.licenseValidUntil
       ? `${new Date(completionLicense.licenseValidUntil).toLocaleDateString('ko-KR')}까지`
-      : validityLabel(null);
+      : completionLicense ? validityLabel(null) : null;
 
   if (step === 'loading') return <div className="wizard narrow"><div className="surface">등록 상태를 확인하고 있어요…</div></div>;
 
@@ -698,7 +713,11 @@ export function ModelRegister() {
       <div className={`wizard narrow ${s.centeredWizard}`}><div className={s.successWrap}>
         <div className={s.successIcon}><Icon name="check" size={30} stroke={2.4} /></div>
         <h1 className={s.successTitle}>축하해요, 등록이 끝났어요</h1>
-        <dl className={s.completionSummary}>
+        {completionDetails.phase === 'loading' ? (
+          <p className={s.completionSummaryState}>조건 요약을 불러오는 중…</p>
+        ) : completionDetails.phase === 'error' ? (
+          <p className={s.completionSummaryState} role="alert">조건 요약을 불러오지 못했어요.</p>
+        ) : <dl className={s.completionSummary}>
           <div><dt>활동명</dt><dd>{completionModel?.displayName || '내 Digital DNA'}</dd></div>
           <div><dt>체형 밴드</dt><dd>{completionBodyBand}</dd></div>
           <div><dt>허용 품목</dt><dd>{completionLicense?.allowedUse?.length || 0}개</dd></div>
@@ -706,7 +725,7 @@ export function ModelRegister() {
           <div><dt>월정액</dt><dd>{formatKrw(monthlyPriceFor(completionUnitPrice))}</dd></div>
           <div><dt>유효기간</dt><dd>{completionValidity}</dd></div>
           <div><dt>승인 방식</dt><dd>{APPROVAL_MODE === 'auto' ? '자동' : APPROVAL_MODE}</dd></div>
-        </dl>
+        </dl>}
         <p className={s.completionNotice}>우리가 사진을 확인한 뒤 테스트 컷을 보내드려요. 보통 1~2일 걸려요.</p>
         <Link to="/status" className={s.nextCard}>
           Digital DNA 관리 보기 <Icon name="chevRight" size={18} />

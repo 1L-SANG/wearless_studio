@@ -87,8 +87,6 @@ test('등록 상태는 검수·생성·확정 단계와 도달 가능한 행동�
     ['terms_pending', 2, '조건·증서 이어가기', '/model/license?step=terms&enrollment=e1'],
     ['vc_pending', 2, '조건·증서 이어가기', '/model/license?step=terms&enrollment=e1'],
     ['review_pending', 3, '검수 상태 새로고침', undefined],
-    ['processing', 4, '생성 상태 새로고침', undefined],
-    ['asset_building', 4, '생성 상태 새로고침', undefined],
     ['confirm_pending', 5, '테스트 컷 확인하기', '/model/confirm'],
   ];
 
@@ -98,6 +96,19 @@ test('등록 상태는 검수·생성·확정 단계와 도달 가능한 행동�
     assert.equal(journey.action.label, label, status);
     assert.equal(journey.action.to, to, status);
     assert.equal(journey.steps.filter((step) => step.state === 'current').length, 1, status);
+  }
+});
+
+test('현재 서버와 Phase B의 processing은 라이선스 존재 여부로 구분해 타임라인이 후퇴하지 않는다', async () => {
+  const { resolveHubJourney } = await loadRequired(journeyUrl, '허브 상태');
+  for (const status of ['processing', 'asset_building']) {
+    const currentServer = resolveHubJourney({ enrollment: { id: 'e1', status }, hasLicense: false });
+    assert.equal(currentServer.currentIndex, 2, status);
+    assert.equal(currentServer.action.label, '등록 상태 새로고침', status);
+
+    const phaseB = resolveHubJourney({ enrollment: { id: 'e1', status }, hasLicense: true });
+    assert.equal(phaseB.currentIndex, 4, status);
+    assert.equal(phaseB.action.label, '생성 상태 새로고침', status);
   }
 });
 

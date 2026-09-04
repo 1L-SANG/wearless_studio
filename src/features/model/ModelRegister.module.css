@@ -238,6 +238,15 @@
   font: 400 0.88rem/1.6 var(--font-body);
   word-break: keep-all;
 }
+.completionSummaryState {
+  margin: 1.6rem 0 0;
+  padding: 1.2rem;
+  border: 1px solid var(--fm-line, var(--ring));
+  border-radius: var(--fm-card-radius, var(--r-5));
+  background: rgba(237, 243, 248, 0.38);
+  color: var(--fm-muted, var(--fg-2));
+  font: 400 0.86rem/1.5 var(--font-body);
+}
 @media (max-width: 35rem) {
   .completionSummary { grid-template-columns: 1fr; }
   .completionSummary div,

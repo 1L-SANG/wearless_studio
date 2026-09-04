@@ -46,6 +46,7 @@ export function resolveHubJourney({
   enrollment = null,
   application = null,
   applicationRequired = true,
+  hasLicense = false,
 } = {}) {
   if (ownedModel?.status === 'verified') {
     return {
@@ -60,7 +61,9 @@ export function resolveHubJourney({
     const status = enrollment.status;
     if (status === 'review_pending') return journeyAt(3, reload('검수 상태 새로고침'));
     if (status === 'processing' || status === 'asset_building') {
-      return journeyAt(4, reload('생성 상태 새로고침'));
+      return hasLicense
+        ? journeyAt(4, reload('생성 상태 새로고침'))
+        : journeyAt(2, reload('등록 상태 새로고침'));
     }
     if (status === 'confirm_pending') {
       return journeyAt(5, route('테스트 컷 확인하기', '/model/confirm'));

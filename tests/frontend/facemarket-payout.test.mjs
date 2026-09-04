@@ -72,10 +72,14 @@ test('정산 요약은 한국 시간 월 경계로 이번 달과 누적 금액�
   });
 });
 
-test('정산일이 지난 뒤에는 다음 달 10일을 안내한다', async () => {
+test('정산일 당일은 오늘을, 정산일이 지난 뒤에는 다음 달 10일을 안내한다', async () => {
   const { summarizeSettlements } = await loadPayoutData();
   assert.deepEqual(
     summarizeSettlements([], new Date('2026-09-10T03:00:00Z')).nextSettlement,
+    { year: 2026, month: 9, day: 10 },
+  );
+  assert.deepEqual(
+    summarizeSettlements([], new Date('2026-09-11T03:00:00Z')).nextSettlement,
     { year: 2026, month: 10, day: 10 },
   );
   assert.deepEqual(
@@ -101,6 +105,11 @@ test('쇼핑몰·품목·썸네일 열은 응답에 그 필드가 있을 때만 
     'date', 'shop', 'item', 'thumbnail', 'share', 'status',
   ]);
   assert.equal(settlementColumns(enrichedRows).some((column) => column.key === 'evidence'), false);
+
+  const billingOnly = [{ ...currentServerRows[0], billingType: 'monthly' }];
+  assert.deepEqual(settlementColumns(billingOnly).map((column) => column.key), [
+    'date', 'share', 'status',
+  ]);
 });
 
 test('월정액 행은 유형과 기간을 한 문장으로 표시한다', async () => {
@@ -135,6 +144,13 @@ test('라이선스가 만료됐으면 정산 행 상태도 만료로 표시한�
     new Date('2026-09-04T00:00:00Z'),
   );
   assert.equal(row.status, '만료');
+
+  const omittedRevokedLicense = normalizeSettlementRow(
+    { id: 's2', createdAt: '2026-09-01T00:00:00Z', modelAmount: 7_000, licenseId: 'revoked-l1' },
+    [],
+    new Date('2026-09-04T00:00:00Z'),
+  );
+  assert.equal(omittedRevokedLicense.status, '만료');
 });
 
 test('프론트 API는 내 정산 목록 엔드포인트를 호출한다', () => {

@@ -13,11 +13,11 @@ import {
 } from '@/lib/api/facemarket.js';
 import {
   APPROVAL_MODE,
-  UNIT_PRICE_DEFAULT_KRW,
   formatKrw,
   monthlyPriceFor,
   validityLabel,
 } from '../facemarket-landing/facemarketTerms.js';
+import { summarizeSettlements } from '../facemarket-landing/payoutData.js';
 import { resolveHubJourney } from './modelHubState.js';
 import s from './ModelPersonalization.module.css';
 
@@ -93,20 +93,17 @@ function TwinImage({ alt, label, src }) {
 
 function ActiveDashboard({ license, model, settlements }) {
   const now = new Date();
-  const thisMonth = settlements.reduce((summary, item) => {
-    const created = new Date(item.createdAt);
-    if (!Number.isNaN(created.getTime())
-      && created.getFullYear() === now.getFullYear()
-      && created.getMonth() === now.getMonth()) {
-      return { count: summary.count + 1, amount: summary.amount + Number(item.modelAmount || 0) };
-    }
-    return summary;
-  }, { count: 0, amount: 0 });
+  const thisMonth = summarizeSettlements(settlements, now);
+  const monthLabel = new Intl.DateTimeFormat('ko-KR', {
+    timeZone: 'Asia/Seoul', month: '2-digit',
+  }).format(now);
 
-  const unitPrice = license?.unitPrice ?? model?.unitPrice ?? UNIT_PRICE_DEFAULT_KRW;
-  const validity = license?.validityDays != null
+  const unitPrice = license?.unitPrice ?? null;
+  const validity = !license
+    ? '—'
+    : license.validityDays != null
     ? validityLabel(license.validityDays)
-    : license?.licenseValidUntil
+    : license.licenseValidUntil
       ? `${new Date(license.licenseValidUntil).toLocaleDateString('ko-KR')}까지`
       : validityLabel(null);
   const verifyPath = license?.id ? `/verify/${encodeURIComponent(license.id)}` : null;
@@ -149,12 +146,12 @@ function ActiveDashboard({ license, model, settlements }) {
             <strong>자동 승인</strong>
           </div>
           <dl className={s.hubRuleList}>
-            <div><dt>허용 품목</dt><dd>{license?.allowedUse?.length || 0}개</dd></div>
-            <div><dt>제외 품목</dt><dd>{license?.forbiddenUse?.length || 0}개</dd></div>
-            <div><dt>건당 가격</dt><dd>{formatKrw(unitPrice)}</dd></div>
-            <div><dt>월정액</dt><dd>{formatKrw(monthlyPriceFor(unitPrice))}</dd></div>
+            <div><dt>허용 품목</dt><dd>{license ? `${license.allowedUse?.length || 0}개` : '—'}</dd></div>
+            <div><dt>제외 품목</dt><dd>{license ? `${license.forbiddenUse?.length || 0}개` : '—'}</dd></div>
+            <div><dt>건당 가격</dt><dd>{unitPrice == null ? '—' : formatKrw(unitPrice)}</dd></div>
+            <div><dt>월정액</dt><dd>{unitPrice == null ? '—' : formatKrw(monthlyPriceFor(unitPrice))}</dd></div>
             <div><dt>유효기간</dt><dd>{validity}</dd></div>
-            <div><dt>승인 방식</dt><dd>{APPROVAL_MODE === 'auto' ? '자동' : APPROVAL_MODE}</dd></div>
+            <div><dt>승인 방식</dt><dd>{license ? (APPROVAL_MODE === 'auto' ? '자동' : APPROVAL_MODE) : '—'}</dd></div>
           </dl>
           <Link className={s.hubTextLink} to="/model/license">규칙 바꾸기 <span aria-hidden="true">→</span></Link>
         </section>
@@ -162,11 +159,11 @@ function ActiveDashboard({ license, model, settlements }) {
         <section className={s.hubActiveCard}>
           <div className={s.hubCardHeading}>
             <span>이번 달 요약</span>
-            <strong>{String(now.getMonth() + 1).padStart(2, '0')}월</strong>
+            <strong>{monthLabel}</strong>
           </div>
           <dl className={s.hubMonthFigures}>
-            <div><dt>사용 건수</dt><dd>{thisMonth.count}건</dd></div>
-            <div><dt>내 몫</dt><dd>{formatKrw(thisMonth.amount)}</dd></div>
+            <div><dt>사용 건수</dt><dd>{thisMonth.monthCount}건</dd></div>
+            <div><dt>내 몫</dt><dd>{formatKrw(thisMonth.monthAmount)}</dd></div>
           </dl>
           <Link className={s.hubTextLink} to="/payout">정산 <span aria-hidden="true">→</span></Link>
         </section>
@@ -205,8 +202,8 @@ export function ModelHub() {
         loadOptional(getApplicationConfig),
         loadOptional(getCurrentApplication),
         loadOptional(getCurrentEnrollment),
-        listLicenses().catch(() => []),
-        listSettlements().catch(() => []),
+        listLicenses(),
+        listSettlements(),
       ]);
       setOwnedModel(mine?.[0] || null);
       setApplicationRequired(cfg?.applicationRequired !== false);
@@ -244,7 +241,13 @@ export function ModelHub() {
     );
   }
 
-  const journey = resolveHubJourney({ ownedModel, enrollment, application, applicationRequired });
+  const journey = resolveHubJourney({
+    ownedModel,
+    enrollment,
+    application,
+    applicationRequired,
+    hasLicense: licenses.length > 0,
+  });
   const onJourneyAction = () => {
     if (journey.action?.kind === 'route') navigate(journey.action.to);
     else if (journey.action?.kind === 'cancel') onCancelApplication();
