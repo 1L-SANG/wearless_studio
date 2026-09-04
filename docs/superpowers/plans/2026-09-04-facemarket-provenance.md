@@ -521,25 +521,53 @@ async def insert_output_records(cur, *, records: list[dict]) -> None:
             img_sha256 = hashlib.sha256(img).hexdigest()
 ```
 
-같은 함수의 두 번째 반환 dict(현재 `{"asset_id": asset_id, "bucket": ..., "metadata": {...}}`)에 두 키를 더한다:
+같은 함수의 두 번째 반환 dict(현재 `{"asset_id": asset_id, "bucket": ..., "metadata": {...}}`)에 `sha256` **한 키만** 더한다:
 
 ```python
                 {"asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
                  "size": len(img), "width": w, "height": h,
                  "cleanup_intent_id": cleanup_intent_id,
                  "sha256": img_sha256,
-                 # REAL 소스일 때만 원장 대상. license_row 는 잡 시작 시 해석된 값이다.
-                 "provenance": (
-                     {"license_id": str(license_row["id"]),
-                      "model_id": str(license_row["model_id"])}
-                     if source == "REAL" and license_row is not None else None
-                 ),
                  "metadata": {
                      "facemarket_real_derived": real_identity_attached,
                  }},
 ```
 
-`server/app/workers/editor_image_job.py:742` 근처도 동일하게:
+> 🔴 **`license_row`·`source` 를 여기서 참조하지 말 것.** 이 코드는 `_gen_cuts(app, job,
+> prepared, product, analysis, body_profile=None)`(detail_page_job.py:196) 안의 `_one_impl`
+> 이고, 그 두 값은 메인 러너 스코프(913·960행)에 있어 `_gen_cuts` 로 넘어오지 않는다.
+> 참조하면 `NameError` 다. `_gen_cuts` 는 바이트를 가진 유일한 곳이라 **해시만** 만들고,
+> provenance 는 아래 Step 5b 에서 메인 러너가 붙인다. `_gen_cuts` 시그니처를 바꾸지 않는
+> 이유: 기존 테스트가 이 함수를 목(mock)으로 갈아끼운다(1639행 주석).
+
+- [ ] **Step 5b: 메인 러너에서 provenance 부착 (detail_page_job.py)**
+
+`_gen_cuts` 호출(1652행)이 돌려준 `cut_assets` 에, `finalize_detail_page_success` 를 부르기
+직전(현재 `async with pool.connection() as conn:` 블록 안, `license_row` 재해석·
+`verify_license_local` 통과 **뒤**)에서 provenance 를 붙인다. 여기서는 `source` 와
+`license_row` 가 둘 다 스코프에 있고, 이미 재검증까지 끝난 값이다:
+
+```python
+                facemarket.verify_license_local(
+                    app,
+                    license_row,
+                    model_id=str(snapshot.get("modelId") or ""),
+                    brand_use_category=payload.get("brandUseCategory"),
+                )
+            # 층① 원장 — 재검증을 통과한 라이선스만 컷에 귀속시킨다. finalize 가 같은
+            # 트랜잭션에서 fm_output_records 를 쓴다(lease 상실 시 0행).
+            if source == "REAL" and license_row is not None:
+                prov = {
+                    "license_id": str(license_row["id"]),
+                    "model_id": str(license_row["model_id"]),
+                }
+                for c in cut_assets:
+                    c["provenance"] = prov
+            out = await repo.finalize_detail_page_success(
+
+`server/app/workers/editor_image_job.py:742` 근처는 **단일 함수**(`run_editor_image_job`, 56행)라
+`fm_license_row`(162·358행)·`fm_face_injected`(110·173·437행)가 그 자리에서 스코프에 있다.
+detail_page 와 달리 분리가 필요 없다:
 
 ```python
         asset_id = str(uuid.uuid4())
@@ -692,7 +720,13 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'app.services.c2pa_sign
     fm_c2pa_key_pem: str | None = None
     # 배포된 FaceMarketProvenance 주소(0x…). 없으면 앵커 no-op.
     fm_provenance_address: str | None = None
+    # C2PA 매니페스트의 verifyUrl 과 공개 검증 링크의 출처. 틀리면 이미 배포된 파일 안
+    # 링크가 잘못된 곳을 가리키고 회수할 수 없다.
+    public_web_origin: str = "https://wearless.kr"
 ```
+
+> `public_web_origin` 은 Task 4 의 `sign` 라우트가 쓰지만 **여기(Task 3)에서 함께 추가한다** —
+> 설정 선언은 한 태스크가 소유해야 두 태스크가 같은 블록을 동시에 편집하지 않는다.
 
 같은 파일의 env 로딩 블록(`fm_face_qc_dir=...` 아래)에:
 
@@ -703,6 +737,9 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'app.services.c2pa_sign
         fm_c2pa_cert_pem=os.getenv("FM_C2PA_CERT_PEM") or None,
         fm_c2pa_key_pem=os.getenv("FM_C2PA_KEY_PEM") or None,
         fm_provenance_address=os.getenv("FM_PROVENANCE_ADDRESS") or None,
+        public_web_origin=(
+            os.getenv("PUBLIC_WEB_ORIGIN") or "https://wearless.kr"
+        ).rstrip("/"),
 ```
 
 - [ ] **Step 4: 서명기 구현**
@@ -1438,7 +1475,7 @@ async def sign(request: Request, body: SignRequest, user_id: str = Depends(requi
     }
 ```
 
-파일 상단 import 에 `from psycopg.types.json import Json` 과 `from .services import c2pa_signer` 를 추가한다. `public_web_origin` 설정이 없으면 `config.py` 에 `public_web_origin: str = "https://wearless.kr"` + `os.getenv("PUBLIC_WEB_ORIGIN", "https://wearless.kr")` 를 함께 추가한다.
+파일 상단 import 에 `from psycopg.types.json import Json` 과 `from .services import c2pa_signer` 를 추가한다. `settings.public_web_origin` 은 Task 3 이 이미 선언했다 — 여기서 다시 추가하지 않는다.
 
 - [ ] **Step 6: 라우터 등록**
 
