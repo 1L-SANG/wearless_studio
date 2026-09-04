@@ -11,6 +11,7 @@
    생존 수입이다(ToastProvider 는 AppProviders 에 남아 있고 스타일은 studio 레이어가 준다).
    ============================================================= */
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useToast } from '@/components/ui.jsx';
 import { Badge } from '@/components/admin-ui/badge.jsx';
 import { Button } from '@/components/admin-ui/button.jsx';
@@ -166,7 +167,8 @@ function ApplicationCard({ app, onApprove, onReject, onResend, busy }) {
 export function AdminApplications() {
   const { push } = useToast();
   const [phase, setPhase] = useState('loading'); // loading | ready | error | forbidden
-  const [filter, setFilter] = useState('under_review');
+  const [searchParams] = useSearchParams();
+  const [filter, setFilter] = useState(searchParams.get('status') || 'under_review');
   const [apps, setApps] = useState([]);
   const [busyId, setBusyId] = useState(null);
 

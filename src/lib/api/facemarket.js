@@ -191,6 +191,13 @@ export async function adminFetchApplicationPhotoUrl(applicationId, kind = 'profi
   return URL.createObjectURL(blob);
 }
 
+// ── 관리자 콘솔: 집계·모델·권한 ─────────────────────────────────────────────
+// 전부 서버가 admin_guard.require_admin 을 강제한다(비관리자는 403).
+
+export function adminOverview(days = 30) {
+  return http(`/v1/facemarket/admin/overview?days=${encodeURIComponent(days)}`);
+}
+
 // POST /v1/facemarket/enrollments/{id}/physique — 체형·키(선택, 비게이팅) 저장. 서버가
 // enum·성별 일치를 검증(app.facemarket_physique)하고 갱신된 EnrollmentView 를 돌려준다.
 export function submitPhysique({ enrollmentId, heightBucket, bodyType }) {
