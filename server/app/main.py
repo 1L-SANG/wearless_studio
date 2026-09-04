@@ -122,6 +122,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dispatcher = None
         draft_asset_reclaimer = None
         vc_revocation_reconciler = None
+        publication_anchor = None
         sam_retry_pusher = None
         sam_autoscaler = None
         opendid_autoscaler = None
@@ -141,6 +142,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not detail_worker_only and (holder_configured or settings.fm_vc_required):
                 vc_revocation_reconciler = FaceVcRevocationReconciler(app)
                 await vc_revocation_reconciler.start()
+            if settings.fm_provenance_enabled:
+                from .workers.fm_publication_anchor import PublicationAnchorReconciler
+
+                publication_anchor = PublicationAnchorReconciler(app)
+                await publication_anchor.start()
             if not detail_worker_only and app.state.r2 is not None:
                 draft_asset_reclaimer = DraftAssetReclaimer(app)
                 await draft_asset_reclaimer.start()
@@ -223,6 +229,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await dispatcher.stop()
         if vc_revocation_reconciler is not None:
             await vc_revocation_reconciler.stop()
+        if publication_anchor is not None:
+            await publication_anchor.stop()
         if pool is not None:
             await image_usage.drain(timeout_seconds=5.0)
             await pool.close()
