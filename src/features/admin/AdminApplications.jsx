@@ -16,8 +16,8 @@ import { useToast } from '@/components/ui.jsx';
 import { Badge } from '@/components/admin-ui/badge.jsx';
 import { Button } from '@/components/admin-ui/button.jsx';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/admin-ui/card.jsx';
-import { Input } from '@/components/admin-ui/input.jsx';
 import { Skeleton } from '@/components/admin-ui/skeleton.jsx';
+import { Textarea } from '@/components/admin-ui/textarea.jsx';
 import {
   adminApproveApplication, adminFetchApplicationPhotoUrl,
   adminListApplications, adminRejectApplication, adminResendEmail,
@@ -138,10 +138,11 @@ function ApplicationCard({ app, onApprove, onReject, onResend, busy }) {
         )}
         {pending && rejecting && (
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-            <Input
+            <Textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               placeholder="거절 사유 (지원자에게 메일로 전달돼요)"
+              rows={2}
               className="sm:flex-1"
             />
             <div className="flex gap-2">

@@ -30,7 +30,7 @@ test('셸은 네 갈래 내비게이션을 가진다', () => {
 });
 
 test('admin-ui 컴포넌트는 공용 ui.jsx 를 물지 않는다', () => {
-  for (const name of ['button', 'card', 'badge', 'input', 'table', 'skeleton']) {
+  for (const name of ['button', 'card', 'badge', 'input', 'textarea', 'table', 'skeleton']) {
     const source = read(`src/components/admin-ui/${name}.jsx`);
     assert.ok(!source.includes('@/components/ui.jsx'), `${name} 이 공용 ui.jsx 를 문다`);
     assert.ok(source.includes('@/lib/adminCn.js'), `${name} 이 cn() 을 안 쓴다`);

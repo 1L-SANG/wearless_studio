@@ -39,3 +39,12 @@ test('사진 objectURL 을 계속 해제한다', () => {
 test('거절은 사유 입력을 요구한다', () => {
   assert.ok(source.includes('reason'), '거절 사유 상태가 사라졌다');
 });
+
+test('거절 사유는 여러 줄 textarea 로 받는다 — 한 줄 Input 으로 좁아지면 안 된다', () => {
+  // 재-스킨 전엔 <textarea rows={2}> 였다. shadcn 이관 때 <Input>(=<input type="text">)으로
+  // 좁혀졌던 적이 있다 — 거절 사유는 지원자에게 메일로 전달되는 프로즈라 한 줄 입력이 아니다.
+  // reason 상태만 보는 위 테스트는 이 폭을 못 잡는다(Input 이든 Textarea 든 'reason' 은 있다).
+  assert.ok(source.includes('@/components/admin-ui/textarea.jsx'), 'Textarea 컴포넌트를 안 쓴다');
+  const reasonBlock = source.slice(source.indexOf('rejecting &&'));
+  assert.ok(/<Textarea\b/.test(reasonBlock), '거절 사유 입력이 Textarea 가 아니다');
+});
