@@ -315,7 +315,25 @@
   font: 400 0.85rem/1.4 var(--font-body);
 }
 .usageRow:first-child { border-top: 0; }
-.usageKind { color: var(--fm-ink); font-weight: 500; }
+/* 철회된 배포본도 행은 지우지 않는다(실제 사용 이력) — 대신 눈에 띄지 않게 죽인다.
+   색만으로 알리지 않는다는 원칙(WCAG 1.4.1, .vcStatus 선례)이라 배지(.usageRevokedBadge)를
+   같이 둔다. */
+.usageRowRevoked { opacity: 0.6; }
+.usageKind {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--fm-ink);
+  font-weight: 500;
+}
+.usageRevokedBadge {
+  padding: 0.16rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(16, 21, 26, 0.08);
+  color: var(--fm-muted);
+  font: 600 0.66rem/1.3 var(--font-body);
+  letter-spacing: 0.01em;
+}
 .usageDate { color: var(--fm-muted); font-size: 0.8rem; }
 .usageHash {
   color: var(--fm-muted);

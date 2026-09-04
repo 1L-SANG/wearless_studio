@@ -1159,12 +1159,18 @@ async def list_licenses(request: Request, user_id: str = Depends(require_user)):
 
 
 class UsageCard(CamelModel):
-    """모델 본인이 보는 사용 내역. 셀러 신원은 싣지 않는다."""
+    """모델 본인이 보는 사용 내역. 셀러 신원은 싣지 않는다.
+
+    revoked — 배포본이 철회됐는지(fm_publication_records.revoked_at). 컷 행은 항상 false.
+    철회됐다고 행을 숨기지 않는다(모델이 실제로 겪은 사용 이력이라 지우면 역사가 사라진다) —
+    대신 이 필드로 표시해 "지금도 살아있는 사용"과 구분한다. 셀러/프로젝트/유저/원본 해시
+    금지 규칙과는 무관하다(모델 자신의 데이터, 셀러 영업정보 아님)."""
 
     kind: str                 # 'cut' | 'publication'
     created_at: datetime
     image_hash_prefix: str
     chain_status: str | None = None
+    revoked: bool = False
 
 
 @router.get(
@@ -1183,6 +1189,13 @@ async def list_model_usage(
     """본인 소유 모델의 사용 내역(컷 생성 + 배포본). 셀러/프로젝트/원본 해시는 싣지 않는다 —
     모델에게 필요한 건 '몇 번 쓰였나'·'체인 기록 여부'뿐이고, 어느 셀러가 썼는지는 셀러
     영업정보라 노출하지 않는다. 비소유 model_id 는 404(존재 비노출 — get_license_face 관례)."""
+    try:  # uuid 형식 가드 — 쓰레기 입력은 500(ops 알림 소음) 아닌 404
+        # (get_model_thumbnail·verify_license_public 선례). 파싱 결과(canonical str)를
+        # 그대로 써야 한다 — 원문을 그대로 쿼리에 넣으면 uuid.UUID() 가 받아주는 별칭 표기
+        # (urn:uuid:…·중괄호 형태)가 가드는 통과하고 PG 캐스팅에서 다시 500으로 터진다.
+        model_id = str(uuid.UUID(str(model_id)))
+    except (TypeError, ValueError):
+        raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
@@ -1193,10 +1206,11 @@ async def list_model_usage(
                 raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
             await cur.execute(
                 """select 'cut' as kind, created_at, left(image_sha256, 12) as prefix,
-                          null::text as chain_status
+                          null::text as chain_status, false as revoked
                      from fm_output_records where model_id = %s
                    union all
-                   select 'publication', created_at, left(image_sha256, 12), chain_status
+                   select 'publication', created_at, left(image_sha256, 12), chain_status,
+                          (revoked_at is not null) as revoked
                      from fm_publication_records where model_id = %s
                    order by created_at desc
                    limit 200""",
@@ -1207,6 +1221,7 @@ async def list_model_usage(
         {
             "kind": r["kind"], "createdAt": r["created_at"],
             "imageHashPrefix": r["prefix"], "chainStatus": r["chain_status"],
+            "revoked": r["revoked"],
         }
         for r in rows
     ]

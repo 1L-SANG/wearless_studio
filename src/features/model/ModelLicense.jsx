@@ -790,10 +790,21 @@ export function ModelLicense() {
                                 {usage.map((u, i) => (
                                     <li
                                         key={`${u.createdAt}-${i}`}
-                                        className={s.usageRow}
+                                        className={`${s.usageRow}${u.revoked ? " " + s.usageRowRevoked : ""}`}
                                     >
                                         <span className={s.usageKind}>
                                             {KIND_LABEL[u.kind] || u.kind}
+                                            {/* 철회된 배포본도 행은 남긴다(실제 사용 이력) —
+                                                대신 이 배지로 "지금은 죽은 사용"임을 알린다. */}
+                                            {u.revoked && (
+                                                <span
+                                                    className={
+                                                        s.usageRevokedBadge
+                                                    }
+                                                >
+                                                    철회됨
+                                                </span>
+                                            )}
                                         </span>
                                         <time className={s.usageDate}>
                                             {new Date(
