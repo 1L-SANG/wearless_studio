@@ -51,12 +51,15 @@ test('admin.css 는 최상위 규칙을 전부 @layer 블록이나 @import ... l
   // 블록 주석 제거 — 주석 안의 `{`/`}` 가 깊이 계산을 흐트러뜨리지 않게.
   const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '');
 
-  // Tailwind v4 가 컴파일 타임에 소비해 theme 레이어로 접어 넣는 두 구조만 예외로 둔다:
-  //   1) 순정 `:root { --… }` 커스텀 프로퍼티 블록 — Tailwind 의 @theme inline 이
-  //      var(--…) 로 참조하는 원천이라 여기 있어야 토큰이 갱신된다.
-  //   2) `@theme inline { … }` — Tailwind 문법상 @layer 로 감쌀 수 없는 자체 at-rule.
-  // 이 둘 말고 최상위에 나타나는 모든 규칙은 @layer 블록이거나 @import 문이어야 한다.
-  const ALLOWED_UNLAYERED_HEADS = [':root', '@theme inline'];
+  // 실제로 빌드해서(dist/assets/admin-*.css) 확인한 결과: Tailwind v4 가 컴파일 타임에
+  // 소비해 theme 레이어로 접어 넣어 주는 건 `@theme inline { … }` 뿐이다 — Tailwind 문법상
+  // @layer 로 감쌀 수 없는 자체 at-rule이라 이것만 예외로 둔다. 순정 `:root { --… }` 는
+  // **접히지 않는다** — 감싸지 않으면 utilities 레이어가 끝난 뒤에 truly unlayered 로
+  // 남는 걸 grep 으로 직접 확인했다(2026-09-04, task-8-11-13-report.md 참조). 그래서
+  // admin.css 는 이제 `:root` 를 `@layer theme { :root { … } }` 로 명시로 감싼다 — 여기서도
+  // `:root` 를 더는 예외로 두지 않는다. 최상위에 나타나는 모든 규칙은 @layer 블록이거나
+  // @import 문이거나, 아래 예외 하나뿐이어야 한다.
+  const ALLOWED_UNLAYERED_HEADS = ['@theme inline'];
 
   let depth = 0;
   let head = '';
