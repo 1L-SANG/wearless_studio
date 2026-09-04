@@ -30,6 +30,7 @@ from .facemarket import (
     _err,
     _is_expired,
     _mask_name,
+    _public_not_found,
     get_conn,
     resolve_model_license,
     verify_license_local,
@@ -467,7 +468,7 @@ async def verify_publication(request: Request, publication_id: str, response: Re
     try:
         pub_uuid = uuid.UUID(str(publication_id))
     except (ValueError, TypeError):
-        raise _err("not_found", "기록을 찾을 수 없습니다.", status=404)
+        return _public_not_found("기록을 찾을 수 없습니다.")
 
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
@@ -488,7 +489,7 @@ async def verify_publication(request: Request, publication_id: str, response: Re
             )
             row = await cur.fetchone()
     if row is None:
-        raise _err("not_found", "기록을 찾을 수 없습니다.", status=404)
+        return _public_not_found("기록을 찾을 수 없습니다.")
 
     if row["revoked_at"] is not None:
         status = "revoked"

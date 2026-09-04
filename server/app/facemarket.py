@@ -416,6 +416,26 @@ def _private_not_found() -> JSONResponse:
     )
 
 
+def _public_not_found(message: str) -> JSONResponse:
+    """무인증 공개 검증 라우트 전용 404 — **반드시 no-store 를 달고 나가야 한다**.
+
+    `raise _err(...)`(HTTPException)로 가면 main.py 의 전역 `http_exception_handler`가
+    `exc.headers` 를 읽지 않고 새 `JSONResponse(status_code=exc.status_code,
+    content=...)` 를 맨손으로 만든다 — 그 경로에서는 아무 헤더도 안 실린다. 라우트
+    안에서 `response.headers[...]="no-store"` 를 미리 심어 둬도 예외를 던지는 순간 그
+    스크래치 `Response` 객체는 버려지고 전역 핸들러의 새 응답으로 완전히 교체된다.
+    그래서 `_private_not_found()` 선례처럼 **raise 가 아니라 return** 으로 직접
+    `JSONResponse` 를 만들어야 헤더가 실제로 나간다. 완전 공개(비게이트) 라우트라
+    `_private_not_found` 의 `, private` 는 붙이지 않는다 — 성공 경로(`Cache-Control:
+    no-store`)와 값을 맞춘다. 캐시된 404 가 뒤이은 진짜 200 을 가리는 사고를 막는다.
+    """
+    return JSONResponse(
+        status_code=404,
+        content={"error": {"code": "not_found", "message": message}},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.get(
     "/models",
     response_model=list[ModelCard],
@@ -1371,7 +1391,7 @@ async def verify_license_public(request: Request, license_id: str, response: Res
     try:  # 공개 라우트 — 쓰레기 입력은 DB 전에 404로 컷(get_asset_file 선례)
         lic_uuid = uuid.UUID(str(license_id))
     except (ValueError, TypeError):
-        raise _err("not_found", "라이선스를 찾을 수 없습니다.", status=404)
+        return _public_not_found("라이선스를 찾을 수 없습니다.")
     # 파싱 결과를 써야 한다 — 원문을 그대로 쿼리에 넣으면 uuid.UUID() 가 받아주는 별칭 표기
     # (`urn:uuid:…`·중괄호 형태)가 가드를 통과한 뒤 PG 캐스팅에서 터져 404 대신 500 이 된다.
     lic_id = str(lic_uuid)
@@ -1393,7 +1413,7 @@ async def verify_license_public(request: Request, license_id: str, response: Res
             )
             row = await cur.fetchone()
     if row is None:
-        raise _err("not_found", "라이선스를 찾을 수 없습니다.", status=404)
+        return _public_not_found("라이선스를 찾을 수 없습니다.")
 
     # 실시간 상태 — 만료 판정은 게이트(verify_license)와 같은 _is_expired 를 쓴다(단일 소스).
     status = row["status"]
