@@ -130,6 +130,18 @@ def test_payload_shape_is_camel_case():
     assert payload["period"]["days"] == 30
 
 
+def test_period_carries_the_end_instant_the_numbers_describe():
+    """30초 캐시로 나가는 응답이라 클라이언트 시계로는 끝 경계를 못 구한다 — 서버가 명시해야 한다."""
+    import asyncio
+    payload = asyncio.run(facemarket_admin.build_overview(_conn(), days=30))
+    period = payload["period"]
+    assert "to" in period
+    to_dt = datetime.fromisoformat(period["to"])
+    from_dt = datetime.fromisoformat(period["from"])
+    assert to_dt.tzinfo is not None, "to 도 from 과 같은 UTC-aware ISO 여야 한다"
+    assert to_dt > from_dt
+
+
 def test_period_start_is_kst_midnight():
     start = facemarket_admin._period_start(7)
     kst = timezone(timedelta(hours=9))

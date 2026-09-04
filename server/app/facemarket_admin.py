@@ -125,6 +125,10 @@ select
 
 async def build_overview(conn, *, days: int) -> dict:
     from_ts = _period_start(days)
+    # from 과 함께 한 번만 찍는다 — 캐시된 응답을 보는 클라이언트는 자기 시계로 끝 경계를
+    # 못 구한다(30초 캐시라 응답을 받은 시각과 실제로 만들어진 시각이 다르다). 서버가
+    # "이 숫자들이 어느 순간을 설명하는지"를 직접 말해줘야 한다.
+    to_ts = datetime.now(timezone.utc)
     async with conn.cursor() as cur:
         await cur.execute(QUEUE_SQL)
         queue = await cur.fetchone() or {}
@@ -142,7 +146,7 @@ async def build_overview(conn, *, days: int) -> dict:
             "emailFailed": queue.get("email_failed", 0),
             "refundsPending": queue.get("refunds_pending", 0),
         },
-        "period": {"days": days, "from": from_ts.isoformat()},
+        "period": {"days": days, "from": from_ts.isoformat(), "to": to_ts.isoformat()},
         "kpi": {
             "applicationsSubmitted": kpi.get("applications_submitted", 0),
             "applicationsApproved": kpi.get("applications_approved", 0),
