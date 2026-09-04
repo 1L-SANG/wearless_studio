@@ -19,7 +19,9 @@
 - **동기 이미지 작업은 반드시 `asyncio.to_thread`.** 2026-08-26 ALB 장애 원인이 동기 이미지 작업의 이벤트루프 동결이었다(`healthz` 37초 공백 실측).
 - **모든 신규 기능은 플래그 뒤.** `FM_PROVENANCE_ENABLED` 가 off 면 신규 라우트 미등록·워커 미기동·원장 insert 생략. 기존 흐름 무영향.
 - **Python 3.12**, `uv` 로 의존성 관리(`server/pyproject.toml`).
-- 테스트 실행: `cd server && uv run pytest tests/<file> -v`. DB 필요 테스트는 `FACEMARKET_TEST_DATABASE_URL` 환경변수 + `requires_database` skipif 관례를 따른다(`tests/test_facemarket_mandatory_vc_migration.py` 선례).
+- 테스트 실행 — 백엔드: `cd server && uv run pytest tests/<file> -v`. DB 필요 테스트는 `FACEMARKET_TEST_DATABASE_URL` 환경변수 + `requires_database` skipif 관례를 따른다(`tests/test_facemarket_mandatory_vc_migration.py` 선례).
+- 테스트 실행 — 프론트: `pnpm test:frontend` (= `node --test tests/frontend/*.test.mjs`). **vitest 는 이 레포에 없다** — devDeps 는 `@vitejs/plugin-react`·`prettier`·`vite` 뿐이다. 테스트는 `node:test` + `node:assert/strict` 로 쓰고 `tests/frontend/*.test.mjs` 에 둔다. DOM·`html-to-image` 를 끌고 오는 모듈은 import 할 수 없으므로 순수 함수를 별도 파일로 분리해서 테스트한다.
+- 빌드: `pnpm build`
 - **작업 브랜치:** `feat/facemarket-provenance` (이미 생성됨, 스펙 커밋 `5d326628` 위에 쌓는다).
 
 ---
@@ -2425,75 +2427,104 @@ git commit -m "feat(facemarket): 배포본 공개 검증 — 무인증 화이트
 ## Task 8: 프론트 다운로드 배선 (공증 왕복)
 
 **Files:**
+- Create: `src/features/editor/publicationNotarize.js` (순수 함수 — DOM·html-to-image 의존 없음)
 - Modify: `src/features/editor/editorExport.js` (`saveBlob` 앞에 공증 왕복)
 - Modify: `src/lib/api/facemarket.js` (presign/sign 클라이언트)
-- Test: `src/features/editor/editorExport.test.js` (기존 테스트 파일이 없으면 신규)
+- Test: `tests/frontend/publication-notarize.test.mjs`
+
+> **이 레포에 vitest 는 없다.** 프론트 테스트는 `node:test` + `node:assert/strict` 로 쓰고
+> `tests/frontend/*.test.mjs` 에 둔다. 실행은 `pnpm test:frontend`
+> (`node --test tests/frontend/*.test.mjs`). devDeps 는 `@vitejs/plugin-react`·`prettier`·`vite`
+> 뿐이라 vitest 를 부르면 명령 자체가 없다.
 
 **Interfaces:**
 - Consumes: Task 4 의 두 라우트
 - Produces:
   - `facemarket.presignPublication({ projectId, kind, byteSize }) -> { uploadToken, uploadUrl }`
   - `facemarket.signPublication({ uploadToken, projectId }) -> { publicationId, downloadUrl, verifyUrl, c2paStatus }`
-  - `editorExport.notarize(blob, { projectId, kind }) -> { blob, verifyUrl, warning }` — 실패 시 원본 blob + warning
+  - `publicationNotarize.notarize(blob, { projectId, kind }, deps?) -> { blob, verifyUrl, warning }`
+    — 실패 시 원본 blob + warning. `deps = { api, fetchImpl }` 는 테스트 주입용(기본값은 실 모듈·전역 fetch)
 
 - [ ] **Step 1: 실패 테스트 작성**
 
-`src/features/editor/editorExport.test.js`:
+`tests/frontend/publication-notarize.test.mjs`:
 
 ```js
 /* 공증 왕복 — 실패해도 다운로드를 막지 않는다는 게 계약이다.
-   생성은 이미 끝났고 크레딧도 차감됐다. 도장이 안 찍혔다고 결과물을 인질로 잡지 않는다. */
-import { describe, expect, it, vi } from 'vitest';
-import { notarize } from './editorExport.js';
+   생성은 이미 끝났고 크레딧도 차감됐다. 도장이 안 찍혔다고 결과물을 인질로 잡지 않는다.
 
-const blob = new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' });
+   notarize 를 editorExport.js 에서 직접 import 하지 않는다 — 그 모듈은 html-to-image 와
+   DOM 을 끌고 오고 node:test 에는 둘 다 없다. 순수 함수만 별도 모듈로 뽑아 테스트한다. */
+import assert from 'node:assert/strict';
+import test from 'node:test';
 
-describe('notarize', () => {
-  it('공증에 성공하면 서명본과 검증 URL 을 돌려준다', async () => {
-    const api = {
-      presignPublication: vi.fn().mockResolvedValue({ uploadToken: 't', uploadUrl: 'https://r2/put' }),
-      signPublication: vi.fn().mockResolvedValue({
-        publicationId: 'p1', downloadUrl: 'https://r2/get', verifyUrl: 'https://w/verify/p/p1',
-        c2paStatus: 'signed',
-      }),
-    };
-    const fetchImpl = vi.fn()
-      .mockResolvedValueOnce({ ok: true })                                   // PUT
-      .mockResolvedValueOnce({ ok: true, blob: async () => blob });          // GET signed
-    const out = await notarize(blob, { projectId: 'p', kind: 'long_png' }, { api, fetchImpl });
-    expect(out.verifyUrl).toBe('https://w/verify/p/p1');
-    expect(out.warning).toBeNull();
-  });
+import { notarize } from '../../src/features/editor/publicationNotarize.js';
 
-  it('presign 이 실패해도 원본을 돌려주고 경고만 붙인다', async () => {
-    const api = {
-      presignPublication: vi.fn().mockRejectedValue(new Error('nope')),
-      signPublication: vi.fn(),
-    };
-    const out = await notarize(blob, { projectId: 'p', kind: 'long_png' }, { api, fetchImpl: vi.fn() });
-    expect(out.blob).toBe(blob);
-    expect(out.verifyUrl).toBeNull();
-    expect(out.warning).toBeTruthy();
-  });
+const blob = { size: 3, type: 'image/png' };
+const signedBlob = { size: 9, type: 'image/png' };
 
-  it('업로드가 실패해도 원본을 돌려준다', async () => {
-    const api = {
-      presignPublication: vi.fn().mockResolvedValue({ uploadToken: 't', uploadUrl: 'https://r2/put' }),
-      signPublication: vi.fn(),
-    };
-    const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 500 });
-    const out = await notarize(blob, { projectId: 'p', kind: 'long_png' }, { api, fetchImpl });
-    expect(out.blob).toBe(blob);
-    expect(api.signPublication).not.toHaveBeenCalled();
-    expect(out.warning).toBeTruthy();
-  });
+const okApi = () => ({
+  presignPublication: async () => ({ uploadToken: 't', uploadUrl: 'https://r2/put' }),
+  signPublication: async () => ({
+    publicationId: 'p1', downloadUrl: 'https://r2/get',
+    verifyUrl: 'https://w/verify/p/p1', c2paStatus: 'signed',
+  }),
+});
+
+test('공증에 성공하면 서명본과 검증 URL 을 돌려준다', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    return calls.length === 1
+      ? { ok: true }
+      : { ok: true, blob: async () => signedBlob };
+  };
+  const out = await notarize(blob, { projectId: 'p', kind: 'long_png' },
+    { api: okApi(), fetchImpl });
+  assert.equal(out.verifyUrl, 'https://w/verify/p/p1');
+  assert.equal(out.blob, signedBlob);
+  assert.equal(out.warning, null);
+});
+
+test('presign 이 실패해도 원본을 돌려주고 경고만 붙인다', async () => {
+  const api = {
+    presignPublication: async () => { throw new Error('nope'); },
+    signPublication: async () => assert.fail('sign 을 부르면 안 된다'),
+  };
+  const out = await notarize(blob, { projectId: 'p', kind: 'long_png' },
+    { api, fetchImpl: async () => assert.fail('fetch 를 부르면 안 된다') });
+  assert.equal(out.blob, blob);
+  assert.equal(out.verifyUrl, null);
+  assert.ok(out.warning);
+});
+
+test('업로드가 실패하면 sign 을 부르지 않고 원본을 돌려준다', async () => {
+  let signCalled = false;
+  const api = {
+    presignPublication: async () => ({ uploadToken: 't', uploadUrl: 'https://r2/put' }),
+    signPublication: async () => { signCalled = true; },
+  };
+  const out = await notarize(blob, { projectId: 'p', kind: 'long_png' },
+    { api, fetchImpl: async () => ({ ok: false, status: 500 }) });
+  assert.equal(out.blob, blob);
+  assert.equal(signCalled, false);
+  assert.ok(out.warning);
+});
+
+test('서명본 내려받기가 실패해도 검증 URL 은 살린다', async () => {
+  const fetchImpl = async (url) =>
+    url === 'https://r2/put' ? { ok: true } : { ok: false, status: 404 };
+  const out = await notarize(blob, { projectId: 'p', kind: 'long_png' },
+    { api: okApi(), fetchImpl });
+  assert.equal(out.blob, blob);
+  assert.equal(out.verifyUrl, 'https://w/verify/p/p1');
 });
 ```
 
 - [ ] **Step 2: 테스트 실패 확인**
 
-Run: `pnpm vitest run src/features/editor/editorExport.test.js`
-Expected: FAIL — `notarize` 가 export 되지 않음
+Run: `node --test tests/frontend/publication-notarize.test.mjs`
+Expected: FAIL — `Cannot find module '.../src/features/editor/publicationNotarize.js'`
 
 - [ ] **Step 3: API 클라이언트 추가**
 
@@ -2518,19 +2549,25 @@ export function signPublication({ uploadToken }) {
 
 - [ ] **Step 4: `notarize` 구현**
 
-`src/features/editor/editorExport.js` — `saveBlob` 위에 추가:
+`src/features/editor/publicationNotarize.js` **(신규 — editorExport.js 에 넣지 않는다.
+그 모듈은 html-to-image·DOM 을 끌고 와서 `node --test` 로 import 할 수 없다)**:
 
 ```js
-/* ---- 배포본 공증 (FaceMarket 출처증명 층①·②) ----
+/* 배포본 공증 (FaceMarket 출처증명 층①·②).
+
    캔버스 PNG 를 R2 로 직접 올리고(ALB 우회), 서버가 해시·원장·C2PA 서명을 한 뒤
-   서명본을 돌려준다. 렌더는 그대로 브라우저가 한다 — 이 픽셀이 정본이다.
+   서명본을 돌려준다. 렌더는 그대로 브라우저가 한다 — 이 픽셀이 정본이고, 서버가 그걸
+   재현할 방법은 없다(설계 결정 #2).
 
    🔴 실패해도 다운로드를 막지 않는다. 생성은 이미 끝났고 크레딧도 차감됐다.
       공증이 안 됐다고 셀러의 결과물을 인질로 잡지 않는다(설계 §6.2). */
+
+const WARNING = '출처 기록을 남기지 못했어요. 파일은 그대로 저장됩니다.';
+
 export async function notarize(blob, { projectId, kind }, deps = {}) {
   const api = deps.api || (await import('../../lib/api/facemarket.js'));
   const fetchImpl = deps.fetchImpl || fetch;
-  const fail = (warning) => ({ blob, verifyUrl: null, warning });
+  const fail = () => ({ blob, verifyUrl: null, warning: WARNING });
   try {
     const { uploadToken, uploadUrl } = await api.presignPublication({
       projectId, kind, byteSize: blob.size,
@@ -2538,16 +2575,23 @@ export async function notarize(blob, { projectId, kind }, deps = {}) {
     const put = await fetchImpl(uploadUrl, {
       method: 'PUT', body: blob, headers: { 'Content-Type': blob.type || 'image/png' },
     });
-    if (!put.ok) return fail('출처 기록을 남기지 못했어요. 파일은 그대로 저장됩니다.');
+    if (!put.ok) return fail();
 
     const res = await api.signPublication({ uploadToken });
+    // 서명본 재다운로드가 실패해도 원장·앵커는 이미 남았다 — 검증 URL 은 살린다.
     const got = await fetchImpl(res.downloadUrl);
     if (!got.ok) return { blob, verifyUrl: res.verifyUrl, warning: null };
     return { blob: await got.blob(), verifyUrl: res.verifyUrl, warning: null };
   } catch {
-    return fail('출처 기록을 남기지 못했어요. 파일은 그대로 저장됩니다.');
+    return fail();
   }
 }
+```
+
+`src/features/editor/editorExport.js` 상단 import 에 추가:
+
+```js
+import { notarize } from './publicationNotarize.js';
 ```
 
 `exportBlockPng` / 긴 PNG / ZIP 세 공개 API 에서 `saveBlob(...)` 직전에 끼운다. 예 — `exportBlockPng`:
@@ -2572,10 +2616,13 @@ export async function exportBlockPng(blockNode, productName, blockIndex, opts = 
 
 긴 PNG 는 `kind: 'long_png'`, ZIP 은 `kind: 'zip'` 으로 같은 형태를 반복한다. 호출부(`Editor.jsx` 의 다운로드 핸들러)는 REAL 소스일 때만 `opts.provenance = { projectId }` 를 넘긴다 — VIRTUAL 은 소비한 라이선스가 없어 서버가 404 를 준다.
 
-- [ ] **Step 5: 테스트 통과 + 빌드 확인**
+- [ ] **Step 5: 테스트 통과 + 전체 프론트 회귀 + 빌드 확인**
 
-Run: `pnpm vitest run src/features/editor/editorExport.test.js`
-Expected: 3 PASS
+Run: `node --test tests/frontend/publication-notarize.test.mjs`
+Expected: 4 PASS
+
+Run: `pnpm test:frontend`
+Expected: 기존 테스트 전부 PASS (신규 실패 0)
 
 Run: `pnpm build`
 Expected: 성공
@@ -2583,7 +2630,8 @@ Expected: 성공
 - [ ] **Step 6: 커밋**
 
 ```bash
-git add src/features/editor/editorExport.js src/features/editor/editorExport.test.js \
+git add src/features/editor/publicationNotarize.js src/features/editor/editorExport.js \
+        tests/frontend/publication-notarize.test.mjs \
         src/lib/api/facemarket.js src/features/editor/Editor.jsx
 git commit -m "feat(editor): 배포본 다운로드에 공증 왕복 — 실패해도 저장은 막지 않는다"
 ```
@@ -3006,7 +3054,7 @@ Expected: 3 PASS
 Run: `cd server && uv run pytest -q`
 Expected: 전체 스위트 통과(신규 실패 0)
 
-Run: `pnpm build && pnpm vitest run`
+Run: `pnpm build && pnpm test:frontend`
 Expected: 성공
 
 - [ ] **Step 6: 커밋**
