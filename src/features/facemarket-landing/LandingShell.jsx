@@ -20,7 +20,7 @@ import {
 } from '@/lib/api/facemarket.js';
 import { Icon } from '@/components/ui.jsx';
 import { LandingHeader } from './LandingHeader.jsx';
-import { registerCta } from './registerCta.js';
+import { isLandingCtaResolved, registerCta } from './registerCta.js';
 import { FooterSection } from './sections/FooterSection.jsx';
 import s from './FacemarketLanding.module.css';
 
@@ -65,7 +65,7 @@ export function LandingShell({ title, description, children }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const [cta, setCta] = useState(() => registerCta(null, null, { scope: 'landing' }));
-  const [ctaResolved, setCtaResolved] = useState(false);
+  const [ctaResolvedFor, setCtaResolvedFor] = useState(null);
   const [noticeOpen, setNoticeOpen] = useState(() => !noticeDismissed);
 
   const closeNotice = () => {
@@ -105,12 +105,12 @@ export function LandingShell({ title, description, children }) {
   useEffect(() => {
     if (!userId) {
       setCta(registerCta(null, null, { scope: 'landing' }));
-      setCtaResolved(true);
+      setCtaResolvedFor('anonymous');
       return undefined;
     }
 
     let alive = true;
-    setCtaResolved(false);
+    setCtaResolvedFor(null);
     setCta(null);
     void (async () => {
       try {
@@ -128,7 +128,7 @@ export function LandingShell({ title, description, children }) {
       } catch {
         if (alive) setCta(null);
       } finally {
-        if (alive) setCtaResolved(true);
+        if (alive) setCtaResolvedFor(userId);
       }
     })();
     return () => { alive = false; };
@@ -151,7 +151,8 @@ export function LandingShell({ title, description, children }) {
 
   // 눌린 사실은 라벨로만 돌려준다. disabled 는 쓰지 않는다 — LandingHeader.jsx 머리말과
   // 같은 이유로, 버튼을 잠그면 클릭이 아예 안 들어와 보류함 자체가 죽는다.
-  const primaryLabel = cta && (!session || ctaResolved)
+  const ctaResolved = isLandingCtaResolved(userId, ctaResolvedFor);
+  const primaryLabel = cta && ctaResolved
     ? (pendingPrimary ? '확인 중이에요…' : cta.label)
     : null;
 

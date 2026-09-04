@@ -25,6 +25,10 @@ const REGISTER_LABEL = '모델 등록하기';
    판정을 두 벌로 만들지 않기 위해 라벨을 키로 쓴다). */
 export const APPLY_LABEL = '얼리버드 지원하기';
 
+export function isLandingCtaResolved(userId, resolvedFor) {
+  return resolvedFor === (userId || 'anonymous');
+}
+
 export function registerCta(
   ownedModel,
   enrollment,

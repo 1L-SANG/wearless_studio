@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { registerCta } from '../../src/features/facemarket-landing/registerCta.js';
+import * as ctaModule from '../../src/features/facemarket-landing/registerCta.js';
 import { resolveHubJourney } from '../../src/features/model/modelHubState.js';
+
+const { registerCta } = ctaModule;
 
 /* 2026-09-02: 지원서 게이트(applicationRequired)가 기본 true 다. 아무것도 없는 방문자의 CTA 는
    허브를 거치지 않고 곧장 지원서(/model/apply)로 간다(사용자 지시). 게이트를 끄면 종전 등록 시작. */
@@ -26,6 +28,14 @@ test('랜딩 CTA는 지원서·등록·모델이 모두 없을 때만 얼리버�
   assert.equal(landing(null, null, { id: 'a2', status: 'rejected' }), null);
   assert.equal(landing(null, { id: 'e1', status: 'photos_pending' }, null), null);
   assert.equal(landing({ id: 'm1', status: 'verified' }, null, null), null);
+});
+
+test('익명 조회 완료는 뒤늦게 확인된 로그인 사용자의 CTA 조회 완료로 재사용하지 않는다', () => {
+  assert.equal(typeof ctaModule.isLandingCtaResolved, 'function');
+  assert.equal(ctaModule.isLandingCtaResolved(null, 'anonymous'), true);
+  assert.equal(ctaModule.isLandingCtaResolved('user-1', 'anonymous'), false);
+  assert.equal(ctaModule.isLandingCtaResolved('user-1', 'user-1'), true);
+  assert.equal(ctaModule.isLandingCtaResolved('user-2', 'user-1'), false);
 });
 
 test('게이트를 끄면 종전처럼 등록으로 보낸다 — 문구는 통일된 모델 등록하기', () => {
