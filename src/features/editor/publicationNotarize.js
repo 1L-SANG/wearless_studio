@@ -53,11 +53,27 @@ export async function notarize(blob, { projectId, kind }, deps = {}) {
   const t = { network: NETWORK_TIMEOUT_MS, transfer: TRANSFER_TIMEOUT_MS, ...(deps.timeouts || {}) };
   const fail = () => ({ blob, verifyUrl: null, warning: WARNING });
 
+  let uploadToken, uploadUrl;
+  try {
+    ({ uploadToken, uploadUrl } = await withTimeout(
+      api.presignPublication({ projectId, kind, byteSize: blob.size }), t.network, 'presign',
+    ));
+  } catch (e) {
+    // presign 만의 404/503 은 "이 요청엔 공증이 아예 없다"는 뜻이지 "공증이 실패했다"가
+    // 아니다 — FM_PROVENANCE_ENABLED=false 로 라우트가 아예 안 뜬 상태(배포 직후 런북이
+    // 지시하는 초기값), FM_PROVENANCE_TOKEN_SECRET 미설정(503 provenance_unconfigured),
+    // 또는 이 브랜치 배포 이전에 만들어진 REAL 프로젝트(원장 행이 없어 영구 404) 세
+    // 경우 전부 여기로 온다. 이걸 WARNING 으로 띄우면 매 REAL 다운로드마다 셀러에게
+    // "공증 실패" 토스트가 뜬다 — 조용히, 브랜치 이전과 똑같이 저장한다.
+    // sign 단계에서 나는 404/503 은 여기 안 걸린다 — 그건 진짜로 시도했다가 실패한
+    // 것이라 아래 catch 로 떨어져 WARNING 을 낸다(리뷰 지시: unavailable 과 attempted-
+    // and-failed 를 구분).
+    if (e?.status === 404 || e?.status === 503) return { blob, verifyUrl: null, warning: null };
+    return fail();
+  }
+
   let res;
   try {
-    const { uploadToken, uploadUrl } = await withTimeout(
-      api.presignPublication({ projectId, kind, byteSize: blob.size }), t.network, 'presign',
-    );
     const put = await withTimeout(
       fetchImpl(uploadUrl, {
         method: 'PUT', body: blob, headers: { 'Content-Type': blob.type || 'image/png' },

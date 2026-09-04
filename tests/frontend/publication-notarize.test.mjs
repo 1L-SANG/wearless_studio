@@ -106,3 +106,46 @@ test('서명본 blob() 파싱이 throw 해도 검증 URL 은 살아남는다 —
   assert.equal(out.blob, blob);
   assert.equal(out.verifyUrl, 'https://w/verify/p/p1');
 });
+
+/* ── 최종 리뷰 C2 — presign 의 404/503 은 "공증이 안 됐다"가 아니라 "공증이 이 요청엔
+   아예 없다"는 뜻이다: FM_PROVENANCE_ENABLED=false(배포 직후 런북이 지시하는 초기값),
+   FM_PROVENANCE_TOKEN_SECRET 미설정(503), 이 브랜치 이전에 만들어진 REAL 프로젝트(원장
+   행 없음 → 영구 404). 이 셋을 WARNING 으로 띄우면 모든 REAL 다운로드마다 토스트가 뜬다
+   — 조용히, 브랜치 이전과 동일하게 저장해야 한다. 반면 진짜로 시도했다가 죽은 500 은
+   여전히 경고해야 셀러가 진짜 장애를 알 수 있다. ────────────────────────────── */
+
+test('presign 이 404 로 실패하면(라우트 미등록·레거시 프로젝트) 조용히 원본만 저장한다 — C2', async () => {
+  const api = {
+    presignPublication: async () => { const e = new Error('not found'); e.status = 404; throw e; },
+    signPublication: async () => assert.fail('sign 을 부르면 안 된다'),
+  };
+  const out = await notarize(blob, { projectId: 'p', kind: 'long_png' },
+    { api, fetchImpl: async () => assert.fail('fetch 를 부르면 안 된다') });
+  assert.equal(out.blob, blob);
+  assert.equal(out.verifyUrl, null);
+  assert.equal(out.warning, null);
+});
+
+test('presign 이 503 으로 실패하면(TOKEN_SECRET 미설정) 조용히 원본만 저장한다 — C2', async () => {
+  const api = {
+    presignPublication: async () => { const e = new Error('provenance_unconfigured'); e.status = 503; throw e; },
+    signPublication: async () => assert.fail('sign 을 부르면 안 된다'),
+  };
+  const out = await notarize(blob, { projectId: 'p', kind: 'long_png' },
+    { api, fetchImpl: async () => assert.fail('fetch 를 부르면 안 된다') });
+  assert.equal(out.blob, blob);
+  assert.equal(out.verifyUrl, null);
+  assert.equal(out.warning, null);
+});
+
+test('presign 이 500 으로 실패하면 여전히 경고를 띄운다(진짜 장애) — C2', async () => {
+  const api = {
+    presignPublication: async () => { const e = new Error('internal error'); e.status = 500; throw e; },
+    signPublication: async () => assert.fail('sign 을 부르면 안 된다'),
+  };
+  const out = await notarize(blob, { projectId: 'p', kind: 'long_png' },
+    { api, fetchImpl: async () => assert.fail('fetch 를 부르면 안 된다') });
+  assert.equal(out.blob, blob);
+  assert.equal(out.verifyUrl, null);
+  assert.ok(out.warning);
+});
