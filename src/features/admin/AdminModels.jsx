@@ -170,8 +170,20 @@ export function AdminModels() {
                   {items.map((m) => (
                     <TableRow
                       key={m.id}
+                      tabIndex={0}
+                      role="button"
+                      aria-pressed={selected === m.id}
                       onClick={() => setSelected(m.id)}
-                      className={`cursor-pointer ${selected === m.id ? 'bg-muted' : ''}`}
+                      // TableRow 는 props 를 그대로 <tr> 로 흘려보낸다. 클릭만 걸려 있으면
+                      // 키보드만 쓰는 관리자는 이 행을 절대 못 연다 — staff 화면의 검색
+                      // input onKeyDown 과 같은 모양으로, Enter·Space 둘 다 받는다.
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setSelected(m.id);
+                        }
+                      }}
+                      className={`cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${selected === m.id ? 'bg-muted' : ''}`}
                     >
                       <TableCell>{m.displayName}</TableCell>
                       <TableCell>
