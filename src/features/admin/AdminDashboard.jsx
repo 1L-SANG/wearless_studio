@@ -45,6 +45,13 @@ export function AdminDashboard() {
   const [days, setDays] = useState(30);
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  // 재시도 트리거. 예전엔 오류 화면의 복구 버튼이 setDays((d) => d) 를 불렀는데, 리액트는
+  // 함수형 업데이터가 이전 값과 똑같은 값을 반환하면 리렌더 자체를 건너뛴다(bail-out) —
+  // days 가 안 바뀌니 useEffect([days]) 도 다시 안 돈다. 이 화면에서 에러 상태가 있는
+  // 이유가 바로 복구할 방법을 준다는 건데, 그 유일한 버튼이 아무것도 안 했다. retryKey 를
+  // effect 의존성에 넣고 클릭마다 증가시켜 — effect 본문(=fetch 경로)은 그대로 하나뿐이라,
+  // 버튼과 effect 가 서로 다른 fetch 코드를 갖게 되어 어긋날 여지가 없다.
+  const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -54,7 +61,7 @@ export function AdminDashboard() {
       .then((d) => { if (alive) setData(d); })
       .catch((e) => { if (alive) setError(e.message || '불러오지 못했어요.'); });
     return () => { alive = false; };
-  }, [days]);
+  }, [days, retryKey]);
 
   if (error) {
     return (
@@ -64,7 +71,7 @@ export function AdminDashboard() {
           <CardDescription>{error}</CardDescription>
         </CardHeader>
         <CardContent>
-          <Button variant="outline" onClick={() => setDays((d) => d)}>다시 시도</Button>
+          <Button variant="outline" onClick={() => setRetryKey((k) => k + 1)}>다시 시도</Button>
         </CardContent>
       </Card>
     );
