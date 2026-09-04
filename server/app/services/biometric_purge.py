@@ -519,6 +519,16 @@ async def _known_targets(conn, schema, scope, enrollment_ids, derived_jobs):
                 (list(scope["license_ids"]),),
             )
             face_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
+        # 서명된 인도본(publication) 사본 — 모델이 동의를 철회하면 R2 사본은 지우되(생체정보
+        # 제거) 원장 행은 남긴다(§9). Task 4 가 아직 이 테이블에 쓰지 않으므로 빈 테이블에서도
+        # 안전해야 하고, 마이그레이션이 아직 안 붙은 DB 에서도 _has 가드로 무해하게 스킵한다.
+        if scope["model_ids"] and _has(schema, "fm_publication_records", "r2_key"):
+            await cur.execute(
+                "select r2_key as k from fm_publication_records "
+                "where model_id = any(%s) and r2_key is not null",
+                (list(scope["model_ids"]),),
+            )
+            face_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
         if scope["model_ids"]:
             await cur.execute(
                 "select r2_key as k from fm_model_assets where model_id = any(%s)",
@@ -931,6 +941,18 @@ async def _cleanup(
                     "update fm_models set status='suspended', user_id=null, ci_hash=null, did=null, "
                     "cover_image_url=null, display_name='삭제된 모델', assets_status='none', "
                     "qc_score=null, assets_source_hash=null where id = any(%s)",
+                    (list(model_ids),),
+                )
+            if model_ids and _has(schema, "fm_publication_records", "revoked_at"):
+                # 행은 남긴다 — 지우면 무단 사용과 정당한 과거 사용을 구별할 수 없다. 파기(생체
+                # 정보 제거)는 r2_key 를 null 로 미는 것으로 달성된다. image_sha256 은 파일
+                # 지문이지 생체정보가 아니므로 건드리지 않는다(§9). coalesce 로 재실행해도
+                # revoked_at 이 밀리지 않게 한다 — 파기는 재시도되고, 철회일이 재시도마다
+                # 흘러가면 그건 증거가 아니다.
+                await cur.execute(
+                    "update fm_publication_records "
+                    "set r2_key = null, revoked_at = coalesce(revoked_at, now()) "
+                    "where model_id = any(%s)",
                     (list(model_ids),),
                 )
             await cur.execute(
