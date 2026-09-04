@@ -915,6 +915,7 @@ async def admin_resend_email(
             target_type="application",
             target_id=application_id,
         )
+        # 명시적 commit 없음 — 다른 관리자 라우트 넷과 달리 여기선 get_conn 스코프가 정상 종료 시 커밋한다.
     await _dispatch_decision_email(
         request, application_id=application_id, to=row["contact_email"],
         email_type=email_type, reject_reason=row.get("reject_reason"),
