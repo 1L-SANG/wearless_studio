@@ -7,8 +7,10 @@
    설계: docs/designs/facemarket-application-renewal.md
 
    Task 6: shadcn 마크업으로 이관. 훅·API 호출·objectURL 해제·409 처리는 이관 전과
-   한 줄도 다르지 않다 — 바뀐 건 마크업과 클래스뿐이다. useToast() 는 ui.jsx 의 유일한
-   생존 수입이다(ToastProvider 는 AppProviders 에 남아 있고 스타일은 studio 레이어가 준다).
+   한 줄도 다르지 않다. 딱 하나 예외가 있었다 — 거절 사유 입력이 <textarea rows={2}>
+   에서 <Input>(=<input type="text">)으로 한 줄로 좁아졌다가, 리뷰에서 잡혀 Textarea 로
+   되돌아갔다(admin-ui/textarea.jsx). useToast() 는 ui.jsx 의 유일한 생존 수입이다
+   (ToastProvider 는 AppProviders 에 남아 있고 스타일은 studio 레이어가 준다).
    ============================================================= */
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
