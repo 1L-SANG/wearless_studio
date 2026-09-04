@@ -52,7 +52,10 @@ def test_logo_is_a_retina_png_with_alt_text_and_absolute_url():
         assert img, email_type
         assert 'alt="FaceMarket"' in img.group(0), email_type
         assert ".svg" not in img.group(0), f"{email_type}: 메일 로고는 SVG 를 쓸 수 없다"
-        assert f'src="{BASE}/assets/brand/facemarket-logo@2x.png"' in img.group(0), email_type
+        assert f'src="{notify.LOGO_URL}"' in img.group(0), email_type
+        assert notify.LOGO_URL.startswith("https://images.wearless.kr/"), (
+            "메일 로고를 SPA 호스트로 되돌리면 배포 전 경로가 200+HTML 을 돌려줘 조용히 깨진다"
+        )
 
 
 def test_cta_is_a_button_and_the_url_also_appears_as_text():
