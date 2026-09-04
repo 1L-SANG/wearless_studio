@@ -451,3 +451,164 @@ async def admin_unsuspend_model(
         result = await unsuspend_model(conn, model_id=model_id, actor=user_id)
         await conn.commit()
     return JSONResponse(result)
+
+
+ROLES = ("admin", "user")
+
+
+class RoleRequest(CamelModel):
+    role: str
+
+
+LIST_ADMINS_SQL = """
+select p.user_id::text as user_id, p.display_name, p.role, u.email
+from profiles p left join auth.users u on u.id = p.user_id
+where p.role = 'admin' order by p.created_at
+"""
+
+SEARCH_USER_SQL = """
+select p.user_id::text as user_id, p.display_name, p.role, u.email
+from profiles p join auth.users u on u.id = p.user_id
+where u.email = %(email)s limit 5
+"""
+
+
+def _staff_row(row: dict) -> dict:
+    return {
+        "userId": row["user_id"],
+        "email": row.get("email"),
+        "displayName": row.get("display_name"),
+        "role": row.get("role") or "user",
+    }
+
+
+async def list_staff(conn, *, q: str | None) -> dict:
+    """현재 관리자 + (이메일 정확일치) 검색 결과.
+
+    검색을 부분일치로 열면 콘솔이 이메일 스캐너가 된다 — 관리자라도 가입자 목록을
+    훑을 이유는 없다. 승격은 이미 이메일을 아는 사람에게 하는 일이다.
+    """
+    email = (q or "").strip().lower() or None
+    async with conn.cursor() as cur:
+        await cur.execute(LIST_ADMINS_SQL)
+        admins = await cur.fetchall() or []
+        matches = []
+        if email:
+            await cur.execute(SEARCH_USER_SQL, {"email": email})
+            matches = await cur.fetchall() or []
+    return {
+        "admins": [_staff_row(r) for r in admins],
+        "matches": [_staff_row(r) for r in matches],
+    }
+
+
+async def set_role(conn, *, target_user_id: str, actor: str, role: str) -> dict:
+    if role not in ROLES:
+        raise _err("invalid_role", "역할 값이 올바르지 않습니다.")
+    # 가드 1: 자기 강등 금지 — 되돌릴 방법이 콘솔에 없다(DB 직접 UPDATE 뿐).
+    if role == "user" and target_user_id == actor:
+        raise _err("cannot_demote_self", "자기 자신의 관리자 권한은 내릴 수 없어요.")
+
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select role from profiles where user_id = %s for update", (target_user_id,)
+        )
+        row = await cur.fetchone()
+        # 가드 3: 미가입 계정 승격 금지 — 초대 흐름을 만들지 않기로 했다(설계 §4.1).
+        if row is None:
+            raise _err("user_not_found", "가입된 계정을 찾을 수 없어요.", status=404)
+        previous = row.get("role") or "user"
+
+        # 가드 2: 최후 관리자 강등 금지. count 를 for update 로 잠그지 않으면 두 관리자가
+        # 서로를 동시에 내려 0명이 될 수 있다(둘 다 "나 말고 하나 더 있다"를 읽는다).
+        if role == "user" and previous == "admin":
+            await cur.execute(
+                "select count(*) as count from (select 1 from profiles "
+                "where role = 'admin' for update) as locked"
+            )
+            counted = await cur.fetchone() or {"count": 0}
+            if counted["count"] <= 1:
+                raise _err("last_admin", "마지막 관리자는 내릴 수 없어요.")
+
+        await cur.execute(
+            "update profiles set role = %s, updated_at = now() where user_id = %s",
+            (role, target_user_id),
+        )
+
+    await admin_guard.write_audit(
+        conn,
+        actor_user_id=actor,
+        action="staff.role.grant" if role == "admin" else "staff.role.revoke",
+        target_type="user",
+        target_id=target_user_id,
+        before={"role": previous},
+        after={"role": role},
+    )
+    return {"userId": target_user_id, "role": role}
+
+
+LIST_AUDIT_SQL = """
+select l.id::text as id, l.action, l.target_type, l.target_id, l.note, l.created_at,
+       l.actor_user_id::text as actor_user_id, u.email as actor_email
+from admin_audit_log l left join auth.users u on u.id = l.actor_user_id
+where (%(target_type)s::text is null or l.target_type = %(target_type)s)
+  and (%(target_id)s::text is null or l.target_id = %(target_id)s)
+order by l.created_at desc
+limit %(limit)s
+"""
+
+
+async def list_audit(conn, *, limit: int, target_type: str | None, target_id: str | None) -> dict:
+    capped = max(1, min(limit, MAX_LIST_LIMIT))
+    async with conn.cursor() as cur:
+        await cur.execute(LIST_AUDIT_SQL, {
+            "limit": capped, "target_type": target_type, "target_id": target_id,
+        })
+        rows = await cur.fetchall() or []
+    return {
+        "items": [
+            {
+                "id": r["id"], "action": r["action"], "targetType": r["target_type"],
+                "targetId": r.get("target_id"), "note": r.get("note"),
+                "actorEmail": r.get("actor_email"),
+                "createdAt": r["created_at"].isoformat() if r.get("created_at") else None,
+            }
+            for r in rows
+        ]
+    }
+
+
+@router.get("/staff")
+async def admin_list_staff(
+    request: Request, q: str | None = Query(None), user_id: str = Depends(require_user)
+):
+    async with get_conn(request) as conn:
+        await admin_guard.require_admin(conn, user_id)
+        return JSONResponse(await list_staff(conn, q=q))
+
+
+@router.post("/staff/{target_user_id}/role")
+async def admin_set_role(
+    request: Request, target_user_id: str, body: RoleRequest,
+    user_id: str = Depends(require_user),
+):
+    async with get_conn(request) as conn:
+        await admin_guard.require_admin(conn, user_id)
+        result = await set_role(conn, target_user_id=target_user_id, actor=user_id, role=body.role)
+        await conn.commit()
+    return JSONResponse(result)
+
+
+@router.get("/audit")
+async def admin_list_audit(
+    request: Request,
+    limit: int = Query(20),
+    target_type: str | None = Query(None, alias="targetType"),
+    target_id: str | None = Query(None, alias="targetId"),
+    user_id: str = Depends(require_user),
+):
+    async with get_conn(request) as conn:
+        await admin_guard.require_admin(conn, user_id)
+        return JSONResponse(await list_audit(
+            conn, limit=limit, target_type=target_type, target_id=target_id,
+        ))
