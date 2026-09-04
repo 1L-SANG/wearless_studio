@@ -192,3 +192,156 @@ async def admin_overview(
         await admin_guard.require_admin(conn, user_id)
         payload = await overview_payload(conn, days=days)
     return JSONResponse(payload)
+
+
+MODEL_STATUSES = ("pending", "verified", "suspended")
+MAX_LIST_LIMIT = 200
+
+
+def validate_model_status(status: str | None) -> str | None:
+    if status is not None and status not in MODEL_STATUSES:
+        raise _err("invalid_status", "상태 필터가 올바르지 않습니다.")
+    return status
+
+
+LIST_MODELS_SQL = """
+select m.id::text as id, m.display_name, m.status, m.created_at,
+       u.email as email,
+       (select count(*) from fm_licenses l where l.model_id = m.id) as license_count,
+       (select max(s.created_at) from fm_settlements s
+          join fm_licenses l2 on l2.id = s.license_id
+         where l2.model_id = m.id) as last_settlement_at
+from fm_models m
+-- left join: 플랫폼 대행 온보딩은 user_id 가 null 이다(fm_models 주석). inner 로 묶으면
+-- 그런 모델이 목록에서 통째로 사라져, 없는 걸 없다고 착각한다.
+left join auth.users u on u.id = m.user_id
+where (%(status)s::text is null or m.status = %(status)s)
+  and (
+    %(q)s::text is null
+    or m.display_name ilike %(q_like)s
+    or u.email = %(q)s
+  )
+order by m.created_at desc
+limit %(limit)s
+"""
+
+
+def _model_row(row: dict) -> dict:
+    return {
+        "id": row["id"],
+        "displayName": row["display_name"],
+        "status": row["status"],
+        "email": row.get("email"),
+        "licenseCount": row.get("license_count", 0),
+        "lastSettlementAt": row["last_settlement_at"].isoformat() if row.get("last_settlement_at") else None,
+        "createdAt": row["created_at"].isoformat() if row.get("created_at") else None,
+    }
+
+
+async def list_models(conn, *, q: str | None, status: str | None, limit: int) -> dict:
+    capped = max(1, min(limit, MAX_LIST_LIMIT))
+    term = (q or "").strip() or None
+    async with conn.cursor() as cur:
+        await cur.execute(LIST_MODELS_SQL, {
+            "status": status, "q": term, "q_like": f"%{term}%" if term else None, "limit": capped,
+        })
+        rows = await cur.fetchall() or []
+    return {"items": [_model_row(r) for r in rows]}
+
+
+# LIST_MODELS_SQL 을 문자열로 잘라 재사용하지 않는다 — 그 SQL 의 첫 where 는 서브쿼리
+# (select count(*) from fm_licenses l where ...) 안에 있어서, split("where")[0] 은 본문
+# where 가 아니라 서브쿼리 중간에서 잘린다. 전문을 따로 적는다.
+DETAIL_MODEL_SQL = """
+select m.id::text as id, m.display_name, m.status, m.created_at,
+       u.email as email,
+       (select count(*) from fm_licenses l where l.model_id = m.id) as license_count,
+       (select max(s.created_at) from fm_settlements s
+          join fm_licenses l2 on l2.id = s.license_id
+         where l2.model_id = m.id) as last_settlement_at
+from fm_models m
+left join auth.users u on u.id = m.user_id
+where m.id = %(model_id)s
+"""
+
+DETAIL_LICENSES_SQL = """
+select id::text as id, status, unit_price, license_valid_until, vc_id
+from fm_licenses where model_id = %(model_id)s order by created_at desc
+"""
+
+DETAIL_SETTLEMENTS_SQL = """
+select s.id::text as id, s.total_amount, s.chain_status, s.tx_hash, s.created_at
+from fm_settlements s join fm_licenses l on l.id = s.license_id
+where l.model_id = %(model_id)s order by s.created_at desc limit 10
+"""
+
+DETAIL_ENROLLMENT_SQL = """
+select id::text as id, status, completed_at
+from fm_biometric_enrollments where model_id = %(model_id)s
+order by created_at desc limit 1
+"""
+
+
+async def model_detail(conn, *, model_id: str) -> dict:
+    params = {"model_id": model_id}
+    async with conn.cursor() as cur:
+        await cur.execute(DETAIL_MODEL_SQL, params)
+        model = await cur.fetchone()
+        if model is None:
+            raise _err("not_found", "모델을 찾을 수 없어요.", status=404)
+        await cur.execute(DETAIL_LICENSES_SQL, params)
+        licenses = await cur.fetchall() or []
+        await cur.execute(DETAIL_SETTLEMENTS_SQL, params)
+        settlements = await cur.fetchall() or []
+        await cur.execute(DETAIL_ENROLLMENT_SQL, params)
+        enrollment = await cur.fetchone()
+
+    return {
+        "model": _model_row(model),
+        "licenses": [
+            {
+                "id": r["id"], "status": r["status"], "unitPrice": r["unit_price"],
+                "validUntil": r["license_valid_until"].isoformat() if r.get("license_valid_until") else None,
+                "vcId": r.get("vc_id"),
+            }
+            for r in licenses
+        ],
+        "settlements": [
+            {
+                "id": r["id"], "totalAmount": int(r["total_amount"]), "chainStatus": r["chain_status"],
+                "txHash": r.get("tx_hash"),
+                "createdAt": r["created_at"].isoformat() if r.get("created_at") else None,
+            }
+            for r in settlements
+        ],
+        "enrollment": (
+            {
+                "id": enrollment["id"], "status": enrollment["status"],
+                "completedAt": enrollment["completed_at"].isoformat() if enrollment.get("completed_at") else None,
+            }
+            if enrollment else None
+        ),
+    }
+
+
+@router.get("/models")
+async def admin_list_models(
+    request: Request,
+    q: str | None = Query(None),
+    status: str | None = Query(None),
+    limit: int = Query(50),
+    user_id: str = Depends(require_user),
+):
+    validate_model_status(status)
+    async with get_conn(request) as conn:
+        await admin_guard.require_admin(conn, user_id)
+        return JSONResponse(await list_models(conn, q=q, status=status, limit=limit))
+
+
+@router.get("/models/{model_id}")
+async def admin_model_detail(
+    request: Request, model_id: str, user_id: str = Depends(require_user)
+):
+    async with get_conn(request) as conn:
+        await admin_guard.require_admin(conn, user_id)
+        return JSONResponse(await model_detail(conn, model_id=model_id))
