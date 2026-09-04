@@ -1872,12 +1872,18 @@ export function Editor() {
      그대로 저장하고 notarizeWarning 만 얹어 돌려준다 — 여기선 그 경고를 토스트로만 보여준다. */
   const provenanceOpts = () => (isRealModelSelection(analysis?.selectedModelId)
     ? { provenance: { projectId } } : {});
+  // softFailed(외부 이미지 유실)와 notarizeWarning(공증 실패)은 서로 독립된 실패다 — REAL
+  // 소스 내보내기 한 번에 둘 다 날 수 있다(외부 썸네일도 못 불러오고 공증 서버도 응답 없는
+  // 경우 등). 각자 자기 토스트를 낸다 — 하나를 감추면 셀러가 그 실패를 영영 모른다.
+  // 성공 토스트는 정말 보고할 게 없을 때만 — 둘 중 하나라도 있으면 자리를 내준다.
   const finishExport = (successMsg, { softFailed, notarizeWarning }) => {
     if (softFailed > 0) {
       toast.push(`저장했지만 외부 이미지 ${softFailed}장은 불러오지 못해 빈 자리로 남았어요`, { icon: 'x' });
-    } else if (notarizeWarning) {
+    }
+    if (notarizeWarning) {
       toast.push(notarizeWarning, { icon: 'alertTri' });
-    } else {
+    }
+    if (softFailed <= 0 && !notarizeWarning) {
       toast.push(successMsg, { icon: 'download' });
     }
   };
