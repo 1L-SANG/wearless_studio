@@ -11,6 +11,7 @@ import {
   getFacemarketConfig,
   getCurrentEnrollment,
   getEnrollment,
+  listLicenses,
   listMyModels,
   submitPhysique,
   uploadEnrollmentPhoto,
@@ -25,6 +26,13 @@ import {
 // 상대경로 — 이 테스트 하네스(configFile:false)는 `@/` alias 를 해석하지 않고, 이 파일은
 // (ModelFaceUpload.jsx 와 달리) 전체가 스텁으로 치환되지 않으므로 alias import 는 실렌더 전부를 깨뜨린다.
 import { bodyTypeMatrix, bodyTypeOptions, heightBucketOptions } from '../../lib/facemarketPhysique.js';
+import {
+  APPROVAL_MODE,
+  UNIT_PRICE_DEFAULT_KRW,
+  formatKrw,
+  monthlyPriceFor,
+  validityLabel,
+} from '../facemarket-landing/facemarketTerms.js';
 import s from './ModelRegister.module.css';
 
 const CX_ORIGIN = 'https://cx.raonsecure.co.kr:17543';
@@ -606,12 +614,50 @@ export function ModelRegister() {
   const [brokenBodyImages, setBrokenBodyImages] = useState([]);
   // 대표 이미지 확인용 로컬 프리뷰 {file, url} — 확인을 눌러야 실제로 올라간다.
   const [profilePreview, setProfilePreview] = useState(null);
+  // 완료 카드에 필요한 모델·조건. 기존 useState 인덱스를 쓰는 등록 테스트를 깨뜨리지 않도록
+  // 모든 기존 state 뒤에 둔다. 조회 실패 시 조건표 기본값으로 안전하게 표시한다.
+  const [completionDetails, setCompletionDetails] = useState({ model: null, license: null });
+
+  useEffect(() => {
+    if (step !== 'done') return undefined;
+    let active = true;
+    void Promise.all([
+      listMyModels().catch(() => []),
+      listLicenses().catch(() => []),
+    ]).then(([models, licenses]) => {
+      if (!active) return;
+      const model = models.find((candidate) => candidate.status === 'verified')
+        || models.find((candidate) => candidate.id === enrollment?.modelId)
+        || models[0]
+        || null;
+      const license = licenses.find((candidate) => candidate.modelId === model?.id)
+        || licenses[0]
+        || null;
+      setCompletionDetails({ model, license });
+    });
+    return () => { active = false; };
+  }, [enrollment?.modelId, step]);
+
   const genderForBuckets = enrollment?.gender || physiqueGender || null;
   const heightOptions = genderForBuckets ? heightBucketOptions(genderForBuckets) : [];
   // 체형도 같은 성별 기준으로 좁힌다(값은 서버 enum 그대로). 성별 미상이면 7종 전부.
   const bodyOptions = bodyTypeOptions(genderForBuckets);
   // 여성은 볼륨×실루엣 매트릭스(행 단위 가로 스크롤). 없으면 위 칩 목록으로 떨어진다.
   const bodyMatrix = bodyTypeMatrix(genderForBuckets);
+  const completionModel = completionDetails.model;
+  const completionLicense = completionDetails.license;
+  const completionBody = bodyTypeOptions(enrollment?.gender || null)
+    .find((option) => option.value === enrollment?.bodyType)?.label;
+  const completionHeight = enrollment?.gender
+    ? heightBucketOptions(enrollment.gender).find((option) => option.value === enrollment?.heightBucket)?.label
+    : null;
+  const completionBodyBand = [completionHeight, completionBody].filter(Boolean).join(' · ') || '선택 안 함';
+  const completionUnitPrice = completionLicense?.unitPrice ?? UNIT_PRICE_DEFAULT_KRW;
+  const completionValidity = completionLicense?.validityDays != null
+    ? validityLabel(completionLicense.validityDays)
+    : completionLicense?.licenseValidUntil
+      ? `${new Date(completionLicense.licenseValidUntil).toLocaleDateString('ko-KR')}까지`
+      : validityLabel(null);
 
   if (step === 'loading') return <div className="wizard narrow"><div className="surface">등록 상태를 확인하고 있어요…</div></div>;
 
@@ -649,22 +695,22 @@ export function ModelRegister() {
 
   if (step === 'done') {
     return (
-      <div className="wizard narrow"><div className={s.successWrap}>
+      <div className={`wizard narrow ${s.centeredWizard}`}><div className={s.successWrap}>
         <div className={s.successIcon}><Icon name="check" size={30} stroke={2.4} /></div>
-        <h1 className={s.successTitle}>등록 완료</h1>
-        <p className={s.successLead}>라이선스와 얼굴 등록이 모두 활성 상태예요.</p>
-        <Button
-          variant="secondary"
-          block
-          onClick={() => {
-            setEnrollment(null);
-            setConsentAccepted(false);
-            setStep('consent');
-          }}
-        >
-          새 생체 등록 시작
-        </Button>
-        <Link to="/model" className={s.nextCard}>내 모델 관리로 이동 <Icon name="chevRight" size={18} /></Link>
+        <h1 className={s.successTitle}>축하해요, 등록이 끝났어요</h1>
+        <dl className={s.completionSummary}>
+          <div><dt>활동명</dt><dd>{completionModel?.displayName || '내 Digital DNA'}</dd></div>
+          <div><dt>체형 밴드</dt><dd>{completionBodyBand}</dd></div>
+          <div><dt>허용 품목</dt><dd>{completionLicense?.allowedUse?.length || 0}개</dd></div>
+          <div><dt>건당 가격</dt><dd>{formatKrw(completionUnitPrice)}</dd></div>
+          <div><dt>월정액</dt><dd>{formatKrw(monthlyPriceFor(completionUnitPrice))}</dd></div>
+          <div><dt>유효기간</dt><dd>{completionValidity}</dd></div>
+          <div><dt>승인 방식</dt><dd>{APPROVAL_MODE === 'auto' ? '자동' : APPROVAL_MODE}</dd></div>
+        </dl>
+        <p className={s.completionNotice}>우리가 사진을 확인한 뒤 테스트 컷을 보내드려요. 보통 1~2일 걸려요.</p>
+        <Link to="/status" className={s.nextCard}>
+          Digital DNA 관리 보기 <Icon name="chevRight" size={18} />
+        </Link>
       </div></div>
     );
   }

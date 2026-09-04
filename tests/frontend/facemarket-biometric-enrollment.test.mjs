@@ -473,7 +473,6 @@ test('the browser wizard keeps raw authentication material in memory only', () =
   assert.doesNotMatch(registerSource, /completeEnrollment\([^)]*token/);
   assert.match(registerSource, /useConvertor:\s*true/);
   assert.match(registerSource, /portraitRef\.current\s*=\s*parsed\?\.data\?\.dlphotoimage/);
-  assert.match(registerSource, /새 생체 등록 시작/);
   assert.match(registerSource, /localStorage\.setItem\([^,]+,\s*deviceId\)/);
   assert.doesNotMatch(registerSource, /localStorage\.setItem\([^)]*(token|session|credentials|image|dlphotoimage|idPhotoHex)/i);
   assert.doesNotMatch(registerSource, /sessionStorage|indexedDB/i);
@@ -1328,6 +1327,47 @@ test('the terms screen sends the model on to VC issuance from a centered card', 
   assert.match(register, /VC 발급 하러 가기/);
   assert.match(register, /centeredWizard/);
   assert.doesNotMatch(register, /라이선스 조건 설정 <Icon/);
+});
+
+test('등록 완료 화면은 조건 요약과 Digital DNA 관리 CTA 하나만 보여 준다', async () => {
+  const harness = await modelComponentHarness({
+    initialStates: [
+      'done',
+      { id: 'e1', modelId: 'm1', status: 'passed', bodyType: 'slim_straight' },
+      null,
+      '',
+      false,
+      false,
+      true,
+      null,
+      null,
+      null,
+      [],
+      null,
+      {
+        model: { id: 'm1', displayName: '김*나', status: 'verified' },
+        license: {
+          id: 'l1', modelId: 'm1', allowedUse: ['상의', '하의'], unitPrice: 10_000,
+          validityDays: 730, status: 'active',
+        },
+      },
+    ],
+    api: { getCurrentEnrollment: () => new Promise(() => {}) },
+  });
+  try {
+    const tree = harness.render();
+    assert.ok(findTree(tree, (node) => node.type === 'h1' && node.props?.children === '축하해요, 등록이 끝났어요'));
+    for (const label of ['활동명', '체형 밴드', '허용 품목', '건당 가격', '월정액', '유효기간', '승인 방식']) {
+      assert.ok(findTree(tree, (node) => node.type === 'dt' && node.props?.children === label), label);
+    }
+    assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props?.to === '/status'));
+    assert.equal(
+      findTree(tree, (node) => node.type === 'Button' && node.props?.children === '새 생체 등록 시작'),
+      null,
+    );
+  } finally {
+    await harness.close();
+  }
 });
 
 
