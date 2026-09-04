@@ -1994,7 +1994,11 @@ def test_fake_publication_purge_updates_on_withdrawal_reason():
     a file already in the seller's hands).
     """
     ctx = _fake_case()
-    pub_key = f"facemarket/models/{ctx.model}/publications/pub-a/signed.png"
+    # Production-shaped key: publications/{seller_user_id}/{publication_id}/signed.png
+    # (facemarket_provenance.py:392) — the seller's id, not the model's, and it lives in
+    # the MAIN bucket (app.state.r2), never r2_face. A test that seeds this into r2_face
+    # and asserts against r2_face cannot distinguish the C1 bug from the fix.
+    pub_key = "publications/seller-x/pub-a/signed.png"
     ctx.db.add(
         "fm_publication_records",
         id="pub-a",
@@ -2004,7 +2008,7 @@ def test_fake_publication_purge_updates_on_withdrawal_reason():
         image_sha256="sha256-fingerprint-a",
         revoked_at=None,
     )
-    ctx.r2_face.keys.add(pub_key)
+    ctx.r2.keys.add(pub_key)
 
     result = _run(ctx, user_id=ctx.user, reason="withdrawal")
 
@@ -2015,8 +2019,11 @@ def test_fake_publication_purge_updates_on_withdrawal_reason():
     assert row["r2_key"] is None
     assert row["revoked_at"] is not None
     assert row["image_sha256"] == "sha256-fingerprint-a"  # file fingerprint, not biometric — survives
-    assert pub_key in ctx.r2_face.deleted
-    assert pub_key not in ctx.r2_face.keys
+    # Bucket label matters here, not just the key: the signed file lives in the MAIN
+    # bucket, so it must be deleted from ctx.r2 and never touched in ctx.r2_face.
+    assert pub_key in ctx.r2.deleted
+    assert pub_key not in ctx.r2.keys
+    assert pub_key not in ctx.r2_face.deleted
 
 
 def test_fake_publication_purge_updates_on_account_delete_reason():
@@ -2024,7 +2031,7 @@ def test_fake_publication_purge_updates_on_account_delete_reason():
     withdrawal-only, it must fire for every purge reason."""
     ctx = _fake_case()
     ctx.db.add("fm_vc_revocation_jobs", vc_id="vc-a", license_id=ctx.license, model_id=ctx.model)
-    pub_key = f"facemarket/models/{ctx.model}/publications/pub-b/signed.png"
+    pub_key = "publications/seller-x/pub-b/signed.png"
     ctx.db.add(
         "fm_publication_records",
         id="pub-b",
@@ -2034,7 +2041,7 @@ def test_fake_publication_purge_updates_on_account_delete_reason():
         image_sha256="sha256-fingerprint-b",
         revoked_at=None,
     )
-    ctx.r2_face.keys.add(pub_key)
+    ctx.r2.keys.add(pub_key)
 
     result = _run(ctx, user_id=ctx.user, reason="account_delete")
 
@@ -2043,13 +2050,16 @@ def test_fake_publication_purge_updates_on_account_delete_reason():
     row = ctx.db.tables["fm_publication_records"][0]
     assert row["r2_key"] is None
     assert row["revoked_at"] is not None
+    assert pub_key in ctx.r2.deleted
+    assert pub_key not in ctx.r2.keys
+    assert pub_key not in ctx.r2_face.deleted
 
 
 def test_fake_publication_purge_revoked_at_does_not_move_on_retry():
     """coalesce(revoked_at, now()) property: purges retry, and a withdrawal date that
     drifts on every retry is not evidence."""
     ctx = _fake_case()
-    pub_key = f"facemarket/models/{ctx.model}/publications/pub-c/signed.png"
+    pub_key = "publications/seller-x/pub-c/signed.png"
     ctx.db.add(
         "fm_publication_records",
         id="pub-c",
@@ -2059,11 +2069,13 @@ def test_fake_publication_purge_revoked_at_does_not_move_on_retry():
         image_sha256="sha256-fingerprint-c",
         revoked_at=None,
     )
-    ctx.r2_face.keys.add(pub_key)
+    ctx.r2.keys.add(pub_key)
 
     _run(ctx, user_id=ctx.user, reason="withdrawal")
     first_revoked_at = ctx.db.tables["fm_publication_records"][0]["revoked_at"]
     assert first_revoked_at is not None
+    assert pub_key in ctx.r2.deleted
+    assert pub_key not in ctx.r2_face.deleted
 
     second = _run(ctx, user_id=ctx.user, reason="withdrawal")
 

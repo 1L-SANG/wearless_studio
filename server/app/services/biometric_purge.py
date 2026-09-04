@@ -520,15 +520,17 @@ async def _known_targets(conn, schema, scope, enrollment_ids, derived_jobs):
             )
             face_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
         # 서명된 인도본(publication) 사본 — 모델이 동의를 철회하면 R2 사본은 지우되(생체정보
-        # 제거) 원장 행은 남긴다(§9). Task 4 가 아직 이 테이블에 쓰지 않으므로 빈 테이블에서도
-        # 안전해야 하고, 마이그레이션이 아직 안 붙은 DB 에서도 _has 가드로 무해하게 스킵한다.
+        # 제거) 원장 행은 남긴다(§9). facemarket_provenance.py 가 이 파일을 쓰는 버킷은
+        # app.state.r2(메인 버킷) 이지 r2_face 가 아니다 — face_keys 에 넣으면 아래에서
+        # r2_face.delete() 로 잘못 매핑돼 존재하지 않는 키를 "지웠다"고 오판(항상 성공)한다.
+        # 반드시 r2_keys(메인 버킷)로 모아야 한다.
         if scope["model_ids"] and _has(schema, "fm_publication_records", "r2_key"):
             await cur.execute(
                 "select r2_key as k from fm_publication_records "
                 "where model_id = any(%s) and r2_key is not null",
                 (list(scope["model_ids"]),),
             )
-            face_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
+            r2_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
         if scope["model_ids"]:
             await cur.execute(
                 "select r2_key as k from fm_model_assets where model_id = any(%s)",
