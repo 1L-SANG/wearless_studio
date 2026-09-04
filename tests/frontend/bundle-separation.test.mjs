@@ -65,10 +65,11 @@ test('진입점 세 개가 각자 자기 앱을 마운트한다', () => {
   assert.match(read('src/apps/seller/main.jsx'), /import App from '\.\/App\.jsx'/);
   assert.match(read('src/apps/facemarket/main.jsx'), /import AppFacemarket from '\.\/App\.jsx'/);
   assert.match(read('src/apps/admin/main.jsx'), /import AppAdmin from '\.\/App\.jsx'/);
-  // 부트스트랩은 한 벌이어야 한다 — 세 진입점이 같은 mountApp 을 쓴다.
-  for (const entry of ['src/apps/seller/main.jsx', 'src/apps/facemarket/main.jsx', 'src/apps/admin/main.jsx']) {
-    assert.match(read(entry), /from '\.\.\/mountApp\.jsx'/, entry);
-  }
+  // 부트스트랩은 프로바이더 한 벌(AppProviders.renderApp)을 공유한다. 스타일 조립만
+  // admin 이 갈라진다(Tailwind 레이어 때문에) — 그래서 admin 만 mountAdminApp 을 거친다.
+  assert.match(read('src/apps/seller/main.jsx'), /from '\.\.\/mountApp\.jsx'/);
+  assert.match(read('src/apps/facemarket/main.jsx'), /from '\.\.\/mountApp\.jsx'/);
+  assert.match(read('src/apps/admin/main.jsx'), /from '\.\/mountAdminApp\.jsx'/);
   // 문서가 무는 진입점도 서로 달라야 한다.
   assert.match(read('seller.html'), /src="\/src\/apps\/seller\/main\.jsx"/);
   assert.match(read('facemarket.html'), /src="\/src\/apps\/facemarket\/main\.jsx"/);

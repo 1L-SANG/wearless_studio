@@ -24,7 +24,7 @@ from fastapi.responses import Response
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
 
-from . import facemarket_notify, repo
+from . import admin_guard, facemarket_notify, repo
 from .auth import require_user
 from .config import Settings
 from .db import get_conn
@@ -410,8 +410,8 @@ async def _load_current(conn, user_id: str) -> dict | None:
 
 
 async def _require_admin(conn, user_id: str) -> None:
-    if not await repo.is_admin(conn, user_id):
-        raise _err("forbidden", "관리자만 가능해요.", status=403)
+    """호출부 이름은 그대로 두고 판정만 admin_guard 로 넘긴다(라우트 diff 최소화)."""
+    await admin_guard.require_admin(conn, user_id)
 
 
 # --- 지원자 엔드포인트 -------------------------------------------------------
@@ -813,6 +813,15 @@ async def admin_approve_application(
                 (application_id,),
             )
             row = await cur.fetchone()
+        await admin_guard.write_audit(
+            conn,
+            actor_user_id=user_id,
+            action="application.approve",
+            target_type="application",
+            target_id=application_id,
+            before={"status": "under_review"},
+            after={"status": "approved"},
+        )
         await conn.commit()
     # post-commit: 승인 메일. 상태는 이미 커밋됨(진실원천, 2A).
     await _dispatch_decision_email(
@@ -851,6 +860,16 @@ async def admin_reject_application(
                 (application_id,),
             )
             row = await cur.fetchone()
+        await admin_guard.write_audit(
+            conn,
+            actor_user_id=user_id,
+            action="application.reject",
+            target_type="application",
+            target_id=application_id,
+            before={"status": "under_review"},
+            after={"status": "rejected"},
+            note=reason,
+        )
         await conn.commit()
     await _dispatch_decision_email(
         request, application_id=application_id, to=row["contact_email"],
@@ -879,16 +898,24 @@ async def admin_resend_email(
                 (application_id,),
             )
             row = await cur.fetchone()
-    if row is None:
-        raise _err("not_found", "지원서를 찾을 수 없습니다.", status=404)
-    if row["status"] not in ("approved", "rejected"):
-        raise _err("no_decision_email", "발송할 결정 메일이 없는 상태입니다.", status=409)
-    # 종류는 원장의 마지막 메일을 따른다. status 로만 고르면 신분증 대조 3회 실패로 자동 거절된
-    # 지원서(auto_rejected)의 재발송이 관리자 거절 템플릿으로 바뀌어, 사유가 없는데 사유 자리가
-    # 빈 메일이 나간다.
-    email_type = row.get("last_email_type") or row["status"]
-    if email_type not in ("approved", "rejected", "auto_rejected"):
-        email_type = row["status"]
+        if row is None:
+            raise _err("not_found", "지원서를 찾을 수 없습니다.", status=404)
+        if row["status"] not in ("approved", "rejected"):
+            raise _err("no_decision_email", "발송할 결정 메일이 없는 상태입니다.", status=409)
+        # 종류는 원장의 마지막 메일을 따른다. status 로만 고르면 신분증 대조 3회 실패로 자동 거절된
+        # 지원서(auto_rejected)의 재발송이 관리자 거절 템플릿으로 바뀌어, 사유가 없는데 사유 자리가
+        # 빈 메일이 나간다.
+        email_type = row.get("last_email_type") or row["status"]
+        if email_type not in ("approved", "rejected", "auto_rejected"):
+            email_type = row["status"]
+        await admin_guard.write_audit(
+            conn,
+            actor_user_id=user_id,
+            action="application.resend_email",
+            target_type="application",
+            target_id=application_id,
+        )
+        # 명시적 commit 없음 — 다른 관리자 라우트 넷과 달리 여기선 get_conn 스코프가 정상 종료 시 커밋한다.
     await _dispatch_decision_email(
         request, application_id=application_id, to=row["contact_email"],
         email_type=email_type, reject_reason=row.get("reject_reason"),

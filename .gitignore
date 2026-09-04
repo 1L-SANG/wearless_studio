@@ -55,7 +55,6 @@ mockups/
 
 .omc
 .omx
-pnpm-workspace.yaml
 claude.md
 agents.md
 # 로컬 dev 런타임(로그·pid)

@@ -191,6 +191,55 @@ export async function adminFetchApplicationPhotoUrl(applicationId, kind = 'profi
   return URL.createObjectURL(blob);
 }
 
+// ── 관리자 콘솔: 집계·모델·권한 ─────────────────────────────────────────────
+// 전부 서버가 admin_guard.require_admin 을 강제한다(비관리자는 403).
+
+export function adminOverview(days = 30) {
+  return http(`/v1/facemarket/admin/overview?days=${encodeURIComponent(days)}`);
+}
+
+export function adminListModels({ q, status, limit = 50 } = {}) {
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  if (status) params.set('status', status);
+  params.set('limit', String(limit));
+  return http(`/v1/facemarket/admin/models?${params.toString()}`);
+}
+
+export function adminModelDetail(modelId) {
+  return http(`/v1/facemarket/admin/models/${encodeURIComponent(modelId)}`);
+}
+
+export function adminSuspendModel(modelId, reason) {
+  return http(`/v1/facemarket/admin/models/${encodeURIComponent(modelId)}/suspend`, {
+    method: 'POST', body: { reason },
+  });
+}
+
+export function adminUnsuspendModel(modelId) {
+  return http(`/v1/facemarket/admin/models/${encodeURIComponent(modelId)}/unsuspend`, {
+    method: 'POST',
+  });
+}
+
+export function adminListStaff(q) {
+  const qs = q ? `?q=${encodeURIComponent(q)}` : '';
+  return http(`/v1/facemarket/admin/staff${qs}`);
+}
+
+export function adminSetRole(userId, role) {
+  return http(`/v1/facemarket/admin/staff/${encodeURIComponent(userId)}/role`, {
+    method: 'POST', body: { role },
+  });
+}
+
+export function adminListAudit({ limit = 20, targetType, targetId } = {}) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (targetType) params.set('targetType', targetType);
+  if (targetId) params.set('targetId', targetId);
+  return http(`/v1/facemarket/admin/audit?${params.toString()}`);
+}
+
 // POST /v1/facemarket/enrollments/{id}/physique — 체형·키(선택, 비게이팅) 저장. 서버가
 // enum·성별 일치를 검증(app.facemarket_physique)하고 갱신된 EnrollmentView 를 돌려준다.
 export function submitPhysique({ enrollmentId, heightBucket, bodyType }) {

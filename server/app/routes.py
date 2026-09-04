@@ -18,7 +18,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPExcep
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from psycopg import errors
 
-from . import facemarket, personalization, repo
+from . import admin_guard, facemarket, personalization, repo
 from .agents import (
     color_harmony,
     content_roles,
@@ -693,12 +693,20 @@ async def approve_refund(
       - `400 Bad Request`: 이미 처리되었거나 유효하지 않은 환불 요청인 경우
     """
     async with get_conn(request) as conn:
-        if not await repo.is_admin(conn, user_id):
-            raise HTTPException(403, detail={"code": "forbidden", "message": "관리자만 가능해요."})
+        await admin_guard.require_admin(conn, user_id)
         try:
             result = await repo.approve_refund(conn, request_id=request_id, resolved_by=user_id)
         except repo.CreditError as e:
             raise _credit_error(e)
+        await admin_guard.write_audit(
+            conn,
+            actor_user_id=user_id,
+            action="refund.approve",
+            target_type="refund",
+            target_id=request_id,
+            before={"status": "pending"},
+            after={"status": "approved"},
+        )
         await conn.commit()
     return JSONResponse(result)
 
@@ -720,12 +728,20 @@ async def reject_refund(
       - `400 Bad Request`: 이미 처리된 환불 요청인 경우
     """
     async with get_conn(request) as conn:
-        if not await repo.is_admin(conn, user_id):
-            raise HTTPException(403, detail={"code": "forbidden", "message": "관리자만 가능해요."})
+        await admin_guard.require_admin(conn, user_id)
         try:
             result = await repo.reject_refund(conn, request_id=request_id, resolved_by=user_id)
         except repo.CreditError as e:
             raise _credit_error(e)
+        await admin_guard.write_audit(
+            conn,
+            actor_user_id=user_id,
+            action="refund.reject",
+            target_type="refund",
+            target_id=request_id,
+            before={"status": "pending"},
+            after={"status": "rejected"},
+        )
         await conn.commit()
     return JSONResponse(result)
 
