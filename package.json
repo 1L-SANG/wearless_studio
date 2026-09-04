@@ -18,6 +18,8 @@
     "@tanstack/react-query": "^5.101.0",
     "@tosspayments/tosspayments-sdk": "^2.7.1",
     "aws-amplify": "^6.20.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "heic-to": "^1.5.2",
     "html-to-image": "^1.11.13",
     "jszip": "^3.10.1",
@@ -27,11 +29,17 @@
     "react-dom": "^18.3.1",
     "react-moveable": "^0.56.0",
     "react-router-dom": "^6.28.0",
+    "tailwind-merge": "^3.6.0",
     "zustand": "^5.0.2"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
     "@vitejs/plugin-react": "^4.3.4",
     "prettier": "3.9.1",
+    "tailwindcss": "^4.3.3",
     "vite": "^6.0.5"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
   }
 }

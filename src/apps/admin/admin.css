@@ -1,0 +1,78 @@
+/* =============================================================
+   admin.wearless.kr 스타일 진입 — Tailwind v4 + 스튜디오 CSS 의 레이어 순서를 정한다.
+
+   순서가 이 파일의 존재 이유다:
+     theme  … Tailwind 토큰(--color-*, --spacing-*)
+     base   … preflight(전역 리셋) — shadcn 컴포넌트가 이걸 전제로 만들어져 있다
+     studio … tokens.css·app.css·features.css — 로그인 모달(AuthProvider→LoginGate)이
+              이 규칙들로 그려진다. preflight **뒤**에 와야 리셋에 지워지지 않는다.
+     utilities … Tailwind 유틸리티 — 관리자 화면 마크업이 마지막에 이긴다.
+
+   스튜디오 CSS 를 JS 로 import 하면(예전 mountApp 방식) 레이어 밖에 놓여 유틸리티를
+   전부 이긴다(레이어 판정이 명시도보다 먼저다). 그래서 여기서 @import 로 레이어에 넣는다.
+   ============================================================= */
+@layer theme, base, studio, components, utilities;
+
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/preflight.css" layer(base);
+
+@import "../../styles/tokens.css" layer(studio);
+@import "../../styles/app.css" layer(studio);
+@import "../../styles/features.css" layer(studio);
+
+@import "tailwindcss/utilities.css" layer(utilities);
+
+/* 유틸리티 클래스 스캔 범위 — 관리자 화면만. 다른 앱 파일을 훑으면 쓰지도 않는
+   클래스가 admin 번들로 들어온다. */
+@source "../../apps/admin";
+@source "../../features/admin";
+@source "../../components/admin-ui";
+
+/* shadcn 색 토큰(zinc, 라이트 전용). 다크는 나중에 이 블록을 복제해
+   `@media (prefers-color-scheme: dark)` 또는 `[data-theme="dark"]` 로 덮으면 끝난다 —
+   단, 그 오버라이드도 반드시 `@layer theme` 안에 넣을 것(바로 아래 이유 참조).
+
+   왜 `@layer theme` 로 감쌌는가: 감싸지 않은 순정 `:root { --… }` 는 Tailwind 가 컴파일할 때
+   레이어 안으로 접어 넣어 주지 않는다(직접 빌드해서 확인함 — dist/assets/admin-*.css 에서
+   이 블록이 `@layer utilities` 가 끝난 *뒤*에 truly unlayered 로 나온다). CSS Cascade Layers
+   규칙상 레이어 밖 선언은 순서·명시도와 무관하게 모든 레이어 안 선언을 항상 이긴다. 그 상태로
+   다크 모드 오버라이드를 다른 레이어(예: utilities) 안에 넣으면, 그 오버라이드는 조용히
+   무시된다 — 레이어 밖의 이 블록이 항상 이기기 때문이다. `@theme inline`(아래)은 Tailwind 가
+   실제로 theme 레이어에 접어 넣지만, 손으로 쓴 이 `:root` 블록은 그렇지 않았다. 명시로
+   `@layer theme` 에 넣어 두 토큰 원천을 같은 레이어에 두면, 나중에 dark 오버라이드를
+   여기(theme 레이어) 안에 이어 쓰기만 해도 정상적인 소스 순서 규칙으로 이긴다. */
+@layer theme {
+  :root {
+    --background: #ffffff;
+    --foreground: #18181b;
+    --card: #ffffff;
+    --card-foreground: #18181b;
+    --muted: #f4f4f5;
+    --muted-foreground: #71717a;
+    --border: #e4e4e7;
+    --input: #e4e4e7;
+    --ring: #18181b;
+    --primary: #18181b;
+    --primary-foreground: #fafafa;
+    --destructive: #dc2626;
+    --destructive-foreground: #fafafa;
+    --radius: 0.5rem;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --radius-lg: var(--radius);
+}
