@@ -457,6 +457,12 @@ def test_route_sign_idempotent_replay_returns_same_id_without_resigning(prov, ma
     assert r2res.json()["publicationId"] == r1.json()["publicationId"]
     assert signer.calls == 1, "재서명이 signer 를 다시 불렀다 — 멱등이 깨졌다"
     assert len(r2.put_calls) == puts_before, "재서명이 R2 에 다시 썼다 — 멱등이 깨졌다"
+    # I1 — 멱등 분기(row 가 이미 signed/skipped/failed)로 빠져도 방금 올린 임시 업로드
+    # 객체(key2)는 지워져야 한다. 예전엔 zip·서명 분기 안에만 delete 가 있어서 이 분기는
+    # 매 재다운로드마다 고아 객체를 하나씩 R2 에 남겼다 — DB 행도 리클레이머도 없는,
+    # biometric_purge 에도 안 잡히는 얼굴 포함 이미지였다.
+    assert key2 in r2.deleted, "멱등 분기가 임시 업로드본을 안 지웠다(I1 회귀)"
+    assert key2 not in r2.objects
 
 
 def test_route_sign_zip_takes_skip_branch_with_ledger_row_written(prov, make_token):

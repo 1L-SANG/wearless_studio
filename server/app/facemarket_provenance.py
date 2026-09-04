@@ -377,7 +377,6 @@ async def sign(request: Request, body: SignRequest, user_id: str = Depends(requi
                     (publication_id,),
                 )
             await conn.commit()
-        await asyncio.to_thread(r2.delete, key)
     else:
         manifest = c2pa_signer.build_manifest(
             model_id=lic["model_id"],
@@ -389,7 +388,13 @@ async def sign(request: Request, body: SignRequest, user_id: str = Depends(requi
             forbidden_use=lic.get("forbidden_use") or [],
             license_valid_until=str(lic.get("license_valid_until") or ""),
             source_asset_ids=[str(a) for a in (lic.get("asset_ids") or [])],
-            app_version=getattr(s, "app_version", "0"),
+            # Settings 에 app_version 필드가 없다(review I3) — "0" 은 실제 버전처럼 읽혀서
+            # 매니페스트에 영구히 박히면(이미 셀러 손에 들어간 파일은 재발급 불가) "0"이
+            # 진짜 버전 0인지 미배선인지 구분이 안 된다. "unset"은 그 자체로 미배선임이
+            # 드러난다(c2pa_signer.py:135 의 폴백과 동일한 선택). 실제 버전을 배선하려면
+            # CI 가 git SHA/릴리스 태그를 env(예: APP_VERSION)로 넘기고 copilot manifest 에
+            # 그 값을 싣는 배포 설정 변경이 필요하다 — 여기서는 하지 않는다.
+            app_version=getattr(s, "app_version", "unset"),
         )
         signer = getattr(request.app.state, "fm_c2pa_signer", None)
         signed, c2pa_status = await asyncio.to_thread(
@@ -413,7 +418,17 @@ async def sign(request: Request, body: SignRequest, user_id: str = Depends(requi
                     (publication_id,),
                 )
             await conn.commit()
-        await asyncio.to_thread(r2.delete, key)   # 임시 업로드본 정리
+
+    # 임시 업로드본 정리 — 세 분기(멱등·zip·서명) 전부를 지난 뒤 여기서 한 번만 지운다
+    # (review I1). 예전에는 zip·서명 분기 안에만 있어서 멱등 분기(이미 서명된 배포본의
+    # 재다운로드)로 빠질 때마다 방금 올린 업로드 객체가 고아로 남았다 — DB 행도,
+    # ai_output_cleanup_intents 항목도 없어 어떤 리클레이머도 못 찾고, biometric_purge 도
+    # r2_key 만 보므로 얼굴이 담긴 이 객체는 동의 철회 후에도 계속 남는다. best-effort —
+    # 정리 실패로 이미 끝난 서명·다운로드 응답을 실패시키지 않는다.
+    try:
+        await asyncio.to_thread(r2.delete, key)
+    except Exception:
+        pass
 
     download_url = await asyncio.to_thread(r2.preview_url, signed_key, _DOWNLOAD_TTL)
     return {
