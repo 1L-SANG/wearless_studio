@@ -192,17 +192,21 @@ presigned_put()`, 버킷 `wearless`). 버킷에 **CORS** 규칙이 없으면 브
 Cloudflare R2 대시보드(또는 API)에서 버킷 `wearless` 에 CORS 규칙을 추가한다:
 
 ```json
-[{"AllowedOrigins": ["https://ai.wearless.kr", "https://facemarket.wearless.kr"],
+[{"AllowedOrigins": ["https://ai.wearless.kr", "https://facemarket.wearless.kr", "https://wearless.kr"],
   "AllowedMethods": ["PUT", "GET"],
   "AllowedHeaders": ["content-type"],
   "MaxAgeSeconds": 3600}]
 ```
 
-두 origin 을 다 넣는다 — `/verify/p/:publicationId` 라우트가 `src/apps/seller/App.jsx`
-와 `src/apps/facemarket/App.jsx` 양쪽에 등록돼 있고, 다운로드/업로드를 실제로 트리거하는
-화면이 어느 프론트에서 뜨는지는 이 태스크(백엔드·배포 설정 전용) 범위에서 프론트
-배선까지는 확인하지 못했다. CORS 는 origin 을 넉넉히 허용해도 보안 위험이 크지 않은
-쪽이니 좁혀서 재발 위험을 만들지 말 것.
+세 origin 을 다 넣는다(리뷰 M4) — `/verify/p/:publicationId` 라우트가
+`src/apps/seller/App.jsx` 와 `src/apps/facemarket/App.jsx` 양쪽에 등록돼 있다. 게다가
+`vercel.json` 은 `admin.wearless.kr`→admin.html, `facemarket.wearless.kr`→facemarket.html,
+**그 외 모든 host**→seller.html 로 라우팅한다(§6 에서 다시 확인한다) — 다운로드/업로드를
+실제로 트리거하는 에디터는 seller 번들에 있으므로 `https://wearless.kr` 이 presigned PUT
+의 실제 origin 이다. 빠뜨리면 §6 에서 열어 확인하라고 지시하는 바로 그 화면에서 업로드
+preflight 가 조용히 막힌다 — 서버 로그에는 아무것도 안 남고 셀러는 경고 문구만 보고
+공증 없는 원본을 받는다(§5 서두가 설명하는 바로 그 실패 모드). CORS 는 origin 을 넉넉히
+허용해도 보안 위험이 크지 않은 쪽이니 좁혀서 재발 위험을 만들지 말 것.
 
 ### 6. `PUBLIC_WEB_ORIGIN` — 아무것도 켜기 전에 먼저 확인
 
@@ -253,12 +257,18 @@ PUBLIC_WEB_ORIGIN: "https://wearless.kr"
 없다(`copilot/api/manifest.yml`, `copilot/detail-worker/manifest.yml`) — 다만 이 값을
 유지보수 등으로 잠깐 끄는 사람이 이 의존을 몰랐다가 놀랄 수 있으니 여기 적어 둔다.
 
-한 가지 비대칭: 앵커 워커(`PublicationAnchorReconciler`)의 기동 조건은 `main.py:145`,
-`if pool is not None:` 블록 안에 있고 `facemarket_enabled` 를 아예 보지 않는다 —
-`FACEMARKET_ENABLED=false` 여도 `FM_PROVENANCE_ENABLED=true` 면 이 워커는 뜬다. 다만
-라우트가 없으면 공증 자체가 절대 일어나지 않으므로(REAL 모델 라이선스 흐름도
-`facemarket_enabled` 를 전제한다) 실전에서는 할 일 없이 유휴 폴링만 한다 — 해는 없지만
-"라우트·서명기가 없으면 이 워커도 안 돈다"고 착각하지 말 것.
+한 가지 비대칭: 앵커 워커(`PublicationAnchorReconciler`)의 기동 조건(`main.py:149`,
+`if not detail_worker_only and settings.fm_provenance_enabled:`)은 `facemarket_enabled`
+를 아예 보지 않는다 — `FACEMARKET_ENABLED=false` 여도 `FM_PROVENANCE_ENABLED=true` 면
+이 워커는 뜬다. 다만 라우트가 없으면 공증 자체가 절대 일어나지 않으므로(REAL 모델
+라이선스 흐름도 `facemarket_enabled` 를 전제한다) 실전에서는 할 일 없이 유휴 폴링만
+한다 — 해는 없지만 "라우트·서명기가 없으면 이 워커도 안 돈다"고 착각하지 말 것.
+
+⚠️ **2026-09-04 정정(리뷰 M3):** 이 조건은 `detail_worker_only` 도 함께 본다 — 그래서
+이 워커는 `api` 서비스에서만 뜨고, detail-worker 서비스에서는 `FM_PROVENANCE_ENABLED`
+값과 무관하게 **절대 안 뜬다**(2026-09-04 `13d66c1f`). 예전 버전의 이 문단과 아래
+부록은 "두 서비스 모두에서 기동할 수 있다"고 적었는데, 그 코드 변경 이후로는 사실이
+아니다 — 라우트와 마찬가지로 이 워커도 사실상 `api` 전용이다.
 
 **층①(컷 원장 `fm_output_records`)은 이 플래그와 무관하게 이미 항상 켜져 있다** — REAL
 라이선스 컷이 생성될 때마다 `finalize_detail_page_success` 트랜잭션 안에서 insert
@@ -292,6 +302,21 @@ ref 가 `ftjxwxuactfjopbokbni` 인지 확인한다. GitHub UI 는 시크릿 값�
 없다) — 하지만 **값이 있는데 잘못된 DB 를 가리키는 경우**까지는 못 잡는다. 그게
 2026-08-29 사고의 정확한 모양이었다.
 
+🔴 **이 브랜치부터는 마이그레이션 누락의 결과가 달라졌다(리뷰 M2).** §7 이 적었듯
+층①(컷 원장 `fm_output_records` insert)은 `FM_PROVENANCE_ENABLED` 와 무관하게 이미
+항상 켜져 있고, REAL 라이선스 컷이 성공할 때마다 `finalize_detail_page_success`/
+`finalize_editor_image_success` 트랜잭션 **안에서** 실행된다
+(`server/app/repo.py:insert_output_records`). 이 마이그레이션이 안 붙은 채 코드만
+배포되면(2026-08-29 와 같은 모양의 `SUPABASE_DB_URL` 오류가 재발하면) 그 insert 는
+`fm_output_records` 테이블이 없어 `UndefinedTable` 로 실패하고, 이는 **출처증명
+기능이 꺼진 상태로 남는 정도가 아니라 그 트랜잭션 전체를 실패시켜 REAL 모델을 쓰는
+모든 상세페이지·에디터 이미지 생성 job 을 죽인다.** 이전에는(이 브랜치 이전 코드)
+마이그레이션 누락이 "새 기능이 안 켜진다"는 국소 실패였다 — 이 브랜치부터는 "REAL
+생성 자체가 전부 막힌다"는 전면 장애다. CI 가 마이그레이션을 코드 배포보다 먼저
+적용하는 정상 경로에서는 이 위험이 없다(`deploy-server.yml:141-152`) — 위험은 오직
+`SUPABASE_DB_URL` 이 잘못된 DB 를 가리키는 경우로 좁혀지지만, 그 경우의 폭발 반경이
+이번 배포로 훨씬 커졌다는 걸 알고 있어야 한다.
+
 ---
 
 ## 켠 뒤 확인 (post-enable)
@@ -320,7 +345,7 @@ ref 가 `ftjxwxuactfjopbokbni` 인지 확인한다. GitHub UI 는 시크릿 값�
 | presign/sign 이 즉시 `provenance_unconfigured`(503) | §2 `FM_PROVENANCE_TOKEN_SECRET` — C2PA·체인이 아니라 이거다 |
 | `/v1/facemarket/publications/*` 가 전부 404 | §7 `FACEMARKET_ENABLED`/`FM_PROVENANCE_ENABLED` 둘 다 `true` 인지 |
 | 다운로드는 되는데 서명이 `c2pa_status='skipped'` | §1 인증서 두 장이 SSM 에 실제로 있는지 |
-| `chain_status` 가 `pending` 에서 안 바뀜 | §4 체인 3종 |
+| `chain_status` 가 `pending` 에서 안 바뀜, §4 로 체인 3종을 확인해도 전부 SSM 에 있음 | `FM_PROVENANCE_ADDRESS` **형식**을 의심한다(2026-09-04 리뷰 추가) — 값이 있어도 checksum·길이가 틀리면 `attach_provenance` 가 raise 하고 `facemarket_chain.py` 가 그 예외를 자체 try 로 삼켜(`facemarket_provenance_attach_failed` 로그만 남김) `provenance_enabled=False` 로 조용히 비활성화한다. **정산(`FM_SETTLEMENT_ADDRESS`)은 별개 경로라 계속 정상 동작한다** — "정산은 되는데 출처증명 앵커만 계속 pending" 이면 §4(값 누락)가 아니라 이 형식 문제부터 본다. 증상이 §4 의 "3종 중 하나가 비어 있음"과 겉보기엔 똑같아서 헷갈리기 쉽다 |
 | 검증 페이지가 404/DNS 에러/다른 앱 화면 | §6 `PUBLIC_WEB_ORIGIN` |
 
 ## 롤백
@@ -340,10 +365,14 @@ insert)은 이 플래그와 무관하게 계속 동작한다 — 롤백해도 RE
 ## 부록 — 매니페스트에 실제로 추가/확인한 항목
 
 `copilot/api/manifest.yml`·`copilot/detail-worker/manifest.yml` 둘 다 동일하게 배선한다.
-라우트는 `api` 에만 등록되지만, 앵커 reconciler 는 `facemarket_enabled` 와 무관하게
-`fm_provenance_enabled` 만 보고 뜨므로(§7) 두 서비스 **모두**에서 실제로 기동할 수 있다
-— 게다가 두 서비스가 같은 이미지·같은 설정 로딩 경로(`app/config.py`)를 쓰므로 한쪽만
-넣으면 기동 시 두 서비스의 설정이 갈린다:
+라우트도 앵커 reconciler 도 실제로는 `api` 에서만 기동한다 — `main.py:149` 의
+`if not detail_worker_only and settings.fm_provenance_enabled:` 가 detail-worker
+서비스를 명시로 제외하기 때문이다(2026-09-04 `13d66c1f`, 리뷰 M3. 이 문단은 예전에
+"`fm_provenance_enabled` 만 보고 뜨므로 두 서비스 모두에서 기동할 수 있다"고 적었는데,
+그 코드 변경 이후로는 사실이 아니다 — §7 도 같이 정정했다). 그래도 두 매니페스트
+모두에 이 값들을 배선하는 이유는 그대로 남아 있다: 두 서비스가 같은 이미지·같은 설정
+로딩 경로(`app/config.py`)를 쓰므로 한쪽에만 넣으면 기동 시 두 서비스의 설정이 갈린다
+(예: detail-worker 가 `FM_PROVENANCE_ENABLED` 를 몰라 다른 코드 경로를 탄다):
 
 ```yaml
 secrets:
