@@ -31,8 +31,9 @@ def _shell(*, public_base: str, heading: str, body_html: str, cta: tuple[str, st
     Gmail 은 <style> 블록을 지우는 경로가 있고 아웃룩(Word 렌더러)은 flex·grid 를 모른다 —
     그래서 레이아웃은 중첩 table, 스타일은 전부 인라인이다. 배경·글자색을 명시하는 것도
     같은 이유다: 색을 비워 두면 다크모드 클라이언트가 제멋대로 반전시켜 읽을 수 없게 만든다.
-    워드마크는 PNG 다(SVG 는 대부분의 메일 클라이언트가 렌더하지 않는다). 이미지를 막아 두고
-    여는 사람이 많아 alt 를 반드시 남긴다.
+    로고는 PNG 다(SVG 는 대부분의 메일 클라이언트가 렌더하지 않는다) — 원본 SVG 를 표시 폭의
+    2배(560px)로 구워 레티나에서 뭉개지지 않게 하고, width 속성으로 140px 에 앉힌다. 이미지를
+    막아 두고 여는 사람이 많아 alt 를 반드시 남긴다.
     """
     button = ""
     if cta:
@@ -50,8 +51,8 @@ def _shell(*, public_base: str, heading: str, body_html: str, cta: tuple[str, st
         f'style="max-width:520px;margin:0 auto;background:{CARD};border:1px solid {LINE};'
         f'border-radius:14px;">'
         f'<tr><td style="padding:32px 32px 0 32px;">'
-        f'<img src="{public_base}/assets/brand/wordmark.png" alt="FaceMarket" '
-        f'width="132" style="display:block;border:0;height:auto;width:132px;" />'
+        f'<img src="{public_base}/assets/brand/facemarket-logo@2x.png" alt="FaceMarket" '
+        f'width="140" style="display:block;border:0;height:auto;width:140px;" />'
         f"</td></tr>"
         f'<tr><td style="padding:24px 32px 0 32px;font-family:-apple-system,BlinkMacSystemFont,'
         f'\'Segoe UI\',Roboto,\'Helvetica Neue\',Arial,sans-serif;">'

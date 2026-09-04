@@ -43,14 +43,16 @@ def test_colors_are_explicit_so_dark_mode_cannot_invert_into_unreadable():
         assert "#0e0d14" in html.lower(), email_type
 
 
-def test_wordmark_has_alt_text_and_absolute_url():
-    """이미지를 막아 두고 여는 사람이 많다 — alt 가 없으면 머리가 빈 칸이 된다."""
+def test_logo_is_a_retina_png_with_alt_text_and_absolute_url():
+    """이미지를 막아 두고 여는 사람이 많다 — alt 가 없으면 머리가 빈 칸이 된다.
+    SVG 로 되돌리면 Gmail 등에서 로고가 통째로 사라진다."""
     for email_type in TYPES:
         _subject, html, _text = _content(email_type)
         img = re.search(r"<img[^>]*>", html)
         assert img, email_type
         assert 'alt="FaceMarket"' in img.group(0), email_type
-        assert f'src="{BASE}/assets/brand/wordmark.png"' in img.group(0), email_type
+        assert ".svg" not in img.group(0), f"{email_type}: 메일 로고는 SVG 를 쓸 수 없다"
+        assert f'src="{BASE}/assets/brand/facemarket-logo@2x.png"' in img.group(0), email_type
 
 
 def test_cta_is_a_button_and_the_url_also_appears_as_text():
