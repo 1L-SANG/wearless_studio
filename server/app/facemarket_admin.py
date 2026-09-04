@@ -115,6 +115,9 @@ select
   (select count(*) from fm_models where status = 'pending') as models_pending,
   (select count(*) from fm_models where status = 'verified') as models_verified,
   (select count(*) from fm_models where status = 'suspended') as models_suspended,
+  -- fm_models.status 가 허용하는 상태를 전부 센다. reverification_required 는 생체 재검증
+  -- 대기 중인 모델이고, 대시보드에 보여야 한다 — 안 보이면 몇몇 모델이 영구히 누락된 것처럼 보인다.
+  (select count(*) from fm_models where status = 'reverification_required') as models_reverification_required,
   (select count(*) from fm_biometric_enrollments where status = 'passed') as enrollments_passed,
   (select count(*) from fm_biometric_enrollments
      where status in ('failed', 'cancelled', 'expired')) as enrollments_failed,
@@ -170,6 +173,7 @@ async def build_overview(conn, *, days: int) -> dict:
                 "pending": dist.get("models_pending", 0),
                 "verified": dist.get("models_verified", 0),
                 "suspended": dist.get("models_suspended", 0),
+                "reverificationRequired": dist.get("models_reverification_required", 0),
             },
             "enrollments": {
                 "passed": dist.get("enrollments_passed", 0),

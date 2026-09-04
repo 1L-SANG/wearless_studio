@@ -168,3 +168,27 @@ def test_cache_is_per_period():
     other = _conn()
     asyncio.run(facemarket_admin.overview_payload(other, days=7))
     assert other.executed, "기간이 다른데 30일치 캐시를 돌려준다"
+
+
+def test_distribution_includes_reverification_required():
+    """fm_models.status 가 reverification_required 를 허용하지만 분포에서 무시되면,
+    생체 재검증 중인 모델이 대시보드에 안 보인다.
+    """
+    import asyncio
+    dist_row_with_reverif = {
+        "models_pending": 2, "models_verified": 9, "models_suspended": 1,
+        "models_reverification_required": 3,  # 누락됐던 상태
+        "enrollments_passed": 9, "enrollments_failed": 3, "enrollments_in_flight": 2,
+    }
+    conn = FakeConn([{}, {}, [], dist_row_with_reverif])
+    payload = asyncio.run(facemarket_admin.build_overview(conn, days=30))
+    models_dist = payload["distribution"]["models"]
+    # reverificationRequired 가 없으면 이 단언은 실패한다 — 그게 테스트의 포인트다.
+    assert "reverificationRequired" in models_dist, (
+        "distribution.models 에 reverificationRequired 가 없다"
+    )
+    assert models_dist["reverificationRequired"] == 3
+    # 기존 키들은 변하지 않아야 한다
+    assert models_dist["pending"] == 2
+    assert models_dist["verified"] == 9
+    assert models_dist["suspended"] == 1
