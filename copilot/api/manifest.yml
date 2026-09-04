@@ -299,7 +299,21 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # ---- FaceMarket 온체인 정산(선택과제2). 넷 다 있어야 recorder 활성(facemarket_chain.from_settings),
   # 하나라도 없으면 정산 훅 no-op(settlement_skipped_no_chain). 주소·chainId 는 공개값이라 평문.
   FM_CHAIN_ID: "201210"
+  # FaceMarketSettlement(정산) 컨트랙트 주소 — 공개값이지만 평문. FM_PROVENANCE_ADDRESS
+  # (출처증명 컨트랙트, 같은 성격의 공개 주소)는 secrets: 로 배선했다 — 재배포 시 매니페스트
+  # 재커밋 없이 SSM 값만 갱신하려는 의도적 비대칭이다. 근거:
+  # docs/runbooks/facemarket-provenance-deploy.md §3.
   FM_SETTLEMENT_ADDRESS: "0x39445B04d8F588Ea5E447ff03D8A4b253a6d67A3"
+  # ---- FaceMarket 출처증명(층②·③, docs/runbooks/facemarket-provenance-deploy.md) ----
+  # off(기본)면 publications 라우트 미등록·앵커 워커 미기동·서명기 비활성 — 기존 흐름
+  # 무영향. 층①(fm_output_records 컷 원장)은 이 플래그와 무관하게 이미 항상 켜져 있다.
+  # ⚠️ FACEMARKET_ENABLED 안에 중첩(라우트·서명기) — 그게 false 면 이 값을 true 로
+  # 올려도 또 다른 조용한 no-op 이다(런북 §7). 런북 §1~6 를 전부 확인한 뒤에만 true 로.
+  FM_PROVENANCE_ENABLED: "false"
+  # C2PA 매니페스트의 verifyUrl 과 공개 검증 링크(/verify/p/:id)의 출처. 틀리면 이미
+  # 서명·배포된 파일 안 링크가 죽은 채로 남고 회수할 수 없다 — 값 변경 전 반드시
+  # 실제로 열어서 seller 앱이 뜨는지 확인할 것(런북 §6).
+  PUBLIC_WEB_ORIGIN: "https://wearless.kr"
 
 secrets:                         # SSM Parameter Store (SecureString). copilot secret init 로 값 저장.
   DATABASE_URL: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/DATABASE_URL
@@ -329,6 +343,19 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   #   raw `aws ssm put-parameter` 로 만들면 copilot 태그가 없어 태스크가 못 읽는다(2026-07-17 실경험).
   TOSS_SECRET_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/TOSS_SECRET_KEY
   FM_CHAIN_PRIVATE_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_CHAIN_PRIVATE_KEY
+  # 출처증명 C2PA 자체서명 인증서(리프 cert/key). 둘 다 있어야 서명기가 활성화된다 —
+  # 하나만 있으면 c2pa_status='skipped'. 발급·업로드 절차: 런북 §1(gen_c2pa_cert.py).
+  FM_C2PA_CERT_PEM: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_C2PA_CERT_PEM
+  FM_C2PA_KEY_PEM: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_C2PA_KEY_PEM
+  # 배포된 FaceMarketProvenance 컨트랙트 주소(0x…, 공개값이지만 재배포 시 매니페스트
+  # 커밋 없이 SSM 값만 갱신할 수 있도록 secrets: 로 둔다). 런북 §3 — OmniOne 콘솔 단일
+  # 파일 업로드, 배포자 = FM_CHAIN_PRIVATE_KEY 계정(onlyOwner).
+  FM_PROVENANCE_ADDRESS: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_PROVENANCE_ADDRESS
+  # 배포본 업로드 토큰 HMAC. FM_CI_PEPPER(생체 CI 해시 전용) 재사용 금지 — 재사용하면 그
+  # 시크릿의 blast radius 가 presign/sign 이라는 더 노출된 경로로 번진다(리뷰 I1,
+  # 2026-09-04). 미설정이면 presign/sign 이 즉시 503 provenance_unconfigured 로 폐쇄
+  # 실패한다(fm_ci_pepper 로 조용히 대체되지 않는다). 런북 §2 — openssl rand -hex 32.
+  FM_PROVENANCE_TOKEN_SECRET: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_PROVENANCE_TOKEN_SECRET
   # ---- 모델 지원서 리뉴얼 ----
   # 새 지원서 Slack 알림 — 전용 채널 #facemarket-모델인증 의 Incoming Webhook(2026-09-02).
   # 크리티컬 로그 알림(addons/log-slack-alerts.yml)의 SLACK_ALERT_WEBHOOK_URL 과 **다른 파라미터**다.

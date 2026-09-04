@@ -185,6 +185,7 @@ class FakeDB:
         self.controller_locked = False
         self.controller_lock_attempts = 0
         self.controller_unlocks = 0
+        self._clock = 0
         self.tables = {
             "assets": [],
             "edit_sessions": [],
@@ -198,6 +199,7 @@ class FakeDB:
             "fm_model_asset_cleanup": [],
             "fm_model_assets": [],
             "fm_models": [],
+            "fm_publication_records": [],
             "fm_biometric_purge_manifests": [],
             "fm_biometric_purge_receipts": [],
             "fm_vc_revocation_jobs": [],
@@ -573,6 +575,9 @@ class FakeDB:
         if "select face_image_key as k from fm_licenses" in q:
             ids = set(params[0])
             return [{"k": r.get("face_image_key")} for r in self.tables["fm_licenses"] if r.get("id") in ids and r.get("face_image_key")]
+        if "select r2_key as k from fm_publication_records" in q:
+            ids = set(params[0])
+            return [{"k": r.get("r2_key")} for r in self.tables["fm_publication_records"] if r.get("model_id") in ids and r.get("r2_key")]
         if "select r2_key as k from fm_model_assets" in q:
             ids = set(params[0])
             return [{"k": r.get("r2_key")} for r in self.tables["fm_model_assets"] if r.get("model_id") in ids]
@@ -849,6 +854,20 @@ class FakeDB:
                     row.update({"face_image_key": None, "face_image_digest": None, "enrollment_id": None})
                     if "status='revoked'" in q:
                         row["status"] = "revoked"
+                    count += 1
+            return count
+        if q.startswith("update fm_publication_records set"):
+            # coalesce(revoked_at, now()) — only stamp when unset, so a retry never
+            # moves an already-recorded withdrawal timestamp. Row is only ever
+            # updated here, never deleted (no "delete from fm_publication_records"
+            # case exists in this dispatcher on purpose).
+            count = 0
+            for row in self.tables["fm_publication_records"]:
+                if row.get("model_id") in set(params[0]):
+                    row["r2_key"] = None
+                    if row.get("revoked_at") is None:
+                        self._clock += 1
+                        row["revoked_at"] = self._clock
                     count += 1
             return count
         if q.startswith("delete from fm_biometric_enrollment_photo_cleanup"):
@@ -1964,6 +1983,105 @@ def test_fake_idempotent_replay_after_success_has_empty_targets():
     assert second.complete is True
     assert second.target_count == 0
     assert second.confirmed_absent_count == 0
+
+
+def test_fake_publication_purge_updates_on_withdrawal_reason():
+    """Task 9 / review C1 regression: a model can withdraw FaceMarket biometric consent
+    WITHOUT deleting their account — that is the actual named scenario for
+    fm_publication_records (design doc §9), not account_delete. The R2 copy of the
+    signed delivered file must be deleted and revoked_at stamped on reason='withdrawal'
+    alone; the row itself must survive (it is the only remaining "revoked" signal for
+    a file already in the seller's hands).
+    """
+    ctx = _fake_case()
+    # Production-shaped key: publications/{seller_user_id}/{publication_id}/signed.png
+    # (facemarket_provenance.py:392) — the seller's id, not the model's, and it lives in
+    # the MAIN bucket (app.state.r2), never r2_face. A test that seeds this into r2_face
+    # and asserts against r2_face cannot distinguish the C1 bug from the fix.
+    pub_key = "publications/seller-x/pub-a/signed.png"
+    ctx.db.add(
+        "fm_publication_records",
+        id="pub-a",
+        model_id=ctx.model,
+        license_id=ctx.license,
+        r2_key=pub_key,
+        image_sha256="sha256-fingerprint-a",
+        revoked_at=None,
+    )
+    ctx.r2.keys.add(pub_key)
+
+    result = _run(ctx, user_id=ctx.user, reason="withdrawal")
+
+    assert result.complete is True
+    assert len(ctx.db.tables["fm_publication_records"]) == 1
+    row = ctx.db.tables["fm_publication_records"][0]
+    assert row["id"] == "pub-a"
+    assert row["r2_key"] is None
+    assert row["revoked_at"] is not None
+    assert row["image_sha256"] == "sha256-fingerprint-a"  # file fingerprint, not biometric — survives
+    # Bucket label matters here, not just the key: the signed file lives in the MAIN
+    # bucket, so it must be deleted from ctx.r2 and never touched in ctx.r2_face.
+    assert pub_key in ctx.r2.deleted
+    assert pub_key not in ctx.r2.keys
+    assert pub_key not in ctx.r2_face.deleted
+
+
+def test_fake_publication_purge_updates_on_account_delete_reason():
+    """Same guarantee must also hold on the account_delete path — it is not
+    withdrawal-only, it must fire for every purge reason."""
+    ctx = _fake_case()
+    ctx.db.add("fm_vc_revocation_jobs", vc_id="vc-a", license_id=ctx.license, model_id=ctx.model)
+    pub_key = "publications/seller-x/pub-b/signed.png"
+    ctx.db.add(
+        "fm_publication_records",
+        id="pub-b",
+        model_id=ctx.model,
+        license_id=ctx.license,
+        r2_key=pub_key,
+        image_sha256="sha256-fingerprint-b",
+        revoked_at=None,
+    )
+    ctx.r2.keys.add(pub_key)
+
+    result = _run(ctx, user_id=ctx.user, reason="account_delete")
+
+    assert result.complete is True
+    assert len(ctx.db.tables["fm_publication_records"]) == 1
+    row = ctx.db.tables["fm_publication_records"][0]
+    assert row["r2_key"] is None
+    assert row["revoked_at"] is not None
+    assert pub_key in ctx.r2.deleted
+    assert pub_key not in ctx.r2.keys
+    assert pub_key not in ctx.r2_face.deleted
+
+
+def test_fake_publication_purge_revoked_at_does_not_move_on_retry():
+    """coalesce(revoked_at, now()) property: purges retry, and a withdrawal date that
+    drifts on every retry is not evidence."""
+    ctx = _fake_case()
+    pub_key = "publications/seller-x/pub-c/signed.png"
+    ctx.db.add(
+        "fm_publication_records",
+        id="pub-c",
+        model_id=ctx.model,
+        license_id=ctx.license,
+        r2_key=pub_key,
+        image_sha256="sha256-fingerprint-c",
+        revoked_at=None,
+    )
+    ctx.r2.keys.add(pub_key)
+
+    _run(ctx, user_id=ctx.user, reason="withdrawal")
+    first_revoked_at = ctx.db.tables["fm_publication_records"][0]["revoked_at"]
+    assert first_revoked_at is not None
+    assert pub_key in ctx.r2.deleted
+    assert pub_key not in ctx.r2_face.deleted
+
+    second = _run(ctx, user_id=ctx.user, reason="withdrawal")
+
+    assert second.complete is True
+    assert len(ctx.db.tables["fm_publication_records"]) == 1
+    assert ctx.db.tables["fm_publication_records"][0]["revoked_at"] == first_revoked_at
 
 
 @pytest.mark.parametrize(

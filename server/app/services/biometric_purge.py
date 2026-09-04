@@ -519,6 +519,18 @@ async def _known_targets(conn, schema, scope, enrollment_ids, derived_jobs):
                 (list(scope["license_ids"]),),
             )
             face_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
+        # 서명된 인도본(publication) 사본 — 모델이 동의를 철회하면 R2 사본은 지우되(생체정보
+        # 제거) 원장 행은 남긴다(§9). facemarket_provenance.py 가 이 파일을 쓰는 버킷은
+        # app.state.r2(메인 버킷) 이지 r2_face 가 아니다 — face_keys 에 넣으면 아래에서
+        # r2_face.delete() 로 잘못 매핑돼 존재하지 않는 키를 "지웠다"고 오판(항상 성공)한다.
+        # 반드시 r2_keys(메인 버킷)로 모아야 한다.
+        if scope["model_ids"] and _has(schema, "fm_publication_records", "r2_key"):
+            await cur.execute(
+                "select r2_key as k from fm_publication_records "
+                "where model_id = any(%s) and r2_key is not null",
+                (list(scope["model_ids"]),),
+            )
+            r2_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
         if scope["model_ids"]:
             await cur.execute(
                 "select r2_key as k from fm_model_assets where model_id = any(%s)",
@@ -877,6 +889,23 @@ async def _cleanup(
                 model_sets.append("current_enrollment_id=null")
             await cur.execute(
                 "update fm_models set " + ", ".join(model_sets) + " where id = any(%s)",
+                (list(model_ids),),
+            )
+        if model_ids and _has(schema, "fm_publication_records", "revoked_at"):
+            # 모든 파기 사유(withdrawal·reverification·account_delete)에서 실행돼야 한다 —
+            # 이건 계정 삭제가 아니라 "모델이 동의를 철회하면" 이 트리거인 시나리오다(§9).
+            # account_delete 게이트 안에 두면 계정은 안 지우고 동의만 철회하는(실제
+            # POST /v1/personalization:withdraw 경로, reason="withdrawal") 진짜 케이스에서
+            # 이 UPDATE 가 영영 안 돌아 revoked_at 이 null 로 남고 검증 페이지가 철회를 알릴
+            # 유일한 수단을 잃는다. 행은 남긴다 — 지우면 무단 사용과 정당한 과거 사용을
+            # 구별할 수 없다. 파기(생체정보 제거)는 r2_key 를 null 로 미는 것으로 달성된다.
+            # image_sha256 은 파일 지문이지 생체정보가 아니므로 건드리지 않는다.
+            # coalesce 로 재실행해도 revoked_at 이 밀리지 않게 한다 — 파기는 재시도되고,
+            # 철회일이 재시도마다 흘러가면 그건 증거가 아니다.
+            await cur.execute(
+                "update fm_publication_records "
+                "set r2_key = null, revoked_at = coalesce(revoked_at, now()) "
+                "where model_id = any(%s)",
                 (list(model_ids),),
             )
         if license_ids:

@@ -122,6 +122,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dispatcher = None
         draft_asset_reclaimer = None
         vc_revocation_reconciler = None
+        publication_anchor = None
         sam_retry_pusher = None
         sam_autoscaler = None
         opendid_autoscaler = None
@@ -141,6 +142,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not detail_worker_only and (holder_configured or settings.fm_vc_required):
                 vc_revocation_reconciler = FaceVcRevocationReconciler(app)
                 await vc_revocation_reconciler.start()
+            # sibling(vc_revocation_reconciler·draft_asset_reclaimer)과 같은 게이트: detail-worker
+            # 전용 프로세스에서는 안 돈다. 이 자체가 nonce 충돌을 막지는 않는다(advisory lock 이
+            # 진짜 방어 — anchor_one 참고) — 다만 오늘 이 워커가 detail-worker 에서 돌 이유가
+            # 없는데도 그러고 있었던 비대칭을 없앤다.
+            if not detail_worker_only and settings.fm_provenance_enabled:
+                from .workers.fm_publication_anchor import PublicationAnchorReconciler
+
+                publication_anchor = PublicationAnchorReconciler(app)
+                await publication_anchor.start()
             if not detail_worker_only and app.state.r2 is not None:
                 draft_asset_reclaimer = DraftAssetReclaimer(app)
                 await draft_asset_reclaimer.start()
@@ -223,6 +233,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await dispatcher.stop()
         if vc_revocation_reconciler is not None:
             await vc_revocation_reconciler.stop()
+        if publication_anchor is not None:
+            await publication_anchor.stop()
         if pool is not None:
             await image_usage.drain(timeout_seconds=5.0)
             await pool.close()
@@ -419,8 +431,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             from .facemarket_enrollment import router as biometric_enrollment_router
 
             app.include_router(biometric_enrollment_router)
+        if settings.fm_provenance_enabled:
+            from .facemarket_provenance import router as provenance_router
+            from .services.c2pa_signer import C2paSigner
+
+            app.include_router(provenance_router)
+            app.state.fm_c2pa_signer = C2paSigner.from_settings(settings)
+        else:
+            app.state.fm_c2pa_signer = None
     else:
         app.state.fm_chain = None
+        app.state.fm_c2pa_signer = None
 
     # 개인화(사용자 본인 얼굴·신체) — 플래그 on일 때만 등록. off(프로드 기본)면 라우트 미존재
     # → 생체정보 처리 코드가 프로드에 배포되지 않는다(api-spec §1.1).

@@ -246,6 +246,13 @@ export function getJobSettlement(jobId) {
   return http(`/v1/facemarket/jobs/${jobId}/settlement`);
 }
 
+// GET /v1/facemarket/models/{id}/usage — 모델 본인의 얼굴 사용 내역.
+// → [{ kind:'cut'|'publication', createdAt, imageHashPrefix, chainStatus }]
+// 셀러/프로젝트/원본 해시는 응답에 없다(모델에게 필요한 건 횟수·체인 기록 여부뿐).
+export function listModelUsage(modelId) {
+  return http(`/v1/facemarket/models/${encodeURIComponent(modelId)}/usage`);
+}
+
 // GET /v1/facemarket/verify/{id} — QR 공개 검증. **무인증**(심사위원·구매자가 스캔).
 // http() 는 세션이 없으면 요청 전에 throw 하므로(httpAdapter) 여기선 쓸 수 없다 — 생 fetch.
 // 응답은 서버 화이트리스트(PublicVerifyResult) 그대로:
@@ -267,6 +274,45 @@ export async function verifyLicensePublic(licenseId) {
     throw err;
   }
   return res.json();
+}
+
+// GET /v1/facemarket/publications/verify/{id} — 배포본 공개 검증. **무인증**.
+// C2PA 매니페스트의 verifyUrl 이 여기로 온다(파일 안에 박혀 배포된 뒤 회수 불가).
+// 응답은 서버 화이트리스트(PublicationVerifyResult) 그대로:
+//   { valid, status, publishedAt, imageHashPrefix, kind, allowedUse, forbiddenUse,
+//     licenseValidUntil, chain, model:{ nameMasked, age } }
+// 얼굴·CI·생년월일·user_id·model_id·seller_id·내부 R2 키·전체 image_sha256 은 서버가
+// 애초에 싣지 않는다. 해지가 즉시 반영돼야 하므로 캐시 금지(위 verifyLicensePublic 과 동일 패턴).
+export async function verifyPublicationPublic(publicationId) {
+  const res = await fetch(
+    `${BASE_URL}/v1/facemarket/publications/verify/${encodeURIComponent(publicationId)}`,
+    { headers: { Accept: 'application/json' }, cache: 'no-store' },
+  );
+  if (!res.ok) {
+    let message = res.status === 404
+      ? '찾을 수 없는 기록이에요.'
+      : '확인하지 못했어요. 잠시 후 다시 시도해 주세요.';
+    try { const p = await res.json(); if (p?.error?.message) message = p.error.message; } catch { /* 비 JSON */ }
+    const err = new Error(message);
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
+// POST /v1/facemarket/publications/presign — 배포본 업로드 URL. 행은 아직 안 만든다.
+export function presignPublication({ projectId, kind, byteSize }) {
+  return http('/v1/facemarket/publications/presign', {
+    method: 'POST', body: { projectId, kind, byteSize },
+  });
+}
+
+// POST /v1/facemarket/publications/sign — 해시·원장·C2PA 서명. 응답의 publicationId 가 정본.
+// projectId·kind 는 uploadToken 안에 서명돼 있다 — 여기서 다시 보내지 않는다.
+export function signPublication({ uploadToken }) {
+  return http('/v1/facemarket/publications/sign', {
+    method: 'POST', body: { uploadToken },
+  });
 }
 
 // 게이트 얼굴 이미지 → objectURL. <img> 는 Bearer 를 못 보내므로 fetch+blob 로 인증해 받는다.

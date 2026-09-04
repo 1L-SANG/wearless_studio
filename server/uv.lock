@@ -253,6 +253,29 @@ wheels = [
 ]
 
 [[package]]
+name = "c2pa-python"
+version = "0.37.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "pytest" },
+    { name = "requests" },
+    { name = "setuptools" },
+    { name = "toml" },
+    { name = "wheel" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1f/32/e93959d17db5af4078532f587b9638e87b6429ca0b51348a8ac6ad99e471/c2pa_python-0.37.8.tar.gz", hash = "sha256:c52eb07244558a5997fe61b6ed8d879b4f46f38642dd11956bcedf888c58649c", size = 113008, upload-time = "2026-08-27T20:40:06.081Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/67/6a/252d8d072ac4192df8da28771be64a54cb4ea73f08f3ca1f2b7fafa823a5/c2pa_python-0.37.8-py3-none-macosx_10_9_universal2.whl", hash = "sha256:8dae7d198dd583de3963529b60665e611e36ddca677f85700147d3bdbc885b27", size = 16186835, upload-time = "2026-08-27T20:39:35.421Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/b7/3519bbb3735adce56eb0836d25fcf4e00c36c4e5cd480ee5277aadba18ed/c2pa_python-0.37.8-py3-none-macosx_10_9_x86_64.whl", hash = "sha256:d3ff8da9be41c6f74218872f8ebf0b0020dbc00202bb30fda751422418f679c5", size = 14230208, upload-time = "2026-08-27T20:39:38.587Z" },
+    { url = "https://files.pythonhosted.org/packages/24/5c/ed3000ca3de522c17797482a90cd64f57cdd2fb9b21a49910c04327954bf/c2pa_python-0.37.8-py3-none-macosx_11_0_arm64.whl", hash = "sha256:ee4fbbe3b98dd4349cc9c60db3c4fb1c349c65b5c72fb89a0de403ca778d3d0d", size = 13865982, upload-time = "2026-08-27T20:39:41.837Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/bd/934002a34aa76e5136508b524734dc3c4719f6d87b5a98cf93cbf4917d05/c2pa_python-0.37.8-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:e8c04f4220194a3392dda290be96181ffc94ee5008e87e1fa96c390ec4f9c53c", size = 14077063, upload-time = "2026-08-27T20:39:45.069Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/e8/ca03c21e253e95a3aaab472697f1c0c766af852cb643879b4928f6c57298/c2pa_python-0.37.8-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:20742bd702d09476390dc73a375883990291ea458af8f3e61ef48fa9928f2313", size = 14715089, upload-time = "2026-08-27T20:39:48.275Z" },
+    { url = "https://files.pythonhosted.org/packages/44/cd/376d90d3073ad975d38a42bdbcb42cec071bff3b6831dd5a6b807526a1df/c2pa_python-0.37.8-py3-none-win_amd64.whl", hash = "sha256:5cf1dadd1c8de7da298db9c62c432180d7185a31e81a96dfae7bce7944b21ddd", size = 86478089, upload-time = "2026-08-27T20:39:55.511Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/df/3e59b7813be65678d28f88a7a0c7a13ba8c983fe2a1ecf406959dc7b88df/c2pa_python-0.37.8-py3-none-win_arm64.whl", hash = "sha256:af827698ead013ca20e829e3c9fe1846b548ae77d1ab84762118fbde340e3f0a", size = 83936189, upload-time = "2026-08-27T20:40:03.148Z" },
+]
+
+[[package]]
 name = "certifi"
 version = "2026.5.20"
 source = { registry = "https://pypi.org/simple" }
@@ -2471,6 +2494,15 @@ wheels = [
 ]
 
 [[package]]
+name = "toml"
+version = "0.10.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/be/ba/1f744cdc819428fc6b5084ec34d9b30660f6f9daaf70eead706e3203ec3c/toml-0.10.2.tar.gz", hash = "sha256:b3bda1d108d5dd99f4a20d24d9c348e91c4db7ab1b749200bded2f839ccbe68f", size = 22253, upload-time = "2020-11-01T01:40:22.204Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/44/6f/7120676b6d73228c96e17f1f794d8ab046fc910d781c8d151120c3f1569e/toml-0.10.2-py2.py3-none-any.whl", hash = "sha256:806143ae5bfb6a3c6e736a764057db0e6a0e05e338b5630894a5f779cabb4f9b", size = 16588, upload-time = "2020-11-01T01:40:20.672Z" },
+]
+
+[[package]]
 name = "toolz"
 version = "1.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2807,6 +2839,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "boto3" },
+    { name = "c2pa-python" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "numpy" },
@@ -2838,6 +2871,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "boto3", specifier = ">=1.35" },
+    { name = "c2pa-python", specifier = ">=0.37.8" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "numpy", specifier = ">=1.26" },
@@ -2917,6 +2951,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/86/eb/20b6cdf273913d0ad05a6a14aed4b9a85591c18a987a3d47f20fa13dcc47/websockets-15.0.1-cp313-cp313-win32.whl", hash = "sha256:ba9e56e8ceeeedb2e080147ba85ffcd5cd0711b89576b83784d8605a7df455fa", size = 176393, upload-time = "2025-03-05T20:02:53.814Z" },
     { url = "https://files.pythonhosted.org/packages/1b/6c/c65773d6cab416a64d191d6ee8a8b1c68a09970ea6909d16965d26bfed1e/websockets-15.0.1-cp313-cp313-win_amd64.whl", hash = "sha256:e09473f095a819042ecb2ab9465aee615bd9c2028e4ef7d933600a8401c79561", size = 176837, upload-time = "2025-03-05T20:02:55.237Z" },
     { url = "https://files.pythonhosted.org/packages/fa/a8/5b41e0da817d64113292ab1f8247140aac61cbf6cfd085d6a0fa77f4984f/websockets-15.0.1-py3-none-any.whl", hash = "sha256:f7a866fbc1e97b5c617ee4116daaa09b722101d4a3c170c787450ba409f9736f", size = 169743, upload-time = "2025-03-05T20:03:39.41Z" },
+]
+
+[[package]]
+name = "wheel"
+version = "0.48.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d0/20/50ed6bdf27dec98b568a8ae25dc599f35baa3d9709f9e83fd1edb56b9a90/wheel-0.48.0.tar.gz", hash = "sha256:94800765601e9171bf5d58d066e640662842bcedcbab982b2c90787a2c987322", size = 66471, upload-time = "2026-08-11T22:02:27.327Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2e/29/69cfbb602cd91690c55d38ba9fe53e6a7e76a6fa647bf38f19c138d25449/wheel-0.48.0-py3-none-any.whl", hash = "sha256:3217dcc807155e45db462d7ef2431f5ddda0d7273b700d05a67b271ceb1287ab", size = 33320, upload-time = "2026-08-11T22:02:26.1Z" },
 ]
 
 [[package]]

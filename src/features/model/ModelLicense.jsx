@@ -35,6 +35,7 @@ import {
     fetchLicenseFaceUrl,
     getEnrollment,
     listLicenses,
+    listModelUsage,
     revokeLicense,
     verifyLicensePublic,
 } from "@/lib/api/facemarket.js";
@@ -74,6 +75,14 @@ const shortVc = (vc) => {
     if (!vc) return null;
     if (vc.length <= 24) return vc;
     return `${vc.slice(0, 14)}…${vc.slice(-4)}`;
+};
+
+// 사용 내역 카드의 표시 라벨. 서버 값(kind/chainStatus)은 그대로 두고 한글만 입힌다.
+const KIND_LABEL = { cut: "사진 생성", publication: "상세페이지 배포" };
+const CHAIN_LABEL = {
+    confirmed: "체인 기록됨",
+    pending: "기록 대기",
+    failed: "기록 실패",
 };
 
 // 조건 4칸의 번호·설명. 랜딩 .record 의 번호 붙은 칸과 같은 형태로 읽히게 한다.
@@ -579,6 +588,10 @@ export function ModelLicense() {
     const [licenses, setLicenses] = useState([]);
     const [issuedId, setIssuedId] = useState(null); // 방금 발급 — 카드로 스크롤·강조
     const issuedRef = useRef(null);
+    const [usage, setUsage] = useState([]);
+    // 이 화면은 라이선스 "목록"이지만 실제로는 모델 1인당 모델도 하나다(라이선스는
+    // 재등록 때마다 늘 수 있어도 model_id 는 같다) — 첫 라이선스의 modelId 로 조회한다.
+    const usageModelId = licenses[0]?.modelId;
 
     const load = useCallback(async () => {
         setPhase("loading");
@@ -609,6 +622,17 @@ export function ModelLicense() {
     useEffect(() => {
         load();
     }, [load]);
+
+    // 사용 내역 — 모델 본인만 본다. 어느 셀러가 썼는지는 응답에 없다(계약상 불필요).
+    useEffect(() => {
+        if (!usageModelId) {
+            setUsage([]);
+            return;
+        }
+        listModelUsage(usageModelId)
+            .then(setUsage)
+            .catch(() => setUsage([]));
+    }, [usageModelId]);
 
     const onIssued = useCallback(
         async (lic) => {
@@ -752,6 +776,61 @@ export function ModelLicense() {
                             </p>
                         </div>
                     )}
+
+                    {usage.length > 0 && (
+                        <section className={s.usage}>
+                            <h2 className={s.usageTitle}>
+                                내 얼굴 사용 내역
+                            </h2>
+                            <p className={s.usageNote}>
+                                어느 셀러가 썼는지는 여기 나오지 않아요.
+                                횟수와 체인 기록 여부만 보여요.
+                            </p>
+                            <ul className={s.usageList}>
+                                {usage.map((u, i) => (
+                                    <li
+                                        key={`${u.createdAt}-${i}`}
+                                        className={`${s.usageRow}${u.revoked ? " " + s.usageRowRevoked : ""}`}
+                                    >
+                                        <span className={s.usageKind}>
+                                            {KIND_LABEL[u.kind] || u.kind}
+                                            {/* 철회된 배포본도 행은 남긴다(실제 사용 이력) —
+                                                대신 이 배지로 "지금은 죽은 사용"임을 알린다. */}
+                                            {u.revoked && (
+                                                <span
+                                                    className={
+                                                        s.usageRevokedBadge
+                                                    }
+                                                >
+                                                    철회됨
+                                                </span>
+                                            )}
+                                        </span>
+                                        <time className={s.usageDate}>
+                                            {new Date(
+                                                u.createdAt,
+                                            ).toLocaleDateString("ko-KR")}
+                                        </time>
+                                        <code className={s.usageHash}>
+                                            {u.imageHashPrefix}…
+                                        </code>
+                                        {u.chainStatus ? (
+                                            <em className={s.usageChain}>
+                                                {CHAIN_LABEL[u.chainStatus] ||
+                                                    u.chainStatus}
+                                            </em>
+                                        ) : (
+                                            <span
+                                                className={s.usageChain}
+                                                aria-hidden="true"
+                                            />
+                                        )}
+                                    </li>
+                                ))}
+                            </ul>
+                        </section>
+                    )}
+
                     <div className={s.listFoot}>
                         <Button
                             variant="ghost"

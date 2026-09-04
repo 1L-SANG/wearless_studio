@@ -69,7 +69,21 @@ variables:
   FACEMARKET_VC_REQUIRED: "true"
   OPENDID_HOLDER_URL: http://opendid:8100
   FM_CHAIN_ID: "201210"
+  # FaceMarketSettlement(정산) 컨트랙트 주소 — 공개값이지만 평문. FM_PROVENANCE_ADDRESS
+  # (출처증명 컨트랙트, 같은 성격의 공개 주소)는 secrets: 로 배선했다 — 재배포 시 매니페스트
+  # 재커밋 없이 SSM 값만 갱신하려는 의도적 비대칭이다. 근거:
+  # docs/runbooks/facemarket-provenance-deploy.md §3.
   FM_SETTLEMENT_ADDRESS: "0x39445B04d8F588Ea5E447ff03D8A4b253a6d67A3"
+  # ---- FaceMarket 출처증명(층②·③, docs/runbooks/facemarket-provenance-deploy.md) ----
+  # api 매니페스트와 반드시 같은 값. 라우트·서명기는 api 쪽에서만 뜬다(FACEMARKET_ENABLED
+  # 블록 안, main.py:413-439) — 하지만 앵커 reconciler(PublicationAnchorReconciler)는
+  # facemarket_enabled 와 무관하게 fm_provenance_enabled 만 보고 뜨므로(main.py:145) 이
+  # 서비스에서도 실제로 기동한다. 게다가 두 서비스가 같은 이미지·같은 config 로딩 경로
+  # (app/config.py)를 쓰므로 한쪽만 넣으면 기동 시 설정이 갈린다. 층①(fm_output_records)
+  # 은 이 플래그와 무관하게 이미 항상 켜져 있다. ⚠️ FACEMARKET_ENABLED=false 면 이 값을
+  # true 로 올려도 라우트·서명기는 여전히 no-op(런북 §7).
+  FM_PROVENANCE_ENABLED: "false"
+  PUBLIC_WEB_ORIGIN: "https://wearless.kr"
 
 secrets:
   DATABASE_URL: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/DATABASE_URL
@@ -81,3 +95,11 @@ secrets:
   OPENDID_HOLDER_HMAC_SECRET: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENDID_HOLDER_HMAC_SECRET
   FM_CHAIN_RPC_URL: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_CHAIN_RPC_URL
   FM_CHAIN_PRIVATE_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_CHAIN_PRIVATE_KEY
+  # 출처증명 C2PA 자체서명 인증서 + 앵커 컨트랙트 주소. api 매니페스트와 동일 SSM 경로
+  # (같은 값을 가리킴). 런북 §1·§3.
+  FM_C2PA_CERT_PEM: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_C2PA_CERT_PEM
+  FM_C2PA_KEY_PEM: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_C2PA_KEY_PEM
+  FM_PROVENANCE_ADDRESS: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_PROVENANCE_ADDRESS
+  # 배포본 업로드 토큰 HMAC. FM_CI_PEPPER 재사용 금지(리뷰 I1) — 미설정이면 presign/sign
+  # 이 즉시 503 provenance_unconfigured 로 폐쇄 실패한다. 런북 §2 — openssl rand -hex 32.
+  FM_PROVENANCE_TOKEN_SECRET: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_PROVENANCE_TOKEN_SECRET

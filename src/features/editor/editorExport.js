@@ -17,6 +17,7 @@
 import { getFontEmbedCSS, toCanvas } from 'html-to-image';
 import JSZip from 'jszip';
 import { ASSET_CACHE_VERSION } from '../../lib/assetUrl.js';
+import { notarize } from './publicationNotarize.js';
 
 export const EXPORT_WIDTH = 1000; // .ed-canvas 설계 폭 — 캡처는 화면 scale 과 무관하게 이 폭 기준
 const PIXEL_RATIO = 2; // 상세페이지 업로드 기준 2000px — 쇼핑몰 권장폭(860~1280)을 여유 있게 커버
@@ -198,19 +199,30 @@ function saveBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-/* ---- 공개 API — 각 함수는 { softFailed } 를 돌려준다 (0 이면 완전 성공) ---- */
+/* ---- 공개 API — 각 함수는 { softFailed, verifyUrl, notarizeWarning } 를 돌려준다
+   (softFailed 0 이면 캡처 완전 성공). opts.provenance = { projectId } 를 넘기면 saveBlob
+   직전에 공증 왕복(publicationNotarize.js)을 끼운다 — 안 넘기면 공증 생략(verifyUrl null). ---- */
 
 // ① 블록 1개 → PNG 저장
-export async function exportBlockPng(blockNode, productName, blockIndex) {
+export async function exportBlockPng(blockNode, productName, blockIndex, opts = {}) {
   const fontEmbedCSS = await getFontEmbedCSS(blockNode);
   const { canvas, softFailed } = await captureBlockCanvas(blockNode, PIXEL_RATIO, fontEmbedCSS);
-  saveBlob(await canvasToBlob(canvas), exportFileName(productName, `블록${blockIndex + 1}`));
-  return { softFailed };
+  let out = await canvasToBlob(canvas);
+  let verifyUrl = null;
+  let notarizeWarning = null;
+  if (opts.provenance?.projectId) {
+    const n = await notarize(out, { projectId: opts.provenance.projectId, kind: 'block_png' });
+    out = n.blob;
+    verifyUrl = n.verifyUrl;
+    notarizeWarning = n.warning;
+  }
+  saveBlob(out, exportFileName(productName, `블록${blockIndex + 1}`));
+  return { softFailed, verifyUrl, notarizeWarning };
 }
 
 // ② 전체 블록 → 세로로 이어붙인 긴 PNG 1장.
 // 스티치 캔버스를 먼저 만들고 블록을 그리는 즉시 해제해 피크 메모리를 절반으로(리뷰 반영).
-export async function exportLongPng(blockNodes, productName, onProgress) {
+export async function exportLongPng(blockNodes, productName, onProgress, opts = {}) {
   const heights = blockNodes.map((n) => n.offsetHeight);
   const totalCssHeight = heights.reduce((a, b) => a + b, 0);
   const ratio = fitPixelRatio(totalCssHeight);
@@ -237,12 +249,21 @@ export async function exportLongPng(blockNodes, productName, onProgress) {
     r.canvas.width = 0; // 그린 즉시 픽셀 버퍼 해제
     r.canvas.height = 0;
   }
-  saveBlob(await canvasToBlob(out), exportFileName(productName));
-  return { softFailed };
+  let outBlob = await canvasToBlob(out);
+  let verifyUrl = null;
+  let notarizeWarning = null;
+  if (opts.provenance?.projectId) {
+    const n = await notarize(outBlob, { projectId: opts.provenance.projectId, kind: 'long_png' });
+    outBlob = n.blob;
+    verifyUrl = n.verifyUrl;
+    notarizeWarning = n.warning;
+  }
+  saveBlob(outBlob, exportFileName(productName));
+  return { softFailed, verifyUrl, notarizeWarning };
 }
 
 // ③ 전체 블록 → 블록별 PNG 를 담은 ZIP
-export async function exportBlocksZip(blockNodes, productName, onProgress) {
+export async function exportBlocksZip(blockNodes, productName, onProgress, opts = {}) {
   const zip = new JSZip();
   const pad = (n) => String(n).padStart(2, '0');
   const fontEmbedCSS = await getFontEmbedCSS(blockNodes[0]);
@@ -253,7 +274,15 @@ export async function exportBlocksZip(blockNodes, productName, onProgress) {
     zip.file(exportFileName(productName, `블록${pad(i + 1)}`), await canvasToBlob(r.canvas)); // eslint-disable-line no-await-in-loop
     softFailed += r.softFailed;
   }
-  const blob = await zip.generateAsync({ type: 'blob' }); // PNG 는 이미 압축 — STORE 기본이면 충분
+  let blob = await zip.generateAsync({ type: 'blob' }); // PNG 는 이미 압축 — STORE 기본이면 충분
+  let verifyUrl = null;
+  let notarizeWarning = null;
+  if (opts.provenance?.projectId) {
+    const n = await notarize(blob, { projectId: opts.provenance.projectId, kind: 'zip' });
+    blob = n.blob;
+    verifyUrl = n.verifyUrl;
+    notarizeWarning = n.warning;
+  }
   saveBlob(blob, exportFileName(productName).replace(/\.png$/, '.zip'));
-  return { softFailed };
+  return { softFailed, verifyUrl, notarizeWarning };
 }

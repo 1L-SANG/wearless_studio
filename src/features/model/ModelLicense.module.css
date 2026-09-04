@@ -279,6 +279,87 @@
   to { transform: scale(1); opacity: 1; }
 }
 
+/* ── 사용 내역 ─────────────────────────────────────────────── */
+/* 라이선스 카드(.empty)와 같은 재질 — 1px 선 + 카드 배경/라운드 토큰. */
+.usage {
+  margin-top: 2.2rem;
+  padding: 1.3rem 1.4rem 1.5rem;
+  border: 1px solid var(--fm-line);
+  border-radius: var(--fm-card-radius);
+  background: var(--fm-card-bg);
+}
+.usageTitle {
+  margin: 0 0 0.35rem;
+  color: var(--fm-ink);
+  font: 600 1.05rem/1.4 var(--font-body);
+}
+.usageNote {
+  margin: 0 0 1.1rem;
+  color: var(--fm-muted);
+  font: 400 0.85rem/1.6 var(--font-body);
+}
+.usageList {
+  display: grid;
+  gap: 0.15rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.usageRow {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.65rem 0;
+  border-top: 1px solid var(--fm-line);
+  font: 400 0.85rem/1.4 var(--font-body);
+}
+.usageRow:first-child { border-top: 0; }
+/* 철회된 배포본도 행은 지우지 않는다(실제 사용 이력) — 대신 눈에 띄지 않게 죽인다.
+   색만으로 알리지 않는다는 원칙(WCAG 1.4.1, .vcStatus 선례)이라 배지(.usageRevokedBadge)를
+   같이 둔다. */
+.usageRowRevoked { opacity: 0.6; }
+.usageKind {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--fm-ink);
+  font-weight: 500;
+}
+.usageRevokedBadge {
+  padding: 0.16rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(16, 21, 26, 0.08);
+  color: var(--fm-muted);
+  font: 600 0.66rem/1.3 var(--font-body);
+  letter-spacing: 0.01em;
+}
+.usageDate { color: var(--fm-muted); font-size: 0.8rem; }
+.usageHash {
+  color: var(--fm-muted);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+.usageChain {
+  min-width: 5.4rem;
+  color: var(--fm-accent);
+  font-style: normal;
+  font-weight: 600;
+  font-size: 0.76rem;
+  text-align: right;
+}
+@media (max-width: 30rem) {
+  .usageRow {
+    grid-template-columns: 1fr auto;
+    grid-template-areas: "kind chain" "date hash";
+    row-gap: 0.2rem;
+  }
+  .usageKind { grid-area: kind; }
+  .usageChain { grid-area: chain; }
+  .usageDate { grid-area: date; }
+  .usageHash { grid-area: hash; text-align: right; }
+}
+
 .listFoot { margin-top: 2.2rem; }
 
 /* 발급 이력이 없을 때. 예전엔 버튼 하나만 뜬 빈 화면이었다. */

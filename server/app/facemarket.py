@@ -416,6 +416,26 @@ def _private_not_found() -> JSONResponse:
     )
 
 
+def _public_not_found(message: str) -> JSONResponse:
+    """무인증 공개 검증 라우트 전용 404 — **반드시 no-store 를 달고 나가야 한다**.
+
+    `raise _err(...)`(HTTPException)로 가면 main.py 의 전역 `http_exception_handler`가
+    `exc.headers` 를 읽지 않고 새 `JSONResponse(status_code=exc.status_code,
+    content=...)` 를 맨손으로 만든다 — 그 경로에서는 아무 헤더도 안 실린다. 라우트
+    안에서 `response.headers[...]="no-store"` 를 미리 심어 둬도 예외를 던지는 순간 그
+    스크래치 `Response` 객체는 버려지고 전역 핸들러의 새 응답으로 완전히 교체된다.
+    그래서 `_private_not_found()` 선례처럼 **raise 가 아니라 return** 으로 직접
+    `JSONResponse` 를 만들어야 헤더가 실제로 나간다. 완전 공개(비게이트) 라우트라
+    `_private_not_found` 의 `, private` 는 붙이지 않는다 — 성공 경로(`Cache-Control:
+    no-store`)와 값을 맞춘다. 캐시된 404 가 뒤이은 진짜 200 을 가리는 사고를 막는다.
+    """
+    return JSONResponse(
+        status_code=404,
+        content={"error": {"code": "not_found", "message": message}},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.get(
     "/models",
     response_model=list[ModelCard],
@@ -1158,6 +1178,75 @@ async def list_licenses(request: Request, user_id: str = Depends(require_user)):
     return rows
 
 
+class UsageCard(CamelModel):
+    """모델 본인이 보는 사용 내역. 셀러 신원은 싣지 않는다.
+
+    revoked — 배포본이 철회됐는지(fm_publication_records.revoked_at). 컷 행은 항상 false.
+    철회됐다고 행을 숨기지 않는다(모델이 실제로 겪은 사용 이력이라 지우면 역사가 사라진다) —
+    대신 이 필드로 표시해 "지금도 살아있는 사용"과 구분한다. 셀러/프로젝트/유저/원본 해시
+    금지 규칙과는 무관하다(모델 자신의 데이터, 셀러 영업정보 아님)."""
+
+    kind: str                 # 'cut' | 'publication'
+    created_at: datetime
+    image_hash_prefix: str
+    chain_status: str | None = None
+    revoked: bool = False
+
+
+@router.get(
+    "/models/{model_id}/usage",
+    response_model=list[UsageCard],
+    responses={
+        401: {"model": ErrorResponse, "description": "인증 실패"},
+        404: {"model": ErrorResponse, "description": "모델 없음"},
+    },
+    tags=["FaceMarket"],
+    summary="내 얼굴 사용 내역 (모델 본인)",
+)
+async def list_model_usage(
+    request: Request, model_id: str, user_id: str = Depends(require_user)
+):
+    """본인 소유 모델의 사용 내역(컷 생성 + 배포본). 셀러/프로젝트/원본 해시는 싣지 않는다 —
+    모델에게 필요한 건 '몇 번 쓰였나'·'체인 기록 여부'뿐이고, 어느 셀러가 썼는지는 셀러
+    영업정보라 노출하지 않는다. 비소유 model_id 는 404(존재 비노출 — get_license_face 관례)."""
+    try:  # uuid 형식 가드 — 쓰레기 입력은 500(ops 알림 소음) 아닌 404
+        # (get_model_thumbnail·verify_license_public 선례). 파싱 결과(canonical str)를
+        # 그대로 써야 한다 — 원문을 그대로 쿼리에 넣으면 uuid.UUID() 가 받아주는 별칭 표기
+        # (urn:uuid:…·중괄호 형태)가 가드는 통과하고 PG 캐스팅에서 다시 500으로 터진다.
+        model_id = str(uuid.UUID(str(model_id)))
+    except (TypeError, ValueError):
+        raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select 1 from fm_models where id = %s and user_id = %s",
+                (model_id, user_id),
+            )
+            if await cur.fetchone() is None:
+                raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
+            await cur.execute(
+                """select 'cut' as kind, created_at, left(image_sha256, 12) as prefix,
+                          null::text as chain_status, false as revoked
+                     from fm_output_records where model_id = %s
+                   union all
+                   select 'publication', created_at, left(image_sha256, 12), chain_status,
+                          (revoked_at is not null) as revoked
+                     from fm_publication_records where model_id = %s
+                   order by created_at desc
+                   limit 200""",
+                (model_id, model_id),
+            )
+            rows = await cur.fetchall()
+    return [
+        {
+            "kind": r["kind"], "createdAt": r["created_at"],
+            "imageHashPrefix": r["prefix"], "chainStatus": r["chain_status"],
+            "revoked": r["revoked"],
+        }
+        for r in rows
+    ]
+
+
 @router.get(
     "/licenses/{license_id}/face",
     responses={
@@ -1302,7 +1391,7 @@ async def verify_license_public(request: Request, license_id: str, response: Res
     try:  # 공개 라우트 — 쓰레기 입력은 DB 전에 404로 컷(get_asset_file 선례)
         lic_uuid = uuid.UUID(str(license_id))
     except (ValueError, TypeError):
-        raise _err("not_found", "라이선스를 찾을 수 없습니다.", status=404)
+        return _public_not_found("라이선스를 찾을 수 없습니다.")
     # 파싱 결과를 써야 한다 — 원문을 그대로 쿼리에 넣으면 uuid.UUID() 가 받아주는 별칭 표기
     # (`urn:uuid:…`·중괄호 형태)가 가드를 통과한 뒤 PG 캐스팅에서 터져 404 대신 500 이 된다.
     lic_id = str(lic_uuid)
@@ -1324,7 +1413,7 @@ async def verify_license_public(request: Request, license_id: str, response: Res
             )
             row = await cur.fetchone()
     if row is None:
-        raise _err("not_found", "라이선스를 찾을 수 없습니다.", status=404)
+        return _public_not_found("라이선스를 찾을 수 없습니다.")
 
     # 실시간 상태 — 만료 판정은 게이트(verify_license)와 같은 _is_expired 를 쓴다(단일 소스).
     status = row["status"]

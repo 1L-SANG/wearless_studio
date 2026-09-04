@@ -1001,6 +1001,25 @@ async def insert_custom_matching_item(
         return (await cur.fetchone())["id"]
 
 
+async def insert_output_records(cur, *, records: list[dict]) -> None:
+    """층① 컷 원장. 호출부의 finalize 트랜잭션 안에서만 부른다(lease 펜스 통과 후).
+
+    on conflict (asset_id) do nothing — 워커 재시도가 같은 asset_id 로 다시 와도 1행.
+    """
+    for r in records:
+        await cur.execute(
+            """insert into fm_output_records
+                 (asset_id, job_id, license_id, license_ref, model_id,
+                  seller_id, image_sha256, byte_size)
+               values (%s, %s, %s, %s, %s, %s, %s, %s)
+               on conflict (asset_id) do nothing""",
+            (
+                r["asset_id"], r.get("job_id"), r.get("license_id"), r["license_ref"],
+                r["model_id"], r["seller_id"], r["image_sha256"], r.get("byte_size"),
+            ),
+        )
+
+
 async def swap_matching_item_assets(
     conn: AsyncConnection, *, matching_item_id: str, project_id: str,
     thumbnail_asset_id: str, image_asset_id: str,
@@ -2598,19 +2617,31 @@ async def finalize_detail_page_success(
                 "update projects set title = %s where id = %s and user_id = %s",
                 (product_name, project_id, user_id),
             )
+        ledger_records = []
         for c in cut_assets:  # 컷 이미지 asset 행 (editor_blocks 가 /v1/assets/{id}/file 로 참조)
             await cur.execute(
                 "insert into assets (id, user_id, project_id, source, visibility, r2_bucket, "
-                "r2_key, mime_type, byte_size, width, height, metadata) "
-                "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s, %s) on conflict (id) do nothing",
+                "r2_key, mime_type, byte_size, width, height, checksum, metadata) "
+                "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s, %s, %s) "
+                "on conflict (id) do nothing",
                 (c["asset_id"], user_id, project_id, c["bucket"], c["key"], c["mime"],
-                 c.get("size"), c.get("width"), c.get("height"), Json(c.get("metadata") or {})),
+                 c.get("size"), c.get("width"), c.get("height"), c.get("sha256"),
+                 Json(c.get("metadata") or {})),
             )
             if c.get("cleanup_intent_id"):
                 await cur.execute(
                     "delete from ai_output_cleanup_intents where id = %s",
                     (c["cleanup_intent_id"],),
                 )
+            prov = c.get("provenance")
+            if prov and c.get("sha256"):
+                ledger_records.append({
+                    "asset_id": c["asset_id"], "job_id": job_id,
+                    "license_id": prov["license_id"], "license_ref": prov["license_id"],
+                    "model_id": prov["model_id"], "seller_id": user_id,
+                    "image_sha256": c["sha256"], "byte_size": c.get("size"),
+                })
+        await insert_output_records(cur, records=ledger_records)
         await cur.execute(
             "update projects set editor_blocks = %s, status = 'done' where id = %s",
             (Json(editor_blocks), project_id),
@@ -2726,10 +2757,10 @@ async def finalize_editor_image_success(
             return None  # lease 빼앗김 — 부수효과 0 (워커는 폐기)
         await cur.execute(
             "insert into assets (id, user_id, project_id, source, visibility, r2_bucket, "
-            "r2_key, mime_type, byte_size, width, height, metadata) "
-            "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s, %s)",
+            "r2_key, mime_type, byte_size, width, height, checksum, metadata) "
+            "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s, %s, %s)",
             (image["asset_id"], user_id, project_id, image["bucket"], image["key"], image["mime"],
-             image.get("size"), image.get("width"), image.get("height"),
+             image.get("size"), image.get("width"), image.get("height"), image.get("sha256"),
              Json(image.get("metadata") or {})),
         )
         if image.get("cleanup_intent_id"):
@@ -2755,6 +2786,14 @@ async def finalize_editor_image_success(
             "ai": True,
             "cutType": cut_type,
         }
+        prov = image.get("provenance")
+        if prov and image.get("sha256"):
+            await insert_output_records(cur, records=[{
+                "asset_id": image["asset_id"], "job_id": job_id,
+                "license_id": prov["license_id"], "license_ref": prov["license_id"],
+                "model_id": prov["model_id"], "seller_id": user_id,
+                "image_sha256": image["sha256"], "byte_size": image.get("size"),
+            }])
     # 크레딧 확정 — 버킷 FIFO 차감(구독먼저→topup), 같은 tx·jobs 락 유지.
     # 멱등 = job.status(위 status='running' FOR UPDATE) → 재진입 없음. settle_key는 release 전용.
     available = await _consume_buckets(
