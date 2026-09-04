@@ -198,6 +198,30 @@ export function adminOverview(days = 30) {
   return http(`/v1/facemarket/admin/overview?days=${encodeURIComponent(days)}`);
 }
 
+export function adminListModels({ q, status, limit = 50 } = {}) {
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  if (status) params.set('status', status);
+  params.set('limit', String(limit));
+  return http(`/v1/facemarket/admin/models?${params.toString()}`);
+}
+
+export function adminModelDetail(modelId) {
+  return http(`/v1/facemarket/admin/models/${encodeURIComponent(modelId)}`);
+}
+
+export function adminSuspendModel(modelId, reason) {
+  return http(`/v1/facemarket/admin/models/${encodeURIComponent(modelId)}/suspend`, {
+    method: 'POST', body: { reason },
+  });
+}
+
+export function adminUnsuspendModel(modelId) {
+  return http(`/v1/facemarket/admin/models/${encodeURIComponent(modelId)}/unsuspend`, {
+    method: 'POST',
+  });
+}
+
 // POST /v1/facemarket/enrollments/{id}/physique — 체형·키(선택, 비게이팅) 저장. 서버가
 // enum·성별 일치를 검증(app.facemarket_physique)하고 갱신된 EnrollmentView 를 돌려준다.
 export function submitPhysique({ enrollmentId, heightBucket, bodyType }) {
