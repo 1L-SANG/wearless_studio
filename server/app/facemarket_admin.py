@@ -247,6 +247,7 @@ def validate_model_status(status: str | None) -> str | None:
 LIST_MODELS_SQL = """
 select m.id::text as id, m.display_name, m.status, m.created_at,
        u.email as email,
+       ap.contact_email as application_contact_email,
        (select count(*) from fm_licenses l where l.model_id = m.id) as license_count,
        (select max(s.created_at) from fm_settlements s
           join fm_licenses l2 on l2.id = s.license_id
@@ -255,11 +256,24 @@ from fm_models m
 -- left join: 플랫폼 대행 온보딩은 user_id 가 null 이다(fm_models 주석). inner 로 묶으면
 -- 그런 모델이 목록에서 통째로 사라져, 없는 걸 없다고 착각한다.
 left join auth.users u on u.id = m.user_id
+-- auth.users.email 은 못 믿는다 — 카카오 로그인은 이메일 동의가 선택이라 null 일 수 있고
+-- (fm_model_applications.contact_email 컬럼 주석이 "auth 엔 이메일 없음"이라 직접 말한다),
+-- 운영자가 실제로 아는 건 지원 당시 적은 contact_email 일 때가 많다. fm_models.user_id 와
+-- fm_model_applications.user_id 는 같은 auth id 다 — 신원인증·enrollment 완료가 그 세션의
+-- user_id 로 fm_models 행을 채우므로(facemarket.py, facemarket_enrollment.py) 이 조인은
+-- 추측이 아니라 실재하는 관계다. 재지원으로 지원서가 여러 개일 수 있어(터미널 상태는
+-- 재지원 허용, fm_model_applications_active_per_user 는 활성 건만 유일) 최신 한 건만 본다.
+left join lateral (
+  select contact_email from fm_model_applications ap2
+  where ap2.user_id = m.user_id
+  order by ap2.created_at desc limit 1
+) ap on true
 where (%(status)s::text is null or m.status = %(status)s)
   and (
     %(q)s::text is null
     or m.display_name ilike %(q_like)s
     or u.email = %(q)s
+    or ap.contact_email = %(q)s
   )
 order by m.created_at desc
 limit %(limit)s
@@ -272,6 +286,10 @@ def _model_row(row: dict) -> dict:
         "displayName": row["display_name"],
         "status": row["status"],
         "email": row.get("email"),
+        # auth 이메일이 없을 때 화면이 보여줄 폴백(지원서 이메일) — 어디서 왔는지 구분할 수
+        # 있게 별도 키로 내려준다. DETAIL_MODEL_SQL 에는 이 컬럼이 없어 .get() 이 None 을
+        # 주는데, 상세 화면은 이 필드를 안 쓰므로 무해하다.
+        "applicationContactEmail": row.get("application_contact_email"),
         "licenseCount": row.get("license_count", 0),
         "lastSettlementAt": row["last_settlement_at"].isoformat() if row.get("last_settlement_at") else None,
         "createdAt": row["created_at"].isoformat() if row.get("created_at") else None,

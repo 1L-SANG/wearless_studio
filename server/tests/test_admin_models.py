@@ -75,6 +75,32 @@ def test_list_joins_auth_users_for_email():
     assert "left join" in sql, "계정 없는 모델(플랫폼 대행 온보딩)이 목록에서 사라지면 안 된다"
 
 
+def test_search_also_matches_applicant_contact_email_exactly():
+    """auth.users.email 은 없을 수 있다 — 카카오 로그인은 이메일 동의가 선택이고,
+    fm_model_applications.contact_email 컬럼 주석이 직접 "auth 엔 이메일 없음"이라 말한다.
+    운영자가 아는 건 지원서에 적힌 contact_email 일 때가 많은데, 검색이 auth.users.email
+    만 보면 그 검색은 항상 허탕이다. fm_models.user_id 와 fm_model_applications.user_id 는
+    같은 auth id 다 — 신원인증·enrollment 완료가 그 세션의 user_id 로 fm_models 행을
+    채우므로(facemarket.py, facemarket_enrollment.py) 이 조인은 추측이 아니라 실재하는
+    관계다.
+    """
+    conn = FakeConn([[MODEL_ROW]])
+    asyncio.run(facemarket_admin.list_models(conn, q="a@example.com", status=None, limit=50))
+    sql, params = conn.executed[0]
+    assert "fm_model_applications" in sql, "지원서 contact_email 을 보는 조인이 없다"
+    assert "ap.contact_email = " in sql, "정확일치가 아니다 — 이메일에 부분일치를 걸면 안 된다"
+    assert "ap.contact_email ilike" not in sql, "이메일에 부분일치를 걸면 안 된다"
+
+
+def test_model_row_exposes_application_contact_email_as_fallback():
+    """auth 이메일이 없는 모델(계정) 행에서도 지원서 이메일을 화면에 내려줘야, 목록 화면이
+    그 값을 계정 칸의 폴백으로 보여줄 수 있다."""
+    row = dict(MODEL_ROW)
+    row["application_contact_email"] = "applicant@example.com"
+    result = facemarket_admin._model_row(row)
+    assert result["applicationContactEmail"] == "applicant@example.com"
+
+
 def test_list_caps_limit():
     conn = FakeConn([[MODEL_ROW]])
     asyncio.run(facemarket_admin.list_models(conn, q=None, status=None, limit=9999))

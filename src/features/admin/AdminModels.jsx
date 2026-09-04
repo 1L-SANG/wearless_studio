@@ -244,7 +244,16 @@ export function AdminModels() {
                       <TableCell>
                         <Badge variant={STATUS_VARIANT[m.status]}>{statusLabel(m.status)}</Badge>
                       </TableCell>
-                      <TableCell className="text-muted-foreground">{m.email || '-'}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {/* auth.users.email 은 카카오 로그인 이메일 동의가 선택이라 없을 수
+                            있다 — 그렇다고 '-' 로만 보여주면, 운영자가 실제로 아는 지원서
+                            이메일(contact_email)로도 이 모델을 못 알아본다. 값을 보여줄 땐
+                            어느 쪽 출처인지 밝힌다 — auth 이메일과 헷갈리면 안 된다. */}
+                        {m.email
+                          || (m.applicationContactEmail
+                            ? `${m.applicationContactEmail} (지원서 이메일)`
+                            : '-')}
+                      </TableCell>
                       <TableCell>{m.licenseCount}</TableCell>
                       <TableCell className="text-muted-foreground">{day(m.lastSettlementAt)}</TableCell>
                     </TableRow>

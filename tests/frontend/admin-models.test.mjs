@@ -83,6 +83,21 @@ test('fm_models 가 허용하는 네 상태 모두 라벨·필터·변형을 갖
   );
 });
 
+test('계정 칸은 auth 이메일이 없으면 지원서 이메일을 출처 표시와 함께 폴백으로 보여준다', () => {
+  // auth.users.email 은 카카오 로그인 이메일 동의가 선택이라 null 일 수 있다
+  // (facemarket_admin.py LIST_MODELS_SQL 주석). m.email 이 없을 때 그냥 '-' 로 떨어지면
+  // 운영자가 실제로 아는 지원서 이메일(applicationContactEmail, 백엔드가 이제 내려준다)을
+  // 보여줄 기회를 버리는 것이고, 값을 보여줄 땐 auth 이메일과 헷갈리지 않게 출처를 밝혀야
+  // 한다.
+  const source = read('src/features/admin/AdminModels.jsx');
+  const idx = source.indexOf('m.email || \'-\'');
+  assert.ok(idx === -1, "계정 칸이 여전히 m.email || '-' 로 지원서 이메일 폴백을 무시한다");
+  assert.ok(
+    source.includes('m.applicationContactEmail'),
+    '계정 칸이 applicationContactEmail 폴백을 안 쓴다',
+  );
+});
+
 test('상세 패널은 실패해도 카드 틀을 그대로 그리고, 다시 시도를 준다', () => {
   // 예전엔 실패해도 data 가 계속 null 이라 패널 전체가 <Skeleton> 하나로 영원히 멈췄다
   // (카드 틀조차 없이) — 여기서는 에러 분기가 실제로 Card 로 감싸져 있고 다시 시도
