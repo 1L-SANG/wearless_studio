@@ -1158,6 +1158,60 @@ async def list_licenses(request: Request, user_id: str = Depends(require_user)):
     return rows
 
 
+class UsageCard(CamelModel):
+    """모델 본인이 보는 사용 내역. 셀러 신원은 싣지 않는다."""
+
+    kind: str                 # 'cut' | 'publication'
+    created_at: datetime
+    image_hash_prefix: str
+    chain_status: str | None = None
+
+
+@router.get(
+    "/models/{model_id}/usage",
+    response_model=list[UsageCard],
+    responses={
+        401: {"model": ErrorResponse, "description": "인증 실패"},
+        404: {"model": ErrorResponse, "description": "모델 없음"},
+    },
+    tags=["FaceMarket"],
+    summary="내 얼굴 사용 내역 (모델 본인)",
+)
+async def list_model_usage(
+    request: Request, model_id: str, user_id: str = Depends(require_user)
+):
+    """본인 소유 모델의 사용 내역(컷 생성 + 배포본). 셀러/프로젝트/원본 해시는 싣지 않는다 —
+    모델에게 필요한 건 '몇 번 쓰였나'·'체인 기록 여부'뿐이고, 어느 셀러가 썼는지는 셀러
+    영업정보라 노출하지 않는다. 비소유 model_id 는 404(존재 비노출 — get_license_face 관례)."""
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select 1 from fm_models where id = %s and user_id = %s",
+                (model_id, user_id),
+            )
+            if await cur.fetchone() is None:
+                raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
+            await cur.execute(
+                """select 'cut' as kind, created_at, left(image_sha256, 12) as prefix,
+                          null::text as chain_status
+                     from fm_output_records where model_id = %s
+                   union all
+                   select 'publication', created_at, left(image_sha256, 12), chain_status
+                     from fm_publication_records where model_id = %s
+                   order by created_at desc
+                   limit 200""",
+                (model_id, model_id),
+            )
+            rows = await cur.fetchall()
+    return [
+        {
+            "kind": r["kind"], "createdAt": r["created_at"],
+            "imageHashPrefix": r["prefix"], "chainStatus": r["chain_status"],
+        }
+        for r in rows
+    ]
+
+
 @router.get(
     "/licenses/{license_id}/face",
     responses={

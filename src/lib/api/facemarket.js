@@ -246,6 +246,13 @@ export function getJobSettlement(jobId) {
   return http(`/v1/facemarket/jobs/${jobId}/settlement`);
 }
 
+// GET /v1/facemarket/models/{id}/usage — 모델 본인의 얼굴 사용 내역.
+// → [{ kind:'cut'|'publication', createdAt, imageHashPrefix, chainStatus }]
+// 셀러/프로젝트/원본 해시는 응답에 없다(모델에게 필요한 건 횟수·체인 기록 여부뿐).
+export function listModelUsage(modelId) {
+  return http(`/v1/facemarket/models/${encodeURIComponent(modelId)}/usage`);
+}
+
 // GET /v1/facemarket/verify/{id} — QR 공개 검증. **무인증**(심사위원·구매자가 스캔).
 // http() 는 세션이 없으면 요청 전에 throw 하므로(httpAdapter) 여기선 쓸 수 없다 — 생 fetch.
 // 응답은 서버 화이트리스트(PublicVerifyResult) 그대로:
