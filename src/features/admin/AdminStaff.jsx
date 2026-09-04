@@ -40,7 +40,14 @@ export function AdminStaff() {
   // 영원히 안 보이고, 유일한 복구 방법이 전체 새로고침이었다. 토스트 대신 화면에 남는
   // 에러 상태를 두고, 화면 틀은 항상 그린다 — 로딩·에러는 그 안의 영역에만 국한한다.
   const [dataError, setDataError] = useState(null);
-  const [audit, setAudit] = useState([]);
+  // null = 아직 한 번도 응답을 못 받음(로딩 중이거나 이번 라운드 전엔 실패해도 계속
+  // null). [] = 응답은 왔는데 진짜로 0건. 라운드 2 에서 []로 초기화했다가, 화면 전체
+  // 게이팅을 없앤 바로 그 수정 때문에 로딩 중에도 "기록 없음" 이 뜨는 새 결함이 생겼다
+  // (전엔 전체 스켈레톤이 이 카드를 가려서 안 보였을 뿐이다) — "아직 안 불러옴" 과
+  // "불러왔는데 없음" 을 구분 못 하면 로딩 중에도 "없다" 는 확정적인 거짓 주장을 하게
+  // 된다. 이 화면이 막으려는 바로 그 부류의 결함이라 audit 도 admins 카드와 같은 모양
+  // (null 스켈레톤 / 에러 / 로드됨)으로 맞춘다.
+  const [audit, setAudit] = useState(null);
   // 실패도 빈 배열로 떨어뜨리면 "기록이 없어요" 와 "불러오기 실패" 가 똑같이 보인다 —
   // AdminModels.jsx 목록과 같은 문제, 같은 처방.
   const [auditError, setAuditError] = useState(null);
@@ -165,7 +172,10 @@ export function AdminStaff() {
               <Button variant="outline" size="sm" onClick={() => load(q.trim() || undefined)}>다시 시도</Button>
             </div>
           )}
-          {!auditError && (
+          {/* audit 가 null 이면 아직 한 번도 응답을 못 받은 것 — "기록 없음" 은 audit 이
+              실제 배열(응답을 받았다는 뜻)일 때만 판정한다. */}
+          {!audit && !auditError && <Skeleton className="m-5 h-40" />}
+          {audit && (
             <Table>
               <TableHeader>
                 <TableRow>
