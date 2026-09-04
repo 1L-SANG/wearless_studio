@@ -134,6 +134,22 @@ def test_email_failed_counts_latest_row_per_application_not_ever_failed():
     )
 
 
+def test_applications_rejected_counts_auto_rejected_with_null_reviewed_at():
+    """3회 신원불일치 자동거절(facemarket_enrollment.py:940-944)은 status='rejected' 와
+    terminated_at=now() 를 세우지만 reviewed_at 은 절대 안 세운다 — 관리자가 없는 경로라서다.
+    그 지원서는 applicationsSubmitted(created_at 기준)엔 잡히는데 reviewed_at 만 보는 이
+    쿼리로는 어느 결정 버킷에도 안 잡혀, 깔때기(제출/승인/거절)가 안 맞아떨어진다 — 그리고
+    빠지는 건 하필 신분증 대조에 실패한 지원자들이다. reviewed_by=null(admin_approve/reject
+    는 둘 다 reviewed_by 를 세운다)로 관리자 결정과 자동거절을 구분하는 대신, 있는 컬럼 중
+    하나라도 세팅된 시각을 쓴다 — coalesce(reviewed_at, terminated_at).
+    """
+    sql = " ".join(facemarket_admin.KPI_SQL.split())
+    assert "coalesce(reviewed_at, terminated_at) >= %(from_ts)s" in sql, (
+        "거절 집계가 reviewed_at 만 본다 — reviewed_at 이 null 인 자동거절(terminated_at 만 "
+        "세팅됨)이 applications_rejected 에서 빠진다"
+    )
+
+
 def test_payload_shape_is_camel_case():
     import asyncio
     payload = asyncio.run(facemarket_admin.build_overview(_conn(), days=30))

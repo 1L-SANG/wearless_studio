@@ -83,8 +83,14 @@ select
     as applications_submitted,
   (select count(*) from fm_model_applications
      where status = 'approved' and reviewed_at >= %(from_ts)s) as applications_approved,
+  -- 3회 신원불일치 자동거절(facemarket_enrollment.py)은 관리자가 없어 reviewed_at 을 안
+  -- 세운다 — terminated_at 만 세운다. reviewed_at 만 보면 이 지원서들은 applications_submitted
+  -- (created_at 기준)엔 잡히고 어느 결정 버킷에도 안 잡혀 깔때기가 안 맞고, 하필 빠지는 게
+  -- 신분증 대조에 실패한 지원자들이다. 승인은 admin_approve_application 한 곳뿐이고 항상
+  -- reviewed_at 을 세우므로(자동승인 경로 없음) 이 간극은 거절에만 있다.
   (select count(*) from fm_model_applications
-     where status = 'rejected' and reviewed_at >= %(from_ts)s) as applications_rejected,
+     where status = 'rejected'
+       and coalesce(reviewed_at, terminated_at) >= %(from_ts)s) as applications_rejected,
   (select count(*) from fm_licenses where created_at >= %(from_ts)s) as licenses_issued,
   (select coalesce(sum(total_amount), 0) from fm_settlements
      where chain_status = 'confirmed' and created_at >= %(from_ts)s
