@@ -142,7 +142,13 @@ class FaceMarketChain:
             )
             addr = getattr(settings, "fm_provenance_address", None)
             if addr:
-                client.attach_provenance(addr)
+                # 별도 try — provenance 는 선택 기능. 주소 오타(길이·checksum·공백)로
+                # to_checksum_address 가 raise 해도 이미 실서비스 정산을 기록 중인
+                # settlement client 자체를 죽여선 안 된다(전체가 None 이 되면 정산도 무음 중단).
+                try:
+                    client.attach_provenance(addr)
+                except Exception:
+                    logger.exception("facemarket_provenance_attach_failed")
             logger.info(
                 "facemarket_chain_ready",
                 extra={"chain_id": client.chain_id, "address": client.address},
