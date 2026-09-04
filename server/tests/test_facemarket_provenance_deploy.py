@@ -219,9 +219,30 @@ def test_manifest_declares_every_required_variable(manifest):
 
 
 @pytest.mark.parametrize("manifest", [API_MANIFEST, WORKER_MANIFEST], ids=["api", "detail-worker"])
-def test_provenance_disabled_by_default_in_manifest(manifest):
+def test_provenance_flag_is_declared_and_boolean(manifest):
+    """플래그는 두 매니페스트에 반드시 선언돼 있어야 하고 값은 "true"/"false" 뿐이다.
+
+    원래 이 테스트는 `== "false"` 를 못박아 "선행 조건 없이 켜는 것"을 막았다. 2026-09-04
+    에 런북 §1~§6 을 실제로 밟아(인감·토큰 시크릿 SSM 등록, FaceMarketProvenance 배포
+    0xa283DcdD55fd123B37F5e95a2ad8bBe83a07Ba73 owner=FM_CHAIN_PRIVATE_KEY 계정, 체인 env
+    확인, R2 CORS 확인, PUBLIC_WEB_ORIGIN 정정, 마이그레이션 적용) 켰으므로 그 단정은
+    수명을 다했다. 다만 오타("True"/"1"/"yes")로 조용히 꺼지는 것은 계속 막는다 —
+    config.py 는 `.lower() == "true"` 로만 참을 만들기 때문에 그 외 값은 전부 off 다.
+    """
     variables = _manifest_doc(manifest).get("variables") or {}
-    assert variables.get("FM_PROVENANCE_ENABLED") == "false"
+    value = variables.get("FM_PROVENANCE_ENABLED")
+    assert value is not None, f"{manifest}: FM_PROVENANCE_ENABLED 선언이 없다"
+    assert value in ("true", "false"), (
+        f"{manifest}: FM_PROVENANCE_ENABLED={value!r} — config.py 는 소문자 "
+        '"true" 만 참으로 읽는다. 그 외 값은 조용히 off 가 된다.'
+    )
+
+
+def test_both_manifests_agree_on_the_provenance_flag():
+    """api 와 detail-worker 가 갈리면 한쪽만 공증하거나 한쪽만 앵커한다."""
+    api = (_manifest_doc(API_MANIFEST).get("variables") or {}).get("FM_PROVENANCE_ENABLED")
+    worker = (_manifest_doc(WORKER_MANIFEST).get("variables") or {}).get("FM_PROVENANCE_ENABLED")
+    assert api == worker, f"api={api!r} detail-worker={worker!r}"
 
 
 def test_both_manifests_use_the_same_secret_path_template():
