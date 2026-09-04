@@ -35,13 +35,27 @@ export function AdminStaff() {
   const { user } = useAuth();
   const [q, setQ] = useState('');
   const [data, setData] = useState(null);
+  // 예전엔 이 fetch 가 실패하면 push 토스트만 뜨고(몇 초 뒤 사라짐) data 는 계속 null 로
+  // 남았는데, 그 하나의 상태로 화면 렌더 전체를 게이팅하고 있었다 — 그러면 검색 카드까지
+  // 영원히 안 보이고, 유일한 복구 방법이 전체 새로고침이었다. 토스트 대신 화면에 남는
+  // 에러 상태를 두고, 화면 틀은 항상 그린다 — 로딩·에러는 그 안의 영역에만 국한한다.
+  const [dataError, setDataError] = useState(null);
   const [audit, setAudit] = useState([]);
+  // 실패도 빈 배열로 떨어뜨리면 "기록이 없어요" 와 "불러오기 실패" 가 똑같이 보인다 —
+  // AdminModels.jsx 목록과 같은 문제, 같은 처방.
+  const [auditError, setAuditError] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback((term) => {
-    adminListStaff(term).then(setData).catch((e) => push?.(e.message, { icon: 'alertCircle' }));
-    adminListAudit({ limit: 20 }).then((d) => setAudit(d.items)).catch(() => setAudit([]));
-  }, [push]);
+    setDataError(null);
+    adminListStaff(term)
+      .then(setData)
+      .catch((e) => setDataError(e.message || '관리자 목록을 불러오지 못했어요.'));
+    setAuditError(null);
+    adminListAudit({ limit: 20 })
+      .then((d) => setAudit(d.items))
+      .catch((e) => setAuditError(e.message || '최근 기록을 불러오지 못했어요.'));
+  }, []);
 
   useEffect(() => { load(undefined); }, [load]);
 
@@ -57,48 +71,58 @@ export function AdminStaff() {
     }
   };
 
-  if (!data) return <Skeleton className="h-64" />;
-
-  const { admins, matches } = data;
+  // data 가 없어도(로딩 중이거나 실패했어도) 화면 틀 — 특히 재시도 진입점이 되는 검색
+  // 카드 — 은 항상 그린다. admins·matches 는 data 가 없을 때 빈 배열로 안전하게 접는다.
+  const admins = data?.admins || [];
+  const matches = data?.matches || [];
 
   return (
     <div className="flex flex-col gap-6">
       <Card>
         <CardHeader>
-          <CardTitle>관리자 {admins.length}명</CardTitle>
+          <CardTitle>{data ? `관리자 ${admins.length}명` : '관리자'}</CardTitle>
           <CardDescription>
             첫 관리자는 DB 에서 직접 지정해요. 여기서는 이미 가입한 계정만 승격할 수 있어요.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow><TableHead>이메일</TableHead><TableHead>이름</TableHead><TableHead /></TableRow>
-            </TableHeader>
-            <TableBody>
-              {admins.map((a) => {
-                const isSelf = a.userId === user?.id;
-                const lastAdmin = admins.length <= 1;
-                return (
-                  <TableRow key={a.userId}>
-                    <TableCell>{a.email || a.userId}</TableCell>
-                    <TableCell className="text-muted-foreground">{a.displayName || '-'}</TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={busy || isSelf || lastAdmin}
-                        title={isSelf ? '자기 자신은 내릴 수 없어요' : lastAdmin ? '마지막 관리자는 내릴 수 없어요' : undefined}
-                        onClick={() => change(a.userId, 'user')}
-                      >
-                        관리자 해제
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+          {dataError && (
+            <div className="flex flex-col items-center gap-3 px-5 py-10 text-center text-sm text-muted-foreground">
+              <p>{dataError}</p>
+              <Button variant="outline" size="sm" onClick={() => load(q.trim() || undefined)}>다시 시도</Button>
+            </div>
+          )}
+          {!data && !dataError && <Skeleton className="m-5 h-40" />}
+          {data && (
+            <Table>
+              <TableHeader>
+                <TableRow><TableHead>이메일</TableHead><TableHead>이름</TableHead><TableHead /></TableRow>
+              </TableHeader>
+              <TableBody>
+                {admins.map((a) => {
+                  const isSelf = a.userId === user?.id;
+                  const lastAdmin = admins.length <= 1;
+                  return (
+                    <TableRow key={a.userId}>
+                      <TableCell>{a.email || a.userId}</TableCell>
+                      <TableCell className="text-muted-foreground">{a.displayName || '-'}</TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={busy || isSelf || lastAdmin}
+                          title={isSelf ? '자기 자신은 내릴 수 없어요' : lastAdmin ? '마지막 관리자는 내릴 수 없어요' : undefined}
+                          onClick={() => change(a.userId, 'user')}
+                        >
+                          관리자 해제
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
 
@@ -135,28 +159,36 @@ export function AdminStaff() {
       <Card>
         <CardHeader><CardTitle>최근 기록</CardTitle></CardHeader>
         <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>시각</TableHead><TableHead>한 일</TableHead>
-                <TableHead>대상</TableHead><TableHead>사람</TableHead><TableHead>메모</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {audit.map((row) => (
-                <TableRow key={row.id}>
-                  <TableCell className="text-muted-foreground">{(row.createdAt || '').slice(0, 16).replace('T', ' ')}</TableCell>
-                  <TableCell>{ACTION_LABEL[row.action] || row.action}</TableCell>
-                  <TableCell className="text-muted-foreground">{row.targetId || '-'}</TableCell>
-                  <TableCell className="text-muted-foreground">{row.actorEmail || '-'}</TableCell>
-                  <TableCell className="text-muted-foreground">{row.note || '-'}</TableCell>
+          {auditError && (
+            <div className="flex flex-col items-center gap-3 px-5 py-10 text-center text-sm text-muted-foreground">
+              <p>{auditError}</p>
+              <Button variant="outline" size="sm" onClick={() => load(q.trim() || undefined)}>다시 시도</Button>
+            </div>
+          )}
+          {!auditError && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>시각</TableHead><TableHead>한 일</TableHead>
+                  <TableHead>대상</TableHead><TableHead>사람</TableHead><TableHead>메모</TableHead>
                 </TableRow>
-              ))}
-              {audit.length === 0 && (
-                <TableRow><TableCell colSpan={5} className="py-8 text-center text-muted-foreground">기록 없음</TableCell></TableRow>
-              )}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {audit.map((row) => (
+                  <TableRow key={row.id}>
+                    <TableCell className="text-muted-foreground">{(row.createdAt || '').slice(0, 16).replace('T', ' ')}</TableCell>
+                    <TableCell>{ACTION_LABEL[row.action] || row.action}</TableCell>
+                    <TableCell className="text-muted-foreground">{row.targetId || '-'}</TableCell>
+                    <TableCell className="text-muted-foreground">{row.actorEmail || '-'}</TableCell>
+                    <TableCell className="text-muted-foreground">{row.note || '-'}</TableCell>
+                  </TableRow>
+                ))}
+                {audit.length === 0 && (
+                  <TableRow><TableCell colSpan={5} className="py-8 text-center text-muted-foreground">기록 없음</TableCell></TableRow>
+                )}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
     </div>

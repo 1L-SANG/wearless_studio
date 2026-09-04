@@ -33,17 +33,47 @@ function Detail({ modelId, onChanged }) {
   // 메시지가 화면에 안 뜨는 채로 사용자만 남는다 — 가드레일 안내가 핵심인 화면이라 치명적.
   const { push } = useToast();
   const [data, setData] = useState(null);
+  // 목록의 fetch 실패와 같은 문제 — 예전엔 실패해도 data 가 계속 null 이라 패널 전체가
+  // <Skeleton> 하나로 영원히 멈췄다(카드 틀조차 없었다). 상세는 실패가 낯설지 않다(모델을
+  // 고른 직후 잠깐의 5xx 등) — 패널 틀은 항상 그리고, 실패는 안에서 보여주고 다시 시도를
+  // 준다.
+  const [detailError, setDetailError] = useState(null);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
     setData(null);
-    adminModelDetail(modelId).then(setData).catch((e) => push?.(e.message, { icon: 'alertCircle' }));
-  }, [modelId, push]);
+    setDetailError(null);
+    adminModelDetail(modelId)
+      .then(setData)
+      .catch((e) => setDetailError(e.message || '모델 정보를 불러오지 못했어요.'));
+  }, [modelId]);
 
   useEffect(() => { load(); }, [load]);
 
-  if (!data) return <Skeleton className="h-64" />;
+  if (detailError) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">모델 정보를 불러오지 못했어요</CardTitle>
+          <CardDescription>{detailError}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button variant="outline" size="sm" onClick={load}>다시 시도</Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!data) {
+    return (
+      <Card>
+        <CardContent className="pt-5">
+          <Skeleton className="h-64" />
+        </CardContent>
+      </Card>
+    );
+  }
 
   const { model, licenses, settlements, enrollment } = data;
   const suspended = model.status === 'suspended';
@@ -126,11 +156,19 @@ export function AdminModels() {
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
   const [items, setItems] = useState(null);
+  // 실패도 빈 배열로 떨어뜨리면 "모델이 없어요" 와 "요청이 실패했어요" 가 화면에서
+  // 똑같이 "결과 없음" 으로 보인다 — 세션 만료(403)·5xx·네트워크 단절을 운영자가 구분할
+  // 방법이 없어진다. 이 콘솔의 존재 이유가 "지금 시스템에 뭐가 진짜인지 알려주는 것"이라
+  // 실패를 빈 목록으로 위장하면 안 된다.
+  const [listError, setListError] = useState(null);
   const [selected, setSelected] = useState(null);
 
   const load = useCallback(() => {
     setItems(null);
-    adminListModels({ q: q.trim(), status }).then((d) => setItems(d.items)).catch(() => setItems([]));
+    setListError(null);
+    adminListModels({ q: q.trim(), status })
+      .then((d) => setItems(d.items))
+      .catch((e) => setListError(e.message || '목록을 불러오지 못했어요.'));
   }, [q, status]);
 
   useEffect(() => { load(); }, [load]);
@@ -154,7 +192,13 @@ export function AdminModels() {
       <div className="grid gap-5 lg:grid-cols-[1fr_24rem]">
         <Card>
           <CardContent className="p-0">
-            {!items && <Skeleton className="h-64" />}
+            {listError && (
+              <div className="flex flex-col items-center gap-3 px-5 py-10 text-center text-sm text-muted-foreground">
+                <p>{listError}</p>
+                <Button variant="outline" size="sm" onClick={load}>다시 시도</Button>
+              </div>
+            )}
+            {!items && !listError && <Skeleton className="h-64" />}
             {items && (
               <Table>
                 <TableHeader>
