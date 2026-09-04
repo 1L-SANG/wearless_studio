@@ -246,6 +246,11 @@ export function getJobSettlement(jobId) {
   return http(`/v1/facemarket/jobs/${jobId}/settlement`);
 }
 
+// GET /v1/facemarket/settlements → 로그인 모델 본인의 정산 기록(최신순, 최대 200건).
+export function listSettlements() {
+  return http('/v1/facemarket/settlements');
+}
+
 // GET /v1/facemarket/verify/{id} — QR 공개 검증. **무인증**(심사위원·구매자가 스캔).
 // http() 는 세션이 없으면 요청 전에 throw 하므로(httpAdapter) 여기선 쓸 수 없다 — 생 fetch.
 // 응답은 서버 화이트리스트(PublicVerifyResult) 그대로:

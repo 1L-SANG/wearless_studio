@@ -172,6 +172,15 @@ async function modelComponentHarness({
           export const cancelApplication = (...args) => api.cancelApplication(...args);
           export const getEnrollment = (...args) => api.getEnrollment(...args);
           export const listMyModels = (...args) => api.listMyModels(...args);
+          export const listLicenses = (...args) => (
+            api.listLicenses ? api.listLicenses(...args) : Promise.resolve([])
+          );
+          export const listSettlements = (...args) => (
+            api.listSettlements ? api.listSettlements(...args) : Promise.resolve([])
+          );
+          export const fetchLicenseFaceUrl = (...args) => (
+            api.fetchLicenseFaceUrl ? api.fetchLicenseFaceUrl(...args) : Promise.reject(new Error('no face'))
+          );
           export const submitPhysique = (...args) => api.submitPhysique(...args);
           export const uploadEnrollmentPhoto = (...args) => api.uploadEnrollmentPhoto(...args);
           export const uploadProfileImage = (...args) => api.uploadProfileImage(...args);
@@ -1000,6 +1009,46 @@ test('ModelHub reaches ready using FaceMarket state when personalization is unav
   }
 });
 
+test('verified ModelHub shows the active dashboard even with zero settlements', async () => {
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelHub.jsx',
+    exportName: 'ModelHub',
+    initialStates: [
+      'ready',
+      { id: 'model-1', status: 'verified', displayName: '김*나', coverImageUrl: '/cover.webp' },
+      null,
+      null,
+      true,
+      [{
+        id: 'license-1', modelId: 'model-1', status: 'active', faceImageUri: '/face',
+        allowedUse: ['상의', '하의'], forbiddenUse: ['수영복·비키니'], unitPrice: 10_000,
+        licenseValidUntil: '2027-09-04T00:00:00Z', vcId: 'vc:test:1',
+      }],
+      [],
+      null,
+    ],
+    api: { getCurrentEnrollment: () => new Promise(() => {}) },
+  });
+  try {
+    const tree = harness.render();
+    const active = findTree(tree, (node) => node.type?.name === 'ActiveDashboard');
+    assert.ok(active, 'verified 상태는 활동 중 대시보드를 선택해야 한다');
+    // 이 경량 JSX 하네스는 중첩 함수 컴포넌트를 React처럼 자동 실행하지 않으므로 실제 함수를
+    // 한 번 펼쳐 내부의 사용자 행동까지 검사한다. UI 스텁 자체를 검사하는 것은 아니다.
+    const dashboard = active.type(active.props);
+    assert.ok(findTree(dashboard, (node) => node.type === 'h2' && node.props?.children === '활동 중'));
+    assert.ok(findTree(dashboard, (node) => node.type === 'Link' && node.props?.to === '/payout'));
+    assert.ok(findTree(dashboard, (node) => node.type === 'Link' && node.props?.to === '/model/withdraw'));
+    assert.equal(
+      findTree(dashboard, (node) => node.type === 'Button' && node.props?.children === '내 모델로 생성하기'),
+      null,
+      '활동 중 허브에 예전 중복 생성 버튼을 남기지 않는다',
+    );
+  } finally {
+    await harness.close();
+  }
+});
+
 test('SlotCard renders a pose example image from the angle', () => {
   const upload = read('../../src/features/model/ModelFaceUpload.jsx');
   assert.match(upload, /exampleImage|example/);
@@ -1228,12 +1277,14 @@ test('gendered body types carry an image path, the unknown-gender list does not'
 test('user-facing copy says 본인/얼굴 확인, and the legal consent wording is untouched', () => {
   const register = read('../../src/features/model/ModelRegister.jsx');
   const hub = read('../../src/features/model/ModelHub.jsx');
+  const hubState = read('../../src/features/model/modelHubState.js');
   assert.doesNotMatch(register, /생체 확인/);
   assert.doesNotMatch(hub, /생체 확인/);
   assert.match(register, /모델 정보 등록 완료/);
   // 법적 문구는 그대로 — 동의문 용어를 바꾸면 동의 버전 계약이 깨진다.
   assert.match(register, /생체정보 처리 동의/);
-  assert.match(hub, /생체정보 처리 동의/);
+  // 허브는 법적 동의문을 복제하지 않고, 사람이 알아볼 진행 단계만 보여 준다.
+  assert.match(hubState, /본인확인·사진·조건·증서/);
 });
 
 
