@@ -574,6 +574,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None):
             ext = ext_for_mime(mime) or _EXT_FALLBACK.get(mime, "png")
             asset_id = str(uuid.uuid4())
             key = ai_key(user_id, project_id, job_id, asset_id, ext)
+            img_sha256 = hashlib.sha256(img).hexdigest()
             async with app.state.pool.connection() as conn:
                 cleanup_intent_id = await repo.create_ai_output_cleanup_intent(
                     conn,
@@ -606,6 +607,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None):
                 {"asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
                  "size": len(img), "width": w, "height": h,
                  "cleanup_intent_id": cleanup_intent_id,
+                 "sha256": img_sha256,
                  "metadata": {
                      "facemarket_real_derived": real_identity_attached,
                  }},
@@ -1731,6 +1733,15 @@ async def run_detail_page_job(app, job: dict) -> None:
                     model_id=str(snapshot.get("modelId") or ""),
                     brand_use_category=payload.get("brandUseCategory"),
                 )
+            # 층① 원장 — 재검증을 통과한 라이선스만 컷에 귀속시킨다. finalize 가 같은
+            # 트랜잭션에서 fm_output_records 를 쓴다(lease 상실 시 0행).
+            if source == "REAL" and license_row is not None:
+                prov = {
+                    "license_id": str(license_row["id"]),
+                    "model_id": str(license_row["model_id"]),
+                }
+                for c in cut_assets:
+                    c["provenance"] = prov
             out = await repo.finalize_detail_page_success(
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id, project_id=project_id,
                 editor_blocks=editor_blocks, cut_assets=cut_assets, reserved=reserved, charge=charge,

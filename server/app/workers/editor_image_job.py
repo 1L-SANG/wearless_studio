@@ -5,6 +5,7 @@ mannequin_adjust_job.py의 reserve→generate→finalize 패턴을 단일 이미
 """
 
 import asyncio
+import hashlib
 import logging
 import re
 import uuid
@@ -741,6 +742,7 @@ async def run_editor_image_job(app, job: dict) -> None:
         ext = ext_for_mime(mime) or _EXT_FALLBACK.get(mime, "png")
         asset_id = str(uuid.uuid4())
         key = ai_key(user_id, project_id, job_id, asset_id, ext)
+        img_sha256 = hashlib.sha256(image).hexdigest()
         async with pool.connection() as conn:
             cleanup_intent_id = await repo.create_ai_output_cleanup_intent(
                 conn,
@@ -764,6 +766,12 @@ async def run_editor_image_job(app, job: dict) -> None:
             "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
             "size": len(image), "width": w, "height": h,
             "cleanup_intent_id": cleanup_intent_id,
+            "sha256": img_sha256,
+            "provenance": (
+                {"license_id": str(fm_license_row["id"]),
+                 "model_id": str(fm_license_row["model_id"])}
+                if fm_face_injected and fm_license_row is not None else None
+            ),
             "metadata": {"facemarket_real_derived": fm_face_injected},
         }
 
