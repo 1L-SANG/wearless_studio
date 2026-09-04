@@ -120,3 +120,10 @@ def test_sign_roundtrip_embeds_manifest(tmp_path):
         assert custom["licenseId"] == kwargs["license_id"]
         assert custom["verifyUrl"] == kwargs["verify_url"]
         assert custom["forbiddenUse"] == kwargs["forbidden_use"]
+
+        # 서명 파일의 "produced by" 는 claim_generator(레거시 문자열)가 아니라
+        # claim_generator_info(리스트)에서만 읽힌다 — c2pa-python 0.37.8 실측
+        # (claim_generator 는 조용히 버려지고 top-level 로는 None 으로 읽힌다).
+        # 이 assert 를 빼면 우리 이름이 안 실린 채로도 조용히 green 이 나온다.
+        generator_names = {g["name"] for g in active["claim_generator_info"]}
+        assert "wearless-facemarket" in generator_names

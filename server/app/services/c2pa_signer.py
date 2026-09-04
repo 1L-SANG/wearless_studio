@@ -54,9 +54,20 @@ def build_manifest(
     source_asset_ids: list[str],
     app_version: str,
 ) -> dict:
-    """C2PA 매니페스트 조립. 키워드 화이트리스트 = 방어 ①."""
+    """C2PA 매니페스트 조립. 키워드 화이트리스트 = 방어 ①.
+
+    `claim_generator`(레거시 문자열)와 `claim_generator_info`(리스트) 를 둘 다 넣는다 —
+    실측 확인(2026-09-04, c2pa-python 0.37.8): 라이브러리는 `claim_generator` 문자열을
+    **조용히 버리고** 서명된 파일의 producer 신원은 `claim_generator_info` 만 읽는다.
+    이걸 빼먹으면 파일에 "produced by c2pa-rs"만 남고 우리 이름은 어디에도 안 남는다
+    (verifier 가 "produced by" 로 보여주는 바로 그 필드라 무해한 누락이 아니다).
+    `claim_generator` 문자열은 하위호환·우리 쪽 로깅용으로 남겨둔다(라이브러리는 무시).
+    """
     return {
         "claim_generator": f"wearless-facemarket/{app_version}",
+        "claim_generator_info": [
+            {"name": "wearless-facemarket", "version": app_version}
+        ],
         "title": "FaceMarket generated image",
         "assertions": [
             {
@@ -116,7 +127,12 @@ class C2paSigner:
             return cls(
                 settings.fm_c2pa_cert_pem,
                 settings.fm_c2pa_key_pem,
-                getattr(settings, "app_version", "0"),
+                # Settings 에 app_version 필드가 아직 없다(config.py 는 이번 라운드
+                # 다른 태스크 소유라 여기서 추가 못 함 — TODO: 실제 배포 버전이
+                # 배선되면 이 getattr 은 그 필드를 그냥 읽으면 된다). 필드가 생기기
+                # 전까지 "0"처럼 진짜 버전으로 착각할 값 대신, 매니페스트에 박혀도
+                # "안 배선됐다"는 게 그 자체로 드러나는 값을 쓴다.
+                getattr(settings, "app_version", "unset"),
             )
         except Exception:
             logger.exception("c2pa_signer_init_failed")
@@ -140,6 +156,14 @@ class C2paSigner:
             alg=c2pa.C2paSigningAlg.ES256,
             sign_cert=self._cert,
             private_key=self._key,
+            # TSA(RFC-3161 트러스티드 타임스탬프) 없음 — 의도적. 있으면 인증서가
+            # 만료된 뒤에도 "서명 당시엔 유효했다"를 증명할 수 있지만(읽어보면
+            # signature_info.time 이 항상 None 인 이유), 그 대가로 서명 시점에
+            # 외부 TSA 서비스에 매 요청 의존이 생긴다 — 이 경로는 다운로드를
+            # 막으면 안 되는 경로라 그 의존을 의도적으로 피했다. 인증서 유효기간을
+            # 10년으로 길게 잡아 당장 급하지 않다. 재검토 트리거: 인증서 로테이션
+            # 주기가 짧아지거나(예: 1년 이하), "서명 당시 유효성" 증명이 실제
+            # 분쟁·감사 요건으로 필요해지면 그때 tsa_url 을 채운다.
             ta_url=None,
         )
         with (
