@@ -22,7 +22,10 @@
       "아무것도 안 남았다"고 거짓말하는 셈이었다. */
 
 const WARNING = '출처 기록을 남기지 못했어요. 파일은 그대로 저장됩니다.';
-// sign 이후 실패 전용 — 원장·앵커는 이미 있다. "안 남았다"가 아니라 "이 파일엔 못 담았다".
+// sign 이후 전용 — 원장·앵커는 이미 있다. "안 남았다"가 아니라 "이 파일엔 못 담았다".
+// 두 경우에 쓴다: ① 서명본 재다운로드가 실패한 경우, ② 다운로드는 됐지만 서버가
+// c2paStatus:'signed' 가 아닌 걸로 응답한 경우(skipped/failed — I2). 둘 다 "기록 자체는
+// 존재한다"는 점에서 WARNING(공증 실패, 아무것도 안 남음)과 다르다.
 const PARTIAL_WARNING = '출처 기록은 이미 남았지만, 이 파일에는 인증서를 담지 못했어요. 검증 링크로 기록을 확인할 수 있어요.';
 
 // presign/sign 은 작은 JSON 왕복 — 빨리 실패해야 한다. PUT/GET 은 수 MB PNG 바디를
@@ -90,11 +93,17 @@ export async function notarize(blob, { projectId, kind }, deps = {}) {
   // sign 이 여기까지 왔다는 건 원장 행과 체인 앵커가 이미 서버에 실재한다는 뜻이다.
   // 이 아래 실패는 ok:false 든 throw 든(네트워크 끊김·malformed body 등) 전부 같은
   // 취급이다: 로컬 원본을 저장하되 verifyUrl 은 절대 버리지 않는다.
+  //
+  // c2paStatus 가 'signed' 가 아니면(skipped/failed — PEM 한쪽만 설정, wheel import 실패,
+  // 서명 자체가 예외, kind==='zip' 은 설계상 항상 skipped) 다운로드된 파일은 인증서 없는
+  // 원본 그대로다. 여기서 안 알리면 셀러는 credential 이 있다고 믿는다(design §6.2, I2).
+  const c2paWarning = res.c2paStatus && res.c2paStatus !== 'signed' ? PARTIAL_WARNING : null;
+
   try {
     const got = await withTimeout(fetchImpl(res.downloadUrl), t.transfer, '서명본 다운로드');
     if (!got.ok) return { blob, verifyUrl: res.verifyUrl, warning: PARTIAL_WARNING };
     const signed = await withTimeout(got.blob(), t.transfer, '서명본 파싱');
-    return { blob: signed, verifyUrl: res.verifyUrl, warning: null };
+    return { blob: signed, verifyUrl: res.verifyUrl, warning: c2paWarning };
   } catch {
     return { blob, verifyUrl: res.verifyUrl, warning: PARTIAL_WARNING };
   }

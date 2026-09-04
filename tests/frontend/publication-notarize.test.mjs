@@ -149,3 +149,49 @@ test('presign 이 500 으로 실패하면 여전히 경고를 띄운다(진짜 �
   assert.equal(out.verifyUrl, null);
   assert.ok(out.warning);
 });
+
+/* ── 최종 리뷰 I2 — c2paStatus 가 'signed' 가 아니면(skipped/failed) 다운로드는 됐어도
+   인증서가 안 담긴 원본이 온 것이다. design §6.2: 경고로 알려야 한다. WARNING("기록을
+   못 남겼다")과는 달라야 한다 — 원장 행·체인 앵커는 실재하므로. ─────────────────── */
+
+test("c2paStatus 가 'skipped' 면 다운로드는 성공해도 경고를 띄운다 — I2", async () => {
+  const api = {
+    presignPublication: async () => ({ uploadToken: 't', uploadUrl: 'https://r2/put' }),
+    signPublication: async () => ({
+      publicationId: 'p1', downloadUrl: 'https://r2/get',
+      verifyUrl: 'https://w/verify/p/p1', c2paStatus: 'skipped',
+    }),
+  };
+  const fetchImpl = async (url) =>
+    (url === 'https://r2/put' ? { ok: true } : { ok: true, blob: async () => signedBlob });
+  const out = await notarize(blob, { projectId: 'p', kind: 'zip' }, { api, fetchImpl });
+  assert.equal(out.blob, signedBlob);
+  assert.equal(out.verifyUrl, 'https://w/verify/p/p1'); // 원장·앵커는 실재 — 검증 링크는 산다
+  assert.ok(out.warning);
+  assert.notEqual(out.warning, '출처 기록을 남기지 못했어요. 파일은 그대로 저장됩니다.');
+});
+
+test("c2paStatus 가 'failed' 면 다운로드는 성공해도 경고를 띄운다 — I2", async () => {
+  const api = {
+    presignPublication: async () => ({ uploadToken: 't', uploadUrl: 'https://r2/put' }),
+    signPublication: async () => ({
+      publicationId: 'p1', downloadUrl: 'https://r2/get',
+      verifyUrl: 'https://w/verify/p/p1', c2paStatus: 'failed',
+    }),
+  };
+  const fetchImpl = async (url) =>
+    (url === 'https://r2/put' ? { ok: true } : { ok: true, blob: async () => signedBlob });
+  const out = await notarize(blob, { projectId: 'p', kind: 'long_png' }, { api, fetchImpl });
+  assert.equal(out.blob, signedBlob);
+  assert.equal(out.verifyUrl, 'https://w/verify/p/p1');
+  assert.ok(out.warning);
+});
+
+test("c2paStatus 가 'signed' 면 경고 없이 조용히 저장한다 — I2 회귀", async () => {
+  const out = await notarize(blob, { projectId: 'p', kind: 'long_png' }, {
+    api: okApi(),
+    fetchImpl: async (url) =>
+      (url === 'https://r2/put' ? { ok: true } : { ok: true, blob: async () => signedBlob }),
+  });
+  assert.equal(out.warning, null);
+});
