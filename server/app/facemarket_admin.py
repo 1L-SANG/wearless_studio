@@ -208,7 +208,17 @@ async def admin_overview(
     return JSONResponse(payload)
 
 
-MODEL_STATUSES = ("pending", "verified", "suspended")
+# fm_models_status_check(supabase/migrations/20260821010100_facemarket_biometric_runtime.sql)
+# 가 실제로 허용하는 값 전체 — reverification_required 는 생체 재검증 대기 중인 모델이고
+# facemarket_cutover.py 가 실제로 이 값을 쓴다. 여기서 빠지면 필터가 실재하는 상태를 400 으로
+# 걷어차고, 정지 해제의 복원 화이트리스트도 이 값을 못 돌려줘 verified 처럼 조용히 pending 으로
+# 깎인다.
+MODEL_STATUSES = ("pending", "verified", "suspended", "reverification_required")
+# 정지 해제가 복원해도 되는 목표 상태 — MODEL_STATUSES 에서 suspended 를 뺀 값이다
+# ("정지 직전"이 다시 suspended 일 수는 없다). verified 창조 금지 규칙은 "콘솔이 새로
+# verified 를 만드는 것"에 걸리는 규칙이라, 원장에 남은 값을 그대로 돌려주는 이 복원에는
+# 걸리지 않는다.
+RESTORABLE_MODEL_STATUSES = ("pending", "verified", "reverification_required")
 MAX_LIST_LIMIT = 200
 
 
@@ -427,8 +437,11 @@ async def unsuspend_model(conn, *, model_id: str, actor: str) -> dict:
         )
         row = await cur.fetchone()
         restored = (row or {}).get("prev")
-        # 원장 값이 오염됐거나 기록이 없으면 pending — 스키마 밖 값을 넣으면 check 제약이 터진다.
-        if restored not in ("pending", "verified"):
+        # 원장 값이 오염됐거나 기록이 없으면 pending — 스키마 밖 값을 넣으면 check 제약이
+        # 터진다. reverification_required 도 정지 직전 값일 수 있다(생체 재검증 대기 중
+        # 정지된 모델) — 원장에 있던 값을 그대로 되돌리는 것뿐이라 verified 창조 금지 규칙에
+        # 걸리지 않는다.
+        if restored not in RESTORABLE_MODEL_STATUSES:
             restored = "pending"
         # 가드 UPDATE — suspend 와 같은 이유다. 방금 확인한 'suspended' 를 where 에 다시
         # 건다: 그 사이 다른 요청이 먼저 해제했으면(동시 해제) 0-row 로 걸려 조용한 이중

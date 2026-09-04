@@ -3,8 +3,9 @@
 되돌아가면: 관리자가 손으로 '검증됨' 배지를 붙일 수 있게 된다. 그 순간 배지는
 생체등록을 통과했다는 뜻이 아니라 누군가 눌렀다는 뜻이 되어, 라이선스 신뢰의 근거가 없다.
 
-리뷰 후속(finding 1·2): 이중 정지가 복원 체인을 깨는 것, 그리고 동시 요청이 감사 원장의
-before 값을 거짓으로 만드는 것 — 둘 다 같은 가드 UPDATE 로 고정한다.
+리뷰 후속(finding 1·2·3): 이중 정지가 복원 체인을 깨는 것, 동시 요청이 감사 원장의
+before 값을 거짓으로 만드는 것, 그리고 reverification_required 상태가 필터·복원 양쪽에서
+빠져 있던 것 — 세 가지를 여기서 같이 고정한다.
 """
 import asyncio
 import contextlib
@@ -146,6 +147,19 @@ def test_unsuspend_never_restores_a_status_outside_the_schema():
     asyncio.run(facemarket_admin.unsuspend_model(conn, model_id="m1", actor="admin-1"))
     updates = [p for sql, p in conn.executed if sql.startswith("update fm_models")]
     assert updates and updates[0][0] == "pending"
+
+
+def test_unsuspend_restores_reverification_required_status():
+    """finding 3: 정지 직전이 reverification_required 였다면 그 값으로 복원한다. verified
+    창조 금지 규칙은 verified 에만 적용된다 — 원장에 있던 값을 그대로 돌려주는 건 창조가
+    아니라 복원이라 그 규칙에 걸리지 않는다."""
+    conn = FakeConn([
+        {"status": "suspended"}, {"prev": "reverification_required"}, {"ok": 1},
+    ])
+    result = asyncio.run(facemarket_admin.unsuspend_model(conn, model_id="m1", actor="admin-1"))
+    assert result["status"] == "reverification_required"
+    updates = [p for sql, p in conn.executed if sql.startswith("update fm_models")]
+    assert updates and updates[0][0] == "reverification_required"
 
 
 def test_unsuspend_rejects_a_model_that_is_not_suspended():

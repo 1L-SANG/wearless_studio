@@ -51,6 +51,13 @@ def test_status_filter_accepts_schema_values():
         assert facemarket_admin.validate_model_status(status) == status
 
 
+def test_status_filter_accepts_reverification_required():
+    """fm_models_status_check(20260821010100 마이그레이션)는 pending·verified·suspended
+    말고 reverification_required 도 허용한다(생체 재검증 대기). 필터가 이 값을 400 으로
+    걷어차면 실재하는 상태를 콘솔에서 볼 방법이 없어진다."""
+    assert facemarket_admin.validate_model_status("reverification_required") == "reverification_required"
+
+
 def test_list_matches_name_partially_and_email_exactly():
     conn = FakeConn([[MODEL_ROW]])
     asyncio.run(facemarket_admin.list_models(conn, q="모델", status=None, limit=50))
