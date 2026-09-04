@@ -313,7 +313,7 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # C2PA 매니페스트의 verifyUrl 과 공개 검증 링크(/verify/p/:id)의 출처. 틀리면 이미
   # 서명·배포된 파일 안 링크가 죽은 채로 남고 회수할 수 없다 — 값 변경 전 반드시
   # 실제로 열어서 seller 앱이 뜨는지 확인할 것(런북 §6).
-  PUBLIC_WEB_ORIGIN: "https://wearless.kr"
+  PUBLIC_WEB_ORIGIN: "https://ai.wearless.kr"
 
 secrets:                         # SSM Parameter Store (SecureString). copilot secret init 로 값 저장.
   DATABASE_URL: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/DATABASE_URL

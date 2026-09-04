@@ -355,7 +355,12 @@ class Settings:
     fm_provenance_token_secret: str | None = None
     # C2PA 매니페스트의 verifyUrl 과 공개 검증 링크의 출처. 틀리면 이미 배포된 파일 안
     # 링크가 잘못된 곳을 가리키고 회수할 수 없다.
-    public_web_origin: str = "https://wearless.kr"
+    # 🔴 ai.wearless.kr 이다 — wearless.kr 이 아니다. wearless.kr 은 www.wearless.kr 로
+    # 리다이렉트되고 그쪽은 이 레포가 아닌 별개 Next.js 마케팅 사이트라 /verify/p/... 가
+    # 404 다(2026-09-04 실측). vercel.json 은 admin·facemarket 을 뺀 모든 host 를
+    # seller.html 로 보내고, 검증 페이지를 든 seller 번들이 실제로 서빙되는 곳이
+    # ai.wearless.kr 이다.
+    public_web_origin: str = "https://ai.wearless.kr"
     # ---- OpenDID 홀더(선택과제1) — 커스터디얼 홀더 MSA(로컬 :8100). ----
     # 프로덕션 FaceMarket은 인증된 Holder가 필수이며 설정 누락 시 서버가 기동하지 않는다.
     fm_vc_required: bool = False
@@ -655,6 +660,6 @@ def load_settings() -> Settings:
         fm_provenance_address=os.getenv("FM_PROVENANCE_ADDRESS") or None,
         fm_provenance_token_secret=os.getenv("FM_PROVENANCE_TOKEN_SECRET") or None,
         public_web_origin=(
-            os.getenv("PUBLIC_WEB_ORIGIN") or "https://wearless.kr"
+            os.getenv("PUBLIC_WEB_ORIGIN") or "https://ai.wearless.kr"
         ).rstrip("/"),
     )

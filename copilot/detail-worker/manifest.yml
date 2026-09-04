@@ -83,7 +83,7 @@ variables:
   # 은 이 플래그와 무관하게 이미 항상 켜져 있다. ⚠️ FACEMARKET_ENABLED=false 면 이 값을
   # true 로 올려도 라우트·서명기는 여전히 no-op(런북 §7).
   FM_PROVENANCE_ENABLED: "false"
-  PUBLIC_WEB_ORIGIN: "https://wearless.kr"
+  PUBLIC_WEB_ORIGIN: "https://ai.wearless.kr"
 
 secrets:
   DATABASE_URL: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/DATABASE_URL
