@@ -68,11 +68,17 @@ def test_from_settings_disabled_without_cert():
 
 
 def test_sign_roundtrip_embeds_manifest(tmp_path):
-    """실제 서명 → 읽기. c2pa 미설치·인증서 미발급이면 스킵."""
+    """실제 서명 → 읽기. c2pa 미설치·인증서 미발급이면 스킵.
+
+    바이트가 변했다는 것만으로는 안 된다 — 서명은 성공했는데 라이선스 페이로드가
+    빠지거나 뭉개진 매니페스트도 "c2pa"/"jumb" 마커는 그대로 남는다. Reader 로
+    다시 읽어 커스텀 assertion 의 실제 필드 값까지 확인한다.
+    """
+    import io
+
     c2pa = pytest.importorskip("c2pa")
     import subprocess
     import sys
-    from pathlib import Path
     from PIL import Image
 
     out = tmp_path / "cert"
@@ -87,13 +93,30 @@ def test_sign_roundtrip_embeds_manifest(tmp_path):
     Image.new("RGB", (8, 8), "white").save(buf)
     data = buf.read_bytes()
 
+    kwargs = base_kwargs()
     signer = c2pa_signer.C2paSigner(cert, key, app_version="test")
-    manifest = c2pa_signer.build_manifest(**base_kwargs())
+    manifest = c2pa_signer.build_manifest(**kwargs)
     signed = signer.sign(data, "image/png", manifest)
 
     assert signed != data
     assert len(signed) > len(data)
-    # 매니페스트가 실제로 읽힌다
-    read_back = c2pa.read_file(str(tmp_path / "out.png")) if False else None
-    (tmp_path / "out.png").write_bytes(signed)
-    assert b"c2pa" in signed or b"jumb" in signed
+
+    with c2pa.Reader("image/png", io.BytesIO(signed)) as reader:
+        # 자체발급 리프라 발급자 미확인은 알려진·기대된 한계다(설계 §6.5) — 실패로
+        # 취급하지 않는다. 대신 그것만이 유일한 불만인지 확인해서, 진짜 에러가 나면
+        # (라이선스 데이터 손상 등) 이 assert 가 잡아내게 한다.
+        assert reader.get_validation_state() == "Valid"
+        results = reader.get_validation_results()
+        failure_codes = {f["code"] for f in results["activeManifest"]["failure"]}
+        assert failure_codes == {"signingCredential.untrusted"}
+
+        manifest_json = json.loads(reader.json())
+        active = manifest_json["manifests"][manifest_json["active_manifest"]]
+        custom = next(
+            a["data"] for a in active["assertions"]
+            if a["label"] == "kr.wearless.facemarket"
+        )
+        assert custom["modelId"] == kwargs["model_id"]
+        assert custom["licenseId"] == kwargs["license_id"]
+        assert custom["verifyUrl"] == kwargs["verify_url"]
+        assert custom["forbiddenUse"] == kwargs["forbidden_use"]

@@ -19,10 +19,16 @@ leaf+intermediate 체인이다). 그래서 이 스크립트는 로컬 루트 CA 
 신뢰 anchor 목록에 없기 때문으로 알려진 한계다(설계 §6.5). EKU OID
 1.3.6.1.5.5.7.3.36(documentSigning)은 라이브러리가 그대로 받아들였다 — 바꿀 필요
 없었다.
+
+🔑 운영자 책임: 이 스크립트가 쓰는 두 개인키 파일(`c2pa_key.pem`·`c2pa_root_key.pem`)은
+0600으로 저장된다 — 커밋 금지, 로컬에 오래 두지 말 것. 리프 키는 SSM SecureString
+으로 옮긴 뒤, 루트 키는 재발급 용도가 끝나면 삭제해도 된다(이미 발급된 리프 서명은
+루트 키 없이도 계속 유효하다).
 """
 
 import argparse
 import datetime as dt
+import os
 from pathlib import Path
 
 from cryptography import x509
@@ -123,25 +129,37 @@ def main():
     # FM_C2PA_CERT_PEM / FM_C2PA_KEY_PEM 으로 들어가는 두 파일. sign_cert 로는 리프
     # 단독으로 충분하다(중간 CA 없이 루트가 바로 리프를 발급했으므로 체인에 얹을
     # 중간 인증서가 없다 — 루트 자체는 트러스트 anchor 가 아니라서 넣지 않는다).
-    (out / "c2pa_cert.pem").write_bytes(leaf_cert.public_bytes(serialization.Encoding.PEM))
-    (out / "c2pa_key.pem").write_bytes(
+    cert_path = out / "c2pa_cert.pem"
+    key_path = out / "c2pa_key.pem"
+    cert_path.write_bytes(leaf_cert.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(
         leaf_key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption(),
         )
     )
-    # 참고용으로만 남긴다 — 재발급에 필요할 수 있으나 서명 경로는 위 두 파일만 쓴다.
-    (out / "c2pa_root_cert.pem").write_bytes(root_cert.public_bytes(serialization.Encoding.PEM))
-    (out / "c2pa_root_key.pem").write_bytes(
+    # 이 파일이 곧 FM_C2PA_KEY_PEM(운영 서명 키)이 된다 — umask 022 기본값이면
+    # write_bytes 만으로는 0644(world-readable)로 나간다. 개인키라 반드시 0600.
+    os.chmod(key_path, 0o600)
+
+    # 루트는 참고용으로만 남긴다 — 재발급에 필요할 수 있으나 서명 경로는 위 두 파일만
+    # 쓴다. 개인키를 넓히는 선택이라 마찬가지로 0600(root 는 이 스크립트를 다시 돌려
+    # 재발급을 마친 뒤 삭제해도 무방 — 이미 발급된 리프 서명에는 영향 없음).
+    root_cert_path = out / "c2pa_root_cert.pem"
+    root_key_path = out / "c2pa_root_key.pem"
+    root_cert_path.write_bytes(root_cert.public_bytes(serialization.Encoding.PEM))
+    root_key_path.write_bytes(
         root_key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption(),
         )
     )
-    print(f"wrote {out}/c2pa_cert.pem and {out}/c2pa_key.pem (valid {VALID_DAYS}d)")
-    print(f"wrote {out}/c2pa_root_cert.pem and {out}/c2pa_root_key.pem (issuer, keep offline)")
+    os.chmod(root_key_path, 0o600)
+
+    print(f"wrote {cert_path} and {key_path} (0600, valid {VALID_DAYS}d)")
+    print(f"wrote {root_cert_path} and {root_key_path} (0600, issuer — keep offline, delete when done reissuing)")
 
 
 if __name__ == "__main__":

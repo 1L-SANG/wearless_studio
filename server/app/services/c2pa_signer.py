@@ -16,13 +16,20 @@ import logging
 logger = logging.getLogger("facemarket.c2pa")
 
 #: 매니페스트에 절대 들어가면 안 되는 키·값 조각. 회귀 테스트가 이 집합을 순회한다.
+#: camelCase·snake_case 양쪽 다 있어야 한다 — DB row 는 snake_case(Postgres 관례)라
+#: 실제 유출 사고는 그쪽에서 난다. bare "ci" 는 일부러 뺐다: 부분 문자열 매치라
+#: precision·specification 같은 무관한 값도 걸려 위양성만 만든다 — ciHash/ci_hash 가
+#: 개념 자체는 이미 정확히 커버한다.
 FORBIDDEN_MANIFEST_KEYS = frozenset({
+    "faceImage", "face_image",
     "faceImageKey", "face_image_key",
     "faceImageUri", "face_image_uri",
     "faceImageDigest", "face_image_digest",
-    "ciHash", "ci_hash", "ci",
-    "birthDate", "birth_date", "birthYear",
-    "displayName", "display_name", "realName",
+    "ciHash", "ci_hash",
+    "birthDate", "birth_date",
+    "birthYear", "birth_year",
+    "displayName", "display_name",
+    "realName", "real_name",
     "userId", "user_id",
     "r2Key", "r2_key",
     "presignedUrl", "presigned_url",
