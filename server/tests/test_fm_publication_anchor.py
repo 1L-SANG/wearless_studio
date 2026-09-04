@@ -1,9 +1,11 @@
 """층③ 앵커 워커 — 상한 없는 재시도가 고아 잡 하나를 880회 돌린 전례가 있다(2026-09-01).
 
-검증 3개:
+검증 4개:
   1. 성공하면 chain_status='confirmed' 로 미러된다.
   2. 이미 체인에 있으면(중복 revert) 재기록 없이 화해한다.
-  3. attempts 상한을 넘으면 dead 로 빠진다 — 무한 재시도 금지.
+  3. 진짜로 체인에 없으면(중복이 아닌 실패) retry 로 빠진다 — anchored 로 오판하지 않는다.
+     (fix round 1: 이 테스트가 없으면 화해 검사를 통째로 지운 뮤턴트도 나머지 3개를 통과한다.)
+  4. attempts 상한을 넘으면 dead 로 빠진다 — 무한 재시도 금지.
 """
 import asyncio
 
@@ -95,6 +97,26 @@ def test_anchor_one_reconciles_when_already_on_chain():
     cur = Cur(JOB)
     status = asyncio.run(anchor.anchor_one(Conn(cur), chain, dict(JOB)))
     assert status == "anchored"
+
+
+def test_anchor_one_retries_when_genuinely_not_on_chain():
+    """실패가 중복 revert 가 아니라 진짜 실패면 retry — 재기록도, anchored 오판도 하지 않는다.
+
+    화해 분기(wait_for_publication/get_publication)를 통째로 지우고 attempts 만으로
+    분기하는 뮤턴트를 넣으면: attempts=0 이라 무조건 'anchored' 를 반환해 이 테스트만
+    깨진다(나머지 3개는 그대로 통과). task-6-report.md Fix round 1 참고.
+    """
+    chain = FakeChain(fail_record=True, already=False)
+    cur = Cur(JOB)
+    status = asyncio.run(anchor.anchor_one(Conn(cur), chain, dict(JOB)))
+    assert status == "retry"
+    job_update = next(
+        s for s in cur.statements if "fm_publication_anchor_jobs" in s[0]
+    )
+    assert "attempts" in job_update[0] and "last_error" in job_update[0]
+    assert job_update[1] == ("retry", 1, "record_failed", "p1")
+    # 재기록도 anchored 미러도 없어야 한다 — fm_publication_records 는 손대지 않는다.
+    assert not any("chain_status" in s[0] for s in cur.statements)
 
 
 def test_anchor_one_goes_dead_past_max_attempts():
