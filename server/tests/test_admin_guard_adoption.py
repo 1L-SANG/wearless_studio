@@ -54,8 +54,20 @@ def test_reject_audit_carries_the_reason_as_note():
 
 
 def test_audit_write_happens_before_commit():
-    """조치와 같은 트랜잭션이어야 한다. 커밋 뒤에 쓰면 원장만 따로 커밋되거나 유실된다."""
-    body = APPLICATIONS.split("async def admin_approve_application(")[1].split("@router.")[0]
-    audit_at = body.index("write_audit(")
-    commit_at = body.index("await conn.commit()")
-    assert audit_at < commit_at, "감사 기록이 commit 뒤에 있다"
+    """조치와 같은 트랜잭션이어야 한다. 커밋 뒤에 쓰면 원장만 따로 커밋되거나 유실된다.
+
+    명시적 conn.commit() 이 있는 라우트 넷만 이 패턴으로 검사한다. admin_resend_email 은
+    명시적 commit 이 없고 get_conn 스코프가 정상 종료 시 커밋한다 — 이 테스트로 잡을 수
+    없다(그 사실은 호출부 주석으로 남긴다).
+    """
+    cases = (
+        (APPLICATIONS, "admin_approve_application"),
+        (APPLICATIONS, "admin_reject_application"),
+        (ROUTES, "approve_refund"),
+        (ROUTES, "reject_refund"),
+    )
+    for source, route in cases:
+        body = source.split(f"async def {route}(")[1].split("@router.")[0]
+        audit_at = body.index("write_audit(")
+        commit_at = body.index("await conn.commit()")
+        assert audit_at < commit_at, f"{route}: 감사 기록이 commit 뒤에 있다"
