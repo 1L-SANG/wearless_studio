@@ -175,7 +175,12 @@
   cursor: pointer;
   transition: color 140ms ease;
 }
-.navLink:hover { color: var(--fm-ink); }
+.navLink:hover {
+  color: var(--fm-ink);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.45rem;
+}
 
 /* 현재 페이지 표시. 색만으로 알리지 않는다 — 색각 이상이나 저대비 환경에서 구분이
    사라진다(WCAG 1.4.1). 밑줄을 함께 둬서 형태로도 읽히게 한다. */

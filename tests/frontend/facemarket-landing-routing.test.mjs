@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { facemarketRootTarget } from '../../src/features/facemarket-landing/facemarketRootTarget.js';
+import * as landingRouting from '../../src/features/facemarket-landing/facemarketRootTarget.js';
+
+const { facemarketRootTarget } = landingRouting;
 
 // 소스에 진짜 제어문자를 박아두면 편집기·린터가 조용히 지운다. 코드로 만든다.
 const TAB = String.fromCharCode(9);
@@ -21,7 +23,24 @@ test('facemarket 도메인의 화면이면 그리로 보낸다', () => {
   assert.equal(facemarketRootTarget('/verify/abc-123'), '/verify/abc-123');
   // 등록 상태 페이지의 로그인 프롬프트가 심는 복귀 경로(StatusPage).
   assert.equal(facemarketRootTarget('/status'), '/status');
+  assert.equal(facemarketRootTarget('/payout'), '/payout');
   assert.equal(facemarketRootTarget('/status-evil'), null);
+});
+
+test('상단바는 세 메뉴를 항상 보여 주고 보호 메뉴만 로그인 의도로 바꾼다', () => {
+  assert.equal(typeof landingRouting.landingNavItems, 'function');
+  assert.equal(typeof landingRouting.landingNavAction, 'function');
+
+  assert.deepEqual(landingRouting.landingNavItems(), [
+    { to: '/models', label: '모델 리스트', protected: false },
+    { to: '/status', label: 'Digital DNA 관리', protected: true },
+    { to: '/payout', label: '정산', protected: true },
+  ]);
+  assert.equal(landingRouting.landingNavAction('/models', { session: null, loading: false }), 'navigate');
+  assert.equal(landingRouting.landingNavAction('/status', { session: null, loading: false }), 'login');
+  assert.equal(landingRouting.landingNavAction('/payout', { session: null, loading: false }), 'login');
+  assert.equal(landingRouting.landingNavAction('/payout', { session: null, loading: true }), 'wait');
+  assert.equal(landingRouting.landingNavAction('/payout', { session: { user: { id: 'u1' } }, loading: false }), 'navigate');
 });
 
 test('루트 자기 자신이면 랜딩을 그린다 — 리다이렉트 루프 금지', () => {

@@ -12,6 +12,23 @@ test('아무것도 없으면 지원서로 보낸다 — 게이트 기본값', ()
   assert.deepEqual(registerCta(null, null, {}), { label: '얼리버드 지원하기', to: '/model/apply' });
 });
 
+test('랜딩 CTA는 지원서·등록·모델이 모두 없을 때만 얼리버드 지원을 보여 준다', () => {
+  const landing = (ownedModel, enrollment, application) => registerCta(
+    ownedModel,
+    enrollment,
+    { application, applicationRequired: false, scope: 'landing' },
+  );
+
+  assert.deepEqual(landing(null, null, null), {
+    label: '얼리버드 지원하기',
+    to: '/model/apply',
+  });
+  assert.equal(landing(null, null, { id: 'a1', status: 'under_review' }), null);
+  assert.equal(landing(null, null, { id: 'a2', status: 'rejected' }), null);
+  assert.equal(landing(null, { id: 'e1', status: 'photos_pending' }, null), null);
+  assert.equal(landing({ id: 'm1', status: 'verified' }, null, null), null);
+});
+
 test('게이트를 끄면 종전처럼 등록으로 보낸다 — 문구는 통일된 모델 등록하기', () => {
   assert.deepEqual(
     registerCta(null, null, { applicationRequired: false }),

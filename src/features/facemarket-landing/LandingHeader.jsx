@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { Icon } from '@/components/ui.jsx';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
+import { landingNavAction, landingNavItems } from './facemarketRootTarget.js';
 import s from './FacemarketLanding.module.css';
 
 /* 2026-09-02 사용자 지시로 세 항목을 갈았다: 라이선싱·모델 등록·모델 정보 →
@@ -25,14 +26,6 @@ import s from './FacemarketLanding.module.css';
    대신 '관리' 어투) — 히어로 제목("create your own digital DNA")과 같은 말이라 상단바에서
    이어진다. 비로그인에게 관리·정산은 남의 집 문패라 숨긴다(눌러도 로그인 벽). 부트스트랩 중
    (session 미확정)에도 공개 묶음만 그리고, 세션이 확인되면 두 항목이 들어온다. */
-const NAV_PUBLIC = [
-  { to: '/models', label: '모델 리스트' }, /* 2026-09-03 오너 지시로 '모델 둘러보기' → '모델 리스트' */
-];
-const NAV_MEMBER = [
-  { to: '/status', label: 'Digital DNA 관리' },
-  { to: '/payout', label: '정산' },
-];
-
 /* CSS 의 `@media (min-width: 48rem)` 과 같은 폭이어야 한다 — 그 폭에서 햄버거가
    사라지므로, 같은 지점에서 메뉴 상태도 접어야 '열린 채 닫을 수 없는' 상태가 안 생긴다. */
 const DESKTOP_QUERY = '(min-width: 48rem)';
@@ -42,10 +35,11 @@ const DESKTOP_QUERY = '(min-width: 48rem)';
    내려가면 한 번 실행한다. 버튼을 잠그면 그 클릭이 아예 안 들어와 보류함이 죽는다. */
 export function LandingHeader({ onPrimary, primaryLabel }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [pendingNav, setPendingNav] = useState(null);
   const headerRef = useRef(null);
-  const { session, signOut } = useAuth();
+  const { session, loading, openLogin, signOut } = useAuth();
   const navigate = useNavigate();
-  const nav = session ? [...NAV_PUBLIC, ...NAV_MEMBER] : NAV_PUBLIC;
+  const nav = landingNavItems();
 
   /* 로그아웃은 이 상단바가 유일한 출구다. facemarket 의 /model/* 은 셀러 크롬
      (shell.jsx 의 ProfileMenu)을 쓰지 않으므로, 여기 없으면 로그인한 모델이 세션을
@@ -84,10 +78,28 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
     };
   }, [menuOpen]);
 
+  // 부트스트랩 중 보호 메뉴를 누른 의도는 세션 판정 뒤 한 번만 소비한다. 이미 로그인한
+  // 사용자로 확인되면 곧장 이동하고, 비로그인이면 같은 목적지를 로그인 복귀 경로로 심는다.
+  useEffect(() => {
+    if (!pendingNav || loading) return;
+    const to = pendingNav;
+    setPendingNav(null);
+    if (session) navigate(to);
+    else openLogin(to);
+  }, [loading, navigate, openLogin, pendingNav, session]);
+
   // 라우트가 바뀌면 모바일 메뉴는 닫힌다 — 링크를 눌러 페이지가 넘어갔는데 드롭다운이
   // 새 페이지 위에 그대로 떠 있으면 안 된다.
   const closeMenu = () => setMenuOpen(false);
   const linkClass = ({ isActive }) => (isActive ? `${s.navLink} ${s.navLinkActive}` : s.navLink);
+  const onNav = (event, item) => {
+    closeMenu();
+    const action = landingNavAction(item.to, { session, loading });
+    if (action === 'navigate') return;
+    event.preventDefault();
+    if (action === 'wait') setPendingNav(item.to);
+    else openLogin(item.to);
+  };
 
   return (
     <header className={s.header} ref={headerRef}>
@@ -104,7 +116,7 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
 
       <nav aria-label="랜딩 내비게이션" className={s.nav}>
         {nav.map((item) => (
-          <NavLink className={linkClass} key={item.to} onClick={closeMenu} to={item.to}>
+          <NavLink className={linkClass} key={item.to} onClick={(event) => onNav(event, item)} to={item.to}>
             {item.label}
           </NavLink>
         ))}
@@ -140,7 +152,7 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
       {menuOpen && (
         <nav aria-label="모바일 메뉴" className={s.mobileNav}>
           {nav.map((item) => (
-            <NavLink className={linkClass} key={item.to} onClick={closeMenu} to={item.to}>
+            <NavLink className={linkClass} key={item.to} onClick={(event) => onNav(event, item)} to={item.to}>
               {item.label}
             </NavLink>
           ))}
