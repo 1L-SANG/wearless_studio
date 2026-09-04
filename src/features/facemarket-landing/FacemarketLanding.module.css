@@ -203,6 +203,17 @@
 }
 .headerCta { padding: 0.68rem 1.1rem; }
 .heroCta { padding: 0.95rem 1.6rem; font-size: 1rem; }
+
+/* 320px 폰에서는 워드마크(약 130px) + 긴 얼리버드 CTA + 햄버거가 한 줄의 가로 예산을
+   넘긴다. CTA 글자가 단어 안에서 세 줄로 깨지면 버튼 높이가 고정 헤더(56px)보다 커져
+   바로 아래 히어로를 덮는다. 전환 버튼은 숨기지 않고, 이 폭에서만 세 요소의 가로 예산을
+   줄여 두 단어가 각각 한 줄씩 서게 한다. 22rem 밖의 현재 헤더 눈금은 그대로다. */
+@media (max-width: 22rem) {
+  .header { gap: 0.5rem; }
+  .brandWordmark { height: 1.55rem; }
+  .headerActions { gap: 0.35rem; }
+  .headerCta { padding: 0.6rem 0.75rem; font-size: 0.85rem; }
+}
 /* 2026-09-03 오너 지시: 호버를 셀러 앱 분석 페이지의 CTA(app.css .btn-primary + .fx-sheen)와
    같게. 그쪽 동작 = ① 배경이 150ms 에 한 단계 어두워짐(--cta-bg → --cta-bg-hover)
    ② 빛 띠가 왼쪽→오른쪽으로 0.72s 스윕(fxSheen) ③ 상단 안쪽 1px 하이라이트(--elev-btn-hi).
