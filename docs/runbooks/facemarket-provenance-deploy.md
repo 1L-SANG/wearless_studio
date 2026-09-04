@@ -192,21 +192,26 @@ presigned_put()`, 버킷 `wearless`). 버킷에 **CORS** 규칙이 없으면 브
 Cloudflare R2 대시보드(또는 API)에서 버킷 `wearless` 에 CORS 규칙을 추가한다:
 
 ```json
-[{"AllowedOrigins": ["https://ai.wearless.kr", "https://facemarket.wearless.kr", "https://wearless.kr"],
+[{"AllowedOrigins": ["https://ai.wearless.kr", "https://facemarket.wearless.kr", "http://localhost:5173"],
   "AllowedMethods": ["PUT", "GET"],
-  "AllowedHeaders": ["content-type"],
+  "AllowedHeaders": ["*"],
   "MaxAgeSeconds": 3600}]
 ```
 
-세 origin 을 다 넣는다(리뷰 M4) — `/verify/p/:publicationId` 라우트가
-`src/apps/seller/App.jsx` 와 `src/apps/facemarket/App.jsx` 양쪽에 등록돼 있다. 게다가
-`vercel.json` 은 `admin.wearless.kr`→admin.html, `facemarket.wearless.kr`→facemarket.html,
-**그 외 모든 host**→seller.html 로 라우팅한다(§6 에서 다시 확인한다) — 다운로드/업로드를
-실제로 트리거하는 에디터는 seller 번들에 있으므로 `https://wearless.kr` 이 presigned PUT
-의 실제 origin 이다. 빠뜨리면 §6 에서 열어 확인하라고 지시하는 바로 그 화면에서 업로드
-preflight 가 조용히 막힌다 — 서버 로그에는 아무것도 안 남고 셀러는 경고 문구만 보고
-공증 없는 원본을 받는다(§5 서두가 설명하는 바로 그 실패 모드). CORS 는 origin 을 넉넉히
-허용해도 보안 위험이 크지 않은 쪽이니 좁혀서 재발 위험을 만들지 말 것.
+**2026-09-04 실측 — 이 값은 이미 설정돼 있고 추가 작업이 필요 없다.** 버킷 `wearless` 의
+현재 CORS 는 `AllowedOrigins: ["https://ai.wearless.kr", "http://localhost:5173"]`,
+`AllowedMethods: ["GET","PUT"]`, `AllowedHeaders: ["*"]` 로, 공증 업로드에 필요한 것을
+이미 전부 덮는다.
+
+🔴 **`https://wearless.kr` 을 넣으라는 이전 지시는 틀렸다.** `wearless.kr` 은
+`www.wearless.kr` 로 리다이렉트되고 그쪽은 이 레포가 아닌 **별개 Next.js 마케팅
+사이트**다(`_next/static` 서빙, `/verify/p/...` 가 404). 공증 업로드를 실제로 트리거하는
+것은 에디터 다운로드 버튼이고, 에디터는 seller 번들에 있으며 seller 번들이 서빙되는
+곳은 `ai.wearless.kr` 이다(실측: `ai.wearless.kr` → `/assets/seller-*.js`,
+`facemarket.wearless.kr` → `/assets/facemarket-*.js`).
+
+`facemarket.wearless.kr` 은 모델용 화면이라 다운로드/업로드를 트리거하지 않지만,
+`/verify/p/:publicationId` 라우트가 그 번들에도 등록돼 있어 넣어 두면 무해하다.
 
 ### 6. `PUBLIC_WEB_ORIGIN` — 아무것도 켜기 전에 먼저 확인
 
@@ -219,7 +224,7 @@ verify_url = f"{s.public_web_origin}/verify/p/{publication_id}"
 
 `/verify/p/:publicationId` 는 프론트 라우트(`src/apps/seller/App.jsx`,
 `src/apps/facemarket/App.jsx` 둘 다 등록)이고, `PublicVerifyPublication.jsx` 가 그걸
-렌더한다. `config.py` 의 `public_web_origin` 기본값은 `"https://wearless.kr"` —
+렌더한다. `config.py` 의 `public_web_origin` 기본값은 `"https://ai.wearless.kr"` —
 이 도메인이 실제로 Vercel 프로젝트(`vercel.json`: `admin.wearless.kr`→admin.html,
 `facemarket.wearless.kr`→facemarket.html, **그 외 모든 host**→seller.html)에 연결돼
 seller 번들을 서빙하는지 **배포 전에 직접 열어서** 확인한다. 값이 틀리면 이미 서명·
@@ -227,7 +232,7 @@ seller 번들을 서빙하는지 **배포 전에 직접 열어서** 확인한다
 방법이 없다.
 
 ```bash
-open https://wearless.kr/verify/p/00000000-0000-0000-0000-000000000000
+open https://ai.wearless.kr/verify/p/00000000-0000-0000-0000-000000000000
 ```
 
 ("기록을 찾을 수 없습니다"/404 응답은 정상이다 — 그 UUID 가 실존하지 않을 뿐이다.
@@ -235,7 +240,7 @@ open https://wearless.kr/verify/p/00000000-0000-0000-0000-000000000000
 `PUBLIC_WEB_ORIGIN` 값을 바로잡기 전에는 아래 어느 것도 켜지 않는다.)
 
 ```yaml
-PUBLIC_WEB_ORIGIN: "https://wearless.kr"
+PUBLIC_WEB_ORIGIN: "https://ai.wearless.kr"
 ```
 
 ### 7. `FM_PROVENANCE_ENABLED=true` — 맨 마지막
@@ -383,7 +388,7 @@ secrets:
 
 variables:
   FM_PROVENANCE_ENABLED: "false"   # 배선 검증 후 true 로 올린다
-  PUBLIC_WEB_ORIGIN: "https://wearless.kr"
+  PUBLIC_WEB_ORIGIN: "https://ai.wearless.kr"
 ```
 
 **이미 있던 것(이번 태스크에서 손대지 않음, 2026-07-20 커밋 `bd70d267`/`d1fa9dd4`부터):**
