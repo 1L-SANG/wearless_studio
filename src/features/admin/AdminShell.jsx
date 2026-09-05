@@ -18,7 +18,12 @@ export function AdminShell() {
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground sm:flex-row">
       <aside className="shrink-0 border-b border-border sm:w-56 sm:border-b-0 sm:border-r">
-        <div className="px-5 py-4 text-sm font-semibold tracking-tight">Wearless 관리자</div>
+        {/* 브랜드 락업 — 로고 한 장이 심볼과 워드마크를 다 담는다. 뒤의 '관리자'는 이 콘솔이
+            FaceMarket 의 운영 도구임을 말해 주는 접미사라, 로고와 같은 줄에 작게 붙인다. */}
+        <div className="flex items-center gap-2 px-5 py-4">
+          <img src="/assets/brand/facemarket-logo.svg" alt="FaceMarket" className="h-4 w-auto" />
+          <span className="text-sm text-muted-foreground">관리자</span>
+        </div>
         <nav className="flex gap-1 overflow-x-auto px-2 pb-3 sm:flex-col sm:overflow-visible">
           {NAV.map(({ to, label, icon: Icon, end }) => (
             <NavLink
