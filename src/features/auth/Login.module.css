@@ -38,6 +38,14 @@
   display: block;
 }
 
+/* FaceMarket 락업 — 가로로 긴 로고라 높이가 아니라 폭으로 잡는다(모달 폭에 종속). */
+.fmLockup {
+  width: min(232px, 72%);
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
+
 .suffix {
   font-family: var(--font-display);
   font-size: 11px;
