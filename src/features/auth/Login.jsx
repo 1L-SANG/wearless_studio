@@ -11,7 +11,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useAuth } from './AuthProvider.jsx';
 import { supabase } from '@/lib/supabase.js';
 import { Modal } from '@/components/ui.jsx';
-import { IS_FACEMARKET } from '@/lib/host.js';
+import { IS_ADMIN, IS_FACEMARKET } from '@/lib/host.js';
 import styles from './Login.module.css';
 
 /* 로컬 supabase(127.0.0.1/localhost)일 때만 이메일·비밀번호 로그인을 노출한다.
@@ -29,6 +29,12 @@ const IS_LOCAL_SUPABASE = /127\.0\.0\.1|localhost/.test(
    워드마크(alt="Wearless") 아래 'FaceMarket' 은 푸터의 'FaceMarket · Wearless',
    랜딩 헤더의 브랜드 표기와 같은 순서다. **셀러 값('Studio')은 바꾸지 마라.** */
 const BRAND_SUFFIX = IS_FACEMARKET ? 'FaceMarket' : 'Studio';
+
+/* 브랜드 락업을 FaceMarket 로고로 가는 도메인.
+   facemarket 은 랜딩 헤더가 이미 이 로고를 쓴다 — 로그인 모달만 Wearless 워드마크였다.
+   admin 콘솔도 FaceMarket 운영 도구라 같은 락업을 쓴다.
+   **셀러(ai.wearless.kr)는 여기 들어오지 않는다** — 오브+wearless+Studio 그대로다. */
+const FACEMARKET_LOCKUP = IS_FACEMARKET || IS_ADMIN;
 
 /* 브랜드 로고 — Lucide(단색 스트로크) 세트와 성격이 달라 인라인 SVG 로 둔다. */
 function GoogleIcon() {
@@ -123,11 +129,22 @@ export function LoginGate() {
     <Modal onClose={dismiss}>
       <div className={styles.gate}>
         <div className={styles.brand}>
-          <img className={styles.logo} src="/assets/brand/logo.svg" alt="" />
-          <div className={styles.mark}>
-            <img className={styles.wordmark} src="/assets/brand/wordmark.png" alt="Wearless" />
-            <span className={styles.suffix}>{BRAND_SUFFIX}</span>
-          </div>
+          {FACEMARKET_LOCKUP ? (
+            /* 로고 한 장이 심볼과 워드마크를 다 담고 있어 오브를 따로 얹지 않는다. */
+            <img
+              className={styles.fmLockup}
+              src="/assets/brand/facemarket-logo.svg"
+              alt="FaceMarket"
+            />
+          ) : (
+            <>
+              <img className={styles.logo} src="/assets/brand/logo.svg" alt="" />
+              <div className={styles.mark}>
+                <img className={styles.wordmark} src="/assets/brand/wordmark.png" alt="Wearless" />
+                <span className={styles.suffix}>{BRAND_SUFFIX}</span>
+              </div>
+            </>
+          )}
         </div>
         {/* 부제도 같은 이유로 도메인을 가른다. facemarket 에서 이 모달이 열리는 경로는
             셋 다 등록으로 향한다 — 랜딩 CTA·상단바 로그인(shell.jsx)·미인증 /model/*
