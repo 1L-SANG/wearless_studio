@@ -25,6 +25,9 @@ const ACTION_LABEL = {
   'model.unsuspend': '모델 정지 해제',
   'refund.approve': '환불 승인',
   'refund.reject': '환불 반려',
+  // 읽기인데도 남는 유일한 기록 — 사용자 목록은 콘솔에서 가입자 이메일을 전수로 보여주는
+  // 곳이라, 누가 언제 훑었는지가 사후에 필요하다.
+  'users.list.view': '사용자 목록 열람',
 };
 
 export function AdminStaff() {
