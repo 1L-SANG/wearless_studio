@@ -85,6 +85,9 @@
 .detailImage {
   display: block;
   width: 100%;
+  /* height: auto 가 없으면 <img height={640}> 속성이 이겨서 aspect-ratio 가 무시되고, 썸네일이
+     640px 세로 막대가 된다(2026-09-07 스크린샷에서 확인). 비율은 여기 3:4 가 유일한 출처다. */
+  height: auto;
   aspect-ratio: 3 / 4;
   object-fit: cover;
   background: var(--bg-2);
