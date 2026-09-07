@@ -71,27 +71,17 @@
   margin-top: var(--sp-8);
 }
 
-.consent {
+/* 동의 안내 한 줄 — 체크박스 없음(동의는 SellerConsentGate 가 첫 로그인 뒤 1회 받는다). */
+.notice {
   width: 100%;
-  display: flex;
-  align-items: flex-start;
-  gap: var(--sp-8);
+  margin: var(--sp-4) 0 0;
   color: var(--fg-2);
   font-size: 12px;
   line-height: 1.5;
+  text-align: center;
 }
-
-.consent input {
-  flex: none;
-  width: 16px;
-  height: 16px;
-  margin: 1px 0 0;
-  accent-color: var(--fg-1);
-}
-
-.consent label { cursor: pointer; }
-.consent a { color: var(--fg-1); text-underline-offset: 2px; }
-.consent a:focus-visible { outline: 2px solid var(--fg-1); outline-offset: 2px; border-radius: var(--r-2); }
+.notice a { color: var(--fg-1); text-underline-offset: 2px; }
+.notice a:focus-visible { outline: 2px solid var(--fg-1); outline-offset: 2px; border-radius: var(--r-2); }
 
 .btn {
   position: relative;             /* 아이콘은 좌측 고정, 라벨은 가운데 정렬 */

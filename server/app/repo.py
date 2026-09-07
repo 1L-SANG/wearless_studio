@@ -64,6 +64,45 @@ _PRISTINE_DRAFT = """
 """
 
 
+async def get_seller_consent(conn: AsyncConnection, user_id: str) -> dict | None:
+    """셀러 약관 동의 기록(없으면 None). 로그인마다 묻지 않기 위한 서버측 기억."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select terms_version, privacy_version, age_attested, accepted_at
+              from seller_consents
+             where user_id = %s
+            """,
+            (user_id,),
+        )
+        return await cur.fetchone()
+
+
+async def upsert_seller_consent(
+    conn: AsyncConnection, user_id: str, *, terms_version: str, privacy_version: str, age_attested: bool,
+) -> dict:
+    """동의 기록 생성/갱신. 재동의(개정)면 직전 기록을 history 에 남긴다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            insert into seller_consents (user_id, terms_version, privacy_version, age_attested)
+            values (%s, %s, %s, %s)
+            on conflict (user_id) do update
+               set history = seller_consents.history || jsonb_build_object(
+                     'termsVersion', seller_consents.terms_version,
+                     'privacyVersion', seller_consents.privacy_version,
+                     'acceptedAt', seller_consents.accepted_at),
+                   terms_version = excluded.terms_version,
+                   privacy_version = excluded.privacy_version,
+                   age_attested = excluded.age_attested,
+                   accepted_at = now()
+            returning terms_version, privacy_version, age_attested, accepted_at
+            """,
+            (user_id, terms_version, privacy_version, age_attested),
+        )
+        return await cur.fetchone()
+
+
 async def get_account(conn: AsyncConnection, user_id: str) -> dict | None:
     async with conn.cursor() as cur:
         await cur.execute(

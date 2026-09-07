@@ -18,7 +18,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPExcep
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from psycopg import errors
 
-from . import admin_guard, facemarket, personalization, repo
+from . import admin_guard, facemarket, legal_versions, personalization, repo
 from .agents import (
     color_harmony,
     content_roles,
@@ -62,6 +62,7 @@ from .models import (
     UploadUrlResponse,
     ToneApplyRequest,
     ToneEditorState,
+    SellerConsentIn,
 )
 from .r2 import (
     ASSET_CACHE_VERSION,
@@ -529,6 +530,78 @@ async def get_account(request: Request, user_id: str = Depends(require_user)):
             detail={"code": "account_not_found", "message": "계정 정보를 찾을 수 없습니다."},
         )
     return row
+
+
+def _consent_payload(row: dict | None) -> dict:
+    required = legal_versions.required_versions()
+    accepted = None
+    if row is not None:
+        accepted = {
+            "termsVersion": row["terms_version"],
+            "privacyVersion": row["privacy_version"],
+            "ageAttested": bool(row["age_attested"]),
+            "acceptedAt": row["accepted_at"],
+        }
+    needs = (
+        accepted is None
+        or accepted["termsVersion"] != required["terms"]
+        or accepted["privacyVersion"] != required["privacy"]
+        or not accepted["ageAttested"]
+    )
+    return {"required": required, "accepted": accepted, "needsConsent": needs}
+
+
+@router.get(
+    "/me/consents",
+    responses={**COMMON_RESPONSES},
+    tags=["User & Account"],
+    summary="셀러 약관 동의 상태 조회",
+)
+async def get_consents(request: Request, user_id: str = Depends(require_user)):
+    """첫 로그인 뒤 한 번만 받는 약관·처리방침 동의의 상태.
+
+    - `required`: 지금 동의를 받아야 하는 문서 버전(서버 상수 legal_versions).
+    - `accepted`: 이 사용자가 마지막으로 동의한 버전(없으면 null).
+    - `needsConsent`: 게이트를 띄워야 하면 true — 기록이 없거나, 문서가 개정돼 버전이 다르면.
+    """
+    async with get_conn(request) as conn:
+        row = await repo.get_seller_consent(conn, user_id)
+    return _consent_payload(row)
+
+
+@router.post(
+    "/me/consents",
+    responses={**COMMON_RESPONSES},
+    tags=["User & Account"],
+    summary="셀러 약관 동의 기록",
+)
+async def accept_consents(
+    request: Request, body: SellerConsentIn, user_id: str = Depends(require_user),
+):
+    """게이트가 보여준 버전 그대로 동의를 기록한다. 만 19세 확인이 빠지면 400,
+    보여준 버전이 현재 버전과 다르면(그 사이 개정) 409 — 게이트가 새 버전으로 다시 그린다."""
+    if not body.age_attested:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "age_attestation_required", "message": "만 19세 이상 확인이 필요해요."},
+        )
+    required = legal_versions.required_versions()
+    if body.terms_version != required["terms"] or body.privacy_version != required["privacy"]:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "consent_version_mismatch",
+                "message": "약관이 갱신됐어요. 새 버전을 확인한 뒤 다시 동의해 주세요.",
+                "required": required,
+            },
+        )
+    async with get_conn(request) as conn:
+        row = await repo.upsert_seller_consent(
+            conn, user_id,
+            terms_version=body.terms_version, privacy_version=body.privacy_version, age_attested=True,
+        )
+        await conn.commit()
+    return _consent_payload(row)
 
 
 @router.delete(

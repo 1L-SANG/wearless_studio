@@ -36,11 +36,11 @@ const BRAND_SUFFIX = IS_FACEMARKET ? 'FaceMarket' : 'Studio';
    **셀러(ai.wearless.kr)는 여기 들어오지 않는다** — 오브+wearless+Studio 그대로다. */
 const FACEMARKET_LOCKUP = IS_FACEMARKET || IS_ADMIN;
 
-/* 만 19세·약관 동의 체크는 **셀러 앱에서만** 받는다. 모델(FaceMarket)은 등록 위저드
-   1단계에서 생체정보·국외이전·계약을 따로 받고, 관리자(admin.html)는 우리 직원이라
-   셀러 약관에 동의할 당사자가 아니다 — 세 진입을 한 조건으로 묶으면 관리자 콘솔이
-   셀러 약관 동의를 요구하는 화면이 된다. */
-const NEEDS_SELLER_CONSENT = !IS_FACEMARKET && !IS_ADMIN;
+/* 셀러 약관 동의는 **여기서 받지 않는다**. 소셜 로그인은 매번 이 화면을 지나므로 체크박스를
+   두면 "로그인할 때마다 동의"가 된다. 동의는 첫 로그인 뒤 SellerConsentGate 가 한 번만 받고
+   서버가 버전을 기억한다(개정 시에만 재동의). 여기엔 그 사실을 알리는 한 줄만 둔다 —
+   셀러 앱에서만. 모델(FaceMarket)은 등록 위저드에서 따로 받고, 관리자는 당사자가 아니다. */
+const IS_SELLER = !IS_FACEMARKET && !IS_ADMIN;
 
 /* 브랜드 로고 — Lucide(단색 스트로크) 세트와 성격이 달라 인라인 SVG 로 둔다. */
 function GoogleIcon() {
@@ -67,7 +67,6 @@ export function LoginGate() {
   const [email, setEmail] = useState('qa@local.test');
   const [password, setPassword] = useState('');
   const [localErr, setLocalErr] = useState('');
-  const [sellerConsent, setSellerConsent] = useState(false);
 
   /* 사용자 조작으로 모달을 닫는 유일한 경로(Esc·바깥 클릭). 진행 중인 로그인이 있으면
      취소가 아니다 — ui.jsx Modal 의 Escape 리스너는 window 에 붙어 있어서 프로바이더
@@ -165,23 +164,13 @@ export function LoginGate() {
           )}
         </p>
 
-        {NEEDS_SELLER_CONSENT && (
-          <div className={styles.consent}>
-            <input id="seller-login-consent" type="checkbox" checked={sellerConsent}
-              onChange={(event) => setSellerConsent(event.target.checked)} />
-            <label htmlFor="seller-login-consent">
-              만 19세 이상이며 <a href="/terms" target="_blank" rel="noreferrer">이용약관</a>과{' '}
-              <a href="/privacy" target="_blank" rel="noreferrer">개인정보 처리방침</a>에 동의합니다.
-            </label>
-          </div>
-        )}
 
         <div className={styles.buttons}>
           <button
             type="button"
             className={`${styles.btn} ${styles.google}`}
             onClick={() => handle('google')}
-            disabled={pending !== null || (NEEDS_SELLER_CONSENT && !sellerConsent)}
+            disabled={pending !== null}
           >
             <span className={styles.icon}><GoogleIcon /></span>
             {pending === 'google' ? '이동 중…' : 'Google로 계속하기'}
@@ -190,12 +179,19 @@ export function LoginGate() {
             type="button"
             className={`${styles.btn} ${styles.kakao}`}
             onClick={() => handle('kakao')}
-            disabled={pending !== null || (NEEDS_SELLER_CONSENT && !sellerConsent)}
+            disabled={pending !== null}
           >
             <span className={styles.icon}><KakaoIcon /></span>
             {pending === 'kakao' ? '이동 중…' : '카카오로 계속하기'}
           </button>
         </div>
+
+        {IS_SELLER && (
+          <p className={styles.notice}>
+            처음 로그인하면 <a href="/terms" target="_blank" rel="noreferrer">이용약관</a>과{' '}
+            <a href="/privacy" target="_blank" rel="noreferrer">개인정보 처리방침</a> 동의를 한 번만 확인해요.
+          </p>
+        )}
 
         {IS_LOCAL_SUPABASE && (
           <form onSubmit={handleLocal} style={{ marginTop: 16, display: 'grid', gap: 8 }}>
