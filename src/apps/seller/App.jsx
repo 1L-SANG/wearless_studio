@@ -21,6 +21,7 @@ import { Pricing } from '@/features/pricing/Pricing.jsx';
 import { CreditsHistory } from '@/features/credits/CreditsHistory.jsx';
 import { PaymentSuccess, PaymentFail } from '@/features/payments/PaymentResult.jsx';
 import { PublicVerify } from '@/features/verify/PublicVerify.jsx';
+import { LegalPage } from '@/features/legal/LegalPage.jsx';
 import { ProductInput } from '@/features/product-input/ProductInput.jsx';
 import { Mannequin } from '@/features/mannequin/Mannequin.jsx';
 import { Storyboard } from '@/features/storyboard/Storyboard.jsx';
@@ -572,6 +573,10 @@ export default function App() {
       <Routes>
         <Route element={<ChromeLayout />}>
           <Route index element={<RootRedirect />} />
+          <Route path="terms" element={<LegalPage slug="terms-seller" />} />
+          <Route path="privacy" element={<LegalPage slug="privacy-seller" />} />
+          <Route path="refund" element={<LegalPage slug="refund" />} />
+          <Route path="model-license-terms" element={<LegalPage slug="seller-license-terms" />} />
           {/* 보관함은 로그인 필요 */}
           <Route element={<RequireAuth />}>
             <Route path="library" element={<Library />} />

@@ -29,6 +29,7 @@ import { Pricing } from '@/features/pricing/Pricing.jsx';
 import { CreditsHistory } from '@/features/credits/CreditsHistory.jsx';
 import { PaymentSuccess, PaymentFail } from '@/features/payments/PaymentResult.jsx';
 import { PublicVerify } from '@/features/verify/PublicVerify.jsx';
+import { LegalPage } from '@/features/legal/LegalPage.jsx';
 import { RequireAuth } from '../guards.jsx';
 import { MODEL_SECTION_ROUTES } from './modelSectionRoutes.jsx';
 import { domainRouteRedirect, redirectToOwnDocumentHost } from '@/lib/host.js';
@@ -76,6 +77,11 @@ export default function AppFacemarket() {
           그 자리를 이어받은 등록 상태로 보낸다. */}
       <Route path="license" element={<Navigate to="/status" replace />} />
       <Route path="licensing" element={<Navigate to="/status" replace />} />
+      <Route path="terms" element={<LegalPage slug="terms-model" />} />
+      <Route path="privacy" element={<LegalPage slug="privacy-model" />} />
+      <Route path="license-agreement" element={<LegalPage slug="license-agreement" />} />
+      <Route path="seller-terms" element={<LegalPage slug="seller-license-terms" />} />
+      <Route path="answers" element={<LegalPage slug="answers" />} />
 
       {/* /model/* 과 결제·크레딧은 랜딩 상단바를 입는다. 이 도메인에 온 사람은 얼굴을
           등록하러 온 모델이고, 셀러 TopNav 의 크레딧 배지·요금제·플로우 스테퍼는 전부

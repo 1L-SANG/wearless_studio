@@ -9,6 +9,7 @@ import { Icon, useToast } from '@/components/ui.jsx';
 import { useSmoothProgress } from '@/components/SmoothProgress.jsx';
 import { EXPECTED_MS } from '@/lib/smoothProgress.js';
 import { TopNav } from '@/features/shell/shell.jsx';
+import { SiteFooter } from '@/features/shell/SiteFooter.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { api } from '@/lib/api/index.js';
@@ -253,6 +254,7 @@ export function ChromeLayout() {
       <div className={`app-main${storyboardOwnsEntrance ? '' : ' page-enter'}`} key={pathname}>
         <Outlet />
       </div>
+      <SiteFooter />
     </div>
   );
 }

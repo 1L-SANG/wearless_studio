@@ -129,6 +129,7 @@ const matchesRoute = (pathname, route) => pathname === route || pathname.startsW
    /model/register 로 튕겨 상단바가 죽는다 — 화면은 잘 만들어 놓고 링크만 안 열린다. */
 const FACEMARKET_ROUTES = [
   '/models', '/status', '/license', '/payout', '/register', '/model-info', '/licensing',
+  '/terms', '/privacy', '/license-agreement', '/seller-terms', '/answers',
   '/model', '/pricing', '/credits/history', '/payments', '/verify',
 ];
 

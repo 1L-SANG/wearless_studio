@@ -1,0 +1,121 @@
+"""documents/legal/*.md → public/legal/*.md 공개본 생성.
+내부 메모(문서 성격 블록·채울 값 표·변호사 검토 포인트·개정 메모)를 걷어내고 자리표시자를 채운 뒤
+문서 간 링크를 라우트로 바꾼다. 남은 [대괄호]가 있으면 목록으로 출력한다(공개 차단 신호).
+실행: python3 tools/legal_publish.py
+"""
+import json, re, pathlib, sys
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+SRC, OUT = ROOT / "documents/legal", ROOT / "public/legal"
+OUT.mkdir(parents=True, exist_ok=True)
+EFFECTIVE = "2026년 9월 7일"
+CO = dict(name="데일리모먼트", ceo="정일상", brn="371-02-03688",
+          addr="서울특별시 노원구 석계로 98-2 광운대역 3층 스타트업스테이션",
+          tel="010-9592-0333", email="contact@wearless.kr")
+# (파일, 슬러그, 앱, 제목)
+DOCS = [
+    ("10_wearless_terms_of_service_v1.md", "terms-seller", "seller", "Wearless 이용약관"),
+    ("11_wearless_privacy_policy_v1.md", "privacy-seller", "seller", "Wearless 개인정보 처리방침"),
+    ("12_wearless_refund_policy_v1.md", "refund", "seller", "Wearless 환불 정책"),
+    ("05_facemarket_seller_license_terms_v1.md", "seller-license-terms", "both", "FaceMarket 셀러 라이선스 이용조건"),
+    ("01_facemarket_terms_of_service_model_v1.md", "terms-model", "facemarket", "FaceMarket 모델 이용약관"),
+    ("02_facemarket_likeness_license_agreement_v1.md", "license-agreement", "facemarket", "FaceMarket 초상 라이선스 표준계약서"),
+    ("03_facemarket_privacy_policy_v1.md", "privacy-model", "facemarket", "FaceMarket 개인정보 처리방침"),
+    ("06_facemarket_legal_faq_v1.md", "answers", "facemarket", "FaceMarket 법적 FAQ"),
+]
+SELLER, FM = "https://ai.wearless.kr", "https://facemarket.wearless.kr"
+# 원본 파일 접두 → (셀러 앱에서의 경로, 페이스마켓 앱에서의 경로)
+ROUTES = {"10_": ("/terms", f"{SELLER}/terms"), "11_": ("/privacy", f"{SELLER}/privacy"), "12_": ("/refund", f"{SELLER}/refund"),
+          "05_": ("/model-license-terms", "/seller-terms"), "01_": (f"{FM}/terms", "/terms"), "02_": (f"{FM}/license-agreement", "/license-agreement"),
+          "03_": (f"{FM}/privacy", "/privacy"), "06_": (f"{FM}/answers", "/answers"), "00_": (None, None), "04_": (None, None)}
+DROP_HEADINGS = [r"^##+ 회사에서 채워야 하는 값", r"^##+ 회사가 채워야 하는 값", r"^##+ 변호사 검토", r"^##+ 초기 화면 하단에 게시",
+                 r"^##+ 계약 요지 \(모델 화면", r"^##+ 셀러 화면에 표시하는 요지", r"^##+ 부록\. `llms\.txt`"]
+SUBS = [
+    (r"\[회사명\]", CO["name"]), (r"\[시행일\]", EFFECTIVE), (r"\[대표자\]", CO["ceo"]), (r"\[주소\]", CO["addr"]),
+    (r"\[CPO 성명\]", CO["ceo"]), (r"\[CPO 직책\]", "대표(CEO)"), (r"\[CPO 전화\]", CO["tel"]), (r"\[CPO 이메일\]", CO["email"]),
+    (r"\[이메일\]", CO["email"]), (r"\[부서명 — 예: 모델 지원팀\]", "고객지원"), (r"\[부서 이메일\]", CO["email"]), (r"\[평일 10:00–18:00\]", "평일 10:00–18:00"),
+    (r"\[본인확인기관명\]", "통신사 본인확인 서비스(CX 표준인증창 운영사)"),
+    (r"\[모바일 신분증 검증 서비스 제공자\]", "정부 모바일 신분증 검증 연동 사업자(확정 시 갱신)"),
+    (r"\[N\]장", "회사가 안내한 장수의"), (r"\[등 N장\]", "등 회사가 안내한 장수"),
+    (r"\[배분 비율: 오너 확정\]", "배분 비율은 모델 몫과 같은 70%로 한다."),
+    (r"\s*\[오너 확정[^\]]*\]", ""), (r"\[v2\]", "(다음 버전에서 제공)"), (r"\[현재 미사용\]", "(현재 미사용)"),
+    (r"\[최소 지급액 1만원\.\]", "최소 지급액 1만원."), (r"\[사용료의 70%\]", "사용료의 70%"),
+    (r"\[(10만원|100만원|50만원|70%|20%|10%|10일|6개월|2\.5배|10,000원|5,000원|30일|1만원|20,000원|10명|3일|1년|48시간)\]", r"\1"),
+    (r"\[\[?사업소득 3\.3% / 기타소득 — 확정 후 기재\]\]?", "사업소득 3.3%"),
+    (r"\[· 주민등록번호 — [^\]]+\]", "· 주민등록번호 — 소득세법 제145조에 따른 원천징수 신고를 위해 법령상 수집(사업소득 3.3% 원천징수)"),
+    (r"\[날짜\]", EFFECTIVE),
+    (r"\[(설정 > [^\]]+|Digital DNA 관리 → [^\]]+|정산 → 내역)\]", r"「\1」"),  # UI 경로 표기
+]
+def strip_head_block(lines):
+    """H1 다음의 '> ' 메모 블록과 뒤따르는 --- 제거."""
+    out, i = [], 0
+    while i < len(lines):
+        ln = lines[i]
+        if ln.startswith("# ") and not out:
+            out.append(re.sub(r"\s*\(v1 초안\).*$", "", ln)); i += 1
+            while i < len(lines) and (lines[i].startswith(">") or lines[i].strip() == ""): i += 1
+            while i < len(lines) and lines[i].strip() in ("---", ""): i += 1
+            continue
+        out.append(ln); i += 1
+    return out
+def drop_sections(lines):
+    out, skip_level, in_fence = [], None, False
+    for ln in lines:
+        if ln.strip().startswith("```"):
+            in_fence = not in_fence
+            if not skip_level: out.append(ln)
+            continue
+        m = None if in_fence else re.match(r"^(#+) ", ln)  # 코드펜스 안의 '#'은 제목이 아니다
+        if m:
+            lvl = len(m.group(1))
+            if skip_level and lvl <= skip_level: skip_level = None
+            if any(re.match(p, ln) for p in DROP_HEADINGS): skip_level = lvl; continue
+        if skip_level: continue
+        out.append(ln)
+    return out
+def drop_revision_notes(text):
+    return re.sub(r"(?m)^> \*\*2026-09-07 개정\*\*.*(?:\n>.*)*\n?", "", text)
+def rewrite_links(text, app):
+    def repl(m):
+        key = m.group(1)
+        seller_path, fm_path = ROUTES.get(key, (None, None))
+        target = seller_path if app == "seller" else fm_path
+        if app == "both":  # 두 앱에서 같은 파일을 서빙하므로 앱 밖 문서는 절대 주소로
+            if key in ("10_", "11_", "12_"): target = f"{SELLER}{seller_path}"
+            elif fm_path: target = fm_path if fm_path.startswith("http") else f"{FM}{fm_path}"
+            else: target = None
+        return f"]({target})" if target else "]"
+    text = re.sub(r"\]\((0\d_|1\d_)[a-z_]+_v1\.md(?:#[^)]*)?\)", repl, text)
+    return re.sub(r"\[([^\]]+)\]\]", r"\1", text)  # 대상 없는 링크 → 텍스트
+def publish():
+    manifest, leftovers = [], {}
+    for fn, slug, app, title in DOCS:
+        text = (SRC / fn).read_text()
+        lines = drop_sections(strip_head_block(text.splitlines()))
+        text = "\n".join(lines)
+        text = drop_revision_notes(text)
+        for pat, rep in SUBS: text = re.sub(pat, rep, text)
+        text = rewrite_links(text, app)
+        text = re.sub(r"\n{3,}", "\n\n", text).strip() + "\n"
+        text = re.sub(r"(?m)^---\s*\n(---\s*\n)+", "---\n", text)
+        text = re.sub(r"\n---\s*$", "\n", text)  # 문서 끝 구분선 제거
+        left = sorted(set(re.findall(r"\[[^\]\n]{1,40}\](?!\()", text)))
+        if left: leftovers[slug] = left
+        (OUT / f"{slug}.md").write_text(text)
+        manifest.append({"slug": slug, "app": app, "title": title, "version": "v1.0", "effectiveDate": "2026-09-07", "source": fn})
+    (OUT / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
+    # llms.txt — 06 부록 코드블록
+    faq = (SRC / "06_facemarket_legal_faq_v1.md").read_text()
+    m = re.search(r"## 부록\. `llms\.txt` 초안.*?```\n(.*?)```", faq, re.S)
+    if m:
+        llms = m.group(1)
+        for pat, rep in SUBS: llms = re.sub(pat, rep, llms)
+        (ROOT / "public/llms.txt").write_text(llms)
+    return manifest, leftovers
+if __name__ == "__main__":
+    manifest, leftovers = publish()
+    print(f"published {len(manifest)} docs → public/legal/ (+ public/llms.txt)")
+    for d in manifest: print(f"  {d['slug']:22s} {d['app']:10s} {d['title']}")
+    if leftovers:
+        print("\n남은 자리표시자 (공개 전 해결):")
+        for k, v in leftovers.items(): print(f"  {k}: {', '.join(v)}")
+        sys.exit(1)

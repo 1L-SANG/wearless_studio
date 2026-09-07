@@ -16,6 +16,25 @@
 /* 탭별 설명 — 구독/추가구매 차이 안내 */
 .tabDesc { margin: -10px 0 18px; font-size: 14px; color: var(--fg-2); }
 
+.billingNotice {
+  margin: 0 0 20px;
+  padding: 14px 16px;
+  background: var(--bg-2);
+  border-radius: var(--r-4);
+  box-shadow: 0 0 0 1px var(--ring);
+  color: var(--fg-2);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.billingNotice p { margin: 0; }
+/* 전자상거래법 §17⑥의 '명확한 표시' — 본문(--fg-2)보다 진하게 두어 결제 전에 읽히게 한다.
+   약하게 만들면 §17②5호의 철회 제한 자체가 적용되지 않는다(환불정책 제4조 제2항). */
+.billingNotice strong { color: var(--fg-1); font-weight: 600; }
+.billingNotice a,
+.purchaseConsent a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
+.billingNotice a:focus-visible,
+.purchaseConsent a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-1); }
+
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
 
 /* 카드 종류 라벨 (구독=중립 / 충전=초록) — 두 탭을 한눈에 구분 */
@@ -46,3 +65,4 @@
 .credits { font-family: var(--font-body); font-size: 14px; color: var(--fg-2); }
 .credits strong { color: var(--fg-1); font-weight: 700; }
 .cta { margin-top: auto; }
+.purchaseConsent { margin: 9px 2px 0; color: var(--fg-2); font-size: 12px; line-height: 1.45; letter-spacing: 0.01em; }
