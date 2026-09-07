@@ -82,7 +82,8 @@ class FakeCursor:
         cuts = self.store["cuts"]
 
         if query.startswith("select m.id::text as id, m.display_name") and "left join fm_model_test_cuts" in query:
-            self.many = [{
+            # 콘솔 목록과 경로가 겹치지 않게 모델 1건 하위 리소스로 바뀌었다 → fetchone 도 채운다.
+            row = {
                 "id": model["id"],
                 "display_name": model["display_name"],
                 "status": model["status"],
@@ -93,7 +94,12 @@ class FakeCursor:
                 "redo_count": model["redo_count"],
                 "ready_to_send": self.store["enrollment"]["status"] == "passed" and self.store["license_active"],
                 "test_cuts": [_cut_view(c) for c in sorted(cuts, key=lambda item: item["sort"])],
-            }]
+            }
+            wanted = str(params[0]) if params else None
+            if wanted is not None and wanted != row["id"]:
+                self.one, self.many = None, []
+            else:
+                self.one, self.many = row, [row]
         elif query.startswith("select m.id::text as id, m.status") and "from fm_models m" in query:
             model_id = params[-1]
             if model["id"] == model_id:
@@ -280,9 +286,11 @@ def _seed_cut(store, r2, *, cut_id=CUT_ID, approved=None, data=None):
     return cut
 
 
-def test_admin_models_requires_admin_role(test_cut_api):
+def test_admin_test_cuts_requires_admin_role(test_cut_api):
     client, _store, _face, _public, make_token = test_cut_api
-    response = client.get("/v1/facemarket/admin/models", headers=_auth(make_token))
+    response = client.get(
+        f"/v1/facemarket/admin/models/{MODEL_ID}/test-cuts", headers=_auth(make_token)
+    )
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "forbidden"
 
@@ -323,10 +331,13 @@ def test_admin_upload_lists_and_streams_cuts_without_emitting_r2_keys(test_cut_a
     assert len(uploaded.json()) == 2
     assert "r2Key" not in uploaded.text and "private/facemarket" not in uploaded.text
 
-    listing = client.get("/v1/facemarket/admin/models", headers=_auth(make_token, "admin-1"))
+    listing = client.get(
+        f"/v1/facemarket/admin/models/{MODEL_ID}/test-cuts",
+        headers=_auth(make_token, "admin-1"),
+    )
     assert listing.status_code == 200
-    assert listing.json()[0]["testCutCount"] == 2
-    assert len(listing.json()[0]["testCuts"]) == 2
+    assert listing.json()["testCutCount"] == 2
+    assert len(listing.json()["testCuts"]) == 2
     assert "r2Key" not in listing.text and "private/facemarket" not in listing.text
 
     cut_id = uploaded.json()[0]["id"]

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { ErrorState, Icon } from '@/components/ui.jsx';
-import { listLicenses, listSettlements } from '@/lib/api/facemarket.js';
+import { getSettlementSummary, listLicenses, listSettlements } from '@/lib/api/facemarket.js';
 import { formatKrw } from '../facemarketTerms.js';
-import { normalizeSettlementRow, settlementColumns, summarizeSettlements } from '../payoutData.js';
+import { normalizeSettlementRow, settlementColumns, nextSettlement } from '../payoutData.js';
 import { LandingShell } from '../LandingShell.jsx';
 import landing from '../FacemarketLanding.module.css';
 import s from './PayoutPage.module.css';
@@ -55,12 +55,12 @@ function TableCell({ column, row, showBillingInDate = false }) {
   return <td>{row[column.key] || <span className={s.cellEmpty}>—</span>}</td>;
 }
 
-export function PayoutView({ settlements = [], licenses = [], now = new Date() }) {
-  const summary = summarizeSettlements(settlements, now);
+export function PayoutView({ settlements = [], licenses = [], settlementSummary, now = new Date() }) {
+  const summary = settlementSummary;
   const columns = settlementColumns(settlements);
   const rows = settlements.map((row) => normalizeSettlementRow(row, licenses, now));
   const showBillingInDate = !columns.some((column) => column.key === 'item');
-  const next = summary.nextSettlement;
+  const next = nextSettlement(now);
 
   return (
     <div className={s.page}>
@@ -119,16 +119,19 @@ function PayoutContent() {
   const [phase, setPhase] = useState('loading');
   const [settlements, setSettlements] = useState([]);
   const [licenses, setLicenses] = useState([]);
+  const [settlementSummary, setSettlementSummary] = useState(null);
 
   const load = useCallback(async () => {
     setPhase('loading');
     try {
-      const [settlementRows, licenseRows] = await Promise.all([
+      const [settlementRows, licenseRows, summary] = await Promise.all([
         listSettlements(),
         listLicenses(),
+        getSettlementSummary(),
       ]);
       setSettlements(Array.isArray(settlementRows) ? settlementRows : []);
       setLicenses(Array.isArray(licenseRows) ? licenseRows : []);
+      setSettlementSummary(summary);
       setPhase('ready');
     } catch {
       setPhase('error');
@@ -141,7 +144,7 @@ function PayoutContent() {
   if (phase === 'error') {
     return <div className={s.page}><div className={s.error}><ErrorState desc="정산 기록을 불러오지 못했어요." onRetry={load} /></div></div>;
   }
-  return <PayoutView licenses={licenses} settlements={settlements} />;
+  return <PayoutView licenses={licenses} settlements={settlements} settlementSummary={settlementSummary} />;
 }
 
 export function PayoutPage() {

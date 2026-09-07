@@ -1,256 +1,437 @@
+/* 모델·유저 — 검색·필터 표 + 선택 행 상세.
+
+   상세를 별도 라우트가 아니라 같은 화면 오른쪽에 붙인다. 운영자는 "이 모델 뭐지"를 확인하고
+   목록으로 곧장 돌아온다 — 라우트를 갈면 그 왕복마다 목록이 다시 로드되고 스크롤을 잃는다. */
 import { useCallback, useEffect, useState } from 'react';
-import { Button, ErrorState, Icon, useToast } from '@/components/ui.jsx';
 import {
-  adminDeleteModelTestCut,
-  adminFetchModelTestCutUrl,
-  adminListModels,
-  adminSendModelTestCuts,
+  adminDeleteModelTestCut, adminFetchModelTestCutUrl, adminListModels, adminModelDetail,
+  adminModelTestCuts, adminSendModelTestCuts, adminSuspendModel, adminUnsuspendModel,
   adminUploadModelTestCuts,
 } from '@/lib/api/facemarket.js';
-import s from './AdminModels.module.css';
+import { Badge } from '@/components/admin-ui/badge.jsx';
+import { Button } from '@/components/admin-ui/button.jsx';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/admin-ui/card.jsx';
+import { Input } from '@/components/admin-ui/input.jsx';
+import { Skeleton } from '@/components/admin-ui/skeleton.jsx';
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from '@/components/admin-ui/table.jsx';
+import { useToast } from '@/components/ui.jsx';
 
+// fm_models_status_check(백엔드 MODEL_STATUSES)가 허용하는 네 값 전부를 다뤄야 한다.
+// reverification_required 라벨은 ModelHub.jsx 의 MODEL_STATUS_LABEL 과 맞춘다 — 운영자
+// 화면과 모델 본인 화면이 같은 상태를 다른 말로 부르면 안 된다.
+const STATUS_FILTERS = [
+  { value: '', label: '전체' },
+  { value: 'pending', label: '대기' },
+  { value: 'verified', label: '검증됨' },
+  { value: 'reverification_required', label: '재검증 필요' },
+  { value: 'suspended', label: '정지' },
+];
 const STATUS_LABEL = {
-  pending: '대기 중',
-  awaiting_confirm: '확인 대기',
-  verified: '공개 중',
-  suspended: '중지',
-  reverification_required: '재확인 필요',
+  pending: '대기', verified: '검증됨', reverification_required: '재검증 필요', suspended: '정지',
 };
-
-const ENROLLMENT_LABEL = {
-  photos_pending: '사진 등록 중',
-  liveness_pending: '라이브니스 대기',
-  processing: '검수 중',
-  asset_building: '자산 생성 중',
-  license_pending: '조건 입력 대기',
-  vc_pending: '증서 발급 중',
-  passed: '등록 완료',
-  failed: '등록 실패',
-  cancelled: '등록 취소',
-  expired: '등록 만료',
+const STATUS_VARIANT = {
+  pending: 'secondary', verified: 'default', reverification_required: 'secondary', suspended: 'destructive',
 };
+// check 제약에 다섯 번째 값이 늘어나도, 빈 배지(undefined → 스타일 없이 텅 빈 pill)
+// 대신 원문자열을 보여준다 — 안 보이는 것보다 못생긴 게 낫다.
+const statusLabel = (status) => STATUS_LABEL[status] || status;
+const won = (n) => `${Number(n || 0).toLocaleString('ko-KR')}원`;
+const day = (iso) => (iso ? iso.slice(0, 10) : '-');
 
-const formatSentAt = (value) => {
-  if (!value) return '';
-  return new Intl.DateTimeFormat('ko-KR', {
-    dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Seoul',
-  }).format(new Date(value));
-};
-
-function AdminCutImage({ cut, modelName }) {
+/* 테스트컷 — 모델 공개 승인 게이트(초상 계약 제8조 5항).
+   목록이 아니라 상세 안에 두는 이유: 운영자가 "이 모델 뭐지"를 확인하는 자리에서 그대로
+   컷을 올리고 보내기 때문이다. 목록에 컬럼으로 얹으면 200행마다 이미지 메타를 조인해야 한다.
+   서명 URL 이 아니라 인증 스트림으로 받는다 — 얼굴은 공개 주소를 갖지 않는다(처리방침 §10). */
+function TestCutThumb({ cut, disabled, onDelete }) {
   const [url, setUrl] = useState(null);
-
   useEffect(() => {
-    let alive = true;
-    let objectUrl = null;
+    let revoked = null;
     adminFetchModelTestCutUrl(cut.imageUri)
-      .then((nextUrl) => {
-        if (!alive) { URL.revokeObjectURL(nextUrl); return; }
-        objectUrl = nextUrl;
-        setUrl(nextUrl);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
+      .then((next) => { revoked = next; setUrl(next); })
+      .catch(() => setUrl(null));
+    return () => { if (revoked) URL.revokeObjectURL(revoked); };
   }, [cut.imageUri]);
-
-  if (!url) return <div className={s.cutLoading} aria-label="테스트컷 불러오는 중">…</div>;
   return (
-    <img
-      className={s.cutImage}
-      src={url}
-      alt={`${modelName} 테스트컷 ${cut.sort + 1}`}
-      width="220"
-      height="280"
-      loading="lazy"
-    />
+    <figure className="relative m-0 w-20 overflow-hidden rounded-md border border-border bg-muted">
+      <div className="aspect-[4/5]">
+        {url
+          ? <img src={url} alt={`테스트컷 ${cut.sort + 1}`} className="h-full w-full object-cover" />
+          : <div className="flex h-full items-center justify-center text-[10px] text-muted-foreground">불러오는 중</div>}
+      </div>
+      {cut.approved
+        ? <span className="absolute left-1 top-1 rounded bg-background/90 px-1 text-[10px]">대표</span>
+        : (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => onDelete(cut)}
+            aria-label={`테스트컷 ${cut.sort + 1} 삭제`}
+            className="absolute right-1 top-1 rounded bg-background/90 px-1 text-[10px] disabled:opacity-40"
+          >
+            삭제
+          </button>
+        )}
+    </figure>
   );
 }
 
-function ModelCard({ model, expanded, busy, onToggle, onUpload, onDelete, onSend }) {
-  const status = model.redoRequested ? 'redo' : model.status;
-  const statusLabel = model.redoRequested ? '재생성 요청' : (STATUS_LABEL[model.status] || model.status);
-  const noCuts = model.testCutCount === 0;
-  const notReady = !model.readyToSend;
-  const inputId = `model-cuts-${model.id}`;
+function TestCuts({ modelId, onChanged }) {
+  const { push } = useToast();
+  const [state, setState] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const inputId = `test-cut-upload-${modelId}`;
+
+  const load = useCallback(() => {
+    setError(null);
+    adminModelTestCuts(modelId).then(setState).catch((e) => setError(e.message));
+  }, [modelId]);
+  useEffect(() => { load(); }, [load]);
+
+  const act = async (fn, done) => {
+    setBusy(true);
+    try { const r = await fn(); push?.(done(r), { icon: 'check' }); load(); onChanged?.(); }
+    catch (e) { push?.(e.message, { icon: 'alertCircle' }); }
+    finally { setBusy(false); }
+  };
+
+  if (error) {
+    return (
+      <section className="border-t border-border pt-4">
+        <h4 className="mb-1 text-xs font-medium text-muted-foreground">테스트컷</h4>
+        <p className="text-muted-foreground">{error}</p>
+        <Button variant="outline" size="sm" className="mt-2" onClick={load}>다시 시도</Button>
+      </section>
+    );
+  }
+  if (!state) {
+    return (
+      <section className="border-t border-border pt-4">
+        <h4 className="mb-1 text-xs font-medium text-muted-foreground">테스트컷</h4>
+        <Skeleton className="h-20 w-full" />
+      </section>
+    );
+  }
+
+  const cuts = state.testCuts || [];
+  const full = cuts.length >= 6;
+  const sent = state.status === 'awaiting_confirm';
+  const confirmed = state.status === 'verified';
 
   return (
-    <li className={s.card}>
-      <button className={s.summary} type="button" onClick={onToggle} aria-expanded={expanded}>
-        <span className={s.modelCopy}>
-          <strong>{model.displayName}</strong>
-          <span>{ENROLLMENT_LABEL[model.enrollmentStatus] || model.enrollmentStatus || '등록 정보 없음'}</span>
-        </span>
-        <span className={`${s.badge} ${s[`badge_${status}`] || ''}`}>{statusLabel}</span>
-        <span className={s.count}>테스트컷 {model.testCutCount}장</span>
-        <Icon name={expanded ? 'chevUp' : 'chevDown'} size={18} />
-      </button>
+    <section className="border-t border-border pt-4">
+      <div className="mb-2 flex items-center gap-2">
+        <h4 className="text-xs font-medium text-muted-foreground">테스트컷 {cuts.length}장</h4>
+        {state.redoRequested && <Badge variant="destructive">재생성 요청</Badge>}
+        {sent && <Badge variant="secondary">확인 대기</Badge>}
+        {confirmed && <Badge>공개 승인됨</Badge>}
+      </div>
 
-      {expanded && (
-        <div className={s.detail}>
-          {model.testCuts.length > 0 ? (
-            <div className={s.cutGrid}>
-              {model.testCuts.map((cut) => (
-                <figure className={s.cut} key={cut.id}>
-                  <AdminCutImage cut={cut} modelName={model.displayName} />
-                  <figcaption>
-                    <span>컷 {cut.sort + 1}{cut.approved ? ' · 승인됨' : ''}</span>
-                    <button
-                      className={s.deleteButton}
-                      type="button"
-                      aria-label={`테스트컷 ${cut.sort + 1} 삭제`}
-                      disabled={busy || cut.approved}
-                      title={cut.approved ? '모델이 승인한 원본은 삭제할 수 없어요.' : '삭제'}
-                      onClick={() => onDelete(cut)}
-                    >
-                      <Icon name="trash" size={15} />
-                    </button>
-                  </figcaption>
-                </figure>
-              ))}
-            </div>
-          ) : (
-            <p className={s.empty}>테스트컷이 아직 없어요. 이미지를 올린 뒤 모델에게 보내 주세요.</p>
-          )}
-
-          <div className={s.actions}>
-            <label className={`${s.uploadLabel}${busy || model.testCutCount >= 6 ? ` ${s.disabled}` : ''}`} htmlFor={inputId}>
-              <Icon name="imagePlus" size={16} />
-              이미지 추가
-            </label>
-            <input
-              className={s.fileInput}
-              id={inputId}
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              multiple
-              disabled={busy || model.testCutCount >= 6}
-              onChange={(event) => {
-                onUpload(Array.from(event.target.files || []));
-                event.target.value = '';
+      {cuts.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {cuts.map((cut) => (
+            <TestCutThumb
+              key={cut.id}
+              cut={cut}
+              disabled={busy}
+              onDelete={(c) => {
+                if (!window.confirm(`테스트컷 ${c.sort + 1}을 삭제할까요?`)) return;
+                act(() => adminDeleteModelTestCut(modelId, c.id), () => '테스트컷을 삭제했어요.');
               }}
             />
-            <span title={noCuts
-              ? '테스트컷을 1장 이상 올려야 보낼 수 있어요.'
-              : notReady ? '등록과 VC 발급이 끝난 뒤 보낼 수 있어요.' : undefined}>
-              <Button variant="primary" size="sm" disabled={busy || noCuts || notReady} onClick={onSend}>
-                {busy ? '처리 중…' : '모델에게 보내기'}
-              </Button>
-            </span>
-          </div>
-
-          {model.status === 'awaiting_confirm' && model.confirmRequestedAt && (
-            <p className={s.sent}>확인 대기 중 · {formatSentAt(model.confirmRequestedAt)}</p>
-          )}
+          ))}
         </div>
+      ) : <p className="text-muted-foreground">아직 없어요. 이미지를 올리면 모델에게 보낼 수 있어요.</p>}
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <label
+          htmlFor={inputId}
+          className={`inline-flex h-9 cursor-pointer items-center rounded-md border border-input px-3 text-sm${busy || full ? ' pointer-events-none opacity-50' : ''}`}
+        >
+          이미지 추가
+        </label>
+        <input
+          id={inputId}
+          type="file"
+          accept="image/*"
+          multiple
+          hidden
+          disabled={busy || full}
+          onChange={(e) => {
+            const files = Array.from(e.target.files || []);
+            e.target.value = '';
+            if (!files.length) return;
+            if (cuts.length + files.length > 6) {
+              push?.(`이 모델은 이미 ${cuts.length}장이에요. 모두 합쳐 6장까지 올릴 수 있어요.`, { icon: 'alertCircle' });
+              return;
+            }
+            act(() => adminUploadModelTestCuts(modelId, files), () => `테스트컷 ${files.length}장을 올렸어요.`);
+          }}
+        />
+        <Button
+          size="sm"
+          disabled={busy || cuts.length === 0 || !state.readyToSend}
+          title={cuts.length === 0
+            ? '보낼 테스트컷이 없어요.'
+            : (!state.readyToSend ? '생체등록과 라이선스 발급이 끝나야 보낼 수 있어요.' : undefined)}
+          onClick={() => act(
+            () => adminSendModelTestCuts(modelId),
+            (r) => (r.emailSent
+              ? '모델에게 테스트컷 확인 메일을 보냈어요.'
+              : '확인 대기 상태로 바꿨어요. 메일은 발송되지 않았어요.'),
+          )}
+        >
+          {sent ? '다시 보내기' : '모델에게 보내기'}
+        </Button>
+        {full && <span className="text-xs text-muted-foreground">6장까지 올릴 수 있어요</span>}
+      </div>
+
+      {sent && state.confirmRequestedAt && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {day(state.confirmRequestedAt)}에 보냈어요. 모델이 확인하면 셀러 목록에 떠요.
+        </p>
       )}
-    </li>
+      {state.redoCount > 0 && (
+        <p className="mt-1 text-xs text-muted-foreground">재생성 요청 {state.redoCount}회 (1회까지)</p>
+      )}
+    </section>
+  );
+}
+
+function Detail({ modelId, onChanged }) {
+  // useToast() 는 { push, dismiss } 를 준다(.show 는 없다) — AdminApplications.jsx 의
+  // 기존 소비 방식과 맞춘다. 여기서 잘못 불러 조용히 no-op 되면, 정지 실패 같은 서버 거부
+  // 메시지가 화면에 안 뜨는 채로 사용자만 남는다 — 가드레일 안내가 핵심인 화면이라 치명적.
+  const { push } = useToast();
+  const [data, setData] = useState(null);
+  // 목록의 fetch 실패와 같은 문제 — 예전엔 실패해도 data 가 계속 null 이라 패널 전체가
+  // <Skeleton> 하나로 영원히 멈췄다(카드 틀조차 없었다). 상세는 실패가 낯설지 않다(모델을
+  // 고른 직후 잠깐의 5xx 등) — 패널 틀은 항상 그리고, 실패는 안에서 보여주고 다시 시도를
+  // 준다.
+  const [detailError, setDetailError] = useState(null);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    setData(null);
+    setDetailError(null);
+    adminModelDetail(modelId)
+      .then(setData)
+      .catch((e) => setDetailError(e.message || '모델 정보를 불러오지 못했어요.'));
+  }, [modelId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (detailError) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">모델 정보를 불러오지 못했어요</CardTitle>
+          <CardDescription>{detailError}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button variant="outline" size="sm" onClick={load}>다시 시도</Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!data) {
+    return (
+      <Card>
+        <CardContent className="pt-5">
+          <Skeleton className="h-64" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const { model, licenses, settlements, enrollment } = data;
+  const suspended = model.status === 'suspended';
+
+  const act = async (fn) => {
+    setBusy(true);
+    try {
+      await fn();
+      setReason('');
+      load();
+      onChanged?.();
+    } catch (e) {
+      push?.(e.message, { icon: 'alertCircle' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <CardTitle className="text-base">{model.displayName}</CardTitle>
+          <Badge variant={STATUS_VARIANT[model.status]}>{statusLabel(model.status)}</Badge>
+        </div>
+        <CardDescription>{model.email || '연결된 계정 없음 (플랫폼 온보딩)'}</CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-5 text-sm">
+        <section>
+          <h4 className="mb-1 text-xs font-medium text-muted-foreground">라이선스 {licenses.length}건</h4>
+          {licenses.length === 0 && <p className="text-muted-foreground">없음</p>}
+          {licenses.map((l) => (
+            <div key={l.id} className="flex gap-3">
+              <span>{l.status}</span><span>{won(l.unitPrice)}</span><span>~{day(l.validUntil)}</span>
+            </div>
+          ))}
+        </section>
+        <section>
+          <h4 className="mb-1 text-xs font-medium text-muted-foreground">최근 정산</h4>
+          {settlements.length === 0 && <p className="text-muted-foreground">없음</p>}
+          {settlements.map((s) => (
+            <div key={s.id} className="flex gap-3">
+              <span>{day(s.createdAt)}</span><span>{won(s.totalAmount)}</span><span>{s.chainStatus}</span>
+            </div>
+          ))}
+        </section>
+        <section>
+          <h4 className="mb-1 text-xs font-medium text-muted-foreground">생체등록</h4>
+          <p>{enrollment ? `${enrollment.status} · ${day(enrollment.completedAt)}` : '기록 없음'}</p>
+        </section>
+        <TestCuts modelId={model.id} onChanged={onChanged} />
+        <section className="border-t border-border pt-4">
+          {suspended ? (
+            <Button variant="outline" disabled={busy} onClick={() => act(() => adminUnsuspendModel(model.id))}>
+              정지 해제 (정지 직전 상태로 되돌아가요)
+            </Button>
+          ) : (
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Input
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="정지 사유 (기록에 남아요)"
+                className="sm:flex-1"
+              />
+              <Button
+                variant="destructive"
+                disabled={busy || !reason.trim()}
+                onClick={() => act(() => adminSuspendModel(model.id, reason.trim()))}
+              >
+                정지
+              </Button>
+            </div>
+          )}
+        </section>
+      </CardContent>
+    </Card>
   );
 }
 
 export function AdminModels() {
-  const { push } = useToast();
-  const [phase, setPhase] = useState('loading');
-  const [models, setModels] = useState([]);
-  const [expandedId, setExpandedId] = useState(null);
-  const [busyId, setBusyId] = useState(null);
+  const [q, setQ] = useState('');
+  const [status, setStatus] = useState('');
+  const [items, setItems] = useState(null);
+  // 실패도 빈 배열로 떨어뜨리면 "모델이 없어요" 와 "요청이 실패했어요" 가 화면에서
+  // 똑같이 "결과 없음" 으로 보인다 — 세션 만료(403)·5xx·네트워크 단절을 운영자가 구분할
+  // 방법이 없어진다. 이 콘솔의 존재 이유가 "지금 시스템에 뭐가 진짜인지 알려주는 것"이라
+  // 실패를 빈 목록으로 위장하면 안 된다.
+  const [listError, setListError] = useState(null);
+  const [selected, setSelected] = useState(null);
 
-  const load = useCallback(async () => {
-    setPhase('loading');
-    try {
-      const rows = await adminListModels();
-      setModels(rows || []);
-      setPhase('ready');
-    } catch (error) {
-      if (error?.status === 403) { setPhase('forbidden'); return; }
-      push?.(error.message, { icon: 'alertCircle' });
-      setPhase('error');
-    }
-  }, [push]);
+  const load = useCallback(() => {
+    setItems(null);
+    setListError(null);
+    adminListModels({ q: q.trim(), status })
+      .then((d) => setItems(d.items))
+      .catch((e) => setListError(e.message || '목록을 불러오지 못했어요.'));
+  }, [q, status]);
 
   useEffect(() => { load(); }, [load]);
 
-  const upload = useCallback(async (model, files) => {
-    if (!files.length) return;
-    if (model.testCutCount + files.length > 6) {
-      push?.(`이 모델은 이미 ${model.testCutCount}장이에요. 모두 합쳐 6장까지 올릴 수 있어요.`, { icon: 'alertCircle' });
-      return;
-    }
-    setBusyId(model.id);
-    try {
-      await adminUploadModelTestCuts(model.id, files);
-      push?.(`테스트컷 ${files.length}장을 올렸어요.`, { icon: 'check' });
-      await load();
-      setExpandedId(model.id);
-    } catch (error) { push?.(error.message, { icon: 'alertCircle' }); }
-    finally { setBusyId(null); }
-  }, [load, push]);
-
-  const remove = useCallback(async (model, cut) => {
-    if (!window.confirm(`테스트컷 ${cut.sort + 1}을 삭제할까요?`)) return;
-    setBusyId(model.id);
-    try {
-      await adminDeleteModelTestCut(model.id, cut.id);
-      push?.('테스트컷을 삭제했어요.', { icon: 'check' });
-      await load();
-      setExpandedId(model.id);
-    } catch (error) { push?.(error.message, { icon: 'alertCircle' }); }
-    finally { setBusyId(null); }
-  }, [load, push]);
-
-  const send = useCallback(async (model) => {
-    setBusyId(model.id);
-    try {
-      const result = await adminSendModelTestCuts(model.id);
-      push?.(
-        result.emailSent ? '모델에게 테스트컷 확인 메일을 보냈어요.' : '확인 대기 상태로 바꿨어요. 메일은 발송되지 않았어요.',
-        { icon: result.emailSent ? 'check' : 'info' },
-      );
-      await load();
-      setExpandedId(model.id);
-    } catch (error) { push?.(error.message, { icon: 'alertCircle' }); }
-    finally { setBusyId(null); }
-  }, [load, push]);
-
   return (
-    <div className={s.page}>
-      <header className={s.head}>
-        <p className={s.eyebrow}>Wearless 관리자</p>
-        <h1 className={s.title}>모델 테스트컷</h1>
-        <p className={s.lead}>등록이 끝난 모델에게 테스트컷을 보내고 공개 전 확인 상태를 관리해요.</p>
-      </header>
-
-      <div className={s.toolbar}>
-        <span>모델 {models.length}명</span>
-        <Button variant="ghost" size="sm" icon="refresh" onClick={load}>새로고침</Button>
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="모델명 또는 계정 이메일"
+          className="w-64"
+        />
+        {STATUS_FILTERS.map((f) => (
+          <Button key={f.value} size="sm" variant={f.value === status ? 'default' : 'outline'} onClick={() => setStatus(f.value)}>
+            {f.label}
+          </Button>
+        ))}
       </div>
 
-      {phase === 'loading' && <p className={s.state}>불러오는 중…</p>}
-      {phase === 'forbidden' && (
-        <div className={s.state}><ErrorState title="접근 권한이 없어요" desc="관리자 계정으로 로그인해 주세요." /></div>
-      )}
-      {phase === 'error' && <div className={s.state}><ErrorState desc="모델을 불러오지 못했어요." onRetry={load} /></div>}
-      {phase === 'ready' && models.length === 0 && <p className={s.state}>등록된 모델이 없어요.</p>}
-      {phase === 'ready' && models.length > 0 && (
-        <ul className={s.list}>
-          {models.map((model) => (
-            <ModelCard
-              key={model.id}
-              model={model}
-              expanded={expandedId === model.id}
-              busy={busyId === model.id}
-              onToggle={() => setExpandedId((current) => current === model.id ? null : model.id)}
-              onUpload={(files) => upload(model, files)}
-              onDelete={(cut) => remove(model, cut)}
-              onSend={() => send(model)}
-            />
-          ))}
-        </ul>
-      )}
+      <div className="grid gap-5 lg:grid-cols-[1fr_24rem]">
+        <Card>
+          <CardContent className="p-0">
+            {listError && (
+              <div className="flex flex-col items-center gap-3 px-5 py-10 text-center text-sm text-muted-foreground">
+                <p>{listError}</p>
+                <Button variant="outline" size="sm" onClick={load}>다시 시도</Button>
+              </div>
+            )}
+            {!items && !listError && <Skeleton className="h-64" />}
+            {items && (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>모델</TableHead>
+                    <TableHead>상태</TableHead>
+                    <TableHead>계정</TableHead>
+                    <TableHead>라이선스</TableHead>
+                    <TableHead>최근 정산</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {items.map((m) => (
+                    <TableRow
+                      key={m.id}
+                      tabIndex={0}
+                      role="button"
+                      aria-pressed={selected === m.id}
+                      onClick={() => setSelected(m.id)}
+                      // TableRow 는 props 를 그대로 <tr> 로 흘려보낸다. 클릭만 걸려 있으면
+                      // 키보드만 쓰는 관리자는 이 행을 절대 못 연다 — staff 화면의 검색
+                      // input onKeyDown 과 같은 모양으로, Enter·Space 둘 다 받는다.
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setSelected(m.id);
+                        }
+                      }}
+                      className={`cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${selected === m.id ? 'bg-muted' : ''}`}
+                    >
+                      <TableCell>{m.displayName}</TableCell>
+                      <TableCell>
+                        <Badge variant={STATUS_VARIANT[m.status]}>{statusLabel(m.status)}</Badge>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {/* auth.users.email 은 카카오 로그인 이메일 동의가 선택이라 없을 수
+                            있다 — 그렇다고 '-' 로만 보여주면, 운영자가 실제로 아는 지원서
+                            이메일(contact_email)로도 이 모델을 못 알아본다. 값을 보여줄 땐
+                            어느 쪽 출처인지 밝힌다 — auth 이메일과 헷갈리면 안 된다. */}
+                        {m.email
+                          || (m.applicationContactEmail
+                            ? `${m.applicationContactEmail} (지원서 이메일)`
+                            : '-')}
+                      </TableCell>
+                      <TableCell>{m.licenseCount}</TableCell>
+                      <TableCell className="text-muted-foreground">{day(m.lastSettlementAt)}</TableCell>
+                    </TableRow>
+                  ))}
+                  {items.length === 0 && (
+                    <TableRow><TableCell colSpan={5} className="py-8 text-center text-muted-foreground">결과 없음</TableCell></TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+
+        {selected && <Detail modelId={selected} onChanged={load} />}
+      </div>
     </div>
   );
 }
-
-export default AdminModels;

@@ -71,7 +71,7 @@ def test_detail_finalize_persists_server_written_real_derived_marker(monkeypatch
     ))
 
     sql, params = _asset_insert(conn)
-    assert "height, metadata)" in sql
+    assert "height, checksum, metadata)" in sql
     assert params[-1].obj == {"facemarket_real_derived": True}
 
 
@@ -103,5 +103,5 @@ def test_editor_finalize_persists_server_written_real_derived_marker(monkeypatch
     ))
 
     sql, params = _asset_insert(conn)
-    assert "height, metadata)" in sql
+    assert "height, checksum, metadata)" in sql
     assert params[-1].obj == {"facemarket_real_derived": True}

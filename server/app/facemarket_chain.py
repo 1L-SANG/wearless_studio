@@ -54,6 +54,36 @@ _ABI = [
 
 _GAS_LIMIT = 300_000  # recordSettlement 실측 여유(단일 mapping write + event)
 
+# 층③ 배포본 앵커(FaceMarketProvenance.sol) — 같은 owner 키를 쓰므로 별도 클래스가 아니라
+# FaceMarketChain 인스턴스에 얹는다(attach_provenance). nonce lock 을 공유하기 위해서다.
+_PROVENANCE_ABI = [
+    {
+        "type": "function",
+        "name": "recordPublication",
+        "stateMutability": "nonpayable",
+        "inputs": [
+            {"name": "publicationId", "type": "bytes32"},
+            {"name": "imageHash", "type": "bytes32"},
+            {"name": "licenseRef", "type": "bytes32"},
+        ],
+        "outputs": [],
+    },
+    {
+        "type": "function",
+        "name": "getPublication",
+        "stateMutability": "view",
+        "inputs": [{"name": "publicationId", "type": "bytes32"}],
+        "outputs": [
+            {"name": "imageHash", "type": "bytes32"},
+            {"name": "licenseRef", "type": "bytes32"},
+            {"name": "blockNumber", "type": "uint256"},
+            {"name": "exists", "type": "bool"},
+        ],
+    },
+]
+
+_PROVENANCE_GAS_LIMIT = 200_000  # 단일 struct write + event
+
 
 class ChainDisabled(Exception):
     """체인 미설정/미가동 — 호출부가 정산을 조용히 건너뛸 신호."""
@@ -92,6 +122,8 @@ class FaceMarketChain:
         # chain_id 미지정이면 1회 조회(Free-Gas BESU는 eth_chainId 지원).
         self.chain_id = int(chain_id) if chain_id else int(self.w3.eth.chain_id)
         self._nonce_lock = threading.Lock()
+        self.provenance = None
+        self.provenance_enabled = False
 
     @classmethod
     def from_settings(cls, settings) -> "FaceMarketChain | None":
@@ -108,6 +140,15 @@ class FaceMarketChain:
                 settings.fm_chain_private_key,
                 settings.fm_chain_id,
             )
+            addr = getattr(settings, "fm_provenance_address", None)
+            if addr:
+                # 별도 try — provenance 는 선택 기능. 주소 오타(길이·checksum·공백)로
+                # to_checksum_address 가 raise 해도 이미 실서비스 정산을 기록 중인
+                # settlement client 자체를 죽여선 안 된다(전체가 None 이 되면 정산도 무음 중단).
+                try:
+                    client.attach_provenance(addr)
+                except Exception:
+                    logger.exception("facemarket_provenance_attach_failed")
             logger.info(
                 "facemarket_chain_ready",
                 extra={"chain_id": client.chain_id, "address": client.address},
@@ -192,6 +233,85 @@ class FaceMarketChain:
             "model_amount": int(model_a),
             "platform_amount": int(plat_a),
             "ops_amount": int(ops_a),
+            "block": int(block),
+            "exists": bool(exists),
+        }
+
+    # ---- 층③ 배포본 앵커(FaceMarketProvenance) — 같은 인스턴스, 같은 nonce lock ----
+    def attach_provenance(self, address: str) -> None:
+        """같은 인스턴스에 provenance 컨트랙트를 얹는다 — nonce lock 을 공유하기 위해서다.
+
+        별도 클래스·별도 인스턴스로 만들면 두 recorder 가 각자 latest nonce 를 읽어
+        같은 nonce 로 서명한다(단일 owner 키).
+        """
+        self.provenance = self.w3.eth.contract(
+            address=self._Web3.to_checksum_address(address), abi=_PROVENANCE_ABI
+        )
+        self.provenance_enabled = True
+
+    def record_publication(
+        self, *, publication_id: str, image_sha256: str, license_id: str
+    ) -> dict:
+        """배포본 앵커. 중복 publicationId 는 컨트랙트가 revert(호출부가 이미 기록으로 처리)."""
+        if self.provenance is None:
+            raise ChainDisabled("provenance contract not attached")
+        pid = self.keccak32(publication_id)
+        img = bytes.fromhex(image_sha256)
+        if len(img) != 32:
+            raise ValueError("image_sha256 must be a 32-byte hex digest")
+        lref = self.keccak32(license_id)
+
+        with self._nonce_lock:  # settlement 와 공유 — 단일 키 nonce 직렬화
+            nonce = self.w3.eth.get_transaction_count(self.account.address, "latest")
+            tx = self.provenance.functions.recordPublication(
+                pid, img, lref
+            ).build_transaction({
+                "from": self.account.address,
+                "nonce": nonce,
+                "gas": _PROVENANCE_GAS_LIMIT,
+                "gasPrice": 0,
+                "chainId": self.chain_id,
+            })
+            signed = self.account.sign_transaction(tx)
+            raw = getattr(signed, "raw_transaction", None) or signed.rawTransaction
+            tx_hash = self.w3.eth.send_raw_transaction(raw)
+            stored = self.wait_for_publication(publication_id)
+            if stored is None:
+                raise RuntimeError(
+                    f"recordPublication not confirmed on-chain: {tx_hash.hex()}"
+                )
+        return {
+            "tx_hash": tx_hash.hex(),
+            "block": stored["block"],
+            "chain_id": self.chain_id,
+            "image_hash": stored["image_hash"],
+            "license_ref": stored["license_ref"],
+        }
+
+    def wait_for_publication(
+        self, publication_id: str, timeout: float | None = None
+    ) -> dict | None:
+        deadline = self._time.monotonic() + (
+            self._CONFIRM_TIMEOUT if timeout is None else max(timeout, 0)
+        )
+        while self._time.monotonic() < deadline:
+            try:
+                stored = self.get_publication(publication_id)
+            except Exception:
+                stored = {"exists": False}
+            if stored.get("exists"):
+                return stored
+            self._time.sleep(self._POLL_INTERVAL)
+        return None
+
+    def get_publication(self, publication_id: str) -> dict:
+        if self.provenance is None:
+            raise ChainDisabled("provenance contract not attached")
+        pid = self.keccak32(publication_id)
+        (img, lref, block, exists) = self.provenance.functions.getPublication(pid).call()
+        return {
+            "image_hash": img.hex(),
+            "license_ref": "0x" + lref.hex(),
             "block": int(block),
             "exists": bool(exists),
         }

@@ -11,7 +11,10 @@ test('seller OAuth requires explicit age, terms, and privacy consent', () => {
   assert.match(login, /만 19세 이상이며/);
   assert.match(login, /href="\/terms" target="_blank"/);
   assert.match(login, /href="\/privacy" target="_blank"/);
-  assert.equal(login.match(/disabled=\{pending !== null \|\| \(!IS_FACEMARKET && !sellerConsent\)\}/g)?.length, 2);
+  // 셀러 전용 게이트 — 모델(FaceMarket)·관리자(admin.html)는 각자 다른 동의 체계를 쓴다.
+  assert.match(login, /const NEEDS_SELLER_CONSENT = !IS_FACEMARKET && !IS_ADMIN;/);
+  assert.equal(login.match(/disabled=\{pending !== null \|\| \(NEEDS_SELLER_CONSENT && !sellerConsent\)\}/g)?.length, 2);
+  assert.match(login, /\{NEEDS_SELLER_CONSENT && \(/);
   assert.doesNotMatch(login, /계속하면 서비스 약관에 동의하는 것으로 간주됩니다/);
 });
 

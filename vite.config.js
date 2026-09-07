@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath, URL } from 'node:url';
 
 /* 문서 진입점 두 벌 — 같은 앱(src/main.jsx)을 물지만 head 가 다르다.
@@ -50,7 +51,10 @@ const facemarketDevDocument = {
 // Vite handles .ts/.tsx out of the box, so TS can be adopted incrementally
 // (contracts → store → api) without a full migration. JS/JSX stays default.
 export default defineConfig({
-  plugins: [react(), facemarketDevDocument],
+  // Tailwind 는 CSS 를 import 하는 진입(admin.html → admin.css)에만 실린다.
+  // 플러그인 등록 자체는 전역이지만, 셀러·facemarket 은 admin.css 를 물지 않으므로
+  // 산출 CSS 에 유틸리티가 한 줄도 들어가지 않는다.
+  plugins: [react(), tailwindcss(), facemarketDevDocument],
   build: {
     rollupOptions: {
       input: {

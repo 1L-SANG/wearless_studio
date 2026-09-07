@@ -49,12 +49,6 @@ concurrency:
 permissions:
     contents: read
 
-env:
-    # pnpm 11 은 빌드 스크립트가 미승인된 의존성(esbuild)을 만나면 install 을 실패시킨다.
-    # 승인 파일(pnpm-workspace.yaml)은 .gitignore 대상이라 CI 체크아웃엔 없다.
-    # esbuild 는 플랫폼별 바이너리 패키지로 동작해 postinstall 없이도 빌드된다.
-    PNPM_CONFIG_STRICT_DEP_BUILDS: "false"
-
 jobs:
     test:
         runs-on: ubuntu-latest

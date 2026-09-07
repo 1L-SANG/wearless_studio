@@ -740,6 +740,17 @@ export function ModelRegister() {
           <div><dt>승인 방식</dt><dd>{APPROVAL_MODE === 'auto' ? '자동' : APPROVAL_MODE}</dd></div>
         </dl>}
         <p className={s.completionNotice}>우리가 사진을 확인한 뒤 테스트 컷을 보내드려요. 보통 1~2일 걸려요.</p>
+        <Button
+          variant="secondary"
+          block
+          onClick={() => {
+            setEnrollment(null);
+            setConsentAccepted(false);
+            setStep('consent');
+          }}
+        >
+          새 생체 등록 시작
+        </Button>
         <Link to="/status" className={s.nextCard}>
           Digital DNA 관리 보기 <Icon name="chevRight" size={18} />
         </Link>

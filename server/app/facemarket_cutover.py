@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 from psycopg.types.json import Json
 
+from . import admin_guard
 from . import facemarket
 from . import repo
 from .services import biometric_purge
@@ -368,7 +369,7 @@ async def approve_initial_cutover_batch(app, *, batch_id: str, admin_user_id: st
     async with app.state.pool.connection() as conn:
         try:
             await repo.lock_facemarket_writer_boundary(conn)
-            if not await repo.is_admin(conn, admin_user_id):
+            if not await admin_guard.is_admin_user(conn, admin_user_id):
                 raise CutoverBlocked("admin_required")
             batch = await _load_batch(conn, batch_id)
             if batch["status"] != "planned":

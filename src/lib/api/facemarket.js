@@ -191,10 +191,59 @@ export async function adminFetchApplicationPhotoUrl(applicationId, kind = 'profi
   return URL.createObjectURL(blob);
 }
 
-// ── 관리자·모델: 최종 테스트컷 확인 게이트 ─────────────────────────────────
+// ── 관리자 콘솔: 집계·모델·권한 ─────────────────────────────────────────────
+// 전부 서버가 admin_guard.require_admin 을 강제한다(비관리자는 403).
 
-export function adminListModels() {
-  return http('/v1/facemarket/admin/models');
+export function adminOverview(days = 30) {
+  return http(`/v1/facemarket/admin/overview?days=${encodeURIComponent(days)}`);
+}
+
+export function adminListModels({ q, status, limit = 50 } = {}) {
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  if (status) params.set('status', status);
+  params.set('limit', String(limit));
+  return http(`/v1/facemarket/admin/models?${params.toString()}`);
+}
+
+export function adminModelDetail(modelId) {
+  return http(`/v1/facemarket/admin/models/${encodeURIComponent(modelId)}`);
+}
+
+export function adminSuspendModel(modelId, reason) {
+  return http(`/v1/facemarket/admin/models/${encodeURIComponent(modelId)}/suspend`, {
+    method: 'POST', body: { reason },
+  });
+}
+
+export function adminUnsuspendModel(modelId) {
+  return http(`/v1/facemarket/admin/models/${encodeURIComponent(modelId)}/unsuspend`, {
+    method: 'POST',
+  });
+}
+
+export function adminListStaff(q) {
+  const qs = q ? `?q=${encodeURIComponent(q)}` : '';
+  return http(`/v1/facemarket/admin/staff${qs}`);
+}
+
+export function adminSetRole(userId, role) {
+  return http(`/v1/facemarket/admin/staff/${encodeURIComponent(userId)}/role`, {
+    method: 'POST', body: { role },
+  });
+}
+
+export function adminListAudit({ limit = 20, targetType, targetId } = {}) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (targetType) params.set('targetType', targetType);
+  if (targetId) params.set('targetId', targetId);
+  return http(`/v1/facemarket/admin/audit?${params.toString()}`);
+}
+
+// ── 관리자: 모델 테스트컷(콘솔 모델 상세의 하위 리소스) ────────────────────
+
+export function adminModelTestCuts(modelId) {
+  return http(`/v1/facemarket/admin/models/${encodeURIComponent(modelId)}/test-cuts`);
 }
 
 export async function adminUploadModelTestCuts(modelId, files) {
@@ -224,6 +273,8 @@ export async function adminFetchModelTestCutUrl(imageUri) {
   if (!res.ok) throw new Error('테스트컷을 불러오지 못했어요.');
   return URL.createObjectURL(await res.blob());
 }
+
+// ── 모델 본인: 테스트컷 확인 게이트 ────────────────────────────────────────
 
 export function getMyModelTestCuts() {
   return http('/v1/facemarket/model/test-cuts');
@@ -307,6 +358,18 @@ export function listSettlements() {
   return http('/v1/facemarket/settlements');
 }
 
+// 전체 기록의 모델 몫 합계 — 최근 200건 목록과 별도로 집계한다.
+export function getSettlementSummary() {
+  return http('/v1/facemarket/settlements/summary');
+}
+
+// GET /v1/facemarket/models/{id}/usage — 모델 본인의 얼굴 사용 내역.
+// → [{ kind:'cut'|'publication', createdAt, imageHashPrefix, chainStatus }]
+// 셀러/프로젝트/원본 해시는 응답에 없다(모델에게 필요한 건 횟수·체인 기록 여부뿐).
+export function listModelUsage(modelId) {
+  return http(`/v1/facemarket/models/${encodeURIComponent(modelId)}/usage`);
+}
+
 // GET /v1/facemarket/verify/{id} — QR 공개 검증. **무인증**(심사위원·구매자가 스캔).
 // http() 는 세션이 없으면 요청 전에 throw 하므로(httpAdapter) 여기선 쓸 수 없다 — 생 fetch.
 // 응답은 서버 화이트리스트(PublicVerifyResult) 그대로:
@@ -328,6 +391,45 @@ export async function verifyLicensePublic(licenseId) {
     throw err;
   }
   return res.json();
+}
+
+// GET /v1/facemarket/publications/verify/{id} — 배포본 공개 검증. **무인증**.
+// C2PA 매니페스트의 verifyUrl 이 여기로 온다(파일 안에 박혀 배포된 뒤 회수 불가).
+// 응답은 서버 화이트리스트(PublicationVerifyResult) 그대로:
+//   { valid, status, publishedAt, imageHashPrefix, kind, allowedUse, forbiddenUse,
+//     licenseValidUntil, chain, model:{ nameMasked, age } }
+// 얼굴·CI·생년월일·user_id·model_id·seller_id·내부 R2 키·전체 image_sha256 은 서버가
+// 애초에 싣지 않는다. 해지가 즉시 반영돼야 하므로 캐시 금지(위 verifyLicensePublic 과 동일 패턴).
+export async function verifyPublicationPublic(publicationId) {
+  const res = await fetch(
+    `${BASE_URL}/v1/facemarket/publications/verify/${encodeURIComponent(publicationId)}`,
+    { headers: { Accept: 'application/json' }, cache: 'no-store' },
+  );
+  if (!res.ok) {
+    let message = res.status === 404
+      ? '찾을 수 없는 기록이에요.'
+      : '확인하지 못했어요. 잠시 후 다시 시도해 주세요.';
+    try { const p = await res.json(); if (p?.error?.message) message = p.error.message; } catch { /* 비 JSON */ }
+    const err = new Error(message);
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
+// POST /v1/facemarket/publications/presign — 배포본 업로드 URL. 행은 아직 안 만든다.
+export function presignPublication({ projectId, kind, byteSize }) {
+  return http('/v1/facemarket/publications/presign', {
+    method: 'POST', body: { projectId, kind, byteSize },
+  });
+}
+
+// POST /v1/facemarket/publications/sign — 해시·원장·C2PA 서명. 응답의 publicationId 가 정본.
+// projectId·kind 는 uploadToken 안에 서명돼 있다 — 여기서 다시 보내지 않는다.
+export function signPublication({ uploadToken }) {
+  return http('/v1/facemarket/publications/sign', {
+    method: 'POST', body: { uploadToken },
+  });
 }
 
 // 게이트 얼굴 이미지 → objectURL. <img> 는 Bearer 를 못 보내므로 fetch+blob 로 인증해 받는다.

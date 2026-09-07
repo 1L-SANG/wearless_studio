@@ -15,7 +15,7 @@ from fastapi.responses import Response
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import Field
 
-from . import facemarket_notify, repo
+from . import admin_guard, facemarket_notify, repo
 from .auth import require_user
 from .db import get_conn
 from .models import CamelModel
@@ -116,9 +116,9 @@ def _r2_public(request: Request):
     return client
 
 
-async def _require_admin(conn, user_id: str) -> None:
-    if not await repo.is_admin(conn, user_id):
-        raise _err("forbidden", "관리자만 가능해요.", status=403)
+#: 콘솔(facemarket_admin.py)과 같은 가드를 쓴다 — 403 응답 형태와 감사 기록 규칙이
+#: 갈리면 운영자가 "왜 여기만 다르지"를 겪는다.
+_require_admin = admin_guard.require_admin
 
 
 def _cut_view(row: dict, *, model_side: bool = False) -> dict:
@@ -216,8 +216,18 @@ async def _load_owned_cut(conn, cut_id: str, user_id: str, *, for_update: bool =
         return await cur.fetchone()
 
 
-@router.get("/admin/models", response_model=list[AdminModelCard])
-async def admin_list_models(request: Request, user_id: str = Depends(require_user)):
+@router.get(
+    "/admin/models/{model_id}/test-cuts",
+    response_model=AdminModelCard,
+    summary="모델 1건의 테스트컷 상태(콘솔 모델 상세에서 호출)",
+)
+async def admin_model_test_cuts(
+    model_id: str, request: Request, user_id: str = Depends(require_user)
+):
+    """콘솔의 `GET /admin/models` 목록·`/{model_id}` 상세와 경로가 겹치지 않게 하위
+    리소스로 둔다. 목록에 테스트컷 컬럼을 얹지 않는 이유는 목록이 200행까지 오는데
+    컷 이미지 메타를 전부 조인하면 목록 응답이 무거워지기 때문이다."""
+    mid = _canonical_id(model_id)
     async with get_conn(request) as conn:
         await _require_admin(conn, user_id)
         async with conn.cursor() as cur:
@@ -244,19 +254,19 @@ async def admin_list_models(request: Request, user_id: str = Depends(require_use
                      from fm_models m
                      left join fm_biometric_enrollments e on e.id = m.current_enrollment_id
                      left join fm_model_test_cuts c on c.model_id = m.id
-                    group by m.id, e.status
-                    order by m.created_at desc limit 200"""
+                    where m.id = %s
+                    group by m.id, e.status""",
+                (mid,),
             )
-            rows = await cur.fetchall()
-    result = []
-    for row in rows:
-        data = dict(row)
-        data["test_cuts"] = [
-            _cut_view({**cut, "model_id": row["id"]})
-            for cut in (row.get("test_cuts") or [])
-        ]
-        result.append(data)
-    return result
+            row = await cur.fetchone()
+    if row is None:
+        raise _err("model_not_found", "모델을 찾을 수 없어요.", status=404)
+    data = dict(row)
+    data["test_cuts"] = [
+        _cut_view({**cut, "model_id": row["id"]})
+        for cut in (row.get("test_cuts") or [])
+    ]
+    return data
 
 
 @router.post(
