@@ -2419,6 +2419,19 @@ def test_public_verify_unknown_and_malformed_404(fm):
     assert client.get("/v1/facemarket/verify/not-a-uuid").status_code == 404
 
 
+def test_public_verify_404_still_carries_no_store(fm):
+    """fix round 1 — raise _err(...)로 가면 main.py 의 전역 HTTPException 핸들러가
+    exc.headers 를 안 읽고 새 JSONResponse 를 만들어 헤더가 통째로 사라진다(성공 경로만
+    no-store 가 붙던 회귀). 캐시된 404 가 뒤이은 진짜 200 을 가리는 사고를 막으려면
+    두 404 경로 모두 무조건 no-store 여야 한다."""
+    client, _, _ = fm
+    unknown = client.get("/v1/facemarket/verify/00000000-0000-0000-0000-000000000000")
+    malformed = client.get("/v1/facemarket/verify/not-a-uuid")
+    assert unknown.status_code == malformed.status_code == 404
+    assert unknown.headers["cache-control"] == "no-store"
+    assert malformed.headers["cache-control"] == "no-store"
+
+
 def test_storage_unavailable_503(keypair, monkeypatch, make_token):
     """multipart 생성은 저장소 확인 전에 거절되어 R2 폴백을 타지 않는다."""
     _priv, public_key = keypair

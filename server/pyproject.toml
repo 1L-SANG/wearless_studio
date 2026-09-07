@@ -17,6 +17,8 @@ dependencies = [
     # 실존 모델 얼굴 대조 QC — SFace(임베딩)+YuNet(검출), Apache-2.0. headless=libGL 불필요.
     "opencv-contrib-python-headless>=4.9,<5",
     "numpy>=1.26",
+    # C2PA Content Credential 서명(층②). manylinux_2_28 휠 제공 → Rust 툴체인 불필요.
+    "c2pa-python>=0.37.8",
 ]
 
 [project.optional-dependencies]

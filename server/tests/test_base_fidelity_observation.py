@@ -388,16 +388,49 @@ def test_idempotency_key_pins_cut_and_qc_version():
 
 
 def test_kind_is_declared_in_the_db_constraint_and_excluded_from_the_active_index():
+    """migration 선택은 이름을 **언급**하는 파일이 아니라 실제로 **재정의**하는 파일이어야
+    한다. 부분문자열 매칭으로 고르면, 나중에 온 다른 작업이 주석에서 이름만 스쳐도(예:
+    fm_output_records 마이그레이션이 "jobs_active_unique_idx 를 안 쓴다"고 설명하는 주석
+    한 줄) 사전순 최신 파일로 뽑혀 이 테스트가 엉뚱한 파일을 검사하고 조용히 깨진다
+    (2026-09-04 실측 — 원인은 코드가 아니라 선택 로직이었다)."""
     import re
+
     root = SERVER.parent / "supabase/migrations"
-    files = sorted(p for p in root.glob("*.sql") if "jobs_kind_check" in p.read_text("utf-8"))
-    body = files[-1].read_text(encoding="utf-8")
+
+    def _strip_comments(text: str) -> str:
+        # 주석 안의 이름 언급은 재정의가 아니다 — 매칭 전에 걷어낸다.
+        text = re.sub(r"--[^\n]*", " ", text)
+        return re.sub(r"/\*.*?\*/", " ", text, flags=re.DOTALL)
+
+    def _select_latest(pattern: str, label: str):
+        rx = re.compile(pattern, re.IGNORECASE)
+        matches = sorted(
+            p for p in root.glob("*.sql")
+            if rx.search(_strip_comments(p.read_text(encoding="utf-8")))
+        )
+        assert matches, f"no migration actually {label} — selector regex found nothing"
+        return matches[-1]
+
+    kind_check_file = _select_latest(
+        r"\badd\s+constraint\s+jobs_kind_check\b",
+        "adds constraint jobs_kind_check",
+    )
+    body = kind_check_file.read_text(encoding="utf-8")
     kinds = set(re.findall(r"'([a-z_]+)'", re.search(
         r"kind in \((.*?)\)", body, re.S).group(1)))
-    assert "base_fidelity_observe" in kinds
+    assert "base_fidelity_observe" in kinds, (
+        f"latest jobs_kind_check definition ({kind_check_file.name}) "
+        "does not declare 'base_fidelity_observe'"
+    )
     # 활성 유니크 인덱스에서 제외 — 연속 거부 표본이 조용히 버려지면 안 된다.
-    idx = sorted(p for p in root.glob("*.sql") if "jobs_active_unique_idx" in p.read_text("utf-8"))
-    assert "base_fidelity_observe" in idx[-1].read_text(encoding="utf-8")
+    idx_file = _select_latest(
+        r"\bcreate\s+unique\s+index\s+jobs_active_unique_idx\b",
+        "creates unique index jobs_active_unique_idx",
+    )
+    assert "base_fidelity_observe" in idx_file.read_text(encoding="utf-8"), (
+        f"latest jobs_active_unique_idx definition ({idx_file.name}) "
+        "does not exclude 'base_fidelity_observe'"
+    )
 
 
 def test_worker_kind_is_registered():

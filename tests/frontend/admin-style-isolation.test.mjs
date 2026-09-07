@@ -1,0 +1,105 @@
+/* Tailwind 는 admin 진입 번들에만 들어간다.
+
+   셀러·facemarket 문서에 Tailwind preflight 가 실리면 전역 리셋이 기존 화면을 통째로
+   바꾼다. 반대로 admin 이 스튜디오 CSS 를 JS 로 import 하면 그 규칙들이 레이어 밖(unlayered)
+   에 놓여, 레이어 안에 있는 Tailwind 유틸리티를 **명시도와 무관하게** 이긴다.
+   그래서 admin 은 CSS 한 파일에서 레이어 순서를 직접 정한다. */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+const root = new URL('../../', import.meta.url);
+const read = (name) => readFileSync(fileURLToPath(new URL(name, root)), 'utf8');
+
+test('admin 부트스트랩은 스튜디오 CSS 를 JS 로 import 하지 않는다', () => {
+  const source = read('src/apps/admin/mountAdminApp.jsx');
+  assert.ok(!source.includes("@/styles/app.css"), 'app.css 를 JS 로 물면 레이어 밖에 놓인다');
+  assert.ok(source.includes("./admin.css"), 'admin.css 를 물어야 한다');
+});
+
+test('admin.css 는 preflight → 스튜디오 → 유틸리티 순으로 레이어를 정한다', () => {
+  const css = read('src/apps/admin/admin.css');
+  const order = css.match(/@layer\s+([^;]+);/);
+  assert.ok(order, '@layer 선언이 없다');
+  const layers = order[1].split(',').map((s) => s.trim());
+  assert.deepEqual(layers, ['theme', 'base', 'studio', 'components', 'utilities']);
+});
+
+test('스튜디오 진입은 Tailwind 를 물지 않는다', () => {
+  for (const entry of ['src/apps/mountApp.jsx', 'src/apps/seller/App.jsx', 'src/apps/facemarket/App.jsx']) {
+    const source = read(entry);
+    assert.ok(!source.includes('admin.css'), `${entry} 가 admin.css 를 문다`);
+    assert.ok(!source.includes('tailwindcss'), `${entry} 가 tailwind 를 문다`);
+  }
+});
+
+test('mountApp 은 스튜디오 스타일을 계속 물고 프로바이더는 공유한다', () => {
+  const source = read('src/apps/mountApp.jsx');
+  assert.ok(source.includes("@/styles/app.css"));
+  assert.ok(source.includes("AppProviders.jsx"));
+});
+
+// 위의 '@layer 선언 순서' 테스트는 딱 그 한 줄(`@layer theme, base, ...;`)만 본다 —
+// admin.css 본문에 레이어 밖(unlayered) 규칙이 실제로 없는지는 아무도 안 본다.
+// 그런데 이 파일 맨 위 주석이 스스로 경고하는 게 바로 그거다: 레이어 밖 규칙은
+// 명시도와 무관하게 레이어 안 규칙을 이긴다. @import 줄 아래에 벌거벗은 셀렉터
+// 블록 하나만 추가돼도(예: `.foo { color: red }`) 설계 전체가 조용히 무력화되는데
+// 기존 네 테스트는 전부 그대로 통과한다. 그 구멍을 여기서 막는다.
+test('admin.css 는 최상위 규칙을 전부 @layer 블록이나 @import ... layer(...) 안에만 둔다', () => {
+  const css = read('src/apps/admin/admin.css');
+  // 블록 주석 제거 — 주석 안의 `{`/`}` 가 깊이 계산을 흐트러뜨리지 않게.
+  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '');
+
+  // 실제로 빌드해서(dist/assets/admin-*.css) 확인한 결과: Tailwind v4 가 컴파일 타임에
+  // 소비해 theme 레이어로 접어 넣어 주는 건 `@theme inline { … }` 뿐이다 — Tailwind 문법상
+  // @layer 로 감쌀 수 없는 자체 at-rule이라 이것만 예외로 둔다. 순정 `:root { --… }` 는
+  // **접히지 않는다** — 감싸지 않으면 utilities 레이어가 끝난 뒤에 truly unlayered 로
+  // 남는 걸 grep 으로 직접 확인했다(2026-09-04, task-8-11-13-report.md 참조). 그래서
+  // admin.css 는 이제 `:root` 를 `@layer theme { :root { … } }` 로 명시로 감싼다 — 여기서도
+  // `:root` 를 더는 예외로 두지 않는다. 최상위에 나타나는 모든 규칙은 @layer 블록이거나
+  // @import 문이거나, 아래 예외 하나뿐이어야 한다.
+  const ALLOWED_UNLAYERED_HEADS = ['@theme inline'];
+
+  let depth = 0;
+  let head = '';
+  const violations = [];
+
+  for (const ch of stripped) {
+    if (ch === '{') {
+      if (depth === 0) {
+        const trimmedHead = head.trim();
+        // '@import' 는 여기 안 넣는다 — @import 문은 항상 ';' 로 끝나고 '{' 를 절대 안 연다.
+        // 그래서 넣어 놔도 이 분기가 실행될 일이 없다(죽은 코드) — 아래 ';' 분기에서
+        // 따로, 진짜로 검사한다.
+        const isAllowed = trimmedHead.startsWith('@layer')
+          || ALLOWED_UNLAYERED_HEADS.some((h) => trimmedHead === h || trimmedHead.startsWith(`${h} `));
+        if (!isAllowed) violations.push(trimmedHead || '(빈 셀렉터)');
+      }
+      depth += 1;
+      head = '';
+    } else if (ch === '}') {
+      depth = Math.max(0, depth - 1);
+      head = '';
+    } else if (ch === ';' && depth === 0) {
+      // ';' 로 끝나는 최상위 문장 — admin.css 에 실제로 나타나는 세 종류만 허용한다:
+      //   1) '@layer theme, base, ...;'  레이어 순서 선언 — 자기 자신은 아무것도 안 지운다.
+      //   2) '@import "..." layer(NAME);'  반드시 layer(...) 를 달아야 한다. 이게 없으면
+      //      그 스타일시트 전체가 레이어 밖으로 들어온다 — 바로 이 파일이 막으려는 사고다.
+      //   3) '@source "...";'  Tailwind 클래스 스캔 지시자, CSS 를 한 줄도 안 낸다.
+      // 예전엔 여기서 무슨 문장이든 검사 없이 head 만 비웠다 — @import 뒤 layer(...) 를
+      // 지워도(진짜 unlayered 스타일시트가 돼도) 통과했다. 지금은 세 형태 중 하나가
+      // 아니면 실패한다.
+      const trimmedHead = head.trim();
+      const isAllowedStatement = trimmedHead.startsWith('@layer ')
+        || (trimmedHead.startsWith('@import ') && /\blayer\([^)]+\)\s*$/.test(trimmedHead))
+        || trimmedHead.startsWith('@source ');
+      if (!isAllowedStatement) violations.push(trimmedHead || '(빈 문장)');
+      head = '';
+    } else {
+      head += ch;
+    }
+  }
+
+  assert.deepEqual(violations, [], `레이어 밖(unlayered) 규칙 발견 — 명시도와 무관하게 레이어 안 유틸리티를 이긴다: ${violations.join(', ')}`);
+});
