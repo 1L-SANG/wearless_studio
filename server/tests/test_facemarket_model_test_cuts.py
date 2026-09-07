@@ -148,6 +148,11 @@ class FakeCursor:
                 "ready_to_send": (
                     self.store["enrollment"]["status"] == "passed"
                     and self.store["license_active"]
+                    and self.store["license"]["license_valid_until"] > NOW
+                ),
+                "sendable": (
+                    model["status"] in {"pending", "awaiting_confirm", "reverification_required"}
+                    or (model["status"] == "verified" and not model.get("fullbody_image_url"))
                 ),
                 "test_cuts": [
                     _cut_view(c) for c in sorted(cuts, key=lambda item: item["sort"])
@@ -167,7 +172,11 @@ class FakeCursor:
                     "redo_count": model["redo_count"],
                     "enrollment_status": self.store["enrollment"]["status"],
                     "contact_email": self.store["application"]["contact_email"],
-                    "has_active_license": self.store["license_active"],
+                    "fullbody_image_url": model.get("fullbody_image_url"),
+                    "has_active_license": (
+                        self.store["license_active"]
+                        and self.store["license"]["license_valid_until"] > NOW
+                    ),
                 }
         elif (
             query.startswith("select id::text as id, status, redo_count")
@@ -235,6 +244,14 @@ class FakeCursor:
         elif query.startswith("select exists") and "fm_model_test_cuts" in query:
             model_id = params[0]
             self.one = {"has_cuts": any(c["model_id"] == model_id for c in cuts)}
+        elif query.startswith("select exists") and "fm_licenses" in query:
+            self.one = {
+                "license_ok": (
+                    model["id"] == params[0]
+                    and self.store["license_active"]
+                    and self.store["license"]["license_valid_until"] > NOW
+                )
+            }
         elif query.startswith("update fm_models set status = 'awaiting_confirm'"):
             model["status"] = "awaiting_confirm"
             model["confirm_requested_at"] = NOW
@@ -608,6 +625,92 @@ def test_admin_cannot_send_before_enrollment_and_vc_are_complete(
     assert store["model"]["status"] == "pending"
 
 
+def test_admin_can_resend_to_legacy_verified_model_without_fullbody(test_cut_api):
+    """옛 1장 확정 모델(verified, 전신샷 없음)은 공개 목록에 없으므로 2+2 로 다시 보낼 수 있다."""
+    client, store, face_r2, _public, make_token = test_cut_api
+    _seed_complete_cuts(store, face_r2)
+    store["model"].update(
+        status="verified",
+        confirmed_at=NOW,
+        cover_image_url=f"facemarket/catalog/models/{MODEL_ID}/covers/old.webp",
+        fullbody_image_url=None,
+    )
+    card = client.get(
+        f"/v1/facemarket/admin/models/{MODEL_ID}/test-cuts",
+        headers=_auth(make_token, "admin-1"),
+    )
+    assert card.json()["sendable"] is True
+
+    response = client.post(
+        f"/v1/facemarket/admin/models/{MODEL_ID}/send-test-cuts",
+        headers=_auth(make_token, "admin-1"),
+    )
+    assert response.status_code == 200, response.text
+    assert store["model"]["status"] == "awaiting_confirm"
+
+
+def test_admin_cannot_resend_to_a_model_already_published_with_two_cuts(test_cut_api):
+    client, store, face_r2, _public, make_token = test_cut_api
+    _seed_complete_cuts(store, face_r2)
+    store["model"].update(
+        status="verified",
+        confirmed_at=NOW,
+        cover_image_url=f"facemarket/catalog/models/{MODEL_ID}/covers/a.webp",
+        fullbody_image_url=f"facemarket/catalog/models/{MODEL_ID}/covers/b.webp",
+    )
+    card = client.get(
+        f"/v1/facemarket/admin/models/{MODEL_ID}/test-cuts",
+        headers=_auth(make_token, "admin-1"),
+    )
+    assert card.json()["sendable"] is False
+
+    response = client.post(
+        f"/v1/facemarket/admin/models/{MODEL_ID}/send-test-cuts",
+        headers=_auth(make_token, "admin-1"),
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "model_not_sendable"
+    assert store["model"]["status"] == "verified"
+
+
+def test_admin_cannot_send_when_license_is_expired_even_if_status_is_active(test_cut_api):
+    client, store, face_r2, _public, make_token = test_cut_api
+    _seed_complete_cuts(store, face_r2)
+    store["license"]["license_valid_until"] = datetime(2026, 9, 6, tzinfo=timezone.utc)
+    card = client.get(
+        f"/v1/facemarket/admin/models/{MODEL_ID}/test-cuts",
+        headers=_auth(make_token, "admin-1"),
+    )
+    assert card.json()["readyToSend"] is False
+
+    response = client.post(
+        f"/v1/facemarket/admin/models/{MODEL_ID}/send-test-cuts",
+        headers=_auth(make_token, "admin-1"),
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "model_registration_incomplete"
+
+
+def test_model_confirm_rejects_when_license_is_no_longer_active(test_cut_api):
+    """전송 뒤 모델이 라이선스를 해지하면(ModelLicense 화면) 확정은 409 로 멈추고 공개 파일도 남기지 않는다."""
+    client, store, face_r2, public_r2, make_token = test_cut_api
+    _seed_complete_cuts(store, face_r2)
+    store["model"]["status"] = "awaiting_confirm"
+    store["license_active"] = False
+
+    response = client.post(
+        "/v1/facemarket/model/test-cuts/confirm",
+        json={"closeupCutId": CUT_ID, "fullbodyCutId": FULLBODY_CUT_ID},
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "license_inactive"
+    assert public_r2.objects == {}
+    assert store["model"]["status"] == "awaiting_confirm"
+    assert all(cut["approved"] is None for cut in store["cuts"])
+
+
 def test_admin_can_delete_an_unapproved_cut_and_private_object(test_cut_api):
     client, store, face_r2, _public, make_token = test_cut_api
     _seed_cut(store, face_r2)
@@ -654,13 +757,51 @@ def test_admin_delete_stops_before_delete_when_backup_read_fails(test_cut_api):
 
 
 def test_test_cut_ready_email_links_to_confirmation_page():
-    subject, html = facemarket_notify._email_content(
+    # send_application_email 은 (subject, html, text) 세 값을 풀어 쓴다 — 두 값만 돌려주면
+    # TypeError 가 나고 보내기 핸들러가 그 예외를 삼켜 메일이 조용히 안 나간다.
+    subject, html, text = facemarket_notify._email_content(
         "test_cuts_ready",
         public_base="https://facemarket.example",
         reject_reason=None,
     )
     assert "테스트컷" in subject
     assert 'href="https://facemarket.example/model/confirm"' in html
+    assert "https://facemarket.example/model/confirm" in text
+
+
+def test_test_cut_ready_email_is_actually_sent_when_resend_is_configured(monkeypatch):
+    posted = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"id": "msg-1"}
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def post(self, url, *, headers, json):
+            posted.update(url=url, payload=json)
+            return FakeResponse()
+
+    monkeypatch.setattr(facemarket_notify.httpx, "AsyncClient", FakeAsyncClient)
+    settings = make_settings(facemarket_enabled=True, fm_ci_pepper="pep", resend_api_key="re_test")
+    ok, message_id, error = asyncio.run(
+        facemarket_notify.send_application_email(
+            settings, to="model@example.com", email_type="test_cuts_ready"
+        )
+    )
+    assert (ok, message_id, error) == (True, "msg-1", None)
+    assert posted["payload"]["to"] == ["model@example.com"]
+    assert "/model/confirm" in posted["payload"]["text"]
 
 
 def test_model_confirmation_slack_uses_existing_webhook_pattern(monkeypatch):

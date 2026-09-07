@@ -62,6 +62,8 @@ class AdminModelCard(CamelModel):
     confirmed_at: datetime | None = None
     redo_count: int = 0
     ready_to_send: bool = False
+    #: 서버가 계산한 "지금 보내도 되는 상태". 화면은 이 값만 본다(_is_sendable 참고).
+    sendable: bool = False
     test_cuts: list[TestCutView] = Field(default_factory=list)
 
 
@@ -253,7 +255,7 @@ async def _load_admin_model(conn, model_id: str, *, for_update: bool = False) ->
     lock = " for update of m" if for_update else ""
     async with conn.cursor() as cur:
         await cur.execute(
-            """select m.id::text as id, m.status, m.redo_count,
+            """select m.id::text as id, m.status, m.redo_count, m.fullbody_image_url,
                       e.status as enrollment_status,
                       coalesce(u.email, a.contact_email) as contact_email,
                       exists (
@@ -262,6 +264,7 @@ async def _load_admin_model(conn, model_id: str, *, for_update: bool = False) ->
                            and l.enrollment_id = m.current_enrollment_id
                            and l.status = 'active'
                            and nullif(btrim(l.vc_id), '') is not null
+                           and l.license_valid_until > now()
                       ) as has_active_license
                  from fm_models m
                  left join fm_biometric_enrollments e on e.id = m.current_enrollment_id
@@ -363,7 +366,11 @@ async def admin_model_test_cuts(
                                and l.enrollment_id = m.current_enrollment_id
                                and l.status = 'active'
                                and nullif(btrim(l.vc_id), '') is not null
+                               and l.license_valid_until > now()
                           )) as ready_to_send,
+                          (m.status in ('pending', 'awaiting_confirm', 'reverification_required')
+                           or (m.status = 'verified' and m.fullbody_image_url is null))
+                            as sendable,
                           coalesce(
                             jsonb_agg(jsonb_build_object(
                               'id', c.id::text, 'mime', c.mime, 'sort', c.sort,
@@ -545,6 +552,26 @@ async def admin_delete_test_cut(
     return Response(status_code=204)
 
 
+SENDABLE_STATUSES = {"pending", "awaiting_confirm", "reverification_required"}
+
+
+def _is_sendable(model: dict) -> bool:
+    """검증 전 상태이거나, 전신샷 없이 확정된 옛(1장 선택) 모델이면 보낼 수 있다.
+
+    옛 모델은 전신샷이 없어 공개 목록(§3.3)에 없으므로 다시 awaiting_confirm 으로 돌려도
+    잃는 게 없다. 두 장으로 이미 공개된 모델은 막는다 — 재전송하면 status 가 바뀌어 셀러
+    카탈로그에서도 사라지기 때문(2026-09-07 Codex 검증 P1)."""
+    if model["status"] in SENDABLE_STATUSES:
+        return True
+    return model["status"] == "verified" and not model.get("fullbody_image_url")
+
+
+def _not_sendable_message(model: dict) -> str:
+    if model["status"] == "verified":
+        return "이미 공개된 모델이에요. 지금은 테스트컷을 다시 보낼 수 없어요."
+    return "테스트컷을 보낼 수 없는 모델 상태입니다."
+
+
 @router.post("/admin/models/{model_id}/send-test-cuts", response_model=SendTestCutsResult)
 async def admin_send_test_cuts(
     request: Request,
@@ -557,8 +584,8 @@ async def admin_send_test_cuts(
         model = await _load_admin_model(conn, model_id, for_update=True)
         if model is None:
             raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
-        if model["status"] not in {"pending", "awaiting_confirm", "reverification_required"}:
-            raise _err("model_not_sendable", "테스트컷을 보낼 수 없는 모델 상태입니다.", status=409)
+        if not _is_sendable(model):
+            raise _err("model_not_sendable", _not_sendable_message(model), status=409)
         if model.get("enrollment_status") != "passed" or model.get("has_active_license") is not True:
             raise _err(
                 "model_registration_incomplete",
@@ -778,6 +805,7 @@ async def confirm_test_cut(
                 conn, fullbody_cut_id, user_id, for_update=True
             )
             _validate_confirmation_cuts(locked_closeup, locked_fullbody)
+            await _ensure_active_license(conn, locked_closeup["model_id"])
             async with conn.cursor() as cur:
                 await cur.execute(
                     """update fm_model_test_cuts
@@ -830,6 +858,34 @@ async def confirm_test_cut(
         "closeup_image_url": public_r2.public_url(closeup_key),
         "fullbody_image_url": public_r2.public_url(fullbody_key),
     }
+
+
+async def _ensure_active_license(conn, model_id: str) -> None:
+    """확정 순간에 현재 enrollment 의 라이선스가 살아 있어야 한다.
+
+    전송 뒤 모델이 라이선스를 해지했거나(ModelLicense 화면) 만료됐으면 verified 로 바꿔도
+    공개 목록 조건(§3.3)을 못 넘어 "모델 리스트에 올라갔어요"가 거짓이 된다. 잠금 안에서
+    확인해 상태 전이와 공개 조건을 한 묶음으로 만든다(2026-09-07 Codex 검증 P1)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select exists (
+                     select 1 from fm_licenses l
+                       join fm_models m on m.id = l.model_id
+                      where l.model_id = %s
+                        and l.enrollment_id = m.current_enrollment_id
+                        and l.status = 'active'
+                        and nullif(btrim(l.vc_id), '') is not null
+                        and l.license_valid_until > now()
+                   ) as license_ok""",
+            (model_id,),
+        )
+        row = await cur.fetchone()
+    if not row or not row.get("license_ok"):
+        raise _err(
+            "license_inactive",
+            "라이선스가 활성 상태가 아니에요. 라이선스를 다시 발급한 뒤 확정해 주세요.",
+            status=409,
+        )
 
 
 def _validate_confirmation_cuts(closeup_cut: dict | None, fullbody_cut: dict | None) -> None:

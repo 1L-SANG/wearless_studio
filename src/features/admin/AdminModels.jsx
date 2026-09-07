@@ -148,9 +148,14 @@ function TestCuts({ modelId, onChanged }) {
   };
   const sent = state.status === 'awaiting_confirm';
   const confirmed = state.status === 'verified';
-  const sendDisabledReason = !state.cutsComplete
-    ? '확대샷 2장과 전신샷 2장이 모두 있어야 보낼 수 있어요.'
-    : (!state.readyToSend ? '생체등록과 라이선스 발급이 끝나야 보낼 수 있어요.' : undefined);
+  // sendable 은 서버가 계산한다(상태 + 전신샷 없이 확정된 옛 모델 예외). 화면에서 상태값을
+  // 다시 해석하지 않는다 — 두 장으로 이미 공개된 모델에 보내기를 열어 두면 409 만 받는다.
+  const sendable = state.sendable !== false;
+  const sendDisabledReason = !sendable
+    ? '이미 공개된 모델이에요. 지금은 다시 보낼 수 없어요.'
+    : (!state.cutsComplete
+      ? '확대샷 2장과 전신샷 2장이 모두 있어야 보낼 수 있어요.'
+      : (!state.readyToSend ? '생체등록과 라이선스 발급이 끝나야 보낼 수 있어요.' : undefined));
 
   return (
     <section className="border-t border-border pt-4">
@@ -215,7 +220,7 @@ function TestCuts({ modelId, onChanged }) {
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Button
           size="sm"
-          disabled={busy || !state.cutsComplete || !state.readyToSend}
+          disabled={busy || !sendable || !state.cutsComplete || !state.readyToSend}
           title={sendDisabledReason}
           onClick={() => act(
             () => adminSendModelTestCuts(modelId),
