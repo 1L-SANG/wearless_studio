@@ -1,5 +1,31 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "redirects": [
+    {
+      "source": "/terms",
+      "has": [{ "type": "host", "value": "ai.wearless.kr" }],
+      "destination": "https://wearless.kr/terms",
+      "permanent": true
+    },
+    {
+      "source": "/privacy",
+      "has": [{ "type": "host", "value": "ai.wearless.kr" }],
+      "destination": "https://wearless.kr/privacy",
+      "permanent": true
+    },
+    {
+      "source": "/refund",
+      "has": [{ "type": "host", "value": "ai.wearless.kr" }],
+      "destination": "https://wearless.kr/refund",
+      "permanent": true
+    },
+    {
+      "source": "/model-license-terms",
+      "has": [{ "type": "host", "value": "ai.wearless.kr" }],
+      "destination": "https://wearless.kr/model-license-terms",
+      "permanent": true
+    }
+  ],
   "rewrites": [
     {
       "source": "/(.*)",
