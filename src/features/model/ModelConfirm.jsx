@@ -2,11 +2,17 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, ErrorState, Icon, useToast } from '@/components/ui.jsx';
 import {
-  confirmMyModelTestCut,
+  confirmMyModelTestCuts,
   fetchMyModelTestCutUrl,
   getMyModelTestCuts,
   requestMyModelTestCutRedo,
 } from '@/lib/api/facemarket.js';
+import {
+  defaultTestCutSelection,
+  profilePhysiqueLine,
+  splitTestCutsByKind,
+  validityLabel,
+} from './modelProfilePreview.js';
 import s from './ModelConfirm.module.css';
 
 function PrivateCutImage({ cut, className, alt, eager = false }) {
@@ -35,11 +41,118 @@ function PrivateCutImage({ cut, className, alt, eager = false }) {
       className={className}
       src={url}
       alt={alt}
-      width={eager ? 720 : 180}
-      height={eager ? 900 : 225}
+      width={480}
+      height={640}
       loading={eager ? 'eager' : 'lazy'}
       fetchPriority={eager ? 'high' : undefined}
     />
+  );
+}
+
+function CutChoiceGroup({ kind, label, cuts, selectedId, onSelect }) {
+  const titleId = `${kind}-cut-title`;
+  return (
+    <section className={s.cutGroup} aria-labelledby={titleId}>
+      <h2 id={titleId}>{label} · 1장 선택</h2>
+      {cuts.length > 0 ? (
+        <div className={s.options}>
+          {cuts.map((cut, index) => (
+            <label className={`${s.option}${selectedId === cut.id ? ` ${s.selected}` : ''}`} key={cut.id}>
+              <input
+                type="radio"
+                name={`${kind}-cut`}
+                value={cut.id}
+                checked={selectedId === cut.id}
+                onChange={() => onSelect(cut.id)}
+              />
+              <PrivateCutImage cut={cut} className={s.thumb} alt={`${label} 후보 ${index + 1}`} />
+              <span>{label} {index + 1}</span>
+            </label>
+          ))}
+        </div>
+      ) : (
+        <p className={s.missing} role="status">{label}이 아직 없어요. 관리자에게 알려 주세요.</p>
+      )}
+    </section>
+  );
+}
+
+function PreviewImage({ cut, className, alt, placeholder, eager = false }) {
+  if (!cut) return <div className={`${className} ${s.imagePlaceholder}`}>{placeholder}</div>;
+  return <PrivateCutImage cut={cut} className={className} alt={alt} eager={eager} />;
+}
+
+function PublicProfilePreview({ profile, closeupCut, fullbodyCut }) {
+  const displayName = profile?.displayName || '활동명';
+  const physique = profilePhysiqueLine(profile);
+  const allowedUse = profile?.license?.allowedUse?.length
+    ? profile.license.allowedUse.join(' · ')
+    : '—';
+  const unitPrice = Number.isFinite(profile?.license?.unitPrice)
+    ? `${profile.license.unitPrice.toLocaleString('ko-KR')}원`
+    : '—';
+
+  return (
+    <aside className={s.previewPanel} aria-labelledby="public-profile-preview-title">
+      <h2 className={s.previewTitle} id="public-profile-preview-title">모델 리스트에 이렇게 보여요</h2>
+
+      <section className={s.listCard} aria-label="모델 리스트 카드 미리보기">
+        <PreviewImage
+          cut={closeupCut}
+          className={s.listImage}
+          alt={`${displayName} 확대샷`}
+          placeholder="확대샷 준비 중"
+          eager
+        />
+        <div className={s.listMeta}>
+          <strong>{displayName}</strong>
+          <span>{physique}</span>
+        </div>
+      </section>
+
+      <section className={s.detailCard} aria-label="모델 상세 미리보기">
+        <div className={s.detailImages}>
+          <figure className={s.detailFigure}>
+            <PreviewImage
+              cut={closeupCut}
+              className={s.detailImage}
+              alt={`${displayName} 확대샷 상세 미리보기`}
+              placeholder="확대샷 준비 중"
+            />
+            <figcaption>확대샷</figcaption>
+          </figure>
+          <figure className={s.detailFigure}>
+            <PreviewImage
+              cut={fullbodyCut}
+              className={s.detailImage}
+              alt={`${displayName} 전신샷 상세 미리보기`}
+              placeholder="전신샷 준비 중"
+            />
+            <figcaption>전신샷</figcaption>
+          </figure>
+        </div>
+
+        <h3 className={s.detailName}>{displayName}</h3>
+        <div className={s.detailCols}>
+          <section className={s.detailCol}>
+            <h4>신체 사이즈</h4>
+            <dl className={s.specList}>
+              <div className={s.specRow}><dt>키·체형</dt><dd>{physique}</dd></div>
+            </dl>
+          </section>
+          <section className={s.detailCol}>
+            <h4>라이선스 조건</h4>
+            <dl className={s.specList}>
+              <div className={s.specRow}><dt>허용 품목</dt><dd>{allowedUse}</dd></div>
+              <div className={s.specRow}><dt>건당 단가</dt><dd>{unitPrice}</dd></div>
+              <div className={s.specRow}>
+                <dt>유효기간</dt><dd>{validityLabel(profile?.license?.validDays)}</dd>
+              </div>
+            </dl>
+          </section>
+        </div>
+      </section>
+    </aside>
   );
 }
 
@@ -48,7 +161,7 @@ export function ModelConfirm() {
   const { push } = useToast();
   const [phase, setPhase] = useState('loading');
   const [data, setData] = useState(null);
-  const [selectedId, setSelectedId] = useState(null);
+  const [selection, setSelection] = useState({ closeupCutId: null, fullbodyCutId: null });
   const [agreed, setAgreed] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -56,10 +169,19 @@ export function ModelConfirm() {
     setPhase('loading');
     try {
       const result = await getMyModelTestCuts();
+      const cuts = result.cuts || [];
+      const grouped = splitTestCutsByKind(cuts);
+      const defaults = defaultTestCutSelection(cuts);
       setData(result);
-      setSelectedId((current) => (
-        result.cuts?.some((cut) => cut.id === current) ? current : result.cuts?.[0]?.id || null
-      ));
+      setSelection((current) => ({
+        closeupCutId: grouped.closeup.some((cut) => cut.id === current.closeupCutId)
+          ? current.closeupCutId
+          : defaults.closeupCutId,
+        fullbodyCutId: grouped.fullbody.some((cut) => cut.id === current.fullbodyCutId)
+          ? current.fullbodyCutId
+          : defaults.fullbodyCutId,
+      }));
+      setAgreed(false);
       setPhase('ready');
     } catch (error) {
       push?.(error.message, { icon: 'alertCircle' });
@@ -69,16 +191,17 @@ export function ModelConfirm() {
 
   useEffect(() => { load(); }, [load]);
 
+  const { closeupCutId, fullbodyCutId } = selection;
   const confirm = useCallback(async () => {
-    if (!selectedId || !agreed) return;
+    if (!closeupCutId || !fullbodyCutId || !agreed) return;
     setBusy(true);
     try {
-      await confirmMyModelTestCut(selectedId);
-      push?.('프로필 컷을 확정했어요. 이제 모델 활동이 시작돼요.', { icon: 'check' });
+      await confirmMyModelTestCuts({ closeupCutId, fullbodyCutId });
+      push?.('프로필을 확정했어요. 모델 리스트에 올라갔어요.', { icon: 'check' });
       navigate('/status', { replace: true });
     } catch (error) { push?.(error.message, { icon: 'alertCircle' }); }
     finally { setBusy(false); }
-  }, [agreed, navigate, push, selectedId]);
+  }, [agreed, closeupCutId, fullbodyCutId, navigate, push]);
 
   const redo = useCallback(async () => {
     if (data?.redoCount >= 1 || busy) return;
@@ -92,71 +215,52 @@ export function ModelConfirm() {
     finally { setBusy(false); }
   }, [busy, data?.redoCount, navigate, push]);
 
-  const selectedCut = data?.cuts?.find((cut) => cut.id === selectedId) || null;
-  const canConfirm = data?.status === 'awaiting_confirm' && selectedId && agreed && !busy;
+  const grouped = splitTestCutsByKind(data?.cuts || []);
+  const closeupCut = grouped.closeup.find((cut) => cut.id === closeupCutId) || null;
+  const fullbodyCut = grouped.fullbody.find((cut) => cut.id === fullbodyCutId) || null;
+  const canConfirm = data?.status === 'awaiting_confirm'
+    && closeupCutId && fullbodyCutId && agreed && !busy;
   const redoUsed = (data?.redoCount || 0) >= 1;
 
   if (phase === 'loading') return <div className={s.page}><p className={s.loading}>테스트컷을 불러오는 중이에요…</p></div>;
   if (phase === 'error') return <div className={s.page}><ErrorState desc="테스트컷을 불러오지 못했어요." onRetry={load} /></div>;
-  if (!data?.cuts?.length) {
-    return (
-      <div className={s.page}>
-        <ErrorState title="도착한 테스트컷이 없어요" desc="관리자가 컷을 보내면 이 화면에서 확인할 수 있어요." />
-      </div>
-    );
-  }
 
   return (
     <main className={s.page}>
       <header className={s.head}>
         <span className={s.eyebrow}>공개 전 마지막 확인</span>
-        <h1>프로필로 쓸 테스트컷을 골라 주세요</h1>
-        <p>공개 전 마지막 확인이에요. 확정하기 전에는 아무것도 공개되지 않고 어떤 쇼핑몰도 내 얼굴을 쓸 수 없어요.</p>
+        <h1>프로필에 걸 컷을 골라 주세요</h1>
+        <p>확대샷 1장, 전신샷 1장을 고르면 오른쪽처럼 모델 리스트에 올라가요. 확정 전에는 아무것도 공개되지 않아요.</p>
       </header>
 
       <div className={s.layout}>
-        <section className={s.preview} aria-label="선택한 테스트컷 큰 미리보기">
-          <PrivateCutImage
-            cut={selectedCut}
-            className={s.previewImage}
-            alt={`선택한 테스트컷 ${selectedCut?.sort + 1}`}
-            eager
+        <div className={s.selection}>
+          <CutChoiceGroup
+            kind="closeup"
+            label="확대샷"
+            cuts={grouped.closeup}
+            selectedId={closeupCutId}
+            onSelect={(cutId) => setSelection((current) => ({ ...current, closeupCutId: cutId }))}
           />
-          <span className={s.previewLabel}>프로필 후보 · 컷 {selectedCut?.sort + 1}</span>
-        </section>
+          <CutChoiceGroup
+            kind="fullbody"
+            label="전신샷"
+            cuts={grouped.fullbody}
+            selectedId={fullbodyCutId}
+            onSelect={(cutId) => setSelection((current) => ({ ...current, fullbodyCutId: cutId }))}
+          />
 
-        <section className={s.controls} aria-labelledby="test-cut-options-title">
-          <div>
-            <p className={s.step}>1 · 컷 선택</p>
-            <h2 id="test-cut-options-title">공개할 모습 한 장</h2>
-          </div>
-          <div className={s.options}>
-            {data.cuts.map((cut) => (
-              <label className={`${s.option}${selectedId === cut.id ? ` ${s.selected}` : ''}`} key={cut.id}>
-                <input
-                  type="radio"
-                  name="approved-cut"
-                  value={cut.id}
-                  checked={selectedId === cut.id}
-                  onChange={() => setSelectedId(cut.id)}
-                />
-                <PrivateCutImage cut={cut} className={s.thumb} alt={`테스트컷 ${cut.sort + 1}`} />
-                <span>컷 {cut.sort + 1}</span>
-              </label>
-            ))}
-          </div>
-
-          <div className={s.agreement}>
-            <p className={s.step}>2 · 공개 동의</p>
+          <section className={s.agreement} aria-labelledby="profile-publication-consent-title">
+            <h2 id="profile-publication-consent-title">공개 동의</h2>
             <label className={s.checkLabel}>
               <input type="checkbox" checked={agreed} onChange={(event) => setAgreed(event.target.checked)} />
-              <span>테스트 컷과 프로필을 확인했으며, 이 품질로 공개되는 것에 동의합니다.</span>
+              <span>고른 컷 2장과 아래 프로필(활동명·키·체형·라이선스 조건)이 FaceMarket 모델 리스트에 공개되는 것에 동의합니다.</span>
             </label>
-          </div>
+          </section>
 
           <div className={s.actions}>
             <Button variant="primary" block disabled={!canConfirm} onClick={confirm}>
-              {busy ? '확정 중…' : '이 컷으로 공개하기'}
+              {busy ? '확정 중…' : '이 모습으로 공개하기'}
             </Button>
             <span className={s.redoWrap} title={redoUsed ? '재생성은 1회까지예요' : undefined}>
               <Button variant="secondary" block disabled={busy || redoUsed} onClick={redo}>
@@ -166,7 +270,13 @@ export function ModelConfirm() {
             </span>
             {redoUsed && <p className={s.limit}>재생성은 1회까지예요</p>}
           </div>
-        </section>
+        </div>
+
+        <PublicProfilePreview
+          profile={data?.profile}
+          closeupCut={closeupCut}
+          fullbodyCut={fullbodyCut}
+        />
       </div>
     </main>
   );
