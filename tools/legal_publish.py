@@ -1,16 +1,16 @@
 """documents/legal/*.md → public/legal/*.md 공개본 생성.
 내부 메모(문서 성격 블록·채울 값 표·변호사 검토 포인트·개정 메모)를 걷어내고 자리표시자를 채운 뒤
 문서 간 링크를 라우트로 바꾼다. 남은 [대괄호]가 있으면 목록으로 출력한다(공개 차단 신호).
-실행: python3 tools/legal_publish.py
+실행: python3 tools/legal_publish.py [--landing-root /path/to/landing_page_fasho]
 """
-import json, re, pathlib, sys
+import argparse, json, re, pathlib, sys
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SRC, OUT = ROOT / "documents/legal", ROOT / "public/legal"
 OUT.mkdir(parents=True, exist_ok=True)
 EFFECTIVE = "2026년 9월 7일"
-CO = dict(name="데일리모먼트", ceo="정일상", brn="371-02-03688",
-          addr="서울특별시 노원구 석계로 98-2 광운대역 3층 스타트업스테이션",
-          tel="010-9592-0333", email="contact@wearless.kr")
+COMPANY = json.loads((ROOT / "src/lib/companyInfo.json").read_text())
+CO = dict(name=COMPANY["name"], ceo=COMPANY["representative"], brn=COMPANY["businessRegistrationNumber"],
+          addr=COMPANY["address"], tel=COMPANY["phone"], email=COMPANY["email"])
 # (파일, 슬러그, 앱, 제목)
 DOCS = [
     ("10_wearless_terms_of_service_v1.md", "terms-seller", "seller", "Wearless 이용약관"),
@@ -22,7 +22,13 @@ DOCS = [
     ("03_facemarket_privacy_policy_v1.md", "privacy-model", "facemarket", "FaceMarket 개인정보 처리방침"),
     ("06_facemarket_legal_faq_v1.md", "answers", "facemarket", "FaceMarket 법적 FAQ"),
 ]
-SELLER, FM = "https://ai.wearless.kr", "https://facemarket.wearless.kr"
+SELLER, FM = "https://wearless.kr", "https://facemarket.wearless.kr"
+LANDING_DOCUMENTS = {
+    "terms-seller": ("/terms", "이용약관"),
+    "privacy-seller": ("/privacy", "개인정보 처리방침"),
+    "refund": ("/refund", "환불 정책"),
+    "seller-license-terms": ("/model-license-terms", "모델 라이선스 이용조건"),
+}
 # 원본 파일 접두 → (셀러 앱에서의 경로, 페이스마켓 앱에서의 경로)
 ROUTES = {"10_": ("/terms", f"{SELLER}/terms"), "11_": ("/privacy", f"{SELLER}/privacy"), "12_": ("/refund", f"{SELLER}/refund"),
           "05_": ("/model-license-terms", "/seller-terms"), "01_": (f"{FM}/terms", "/terms"), "02_": (f"{FM}/license-agreement", "/license-agreement"),
@@ -31,7 +37,7 @@ DROP_HEADINGS = [r"^##+ 회사에서 채워야 하는 값", r"^##+ 회사가 채
                  r"^##+ 계약 요지 \(모델 화면", r"^##+ 셀러 화면에 표시하는 요지", r"^##+ 부록\. `llms\.txt`"]
 SUBS = [
     (r"\[회사명\]", CO["name"]), (r"\[시행일\]", EFFECTIVE), (r"\[대표자\]", CO["ceo"]), (r"\[주소\]", CO["addr"]),
-    (r"\[CPO 성명\]", CO["ceo"]), (r"\[CPO 직책\]", "대표(CEO)"), (r"\[CPO 전화\]", CO["tel"]), (r"\[CPO 이메일\]", CO["email"]),
+    (r"\[CPO 성명\]", COMPANY["privacyOfficer"]), (r"\[CPO 직책\]", "대표(CEO)"), (r"\[CPO 전화\]", CO["tel"]), (r"\[CPO 이메일\]", CO["email"]),
     (r"\[이메일\]", CO["email"]), (r"\[부서명 — 예: 모델 지원팀\]", "고객지원"), (r"\[부서 이메일\]", CO["email"]), (r"\[평일 10:00–18:00\]", "평일 10:00–18:00"),
     (r"\[본인확인기관명\]", "통신사 본인확인 서비스(CX 표준인증창 운영사)"),
     (r"\[모바일 신분증 검증 서비스 제공자\]", "정부 모바일 신분증 검증 연동 사업자(확정 시 갱신)"),
@@ -97,7 +103,7 @@ def publish():
         text = rewrite_links(text, app)
         text = re.sub(r"\n{3,}", "\n\n", text).strip() + "\n"
         text = re.sub(r"(?m)^---\s*\n(---\s*\n)+", "---\n", text)
-        text = re.sub(r"\n---\s*$", "\n", text)  # 문서 끝 구분선 제거
+        text = re.sub(r"\n---\s*$", "\n", text).rstrip() + "\n"  # 문서 끝 구분선·빈 줄 제거
         left = sorted(set(re.findall(r"\[[^\]\n]{1,40}\](?!\()", text)))
         if left: leftovers[slug] = left
         (OUT / f"{slug}.md").write_text(text)
@@ -111,7 +117,28 @@ def publish():
         for pat, rep in SUBS: llms = re.sub(pat, rep, llms)
         (ROOT / "public/llms.txt").write_text(llms)
     return manifest, leftovers
+
+def export_landing(landing_root, manifest):
+    """랜딩은 커밋된 공개본으로 빌드한다. 앱 서버에 런타임 의존하지 않는다."""
+    destination = landing_root / "content/legal"
+    destination.mkdir(parents=True, exist_ok=True)
+    documents = []
+    for document in manifest:
+        slug = document["slug"]
+        if slug not in LANDING_DOCUMENTS:
+            continue
+        path, label = LANDING_DOCUMENTS[slug]
+        documents.append({**document, "path": path, "label": label, "canonicalUrl": f"{SELLER}{path}"})
+        (destination / f"{slug}.md").write_text((OUT / f"{slug}.md").read_text())
+    for filename, content in (("manifest.json", documents), ("company-info.json", COMPANY)):
+        (destination / filename).write_text(json.dumps(content, ensure_ascii=False, indent=2) + "\n")
+
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--landing-root", type=pathlib.Path, help="랜딩 저장소 경로. Wearless 공개본 4종과 사업자 정보를 내보냅니다.")
+    args = parser.parse_args()
+    if args.landing_root and not (args.landing_root / "package.json").is_file():
+        parser.error("--landing-root에는 package.json이 있는 랜딩 저장소를 지정하세요.")
     manifest, leftovers = publish()
     print(f"published {len(manifest)} docs → public/legal/ (+ public/llms.txt)")
     for d in manifest: print(f"  {d['slug']:22s} {d['app']:10s} {d['title']}")
@@ -119,3 +146,6 @@ if __name__ == "__main__":
         print("\n남은 자리표시자 (공개 전 해결):")
         for k, v in leftovers.items(): print(f"  {k}: {', '.join(v)}")
         sys.exit(1)
+    if args.landing_root:
+        export_landing(args.landing_root, manifest)
+        print(f"exported {len(LANDING_DOCUMENTS)} Wearless docs → {args.landing_root / 'content/legal'}")
