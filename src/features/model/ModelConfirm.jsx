@@ -110,7 +110,7 @@ export function ModelConfirm() {
     <main className={s.page}>
       <header className={s.head}>
         <span className={s.eyebrow}>공개 전 마지막 확인</span>
-        <h1>프로필로 쓸 테스트컷을 골라 주세요</h1>
+        <h1>내 프로필에 쓰일 이미지를 선택해주세요.</h1>
         <p>공개 전 마지막 확인이에요. 확정하기 전에는 아무것도 공개되지 않고 어떤 쇼핑몰도 내 얼굴을 쓸 수 없어요.</p>
       </header>
 
@@ -156,7 +156,7 @@ export function ModelConfirm() {
 
           <div className={s.actions}>
             <Button variant="primary" block disabled={!canConfirm} onClick={confirm}>
-              {busy ? '확정 중…' : '이 컷으로 공개하기'}
+              {busy ? '확정 중…' : '프로필 확정 완료'}
             </Button>
             <span className={s.redoWrap} title={redoUsed ? '재생성은 1회까지예요' : undefined}>
               <Button variant="secondary" block disabled={busy || redoUsed} onClick={redo}>
