@@ -122,11 +122,48 @@ jobs:
                   aws-region: ${{ env.AWS_REGION }}
 
 
+            # 배포 전체가 이 한 스텝에 걸려 있다. 2026-09-07 에 여기서 두 번 죽었다.
+            #
+            # **진짜 버그는 `-f` 가 없던 것.** 그게 없으면 curl 은 HTTP 에러 본문을 그대로
+            # 파일에 쓰고 exit 0 을 낸다. chmod +x 도 통과하니 설치 단계는 초록불이고,
+            # 실패는 한참 뒤 배포 단계에서
+            #     /usr/local/bin/copilot: line 1: syntax error near unexpected token `<'
+            # 로 나타난다 — 원인과 아무 상관 없어 보이는 메시지라, 그동안 앱 코드를
+            # 의심하게 된다(실제로 그랬다).
+            #
+            # 그날 다운로드가 실패한 이유 자체는 **GitHub 릴리스 에셋 CDN 의 일시 장애**다.
+            # 약 10분간 92바이트짜리 504 가 왔고, 두 번째 요청부터는 0.05초 만에 돌아왔다 —
+            # varnish 가 그 에러를 캐시했다는 뜻이다. GitHub 상태 페이지에는 아무 공지도
+            # 없었다. 같은 URL 을 나중에 10회 재시도하니 10/10 이 200 이었다. 저장소가
+            # 아카이브(2026-05)돼서 영구히 깨진 게 **아니다** — 그 둘은 무관하다.
+            #
+            # 그래서 셋을 둔다.
+            #   -f            HTTP 에러가 파일이 아니라 종료코드가 된다.
+            #   재시도         짧은 blip 은 여기서 흡수한다(10분짜리는 못 넘긴다).
+            #   예비 경로       그 10분 동안 API asset 엔드포인트는 같은 파일을 200 으로 줬다.
+            #                 관측 1회라 확증은 아니지만, 배포 전체를 막는 단계에
+            #                 독립 경로 하나는 싸다.
+            # 마지막 `copilot --version` 이 "받은 게 진짜 실행 파일인가" 를 **설치 단계에서**
+            # 확인한다. 다음에 또 나면 실패 지점이 원인을 가리킨다.
             - name: Copilot CLI 설치
+              env:
+                  GH_TOKEN: ${{ github.token }}
               run: |
-                  curl -Lo /usr/local/bin/copilot \
-                    https://github.com/aws/copilot-cli/releases/download/v1.34.1/copilot-linux
+                  set -euo pipefail
+                  fetch() {
+                    curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 \
+                      -o /usr/local/bin/copilot "$@"
+                  }
+                  if ! fetch https://github.com/aws/copilot-cli/releases/download/v1.34.1/copilot-linux; then
+                    echo "::warning::릴리스 다운로드 실패 — API asset 경로로 재시도"
+                    asset_id=$(gh api repos/aws/copilot-cli/releases/tags/v1.34.1 \
+                      --jq '.assets[] | select(.name == "copilot-linux") | .id')
+                    fetch -H "Accept: application/octet-stream" \
+                          -H "Authorization: Bearer $GH_TOKEN" \
+                          "https://api.github.com/repos/aws/copilot-cli/releases/assets/$asset_id"
+                  fi
                   chmod +x /usr/local/bin/copilot
+                  copilot --version
 
             # DB 마이그레이션이 **가장 먼저**다. 새 job kind 는 코드(워커·라우트)와 DB
             # 제약(jobs_kind_check) 양쪽에 있어야 동작한다. 코드가 먼저 뜨면 잡 INSERT 가

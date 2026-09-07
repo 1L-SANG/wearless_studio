@@ -481,7 +481,18 @@ def test_workflows_pin_copilot_and_deploy_server_watches_addons():
     root = MANIFEST.parents[2]
     for wf in ("deploy-sam2.yml", "deploy-server.yml"):
         text = (root / ".github/workflows" / wf).read_text(encoding="utf-8")
+        # 버전 고정. latest 를 쓰면 어느 날 갑자기 CLI 가 올라가 배포가 흔들린다.
         assert "releases/latest/download/copilot-linux" not in text, f"{wf}: Copilot 버전 고정"
+        assert "copilot-cli/releases/latest" not in text, f"{wf}: Copilot 버전 고정"
         assert "releases/download/v1.34.1/copilot-linux" in text, wf
+        # 예비 경로도 같은 버전을 받아야 한다 — 여기가 어긋나면 릴리스 CDN 이 흔들린
+        # 날에만 다른 버전의 CLI 로 배포가 나간다(가장 알아채기 어려운 종류의 불일치다).
+        assert "copilot-cli/releases/tags/v1.34.1" in text, f"{wf}: 예비 경로 버전 불일치"
+        # 2026-09-07: `-f` 없는 curl 이 504 본문을 바이너리 자리에 저장하고 exit 0 을 냈다.
+        # chmod +x 도 통과해서, 실패는 한참 뒤 배포 단계에서 원인과 무관해 보이는 셸 문법
+        # 에러로 나타났다. -f 가 그걸 종료코드로 만들고, --version 이 "받은 게 실행
+        # 파일인가" 를 설치 단계에서 확인한다.
+        assert "curl -fsSL" in text, f"{wf}: curl -f 없음 — HTTP 에러가 파일로 저장된다"
+        assert "copilot --version" in text, f"{wf}: 설치 검증 누락"
     server_wf = (root / ".github/workflows/deploy-server.yml").read_text(encoding="utf-8")
     assert server_wf.count("copilot/api/addons/**") >= 3, "push·pull_request·filters 세 곳"
