@@ -295,6 +295,16 @@ export function getJobSettlement(jobId) {
   return http(`/v1/facemarket/jobs/${jobId}/settlement`);
 }
 
+// GET /v1/facemarket/settlements → 로그인 모델 본인의 정산 기록(최신순, 최대 200건).
+export function listSettlements() {
+  return http('/v1/facemarket/settlements');
+}
+
+// 전체 기록의 모델 몫 합계 — 최근 200건 목록과 별도로 집계한다.
+export function getSettlementSummary() {
+  return http('/v1/facemarket/settlements/summary');
+}
+
 // GET /v1/facemarket/models/{id}/usage — 모델 본인의 얼굴 사용 내역.
 // → [{ kind:'cut'|'publication', createdAt, imageHashPrefix, chainStatus }]
 // 셀러/프로젝트/원본 해시는 응답에 없다(모델에게 필요한 건 횟수·체인 기록 여부뿐).

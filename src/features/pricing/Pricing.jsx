@@ -5,6 +5,7 @@
    데이터: api.getPricingPlans() (http → /v1/pricing-plans, mock 폴백).
    ============================================================= */
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
@@ -77,6 +78,20 @@ export function Pricing() {
           ? '매달 자동으로 크레딧이 충전되는 정기 구독이에요.'
           : '구독 크레딧이 부족할 때, 한 번만 결제해 바로 충전하는 1회 상품이에요.'}
       </p>
+      <div className={s.billingNotice}>
+        <p>
+          {recurring
+            ? '구독은 해지할 때까지 매달 자동 결제돼요. 구독 크레딧은 결제 주기가 끝나면 소멸하고 이월되지 않아요.'
+            : '추가 구매 크레딧은 소멸하지 않아요.'}
+          {' '}
+          {/* 전자상거래법 §17②5호(디지털콘텐츠 제공 개시 시 철회 제한)는 같은 조 제6항의
+              '명확한 표시'가 있어야 적용된다. 이 문장이 그 표시다 — 결제 전에 보여야 하고
+              강조를 빼면 안 된다(환불정책 제4조 제2항). */}
+          <strong>크레딧을 한 건이라도 사용하면 청약철회(환불)가 되지 않아요.</strong>
+          {' 결제 후 7일 안에 한 건도 쓰지 않았다면 전액 환불받을 수 있어요. '}
+          <Link to="/refund">환불 정책</Link>
+        </p>
+      </div>
 
       {isLoading && (
         <div className={s.grid}>{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} h={190} r={16} />)}</div>
@@ -133,6 +148,9 @@ export function Pricing() {
                       {!TOSS_CLIENT_KEY && ' (준비 중)'}
                     </Button>
                   )}
+                  <p className={s.purchaseConsent}>
+                    결제하면 <Link to="/terms">이용약관</Link>과 <Link to="/refund">환불 정책</Link>에 동의하는 것으로 봐요.
+                  </p>
                 </div>
               </div>
             );

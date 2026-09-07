@@ -146,7 +146,7 @@
   font: 500 0.95rem/1 var(--font-body);
   box-shadow: var(--fm-elev-card);
 }
-.ctaQuiet.ctaQuiet:hover:not([disabled]) { background: #fff; box-shadow: var(--fm-elev-card); }
+.ctaQuiet.ctaQuiet:hover:not([disabled]) { background: var(--bg-1); box-shadow: var(--fm-elev-card); }
 
 /* ── 발급 대기 (PRD §7.3 · §13-2) ──────────────────────────────
    holder 콜드부트 ~2분이 **정상 경로**에 있다. 버튼 라벨만 바뀌면 "멈춘 건가"로 읽혀서

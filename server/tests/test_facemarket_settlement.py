@@ -748,3 +748,116 @@ def test_simulate_rate_limit_returns_429_without_chain_call(fmset, make_token):
     assert [x["payment_id"] for x in store["intents"]] == [
         x["payment_id"] for x in store["settlements"]
     ]
+
+
+@pytest.fixture()
+def summary_db(fmset, monkeypatch):
+    """Run the aggregate SQL on SQLite, preserving joins, filters and grouping semantics."""
+    import sqlite3
+
+    db = sqlite3.connect(':memory:', check_same_thread=False)
+    db.row_factory = sqlite3.Row
+    db.executescript('''
+        create table fm_models (id text, user_id text, created_at text);
+        create table fm_licenses (id text, model_id text, status text, created_at text);
+        create table fm_settlements (
+            id text, payment_id text, license_id text, job_id text, model_ref text default '',
+            total_amount integer default 0, model_amount integer, platform_amount integer default 0,
+            ops_amount integer default 0, chain_status text default 'confirmed', tx_hash text,
+            chain_id text, recorded_block integer, created_at text
+        );
+        insert into fm_models (id, user_id) values ('mine', 'owner'), ('other', 'other-user');
+        insert into fm_licenses (id, model_id, status) values ('active', 'mine', 'active'), ('revoked', 'mine', 'revoked'), ('foreign', 'other', 'active');
+    ''')
+
+    class Cursor:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            pass
+
+        async def execute(self, sql, params):
+            params = tuple(
+                value.astimezone(timezone.utc).isoformat() if isinstance(value, datetime) else value
+                for value in params
+            )
+            self.result = db.execute(sql.replace('%s', '?').replace('::text', ''), params)
+
+        async def fetchone(self):
+            return dict(self.result.fetchone())
+
+        async def fetchall(self):
+            return [dict(row) for row in self.result.fetchall()]
+
+    @contextlib.asynccontextmanager
+    async def connection(_request):
+        yield SimpleNamespace(cursor=Cursor)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            # September starts in Seoul while UTC is still August.
+            return datetime(2026, 8, 31, 15, tzinfo=timezone.utc).astimezone(tz)
+
+    monkeypatch.setattr(facemarket, 'get_conn', connection)
+    monkeypatch.setattr(facemarket, 'datetime', Clock)
+    from app.auth import require_user
+    fmset[0].dependency_overrides[require_user] = lambda: 'owner'
+    yield fmset[1], db
+    db.close()
+
+
+def test_summary_includes_more_than_200_and_all_owned_licenses(summary_db):
+    client, db = summary_db
+    db.executemany('insert into fm_settlements (license_id, model_amount, created_at) values (?, ?, ?)', [
+        ('active', 7000, '2026-08-31T15:00:00+00:00') for _ in range(201)
+    ] + [
+        ('revoked', 3000, '2026-08-31T14:59:59+00:00'),
+        ('foreign', 999999, '2026-08-31T15:00:00+00:00'),
+    ])
+    response = client.get('/v1/facemarket/settlements/summary')
+    assert response.status_code == 200, response.text
+    assert response.json() == {'monthCount': 201, 'monthAmount': 1407000, 'totalAmount': 1410000}
+
+
+def test_summary_seoul_month_is_start_inclusive_end_exclusive(summary_db):
+    client, db = summary_db
+    db.executemany('insert into fm_settlements (license_id, model_amount, created_at) values (?, ?, ?)', [
+        ('active', 100, '2026-08-31T14:59:59+00:00'),
+        ('active', 200, '2026-08-31T15:00:00+00:00'),
+        ('active', 300, '2026-09-30T14:59:59+00:00'),
+        ('active', 400, '2026-09-30T15:00:00+00:00'),
+    ])
+    response = client.get('/v1/facemarket/settlements/summary')
+    assert response.status_code == 200, response.text
+    assert response.json() == {'monthCount': 2, 'monthAmount': 500, 'totalAmount': 1000}
+
+
+def test_summary_zero_without_owned_settlements(summary_db):
+    client, db = summary_db
+    db.execute("insert into fm_settlements (license_id, model_amount, created_at) values ('foreign', 7000, '2026-08-31T15:00:00+00:00')")
+    response = client.get('/v1/facemarket/settlements/summary')
+    assert response.status_code == 200, response.text
+    assert response.json() == {'monthCount': 0, 'monthAmount': 0, 'totalAmount': 0}
+
+
+def test_summary_requires_authentication(fmset):
+    response = fmset[1].get('/v1/facemarket/settlements/summary')
+    assert response.status_code == 401
+
+
+def test_recent_settlements_query_handles_joined_columns_and_keeps_owner_limit(summary_db):
+    client, db = summary_db
+    db.executemany(
+        'insert into fm_settlements (id, payment_id, license_id, model_amount, created_at) values (?, ?, ?, ?, ?)',
+        [(f's{i}', f'job:{i}', 'active', 7000, '2026-09-01T00:00:00+00:00') for i in range(201)]
+        + [('foreign-row', 'foreign-job', 'foreign', 999999, '2026-09-02T00:00:00+00:00'),
+           ('old-row', 'old-job', 'revoked', 3000, '2026-08-01T00:00:00+00:00')],
+    )
+    response = client.get('/v1/facemarket/settlements')
+    assert response.status_code == 200, response.text
+    rows = response.json()
+    assert len(rows) == 200
+    assert {row['licenseId'] for row in rows} == {'active'}
+    assert all(row['modelAmount'] == 7000 for row in rows)

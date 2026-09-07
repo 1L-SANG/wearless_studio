@@ -1470,6 +1470,12 @@ class SettlementCard(CamelModel):
     created_at: datetime
 
 
+class SettlementSummary(CamelModel):
+    month_count: int
+    month_amount: int
+    total_amount: int
+
+
 class SimulateRequest(CamelModel):
     """데모/부하 정산(장면④, KPI '시뮬' 집계). 실 상세페이지 잡 없이 라이선스 1건 정산."""
 
@@ -1792,10 +1798,11 @@ async def record_license_settlement(
 )
 async def list_settlements(request: Request, user_id: str = Depends(require_user)):
     """본인 소유 모델의 라이선스 정산 내역. 이중장부의 DB측(canonical=컨트랙트)."""
+    columns = ", ".join(f"st.{column}" for column in _SETTLEMENT_COLS.split(", "))
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                f"""select {_SETTLEMENT_COLS} from fm_settlements st
+                f"""select {columns} from fm_settlements st
                     join fm_licenses l on l.id = st.license_id
                     join fm_models m on m.id = l.model_id
                     where m.user_id = %s
@@ -1803,6 +1810,35 @@ async def list_settlements(request: Request, user_id: str = Depends(require_user
                 (user_id,),
             )
             return await cur.fetchall()
+
+
+@router.get(
+    "/settlements/summary",
+    response_model=SettlementSummary,
+    responses={401: {"model": ErrorResponse, "description": "인증 실패"}},
+    tags=["FaceMarket"],
+    summary="내 전체 정산 합계 (서울 기준 이번 달·누적)",
+)
+async def get_settlement_summary(request: Request, user_id: str = Depends(require_user)):
+    month_start = datetime.now(_KST).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    next_month = (month_start + timedelta(days=32)).replace(day=1)
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """select count(*) filter (
+                              where st.created_at >= %s and st.created_at < %s
+                          ) as month_count,
+                          coalesce(sum(st.model_amount) filter (
+                              where st.created_at >= %s and st.created_at < %s
+                          ), 0) as month_amount,
+                          coalesce(sum(st.model_amount), 0) as total_amount
+                     from fm_settlements st
+                     join fm_licenses l on l.id = st.license_id
+                     join fm_models m on m.id = l.model_id
+                    where m.user_id = %s""",
+                (month_start, next_month, month_start, next_month, user_id),
+            )
+            return await cur.fetchone()
 
 
 @router.get(

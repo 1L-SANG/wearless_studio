@@ -27,13 +27,96 @@ registerHooks({
 const {
   ENROLLMENT_ANGLES,
   ENROLLMENT_STEPS,
+  buildRegistrationCompletion,
   enrollmentReasonMessage,
+  initialRegistrationStep,
   nextEnrollmentStep,
 } = await import('../../src/features/model/biometricEnrollment.js');
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+test('a revoked license owner can reach fresh enrollment from the license list', async () => {
+  const destinations = [];
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelLicense.jsx',
+    exportName: 'ModelLicense',
+    initialStates: ['ready', 'cards', null, [], null],
+    api: {},
+  });
+  try {
+    harness.runtime.navigate = (to) => destinations.push(to);
+    const tree = harness.render();
+    const restart = findTree(tree, (node) => node.type === 'Button'
+      && node.props.children === '새 생체 등록으로 라이선스 발급');
+    assert.ok(restart, 'an empty list after revocation must offer a fresh enrollment entry');
+    restart.props.onClick();
+    assert.deepEqual(destinations, ['/model/register']);
+  } finally {
+    await harness.close();
+  }
+});
+
+test('reissuing from completed registration requires fresh consent before a new identity enrollment', async () => {
+  const created = [];
+  let restores = 0;
+  const harness = await modelComponentHarness({
+    // A previous agreement must not carry into this new enrollment.
+    initialStates: ['loading', null, null, '', false, true, true],
+    honorHookDependencies: true,
+    api: {
+      getCurrentEnrollment: async () => {
+        restores += 1;
+        throw Object.assign(new Error('no current enrollment'), { status: 404 });
+      },
+      listMyModels: async () => [{ id: 'model-1', status: 'verified' }],
+      listLicenses: async () => [], // revoked licenses are excluded by the real API
+      createEnrollment: async (body) => {
+        created.push(body);
+        return { id: 'new-enrollment', modelId: 'model-1', status: 'identity_pending', photos: [] };
+      },
+    },
+  });
+  const commit = () => {
+    const tree = harness.render();
+    harness.runtime.effects.forEach((effect) => effect());
+    return tree;
+  };
+  try {
+    commit();
+    await eventually(() => harness.runtime.states[0] === 'done', 'verified model restores its completed registration');
+    let tree = commit();
+    assert.equal(created.length, 0, 'visiting registration must never create a new enrollment');
+    const restart = findTree(tree, (node) => node.type === 'Button'
+      && node.props.children === '새 생체 등록 시작');
+    assert.ok(restart, 'the completed registration must offer explicit re-enrollment');
+    restart.props.onClick();
+    tree = commit();
+    await flush();
+    assert.equal(restores, 1, 'the restore effect must not bounce the explicit restart back to done');
+    assert.equal(harness.runtime.states[0], 'consent');
+    const checkbox = findTree(tree, (node) => node.type === 'input' && node.props.type === 'checkbox');
+    assert.equal(checkbox.props.checked, false, 'previous consent is cleared');
+    let submit = findTree(tree, (node) => node.type === 'Button'
+      && node.props.children === '동의하고 본인 확인 시작');
+    assert.equal(submit.props.disabled, true);
+    assert.equal(created.length, 0, 'the restart action itself must not submit an enrollment');
+    checkbox.props.onChange({ target: { checked: true } });
+    tree = commit();
+    submit = findTree(tree, (node) => node.type === 'Button'
+      && node.props.children === '동의하고 본인 확인 시작');
+    assert.equal(submit.props.disabled, false);
+    await submit.props.onClick();
+    assert.equal(created.length, 1);
+    assert.equal(created[0].documentVersion, '2026-08-v2');
+    assert.equal(created[0].enrollmentId, undefined, 'the old enrollment is never reused');
+    assert.equal(harness.runtime.states[0], 'identity', 'a new enrollment must still go through identity verification');
+    assert.equal(harness.runtime.states[1].id, 'new-enrollment');
+  } finally {
+    await harness.close();
+  }
+});
 
 async function eventually(predicate, message) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -71,6 +154,7 @@ async function modelComponentHarness({
   exportName = 'ModelRegister',
   // ModelFaceUpload 자체를 렌더하는 테스트는 스텁 치환을 꺼야 한다(등록 마법사 테스트는 계속 스텁).
   stubUpload = true,
+  honorHookDependencies = false,
 }) {
   const key = `__fmRegisterTest${Math.random().toString(36).slice(2)}`;
   const runtime = {
@@ -81,6 +165,11 @@ async function modelComponentHarness({
     refs: [],
     stateCursor: 0,
     refCursor: 0,
+    honorHookDependencies,
+    callbacks: [],
+    callbackCursor: 0,
+    effectDeps: [],
+    effectCursor: 0,
   };
   globalThis[key] = runtime;
   const { createServer } = await import('vite');
@@ -97,6 +186,8 @@ async function modelComponentHarness({
       name: 'facemarket-register-test-harness',
       enforce: 'pre',
       resolveId(id) {
+        if (id === 'qrcode') return '\0fm-test-qrcode';
+        if (id === '@/lib/brandUseCategories.js') return new URL('../../src/lib/brandUseCategories.js', import.meta.url).pathname;
         if (id === 'react') return '\0fm-test-react';
         if (id === 'react/jsx-dev-runtime' || id === 'react/jsx-runtime') return '\0fm-test-jsx';
         if (id === 'react-router-dom') return '\0fm-test-router';
@@ -109,11 +200,21 @@ async function modelComponentHarness({
         return null;
       },
       load(id) {
+        // QR canvas rendering is unrelated to the empty/revoked license list entry.
+        if (id === '\0fm-test-qrcode') return 'export default {};';
         if (id === '\0fm-test-react') return `
           const runtime = ${access};
           export const lazy = () => 'Lazy';
           export const Suspense = 'Suspense';
-          export const useCallback = (value) => value;
+          const unchanged = (previous, next) => previous && next && previous.length === next.length
+            && next.every((value, index) => Object.is(value, previous[index]));
+          export const useCallback = (value, deps) => {
+            if (!runtime.honorHookDependencies) return value;
+            const index = runtime.callbackCursor++;
+            const previous = runtime.callbacks[index];
+            if (!previous || !unchanged(previous.deps, deps)) runtime.callbacks[index] = { value, deps };
+            return runtime.callbacks[index].value;
+          };
           export const useMemo = (factory) => factory();
           export const useState = (initial) => {
             const index = runtime.stateCursor++;
@@ -128,7 +229,14 @@ async function modelComponentHarness({
             if (!runtime.refs[index]) runtime.refs[index] = { current: initial };
             return runtime.refs[index];
           };
-          export const useEffect = (effect) => { runtime.effects.push(effect); };
+          export const useEffect = (effect, deps) => {
+            if (runtime.honorHookDependencies) {
+              const index = runtime.effectCursor++;
+              if (unchanged(runtime.effectDeps[index], deps)) return;
+              runtime.effectDeps[index] = deps;
+            }
+            runtime.effects.push(effect);
+          };
         `;
         if (id === '\0fm-test-jsx') return `
           export const Fragment = 'Fragment';
@@ -139,11 +247,15 @@ async function modelComponentHarness({
         if (id === '\0fm-test-router') return `
           export const Link = 'Link';
           export const useNavigate = () => ${access}.navigate;
+          export const useLocation = () => ${access}.location || ({ state: null });
+          export const useSearchParams = () => [new URLSearchParams(), () => {}];
         `;
         if (id === '\0fm-test-ui') return `
           export const Button = 'Button';
           export const ErrorState = 'ErrorState';
           export const Icon = 'Icon';
+          export const Chips = 'Chips';
+          export const Field = 'Field';
           export const useToast = () => ({ push: ${access}.push || (() => {}) });
         `;
         if (id === '\0fm-test-upload') return "export const ModelFaceUpload = 'ModelFaceUpload';";
@@ -151,6 +263,9 @@ async function modelComponentHarness({
         if (id === '\0fm-test-api') return `
           const api = ${access}.api;
           export const cancelEnrollment = (...args) => api.cancelEnrollment(...args);
+          export const createLicense = (...args) => api.createLicense(...args);
+          export const revokeLicense = (...args) => api.revokeLicense(...args);
+          export const verifyLicensePublic = (...args) => api.verifyLicensePublic(...args);
           export const completeEnrollment = (...args) => api.completeEnrollment(...args);
           export const createEnrollment = (...args) => api.createEnrollment(...args);
           export const createIdentity = (...args) => api.createIdentity(...args);
@@ -172,6 +287,21 @@ async function modelComponentHarness({
           export const cancelApplication = (...args) => api.cancelApplication(...args);
           export const getEnrollment = (...args) => api.getEnrollment(...args);
           export const listMyModels = (...args) => api.listMyModels(...args);
+          export const listLicenses = (...args) => (
+            api.listLicenses ? api.listLicenses(...args) : Promise.resolve([])
+          );
+          export const listSettlements = (...args) => (
+            api.listSettlements ? api.listSettlements(...args) : Promise.resolve([])
+          );
+          export const getSettlementSummary = (...args) => (
+            api.getSettlementSummary ? api.getSettlementSummary(...args)
+              : Promise.resolve({ monthCount: 0, monthAmount: 0, totalAmount: 0 })
+          );
+          export const stageApplicationPhoto = (...args) => api.stageApplicationPhoto(...args);
+          export const submitApplication = (...args) => api.submitApplication(...args);
+          export const fetchLicenseFaceUrl = (...args) => (
+            api.fetchLicenseFaceUrl ? api.fetchLicenseFaceUrl(...args) : Promise.reject(new Error('no face'))
+          );
           export const submitPhysique = (...args) => api.submitPhysique(...args);
           export const uploadEnrollmentPhoto = (...args) => api.uploadEnrollmentPhoto(...args);
           export const uploadProfileImage = (...args) => api.uploadProfileImage(...args);
@@ -194,12 +324,16 @@ async function modelComponentHarness({
       },
     }],
   });
-  const module = await server.ssrLoadModule(entry);
+  let module;
+  try { module = await server.ssrLoadModule(entry); }
+  catch (error) { await server.close(); delete globalThis[key]; throw error; }
   return {
     runtime,
     render(props = {}) {
       runtime.stateCursor = 0;
       runtime.refCursor = 0;
+      runtime.callbackCursor = 0;
+      runtime.effectCursor = 0;
       runtime.effects = [];
       return module[exportName](props);
     },
@@ -233,6 +367,23 @@ test('server status restores the next safe enrollment step', () => {
   assert.equal(nextEnrollmentStep({ status: 'vc_pending', photos: [{}, {}, {}] }), 'terms');
   assert.equal(nextEnrollmentStep({ status: 'passed', photos: [{}, {}, {}] }), 'done');
   assert.equal(nextEnrollmentStep({ status: 'failed', reason: 'face_match_failed' }), 'failed');
+});
+
+test('완료 전달값은 최소 체형 정보만 남기고 완료 화면을 먼저 선택한다', () => {
+  assert.equal(typeof buildRegistrationCompletion, 'function');
+  assert.equal(typeof initialRegistrationStep, 'function');
+  const handoff = buildRegistrationCompletion(
+    {
+      id: 'e1', modelId: 'm1', gender: 'female', heightBucket: 'f_160_165',
+      bodyType: 'slim_upper', photos: [{ angle: 'front' }], reason: 'private',
+    },
+    { id: 'l1', modelId: 'm1', unitPrice: 10_000, faceImageDigest: 'secret-digest' },
+  );
+  assert.deepEqual(handoff, {
+    modelId: 'm1', gender: 'female', heightBucket: 'f_160_165', bodyType: 'slim_upper',
+  });
+  assert.equal(initialRegistrationStep(handoff), 'done');
+  assert.equal(initialRegistrationStep(null), 'loading');
 });
 
 test('raw biometric reasons collapse to actionable copy', () => {
@@ -464,7 +615,6 @@ test('the browser wizard keeps raw authentication material in memory only', () =
   assert.doesNotMatch(registerSource, /completeEnrollment\([^)]*token/);
   assert.match(registerSource, /useConvertor:\s*true/);
   assert.match(registerSource, /portraitRef\.current\s*=\s*parsed\?\.data\?\.dlphotoimage/);
-  assert.match(registerSource, /새 생체 등록 시작/);
   assert.match(registerSource, /localStorage\.setItem\([^,]+,\s*deviceId\)/);
   assert.doesNotMatch(registerSource, /localStorage\.setItem\([^)]*(token|session|credentials|image|dlphotoimage|idPhotoHex)/i);
   assert.doesNotMatch(registerSource, /sessionStorage|indexedDB/i);
@@ -1000,6 +1150,109 @@ test('ModelHub reaches ready using FaceMarket state when personalization is unav
   }
 });
 
+test('verified ModelHub shows the active dashboard even with zero settlements', async () => {
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelHub.jsx',
+    exportName: 'ModelHub',
+    initialStates: [
+      'ready',
+      { id: 'model-1', status: 'verified', displayName: '김*나', coverImageUrl: '/cover.webp' },
+      null,
+      null,
+      true,
+      [{
+        id: 'license-1', modelId: 'model-1', status: 'active', faceImageUri: '/face',
+        allowedUse: ['상의', '하의'], forbiddenUse: ['수영복·비키니'], unitPrice: 10_000,
+        licenseValidUntil: '2027-09-04T00:00:00Z', vcId: 'vc:test:1',
+      }],
+      { monthCount: 0, monthAmount: 0, totalAmount: 0 },
+    ],
+    api: { getCurrentEnrollment: () => new Promise(() => {}) },
+  });
+  try {
+    const tree = harness.render();
+    const active = findTree(tree, (node) => node.type?.name === 'ActiveDashboard');
+    assert.ok(active, 'verified 상태는 활동 중 대시보드를 선택해야 한다');
+    // 이 경량 JSX 하네스는 중첩 함수 컴포넌트를 React처럼 자동 실행하지 않으므로 실제 함수를
+    // 한 번 펼쳐 내부의 사용자 행동까지 검사한다. UI 스텁 자체를 검사하는 것은 아니다.
+    const dashboard = active.type(active.props);
+    assert.ok(findTree(dashboard, (node) => node.type === 'h2' && node.props?.children === '활동 중'));
+    assert.ok(findTree(dashboard, (node) => node.type === 'Link' && node.props?.to === '/payout'));
+    assert.ok(findTree(dashboard, (node) => node.type === 'Link' && node.props?.to === '/model/withdraw'));
+    assert.equal(
+      findTree(dashboard, (node) => node.type === 'Button' && node.props?.children === '내 모델로 생성하기'),
+      null,
+      '활동 중 허브에 예전 중복 생성 버튼을 남기지 않는다',
+    );
+  } finally {
+    await harness.close();
+  }
+});
+
+test('ModelHub treats license API failure as unavailable instead of real zero/default terms', async () => {
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelHub.jsx',
+    exportName: 'ModelHub',
+    initialStates: ['loading', null, null, null, true, [], []],
+    api: {
+      listMyModels: async () => [{ id: 'model-1', status: 'verified' }],
+      getCurrentEnrollment: async () => { throw Object.assign(new Error('none'), { status: 404 }); },
+      listLicenses: async () => { throw Object.assign(new Error('license unavailable'), { status: 500 }); },
+      listSettlements: async () => [],
+    },
+  });
+  try {
+    harness.render();
+    harness.runtime.effects[0]();
+    await eventually(() => harness.runtime.states[0] !== 'loading', 'hub load should settle');
+    assert.equal(harness.runtime.states[0], 'error');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('ModelHub treats settlement summary failure as unavailable instead of zero earnings', async () => {
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelHub.jsx',
+    exportName: 'ModelHub',
+    initialStates: [],
+    api: {
+      listMyModels: async () => [{ id: 'model-1', status: 'verified' }],
+      getCurrentEnrollment: async () => { throw Object.assign(new Error('none'), { status: 404 }); },
+      getSettlementSummary: async () => { throw Object.assign(new Error('summary unavailable'), { status: 500 }); },
+    },
+  });
+  try {
+    harness.render();
+    harness.runtime.effects[0]();
+    await eventually(() => harness.runtime.states[0] !== 'loading', 'hub load should settle');
+    const tree = harness.render();
+    assert.ok(findTree(tree, (node) => node.type === 'ErrorState'));
+    assert.equal(findTree(tree, (node) => node.type?.name === 'ActiveDashboard'), null);
+  } finally {
+    await harness.close();
+  }
+});
+
+test('verified ModelHub without a license does not invent default rules', async () => {
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelHub.jsx',
+    exportName: 'ModelHub',
+    initialStates: ['ready', { id: 'model-1', status: 'verified', displayName: '김*나' }, null, null, true, [], { monthCount: 0, monthAmount: 0, totalAmount: 0 }],
+    api: { getCurrentEnrollment: () => new Promise(() => {}) },
+  });
+  try {
+    const tree = harness.render();
+    const active = findTree(tree, (node) => node.type?.name === 'ActiveDashboard');
+    const dashboard = active.type(active.props);
+    assert.equal(findTree(dashboard, (node) => node.props?.children === '10,000원'), null);
+    assert.equal(findTree(dashboard, (node) => node.props?.children === '25,000원'), null);
+    assert.ok(findTree(dashboard, (node) => node.type === 'dd' && node.props?.children === '—'));
+  } finally {
+    await harness.close();
+  }
+});
+
 test('SlotCard renders a pose example image from the angle', () => {
   const upload = read('../../src/features/model/ModelFaceUpload.jsx');
   assert.match(upload, /exampleImage|example/);
@@ -1195,7 +1448,18 @@ test('each angle offers a photo example with the pose drawing as fallback', () =
 
 // ── 체형: 성별 분리 + 이미지 ────────────────────────────────────────────────
 
-const { BODY_TYPES, bodyTypeOptions, bodyTypeMatrix } = await import('../../src/lib/facemarketPhysique.js');
+const {
+  BODY_TYPES, bodyTypeLabel, bodyTypeOptions, bodyTypeMatrix, heightBucketLabel,
+} = await import('../../src/lib/facemarketPhysique.js');
+
+test('완료 요약은 저장된 키·복합 체형 코드를 사람말로 바꾼다', () => {
+  assert.equal(typeof bodyTypeLabel, 'function');
+  assert.equal(typeof heightBucketLabel, 'function');
+  assert.equal(heightBucketLabel('f_160_165'), '160–165cm');
+  assert.equal(bodyTypeLabel('slim'), '마름');
+  assert.equal(bodyTypeLabel('slim_upper'), '마름 · 상체 볼륨');
+  assert.equal(bodyTypeLabel(null), null);
+});
 
 test('body types are split by gender without inventing new server values', () => {
   const serverValues = new Set(BODY_TYPES.map((b) => b.value));
@@ -1228,12 +1492,14 @@ test('gendered body types carry an image path, the unknown-gender list does not'
 test('user-facing copy says 본인/얼굴 확인, and the legal consent wording is untouched', () => {
   const register = read('../../src/features/model/ModelRegister.jsx');
   const hub = read('../../src/features/model/ModelHub.jsx');
+  const hubState = read('../../src/features/model/modelHubState.js');
   assert.doesNotMatch(register, /생체 확인/);
   assert.doesNotMatch(hub, /생체 확인/);
   assert.match(register, /모델 정보 등록 완료/);
   // 법적 문구는 그대로 — 동의문 용어를 바꾸면 동의 버전 계약이 깨진다.
   assert.match(register, /생체정보 처리 동의/);
-  assert.match(hub, /생체정보 처리 동의/);
+  // 허브는 법적 동의문을 복제하지 않고, 사람이 알아볼 진행 단계만 보여 준다.
+  assert.match(hubState, /본인확인·사진·조건·증서/);
 });
 
 
@@ -1277,6 +1543,158 @@ test('the terms screen sends the model on to VC issuance from a centered card', 
   assert.match(register, /VC 발급 하러 가기/);
   assert.match(register, /centeredWizard/);
   assert.doesNotMatch(register, /라이선스 조건 설정 <Icon/);
+});
+
+test('등록 완료 화면은 조건 요약과 Digital DNA 관리 경로를 보여 준다', async () => {
+  const harness = await modelComponentHarness({
+    initialStates: [
+      'done',
+      { id: 'e1', modelId: 'm1', status: 'passed', bodyType: 'slim' },
+      null,
+      '',
+      false,
+      false,
+      true,
+      null,
+      null,
+      null,
+      [],
+      null,
+      {
+        phase: 'ready',
+        model: { id: 'm1', displayName: '김*나', status: 'verified' },
+        summary: {
+          bodyType: 'slim', allowedUseCount: 2, unitPrice: 10_000, validityDays: 730,
+        },
+      },
+    ],
+    api: { getCurrentEnrollment: () => new Promise(() => {}) },
+  });
+  try {
+    const tree = harness.render();
+    assert.ok(findTree(tree, (node) => node.type === 'h1' && node.props?.children === '축하해요, 등록이 끝났어요'));
+    for (const label of ['활동명', '체형 밴드', '허용 품목', '건당 가격', '월정액', '유효기간', '승인 방식']) {
+      assert.ok(findTree(tree, (node) => node.type === 'dt' && node.props?.children === label), label);
+    }
+    assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props?.to === '/status'));
+  } finally {
+    await harness.close();
+  }
+});
+
+test('라이선스 발급은 등록 완료 화면으로 체형과 발급 조건을 전달한다', () => {
+  const source = read('../../src/features/model/ModelLicense.jsx');
+  assert.match(
+    source,
+    /navigate\(\s*["']\/model\/register["'][\s\S]*completionSummary:\s*buildRegistrationCompletion\(enrollmentRecord,\s*lic\)/,
+  );
+});
+
+test('등록 완료 화면은 발급 경로로 전달된 체형을 되살린다', async () => {
+  const harness = await modelComponentHarness({
+    initialStates: [
+      'done',
+      { modelId: 'm1', status: 'passed' },
+      null, '', false, false, true,
+      null, null, null, [], null,
+      {
+        phase: 'ready',
+        model: { id: 'm1', displayName: '김*나', status: 'verified' },
+        summary: {
+          heightBucket: 'f_160_165', bodyType: 'slim_upper',
+          allowedUseCount: 1, unitPrice: 10_000, validityDays: 730,
+        },
+      },
+    ],
+    api: { getCurrentEnrollment: () => new Promise(() => {}) },
+  });
+  harness.runtime.location = {
+    state: {
+      completionSummary: {
+        modelId: 'm1', gender: 'female',
+        heightBucket: 'f_160_165', bodyType: 'slim_upper',
+      },
+    },
+  };
+  try {
+    const tree = harness.render();
+    assert.ok(findTree(
+      tree,
+      (node) => node.type === 'dd' && node.props?.children === '160–165cm · 마름 · 상체 볼륨',
+    ));
+  } finally {
+    await harness.close();
+  }
+});
+
+test('등록 완료 조건 조회 실패는 기본 가격과 영구 조건을 실제 값처럼 보여 주지 않는다', async () => {
+  const harness = await modelComponentHarness({
+    initialStates: [
+      'done', { modelId: 'm1', status: 'passed' }, null, '', false, false, true,
+      null, null, null, [], null,
+      { phase: 'error', model: null, summary: null },
+    ],
+    api: { getCurrentEnrollment: () => new Promise(() => {}) },
+  });
+  try {
+    const tree = harness.render();
+    assert.ok(findTree(tree, (node) => node.props?.children === '조건 요약을 불러오지 못했어요.'));
+    assert.equal(findTree(tree, (node) => node.props?.children === '10,000원'), null);
+    assert.equal(findTree(tree, (node) => node.props?.children === '영구'), null);
+  } finally {
+    await harness.close();
+  }
+});
+
+test('지원서 제출 성공 뒤 완료 화면에 머물고 모델 리스트로 이어진다', async () => {
+  const navigations = [];
+  const submissions = [];
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelApply.jsx',
+    exportName: 'ModelApply',
+    initialStates: [
+      'ready',
+      {
+        contactEmail: 'model@example.com', lastName: '김', firstName: '하나', phone: '',
+        birthdate: '2000-01-01', region: '서울, 대한민국', gender: 'female',
+        experienceLevel: 'beginner', categories: ['fashion'], portfolioUrl: '', snsUrl: '', bio: '',
+      },
+      { profile: { staged: true, name: 'profile.jpg' } },
+      { adultAndTruthful: true, photosAreMine: true },
+      true,
+      true,
+      null,
+    ],
+    api: {
+      getCurrentApplication: () => new Promise(() => {}),
+      stageApplicationPhoto: async () => ({}),
+      submitApplication: async (body) => { submissions.push(body); return { id: 'a1', status: 'under_review' }; },
+    },
+  });
+  harness.runtime.navigate = (...args) => navigations.push(args);
+  try {
+    const form = harness.render();
+    const submit = findTree(
+      form,
+      (node) => node.type === 'button' && node.props?.children === '지원서 제출하기',
+    );
+    assert.ok(submit, '완성된 지원서는 제출할 수 있어야 한다');
+    await submit.props.onClick();
+    await flush();
+
+    assert.equal(submissions.length, 1);
+    assert.equal(harness.runtime.states[0], 'complete');
+    assert.deepEqual(navigations, [], '제출 직후 상태 허브로 자동 이동하지 않는다');
+
+    const complete = harness.render();
+    assert.ok(findTree(complete, (node) => node.props?.children === '지원서 접수가 끝났어요'));
+    assert.ok(findTree(complete, (node) => node.props?.children === '승인되면 메일로 등록 링크가 가요 · 보통 1시간 안'));
+    assert.ok(findTree(complete, (node) => node.props?.children === '정부 모바일 신분증 앱'));
+    assert.ok(findTree(complete, (node) => node.props?.children === '본인 사진'));
+    assert.ok(findTree(complete, (node) => node.type === 'Link' && node.props?.to === '/models'));
+  } finally {
+    await harness.close();
+  }
 });
 
 

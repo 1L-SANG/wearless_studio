@@ -16,11 +16,11 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { IS_FACEMARKET } from '@/lib/host.js';
 import {
-  getApplicationConfig, getCurrentApplication, getCurrentEnrollment, listMyModels,
+  getCurrentApplication, getCurrentEnrollment, listMyModels,
 } from '@/lib/api/facemarket.js';
 import { Icon } from '@/components/ui.jsx';
 import { LandingHeader } from './LandingHeader.jsx';
-import { registerCta } from './registerCta.js';
+import { isLandingCtaResolved, registerCta } from './registerCta.js';
 import { FooterSection } from './sections/FooterSection.jsx';
 import s from './FacemarketLanding.module.css';
 
@@ -64,10 +64,8 @@ export function LandingShell({ title, description, children }) {
   const { session, loading, openLogin } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const [cta, setCta] = useState(() => registerCta(null, null));
-  // 지원서 게이트. 기본 true(registerCta 머리말) — 서버 설정이 오면 그 값으로 바꾼다.
-  // /applications/config 는 무인증 공개라 로그인 전에도 읽는다.
-  const [applicationRequired, setApplicationRequired] = useState(true);
+  const [cta, setCta] = useState(() => registerCta(null, null, { scope: 'landing' }));
+  const [ctaResolvedFor, setCtaResolvedFor] = useState(null);
   const [noticeOpen, setNoticeOpen] = useState(() => !noticeDismissed);
 
   const closeNotice = () => {
@@ -102,38 +100,47 @@ export function LandingShell({ title, description, children }) {
   // (TOKEN_REFRESHED, 기본 1시간)마다 새 객체로 바뀌는데, 같은 사람이면 CTA 도 같다.
   const userId = session?.user?.id ?? null;
 
+  // 비로그인은 곧바로 얼리버드 지원 CTA를 본다. 로그인 사용자는 세 조회가 모두 끝나
+  // "기록 없음"이 확인된 경우에만 본다. 조회 실패를 기록 없음으로 오인하지 않는다.
   useEffect(() => {
-    let alive = true;
-    getApplicationConfig()
-      .then((cfg) => { if (alive && typeof cfg?.applicationRequired === 'boolean') setApplicationRequired(cfg.applicationRequired); })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, []);
-
-  // 등록 상태로 CTA 문구를 바꾼다. 조회는 렌더를 막지 않는다 —
-  // 기본 문구로 먼저 그리고, 결과가 오면 교체한다. 실패하면 기본 문구로 남는다.
-  useEffect(() => {
-    if (!userId) { setCta(registerCta(null, null, { applicationRequired })); return undefined; }
+    if (!userId) {
+      setCta(registerCta(null, null, { scope: 'landing' }));
+      setCtaResolvedFor('anonymous');
+      return undefined;
+    }
 
     let alive = true;
+    setCtaResolvedFor(null);
+    setCta(null);
     void (async () => {
-      const [models, enrollment, application] = await Promise.all([
-        listMyModels().catch(() => null),
-        getCurrentEnrollment().catch(() => null),
-        getCurrentApplication().catch(() => null),   // 404 = 지원서 없음
-      ]);
-      if (!alive) return;
-      setCta(registerCta(models?.[0] || null, enrollment, { application, applicationRequired }));
+      try {
+        const optional = async (fn) => {
+          try { return await fn(); }
+          catch (error) { if (error?.status === 404) return null; throw error; }
+        };
+        const [models, enrollment, application] = await Promise.all([
+          listMyModels(),
+          optional(getCurrentEnrollment),
+          optional(getCurrentApplication),
+        ]);
+        if (!alive) return;
+        setCta(registerCta(models?.[0] || null, enrollment, { application, scope: 'landing' }));
+      } catch {
+        if (alive) setCta(null);
+      } finally {
+        if (alive) setCtaResolvedFor(userId);
+      }
     })();
     return () => { alive = false; };
-  }, [userId, applicationRequired]);
+  }, [userId]);
 
   // 비로그인은 CTA 의 목적지를 복귀 경로로 심는다 — 게이트가 켜져 있으면 '/model/apply' 라
   // 로그인을 마치는 순간 허브 없이 지원서가 열린다(사용자 지시 2026-09-02).
   const runPrimary = useCallback(() => {
+    if (!cta) return;
     if (session) navigate(cta.to);
     else openLogin(cta.to);
-  }, [session, cta.to, navigate, openLogin]);
+  }, [session, cta, navigate, openLogin]);
 
   // 부트스트랩 중 눌린 클릭을 담아 두는 보류함. FacemarketRoot 는 복귀 플래그가 없는
   // 평범한 방문이면 loading 중에도 랜딩을 그대로 그리므로, 이 창은 실제로 사용자에게 보인다.
@@ -144,7 +151,10 @@ export function LandingShell({ title, description, children }) {
 
   // 눌린 사실은 라벨로만 돌려준다. disabled 는 쓰지 않는다 — LandingHeader.jsx 머리말과
   // 같은 이유로, 버튼을 잠그면 클릭이 아예 안 들어와 보류함 자체가 죽는다.
-  const primaryLabel = pendingPrimary ? '확인 중이에요…' : cta.label;
+  const ctaResolved = isLandingCtaResolved(userId, ctaResolvedFor);
+  const primaryLabel = cta && ctaResolved
+    ? (pendingPrimary ? '확인 중이에요…' : cta.label)
+    : null;
 
   const onPrimary = () => {
     // 부트스트랩 중에는 session=null 이 '비로그인'이 아니라 '아직 모름'이다. 이때
@@ -154,17 +164,18 @@ export function LandingShell({ title, description, children }) {
     // 막아야 하므로 loading 게이트는 그대로 둔다.
     // 다만 조용히 return 하면 랜딩의 유일한 전환 버튼이 '눌러도 아무 일 없는 버튼'이
     // 된다. 분기는 미루되 의도는 버리지 않는다 — loading 이 내려가면 한 번만 실행한다.
-    if (loading) { setPendingPrimary(true); return; }
+    if (!cta) return;
+    if (loading || (session && !ctaResolved)) { setPendingPrimary(true); return; }
     runPrimary();
   };
 
   // 보류된 클릭 소비. 연타해도 boolean 하나라 이동·모달은 한 번만 일어난다
   // (소비하며 false 로 내리고, 그 재렌더에서는 이 이펙트가 곧바로 빠져나온다).
   useEffect(() => {
-    if (loading || !pendingPrimary) return;
+    if (loading || !pendingPrimary || (session && !ctaResolved)) return;
     setPendingPrimary(false);
     runPrimary();
-  }, [loading, pendingPrimary, runPrimary]);
+  }, [ctaResolved, loading, pendingPrimary, runPrimary, session]);
 
   return (
     // header/footer 는 <main> 밖에 둔다. HTML-AAM 상 main·section·article 안에
@@ -203,8 +214,8 @@ export function LandingShell({ title, description, children }) {
           </button>
         </div>
       )}
-      <LandingHeader onPrimary={onPrimary} primaryLabel={primaryLabel} />
-      <main>{children({ ctaLabel: primaryLabel, onPrimary })}</main>
+      <LandingHeader onPrimary={primaryLabel ? onPrimary : undefined} primaryLabel={primaryLabel} />
+      <main>{children({ ctaLabel: primaryLabel, onPrimary: primaryLabel ? onPrimary : undefined })}</main>
       <FooterSection />
     </div>
   );

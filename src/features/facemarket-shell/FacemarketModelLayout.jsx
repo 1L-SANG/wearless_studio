@@ -15,6 +15,7 @@
    ============================================================= */
 import { Outlet } from 'react-router-dom';
 import { LandingHeader } from '@/features/facemarket-landing/LandingHeader.jsx';
+import { FooterSection } from '@/features/facemarket-landing/sections/FooterSection.jsx';
 
 export function FacemarketModelLayout() {
   return (
@@ -29,6 +30,9 @@ export function FacemarketModelLayout() {
       <main>
         <Outlet />
       </main>
+      <div className="fm-theme-inset">
+        <FooterSection compact />
+      </div>
     </div>
   );
 }

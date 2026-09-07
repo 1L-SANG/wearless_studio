@@ -11,8 +11,8 @@
    설계: docs/designs/facemarket-application-renewal.md
    ============================================================= */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useToast } from '@/components/ui.jsx';
+import { Link, useNavigate } from 'react-router-dom';
+import { Icon, useToast } from '@/components/ui.jsx';
 import {
   getCurrentApplication, stageApplicationPhoto, submitApplication,
 } from '@/lib/api/facemarket.js';
@@ -271,16 +271,35 @@ export function ModelApply() {
         attestations: attest,
         privacyConsent: { accepted: true, documentVersion: PRIVACY_CONSENT_VERSION },
       });
-      push?.('지원서를 제출했어요. 관리자 검토를 기다려 주세요.', { icon: 'check' });
-      navigate('/status', { replace: true });
+      setPhase('complete');
     } catch (err) {
       push?.(err.message, { icon: 'alertCircle' });
       setPhase('ready');
     }
-  }, [canSubmit, form, attest, navigate, push]);
+  }, [canSubmit, form, attest, push]);
 
   if (phase === 'loading') {
     return <div className={s.page}><p className={s.loading}>불러오는 중…</p></div>;
+  }
+
+  if (phase === 'complete') {
+    return (
+      <div className={s.completePage}>
+        <section className={s.completeCard}>
+          <span className={s.completeIcon}><Icon name="check" size={28} stroke={2.5} /></span>
+          <p className={s.completeEyebrow}>접수 완료</p>
+          <h1>지원서 접수가 끝났어요</h1>
+          <span className={s.completeChip}>승인되면 메일로 등록 링크가 가요 · 보통 1시간 안</span>
+          <div className={s.completeNeeds}>
+            <p><Icon name="check" size={15} /><strong>정부 모바일 신분증 앱</strong></p>
+            <p><Icon name="check" size={15} /><strong>본인 사진</strong></p>
+          </div>
+          <Link className={s.completeCta} to="/models">
+            모델 리스트 보기 <Icon name="arrowRight" size={17} stroke={2} />
+          </Link>
+        </section>
+      </div>
+    );
   }
 
   return (

@@ -175,7 +175,12 @@
   cursor: pointer;
   transition: color 140ms ease;
 }
-.navLink:hover { color: var(--fm-ink); }
+.navLink:hover {
+  color: var(--fm-ink);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.45rem;
+}
 
 /* 현재 페이지 표시. 색만으로 알리지 않는다 — 색각 이상이나 저대비 환경에서 구분이
    사라진다(WCAG 1.4.1). 밑줄을 함께 둬서 형태로도 읽히게 한다. */
@@ -955,11 +960,16 @@
   display: grid;
   gap: 0.4rem;
   padding: clamp(2.5rem, 6vw, 4rem) 0 0;
-  border-top: 1px solid var(--fm-line);
+  box-shadow: inset 0 1px 0 var(--fm-line);
 }
 .footerBrand { margin: 0 0 0.4rem; font: 600 0.95rem/1.4 var(--font-body); }
 .footerNote { margin: 0; color: var(--fm-muted); font: 400 0.85rem/1.6 var(--font-body); }
 .footerLink { color: var(--fm-accent); }
+.footerLegal { display: flex; flex-wrap: wrap; gap: 0.2rem 0.45rem; color: var(--fm-muted); font: 400 0.85rem/1.6 var(--font-body); }
+.footerLinkStrong { color: var(--fm-ink); font-weight: 600; }
+.footerCompany { display: grid; gap: 0.12rem; margin-top: 0.55rem; color: var(--fm-muted); font: 400 0.75rem/1.55 var(--font-body); letter-spacing: 0.01em; }
+.footerCompany p { margin: 0; }
+.footerCompact { margin-top: 2.5rem; padding: 1.5rem 0 1.75rem; }
 
 /* 상단바의 조용한 보조 액션(로그아웃). 주 CTA(.headerCta)와 나란히 서지만 잉크 pill 이
    아니라 테두리만 있는 형태다 — 로그아웃이 이 화면에서 권장 행동이 아니기 때문이다.

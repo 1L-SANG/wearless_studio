@@ -43,7 +43,10 @@ import {
     ALLOWED_BRAND_USE_CATEGORIES,
     FORBIDDEN_BRAND_USE_CATEGORIES,
 } from "@/lib/brandUseCategories.js";
-import { enrollmentReasonMessage } from "./biometricEnrollment.js";
+import {
+    buildRegistrationCompletion,
+    enrollmentReasonMessage,
+} from "./biometricEnrollment.js";
 import s from "./ModelLicense.module.css";
 
 // 서버 enum 과 묶인 값이다 — 표시만 바꾸고 value 는 건드리지 않는다.
@@ -635,13 +638,16 @@ export function ModelLicense() {
     }, [usageModelId]);
 
     const onIssued = useCallback(
-        async (lic) => {
+        (lic) => {
             setIssuedId(lic?.id ?? null);
-            setView("cards");
-            setSearchParams({}, { replace: true });
-            setLicenses(await listLicenses());
+            navigate("/model/register", {
+                replace: true,
+                state: {
+                    completionSummary: buildRegistrationCompletion(enrollmentRecord, lic),
+                },
+            });
         },
-        [setSearchParams],
+        [enrollmentRecord, navigate],
     );
 
     // 발급 직후 카드로 데려간다(모바일에선 목록이 길어 새 카드가 화면 밖에 있을 수 있다).

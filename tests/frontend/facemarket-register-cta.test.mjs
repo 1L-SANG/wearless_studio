@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import * as ctaModule from '../../src/features/facemarket-landing/registerCta.js';
+import { resolveHubJourney } from '../../src/features/model/modelHubState.js';
 
-import { registerCta } from '../../src/features/facemarket-landing/registerCta.js';
+const { registerCta } = ctaModule;
 
 /* 2026-09-02: 지원서 게이트(applicationRequired)가 기본 true 다. 아무것도 없는 방문자의 CTA 는
    허브를 거치지 않고 곧장 지원서(/model/apply)로 간다(사용자 지시). 게이트를 끄면 종전 등록 시작. */
@@ -10,6 +11,31 @@ test('아무것도 없으면 지원서로 보낸다 — 게이트 기본값', ()
   assert.deepEqual(registerCta(null, null), { label: '얼리버드 지원하기', to: '/model/apply' });
   assert.deepEqual(registerCta(undefined, undefined), { label: '얼리버드 지원하기', to: '/model/apply' });
   assert.deepEqual(registerCta(null, null, {}), { label: '얼리버드 지원하기', to: '/model/apply' });
+});
+
+test('랜딩 CTA는 지원서·등록·모델이 모두 없을 때만 얼리버드 지원을 보여 준다', () => {
+  const landing = (ownedModel, enrollment, application) => registerCta(
+    ownedModel,
+    enrollment,
+    { application, applicationRequired: false, scope: 'landing' },
+  );
+
+  assert.deepEqual(landing(null, null, null), {
+    label: '얼리버드 지원하기',
+    to: '/model/apply',
+  });
+  assert.equal(landing(null, null, { id: 'a1', status: 'under_review' }), null);
+  assert.equal(landing(null, null, { id: 'a2', status: 'rejected' }), null);
+  assert.equal(landing(null, { id: 'e1', status: 'photos_pending' }, null), null);
+  assert.equal(landing({ id: 'm1', status: 'verified' }, null, null), null);
+});
+
+test('익명 조회 완료는 뒤늦게 확인된 로그인 사용자의 CTA 조회 완료로 재사용하지 않는다', () => {
+  assert.equal(typeof ctaModule.isLandingCtaResolved, 'function');
+  assert.equal(ctaModule.isLandingCtaResolved(null, 'anonymous'), true);
+  assert.equal(ctaModule.isLandingCtaResolved('user-1', 'anonymous'), false);
+  assert.equal(ctaModule.isLandingCtaResolved('user-1', 'user-1'), true);
+  assert.equal(ctaModule.isLandingCtaResolved('user-2', 'user-1'), false);
 });
 
 test('게이트를 끄면 종전처럼 등록으로 보낸다 — 문구는 통일된 모델 등록하기', () => {
@@ -90,14 +116,18 @@ test('모델 상태 네 가지를 전부 판정한다 — verified 만 내 모�
   }
 });
 
-test('ModelHub 의 모델 상태 어휘가 늘어나면 여기서 걸린다', () => {
-  const source = readFileSync(new URL('../../src/features/model/ModelHub.jsx', import.meta.url), 'utf8');
-  const block = source.match(/const MODEL_STATUS_LABEL = \{([\s\S]*?)\};/);
-  assert.ok(block, 'ModelHub 에서 MODEL_STATUS_LABEL 을 찾지 못했다');
-  const keys = [...block[1].matchAll(/^\s*([a-z_]+):/gm)].map((m) => m[1]);
-  assert.ok(keys.length > 0, '상태 키를 하나도 못 읽었다');
-  for (const key of keys) {
-    assert.ok(MODEL_STATUSES.includes(key), `registerCta 가 모르는 모델 상태: ${key}`);
+test('ModelHub 는 모델 상태 네 가지를 개발자 코드 노출 없이 안전한 단계로 보낸다', () => {
+  for (const status of MODEL_STATUSES) {
+    const journey = resolveHubJourney({
+      ownedModel: { id: 'm1', status },
+      applicationRequired: true,
+    });
+    if (status === 'verified') assert.equal(journey.mode, 'active');
+    else {
+      assert.equal(journey.mode, 'onboarding');
+      assert.ok(journey.action?.label, `${status} 에 다음 행동이 없다`);
+      assert.doesNotMatch(journey.action.label, new RegExp(status));
+    }
   }
 });
 

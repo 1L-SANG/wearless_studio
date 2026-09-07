@@ -101,3 +101,22 @@ export function heightBucketOptions(gender) {
   if (gender === 'female') return HEIGHT_BUCKETS.female;
   return [...HEIGHT_BUCKETS.male, ...HEIGHT_BUCKETS.female];
 }
+
+export function heightBucketLabel(value) {
+  if (!value) return null;
+  return [...HEIGHT_BUCKETS.male, ...HEIGHT_BUCKETS.female]
+    .find((option) => option.value === value)?.label || null;
+}
+
+export function bodyTypeLabel(value) {
+  if (!value) return null;
+  const direct = BODY_TYPE_LABEL[value];
+  if (direct) return direct;
+  const divider = value.indexOf('_');
+  if (divider === -1) return null;
+  const volume = value.slice(0, divider);
+  const shape = value.slice(divider + 1);
+  const volumeLabel = BODY_VOLUMES.find((option) => option.value === volume)?.label;
+  const shapeLabel = BODY_SHAPES.find((option) => option.value === shape)?.label;
+  return volumeLabel && shapeLabel ? `${volumeLabel} · ${shapeLabel}` : null;
+}
