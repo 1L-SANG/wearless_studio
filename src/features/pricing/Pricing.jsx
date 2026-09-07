@@ -5,7 +5,7 @@
    데이터: api.getPricingPlans() (http → /v1/pricing-plans, mock 폴백).
    ============================================================= */
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { WEARLESS_LEGAL_URLS } from '@/lib/legalLinks.js';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
@@ -89,7 +89,7 @@ export function Pricing() {
               강조를 빼면 안 된다(환불정책 제4조 제2항). */}
           <strong>크레딧을 한 건이라도 사용하면 청약철회(환불)가 되지 않아요.</strong>
           {' 결제 후 7일 안에 한 건도 쓰지 않았다면 전액 환불받을 수 있어요. '}
-          <Link to="/refund">환불 정책</Link>
+          <a href={WEARLESS_LEGAL_URLS.refund}>환불 정책</a>
         </p>
       </div>
 
@@ -149,7 +149,7 @@ export function Pricing() {
                     </Button>
                   )}
                   <p className={s.purchaseConsent}>
-                    결제하면 <Link to="/terms">이용약관</Link>과 <Link to="/refund">환불 정책</Link>에 동의하는 것으로 봐요.
+                    결제하면 <a href={WEARLESS_LEGAL_URLS.terms}>이용약관</a>과 <a href={WEARLESS_LEGAL_URLS.refund}>환불 정책</a>에 동의하는 것으로 봐요.
                   </p>
                 </div>
               </div>
