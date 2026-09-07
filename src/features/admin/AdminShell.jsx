@@ -4,13 +4,17 @@
    항상 보이고, 화면이 늘어도 세로로 늘어난다). 모바일은 대상이 아니다 — 작은 화면에서는
    내비가 위로 접힌다. */
 import { NavLink, Outlet } from 'react-router-dom';
-import { FileText, LayoutDashboard, ShieldCheck, Users } from 'lucide-react';
+import { Camera, FileText, LayoutDashboard, ShieldCheck, Users } from 'lucide-react';
 import { cn } from '@/lib/adminCn.js';
 
+/* '모델' 과 '사용자' 는 다른 화면이다 — 전자는 FaceMarket 에 얼굴을 올린 모델(fm_models),
+   후자는 두 서비스의 가입 계정(profiles) 전체다. 모델 항목이 예전처럼 '유저' 까지
+   이름에 달고 있으면, 둘 중 어디를 눌러야 하는지 알 수 없다. */
 const NAV = [
   { to: '/', label: '대시보드', icon: LayoutDashboard, end: true },
   { to: '/applications', label: '지원서 검토', icon: FileText },
-  { to: '/models', label: '모델·유저', icon: Users },
+  { to: '/models', label: '모델', icon: Camera },
+  { to: '/users', label: '사용자', icon: Users },
   { to: '/staff', label: '관리자 관리', icon: ShieldCheck },
 ];
 

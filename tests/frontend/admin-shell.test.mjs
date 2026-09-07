@@ -60,11 +60,11 @@ function findRouteBlockEnd(text, openTagStart) {
   throw new Error('가드 Route 를 짝지어 닫는 </Route> 를 못 찾았다 — 태그 균형이 안 맞는다');
 }
 
-test('admin 라우트 4개가 셸 아래, 로그인 가드 안에 있다', () => {
+test('admin 화면 라우트가 전부 셸 아래, 로그인 가드 안에 있다', () => {
   const app = read('src/apps/admin/App.jsx');
   assert.ok(app.includes('<RequireAuth />'), '로그인 가드가 없다');
   assert.ok(app.includes('AdminShell'), '셸이 없다');
-  for (const path of ['applications', 'models', 'staff']) {
+  for (const path of ['applications', 'models', 'users', 'staff']) {
     assert.ok(app.includes(`path="${path}"`), `라우트 누락: ${path}`);
   }
   // 셸 밖(가드 밖)에 화면 라우트를 두면 안 된다 — catch-all 리다이렉트만 허용.
@@ -80,11 +80,14 @@ test('admin 라우트 4개가 셸 아래, 로그인 가드 안에 있다', () =>
   assert.ok(!/element=\{<Admin/.test(outside), `가드 밖에 관리자 화면이 있다: ${outside.slice(0, 200)}`);
 });
 
-test('셸은 네 갈래 내비게이션을 가진다', () => {
+test('셸 내비게이션이 화면마다 하나씩 있다', () => {
   const shell = read('src/features/admin/AdminShell.jsx');
-  for (const label of ['대시보드', '지원서', '모델', '관리자']) {
+  for (const label of ['대시보드', '지원서', '모델', '사용자', '관리자']) {
     assert.ok(shell.includes(label), `내비 항목 누락: ${label}`);
   }
+  // '모델' 과 '사용자' 는 다른 화면이다(fm_models vs profiles). 예전 '모델·유저' 라벨로
+  // 되돌리면 둘 중 어디를 눌러야 하는지 알 수 없다.
+  assert.ok(!shell.includes('모델·유저'), '모델 내비가 사용자 화면과 이름이 겹친다');
 });
 
 test('admin-ui 컴포넌트는 공용 ui.jsx 를 물지 않는다', () => {

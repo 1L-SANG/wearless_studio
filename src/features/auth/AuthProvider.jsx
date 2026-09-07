@@ -17,6 +17,7 @@ import { createContext, useCallback, useContext, useEffect, useState } from 'rea
 import { supabase } from '@/lib/supabase.js';
 import { LoginGate } from './Login.jsx';
 import { draftSlot } from '@/lib/draftSlot.js';
+import { stampAppOrigin } from '@/lib/appOrigin.js';
 import { useAppStore } from '@/store/useAppStore.js';
 
 const AuthCtx = createContext(null);
@@ -106,6 +107,16 @@ export function AuthProvider({ children }) {
       subscription?.unsubscribe();
     };
   }, []);
+
+  /* 로그인된 계정이 어느 앱에서 왔는지 서버에 한 번 알린다(lib/appOrigin.js).
+     세션 부트스트랩·OAuth 복귀·토큰 갱신이 전부 여기 session 을 지나므로 배선 지점이
+     하나로 끝난다. deps 를 user.id 로 두는 이유: 토큰이 갱신될 때마다 session 객체는
+     새로 오지만 사용자는 그대로다 — 객체를 deps 에 두면 갱신마다 다시 보낸다.
+     실패는 무시한다(가입 흐름이 아니라 라벨 한 칸이다). */
+  const userId = session?.user?.id ?? null;
+  useEffect(() => {
+    if (userId) stampAppOrigin(userId);
+  }, [userId]);
 
   const signIn = (provider) =>
     supabase.auth.signInWithOAuth({
