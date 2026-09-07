@@ -27,7 +27,11 @@ import { mergeMatchClothing, reconcileMatchCompatibility } from '@/lib/api/match
 import { BRAND_USE_CATEGORIES } from '@/lib/brandUseCategories.js';
 import { looksLikeImageFile, toUploadableImages } from '@/lib/imageTranscode.js';
 import { invalidateStoryboardEntryPrefetch } from '@/features/storyboard/storyboardEntryPrefetch.js';
-import { isRealModelSelection, resolveSelectedModelId } from './modelSelection.js';
+import {
+  isRealModelSelection,
+  resolveSelectedModelId,
+  resolveStylingModelId,
+} from './modelSelection.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { SELLING_POINTS_MAX, applySellingPointEdit } from './sellingPoints.js';
 import { selectAnalysisComposeMode } from './composeModeSelection.js';
@@ -109,7 +113,7 @@ function ModelDetailModal({ model, onClose, onSelect, selectable }) {
                 )}
                 <div className="lic-foot">
                   <div className="lic-foot-info">
-                    <div className="lic-price">{_won(data.unitPrice)}<em> · 상세페이지 1개당</em></div>
+                    <div className="lic-price">{_won(data.unitPrice)}<em> · 호리존 컷 1장당</em></div>
                     {_fmtDate(data.validUntil) && <div className="lic-valid">{_fmtDate(data.validUntil)}까지</div>}
                     {data.vcId && <code className="lic-vcid">{data.vcId}</code>}
                   </div>
@@ -671,6 +675,12 @@ export function AnalysisForm({
     });
   };
   const confirmAnalysis = async () => {
+    if (isRealModelSelection(a.selectedModelId) && !a.stylingModelId) {
+      toast.push('장소·스타일링 컷에 쓸 가상 모델을 골라 주세요.', {
+        icon: 'alertCircle',
+      });
+      return;
+    }
     if (isRealModelSelection(a.selectedModelId) && !a.brandUseCategory) {
       toast.push('실제 모델을 사용할 브랜드 유형을 선택해 주세요.', {
         icon: 'alertCircle',
@@ -752,10 +762,21 @@ export function AnalysisForm({
       modelsLoading,
       aiModels: AI_MODELS,
     });
+    const nextStylingModelId = resolveStylingModelId({
+      selectedModelId: nextSelectedModelId,
+      stylingModelId: a.stylingModelId,
+      targetGenders: a.targetGenders,
+      aiModels: AI_MODELS,
+    });
+    const patch = {};
     if (nextSelectedModelId !== a.selectedModelId) {
-      onChange({ selectedModelId: nextSelectedModelId });
+      patch.selectedModelId = nextSelectedModelId;
     }
-  }, [models, modelsLoading, a.selectedModelId, a.targetGenders, onChange]);
+    if (nextStylingModelId !== (a.stylingModelId || null)) {
+      patch.stylingModelId = nextStylingModelId;
+    }
+    if (Object.keys(patch).length) onChange(patch);
+  }, [models, modelsLoading, a.selectedModelId, a.stylingModelId, a.targetGenders, onChange]);
   const aiSet = new Set(a.aiSuggestedPoints || []);
   const selectableModels = models.filter((model) => model.hasActiveLicense);
   const pendingLicenseModels = models.filter((model) => !model.hasActiveLicense);
@@ -1029,12 +1050,21 @@ export function AnalysisForm({
           <div className="field-row"><label className="lbl">대상 성별</label>
             <Chips options={genderOptions} value={a.targetGenders?.[0] || null}
               allowDeselect={false}
-              onChange={(v) => onChange(withFitProfile({
-                targetGenders: normalizeTargetGendersForClothingType(
+              onChange={(v) => {
+                const targetGenders = normalizeTargetGendersForClothingType(
                   a.clothingType,
                   v ? [v] : [],
-                ),
-              }))} /></div>
+                );
+                onChange(withFitProfile({
+                  targetGenders,
+                  stylingModelId: resolveStylingModelId({
+                    selectedModelId: a.selectedModelId,
+                    stylingModelId: a.stylingModelId,
+                    targetGenders,
+                    aiModels: AI_MODELS,
+                  }),
+                }));
+              }} /></div>
           {fitOpts.length > 0 && (
             <div className="field-row"><label className="lbl">핏</label>
               <Chips options={fitOpts} value={a.fit} onChange={(v) => onChange(withFitProfile({ fit: v }, 'seller'))} /></div>
@@ -1197,7 +1227,7 @@ export function AnalysisForm({
                 const on = a.selectedModelId === m.id;
                 return (
                   <div key={m.id} className={`model-card fm-model ai-model${on ? ' on' : ''}`}
-                    onClick={() => onChange({ selectedModelId: m.id })} title={m.displayName}>
+                    onClick={() => onChange({ selectedModelId: m.id, stylingModelId: null })} title={m.displayName}>
                     <img src={m.thumb} alt={m.displayName} />
                     <span className="ai-name">
                       {m.displayName}{on && <Icon name="check" size={12} />}
@@ -1231,12 +1261,13 @@ export function AnalysisForm({
                     ? <img src={m.coverImageUrl} alt={m.displayName} />
                     : <ModelThumb uri={m.faceThumbUri} alt={m.displayName} />}
                   {m.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
+                  <span className="fm-studio-only">스튜디오 컷 전용</span>
                   <div className="fm-meta">
                     <div className="fm-name">{m.displayName}{on && <Icon name="check" size={13} className="star" />}</div>
                     <div className="fm-price">
                       {m.unitPrice != null
-                        ? `₩${Number(m.unitPrice).toLocaleString('ko-KR')} · 상세페이지 1개당`
-                        : '상세페이지 1개당 가격 확인 필요'}
+                        ? `₩${Number(m.unitPrice).toLocaleString('ko-KR')} · 호리존 컷 1장당`
+                        : '호리존 컷 1장당 가격 확인 필요'}
                     </div>
                   </div>
                 </div>
@@ -1254,6 +1285,7 @@ export function AnalysisForm({
                         ? <img src={m.coverImageUrl} alt={m.displayName} />
                         : <ModelThumb uri={m.faceThumbUri} alt={m.displayName} />}
                       {m.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
+                      <span className="fm-studio-only">스튜디오 컷 전용</span>
                       <div className="fm-meta">
                         <div className="fm-name">{m.displayName}</div>
                         <div className="fm-price">라이선스 없음</div>
@@ -1269,21 +1301,51 @@ export function AnalysisForm({
           <ModelDetailModal
             model={detailFor}
             selectable={!!detailFor.hasActiveLicense}
-            onSelect={(id) => onChange({ selectedModelId: id })}
+            onSelect={(id) => onChange({
+              selectedModelId: id,
+              stylingModelId: resolveStylingModelId({
+                selectedModelId: id,
+                stylingModelId: a.stylingModelId,
+                targetGenders: a.targetGenders,
+                aiModels: AI_MODELS,
+              }),
+            })}
             onClose={() => setDetailFor(null)}
           />
         )}
         {isRealModelSelection(a.selectedModelId) && (
-          <div className="fm-use-category">
-            <div className="sec-title">사용 브랜드 유형</div>
-            <div className="sec-sub">이 모델을 사용할 브랜드 유형을 하나 선택해 주세요.</div>
-            <Chips
-              options={BRAND_USE_CATEGORIES}
-              value={a.brandUseCategory}
-              allowDeselect={ false }
-              onChange={(value) => onChange({ brandUseCategory: value })}
-            />
-          </div>
+          <>
+            <div className="fm-styling-model">
+              <div className="sec-title">장소·스타일링 컷 모델</div>
+              <div className="sec-sub">실제 모델은 스튜디오(호리존) 컷에만 나와요. 장소·스타일링 컷은 가상 모델로 만들어요.</div>
+              <div className="model-grid">
+                {AI_MODELS
+                  .filter((model) => !a.targetGenders?.[0] || model.gender === a.targetGenders[0])
+                  .map((model) => {
+                    const on = a.stylingModelId === model.id;
+                    return (
+                      <div key={model.id} className={`model-card fm-model ai-model${on ? ' on' : ''}`}
+                        onClick={() => onChange({ stylingModelId: model.id })} title={model.displayName}>
+                        <img src={model.thumb} alt={model.displayName} />
+                        <span className="ai-name">
+                          {model.displayName}{on && <Icon name="check" size={12} />}
+                        </span>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+            <div className="fm-use-category">
+              <div className="sec-title">사용 브랜드 유형</div>
+              <div className="sec-sub">이 모델을 사용할 브랜드 유형을 하나 선택해 주세요.</div>
+              <Chips
+                options={BRAND_USE_CATEGORIES}
+                value={a.brandUseCategory}
+                allowDeselect={false}
+                onChange={(value) => onChange({ brandUseCategory: value })}
+              />
+            </div>
+          </>
         )}
       </div>
 

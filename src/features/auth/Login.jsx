@@ -55,6 +55,7 @@ export function LoginGate() {
   const [email, setEmail] = useState('qa@local.test');
   const [password, setPassword] = useState('');
   const [localErr, setLocalErr] = useState('');
+  const [sellerConsent, setSellerConsent] = useState(false);
 
   /* 사용자 조작으로 모달을 닫는 유일한 경로(Esc·바깥 클릭). 진행 중인 로그인이 있으면
      취소가 아니다 — ui.jsx Modal 의 Escape 리스너는 window 에 붙어 있어서 프로바이더
@@ -141,12 +142,23 @@ export function LoginGate() {
           )}
         </p>
 
+        {!IS_FACEMARKET && (
+          <div className={styles.consent}>
+            <input id="seller-login-consent" type="checkbox" checked={sellerConsent}
+              onChange={(event) => setSellerConsent(event.target.checked)} />
+            <label htmlFor="seller-login-consent">
+              만 19세 이상이며 <a href="/terms" target="_blank" rel="noreferrer">이용약관</a>과{' '}
+              <a href="/privacy" target="_blank" rel="noreferrer">개인정보 처리방침</a>에 동의합니다.
+            </label>
+          </div>
+        )}
+
         <div className={styles.buttons}>
           <button
             type="button"
             className={`${styles.btn} ${styles.google}`}
             onClick={() => handle('google')}
-            disabled={pending !== null}
+            disabled={pending !== null || (!IS_FACEMARKET && !sellerConsent)}
           >
             <span className={styles.icon}><GoogleIcon /></span>
             {pending === 'google' ? '이동 중…' : 'Google로 계속하기'}
@@ -155,7 +167,7 @@ export function LoginGate() {
             type="button"
             className={`${styles.btn} ${styles.kakao}`}
             onClick={() => handle('kakao')}
-            disabled={pending !== null}
+            disabled={pending !== null || (!IS_FACEMARKET && !sellerConsent)}
           >
             <span className={styles.icon}><KakaoIcon /></span>
             {pending === 'kakao' ? '이동 중…' : '카카오로 계속하기'}
@@ -179,7 +191,7 @@ export function LoginGate() {
           </form>
         )}
 
-        {/* 약관 고지. **셀러 도메인 문구는 그대로 둔다** — 법적 문구를 약화시키지 않는다.
+        {/* 약관 고지. 셀러는 위 명시적 체크박스로 대체한다.
             facemarket 에서만 바꾸는 이유: 이 모달을 여는 랜딩의 푸터가 '개인정보처리방침·
             이용약관 링크는 공개 문서가 준비되면 여기에 겁니다' 라고 적는다(FooterSection.jsx).
             실제로 걸 링크가 없다 — /legal/* 라우트는 App.jsx 에 없고, 서버 NOTICE_URIS
@@ -191,11 +203,11 @@ export function LoginGate() {
             (ModelRegister STEP 1 의 처리 안내 5줄 + 동의 체크박스)에서 명시적으로 받는다.
             문장은 푸터와 같은 말이 되도록 맞췄다. 없는 주소를 지어 걸지 마라 — 법무 문서가
             공개되면 그때 푸터와 이 줄을 **같은 링크로 함께** 잇는다. */}
-        <p className={styles.hint}>
-          {IS_FACEMARKET
-            ? '무엇을 어떻게 처리하는지는 모델 등록 첫 단계에서 동의하기 전에 화면에 표시됩니다.'
-            : '계속하면 서비스 약관에 동의하는 것으로 간주됩니다.'}
-        </p>
+        {IS_FACEMARKET && (
+          <p className={styles.hint}>
+            무엇을 어떻게 처리하는지는 모델 등록 첫 단계에서 동의하기 전에 화면에 표시됩니다.
+          </p>
+        )}
       </div>
     </Modal>
   );

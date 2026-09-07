@@ -24,8 +24,8 @@ from types import SimpleNamespace
 from app.facemarket import LicenseCard, _cover_serving_url, _license_card
 
 
-def _req_with_r2(r2):
-    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(r2_face=r2)))
+def _req_with_r2(r2, public_r2=None):
+    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(r2_face=r2, r2=public_r2)))
 
 
 def test_cover_serving_url_transforms_private_key_to_signed_url():
@@ -41,6 +41,19 @@ def test_cover_serving_url_transforms_private_key_to_signed_url():
     assert _cover_serving_url(req, "") is None
     # r2_face 미설정 → None(그레이스풀, 크래시 아님)
     assert _cover_serving_url(_req_with_r2(None), "private/fm-profile/abc.png") is None
+
+
+def test_cover_serving_url_uses_general_bucket_for_confirmed_catalog_cover():
+    class _R2:
+        def __init__(self, host):
+            self.host = host
+
+        def public_url(self, key):
+            return f"https://{self.host}/{key}"
+
+    key = f"facemarket/catalog/models/{MODEL_ID}/covers/cut.webp"
+    request = _req_with_r2(_R2("private.example"), _R2("public.example"))
+    assert _cover_serving_url(request, key) == f"https://public.example/{key}"
 from app.main import create_app
 from conftest import make_settings
 
@@ -635,7 +648,7 @@ class FakeCursor:
                 r["status"] = "revoked"
             self._many = [{"id": r["id"], "vc_id": r.get("vc_id")} for r in rows]
             self.rowcount = len(rows)
-        elif s.startswith("update fm_models set status = 'verified'"):
+        elif s.startswith("update fm_models set did ="):
             user_did, model_id, enrollment_id = params[:3]
             if self.store.get("final_model_update_misses"):
                 self._result = None
@@ -649,7 +662,7 @@ class FakeCursor:
                 None,
             )
             if m:
-                m["status"] = "verified"
+                m["status"] = "pending"
                 if user_did and not m.get("did"):
                     m["did"] = user_did
                 self._result = {"id": m["id"]}
@@ -1128,11 +1141,14 @@ def _create_current_license(biometric_fm, make_token):
         headers=_auth(make_token),
     )
     assert response.status_code == 201, response.text
+    # VC 발급 뒤 모델은 pending 이고, 이 헬퍼를 쓰는 얼굴 게이트 테스트는 테스트컷 확인까지
+    # 마친 현재 모델을 전제로 한다. 확인 API 자체는 test_facemarket_model_test_cuts.py가 검증한다.
+    store["models"][0]["status"] = "verified"
     r2.gets.clear()
     return response.json()["id"]
 
 
-def test_license_starts_pending_and_activates_only_after_vc(
+def test_license_activates_after_vc_but_model_stays_pending_until_cut_confirmation(
     biometric_fm, make_token, holder_stub
 ):
     client, store, _ = biometric_fm
@@ -1150,11 +1166,28 @@ def test_license_starts_pending_and_activates_only_after_vc(
     assert APPROVED_FRONT_KEY not in response.text
     assert store["licenses"][0]["status"] == "active"
     assert store["licenses"][0]["face_image_key"] == APPROVED_FRONT_KEY
-    assert store["models"][0]["status"] == "verified"
+    assert store["models"][0]["status"] == "pending"
     assert store["enrollments"][0]["status"] == "passed"
     issue_call = next(c for c in holder_stub.calls if c["path"].endswith("/issue-vc"))
     assert issue_call["payload"]["idempotencyKey"] == f"fm-license:{card['id']}"
     assert all(c["secret"] == "shared-secret" for c in holder_stub.calls)
+
+
+def test_reverification_vc_returns_model_to_pending_confirmation_gate(
+    biometric_fm, make_token, holder_stub
+):
+    client, store, _ = biometric_fm
+    enrollment_id = _seed_license_pending_enrollment(store)
+    store["models"][0]["status"] = "reverification_required"
+
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body(enrollment_id),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 201, response.text
+    assert store["models"][0]["status"] == "pending"
 
 
 def test_license_terms_are_normalized_once_for_storage_and_holder_claims(
@@ -1879,6 +1912,7 @@ def _remove_asset(store, view):
 @pytest.mark.parametrize(
     "mutate",
     [
+        lambda store: store["models"][0].update(status="awaiting_confirm"),
         lambda store: store["models"][0].update(status="reverification_required"),
         lambda store: store["models"][0].update(assets_status="building"),
         lambda store: store["licenses"][0].update(status="revoked"),
@@ -1904,6 +1938,7 @@ def _remove_asset(store, view):
         lambda store: store["licenses"][0].update(face_image_key=" "),
     ],
     ids=[
+        "awaiting-confirm",
         "model-frozen",
         "assets-building",
         "license-revoked",
@@ -2064,6 +2099,18 @@ def test_detail_page_worker_mime_extension_contract_remains_importable():
     assert facemarket._EXT_TO_MIME["jpg"] == "image/jpeg"
 
 
+def test_verify_license_local_blocks_awaiting_confirm_model():
+    with pytest.raises(Exception) as caught:
+        facemarket.verify_license_local(
+            SimpleNamespace(),
+            {"model_id": MODEL_ID, "model_status": "awaiting_confirm"},
+            model_id=MODEL_ID,
+            brand_use_category="상의",
+        )
+    assert caught.value.status_code == 409
+    assert caught.value.detail["code"] == "model_unavailable"
+
+
 def _purge_current(store):
     store["models"][0]["current_enrollment_id"] = None
     store["enrollments"].clear()
@@ -2074,6 +2121,7 @@ def _purge_current(store):
 @pytest.mark.parametrize(
     "mutate",
     [
+        lambda store: store["models"][0].update(status="awaiting_confirm"),
         lambda store: store["models"][0].update(status="reverification_required"),
         lambda store: store["licenses"][0].update(status="reverification_required"),
         lambda store: store["licenses"][0].update(status="revoked"),
@@ -2095,6 +2143,7 @@ def _purge_current(store):
         lambda store: store["licenses"][0].update(face_image_key="other/front.png"),
     ],
     ids=[
+        "awaiting-confirm",
         "model-freeze",
         "license-freeze",
         "revoke",

@@ -387,15 +387,11 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
   const [shot, setShot] = useState('full');
   const [color, setColor] = useState(null);
   // 실존(FaceMarket) 검증 모델 — 활성 라이선스 + 그리드 자산(assetsReady)까지 갖춰야 컷 생성 가능.
-  // 목록이 비면(오프/미등록/mock 모드) 기존 가상모델(catalogs.models)로 폴백 — 서버도 동일 분기.
+  // 장소·스타일링 컷에서도 가상모델을 고를 수 있어야 하므로 실존/가상 목록을 함께 보여준다.
   const fmList = (fmModels || []).filter((m) => m.hasActiveLicense && m.assetsReady);
-  const useFm = fmList.length > 0;
-  const initialModel = useFm ? fmList[0]
-    : (catalogs.models || []).find((m) => m.recommended) || (catalogs.models || [])[0];
+  const virtualModels = catalogs.models || [];
+  const initialModel = virtualModels.find((m) => m.recommended) || virtualModels[0] || fmList[0];
   const [model, setModel] = useState(initialModel?.id || 'mA');
-  useEffect(() => {   // 패널 열린 뒤 fm 카탈로그가 도착한 레이스 — mock id 선택을 실존 모델로 승격
-    if (useFm && !fmList.some((m) => m.id === model)) setModel(fmList[0].id);
-  }, [useFm]); // eslint-disable-line react-hooks/exhaustive-deps
   const [refImages, setRefImages] = useState([]);       // 내 레퍼런스 — NewCutRequest.refImages (계약 §6)
   const [exampleId, setExampleId] = useState(null);     // 촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
   const [refScope, setRefScope] = useState('all');
@@ -427,6 +423,10 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
   const effectiveCutType = effectiveRecipe.cutType;
   const isProduct = effectiveCutType === 'product';
   const isMirror = effectiveCutType === 'mirror'; // mirror 레시피(ADR-0004): 방향 없음, 샷 full/medium만
+  useEffect(() => {
+    if (effectiveCutType === 'horizon' || !isRealModelSelection(model)) return;
+    setModel(virtualModels.find((item) => item.recommended)?.id || virtualModels[0]?.id || 'mA');
+  }, [effectiveCutType, model, virtualModels]);
   const effectiveDirectionOptions = isProduct ? catalogs.productDirections : catalogs.directions;
   const effectiveShotOptions = isProduct ? catalogs.productShotTypes : catalogs.shotTypes;
   const effectiveDirectionVal = effectiveDirectionOptions.some((option) => option.value === effectiveRecipe.direction)
@@ -459,7 +459,7 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
     ? color : activeColorOpts[0]?.id || null;   // wardrobe 그룹 키 = colorId (계약 §3.6)
   // 갤러리·게이트용 성별 — 고른 모델(가상·실존)의 성별 우선, 못 찾으면 분석 기반(콘티보드 exampleGender 규칙).
   // 실존 모델은 catalogs.models 에 없어서 이 폴백이 없으면 null 이 되고, null 이면 착용컷 예시가 전부 닫힌다.
-  const modelGender = [...(catalogs.models || []), ...fmList].find((item) => item.id === model)?.gender
+  const modelGender = [...virtualModels, ...fmList].find((item) => item.id === model)?.gender
     || exampleGender || null;
   const closureOptions = catalogs.outerClosureStates || [];
   const showOuterClosure = clothingType === 'outer' && !isProduct;
@@ -503,9 +503,9 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
     }
   };
   const categoryRequired = failedCutRetry
-    ? failedCutRetry.request?.cutType !== 'product'
+    ? failedCutRetry.request?.cutType === 'horizon'
       && isRealModelSelection(failedCutRetry.request?.modelId)
-    : !isProduct && useFm;
+    : effectiveCutType === 'horizon' && isRealModelSelection(model);
   const brandUseCategoryBlocked = categoryRequired
     && (!brandUseCategory || brandUseCategorySaving);
   const brandUseCategoryControl = categoryRequired && (
@@ -615,16 +615,21 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
           {!isProduct && <details ref={modelRef} className="insp-extra ai-model" open={modelOpen}>
             <summary onClick={toggleModel}><Icon name="chevRight" size={15} />모델</summary>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 12 }}>
-              {useFm ? fmList.map((m) => (
-                <div key={m.id} className={`model-card fm-model img-only${model === m.id ? ' on' : ''}`} style={{ width: 'auto' }}
-                  onClick={() => { setModel(m.id); setExampleId(null); setRefScope('all'); }}
-                  title={`${m.displayName}${m.unitPrice != null ? ` · ₩${Number(m.unitPrice).toLocaleString('ko-KR')}/건` : ''}`}>
+              {fmList.map((m) => {
+                const disabled = effectiveCutType !== 'horizon';
+                return (
+                <div key={m.id} className={`model-card fm-model img-only${model === m.id ? ' on' : ''}${disabled ? ' disabled' : ''}`} style={{ width: 'auto' }}
+                  onClick={() => { if (!disabled) { setModel(m.id); setExampleId(null); setRefScope('all'); } }}
+                  aria-disabled={disabled}
+                  title={disabled ? '실제 모델은 스튜디오 컷에만 쓸 수 있어요' : `${m.displayName}${m.unitPrice != null ? ` · ₩${Number(m.unitPrice).toLocaleString('ko-KR')}/건` : ''}`}>
                   {m.coverImageUrl
                     ? <img src={m.coverImageUrl} alt={m.displayName} style={{ height: 104 }} />
                     : <ModelThumb uri={m.faceThumbUri} alt={m.displayName} />}
                   {m.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
                 </div>
-              )) : (catalogs.models || []).map((m) => (
+                );
+              })}
+              {virtualModels.map((m) => (
                 /* 이름을 사진 위에 얹는다(분석 화면과 동일) — 2026-08-17 가상모델이 5→14명이
                    되면서 라벨 없는 썸네일만으로는 특정 모델을 고를 수 없게 됐다. */
                 <div key={m.id} className={`model-card ai-model img-only${model === m.id ? ' on' : ''}`} style={{ width: 'auto' }}

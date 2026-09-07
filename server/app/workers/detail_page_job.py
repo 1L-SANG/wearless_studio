@@ -211,7 +211,6 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None):
     detail_settings = replace(s, model_image_high=detail_model)
     prepared = await _normalize_detail_openai_refs(prepared, detail_model)
     job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
-    suppress_preview_urls = bool(job.get("_suppress_detail_preview_urls"))
     # 동시성: 설정값(0=제한 없음 → 컷 수만큼). 구 상수 3은 429 실측 없는 보수적 추정이라
     # 오너 결정(2026-08-03)으로 전부 병렬 + 제출 간격(stagger) + 429 백오프가 기본이 됐다.
     _limit = getattr(s, "detail_cut_concurrency", 0) or max(1, len(prepared))
@@ -595,7 +594,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None):
             # REAL FaceMarket 컷은 최종 권한 펜스 전까지 출력 위치를 이벤트 원장에 남기지 않는다.
             step = {"blockId": b.get("id"), "status": "cut_done",
                     "width": w, "height": h}
-            if not suppress_preview_urls:
+            if not real_identity_attached:
                 step["previewUrl"] = r2.preview_url(key)
             await _emit(app.state.pool, job_id, "step", step)
             return (
@@ -608,6 +607,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None):
                  "cleanup_intent_id": cleanup_intent_id,
                  "metadata": {
                      "facemarket_real_derived": real_identity_attached,
+                     "cut_type": b.get("cutType"),
                  }},
                 has_face,
                 garment_qc,
@@ -663,7 +663,11 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None):
             continue
         step = {"blockId": block.get("id"), "status": "cut_done",
                 "width": base[0].get("width"), "height": base[0].get("height")}
-        if base[1] is not None and not suppress_preview_urls:
+        base_is_real_derived = bool(
+            base[1] is not None
+            and (base[1].get("metadata") or {}).get("facemarket_real_derived") is True
+        )
+        if base[1] is not None and not base_is_real_derived:
             step["previewUrl"] = r2.preview_url(base[1]["key"])
         await _emit(app.state.pool, job_id, "step", step)
         outcomes.append((
@@ -896,23 +900,25 @@ async def run_detail_page_job(app, job: dict) -> None:
                 for b in storyboard
                 if isinstance(b, dict) and b.get("source") == "ai"
             ]
-            uses_model_identity = any(
-                block.get("cutType") in _WORN_CUT_TYPES for block in ai_blocks
+            selected_model_id = payload.get("modelId")
+            styling_model_id = payload.get("stylingModelId")
+            block_model_ids = {
+                id(block): facemarket.resolve_block_model_id(
+                    block.get("cutType"), selected_model_id, styling_model_id
+                )
+                for block in ai_blocks
+            }
+            uses_horizon_identity = any(
+                block.get("cutType") == "horizon" for block in ai_blocks
             )
             example_repeat_indexes = _example_repeat_indexes(
                 ai_blocks, clothing_type
             )
-            selected_model_id = payload.get("modelId")
-            try:
-                uuid.UUID(str(selected_model_id))
-            except (TypeError, ValueError):
-                selected_is_real = False
-            else:
-                selected_is_real = True
+            selected_is_real = facemarket.is_real_model_id(selected_model_id)
             from ..agents import identity_source
             license_row = None
             real_refs = None
-            if selected_is_real and uses_model_identity:
+            if selected_is_real and uses_horizon_identity:
                 snapshot = payload.get("_facemarket")
                 if (
                     not isinstance(snapshot, dict)
@@ -947,7 +953,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     )
             elif (
                 not selected_model_id
-                and uses_model_identity
+                and uses_horizon_identity
                 and s.facemarket_enabled
                 and (
                     project.get("facemarket_license_id")
@@ -957,8 +963,13 @@ async def run_detail_page_job(app, job: dict) -> None:
                 raise facemarket._err(
                     "model_unavailable", "사용할 수 없는 모델입니다.", status=409
                 )
+            source_model_id = (
+                selected_model_id
+                if not selected_is_real or uses_horizon_identity
+                else styling_model_id
+            )
             source = identity_source.select_source(
-                selected_model_id=(selected_model_id if uses_model_identity else None),
+                selected_model_id=(source_model_id if block_model_ids else None),
                 license_row=license_row,
                 has_real_assets=real_refs is not None,
                 has_license_face=False,
@@ -978,7 +989,6 @@ async def run_detail_page_job(app, job: dict) -> None:
                 notice_ctx = {"model_name": license_row["model_name"], "license_id": license_row["id"]}
             else:
                 notice_ctx = None
-            job["_suppress_detail_preview_urls"] = source == "REAL"
 
             mannequin_asset = None
             sel = project.get("selected_mannequin_id") or project.get("selectedMannequinId")
@@ -1202,7 +1212,10 @@ async def run_detail_page_job(app, job: dict) -> None:
         example_warnings: list[dict] = []
         _virtual_ids: set[str] = set()
         fallback_model_id = s.detailpage_fallback_model_id
-        if fallback_model_id and source == "VIRTUAL":
+        if fallback_model_id and any(
+            model_id and not facemarket.is_real_model_id(model_id)
+            for model_id in block_model_ids.values()
+        ):
             try:
                 _virtual_ids = set(cut_generator.load_virtual_model_registry())
             except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
@@ -1231,22 +1244,30 @@ async def run_detail_page_job(app, job: dict) -> None:
             # 저장 콘티에 우연히 남은 비계약 필드가 프로젝트 선택 모델을 덮지 못하게 제거 후 주입한다.
             cut_spec.pop("modelId", None)
             cut_spec.pop("model_id", None)
+            block_model_id = block_model_ids[id(b)]
+            cut_source = (
+                "REAL"
+                if source == "REAL" and b.get("cutType") == "horizon"
+                else "VIRTUAL"
+                if block_model_id
+                else "NONE"
+            )
             # 인물 일관성(AG-06): VIRTUAL 소스에서 선택 id 가 가상 registry 밖(facemarket off 상태의
             # 실존 UUID)이면 resolve_virtual_model_assets 가 None → 참조 0장 → 컷마다 인물 랜덤.
             # 결정적 가상모델로 폴백해 전 컷 동일 인물 보장. REAL 은 얼굴을 별도 경로로
             # 붙이므로 건드리지 않는다(인물 이중 첨부 방지).
-            if source == "VIRTUAL":
+            if cut_source == "VIRTUAL":
                 eff_model_id, _subbed = cut_generator.resolve_effective_model_id(
-                    selected_model_id, fallback_model_id=fallback_model_id,
+                    block_model_id, fallback_model_id=fallback_model_id,
                     virtual_ids=_virtual_ids)
                 if _subbed and not _fallback_warned:
                     log.warning(
                         "AG-06 selected model %s unresolvable as virtual (facemarket=%s) → fallback %s "
                         "for identity consistency (job %s)",
-                        selected_model_id, s.facemarket_enabled, eff_model_id, job_id)
+                        block_model_id, s.facemarket_enabled, eff_model_id, job_id)
                     _fallback_warned = True
             else:
-                eff_model_id = selected_model_id
+                eff_model_id = block_model_id
             if eff_model_id:
                 cut_spec["modelId"] = eff_model_id
             try:
@@ -1258,8 +1279,8 @@ async def run_detail_page_job(app, job: dict) -> None:
                     normalized is not None
                     and confirmed_gpt_runtime.resolve_profile_request(
                         cut_generator.apply_reference_compatibility(normalized),
-                        identity_source=source,
-                        selected_model_id=selected_model_id,
+                        identity_source=cut_source,
+                        selected_model_id=block_model_id,
                         effective_model_id=eff_model_id,
                         uses_base_color=_uses_base_color(b),
                     )
@@ -1336,7 +1357,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                 # 상품컷에는 REAL/VIRTUAL 그리드를 구조적으로 차단한다.
                 model_images = []
                 has_identity = False
-            elif source == "REAL":
+            elif cut_source == "REAL":
                 # 실존 모델 그리드는 얼굴 노출과 무관하게 모든 착용컷에 identity 앵커로 붙인다(A4).
                 # wants(얼굴 노출)로만 게이트하면 mirror/back 이 참조 0장 → 그 컷만 인물 랜덤이 된다
                 # (REAL 은 VIRTUAL 과 달리 mB 폴백도 없음). 배지(has_identity)만 wants 로 준다.
@@ -1344,7 +1365,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     normalized.get("cutType") if normalized else None, wants_face=wants)
                 model_images = real_model_images if attach_grid else []
                 has_identity = _badge and len(model_images) == 2
-            elif source == "VIRTUAL":
+            elif cut_source == "VIRTUAL":
                 try:
                     model_images = list(
                         await _confirmed_model_images(normalized)
@@ -1529,8 +1550,8 @@ async def run_detail_page_job(app, job: dict) -> None:
                     confirmed_packet = confirmed_gpt_runtime.build_packet(
                         cut_generator.apply_reference_compatibility(normalized),
                         clothing_type=clothing_type,
-                        identity_source=source,
-                        selected_model_id=selected_model_id,
+                        identity_source=cut_source,
+                        selected_model_id=block_model_id,
                         effective_model_id=eff_model_id,
                         uses_base_color=_uses_base_color(b),
                         mannequin_image=cut_mannequin_image,
@@ -1576,7 +1597,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     )["_referenceDirectionCompatible"])
             # 4번째 = has_identity: 검증 얼굴(REAL 그리드)이 실제 담긴 컷 → face_cuts 계수·
             # generate has_face·검증 배지 근거. VIRTUAL 그리드는 검증 얼굴이 아니므로 False.
-            real_identity_attached = source == "REAL" and len(model_images) == 2
+            real_identity_attached = cut_source == "REAL" and len(model_images) == 2
             prepared.append(
                 (
                     cut_spec,
@@ -1650,6 +1671,11 @@ async def run_detail_page_job(app, job: dict) -> None:
             page_qc,
             garment_warnings,
         ) = await _gen_cuts(app, job, prepared, product, analysis, **_gen_cuts_kwargs)
+        real_generated_cut_count = sum(
+            1
+            for asset in cut_assets
+            if (asset.get("metadata") or {}).get("facemarket_real_derived") is True
+        )
         example_warnings.extend(garment_warnings)
         # 판정 기준은 **컷이 하나라도 나왔는가**(cut_results)다. cut_assets 로 보면 전 블록이
         # 원본 패스스루인 상세페이지가 "전멸"로 오인된다 — 그 경우 컷은 멀쩡히 있다.
@@ -1747,6 +1773,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             if (
                 source == "REAL"
                 and license_row is not None
+                and real_generated_cut_count > 0
                 and license_row.get("unit_price") is not None
                 and getattr(app.state, "fm_chain", None) is not None
             ):
@@ -1756,7 +1783,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                         payment_key=f"job:{job_id}",
                         license_id=str(license_row["id"]),
                         model_id=str(license_row["model_id"]),
-                        total=int(license_row["unit_price"]),
+                        total=int(license_row["unit_price"]) * real_generated_cut_count,
                         job_id=str(job_id),
                     )
                 except Exception:

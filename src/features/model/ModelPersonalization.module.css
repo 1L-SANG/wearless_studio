@@ -537,6 +537,20 @@
   font: 400 0.95rem/1.6 var(--font-body);
 }
 
+.hubGateNotice {
+  display: grid;
+  gap: 1.25rem;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding: clamp(1.35rem, 3vw, 2rem);
+  border-radius: 1.25rem;
+  background: rgba(45, 99, 255, 0.07);
+}
+
+@media (min-width: 48rem) {
+  .hubGateNotice { grid-template-columns: minmax(0, 1fr) auto; }
+}
+
 /* ---- 상태 세 칸 ---- */
 .hubStatus { margin-top: clamp(2rem, 5vw, 3rem); }
 .hubStatusLabel {

@@ -6,11 +6,29 @@
    API 가 repo.is_admin 을 강제한다. 이 호스트/라우팅은 UX 경계일 뿐이고, 비관리자가
    admin.wearless.kr 에 접속해도 API 가 403 을 준다.
    ============================================================= */
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { NavLink, Outlet, Routes, Route, Navigate } from 'react-router-dom';
 import { RequireAuth } from '../guards.jsx';
 import { AdminApplications } from '@/features/admin/AdminApplications.jsx';
+import { AdminModels } from '@/features/admin/AdminModels.jsx';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
 import { redirectToOwnDocumentHost } from '@/lib/host.js';
+import s from './App.module.css';
+
+function AdminShell() {
+  return (
+    <div className={s.shell}>
+      <nav className={s.tabs} aria-label="관리자 메뉴">
+        <NavLink to="/applications" className={({ isActive }) => `${s.tab}${isActive ? ` ${s.active}` : ''}`}>
+          지원서
+        </NavLink>
+        <NavLink to="/models" className={({ isActive }) => `${s.tab}${isActive ? ` ${s.active}` : ''}`}>
+          모델
+        </NavLink>
+      </nav>
+      <Outlet />
+    </div>
+  );
+}
 
 export default function AppAdmin() {
   // 셀러·facemarket 도메인에서 /admin.html 을 직접 연 경우 관리자 호스트로 되돌린다(host.js).
@@ -27,8 +45,11 @@ export default function AppAdmin() {
   return (
     <Routes>
       <Route element={<RequireAuth />}>
-        <Route index element={<AdminApplications />} />
-        <Route path="applications" element={<AdminApplications />} />
+        <Route element={<AdminShell />}>
+          <Route index element={<Navigate to="/applications" replace />} />
+          <Route path="applications" element={<AdminApplications />} />
+          <Route path="models" element={<AdminModels />} />
+        </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import { createStoryboardEntryPrefetchCache } from '../../src/features/storyboard/storyboardEntryPrefetchCache.js';
+import { loadStoryboardEntry } from '../../src/features/storyboard/storyboardEntryPrefetch.js';
 
 const storyboardSource = readFileSync(
   new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url),
@@ -45,6 +46,29 @@ test('repeated mannequin warm-ups share one project request', async () => {
   );
   assert.match(productInputSource, /\}, \[analysisProjectId, phase\]\);/);
   assert.doesNotMatch(mannequinSource, /warmStoryboardEntry/);
+});
+
+test('legacy real-model storyboard resume persists the default styling model', async () => {
+  const calls = [];
+  const client = {
+    getStoryboard: async () => [],
+    getCatalogs: async () => ({}),
+    getMatchClothing: async () => [],
+    getProduct: async () => ({}),
+    getAnalysis: async () => ({
+      selectedModelId: '11111111-1111-1111-1111-111111111111',
+      stylingModelId: null,
+      targetGenders: ['women'],
+    }),
+    saveAnalysis: async (projectId, patch) => {
+      calls.push([projectId, patch]);
+      return patch;
+    },
+  };
+
+  const entry = await loadStoryboardEntry('project-real', client);
+  assert.deepEqual(calls, [['project-real', { stylingModelId: 'mA' }]]);
+  assert.equal(entry[4].stylingModelId, 'mA');
 });
 
 test('edits that touch the storyboard seed invalidate the warmed prefetch', () => {

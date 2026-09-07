@@ -180,6 +180,44 @@ def test_get_wardrobe_groups_by_color_id_or_misc(client, make_token, monkeypatch
 # ---------- 워커 ----------
 
 
+def test_run_editor_real_vary_rejects_scene_change_before_generation(monkeypatch):
+    captured = {}
+
+    async def fake_get_asset(conn, uid, aid):
+        return {
+            "id": aid,
+            "r2_key": "k/source-real",
+            "mime_type": "image/png",
+            "metadata": {
+                "facemarket_real_derived": True,
+                "cut_type": "horizon",
+            },
+        }
+
+    async def fake_failure(conn, **kwargs):
+        captured["failure"] = kwargs
+        return True
+
+    async def forbidden_generate(*args, **kwargs):
+        raise AssertionError("real scene-changing request must not generate")
+
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_failure)
+    monkeypatch.setattr(eij.cut_variator, "generate", forbidden_generate)
+
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(eij.run_editor_image_job(app, worker_job({
+        "mode": "vary",
+        "source": {"src": "/v1/assets/a1/file", "cutType": "horizon"},
+        "changes": [{"type": "bg", "value": "거리"}],
+        "brandUseCategory": CATEGORY,
+        "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
+    })))
+
+    assert captured["failure"]["code"] == "real_model_horizon_only"
+
+
+
 def test_run_editor_image_job_vary_charges_cost_and_group_misc(monkeypatch):
     captured = {}
 
@@ -223,6 +261,7 @@ def test_run_editor_image_job_vary_charges_cost_and_group_misc(monkeypatch):
     assert captured["image"]["mime"] == "image/png"
     assert captured["image"]["metadata"] == {
         "facemarket_real_derived": False,
+        "cut_type": "styling",
     }
 
 
@@ -256,10 +295,14 @@ def test_run_editor_image_job_vary_propagates_real_privacy_and_rechecks_license(
             "id": aid,
             "r2_key": "k/source-real",
             "mime_type": "image/png",
-            "metadata": {"facemarket_real_derived": True},
+            "metadata": {
+                "facemarket_real_derived": True,
+                "cut_type": "horizon",
+            },
         }
 
-    async def fake_generate(*_args, **_kwargs):
+    async def fake_generate(settings, gemini, source, changes, cut_type, **kwargs):
+        captured["trusted_cut_type"] = cut_type
         return b"VARIED", "image/png"
 
     async def fake_resolve(conn, model_id, *, license_id=None, **kwargs):
@@ -319,6 +362,7 @@ def test_run_editor_image_job_vary_propagates_real_privacy_and_rechecks_license(
     })))
 
     assert captured["resolve"] == 2
+    assert captured["trusted_cut_type"] == "horizon"
     assert captured["locked"] is True
     assert r2.caches == ["private, no-store"]
     assert "/ai/j1/" in r2.keys[0]
@@ -329,6 +373,7 @@ def test_run_editor_image_job_vary_propagates_real_privacy_and_rechecks_license(
     else:
         assert captured["finalize"]["image"]["metadata"] == {
             "facemarket_real_derived": True,
+            "cut_type": "horizon",
         }
         assert r2.deletes == []
 

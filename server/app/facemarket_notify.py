@@ -22,6 +22,16 @@ def _email_content(email_type: str, *, public_base: str, reject_reason: str | No
     예전 /model 허브는 2026-09-02 부터 /status 로 넘어가므로 처음부터 그리로."""
     hub = f"{public_base}/status"
     apply = f"{public_base}/model/apply"
+    if email_type == "test_cuts_ready":
+        confirm = f"{public_base}/model/confirm"
+        subject = "[FaceMarket] 테스트컷이 도착했어요"
+        html = (
+            "<p>등록이 완료되어 테스트컷을 준비했어요. 공개 전에 직접 확인하고 "
+            "프로필로 쓸 컷을 골라 주세요.</p>"
+            f'<p><a href="{confirm}">테스트컷 확인하기</a></p>'
+            "<p>확정하기 전에는 셀러에게 공개되지 않아요.</p>"
+        )
+        return subject, html
     if email_type == "approved":
         subject = "[FaceMarket] 모델 지원이 승인됐어요"
         html = (

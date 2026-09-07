@@ -128,6 +128,52 @@ test('verified 모델은 거래가 없어도 활동 중 화면이다', async () 
   assert.equal(journey.action, null);
 });
 
+test('테스트컷 전송 뒤에는 확인 화면으로 바로 이어진다', async () => {
+  const { resolveHubJourney } = await loadRequired(journeyUrl, '허브 상태');
+  const journey = resolveHubJourney({
+    ownedModel: { id: 'm1', status: 'awaiting_confirm', redoCount: 0 },
+    enrollment: { id: 'e1', status: 'passed' },
+    hasLicense: true,
+  });
+
+  assert.equal(journey.currentIndex, 5);
+  assert.deepEqual(journey.action, {
+    label: '테스트컷 확인하기',
+    kind: 'route',
+    to: '/model/confirm',
+  });
+});
+
+test('재생성 요청 뒤에는 등록 화면으로 되돌리지 않고 생성 중으로 표시한다', async () => {
+  const { resolveHubJourney } = await loadRequired(journeyUrl, '허브 상태');
+  const journey = resolveHubJourney({
+    ownedModel: { id: 'm1', status: 'pending', redoCount: 1 },
+    enrollment: { id: 'e1', status: 'passed' },
+    hasLicense: true,
+  });
+
+  assert.equal(journey.currentIndex, 4);
+  assert.deepEqual(journey.action, {
+    label: '생성 상태 새로고침',
+    kind: 'reload',
+  });
+});
+
+test('첫 VC 발급 뒤에도 현재 등록 조회가 끝났다고 등록 단계로 후퇴하지 않는다', async () => {
+  const { resolveHubJourney } = await loadRequired(journeyUrl, '허브 상태');
+  const journey = resolveHubJourney({
+    ownedModel: { id: 'm1', status: 'pending', redoCount: 0 },
+    enrollment: null,
+    hasLicense: true,
+  });
+
+  assert.equal(journey.currentIndex, 4);
+  assert.deepEqual(journey.action, {
+    label: '생성 상태 새로고침',
+    kind: 'reload',
+  });
+});
+
 test('1280px 활동 중 허브는 트윈·규칙·이번 달 요약을 같은 행에 둔다', () => {
   const css = readFileSync(
     new URL('../../src/features/model/ModelPersonalization.module.css', import.meta.url),

@@ -702,8 +702,35 @@ async def get_asset_facemarket_provenance(
                    case when jsonb_typeof(j.payload->'_facemarket') = 'object'
                         then j.payload->'_facemarket'
                         else null
-                   end as facemarket
+                   end as facemarket,
+                   coalesce(
+                     nullif(a.metadata->>'cut_type', ''),
+                     wi.cut_type,
+                     (
+                       select element->>'cutType'
+                         from jsonb_array_elements(
+                           case
+                             when jsonb_typeof(j.result->'data') = 'array'
+                             then j.result->'data'
+                             else '[]'::jsonb
+                           end
+                         ) as blocks(block)
+                         cross join lateral jsonb_array_elements(
+                           case
+                             when jsonb_typeof(block->'elements') = 'array'
+                             then block->'elements'
+                             else '[]'::jsonb
+                           end
+                         ) as elements(element)
+                        where element->>'src' = '/v1/assets/' || a.id::text || '/file'
+                          and nullif(element->>'cutType', '') is not null
+                        limit 1
+                     )
+                   ) as cut_type
               from assets a
+              left join wardrobe_images wi
+                on wi.asset_id = a.id and wi.project_id = a.project_id
+               and wi.deleted_at is null
               left join jobs j
                 on j.id::text = split_part(a.r2_key, '/', 6)
                and j.user_id = a.user_id
@@ -724,7 +751,14 @@ async def get_asset_facemarket_provenance(
         real_derived = metadata["facemarket_real_derived"] is True
     else:
         real_derived = isinstance(snapshot, dict)
-    return {"real_derived": real_derived, "facemarket": snapshot}
+    cut_type = row.get("cut_type")
+    if not cut_type and isinstance(metadata, dict):
+        cut_type = metadata.get("cut_type")
+    return {
+        "real_derived": real_derived,
+        "facemarket": snapshot,
+        "cut_type": cut_type,
+    }
 
 
 async def get_asset_public(conn: AsyncConnection, asset_id: str) -> dict | None:

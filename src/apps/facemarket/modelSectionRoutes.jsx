@@ -25,6 +25,7 @@ import { ModelRegister } from '@/features/model/ModelRegister.jsx';
 import { ModelLicense } from '@/features/model/ModelLicense.jsx';
 import { ModelGenerate } from '@/features/model/ModelGenerate.jsx';
 import { ModelWithdraw } from '@/features/model/ModelWithdraw.jsx';
+import { ModelConfirm } from '@/features/model/ModelConfirm.jsx';
 
 /* 모델 섹션 보호 — 등록 중 모델은 허브·라이선스에 접근할 수 있지만 생성은 verified만 허용한다. */
 function RequireModel({ verifiedOnly = false }) {
@@ -70,7 +71,7 @@ async function loadOptional(fn) {
 /* 지원서 게이트(리뉴얼, 스펙 12). FM_APPLICATION_REQUIRED 가 켜져 있으면 승인된 지원서가
    없는 신규 사용자는 등록 화면(/model/register)에 들어갈 수 없다 — "검증된 사람만 등록".
    백엔드 create_enrollment 의 403 과 같은 규칙을 UI 에서 먼저 적용해, 동의 폼을 보여줬다가
-   막는 일이 없게 한다. 기존 모델(pending/verified/reverification_required)·진행 중 등록 보유자는
+   막는 일이 없게 한다. 기존 모델(pending/awaiting_confirm/verified/reverification_required)·진행 중 등록 보유자는
    grandfathered(백엔드 E6 과 동일 조건). 거부되면 허브로 — 허브가 "지원 시작하기"를 안내한다. */
 function RequireApprovedApplication() {
   const [phase, setPhase] = useState('loading'); // loading | allowed | denied | error
@@ -94,7 +95,7 @@ function RequireApprovedApplication() {
         // pending 인 채 활성 등록도 지원서도 없어 여기서 막히고 /status 로 되돌려지는데,
         // 허브는 모델이 있으니 '등록 이어가기'를 띄워 다시 여기로 보낸다 — 나갈 길 없는 왕복.
         const legacyExempt = (models || []).some(
-          (m) => ['pending', 'verified', 'reverification_required'].includes(m.status),
+          (m) => ['pending', 'awaiting_confirm', 'verified', 'reverification_required'].includes(m.status),
         );
         const inProgress = !!enrollment;
         const approved = app?.status === 'approved';
@@ -141,6 +142,7 @@ export const MODEL_SECTION_ROUTES = (
     <Route index element={<Navigate to="/status" replace />} />
     <Route element={<RequireOwnedModel />}>
       <Route path="license" element={<ModelLicense />} />
+      <Route path="confirm" element={<ModelConfirm />} />
       {/* 폐기된 직접 업로드 북마크는 신규 등록 경계로 되돌린다. */}
       <Route path="consent" element={<Navigate to="/model/register" replace />} />
       <Route path="face" element={<Navigate to="/model/register" replace />} />

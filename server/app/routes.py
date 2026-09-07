@@ -2812,6 +2812,12 @@ async def generate_editor_image(
                     raise facemarket._err(
                         "model_unavailable", "사용할 수 없는 모델입니다.", status=409
                     )
+                trusted_cut_type = provenance.get("cut_type")
+                facemarket.reject_real_model_outside_horizon(
+                    trusted_cut_type, model_id
+                )
+                facemarket.reject_real_model_scene_variation(payload)
+                payload["source"] = {**source, "cutType": trusted_cut_type}
                 analysis = await repo.get_analysis(conn, project_id) or {}
                 brand_use_category = analysis.get("brandUseCategory")
                 license_row = await facemarket.resolve_model_license(
@@ -2837,6 +2843,9 @@ async def generate_editor_image(
                 payload.get("cutType"), wants_face=False
             )[0]
             if uses_model_identity:
+                facemarket.reject_real_model_outside_horizon(
+                    payload.get("cutType"), selected_model_id
+                )
                 payload["modelId"] = selected_model_id
                 brand_use_category = analysis.get("brandUseCategory")
                 payload["brandUseCategory"] = brand_use_category
@@ -2876,7 +2885,11 @@ async def generate_editor_image(
         # FaceMarket verify-before-use 게이트(FM-30) — 에디터 새 컷도 상세페이지와 동일하게,
         # 실존 모델(UUID modelId) 선택 시 라이선스 자격을 잡 생성 전에 검증한다(실패=409, 예약 없음).
         # 가상모델('mA' 등 비-UUID)·무라이선스 모델은 no-op → 기존 플로우 무영향.
-        if s.facemarket_enabled and payload.get("mode") == "new" and selected_model_id:
+        if (
+            s.facemarket_enabled
+            and payload.get("mode") == "new"
+            and facemarket.is_real_model_id(selected_model_id)
+        ):
             license_row = await facemarket.resolve_model_license(
                 conn, selected_model_id
             )
@@ -2928,28 +2941,46 @@ async def generate_detail_page(
         selected_model_id = analysis.get("selectedModelId") or analysis.get(
             "selected_model_id"
         )
+        styling_model_id = analysis.get("stylingModelId") or analysis.get(
+            "styling_model_id"
+        )
         brand_use_category = analysis.get("brandUseCategory")
-        storyboard = None
-        uses_model_identity = False
-        if selected_model_id and s.facemarket_enabled:
-            storyboard = await repo.get_storyboard(conn, project_id)
-            uses_model_identity = any(
-                isinstance(block, dict)
-                and block.get("source") == "ai"
-                and cut_generator.real_identity_plan(block.get("cutType"), wants_face=False)[0]
-                for block in storyboard
+        storyboard = (
+            await repo.get_storyboard(conn, project_id)
+            if selected_model_id
+            else None
+        )
+        ai_worn_blocks = [
+            block for block in (storyboard or [])
+            if isinstance(block, dict)
+            and block.get("source") == "ai"
+            and cut_generator.real_identity_plan(
+                block.get("cutType"), wants_face=False
+            )[0]
+        ]
+        resolved_block_model_ids = [
+            facemarket.resolve_block_model_id(
+                block.get("cutType"), selected_model_id, styling_model_id
             )
+            for block in ai_worn_blocks
+        ]
+        uses_model_identity = any(resolved_block_model_ids)
+        uses_real_horizon_identity = (
+            facemarket.is_real_model_id(selected_model_id)
+            and any(block.get("cutType") == "horizon" for block in ai_worn_blocks)
+        )
         payload = {"mode": "generate"}
         if uses_model_identity:
-            payload.update({
-                "modelId": selected_model_id,
-                "brandUseCategory": brand_use_category,
-            })
+            payload["modelId"] = selected_model_id
+            if styling_model_id:
+                payload["stylingModelId"] = styling_model_id
+        if uses_real_horizon_identity:
+            payload["brandUseCategory"] = brand_use_category
         license_row = None
         # FaceMarket verify-before-use 게이트(FM-30). **캐시 반환보다 먼저** — 해지·만료된
         # 라이선스가 이미 생성된 페이지의 재생성까지 막아야 하므로(장면⑤). facemarket off면
         # 미진입 → 기존 셀러 플로우 무영향. 선택 모델에 라이선스 없으면 no-op(비-FaceMarket 셀러).
-        if s.facemarket_enabled and uses_model_identity:
+        if s.facemarket_enabled and uses_real_horizon_identity:
             license_row = await facemarket.resolve_project_license(conn, project, analysis)
             await facemarket.verify_license(
                 request.app,

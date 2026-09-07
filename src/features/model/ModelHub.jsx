@@ -178,6 +178,34 @@ function ActiveDashboard({ license, model, settlements }) {
   );
 }
 
+function ConfirmationNotice({ model, onConfirm, onRefresh }) {
+  if (model?.status === 'awaiting_confirm') {
+    return (
+      <section className={s.hubGateNotice} aria-labelledby="test-cuts-ready-title">
+        <div>
+          <p className={s.hubNextEyebrow}>공개 전 마지막 확인</p>
+          <h2 className={s.hubNextTitle} id="test-cuts-ready-title">테스트컷이 도착했어요</h2>
+          <p className={s.hubNextBody}>프로필로 쓸 컷을 직접 고르고 공개 품질을 확인해 주세요.</p>
+        </div>
+        <Button variant="primary" iconRight="arrowRight" onClick={onConfirm}>확인하러 가기</Button>
+      </section>
+    );
+  }
+  if (model?.status === 'pending' && model?.redoCount > 0) {
+    return (
+      <section className={s.hubGateNotice} aria-labelledby="test-cuts-redo-title">
+        <div>
+          <p className={s.hubNextEyebrow}>테스트 컷 생성</p>
+          <h2 className={s.hubNextTitle} id="test-cuts-redo-title">다시 만드는 중이에요</h2>
+          <p className={s.hubNextBody}>새 테스트컷이 준비되면 여기와 이메일로 알려드려요.</p>
+        </div>
+        <Button variant="ghost" icon="refresh" onClick={onRefresh}>상태 새로고침</Button>
+      </section>
+    );
+  }
+  return null;
+}
+
 export function ModelHub() {
   const navigate = useNavigate();
   const { push } = useToast();
@@ -257,6 +285,11 @@ export function ModelHub() {
   return (
     <div className={s.hubPage}>
       <HubHead active={journey.mode === 'active'} />
+      <ConfirmationNotice
+        model={ownedModel}
+        onConfirm={() => navigate('/model/confirm')}
+        onRefresh={load}
+      />
       {journey.mode === 'active' ? (
         <ActiveDashboard
           license={activeLicense}

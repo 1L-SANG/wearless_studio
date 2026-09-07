@@ -73,6 +73,10 @@ def _prefixes(
     # 쓰이므로 고아가 없고, prefix 를 넓게 스윕하면 스캔 범위 밖 원본까지 지우는 데이터 파괴가 된다.
     # 생성물은 워커 크래시로 고아가 생길 수 있어 별도 비파괴 스캔(_scan_generation_orphans)이 맡는다.
     values = [f"facemarket/models/{model_id}/" for model_id in model_ids]
+    # 관리자 테스트컷 원본과 모델 승인 커버는 기존 모델 prefix 밖에 있다. 두 버킷 모두 같은
+    # prefix 목록으로 reconcile 하므로 존재하는 쪽만 수집되고, DB 없는 고아까지 함께 지워진다.
+    values.extend(f"private/facemarket/models/{model_id}/" for model_id in model_ids)
+    values.extend(f"facemarket/catalog/models/{model_id}/" for model_id in model_ids)
     values.extend(f"facemarket/enrollments/{eid}/" for eid in enrollment_ids)
     # 지원서 사진은 DB 행 없이 남을 수 있다(제출 중 크래시, 409 경합, 스테이징 업로드 후 이탈).
     # 그 고아는 known key 수집으로는 절대 안 잡히므로 사용자 소유 접두사를 통째로 스윕한다.
@@ -531,6 +535,19 @@ async def _known_targets(conn, schema, scope, enrollment_ids, derived_jobs):
                 (list(scope["model_ids"]),),
             )
             face_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
+        if scope["model_ids"] and _has(schema, "fm_model_test_cuts", "model_id", "r2_key"):
+            await cur.execute(
+                "select r2_key as k from fm_model_test_cuts where model_id = any(%s)",
+                (list(scope["model_ids"]),),
+            )
+            face_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
+        if scope["model_ids"] and _has(schema, "fm_models", "cover_image_url"):
+            await cur.execute(
+                "select cover_image_url as k from fm_models "
+                "where id = any(%s) and cover_image_url like 'facemarket/catalog/models/%'",
+                (list(scope["model_ids"]),),
+            )
+            r2_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
         if enrollment_ids and _has(schema, "fm_biometric_enrollment_photos", "r2_key"):
             await cur.execute(
                 "select r2_key as k from fm_biometric_enrollment_photos "
@@ -872,9 +889,21 @@ async def _cleanup(
                     "delete from fm_model_asset_cleanup where model_id = any(%s)",
                     (list(model_ids),),
                 )
+            if _has(schema, "fm_model_test_cuts", "model_id"):
+                await cur.execute(
+                    "delete from fm_model_test_cuts where model_id = any(%s)",
+                    (list(model_ids),),
+                )
             model_sets = ["assets_status='none'", "qc_score=null", "assets_source_hash=null"]
             if _has(schema, "fm_models", "current_enrollment_id"):
                 model_sets.append("current_enrollment_id=null")
+            if _has(schema, "fm_models", "cover_image_url"):
+                model_sets.append("cover_image_url=null")
+            for column in (
+                "confirm_requested_at", "confirmed_at", "confirm_consent_version", "redo_reason"
+            ):
+                if _has(schema, "fm_models", column):
+                    model_sets.append(f"{column}=null")
             await cur.execute(
                 "update fm_models set " + ", ".join(model_sets) + " where id = any(%s)",
                 (list(model_ids),),

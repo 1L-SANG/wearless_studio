@@ -413,8 +413,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # 의존하지 않는 프리스테이지라 biometric 플래그와 무관하게 등록한다. create_enrollment
         # 게이트(승인 지원서 요구)만 FM_APPLICATION_REQUIRED + 생체등록 활성일 때 동작한다.
         from .facemarket_applications import router as applications_router
+        from .facemarket_admin_models import router as admin_models_router
 
         app.include_router(applications_router)
+        app.include_router(admin_models_router)
         if settings.fm_biometric_enrollment_enabled:
             from .facemarket_enrollment import router as biometric_enrollment_router
 

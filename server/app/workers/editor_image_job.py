@@ -158,6 +158,14 @@ async def run_editor_image_job(app, job: dict) -> None:
                     raise facemarket._err(
                         "model_unavailable", "사용할 수 없는 모델입니다.", status=409
                     )
+                trusted_cut_type = (
+                    src_asset.get("metadata") or {}
+                ).get("cut_type")
+                facemarket.reject_real_model_outside_horizon(
+                    trusted_cut_type, str(snapshot["modelId"])
+                )
+                facemarket.reject_real_model_scene_variation(payload)
+                source = {**source, "cutType": trusted_cut_type}
                 async with pool.connection() as conn:
                     fm_license_row = await facemarket.resolve_model_license(
                         conn,
@@ -313,6 +321,12 @@ async def run_editor_image_job(app, job: dict) -> None:
                 await _fail("컷 설정이 올바르지 않아요. 다시 시도해 주세요.", {"error": "invalid_spec"})
                 return
 
+            requested_model_id = payload.get("modelId")
+            if normalized["cutType"] in _WORN_CUT_TYPES:
+                facemarket.reject_real_model_outside_horizon(
+                    normalized["cutType"], requested_model_id
+                )
+
             colors = product.get("colors") or []
             base_color = next(
                 (color for color in colors if color.get("isBase")),
@@ -336,7 +350,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             # 아이덴티티 소스 1회 결정(detail_page 와 동일 계약, codex [P1]) — 실존 모델(UUID)은
             # REAL 로 비공개 자산을 첨부하고, 라이선스 실패면 조용한 폴백 없이 잡 실패(라우트 409
             # 게이트 이후 해지 레이스 방어). 가상모델('mA' 등)은 기존 VIRTUAL 경로 그대로.
-            selected_model_id = payload.get("modelId")
+            selected_model_id = requested_model_id
             real_refs = None
             try:
                 uuid.UUID(str(selected_model_id))
@@ -436,7 +450,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 model_has_full_body = False
             fm_face_injected = (
                 fm_source == "REAL"
-                and normalized["cutType"] != "product"
+                and normalized["cutType"] == "horizon"
                 and len(model_images) == 2
             )
             body_profile = None
@@ -764,7 +778,10 @@ async def run_editor_image_job(app, job: dict) -> None:
             "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
             "size": len(image), "width": w, "height": h,
             "cleanup_intent_id": cleanup_intent_id,
-            "metadata": {"facemarket_real_derived": fm_face_injected},
+            "metadata": {
+                "facemarket_real_derived": fm_face_injected,
+                "cut_type": cut_type,
+            },
         }
 
         # 성공 종결 (원자·lease 펜스). charge = reserved — 예약 시점 견적 확정(부분 성공 없음.

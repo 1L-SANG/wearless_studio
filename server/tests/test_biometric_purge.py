@@ -197,6 +197,7 @@ class FakeDB:
             "fm_licenses": [],
             "fm_model_asset_cleanup": [],
             "fm_model_assets": [],
+            "fm_model_test_cuts": [],
             "fm_models": [],
             "fm_biometric_purge_manifests": [],
             "fm_biometric_purge_receipts": [],
@@ -231,6 +232,7 @@ class FakeDB:
                 "body_type", "body_type_custom", "gender", "age_range", "skin_tone",
                 "hair", "clothing_size", "assets_status", "qc_score", "assets_source_hash",
                 "ci_hash", "did", "cover_image_url", "display_name", "outcome",
+                "confirm_requested_at", "confirmed_at", "confirm_consent_version", "redo_reason",
                 "target_count", "confirmed_absent_count", "model_count", "profile_count",
                 "enrollment_count", "asset_count", "source_job_id", "completed_at",
                 "scope_key", "target_manifest", "revision", "created_at", "updated_at",
@@ -579,6 +581,17 @@ class FakeDB:
         if "select r2_key as k from fm_model_asset_cleanup" in q:
             ids = set(params[0])
             return [{"k": r.get("r2_key")} for r in self.tables["fm_model_asset_cleanup"] if r.get("model_id") in ids]
+        if "select r2_key as k from fm_model_test_cuts" in q:
+            ids = set(params[0])
+            return [{"k": r.get("r2_key")} for r in self.tables["fm_model_test_cuts"] if r.get("model_id") in ids]
+        if "select cover_image_url as k from fm_models" in q:
+            ids = set(params[0])
+            return [
+                {"k": r.get("cover_image_url")}
+                for r in self.tables["fm_models"]
+                if r.get("id") in ids
+                and str(r.get("cover_image_url") or "").startswith("facemarket/catalog/models/")
+            ]
         if q.startswith("select") and "from fm_biometric_enrollment_photos" in q:
             ids = set(params[0])
             return [{"k": r.get("r2_key")} for r in self.tables["fm_biometric_enrollment_photos"] if r.get("enrollment_id") in ids]
@@ -826,11 +839,15 @@ class FakeDB:
             return _delete_where_in(self.tables["fm_model_assets"], "model_id", params[0])
         if q.startswith("delete from fm_model_asset_cleanup"):
             return _delete_where_in(self.tables["fm_model_asset_cleanup"], "model_id", params[0])
+        if q.startswith("delete from fm_model_test_cuts"):
+            return _delete_where_in(self.tables["fm_model_test_cuts"], "model_id", params[0])
         if q.startswith("update fm_models set"):
             count = 0
             for row in self.tables["fm_models"]:
                 if row.get("id") in set(params[0]):
                     row.update({"assets_status": "none", "qc_score": None, "assets_source_hash": None, "current_enrollment_id": None})
+                    if "cover_image_url=null" in q:
+                        row["cover_image_url"] = None
                     if "display_name='삭제된 모델'" in q:
                         row.update({
                             "status": "suspended",
@@ -1463,6 +1480,31 @@ def test_fake_user_purge_reconciles_both_buckets_and_tombstones_recursive_lineag
     assert ctx.db.tables["personalization_consents"]
     assert ctx.db.tables["personalization_audit_log"]
     assert "facemarket/" not in caplog.text and ctx.user not in caplog.text
+
+
+def test_withdrawal_purges_private_test_cuts_and_public_confirmed_cover():
+    ctx = _fake_case()
+    cut_key = f"private/facemarket/models/{ctx.model}/test-cuts/cut-a.png"
+    cover_key = f"facemarket/catalog/models/{ctx.model}/covers/cover-a.webp"
+    ctx.db.add(
+        "fm_model_test_cuts",
+        id="cut-a",
+        model_id=ctx.model,
+        r2_key=cut_key,
+        mime="image/png",
+        sort=0,
+        approved=True,
+    )
+    ctx.db.tables["fm_models"][0]["cover_image_url"] = cover_key
+    ctx.r2_face.keys.add(cut_key)
+    ctx.r2.keys.add(cover_key)
+
+    _run(ctx, user_id=ctx.user, reason="withdrawal")
+
+    assert cut_key in ctx.r2_face.deleted
+    assert cover_key in ctx.r2.deleted
+    assert ctx.db.tables["fm_model_test_cuts"] == []
+    assert ctx.db.tables["fm_models"][0]["cover_image_url"] is None
 
 
 def test_fake_account_delete_anonymizes_identity_and_writes_aggregate_receipt(caplog):

@@ -186,7 +186,7 @@ def _patch(monkeypatch, captured, *, project=None, analysis=None, storyboard=Non
     async def fake_sb(conn, pid):
         if storyboard is not None:
             return storyboard
-        return [{"id": "b1", "source": "ai", "cutType": "styling", "shot": "full"}]
+        return [{"id": "b1", "source": "ai", "cutType": "horizon", "shot": "full"}]
 
     async def fake_prod(conn, pid):
         return {"clothing_type": "top",
