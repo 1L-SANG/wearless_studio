@@ -102,7 +102,7 @@ test('키·체형 문구는 실제 키를 구간보다 우선하고 있는 정�
     heightBucket: null,
     bodyType: 'slim',
   }), '마름');
-  assert.equal(profilePhysiqueLine({}), '—');
+  assert.equal(profilePhysiqueLine({}), '미정');
 });
 
 test('유효기간은 10년 이상이면 영구, 연 단위면 연수, 나머지는 일수로 표시한다', () => {
@@ -110,7 +110,7 @@ test('유효기간은 10년 이상이면 영구, 연 단위면 연수, 나머지
   assert.equal(validityLabel(4000), '영구');
   assert.equal(validityLabel(730), '2년');
   assert.equal(validityLabel(540), '540일');
-  assert.equal(validityLabel(null), '—');
+  assert.equal(validityLabel(null), '미정');
 });
 
 test('테스트컷은 종류별 입력 순서를 보존하고 알 수 없는 종류는 노출하지 않는다', () => {
@@ -164,7 +164,8 @@ test('어드민 테스트컷 업로드는 이미지와 종류를 multipart로 �
       [new File(['one'], 'one.jpg'), new File(['two'], 'two.jpg')],
       'fullbody',
     );
-    assert.equal(request.url, '/v1/facemarket/admin/models/model%2F1/test-cuts');
+    // VITE_API_BASE_URL 이 .env 로 박힌 환경(실서버 주소)에서도 깨지지 않게 끝부분만 본다.
+    assert.ok(String(request.url).endsWith('/v1/facemarket/admin/models/model%2F1/test-cuts'), request.url);
     assert.equal(request.options.body.get('kind'), 'fullbody');
     assert.equal(request.options.body.getAll('images').length, 2);
   } finally {

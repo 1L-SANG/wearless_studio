@@ -6,11 +6,11 @@ export function profilePhysiqueLine({ heightCm, heightBucket, bodyType } = {}) {
     : heightBucketLabel(heightBucket);
   const physique = bodyTypeLabel(bodyType);
 
-  return [height ? `키 ${height}` : null, physique].filter(Boolean).join(' · ') || '—';
+  return [height ? `키 ${height}` : null, physique].filter(Boolean).join(' · ') || '미정';
 }
 
 export function validityLabel(validDays) {
-  if (!Number.isFinite(validDays) || validDays <= 0) return '—';
+  if (!Number.isFinite(validDays) || validDays <= 0) return '미정';
   if (validDays >= 3650) return '영구';
   if (validDays % 365 === 0) return `${validDays / 365}년`;
   return `${validDays}일`;

@@ -87,10 +87,10 @@ function PublicProfilePreview({ profile, closeupCut, fullbodyCut }) {
   const physique = profilePhysiqueLine(profile);
   const allowedUse = profile?.license?.allowedUse?.length
     ? profile.license.allowedUse.join(' · ')
-    : '—';
+    : '미정';
   const unitPrice = Number.isFinite(profile?.license?.unitPrice)
     ? `${profile.license.unitPrice.toLocaleString('ko-KR')}원`
-    : '—';
+    : '미정';
 
   return (
     <aside className={s.previewPanel} aria-labelledby="public-profile-preview-title">
