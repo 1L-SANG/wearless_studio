@@ -140,3 +140,11 @@ test('1280px 활동 중 허브는 트윈·규칙·이번 달 요약을 같은 �
   assert.match(desktop, /\.hubActiveGrid\s*\{[\s\S]*grid-template-columns:\s*repeat\(3,/);
   assert.match(desktop, /\.hubActiveCardWide\s*\{\s*grid-column:\s*auto;/);
 });
+
+
+test('활동 허브는 서버 전체 월 합계를 조회하고 최근 내역을 합산하지 않는다', () => {
+  const source = readFileSync(new URL('../../src/features/model/ModelHub.jsx', import.meta.url), 'utf8');
+  assert.match(source, /getSettlementSummary\(\)/);
+  assert.doesNotMatch(source, /listSettlements|summarizeSettlements/);
+  assert.match(source, /settlementSummary=\{settlementSummary\}/);
+});

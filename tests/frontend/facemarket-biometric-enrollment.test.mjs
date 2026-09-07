@@ -37,6 +37,87 @@ const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
+test('a revoked license owner can reach fresh enrollment from the license list', async () => {
+  const destinations = [];
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelLicense.jsx',
+    exportName: 'ModelLicense',
+    initialStates: ['ready', 'cards', null, [], null],
+    api: {},
+  });
+  try {
+    harness.runtime.navigate = (to) => destinations.push(to);
+    const tree = harness.render();
+    const restart = findTree(tree, (node) => node.type === 'Button'
+      && node.props.children === '새 생체 등록으로 라이선스 발급');
+    assert.ok(restart, 'an empty list after revocation must offer a fresh enrollment entry');
+    restart.props.onClick();
+    assert.deepEqual(destinations, ['/model/register']);
+  } finally {
+    await harness.close();
+  }
+});
+
+test('reissuing from completed registration requires fresh consent before a new identity enrollment', async () => {
+  const created = [];
+  let restores = 0;
+  const harness = await modelComponentHarness({
+    // A previous agreement must not carry into this new enrollment.
+    initialStates: ['loading', null, null, '', false, true, true],
+    honorHookDependencies: true,
+    api: {
+      getCurrentEnrollment: async () => {
+        restores += 1;
+        throw Object.assign(new Error('no current enrollment'), { status: 404 });
+      },
+      listMyModels: async () => [{ id: 'model-1', status: 'verified' }],
+      listLicenses: async () => [], // revoked licenses are excluded by the real API
+      createEnrollment: async (body) => {
+        created.push(body);
+        return { id: 'new-enrollment', modelId: 'model-1', status: 'identity_pending', photos: [] };
+      },
+    },
+  });
+  const commit = () => {
+    const tree = harness.render();
+    harness.runtime.effects.forEach((effect) => effect());
+    return tree;
+  };
+  try {
+    commit();
+    await eventually(() => harness.runtime.states[0] === 'done', 'verified model restores its completed registration');
+    let tree = commit();
+    assert.equal(created.length, 0, 'visiting registration must never create a new enrollment');
+    const restart = findTree(tree, (node) => node.type === 'Button'
+      && node.props.children === '새 생체 등록 시작');
+    assert.ok(restart, 'the completed registration must offer explicit re-enrollment');
+    restart.props.onClick();
+    tree = commit();
+    await flush();
+    assert.equal(restores, 1, 'the restore effect must not bounce the explicit restart back to done');
+    assert.equal(harness.runtime.states[0], 'consent');
+    const checkbox = findTree(tree, (node) => node.type === 'input' && node.props.type === 'checkbox');
+    assert.equal(checkbox.props.checked, false, 'previous consent is cleared');
+    let submit = findTree(tree, (node) => node.type === 'Button'
+      && node.props.children === '동의하고 본인 확인 시작');
+    assert.equal(submit.props.disabled, true);
+    assert.equal(created.length, 0, 'the restart action itself must not submit an enrollment');
+    checkbox.props.onChange({ target: { checked: true } });
+    tree = commit();
+    submit = findTree(tree, (node) => node.type === 'Button'
+      && node.props.children === '동의하고 본인 확인 시작');
+    assert.equal(submit.props.disabled, false);
+    await submit.props.onClick();
+    assert.equal(created.length, 1);
+    assert.equal(created[0].documentVersion, '2026-08-v2');
+    assert.equal(created[0].enrollmentId, undefined, 'the old enrollment is never reused');
+    assert.equal(harness.runtime.states[0], 'identity', 'a new enrollment must still go through identity verification');
+    assert.equal(harness.runtime.states[1].id, 'new-enrollment');
+  } finally {
+    await harness.close();
+  }
+});
+
 async function eventually(predicate, message) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (predicate()) return;
@@ -73,6 +154,7 @@ async function modelComponentHarness({
   exportName = 'ModelRegister',
   // ModelFaceUpload 자체를 렌더하는 테스트는 스텁 치환을 꺼야 한다(등록 마법사 테스트는 계속 스텁).
   stubUpload = true,
+  honorHookDependencies = false,
 }) {
   const key = `__fmRegisterTest${Math.random().toString(36).slice(2)}`;
   const runtime = {
@@ -83,6 +165,11 @@ async function modelComponentHarness({
     refs: [],
     stateCursor: 0,
     refCursor: 0,
+    honorHookDependencies,
+    callbacks: [],
+    callbackCursor: 0,
+    effectDeps: [],
+    effectCursor: 0,
   };
   globalThis[key] = runtime;
   const { createServer } = await import('vite');
@@ -99,6 +186,8 @@ async function modelComponentHarness({
       name: 'facemarket-register-test-harness',
       enforce: 'pre',
       resolveId(id) {
+        if (id === 'qrcode') return '\0fm-test-qrcode';
+        if (id === '@/lib/brandUseCategories.js') return new URL('../../src/lib/brandUseCategories.js', import.meta.url).pathname;
         if (id === 'react') return '\0fm-test-react';
         if (id === 'react/jsx-dev-runtime' || id === 'react/jsx-runtime') return '\0fm-test-jsx';
         if (id === 'react-router-dom') return '\0fm-test-router';
@@ -111,11 +200,21 @@ async function modelComponentHarness({
         return null;
       },
       load(id) {
+        // QR canvas rendering is unrelated to the empty/revoked license list entry.
+        if (id === '\0fm-test-qrcode') return 'export default {};';
         if (id === '\0fm-test-react') return `
           const runtime = ${access};
           export const lazy = () => 'Lazy';
           export const Suspense = 'Suspense';
-          export const useCallback = (value) => value;
+          const unchanged = (previous, next) => previous && next && previous.length === next.length
+            && next.every((value, index) => Object.is(value, previous[index]));
+          export const useCallback = (value, deps) => {
+            if (!runtime.honorHookDependencies) return value;
+            const index = runtime.callbackCursor++;
+            const previous = runtime.callbacks[index];
+            if (!previous || !unchanged(previous.deps, deps)) runtime.callbacks[index] = { value, deps };
+            return runtime.callbacks[index].value;
+          };
           export const useMemo = (factory) => factory();
           export const useState = (initial) => {
             const index = runtime.stateCursor++;
@@ -130,7 +229,14 @@ async function modelComponentHarness({
             if (!runtime.refs[index]) runtime.refs[index] = { current: initial };
             return runtime.refs[index];
           };
-          export const useEffect = (effect) => { runtime.effects.push(effect); };
+          export const useEffect = (effect, deps) => {
+            if (runtime.honorHookDependencies) {
+              const index = runtime.effectCursor++;
+              if (unchanged(runtime.effectDeps[index], deps)) return;
+              runtime.effectDeps[index] = deps;
+            }
+            runtime.effects.push(effect);
+          };
         `;
         if (id === '\0fm-test-jsx') return `
           export const Fragment = 'Fragment';
@@ -142,11 +248,14 @@ async function modelComponentHarness({
           export const Link = 'Link';
           export const useNavigate = () => ${access}.navigate;
           export const useLocation = () => ${access}.location || ({ state: null });
+          export const useSearchParams = () => [new URLSearchParams(), () => {}];
         `;
         if (id === '\0fm-test-ui') return `
           export const Button = 'Button';
           export const ErrorState = 'ErrorState';
           export const Icon = 'Icon';
+          export const Chips = 'Chips';
+          export const Field = 'Field';
           export const useToast = () => ({ push: ${access}.push || (() => {}) });
         `;
         if (id === '\0fm-test-upload') return "export const ModelFaceUpload = 'ModelFaceUpload';";
@@ -154,6 +263,9 @@ async function modelComponentHarness({
         if (id === '\0fm-test-api') return `
           const api = ${access}.api;
           export const cancelEnrollment = (...args) => api.cancelEnrollment(...args);
+          export const createLicense = (...args) => api.createLicense(...args);
+          export const revokeLicense = (...args) => api.revokeLicense(...args);
+          export const verifyLicensePublic = (...args) => api.verifyLicensePublic(...args);
           export const completeEnrollment = (...args) => api.completeEnrollment(...args);
           export const createEnrollment = (...args) => api.createEnrollment(...args);
           export const createIdentity = (...args) => api.createIdentity(...args);
@@ -180,6 +292,10 @@ async function modelComponentHarness({
           );
           export const listSettlements = (...args) => (
             api.listSettlements ? api.listSettlements(...args) : Promise.resolve([])
+          );
+          export const getSettlementSummary = (...args) => (
+            api.getSettlementSummary ? api.getSettlementSummary(...args)
+              : Promise.resolve({ monthCount: 0, monthAmount: 0, totalAmount: 0 })
           );
           export const stageApplicationPhoto = (...args) => api.stageApplicationPhoto(...args);
           export const submitApplication = (...args) => api.submitApplication(...args);
@@ -208,12 +324,16 @@ async function modelComponentHarness({
       },
     }],
   });
-  const module = await server.ssrLoadModule(entry);
+  let module;
+  try { module = await server.ssrLoadModule(entry); }
+  catch (error) { await server.close(); delete globalThis[key]; throw error; }
   return {
     runtime,
     render(props = {}) {
       runtime.stateCursor = 0;
       runtime.refCursor = 0;
+      runtime.callbackCursor = 0;
+      runtime.effectCursor = 0;
       runtime.effects = [];
       return module[exportName](props);
     },
@@ -1045,8 +1165,7 @@ test('verified ModelHub shows the active dashboard even with zero settlements', 
         allowedUse: ['상의', '하의'], forbiddenUse: ['수영복·비키니'], unitPrice: 10_000,
         licenseValidUntil: '2027-09-04T00:00:00Z', vcId: 'vc:test:1',
       }],
-      [],
-      null,
+      { monthCount: 0, monthAmount: 0, totalAmount: 0 },
     ],
     api: { getCurrentEnrollment: () => new Promise(() => {}) },
   });
@@ -1092,11 +1211,34 @@ test('ModelHub treats license API failure as unavailable instead of real zero/de
   }
 });
 
+test('ModelHub treats settlement summary failure as unavailable instead of zero earnings', async () => {
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelHub.jsx',
+    exportName: 'ModelHub',
+    initialStates: [],
+    api: {
+      listMyModels: async () => [{ id: 'model-1', status: 'verified' }],
+      getCurrentEnrollment: async () => { throw Object.assign(new Error('none'), { status: 404 }); },
+      getSettlementSummary: async () => { throw Object.assign(new Error('summary unavailable'), { status: 500 }); },
+    },
+  });
+  try {
+    harness.render();
+    harness.runtime.effects[0]();
+    await eventually(() => harness.runtime.states[0] !== 'loading', 'hub load should settle');
+    const tree = harness.render();
+    assert.ok(findTree(tree, (node) => node.type === 'ErrorState'));
+    assert.equal(findTree(tree, (node) => node.type?.name === 'ActiveDashboard'), null);
+  } finally {
+    await harness.close();
+  }
+});
+
 test('verified ModelHub without a license does not invent default rules', async () => {
   const harness = await modelComponentHarness({
     entry: '/src/features/model/ModelHub.jsx',
     exportName: 'ModelHub',
-    initialStates: ['ready', { id: 'model-1', status: 'verified', displayName: '김*나' }, null, null, true, [], []],
+    initialStates: ['ready', { id: 'model-1', status: 'verified', displayName: '김*나' }, null, null, true, [], { monthCount: 0, monthAmount: 0, totalAmount: 0 }],
     api: { getCurrentEnrollment: () => new Promise(() => {}) },
   });
   try {
@@ -1403,7 +1545,7 @@ test('the terms screen sends the model on to VC issuance from a centered card', 
   assert.doesNotMatch(register, /라이선스 조건 설정 <Icon/);
 });
 
-test('등록 완료 화면은 조건 요약과 Digital DNA 관리 CTA 하나만 보여 준다', async () => {
+test('등록 완료 화면은 조건 요약과 Digital DNA 관리 경로를 보여 준다', async () => {
   const harness = await modelComponentHarness({
     initialStates: [
       'done',
@@ -1435,10 +1577,6 @@ test('등록 완료 화면은 조건 요약과 Digital DNA 관리 CTA 하나만 
       assert.ok(findTree(tree, (node) => node.type === 'dt' && node.props?.children === label), label);
     }
     assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props?.to === '/status'));
-    assert.equal(
-      findTree(tree, (node) => node.type === 'Button' && node.props?.children === '새 생체 등록 시작'),
-      null,
-    );
   } finally {
     await harness.close();
   }
@@ -1450,7 +1588,6 @@ test('라이선스 발급은 등록 완료 화면으로 체형과 발급 조건�
     source,
     /navigate\(\s*["']\/model\/register["'][\s\S]*completionSummary:\s*buildRegistrationCompletion\(enrollmentRecord,\s*lic\)/,
   );
-  assert.doesNotMatch(source, /새 생체 등록으로 라이선스 발급/);
 });
 
 test('등록 완료 화면은 발급 경로로 전달된 체형을 되살린다', async () => {

@@ -22,18 +22,22 @@ function findTree(node, predicate) {
   return findTree(node.props?.children, predicate);
 }
 
-async function payoutViewHarness() {
+async function payoutViewHarness(api = {}) {
   const { createServer } = await import('vite');
   const server = await createServer({
     configFile: false,
     logLevel: 'silent',
     root: new URL('../..', import.meta.url).pathname,
     server: { middlewareMode: true },
+    ssr: { noExternal: true },
     esbuild: { jsx: 'automatic' },
     plugins: [{
       name: 'facemarket-payout-test-harness',
       enforce: 'pre',
       resolveId(id) {
+        if (id === 'react/jsx-runtime' || id === 'react/jsx-dev-runtime') return '\0payout-jsx';
+        if (id === 'react') return '\0payout-react';
+        if (id === 'virtual:payout-runtime') return '\0payout-runtime';
         if (id === 'react-router-dom') return '\0payout-router';
         if (id === '@/features/auth/AuthProvider.jsx') return '\0payout-auth';
         if (id === '@/components/ui.jsx') return '\0payout-ui';
@@ -43,47 +47,77 @@ async function payoutViewHarness() {
         return null;
       },
       load(id) {
+        if (id === '\0payout-jsx') return 'export const jsx = (type, props) => ({ type, props }); export const jsxs = jsx; export const jsxDEV = jsx;';
+        if (id === '\0payout-runtime') return 'export const runtime = { api: {}, states: [], effects: [], index: 0 };';
+        if (id === '\0payout-react') return `
+          import { runtime } from 'virtual:payout-runtime';
+          export const useState = (initial) => {
+            const index = runtime.index++;
+            if (!(index in runtime.states)) runtime.states[index] = initial;
+            return [runtime.states[index], (value) => { runtime.states[index] = value; }];
+          };
+          export const useCallback = (callback) => callback;
+          export const useEffect = (effect) => { runtime.effects.push(effect); };
+        `;
         if (id === '\0payout-router') return "export const Link = 'Link';";
-        if (id === '\0payout-auth') return 'export const useAuth = () => ({ session: null, loading: false, openLogin() {} });';
+        if (id === '\0payout-auth') return 'export const useAuth = () => ({ session: {}, loading: false, openLogin() {} });';
         if (id === '\0payout-ui') return "export const ErrorState = 'ErrorState'; export const Icon = 'Icon';";
-        if (id === '\0payout-api') return 'export const listLicenses = async () => []; export const listSettlements = async () => [];';
+        if (id === '\0payout-api') return `
+          import { runtime } from 'virtual:payout-runtime';
+          export const listLicenses = async () => [];
+          export const listSettlements = () => runtime.api.listSettlements?.() ?? Promise.resolve([]);
+          export const getSettlementSummary = () => runtime.api.getSettlementSummary?.() ?? Promise.resolve({ monthCount: 0, monthAmount: 0, totalAmount: 0 });
+        `;
         if (id === '\0payout-shell') return "export const LandingShell = 'LandingShell';";
         if (id === '\0payout-css') return 'export default new Proxy({}, { get: (_, key) => key });';
         return null;
       },
     }],
   });
-  return { module: await server.ssrLoadModule('/src/features/facemarket-landing/pages/PayoutPage.jsx'), server };
+  const { runtime } = await server.ssrLoadModule('virtual:payout-runtime');
+  runtime.api = api;
+  const module = await server.ssrLoadModule('/src/features/facemarket-landing/pages/PayoutPage.jsx');
+  return {
+    module, server,
+    async loadContent() {
+      const content = module.PayoutPage().props.children();
+      content.type();
+      runtime.effects[0]();
+      await new Promise((resolve) => setImmediate(resolve));
+      runtime.index = 0;
+      return content.type();
+    },
+  };
 }
 
-test('정산 요약은 한국 시간 월 경계로 이번 달과 누적 금액을 나눈다', async () => {
-  const { summarizeSettlements } = await loadPayoutData();
-  const rows = [
-    { id: 's1', createdAt: '2026-08-31T15:05:00Z', modelAmount: 7_000 }, // KST 9월 1일
-    { id: 's2', createdAt: '2026-09-03T02:00:00Z', modelAmount: 12_000 },
-    { id: 's3', createdAt: '2026-08-31T14:59:00Z', modelAmount: 5_000 }, // KST 8월
-  ];
-
-  assert.deepEqual(summarizeSettlements(rows, new Date('2026-09-04T03:00:00Z')), {
-    monthCount: 2,
-    monthAmount: 19_000,
-    totalAmount: 24_000,
-    nextSettlement: { year: 2026, month: 9, day: 10 },
-  });
+test('정산 화면은 최근 200건보다 큰 서버 전체 합계를 그대로 표시한다', async () => {
+  const { module, server } = await payoutViewHarness();
+  try {
+    const tree = module.PayoutView({
+      settlements: Array.from({ length: 200 }, (_, i) => ({ id: `s${i}`, modelAmount: 7000, createdAt: '2026-09-01T00:00:00Z' })),
+      settlementSummary: { monthCount: 201, monthAmount: 1407000, totalAmount: 1410000 },
+      now: new Date('2026-09-04T00:00:00Z'),
+    });
+    assert.ok(findTree(tree, (node) => node.props?.label === '이번 달' && node.props?.value === '201건'));
+    assert.ok(findTree(tree, (node) => node.type === 'small' && node.props?.children === '1,407,000원'));
+    assert.ok(findTree(tree, (node) => node.props?.label === '누적' && node.props?.value === '1,410,000원'));
+  } finally {
+    await server.close();
+  }
 });
 
 test('정산일 당일은 오늘을, 정산일이 지난 뒤에는 다음 달 10일을 안내한다', async () => {
-  const { summarizeSettlements } = await loadPayoutData();
+  const { nextSettlement } = await loadPayoutData();
   assert.deepEqual(
-    summarizeSettlements([], new Date('2026-09-10T03:00:00Z')).nextSettlement,
+    nextSettlement(new Date('2026-09-10T03:00:00Z')),
     { year: 2026, month: 9, day: 10 },
   );
   assert.deepEqual(
-    summarizeSettlements([], new Date('2026-09-11T03:00:00Z')).nextSettlement,
+    nextSettlement(new Date('2026-09-11T03:00:00Z')),
     { year: 2026, month: 10, day: 10 },
   );
   assert.deepEqual(
-    summarizeSettlements([], new Date('2026-12-11T03:00:00Z')).nextSettlement,
+    nextSettlement(new Date('2026-12-11T03:00:00Z')),
     { year: 2027, month: 1, day: 10 },
   );
 });
@@ -153,8 +187,9 @@ test('라이선스가 만료됐으면 정산 행 상태도 만료로 표시한�
   assert.equal(omittedRevokedLicense.status, '만료');
 });
 
-test('프론트 API는 내 정산 목록 엔드포인트를 호출한다', () => {
+test('프론트 API는 내 정산 목록과 전체 합계 엔드포인트를 호출한다', () => {
   const source = readFileSync(new URL('../../src/lib/api/facemarket.js', import.meta.url), 'utf8');
+  assert.match(source, /function getSettlementSummary\(\)[\s\S]*?http\('\/v1\/facemarket\/settlements\/summary'\)/);
   assert.match(source, /function listSettlements\(\)[\s\S]*?http\('\/v1\/facemarket\/settlements'\)/);
 });
 
@@ -162,11 +197,13 @@ test('정산 화면은 준비 칩·세 숫자·빈 상태와 가변 열 표를 �
   const { module, server } = await payoutViewHarness();
   try {
     assert.equal(typeof module.PayoutView, 'function');
-    const empty = module.PayoutView({ settlements: [], licenses: [], now: new Date('2026-09-04T00:00:00Z') });
+    const empty = module.PayoutView({ settlementSummary: { monthCount: 0, monthAmount: 0, totalAmount: 0 }, settlements: [], licenses: [], now: new Date('2026-09-04T00:00:00Z') });
     assert.ok(findTree(empty, (node) => node.props?.children === '지급 준비 중 · 기록은 쌓이고 있어요'));
     assert.ok(findTree(empty, (node) => node.props?.children === '아직 쌓인 정산 기록이 없어요'));
+    assert.ok(findTree(empty, (node) => node.props?.label === '이번 달' && node.props?.value === '0건'));
+    assert.ok(findTree(empty, (node) => node.props?.label === '누적' && node.props?.value === '0원'));
 
-    const enriched = module.PayoutView({
+    const enriched = module.PayoutView({ settlementSummary: { monthCount: 0, monthAmount: 0, totalAmount: 0 },
       settlements: [{
         id: 's1', createdAt: '2026-09-03T00:00:00Z', modelAmount: 7_000,
         shopName: '오늘의 상점', productName: '린넨 셔츠', thumbnailUrl: '/shirt.webp',
@@ -180,7 +217,7 @@ test('정산 화면은 준비 칩·세 숫자·빈 상태와 가변 열 표를 �
     }
     assert.equal(findTree(enriched, (node) => node.type === 'th' && node.props?.children === '증빙'), null);
 
-    const monthlyWithoutItem = module.PayoutView({
+    const monthlyWithoutItem = module.PayoutView({ settlementSummary: { monthCount: 0, monthAmount: 0, totalAmount: 0 },
       settlements: [{
         id: 'monthly', createdAt: '2026-09-03T00:00:00Z', modelAmount: 17_500,
         billingType: 'monthly', periodStart: '2026-09-01T00:00:00Z', periodEnd: '2026-09-30T00:00:00Z',
@@ -198,4 +235,30 @@ test('정산 화면은 준비 칩·세 숫자·빈 상태와 가변 열 표를 �
   } finally {
     await server.close();
   }
+});
+
+
+test('정산 페이지 로더는 최근 내역과 별도로 전체 합계를 조회해 화면에 전달한다', async () => {
+  const summary = { monthCount: 201, monthAmount: 1407000, totalAmount: 1410000 };
+  const harness = await payoutViewHarness({
+    listSettlements: async () => [{ id: 'recent', modelAmount: 7000 }],
+    getSettlementSummary: async () => summary,
+  });
+  try {
+    const content = await harness.loadContent();
+    assert.equal(content.type, harness.module.PayoutView);
+    assert.deepEqual(content.props.settlementSummary, summary);
+  } finally { await harness.server.close(); }
+});
+
+test('전체 합계 조회 실패 시 최근 내역을 합산하지 않고 재시도 오류를 표시한다', async () => {
+  const harness = await payoutViewHarness({
+    listSettlements: async () => [{ id: 'recent', modelAmount: 7000 }],
+    getSettlementSummary: async () => { throw new Error('summary unavailable'); },
+  });
+  try {
+    const content = await harness.loadContent();
+    assert.ok(findTree(content, (node) => node.type === 'ErrorState' && typeof node.props.onRetry === 'function'));
+    assert.equal(findTree(content, (node) => node.type === harness.module.PayoutView), null);
+  } finally { await harness.server.close(); }
 });

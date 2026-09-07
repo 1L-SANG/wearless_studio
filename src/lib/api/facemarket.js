@@ -251,6 +251,11 @@ export function listSettlements() {
   return http('/v1/facemarket/settlements');
 }
 
+// 전체 기록의 모델 몫 합계 — 최근 200건 목록과 별도로 집계한다.
+export function getSettlementSummary() {
+  return http('/v1/facemarket/settlements/summary');
+}
+
 // GET /v1/facemarket/verify/{id} — QR 공개 검증. **무인증**(심사위원·구매자가 스캔).
 // http() 는 세션이 없으면 요청 전에 throw 하므로(httpAdapter) 여기선 쓸 수 없다 — 생 fetch.
 // 응답은 서버 화이트리스트(PublicVerifyResult) 그대로:

@@ -9,7 +9,7 @@ import {
   getCurrentEnrollment,
   listLicenses,
   listMyModels,
-  listSettlements,
+  getSettlementSummary,
 } from '@/lib/api/facemarket.js';
 import {
   APPROVAL_MODE,
@@ -17,7 +17,6 @@ import {
   monthlyPriceFor,
   validityLabel,
 } from '../facemarket-landing/facemarketTerms.js';
-import { summarizeSettlements } from '../facemarket-landing/payoutData.js';
 import { hasCurrentEnrollmentLicense, resolveHubJourney } from './modelHubState.js';
 import s from './ModelPersonalization.module.css';
 
@@ -91,9 +90,9 @@ function TwinImage({ alt, label, src }) {
   );
 }
 
-function ActiveDashboard({ license, model, settlements }) {
+function ActiveDashboard({ license, model, settlementSummary }) {
   const now = new Date();
-  const thisMonth = summarizeSettlements(settlements, now);
+  const thisMonth = settlementSummary;
   const monthLabel = new Intl.DateTimeFormat('ko-KR', {
     timeZone: 'Asia/Seoul', month: '2-digit',
   }).format(now);
@@ -187,7 +186,7 @@ export function ModelHub() {
   const [application, setApplication] = useState(null);
   const [applicationRequired, setApplicationRequired] = useState(true);
   const [licenses, setLicenses] = useState([]);
-  const [settlements, setSettlements] = useState([]);
+  const [settlementSummary, setSettlementSummary] = useState(null);
 
   const activeLicense = useMemo(() => {
     const sameModel = licenses.find((license) => license.modelId === ownedModel?.id);
@@ -197,20 +196,20 @@ export function ModelHub() {
   const load = useCallback(async () => {
     setPhase('loading');
     try {
-      const [mine, cfg, app, enr, licenseRows, settlementRows] = await Promise.all([
+      const [mine, cfg, app, enr, licenseRows, summary] = await Promise.all([
         listMyModels(),
         loadOptional(getApplicationConfig),
         loadOptional(getCurrentApplication),
         loadOptional(getCurrentEnrollment),
         listLicenses(),
-        listSettlements(),
+        getSettlementSummary(),
       ]);
       setOwnedModel(mine?.[0] || null);
       setApplicationRequired(cfg?.applicationRequired !== false);
       setApplication(app);
       setEnrollment(enr);
       setLicenses(Array.isArray(licenseRows) ? licenseRows : []);
-      setSettlements(Array.isArray(settlementRows) ? settlementRows : []);
+      setSettlementSummary(summary);
       setPhase('ready');
     } catch (error) {
       push?.(error.message, { icon: 'alertCircle' });
@@ -261,7 +260,7 @@ export function ModelHub() {
         <ActiveDashboard
           license={activeLicense}
           model={ownedModel}
-          settlements={settlements}
+          settlementSummary={settlementSummary}
         />
       ) : <Timeline journey={journey} onAction={onJourneyAction} />}
     </div>

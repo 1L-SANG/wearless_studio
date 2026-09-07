@@ -29,7 +29,7 @@ function compactDate(value) {
   return `${parts.year}.${String(parts.month).padStart(2, '0')}.${String(parts.day).padStart(2, '0')}`;
 }
 
-function nextSettlement(now) {
+export function nextSettlement(now = new Date()) {
   const parts = seoulParts(now) || seoulParts(new Date());
   let year = parts.year;
   let month = parts.month;
@@ -38,25 +38,6 @@ function nextSettlement(now) {
     if (month === 13) { year += 1; month = 1; }
   }
   return { year, month, day: SETTLEMENT_DAY };
-}
-
-export function summarizeSettlements(rows = [], now = new Date()) {
-  const current = seoulParts(now) || seoulParts(new Date());
-  return rows.reduce((summary, row) => {
-    const amount = Number(row?.modelAmount || 0);
-    const created = seoulParts(row?.createdAt);
-    summary.totalAmount += Number.isFinite(amount) ? amount : 0;
-    if (created && created.year === current.year && created.month === current.month) {
-      summary.monthCount += 1;
-      summary.monthAmount += Number.isFinite(amount) ? amount : 0;
-    }
-    return summary;
-  }, {
-    monthCount: 0,
-    monthAmount: 0,
-    totalAmount: 0,
-    nextSettlement: nextSettlement(now),
-  });
 }
 
 function hasOwnField(rows, fields) {

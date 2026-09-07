@@ -758,6 +758,17 @@ export function ModelLicense() {
                             </p>
                         </div>
                     )}
+                    <div className={s.listFoot}>
+                        <Button
+                            variant="ghost"
+                            block
+                            icon="plus"
+                            className={s.ctaQuiet}
+                            onClick={() => navigate("/model/register")}
+                        >
+                            새 생체 등록으로 라이선스 발급
+                        </Button>
+                    </div>
                 </>
             )}
         </div>
