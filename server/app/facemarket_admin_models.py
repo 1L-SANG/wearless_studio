@@ -189,7 +189,10 @@ select m.id::text as id, m.display_name, m.gender,
   from fm_models m
   join fm_biometric_enrollments e
     on e.id = m.current_enrollment_id and e.model_id = m.id
-  join fm_model_applications a on a.id = e.application_id
+  -- 지원서는 left join — 플랫폼 대행 온보딩(enrollment.application_id null, fm_models.user_id null 허용)
+  -- 모델은 지원서가 없다. inner join 이면 그 모델이 프로필·공개 목록에서 통째로 빠진다.
+  -- 키(height_cm)는 그때 null 이고, 화면은 키 구간·체형으로 대신한다(명세 §3.4).
+  left join fm_model_applications a on a.id = e.application_id
   join fm_licenses l
     on l.model_id = m.id and l.enrollment_id = m.current_enrollment_id
 """
