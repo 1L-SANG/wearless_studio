@@ -245,3 +245,25 @@ async def notify_slack_new_application(
             logger.error("slack notify rejected status=%s", res.status_code)
     except Exception as exc:
         logger.warning("slack notify failed: %s", exc)
+
+
+async def notify_slack_model_confirmed(
+    settings, *, display_name: str, admin_link: str
+) -> None:
+    """모델이 공개 프로필을 확정했다는 알림. 활동명만 싣고 실패는 무해하게 끝낸다."""
+    if not settings.fm_slack_webhook_url:
+        return
+    text = (
+        ":white_check_mark: 모델 공개 확정 · 활동명: "
+        f"{_slack_escape(display_name)}\n"
+        f"<{admin_link}|관리자 모델 콘솔 열기>"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            res = await client.post(settings.fm_slack_webhook_url, json={"text": text})
+        if res.status_code >= 400:
+            logger.error(
+                "model confirmation slack notify rejected status=%s", res.status_code
+            )
+    except Exception as exc:
+        logger.warning("model confirmation slack notify failed: %s", exc)
