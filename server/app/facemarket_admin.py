@@ -7,7 +7,9 @@
 숫자가 항상 진짜다. 대신 새로고침 연타가 DB 를 두드리지 않게 30초 프로세스 캐시를 둔다 —
 태스크가 여러 개면 태스크마다 따로 캐시되지만, 30초짜리 불일치는 무해하다.
 """
+import base64
 import time
+import uuid
 from datetime import datetime, time as dtime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -627,6 +629,121 @@ async def set_role(conn, *, target_user_id: str, actor: str, role: str) -> dict:
     return {"userId": target_user_id, "role": role}
 
 
+# ---------- 사용자 목록 (셀러 ↔ FaceMarket 구분) ----------
+# 이 목록은 /staff 검색과 성격이 다르다. /staff 는 "이미 이메일을 아는 사람" 을 승격하는
+# 도구라 정확일치만 허용하지만, 여기는 **누가 어느 서비스에서 왔는지 보는** 화면이라
+# 전수 열람이 목적이다. 그 대가로 열람 자체를 감사 원장에 남긴다(admin_list_users).
+USER_ORIGINS = ("seller", "facemarket", "both", "unknown")
+DEFAULT_USER_LIMIT = 50
+
+LIST_USERS_SQL = """
+select p.user_id::text as user_id, u.email, p.display_name, p.role, p.plan,
+       p.app_origin, p.created_at, u.last_sign_in_at
+from profiles p join auth.users u on u.id = p.user_id
+where (%(q)s::text is null
+       or lower(coalesce(u.email, '')) like %(like)s
+       or lower(coalesce(p.display_name, '')) like %(like)s)
+  and (%(origin)s::text is null
+       or (%(origin)s = 'unknown' and p.app_origin is null)
+       or p.app_origin = %(origin)s)
+  and (%(cursor_created)s::timestamptz is null
+       or (p.created_at, p.user_id)
+          < (%(cursor_created)s::timestamptz, %(cursor_user)s::uuid))
+order by p.created_at desc, p.user_id desc
+limit %(limit)s
+"""
+
+# 필터 칩의 숫자. 첫 페이지에서만 센다 — 더 보기를 누를 때마다 전체 집계를 다시 돌 이유가 없다.
+COUNT_USERS_BY_ORIGIN_SQL = """
+select coalesce(app_origin, 'unknown') as origin, count(*)::int as count
+from profiles group by 1
+"""
+
+
+def encode_user_cursor(row: dict) -> str:
+    """(created_at, user_id) keyset 커서.
+
+    offset 을 안 쓰는 이유: 목록이 가입 시간 역순이라, 페이지를 넘기는 사이 가입이 하나
+    생기면 offset 은 이미 본 행을 다시 보여준다.
+    """
+    created = row["created_at"]
+    return base64.urlsafe_b64encode(
+        f"{created.isoformat()}|{row['user_id']}".encode()
+    ).decode()
+
+
+def decode_user_cursor(cursor: str | None) -> tuple[datetime | None, str | None]:
+    if not cursor:
+        return None, None
+    try:
+        raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+        created_raw, user_id = raw.split("|", 1)
+        created = datetime.fromisoformat(created_raw)
+        # uuid 가 아닌 값이 SQL 캐스트까지 가면 500 이 된다 — 여기서 400 으로 잘라 낸다.
+        uuid.UUID(user_id)
+    except Exception:
+        raise _err("invalid_cursor", "목록 위치 정보가 올바르지 않아요.") from None
+    return created, user_id
+
+
+def validate_user_origin(origin: str | None) -> str | None:
+    if origin in (None, "", "all"):
+        return None
+    if origin not in USER_ORIGINS:
+        raise _err("invalid_origin", "출처 필터 값이 올바르지 않아요.")
+    return origin
+
+
+def _user_row(row: dict) -> dict:
+    return {
+        "userId": row["user_id"],
+        "email": row.get("email"),
+        "displayName": row.get("display_name"),
+        "role": row.get("role") or "user",
+        "plan": row.get("plan"),
+        # null 을 그대로 흘린다 — 화면이 '미상' 과 '셀러' 를 구분해야 한다.
+        "appOrigin": row.get("app_origin"),
+        "createdAt": row["created_at"].isoformat() if row.get("created_at") else None,
+        "lastSignInAt": (
+            row["last_sign_in_at"].isoformat() if row.get("last_sign_in_at") else None
+        ),
+    }
+
+
+async def list_users(
+    conn, *, q: str | None, origin: str | None, limit: int, cursor: str | None
+) -> dict:
+    origin = validate_user_origin(origin)
+    capped = max(1, min(limit, MAX_LIST_LIMIT))
+    term = (q or "").strip().lower() or None
+    cursor_created, cursor_user = decode_user_cursor(cursor)
+
+    async with conn.cursor() as cur:
+        # limit+1 을 받아 "다음이 있나" 를 별도 count 없이 안다.
+        await cur.execute(LIST_USERS_SQL, {
+            "q": term,
+            "like": f"%{term}%" if term else None,
+            "origin": origin,
+            "cursor_created": cursor_created,
+            "cursor_user": cursor_user,
+            "limit": capped + 1,
+        })
+        rows = await cur.fetchall() or []
+        counts = {}
+        if cursor is None:
+            await cur.execute(COUNT_USERS_BY_ORIGIN_SQL)
+            counts = {r["origin"]: r["count"] for r in (await cur.fetchall() or [])}
+
+    has_more = len(rows) > capped
+    page = rows[:capped]
+    return {
+        "items": [_user_row(r) for r in page],
+        "nextCursor": encode_user_cursor(page[-1]) if has_more and page else None,
+        # 첫 페이지에만 실린다. 없으면 화면은 칩 숫자를 숨긴다.
+        "counts": counts or None,
+    }
+
+
 LIST_AUDIT_SQL = """
 select l.id::text as id, l.action, l.target_type, l.target_id, l.note, l.created_at,
        l.actor_user_id::text as actor_user_id, u.email as actor_email
@@ -675,6 +792,35 @@ async def admin_set_role(
     async with get_conn(request) as conn:
         await admin_guard.require_admin(conn, user_id)
         result = await set_role(conn, target_user_id=target_user_id, actor=user_id, role=body.role)
+        await conn.commit()
+    return JSONResponse(result)
+
+
+@router.get("/users")
+async def admin_list_users(
+    request: Request,
+    q: str | None = Query(None),
+    origin: str | None = Query(None),
+    limit: int = Query(DEFAULT_USER_LIMIT),
+    cursor: str | None = Query(None),
+    user_id: str = Depends(require_user),
+):
+    """전체 가입자 목록 — 출처(셀러/FaceMarket) 필터·이메일·이름 부분일치 검색.
+
+    열람 자체를 감사 원장에 남긴다. 이 화면은 콘솔에서 유일하게 **가입자 이메일을 전수로
+    보여주는** 곳이라, 관리자 계정 하나가 털리면 명부 전체가 나간다. 막을 수는 없지만
+    (관리자에게는 필요한 화면이다) 언제 누가 무엇으로 훑었는지는 남아야 한다.
+    """
+    async with get_conn(request) as conn:
+        await admin_guard.require_admin(conn, user_id)
+        result = await list_users(conn, q=q, origin=origin, limit=limit, cursor=cursor)
+        await admin_guard.write_audit(
+            conn,
+            actor_user_id=user_id,
+            action="users.list.view",
+            target_type="user_list",
+            after={"q": q, "origin": origin, "returned": len(result["items"])},
+        )
         await conn.commit()
     return JSONResponse(result)
 

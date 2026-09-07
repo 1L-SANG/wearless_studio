@@ -68,6 +68,9 @@ def test_audit_write_happens_before_commit():
         (APPLICATIONS, "admin_reject_application"),
         (ROUTES, "approve_refund"),
         (ROUTES, "reject_refund"),
+        # 사용자 목록은 **읽기인데도** 원장에 남긴다 — 콘솔에서 유일하게 가입자 이메일을
+        # 전수로 보여주는 화면이라, 누가 언제 무엇으로 훑었는지가 사후에 필요하다.
+        (ADMIN, "admin_list_users"),
     )
     for source, route in inline_cases:
         body = source.split(f"async def {route}(")[1].split("@router.")[0]

@@ -18,7 +18,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPExcep
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from psycopg import errors
 
-from . import admin_guard, facemarket, legal_versions, personalization, repo
+from . import admin_guard, app_origin, facemarket, legal_versions, personalization, repo
 from .agents import (
     color_harmony,
     content_roles,
@@ -41,6 +41,8 @@ from .auth import require_user
 from .db import get_conn
 from .models import (
     Account,
+    AppOriginRequest,
+    AppOriginResponse,
     Asset,
     AssetCompleteRequest,
     CreditHistoryEntry,
@@ -602,6 +604,45 @@ async def accept_consents(
         )
         await conn.commit()
     return _consent_payload(row)
+
+@router.post(
+    "/me/app-origin",
+    response_model=AppOriginResponse,
+    responses={**COMMON_RESPONSES},
+    tags=["User & Account"],
+    summary="이 계정의 가입 출처(셀러/FaceMarket) 기록",
+)
+async def stamp_app_origin(
+    request: Request,
+    body: AppOriginRequest | None = None,
+    user_id: str = Depends(require_user),
+):
+    """로그인 직후 프런트가 한 번 부른다 — 이 계정이 어느 앱에서 왔는지 남긴다.
+
+    셀러와 FaceMarket 이 Supabase 프로젝트를 공유해서, 이걸 안 남기면 콘솔에서 두
+    서비스의 가입자가 구분 없이 섞인다. 로그인 트리거가 아니라 API 인 이유는 OAuth 다 —
+    auth.users INSERT 시점에는 사용자가 어느 호스트에서 출발했는지가 어디에도 없다.
+
+    - **판정**: Origin 헤더 우선, 본문 app 은 로컬 개발 폴백(app_origin.py).
+    - **기록**: 첫 값 보존, 반대쪽 앱을 처음 쓰면 'both' 로 승격.
+    - **에지 케이스**: 판정 불가(관리자 콘솔·비브라우저 호출)면 아무것도 안 쓰고
+      현재 값을 그대로 돌려준다 — 200 이다. 실패로 만들면 프런트가 로그인마다
+      의미 없는 에러를 보게 된다.
+    """
+    app = app_origin.resolve_app(
+        request.headers.get("origin"), body.app if body else None
+    )
+    async with get_conn(request) as conn:
+        if app is None:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "select app_origin from profiles where user_id = %s", (user_id,)
+                )
+                row = await cur.fetchone()
+            return {"app_origin": row.get("app_origin") if row else None}
+        current = await repo.touch_app_origin(conn, user_id, app)
+        await conn.commit()
+    return {"app_origin": current}
 
 
 @router.delete(
