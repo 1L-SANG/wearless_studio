@@ -129,9 +129,9 @@
 .cardMedia:focus-visible .cardPill { opacity: 1; translate: -50% 0; }
 .cardPill svg { opacity: 0.85; }
 
-.cardMeta { display: grid; gap: 0.15rem; }
-.cardName { margin: 0; font: 600 0.95rem/1.4 var(--font-body); }
-.cardSpec { margin: 0; color: var(--fm-muted); font: 400 0.85rem/1.5 var(--font-body); }
+.cardMeta { display: flex; align-items: flex-end; gap: 0.6rem; }
+.cardName { flex: 1; min-width: 3em; margin: 0; overflow-wrap: anywhere; font: 600 0.95rem/1.4 var(--font-body); }
+.cardSpec { max-width: 70%; margin: 0 0 0 auto; text-align: right; overflow-wrap: anywhere; color: var(--fm-muted); font: 400 0.85rem/1.5 var(--font-body); }
 
 /* ---- 상세 서랍 ---- */
 /* 가운데 팝업이 아니라 **오른쪽에서 나오는 창**이다(사용자 지시). 뒤 화면은 어둡게 + 흐리게.
