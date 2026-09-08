@@ -14,12 +14,12 @@ import {
 import {
   APPROVAL_MODE,
   formatKrw,
-  monthlyPriceFor,
   validityLabel,
 } from '../facemarket-landing/facemarketTerms.js';
 import { hasCurrentEnrollmentLicense, resolveHubJourney } from './modelHubState.js';
 import s from './ModelPersonalization.module.css';
 import { seoulDate } from '@/lib/datetime.js';
+import { FACEMARKET_PRICING } from '../../lib/facemarketPricing.js';
 
 async function loadOptional(fn) {
   try { return await fn(); }
@@ -98,7 +98,7 @@ function ActiveDashboard({ license, model, settlementSummary }) {
     timeZone: 'Asia/Seoul', month: '2-digit',
   }).format(now);
 
-  const unitPrice = license?.unitPrice ?? null;
+  const unitPrice = license ? FACEMARKET_PRICING.perCut : null;
   const validity = !license
     ? '—'
     : license.validityDays != null
@@ -149,7 +149,7 @@ function ActiveDashboard({ license, model, settlementSummary }) {
             <div><dt>허용 품목</dt><dd>{license ? `${license.allowedUse?.length || 0}개` : '—'}</dd></div>
             <div><dt>제외 품목</dt><dd>{license ? `${license.forbiddenUse?.length || 0}개` : '—'}</dd></div>
             <div><dt>건당 가격</dt><dd>{unitPrice == null ? '—' : formatKrw(unitPrice)}</dd></div>
-            <div><dt>월정액</dt><dd>{unitPrice == null ? '—' : formatKrw(monthlyPriceFor(unitPrice))}</dd></div>
+            <div><dt>월정액</dt><dd>{unitPrice == null ? '—' : formatKrw(FACEMARKET_PRICING.monthly)}</dd></div>
             <div><dt>유효기간</dt><dd>{validity}</dd></div>
             <div><dt>승인 방식</dt><dd>{license ? (APPROVAL_MODE === 'auto' ? '자동' : APPROVAL_MODE) : '—'}</dd></div>
           </dl>

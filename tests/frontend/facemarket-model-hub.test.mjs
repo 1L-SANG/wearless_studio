@@ -10,7 +10,7 @@ async function loadRequired(url, label) {
   return import(url);
 }
 
-test('조건표는 월정액과 정산 기준을 한 곳에서 계산한다', async () => {
+test('조건표는 계약과 정산 기준을 한 곳에서 제공한다', async () => {
   const terms = await loadRequired(termsUrl, 'FaceMarket 조건표');
 
   assert.equal(terms.MODEL_SHARE, 0.7);
@@ -18,14 +18,10 @@ test('조건표는 월정액과 정산 기준을 한 곳에서 계산한다', as
   assert.equal(terms.OPS_SHARE, 0.1);
   assert.equal(terms.SETTLEMENT_DAY, 10);
   assert.equal(terms.MIN_PAYOUT_KRW, 10_000);
-  assert.equal(terms.MONTHLY_MULTIPLIER, 2.5);
   assert.equal(terms.MONTHLY_PERIOD_DAYS, 30);
   assert.equal(terms.APPROVAL_MODE, 'auto');
   assert.deepEqual(terms.VALIDITY_OPTIONS, [365, 730, null]);
 
-  assert.equal(terms.monthlyPriceFor(10_000), 25_000);
-  assert.equal(terms.monthlyPriceFor(5_150), 12_900);
-  assert.equal(terms.monthlyPriceFor(undefined), 25_000);
   assert.equal(terms.formatKrw(25_000), '25,000원');
   assert.equal(terms.validityLabel(365), '365일');
   assert.equal(terms.validityLabel(730), '730일');

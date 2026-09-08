@@ -19,10 +19,10 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { Icon } from '@/components/ui.jsx';
 import { sellerStudioUrl } from '../data/publicModels.js';
+import { pricingParts } from '@/lib/facemarketPricing.js';
 import s from '../BrowseModels.module.css';
 
 const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])';
-const won = (n) => `${Number(n).toLocaleString('ko-KR')}원`;
 
 /* 한 줄에 두 칸(왼쪽·오른쪽). 값이 없는 칸은 빼고, 남은 칸이 하나면 그 칸이 줄을 다 쓴다. */
 function Pair({ cells }) {
@@ -132,15 +132,11 @@ export function ModelDetailDialog({ model, onClose }) {
         <div className={s.dialogBody}>
           {/* 가격이 맨 위, 그 아래 셀러가 바로 가는 버튼(2026-09-08 오너 지시). 예시 모델은 갈 곳이
               없으므로 버튼을 두지 않는다 — 눌러도 아무 일 없는 버튼은 안 둔다. */}
-          {license?.unitPrice != null && (
-            <div className={s.dialogPriceRow}>
-              <span className={s.dialogPrice}>{won(license.unitPrice)}</span>
-              <span className={s.dialogPriceNote}>건당</span>
-              {license.monthlyPrice != null && (
-                <span className={s.dialogPriceNote}>· 월 {won(license.monthlyPrice)}, 한 쇼핑몰 30일 무제한</span>
-              )}
-            </div>
-          )}
+          {/* 가격은 플랫폼 공통 고정값(lib/facemarketPricing.js). 모델별 단가는 초기에 쓰지 않는다. */}
+          <div className={s.dialogPriceRow}>
+            <span className={s.dialogPrice}>{pricingParts().perCut}</span>
+            <span className={s.dialogPriceNote}>/ {pricingParts().monthly} ({pricingParts().cap})</span>
+          </div>
           {!isExample && (
             <a className={s.dialogCta} href={sellerStudioUrl(model.id)}>
               상세페이지 만들러 가기

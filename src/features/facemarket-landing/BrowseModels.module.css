@@ -2,53 +2,88 @@
    모델 둘러보기(/models)와 상세 창.
    색·글자·간격은 랜딩 토큰(--fm-*)을 그대로 쓴다 — 그 토큰은 .shell 이 정의하고
    이 화면도 LandingShell 안에서 그려지므로 여기서 다시 정의하지 않는다.
+   2026-09-08 오너 확정: 바탕은 옅은 중성 회색(#f5f6f7), 제목 작게, 탭 셋, 정렬 없음, 모델마다 흰 카드 하나.
    ============================================================= */
 
-.browse { padding: clamp(2rem, 5vw, 4rem) 0 clamp(3rem, 6vw, 5rem); }
-
-/* 머리말은 격자와 같은 열(폭·좌우 여백)에 선다 — 격자만 좁히고 머리말은 컨테이너 끝에 두면
-   왼쪽이 어긋나 보인다. */
-.browseHead { max-width: min(100%, 61rem); margin: 0 auto clamp(1.75rem, 4vw, 2.75rem); }
-
-.eyebrow {
-  display: block;
-  margin: 0 0 0.7rem;
-  color: var(--fm-muted);
-  font: 500 0.76rem/1 var(--font-body);
-  letter-spacing: 0.02em;
+/* 바탕은 파란 기운 없는 옅은 회색. 셸(.shell)은 회청 그라데이션이라 이 섹션이 좌우 패딩을 넘어
+   화면 끝까지 깔고, 셸의 아래 여백(4rem)까지 덮는다 — 안 그러면 카드 밖으로 회청이 비친다.
+   흰 카드가 이 위에 놓여야 카드가 "물건"처럼 선다. */
+.browse {
+  margin-inline: calc(var(--fm-pad) * -1);
+  margin-bottom: -4rem;
+  padding: clamp(1.75rem, 4vw, 3rem) var(--fm-pad) clamp(3rem, 6vw, 5rem);
+  min-height: calc(100vh - var(--fm-header-h));
+  background: #f5f6f7;
 }
 
+/* 머리말·탭·격자·고지는 전부 같은 열(폭 61rem)에 선다. */
+.browseHead,
+.browseBar,
+.browseNotice { max-width: min(100%, 61rem); margin-inline: auto; }
+
+.browseHead { margin-bottom: 1.1rem; }
 .browseTitle {
-  margin: 0 0 0.9rem;
-  font-family: var(--font-body);
-  font-size: clamp(1.9rem, 4.5vw, 3.2rem);
-  font-weight: 600;
-  line-height: 1.25;
+  margin: 0 0 0.35rem;
+  font: 600 clamp(1.4rem, 2.2vw, 1.75rem)/1.25 var(--font-body);
   letter-spacing: -0.02em;
 }
-
-.browseNotice {
+.browseLead { margin: 0; color: var(--fm-muted); font: 400 0.95rem/1.6 var(--font-body); }
+/* 가격 한 줄: 금액 두 개만 잉크색·600, 라벨과 구분자·제한은 흐리게. 숫자는 고정폭. */
+.browsePricing {
   display: flex;
-  align-items: flex-start;
-  gap: 0.4rem;
-  margin: 0;
-  color: var(--fm-muted);
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.1rem 0.4rem;
+  margin: 0.35rem 0 0;
+  color: var(--fm-ink);
   font: 400 0.9rem/1.6 var(--font-body);
+  font-variant-numeric: tabular-nums;
 }
-.browseNotice svg { flex: none; margin-top: 0.25rem; }
+.browsePricing b { font-weight: 600; }
+.browsePricingLabel { margin-right: 0.15rem; color: var(--fm-muted); }
+.browsePricingLabel::after { content: ":"; }
+.browsePricingDim { color: var(--fm-muted); }
+
+/* 탭 줄: 위 검은 선 하나, 아래 옅은 선. 오른쪽은 인원 수. */
+.browseBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.7rem 0;
+  border-top: 1px solid var(--fm-ink);
+  border-bottom: 1px solid var(--fm-line);
+}
+.tabs { display: flex; gap: 1.4rem; }
+.tab {
+  padding: 0.25rem 0;
+  border: 0;
+  background: none;
+  color: var(--fm-muted);
+  font: 500 0.92rem/1 var(--font-body);
+  cursor: pointer;
+  transition: color 140ms ease;
+}
+.tab:hover { color: var(--fm-ink); }
+/* 현재 탭은 색만으로 알리지 않는다 — 밑줄을 함께 둬서 형태로도 읽히게(WCAG 1.4.1). */
+.tabActive {
+  color: var(--fm-ink);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.45rem;
+}
+.tab:focus-visible { outline: 2px solid var(--fm-ink); outline-offset: 3px; border-radius: 2px; }
+.browseCount { color: var(--fm-muted); font: 400 0.88rem/1 var(--font-body); }
 
 /* 카드 격자 — 데스크톱 **가로 4개**(사용자 지시). auto-fill 로 두면 창 폭에 따라 5열·6열이
    되므로 열 수를 단계로 못박는다. minmax(0, 1fr) 의 0 이 중요하다: 기본값 auto 면 사진의
-   내재 폭이 하한이 되어 좁은 화면에서 열이 넘친다. */
-/* 2026-09-04 오너 지시: 카드를 70% 크기로, 양옆 여백을 두고, 카드 사이 간격은 살짝 넓게 →
-   같은 날 "10%씩 더 키우자". 열 수(2·3·4)는 그대로 두고 격자 자체의 폭을 61rem 으로 묶어
-   가운데 놓는다 — 1280px 에서 카드 한 장이 원래 285px → 206px(70%) → 227px(+10%)이 되고,
-   남는 폭이 양옆 여백으로 떨어진다. 간격은 1.15rem → 1.5rem 상한. */
+   내재 폭이 하한이 되어 좁은 화면에서 열이 넘친다. 격자 폭 61rem 가운데(2026-09-04 오너 지시). */
 .grid {
   display: grid;
   gap: clamp(1rem, 1.8vw, 1.5rem);
   max-width: min(100%, 61rem);
-  margin: 0 auto;
+  margin: 1.4rem auto 0;
   padding: 0;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   list-style: none;
@@ -56,7 +91,8 @@
 @media (min-width: 48rem) { .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (min-width: 64rem) { .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 
-/* 카드 = 사진 + 아래 이름 줄(주: 이름 / 보조: 키·몸무게). */
+/* 카드 상자를 두지 않는다(2026-09-08 오너 번복). 사진 한 장과 그 아래 한 줄이 전부이고,
+   카드 사이는 여백이 나눈다 — 상자를 없애면 사진이 격자의 주인이 된다. */
 .card {
   display: grid;
   gap: 0.7rem;
@@ -72,10 +108,11 @@
   padding: 0;
   border: 1px solid var(--fm-line);
   border-radius: 0.9rem;
-  background: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.6);
   overflow: hidden;
   cursor: pointer;
 }
+.cardMedia:focus-visible { outline: 2px solid var(--fm-ink); outline-offset: 2px; }
 
 .cardImage {
   display: block;
@@ -101,9 +138,7 @@
 
 /* hover·focus 에서 **사진 안쪽 아래**로 떠오르는 검정 pill "모델 정보 확인"(2026-09-04 오너
    지시). 사진 아랫변에서 0.75rem 띄운 자리가 목적지고, 처음엔 그보다 8px 아래에 투명하게
-   있다가 올라오며 나타난다 — 상단바 CTA 와 같은 잉크색·안쪽 하이라이트라 같은 물건으로
-   읽힌다. 사진 칸이 overflow:hidden 이라 올라오는 첫 프레임은 아랫변에 살짝 잘려 '밑에서
-   솟는' 느낌이 난다(의도). 터치에는 hover 가 없지만 카드 자체가 버튼이라 탭하면 같은 창이 열린다. */
+   있다가 올라오며 나타난다. 터치에는 hover 가 없지만 카드 자체가 버튼이라 탭하면 같은 창이 열린다. */
 .cardPill {
   position: absolute;
   left: 50%;
@@ -129,9 +164,28 @@
 .cardMedia:focus-visible .cardPill { opacity: 1; translate: -50% 0; }
 .cardPill svg { opacity: 0.85; }
 
+/* 사진 아래 한 줄: 왼쪽 이름, 오른쪽 성별·나이대. 가격은 카드에 없다(모두 같은 값이라 머리말에 한 번).
+   이름이 길면 줄바꿈되고 오른쪽 칸은 70% 를 넘지 않는다 — 두 값이 서로를 밀어내지 않게. */
 .cardMeta { display: flex; align-items: flex-end; gap: 0.6rem; }
 .cardName { flex: 1; min-width: 3em; margin: 0; overflow-wrap: anywhere; font: 600 0.95rem/1.4 var(--font-body); }
-.cardSpec { max-width: 70%; margin: 0 0 0 auto; text-align: right; overflow-wrap: anywhere; color: var(--fm-muted); font: 400 0.85rem/1.5 var(--font-body); }
+.cardSpec {
+  max-width: 70%;
+  margin: 0 0 0 auto;
+  color: var(--fm-muted);
+  font: 400 0.82rem/1.5 var(--font-body);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.browseNotice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  margin-top: 1.6rem;
+  color: var(--fm-muted);
+  font: 400 0.85rem/1.6 var(--font-body);
+}
+.browseNotice svg { flex: none; margin-top: 0.25rem; }
 
 /* ---- 상세 서랍 ---- */
 /* 가운데 팝업이 아니라 **오른쪽에서 나오는 창**이다(사용자 지시). 뒤 화면은 어둡게 + 흐리게.

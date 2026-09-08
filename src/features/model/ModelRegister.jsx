@@ -36,11 +36,11 @@ import {
 import {
   APPROVAL_MODE,
   formatKrw,
-  monthlyPriceFor,
   validityLabel,
 } from '../facemarket-landing/facemarketTerms.js';
 import s from './ModelRegister.module.css';
 import { seoulDate } from '@/lib/datetime.js';
+import { FACEMARKET_PRICING } from '../../lib/facemarketPricing.js';
 
 const CX_ORIGIN = 'https://cx.raonsecure.co.kr:17543';
 const CX_CONFIG_URL = import.meta.env.VITE_CX_CONFIG_URL
@@ -712,7 +712,6 @@ export function ModelRegister() {
   const completionBody = bodyTypeLabel(completionSummary?.bodyType);
   const completionHeight = heightBucketLabel(completionSummary?.heightBucket);
   const completionBodyBand = [completionHeight, completionBody].filter(Boolean).join(' · ') || '선택 안 함';
-  const completionUnitPrice = completionSummary?.unitPrice;
   const completionValidity = completionSummary?.validityDays != null
     ? validityLabel(completionSummary.validityDays)
     : completionSummary?.licenseValidUntil
@@ -766,8 +765,8 @@ export function ModelRegister() {
           <div><dt>활동명</dt><dd>{completionModel?.displayName || '내 Digital DNA'}</dd></div>
           <div><dt>체형 밴드</dt><dd>{completionBodyBand}</dd></div>
           <div><dt>허용 품목</dt><dd>{completionSummary.allowedUseCount}개</dd></div>
-          <div><dt>건당 가격</dt><dd>{formatKrw(completionUnitPrice)}</dd></div>
-          <div><dt>월정액</dt><dd>{formatKrw(monthlyPriceFor(completionUnitPrice))}</dd></div>
+          <div><dt>건당 가격</dt><dd>{formatKrw(FACEMARKET_PRICING.perCut)}</dd></div>
+          <div><dt>월정액</dt><dd>{formatKrw(FACEMARKET_PRICING.monthly)}</dd></div>
           <div><dt>유효기간</dt><dd>{completionValidity}</dd></div>
           <div><dt>승인 방식</dt><dd>{APPROVAL_MODE === 'auto' ? '자동' : APPROVAL_MODE}</dd></div>
         </dl>}
