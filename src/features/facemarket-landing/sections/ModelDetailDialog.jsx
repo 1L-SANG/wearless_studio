@@ -92,17 +92,13 @@ export function ModelDetailDialog({ model, onClose }) {
           <Icon name="x" size={18} stroke={2} />
         </button>
 
+        {/* 사진 두 장에 '확대샷·전신샷' 글자는 붙이지 않는다(2026-09-08 오너 지시). 보면 아는
+            것이고, 검정 바탕에서는 라벨이 사진보다 먼저 눈에 들어온다. alt 에만 남긴다. */}
         <div className={s.dialogShots}>
-          <figure className={s.dialogShotBox}>
-            <img alt={`${model.name} 확대샷`} className={s.dialogShot} src={model.closeup} />
-            <figcaption className={s.dialogShotLabel}>확대샷</figcaption>
-          </figure>
-          <figure className={s.dialogShotBox}>
-            {model.fullbody
-              ? <img alt={`${model.name} 전신샷`} className={s.dialogShot} src={model.fullbody} />
-              : <div className={s.dialogShotEmpty}>전신샷 준비 중</div>}
-            <figcaption className={s.dialogShotLabel}>전신샷</figcaption>
-          </figure>
+          <img alt={`${model.name} 확대샷`} className={s.dialogShot} src={model.closeup} />
+          {model.fullbody
+            ? <img alt={`${model.name} 전신샷`} className={s.dialogShot} src={model.fullbody} />
+            : <div className={s.dialogShotEmpty}>전신샷 준비 중</div>}
         </div>
 
         <div className={s.dialogHead}>
