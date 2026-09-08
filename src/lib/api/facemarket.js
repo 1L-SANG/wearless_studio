@@ -258,8 +258,9 @@ export function adminModelTestCuts(modelId) {
   return http(`/v1/facemarket/admin/models/${encodeURIComponent(modelId)}/test-cuts`);
 }
 
-export async function adminUploadModelTestCuts(modelId, files) {
+export async function adminUploadModelTestCuts(modelId, files, kind) {
   const form = new FormData();
+  form.append('kind', kind);
   for (const file of files) form.append('images', file, file.name || 'test-cut');
   return checkedJson(await _authFetch(
     `/v1/facemarket/admin/models/${encodeURIComponent(modelId)}/test-cuts`,
@@ -298,9 +299,9 @@ export async function fetchMyModelTestCutUrl(imageUri) {
   return URL.createObjectURL(await res.blob());
 }
 
-export function confirmMyModelTestCut(approvedCutId) {
+export function confirmMyModelTestCuts({ closeupCutId, fullbodyCutId }) {
   return http('/v1/facemarket/model/test-cuts/confirm', {
-    method: 'POST', body: { approvedCutId },
+    method: 'POST', body: { closeupCutId, fullbodyCutId },
   });
 }
 

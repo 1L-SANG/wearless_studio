@@ -7,10 +7,10 @@
 import asyncio
 import logging
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from io import BytesIO
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import Field
@@ -18,6 +18,7 @@ from pydantic import Field
 from . import admin_guard, facemarket_notify, repo
 from .auth import require_user
 from .db import get_conn
+from .facemarket import _cover_serving_url
 from .models import CamelModel
 from .personalization import CONSENT_DOC_VERSION
 from .r2 import (
@@ -30,7 +31,9 @@ from .r2 import (
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket model test cuts"])
 
-MAX_TEST_CUTS = 6
+MAX_TEST_CUTS = 4
+MAX_TEST_CUTS_PER_KIND = 2
+TEST_CUT_KINDS = {"closeup", "fullbody"}
 MAX_TEST_CUT_BYTES = 25 * 1024 * 1024
 ALLOWED_TEST_CUT_MIME = {"image/png", "image/jpeg", "image/webp"}
 
@@ -39,6 +42,7 @@ class TestCutView(CamelModel):
     id: str
     mime: str
     sort: int
+    kind: str
     approved: bool | None = None
     created_at: datetime
     image_uri: str
@@ -50,10 +54,16 @@ class AdminModelCard(CamelModel):
     status: str
     enrollment_status: str | None = None
     test_cut_count: int = 0
+    closeup_count: int = 0
+    fullbody_count: int = 0
+    cuts_complete: bool = False
     redo_requested: bool = False
     confirm_requested_at: datetime | None = None
+    confirmed_at: datetime | None = None
     redo_count: int = 0
     ready_to_send: bool = False
+    #: 서버가 계산한 "지금 보내도 되는 상태". 화면은 이 값만 본다(_is_sendable 참고).
+    sendable: bool = False
     test_cuts: list[TestCutView] = Field(default_factory=list)
 
 
@@ -63,6 +73,25 @@ class SendTestCutsResult(CamelModel):
     email_sent: bool
 
 
+class ProfileLicenseView(CamelModel):
+    allowed_use: list[str] = Field(default_factory=list)
+    forbidden_use: list[str] = Field(default_factory=list)
+    unit_price: int
+    valid_until: datetime
+    valid_days: int
+
+
+class ModelProfileView(CamelModel):
+    display_name: str
+    gender: str | None = None
+    #: "20대 초반"처럼 구간만. 생년월일·정확한 나이는 절대 내보내지 않는다(명세 §3.4).
+    age_band: str | None = None
+    height_cm: int | None = None
+    height_bucket: str | None = None
+    body_type: str | None = None
+    license: ProfileLicenseView
+
+
 class ModelTestCutsView(CamelModel):
     model_id: str
     status: str
@@ -70,16 +99,30 @@ class ModelTestCutsView(CamelModel):
     confirm_requested_at: datetime | None = None
     confirmed_at: datetime | None = None
     cuts: list[TestCutView] = Field(default_factory=list)
+    profile: ModelProfileView | None = None
 
 
 class ConfirmTestCutBody(CamelModel):
-    approved_cut_id: str
+    closeup_cut_id: str
+    fullbody_cut_id: str
 
 
 class ConfirmTestCutResult(CamelModel):
     status: str
     confirmed_at: datetime
-    cover_image_url: str
+    closeup_image_url: str
+    fullbody_image_url: str
+
+
+class PublicModelItem(ModelProfileView):
+    id: str
+    closeup_image_url: str
+    fullbody_image_url: str
+    confirmed_at: datetime
+
+
+class PublicModelsResult(CamelModel):
+    items: list[PublicModelItem] = Field(default_factory=list)
 
 
 class RedoTestCutsBody(CamelModel):
@@ -134,9 +177,104 @@ def _cut_view(row: dict, *, model_side: bool = False) -> dict:
         "id": cut_id,
         "mime": row["mime"],
         "sort": row["sort"],
+        "kind": row["kind"],
         "approved": row.get("approved"),
         "created_at": row["created_at"],
         "image_uri": uri,
+    }
+
+
+_MODEL_PROFILE_SELECT = """
+select m.id::text as id, m.display_name, m.gender,
+       a.height_cm, a.birthdate, m.height_bucket, m.body_type,
+       l.allowed_use, l.forbidden_use, l.unit_price, l.license_valid_until,
+       round(extract(epoch from (l.license_valid_until - l.created_at)) / 86400.0)::integer
+         as license_valid_days,
+       m.cover_image_url, m.fullbody_image_url, m.confirmed_at
+  from fm_models m
+  join fm_biometric_enrollments e
+    on e.id = m.current_enrollment_id and e.model_id = m.id
+  -- 지원서는 left join — 플랫폼 대행 온보딩(enrollment.application_id null, fm_models.user_id null 허용)
+  -- 모델은 지원서가 없다. inner join 이면 그 모델이 프로필·공개 목록에서 통째로 빠진다.
+  -- 키(height_cm)는 그때 null 이고, 화면은 키 구간·체형으로 대신한다(명세 §3.4).
+  left join fm_model_applications a on a.id = e.application_id
+  join fm_licenses l
+    on l.model_id = m.id and l.enrollment_id = m.current_enrollment_id
+"""
+
+
+async def _load_model_profiles(
+    conn, *, model_id: str | None = None, public_only: bool = False
+) -> list[dict]:
+    """현재 enrollment의 활성 라이선스가 붙은 공개 프로필 원천만 읽는다.
+
+    모델 확인 화면과 무인증 공개 목록이 같은 SQL/shape를 사용해야 미리보기와 실제
+    카드가 어긋나지 않는다. 공개 목록 조건만 이 헬퍼의 ``public_only`` 분기로 추가한다.
+    """
+    clauses = [
+        "l.status = 'active'",
+        "nullif(btrim(l.vc_id), '') is not null",
+        "l.license_valid_until > now()",
+    ]
+    params: tuple[str, ...] = ()
+    if model_id is not None:
+        clauses.insert(0, "m.id = %s")
+        params = (model_id,)
+    if public_only:
+        clauses.extend(
+            [
+                "m.status = 'verified'",
+                "m.confirmed_at is not null",
+                "m.cover_image_url like 'facemarket/catalog/models/%'",
+                "m.fullbody_image_url like 'facemarket/catalog/models/%'",
+            ]
+        )
+    suffix = "order by m.confirmed_at desc limit 200" if public_only else "limit 1"
+    async with conn.cursor() as cur:
+        await cur.execute(
+            _MODEL_PROFILE_SELECT + " where " + " and ".join(clauses) + " " + suffix,
+            params,
+        )
+        return await cur.fetchall()
+
+
+def _today() -> date:
+    """테스트가 날짜를 고정할 수 있게 한 겹 뗀다."""
+    return date.today()
+
+
+def _age_band(birthdate) -> str | None:
+    """생년월일 → "20대 초반" 같은 구간. 셀러가 타깃 연령과 맞춰 보는 용도라 이 정도면 충분하고,
+    정확한 나이는 개인정보라 내보내지 않는다. 0~3 초반, 4~6 중반, 7~9 후반."""
+    if birthdate is None:
+        return None
+    if isinstance(birthdate, datetime):
+        birthdate = birthdate.date()
+    today = _today()
+    age = today.year - birthdate.year - ((today.month, today.day) < (birthdate.month, birthdate.day))
+    if age < 20:
+        return "10대"
+    decade = (age // 10) * 10
+    pos = age % 10
+    part = "초반" if pos <= 3 else ("중반" if pos <= 6 else "후반")
+    return f"{decade}대 {part}"
+
+
+def _profile_view(row: dict) -> dict:
+    return {
+        "display_name": row["display_name"],
+        "gender": row.get("gender"),
+        "age_band": _age_band(row.get("birthdate")),
+        "height_cm": row.get("height_cm"),
+        "height_bucket": row.get("height_bucket"),
+        "body_type": row.get("body_type"),
+        "license": {
+            "allowed_use": list(row.get("allowed_use") or []),
+            "forbidden_use": list(row.get("forbidden_use") or []),
+            "unit_price": row["unit_price"],
+            "valid_until": row["license_valid_until"],
+            "valid_days": row["license_valid_days"],
+        },
     }
 
 
@@ -144,7 +282,7 @@ async def _load_admin_model(conn, model_id: str, *, for_update: bool = False) ->
     lock = " for update of m" if for_update else ""
     async with conn.cursor() as cur:
         await cur.execute(
-            """select m.id::text as id, m.status, m.redo_count,
+            """select m.id::text as id, m.status, m.redo_count, m.fullbody_image_url,
                       e.status as enrollment_status,
                       coalesce(u.email, a.contact_email) as contact_email,
                       exists (
@@ -153,6 +291,7 @@ async def _load_admin_model(conn, model_id: str, *, for_update: bool = False) ->
                            and l.enrollment_id = m.current_enrollment_id
                            and l.status = 'active'
                            and nullif(btrim(l.vc_id), '') is not null
+                           and l.license_valid_until > now()
                       ) as has_active_license
                  from fm_models m
                  left join fm_biometric_enrollments e on e.id = m.current_enrollment_id
@@ -180,7 +319,7 @@ async def _load_owned_model(conn, user_id: str, *, for_update: bool = False) -> 
 async def _load_cuts(conn, model_id: str) -> list[dict]:
     async with conn.cursor() as cur:
         await cur.execute(
-            """select id::text as id, mime, sort, approved, created_at
+            """select id::text as id, mime, sort, kind, approved, created_at
                  from fm_model_test_cuts
                 where model_id = %s order by sort, created_at""",
             (model_id,),
@@ -194,7 +333,7 @@ async def _load_cut_for_admin(
     lock = " for update" if for_update else ""
     async with conn.cursor() as cur:
         await cur.execute(
-            """select id::text as id, r2_key, mime, approved
+            """select id::text as id, r2_key, mime, kind, approved
                  from fm_model_test_cuts
                 where id = %s and model_id = %s""" + lock,
             (cut_id, model_id),
@@ -202,12 +341,16 @@ async def _load_cut_for_admin(
         return await cur.fetchone()
 
 
-async def _load_owned_cut(conn, cut_id: str, user_id: str, *, for_update: bool = False) -> dict | None:
+async def _load_owned_cut(
+    conn, cut_id: str, user_id: str, *, for_update: bool = False
+) -> dict | None:
     lock = " for update of m, c" if for_update else ""
     async with conn.cursor() as cur:
         await cur.execute(
-            """select c.id::text as id, c.r2_key, c.mime, c.sort, c.approved, c.created_at,
-                      m.id::text as model_id, m.status as model_status, m.redo_count
+            """select c.id::text as id, c.r2_key, c.mime, c.sort, c.kind,
+                      c.approved, c.created_at,
+                      m.id::text as model_id, m.status as model_status, m.redo_count,
+                      m.display_name
                  from fm_model_test_cuts c
                  join fm_models m on m.id = c.model_id
                 where c.id = %s and m.user_id = %s""" + lock,
@@ -235,19 +378,31 @@ async def admin_model_test_cuts(
                 """select m.id::text as id, m.display_name, m.status,
                           e.status as enrollment_status,
                           count(c.id)::integer as test_cut_count,
+                          count(c.id) filter (where c.kind = 'closeup')::integer
+                            as closeup_count,
+                          count(c.id) filter (where c.kind = 'fullbody')::integer
+                            as fullbody_count,
+                          (count(c.id) filter (where c.kind = 'closeup') = 2
+                           and count(c.id) filter (where c.kind = 'fullbody') = 2)
+                            as cuts_complete,
                           (m.status = 'pending' and m.redo_count > 0) as redo_requested,
-                          m.confirm_requested_at, m.redo_count,
+                          m.confirm_requested_at, m.confirmed_at, m.redo_count,
                           (e.status = 'passed' and exists (
                             select 1 from fm_licenses l
                              where l.model_id = m.id
                                and l.enrollment_id = m.current_enrollment_id
                                and l.status = 'active'
                                and nullif(btrim(l.vc_id), '') is not null
+                               and l.license_valid_until > now()
                           )) as ready_to_send,
+                          (m.status in ('pending', 'awaiting_confirm', 'reverification_required')
+                           or (m.status = 'verified' and m.fullbody_image_url is null))
+                            as sendable,
                           coalesce(
                             jsonb_agg(jsonb_build_object(
                               'id', c.id::text, 'mime', c.mime, 'sort', c.sort,
-                              'approved', c.approved, 'created_at', c.created_at
+                              'kind', c.kind, 'approved', c.approved,
+                              'created_at', c.created_at
                             ) order by c.sort) filter (where c.id is not null),
                             '[]'::jsonb
                           ) as test_cuts
@@ -278,11 +433,15 @@ async def admin_upload_test_cuts(
     request: Request,
     model_id: str,
     images: list[UploadFile] = File(...),
+    kind: str | None = Form(default=None),
     user_id: str = Depends(require_user),
 ):
     model_id = _canonical_id(model_id)
+    kind = kind or ""
+    if kind not in TEST_CUT_KINDS:
+        raise _err("invalid_kind", "테스트컷 종류를 올바르게 선택해 주세요.")
     if not 1 <= len(images) <= MAX_TEST_CUTS:
-        raise _err("invalid_cut_count", "테스트컷은 한 번에 1~6장 올려 주세요.")
+        raise _err("invalid_cut_count", "테스트컷은 한 번에 1~4장 올려 주세요.")
 
     # multipart 파싱은 프레임워크가 맡지만 실제 파일 바이트는 관리자 확인 뒤에만 읽는다.
     # 비관리자가 큰 업로드를 반복해 애플리케이션 메모리를 쓰는 경로를 닫는다.
@@ -290,9 +449,8 @@ async def admin_upload_test_cuts(
         await _require_admin(conn, user_id)
         if await _load_admin_model(conn, model_id) is None:
             raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
-        existing_sorts = await _load_cut_sorts(conn, model_id)
-    if len(existing_sorts) + len(images) > MAX_TEST_CUTS:
-        raise _err("cut_limit", "모델당 테스트컷은 6장까지 올릴 수 있습니다.", status=409)
+        existing_slots = await _load_cut_slots(conn, model_id)
+    _ensure_cut_capacity(existing_slots, kind, len(images))
 
     prepared = []
     for image in images:
@@ -324,18 +482,19 @@ async def admin_upload_test_cuts(
             await _require_admin(conn, user_id)
             if await _load_admin_model(conn, model_id, for_update=True) is None:
                 raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
-            used = set(await _load_cut_sorts(conn, model_id))
-            if len(used) + len(prepared) > MAX_TEST_CUTS:
-                raise _err("cut_limit", "모델당 테스트컷은 6장까지 올릴 수 있습니다.", status=409)
+            slots = await _load_cut_slots(conn, model_id)
+            _ensure_cut_capacity(slots, kind, len(prepared))
+            used = {slot["sort"] for slot in slots}
             available = [value for value in range(MAX_TEST_CUTS) if value not in used]
             rows = []
             async with conn.cursor() as cur:
                 for item, sort in zip(prepared, available[:len(prepared)], strict=True):
                     await cur.execute(
-                        """insert into fm_model_test_cuts (id, model_id, r2_key, mime, sort)
-                           values (%s, %s, %s, %s, %s)
-                           returning id::text as id, mime, sort, approved, created_at""",
-                        (item["id"], model_id, item["key"], item["mime"], sort),
+                        """insert into fm_model_test_cuts
+                             (id, model_id, r2_key, mime, kind, sort)
+                           values (%s, %s, %s, %s, %s, %s)
+                           returning id::text as id, mime, sort, kind, approved, created_at""",
+                        (item["id"], model_id, item["key"], item["mime"], kind, sort),
                     )
                     rows.append(await cur.fetchone())
             await conn.commit()
@@ -349,13 +508,23 @@ async def admin_upload_test_cuts(
     return [_cut_view({**row, "model_id": model_id}) for row in rows]
 
 
-async def _load_cut_sorts(conn, model_id: str) -> list[int]:
+async def _load_cut_slots(conn, model_id: str) -> list[dict]:
     async with conn.cursor() as cur:
         await cur.execute(
-            "select sort from fm_model_test_cuts where model_id = %s order by sort",
+            "select sort, kind from fm_model_test_cuts where model_id = %s order by sort",
             (model_id,),
         )
-        return [row["sort"] for row in await cur.fetchall()]
+        return await cur.fetchall()
+
+
+def _ensure_cut_capacity(slots: list[dict], kind: str, incoming: int) -> None:
+    kind_count = sum(slot.get("kind") == kind for slot in slots)
+    if (
+        kind_count + incoming > MAX_TEST_CUTS_PER_KIND
+        or len(slots) + incoming > MAX_TEST_CUTS
+    ):
+        label = "확대샷" if kind == "closeup" else "전신샷"
+        raise _err("cut_limit", f"{label}은 2장까지 올릴 수 있어요.", status=409)
 
 
 @router.delete("/admin/models/{model_id}/test-cuts/{cut_id}", status_code=204)
@@ -410,6 +579,26 @@ async def admin_delete_test_cut(
     return Response(status_code=204)
 
 
+SENDABLE_STATUSES = {"pending", "awaiting_confirm", "reverification_required"}
+
+
+def _is_sendable(model: dict) -> bool:
+    """검증 전 상태이거나, 전신샷 없이 확정된 옛(1장 선택) 모델이면 보낼 수 있다.
+
+    옛 모델은 전신샷이 없어 공개 목록(§3.3)에 없으므로 다시 awaiting_confirm 으로 돌려도
+    잃는 게 없다. 두 장으로 이미 공개된 모델은 막는다 — 재전송하면 status 가 바뀌어 셀러
+    카탈로그에서도 사라지기 때문(2026-09-07 Codex 검증 P1)."""
+    if model["status"] in SENDABLE_STATUSES:
+        return True
+    return model["status"] == "verified" and not model.get("fullbody_image_url")
+
+
+def _not_sendable_message(model: dict) -> str:
+    if model["status"] == "verified":
+        return "이미 공개된 모델이에요. 지금은 테스트컷을 다시 보낼 수 없어요."
+    return "테스트컷을 보낼 수 없는 모델 상태입니다."
+
+
 @router.post("/admin/models/{model_id}/send-test-cuts", response_model=SendTestCutsResult)
 async def admin_send_test_cuts(
     request: Request,
@@ -422,8 +611,8 @@ async def admin_send_test_cuts(
         model = await _load_admin_model(conn, model_id, for_update=True)
         if model is None:
             raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
-        if model["status"] not in {"pending", "awaiting_confirm", "reverification_required"}:
-            raise _err("model_not_sendable", "테스트컷을 보낼 수 없는 모델 상태입니다.", status=409)
+        if not _is_sendable(model):
+            raise _err("model_not_sendable", _not_sendable_message(model), status=409)
         if model.get("enrollment_status") != "passed" or model.get("has_active_license") is not True:
             raise _err(
                 "model_registration_incomplete",
@@ -432,11 +621,21 @@ async def admin_send_test_cuts(
             )
         async with conn.cursor() as cur:
             await cur.execute(
-                "select exists(select 1 from fm_model_test_cuts where model_id = %s) as has_cuts",
+                """select count(*) filter (where kind = 'closeup')::integer as closeup_count,
+                          count(*) filter (where kind = 'fullbody')::integer as fullbody_count
+                     from fm_model_test_cuts where model_id = %s""",
                 (model_id,),
             )
-            if not (await cur.fetchone())["has_cuts"]:
-                raise _err("test_cuts_required", "먼저 테스트컷을 1장 이상 올려 주세요.", status=409)
+            counts = await cur.fetchone()
+            if (
+                counts["closeup_count"] != MAX_TEST_CUTS_PER_KIND
+                or counts["fullbody_count"] != MAX_TEST_CUTS_PER_KIND
+            ):
+                raise _err(
+                    "test_cuts_incomplete",
+                    "확대샷 2장과 전신샷 2장을 모두 올려야 보낼 수 있어요.",
+                    status=409,
+                )
             await cur.execute(
                 """update fm_models set status = 'awaiting_confirm', confirm_requested_at = now()
                     where id = %s returning confirm_requested_at""",
@@ -487,6 +686,7 @@ async def model_test_cuts(request: Request, user_id: str = Depends(require_user)
         if model is None:
             raise _err("not_found", "내 모델을 찾을 수 없습니다.", status=404)
         cuts = await _load_cuts(conn, model["id"])
+        profiles = await _load_model_profiles(conn, model_id=model["id"])
     return {
         "model_id": model["id"],
         "status": model["status"],
@@ -494,7 +694,31 @@ async def model_test_cuts(request: Request, user_id: str = Depends(require_user)
         "confirm_requested_at": model.get("confirm_requested_at"),
         "confirmed_at": model.get("confirmed_at"),
         "cuts": [_cut_view(row, model_side=True) for row in cuts],
+        "profile": _profile_view(profiles[0]) if profiles else None,
     }
+
+
+@router.get("/public/models", response_model=PublicModelsResult)
+async def public_models(request: Request, response: Response):
+    async with get_conn(request) as conn:
+        rows = await _load_model_profiles(conn, public_only=True)
+    items = []
+    for row in rows:
+        items.append(
+            {
+                "id": row["id"],
+                **_profile_view(row),
+                "closeup_image_url": _cover_serving_url(
+                    request, row["cover_image_url"]
+                ),
+                "fullbody_image_url": _cover_serving_url(
+                    request, row["fullbody_image_url"]
+                ),
+                "confirmed_at": row["confirmed_at"],
+            }
+        )
+    response.headers["Cache-Control"] = "public, max-age=60"
+    return {"items": items}
 
 
 @router.get("/model/test-cuts/{cut_id}/image")
@@ -558,48 +782,77 @@ async def confirm_test_cut(
     body: ConfirmTestCutBody,
     user_id: str = Depends(require_user),
 ):
-    cut_id = _canonical_id(body.approved_cut_id, noun="테스트컷")
+    closeup_cut_id = _canonical_id(body.closeup_cut_id, noun="테스트컷")
+    fullbody_cut_id = _canonical_id(body.fullbody_cut_id, noun="테스트컷")
     async with get_conn(request) as conn:
-        cut = await _load_owned_cut(conn, cut_id, user_id)
-    if cut is None:
-        raise _err("not_found", "테스트컷을 찾을 수 없습니다.", status=404)
-    if cut["model_status"] != "awaiting_confirm":
-        raise _err("not_awaiting_confirm", "확인 대기 중인 테스트컷이 아닙니다.", status=409)
+        closeup_cut = await _load_owned_cut(conn, closeup_cut_id, user_id)
+        fullbody_cut = await _load_owned_cut(conn, fullbody_cut_id, user_id)
+    _validate_confirmation_cuts(closeup_cut, fullbody_cut)
 
     try:
-        original = await asyncio.to_thread(_r2_face(request).get_bytes, cut["r2_key"])
+        face_r2 = _r2_face(request)
+        closeup_original, fullbody_original = await asyncio.gather(
+            asyncio.to_thread(face_r2.get_bytes, closeup_cut["r2_key"]),
+            asyncio.to_thread(face_r2.get_bytes, fullbody_cut["r2_key"]),
+        )
     except Exception:
         raise _err("not_found", "테스트컷을 찾을 수 없습니다.", status=404)
-    cover = await asyncio.to_thread(_resize_cover, original)
-    public_r2 = _r2_public(request)
-    cover_key = _new_confirmation_cover_key(cut["model_id"], cut_id)
-    await asyncio.to_thread(
-        public_r2.put_bytes,
-        cover_key,
-        cover,
-        "image/webp",
-        IMMUTABLE_CACHE,
+    closeup_image, fullbody_image = await asyncio.gather(
+        asyncio.to_thread(_resize_cover, closeup_original),
+        asyncio.to_thread(_resize_cover, fullbody_original),
     )
-    cover_url = public_r2.public_url(cover_key)
+    public_r2 = _r2_public(request)
+    closeup_key = _new_confirmation_cover_key(
+        closeup_cut["model_id"], closeup_cut_id
+    )
+    fullbody_key = _new_confirmation_cover_key(
+        closeup_cut["model_id"], fullbody_cut_id
+    )
+    stored_keys: list[str] = []
     committed = False
     try:
+        for key, image in (
+            (closeup_key, closeup_image),
+            (fullbody_key, fullbody_image),
+        ):
+            await asyncio.to_thread(
+                public_r2.put_bytes,
+                key,
+                image,
+                "image/webp",
+                IMMUTABLE_CACHE,
+            )
+            stored_keys.append(key)
+
         async with get_conn(request) as conn:
-            locked = await _load_owned_cut(conn, cut_id, user_id, for_update=True)
-            if locked is None:
-                raise _err("not_found", "테스트컷을 찾을 수 없습니다.", status=404)
-            if locked["model_status"] != "awaiting_confirm":
-                raise _err("not_awaiting_confirm", "확인 대기 중인 테스트컷이 아닙니다.", status=409)
+            locked_closeup = await _load_owned_cut(
+                conn, closeup_cut_id, user_id, for_update=True
+            )
+            locked_fullbody = await _load_owned_cut(
+                conn, fullbody_cut_id, user_id, for_update=True
+            )
+            _validate_confirmation_cuts(locked_closeup, locked_fullbody)
+            await _ensure_active_license(conn, locked_closeup["model_id"])
             async with conn.cursor() as cur:
                 await cur.execute(
-                    "update fm_model_test_cuts set approved = (id = %s) where model_id = %s",
-                    (cut_id, locked["model_id"]),
+                    """update fm_model_test_cuts
+                          set approved = (id in (%s, %s))
+                        where model_id = %s""",
+                    (closeup_cut_id, fullbody_cut_id, locked_closeup["model_id"]),
                 )
                 await cur.execute(
                     """update fm_models set status = 'verified', confirmed_at = now(),
-                              confirm_consent_version = %s, cover_image_url = %s
+                              confirm_consent_version = %s, cover_image_url = %s,
+                              fullbody_image_url = %s
                         where id = %s and user_id = %s and status = 'awaiting_confirm'
                         returning confirmed_at""",
-                    (CONSENT_DOC_VERSION, cover_key, locked["model_id"], user_id),
+                    (
+                        CONSENT_DOC_VERSION,
+                        closeup_key,
+                        fullbody_key,
+                        locked_closeup["model_id"],
+                        user_id,
+                    ),
                 )
                 updated = await cur.fetchone()
             if updated is None:
@@ -608,15 +861,81 @@ async def confirm_test_cut(
             committed = True
     finally:
         if not committed:
-            try:
-                await asyncio.to_thread(public_r2.delete, cover_key)
-            except Exception:
-                logger.warning("uncommitted model cover cleanup failed", exc_info=True)
+            for key in stored_keys:
+                try:
+                    await asyncio.to_thread(public_r2.delete, key)
+                except Exception:
+                    logger.warning("uncommitted model cover cleanup failed", exc_info=True)
+
+    settings = request.app.state.settings
+    admin_base = settings.fm_application_public_base.replace(
+        "facemarket.", "admin."
+    ).rstrip("/")
+    try:
+        await facemarket_notify.notify_slack_model_confirmed(
+            settings,
+            display_name=locked_closeup["display_name"],
+            admin_link=f"{admin_base}/models",
+        )
+    except Exception:
+        logger.warning("model confirmation slack dispatch failed", exc_info=True)
     return {
         "status": "verified",
         "confirmed_at": updated["confirmed_at"],
-        "cover_image_url": cover_url,
+        "closeup_image_url": public_r2.public_url(closeup_key),
+        "fullbody_image_url": public_r2.public_url(fullbody_key),
     }
+
+
+async def _ensure_active_license(conn, model_id: str) -> None:
+    """확정 순간에 현재 enrollment 의 라이선스가 살아 있어야 한다.
+
+    전송 뒤 모델이 라이선스를 해지했거나(ModelLicense 화면) 만료됐으면 verified 로 바꿔도
+    공개 목록 조건(§3.3)을 못 넘어 "모델 리스트에 올라갔어요"가 거짓이 된다. 잠금 안에서
+    확인해 상태 전이와 공개 조건을 한 묶음으로 만든다(2026-09-07 Codex 검증 P1)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select exists (
+                     select 1 from fm_licenses l
+                       join fm_models m on m.id = l.model_id
+                      where l.model_id = %s
+                        and l.enrollment_id = m.current_enrollment_id
+                        and l.status = 'active'
+                        and nullif(btrim(l.vc_id), '') is not null
+                        and l.license_valid_until > now()
+                   ) as license_ok""",
+            (model_id,),
+        )
+        row = await cur.fetchone()
+    if not row or not row.get("license_ok"):
+        raise _err(
+            "license_inactive",
+            "라이선스가 활성 상태가 아니에요. 라이선스를 다시 발급한 뒤 확정해 주세요.",
+            status=409,
+        )
+
+
+def _validate_confirmation_cuts(closeup_cut: dict | None, fullbody_cut: dict | None) -> None:
+    if closeup_cut is None or fullbody_cut is None:
+        raise _err("not_found", "테스트컷을 찾을 수 없습니다.", status=404)
+    if (
+        closeup_cut.get("kind") != "closeup"
+        or fullbody_cut.get("kind") != "fullbody"
+        or closeup_cut["model_id"] != fullbody_cut["model_id"]
+    ):
+        raise _err(
+            "kind_mismatch",
+            "확대샷과 전신샷을 각각 한 장씩 선택해 주세요.",
+        )
+    if (
+        closeup_cut["model_status"] != "awaiting_confirm"
+        or fullbody_cut["model_status"] != "awaiting_confirm"
+    ):
+        raise _err(
+            "not_awaiting_confirm",
+            "확인 대기 중인 테스트컷이 아닙니다.",
+            status=409,
+        )
 
 
 @router.post("/model/test-cuts/redo", response_model=RedoTestCutsResult)
