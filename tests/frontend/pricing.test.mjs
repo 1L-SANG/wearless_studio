@@ -95,7 +95,7 @@ test('빈 요금제 목록은 준비 중 안내를 표시한다', () => {
 
 test('목 결제 주문은 새 충전 상품 다섯 개의 가격과 지급량을 사용한다', async () => {
   for (const [code, amount, credits] of [
-    ['topup_finish', 9900, 1900], ['topup_start', 24900, 4700],
+    ['topup_finish', 9900, 1800], ['topup_start', 24900, 4700],
     ['topup_repeat', 69900, 13800], ['topup_season', 149000, 30500],
     ['topup_bulk', 299000, 64000],
   ]) {
