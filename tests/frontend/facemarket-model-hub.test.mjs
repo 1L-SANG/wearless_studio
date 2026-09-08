@@ -194,3 +194,15 @@ test('활동 허브는 서버 전체 월 합계를 조회하고 최근 내역을
   assert.doesNotMatch(source, /listSettlements|summarizeSettlements/);
   assert.match(source, /settlementSummary=\{settlementSummary\}/);
 });
+
+
+test('a pending VC still offers issuance retry with a pending license row', async () => {
+  const { resolveHubJourney, hasCurrentEnrollmentLicense } = await loadRequired(journeyUrl, '허브 상태');
+  const result = resolveHubJourney({
+    ownedModel: { status: 'pending' },
+    enrollment: { id: 'retry-vc', status: 'vc_pending' },
+    hasLicense: hasCurrentEnrollmentLicense([{ status: 'pending' }]),
+  });
+  assert.equal(result.currentIndex, 2);
+  assert.equal(result.action.to, '/model/license?step=terms&enrollment=retry-vc');
+});

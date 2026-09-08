@@ -752,8 +752,14 @@ async def create_enrollment(
             )
             model = await cur.fetchone()
             model_id = model["id"] if model else None
+            if model and model["status"] == "awaiting_confirm":
+                raise _err(
+                    "model_confirmation_required",
+                    "도착한 테스트컷을 먼저 확인해 주세요.",
+                    status=409,
+                )
             # 지원서 게이트(E1/E5/E6): 플래그 on 이면 신규 등록은 승인 지원서가 있어야 한다.
-            # 면제 = 이미 등록 흐름에 들어온 모델 보유자(pending/awaiting_confirm/verified/
+            # 면제 = 이미 등록 흐름에 들어온 모델 보유자(pending/verified/
             # reverification_required). suspended 는 우회 불가. 승인 지원서로 진입하는
             # 경우 enrollment 에 application_id 를 박아 대조·strike 대상을 고정한다(E5).
             application_id = None
@@ -765,7 +771,6 @@ async def create_enrollment(
                 # suspended 는 뺀다 — 정지된 모델이 심사 없이 재등록하는 우회로가 되면 안 된다.
                 legacy_exempt = model is not None and model["status"] in (
                     "pending",
-                    "awaiting_confirm",
                     "verified",
                     "reverification_required",
                 )

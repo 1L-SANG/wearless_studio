@@ -162,6 +162,14 @@ async def run_editor_image_job(app, job: dict) -> None:
                 trusted_cut_type = (
                     src_asset.get("metadata") or {}
                 ).get("cut_type")
+                if not trusted_cut_type:
+                    # 구 자산에는 cut_type이 없다. 라우트와 같은 소유 원장 조회로
+                    # wardrobe/job 결과를 확인하며 클라이언트 source는 믿지 않는다.
+                    async with pool.connection() as conn:
+                        provenance = await repo.get_asset_facemarket_provenance(
+                            conn, user_id, asset_id
+                        )
+                    trusted_cut_type = (provenance or {}).get("cut_type")
                 facemarket.reject_real_model_outside_horizon(
                     trusted_cut_type, str(snapshot["modelId"])
                 )

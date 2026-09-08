@@ -90,7 +90,8 @@ function RequireApprovedApplication() {
         ]);
         if (!alive) return;
         const required = !!cfg?.applicationRequired;
-        // 서버 게이트(facemarket_enrollment.create_enrollment)와 **같은 목록**이어야 한다.
+        // awaiting_confirm도 화면 진입은 허용한다. ModelRegister가 확인 화면으로 안내하며
+        // 실제 새 등록은 서버의 모델 상태 잠금 아래에서 거절한다.
         // pending 이 빠져 있으면: 신분증까지 마치고 사진 단계에서 이탈한 사람은 모델 행이
         // pending 인 채 활성 등록도 지원서도 없어 여기서 막히고 /status 로 되돌려지는데,
         // 허브는 모델이 있으니 '등록 이어가기'를 띄워 다시 여기로 보낸다 — 나갈 길 없는 왕복.

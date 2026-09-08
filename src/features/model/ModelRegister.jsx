@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Button, Icon } from '@/components/ui.jsx';
 import {
   cancelEnrollment,
@@ -169,6 +169,7 @@ function renderStepRail(step) {
 }
 
 export function ModelRegister() {
+  const navigate = useNavigate();
   const { state: routeState } = useLocation();
   const completionHandoff = routeState?.completionSummary || null;
   const [step, setStep] = useState(() => initialRegistrationStep(completionHandoff));
@@ -194,34 +195,34 @@ export function ModelRegister() {
     setStep('loading');
     setError('');
     try {
-      const current = await getCurrentEnrollment();
+      const models = await listMyModels();
       if (!mounted.current) return;
-      setEnrollment(current);
-      setStep(nextEnrollmentStep(current));
-    } catch (requestError) {
-      if (!mounted.current) return;
-      if (requestError?.status !== 404) {
-        setError(requestError?.message || '등록 상태를 불러오지 못했어요.');
-        setStep('error');
+      if (models.some((model) => model.status === 'awaiting_confirm')) {
+        navigate('/model/confirm', { replace: true });
         return;
       }
       try {
-        const models = await listMyModels();
-        const verified = models.find((model) => model.status === 'verified');
+        const current = await getCurrentEnrollment();
         if (!mounted.current) return;
+        setEnrollment(current);
+        setStep(nextEnrollmentStep(current));
+      } catch (requestError) {
+        if (requestError?.status !== 404) throw requestError;
+        if (!mounted.current) return;
+        const verified = models.find((model) => model.status === 'verified');
         if (verified) {
           setEnrollment({ modelId: verified.id, status: 'passed' });
           setStep('done');
         } else {
           setStep('consent');
         }
-      } catch (modelError) {
-        if (!mounted.current) return;
-        setError(modelError?.message || '등록 상태를 불러오지 못했어요.');
-        setStep('error');
       }
+    } catch (requestError) {
+      if (!mounted.current) return;
+      setError(requestError?.message || '등록 상태를 불러오지 못했어요.');
+      setStep('error');
     }
-  }, []);
+  }, [navigate]);
 
   useEffect(() => {
     mounted.current = true;
@@ -241,6 +242,26 @@ export function ModelRegister() {
     remove: (angle) => deleteEnrollmentPhoto(enrollment.id, angle),
   }) : null, [enrollment]);
 
+  const restartEnrollment = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const models = await listMyModels();
+      if (!mounted.current) return;
+      if (models.some((model) => model.status === 'awaiting_confirm')) {
+        navigate('/model/confirm', { replace: true });
+        return;
+      }
+      setEnrollment(null);
+      setConsentAccepted(false);
+      setStep('consent');
+    } catch (requestError) {
+      if (mounted.current) setError(requestError?.message || '등록 상태를 불러오지 못했어요.');
+    } finally {
+      if (mounted.current) setBusy(false);
+    }
+  };
+
   const startEnrollment = async () => {
     setBusy(true);
     setError('');
@@ -249,12 +270,18 @@ export function ModelRegister() {
         documentVersion: CONSENT_VERSION,
         deviceId: getDeviceId(),
       });
+      if (!mounted.current) return;
       setEnrollment(created);
       setStep(nextEnrollmentStep(created));
     } catch (requestError) {
+      if (!mounted.current) return;
+      if (requestError?.code === 'model_confirmation_required') {
+        navigate('/model/confirm', { replace: true });
+        return;
+      }
       setError(requestError?.message || '등록을 시작하지 못했어요.');
     } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   };
 
@@ -638,6 +665,10 @@ export function ModelRegister() {
       try {
         const [models, licenses] = await Promise.all([listMyModels(), listLicenses()]);
         if (!active) return;
+        if (models.some((model) => model.status === 'awaiting_confirm')) {
+          navigate('/model/confirm', { replace: true });
+          return;
+        }
         const targetModelId = completionHandoff?.modelId || enrollment?.modelId || null;
         const model = targetModelId
           ? models.find((candidate) => candidate.id === targetModelId) || null
@@ -667,7 +698,7 @@ export function ModelRegister() {
       }
     })();
     return () => { active = false; };
-  }, [completionHandoff, enrollment?.bodyType, enrollment?.gender, enrollment?.heightBucket, enrollment?.modelId, step]);
+  }, [completionHandoff, enrollment?.bodyType, enrollment?.gender, enrollment?.heightBucket, enrollment?.modelId, navigate, step]);
 
   const genderForBuckets = enrollment?.gender || physiqueGender || null;
   const heightOptions = genderForBuckets ? heightBucketOptions(genderForBuckets) : [];
@@ -743,14 +774,12 @@ export function ModelRegister() {
         <Button
           variant="secondary"
           block
-          onClick={() => {
-            setEnrollment(null);
-            setConsentAccepted(false);
-            setStep('consent');
-          }}
+          disabled={busy}
+          onClick={restartEnrollment}
         >
           새 생체 등록 시작
         </Button>
+        {error && <p className={s.error} role="alert">{error}</p>}
         <Link to="/status" className={s.nextCard}>
           Digital DNA 관리 보기 <Icon name="chevRight" size={18} />
         </Link>

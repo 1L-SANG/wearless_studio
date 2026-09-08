@@ -19,6 +19,7 @@ import { LoginGate } from './Login.jsx';
 import { draftSlot } from '@/lib/draftSlot.js';
 import { stampAppOrigin } from '@/lib/appOrigin.js';
 import { useAppStore } from '@/store/useAppStore.js';
+import { clearSignupConsent } from '@/lib/signupConsent.js';
 
 const AuthCtx = createContext(null);
 let oauthExchangeCode = null;
@@ -126,6 +127,7 @@ export function AuthProvider({ children }) {
 
   // 로그아웃 시 미동기화 draft 도 정리 — 공용 브라우저에서 다음 사용자에게 입력이 복원되지 않게.
   const signOut = async () => {
+    clearSignupConsent();
     forgetPostLogin();
     setSigningOut(true);
     try {

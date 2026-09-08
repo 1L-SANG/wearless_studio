@@ -12,7 +12,7 @@ import { useAuth } from './AuthProvider.jsx';
 import { supabase } from '@/lib/supabase.js';
 import { Modal } from '@/components/ui.jsx';
 import { IS_ADMIN, IS_FACEMARKET } from '@/lib/host.js';
-import { markSignupConsent } from '@/lib/signupConsent.js';
+import { clearSignupConsent, markSignupConsent, readSignupConsent } from '@/lib/signupConsent.js';
 import styles from './Login.module.css';
 
 /* 로컬 supabase(127.0.0.1/localhost)일 때만 이메일·비밀번호 로그인을 노출한다.
@@ -121,6 +121,7 @@ export function LoginGate() {
 
   const handleLocal = async (e) => {
     e.preventDefault();
+    clearSignupConsent();
     setPending('local'); setLocalErr('');
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) { setLocalErr(error.message || '로그인 실패'); setPending(null); }
@@ -134,12 +135,18 @@ export function LoginGate() {
   const blocked = isSignup && !signupConsent;
 
   const handle = async (provider) => {
-    if (blocked) return;
+    if (blocked || pending !== null) return;
     // 가입 동의는 OAuth 왕복 뒤에 서버로 기록된다 — 지금은 계정이 없어서 남길 곳이 없다.
     if (isSignup) markSignupConsent();
+    else clearSignupConsent();
+    const marker = readSignupConsent();
     setPending(provider);
-    const { error } = await signIn(provider);
-    if (error) setPending(null); // 성공 시엔 리다이렉트되어 언마운트됨
+    try {
+      const { error } = await signIn(provider);
+      if (!error) return; // 성공 시엔 리다이렉트되어 언마운트됨
+    } catch { /* OAuth 시작 실패도 이번 가입 동의를 버린다. */ }
+    clearSignupConsent(marker);
+    setPending(null);
   };
 
   return (
