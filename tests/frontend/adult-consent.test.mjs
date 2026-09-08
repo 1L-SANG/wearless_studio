@@ -74,7 +74,9 @@ test('signup completion continues the login modal instead of taking over the scr
 
 test('login copy follows the owner-approved lines for each product', () => {
   // 2026-09-08 오너 지정 카피
-  assert.match(login, /끝판왕 AI 상세페이지 서비스,<br \/>팔리는 상세페이지를 만드세요\./);
+  // 셀러는 로그인·회원가입 두 탭이 같은 한 줄을 쓴다
+  assert.match(login, /완성형 AI 상세페이지 서비스,<br \/>팔리는 상세페이지를 만드세요\./);
+  assert.doesNotMatch(login, /끝판왕|소셜 계정으로 로그인하고<br \/>마네킹컷/);
   assert.match(login, /Wearless가 처음이라면\? <button type="button" className=\{styles\.linkBtn\}/);
   assert.match(loginCss, /\.linkBtn \{[^}]*text-decoration: underline;/s);
   // FaceMarket 은 랜딩 히어로(오너 확정)와 같은 결
