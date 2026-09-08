@@ -180,9 +180,11 @@ export function LoginGate() {
 
         <p className={styles.subtitle}>
           {IS_FACEMARKET ? (
-            <>소셜 계정으로 로그인하고<br />모델 등록을 이어가세요.</>
+            /* 랜딩 히어로(오너 확정 카피 "내 얼굴이 쇼핑몰에서 일하고, 쓰일 때마다 입금돼요")와
+               같은 결로 맞춘다 — 랜딩 CTA 에서 이 모달로 넘어오는 사람이 대부분이다. */
+            <>내 얼굴이 쇼핑몰에서 일하는 곳,<br />모델 등록을 시작하세요.</>
           ) : isSignup ? (
-            <>소셜 계정으로 가입하고<br />마네킹컷 생성을 시작하세요.</>
+            <>끝판왕 AI 상세페이지 서비스,<br />팔리는 상세페이지를 만드세요.</>
           ) : (
             <>소셜 계정으로 로그인하고<br />마네킹컷 생성으로 이어가세요.</>
           )}
@@ -223,8 +225,8 @@ export function LoginGate() {
 
         {IS_SELLER && mode === 'login' && (
           <p className={styles.notice}>
-            Wearless가 처음이시면 <button type="button" className={styles.linkBtn}
-              onClick={() => setMode('signup')}>회원가입</button> 탭에서 시작하세요.
+            Wearless가 처음이라면? <button type="button" className={styles.linkBtn}
+              onClick={() => setMode('signup')}>회원가입</button>
           </p>
         )}
 

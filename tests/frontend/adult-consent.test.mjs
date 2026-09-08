@@ -50,7 +50,7 @@ test('signup consent survives the OAuth round trip without asking twice', () => 
   assert.match(completion, /clearSignupConsent\(\);/);
 });
 
-test('signup completion is a full screen with one CTA and an X, seller app only', () => {
+test('signup completion continues the login modal instead of taking over the screen', () => {
   assert.match(sellerApp, /import \{ SignupCompletion \} from '@\/features\/auth\/SignupCompletion\.jsx';/);
   assert.match(sellerApp, /<SignupCompletion \/>/);
   assert.doesNotMatch(facemarketApp, /SignupCompletion/);
@@ -61,11 +61,25 @@ test('signup completion is a full screen with one CTA and an X, seller app only'
   assert.match(completion, /<Icon name="x"/);
   assert.match(completion, /className=\{styles\.close\} onClick=\{\(\) => signOut\?\.\(\)\}/);
   assert.match(completion, /aria-label="나가기\(로그아웃\)"/);
-  // 팝업이 아니라 전체 화면이다
-  assert.match(completionCss, /position: fixed;\s*\n\s*inset: 0;/);
-  assert.doesNotMatch(completion, /<Modal/);
+  // 로그인 창과 같은 크기의 같은 창 — 기본 Modal(폭 460px)을 쓰고, 내용이 우측에서 넘어온다.
+  assert.match(completion, /<Modal>/);
+  assert.doesNotMatch(completion, /<Modal (wide|narrow)/);
+  assert.doesNotMatch(completion, /onClose=/); // Esc·바깥 클릭으로 닫히면 동의를 건너뛸 수 있다
+  assert.match(completionCss, /animation: slideNext/);
+  assert.match(completionCss, /@keyframes slideNext \{\s*\n\s*from \{ opacity: 0; transform: translateX\(38px\); \}/);
+  assert.match(completionCss, /@media \(prefers-reduced-motion: reduce\)/);
   assert.match(completion, /if \(!state\?\.needsConsent\) return null;/);
   assert.match(completion, /만 19세 이상이며, 위 이용약관과 개인정보 처리방침에 동의합니다\./);
+});
+
+test('login copy follows the owner-approved lines for each product', () => {
+  // 2026-09-08 오너 지정 카피
+  assert.match(login, /끝판왕 AI 상세페이지 서비스,<br \/>팔리는 상세페이지를 만드세요\./);
+  assert.match(login, /Wearless가 처음이라면\? <button type="button" className=\{styles\.linkBtn\}/);
+  assert.match(loginCss, /\.linkBtn \{[^}]*text-decoration: underline;/s);
+  // FaceMarket 은 랜딩 히어로(오너 확정)와 같은 결
+  assert.match(login, /내 얼굴이 쇼핑몰에서 일하는 곳,<br \/>모델 등록을 시작하세요\./);
+  assert.doesNotMatch(login, /마네킹컷 생성을 시작하세요/);
 });
 
 test('model application eligibility and attestation use age 19', () => {

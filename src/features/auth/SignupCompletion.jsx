@@ -6,16 +6,19 @@
    로그인해 가입 동의 표시가 없는 경우다. 회원가입 탭에서 동의하고 온 사람에게는
    **아무것도 보이지 않는다**: 그 표시(signupConsent)를 확인해 조용히 서버에 기록만 한다.
 
-   모달이 아니라 전체 화면이다 — 로그인 뒤 튀어나오는 팝업이 아니라 가입 절차의 마지막
-   단계로 보여야 한다(2026-09-07 오너). 버튼은 '가입 완료' 하나, 나가기는 우측 위 X 다.
-   X 는 로그아웃이다: 동의 없이 서비스로 들어갈 길을 만들면 이 화면이 무의미해진다.
+   로그인 모달과 **같은 크기의 같은 창**으로 띄우고, 내용은 오른쪽에서 넘어오듯 들어온다
+   (2026-09-08 오너). OAuth 왕복 때문에 페이지는 실제로 새로 뜨지만, 사용자에게는 로그인
+   창의 다음 장으로 읽혀야 한다 — 그래서 브랜드 락업·모달 폭·전면 버튼을 그대로 맞췄다.
+   버튼은 '가입 완료' 하나, 나가기는 우측 위 X 다. X 는 로그아웃이다: 동의 없이 서비스로
+   들어갈 길을 만들면 이 화면이 무의미해진다. 그래서 Modal 에 onClose 를 주지 않는다
+   (Esc·바깥 클릭으로 닫히면 그 길이 생긴다).
 
    셀러 앱(App.jsx)에만 마운트한다. 모델(FaceMarket)은 등록 위저드에서, 관리자는 아예
    셀러 약관의 당사자가 아니다. 조회가 실패하면(네트워크 등) 화면을 띄우지 않는다 —
    앱을 막는 것보다 다음 진입에서 다시 확인하는 편이 낫다.
    ============================================================= */
 import { useCallback, useEffect, useState } from 'react';
-import { Button, Icon } from '@/components/ui.jsx';
+import { Button, Icon, Modal } from '@/components/ui.jsx';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { isMockMode } from '@/lib/api/index.js';
 import { acceptSellerConsent, getSellerConsent } from '@/lib/api/consents.js';
@@ -78,23 +81,26 @@ export function SignupCompletion() {
   };
 
   return (
-    <div className={styles.screen} role="dialog" aria-modal="true" aria-labelledby="signup-completion-title">
-      <header className={styles.bar}>
-        <span className={styles.brand}>
-          <img className={styles.logo} src="/assets/brand/logo.svg" alt="" />
-          <img className={styles.wordmark} src="/assets/brand/wordmark.png" alt="Wearless" />
-        </span>
-        {/* 나가기 = 로그아웃. 동의 없이 서비스로 들어갈 문을 만들지 않는다. */}
+    <Modal>
+      {/* 로그인 창의 다음 장 — 오른쪽에서 넘어오듯 들어온다(클립은 viewport 가 맡는다). */}
+      <div className={styles.viewport}>
+      <div className={styles.panel} role="document" aria-labelledby="signup-completion-title">
         <button type="button" className={styles.close} onClick={() => signOut?.()}
           disabled={pending} title="나가기(로그아웃)" aria-label="나가기(로그아웃)">
           <Icon name="x" size={18} stroke={2} />
         </button>
-      </header>
 
-      <main className={styles.body}>
-        <h1 id="signup-completion-title" className={styles.title}>
+        <div className={styles.brand}>
+          <img className={styles.logo} src="/assets/brand/logo.svg" alt="" />
+          <div className={styles.mark}>
+            <img className={styles.wordmark} src="/assets/brand/wordmark.png" alt="Wearless" />
+            <span className={styles.suffix}>Studio</span>
+          </div>
+        </div>
+
+        <h2 id="signup-completion-title" className={styles.title}>
           {revised ? '약관이 바뀌어 다시 확인해 주세요' : '가입을 마치려면 한 가지만 확인해 주세요'}
-        </h1>
+        </h2>
         <p className={styles.desc}>
           {revised
             ? '이용약관 또는 개인정보 처리방침이 개정됐어요. 바뀐 문서를 확인하고 동의하면 이어서 쓸 수 있어요.'
@@ -119,12 +125,11 @@ export function SignupCompletion() {
 
         {error && <p className={styles.error} role="alert">{error}</p>}
 
-        <div className={styles.actions}>
-          <Button variant="primary" onClick={submit} disabled={!checked || pending}>
-            {pending ? '처리 중…' : revised ? '동의하고 계속하기' : '가입 완료'}
-          </Button>
-        </div>
-      </main>
-    </div>
+        <Button variant="primary" block onClick={submit} disabled={!checked || pending}>
+          {pending ? '처리 중…' : revised ? '동의하고 계속하기' : '가입 완료'}
+        </Button>
+      </div>
+      </div>
+    </Modal>
   );
 }
