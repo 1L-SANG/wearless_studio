@@ -57,8 +57,16 @@ test('isDetail 은 검증된 effectiveShotVal 을 읽는다 — raw shot 은 카
 
 test('갤러리·게이트 성별은 실존 모델 선택 시에도 비지 않는다 — 분석 기반 exampleGender 폴백', () => {
   const aiPanel = panelSource.slice(panelSource.indexOf('export function AIPanel'));
-  assert.match(aiPanel, /\[\.\.\.\(catalogs\.models \|\| \[\]\), \.\.\.fmList\]\.find\(\(item\) => item\.id === model\)\?\.gender\s*\|\| exampleGender/);
+  assert.match(aiPanel, /\[\.\.\.virtualModels, \.\.\.fmList\]\.find\(\(item\) => item\.id === model\)\?\.gender\s*\|\| exampleGender/);
   assert.match(editorSource, /exampleGender=\{exampleGenderFromAnalysis\(analysis, catalogs, clothingType\)\}/);
+});
+
+test('실제 모델은 호리존 컷에서만 선택할 수 있다', () => {
+  const aiPanel = panelSource.slice(panelSource.indexOf('export function AIPanel'));
+  assert.match(aiPanel, /const disabled = effectiveCutType !== 'horizon'/);
+  assert.match(aiPanel, /aria-disabled=\{disabled\}/);
+  assert.match(aiPanel, /실제 모델은 스튜디오 컷에만 쓸 수 있어요/);
+  assert.match(aiPanel, /if \(effectiveCutType === 'horizon' \|\| !isRealModelSelection\(model\)\) return/);
 });
 
 test('거울 예시는 파생 유효 레시피로 화면과 생성 페이로드를 함께 전환한다', () => {

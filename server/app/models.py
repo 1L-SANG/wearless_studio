@@ -310,6 +310,13 @@ class RefundRequestBody(CamelModel):
     reason: str | None = None
 
 
+class SellerConsentIn(CamelModel):
+    """셀러 약관 동의 요청 — 게이트가 보여준 버전을 그대로 되돌려 보낸다(서버가 현재 버전과 대조)."""
+    terms_version: str
+    privacy_version: str
+    age_attested: bool
+
+
 class ErrorDetail(CamelModel):
     code: str
     message: str

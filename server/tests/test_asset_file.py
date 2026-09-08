@@ -96,7 +96,7 @@ def test_owned_asset_lookup_loads_server_written_privacy_marker():
 @pytest.mark.parametrize(
     ("metadata", "snapshot", "expected"),
     [
-        ({"facemarket_real_derived": True}, {"modelId": "model-1", "licenseId": "license-1"}, True),
+        ({"facemarket_real_derived": True, "cut_type": "horizon"}, {"modelId": "model-1", "licenseId": "license-1"}, True),
         ({"facemarket_real_derived": False}, {"modelId": "model-1", "licenseId": "license-1"}, False),
         ({}, {"modelId": "model-1", "licenseId": "license-1"}, True),
         ({}, None, False),
@@ -122,6 +122,7 @@ def test_asset_facemarket_provenance_prefers_explicit_marker_and_falls_back_to_p
             return {
                 "metadata": metadata,
                 "facemarket": snapshot,
+                "cut_type": metadata.get("cut_type") or "horizon-from-wardrobe",
             }
 
     class Conn:
@@ -135,11 +136,15 @@ def test_asset_facemarket_provenance_prefers_explicit_marker_and_falls_back_to_p
 
     assert "join jobs" in seen["sql"]
     assert "j.payload->'_facemarket'" in seen["sql"]
+    assert "j.result->'data'" in seen["sql"]
     assert "split_part(a.r2_key, '/', 6)" in seen["sql"]
     assert "a.user_id = %s" in seen["sql"]
     assert seen["params"] == (asset_id, "user-1")
     assert row["real_derived"] is expected
     assert row["facemarket"] == snapshot
+    assert row["cut_type"] == (
+        metadata.get("cut_type") or "horizon-from-wardrobe"
+    )
 
 
 def test_asset_file_serves_without_auth(client, monkeypatch):

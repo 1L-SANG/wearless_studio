@@ -2402,3 +2402,54 @@ def test_purge_scope_not_found_terminates_without_retry(uid, monkeypatch):
     assert row["status"] == "done"
     assert (row["metadata"] or {}).get("code") == "scope_empty"
     assert (row["metadata"] or {}).get("stage") != "retry"
+
+
+# ── 파기 캐스케이드: 관리자 테스트컷·승인 커버(2026-09-07 신설 대상) ────────────────
+def test_purge_deletes_model_test_cuts_and_cover(uid):
+    """모델 철회 시 관리자 테스트컷 원본(비공개 버킷)과 승인 커버(카탈로그)가 함께 파기된다.
+
+    회귀 대상: 테스트컷 확인 게이트가 새로 만든 두 저장소는 기존 파기 prefix 밖에 있다 —
+    `private/facemarket/models/{id}/`(테스트컷), `facemarket/catalog/models/{id}/`(커버).
+    스코프에 안 들어가면 초상 계약 §12④(30일 내 파기)를 어기고 얼굴이 R2 에 잔존한다.
+    가짜 테이블 검사(test_biometric_purge)는 로직만 보므로, 실제 캐스케이드 delete 와
+    cover_image_url 널링을 실 Postgres 로 확인한다.
+    """
+    profile_id = _seed_profile(uid)
+    model_id = str(uuid.uuid4())
+    cover_key = f"facemarket/catalog/models/{model_id}/cover.jpg"
+    cut_keys = [f"private/facemarket/models/{model_id}/test-cuts/{i}.png" for i in range(2)]
+    conn = _sync_conn()
+    # 실제 철회 경로(`_start_purge` → `freeze_user_biometric_scope`)는 워커 전에 모델을
+    # 'reverification_required' 로 동결한다. 'verified' 로 심으면 `_ensure_frozen` 이
+    # scope_not_frozen 으로 재시도만 걸고 파기가 돌지 않으므로 동결 후 상태를 그대로 심는다.
+    conn.execute(
+        "insert into fm_models (id, user_id, display_name, status, cover_image_url) "
+        "values (%s, %s, 'purge-probe', 'reverification_required', %s)",
+        (model_id, uid, cover_key),
+    )
+    for i, key in enumerate(cut_keys):
+        conn.execute(
+            "insert into fm_model_test_cuts (model_id, r2_key, mime, kind, sort) "
+            "values (%s, %s, 'image/png', %s, %s)",
+            (model_id, key, ("closeup", "fullbody")[i], i),
+        )
+    conn.close()
+    r2 = FakeR2Face()
+    r2.put_bytes(cover_key, b"cover", "image/jpeg")
+    for key in cut_keys:
+        r2.put_bytes(key, b"cut", "image/png")
+
+    asyncio.run(run_personalization_purge_job(_purge_app(r2), _seed_purge_job(uid, profile_id)))
+
+    assert cover_key not in r2.objects, "승인 커버가 R2 에 남았다"
+    assert all(key not in r2.objects for key in cut_keys), "테스트컷 원본이 R2 에 남았다"
+    conn = _sync_conn()
+    remaining = conn.execute(
+        "select count(*) as n from fm_model_test_cuts where model_id = %s", (model_id,)
+    ).fetchone()["n"]
+    cover_after = conn.execute(
+        "select cover_image_url from fm_models where id = %s", (model_id,)
+    ).fetchone()
+    conn.close()
+    assert remaining == 0, "fm_model_test_cuts 행이 남았다"
+    assert cover_after is None or cover_after["cover_image_url"] is None, "cover_image_url 이 널링되지 않았다"

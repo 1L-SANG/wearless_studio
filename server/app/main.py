@@ -465,12 +465,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # 의존하지 않는 프리스테이지라 biometric 플래그와 무관하게 등록한다. create_enrollment
         # 게이트(승인 지원서 요구)만 FM_APPLICATION_REQUIRED + 생체등록 활성일 때 동작한다.
         from .facemarket_applications import router as applications_router
+        from .facemarket_admin_models import router as admin_models_router
 
         app.include_router(applications_router)
         # 관리자 콘솔(집계·모델 조회·권한 관리). 지원서 라우트와 같은 플래그 아래 산다.
         from .facemarket_admin import router as admin_console_router
 
         app.include_router(admin_console_router)
+        # 테스트컷 업로드·전송은 콘솔의 모델 상세에서 쓰는 하위 리소스다. 콘솔 라우터
+        # 뒤에 붙여 /admin/models 목록·상세는 콘솔이, /test-cuts 는 이 모듈이 맡는다.
+        app.include_router(admin_models_router)
         if settings.fm_biometric_enrollment_enabled:
             from .facemarket_enrollment import router as biometric_enrollment_router
 

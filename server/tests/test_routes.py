@@ -603,7 +603,7 @@ def test_editor_new_owns_category_model_and_license_snapshot(
         headers=_auth(make_token),
         json={
             "mode": "new",
-            "cutType": "styling",
+            "cutType": "horizon",
             model_key: MODEL_ID,
             "brandUseCategory": "속옷·란제리",
             "_facemarket": {"modelId": "attacker", "licenseId": "attacker"},
@@ -643,6 +643,7 @@ def test_editor_vary_inherits_trusted_source_license_snapshot(
         return {
             "real_derived": True,
             "facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
+            "cut_type": "horizon",
         }
 
     async def fake_resolve(conn, model_id, **kwargs):
@@ -702,7 +703,64 @@ def test_editor_vary_inherits_trusted_source_license_snapshot(
         "licenseId": LICENSE_ID,
     }
     assert seen["payload"]["brandUseCategory"] == CATEGORY
+    assert seen["payload"]["source"]["cutType"] == "horizon"
     assert fence == ["lock", "closed"]
+
+
+@pytest.mark.parametrize(
+    ("trusted_cut_type", "body_patch"),
+    [
+        (None, {}),
+        ("horizon", {"changes": [{"type": "bg", "value": "거리"}]}),
+        ("horizon", {"changes": [{"type": "other", "value": "거리 배경으로 이동"}]}),
+        ("horizon", {"changes": [{"type": "pose", "value": "파리 거리에서 걷기"}]}),
+        ("horizon", {"refBgAssetId": "44444444-4444-4444-4444-444444444444"}),
+    ],
+)
+def test_editor_real_vary_rejects_untrusted_or_scene_changing_requests(
+    client, make_token, monkeypatch, trusted_cut_type, body_patch
+):
+    calls = {"job": 0, "reserve": 0}
+    source_asset_id = "33333333-3333-3333-3333-333333333333"
+
+    async def fake_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_provenance(conn, user_id, asset_id):
+        return {
+            "real_derived": True,
+            "facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
+            "cut_type": trusted_cut_type,
+        }
+
+    async def forbidden_job(*args, **kwargs):
+        calls["job"] += 1
+
+    async def forbidden_reserve(*args, **kwargs):
+        calls["reserve"] += 1
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_project)
+    monkeypatch.setattr(routes.repo, "get_asset_facemarket_provenance", fake_provenance)
+    monkeypatch.setattr(routes.repo, "create_job", forbidden_job)
+    monkeypatch.setattr(routes.repo, "reserve_credits", forbidden_reserve)
+    patch_route_db(monkeypatch, routes)
+
+    response = client.post(
+        "/v1/projects/p1/editor:generate-image",
+        headers=_auth(make_token),
+        json={
+            "mode": "vary",
+            "source": {
+                "src": f"/v1/assets/{source_asset_id}/file",
+                "cutType": "horizon",
+            },
+            **body_patch,
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "real_model_horizon_only"
+    assert calls == {"job": 0, "reserve": 0}
 
 
 def test_editor_vary_real_marker_without_trusted_lineage_fails_before_charge(
@@ -748,7 +806,9 @@ def test_editor_vary_real_marker_without_trusted_lineage_fails_before_charge(
     assert calls == {"create": 0, "reserve": 0}
 
 
-def test_editor_denial_precedes_job_and_credit(client, make_token, monkeypatch):
+def test_editor_rejects_real_model_for_styling_before_job_and_credit(
+    client, make_token, monkeypatch
+):
     client.app.state.settings = replace(
         client.app.state.settings,
         facemarket_enabled=True,
@@ -761,14 +821,8 @@ def test_editor_denial_precedes_job_and_credit(client, make_token, monkeypatch):
     async def fake_analysis(conn, project_id):
         return {"brandUseCategory": CATEGORY}
 
-    async def fake_resolve(conn, model_id, **kwargs):
-        return {"id": LICENSE_ID, "model_id": MODEL_ID}
-
-    async def deny(*args, **kwargs):
-        raise routes.HTTPException(
-            status_code=409,
-            detail={"code": "model_assets_unavailable", "message": "blocked"},
-        )
+    async def forbidden_resolve(*args, **kwargs):
+        raise AssertionError("non-horizon real model must fail before license lookup")
 
     async def fake_create(*args, **kwargs):
         calls["create"] += 1
@@ -778,8 +832,7 @@ def test_editor_denial_precedes_job_and_credit(client, make_token, monkeypatch):
 
     monkeypatch.setattr(routes.repo, "get_project", fake_project)
     monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
-    monkeypatch.setattr(routes.facemarket, "resolve_model_license", fake_resolve)
-    monkeypatch.setattr(routes.facemarket, "verify_license", deny)
+    monkeypatch.setattr(routes.facemarket, "resolve_model_license", forbidden_resolve)
     monkeypatch.setattr(routes.repo, "create_job", fake_create)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
     patch_route_db(monkeypatch, routes)
@@ -791,6 +844,7 @@ def test_editor_denial_precedes_job_and_credit(client, make_token, monkeypatch):
     )
 
     assert response.status_code == 409
+    assert response.json()["error"]["code"] == "real_model_horizon_only"
     assert calls == {"create": 0, "reserve": 0}
 
 

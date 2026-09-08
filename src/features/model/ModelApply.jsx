@@ -31,7 +31,7 @@ const HOUSE_RULES = [
 ];
 
 const QUAL_REQUIRED = [
-  '만 18세 이상',
+  '만 19세 이상',
   '제출하는 사진의 권리를 본인이 보유할 것 (동의 없는 스튜디오 저작물 불가)',
   'AI 생성 방식의 초상 활용에 동의할 것',
   '정확한 신체 치수 제공 (키·가슴·허리·엉덩이)',
@@ -70,7 +70,7 @@ const PHOTO_SLOTS = [
 ];
 
 const ATTESTATIONS = [
-  { key: 'adultAndTruthful', text: '만 18세 이상이며, 제공한 모든 정보가 사실이고 정확함을 확인합니다.' },
+  { key: 'adultAndTruthful', text: '만 19세 이상이며, 제공한 모든 정보가 사실이고 정확함을 확인합니다.' },
   { key: 'photosAreMine', text: '이 사진은 본인의 것이며, 최신 상태이고 변형되지 않았으며, 제출할 권리가 있음을 확인합니다.' },
 ];
 

@@ -20,7 +20,11 @@ import {
 import { Icon, Button, ErrorState, Modal, useToast } from '@/components/ui.jsx';
 import { CreditShortfallModal } from '@/features/credits/CreditShortfallModal.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
-import { realModelFeeLabel } from '@/features/analysis/modelSelection.js';
+import {
+  realModelFeeLabel,
+  stylingModelPatchForAnalysis,
+} from '@/features/analysis/modelSelection.js';
+import { AI_MODELS } from '@/features/analysis/aiModels.js';
 import {
   clearInitialGenerationRequested,
   cutsExistedBeforeInitialGeneration,
@@ -660,6 +664,7 @@ export function Mannequin() {
   const [catalogs, setCatalogs] = useState(null);
   const [realModels, setRealModels] = useState([]);
   const [aiCutCount, setAiCutCount] = useState(null);   // null = 아직 모름(로딩 중·조회 실패) — 0 과 구분
+  const [horizonCutCount, setHorizonCutCount] = useState(null);
   const [creditShortfall, setCreditShortfall] = useState(null);
   const [creditResume, setCreditResume] = useState(() => (
     location.state?.creditResume?.action === 'detail-page' ? location.state.creditResume : null
@@ -749,13 +754,17 @@ export function Mannequin() {
       // getStoryboard 실패는 이 화면 자체를 막지 않는다(비치명) — 대신 null 로 남겨
       // "콘티가 AI 컷 0장" 과 "조회 자체를 못 함" 을 구분한다. 구분 안 하면 CTA 가
       // 크레딧 소비 직전에 '0 크레딧'(=무료로 읽힘)을 보여줄 수 있다.
-      const [nextProduct, nextAnalysis, nextCatalogs, nextStoryboard, nextRealModels] = await Promise.all([
+      const [nextProduct, loadedAnalysis, nextCatalogs, nextStoryboard, nextRealModels] = await Promise.all([
         api.getProduct(pid),
         api.getAnalysis(pid),
         api.getCatalogs(),
         api.getStoryboard(pid).catch(() => null),
         isMockMode ? Promise.resolve([]) : listModels().catch(() => []),
       ]);
+      const stylingModelPatch = stylingModelPatchForAnalysis(loadedAnalysis, AI_MODELS);
+      const nextAnalysis = stylingModelPatch
+        ? { ...loadedAnalysis, ...(await api.saveAnalysis(pid, stylingModelPatch)), ...stylingModelPatch }
+        : loadedAnalysis;
       if (loadRunRef.current !== runId) return;
       setProgress(generationProgressFor(pid));
       setAnalysis(nextAnalysis);
@@ -763,6 +772,9 @@ export function Mannequin() {
       setRealModels(Array.isArray(nextRealModels) ? nextRealModels : []);
       // 크레딧 견적은 실제 생성 수 — 동일 설정 복제 컷은 서버가 1장만 생성한다(ADR-0011).
       setAiCutCount(Array.isArray(nextStoryboard) ? uniqueGenerationCutCount(nextStoryboard) : null);
+      setHorizonCutCount(Array.isArray(nextStoryboard)
+        ? uniqueGenerationCutCount(nextStoryboard.filter((block) => block?.cutType === 'horizon'))
+        : null);
       const nextMainMatchingItem = resolveMainMatchingItem(nextAnalysis);
       const draft = createFitProfileDraft(nextProduct, nextAnalysis, nextMainMatchingItem);
       setFitProfileDraft(draft);
@@ -893,7 +905,11 @@ export function Mannequin() {
       pickLb: stepState[step.key]?.pickLb,
     }))
   ));
-  const realModelFee = realModelFeeLabel(analysis?.selectedModelId, realModels);
+  const realModelFee = realModelFeeLabel(
+    analysis?.selectedModelId,
+    realModels,
+    horizonCutCount || 0,
+  );
   const continueLabel = needsRegen
     ? `수정 반영 · ${CREDIT_COSTS.mannequinGenerate} 크레딧`
     : `이대로 진행 · ${aiCutCount == null ? '—' : aiCutCount * CREDIT_COSTS.storyboardPerCut} 크레딧${realModelFee}`;

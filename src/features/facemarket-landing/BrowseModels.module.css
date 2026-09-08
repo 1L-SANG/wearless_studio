@@ -129,9 +129,9 @@
 .cardMedia:focus-visible .cardPill { opacity: 1; translate: -50% 0; }
 .cardPill svg { opacity: 0.85; }
 
-.cardMeta { display: grid; gap: 0.15rem; }
-.cardName { margin: 0; font: 600 0.95rem/1.4 var(--font-body); }
-.cardSpec { margin: 0; color: var(--fm-muted); font: 400 0.85rem/1.5 var(--font-body); }
+.cardMeta { display: flex; align-items: flex-end; gap: 0.6rem; }
+.cardName { flex: 1; min-width: 3em; margin: 0; overflow-wrap: anywhere; font: 600 0.95rem/1.4 var(--font-body); }
+.cardSpec { max-width: 70%; margin: 0 0 0 auto; text-align: right; overflow-wrap: anywhere; color: var(--fm-muted); font: 400 0.85rem/1.5 var(--font-body); }
 
 /* ---- 상세 서랍 ---- */
 /* 가운데 팝업이 아니라 **오른쪽에서 나오는 창**이다(사용자 지시). 뒤 화면은 어둡게 + 흐리게.
@@ -175,9 +175,18 @@
      상한 64rem 은 와이드 모니터에서 서랍이 끝없이 넓어지지 않게. 폰에서는 아래 미디어쿼리가
      100% 로 덮는다 — 66vw 면 390px 화면에서 257px 라 두 칸이 성립하지 않는다. */
   width: min(64rem, 66vw);
-  padding: clamp(1.25rem, 3vw, 2rem);
-  background: var(--fm-page-bg);
-  box-shadow: -1rem 0 3rem rgba(16, 21, 26, 0.22);
+  /* 패딩 0 — 사진이 가장자리까지 간다. 안쪽 여백은 --dlg-pad 로 본문·이름 자리만 준다. */
+  --dlg-pad: clamp(1.25rem, 3vw, 2rem);
+  padding: 0;
+  /* 검정 바탕 + 흰 글자(2026-09-08 오너 지시). 목록은 밝고 서랍만 어둡다 — 사진이 주인공인
+     창이라 바탕이 물러나야 한다. 서랍 안 색은 아래 세 변수만 쓴다. 랜딩 토큰(--fm-*)은
+     밝은 화면용이라 여기서 그대로 쓰면 회색 글자가 검정에 묻힌다. */
+  --dlg-ink: #ffffff;
+  --dlg-muted: rgba(255, 255, 255, 0.62);
+  --dlg-line: rgba(255, 255, 255, 0.16);
+  background: #0c0f13;
+  color: var(--dlg-ink);
+  box-shadow: -1rem 0 3rem rgba(0, 0, 0, 0.45);
   overflow-y: auto;
   overscroll-behavior: contain;   /* 서랍 끝에서 뒤 페이지로 스크롤이 새지 않게 */
   animation: fmSlideIn 260ms cubic-bezier(0.22, 0.61, 0.36, 1);
@@ -204,92 +213,153 @@
   padding: 0;
   border: 0;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.7);
-  color: var(--fm-ink);
+  z-index: 2;                    /* 사진·그라데이션 위 */
+  background: rgba(12, 15, 19, 0.55);
+  color: var(--dlg-ink);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   cursor: pointer;
 }
-.dialogClose:hover { background: #fff; }
+.dialogClose:hover { background: rgba(12, 15, 19, 0.8); }
 
-/* 얼굴은 있는 만큼만 놓는다 — 한 장뿐인 모델은 그 한 장이 칸을 채운다. */
-.dialogFaces {
+/* ---- 서랍 안 ----
+   위: 확대샷 | 전신샷 두 장이 서랍 가장자리까지 붙고(2px 틈), 아랫부분 그라데이션 위에 이름·성별·
+   나이대가 얹힌다. 아래: 세로 목록. 2026-09-08 오너 확정("2C 위 + 방향 1 아래, 가격 맨 위").
+   사진에 테두리·둥근 모서리를 주지 않는다 — 사진이 곧 화면이라야 검정 바탕이 산다. */
+.dialogHero {
+  position: relative;
   display: grid;
-  gap: 0.75rem;
-  /* 서랍이 넓어져도 얼굴이 한없이 커지지 않게. 이게 없으면 1440 에서 한 장이 460px 정사각형이
-     되어 아래 내용이 전부 스크롤 밖으로 밀린다. */
-  max-width: 36rem;
+  gap: 2px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
-/* 얼굴이 한 장뿐인 모델(w1·m1·m2)은 그 한 장이 두 칸을 다 쓴다 — 안 그러면 반쪽만 차고
-   옆이 빈다. */
-.dialogFace:only-child { grid-column: 1 / -1; }
-.dialogFace {
+.dialogHeroShot {
   display: block;
   width: 100%;
-  aspect-ratio: 1;
-  border-radius: 0.75rem;
+  aspect-ratio: 3 / 4;
   object-fit: cover;
-  background: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.06);
 }
-
-.dialogHead { display: flex; align-items: center; gap: 0.6rem; margin: 1.35rem 0 1.1rem; }
-.dialogName { margin: 0; font: 600 clamp(1.35rem, 2.4vw, 1.75rem)/1.3 var(--font-body); }
+/* 확대샷은 얼굴이 위쪽 3분의 1에 오게 살짝 올려 자른다 — 이름 그라데이션이 턱을 덮지 않게. */
+.dialogHeroShot:first-child { object-position: center 20%; }
+/* 본인 전신 사진이 없는 가상 예시의 빈 칸. 실모델은 확정 때 두 장이 모두 정해지므로 여기 오지 않는다. */
+.dialogHeroEmpty {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 3 / 4;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--dlg-muted);
+  font: 500 0.85rem/1.4 var(--font-body);
+}
+/* 사진 아래 절반이 서랍 바탕색으로 녹아들며 이름 자리가 생긴다. 글자 대비는 마지막 20% 구간이 책임진다. */
+.dialogHero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(to bottom, rgba(12, 15, 19, 0) 52%, rgba(12, 15, 19, 0.72) 82%, #0c0f13 100%);
+}
+.dialogHeroText {
+  position: absolute;
+  left: var(--dlg-pad);
+  right: var(--dlg-pad);
+  bottom: 1.1rem;
+  z-index: 1;
+}
+.dialogName {
+  margin: 0;
+  color: var(--dlg-ink);
+  font: 600 clamp(1.75rem, 3vw, 2.5rem)/1.05 var(--font-body);
+  letter-spacing: -0.025em;
+}
+.dialogMeta {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0.45rem 0 0;
+  color: var(--dlg-muted);
+  font: 400 0.92rem/1.4 var(--font-body);
+}
 
 /* 창 안에도 예시 배지를 둔다 — 목록의 고지는 이 창만 캡처하면 같이 안 나간다. */
 .exampleBadge {
   padding: 0.2rem 0.5rem;
   border-radius: 999px;
-  background: rgba(16, 21, 26, 0.08);
-  color: var(--fm-muted);
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--dlg-ink);
   font: 500 0.72rem/1 var(--font-body);
 }
 
-/* 두 칸(신체 사이즈 | 라이선스 조건)과 그 사이 세로선은 스케치 그대로. 열 수를 못박는
-   이유: 미디어쿼리는 뷰포트를 보는데 이 창은 34rem 짜리 서랍이라, auto-fit 으로 두면
-   데스크톱에서도 한 칸으로 접혀 스케치의 세로선이 사라진다. */
-.dialogCols {
+.dialogBody { padding: 0.25rem var(--dlg-pad) var(--dlg-pad); }
+
+/* 가격 줄: 값 중 유일하게 크다. 옆에 건당·월정액 설명이 작게 붙는다. */
+.dialogPriceRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.45rem;
+  padding: 0.6rem 0 0.2rem;
+}
+.dialogPrice { color: var(--dlg-ink); font: 600 1.75rem/1.1 var(--font-body); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.dialogPriceNote { color: var(--dlg-muted); font: 400 0.88rem/1.4 var(--font-body); }
+
+/* 셀러 버튼: 서랍 안에서 유일한 밝은 덩어리. 검정 바탕에 흰 버튼이라 색 없이도 가장 먼저 잡힌다. */
+.dialogCta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin: 0.9rem 0 0.4rem;
+  padding: 0.95rem 1.2rem;
+  border-radius: 999px;
+  background: var(--dlg-ink);
+  color: #0c0f13;
+  font: 600 0.95rem/1 var(--font-body);
+  letter-spacing: 0.005em;
+  text-decoration: none;
+}
+.dialogCta:hover { background: #e6e6e4; }
+.dialogCta:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+
+/* 한 줄에 두 칸(키 | 몸무게, 허용 품목 | 제외 품목). 칸마다 라벨 위, 값 아래. 줄 사이 가는 선. */
+.dialogRows { display: grid; margin: 0.6rem 0 0; }
+.dialogPair {
   display: grid;
-  gap: clamp(0.75rem, 2vw, 1.5rem);
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  padding: 0.95rem 0;
+  border-top: 1px solid var(--dlg-line);
 }
-.dialogCol + .dialogCol {
-  padding-left: clamp(1rem, 2.5vw, 2rem);
-  border-left: 1px solid var(--fm-line);
-}
-/* 아주 좁은 폰에서는 두 칸이 각각 8rem 도 안 되므로 위아래로 쌓고 선을 가로로 눕힌다. */
-@media (max-width: 26rem) {
-  .dialogCols { grid-template-columns: minmax(0, 1fr); }
-  .dialogCol + .dialogCol {
-    padding-left: 0;
-    padding-top: 1rem;
-    border-left: 0;
-    border-top: 1px solid var(--fm-line);
-  }
-}
+.dialogCell dt { margin: 0 0 0.15rem; color: var(--dlg-muted); font: 400 0.84rem/1.4 var(--font-body); }
+.dialogCell dd { margin: 0; color: var(--dlg-ink); font: 500 1rem/1.5 var(--font-body); font-variant-numeric: tabular-nums; }
 
-.dialogColTitle { margin: 0 0 0.7rem; font: 600 0.95rem/1.4 var(--font-body); }
-
-.specList { display: grid; gap: 0.5rem; margin: 0; }
-/* 서랍이 좁아 라벨 열을 5rem 으로 고정하면 '허용 품목' 값이 두세 줄로 접힌다.
-   라벨을 값 위에 쌓는다. */
-.specRow { display: grid; gap: 0.1rem; }
-.specRow dt { color: var(--fm-muted); font: 400 0.85rem/1.5 var(--font-body); }
-.specRow dd { margin: 0; font: 500 0.9rem/1.5 var(--font-body); }
-
-.dialogExamples { margin-top: clamp(1.25rem, 3vw, 1.75rem); }
-.exampleGrid {
+/* 착용 사이즈: 맨 밑, 세 칸으로 나눠 숫자를 크게. 표가 아니라 읽는 순서대로 상의·하의·신발. */
+.dialogSizes { margin-top: 0.2rem; padding-top: 0.95rem; border-top: 1px solid var(--dlg-line); }
+.dialogSizesTitle { display: block; margin-bottom: 0.6rem; color: var(--dlg-muted); font: 400 0.84rem/1.4 var(--font-body); }
+.dialogSizeCells {
   display: grid;
-  gap: 0.6rem;
-  max-width: 44rem;
+  gap: 0.5rem;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
 }
-.exampleImage {
-  display: block;
-  width: 100%;
-  aspect-ratio: 3 / 4;
+.dialogSizeCells > div {
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--dlg-line);
   border-radius: 0.6rem;
-  object-fit: cover;
-  background: rgba(255, 255, 255, 0.5);
 }
+.dialogSizeCells dt { margin: 0 0 0.15rem; color: var(--dlg-muted); font: 500 0.72rem/1 var(--font-body); letter-spacing: 0.06em; }
+.dialogSizeCells dd { margin: 0; color: var(--dlg-ink); font: 600 1.15rem/1.3 var(--font-body); font-variant-numeric: tabular-nums; }
+
+/* 검증 한 줄. 의미색은 이 체크 하나뿐이다. */
+.dialogVerify {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.1rem;
+  margin: 1.1rem 0 0;
+  color: var(--dlg-muted);
+  font: 500 0.82rem/1.4 var(--font-body);
+}
+.dialogVerify span::before { content: "✓"; margin-right: 0.35rem; color: #8fd3ad; font-weight: 700; }
 
 /* '동작 줄이기'를 켠 사용자에게는 확대·떠오름을 재생하지 않는다. */
 @media (prefers-reduced-motion: reduce) {

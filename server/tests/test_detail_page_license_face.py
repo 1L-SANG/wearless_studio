@@ -58,6 +58,7 @@ def _snapshot_job(*, reserved=1):
         {
             "mode": "generate",
             "modelId": MODEL_ID,
+            "stylingModelId": "mA",
             "brandUseCategory": CATEGORY,
             "_facemarket": {"modelId": MODEL_ID, "licenseId": LIC_ID},
         },
@@ -218,7 +219,7 @@ def _patch_inputs(monkeypatch, captured, *, project, storyboard=None, product=No
         return project
 
     async def fake_sb(conn, pid):
-        return storyboard or [{"id": "b1", "source": "ai", "cutType": "styling", "shot": "full"}]
+        return storyboard or [{"id": "b1", "source": "ai", "cutType": "horizon", "shot": "full"}]
 
     async def fake_prod(conn, pid):
         return product or {"clothing_type": "top",
@@ -377,13 +378,13 @@ def test_snapshot_real_job_notice_states_masked_model(monkeypatch):
     }
 
 
-def test_snapshot_real_identity_is_attached_only_to_worn_cuts(monkeypatch):
-    # product 컷에는 인물 증거를 붙이지 않는다. 거울샷은 일관성 그리드만 쓰고 배지는 숨긴다.
+def test_snapshot_real_identity_is_attached_only_to_horizon_cuts(monkeypatch):
+    # product 컷에는 인물 증거를 붙이지 않고, 거울샷은 별도 가상모델만 쓴다.
     captured = {}
     _patch_inputs(monkeypatch, captured,
                   project={"copywriting": False, "facemarket_license_id": "later-lock"},
                   storyboard=[
-                      {"id": "b1", "source": "ai", "cutType": "styling", "shot": "full"},
+                      {"id": "b1", "source": "ai", "cutType": "horizon", "shot": "full"},
                       {"id": "b2", "source": "ai", "cutType": "product", "shot": "ghost"},
                       {"id": "b3", "source": "ai", "cutType": "mirror", "shot": "full"},
                   ])
@@ -399,13 +400,12 @@ def test_snapshot_real_identity_is_attached_only_to_worn_cuts(monkeypatch):
     assert by_block["b3"]["has_face"] is False and len(by_block["b3"]["images"]) == 3
     # 얼굴이 담긴 컷이 하나라도 성공했으므로 고지는 실제 모델 문구
     assert captured["license_notice"] is not None
-    # mirror는 얼굴 노출 배지는 꺼져도 REAL identity 두 장을 생성 근거로 쓴다. 따라서
-    # 결과 본문과 asset API 모두 styling과 같은 생체 파생물로 취급해야 한다.
-    assert main_r2.caches.count("private, no-store") == 2
-    assert main_r2.caches.count("public, max-age=31536000, immutable") == 1
+    # 실존 모델 파생물은 horizon 한 장뿐이고 mirror는 가상모델이라 공개 캐시 경로다.
+    assert main_r2.caches.count("private, no-store") == 1
+    assert main_r2.caches.count("public, max-age=31536000, immutable") == 2
     markers = [asset["metadata"]["facemarket_real_derived"] for asset in captured["cut_assets"]]
-    assert markers.count(True) == 2
-    assert markers.count(False) == 1
+    assert markers.count(True) == 1
+    assert markers.count(False) == 2
 
 
 # ── verify-before-use 시점 갭 (해지된 얼굴이 생성돼 나가면 회수 불가) ────────
@@ -627,7 +627,7 @@ def test_real_prefinal_events_hide_original_cut_output_before_late_revoke(monkey
         monkeypatch,
         captured,
         project={"copywriting": False, "facemarket_license_id": "later-lock"},
-        storyboard=[{"id": "b1", "source": "ai", "cutType": "styling", "shot": "full"}],
+        storyboard=[{"id": "b1", "source": "ai", "cutType": "horizon", "shot": "full"}],
     )
 
     def row(status):
@@ -780,7 +780,7 @@ def test_detail_final_recheck_revoked_license_deletes_outputs_and_refunds(monkey
         monkeypatch,
         captured,
         project={"copywriting": False},
-        storyboard=[{"id": "b1", "source": "ai", "cutType": "styling", "shot": "full"}],
+        storyboard=[{"id": "b1", "source": "ai", "cutType": "horizon", "shot": "full"}],
     )
 
     def row(status):
@@ -831,7 +831,7 @@ def test_detail_final_recheck_delete_failure_leaves_cleanup_intent(monkeypatch):
         monkeypatch,
         captured,
         project={"copywriting": False},
-        storyboard=[{"id": "b1", "source": "ai", "cutType": "styling", "shot": "full"}],
+        storyboard=[{"id": "b1", "source": "ai", "cutType": "horizon", "shot": "full"}],
     )
 
     def row(status):
