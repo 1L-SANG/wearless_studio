@@ -193,15 +193,18 @@ export function ModelConfirm() {
 
   const { closeupCutId, fullbodyCutId } = selection;
   const confirm = useCallback(async () => {
-    if (!closeupCutId || !fullbodyCutId || !agreed) return;
+    if (!data?.profile || !closeupCutId || !fullbodyCutId || !agreed) return;
     setBusy(true);
     try {
       await confirmMyModelTestCuts({ closeupCutId, fullbodyCutId });
       push?.('프로필을 확정했어요. 모델 리스트에 올라갔어요.', { icon: 'check' });
       navigate('/status', { replace: true });
-    } catch (error) { push?.(error.message, { icon: 'alertCircle' }); }
+    } catch (error) {
+      push?.(error.message, { icon: 'alertCircle' });
+      if (error.code === 'license_inactive') await load();
+    }
     finally { setBusy(false); }
-  }, [agreed, closeupCutId, fullbodyCutId, navigate, push]);
+  }, [agreed, closeupCutId, data?.profile, fullbodyCutId, load, navigate, push]);
 
   const redo = useCallback(async () => {
     if (data?.redoCount >= 1 || busy) return;
@@ -219,18 +222,27 @@ export function ModelConfirm() {
   const closeupCut = grouped.closeup.find((cut) => cut.id === closeupCutId) || null;
   const fullbodyCut = grouped.fullbody.find((cut) => cut.id === fullbodyCutId) || null;
   const canConfirm = data?.status === 'awaiting_confirm'
-    && closeupCutId && fullbodyCutId && agreed && !busy;
+    && data?.profile && closeupCutId && fullbodyCutId && agreed && !busy;
   const redoUsed = (data?.redoCount || 0) >= 1;
 
   if (phase === 'loading') return <div className={s.page}><p className={s.loading}>테스트컷을 불러오는 중이에요…</p></div>;
   if (phase === 'error') return <div className={s.page}><ErrorState desc="테스트컷을 불러오지 못했어요." onRetry={load} /></div>;
+  if (!data?.profile) return (
+    <main className={s.page}>
+      <ErrorState
+        title="라이선스 상태를 확인해 주세요"
+        desc="활성 라이선스 정보를 찾을 수 없어 프로필을 공개할 수 없어요. 라이선스가 만료되었거나 해지되었다면 관리자에게 상태 확인을 요청해 주세요."
+        onRetry={load}
+      />
+    </main>
+  );
 
   return (
     <main className={s.page}>
       <header className={s.head}>
         <span className={s.eyebrow}>공개 전 마지막 확인</span>
-        <h1>프로필에 걸 컷을 골라 주세요</h1>
-        <p>확대샷 1장, 전신샷 1장을 고르면 오른쪽처럼 모델 리스트에 올라가요. 확정 전에는 아무것도 공개되지 않아요.</p>
+        <h1>내 프로필에 쓰일 이미지를 선택해주세요.</h1>
+        <p>확대샷 1장, 전신샷 1장을 골라 주세요. 확정 전에는 아무것도 공개되지 않고 어떤 쇼핑몰도 내 얼굴을 쓸 수 없어요.</p>
       </header>
 
       <div className={s.layout}>
@@ -260,7 +272,7 @@ export function ModelConfirm() {
 
           <div className={s.actions}>
             <Button variant="primary" block disabled={!canConfirm} onClick={confirm}>
-              {busy ? '확정 중…' : '이 모습으로 공개하기'}
+              {busy ? '확정 중…' : '프로필 확정 완료'}
             </Button>
             <span className={s.redoWrap} title={redoUsed ? '재생성은 1회까지예요' : undefined}>
               <Button variant="secondary" block disabled={busy || redoUsed} onClick={redo}>

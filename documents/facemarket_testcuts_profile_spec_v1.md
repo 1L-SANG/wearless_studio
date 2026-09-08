@@ -104,6 +104,7 @@ alter table public.fm_models add column if not exists fullbody_image_url text;
   "bodyType": "toned",
   "license": {
     "allowedUse": ["상의", "아우터"],
+    "forbiddenUse": ["속옷", "수영복"],
     "unitPrice": 10000,
     "validUntil": "2027-09-07T00:00:00Z",
     "validDays": 365

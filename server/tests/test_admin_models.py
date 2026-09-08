@@ -47,7 +47,7 @@ def test_status_filter_rejects_unknown_value():
 
 
 def test_status_filter_accepts_schema_values():
-    for status in ("pending", "verified", "suspended"):
+    for status in ("pending", "awaiting_confirm", "verified", "suspended"):
         assert facemarket_admin.validate_model_status(status) == status
 
 

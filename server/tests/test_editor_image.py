@@ -266,8 +266,9 @@ def test_run_editor_image_job_vary_charges_cost_and_group_misc(monkeypatch):
 
 
 @pytest.mark.parametrize("late_revoke", [False, True])
+@pytest.mark.parametrize("legacy_asset", [False, True])
 def test_run_editor_image_job_vary_propagates_real_privacy_and_rechecks_license(
-    monkeypatch, late_revoke,
+    monkeypatch, late_revoke, legacy_asset,
 ):
     captured = {"resolve": 0}
 
@@ -297,8 +298,16 @@ def test_run_editor_image_job_vary_propagates_real_privacy_and_rechecks_license(
             "mime_type": "image/png",
             "metadata": {
                 "facemarket_real_derived": True,
-                "cut_type": "horizon",
+                **({} if legacy_asset else {"cut_type": "horizon"}),
             },
+        }
+
+    async def fake_provenance(conn, uid, aid):
+        assert aid == "a1"
+        return {
+            "real_derived": True,
+            "facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
+            "cut_type": "horizon",
         }
 
     async def fake_generate(settings, gemini, source, changes, cut_type, **kwargs):
@@ -339,6 +348,7 @@ def test_run_editor_image_job_vary_propagates_real_privacy_and_rechecks_license(
         return None
 
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(eij.repo, "get_asset_facemarket_provenance", fake_provenance)
     monkeypatch.setattr(eij.cut_variator, "generate", fake_generate)
     monkeypatch.setattr(eij.facemarket, "resolve_model_license", fake_resolve)
     monkeypatch.setattr(eij.facemarket, "verify_license", fake_verify)
@@ -376,6 +386,48 @@ def test_run_editor_image_job_vary_propagates_real_privacy_and_rechecks_license(
             "cut_type": "horizon",
         }
         assert r2.deletes == []
+
+
+@pytest.mark.parametrize("trusted_cut_type", [None, "styling", "mirror"])
+def test_run_editor_legacy_real_vary_rejects_spoofed_horizon(monkeypatch, trusted_cut_type):
+    captured = {}
+
+    async def fake_asset(conn, uid, aid):
+        return {
+            "id": aid, "r2_key": "k/source-real", "mime_type": "image/png",
+            "metadata": {"facemarket_real_derived": True},
+        }
+
+    async def fake_provenance(conn, uid, aid):
+        return {
+            "real_derived": True,
+            "facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
+            "cut_type": trusted_cut_type,
+        }
+
+    async def fake_failure(conn, **kwargs):
+        captured["failure"] = kwargs
+        return True
+
+    async def forbidden_generate(*args, **kwargs):
+        captured["generated"] = True
+        raise AssertionError("unknown or non-horizon real sources must not generate")
+
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(eij.repo, "get_asset_facemarket_provenance", fake_provenance)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_failure)
+    monkeypatch.setattr(eij.cut_variator, "generate", forbidden_generate)
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(eij.run_editor_image_job(app, worker_job({
+        "mode": "vary",
+        "source": {"src": "/v1/assets/a1/file", "cutType": "horizon"},
+        "changes": [],
+        "brandUseCategory": CATEGORY,
+        "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
+    })))
+
+    assert captured["failure"]["code"] == "real_model_horizon_only"
+    assert "generated" not in captured
 
 
 def test_run_editor_image_job_vary_missing_source_fails(monkeypatch):

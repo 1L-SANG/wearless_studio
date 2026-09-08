@@ -1901,14 +1901,16 @@ def test_run_detail_page_job_uses_queued_model_without_mutating_storyboard(monke
     assert all("modelId" not in block and "model_id" not in block for block in storyboard)
 
 
+@pytest.mark.parametrize("real_cuts_fail", [False, True])
 def test_run_detail_page_job_splits_real_horizon_from_virtual_styling_and_settles_horizons(
-    monkeypatch,
+    monkeypatch, real_cuts_fail,
 ):
     captured = {"cuts": {}, "settlements": [], "events": []}
     storyboard = [
         {"id": "h-front", "source": "ai", "cutType": "horizon", "shot": "full", "direction": "front"},
         {"id": "h-side", "source": "ai", "cutType": "horizon", "shot": "full", "direction": "side"},
         {"id": "styling", "source": "ai", "cutType": "styling", "shot": "full", "direction": "front"},
+        {"id": "mirror", "source": "ai", "cutType": "mirror", "shot": "full"},
     ]
 
     class TrackingR2:
@@ -1980,12 +1982,15 @@ def test_run_detail_page_job_splits_real_horizon_from_virtual_styling_and_settle
             "modelId": cut_spec.get("modelId"),
             "images": [image.data.decode() for image in images],
         }
+        if real_cuts_fail and cut_spec["cutType"] == "horizon":
+            raise ValueError("real cut generation failed")
         return b"IMG", "image/png"
 
     def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **kwargs):
         return []
 
     async def fake_finalize(conn, **kwargs):
+        captured["finalize"] = kwargs
         return {"editor_blocks": [], "available": 99}
 
     async def fake_settlement(*args, **kwargs):
@@ -2026,7 +2031,7 @@ def test_run_detail_page_job_splits_real_horizon_from_virtual_styling_and_settle
         "stylingModelId": "mA",
         "brandUseCategory": CATEGORY,
         "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
-    }, credits_reserved=3)))
+    }, credits_reserved=4)))
 
     assert captured["cuts"]["h-front"]["modelId"] == MODEL_ID
     assert captured["cuts"]["h-side"]["modelId"] == MODEL_ID
@@ -2040,11 +2045,29 @@ def test_run_detail_page_job_splits_real_horizon_from_virtual_styling_and_settle
         for event_type, payload in captured["events"]
         if event_type == "step" and payload.get("status") == "cut_done"
     }
-    assert "previewUrl" not in done_events["h-front"]
-    assert "previewUrl" not in done_events["h-side"]
+    if real_cuts_fail:
+        assert "h-front" not in done_events and "h-side" not in done_events
+    else:
+        assert "previewUrl" not in done_events["h-front"]
+        assert "previewUrl" not in done_events["h-side"]
     assert done_events["styling"]["previewUrl"].startswith("https://r2.test/")
-    assert len(captured["settlements"]) == 1
-    assert captured["settlements"][0]["total"] == 10000
+    assert captured["cuts"]["mirror"]["modelId"] == "mA"
+    assert "real/face" not in captured["cuts"]["mirror"]["images"]
+    assets = captured["finalize"]["cut_assets"]
+    assert len(assets) == (2 if real_cuts_fail else 4)
+    for asset in assets:
+        if asset["metadata"]["cut_type"] == "horizon":
+            assert asset["provenance"] == {
+                "license_id": LICENSE_ID, "model_id": MODEL_ID,
+            }
+        else:
+            assert asset["metadata"]["facemarket_real_derived"] is False
+            assert "provenance" not in asset
+    if real_cuts_fail:
+        assert captured["settlements"] == []
+    else:
+        assert len(captured["settlements"]) == 1
+        assert captured["settlements"][0]["total"] == 10000
 
 
 def test_run_detail_page_job_partial_charge_uses_reservation_time_price(monkeypatch):

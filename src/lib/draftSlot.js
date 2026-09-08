@@ -1,4 +1,5 @@
 import { isPlaceholderPhotoSrc } from './imageTranscode.js';
+import { seoulClock } from './datetime.js';
 
 const TOKEN_KEY = 'wl_draftSlotToken';
 const SYNCED_AT_KEY = 'wl_draftSlotSyncedAt';
@@ -64,9 +65,7 @@ export function formatDraftClock(updatedAt) {
   if (!updatedAt) return '--:--';
   const date = new Date(updatedAt || 0);
   if (Number.isNaN(date.getTime())) return '--:--';
-  return new Intl.DateTimeFormat('ko-KR', {
-    hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(date);
+  return seoulClock(date);
 }
 
 export function localDraftMeta(draft) {

@@ -91,7 +91,7 @@ test('reissuing from completed registration requires fresh consent before a new 
     const restart = findTree(tree, (node) => node.type === 'Button'
       && node.props.children === '새 생체 등록 시작');
     assert.ok(restart, 'the completed registration must offer explicit re-enrollment');
-    restart.props.onClick();
+    await restart.props.onClick();
     tree = commit();
     await flush();
     assert.equal(restores, 1, 'the restore effect must not bounce the explicit restart back to done');
@@ -188,6 +188,9 @@ async function modelComponentHarness({
       resolveId(id) {
         if (id === 'qrcode') return '\0fm-test-qrcode';
         if (id === '@/lib/brandUseCategories.js') return new URL('../../src/lib/brandUseCategories.js', import.meta.url).pathname;
+        // 날짜 표기는 스텁하지 않고 진짜 모듈을 쓴다 — 화면이 그리는 유효기간이 한국
+        // 시간인지도 이 테스트가 지나는 경로다(src/lib/datetime.js).
+        if (id === '@/lib/datetime.js') return new URL('../../src/lib/datetime.js', import.meta.url).pathname;
         if (id === 'react') return '\0fm-test-react';
         if (id === 'react/jsx-dev-runtime' || id === 'react/jsx-runtime') return '\0fm-test-jsx';
         if (id === 'react-router-dom') return '\0fm-test-router';
@@ -286,7 +289,9 @@ async function modelComponentHarness({
           );
           export const cancelApplication = (...args) => api.cancelApplication(...args);
           export const getEnrollment = (...args) => api.getEnrollment(...args);
-          export const listMyModels = (...args) => api.listMyModels(...args);
+          export const listMyModels = (...args) => (
+            api.listMyModels ? api.listMyModels(...args) : Promise.resolve([])
+          );
           export const listLicenses = (...args) => (
             api.listLicenses ? api.listLicenses(...args) : Promise.resolve([])
           );
@@ -1748,4 +1753,150 @@ test('the optional steps can go back so a wrong photo is fixable', () => {
   assert.match(source, /이전 · 체형·키/);
   assert.match(source, /이전 · 얼굴 사진/);
   assert.match(source, /setStep\('photos'\)/);
+});
+
+
+test('registration entry directs an awaiting model to confirmation', async () => {
+  const destinations = [];
+  let created = 0;
+  const harness = await modelComponentHarness({
+    initialStates: ['loading', null, null, '', false, false, true],
+    honorHookDependencies: true,
+    api: {
+      listMyModels: async () => [{ id: 'm1', status: 'awaiting_confirm' }],
+      getCurrentEnrollment: async () => { throw Object.assign(new Error('none'), { status: 404 }); },
+      createEnrollment: async () => { created += 1; },
+    },
+  });
+  try {
+    harness.runtime.navigate = (to) => destinations.push(to);
+    harness.render();
+    harness.runtime.effects.forEach((effect) => effect());
+    await flush();
+    assert.deepEqual(destinations, ['/model/confirm']);
+    assert.equal(created, 0);
+    assert.equal(findTree(harness.render(), (node) => node.props?.children === '동의하고 본인 확인 시작'), null);
+  } finally { await harness.close(); }
+});
+
+test('stale completion restart checks for newly sent cuts before reopening consent', async () => {
+  const destinations = [];
+  const harness = await modelComponentHarness({
+    initialStates: ['done', { modelId: 'm1', status: 'passed' }, null, '', false, false, true,
+      null, null, null, [], null, { phase: 'error', model: null, summary: null }],
+    api: { listMyModels: async () => [{ id: 'm1', status: 'awaiting_confirm' }] },
+  });
+  try {
+    harness.runtime.navigate = (to) => destinations.push(to);
+    const restart = findTree(harness.render(), (node) => node.type === 'Button'
+      && node.props.children === '새 생체 등록 시작');
+    assert.ok(restart);
+    await restart.props.onClick();
+    assert.deepEqual(destinations, ['/model/confirm']);
+    assert.notEqual(harness.runtime.states[0], 'consent');
+  } finally { await harness.close(); }
+});
+
+test('confirmation required after consent was displayed redirects without starting identity', async () => {
+  const destinations = [];
+  const harness = await modelComponentHarness({
+    initialStates: ['consent', null, null, '', false, true, true],
+    api: { createEnrollment: async () => {
+      throw Object.assign(new Error('confirm first'), { code: 'model_confirmation_required', status: 409 });
+    } },
+  });
+  try {
+    harness.runtime.navigate = (to) => destinations.push(to);
+    const submit = findTree(harness.render(), (node) => node.type === 'Button'
+      && node.props.children === '동의하고 본인 확인 시작');
+    await submit.props.onClick();
+    assert.deepEqual(destinations, ['/model/confirm']);
+    assert.equal(harness.runtime.states[1], null);
+  } finally { await harness.close(); }
+});
+
+
+test('completion handoff also redirects when cuts have arrived since issuance', async () => {
+  const destinations = [];
+  const harness = await modelComponentHarness({
+    initialStates: ['done', { modelId: 'm1', status: 'passed' }, null, '', false, false, true,
+      null, null, null, [], null, { phase: 'error', model: null, summary: null }],
+    honorHookDependencies: true,
+    api: {
+      listMyModels: async () => [{ id: 'm1', status: 'awaiting_confirm' }],
+      listLicenses: async () => [{ modelId: 'm1', status: 'active' }],
+    },
+  });
+  try {
+    harness.runtime.location = { state: { completionSummary: { modelId: 'm1' } } };
+    harness.runtime.navigate = (to) => destinations.push(to);
+    harness.render();
+    harness.runtime.effects.forEach((effect) => effect());
+    await flush();
+    assert.deepEqual(destinations, ['/model/confirm']);
+  } finally { await harness.close(); }
+});
+
+
+for (const outcome of ['awaiting_confirm', 'verified', 'error']) {
+  test(`leaving completion ignores a late restart lookup: ${outcome}`, async () => {
+    const destinations = [];
+    let resolveLookup;
+    let rejectLookup;
+    const lookup = new Promise((resolve, reject) => {
+      resolveLookup = resolve;
+      rejectLookup = reject;
+    });
+    const harness = await modelComponentHarness({
+      initialStates: ['done', { modelId: 'm1', status: 'passed' }, null, '', false, false, true,
+        null, null, null, [], null, { phase: 'error', model: null, summary: null }],
+      honorHookDependencies: true,
+      api: { listMyModels: () => lookup },
+    });
+    try {
+      harness.runtime.location = { state: { completionSummary: { modelId: 'm1' } } };
+      harness.runtime.navigate = (to) => destinations.push(to);
+      const tree = harness.render();
+      const cleanup = harness.runtime.effects[0]();
+      const restart = findTree(tree, (node) => node.type === 'Button'
+        && node.props.children === '새 생체 등록 시작');
+      const pending = restart.props.onClick();
+      cleanup();
+      const updatesBeforeResponse = harness.runtime.updates.length;
+      if (outcome === 'error') rejectLookup(new Error('late lookup failed'));
+      else resolveLookup([{ id: 'm1', status: outcome }]);
+      await pending;
+      assert.deepEqual(destinations, []);
+      assert.equal(harness.runtime.updates.length, updatesBeforeResponse);
+    } finally { await harness.close(); }
+  });
+}
+
+
+test('leaving consent ignores a late confirmation-required enrollment response', async () => {
+  const destinations = [];
+  let rejectSubmission;
+  const submission = new Promise((_resolve, reject) => { rejectSubmission = reject; });
+  const harness = await modelComponentHarness({
+    initialStates: ['consent', null, null, '', false, true, true],
+    api: { createEnrollment: () => submission },
+  });
+  try {
+    // Skip restore; exercise the existing mounted lifecycle without a second request.
+    harness.runtime.location = { state: { completionSummary: { modelId: 'm1' } } };
+    harness.runtime.navigate = (to) => destinations.push(to);
+    const tree = harness.render();
+    const cleanup = harness.runtime.effects[0]();
+    const submit = findTree(tree, (node) => node.type === 'Button'
+      && node.props.children === '동의하고 본인 확인 시작');
+    const pending = submit.props.onClick();
+    cleanup();
+    const updatesBeforeResponse = harness.runtime.updates.length;
+    rejectSubmission(Object.assign(new Error('confirm first'), {
+      code: 'model_confirmation_required', status: 409,
+    }));
+    await pending;
+    assert.deepEqual(destinations, []);
+    assert.equal(harness.runtime.updates.length, updatesBeforeResponse);
+  } finally { await harness.close(); }
 });

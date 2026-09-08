@@ -19,6 +19,7 @@ import {
 } from '../facemarket-landing/facemarketTerms.js';
 import { hasCurrentEnrollmentLicense, resolveHubJourney } from './modelHubState.js';
 import s from './ModelPersonalization.module.css';
+import { seoulDate } from '@/lib/datetime.js';
 
 async function loadOptional(fn) {
   try { return await fn(); }
@@ -103,7 +104,7 @@ function ActiveDashboard({ license, model, settlementSummary }) {
     : license.validityDays != null
     ? validityLabel(license.validityDays)
     : license.licenseValidUntil
-      ? `${new Date(license.licenseValidUntil).toLocaleDateString('ko-KR')}까지`
+      ? `${seoulDate(license.licenseValidUntil)}까지`
       : validityLabel(null);
   const verifyPath = license?.id ? `/verify/${encodeURIComponent(license.id)}` : null;
   const cover = model?.coverImageUrl || license?.coverImageUrl || null;

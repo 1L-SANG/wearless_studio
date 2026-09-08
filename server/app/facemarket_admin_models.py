@@ -75,6 +75,7 @@ class SendTestCutsResult(CamelModel):
 
 class ProfileLicenseView(CamelModel):
     allowed_use: list[str] = Field(default_factory=list)
+    forbidden_use: list[str] = Field(default_factory=list)
     unit_price: int
     valid_until: datetime
     valid_days: int
@@ -186,7 +187,7 @@ def _cut_view(row: dict, *, model_side: bool = False) -> dict:
 _MODEL_PROFILE_SELECT = """
 select m.id::text as id, m.display_name, m.gender,
        a.height_cm, a.birthdate, m.height_bucket, m.body_type,
-       l.allowed_use, l.unit_price, l.license_valid_until,
+       l.allowed_use, l.forbidden_use, l.unit_price, l.license_valid_until,
        round(extract(epoch from (l.license_valid_until - l.created_at)) / 86400.0)::integer
          as license_valid_days,
        m.cover_image_url, m.fullbody_image_url, m.confirmed_at
@@ -269,6 +270,7 @@ def _profile_view(row: dict) -> dict:
         "body_type": row.get("body_type"),
         "license": {
             "allowed_use": list(row.get("allowed_use") or []),
+            "forbidden_use": list(row.get("forbidden_use") or []),
             "unit_price": row["unit_price"],
             "valid_until": row["license_valid_until"],
             "valid_days": row["license_valid_days"],

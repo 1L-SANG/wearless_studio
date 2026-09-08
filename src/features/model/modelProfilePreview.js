@@ -1,6 +1,7 @@
 import { bodyTypeLabel, heightBucketLabel } from '../../lib/facemarketPhysique.js';
 
-export function profilePhysiqueLine({ heightCm, heightBucket, bodyType } = {}) {
+export function profilePhysiqueLine(profile) {
+  const { heightCm, heightBucket, bodyType } = profile || {};
   const height = Number.isFinite(heightCm)
     ? `${heightCm}cm`
     : heightBucketLabel(heightBucket);

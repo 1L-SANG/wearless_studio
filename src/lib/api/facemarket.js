@@ -233,6 +233,18 @@ export function adminSetRole(userId, role) {
   });
 }
 
+/* 전체 가입자 목록 — 셀러/FaceMarket 출처 필터·이메일/이름 부분일치 검색.
+   adminListStaff 와 헷갈리지 마라: 저쪽은 "이미 이메일을 아는 사람" 을 승격하는 도구라
+   정확일치만 되고, 이쪽은 명부를 보는 화면이다(서버가 열람을 감사 원장에 남긴다).
+   origin 은 seller|facemarket|both|unknown, 안 주면 전체. */
+export function adminListUsers({ q, origin, limit = 50, cursor } = {}) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (q) params.set('q', q);
+  if (origin) params.set('origin', origin);
+  if (cursor) params.set('cursor', cursor);
+  return http(`/v1/facemarket/admin/users?${params.toString()}`);
+}
+
 export function adminListAudit({ limit = 20, targetType, targetId } = {}) {
   const params = new URLSearchParams({ limit: String(limit) });
   if (targetType) params.set('targetType', targetType);

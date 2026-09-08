@@ -64,6 +64,45 @@ _PRISTINE_DRAFT = """
 """
 
 
+async def get_seller_consent(conn: AsyncConnection, user_id: str) -> dict | None:
+    """셀러 약관 동의 기록(없으면 None). 로그인마다 묻지 않기 위한 서버측 기억."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select terms_version, privacy_version, age_attested, accepted_at
+              from seller_consents
+             where user_id = %s
+            """,
+            (user_id,),
+        )
+        return await cur.fetchone()
+
+
+async def upsert_seller_consent(
+    conn: AsyncConnection, user_id: str, *, terms_version: str, privacy_version: str, age_attested: bool,
+) -> dict:
+    """동의 기록 생성/갱신. 재동의(개정)면 직전 기록을 history 에 남긴다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            insert into seller_consents (user_id, terms_version, privacy_version, age_attested)
+            values (%s, %s, %s, %s)
+            on conflict (user_id) do update
+               set history = seller_consents.history || jsonb_build_object(
+                     'termsVersion', seller_consents.terms_version,
+                     'privacyVersion', seller_consents.privacy_version,
+                     'acceptedAt', seller_consents.accepted_at),
+                   terms_version = excluded.terms_version,
+                   privacy_version = excluded.privacy_version,
+                   age_attested = excluded.age_attested,
+                   accepted_at = now()
+            returning terms_version, privacy_version, age_attested, accepted_at
+            """,
+            (user_id, terms_version, privacy_version, age_attested),
+        )
+        return await cur.fetchone()
+
+
 async def get_account(conn: AsyncConnection, user_id: str) -> dict | None:
     async with conn.cursor() as cur:
         await cur.execute(
@@ -80,6 +119,42 @@ async def get_account(conn: AsyncConnection, user_id: str) -> dict | None:
             (user_id,),
         )
         return await cur.fetchone()
+
+
+# 첫 값 보존 + 다른 앱이 오면 'both' 로 승격. 한 문장으로 쓰는 이유는 경합이다 —
+# select 로 읽고 파이썬에서 합쳐 update 하면, 두 탭(셀러·FaceMarket)이 같은 순간에
+# 스탬프를 보낼 때 늦은 쪽이 이른 쪽을 덮어 'both' 가 한쪽 값으로 되돌아간다.
+# where 절이 이미 맞는 행을 걸러 내므로, 바뀔 것이 없으면 아무 행도 안 건드린다
+# (updated_at 을 헛되이 흔들지 않는다 — 이 컬럼은 다른 화면이 '최근 변경' 으로 읽는다).
+TOUCH_APP_ORIGIN_SQL = """
+update profiles
+   set app_origin = case when app_origin is null then %(app)s else 'both' end,
+       updated_at = now()
+ where user_id = %(user_id)s
+   and (app_origin is null or app_origin not in (%(app)s, 'both'))
+returning app_origin
+"""
+
+
+async def touch_app_origin(
+    conn: AsyncConnection, user_id: str, app: str
+) -> str | None:
+    """이 계정의 가입 출처를 기록하고 현재 값을 돌려준다 (app_origin.py 의 merge 규칙).
+
+    이미 맞게 적혀 있으면 쓰기 없이 읽기만 한다 — 로그인마다 불리는 경로라, 안 바뀌는
+    사용자에게 UPDATE 를 매번 날리면 그 행이 계속 죽은 튜플을 남긴다.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(TOUCH_APP_ORIGIN_SQL, {"user_id": user_id, "app": app})
+        row = await cur.fetchone()
+        if row:
+            return row.get("app_origin")
+        # 안 바뀌었다 = 이미 맞다. 현재 값을 그대로 돌려준다(프로필이 없으면 None).
+        await cur.execute(
+            "select app_origin from profiles where user_id = %s", (user_id,)
+        )
+        row = await cur.fetchone()
+    return row.get("app_origin") if row else None
 
 
 async def lock_draft_slot(conn: AsyncConnection, user_id: str) -> dict | None:

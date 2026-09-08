@@ -103,6 +103,7 @@ test('키·체형 문구는 실제 키를 구간보다 우선하고 있는 정�
     bodyType: 'slim',
   }), '마름');
   assert.equal(profilePhysiqueLine({}), '미정');
+  assert.equal(profilePhysiqueLine(null), '미정');
 });
 
 test('유효기간은 10년 이상이면 영구, 연 단위면 연수, 나머지는 일수로 표시한다', () => {

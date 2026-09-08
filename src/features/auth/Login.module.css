@@ -71,27 +71,78 @@
   margin-top: var(--sp-8);
 }
 
-.consent {
+/* 로그인 / 회원가입 탭 — 셀러에서만 렌더. 동의는 회원가입 탭에서만 받는다. */
+.tabs {
   width: 100%;
   display: flex;
-  align-items: flex-start;
-  gap: var(--sp-8);
+  gap: 4px;
+  padding: 3px;
+  background: var(--bg-2);
+  border-radius: 10px;
+}
+.tabs button {
+  flex: 1;
+  padding: 7px 0;
+  border: 0;
+  background: none;
+  border-radius: 8px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-2);
+  cursor: pointer;
+}
+.tabs button:hover:not(:disabled) { color: var(--fg-1); }
+.tabs button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* `.tabs button` 보다 특이도가 높아야 선택 상태가 실제로 칠해진다 —
+   `.tabOn` 만으로 두면 위의 `.tabs button` 규칙(요소 선택자 포함)에 져서 두 탭이 똑같이 보인다. */
+.tabs button.tabOn { background: var(--bg-1); color: var(--fg-1); box-shadow: 0 1px 2px var(--ring-strong); }
+
+/* 가입 동의 체크 — 체크박스는 **첫 줄 글자의 세로 중앙**에 정확히 건다.
+   flex-start + 눈대중 margin 으로 두면 두 줄로 접힐 때 위로 뜬 것처럼 보인다. */
+.consent {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  column-gap: var(--sp-8);
+  align-items: start;
+  text-align: left;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--fg-1);
+  cursor: pointer;
+}
+.consent input {
+  width: 16px;
+  height: 16px;
+  margin: calc((1.55em - 16px) / 2) 0 0;   /* (줄 높이 - 상자) / 2 */
+  accent-color: var(--fg-1);
+  cursor: pointer;
+}
+.consent a { color: var(--fg-1); font-weight: 600; text-underline-offset: 2px; }
+.consent a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-2); }
+
+/* 로그인 탭 하단 안내 — 신규를 가입 탭으로 보낸다. */
+.notice {
+  width: 100%;
+  margin: var(--sp-4) 0 0;
   color: var(--fg-2);
   font-size: 12px;
   line-height: 1.5;
+  text-align: center;
 }
-
-.consent input {
-  flex: none;
-  width: 16px;
-  height: 16px;
-  margin: 1px 0 0;
-  accent-color: var(--fg-1);
+.linkBtn {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--fg-1);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
 }
-
-.consent label { cursor: pointer; }
-.consent a { color: var(--fg-1); text-underline-offset: 2px; }
-.consent a:focus-visible { outline: 2px solid var(--fg-1); outline-offset: 2px; border-radius: var(--r-2); }
+.linkBtn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-2); }
 
 .btn {
   position: relative;             /* 아이콘은 좌측 고정, 라벨은 가운데 정렬 */

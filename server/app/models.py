@@ -14,6 +14,10 @@ from pydantic.alias_generators import to_camel
 ProjectStatus = Literal["draft", "generating", "done"]
 PlanTier = Literal["basic", "plus", "seller"]
 ComposeMode = Literal["basic", "extended"]
+# 가입 출처. 입력으로 받는 값과 저장되는 값이 다르다 — 'both' 는 서버가 승격시켜
+# 만드는 값이라 클라이언트가 주장할 수 없다 (app_origin.py).
+AppName = Literal["seller", "facemarket"]
+AppOrigin = Literal["seller", "facemarket", "both"]
 
 
 class CamelModel(BaseModel):
@@ -28,6 +32,21 @@ class Account(CamelModel):
     avatar: str
     credits: int  # = balance - reserved (§6)
     plan: PlanTier
+
+
+class AppOriginRequest(CamelModel):
+    """POST /v1/me/app-origin 의 본문.
+
+    app 은 **힌트일 뿐**이다. 서버는 브라우저가 붙인 Origin 헤더를 먼저 보고, 그것으로
+    판정이 되면 이 값을 무시한다(app_origin.resolve_app). 헤더로 구분이 안 되는
+    로컬 개발에서만 쓰인다 — 그래서 없어도 된다(None).
+    """
+
+    app: AppName | None = None
+
+
+class AppOriginResponse(CamelModel):
+    app_origin: AppOrigin | None
 
 
 class Project(CamelModel):
@@ -289,6 +308,13 @@ class RefundRequestBody(CamelModel):
 
     credit_source_id: str
     reason: str | None = None
+
+
+class SellerConsentIn(CamelModel):
+    """셀러 약관 동의 요청 — 게이트가 보여준 버전을 그대로 되돌려 보낸다(서버가 현재 버전과 대조)."""
+    terms_version: str
+    privacy_version: str
+    age_attested: bool
 
 
 class ErrorDetail(CamelModel):

@@ -52,7 +52,7 @@ export function ModelThumb({ uri, alt }) {
 }
 
 const _won = (n) => `₩${Number(n || 0).toLocaleString('ko-KR')}`;
-const _fmtDate = (iso) => { if (!iso) return null; try { return new Date(iso).toLocaleDateString('ko-KR'); } catch { return iso; } };
+const _fmtDate = (iso) => (iso ? seoulDate(iso, iso) : null);
 
 // 모델 상세 = 얼굴 라이선스 카드. 공개 검증 화이트리스트(verifyLicensePublic)만 표시하고
 // 얼굴은 게이트 썸네일, QR 은 무인증 검증 페이지({origin}/verify/{id}) 주소만 싣는다(생체정보 X).
@@ -141,6 +141,7 @@ function ModelDetailModal({ model, onClose, onSelect, selectable }) {
 // 시작해 내용 길이만큼만 유동 확장되게 하는 계산 (2026-07-13 사용자 피드백).
 const chWidth = (s) => [...s].reduce((n, ch) => n + (/[가-힣]/.test(ch) ? 1 : 0.55), 0).toFixed(1);
 import { CREDIT_COSTS } from '@/lib/limits.js';
+import { seoulDate } from '@/lib/datetime.js';
 import {
   createMeasurementFields,
   normalizeMeasurementValue,

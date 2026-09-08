@@ -98,6 +98,7 @@ class FakeCursor:
                         "height_bucket": model["height_bucket"],
                         "body_type": model["body_type"],
                         "allowed_use": self.store["license"]["allowed_use"],
+                        "forbidden_use": self.store["license"].get("forbidden_use", []),
                         "unit_price": self.store["license"]["unit_price"],
                         "license_valid_until": self.store["license"]["license_valid_until"],
                         "license_valid_days": self.store["license"]["valid_days"],
@@ -385,6 +386,7 @@ def test_cut_api(keypair, make_token, monkeypatch):
         },
         "license": {
             "allowed_use": ["상의", "아우터"],
+            "forbidden_use": ["속옷", "수영복"],
             "unit_price": 10000,
             "license_valid_until": LICENSE_VALID_UNTIL,
             "valid_days": 365,
@@ -898,6 +900,7 @@ def test_model_confirm_sets_two_selected_cuts_and_public_1024_images(
         "bodyType": "toned",
         "license": {
             "allowedUse": ["상의", "아우터"],
+            "forbiddenUse": ["속옷", "수영복"],
             "unitPrice": 10000,
             "validUntil": LICENSE_VALID_UNTIL.isoformat().replace("+00:00", "Z"),
             "validDays": 365,
@@ -994,6 +997,7 @@ def test_public_models_returns_only_eligible_profiles_without_pii(test_cut_api):
         "height_bucket": "m_175_180",
         "body_type": "toned",
         "allowed_use": ["상의", "아우터"],
+        "forbidden_use": ["속옷", "수영복"],
         "unit_price": 10000,
         "license_valid_until": LICENSE_VALID_UNTIL,
         "license_valid_days": 365,
@@ -1037,6 +1041,7 @@ def test_public_models_returns_only_eligible_profiles_without_pii(test_cut_api):
         "bodyType": "toned",
         "license": {
             "allowedUse": ["상의", "아우터"],
+            "forbiddenUse": ["속옷", "수영복"],
             "unitPrice": 10000,
             "validUntil": LICENSE_VALID_UNTIL.isoformat().replace("+00:00", "Z"),
             "validDays": 365,
@@ -1059,6 +1064,7 @@ def test_public_models_returns_only_eligible_profiles_without_pii(test_cut_api):
         "m.cover_image_url like 'facemarket/catalog/models/%'",
         "m.fullbody_image_url like 'facemarket/catalog/models/%'",
         "l.enrollment_id = m.current_enrollment_id",
+        "l.forbidden_use",
         "l.status = 'active'",
         "nullif(btrim(l.vc_id), '') is not null",
         "l.license_valid_until > now()",
