@@ -1181,6 +1181,10 @@ test('verified ModelHub shows the active dashboard even with zero settlements', 
     // 이 경량 JSX 하네스는 중첩 함수 컴포넌트를 React처럼 자동 실행하지 않으므로 실제 함수를
     // 한 번 펼쳐 내부의 사용자 행동까지 검사한다. UI 스텁 자체를 검사하는 것은 아니다.
     const dashboard = active.type(active.props);
+    assert.ok(findTree(dashboard, (node) => node.props?.children === '9,900원'));
+    assert.ok(findTree(dashboard, (node) => node.props?.children === '29,900원'));
+    assert.equal(findTree(dashboard, (node) => node.props?.children === '10,000원'), null);
+    assert.equal(findTree(dashboard, (node) => node.props?.children === '25,000원'), null);
     assert.ok(findTree(dashboard, (node) => node.type === 'h2' && node.props?.children === '활동 중'));
     assert.ok(findTree(dashboard, (node) => node.type === 'Link' && node.props?.to === '/payout'));
     assert.ok(findTree(dashboard, (node) => node.type === 'Link' && node.props?.to === '/model/withdraw'));
@@ -1578,6 +1582,8 @@ test('등록 완료 화면은 조건 요약과 Digital DNA 관리 경로를 보�
   try {
     const tree = harness.render();
     assert.ok(findTree(tree, (node) => node.type === 'h1' && node.props?.children === '축하해요, 등록이 끝났어요'));
+    assert.ok(findTree(tree, (node) => node.props?.children === '9,900원'));
+    assert.ok(findTree(tree, (node) => node.props?.children === '29,900원'));
     for (const label of ['활동명', '체형 밴드', '허용 품목', '건당 가격', '월정액', '유효기간', '승인 방식']) {
       assert.ok(findTree(tree, (node) => node.type === 'dt' && node.props?.children === label), label);
     }

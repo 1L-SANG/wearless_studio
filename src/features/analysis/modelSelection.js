@@ -1,4 +1,5 @@
 import { AI_MODEL_IDS } from './aiModels.js';
+import { FACEMARKET_PRICING } from '../../lib/facemarketPricing.js';
 
 export function resolveSelectedModelId({
   selectedModelId,
@@ -67,8 +68,7 @@ export function stylingModelPatchForAnalysis(analysis, aiModels) {
 export function realModelFeeLabel(selectedModelId, models, horizonCutCount = 1) {
   if (!isRealModelSelection(selectedModelId) || horizonCutCount < 1) return '';
   const selected = (models || []).find((model) => model.id === selectedModelId);
-  const unitPrice = Number(selected?.unitPrice);
-  return selected?.unitPrice != null && Number.isFinite(unitPrice) && unitPrice >= 0
-    ? ` + 실제 모델 ₩${(unitPrice * horizonCutCount).toLocaleString('ko-KR')}`
+  return selected
+    ? ` + 실제 모델 ₩${(FACEMARKET_PRICING.perCut * horizonCutCount).toLocaleString('ko-KR')}`
     : ' + 실제 모델 이용료 별도';
 }
