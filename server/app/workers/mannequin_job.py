@@ -44,6 +44,7 @@ from ..agents.prompts import (
     load_untuck_prompt_template,
     render_mannequin_prompt,
 )
+from ..agents.product_reference import ProductReference
 from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
 from ..services import canonical_reference, editor_garment_mask, qc, sam_fallback
 from ..services import generation_input_strategy as gis
@@ -221,6 +222,7 @@ def _maybe_augment_with_canonical(
     prompt = render_mannequin_prompt(
         template, ctx, product, analysis,
         seller_canon=settings.seller_text_canonicalize, knowledge=settings.retrieval_knowledge,
+        material_policy="photo_evidence",
     )
     if prompt_suffix:
         prompt = f"{prompt}\n\n{prompt_suffix}"
@@ -1091,13 +1093,14 @@ async def _apply_untuck_postpass(
 
 async def _apply_fabric_pass(
     *, pool, gemini, s, job_id, candidate, attempt, res, prod_imgs, calls_spent,
-    has_fine_pattern=False, image_size=None,
+    has_fine_pattern=False, image_size=None, product_refs=None,
 ):
     """미세 패턴 상품의 원단 패턴 2패스. → (선택 결과, 편집콜 소비 여부).
 
     가슴 2패스와 **입력이 다르다**: 생성본만 주는 게 아니라 상품 사진을 함께 넣는다.
     고칠 대상이 "상품 사진과 같은 패턴"이라 근거 이미지가 없으면 모델이 패턴을 지어낸다.
-    상품 사진은 앞쪽 몇 장만 — 전부 넣으면 편집 과제가 다시 흐려진다(과제 1개 원칙).
+    역할이 있는 RAW 참조는 Front → Back → Detail → BackDetail 순으로 전부 보낸다.
+    역할을 잃은 레거시 호출자도 인덱스로 슬롯을 추측하지 않고 전부 보존한다.
 
     fail-open — 거부·오류·빈 응답 어떤 경우에도 1패스 결과를 그대로 돌려준다.
     """
@@ -1111,11 +1114,24 @@ async def _apply_fabric_pass(
             "image_hash": hashlib.sha256(res.image).hexdigest()[:12]})
         return res, False
     before = hashlib.sha256(res.image).hexdigest()[:12]
+    if product_refs is None:
+        evidence_images = list(prod_imgs)
+        reference_slots = [None] * len(evidence_images)
+    else:
+        slot_order = {"Front": 0, "Back": 1, "Detail": 2, "BackDetail": 3}
+        ordered_refs = sorted(
+            product_refs,
+            key=lambda ref: slot_order.get(ref.slot, len(slot_order)),
+        )
+        evidence_images = [ref.image for ref in ordered_refs]
+        reference_slots = [ref.slot for ref in ordered_refs]
     try:
-        prompt = mannequin_fabric.build_prompt(load_fabric_prompt_template())
+        prompt = mannequin_fabric.build_prompt(
+            load_fabric_prompt_template(), reference_slots=reference_slots
+        )
         out = await gemini.generate_content_image(
             resolve_model(s, "image_high"),
-            prompt, [InlineImage(res.mime, res.image), *prod_imgs[:2]],
+            prompt, [InlineImage(res.mime, res.image), *evidence_images],
             image_size or s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
     except Exception as e:
         log.warning("fabric pass failed for job %s (원본 유지): %r", job_id, e)
@@ -1134,7 +1150,7 @@ async def _apply_fabric_pass(
 async def _apply_edits(
     *, pool, gemini, s, job_id, candidate, attempt, model, res, p2, prod_imgs, match_img,
     fit_profile, profile_hash, base_gender, calls_spent, clothing_type=None, enabled=True,
-    image_size=None, has_fine_pattern=False, cancel_check=None,
+    image_size=None, has_fine_pattern=False, cancel_check=None, product_refs=None,
 ):
     """채택본에 편집(축 교정 → 가슴 2패스)을 적용하고, 바뀌었으면 재판정·회귀 시 되돌린다.
 
@@ -1178,7 +1194,7 @@ async def _apply_edits(
     res, fabric_spent = await _apply_fabric_pass(
         pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
         res=res, prod_imgs=prod_imgs, calls_spent=calls_spent,
-        has_fine_pattern=has_fine_pattern, image_size=image_size)
+        has_fine_pattern=has_fine_pattern, image_size=image_size, product_refs=product_refs)
     await _cancel_checkpoint(cancel_check)
     calls_spent += fabric_spent
     # 편집 체인의 최종 출고본은 디코드 가능하고 불투명한 캔버스여야 한다. 깨진
@@ -1327,7 +1343,7 @@ async def _run_candidate(
     product_count, template, product, analysis, clothing_type, image_manifest="", fit_profile=None,
     adjusted_axes=(), fit_profile_source="legacy_analysis_fallback", ref_imgs=(),
     generation_path="fresh", parent_cut_img=None, adjust_directives="",
-    cancel_check=None, canonical_refs=None,
+    cancel_check=None, canonical_refs=None, product_refs=None,
 ) -> dict | None:
     """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None."""
     s = app.state.settings
@@ -1359,6 +1375,7 @@ async def _run_candidate(
         base_prompt = render_mannequin_prompt(
             template, ctx, product, analysis,
             seller_canon=s.seller_text_canonicalize, knowledge=s.retrieval_knowledge,
+            material_policy="photo_evidence",
         )
         # 레퍼런스 첨부 시에만 오염 가드를 프롬프트 말미에 강조(look-only). 재렌더도 같은 꼬리를 받는다.
         prompt_suffix = _STYLE_REF_GUARD if ref_imgs else ""
@@ -1406,6 +1423,7 @@ async def _run_candidate(
             "profile_hash": profile_hash,
             "prompt_hash": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
             "prompt_version": prompt_version,
+            "material_policy": "photo_evidence" if generation_path == "fresh" else "edit_photo_identity",
             "generation_path": generation_path,
             "input_source": fit_profile_source})
         await _cancel_checkpoint(cancel_check)
@@ -1519,7 +1537,8 @@ async def _run_candidate(
                 match_img=match_img, fit_profile=fit_profile, profile_hash=profile_hash,
                 base_gender=base_gender, calls_spent=calls_spent,
                 clothing_type=clothing_type, enabled=reprocess, image_size=image_size,
-                has_fine_pattern=has_fine_pattern, cancel_check=cancel_check)
+                has_fine_pattern=has_fine_pattern, cancel_check=cancel_check,
+                product_refs=product_refs)
             # D축 시리즈 일관성 — bust 2패스 뒤(측정본=출고본), R2 저장 직전. fail-open.
             # 재처리 대상이 아니면(=이미 판정을 거친 구제본) 그때의 스냅샷을 그대로 쓴다.
             series = (
@@ -1647,7 +1666,8 @@ async def _run_candidate(
                 prod_imgs=prod_imgs, match_img=match_img, fit_profile=fit_profile,
                 profile_hash=profile_hash, base_gender=base_gender, calls_spent=calls_spent,
                 clothing_type=clothing_type, image_size=image_size,
-                has_fine_pattern=has_fine_pattern, cancel_check=cancel_check)
+                has_fine_pattern=has_fine_pattern, cancel_check=cancel_check,
+                product_refs=product_refs)
             series = await _apply_series_qc(
                 app=app, pool=pool, s=s, job_id=job_id, project_id=project_id,
                 candidate=candidate, attempt=s.mannequin_max_attempts, res=res)
@@ -1753,6 +1773,7 @@ async def run_mannequin_job(app, job: dict) -> None:
             for slot, aid in mannequin.base_color_images(product):
                 a = await repo.get_asset_for_user(conn, user_id, aid)
                 if a:
+                    a.setdefault("id", aid)
                     a["slot"] = slot  # Front/Back/Detail/BackDetail — 매니페스트 라벨용
                     prod_assets.append(a)
             match_asset = None
@@ -1775,7 +1796,20 @@ async def run_mannequin_job(app, job: dict) -> None:
 
         # 2) 바이트 다운로드 (to_thread)
         base_img = InlineImage(base_asset["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, base_asset["r2_key"]))
-        prod_imgs = [InlineImage(a["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, a["r2_key"])) for a in prod_assets]
+        product_refs = [
+            ProductReference(
+                slot=a["slot"],
+                asset_id=str(a["id"]),
+                image=InlineImage(
+                    a["mime_type"],
+                    await asyncio.to_thread(app.state.r2.get_bytes, a["r2_key"]),
+                ),
+            )
+            for a in prod_assets
+        ]
+        # 생성/QC의 기존 bare 이미지 계약은 역할 참조에서 파생한다.
+        # 캐노니컬 참조는 별도 `canonical_refs` 경로에 계속 머물며 여기 섞지 않는다.
+        prod_imgs = [ref.image for ref in product_refs]
         match_img = None
         if match_asset:
             match_img = InlineImage(match_asset["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, match_asset["r2_key"]))
@@ -1914,7 +1948,7 @@ async def run_mannequin_job(app, job: dict) -> None:
                     fit_profile_source=fit_profile_source, ref_imgs=ref_imgs,
                     generation_path=generation_path, parent_cut_img=parent_cut_img,
                     adjust_directives=adjust_directives, cancel_check=_cancel_check,
-                    canonical_refs=canonical_refs)
+                    canonical_refs=canonical_refs, product_refs=product_refs)
             except _MannequinJobCancelled:
                 raise
             except Exception as e:
