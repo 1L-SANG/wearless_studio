@@ -28,7 +28,21 @@
   letter-spacing: -0.02em;
 }
 .browseLead { margin: 0; color: var(--fm-muted); font: 400 0.95rem/1.6 var(--font-body); }
-.browsePricing { margin: 0.2rem 0 0; color: var(--fm-muted); font: 400 0.88rem/1.6 var(--font-body); font-variant-numeric: tabular-nums; }
+/* 가격 한 줄: 금액 두 개만 잉크색·600, 라벨과 구분자·제한은 흐리게. 숫자는 고정폭. */
+.browsePricing {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.1rem 0.4rem;
+  margin: 0.35rem 0 0;
+  color: var(--fm-ink);
+  font: 400 0.9rem/1.6 var(--font-body);
+  font-variant-numeric: tabular-nums;
+}
+.browsePricing b { font-weight: 600; }
+.browsePricingLabel { margin-right: 0.15rem; color: var(--fm-muted); }
+.browsePricingLabel::after { content: ":"; }
+.browsePricingDim { color: var(--fm-muted); }
 
 /* 탭 줄: 위 검은 선 하나, 아래 옅은 선. 오른쪽은 인원 수. */
 .browseBar {

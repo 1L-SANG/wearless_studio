@@ -20,7 +20,7 @@ import { useEffect, useState } from 'react';
 import { Icon } from '@/components/ui.jsx';
 import { BROWSE_MODELS } from '../data/browseModels.js';
 import { fetchPublicModels, fromExampleModel } from '../data/publicModels.js';
-import { pricingLine } from '@/lib/facemarketPricing.js';
+import { pricingParts } from '@/lib/facemarketPricing.js';
 import { ModelDetailDialog } from './ModelDetailDialog.jsx';
 import s from '../BrowseModels.module.css';
 
@@ -54,8 +54,15 @@ export function BrowseSection() {
       <header className={s.browseHead}>
         <h1 className={s.browseTitle} id="fm-browse-title">등록 모델 리스트</h1>
         <p className={s.browseLead}>본인확인과 라이선스 발급을 마친 모델만 올라와요.</p>
-        {/* 가격은 모든 모델 공통(초기 고정값)이라 카드에는 안 적고 여기 한 줄로 밝힌다(2026-09-08 오너). */}
-        <p className={s.browsePricing}>가격은 모든 모델이 같아요. {pricingLine()}</p>
+        {/* 가격은 모든 모델 공통(초기 고정값)이라 카드에는 안 적고 여기 한 줄로 밝힌다(2026-09-08 오너).
+            금액만 굵게, 라벨·구분자·제한은 흐리게 — 셀러가 두 숫자만 집어 읽게 한다. */}
+        <p className={s.browsePricing}>
+          <span className={s.browsePricingLabel}>{pricingParts().label}</span>
+          <b>{pricingParts().perCut}</b>
+          <span className={s.browsePricingDim}>/</span>
+          <b>{pricingParts().monthly}</b>
+          <span className={s.browsePricingDim}>({pricingParts().cap})</span>
+        </p>
       </header>
 
       <div className={s.browseBar}>

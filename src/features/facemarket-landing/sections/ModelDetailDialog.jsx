@@ -135,7 +135,7 @@ export function ModelDetailDialog({ model, onClose }) {
           {/* 가격은 플랫폼 공통 고정값(lib/facemarketPricing.js). 모델별 단가는 초기에 쓰지 않는다. */}
           <div className={s.dialogPriceRow}>
             <span className={s.dialogPrice}>{pricingParts().perCut}</span>
-            <span className={s.dialogPriceNote}>/ {pricingParts().monthly} · {pricingParts().cap}</span>
+            <span className={s.dialogPriceNote}>/ {pricingParts().monthly} ({pricingParts().cap})</span>
           </div>
           {!isExample && (
             <a className={s.dialogCta} href={sellerStudioUrl(model.id)}>
