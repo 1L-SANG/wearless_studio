@@ -1,25 +1,63 @@
 /* =============================================================
    모델 상세 서랍 — 카드를 누르면 **오른쪽에서** 나온다(사용자 지시: "팝업처럼이 아니라 우측에서
-   기존 화면 흐려지면서"). 뒤 화면은 어둡게 + 흐리게 깔린다.
+   기존 화면 흐려지면서"). 뒤 화면은 어둡게 + 흐리게 깔린다. 서랍 자체는 검정 바탕.
 
-   구성(2026-09-07 오너 스케치): 위에 **확대샷 | 전신샷** 두 장 나란히 · 아래 이름 · 그 아래
-   두 칸 "신체 사이즈 | 라이선스 조건" · 우상단 X. 확대샷은 얼굴이 주로 보이는 스튜디오샷,
-   전신샷은 전신이 드러나고 포즈가 있는 스튜디오샷이다 — 모델이 /model/confirm 에서 고른 그 두 장이다.
+   구성(2026-09-08 오너 확정):
+     위   확대샷 | 전신샷 두 장이 가장자리까지 붙고, 아래쪽 그라데이션 위에 이름·성별·나이대가 얹힌다.
+     아래 세로 목록. 가격이 맨 위, 그다음 키·몸무게·착용 사이즈(단위 표시), 허용 품목·제외 품목·사용 기한.
+     끝   검증 한 줄(신분증 본인확인 · 라이선스 증서 발급).
+   지역·스타일 태그·'이 모델의 컷' 갤러리는 일부러 없다(같은 날 오너 결정).
 
-   모델 객체는 publicModels.js 가 만든 한 가지 모양이다(실모델·가상 예시 공통). 예시는 이름 옆에
-   '예시' 배지를 둔다 — 목록에만 고지가 있으면 이 창을 열어 놓고 캡처했을 때 그 사실이 같이 안 나간다.
-   예시 중 본인 전신 사진이 없는 모델은 전신 칸을 "준비 중"으로 비워 둔다 — 남의 전신을 돌려 쓰면
-   이름 밑에 다른 사람이 선다.
+   모델 객체는 publicModels.js 가 만든 한 가지 모양이다(실모델·가상 예시 공통). 값이 없는 줄은 그리지
+   않는다 — 예시는 착용 사이즈·제외 품목이 없고, 실모델은 몸무게·사이즈를 아직 받지 않는다.
+   예시는 이름 옆에 '예시' 배지를 둔다 — 목록에만 고지가 있으면 이 창을 캡처했을 때 같이 안 나간다.
 
-   접근성: 열릴 때 포커스를 창 안으로 들이고, Esc·바깥 클릭으로 닫고, 닫을 때 원래 있던
-   곳으로 포커스를 되돌린다. Tab 은 창 안에서만 돈다 — 안 가두면 뒤에 깔린 카드들로 포커스가
-   새어 나가고(그쪽은 aria-hidden 도 아니다) 화면 낭독 순서가 뒤죽박죽이 된다.
+   접근성: 열릴 때 포커스를 창 안으로 들이고, Esc·바깥 클릭으로 닫고, 닫을 때 원래 있던 곳으로
+   포커스를 되돌린다. Tab 은 창 안에서만 돈다.
    ============================================================= */
 import { useCallback, useEffect, useRef } from 'react';
 import { Icon } from '@/components/ui.jsx';
 import s from '../BrowseModels.module.css';
 
 const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])';
+const won = (n) => `${Number(n).toLocaleString('ko-KR')}원`;
+
+function buildRows(model) {
+  const { license } = model;
+  const rows = [];
+  if (license?.unitPrice != null) {
+    rows.push({
+      dt: '가격',
+      dd: (
+        <>
+          <span className={s.dialogPrice}>{won(license.unitPrice)}</span>
+          <small>건당</small>
+          {license.monthlyPrice != null && <small>· 월 {won(license.monthlyPrice)}, 한 쇼핑몰 30일 무제한</small>}
+        </>
+      ),
+    });
+  }
+  if (model.height) rows.push({ dt: '키', dd: model.height });
+  if (model.weight) rows.push({ dt: '몸무게', dd: model.weight });
+  if (model.sizes) rows.push({ dt: '착용 사이즈', dd: model.sizes });
+  if (license) {
+    rows.push({ dt: '허용 품목', dd: license.uses.length ? license.uses.join(' · ') : '미정' });
+    if (license.excluded.length) rows.push({ dt: '제외 품목', dd: license.excluded.join(' · ') });
+    const until = license.validUntilText || license.validity;
+    if (until) {
+      rows.push({
+        dt: '사용 기한',
+        dd: (
+          <>
+            {until}
+            {license.validUntilText && license.validity && <small>· {license.validity}</small>}
+          </>
+        ),
+      });
+    }
+  }
+  return rows;
+}
 
 export function ModelDetailDialog({ model, onClose }) {
   const panelRef = useRef(null);
@@ -72,8 +110,9 @@ export function ModelDetailDialog({ model, onClose }) {
     };
   }, []);
 
-  const { license } = model;
   const isExample = model.kind === 'example';
+  const meta = [model.gender, model.ageBand].filter(Boolean).join(' · ');
+  const rows = buildRows(model);
 
   return (
     // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
@@ -92,51 +131,41 @@ export function ModelDetailDialog({ model, onClose }) {
           <Icon name="x" size={18} stroke={2} />
         </button>
 
-        {/* 사진 두 장에 '확대샷·전신샷' 글자는 붙이지 않는다(2026-09-08 오너 지시). 보면 아는
-            것이고, 검정 바탕에서는 라벨이 사진보다 먼저 눈에 들어온다. alt 에만 남긴다. */}
-        <div className={s.dialogShots}>
-          <img alt={`${model.name} 확대샷`} className={s.dialogShot} src={model.closeup} />
+        {/* 사진 두 장 + 그라데이션 + 이름. 사진 밑 '확대샷·전신샷' 글자는 붙이지 않는다(alt 에만). */}
+        <div className={s.dialogHero}>
+          <img alt={`${model.name} 확대샷`} className={s.dialogHeroShot} src={model.closeup} />
           {model.fullbody
-            ? <img alt={`${model.name} 전신샷`} className={s.dialogShot} src={model.fullbody} />
-            : <div className={s.dialogShotEmpty}>전신샷 준비 중</div>}
+            ? <img alt={`${model.name} 전신샷`} className={s.dialogHeroShot} src={model.fullbody} />
+            : <div className={s.dialogHeroEmpty}>전신샷 준비 중</div>}
+          <div className={s.dialogHeroText}>
+            <h2 className={s.dialogName} id="fm-model-dialog-title">{model.name}</h2>
+            {(meta || isExample) && (
+              <p className={s.dialogMeta}>
+                {meta && <span>{meta}</span>}
+                {isExample && <span className={s.exampleBadge}>예시</span>}
+              </p>
+            )}
+          </div>
         </div>
 
-        <div className={s.dialogHead}>
-          <h2 className={s.dialogName} id="fm-model-dialog-title">{model.name}</h2>
-          {isExample && <span className={s.exampleBadge}>예시</span>}
-        </div>
+        <div className={s.dialogBody}>
+          {/* 라이선스 조건 세 항목(허용 품목·건당 단가·유효기간)은 실제 발급 폼(ModelLicense.jsx)이
+              받는 값 그대로다. 제외 품목은 같은 라이선스의 forbidden_use. */}
+          <dl className={s.dialogRows}>
+            {rows.map((row) => (
+              <div className={s.dialogRow} key={row.dt}>
+                <dt>{row.dt}</dt>
+                <dd>{row.dd}</dd>
+              </div>
+            ))}
+          </dl>
 
-        <div className={s.dialogCols}>
-          <section className={s.dialogCol}>
-            <h3 className={s.dialogColTitle}>신체 사이즈</h3>
-            <dl className={s.specList}>
-              {model.body.length > 0
-                ? model.body.map((row) => (
-                  <div className={s.specRow} key={row.dt}><dt>{row.dt}</dt><dd>{row.dd}</dd></div>
-                ))
-                : <div className={s.specRow}><dt>키·체형</dt><dd>아직 등록되지 않았어요</dd></div>}
-            </dl>
-          </section>
-
-          {/* 라이선스 조건의 세 항목은 실제 발급 폼(ModelLicense.jsx TermsStep)이 받는 값과
-              같은 것들이다 — 허용 품목·건당 단가·유효기간. 실모델은 그 폼에서 정한 값 그대로다. */}
-          <section className={s.dialogCol}>
-            <h3 className={s.dialogColTitle}>라이선스 조건</h3>
-            <dl className={s.specList}>
-              <div className={s.specRow}>
-                <dt>허용 품목</dt>
-                <dd>{license?.uses?.length ? license.uses.join(' · ') : '미정'}</dd>
-              </div>
-              <div className={s.specRow}>
-                <dt>건당 단가</dt>
-                <dd>{license?.unitPrice != null ? `${license.unitPrice.toLocaleString('ko-KR')}원` : '미정'}</dd>
-              </div>
-              <div className={s.specRow}>
-                <dt>유효기간</dt>
-                <dd>{license?.validity || '미정'}</dd>
-              </div>
-            </dl>
-          </section>
+          {model.verified && (
+            <p className={s.dialogVerify}>
+              <span>신분증 본인확인</span>
+              <span>라이선스 증서 발급</span>
+            </p>
+          )}
         </div>
       </div>
     </div>

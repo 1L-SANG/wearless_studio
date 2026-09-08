@@ -7,7 +7,7 @@
 import asyncio
 import logging
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from io import BytesIO
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -83,6 +83,8 @@ class ProfileLicenseView(CamelModel):
 class ModelProfileView(CamelModel):
     display_name: str
     gender: str | None = None
+    #: "20대 초반"처럼 구간만. 생년월일·정확한 나이는 절대 내보내지 않는다(명세 §3.4).
+    age_band: str | None = None
     height_cm: int | None = None
     height_bucket: str | None = None
     body_type: str | None = None
@@ -183,7 +185,7 @@ def _cut_view(row: dict, *, model_side: bool = False) -> dict:
 
 _MODEL_PROFILE_SELECT = """
 select m.id::text as id, m.display_name, m.gender,
-       a.height_cm, m.height_bucket, m.body_type,
+       a.height_cm, a.birthdate, m.height_bucket, m.body_type,
        l.allowed_use, l.unit_price, l.license_valid_until,
        round(extract(epoch from (l.license_valid_until - l.created_at)) / 86400.0)::integer
          as license_valid_days,
@@ -235,10 +237,33 @@ async def _load_model_profiles(
         return await cur.fetchall()
 
 
+def _today() -> date:
+    """테스트가 날짜를 고정할 수 있게 한 겹 뗀다."""
+    return date.today()
+
+
+def _age_band(birthdate) -> str | None:
+    """생년월일 → "20대 초반" 같은 구간. 셀러가 타깃 연령과 맞춰 보는 용도라 이 정도면 충분하고,
+    정확한 나이는 개인정보라 내보내지 않는다. 0~3 초반, 4~6 중반, 7~9 후반."""
+    if birthdate is None:
+        return None
+    if isinstance(birthdate, datetime):
+        birthdate = birthdate.date()
+    today = _today()
+    age = today.year - birthdate.year - ((today.month, today.day) < (birthdate.month, birthdate.day))
+    if age < 20:
+        return "10대"
+    decade = (age // 10) * 10
+    pos = age % 10
+    part = "초반" if pos <= 3 else ("중반" if pos <= 6 else "후반")
+    return f"{decade}대 {part}"
+
+
 def _profile_view(row: dict) -> dict:
     return {
         "display_name": row["display_name"],
         "gender": row.get("gender"),
+        "age_band": _age_band(row.get("birthdate")),
         "height_cm": row.get("height_cm"),
         "height_bucket": row.get("height_bucket"),
         "body_type": row.get("body_type"),

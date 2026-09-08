@@ -3,7 +3,7 @@
 import asyncio
 import contextlib
 import copy
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from io import BytesIO
 from types import SimpleNamespace
 
@@ -94,6 +94,7 @@ class FakeCursor:
                         "display_name": model["display_name"],
                         "gender": model["gender"],
                         "height_cm": self.store["application"]["height_cm"],
+                        "birthdate": self.store["application"].get("birthdate"),
                         "height_bucket": model["height_bucket"],
                         "body_type": model["body_type"],
                         "allowed_use": self.store["license"]["allowed_use"],
@@ -380,6 +381,7 @@ def test_cut_api(keypair, make_token, monkeypatch):
             "applicant_name": "민감한 실명",
             "contact_email": "model@example.com",
             "height_cm": 178,
+            "birthdate": date(2004, 3, 15),
         },
         "license": {
             "allowed_use": ["상의", "아우터"],
@@ -623,6 +625,22 @@ def test_admin_cannot_send_before_enrollment_and_vc_are_complete(
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "model_registration_incomplete"
     assert store["model"]["status"] == "pending"
+
+
+@pytest.mark.parametrize(
+    "birthdate,expected",
+    [
+        (date(2010, 1, 1), "10대"),
+        (date(2004, 3, 15), "20대 초반"),
+        (date(2001, 9, 8), "20대 중반"),
+        (date(1998, 5, 1), "20대 후반"),
+        (date(1994, 12, 31), "30대 초반"),
+        (None, None),
+    ],
+)
+def test_age_band_reports_only_a_decade_and_thirds(monkeypatch, birthdate, expected):
+    monkeypatch.setattr(facemarket_admin_models, "_today", lambda: date(2026, 9, 7))
+    assert facemarket_admin_models._age_band(birthdate) == expected
 
 
 def test_admin_can_resend_to_legacy_verified_model_without_fullbody(test_cut_api):
@@ -870,9 +888,11 @@ def test_model_confirm_sets_two_selected_cuts_and_public_1024_images(
     assert mine.json()["status"] == "awaiting_confirm"
     assert mine.json()["cuts"][0]["imageUri"].endswith(f"/{CUT_ID}/image")
     assert {cut["kind"] for cut in mine.json()["cuts"]} == {"closeup", "fullbody"}
+    monkeypatch.setattr(facemarket_admin_models, "_today", lambda: date(2026, 9, 7))
     assert mine.json()["profile"] == {
         "displayName": "정일상",
         "gender": "male",
+        "ageBand": "20대 초반",
         "heightCm": 178,
         "heightBucket": "m_175_180",
         "bodyType": "toned",
@@ -1005,10 +1025,13 @@ def test_public_models_returns_only_eligible_profiles_without_pii(test_cut_api):
     assert response.headers["cache-control"] == "public, max-age=60"
     assert len(response.json()["items"]) == 1
     item = response.json()["items"][0]
+    # 공개 후보 대역에는 생년월일이 없다 → 나이대 None. 구간 계산은 test_age_band_* 가 따로 본다.
+    assert "birthdate" not in response.text
     assert item == {
         "id": MODEL_ID,
         "displayName": "정일상",
         "gender": "male",
+        "ageBand": None,
         "heightCm": 178,
         "heightBucket": "m_175_180",
         "bodyType": "toned",

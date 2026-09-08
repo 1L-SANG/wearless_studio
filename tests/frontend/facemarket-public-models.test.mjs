@@ -2,29 +2,39 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  MONTHLY_MULTIPLIER,
   fetchPublicModels,
+  formatValidUntil,
   formatValidity,
   fromExampleModel,
   physiqueLine,
+  sizesText,
   toBrowseModel,
 } from '../../src/features/facemarket-landing/data/publicModels.js';
 import { BROWSE_MODELS } from '../../src/features/facemarket-landing/data/browseModels.js';
 
 /* =============================================================
    /models 가 실모델(공개 API)과 가상 예시를 한 모양으로 맞추는 어댑터의 계약.
-   명세: documents/facemarket_testcuts_profile_spec_v1.md §3.4·§6.
+   명세: documents/facemarket_testcuts_profile_spec_v1.md §3.4·§6, 상세 창 구성은 2026-09-08 오너 확정.
    ============================================================= */
 
 const ITEM = {
   id: '11111111-1111-1111-1111-111111111111',
   displayName: '정일상',
   gender: 'male',
+  ageBand: '20대 초반',
   heightCm: 178,
   heightBucket: 'm_175_180',
   bodyType: 'toned',
   closeupImageUrl: 'https://assets.example/facemarket/catalog/models/x/covers/a.webp',
   fullbodyImageUrl: 'https://assets.example/facemarket/catalog/models/x/covers/b.webp',
-  license: { allowedUse: ['상의', '아우터'], unitPrice: 10000, validUntil: '2027-09-07T00:00:00Z', validDays: 365 },
+  license: {
+    allowedUse: ['상의', '아우터'],
+    forbiddenUse: ['속옷', '수영복'],
+    unitPrice: 10000,
+    validUntil: '2027-09-07T00:00:00Z',
+    validDays: 365,
+  },
   confirmedAt: '2026-09-07T10:00:00Z',
 };
 
@@ -36,6 +46,12 @@ test('유효기간 라벨 — 1년·2년·90일·영구', () => {
   assert.equal(formatValidity(null), null);
 });
 
+test('만료 시각은 "년 월 일까지"로, 잘못된 값은 null', () => {
+  assert.equal(formatValidUntil('2027-09-07T12:00:00Z'), '2027년 9월 7일까지');
+  assert.equal(formatValidUntil('nope'), null);
+  assert.equal(formatValidUntil(null), null);
+});
+
 test('카드 보조 줄 — cm 가 있으면 cm, 없으면 키 구간, 체형은 한국어 라벨', () => {
   assert.equal(physiqueLine(ITEM), '키 178cm · 잔잔한 근육');
   assert.equal(physiqueLine({ heightBucket: 'f_160_165', bodyType: 'slim' }), '키 160–165cm · 마름');
@@ -45,20 +61,48 @@ test('카드 보조 줄 — cm 가 있으면 cm, 없으면 키 구간, 체형은
   assert.equal(physiqueLine({}), null);
 });
 
-test('실모델 → 화면 모델: 화이트리스트 필드만 담고 확대·전신 이미지를 나눈다', () => {
-  const model = toBrowseModel({ ...ITEM, email: 'leak@example.com', applicantName: '실명', r2Key: 'private/x' });
+test('착용 사이즈는 단위를 붙여 한 줄로, 하나도 없으면 null', () => {
+  assert.equal(sizesText({ topSize: 'm', bottomSize: 30, shoeSize: 270 }), '상의 M · 하의 30인치 · 신발 270mm');
+  assert.equal(sizesText({ bottomSize: 'L' }), '하의 L');
+  assert.equal(sizesText({}), null);
+});
+
+test('실모델 → 화면 모델: 화이트리스트 필드만 담고 상세 창 줄을 채운다', () => {
+  const model = toBrowseModel({
+    ...ITEM, weightKg: 62.4, topSize: 'M', bottomSize: 30, shoeSize: 270,
+    email: 'leak@example.com', applicantName: '실명', r2Key: 'private/x', birthdate: '2004-03-15',
+  });
   assert.equal(model.kind, 'real');
   assert.equal(model.name, '정일상');
+  assert.equal(model.gender, '남성');
+  assert.equal(model.ageBand, '20대 초반');
   assert.equal(model.closeup, ITEM.closeupImageUrl);
   assert.equal(model.fullbody, ITEM.fullbodyImageUrl);
+  assert.equal(model.height, '178cm');
+  assert.equal(model.weight, '62kg');
+  assert.equal(model.sizes, '상의 M · 하의 30인치 · 신발 270mm');
   assert.equal(model.spec, '키 178cm · 잔잔한 근육');
-  assert.deepEqual(model.body, [{ dt: '키', dd: '178cm' }, { dt: '체형', dd: '잔잔한 근육' }]);
-  assert.deepEqual(model.license, { uses: ['상의', '아우터'], unitPrice: 10000, validity: '1년' });
-  // 서버가 실수로 더 보내도 화면 모델에는 안 실린다.
+  assert.deepEqual(model.license, {
+    uses: ['상의', '아우터'],
+    excluded: ['속옷', '수영복'],
+    unitPrice: 10000,
+    monthlyPrice: 10000 * MONTHLY_MULTIPLIER,
+    validity: '1년',
+    validUntilText: '2027년 9월 7일까지',
+  });
+  assert.equal(model.verified, true);
+  // 서버가 실수로 더 보내도(이메일·실명·생년월일) 화면 모델에는 안 실린다.
   assert.deepEqual(
     Object.keys(model).sort(),
-    ['alt', 'body', 'closeup', 'fullbody', 'id', 'kind', 'license', 'name', 'spec'],
+    ['ageBand', 'alt', 'closeup', 'fullbody', 'gender', 'height', 'id', 'kind', 'license', 'name', 'sizes', 'spec', 'verified', 'weight'],
   );
+});
+
+test('몸무게·사이즈·나이대가 없으면 그 줄은 null 로 비운다', () => {
+  const model = toBrowseModel({ ...ITEM, ageBand: undefined });
+  assert.equal(model.ageBand, null);
+  assert.equal(model.weight, null);
+  assert.equal(model.sizes, null);
 });
 
 test('확대샷이 없는 항목은 버린다 — 카드 사진이 비면 안 된다', () => {
@@ -66,16 +110,21 @@ test('확대샷이 없는 항목은 버린다 — 카드 사진이 비면 안 �
   assert.equal(toBrowseModel(null), null);
 });
 
-test('가상 예시 → 같은 모양: 확대 = 초상, 전신 = 본인 전신 예시 첫 장(없으면 null)', () => {
+test('가상 예시 → 같은 모양: 확대 = 초상, 전신 = 본인 전신 예시 첫 장(없으면 null), 예시는 검증 표시 없음', () => {
   const w2 = fromExampleModel(BROWSE_MODELS.find((m) => m.id === 'w2'));
   const w1 = fromExampleModel(BROWSE_MODELS.find((m) => m.id === 'w1'));
   assert.equal(w2.kind, 'example');
   assert.equal(w2.closeup, '/models/women/w2.webp');
   assert.match(w2.fullbody, /^\/models\/women\/w2-body-types\//);
   assert.equal(w1.fullbody, null);
+  assert.equal(w1.gender, '여성');
   assert.equal(w1.spec, '168cm · 49kg');
-  assert.deepEqual(w1.body, [{ dt: '키', dd: '168cm' }, { dt: '몸무게', dd: '49kg' }]);
+  assert.equal(w1.height, '168cm');
+  assert.equal(w1.weight, '49kg');
+  assert.equal(w1.sizes, null);
+  assert.equal(w1.verified, false);
   assert.ok(w1.license.validity);
+  assert.equal(w1.license.monthlyPrice, Math.round(w1.license.unitPrice * MONTHLY_MULTIPLIER));
 });
 
 test('공개 목록 fetch — items 를 화면 모델로 바꾸고, 실패는 던진다', async () => {
