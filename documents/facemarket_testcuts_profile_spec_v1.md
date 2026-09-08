@@ -68,6 +68,8 @@ alter table public.fm_models add column if not exists fullbody_image_url text;
 - `GET /v1/facemarket/model/test-cuts`
   - 각 cut에 `kind` 추가.
   - `profile` 추가(아래 3.4 공통 shape). 미리보기가 공개 리스트와 똑같은 값을 보여 주기 위해서다.
+  - 활성 라이선스가 없으면 `profile`은 null이다. 화면은 라이선스 상태 안내와 다시 시도를
+    보여 주고 공개 확정을 허용하지 않는다. 다시 불러와 프로필이 복구되면 동의를 새로 받는다.
 - `POST /v1/facemarket/model/test-cuts/confirm`
   - body `{ "closeupCutId": "...", "fullbodyCutId": "..." }` 둘 다 필수. 기존 `approvedCutId`는 폐기.
   - 검증: 두 컷 모두 본인 모델 소유, `kind`가 각각 맞아야 함(아니면 400 `kind_mismatch`),
@@ -116,6 +118,8 @@ alter table public.fm_models add column if not exists fullbody_image_url text;
 - `heightCm` = 현재 enrollment가 물린 지원서(`fm_model_applications.height_cm`). 없으면 null.
 - `heightBucket`, `bodyType` = `fm_models` 값. 없으면 null.
 - `license` = 현재 enrollment의 활성 라이선스. `validDays = round((license_valid_until - created_at) / 1 day)`.
+- `forbiddenUse`는 라이선스에 저장된 제외 품목이다. 모델 본인 조회와 공개 목록 모두 동일하게
+  전달하며, 실제 제외 품목이 없을 때만 빈 배열을 보낸다.
 - 몸무게 컬럼은 어디에도 없다. 카드·상세는 "키 · 체형"으로 보여 준다(§7 오너 결정 1).
 
 ## 4. 어드민 UI (`AdminModels.jsx` TestCuts 섹션)
