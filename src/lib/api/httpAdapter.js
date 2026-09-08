@@ -57,7 +57,7 @@ const absolutizeAssetUrls = rebaseAssetUrls;
 // 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).
 // 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
 export async function http(path, {
-  method = 'GET', body, signal, keepalive, headers: requestHeaders,
+  method = 'GET', body, signal, keepalive, headers: requestHeaders, requireAuth = true,
 } = {}) {
   let data;
   try {
@@ -71,11 +71,19 @@ export async function http(path, {
     );
   }
   const token = data?.session?.access_token;
-  if (!token) {
+  if (!token && requireAuth) {
     // http 모드에 mock 폴백은 없다 — 무세션이면 전 호출이 401 폭탄이 되므로 요청 전에 명확히 실패시킨다.
     console.error(`API no-session ${path}`);
     throw new Error('로그인이 필요해요. 로그인 후 다시 시도해 주세요.');
   }
+  // requireAuth:false — 서버가 인증을 요구하지 않는 **공개 엔드포인트** 전용 탈출구.
+  // 위 가드는 "세션이 필요한 화면에서 무세션 호출이 401 폭탄으로 번지는 것"을 막으려고 있는데,
+  // 공개 화면(비로그인 /pricing)에서는 그 가드가 정반대로 작동한다 — 서버는 200 을 줄 준비가
+  // 돼 있는데 클라이언트가 요청조차 보내지 않아 화면이 빈 채로 남는다.
+  // **이 옵션을 쓸 자격은 서버 라우트가 정한다**: 대응하는 FastAPI 라우트에 require_user 가
+  // 없어야 한다(현재 /v1/pricing-plans 하나뿐). 인증이 걸린 경로에 붙이면 401 이 그대로 뚫고
+  // 올라와 사용자에게 "요청을 처리하지 못했어요" 만 남는다.
+  // 세션이 있으면 토큰은 그대로 실어 보낸다 — 서버가 무시할 뿐 거부하지 않는다.
 
   // Chrome DevTools의 Offline 에뮬레이션을 포함해 브라우저가 오프라인이면 요청 자체를 보내지
   // 않는다. 응답이 아예 없을 때 뒤따르는 가짜 CORS 메시지를 서버 장애로 오진하지 않게 한다.
@@ -707,8 +715,10 @@ export const httpAdapter = {
     return http(`/v1/projects/${projectId}`, { method: 'PATCH', body: patch });
   },
   // 크레딧 표시 페이지 (계약 §6) — 조회 전용. 구매·환불 UI는 PG 단계.
+  // 요금제는 **공개 카탈로그**다(서버 라우트에 require_user 없음). 랜딩에서 넘어온 비로그인
+  // 방문자가 /pricing 에서 가격을 봐야 하므로 세션 없이도 요청을 보낸다.
   async getPricingPlans() {
-    return http('/v1/pricing-plans');
+    return http('/v1/pricing-plans', { requireAuth: false });
   },
   async getCreditHistory() {
     return http('/v1/credits/history');

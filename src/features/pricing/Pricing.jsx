@@ -3,12 +3,22 @@
    표시 전용(계약 §6): 구독 / 추가구매(top-up)를 connected-tabs 로 전환해 카드 표시.
    현재 이용 중인 구독 플랜을 강조. 실제 구매/결제는 PG 연동 단계 — 버튼은 "준비 중".
    데이터: api.getPricingPlans() (http → /v1/pricing-plans, mock 폴백).
+
+   ▶ 이 라우트는 **공개다**(App.jsx 에서 RequireAuth 밖). 랜딩(wearless.kr)의 요금제
+     '선택' 이 여기로 사람을 보내므로 로그인 없이도 가격이 보여야 한다. 그래서 이 파일은
+     세션 없는 렌더를 정상 경로로 취급한다:
+       · 카탈로그는 공개 엔드포인트라 그냥 뜬다.
+       · account 는 비어 있다 → currentPlan 이 '' 이라 '이용 중' 강조만 빠진다.
+       · **결제 버튼만 로그인을 요구한다** — 누르면 결제창 대신 로그인 모달을 열고,
+         로그인 뒤 이 화면으로 돌려보낸다(openLogin('/pricing')).
+     결제 자체를 공개로 푼 게 아니다. 공개된 건 '얼마인가' 뿐이다.
    ============================================================= */
 import { useState } from 'react';
 import { WEARLESS_LEGAL_URLS } from '@/lib/legalLinks.js';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
+import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { Button, Icon, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
 import s from './Pricing.module.css';
 
@@ -22,10 +32,18 @@ export function Pricing() {
   const [payError, setPayError] = useState('');
   const account = useAppStore((a) => a.account);
   const currentPlan = (account?.plan || '').toLowerCase();
+  const { session, openLogin } = useAuth();
+  // 비로그인 방문자(랜딩에서 넘어온 사람)는 가격까지만 본다. 복귀 목표를 이 화면으로 심어
+  // 로그인 뒤 요금제로 돌아오게 한다 — 기본값(/create/input)으로 두면 결제하러 로그인한
+  // 사람이 입력 화면에 떨어져 요금제를 다시 찾아 들어와야 한다.
+  const requireLogin = () => openLogin('/pricing');
 
   // 추가구매: 서버가 주문(금액 스냅샷)을 만들고 → 그 값 그대로 토스 결제창을 연다.
   // 성공/실패는 리다이렉트로 돌아와 /payments/success|fail 이 승인·안내를 담당한다.
   async function buyTopup(planCode) {
+    // 세션 없이 여기 오면 createTossCheckout 이 401 로 떨어져 "결제를 시작하지 못했어요" 만
+    // 남는다 — 원인(로그인 안 함)도 다음 행동도 안 보인다. 결제창 대신 로그인 모달을 연다.
+    if (!session) { requireLogin(); return; }
     setPayError('');
     setBuying(planCode);
     try {
@@ -133,19 +151,30 @@ export function Pricing() {
                 )}
                 <div className={s.cta}>
                   {recurring ? (
-                    // 정기구독(빌링키)은 이번 범위 밖 — 기존 '준비 중' 유지
-                    <Button variant={isCurrent ? 'ghost' : 'primary'} block disabled title="결제 연동 준비 중">
-                      {isCurrent ? '이용 중' : '구독하기'} {!isCurrent && '(준비 중)'}
-                    </Button>
+                    // 정기구독(빌링키)은 이번 범위 밖 — 로그인 사용자에겐 기존 '준비 중' 유지.
+                    // 비로그인에게는 '준비 중' 대신 로그인을 권한다: 랜딩에서 '선택' 을 누르고
+                    // 넘어온 사람이 처음 만나는 버튼이라, 여기서 비활성 회색 버튼만 보이면
+                    // 로그인할 길이 이 화면에 없다(상단바 로그인은 별개 동선이다).
+                    !session ? (
+                      <Button variant="primary" block onClick={requireLogin}>
+                        로그인하고 시작하기
+                      </Button>
+                    ) : (
+                      <Button variant={isCurrent ? 'ghost' : 'primary'} block disabled title="결제 연동 준비 중">
+                        {isCurrent ? '이용 중' : '구독하기'} {!isCurrent && '(준비 중)'}
+                      </Button>
+                    )
                   ) : (
                     <Button
                       variant="primary" block
-                      disabled={!TOSS_CLIENT_KEY || buying !== null}
-                      title={TOSS_CLIENT_KEY ? undefined : '결제 키가 설정되지 않았어요'}
+                      // 비로그인일 때는 결제 키 유무로 막지 않는다 — 이 버튼의 다음 행동이
+                      // 결제가 아니라 로그인이라서다. 키 문제는 로그인한 뒤에 드러나면 된다.
+                      disabled={session ? (!TOSS_CLIENT_KEY || buying !== null) : false}
+                      title={!session || TOSS_CLIENT_KEY ? undefined : '결제 키가 설정되지 않았어요'}
                       onClick={() => buyTopup(p.code)}
                     >
-                      {buying === p.code ? '결제창 여는 중…' : '구매하기'}
-                      {!TOSS_CLIENT_KEY && ' (준비 중)'}
+                      {!session ? '로그인하고 구매하기' : (buying === p.code ? '결제창 여는 중…' : '구매하기')}
+                      {session && !TOSS_CLIENT_KEY && ' (준비 중)'}
                     </Button>
                   )}
                   <p className={s.purchaseConsent}>

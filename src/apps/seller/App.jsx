@@ -447,6 +447,40 @@ function ProductInputRoute() {
    목표가 마네킹인데 세션이 없으면(로그인 취소) 입력으로. */
 const DRAFT_SYNC_TIMEOUT_MS = 20000;
 
+/* ?login=1 — 다른 출처(랜딩 wearless.kr)에서 "로그인 창을 띄운 채로" 이 앱을 열게 하는
+   유일한 진입점. 로그인 모달(LoginGate)은 openLogin() 호출로만 열리므로, 앱 밖에서는
+   URL 말고 모달을 여는 수단이 없다 — 랜딩의 '로그인' 버튼이 이 쿼리를 붙여 온다.
+
+   ▶ 쿼리는 한 번 쓰고 **주소창에서 지운다**(navigate replace). 남겨두면 뒤로가기·새로고침·
+     공유된 링크마다 모달이 다시 뜬다. 지운 주소가 곧 로그인 복귀 목표이기도 하다
+     (openLogin 이 sessionStorage 'wl_postLogin' 에 심고, OAuth 복귀 '/' 에서 RootRedirect 가 소비).
+   ▶ loading 중에는 아무것도 안 한다. 세션이 확정되기 전에 열면, 이미 로그인된 사람에게도
+     모달이 한 번 번쩍이고 사라진다.
+   ▶ 이미 세션이 있으면 쿼리만 지우고 모달은 열지 않는다 — 로그인한 사람에게 로그인 창은 잡음이다.
+   ▶ opened ref 로 1회만 실행한다. openLogin 은 AuthProvider 가 useCallback 으로 안정화했지만,
+     guards.jsx 의 FacemarketLoginPrompt 가 같은 이유로 ref 를 한 겹 더 두고 있다(닫을 수 없는
+     모달 재발 방지) — 같은 규율을 여기서도 지킨다. */
+function LoginQueryGate() {
+  const { session, loading, openLogin } = useAuth();
+  const { pathname, search } = useLocation();
+  const navigate = useNavigate();
+  const handled = useRef(false);
+
+  useEffect(() => {
+    if (handled.current || loading) return;
+    const params = new URLSearchParams(search);
+    if (params.get('login') !== '1') return;
+    handled.current = true;
+    params.delete('login');
+    const rest = params.toString();
+    const here = `${pathname}${rest ? `?${rest}` : ''}`;
+    navigate(here, { replace: true });
+    if (!session) openLogin(here);
+  }, [loading, session, pathname, search, navigate, openLogin]);
+
+  return null;
+}
+
 function RootRedirect() {
   const { session, loading } = useAuth();
   // 저장소 접근은 AuthProvider 의 헬퍼를 지난다. **이 읽기는 useState 초기화 함수라 렌더
@@ -572,6 +606,7 @@ export default function App() {
   return (
     <>
       <ResumeTracker />
+      <LoginQueryGate />
       <Routes>
         <Route element={<ChromeLayout />}>
           <Route index element={<RootRedirect />} />
@@ -579,11 +614,21 @@ export default function App() {
           <Route path="privacy" element={<LegalRedirect to={WEARLESS_LEGAL_URLS.privacy} />} />
           <Route path="refund" element={<LegalRedirect to={WEARLESS_LEGAL_URLS.refund} />} />
           <Route path="model-license-terms" element={<LegalRedirect to={WEARLESS_LEGAL_URLS.modelLicenseTerms} />} />
+          {/* 요금제는 **공개**다 — RequireAuth 밖에 둔다.
+              랜딩(wearless.kr)의 요금제 '선택' 이 여기로 사람을 보낸다. 로그인 벽 뒤에 두면
+              비로그인 방문자가 RequireAuth 의 `<Navigate to="/create/input">` 로 조용히
+              튕겨(guards.jsx) 가격을 보러 온 사람에게 아무 설명 없이 입력 화면이 뜬다 —
+              랜딩에서 '선택' 을 누른 사람 눈에는 그냥 버튼이 고장 난 것으로 보인다.
+              화면 자체는 비로그인에서도 안전하다: 카탈로그(/v1/pricing-plans)는 공개고,
+              account.plan 이 없으면 '이용 중' 강조만 빠진다. 결제 버튼은 Pricing.jsx 가
+              비로그인일 때 로그인 모달로 돌린다 — **결제 자체는 여전히 로그인이 필요하다.**
+              /price 는 랜딩이 먼저 쓴 철자다(라우트는 언제나 /pricing 하나). 이미 나간
+              링크·광고 소재가 죽지 않게 별칭으로 받아 넘긴다. */}
+          <Route path="pricing" element={<Pricing />} />
+          <Route path="price" element={<Navigate to="/pricing" replace />} />
           {/* 보관함은 로그인 필요 */}
           <Route element={<RequireAuth />}>
             <Route path="library" element={<Library />} />
-            {/* 크레딧 에이전트 페이지 — auth 는 라우트만 등록, 본문 컴포넌트는 크레딧 에이전트 소유 */}
-            <Route path="pricing" element={<Pricing />} />
             <Route path="credits/history" element={<CreditsHistory />} />
             {/* 토스 결제 리다이렉트 착지점(WS3) — 승인은 success 화면이 서버에 위임한다 */}
             <Route path="payments/success" element={<PaymentSuccess />} />
