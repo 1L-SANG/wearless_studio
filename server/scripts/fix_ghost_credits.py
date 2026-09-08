@@ -5,7 +5,7 @@
 처리: ① 유령 balance를 원장 행과 함께 0으로 정산(원장-잔액 일관성 유지)
      ② repo.grant_subscription으로 정식 지급(버킷+잔액+원장 일관 생성) ③ 불변식 검증.
 
-실행: cd server && .venv/bin/python -m scripts.fix_ghost_credits --email daily13y@gmail.com [--plan basic]
+실행: cd server && .venv/bin/python -m scripts.fix_ghost_credits --email daily13y@gmail.com --plan PLAN_CODE
 """
 
 import argparse
@@ -32,7 +32,7 @@ from app import repo  # noqa: E402
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--email", required=True)
-    ap.add_argument("--plan", default="basic")
+    ap.add_argument("--plan", required=True)
     args = ap.parse_args()
 
     async with await psycopg.AsyncConnection.connect(

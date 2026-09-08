@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from pydantic.alias_generators import to_camel
 
 ProjectStatus = Literal["draft", "generating", "done"]
-PlanTier = Literal["basic", "plus", "seller"]
+PlanTier = Literal["free", "starter", "seller", "pro"]
 ComposeMode = Literal["basic", "extended"]
 # 가입 출처. 입력으로 받는 값과 저장되는 값이 다르다 — 'both' 는 서버가 승격시켜
 # 만드는 값이라 클라이언트가 주장할 수 없다 (app_origin.py).

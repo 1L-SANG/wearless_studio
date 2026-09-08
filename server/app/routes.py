@@ -12,6 +12,7 @@ import logging
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import get_args
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPException, Query, Request
@@ -52,6 +53,7 @@ from .models import (
     ErrorResponse,
     JobView,
     MannequinCut,
+    PlanTier,
     PricingPlan,
     Product,
     ProductPatch,
@@ -531,6 +533,9 @@ async def get_account(request: Request, user_id: str = Depends(require_user)):
             status_code=404,
             detail={"code": "account_not_found", "message": "계정 정보를 찾을 수 없습니다."},
         )
+    # 단일 배포 중 DB에 옛 요금제가 남아 있어도 계정 조회가 500으로 실패하지 않게 한다.
+    if row.get("plan") not in get_args(PlanTier):
+        row = {**row, "plan": "free"}
     return row
 
 

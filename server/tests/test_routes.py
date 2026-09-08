@@ -22,6 +22,23 @@ def _auth(make_token):
     return {"Authorization": f"Bearer {make_token()}"}
 
 
+@pytest.mark.parametrize("plan, expected", [
+    ("basic", "free"), ("plus", "free"), ("unknown", "free"),
+    ("free", "free"), ("starter", "starter"), ("seller", "seller"), ("pro", "pro"),
+])
+def test_account_reads_retired_plans_as_free(client, make_token, monkeypatch, plan, expected):
+    async def fake_get_account(conn, user_id):
+        return {"name": "한지수", "avatar": "", "credits": 24, "plan": plan}
+
+    monkeypatch.setattr(routes.repo, "get_account", fake_get_account)
+    patch_route_db(monkeypatch, routes)
+
+    response = client.get("/v1/me/account", headers=_auth(make_token))
+
+    assert response.status_code == 200, response.text
+    assert response.json()["plan"] == expected
+
+
 def test_editor_source_capability_parser_accepts_api_urls_and_rejects_malformed_hosts():
     asset_id = "33333333-3333-3333-3333-333333333333"
 

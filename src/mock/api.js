@@ -194,12 +194,14 @@ export const api = {
   async getPricingPlans() {
     await wait(80);
     return [
-      { id: 'm-basic', code: 'basic', kind: 'subscription', name: 'Basic', credits: 200, price: 19900, billingPeriod: 'monthly', sortOrder: 1 },
-      { id: 'm-plus', code: 'plus', kind: 'subscription', name: 'Plus', credits: 600, price: 49900, billingPeriod: 'monthly', sortOrder: 2 },
-      { id: 'm-seller', code: 'seller', kind: 'subscription', name: 'Seller', credits: 1400, price: 99900, billingPeriod: 'monthly', sortOrder: 3 },
-      { id: 'm-tb', code: 'topup_basic', kind: 'topup', name: '크레딧 200', credits: 200, price: 19900, billingPeriod: 'once', sortOrder: 11 },
-      { id: 'm-tp', code: 'topup_plus', kind: 'topup', name: '크레딧 600', credits: 600, price: 49900, billingPeriod: 'once', sortOrder: 12 },
-      { id: 'm-ts', code: 'topup_seller', kind: 'topup', name: '크레딧 1400', credits: 1400, price: 99900, billingPeriod: 'once', sortOrder: 13 },
+      { id: 'm-starter', code: 'starter', kind: 'subscription', name: 'Starter', credits: 6000, price: 29900, billingPeriod: 'monthly', sortOrder: 1 },
+      { id: 'm-seller-v9', code: 'seller', kind: 'subscription', name: 'Seller', credits: 18000, price: 79900, billingPeriod: 'monthly', sortOrder: 2 },
+      { id: 'm-pro', code: 'pro', kind: 'subscription', name: 'Pro', credits: 38000, price: 159000, billingPeriod: 'monthly', sortOrder: 3 },
+      { id: 'm-finish', code: 'topup_finish', kind: 'topup', name: '마무리 충전', credits: 1900, price: 9900, billingPeriod: 'once', sortOrder: 11 },
+      { id: 'm-start', code: 'topup_start', kind: 'topup', name: '시작 팩', credits: 4700, price: 24900, billingPeriod: 'once', sortOrder: 12 },
+      { id: 'm-repeat', code: 'topup_repeat', kind: 'topup', name: '반복 팩', credits: 13800, price: 69900, billingPeriod: 'once', sortOrder: 13 },
+      { id: 'm-season', code: 'topup_season', kind: 'topup', name: '시즌 팩', credits: 30500, price: 149000, billingPeriod: 'once', sortOrder: 14 },
+      { id: 'm-bulk', code: 'topup_bulk', kind: 'topup', name: '대량 팩', credits: 64000, price: 299000, billingPeriod: 'once', sortOrder: 15 },
     ];
   },
   async getCreditHistory() {
@@ -219,15 +221,14 @@ export const api = {
     ];
   },
   async createTossCheckout(planCode) {
-    const creditsByCode = { topup_basic: 200, topup_plus: 600, topup_seller: 1400 };
-    const priceByCode = { topup_basic: 19900, topup_plus: 49900, topup_seller: 99900 };
-    if (!creditsByCode[planCode]) throw new Error('존재하지 않는 충전 상품이에요.');
+    const plan = (await api.getPricingPlans()).find((p) => p.kind === 'topup' && p.code === planCode);
+    if (!plan) throw new Error('존재하지 않는 충전 상품이에요.');
     const orderId = uid('order');
     const order = {
       orderId,
-      amount: priceByCode[planCode],
-      credits: creditsByCode[planCode],
-      orderName: `크레딧 ${creditsByCode[planCode]}`,
+      amount: plan.price,
+      credits: plan.credits,
+      orderName: `크레딧 ${plan.credits}`,
       customerKey: 'mock-customer',
     };
     mockCheckoutOrders.set(orderId, order);
