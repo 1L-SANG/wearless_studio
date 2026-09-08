@@ -144,15 +144,11 @@
   height: var(--fm-header-h);
   margin-inline: calc(var(--fm-pad) * -1);
   padding-inline: var(--fm-pad);
-  background: rgba(248, 251, 253, 0.72);
-  backdrop-filter: blur(14px) saturate(1.6);
-  -webkit-backdrop-filter: blur(14px) saturate(1.6);
-}
-
-/* 블러를 못 쓰는 환경에서는 반투명이 아니라 불투명으로 — 글자 뒤로 카드가 지나가면
-   읽을 수 없다. 색은 페이지 그라데이션 맨 위 색이라 첫 화면에서는 이음매가 안 보인다. */
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .header { background: #f8fbfd; }
+  /* 흰 띠 + 밑선(2026-09-08 오너). 종전 rgba(248,251,253,.72) 는 푸른 기가 돌았고, 반투명이라
+     스크롤 중 뒤 카드 색이 비쳐 띠 색이 계속 흔들렸다. 불투명 흰색이면 어느 스크롤 위치에서도
+     같은 색이고 블러도 필요 없다. 밑선 하나가 "틀(상단바)"과 "내용"을 가른다. */
+  background: #fff;
+  border-bottom: 1px solid var(--fm-line);
 }
 
 .brand { display: inline-flex; align-items: center; gap: 0.55rem; color: inherit; text-decoration: none; }

@@ -4,8 +4,9 @@
    2026-09-08 오너 확정:
      제목 "등록 모델 리스트"(작게), 그 아래 설명 한 줄. 위 눈썹 글자 없음.
      탭은 전체·여성·남성뿐. 정렬 없음.
-     모델마다 흰 카드 하나: 사진, 이름, 성별·나이대. 가격·품목·검증 문구 없음(가격은 머리말 한 줄).
-     바탕은 옅은 중성 회색, 상단바는 원래대로(같은 날 오너 번복).
+     카드 상자 없이 사진 한 장 + 그 아래 한 줄(왼쪽 이름, 오른쪽 성별·나이대).
+     가격·품목·검증 문구는 카드에 없다 — 가격은 모든 모델이 같아 머리말에 한 번만 적는다.
+     바탕은 옅은 중성 회색, 상단바는 흰 띠 + 밑선(FacemarketLanding.module.css).
 
    목록 = **실제 등록 모델(앞)** + 가상 예시(뒤). 실모델은 GET /v1/facemarket/public/models 에서
    온다 — 모델이 /model/confirm 에서 확대샷·전신샷을 고르고 공개에 동의한 순간부터 여기 선다.
@@ -93,10 +94,10 @@ export function BrowseSection() {
                 <Icon name="arrowRight" size={14} stroke={2} />
               </span>
             </button>
-            <div className={s.cardBody}>
+            <div className={s.cardMeta}>
               <p className={s.cardName}>{model.name}</p>
               {(model.gender || model.ageBand) && (
-                <p className={s.cardMeta}>{[model.gender, model.ageBand].filter(Boolean).join(' · ')}</p>
+                <p className={s.cardSpec}>{[model.gender, model.ageBand].filter(Boolean).join(' · ')}</p>
               )}
             </div>
           </li>

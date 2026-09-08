@@ -77,15 +77,13 @@
 @media (min-width: 48rem) { .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (min-width: 64rem) { .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 
-/* 모델 하나 = 흰 카드 하나(2026-09-08 오너). 사진 위, 글 아래. 흰 바탕 위라 가는 선으로 경계를 준다. */
+/* 카드 상자를 두지 않는다(2026-09-08 오너 번복). 사진 한 장과 그 아래 한 줄이 전부이고,
+   카드 사이는 여백이 나눈다 — 상자를 없애면 사진이 격자의 주인이 된다. */
 .card {
-  overflow: hidden;
-  border: 1px solid #e8ebef;   /* 회색 바탕 위라 선은 아주 옅게, 흰 면이 경계를 만든다 */
-  border-radius: 1rem;
-  background: #fff;
-  transition: box-shadow 180ms ease, transform 180ms ease;
+  display: grid;
+  gap: 0.7rem;
+  align-content: start;
 }
-.card:hover { box-shadow: 0 0.75rem 1.8rem rgba(16, 21, 26, 0.12); transform: translateY(-2px); }
 
 /* 사진 칸이 곧 버튼이다(BrowseSection 머리말 — hover 전용 버튼을 두지 않는 이유). */
 .cardMedia {
@@ -94,12 +92,13 @@
   width: 100%;
   aspect-ratio: 3 / 4;
   padding: 0;
-  border: 0;
-  background: rgba(16, 21, 26, 0.04);
+  border: 1px solid var(--fm-line);
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.6);
   overflow: hidden;
   cursor: pointer;
 }
-.cardMedia:focus-visible { outline: 2px solid var(--fm-ink); outline-offset: -2px; }
+.cardMedia:focus-visible { outline: 2px solid var(--fm-ink); outline-offset: 2px; }
 
 .cardImage {
   display: block;
@@ -151,11 +150,18 @@
 .cardMedia:focus-visible .cardPill { opacity: 1; translate: -50% 0; }
 .cardPill svg { opacity: 0.85; }
 
-/* 카드 글: 이름이 주, 성별·나이대가 그 아래 보조. 가격은 카드에 없다(2026-09-08 오너).
-   이름과 보조 줄의 간격을 살짝 벌리고 보조 줄에 자간을 줘서 두 층으로 읽히게 한다. */
-.cardBody { display: grid; gap: 0.2rem; padding: 0.85rem 1rem 1rem; }
-.cardName { margin: 0; font: 600 1rem/1.35 var(--font-body); letter-spacing: -0.01em; }
-.cardMeta { margin: 0; color: var(--fm-muted); font: 400 0.8rem/1.4 var(--font-body); letter-spacing: 0.01em; }
+/* 사진 아래 한 줄: 왼쪽 이름, 오른쪽 성별·나이대. 가격은 카드에 없다(모두 같은 값이라 머리말에 한 번).
+   이름이 길면 줄바꿈되고 오른쪽 칸은 70% 를 넘지 않는다 — 두 값이 서로를 밀어내지 않게. */
+.cardMeta { display: flex; align-items: flex-end; gap: 0.6rem; }
+.cardName { flex: 1; min-width: 3em; margin: 0; overflow-wrap: anywhere; font: 600 0.95rem/1.4 var(--font-body); }
+.cardSpec {
+  max-width: 70%;
+  margin: 0 0 0 auto;
+  color: var(--fm-muted);
+  font: 400 0.82rem/1.5 var(--font-body);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
 
 .browseNotice {
   display: flex;
