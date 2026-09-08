@@ -144,16 +144,14 @@
   height: var(--fm-header-h);
   margin-inline: calc(var(--fm-pad) * -1);
   padding-inline: var(--fm-pad);
-  background: rgba(248, 251, 253, 0.72);
-  backdrop-filter: blur(14px) saturate(1.6);
-  -webkit-backdrop-filter: blur(14px) saturate(1.6);
+  /* 검정으로 고정(2026-09-08 오너 지시). 맨 위 안내 띠(.topNotice, #1a1b1d)와 같은 색이라
+     두 줄이 한 덩어리로 읽힌다. 불투명이라 블러도 필요 없다. 안의 글자·버튼은 아래에서
+     흑백을 뒤집는다 — 워드마크 SVG 는 검정 한 색이라 invert 로 흰색이 된다. */
+  --fm-header-bg: #1a1b1d;
+  background: var(--fm-header-bg);
+  color: #fff;
 }
-
-/* 블러를 못 쓰는 환경에서는 반투명이 아니라 불투명으로 — 글자 뒤로 카드가 지나가면
-   읽을 수 없다. 색은 페이지 그라데이션 맨 위 색이라 첫 화면에서는 이음매가 안 보인다. */
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .header { background: #f8fbfd; }
-}
+.header .brandWordmark { filter: invert(1); }
 
 .brand { display: inline-flex; align-items: center; gap: 0.55rem; color: inherit; text-decoration: none; }
 .brandLogo { width: 1.4rem; height: 1.4rem; }
@@ -169,14 +167,14 @@
   padding: 0.35rem 0;
   border: 0;
   background: none;
-  color: var(--fm-muted);
+  color: rgba(255, 255, 255, 0.62);   /* 검정 상단바 위의 보조 글자 */
   font: 500 0.92rem/1 var(--font-body);
   text-decoration: none;
   cursor: pointer;
   transition: color 140ms ease;
 }
 .navLink:hover {
-  color: var(--fm-ink);
+  color: #fff;
   text-decoration: underline;
   text-decoration-thickness: 2px;
   text-underline-offset: 0.45rem;
@@ -185,7 +183,7 @@
 /* 현재 페이지 표시. 색만으로 알리지 않는다 — 색각 이상이나 저대비 환경에서 구분이
    사라진다(WCAG 1.4.1). 밑줄을 함께 둬서 형태로도 읽히게 한다. */
 .navLinkActive {
-  color: var(--fm-ink);
+  color: #fff;
   text-decoration: underline;
   text-underline-offset: 0.45rem;
   text-decoration-thickness: 2px;
@@ -206,7 +204,8 @@
   cursor: pointer;
   transition: opacity 140ms ease;
 }
-.headerCta { padding: 0.68rem 1.1rem; }
+/* 검정 상단바 위에서는 버튼이 흰색, 글자가 검정(흑백 반전). 히어로의 .heroCta 는 그대로 검정이다. */
+.headerCta { padding: 0.68rem 1.1rem; background: #fff; color: var(--fm-ink); }
 .heroCta { padding: 0.95rem 1.6rem; font-size: 1rem; }
 
 /* 320px 폰에서는 워드마크(약 130px) + 긴 얼리버드 CTA + 햄버거가 한 줄의 가로 예산을
@@ -244,7 +243,8 @@
   transform: skewX(-18deg);
   pointer-events: none;
 }
-.headerCta:hover:not([disabled]), .heroCta:hover:not([disabled]) { background: #000; opacity: 1; }
+.heroCta:hover:not([disabled]) { background: #000; opacity: 1; }
+.headerCta:hover:not([disabled]) { background: #e6e6e4; opacity: 1; }
 .headerCta:hover:not([disabled])::after, .heroCta:hover:not([disabled])::after { animation: fmSheen 0.72s ease; }
 @keyframes fmSheen { to { left: 130%; } }
 @media (prefers-reduced-motion: reduce) {
@@ -267,10 +267,10 @@
   display: grid;
   gap: 0.4rem;
   padding: 1rem;
-  border: 1px solid var(--fm-line);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 1rem;
-  background: #fff;
-  box-shadow: 0 1.4rem 3rem rgba(16, 21, 26, 0.14);
+  background: var(--fm-header-bg, #1a1b1d);   /* 검정 상단바에서 내려오는 메뉴라 같은 색 */
+  box-shadow: 0 1.4rem 3rem rgba(16, 21, 26, 0.3);
 }
 
 @media (min-width: 48rem) {
@@ -979,12 +979,12 @@
   align-items: center;
   gap: 0.35rem;
   padding: 0.62rem 0.95rem;
-  border: 1px solid var(--fm-line);
+  border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.7);
-  color: var(--fm-muted);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.8);
   font: 500 0.85rem/1 var(--font-body);
   cursor: pointer;
   transition: color 140ms ease, background 140ms ease;
 }
-.headerQuiet:hover { background: #fff; color: var(--fm-ink); }
+.headerQuiet:hover { background: rgba(255, 255, 255, 0.18); color: #fff; }
