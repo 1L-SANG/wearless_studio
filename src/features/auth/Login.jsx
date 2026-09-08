@@ -12,6 +12,7 @@ import { useAuth } from './AuthProvider.jsx';
 import { supabase } from '@/lib/supabase.js';
 import { Modal } from '@/components/ui.jsx';
 import { IS_ADMIN, IS_FACEMARKET } from '@/lib/host.js';
+import { markSignupConsent } from '@/lib/signupConsent.js';
 import styles from './Login.module.css';
 
 /* 로컬 supabase(127.0.0.1/localhost)일 때만 이메일·비밀번호 로그인을 노출한다.
@@ -36,10 +37,12 @@ const BRAND_SUFFIX = IS_FACEMARKET ? 'FaceMarket' : 'Studio';
    **셀러(ai.wearless.kr)는 여기 들어오지 않는다** — 오브+wearless+Studio 그대로다. */
 const FACEMARKET_LOCKUP = IS_FACEMARKET || IS_ADMIN;
 
-/* 셀러 약관 동의는 **여기서 받지 않는다**. 소셜 로그인은 매번 이 화면을 지나므로 체크박스를
-   두면 "로그인할 때마다 동의"가 된다. 동의는 첫 로그인 뒤 SellerConsentGate 가 한 번만 받고
-   서버가 버전을 기억한다(개정 시에만 재동의). 여기엔 그 사실을 알리는 한 줄만 둔다 —
-   셀러 앱에서만. 모델(FaceMarket)은 등록 위저드에서 따로 받고, 관리자는 당사자가 아니다. */
+/* 셀러는 이 모달을 '로그인 / 회원가입' 두 탭으로 쓴다. 약관 동의는 **회원가입 탭에서만**
+   받는다 — 소셜 버튼 하나가 가입과 로그인을 겸하므로, 탭을 나누지 않으면 이미 가입한
+   사람에게도 매번 동의를 묻게 된다(2026-09-07 오너 지적). 동의는 가입 버튼을 누르기 전에
+   받고, 실제 기록은 OAuth 복귀 후 SignupCompletion 이 서버에 남긴다(signupConsent.js).
+   모델(FaceMarket)은 등록 위저드 1단계에서 따로 받고, 관리자는 셀러 약관의 당사자가 아니다 —
+   그 둘은 탭 없이 지금까지의 단일 화면 그대로다. */
 const IS_SELLER = !IS_FACEMARKET && !IS_ADMIN;
 
 /* 브랜드 로고 — Lucide(단색 스트로크) 세트와 성격이 달라 인라인 SVG 로 둔다. */
@@ -67,6 +70,8 @@ export function LoginGate() {
   const [email, setEmail] = useState('qa@local.test');
   const [password, setPassword] = useState('');
   const [localErr, setLocalErr] = useState('');
+  const [mode, setMode] = useState('login'); // 셀러 전용 탭: 'login' | 'signup'
+  const [signupConsent, setSignupConsent] = useState(false);
 
   /* 사용자 조작으로 모달을 닫는 유일한 경로(Esc·바깥 클릭). 진행 중인 로그인이 있으면
      취소가 아니다 — ui.jsx Modal 의 Escape 리스너는 window 에 붙어 있어서 프로바이더
@@ -125,7 +130,13 @@ export function LoginGate() {
   };
 
   // 복귀 지점(sessionStorage 'wl_postLogin')은 openLogin 이 이미 심어둠 — 여기선 redirect 만.
+  const isSignup = IS_SELLER && mode === 'signup';
+  const blocked = isSignup && !signupConsent;
+
   const handle = async (provider) => {
+    if (blocked) return;
+    // 가입 동의는 OAuth 왕복 뒤에 서버로 기록된다 — 지금은 계정이 없어서 남길 곳이 없다.
+    if (isSignup) markSignupConsent();
     setPending(provider);
     const { error } = await signIn(provider);
     if (error) setPending(null); // 성공 시엔 리다이렉트되어 언마운트됨
@@ -156,13 +167,37 @@ export function LoginGate() {
             셋 다 등록으로 향한다 — 랜딩 CTA·상단바 로그인(shell.jsx)·미인증 /model/*
             진입(App.jsx FacemarketLoginPrompt, 그 화면 문구도 '모델 등록은 로그인이
             필요해요'). 셀러 문구는 한 글자도 건드리지 않는다. */}
+        {IS_SELLER && (
+          <div className={styles.tabs} role="tablist" aria-label="로그인 또는 회원가입">
+            <button type="button" role="tab" aria-selected={mode === 'login'}
+              className={mode === 'login' ? styles.tabOn : undefined}
+              onClick={() => setMode('login')} disabled={pending !== null}>로그인</button>
+            <button type="button" role="tab" aria-selected={mode === 'signup'}
+              className={mode === 'signup' ? styles.tabOn : undefined}
+              onClick={() => setMode('signup')} disabled={pending !== null}>회원가입</button>
+          </div>
+        )}
+
         <p className={styles.subtitle}>
           {IS_FACEMARKET ? (
             <>소셜 계정으로 로그인하고<br />모델 등록을 이어가세요.</>
+          ) : isSignup ? (
+            <>소셜 계정으로 가입하고<br />마네킹컷 생성을 시작하세요.</>
           ) : (
             <>소셜 계정으로 로그인하고<br />마네킹컷 생성으로 이어가세요.</>
           )}
         </p>
+
+        {isSignup && (
+          <label className={styles.consent}>
+            <input type="checkbox" checked={signupConsent}
+              onChange={(event) => setSignupConsent(event.target.checked)} />
+            <span>
+              만 19세 이상이며 <a href="/terms" target="_blank" rel="noreferrer">이용약관</a>과{' '}
+              <a href="/privacy" target="_blank" rel="noreferrer">개인정보 처리방침</a>에 동의합니다.
+            </span>
+          </label>
+        )}
 
 
         <div className={styles.buttons}>
@@ -170,26 +205,26 @@ export function LoginGate() {
             type="button"
             className={`${styles.btn} ${styles.google}`}
             onClick={() => handle('google')}
-            disabled={pending !== null}
+            disabled={pending !== null || blocked}
           >
             <span className={styles.icon}><GoogleIcon /></span>
-            {pending === 'google' ? '이동 중…' : 'Google로 계속하기'}
+            {pending === 'google' ? '이동 중…' : isSignup ? 'Google로 가입하기' : 'Google로 계속하기'}
           </button>
           <button
             type="button"
             className={`${styles.btn} ${styles.kakao}`}
             onClick={() => handle('kakao')}
-            disabled={pending !== null}
+            disabled={pending !== null || blocked}
           >
             <span className={styles.icon}><KakaoIcon /></span>
-            {pending === 'kakao' ? '이동 중…' : '카카오로 계속하기'}
+            {pending === 'kakao' ? '이동 중…' : isSignup ? '카카오로 가입하기' : '카카오로 계속하기'}
           </button>
         </div>
 
-        {IS_SELLER && (
+        {IS_SELLER && mode === 'login' && (
           <p className={styles.notice}>
-            처음 로그인하면 <a href="/terms" target="_blank" rel="noreferrer">이용약관</a>과{' '}
-            <a href="/privacy" target="_blank" rel="noreferrer">개인정보 처리방침</a> 동의를 한 번만 확인해요.
+            Wearless가 처음이시면 <button type="button" className={styles.linkBtn}
+              onClick={() => setMode('signup')}>회원가입</button> 탭에서 시작하세요.
           </p>
         )}
 

@@ -4,40 +4,68 @@ import test from 'node:test';
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const login = read('../../src/features/auth/Login.jsx');
-const gate = read('../../src/features/auth/SellerConsentGate.jsx');
+const loginCss = read('../../src/features/auth/Login.module.css');
+const completion = read('../../src/features/auth/SignupCompletion.jsx');
+const completionCss = read('../../src/features/auth/SignupCompletion.module.css');
+const signupConsent = read('../../src/lib/signupConsent.js');
 const sellerApp = read('../../src/apps/seller/App.jsx');
 const facemarketApp = read('../../src/apps/facemarket/App.jsx');
 const adminApp = read('../../src/apps/admin/App.jsx');
 const modelApply = read('../../src/features/model/ModelApply.jsx');
 
-test('login screen asks for no consent checkbox — consent is a one-time gate, not per login', () => {
-  // 2026-09-07 오너 지적: 로그인마다 동의 체크는 말이 안 된다. 체크박스·게이팅 상태를 두지 않는다.
-  assert.doesNotMatch(login, /sellerConsent|NEEDS_SELLER_CONSENT|type="checkbox"/);
-  // 소셜 버튼 2개 + 로컬 폼 제출 1개 — 셋 다 진행 중 여부로만 잠긴다(동의 상태로 잠그지 않는다).
-  assert.equal(login.match(/disabled=\{pending !== null\}/g)?.length, 3);
-  // 대신 셀러에게만 "첫 로그인 때 한 번만 확인한다"는 안내 한 줄
-  assert.match(login, /const IS_SELLER = !IS_FACEMARKET && !IS_ADMIN;/);
-  assert.match(login, /\{IS_SELLER && \(/);
-  assert.match(login, /동의를 한 번만 확인해요/);
-  assert.match(login, /href="\/terms" target="_blank"/);
-  assert.match(login, /href="\/privacy" target="_blank"/);
+test('seller login modal splits login and signup — consent lives only in the signup tab', () => {
+  // 2026-09-07 오너: 로그인마다 동의는 틀렸다. 동의는 가입 행위 안에서 받는다.
+  assert.match(login, /const \[mode, setMode\] = useState\('login'\)/);
+  assert.match(login, /const isSignup = IS_SELLER && mode === 'signup';/);
+  assert.match(login, /role="tablist"/);
+  assert.equal(login.match(/role="tab"/g)?.length, 2);
+  // 체크박스는 가입 탭에서만 렌더된다
+  assert.match(login, /\{isSignup && \(\s*\n\s*<label className=\{styles\.consent\}>/);
+  assert.match(login, /만 19세 이상이며 <a href="\/terms" target="_blank"/);
+  assert.match(login, /<a href="\/privacy" target="_blank"/);
+  // 체크 전에는 두 소셜 버튼이 잠긴다
+  assert.match(login, /const blocked = isSignup && !signupConsent;/);
+  assert.equal(login.match(/disabled=\{pending !== null \|\| blocked\}/g)?.length, 2);
+  assert.match(login, /isSignup \? 'Google로 가입하기' : 'Google로 계속하기'/);
+  assert.match(login, /isSignup \? '카카오로 가입하기' : '카카오로 계속하기'/);
+  // 로그인 탭에는 동의가 없고, 신규를 가입 탭으로 보내는 안내만 있다
+  assert.match(login, /\{IS_SELLER && mode === 'login' && \(/);
   assert.doesNotMatch(login, /계속하면 서비스 약관에 동의하는 것으로 간주됩니다/);
 });
 
-test('seller consent gate is mounted only in the seller app and records age 19 + both documents', () => {
-  assert.match(sellerApp, /import \{ SellerConsentGate \} from '@\/features\/auth\/SellerConsentGate\.jsx';/);
-  assert.match(sellerApp, /<SellerConsentGate \/>/);
-  assert.doesNotMatch(facemarketApp, /SellerConsentGate/);
-  assert.doesNotMatch(adminApp, /SellerConsentGate/);
-  // 서버가 버전을 기억한다 — 게이트는 needsConsent 일 때만 그려지고, 닫기 없이 로그아웃만 준다.
-  assert.match(gate, /if \(!state\?\.needsConsent\) return null;/);
-  assert.match(gate, /<Modal narrow>/);
-  assert.match(gate, /signOut\?\.\(\)/);
-  assert.match(gate, /만 19세 이상이며, 위 이용약관과 개인정보 처리방침에 동의합니다\./);
-  assert.match(gate, /WEARLESS_LEGAL_URLS\.terms/);
-  assert.match(gate, /WEARLESS_LEGAL_URLS\.privacy/);
-  // 게이트가 보여준 버전을 그대로 보낸다(서버가 현재 버전과 대조)
-  assert.match(gate, /acceptSellerConsent\(\{ termsVersion: required\.terms, privacyVersion: required\.privacy \}\)/);
+test('checkbox sits on the first text line instead of being eyeballed', () => {
+  // 오너 지적(9/8): 체크 위치가 애매하다 → 줄 높이 기준으로 계산해 첫 줄 중앙에 건다.
+  for (const css of [loginCss, completionCss]) {
+    assert.match(css, /grid-template-columns: 16px 1fr;/);
+    assert.match(css, /margin: calc\(\(1\.55em - 16px\) \/ 2\) 0 0;/);
+  }
+});
+
+test('signup consent survives the OAuth round trip without asking twice', () => {
+  assert.match(login, /import \{ markSignupConsent \} from '@\/lib\/signupConsent\.js';/);
+  assert.match(login, /if \(isSignup\) markSignupConsent\(\);/);
+  assert.match(signupConsent, /sessionStorage/);
+  // 가입 탭에서 동의한 사람에게는 완료 화면을 띄우지 않고 조용히 기록만 남긴다
+  assert.match(completion, /if \(res\.needsConsent && !res\.accepted && hasFreshSignupConsent\(\)\)/);
+  assert.match(completion, /clearSignupConsent\(\);/);
+});
+
+test('signup completion is a full screen with one CTA and an X, seller app only', () => {
+  assert.match(sellerApp, /import \{ SignupCompletion \} from '@\/features\/auth\/SignupCompletion\.jsx';/);
+  assert.match(sellerApp, /<SignupCompletion \/>/);
+  assert.doesNotMatch(facemarketApp, /SignupCompletion/);
+  assert.doesNotMatch(adminApp, /SignupCompletion/);
+  // 버튼은 '가입 완료' 하나뿐 — 로그아웃 버튼은 없고 우측 위 X 가 그 역할을 한다
+  assert.match(completion, /revised \? '동의하고 계속하기' : '가입 완료'/);
+  assert.equal(completion.match(/<Button /g)?.length, 1);
+  assert.match(completion, /<Icon name="x"/);
+  assert.match(completion, /className=\{styles\.close\} onClick=\{\(\) => signOut\?\.\(\)\}/);
+  assert.match(completion, /aria-label="나가기\(로그아웃\)"/);
+  // 팝업이 아니라 전체 화면이다
+  assert.match(completionCss, /position: fixed;\s*\n\s*inset: 0;/);
+  assert.doesNotMatch(completion, /<Modal/);
+  assert.match(completion, /if \(!state\?\.needsConsent\) return null;/);
+  assert.match(completion, /만 19세 이상이며, 위 이용약관과 개인정보 처리방침에 동의합니다\./);
 });
 
 test('model application eligibility and attestation use age 19', () => {

@@ -1,0 +1,90 @@
+/* SignupCompletion — 가입 완료 전체 화면. 토큰만 사용(DESIGN.md: 흑백·ring·pill CTA). */
+.screen {
+  position: fixed;
+  inset: 0;
+  z-index: 60;                 /* 앱 크롬 위 */
+  background: var(--bg-1);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.bar {
+  flex: none;
+  height: 56px;
+  padding: 0 var(--sp-16);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+}
+.brand { display: inline-flex; align-items: center; gap: var(--sp-8); }
+.logo { height: 22px; width: auto; }
+.wordmark { height: 16px; width: auto; }
+
+.close {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: none;
+  border-radius: var(--r-4);
+  color: var(--fg-2);
+  cursor: pointer;
+}
+.close:hover:not(:disabled) { background: var(--bg-2); color: var(--fg-1); }
+.close:disabled { opacity: 0.5; cursor: default; }
+.close:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.body {
+  width: 100%;
+  max-width: 420px;
+  margin: 0 auto;
+  padding: clamp(28px, 8vh, 72px) var(--sp-16) 48px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-12);
+}
+
+.title { margin: 0; font-family: var(--font-body); font-size: 20px; font-weight: 700; letter-spacing: -0.015em; color: var(--fg-1); }
+.desc { margin: 0; font-size: 13px; line-height: 1.65; color: var(--fg-2); }
+
+.docs {
+  list-style: none;
+  margin: var(--sp-4) 0 0;
+  padding: var(--sp-12);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-2);
+  border-radius: var(--r-4);
+  box-shadow: 0 0 0 1px var(--ring);
+}
+.docs li { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
+.docs a { color: var(--fg-1); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.docs a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-2); }
+.ver { font-size: 12px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+
+/* 체크박스는 첫 줄 글자의 세로 중앙에 건다(Login.module.css .consent 와 같은 규칙). */
+.consent {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  column-gap: var(--sp-8);
+  align-items: start;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--fg-1);
+  cursor: pointer;
+}
+.consent input {
+  width: 16px;
+  height: 16px;
+  margin: calc((1.55em - 16px) / 2) 0 0;
+  accent-color: var(--fg-1);
+  cursor: pointer;
+}
+
+.error { margin: 0; font-size: 12px; color: var(--accent-danger, #b42318); }
+.actions { display: flex; justify-content: flex-end; margin-top: var(--sp-4); }
