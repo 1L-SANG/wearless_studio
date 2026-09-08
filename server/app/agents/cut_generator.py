@@ -32,7 +32,7 @@ from .gemini_image import GeminiImageClient, InlineImage
 from .model_routing import resolve_model
 from .fit_axes import build_fit_profile_block
 from .prompts import _product_block, _sanitize
-from . import pose_crop
+from . import face_identity, pose_crop
 from ..facemarket_physique import build_body_profile_block
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
@@ -1397,11 +1397,35 @@ async def generate(
         _detail_image_size(settings),
         **provider_kwargs,
     )
+    image, mime = res.image, res.mime
+    # 인물 LoRA 얼굴 패스 — provider 는 그대로(Gemini 가 옷·장면), 얼굴 타원만 뒤에서 교체.
+    # 플래그 기본 off + 레지스트리 faceIdentity 항목이 있는 모델만. 실패는 원본 폴백(예외 없음).
+    identity = _face_identity_spec(settings, spec, clothing_type)
+    if identity is not None:
+        image, mime = await face_identity.apply_face_pass(settings, image, mime, identity)
     if crop_pose_medium:
         return await pose_crop.crop_pose_medium(
-            settings, res.image, res.mime, clothing_type
+            settings, image, mime, clothing_type
         )
-    return res.image, res.mime
+    return image, mime
+
+
+def _face_identity_spec(settings, spec: dict, clothing_type) -> face_identity.FaceIdentitySpec | None:
+    """이 컷이 얼굴 패스 대상인가 — 플래그 on · 착용컷 · 얼굴이 실제로 담기는 컷(_face_fits) ·
+    가상모델 레지스트리 항목에 faceIdentity{loraPath,token} 있음. 하나라도 아니면 None(기존 동작)."""
+    if not getattr(settings, "face_identity_enabled", False):
+        return None
+    if spec.get("cutType") not in _WORN_CUTS or not spec.get("modelId"):
+        return None
+    if not _face_fits(spec, _is_bottom(clothing_type)):
+        return None
+    try:
+        entry = load_virtual_model_registry().get(str(spec["modelId"]))
+    except (OSError, json.JSONDecodeError) as e:
+        log.warning("face_identity: virtual model manifest unavailable for %s; skipping face pass: %r",
+                    spec["modelId"], e)
+        return None
+    return face_identity.face_identity_from_registry_entry(entry)
 
 
 async def repair(

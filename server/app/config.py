@@ -371,6 +371,11 @@ class Settings:
     fm_face_qc_enabled: bool = False
     fm_face_qc_threshold: float = 0.363  # OpenCV SFace 권장 코사인 동일인 기준선(캘리브 전 잠정)
     fm_face_qc_dir: str | None = None    # SFace/YuNet onnx 디렉터리. None이면 app/data/face_models
+    # ---- 인물 LoRA 얼굴 패스(agents/face_identity.py) — 기본 off. 켜도 virtual_models.json 항목에
+    # faceIdentity{loraPath,token} 가 있는 모델의 착용컷만 후처리한다. 기본값에서는 기존 동작이 한 줄도 안 바뀐다.
+    face_identity_enabled: bool = False
+    face_identity_backend_url: str | None = None  # 원격 GPU 렌더 서비스 URL. 없으면 로컬 Qwen(파드·개발 전용)
+    face_identity_lora_path: str | None = None    # LoRA 디렉터리(레지스트리 loraPath 기준) 또는 단일 .safetensors
     # ---- 이미지 실비 계측(내부용) ----
     # false 면 image_usage_events 적재를 끄고 로그만 남긴다.
     # **기본값은 app_env 가 정한다**(load_settings → _image_usage_persist): production 만 on.
@@ -652,6 +657,9 @@ def load_settings() -> Settings:
         fm_face_qc_enabled=(os.getenv("FM_FACE_QC_ENABLED", "false").lower() == "true"),
         fm_face_qc_threshold=float(os.getenv("FM_FACE_QC_THRESHOLD") or "0.363"),
         fm_face_qc_dir=os.getenv("FM_FACE_QC_DIR") or None,
+        face_identity_enabled=(os.getenv("FACE_IDENTITY_ENABLED", "false").lower() == "true"),
+        face_identity_backend_url=(os.getenv("FACE_IDENTITY_BACKEND_URL") or "").rstrip("/") or None,
+        face_identity_lora_path=os.getenv("FACE_IDENTITY_LORA_PATH") or None,
         fm_provenance_enabled=(
             os.getenv("FM_PROVENANCE_ENABLED", "false").lower() == "true"
         ),
