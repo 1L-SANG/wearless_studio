@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  MONTHLY_MULTIPLIER,
   fetchPublicModels,
   formatValidUntil,
   formatValidity,
@@ -95,7 +94,6 @@ test('실모델 → 화면 모델: 화이트리스트 필드만 담고 상세 �
     uses: ['상의', '아우터'],
     excluded: ['속옷', '수영복'],
     unitPrice: 10000,
-    monthlyPrice: 10000 * MONTHLY_MULTIPLIER,
     validity: '1년',
     validUntilText: '2027년 9월 7일까지',
   });
@@ -133,7 +131,6 @@ test('가상 예시 → 같은 모양: 확대 = 초상, 전신 = 본인 전신 �
   assert.equal(w1.sizes, null);
   assert.equal(w1.verified, false);
   assert.ok(w1.license.validity);
-  assert.equal(w1.license.monthlyPrice, Math.round(w1.license.unitPrice * MONTHLY_MULTIPLIER));
 });
 
 test('공개 목록 fetch — items 를 화면 모델로 바꾸고, 실패는 던진다', async () => {

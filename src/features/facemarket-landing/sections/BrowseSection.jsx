@@ -4,8 +4,8 @@
    2026-09-08 오너 확정:
      제목 "등록 모델 리스트"(작게), 그 아래 설명 한 줄. 위 눈썹 글자 없음.
      탭은 전체·여성·남성뿐. 정렬 없음.
-     모델마다 흰 카드 하나: 사진, 이름 + 성별·나이대, "1건 10,000원 / 1개월 25,000원". 품목·검증 문구 없음.
-     바탕은 흰색(회청 폐기), 상단바는 검정(LandingHeader 쪽 CSS).
+     모델마다 흰 카드 하나: 사진, 이름, 성별·나이대. 가격·품목·검증 문구 없음(가격은 머리말 한 줄).
+     바탕은 옅은 중성 회색, 상단바는 원래대로(같은 날 오너 번복).
 
    목록 = **실제 등록 모델(앞)** + 가상 예시(뒤). 실모델은 GET /v1/facemarket/public/models 에서
    온다 — 모델이 /model/confirm 에서 확대샷·전신샷을 고르고 공개에 동의한 순간부터 여기 선다.
@@ -19,6 +19,7 @@ import { useEffect, useState } from 'react';
 import { Icon } from '@/components/ui.jsx';
 import { BROWSE_MODELS } from '../data/browseModels.js';
 import { fetchPublicModels, fromExampleModel } from '../data/publicModels.js';
+import { pricingLine } from '@/lib/facemarketPricing.js';
 import { ModelDetailDialog } from './ModelDetailDialog.jsx';
 import s from '../BrowseModels.module.css';
 
@@ -28,7 +29,6 @@ const TABS = [
   { key: '여성', label: '여성' },
   { key: '남성', label: '남성' },
 ];
-const won = (n) => `${Number(n).toLocaleString('ko-KR')}원`;
 
 export function BrowseSection() {
   const [openId, setOpenId] = useState(null);
@@ -52,7 +52,9 @@ export function BrowseSection() {
     <section aria-labelledby="fm-browse-title" className={s.browse}>
       <header className={s.browseHead}>
         <h1 className={s.browseTitle} id="fm-browse-title">등록 모델 리스트</h1>
-        <p className={s.browseLead}>본인확인과 라이선스 발급을 마친 모델만 올라와요. 사용 조건은 모델이 직접 정했어요.</p>
+        <p className={s.browseLead}>본인확인과 라이선스 발급을 마친 모델만 올라와요.</p>
+        {/* 가격은 모든 모델 공통(초기 고정값)이라 카드에는 안 적고 여기 한 줄로 밝힌다(2026-09-08 오너). */}
+        <p className={s.browsePricing}>가격은 모든 모델이 같아요. {pricingLine()}</p>
       </header>
 
       <div className={s.browseBar}>
@@ -92,17 +94,9 @@ export function BrowseSection() {
               </span>
             </button>
             <div className={s.cardBody}>
-              <div className={s.cardRow}>
-                <p className={s.cardName}>{model.name}</p>
-                {(model.gender || model.ageBand) && (
-                  <p className={s.cardMeta}>{[model.gender, model.ageBand].filter(Boolean).join(' · ')}</p>
-                )}
-              </div>
-              {model.license?.unitPrice != null && (
-                <p className={s.cardPrice}>
-                  <b>1건 {won(model.license.unitPrice)}</b>
-                  {model.license.monthlyPrice != null && <span> / 1개월 {won(model.license.monthlyPrice)}</span>}
-                </p>
+              <p className={s.cardName}>{model.name}</p>
+              {(model.gender || model.ageBand) && (
+                <p className={s.cardMeta}>{[model.gender, model.ageBand].filter(Boolean).join(' · ')}</p>
               )}
             </div>
           </li>

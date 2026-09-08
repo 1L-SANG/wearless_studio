@@ -13,6 +13,7 @@ import {
   splitTestCutsByKind,
   validityLabel,
 } from './modelProfilePreview.js';
+import { pricingLine } from '@/lib/facemarketPricing.js';
 import s from './ModelConfirm.module.css';
 
 function PrivateCutImage({ cut, className, alt, eager = false }) {
@@ -88,9 +89,6 @@ function PublicProfilePreview({ profile, closeupCut, fullbodyCut }) {
   const allowedUse = profile?.license?.allowedUse?.length
     ? profile.license.allowedUse.join(' · ')
     : '미정';
-  const unitPrice = Number.isFinite(profile?.license?.unitPrice)
-    ? `${profile.license.unitPrice.toLocaleString('ko-KR')}원`
-    : '미정';
 
   return (
     <aside className={s.previewPanel} aria-labelledby="public-profile-preview-title">
@@ -144,7 +142,7 @@ function PublicProfilePreview({ profile, closeupCut, fullbodyCut }) {
             <h4>라이선스 조건</h4>
             <dl className={s.specList}>
               <div className={s.specRow}><dt>허용 품목</dt><dd>{allowedUse}</dd></div>
-              <div className={s.specRow}><dt>건당 단가</dt><dd>{unitPrice}</dd></div>
+              <div className={s.specRow}><dt>가격</dt><dd>{pricingLine()}</dd></div>
               <div className={s.specRow}>
                 <dt>유효기간</dt><dd>{validityLabel(profile?.license?.validDays)}</dd>
               </div>

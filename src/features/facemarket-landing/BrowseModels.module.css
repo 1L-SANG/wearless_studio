@@ -2,17 +2,18 @@
    모델 둘러보기(/models)와 상세 창.
    색·글자·간격은 랜딩 토큰(--fm-*)을 그대로 쓴다 — 그 토큰은 .shell 이 정의하고
    이 화면도 LandingShell 안에서 그려지므로 여기서 다시 정의하지 않는다.
-   2026-09-08 오너 확정: 바탕 흰색, 제목 작게, 탭 셋, 정렬 없음, 모델마다 흰 카드 하나.
+   2026-09-08 오너 확정: 바탕은 옅은 중성 회색(#f5f6f7), 제목 작게, 탭 셋, 정렬 없음, 모델마다 흰 카드 하나.
    ============================================================= */
 
-/* 바탕을 흰색으로. 셸(.shell)은 회청 그라데이션이라 이 섹션이 좌우 패딩을 넘어 화면 끝까지
-   흰색을 깔고, 셸의 아래 여백(4rem)까지 덮는다 — 안 그러면 카드 밖으로 회청이 비친다. */
+/* 바탕은 파란 기운 없는 옅은 회색. 셸(.shell)은 회청 그라데이션이라 이 섹션이 좌우 패딩을 넘어
+   화면 끝까지 깔고, 셸의 아래 여백(4rem)까지 덮는다 — 안 그러면 카드 밖으로 회청이 비친다.
+   흰 카드가 이 위에 놓여야 카드가 "물건"처럼 선다. */
 .browse {
   margin-inline: calc(var(--fm-pad) * -1);
   margin-bottom: -4rem;
   padding: clamp(1.75rem, 4vw, 3rem) var(--fm-pad) clamp(3rem, 6vw, 5rem);
   min-height: calc(100vh - var(--fm-header-h));
-  background: #fff;
+  background: #f5f6f7;
 }
 
 /* 머리말·탭·격자·고지는 전부 같은 열(폭 61rem)에 선다. */
@@ -27,6 +28,7 @@
   letter-spacing: -0.02em;
 }
 .browseLead { margin: 0; color: var(--fm-muted); font: 400 0.95rem/1.6 var(--font-body); }
+.browsePricing { margin: 0.2rem 0 0; color: var(--fm-muted); font: 400 0.88rem/1.6 var(--font-body); font-variant-numeric: tabular-nums; }
 
 /* 탭 줄: 위 검은 선 하나, 아래 옅은 선. 오른쪽은 인원 수. */
 .browseBar {
@@ -78,8 +80,8 @@
 /* 모델 하나 = 흰 카드 하나(2026-09-08 오너). 사진 위, 글 아래. 흰 바탕 위라 가는 선으로 경계를 준다. */
 .card {
   overflow: hidden;
-  border: 1px solid var(--fm-line);
-  border-radius: 0.9rem;
+  border: 1px solid #e8ebef;   /* 회색 바탕 위라 선은 아주 옅게, 흰 면이 경계를 만든다 */
+  border-radius: 1rem;
   background: #fff;
   transition: box-shadow 180ms ease, transform 180ms ease;
 }
@@ -149,14 +151,11 @@
 .cardMedia:focus-visible .cardPill { opacity: 1; translate: -50% 0; }
 .cardPill svg { opacity: 0.85; }
 
-.cardBody { display: grid; gap: 0.3rem; padding: 0.75rem 0.9rem 0.9rem; }
-.cardRow { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
-.cardName { margin: 0; font: 600 0.95rem/1.4 var(--font-body); }
-.cardMeta { margin: 0; color: var(--fm-muted); font: 400 0.78rem/1.4 var(--font-body); white-space: nowrap; }
-/* "1건 10,000원 / 1개월 25,000원". 건당이 주, 월정액은 보조. 숫자는 고정폭. */
-.cardPrice { margin: 0; font: 500 0.88rem/1.4 var(--font-body); font-variant-numeric: tabular-nums; }
-.cardPrice b { font-weight: 600; }
-.cardPrice span { color: var(--fm-muted); }
+/* 카드 글: 이름이 주, 성별·나이대가 그 아래 보조. 가격은 카드에 없다(2026-09-08 오너).
+   이름과 보조 줄의 간격을 살짝 벌리고 보조 줄에 자간을 줘서 두 층으로 읽히게 한다. */
+.cardBody { display: grid; gap: 0.2rem; padding: 0.85rem 1rem 1rem; }
+.cardName { margin: 0; font: 600 1rem/1.35 var(--font-body); letter-spacing: -0.01em; }
+.cardMeta { margin: 0; color: var(--fm-muted); font: 400 0.8rem/1.4 var(--font-body); letter-spacing: 0.01em; }
 
 .browseNotice {
   display: flex;

@@ -14,10 +14,6 @@
 // 상대 경로인 이유: node --test 가 '@/' 별칭을 모른다(tests/frontend 의 다른 어댑터와 같은 규칙).
 import { bodyTypeLabel, heightBucketLabel } from '../../../lib/facemarketPhysique.js';
 
-/** 월정액 = 건당 × 2.5, 한 쇼핑몰 30일 무제한(2026-09-04 오너 확정, 구현 지시서 §1).
-    서버가 월정액을 내려주기 시작하면 그 값을 쓰고 이 상수는 지운다. */
-export const MONTHLY_MULTIPLIER = 2.5;
-
 const GENDER_LABEL = Object.freeze({ male: '남성', female: '여성' });
 
 /** 유효기간(일)을 사람이 읽는 말로. 라이선스 폼 선택지(90일·1년·2년)와 '영구'(3650일 이상)를 덮는다. */
@@ -103,8 +99,8 @@ function licenseView(license) {
   return {
     uses: clean(license.allowedUse),
     excluded: clean(license.forbiddenUse),
+    // 화면은 지금 플랫폼 고정가(lib/facemarketPricing.js)를 쓴다. 모델별 단가는 데이터로만 보존.
     unitPrice: hasPrice ? unitPrice : null,
-    monthlyPrice: hasPrice ? Math.round(unitPrice * MONTHLY_MULTIPLIER) : null,
     validity: formatValidity(license.validDays),
     validUntilText: formatValidUntil(license.validUntil),
   };
@@ -115,7 +111,7 @@ function licenseView(license) {
  * 화면 모델 모양(카드·상세 창이 같이 쓴다):
  *   { id, kind: 'real'|'example', name, alt, closeup, fullbody|null,
  *     gender, ageBand, height, weight, sizes, spec,
- *     license: { uses, excluded, unitPrice, monthlyPrice, validity, validUntilText }, verified }
+ *     license: { uses, excluded, unitPrice, validity, validUntilText }, verified }
  */
 export function toBrowseModel(item) {
   if (!item || !item.id || !item.closeupImageUrl) return null;
@@ -160,7 +156,6 @@ export function fromExampleModel(model) {
       uses: model.license.uses,
       excluded: [],
       unitPrice: model.license.unitPrice,
-      monthlyPrice: Math.round(model.license.unitPrice * MONTHLY_MULTIPLIER),
       validity: formatValidity(model.license.validDays),
       validUntilText: null,
     },
