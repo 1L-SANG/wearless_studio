@@ -75,7 +75,7 @@
 .docs li { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
 .docs a { color: var(--fg-1); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
 .docs a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-2); }
-.ver { font-size: 12px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.required { font-size: 12px; font-weight: 600; color: color-mix(in srgb, var(--link) 70%, var(--fg-1)); }
 
 /* 체크박스는 첫 줄 글자의 세로 중앙에 건다(Login.module.css .consent 와 같은 규칙). */
 .consent {

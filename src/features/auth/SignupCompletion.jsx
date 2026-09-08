@@ -120,17 +120,17 @@ export function SignupCompletion() {
         <p className={styles.desc}>
           {revised
             ? '이용약관 또는 개인정보 처리방침이 개정됐어요. 바뀐 문서를 확인하고 동의하면 이어서 쓸 수 있어요.'
-            : '아직 가입이 끝나지 않았어요. 아래 문서에 동의하면 바로 시작할 수 있어요.'}
+            : <>아래 항목에 체크하고<br />바로 서비스를 이용해볼 수 있어요.</>}
         </p>
 
         <ul className={styles.docs}>
           <li>
             <a href={WEARLESS_LEGAL_URLS.terms} target="_blank" rel="noreferrer">이용약관</a>
-            <span className={styles.ver}>{required.terms}</span>
+            <span className={styles.required}>(필수)</span>
           </li>
           <li>
             <a href={WEARLESS_LEGAL_URLS.privacy} target="_blank" rel="noreferrer">개인정보 처리방침</a>
-            <span className={styles.ver}>{required.privacy}</span>
+            <span className={styles.required}>(필수)</span>
           </li>
         </ul>
 
