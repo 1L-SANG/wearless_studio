@@ -840,12 +840,11 @@ async def run_editor_image_job(app, job: dict) -> None:
               and getattr(app.state, "fm_chain", None) is not None):
             written_key = None
             written_cleanup_intent_id = None
-            # FaceMarket 온체인 정산 훅(선택과제2) — 에디터 컷도 얼굴 라이선스 1회 사용으로
-            # detail_page 와 동일하게 70/20/10 기록. payment_key=job:{id} 멱등(컨트랙트 중복
-            # revert + fm_settlements UNIQUE). best-effort: 정산 실패가 완료된 생성을 안 되돌림.
+            # FaceMarket 온체인 정산 훅(선택과제2). 같은 상품의 7일 내 에디터 수정은
+            # detail_page와 한 건으로 기록한다. best-effort: 정산 실패가 완료된 생성을 안 되돌림.
             try:
                 await facemarket.record_license_settlement(
-                    app, payment_key=f"job:{job_id}", license_id=str(fm_license_row["id"]),
+                    app, project_id=str(project_id), license_id=str(fm_license_row["id"]),
                     model_id=str(fm_license_row["model_id"]),
                     total=int(fm_license_row["unit_price"]), job_id=job_id)
             except Exception:

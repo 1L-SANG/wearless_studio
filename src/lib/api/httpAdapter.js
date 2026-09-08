@@ -540,7 +540,7 @@ export const httpAdapter = {
       timeoutMs: 900000,
       timeoutMessage: '상세페이지 생성이 예상보다 오래 걸리고 있어요. 잠시 후 다시 확인해 주세요.',
     });
-    // jobId 를 함께 반환 — 완료 후 정산 영수증(GET /jobs/{jobId}/settlement, payment_id=job:{jobId})을 조회한다.
+    // jobId 를 함께 반환 — 완료 후 정산 영수증(GET /jobs/{jobId}/settlement)을 조회한다. 정산은 상품(project) 단위 7일 창으로 묶인다.
     return { data: result.data, credits: result.credits, jobId: res.jobId };
   },
   /* ---- 에디터 대기 배관 (editor_wait_dev_spec §3) ----

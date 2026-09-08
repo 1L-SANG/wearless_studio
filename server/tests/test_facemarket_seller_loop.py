@@ -504,9 +504,37 @@ class _RouteCur:
                 {"license_id": license_id, "model_id": model_id, "status": "pending"},
             )
             self._one = None
+        elif "from jobs j" in normalized:
+            job = self.store["jobs"].get(params[0])
+            self._one = dict(job) if (job and job["user_id"] == params[1]) else None
+        elif normalized.startswith("select vc_id from fm_licenses"):
+            lic = self.store["licenses"].get(params[0])
+            self._one = {"vc_id": lic["vc_id"]} if lic else None
         elif "from fm_settlements st" in normalized:
-            row = self.store["settlements"].get(params[0])
-            self._one = row if (row and row["user_id"] == params[1]) else None
+            if "where j.project_id = %s" in normalized:
+                project_id, cutoff = params
+                rows = [
+                    r for r in self.store["settlements"].values()
+                    if self.store["jobs"].get(r["job_id"], {}).get("project_id") == project_id
+                    and r["created_at"] >= cutoff
+                ]
+                if "order by st.created_at desc" in normalized:
+                    rows.sort(key=lambda r: r["created_at"], reverse=True)
+                row = rows[0] if rows else None
+            elif "where j.id = %s" in normalized:
+                row = next(
+                    (r for r in self.store["settlements"].values() if r["job_id"] == params[0]),
+                    None,
+                )
+                job = self.store["jobs"].get(params[0])
+                if not job or job["user_id"] != params[1]:
+                    row = None
+            else:
+                raise AssertionError(f"unexpected settlement SQL: {normalized}")
+            self._one = dict(row) if row else None
+            if row and "left join fm_licenses" in normalized:
+                lic = self.store["licenses"].get(row["license_id"])
+                self._one["vc_id"] = lic["vc_id"] if lic else None
         else:  # pragma: no cover
             raise AssertionError(f"unexpected SQL: {normalized}")
 
@@ -538,9 +566,15 @@ def route(keypair, monkeypatch):
     app = create_app(make_settings(facemarket_enabled=True, fm_ci_pepper="pep"))
     app.state.jwt_key_resolver = lambda token: public_key
     store = {
-        "licenses": {}, "settlements": {}, "revocations": {},
+        "licenses": {}, "settlements": {}, "revocations": {}, "jobs": {},
         "commit_count": 0, "select_for_update": 0, "account_closed": False,
+        "now": datetime(2026, 9, 8, 12, tzinfo=timezone.utc),
     }
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return store["now"].astimezone(tz)
 
     @contextlib.asynccontextmanager
     async def fake_get_conn(_request):
@@ -552,6 +586,7 @@ def route(keypair, monkeypatch):
             raise
 
     monkeypatch.setattr(facemarket, "get_conn", fake_get_conn)
+    monkeypatch.setattr(facemarket, "datetime", Clock)
     return TestClient(app), store
 
 
@@ -640,15 +675,31 @@ def test_revoke_enqueue_failure_rolls_back_local_halt(route, make_token):
     assert store["commit_count"] == 0
 
 
-def test_job_settlement_receipt_shape(route, make_token):
+@pytest.fixture()
+def receipt(route, make_token):
     client, store = route
     tok, uid = _uid(make_token)
-    store["settlements"]["job:jid-1"] = {
-        "payment_id": "job:jid-1", "tx_hash": "0xabc", "chain_id": "1337",
+    store["jobs"]["jid-1"] = {"project_id": "p1", "user_id": uid}
+    store["licenses"]["lic-1"] = {"vc_id": "vc-1", "status": "active"}
+    payment_id = "product:p1:20260908"
+    store["settlements"][payment_id] = {
+        "id": "st-1", "license_id": "lic-1", "model_ref": "ref-1",
+        "payment_id": payment_id, "job_id": "jid-1", "tx_hash": "0xabc", "chain_id": "1337",
         "total_amount": 10000, "model_amount": 7000, "platform_amount": 2000,
-        "ops_amount": 1000, "chain_status": "confirmed", "vc_id": "vc-1",
-        "user_id": uid,
+        "ops_amount": 1000, "chain_status": "confirmed", "recorded_block": 1,
+        "created_at": store["now"],
     }
+    return client, store, tok
+
+
+@pytest.mark.parametrize("payment_id", ["job:jid-1", "product:p1:20260908"])
+@pytest.mark.parametrize("age_days", [0, 8])
+def test_job_settlement_receipt_shape(receipt, make_token, payment_id, age_days):
+    client, store, tok = receipt
+    row = store["settlements"].pop("product:p1:20260908")
+    row["payment_id"] = payment_id
+    store["settlements"][payment_id] = row
+    store["now"] += timedelta(days=age_days)
     r = client.get("/v1/facemarket/jobs/jid-1/settlement",
                    headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 200, r.text
@@ -657,14 +708,77 @@ def test_job_settlement_receipt_shape(route, make_token):
         "paymentId", "txHash", "chainId", "totalAmount", "modelAmount",
         "platformAmount", "opsAmount", "vcId", "chainStatus",
     }
-    assert b["paymentId"] == "job:jid-1" and b["txHash"] == "0xabc"
+    assert b["paymentId"] == payment_id and b["txHash"] == "0xabc"
     assert (b["modelAmount"], b["platformAmount"], b["opsAmount"]) == (7000, 2000, 1000)
     assert b["vcId"] == "vc-1" and b["chainStatus"] == "confirmed"
 
+    other = client.get("/v1/facemarket/jobs/jid-1/settlement",
+                       headers={"Authorization": f"Bearer {make_token(sub='other')}"})
+    assert other.status_code == 404
+
+
+@pytest.mark.parametrize("age_days, status", [(6, 200), (7, 200), (8, 404)])
+def test_job_settlement_regeneration_uses_product_window(receipt, make_token, age_days, status):
+    client, store, tok = receipt
+    store["jobs"]["jid-2"] = dict(store["jobs"]["jid-1"])
+    store["now"] += timedelta(days=age_days)
+
+    r = client.get("/v1/facemarket/jobs/jid-2/settlement",
+                   headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == status, r.text
+    if status == 200:
+        assert r.json() == {
+            "paymentId": "product:p1:20260908", "txHash": "0xabc", "chainId": "1337",
+            "totalAmount": 10000, "modelAmount": 7000, "platformAmount": 2000,
+            "opsAmount": 1000, "vcId": "vc-1", "chainStatus": "confirmed",
+        }
+
+    other = client.get("/v1/facemarket/jobs/jid-2/settlement",
+                       headers={"Authorization": f"Bearer {make_token(sub='other')}"})
+    assert other.status_code == 404
+
+
+def test_job_settlement_prefers_latest_same_product_over_own_row(receipt):
+    client, store, tok = receipt
+    old = store["settlements"]["product:p1:20260908"]
+    store["now"] += timedelta(days=1)
+    store["jobs"]["jid-2"] = dict(store["jobs"]["jid-1"])
+    store["licenses"]["lic-2"] = {"vc_id": "vc-2", "status": "active"}
+    store["settlements"]["product:p1:20260909"] = dict(
+        old, payment_id="product:p1:20260909", job_id="jid-2", license_id="lic-2",
+        tx_hash="0xnew", created_at=store["now"],
+    )
+    store["now"] += timedelta(days=1)
+    store["jobs"]["jid-3"] = dict(store["jobs"]["jid-1"], project_id="p2")
+    store["settlements"]["product:p2:20260910"] = dict(
+        old, payment_id="product:p2:20260910", job_id="jid-3", created_at=store["now"],
+    )
+
+    r = client.get("/v1/facemarket/jobs/jid-1/settlement",
+                   headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200, r.text
+    assert r.json()["paymentId"] == "product:p1:20260909"
+    assert r.json()["txHash"] == "0xnew" and r.json()["vcId"] == "vc-2"
+
+
+def test_job_settlement_receipt_without_license(receipt):
+    client, store, tok = receipt
+    store["settlements"]["product:p1:20260908"]["license_id"] = None
+
+    r = client.get("/v1/facemarket/jobs/jid-1/settlement",
+                   headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200, r.text
+    assert r.json()["vcId"] is None
+
 
 def test_job_settlement_404_when_unrecorded(route, make_token):
-    client, _store = route
-    tok, _sub = _uid(make_token)
+    client, store = route
+    tok, uid = _uid(make_token)
+    store["jobs"]["jid-1"] = {"project_id": "p1", "user_id": uid}
+    r = client.get("/v1/facemarket/jobs/jid-1/settlement",
+                   headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 404
+
     r = client.get("/v1/facemarket/jobs/unknown/settlement",
                    headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 404

@@ -207,6 +207,10 @@ class FakeCursor:
             self._many = [
                 dict(x) for x in self.store["intents"] if x["status"] == "broadcasting"
             ]
+        elif "from fm_settlement_signer_intents where payment_id" in s:
+            self._one = next(
+                (dict(x) for x in self.store["intents"] if x["payment_id"] == p[0]), None,
+            )
         elif s.startswith("update fm_settlement_signer_intents set status = 'broadcasting'"):
             intent = next(x for x in self.store["intents"] if x["payment_id"] == p[0])
             intent.update(status="broadcasting", attempted_at=datetime.now(timezone.utc))
@@ -234,6 +238,13 @@ class FakeCursor:
         elif "from fm_settlements where payment_id" in s:
             self._one = next(
                 (r for r in self.store["settlements"] if r["payment_id"] == p[0]), None)
+        elif "from fm_settlements st join jobs j" in s:
+            rows = [
+                r for r in self.store["settlements"]
+                if self.store["jobs"].get(r["job_id"]) == p[0]
+                and r["created_at"] >= p[1]
+            ]
+            self._one = max(rows, key=lambda r: r["created_at"], default=None)
         elif s.startswith("insert into fm_settlements"):
             payment_id = p[0]
             if any(r["payment_id"] == payment_id for r in self.store["settlements"]):
@@ -244,7 +255,7 @@ class FakeCursor:
                      "total_amount", "model_amount", "platform_amount", "ops_amount",
                      "tx_hash", "chain_id", "recorded_block"), p))
                 row.update(id=f"set-{len(self.store['settlements']) + 1}",
-                           chain_status="confirmed", created_at=FIXED_DT)
+                           chain_status="confirmed", created_at=self.store.get("now", FIXED_DT))
                 self.store["settlements"].append(row)
                 if self.store.get("insert_conflict"):
                     self.store["insert_conflict"] = False

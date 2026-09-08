@@ -2044,7 +2044,8 @@ def test_run_detail_page_job_splits_real_horizon_from_virtual_styling_and_settle
     assert "previewUrl" not in done_events["h-side"]
     assert done_events["styling"]["previewUrl"].startswith("https://r2.test/")
     assert len(captured["settlements"]) == 1
-    assert captured["settlements"][0]["total"] == 10000
+    assert captured["settlements"][0]["total"] == 5000
+    assert captured["settlements"][0]["project_id"] == "p1"
 
 
 def test_run_detail_page_job_partial_charge_uses_reservation_time_price(monkeypatch):

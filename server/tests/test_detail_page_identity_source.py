@@ -552,7 +552,7 @@ def test_real_worker_snapshot_wins_and_notice_is_masked(monkeypatch):
     assert captured["license_notice"]["modelName"] == "홍*동"
     assert captured["license_notice"]["licenseId"] == LICENSE_ID
     assert captured["settlement"] == {
-        "payment_key": "job:j1",
+        "project_id": "p1",
         "license_id": LICENSE_ID,
         "model_id": MODEL_ID,
         "total": 100,
