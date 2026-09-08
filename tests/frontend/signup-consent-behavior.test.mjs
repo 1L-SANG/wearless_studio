@@ -35,7 +35,7 @@ async function harness(t, { storage = new Map(), user = null, realHttp = false }
     setItem: (key, value) => memory.set(key, String(value)),
     removeItem: (key) => memory.delete(key),
   };
-  globalThis.window = { location: { origin: 'https://ai.wearless.kr', search: '' } };
+  globalThis.window = Object.assign(new EventTarget(), { location: { origin: 'https://ai.wearless.kr', search: '' } });
   const runtime = {
     frame: null, auth: null, user, listener: null, records: [], requests: [],
     oauth: async () => ({ error: null }),
@@ -212,6 +212,48 @@ test('logout clears signup intent independently of consent lookup', async (t) =>
   h.consent.markSignupConsent();
   await h.runtime.auth.signOut();
   assert.equal(h.consent.hasFreshSignupConsent(), false);
+});
+
+for (const provider of ['google', 'kakao']) {
+  test(`back navigation after ${provider} unlocks both social buttons and preserves the return destination`, async t => {
+    const h = await harness(t);
+    const social = (tree, name) => nodes(tree, node => node.props?.className?.includes(name))[0];
+    const calls = [];
+    h.runtime.oauth = async ({ provider }) => { calls.push(provider); return { error: null }; };
+    h.runtime.auth.openLogin('/create/storyboard');
+    await social(h.login(), provider).props.onClick();
+    assert.equal(google(h.login()).props.disabled, true);
+    window.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true }));
+    assert.equal(google(h.login()).props.disabled, false);
+    assert.equal(social(h.login(), 'kakao').props.disabled, false);
+    assert.equal(h.memory.get('wl_postLogin'), '/create/storyboard');
+    await social(h.login(), provider === 'google' ? 'kakao' : 'google').props.onClick();
+    assert.equal(calls.length, 2);
+  });
+}
+
+test('back from signup discards cancelled consent, and an old error cannot unlock a newer login', async t => {
+  const h = await harness(t);
+  const old = deferred();
+  h.runtime.oauth = () => old.promise;
+  const oldSignup = h.signup();
+  assert.equal(h.consent.hasFreshSignupConsent(), true);
+  window.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true }));
+  assert.equal(h.consent.hasFreshSignupConsent(), false);
+  h.runtime.oauth = async () => ({ error: null });
+  await google(h.login()).props.onClick();
+  old.resolve({ error: new Error('cancelled previous request') });
+  await oldSignup;
+  assert.equal(google(h.login()).props.disabled, true);
+  assert.equal(h.consent.hasFreshSignupConsent(), true);
+});
+
+test('ordinary pageshow does not unlock an OAuth request or consume its signup consent', async t => {
+  const h = await harness(t);
+  await h.signup();
+  window.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: false }));
+  assert.equal(google(h.login()).props.disabled, true);
+  assert.equal(h.consent.hasFreshSignupConsent(), true);
 });
 
 test('normal login discards an old signup marker but preserves the return destination', async (t) => {

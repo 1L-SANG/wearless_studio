@@ -72,6 +72,22 @@ export function LoginGate() {
   const [localErr, setLocalErr] = useState('');
   const [mode, setMode] = useState('login'); // 셀러 전용 탭: 'login' | 'signup'
   const [signupConsent, setSignupConsent] = useState(false);
+  const oauthAttempt = useRef(null);
+
+  useEffect(() => {
+    const resume = (event) => {
+      // 뒤로가기로 캐시된 화면이 복원되면 React의 대기 상태도 함께 돌아온다.
+      if (!event.persisted || !oauthAttempt.current) return;
+      clearSignupConsent(oauthAttempt.current.marker);
+      oauthAttempt.current = null;
+      setPending(null);
+    };
+    window.addEventListener('pageshow', resume);
+    return () => {
+      window.removeEventListener('pageshow', resume);
+      oauthAttempt.current = null;
+    };
+  }, []);
 
   /* 사용자 조작으로 모달을 닫는 유일한 경로(Esc·바깥 클릭). 진행 중인 로그인이 있으면
      취소가 아니다 — ui.jsx Modal 의 Escape 리스너는 window 에 붙어 있어서 프로바이더
@@ -140,11 +156,15 @@ export function LoginGate() {
     if (isSignup) markSignupConsent();
     else clearSignupConsent();
     const marker = readSignupConsent();
+    const attempt = { marker };
+    oauthAttempt.current = attempt;
     setPending(provider);
     try {
       const { error } = await signIn(provider);
       if (!error) return; // 성공 시엔 리다이렉트되어 언마운트됨
     } catch { /* OAuth 시작 실패도 이번 가입 동의를 버린다. */ }
+    if (oauthAttempt.current !== attempt) return;
+    oauthAttempt.current = null;
     clearSignupConsent(marker);
     setPending(null);
   };
