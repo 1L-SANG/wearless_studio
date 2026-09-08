@@ -188,6 +188,9 @@ async function modelComponentHarness({
       resolveId(id) {
         if (id === 'qrcode') return '\0fm-test-qrcode';
         if (id === '@/lib/brandUseCategories.js') return new URL('../../src/lib/brandUseCategories.js', import.meta.url).pathname;
+        // 날짜 표기는 스텁하지 않고 진짜 모듈을 쓴다 — 화면이 그리는 유효기간이 한국
+        // 시간인지도 이 테스트가 지나는 경로다(src/lib/datetime.js).
+        if (id === '@/lib/datetime.js') return new URL('../../src/lib/datetime.js', import.meta.url).pathname;
         if (id === 'react') return '\0fm-test-react';
         if (id === 'react/jsx-dev-runtime' || id === 'react/jsx-runtime') return '\0fm-test-jsx';
         if (id === 'react-router-dom') return '\0fm-test-router';

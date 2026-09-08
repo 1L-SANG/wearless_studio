@@ -15,6 +15,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/admin-ui/table.jsx';
 import { useToast } from '@/components/ui.jsx';
+import { seoulDateKey } from '@/lib/datetime.js';
 
 // fm_models_status_check(백엔드 MODEL_STATUSES)가 허용하는 네 값 전부를 다뤄야 한다.
 // reverification_required 라벨은 ModelHub.jsx 의 MODEL_STATUS_LABEL 과 맞춘다 — 운영자
@@ -36,7 +37,7 @@ const STATUS_VARIANT = {
 // 대신 원문자열을 보여준다 — 안 보이는 것보다 못생긴 게 낫다.
 const statusLabel = (status) => STATUS_LABEL[status] || status;
 const won = (n) => `${Number(n || 0).toLocaleString('ko-KR')}원`;
-const day = (iso) => (iso ? iso.slice(0, 10) : '-');
+const day = (iso) => seoulDateKey(iso);
 
 function Detail({ modelId, onChanged }) {
   // useToast() 는 { push, dismiss } 를 준다(.show 는 없다) — AdminApplications.jsx 의
