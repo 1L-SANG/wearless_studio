@@ -40,6 +40,7 @@ import {
   validityLabel,
 } from '../facemarket-landing/facemarketTerms.js';
 import s from './ModelRegister.module.css';
+import { seoulDate } from '@/lib/datetime.js';
 
 const CX_ORIGIN = 'https://cx.raonsecure.co.kr:17543';
 const CX_CONFIG_URL = import.meta.env.VITE_CX_CONFIG_URL
@@ -684,7 +685,7 @@ export function ModelRegister() {
   const completionValidity = completionSummary?.validityDays != null
     ? validityLabel(completionSummary.validityDays)
     : completionSummary?.licenseValidUntil
-      ? `${new Date(completionSummary.licenseValidUntil).toLocaleDateString('ko-KR')}까지`
+      ? `${seoulDate(completionSummary.licenseValidUntil)}까지`
       : completionSummary ? validityLabel(null) : null;
 
   if (step === 'loading') return <div className="wizard narrow"><div className="surface">등록 상태를 확인하고 있어요…</div></div>;
