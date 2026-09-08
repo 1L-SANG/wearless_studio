@@ -8,6 +8,8 @@ import {
   formatValidity,
   fromExampleModel,
   physiqueLine,
+  sellerStudioUrl,
+  sizeParts,
   sizesText,
   toBrowseModel,
 } from '../../src/features/facemarket-landing/data/publicModels.js';
@@ -61,10 +63,16 @@ test('카드 보조 줄 — cm 가 있으면 cm, 없으면 키 구간, 체형은
   assert.equal(physiqueLine({}), null);
 });
 
-test('착용 사이즈는 단위를 붙여 한 줄로, 하나도 없으면 null', () => {
+test('착용 사이즈는 단위를 붙여 칸별로, 하나도 없으면 null', () => {
+  assert.deepEqual(sizeParts({ topSize: 'm', bottomSize: 30, shoeSize: 270 }), { top: 'M', bottom: '30인치', shoe: '270mm' });
   assert.equal(sizesText({ topSize: 'm', bottomSize: 30, shoeSize: 270 }), '상의 M · 하의 30인치 · 신발 270mm');
-  assert.equal(sizesText({ bottomSize: 'L' }), '하의 L');
+  assert.deepEqual(sizeParts({ bottomSize: 'L' }), { bottom: 'L' });
+  assert.equal(sizeParts({}), null);
   assert.equal(sizesText({}), null);
+});
+
+test('셀러 스튜디오 링크는 ai.wearless.kr 에 모델 id 를 쿼리로 붙인다', () => {
+  assert.equal(sellerStudioUrl('abc/1'), 'https://ai.wearless.kr/?model=abc%2F1');
 });
 
 test('실모델 → 화면 모델: 화이트리스트 필드만 담고 상세 창 줄을 채운다', () => {
@@ -81,6 +89,7 @@ test('실모델 → 화면 모델: 화이트리스트 필드만 담고 상세 �
   assert.equal(model.height, '178cm');
   assert.equal(model.weight, '62kg');
   assert.equal(model.sizes, '상의 M · 하의 30인치 · 신발 270mm');
+  assert.deepEqual(model.sizeParts, { top: 'M', bottom: '30인치', shoe: '270mm' });
   assert.equal(model.spec, '키 178cm · 잔잔한 근육');
   assert.deepEqual(model.license, {
     uses: ['상의', '아우터'],
@@ -94,7 +103,7 @@ test('실모델 → 화면 모델: 화이트리스트 필드만 담고 상세 �
   // 서버가 실수로 더 보내도(이메일·실명·생년월일) 화면 모델에는 안 실린다.
   assert.deepEqual(
     Object.keys(model).sort(),
-    ['ageBand', 'alt', 'closeup', 'fullbody', 'gender', 'height', 'id', 'kind', 'license', 'name', 'sizes', 'spec', 'verified', 'weight'],
+    ['ageBand', 'alt', 'closeup', 'fullbody', 'gender', 'height', 'id', 'kind', 'license', 'name', 'sizeParts', 'sizes', 'spec', 'verified', 'weight'],
   );
 });
 

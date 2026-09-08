@@ -4,9 +4,10 @@
 
    구성(2026-09-08 오너 확정):
      위   확대샷 | 전신샷 두 장이 가장자리까지 붙고, 아래쪽 그라데이션 위에 이름·성별·나이대가 얹힌다.
-     아래 세로 목록. 가격이 맨 위, 그다음 키·몸무게·착용 사이즈(단위 표시), 허용 품목·제외 품목·사용 기한.
+     아래 가격(맨 위) → "OOO 모델로 상세페이지 만들러 가기" 버튼 → 키 | 몸무게 → 허용 품목 | 제외 품목
+          (한 줄에 양쪽) → 착용 사이즈(칸 나눠서, 맨 밑).
      끝   검증 한 줄(신분증 본인확인 · 라이선스 증서 발급).
-   지역·스타일 태그·'이 모델의 컷' 갤러리는 일부러 없다(같은 날 오너 결정).
+   지역·스타일 태그·사용 기한·'이 모델의 컷' 갤러리는 일부러 없다(같은 날 오너 결정).
 
    모델 객체는 publicModels.js 가 만든 한 가지 모양이다(실모델·가상 예시 공통). 값이 없는 줄은 그리지
    않는다 — 예시는 착용 사이즈·제외 품목이 없고, 실모델은 몸무게·사이즈를 아직 받지 않는다.
@@ -17,46 +18,26 @@
    ============================================================= */
 import { useCallback, useEffect, useRef } from 'react';
 import { Icon } from '@/components/ui.jsx';
+import { sellerStudioUrl } from '../data/publicModels.js';
 import s from '../BrowseModels.module.css';
 
 const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])';
 const won = (n) => `${Number(n).toLocaleString('ko-KR')}원`;
 
-function buildRows(model) {
-  const { license } = model;
-  const rows = [];
-  if (license?.unitPrice != null) {
-    rows.push({
-      dt: '가격',
-      dd: (
-        <>
-          <span className={s.dialogPrice}>{won(license.unitPrice)}</span>
-          <small>건당</small>
-          {license.monthlyPrice != null && <small>· 월 {won(license.monthlyPrice)}, 한 쇼핑몰 30일 무제한</small>}
-        </>
-      ),
-    });
-  }
-  if (model.height) rows.push({ dt: '키', dd: model.height });
-  if (model.weight) rows.push({ dt: '몸무게', dd: model.weight });
-  if (model.sizes) rows.push({ dt: '착용 사이즈', dd: model.sizes });
-  if (license) {
-    rows.push({ dt: '허용 품목', dd: license.uses.length ? license.uses.join(' · ') : '미정' });
-    if (license.excluded.length) rows.push({ dt: '제외 품목', dd: license.excluded.join(' · ') });
-    const until = license.validUntilText || license.validity;
-    if (until) {
-      rows.push({
-        dt: '사용 기한',
-        dd: (
-          <>
-            {until}
-            {license.validUntilText && license.validity && <small>· {license.validity}</small>}
-          </>
-        ),
-      });
-    }
-  }
-  return rows;
+/* 한 줄에 두 칸(왼쪽·오른쪽). 값이 없는 칸은 빼고, 남은 칸이 하나면 그 칸이 줄을 다 쓴다. */
+function Pair({ cells }) {
+  const live = cells.filter((cell) => cell.dd);
+  if (live.length === 0) return null;
+  return (
+    <div className={s.dialogPair}>
+      {live.map((cell) => (
+        <div className={s.dialogCell} key={cell.dt}>
+          <dt>{cell.dt}</dt>
+          <dd>{cell.dd}</dd>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function ModelDetailDialog({ model, onClose }) {
@@ -112,7 +93,7 @@ export function ModelDetailDialog({ model, onClose }) {
 
   const isExample = model.kind === 'example';
   const meta = [model.gender, model.ageBand].filter(Boolean).join(' · ');
-  const rows = buildRows(model);
+  const { license, sizeParts } = model;
 
   return (
     // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
@@ -149,16 +130,46 @@ export function ModelDetailDialog({ model, onClose }) {
         </div>
 
         <div className={s.dialogBody}>
-          {/* 라이선스 조건 세 항목(허용 품목·건당 단가·유효기간)은 실제 발급 폼(ModelLicense.jsx)이
-              받는 값 그대로다. 제외 품목은 같은 라이선스의 forbidden_use. */}
+          {/* 가격이 맨 위, 그 아래 셀러가 바로 가는 버튼(2026-09-08 오너 지시). 예시 모델은 갈 곳이
+              없으므로 버튼을 두지 않는다 — 눌러도 아무 일 없는 버튼은 안 둔다. */}
+          {license?.unitPrice != null && (
+            <div className={s.dialogPriceRow}>
+              <span className={s.dialogPrice}>{won(license.unitPrice)}</span>
+              <span className={s.dialogPriceNote}>건당</span>
+              {license.monthlyPrice != null && (
+                <span className={s.dialogPriceNote}>· 월 {won(license.monthlyPrice)}, 한 쇼핑몰 30일 무제한</span>
+              )}
+            </div>
+          )}
+          {!isExample && (
+            <a className={s.dialogCta} href={sellerStudioUrl(model.id)}>
+              {model.name} 모델로 상세페이지 만들러 가기
+              <Icon name="arrowRight" size={16} stroke={2} />
+            </a>
+          )}
+
+          {/* 키 | 몸무게, 허용 품목 | 제외 품목 — 한 줄에 양쪽. 사용 기한은 쓰지 않는다(오너 지시). */}
           <dl className={s.dialogRows}>
-            {rows.map((row) => (
-              <div className={s.dialogRow} key={row.dt}>
-                <dt>{row.dt}</dt>
-                <dd>{row.dd}</dd>
-              </div>
-            ))}
+            <Pair cells={[{ dt: '키', dd: model.height }, { dt: '몸무게', dd: model.weight }]} />
+            {license && (
+              <Pair cells={[
+                { dt: '허용 품목', dd: license.uses.length ? license.uses.join(' · ') : '미정' },
+                { dt: '제외 품목', dd: license.excluded.length ? license.excluded.join(' · ') : '없음' },
+              ]} />
+            )}
           </dl>
+
+          {/* 착용 사이즈는 맨 밑에, 칸을 나눠 읽기 쉽게. 값이 있을 때만. */}
+          {sizeParts && (
+            <div className={s.dialogSizes}>
+              <span className={s.dialogSizesTitle}>착용 사이즈</span>
+              <dl className={s.dialogSizeCells}>
+                {sizeParts.top && <div><dt>상의</dt><dd>{sizeParts.top}</dd></div>}
+                {sizeParts.bottom && <div><dt>하의</dt><dd>{sizeParts.bottom}</dd></div>}
+                {sizeParts.shoe && <div><dt>신발</dt><dd>{sizeParts.shoe}</dd></div>}
+              </dl>
+            </div>
+          )}
 
           {model.verified && (
             <p className={s.dialogVerify}>

@@ -56,18 +56,33 @@ export function weightText(weightKg) {
   return Number.isFinite(kg) && kg > 0 ? `${Math.round(kg)}kg` : null;
 }
 
-/** 착용 사이즈 한 줄, 단위 표시(2026-09-08 오너 지시). "상의 M · 하의 30인치 · 신발 270mm".
+/** 착용 사이즈를 칸별로, 단위 붙여서(2026-09-08 오너 지시). { top: 'M', bottom: '30인치', shoe: '270mm' }.
     하의는 숫자면 인치, 글자(S/M/L)면 그대로. 하나도 없으면 null. */
-export function sizesText({ topSize, bottomSize, shoeSize } = {}) {
-  const parts = [];
-  if (topSize) parts.push(`상의 ${String(topSize).toUpperCase()}`);
+export function sizeParts({ topSize, bottomSize, shoeSize } = {}) {
+  const out = {};
+  if (topSize) out.top = String(topSize).toUpperCase();
   if (bottomSize) {
     const n = Number(bottomSize);
-    parts.push(Number.isFinite(n) ? `하의 ${n}인치` : `하의 ${String(bottomSize).toUpperCase()}`);
+    out.bottom = Number.isFinite(n) ? `${n}인치` : String(bottomSize).toUpperCase();
   }
   const shoe = Number(shoeSize);
-  if (Number.isFinite(shoe) && shoe > 0) parts.push(`신발 ${shoe}mm`);
-  return parts.length ? parts.join(' · ') : null;
+  if (Number.isFinite(shoe) && shoe > 0) out.shoe = `${shoe}mm`;
+  return Object.keys(out).length ? out : null;
+}
+
+/** 착용 사이즈 한 줄(카드·검색용). "상의 M · 하의 30인치 · 신발 270mm". 없으면 null. */
+export function sizesText(profile = {}) {
+  const parts = sizeParts(profile);
+  if (!parts) return null;
+  return [parts.top && `상의 ${parts.top}`, parts.bottom && `하의 ${parts.bottom}`, parts.shoe && `신발 ${parts.shoe}`]
+    .filter(Boolean).join(' · ');
+}
+
+/** 셀러 스튜디오로 가는 링크. 랜딩 상단·푸터가 쓰는 ai.wearless.kr 과 같은 곳이고, 어느 모델을
+    골랐는지 쿼리로 넘긴다. 스튜디오 쪽에서 이 값을 읽어 모델을 미리 고르는 배선은 후속 작업. */
+export const SELLER_STUDIO_URL = 'https://ai.wearless.kr';
+export function sellerStudioUrl(modelId) {
+  return `${SELLER_STUDIO_URL}/?model=${encodeURIComponent(modelId)}`;
 }
 
 /** 카드 보조 줄. "키 178cm · 잔잔한 근육" / 한쪽만 있으면 그것만 / 둘 다 없으면 null. */
@@ -117,6 +132,7 @@ export function toBrowseModel(item) {
     height: heightText(item),
     weight: weightText(item.weightKg),
     sizes: sizesText(item),
+    sizeParts: sizeParts(item),
     spec: physiqueLine(item),
     license: licenseView(item.license),
     // 공개 목록 조건(§3.3)이 본인확인·증서 발급을 이미 요구하므로, 여기 온 모델은 둘 다 참이다.
@@ -138,6 +154,7 @@ export function fromExampleModel(model) {
     height: `${model.height}cm`,
     weight: `${model.weight}kg`,
     sizes: null,
+    sizeParts: null,
     spec: `${model.height}cm · ${model.weight}kg`,
     license: {
       uses: model.license.uses,

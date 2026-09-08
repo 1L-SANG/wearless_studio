@@ -291,28 +291,63 @@
 
 .dialogBody { padding: 0.25rem var(--dlg-pad) var(--dlg-pad); }
 
-/* 세로 목록: 왼쪽 라벨, 오른쪽 값, 줄마다 가는 선. 가격은 값 중 유일하게 크다. */
-.dialogRows { display: grid; margin: 0; }
-.dialogRow {
+/* 가격 줄: 값 중 유일하게 크다. 옆에 건당·월정액 설명이 작게 붙는다. */
+.dialogPriceRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.45rem;
+  padding: 0.6rem 0 0.2rem;
+}
+.dialogPrice { color: var(--dlg-ink); font: 600 1.75rem/1.1 var(--font-body); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.dialogPriceNote { color: var(--dlg-muted); font: 400 0.88rem/1.4 var(--font-body); }
+
+/* 셀러 버튼: 서랍 안에서 유일한 밝은 덩어리. 검정 바탕에 흰 버튼이라 색 없이도 가장 먼저 잡힌다. */
+.dialogCta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin: 0.9rem 0 0.4rem;
+  padding: 0.95rem 1.2rem;
+  border-radius: 999px;
+  background: var(--dlg-ink);
+  color: #0c0f13;
+  font: 600 0.95rem/1 var(--font-body);
+  letter-spacing: 0.005em;
+  text-decoration: none;
+}
+.dialogCta:hover { background: #e6e6e4; }
+.dialogCta:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+
+/* 한 줄에 두 칸(키 | 몸무게, 허용 품목 | 제외 품목). 칸마다 라벨 위, 값 아래. 줄 사이 가는 선. */
+.dialogRows { display: grid; margin: 0.6rem 0 0; }
+.dialogPair {
   display: grid;
-  gap: 0.75rem;
-  grid-template-columns: 8.5rem minmax(0, 1fr);
-  padding: 0.9rem 0;
-  border-bottom: 1px solid var(--dlg-line);
+  gap: 1rem 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  padding: 0.95rem 0;
+  border-top: 1px solid var(--dlg-line);
 }
-.dialogRow dt { margin: 0; color: var(--dlg-muted); font: 400 0.9rem/1.5 var(--font-body); }
-.dialogRow dd {
+.dialogCell dt { margin: 0 0 0.15rem; color: var(--dlg-muted); font: 400 0.84rem/1.4 var(--font-body); }
+.dialogCell dd { margin: 0; color: var(--dlg-ink); font: 500 1rem/1.5 var(--font-body); font-variant-numeric: tabular-nums; }
+
+/* 착용 사이즈: 맨 밑, 세 칸으로 나눠 숫자를 크게. 표가 아니라 읽는 순서대로 상의·하의·신발. */
+.dialogSizes { margin-top: 0.2rem; padding-top: 0.95rem; border-top: 1px solid var(--dlg-line); }
+.dialogSizesTitle { display: block; margin-bottom: 0.6rem; color: var(--dlg-muted); font: 400 0.84rem/1.4 var(--font-body); }
+.dialogSizeCells {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   margin: 0;
-  color: var(--dlg-ink);
-  font: 500 0.95rem/1.5 var(--font-body);
-  font-variant-numeric: tabular-nums;
 }
-.dialogRow dd small { margin-left: 0.45rem; color: var(--dlg-muted); font-size: 0.85rem; font-weight: 400; }
-.dialogPrice { font: 600 1.4rem/1.2 var(--font-body); letter-spacing: -0.01em; }
-/* 폰에서는 라벨을 값 위에 쌓는다 — 8.5rem 라벨 열이 390px 의 40% 를 먹는다. */
-@media (max-width: 26rem) {
-  .dialogRow { grid-template-columns: minmax(0, 1fr); gap: 0.15rem; }
+.dialogSizeCells > div {
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--dlg-line);
+  border-radius: 0.6rem;
 }
+.dialogSizeCells dt { margin: 0 0 0.15rem; color: var(--dlg-muted); font: 500 0.72rem/1 var(--font-body); letter-spacing: 0.06em; }
+.dialogSizeCells dd { margin: 0; color: var(--dlg-ink); font: 600 1.15rem/1.3 var(--font-body); font-variant-numeric: tabular-nums; }
 
 /* 검증 한 줄. 의미색은 이 체크 하나뿐이다. */
 .dialogVerify {
