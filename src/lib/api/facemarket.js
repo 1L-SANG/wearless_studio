@@ -252,6 +252,64 @@ export function adminListAudit({ limit = 20, targetType, targetId } = {}) {
   return http(`/v1/facemarket/admin/audit?${params.toString()}`);
 }
 
+// ── 관리자: 모델 테스트컷(콘솔 모델 상세의 하위 리소스) ────────────────────
+
+export function adminModelTestCuts(modelId) {
+  return http(`/v1/facemarket/admin/models/${encodeURIComponent(modelId)}/test-cuts`);
+}
+
+export async function adminUploadModelTestCuts(modelId, files) {
+  const form = new FormData();
+  for (const file of files) form.append('images', file, file.name || 'test-cut');
+  return checkedJson(await _authFetch(
+    `/v1/facemarket/admin/models/${encodeURIComponent(modelId)}/test-cuts`,
+    { method: 'POST', body: form },
+  ), '테스트컷 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
+}
+
+export function adminDeleteModelTestCut(modelId, cutId) {
+  return http(
+    `/v1/facemarket/admin/models/${encodeURIComponent(modelId)}/test-cuts/${encodeURIComponent(cutId)}`,
+    { method: 'DELETE' },
+  );
+}
+
+export function adminSendModelTestCuts(modelId) {
+  return http(`/v1/facemarket/admin/models/${encodeURIComponent(modelId)}/send-test-cuts`, {
+    method: 'POST',
+  });
+}
+
+export async function adminFetchModelTestCutUrl(imageUri) {
+  const res = await _authFetch(imageUri);
+  if (!res.ok) throw new Error('테스트컷을 불러오지 못했어요.');
+  return URL.createObjectURL(await res.blob());
+}
+
+// ── 모델 본인: 테스트컷 확인 게이트 ────────────────────────────────────────
+
+export function getMyModelTestCuts() {
+  return http('/v1/facemarket/model/test-cuts');
+}
+
+export async function fetchMyModelTestCutUrl(imageUri) {
+  const res = await _authFetch(imageUri);
+  if (!res.ok) throw new Error('테스트컷을 불러오지 못했어요.');
+  return URL.createObjectURL(await res.blob());
+}
+
+export function confirmMyModelTestCut(approvedCutId) {
+  return http('/v1/facemarket/model/test-cuts/confirm', {
+    method: 'POST', body: { approvedCutId },
+  });
+}
+
+export function requestMyModelTestCutRedo(reason) {
+  return http('/v1/facemarket/model/test-cuts/redo', {
+    method: 'POST', body: reason ? { reason } : {},
+  });
+}
+
 // POST /v1/facemarket/enrollments/{id}/physique — 체형·키(선택, 비게이팅) 저장. 서버가
 // enum·성별 일치를 검증(app.facemarket_physique)하고 갱신된 EnrollmentView 를 돌려준다.
 export function submitPhysique({ enrollmentId, heightBucket, bodyType }) {

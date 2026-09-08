@@ -87,6 +87,16 @@ def model_asset_key(model_id: str, enrollment_id: str, view: str, ext: str) -> s
     return f"facemarket/models/{model_id}/enrollments/{enrollment_id}/assets/{view}.{ext}"
 
 
+def model_test_cut_key(model_id: str, cut_id: str, ext: str) -> str:
+    """관리자 업로드 테스트컷 원본. r2_face 전용이며 API 응답에 내보내지 않는다."""
+    return f"private/facemarket/models/{model_id}/test-cuts/{cut_id}.{ext}"
+
+
+def model_catalog_cover_key(model_id: str, cut_id: str) -> str:
+    """모델 승인 컷의 1024px WebP. 일반 R2 카탈로그 자산 경로."""
+    return f"facemarket/catalog/models/{model_id}/covers/{cut_id}.webp"
+
+
 def sha256_sri(data: bytes) -> str:
     """SRI 무결성 digest 'sha256-<base64>'. fm_licenses.face_image_digest 포맷."""
     return "sha256-" + base64.b64encode(hashlib.sha256(data).digest()).decode()

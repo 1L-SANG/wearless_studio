@@ -1,0 +1,99 @@
+/* SignupCompletion — 로그인 모달의 '다음 장'. 카드 외곽(폭·라운드·그림자·패딩)은 공용
+   .modal 이 그대로 제공하므로 여기서는 내용만 그린다(로그인 창과 같은 크기가 되는 이유).
+   토큰만 사용(DESIGN.md). */
+
+/* 슬라이드가 카드 밖으로 삐져나오지 않게 카드 안쪽으로 클립한다. 공용 .modal 의 패딩(26px)을
+   음수 마진으로 걷어내 카드 경계까지 덮은 뒤, 같은 값을 패딩으로 되돌려 안쪽 여백을 지킨다. */
+.viewport {
+  margin: -26px;
+  padding: 26px;
+  max-height: calc(100dvh - 48px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-radius: var(--r-6);
+}
+
+.panel {
+  position: relative;                 /* 우측 상단 X 의 기준 */
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--sp-12);
+  padding: var(--sp-4) 0 0;
+  /* 로그인 창에서 오른쪽으로 넘어가듯 — 페이지는 OAuth 로 새로 뜨지만 다음 장으로 읽혀야 한다. */
+  animation: slideNext 0.28s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+@keyframes slideNext {
+  from { opacity: 0; transform: translateX(38px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .panel { animation: none; }
+}
+
+.close {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: none;
+  border-radius: var(--r-4);
+  color: var(--fg-3);
+  cursor: pointer;
+}
+.close:hover:not(:disabled) { background: var(--bg-2); color: var(--fg-1); }
+.close:disabled { opacity: 0.5; cursor: default; }
+.close:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* 브랜드 락업 — 로그인 모달과 같은 구성(Login.module.css .brand). 같은 창으로 읽히게 한다. */
+.brand { display: flex; flex-direction: column; align-items: center; gap: var(--sp-8); margin-bottom: var(--sp-4); }
+.logo { height: 40px; width: auto; object-fit: contain; }
+.mark { display: flex; flex-direction: column; align-items: center; gap: var(--sp-4); }
+.wordmark { height: 26px; width: auto; object-fit: contain; display: block; }
+.suffix { font-family: var(--font-display); font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--fg-3); }
+
+/* 가운데 정렬 문단은 마지막 줄에 한두 글자만 남기 쉽다("…있어 / 요."). 줄을 고르게 나눈다. */
+.title { margin: 0; font-family: var(--font-body); font-size: 17px; font-weight: 700; letter-spacing: -0.01em; color: var(--fg-1); text-align: center; text-wrap: balance; }
+.desc { margin: 0; font-size: 13px; line-height: 1.6; color: var(--fg-2); text-align: center; text-wrap: balance; max-width: 34em; }
+
+.docs {
+  list-style: none;
+  margin: var(--sp-4) 0 0;
+  padding: var(--sp-12);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-2);
+  border-radius: var(--r-4);
+  box-shadow: 0 0 0 1px var(--ring);
+}
+.docs li { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
+.docs a { color: var(--fg-1); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.docs a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-2); }
+.ver { font-size: 12px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+
+/* 체크박스는 첫 줄 글자의 세로 중앙에 건다(Login.module.css .consent 와 같은 규칙). */
+.consent {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  column-gap: var(--sp-8);
+  align-items: start;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--fg-1);
+  cursor: pointer;
+}
+.consent input {
+  width: 16px;
+  height: 16px;
+  margin: calc((1.55em - 16px) / 2) 0 0;
+  accent-color: var(--fg-1);
+  cursor: pointer;
+}
+
+.error { margin: 0; font-size: 12px; color: var(--accent-danger, #b42318); text-align: center; }

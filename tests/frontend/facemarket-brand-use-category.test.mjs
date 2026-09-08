@@ -51,9 +51,9 @@ test('ModelLicense reuses the shared category lists', () => {
 });
 
 test('analysis shape and form require an explicit category for a real model', () => {
-  assert.match(shapesSource, /selectedModelId: null, brandUseCategory: null, models: \[\]/);
+  assert.match(shapesSource, /selectedModelId: null, stylingModelId: null, brandUseCategory: null, models: \[\]/);
   assert.match(analysisFormSource, /import \{ BRAND_USE_CATEGORIES \} from '@\/lib\/brandUseCategories\.js';/);
-  assert.match(analysisFormSource, /import \{ isRealModelSelection, resolveSelectedModelId \} from '\.\/modelSelection\.js';/);
+  assert.match(analysisFormSource, /isRealModelSelection,[\s\S]*resolveSelectedModelId,[\s\S]*resolveStylingModelId,[\s\S]*from '\.\/modelSelection\.js';/);
   assert.match(analysisFormSource, /isRealModelSelection\(a\.selectedModelId\)[\s\S]*?<Chips[\s\S]*?options=\{BRAND_USE_CATEGORIES\}[\s\S]*?value=\{a\.brandUseCategory\}/);
   assert.match(analysisFormSource, /실제 모델을 사용할 브랜드 유형을 선택해 주세요\./);
 });
@@ -83,7 +83,7 @@ test('Editor AI panel remediates a missing persisted category in place', () => {
   assert.match(aiPanel, /brandUseCategory = null/);
   assert.match(aiPanel, /brandUseCategorySaving = false/);
   assert.match(aiPanel, /onBrandUseCategoryChange/);
-  assert.match(aiPanel, /const categoryRequired = failedCutRetry[\s\S]*?failedCutRetry\.request\?\.cutType !== 'product'[\s\S]*?isRealModelSelection\(failedCutRetry\.request\?\.modelId\)[\s\S]*?: !isProduct && useFm;/);
+  assert.match(aiPanel, /const categoryRequired = failedCutRetry[\s\S]*?failedCutRetry\.request\?\.cutType === 'horizon'[\s\S]*?isRealModelSelection\(failedCutRetry\.request\?\.modelId\)[\s\S]*?: effectiveCutType === 'horizon' && isRealModelSelection\(model\);/);
   assert.match(aiPanel, /const brandUseCategoryBlocked = categoryRequired[\s\S]*?!brandUseCategory \|\| brandUseCategorySaving/);
   assert.match(aiPanel, /const brandUseCategoryControl = categoryRequired && \([\s\S]*?<Chips[\s\S]*?options=\{BRAND_USE_CATEGORIES\}[\s\S]*?value=\{brandUseCategory\}/);
   assert.match(failedRetryBranch, /\{brandUseCategoryControl\}/);
@@ -108,8 +108,9 @@ test('Editor image generation fails closed before side effects for an unready re
   );
   const beforeSideEffects = generateImage.slice(0, generateImage.indexOf('const group ='));
 
-  assert.match(editorSource, /import \{ isRealModelSelection \} from '@\/features\/analysis\/modelSelection\.js';/);
-  assert.match(beforeSideEffects, /req\.cutType !== 'product'[\s\S]*?isRealModelSelection\(req\.modelId\)/);
+  assert.match(editorSource, /isRealModelSelection,[\s\S]*stylingModelPatchForAnalysis,[\s\S]*from '@\/features\/analysis\/modelSelection\.js';/);
+  assert.match(beforeSideEffects, /req\.cutType !== 'horizon'[\s\S]*?isRealModelSelection\(req\.modelId\)/);
+  assert.match(beforeSideEffects, /req\.cutType === 'horizon'[\s\S]*?isRealModelSelection\(req\.modelId\)/);
   assert.match(beforeSideEffects, /!analysis\?\.brandUseCategory \|\| brandUseCategorySaving/);
   assert.match(beforeSideEffects, /return null;/);
 });

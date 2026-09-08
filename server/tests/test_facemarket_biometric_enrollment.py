@@ -8,6 +8,7 @@ import json
 import threading
 import types
 import uuid
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -4552,3 +4553,30 @@ def test_photo_upload_prewarms_opendid(
 
     assert response.status_code == 201, response.text
     assert calls, "첫 사진 업로드에서 홀더를 깨워야 한다"
+
+
+@pytest.mark.parametrize("application_required", [False, True])
+def test_create_enrollment_rejects_awaiting_confirmation_without_side_effects(
+    enrollment_client, auth, enrollment_store, fake_r2, application_required
+):
+    enrollment_client.app.state.settings = replace(
+        enrollment_client.app.state.settings, fm_application_required=application_required
+    )
+    enrollment_store.models.append({
+        "id": "model-1", "user_id": "user-1", "status": "awaiting_confirm",
+        "assets_status": "ready", "current_enrollment_id": "old-enrollment",
+    })
+    enrollment_store.licenses.append({"id": "license-1", "model_id": "model-1", "status": "active"})
+    before = enrollment_store.serialized()
+    response = enrollment_client.post(
+        "/v1/facemarket/enrollments",
+        json={"deviceId": DEVICE_ID, "biometricConsent": {
+            "accepted": True, "documentVersion": "2026-08-v1",
+        }},
+        headers=auth(),
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "model_confirmation_required"
+    assert enrollment_store.serialized() == before
+    assert enrollment_store.commit_attempts == 0
+    assert fake_r2.puts == [] and fake_r2.deletes == []

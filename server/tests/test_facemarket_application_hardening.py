@@ -79,7 +79,8 @@ def test_pending_models_are_exempt_from_the_application_gate():
     """fm_models 행은 신분증 인증 성공 시점에 pending 으로 먼저 생긴다. pending 을 면제하지 않으면
     사진 단계에서 이탈한 기존 사용자가 등록도 지원도 못 하는 막다른 골목에 갇힌다."""
     block = ENROLLMENT.split("legacy_exempt = model is not None and model[\"status\"] in (")[1].split(")")[0]
-    assert '"pending"' in block and '"verified"' in block and '"reverification_required"' in block
+    assert '"pending"' in block and '"awaiting_confirm"' not in block
+    assert '"verified"' in block and '"reverification_required"' in block
     assert '"suspended"' not in block, "정지된 모델까지 면제하면 심사 우회로가 된다"
 
 
@@ -249,5 +250,5 @@ def test_hub_separates_blocked_from_no_application():
     routes_js = (
         Path(__file__).resolve().parents[2] / "src" / "apps" / "facemarket" / "modelSectionRoutes.jsx"
     ).read_text()
-    assert "['pending', 'verified', 'reverification_required'].includes(m.status)" in routes_js
+    assert "['pending', 'awaiting_confirm', 'verified', 'reverification_required'].includes(m.status)" in routes_js
     assert "const inProgress = !!enrollment;" in routes_js

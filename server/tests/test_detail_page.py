@@ -7,6 +7,7 @@ from dataclasses import replace
 import app.routes as routes
 import pytest
 from app import repo
+from app.agents import identity_source
 from app.workers import detail_page_job as dpj
 from conftest import auth_headers, fake_worker_app, make_settings, patch_route_db, worker_job
 
@@ -235,6 +236,120 @@ def test_detail_product_only_storyboard_strips_real_model_before_facemarket_gate
     assert events == ["cache", "job", "reserve", "commit"]
 
 
+def test_detail_real_styling_requires_virtual_styling_model_before_job(
+    client, make_token, monkeypatch
+):
+    calls = {"job": 0, "reserve": 0}
+
+    async def fake_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_analysis(conn, project_id):
+        return {"selectedModelId": MODEL_ID, "brandUseCategory": CATEGORY}
+
+    async def fake_storyboard(conn, project_id):
+        return [{"id": "s1", "source": "ai", "cutType": "styling"}]
+
+    async def forbidden_job(*args, **kwargs):
+        calls["job"] += 1
+
+    async def forbidden_reserve(*args, **kwargs):
+        calls["reserve"] += 1
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_project)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(routes.repo, "get_storyboard", fake_storyboard)
+    monkeypatch.setattr(routes.repo, "create_job", forbidden_job)
+    monkeypatch.setattr(routes.repo, "reserve_credits", forbidden_reserve)
+    patch_route_db(monkeypatch, routes)
+
+    response = client.post(
+        "/v1/projects/p1/detail-page:generate",
+        headers=auth_headers(make_token),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == {
+        "code": "styling_model_required",
+        "message": "장소·스타일링 컷에 쓸 가상 모델을 골라 주세요.",
+    }
+    assert calls == {"job": 0, "reserve": 0}
+
+
+def test_detail_mixed_real_selection_queues_styling_model_at_payload_top_level(
+    client, make_token, monkeypatch
+):
+    seen = {}
+    client.app.state.settings = replace(
+        client.app.state.settings,
+        facemarket_enabled=True,
+    )
+
+    async def fake_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_analysis(conn, project_id):
+        return {
+            "selectedModelId": MODEL_ID,
+            "stylingModelId": "mA",
+            "brandUseCategory": CATEGORY,
+        }
+
+    async def fake_storyboard(conn, project_id):
+        return [
+            {"id": "h1", "source": "ai", "cutType": "horizon"},
+            {"id": "s1", "source": "ai", "cutType": "styling"},
+        ]
+
+    async def fake_resolve(conn, project, analysis):
+        return {"id": LICENSE_ID, "model_id": MODEL_ID}
+
+    async def fake_verify(*args, **kwargs):
+        return None
+
+    async def fake_editor(conn, project_id):
+        return []
+
+    async def fake_lock(conn, project_id, license_id):
+        return None
+
+    async def fake_product(conn, project_id):
+        return {"clothing_type": "top"}
+
+    async def fake_create(conn, **kwargs):
+        seen.update(kwargs)
+        return {"id": "job-mixed"}, True
+
+    async def fake_reserve(conn, user_id, amount):
+        return 10
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_project)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(routes.repo, "get_storyboard", fake_storyboard)
+    monkeypatch.setattr(routes.facemarket, "resolve_project_license", fake_resolve)
+    monkeypatch.setattr(routes.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(routes.facemarket, "set_project_license", fake_lock)
+    monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_editor)
+    monkeypatch.setattr(routes.repo, "get_product", fake_product)
+    monkeypatch.setattr(routes.repo, "create_job", fake_create)
+    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
+    _patch_counted_route_conn(monkeypatch, [])
+
+    response = client.post(
+        "/v1/projects/p1/detail-page:generate",
+        headers=auth_headers(make_token),
+    )
+
+    assert response.status_code == 202, response.text
+    assert seen["payload"] == {
+        "mode": "generate",
+        "modelId": MODEL_ID,
+        "stylingModelId": "mA",
+        "brandUseCategory": CATEGORY,
+        "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
+    }
+
+
 def test_detail_current_selection_updates_lock_and_queues_snapshot_atomically(
     client, make_token, monkeypatch
 ):
@@ -268,7 +383,7 @@ def test_detail_current_selection_updates_lock_and_queues_snapshot_atomically(
         return []
 
     async def fake_storyboard(conn, project_id):
-        return [{"id": "b1", "source": "ai", "cutType": "styling"}]
+        return [{"id": "b1", "source": "ai", "cutType": "horizon"}]
 
     async def fake_product(conn, project_id):
         return {"clothing_type": "top"}
@@ -334,7 +449,7 @@ def test_detail_denial_precedes_cache_job_and_credit(
         return {"selectedModelId": MODEL_ID, "brandUseCategory": CATEGORY}
 
     async def fake_storyboard(conn, project_id):
-        return [{"id": "b1", "source": "ai", "cutType": "styling"}]
+        return [{"id": "b1", "source": "ai", "cutType": "horizon"}]
 
     async def fake_resolve(conn, project, analysis):
         return {"id": LICENSE_ID, "model_id": MODEL_ID}
@@ -387,7 +502,7 @@ def test_detail_reservation_failure_does_not_commit_new_lock(
         return {"selectedModelId": MODEL_ID, "brandUseCategory": CATEGORY}
 
     async def fake_storyboard(conn, project_id):
-        return [{"id": "b1", "source": "ai", "cutType": "styling"}]
+        return [{"id": "b1", "source": "ai", "cutType": "horizon"}]
 
     async def fake_resolve(conn, project, analysis):
         return {"id": LICENSE_ID, "model_id": MODEL_ID}
@@ -402,7 +517,7 @@ def test_detail_reservation_failure_does_not_commit_new_lock(
         return []
 
     async def fake_storyboard(conn, project_id):
-        return [{"id": "b1", "source": "ai", "cutType": "styling"}]
+        return [{"id": "b1", "source": "ai", "cutType": "horizon"}]
 
     async def fake_product(conn, project_id):
         return {"clothing_type": "top"}
@@ -451,7 +566,7 @@ def test_detail_cached_success_commits_verified_lock_immediately_before_return(
         return {"selectedModelId": MODEL_ID, "brandUseCategory": CATEGORY}
 
     async def fake_storyboard(conn, project_id):
-        return [{"id": "b1", "source": "ai", "cutType": "styling"}]
+        return [{"id": "b1", "source": "ai", "cutType": "horizon"}]
 
     async def fake_resolve(conn, project, analysis):
         return {"id": LICENSE_ID, "model_id": MODEL_ID}
@@ -1784,6 +1899,175 @@ def test_run_detail_page_job_uses_queued_model_without_mutating_storyboard(monke
         "fit", "productOverview",
     ]
     assert all("modelId" not in block and "model_id" not in block for block in storyboard)
+
+
+@pytest.mark.parametrize("real_cuts_fail", [False, True])
+def test_run_detail_page_job_splits_real_horizon_from_virtual_styling_and_settles_horizons(
+    monkeypatch, real_cuts_fail,
+):
+    captured = {"cuts": {}, "settlements": [], "events": []}
+    storyboard = [
+        {"id": "h-front", "source": "ai", "cutType": "horizon", "shot": "full", "direction": "front"},
+        {"id": "h-side", "source": "ai", "cutType": "horizon", "shot": "full", "direction": "side"},
+        {"id": "styling", "source": "ai", "cutType": "styling", "shot": "full", "direction": "front"},
+        {"id": "mirror", "source": "ai", "cutType": "mirror", "shot": "full"},
+    ]
+
+    class TrackingR2:
+        def get_bytes(self, key):
+            return key.encode()
+
+        def put_bytes(self, key, data, mime, cache=None):
+            return None
+
+        def delete(self, key):
+            return None
+
+        def public_url(self, key):
+            return f"https://r2.test/{key}"
+
+        def preview_url(self, key, expires=3600):
+            return f"https://r2.test/{key}"
+
+    async def fake_project(conn, user_id, project_id):
+        return {"copywriting": False}
+
+    async def fake_storyboard(conn, project_id):
+        return storyboard
+
+    async def fake_product(conn, project_id):
+        return {
+            "clothing_type": "top",
+            "colors": [{"isBase": True, "images": [{"slot": "Front", "id": "product"}]}],
+        }
+
+    async def fake_analysis(conn, project_id):
+        return {"targetGenders": ["women"]}
+
+    async def fake_asset(conn, user_id, asset_id):
+        return {"mime_type": "image/png", "r2_key": f"public/{asset_id}"}
+
+    async def fake_license(conn, model_id, *, license_id=None, **kwargs):
+        assert model_id == MODEL_ID
+        assert license_id == LICENSE_ID
+        return {
+            "id": LICENSE_ID,
+            "model_id": MODEL_ID,
+            "model_name": "실모델",
+            "status": "active",
+            "model_status": "verified",
+            "current_enrollment_id": "enrollment-1",
+            "match_policy_version": "policy-1",
+            "unit_price": 5000,
+        }
+
+    async def fake_verify(*args, **kwargs):
+        return None
+
+    async def fake_real_refs(conn, model_id, **kwargs):
+        return [
+            {"key": "real/face", "mime": "image/png", "bucket": "face"},
+            {"key": "real/grid", "mime": "image/png", "bucket": "face"},
+        ]
+
+    def fake_virtual_refs(spec, *, require_full_body=False):
+        assert spec["modelId"] == "mA"
+        return (
+            {"key": "virtual/face", "mime": "image/png"},
+            {"key": "virtual/body", "mime": "image/png"},
+        )
+
+    async def fake_generate(settings, gemini, cut_spec, product, images, **kwargs):
+        captured["cuts"][cut_spec["id"]] = {
+            "modelId": cut_spec.get("modelId"),
+            "images": [image.data.decode() for image in images],
+        }
+        if real_cuts_fail and cut_spec["cutType"] == "horizon":
+            raise ValueError("real cut generation failed")
+        return b"IMG", "image/png"
+
+    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **kwargs):
+        return []
+
+    async def fake_finalize(conn, **kwargs):
+        captured["finalize"] = kwargs
+        return {"editor_blocks": [], "available": 99}
+
+    async def fake_settlement(*args, **kwargs):
+        captured["settlements"].append(kwargs)
+
+    async def fake_emit(*args, **kwargs):
+        captured["events"].append((args[-2], args[-1]))
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_project)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_storyboard)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_product)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(dpj.facemarket, "resolve_model_license", fake_license)
+    monkeypatch.setattr(dpj.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(dpj.facemarket, "verify_license_local", lambda *args, **kwargs: None)
+    monkeypatch.setattr(identity_source, "resolve_real_model_assets", fake_real_refs)
+    monkeypatch.setattr(dpj.cut_generator, "resolve_virtual_model_assets", fake_virtual_refs)
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_generate)
+    monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
+    monkeypatch.setattr(dpj.repo, "lock_facemarket_writer_boundary", lambda conn: asyncio.sleep(0))
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj.facemarket, "record_license_settlement", fake_settlement)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+    public_r2 = TrackingR2()
+    face_r2 = TrackingR2()
+    app = fake_worker_app(
+        make_settings(gemini_api_key="x", r2_bucket="b", facemarket_enabled=True),
+        r2=public_r2,
+    )
+    app.state.r2_face = face_r2
+    app.state.fm_chain = object()
+
+    asyncio.run(dpj.run_detail_page_job(app, worker_job({
+        "mode": "generate",
+        "modelId": MODEL_ID,
+        "stylingModelId": "mA",
+        "brandUseCategory": CATEGORY,
+        "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
+    }, credits_reserved=4)))
+
+    assert captured["cuts"]["h-front"]["modelId"] == MODEL_ID
+    assert captured["cuts"]["h-side"]["modelId"] == MODEL_ID
+    assert captured["cuts"]["styling"]["modelId"] == "mA"
+    assert "real/face" in captured["cuts"]["h-front"]["images"]
+    assert "real/face" in captured["cuts"]["h-side"]["images"]
+    assert "real/face" not in captured["cuts"]["styling"]["images"]
+    assert "virtual/face" in captured["cuts"]["styling"]["images"]
+    done_events = {
+        payload["blockId"]: payload
+        for event_type, payload in captured["events"]
+        if event_type == "step" and payload.get("status") == "cut_done"
+    }
+    if real_cuts_fail:
+        assert "h-front" not in done_events and "h-side" not in done_events
+    else:
+        assert "previewUrl" not in done_events["h-front"]
+        assert "previewUrl" not in done_events["h-side"]
+    assert done_events["styling"]["previewUrl"].startswith("https://r2.test/")
+    assert captured["cuts"]["mirror"]["modelId"] == "mA"
+    assert "real/face" not in captured["cuts"]["mirror"]["images"]
+    assets = captured["finalize"]["cut_assets"]
+    assert len(assets) == (2 if real_cuts_fail else 4)
+    for asset in assets:
+        if asset["metadata"]["cut_type"] == "horizon":
+            assert asset["provenance"] == {
+                "license_id": LICENSE_ID, "model_id": MODEL_ID,
+            }
+        else:
+            assert asset["metadata"]["facemarket_real_derived"] is False
+            assert "provenance" not in asset
+    if real_cuts_fail:
+        assert captured["settlements"] == []
+    else:
+        assert len(captured["settlements"]) == 1
+        assert captured["settlements"][0]["total"] == 10000
 
 
 def test_run_detail_page_job_partial_charge_uses_reservation_time_price(monkeypatch):

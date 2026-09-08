@@ -171,7 +171,7 @@ test('target-gender chips disable deselection, photo-volume options stay exclusi
   );
   assert.match(ui, /allowDeselect = true/);
   assert.match(ui, /v === value && allowDeselect \? null : v/);
-  assert.equal((analysis.match(/allowDeselect=\{false\}/g) || []).length, 3);
+  assert.equal((analysis.match(/allowDeselect=\{false\}/g) || []).length, 4);
   assert.match(analysis, /role="listbox" aria-label="상세페이지 사진 양"/);
   assert.match(analysis, /role="option" aria-selected=\{composeMode === mode\.value\}/);
   assert.match(analysis, /controllerRef\.current\.abort\(\)/);

@@ -22,6 +22,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address
+from typing import Any
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -89,6 +90,12 @@ class ModelCard(CamelModel):
     assets_ready: bool = False  # 실존 모델 그리드 자산 빌드 완료 → 셀러 선택 가능(assetsReady)
     # 비생체 고정 placeholder 게이트 URL. 모델별 얼굴/cover 바이트를 뜻하지 않는다.
     face_thumb_uri: str | None = None
+
+
+class OwnedModelCard(ModelCard):
+    """본인 허브 카드. 셀러 카탈로그에는 재생성 횟수를 노출하지 않는다."""
+
+    redo_count: int = 0
 
 
 def _err(code: str, message: str, status: int = 400) -> HTTPException:
@@ -341,7 +348,7 @@ async def identity_verify(
 # uuid 컬럼은 ::text 캐스트해 반환(repo.py 관례). psycopg 는 uuid 를 uuid.UUID 로 로드하는데
 # CamelModel(id: str) 이 UUID 를 거부 → ResponseValidationError 500. 캐스트로 문자열화.
 _MODEL_CARD_COLS = ("id::text as id, display_name, status, cover_image_url, created_at, "
-                    "(assets_status = 'ready') as assets_ready")
+                    "(assets_status = 'ready') as assets_ready, redo_count")
 
 _CURRENT_CARD_JOINS = """
 join fm_biometric_enrollments e
@@ -476,7 +483,7 @@ async def list_models(
 
 @router.get(
     "/models/me",
-    response_model=list[ModelCard],
+    response_model=list[OwnedModelCard],
     responses={401: {"model": ErrorResponse, "description": "인증 실패"}},
     tags=["FaceMarket"],
     summary="내 모델 목록 (마이페이지)",
@@ -632,12 +639,17 @@ def _r2_face(request: Request):
 
 
 def _cover_serving_url(request: Request, key: str | None) -> str | None:
-    """대표 이미지(cover)는 FaceMarket 비공개 R2 버킷(r2_face, 공개도메인 차단)에 저장되므로 raw 키로는
-    브라우저 <img src> 가 못 읽는다(§ r2_face public_base=None). 서빙용 presigned GET URL(1h)로 변환한다.
-    r2 미설정이거나 키가 없으면 None(그레이스풀 — 카드가 placeholder/폴백으로 강등)."""
+    """대표 이미지 키를 브라우저용 URL로 변환한다.
+
+    모델이 직접 올린 구 커버는 얼굴 버킷의 signed GET으로, 테스트컷 확인 뒤 만든 1024px
+    카탈로그 커버는 일반 버킷 URL로 서빙한다. 저장 키 자체는 응답에 내보내지 않는다.
+    """
     if not key:
         return None
-    r2 = getattr(request.app.state, "r2_face", None)
+    if key.startswith("facemarket/catalog/models/"):
+        r2 = getattr(request.app.state, "r2", None)
+    else:
+        r2 = getattr(request.app.state, "r2_face", None)
     if r2 is None:
         return None
     return r2.public_url(key)
@@ -906,8 +918,8 @@ async def finalize_issued_face_vc(
                     )
                     active = await cur.fetchone()
                     await cur.execute(
-                        """update fm_models set status = 'verified',
-                                  did = coalesce(nullif(did, ''), %s)
+                        """update fm_models
+                              set did = coalesce(nullif(did, ''), %s), status = 'pending'
                             where id = %s and current_enrollment_id = %s
                               and status in ('pending', 'reverification_required')
                             returning id""",
@@ -2068,6 +2080,79 @@ async def issue_face_vc(app, *, license_id, model_id, allowed, forbidden,
 # ============================================================================
 
 _HOLDER_VERIFY_TIMEOUT = 5.0  # 게이트는 셀러 요청 블로킹 경로 — 홀더 지연이 생성 지연되지 않게 짧게.
+
+_STYLING_CUT_TYPES = frozenset({"styling", "mirror"})
+
+
+def is_real_model_id(model_id: str | None) -> bool:
+    if not model_id:
+        return False
+    try:
+        uuid.UUID(str(model_id))
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def resolve_block_model_id(
+    cut_type: str | None,
+    model_id: str | None,
+    styling_model_id: str | None,
+) -> str | None:
+    """Return the only model identity permitted for this cut type."""
+    if cut_type == "horizon":
+        return str(model_id) if model_id else None
+    if cut_type not in _STYLING_CUT_TYPES:
+        return None
+    if not is_real_model_id(model_id):
+        return str(model_id) if model_id else None
+    if styling_model_id and not is_real_model_id(styling_model_id):
+        return str(styling_model_id)
+    raise _err(
+        "styling_model_required",
+        "장소·스타일링 컷에 쓸 가상 모델을 골라 주세요.",
+        status=400,
+    )
+
+
+def reject_real_model_outside_horizon(
+    cut_type: str | None,
+    model_id: str | None,
+) -> None:
+    if is_real_model_id(model_id) and cut_type != "horizon":
+        raise _err(
+            "real_model_horizon_only",
+            "실제 모델은 스튜디오 컷에만 쓸 수 있어요",
+            status=409,
+        )
+
+
+def reject_real_model_scene_variation(payload: Mapping[str, Any]) -> None:
+    """Keep REAL-derived editor variations inside the original studio scene."""
+    if payload.get("refBgAssetId") or payload.get("ref_bg_asset_id"):
+        raise _err(
+            "real_model_horizon_only",
+            "실제 모델은 스튜디오 컷에만 쓸 수 있어요",
+            status=409,
+        )
+    allowed = {
+        "direction": {"front", "back", "side"},
+        "pose": {"stand", "walk", "lean", "sit", "turn"},
+        "face": {"smile", "laugh", "chic", "gaze"},
+    }
+    for change in payload.get("changes") or []:
+        if (
+            isinstance(change, Mapping)
+            and str(change.get("value") or "").strip()
+            and str(change.get("value")).strip() not in allowed.get(
+                change.get("type"), set()
+            )
+        ):
+            raise _err(
+                "real_model_horizon_only",
+                "실제 모델은 스튜디오 컷에만 쓸 수 있어요",
+                status=409,
+            )
 
 async def resolve_project_license(conn, project: dict, analysis: dict) -> dict | None:
     """Resolve the selected model's current license; historical project locks are inert."""
