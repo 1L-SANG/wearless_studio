@@ -43,9 +43,17 @@ async def _configure(conn) -> None:
 
     화면은 이 설정을 믿지 않는다 — src/lib/datetime.js 가 표시 시간대를 따로 고정한다.
     여기가 꺼져도 사용자에게 보이는 시각은 안 바뀐다.
+
+    **커밋까지가 이 함수의 일이다.** psycopg3 커넥션은 autocommit=False 라 `set time zone`
+    한 줄만으로도 트랜잭션이 열린다. psycopg_pool 은 configure 콜백이 커넥션을 IDLE 이
+    아닌 상태로 남기면 그 커넥션을 **버리고**("connection left in status INTRANS by
+    configure function: discarded") 다시 만든다 — 그게 무한히 반복돼 풀이 영영 차지 않고,
+    모든 워커·요청이 `PoolTimeout: couldn't get a connection after 10.00 sec` 로 죽는다.
+    2026-09-08 프로덕션에서 실제로 그렇게 나갔다. 커밋을 빼지 마라.
     """
     async with conn.cursor() as cur:
         await cur.execute(f"set time zone '{SESSION_TIME_ZONE}'")
+    await conn.commit()
 
 
 def create_pool(database_url: str) -> AsyncConnectionPool:
