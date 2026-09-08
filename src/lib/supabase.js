@@ -4,8 +4,15 @@
    담당한다 (backend_integration_plan §1, Data API OFF). 세션의 access_token 은
    httpAdapter 가 Authorization: Bearer 로 주입한다.
    SPA OAuth 설정: PKCE. 리다이렉트 복귀의 code 교환은 AuthProvider 가 명시적으로 처리한다.
+
+   세션 저장소는 **localStorage 가 아니라 `.wearless.kr` 공유 쿠키**다(lib/authCookieStorage).
+   랜딩(www.wearless.kr)과 스튜디오(ai.wearless.kr)가 한 세션을 나눠 쓰기 위해서다 —
+   localStorage 는 origin 에 갇혀 있어 랜딩에서 로그인해도 여기서는 로그아웃 상태였다.
+   PKCE 의 code verifier 도 이 저장소를 지나므로, 랜딩에서 시작한 OAuth 를 여기서 교환할 수 있다.
+   **이 값을 localStorage 로 되돌리면 랜딩 로그인이 통째로 끊긴다.**
    ============================================================= */
 import { createClient } from '@supabase/supabase-js';
+import { cookieStorage } from './authCookieStorage.js';
 
 const url = import.meta.env.VITE_SUPABASE_URL;
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -29,6 +36,7 @@ export const supabase = createClient(
       autoRefreshToken: true,
       detectSessionInUrl: false,
       flowType: 'pkce',
+      storage: cookieStorage,
     },
   },
 );

@@ -1,50 +1,99 @@
 /* =============================================================
-   모델 둘러보기 — /models 의 본문. 카드 격자 + 상세 창.
+   모델 둘러보기 — /models 의 본문. 제목 + 성별 탭 + 카드 격자 + 상세 창.
 
-   레퍼런스(사용자 스크린샷)는 검은 바탕의 모델 에이전시 로스터인데, 배치만 가져오고 색은
-   이 사이트 것을 쓴다 — 랜딩·라이선스·등록이 전부 밝은 화면이라 여기만 검으면 다른 서비스로
-   읽힌다.
+   2026-09-08 오너 확정:
+     제목 "등록 모델 리스트"(작게), 그 아래 설명 한 줄. 위 눈썹 글자 없음.
+     탭은 전체·여성·남성뿐. 정렬 없음.
+     카드 상자 없이 사진 한 장 + 그 아래 한 줄(왼쪽 이름, 오른쪽 성별·나이대).
+     가격·품목·검증 문구는 카드에 없다 — 가격은 모든 모델이 같아 머리말에 한 번만 적는다.
+     바탕은 옅은 중성 회색, 상단바는 흰 띠 + 밑선(FacemarketLanding.module.css).
 
-   카드 아래에는 이름(주)·키·몸무게(보조)가 항상 보이고, 마우스를 올리면 **사진 안쪽 아래**에서
-   검정 pill "모델 정보 확인"이 살짝 떠오른다(2026-09-04 오너 지시 — 예전의 사진 아래 모서리에
-   딱 붙는 흰 띠는 내렸다). **버튼은 hover 로만 존재하지 않는다**: 카드 자체가 button 이라
-   터치·키보드로도 같은 창이 열린다. hover 로만 만들면 폰에서 상세를 볼 길이 사라진다.
+   목록 = **실제 등록 모델(앞)** + 가상 예시(뒤). 실모델은 GET /v1/facemarket/public/models 에서
+   온다 — 모델이 /model/confirm 에서 확대샷·전신샷을 고르고 공개에 동의한 순간부터 여기 선다.
+   서버가 죽어 있어도 예시는 그대로 보인다 — 공개 페이지가 서버 사정으로 텅 비면 안 되므로
+   실패는 조용히 삼킨다.
+
+   카드 자체가 button 이라 터치·키보드로도 같은 창이 열린다. hover 로만 만들면 폰에서 상세를
+   볼 길이 사라진다.
    ============================================================= */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '@/components/ui.jsx';
 import { BROWSE_MODELS } from '../data/browseModels.js';
+import { fetchPublicModels, fromExampleModel } from '../data/publicModels.js';
+import { pricingParts } from '@/lib/facemarketPricing.js';
 import { ModelDetailDialog } from './ModelDetailDialog.jsx';
 import s from '../BrowseModels.module.css';
 
+const EXAMPLE_MODELS = Object.freeze(BROWSE_MODELS.map(fromExampleModel));
+const TABS = [
+  { key: 'all', label: '전체' },
+  { key: '여성', label: '여성' },
+  { key: '남성', label: '남성' },
+];
+
 export function BrowseSection() {
   const [openId, setOpenId] = useState(null);
-  const openModel = BROWSE_MODELS.find((model) => model.id === openId) || null;
+  const [realModels, setRealModels] = useState([]);
+  const [tab, setTab] = useState('all');
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchPublicModels({ signal: controller.signal })
+      .then((items) => { if (!controller.signal.aborted) setRealModels(items); })
+      .catch(() => { /* 실패해도 예시 카드는 남는다 — 위 머리말 */ });
+    return () => controller.abort();
+  }, []);
+
+  const hasReal = realModels.length > 0;
+  const all = hasReal ? [...realModels, ...EXAMPLE_MODELS] : EXAMPLE_MODELS;
+  const models = tab === 'all' ? all : all.filter((model) => model.gender === tab);
+  const openModel = all.find((model) => model.id === openId) || null;
 
   return (
     <section aria-labelledby="fm-browse-title" className={s.browse}>
       <header className={s.browseHead}>
-        <span className={s.eyebrow}>모델 둘러보기</span>
-        <h1 className={s.browseTitle} id="fm-browse-title">등록된 얼굴을 조건과 함께 봅니다</h1>
-        {/* 고지는 제목 바로 밑이다 — 격자보다 위에 있어야 사진을 보기 전에 읽힌다.
-            카드마다 '예시' 배지가 또 붙는 건 이미지만 잘려 공유되는 경우 때문이다. */}
-        <p className={s.browseNotice}>
-          <Icon name="info" size={14} stroke={2} />
-          아래는 전부 가상 모델 예시입니다. 이름·키·몸무게·라이선스 조건도 예시 값이고,
-          실제 등록된 모델이 아닙니다.
+        <h1 className={s.browseTitle} id="fm-browse-title">등록 모델 리스트</h1>
+        <p className={s.browseLead}>본인확인과 라이선스 발급을 마친 모델만 올라와요.</p>
+        {/* 가격은 모든 모델 공통(초기 고정값)이라 카드에는 안 적고 여기 한 줄로 밝힌다(2026-09-08 오너).
+            금액만 굵게, 라벨·구분자·제한은 흐리게 — 셀러가 두 숫자만 집어 읽게 한다. */}
+        <p className={s.browsePricing}>
+          <span className={s.browsePricingLabel}>{pricingParts().label}</span>
+          <b>{pricingParts().perCut}</b>
+          <span className={s.browsePricingDim}>/</span>
+          <b>{pricingParts().monthly}</b>
+          <span className={s.browsePricingDim}>({pricingParts().cap})</span>
         </p>
       </header>
 
+      <div className={s.browseBar}>
+        <div aria-label="성별로 보기" className={s.tabs} role="tablist">
+          {TABS.map((item) => (
+            <button
+              aria-selected={tab === item.key}
+              className={`${s.tab}${tab === item.key ? ` ${s.tabActive}` : ''}`}
+              key={item.key}
+              onClick={() => setTab(item.key)}
+              role="tab"
+              type="button"
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+        <span className={s.browseCount}>{models.length}명</span>
+      </div>
+
       <ul className={s.grid}>
-        {BROWSE_MODELS.map((model) => (
-          <li className={s.card} key={model.id}>
+        {models.map((model) => (
+          <li className={s.card} key={`${model.kind}-${model.id}`}>
             <button
               aria-label={`${model.name} 모델 정보 보기`}
               className={s.cardMedia}
               onClick={() => setOpenId(model.id)}
               type="button"
             >
-              <img alt={model.alt} className={s.cardImage} src={model.portrait} />
-              <span aria-hidden="true" className={s.cardBadge}>예시</span>
+              <img alt={model.alt} className={s.cardImage} loading="lazy" src={model.closeup} />
+              {model.kind === 'example' && <span aria-hidden="true" className={s.cardBadge}>예시</span>}
               {/* hover·focus 에서 사진 안쪽 아래로 떠오르는 검정 pill. aria-hidden 인 이유는 위
                   aria-label 이 같은 말을 이미 하고 있어서다 — 안 그러면 "모델 정보"를 두 번 읽는다. */}
               <span aria-hidden="true" className={s.cardPill}>
@@ -54,11 +103,21 @@ export function BrowseSection() {
             </button>
             <div className={s.cardMeta}>
               <p className={s.cardName}>{model.name}</p>
-              <p className={s.cardSpec}>{model.height}cm · {model.weight}kg</p>
+              {(model.gender || model.ageBand) && (
+                <p className={s.cardSpec}>{[model.gender, model.ageBand].filter(Boolean).join(' · ')}</p>
+              )}
             </div>
           </li>
         ))}
       </ul>
+
+      {/* 고지는 격자 아래. 실모델이 하나라도 서면 "전부 예시"는 거짓이 되므로 문구를 바꾼다. */}
+      <p className={s.browseNotice}>
+        <Icon name="info" size={14} stroke={2} />
+        {hasReal
+          ? '‘예시’ 표시가 있는 카드는 가상 모델이에요. 그 카드의 이름·조건도 예시 값이에요.'
+          : '아래는 전부 가상 모델 예시입니다. 이름·조건도 예시 값이고, 실제 등록된 모델이 아닙니다.'}
+      </p>
 
       {openModel && <ModelDetailDialog model={openModel} onClose={() => setOpenId(null)} />}
     </section>

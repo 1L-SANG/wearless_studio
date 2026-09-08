@@ -97,13 +97,25 @@ def _email_content(
     if email_type == "test_cuts_ready":
         confirm = f"{public_base}/model/confirm"
         subject = "[FaceMarket] 테스트컷이 도착했어요"
-        html = (
-            "<p>등록이 완료되어 테스트컷을 준비했어요. 공개 전에 직접 확인하고 "
-            "프로필로 쓸 컷을 골라 주세요.</p>"
-            f'<p><a href="{confirm}">테스트컷 확인하기</a></p>'
-            "<p>확정하기 전에는 셀러에게 공개되지 않아요.</p>"
+        # 다른 메일과 같은 껍데기(_shell) + 텍스트 파트. 예전엔 (subject, html) 두 값만 돌려줘
+        # 호출부(send_application_email)의 3값 언패킹이 TypeError 로 터졌고, 그 예외를 보내기
+        # 핸들러가 삼켜서 Resend 가 켜진 실서버에서 이 메일만 한 번도 안 나갔다(2026-09-07 발견).
+        html = _shell(
+            public_base=public_base,
+            heading="테스트컷이 도착했어요",
+            body_html="등록이 끝나 테스트컷을 준비했어요. 확대샷 1장, 전신샷 1장을 골라 "
+                      "프로필로 공개해 주세요. 확정하기 전에는 아무에게도 공개되지 않아요.",
+            cta=("테스트컷 확인하기", confirm),
+            footnote=f"버튼이 열리지 않으면 이 주소를 직접 열어 주세요: {confirm}",
         )
-        return subject, html
+        text = (
+            "테스트컷이 도착했어요.\n\n"
+            "확대샷 1장, 전신샷 1장을 골라 프로필로 공개해 주세요. "
+            "확정하기 전에는 아무에게도 공개되지 않아요.\n"
+            f"{confirm}\n\n"
+            "이 메일은 발신 전용이에요."
+        )
+        return subject, html, text
     if email_type == "approved":
         subject = "[FaceMarket] 모델 지원이 승인됐어요"
         html = _shell(
@@ -245,3 +257,25 @@ async def notify_slack_new_application(
             logger.error("slack notify rejected status=%s", res.status_code)
     except Exception as exc:
         logger.warning("slack notify failed: %s", exc)
+
+
+async def notify_slack_model_confirmed(
+    settings, *, display_name: str, admin_link: str
+) -> None:
+    """모델이 공개 프로필을 확정했다는 알림. 활동명만 싣고 실패는 무해하게 끝낸다."""
+    if not settings.fm_slack_webhook_url:
+        return
+    text = (
+        ":white_check_mark: 모델 공개 확정 · 활동명: "
+        f"{_slack_escape(display_name)}\n"
+        f"<{admin_link}|관리자 모델 콘솔 열기>"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            res = await client.post(settings.fm_slack_webhook_url, json={"text": text})
+        if res.status_code >= 400:
+            logger.error(
+                "model confirmation slack notify rejected status=%s", res.status_code
+            )
+    except Exception as exc:
+        logger.warning("model confirmation slack notify failed: %s", exc)

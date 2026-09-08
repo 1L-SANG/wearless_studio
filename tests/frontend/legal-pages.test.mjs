@@ -171,6 +171,12 @@ test('FaceMarket 모델 레이아웃은 얇은 법무 푸터를 함께 렌더한
 
 test('공용 결제 화면은 셀러·모델 경로 모두 대표 도메인의 약관과 환불 정책으로 연결한다', async () => {
   const { Pricing } = await load('src/features/pricing/Pricing.jsx');
+  // Pricing 은 세션을 읽는다 — 요금제가 공개 라우트가 되면서(비로그인도 가격을 본다)
+  // 결제 버튼이 '로그인하고 …' 로 갈리기 때문이다. useAuth 는 프로바이더 밖에서 throw 하므로
+  // 라우트 엘리먼트만 떼어 렌더하는 이 테스트도 앱과 같은 컨텍스트를 둘러 줘야 한다.
+  // SSR(renderToStaticMarkup)에서는 effect 가 돌지 않아 세션 부트스트랩·OAuth 교환은
+  // 일어나지 않는다 — session=null(비로그인) 상태로 굳는다. 법무 링크는 세션과 무관하다.
+  const { AuthProvider } = await load('src/features/auth/AuthProvider.jsx');
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(['pricingPlans'], [{
     id: 'basic', code: 'basic', kind: 'subscription', name: '베이직', credits: 100, price: 10000,
@@ -180,7 +186,11 @@ test('공용 결제 화면은 셀러·모델 경로 모두 대표 도메인의 �
       const routes = await registeredRoutes(appPath);
       const element = matchRoutes(routes, '/pricing').at(-1).route.element;
       assert.equal(element.type, Pricing, `${appPath}의 실제 결제 경로를 검증해야 해요`);
-      const html = render(React.createElement(QueryClientProvider, { client }, element), '/pricing');
+      const html = render(
+        React.createElement(QueryClientProvider, { client },
+          React.createElement(AuthProvider, null, element)),
+        '/pricing',
+      );
       assert.match(html, /구독은 해지할 때까지 매달 자동 결제돼요/);
       assert.match(html, /결제하면/);
       assert.deepEqual(hrefs(html), [

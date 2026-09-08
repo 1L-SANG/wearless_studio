@@ -19,6 +19,43 @@ from psycopg_pool import AsyncConnectionPool, PoolTimeout
 _DB_UNAVAILABLE = {"code": "db_unavailable", "message": "서버가 잠시 응답하지 않아요. 잠시 후 다시 시도해 주세요."}
 
 
+SESSION_TIME_ZONE = "Asia/Seoul"
+
+
+async def _configure(conn) -> None:
+    """새 커넥션마다 세션 시간대를 KST 로 맞춘다.
+
+    저장은 그대로다 — 모든 시각 컬럼이 timestamptz(절대시각)이고, 세션 시간대는 **텍스트로
+    렌더할 때와 달력 하루로 자를 때(::date)만** 작용한다. 비교·정렬·기간 계산은 어느
+    시간대에서든 같은 답을 낸다.
+
+    그런데도 이걸 두는 이유는 사람이다. API 응답의 ISO 문자열과 psql 로 직접 본 원본이
+    서로 다른 눈금이면, 운영자가 매번 9시간을 암산해야 하고 그게 실수가 된다. 여기서
+    맞춰 두면 우리가 내보내는 모든 시각이 `+09:00` 을 달고 나간다.
+
+    **DB 전체(ALTER DATABASE)나 역할(ALTER ROLE)에는 걸지 마라.** 같은 DB 에 Supabase 의
+    auth·realtime·storage 가 붙어 있고, 그쪽에는 시간대 정보가 없는 naive `timestamp`
+    컬럼이 8개 있다(예: `auth.one_time_tokens.created_at`, 기본값 `now()`). 세션 시간대가
+    KST 면 `timestamptz → timestamp` 암묵 변환이 KST 로 일어나 그 컬럼에 9시간 밀린 값이
+    들어가고, naive 라 나중에 어느 눈금인지 구분할 방법이 없다. one_time_tokens 는
+    매직링크·비밀번호 재설정 만료 판정에 쓰이므로 인증이 조용히 깨진다. 우리 public
+    스키마에는 naive timestamp 가 0개라 **우리 커넥션에만** 거는 것은 안전하다.
+
+    화면은 이 설정을 믿지 않는다 — src/lib/datetime.js 가 표시 시간대를 따로 고정한다.
+    여기가 꺼져도 사용자에게 보이는 시각은 안 바뀐다.
+
+    **커밋까지가 이 함수의 일이다.** psycopg3 커넥션은 autocommit=False 라 `set time zone`
+    한 줄만으로도 트랜잭션이 열린다. psycopg_pool 은 configure 콜백이 커넥션을 IDLE 이
+    아닌 상태로 남기면 그 커넥션을 **버리고**("connection left in status INTRANS by
+    configure function: discarded") 다시 만든다 — 그게 무한히 반복돼 풀이 영영 차지 않고,
+    모든 워커·요청이 `PoolTimeout: couldn't get a connection after 10.00 sec` 로 죽는다.
+    2026-09-08 프로덕션에서 실제로 그렇게 나갔다. 커밋을 빼지 마라.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(f"set time zone '{SESSION_TIME_ZONE}'")
+    await conn.commit()
+
+
 def create_pool(database_url: str) -> AsyncConnectionPool:
     # open=False → lifespan에서 명시적 open (psycopg_pool 권장).
     # timeout/connect_timeout: DB 불가 시 기본 30s 대기 대신 ~10s 안에 빨리 실패
@@ -34,6 +71,9 @@ def create_pool(database_url: str) -> AsyncConnectionPool:
         max_size=int(os.getenv("DB_POOL_MAX_SIZE", "10")),
         timeout=10,  # pool.connection() 연결 획득 최대 대기 (기본 30)
         kwargs={"row_factory": dict_row, "connect_timeout": 10},  # 각 연결 시도 상한(초)
+        # DSN 의 options 파라미터가 아니라 configure 훅으로 건다 — 풀러(Supavisor)가 startup
+        # 파라미터를 어떻게 다루든 `set time zone` 은 평범한 SQL 이라 그냥 통한다.
+        configure=_configure,
         open=False,
     )
 
