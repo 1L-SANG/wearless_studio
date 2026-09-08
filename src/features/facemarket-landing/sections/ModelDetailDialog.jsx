@@ -4,9 +4,9 @@
 
    구성(2026-09-08 오너 확정):
      위   확대샷 | 전신샷 두 장이 가장자리까지 붙고, 아래쪽 그라데이션 위에 이름·성별·나이대가 얹힌다.
-     아래 가격(맨 위) → "OOO 모델로 상세페이지 만들러 가기" 버튼 → 키 | 몸무게 → 허용 품목 | 제외 품목
+     아래 가격(맨 위) → "상세페이지 만들러 가기" 버튼(모델 이름은 넣지 않는다, 9/8 오너) → 키 | 몸무게 → 허용 품목 | 제외 품목
           (한 줄에 양쪽) → 착용 사이즈(칸 나눠서, 맨 밑).
-     끝   검증 한 줄(신분증 본인확인 · 라이선스 증서 발급).
+     끝   검증 한 줄(신분증 본인확인 완료 · 라이선스 증서 발급 완료).
    지역·스타일 태그·사용 기한·'이 모델의 컷' 갤러리는 일부러 없다(같은 날 오너 결정).
 
    모델 객체는 publicModels.js 가 만든 한 가지 모양이다(실모델·가상 예시 공통). 값이 없는 줄은 그리지
@@ -143,7 +143,7 @@ export function ModelDetailDialog({ model, onClose }) {
           )}
           {!isExample && (
             <a className={s.dialogCta} href={sellerStudioUrl(model.id)}>
-              {model.name} 모델로 상세페이지 만들러 가기
+              상세페이지 만들러 가기
               <Icon name="arrowRight" size={16} stroke={2} />
             </a>
           )}
@@ -173,8 +173,8 @@ export function ModelDetailDialog({ model, onClose }) {
 
           {model.verified && (
             <p className={s.dialogVerify}>
-              <span>신분증 본인확인</span>
-              <span>라이선스 증서 발급</span>
+              <span>신분증 본인확인 완료</span>
+              <span>라이선스 증서 발급 완료</span>
             </p>
           )}
         </div>
