@@ -56,21 +56,57 @@ class FakeCursor:
 
 
 class FakeConn:
+    """트랜잭션 상태를 흉내 낸다 — 그게 이 콜백의 계약이기 때문이다.
+
+    psycopg3 커넥션은 autocommit=False 라 statement 하나만 실행해도 트랜잭션이 열린다.
+    커밋 여부를 안 보는 가짜 커넥션은 이 파일이 막으려는 사고를 못 잡는다(실제로 못 잡아서
+    프로덕션이 나갔다 — 2026-09-08).
+    """
+
     def __init__(self):
         self.executed = []
+        self.in_transaction = False
+        self.commits = 0
 
     def cursor(self):
+        conn = self
+
         @contextlib.asynccontextmanager
         async def _cm():
-            yield FakeCursor(self.executed)
+            cursor = FakeCursor(self.executed)
+            original = cursor.execute
+
+            async def execute(sql, params=None):
+                conn.in_transaction = True
+                await original(sql, params)
+
+            cursor.execute = execute
+            yield cursor
 
         return _cm()
+
+    async def commit(self):
+        self.in_transaction = False
+        self.commits += 1
 
 
 def test_new_connections_are_set_to_kst():
     conn = FakeConn()
     asyncio.run(db._configure(conn))
     assert conn.executed == ["set time zone 'Asia/Seoul'"]
+
+
+def test_configure_leaves_the_connection_idle():
+    """psycopg_pool 은 configure 가 트랜잭션을 열어 둔 커넥션을 **버린다**
+    ("connection left in status INTRANS by configure function: discarded"). 그러면 풀이
+    영영 차지 않고 모든 워커·요청이 PoolTimeout 으로 죽는다 — 2026-09-08 프로덕션 장애.
+
+    `set time zone` 한 줄이 트랜잭션을 여는 것이 함정이라, 커밋을 지우면 여기서 걸린다.
+    """
+    conn = FakeConn()
+    asyncio.run(db._configure(conn))
+    assert conn.commits == 1, "configure 가 커밋하지 않는다 — 풀이 커넥션을 전부 버린다"
+    assert not conn.in_transaction, "커넥션이 트랜잭션 안에 남았다"
 
 
 def test_pool_wires_the_configure_hook():
