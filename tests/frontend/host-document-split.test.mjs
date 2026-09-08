@@ -77,7 +77,7 @@ test('남의 호스트에서 열린 진입 문서는 자기 호스트로 되돌�
   assert.equal(typeof host.redirectToOwnDocumentHost, 'function');
 });
 
-/* 파비콘도 호스트별로 갈린다(2026-09-08). 사파리는 SVG 파비콘을 안 읽고 /favicon.ico 로
+/* 파비콘도 호스트별로 갈린다(2026-09-08). 구형 사파리는 SVG 파비콘을 안 읽고 /favicon.ico 로
    되돌아가는데, facemarket 호스트는 `/(.*)` rewrite 가 모든 경로를 문서로 보내므로 그 요청이
    HTML 을 받아 아이콘이 빈다(실측: 200 text/html). 그래서 ① 문서에 PNG·ico 폴백을 걸고
    ② 그 호스트 한정 /favicon.ico rewrite 를 catch-all 앞에 둔다. 둘 중 하나만 있으면 다시 빈다. */
@@ -87,6 +87,10 @@ test('facemarket 문서는 자기 아이콘을 SVG·PNG·ico 로 건다', () => 
   assert.match(html, /rel="icon" type="image\/png"[^>]*href="\/assets\/brand\/facemarket-icon-32\.png"/);
   assert.match(html, /rel="icon" type="image\/x-icon" href="\/assets\/brand\/facemarket-favicon\.ico"/);
   assert.match(html, /rel="apple-touch-icon"[^>]*href="\/assets\/brand\/facemarket-icon-180\.png"/);
+  const svg = html.match(/<link[^>]*type="image\/svg\+xml"[^>]*>/)[0];
+  assert.match(svg, /sizes="any"/);
+  assert.ok(html.indexOf('type="image/png"') < html.indexOf(svg));
+  assert.ok(html.indexOf('type="image/x-icon"') < html.indexOf(svg));
 });
 
 test('셀러 문서는 Wearless 아이콘 그대로다 — facemarket 아이콘이 새면 안 된다', () => {
