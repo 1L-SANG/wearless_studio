@@ -603,3 +603,94 @@ def test_run_face_pass_skips_small_face_and_reports(monkeypatch):
     assert res.meta["reason"] in ("too_small", "error:AssertionError")
     if res.meta["reason"] == "too_small":
         assert res.image == data and res.applied is False and res.meta["upscale_applied"] is True
+
+
+# ---------------------------------------------------------------- 2026-09-09 통합 검증 결함 수정
+
+
+def test_detect_face_downscales_large_images(monkeypatch):
+    """긴 변 2000px 초과면 ×4 축소본에서 검출하고 좌표를 되돌린다(v6 빌더·채점과 같은 규칙)."""
+    calls = []
+
+    class FakeDet:
+        def setInputSize(self, size):
+            calls.append(size)
+
+        def detect(self, arr):
+            # 축소본 좌표계에서 얼굴 하나(박스 100, 눈 간격 20, 코는 눈 중점)
+            f = np.array([[100.0, 200.0, 100.0, 130.0, 140.0, 240.0, 160.0, 240.0, 150.0, 260.0,
+                           145.0, 285.0, 155.0, 285.0, 0.99]], dtype=np.float32)
+            return 1, f
+
+    monkeypatch.setattr(fi, "_detector", lambda model_dir: FakeDet())
+    big = Image.new("RGB", (4000, 6000), (120, 110, 100))
+    det = fi.detect_face(big)
+    assert calls[-1] == (1000, 1500)          # ×4 축소본 크기로 검출
+    assert det.box == (400.0, 800.0, 400.0, 520.0)   # 좌표 ×4 복원
+    assert det.eye_dist == 80.0                       # 랜드마크도 복원(20 × 4)
+    assert det.landmarks[0] == (560.0, 960.0)
+    assert det.score == pytest.approx(0.99)           # 점수는 스케일 대상 아님
+    calls.clear()
+    small = Image.new("RGB", (1200, 1800), (120, 110, 100))
+    fi.detect_face(small)
+    assert calls[-1] == (1200, 1800)          # 2000px 이하는 원본 해상도
+    calls.clear()
+    fi.detect_face(big, downscale=False)
+    assert calls[-1] == (4000, 6000)          # 학습 재현 경로는 축소 없음
+
+
+@needs_samples
+@pytest.mark.parametrize("sid", IDS)
+def test_training_control_still_pixel_identical_after_downscale_rule(sid):
+    """축소 규칙 도입이 학습 경로를 건드리지 않는지 — prod 입력(848×1264)은 2000px 이하라 무영향."""
+    img = _fixture_image(sid)
+    assert max(img.size) <= 2000
+    plan = fi.plan_from_image(img)
+    plan = fi.plan_from_box(img.size[0], img.size[1], plan.box, yaw_proxy=plan.yaw_proxy, eye_dist=plan.eye_dist,
+                            ellipse=fi.ELLIPSE_TRAIN)
+    ctrl = np.asarray(fi.build_control(img, plan), np.int16)
+    with Image.open(os.path.join(SAMPLES_CTRL, f"prod_{sid}.png")) as ref_im:
+        ref = np.asarray(ref_im.convert("RGB"), np.int16)
+    assert np.array_equal(ctrl, ref)
+
+
+def test_center_gate_threshold_matches_measured_distribution():
+    """0.25 근거: 채택 6컷 0.065~0.145 · 거부 9회 0.164~0.235(확장 타원의 위쪽 편향)."""
+    assert fi.GATE_CENTER_FRAC == 0.25
+    plan = fi.plan_from_box(848, 1264, (355.0, 252.0, 135.0, 180.0), yaw_proxy=0.05)
+    img = Image.new("RGB", (848, 1264), (90, 90, 90))
+    bx, by, bw, bh = plan.box
+
+    for frac, expect in ((0.14, "ok"), (0.20, "ok"), (0.24, "ok"), (0.30, "center_off")):
+        det = fi.FaceDetection(box=(bx, by + frac * bh, bw, bh), yaw_proxy=0.05, eye_dist=60.0, score=0.9)
+        object.__setattr__(det, "box", (bx, by + frac * bh, bw, bh))
+        import unittest.mock as um
+
+        with um.patch.object(fi, "detect_face", return_value=det):
+            assert fi.evaluate_gate(plan, img).reason == expect, frac
+
+
+def test_retry_stops_after_three_same_reason_failures():
+    """같은 사유 3연속이면 남은 시드를 포기한다(c9_1: center_off 6시드 630초 낭비)."""
+    assert fi.GATE_SAME_REASON_STOP == 3
+    orig, plan = _synthetic()
+    buf = __import__("io").BytesIO()
+    orig.save(buf, "PNG")
+    data = buf.getvalue()
+    calls = []
+
+    class Flat:
+        def render(self, control, prompt, seed):
+            calls.append(seed)
+            return Image.new("RGB", (fi.CROP, fi.CROP), (100, 100, 100))
+
+    import unittest.mock as um
+
+    with um.patch.object(fi, "plan_from_image", return_value=plan), \
+         um.patch.object(fi, "prepare_image", return_value=(orig, plan, {"skipped_reason": None, "pose_risk": False})), \
+         um.patch.object(fi, "evaluate_gate", return_value=fi.GateResult(False, "center_off", 100.0, 0.4, 0.05)):
+        res = fi.run_face_pass(data, Flat(), seeds=(42, 43, 44, 45, 46, 47))
+    assert not res.applied
+    assert len(calls) == 3, calls                      # 6시드가 아니라 3에서 멈춘다
+    assert res.meta["stopped_early"] is True
+    assert res.meta["reason"] == "gate_failed:center_offx3"

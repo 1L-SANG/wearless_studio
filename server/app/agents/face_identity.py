@@ -82,14 +82,23 @@ GATE_YAW_FLATTEN_MIN_IN = 0.20
 AUTO_UPSCALE_FACE_W_MIN = 120.0
 AUTO_UPSCALE_TARGET_FACE_W = 150.0
 AUTO_UPSCALE_MAX = 6
-#: 게이트 — 결과 얼굴폭 입력 대비 ±30%, 박스 중심 이탈 ≤ 얼굴높이 15%,
+#: 게이트 — 결과 얼굴폭 입력 대비 ±30%, 박스 중심 이탈 ≤ 얼굴높이 25%,
 #: 결과 yaw_proxy > max(0.20, 입력 yaw_proxy × 2.0) 이면 실패(원본보다 더 돌아간 결과 → 시드 재시도)
 GATE_WIDTH_TOL = 0.30
-GATE_CENTER_FRAC = 0.15
+#: 0.15 는 학습 타원(ELLIPSE_TRAIN) 기준값이었다. 기본 타원을 확장으로 바꾸면서 **수직 중심이
+#: 얼굴박스 중심보다 0.425·h 위**로 올라갔고(확장 타원 상단 −1.10h·하단 +1.25h → 중심 +0.075h,
+#: 박스 중심 +0.5h), 생성 얼굴이 그 타원을 채우므로 결과 박스 중심이 체계적으로 위로 치우친다.
+#: 2026-09-09 13개 렌더 실측: 채택된 6컷 0.065~0.145, 거부 9회 0.164~0.235(정면 c9_1 이 6시드 전부
+#: 이 구간). 실제 오붙임이 아니라 타원 편향이므로 0.25(얼굴높이의 1/4)로 올린다 — 그 이상은
+#: 눈에 보이는 오붙임이다. 폭·yaw 게이트는 그대로라 이중 방어는 유지된다.
+GATE_CENTER_FRAC = 0.25
 GATE_YAW_DRIFT_MIN = 0.20
 GATE_YAW_DRIFT_MULT = 2.0
 #: 결과 얼굴의 고주파 표준편차가 원본의 이 배율 미만일 때만 grain 재주입
 GRAIN_MIN_RATIO = 0.85
+#: 같은 게이트 사유가 이만큼 연속되면 남은 시드를 포기하고 폴백한다. 시드를 바꿔도 같은 사유로
+#: 막히는 것은 그 컷의 구조적 문제라 더 뽑아도 낭비다(2026-09-09: c9_1 이 center_off 로 6시드 630초).
+GATE_SAME_REASON_STOP = 3
 #: 표정 추정(YuNet 5점 + 입술 색 마스크, 외부 모델 없음). 2026-09-08 v5 학습 원본 118장(캡션 라벨) 캘리브레이션:
 #:   mc = (입술 마스크 중심 y − 입꼬리 평균 y) / 입폭 — 무표정 p10 0.035 · 중앙 0.064, smiling 중앙 −0.008 · p75 0.053
 #:   ratio = 입폭 / 눈간격 — 무표정 중앙 0.853(p90 0.892), smiling p10 0.869
@@ -154,17 +163,27 @@ class FaceDetection:
         return self.box[0] + self.box[2] / 2, self.box[1] + self.box[3] / 2
 
 
-def detect_face(image: Image.Image, model_dir: str | None = None) -> FaceDetection | None:
-    """YuNet 최대 얼굴(면적 기준 — build_v4c.face_box 와 동일). 미검출이면 None."""
+def detect_face(image: Image.Image, model_dir: str | None = None, *, downscale: bool = True) -> FaceDetection | None:
+    """YuNet 최대 얼굴(면적 기준 — build_v4c.face_box 와 동일). 미검출이면 None.
+
+    긴 변이 2000px 을 넘으면 ×4 축소본에서 검출하고 좌표를 되돌린다(v6 데이터 빌더·기준자 채점과 같은 규칙).
+    풀해상도 YuNet 은 큰 얼굴을 놓친다 — 2026-09-09 실측: 5884×7005 컷에서 폭 617px 주 얼굴을 놓치고
+    214px 짜리 다른 얼굴을 골랐고, 2005×6673 컷은 아예 no_face 였다.
+    downscale=False 는 학습 데이터 재현 경로용(그 입력은 2000px 이하라 실제로는 같은 결과다).
+    """
     arr = cv2.cvtColor(np.asarray(image.convert("RGB")), cv2.COLOR_RGB2BGR)
     h, w = arr.shape[:2]
+    sc = 4 if (downscale and max(h, w) > 2000) else 1
+    small = cv2.resize(arr, (w // sc, h // sc)) if sc > 1 else arr
     det = _detector(model_dir)
     with _DET_LOCK:  # YuNet 객체는 setInputSize 상태를 가진다 — 스레드 간 직렬화
-        det.setInputSize((w, h))
-        _, faces = det.detect(arr)
+        det.setInputSize((small.shape[1], small.shape[0]))
+        _, faces = det.detect(small)
     if faces is None or len(faces) == 0:
         return None
-    f = faces[int(np.argmax(faces[:, 2] * faces[:, 3]))]
+    f = faces[int(np.argmax(faces[:, 2] * faces[:, 3]))].copy()
+    if sc > 1:
+        f[:14] *= sc  # 박스 4 + 랜드마크 5점(10) 복원. f[14] 는 점수라 건드리지 않는다.
     eye_r, eye_l, nose = f[4:6], f[6:8], f[8:10]
     mid = (eye_r + eye_l) / 2
     eye_dist = float(np.linalg.norm(eye_r - eye_l)) or 1.0
@@ -709,7 +728,13 @@ def run_face_pass(
         prompt = build_prompt(plan, expression, token=token)
         meta["prompt"] = prompt
         control = build_control(original, plan)
+        streak_reason, streak = None, 0
         for seed in seeds:
+            if streak >= GATE_SAME_REASON_STOP:
+                meta["reason"] = f"gate_failed:{streak_reason}x{streak}"
+                meta["stopped_early"] = True
+                log.info("face_identity giving up after %d× %s", streak, streak_reason)
+                return FacePassResult(image_bytes, mime, False, meta)
             meta["attempts"] += 1
             t1 = time.perf_counter()
             generated = backend.render(control, prompt, int(seed))
@@ -723,6 +748,8 @@ def run_face_pass(
                 "yaw_out": gate.yaw_proxy,
                 "ms": round((time.perf_counter() - t1) * 1000),
             })
+            streak = streak + 1 if gate.reason == streak_reason else 1
+            streak_reason = gate.reason
             if gate.passed:
                 meta.update(cmeta)
                 meta.update({
@@ -737,6 +764,7 @@ def run_face_pass(
                 result.save(buf, "PNG")
                 return FacePassResult(buf.getvalue(), "image/png", True, meta)
         meta["reason"] = "gate_failed"
+        meta["stopped_early"] = False
         return FacePassResult(image_bytes, mime, False, meta)
     except Exception as exc:  # noqa: BLE001 — 폴백이 계약이다
         meta["reason"] = f"error:{type(exc).__name__}"
