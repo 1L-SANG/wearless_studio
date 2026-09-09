@@ -265,3 +265,53 @@ control 의 블러 타원 자체를 키워 **재생성**(저장된 raw 재합성
 **모듈 반영(사용자 승인, 2026-09-09)**: `ELLIPSE = (-0.75, -1.45, 1.75, 1.30)`. 이전 확장본은 `ELLIPSE_PREV (-0.55,-1.10,1.55,1.25)` 로 남겨 §14~16 회차를 재현할 수 있게 했고, `ELLIPSE_TRAIN (-0.30,-0.60,1.30,1.15)` 은 그대로 유지(학습 표본 픽셀 동일 테스트가 이 경로를 쓴다). 실측 확인: m9_3 면적 56.4% · m9_5 58.3%(시험값 56.5/58.8% 재현). center_off 주석의 타원 중심 산식도 E2 기준으로 정정(E2 중심 −0.075h).
 
 산출물 `~/Downloads/lora_runs/ell3_out/`(`ell3_compare.png` 원본/E1/E2/E3, `ell3_hairline_zoom.png` 이마·측면 ×3, `ell3/` raw·control·full·result.json).
+
+## 18. 확정과 남은 일 (2026-09-09) — Qwen 얼굴패스 채택, DB 배선이 다음 관문
+
+**확정**: Qwen v6-1500 얼굴패스. 같은 자(refset 8) 남자 모델 실촬영 기준 정면 7컷 개별 0.717(0.637~0.792)·일관성 0.721 vs Krea 인물 LoRA 최고 0.639 + 전 체크포인트 가슴 글자(의상 통제 불합격). **Krea 는 보류(중단 아님, 우선순위만 내림) — 재학습하지 않는다. 캡션·데이터 준비가 선행 조건.**
+E2 타원 반영 커밋 `e8fd1c3a`(§17). `face_identity_enabled` 기본 False 유지.
+
+### 18.1 DB 배선 — 현행 구조 조사(스키마 변경 전, 제안만)
+
+실존 인물은 `virtual_models.json` 이 아니라 DB(`public.fm_models`)에 있고, 자산은 `fm_model_assets` 에 view 별로 붙는다. 워커는 `agents/identity_source.resolve_real_model_assets()` 로 두 자산(face_front·grid_sedcard)만 꺼내 쓴다(`workers/editor_image_job.py:392`).
+
+| 테이블 | 키 | 지금 있는 것 | LoRA 배선에 쓸 수 있나 |
+|--|--|--|--|
+| `fm_models` | `id uuid` | display_name · status(pending/awaiting_confirm/verified/suspended/reverification_required) · **gender(male/female)** · height_bucket · body_type · current_enrollment_id · assets_status(none/building/ready/failed) · assets_source_hash · cover_image_url | 인물 1행 = LoRA 1묶음의 주인. **gender 는 이미 있다.** hair 는 없다 |
+| `fm_model_assets` | `(model_id, view)` | view ∈ {face_front, grid_sedcard} · r2_key · mime · bucket · source_enrollment_id · evidence_version | 자산 패턴의 선례. view 를 늘리면 LoRA 를 여기 담을 수 있으나 **1인 1행 제약**이라 버전 여러 개를 못 담는다 |
+| `personalization_profiles` | `user_id` | **hair_length(short/medium/long)** · hair_color(8종) · gender(female/male/other) · body_type · 3사이즈 | hair_length 어휘가 이미 있다. 다만 **셀러 개인화 프로필**이라 FaceMarket 모델과 다른 축이다(user_id 기준, 모델 id 아님) |
+| `fm_model_test_cuts` | `id` | model_id · r2_key · sort · approved | 모델별 다행(多行) 자산의 선례 — LoRA 버전 테이블 모양의 참고 |
+
+**제안(선택지 A/B, 마이그레이션은 승인 후)**
+
+| 안 | 모양 | 장점 | 단점 |
+|--|--|--|--|
+| **A. 새 테이블 `fm_model_loras`** (권장) | `id uuid pk · model_id uuid fk · version text · lora_r2_key text · trigger_token text · base_model text · status text(building/ready/failed/retired) · enabled boolean default false · hair_length text · trained_steps int · source_enrollment_id uuid · metrics jsonb · created_at` + `unique(model_id, version)` + 부분 유니크 `unique(model_id) where enabled` | 한 인물에 체크포인트 여러 개(v6-1500·v7…) 공존, 버전 승격/롤백이 한 행 토글, 지표(refset 유사도·일관성)를 jsonb 로 같이 보관, `fm_models` 를 안 건드림 | 테이블 1개 추가, 조회 조인 1회 |
+| B. `fm_model_assets` 에 view 추가 | `view in (…, 'identity_lora')` + `fm_models.lora_trigger_token`·`lora_enabled` 컬럼 | 마이그레이션 최소 | **(model_id, view) PK 라 버전 다중 불가**, 지표·steps 둘 자리 없음, view 제약을 계속 늘려야 함 |
+
+- 매칭 필터 필드: `gender` 는 `fm_models` 것을 그대로 쓴다(중복 저장 금지). `hair_length` 는 **LoRA 쪽에 둔다** — 인물의 현재 헤어가 아니라 *그 체크포인트가 학습한 헤어*가 매칭 기준이기 때문이다(v6 는 짧은 머리로 학습, v5 는 긴 머리였다). 어휘는 `personalization_profiles.hair_length`(short/medium/long) 재사용.
+- 적용 여부는 두 단계: 전역 `FACE_IDENTITY_ENABLED`(env) **and** 행의 `enabled`(인물별). 지금 `cut_generator._face_identity_spec` 이 `virtual_models.json` 의 `faceIdentity` 를 보는 자리를 DB 조회로 바꾸면 된다(모듈 인터페이스 `FaceIdentitySpec(lora_path, token)` 은 그대로 쓸 수 있다).
+- 매칭 규칙(이번 회차 실측 근거): 원본 컷의 성별이 다르면 얼굴만 교체돼 머리·목 경계가 명백히 이질적이었다(c5_1·c5_2 여자 모델). 헤어 길이도 다르면 티가 난다. → 컷의 기존 모델 성별·헤어를 알 수 없으면 **적용하지 않는 쪽이 안전**하다는 것이 현재 데이터의 결론.
+
+### 18.2 GPU 백엔드 3안 (결정 보류, 선택지만)
+
+실측 기준: 컷당 렌더 100~105초(A40 44GiB, bf16 3단 분할 적재) + ESRGAN 확대 5~10초. 모델 적재는 회당 86~138초(캐시 있는 파드). A40 단가 community $0.35/h · secure $0.49/h · **serverless $1.22/h**(RunPod 공시).
+
+| 안 | 형태 | 비용(컷 100장/월 가정) | 지연 | 위험 |
+|--|--|--|--|--|
+| 1. RunPod serverless | 요청당 워커. `HttpFaceBackend` 가 그대로 물림 | 100컷 × 115초 = 3.2h × $1.22 ≈ **$3.9/월** + 콜드스타트분 | 콜드스타트가 문제 — 모델 적재 86~138초가 요청마다 붙으면 컷당 4분. flex worker 를 1대 warm 유지하면 $1.22/h × 24 × 30 = $878/월(불가) | 콜드스타트, 컨테이너 이미지에 20GB 모델 포함 필요 |
+| 2. 상시 파드 | A40 1대 상시 + 내부 큐 | $0.35~0.49/h × 720 = **$252~353/월** | 적재 1회 후 컷당 115초 | 유휴 낭비가 절대적으로 큼 |
+| 3. 온디맨드 파드 + 유휴 종료 (SAM 선례) | 수요 발생 시 파드 기동, N분 유휴 후 정지. `sam_autoscale`/`sam_autoscale_idle_minutes` 와 같은 패턴 | 100컷을 배치로 묶으면 3.2h + 적재 0.1h ≈ 3.3h × $0.49 ≈ **$1.6/월**(+ 기동 지연) | 첫 컷 지연 = 파드 기동 2~4분 + 적재 1.5~2.3분 ≈ **4~6분** | RunPod API 키 서버 보관, 기동 실패(재고 없음) 처리 |
+
+- 레포에 이미 선례가 있다: SAM 세그멘테이션이 `SAM_AUTOSCALE` + `SAM_AUTOSCALE_IDLE_MINUTES`(기본 30분) 로 3안을 쓴다. 코드·운영 패턴을 그대로 복제할 수 있다.
+- 3안의 지연은 상세페이지 잡이 이미 수 분 단위라 흡수 가능. 1안은 콜드스타트를 못 피해 사실상 2안(warm) 비용이 되고, 2안은 지금 트래픽에 과투자다. **정리하면 3안이 유력하나 결정은 사용자 몫.**
+
+### 18.3 미해결 항목(제품 규칙 필요)
+
+| 항목 | 현재 상태 | 성격 |
+|--|--|--|
+| 선글라스·안경 소실 | 마스크 타원이 눈을 덮으므로 생성이 안경을 지운다(m5_1·m9_1·c10_2 실측) | **구조적** — 마스크 방식으로는 못 고침. 안경 검출 후 건너뛰기 또는 안경 재합성이 필요 |
+| 다인 컷 = 최대 얼굴만 교체 | c10_1(2인)·c10_4(3인)에서 나머지 인물은 원본 그대로. 메타에 다인 플래그 없음 | 규칙 필요: 다인 검출 시 건너뛰기 또는 전원 교체 |
+| 체형은 원본 모델 것 | 얼굴 타원만 바꾸므로 키·어깨·체형은 원본 유지 | 트랙 B(전체 생성)로만 해결. 얼굴패스 범위 밖 |
+| 성별·헤어 길이 매칭 | 필터 없음. 성별 다른 원본에 넣으면 경계가 명백히 이질적(c5_1·c5_2), 헤어 길이 달라도 티남 | 18.1 의 `gender`·`hair_length` 필터로 해결. 미상이면 미적용이 안전 |
+| 헤어스타일 교체 | 곱슬·갈색 → 검정 직모로 바뀜(E2 로 경계 잔털은 해결, 스타일 자체는 그대로 교체됨) | 원본 헤어 보존은 미해결. 재학습(원본 헤어 다양화) 또는 헤어 영역 제외 마스크가 후보 |
