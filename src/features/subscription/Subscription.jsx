@@ -20,9 +20,10 @@ import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { seoulDate } from '@/lib/datetime.js';
 import { Button, Icon, Skeleton, ErrorState } from '@/components/ui.jsx';
+import { TOSS_BILLING_CLIENT_KEY } from '@/lib/tossKeys.js';
 import s from './Subscription.module.css';
 
-const TOSS_CLIENT_KEY = import.meta.env.VITE_TOSS_CLIENT_KEY;
+// 카드 등록/교체는 자동결제 MID 의 클라이언트 키로 해야 한다 — lib/tossKeys.js 참고.
 const num = (n) => Number(n || 0).toLocaleString('ko-KR');
 
 const STATUS_LABEL = {
@@ -34,7 +35,7 @@ const STATUS_LABEL = {
 /** 카드 등록 결제창을 연다. 성공하면 successUrl 로 authKey·customerKey 가 붙어 돌아온다. */
 async function openBillingAuth({ userId, next }) {
   const { loadTossPayments } = await import('@tosspayments/tosspayments-sdk');
-  const toss = await loadTossPayments(TOSS_CLIENT_KEY);
+  const toss = await loadTossPayments(TOSS_BILLING_CLIENT_KEY);
   const payment = toss.payment({ customerKey: userId });
   await payment.requestBillingAuth({
     method: 'CARD',
@@ -245,7 +246,7 @@ export function SubscriptionManage() {
         </dl>
 
         <div className={s.actions}>
-          <Button variant="ghost" onClick={changeCard} disabled={!TOSS_CLIENT_KEY}>카드 변경</Button>
+          <Button variant="ghost" onClick={changeCard} disabled={!TOSS_BILLING_CLIENT_KEY}>카드 변경</Button>
           {data.status === 'canceled' ? (
             <Button variant="primary" onClick={() => resume.mutate()} disabled={resume.isPending}>
               해지 취소

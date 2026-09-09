@@ -13,11 +13,34 @@
 
 **우리 자동결제 MID: `bill_wearl02h5`** (2026-09-09 확인 — 일반결제 MID 와 별개다)
 
-1. [개발자센터 API 키](https://developers.tosspayments.com/my/api-keys) 에서 **`bill_wearl02h5` 를 선택**한 뒤 나오는 시크릿 키를 쓴다
-2. 그 키를 `TOSS_BILLING_SECRET_KEY` 로 SSM 에 넣는다. **라이브 전환 시 이 값은 필수다** — 비워 두면 코드가 일반결제 MID 키(`TOSS_SECRET_KEY`)로 떨어지고, 그 키로는 빌링 승인이 `NOT_SUPPORTED_METHOD` 로 거절된다
-3. 테스트 단계에서는 비워도 된다. 테스트 시크릿 키는 MID 구분 없이 빌링이 열려 있다 —
-   2026-09-09 실측: `test_sk_…` 로 `POST /v1/billing/authorizations/issue` 호출 시
-   `NOT_FOUND_BILLING`(= 인증 통과, authKey 만 무효)이 돌아왔다
+### 어디서 받나
+
+[개발자센터 > API 키](https://developers.tosspayments.com/my/api-keys) 에 로그인 → 상단에서 **상점(MID) `bill_wearl02h5` 선택** → 그 화면에 **클라이언트 키와 시크릿 키가 한 세트로** 표시된다.
+
+키 읽는 법:
+
+| 구분 | 생김새 | 우리가 쓰는 것 |
+|---|---|---|
+| 테스트 / 라이브 | `test_` / `live_` 로 시작 | 검증은 `test_`, 출시 후 `live_` |
+| **API 개별 연동 키** | 중간에 **`ck`** / **`sk`** | ✅ 이것 |
+| 결제(위젯) 키 | 중간에 `gck` / `gsk` | ❌ 아님 |
+
+> 토스 문서 원문: *"클라이언트 키와 시크릿 키는 항상 '세트'로 묶여 있고, 한 세트로 써야 한다. 세트가 아닌 키를 사용하거나 테스트 또는 라이브 키를 섞어 사용하면 `INVALID_API_KEY` 오류가 발생한다."*
+
+키를 다른 사람과 공유해야 하면 그 화면 좌하단 **'사용자 추가하기'** 로 권한을 준다(키 문자열을 메신저로 보내지 말 것).
+
+### 어디에 넣나 — **두 군데다**
+
+| 키 | 넣는 곳 | 없으면 |
+|---|---|---|
+| 시크릿 키 (`sk`) | SSM `TOSS_BILLING_SECRET_KEY` (서버) | 일반결제 키로 떨어져 승인이 `NOT_SUPPORTED_METHOD` |
+| 클라이언트 키 (`ck`) | 빌드 env `VITE_TOSS_BILLING_CLIENT_KEY` (프런트) | 카드 등록창이 `NOT_SUPPORTED_METHOD` / `INVALID_API_KEY` |
+
+**둘 다 채워야 한다.** 시크릿만 바꾸고 클라이언트 키를 일반결제 것으로 두면 카드 등록 단계에서 막히고, 반대면 승인 단계에서 막힌다. MID 가 하나뿐인 상점이면 둘 다 비워 둔다 — 코드가 일반결제 키로 떨어진다(`src/lib/tossKeys.js`, `toss_billing.billing_secret`).
+
+테스트 단계에서는 비워도 된다. 테스트 키는 MID 구분 없이 빌링이 열려 있다 —
+2026-09-09 실측: `test_sk_…` 로 `POST /v1/billing/authorizations/issue` 호출 시
+`NOT_FOUND_BILLING`(= 인증 통과, authKey 만 무효)이 돌아왔다.
 
 키가 어긋났을 때 나오는 코드로 원인을 가른다. 셋 다 4xx(확정 거절)이라 재시도해도 같다.
 

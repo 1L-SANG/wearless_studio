@@ -21,11 +21,13 @@ import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { Icon, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
+import { TOSS_BILLING_CLIENT_KEY, TOSS_CLIENT_KEY } from '@/lib/tossKeys.js';
 import s from './Pricing.module.css';
 
 const won = (n) => '₩' + Number(n).toLocaleString('ko-KR');
 // 공개 클라이언트 키(테스트). 없으면 결제 버튼을 비활성 — 키 없이 결제창을 띄우면 런타임에 깨진다.
-const TOSS_CLIENT_KEY = import.meta.env.VITE_TOSS_CLIENT_KEY;
+// 충전과 구독은 계약 MID 가 달라 클라이언트 키도 다르다 — lib/tossKeys.js 참고.
+// 하나로 쓰면 둘 중 하나가 INVALID_API_KEY / NOT_SUPPORTED_METHOD 로 깨진다.
 
 // 랜딩 PricingSection 및 요금제 정본 §5(v9). 가격과 지급량은 API 값을 사용한다.
 const PLAN_DETAILS = {
@@ -95,7 +97,8 @@ export function Pricing() {
     setBuying(planCode);
     try {
       const { loadTossPayments } = await import('@tosspayments/tosspayments-sdk');
-      const toss = await loadTossPayments(TOSS_CLIENT_KEY);
+      // 자동결제 MID 의 클라이언트 키여야 한다 — 일반결제 키로 부르면 NOT_SUPPORTED_METHOD.
+      const toss = await loadTossPayments(TOSS_BILLING_CLIENT_KEY);
       const payment = toss.payment({ customerKey: session.user.id });
       await payment.requestBillingAuth({
         method: 'CARD',
@@ -225,8 +228,8 @@ export function Pricing() {
                       ) : (
                         <button
                           type="button" className={`${s.purchaseButton} ${s.subscriptionButton}`}
-                          disabled={isCurrent || !TOSS_CLIENT_KEY || buying !== null}
-                          title={TOSS_CLIENT_KEY ? undefined : '결제 키가 설정되지 않았어요'}
+                          disabled={isCurrent || !TOSS_BILLING_CLIENT_KEY || buying !== null}
+                          title={TOSS_BILLING_CLIENT_KEY ? undefined : '결제 키가 설정되지 않았어요'}
                           onClick={() => subscribe(p.code)}
                         >
                           {isCurrent ? '이용 중'

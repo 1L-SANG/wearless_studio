@@ -54,3 +54,30 @@ test('빌링키를 프런트에서 다루지 않는다', () => {
   assert.doesNotMatch(SUB, /billingKey/);
   assert.doesNotMatch(PRICING, /billingKey/);
 });
+
+/* MID 가 갈리면 클라이언트 키도 갈린다(토스 문서: 클라이언트·시크릿은 MID 단위 한 세트).
+   충전과 구독이 같은 키를 쓰면 둘 중 하나가 INVALID_API_KEY / NOT_SUPPORTED_METHOD 로
+   반드시 깨진다. 2026-09-09 실제로 이 상태였고, 여기서 다시 붙지 않게 고정한다. */
+const KEYS = readFileSync('src/lib/tossKeys.js', 'utf8');
+
+test('충전과 구독의 클라이언트 키가 분리돼 있다', () => {
+  assert.match(KEYS, /VITE_TOSS_CLIENT_KEY/);
+  assert.match(KEYS, /VITE_TOSS_BILLING_CLIENT_KEY/);
+  // MID 가 하나인 상점은 빌링 키를 비워도 되게 — 서버 fallback 규칙과 같은 모양
+  assert.match(KEYS, /VITE_TOSS_BILLING_CLIENT_KEY \|\| TOSS_CLIENT_KEY/);
+});
+
+test('빌링 인증(requestBillingAuth)은 빌링 클라이언트 키로만 부른다', () => {
+  for (const [name, src] of [['Pricing', PRICING], ['Subscription', SUB]]) {
+    if (!src.includes('requestBillingAuth')) continue;
+    assert.match(src, /loadTossPayments\(TOSS_BILLING_CLIENT_KEY\)/, name);
+  }
+  // 충전 경로는 그대로 일반결제 키를 쓴다
+  assert.match(PRICING, /loadTossPayments\(TOSS_CLIENT_KEY\)/);
+});
+
+test('클라이언트 키를 컴포넌트에서 직접 읽지 않는다', () => {
+  for (const src of [PRICING, SUB]) {
+    assert.doesNotMatch(src, /import\.meta\.env\.VITE_TOSS/);
+  }
+});
