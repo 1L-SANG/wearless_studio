@@ -6,6 +6,7 @@
    ============================================================= */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api/index.js';
+import { FACEMARKET_PRICING } from '@/lib/facemarketPricing.js';
 import { listModels, fetchLicenseFaceUrl, verifyLicensePublic } from '@/lib/api/facemarket.js';
 import QRCode from 'qrcode';
 import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppStore.js';
@@ -13,7 +14,7 @@ import { Icon, Chips, Button, Skeleton, ErrorState, Modal, useToast } from '@/co
 import { useSteppedProgress } from '@/components/SmoothProgress.jsx';
 import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
 import { AI_MODELS } from '@/features/analysis/aiModels.js';
-import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
+import { axesFor, fitProfileCategory, subcategoryLength } from '@/lib/fitAxes.js';
 import {
   genderForClothingType,
   normalizeTargetGendersForClothingType,
@@ -52,7 +53,7 @@ export function ModelThumb({ uri, alt }) {
 }
 
 const _won = (n) => `₩${Number(n || 0).toLocaleString('ko-KR')}`;
-const _fmtDate = (iso) => { if (!iso) return null; try { return new Date(iso).toLocaleDateString('ko-KR'); } catch { return iso; } };
+const _fmtDate = (iso) => (iso ? seoulDate(iso, iso) : null);
 
 // 모델 상세 = 얼굴 라이선스 카드. 공개 검증 화이트리스트(verifyLicensePublic)만 표시하고
 // 얼굴은 게이트 썸네일, QR 은 무인증 검증 페이지({origin}/verify/{id}) 주소만 싣는다(생체정보 X).
@@ -113,7 +114,7 @@ function ModelDetailModal({ model, onClose, onSelect, selectable }) {
                 )}
                 <div className="lic-foot">
                   <div className="lic-foot-info">
-                    <div className="lic-price">{_won(data.unitPrice)}<em> · 호리존 컷 1장당</em></div>
+                    <div className="lic-price">{_won(FACEMARKET_PRICING.perCut)}<em> · 호리존 컷 1장당</em></div>
                     {_fmtDate(data.validUntil) && <div className="lic-valid">{_fmtDate(data.validUntil)}까지</div>}
                     {data.vcId && <code className="lic-vcid">{data.vcId}</code>}
                   </div>
@@ -141,6 +142,7 @@ function ModelDetailModal({ model, onClose, onSelect, selectable }) {
 // 시작해 내용 길이만큼만 유동 확장되게 하는 계산 (2026-07-13 사용자 피드백).
 const chWidth = (s) => [...s].reduce((n, ch) => n + (/[가-힣]/.test(ch) ? 1 : 0.55), 0).toFixed(1);
 import { CREDIT_COSTS } from '@/lib/limits.js';
+import { seoulDate } from '@/lib/datetime.js';
 import {
   createMeasurementFields,
   normalizeMeasurementValue,
@@ -958,12 +960,8 @@ export function AnalysisForm({
     const sameProfileScope = prev?.category === cat && prev?.gender === gender;
     const axes = sameProfileScope ? { ...(prev.axes || {}) } : {}; // 카테고리·성별이 바뀌면 타 축 무효 → 리셋
     if (fit === null) delete axes.fit; else axes.fit = fit;
-    if ('subCategory' in patch && patch.subCategory !== a.subCategory) {
-      const length = {
-        mini_skirt: 'mini', mini_dress: 'mini',
-        midi_skirt: 'midi', midi_dress: 'midi',
-        long_skirt: 'long', long_dress: 'long',
-      }[patch.subCategory];
+    if ('subCategory' in patch && (patch.subCategory !== a.subCategory || !sameProfileScope)) {
+      const length = subcategoryLength(patch.subCategory);
       if (length) axes.length = length;
     }
     if (next.subCategory === 'leggings') {
@@ -1290,9 +1288,7 @@ export function AnalysisForm({
                   <div className="fm-meta">
                     <div className="fm-name">{m.displayName}{on && <Icon name="check" size={13} className="star" />}</div>
                     <div className="fm-price">
-                      {m.unitPrice != null
-                        ? `₩${Number(m.unitPrice).toLocaleString('ko-KR')} · 호리존 컷 1장당`
-                        : '호리존 컷 1장당 가격 확인 필요'}
+                      {`₩${FACEMARKET_PRICING.perCut.toLocaleString('ko-KR')} · 호리존 컷 1장당`}
                     </div>
                   </div>
                 </div>

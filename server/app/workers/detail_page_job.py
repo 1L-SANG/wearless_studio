@@ -1767,7 +1767,8 @@ async def run_detail_page_job(app, job: dict) -> None:
                     "model_id": str(license_row["model_id"]),
                 }
                 for c in cut_assets:
-                    c["provenance"] = prov
+                    if (c.get("metadata") or {}).get("facemarket_real_derived") is True:
+                        c["provenance"] = prov
             out = await repo.finalize_detail_page_success(
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id, project_id=project_id,
                 editor_blocks=editor_blocks, cut_assets=cut_assets, reserved=reserved, charge=charge,

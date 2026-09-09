@@ -16,6 +16,7 @@ import { Button } from '@/components/admin-ui/button.jsx';
 import { Card, CardContent } from '@/components/admin-ui/card.jsx';
 import { Input } from '@/components/admin-ui/input.jsx';
 import { Skeleton } from '@/components/admin-ui/skeleton.jsx';
+import { seoulDateKey } from '@/lib/datetime.js';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/admin-ui/table.jsx';
@@ -36,7 +37,7 @@ const ORIGIN_VARIANT = {
   facemarket: 'default', seller: 'secondary', both: 'outline',
 };
 
-const day = (iso) => (iso ? iso.slice(0, 10) : '-');
+const day = (iso) => seoulDateKey(iso);
 
 /* null(미상)과 앞으로 늘어날 수 있는 값을 둘 다 다룬다 — 스키마에 여섯 번째 값이 생겨도
    빈 pill 대신 원문자열을 보여준다. */

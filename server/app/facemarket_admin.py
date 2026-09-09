@@ -231,12 +231,12 @@ async def admin_overview(
 # facemarket_cutover.py 가 실제로 이 값을 쓴다. 여기서 빠지면 필터가 실재하는 상태를 400 으로
 # 걷어차고, 정지 해제의 복원 화이트리스트도 이 값을 못 돌려줘 verified 처럼 조용히 pending 으로
 # 깎인다.
-MODEL_STATUSES = ("pending", "verified", "suspended", "reverification_required")
+MODEL_STATUSES = ("pending", "awaiting_confirm", "verified", "suspended", "reverification_required")
 # 정지 해제가 복원해도 되는 목표 상태 — MODEL_STATUSES 에서 suspended 를 뺀 값이다
 # ("정지 직전"이 다시 suspended 일 수는 없다). verified 창조 금지 규칙은 "콘솔이 새로
 # verified 를 만드는 것"에 걸리는 규칙이라, 원장에 남은 값을 그대로 돌려주는 이 복원에는
 # 걸리지 않는다.
-RESTORABLE_MODEL_STATUSES = ("pending", "verified", "reverification_required")
+RESTORABLE_MODEL_STATUSES = ("pending", "awaiting_confirm", "verified", "reverification_required")
 MAX_LIST_LIMIT = 200
 
 

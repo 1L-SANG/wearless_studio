@@ -1247,9 +1247,12 @@ def test_fabric_pass_sends_product_photos_with_the_cut():
         res=res, prod_imgs=prod, calls_spent=0, has_fine_pattern=True, image_size="4K"))
 
     assert spent is True and out.image == b"edited"
-    # 생성본 + 상품 사진 앞 2장 — 전부 넣으면 편집 과제가 다시 흐려진다
-    assert len(sent["images"]) == 3
+    # 생성본 + 레거시 무라벨 상품 사진 전부. 역할을 잃은 호출자에서도
+    # 인덱스로 Front/Detail 을 추측하거나 세 번째 근거를 조용히 버리지 않는다.
+    assert len(sent["images"]) == 4
     assert sent["images"][0].data == b"cut"
+    assert [image.data for image in sent["images"][1:]] == [b"front", b"detail", b"back"]
+    assert sent["prompt"].count("Unlabeled seller product photo") == 3
     assert sent["size"] == "4K", "승급된 해상도를 편집에서도 유지해야 한다"
     assert "${" not in sent["prompt"]
     assert any(e.get("status") == "fabric_pass" and e.get("outcome") == "applied"

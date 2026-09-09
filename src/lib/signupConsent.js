@@ -9,13 +9,24 @@
    'wl_postLogin'(AuthProvider) 과 같은 방식·같은 수명 가정이다.
    ============================================================= */
 const KEY = 'wl_signupConsent';
+const USER_KEY = 'wl_signupConsentUser';
 const TTL_MS = 30 * 60 * 1000;
 
 export function markSignupConsent() {
-  try { sessionStorage.setItem(KEY, String(Date.now())); } catch { /* 사파리 프라이빗 등 */ }
+  // 같은 밀리초에 재시도해도 이전 요청의 정리가 새 표시를 지우지 않게 한다.
+  const marker = String(Math.max(Date.now(), (Number(readSignupConsent()) || 0) + 1));
+  try {
+    sessionStorage.setItem(KEY, marker);
+    sessionStorage.removeItem(USER_KEY);
+  } catch { /* 사파리 프라이빗 등 */ }
+  return marker;
 }
 
-/** 지우지 않고 확인만 한다 — 서버 기록에 성공한 뒤에 clearSignupConsent 로 지운다. */
+export function readSignupConsent() {
+  try { return sessionStorage.getItem(KEY); } catch { return null; }
+}
+
+/** 지우지 않고 확인만 한다. 이번 로그인에서 소비하거나 취소하면 표시를 지운다. */
 export function hasFreshSignupConsent() {
   try {
     const at = Number(sessionStorage.getItem(KEY));
@@ -23,6 +34,26 @@ export function hasFreshSignupConsent() {
   } catch { return false; }
 }
 
-export function clearSignupConsent() {
-  try { sessionStorage.removeItem(KEY); } catch { /* 위와 같다 */ }
+/** 첫 복귀 계정에 묶는다. 다른 탭의 계정 전환이나 새로고침 뒤에도 다른 사람에게 넘기지 않는다. */
+export function claimSignupConsent(userId) {
+  const marker = readSignupConsent();
+  if (!userId || !hasFreshSignupConsent()) return null;
+  try {
+    const owner = sessionStorage.getItem(USER_KEY);
+    if (owner && owner !== userId) {
+      clearSignupConsent(marker);
+      return null;
+    }
+    sessionStorage.setItem(USER_KEY, userId);
+    return marker;
+  } catch { return null; }
+}
+
+export function clearSignupConsent(expected) {
+  try {
+    if (expected === undefined || sessionStorage.getItem(KEY) === expected) {
+      sessionStorage.removeItem(KEY);
+      sessionStorage.removeItem(USER_KEY);
+    }
+  } catch { /* 위와 같다 */ }
 }

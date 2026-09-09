@@ -16,9 +16,10 @@ import { useParams } from 'react-router-dom';
 import { Icon } from '@/components/ui.jsx';
 import { verifyLicensePublic } from '@/lib/api/facemarket.js';
 import s from './PublicVerify.module.css';
+import { seoulDate } from '@/lib/datetime.js';
 
 const won = (n) => `₩${Number(n || 0).toLocaleString('ko-KR')}`;
-const fmtDate = (iso) => { try { return new Date(iso).toLocaleDateString('ko-KR'); } catch { return iso; } };
+const fmtDate = (iso) => seoulDate(iso, iso);
 
 const STATUS_COPY = {
   active: { title: '유효한 라이선스예요', desc: '이 얼굴은 아래 조건으로 사용할 수 있어요.' },

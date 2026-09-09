@@ -17,12 +17,12 @@
    셀러 약관의 당사자가 아니다. 조회가 실패하면(네트워크 등) 화면을 띄우지 않는다 —
    앱을 막는 것보다 다음 진입에서 다시 확인하는 편이 낫다.
    ============================================================= */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Icon, Modal } from '@/components/ui.jsx';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { isMockMode } from '@/lib/api/index.js';
 import { acceptSellerConsent, getSellerConsent } from '@/lib/api/consents.js';
-import { clearSignupConsent, hasFreshSignupConsent } from '@/lib/signupConsent.js';
+import { claimSignupConsent, clearSignupConsent, hasFreshSignupConsent, readSignupConsent } from '@/lib/signupConsent.js';
 import { WEARLESS_LEGAL_URLS } from '@/lib/legalLinks.js';
 import styles from './SignupCompletion.module.css';
 
@@ -33,50 +33,66 @@ export function SignupCompletion() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
   const userId = session?.user?.id ?? null;
+  const request = useRef(null);
 
-  const record = useCallback(async (required) => {
+  const record = useCallback(async (required, signal, marker) => {
+    if (signal.aborted) return;
     const res = await acceptSellerConsent({
-      termsVersion: required.terms, privacyVersion: required.privacy,
+      termsVersion: required.terms, privacyVersion: required.privacy, signal, expectedUserId: userId,
     });
-    clearSignupConsent();
-    setState(res);
-  }, []);
+    if (signal.aborted) return;
+    clearSignupConsent(marker);
+    setState({ ...res, userId });
+  }, [userId]);
 
   useEffect(() => {
-    if (loading || !userId || isMockMode) { setState(null); return undefined; }
+    setState(null); setChecked(false); setPending(false); setError('');
+    if (loading || !userId || isMockMode) return undefined;
     const ctrl = new AbortController();
-    getSellerConsent({ signal: ctrl.signal })
+    request.current = ctrl;
+    // 조회가 늦거나 실패해도 이 가입 동의는 처음 돌아온 계정의 것이다.
+    const marker = claimSignupConsent(userId);
+    getSellerConsent({ signal: ctrl.signal, expectedUserId: userId })
       .then(async (res) => {
         if (ctrl.signal.aborted) return;
+        // 기존 계정으로 돌아온 가입 시도도 여기서 끝난다. 다음 계정에 넘기지 않는다.
+        if (res.accepted || !res.needsConsent) clearSignupConsent(marker);
         // 회원가입 탭에서 이미 동의한 사람 — 화면을 띄우지 않고 기록만 남긴다.
-        if (res.needsConsent && !res.accepted && hasFreshSignupConsent()) {
-          try { await record(res.required); return; } catch { /* 아래에서 화면으로 받는다 */ }
+        if (res.needsConsent && !res.accepted && marker === readSignupConsent() && hasFreshSignupConsent()) {
+          try { await record(res.required, ctrl.signal, marker); return; } catch { /* 아래에서 화면으로 받는다 */ }
         }
-        if (!ctrl.signal.aborted) setState(res);
+        if (!ctrl.signal.aborted) setState({ ...res, userId });
       })
       .catch(() => { /* 조회 실패 — 막지 않는다(위 주석) */ });
     return () => ctrl.abort();
   }, [loading, userId, record]);
 
-  if (!state?.needsConsent) return null;
+  if (state?.userId !== userId || !state?.needsConsent) return null;
   const { required } = state;
   const revised = Boolean(state.accepted); // 기록이 있는데 떴다 = 개정 재동의
 
   const submit = async () => {
-    if (!checked || pending) return;
+    const signal = request.current?.signal;
+    if (!checked || pending || !signal || signal.aborted) return;
     setPending(true); setError('');
     try {
-      await record(required);
+      await record(required, signal, readSignupConsent());
     } catch (e) {
+      if (signal.aborted) return;
       if (e?.status === 409) {
         // 화면을 띄운 사이 문서가 개정됐다 — 새 버전으로 다시 그린다.
-        try { setState(await getSellerConsent()); setChecked(false); } catch { /* 다음 진입에서 */ }
+        try {
+          const res = await getSellerConsent({ signal, expectedUserId: userId });
+          if (signal.aborted) return;
+          setState({ ...res, userId }); setChecked(false);
+        } catch { /* 다음 진입에서 */ }
+        if (signal.aborted) return;
         setError('약관이 갱신됐어요. 새 버전을 확인한 뒤 다시 동의해 주세요.');
       } else {
         setError(e?.message || '저장하지 못했어요. 잠시 후 다시 시도해 주세요.');
       }
     } finally {
-      setPending(false);
+      if (!signal.aborted) setPending(false);
     }
   };
 
@@ -84,7 +100,7 @@ export function SignupCompletion() {
     <Modal>
       {/* 로그인 창의 다음 장 — 오른쪽에서 넘어오듯 들어온다(클립은 viewport 가 맡는다). */}
       <div className={styles.viewport}>
-      <div className={styles.panel} role="document" aria-labelledby="signup-completion-title">
+      <div className={styles.panel} role="dialog" aria-modal="true" aria-labelledby="signup-completion-title">
         <button type="button" className={styles.close} onClick={() => signOut?.()}
           disabled={pending} title="나가기(로그아웃)" aria-label="나가기(로그아웃)">
           <Icon name="x" size={18} stroke={2} />
@@ -104,17 +120,17 @@ export function SignupCompletion() {
         <p className={styles.desc}>
           {revised
             ? '이용약관 또는 개인정보 처리방침이 개정됐어요. 바뀐 문서를 확인하고 동의하면 이어서 쓸 수 있어요.'
-            : '아직 가입이 끝나지 않았어요. 아래 문서에 동의하면 바로 시작할 수 있어요.'}
+            : <>아래 항목에 체크하고<br />바로 서비스를 이용해볼 수 있어요.</>}
         </p>
 
         <ul className={styles.docs}>
           <li>
             <a href={WEARLESS_LEGAL_URLS.terms} target="_blank" rel="noreferrer">이용약관</a>
-            <span className={styles.ver}>{required.terms}</span>
+            <span className={styles.required}>(필수)</span>
           </li>
           <li>
             <a href={WEARLESS_LEGAL_URLS.privacy} target="_blank" rel="noreferrer">개인정보 처리방침</a>
-            <span className={styles.ver}>{required.privacy}</span>
+            <span className={styles.required}>(필수)</span>
           </li>
         </ul>
 

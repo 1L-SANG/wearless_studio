@@ -278,7 +278,29 @@ Resources:
   #                                앞뒤 공백이 메시지 본문 안의 같은 단어 오탐을 줄인다.
   #   "ERROR:" / "CRITICAL:"   -> uvicorn 자체 로거 포맷(`ERROR:    ...`). 앱 포맷과 달라서 별도.
   #   "Traceback"              -> 스택 헤더 줄.
+  #   "http error status=5"    -> main.py http_error_log 미들웨어가 5xx 응답마다 남기는 줄.
   # WARNING 은 일부러 뺐다 -- 켜면 fail-open 경로(SAM/QC 스킵)가 상시로 울려서 채널이 죽는다.
+  #
+  # ── api 만 5xx 로 좁힌 이유 (2026-09-09 오너 결정, 실측 근거) ──
+  #   7일 실측에서 알림을 유발한 줄 607건이 **전부 api 로그그룹**이었다(detail-worker·sam2 는 0건).
+  #   그 607건의 내역:
+  #     350  Traceback 헤더(아래 ERROR 들의 동반 줄)
+  #     115  wearless.dispatcher   dispatcher loop error
+  #      63  wearless.sam_autoscale sam autoscaler reconcile error
+  #      59  wearless.sam_retry     sam retry pusher error
+  #      18  wearless.api          5xx (전부 public/models 한 버그)
+  #       2  기타 스윕 실패
+  #   앞의 587건은 **스스로 재시도해서 회복하는 루프**가 한 바퀴 실패한 기록이다. 사람이
+  #   손댈 일이 없는데 채널을 울려서, 정작 진짜 5xx 가 묻힌다. 실제로 2026-09-09 Supabase
+  #   풀러 노드 교체(우리 밖의 일)로 dispatcher 가 12분간 울린 게 계기다.
+  #   좁힌 패턴을 같은 7일에 대보면 9건, 전부 진짜 사용자 5xx 였다.
+  #
+  #   ⚠️ 대가: api 컨테이너 안에서 도는 잡·스윕 실패는 Slack 에 안 온다(CloudWatch 에는 남는다).
+  #   그게 사용자에게 번지면 5xx 로 다시 잡히고, 컨테이너가 못 뜨는 수준이면 ALB 헬스체크가
+  #   먼저 운다. 되돌리려면 아래 Api 필터를 detail-worker 것과 같은 값으로 되돌리면 된다.
+  #   CRITICAL 과 uvicorn 의 "Application startup failed" 는 남겨둔다 -- 앱이 뜨지도 못하면
+  #   5xx 줄 자체가 안 생겨서 이 둘이 유일한 신호다(실측으로 확인: 좁힌 패턴만으로는 부팅
+  #   실패 줄이 안 잡혔다).
   LogSlackAlertPermissionApi:
     Type: AWS::Lambda::Permission
     Properties:
@@ -294,7 +316,7 @@ Resources:
     Properties:
       LogGroupName: !Sub '/copilot/${App}-${Env}-api'
       DestinationArn: !GetAtt LogSlackAlertFunction.Arn
-      FilterPattern: '?" ERROR " ?" CRITICAL " ?"ERROR:" ?"CRITICAL:" ?"Traceback"'
+      FilterPattern: '?"http error status=5" ?" CRITICAL " ?"CRITICAL:" ?"Application startup failed"'
 
   LogSlackAlertPermissionDetailWorker:
     Type: AWS::Lambda::Permission
@@ -311,6 +333,8 @@ Resources:
     Properties:
       LogGroupName: !Sub '/copilot/${App}-${Env}-detail-worker'
       DestinationArn: !GetAtt LogSlackAlertFunction.Arn
+      # HTTP 를 서빙하지 않아 5xx 줄이 없다 -- 좁히면 통째로 침묵한다. 7일 실측 0건이라
+      # ERROR 를 그대로 둬도 소음이 없고, 잡 실패를 잡아줄 유일한 그물이라 남긴다.
       FilterPattern: '?" ERROR " ?" CRITICAL " ?"ERROR:" ?"CRITICAL:" ?"Traceback"'
 
   # opendid(fm-holder)에는 **일부러 구독 필터를 붙이지 않는다**(2026-09-01 오너 결정).

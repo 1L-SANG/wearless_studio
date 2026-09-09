@@ -2012,6 +2012,20 @@ class FaceVcIssueResult:
     user_did: str | None
 
 
+def _kst_date_str(value) -> str:
+    """절대시각을 **한국 날짜** 문자열로. 시각이 아닌 값은 그대로 문자열화한다.
+
+    naive datetime 은 UTC 로 본다 — `astimezone()` 에 그냥 넘기면 파이썬이 **시스템 로컬**
+    시간대를 가정하는데, 그러면 같은 코드가 컨테이너 TZ 설정에 따라 다른 날짜를 낸다.
+    이 저장소의 naive 시각은 전부 UTC 에서 온다(DB 는 timestamptz 라 aware 로 오고,
+    naive 가 섞이는 경로는 테스트·직렬화 왕복뿐이다).
+    """
+    if isinstance(value, datetime):
+        aware = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return aware.astimezone(_KST).date().isoformat()
+    return str(value)
+
+
 class FaceVcIssueError(RuntimeError):
     def __init__(self, code: str, *, status_code: int):
         super().__init__(code)
@@ -2020,7 +2034,12 @@ class FaceVcIssueError(RuntimeError):
 
 
 def build_face_vc_claims(*, allowed, forbidden, unit_price, valid_until, digest) -> dict:
-    valid_str = valid_until.date().isoformat() if hasattr(valid_until, "date") else str(valid_until)
+    # valid_until 은 절대시각(now + valid_days)이라, 어느 시간대로 자르느냐에 따라 날짜가
+    # 하루 갈린다. KST 로 자른다 — 이 값을 읽는 사람도, 라이선스가 걸린 계약도 한국 날짜다.
+    # UTC 로 자르면 KST 오전에 발급한 라이선스가 하루 이른 날짜로 박혔다(발급 후에는
+    # 되돌릴 수 없는 크리덴셜 값이라, 표기만 어긋나도 분쟁의 근거가 된다).
+    # 만료 판정 자체는 `license_valid_until > now()` 라는 절대시각 비교라 영향 없다.
+    valid_str = _kst_date_str(valid_until)
     return {
         "allowedUse": ", ".join(allowed),
         "forbiddenUse": ", ".join(forbidden),
