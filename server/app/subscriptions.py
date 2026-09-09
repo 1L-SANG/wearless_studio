@@ -166,3 +166,92 @@ async def start_subscription(
         "currentPeriodEnd": str(sub_row["current_period_end"]),
         "card": {"brand": issued.get("cardBrand"), "last4": issued.get("cardLast4")},
     })
+
+
+#: 조회·전이 응답이 공유하는 컬럼 목록. **billing_key_enc 는 절대 넣지 않는다**(불변식 ⑤) —
+#: 여기 한 곳에 모아 두면 새 라우트가 실수로 빌링키를 끌어올 여지가 없다.
+_ME_COLUMNS = (
+    "id::text as id, plan_code, status, current_period_end, next_billing_at, "
+    "scheduled_plan_code, card_brand, card_last4, grace_until, billing_key_invalid"
+)
+
+
+def _expiring(summary: dict) -> dict:
+    return {"credits": summary["credits"],
+            "expiresAt": str(summary["expiresAt"]) if summary["expiresAt"] else None}
+
+
+@router.get("/me", summary="내 구독 상태")
+async def get_my_subscription(request: Request, user_id: str = Depends(require_user)):
+    """구독이 없으면 `{"status": "none"}`. 404 가 아니다 — 화면이 분기 없이 렌더한다.
+
+    빌링키는 어떤 경우에도 응답에 넣지 않는다(카드사·끝 4자리만 표시용).
+    """
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                f"select {_ME_COLUMNS} from subscriptions where user_id = %s", (user_id,)
+            )
+            sub = await cur.fetchone()
+            if sub is None or sub["status"] == "ended":
+                return JSONResponse({"status": "none"})
+        expiring = await repo.subscription_bucket_summary(conn, user_id)
+    return JSONResponse({
+        "status": sub["status"],
+        "planCode": sub["plan_code"],
+        "currentPeriodEnd": str(sub["current_period_end"]),
+        "nextBillingAt": str(sub["next_billing_at"]) if sub["next_billing_at"] else None,
+        "scheduledPlanCode": sub["scheduled_plan_code"],
+        "graceUntil": str(sub["grace_until"]) if sub["grace_until"] else None,
+        "cardNeedsUpdate": bool(sub["billing_key_invalid"]),
+        "card": {"brand": sub["card_brand"], "last4": sub["card_last4"]},
+        "expiring": _expiring(expiring),
+    })
+
+
+@router.post("/cancel", summary="구독 해지 예약")
+async def cancel_subscription(request: Request, user_id: str = Depends(require_user)):
+    """즉시 차단이 아니다 — `current_period_end` 까지 그대로 쓰고 그때 크레딧이 소멸한다.
+
+    응답의 `expiring` 은 **이월분을 포함한** 소멸 예정 수량이다. 화면은 이 숫자를
+    확인 모달에 반드시 노출한다(계획서 §0.1 — 큰 금액이 한 번에 사라지는 사건이다).
+    """
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            # 조건부 UPDATE 로 상태 전이와 판정을 한 문장에 담는다 — 읽고 나서 쓰면
+            # 두 탭이 동시에 해지를 눌렀을 때 늦은 쪽이 이미 해지된 구독을 또 해지한다.
+            await cur.execute(
+                "update subscriptions set status = 'canceled', next_billing_at = null, "
+                "canceled_at = now() where user_id = %s and status in ('active', 'past_due') "
+                f"returning {_ME_COLUMNS}",
+                (user_id,),
+            )
+            sub = await cur.fetchone()
+            if sub is None:
+                raise _err("not_cancelable", "해지할 수 있는 구독이 없어요.", 409)
+        expiring = await repo.subscription_bucket_summary(conn, user_id)
+        await conn.commit()
+    return JSONResponse({
+        "status": "canceled",
+        "accessUntil": str(sub["current_period_end"]),
+        "expiring": _expiring(expiring),
+    })
+
+
+@router.post("/resume", summary="해지 철회")
+async def resume_subscription(request: Request, user_id: str = Depends(require_user)):
+    """주기 종료 전이면 되돌릴 수 있다. 다음 청구를 `current_period_end` 로 되살린다."""
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "update subscriptions set status = 'active', canceled_at = null, "
+                "next_billing_at = current_period_end "
+                "where user_id = %s and status = 'canceled' and current_period_end > now() "
+                f"returning {_ME_COLUMNS}",
+                (user_id,),
+            )
+            sub = await cur.fetchone()
+            if sub is None:
+                raise _err("not_resumable", "되돌릴 수 있는 구독이 없어요.", 409)
+        await conn.commit()
+    return JSONResponse({"status": "active", "nextBillingAt": str(sub["next_billing_at"])})
