@@ -1,7 +1,7 @@
 /* =============================================================
    features/pricing — 요금제 (/pricing)
-   표시 전용(계약 §6): 구독 / 추가구매(top-up)를 connected-tabs 로 전환해 카드 표시.
-   현재 이용 중인 구독 플랜을 강조. 실제 구매/결제는 PG 연동 단계 — 버튼은 "준비 중".
+   구독 / 추가구매(top-up)를 connected-tabs 로 전환해 카드 표시.
+   구독은 준비 중, 추가구매는 토스 결제창으로 연결한다.
    데이터: api.getPricingPlans() (http → /v1/pricing-plans, mock 폴백).
 
    ▶ 이 라우트는 **공개다**(App.jsx 에서 RequireAuth 밖). 랜딩(wearless.kr)의 요금제
@@ -19,12 +19,29 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
-import { Button, Icon, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
+import { Icon, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
 import s from './Pricing.module.css';
 
 const won = (n) => '₩' + Number(n).toLocaleString('ko-KR');
 // 공개 클라이언트 키(테스트). 없으면 결제 버튼을 비활성 — 키 없이 결제창을 띄우면 런타임에 깨진다.
 const TOSS_CLIENT_KEY = import.meta.env.VITE_TOSS_CLIENT_KEY;
+
+// 랜딩 PricingSection 및 요금제 정본 §5(v9). 가격과 지급량은 API 값을 사용한다.
+const PLAN_DETAILS = {
+  starter: {
+    features: ['기본모델 2명 무료 제공', '마네킹컷 1회 무료 수정 가능', '에디터 기능 제공', '무제한 다운로드 가능'],
+  },
+  seller: {
+    baseCredits: 16000,
+    bonusNote: '2,000 크레딧 추가 증정',
+    features: ['Starter의 모든 기능 제공', '모든 AI 모델 50% 할인', '매칭의류 커스텀 업로드 가능', '충전할 때마다 크레딧 5% 보너스'],
+  },
+  pro: {
+    baseCredits: 32000,
+    bonusNote: '6,000 크레딧 추가 증정',
+    features: ['Seller의 모든 기능 제공', '마네킹컷 2회 무료 수정 가능', '모든 AI 모델 무료 제공', '충전할 때마다 크레딧 10% 보너스'],
+  },
+};
 
 export function Pricing() {
   const [tab, setTab] = useState('subscription'); // 'subscription' | 'topup'
@@ -82,15 +99,15 @@ export function Pricing() {
     <div className="wizard wide">
       <div className={s.head}>
         <h1 className={s.title}>요금제</h1>
-        <p className={s.sub}>매달 크레딧이 충전되는 구독을 고르고, 부족하면 추가로 구매할 수 있어요.</p>
+        <p className={s.sub}>상세페이지 한 개에 13,000원. 사진 10장 기준이에요.</p>
       </div>
 
-      <div className={s.tabs} role="tablist">
-        <button className={`${s.tab}${tab === 'subscription' ? ' ' + s.active : ''}`} onClick={() => setTab('subscription')}>구독</button>
-        <button className={`${s.tab}${tab === 'topup' ? ' ' + s.active : ''}`} onClick={() => setTab('topup')}>추가 구매</button>
+      <div className={s.tabs} role="group" aria-label="요금제 유형">
+        <button type="button" aria-pressed={recurring} className={`${s.tab}${recurring ? ' ' + s.active : ''}`} onClick={() => setTab('subscription')}>구독</button>
+        <button type="button" aria-pressed={!recurring} className={`${s.tab}${!recurring ? ' ' + s.active : ''}`} onClick={() => setTab('topup')}>추가 구매</button>
       </div>
 
-      {payError && <div className="surface" role="alert" style={{ marginBottom: 12 }}>{payError}</div>}
+      {payError && <div className={`surface ${s.payError}`} role="alert">{payError}</div>}
       <p className={s.tabDesc}>
         {recurring
           ? '매달 자동으로 크레딧이 충전되는 정기 구독이에요.'
@@ -120,15 +137,17 @@ export function Pricing() {
       )}
 
       {!isLoading && !isError && shown.length > 0 && (
-        <div className={s.grid}>
+        <div className={`${s.grid}${recurring ? '' : ' ' + s.topupGrid}`}>
           {shown.map((p) => {
             const isCurrent = recurring && p.code === currentPlan;
-            const credits = p.credits.toLocaleString('ko-KR');
+            const credits = Number(p.credits).toLocaleString('ko-KR');
+            const details = recurring && Object.hasOwn(PLAN_DETAILS, p.code) ? PLAN_DETAILS[p.code] : null;
             return (
               <div key={p.id} className={`${s.card}${isCurrent ? ' ' + s.current : ''}${recurring ? '' : ' ' + s.topupCard}`}>
+                {recurring && p.code === 'seller' && <span className={s.popular}>MOST POPULAR</span>}
                 {isCurrent && <span className={s.badge}>이용 중</span>}
                 <span className={`${s.kind}${recurring ? '' : ' ' + s.kindTopup}`}>
-                  <Icon name={recurring ? 'refresh' : 'coins'} size={13} />
+                  {!recurring && <Icon name="coins" size={13} />}
                   {recurring ? '정기 구독' : '1회 충전'}
                 </span>
                 <h3 className={s.name}>{p.name}</h3>
@@ -138,7 +157,25 @@ export function Pricing() {
                       <span className={s.price}>{won(p.price)}</span>
                       <span className={s.unit}>/ 월</span>
                     </div>
-                    <p className={s.credits}>크레딧 <strong>{credits}</strong> 매달 충전</p>
+                    <div className={s.creditSection}>
+                      <div className={s.creditLine}>
+                        {details?.baseCredits && <>
+                          <s className={s.baseCredits}>{details.baseCredits.toLocaleString('ko-KR')}</s>
+                          <span className={s.creditArrow} aria-hidden="true">→</span>
+                        </>}
+                        <span className={s.creditAmount}>
+                          <span className={details?.bonusNote ? s.bonusCredits : undefined}>{credits}</span>
+                          {details?.bonusNote && <em className={s.bonusNote}>{details.bonusNote}</em>}
+                        </span>
+                        <span className={s.creditUnit}>크레딧</span>
+                      </div>
+                    </div>
+                    {details && <ul className={s.features}>
+                      {details.features.map((feature) => <li key={feature}>
+                        <span className={s.featureCheck} aria-hidden="true"><Icon name="check" size={12} stroke={3} /></span>
+                        <span>{feature}</span>
+                      </li>)}
+                    </ul>}
                   </>
                 ) : (
                   <>
@@ -151,31 +188,30 @@ export function Pricing() {
                 )}
                 <div className={s.cta}>
                   {recurring ? (
-                    // 정기구독(빌링키)은 이번 범위 밖 — 로그인 사용자에겐 기존 '준비 중' 유지.
-                    // 비로그인에게는 '준비 중' 대신 로그인을 권한다: 랜딩에서 '선택' 을 누르고
-                    // 넘어온 사람이 처음 만나는 버튼이라, 여기서 비활성 회색 버튼만 보이면
-                    // 로그인할 길이 이 화면에 없다(상단바 로그인은 별개 동선이다).
-                    !session ? (
-                      <Button variant="primary" block onClick={requireLogin}>
-                        로그인하고 시작하기
-                      </Button>
-                    ) : (
-                      <Button variant={isCurrent ? 'ghost' : 'primary'} block disabled title="결제 연동 준비 중">
-                        {isCurrent ? '이용 중' : '구독하기'} {!isCurrent && '(준비 중)'}
-                      </Button>
-                    )
+                    // 구독과 로그인 버튼을 같은 무지개 링 안에 표시한다.
+                    <div className={s.buttonRing}>
+                      {!session ? (
+                        <button type="button" className={`${s.purchaseButton} ${s.subscriptionButton}`} onClick={requireLogin}>
+                          로그인하고 시작하기
+                        </button>
+                      ) : (
+                        <button type="button" className={`${s.purchaseButton} ${s.subscriptionButton}`} disabled title="결제 연동 준비 중">
+                          {isCurrent ? '이용 중' : '구독하기'} {!isCurrent && '(준비 중)'}
+                        </button>
+                      )}
+                    </div>
                   ) : (
-                    <Button
-                      variant="primary" block
-                      // 비로그인일 때는 결제 키 유무로 막지 않는다 — 이 버튼의 다음 행동이
-                      // 결제가 아니라 로그인이라서다. 키 문제는 로그인한 뒤에 드러나면 된다.
-                      disabled={session ? (!TOSS_CLIENT_KEY || buying !== null) : false}
-                      title={!session || TOSS_CLIENT_KEY ? undefined : '결제 키가 설정되지 않았어요'}
-                      onClick={() => buyTopup(p.code)}
-                    >
-                      {!session ? '로그인하고 구매하기' : (buying === p.code ? '결제창 여는 중…' : '구매하기')}
-                      {session && !TOSS_CLIENT_KEY && ' (준비 중)'}
-                    </Button>
+                    <div className={!session ? s.buttonRing : undefined}>
+                      <button
+                        type="button" className={s.purchaseButton}
+                        disabled={session ? (!TOSS_CLIENT_KEY || buying !== null) : false}
+                        title={!session || TOSS_CLIENT_KEY ? undefined : '결제 키가 설정되지 않았어요'}
+                        onClick={() => buyTopup(p.code)}
+                      >
+                        {!session ? '로그인하고 구매하기' : (buying === p.code ? '결제창 여는 중…' : '구매하기')}
+                        {session && !TOSS_CLIENT_KEY && ' (준비 중)'}
+                      </button>
+                    </div>
                   )}
                   <p className={s.purchaseConsent}>
                     결제하면 <a href={WEARLESS_LEGAL_URLS.terms}>이용약관</a>과 <a href={WEARLESS_LEGAL_URLS.refund}>환불 정책</a>에 동의하는 것으로 봐요.

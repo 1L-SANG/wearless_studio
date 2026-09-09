@@ -55,7 +55,7 @@ const defaultFitProfile = (product, analysis) => {
 };
 
 /* ---- Account (stable) ---- */
-const account = { name: 'Jisoo Han', avatar: P.portrait('han'), credits: 196, plan: 'basic' };
+const account = { name: 'Jisoo Han', avatar: P.portrait('han'), credits: 196, plan: 'free' };
 
 // 추가 색상 모두가 같은 풀샷/중간샷 촬영 예시 템플릿을 공유한다. 색상마다 별도 예시를
 // 만들지 않고, 실제 생성에서 현재 colorId의 셀러 사진과 자연스러운 미세 포즈 변주를 쓴다.

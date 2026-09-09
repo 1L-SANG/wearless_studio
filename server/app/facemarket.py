@@ -1559,6 +1559,19 @@ async def _find_settlement(conn, payment_key: str) -> dict | None:
         return await cur.fetchone()
 
 
+async def _find_product_settlement(conn, project_id: str, now: datetime) -> dict | None:
+    columns = ", ".join(f"st.{column}" for column in _SETTLEMENT_COLS.split(", "))
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"""select {columns}
+                  from fm_settlements st join jobs j on j.id = st.job_id
+                 where j.project_id = %s and st.created_at >= %s
+                 order by st.created_at desc limit 1""",
+            (project_id, now - timedelta(days=7)),
+        )
+        return await cur.fetchone()
+
+
 def _chain_result(chain, stored: dict, tx_hash: str | None = None) -> dict:
     return {
         "tx_hash": tx_hash, "block": stored["block"], "chain_id": chain.chain_id,
@@ -1661,17 +1674,19 @@ async def _reconcile_settlement_intents(conn, chain) -> None:
 async def record_license_settlement(
     app,
     *,
-    payment_key: str,
+    payment_key: str | None = None,
     license_id: str,
     model_id: str,
     total: int,
     job_id: str | None = None,
+    project_id: str | None = None,
     credit_ledger_id: str | None = None,
     first_attempt=None,
 ) -> dict | None:
     """라이선스 사용 1건을 온체인 기록 + fm_settlements 미러. best-effort(생성 흐름 비파손).
 
     payment_key = 결정적(멱등) 문자열. 컨트랙트 중복 revert + DB payment_id UNIQUE 가 쌍.
+    project_id가 있으면 signer lock 안에서 최근 7일 기록을 재사용하고 상품별 키를 결정한다.
     체인 미설정(app.state.fm_chain None)이면 None 반환(no-op). 온체인 성공 시에만 미러 기록.
     """
     chain = getattr(app.state, "fm_chain", None)
@@ -1679,34 +1694,44 @@ async def record_license_settlement(
         logger.info("settlement_skipped_no_chain", extra={"payment_key": payment_key})
         return None
 
+    if project_id is not None and job_id is None:
+        raise ValueError("product settlement requires job_id")
+    if project_id is None and payment_key is None:
+        raise ValueError("settlement requires payment_key or project_id")
+
+    async def queue_intent(conn):
+        try:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """insert into fm_settlement_signer_intents
+                        (payment_id, license_id, job_id, credit_ledger_id,
+                         model_id, total_amount)
+                        values (%s, %s, %s, %s, %s, %s)
+                        on conflict (payment_id) do nothing
+                        returning payment_id""",
+                    (
+                        payment_key, license_id, job_id, credit_ledger_id,
+                        model_id, int(total),
+                    ),
+                )
+                inserted = await cur.fetchone()
+            if inserted and first_attempt:
+                await first_attempt(conn)
+            await conn.commit()
+        except Exception:
+            await conn.rollback()
+            raise
+
     pool = app.state.pool
-    # DB 선확인 — 이미 미러된 payment 면 재기록 없이 반환(재시도 멱등).
-    async with pool.connection() as conn:
-        existing = await _find_settlement(conn, payment_key)
-        if not existing:
-            try:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        """insert into fm_settlement_signer_intents
-                            (payment_id, license_id, job_id, credit_ledger_id,
-                             model_id, total_amount)
-                            values (%s, %s, %s, %s, %s, %s)
-                            on conflict (payment_id) do nothing
-                            returning payment_id""",
-                        (
-                            payment_key, license_id, job_id, credit_ledger_id,
-                            model_id, int(total),
-                        ),
-                    )
-                    inserted = await cur.fetchone()
-                if inserted and first_attempt:
-                    await first_attempt(conn)
-                await conn.commit()
-            except Exception:
-                await conn.rollback()
-                raise
-    if existing:
-        return existing
+    # 상품 키는 아래 signer lock 안에서만 결정하고 intent를 만든다.
+    # 명시적 payment_key(시뮬레이션 등)는 기존 선확인과 first_attempt 멱등을 유지한다.
+    if project_id is None:
+        async with pool.connection() as conn:
+            existing = await _find_settlement(conn, payment_key)
+            if not existing:
+                await queue_intent(conn)
+        if existing:
+            return existing
 
     # Session advisory lock은 commit 뒤에도 유지된다. 미획득자는 연결을 즉시 반납해 작은 pool을
     # 고갈시키지 않고, owner만 durable broadcasting intent→RPC→mirror 구간에 연결 하나를 쓴다.
@@ -1724,9 +1749,31 @@ async def record_license_settlement(
                 continue_after_release = False
                 try:
                     await _reconcile_settlement_intents(conn, chain)
+                    if project_id is not None:
+                        # 복구 미러까지 끝낸 뒤 확인해야 동시 종결과 UTC 자정 경계도 한 건이다.
+                        now = datetime.now(timezone.utc)
+                        existing = await _find_product_settlement(conn, project_id, now)
+                        if existing:
+                            return existing
+                        payment_key = f"product:{project_id}:{now:%Y%m%d}"
                     existing = await _find_settlement(conn, payment_key)
                     if existing:
                         return existing
+                    if project_id is not None:
+                        await queue_intent(conn)
+                        # 이전 잡이 queued 저장 직후 중단됐어도 같은 키의 최초 payload를 쓴다.
+                        # 실제 전송과 crash recovery가 서로 다른 모델/금액을 쓰면 안 된다.
+                        async with conn.cursor() as cur:
+                            await cur.execute(
+                                """select license_id::text, job_id::text, credit_ledger_id::text,
+                                          model_id, total_amount
+                                     from fm_settlement_signer_intents where payment_id = %s""",
+                                (payment_key,),
+                            )
+                            queued = await cur.fetchone()
+                        license_id, job_id = queued["license_id"], queued["job_id"]
+                        credit_ledger_id = queued["credit_ledger_id"]
+                        model_id, total = queued["model_id"], queued["total_amount"]
 
                     async with conn.cursor() as cur:
                         await cur.execute(
@@ -2539,23 +2586,44 @@ async def get_job_settlement(
 ):
     """상세페이지 생성 잡의 얼굴 라이선스 정산 영수증(장면⑤ 영수증 UI).
 
-    `payment_id = f"job:{job_id}"` 정산 미러 + 라이선스 vc_id 를 한 번에 반환.
+    상품의 최근 7일 정산을 우선 반환하고, 없으면 잡 자신의 정산을 찾는다.
     잡 소유자(셀러) 스코프 — 남의 잡은 404. 정산 미기록(체인 미설정/실패)이면 404.
     """
-    payment_id = f"job:{job_id}"
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                """select st.payment_id, st.tx_hash, st.chain_id, st.total_amount,
-                          st.model_amount, st.platform_amount, st.ops_amount,
-                          st.chain_status, l.vc_id
-                   from fm_settlements st
-                   join jobs j on j.id = st.job_id
-                   left join fm_licenses l on l.id = st.license_id
-                   where st.payment_id = %s and j.user_id = %s""",
-                (payment_id, user_id),
+                """select j.project_id::text as project_id from jobs j
+                   where j.id = %s and j.user_id = %s""",
+                (job_id, user_id),
             )
-            row = await cur.fetchone()
+            job = await cur.fetchone()
+        if not job:
+            raise _err("not_found", "정산 내역을 찾을 수 없습니다.", status=404)
+        row = None
+        if job["project_id"] is not None:
+            row = await _find_product_settlement(
+                conn, job["project_id"], datetime.now(timezone.utc)
+            )
+        async with conn.cursor() as cur:
+            if row:
+                await cur.execute(
+                    "select vc_id from fm_licenses where id = %s",
+                    (row["license_id"],),
+                )
+                license_row = await cur.fetchone()
+                row["vc_id"] = license_row["vc_id"] if license_row else None
+            else:
+                await cur.execute(
+                    """select st.payment_id, st.tx_hash, st.chain_id, st.total_amount,
+                              st.model_amount, st.platform_amount, st.ops_amount,
+                              st.chain_status, l.vc_id
+                       from fm_settlements st
+                       join jobs j on j.id = st.job_id
+                       left join fm_licenses l on l.id = st.license_id
+                       where j.id = %s and j.user_id = %s""",
+                    (job_id, user_id),
+                )
+                row = await cur.fetchone()
     if not row:
         raise _err("not_found", "정산 내역을 찾을 수 없습니다.", status=404)
     # 나머지 FM API 와 동일 camelCase — 영수증 UI 가 그대로 소비.

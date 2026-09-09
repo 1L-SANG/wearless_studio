@@ -1,24 +1,28 @@
-/* features/pricing — 요금제 (표시 전용). 토큰만 사용, Pretendard(--font-body). */
+/* 요금제 카드: 랜딩 v9, 공통 색상은 tokens.css, 전용 장식은 지역 변수. */
+@property --pricing-ring-angle {
+  syntax: '<angle>';
+  initial-value: 180deg;
+  inherits: false;
+}
 
-.head { margin-top: 14px; margin-bottom: 22px; } /* .wizard 패딩 14 + 14 = 상단 28(원래 간격 보존) */
+.head { margin-top: 14px; margin-bottom: 22px; }
 .title { font-family: var(--font-body); font-size: 30px; font-weight: 700; letter-spacing: -0.02em; color: var(--fg-1); }
-.sub { margin-top: 8px; font-size: 16px; line-height: 1.5; color: var(--fg-2); } /* 부가설명 키움 */
+.sub { margin-top: var(--sp-8); font-size: 16px; line-height: 1.5; color: var(--fg-2); text-wrap: pretty; }
 
-/* connected tabs (세그먼트) */
-.tabs { display: inline-flex; gap: 4px; padding: 4px; margin-bottom: 22px; background: var(--bg-2); border-radius: 12px; }
+.tabs { display: inline-flex; gap: var(--sp-4); padding: var(--sp-4); margin-bottom: 22px; background: var(--bg-2); border-radius: var(--r-5); }
 .tab {
-  padding: 8px 20px; border: none; background: none; border-radius: 9px;
+  padding: var(--sp-8) var(--sp-20); border: none; background: none; border-radius: var(--r-4);
   font-family: var(--font-body); font-size: 14px; font-weight: 600; color: var(--fg-2); cursor: pointer;
 }
 .tab:hover { color: var(--fg-1); }
 .tab.active { background: var(--bg-1); color: var(--fg-1); box-shadow: 0 1px 2px var(--ring); }
-
-/* 탭별 설명 — 구독/추가구매 차이 안내 */
+.tab:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .tabDesc { margin: -10px 0 18px; font-size: 14px; color: var(--fg-2); }
+.payError { margin-bottom: var(--sp-12); }
 
 .billingNotice {
-  margin: 0 0 20px;
-  padding: 14px 16px;
+  margin: 0 0 var(--sp-20);
+  padding: 14px var(--sp-16);
   background: var(--bg-2);
   border-radius: var(--r-4);
   box-shadow: 0 0 0 1px var(--ring);
@@ -27,42 +31,79 @@
   line-height: 1.55;
 }
 .billingNotice p { margin: 0; }
-/* 전자상거래법 §17⑥의 '명확한 표시' — 본문(--fg-2)보다 진하게 두어 결제 전에 읽히게 한다.
-   약하게 만들면 §17②5호의 철회 제한 자체가 적용되지 않는다(환불정책 제4조 제2항). */
+/* 청약철회 제한은 결제 전에 본문보다 진하게 표시한다. */
 .billingNotice strong { color: var(--fg-1); font-weight: 600; }
 .billingNotice a,
 .purchaseConsent a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
 .billingNotice a:focus-visible,
 .purchaseConsent a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-1); }
 
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
-
-/* 카드 종류 라벨 (구독=중립 / 충전=초록) — 두 탭을 한눈에 구분 */
-.kind { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-body); font-size: 12px; font-weight: 700; color: var(--fg-2); }
-.kindTopup { color: var(--accent-success); }
-/* 추가구매 카드: 상단 초록 강조선으로 구독과 시각 차별 */
-.topupCard { border-top: 3px solid var(--accent-success); }
-/* 추가구매는 '받는 크레딧'을 헤드라인으로 (초록) */
-.creditBig { font-family: var(--font-body); font-size: 28px; font-weight: 700; letter-spacing: -0.02em; color: var(--accent-success); font-variant-numeric: tabular-nums; }
-
+.grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 1fr; align-items: stretch; gap: var(--sp-24); padding-top: var(--sp-12); }
+.topupGrid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); }
 .card {
-  position: relative; display: flex; flex-direction: column; gap: 12px;
-  padding: 24px; background: var(--bg-1); border: 1px solid var(--line); border-radius: 16px;
+  --pricing-check: #2F80ED;
+  --pricing-card-radius: 20px;
+  --pricing-rainbow-sky: #12ADE6;
+  --pricing-rainbow-blue: #4C63FC;
+  --pricing-rainbow-violet: #DC4CFC;
+  --pricing-rainbow-pink: #FF0080;
+  --pricing-rainbow-magenta: #EE00FF;
+  --pricing-rainbow-cyan: #12B4E6;
+  position: relative; display: flex; flex-direction: column; min-width: 0;
+  padding: clamp(20px, 2.8vw, 40px); background: var(--bg-1);
+  border: 1.5px solid var(--ring-strong); border-radius: var(--pricing-card-radius); box-shadow: var(--elev-soft);
 }
-/* 이용 중인 플랜 강조 */
 .card.current { border-color: var(--accent-success); box-shadow: 0 0 0 3px var(--accent-success-ring); }
-
-.badge {
-  position: absolute; top: 16px; right: 16px;
-  font-size: 12px; font-weight: 700; color: var(--accent-success);
-  background: var(--accent-success-ring); padding: 3px 10px; border-radius: 999px;
+.popular {
+  position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
+  padding: var(--sp-4) var(--sp-12); border-radius: var(--r-pill); white-space: nowrap;
+  background: var(--fg-1); color: var(--cta-fg); font-size: 11px; font-weight: 700; letter-spacing: 0.03em;
 }
+.badge {
+  position: absolute; top: var(--sp-16); right: var(--sp-16);
+  font-size: 12px; font-weight: 700; color: var(--accent-success);
+  background: var(--accent-success-ring); padding: var(--sp-3) 10px; border-radius: var(--r-pill);
+}
+.kind { display: inline-flex; align-items: center; gap: var(--sp-6); margin-bottom: var(--sp-4); font-family: var(--font-body); font-size: 13px; font-weight: 500; color: var(--fg-2); }
+.kindTopup { color: var(--accent-success); }
+.name { margin: 0 0 var(--sp-16); font-family: var(--font-body); font-size: 26px; font-weight: 800; letter-spacing: -0.02em; color: var(--fg-1); }
+.priceRow { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-6); }
+.price { font-family: var(--font-body); font-size: 36px; font-weight: 800; line-height: 1.2; letter-spacing: -0.02em; color: var(--fg-1); font-variant-numeric: tabular-nums; }
+.unit { font-size: 16px; font-weight: 500; color: var(--fg-2); }
+.creditSection { margin: var(--sp-24) 0; padding: var(--sp-24) 0 48px; border-block: 1px solid var(--ring); }
+.creditLine { display: flex; align-items: baseline; gap: var(--sp-8); font-size: 24px; font-weight: 800; line-height: 1.5; letter-spacing: -0.02em; color: var(--fg-1); white-space: nowrap; }
+.baseCredits { font-size: 18px; font-weight: 600; color: var(--fg-3); text-decoration-thickness: 2px; }
+.creditArrow { font-size: 18px; font-weight: 500; color: var(--fg-3); }
+.creditAmount { position: relative; display: inline-block; }
+.bonusCredits { text-decoration: underline; text-decoration-thickness: 3px; text-underline-offset: 5px; }
+.bonusNote { position: absolute; left: 50%; top: 100%; transform: translateX(-50%); margin-top: 10px; font-size: 13.5px; font-weight: 700; font-style: italic; white-space: nowrap; }
+.creditUnit { font-size: 14px; font-weight: 500; color: var(--fg-2); }
+.features { display: flex; flex: 1; flex-direction: column; gap: 14px; margin: 0 0 32px; padding: 0; list-style: none; }
+.features li { display: flex; align-items: flex-start; gap: var(--sp-12); color: var(--fg-2); font-size: 15px; line-height: 1.5; word-break: keep-all; overflow-wrap: anywhere; }
+.featureCheck { display: flex; align-items: center; justify-content: center; flex: 0 0 18px; height: 18px; margin-top: var(--sp-2); border-radius: var(--r-pill); background: var(--pricing-check); color: var(--cta-fg); }
 
-.name { font-family: var(--font-body); font-size: 18px; font-weight: 700; color: var(--fg-1); }
-.priceRow { display: flex; align-items: baseline; gap: 6px; }
-.price { font-family: var(--font-body); font-size: 28px; font-weight: 700; letter-spacing: -0.02em; color: var(--fg-1); font-variant-numeric: tabular-nums; }
-.unit { font-size: 14px; font-weight: 500; color: var(--fg-2); }
-.credits { font-family: var(--font-body); font-size: 14px; color: var(--fg-2); }
-.credits strong { color: var(--fg-1); font-weight: 700; }
+.topupCard { border-top: 3px solid var(--accent-success); }
+.creditBig { font-family: var(--font-body); font-size: 28px; font-weight: 800; letter-spacing: -0.02em; color: var(--accent-success); font-variant-numeric: tabular-nums; }
+.credits { margin: var(--sp-12) 0 var(--sp-24); font-family: var(--font-body); font-size: 14px; color: var(--fg-2); }
 .cta { margin-top: auto; }
-.purchaseConsent { margin: 9px 2px 0; color: var(--fg-2); font-size: 12px; line-height: 1.45; letter-spacing: 0.01em; }
+.buttonRing {
+  padding: var(--sp-2); border-radius: 13px;
+  background: conic-gradient(from var(--pricing-ring-angle), var(--pricing-rainbow-sky), var(--pricing-rainbow-blue), var(--pricing-rainbow-violet), var(--pricing-rainbow-pink), var(--pricing-rainbow-magenta), var(--pricing-rainbow-cyan), var(--pricing-rainbow-sky));
+  animation: pricingRingRotate 8s linear infinite;
+}
+.purchaseButton {
+  display: block; width: 100%; min-height: var(--cta-height); padding: var(--sp-12) var(--sp-16);
+  border: 0; border-radius: 11px; background: var(--cta-bg); color: var(--cta-fg);
+  font-family: var(--font-body); font-size: 16px; font-weight: 600; line-height: 1.5; cursor: pointer;
+  transition: background-color var(--cta-transition);
+}
+.purchaseButton:hover { background: var(--cta-bg-hover); }
+.purchaseButton:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
+.purchaseButton:disabled { cursor: not-allowed; }
+/* 구독 준비 상태도 랜딩의 검정 버튼과 손가락 커서를 유지한다. */
+.subscriptionButton:disabled { opacity: 1; cursor: pointer; }
+.purchaseConsent { margin: 9px var(--sp-2) 0; color: var(--fg-2); font-size: 12px; line-height: 1.45; letter-spacing: 0.01em; }
+@keyframes pricingRingRotate { to { --pricing-ring-angle: 540deg; } }
+@media (prefers-reduced-motion: reduce) { .buttonRing { animation: none; } .purchaseButton { transition: none; } }
+@media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } .card { padding: var(--sp-28); } }
+@media (max-width: 380px) { .card { padding: var(--sp-20); } .creditLine { gap: var(--sp-6); } }

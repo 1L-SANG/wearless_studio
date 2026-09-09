@@ -1792,10 +1792,10 @@ async def run_detail_page_job(app, job: dict) -> None:
                 try:
                     await facemarket.record_license_settlement(
                         app,
-                        payment_key=f"job:{job_id}",
+                        project_id=str(project_id),
                         license_id=str(license_row["id"]),
                         model_id=str(license_row["model_id"]),
-                        total=int(license_row["unit_price"]) * real_generated_cut_count,
+                        total=int(license_row["unit_price"]),
                         job_id=str(job_id),
                     )
                 except Exception:

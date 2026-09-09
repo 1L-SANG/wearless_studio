@@ -72,10 +72,17 @@ def test_patchable_columns_match_model():
     assert set(ProjectPatch.model_fields) == set(repo.PATCHABLE_COLUMNS)
 
 
-def test_account_serializes_to_camel():
-    acct = Account(name="한지수", avatar="", credits=24, plan="basic")
+@pytest.mark.parametrize("plan", ["free", "starter", "seller", "pro"])
+def test_account_serializes_to_camel(plan):
+    acct = Account(name="한지수", avatar="", credits=24, plan=plan)
     out = acct.model_dump(by_alias=True)
-    assert out == {"name": "한지수", "avatar": "", "credits": 24, "plan": "basic"}
+    assert out == {"name": "한지수", "avatar": "", "credits": 24, "plan": plan}
+
+
+@pytest.mark.parametrize("plan", ["basic", "plus"])
+def test_account_rejects_retired_plan_tiers(plan):
+    with pytest.raises(ValidationError):
+        Account(name="한지수", avatar="", credits=24, plan=plan)
 
 
 def test_project_serializes_to_camel():

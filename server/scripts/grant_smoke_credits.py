@@ -1,7 +1,7 @@
 """스모크 계정(qa-smoke@wearless.kr) 크레딧 지급 — repo.grant_subscription 재사용(원장 불변식 유지).
 
 실작동 스모크(P1 유료 구간) 전용. 실사용자 계정은 건드리지 않는다.
-실행: cd server && .venv/bin/python -m scripts.grant_smoke_credits [--plan basic] [--email qa-smoke@wearless.kr]
+실행: cd server && .venv/bin/python -m scripts.grant_smoke_credits --plan PLAN_CODE [--email qa-smoke@wearless.kr]
 """
 
 import argparse
@@ -27,7 +27,7 @@ from app import repo  # noqa: E402
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--email", default="qa-smoke@wearless.kr")
-    ap.add_argument("--plan", default="basic")
+    ap.add_argument("--plan", required=True)
     args = ap.parse_args()
 
     async with await psycopg.AsyncConnection.connect(

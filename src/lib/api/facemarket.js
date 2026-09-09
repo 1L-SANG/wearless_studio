@@ -359,7 +359,7 @@ export function revokeLicense(id) {
   return http(`/v1/facemarket/licenses/${id}/revoke`, { method: 'POST' });
 }
 
-// GET /v1/facemarket/jobs/{jobId}/settlement — 생성 잡의 온체인 정산 영수증(payment_id=job:{jobId}).
+// GET /v1/facemarket/jobs/{jobId}/settlement — 생성 잡이 속한 상품의 온체인 정산 영수증(payment_id=product:{projectId}:{날짜}, 레거시 job:{jobId}).
 // → { paymentId, txHash, chainId, totalAmount, modelAmount, platformAmount, opsAmount, vcId, chainStatus }
 // (70/20/10 = 모델/플랫폼/운영). 정산 미기록(비 FaceMarket 잡·체인 지연 등)이면 404 → http() 가 throw.
 export function getJobSettlement(jobId) {
