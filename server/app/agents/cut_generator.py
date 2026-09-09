@@ -33,7 +33,7 @@ from .model_routing import resolve_model
 from .fit_axes import build_fit_profile_block
 from .prompts import _product_block, _sanitize
 from . import face_identity, pose_crop
-from ..facemarket_physique import build_body_profile_block
+from ..facemarket_physique import build_body_profile_block, build_hair_block
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
 _DEFAULT_PROMPT = os.path.join(_SERVER_DIR, "prompts", "cut_generate_v1.txt")
@@ -617,6 +617,7 @@ def render_cut_prompt(
     authority_plan_line: str | None = None,
     directing_profile: dict | None = None,
     body_profile: dict | None = None,
+    hair_profile: dict | None = None,
 ) -> str:
     """섹션 선택 + ${토큰} 치환 + PRODUCT CONTEXT(ground truth) 자동 주입.
 
@@ -901,9 +902,12 @@ def render_cut_prompt(
         }
     fit_block = build_fit_profile_block(fit_profile)
     body_block = build_body_profile_block(body_profile)
+    # 머리는 착장 컷에서만 의미가 있다(product 컷은 사람이 없다). 값이 없으면 블록을 내지 않으므로
+    # 기존 프롬프트는 바이트 단위로 동일하다.
+    hair_block = build_hair_block(hair_profile) if spec["cutType"] in _WORN_CUTS else ""
     block = _product_block(product, analysis or {}, include_legacy_fit=fit_profile is None)
     return "\n\n".join(
-        part for part in (text, directing_block, fit_block, body_block, block) if part
+        part for part in (text, directing_block, fit_block, body_block, hair_block, block) if part
     )
 
 
@@ -1223,6 +1227,7 @@ def build_prompt(
     analysis: dict | None = None, manifest: str | None = None, has_face: bool = False,
     directing_profile: dict | None = None,
     body_profile: dict | None = None,
+    hair_profile: dict | None = None,
     qc_corrections: tuple[str, ...] = (),
 ) -> str:
     """스펙 정규화(ValueError=unknown_cut_type) + 템플릿 렌더. manifest 미지정 시
@@ -1262,7 +1267,8 @@ def build_prompt(
         load_cut_template(), spec, product, analysis or {}, clothing_type, manifest, has_face,
         authority_plan_line=authority_plan_line,
         directing_profile=directing_profile,
-        body_profile=body_profile)
+        body_profile=body_profile,
+        hair_profile=hair_profile)
     if qc_corrections:
         prompt += (
             "\n\nINDEPENDENT QC CORRECTION — regenerate from the original authority "
@@ -1342,6 +1348,7 @@ async def generate(
     has_face: bool = False,
     directing_profile: dict | None = None,
     body_profile: dict | None = None,
+    hair_profile: dict | None = None,
     qc_corrections: tuple[str, ...] = (),
     confirmed_prompt_input: ConfirmedGptPromptInput | None = None,
 ) -> tuple[bytes, str]:
@@ -1369,6 +1376,7 @@ async def generate(
         if (
             analysis is not None or manifest is not None or has_face
             or directing_profile is not None or body_profile is not None
+            or hair_profile is not None
         ):
             raise ValueError("confirmed_gpt_forbids_generic_prompt_inputs")
         prompt = compile_confirmed_gpt_prompt(
@@ -1383,6 +1391,7 @@ async def generate(
             has_face=has_face,
             directing_profile=directing_profile,
             body_profile=body_profile,
+            hair_profile=hair_profile,
             qc_corrections=qc_corrections,
         )
     provider_kwargs = {"aspect_ratio": settings.mannequin_aspect_ratio}
