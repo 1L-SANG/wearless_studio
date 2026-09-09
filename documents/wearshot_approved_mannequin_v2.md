@@ -66,6 +66,8 @@ v2 기본 캔버스는 긴 변 2048픽셀이다. API의 16픽셀 단위 때문�
 
 생산 환경의 생성 모델 라우팅은 기존처럼 실행 시점 서버 Settings를 사용한다. 불변 근거 계약이 서버 운영 설정 전체를 고정한다는 의미는 아니다. 이번 변경은 전역 모델을 바꾸지 않는다. `WEARSHOT_QC_MODEL`은 v2 검수 모델, `WEARSHOT_REPAIR_MODEL`은 선택적 2차 수정 모델 설정이다. 비교 실험은 이와 별도로 양쪽의 모델·코드·입력·수정 지시를 고정한다.
 
+v2 검수는 `WEARSHOT_QC_TIMEOUT_SECONDS`로 별도 제한 시간을 사용하며 기본 180초다. 기존 `ANALYSIS_TIMEOUT_SECONDS`의 30초 기본값은 바꾸지 않는다. 실제 기준본 검수에서 본 검수 39초·추가 얼굴 검수 12초가 걸려 기존 30초 제한에 걸리는 사례를 확인했다. 제한 시간 초과와 공급자 오류는 시각적 불합격과 구분해 기록한다. 로컬 비교 manifest의 `qcTimeoutSeconds`도 입력·모델과 함께 고정한다.
+
 ## Sunburst 비교 도구
 
 `server/app/experiments/wearshot_repair_ab.py`는 실제 `cut_generator.repair`와 공통 검수를 호출한다. 두 모델은 `gpt-image-2`, `gpt-image-2.5-sunburst-2026-09-08`로 제한하며, 기본 동작은 호출·쓰기 없는 드라이런이다.

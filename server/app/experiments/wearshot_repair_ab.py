@@ -11,6 +11,7 @@ import asyncio
 from dataclasses import replace
 from datetime import datetime, timezone
 import json
+import math
 from pathlib import Path
 
 from ..agents import cut_generator, cut_identity_review, gemini_image, vision_llm
@@ -84,12 +85,15 @@ def _prepare(path, case):
     raw = legacy._read(path)
     try:
         manifest = json.loads(raw)
-        if (set(manifest) != {"schemaVersion", "models", "qcModel", "quality", "imageSize", "cases"}
+        if (set(manifest) != {"schemaVersion", "models", "qcModel", "qcTimeoutSeconds", "quality", "imageSize", "cases"}
                 or type(manifest["schemaVersion"]) is not int or manifest["schemaVersion"] != 1
                 or manifest["models"] != MODELS or manifest["quality"] != "medium"
                 or manifest["imageSize"] not in {"1K", "2K", "4K"}
                 or not isinstance(manifest["qcModel"], str) or not manifest["qcModel"].startswith("gpt-")):
             raise ValueError("Manifest requires exact repair models, medium quality, and GPT QC")
+        timeout = manifest["qcTimeoutSeconds"]
+        if type(timeout) not in (int, float) or not 1 <= timeout <= 600 or not math.isfinite(timeout):
+            raise ValueError("Manifest qcTimeoutSeconds must be a finite number from 1 to 600")
         rows = manifest["cases"]
         if not isinstance(rows, list) or not rows:
             raise ValueError("Cases must be nonempty")
@@ -115,7 +119,7 @@ def _prepare(path, case):
             request = dict(harnessVersion=VERSION, caseId=row["id"], manifestSha256=legacy._sha(raw),
                            codeVersions=code, contract=contract.to_dict(), base=base_info,
                            outputSize=size, imageSize=manifest["imageSize"], quality="medium", outputFormat="png",
-                           qcModel=manifest["qcModel"], models=MODELS)
+                           qcModel=manifest["qcModel"], qcTimeoutSeconds=timeout, models=MODELS)
             if "humanFeedback" in row:
                 request["humanFeedback"] = _feedback(row["humanFeedback"], contract)
             prepared.append(dict(contract=contract, base=base, request=request))
@@ -263,6 +267,7 @@ async def run_manifest(manifest_path, output_dir, *, mode="dry-run", case=None, 
                        "sourceGeneration": source, "candidateSha256": output["sha256"]}
     # A copied local configuration freezes both judges and image-size settings.
     configured = replace(settings or load_settings(), wearshot_qc_model=manifest["qcModel"],
+                         wearshot_qc_timeout_seconds=manifest["qcTimeoutSeconds"],
                          cut_identity_review_model=manifest["qcModel"], analysis_model_order="gpt",
                          model_text=manifest["qcModel"], detail_cut_image_size=manifest["imageSize"])
     out.mkdir(parents=True, exist_ok=True)

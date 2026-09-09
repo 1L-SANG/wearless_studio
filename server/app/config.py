@@ -171,6 +171,8 @@ class Settings:
     cut_output_release_policy: str = "off"  # off | critical
     cut_identity_review_model: str = "gpt-6-astra"
     wearshot_qc_model: str = "gpt-6-astra"
+    # V2 primary and focused QC share this deadline; legacy analysis stays independent.
+    wearshot_qc_timeout_seconds: float = 180.0
     wearshot_repair_model: str | None = None
     cut_color_review_model: str = "gpt-6-astra"
     page_output_qc_mode: str = "off"  # off | shadow
@@ -457,6 +459,15 @@ def _optional_float_env(env: str) -> float | None:
     return float(raw) if raw else None
 
 
+def _wearshot_qc_timeout_from_env() -> float:
+    try:
+        return float(os.getenv("WEARSHOT_QC_TIMEOUT_SECONDS", "180"))
+    except ValueError:
+        # Retain invalid configuration as a nonfinite sentinel. The v2 consumer
+        # turns it into a sanitized hold before any provider call.
+        return float("nan")
+
+
 def load_settings() -> Settings:
     app_env = os.getenv("APP_ENV", "dev")
     supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
@@ -598,6 +609,7 @@ def load_settings() -> Settings:
             "CUT_OUTPUT_RELEASE_POLICY", "off", {"off", "critical"}),
         cut_identity_review_model=os.getenv("CUT_IDENTITY_REVIEW_MODEL", "gpt-6-astra").strip() or "gpt-6-astra",
         wearshot_qc_model=os.getenv("WEARSHOT_QC_MODEL", "gpt-6-astra").strip() or "gpt-6-astra",
+        wearshot_qc_timeout_seconds=_wearshot_qc_timeout_from_env(),
         wearshot_repair_model=os.getenv("WEARSHOT_REPAIR_MODEL", "").strip() or None,
         cut_color_review_model=os.getenv("CUT_COLOR_REVIEW_MODEL", "gpt-6-astra").strip() or "gpt-6-astra",
         page_output_qc_mode=_flag("PAGE_OUTPUT_QC_MODE", "off", {"off", "shadow"}),

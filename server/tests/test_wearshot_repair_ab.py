@@ -32,7 +32,7 @@ def evidence(tmp_path):
         paths[ref.key] = path.name
     (tmp_path / "base.png").write_bytes(base.data)
     manifest = dict(schemaVersion=1, models={"image2": "gpt-image-2", "sunburst": "gpt-image-2.5-sunburst-2026-09-08"},
-                    qcModel="gpt-6-astra", quality="medium", imageSize="2K", cases=[dict(
+                    qcModel="gpt-6-astra", qcTimeoutSeconds=180, quality="medium", imageSize="2K", cases=[dict(
                         id="sample-a", repairDeclared=True, contract=contract.to_dict(), referencePaths=paths,
                         base=dict(path="base.png", mime=base.mime, sha256=image_sha256(base)),
                         outputSize="1360x2048")])
@@ -316,3 +316,49 @@ def test_real_frozen_settings_are_copied_and_forward_explicit_judge_and_image_si
     assert repair["actualRequest"]["imageSize"] == "2K"
     assert base["verdict"]["model"] == base["verdict"]["identityReview"]["model"] == "gpt-6-astra"
     assert asdict(settings) == original
+
+
+@pytest.mark.parametrize("value", [None, 0, -1, 601, 10 ** 400, float("inf"), float("nan"), True, "180"])
+def test_invalid_frozen_qc_deadline_rejected_without_calls_or_writes(evidence, external, value):
+    evidence.manifest["qcTimeoutSeconds"] = value
+    rewrite(evidence)
+    with pytest.raises(ValueError): run(evidence)
+    assert external == [] and not evidence.out.exists()
+
+
+def test_frozen_qc_deadline_required(evidence, external):
+    del evidence.manifest["qcTimeoutSeconds"]
+    rewrite(evidence)
+    with pytest.raises(ValueError): run(evidence)
+    assert external == [] and not evidence.out.exists()
+
+
+def test_manifest_deadline_overrides_real_settings_and_is_recorded_for_both_judges(evidence, external, monkeypatch):
+    evidence.manifest["qcTimeoutSeconds"] = 95.5
+    rewrite(evidence)
+    settings = make_settings(openai_api_key="test")
+    before, deadlines = asdict(settings), []
+    transport = vision_llm._call_gpt
+    async def judge(configured, model, prompt, images, schema, timeout):
+        deadlines.append((configured.analysis_timeout_seconds, timeout))
+        return await transport(configured, model, prompt, images, schema, timeout)
+    monkeypatch.setattr(vision_llm, "_call_gpt", judge)
+    dry = asyncio.run(harness().run_manifest(evidence.path, evidence.out))[0]
+    assert dry["request"]["qcTimeoutSeconds"] == 95.5
+    assert not evidence.out.exists() and deadlines == []
+    receipt = asyncio.run(harness().run_manifest(evidence.path, evidence.out, mode="qc-base", case="sample-a", settings=settings))[0]
+    assert receipt["status"] == "completed" and receipt["request"]["qcTimeoutSeconds"] == 95.5
+    assert deadlines == [(95.5, 95.5), (95.5, 95.5)]
+    assert receipt["verdict"]["timeoutSeconds"] == receipt["verdict"]["identityReview"]["timeoutSeconds"] == 95.5
+    assert asdict(settings) == before
+
+
+def test_changed_qc_deadline_invalidates_prior_receipt_before_repair(evidence, external):
+    run(evidence, mode="qc-base", case="sample-a")
+    original = (evidence.out / "sample-a.qc-base.receipt.json").read_bytes()
+    count = len(external)
+    evidence.manifest["qcTimeoutSeconds"] = 90
+    rewrite(evidence)
+    with pytest.raises(ValueError): run(evidence, mode="repair", case="sample-a", arm="sunburst")
+    assert len(external) == count
+    assert (evidence.out / "sample-a.qc-base.receipt.json").read_bytes() == original

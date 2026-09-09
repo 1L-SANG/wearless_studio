@@ -5,6 +5,8 @@ import hashlib
 from collections.abc import Sequence
 from typing import Any
 
+import httpx
+
 from ..config import Settings
 from . import vision_llm
 from .cut_output_qc import LabeledReference
@@ -51,13 +53,15 @@ def validate(raw: Any) -> dict:
 async def verdict(settings: Settings, references: Sequence[LabeledReference], generated_image: InlineImage) -> dict:
     model = getattr(settings, "cut_identity_review_model", "gpt-6-astra")
     result = validate(None)
-    result.update(model=model, provider=None, candidateSha256=hashlib.sha256(generated_image.data).hexdigest())
+    result.update(model=model, provider=None, candidateSha256=hashlib.sha256(generated_image.data).hexdigest(),
+                  timeoutSeconds=getattr(settings, "analysis_timeout_seconds", None), errorCategory=None)
     faces = [ref.image for ref in references if ref.role == "modelFace"]
     sources = [ref.image for ref in references if ref.role == "example"]
     images = [*faces, *sources, generated_image]
     if not faces or any(not image.data or not image.mime.startswith("image/") for image in images):
         return result
     if not settings.openai_api_key:
+        result["errorCategory"] = "provider_unavailable"
         return result
     labels = [*("MODEL FACE — selected target facial reference" for _ in faces),
               *("EXAMPLE — source person reference" for _ in sources),
@@ -89,6 +93,9 @@ ambiguity in nonempty text. No material ambiguity may be stated explicitly. Retu
                 settings, model, prompt, images, review_schema(), settings.analysis_timeout_seconds,
             )
         result.update(validate(raw))
+    except (TimeoutError, httpx.TimeoutException):
+        result.update(errorCategory="deadline_exceeded", evidence="Independent visible-face review unavailable.")
     except Exception:
         result["evidence"] = "Independent visible-face review unavailable."
+        result["errorCategory"] = "provider_unavailable"
     return result

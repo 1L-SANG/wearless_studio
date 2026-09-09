@@ -187,7 +187,7 @@ async def review_candidate(settings, contract: WearshotContract, candidate, *, r
         try:
             refs = [LabeledReference(ref.role, ref.image) for ref in contract.references
                     if ref.key in (contract.model_face_key, contract.example_key)]
-            review = await cut_identity_review.verdict(settings, refs, candidate)
+            review = await cut_identity_review.verdict(wearshot_qc.review_settings(settings), refs, candidate)
             if not isinstance(review, dict) or review.get("candidateSha256") != image_sha256(candidate):
                 raise ValueError("wearshot_v2_identity_candidate_mismatch")
         except Exception:

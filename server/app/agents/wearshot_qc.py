@@ -6,8 +6,12 @@ observes pixels; malformed or unavailable observations hold without raw errors.
 from __future__ import annotations
 
 import asyncio
-from copy import deepcopy
+from copy import copy, deepcopy
+from dataclasses import is_dataclass, replace
+import math
 import re
+
+import httpx
 
 from . import vision_llm
 from .gemini_image import InlineImage
@@ -16,6 +20,18 @@ from .wearshot_contract import (VERSION, GARMENT_AXES, GLOBAL_AXES, ContractErro
 from .wearshot_prompt import authority_description, render_generation, render_repair
 
 _STATUSES = ("PASS", "FAIL", "UNJUDGEABLE")
+
+
+def review_settings(settings):
+    """Copy the dedicated, validated v2 deadline into the shared transport slot."""
+    timeout = getattr(settings, "wearshot_qc_timeout_seconds", 180.0)
+    if type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("wearshot_v2_invalid_qc_timeout")
+    if is_dataclass(settings):
+        return replace(settings, analysis_timeout_seconds=timeout)
+    configured = copy(settings)
+    configured.analysis_timeout_seconds = timeout
+    return configured
 
 
 def _object(properties):
@@ -294,7 +310,14 @@ async def verdict(settings, contract: WearshotContract, candidate: InlineImage, 
     """One GPT-only call; preflight/provider failures produce a sanitized hold."""
     model = getattr(settings, "wearshot_qc_model", "gpt-6-astra") or "gpt-6-astra"
     result = _unavailable(contract, None, repair_plan)
-    result.update(model=model, provider=None)
+    result.update(model=model, provider=None, timeoutSeconds=None, errorCategory=None)
+    try:
+        settings = review_settings(settings)
+        timeout = settings.analysis_timeout_seconds
+        result["timeoutSeconds"] = timeout
+    except (ValueError, TypeError, OverflowError):
+        result.update(errorCategory="invalid_timeout", evidence="V2 QC requires a finite positive deadline.")
+        return result
     try:
         result["candidateSha256"] = image_sha256(candidate)
         if repair_plan is not None:
@@ -304,7 +327,11 @@ async def verdict(settings, contract: WearshotContract, candidate: InlineImage, 
             if base_image is not None:
                 raise ContractError("wearshot_v2:base_without_plan")
             rendered = render_generation(contract)
-        if not getattr(settings, "openai_api_key", None) or type(model) is not str or not model.startswith("gpt-"):
+        if not getattr(settings, "openai_api_key", None):
+            result["errorCategory"] = "provider_unavailable"
+            return result
+        if type(model) is not str or not model.startswith("gpt-"):
+            result["errorCategory"] = "invalid_model"
             return result
         images = [*rendered.images, candidate]
         prompt = ("Judge the final CANDIDATE against this exact v2 contract. Do not generate or repair an image.\n"
@@ -325,12 +352,16 @@ async def verdict(settings, contract: WearshotContract, candidate: InlineImage, 
                   + ("Protected attributes: " + str(repair_plan.approved_axes) + "\n" if repair_plan else "")
                   +
                   "Expected contract fingerprint: " + contract.fingerprint)
-        timeout = getattr(settings, "analysis_timeout_seconds", 120)
         result["provider"] = "gpt"
         async with asyncio.timeout(timeout):
             raw = await vision_llm._call_gpt(settings, model, prompt, images, review_schema(contract, repair_plan), timeout)
         result.update(validate(raw, contract, candidate, repair_plan=repair_plan, base_image=base_image))
+        if not result["valid"]:
+            result["errorCategory"] = "malformed_observation"
+    except (TimeoutError, httpx.TimeoutException):
+        result.update(errorCategory="deadline_exceeded", evidence="V2 review deadline exceeded.")
     except Exception:
         # Never copy or log provider responses, URLs, credentials, or exceptions.
         result["evidence"] = "V2 review unavailable."
+        result["errorCategory"] = "provider_unavailable" if result["provider"] else "invalid_request"
     return result
