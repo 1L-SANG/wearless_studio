@@ -19,6 +19,42 @@ def settings():
     )
 
 
+@pytest.mark.parametrize("override,want", [(None, "1024x1536"), ("1536x2048", "1536x2048"), ("auto", "auto")])
+def test_explicit_openai_size_reaches_multipart_without_changing_legacy(monkeypatch, override, want):
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json={"data": [{"b64_json": "aW1hZ2U="}]})
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(gemini_image.httpx, "AsyncClient", lambda **kw: original(transport=httpx.MockTransport(respond), **kw))
+    monkeypatch.setattr(gemini_image.image_usage, "record", lambda **kw: None)
+    kwargs = {} if override is None else {"openai_output_size": override}
+    asyncio.run(gemini_image.GeminiImageClient(settings()).generate_content_image(
+        "gpt-image-2", "prompt", [gemini_image.InlineImage("image/png", b"input")],
+        "2K", aspect_ratio="3:4", **kwargs))
+    assert f'name="size"\r\n\r\n{want}\r\n'.encode() in requests[0].content
+
+
+@pytest.mark.parametrize("override", ["1x1", "1025x1536", "4096x2048", "512x2048", "512x512", "3840x3840", "junk", "", 123])
+def test_invalid_explicit_size_rejected_before_transport(monkeypatch, override):
+    def no_network(*args, **kwargs):
+        pytest.fail("invalid dimensions reached network")
+
+    monkeypatch.setattr(gemini_image.httpx, "AsyncClient", no_network)
+    with pytest.raises(ValueError):
+        asyncio.run(gemini_image.GeminiImageClient(settings()).generate_content_image(
+            "gpt-image-2", "prompt", [], "2K", openai_output_size=override))
+
+
+def test_gemini_rejects_openai_only_size_before_transport(monkeypatch):
+    monkeypatch.setattr(gemini_image.httpx, "AsyncClient", lambda **kw: pytest.fail("unexpected request"))
+    with pytest.raises(ValueError):
+        asyncio.run(gemini_image.GeminiImageClient(settings()).generate_content_image(
+            "gemini-3-pro-image", "prompt", [], "2K", openai_output_size="1536x2048"))
+
+
 def test_image_cpu_work_runs_off_loop_with_process_concurrency_one():
     active = 0
     peak = 0

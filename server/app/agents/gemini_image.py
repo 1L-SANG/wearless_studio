@@ -168,6 +168,19 @@ async def normalize_openai_images(
     ]
 
 
+def validate_openai_output_size(value: str) -> None:
+    """Validate an explicit canvas without altering legacy size selection."""
+    if value == "auto":
+        return
+    if not isinstance(value, str) or not re.fullmatch(r"[1-9][0-9]{0,3}x[1-9][0-9]{0,3}", value):
+        raise ValueError("OpenAI output size must be auto or WIDTHxHEIGHT")
+    width, height = map(int, value.split("x"))
+    if (width % 16 or height % 16 or max(width, height) > 3840
+            or max(width, height) > 3 * min(width, height)
+            or not 655360 <= width * height <= 8294400):
+        raise ValueError("OpenAI output dimensions are outside supported bounds")
+
+
 class GeminiImageClient:
     """앱 1개당 1개. app.state.gemini 에 둔다. settings.gemini_api_key 없으면 생성 안 함."""
 
@@ -227,6 +240,7 @@ class GeminiImageClient:
         aspect_ratio: str | None = None,
         timeout: float = 180.0,
         openai_preserve_input_bytes: bool = False,
+        openai_output_size: str | None = None,
     ) -> GeminiImageResult:
         # 모델 id 로 provider 분기. gpt-image* 는 OpenAI images/edits(멀티 레퍼런스), 그 외는 Gemini.
         # 같은 시그니처·같은 GeminiImageResult 반환이라 9개 콜사이트는 무변경이다.
@@ -239,7 +253,10 @@ class GeminiImageClient:
                 aspect_ratio,
                 timeout,
                 preserve_input_bytes=openai_preserve_input_bytes,
+                output_size=openai_output_size,
             )
+        if openai_output_size is not None:
+            raise ValueError("openai_output_size requires an OpenAI image model")
         if not self._key:
             raise GeminiError("GEMINI_API_KEY 미설정")
         body = await run_cpu_bound(
@@ -370,16 +387,18 @@ class GeminiImageClient:
     async def _openai_generate(
         self, model: str, prompt: str, images: list[InlineImage],
         image_size: str, aspect_ratio: str | None, timeout: float,
-        *, preserve_input_bytes: bool,
+        *, preserve_input_bytes: bool, output_size: str | None = None,
     ) -> GeminiImageResult:
         """OpenAI images/edits — 멀티 레퍼런스 편집 생성. Gemini 와 동일 반환 계약.
 
         Gemini generateContent 와 의미가 다르다(캔버스 편집 vs 조건부 생성) — 동등 품질 보장 아님.
         키·엔드포인트·multipart·응답(b64_json) 전부 Gemini 와 다르므로 별도 경로다.
         """
+        if output_size is not None:
+            validate_openai_output_size(output_size)
         if not self._openai_key:
             raise GeminiError("OPENAI_API_KEY 미설정")
-        size = self._openai_size(image_size, aspect_ratio)
+        size = output_size if output_size is not None else self._openai_size(image_size, aspect_ratio)
         _ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
         if preserve_input_bytes:
             # 과거 오너 확정 실험의 요청은 각 참조 이미지의 원본 bytes/MIME까지 봉인했다.

@@ -166,6 +166,11 @@ class Settings:
     # 2차가 개선되지 않으면 1차를 보존하며, QC/2차 호출 실패도 1차 출고를 막지 않는다.
     # 기본 off라 명시적으로 켠 환경에서만 추가 호출 비용이 발생한다.
     cut_output_qc_mode: str = "off"  # off | shadow | repair
+    # critical holds generated cuts before storage when final critical QC is absent/failing.
+    # Independent of QC mode: enabling this with QC off holds all generated cuts.
+    cut_output_release_policy: str = "off"  # off | critical
+    cut_identity_review_model: str = "gpt-6-astra"
+    cut_color_review_model: str = "gpt-6-astra"
     page_output_qc_mode: str = "off"  # off | shadow
     # P1 축 인지 QC(선언 핏 축 반영 판정 + 실패 시 편집 교정 1회 — fidelity §G·§H).
     # off | shadow(판정·이벤트만) | enforce(편집 재시도 발화). enforce는 코드 레벨 가드
@@ -587,6 +592,10 @@ def load_settings() -> Settings:
         garment_qc_extra_candidates=int(os.getenv("GARMENT_QC_EXTRA_CANDIDATES", "2")),
         cut_output_qc_mode=_flag(
             "CUT_OUTPUT_QC_MODE", "off", {"off", "shadow", "repair"}),
+        cut_output_release_policy=_flag(
+            "CUT_OUTPUT_RELEASE_POLICY", "off", {"off", "critical"}),
+        cut_identity_review_model=os.getenv("CUT_IDENTITY_REVIEW_MODEL", "gpt-6-astra").strip() or "gpt-6-astra",
+        cut_color_review_model=os.getenv("CUT_COLOR_REVIEW_MODEL", "gpt-6-astra").strip() or "gpt-6-astra",
         page_output_qc_mode=_flag("PAGE_OUTPUT_QC_MODE", "off", {"off", "shadow"}),
         mannequin_axis_qc=_flag("MANNEQUIN_AXIS_QC", "off", {"off", "shadow", "enforce"}),
         mannequin_base_fidelity_qc=_flag(

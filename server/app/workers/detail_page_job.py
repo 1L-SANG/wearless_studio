@@ -24,6 +24,9 @@ from ..agents import (
     confirmed_gpt_runtime,
     cut_generator,
     cut_output_qc,
+    cut_identity_review,
+    cut_color_review,
+    cut_release_policy,
     cut_plan,
     feature_copy,
     image_qc,
@@ -453,9 +456,13 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None):
                     _generate_candidate,
                 )
             img, mime = chosen.data, chosen.mime
+            # Preserve the actually selected stage1 pixels before optional repair.
+            stage1_chosen = chosen
             garment_warnings = [*candidate_scene_warnings, *garment_warnings]
 
             cut_qc = None
+            cut_qc_unavailable = False
+            qc_references = []
             if s.cut_output_qc_mode in {"shadow", "repair"}:
                 try:
                     normalized_spec = cut_generator.normalize_spec(
@@ -561,7 +568,9 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None):
                                 })
                         cut_qc = {**cut_qc, "repair": repair}
                 except Exception as e:
-                    # QC/plan/manifest/provider 오류가 성공한 1차 이미지를 막지 않는다.
+                    # Legacy delivery stays fail-open; the opt-in release guard below
+                    # independently holds an unavailable judgment before any upload.
+                    cut_qc_unavailable = True
                     log.warning(
                         "AG-06 cut output QC unavailable job %s block %s: %r — keep stage1",
                         job_id,
@@ -569,6 +578,71 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None):
                         e,
                     )
                     garment_warnings.append({"code": "cut_output_qc_unavailable"})
+
+            release_policy = getattr(s, "cut_output_release_policy", "off")
+            selected_qc, _ = cut_release_policy.select_stage_qc(
+                None if cut_qc_unavailable else cut_qc
+            )
+            selected_gates = selected_qc.get("gates", {}) if isinstance(selected_qc, dict) else {}
+            identity_gate = selected_gates.get("modelIdentity") if isinstance(selected_gates, dict) else None
+            if (release_policy == "critical" and isinstance(identity_gate, dict)
+                    and identity_gate.get("status") == "PASS"):
+                try:
+                    review = await cut_identity_review.verdict(s, qc_references, chosen)
+                    if (not isinstance(review, dict)
+                            or review.get("candidateSha256") != hashlib.sha256(img).hexdigest()):
+                        raise ValueError("identity_review_candidate_mismatch")
+                except Exception:
+                    # This sits outside the primary QC's legacy fail-open handler.
+                    # Missing, stale or errored confirmation must hold before storage;
+                    # never expose provider exceptions or generate another candidate.
+                    review = {
+                        "status": "UNJUDGEABLE",
+                        "evidence": "Independent visible-face review unavailable or candidate binding invalid.",
+                        "raw": None,
+                        "provider": None,
+                        "model": getattr(s, "cut_identity_review_model", "gpt-6-astra"),
+                        "candidateSha256": hashlib.sha256(img).hexdigest(),
+                    }
+                selected_qc["identityReview"] = review
+
+            protected_colors = cut_release_policy.protected_color_axes(
+                None if cut_qc_unavailable else cut_qc, policy=release_policy,
+            )
+            baseline_sha256 = hashlib.sha256(stage1_chosen.data).hexdigest()
+            candidate_sha256 = hashlib.sha256(img).hexdigest()
+            if protected_colors and isinstance(selected_qc, dict):
+                try:
+                    color_review = await cut_color_review.verdict(
+                        s, qc_references, stage1_chosen, chosen, protected_axes=protected_colors,
+                    )
+                    if (not isinstance(color_review, dict)
+                            or color_review.get("baselineSha256") != baseline_sha256
+                            or color_review.get("candidateSha256") != candidate_sha256):
+                        raise ValueError("color_review_image_binding_invalid")
+                except Exception:
+                    color_review = cut_color_review.validate(None, protected_axes=protected_colors)
+                    color_review.update(
+                        evidence="Independent color review unavailable or image binding invalid.",
+                        provider=None, model=getattr(s, "cut_color_review_model", "gpt-6-astra"),
+                        baselineSha256=baseline_sha256, candidateSha256=candidate_sha256,
+                    )
+                selected_qc["colorReview"] = color_review
+
+            release = cut_release_policy.evaluate_cut_release(
+                None if cut_qc_unavailable else cut_qc,
+                policy=release_policy,
+                baseline_sha256=baseline_sha256,
+                candidate_sha256=candidate_sha256,
+            )
+            if not release["allowed"]:
+                await _emit(app.state.pool, job_id, "step", {
+                    "blockId": b.get("id"),
+                    "status": "cut_failed",
+                    "reason": "quality_review_required",
+                    "qualityReview": release,
+                })
+                return None
 
             ext = ext_for_mime(mime) or _EXT_FALLBACK.get(mime, "png")
             asset_id = str(uuid.uuid4())
