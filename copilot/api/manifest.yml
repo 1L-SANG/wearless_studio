@@ -55,6 +55,13 @@ network:
 
 variables:                       # 평문 (민감하지 않음). 시크릿은 아래 secrets 블록.
   APP_ENV: production
+  # 정기결제(빌링). 시크릿 3종을 SSM 에 넣고 테스트 키로 e2e 를 마친 뒤 true 로 켠다.
+  # off 면 /v1/subscriptions/* 라우트가 아예 없고 청구·만료 워커도 뜨지 않는다.
+  # 런북: docs/runbooks/subscription-billing.md
+  SUBSCRIPTION_BILLING_ENABLED: "false"
+  # 토스 문서: 자동결제 승인은 최대 60초. 일반결제 값(15초)을 재사용하면 정상 승인이
+  # 타임아웃으로 뒤집혀 '결과 미상' 재시도만 쌓인다.
+  TOSS_BILLING_TIMEOUT: "60"
   # 상세페이지는 0대 Spot 전용 워커가 소유한다. API는 나머지 잡만 claim하고,
   # pending detail_page가 생기면 아래 autoscaler가 detail-worker를 1대로 깨운다.
   JOB_KINDS: "-detail_page"
@@ -342,6 +349,18 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   #     copilot-aws secret init --name TOSS_SECRET_KEY
   #   raw `aws ssm put-parameter` 로 만들면 copilot 태그가 없어 태스크가 못 읽는다(2026-07-17 실경험).
   TOSS_SECRET_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/TOSS_SECRET_KEY
+  # 정기결제(빌링) — 계획서 docs/plans/2026-09-09-toss-billing-subscription.md.
+  # ⚠️ 자동결제는 별도 계약 MID 라 일반결제와 시크릿 키가 다를 수 있다. 개발자센터 API 키
+  #    메뉴에서 '자동결제로 계약된 MID' 를 고른 뒤의 키를 넣는다. 비우면 TOSS_SECRET_KEY 로
+  #    떨어지므로 MID 가 하나인 상점이면 등록하지 않아도 된다.
+  #     copilot-aws secret init --name TOSS_BILLING_SECRET_KEY
+  TOSS_BILLING_SECRET_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/TOSS_BILLING_SECRET_KEY
+  # 빌링키 컬럼 암호화 키(pgcrypto pgp_sym_encrypt). ⚠️ 이 값을 잃으면 저장된 빌링키를
+  #    전부 복호화할 수 없고, 빌링키는 재조회가 불가능하므로 **전 구독자가 카드를 다시
+  #    등록**해야 한다. 로테이션은 반드시 재암호화 마이그레이션과 함께 한다.
+  TOSS_BILLING_KEK: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/TOSS_BILLING_KEK
+  # 웹훅 경로 시크릿 — 토스 일반 웹훅에는 서명 헤더가 없어 경로 지식이 인증 대용이다.
+  TOSS_WEBHOOK_PATH_SECRET: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/TOSS_WEBHOOK_PATH_SECRET
   FM_CHAIN_PRIVATE_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_CHAIN_PRIVATE_KEY
   # 출처증명 C2PA 자체서명 인증서(리프 cert/key). 둘 다 있어야 서명기가 활성화된다 —
   # 하나만 있으면 c2pa_status='skipped'. 발급·업로드 절차: 런북 §1(gen_c2pa_cert.py).
