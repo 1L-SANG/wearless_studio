@@ -2967,10 +2967,21 @@ async def is_admin(conn: AsyncConnection, user_id: str) -> bool:
 
 
 async def grant_subscription(
-    conn: AsyncConnection, *, user_id: str, plan_code: str, metadata: dict | None = None
+    conn: AsyncConnection, *, user_id: str, plan_code: str, metadata: dict | None = None,
+    credits: int | None = None,
+    period_end_sql: str = "now() + interval '1 month'",
 ) -> dict:
-    """구독 월 충전(§3.1): 기존 active 구독 버킷 소멸 → 새 버킷(plan.credits, 1달 만료).
-    full plan 지급이라 balance가 reserved를 항상 상회(불변식 5 backstop은 credit_accounts CHECK)."""
+    """구독 크레딧 지급 — **이월**(계획서 docs/plans/2026-09-09-toss-billing-subscription.md §0.1).
+
+    2026-09-09 정책 변경: 예전에는 갱신 때 기존 구독 버킷을 만료시키고 새로 줬다(소멸).
+    이제 소멸은 해지·유예만료라는 사건에서만 일어난다(expire_subscription_buckets).
+    갱신은 버킷을 하나 더 얹을 뿐이다. FIFO 정렬이 (source_type, created_at) 이라
+    이월분이 자연히 먼저 소진된다 — 오래된 크레딧부터 쓰는 게 사용자에게 유리하다.
+
+    credits: 지급량 override(업그레이드 비례분). None 이면 요금제 정가.
+    period_end_sql: 버킷 만료 시각 SQL. 업그레이드 비례 버킷은 현재 주기 끝에 맞춘다.
+      **호출자가 주는 SQL 조각이다 — 사용자 입력을 절대 넘기지 않는다**(리터럴 상수만).
+    """
     metadata = metadata or {}
     async with conn.cursor() as cur:
         await cur.execute(
@@ -2981,6 +2992,44 @@ async def grant_subscription(
         plan = await cur.fetchone()
         if plan is None:
             raise CreditError("unknown_plan", f"요금제를 찾을 수 없어요: {plan_code}", 404)
+        grant = plan["credits"] if credits is None else int(credits)
+        if grant < 0:
+            raise CreditError("invalid_grant", "지급 크레딧이 음수예요.", 400)
+        await cur.execute(
+            "select balance, reserved from credit_accounts where user_id = %s for update", (user_id,)
+        )
+        acct = await cur.fetchone()
+        if acct is None:
+            raise CreditError("account_missing", "크레딧 계정이 없어요.", 404)
+        running = acct["balance"] + grant
+        await cur.execute(
+            "insert into credit_sources (user_id, source_type, plan_id, initial_credits, "
+            "remaining_credits, status, period_end) "
+            f"values (%s, 'subscription', %s, %s, %s, 'active', {period_end_sql}) "
+            "returning id::text as id",
+            (user_id, plan["id"], grant, grant),
+        )
+        src_id = (await cur.fetchone())["id"]
+        await cur.execute(
+            "insert into credit_ledger (user_id, credit_source_id, action_key, delta, "
+            "balance_after, available_after, metadata) values (%s,%s,'grant_subscription',%s,%s,%s,%s)",
+            (user_id, src_id, grant, running, running - acct["reserved"], Json(metadata)),
+        )
+        await cur.execute(
+            "update credit_accounts set balance = %s where user_id = %s", (running, user_id)
+        )
+    return {"creditSourceId": src_id, "credits": grant, "available": running - acct["reserved"]}
+
+
+async def expire_subscription_buckets(
+    conn: AsyncConnection, *, user_id: str, reason: str
+) -> dict:
+    """구독 버킷 전량 소멸 — 해지 주기 종료·유예 만료에서만 부른다(계획서 §0.1).
+
+    이월분까지 전부 지운다. 사용자에게는 큰 금액이 한 번에 사라지는 사건이므로,
+    호출 전에 화면이 소멸 예정 수량·날짜를 이미 보여줬어야 한다.
+    """
+    async with conn.cursor() as cur:
         await cur.execute(
             "select balance, reserved from credit_accounts where user_id = %s for update", (user_id,)
         )
@@ -2993,36 +3042,40 @@ async def grant_subscription(
             "where user_id = %s and source_type = 'subscription' and status = 'active' for update",
             (user_id,),
         )
-        for old in await cur.fetchall():
+        buckets = await cur.fetchall()
+        expired = 0
+        for bucket in buckets:
             await cur.execute(
                 "update credit_sources set status = 'expired', remaining_credits = 0 where id = %s",
-                (old["id"],),
+                (bucket["id"],),
             )
-            running -= old["remaining_credits"]
+            running -= bucket["remaining_credits"]
+            expired += bucket["remaining_credits"]
             await cur.execute(
                 "insert into credit_ledger (user_id, credit_source_id, action_key, delta, "
-                "balance_after, available_after, metadata) values (%s,%s,'expire_subscription',%s,%s,%s,%s)",
-                (user_id, old["id"], -old["remaining_credits"], running,
-                 running - acct["reserved"], Json(metadata)),
+                "balance_after, available_after, metadata) "
+                "values (%s,%s,'expire_subscription',%s,%s,%s,%s)",
+                (user_id, bucket["id"], -bucket["remaining_credits"], running,
+                 running - acct["reserved"], Json({"reason": reason})),
             )
+        if buckets:
+            await cur.execute(
+                "update credit_accounts set balance = %s where user_id = %s", (running, user_id)
+            )
+    return {"expired": expired, "available": running - acct["reserved"]}
+
+
+async def subscription_bucket_summary(conn: AsyncConnection, user_id: str) -> dict:
+    """해지 화면이 '무엇이 언제 사라지는지' 를 숫자로 보여주기 위한 조회."""
+    async with conn.cursor() as cur:
         await cur.execute(
-            "insert into credit_sources (user_id, source_type, plan_id, initial_credits, "
-            "remaining_credits, status, period_end) "
-            "values (%s, 'subscription', %s, %s, %s, 'active', now() + interval '1 month') "
-            "returning id::text as id",
-            (user_id, plan["id"], plan["credits"], plan["credits"]),
+            "select coalesce(sum(remaining_credits), 0) as credits, max(period_end) as expires_at "
+            "from credit_sources "
+            "where user_id = %s and source_type = 'subscription' and status = 'active'",
+            (user_id,),
         )
-        src_id = (await cur.fetchone())["id"]
-        running += plan["credits"]
-        await cur.execute(
-            "insert into credit_ledger (user_id, credit_source_id, action_key, delta, "
-            "balance_after, available_after, metadata) values (%s,%s,'grant_subscription',%s,%s,%s,%s)",
-            (user_id, src_id, plan["credits"], running, running - acct["reserved"], Json(metadata)),
-        )
-        await cur.execute(
-            "update credit_accounts set balance = %s where user_id = %s", (running, user_id)
-        )
-    return {"creditSourceId": src_id, "credits": plan["credits"], "available": running - acct["reserved"]}
+        row = await cur.fetchone() or {}
+    return {"credits": int(row.get("credits") or 0), "expiresAt": row.get("expires_at")}
 
 
 async def purchase_topup(
