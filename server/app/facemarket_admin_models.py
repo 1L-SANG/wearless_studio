@@ -221,14 +221,18 @@ async def _load_model_profiles(
         clauses.insert(0, "m.id = %s")
         params = (model_id,)
     if public_only:
+        # LIKE 패턴의 % 는 반드시 파라미터로 넘긴다. SQL 문자열에 직접 박으면 psycopg 가
+        # 그 % 를 자리표시자로 읽어 execute 단계에서 ProgrammingError 를 던진다(운영 500).
+        catalog_prefix = "facemarket/catalog/models/%"
         clauses.extend(
             [
                 "m.status = 'verified'",
                 "m.confirmed_at is not null",
-                "m.cover_image_url like 'facemarket/catalog/models/%'",
-                "m.fullbody_image_url like 'facemarket/catalog/models/%'",
+                "m.cover_image_url like %s",
+                "m.fullbody_image_url like %s",
             ]
         )
+        params = params + (catalog_prefix, catalog_prefix)
     suffix = "order by m.confirmed_at desc limit 200" if public_only else "limit 1"
     async with conn.cursor() as cur:
         await cur.execute(

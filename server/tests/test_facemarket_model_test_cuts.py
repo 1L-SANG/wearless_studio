@@ -13,7 +13,7 @@ from PIL import Image
 
 from app import facemarket_admin_models, facemarket_notify
 from app.main import create_app
-from conftest import make_settings
+from conftest import assert_query_binds, make_settings
 
 
 MODEL_ID = "11111111-1111-1111-1111-111111111111"
@@ -78,9 +78,11 @@ class FakeCursor:
         return False
 
     async def execute(self, sql, params=None):
+        assert_query_binds(sql, params)
         query = " ".join(sql.split()).lower()
         params = params or ()
         self.store.setdefault("sql", []).append(query)
+        self.store.setdefault("sql_params", []).append((query, tuple(params)))
         self.one = None
         self.many = []
         model = self.store["model"]
@@ -1059,10 +1061,17 @@ def test_public_models_returns_only_eligible_profiles_without_pii(test_cut_api):
         for query in store["sql"]
         if "m.confirmed_at is not null" in query
     )
+    # LIKE 패턴은 파라미터로 간다 — SQL 에 % 를 박으면 psycopg 가 execute 에서 죽는다.
+    public_params = next(
+        params
+        for query, params in store["sql_params"]
+        if "m.confirmed_at is not null" in query
+    )
+    assert public_params == ("facemarket/catalog/models/%",) * 2
     for clause in (
         "m.status = 'verified'",
-        "m.cover_image_url like 'facemarket/catalog/models/%'",
-        "m.fullbody_image_url like 'facemarket/catalog/models/%'",
+        "m.cover_image_url like %s",
+        "m.fullbody_image_url like %s",
         "l.enrollment_id = m.current_enrollment_id",
         "l.forbidden_use",
         "l.status = 'active'",

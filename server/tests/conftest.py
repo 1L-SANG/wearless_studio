@@ -177,3 +177,18 @@ def make_token(keypair):
         return jwt.encode(claims, private_key, algorithm="ES256")
 
     return _make
+
+
+def assert_query_binds(sql, params):
+    """가짜 커서가 실제 드라이버처럼 쿼리를 검사하게 한다.
+
+    가짜 커서는 SQL 을 문자열로만 보관해서 psycopg 가 잡아내는 오류를 통째로 못 본다.
+    - 리터럴 ``%`` (예: ``like 'a/%'``) 는 params 를 넘긴 순간 psycopg 가 자리표시자로 읽고 죽는다.
+      params 가 빈 튜플이어도 ``None`` 이 아니면 검사가 돈다.
+    - 자리표시자 개수와 params 개수가 어긋나도 죽는다.
+    둘 다 DB 왕복 전에 터져서, 진짜 커서를 안 쓰는 테스트는 통과하고 운영만 500 이 난다.
+    """
+    from psycopg._queries import PostgresQuery
+    from psycopg.adapt import Transformer
+
+    PostgresQuery(Transformer()).convert(sql, params)
