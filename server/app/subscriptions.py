@@ -238,6 +238,149 @@ async def cancel_subscription(request: Request, user_id: str = Depends(require_u
     })
 
 
+class ChangePlanBody(BaseModel):
+    plan_code: str = Field(alias="planCode", min_length=1, max_length=64)
+
+    model_config = {"populate_by_name": True}
+
+
+def _proration(*, old_price: int, new_price: int, old_credits: int, new_credits: int,
+               remaining_days: int, period_days: int) -> dict:
+    """업그레이드 비례배분(계획서 §0.2). 금액·크레딧 모두 **버림**.
+
+    버림으로 통일한 이유: 금액을 올림하면 사용자가 더 내고, 크레딧을 올림하면 우리가
+    더 준다. 둘 다 버림이면 오차가 항상 사용자 쪽으로 1원·1크레딧 유리하게 떨어진다.
+    """
+    period_days = max(int(period_days), 1)
+    remaining_days = max(min(int(remaining_days), period_days), 0)
+    return {
+        "amount": (new_price - old_price) * remaining_days // period_days,
+        "credits": max((new_credits - old_credits) * remaining_days // period_days, 0),
+    }
+
+
+@router.post("/change-plan", summary="요금제 변경")
+async def change_plan(
+    request: Request, body: ChangePlanBody, user_id: str = Depends(require_user),
+):
+    """업그레이드는 즉시(비례 차액 결제 + 비례 크레딧), 다운그레이드는 다음 주기.
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**: `400 same_plan` · `404 unknown_plan`/`subscription_not_found` ·
+      `409 subscription_not_active`(미납·해지 상태에서는 변경 불가 — 못 받은 돈 위에
+      크레딧을 얹지 않는다) · `402`(카드 거절) · `503`(게이트웨이 미상)
+    """
+    kek = _require_billing_config(request)
+    settings = _settings(request)
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select id::text as id, plan_code, status, current_period_end "
+                "from subscriptions where user_id = %s for update",
+                (user_id,),
+            )
+            sub = await cur.fetchone()
+            if sub is None or sub["status"] == "ended":
+                raise _err("subscription_not_found", "구독이 없어요.", 404)
+            if sub["status"] != "active":
+                raise _err("subscription_not_active", "지금은 요금제를 바꿀 수 없어요.", 409)
+            if sub["plan_code"] == body.plan_code:
+                raise _err("same_plan", "이미 사용 중인 요금제예요.", 400)
+            new_plan = await _load_plan(cur, body.plan_code)
+            old_plan = await _load_plan(cur, sub["plan_code"])
+            # 남은 일수는 DB 가 계산한다 — 파이썬에서 만들면 시간대가 섞인다.
+            await cur.execute(
+                "select greatest(ceil(extract(epoch from (current_period_end - now())) / 86400),"
+                " 1)::int as remaining_days, "
+                "greatest(ceil(extract(epoch from (current_period_end - current_period_start))"
+                " / 86400), 1)::int as period_days "
+                "from subscriptions where user_id = %s",
+                (user_id,),
+            )
+            span = await cur.fetchone()
+
+        prorated = _proration(
+            old_price=old_plan["price"], new_price=new_plan["price"],
+            old_credits=old_plan["credits"], new_credits=new_plan["credits"],
+            remaining_days=span["remaining_days"], period_days=span["period_days"])
+
+        if prorated["amount"] <= 0:
+            # 다운그레이드 — 이번 주기는 이미 비싼 요금제로 결제됐으므로 건드리지 않는다.
+            # 등급(profiles.plan)도 그대로 둔다: 낸 만큼은 이번 달 끝까지 쓴다.
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "update subscriptions set scheduled_plan_code = %s where user_id = %s "
+                    f"returning {_ME_COLUMNS}",
+                    (new_plan["code"], user_id),
+                )
+                await cur.fetchone()
+            await conn.commit()
+            return JSONResponse({
+                "applied": "next_period",
+                "scheduledPlanCode": new_plan["code"],
+                "effectiveAt": str(sub["current_period_end"]),
+            })
+
+        order_id = _new_order_id("up")
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select pgp_sym_decrypt(billing_key_enc, %s)::text as billing_key "
+                "from subscriptions where user_id = %s",
+                (kek, user_id),
+            )
+            billing_key = (await cur.fetchone())["billing_key"]
+            await cur.execute(
+                "insert into subscription_invoices (subscription_id, user_id, order_id, kind, "
+                "plan_code, amount, credits, period_start, period_end) "
+                "select %s, %s, %s, 'upgrade_proration', %s, %s, %s, now(), current_period_end "
+                "from subscriptions where user_id = %s",
+                (sub["id"], user_id, order_id, new_plan["code"], prorated["amount"],
+                 prorated["credits"], user_id),
+            )
+        try:
+            charged = await toss_billing.charge(
+                settings, billing_key=billing_key, customer_key=user_id, order_id=order_id,
+                order_name=f"{new_plan['name']} 업그레이드", amount=prorated["amount"])
+        except toss_billing.TossBillingError as e:
+            await conn.rollback()
+            raise _err(e.code, e.message, _billing_http_status(e))
+
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "update subscription_invoices set status = 'paid', payment_key = %s, "
+                "approved_at = now() where order_id = %s",
+                (charged.get("paymentKey"), order_id),
+            )
+            await cur.execute(
+                "update subscriptions set plan_code = %s, scheduled_plan_code = null "
+                f"where user_id = %s returning {_ME_COLUMNS}",
+                (new_plan["code"], user_id),
+            )
+            await cur.fetchone()
+            await cur.execute(
+                "update profiles set plan = %s where user_id = %s", (new_plan["code"], user_id)
+            )
+        try:
+            granted = await repo.grant_subscription(
+                conn, user_id=user_id, plan_code=new_plan["code"], credits=prorated["credits"],
+                metadata={"orderId": order_id, "kind": "upgrade_proration"},
+                # 비례분은 현재 주기 끝에 맞춘다 — 한 달을 새로 주면 주기가 어긋난다.
+                period_end_sql="(select current_period_end from subscriptions where user_id = %s)",
+                period_end_params=(user_id,))
+        except repo.CreditError as e:
+            await conn.rollback()
+            raise _err(e.code, e.message, e.status)
+        await conn.commit()
+
+    return JSONResponse({
+        "applied": "immediate",
+        "planCode": new_plan["code"],
+        "charged": prorated["amount"],
+        "credits": granted["credits"],
+        "available": granted["available"],
+    })
+
+
 @router.post("/resume", summary="해지 철회")
 async def resume_subscription(request: Request, user_id: str = Depends(require_user)):
     """주기 종료 전이면 되돌릴 수 있다. 다음 청구를 `current_period_end` 로 되살린다."""

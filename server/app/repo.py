@@ -2970,6 +2970,7 @@ async def grant_subscription(
     conn: AsyncConnection, *, user_id: str, plan_code: str, metadata: dict | None = None,
     credits: int | None = None,
     period_end_sql: str = "now() + interval '1 month'",
+    period_end_params: tuple = (),
 ) -> dict:
     """구독 크레딧 지급 — **이월**(계획서 docs/plans/2026-09-09-toss-billing-subscription.md §0.1).
 
@@ -2981,6 +2982,7 @@ async def grant_subscription(
     credits: 지급량 override(업그레이드 비례분). None 이면 요금제 정가.
     period_end_sql: 버킷 만료 시각 SQL. 업그레이드 비례 버킷은 현재 주기 끝에 맞춘다.
       **호출자가 주는 SQL 조각이다 — 사용자 입력을 절대 넘기지 않는다**(리터럴 상수만).
+      값이 필요하면 조각에 %s 를 쓰고 period_end_params 로 넘긴다(문자열 삽입 금지).
     """
     metadata = metadata or {}
     async with conn.cursor() as cur:
@@ -3007,7 +3009,7 @@ async def grant_subscription(
             "remaining_credits, status, period_end) "
             f"values (%s, 'subscription', %s, %s, %s, 'active', {period_end_sql}) "
             "returning id::text as id",
-            (user_id, plan["id"], grant, grant),
+            (user_id, plan["id"], grant, grant, *period_end_params),
         )
         src_id = (await cur.fetchone())["id"]
         await cur.execute(
