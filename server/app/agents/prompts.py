@@ -103,15 +103,19 @@ def _product_block(
     knowledge: str = "off",
     *,
     include_legacy_fit: bool = True,
+    material_policy: str = "legacy",
 ) -> str:
     """분석 정보를 ground-truth 블록으로. 값 없는 항목은 생략, 값은 sanitize.
-    materials는 [{name,ratio}] — name sanitize + ratio% 표기, 그 다음 소재 렌더링 가이드(영문) 첨부."""
+    legacy는 소재 설명을 유지한다. photo_evidence는 저장된 혼용률을 바꾸지 않고
+    이미지 요청에서만 제외하며, 사진이 색과 원단의 기준이 된다."""
+    if material_policy not in ("legacy", "photo_evidence"):
+        raise ValueError(f"unknown material_policy: {material_policy}")
     raw_mats = analysis.get("materials") or []
     mat_strs = []
     clothing_type = product.get("clothing_type") or product.get("clothingType")
     clothing_type_str = str(clothing_type or "")
     sub_category_str = str(analysis.get("subCategory") or "")
-    for m in raw_mats:  # [{name,ratio}] (name=자유텍스트 → sanitize). 레거시 문자열도 수용
+    for m in (raw_mats if material_policy == "legacy" else []):
         if isinstance(m, dict):
             name = _sanitize(m.get("name", ""))
             if not name:
@@ -121,18 +125,27 @@ def _product_block(
         elif m:
             mat_strs.append(_sanitize(m))
     material_entry = None
-    if mat_strs:  # Material 줄 + (소재 인식) 렌더링 가이드 블록 (materials.py, §2.6)
+    if mat_strs:
         material_entry = f"- Material: {', '.join(mat_strs)}"
         guidance = material_guidance(raw_mats, clothing_type_str, sub_category_str)
         if guidance:
             material_entry += "\n" + guidance
     # 강조특징 정규화 (FR-D1): off=원문 그대로 / shadow=원문+매핑 로그 / enforce=canonical 큐만
-    raw_points = list(analysis.get("sellingPoints") or []) + list(analysis.get("aiSuggestedPoints") or [])
-    points = [_sanitize(p) for p in raw_points]
+    raw_point_union = (
+        list(analysis.get("sellingPoints") or [])
+        + list(analysis.get("aiSuggestedPoints") or [])
+    )
+    points = []
+    seen_points = set()
+    for raw_point in raw_point_union:
+        point = _sanitize(raw_point)
+        if point and point not in seen_points:
+            seen_points.add(point)
+            points.append(point)
     key_features_line = None
     normalized_block = None
     if seller_canon == "enforce":
-        matched, unmatched = canonicalize(raw_points)
+        matched, unmatched = canonicalize(points)
         if unmatched:
             logger.info("seller_text_canonicalize", extra={"mode": "enforce", "dropped": len(unmatched)})
         if matched:  # PRODUCT CONTEXT 밖 별도 파생 블록 (FR-D1a — ground-truth 라벨 보존)
@@ -143,7 +156,7 @@ def _product_block(
         # key_features_line=None → PRODUCT CONTEXT에서 'Key features' 줄 제외
     else:
         if seller_canon == "shadow":
-            matched, unmatched = canonicalize(raw_points)
+            matched, unmatched = canonicalize(points)
             logger.info(
                 "seller_text_canonicalize",
                 extra={"mode": "shadow", "matched": len(matched), "unmatched": len(unmatched)},
@@ -178,11 +191,16 @@ def _product_block(
     body = "\n".join(x for x in lines if x)
     context = ""
     if body:
-        context = (
+        header = (
             "PRODUCT CONTEXT (seller-confirmed analysis — treat as ground truth, never "
-            "contradict it; use it to keep the garment's color, fit, and any logo faithful):\n"
-            + body
+            "contradict it; use it to keep the garment's color, fit, and any logo faithful):"
         )
+        if material_policy == "photo_evidence":
+            header = (
+                "PRODUCT CONTEXT (seller-confirmed identity and fit metadata; "
+                "product photos govern color, fabric and finish):"
+            )
+        context = f"{header}\n{body}"
     if normalized_block:  # PRODUCT CONTEXT 밖 별도 섹션 (FR-D1a)
         context = f"{context}\n\n{normalized_block}" if context else normalized_block
     if knowledge_block:  # PRODUCT CONTEXT 밖 별도 섹션 (feature 2a — D1과 동일 구조, 공존 가능)
@@ -219,6 +237,8 @@ def render_mannequin_prompt(
     analysis: dict,
     seller_canon: str = "off",
     knowledge: str = "off",
+    *,
+    material_policy: str = "legacy",
 ) -> str:
     """템플릿 ${토큰} 치환 + 분석 정보 자동 주입."""
     outerwear_inner_token = "${outerwearInnerLine}"
@@ -240,7 +260,12 @@ def render_mannequin_prompt(
     fit_profile = ctx.fit_profile if ctx.fit_profile is not None else analysis.get("fitProfile")
     fit_block = build_fit_profile_block(fit_profile, ctx.adjusted_axes)
     product_block = _product_block(
-        product, analysis, seller_canon, knowledge, include_legacy_fit=fit_profile is None
+        product,
+        analysis,
+        seller_canon,
+        knowledge,
+        include_legacy_fit=fit_profile is None,
+        material_policy=material_policy,
     )
     mirror_block = build_mirrored_source_block(analysis)
     blocks = [text, fit_block, product_block, mirror_block]

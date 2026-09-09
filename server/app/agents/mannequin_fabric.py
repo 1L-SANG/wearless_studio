@@ -18,6 +18,19 @@
 
 _FINE_PATTERN_ONLY = True  # 무지 상품에는 돌리지 않는다 — 고칠 고주파가 없고 호출만 나간다
 
+_REFERENCE_LABELS = {
+    "Front": "Front — garment-wide appearance and pattern scale.",
+    "Back": "Back — garment-wide appearance and pattern scale.",
+    "Detail": (
+        "Detail — optional close-up; use only the feature visibly proved "
+        "(it may be a label or hardware, not fabric)."
+    ),
+    "BackDetail": (
+        "BackDetail — optional close-up; use only the feature visibly proved "
+        "(it may be a label or hardware, not fabric)."
+    ),
+}
+
 
 def should_apply(mode: str, has_fine_pattern: bool, has_product_images: bool) -> bool:
     """2패스를 돌릴지. 플래그 on + 미세 패턴 상품 + **원단 근거 사진이 있을 때**만.
@@ -32,10 +45,19 @@ def should_apply(mode: str, has_fine_pattern: bool, has_product_images: bool) ->
     return bool(has_product_images)
 
 
-def build_prompt(template: str) -> str:
-    """원단 2패스 템플릿. 치환 토큰이 없다 — 지시가 상품과 무관하게 동일하고,
-    패턴의 실제 모습은 첨부된 상품 사진이 말한다(문장으로 옮기면 그 과정에서 왜곡된다)."""
+def build_prompt(template: str, *, reference_slots=()) -> str:
+    """원단 2패스 템플릿 + 실제 첨부 순서와 맞는 역할 매니페스트.
+
+    `None` 슬롯은 역할을 잃은 레거시 호출자다. 인덱스로 Front/Detail 을 추측하지
+    않고 일반 상품 사진으로만 라벨링한다.
+    """
     if "${" in template:
         leftover = sorted({p.split("}")[0] + "}" for p in template.split("${")[1:]})
         raise ValueError(f"원단 프롬프트 템플릿에 해결되지 않은 토큰: {leftover}")
-    return template
+    lines = ["1. Finished mannequin candidate — edit target."]
+    for index, slot in enumerate(reference_slots, start=2):
+        label = _REFERENCE_LABELS.get(slot)
+        if label is None:
+            label = "Unlabeled seller product photo — use only visible evidence; no slot inferred."
+        lines.append(f"{index}. {label}")
+    return f"{template.rstrip()}\n\n<input manifest>\n" + "\n".join(lines) + "\n</input manifest>"

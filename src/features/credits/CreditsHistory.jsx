@@ -11,6 +11,7 @@ import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
 import s from './CreditsHistory.module.css';
+import { seoulDateTime } from '@/lib/datetime.js';
 
 const ACTION_LABEL = {
   mannequinGenerate: '마네킹 생성',
@@ -24,8 +25,7 @@ const ACTION_LABEL = {
 };
 const labelFor = (k) => ACTION_LABEL[k] || k;
 const iconFor = (delta) => (delta > 0 ? 'coins' : 'sparkles');
-const fmtDate = (iso) =>
-  new Date(iso).toLocaleString('ko-KR', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+const fmtDate = (iso) => seoulDateTime(iso);
 
 export function CreditsHistory() {
   const account = useAppStore((a) => a.account);

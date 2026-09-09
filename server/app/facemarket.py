@@ -22,6 +22,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address
+from typing import Any
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -89,6 +90,12 @@ class ModelCard(CamelModel):
     assets_ready: bool = False  # 실존 모델 그리드 자산 빌드 완료 → 셀러 선택 가능(assetsReady)
     # 비생체 고정 placeholder 게이트 URL. 모델별 얼굴/cover 바이트를 뜻하지 않는다.
     face_thumb_uri: str | None = None
+
+
+class OwnedModelCard(ModelCard):
+    """본인 허브 카드. 셀러 카탈로그에는 재생성 횟수를 노출하지 않는다."""
+
+    redo_count: int = 0
 
 
 def _err(code: str, message: str, status: int = 400) -> HTTPException:
@@ -341,7 +348,7 @@ async def identity_verify(
 # uuid 컬럼은 ::text 캐스트해 반환(repo.py 관례). psycopg 는 uuid 를 uuid.UUID 로 로드하는데
 # CamelModel(id: str) 이 UUID 를 거부 → ResponseValidationError 500. 캐스트로 문자열화.
 _MODEL_CARD_COLS = ("id::text as id, display_name, status, cover_image_url, created_at, "
-                    "(assets_status = 'ready') as assets_ready")
+                    "(assets_status = 'ready') as assets_ready, redo_count")
 
 _CURRENT_CARD_JOINS = """
 join fm_biometric_enrollments e
@@ -476,7 +483,7 @@ async def list_models(
 
 @router.get(
     "/models/me",
-    response_model=list[ModelCard],
+    response_model=list[OwnedModelCard],
     responses={401: {"model": ErrorResponse, "description": "인증 실패"}},
     tags=["FaceMarket"],
     summary="내 모델 목록 (마이페이지)",
@@ -632,12 +639,17 @@ def _r2_face(request: Request):
 
 
 def _cover_serving_url(request: Request, key: str | None) -> str | None:
-    """대표 이미지(cover)는 FaceMarket 비공개 R2 버킷(r2_face, 공개도메인 차단)에 저장되므로 raw 키로는
-    브라우저 <img src> 가 못 읽는다(§ r2_face public_base=None). 서빙용 presigned GET URL(1h)로 변환한다.
-    r2 미설정이거나 키가 없으면 None(그레이스풀 — 카드가 placeholder/폴백으로 강등)."""
+    """대표 이미지 키를 브라우저용 URL로 변환한다.
+
+    모델이 직접 올린 구 커버는 얼굴 버킷의 signed GET으로, 테스트컷 확인 뒤 만든 1024px
+    카탈로그 커버는 일반 버킷 URL로 서빙한다. 저장 키 자체는 응답에 내보내지 않는다.
+    """
     if not key:
         return None
-    r2 = getattr(request.app.state, "r2_face", None)
+    if key.startswith("facemarket/catalog/models/"):
+        r2 = getattr(request.app.state, "r2", None)
+    else:
+        r2 = getattr(request.app.state, "r2_face", None)
     if r2 is None:
         return None
     return r2.public_url(key)
@@ -906,8 +918,8 @@ async def finalize_issued_face_vc(
                     )
                     active = await cur.fetchone()
                     await cur.execute(
-                        """update fm_models set status = 'verified',
-                                  did = coalesce(nullif(did, ''), %s)
+                        """update fm_models
+                              set did = coalesce(nullif(did, ''), %s), status = 'pending'
                             where id = %s and current_enrollment_id = %s
                               and status in ('pending', 'reverification_required')
                             returning id""",
@@ -1547,6 +1559,19 @@ async def _find_settlement(conn, payment_key: str) -> dict | None:
         return await cur.fetchone()
 
 
+async def _find_product_settlement(conn, project_id: str, now: datetime) -> dict | None:
+    columns = ", ".join(f"st.{column}" for column in _SETTLEMENT_COLS.split(", "))
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"""select {columns}
+                  from fm_settlements st join jobs j on j.id = st.job_id
+                 where j.project_id = %s and st.created_at >= %s
+                 order by st.created_at desc limit 1""",
+            (project_id, now - timedelta(days=7)),
+        )
+        return await cur.fetchone()
+
+
 def _chain_result(chain, stored: dict, tx_hash: str | None = None) -> dict:
     return {
         "tx_hash": tx_hash, "block": stored["block"], "chain_id": chain.chain_id,
@@ -1649,17 +1674,19 @@ async def _reconcile_settlement_intents(conn, chain) -> None:
 async def record_license_settlement(
     app,
     *,
-    payment_key: str,
+    payment_key: str | None = None,
     license_id: str,
     model_id: str,
     total: int,
     job_id: str | None = None,
+    project_id: str | None = None,
     credit_ledger_id: str | None = None,
     first_attempt=None,
 ) -> dict | None:
     """라이선스 사용 1건을 온체인 기록 + fm_settlements 미러. best-effort(생성 흐름 비파손).
 
     payment_key = 결정적(멱등) 문자열. 컨트랙트 중복 revert + DB payment_id UNIQUE 가 쌍.
+    project_id가 있으면 signer lock 안에서 최근 7일 기록을 재사용하고 상품별 키를 결정한다.
     체인 미설정(app.state.fm_chain None)이면 None 반환(no-op). 온체인 성공 시에만 미러 기록.
     """
     chain = getattr(app.state, "fm_chain", None)
@@ -1667,34 +1694,44 @@ async def record_license_settlement(
         logger.info("settlement_skipped_no_chain", extra={"payment_key": payment_key})
         return None
 
+    if project_id is not None and job_id is None:
+        raise ValueError("product settlement requires job_id")
+    if project_id is None and payment_key is None:
+        raise ValueError("settlement requires payment_key or project_id")
+
+    async def queue_intent(conn):
+        try:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """insert into fm_settlement_signer_intents
+                        (payment_id, license_id, job_id, credit_ledger_id,
+                         model_id, total_amount)
+                        values (%s, %s, %s, %s, %s, %s)
+                        on conflict (payment_id) do nothing
+                        returning payment_id""",
+                    (
+                        payment_key, license_id, job_id, credit_ledger_id,
+                        model_id, int(total),
+                    ),
+                )
+                inserted = await cur.fetchone()
+            if inserted and first_attempt:
+                await first_attempt(conn)
+            await conn.commit()
+        except Exception:
+            await conn.rollback()
+            raise
+
     pool = app.state.pool
-    # DB 선확인 — 이미 미러된 payment 면 재기록 없이 반환(재시도 멱등).
-    async with pool.connection() as conn:
-        existing = await _find_settlement(conn, payment_key)
-        if not existing:
-            try:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        """insert into fm_settlement_signer_intents
-                            (payment_id, license_id, job_id, credit_ledger_id,
-                             model_id, total_amount)
-                            values (%s, %s, %s, %s, %s, %s)
-                            on conflict (payment_id) do nothing
-                            returning payment_id""",
-                        (
-                            payment_key, license_id, job_id, credit_ledger_id,
-                            model_id, int(total),
-                        ),
-                    )
-                    inserted = await cur.fetchone()
-                if inserted and first_attempt:
-                    await first_attempt(conn)
-                await conn.commit()
-            except Exception:
-                await conn.rollback()
-                raise
-    if existing:
-        return existing
+    # 상품 키는 아래 signer lock 안에서만 결정하고 intent를 만든다.
+    # 명시적 payment_key(시뮬레이션 등)는 기존 선확인과 first_attempt 멱등을 유지한다.
+    if project_id is None:
+        async with pool.connection() as conn:
+            existing = await _find_settlement(conn, payment_key)
+            if not existing:
+                await queue_intent(conn)
+        if existing:
+            return existing
 
     # Session advisory lock은 commit 뒤에도 유지된다. 미획득자는 연결을 즉시 반납해 작은 pool을
     # 고갈시키지 않고, owner만 durable broadcasting intent→RPC→mirror 구간에 연결 하나를 쓴다.
@@ -1712,9 +1749,31 @@ async def record_license_settlement(
                 continue_after_release = False
                 try:
                     await _reconcile_settlement_intents(conn, chain)
+                    if project_id is not None:
+                        # 복구 미러까지 끝낸 뒤 확인해야 동시 종결과 UTC 자정 경계도 한 건이다.
+                        now = datetime.now(timezone.utc)
+                        existing = await _find_product_settlement(conn, project_id, now)
+                        if existing:
+                            return existing
+                        payment_key = f"product:{project_id}:{now:%Y%m%d}"
                     existing = await _find_settlement(conn, payment_key)
                     if existing:
                         return existing
+                    if project_id is not None:
+                        await queue_intent(conn)
+                        # 이전 잡이 queued 저장 직후 중단됐어도 같은 키의 최초 payload를 쓴다.
+                        # 실제 전송과 crash recovery가 서로 다른 모델/금액을 쓰면 안 된다.
+                        async with conn.cursor() as cur:
+                            await cur.execute(
+                                """select license_id::text, job_id::text, credit_ledger_id::text,
+                                          model_id, total_amount
+                                     from fm_settlement_signer_intents where payment_id = %s""",
+                                (payment_key,),
+                            )
+                            queued = await cur.fetchone()
+                        license_id, job_id = queued["license_id"], queued["job_id"]
+                        credit_ledger_id = queued["credit_ledger_id"]
+                        model_id, total = queued["model_id"], queued["total_amount"]
 
                     async with conn.cursor() as cur:
                         await cur.execute(
@@ -1953,6 +2012,20 @@ class FaceVcIssueResult:
     user_did: str | None
 
 
+def _kst_date_str(value) -> str:
+    """절대시각을 **한국 날짜** 문자열로. 시각이 아닌 값은 그대로 문자열화한다.
+
+    naive datetime 은 UTC 로 본다 — `astimezone()` 에 그냥 넘기면 파이썬이 **시스템 로컬**
+    시간대를 가정하는데, 그러면 같은 코드가 컨테이너 TZ 설정에 따라 다른 날짜를 낸다.
+    이 저장소의 naive 시각은 전부 UTC 에서 온다(DB 는 timestamptz 라 aware 로 오고,
+    naive 가 섞이는 경로는 테스트·직렬화 왕복뿐이다).
+    """
+    if isinstance(value, datetime):
+        aware = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return aware.astimezone(_KST).date().isoformat()
+    return str(value)
+
+
 class FaceVcIssueError(RuntimeError):
     def __init__(self, code: str, *, status_code: int):
         super().__init__(code)
@@ -1961,7 +2034,12 @@ class FaceVcIssueError(RuntimeError):
 
 
 def build_face_vc_claims(*, allowed, forbidden, unit_price, valid_until, digest) -> dict:
-    valid_str = valid_until.date().isoformat() if hasattr(valid_until, "date") else str(valid_until)
+    # valid_until 은 절대시각(now + valid_days)이라, 어느 시간대로 자르느냐에 따라 날짜가
+    # 하루 갈린다. KST 로 자른다 — 이 값을 읽는 사람도, 라이선스가 걸린 계약도 한국 날짜다.
+    # UTC 로 자르면 KST 오전에 발급한 라이선스가 하루 이른 날짜로 박혔다(발급 후에는
+    # 되돌릴 수 없는 크리덴셜 값이라, 표기만 어긋나도 분쟁의 근거가 된다).
+    # 만료 판정 자체는 `license_valid_until > now()` 라는 절대시각 비교라 영향 없다.
+    valid_str = _kst_date_str(valid_until)
     return {
         "allowedUse": ", ".join(allowed),
         "forbiddenUse": ", ".join(forbidden),
@@ -2049,6 +2127,79 @@ async def issue_face_vc(app, *, license_id, model_id, allowed, forbidden,
 # ============================================================================
 
 _HOLDER_VERIFY_TIMEOUT = 5.0  # 게이트는 셀러 요청 블로킹 경로 — 홀더 지연이 생성 지연되지 않게 짧게.
+
+_STYLING_CUT_TYPES = frozenset({"styling", "mirror"})
+
+
+def is_real_model_id(model_id: str | None) -> bool:
+    if not model_id:
+        return False
+    try:
+        uuid.UUID(str(model_id))
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def resolve_block_model_id(
+    cut_type: str | None,
+    model_id: str | None,
+    styling_model_id: str | None,
+) -> str | None:
+    """Return the only model identity permitted for this cut type."""
+    if cut_type == "horizon":
+        return str(model_id) if model_id else None
+    if cut_type not in _STYLING_CUT_TYPES:
+        return None
+    if not is_real_model_id(model_id):
+        return str(model_id) if model_id else None
+    if styling_model_id and not is_real_model_id(styling_model_id):
+        return str(styling_model_id)
+    raise _err(
+        "styling_model_required",
+        "장소·스타일링 컷에 쓸 가상 모델을 골라 주세요.",
+        status=400,
+    )
+
+
+def reject_real_model_outside_horizon(
+    cut_type: str | None,
+    model_id: str | None,
+) -> None:
+    if is_real_model_id(model_id) and cut_type != "horizon":
+        raise _err(
+            "real_model_horizon_only",
+            "실제 모델은 스튜디오 컷에만 쓸 수 있어요",
+            status=409,
+        )
+
+
+def reject_real_model_scene_variation(payload: Mapping[str, Any]) -> None:
+    """Keep REAL-derived editor variations inside the original studio scene."""
+    if payload.get("refBgAssetId") or payload.get("ref_bg_asset_id"):
+        raise _err(
+            "real_model_horizon_only",
+            "실제 모델은 스튜디오 컷에만 쓸 수 있어요",
+            status=409,
+        )
+    allowed = {
+        "direction": {"front", "back", "side"},
+        "pose": {"stand", "walk", "lean", "sit", "turn"},
+        "face": {"smile", "laugh", "chic", "gaze"},
+    }
+    for change in payload.get("changes") or []:
+        if (
+            isinstance(change, Mapping)
+            and str(change.get("value") or "").strip()
+            and str(change.get("value")).strip() not in allowed.get(
+                change.get("type"), set()
+            )
+        ):
+            raise _err(
+                "real_model_horizon_only",
+                "실제 모델은 스튜디오 컷에만 쓸 수 있어요",
+                status=409,
+            )
 
 async def resolve_project_license(conn, project: dict, analysis: dict) -> dict | None:
     """Resolve the selected model's current license; historical project locks are inert."""
@@ -2435,23 +2586,44 @@ async def get_job_settlement(
 ):
     """상세페이지 생성 잡의 얼굴 라이선스 정산 영수증(장면⑤ 영수증 UI).
 
-    `payment_id = f"job:{job_id}"` 정산 미러 + 라이선스 vc_id 를 한 번에 반환.
+    상품의 최근 7일 정산을 우선 반환하고, 없으면 잡 자신의 정산을 찾는다.
     잡 소유자(셀러) 스코프 — 남의 잡은 404. 정산 미기록(체인 미설정/실패)이면 404.
     """
-    payment_id = f"job:{job_id}"
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                """select st.payment_id, st.tx_hash, st.chain_id, st.total_amount,
-                          st.model_amount, st.platform_amount, st.ops_amount,
-                          st.chain_status, l.vc_id
-                   from fm_settlements st
-                   join jobs j on j.id = st.job_id
-                   left join fm_licenses l on l.id = st.license_id
-                   where st.payment_id = %s and j.user_id = %s""",
-                (payment_id, user_id),
+                """select j.project_id::text as project_id from jobs j
+                   where j.id = %s and j.user_id = %s""",
+                (job_id, user_id),
             )
-            row = await cur.fetchone()
+            job = await cur.fetchone()
+        if not job:
+            raise _err("not_found", "정산 내역을 찾을 수 없습니다.", status=404)
+        row = None
+        if job["project_id"] is not None:
+            row = await _find_product_settlement(
+                conn, job["project_id"], datetime.now(timezone.utc)
+            )
+        async with conn.cursor() as cur:
+            if row:
+                await cur.execute(
+                    "select vc_id from fm_licenses where id = %s",
+                    (row["license_id"],),
+                )
+                license_row = await cur.fetchone()
+                row["vc_id"] = license_row["vc_id"] if license_row else None
+            else:
+                await cur.execute(
+                    """select st.payment_id, st.tx_hash, st.chain_id, st.total_amount,
+                              st.model_amount, st.platform_amount, st.ops_amount,
+                              st.chain_status, l.vc_id
+                       from fm_settlements st
+                       join jobs j on j.id = st.job_id
+                       left join fm_licenses l on l.id = st.license_id
+                       where j.id = %s and j.user_id = %s""",
+                    (job_id, user_id),
+                )
+                row = await cur.fetchone()
     if not row:
         raise _err("not_found", "정산 내역을 찾을 수 없습니다.", status=404)
     # 나머지 FM API 와 동일 camelCase — 영수증 UI 가 그대로 소비.

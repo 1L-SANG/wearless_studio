@@ -57,7 +57,8 @@ const absolutizeAssetUrls = rebaseAssetUrls;
 // 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).
 // 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
 export async function http(path, {
-  method = 'GET', body, signal, keepalive, headers: requestHeaders, requireAuth = true,
+  method = 'GET', body, signal, keepalive, headers: requestHeaders, expectedUserId,
+  requireAuth = true,
 } = {}) {
   let data;
   try {
@@ -69,6 +70,13 @@ export async function http(path, {
       { stage: 'auth_session', path, origin: browserOrigin() },
       cause,
     );
+  }
+  // 다른 탭의 계정 변경은 React에 늦게 도착할 수 있다. 이 요청의 동의 당사자를
+  // 실제 Bearer 토큰을 꺼내는 같은 세션과 대조한다.
+  if (expectedUserId !== undefined && data?.session?.user?.id !== expectedUserId) {
+    const error = new Error('로그인 계정이 바뀌었어요. 현재 계정에서 다시 확인해 주세요.');
+    error.code = 'auth_user_changed';
+    throw error;
   }
   const token = data?.session?.access_token;
   if (!token && requireAuth) {
@@ -548,7 +556,7 @@ export const httpAdapter = {
       timeoutMs: 900000,
       timeoutMessage: '상세페이지 생성이 예상보다 오래 걸리고 있어요. 잠시 후 다시 확인해 주세요.',
     });
-    // jobId 를 함께 반환 — 완료 후 정산 영수증(GET /jobs/{jobId}/settlement, payment_id=job:{jobId})을 조회한다.
+    // jobId 를 함께 반환 — 완료 후 정산 영수증(GET /jobs/{jobId}/settlement)을 조회한다. 정산은 상품(project) 단위 7일 창으로 묶인다.
     return { data: result.data, credits: result.credits, jobId: res.jobId };
   },
   /* ---- 에디터 대기 배관 (editor_wait_dev_spec §3) ----

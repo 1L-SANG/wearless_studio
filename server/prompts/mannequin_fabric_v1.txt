@@ -36,10 +36,12 @@ untouched.
 </what must not change>
 
 <how to read the references>
-The product photos are the truth for the pattern. If a close-up detail view is attached, measure
-the pattern there — the spacing reads correctly at that scale and is easy to under-read from a
-full-length view. Then apply that same scale to the garment on the mannequin, following the
-body's curves and folds so the lines bend with the cloth instead of lying flat.
+Read the numbered input manifest literally. Front and Back establish the garment-wide appearance
+and pattern scale. A Detail or BackDetail image is optional and supplies only the local feature it
+visibly proves; it may show a label, button, zipper or other hardware rather than fabric. Never let
+an optional close-up override garment-wide evidence unless its pixels directly prove the relevant
+local cloth structure. Apply the evidenced pattern along the garment's curves and folds so lines
+bend with the cloth instead of lying flat. Front and Back are sufficient; no Detail is required.
 </how to read the references>
 
 <critical rules>

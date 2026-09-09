@@ -768,6 +768,7 @@ def test_editor_real_product_prunes_identity_and_never_sets_settlement_flag(monk
     assert public_r2.caches == ["public, max-age=31536000, immutable"]
     assert captured["finalize"]["image"]["metadata"] == {
         "facemarket_real_derived": False,
+        "cut_type": "product",
     }
 
 
@@ -814,7 +815,7 @@ def test_editor_real_visible_worn_cut_enables_identity_contract(monkeypatch):
     app.state.r2_face = _TrackingR2()
     asyncio.run(eij.run_editor_image_job(app, worker_job({
         "mode": "new",
-        "cutType": "styling",
+        "cutType": "horizon",
         "shot": "full",
         "direction": "front",
         "faceExposure": "show",
@@ -832,6 +833,7 @@ def test_editor_real_visible_worn_cut_enables_identity_contract(monkeypatch):
     assert public_r2.caches == ["private, no-store"]
     assert captured["finalize"]["image"]["metadata"] == {
         "facemarket_real_derived": True,
+        "cut_type": "horizon",
     }
 
 
@@ -911,7 +913,7 @@ def _run_editor_worker_vc_denial(monkeypatch, holder_call, *, license_overrides=
 
     asyncio.run(eij.run_editor_image_job(app, worker_job({
         "mode": "new",
-        "cutType": "styling",
+        "cutType": "horizon",
         "shot": "full",
         "direction": "front",
         "faceExposure": "show",
@@ -1051,7 +1053,7 @@ def test_editor_real_denials_refund_without_generation_output_or_settlement(
     app.state.fm_chain = object()
     payload = {
         "mode": "new",
-        "cutType": "styling",
+        "cutType": "horizon",
         "shot": "full",
         "modelId": REAL_MODEL_ID,
         "brandUseCategory": REAL_CATEGORY,
@@ -1156,7 +1158,7 @@ def test_editor_final_recheck_revoked_license_deletes_output_and_refunds(monkeyp
 
     asyncio.run(eij.run_editor_image_job(app, worker_job({
         "mode": "new",
-        "cutType": "styling",
+        "cutType": "horizon",
         "shot": "full",
         "modelId": REAL_MODEL_ID,
         "brandUseCategory": REAL_CATEGORY,
@@ -1269,7 +1271,7 @@ def test_editor_final_recheck_delete_failure_leaves_cleanup_intent(monkeypatch):
 
     asyncio.run(eij.run_editor_image_job(app, worker_job({
         "mode": "new",
-        "cutType": "styling",
+        "cutType": "horizon",
         "shot": "full",
         "modelId": REAL_MODEL_ID,
         "brandUseCategory": REAL_CATEGORY,

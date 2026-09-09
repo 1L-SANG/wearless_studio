@@ -10,7 +10,7 @@ async function loadRequired(url, label) {
   return import(url);
 }
 
-test('조건표는 월정액과 정산 기준을 한 곳에서 계산한다', async () => {
+test('조건표는 계약과 정산 기준을 한 곳에서 제공한다', async () => {
   const terms = await loadRequired(termsUrl, 'FaceMarket 조건표');
 
   assert.equal(terms.MODEL_SHARE, 0.7);
@@ -18,14 +18,10 @@ test('조건표는 월정액과 정산 기준을 한 곳에서 계산한다', as
   assert.equal(terms.OPS_SHARE, 0.1);
   assert.equal(terms.SETTLEMENT_DAY, 10);
   assert.equal(terms.MIN_PAYOUT_KRW, 10_000);
-  assert.equal(terms.MONTHLY_MULTIPLIER, 2.5);
   assert.equal(terms.MONTHLY_PERIOD_DAYS, 30);
   assert.equal(terms.APPROVAL_MODE, 'auto');
   assert.deepEqual(terms.VALIDITY_OPTIONS, [365, 730, null]);
 
-  assert.equal(terms.monthlyPriceFor(10_000), 25_000);
-  assert.equal(terms.monthlyPriceFor(5_150), 12_900);
-  assert.equal(terms.monthlyPriceFor(undefined), 25_000);
   assert.equal(terms.formatKrw(25_000), '25,000원');
   assert.equal(terms.validityLabel(365), '365일');
   assert.equal(terms.validityLabel(730), '730일');
@@ -128,6 +124,52 @@ test('verified 모델은 거래가 없어도 활동 중 화면이다', async () 
   assert.equal(journey.action, null);
 });
 
+test('테스트컷 전송 뒤에는 확인 화면으로 바로 이어진다', async () => {
+  const { resolveHubJourney } = await loadRequired(journeyUrl, '허브 상태');
+  const journey = resolveHubJourney({
+    ownedModel: { id: 'm1', status: 'awaiting_confirm', redoCount: 0 },
+    enrollment: { id: 'e1', status: 'passed' },
+    hasLicense: true,
+  });
+
+  assert.equal(journey.currentIndex, 5);
+  assert.deepEqual(journey.action, {
+    label: '테스트컷 확인하기',
+    kind: 'route',
+    to: '/model/confirm',
+  });
+});
+
+test('재생성 요청 뒤에는 등록 화면으로 되돌리지 않고 생성 중으로 표시한다', async () => {
+  const { resolveHubJourney } = await loadRequired(journeyUrl, '허브 상태');
+  const journey = resolveHubJourney({
+    ownedModel: { id: 'm1', status: 'pending', redoCount: 1 },
+    enrollment: { id: 'e1', status: 'passed' },
+    hasLicense: true,
+  });
+
+  assert.equal(journey.currentIndex, 4);
+  assert.deepEqual(journey.action, {
+    label: '생성 상태 새로고침',
+    kind: 'reload',
+  });
+});
+
+test('첫 VC 발급 뒤에도 현재 등록 조회가 끝났다고 등록 단계로 후퇴하지 않는다', async () => {
+  const { resolveHubJourney } = await loadRequired(journeyUrl, '허브 상태');
+  const journey = resolveHubJourney({
+    ownedModel: { id: 'm1', status: 'pending', redoCount: 0 },
+    enrollment: null,
+    hasLicense: true,
+  });
+
+  assert.equal(journey.currentIndex, 4);
+  assert.deepEqual(journey.action, {
+    label: '생성 상태 새로고침',
+    kind: 'reload',
+  });
+});
+
 test('1280px 활동 중 허브는 트윈·규칙·이번 달 요약을 같은 행에 둔다', () => {
   const css = readFileSync(
     new URL('../../src/features/model/ModelPersonalization.module.css', import.meta.url),
@@ -147,4 +189,16 @@ test('활동 허브는 서버 전체 월 합계를 조회하고 최근 내역을
   assert.match(source, /getSettlementSummary\(\)/);
   assert.doesNotMatch(source, /listSettlements|summarizeSettlements/);
   assert.match(source, /settlementSummary=\{settlementSummary\}/);
+});
+
+
+test('a pending VC still offers issuance retry with a pending license row', async () => {
+  const { resolveHubJourney, hasCurrentEnrollmentLicense } = await loadRequired(journeyUrl, '허브 상태');
+  const result = resolveHubJourney({
+    ownedModel: { status: 'pending' },
+    enrollment: { id: 'retry-vc', status: 'vc_pending' },
+    hasLicense: hasCurrentEnrollmentLicense([{ status: 'pending' }]),
+  });
+  assert.equal(result.currentIndex, 2);
+  assert.equal(result.action.to, '/model/license?step=terms&enrollment=retry-vc');
 });

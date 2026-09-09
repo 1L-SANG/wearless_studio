@@ -1,24 +1,43 @@
 /* =============================================================
-   모델 상세 서랍 — '모델 정보 보기'를 누르면 **오른쪽에서** 나온다(사용자 지시:
-   "팝업처럼이 아니라 우측에서 기존 화면 흐려지면서"). 뒤 화면은 어둡게 + 흐리게 깔린다.
-   구성(사용자 스케치): 얼굴 이미지 · 이름 · 신체 사이즈 | 라이선스 조건 · 모델 예시 이미지.
+   모델 상세 서랍 — 카드를 누르면 **오른쪽에서** 나온다(사용자 지시: "팝업처럼이 아니라 우측에서
+   기존 화면 흐려지면서"). 뒤 화면은 어둡게 + 흐리게 깔린다. 서랍 자체는 검정 바탕.
 
-   내용은 전부 가상 모델의 지어낸 값이다(browseModels.js). 창 안에도 '예시' 배지를 둔다 —
-   목록에만 고지가 있으면 이 창을 열어 놓고 캡처했을 때 그 사실이 같이 안 나간다.
+   구성(2026-09-08 오너 확정):
+     위   확대샷 | 전신샷 두 장이 가장자리까지 붙고, 아래쪽 그라데이션 위에 이름·성별·나이대가 얹힌다.
+     아래 가격(맨 위) → "상세페이지 만들러 가기" 버튼(모델 이름은 넣지 않는다, 9/8 오너) → 키 | 몸무게 → 허용 품목 | 제외 품목
+          (한 줄에 양쪽) → 착용 사이즈(칸 나눠서, 맨 밑).
+     끝   검증 한 줄(신분증 본인확인 완료 · 라이선스 증서 발급 완료).
+   지역·스타일 태그·사용 기한·'이 모델의 컷' 갤러리는 일부러 없다(같은 날 오너 결정).
 
-   접근성: 열릴 때 포커스를 창 안으로 들이고, Esc·바깥 클릭으로 닫고, 닫을 때 원래 있던
-   곳으로 포커스를 되돌린다. Tab 은 창 안에서만 돈다 — 안 가두면 뒤에 깔린 카드들로 포커스가
-   새어 나가고(그쪽은 aria-hidden 도 아니다) 화면 낭독 순서가 뒤죽박죽이 된다.
+   모델 객체는 publicModels.js 가 만든 한 가지 모양이다(실모델·가상 예시 공통). 값이 없는 줄은 그리지
+   않는다 — 예시는 착용 사이즈·제외 품목이 없고, 실모델은 몸무게·사이즈를 아직 받지 않는다.
+   예시는 이름 옆에 '예시' 배지를 둔다 — 목록에만 고지가 있으면 이 창을 캡처했을 때 같이 안 나간다.
+
+   접근성: 열릴 때 포커스를 창 안으로 들이고, Esc·바깥 클릭으로 닫고, 닫을 때 원래 있던 곳으로
+   포커스를 되돌린다. Tab 은 창 안에서만 돈다.
    ============================================================= */
 import { useCallback, useEffect, useRef } from 'react';
 import { Icon } from '@/components/ui.jsx';
+import { sellerStudioUrl } from '../data/publicModels.js';
+import { pricingParts } from '@/lib/facemarketPricing.js';
 import s from '../BrowseModels.module.css';
 
 const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-function formatValidity(days) {
-  if (days % 365 === 0) return `${days / 365}년`;
-  return `${days}일`;
+/* 한 줄에 두 칸(왼쪽·오른쪽). 값이 없는 칸은 빼고, 남은 칸이 하나면 그 칸이 줄을 다 쓴다. */
+function Pair({ cells }) {
+  const live = cells.filter((cell) => cell.dd);
+  if (live.length === 0) return null;
+  return (
+    <div className={s.dialogPair}>
+      {live.map((cell) => (
+        <div className={s.dialogCell} key={cell.dt}>
+          <dt>{cell.dt}</dt>
+          <dd>{cell.dd}</dd>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function ModelDetailDialog({ model, onClose }) {
@@ -72,7 +91,9 @@ export function ModelDetailDialog({ model, onClose }) {
     };
   }, []);
 
-  const { license } = model;
+  const isExample = model.kind === 'example';
+  const meta = [model.gender, model.ageBand].filter(Boolean).join(' · ');
+  const { license, sizeParts } = model;
 
   return (
     // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
@@ -91,59 +112,68 @@ export function ModelDetailDialog({ model, onClose }) {
           <Icon name="x" size={18} stroke={2} />
         </button>
 
-        <div className={s.dialogFaces}>
-          {model.faces.map((src) => (
-            <img alt="" className={s.dialogFace} key={src} src={src} />
-          ))}
+        {/* 사진 두 장 + 그라데이션 + 이름. 사진 밑 '확대샷·전신샷' 글자는 붙이지 않는다(alt 에만). */}
+        <div className={s.dialogHero}>
+          <img alt={`${model.name} 확대샷`} className={s.dialogHeroShot} src={model.closeup} />
+          {model.fullbody
+            ? <img alt={`${model.name} 전신샷`} className={s.dialogHeroShot} src={model.fullbody} />
+            : <div className={s.dialogHeroEmpty}>전신샷 준비 중</div>}
+          <div className={s.dialogHeroText}>
+            <h2 className={s.dialogName} id="fm-model-dialog-title">{model.name}</h2>
+            {(meta || isExample) && (
+              <p className={s.dialogMeta}>
+                {meta && <span>{meta}</span>}
+                {isExample && <span className={s.exampleBadge}>예시</span>}
+              </p>
+            )}
+          </div>
         </div>
 
-        <div className={s.dialogHead}>
-          <h2 className={s.dialogName} id="fm-model-dialog-title">{model.name}</h2>
-          <span className={s.exampleBadge}>예시</span>
-        </div>
+        <div className={s.dialogBody}>
+          {/* 가격이 맨 위, 그 아래 셀러가 바로 가는 버튼(2026-09-08 오너 지시). 예시 모델은 갈 곳이
+              없으므로 버튼을 두지 않는다 — 눌러도 아무 일 없는 버튼은 안 둔다. */}
+          {/* 가격은 플랫폼 공통 고정값(lib/facemarketPricing.js). 모델별 단가는 초기에 쓰지 않는다. */}
+          <div className={s.dialogPriceRow}>
+            <span className={s.dialogPrice}>{pricingParts().perCut}</span>
+            <span className={s.dialogPriceNote}>/ {pricingParts().monthly} ({pricingParts().cap})</span>
+          </div>
+          {!isExample && (
+            <a className={s.dialogCta} href={sellerStudioUrl(model.id)}>
+              상세페이지 만들러 가기
+              <Icon name="arrowRight" size={16} stroke={2} />
+            </a>
+          )}
 
-        <div className={s.dialogCols}>
-          <section className={s.dialogCol}>
-            <h3 className={s.dialogColTitle}>신체 사이즈</h3>
-            <dl className={s.specList}>
-              <div className={s.specRow}><dt>키</dt><dd>{model.height}cm</dd></div>
-              <div className={s.specRow}><dt>몸무게</dt><dd>{model.weight}kg</dd></div>
-            </dl>
-          </section>
+          {/* 키 | 몸무게, 허용 품목 | 제외 품목 — 한 줄에 양쪽. 사용 기한은 쓰지 않는다(오너 지시). */}
+          <dl className={s.dialogRows}>
+            <Pair cells={[{ dt: '키', dd: model.height }, { dt: '몸무게', dd: model.weight }]} />
+            {license && (
+              <Pair cells={[
+                { dt: '허용 품목', dd: license.uses.length ? license.uses.join(' · ') : '미정' },
+                { dt: '제외 품목', dd: license.excluded.length ? license.excluded.join(' · ') : '없음' },
+              ]} />
+            )}
+          </dl>
 
-          {/* 라이선스 조건의 세 항목은 실제 발급 폼(ModelLicense.jsx TermsStep)이 받는 값과
-              같은 것들이다 — 허용 품목·건당 단가·유효기간. 값만 예시다. */}
-          <section className={s.dialogCol}>
-            <h3 className={s.dialogColTitle}>라이선스 조건</h3>
-            <dl className={s.specList}>
-              <div className={s.specRow}>
-                <dt>허용 품목</dt>
-                <dd>{license.uses.join(' · ')}</dd>
-              </div>
-              <div className={s.specRow}>
-                <dt>건당 단가</dt>
-                <dd>{license.unitPrice.toLocaleString('ko-KR')}원</dd>
-              </div>
-              <div className={s.specRow}>
-                <dt>유효기간</dt>
-                <dd>{formatValidity(license.validDays)}</dd>
-              </div>
-            </dl>
-          </section>
-        </div>
-
-        {/* 전신 예시는 그 모델 본인의 사진이 있을 때만 온다(browseModels.js). 없는 모델에게
-            남의 전신 사진을 돌려 쓰면 이름 밑에 다른 얼굴이 서므로, 칸째로 접는다. */}
-        {model.examples.length > 0 && (
-          <section className={s.dialogExamples}>
-            <h3 className={s.dialogColTitle}>모델 예시 이미지</h3>
-            <div className={s.exampleGrid}>
-              {model.examples.map((src) => (
-                <img alt="" className={s.exampleImage} key={src} src={src} />
-              ))}
+          {/* 착용 사이즈는 맨 밑에, 칸을 나눠 읽기 쉽게. 값이 있을 때만. */}
+          {sizeParts && (
+            <div className={s.dialogSizes}>
+              <span className={s.dialogSizesTitle}>착용 사이즈</span>
+              <dl className={s.dialogSizeCells}>
+                {sizeParts.top && <div><dt>상의</dt><dd>{sizeParts.top}</dd></div>}
+                {sizeParts.bottom && <div><dt>하의</dt><dd>{sizeParts.bottom}</dd></div>}
+                {sizeParts.shoe && <div><dt>신발</dt><dd>{sizeParts.shoe}</dd></div>}
+              </dl>
             </div>
-          </section>
-        )}
+          )}
+
+          {model.verified && (
+            <p className={s.dialogVerify}>
+              <span>신분증 본인확인 완료</span>
+              <span>라이선스 증서 발급 완료</span>
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );

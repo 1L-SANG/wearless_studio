@@ -4,6 +4,8 @@ import {
   NEW_PROJECT_KEY,
   productPhotosReady,
 } from '../../lib/productPhotoPromotion.js';
+import { AI_MODELS } from '../analysis/aiModels.js';
+import { stylingModelPatchForAnalysis } from '../analysis/modelSelection.js';
 
 // api 를 모듈 top-level 에서 정적 import 하지 않는다 — lib/api/index.js 는 mock/http 두
 // 어댑터를 모두 물어 `@/` 별칭 경로로 끌어오는데, 이 파일은 (invalidate 등 캐시 조작
@@ -12,13 +14,19 @@ import {
 // 모른다) — apiClient 를 안 넘긴 실사용(런타임) 경로에서만 지연 로드한다.
 export async function loadStoryboardEntry(projectId, apiClient) {
   const client = apiClient || (await import('../../lib/api/index.js')).api;
-  return Promise.all([
+  const entry = await Promise.all([
     client.getStoryboard(projectId),
     client.getCatalogs(),
     client.getMatchClothing(projectId),
     client.getProduct(projectId),
     client.getAnalysis(projectId),
   ]);
+  const patch = stylingModelPatchForAnalysis(entry[4], AI_MODELS);
+  if (patch) {
+    const saved = await client.saveAnalysis(projectId, patch);
+    entry[4] = { ...entry[4], ...(saved || {}), ...patch };
+  }
+  return entry;
 }
 
 const storyboardEntryCache = createStoryboardEntryPrefetchCache();

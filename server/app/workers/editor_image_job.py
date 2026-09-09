@@ -159,6 +159,22 @@ async def run_editor_image_job(app, job: dict) -> None:
                     raise facemarket._err(
                         "model_unavailable", "사용할 수 없는 모델입니다.", status=409
                     )
+                trusted_cut_type = (
+                    src_asset.get("metadata") or {}
+                ).get("cut_type")
+                if not trusted_cut_type:
+                    # 구 자산에는 cut_type이 없다. 라우트와 같은 소유 원장 조회로
+                    # wardrobe/job 결과를 확인하며 클라이언트 source는 믿지 않는다.
+                    async with pool.connection() as conn:
+                        provenance = await repo.get_asset_facemarket_provenance(
+                            conn, user_id, asset_id
+                        )
+                    trusted_cut_type = (provenance or {}).get("cut_type")
+                facemarket.reject_real_model_outside_horizon(
+                    trusted_cut_type, str(snapshot["modelId"])
+                )
+                facemarket.reject_real_model_scene_variation(payload)
+                source = {**source, "cutType": trusted_cut_type}
                 async with pool.connection() as conn:
                     fm_license_row = await facemarket.resolve_model_license(
                         conn,
@@ -314,6 +330,12 @@ async def run_editor_image_job(app, job: dict) -> None:
                 await _fail("컷 설정이 올바르지 않아요. 다시 시도해 주세요.", {"error": "invalid_spec"})
                 return
 
+            requested_model_id = payload.get("modelId")
+            if normalized["cutType"] in _WORN_CUT_TYPES:
+                facemarket.reject_real_model_outside_horizon(
+                    normalized["cutType"], requested_model_id
+                )
+
             colors = product.get("colors") or []
             base_color = next(
                 (color for color in colors if color.get("isBase")),
@@ -337,7 +359,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             # 아이덴티티 소스 1회 결정(detail_page 와 동일 계약, codex [P1]) — 실존 모델(UUID)은
             # REAL 로 비공개 자산을 첨부하고, 라이선스 실패면 조용한 폴백 없이 잡 실패(라우트 409
             # 게이트 이후 해지 레이스 방어). 가상모델('mA' 등)은 기존 VIRTUAL 경로 그대로.
-            selected_model_id = payload.get("modelId")
+            selected_model_id = requested_model_id
             real_refs = None
             try:
                 uuid.UUID(str(selected_model_id))
@@ -437,7 +459,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 model_has_full_body = False
             fm_face_injected = (
                 fm_source == "REAL"
-                and normalized["cutType"] != "product"
+                and normalized["cutType"] == "horizon"
                 and len(model_images) == 2
             )
             body_profile = None
@@ -772,7 +794,11 @@ async def run_editor_image_job(app, job: dict) -> None:
                  "model_id": str(fm_license_row["model_id"])}
                 if fm_face_injected and fm_license_row is not None else None
             ),
-            "metadata": {"facemarket_real_derived": fm_face_injected},
+            # cut_type 은 실모델이 호리존에만 쓰였는지 사후에 확인할 근거다(계약 §3②).
+            "metadata": {
+                "facemarket_real_derived": fm_face_injected,
+                "cut_type": cut_type,
+            },
         }
 
         # 성공 종결 (원자·lease 펜스). charge = reserved — 예약 시점 견적 확정(부분 성공 없음.
@@ -822,12 +848,11 @@ async def run_editor_image_job(app, job: dict) -> None:
               and getattr(app.state, "fm_chain", None) is not None):
             written_key = None
             written_cleanup_intent_id = None
-            # FaceMarket 온체인 정산 훅(선택과제2) — 에디터 컷도 얼굴 라이선스 1회 사용으로
-            # detail_page 와 동일하게 70/20/10 기록. payment_key=job:{id} 멱등(컨트랙트 중복
-            # revert + fm_settlements UNIQUE). best-effort: 정산 실패가 완료된 생성을 안 되돌림.
+            # FaceMarket 온체인 정산 훅(선택과제2). 같은 상품의 7일 내 에디터 수정은
+            # detail_page와 한 건으로 기록한다. best-effort: 정산 실패가 완료된 생성을 안 되돌림.
             try:
                 await facemarket.record_license_settlement(
-                    app, payment_key=f"job:{job_id}", license_id=str(fm_license_row["id"]),
+                    app, project_id=str(project_id), license_id=str(fm_license_row["id"]),
                     model_id=str(fm_license_row["model_id"]),
                     total=int(fm_license_row["unit_price"]), job_id=job_id)
             except Exception:

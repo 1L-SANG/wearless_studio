@@ -12,13 +12,14 @@ import logging
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import get_args
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from psycopg import errors
 
-from . import admin_guard, app_origin, facemarket, personalization, repo
+from . import admin_guard, app_origin, facemarket, legal_versions, personalization, repo
 from .agents import (
     color_harmony,
     content_roles,
@@ -52,6 +53,7 @@ from .models import (
     ErrorResponse,
     JobView,
     MannequinCut,
+    PlanTier,
     PricingPlan,
     Product,
     ProductPatch,
@@ -64,6 +66,7 @@ from .models import (
     UploadUrlResponse,
     ToneApplyRequest,
     ToneEditorState,
+    SellerConsentIn,
 )
 from .r2 import (
     ASSET_CACHE_VERSION,
@@ -530,8 +533,82 @@ async def get_account(request: Request, user_id: str = Depends(require_user)):
             status_code=404,
             detail={"code": "account_not_found", "message": "계정 정보를 찾을 수 없습니다."},
         )
+    # 단일 배포 중 DB에 옛 요금제가 남아 있어도 계정 조회가 500으로 실패하지 않게 한다.
+    if row.get("plan") not in get_args(PlanTier):
+        row = {**row, "plan": "free"}
     return row
 
+
+def _consent_payload(row: dict | None) -> dict:
+    required = legal_versions.required_versions()
+    accepted = None
+    if row is not None:
+        accepted = {
+            "termsVersion": row["terms_version"],
+            "privacyVersion": row["privacy_version"],
+            "ageAttested": bool(row["age_attested"]),
+            "acceptedAt": row["accepted_at"],
+        }
+    needs = (
+        accepted is None
+        or accepted["termsVersion"] != required["terms"]
+        or accepted["privacyVersion"] != required["privacy"]
+        or not accepted["ageAttested"]
+    )
+    return {"required": required, "accepted": accepted, "needsConsent": needs}
+
+
+@router.get(
+    "/me/consents",
+    responses={**COMMON_RESPONSES},
+    tags=["User & Account"],
+    summary="셀러 약관 동의 상태 조회",
+)
+async def get_consents(request: Request, user_id: str = Depends(require_user)):
+    """첫 로그인 뒤 한 번만 받는 약관·처리방침 동의의 상태.
+
+    - `required`: 지금 동의를 받아야 하는 문서 버전(서버 상수 legal_versions).
+    - `accepted`: 이 사용자가 마지막으로 동의한 버전(없으면 null).
+    - `needsConsent`: 게이트를 띄워야 하면 true — 기록이 없거나, 문서가 개정돼 버전이 다르면.
+    """
+    async with get_conn(request) as conn:
+        row = await repo.get_seller_consent(conn, user_id)
+    return _consent_payload(row)
+
+
+@router.post(
+    "/me/consents",
+    responses={**COMMON_RESPONSES},
+    tags=["User & Account"],
+    summary="셀러 약관 동의 기록",
+)
+async def accept_consents(
+    request: Request, body: SellerConsentIn, user_id: str = Depends(require_user),
+):
+    """게이트가 보여준 버전 그대로 동의를 기록한다. 만 19세 확인이 빠지면 400,
+    보여준 버전이 현재 버전과 다르면(그 사이 개정) 409 — 게이트가 새 버전으로 다시 그린다."""
+    if not body.age_attested:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "age_attestation_required", "message": "만 19세 이상 확인이 필요해요."},
+        )
+    required = legal_versions.required_versions()
+    if body.terms_version != required["terms"] or body.privacy_version != required["privacy"]:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "consent_version_mismatch",
+                "message": "약관이 갱신됐어요. 새 버전을 확인한 뒤 다시 동의해 주세요.",
+                "required": required,
+            },
+        )
+    async with get_conn(request) as conn:
+        row = await repo.upsert_seller_consent(
+            conn, user_id,
+            terms_version=body.terms_version, privacy_version=body.privacy_version, age_attested=True,
+        )
+        await conn.commit()
+    return _consent_payload(row)
 
 @router.post(
     "/me/app-origin",
@@ -2877,6 +2954,12 @@ async def generate_editor_image(
                     raise facemarket._err(
                         "model_unavailable", "사용할 수 없는 모델입니다.", status=409
                     )
+                trusted_cut_type = provenance.get("cut_type")
+                facemarket.reject_real_model_outside_horizon(
+                    trusted_cut_type, model_id
+                )
+                facemarket.reject_real_model_scene_variation(payload)
+                payload["source"] = {**source, "cutType": trusted_cut_type}
                 analysis = await repo.get_analysis(conn, project_id) or {}
                 brand_use_category = analysis.get("brandUseCategory")
                 license_row = await facemarket.resolve_model_license(
@@ -2902,6 +2985,9 @@ async def generate_editor_image(
                 payload.get("cutType"), wants_face=False
             )[0]
             if uses_model_identity:
+                facemarket.reject_real_model_outside_horizon(
+                    payload.get("cutType"), selected_model_id
+                )
                 payload["modelId"] = selected_model_id
                 brand_use_category = analysis.get("brandUseCategory")
                 payload["brandUseCategory"] = brand_use_category
@@ -2941,7 +3027,11 @@ async def generate_editor_image(
         # FaceMarket verify-before-use 게이트(FM-30) — 에디터 새 컷도 상세페이지와 동일하게,
         # 실존 모델(UUID modelId) 선택 시 라이선스 자격을 잡 생성 전에 검증한다(실패=409, 예약 없음).
         # 가상모델('mA' 등 비-UUID)·무라이선스 모델은 no-op → 기존 플로우 무영향.
-        if s.facemarket_enabled and payload.get("mode") == "new" and selected_model_id:
+        if (
+            s.facemarket_enabled
+            and payload.get("mode") == "new"
+            and facemarket.is_real_model_id(selected_model_id)
+        ):
             license_row = await facemarket.resolve_model_license(
                 conn, selected_model_id
             )
@@ -2993,28 +3083,46 @@ async def generate_detail_page(
         selected_model_id = analysis.get("selectedModelId") or analysis.get(
             "selected_model_id"
         )
+        styling_model_id = analysis.get("stylingModelId") or analysis.get(
+            "styling_model_id"
+        )
         brand_use_category = analysis.get("brandUseCategory")
-        storyboard = None
-        uses_model_identity = False
-        if selected_model_id and s.facemarket_enabled:
-            storyboard = await repo.get_storyboard(conn, project_id)
-            uses_model_identity = any(
-                isinstance(block, dict)
-                and block.get("source") == "ai"
-                and cut_generator.real_identity_plan(block.get("cutType"), wants_face=False)[0]
-                for block in storyboard
+        storyboard = (
+            await repo.get_storyboard(conn, project_id)
+            if selected_model_id
+            else None
+        )
+        ai_worn_blocks = [
+            block for block in (storyboard or [])
+            if isinstance(block, dict)
+            and block.get("source") == "ai"
+            and cut_generator.real_identity_plan(
+                block.get("cutType"), wants_face=False
+            )[0]
+        ]
+        resolved_block_model_ids = [
+            facemarket.resolve_block_model_id(
+                block.get("cutType"), selected_model_id, styling_model_id
             )
+            for block in ai_worn_blocks
+        ]
+        uses_model_identity = any(resolved_block_model_ids)
+        uses_real_horizon_identity = (
+            facemarket.is_real_model_id(selected_model_id)
+            and any(block.get("cutType") == "horizon" for block in ai_worn_blocks)
+        )
         payload = {"mode": "generate"}
         if uses_model_identity:
-            payload.update({
-                "modelId": selected_model_id,
-                "brandUseCategory": brand_use_category,
-            })
+            payload["modelId"] = selected_model_id
+            if styling_model_id:
+                payload["stylingModelId"] = styling_model_id
+        if uses_real_horizon_identity:
+            payload["brandUseCategory"] = brand_use_category
         license_row = None
         # FaceMarket verify-before-use 게이트(FM-30). **캐시 반환보다 먼저** — 해지·만료된
         # 라이선스가 이미 생성된 페이지의 재생성까지 막아야 하므로(장면⑤). facemarket off면
         # 미진입 → 기존 셀러 플로우 무영향. 선택 모델에 라이선스 없으면 no-op(비-FaceMarket 셀러).
-        if s.facemarket_enabled and uses_model_identity:
+        if s.facemarket_enabled and uses_real_horizon_identity:
             license_row = await facemarket.resolve_project_license(conn, project, analysis)
             await facemarket.verify_license(
                 request.app,

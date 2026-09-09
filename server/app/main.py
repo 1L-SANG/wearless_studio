@@ -381,10 +381,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
 
-    @app.get("/healthz", tags=["System"], summary="서버 헬스 체크")
+    @app.get("/healthz", tags=["System"], summary="서버 헬스 체크 (liveness)")
     async def healthz():
-        """서버가 정상 기동 중인지 모니터링하기 위한 헬스체크 엔드포인트입니다."""
+        """프로세스가 살아 있는지만 본다 — **의존성은 보지 않는다.**
+
+        ALB 타깃 그룹이 이 경로를 때린다(copilot/api/manifest.yml). 여기에 DB 를 넣지
+        마라: DB 가 잠깐 흔들리면 모든 태스크가 **동시에** unhealthy 가 되어 ALB 에 정상
+        타깃이 0개가 되고, ECS 는 멀쩡한 컨테이너들을 죽여 재시작한다 — 일시 장애가
+        전면 장애로 커진다. 여기가 답하는 질문은 "이 컨테이너를 죽여야 하나" 뿐이다.
+
+        "서비스가 실제로 되나" 는 /readyz 가 답한다.
+        """
         return {"status": "ok"}
+
+    @app.get("/readyz", tags=["System"], summary="서버 준비 상태 (readiness)")
+    async def readyz():
+        """DB 까지 짚어서 **요청을 처리할 수 있는 상태인지** 답한다.
+
+        healthz 가 DB 를 안 보기 때문에, 2026-09-08 에 커넥션 풀이 완전히 죽어 모든
+        워커와 요청이 PoolTimeout 으로 실패하는 동안에도 healthz 는 200 을 계속 줬다.
+        그래서 ECS 롤링이 정상 완료됐고 배포 워크플로도 success 로 끝났다 — 장애를
+        알려준 건 Slack 알림뿐이었다. 이 엔드포인트는 그 공백을 메운다.
+
+        배포 파이프라인이 배포 직후 이걸 때린다(deploy-server.yml). ALB 는 여전히
+        healthz 를 본다 — 위 주석의 이유로 의도적이다.
+        """
+        pool = getattr(app.state, "pool", None)
+        if pool is None:
+            # DB 없이 뜨는 구성(JWT 검증 전용)도 있다 — 그건 고장이 아니다.
+            return {"status": "ok", "db": "not_configured"}
+        try:
+            async with pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("select 1")
+                    await cur.fetchone()
+        except Exception as exc:
+            # 여기서 삼키면 이 엔드포인트의 존재 이유가 없어진다. 503 + 이유를 남긴다.
+            logging.getLogger("wearless.api").error(
+                "readyz db check failed: %s: %s", type(exc).__name__, exc
+            )
+            return JSONResponse(
+                status_code=503,
+                content={"error": {"code": "db_unavailable", "message": "DB 연결을 확인하지 못했어요."}},
+            )
+        return {"status": "ok", "db": "ok"}
 
     @app.get(
         "/v1/me/ping",
@@ -425,12 +465,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # 의존하지 않는 프리스테이지라 biometric 플래그와 무관하게 등록한다. create_enrollment
         # 게이트(승인 지원서 요구)만 FM_APPLICATION_REQUIRED + 생체등록 활성일 때 동작한다.
         from .facemarket_applications import router as applications_router
+        from .facemarket_admin_models import router as admin_models_router
 
         app.include_router(applications_router)
         # 관리자 콘솔(집계·모델 조회·권한 관리). 지원서 라우트와 같은 플래그 아래 산다.
         from .facemarket_admin import router as admin_console_router
 
         app.include_router(admin_console_router)
+        # 테스트컷 업로드·전송은 콘솔의 모델 상세에서 쓰는 하위 리소스다. 콘솔 라우터
+        # 뒤에 붙여 /admin/models 목록·상세는 콘솔이, /test-cuts 는 이 모듈이 맡는다.
+        app.include_router(admin_models_router)
         if settings.fm_biometric_enrollment_enabled:
             from .facemarket_enrollment import router as biometric_enrollment_router
 

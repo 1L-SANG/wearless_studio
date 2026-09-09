@@ -61,6 +61,15 @@ export function resolveHubJourney({
     };
   }
 
+  if (ownedModel?.status === 'awaiting_confirm') {
+    return journeyAt(5, route('테스트컷 확인하기', '/model/confirm'));
+  }
+
+  if (ownedModel?.status === 'pending' && (!enrollment || enrollment.status === 'passed')
+    && (ownedModel?.redoCount > 0 || hasLicense)) {
+    return journeyAt(4, reload('생성 상태 새로고침'));
+  }
+
   if (enrollment) {
     const status = enrollment.status;
     if (status === 'review_pending') return journeyAt(3, reload('검수 상태 새로고침'));

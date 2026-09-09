@@ -76,3 +76,35 @@ test('남의 호스트에서 열린 진입 문서는 자기 호스트로 되돌�
   const host = await import('../../src/lib/host.js');
   assert.equal(typeof host.redirectToOwnDocumentHost, 'function');
 });
+
+/* 파비콘도 호스트별로 갈린다(2026-09-08). 구형 사파리는 SVG 파비콘을 안 읽고 /favicon.ico 로
+   되돌아가는데, facemarket 호스트는 `/(.*)` rewrite 가 모든 경로를 문서로 보내므로 그 요청이
+   HTML 을 받아 아이콘이 빈다(실측: 200 text/html). 그래서 ① 문서에 PNG·ico 폴백을 걸고
+   ② 그 호스트 한정 /favicon.ico rewrite 를 catch-all 앞에 둔다. 둘 중 하나만 있으면 다시 빈다. */
+test('facemarket 문서는 자기 아이콘을 SVG·PNG·ico 로 건다', () => {
+  const html = read('facemarket.html');
+  assert.match(html, /rel="icon" type="image\/svg\+xml" href="\/assets\/brand\/facemarket-mark\.svg"/);
+  assert.match(html, /rel="icon" type="image\/png"[^>]*href="\/assets\/brand\/facemarket-icon-32\.png"/);
+  assert.match(html, /rel="icon" type="image\/x-icon" href="\/assets\/brand\/facemarket-favicon\.ico"/);
+  assert.match(html, /rel="apple-touch-icon"[^>]*href="\/assets\/brand\/facemarket-icon-180\.png"/);
+  const svg = html.match(/<link[^>]*type="image\/svg\+xml"[^>]*>/)[0];
+  assert.match(svg, /sizes="any"/);
+  assert.ok(html.indexOf('type="image/png"') < html.indexOf(svg));
+  assert.ok(html.indexOf('type="image/x-icon"') < html.indexOf(svg));
+});
+
+test('셀러 문서는 Wearless 아이콘 그대로다 — facemarket 아이콘이 새면 안 된다', () => {
+  const html = read('seller.html');
+  assert.match(html, /rel="icon" type="image\/svg\+xml" href="\/assets\/brand\/logo\.svg"/);
+  assert.doesNotMatch(html, /facemarket-(icon|favicon)/);
+});
+
+test('facemarket 호스트의 /favicon.ico 만 실제 아이콘으로 가고, 그 호스트 catch-all 보다 앞이다', () => {
+  const rewrites = JSON.parse(read('vercel.json')).rewrites;
+  const icon = rewrites.find((r) => r.source === '/favicon.ico');
+  assert.deepEqual(icon.has, [{ type: 'host', value: FACEMARKET_HOST }]);
+  assert.equal(icon.destination, '/assets/brand/facemarket-favicon.ico');
+
+  const docRule = rewrites.findIndex((r) => r.destination === '/facemarket.html');
+  assert.ok(rewrites.indexOf(icon) < docRule, '문서 catch-all 이 먼저면 아이콘 요청이 HTML 을 받는다');
+});

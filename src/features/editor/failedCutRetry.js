@@ -1,3 +1,5 @@
+import { isRealModelSelection } from '../analysis/modelSelection.js';
+
 const RETRY_FIELDS = Object.freeze([
   'contentRole',
   'colorId',
@@ -18,7 +20,7 @@ const RETRY_FIELDS = Object.freeze([
  * 일반 AI 패널의 기본값으로 재구성하면 시그니처 exampleId, 매칭 의류, 모델 같은
  * 생성 정본이 유실되므로 sourceBlockId로 원본 블록을 찾아 필요한 필드만 복사한다.
  */
-export function buildFailedCutRetry(storyboard, sourceBlockId) {
+export function buildFailedCutRetry(storyboard, sourceBlockId, modelSelection = null) {
   if (!sourceBlockId || !Array.isArray(storyboard)) return null;
   const block = storyboard.find((item) => item?.id === sourceBlockId);
   if (!block || block.source !== 'ai' || !block.cutType) return null;
@@ -26,6 +28,19 @@ export function buildFailedCutRetry(storyboard, sourceBlockId) {
   const request = { mode: 'new' };
   for (const field of RETRY_FIELDS) {
     if (block[field] !== undefined) request[field] = block[field];
+  }
+  if (modelSelection) {
+    const selectedModelId = modelSelection.selectedModelId
+      || modelSelection.selected_model_id
+      || null;
+    const stylingModelId = modelSelection.stylingModelId
+      || modelSelection.styling_model_id
+      || null;
+    request.modelId = block.cutType === 'product'
+      ? null
+      : block.cutType === 'horizon' || !isRealModelSelection(selectedModelId)
+        ? selectedModelId
+        : stylingModelId;
   }
   request.matchIds = Array.isArray(block.matchIds) ? [...block.matchIds] : [];
 

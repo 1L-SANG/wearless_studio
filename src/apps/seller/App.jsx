@@ -32,6 +32,7 @@ import { LazyEditor } from '@/features/editor/lazyEditor.js';
 import { forgetPostLogin, readPostLogin, useAuth } from '@/features/auth/AuthProvider.jsx';
 import { IS_FACEMARKET, domainRouteRedirect, redirectToOwnDocumentHost } from '@/lib/host.js';
 import { RequireAuth } from '../guards.jsx';
+import { SignupCompletion } from '@/features/auth/SignupCompletion.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
 import { loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
@@ -606,6 +607,8 @@ export default function App() {
   return (
     <>
       <ResumeTracker />
+      {/* 가입 완료 화면 — 회원가입 탭을 지나지 않고 들어온 신규만 본다(개정 재동의도 여기) */}
+      <SignupCompletion />
       <LoginQueryGate />
       <Routes>
         <Route element={<ChromeLayout />}>

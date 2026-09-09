@@ -4,7 +4,9 @@
    목록으로 곧장 돌아온다 — 라우트를 갈면 그 왕복마다 목록이 다시 로드되고 스크롤을 잃는다. */
 import { useCallback, useEffect, useState } from 'react';
 import {
-  adminListModels, adminModelDetail, adminSuspendModel, adminUnsuspendModel,
+  adminDeleteModelTestCut, adminFetchModelTestCutUrl, adminListModels, adminModelDetail,
+  adminModelTestCuts, adminSendModelTestCuts, adminSuspendModel, adminUnsuspendModel,
+  adminUploadModelTestCuts,
 } from '@/lib/api/facemarket.js';
 import { Badge } from '@/components/admin-ui/badge.jsx';
 import { Button } from '@/components/admin-ui/button.jsx';
@@ -15,28 +17,239 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/admin-ui/table.jsx';
 import { useToast } from '@/components/ui.jsx';
+import { seoulDateKey } from '@/lib/datetime.js';
 
-// fm_models_status_check(백엔드 MODEL_STATUSES)가 허용하는 네 값 전부를 다뤄야 한다.
+// fm_models_status_check(백엔드 MODEL_STATUSES)가 허용하는 값 전부를 다뤄야 한다.
 // reverification_required 라벨은 ModelHub.jsx 의 MODEL_STATUS_LABEL 과 맞춘다 — 운영자
 // 화면과 모델 본인 화면이 같은 상태를 다른 말로 부르면 안 된다.
 const STATUS_FILTERS = [
   { value: '', label: '전체' },
   { value: 'pending', label: '대기' },
+  { value: 'awaiting_confirm', label: '확인 대기' },
   { value: 'verified', label: '검증됨' },
   { value: 'reverification_required', label: '재검증 필요' },
   { value: 'suspended', label: '정지' },
 ];
 const STATUS_LABEL = {
-  pending: '대기', verified: '검증됨', reverification_required: '재검증 필요', suspended: '정지',
+  pending: '대기', awaiting_confirm: '확인 대기', verified: '검증됨',
+  reverification_required: '재검증 필요', suspended: '정지',
 };
 const STATUS_VARIANT = {
-  pending: 'secondary', verified: 'default', reverification_required: 'secondary', suspended: 'destructive',
+  pending: 'secondary', awaiting_confirm: 'secondary', verified: 'default',
+  reverification_required: 'secondary', suspended: 'destructive',
 };
 // check 제약에 다섯 번째 값이 늘어나도, 빈 배지(undefined → 스타일 없이 텅 빈 pill)
 // 대신 원문자열을 보여준다 — 안 보이는 것보다 못생긴 게 낫다.
 const statusLabel = (status) => STATUS_LABEL[status] || status;
 const won = (n) => `${Number(n || 0).toLocaleString('ko-KR')}원`;
-const day = (iso) => (iso ? iso.slice(0, 10) : '-');
+const day = (iso) => seoulDateKey(iso);
+const TEST_CUT_GROUPS = [
+  { kind: 'closeup', label: '확대샷' },
+  { kind: 'fullbody', label: '전신샷' },
+];
+
+/* 테스트컷 — 모델 공개 승인 게이트(초상 계약 제8조 5항).
+   목록이 아니라 상세 안에 두는 이유: 운영자가 "이 모델 뭐지"를 확인하는 자리에서 그대로
+   컷을 올리고 보내기 때문이다. 목록에 컬럼으로 얹으면 200행마다 이미지 메타를 조인해야 한다.
+   서명 URL 이 아니라 인증 스트림으로 받는다 — 얼굴은 공개 주소를 갖지 않는다(처리방침 §10). */
+function TestCutThumb({ cut, disabled, onDelete }) {
+  const [url, setUrl] = useState(null);
+  useEffect(() => {
+    let revoked = null;
+    adminFetchModelTestCutUrl(cut.imageUri)
+      .then((next) => { revoked = next; setUrl(next); })
+      .catch(() => setUrl(null));
+    return () => { if (revoked) URL.revokeObjectURL(revoked); };
+  }, [cut.imageUri]);
+  return (
+    <figure className="relative m-0 w-20 overflow-hidden rounded-md border border-border bg-muted">
+      <div className="aspect-[4/5]">
+        {url
+          ? <img src={url} alt={`테스트컷 ${cut.sort + 1}`} className="h-full w-full object-cover" />
+          : <div className="flex h-full items-center justify-center text-[10px] text-muted-foreground">불러오는 중</div>}
+      </div>
+      {cut.approved
+        ? <span className="absolute left-1 top-1 rounded bg-background/90 px-1 text-[10px]">대표</span>
+        : (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => onDelete(cut)}
+            aria-label={`테스트컷 ${cut.sort + 1} 삭제`}
+            className="absolute right-1 top-1 rounded bg-background/90 px-1 text-[10px] disabled:opacity-40"
+          >
+            삭제
+          </button>
+        )}
+    </figure>
+  );
+}
+
+export function TestCutUpload({ inputId, disabled, onChange }) {
+  return (
+    <label
+      htmlFor={inputId}
+      className={`inline-flex h-8 cursor-pointer items-center rounded-md border border-input px-2.5 text-xs focus-within:outline-none focus-within:ring-2 focus-within:ring-ring${disabled ? ' pointer-events-none opacity-50' : ''}`}
+    >
+      <span>이미지 추가</span>
+      <input
+        id={inputId}
+        type="file"
+        accept="image/*"
+        multiple
+        className="sr-only"
+        disabled={disabled}
+        onChange={onChange}
+      />
+    </label>
+  );
+}
+
+function TestCuts({ modelId, onChanged }) {
+  const { push } = useToast();
+  const [state, setState] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    setError(null);
+    adminModelTestCuts(modelId).then(setState).catch((e) => setError(e.message));
+  }, [modelId]);
+  useEffect(() => { load(); }, [load]);
+
+  const act = async (fn, done) => {
+    setBusy(true);
+    try { const r = await fn(); push?.(done(r), { icon: 'check' }); load(); onChanged?.(); }
+    catch (e) { push?.(e.message, { icon: 'alertCircle' }); }
+    finally { setBusy(false); }
+  };
+
+  if (error) {
+    return (
+      <section className="border-t border-border pt-4">
+        <h4 className="mb-1 text-xs font-medium text-muted-foreground">테스트컷</h4>
+        <p className="text-muted-foreground">{error}</p>
+        <Button variant="outline" size="sm" className="mt-2" onClick={load}>다시 시도</Button>
+      </section>
+    );
+  }
+  if (!state) {
+    return (
+      <section className="border-t border-border pt-4">
+        <h4 className="mb-1 text-xs font-medium text-muted-foreground">테스트컷</h4>
+        <Skeleton className="h-20 w-full" />
+      </section>
+    );
+  }
+
+  const cuts = state.testCuts || [];
+  const counts = {
+    closeup: state.closeupCount,
+    fullbody: state.fullbodyCount,
+  };
+  const sent = state.status === 'awaiting_confirm';
+  const confirmed = state.status === 'verified';
+  // sendable 은 서버가 계산한다(상태 + 전신샷 없이 확정된 옛 모델 예외). 화면에서 상태값을
+  // 다시 해석하지 않는다 — 두 장으로 이미 공개된 모델에 보내기를 열어 두면 409 만 받는다.
+  const sendable = state.sendable !== false;
+  const sendDisabledReason = !sendable
+    ? '이미 공개된 모델이에요. 지금은 다시 보낼 수 없어요.'
+    : (!state.cutsComplete
+      ? '확대샷 2장과 전신샷 2장이 모두 있어야 보낼 수 있어요.'
+      : (!state.readyToSend ? '생체등록과 라이선스 발급이 끝나야 보낼 수 있어요.' : undefined));
+
+  return (
+    <section className="border-t border-border pt-4">
+      <div className="mb-2 flex items-center gap-2">
+        <h4 className="text-xs font-medium text-muted-foreground">테스트컷</h4>
+        {state.redoRequested && <Badge variant="destructive">재생성 요청</Badge>}
+        {sent && <Badge variant="secondary">확인 대기</Badge>}
+        {confirmed && <Badge>공개 승인됨</Badge>}
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        {TEST_CUT_GROUPS.map(({ kind, label }) => {
+          const groupCuts = cuts.filter((cut) => cut.kind === kind);
+          const count = counts[kind] ?? groupCuts.length;
+          const groupFull = count >= 2;
+          const inputId = `test-cut-upload-${modelId}-${kind}`;
+          return (
+            <div className="rounded-md border border-border p-3" key={kind}>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <h5 className="text-xs font-medium">{label} {count}/2</h5>
+                <TestCutUpload
+                  inputId={inputId}
+                  disabled={busy || groupFull}
+                  onChange={(event) => {
+                    const files = Array.from(event.target.files || []);
+                    event.target.value = '';
+                    if (!files.length) return;
+                    if (count + files.length > 2) {
+                      push?.(`${label}은 2장까지 올릴 수 있어요.`, { icon: 'alertCircle' });
+                      return;
+                    }
+                    act(
+                      () => adminUploadModelTestCuts(modelId, files, kind),
+                      () => `${label} ${files.length}장을 올렸어요.`,
+                    );
+                  }}
+                />
+              </div>
+              {groupCuts.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {groupCuts.map((cut) => (
+                    <TestCutThumb
+                      key={cut.id}
+                      cut={cut}
+                      disabled={busy}
+                      onDelete={(selectedCut) => {
+                        if (!window.confirm(`${label} ${selectedCut.sort + 1}을 삭제할까요?`)) return;
+                        act(
+                          () => adminDeleteModelTestCut(modelId, selectedCut.id),
+                          () => `${label}을 삭제했어요.`,
+                        );
+                      }}
+                    />
+                  ))}
+                </div>
+              ) : <p className="text-xs text-muted-foreground">아직 없어요.</p>}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          disabled={busy || !sendable || !state.cutsComplete || !state.readyToSend}
+          title={sendDisabledReason}
+          onClick={() => act(
+            () => adminSendModelTestCuts(modelId),
+            (r) => (r.emailSent
+              ? '모델에게 테스트컷 확인 메일을 보냈어요.'
+              : '확인 대기 상태로 바꿨어요. 메일은 발송되지 않았어요.'),
+          )}
+        >
+          {sent ? '다시 보내기' : '모델에게 보내기'}
+        </Button>
+      </div>
+
+      {sent && state.confirmRequestedAt && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {day(state.confirmRequestedAt)}에 보냈어요. 모델이 확인하면 셀러 목록에 떠요.
+        </p>
+      )}
+      {confirmed && state.confirmedAt && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {day(state.confirmedAt)}에 모델이 확정했어요. 모델 리스트에 올라갔어요.
+        </p>
+      )}
+      {state.redoCount > 0 && (
+        <p className="mt-1 text-xs text-muted-foreground">재생성 요청 {state.redoCount}회 (1회까지)</p>
+      )}
+    </section>
+  );
+}
 
 function Detail({ modelId, onChanged }) {
   // useToast() 는 { push, dismiss } 를 준다(.show 는 없다) — AdminApplications.jsx 의
@@ -135,6 +348,7 @@ function Detail({ modelId, onChanged }) {
           <h4 className="mb-1 text-xs font-medium text-muted-foreground">생체등록</h4>
           <p>{enrollment ? `${enrollment.status} · ${day(enrollment.completedAt)}` : '기록 없음'}</p>
         </section>
+        <TestCuts modelId={model.id} onChanged={onChanged} />
         <section className="border-t border-border pt-4">
           {suspended ? (
             <Button variant="outline" disabled={busy} onClick={() => act(() => adminUnsuspendModel(model.id))}>

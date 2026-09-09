@@ -33,6 +33,11 @@
       "destination": "/admin.html"
     },
     {
+      "source": "/favicon.ico",
+      "has": [{ "type": "host", "value": "facemarket.wearless.kr" }],
+      "destination": "/assets/brand/facemarket-favicon.ico"
+    },
+    {
       "source": "/(.*)",
       "has": [{ "type": "host", "value": "facemarket.wearless.kr" }],
       "destination": "/facemarket.html"
