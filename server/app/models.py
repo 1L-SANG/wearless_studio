@@ -27,6 +27,14 @@ class CamelModel(BaseModel):
     )
 
 
+class WearshotGenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    contractVersion: Literal["approved_mannequin_v2"]
+    matchingMannequinAssets: dict[str, UUID] = Field(default_factory=dict, max_length=2)
+    variationAxis: Literal["pose", "background"] = "pose"
+    captureProfile: Literal["clean", "soft"] = "soft"
+
+
 class Account(CamelModel):
     name: str
     avatar: str

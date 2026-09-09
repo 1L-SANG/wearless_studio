@@ -20,6 +20,8 @@ Core reference roles: target/matching seller evidence, approved garment mannequi
 
 New generation and repair renderers do not mutate the immutable confirmed-v1 template. A v2 QC schema contains per-garment color, fit/length, permanent structure/material, per-essential detail evidence, global camera/crop/identity/anatomy/capture/light, and pose/background variation observations. Deterministic validation checks coverage and bindings; it does not pretend to prove visual truth. Partial/hidden faces are explicitly represented so QC must not demand an outpainted full face.
 
+Output framing is preserved within the provider's 16-pixel canvas grid, not an impossible exact reduced rational for small references such as387×515 or720×883. Native long-edge2048 with the nearest supported short edge may differ by at most0.5% in relative aspect ratio; larger distortion holds. Requested and returned output dimensions must match exactly. There is no forced2:3 conversion, post-crop, resampling or claimed pixel-identical framing.
+
 A QC compatibility projection may expose existing gate names for worker/log compatibility, but v2 variation semantics and per-garment/details must remain explicit and versioned. Repair instructions are deterministic templates from failed axes, never free-form judge prose. Repair comparison verifies the same contract/base binding and no regression in approved axes. Full v2 release is separate from the older three-gate critical policy.
 
 ## Production binding and API seam
@@ -28,7 +30,7 @@ Existing detail-page generate route accepts an optional strict body with contrac
 
 Resolve requested target mannequin from current selected candidate/version using active tone asset when present, and snapshot it into job payload. Explicit matching anchors must resolve through real owned mannequin-cuts/project lineage, not arbitrary uploaded images. Tone lineage must resolve its original cut, ownership, project and original byte hash. A verified selected composite can provide its matching region only for exact original metadata.matchItemId; missing/second/unproven matching anchors hold before generation. Worker revalidates after enqueue. No schema migration or automatic inferred approval.
 
-Version/anchor/variation request fields are typed IDs/enums only. Saved editor blocks remain the authoritative matching/model selections. Source framing is bound from verified directing metadata or explicit trusted local test observations. New optional API capability is not a claim that the existing UI already exposes all anchor choices.
+Version/anchor/variation request fields are typed IDs/enums only. Optional `captureProfile` is `clean` or `soft` (default soft) and is part of the immutable queue projection and contract, making both named methods API-usable without client prose. Saved editor blocks remain the authoritative matching/model selections. Source framing is bound from verified directing metadata or explicit trusted local test observations. New optional API capability is not a claim that the existing UI already exposes all anchor choices.
 
 ## Sunburst stage2 A/B
 

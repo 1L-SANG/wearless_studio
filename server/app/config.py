@@ -170,6 +170,8 @@ class Settings:
     # Independent of QC mode: enabling this with QC off holds all generated cuts.
     cut_output_release_policy: str = "off"  # off | critical
     cut_identity_review_model: str = "gpt-6-astra"
+    wearshot_qc_model: str = "gpt-6-astra"
+    wearshot_repair_model: str | None = None
     cut_color_review_model: str = "gpt-6-astra"
     page_output_qc_mode: str = "off"  # off | shadow
     # P1 축 인지 QC(선언 핏 축 반영 판정 + 실패 시 편집 교정 1회 — fidelity §G·§H).
@@ -595,6 +597,8 @@ def load_settings() -> Settings:
         cut_output_release_policy=_flag(
             "CUT_OUTPUT_RELEASE_POLICY", "off", {"off", "critical"}),
         cut_identity_review_model=os.getenv("CUT_IDENTITY_REVIEW_MODEL", "gpt-6-astra").strip() or "gpt-6-astra",
+        wearshot_qc_model=os.getenv("WEARSHOT_QC_MODEL", "gpt-6-astra").strip() or "gpt-6-astra",
+        wearshot_repair_model=os.getenv("WEARSHOT_REPAIR_MODEL", "").strip() or None,
         cut_color_review_model=os.getenv("CUT_COLOR_REVIEW_MODEL", "gpt-6-astra").strip() or "gpt-6-astra",
         page_output_qc_mode=_flag("PAGE_OUTPUT_QC_MODE", "off", {"off", "shadow"}),
         mannequin_axis_qc=_flag("MANNEQUIN_AXIS_QC", "off", {"off", "shadow", "enforce"}),

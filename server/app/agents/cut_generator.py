@@ -33,6 +33,8 @@ from .model_routing import resolve_model
 from .fit_axes import build_fit_profile_block
 from .prompts import _product_block, _sanitize
 from . import pose_crop
+from .wearshot_contract import WearshotContract, RepairPlan
+from .wearshot_prompt import render_generation, render_repair
 from ..facemarket_physique import build_body_profile_block
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
@@ -1344,6 +1346,9 @@ async def generate(
     body_profile: dict | None = None,
     qc_corrections: tuple[str, ...] = (),
     confirmed_prompt_input: ConfirmedGptPromptInput | None = None,
+    wearshot_contract: WearshotContract | None = None,
+    repair_plan: RepairPlan | None = None,
+    output_size: str | None = None,
 ) -> tuple[bytes, str]:
     """컷 1개 생성. 실패 시 GeminiError 전파(호출자가 빈 슬롯 등으로 처리).
     스펙 위반(unknown cutType)은 ValueError — 조용한 styling 폴백을 하지 않는다
@@ -1353,6 +1358,15 @@ async def generate(
     매니페스트와 같은 자리에 넣었다'는 뜻이다. MODEL / MODEL SHEET
     identity pair는 has_face와 독립적으로 매니페스트에서 판정한다 — 첨부와
     매니페스트가 어긋나면 라벨이 밀린다."""
+    if wearshot_contract is not None:
+        if confirmed_prompt_input is not None or qc_corrections or repair_plan is not None:
+            raise ValueError("wearshot_v2_mixed_prompt_inputs")
+        rendered = render_generation(wearshot_contract)
+        if tuple(images) != rendered.images:
+            raise ValueError("wearshot_v2_reference_packet_mismatch")
+        return await _generate_wearshot(settings, gemini, cut_spec, rendered, output_size, contract=wearshot_contract)
+    if repair_plan is not None:
+        raise ValueError("wearshot_v2_contract_required")
     clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
     spec = normalize_spec(cut_spec, clothing_type=clothing_type)
     # 시그니처 컷만 별도 모델(기본 gpt-image-2) — 나머지 컷은 기존 image_high 유지.
@@ -1386,6 +1400,8 @@ async def generate(
             qc_corrections=qc_corrections,
         )
     provider_kwargs = {"aspect_ratio": settings.mannequin_aspect_ratio}
+    if output_size is not None:
+        provider_kwargs["openai_output_size"] = output_size
     if confirmed_prompt_input is not None:
         # 과거 확정 실험은 역할·순서뿐 아니라 provider가 받은 참조 바이트/MIME도
         # 봉인했다. 일반 OpenAI 호환용 PNG 정규화를 이 exact 경로에 적용하지 않는다.
@@ -1411,23 +1427,65 @@ async def repair(
     product: dict,
     source_image: InlineImage,
     *,
-    qc_corrections: tuple[str, ...],
+    qc_corrections: tuple[str, ...] = (),
     confirmed_prompt_input: ConfirmedGptPromptInput | None = None,
+    wearshot_contract: WearshotContract | None = None,
+    repair_plan: RepairPlan | None = None,
+    repair_model: str | None = None,
+    output_size: str | None = None,
 ) -> tuple[bytes, str]:
     """AG-06 국소 2차 보정. 호출자가 고른 image_high 모델로 1차 결과만 편집한다."""
 
-    model = _resolve_generation_model(settings, cut_spec)
+    if wearshot_contract is not None:
+        if confirmed_prompt_input is not None or qc_corrections or repair_plan is None:
+            raise ValueError("wearshot_v2_repair_plan_required_or_mixed")
+        repair_plan.validate(wearshot_contract, source_image)
+        rendered = render_repair(wearshot_contract, repair_plan)
+        return await _generate_wearshot(settings, gemini, cut_spec, rendered, output_size, repair_model,
+                                       contract=wearshot_contract, repair_plan=repair_plan)
+    if repair_plan is not None:
+        raise ValueError("wearshot_v2_contract_required")
+    model = repair_model or _resolve_generation_model(settings, cut_spec)
     prompt = build_qc_repair_prompt(
         cut_spec,
         product,
         qc_corrections,
         confirmed_prompt_input=confirmed_prompt_input,
     )
+    provider_kwargs = {"aspect_ratio": settings.mannequin_aspect_ratio}
+    if output_size is not None:
+        provider_kwargs["openai_output_size"] = output_size
     res = await gemini.generate_content_image(
         model,
         prompt,
         [source_image],
         _detail_image_size(settings),
-        aspect_ratio=settings.mannequin_aspect_ratio,
+        **provider_kwargs,
     )
+    return res.image, res.mime
+
+
+async def _generate_wearshot(settings, gemini, spec, rendered, output_size, model=None, *, contract, repair_plan=None):
+    # No signature fallback or generic reference conversion/crop on the exact path.
+    from .wearshot_runtime import source_output_size, validate_output_size
+    example = next(ref.image for ref in contract.references if ref.key == contract.example_key)
+    if output_size is None:
+        output_size = source_output_size(example)
+    validate_output_size(example, output_size)
+    if repair_plan is not None:
+        validate_output_size(repair_plan.base_image, output_size)
+    model = model or _resolve_generation_model(settings, {})
+    if not model.startswith("gpt-image-"):
+        raise ValueError("wearshot_v2_requires_openai_image_model")
+    res = await gemini.generate_content_image(model, rendered.prompt, list(rendered.images),
+        _detail_image_size(settings), openai_preserve_input_bytes=True, openai_output_size=output_size)
+    # Validate decoded provider pixels before either primary/focused QC or storage.
+    # A requested canvas is not evidence that the provider actually returned it.
+    import io
+    from PIL import Image
+    from .wearshot_contract import image_sha256
+    image_sha256(InlineImage(res.mime, res.image))
+    with Image.open(io.BytesIO(res.image)) as decoded:
+        if decoded.size != tuple(map(int, output_size.split("x"))):
+            raise ValueError("wearshot_v2_returned_dimensions_mismatch")
     return res.image, res.mime

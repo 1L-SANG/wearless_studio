@@ -32,6 +32,7 @@ from .agents import (
     product_analyst,
     space_set_assets,
     style_affinity,
+    wearshot_runtime,
 )
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
@@ -67,6 +68,7 @@ from .models import (
     ToneApplyRequest,
     ToneEditorState,
     SellerConsentIn,
+    WearshotGenerateRequest,
 )
 from .r2 import (
     ASSET_CACHE_VERSION,
@@ -3063,6 +3065,7 @@ async def generate_editor_image(
 async def generate_detail_page(
     request: Request, project_id: str, user_id: str = Depends(require_user),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    body: WearshotGenerateRequest | None = Body(None),
 ):
     """저장된 콘티로 AI 컷(AG-06) + 카피(AG-02/03) 생성 → M-02 조립 → EditorBlock[]. 크레딧:
     storyboardPerCut × source='ai' 블록 수(성공 컷만 차감). 완료 재호출은 기존 결과 반환(무차감)."""
@@ -3082,7 +3085,7 @@ async def generate_detail_page(
         brand_use_category = analysis.get("brandUseCategory")
         storyboard = (
             await repo.get_storyboard(conn, project_id)
-            if selected_model_id
+            if selected_model_id or body is not None
             else None
         )
         ai_worn_blocks = [
@@ -3105,6 +3108,16 @@ async def generate_detail_page(
             and any(block.get("cutType") == "horizon" for block in ai_worn_blocks)
         )
         payload = {"mode": "generate"}
+        if body is not None:
+            try:
+                product_v2 = await repo.get_product(conn, project_id) or {}
+                payload["wearshotV2"] = await wearshot_runtime.snapshot_request(
+                    conn, user_id, project_id, project, product_v2, analysis, storyboard or [],
+                    body.model_dump(mode="json"),
+                )
+            except ValueError:
+                raise HTTPException(status_code=409, detail={"code": "wearshot_v2_preflight_hold",
+                    "message": "선택한 착장 근거를 확인할 수 없어요. 마네킹과 예시 선택을 확인해 주세요."})
         if uses_model_identity:
             payload["modelId"] = selected_model_id
             if styling_model_id:
@@ -3130,6 +3143,9 @@ async def generate_detail_page(
                 }
         existing = await repo.get_editor_blocks(conn, project_id)
         if existing:  # 완료 재호출 → 기존 결과 반환(재생성·재차감 없음)
+            if body is not None:
+                raise HTTPException(status_code=409, detail={"code": "wearshot_v2_existing_output_unproven",
+                    "message": "기존 결과와 새 착장 계약의 일치를 확인할 수 없어요."})
             account = await repo.get_account(conn, user_id)
             return JSONResponse({"data": existing, "credits": (account or {}).get("credits", 0)})
         if license_row is not None:
@@ -3156,6 +3172,10 @@ async def generate_detail_page(
             # 변경·콘티 재저장으로 인한 블록 수 변동과 무관하게 견적 가격을 고정).
             metadata={"creditCostVersion": s.credit_cost_version,
                       "perCutCost": s.credit_cost_storyboard_per_cut, "aiCount": ai_count})
+        if not created and (payload.get("wearshotV2") is not None or (job.get("payload") or {}).get("wearshotV2") is not None):
+            if payload.get("wearshotV2") != (job.get("payload") or {}).get("wearshotV2"):
+                raise HTTPException(status_code=409, detail={"code": "wearshot_v2_job_binding_mismatch",
+                    "message": "진행 중인 작업의 착장 계약이 이번 요청과 달라요."})
         if created:
             if not storyboard:
                 raise _bad_request("empty_storyboard", "콘티가 비어 있어요. 먼저 콘티를 저장해 주세요.")

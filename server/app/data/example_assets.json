@@ -1071,6 +1071,7 @@
    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/thumb/ex_styling_women_dress_full_cafe_shop_09.webp"
   },
   "ex_styling_women_dress_full_city_03": {
+   "wearshotScopeV2": {"allSha256": "7f2c5f93b6a53cd2e21773e491eedf7c665a7b42e8d83608cb51961b6786813a", "faceVisibility": "full", "garmentScopes": {"dress": []}},
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_dress_full_city_03.png",
    "applicableClothingTypes": [
     "dress"
@@ -1125,6 +1126,7 @@
    }
   },
   "ex_styling_women_dress_full_home_01": {
+   "wearshotScopeV2": {"allSha256": "b7ad0d512d3f7af42ff81310f344a85e938bc45f5d22d2d6e95c58512a9f021f", "faceVisibility": "partial", "garmentScopes": {"dress": []}},
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_dress_full_home_01.png",
    "applicableClothingTypes": [
     "dress"
@@ -1655,6 +1657,7 @@
    }
   },
   "ex_styling_women_outer_medium_cafe_01": {
+   "wearshotScopeV2": {"allSha256": "fbacf94ebbacc08a810458c25d8f2b405aeee69c1ceb43e5afc58433d26c19bb", "faceVisibility": "full", "garmentScopes": {"outer": [], "bottom": ["length"]}},
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_outer_medium_cafe_01.png",
    "applicableClothingTypes": [
     "outer"
@@ -1813,6 +1816,7 @@
    }
   },
   "ex_styling_women_top_full_snapshot_03": {
+   "wearshotScopeV2": {"allSha256": "90a9d45f842cfcdf330870f73c10d38c77afa68a5e62e3c89757fd3360f3b467", "faceVisibility": "full", "garmentScopes": {"top": [], "bottom": []}},
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_top_full_snapshot_03.png",
    "applicableClothingTypes": [
     "top"
@@ -1921,6 +1925,7 @@
    }
   },
   "ex_styling_women_top_medium_snapshot_01": {
+   "wearshotScopeV2": {"allSha256": "c562e051725ee187bb16cf633c24580768cd9d793a821c54bd0ada5785ad3767", "faceVisibility": "hidden", "garmentScopes": {"top": [], "bottom": ["length"]}},
    "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-17-mia-cafe-snapshot-01/all/ex_styling_women_top_medium_snapshot_01.png",
    "applicableClothingTypes": [
     "top"
