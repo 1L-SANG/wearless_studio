@@ -74,6 +74,12 @@ def create_pool(database_url: str) -> AsyncConnectionPool:
         # DSN 의 options 파라미터가 아니라 configure 훅으로 건다 — 풀러(Supavisor)가 startup
         # 파라미터를 어떻게 다루든 `set time zone` 은 평범한 SQL 이라 그냥 통한다.
         configure=_configure,
+        # 대여 전에 커넥션이 살아 있는지 확인한다(왕복 1회). Supabase 풀러(Supavisor)는 NLB 뒤
+        # 여러 노드로 떠 있고 우리 커넥션은 그중 한 노드에 고정되므로, 그 노드가 교체되면 풀이
+        # 들고 있던 커넥션이 한꺼번에 죽는다 — 2026-09-09 프로덕션에서 12분간 그랬다
+        # ("SSL connection has been closed unexpectedly"). 이 훅이 없으면 죽은 커넥션이
+        # 그대로 나가서 디스패처·스윕이 각자 터지고 그게 전부 알림이 된다.
+        check=AsyncConnectionPool.check_connection,
         open=False,
     )
 
