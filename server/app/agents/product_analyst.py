@@ -18,6 +18,7 @@ import re
 
 from ..config import Settings
 from . import product_evidence_contract
+from .fit_axes import FIT_AXES
 from .gemini_image import InlineImage
 from .prompts import _sanitize
 from .style_tags import STYLE_TAGS, is_style_tag
@@ -28,10 +29,15 @@ log = logging.getLogger("wearless.product_analyst")
 # ── 계약 §4 enum 토큰 (검증·스키마 단일 참조) ────────────────────────────────
 CLOTHING_TYPES = ("top", "bottom", "outer", "dress")
 SUBCATEGORIES = (
-    "tshirt", "sweatshirt", "shirt", "knit",  # top
+    "tshirt", "sweatshirt", "shirt", "knit", "hoodie", "blouse",  # top
     "cotton_pants", "training_pants", "jeans", "slacks", "skirt",  # bottom
-    "jacket", "cardigan", "padding", "coat",  # outer (shirt 는 top 과 공유)
+    "leggings", "mini_skirt", "midi_skirt", "long_skirt",  # bottom (여성 전용)
+    "jacket", "cardigan", "padding", "coat", "blazer", "windbreaker",  # outer (shirt 는 top 과 공유)
+    "mini_dress", "midi_dress", "long_dress",  # dress
 )
+# 구 skirt 값은 저장 호환 검증에만 남기고 새 분석에는 길이별 분류를 제안한다.
+ACTIVE_SUBCATEGORIES = tuple(sub for sub in SUBCATEGORIES if sub != "skirt")
+WOMEN_ONLY_SUBCATEGORIES = frozenset({"leggings", "mini_skirt", "midi_skirt", "long_skirt"})
 FITS = ("slim", "regular", "semi_over", "over")
 GENDERS = ("women", "men")
 SWATCH_IDS = (
@@ -47,12 +53,12 @@ SWATCH_LABELS = {
 MAX_SELLING_POINTS = 2
 
 # clothingType별 허용 subCategory (계약 §4 그룹). cross-field 검증용 — 종류와 안 맞는
-# 세부카테고리(예: top+slacks)를 드롭한다. dress 는 subCategory 없음(null).
+# 세부카테고리(예: top+slacks)를 드롭한다. 기존 skirt 토큰은 하위호환으로 유지한다.
 SUBCATEGORY_BY_TYPE: dict[str, frozenset[str]] = {
-    "top": frozenset({"tshirt", "sweatshirt", "shirt", "knit"}),
-    "bottom": frozenset({"cotton_pants", "training_pants", "jeans", "slacks", "skirt"}),
-    "outer": frozenset({"shirt", "jacket", "cardigan", "padding", "coat"}),
-    "dress": frozenset(),
+    "top": frozenset({"tshirt", "sweatshirt", "shirt", "knit", "hoodie", "blouse"}),
+    "bottom": frozenset({"cotton_pants", "training_pants", "jeans", "slacks", "skirt", "leggings", "mini_skirt", "midi_skirt", "long_skirt"}),
+    "outer": frozenset({"shirt", "jacket", "cardigan", "padding", "coat", "blazer", "windbreaker"}),
+    "dress": frozenset({"mini_dress", "midi_dress", "long_dress"}),
 }
 
 # ── 카테고리 소재 프리셋 (사용자 결정 2026-07-15, 기본값 팩트체크 2026-07-13 계승) ──
@@ -203,6 +209,8 @@ def _render_material_presets() -> str:
     rows = list(MATERIAL_PRESETS.items()) + [(("dress", None), _MATERIAL_PRESETS_BY_TYPE["dress"])]
     lines = []
     for (ct, sub), presets in rows:
+        if sub is not None and sub not in ACTIVE_SUBCATEGORIES:
+            continue
         opts = "  ".join(
             f"{i}) " + "+".join(f"{m['name']} {m['ratio']}" for m in p["mix"]) + f" — {p['hint']}"
             for i, p in enumerate(presets)
@@ -211,13 +219,22 @@ def _render_material_presets() -> str:
     return "\n".join(lines)
 
 
+def _render_subcategory_length_rules() -> str:
+    return "\n".join(
+        f"  {option['value']}_{category}: {option['promptEn']}"
+        for category in ("skirt", "dress")
+        for option in FIT_AXES[category]["length"]["women"]
+    )
+
+
 def build_prompt(product: dict, *, evidence_binding: dict | None = None) -> str:
     """외부 템플릿 + enum 주입 + sanitize 된 상품 컨텍스트. product 자유텍스트는 인젝션 안전."""
     text = (
         _load_template()
         .replace("${materialPresets}", _render_material_presets())
         .replace("${clothingTypes}", " ".join(CLOTHING_TYPES))
-        .replace("${subCategories}", " ".join(SUBCATEGORIES))
+        .replace("${subCategories}", " ".join(ACTIVE_SUBCATEGORIES))
+        .replace("${subcategoryLengthRules}", _render_subcategory_length_rules())
         .replace("${fits}", " ".join(FITS))
         .replace("${genders}", " ".join(GENDERS))
         .replace("${swatchIds}", " ".join(SWATCH_IDS))
@@ -382,6 +399,8 @@ def validate(raw: dict, *, evidence_binding: dict | None = None) -> dict:
     # 종류 미상(None)이면 어떤 subCategory 도 검증 불가 → 드롭.
     allowed_subs = SUBCATEGORY_BY_TYPE.get(clothing_type, frozenset()) if clothing_type else frozenset()
     sub_category = raw.get("subCategory") if _in(raw.get("subCategory"), allowed_subs) else None
+    if sub_category in WOMEN_ONLY_SUBCATEGORIES and genders != ["women"]:
+        sub_category = None
     # 자유 명칭 — sanitize + 20자 컷 (칩/입력칸 UI 폭). enum 토큰을 그대로 되뱉으면 무의미 → 드롭.
     custom = _sanitize(raw.get("customCategory"))[:20]
     if custom and custom.lower() in SUBCATEGORIES:

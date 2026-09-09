@@ -338,7 +338,7 @@ const isMatchRefresh = (patch) =>
 
 function mergeAnalysisResult(ai) {
   const base = defaultAnalysisShape(ai.clothingType || 'top');
-  return {
+  return normalizeAnalysisFit({
     ...base,
     clothingType: ai.clothingType ?? null,
     subCategory: ai.subCategory ?? null,
@@ -356,7 +356,7 @@ function mergeAnalysisResult(ai) {
     customCategory: ai.customCategory ?? null,
     sellingPoints: [],
     inputConsistency: ai.inputConsistency ?? null,
-  };
+  });
 }
 
 // match-candidates(실 매칭 아이템) 조회 → [{id,name,gender,thumb,imageUrl,thumbnailUrl,selected:false}].

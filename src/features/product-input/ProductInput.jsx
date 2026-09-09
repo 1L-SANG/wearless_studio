@@ -48,6 +48,7 @@ import {
 import { Icon, Button, IconButton, ErrorState, Modal, UploadPendingTile, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { AnalysisForm, AnalysisSkeleton, AnalysisProgress, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
+import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 import {
   analysisResponseProductPatch,
   createTrailingPatchScheduler,
@@ -908,7 +909,7 @@ export function ProductInput() {
     const restored = restoreDraftProduct(payload);
     persistedColorsRef.current = restored.colors || [];
     setProduct(restored);
-    setAnalysis(payload.analysis || null);
+    setAnalysis(normalizeAnalysisFit(payload.analysis) || null);
     useAppStore.getState().restoreComposeMode(payload.composeMode);
     setAnalysisProjectId(null);
     setPhase(payload.analysis && hasRequiredDraftPhotos(restored) ? 'done' : 'input');

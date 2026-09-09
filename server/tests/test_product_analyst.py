@@ -106,10 +106,90 @@ def test_validate_cross_field_subcategory_group():
     assert pa.validate({"clothingType": "bottom", "subCategory": "slacks"})["subCategory"] == "slacks"
     assert pa.validate({"clothingType": "top", "subCategory": "knit"})["subCategory"] == "knit"
     assert pa.validate({"clothingType": "outer", "subCategory": "shirt"})["subCategory"] == "shirt"
-    # dress 는 subCategory 없음(그룹 비어있음) → 항상 None
+    # 원피스에 속하지 않는 세부 카테고리는 드롭한다.
     assert pa.validate({"clothingType": "dress", "subCategory": "knit"})["subCategory"] is None
     # clothingType 미상이면 subCategory 검증 불가 → 드롭
     assert pa.validate({"clothingType": "hat", "subCategory": "knit"})["subCategory"] is None
+
+
+@pytest.mark.parametrize("clothing_type,sub_category", [
+    ("top", "hoodie"), ("top", "blouse"),
+    ("outer", "blazer"), ("outer", "windbreaker"),
+    ("bottom", "leggings"), ("bottom", "mini_skirt"),
+    ("bottom", "midi_skirt"), ("bottom", "long_skirt"),
+    ("dress", "mini_dress"), ("dress", "midi_dress"), ("dress", "long_dress"),
+])
+def test_expanded_subcategory_survives_analysis_response(clothing_type, sub_category):
+    validated = pa.validate({
+        "clothingType": clothing_type, "subCategory": sub_category,
+        "targetGenders": ["women"],
+    })
+    assert pa.distribute(validated)["analysis"]["subCategory"] == sub_category
+    assert sub_category in pa.build_prompt({}).split()
+
+
+@pytest.mark.parametrize("sub_category", ["leggings", "mini_skirt", "midi_skirt", "long_skirt"])
+@pytest.mark.parametrize("gender_fields,expected_genders,allowed", [
+    ({"targetGenders": ["women"]}, ["women"], True),
+    ({"targetGenders": ["men"]}, ["men"], False),
+    ({}, [], False),
+    ({"targetGenders": []}, [], False),
+    ({"targetGenders": ["unknown"]}, [], False),
+    ({"targetGenders": ["men", "women"]}, ["men"], False),
+])
+def test_women_only_bottom_subcategory_requires_known_women_target(
+    sub_category, gender_fields, expected_genders, allowed,
+):
+    result = pa.distribute(pa.validate({
+        "clothingType": "bottom", "subCategory": sub_category, **gender_fields,
+    }))
+    assert result["product"]["clothingType"] == "bottom"
+    assert result["analysis"]["targetGenders"] == expected_genders
+    assert result["analysis"]["subCategory"] == (sub_category if allowed else None)
+
+
+@pytest.mark.parametrize("gender_fields", [{}, {"targetGenders": ["women"]}, {"targetGenders": ["men"]}])
+def test_legacy_skirt_remains_valid_for_stored_analysis(gender_fields):
+    validated = pa.validate({"clothingType": "bottom", "subCategory": "skirt", **gender_fields})
+    assert pa.distribute(validated)["analysis"]["subCategory"] == "skirt"
+
+
+def test_rendered_prompt_offers_active_categories_and_photo_based_dress_length():
+    prompt = pa.build_prompt({})
+    subcategories = next(line for line in prompt.splitlines() if line.startswith("- subCategory:")).split()
+    assert "skirt" not in subcategories
+    assert "bottom/skirt:" not in prompt
+    for category in ("mini_dress", "midi_dress", "long_dress", "leggings", "mini_skirt", "midi_skirt", "long_skirt"):
+        assert category in subcategories
+    assert "drops subCategory to null" not in prompt
+    assert "for a dress, subCategory is null" not in prompt
+    assert "null for dress" not in prompt
+    assert "For dress, choose mini_dress, midi_dress or long_dress from visible length" in prompt
+    assert "If the length cannot be determined from the photos, output null" in prompt
+    assert "Never invent measurements" in prompt
+    assert 'leggings, mini_skirt, midi_skirt and long_skirt require targetGenders ["women"]' in prompt
+    assert "For men or unknown gender, leave subCategory null" in prompt
+    assert "Do not change gender or choose a different garment category" in prompt
+
+
+def test_initial_length_classification_uses_the_generation_axis_definitions():
+    from app.agents.fit_axes import FIT_AXES
+
+    prompt = pa.build_prompt({})
+    for category in ("skirt", "dress"):
+        for option in FIT_AXES[category]["length"]["women"]:
+            assert f"{option['value']}_{category}: {option['promptEn']}" in prompt
+    assert "mini ends above the knee" not in prompt
+    assert "toward the ankle or floor" not in prompt
+
+
+@pytest.mark.parametrize("sub_category", ["mini_dress", "midi_dress", "long_dress", None])
+def test_dress_subcategory_keeps_photo_length_and_existing_women_rule(sub_category):
+    result = pa.distribute(pa.validate({
+        "clothingType": "dress", "subCategory": sub_category, "targetGenders": ["men"],
+    }))
+    assert result["analysis"]["subCategory"] == sub_category
+    assert result["analysis"]["targetGenders"] == ["women"]
 
 
 def test_validate_forces_dress_to_women():

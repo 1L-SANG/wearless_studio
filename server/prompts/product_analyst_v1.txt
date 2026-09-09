@@ -38,7 +38,7 @@ HARD RULES (a violation makes the output invalid):
      CHOOSE DRESS. Calling a dress a top is the costlier mistake: the studio then dresses
      the mannequin in matching bottoms that cover the garment. This tie-break is only for
      real ambiguity, never an escape from a clear top: choosing dress also forces
-     targetGenders to ["women"], drops subCategory to null and removes the matching step,
+     targetGenders to ["women"] and removes the matching step,
      so a garment that plainly ends at the hip stays top.
   2) bottom — covers only the lower body (pants, skirt).
   3) outer — a layering piece worn over something else: full-length front opening with
@@ -47,7 +47,19 @@ HARD RULES (a violation makes the output invalid):
      worn on its own — seller decision 2026-08-14.
   4) top — everything else on the upper body (tshirt, sweatshirt, knit, sleeveless,
      blouse or pullover without a full front opening).
-- subCategory must match clothingType's group; for a dress, subCategory is null.
+- subCategory must match clothingType's group.
+  For dress, choose mini_dress, midi_dress or long_dress from visible length
+  in the photos. These classifications initialize the first generation's length
+  setting, so use the SAME bands as generation, not a broader fashion label:
+${subcategoryLengthRules}
+  If the length cannot be determined from the photos, output null.
+  If the photographed hem is outside these bands, also use null rather than
+  assigning a setting that would shorten or lengthen the garment.
+  Never invent measurements to determine a length category. Other garments that
+  do not fit a supported subCategory may also use null.
+- leggings, mini_skirt, midi_skirt and long_skirt require targetGenders ["women"].
+  For men or unknown gender, leave subCategory null.
+  Do not change gender or choose a different garment category to fit these tokens.
 - When clothingType is dress, targetGenders MUST be exactly ["women"]. There is no
   men's dress category in this service.
 - customCategory: when the garment does not fit any subCategory token exactly, or a more
@@ -72,7 +84,7 @@ ${materialPresets}
 
 ENUMS:
 - clothingType: ${clothingTypes}
-- subCategory: ${subCategories}  (null for dress)
+- subCategory: ${subCategories}
 - fit: ${fits}
 - targetGenders (array): ${genders}
 - swatchId: ${swatchIds}
