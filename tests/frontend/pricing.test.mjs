@@ -57,15 +57,22 @@ function render(plansToShow, currentPlan = 'free', loggedIn = true) {
   }
 }
 
-test('구독 카드가 랜딩의 증정 문구와 기능을 표시하고 준비 중 상태를 유지한다', () => {
+// 2026-09-09: 정기결제(빌링)를 붙이면서 '준비 중' 이 사라졌다. 이 테스트는 옛 상태를
+// 고정하고 있었으므로 새 정책(구독 버튼 활성)으로 고쳐 쓴다 — 계획서
+// docs/plans/2026-09-09-toss-billing-subscription.md Task 10.
+test('구독 카드가 랜딩의 증정 문구와 기능을 표시하고 구독 버튼이 활성이다', () => {
   const html = render(plans);
   assert.match(html, /상세페이지 한 개에 13,000원. 사진 10장 기준이에요./);
   for (const text of ['Starter', 'Seller', 'Pro', '₩29,900', '₩79,900', '₩159,000',
     '2,000 크레딧 추가 증정', '6,000 크레딧 추가 증정', '마네킹컷 1회 무료 수정 가능',
     '모든 AI 모델 50% 할인', '모든 AI 모델 무료 제공']) assert.ok(html.includes(text), text);
   assert.equal((html.match(/MOST POPULAR/g) || []).length, 1);
+  assert.equal((html.match(/구독하기/g) || []).length, 3);
+  // '준비 중'(기능 미구현)이 아니라 '구독하기'다. 이 하네스에는 VITE_TOSS_CLIENT_KEY 가
+  // 없어서 버튼이 비활성인데, 그 사유가 결제 키 부재임을 title 로 확인한다.
+  assert.doesNotMatch(html, /준비 중/);
   assert.equal((html.match(/disabled=""/g) || []).length, 3);
-  assert.equal((html.match(/구독하기.*?준비 중/g) || []).length, 3);
+  assert.equal((html.match(/결제 키가 설정되지 않았어요/g) || []).length, 3);
   assert.equal((html.match(/<li\b/g) || []).length, 12);
 });
 

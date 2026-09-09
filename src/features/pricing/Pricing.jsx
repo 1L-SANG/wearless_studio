@@ -1,7 +1,8 @@
 /* =============================================================
    features/pricing — 요금제 (/pricing)
    구독 / 추가구매(top-up)를 connected-tabs 로 전환해 카드 표시.
-   구독은 준비 중, 추가구매는 토스 결제창으로 연결한다.
+   구독은 빌링키(정기결제), 추가구매는 1회 결제 — 둘 다 토스 결제창으로 연결한다.
+   구독 흐름은 features/subscription 이 이어받는다(계획서 2026-09-09-toss-billing-subscription).
    데이터: api.getPricingPlans() (http → /v1/pricing-plans, mock 폴백).
 
    ▶ 이 라우트는 **공개다**(App.jsx 에서 RequireAuth 밖). 랜딩(wearless.kr)의 요금제
@@ -86,6 +87,31 @@ export function Pricing() {
     }
   }
 
+  // 구독: 토스 결제창에서 카드를 등록(빌링키 인증)하고 successUrl 로 돌아온다.
+  // 실제 빌링키 발급·첫 결제는 서버가 authKey 로 처리한다 — **클라이언트는 금액을 모른다**.
+  async function subscribe(planCode) {
+    if (!session) { requireLogin(); return; }
+    setPayError('');
+    setBuying(planCode);
+    try {
+      const { loadTossPayments } = await import('@tosspayments/tosspayments-sdk');
+      const toss = await loadTossPayments(TOSS_CLIENT_KEY);
+      const payment = toss.payment({ customerKey: session.user.id });
+      await payment.requestBillingAuth({
+        method: 'CARD',
+        successUrl: `${window.location.origin}/subscription/success?plan=${encodeURIComponent(planCode)}`,
+        failUrl: `${window.location.origin}/subscription/fail`,
+      });
+    } catch (e) {
+      // 사용자가 창을 닫은 경우도 여기로 온다 — 조용히 버튼만 되돌린다.
+      const code = e?.code || '';
+      if (code !== 'USER_CANCEL' && code !== 'PAY_PROCESS_CANCELED') {
+        setPayError(e?.message || '카드 등록을 시작하지 못했어요.');
+      }
+      setBuying(null);
+    }
+  }
+
   const { data: plans = [], isLoading, isError, refetch } = useQuery({
     queryKey: ['pricingPlans'],
     queryFn: () => api.getPricingPlans(),
@@ -115,8 +141,10 @@ export function Pricing() {
       </p>
       <div className={s.billingNotice}>
         <p>
+          {/* 이월 정책(2026-09-09). 이 문장은 계약 고지다 — 코드 동작과 반드시 같아야 한다.
+              구독 유지 중에는 이월, 해지하면 주기 종료일에 이월분까지 전부 소멸. */}
           {recurring
-            ? '구독은 해지할 때까지 매달 자동 결제돼요. 구독 크레딧은 결제 주기가 끝나면 소멸하고 이월되지 않아요.'
+            ? '구독은 해지할 때까지 매달 자동 결제돼요. 구독 크레딧은 구독을 유지하는 동안 다음 달로 이월되지만, 해지하면 결제 주기가 끝나는 날 이월분까지 모두 소멸해요.'
             : '추가 구매 크레딧은 소멸하지 않아요.'}
           {' '}
           {/* 전자상거래법 §17②5호(디지털콘텐츠 제공 개시 시 철회 제한)는 같은 조 제6항의
@@ -195,8 +223,14 @@ export function Pricing() {
                           로그인하고 시작하기
                         </button>
                       ) : (
-                        <button type="button" className={`${s.purchaseButton} ${s.subscriptionButton}`} disabled title="결제 연동 준비 중">
-                          {isCurrent ? '이용 중' : '구독하기'} {!isCurrent && '(준비 중)'}
+                        <button
+                          type="button" className={`${s.purchaseButton} ${s.subscriptionButton}`}
+                          disabled={isCurrent || !TOSS_CLIENT_KEY || buying !== null}
+                          title={TOSS_CLIENT_KEY ? undefined : '결제 키가 설정되지 않았어요'}
+                          onClick={() => subscribe(p.code)}
+                        >
+                          {isCurrent ? '이용 중'
+                            : (buying === p.code ? '카드 등록 창 여는 중…' : '구독하기')}
                         </button>
                       )}
                     </div>

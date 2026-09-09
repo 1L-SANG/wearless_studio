@@ -127,6 +127,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         sam_autoscaler = None
         opendid_autoscaler = None
         detail_worker_autoscaler = None
+        subscription_biller = None
+        subscription_expirer = None
         if pool is not None:
             await pool.open()
             # revoke_license/cutover 는 fm_vc_required 와 무관하게 vc_id 가 있으면
@@ -154,6 +156,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not detail_worker_only and app.state.r2 is not None:
                 draft_asset_reclaimer = DraftAssetReclaimer(app)
                 await draft_asset_reclaimer.start()
+            # 정기결제 청구·만료 — 계획서 docs/plans/2026-09-09-toss-billing-subscription.md.
+            # detail-worker 태스크에서는 돌리지 않는다(청구는 API 태스크의 일이고, 두 곳에서
+            # 돌면 advisory lock 경합만 는다). 중복 실행은 락이 막지만 애초에 안 거는 게 낫다.
+            if not detail_worker_only and settings.subscription_billing_enabled:
+                from .workers.subscription_biller import (
+                    SubscriptionBiller,
+                    SubscriptionExpirer,
+                )
+
+                subscription_biller = SubscriptionBiller(app)
+                await subscription_biller.start()
+                subscription_expirer = SubscriptionExpirer(app)
+                await subscription_expirer.start()
             # sam2 온디맨드 기동/종료(2026-08-21). 디스패처 조건(R2·AI provider)과 **독립** —
             # DB 만 있으면 돈다. 디스패처 블록 안에 두면 provider 키가 빠진 환경에서 sam2 가
             # 영영 안 켜진다. off 면 어댑터가 클라이언트를 안 만들고 prewarm 은 즉시 return.
@@ -225,6 +240,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await opendid_autoscaler.stop()
         if detail_worker_autoscaler is not None:
             await detail_worker_autoscaler.stop()
+        if subscription_biller is not None:
+            await subscription_biller.stop()
+        if subscription_expirer is not None:
+            await subscription_expirer.stop()
         if draft_asset_reclaimer is not None:
             await draft_asset_reclaimer.stop()
         if sam_retry_pusher is not None:
