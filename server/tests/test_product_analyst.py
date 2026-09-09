@@ -106,10 +106,24 @@ def test_validate_cross_field_subcategory_group():
     assert pa.validate({"clothingType": "bottom", "subCategory": "slacks"})["subCategory"] == "slacks"
     assert pa.validate({"clothingType": "top", "subCategory": "knit"})["subCategory"] == "knit"
     assert pa.validate({"clothingType": "outer", "subCategory": "shirt"})["subCategory"] == "shirt"
-    # dress 는 subCategory 없음(그룹 비어있음) → 항상 None
+    # 원피스에 속하지 않는 세부 카테고리는 드롭한다.
     assert pa.validate({"clothingType": "dress", "subCategory": "knit"})["subCategory"] is None
     # clothingType 미상이면 subCategory 검증 불가 → 드롭
     assert pa.validate({"clothingType": "hat", "subCategory": "knit"})["subCategory"] is None
+
+
+@pytest.mark.parametrize("clothing_type,sub_category", [
+    ("top", "hoodie"), ("top", "blouse"),
+    ("outer", "blazer"), ("outer", "windbreaker"),
+    ("bottom", "leggings"), ("bottom", "mini_skirt"),
+    ("bottom", "midi_skirt"), ("bottom", "long_skirt"),
+    ("dress", "mini_dress"), ("dress", "midi_dress"), ("dress", "long_dress"),
+    ("bottom", "skirt"),
+])
+def test_expanded_subcategory_survives_analysis_response(clothing_type, sub_category):
+    validated = pa.validate({"clothingType": clothing_type, "subCategory": sub_category})
+    assert pa.distribute(validated)["analysis"]["subCategory"] == sub_category
+    assert sub_category in pa.build_prompt({}).split()
 
 
 def test_validate_forces_dress_to_women():

@@ -863,7 +863,13 @@ export function AnalysisForm({
   // 한글 IME 조합 중의 Enter 는 글자 확정용이다 — 칩 확정까지 하면 "수정"을 치다가 창이 닫힌다.
   const isComposing = (e) => e.nativeEvent?.isComposing === true;
 
-  const subCats = catalogs.subCategories[a.clothingType] || [];
+  const subCats = subCategoriesFor(a.clothingType, a.targetGenders);
+  function subCategoriesFor(clothingType, targetGenders) {
+    const gender = genderForClothingType(clothingType, targetGenders);
+    return (catalogs.subCategories[clothingType] || []).filter(
+      (item) => !item.gender || item.gender === gender,
+    );
+  }
   const selMatch = (a.matchClothing || []).filter((c) => c.selected).sort((x, y) => (x.selOrder || 0) - (y.selOrder || 0));
   const mainMatchId = selMatch[0]?.id;
   const isMatchCompatible = (item, clothingType = a.clothingType) => {
@@ -952,6 +958,18 @@ export function AnalysisForm({
     const sameProfileScope = prev?.category === cat && prev?.gender === gender;
     const axes = sameProfileScope ? { ...(prev.axes || {}) } : {}; // 카테고리·성별이 바뀌면 타 축 무효 → 리셋
     if (fit === null) delete axes.fit; else axes.fit = fit;
+    if ('subCategory' in patch && patch.subCategory !== a.subCategory) {
+      const length = {
+        mini_skirt: 'mini', mini_dress: 'mini',
+        midi_skirt: 'midi', midi_dress: 'midi',
+        long_skirt: 'long', long_dress: 'long',
+      }[patch.subCategory];
+      if (length) axes.length = length;
+    }
+    if (next.subCategory === 'leggings') {
+      delete axes.cut;
+      delete axes.length;
+    }
     const matchingFit = sameProfileScope
       ? matchingFitFromProfile(
         prev,
@@ -969,10 +987,11 @@ export function AnalysisForm({
     if (!t || t === a.clothingType) return;
     setMeasurementDraft({ clothingType: t, values: {} });
     const matchClothing = reconcileMatchCompatibility(a.matchClothing, t);
+    const targetGenders = normalizeTargetGendersForClothingType(t, a.targetGenders);
     onChange(withFitProfile({
       clothingType: t,
-      subCategory: (catalogs.subCategories[t] || [])[0]?.value ?? null,
-      targetGenders: normalizeTargetGendersForClothingType(t, a.targetGenders),
+      subCategory: subCategoriesFor(t, targetGenders)[0]?.value ?? null,
+      targetGenders,
       measurements: createMeasurementFields(t),
       matchClothing,
     }));
@@ -1055,8 +1074,14 @@ export function AnalysisForm({
                   a.clothingType,
                   v ? [v] : [],
                 );
+                const nextSubCats = subCategoriesFor(a.clothingType, targetGenders);
                 onChange(withFitProfile({
                   targetGenders,
+                  // 성별을 바꿔 지금 세부 카테고리가 그 성별에 없어지면 비운다. 다른 품목으로
+                  // 자동 대체하면 셀러가 고른 적 없는 종류로 상품이 바뀐다(오너 결정 2026-09-09).
+                  ...(a.subCategory && !nextSubCats.some((item) => item.value === a.subCategory)
+                    ? { subCategory: null }
+                    : {}),
                   stylingModelId: resolveStylingModelId({
                     selectedModelId: a.selectedModelId,
                     stylingModelId: a.stylingModelId,

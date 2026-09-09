@@ -28,9 +28,11 @@ log = logging.getLogger("wearless.product_analyst")
 # ── 계약 §4 enum 토큰 (검증·스키마 단일 참조) ────────────────────────────────
 CLOTHING_TYPES = ("top", "bottom", "outer", "dress")
 SUBCATEGORIES = (
-    "tshirt", "sweatshirt", "shirt", "knit",  # top
+    "tshirt", "sweatshirt", "shirt", "knit", "hoodie", "blouse",  # top
     "cotton_pants", "training_pants", "jeans", "slacks", "skirt",  # bottom
-    "jacket", "cardigan", "padding", "coat",  # outer (shirt 는 top 과 공유)
+    "leggings", "mini_skirt", "midi_skirt", "long_skirt",  # bottom (여성 전용)
+    "jacket", "cardigan", "padding", "coat", "blazer", "windbreaker",  # outer (shirt 는 top 과 공유)
+    "mini_dress", "midi_dress", "long_dress",  # dress
 )
 FITS = ("slim", "regular", "semi_over", "over")
 GENDERS = ("women", "men")
@@ -47,12 +49,12 @@ SWATCH_LABELS = {
 MAX_SELLING_POINTS = 2
 
 # clothingType별 허용 subCategory (계약 §4 그룹). cross-field 검증용 — 종류와 안 맞는
-# 세부카테고리(예: top+slacks)를 드롭한다. dress 는 subCategory 없음(null).
+# 세부카테고리(예: top+slacks)를 드롭한다. 기존 skirt 토큰은 하위호환으로 유지한다.
 SUBCATEGORY_BY_TYPE: dict[str, frozenset[str]] = {
-    "top": frozenset({"tshirt", "sweatshirt", "shirt", "knit"}),
-    "bottom": frozenset({"cotton_pants", "training_pants", "jeans", "slacks", "skirt"}),
-    "outer": frozenset({"shirt", "jacket", "cardigan", "padding", "coat"}),
-    "dress": frozenset(),
+    "top": frozenset({"tshirt", "sweatshirt", "shirt", "knit", "hoodie", "blouse"}),
+    "bottom": frozenset({"cotton_pants", "training_pants", "jeans", "slacks", "skirt", "leggings", "mini_skirt", "midi_skirt", "long_skirt"}),
+    "outer": frozenset({"shirt", "jacket", "cardigan", "padding", "coat", "blazer", "windbreaker"}),
+    "dress": frozenset({"mini_dress", "midi_dress", "long_dress"}),
 }
 
 # ── 카테고리 소재 프리셋 (사용자 결정 2026-07-15, 기본값 팩트체크 2026-07-13 계승) ──

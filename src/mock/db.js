@@ -92,16 +92,26 @@ const catalogs = {
     top: [
       { value: 'tshirt', label: '티셔츠' }, { value: 'sweatshirt', label: '맨투맨' },
       { value: 'shirt', label: '셔츠' }, { value: 'knit', label: '니트' },
+      { value: 'hoodie', label: '후드' }, { value: 'blouse', label: '블라우스' },
     ],
     bottom: [
       { value: 'cotton_pants', label: '면바지' }, { value: 'training_pants', label: '트레이닝 팬츠' },
-      { value: 'jeans', label: '청바지' }, { value: 'slacks', label: '슬랙스' }, { value: 'skirt', label: '치마' },
+      { value: 'jeans', label: '청바지' }, { value: 'slacks', label: '슬랙스' },
+      { value: 'leggings', label: '레깅스', gender: 'women' },
+      { value: 'mini_skirt', label: '미니 치마', gender: 'women' },
+      { value: 'midi_skirt', label: '미디 치마', gender: 'women' },
+      { value: 'long_skirt', label: '롱 치마', gender: 'women' },
     ],
     outer: [
       { value: 'shirt', label: '셔츠' }, { value: 'jacket', label: '자켓' },
       { value: 'cardigan', label: '가디건' }, { value: 'padding', label: '패딩' }, { value: 'coat', label: '코트' },
+      { value: 'blazer', label: '블레이저' }, { value: 'windbreaker', label: '바람막이' },
     ],
-    dress: [],
+    dress: [
+      { value: 'mini_dress', label: '미니 원피스' },
+      { value: 'midi_dress', label: '미디 원피스' },
+      { value: 'long_dress', label: '롱 원피스' },
+    ],
   },
   genders: [{ value: 'women', label: '여자' }, { value: 'men', label: '남자' }],
   fits: [
