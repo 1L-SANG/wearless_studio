@@ -33,6 +33,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
+from functools import lru_cache
 from io import BytesIO
 from typing import Protocol
 
@@ -106,6 +107,19 @@ GRAIN_MIN_RATIO = 0.85
 #: 같은 게이트 사유가 이만큼 연속되면 남은 시드를 포기하고 폴백한다. 시드를 바꿔도 같은 사유로
 #: 막히는 것은 그 컷의 구조적 문제라 더 뽑아도 낭비다(2026-09-09: c9_1 이 center_off 로 6시드 630초).
 GATE_SAME_REASON_STOP = 3
+#: identity_low — 결과 얼굴의 SFace 코사인(기준셋 8장 중앙)이 이 값 미만이면 실패 → 시드 재시도.
+#: 근거(2026-09-10, 기존 게이트를 통과한 8컷 실측: prod 6 + ZARA 2, LoRA v6-1500, 시드 42):
+#:   0.676 0.678 0.689 0.694 0.698 0.716 0.728 0.750 → 최저 0.676 · 평균 0.704 · σ 0.024.
+#:   최저 − 3σ = 0.604 → 0.60. 통과분 8/8 을 모두 남기면서 "다른 사람"(원본 타인 0.13~0.22)과
+#:   확실히 갈라지는 자리다. 기준셋 자기들끼리의 천장은 0.885.
+#:   ★ 참고: 옛 남자 14컷 집계의 pose_risk 군(0.545~0.647)은 이 문턱에서 재시도 대상이 된다 — 의도된 동작이다.
+GATE_IDENTITY_MIN = 0.60
+#: lighting_off — 링 색 보정량 |RGB| 최대값이 이 값을 넘으면 실패(조명·색이 근본적으로 어긋난 생성).
+#: 근거(기존 게이트 통과 8컷의 링 보정량): prod 6컷 0.1~2.9 · ZARA2 16.1 · ZARA1 27.2
+#:   → 허용한 최대 보정량 27.2 의 1.3배 = 35.4 → 35.0. prod 컷은 전부 2.9 이하라 여유가 크다.
+#:   (22.B 에서 시험한 국소 차분 필드의 링 평균도 같은 값이었다 — ZARA1 27.26 vs 전역 27.2 — 그래서
+#:    필드를 되돌린 뒤에도 이 분포와 문턱은 그대로 유효하다.)
+GATE_COLOR_MAX = 35.0
 #: 표정 추정(YuNet 5점 + 입술 색 마스크, 외부 모델 없음). 2026-09-08 v5 학습 원본 118장(캡션 라벨) 캘리브레이션:
 #:   mc = (입술 마스크 중심 y − 입꼬리 평균 y) / 입폭 — 무표정 p10 0.035 · 중앙 0.064, smiling 중앙 −0.008 · p75 0.053
 #:   ratio = 입폭 / 눈간격 — 무표정 중앙 0.853(p90 0.892), smiling p10 0.869
@@ -118,8 +132,22 @@ EXPR_NEUTRAL_MC_MIN = 0.045
 EXPR_NEUTRAL_RATIO_MAX = 0.87
 #: 색 보정에 쓰는 타원 테두리 링 폭(px, 타원 안쪽)
 COLOR_RING_PX = 8
+#: 합성 알파를 크롭 경계 이 픽셀 안에서 0 까지 내린다(1024² 기준, 네 변).
+#: 타원이 크롭 밖으로 나가면(예: ZARA 컷2 타원 상단 −412) 페더 알파가 크롭 첫 행에서 1.00 이라
+#: 경계에서 뚝 잘려 머리 위에 사각 테두리가 생긴다 — feather 로는 못 살린다(잘린 것이라서).
+#: 타원이 크롭 안에 있는 컷은 경계 알파가 이미 0 이므로 이 페이드가 아무 영향을 주지 않는다.
+#: ★ feather_mask/binary_mask 에는 넣지 않는다 — 그건 학습 control 의 정본이다.
+#: ★ 실측(2026-09-09): 표준 3× 크롭에서 E2 타원 상단은 **항상** 크롭 밖이다 — 프로덕션 6컷 T=−330~−428,
+#: ZARA 3컷 T=−391~−569. 좌·우·하는 전 컷 크롭 안(L 86~87 · R 939~942 · B 735~898). 그래서 페이드는
+#: **벗어난 변에만** 건다(crossing_sides) — 4변 일괄로 걸면 좌·우에서 페더 가우시안 꼬리(σ=0.12×얼굴폭≈40px)를
+#: 깎아 E2 가 없앤 측면 헤어 경계 문제를 되살린다. 결과적으로 상단 변에서만 일하지만 모든 컷에 적용된다
+#: (= 프로덕션 컷도 같은 이음선을 갖고 있었다).
+EDGE_FADE_PX = 48
+#: 페이드 맨 앞 이 픽셀은 정확히 0(축소 보간이 경계를 되살리지 않게)
+EDGE_FADE_HARD_PX = 3
 
 _YUNET = "face_detection_yunet_2023mar.onnx"
+_SFACE = "face_recognition_sface_2021dec.onnx"
 _DEFAULT_MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "face_models")
 _ANGLE_FRONT = "facing the camera"
 _ANGLE_THREE_QUARTER = "turned three-quarters toward camera"
@@ -154,6 +182,41 @@ def _detector(model_dir: str | None):
             det = cv2.FaceDetectorYN.create(path, "", (320, 320), score_threshold=0.7)
             _DETECTORS[model_dir] = det
         return det
+
+
+_RECOGNIZERS: dict[str, object] = {}
+
+
+def _recognizer(model_dir: str | None):
+    """SFace 임베더 — _detector 와 같은 락·캐시 규칙(모델 객체는 스레드 안전하지 않다)."""
+    model_dir = model_dir or default_model_dir()
+    with _DET_LOCK:
+        rec = _RECOGNIZERS.get(model_dir)
+        if rec is None:
+            path = os.path.join(model_dir, _SFACE)
+            if not os.path.exists(path):
+                raise FileNotFoundError("face identity weights missing")  # 경로는 예외에 싣지 않는다
+            rec = cv2.FaceRecognizerSF.create(path, "")
+            _RECOGNIZERS[model_dir] = rec
+        return rec
+
+
+def face_embedding(image: Image.Image, det: FaceDetection, model_dir: str | None = None) -> np.ndarray:
+    """검출 박스·랜드마크로 alignCrop 한 뒤 SFace 임베딩(128-d). 좌표는 원본 해상도 기준이다."""
+    arr = cv2.cvtColor(np.asarray(image.convert("RGB")), cv2.COLOR_RGB2BGR)
+    row = np.zeros(15, np.float32)
+    row[:4] = det.box
+    for i, (x, y) in enumerate(det.landmarks[:5]):
+        row[4 + 2 * i], row[5 + 2 * i] = x, y
+    row[14] = det.score
+    rec = _recognizer(model_dir)
+    with _DET_LOCK:
+        return np.asarray(rec.feature(rec.alignCrop(arr, row))).flatten()
+
+
+def cosine(a: np.ndarray, b: np.ndarray) -> float:
+    denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+    return float(np.dot(a, b) / denom) if denom else 0.0
 
 
 @dataclass(frozen=True)
@@ -465,6 +528,49 @@ def feather_mask(plan: FacePlan, feather: float = FEATHER_FRAC,
     return ellipse_mask(plan, ellipse).filter(ImageFilter.GaussianBlur(max(3, int(feather * plan.face_box_crop[2]))))
 
 
+@lru_cache(maxsize=32)
+def _edge_fade(px: int, sides: tuple[bool, bool, bool, bool]) -> np.ndarray:
+    """(CROP, CROP) float32 — 지정한 변에서만 0 → 1 로 px 픽셀에 걸쳐 올라가는 페이드.
+
+    sides = (좌, 상, 우, 하). 켜지 않은 변은 1 로 남으므로 그 쪽 알파는 손대지 않는다.
+    """
+    f = np.ones((CROP, CROP), np.float32)
+    if px <= 0 or not any(sides):
+        return f
+    px = min(int(px), CROP // 2)
+    hard = min(EDGE_FADE_HARD_PX, px)
+    ramp = np.clip((np.arange(px, dtype=np.float32) - (hard - 1)) / max(px - hard, 1), 0.0, 1.0)
+    left, top, right, bottom = sides
+    col = np.ones(CROP, np.float32)
+    row = np.ones(CROP, np.float32)
+    if left:
+        col[:px] = ramp
+    if right:
+        col[CROP - px :] = ramp[::-1]
+    if top:
+        row[:px] = ramp
+    if bottom:
+        row[CROP - px :] = ramp[::-1]
+    return np.minimum(row[:, None], col[None, :])
+
+
+def crossing_sides(plan: FacePlan, ellipse: tuple[float, float, float, float] | None = None) -> tuple[bool, bool, bool, bool]:
+    """타원이 크롭 밖으로 나간 변 (좌, 상, 우, 하). 실측상 E2 는 상단만 나간다."""
+    x0, y0, x1, y1 = ellipse_box(plan, ellipse)
+    return (x0 < 0, y0 < 0, x1 > CROP, y1 > CROP)
+
+
+def composite_alpha(plan: FacePlan, feather: float = FEATHER_FRAC, *,
+                    edge_fade_px: int = EDGE_FADE_PX,
+                    ellipse: tuple[float, float, float, float] | None = None) -> np.ndarray:
+    """합성용 1024² 알파 = 페더 마스크 × (타원이 벗어난 변에만 걸리는) 크롭 경계 페이드.
+
+    학습 control(binary_mask) 경로와 분리돼 있다 — control 은 정본이라 건드리지 않는다.
+    """
+    a = np.asarray(feather_mask(plan, feather, ellipse), np.float32) / 255.0
+    return a * _edge_fade(int(edge_fade_px), crossing_sides(plan, ellipse))
+
+
 def binary_mask(plan: FacePlan) -> Image.Image:
     """학습 control 의 블러 영역. 합성 페더와 무관하게 항상 0.12 페더에서 파생(build_v4c)."""
     return feather_mask(plan, FEATHER_FRAC).point(lambda v: 255 if v > 127 else 0)
@@ -524,12 +630,15 @@ def _hf_std(arr: np.ndarray, region: np.ndarray) -> float:
     return float(vals.std()) if vals.size else 0.0
 
 
-def paste_alpha(plan: FacePlan, feather: float = FEATHER_FRAC) -> np.ndarray:
+def paste_alpha(plan: FacePlan, feather: float = FEATHER_FRAC, *,
+                edge_fade_px: int = EDGE_FADE_PX) -> np.ndarray:
     """원본 해상도 (H, W) float32 알파. 0 인 픽셀은 composite 가 원본을 그대로 둔다."""
     x0, y0, side = plan.crop
-    small = feather_mask(plan, feather).resize((side, side), Image.BILINEAR)
+    a1024 = composite_alpha(plan, feather, edge_fade_px=edge_fade_px)
+    small = np.asarray(Image.fromarray(np.clip(a1024 * 255.0 + 0.5, 0, 255).astype(np.uint8))
+                       .resize((side, side), Image.BILINEAR), np.float32) / 255.0
     alpha = np.zeros((plan.height, plan.width), np.float32)
-    alpha[y0 : y0 + side, x0 : x0 + side] = np.asarray(small, np.float32) / 255.0
+    alpha[y0 : y0 + side, x0 : x0 + side] = small
     return alpha
 
 
@@ -560,11 +669,16 @@ def composite_with_meta(
     ring = ell & ~inner
     meta: dict = {"feather": feather, "color_shift": [0.0, 0.0, 0.0]}
     if ring.any():
+        # 링 8px 평균 RGB 를 원본에 맞추는 **전역** 보정. 국소 차분 필드는 시험했고 되돌렸다 — 22.B 참조:
+        #   normalized convolution(σ=0.5×얼굴폭)은 링 잔차를 27.2→2.26 으로 줄였지만 ZARA 컷1 목·턱이
+        #   노랗게 과보정됐다(목 색이동 38.7→65.6). 링이 위쪽에서 밝은 벽을, 아래쪽에서 목을 함께 표본해
+        #   그 배경 차이를 타원 내부로 끌고 들어온다. seamlessClone(MIXED_CLONE)은 더 나빠 신원이 붕괴했다
+        #   (점수 0.669→0.151, 보정 최대 247). 세 안을 같은 raw 로 비교해 전역 보정이 육안 최선이었다.
         shift = up[ring].mean(axis=0) - gen_arr[ring].mean(axis=0)
         gen_arr = np.clip(gen_arr + shift, 0, 255)
         meta["color_shift"] = [round(float(v), 2) for v in shift]
 
-    alpha = np.asarray(feather_mask(plan, feather), np.float32)[..., None] / 255.0
+    alpha = composite_alpha(plan, feather)[..., None]
     comp = gen_arr * alpha + up * (1.0 - alpha)
 
     hf_orig = _hf_std(up, ell)
@@ -605,13 +719,38 @@ def composite(
 @dataclass(frozen=True)
 class GateResult:
     passed: bool
-    reason: str  # ok · no_face · face_width · center_off · yaw_drift · yaw_flatten
+    #: ok · no_face · face_width · center_off · yaw_drift · yaw_flatten · identity_low · lighting_off
+    reason: str
     face_width: float | None = None
     center_offset: float | None = None  # 얼굴높이 대비 비율
     yaw_proxy: float | None = None
+    identity: float | None = None  # 기준셋 대비 SFace 코사인 중앙 (references 를 준 경우만)
+    color_max: float | None = None  # 링 색 보정량 |RGB| 최대
 
 
-def evaluate_gate(plan: FacePlan, result_image: Image.Image, model_dir: str | None = None) -> GateResult:
+def identity_score(result_image: Image.Image, references, det: FaceDetection | None = None,
+                   model_dir: str | None = None) -> float | None:
+    """결과 얼굴 vs 기준셋 임베딩들의 코사인 **중앙값**. 얼굴 미검출·기준셋 없음이면 None."""
+    if not references:
+        return None
+    if det is None:
+        det = detect_face(result_image, model_dir)
+        if det is None:
+            return None
+    emb = face_embedding(result_image, det, model_dir)
+    vals = sorted(cosine(emb, np.asarray(r, np.float32)) for r in references)
+    n = len(vals)
+    return round(vals[n // 2] if n % 2 else (vals[n // 2 - 1] + vals[n // 2]) / 2.0, 3)
+
+
+def evaluate_gate(plan: FacePlan, result_image: Image.Image, model_dir: str | None = None, *,
+                  references=None, color_ring_mean=None) -> GateResult:
+    """기하 게이트 + 광학 게이트.
+
+    references 를 주면 identity_low(기준셋 대비 SFace 중앙 < GATE_IDENTITY_MIN)를,
+    color_ring_mean(= composite 의 color_shift, 링 보정량)을 주면 lighting_off(|RGB| 최대 > GATE_COLOR_MAX)를
+    추가로 본다. 둘 다 없으면 기존 기하 게이트와 완전히 같다(하위 호환).
+    """
     det = detect_face(result_image, model_dir)
     if det is None:
         return GateResult(False, "no_face")
@@ -624,6 +763,9 @@ def evaluate_gate(plan: FacePlan, result_image: Image.Image, model_dir: str | No
     yaw_ok = det.yaw_proxy <= yaw_drift_limit(plan.yaw_proxy)
     # 정면화: 측면 입력이 3/4 로 펴진 것도 포즈 변형이다(yaw_drift 는 "더 돌아간 것"만 잡는다).
     flat = (plan.yaw_proxy >= GATE_YAW_FLATTEN_MIN_IN and det.yaw_proxy < GATE_YAW_FLATTEN_RATIO * plan.yaw_proxy)
+    ident = identity_score(result_image, references, det, model_dir)
+    color_max = (round(max(abs(float(v)) for v in color_ring_mean), 2)
+                 if color_ring_mean is not None and len(color_ring_mean) else None)
     if not width_ok:
         reason = "face_width"
     elif not center_ok:
@@ -632,9 +774,14 @@ def evaluate_gate(plan: FacePlan, result_image: Image.Image, model_dir: str | No
         reason = "yaw_drift"
     elif flat:
         reason = "yaw_flatten"
+    elif ident is not None and ident < GATE_IDENTITY_MIN:
+        reason = "identity_low"
+    elif color_max is not None and color_max > GATE_COLOR_MAX:
+        reason = "lighting_off"
     else:
         reason = "ok"
-    return GateResult(reason == "ok", reason, round(det.box[2], 1), round(offset, 3), det.yaw_proxy)
+    return GateResult(reason == "ok", reason, round(det.box[2], 1), round(offset, 3), det.yaw_proxy,
+                      ident, color_max)
 
 
 def yaw_drift_limit(input_yaw: float) -> float:
@@ -642,10 +789,12 @@ def yaw_drift_limit(input_yaw: float) -> float:
     return max(GATE_YAW_DRIFT_MIN, float(input_yaw) * GATE_YAW_DRIFT_MULT)
 
 
-def check_gate(plan: FacePlan, result_image: Image.Image, model_dir: str | None = None) -> bool:
+def check_gate(plan: FacePlan, result_image: Image.Image, model_dir: str | None = None, *,
+               references=None, color_ring_mean=None) -> bool:
     """결과 YuNet 얼굴폭이 입력 대비 ±30% 밖, 박스 중심이 기준점에서 얼굴높이 15% 초과 이탈,
     결과 yaw_proxy 가 max(0.20, 입력×2) 초과(yaw_drift), 또는 입력 대비 0.6배 미만(yaw_flatten)이면 실패."""
-    return evaluate_gate(plan, result_image, model_dir).passed
+    return evaluate_gate(plan, result_image, model_dir,
+                         references=references, color_ring_mean=color_ring_mean).passed
 
 
 # ---------------------------------------------------------------- 백엔드
@@ -715,6 +864,7 @@ def run_face_pass(
     feather: float = FEATHER_FRAC,
     model_dir: str | None = None,
     mime: str = "image/png",
+    references=None,
 ) -> FacePassResult:
     """시드를 순차로 시도해 check_gate 통과분을 채택. 전부 실패·예외면 원본 그대로(폴백) + 메타.
 
@@ -746,13 +896,16 @@ def run_face_pass(
             t1 = time.perf_counter()
             generated = backend.render(control, prompt, int(seed))
             result, cmeta = composite_with_meta(original, generated, plan, feather=feather)
-            gate = evaluate_gate(plan, result, model_dir)
+            gate = evaluate_gate(plan, result, model_dir, references=references,
+                                 color_ring_mean=cmeta.get("color_shift"))
             meta["tries"].append({
                 "seed": int(seed),
                 "gate": gate.reason,
                 "face_width_out": gate.face_width,
                 "center_offset": gate.center_offset,
                 "yaw_out": gate.yaw_proxy,
+                "identity": gate.identity,
+                "color_max": gate.color_max,
                 "ms": round((time.perf_counter() - t1) * 1000),
             })
             streak = streak + 1 if gate.reason == streak_reason else 1
@@ -765,6 +918,8 @@ def run_face_pass(
                     "seed": int(seed),
                     "face_width_out": gate.face_width,
                     "yaw_out": gate.yaw_proxy,
+                    "identity": gate.identity,
+                    "color_max": gate.color_max,
                     "reason": "ok",
                 })
                 buf = BytesIO()
@@ -874,11 +1029,14 @@ __all__ = [
     "CROP",
     "DEFAULT_SEEDS",
     "DEFAULT_TOKEN",
+    "EDGE_FADE_PX",
     "ELLIPSE",
     "ELLIPSE_TRAIN",
     "EXPR_FALLBACK",
     "EXPR_TEETH_MIN",
     "FEATHER_FRAC",
+    "GATE_COLOR_MAX",
+    "GATE_IDENTITY_MIN",
     "YAW_APPLY_MAX",
     "YAW_POSE_RISK_MIN",
     "FaceBackend",
@@ -891,6 +1049,10 @@ __all__ = [
     "NullBackend",
     "QwenLocalBackend",
     "apply_face_pass",
+    "composite_alpha",
+    "cosine",
+    "face_embedding",
+    "identity_score",
     "auto_upscale",
     "binary_mask",
     "build_control",

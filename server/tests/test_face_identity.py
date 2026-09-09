@@ -10,6 +10,9 @@ import asyncio
 import os
 from types import SimpleNamespace
 
+from unittest import mock
+
+import cv2
 import numpy as np
 import pytest
 from PIL import Image
@@ -199,10 +202,137 @@ def test_composite_color_shift_and_conditional_grain():
     assert meta_same["hf_std_result"] >= fi.GRAIN_MIN_RATIO * meta_same["hf_std_orig"]
 
 
+def _edge_crossing():
+    """타원이 크롭 상단 밖으로 나가는 계획(ZARA 컷2 와 같은 상황)."""
+    rng = np.random.default_rng(11)
+    orig = Image.fromarray(rng.integers(0, 256, size=(1600, 1200, 3), dtype=np.uint8))
+    plan = fi.plan_from_box(1200, 1600, (500.0, 20.0, 300.0, 400.0), yaw_proxy=0.02, eye_dist=140.0)
+    return orig, plan
+
+
+def test_edge_fade_zeroes_alpha_on_crossing_side():
+    """EDGE_FADE_PX: 타원이 크롭을 벗어난 변에서 페더 알파는 1 이지만 합성 알파는 0 이어야 한다."""
+    _, plan = _edge_crossing()
+    left, top, right, bottom = fi.crossing_sides(plan)
+    assert top and not (left or right or bottom), "E2 는 상단만 크롭을 벗어난다"
+    feathered = np.asarray(fi.feather_mask(plan), np.float32) / 255.0
+    assert feathered[0].max() > 0.9, "페더만으로는 상단에서 잘린다(= 사각 테두리 원인)"
+    alpha = fi.composite_alpha(plan)
+    assert alpha[0].max() == 0.0
+    col = fi.CROP // 2
+    assert alpha[fi.EDGE_FADE_PX, col] == pytest.approx(feathered[fi.EDGE_FADE_PX, col], abs=1e-6)
+    assert alpha[fi.EDGE_FADE_PX // 2, col] < feathered[fi.EDGE_FADE_PX // 2, col]
+    # 원본 해상도 알파도 크롭 첫 행이 0 (하드제로 3px 덕분에 축소 보간이 되살리지 않는다)
+    pa = fi.paste_alpha(plan)
+    x0, y0, side = plan.crop
+    assert pa[y0, x0 : x0 + side].max() == 0.0
+
+
+def test_edge_fade_leaves_non_crossing_sides_untouched():
+    """벗어나지 않은 변은 손대지 않는다 — 4변 일괄이면 좌·우에서 페더 꼬리를 깎는다."""
+    _, plan = _synthetic()
+    left, top, right, bottom = fi.crossing_sides(plan)
+    assert top and not (left or right or bottom)
+    feathered = np.asarray(fi.feather_mask(plan), np.float32) / 255.0
+    alpha = fi.composite_alpha(plan)
+    assert (alpha <= feathered + 1e-6).all(), "페이드는 알파를 올리지 않는다"
+    band = fi.EDGE_FADE_PX
+    assert feathered[:, :band].max() > 0.0, "이 픽스처는 좌측 밴드에 페더 꼬리가 있다"
+    below = slice(band, None)  # 상단 페이드가 걸리는 행은 제외 — 그건 상단 변의 일이다
+    assert np.array_equal(alpha[below, :band], feathered[below, :band])
+    assert np.array_equal(alpha[below, -band:], feathered[below, -band:])
+    assert np.array_equal(alpha[-band:, :], feathered[-band:, :])
+    assert feathered[0].max() > 0.9 and alpha[0].max() == 0.0
+    # 페이드를 끄면 정확히 페더로 돌아간다
+    assert np.array_equal(fi.composite_alpha(plan, edge_fade_px=0), feathered)
+
+
+def test_color_correction_stays_global_ring_shift():
+    """22.B 회귀 고정: 색 보정은 **전역** 링 shift 다. 국소 차분 필드는 지표는 좋아도 육안이 나빠져 되돌렸다.
+
+    (ZARA 컷1: 링 잔차 27.2→2.26 이지만 목 색이동 38.7→65.6 으로 노랗게 과보정. seamlessClone 은
+     신원 붕괴 0.669→0.151.) 그래서 보정량은 타원 안에서 상수여야 한다.
+    """
+    orig, plan = _synthetic()
+    up = np.asarray(fi.crop_1024(orig, plan), np.float32)
+    ramp = np.linspace(-40.0, 40.0, fi.CROP, dtype=np.float32)[None, :, None]
+    gen = Image.fromarray(np.clip(up + ramp, 0, 255).astype(np.uint8))
+    _, meta = fi.composite_with_meta(orig, gen, plan, grain=False)
+    assert "color_field_max" not in meta and "color_field_ring_mean" not in meta
+    assert len(meta["color_shift"]) == 3
+    # 링 평균과 정확히 일치하는 상수여야 한다(공간적으로 변하지 않는다)
+    ell = np.asarray(fi.ellipse_mask(plan)) > 127
+    k = 2 * fi.COLOR_RING_PX + 1
+    ring = ell & ~cv2.erode(ell.astype(np.uint8), np.ones((k, k), np.uint8)).astype(bool)
+    gen_arr = np.asarray(gen, np.float32)
+    expected = up[ring].mean(axis=0) - gen_arr[ring].mean(axis=0)
+    assert meta["color_shift"] == pytest.approx([round(float(v), 2) for v in expected], abs=0.01)
+
+
 def test_composite_accepts_non_1024_generation():
     orig, plan = _synthetic()
     out = fi.composite(orig, Image.new("RGB", (512, 512), (10, 200, 10)), plan)
     assert out.size == orig.size
+
+
+def _fake_det(plan):
+    """plan 기하를 그대로 만족하는 가짜 검출 — 합성 노이즈 픽스처에는 실제 얼굴이 없다."""
+    x, y, w, h = plan.box
+    ax, ay = plan.anchor_center
+    return fi.FaceDetection(box=(ax - w / 2, ay - h / 2, w, h), yaw_proxy=plan.yaw_proxy,
+                            eye_dist=plan.eye_dist, score=1.0,
+                            landmarks=((x + w * 0.3, y + h * 0.35), (x + w * 0.7, y + h * 0.35),
+                                       (x + w * 0.5, y + h * 0.55),
+                                       (x + w * 0.35, y + h * 0.75), (x + w * 0.65, y + h * 0.75)))
+
+
+def test_gate_identity_low_uses_reference_median():
+    """GATE_IDENTITY_MIN: 기준셋을 주면 신원 낮은 결과가 identity_low 로 걸린다. 안 주면 기존과 동일."""
+    orig, plan = _synthetic()
+    result = fi.composite(orig, fi.crop_1024(orig, plan), plan)
+    hi = [np.array([1.0, 0.0], np.float32)] * 3
+    lo = [np.array([0.0, 1.0], np.float32)] * 3
+    with mock.patch.object(fi, "detect_face", return_value=_fake_det(plan)), \
+         mock.patch.object(fi, "face_embedding", return_value=np.array([1.0, 0.0], np.float32)):
+        g_ok = fi.evaluate_gate(plan, result, references=hi)
+        assert g_ok.reason == "ok" and g_ok.identity == 1.0
+        g_low = fi.evaluate_gate(plan, result, references=lo)
+        assert g_low.reason == "identity_low" and g_low.passed is False
+        assert g_low.identity is not None and g_low.identity < fi.GATE_IDENTITY_MIN
+        # references 미지정이면 신원 검사를 하지 않는다(하위 호환)
+        g_none = fi.evaluate_gate(plan, result)
+        assert g_none.reason == "ok" and g_none.identity is None
+
+
+def test_gate_lighting_off_uses_color_ring_mean():
+    """GATE_COLOR_MAX: 링 차분 필드의 링 평균 |RGB| 최대가 문턱을 넘으면 lighting_off."""
+    orig, plan = _synthetic()
+    result = fi.composite(orig, fi.crop_1024(orig, plan), plan)
+    with mock.patch.object(fi, "detect_face", return_value=_fake_det(plan)):
+        assert fi.evaluate_gate(plan, result, color_ring_mean=[fi.GATE_COLOR_MAX - 1, 0.0, 0.0]).reason == "ok"
+        g = fi.evaluate_gate(plan, result, color_ring_mean=[0.0, fi.GATE_COLOR_MAX + 1, 0.0])
+        assert g.reason == "lighting_off" and g.passed is False
+        assert g.color_max == pytest.approx(fi.GATE_COLOR_MAX + 1)
+        # 부호 무관
+        assert fi.evaluate_gate(plan, result,
+                                color_ring_mean=[-(fi.GATE_COLOR_MAX + 1), 0.0, 0.0]).reason == "lighting_off"
+        # 미지정이면 검사하지 않는다
+        assert fi.evaluate_gate(plan, result).color_max is None
+
+
+@needs_fixtures
+def test_recognizer_wiring_and_cosine():
+    """_recognizer 배선: SFace 임베딩 128-d, 자기 자신 코사인 1.0, 0 벡터는 ZeroDivision 없이 0."""
+    img = _fixture_image("good_front")
+    det = fi.detect_face(img)
+    assert det is not None
+    emb = fi.face_embedding(img, det)
+    assert emb.shape == (128,)
+    assert fi.cosine(emb, emb) == pytest.approx(1.0, abs=1e-5)
+    assert fi.cosine(emb, np.zeros_like(emb)) == 0.0
+    # identity_score 는 기준셋 중앙값 — 자기 자신만 주면 1.0
+    assert fi.identity_score(img, [emb], det) == pytest.approx(1.0, abs=1e-3)
+    assert fi.identity_score(img, None, det) is None
 
 
 # ---------------------------------------------------------------- 게이트
