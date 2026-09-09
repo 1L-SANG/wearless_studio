@@ -55,10 +55,10 @@ network:
 
 variables:                       # 평문 (민감하지 않음). 시크릿은 아래 secrets 블록.
   APP_ENV: production
-  # 정기결제(빌링). 시크릿 3종을 SSM 에 넣고 테스트 키로 e2e 를 마친 뒤 true 로 켠다.
-  # off 면 /v1/subscriptions/* 라우트가 아예 없고 청구·만료 워커도 뜨지 않는다.
-  # 런북: docs/runbooks/subscription-billing.md
-  SUBSCRIPTION_BILLING_ENABLED: "false"
+  # 정기결제(빌링). ⚠️ 이 값이 true 인 채로 배포하려면 아래 secrets 3종이 **먼저** SSM 에
+  # 있어야 한다(TOSS_BILLING_SECRET_KEY·TOSS_BILLING_KEK·TOSS_WEBHOOK_PATH_SECRET).
+  # 없으면 ECS 태스크가 기동조차 못 한다. 런북: docs/runbooks/subscription-billing.md
+  SUBSCRIPTION_BILLING_ENABLED: "true"
   # 토스 문서: 자동결제 승인은 최대 60초. 일반결제 값(15초)을 재사용하면 정상 승인이
   # 타임아웃으로 뒤집혀 '결과 미상' 재시도만 쌓인다.
   TOSS_BILLING_TIMEOUT: "60"

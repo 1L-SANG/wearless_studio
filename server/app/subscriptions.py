@@ -112,7 +112,7 @@ async def start_subscription(
                 await cur.execute(
                     "insert into subscriptions (user_id, plan_code, billing_key_enc, "
                     "card_brand, card_last4, current_period_start, current_period_end, "
-                    "next_billing_at) values (%s, %s, pgp_sym_encrypt(%s, %s), %s, %s, "
+                    "next_billing_at) values (%s, %s, public.wl_billing_encrypt(%s, %s), %s, %s, "
                     "now(), now() + interval '1 month', now() + interval '1 month') "
                     "returning id::text as id, current_period_start, current_period_end",
                     (user_id, plan["code"], issued["billingKey"], kek,
@@ -324,7 +324,7 @@ async def change_plan(
         order_id = _new_order_id("up")
         async with conn.cursor() as cur:
             await cur.execute(
-                "select pgp_sym_decrypt(billing_key_enc, %s)::text as billing_key "
+                "select public.wl_billing_decrypt(billing_key_enc, %s) as billing_key "
                 "from subscriptions where user_id = %s",
                 (kek, user_id),
             )
@@ -423,7 +423,7 @@ async def replace_card(
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "select pgp_sym_decrypt(billing_key_enc, %s)::text as billing_key "
+                "select public.wl_billing_decrypt(billing_key_enc, %s) as billing_key "
                 "from subscriptions where user_id = %s and status <> 'ended'",
                 (kek, user_id),
             )
@@ -440,7 +440,7 @@ async def replace_card(
 
         async with conn.cursor() as cur:
             await cur.execute(
-                "update subscriptions set billing_key_enc = pgp_sym_encrypt(%s, %s), "
+                "update subscriptions set billing_key_enc = public.wl_billing_encrypt(%s, %s), "
                 "card_brand = %s, card_last4 = %s, billing_key_invalid = false "
                 "where user_id = %s returning id::text as id",
                 (issued["billingKey"], kek, issued.get("cardBrand"), issued.get("cardLast4"),
@@ -483,7 +483,7 @@ async def toss_webhook(secret: str, request: Request):
                     # 빌링키로 직접 찾을 수 없다(암호문은 매번 달라 비교 불가) → 풀어서 맞춘다.
                     await cur.execute(
                         "update subscriptions set billing_key_invalid = true "
-                        "where pgp_sym_decrypt(billing_key_enc, %s)::text = %s "
+                        "where public.wl_billing_decrypt(billing_key_enc, %s) = %s "
                         "and status in ('active', 'past_due') returning id::text as id",
                         (settings.toss_billing_kek, billing_key),
                     )

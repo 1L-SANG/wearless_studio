@@ -57,7 +57,7 @@ class _Cur:
             self._row = {"remaining_days": 15, "period_days": 30}
         elif "from pricing_plans" in q:
             self._row = PLANS.get(params[0])
-        elif "select pgp_sym_decrypt" in q:
+        elif "wl_billing_decrypt" in q:
             self._row = {"billing_key": "bk-1"}
         elif "update subscriptions set plan_code" in q:
             self.s["sub"] = {**self.s["sub"], "plan_code": params[0]}

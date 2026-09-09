@@ -11,11 +11,21 @@
 
 자동결제는 일반결제와 **별도 계약**이고, 상점아이디(MID)가 갈리면 시크릿 키도 갈린다.
 
-1. [개발자센터 API 키](https://developers.tosspayments.com/my/api-keys) 에서 MID 목록을 본다
-2. **자동결제(빌링)로 계약된 MID 가 따로 있으면** 그 MID 의 시크릿 키를 `TOSS_BILLING_SECRET_KEY` 로 넣는다
-3. MID 가 하나면 이 값을 비워 둔다 — 코드가 `TOSS_SECRET_KEY` 로 떨어진다(`toss_billing.billing_secret`)
+**우리 자동결제 MID: `bill_wearl02h5`** (2026-09-09 확인 — 일반결제 MID 와 별개다)
 
-키가 어긋나면 `NOT_SUPPORTED_METHOD` 또는 `UNAUTHORIZED_KEY` 가 뜬다. 둘 다 확정 거절(4xx)이라 재시도해도 같다.
+1. [개발자센터 API 키](https://developers.tosspayments.com/my/api-keys) 에서 **`bill_wearl02h5` 를 선택**한 뒤 나오는 시크릿 키를 쓴다
+2. 그 키를 `TOSS_BILLING_SECRET_KEY` 로 SSM 에 넣는다. **라이브 전환 시 이 값은 필수다** — 비워 두면 코드가 일반결제 MID 키(`TOSS_SECRET_KEY`)로 떨어지고, 그 키로는 빌링 승인이 `NOT_SUPPORTED_METHOD` 로 거절된다
+3. 테스트 단계에서는 비워도 된다. 테스트 시크릿 키는 MID 구분 없이 빌링이 열려 있다 —
+   2026-09-09 실측: `test_sk_…` 로 `POST /v1/billing/authorizations/issue` 호출 시
+   `NOT_FOUND_BILLING`(= 인증 통과, authKey 만 무효)이 돌아왔다
+
+키가 어긋났을 때 나오는 코드로 원인을 가른다. 셋 다 4xx(확정 거절)이라 재시도해도 같다.
+
+| 응답 코드 | 뜻 |
+|---|---|
+| `NOT_FOUND_BILLING` | ✅ 키·계약 정상. authKey 가 만료·오타일 뿐 |
+| `NOT_SUPPORTED_METHOD` | 자동결제 계약이 없는 키다 → `bill_wearl02h5` 의 키로 바꾼다 |
+| `UNAUTHORIZED_KEY` | 키 자체가 틀렸다(또는 Basic 인코딩에서 `:` 누락) |
 
 ## 2. 시크릿 3종 등록
 

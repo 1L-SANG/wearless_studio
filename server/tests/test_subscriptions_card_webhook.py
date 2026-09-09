@@ -24,14 +24,15 @@ class _Cur:
     async def execute(self, sql, params=None):
         q = " ".join(sql.split())
         self.s["sql"].append(q)
-        if "select pgp_sym_decrypt" in q:
-            self._row = {"billing_key": "bk-old"} if self.s["sub"] else None
+        # 웹훅 UPDATE 도 where 절에 wl_billing_decrypt 를 쓴다 — 복호화 조회보다 먼저 본다.
+        if "update subscriptions set billing_key_invalid = true" in q:
+            self.s["invalidated"].append(params)
+            self._row = {"id": "sub-1"}
         elif "update subscriptions set billing_key_enc" in q:
             self.s["card"] = {"brand": params[2], "last4": params[3]}
             self._row = {"id": "sub-1"}
-        elif "update subscriptions set billing_key_invalid = true" in q:
-            self.s["invalidated"].append(params)
-            self._row = {"id": "sub-1"}
+        elif "wl_billing_decrypt" in q:
+            self._row = {"billing_key": "bk-old"} if self.s["sub"] else None
         elif "from subscriptions" in q:
             self._row = self.s["sub"]
         else:

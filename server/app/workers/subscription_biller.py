@@ -99,7 +99,7 @@ class SubscriptionBiller(_PeriodicWorker):
                 await cur.execute(
                     "select id::text as id, user_id::text as user_id, plan_code, status, "
                     "fail_count, scheduled_plan_code, "
-                    "pgp_sym_decrypt(billing_key_enc, %s)::text as billing_key "
+                    "public.wl_billing_decrypt(billing_key_enc, %s) as billing_key "
                     "from subscriptions "
                     "where status in ('active', 'past_due') and next_billing_at <= now() "
                     "order by next_billing_at limit %s for update skip locked",

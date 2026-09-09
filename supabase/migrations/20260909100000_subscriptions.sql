@@ -4,6 +4,31 @@
 -- 승인하고 주기마다 반복되며 유예·재시도 상태를 갖는다 — 상태기계가 다르다.
 create extension if not exists pgcrypto;
 
+-- pgcrypto 가 어느 스키마에 깔렸든 동작하게 감싼다.
+-- Supabase 는 확장을 `extensions` 스키마에 설치하는데, 앱 커넥션(db.py _configure)은
+-- search_path 를 건드리지 않는다. 그래서 SQL 에 pgp_sym_encrypt 를 그대로 쓰면 역할의
+-- 기본 search_path 에 extensions 가 없는 순간 `function ... does not exist` 로 죽는다 —
+-- 로컬(공용 스키마 설치)에서는 멀쩡하고 prod 에서만 터지는 종류의 사고다.
+-- 함수에 search_path 를 박아 두면 호출 시점 세션 설정과 무관하게 해석된다.
+create or replace function public.wl_billing_encrypt(p_value text, p_kek text)
+returns bytea
+language sql
+immutable
+set search_path = public, extensions
+as $$ select pgp_sym_encrypt(p_value, p_kek) $$;
+
+create or replace function public.wl_billing_decrypt(p_value bytea, p_kek text)
+returns text
+language sql
+immutable
+set search_path = public, extensions
+as $$ select pgp_sym_decrypt(p_value, p_kek)::text $$;
+
+-- 빌링키 복호화는 서버(service_role)만 한다. anon/authenticated 가 이 함수를 부를 수
+-- 있으면 RLS 로 테이블을 막아 둔 의미가 없다.
+revoke all on function public.wl_billing_encrypt(text, text) from public, anon, authenticated;
+revoke all on function public.wl_billing_decrypt(bytea, text) from public, anon, authenticated;
+
 create table if not exists public.subscriptions (
   id uuid primary key default gen_random_uuid(),
   -- 1인 1구독. 등급 변경은 이 행을 갱신한다(새 행을 만들지 않는다).
