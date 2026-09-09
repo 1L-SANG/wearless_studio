@@ -398,3 +398,96 @@ async def resume_subscription(request: Request, user_id: str = Depends(require_u
                 raise _err("not_resumable", "되돌릴 수 있는 구독이 없어요.", 409)
         await conn.commit()
     return JSONResponse({"status": "active", "nextBillingAt": str(sub["next_billing_at"])})
+
+
+class CardBody(BaseModel):
+    auth_key: str = Field(alias="authKey", min_length=1, max_length=300)
+    customer_key: str = Field(alias="customerKey", min_length=2, max_length=300)
+
+    model_config = {"populate_by_name": True}
+
+
+@router.put("/card", summary="결제 카드 교체")
+async def replace_card(
+    request: Request, body: CardBody, user_id: str = Depends(require_user),
+):
+    """새 빌링키를 발급해 갈아끼우고 옛 키는 토스에서 삭제한다.
+
+    빌링키에는 갱신 개념이 없다 — 카드가 바뀌거나 유효기간이 지나면 **재발급만이 답**이다.
+    """
+    kek = _require_billing_config(request)
+    settings = _settings(request)
+    if body.customer_key != user_id:
+        raise _err("customer_key_mismatch", "결제 요청 정보가 계정과 달라요.", 403)
+
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select pgp_sym_decrypt(billing_key_enc, %s)::text as billing_key "
+                "from subscriptions where user_id = %s and status <> 'ended'",
+                (kek, user_id),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                raise _err("subscription_not_found", "구독이 없어요.", 404)
+            old_key = row["billing_key"]
+
+        try:
+            issued = await toss_billing.issue_billing_key(
+                settings, auth_key=body.auth_key, customer_key=user_id)
+        except toss_billing.TossBillingError as e:
+            raise _err(e.code, e.message, _billing_http_status(e))
+
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "update subscriptions set billing_key_enc = pgp_sym_encrypt(%s, %s), "
+                "card_brand = %s, card_last4 = %s, billing_key_invalid = false "
+                "where user_id = %s returning id::text as id",
+                (issued["billingKey"], kek, issued.get("cardBrand"), issued.get("cardLast4"),
+                 user_id),
+            )
+            await cur.fetchone()
+        await conn.commit()
+
+    # 새 키가 확정 저장된 뒤에 옛 키를 지운다(순서가 반대면 둘 다 잃는다).
+    await toss_billing.delete_billing_key(settings, billing_key=old_key)
+    return JSONResponse({"card": {"brand": issued.get("cardBrand"),
+                                  "last4": issued.get("cardLast4")}})
+
+
+webhook_router = APIRouter(prefix="/v1/webhooks", tags=["Subscriptions"])
+
+
+@webhook_router.post("/toss/{secret}", summary="토스 웹훅 수신", include_in_schema=False)
+async def toss_webhook(secret: str, request: Request):
+    """토스 일반 웹훅에는 서명 헤더가 없다 → **경로 시크릿이 인증 대용**이다.
+
+    그래도 본문은 신뢰하지 않는다. BILLING_DELETED 를 받아도 구독을 끊지 않고
+    '카드 재등록 필요' 표시만 남긴다 — 끊는 동작을 두면 위조 요청 하나로 남의
+    구독을 종료시킬 수 있다. 진짜로 죽은 키라면 다음 청구가 어차피 실패한다.
+    항상 200 을 돌려준다(4xx 를 주면 토스가 재전송을 반복한다).
+    """
+    settings = _settings(request)
+    configured = settings.toss_webhook_path_secret
+    if not configured or not secrets.compare_digest(secret, configured):
+        raise HTTPException(status_code=404, detail="not found")
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    if payload.get("eventType") == "BILLING_DELETED":
+        billing_key = str((payload.get("data") or {}).get("billingKey") or "")
+        if billing_key and settings.toss_billing_kek:
+            async with get_conn(request) as conn:
+                async with conn.cursor() as cur:
+                    # 빌링키로 직접 찾을 수 없다(암호문은 매번 달라 비교 불가) → 풀어서 맞춘다.
+                    await cur.execute(
+                        "update subscriptions set billing_key_invalid = true "
+                        "where pgp_sym_decrypt(billing_key_enc, %s)::text = %s "
+                        "and status in ('active', 'past_due') returning id::text as id",
+                        (settings.toss_billing_kek, billing_key),
+                    )
+                    await cur.fetchone()
+                await conn.commit()
+            log.warning("toss webhook BILLING_DELETED — 카드 재등록 필요")
+    return JSONResponse({"ok": True})

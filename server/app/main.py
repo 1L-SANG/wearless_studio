@@ -456,8 +456,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # 계획서 docs/plans/2026-09-09-toss-billing-subscription.md
     if settings.subscription_billing_enabled:
         from .subscriptions import router as subscriptions_router
+        from .subscriptions import webhook_router as toss_webhook_router
 
         app.include_router(subscriptions_router)
+        app.include_router(toss_webhook_router)
 
     # FaceMarket(해커톤) — 플래그 on일 때만 등록. off(프로드 기본)면 라우트 미존재 →
     # 기존 셀러 플로우/배포 무영향. verify·settle 훅이 OpenDID env 없는 프로드를 파손하지 않게.
