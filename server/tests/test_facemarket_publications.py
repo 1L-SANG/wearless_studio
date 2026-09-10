@@ -138,7 +138,7 @@ def _evidence_row(model_id=MODEL_ID, **overrides):
     row = {
         "id": LICENSE_ID, "model_id": model_id, "model_name": "홍*동",
         "status": "active", "license_valid_until": None, "unit_price": 1000,
-        "vc_id": "vc-1", "allowed_use": ["상의"], "forbidden_use": [],
+        "vc_id": "vc-1", "allowed_use": ["일반 의류"], "forbidden_use": [],
         "model_status": "verified", "assets_status": "ready",
         "gender": "female", "height_bucket": "m", "body_type": "standard",
         "current_enrollment_id": ENROLLMENT_ID, "license_enrollment_id": ENROLLMENT_ID,
