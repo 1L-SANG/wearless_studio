@@ -51,7 +51,7 @@ export function ApplyStartPage() {
                       <span className={s.tooltip} id="apply-settlement-tooltip" role="tooltip">1건 기준 {formatKrw(FACEMARKET_PRICING.perCut)}의 {sharePercent}%, {formatKrw(perCutShare)}</span>
                     </span>
                   </li>
-                  <li>허용, 금지 카테고리 설정이 가능해요</li>
+                  <li>내 얼굴을 쓸 수 있는 옷의 종류를 선택할 수 있어요</li>
                   <li>내 얼굴이 어디 쓰였는지 전부 추적이 가능해요</li>
                 </ul>
                 <p className={s.fine}>쌓인 몫이 {formatKrw(MIN_PAYOUT_KRW)}을 넘으면 매월 {SETTLEMENT_DAY}일에 보내드려요</p>

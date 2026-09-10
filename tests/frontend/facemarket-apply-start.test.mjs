@@ -11,7 +11,7 @@ test('apply is the first public navigation destination and a permitted return pa
   assert.equal(facemarketRootTarget('/apply'), '/apply');
 });
 test('the ten FAQ titles follow the approved list and omit the held protection claim', () => {
-  // 승인본은 커밋되지 않는 mockups/ 폴더의 faq_final.md 라 CI 에는 없다. 제목 10개를 여기에 고정한다.
+  // 질문 목록과 저장소에 보관한 답변 기준을 함께 확인한다.
   const expected = [
     'FaceMarket에서 모델은 무슨 일을 하나요?',
     '지원할 때 무엇이 필요한가요?',
@@ -27,6 +27,10 @@ test('the ten FAQ titles follow the approved list and omit the held protection c
   assert.deepEqual(APPLY_START_FAQ.map(({ q }) => q), expected);
   assert.ok(APPLY_START_FAQ.every(({ a }) => typeof a === 'string' && a.trim().length > 40));
   assert.ok(!APPLY_START_FAQ.some(({ q }) => q.includes('확실히 지켜지는')));
+  const source = read('../../documents/facemarket_apply_faq.md').split('## 공개 FAQ')[1];
+  const expectedCopy = [...source.matchAll(/\*\*Q\. (.+?)\*\*\n([\s\S]*?)(?=\n\n\*\*Q\.|$)/g)]
+    .map(([, q, a]) => ({ q, a: a.trim() }));
+  assert.deepEqual(APPLY_START_FAQ, expectedCopy);
 });
 test('public start is routed in LandingShell and links to the guarded application', () => {
   assert.match(read('../../src/apps/facemarket/App.jsx'), /path="apply" element=\{<ApplyStartPage \/>\}/);

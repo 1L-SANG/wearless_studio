@@ -39,6 +39,14 @@ function optionalLink(value) {
   return /^[a-z][a-z\d+.-]*:/i.test(link) ? link : `https://${link}`;
 }
 
+function linkError(value) {
+  const link = optionalLink(value);
+  if (!link) return '';
+  if (link.length > 500) return '링크는 https://를 포함해 500자까지 입력할 수 있어요. 더 짧은 공유 주소를 입력해 주세요.';
+  if (!/^https?:\/\//.test(link)) return 'http:// 또는 https://로 시작하는 웹 주소를 입력해 주세요.';
+  return '';
+}
+
 function formatPhone(input) {
   const digits = input.replace(/\D/g, '').slice(0, 13);
   const prefixLength = digits.startsWith('02') ? 2 : 3;
@@ -119,7 +127,7 @@ export function ModelApply() {
       // 재지원은 보존 중인 입력값만 복원한다. 사진과 체크사항은 새로 받는다.
       const previous = app && !app.piiPurgedAt ? app : {};
       setForm(Object.fromEntries(Object.entries(EMPTY).map(([key, fallback]) => [
-        key, key === 'contactEmail' ? accountEmail : (previous[key] ?? fallback),
+        key, key === 'contactEmail' ? (previous.contactEmail || accountEmail) : (previous[key] ?? fallback),
       ])));
       setPhase('ready');
     }).catch((err) => {
@@ -158,12 +166,15 @@ export function ModelApply() {
     }
   };
 
+  const contactEmail = form.contactEmail.trim();
+  const emailValid = contactEmail.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail);
+  const linkErrors = { portfolioUrl: linkError(form.portfolioUrl), snsUrl: linkError(form.snsUrl) };
   const basicValid = Boolean(form.applicantName.trim() && ['female', 'male'].includes(form.gender)
     && isAdultBirthdate(form.birthdate) && /^[\d-]+$/.test(form.phone)
-    && /^\d{9,13}$/.test(form.phone.replace(/-/g, '')) && accountEmail);
+    && /^\d{9,13}$/.test(form.phone.replace(/-/g, '')) && emailValid);
   const profileValid = Boolean(photo?.staged && !uploading && validInteger(form.heightCm, 100, 250)
     && (form.weightKg === '' || form.weightKg == null || validInteger(form.weightKg, 30, 200))
-    && typeof form.agencyContracted === 'boolean');
+    && typeof form.agencyContracted === 'boolean' && !linkErrors.portfolioUrl && !linkErrors.snsUrl);
   const uncheckedCount = ATTESTATIONS.filter(({ key }) => !attest[key]).length;
   const busy = phase === 'submitting';
   const canSubmit = basicValid && profileValid && uncheckedCount === 0;
@@ -175,7 +186,7 @@ export function ModelApply() {
     setError('');
     try {
       await submitApplication({
-        contactEmail: accountEmail,
+        contactEmail,
         applicantName: form.applicantName.trim(),
         gender: form.gender,
         birthdate: form.birthdate,
@@ -192,7 +203,23 @@ export function ModelApply() {
       if (mounted.current) setPhase('complete');
     } catch (err) {
       if (mounted.current) {
-        setError(err.status === 409 ? '이미 검토 중인 지원서가 있어요. 상태 화면에서 확인해 주세요.' : '보내지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.');
+        if (err.status === 409) {
+          setError('이미 검토 중인 지원서가 있어요. 상태 화면에서 확인해 주세요.');
+        } else if (err.status >= 400 && err.status < 500) {
+          setError(err.message || '입력한 내용을 확인하고 다시 보내 주세요.');
+          const correctionStep = {
+            invalid_email: 1, invalid_gender: 1, invalid_phone: 1,
+            invalid_url: 2, invalid_height: 2, invalid_weight: 2, invalid_experience: 2,
+          }[err.code];
+          if (correctionStep) {
+            setStep(correctionStep);
+            setEditing(correctionStep);
+          }
+        } else {
+          setError(err.status
+            ? '지금은 지원서를 처리하지 못했어요. 잠시 후 다시 눌러 주세요.'
+            : '서버에 연결하지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.');
+        }
         setPhase('ready');
       }
     } finally { submitting.current = false; }
@@ -217,7 +244,7 @@ export function ModelApply() {
 
   const basicRows = [
     ['이름', form.applicantName], ['성별', form.gender === 'female' ? '여성' : '남성'],
-    ['생년월일', form.birthdate.replace(/^(\d{4})-(\d{2})-(\d{2})$/, (_, year, month, day) => `${year}년 ${Number(month)}월 ${Number(day)}일`)], ['전화번호', form.phone], ['이메일', accountEmail],
+    ['생년월일', form.birthdate.replace(/^(\d{4})-(\d{2})-(\d{2})$/, (_, year, month, day) => `${year}년 ${Number(month)}월 ${Number(day)}일`)], ['전화번호', form.phone], ['이메일', contactEmail],
   ];
   const profileRows = [
     ['키', form.heightCm ? `${form.heightCm}cm` : ''], ['몸무게', form.weightKg ? `${form.weightKg}kg` : ''],
@@ -258,7 +285,8 @@ export function ModelApply() {
             <input className={s.input} type="tel" required autoComplete="tel" placeholder="010-0000-0000" value={form.phone} onChange={(e) => set('phone', formatPhone(e.target.value))} />
           </label>
           <label className={`${s.field} ${s.emailField}`}><span className={s.label}>이메일<span className={s.required}>*</span></span>
-            <input className={s.input} type="email" required autoComplete="email" value={accountEmail} readOnly />
+            <input className={s.input} type="email" required autoComplete="email" spellCheck={false} value={form.contactEmail} onChange={(e) => set('contactEmail', e.target.value)} aria-invalid={Boolean(contactEmail && !emailValid)} aria-describedby={contactEmail && !emailValid ? 'contact-email-error' : undefined} />
+            {contactEmail && !emailValid && <span id="contact-email-error" className={`${s.hint} ${s.error}`} role="alert">이메일을 254자 이내의 name@example.com 형식으로 입력해 주세요.</span>}
           </label>
         </div>}
 
@@ -290,7 +318,10 @@ export function ModelApply() {
             <button key={label} type="button" className={`${s.pill} ${form.agencyContracted === value ? s.pillOn : ''}`} aria-pressed={form.agencyContracted === value} onClick={() => set('agencyContracted', value)}>{label}</button>
           ))}</div></fieldset>
           {[{ key: 'portfolioUrl', label: '포트폴리오 링크', placeholder: 'www.portfolio.com' }, { key: 'snsUrl', label: 'SNS 링크', placeholder: 'www.instagram.com/example' }].map(({ key, label, placeholder }) => (
-            <label key={key} className={`${s.field} ${s.linkField}`}><span className={s.label}>{label}</span><input className={s.input} inputMode="url" placeholder={placeholder} value={form[key]} onChange={(e) => set(key, e.target.value)} /></label>
+            <label key={key} className={`${s.field} ${s.linkField}`}><span className={s.label}>{label}</span>
+              <input className={s.input} inputMode="url" spellCheck={false} placeholder={placeholder} value={form[key]} onChange={(e) => set(key, e.target.value)} aria-invalid={Boolean(linkErrors[key])} aria-describedby={linkErrors[key] ? `${key}-error` : undefined} />
+              {linkErrors[key] && <span id={`${key}-error`} className={`${s.hint} ${s.error}`} role="alert">{linkErrors[key]}</span>}
+            </label>
           ))}
         </div>}
 

@@ -288,7 +288,7 @@ async def _load_admin_model(conn, model_id: str, *, for_update: bool = False) ->
         await cur.execute(
             """select m.id::text as id, m.status, m.redo_count, m.fullbody_image_url,
                       e.status as enrollment_status,
-                      coalesce(u.email, a.contact_email) as contact_email,
+                      coalesce(a.contact_email, u.email) as contact_email,
                       exists (
                         select 1 from fm_licenses l
                          where l.model_id = m.id

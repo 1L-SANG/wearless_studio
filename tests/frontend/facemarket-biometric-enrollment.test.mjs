@@ -1714,10 +1714,13 @@ test('확인에서 고치기로 돌아가도 입력값을 유지하고 다음은
     tree = harness.render();
     assert.ok(findTree(tree, (node) => node.type === 'input' && node.props.value === '김하나'));
     const email = findTree(tree, (node) => node.type === 'input' && node.props.type === 'email');
-    assert.equal(email.props.readOnly, true);
+    assert.ok(!email.props.readOnly);
+    email.props.onChange({ target: { value: 'contact@example.com' } });
+    tree = harness.render();
     findTree(tree, (node) => node.type === 'button' && node.props.children === '다음').props.onClick();
     assert.equal(harness.runtime.states[4], 3);
-    assert.deepEqual(harness.runtime.states[1], completeApplicationForm);
+    assert.deepEqual(harness.runtime.states[1], { ...completeApplicationForm, contactEmail: 'contact@example.com' });
+    assert.ok(findTree(harness.render(), (node) => node.type === 'dd' && node.props.children === 'contact@example.com'));
   } finally { await harness.close(); }
 });
 
@@ -1991,7 +1994,7 @@ test('재지원은 이전 입력만 복원하고 사진과 다섯 체크는 다�
     harness.runtime.effects.forEach((effect) => effect());
     await eventually(() => harness.runtime.states[0] === 'ready', 'the rejected form loads');
     assert.equal(harness.runtime.states[1].applicantName, '김하나');
-    assert.equal(harness.runtime.states[1].contactEmail, 'model@example.com');
+    assert.equal(harness.runtime.states[1].contactEmail, 'previous@example.com');
     assert.equal(harness.runtime.states[2], null);
     assert.deepEqual(Object.values(harness.runtime.states[3]), [false, false, false, false, false]);
   } finally { await harness.close(); }
@@ -2034,3 +2037,103 @@ test('지원 시작 상단바는 중복 지원 CTA 대신 로그인 버튼을 �
     assert.deepEqual(logins, ['/apply']);
   } finally { await harness.close(); }
 });
+
+for (const accountEmail of [null, 'google@example.com']) {
+  test(`지원서 연락 이메일은 계정 이메일(${accountEmail})과 달라도 제출된다`, async () => {
+    const submissions = [];
+    const harness = await modelComponentHarness({
+      entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
+      initialStates: ['ready', { ...completeApplicationForm, contactEmail: accountEmail || '' }, { staged: true, previewUrl: 'blob:profile' }, applicationAttestations, 1, null, false, ''],
+      api: { submitApplication: async (body) => { submissions.push(body); return { status: 'under_review' }; } },
+    });
+    harness.runtime.session = { user: { email: accountEmail } };
+    try {
+      let tree = harness.render();
+      const email = findTree(tree, (node) => node.type === 'input' && node.props.type === 'email');
+      assert.equal(email.props.value, accountEmail || '');
+      assert.ok(!email.props.readOnly);
+      for (const invalid of ['', 'wrong-address', 'a'.repeat(255) + '@example.com']) {
+        email.props.onChange({ target: { value: invalid } });
+        tree = harness.render();
+        assert.equal(findTree(tree, (node) => node.type === 'button' && node.props.children === '다음').props.disabled, true);
+      }
+      email.props.onChange({ target: { value: ' contact@example.com ' } });
+      tree = harness.render();
+      const next = findTree(tree, (node) => node.type === 'button' && node.props.children === '다음');
+      assert.equal(next.props.disabled, false);
+      next.props.onClick();
+      findTree(harness.render(), (node) => node.type === 'button' && node.props.children === '다음').props.onClick();
+      tree = harness.render();
+      assert.ok(findTree(tree, (node) => node.type === 'dd' && node.props.children === 'contact@example.com'));
+      const submit = findTree(tree, (node) => node.type === 'button' && node.props.children === '지원 완료');
+      assert.equal(submit.props.disabled, false);
+      await submit.props.onClick();
+      assert.equal(submissions[0].contactEmail, 'contact@example.com');
+      assert.equal(harness.runtime.states[0], 'complete');
+    } finally { await harness.close(); }
+  });
+}
+
+test('지원서의 긴 링크와 잘못된 주소는 프로필 단계에서 알리고 수정 후 진행한다', async () => {
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
+    initialStates: ['ready', completeApplicationForm, { staged: true }, applicationAttestations, 2, null, false, ''], api: {},
+  });
+  try {
+    for (const placeholder of ['www.portfolio.com', 'www.instagram.com/example']) {
+      const input = findTree(harness.render(), (node) => node.type === 'input' && node.props.placeholder === placeholder);
+      // https:// is added before submission; it must count towards the server's limit.
+      for (const invalid of ['example.com/' + 'a'.repeat(490), 'ftp://example.com/file']) {
+        input.props.onChange({ target: { value: invalid } });
+        const tree = harness.render();
+        assert.equal(findTree(tree, (node) => node.type === 'button' && node.props.children === '다음').props.disabled, true);
+        assert.ok(findTree(tree, (node) => node.props.role === 'alert'));
+        assert.equal(findTree(tree, (node) => node.type === 'input' && node.props.placeholder === placeholder).props.value, invalid, 'pasting must not silently truncate the URL');
+      }
+      input.props.onChange({ target: { value: 'https://example.com/' + 'a'.repeat(480) } });
+      assert.equal(findTree(harness.render(), (node) => node.type === 'button' && node.props.children === '다음').props.disabled, false);
+      input.props.onChange({ target: { value: '' } });
+    }
+  } finally { await harness.close(); }
+});
+
+for (const failure of [
+  { status: 400, code: 'invalid_url', message: '포트폴리오 링크가 너무 깁니다.', expected: /포트폴리오 링크가 너무 깁니다/, step: 2 },
+  { status: 400, code: 'invalid_email', message: '이메일 형식이 올바르지 않습니다.', expected: /이메일 형식/, step: 1 },
+  { status: 409, code: 'application_exists', message: '이미 검토 중인 지원서가 있습니다.', expected: /이미/, step: 3 },
+  { status: 503, message: 'internal server detail', expected: /잠시 후/, step: 3 },
+  { message: 'Failed to fetch', expected: /인터넷 연결/, step: 3 },
+]) {
+  test(`지원서 제출 실패(${failure.code || failure.status || 'network'})는 원인을 구분하고 작성 내용을 보존한다`, async () => {
+    let attempts = 0;
+    const form = { ...completeApplicationForm, portfolioUrl: 'https://example.com/portfolio' };
+    const photo = { staged: true, previewUrl: 'blob:profile' };
+    const harness = await modelComponentHarness({
+      entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
+      initialStates: ['ready', form, photo, applicationAttestations, 3, null, false, ''],
+      api: { submitApplication: async () => { attempts += 1; if (attempts === 1) throw Object.assign(new Error(failure.message), failure); return { status: 'under_review' }; } },
+    });
+    try {
+      await findTree(harness.render(), (node) => node.type === 'button' && node.props.children === '지원 완료').props.onClick();
+      let tree = harness.render();
+      assert.ok(findTree(tree, (node) => node.props.role === 'alert'));
+      assert.match(harness.runtime.states[7], failure.expected);
+      assert.equal(harness.runtime.states[4], failure.step);
+      assert.deepEqual(harness.runtime.states[1], form);
+      assert.deepEqual(harness.runtime.states[2], photo);
+      assert.deepEqual(harness.runtime.states[3], applicationAttestations);
+      if (failure.status === 409) {
+        assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/status'));
+      } else {
+        if (failure.step !== 3) {
+          findTree(tree, (node) => node.type === 'button' && node.props.children === '다음').props.onClick();
+          tree = harness.render();
+        }
+        const retry = findTree(tree, (node) => node.type === 'button' && node.props.children === '지원 완료');
+        assert.equal(retry.props.disabled, false);
+        await retry.props.onClick();
+        assert.equal(harness.runtime.states[0], 'complete');
+      }
+    } finally { await harness.close(); }
+  });
+}
