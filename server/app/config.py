@@ -387,6 +387,11 @@ class Settings:
     face_autoscale_idle_minutes: int = 30
     face_runpod_pod_id: str | None = None
     face_runpod_api_key: str | None = None
+    #: 켜라고 한 뒤 이 시간이 지나도 /healthz 가 안 뜨면 "안 뜬다"로 보고 내린다(요금 방지).
+    #: 근거는 콜드스타트 실측 × 2 (services/face_autoscale.py 주석).
+    face_autoscale_start_grace_minutes: int = 8
+    #: 파드 볼륨에 올라가 있어야 할 코드 버전(git sha). 다르면 **경고 로그만** — 컷은 막지 않는다.
+    face_render_code_version: str | None = None
     # ---- 이미지 실비 계측(내부용) ----
     # false 면 image_usage_events 적재를 끄고 로그만 남긴다.
     # **기본값은 app_env 가 정한다**(load_settings → _image_usage_persist): production 만 on.
@@ -677,6 +682,8 @@ def load_settings() -> Settings:
         face_autoscale_idle_minutes=_int_env("FACE_AUTOSCALE_IDLE_MINUTES", 30),
         face_runpod_pod_id=os.getenv("FACE_RUNPOD_POD_ID") or None,
         face_runpod_api_key=os.getenv("RUNPOD_API_KEY") or None,
+        face_autoscale_start_grace_minutes=_int_env("FACE_AUTOSCALE_START_GRACE_MINUTES", 8),
+        face_render_code_version=os.getenv("FACE_RENDER_CODE_VERSION") or None,
         fm_provenance_enabled=(
             os.getenv("FM_PROVENANCE_ENABLED", "false").lower() == "true"
         ),

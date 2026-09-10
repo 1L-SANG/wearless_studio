@@ -210,7 +210,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     app, face_adapter,
                     demand_fn=lambda repo, conn: face_demand_snapshot(conn),
                     idle_attr="face_autoscale_idle_minutes",
-                    name="face-render", lock_key="face_autoscaler")
+                    name="face-render", lock_key="face_autoscaler",
+                    start_grace_attr="face_autoscale_start_grace_minutes")
                 if face_adapter.enabled:
                     face_autoscaler = app.state.face_autoscaler
                     await face_autoscaler.start()
