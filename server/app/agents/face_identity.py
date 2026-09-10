@@ -1011,6 +1011,23 @@ def face_identity_from_registry_entry(entry: dict | None) -> FaceIdentitySpec | 
     return FaceIdentitySpec(lora.strip(), str(token).strip() if isinstance(token, str) and token.strip() else DEFAULT_TOKEN)
 
 
+def face_identity_from_lora_row(row) -> FaceIdentitySpec | None:
+    """fm_model_loras 한 행 → FaceIdentitySpec. 실존 등록자 경로.
+
+    호출자(워커)가 `enabled` 행을 이미 골라서 넘긴다 — 여기서는 필드만 검증한다.
+    가상모델의 레지스트리 경로(face_identity_from_registry_entry)와 나란한 자리다.
+    """
+    if not row:
+        return None
+    get = row.get if hasattr(row, "get") else lambda k, d=None: getattr(row, k, d)
+    lora = get("lora_r2_key")
+    if not isinstance(lora, str) or not lora.strip():
+        return None
+    token = get("trigger_token")
+    return FaceIdentitySpec(lora.strip(),
+                            str(token).strip() if isinstance(token, str) and token.strip() else DEFAULT_TOKEN)
+
+
 def resolve_lora_file(spec: FaceIdentitySpec, base: str | None) -> str:
     """레지스트리 loraPath 가 절대경로면 그대로, 아니면 face_identity_lora_path(디렉터리) 기준.
     base 가 .safetensors 파일이면 단일 인물 배포로 보고 그 파일을 쓴다."""
@@ -1117,6 +1134,7 @@ __all__ = [
     "ellipse_mask",
     "estimate_expression",
     "evaluate_gate",
+    "face_identity_from_lora_row",
     "face_identity_from_registry_entry",
     "feather_mask",
     "paste_alpha",

@@ -1377,6 +1377,7 @@ async def generate(
     body_profile: dict | None = None,
     hair_profile: dict | None = None,
     face_shape_profile: dict | None = None,
+    face_identity_spec: face_identity.FaceIdentitySpec | None = None,
     qc_corrections: tuple[str, ...] = (),
     confirmed_prompt_input: ConfirmedGptPromptInput | None = None,
 ) -> tuple[bytes, str]:
@@ -1438,7 +1439,7 @@ async def generate(
     image, mime = res.image, res.mime
     # 인물 LoRA 얼굴 패스 — provider 는 그대로(Gemini 가 옷·장면), 얼굴 타원만 뒤에서 교체.
     # 플래그 기본 off + 레지스트리 faceIdentity 항목이 있는 모델만. 실패는 원본 폴백(예외 없음).
-    identity = _face_identity_spec(settings, spec, clothing_type)
+    identity = _face_identity_spec(settings, spec, clothing_type, face_identity_spec)
     if identity is not None:
         image, mime = await face_identity.apply_face_pass(settings, image, mime, identity)
     if crop_pose_medium:
@@ -1448,15 +1449,26 @@ async def generate(
     return image, mime
 
 
-def _face_identity_spec(settings, spec: dict, clothing_type) -> face_identity.FaceIdentitySpec | None:
+def _face_identity_spec(settings, spec: dict, clothing_type,
+                        provided: face_identity.FaceIdentitySpec | None = None,
+                        ) -> face_identity.FaceIdentitySpec | None:
     """이 컷이 얼굴 패스 대상인가 — 플래그 on · 착용컷 · 얼굴이 실제로 담기는 컷(_face_fits) ·
-    가상모델 레지스트리 항목에 faceIdentity{loraPath,token} 있음. 하나라도 아니면 None(기존 동작)."""
+    LoRA 근거가 있음. 하나라도 아니면 None(기존 동작).
+
+    근거는 둘 중 하나다:
+      · provided — 호출자가 DB(fm_model_loras)에서 골라 넘긴 것. **실존 등록자 경로**.
+        이 함수는 sync 라 DB 를 직접 부르지 않는다(워커가 이미 conn 을 갖고 있다).
+      · 가상모델 JSON 레지스트리의 faceIdentity{loraPath,token} — 기존 경로, 회귀 금지.
+    provided 가 있으면 그것이 우선이고 레지스트리는 보지 않는다.
+    """
     if not getattr(settings, "face_identity_enabled", False):
         return None
     if spec.get("cutType") not in _WORN_CUTS or not spec.get("modelId"):
         return None
     if not _face_fits(spec, _is_bottom(clothing_type)):
         return None
+    if provided is not None:
+        return provided
     try:
         entry = load_virtual_model_registry().get(str(spec["modelId"]))
     except (OSError, json.JSONDecodeError) as e:
