@@ -746,3 +746,86 @@ v6 는 사람이 보고 {oval, defined} 로 잠정(측정값 아님). 착장 컷
 `--check` 결과: 세 블록(BUILD·HAIR·FACE SHAPE)이 프롬프트에 실제로 들어감을 확인, 입력 3종·기준셋 8장 존재 확인,
 `OPENAI_API_KEY` 없음·`MODEL_ROUTING_IMAGE_HIGH` 미설정 보고. `--run` 본문은 키 확보 후 채운다
 (지금 채우면 검증 없이 죽은 코드가 된다).
+
+## 26. Phase 1 — 경로 A(gpt-image) 착장 컷 생성 → 얼굴 패스 (2026-09-10)
+
+### 26.0 에디터 전용 모델 노브 (커밋 b16fcc76)
+에디터(`editor_image_job`)는 `resolve_model(settings,"image_high")` 를 직접 읽어, image_high 를 바꾸면
+마네킹(`mannequin_tier`)·매칭 플랫레이(`matching_flatlay_tier`)·AG-07(`cut_variator`)까지 전부 딸려 간다.
+`detail_page_job` 선례대로 워커 안에서만 불변 Settings 복사본의 image_high 를 치환한다.
+
+- `config.py` `model_editor_cut = ""` · `MODEL_ROUTING_EDITOR_CUT`
+- `model_routing.py` `resolve_editor_cut_model()` + 스냅샷 `"editor_cut"` 키
+- `editor_image_job.py` 진입부 `editor_settings = replace(s, model_image_high=resolve_editor_cut_model(s))`,
+  이미지 생성 호출 5곳(`cut_generator.generate` ×4 · `cut_variator.generate` ×1)만 사용. SAM·QC·업로드는 `s` 그대로.
+
+확인 출력: `editor_cut = gpt-image-2.5-flare` · `image_high = gemini-3-pro-image`(유지) · `detail_cut = gemini-3-pro-image`(유지).
+테스트 +5(총 4051 통과) — 빈 노브 폴백, 노브가 에디터만 바꿈, Settings 복사본이 image_high 한 필드만 바꿈,
+`mannequin_tier`/`matching_flatlay_tier` 가 여전히 image_high 로 해석, 워커 소스에 `s` 직접 사용 없음.
+
+### 26.1 모델 id — 하이픈 오타
+`gpt-image-2.5flare` 로 첫 호출이 **400**:
+```
+"message": "The model 'gpt-image-2.5flare' does not exist.", "code": "invalid_value"
+```
+계정 모델 목록 조회(무료)로 실재 id 확인 — `gpt-image-1`, `gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2`,
+`gpt-image-2-2026-04-21`, **`gpt-image-2.5-flare`**, `gpt-image-2.5-flare-2026-09-08`, `gpt-image-2.5-sunburst`,
+`gpt-image-2.5-sunburst-2026-09-08`, `chatgpt-image-latest`. 하이픈만 넣어 재실행 → 5/5 생성 성공.
+400 회차는 이미지가 안 나왔으므로 과금 0.
+
+### 26.2 생성 (5/5, 1024×1536)
+입력 순서는 REAL 경로 그대로: MODEL(refset 정면무표정) → MODEL SHEET(refset 4장 2×2 1280²) →
+PRODUCT 앞 → PRODUCT 뒤 → SPACE SET PLATE. 프로필 hair{short,straight,black} · face_shape{oval,defined} ·
+physique{male, m_175_180, slim}. 컷 5종은 prod_inputs.json 스펙 재사용(정면·3/4·전신·앉은자세·클로즈업).
+
+**채점 기준셋은 4장이다** — refset 8장 중 입력으로 쓴 4장(정면무표정·정면미소·시선왼쪽·시선오른쪽)을 제외했다.
+이 4장 pairwise 중앙(천장) 0.888.
+
+**패스 전 SFace**: front 0.842 · three_quarter 0.836 · full 0.803 · seated 0.856 · close 0.877.
+→ **얼굴 패스 없이 이미 통과 조건 0.70 을 넘고 천장(0.888)에 붙는다.** 경로 A 에서는 참조 2장(MODEL+SHEET)만으로
+gpt-image-2.5-flare 가 인물을 재현한다. 프린트 글자(`thisisneverthat®`)·장면판·머리/얼굴형 지정도 전 컷 일관.
+
+### 26.3 얼굴 패스 (파드 1회 13분 21초, 실비 $0.109)
+5/5 전부 **첫 시드 통과**(`gates=['ok']`, 재시도 0). 게이트 사유별: `ok` 5 · `identity_low` 0 · `lighting_off` 0 ·
+`face_width` 0 · `center_off` 0 · `yaw_drift` 0 · `yaw_flatten` 0 · `no_face` 0.
+`full` 만 얼굴이 작아(face_w 110) ESRGAN ×2 자동 확대가 걸렸고 결과가 2048×3072 로 반환됐다(모듈 계약).
+픽셀 비교는 원본 해상도로 되돌려서 했다 — 그 컷의 지표 2·3 에는 리샘플 오차가 섞여 있다.
+
+| 컷 | 게이트 | 1 SFace 전→후 | 2 상단행 \|Δ\| | 3 칼라띠 \|Δ\| | 4 턱(휘도) px | 5 어깨 좌/우 Δ |
+|---|---|---|---|---|---|---|
+| front | ok | 0.842 → **0.780** | 0.00 | 0.05 | 8.0 | 0 / 0 |
+| three_quarter | ok | 0.836 → **0.796** | 0.00 | 0.02 | 6.0 | 2 / 2 |
+| full | ok | 0.803 → **0.823** | 3.12※ | 3.83※ | 4.0 | 2 / 2 |
+| seated | ok | 0.856 → **0.770** | 0.01 | 0.35 | 8.0 | 15 / 2 |
+| close | ok | 0.877 → **0.834** | 0.00 | 0.01 | 4.0 | 1 / 4 |
+
+※ ESRGAN ×2 후 다운스케일 비교라 리샘플 오차 포함.
+지표 4 의 "피부/비피부 경계" 정의는 **작동하지 않는다** — 턱 아래는 여전히 피부(목)라 그 띠에 전이가 없다
+(ZARA 기준선 두 컷 모두 None). 그래서 휘도 에지(열별 |d(luma)/dy| 최대 행) 기준으로 바꿔 재고 그 값을 쓴다.
+
+### 26.4 핵심 질문 — (a)(b) 가 ZARA 대비 줄었는가: **줄었다, 크게**
+| 지표 | ZARA(남의 룩북) | 경로 A(gpt-image) |
+|---|---|---|
+| (a) 턱 실루엣 이동 | 19.0 · 34.5 px | **4 ~ 8 px** (중앙 6) |
+| (b) 어깨 좌 Δ | 111 · 106 | **0 ~ 15** (중앙 2) |
+| (b) 어깨 우 Δ | 37 · 23 | 0 ~ 4 |
+
+근거: ZARA 는 원본 인물과 LoRA 인물이 서로 다른 사람이라 타원 밖에 남의 턱·어깨가 남았다. 경로 A 는
+얼굴형·머리·체형을 프롬프트로 지정해 생성기가 그린 몸이 LoRA 가 그리는 몸과 거의 같아졌고, 그래서
+타원 경계 바깥에 남는 불일치가 사실상 사라졌다. 육안(`phase1/measure/*_zoom.png`)에서도 사각 테두리·칼라
+베일·턱 이중 윤곽이 전부 보이지 않는다. → **타원 마스크로 간다. SAM 인물 마스크는 필요 없다.**
+
+### 26.5 예상 못한 결론 — 경로 A 에서는 얼굴 패스가 손해다
+패스 **전** 이미 0.803~0.877 로 천장(0.888)에 붙어 있었고, 패스 **후** 4/5 컷에서 신원이 내려갔다
+(−0.062 · −0.040 · −0.086 · −0.043). 오른 컷은 `full` 하나뿐이고(+0.020) 그 컷만 얼굴이 작아(face_w 110)
+ESRGAN 확대가 걸린 컷이다.
+
+읽는 법: gpt-image-2.5-flare 가 MODEL + MODEL SHEET 참조 2장만으로 인물을 이미 재현하므로, 그 위에
+LoRA 얼굴을 덮으면 **더 좋아지지 않고 미세하게 나빠진다**. 얼굴 패스의 값어치는 **얼굴이 작아 생성기가
+인물을 흐리게 그리는 컷**(full 류)에 남는다.
+
+주의: 채점 기준셋이 4장뿐이고 그 4장은 입력 4장과 같은 촬영·같은 조명이다. 절대값은 이 조건에서만 유효하다.
+전/후 비교는 같은 기준셋으로 재서 방향은 신뢰할 수 있다.
+
+**아침에 사람이 결정할 것**: 경로 A 에서 얼굴 패스를 (1) 끄고 gpt-image 단독으로 갈지, (2) `face_w` 임계
+아래 컷에만 켤지(예: face_w < 150), (3) 그대로 전 컷에 켤지. 지금 수치는 (2)를 가리킨다.
