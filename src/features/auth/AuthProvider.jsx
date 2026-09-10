@@ -55,6 +55,22 @@ export function forgetPostLogin() {
   try { sessionStorage.removeItem(POST_LOGIN_KEY); } catch { /* 위와 같다 */ }
 }
 
+/* `code` 는 OAuth 전용 이름이 아니다. 토스는 결제·카드등록 실패를 `?code=…&message=…` 로
+   돌려보낸다(PAY_PROCESS_CANCELED 등). 그 화면에서 이 파일이 code 를 건드리면 두 가지가 깨진다:
+     ① PKCE 교환을 시도했다가 실패한다(위 부트스트랩에서 세션까지 날아갔었다)
+     ② cleanOAuthCodeFromUrl 이 code 를 지워, 실패 화면이 사용자에게 보여줄 사유를 잃는다
+   그래서 결제 결과 경로에서는 OAuth 처리를 통째로 건너뛴다. OAuth 복귀는 이 경로로 오지 않는다
+   (redirectTo 는 window.location.origin 이다). */
+const PAYMENT_RESULT_PATHS = [
+  '/payments/success', '/payments/fail',
+  '/subscription/success', '/subscription/fail',
+];
+
+function isPaymentResultPath() {
+  if (typeof window === 'undefined') return false;
+  return PAYMENT_RESULT_PATHS.includes(window.location.pathname);
+}
+
 function cleanOAuthCodeFromUrl(code) {
   const url = new URL(window.location.href);
   if (url.searchParams.get('code') !== code) return;
@@ -83,10 +99,25 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     let alive = true; // StrictMode 이중 마운트: cleanup 이후 state 갱신 방지
     let subscription = null;
-    const code = new URLSearchParams(window.location.search).get('code');
+    const code = isPaymentResultPath()
+      ? null
+      : new URLSearchParams(window.location.search).get('code');
     (async () => {
       try {
-        if (code) await exchangeOAuthCodeOnce(code);
+        if (code) {
+          // 교환 실패를 부트스트랩 실패로 취급하지 않는다. `code` 는 OAuth 만 쓰는 이름이
+          // 아니다 — 토스 결제 실패 리다이렉트가 `?code=PAY_PROCESS_CANCELED` 로 돌아오고
+          // (/payments/fail·/subscription/fail), 그걸 PKCE 코드로 오인해 교환하면 당연히
+          // 실패한다. 예전에는 그 실패가 아래 catch 로 떨어져 setSession(null) 을 불렀다 —
+          // **쿠키에 멀쩡한 세션이 있는데도 로그아웃**됐다. 즉 카드 등록을 취소한 사용자가
+          // 로그인까지 풀렸다. 교환은 '되면 좋은 것'이고, 세션의 정본은 getSession 이다.
+          try {
+            await exchangeOAuthCodeOnce(code);
+          } catch (exchangeError) {
+            console.warn('[auth] OAuth code 교환 실패 — 기존 세션 유지',
+              exchangeError?.message || exchangeError);
+          }
+        }
         const { data } = await supabase.auth.getSession();
         if (!alive) return;
         setSession(data.session);

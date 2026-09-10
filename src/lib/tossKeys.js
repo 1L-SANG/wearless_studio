@@ -2,7 +2,7 @@
    계획서 docs/plans/2026-09-09-toss-billing-subscription.md
 
    **왜 두 개인가**: 자동결제는 별도 계약이라 상점아이디(MID)가 따로 난다(우리는
-   `bill_wearl02h5`). 토스 문서상 클라이언트 키와 시크릿 키는 MID 단위로 한 '세트' 이고,
+   `bill_wearlau5j`). 토스 문서상 클라이언트 키와 시크릿 키는 MID 단위로 한 '세트' 이고,
    세트가 아닌 키를 섞으면 `INVALID_API_KEY`, 자동결제 계약이 없는 클라이언트 키로
    requestBillingAuth 를 부르면 `NOT_SUPPORTED_METHOD` 가 난다.
 
@@ -18,3 +18,11 @@ export const TOSS_CLIENT_KEY = import.meta.env.VITE_TOSS_CLIENT_KEY;
 /** 구독(requestBillingAuth) 용 — 자동결제 MID 의 클라이언트 키. 없으면 일반결제 키. */
 export const TOSS_BILLING_CLIENT_KEY =
   import.meta.env.VITE_TOSS_BILLING_CLIENT_KEY || TOSS_CLIENT_KEY;
+
+/* 퀵계좌이체 자동결제(method='TRANSFER') 노출 여부.
+   문서상 카드와 같은 자동결제 계약으로 되는 것처럼 읽히지만, 2026-09-10 우리 MID
+   (bill_wearlau5j)에서는 열리지 않았다. 그래서 **버튼만** 숨긴다 —
+   서버(toss_billing·subscriptions)와 스키마(pay_method)는 이미 카드·계좌를 모두
+   다루므로, 토스가 열어주는 날 이 값만 true 로 바꾸면 끝난다. 코드를 지우면
+   그때 다시 만들어야 한다. */
+export const SUBSCRIPTION_TRANSFER_ENABLED = false;

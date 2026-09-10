@@ -41,10 +41,68 @@ def test_issue_billing_key_returns_key_and_card_display(stub):
     stub(handler)
     out = asyncio.run(tb.issue_billing_key(SETTINGS, auth_key="ak-1", customer_key="cus-1"))
     assert out["billingKey"] == "bk-1"
-    assert out["cardBrand"] == "현대"
-    assert out["cardLast4"] == "1234"
+    assert out["label"] == "현대"
+    assert out["last4"] == "1234"
     assert seen["url"] == "https://toss.test/v1/billing/authorizations/issue"
     assert seen["auth"].startswith("Basic ")
+
+
+def test_issue_derives_brand_from_issuer_code(stub):
+    """API 2024-06-01 자동결제 응답에는 cardCompany 가 없다(문서 명시 + 2026-09-10 실측).
+    대체 필드 card.issuerCode 를 카드사명으로 바꿔야 화면에 '현대 ····701*' 로 뜬다."""
+    stub(lambda request: httpx.Response(200, json={
+        "billingKey": "bk-2", "method": "카드",
+        "card": {"issuerCode": "61", "number": "49061000****701*", "cardType": "체크"},
+    }))
+    out = asyncio.run(tb.issue_billing_key(SETTINGS, auth_key="ak", customer_key="cus"))
+    assert out["billingKey"] == "bk-2"
+    assert out["label"] == "현대"
+    assert out["last4"] == "701*"
+
+
+def test_issue_prefers_legacy_card_company_when_present(stub):
+    """옛 API 버전 상점은 cardCompany 를 그대로 준다 — 그게 더 정확하니 우선한다."""
+    stub(lambda request: httpx.Response(200, json={
+        "billingKey": "bk-3", "cardCompany": "신한",
+        "card": {"issuerCode": "61", "number": "1234****5678"},
+    }))
+    out = asyncio.run(tb.issue_billing_key(SETTINGS, auth_key="ak", customer_key="cus"))
+    assert out["label"] == "신한"
+
+
+def test_issue_leaves_brand_empty_for_unknown_issuer(stub):
+    """모르는 코드는 추측하지 않는다 — 엉뚱한 카드사를 보여주느니 이름을 비운다."""
+    stub(lambda request: httpx.Response(200, json={
+        "billingKey": "bk-4", "card": {"issuerCode": "ZZ", "number": "1234****9999"},
+    }))
+    out = asyncio.run(tb.issue_billing_key(SETTINGS, auth_key="ak", customer_key="cus"))
+    assert out["label"] is None
+    assert out["last4"] == "9999"
+
+
+def test_issue_reads_bank_for_quick_transfer(stub):
+    """퀵계좌이체(method='TRANSFER')는 card 대신 transfers[] 로 온다 — 은행명과 계좌
+    뒤 4자리를 같은 모양(label·last4)으로 정규화해야 화면이 분기 없이 그린다."""
+    stub(lambda request: httpx.Response(200, json={
+        "billingKey": "bk-t", "method": "계좌이체", "card": None,
+        "transfers": [{"bankName": "토스", "bankCode": "92",
+                       "bankAccountNumber": "123*******789"}],
+    }))
+    out = asyncio.run(tb.issue_billing_key(SETTINGS, auth_key="ak", customer_key="cus"))
+    assert out["method"] == "TRANSFER"
+    assert out["label"] == "토스"
+    assert out["last4"] == "*789"
+
+
+def test_issue_transfer_without_account_detail_still_registers(stub):
+    """토스 문서: 등록 시점에 계좌 정보를 주지 않는 경우가 있다. 그래도 빌링키는 살아야 한다."""
+    stub(lambda request: httpx.Response(200, json={
+        "billingKey": "bk-t2", "method": "계좌이체", "transfers": [{}],
+    }))
+    out = asyncio.run(tb.issue_billing_key(SETTINGS, auth_key="ak", customer_key="cus"))
+    assert out["method"] == "TRANSFER"
+    assert out["label"] is None
+    assert out["last4"] is None
 
 
 def test_charge_posts_to_billing_key_path_with_idempotency_key(stub):

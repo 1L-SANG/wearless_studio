@@ -13,6 +13,8 @@ import logging
 
 import httpx
 
+from .toss_codes import card_issuer_name
+
 log = logging.getLogger("wearless.toss_billing")
 
 _ISSUE_PATH = "/v1/billing/authorizations/issue"
@@ -77,17 +79,43 @@ async def _post(settings, path: str, payload: dict, *,
 
 
 async def issue_billing_key(settings, *, auth_key: str, customer_key: str) -> dict:
-    """authKey → 빌링키. **응답을 저장하지 못하면 빌링키는 영구 분실이다**(조회 API 없음)."""
+    """authKey → 빌링키. **응답을 저장하지 못하면 빌링키는 영구 분실이다**(조회 API 없음).
+
+    카드와 퀵계좌이체가 같은 엔드포인트를 쓰고 응답만 갈린다:
+      카드 → `card.issuerCode` · `card.number`
+      계좌 → `transfers[].bankName` · `transfers[].bankAccountNumber`
+    화면에 필요한 건 양쪽 다 '이름 + 뒤 4자리' 하나라 여기서 그 모양으로 정규화한다.
+    """
     body = await _post(settings, _ISSUE_PATH,
                        {"authKey": auth_key, "customerKey": customer_key})
     key = body.get("billingKey")
     if not key:
         raise TossBillingError("billing_key_missing", "빌링키를 받지 못했어요.", retryable=False)
-    masked = str(body.get("cardNumber") or (body.get("card") or {}).get("number") or "")
+
+    transfers = body.get("transfers") or []
+    if transfers:
+        # 퀵계좌이체. 등록 시점에 계좌 정보를 주는 상점도 있고 아닌 곳도 있어 방어적으로 읽는다.
+        account = transfers[0] or {}
+        masked = str(account.get("bankAccountNumber") or "")
+        return {
+            "billingKey": key,
+            "method": "TRANSFER",
+            "label": account.get("bankName") or None,
+            "last4": masked[-4:] or None,
+        }
+
+    # cardCompany·cardNumber 는 **API 2024-06-01 부터 응답에서 제거됐다**(토스 문서 명시,
+    # 2026-09-10 실측으로도 확인). 대체 필드는 card.issuerCode·card.number 다.
+    # issuerCode 는 두 자리 코드라 그대로 보여줄 수 없어 이름으로 바꾼다(toss_codes).
+    # 옛 버전 상점을 위해 제거된 필드도 먼저 본다 — 있으면 그게 더 정확하다.
+    card = body.get("card") or {}
+    masked = str(body.get("cardNumber") or card.get("number") or "")
+    brand = body.get("cardCompany") or card_issuer_name(card.get("issuerCode"))
     return {
         "billingKey": key,
-        "cardBrand": body.get("cardCompany"),
-        "cardLast4": masked[-4:] or None,
+        "method": "CARD",
+        "label": brand or None,
+        "last4": masked[-4:] or None,
     }
 
 

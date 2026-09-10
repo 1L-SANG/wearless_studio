@@ -11,11 +11,11 @@
 
 자동결제는 일반결제와 **별도 계약**이고, 상점아이디(MID)가 갈리면 시크릿 키도 갈린다.
 
-**우리 자동결제 MID: `bill_wearl02h5`** (2026-09-09 확인 — 일반결제 MID 와 별개다)
+**우리 자동결제 MID: `bill_wearlau5j`** (2026-09-09 확인 — 일반결제 MID 와 별개다)
 
 ### 어디서 받나
 
-[개발자센터 > API 키](https://developers.tosspayments.com/my/api-keys) 에 로그인 → 상단에서 **상점(MID) `bill_wearl02h5` 선택** → 그 화면에 **클라이언트 키와 시크릿 키가 한 세트로** 표시된다.
+[개발자센터 > API 키](https://developers.tosspayments.com/my/api-keys) 에 로그인 → 상단에서 **상점(MID) `bill_wearlau5j` 선택** → 그 화면에 **클라이언트 키와 시크릿 키가 한 세트로** 표시된다.
 
 키 읽는 법:
 
@@ -47,7 +47,7 @@
 | 응답 코드 | 뜻 |
 |---|---|
 | `NOT_FOUND_BILLING` | ✅ 키·계약 정상. authKey 가 만료·오타일 뿐 |
-| `NOT_SUPPORTED_METHOD` | 자동결제 계약이 없는 키다 → `bill_wearl02h5` 의 키로 바꾼다 |
+| `NOT_SUPPORTED_METHOD` | 자동결제 계약이 없는 키다 → `bill_wearlau5j` 의 키로 바꾼다 |
 | `UNAUTHORIZED_KEY` | 키 자체가 틀렸다(또는 Basic 인코딩에서 `:` 누락) |
 
 ## 2. 시크릿 3종 등록

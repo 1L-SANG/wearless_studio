@@ -21,7 +21,8 @@ import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { Icon, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
-import { TOSS_BILLING_CLIENT_KEY, TOSS_CLIENT_KEY } from '@/lib/tossKeys.js';
+import { SUBSCRIPTION_TRANSFER_ENABLED, TOSS_BILLING_CLIENT_KEY, TOSS_CLIENT_KEY }
+  from '@/lib/tossKeys.js';
 import s from './Pricing.module.css';
 
 const won = (n) => '₩' + Number(n).toLocaleString('ko-KR');
@@ -91,7 +92,9 @@ export function Pricing() {
 
   // 구독: 토스 결제창에서 카드를 등록(빌링키 인증)하고 successUrl 로 돌아온다.
   // 실제 빌링키 발급·첫 결제는 서버가 authKey 로 처리한다 — **클라이언트는 금액을 모른다**.
-  async function subscribe(planCode) {
+  // method: 'CARD' = 카드 등록, 'TRANSFER' = 퀵계좌이체 계좌 등록. 같은 메서드로 둘 다 받고
+  // 빌링키 발급 응답만 갈린다(서버 toss_billing.issue_billing_key 가 정규화).
+  async function subscribe(planCode, method = 'CARD') {
     if (!session) { requireLogin(); return; }
     setPayError('');
     setBuying(planCode);
@@ -101,7 +104,7 @@ export function Pricing() {
       const toss = await loadTossPayments(TOSS_BILLING_CLIENT_KEY);
       const payment = toss.payment({ customerKey: session.user.id });
       await payment.requestBillingAuth({
-        method: 'CARD',
+        method,
         successUrl: `${window.location.origin}/subscription/success?plan=${encodeURIComponent(planCode)}`,
         failUrl: `${window.location.origin}/subscription/fail`,
       });
@@ -226,15 +229,29 @@ export function Pricing() {
                           로그인하고 시작하기
                         </button>
                       ) : (
-                        <button
-                          type="button" className={`${s.purchaseButton} ${s.subscriptionButton}`}
-                          disabled={isCurrent || !TOSS_BILLING_CLIENT_KEY || buying !== null}
-                          title={TOSS_BILLING_CLIENT_KEY ? undefined : '결제 키가 설정되지 않았어요'}
-                          onClick={() => subscribe(p.code)}
-                        >
-                          {isCurrent ? '이용 중'
-                            : (buying === p.code ? '카드 등록 창 여는 중…' : '구독하기')}
-                        </button>
+                        <>
+                          <button
+                            type="button" className={`${s.purchaseButton} ${s.subscriptionButton}`}
+                            disabled={isCurrent || !TOSS_BILLING_CLIENT_KEY || buying !== null}
+                            title={TOSS_BILLING_CLIENT_KEY ? undefined : '결제 키가 설정되지 않았어요'}
+                            onClick={() => subscribe(p.code, 'CARD')}
+                          >
+                            {isCurrent ? '이용 중'
+                              : (buying === p.code ? '등록 창 여는 중…' : '카드로 구독하기')}
+                          </button>
+                          {/* 퀵계좌이체는 카드보다 수수료가 낮지만(토스 문서: 카드 대비 1%p 이상)
+                              우리 MID 에서는 아직 안 열린다(2026-09-10 실측). 플래그로 숨긴다 —
+                              서버·스키마는 이미 계좌를 다루므로 열리는 날 켜기만 하면 된다. */}
+                          {SUBSCRIPTION_TRANSFER_ENABLED && !isCurrent && (
+                            <button
+                              type="button" className={s.altMethodButton}
+                              disabled={!TOSS_BILLING_CLIENT_KEY || buying !== null}
+                              onClick={() => subscribe(p.code, 'TRANSFER')}
+                            >
+                              계좌이체로 구독하기
+                            </button>
+                          )}
+                        </>
                       )}
                     </div>
                   ) : (

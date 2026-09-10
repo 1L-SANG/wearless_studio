@@ -3,14 +3,15 @@
    계획서 docs/plans/2026-09-09-toss-billing-subscription.md
 
    · /subscription/success — 결제창이 돌려준 authKey 로 구독을 연다(서버가 빌링키 발급)
-   · /subscription/fail    — 카드 인증 실패 안내
-   · /subscription         — 상태·다음 결제일·카드 관리·해지
+   · /subscription/fail    — 결제수단 인증 실패 안내
+   · /subscription         — 상태·다음 결제일·결제수단 관리·해지
 
    **이 화면의 존재 이유는 해지 확인창이다.** 크레딧이 이월되는 정책이라 오래 구독한
    사람일수록 해지 시 한 번에 사라지는 양이 크다(Seller 3개월이면 54,000). 그래서
    해지 버튼은 곧장 API 를 부르지 않고, 서버가 알려준 소멸 예정 수량·날짜를 먼저 보여준다.
 
-   빌링키는 프런트에 오지 않는다 — 카드사·끝 4자리만 표시용으로 받는다.
+   빌링키는 프런트에 오지 않는다 — 카드사/은행명과 끝 4자리만 표시용으로 받는다.
+   결제수단은 카드(CARD)와 퀵계좌이체(TRANSFER) 둘 다 지원한다.
    ============================================================= */
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
@@ -20,10 +21,11 @@ import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { seoulDate } from '@/lib/datetime.js';
 import { Button, Icon, Skeleton, ErrorState } from '@/components/ui.jsx';
-import { TOSS_BILLING_CLIENT_KEY } from '@/lib/tossKeys.js';
+import { SUBSCRIPTION_TRANSFER_ENABLED, TOSS_BILLING_CLIENT_KEY }
+  from '@/lib/tossKeys.js';
 import s from './Subscription.module.css';
 
-// 카드 등록/교체는 자동결제 MID 의 클라이언트 키로 해야 한다 — lib/tossKeys.js 참고.
+// 결제수단 등록/교체는 자동결제 MID 의 클라이언트 키로 해야 한다 — lib/tossKeys.js 참고.
 const num = (n) => Number(n || 0).toLocaleString('ko-KR');
 
 const STATUS_LABEL = {
@@ -32,13 +34,14 @@ const STATUS_LABEL = {
   canceled: '해지 예약됨',
 };
 
-/** 카드 등록 결제창을 연다. 성공하면 successUrl 로 authKey·customerKey 가 붙어 돌아온다. */
-async function openBillingAuth({ userId, next }) {
+/** 결제수단 등록창을 연다. 성공하면 successUrl 로 authKey·customerKey 가 붙어 돌아온다.
+    method: 'CARD' = 카드, 'TRANSFER' = 퀵계좌이체. */
+async function openBillingAuth({ userId, next, method = 'CARD' }) {
   const { loadTossPayments } = await import('@tosspayments/tosspayments-sdk');
   const toss = await loadTossPayments(TOSS_BILLING_CLIENT_KEY);
   const payment = toss.payment({ customerKey: userId });
   await payment.requestBillingAuth({
-    method: 'CARD',
+    method,
     successUrl: `${window.location.origin}${next}`,
     failUrl: `${window.location.origin}/subscription/fail`,
   });
@@ -68,10 +71,10 @@ export function SubscriptionSuccess() {
     const authKey = params.get('authKey');
     const customerKey = params.get('customerKey');
     const planCode = params.get('plan');
-    // 카드 교체 복귀는 plan 없이 온다 — 구독을 새로 열면 안 되고 카드만 갈아끼운다.
+    // 결제수단 교체 복귀는 plan 없이 온다 — 구독을 새로 열면 안 되고 수단만 갈아끼운다.
     const mode = params.get('mode') === 'card' ? 'card' : 'start';
     if (!authKey || !customerKey || (mode === 'start' && !planCode)) {
-      setState({ status: 'error', message: '카드 등록 정보가 올바르지 않아요.' });
+      setState({ status: 'error', message: '결제수단 등록 정보가 올바르지 않아요.' });
       return;
     }
     const call = mode === 'card'
@@ -104,7 +107,7 @@ export function SubscriptionSuccess() {
   }
   if (state.mode === 'card') {
     return (
-      <Shell icon="refresh" title="카드를 바꿨어요" desc="다음 결제부터 새 카드로 결제돼요.">
+      <Shell icon="refresh" title="결제수단을 바꿨어요" desc="다음 결제부터 새 결제수단으로 결제돼요.">
         <Link to="/subscription"><Button variant="primary">구독 관리로</Button></Link>
       </Shell>
     );
@@ -126,9 +129,9 @@ export function SubscriptionSuccess() {
 export function SubscriptionFail() {
   const [params] = useSearchParams();
   const code = params.get('code');
-  const message = params.get('message') || '카드 등록이 완료되지 않았어요.';
+  const message = params.get('message') || '결제수단 등록이 완료되지 않았어요.';
   return (
-    <Shell icon="alert" title="카드 등록이 취소됐어요" desc={code ? `${message} (${code})` : message}>
+    <Shell icon="alert" title="결제수단 등록이 취소됐어요" desc={code ? `${message} (${code})` : message}>
       <Link to="/pricing"><Button variant="primary">다시 시도하기</Button></Link>
     </Shell>
   );
@@ -161,12 +164,13 @@ export function SubscriptionManage() {
     onError,
   });
 
-  async function changeCard() {
+  async function changeMethod(method) {
     setActionError('');
     try {
       await openBillingAuth({
         userId: session?.user?.id,
         next: '/subscription/success?mode=card',
+        method,
       });
     } catch (e) {
       const code = e?.code || '';
@@ -208,8 +212,8 @@ export function SubscriptionManage() {
           <div>
             <strong>결제가 실패했어요.</strong>{' '}
             {data.graceUntil
-              ? `${seoulDate(data.graceUntil)}까지 카드를 바꾸면 구독이 이어져요.`
-              : '카드를 다시 등록해 주세요.'}
+              ? `${seoulDate(data.graceUntil)}까지 결제수단을 바꾸면 구독이 이어져요.`
+              : '결제수단을 다시 등록해 주세요.'}
             {' '}남은 크레딧은 그때까지 그대로 쓸 수 있어요.
           </div>
         </div>
@@ -236,8 +240,14 @@ export function SubscriptionManage() {
             <dd>{seoulDate(data.nextBillingAt || data.currentPeriodEnd)}</dd>
           </div>
           <div className={s.row}>
-            <dt>결제 카드</dt>
-            <dd>{data.card?.brand ? `${data.card.brand} ····${data.card.last4}` : '등록된 카드 없음'}</dd>
+            <dt>{data.method === 'TRANSFER' ? '결제 계좌' : '결제 카드'}</dt>
+            {/* 등록 유무의 근거는 끝 4자리다. 이름(brand)은 토스가 안 줄 때가 있어서
+                (API 2024-06-01 자동결제 응답에 cardCompany 가 없다 — 2026-09-10 실측)
+                이름으로 분기하면 **등록된 결제수단을 '없음'으로 표시**한다.
+                계좌는 등록 시점에 계좌번호를 아예 안 주는 경우도 있다(토스 문서). */}
+            <dd>{data.card?.last4
+              ? `${data.card.brand ? data.card.brand + ' ' : ''}····${data.card.last4}`
+              : (data.method === 'TRANSFER' ? '계좌 등록됨' : '등록된 카드 없음')}</dd>
           </div>
           <div className={s.row}>
             <dt>구독 크레딧</dt>
@@ -246,7 +256,15 @@ export function SubscriptionManage() {
         </dl>
 
         <div className={s.actions}>
-          <Button variant="ghost" onClick={changeCard} disabled={!TOSS_BILLING_CLIENT_KEY}>카드 변경</Button>
+          <Button variant="ghost" onClick={() => changeMethod('CARD')}
+            disabled={!TOSS_BILLING_CLIENT_KEY}>
+            {SUBSCRIPTION_TRANSFER_ENABLED ? '카드로 변경' : '카드 변경'}
+          </Button>
+          {/* 계좌는 우리 MID 에서 아직 안 열린다 — lib/tossKeys.js 참고 */}
+          {SUBSCRIPTION_TRANSFER_ENABLED && (
+            <Button variant="ghost" onClick={() => changeMethod('TRANSFER')}
+              disabled={!TOSS_BILLING_CLIENT_KEY}>계좌로 변경</Button>
+          )}
           {data.status === 'canceled' ? (
             <Button variant="primary" onClick={() => resume.mutate()} disabled={resume.isPending}>
               해지 취소

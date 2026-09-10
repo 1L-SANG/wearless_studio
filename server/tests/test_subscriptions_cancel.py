@@ -17,7 +17,7 @@ from conftest import make_settings
 ACTIVE = {"id": "sub-1", "plan_code": "seller", "status": "active",
           "current_period_end": "2026-10-09T00:00:00+00:00",
           "next_billing_at": "2026-10-09T00:00:00+00:00", "scheduled_plan_code": None,
-          "card_brand": "현대", "card_last4": "1234", "grace_until": None,
+          "pay_method": "CARD", "method_label": "현대", "method_last4": "1234", "grace_until": None,
           "billing_key_invalid": False}
 
 

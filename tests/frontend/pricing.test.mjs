@@ -68,11 +68,17 @@ test('구독 카드가 랜딩의 증정 문구와 기능을 표시하고 구독 
     '모든 AI 모델 50% 할인', '모든 AI 모델 무료 제공']) assert.ok(html.includes(text), text);
   assert.equal((html.match(/MOST POPULAR/g) || []).length, 1);
   assert.equal((html.match(/구독하기/g) || []).length, 3);
-  // '준비 중'(기능 미구현)이 아니라 '구독하기'다. 이 하네스에는 VITE_TOSS_CLIENT_KEY 가
-  // 없어서 버튼이 비활성인데, 그 사유가 결제 키 부재임을 title 로 확인한다.
+  // 계좌이체는 우리 MID 에서 아직 안 열려 숨겨 둔다(SUBSCRIPTION_TRANSFER_ENABLED=false).
+  assert.doesNotMatch(html, /계좌이체로 구독하기/);
+  // '준비 중'(기능 미구현)이 아니라 '구독하기'다.
   assert.doesNotMatch(html, /준비 중/);
-  assert.equal((html.match(/disabled=""/g) || []).length, 3);
-  assert.equal((html.match(/결제 키가 설정되지 않았어요/g) || []).length, 3);
+  // 비활성 여부는 VITE_TOSS_BILLING_CLIENT_KEY 유무에 달렸다(로컬에 .env 가 있으면 활성,
+  // CI 처럼 없으면 비활성). 환경에 따라 갈리는 값을 고정하면 테스트가 환경을 검사하게 된다 —
+  // 여기서 지킬 계약은 '비활성이라면 그 사유가 결제 키 부재'라는 것뿐이다.
+  const disabled = (html.match(/disabled=""/g) || []).length;
+  const keyNotice = (html.match(/결제 키가 설정되지 않았어요/g) || []).length;
+  assert.equal(disabled, keyNotice, '비활성 사유가 결제 키 부재로 설명돼야 한다');
+  assert.ok(disabled === 0 || disabled === 3, `구독 버튼 비활성 수가 이상하다: ${disabled}`);
   assert.equal((html.match(/<li\b/g) || []).length, 12);
 });
 

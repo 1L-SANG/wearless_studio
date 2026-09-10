@@ -24,7 +24,28 @@ test('요금제 화면의 구독 버튼이 더 이상 준비 중이 아니다', 
   assert.doesNotMatch(PRICING, /결제 연동 준비 중/);
   assert.doesNotMatch(PRICING, /'구독하기'\} \{!isCurrent && '\(준비 중\)'\}/);
   assert.match(PRICING, /requestBillingAuth/);
-  assert.match(PRICING, /subscribe\(p\.code\)/);
+  assert.match(PRICING, /subscribe\(p\.code, 'CARD'\)/);
+});
+
+/* 퀵계좌이체 자동결제 — 같은 자동결제 계약 안에서 쓰고, 카드보다 수수료가 낮다
+   (토스 문서: 카드 대비 1%p 이상). 등록은 method: 'TRANSFER' 한 글자 차이다. */
+test('계좌이체는 코드로 남기되 플래그로 가려 둔다', () => {
+  // 우리 MID 에서 아직 안 열린다(2026-09-10). 지우면 열리는 날 다시 만들어야 하므로
+  // 서버·스키마는 그대로 두고 버튼만 가린다.
+  assert.match(KEYS, /SUBSCRIPTION_TRANSFER_ENABLED = false/);
+  assert.match(PRICING, /SUBSCRIPTION_TRANSFER_ENABLED && !isCurrent/);
+  assert.match(PRICING, /subscribe\(p\.code, 'TRANSFER'\)/);
+  // method 를 하드코딩하지 않고 인자로 받아야 두 갈래가 같은 코드를 지난다.
+  // (충전 경로의 requestPayment 는 일반결제라 method: 'CARD' 가 맞다 — 그건 건드리지 않는다)
+  assert.match(PRICING, /async function subscribe\(planCode, method = 'CARD'\)/);
+  const billingCall = PRICING.slice(PRICING.indexOf('requestBillingAuth'));
+  assert.match(billingCall, /requestBillingAuth\(\{\s*method,/);
+});
+
+test('구독 관리는 결제수단 종류를 구분해 표시한다', () => {
+  assert.match(SUB, /changeMethod\('CARD'\)/);
+  assert.match(SUB, /SUBSCRIPTION_TRANSFER_ENABLED && \(/);
+  assert.match(SUB, /data\.method === 'TRANSFER'/);
 });
 
 test('구독 고지문이 이월 정책과 일치한다', () => {
@@ -37,6 +58,21 @@ test('구독 API 5개가 어댑터에 있다', () => {
     'resumeSubscription', 'replaceSubscriptionCard']) {
     assert.match(API, new RegExp(`${name}\\(`), `${name} 없음`);
   }
+});
+
+/* 구독 관리로 가는 길이 화면에 있어야 한다. /pricing 은 '무엇을 살까' 라서
+   이미 구독 중인 사람이 해지·카드변경 하러 갈 곳이 없었다(2026-09-10 QA 지적). */
+test('프로필 메뉴에 구독 관리가 있다', () => {
+  const shell = readFileSync('src/features/shell/shell.jsx', 'utf8');
+  assert.match(shell, /구독 관리/);
+  assert.match(shell, /navigate\('\/subscription'\)/);
+});
+
+test('카드사명이 없어도 등록된 카드로 표시한다', () => {
+  // 토스 API 2024-06-01 부터 자동결제 응답에 cardCompany 가 없다(문서 명시).
+  // brand 로 분기하면 등록된 카드를 '없음'으로 표시한다.
+  assert.match(SUB, /data\.card\?\.last4/);
+  assert.doesNotMatch(SUB, /data\.card\?\.brand \? `\$\{data\.card\.brand\} ····/);
 });
 
 test('구독 라우트 3개가 등록돼 있다', () => {
@@ -80,4 +116,23 @@ test('클라이언트 키를 컴포넌트에서 직접 읽지 않는다', () => 
   for (const src of [PRICING, SUB]) {
     assert.doesNotMatch(src, /import\.meta\.env\.VITE_TOSS/);
   }
+});
+
+/* 토스는 결제·카드등록 실패를 `?code=PAY_PROCESS_CANCELED` 로 돌려보낸다. AuthProvider 가
+   그 code 를 OAuth PKCE 코드로 오인하면 ① 교환 실패가 setSession(null) 로 이어져 **멀쩡한
+   세션이 로그아웃**되고 ② URL 에서 code 를 지워 실패 화면이 사유를 못 읽는다.
+   2026-09-10 로컬 QA 에서 실제로 ①에 막혔다 — 구독 요청이 서버까지 오지 못했다. */
+const AUTH = readFileSync('src/features/auth/AuthProvider.jsx', 'utf8');
+
+test('결제 결과 경로에서는 OAuth code 처리를 건너뛴다', () => {
+  for (const p of ['/payments/success', '/payments/fail',
+    '/subscription/success', '/subscription/fail']) {
+    assert.ok(AUTH.includes(`'${p}'`), `${p} 가 예외 경로에 없음`);
+  }
+  assert.match(AUTH, /isPaymentResultPath\(\)\s*\?\s*null/);
+});
+
+test('OAuth code 교환 실패가 기존 세션을 지우지 않는다', () => {
+  // 교환은 자체 try/catch 안에 있어야 한다 — 바깥 catch(setSession(null))로 떨어지면 안 된다.
+  assert.match(AUTH, /try\s*\{\s*await exchangeOAuthCodeOnce\(code\);\s*\}\s*catch/);
 });

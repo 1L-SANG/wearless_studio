@@ -85,7 +85,7 @@ def sub(monkeypatch, keypair):
 
     async def fake_issue(settings, *, auth_key, customer_key):
         state["issued"].append({"authKey": auth_key, "customerKey": customer_key})
-        return {"billingKey": "bk-1", "cardBrand": "현대", "cardLast4": "1234"}
+        return {"billingKey": "bk-1", "method": "CARD", "label": "현대", "last4": "1234"}
 
     async def fake_charge(settings, *, billing_key, customer_key, order_id, order_name, amount):
         state["charged"].append({"orderId": order_id, "amount": amount,

@@ -29,7 +29,8 @@ class _Cur:
             self.s["invalidated"].append(params)
             self._row = {"id": "sub-1"}
         elif "update subscriptions set billing_key_enc" in q:
-            self.s["card"] = {"brand": params[2], "last4": params[3]}
+            self.s["card"] = {"method": params[2], "brand": params[3],
+                              "last4": params[4]}
             self._row = {"id": "sub-1"}
         elif "wl_billing_decrypt" in q:
             self._row = {"billing_key": "bk-old"} if self.s["sub"] else None
@@ -71,7 +72,7 @@ def sub(monkeypatch, keypair):
 
     async def fake_issue(settings, *, auth_key, customer_key):
         state["issued"].append(customer_key)
-        return {"billingKey": "bk-new", "cardBrand": "신한", "cardLast4": "9876"}
+        return {"billingKey": "bk-new", "method": "CARD", "label": "신한", "last4": "9876"}
 
     async def fake_delete(settings, *, billing_key):
         state["deleted"].append(billing_key)

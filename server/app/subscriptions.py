@@ -111,12 +111,13 @@ async def start_subscription(
             async with conn.cursor() as cur:
                 await cur.execute(
                     "insert into subscriptions (user_id, plan_code, billing_key_enc, "
-                    "card_brand, card_last4, current_period_start, current_period_end, "
-                    "next_billing_at) values (%s, %s, public.wl_billing_encrypt(%s, %s), %s, %s, "
+                    "pay_method, method_label, method_last4, current_period_start, "
+                    "current_period_end, next_billing_at) "
+                    "values (%s, %s, public.wl_billing_encrypt(%s, %s), %s, %s, %s, "
                     "now(), now() + interval '1 month', now() + interval '1 month') "
                     "returning id::text as id, current_period_start, current_period_end",
-                    (user_id, plan["code"], issued["billingKey"], kek,
-                     issued.get("cardBrand"), issued.get("cardLast4")),
+                    (user_id, plan["code"], issued["billingKey"], kek, issued["method"],
+                     issued.get("label"), issued.get("last4")),
                 )
                 sub_row = await cur.fetchone()
                 await cur.execute(
@@ -164,7 +165,8 @@ async def start_subscription(
         "credits": granted["credits"],
         "available": granted["available"],
         "currentPeriodEnd": str(sub_row["current_period_end"]),
-        "card": {"brand": issued.get("cardBrand"), "last4": issued.get("cardLast4")},
+        "method": issued["method"],
+        "card": {"brand": issued.get("label"), "last4": issued.get("last4")},
     })
 
 
@@ -172,7 +174,8 @@ async def start_subscription(
 #: 여기 한 곳에 모아 두면 새 라우트가 실수로 빌링키를 끌어올 여지가 없다.
 _ME_COLUMNS = (
     "id::text as id, plan_code, status, current_period_end, next_billing_at, "
-    "scheduled_plan_code, card_brand, card_last4, grace_until, billing_key_invalid"
+    "scheduled_plan_code, pay_method, method_label, method_last4, grace_until, "
+    "billing_key_invalid"
 )
 
 
@@ -204,7 +207,8 @@ async def get_my_subscription(request: Request, user_id: str = Depends(require_u
         "scheduledPlanCode": sub["scheduled_plan_code"],
         "graceUntil": str(sub["grace_until"]) if sub["grace_until"] else None,
         "cardNeedsUpdate": bool(sub["billing_key_invalid"]),
-        "card": {"brand": sub["card_brand"], "last4": sub["card_last4"]},
+        "method": sub["pay_method"],
+        "card": {"brand": sub["method_label"], "last4": sub["method_last4"]},
         "expiring": _expiring(expiring),
     })
 
@@ -441,18 +445,20 @@ async def replace_card(
         async with conn.cursor() as cur:
             await cur.execute(
                 "update subscriptions set billing_key_enc = public.wl_billing_encrypt(%s, %s), "
-                "card_brand = %s, card_last4 = %s, billing_key_invalid = false "
+                "pay_method = %s, method_label = %s, method_last4 = %s, "
+                "billing_key_invalid = false "
                 "where user_id = %s returning id::text as id",
-                (issued["billingKey"], kek, issued.get("cardBrand"), issued.get("cardLast4"),
-                 user_id),
+                (issued["billingKey"], kek, issued["method"], issued.get("label"),
+                 issued.get("last4"), user_id),
             )
             await cur.fetchone()
         await conn.commit()
 
     # 새 키가 확정 저장된 뒤에 옛 키를 지운다(순서가 반대면 둘 다 잃는다).
     await toss_billing.delete_billing_key(settings, billing_key=old_key)
-    return JSONResponse({"card": {"brand": issued.get("cardBrand"),
-                                  "last4": issued.get("cardLast4")}})
+    return JSONResponse({"method": issued["method"],
+                         "card": {"brand": issued.get("label"),
+                                  "last4": issued.get("last4")}})
 
 
 webhook_router = APIRouter(prefix="/v1/webhooks", tags=["Subscriptions"])

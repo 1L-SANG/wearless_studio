@@ -215,6 +215,15 @@ function ProfileMenu() {
             onClick={() => { setOpen(false); navigate('/pricing'); }}>
             <Icon name="star" size={16} stroke={1.8} />요금제 관리
           </button>
+          {/* 구독 관리는 해지·카드 변경이 사는 자리다. 요금제(/pricing)는 '무엇을 살까'
+              라서 이미 구독 중인 사람이 해지하러 갈 곳이 없었다 — facemarket 은 구독을
+              팔지 않으므로 ai 도메인에서만 보인다. */}
+          {!IS_FACEMARKET && (
+            <button className="profile-item" role="menuitem"
+              onClick={() => { setOpen(false); navigate('/subscription'); }}>
+              <Icon name="refresh" size={16} stroke={1.8} />구독 관리
+            </button>
+          )}
           <button className="profile-item" role="menuitem"
             onClick={() => { setOpen(false); navigate('/credits/history'); }}>
             <Icon name="coins" size={16} stroke={1.8} />크레딧 사용 내역
