@@ -34,6 +34,7 @@ class QwenLocalBackend:
         negative_prompt: str = RENDER_NEGATIVE,
         lora_scale: float = 1.0,
         cpu_offload: bool = False,
+        gpu_fuse: bool = False,
     ):
         """cpu_offload=True 면 enable_model_cpu_offload() — 48GB 급 카드(A40)에서 bf16 전체(≈55GB)를
         한 번에 못 올릴 때. transformer(≈40GB)만 GPU 에 올라가 1024² 추론이 돈다(느리다)."""
@@ -45,6 +46,7 @@ class QwenLocalBackend:
         self.negative_prompt = negative_prompt
         self.lora_scale = lora_scale
         self.cpu_offload = cpu_offload
+        self.gpu_fuse = gpu_fuse
         self._pipe = None
         self._lock = threading.Lock()
 
@@ -56,21 +58,22 @@ class QwenLocalBackend:
 
                 pipe = QwenImageEditPlusPipeline.from_pretrained(self.model_id, torch_dtype=torch.bfloat16)
                 pipe.set_progress_bar_config(disable=True)
-                if self.cpu_offload:
-                    # 오프로드 경로는 순서를 그대로 둔다 — 가중치가 GPU 에 상주하지 않으므로
-                    # CPU 에서 합치는 편이 맞고, to(device) 대신 enable_model_cpu_offload 가 온다.
-                    pipe.load_lora_weights(self.lora_path, adapter_name="identity")
-                    pipe.set_adapters(["identity"], adapter_weights=[self.lora_scale])
-                    pipe.fuse_lora(lora_scale=self.lora_scale)
-                    pipe.enable_model_cpu_offload(device=self.device)
-                else:
-                    # ★ 먼저 GPU 로 올리고 나서 LoRA 를 합친다. CPU 에서 합치면 수백 개 텐서를
-                    #   단일 스레드 CPU 연산으로 더하게 되고(파드 vCPU 는 넉넉하지 않다),
-                    #   그 결과가 다시 GPU 로 전송된다 — 적재의 대부분이 여기서 나왔다.
+                if self.gpu_fuse and not self.cpu_offload:
+                    # 먼저 GPU 로 올리고 합친다 — 적재 214.7초 → 13.5초(위 실측).
+                    # 기본값이 아니다: 채택 기준(SFace |Δ| ≤ 0.02)을 한 컷이 0.022 로 넘었다.
                     pipe.to(self.device)
                     pipe.load_lora_weights(self.lora_path, adapter_name="identity")
                     pipe.set_adapters(["identity"], adapter_weights=[self.lora_scale])
                     pipe.fuse_lora(lora_scale=self.lora_scale)
+                else:
+                    # 기본: CPU 에서 합치고 나서 올린다(기존 동작 — 결과 픽셀이 바뀌지 않는다).
+                    pipe.load_lora_weights(self.lora_path, adapter_name="identity")
+                    pipe.set_adapters(["identity"], adapter_weights=[self.lora_scale])
+                    pipe.fuse_lora(lora_scale=self.lora_scale)
+                    if self.cpu_offload:
+                        pipe.enable_model_cpu_offload(device=self.device)
+                    else:
+                        pipe.to(self.device)
                 self._pipe = pipe
             return self._pipe
 

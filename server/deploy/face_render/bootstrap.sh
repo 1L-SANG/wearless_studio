@@ -49,6 +49,9 @@ fi
 t2=$(date +%s); say "weights $((t2-t1))s"
 say "총 $((t2-t0))s"
 
-# MEASURE (2026-09-11, RTX PRO 6000 · US-MO-2):
-#   hf_transfer off … (아래 표에 채운다)
-#   hf_transfer on  … (아래 표에 채운다)
+# MEASURE (2026-09-11, H100 80GB SECURE · 224 vCPU · 컨테이너 디스크 100GB):
+#   venv+pip        20초
+#   hf_transfer off 38초 (53.8GiB)
+#   hf_transfer on  39초 (53.8GiB)
+#   → **이 호스트에서는 hf_transfer 이득이 없다.** 앞선 회차의 390초는 라이브러리가 아니라
+#     그 파드의 회선이었다(같은 명령, 같은 용량). 켜 두는 비용도 없어 기본 on 으로 둔다.

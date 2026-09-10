@@ -81,6 +81,9 @@ DEVICE = os.getenv("FACE_RENDER_DEVICE", "cuda")
 #: A40(48GiB) 처럼 bf16 전체(≈55GiB)가 한 번에 안 올라가는 카드에서 켠다 —
 #: enable_model_cpu_offload() 로 transformer 만 GPU 에 두고 돌린다(느리지만 돈다).
 CPU_OFFLOAD = (os.getenv("FACE_RENDER_CPU_OFFLOAD", "false").lower() == "true")
+#: LoRA 를 GPU 에서 합친다(적재 214.7초 → 13.5초). 기본 off — 채택 기준을 한 컷이 0.022 로 넘었다.
+#: 자세한 실측은 app/agents/face_identity_qwen.py 상단 주석.
+GPU_FUSE = (os.getenv("FACE_RENDER_GPU_FUSE", "false").lower() == "true")
 #: 프로세스 기동 때 미리 올려 둘 LoRA 키. 비우면 첫 요청이 로드 비용(수 분)을 문다.
 #: **캐시에 있는 키만** 의미가 있다(기동 시점에는 presigned URL 이 없다).
 PRELOAD_LORA = os.getenv("FACE_RENDER_PRELOAD_LORA") or None
@@ -243,7 +246,7 @@ def _backend(lora_key: str | None, lora_url: str | None = None,
         except Exception:  # noqa: BLE001 — 정리 실패는 로드 실패가 아니다
             log.warning("cuda cache clear failed", exc_info=True)
     backend = QwenLocalBackend(_lora_file(lora_key, lora_url, lora_sha256), model_id=MODEL_ID,
-                               device=DEVICE, cpu_offload=CPU_OFFLOAD)
+                               device=DEVICE, cpu_offload=CPU_OFFLOAD, gpu_fuse=GPU_FUSE)
     t0 = time.perf_counter()
     backend.pipeline()          # 여기서 실제 로드가 일어난다(수 분)
     _state.update(backend=backend, lora=lora_key, loaded_at=time.time())
@@ -261,6 +264,7 @@ def healthz() -> dict:
         "token_configured": bool(TOKEN) and len(TOKEN) >= MIN_TOKEN_LEN,
         "model_id": MODEL_ID,
         "cpu_offload": CPU_OFFLOAD,
+        "gpu_fuse": GPU_FUSE,
         "code_version": CODE_VERSION,
         "cache_dir": CACHE_DIR,
     }
