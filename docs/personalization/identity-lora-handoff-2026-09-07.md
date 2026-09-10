@@ -698,3 +698,51 @@ black hair. Keep it consistent across cuts; it has no authority over the face.
 gpt-image 경로에서는 턱선을 프롬프트로 맞출 수 있어 덜 나올 가능성이 있다(Phase 1 에서 확인).
 
 **상수는 바꾸지 않았다**(FEATHER_FRAC·ELLIPSE 그대로, `feather_bottom` 기본 None). 부정 결과는 `feather_mask` docstring 에 박아 재시도를 막는다.
+
+## 25. prod raw 확보 → 합성 상수 확정 + Phase 1 준비 (2026-09-10)
+
+### 25.A prod 6컷 raw (파드 1회, 15분 20초, 실비 $0.128)
+`praw_kit.py`/`praw_run.sh`/`praw_launch.sh` — ZARA 키트를 그대로 쓰되 입력만 `prod_inputs/*.jpg` 로.
+**ZARA 사고(sed /g 누락으로 arcname 이 `ab_run.sh` 로 남아 45분 유휴 $0.37) 재발 방지**: 빌드 후 tar 를 내려받아
+`tar tzf` 로 arcname 을 확인하고 나서 파드를 띄웠다(`praw_run.sh` + inputs 6장 확인). 파드가 도는 동안 로그를 봤다.
+
+6컷 전부 첫 시드 통과: good_cafe 0.037→0.031 · good_close 0.079→0.032 · good_front 0.055→0.090 ·
+weak_34 0.162→0.227 · weak_full(ESRGAN ×2) 0.100→0.090 · weak_sit 0.101→0.055, 각 ~105초.
+산출 `praw_out/{id}_s42_raw.png` + `_control.png` + `_meta.json` + `_result.png` (6/6 회수).
+15분 강제 정지 대기자가 scp 도중 파드를 끊었으나 `PRAW_DONE` 이 03:35:31Z 에 이미 올라가 있어 R2 로 전량 회수했다.
+
+### 25.B 합성 상수 확정 — 8컷 × 4판, 판정 규칙 사전 고정
+같은 raw 로 합성만 재실행. `feather_bottom` 은 None 고정(§24 부정 결과). 칼라 y 는 컷별로 사람이 잡았다
+(prod: 515·720·500·470·345·655 / ZARA: 735·945).
+
+| 컷 | SFace 1.30→1.20 | Δ | 칼라띠 1.30→1.20 | 상단행 fade 0→48 |
+|---|---|---|---|---|
+| good_cafe | 0.715 → 0.715 | +0.000 | 0.73 → 0.12 | 8.13 → 0.00 |
+| good_close | 0.727 → 0.728 | +0.001 | 0.00 → 0.00 | 21.38 → 0.03 |
+| good_front | 0.696 → 0.692 | −0.004 | 0.01 → 0.00 | 6.44 → 0.02 |
+| weak_34 | 0.678 → 0.676 | −0.002 | 0.24 → 0.02 | 8.05 → 0.00 |
+| weak_full | 0.675 → 0.668 | **−0.007** | 0.08 → 0.00 | 11.99 → 0.31 |
+| weak_sit | 0.698 → 0.699 | +0.001 | 0.00 → 0.00 | 12.83 → 0.01 |
+| ZARA 1 | 0.669 → 0.693 | **+0.024** | 1.06 → 0.00 | 15.57 → 0.00 |
+| ZARA 2 | 0.722 → 0.746 | **+0.024** | 4.74 → 0.29 | 9.58 → 0.00 |
+
+**판정(규칙 그대로)**: k=1.20 채택 — SFace 최악 −0.007 로 문턱 −0.02 안, 칼라띠가 나빠진 컷 0개.
+EDGE_FADE_PX=48 채택 — 8컷 전부 상단행 |Δ| 감소.
+→ `ELLIPSE = (-0.75, -1.45, 1.75, 1.20)` 으로 변경. 하단 1.30 원판은 `ELLIPSE_E2_BOTTOM130` 으로 보존,
+`ELLIPSE_PREV`·`ELLIPSE_TRAIN` 과 학습 control 바이트 동일성 테스트는 무손상. 상수 옆 주석에 위 표 요약을 남겼다.
+육안(`const_sweep/{id}_sheet.png`): 네 판 모두 목·칼라 깨끗, fade48 에서 상단 테두리 소멸.
+
+### 25.C 얼굴형 블록 (커밋 e767324e)
+`FACE_SHAPES{oval,round,square,heart,long}` · `JAW_LINES{soft,defined,angular}` + `validate_face_shape` +
+`build_face_shape_block`. hair 와 같은 이유로 **LoRA 가 학습한 얼굴형**이라 LoRA 행에 붙는다(주석 명시).
+v6 는 사람이 보고 {oval, defined} 로 잠정(측정값 아님). 착장 컷만, 값 없으면 프롬프트 바이트 동일.
+프롬프트 블록 순서: BUILD → HAIR → FACE SHAPE.
+
+### 25.D Phase 1 대기 스크립트 (실행 안 함 — OPENAI_API_KEY 없음)
+`~/Downloads/lora_runs/phase1/phase1_gptimage.py`
+- 준비 확인(지금, API 0회): `~/devs/wearless_studio/server/.venv/bin/python ~/Downloads/lora_runs/phase1/phase1_gptimage.py --check`
+- 실행(키 들어온 뒤): `MODEL_ROUTING_IMAGE_HIGH=gpt-image-2 OPENAI_API_KEY=sk-... ~/devs/wearless_studio/server/.venv/bin/python ~/Downloads/lora_runs/phase1/phase1_gptimage.py --run`
+
+`--check` 결과: 세 블록(BUILD·HAIR·FACE SHAPE)이 프롬프트에 실제로 들어감을 확인, 입력 3종·기준셋 8장 존재 확인,
+`OPENAI_API_KEY` 없음·`MODEL_ROUTING_IMAGE_HIGH` 미설정 보고. `--run` 본문은 키 확보 후 채운다
+(지금 채우면 검증 없이 죽은 코드가 된다).

@@ -658,20 +658,23 @@ def test_generate_bottom_full_shot_gets_face_pass(monkeypatch):
 
 
 def test_expanded_ellipse_is_the_default_and_matches_the_formula():
-    # 기본은 E2(2026-09-09 타원 3단계 시험 채택). 이전 확장본은 ELLIPSE_PREV, 학습용은 ELLIPSE_TRAIN.
-    assert fi.ELLIPSE == (-0.75, -1.45, 1.75, 1.30)
+    # 기본은 E2 에서 하단만 1.20 으로 내린 값(2026-09-10, 8컷 스윕 채택).
+    # 하단 1.30 원판은 ELLIPSE_E2_BOTTOM130, 그 이전 확장본은 ELLIPSE_PREV, 학습용은 ELLIPSE_TRAIN.
+    assert fi.ELLIPSE == (-0.75, -1.45, 1.75, 1.20)
+    assert fi.ELLIPSE_E2_BOTTOM130 == (-0.75, -1.45, 1.75, 1.30)
     assert fi.ELLIPSE_PREV == (-0.55, -1.10, 1.55, 1.25)
     assert fi.ELLIPSE_TRAIN == (-0.30, -0.60, 1.30, 1.15)
     plan = fi.plan_from_box(848, 1264, (355.0, 252.0, 135.0, 180.0))
     fb = plan.face_box_crop
-    assert list(plan.ellipse) == pytest.approx([fb[0] - 0.75 * fb[2], fb[1] - 1.45 * fb[3], fb[0] + 1.75 * fb[2], fb[1] + 1.30 * fb[3]])
+    assert list(plan.ellipse) == pytest.approx([fb[0] - 0.75 * fb[2], fb[1] - 1.45 * fb[3], fb[0] + 1.75 * fb[2], fb[1] + 1.20 * fb[3]])
     prev = fi.plan_from_box(848, 1264, (355.0, 252.0, 135.0, 180.0), ellipse=fi.ELLIPSE_PREV)
     assert list(prev.ellipse) == pytest.approx([fb[0] - 0.55 * fb[2], fb[1] - 1.10 * fb[3], fb[0] + 1.55 * fb[2], fb[1] + 1.25 * fb[3]])
-    # 면적 순서: 학습 < 이전 확장 < 현재 E2 (시험에서 잰 45.6→56.5% 관계와 같은 방향)
+    # 면적 순서: 학습 < 이전 확장 < 현재 < 하단 1.30 원판 (하단만 줄였으므로 현재가 원판보다 작다)
     def area(pl):
         return int((np.asarray(fi.ellipse_mask(pl)) > 127).sum())
     train = fi.plan_from_box(848, 1264, (355.0, 252.0, 135.0, 180.0), ellipse=fi.ELLIPSE_TRAIN)
-    assert area(train) < area(prev) < area(plan)
+    e2 = fi.plan_from_box(848, 1264, (355.0, 252.0, 135.0, 180.0), ellipse=fi.ELLIPSE_E2_BOTTOM130)
+    assert area(train) < area(prev) < area(plan) < area(e2)
     assert list(train.ellipse) == pytest.approx([fb[0] - 0.30 * fb[2], fb[1] - 0.60 * fb[3], fb[0] + 1.30 * fb[2], fb[1] + 1.15 * fb[3]])
     # 페더 기본은 0.12
     assert fi.FEATHER_FRAC == 0.12
