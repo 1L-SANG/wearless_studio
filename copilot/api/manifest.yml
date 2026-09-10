@@ -197,7 +197,12 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # image_high는 마네킹·매칭·AG-07 공유 경로이므로 Gemini로 유지하고 AG-06만 분리한다.
   # 새 hard-gate가 garment 동일성까지 포함하므로 구 best-of 후보 생성은 중복 비용을 막기 위해 끈다.
   MODEL_ROUTING_IMAGE_HIGH: gemini-3-pro-image
-  MODEL_ROUTING_DETAIL_CUT: gpt-image-2-2026-04-21
+  # 2026-09-10 오너 결정: 최종 컷(에디터·상세페이지) 생성만 gpt-image 2.5 로 올린다.
+  # 마네킹·컬러웨이·매칭·개인화는 Gemini(image_high) 유지 — 그래서 image_high 를 건드리지
+  # 않고 워커별 노브 두 개만 쓴다. 각 워커가 자기 안에서만 image_high 를 치환한다
+  # (editor_image_job · detail_page_job). 되돌리려면 이 두 줄만 지운다.
+  MODEL_ROUTING_DETAIL_CUT: gpt-image-2.5-flare
+  MODEL_ROUTING_EDITOR_CUT: gpt-image-2.5-flare
   # 상세페이지 컷 출고 해상도 4K → 2K (2026-08-26 오너 결정). GPT Image 2 에서 이 값은
   # 2:3 캔버스 2336×3504 → 1536×2304 로 바뀐다(gemini_image._OPENAI_2K_SIZE).
   # 출력 토큰이 줄어 컷당 실비도 함께 내려가고, 4K 가 원인이던 메모리 압박(아래

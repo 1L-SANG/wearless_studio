@@ -47,8 +47,14 @@ def test_production_manifest_bounds_4k_gpt_repair_concurrency_without_moving_sha
     manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
     variables = manifest["variables"]
 
+    # 공용 tier(image_high)는 절대 안 움직인다 — 마네킹·컬러웨이·매칭·개인화가 여기 딸려 있다.
+    # 이 핀이 이 테스트 이름의 'without moving shared tier' 다.
     assert variables["MODEL_ROUTING_IMAGE_HIGH"] == "gemini-3-pro-image"
-    assert variables["MODEL_ROUTING_DETAIL_CUT"] == "gpt-image-2-2026-04-21"
+    # 최종 컷(에디터·상세페이지)만 gpt-image 2.5 (2026-09-10 오너 결정, Phase 1 측정 후).
+    # 워커별 노브라 위 image_high 와 독립이다. 둘을 같은 값으로 두는 것도 계약이다 —
+    # 한쪽만 바뀌면 같은 상세페이지 안에서 컷마다 모델이 달라진다.
+    assert variables["MODEL_ROUTING_DETAIL_CUT"] == "gpt-image-2.5-flare"
+    assert variables["MODEL_ROUTING_EDITOR_CUT"] == variables["MODEL_ROUTING_DETAIL_CUT"]
     # 상세페이지 컷 출고 해상도 2K (2026-08-26 오너 결정, 4K 에서 내림). 마네킹 핀과 같은
     # 이유로 못 박는다 — manifest 병합 사고 때 소리 없이 4K 로 되돌아가면 컷당 실비가 오른다.
     assert variables["DETAIL_CUT_IMAGE_SIZE"] == "2K"
