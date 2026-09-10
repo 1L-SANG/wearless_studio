@@ -17,7 +17,7 @@ from app import repo, routes
 from conftest import make_settings
 
 MIGRATIONS = Path(__file__).resolve().parents[2] / 'supabase' / 'migrations'
-ALIAS_MIGRATION = MIGRATIONS / '20260910120000_mannequin_job_requests.sql'
+ALIAS_MIGRATION = MIGRATIONS / '20260910210906_mannequin_job_requests.sql'
 
 
 @pytest.fixture(scope='module')
