@@ -19,7 +19,7 @@ from conftest import make_settings
 
 
 PROFILE = {"category": "top", "gender": "women", "version": 2,
-           "source": "seller", "axes": {"length": "standard"}}
+           "source": "seller", "axes": {"length": "basic"}}
 FRONT = InlineImage("image/png", b"seller-front")
 DETAIL = InlineImage("image/png", b"seller-detail")
 MATCHING = InlineImage("image/png", b"matching-bottom")
@@ -41,15 +41,19 @@ def series(value):
 
 def run_worker(monkeypatch, *, p2, generated=(b"before",), after=b"after",
                series_results=None, mode="enforce", has_match=True,
-               pants_mode="off", ref_images=(), bust_pass="off"):
+               pants_mode="off", ref_images=(), bust_pass="off", captures=None,
+               settings_overrides=None, candidate_kwargs=None):
     pending = list(generated)
-    captures = SimpleNamespace(judged=[], series=[], puts=[], image_calls=[], events=[])
+    captures = captures or SimpleNamespace(judged=[], series=[], puts=[], image_calls=[], events=[], prompts=[])
+    captures.requests = []
 
     class Provider:
         async def generate_content_image(self, model, prompt, images, size, **kwargs):
             bust = "BUST SIZE" in prompt
             untuck = not bust and "unbroken visible line" in prompt
             captures.image_calls.append("bust" if bust else "untuck" if untuck else "generate")
+            captures.prompts.append(prompt)
+            captures.requests.append({"images": images, "model": model, "size": size})
             result = after if bust or untuck else pending.pop(0)
             if isinstance(result, Exception):
                 raise result
@@ -84,12 +88,14 @@ def run_worker(monkeypatch, *, p2, generated=(b"before",), after=b"after",
     monkeypatch.setattr(job.qc, "evaluate_mannequin_qc", lambda _: QcResult("pass", [], {}))
     monkeypatch.setattr(job.qc, "evaluate_canvas_alpha_qc", lambda _: QcResult("pass", [], {}))
     monkeypatch.setattr(job.qc, "compare_pants_region", lambda *a, **k: QcResult("same", [], {}))
-    settings = make_settings(
+    settings = make_settings(**{
+        **dict(
         r2_bucket="bucket", image_qc=mode, mannequin_axis_qc="off",
         mannequin_max_attempts=2, mannequin_bust_pass=bust_pass, mannequin_bust_gate="off", mannequin_fabric_pass="off",
         mannequin_untuck_pass="on", mannequin_untuck_gate="off", mannequin_pants_qc=pants_mode,
-        qc_edit_regression_margin=10,
-    )
+        qc_edit_regression_margin=10),
+        **(settings_overrides or {}),
+    })
     app = SimpleNamespace(state=SimpleNamespace(
         settings=settings, pool=object(), r2=Storage(), gemini=Provider()))
     result = asyncio.run(job._run_candidate(
@@ -101,6 +107,7 @@ def run_worker(monkeypatch, *, p2, generated=(b"before",), after=b"after",
         product={}, analysis={}, clothing_type="top", fit_profile=deepcopy(PROFILE),
         product_refs=[ProductReference("Front", "front", FRONT), ProductReference("Detail", "detail", DETAIL)],
         ref_imgs=ref_images,
+        **(candidate_kwargs or {}),
     ))
     return result, captures
 

@@ -28,6 +28,7 @@ from ..agents import (
     mannequin_fit_qc,
     mannequin_series_qc,
     mannequin_untuck,
+    mannequin_quality,
 )
 from ..agents.mannequin_adjust import (
     ADJUST_PROMPT_VERSION,
@@ -500,11 +501,19 @@ _COMPARABLE_KEYS = tuple(k for k in image_qc.SCORE_KEYS if k != "series_consiste
 def _is_better_candidate(s, new_p2, old_p2) -> bool:
     """reject 후보끼리의 우열 — 구제할 '최선본'을 고르기 위한 순수 비교.
 
-    치명 오류 없는 쪽이 무조건 낫다(점수가 낮아도 출고 가능한 결함이라). 그 다음 최저축.
-    점수 신호가 없는 후보는 비교 불가라 기존 후보를 유지한다.
+    enforce에서는 최고 심각도, 항목별 개선을 먼저 본다. 동급의 항목 교환이나 미판정은
+    기존 후보를 유지한다. 동등한 판정과 구형 스냅샷에만 기존 점수 비교를 적용한다.
     """
     if old_p2 is None:
         return True
+    comparison = mannequin_quality.compare_risks(new_p2, old_p2)
+    if s.image_qc == "enforce" and comparison in ("better", "worse", "tradeoff"):
+        return comparison == "better"
+    if s.image_qc == "enforce" and comparison == "unavailable" and (
+            new_p2 is None or 'product_risks' in (new_p2 or {})
+            or 'product_risks' in (old_p2 or {})):
+        # 미판정을 정상으로 채워 더 좋은 후보라고 선언하지 않는다.
+        return False
     new_critical = bool((new_p2 or {}).get("critical_errors"))
     old_critical = bool((old_p2 or {}).get("critical_errors"))
     if new_critical != old_critical:
@@ -548,6 +557,9 @@ def edit_regressed(s, pre_p2, post_p2, *, score_keys=_COMPARABLE_KEYS) -> bool:
     """
     if not isinstance(pre_p2, dict) or not isinstance(post_p2, dict):
         return False
+    enforce_product_policy = s.image_qc == "enforce"
+    if enforce_product_policy and mannequin_quality.edit_risk_reason(pre_p2, post_p2):
+        return True
     # 신규 치명오류는 **점수 유무보다 먼저** 본다. 점수 없음 검사를 앞에 두면, 편집 전 판정에
     # 숫자가 없던 경우(미채점 모델·판정 부분실패) 편집이 로고를 망가뜨려도 그냥 나간다
     # (codex 2026-07-31 8차 HIGH). 치명오류는 점수와 무관하게 그 자체로 출고 불가다.
@@ -556,8 +568,8 @@ def edit_regressed(s, pre_p2, post_p2, *, score_keys=_COMPARABLE_KEYS) -> bool:
     pre_worst = _worst_score(pre_p2, score_keys)
     if pre_worst is None:
         return False  # 편집 전 점수가 없으면 등급 하락은 논할 수 없다
-    pre_rank = _GRADE_RANK[score_outcome(s, pre_p2)]
-    post_rank = _GRADE_RANK[score_outcome(s, post_p2)]
+    pre_rank = _GRADE_RANK[score_outcome(s, pre_p2, product_policy=enforce_product_policy)]
+    post_rank = _GRADE_RANK[score_outcome(s, post_p2, product_policy=enforce_product_policy)]
     if post_rank >= pre_rank:
         return False
     # 등급이 내려갔어도 **하락폭이 판정 노이즈 수준이면 편집을 살린다.** 등급만 보면 임계(80)에
@@ -572,35 +584,37 @@ def edit_regressed(s, pre_p2, post_p2, *, score_keys=_COMPARABLE_KEYS) -> bool:
     return True
 
 
-def score_outcome(s, p2) -> str:
+def score_outcome(s, p2, *, product_policy=True) -> str:
     """4축 점수 → auto_pass | needs_review | regenerate (순수).
 
     이진 verdict 로는 "얼마나 나쁜지"를 몰라 셀러에게 보일지/자동으로 다시 만들지를 못 가른다.
     점수 신호가 아예 없으면(off·shadow·판정실패·미채점 모델) **auto_pass** 로 눕힌다 —
     신호 부재를 나쁨으로 읽으면 QC 를 켜는 순간 멀쩡한 컷이 재생성된다.
 
-    치명 오류(로고 변형·색 변경·구조 붕괴)는 점수와 무관하게 regenerate. 점수는 평균으로
-    희석되지만 이런 결함은 하나만 있어도 출고 불가라 별도 축으로 둔다.
+    치명 오류와 구조화된 major 이상은 점수와 무관하게 regenerate. 새 정책의 명시적인
+    미판정은 auto_pass로 표시하지 않는다. 구형 점수 부재와는 구분한다.
     """
     if not isinstance(p2, dict):
         return "auto_pass"
-    if p2.get("critical_errors"):
+    if p2.get("critical_errors") or (product_policy and mannequin_quality.blocking_issues(p2)):
         return "regenerate"
+    unverified = product_policy and mannequin_quality.review_unavailable(p2)
     worst = _worst_score(p2)  # 평균이 아니라 최저 — 한 축 붕괴가 고득점에 가려지면 안 된다
     if worst is None:
-        return "auto_pass"
+        return "needs_review" if unverified else "auto_pass"
     if worst >= s.qc_score_auto_pass:
-        return "auto_pass"
+        return "needs_review" if unverified else "auto_pass"
     if worst >= s.qc_score_review:
         return "needs_review"
     return "regenerate"
 
 
-async def _apply_series_qc(*, app, pool, s, job_id, project_id, candidate, attempt, res):
+async def _apply_series_qc(*, app, pool, s, job_id, project_id, candidate, attempt, res,
+                           require_available=False):
     """D축 시리즈 일관성 — 채택본이 같은 프로젝트 기존 컷들과 한 세트로 보이는지 판정.
 
-    **fail-open** — _apply_axis_qc·_apply_bust_pass 와 같은 규율. 판정은 관측이지 게이트가
-    아니다. 기존 컷 0장(첫 생성)·모델 오류·R2 미스 어떤 경우에도 None 을 돌려 생성을 통과시킨다.
+    일반 시도는 fail-open. 마지막 구제 생성의 enforce 검수는 실패와 참조 없음(첫 생성)을
+    구별한다. 참조가 없으면 비교를 생략하고, 조회·다운로드·검수 실패는 통과시키지 않는다.
 
     호출 위치가 중요하다: bust 2패스 **뒤**여야 측정 대상이 실제 출고본과 같다. 그리고 게이트
     통과 뒤에만 불리므로 reject 된 attempt 에서 기존 컷을 헛되이 로드하지 않는다.
@@ -629,7 +643,11 @@ async def _apply_series_qc(*, app, pool, s, job_id, project_id, candidate, attem
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "attempt": attempt, "status": "series_qc_failed",
             "error": type(e).__name__, "message": str(e)[:200]})
+        if require_available:
+            raise MannequinQualityError("final_series_unavailable") from e
         return None
+    if require_available and out is None:
+        raise MannequinQualityError("final_series_unavailable")
     if out is not None:
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "attempt": attempt, "status": "series_qc",
@@ -651,6 +669,9 @@ def merge_qc_scores(p2, series, *, salvaged: bool = False, thresholds: tuple | N
         out["series_consistency"] = series["consistency"]
         out["series_inconsistencies"] = series["inconsistencies"]
     out["critical_errors"] = p2d.get("critical_errors") or []
+    for key in ("product_risks", "quality_policy", "image_hash", "matching_critical_errors"):
+        if key in p2d:
+            out[key] = p2d[key]
     out["salvaged"] = salvaged
     # 판정에 쓰인 임계를 함께 남긴다. 임계를 바꾸면 과거 판정은 재계산되지 않으므로, 이게
     # 없으면 나중에 저장된 outcome 을 재계산해봤을 때 불일치가 나와 버그로 오해하게 된다
@@ -682,12 +703,15 @@ def _build_retry_feedback(scores: dict | None, series: dict | None, p2) -> str:
     """
     parts = []
     if (scores or {}).get("critical_errors"):
-        parts.append("CRITICAL: " + "; ".join(scores["critical_errors"][:3]))
+        parts.append("CRITICAL: " + "; ".join(dict.fromkeys(scores["critical_errors"])))
+    issues = mannequin_quality.blocking_issues({"product_risks": (scores or {}).get("product_risks")})
+    if issues:
+        parts.append("PRODUCT IDENTITY: " + "; ".join(issues))
     if series and series.get("inconsistencies"):
         parts.append("CONSISTENCY: " + _AXIS_FEEDBACK["series_consistency"] + " — "
                      + "; ".join(series["inconsistencies"][:3]))
-    # 매칭(코디) 하드 게이트 사유. merge_qc_scores 는 매칭 키를 싣지 않으므로 p2 에서 직접
-    # 읽는다 — 이게 없으면 바지 때문에 건 재롤이 같은 프롬프트로 돌아 같은 바지를 낸다.
+    # 매칭(코디) 하드 게이트 사유는 원본 판정에서도 읽는다. 바지 때문에 건 재롤에도
+    # 실제로 무엇을 교정해야 하는지 전달한다.
     if isinstance(p2, dict) and p2.get("matching_critical_errors"):
         parts.append("MATCHING GARMENT (reproduce the coordination item exactly as in its "
                      "reference photo): " + "; ".join(p2["matching_critical_errors"][:3]))
@@ -747,7 +771,7 @@ def gate_decision(s, pillow_verdict_str: str, p2) -> tuple[bool, bool]:
         return pillow_reject, False  # off/shadow 는 항상 통과 — 기존 동작 불변
     # 점수 신호가 있으면 그쪽이 정본(3분기). 없으면 기존 이진 verdict 로 폴백한다 —
     # 미채점 응답에서 게이트가 통째로 풀리지 않게.
-    if isinstance(p2, dict) and (p2.get("critical_errors") or any(
+    if isinstance(p2, dict) and (mannequin_quality.blocking_issues(p2) or any(
             isinstance(p2.get(k), int) and not isinstance(p2.get(k), bool)
             for k in image_qc.SCORE_KEYS)):
         return pillow_reject, score_outcome(s, p2) == "regenerate"
@@ -788,6 +812,12 @@ def pants_gate(s, p2) -> bool:
     """
     return (getattr(s, "mannequin_pants_qc", "off") == "enforce"
             and isinstance(p2, dict) and bool(p2.get("matching_critical_errors")))
+
+
+def _matching_review_unavailable(s, p2, match_img, clothing_type) -> bool:
+    return (getattr(s, "mannequin_pants_qc", "off") == "enforce"
+            and _pants_qc_ref(s, match_img, clothing_type) is not None
+            and (not isinstance(p2, dict) or p2.get("matching_fidelity") is None))
 
 
 def _pants_shippable(s, p2) -> bool:
@@ -1414,6 +1444,10 @@ async def _rollback_edits(
     return await _revert_to(post_axis_res, mid_p2, "bust_only")
 
 
+class MannequinQualityError(RuntimeError):
+    """추가 한 장까지 검증하지 못한 품질 종료. 화면 자동 재시도 대상이 아니다."""
+
+
 async def _run_candidate(
     *, app, job, candidate, base_fit, base_gender, base_img, prod_imgs, match_img,
     product_count, template, product, analysis, clothing_type, image_manifest="", fit_profile=None,
@@ -1476,6 +1510,9 @@ async def _run_candidate(
     # 저장 shape 이 계약(QcScores)을 벗어나지 않게. 네 번째는 이벤트·correctionPrompt 용.
     pre_reject: tuple | None = None
     final_reject: tuple | None = None
+    # 출고 후보가 아니다. 매칭 하드 게이트 때문에 구제 풀에서 빠진 사진도 마지막
+    # 원본 기반 재생성의 진단 입력으로는 남겨야 한다.
+    last_blocked: tuple | None = None
     # 이미지 모델 호출 예산은 한 통이다 — 생성·axis 편집·bust 2패스가 여기서 나간다.
     # 호출 **직전**에 소비하고, 재생성 여부는 남은 잔량으로만 판단한다.
     # untuck 은 이 통을 **쓰지 않는다** — 저장 직전 전용 post-pass 슬롯 1회
@@ -1489,6 +1526,112 @@ async def _run_candidate(
     canonical_refs = canonical_refs or {}
     sam_fallback_used = False
     profile_hash = _canonical_profile_hash(fit_profile)
+    observed_scores = []
+
+    async def prefer(new, previous):
+        chosen = _is_better_candidate(s, new[1], previous[1] if previous else None)
+        if previous:
+            await _emit(pool, job_id, "step", {
+                "status": "quality_candidate_comparison", "candidate": candidate,
+                "policy": mannequin_quality.POLICY_VERSION,
+                "reason": mannequin_quality.compare_risks(new[1], previous[1]),
+                "selected": "new" if chosen else "previous",
+                "new_image_hash": hashlib.sha256(new[0].image).hexdigest(),
+                "previous_image_hash": hashlib.sha256(previous[0].image).hexdigest(),
+            })
+        return chosen
+
+    async def finish(res, p2, series, scores, attempt, *, untuck=True):
+        needs_repair = (s.image_qc == "enforce" and mannequin_quality.blocking_issues(scores)) or pants_gate(s, scores)
+        if untuck and not needs_repair:
+            res, scores = await _apply_checked_untuck_postpass(
+                app=app, pool=pool, gemini=gemini, s=s, job_id=job_id,
+                project_id=project_id, candidate=candidate, attempt=attempt,
+                generation_attempts=generation_calls, res=res, p2=p2, series=series,
+                qc_scores=scores, prod_imgs=prod_imgs, match_img=match_img,
+                fit_profile=fit_profile, eff_image_qc=eff_image_qc,
+                clothing_type=clothing_type, image_size=image_size,
+                cancel_check=cancel_check)
+        important = s.image_qc == "enforce" and mannequin_quality.blocking_issues(scores)
+        if important or pants_gate(s, scores):
+            # 최종 1회는 재시도 루프 밖이다. 기존 결과의 디자인 오류를 물려받지 않도록
+            # 원본 사진과 베이스에서 시작하되 선언된 모든 핏 축은 그대로 적용한다.
+            repair_images = [base_img, *prod_imgs] + ([match_img] if match_img else [])
+            manifest = _build_manifest(
+                [{"slot": ref.slot} for ref in product_refs] if product_refs else [{} for _ in prod_imgs],
+                match_img is not None, clothing_type)
+            ctx = mannequin.prompt_context(
+                clothing_type=clothing_type, product_count=product_count,
+                base_gender=base_gender, image_manifest=manifest, fit_profile=fit_profile,
+                adjusted_axes=adjusted_axes)
+            source_prompt = render_mannequin_prompt(
+                template, ctx, product, analysis, seller_canon=s.seller_text_canonicalize,
+                knowledge=s.retrieval_knowledge, material_policy="photo_evidence")
+            diagnostics = list(dict.fromkeys(
+                mannequin_quality.repair_feedback(item) for item in [*observed_scores, scores]
+                if mannequin_quality.blocking_issues(item) or pants_gate(s, item)))
+            repair_prompt = "\n\n".join([*diagnostics, source_prompt])
+            await _emit(pool, job_id, "step", {
+                "status": "quality_repair", "candidate": candidate, "outcome": "started",
+                "policy": mannequin_quality.POLICY_VERSION, "extra_image_limit": 1,
+                "generation_attempts": generation_calls,
+                "prompt_hash": hashlib.sha256(repair_prompt.encode()).hexdigest(),
+            })
+            await _cancel_checkpoint(cancel_check)
+            try:
+                repaired = await gemini.generate_content_image(
+                    model, repair_prompt, repair_images, image_size,
+                    aspect_ratio=s.mannequin_aspect_ratio)
+            except Exception as error:
+                raise MannequinQualityError("final_generation_failed") from error
+            await _cancel_checkpoint(cancel_check)
+            canvas = qc.evaluate_canvas_alpha_qc(repaired.image)
+            if any(r in canvas.reasons for r in ("decode_failed", "transparent_canvas")):
+                raise MannequinQualityError("final_canvas_rejected")
+            post_p2, base_fidelity = await _observe_generation_qc(
+                pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt + 1,
+                res=repaired, prod_imgs=prod_imgs, match_img=match_img,
+                clothing_type=clothing_type, fit_profile=fit_profile,
+                eff_image_qc=eff_image_qc, base_img=base_img, product=product, analysis=analysis)
+            await _cancel_checkpoint(cancel_check)
+            if s.image_qc == "enforce" and not mannequin_quality.review_complete(post_p2):
+                raise MannequinQualityError("final_review_unavailable")
+            if _matching_review_unavailable(s, post_p2, match_img, clothing_type):
+                raise MannequinQualityError("final_matching_unavailable")
+            if (s.image_qc == "enforce" and mannequin_quality.blocking_issues(post_p2)) or pants_gate(s, post_p2):
+                raise MannequinQualityError("final_product_rejected")
+            if base_fidelity_retry_axes(s, base_fidelity):
+                raise MannequinQualityError("final_base_rejected")
+            if (getattr(s, "mannequin_base_fidelity_qc", "off") == "enforce"
+                    and (not base_fidelity or base_fidelity["poseFrameMatch"]["decision"] == "skip")):
+                raise MannequinQualityError("final_base_unavailable")
+            axis_spec = mannequin_fit_qc.declared_axis_spec(fit_profile)
+            if _effective_axis_qc_mode(s) == "enforce" and axis_spec:
+                try:
+                    fit = await mannequin_fit_qc.verdict(
+                        s, prod_imgs, InlineImage(repaired.mime, repaired.image), fit_profile, match_img)
+                except Exception as error:
+                    raise MannequinQualityError("final_fit_unavailable") from error
+                if not fit["identityPass"] or mannequin_fit_qc.failed_axis_specs(axis_spec, fit):
+                    raise MannequinQualityError("final_fit_rejected")
+            post_series = await _apply_series_qc(
+                app=app, pool=pool, s=s, job_id=job_id, project_id=project_id,
+                candidate=candidate, attempt=attempt + 1, res=repaired,
+                require_available=s.image_qc == "enforce")
+            scores = merge_qc_scores(post_p2, post_series, thresholds=(s.qc_score_auto_pass, s.qc_score_review))
+            if final_decision(s, scores) == "retry":
+                raise MannequinQualityError("final_scores_rejected")
+            res = repaired
+            scores["quality_repair_used"] = True
+            await _emit(pool, job_id, "step", {
+                "status": "quality_repair", "candidate": candidate, "outcome": "accepted",
+                "image_hash": hashlib.sha256(res.image).hexdigest(),
+            })
+        return await _save_cut(
+            s=s, r2=r2, user_id=user_id, project_id=project_id, job_id=job_id,
+            candidate=candidate, base_fit=base_fit, res=res, qc_scores=scores,
+            cancel_check=cancel_check)
+
     for attempt in range(1, s.mannequin_max_attempts + 1):
         if calls_spent >= s.mannequin_max_attempts:
             # 편집이 예산을 다 먹어 생성조차 못 하는 상태. 사전·최종 게이트가 둘 다 잔량을
@@ -1523,7 +1666,7 @@ async def _run_candidate(
             # 넘어가지 않는다 — 같은 후보를 한 번 더 그려 요금이 두 번 나가고, 그 호출은
             # 비용 원장에도 안 남는다(2026-08-17 검증. 컷 생성 쪽과 같은 규칙).
             if getattr(e, "billable", False):
-                break
+                raise MannequinQualityError("generation_result_unknown") from e
             continue
         await _cancel_checkpoint(cancel_check)
         verdict = qc.evaluate_mannequin_qc(res.image)
@@ -1563,6 +1706,22 @@ async def _run_candidate(
             prod_imgs=prod_imgs, match_img=match_img, clothing_type=clothing_type,
             fit_profile=fit_profile, eff_image_qc=eff_image_qc,
             base_img=base_img, product=product, analysis=analysis)
+        unverified_main = (s.image_qc == "enforce" and mannequin_quality.review_unavailable(p2)
+                and any(mannequin_quality.blocking_issues(previous) for previous in observed_scores)
+                and not mannequin_quality.blocking_issues(p2))
+        unverified_matching = (_matching_review_unavailable(s, p2, match_img, clothing_type)
+                and any(pants_gate(s, previous) for previous in observed_scores))
+        if p2 is not None:
+            observed_scores.append(p2)
+        if unverified_main or unverified_matching:
+            # 판정을 못 받은 새 사진은 앞서 확인한 중요한 문제를 해결했다는 근거가 아니다.
+            # 이전 후보·진단을 유지하고 마지막 구제 경로에서 완전한 재검수를 요구한다.
+            await _emit(pool, job_id, "step", {
+                "candidate": candidate, "attempt": attempt,
+                "status": "quality_review_unavailable", "outcome": "previous_retained"})
+            continue
+        if (s.image_qc == "enforce" and mannequin_quality.blocking_issues(p2)) or pants_gate(s, p2):
+            last_blocked = (res, merge_qc_scores(p2, None), None, p2)
         # **사전 게이트** — 잘못된 옷을 axis/bust 편집하면 그 정체성이 보존되므로, 편집 전에
         # 한 번 거른다. 최종 출고 판정은 여기가 아니라 아래 final_decision 하나가 내린다.
         pillow_reject, p2_reject = gate_decision(s, verdict.verdict, p2)
@@ -1577,8 +1736,7 @@ async def _run_candidate(
             pre_scores = merge_qc_scores(p2, None)
             # 바지 하드 게이트 걸린 후보는 구제 풀에 넣지 않는다(요구 6) — 잘못된 바지가
             # salvage 로 출고되면 안 된다. 재롤은 아래 needs_retry 가 예산 내에서 담당한다.
-            if _pants_shippable(s, p2) and _is_better_candidate(
-                    s, pre_scores, pre_reject[1] if pre_reject else None):
+            if _pants_shippable(s, p2) and await prefer((res, pre_scores, None, p2), pre_reject):
                 pre_reject = (res, pre_scores, None, p2)
             if not has_budget_for_retry(s, calls_spent=calls_spent):
                 # 재생성 여력이 없으면 여기서 끝이다. attempt 번호가 아니라 **남은 호출**로
@@ -1591,7 +1749,7 @@ async def _run_candidate(
                 # enforce 에서 바지-critical 만 나온 잡은 pre_reject 가 None 일 수 있다 — 그때
                 # pre_reject[1] 을 만지면 크래시다. None 을 명시적으로 다뤄 **드롭**으로 끝낸다.
                 use_final = final_reject is not None and (
-                    pre_reject is None or _is_better_candidate(s, final_reject[1], pre_reject[1]))
+                    pre_reject is None or not await prefer(pre_reject, final_reject))
                 if use_final:
                     # 이미 편집·재판정·D축을 다 거친 출고 준비본이다. 본 경로를 다시 태우면
                     # bust 가 두 번 적용되고 D축 스냅샷이 덮어써진다(codex 7차 MEDIUM).
@@ -1601,12 +1759,12 @@ async def _run_candidate(
                     res, salvaged_scores, salvaged_series, p2 = pre_reject
                     # 사전 게이트 후보는 편집·D축을 안 거쳤다 → 아래 본 경로가 그걸 수행한다.
                 else:
-                    # 구제할 깨끗한 후보가 없다(바지-critical 만) → 이 후보 드롭(요구 6).
+                    # 깨끗한 후보가 없으므로 잘못된 사진 대신 원본 기반 최종 한 장으로 넘긴다.
                     await _emit(pool, job_id, "step", {
                         "candidate": candidate, "attempt": attempt, "status": "candidate_dropped",
                         "reason": "matching_identity",
                         "matchingCriticalErrors": (p2 or {}).get("matching_critical_errors", [])})
-                    return None
+                    return await finish(res, p2, None, pre_scores, attempt, untuck=False)
                 p2_reject, salvaged = False, True
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "qc_salvaged",
@@ -1651,8 +1809,7 @@ async def _run_candidate(
                     "seriesConsistency": (series or {}).get("consistency")})
                 # 편집 완료 이미지 + A~D 전체 스냅샷 — 최종 단계 후보 풀에만 담는다.
                 # 바지 하드 게이트 걸린 컷은 제외 — 예산 소진 시 이 컷으로 salvage 되면 안 된다(요구 6).
-                if _pants_shippable(s, p2) and _is_better_candidate(
-                        s, qc_scores, final_reject[1] if final_reject else None):
+                if _pants_shippable(s, p2) and await prefer((res, qc_scores, series, p2), final_reject):
                     final_reject = (res, qc_scores, series, p2)
                 feedback = _build_retry_feedback(qc_scores, series, p2)
                 # 추가 예산을 만들지 않는다 — 이미 승인된 재생성의 **입력만** 바꾼다.
@@ -1686,29 +1843,18 @@ async def _run_candidate(
                         "candidate": candidate, "attempt": attempt, "status": "candidate_dropped",
                         "reason": "matching_identity",
                         "matchingCriticalErrors": (p2 or {}).get("matching_critical_errors", [])})
-                    return None
+                    return await finish(res, p2, series, qc_scores, attempt, untuck=False)
             # 예산 소진인데 최종 판정이 retry 라면 최선본으로 되돌려 구제 출고한다.
             # **final_reject 만** 쓴다 — pre_reject 는 편집·재판정·D축을 안 거친 원본이라
             # 그대로 저장하면 검증 안 된 이미지가 출고된다(codex HIGH).
             if final_decision(s, qc_scores) == "retry" and not salvaged:
-                if final_reject and _is_better_candidate(s, final_reject[1], qc_scores):
+                if final_reject and not await prefer((res, qc_scores, series, p2), final_reject):
                     res, qc_scores, series, p2 = final_reject
                 qc_scores = {**(qc_scores or {}), "salvaged": True}
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "qc_salvaged",
                     "reason": "budget_exhausted", "outcome": score_outcome(s, qc_scores)})
-            res, qc_scores = await _apply_checked_untuck_postpass(
-                app=app, pool=pool, gemini=gemini, s=s, job_id=job_id,
-                project_id=project_id, candidate=candidate, attempt=attempt,
-                generation_attempts=generation_calls, res=res, p2=p2, series=series,
-                qc_scores=qc_scores, prod_imgs=prod_imgs, match_img=match_img,
-                fit_profile=fit_profile, eff_image_qc=eff_image_qc,
-                clothing_type=clothing_type, image_size=image_size,
-                cancel_check=cancel_check)
-            return await _save_cut(
-                s=s, r2=r2, user_id=user_id, project_id=project_id, job_id=job_id,
-                candidate=candidate, base_fit=base_fit, res=res, qc_scores=qc_scores,
-                cancel_check=cancel_check)
+            return await finish(res, p2, series, qc_scores, attempt)
         # reject → 재시도 프롬프트에 교정 피드백 주입(Pillow 사유 + AG-P2 correctionPrompt).
         # 정체성 게이트가 선점하면 축 QC/편집은 이 attempt에서 미실행 — 잘못된 옷을 편집하면
         # 그 정체성이 보존되므로 신규 생성(re-roll)이 우선한다(설계 결정 3).
@@ -1764,22 +1910,15 @@ async def _run_candidate(
                 "candidate": candidate, "status": "candidate_dropped",
                 "reason": "matching_identity",
                 "matchingCriticalErrors": (p2 or {}).get("matching_critical_errors", [])})
-            return None
+            return await finish(res, p2, series, qc_scores, s.mannequin_max_attempts, untuck=False)
         qc_scores = {**(qc_scores or {}), "salvaged": True}
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "status": "qc_salvaged",
             "reason": "loop_exhausted", "outcome": score_outcome(s, qc_scores)})
-        res, qc_scores = await _apply_checked_untuck_postpass(
-            app=app, pool=pool, gemini=gemini, s=s, job_id=job_id,
-            project_id=project_id, candidate=candidate, attempt=s.mannequin_max_attempts,
-            generation_attempts=generation_calls, res=res, p2=p2, series=series,
-            qc_scores=qc_scores, prod_imgs=prod_imgs, match_img=match_img,
-            fit_profile=fit_profile, eff_image_qc=eff_image_qc,
-            clothing_type=clothing_type, image_size=image_size, cancel_check=cancel_check)
-        return await _save_cut(
-            s=s, r2=r2, user_id=user_id, project_id=project_id, job_id=job_id,
-            candidate=candidate, base_fit=base_fit, res=res, qc_scores=qc_scores,
-            cancel_check=cancel_check)
+        return await finish(res, p2, series, qc_scores, s.mannequin_max_attempts)
+    if last_blocked:
+        res, qc_scores, series, p2 = last_blocked
+        return await finish(res, p2, series, qc_scores, s.mannequin_max_attempts, untuck=False)
     return None  # 구제할 후보조차 없음 → 이 후보 드롭(부분 성공 허용)
 
 
@@ -1828,7 +1967,7 @@ async def run_mannequin_job(app, job: dict) -> None:
         async with pool.connection() as conn:
             return await repo.is_job_cancelled(conn, job_id)
 
-    async def _fail(message: str, meta: dict):
+    async def _fail(message: str, meta: dict, *, code="generation_failed"):
         # 사용자 취소 라우트가 이미 차감 정산·cancelled 종결을 끝냈으면 failure release/error로
         # 덮지 않는다. 직후 경합도 repo의 running+lease FOR UPDATE 펜스가 한 번 더 막는다.
         await _cancel_checkpoint(_cancel_check)
@@ -1836,7 +1975,8 @@ async def run_mannequin_job(app, job: dict) -> None:
             await repo.finalize_mannequin_failure(
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
                 project_id=project_id, reserved=reserved, settle_key=settle_key,
-                message=message, metadata=meta)
+                message=message, metadata=meta,
+                **({"code": code} if code != "generation_failed" else {}))
             await conn.commit()
 
     try:
@@ -2038,6 +2178,8 @@ async def run_mannequin_job(app, job: dict) -> None:
                     canonical_refs=canonical_refs, product_refs=product_refs)
             except _MannequinJobCancelled:
                 raise
+            except MannequinQualityError:
+                raise
             except Exception as e:
                 log.warning("job %s candidate %s failed: %r", job_id, letter, e)
                 r = None
@@ -2063,6 +2205,10 @@ async def run_mannequin_job(app, job: dict) -> None:
             return
         await _emit(pool, job_id, "progress", {"progress": 85, "phase": "finalizing"})
 
+        # 최종 구제는 부모 편집이 아니라 원본 기반 신규 생성이다. 다음 조정에서 부모
+        # 깊이를 계산할 때도 실제 출고본의 계보·프롬프트를 사용한다(현재 후보는 A 한 장).
+        if (passed[0].get("qc_scores") or {}).get("quality_repair_used"):
+            generation_path = "fresh"
         cut_generation_metadata = {
             "generationPath": generation_path,
             "editDepth": (parent_edit_depth + 1) if generation_path == "edit" else 0,
@@ -2104,6 +2250,14 @@ async def run_mannequin_job(app, job: dict) -> None:
     except _MannequinJobCancelled:
         # 취소 라우트가 status/event/차감까지 종결한다. 워커는 error/done을 추가하지 않는다.
         return
+    except MannequinQualityError as error:
+        try:
+            await _fail(
+                "상품이 제대로 재현된 결과를 확인하지 못했어요. 크레딧은 차감하지 않았어요. 다시 시도해 주세요.",
+                {"error": "mannequin_quality_failed", "reason": str(error)},
+                code="mannequin_quality_failed")
+        except _MannequinJobCancelled:
+            return
     except Exception as e:  # 예기치 못한 오류도 lease 펜스 종결로
         try:
             await _fail("생성 중 오류가 발생했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})

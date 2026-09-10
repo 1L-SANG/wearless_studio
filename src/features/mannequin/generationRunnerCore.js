@@ -8,6 +8,14 @@
    `idle/100`(=완료 배지)도 쓰지 않는다. 시작하지 않은 일을 시작했다고 말하면 두 가지가 깨진다:
    ① 리본이 하지도 않은 생성을 진행 중/완료로 보고하고, ② 최초 생성 소유권 플래그가 오염돼
    "컷이 원래 있었나" 판정이 뒤집히고 유료 재생성(분석 수정 반영)이 조용히 건너뛰어진다. */
+export function isNonRetryableRegenerateError(error) {
+  const status = Number(error?.status) || 0;
+  return error?.code === 'mannequin_quality_failed'
+    || status === 402
+    || String(error?.message || '').includes('크레딧')
+    || (status >= 400 && status < 500);
+}
+
 export function createMannequinGenerationRunner({
   generate,
   readProgress,
@@ -150,13 +158,14 @@ export async function resolveInitialGenerationCuts({
 
 /* 분석 수정 자동 재생성의 1회 실행 가드.
    handledRef 는 요청 전에 잠그되 dirty 신호는 성공 뒤에만 지운다. 같은 마운트의 effect 재발화는
-   유료 요청을 늘리지 않고, 실패 신호는 다음 화면 진입에서 새 ref 로 다시 시도할 수 있다. */
+   유료 요청을 늘리지 않는다. 품질 구제까지 소진된 실패는 화면 재진입으로도 재시작하지 않는다. */
 export async function runGenerationRelevantEditsRefresh({
   handledRef,
   readDirtyRevision,
   cutsExisted,
   regenerate,
   clearDirty,
+  isTerminalFailure = () => false,
 }) {
   const dirtyRevision = readDirtyRevision();
   if (handledRef.current || !dirtyRevision) return false;
@@ -168,6 +177,7 @@ export async function runGenerationRelevantEditsRefresh({
     clearDirty(dirtyRevision);
     return true;
   }
+  if (isTerminalFailure(dirtyRevision)) return false;
 
   try {
     let consumed = false;

@@ -6,12 +6,14 @@ correctionPrompt(재생성 시 보정 지시)를 반환한다(ai_agent_modules �
 단일 후보 판정(verdict)과 전 후보 불합격 시 최선 후보 선택(pick_best)을 제공한다.
 """
 
+import hashlib
 import os
 
 from ..config import Settings
 from .gemini_image import InlineImage
 from .prompts import clean_text
 from .vision_llm import VisionError, analyze_with_fallback
+from . import mannequin_quality
 
 VERDICTS = ("pass", "retry")
 
@@ -24,6 +26,7 @@ _PICK_PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "garment_pick_v1.txt")
 # 3분기를 못 만든다. series_consistency 는 Phase 3(D축 에이전트)가 채우므로 여기선 항상 null.
 SCORE_KEYS = ("product_fidelity", "physical_naturalness", "image_quality", "series_consistency")
 _SCORE_PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "image_qc_scores_v1.txt")
+_RISK_PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "mannequin_product_risks_v1.txt")
 
 # 매칭 하의(코디 바지) 정체성. 주상품(SCORE_KEYS)과 **분리**한다 — matching_fidelity 는
 # score_outcome/_worst_score 에 절대 들어가면 안 된다(주름·미세광택이 상품 등급을 깎으면
@@ -55,6 +58,7 @@ def qc_schema(*, scored: bool = False, matching: bool = False) -> dict:
         for key in SCORE_KEYS:
             props[key] = {"type": ["integer", "null"]}
         props["critical_errors"] = {"type": "array", "items": {"type": "string"}}
+        props["product_risks"] = mannequin_quality.risk_schema()
         if matching:
             for key in MATCHING_KEYS:
                 props[key] = {"type": ["integer", "null"]}
@@ -119,6 +123,8 @@ def build_prompt(
                 prompt = f"{prompt}\n{f.read()}"
         # 선언 핏은 **scored 경로 전용** — 다른 호출부(scene·best_of)의 요청은 불변이어야 한다.
         prompt += build_declared_fit_block(fit_profile)
+        with open(_RISK_PROMPT_FILE, encoding="utf-8") as f:
+            prompt = f"{prompt}\n{f.read()}"
     return prompt
 
 
@@ -153,6 +159,8 @@ def validate(raw: dict, *, scored: bool = False, matching: bool = False) -> dict
         out["critical_errors"] = [
             c for c in (clean_text(x, 200) for x in (raw.get("critical_errors") or [])) if c
         ]
+        if "product_risks" in raw:
+            out["product_risks"] = mannequin_quality.normalize_risks(raw["product_risks"])
         if matching:
             out.update({k: _score(raw.get(k)) for k in MATCHING_KEYS})
             # 바지 하드 게이트도 pass 판정과 무관하게 남긴다(주상품 critical_errors 와 같은 규율).
@@ -183,7 +191,14 @@ async def verdict(
         len(product_images), scored=scored, fit_profile=fit_profile, matching=matching)
     raw, _provider = await analyze_with_fallback(
         settings, prompt, images, qc_schema(scored=scored, matching=matching))
-    return validate(raw, scored=scored, matching=matching)
+    result = validate(raw, scored=scored, matching=matching)
+    if scored:
+        # 새 필드가 불완전해도 이미 확인된 치명 오류·매칭 오류·점수를 버리지 않는다.
+        # 미판정은 호출측에서 통과와 구분하며, 마지막 구제 생성은 완전한 판정을 요구한다.
+        result.setdefault("product_risks", None)
+        result["quality_policy"] = mannequin_quality.POLICY_VERSION
+        result["image_hash"] = hashlib.sha256(generated_image.data).hexdigest()
+    return result
 
 
 def pick_schema(candidate_count: int) -> dict:

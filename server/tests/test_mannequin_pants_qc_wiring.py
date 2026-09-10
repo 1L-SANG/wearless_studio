@@ -2,8 +2,8 @@
 
 증명 대상:
   1. 바지 판정이 **기존 AG-P2 1콜 안**에서 나온다(match_image 첨부, AI 콜 증가 0).
-  2. enforce 에서 바지 하드 게이트 = **예산 내 재롤 후 드롭**(요구 6, 선택 B). 전신 재생성
-     슬롯을 새로 만들지 않는다(생성 콜 ≤ MANNEQUIN_MAX_ATTEMPTS).
+  2. enforce에서 기존 예산을 소진해도 중요한 문제가 남으면 원본 기반 최종 1회만 추가한다.
+     최종 검수까지 실패한 후보는 저장하지 않는다(2026-09-10 사용자 승인).
   3. 깨끗한 final_reject 가 있으면 드롭 대신 그걸로 구제한다.
   4. shadow 는 아무 것도 막지 않고 계측만 한다.
   5. 편집(bust)·untuck 후 바지영역이 회귀하면 그 편집을 버리고 편집 전으로 롤백한다.
@@ -12,9 +12,12 @@
 import asyncio
 import types
 
+import pytest
+
 from app.services.qc import QcResult
 from app.workers import mannequin_job
 from conftest import make_settings
+from test_mannequin_quality import assessment
 
 _PASS = QcResult("pass", [], {})
 
@@ -55,7 +58,7 @@ async def _no_series(**kwargs):
 
 def _run(monkeypatch, *, p2_by_attempt, outputs, pants_qc="enforce", image_qc="enforce",
          with_match=True, max_attempts=2, bust="off", untuck="off",
-         compare=None, base_fidelity_axes=None, mannequin_verdicts=None):
+         compare=None, base_fidelity_axes=None, mannequin_verdicts=None, gemini=None, r2=None):
     emits = []
     verdict_calls = {"n": 0, "match_seen": []}
     p2s = list(p2_by_attempt)
@@ -85,7 +88,7 @@ def _run(monkeypatch, *, p2_by_attempt, outputs, pants_qc="enforce", image_qc="e
 
     monkeypatch.setattr(mannequin_job, "_emit", fake_emit)
 
-    gemini, r2 = _Gemini(outputs), _R2()
+    gemini, r2 = gemini or _Gemini(outputs), r2 or _R2()
     settings = make_settings(
         r2_bucket="bucket", image_qc=image_qc, mannequin_pants_qc=pants_qc,
         mannequin_axis_qc="off", mannequin_max_attempts=max_attempts,
@@ -156,47 +159,34 @@ def test_pants_ref_omitted_when_flag_off(monkeypatch):
     assert vc["match_seen"] == [False]
 
 
-# ── 2. 예산 내 재롤 후 드롭 (선택 B, 요구 6) ─────────────────────────────────
+# ── 2. 예산 내 재롤과 최종 1회 구제 ────────────────────────────────────────
 
-def test_pants_critical_rerolls_within_budget_then_drops(monkeypatch):
-    """상품은 통과하는데 바지 하드 게이트가 두 attempt 다 걸리면: 재롤 1회(예산 내) 후 드롭.
-
-    - 생성 콜은 정확히 2회(MANNEQUIN_MAX_ATTEMPTS) — 바지만으로 3번째 생성 슬롯을 만들지 않는다.
-    - 결과는 None(부분 성공: 이 후보 드롭). candidate_dropped 이벤트가 사유를 남긴다.
-    - 잘못된 바지 컷은 R2 에 저장되지 않는다.
-    """
+def test_pants_critical_gets_one_final_repair_then_stops(monkeypatch):
+    """마지막 1회에도 바지 하드 오류가 남으면 저장과 자동 재시도 없이 실패로 종결한다."""
     crit = ["matching bottom colour changed"]
-    result, gemini, r2, emits, vc = _run(
-        monkeypatch,
-        p2_by_attempt=[_p2(matching_critical=crit), _p2(matching_critical=crit)],
-        outputs=[b"gen-1", b"gen-2"])
-    assert result is None, "바지 하드 게이트가 끝까지 남으면 드롭(구제 안 함)"
-    assert len(gemini.generation_calls) == 2, "재롤은 기존 예산 2회 안에서만 — 3번째 생성 없음"
-    assert vc["n"] == 2, "판정 콜도 attempt 당 1회 — AI 콜 증가 0"
-    dropped = _status(emits, "candidate_dropped")
-    assert dropped and dropped[0]["reason"] == "matching_identity"
-    assert dropped[0]["matchingCriticalErrors"] == crit
-    assert r2.puts == [], "드롭된 컷은 저장되지 않는다"
+    gemini, r2 = _Gemini([b'gen-1', b'gen-2', b'final']), _R2()
+    with pytest.raises(mannequin_job.MannequinQualityError, match='final_product_rejected'):
+        _run(monkeypatch, gemini=gemini, r2=r2, outputs=[],
+            p2_by_attempt=[{**_p2(matching_critical=crit), **assessment()}] * 3)
+    assert len(gemini.generation_calls) == 3
+    assert 'matching bottom colour changed' in gemini.generation_calls[-1]
+    assert r2.puts == []
 
 
-def test_product_reject_with_pants_critical_drops_without_crash(monkeypatch):
+def test_product_reject_with_pants_critical_gets_one_final_repair_without_crash(monkeypatch):
     """상품 QC 도 거절(p2_reject) + 바지 하드 게이트가 두 attempt 다 걸리는 경로.
 
     바지-critical 은 pre_reject 구제 풀에서 제외되므로, 예산 소진 시 pre_reject 가 None 이다.
-    None 을 안전하게 다뤄 **크래시 없이 드롭**해야 한다(리뷰 isolation HIGH — pre_reject[1]
-    언팩 TypeError 회귀 가드). 절반의 'never ship' 보장(pre_reject 제외)을 함께 증명한다.
+    None 을 안전하게 다뤄 최종 구제로 넘긴다. pre_reject[1] 언팩 크래시도 없어야 한다.
     """
     crit = ["matching bottom colour changed"]
-    result, gemini, r2, emits, vc = _run(
-        monkeypatch,
-        p2_by_attempt=[_p2(critical=["logo altered"], matching_critical=crit),
-                       _p2(critical=["logo altered"], matching_critical=crit)],
-        outputs=[b"gen-1", b"gen-2"])
-    assert result is None, "상품·바지 둘 다 거절이면 구제 없이 드롭(크래시 아님)"
-    assert len(gemini.generation_calls) == 2, "예산 2회 안에서만 — 3번째 생성 없음"
-    dropped = _status(emits, "candidate_dropped")
-    assert dropped and dropped[0]["reason"] == "matching_identity"
-    assert r2.puts == [], "드롭된 컷은 저장되지 않는다"
+    gemini, r2 = _Gemini([b'gen-1', b'gen-2', b'final']), _R2()
+    failed = {**assessment(), **_p2(critical=['logo altered'], matching_critical=crit)}
+    with pytest.raises(mannequin_job.MannequinQualityError, match='final_product_rejected'):
+        _run(monkeypatch, gemini=gemini, r2=r2, outputs=[], p2_by_attempt=[failed] * 3)
+    assert len(gemini.generation_calls) == 3
+    assert 'logo altered' in gemini.generation_calls[-1]
+    assert r2.puts == []
 
 
 def test_pants_critical_salvages_clean_final_reject_instead_of_dropping(monkeypatch):

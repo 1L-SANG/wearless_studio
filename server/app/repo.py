@@ -1618,13 +1618,36 @@ async def create_job(
 
     멱등(계약 §6): ① 같은 Idempotency-Key = 같은 job(상태 무관) — 선조회로 합류 ② 진행 중 중복 =
     활성 job 합류(ON CONFLICT) ③ 실패 후 재호출(키 없음·새 키) = 새 job. **완료 job 재호출(기존
-    결과 반환·무차감)은 라우트가 create 전에 list_mannequin_cuts로 확인**(여기 아님)."""
+    결과 반환·무차감)은 라우트가 create 전에 list_mannequin_cuts로 확인**(여기 아님).
+    마네킹은 활성 합류 키도 저장한다. 202 응답이 유실돼도 종료된 원래 작업에 합류한다.
+    """
+    remember_request = kind == "mannequin" and bool(idempotency_key)
+
     async def _by_key(cur):
         await cur.execute(
             f"select {_JOB_COLS} from jobs where idempotency_key = %s and user_id = %s",
             (idempotency_key, user_id),
         )
-        return await cur.fetchone()
+        existing = await cur.fetchone()
+        if existing is None and remember_request:
+            await cur.execute(
+                f"select {_JOB_COLS} from jobs where user_id = %s and project_id = %s "
+                "and kind = 'mannequin' and id in ("
+                "select job_id from mannequin_job_requests "
+                "where user_id = %s and project_id = %s and idempotency_key = %s)",
+                (user_id, project_id, user_id, project_id, idempotency_key),
+            )
+            existing = await cur.fetchone()
+        return existing
+
+    async def _remember(cur, row):
+        if remember_request:
+            await cur.execute(
+                "insert into mannequin_job_requests (user_id, project_id, idempotency_key, job_id) "
+                "values (%s, %s, %s, %s) on conflict do nothing",
+                (user_id, project_id, idempotency_key, row["id"]),
+            )
+        return row
 
     async def _active(cur):
         await cur.execute(
@@ -1635,10 +1658,17 @@ async def create_job(
         return await cur.fetchone()
 
     async with conn.cursor() as cur:
+        if remember_request:
+            # 같은 프로젝트의 조회·생성·합류 키 저장을 한 트랜잭션으로 직렬화한다.
+            # 원래 키를 합류 키로 덮어쓰지 않으며 키 없는 호출과 다른 job kind는 불변이다.
+            await cur.execute(
+                "select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"mannequin-request:{user_id}:{project_id}",),
+            )
         if idempotency_key:  # ① 같은 Idempotency-Key 재시도(순차) → 같은 job
             existing = await _by_key(cur)
             if existing is not None:
-                return existing, False
+                return await _remember(cur, existing), False
         # 직접 SAVEPOINT — conn.transaction()은 열린 tx가 없으면 스스로 COMMIT해 라우트의
         # 커밋 제어(예약+생성 원자)를 빼앗을 수 있다. SAVEPOINT/RELEASE는 절대 커밋 안 함.
         # INSERT-or-join을 bounded 재시도(3회): 충돌(활성중복/동시같은키)로 합류해야 하는데
@@ -1669,15 +1699,15 @@ async def create_job(
             else:
                 await cur.execute("release savepoint create_job_insert")
             if row is not None:
-                return row, True
+                return await _remember(cur, row), True
             # 충돌 → 기존 job 합류: 키 우선, 없으면 활성
             if idempotency_key:
                 existing = await _by_key(cur)
                 if existing is not None:
-                    return existing, False
+                    return await _remember(cur, existing), False
             active = await _active(cur)
             if active is not None:
-                return active, False
+                return await _remember(cur, active), False
             # 합류 대상이 사라짐(충돌 job 완료) → 루프 재시도(이제 INSERT 성공)
         raise RuntimeError("create_job: 활성 합류 대상이 반복적으로 사라짐 (드문 레이스)")
 
@@ -2428,7 +2458,7 @@ async def finalize_mannequin_failure(
     code: str = "generation_failed",
 ) -> bool:
     """실패 종결(원자·lease 펜스): 예약 해제 + job error + error 이벤트. False = lease 상실."""
-    return await _finalize_job_failure(
+    finalized = await _finalize_job_failure(
         conn, job_id=job_id, lease_token=lease_token, message=message,
         metadata=metadata, code=code,
         release={
@@ -2439,6 +2469,15 @@ async def finalize_mannequin_failure(
             "action_key": "mannequinGenerate.release",
         },
     )
+    if finalized and code == "mannequin_quality_failed":
+        # 같은 트랜잭션과 행 잠금 안에서 폴링 응답에도 종료 이유를 전달한다.
+        # 화면이 일반 일시 오류로 오인해 새로운 유료 잡을 자동 생성하지 않게 한다.
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "update jobs set result = %s where id = %s",
+                (Json({"errorCode": code}), job_id),
+            )
+    return finalized
 
 
 # ---------- AG-05 마네킹 조정 종결 (원자·lease 펜스) — 마네킹 finalize 미러 ----------

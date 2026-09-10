@@ -85,11 +85,12 @@ export function createGenerationRelevantEditsSession({
     } catch { /* in-memory state was still consumed */ }
     return true;
   };
-  const markAttempt = (projectId, expectedRevision, baseline) => {
+  const markAttempt = (projectId, expectedRevision, baseline, { manual = false } = {}) => {
     if (!projectId || !expectedRevision || !baseline) return false;
     if (readRevision(projectId) !== expectedRevision) return false;
     const existing = readAttempt(projectId);
-    if (existing?.revision === expectedRevision && existing.idempotencyKey) {
+    if (existing?.revision === expectedRevision && existing.idempotencyKey
+      && !(manual && existing.terminalFailure)) {
       return existing.idempotencyKey;
     }
     const attempt = {
@@ -111,6 +112,22 @@ export function createGenerationRelevantEditsSession({
     try { getStorage()?.removeItem(attemptKey(projectId)); } catch { /* in-memory fallback */ }
     return true;
   };
+  const isTerminalFailure = (projectId, expectedRevision) => {
+    const attempt = readAttempt(projectId);
+    return readRevision(projectId) === expectedRevision
+      && attempt?.revision === expectedRevision && attempt.terminalFailure === true;
+  };
+  const markTerminalFailure = (projectId, expectedRevision) => {
+    if (!projectId || readRevision(projectId) !== expectedRevision) return false;
+    const attempt = readAttempt(projectId);
+    if (attempt?.revision !== expectedRevision) return false;
+    const stopped = { ...attempt, terminalFailure: true };
+    memoryAttempts.set(projectId, stopped);
+    try {
+      getStorage()?.setItem(attemptKey(projectId), JSON.stringify(stopped));
+    } catch { /* in-memory fallback */ }
+    return true;
+  };
   const landedAttemptRevision = (projectId, cuts) => {
     if (!projectId) return null;
     const attempt = readAttempt(projectId);
@@ -130,6 +147,8 @@ export function createGenerationRelevantEditsSession({
     clear,
     markAttempt,
     clearAttempt,
+    isTerminalFailure,
+    markTerminalFailure,
     landedAttemptRevision,
     adopt: (projectId, { preserveDirty = false } = {}) => (
       preserveDirty ? mark(projectId) : read(projectId)
@@ -147,8 +166,14 @@ export const markGenerationRelevantEdits = (projectId) => generationRelevantEdit
 export const clearGenerationRelevantEdits = (projectId, expectedRevision) => (
   generationRelevantEditsSession.clear(projectId, expectedRevision)
 );
-export const markGenerationRelevantEditsAttempt = (projectId, expectedRevision, baseline) => (
-  generationRelevantEditsSession.markAttempt(projectId, expectedRevision, baseline)
+export const markGenerationRelevantEditsAttempt = (projectId, expectedRevision, baseline, options) => (
+  generationRelevantEditsSession.markAttempt(projectId, expectedRevision, baseline, options)
+);
+export const isGenerationRelevantEditsTerminalFailure = (projectId, expectedRevision) => (
+  generationRelevantEditsSession.isTerminalFailure(projectId, expectedRevision)
+);
+export const markGenerationRelevantEditsTerminalFailure = (projectId, expectedRevision) => (
+  generationRelevantEditsSession.markTerminalFailure(projectId, expectedRevision)
 );
 export const clearGenerationRelevantEditsAttempt = (projectId, expectedRevision) => (
   generationRelevantEditsSession.clearAttempt(projectId, expectedRevision)
