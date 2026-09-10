@@ -451,3 +451,71 @@ def test_older_profile_retains_strict_three_argument_repair_callable(monkeypatch
     monkeypatch.setattr(rt, 'derive_repair_plan', older_planner)
     _assert_worker_override_and_repair(monkeypatch, None)
     assert calls == [None]
+
+
+@pytest.mark.parametrize('arm', ['image2', 'flare_sunburst'])
+@pytest.mark.parametrize('mode', ['generate-first', 'conditional-repair'])
+def test_benchmark_429_is_one_post_with_durable_no_resubmission(evidence, monkeypatch, arm, mode):
+    import base64
+    import httpx
+    from app.agents import gemini_image
+    e = evidence
+    submissions, sleeps = [], []
+    reject = [mode == 'generate-first']
+    async def post(self, url, **kwargs):
+        submissions.append(kwargs)
+        if reject[0]:
+            return httpx.Response(429, headers={'retry-after': '1'}, json={'error': {'code': 'rate_limit_exceeded'}})
+        return httpx.Response(200, json={'data': [{'b64_json': base64.b64encode(e.first.data).decode()}], 'usage': {}})
+    async def sleep(seconds): sleeps.append(seconds)
+    async def judge(settings, model, prompt, images, schema, timeout):
+        if 'garments' not in schema['properties']:
+            return dict(viewAdequate=True, selectedFaceRelation='clear_target', strongestTargetEvidence='Target eyes',
+                        strongestSourceEvidence='Source absent', remainingAmbiguity='None')
+        raw = observed(e.contract)
+        raw['globalChecks']['capture'] = mark('FAIL')
+        return raw
+    monkeypatch.setattr(httpx.AsyncClient, 'post', post)
+    monkeypatch.setattr(gemini_image.asyncio, 'sleep', sleep)
+    monkeypatch.setattr(vision_llm, '_call_gpt', judge)
+    if mode == 'conditional-repair':
+        assert run(e, monkeypatch, 'generate-first', arm)[0]['status'] == 'completed'
+        assert run(e, monkeypatch, 'qc-first', arm)[0]['status'] == 'completed'
+        submissions.clear()
+        reject[0] = True
+    result = run(e, monkeypatch, mode, arm)[0]
+    assert len(submissions) == 1
+    assert sleeps == []
+    assert result['status'] == 'failed' and result['error']['httpStatus'] == 429
+    assert result['request']['imageTransportMaxAttempts'] == 1
+    stem = e.out / f'sample-a.{mode}.{arm}'
+    assert stem.with_suffix(stem.suffix + '.started.json').exists()
+    assert json.loads(stem.with_suffix(stem.suffix + '.receipt.json').read_text()) == result
+    with pytest.raises(ValueError): run(e, monkeypatch, mode, arm)
+    assert len(submissions) == 1
+    if mode == 'conditional-repair':
+        assert (e.out / f'sample-a.generate-first.{arm}.png').read_bytes() == e.first.data
+
+
+def test_default_image_adapter_retains_four_attempt_429_policy(monkeypatch):
+    import httpx
+    from app.agents import gemini_image
+    submissions, sleeps = [], []
+    async def post(self, url, **kwargs):
+        submissions.append(kwargs)
+        return httpx.Response(429, headers={'retry-after': '1'}, json={'error': {'code': 'rate_limit_exceeded'}})
+    async def sleep(seconds): sleeps.append(seconds)
+    monkeypatch.setattr(httpx.AsyncClient, 'post', post)
+    monkeypatch.setattr(gemini_image.asyncio, 'sleep', sleep)
+    client = GeminiImageClient(make_settings(openai_api_key='test'))
+    with pytest.raises(gemini_image.GeminiError):
+        asyncio.run(client.generate_content_image('gpt-image-2', 'Frozen test prompt', [canvas()], '2K',
+            openai_preserve_input_bytes=True, openai_output_size='1360x2048'))
+    assert len(submissions) == 4
+    assert sleeps == [1, 1, 1]
+
+
+@pytest.mark.parametrize('limit', [0, -1, 5, True, 1.5])
+def test_image_adapter_rejects_invalid_attempt_limit_before_submission(limit):
+    with pytest.raises(ValueError):
+        GeminiImageClient(make_settings(openai_api_key='test'), openai_max_attempts=limit)

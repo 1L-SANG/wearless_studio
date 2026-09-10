@@ -18,7 +18,7 @@ from time import perf_counter
 
 from .. import config
 from ..agents import cut_generator, model_routing, vision_llm, wearshot_prompt, wearshot_qc, wearshot_runtime as rt
-from ..agents.gemini_image import InlineImage
+from ..agents.gemini_image import GeminiImageClient, InlineImage
 from ..config import load_settings
 from . import wearshot_repair_ab as paired, wearshot_replay as local
 
@@ -64,7 +64,8 @@ def _prepare(path, case):
             rt.validate_output_size(example, row['outputSize'])
             request = dict(harnessVersion=VERSION, caseId=row['id'], manifestSha256=local._sha(raw),
                 codeVersions=code, contract=contract.to_dict(), outputSize=row['outputSize'], imageSize='2K',
-                quality='medium', outputFormat='png', qcModel=manifest['qcModel'], qcTimeoutSeconds=180, models=MODELS)
+                quality='medium', outputFormat='png', qcModel=manifest['qcModel'], qcTimeoutSeconds=180,
+                imageTransportMaxAttempts=1, models=MODELS)
             items.append(dict(contract=contract, request=request))
         return manifest, items
     except (KeyError, TypeError, UnicodeError) as exc:
@@ -140,6 +141,11 @@ def _context(item, out, arm, mode):
 
 
 class _BoundClient(paired._BoundClient):
+    def __init__(self, settings, request, rendered, receipt):
+        self.client = GeminiImageClient(settings, openai_max_attempts=request['imageTransportMaxAttempts'])
+        self.request, self.rendered, self.receipt = request, rendered, receipt
+        self.called = False
+
     async def generate_content_image(self, *args, **kwargs):
         result = await super().generate_content_image(*args, **kwargs)
         self.receipt['providerLatencyMs'] = self.receipt.pop('latencyMs')
