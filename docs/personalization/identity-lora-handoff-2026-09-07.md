@@ -829,3 +829,70 @@ LoRA 얼굴을 덮으면 **더 좋아지지 않고 미세하게 나빠진다**. 
 
 **아침에 사람이 결정할 것**: 경로 A 에서 얼굴 패스를 (1) 끄고 gpt-image 단독으로 갈지, (2) `face_w` 임계
 아래 컷에만 켤지(예: face_w < 150), (3) 그대로 전 컷에 켤지. 지금 수치는 (2)를 가리킨다.
+
+## 27. 전신 슬롯(MODEL FULL BODY) 을 REAL 등록자에게 열기 (2026-09-10)
+
+### 27.A 코드 (커밋 아래)
+1. **마이그레이션** `20260910000000_fm_model_assets_body_front.sql` — `view` CHECK 에 `body_front` 추가
+   (additive · PG16-safe · drop-if-exists → add). PK `(model_id, view)` 유지.
+   `body_front` 는 `bucket='face'` 강제 CHECK 도 함께 건다.
+   ※ 지시가 인용한 `biometric_purge.py` 는 이 저장소에 없다. 대신 확인한 사실: 모델 자산의 쓰기·복사·삭제는
+   전부 `app.state.r2_face` 하나로만 하고(`fm_model_asset_job.py:282·421·448·591`), 정리 경로
+   (`facemarket_enrollment.py:598`)는 `fm_model_assets` 에 **없는** 키만 그 버킷에서 지운다.
+   즉 `bucket='public'` 행은 파일이 다른 버킷에 있는데 장부만 남아 정리 대상에서 빠진다.
+2. **`identity_source.resolve_real_model_assets`** — 얼굴 2장은 필수(fail-closed 유지), `body_front` 는
+   **선택**으로 세 번째. 핀(같은 `source_enrollment_id` · `evidence_version == policy_version` ·
+   `bucket=='face'` · `assets_source_hash` 재계산)은 전신에도 **똑같이** 건다. 전신이 있는데 핀이 어긋나면
+   그 자산만 빼지 않고 **전체를 거부**한다 — 반쪽 근거로 컷을 만들지 않는다.
+   반환 순서 `face_front → grid_sedcard → body_front`.
+3. **`editor_image_job`** — `len(model_images)==2` 하드코딩 3곳을 장수 분기로.
+   `fm_face_injected` 조건도 `n>=2`. **크레딧·정산 영향**: 이 플래그가 `record_license_settlement` 와
+   비공개 캐시를 켠다. 기존 REAL 2장은 동작 동일이고, 새로 생기는 3장 상태에서 `==2` 를 그대로 뒀다면
+   **정산이 조용히 빠졌을** 것이다(라이선스는 소비되는데 과금 안 됨) — `>=2` 가 맞다.
+4. **`build_manifest`** — `has_model_sheet ∧ has_model_full_body` 를 무조건 거부하던 규칙을
+   `∧ not has_model_face` 로 좁혔다. 세 슬롯은 **서로 다른 자리**에 오므로 상충이 아니다. 옛 가드가 막으려던
+   진짜 위험(얼굴 시트 한 장을 체형 근거로 위장)은 얼굴 슬롯 없이 sheet·full_body 만 선언하는 경우뿐이고,
+   그 경우는 계속 `ValueError` 다. 라벨 순서를 **FACE → SHEET → FULL BODY** 로 맞췄다(자산 해석 순서와 동일).
+   얼굴 라벨은 전신이 붙는 조합에서만 명시형(`MODEL FACE`)을 쓰고, 기존 REAL 2장은 `MODEL` 그대로 —
+   그 경로 프롬프트는 바이트 단위로 안 바뀐다.
+
+매니페스트 3조합:
+```
+REAL 2장(기존)    1 MODEL          2 MODEL SHEET   3·4 PRODUCT  5 SPACE SET PLATE
+REAL 3장(신규)    1 MODEL FACE     2 MODEL SHEET   3 MODEL FULL BODY  4·5 PRODUCT  6 SPACE SET PLATE
+VIRTUAL 2장(기존) 1 MODEL FACE     2 MODEL FULL BODY  3·4 PRODUCT  5 SPACE SET PLATE
+```
+테스트 +8(총 4059 통과).
+
+### 27.B 실측 A/B — 6렌더 (gpt-image-2.5-flare, 파드 0)
+전신 자산 등록 경로가 아직 없어 **대역**을 썼다: `v6_dataset/train/해가오른쪽__전신_정면.png`(48MP 원본,
+1536 로 축소해 첨부). BODY 문구는 양쪽 다 넣었다 — 이번 비교는 "문구만 vs 문구+사진".
+
+| 컷 | SFace 없음 | SFace 있음 | Δ |
+|---|---|---|---|
+| full | 0.828 | **0.476** | −0.352 |
+| three_quarter | 0.841 | 0.743 | −0.098 |
+| seated | 0.835 | **0.883** | +0.048 |
+
+### 27.C 판정 — **전신 사진은 체형을 따라오게 하지만, 옷·배경 권한 0 이 지켜지지 않아 그대로 쓸 수 없다**
+`_MODEL_FULL_BODY_LABEL` 은 "ZERO authority over facial identity, facial features, hair, pose, framing or
+clothing" 인데 gpt-image-2.5-flare 는 그걸 지키지 않았다. 육안(`phase1/body_ab/body_ab_sheet.png`):
+
+- **full·있음**: 배경이 SPACE SET PLATE 의 실내 상점 → 전신 사진의 **실외 골목**(주차된 차·건물)으로 바뀌었다.
+  하의도 검정 데님 → 전신 사진의 **카키 팬츠**, 신발도 전신 사진의 검은 구두.
+- **three_quarter·있음**: 배경 실외 골목, 하의 카키.
+- **seated·있음**: 배경은 상점 유지, 하의만 카키로 바뀜.
+
+수치 뒷받침(하의 영역 세로 55~80% 평균 RGB · 전신 대역 사진의 하의 = [137,129,122]):
+`full` 없음 [68,69,72](검정) → 있음 [161,155,147], `seated` 없음 [182,164,158] → 있음 [162,143,135].
+배경(좌우 가장자리): `full` 있음이 장면판과 |Δ|25.3, 전신 사진과 |Δ|**2.1** — 전신 사진 배경을 그대로 가져왔다.
+(`three_quarter` 는 가장자리 평균이 우연히 장면판에 가깝게 나왔지만 육안으로는 실외다 — 육안이 정본.)
+
+`full` 의 얼굴 급락(0.828→0.476)도 같은 원인이다. 인물이 전신 사진의 먼 거리 구도로 옮겨가 얼굴이 작아졌다.
+
+**체형 효과 자체는 판정 불가다.** 옷·배경 오염이 같이 왔기 때문에 "체형이 실물에 가까워졌는가" 를 분리해서
+볼 수 없다. `seated·있음` 의 어깨가 조금 넓어 보이지만 확신할 수준이 아니다. 결론을 억지로 내지 않는다.
+
+**다음에 시도할 것(미검증 제안)**: ① 전신 참조를 인물만 남기고 배경 제거(SAM) 후 첨부 ② 전신 참조를
+실루엣/포즈만 남긴 추상화본으로 대체 ③ 라벨을 더 강하게(부정 열거 대신 "use ONLY the body outline") 쓰기.
+지금 상태로는 **REAL 전신 슬롯을 프로덕션에 켜면 안 된다** — 코드는 준비됐지만 자산을 붙이면 옷·배경이 오염된다.

@@ -464,10 +464,15 @@ async def run_editor_image_job(app, job: dict) -> None:
                     job_id, normalized.get("modelId"), e)
                 model_images = []
                 model_has_full_body = False
+            # 모델 참조 장수로 분기한다. REAL 은 얼굴 2장(face_front + grid_sedcard) 이 기본이고,
+            # 전신 자산(body_front)이 등록돼 있으면 3장이 된다. VIRTUAL 은 항상 2장(face + body).
+            n_model_images = len(model_images)
+            if n_model_images == 3:
+                model_has_full_body = True  # REAL 3장 = 얼굴 2 + 전신 1
             fm_face_injected = (
                 fm_source == "REAL"
                 and normalized["cutType"] == "horizon"
-                and len(model_images) == 2
+                and n_model_images >= 2
             )
             body_profile = None
             if fm_face_injected and isinstance(fm_license_row, dict):
@@ -626,11 +631,10 @@ async def run_editor_image_job(app, job: dict) -> None:
                 matching_count=len(matching_images),
                 matching_custom=[matching_id.startswith("custom_") for matching_id in matching_ids],
                 mood_count=attached_mood_count,
-                has_model_face=len(model_images) == 2,
-                has_model_sheet=len(model_images) == 2 and not model_has_full_body,
-                has_model_full_body=(
-                    len(model_images) == 2 and model_has_full_body
-                ),
+                # REAL 2장 = FACE + SHEET · REAL 3장 = FACE + SHEET + FULL BODY · VIRTUAL 2장 = FACE + FULL BODY
+                has_model_face=n_model_images >= 2,
+                has_model_sheet=n_model_images == 3 or (n_model_images == 2 and not model_has_full_body),
+                has_model_full_body=model_has_full_body and n_model_images >= 2,
                 example_scope=example_scope,
                 example_is_product=normalized["cutType"] == "product",
                 reference_direction_compatible=cut_generator.apply_reference_compatibility(

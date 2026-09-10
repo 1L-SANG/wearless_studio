@@ -141,8 +141,9 @@ async def resolve_real_model_assets(
         )
         return None
     by_view = {r["view"]: r for r in rows if r.get("view")}
-    out = []
-    for view in ("face_front", "grid_sedcard"):
+
+    def pinned(view: str):
+        """같은 등록·같은 정책 버전에 핀된 비공개 자산 행만 통과시킨다. 어긋나면 None."""
         r = by_view.get(view)
         if (
             not r
@@ -154,5 +155,20 @@ async def resolve_real_model_assets(
             or r.get("evidence_version") != policy_version
         ):
             return None
-        out.append({"key": r["r2_key"], "mime": r["mime"], "bucket": r["bucket"]})
+        return {"key": r["r2_key"], "mime": r["mime"], "bucket": r["bucket"]}
+
+    out = []
+    # 얼굴 두 장은 필수 — 하나라도 핀이 어긋나면 자산 전체를 거부한다(fail-closed 유지).
+    for view in ("face_front", "grid_sedcard"):
+        ref = pinned(view)
+        if ref is None:
+            return None
+        out.append(ref)
+    # 전신은 **선택**이다. 있으면 세 번째로 붙이고(매니페스트 MODEL FULL BODY 자리), 없으면 기존 2장 그대로.
+    # 있는데 핀이 어긋나면 그 자산만 빼는 게 아니라 전체를 거부한다 — 반쪽 근거로 컷을 만들지 않는다.
+    if "body_front" in by_view:
+        ref = pinned("body_front")
+        if ref is None:
+            return None
+        out.append(ref)
     return out

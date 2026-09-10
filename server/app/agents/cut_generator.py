@@ -1094,7 +1094,16 @@ def build_manifest(
     ``matching_count`` 미지정 시 기존 ``has_match`` 불리언을 그대로 0/1장으로 해석한다.
     실제 첨부 수를 아는 호출자는 count를 넘겨 여러 MATCHING 위치를 선언할 수 있다.
     """
-    if has_model_sheet and has_model_full_body:
+    # 상호배타는 **같은 자리**를 두 권한이 다툴 때만이다.
+    # 세 슬롯은 서로 다른 위치에 온다: MODEL FACE → MODEL SHEET → MODEL FULL BODY.
+    #   · VIRTUAL 2장 = FACE + FULL BODY (sheet 없음)
+    #   · REAL 2장   = MODEL(legacy face) + SHEET (전신 없음)
+    #   · REAL 3장   = FACE + SHEET + FULL BODY  ← 셋 다 켠다. 시트는 얼굴 연속성, 전신은 체형 근거로
+    #     자리와 라벨이 갈라져 있어 권한이 겹치지 않는다(시트 라벨은 "ZERO authority over body shape",
+    #     전신 라벨은 "ZERO authority over facial identity").
+    # 옛 규칙은 얼굴 자산 한 장을 체형 근거로 위장하는 것을 막으려던 것이고, 그 위험은
+    # has_model_face 없이 sheet·full_body 만 선언하는 경우로 좁혀진다.
+    if has_model_sheet and has_model_full_body and not has_model_face:
         raise ValueError("conflicting_model_body_authority")
 
     lines: list[str] = []
@@ -1103,16 +1112,19 @@ def build_manifest(
         lines.append(f"{i}. {_MANNEQUIN_LABEL}")
         i += 1
     if has_model_face:
-        # FaceMarket의 구 face+sheet 계약은 기존 라벨을 유지한다. 새 가상모델
-        # face+full-body 계약(또는 불완전한 후보 검증 입력)은 명시적인 FACE 역할을 쓴다.
-        model_face_label = _MODEL_LABEL if has_model_sheet else _MODEL_FACE_LABEL
+        # FaceMarket의 구 face+sheet 계약(전신 없음)은 기존 라벨을 그대로 유지한다 — 그 경로의
+        # 프롬프트는 바이트 단위로 안 바뀐다. 전신 근거가 실제로 붙는 조합(가상모델 face+full-body,
+        # 실존 등록자 face+sheet+full-body)은 명시적인 FACE 역할을 쓴다.
+        model_face_label = _MODEL_LABEL if (has_model_sheet and not has_model_full_body) else _MODEL_FACE_LABEL
         lines.append(f"{i}. {model_face_label}")
+        i += 1
+    # 순서 = 자산 해석 순서(identity_source: face_front → grid_sedcard → body_front).
+    # 첨부 바이트와 라벨이 어긋나면 권한이 통째로 밀린다.
+    if has_model_sheet:
+        lines.append(f"{i}. {_MODEL_SHEET_LABEL}")
         i += 1
     if has_model_full_body:
         lines.append(f"{i}. {_MODEL_FULL_BODY_LABEL}")
-        i += 1
-    if has_model_sheet:
-        lines.append(f"{i}. {_MODEL_SHEET_LABEL}")
         i += 1
     for a in prod_assets:
         lines.append(f"{i}. {_SLOT_LABEL.get(a.get('slot'), 'PRODUCT — view of the garment')}")
