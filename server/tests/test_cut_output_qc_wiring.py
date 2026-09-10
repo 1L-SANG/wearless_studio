@@ -49,6 +49,7 @@ def _detail_spec():
 def _run_detail_cut(
     monkeypatch, *, qc_mode="shadow", manifest="1. PRODUCT — front", events=None,
     generated_outputs=None, confirmed_packet=None, spec=None, settings_overrides=None,
+    release_policy=None, reference_images=None,
 ):
     events = [] if events is None else events
     captured = {}
@@ -60,6 +61,8 @@ def _run_detail_cut(
         captured.setdefault("generateModels", []).append(settings.model_image_high)
         captured.setdefault("generateKwargs", []).append(kwargs)
         output = generated_outputs.pop(0) if generated_outputs else b"INITIAL"
+        if isinstance(output, Exception):
+            raise output
         return output, "image/png"
 
     async def fake_best_of(settings, product_images, initial, generate_candidate):
@@ -67,8 +70,8 @@ def _run_detail_cut(
         assert initial.data == b"INITIAL"
         return InlineImage("image/png", b"CHOSEN"), {"chosenIndex": 0}, []
 
-    async def fake_emit(*_args, **_kwargs):
-        return None
+    async def fake_emit(_pool, _job_id, event, data):
+        captured.setdefault("emitted", []).append((event, data))
 
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_generate)
     monkeypatch.setattr(dpj.image_qc, "best_of", fake_best_of)
@@ -85,8 +88,10 @@ def _run_detail_cut(
     }
     setting_values.update(settings_overrides or {})
     app = fake_worker_app(make_settings(**setting_values), r2=r2)
+    if release_policy is not None:
+        object.__setattr__(app.state.settings, "cut_output_release_policy", release_policy)
     product_image = InlineImage("image/png", b"PRODUCT")
-    prepared = (spec or _detail_spec(), [product_image], manifest, False, [product_image])
+    prepared = (spec or _detail_spec(), reference_images or [product_image], manifest, False, [product_image])
     if confirmed_packet is not None:
         prepared = (*prepared, None, False, None, confirmed_packet)
     result = asyncio.run(dpj._gen_cuts(
@@ -209,6 +214,335 @@ def _qc_result(*failed_gates):
     for gate in failed_gates:
         raw["gates"][dpj.cut_output_qc.GATES.index(gate)]["status"] = "FAIL"
     return dpj.cut_output_qc.validate(raw)
+
+
+@pytest.mark.parametrize("failure", ["modelIdentity", "garmentColor", "matchingGarmentIdentity", "outage", "disabled"])
+def test_critical_release_holds_before_any_delivery_side_effect(monkeypatch, failure):
+    cleanup_calls = []
+
+    async def cleanup(*args, **kwargs):
+        cleanup_calls.append(kwargs)
+        return "cleanup-id"
+
+    async def qc(*args, **kwargs):
+        if failure == "outage":
+            raise VisionError("provider secret must never reach event")
+        return _qc_result(failure)
+
+    monkeypatch.setattr(dpj.cut_output_qc, "verdict", qc)
+    monkeypatch.setattr(dpj.repo, "create_ai_output_cleanup_intent", cleanup)
+    run = _run_detail_cut(monkeypatch, release_policy="critical", qc_mode="off" if failure == "disabled" else "shadow")
+    assert run["r2"].saved == []
+    assert cleanup_calls == []
+    assert run["result"][0] == run["result"][1] == []
+    steps = [data for event, data in run["emitted"] if event == "step"]
+    assert [step["status"] for step in steps] == ["cut_start", "cut_failed"]
+    assert steps[-1]["reason"] == "quality_review_required"
+    assert steps[-1]["qualityReview"]["allowed"] is False
+    assert "provider secret" not in str(steps)
+    assert "CHOSEN" not in str(steps)
+
+
+@pytest.mark.parametrize("repair_outcome,want_saved", [
+    ("accepted", [b"EDITED"]), ("rejected", [b"CHOSEN"]),
+    ("critical_remains", []), ("error", []),
+])
+def test_critical_release_checks_the_actual_selected_repair(monkeypatch, repair_outcome, want_saved):
+    from app.agents import vision_llm
+    from test_cut_identity_review import face_raw
+
+    reviewed = []
+
+    async def face_transport(settings, model, prompt, images, schema, timeout, **kwargs):
+        reviewed.append(images[-1].data)
+        return face_raw()
+
+    monkeypatch.setattr(vision_llm, "_call_gpt", face_transport)
+    async def qc(settings, plan, references, generated):
+        if generated.data == b"CHOSEN":
+            return (_qc_result("framingDirectionFacePose") if repair_outcome == "rejected"
+                    else _qc_result("framingDirectionFacePose", "modelIdentity", "garmentColor"))
+        if repair_outcome == "rejected":
+            return _qc_result("modelIdentity")
+        if repair_outcome == "critical_remains":
+            return _qc_result("modelIdentity")
+        return _qc_result()
+
+    async def repaired(*args, **kwargs):
+        if repair_outcome == "error":
+            raise VisionError("repair unavailable")
+        return b"EDITED", "image/png"
+
+    monkeypatch.setattr(dpj.cut_output_qc, "verdict", qc)
+    monkeypatch.setattr(dpj.cut_generator, "repair", repaired)
+    stage2 = VisionError("repair unavailable") if repair_outcome == "error" else b"EDITED"
+    run = _run_detail_cut(
+        monkeypatch, release_policy="critical", qc_mode="repair",
+        generated_outputs=[b"INITIAL", stage2],
+        manifest="1. PRODUCT — front\n2. MODEL FACE — selected target",
+        reference_images=[InlineImage("image/png", b"PRODUCT"), InlineImage("image/png", b"FACE")],
+        settings_overrides={"openai_api_key": "test"},
+    )
+    assert run["r2"].saved == want_saved
+    statuses = [data["status"] for event, data in run["emitted"] if event == "step"]
+    assert statuses[-1] == ("cut_done" if want_saved else "cut_failed")
+    assert reviewed == want_saved
+    if want_saved:
+        selected = run["result"][4][0]
+        if repair_outcome == "accepted":
+            assert "identityReview" not in selected
+            selected = selected["repair"]["stage2Qc"]
+        else:
+            assert "identityReview" not in selected["repair"]["stage2Qc"]
+        assert selected["identityReview"]["status"] == "PASS"
+
+
+@pytest.mark.parametrize("policy,primary,secondary,want_saved,want_calls", [
+    ("critical", "PASS", "mixed", [], 1),
+    ("critical", "PASS", "clear_target", [b"CHOSEN"], 1),
+    ("critical", "PASS", "error", [], 1),
+    ("critical", "FAIL", "clear_target", [], 0),
+    ("critical", "UNJUDGEABLE", "clear_target", [], 0),
+    ("critical", "NA", "clear_target", [b"CHOSEN"], 0),
+    ("off", "PASS", "mixed", [b"CHOSEN"], 0),
+])
+def test_real_qc_and_release_require_selected_visible_face_confirmation(
+    monkeypatch, policy, primary, secondary, want_saved, want_calls,
+):
+    from app.agents import vision_llm
+    from test_cut_identity_review import face_raw
+
+    face_inputs = []
+
+    async def primary_transport(settings, prompt, images, schema):
+        return {"gates": [
+            {"gate": gate, "status": primary if gate == "modelIdentity" and primary != "NA" else "PASS", "evidence": "Visible comparison of the required features."}
+            for gate in dpj.cut_output_qc.GATES
+        ]}, "gpt"
+
+    async def face_transport(settings, model, prompt, images, schema, timeout, **kwargs):
+        face_inputs.append([image.data for image in images])
+        if secondary == "error":
+            raise VisionError("secret-provider-error")
+        return face_raw(secondary)
+
+    monkeypatch.setattr(dpj.cut_output_qc, "analyze_with_fallback", primary_transport)
+    monkeypatch.setattr(vision_llm, "_call_gpt", face_transport)
+    run = _run_detail_cut(
+        monkeypatch, release_policy=policy,
+        spec={**_detail_spec(), "cutType": "styling", "shot": "full", "modelId": "selected-model", "faceExposure": "hide" if primary == "NA" else "show"},
+        manifest="1. PRODUCT — front\n2. MODEL FACE — target\n3. EXAMPLE (scope: all) — source",
+        reference_images=[InlineImage("image/png", data) for data in (b"PRODUCT", b"FACE", b"SOURCE")],
+        settings_overrides={"openai_api_key": "test"},
+    )
+    assert run["r2"].saved == want_saved
+    assert face_inputs == ([[b"FACE", b"SOURCE", b"CHOSEN"]] if want_calls else [])
+    steps = [data for event, data in run["emitted"] if event == "step"]
+    assert steps[-1]["status"] == ("cut_done" if want_saved else "cut_failed")
+    assert "secret-provider-error" not in str(steps)
+    if want_saved and want_calls:
+        assert run["result"][4][0]["identityReview"]["raw"]["selectedFaceRelation"] == "clear_target"
+
+
+@pytest.mark.parametrize("bad_review", ["stale", "raises", "malformed"])
+def test_worker_rejects_unbound_or_broken_face_review(monkeypatch, bad_review):
+    from app.agents import cut_identity_review
+    reviewed = []
+
+    async def primary(*args, **kwargs):
+        return _qc_result()
+
+    async def bad(*args, **kwargs):
+        reviewed.append(args[-1].data)
+        if bad_review == "raises":
+            raise RuntimeError("secret-review-failure")
+        if bad_review == "malformed":
+            return None
+        return {"status": "PASS", "evidence": "Visible target eyelids match.", "candidateSha256": "stale-other-image"}
+
+    monkeypatch.setattr(dpj.cut_output_qc, "verdict", primary)
+    monkeypatch.setattr(cut_identity_review, "verdict", bad)
+    run = _run_detail_cut(monkeypatch, release_policy="critical")
+    assert run["r2"].saved == []
+    assert reviewed == [b"CHOSEN"]
+    steps = [data for event, data in run["emitted"] if event == "step"]
+    assert steps[-1]["status"] == "cut_failed"
+    assert steps[-1]["reason"] == "quality_review_required"
+    assert "secret-review-failure" not in str(steps)
+
+
+@pytest.mark.parametrize("scenario,want_saved,want_color", [
+    ("preserved", [b"EDITED"], True),
+    ("target_shifted", [], True),
+    ("matching_shifted", [], True),
+    ("uncertain", [], True),
+    ("baseline_wrong", [b"EDITED"], False),
+    ("global_regeneration", [b"EDITED"], False),
+    ("lighting_repair", [b"EDITED"], False),
+    ("rejected", [b"CHOSEN"], False),
+    ("off", [b"EDITED"], False),
+])
+def test_local_color_witness_controls_delivery_without_freezing_global_repairs(monkeypatch, scenario, want_saved, want_color):
+    from app.agents import vision_llm
+    from test_cut_color_review import color_raw
+    from test_cut_identity_review import face_raw
+
+    color_inputs, face_inputs, repair_inputs, cleanup_calls = [], [], [], []
+
+    async def primary(settings, plan, references, generated):
+        if generated.data == b"CHOSEN":
+            failed = {"baseline_wrong": "garmentColor", "global_regeneration": "modelIdentity",
+                      "lighting_repair": "lightingShadowReflectionDrape"}.get(scenario, "framingCrop")
+            return _qc_result(failed)
+        return _qc_result("modelIdentity") if scenario == "rejected" else _qc_result()
+
+    async def repair(settings, gemini, block, product, source, **kwargs):
+        repair_inputs.append(source.data)
+        return b"EDITED", "image/png"
+
+    async def transport(settings, model, prompt, images, schema, timeout):
+        if "target" in schema["properties"]:
+            color_inputs.append([image.data for image in images])
+            return color_raw(target="shifted" if scenario == "target_shifted" else "uncertain" if scenario == "uncertain" else "preserved",
+                             matching="shifted" if scenario == "matching_shifted" else "preserved")
+        face_inputs.append(images[-1].data)
+        return face_raw()
+
+    async def cleanup(*args, **kwargs):
+        cleanup_calls.append(kwargs)
+        return "cleanup-id"
+
+    monkeypatch.setattr(dpj.cut_output_qc, "verdict", primary)
+    monkeypatch.setattr(dpj.cut_generator, "repair", repair)
+    monkeypatch.setattr(vision_llm, "_call_gpt", transport)
+    monkeypatch.setattr(dpj.repo, "create_ai_output_cleanup_intent", cleanup)
+    run = _run_detail_cut(monkeypatch, qc_mode="repair", release_policy="off" if scenario == "off" else "critical",
+        generated_outputs=[b"INITIAL", b"EDITED"], settings_overrides={"openai_api_key": "test"},
+        manifest="1. PRODUCT — target\n2. MATCHING — support\n3. MODEL FACE — face",
+        reference_images=[InlineImage("image/png", data) for data in (b"PRODUCT", b"SUPPORT", b"FACE")])
+    assert run["r2"].saved == want_saved
+    assert bool(cleanup_calls) is bool(want_saved)
+    assert color_inputs == ([[b"CHOSEN", b"EDITED", b"PRODUCT", b"SUPPORT"]] if want_color else [])
+    assert face_inputs == ([] if scenario == "off" else [b"CHOSEN" if scenario == "rejected" else b"EDITED"])
+    assert repair_inputs == ([] if scenario in {"baseline_wrong", "global_regeneration"} else [b"CHOSEN"])
+    steps = [data for event, data in run["emitted"] if event == "step"]
+    assert steps[-1]["status"] == ("cut_done" if want_saved else "cut_failed")
+    if not want_saved:
+        assert steps[-1]["qualityReview"]["blockingGates"] == ["colorReview"]
+    if scenario == "preserved":
+        qc = run["result"][4][0]
+        assert "colorReview" not in qc
+        assert qc["repair"]["stage2Qc"]["colorReview"]["status"] == "PASS"
+        assert qc["repair"]["stage2Qc"]["identityReview"]["status"] == "PASS"
+
+
+@pytest.mark.parametrize("problem", ["baseline_hash", "candidate_hash", "raises", "malformed"])
+def test_worker_holds_stale_or_broken_color_witness_before_storage(monkeypatch, problem):
+    import hashlib
+    from app.agents import cut_color_review, vision_llm
+    from test_cut_color_review import color_raw
+    from test_cut_identity_review import face_raw
+
+    reviewed = []
+
+    async def primary(settings, plan, references, generated):
+        return _qc_result("framingCrop") if generated.data == b"CHOSEN" else _qc_result()
+
+    async def repair(*args, **kwargs):
+        return b"EDITED", "image/png"
+
+    async def face(*args, **kwargs):
+        return face_raw()
+
+    async def bad(settings, refs, before, after, *, protected_axes):
+        reviewed.append((before.data, after.data))
+        if problem == "raises":
+            raise RuntimeError("private-color-error")
+        if problem == "malformed":
+            return None
+        result = cut_color_review.validate(color_raw(), protected_axes=protected_axes)
+        result.update(baselineSha256=hashlib.sha256(b"STALE" if problem == "baseline_hash" else before.data).hexdigest(),
+                      candidateSha256=hashlib.sha256(b"STALE" if problem == "candidate_hash" else after.data).hexdigest())
+        return result
+
+    monkeypatch.setattr(dpj.cut_output_qc, "verdict", primary)
+    monkeypatch.setattr(dpj.cut_generator, "repair", repair)
+    monkeypatch.setattr(vision_llm, "_call_gpt", face)
+    monkeypatch.setattr(cut_color_review, "verdict", bad)
+    run = _run_detail_cut(monkeypatch, qc_mode="repair", release_policy="critical", settings_overrides={"openai_api_key": "test"},
+        manifest="1. PRODUCT — target\n2. MATCHING — support\n3. MODEL FACE — face",
+        reference_images=[InlineImage("image/png", data) for data in (b"PRODUCT", b"SUPPORT", b"FACE")])
+    assert reviewed == [(b"CHOSEN", b"EDITED")]
+    assert run["r2"].saved == []
+    steps = [data for event, data in run["emitted"] if event == "step"]
+    assert steps[-1]["reason"] == "quality_review_required"
+    assert steps[-1]["qualityReview"]["blockingGates"] == ["colorReview"]
+    assert "private-color-error" not in str(steps)
+
+
+@pytest.mark.parametrize("relation", ["preserved", "shifted"])
+def test_real_primary_qc_and_local_repair_require_target_color_witness(monkeypatch, relation):
+    from app.agents import vision_llm
+    from test_cut_color_review import color_raw
+
+    primary_inputs, color_inputs = [], []
+
+    async def primary_transport(settings, prompt, images, schema):
+        primary_inputs.append(images[-1].data)
+        return {"gates": [
+            {"gate": gate, "status": "FAIL" if gate == "framingCrop" and images[-1].data == b"CHOSEN" else "PASS",
+             "evidence": "Corresponding required visible features compared."}
+            for gate in dpj.cut_output_qc.GATES
+        ]}, "gpt"
+
+    async def color_transport(settings, model, prompt, images, schema, timeout):
+        color_inputs.append([image.data for image in images])
+        return color_raw(target=relation)
+
+    async def repair(*args, **kwargs):
+        return b"EDITED", "image/png"
+
+    monkeypatch.setattr(dpj.cut_output_qc, "analyze_with_fallback", primary_transport)
+    monkeypatch.setattr(dpj.cut_generator, "repair", repair)
+    monkeypatch.setattr(vision_llm, "_call_gpt", color_transport)
+    run = _run_detail_cut(monkeypatch, qc_mode="repair", release_policy="critical",
+        spec={**_detail_spec(), "refScope": "none"}, settings_overrides={"openai_api_key": "test"})
+    assert primary_inputs == [b"CHOSEN", b"EDITED"]
+    assert color_inputs == [[b"CHOSEN", b"EDITED", b"PRODUCT"]]
+    assert run["r2"].saved == ([b"EDITED"] if relation == "preserved" else [])
+    if relation == "preserved":
+        final_qc = run["result"][4][0]["repair"]["stage2Qc"]
+        assert final_qc["colorReview"]["axes"]["matching"]["status"] == "NA"
+
+
+def test_confirmed_local_edit_preserves_first_result_baseline(monkeypatch):
+    from app.agents import vision_llm
+    from test_cut_color_review import color_raw
+    from test_cut_identity_review import face_raw
+
+    color_inputs = []
+
+    async def primary(settings, plan, references, generated, **kwargs):
+        return _qc_result("framingCrop") if generated.data == b"INITIAL" else _qc_result()
+
+    async def repair(*args, **kwargs):
+        return b"EDITED", "image/png"
+
+    async def transport(settings, model, prompt, images, schema, timeout):
+        if "target" in schema["properties"]:
+            color_inputs.append([image.data for image in images])
+            return color_raw()
+        return face_raw()
+
+    monkeypatch.setattr(dpj.cut_output_qc, "verdict", primary)
+    monkeypatch.setattr(dpj.cut_generator, "repair", repair)
+    monkeypatch.setattr(vision_llm, "_call_gpt", transport)
+    run = _run_detail_cut(monkeypatch, qc_mode="repair", release_policy="critical",
+        confirmed_packet=SimpleNamespace(prompt_input=object()), settings_overrides={"openai_api_key": "test"},
+        manifest="1. PRODUCT — target\n2. MATCHING — support\n3. MODEL FACE — face",
+        reference_images=[InlineImage("image/png", data) for data in (b"PRODUCT", b"SUPPORT", b"FACE")])
+    assert color_inputs == [[b"INITIAL", b"EDITED", b"PRODUCT", b"SUPPORT"]]
+    assert run["r2"].saved == [b"EDITED"]
 
 
 def test_detail_shadow_qc_observes_chosen_output_before_save(monkeypatch):

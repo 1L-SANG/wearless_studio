@@ -24,6 +24,11 @@ from ..agents import (
     confirmed_gpt_runtime,
     cut_generator,
     cut_output_qc,
+    wearshot_runtime,
+    wearshot_qc,
+    cut_identity_review,
+    cut_color_review,
+    cut_release_policy,
     cut_plan,
     feature_copy,
     image_qc,
@@ -165,7 +170,7 @@ async def _normalize_detail_openai_refs(prepared, model: str):
         if not images:
             continue
         confirmed_packet = item[8] if len(item) > 8 else None
-        if confirmed_packet is not None or cut_generator.is_signature_cut(block):
+        if confirmed_packet is not None or (len(item) > 11 and item[11] is not None) or cut_generator.is_signature_cut(block):
             continue
         eligible.append(index)
         for image in images:
@@ -191,6 +196,67 @@ async def _normalize_detail_openai_refs(prepared, model: str):
         padded = tuple(item) + (None,) * max(0, 10 - len(item))
         result[index] = padded + (originals,)
     return result
+
+
+async def _gen_wearshot_cut(app, job, item, product, settings):
+    """Exact v2 path: one stage1, at most one typed repair, full release before storage."""
+    block, contract = item[0], item[11]
+    refs = [ref.image for ref in contract.references]
+    if item[8] is not None or item[7] is not None or item[1] != refs:
+        raise ValueError("wearshot_v2_prepared_packet_mismatch")
+    candidate = None
+    await _emit(app.state.pool, job["id"], "step", {"blockId": block.get("id"), "status": "cut_start"})
+    try:
+        output_size = wearshot_runtime.source_output_size(next(ref.image for ref in contract.references if ref.key == contract.example_key))
+        generation_settings = wearshot_runtime.generation_settings(settings)
+        image, mime = await cut_generator.generate(generation_settings, app.state.gemini, block, product, refs,
+            wearshot_contract=contract, output_size=output_size)
+        candidate = InlineImage(mime, image)
+        initial = await wearshot_runtime.review_candidate(settings, contract, candidate)
+        final_qc = initial
+        allowed = wearshot_runtime.release_allowed(initial, contract, candidate)
+        if not allowed:
+            if contract.directing_mode == "source_locked_v1":
+                repair_plan = wearshot_runtime.derive_repair_plan(contract, candidate, initial,
+                    known_failures_only=True)
+            else:
+                repair_plan = wearshot_runtime.derive_repair_plan(contract, candidate, initial)
+            repaired, repaired_mime = await cut_generator.repair(generation_settings, app.state.gemini, block, product, candidate,
+                wearshot_contract=contract, repair_plan=repair_plan,
+                repair_model=getattr(settings, "wearshot_repair_model", None), output_size=output_size)
+            final = InlineImage(repaired_mime, repaired)
+            final_qc = await wearshot_runtime.review_candidate(settings, contract, final, repair_plan=repair_plan)
+            allowed = (wearshot_qc.compare_repair(contract, repair_plan, initial, final_qc)
+                       and wearshot_runtime.release_allowed(final_qc, contract, final, repair_plan=repair_plan))
+            if allowed:
+                candidate = final
+                final_qc = {**final_qc, "stage1Qc": initial}
+        if not allowed:
+            raise ValueError("wearshot_v2_quality_review_required")
+    except Exception:
+        await _emit(app.state.pool, job["id"], "step", {"blockId": block.get("id"), "status": "cut_failed",
+            "reason": "wearshot_v2_quality_review_required"})
+        return None
+    image, mime = candidate.data, candidate.mime
+    asset_id = str(uuid.uuid4())
+    key = ai_key(job["user_id"], job["project_id"], job["id"], asset_id, ext_for_mime(mime) or "png")
+    async with app.state.pool.connection() as conn:
+        intent = await repo.create_ai_output_cleanup_intent(conn, job_id=job["id"], r2_key=key)
+        await conn.commit()
+    real_identity = bool(item[9])
+    await asyncio.to_thread(app.state.r2.put_bytes, key, image, mime,
+        cache=PRIVATE_NO_STORE if real_identity else IMMUTABLE_CACHE)
+    width, height = _dims(image)
+    step = {"blockId": block.get("id"), "status": "cut_done", "width": width, "height": height}
+    if not real_identity:
+        step["previewUrl"] = app.state.r2.preview_url(key)
+    await _emit(app.state.pool, job["id"], "step", step)
+    return ({"blockId": block.get("id"), "imageUrl": f"/v1/assets/{asset_id}/file", "width": width, "height": height},
+        {"asset_id": asset_id, "bucket": settings.r2_bucket, "key": key, "mime": mime, "size": len(image),
+         "width": width, "height": height, "cleanup_intent_id": intent, "sha256": hashlib.sha256(image).hexdigest(),
+         "metadata": {"facemarket_real_derived": real_identity, "cut_type": block.get("cutType"),
+                      "wearshotContract": contract.to_dict()}}, bool(item[3]), None, final_qc, [],
+        candidate if settings.page_output_qc_mode == "shadow" else None)
 
 
 async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None):
@@ -241,6 +307,9 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None):
     async def _one_impl(item):
         """컷 1개 생성+저장. 실패(빈 슬롯)면 None. 각 블록 독립이라 동시 실행 가능."""
         b, images, manifest, has_face, product_images = item[:5]
+        if len(item) > 11 and item[11] is not None:
+            async with sem:
+                return await _gen_wearshot_cut(app, job, item, product, detail_settings)
         space_set_plate = item[5] if len(item) > 5 else None
         strict_space_scene_qc = bool(item[6]) if len(item) > 6 else False
         passthrough = item[7] if len(item) > 7 else None
@@ -453,9 +522,13 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None):
                     _generate_candidate,
                 )
             img, mime = chosen.data, chosen.mime
+            # Preserve the actually selected stage1 pixels before optional repair.
+            stage1_chosen = chosen
             garment_warnings = [*candidate_scene_warnings, *garment_warnings]
 
             cut_qc = None
+            cut_qc_unavailable = False
+            qc_references = []
             if s.cut_output_qc_mode in {"shadow", "repair"}:
                 try:
                     normalized_spec = cut_generator.normalize_spec(
@@ -561,7 +634,9 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None):
                                 })
                         cut_qc = {**cut_qc, "repair": repair}
                 except Exception as e:
-                    # QC/plan/manifest/provider 오류가 성공한 1차 이미지를 막지 않는다.
+                    # Legacy delivery stays fail-open; the opt-in release guard below
+                    # independently holds an unavailable judgment before any upload.
+                    cut_qc_unavailable = True
                     log.warning(
                         "AG-06 cut output QC unavailable job %s block %s: %r — keep stage1",
                         job_id,
@@ -569,6 +644,71 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None):
                         e,
                     )
                     garment_warnings.append({"code": "cut_output_qc_unavailable"})
+
+            release_policy = getattr(s, "cut_output_release_policy", "off")
+            selected_qc, _ = cut_release_policy.select_stage_qc(
+                None if cut_qc_unavailable else cut_qc
+            )
+            selected_gates = selected_qc.get("gates", {}) if isinstance(selected_qc, dict) else {}
+            identity_gate = selected_gates.get("modelIdentity") if isinstance(selected_gates, dict) else None
+            if (release_policy == "critical" and isinstance(identity_gate, dict)
+                    and identity_gate.get("status") == "PASS"):
+                try:
+                    review = await cut_identity_review.verdict(s, qc_references, chosen)
+                    if (not isinstance(review, dict)
+                            or review.get("candidateSha256") != hashlib.sha256(img).hexdigest()):
+                        raise ValueError("identity_review_candidate_mismatch")
+                except Exception:
+                    # This sits outside the primary QC's legacy fail-open handler.
+                    # Missing, stale or errored confirmation must hold before storage;
+                    # never expose provider exceptions or generate another candidate.
+                    review = {
+                        "status": "UNJUDGEABLE",
+                        "evidence": "Independent visible-face review unavailable or candidate binding invalid.",
+                        "raw": None,
+                        "provider": None,
+                        "model": getattr(s, "cut_identity_review_model", "gpt-6-astra"),
+                        "candidateSha256": hashlib.sha256(img).hexdigest(),
+                    }
+                selected_qc["identityReview"] = review
+
+            protected_colors = cut_release_policy.protected_color_axes(
+                None if cut_qc_unavailable else cut_qc, policy=release_policy,
+            )
+            baseline_sha256 = hashlib.sha256(stage1_chosen.data).hexdigest()
+            candidate_sha256 = hashlib.sha256(img).hexdigest()
+            if protected_colors and isinstance(selected_qc, dict):
+                try:
+                    color_review = await cut_color_review.verdict(
+                        s, qc_references, stage1_chosen, chosen, protected_axes=protected_colors,
+                    )
+                    if (not isinstance(color_review, dict)
+                            or color_review.get("baselineSha256") != baseline_sha256
+                            or color_review.get("candidateSha256") != candidate_sha256):
+                        raise ValueError("color_review_image_binding_invalid")
+                except Exception:
+                    color_review = cut_color_review.validate(None, protected_axes=protected_colors)
+                    color_review.update(
+                        evidence="Independent color review unavailable or image binding invalid.",
+                        provider=None, model=getattr(s, "cut_color_review_model", "gpt-6-astra"),
+                        baselineSha256=baseline_sha256, candidateSha256=candidate_sha256,
+                    )
+                selected_qc["colorReview"] = color_review
+
+            release = cut_release_policy.evaluate_cut_release(
+                None if cut_qc_unavailable else cut_qc,
+                policy=release_policy,
+                baseline_sha256=baseline_sha256,
+                candidate_sha256=candidate_sha256,
+            )
+            if not release["allowed"]:
+                await _emit(app.state.pool, job_id, "step", {
+                    "blockId": b.get("id"),
+                    "status": "cut_failed",
+                    "reason": "quality_review_required",
+                    "qualityReview": release,
+                })
+                return None
 
             ext = ext_for_mime(mime) or _EXT_FALLBACK.get(mime, "png")
             asset_id = str(uuid.uuid4())
@@ -882,6 +1022,9 @@ async def run_detail_page_job(app, job: dict) -> None:
                 raise ValueError("genexample_bg_disabled")
             product = await repo.get_product(conn, project_id) or {}
             analysis = await repo.get_analysis(conn, project_id) or {}
+            if payload.get("wearshotV2") is not None:
+                await wearshot_runtime.verify_snapshot(conn, user_id, project_id, project, product, analysis, storyboard,
+                                                       payload["wearshotV2"])
             # contentRole가 사용자 선택의 정본이다. 저장 입력을 여기서도 방어적으로
             # 정규화해 매칭 첨부·컷·카피·조립이 모두 같은 역할/레시피를 읽게 한다.
             storyboard = content_roles.canonicalize_storyboard(storyboard)
@@ -994,7 +1137,9 @@ async def run_detail_page_job(app, job: dict) -> None:
 
             mannequin_asset = None
             sel = project.get("selected_mannequin_id") or project.get("selectedMannequinId")
-            if sel:
+            if payload.get("wearshotV2") is not None:
+                mannequin_asset = payload["wearshotV2"]["target"]
+            elif sel:
                 for c in await repo.list_mannequin_cuts(conn, user_id, project_id):
                     if f"{c.get('candidate')}-{c.get('version')}" == sel and c.get("asset_id"):
                         asset_id = c.get("active_asset_id") or c["asset_id"]
@@ -1228,6 +1373,11 @@ async def run_detail_page_job(app, job: dict) -> None:
                     "for job %s: %r", job_id, e)
         _fallback_warned = False
         for b, example_repeat_index in zip(ai_blocks, example_repeat_indexes):
+            if payload.get("wearshotV2") is not None and b.get("cutType") != "product":
+                async with pool.connection() as conn:
+                    prepared.append(await wearshot_runtime.prepare_block(s, conn, user_id, project_id, b, product, analysis,
+                        payload["wearshotV2"], load_asset=_img, load_model_image=_r2_img))
+                continue
             cut_spec = dict(b)
             space_binding = space_set_bindings.get(id(b))
             # 저장/클라이언트가 런타임 전용 지시를 주입하지 못하게 매번 실제 선택 결과로 재구성한다.
@@ -1735,6 +1885,11 @@ async def run_detail_page_job(app, job: dict) -> None:
             success_metadata["garmentQc"] = garment_qcs
         if cut_qcs:
             success_metadata["cutQc"] = cut_qcs
+        if payload.get("wearshotV2") is not None:
+            success_metadata["wearshotV2"] = payload["wearshotV2"]
+            for asset in cut_assets:
+                asset.setdefault("metadata", {}).setdefault("contractVersion",
+                    "approved_mannequin_v2" if asset.get("metadata", {}).get("wearshotContract") else "generic_v1")
         if page_qc is not None:
             success_metadata["pageQc"] = page_qc
         if example_warnings:
@@ -1833,6 +1988,8 @@ async def run_detail_page_job(app, job: dict) -> None:
                 if is_space_set_error
                 else "genexample_bg_disabled"
                 if error == "genexample_bg_disabled"
+                else "wearshot_v2_preflight_hold"
+                if payload.get("wearshotV2") is not None and not locals().get("cut_assets")
                 else "generation_failed"
             ),
         )

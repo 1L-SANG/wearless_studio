@@ -168,10 +168,27 @@ async def normalize_openai_images(
     ]
 
 
+def validate_openai_output_size(value: str) -> None:
+    """Validate an explicit canvas without altering legacy size selection."""
+    if value == "auto":
+        return
+    if not isinstance(value, str) or not re.fullmatch(r"[1-9][0-9]{0,3}x[1-9][0-9]{0,3}", value):
+        raise ValueError("OpenAI output size must be auto or WIDTHxHEIGHT")
+    width, height = map(int, value.split("x"))
+    if (width % 16 or height % 16 or max(width, height) > 3840
+            or max(width, height) > 3 * min(width, height)
+            or not 655360 <= width * height <= 8294400):
+        raise ValueError("OpenAI output dimensions are outside supported bounds")
+
+
 class GeminiImageClient:
     """앱 1개당 1개. app.state.gemini 에 둔다. settings.gemini_api_key 없으면 생성 안 함."""
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, *, openai_max_attempts: int = _OPENAI_MAX_ATTEMPTS):
+        # Local experiments may prohibit resubmission; default application retries stay unchanged.
+        if type(openai_max_attempts) is not int or not 1 <= openai_max_attempts <= _OPENAI_MAX_ATTEMPTS:
+            raise ValueError("OpenAI attempt limit must be an integer from 1 to 4")
+        self._openai_max_attempts = openai_max_attempts
         self._key = settings.gemini_api_key
         # getattr — 테스트·부분 설정 객체가 openai 키를 안 가질 수 있다. 없으면 gpt-image
         # 모델을 호출할 때에만 GeminiError 로 드러난다(기존 gemini 경로는 영향 0).
@@ -227,6 +244,7 @@ class GeminiImageClient:
         aspect_ratio: str | None = None,
         timeout: float = 180.0,
         openai_preserve_input_bytes: bool = False,
+        openai_output_size: str | None = None,
     ) -> GeminiImageResult:
         # 모델 id 로 provider 분기. gpt-image* 는 OpenAI images/edits(멀티 레퍼런스), 그 외는 Gemini.
         # 같은 시그니처·같은 GeminiImageResult 반환이라 9개 콜사이트는 무변경이다.
@@ -239,7 +257,10 @@ class GeminiImageClient:
                 aspect_ratio,
                 timeout,
                 preserve_input_bytes=openai_preserve_input_bytes,
+                output_size=openai_output_size,
             )
+        if openai_output_size is not None:
+            raise ValueError("openai_output_size requires an OpenAI image model")
         if not self._key:
             raise GeminiError("GEMINI_API_KEY 미설정")
         body = await run_cpu_bound(
@@ -370,16 +391,18 @@ class GeminiImageClient:
     async def _openai_generate(
         self, model: str, prompt: str, images: list[InlineImage],
         image_size: str, aspect_ratio: str | None, timeout: float,
-        *, preserve_input_bytes: bool,
+        *, preserve_input_bytes: bool, output_size: str | None = None,
     ) -> GeminiImageResult:
         """OpenAI images/edits — 멀티 레퍼런스 편집 생성. Gemini 와 동일 반환 계약.
 
         Gemini generateContent 와 의미가 다르다(캔버스 편집 vs 조건부 생성) — 동등 품질 보장 아님.
         키·엔드포인트·multipart·응답(b64_json) 전부 Gemini 와 다르므로 별도 경로다.
         """
+        if output_size is not None:
+            validate_openai_output_size(output_size)
         if not self._openai_key:
             raise GeminiError("OPENAI_API_KEY 미설정")
-        size = self._openai_size(image_size, aspect_ratio)
+        size = output_size if output_size is not None else self._openai_size(image_size, aspect_ratio)
         _ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
         if preserve_input_bytes:
             # 과거 오너 확정 실험의 요청은 각 참조 이미지의 원본 bytes/MIME까지 봉인했다.
@@ -416,7 +439,7 @@ class GeminiImageClient:
         # 429 백오프. 상세페이지 컷은 전부 이 경로라, 없으면 레이트리밋에 걸린 컷이
         # 그대로 빈 슬롯이 된다(2026-08-28: 14컷 중 4컷 유실). 대기 시간은 프로바이더가
         # 알려주는 값을 그대로 쓴다 — 임의 백오프보다 정확하고 짧다.
-        for attempt in range(_OPENAI_MAX_ATTEMPTS):
+        for attempt in range(self._openai_max_attempts):
             try:
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     res = await client.post(
@@ -434,10 +457,10 @@ class GeminiImageClient:
                     f"OpenAI request failed: {type(exc).__name__}: {exc}",
                     billable=billable) from exc
             delay = openai_retry_delay(res)
-            if delay is None or attempt == _OPENAI_MAX_ATTEMPTS - 1:
+            if delay is None or attempt == self._openai_max_attempts - 1:
                 break
             log.warning("OpenAI 429 — %.1fs 대기 후 재시도 (%d/%d)",
-                        delay, attempt + 1, _OPENAI_MAX_ATTEMPTS - 1)
+                        delay, attempt + 1, self._openai_max_attempts - 1)
             await asyncio.sleep(delay)
         latency_ms = int((time.perf_counter() - t0) * 1000)
         if res.status_code != 200:

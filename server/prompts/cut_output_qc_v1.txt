@@ -41,10 +41,11 @@ AUTHORITY RULES
   override; never restore or score omitted attributes. For pose, judge only allowed pose kinematics and
   left/right. For bg, judge the exact plate scene while storyboard controls person/framing. A space-set
   plate owns continuity, not cut-specific pose/camera.
-  When exampleRepeatIndex is 1 or greater, the repeated all-scope example intentionally receives a
-  bounded natural micro-variation. Allow small changes to hand/finger placement, one arm bend, head angle,
+  Allow bounded natural micro-variation on every example use, including the first use: small changes to
+  hand/finger placement, one arm bend, head angle,
   stance width, shoulder/pelvis line, weight distribution on the SAME support side, and gaze target within
-  the same gaze meaning. Do not fail solely for those authorized changes. Still fail a changed action,
+  the same gaze meaning, while preserving camera distance, subject scale and requested crop.
+  Do not fail solely for those natural changes. Still fail a changed action,
   body-direction family, support-side reversal, defining contact/support function, broad limb role, gaze
   meaning, or intended asymmetry.
 
@@ -81,8 +82,14 @@ HARD GATES — return each exactly once in this order:
 11. fitClosureAllowedMutation — only declared fit axes may change; closure equals storyboard intent; undeclared
    fit, hem, tuck, silhouette, construction and matching-apparel boundaries remain unchanged.
 12. modelIdentity — when applicable, the visible face is the selected MODEL FACE identity, not a similar
-    person or the EXAMPLE person. MODEL FULL BODY cannot substitute for missing facial evidence. Ambiguity
-    is UNJUDGEABLE. Hidden/back-facing/product cuts are NA per applicability.
+    person or the EXAMPLE person. Compare the candidate separately against EXAMPLE facial features and
+    the selected MODEL FACE: inspect visible eye/eyelid, nose, mouth and cheek/jaw relationships. Judge
+    facial evidence separately from hair and skin; changed hair, bangs or skin tone cannot establish a
+    facial PASS. Clearly retained EXAMPLE identity FAILS; suspected source-like features, a merely similar
+    impression or ambiguous comparison is UNJUDGEABLE, never PASS. MODEL FULL BODY cannot substitute for
+    missing facial evidence. Inspect only visible facial regions; never reconstruct hidden areas, widen
+    the crop or invent eyes to make a judgment. A tiny unreadable face is UNJUDGEABLE when applicable.
+    Hidden/back-facing/product cuts are NA per applicability.
 13. modelBodyProportions — independently of face identity, preserve MODEL FULL BODY stature/apparent height
     and head-to-body, shoulder-width, torso, waist, hip, arm and leg proportions. Hidden-face, back-view and
     intended headless/cropped worn cuts remain applicable: use only MODEL FULL BODY as the baseline and judge
