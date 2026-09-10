@@ -189,7 +189,7 @@ async def resolve_enabled_lora(conn, model_id: str) -> dict | None:
     try:
         async with conn.cursor() as cur:
             await cur.execute(
-                "select id::text as id, version, lora_r2_key, bucket, trigger_token, "
+                "select id::text as id, version, lora_r2_key, lora_sha256, bucket, trigger_token, "
                 "hair_length, hair_color, hair_texture, face_shape, jaw_line, trained_steps "
                 "from fm_model_loras "
                 "where model_id = %s and enabled and status = 'ready' "

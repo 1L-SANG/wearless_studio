@@ -863,17 +863,50 @@ class NullBackend:
 
 
 class HttpFaceBackend:
-    """원격 GPU 렌더 서비스. POST {control_png, prompt, seed, steps, guidance_scale, lora} → {image_png}."""
+    """원격 GPU 렌더 서비스. POST {control_png, prompt, seed, steps, guidance_scale, lora,
+    lora_url, lora_sha256} → {image_png}.
 
-    def __init__(self, url: str, *, lora: str | None = None, timeout: float = 180.0, token: str | None = None):
+    가중치는 **요청마다 presigned GET** 으로 넘긴다 — 파드에 R2 자격증명을 두지 않기 위해서다.
+    `lora` 는 서비스 쪽 캐시 식별자라 두 번째 요청부터는 URL 을 쓰지 않는다(캐시 히트).
+    url_provider 는 호출 시점에 URL 을 만든다(만료가 짧아 미리 만들어 두면 안 된다).
+    ★ presigned URL 은 로그·job_events·DB 어디에도 남기지 않는다."""
+
+    def __init__(self, url: str, *, lora: str | None = None, timeout: float = 180.0,
+                 token: str | None = None, lora_sha256: str | None = None, url_provider=None,
+                 expected_version: str | None = None):
         self.url = url
         self.lora = lora
         self.timeout = timeout
         self.token = token
+        self.lora_sha256 = lora_sha256
+        self.url_provider = url_provider
+        self.expected_version = expected_version
+        self._version_checked = False
+
+    def check_version(self) -> None:
+        """파드에 올라간 코드가 기대 버전인가 — **경고만** 한다(컷을 막지 않는다).
+        볼륨에 옛 코드가 남아 있는 채로 운영이 도는 상황을 로그로 잡기 위한 것이다."""
+        if self._version_checked or not self.expected_version:
+            return
+        self._version_checked = True
+        try:
+            import httpx
+
+            base = self.url.rstrip("/")
+            base = base[: -len("/render")] if base.endswith("/render") else base
+            got = httpx.get(f"{base}/healthz", timeout=10.0).json().get("code_version")
+        except Exception as exc:  # noqa: BLE001 — 버전 확인 실패가 렌더를 막아선 안 된다
+            log.info("face_identity: code_version probe failed: %r", exc)
+            return
+        if got != self.expected_version:
+            log.warning("face_identity: render service code_version=%s but expected %s "
+                        "— 볼륨의 코드가 오래됐을 수 있다(scripts/face_render_sync.sh)",
+                        got, self.expected_version)
 
     def render(self, control: Image.Image, prompt: str, seed: int) -> Image.Image:
         import httpx
 
+        self.check_version()
         buf = BytesIO()
         control.convert("RGB").save(buf, "PNG")
         payload = {
@@ -884,7 +917,14 @@ class HttpFaceBackend:
             "guidance_scale": RENDER_GUIDANCE,
             "negative_prompt": RENDER_NEGATIVE,
             "lora": self.lora,
+            "lora_sha256": self.lora_sha256,
         }
+        if self.url_provider is not None and self.lora:
+            try:
+                payload["lora_url"] = self.url_provider(self.lora)
+            except Exception:  # noqa: BLE001 — URL 을 못 만들면 캐시 히트에 기대고 계속 간다
+                log.warning("face_identity: presigned lora url unavailable; relying on pod cache",
+                            exc_info=False)
         headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
         res = httpx.post(self.url, json=payload, headers=headers, timeout=self.timeout)
         res.raise_for_status()
@@ -992,10 +1032,15 @@ def run_face_pass(
 
 @dataclass(frozen=True)
 class FaceIdentitySpec:
-    """virtual_models.json 항목의 `faceIdentity: {loraPath, token}`. 없으면 얼굴 패스 없음."""
+    """얼굴 패스 근거. 가상모델은 virtual_models.json 의 `faceIdentity: {loraPath, token}`,
+    실존 등록자는 fm_model_loras 한 행. 없으면 얼굴 패스 없음.
+
+    sha256 은 원격 백엔드가 **받은 가중치가 우리가 지목한 그 파일인지** 확인하는 값이다
+    (DB 행에만 있고 URL 에는 없다). 로컬 백엔드 경로에서는 쓰이지 않는다."""
 
     lora_path: str
     token: str = DEFAULT_TOKEN
+    sha256: str | None = None
 
 
 def face_identity_from_registry_entry(entry: dict | None) -> FaceIdentitySpec | None:
@@ -1023,9 +1068,12 @@ def face_identity_from_lora_row(row) -> FaceIdentitySpec | None:
     lora = get("lora_r2_key")
     if not isinstance(lora, str) or not lora.strip():
         return None
+    sha = get("lora_sha256")
     token = get("trigger_token")
-    return FaceIdentitySpec(lora.strip(),
-                            str(token).strip() if isinstance(token, str) and token.strip() else DEFAULT_TOKEN)
+    return FaceIdentitySpec(
+        lora.strip(),
+        str(token).strip() if isinstance(token, str) and token.strip() else DEFAULT_TOKEN,
+        sha256=str(sha).strip().lower() if isinstance(sha, str) and sha.strip() else None)
 
 
 def resolve_lora_file(spec: FaceIdentitySpec, base: str | None) -> str:
@@ -1040,6 +1088,24 @@ def resolve_lora_file(spec: FaceIdentitySpec, base: str | None) -> str:
 
 _BACKENDS: dict[tuple, FaceBackend] = {}
 _BACKEND_LOCK = threading.Lock()
+
+
+#: presigned GET 만료. 렌더 1회(≈35초)와 재시도 여유만 있으면 된다 — 길수록 유출 창이 커진다.
+LORA_URL_EXPIRES_S = 900
+
+
+def _presigned_lora_url(settings):
+    """r2_face 키 → 만료 15분 서명 GET 을 만드는 호출 가능 객체. 자격증명이 없으면 None."""
+    if not getattr(settings, "r2_face_bucket", None) or not getattr(settings, "r2_endpoint", None):
+        return None
+
+    def provider(key: str) -> str:
+        from ..r2 import R2Client
+
+        client = R2Client(settings, bucket=settings.r2_face_bucket, public_base=None)
+        return client.preview_url(key, expires=LORA_URL_EXPIRES_S)
+
+    return provider
 
 
 def resolve_backend(settings, spec: FaceIdentitySpec) -> FaceBackend | None:
@@ -1057,7 +1123,10 @@ def resolve_backend(settings, spec: FaceIdentitySpec) -> FaceBackend | None:
         backend = _BACKENDS.get(key)
         if backend is None:
             token = getattr(settings, "face_identity_backend_token", None) if url else None
-            backend = (HttpFaceBackend(url, lora=spec.lora_path, token=token)
+            backend = (HttpFaceBackend(url, lora=spec.lora_path, token=token,
+                                       lora_sha256=spec.sha256,
+                                       url_provider=_presigned_lora_url(settings),
+                                       expected_version=getattr(settings, "face_render_code_version", None))
                        if url else QwenLocalBackend(key[1]))
             _BACKENDS[key] = backend
         return backend

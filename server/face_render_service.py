@@ -11,8 +11,11 @@
 
 ★ 파드 규칙(2026-09-05 실측): /workspace 는 MooseFS FUSE 라 큰 파일 I/O 에서 파이썬이 멈춘다.
   가중치 캐시는 반드시 로컬 디스크(/root) 아래에 둔다.
-★ lora 는 r2_face 의 **키**다. 첫 요청 때 받아서 캐시하고, 그 다음부터는 디스크에서 쓴다.
+★ lora 는 r2_face 의 **키**(캐시 식별자)이고, 실제 다운로드는 요청이 실어 보내는 presigned URL
+  (`lora_url`)로만 한다 — 이 파드에는 R2 자격증명이 없다. 캐시에 있으면 URL 을 아예 안 쓴다.
   키를 그대로 파일 경로로 쓰지 않는다(경로 탈출) — 해시로 평탄화한다.
+  받은 파일은 `lora_sha256` 과 대조하고, 다르면 지우고 400 을 돌려준다(엉뚱한 얼굴 방지).
+  ★ presigned URL 은 로그에 남기지 않는다.
 ★ A40(44GiB)에는 파이프라인이 하나만 올라간다. LoRA 는 fuse 되므로 다른 키가 오면
   기존 백엔드를 버리고 새로 만든다(그 요청은 느리다). 프로덕션은 모델당 파드가 아니라
   **한 번에 한 사람**을 처리한다는 전제다.
@@ -36,8 +39,9 @@
   ※ 로컬 QwenLocalBackend 직접 렌더와 이 서비스 경유 렌더가 **PNG sha256 동일**(픽셀 diff 0).
 
 실행:
-    FACE_RENDER_TOKEN=... R2_ENDPOINT=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... \
-    R2_FACE_BUCKET=wearless-face uvicorn face_render_service:app --host 0.0.0.0 --port 8000
+    FACE_RENDER_TOKEN=... FACE_RENDER_CACHE_DIR=/workspace/face_render/loras \
+    uvicorn face_render_service:app --host 0.0.0.0 --port 8000
+(R2 자격증명은 필요 없다 — 가중치는 요청이 실어 보내는 presigned URL 로만 받는다.)
 """
 
 from __future__ import annotations
@@ -48,10 +52,12 @@ import hashlib
 import hmac
 import logging
 import os
+import pathlib
 import threading
 import time
 from contextlib import asynccontextmanager
 from io import BytesIO
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Header, HTTPException
 from PIL import Image
@@ -76,9 +82,16 @@ DEVICE = os.getenv("FACE_RENDER_DEVICE", "cuda")
 #: enable_model_cpu_offload() 로 transformer 만 GPU 에 두고 돌린다(느리지만 돈다).
 CPU_OFFLOAD = (os.getenv("FACE_RENDER_CPU_OFFLOAD", "false").lower() == "true")
 #: 프로세스 기동 때 미리 올려 둘 LoRA 키. 비우면 첫 요청이 로드 비용(수 분)을 문다.
+#: **캐시에 있는 키만** 의미가 있다(기동 시점에는 presigned URL 이 없다).
 PRELOAD_LORA = os.getenv("FACE_RENDER_PRELOAD_LORA") or None
 TOKEN = os.getenv("FACE_RENDER_TOKEN") or None
-BUCKET = os.getenv("R2_FACE_BUCKET") or None
+#: 배포된 코드가 어느 커밋인지. 볼륨에 올린 VERSION 파일이나 env 로 들어온다(관측용).
+CODE_VERSION = (os.getenv("FACE_RENDER_CODE_VERSION")
+                or (pathlib.Path(__file__).with_name("VERSION").read_text().strip()
+                    if pathlib.Path(__file__).with_name("VERSION").exists() else "unknown"))
+#: presigned 다운로드를 허용할 호스트 접미사. 다른 호스트로 유도당하지 않게 고정한다.
+ALLOWED_LORA_HOST_SUFFIX = ".r2.cloudflarestorage.com"
+DOWNLOAD_TIMEOUT = 300.0
 
 #: GPU 는 하나다 — 렌더를 직렬화한다. 동시 요청은 대기(타임아웃은 호출자 몫).
 _RENDER_LOCK = threading.Lock()
@@ -93,6 +106,8 @@ class RenderRequest(BaseModel):
     guidance_scale: float = RENDER_GUIDANCE
     negative_prompt: str = RENDER_NEGATIVE
     lora: str | None = None
+    lora_url: str | None = None       # presigned GET. 캐시 히트면 없어도 된다
+    lora_sha256: str | None = None    # 받은 파일 검증값(fm_model_loras.lora_sha256)
 
 
 class RenderResponse(BaseModel):
@@ -127,34 +142,82 @@ def _authorize(authorization: str | None) -> None:
         raise HTTPException(401, "unauthorized")
 
 
-def _lora_file(key: str) -> str:
-    """r2_face 키 → 로컬 캐시 파일. 없으면 받아서 저장하고, 있으면 그대로 쓴다."""
+def _cache_path(key: str) -> str:
     os.makedirs(CACHE_DIR, exist_ok=True)
     name = f"{hashlib.sha256(key.encode()).hexdigest()[:16]}_{os.path.basename(key)}"
-    path = os.path.join(CACHE_DIR, name)
+    return os.path.join(CACHE_DIR, name)
+
+
+def _sha256_file(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _check_url(url: str) -> None:
+    """https + 우리 R2 호스트만. 값은 예외 메시지에도 넣지 않는다."""
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise HTTPException(400, "lora_url must be https")
+    host = (parsed.hostname or "").lower()
+    if not host.endswith(ALLOWED_LORA_HOST_SUFFIX):
+        raise HTTPException(400, f"lora_url host not allowed (expected *{ALLOWED_LORA_HOST_SUFFIX})")
+
+
+def _lora_file(key: str, url: str | None = None, sha256: str | None = None) -> str:
+    """캐시 우선. 미스면 presigned URL 로 받아 sha256 을 대조한 뒤에만 캐시에 남긴다."""
+    path = _cache_path(key)
     if os.path.exists(path) and os.path.getsize(path) > 0:
         return path
-    if not BUCKET:
-        raise HTTPException(503, "R2_FACE_BUCKET not configured")
-    import boto3
+    if not url:
+        raise HTTPException(400, "lora not cached and no lora_url given")
+    _check_url(url)
+    import httpx
 
-    s3 = boto3.client(
-        "s3",
-        endpoint_url=os.environ["R2_ENDPOINT"],
-        aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
-        aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
-        region_name="auto",
-    )
-    t0 = time.perf_counter()
     tmp = f"{path}.part"
-    s3.download_file(BUCKET, key, tmp)
-    os.replace(tmp, path)   # 부분 파일이 캐시로 둔갑하지 않게
-    log.info("lora downloaded %s (%.1fMB, %.1fs)", key,
+    t0 = time.perf_counter()
+    try:
+        with httpx.stream("GET", url, timeout=DOWNLOAD_TIMEOUT, follow_redirects=False) as res:
+            if res.status_code != 200:
+                # 403/만료를 그대로 보여준다(URL 값은 빼고) — 발급 쪽을 봐야 하는 실패다.
+                raise HTTPException(502, f"lora_url fetch failed: HTTP {res.status_code}")
+            with open(tmp, "wb") as fh:
+                for chunk in res.iter_bytes(1 << 20):
+                    fh.write(chunk)
+    except HTTPException:
+        _unlink(tmp)
+        raise
+    except Exception as exc:
+        _unlink(tmp)
+        raise HTTPException(502, f"lora_url fetch failed: {type(exc).__name__}") from exc
+    if sha256:
+        got = _sha256_file(tmp)
+        if got.lower() != sha256.strip().lower():
+            _unlink(tmp)   # 검증 실패본을 캐시에 남기면 다음 요청이 그걸 쓴다
+            raise HTTPException(400, "lora sha256 mismatch")
+    os.replace(tmp, path)
+    # 캐시 파일명은 키의 해시라 되돌릴 수 없다 → 옆에 키를 적어 둔다.
+    # start.sh 가 이 파일을 읽어 재기동 때 PRELOAD 할 키를 정한다(캐시가 비면 PRELOAD 없이 뜬다).
+    try:
+        pathlib.Path(f"{path}.key").write_text(key)
+    except OSError:
+        log.warning("could not write cache key sidecar for %s", key)
+    log.info("lora fetched key=%s (%.1fMB, %.1fs)", key,
              os.path.getsize(path) / 2**20, time.perf_counter() - t0)
     return path
 
 
-def _backend(lora_key: str | None) -> QwenLocalBackend:
+def _unlink(path: str) -> None:
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+
+
+def _backend(lora_key: str | None, lora_url: str | None = None,
+             lora_sha256: str | None = None) -> QwenLocalBackend:
     """이 키의 백엔드. 다른 키가 오면 기존 파이프라인을 버린다(A40 에 둘은 안 올라간다)."""
     if lora_key is None:
         raise HTTPException(400, "lora key required")
@@ -172,8 +235,8 @@ def _backend(lora_key: str | None) -> QwenLocalBackend:
             torch.cuda.empty_cache()
         except Exception:  # noqa: BLE001 — 정리 실패는 로드 실패가 아니다
             log.warning("cuda cache clear failed", exc_info=True)
-    backend = QwenLocalBackend(_lora_file(lora_key), model_id=MODEL_ID, device=DEVICE,
-                               cpu_offload=CPU_OFFLOAD)
+    backend = QwenLocalBackend(_lora_file(lora_key, lora_url, lora_sha256), model_id=MODEL_ID,
+                               device=DEVICE, cpu_offload=CPU_OFFLOAD)
     t0 = time.perf_counter()
     backend.pipeline()          # 여기서 실제 로드가 일어난다(수 분)
     _state.update(backend=backend, lora=lora_key, loaded_at=time.time())
@@ -189,9 +252,10 @@ def healthz() -> dict:
         "lora": _state["lora"],
         "renders": _state["renders"],
         "token_configured": bool(TOKEN),
-        "bucket": BUCKET,
         "model_id": MODEL_ID,
         "cpu_offload": CPU_OFFLOAD,
+        "code_version": CODE_VERSION,
+        "cache_dir": CACHE_DIR,
     }
 
 
@@ -206,7 +270,7 @@ def render(req: RenderRequest, authorization: str | None = Header(default=None))
     with Image.open(BytesIO(raw)) as im:
         im.load()
         control = im.convert("RGB")
-    backend = _backend(req.lora)
+    backend = _backend(req.lora, req.lora_url, req.lora_sha256)
     # 요청이 준 값이 정본 — 호출자(face_identity)가 RENDER_* 를 보낸다. 파드가 임의로 바꾸면
     # 같은 시드로도 그림이 달라져 로컬/원격 비교가 성립하지 않는다.
     backend.steps = int(req.steps)

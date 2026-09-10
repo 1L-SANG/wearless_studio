@@ -5,9 +5,12 @@
 """
 
 import base64
+import hashlib
+import pathlib
 from io import BytesIO
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -101,7 +104,7 @@ def test_http_backend_payload_is_accepted_verbatim(client, monkeypatch):
     sent = _sent_payload(monkeypatch)
     assert sent["headers"]["Authorization"] == f"Bearer {TOKEN}"
     backend = _Backend()
-    monkeypatch.setattr(svc, "_backend", lambda key: backend)
+    monkeypatch.setattr(svc, "_backend", lambda key, url=None, sha=None: backend)
 
     res = client.post("/render", json=sent["body"], headers={"Authorization": f"Bearer {TOKEN}"})
 
@@ -121,7 +124,7 @@ def test_http_backend_payload_is_accepted_verbatim(client, monkeypatch):
 def test_response_is_what_http_backend_expects(client, monkeypatch):
     """서비스 응답이 HttpFaceBackend 의 파싱(image_png b64 → PIL)과 맞물리는가."""
     backend = _Backend()
-    monkeypatch.setattr(svc, "_backend", lambda key: backend)
+    monkeypatch.setattr(svc, "_backend", lambda key, url=None, sha=None: backend)
     sent = _sent_payload(monkeypatch)
     res = client.post("/render", json=sent["body"], headers={"Authorization": f"Bearer {TOKEN}"})
     data = base64.b64decode(res.json()["image_png"])
@@ -133,15 +136,128 @@ def test_response_is_what_http_backend_expects(client, monkeypatch):
 def test_lora_cache_path_is_flattened(tmp_path, monkeypatch):
     """r2 키를 파일 경로로 그대로 쓰지 않는다(경로 탈출·디렉터리 생성 방지)."""
     monkeypatch.setattr(svc, "CACHE_DIR", str(tmp_path))
-    target = None
     for key in ("facemarket/loras/m/v1.safetensors", "../../etc/passwd"):
-        got = None
-        try:
-            got = svc._lora_file(key)
-        except Exception as exc:  # 다운로드는 이 테스트의 관심이 아니다(버킷 미설정 → 503)
-            assert "R2_FACE_BUCKET" in str(exc)
-            continue
-        target = got
-    # 캐시 디렉터리 밖으로 나가는 경로가 만들어지지 않았다
-    assert target is None or target.startswith(str(tmp_path))
+        assert svc._cache_path(key).startswith(str(tmp_path))
     assert not (tmp_path / "facemarket").exists()
+
+
+# ── LoRA 전달: 요청마다 presigned URL(파드에 R2 자격증명 없음) ──
+_URL = "https://acct.r2.cloudflarestorage.com/wearless-face/x.safetensors?X-Amz-Signature=zzz"
+
+
+def _weights(n=2048):
+    return bytes(range(256)) * (n // 256)
+
+
+class _Stream:
+    """httpx.stream 대역 — 컨텍스트 매니저."""
+
+    def __init__(self, status=200, body=b"", record=None):
+        self.status_code, self._body, self._record = status, body, record
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def iter_bytes(self, size=None):
+        yield self._body
+
+
+def _patch_stream(monkeypatch, *, status=200, body=b"", boom=None):
+    calls = []
+
+    def fake_stream(method, url, **kw):
+        calls.append((method, url))
+        if boom is not None:
+            raise boom
+        return _Stream(status, body)
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "stream", fake_stream)
+    return calls
+
+
+def test_cache_hit_never_touches_the_network(tmp_path, monkeypatch):
+    monkeypatch.setattr(svc, "CACHE_DIR", str(tmp_path))
+    path = svc._cache_path(LORA_KEY)
+    pathlib.Path(path).write_bytes(_weights())
+    calls = _patch_stream(monkeypatch)
+    assert svc._lora_file(LORA_KEY, None, "무관한값") == path      # URL 도 sha 도 안 본다
+    assert calls == []
+
+
+def test_missing_cache_without_url_is_a_clear_400(tmp_path, monkeypatch):
+    monkeypatch.setattr(svc, "CACHE_DIR", str(tmp_path))
+    with pytest.raises(HTTPException) as exc:
+        svc._lora_file(LORA_KEY, None, None)
+    assert exc.value.status_code == 400 and "lora_url" in exc.value.detail
+
+
+@pytest.mark.parametrize("url", [
+    "http://acct.r2.cloudflarestorage.com/x",             # https 아님
+    "https://evil.example.com/x",                          # 우리 호스트 아님
+    "https://acct.r2.cloudflarestorage.com.evil.com/x",    # 접미사 위장
+])
+def test_only_https_r2_hosts_are_downloaded(tmp_path, monkeypatch, url):
+    monkeypatch.setattr(svc, "CACHE_DIR", str(tmp_path))
+    calls = _patch_stream(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        svc._lora_file(LORA_KEY, url, None)
+    assert exc.value.status_code == 400
+    assert calls == []                                     # 요청 자체를 안 보낸다
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_sha256_mismatch_deletes_the_file_and_400s(tmp_path, monkeypatch):
+    monkeypatch.setattr(svc, "CACHE_DIR", str(tmp_path))
+    _patch_stream(monkeypatch, body=_weights())
+    with pytest.raises(HTTPException) as exc:
+        svc._lora_file(LORA_KEY, _URL, "0" * 64)
+    assert exc.value.status_code == 400 and "sha256" in exc.value.detail
+    # 검증 실패본이 캐시에 남으면 다음 요청이 그걸 쓴다 — 파일이 없어야 한다
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_sha256_match_caches_file_and_key_sidecar(tmp_path, monkeypatch):
+    monkeypatch.setattr(svc, "CACHE_DIR", str(tmp_path))
+    body = _weights()
+    _patch_stream(monkeypatch, body=body)
+    path = svc._lora_file(LORA_KEY, _URL, hashlib.sha256(body).hexdigest().upper())
+    assert pathlib.Path(path).read_bytes() == body
+    # start.sh 가 재기동 때 PRELOAD 할 키를 여기서 읽는다
+    assert pathlib.Path(f"{path}.key").read_text() == LORA_KEY
+
+
+@pytest.mark.parametrize("status", [403, 404, 500])
+def test_expired_or_denied_url_is_a_502_naming_the_status(tmp_path, monkeypatch, status):
+    monkeypatch.setattr(svc, "CACHE_DIR", str(tmp_path))
+    _patch_stream(monkeypatch, status=status)
+    with pytest.raises(HTTPException) as exc:
+        svc._lora_file(LORA_KEY, _URL, None)
+    assert exc.value.status_code == 502 and str(status) in exc.value.detail
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_network_failure_leaves_no_partial_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(svc, "CACHE_DIR", str(tmp_path))
+    _patch_stream(monkeypatch, boom=OSError("connection reset"))
+    with pytest.raises(HTTPException) as exc:
+        svc._lora_file(LORA_KEY, _URL, None)
+    assert exc.value.status_code == 502
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_service_needs_no_r2_credentials():
+    """파드에 R2 키를 두지 않는 것이 이 설계의 목적 — boto3·R2_* 경로가 남아 있으면 안 된다."""
+    source = pathlib.Path(svc.__file__).read_text()
+    assert "boto3" not in source
+    assert "R2_ACCESS_KEY_ID" not in source and "R2_FACE_BUCKET" not in source
+    assert svc.healthz()["ok"] is True          # 자격증명 없이도 뜬다
+
+
+def test_healthz_reports_code_version():
+    body = svc.healthz()
+    assert "code_version" in body and body["cache_dir"] == svc.CACHE_DIR

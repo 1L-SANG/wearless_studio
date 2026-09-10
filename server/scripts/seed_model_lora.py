@@ -93,8 +93,11 @@ def main() -> int:
     key = _key(a.model_id, a.version, ckpt)
     data = ckpt.read_bytes()
     digest = hashlib.md5(data).hexdigest()
+    # 렌더 파드가 presigned 로 받은 파일을 대조할 값(fm_model_loras.lora_sha256).
+    sha256 = hashlib.sha256(data).hexdigest()
     head = r2.head(key)
     print(f"ckpt   {ckpt} ({len(data)/2**20:.1f}MB md5={digest})")
+    print(f"sha256 {sha256}")
     print(f"key    {key}  (이미 있음: {bool(head)})")
     print(f"db     {'apply' if a.apply else 'dry-run'}  enable={a.enable} version={a.version}")
 
@@ -130,19 +133,20 @@ def main() -> int:
             )
         cur.execute(
             """insert into fm_model_loras
-                 (model_id, version, status, enabled, base_model, lora_r2_key, bucket,
+                 (model_id, version, status, enabled, base_model, lora_r2_key, lora_sha256, bucket,
                   trigger_token, hair_length, hair_color, hair_texture, face_shape, jaw_line,
                   trained_steps, source_enrollment_id, metrics)
-               values (%s, %s, 'ready', %s, %s, %s, 'face', %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               values (%s, %s, 'ready', %s, %s, %s, %s, 'face', %s, %s, %s, %s, %s, %s, %s, %s, %s)
                on conflict (model_id, version) do update set
                  status = 'ready', enabled = excluded.enabled, base_model = excluded.base_model,
-                 lora_r2_key = excluded.lora_r2_key, trigger_token = excluded.trigger_token,
+                 lora_r2_key = excluded.lora_r2_key, lora_sha256 = excluded.lora_sha256,
+                 trigger_token = excluded.trigger_token,
                  hair_length = excluded.hair_length, hair_color = excluded.hair_color,
                  hair_texture = excluded.hair_texture, face_shape = excluded.face_shape,
                  jaw_line = excluded.jaw_line, trained_steps = excluded.trained_steps,
                  source_enrollment_id = excluded.source_enrollment_id, metrics = excluded.metrics
                returning id::text as id""",
-            (a.model_id, a.version, a.enable, a.base_model, key, a.trigger,
+            (a.model_id, a.version, a.enable, a.base_model, key, sha256, a.trigger,
              a.hair_length, a.hair_color, a.hair_texture, a.face_shape, a.jaw_line,
              a.trained_steps, a.source_enrollment_id,
              Json(metrics) if metrics is not None else None),
