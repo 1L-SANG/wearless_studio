@@ -392,8 +392,8 @@ function VcCard({ license, onRevoked, push }) {
 
 /* ── 4단계: 라이선스 조건 + 발급 ──────────────────────────── */
 function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued, push }) {
-    const [allowed, setAllowed] = useState([ALLOWED_BRAND_USE_CATEGORIES[0]]);
-    const [forbidden, setForbidden] = useState([FORBIDDEN_BRAND_USE_CATEGORIES[0]]);
+    const [allowed, setAllowed] = useState([...ALLOWED_BRAND_USE_CATEGORIES]);
+    const [forbidden, setForbidden] = useState([...FORBIDDEN_BRAND_USE_CATEGORIES]);
     const [unitPrice, setUnitPrice] = useState(10000);
     const [validDays, setValidDays] = useState(365);
     const [submitting, setSubmitting] = useState(false);
@@ -474,7 +474,7 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
             <div className={s.terms}>
                 <section className={s.term}>
                     <span className={s.termNo}>{TERM_STEPS.allowed.no}</span>
-                    <h3 className={s.termLabel}>허용 브랜드 유형</h3>
+                    <h3 className={s.termLabel}>허용 품목</h3>
                     <p className={s.termNote}>{TERM_STEPS.allowed.note}</p>
                     <Chips
                         options={ALLOWED_BRAND_USE_CATEGORIES}
@@ -486,7 +486,7 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
 
                 <section className={s.term}>
                     <span className={s.termNo}>{TERM_STEPS.forbidden.no}</span>
-                    <h3 className={s.termLabel}>금지 브랜드 유형</h3>
+                    <h3 className={s.termLabel}>제한 품목</h3>
                     <p className={s.termNote}>{TERM_STEPS.forbidden.note}</p>
                     <Chips
                         options={FORBIDDEN_BRAND_USE_CATEGORIES}
@@ -776,7 +776,7 @@ export function ModelLicense() {
                                 아직 발급된 라이선스가 없어요
                             </h2>
                             <p className={s.emptyBody}>
-                                모델 등록을 마치면 허용 품목·금지 품목·건당
+                                모델 등록을 마치면 허용 품목·제한 품목·건당
                                 단가·유효기간을 정하고 라이선스를 발급할 수
                                 있어요.
                             </p>
