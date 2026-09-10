@@ -182,6 +182,40 @@ def test_missing_initial_judgment_can_be_replaced_by_final_judgment(monkeypatch)
     assert result["qc_scores"]["product_fidelity"] == 91
 
 
+@pytest.mark.parametrize("after_scores", [scored(95, critical=["invented panel seam"]), scored(30)])
+def test_new_final_judgment_cannot_bypass_enforce_when_initial_check_failed(monkeypatch, after_scores):
+    result, seen = run_worker(monkeypatch, p2={
+        b"before": RuntimeError("initial unavailable"), b"after": after_scores})
+    assert seen.puts == [b"before"]
+    assert result["qc_scores"] is None
+    assert seen.image_calls == ["generate", "untuck"]
+
+
+def test_new_final_series_failure_cannot_bypass_enforce(monkeypatch):
+    result, seen = run_worker(monkeypatch,
+                             p2={b"before": scored(95), b"after": scored(95)},
+                             series_results={b"after": series(30)})
+    assert seen.puts == [b"before"]
+    assert result["qc_scores"]["product_fidelity"] == 95
+    assert result["qc_scores"]["series_consistency"] is None
+
+
+def test_new_final_judgment_stays_observational_in_shadow(monkeypatch):
+    result, seen = run_worker(monkeypatch, mode="shadow", p2={
+        b"before": RuntimeError("initial unavailable"),
+        b"after": scored(95, critical=["invented panel seam"])})
+    assert seen.puts == [b"after"]
+    assert result["qc_scores"]["critical_errors"] == ["invented panel seam"]
+
+
+def test_new_final_series_pass_is_not_rejected_for_missing_baseline(monkeypatch):
+    result, seen = run_worker(monkeypatch,
+                             p2={b"before": scored(95), b"after": scored(95)},
+                             series_results={b"after": series(90)})
+    assert seen.puts == [b"after"]
+    assert result["qc_scores"]["series_consistency"] == 90
+
+
 def test_final_edit_cannot_bypass_existing_matching_identity_gate(monkeypatch):
     result, seen = run_worker(monkeypatch, pants_mode="enforce",
                              p2={b"before": scored(92), b"after": scored(95, matching_critical=["matching trousers changed"])})

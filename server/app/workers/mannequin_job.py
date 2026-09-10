@@ -1146,6 +1146,12 @@ async def _apply_checked_untuck_postpass(
     post_scores = merge_qc_scores(
         post_p2, post_series, salvaged=salvaged,
         thresholds=(s.qc_score_auto_pass, s.qc_score_review))
+    # 처음 확보한 판정은 전후 악화 비교가 불가능해도 기존 enforce 기준을 따른다.
+    # 이미 점수가 있던 축은 아래의 허용폭 비교에 맡겨 정상 편집을 과잉 롤백하지 않는다.
+    new_scores = merge_qc_scores(
+        post_p2 if p2 is None else None, post_series if series is None else None)
+    if final_decision(s, new_scores) == "retry":
+        return await keep_before("new_qc_rejected")
     # D축을 새로 관측한 경우와 기존 D축을 재검사한 경우를 섞어 비교하지 않는다.
     if series is not None and post_series is not None and edit_regressed(
             s, qc_scores, post_scores, score_keys=image_qc.SCORE_KEYS):
