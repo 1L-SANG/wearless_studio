@@ -15,7 +15,7 @@ set -euo pipefail
 HOST="${POD_HOST:?POD_HOST 가 필요하다 (파드 publicIp)}"
 PORT="${POD_PORT:?POD_PORT 가 필요하다 (파드의 22 매핑 포트 — 재시작마다 바뀐다)}"
 KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
-ROOT="${FACE_RENDER_ROOT:-/workspace/face_render}"
+ROOT="${FACE_RENDER_ROOT:-/root/face_render}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"      # server/
 SSH=(ssh -i "$KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -p "$PORT" "root@$HOST")
 
@@ -29,12 +29,13 @@ cp "$HERE/app/agents/face_identity_qwen.py" "$STAGE/code/app/agents/"
 : > "$STAGE/code/app/agents/__init__.py"
 cp "$HERE/deploy/face_render/start.sh" "$STAGE/start.sh"
 cp "$HERE/deploy/face_render/pre_start.sh" "$STAGE/pre_start.sh"
+cp "$HERE/deploy/face_render/bootstrap.sh" "$STAGE/bootstrap.sh"
 printf '%s\n' "$VERSION" > "$STAGE/VERSION"
 printf '%s\n' "$VERSION" > "$STAGE/code/VERSION"
 chmod +x "$STAGE/start.sh"
 
 # COPYFILE_DISABLE: macOS tar 이 ._AppleDouble 을 같이 넣는 것을 막는다.
-COPYFILE_DISABLE=1 tar czf "$STAGE/sync.tgz" -C "$STAGE" code start.sh pre_start.sh VERSION
+COPYFILE_DISABLE=1 tar czf "$STAGE/sync.tgz" -C "$STAGE" code start.sh pre_start.sh bootstrap.sh VERSION
 tar tzf "$STAGE/sync.tgz" > /dev/null           # 올리기 전에 아카이브부터 검증
 scp -i "$KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -P "$PORT" \
     "$STAGE/sync.tgz" "root@$HOST:/tmp/face_render_sync.tgz"
@@ -45,7 +46,7 @@ scp -i "$KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -P "$PORT" \
   # --no-same-owner: 네트워크 볼륨(MooseFS)은 맥 tar 의 uid/gid 를 못 준다(chown 거부).
   tar --no-same-owner -xzf /tmp/face_render_sync.tgz -C '$ROOT'
   rm -f /tmp/face_render_sync.tgz
-  chmod +x '$ROOT/start.sh' '$ROOT/pre_start.sh'
+  chmod +x '$ROOT/start.sh' '$ROOT/pre_start.sh' '$ROOT/bootstrap.sh'
   ls -la '$ROOT' '$ROOT/code'
   echo VERSION=\$(cat '$ROOT/VERSION')"
 echo "synced $VERSION → $HOST:$ROOT"

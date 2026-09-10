@@ -56,13 +56,21 @@ class QwenLocalBackend:
 
                 pipe = QwenImageEditPlusPipeline.from_pretrained(self.model_id, torch_dtype=torch.bfloat16)
                 pipe.set_progress_bar_config(disable=True)
-                pipe.load_lora_weights(self.lora_path, adapter_name="identity")
-                pipe.set_adapters(["identity"], adapter_weights=[self.lora_scale])
-                pipe.fuse_lora(lora_scale=self.lora_scale)
                 if self.cpu_offload:
+                    # 오프로드 경로는 순서를 그대로 둔다 — 가중치가 GPU 에 상주하지 않으므로
+                    # CPU 에서 합치는 편이 맞고, to(device) 대신 enable_model_cpu_offload 가 온다.
+                    pipe.load_lora_weights(self.lora_path, adapter_name="identity")
+                    pipe.set_adapters(["identity"], adapter_weights=[self.lora_scale])
+                    pipe.fuse_lora(lora_scale=self.lora_scale)
                     pipe.enable_model_cpu_offload(device=self.device)
                 else:
+                    # ★ 먼저 GPU 로 올리고 나서 LoRA 를 합친다. CPU 에서 합치면 수백 개 텐서를
+                    #   단일 스레드 CPU 연산으로 더하게 되고(파드 vCPU 는 넉넉하지 않다),
+                    #   그 결과가 다시 GPU 로 전송된다 — 적재의 대부분이 여기서 나왔다.
                     pipe.to(self.device)
+                    pipe.load_lora_weights(self.lora_path, adapter_name="identity")
+                    pipe.set_adapters(["identity"], adapter_weights=[self.lora_scale])
+                    pipe.fuse_lora(lora_scale=self.lora_scale)
                 self._pipe = pipe
             return self._pipe
 
