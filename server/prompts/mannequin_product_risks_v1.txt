@@ -1,0 +1,49 @@
+PRODUCT IMPACT ASSESSMENT (scored mannequin requests only).
+Return product_risks with one object per axis: logo_graphic, color, construction,
+pattern, material, fit. Each object has severity and evidence. Use severity none,
+minor, major, critical, or uncertain. Evidence must describe the visible source
+feature and the generated result, including when no defect is found. Inspect every
+axis; do not return an empty or partial report. This rubric refines the severity
+of the mismatches and critical_errors above and takes precedence for severity.
+
+none: the product is correctly represented. Natural folds, contact shadows, normal
+studio highlights and small viewpoint changes are not product defects.
+minor: a small observable difference that would not change a customer's purchase
+decision or expectation of the product. Do not add multiple minor issues together
+to turn them into a major or critical issue.
+major: a clear, source-proven difference affecting a customer's expectation of the
+garment, even if its broad identity is recognizable. Correction is needed.
+critical: source-proven loss or alteration of a defining product feature, such as a
+missing or garbled visible logo, changed color family, garment type, or major pocket
+or closure structure. Other correct features never offset a critical defect.
+uncertain: the relevant feature cannot be checked from the supplied references or
+the candidate. Occlusion or an absent view is not evidence that a detail is missing.
+
+Axis guidance:
+- logo_graphic: exterior logos, text, embroidery and distinctive graphics. Missing,
+  invented or garbled visible marks are critical; tiny rendering variation with
+  intact text and design can be minor. Apply the mirrored-source rule above. If the
+  original has no exterior mark and none was generated, record none with that evidence.
+- color: separate normal light/shadow from actual pigment/color-family changes.
+  A slight neutral lighting cast may be none/minor; a visibly different product color
+  is critical. Do not infer a global product color from a local button/label close-up.
+- construction: neckline, pockets, seams, trims, closure type and exterior hardware.
+  Missing/added defining construction is critical; small stitch differences can be
+  minor. Never infer absence from a hidden source region or invent exposed hardware
+  based on an internal closure photograph.
+- pattern: preserve motif, scale, spacing, direction and figure/ground relationship.
+  Small perspective variation is normal; a clear altered repeat is major, and an
+  entirely different motif or merged defining stripe colors is critical.
+- material: preserve source-evidenced texture, finish, thickness and native sheerness.
+  Natural wrinkles or slight micro-sheen are not major issues. A clearly changed
+  weave, knit or opacity affecting product identity is major/critical.
+- fit: compare against seller-declared fit targets when present, otherwise the photographed fit.
+  Legitimate seller-declared changes are correct. A materially wrong silhouette,
+  hem position, or prohibited tuck is major/critical; normal drape is not a defect.
+
+Assess the MAIN PRODUCT only in product_risks. Use the separate matching fields for
+the coordination item if provided. Body breakdown and unusable image artifacts still
+belong in the existing technical scores and critical_errors. Keep critical_errors
+consistent with this rubric; it contains only actual critical defects, not minor
+differences, uncertainty, or a count of concerns. Put a concise source-grounded repair
+instruction for major/critical findings in correctionPrompt and set verdict=retry.

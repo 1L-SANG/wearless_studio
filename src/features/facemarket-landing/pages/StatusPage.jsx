@@ -22,7 +22,7 @@ const DESCRIPTION = '지원서 검토부터 얼굴 등록, 라이선스까지 �
 export function StatusPage() {
   const { session, loading, openLogin } = useAuth();
   return (
-    <LandingShell description={DESCRIPTION} title={TITLE}>
+    <LandingShell description={DESCRIPTION} title={TITLE} variant="apply">
       {() => {
         // 부트스트랩 중 session=null 은 '비로그인'이 아니라 '아직 모름'이다(LandingShell 주석).
         if (loading) return <section className={s.section}><p className={s.sectionLead}>불러오는 중이에요</p></section>;
@@ -41,7 +41,7 @@ export function StatusPage() {
             </section>
           );
         }
-        return <ModelHub />;
+        return <ModelHub email={session.user?.email || ''} />;
       }}
     </LandingShell>
   );

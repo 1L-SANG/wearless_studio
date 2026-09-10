@@ -28,16 +28,14 @@ test('조건표는 계약과 정산 기준을 한 곳에서 제공한다', async
   assert.equal(terms.validityLabel(null), '영구');
 });
 
-test('지원부터 활동까지 일곱 단계의 라벨이 고정된다', async () => {
+test('Digital DNA 여정은 다섯 단계와 현재 단계 설명을 제공한다', async () => {
   const { HUB_STEPS } = await loadRequired(journeyUrl, '허브 상태');
-  assert.deepEqual(HUB_STEPS.map((step) => step.label), [
-    '지원 접수',
-    '등록 링크',
-    '본인확인·사진·조건·증서',
-    '우리 검수',
-    '테스트 컷 생성',
-    '확정',
-    '활동 중',
+  assert.deepEqual(HUB_STEPS, [
+    { key: 'application', label: '지원 접수', description: null },
+    { key: 'review', label: '내부 검토', description: '지원서를 검토중이에요. 24시간 이내 결과를 전달해드릴게요.' },
+    { key: 'registration', label: '모델 등록', description: '얼굴 구현을 위한 이미지들과, 라이선스 증서에 대한 설정이 필요해요.' },
+    { key: 'final_review', label: '최종 검토', description: '등록서를 최종 검토중이에요. 24시간 이내 결과를 전달해드릴게요.' },
+    { key: 'confirm', label: '프로필 이미지 확정', description: '저희가 만들어드리는 프로필 이미지 중 사용될 이미지를 선택해주시면 모델 등록이 끝나요.' },
   ]);
 });
 
@@ -47,21 +45,21 @@ test('지원 상태는 현재 칸 하나와 행동 하나로 이어진다', asyn
     {
       input: { applicationRequired: true },
       wantIndex: 0,
-      wantAction: { label: '얼리버드 지원하기', kind: 'route', to: '/model/apply' },
+      wantAction: { label: '얼리버드 지원하기', kind: 'route', to: '/apply' },
     },
     {
       input: { applicationRequired: true, application: { id: 'a1', status: 'under_review' } },
-      wantIndex: 0,
+      wantIndex: 1,
       wantAction: { label: '지원 취소', kind: 'cancel' },
     },
     {
       input: { applicationRequired: true, application: { id: 'a2', status: 'approved' } },
-      wantIndex: 1,
+      wantIndex: 2,
       wantAction: { label: '등록 시작하기', kind: 'route', to: '/model/register' },
     },
     {
       input: { applicationRequired: true, application: { id: 'a3', status: 'rejected' } },
-      wantIndex: 0,
+      wantIndex: 1,
       wantAction: { label: '다시 지원하기', kind: 'route', to: '/model/apply' },
     },
   ];
@@ -75,15 +73,17 @@ test('지원 상태는 현재 칸 하나와 행동 하나로 이어진다', asyn
   }
 });
 
-test('등록 상태는 검수·생성·확정 단계와 도달 가능한 행동으로 매핑된다', async () => {
+test('등록 상태는 등록, 최종 검토, 프로필 확정과 도달 가능한 행동으로 매핑된다', async () => {
   const { resolveHubJourney } = await loadRequired(journeyUrl, '허브 상태');
   const cases = [
     ['identity_pending', 2, '등록 이어가기', '/model/register'],
     ['photos_pending', 2, '등록 이어가기', '/model/register'],
     ['terms_pending', 2, '조건·증서 이어가기', '/model/license?step=terms&enrollment=e1'],
     ['vc_pending', 2, '조건·증서 이어가기', '/model/license?step=terms&enrollment=e1'],
-    ['review_pending', 3, '검수 상태 새로고침', undefined],
-    ['confirm_pending', 5, '테스트 컷 확인하기', '/model/confirm'],
+    ['review_pending', 3, '검토 상태 새로고침', undefined],
+    ['processing', 3, '검토 상태 새로고침', undefined],
+    ['asset_building', 3, '검토 상태 새로고침', undefined],
+    ['confirm_pending', 4, '이미지 선택하기', '/model/confirm'],
   ];
 
   for (const [status, wantIndex, label, to] of cases) {
@@ -95,19 +95,19 @@ test('등록 상태는 검수·생성·확정 단계와 도달 가능한 행동�
   }
 });
 
-test('현재 서버와 Phase B의 processing은 라이선스 존재 여부로 구분해 타임라인이 후퇴하지 않는다', async () => {
+test('processing은 라이선스 유무와 관계없이 최종 검토 단계다', async () => {
   const { hasCurrentEnrollmentLicense, resolveHubJourney } = await loadRequired(journeyUrl, '허브 상태');
   assert.equal(hasCurrentEnrollmentLicense([{ status: 'reverification_required' }]), false);
   assert.equal(hasCurrentEnrollmentLicense([{ status: 'pending' }]), true);
   assert.equal(hasCurrentEnrollmentLicense([{ status: 'active' }]), true);
   for (const status of ['processing', 'asset_building']) {
     const currentServer = resolveHubJourney({ enrollment: { id: 'e1', status }, hasLicense: false });
-    assert.equal(currentServer.currentIndex, 2, status);
-    assert.equal(currentServer.action.label, '등록 상태 새로고침', status);
+    assert.equal(currentServer.currentIndex, 3, status);
+    assert.equal(currentServer.action.label, '검토 상태 새로고침', status);
 
     const phaseB = resolveHubJourney({ enrollment: { id: 'e1', status }, hasLicense: true });
-    assert.equal(phaseB.currentIndex, 4, status);
-    assert.equal(phaseB.action.label, '생성 상태 새로고침', status);
+    assert.equal(phaseB.currentIndex, 3, status);
+    assert.equal(phaseB.action.label, '검토 상태 새로고침', status);
   }
 });
 
@@ -119,7 +119,7 @@ test('verified 모델은 거래가 없어도 활동 중 화면이다', async () 
     settlements: [],
   });
   assert.equal(journey.mode, 'active');
-  assert.equal(journey.currentIndex, 6);
+  assert.equal(journey.currentIndex, 4);
   assert.equal(journey.steps.every((step) => step.state === 'done'), true);
   assert.equal(journey.action, null);
 });
@@ -132,9 +132,9 @@ test('테스트컷 전송 뒤에는 확인 화면으로 바로 이어진다', as
     hasLicense: true,
   });
 
-  assert.equal(journey.currentIndex, 5);
+  assert.equal(journey.currentIndex, 4);
   assert.deepEqual(journey.action, {
-    label: '테스트컷 확인하기',
+    label: '이미지 선택하기',
     kind: 'route',
     to: '/model/confirm',
   });
@@ -148,9 +148,9 @@ test('재생성 요청 뒤에는 등록 화면으로 되돌리지 않고 생성 
     hasLicense: true,
   });
 
-  assert.equal(journey.currentIndex, 4);
+  assert.equal(journey.currentIndex, 3);
   assert.deepEqual(journey.action, {
-    label: '생성 상태 새로고침',
+    label: '검토 상태 새로고침',
     kind: 'reload',
   });
 });
@@ -163,9 +163,9 @@ test('첫 VC 발급 뒤에도 현재 등록 조회가 끝났다고 등록 단계
     hasLicense: true,
   });
 
-  assert.equal(journey.currentIndex, 4);
+  assert.equal(journey.currentIndex, 3);
   assert.deepEqual(journey.action, {
-    label: '생성 상태 새로고침',
+    label: '검토 상태 새로고침',
     kind: 'reload',
   });
 });

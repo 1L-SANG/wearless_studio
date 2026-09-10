@@ -14,6 +14,7 @@ import { deriveHookFrame } from '@/lib/storyboardHookFrame.js';
 import { selectPublicAnalysisPhotos } from '@/lib/publicAnalysisPhotos.js';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 import { rebaseAssetUrls, relativizeAssetUrls } from '@/lib/assetUrl.js';
+import { jobFailure } from './jobFailure.js';
 
 export { toMatchItem } from '@/lib/api/matchingItems.js';
 
@@ -235,9 +236,7 @@ async function pollJob(
     }
     if (job.status === 'done') { onProgress && onProgress(100); return job.result; }
     if (job.status === 'error') {
-      const error = new Error(job.errorMessage || '작업에 실패했어요.');
-      error.code = 'job_failed';
-      throw error;
+      throw jobFailure(job);
     }
     if (Date.now() - start > timeoutMs) {
       // 타임아웃은 **실패가 아니다** — 화면이 기다리기를 그만둔 것뿐이고 서버 잡은 계속 돈다.
@@ -796,12 +795,19 @@ export const httpAdapter = {
   // 폴링이 끝난 뒤라 늦다), 호출부는 이 신호로만 "생성이 시작됐다" 를 판단해야 한다 —
   // 시작하지도 않은 생성을 진행 중이라 알리거나(리본) 최초 생성의 소유권을 주장하면
   // (initialGenerationSession 플래그) 유료 재생성 게이트가 조용히 무력화된다.
-  async generateMannequins(projectId, { onProgress, onJobStarted } = {}) {
-    const res = await http(`/v1/projects/${projectId}/mannequins:generate`, { method: 'POST' });
-    if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(200 캐시) — job 없음
-    onJobStarted?.(res.jobId);
+  async generateMannequins(projectId, { onProgress, onJobStarted, idempotencyKey, resumeJobId } = {}) {
+    let jobId = resumeJobId;
+    if (!jobId) {
+      const res = await http(`/v1/projects/${projectId}/mannequins:generate`, {
+        method: 'POST',
+        headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+      });
+      if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(200 캐시) — job 없음
+      jobId = res.jobId;
+    }
+    onJobStarted?.(jobId);
     // 마네킹 A/B 합성은 무거운 image job — 폴링 상한을 넉넉히(짧으면 정상 job 완료 전 실패 토스트).
-    const result = await pollJob(res.jobId, {
+    const result = await pollJob(jobId, {
       onProgress,
       timeoutMs: LONG_IMAGE_JOB_TIMEOUT_MS,
       timeoutMessage: MANNEQUIN_JOB_TIMEOUT_MESSAGE,

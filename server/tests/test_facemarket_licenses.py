@@ -629,6 +629,7 @@ class FakeCursor:
             row = next((r for r in licenses if r["id"] == license_id and r["status"] == "pending"), None)
             if row:
                 row["status"] = "active"
+                row["forbidden_use"] = []
                 row["vc_id"] = vc_id
                 self._result = {k: row[k] for k in _LICENSE_KEYS}
                 self.rowcount = 1
@@ -942,14 +943,10 @@ def valid_license_body(enrollment_id=ENROLLMENT_ID):
 
 
 def test_license_use_categories_are_the_exact_approved_sets():
-    assert facemarket.ALLOWED_BRAND_USE_CATEGORIES == (
+    assert facemarket.BRAND_USE_CATEGORIES == (
         "일반 의류",
         "액티브웨어",
         "홈웨어·잠옷",
-    )
-    assert facemarket.FORBIDDEN_BRAND_USE_CATEGORIES == (
-        "속옷",
-        "수영복",
     )
 
 
@@ -957,15 +954,11 @@ def test_license_use_categories_are_the_exact_approved_sets():
     ("field", "value"),
     [
         ("allowedUse", "광고"),
-        ("forbiddenUse", "성인"),
         ("allowedUse", "수영복"),
-        ("forbiddenUse", "일반 의류"),
     ],
     ids=[
         "unknown-allowed",
-        "unknown-forbidden",
-        "forbidden-preset-in-allowed",
-        "allowed-preset-in-forbidden",
+        "outside-pool-in-allowed",
     ],
 )
 def test_create_license_rejects_invalid_use_category_before_db_and_holder(
@@ -1210,10 +1203,33 @@ def test_license_terms_are_normalized_once_for_storage_and_holder_claims(
 
     assert response.status_code == 201, response.text
     assert response.json()["allowedUse"] == ["일반 의류", "액티브웨어"]
-    assert response.json()["forbiddenUse"] == ["속옷", "수영복"]
+    assert response.json()["forbiddenUse"] == []
+    assert store["licenses"][0]["forbidden_use"] == []
     issue_call = next(c for c in holder_stub.calls if c["path"].endswith("/issue-vc"))
     assert issue_call["payload"]["claims"]["allowedUse"] == "일반 의류, 액티브웨어"
-    assert issue_call["payload"]["claims"]["forbiddenUse"] == "속옷, 수영복"
+    assert issue_call["payload"]["claims"]["forbiddenUse"] == ""
+
+
+@pytest.mark.parametrize("field", ["forbidden_use", "forbiddenUse"])
+@pytest.mark.parametrize("values", [["속옷"], ["legacy forbidden"]])
+def test_create_license_ignores_legacy_forbidden_use(
+    biometric_fm, make_token, holder_stub, field, values
+):
+    client, store, _ = biometric_fm
+    enrollment_id = _seed_license_pending_enrollment(store)
+    body = valid_license_body(enrollment_id)
+    body.pop("forbiddenUse")
+    body[field] = values
+
+    response = client.post(
+        "/v1/facemarket/licenses", json=body, headers=_auth(make_token)
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["forbiddenUse"] == []
+    assert store["licenses"][0]["forbidden_use"] == []
+    issue_call = next(c for c in holder_stub.calls if c["path"].endswith("/issue-vc"))
+    assert issue_call["payload"]["claims"]["forbiddenUse"] == ""
 
 
 def test_holder_failure_leaves_everything_non_active(
@@ -1268,9 +1284,8 @@ def test_repeated_pending_post_reuses_license_and_holder_idempotency(
     ("allowed_use", "forbidden_use"),
     [
         (["legacy allowed"], ["속옷"]),
-        (["일반 의류"], ["legacy forbidden"]),
     ],
-    ids=["invalid-stored-allowed", "invalid-stored-forbidden"],
+    ids=["invalid-stored-allowed"],
 )
 def test_pending_retry_rejects_invalid_persisted_terms_before_enrollment_or_holder(
     biometric_fm, make_token, holder_stub, allowed_use, forbidden_use
@@ -1307,6 +1322,7 @@ def test_active_retry_returns_existing_card_without_reissue(
         headers=_auth(make_token),
     )
     before = len(holder_stub.calls)
+    store["licenses"][0]["forbidden_use"] = ["속옷", "수영복"]
     second = client.post(
         "/v1/facemarket/licenses",
         json=valid_license_body(enrollment_id),
@@ -1314,6 +1330,8 @@ def test_active_retry_returns_existing_card_without_reissue(
     )
     assert second.status_code == 201
     assert second.json()["id"] == first.json()["id"]
+    assert second.json()["forbiddenUse"] == []
+    assert store["licenses"][0]["forbidden_use"] == ["속옷", "수영복"]
     assert len(holder_stub.calls) == before
 
 
@@ -1709,9 +1727,8 @@ def test_malformed_enrollment_uuid_rejected_before_sql(
     ("allowed_use", "forbidden_use"),
     [
         (["legacy allowed"], ["속옷"]),
-        (["일반 의류"], ["legacy forbidden"]),
     ],
-    ids=["invalid-stored-allowed", "invalid-stored-forbidden"],
+    ids=["invalid-stored-allowed"],
 )
 def test_conflict_reload_rejects_invalid_persisted_terms_before_enrollment_or_holder(
     biometric_fm, make_token, holder_stub, allowed_use, forbidden_use
@@ -1772,7 +1789,7 @@ def test_conflict_reload_uses_persisted_terms_for_holder_claims(
     assert issue_call["payload"]["idempotencyKey"] == f"fm-license:{persisted['id']}"
     assert issue_call["payload"]["claims"] == {
         "allowedUse": "액티브웨어",
-        "forbiddenUse": "수영복",
+        "forbiddenUse": "",
         "unitPrice": 4321,
         "licenseValidUntil": "2027-02-03",
         "faceImageDigest": "sha256-persisted-digest",
@@ -1864,9 +1881,11 @@ def test_create_license_requires_auth(fm):
 def test_list_licenses_scoped_to_owner(fm, make_token):
     client, store, r2 = fm
     _seed_active_license(store, r2)
+    store["licenses"][0]["forbidden_use"] = ["속옷", "수영복"]
     mine = client.get("/v1/facemarket/licenses", headers=_auth(make_token))
     assert mine.status_code == 200
     assert len(mine.json()) == 1
+    assert mine.json()[0]["forbiddenUse"] == []
     # 다른 사용자는 못 본다
     other = client.get("/v1/facemarket/licenses", headers=_auth(make_token, sub="user-2"))
     assert other.status_code == 200 and other.json() == []
@@ -2394,7 +2413,7 @@ def test_public_verify_exposes_only_whitelist_no_pii(fm, make_token):
     assert set(body) == _PUBLIC_KEYS
     assert set(body["model"]) == {"nameMasked", "age"}
     assert body["valid"] is True and body["status"] == "active"
-    assert body["allowedUse"] == ["광고"] and body["forbiddenUse"] == ["성인"]
+    assert body["allowedUse"] == ["광고"] and body["forbiddenUse"] == []
     assert body["unitPrice"] == 5000
     assert body["model"]["nameMasked"] == "홍*동"
     assert body["model"]["age"] == datetime.now(timezone.utc).year - 1996 - 1  # 보수적 하한

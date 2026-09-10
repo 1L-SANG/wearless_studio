@@ -91,6 +91,7 @@ def _run_worker(
     parent=None,
     adjusted_axes=("fit",),
     current_match_id=None,
+    candidate_qc=None,
 ):
     calls = {"run": [], "success": [], "failure": [], "emits": [], "parent_lookup": 0}
     analysis = {
@@ -142,6 +143,7 @@ def _run_worker(
             "height": 1,
             "candidate": kwargs["candidate"],
             "base_fit": kwargs["base_fit"],
+            "qc_scores": candidate_qc,
         }
 
     async def finalize_success(conn, **kwargs):
@@ -199,6 +201,18 @@ def _run_worker(
     assert calls["failure"] == []
     assert len(calls["run"]) == 1 and len(calls["success"]) == 1
     return calls, r2
+
+
+def test_source_grounded_final_repair_resets_edit_ancestry(monkeypatch):
+    calls, _ = _run_worker(monkeypatch, parent=_parent(editDepth=1),
+                          candidate_qc={"quality_repair_used": True})
+    assert calls['run'][0]['generation_path'] == 'edit'
+    success = calls['success'][0]
+    metadata = success['candidates'][0]['generation_metadata']
+    assert metadata['generationPath'] == 'fresh'
+    assert metadata['editDepth'] == 0 and metadata['parentCutId'] is None
+    assert metadata['promptVersion'] == success['metadata']['promptVersion'] == 'fresh_v1'
+    assert success['reserved'] == success['charge'] == 2
 
 
 def test_regenerate_with_compatible_parent_uses_edit_and_increments_metadata(monkeypatch):

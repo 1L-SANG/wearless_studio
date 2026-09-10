@@ -2,7 +2,7 @@
 
 조정(:regenerate)을 "베이스에서 재생성"이 아니라 "현재 컷 편집"으로 수행하기 위한
 프롬프트 빌더. v1은 폐기된 AG-05 유물이라 v2로 분리. 지시문은 fit_axes 고정 문구만 사용(셀러 텍스트 비주입), 의류 단위
-스코프(MAIN PRODUCT / MATCHING BOTTOM)를 명시해 지시 밖 의류 변경을 금지한다.
+스코프(MAIN PRODUCT, MATCHING TOP, MATCHING BOTTOM)를 명시해 지시 밖 의류 변경을 금지한다.
 모델은 조정 전용 tier(MANNEQUIN_ADJUST_TIER=image_high → Gemini 3 Pro) 사용이 전제.
 """
 
@@ -50,21 +50,37 @@ def build_adjust_directives(profile: dict, adjusted_axes: tuple | list) -> str:
         m_cat = mf.get("fitCategory")
         for axis, value in mf["axes"].items():
             if isinstance(value, str):
-                line = _directive_line("MATCHING BOTTOM", m_cat, axis, "women", value)
+                scope = "MATCHING TOP" if m_cat == "top" else "MATCHING BOTTOM"
+                line = _directive_line(scope, m_cat, axis, "women", value)
                 if line:
                     lines.append(line)
     return "\n".join(lines)
 
 
-def build_adjust_manifest(product_count: int, has_match: bool) -> str:
+def build_adjust_manifest(
+    product_count: int, has_match: bool, *, clothing_type: str | None = None,
+    product_slots: tuple[str, ...] | list[str] | None = None,
+) -> str:
     """편집 입력 순서: 1=현재 컷(캔버스), 2..=상품 사진(정체성 기준), 마지막=매칭(있으면)."""
+    if product_slots is not None and len(product_slots) != product_count:
+        raise ValueError("product slot count must match the attached product images")
+    roles = {
+        "Front": "Front product photo, whole front appearance and exterior construction",
+        "Back": "Back product photo, back construction, not the front",
+        "Detail": "Detail product photo, only the visible local feature; it may show an internal closure or label",
+        "BackDetail": "BackDetail product photo, only the visible back-side feature",
+        "Fit": "Fit product photo, worn fit reference for undeclared fit axes",
+    }
     lines = ["1. CURRENT CUT — the mannequin photo to edit"]
     i = 2
-    for _ in range(product_count):
-        lines.append(f"{i}. product photo — identity reference for the MAIN PRODUCT")
+    for index in range(product_count):
+        slot = product_slots[index] if product_slots is not None else None
+        role = roles.get(slot, "product photo")
+        lines.append(f"{i}. {role} - identity reference for the MAIN PRODUCT")
         i += 1
     if has_match:
-        lines.append(f"{i}. matching bottom photo — identity reference for the MATCHING BOTTOM")
+        role = "TOP" if str(clothing_type or "").lower() == "bottom" else "BOTTOM"
+        lines.append(f"{i}. matching {role.lower()} photo — identity reference for the MATCHING {role}")
     return "\n".join(lines)
 
 

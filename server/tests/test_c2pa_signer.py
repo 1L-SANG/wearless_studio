@@ -43,7 +43,7 @@ def test_manifest_carries_license_assertion():
     )
     assert custom["licenseId"] == "22222222-2222-2222-2222-222222222222"
     assert custom["verifyUrl"].endswith("/verify/p/33333333-3333-3333-3333-333333333333")
-    assert custom["forbiddenUse"] == ["adult", "political"]
+    assert custom["forbiddenUse"] == []
 
 
 @pytest.mark.parametrize("forbidden", sorted(c2pa_signer.FORBIDDEN_MANIFEST_KEYS))
@@ -119,7 +119,7 @@ def test_sign_roundtrip_embeds_manifest(tmp_path):
         assert custom["modelId"] == kwargs["model_id"]
         assert custom["licenseId"] == kwargs["license_id"]
         assert custom["verifyUrl"] == kwargs["verify_url"]
-        assert custom["forbiddenUse"] == kwargs["forbidden_use"]
+        assert custom["forbiddenUse"] == []
 
         # 서명 파일의 "produced by" 는 claim_generator(레거시 문자열)가 아니라
         # claim_generator_info(리스트)에서만 읽힌다 — c2pa-python 0.37.8 실측

@@ -65,9 +65,8 @@ test('충전 서버 라우트는 지우지 않는다', () => {
   assert.match(payments, /payment_not_configured/);
 });
 
-test('구독 고지문이 이월 정책과 일치한다', () => {
-  assert.doesNotMatch(PRICING, /소멸하고 이월되지 않아요/);
-  assert.match(PRICING, /이월/);
+test('요금제에서 긴 구독 고지문을 표시하지 않는다', () => {
+  assert.doesNotMatch(PRICING, /구독은 해지할 때까지|청약철회|전액 환불/);
 });
 
 test('구독 API 5개가 어댑터에 있다', () => {

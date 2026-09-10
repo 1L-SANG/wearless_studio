@@ -103,16 +103,6 @@ export function PublicVerify() {
                 </dd>
               </div>
             )}
-            {data.forbiddenUse?.length > 0 && (
-              <div className={s.row}>
-                <dt>금지 용도</dt>
-                <dd className={s.tags}>
-                  {data.forbiddenUse.map((u) => (
-                    <span key={u} className={s.tagDeny}><Icon name="ban" size={10} />{u}</span>
-                  ))}
-                </dd>
-              </div>
-            )}
             <div className={s.row}>
               <dt>단가</dt>
               <dd className={s.price}>{won(data.unitPrice)}<em>/건</em></dd>

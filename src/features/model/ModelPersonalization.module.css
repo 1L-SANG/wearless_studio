@@ -442,12 +442,20 @@
    (1440 − 44.6×2 ≈ 1351)과 사실상 같아 두 화면을 오갈 때 열이 흔들리지 않고,
    초광폭(2560px)에서 리드문이 한 줄로 늘어지는 것만 막는다. */
 .hubPage {
+  --fm-journey-grad: linear-gradient(135deg, #2d63ff 0%, #4f9dff 55%, #8ecbff 100%);
   width: 100%;
   max-width: 84rem;
   margin: 0 auto;
   /* 가로 패딩은 0 — 이 화면은 랜딩 셸(.shell, 좌우 --fm-pad) 안에 실린다(StatusPage).
      셸이 이미 여백을 주므로 여기서 또 주면 다른 랜딩 페이지보다 안으로 들어간다. */
   padding: 0 0 clamp(3rem, 8vw, 5rem);
+}
+
+.hubOnboarding,
+.hubRejected {
+  width: 100%;
+  max-width: 47.5rem;
+  margin: 0 auto;
 }
 
 /* ---- 머리글: eyebrow + 큰 제목 + 리드문 (랜딩 섹션과 같은 리듬) ---- */
@@ -474,6 +482,17 @@
   margin: 0.9rem 0 0;
   color: var(--fm-muted, var(--fg-2));
   font: 400 clamp(0.92rem, 1.3vw, 1rem)/1.75 var(--font-body);
+}
+.hubOnboarding .hubEyebrow,
+.hubRejected .hubEyebrow { margin-bottom: 0.625rem; }
+.hubOnboarding .hubTitle,
+.hubRejected .hubTitle { font-size: clamp(1.625rem, 3vw, 2rem); }
+.hubOnboarding .hubLead,
+.hubRejected .hubLead {
+  max-width: none;
+  margin-top: 0.625rem;
+  font-size: 1rem;
+  line-height: 1.65;
 }
 
 /* ---- 다음에 할 일 패널 ----
@@ -680,89 +699,203 @@
   text-underline-offset: 0.3rem;
 }
 
-/* ---- Phase A 온보딩 타임라인 ---- */
-.hubTimelineSection {
-  overflow: hidden;
-  border: 1px solid var(--fm-line, var(--ring));
-  border-radius: 1.4rem;
-  background: rgba(255, 255, 255, 0.72);
-}
-.hubTimelineHead { padding: 1.5rem 1.5rem 0; }
-.hubTimeline {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(9.5rem, 1fr));
-  gap: 0;
-  overflow-x: auto;
+/* ---- Digital DNA 5단계 여정 ---- */
+.hubJourneySection { width: 100%; }
+.hubJourneyList {
   margin: 0;
-  padding: 1.5rem;
+  padding: 0;
   list-style: none;
-  scrollbar-width: thin;
 }
-.hubTimelineStep {
+.hubJourneyStep {
   position: relative;
-  min-height: 15rem;
-  padding: 0 0.7rem;
+  display: grid;
+  grid-template-columns: 1.75rem minmax(0, 1fr);
+  gap: 0.875rem;
+  padding: 0 0 1.375rem;
 }
-.hubTimelineStep::before {
+.hubJourneyStep::before {
   content: '';
   position: absolute;
-  top: 1rem;
-  left: 0;
-  right: 0;
-  height: 1px;
+  top: 1.875rem;
+  bottom: 0.125rem;
+  left: 0.84375rem;
+  width: 1px;
   background: var(--fm-line, var(--ring));
 }
-.hubTimelineStep:first-child::before { left: 1rem; }
-.hubTimelineStep:last-child::before { right: calc(100% - 1rem); }
-.hubTimelineRail { position: relative; z-index: 1; }
-.hubTimelineDot {
+.hubJourneyStep:last-child::before { display: none; }
+.hubJourneyRail { position: relative; z-index: 1; }
+.hubJourneyDot {
   display: grid;
   place-items: center;
-  width: 2rem;
-  height: 2rem;
+  width: 1.75rem;
+  height: 1.75rem;
   border: 1px solid var(--fm-line, var(--ring));
-  border-radius: 999px;
-  background: #fff;
+  border-radius: var(--r-pill);
+  background: var(--bg-1);
   color: var(--fm-muted, var(--fg-2));
-  font: 600 0.66rem/1 var(--font-body);
+  font: 600 0.72rem/1 var(--font-body);
 }
-.hubTimelineCopy { padding-top: 0.85rem; }
-.hubTimelineState {
+.hubJourneyCopy {
+  min-width: 0;
+  padding-top: 0.2rem;
+}
+.hubJourneyText { min-width: 0; }
+.hubJourneyState {
+  display: inline-block;
+  margin-left: 0.4rem;
   color: var(--fm-muted, var(--fg-2));
-  font: 600 0.68rem/1 var(--font-body);
+  font: 500 0.75rem/1 var(--font-body);
+  letter-spacing: 0.01em;
 }
-.hubTimelineCopy h3 {
-  min-height: 2.8rem;
-  margin: 0.45rem 0 0;
+.hubJourneyCopy h3 {
+  margin: 0;
   color: var(--fm-ink, var(--fg-1));
-  font: 600 0.94rem/1.45 var(--font-body);
+  font: 600 1rem/1.35 var(--font-body);
   word-break: keep-all;
 }
-.hubTimelineCopy p {
-  min-height: 4.3rem;
-  margin: 0.55rem 0 0.9rem;
+.hubJourney_current .hubJourneyCopy h3 { font-size: 1.0625rem; }
+.hubJourneyCopy p {
+  margin: 0.25rem 0 0;
   color: var(--fm-muted, var(--fg-2));
-  font: 400 0.78rem/1.55 var(--font-body);
+  font: 400 0.94rem/1.6 var(--font-body);
   word-break: keep-all;
 }
-.hubTimeline_done .hubTimelineDot {
-  border-color: #14835b;
-  background: #14835b;
-  color: #fff;
+.hubJourneyCopy .hubJourneyWhen {
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
 }
-.hubTimeline_done::before { background: rgba(20, 131, 91, 0.45); }
-.hubTimeline_done .hubTimelineState { color: #0d6b49; }
-.hubTimeline_current {
-  border-radius: 1rem;
-  background: rgba(45, 99, 255, 0.07);
+.hubJourney_done .hubJourneyDot {
+  border-color: var(--fm-accent, var(--link));
+  background: var(--fm-accent, var(--link));
+  color: var(--bg-1);
 }
-.hubTimeline_current .hubTimelineDot {
-  border: 5px solid #2d63ff;
-  background: #fff;
-  color: transparent;
+.hubJourney_done::before { background: color-mix(in srgb, var(--fm-accent, var(--link)) 38%, transparent); }
+.hubJourney_done .hubJourneyState { color: var(--fm-accent, var(--link)); }
+.hubJourney_current .hubJourneyDot {
+  border-color: var(--fm-accent, var(--link));
+  background: var(--fm-accent, var(--link));
+  color: var(--bg-1);
 }
-.hubTimeline_current .hubTimelineState { color: #2455de; }
-.hubTimeline_upcoming { opacity: 0.7; }
+.hubJourney_current .hubJourneyState { color: var(--fm-accent, var(--link)); }
+.hubJourney_upcoming { opacity: 0.72; }
+.hubJourneyActionCard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  padding: 1rem 1.125rem;
+  border: 1.5px solid var(--fm-line, var(--ring));
+  border-radius: var(--fm-card-radius, var(--r-6));
+  background: var(--fm-card-bg, var(--bg-1));
+}
+.hubJourneyActionCardGradient {
+  border-color: transparent;
+  background:
+    linear-gradient(var(--fm-card-bg, var(--bg-1)), var(--fm-card-bg, var(--bg-1))) padding-box,
+    var(--fm-journey-grad) border-box;
+}
+.hubJourneyCopy > button { margin-top: 0.875rem; }
+.hubJourneyActionCard > button {
+  align-self: stretch;
+  margin-top: 0;
+}
+.hubJourneyCancelRow {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+.hubJourneyCancel {
+  min-height: 2.75rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fm-muted, var(--fg-2));
+  font: 500 0.94rem/1 var(--font-body);
+  text-decoration: underline;
+  text-underline-offset: 0.25rem;
+  cursor: pointer;
+}
+.hubJourneyCancel:hover { color: var(--fm-ink, var(--fg-1)); }
+.hubJourneyCancel:focus-visible {
+  outline: 2px solid var(--fm-accent, var(--link));
+  outline-offset: 0.25rem;
+}
+
+.hubRejectReason {
+  margin: 0 0 1.5rem;
+  padding: 1rem 1.125rem;
+  border: 1px solid var(--fm-line, var(--ring));
+  border-radius: var(--fm-card-radius, var(--r-6));
+  background: var(--fm-card-bg, var(--bg-1));
+}
+.hubRejectReason h2 {
+  margin: 0 0 0.5rem;
+  color: var(--fm-muted, var(--fg-2));
+  font: 500 0.75rem/1 var(--font-body);
+  letter-spacing: 0.02em;
+}
+.hubRejectReason p {
+  margin: 0;
+  color: var(--fm-ink, var(--fg-1));
+  font: 400 1rem/1.6 var(--font-body);
+}
+.hubRejectMissing {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0 0 1.5rem;
+  color: var(--fm-muted, var(--fg-2));
+  font: 400 0.94rem/1.6 var(--font-body);
+}
+.hubRejectMissing a {
+  justify-self: start;
+  color: var(--fm-accent, var(--link));
+  font-weight: 500;
+  text-underline-offset: 0.25rem;
+}
+.hubRejectRetention { margin: 0; border-top: 1px solid var(--fm-line, var(--ring)); }
+.hubRejectRetention div {
+  display: grid;
+  grid-template-columns: 5.25rem minmax(0, 1fr);
+  gap: 0.75rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--fm-line, var(--ring));
+}
+.hubRejectRetention dt {
+  color: var(--fm-muted, var(--fg-2));
+  font: 400 0.94rem/1.5 var(--font-body);
+}
+.hubRejectRetention dd {
+  margin: 0;
+  color: var(--fm-ink, var(--fg-1));
+  font: 500 0.94rem/1.5 var(--font-body);
+}
+.hubRejectBrowse {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  margin-top: 1.25rem;
+  color: var(--fm-accent, var(--link));
+  font: 500 0.94rem/1 var(--font-body);
+  text-decoration: none;
+}
+.hubRejectBrowse:hover { text-decoration: underline; text-underline-offset: 0.25rem; }
+.hubRejectAction {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 2rem;
+}
+
+@media (min-width: 48rem) {
+  .hubJourneyActionCard {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    padding: 1.125rem 1.25rem;
+  }
+  .hubJourneyActionCard > button { flex: none; align-self: center; }
+}
 
 /* ---- Phase A 활동 중 대시보드 ---- */
 .hubActive { display: grid; gap: 1rem; }
@@ -913,7 +1046,6 @@
 }
 
 @media (max-width: 47.99rem) {
-  .hubTimeline { padding-inline: 1rem; }
   .hubActiveIntro { align-items: flex-start; flex-direction: column; }
   .hubActiveGrid { grid-template-columns: 1fr; }
   .hubActiveCardWide { grid-column: auto; }

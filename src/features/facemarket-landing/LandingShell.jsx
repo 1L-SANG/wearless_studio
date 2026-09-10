@@ -60,7 +60,7 @@ function applyHead(title, description) {
    localStorage 로 남기지 마라(한 번 쓴 적이 있다). 그러면 영영 안 뜬다. */
 let noticeDismissed = false;
 
-export function LandingShell({ title, description, children }) {
+export function LandingShell({ title, description, children, variant = 'landing' }) {
   const { session, loading, openLogin } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -138,7 +138,7 @@ export function LandingShell({ title, description, children }) {
   // 로그인을 마치는 순간 허브 없이 지원서가 열린다(사용자 지시 2026-09-02).
   const runPrimary = useCallback(() => {
     if (!cta) return;
-    if (session) navigate(cta.to);
+    if (cta.to === '/apply' || session) navigate(cta.to);
     else openLogin(cta.to);
   }, [session, cta, navigate, openLogin]);
 
@@ -184,7 +184,7 @@ export function LandingShell({ title, description, children }) {
     /* 띠를 닫으면 그 높이를 0 으로 돌려준다 — 첫 화면 그리드가 '뷰포트 − 상단바 − 띠'로
        높이를 잡으므로(FacemarketLanding.module.css .screen), 안 돌려주면 캐러셀과 메타 바가
        사라진 띠 높이만큼 아래로 밀린 채 남는다. */
-    <div className={s.shell} id="top" style={noticeOpen ? undefined : { '--fm-notice-h': '0px' }}>
+    <div className={`${s.shell} ${variant === 'apply' ? s.applyShell : ''} ${!noticeOpen || variant === 'apply' ? s.noticeClosed : ''}`} id="top">
       {/* 맨 위 안내 띠 — 왼쪽 '**모델을 위한** 안내 페이지입니다.', 오른쪽 셀러용 스튜디오 링크
           (문구는 2026-09-02 사용자 지시). 셀러가 facemarket 도메인에 잘못 들어와도 첫 줄에서
           갈라진다. 랜딩 네 페이지(이 셸)에만 있고 /model/* 은 없다 — 거긴 이미 모델이 서 있는
@@ -192,7 +192,7 @@ export function LandingShell({ title, description, children }) {
           띄어쓰기는 지시받은 문구에서 두 군데 고쳤다: '안내페이지 입니다' → '안내 페이지입니다',
           '만들러가기' → '만들러 가기'(보조용언은 띄고 서술격 조사는 붙인다). 브랜드는
           'Wearless' 로 대문자 유지 — 푸터·로고와 같은 표기여야 한다. */}
-      {noticeOpen && (
+      {noticeOpen && variant !== 'apply' && (
         <div className={s.topNotice}>
           <div className={s.topNoticeInner}>
             <span>
@@ -214,9 +214,9 @@ export function LandingShell({ title, description, children }) {
           </button>
         </div>
       )}
-      <LandingHeader onPrimary={primaryLabel ? onPrimary : undefined} primaryLabel={primaryLabel} />
+      <LandingHeader onPrimary={variant !== 'apply' && primaryLabel ? onPrimary : undefined} primaryLabel={variant === 'apply' ? null : primaryLabel} />
       <main>{children({ ctaLabel: primaryLabel, onPrimary: primaryLabel ? onPrimary : undefined })}</main>
-      <FooterSection />
+      {variant !== 'apply' && <FooterSection />}
     </div>
   );
 }

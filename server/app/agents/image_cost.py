@@ -9,6 +9,9 @@
   - gemini-3.1-flash-image: 입력 $0.5/1M, 이미지 출력 $60/1M → 1K $0.067 / 2K $0.101 / 4K $0.151
   - gpt-image-2: 텍스트 입력 $5/1M, 이미지 입력 $8/1M, 이미지 출력 $30/1M
     (캐시 입력은 각각 $1.25/1M, $2/1M)
+  - gpt-image-2.5-flare, gpt-image-2.5-sunburst: 위와 같은 토큰 단가.
+    출력 토큰 수는 Image 2의 해상도별 예상값이 아니라 각 응답의 실제 usage를 쓴다.
+    OpenAI Standard 요금 확인: 2026-09-10, https://developers.openai.com/api/docs/pricing
 usage 가 오면 그 토큰이 1차 근거, 없으면(구버전 응답·모킹) 해상도별 표로 폴백한다 —
 어느 쪽을 썼는지 `source` 로 남겨서, 나중에 집계를 볼 때 추정치와 실측치를 섞어 보지 않게 한다.
 """
@@ -25,6 +28,10 @@ _GPT_IMAGE_2_IMAGE_INPUT = 8.0
 _GPT_IMAGE_2_CACHED_TEXT_INPUT = 1.25
 _GPT_IMAGE_2_CACHED_IMAGE_INPUT = 2.0
 _GPT_IMAGE_2_IMAGE_OUTPUT = 30.0
+_GPT_IMAGE_25_MODELS = frozenset({
+    "gpt-image-2.5-flare", "gpt-image-2.5-sunburst",
+    "gpt-image-2.5-flare-2026-09-08", "gpt-image-2.5-sunburst-2026-09-08",
+})
 
 
 @dataclass(frozen=True)
@@ -221,7 +228,7 @@ def estimate_cost(
     model: str, image_size: str, usage: dict | None, *, has_image: bool = True,
 ) -> ImageCost:
     """이 호출 1회의 실비. 실패해도 예외를 던지지 않는다 — 계측이 생성을 막으면 안 된다."""
-    if _is_gpt_image_2(model):
+    if _is_gpt_image_2(model) or model in _GPT_IMAGE_25_MODELS:
         return _estimate_gpt_image_2(usage, has_image=has_image)
 
     price = PRICES.get(model)

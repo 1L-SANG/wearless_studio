@@ -29,9 +29,12 @@ import { AI_MODELS } from '@/features/analysis/aiModels.js';
 import {
   clearInitialGenerationRequested,
   cutsExistedBeforeInitialGeneration,
+  retryInitialGeneration,
 } from './initialGenerationSession.js';
 import {
   clearGenerationRelevantEditsAttempt,
+  isGenerationRelevantEditsTerminalFailure,
+  markGenerationRelevantEditsTerminalFailure,
   landedGenerationRelevantEditsAttemptRevision,
   markGenerationRelevantEditsAttempt,
   readGenerationRelevantEditsRevision,
@@ -44,6 +47,7 @@ import {
 import { fitHotspotsFor } from './fitHotspots.js';
 import { ToneEditor } from './ToneEditor.jsx';
 import {
+  isNonRetryableRegenerateError,
   resolveInitialGenerationCuts,
   runGenerationRelevantEditsRefresh,
 } from './generationRunnerCore.js';
@@ -178,14 +182,6 @@ function newestCutSince(list, baseline) {
     || landed.reduce((latest, cut) => (
       !latest || (Number(cut.version) || 0) >= (Number(latest.version) || 0) ? cut : latest
     ), null);
-}
-
-function isNonRetryableRegenerateError(error) {
-  const status = Number(error?.status) || 0;
-  const message = String(error?.message || '');
-  return status === 402
-    || message.includes('크레딧')
-    || (status >= 400 && status < 500);
 }
 
 function decodeCutImage(src) {
@@ -1194,6 +1190,10 @@ export function Mannequin() {
         }
         if (!runIsCurrent(runId)) return false;
         if (isNonRetryableRegenerateError(error)) {
+          if (error?.code === 'mannequin_quality_failed' && generationAttempt.dirtyRevision) {
+            // F5·화면 재진입도 같은 종료 상태를 본다. 새 키는 명시적인 재시도에서만 만든다.
+            markGenerationRelevantEditsTerminalFailure(generationAttempt.projectId, generationAttempt.dirtyRevision);
+          }
           finishNonRetryable(runId, error);
           return false;
         }
@@ -1248,11 +1248,12 @@ export function Mannequin() {
     return false;
   };
 
-  const regenerate = async (profileOverride = null, onGenerationSucceeded = () => {}) => {
+  const regenerate = async (profileOverride = null, onGenerationSucceeded = () => {}, { manual = true } = {}) => {
     if (submittingRef.current) return false;   // 연타 + 모든 자동 재시도 구간의 이중 재생성·이중 차감 방지
-    submittingRef.current = true;
     const generationProjectId = projectId;
     const dirtyRevision = readGenerationRelevantEditsRevision(generationProjectId);
+    if (!manual && isGenerationRelevantEditsTerminalFailure(generationProjectId, dirtyRevision)) return false;
+    submittingRef.current = true;
     const generationAttempt = {
       projectId: generationProjectId,
       dirtyRevision,
@@ -1268,6 +1269,7 @@ export function Mannequin() {
         generationProjectId,
         dirtyRevision,
         regenerateBaselineRef.current,
+        { manual },
       );
     }
     knownLandedListRef.current = null;
@@ -1303,7 +1305,8 @@ export function Mannequin() {
       handledRef: refreshForEditsHandledRef,
       readDirtyRevision: () => readGenerationRelevantEditsRevision(refreshProjectId),
       cutsExisted: initialCutsExistedRef.current,
-      regenerate: (onSucceeded) => regenerate(null, onSucceeded),
+      regenerate: (onSucceeded) => regenerate(null, onSucceeded, { manual: false }),
+      isTerminalFailure: (revision) => isGenerationRelevantEditsTerminalFailure(refreshProjectId, revision),
       clearDirty: (revision) => (
         useAppStore.getState().clearGenerationRelevantEdits(refreshProjectId, revision)
       ),
@@ -1403,7 +1406,10 @@ export function Mannequin() {
         : runningWaitStep >= 0 ? `${waitLabels[runningWaitStep]} 중` : '';
 
   if (phase === 'loading') return <>{doneBlocked && <DoneGuardModal />}<MannequinLoading progress={loadingProgress} category={fitProfileDraft?.category} /></>;
-  if (phase === 'error') return <>{doneBlocked && <DoneGuardModal />}<MannequinError message={errorMsg} onRetry={loadMannequins} /></>;
+  if (phase === 'error') return <>{doneBlocked && <DoneGuardModal />}<MannequinError message={errorMsg} onRetry={() => {
+    retryInitialGeneration(projectId);
+    void loadMannequins();
+  }} /></>;
 
   return (
     <div className="wizard wide fit-page">

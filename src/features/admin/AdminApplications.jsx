@@ -37,9 +37,6 @@ const STATUS_LABEL = {
 const STATUS_BADGE_VARIANT = {
   under_review: 'secondary', approved: 'default', rejected: 'destructive', cancelled: 'outline',
 };
-const CATEGORY_LABEL = {
-  fashion: '패션', commercial: '커머셜', fitness: '피트니스', lifestyle: '라이프스타일',
-};
 const EXPERIENCE_LABEL = {
   none: '경력 없음', beginner: '입문', intermediate: '중급', professional: '전문',
 };
@@ -103,17 +100,13 @@ function ApplicationCard({ app, onApprove, onReject, onResend, busy }) {
         <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm sm:grid-cols-3">
           <div><dt className="text-xs text-muted-foreground">이메일</dt><dd className="truncate">{app.contactEmail}</dd></div>
           <div><dt className="text-xs text-muted-foreground">생년월일</dt><dd className="truncate">{app.birthdate}</dd></div>
-          <div><dt className="text-xs text-muted-foreground">지역</dt><dd className="truncate">{app.region}</dd></div>
           <div><dt className="text-xs text-muted-foreground">성별</dt><dd className="truncate">{app.gender === 'male' ? '남성' : app.gender === 'female' ? '여성' : '-'}</dd></div>
           <div><dt className="text-xs text-muted-foreground">키</dt><dd className="truncate">{app.heightCm ? `${app.heightCm}cm` : '-'}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">몸무게</dt><dd className="truncate">{app.weightKg != null ? `${app.weightKg}kg` : '-'}</dd></div>
           <div><dt className="text-xs text-muted-foreground">전화</dt><dd className="truncate">{app.phone || '-'}</dd></div>
           <div><dt className="text-xs text-muted-foreground">경력</dt><dd className="truncate">{EXPERIENCE_LABEL[app.experienceLevel] || '-'}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">에이전시 경험</dt><dd className="truncate">{app.agencyContracted ? '있음' : '없음'}</dd></div>
         </dl>
-        <div className="mb-2.5 mt-2.5 flex flex-wrap gap-1.5">
-          {(app.categories || []).map((c) => (
-            <Badge key={c} variant="outline">{CATEGORY_LABEL[c] || c}</Badge>
-          ))}
-        </div>
         {(app.portfolioUrl || app.snsUrl) && (
           <div className="mb-2.5 flex gap-3.5">
             {app.portfolioUrl && <a className="text-sm text-primary underline-offset-2 hover:underline" href={app.portfolioUrl} target="_blank" rel="noreferrer">포트폴리오</a>}

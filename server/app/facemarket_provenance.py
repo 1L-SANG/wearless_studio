@@ -385,7 +385,7 @@ async def sign(request: Request, body: SignRequest, user_id: str = Depends(requi
             publication_id=publication_id,
             verify_url=verify_url,
             allowed_use=lic.get("allowed_use") or [],
-            forbidden_use=lic.get("forbidden_use") or [],
+            forbidden_use=[],
             license_valid_until=str(lic.get("license_valid_until") or ""),
             source_asset_ids=[str(a) for a in (lic.get("asset_ids") or [])],
             # Settings 에 app_version 필드가 없다(review I3) — "0" 은 실제 버전처럼 읽혀서
@@ -531,7 +531,7 @@ async def verify_publication(request: Request, publication_id: str, response: Re
         "imageHashPrefix": (row["image_sha256"] or "")[:12],
         "kind": row["kind"],
         "allowedUse": row["allowed_use"] or [],
-        "forbiddenUse": row["forbidden_use"] or [],
+        "forbiddenUse": [],
         "licenseValidUntil": row["license_valid_until"],
         "chain": chain,
         "model": {

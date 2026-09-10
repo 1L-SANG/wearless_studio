@@ -20,6 +20,7 @@
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { FacemarketRoot } from '@/features/facemarket-landing/FacemarketRoot.jsx';
 import { FacemarketModelLayout } from '@/features/facemarket-shell/FacemarketModelLayout.jsx';
+import { ApplyStartPage } from '@/features/facemarket-landing/pages/ApplyStartPage.jsx';
 import { ModelsPage } from '@/features/facemarket-landing/pages/ModelsPage.jsx';
 import { PayoutPage } from '@/features/facemarket-landing/pages/PayoutPage.jsx';
 import { StatusPage } from '@/features/facemarket-landing/pages/StatusPage.jsx';
@@ -64,6 +65,7 @@ export default function AppFacemarket() {
           무인증 공개**여야 한다 — 설명을 읽기 전에 로그인 모달을 띄우지 않는 게 랜딩의
           존재 이유다. 인증이 필요한 곳(/model/*)으로는 각 페이지 끝 CTA 가 보낸다. */}
       <Route index element={<FacemarketRoot />} />
+      <Route path="apply" element={<ApplyStartPage />} />
       <Route path="models" element={<ModelsPage />} />
       {/* 등록 상태 — 예전 /model 허브의 내용. 공개 라우트지만 내용은 로그인 뒤에 보인다
           (StatusPage 머리말). 라이선스 페이지는 2026-09-02 지시로 지웠다. */}

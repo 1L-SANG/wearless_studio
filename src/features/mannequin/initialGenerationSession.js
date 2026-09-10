@@ -1,3 +1,5 @@
+import { initialGenerationAttempts } from './initialGenerationAttempts.js';
+
 const KEY_PREFIX = 'wl_initial_mannequin_generation:';
 
 function key(projectId) {
@@ -10,9 +12,12 @@ export function markInitialGenerationRequested(projectId) {
 }
 
 export function clearInitialGenerationRequested(projectId) {
+  initialGenerationAttempts.clear(projectId);
   if (!projectId || typeof sessionStorage === 'undefined') return;
   try { sessionStorage.removeItem(key(projectId)); } catch { /* sessionStorage unavailable */ }
 }
+
+export const retryInitialGeneration = (projectId) => initialGenerationAttempts.retry(projectId);
 
 export function hadInitialGenerationRequest(projectId) {
   if (!projectId || typeof sessionStorage === 'undefined') return false;

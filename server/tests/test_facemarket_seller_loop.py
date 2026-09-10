@@ -248,7 +248,8 @@ def test_optional_dev_mode_preserves_local_only_behavior():
         ({"status": "reverification_required"}, MODEL_ID, CATEGORY, "license_inactive"),
         ({}, MODEL_ID, " ", "brand_use_category_required"),
         ({}, MODEL_ID, "not-fixed", "brand_use_category_required"),
-        ({"forbidden_use": [CATEGORY]}, MODEL_ID, CATEGORY, "license_use_forbidden"),
+        ({}, MODEL_ID, "속옷", "brand_use_category_required"),
+        ({"allowed_use": ["일반 의류"]}, MODEL_ID, "액티브웨어", "license_use_not_allowed"),
         ({"allowed_use": None}, MODEL_ID, CATEGORY, "license_use_not_allowed"),
         ({"allowed_use": "not-a-list"}, MODEL_ID, CATEGORY, "license_use_not_allowed"),
         ({"allowed_use": ["액티브웨어"]}, MODEL_ID, CATEGORY, "license_use_not_allowed"),
@@ -289,16 +290,16 @@ def test_verify_current_runtime_gate_fails_closed_without_holder(
         (CATEGORY,),
         {CATEGORY: True},
         [CATEGORY, "unknown-category"],
-        [CATEGORY, facemarket.FORBIDDEN_BRAND_USE_CATEGORIES[0]],
+        [CATEGORY, "속옷"],
         [
             CATEGORY,
-            facemarket.ALLOWED_BRAND_USE_CATEGORIES[1],
+            facemarket.BRAND_USE_CATEGORIES[1],
             "unknown-category",
         ],
         [],
     ],
     ids=(
-        "none", "string", "tuple", "dict", "unknown", "cross-list", "mixed", "empty"
+        "none", "string", "tuple", "dict", "unknown", "outside-pool", "mixed", "empty"
     ),
 )
 def test_verify_rejects_malformed_allowed_policy_before_holder(monkeypatch, malformed):
@@ -315,31 +316,11 @@ def test_verify_rejects_malformed_allowed_policy_before_holder(monkeypatch, malf
     assert calls == []
 
 
-@pytest.mark.parametrize(
-    "malformed",
-    [
-        None,
-        facemarket.FORBIDDEN_BRAND_USE_CATEGORIES[0],
-        (facemarket.FORBIDDEN_BRAND_USE_CATEGORIES[0],),
-        {facemarket.FORBIDDEN_BRAND_USE_CATEGORIES[0]: True},
-        ["unknown-category"],
-        [facemarket.ALLOWED_BRAND_USE_CATEGORIES[1]],
-        [facemarket.FORBIDDEN_BRAND_USE_CATEGORIES[0], "unknown-category"],
-    ],
-    ids=("none", "string", "tuple", "dict", "unknown", "cross-list", "mixed"),
-)
-def test_verify_rejects_malformed_forbidden_policy_before_holder(monkeypatch, malformed):
-    calls = _patch_holder(monkeypatch, error=AssertionError("must not call Holder"))
-
-    with pytest.raises(facemarket.HTTPException) as exc:
-        asyncio.run(_verify(
-            _app("http://holder", required=True),
-            _valid_gate_row(forbidden_use=malformed),
-        ))
-
-    assert exc.value.status_code == 409
-    assert exc.value.detail["code"] == "license_use_forbidden"
-    assert calls == []
+@pytest.mark.parametrize("legacy", [["속옷", "수영복"], [CATEGORY], None, "legacy"])
+def test_verify_ignores_legacy_forbidden_policy(legacy):
+    assert asyncio.run(_verify(
+        _app(required=False), _valid_gate_row(forbidden_use=legacy)
+    )) is None
 
 
 # ── resolve_project_license (no-op 가드) ─────────────────────────

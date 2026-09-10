@@ -28,6 +28,7 @@ import {
     ErrorState,
     Field,
     Icon,
+    Toggle,
     useToast,
 } from "@/components/ui.jsx";
 import {
@@ -40,8 +41,7 @@ import {
     verifyLicensePublic,
 } from "@/lib/api/facemarket.js";
 import {
-    ALLOWED_BRAND_USE_CATEGORIES,
-    FORBIDDEN_BRAND_USE_CATEGORIES,
+    BRAND_USE_CATEGORIES,
 } from "@/lib/brandUseCategories.js";
 import {
     buildRegistrationCompletion,
@@ -76,21 +76,25 @@ const CHAIN_LABEL = {
     failed: "기록 실패",
 };
 
-// 조건 4칸의 번호·설명. 랜딩 .record 의 번호 붙은 칸과 같은 형태로 읽히게 한다.
+// 조건 3칸의 번호·설명. 랜딩 .record 의 번호 붙은 칸과 같은 형태로 읽히게 한다.
 // 설명 문장은 랜딩 LicensingSection 의 카드 카피와 같은 눈금이다 — 없는 걸 약속하지 않는다.
 const TERM_STEPS = {
-    allowed: { no: "01", note: "여기서 고른 품목의 컷에만 내 얼굴이 쓰여요." },
-    forbidden: { no: "02", note: "고른 품목에는 쓸 수 없어요." },
-    // 원래 Field 의 hint(입력칸 아래)였다. 문장은 그대로 두고 자리만 다른 세 칸과 같은
-    // 곳(라벨 아래)으로 옮겼다 — 네 칸이 같은 구조여야 2열로 놓았을 때 줄이 맞는다.
+    allowed: { no: "01", note: "기본은 전부 켜져 있어요. 원하지 않는 것만 끄세요." },
+    // 단가·유효기간은 라벨 아래 설명을 둬 2열로 놓았을 때 줄을 맞춘다.
     // '지불하는' 이라고 쓰지 마라 — 지급(payout) 기능이 아직 없다. 랜딩이 네 라운드
     // 사실성 감사 끝에 "실제 지급 기능도 아직 준비 중입니다"로 못박은 것과 같은 눈금이어야
     // 하고, 여기는 모델이 그 숫자를 실제로 정하는 자리라 더 정확해야 한다.
-    price: { no: "03", note: "사용 1건마다 기록되는 내 몫 금액이에요. 실제 지급 기능은 아직 준비 중이에요." },
+    price: { no: "02", note: "사용 1건마다 기록되는 내 몫 금액이에요. 실제 지급 기능은 아직 준비 중이에요." },
     validity: {
-        no: "04",
+        no: "03",
         note: "기간이 끝나면 이 라이선스로는 컷을 만들 수 없어요.",
     },
+};
+
+const USE_DESCRIPTIONS = {
+    "일반 의류": "상의·하의·아우터·원피스 등 대부분의 옷",
+    "액티브웨어": "레깅스·스포츠브라처럼 몸에 붙는 옷",
+    "홈웨어·잠옷": "파자마·라운지웨어",
 };
 
 /* ── 얼굴 VC 카드 (PDF step02 — 파란 카드, 모바일 폭 기준) ────────
@@ -334,19 +338,7 @@ function VcCard({ license, onRevoked, push }) {
                                     </dd>
                                 </div>
                             )}
-                            {license.forbiddenUse?.length > 0 && (
-                                <div className={s.vcRow}>
-                                    <dt>금지 용도</dt>
-                                    <dd className={s.vcTags}>
-                                        {license.forbiddenUse.map((u) => (
-                                            <span key={u} className={s.tagDeny}>
-                                                <Icon name="ban" size={10} />
-                                                {u}
-                                            </span>
-                                        ))}
-                                    </dd>
-                                </div>
-                            )}
+
                         </dl>
                     </>
                 )}
@@ -380,21 +372,21 @@ function VcCard({ license, onRevoked, push }) {
 
 /* ── 4단계: 라이선스 조건 + 발급 ──────────────────────────── */
 function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued, push }) {
-    const [allowed, setAllowed] = useState([...ALLOWED_BRAND_USE_CATEGORIES]);
-    const [forbidden, setForbidden] = useState([...FORBIDDEN_BRAND_USE_CATEGORIES]);
+    const [allowed, setAllowed] = useState([...BRAND_USE_CATEGORIES]);
     const [unitPrice, setUnitPrice] = useState(10000);
     const [validDays, setValidDays] = useState(365);
     const [submitting, setSubmitting] = useState(false);
     const [issuePhase, setIssuePhase] = useState(null); // null | 'preparing' | 'issuing'
 
-    // 발급 가능 여부 — 아래 세 곳(안내문·버튼 disabled)이 같은 판정을 쓰게 이름만 붙였다.
-    // onSubmit 의 가드는 리뉴얼 전 표현 그대로 둔다(판정이 갈릴 여지를 만들지 않는다).
+    // 등록 상태와 최소 한 가지 허용 여부를 안내문·발급 버튼·제출 가드에 반영한다.
     const blocked =
         !enrollmentId ||
         !["license_pending", "vc_pending"].includes(enrollmentStatus);
 
+    const noAllowedUse = allowed.length === 0;
+
     const onSubmit = async () => {
-        if (!enrollmentId || !["license_pending", "vc_pending"].includes(enrollmentStatus)) return;
+        if (blocked || noAllowedUse || submitting) return;
         setSubmitting(true);
         // VC 발급은 opendid(체인·홀더)를 거친다. 유휴 시 scale-to-zero 라 첫 요청이 콜드스타트
         // (code=vc_issue_delayed)로 돌아온다. 원시 503 을 그대로 던지지 말고, 준비될 때까지 자동
@@ -407,7 +399,6 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
                     const lic = await createLicense({
                         enrollmentId,
                         allowedUse: allowed,
-                        forbiddenUse: forbidden,
                         unitPrice: Number(unitPrice) || 0,
                         validDays,
                     });
@@ -440,7 +431,7 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
         <div className="surface">
             <div className={s.formHead}>
                 <span className={s.eyebrow}>발급 조건</span>
-                <h2 className={s.formTitle}>네 가지를 정하면 발급돼요</h2>
+                <h2 className={s.formTitle}>세 가지를 정하면 발급돼요</h2>
                 {/* DESIGN.md:309 — '결속'·'자산' 은 화면에 쓰지 않는 개발자 언어라
                     '이번 등록에서 확인한 얼굴 이미지' 로 바꿨다(사실은 같다). */}
                 <p className={s.formLead}>
@@ -462,26 +453,32 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
             <div className={s.terms}>
                 <section className={s.term}>
                     <span className={s.termNo}>{TERM_STEPS.allowed.no}</span>
-                    <h3 className={s.termLabel}>허용 품목</h3>
+                    <h3 className={s.termLabel}>내 얼굴을 쓸 수 있는 옷</h3>
                     <p className={s.termNote}>{TERM_STEPS.allowed.note}</p>
-                    <Chips
-                        options={ALLOWED_BRAND_USE_CATEGORIES}
-                        value={allowed}
-                        onChange={setAllowed}
-                        multi
-                    />
-                </section>
-
-                <section className={s.term}>
-                    <span className={s.termNo}>{TERM_STEPS.forbidden.no}</span>
-                    <h3 className={s.termLabel}>제한 품목</h3>
-                    <p className={s.termNote}>{TERM_STEPS.forbidden.note}</p>
-                    <Chips
-                        options={FORBIDDEN_BRAND_USE_CATEGORIES}
-                        value={forbidden}
-                        onChange={setForbidden}
-                        multi
-                    />
+                    <div className={s.useOptions}>
+                        {BRAND_USE_CATEGORIES.map((category) => (
+                            <div key={category} className={s.useOption}>
+                                <Toggle
+                                    on={allowed.includes(category)}
+                                    onChange={(on) => setAllowed((current) =>
+                                        BRAND_USE_CATEGORIES.filter((value) =>
+                                            value === category ? on : current.includes(value)
+                                        )
+                                    )}
+                                    label={category}
+                                />
+                                <div>
+                                    <p className={s.useLabel}>{category}</p>
+                                    <p className={s.useDescription}>{USE_DESCRIPTIONS[category]}</p>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                    {noAllowedUse && (
+                        <p className={s.termNote} role="status">
+                            최소 한 가지는 허용해야 라이선스를 만들 수 있어요
+                        </p>
+                    )}
                 </section>
 
                 <div className={s.row2}>
@@ -518,7 +515,7 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
                     block
                     className={s.cta}
                     onClick={onSubmit}
-                    disabled={submitting || blocked}
+                    disabled={submitting || blocked || noAllowedUse}
                     iconRight="arrowRight"
                 >
                     {submitting
@@ -764,7 +761,7 @@ export function ModelLicense() {
                                 아직 발급된 라이선스가 없어요
                             </h2>
                             <p className={s.emptyBody}>
-                                모델 등록을 마치면 허용 품목·제한 품목·건당
+                                모델 등록을 마치면 허용 품목·건당
                                 단가·유효기간을 정하고 라이선스를 발급할 수
                                 있어요.
                             </p>

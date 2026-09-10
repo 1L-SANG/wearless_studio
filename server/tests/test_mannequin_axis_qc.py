@@ -8,6 +8,8 @@ import contextlib
 import hashlib
 import types
 
+import pytest
+
 from app.workers import mannequin_job
 from app.agents import mannequin_fit_qc
 from conftest import make_settings
@@ -71,7 +73,7 @@ def _verdict(fit_ok=True, len_ok=True, identity=True, visible=True):
 
 
 def _run(monkeypatch, *, mode, verdicts, guard=False, max_attempts=2, gemini=None,
-         profile=PROFILE, image_qc="off", p2=None, **settings_kw):
+         profile=PROFILE, image_qc="off", p2=None, storage=None, **settings_kw):
     """_run_candidate 를 실제 경로로 실행. verdicts=판정 fake 가 순서대로 돌려줄 값(or 예외)."""
     emits = []
 
@@ -97,7 +99,7 @@ def _run(monkeypatch, *, mode, verdicts, guard=False, max_attempts=2, gemini=Non
         monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_p2)
 
     g = gemini or _FakeGemini()
-    r2 = _R2()
+    r2 = storage or _R2()
     settings = make_settings(r2_bucket="b", mannequin_axis_qc=mode,
                              mannequin_max_attempts=max_attempts, image_qc=image_qc,
                              **settings_kw)
@@ -290,19 +292,18 @@ def test_identity_reject_on_last_attempt_salvages_instead_of_dropping(monkeypatc
     assert salvage and salvage[0]["reason"] == "budget_exhausted"
 
 
-def test_salvaged_candidate_keeps_critical_errors_visible(monkeypatch):
-    """치명 오류는 구제되어도 지워지지 않는다 — 검수자가 'must not ship' 을 봐야 한다."""
-    result, _g, _r2, _emits = _run(
-        monkeypatch, mode="off", guard=True, max_attempts=1,
-        verdicts=[], image_qc="enforce",
-        p2={"verdict": "retry", "mismatches": [], "correctionPrompt": None,
-            "product_fidelity": 95, "physical_naturalness": 95,
-            "image_quality": 95, "series_consistency": None,
-            "critical_errors": ["logo altered"]})
-    q = result["qc_scores"]
-    assert q["critical_errors"] == ["logo altered"]
-    assert q["outcome"] == "regenerate"  # 점수 95 여도 치명 오류가 이긴다
-    assert q["salvaged"] is True
+def test_critical_salvage_gets_one_final_repair_but_never_ships_unverified(monkeypatch):
+    """점수 95여도 로고 손상은 최종 한 장으로 교정하고, 재검수 미완료면 저장하지 않는다."""
+    g, storage = _FakeGemini(), _R2()
+    with pytest.raises(mannequin_job.MannequinQualityError, match='final_review_unavailable'):
+        _run(monkeypatch, mode="off", guard=True, max_attempts=1, gemini=g, storage=storage,
+            verdicts=[], image_qc="enforce",
+            p2={"verdict": "retry", "mismatches": [], "correctionPrompt": None,
+                "product_fidelity": 95, "physical_naturalness": 95,
+                "image_quality": 95, "series_consistency": None,
+                "critical_errors": ["logo altered"]})
+    assert len(g.calls) == 2 and 'logo altered' in g.calls[-1]['prompt']
+    assert storage.puts == []
 
 
 def test_identity_reject_with_budget_left_still_rerolls(monkeypatch):

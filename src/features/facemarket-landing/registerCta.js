@@ -39,7 +39,7 @@ export function registerCta(
   // applicationRequired 는 운영 게이트일 뿐, 얼리버드 지원의 목적지는 항상 지원서다.
   if (scope === 'landing') {
     if (ownedModel || enrollment || application) return null;
-    return { label: APPLY_LABEL, to: '/model/apply' };
+    return { label: APPLY_LABEL, to: '/apply' };
   }
 
   if (ownedModel?.status === 'verified') {
