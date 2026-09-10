@@ -1,0 +1,111 @@
+/* features/subscription — 구독 관리 화면.
+   해지 확인창(.modal/.warn)이 이 파일의 중심이다. 소멸 예정 수량을 눈에 띄게 둔다. */
+
+.head {
+  margin-bottom: 16px;
+}
+
+.title {
+  font-size: 22px;
+  margin: 0;
+}
+
+.alert {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--warn-border, #f0d9a8);
+  background: var(--warn-bg, #fdf6e6);
+  color: var(--fg-1, #2a2a26);
+  line-height: 1.5;
+}
+
+.rows {
+  margin: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line, #ecebe6);
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.row dt {
+  color: var(--fg-2, #6b6b63);
+}
+
+.row dd {
+  margin: 0;
+  font-weight: 600;
+  text-align: right;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.note {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--surface-2, #f6f5f1);
+  color: var(--fg-2, #4a4a45);
+  line-height: 1.6;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(24, 24, 20, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 60;
+}
+
+.modalCard {
+  background: var(--surface, #fff);
+  border-radius: 16px;
+  padding: 24px;
+  max-width: 440px;
+  width: 100%;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.22);
+}
+
+.modalTitle {
+  margin: 0 0 12px;
+  font-size: 19px;
+}
+
+/* 소멸 예정 크레딧 경고 — 이 블록은 색을 빼지 말 것. 사용자가 잃는 금액을 알리는 자리다. */
+.warn {
+  margin: 0 0 8px;
+  line-height: 1.7;
+  color: var(--fg-1, #2a2a26);
+  background: var(--warn-bg, #fdf6e6);
+  border: 1px solid var(--warn-border, #f0d9a8);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.modalSub {
+  margin: 0;
+  color: var(--fg-2, #6b6b63);
+  font-size: 13px;
+}

@@ -1,7 +1,8 @@
 /* =============================================================
    features/pricing — 요금제 (/pricing)
    구독 / 추가구매(top-up)를 connected-tabs 로 전환해 카드 표시.
-   구독은 준비 중, 추가구매는 토스 결제창으로 연결한다.
+   구독은 빌링키(정기결제), 추가구매는 1회 결제 — 둘 다 토스 결제창으로 연결한다.
+   구독 흐름은 features/subscription 이 이어받는다(계획서 2026-09-09-toss-billing-subscription).
    데이터: api.getPricingPlans() (http → /v1/pricing-plans, mock 폴백).
 
    ▶ 이 라우트는 **공개다**(App.jsx 에서 RequireAuth 밖). 랜딩(wearless.kr)의 요금제
@@ -20,11 +21,14 @@ import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { Icon, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
+import { SUBSCRIPTION_TRANSFER_ENABLED, TOPUP_ENABLED, TOSS_BILLING_CLIENT_KEY,
+  TOSS_CLIENT_KEY } from '@/lib/tossKeys.js';
 import s from './Pricing.module.css';
 
 const won = (n) => '₩' + Number(n).toLocaleString('ko-KR');
 // 공개 클라이언트 키(테스트). 없으면 결제 버튼을 비활성 — 키 없이 결제창을 띄우면 런타임에 깨진다.
-const TOSS_CLIENT_KEY = import.meta.env.VITE_TOSS_CLIENT_KEY;
+// 충전과 구독은 계약 MID 가 달라 클라이언트 키도 다르다 — lib/tossKeys.js 참고.
+// 하나로 쓰면 둘 중 하나가 INVALID_API_KEY / NOT_SUPPORTED_METHOD 로 깨진다.
 
 // 랜딩 PricingSection 및 요금제 정본 §5(v9). 가격과 지급량은 API 값을 사용한다.
 const PLAN_DETAILS = {
@@ -86,14 +90,45 @@ export function Pricing() {
     }
   }
 
+  // 구독: 토스 결제창에서 카드를 등록(빌링키 인증)하고 successUrl 로 돌아온다.
+  // 실제 빌링키 발급·첫 결제는 서버가 authKey 로 처리한다 — **클라이언트는 금액을 모른다**.
+  // method: 'CARD' = 카드 등록, 'TRANSFER' = 퀵계좌이체 계좌 등록. 같은 메서드로 둘 다 받고
+  // 빌링키 발급 응답만 갈린다(서버 toss_billing.issue_billing_key 가 정규화).
+  async function subscribe(planCode, method = 'CARD') {
+    if (!session) { requireLogin(); return; }
+    setPayError('');
+    setBuying(planCode);
+    try {
+      const { loadTossPayments } = await import('@tosspayments/tosspayments-sdk');
+      // 자동결제 MID 의 클라이언트 키여야 한다 — 일반결제 키로 부르면 NOT_SUPPORTED_METHOD.
+      const toss = await loadTossPayments(TOSS_BILLING_CLIENT_KEY);
+      const payment = toss.payment({ customerKey: session.user.id });
+      await payment.requestBillingAuth({
+        method,
+        successUrl: `${window.location.origin}/subscription/success?plan=${encodeURIComponent(planCode)}`,
+        failUrl: `${window.location.origin}/subscription/fail`,
+      });
+    } catch (e) {
+      // 사용자가 창을 닫은 경우도 여기로 온다 — 조용히 버튼만 되돌린다.
+      const code = e?.code || '';
+      if (code !== 'USER_CANCEL' && code !== 'PAY_PROCESS_CANCELED') {
+        setPayError(e?.message || '카드 등록을 시작하지 못했어요.');
+      }
+      setBuying(null);
+    }
+  }
+
   const { data: plans = [], isLoading, isError, refetch } = useQuery({
     queryKey: ['pricingPlans'],
     queryFn: () => api.getPricingPlans(),
     staleTime: 5 * 60 * 1000,
   });
 
-  const shown = plans.filter((p) => p.kind === tab);
-  const recurring = tab === 'subscription';
+  // 충전 탭이 없으면 tab 이 'topup' 이 될 길은 없지만, 상태가 남아 있어도
+  // 빈 화면을 그리지 않게 구독으로 되돌린다.
+  const activeTab = TOPUP_ENABLED ? tab : 'subscription';
+  const shown = plans.filter((p) => p.kind === activeTab);
+  const recurring = activeTab === 'subscription';
 
   return (
     <div className="wizard wide">
@@ -102,10 +137,15 @@ export function Pricing() {
         <p className={s.sub}>상세페이지 한 개에 13,000원. 사진 10장 기준이에요.</p>
       </div>
 
-      <div className={s.tabs} role="group" aria-label="요금제 유형">
-        <button type="button" aria-pressed={recurring} className={`${s.tab}${recurring ? ' ' + s.active : ''}`} onClick={() => setTab('subscription')}>구독</button>
-        <button type="button" aria-pressed={!recurring} className={`${s.tab}${!recurring ? ' ' + s.active : ''}`} onClick={() => setTab('topup')}>추가 구매</button>
-      </div>
+      {/* 충전(추가 구매)은 일반결제라 계약 전까지 라이브에서 동작하지 않는다 —
+          탭 자체를 숨긴다(lib/tossKeys.js TOPUP_ENABLED). 누르면 실패할 버튼을
+          남겨 두면 사용자가 결제 실패를 겪는다. 탭이 하나뿐이면 탭 줄도 안 그린다. */}
+      {TOPUP_ENABLED && (
+        <div className={s.tabs} role="group" aria-label="요금제 유형">
+          <button type="button" aria-pressed={recurring} className={`${s.tab}${recurring ? ' ' + s.active : ''}`} onClick={() => setTab('subscription')}>구독</button>
+          <button type="button" aria-pressed={!recurring} className={`${s.tab}${!recurring ? ' ' + s.active : ''}`} onClick={() => setTab('topup')}>추가 구매</button>
+        </div>
+      )}
 
       {payError && <div className={`surface ${s.payError}`} role="alert">{payError}</div>}
       <p className={s.tabDesc}>
@@ -115,8 +155,10 @@ export function Pricing() {
       </p>
       <div className={s.billingNotice}>
         <p>
+          {/* 이월 정책(2026-09-09). 이 문장은 계약 고지다 — 코드 동작과 반드시 같아야 한다.
+              구독 유지 중에는 이월, 해지하면 주기 종료일에 이월분까지 전부 소멸. */}
           {recurring
-            ? '구독은 해지할 때까지 매달 자동 결제돼요. 구독 크레딧은 결제 주기가 끝나면 소멸하고 이월되지 않아요.'
+            ? '구독은 해지할 때까지 매달 자동 결제돼요. 구독 크레딧은 구독을 유지하는 동안 다음 달로 이월되지만, 해지하면 결제 주기가 끝나는 날 이월분까지 모두 소멸해요.'
             : '추가 구매 크레딧은 소멸하지 않아요.'}
           {' '}
           {/* 전자상거래법 §17②5호(디지털콘텐츠 제공 개시 시 철회 제한)는 같은 조 제6항의
@@ -195,9 +237,29 @@ export function Pricing() {
                           로그인하고 시작하기
                         </button>
                       ) : (
-                        <button type="button" className={`${s.purchaseButton} ${s.subscriptionButton}`} disabled title="결제 연동 준비 중">
-                          {isCurrent ? '이용 중' : '구독하기'} {!isCurrent && '(준비 중)'}
-                        </button>
+                        <>
+                          <button
+                            type="button" className={`${s.purchaseButton} ${s.subscriptionButton}`}
+                            disabled={isCurrent || !TOSS_BILLING_CLIENT_KEY || buying !== null}
+                            title={TOSS_BILLING_CLIENT_KEY ? undefined : '결제 키가 설정되지 않았어요'}
+                            onClick={() => subscribe(p.code, 'CARD')}
+                          >
+                            {isCurrent ? '이용 중'
+                              : (buying === p.code ? '등록 창 여는 중…' : '카드로 구독하기')}
+                          </button>
+                          {/* 퀵계좌이체는 카드보다 수수료가 낮지만(토스 문서: 카드 대비 1%p 이상)
+                              우리 MID 에서는 아직 안 열린다(2026-09-10 실측). 플래그로 숨긴다 —
+                              서버·스키마는 이미 계좌를 다루므로 열리는 날 켜기만 하면 된다. */}
+                          {SUBSCRIPTION_TRANSFER_ENABLED && !isCurrent && (
+                            <button
+                              type="button" className={s.altMethodButton}
+                              disabled={!TOSS_BILLING_CLIENT_KEY || buying !== null}
+                              onClick={() => subscribe(p.code, 'TRANSFER')}
+                            >
+                              계좌이체로 구독하기
+                            </button>
+                          )}
+                        </>
                       )}
                     </div>
                   ) : (

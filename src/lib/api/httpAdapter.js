@@ -744,6 +744,29 @@ export const httpAdapter = {
       method: 'POST', body: { paymentKey, orderId, amount },
     });
   },
+  // ---- 정기결제(빌링) — 계획서 docs/plans/2026-09-09-toss-billing-subscription.md ----
+  // 클라이언트는 금액도 빌링키도 만지지 않는다. 카드 인증(authKey)만 넘기면 서버가
+  // 빌링키를 발급·보관하고 요금제 정가로 결제한다.
+  async startSubscription({ authKey, customerKey, planCode }) {
+    return http('/v1/subscriptions/start', {
+      method: 'POST', body: { authKey, customerKey, planCode },
+    });
+  },
+  async getMySubscription() {
+    return http('/v1/subscriptions/me');
+  },
+  async cancelSubscription() {
+    return http('/v1/subscriptions/cancel', { method: 'POST' });
+  },
+  async resumeSubscription() {
+    return http('/v1/subscriptions/resume', { method: 'POST' });
+  },
+  async changeSubscriptionPlan(planCode) {
+    return http('/v1/subscriptions/change-plan', { method: 'POST', body: { planCode } });
+  },
+  async replaceSubscriptionCard({ authKey, customerKey }) {
+    return http('/v1/subscriptions/card', { method: 'PUT', body: { authKey, customerKey } });
+  },
   // ---- 마네킹 (PRD §7) — generate/getMannequins/adjust 는 배포된 라우트로 실배선 ----
   // 마네킹 컷 목록 (계약 §6) — [{id,src,candidate,version,baseFit,fitAdjust,lengthAdjust,matchAdjust}].
   async getMannequins(projectId) {
