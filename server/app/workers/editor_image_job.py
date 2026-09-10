@@ -9,6 +9,7 @@ import hashlib
 import logging
 import re
 import uuid
+from dataclasses import replace
 from io import BytesIO
 
 from PIL import Image
@@ -26,6 +27,7 @@ from ..agents import (
     space_set_assets,
 )
 from ..agents.gemini_image import GeminiError, InlineImage
+from ..agents.model_routing import resolve_editor_cut_model
 from ..agents.vision_llm import VisionError
 from ..r2 import IMMUTABLE_CACHE, PRIVATE_NO_STORE, ai_key, ext_for_mime
 from ._common import emit_job_event as _emit
@@ -56,6 +58,11 @@ def _parse_source_asset_id(src: str | None) -> str | None:
 
 async def run_editor_image_job(app, job: dict) -> None:
     s = app.state.settings
+    # 에디터 컷만 별도 모델로 보낼 수 있게, 이 워커 안에서만 불변 Settings 복사본의 image_high 를
+    # 에디터 노브로 치환한다(detail_page_job 선례). 공용 image_high 를 바꾸면 마네킹·매칭 플랫레이·
+    # AG-07 까지 함께 전환되므로 그렇게 하지 않는다. 이미지 생성 호출만 editor_settings 를 쓰고,
+    # SAM·QC·업로드 등 나머지는 s 그대로다.
+    editor_settings = replace(s, model_image_high=resolve_editor_cut_model(s))
     pool = app.state.pool
     job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
     lease_token = job["lease_token"]
@@ -202,7 +209,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             changes = payload.get("changes") or []
             try:
                 image, mime = await cut_variator.generate(
-                    s, app.state.gemini, src_img, changes, cut_type, ref_bg=ref_bg_img)
+                    editor_settings, app.state.gemini, src_img, changes, cut_type, ref_bg=ref_bg_img)
             except GeminiError as e:
                 await _fail("컷 변형에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
                 return
@@ -642,7 +649,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 generate_kwargs["has_face"] = True
             try:
                 image, mime = await cut_generator.generate(
-                    s, app.state.gemini, cut_spec, product, images,
+                    editor_settings, app.state.gemini, cut_spec, product, images,
                     **generate_kwargs)
             except ValueError as e:
                 if str(e) == "detail_reference_required":
@@ -685,7 +692,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                     attempt += 1
                     try:
                         image, mime = await cut_generator.generate(
-                            s, app.state.gemini, cut_spec, product, images,
+                            editor_settings, app.state.gemini, cut_spec, product, images,
                             **generate_kwargs)
                     except (GeminiError, ValueError) as e:
                         await _fail("컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
@@ -694,7 +701,7 @@ async def run_editor_image_job(app, job: dict) -> None:
 
             async def _generate_candidate():
                 candidate_image, candidate_mime = await cut_generator.generate(
-                    s, app.state.gemini, cut_spec, product, images,
+                    editor_settings, app.state.gemini, cut_spec, product, images,
                     **generate_kwargs)
                 if scene_plate is None:
                     return InlineImage(candidate_mime, candidate_image)
@@ -716,7 +723,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                         raise RuntimeError("bg candidate scene mismatch")
                     candidate_attempt += 1
                     candidate_image, candidate_mime = await cut_generator.generate(
-                        s, app.state.gemini, cut_spec, product, images,
+                        editor_settings, app.state.gemini, cut_spec, product, images,
                         **generate_kwargs)
                 return InlineImage(candidate_mime, candidate_image)
 
