@@ -335,6 +335,41 @@ def test_recognizer_wiring_and_cosine():
     assert fi.identity_score(img, None, det) is None
 
 
+def test_feather_bottom_none_is_byte_identical():
+    """feather_bottom=None 은 기존 단일 σ 경로와 **바이트 동일**해야 한다(기본값 무해)."""
+    orig, plan = _synthetic()
+    gen = Image.new("RGB", (fi.CROP, fi.CROP), (120, 60, 40))
+    a = np.asarray(fi.feather_mask(plan))
+    b = np.asarray(fi.feather_mask(plan, feather_bottom=None))
+    assert np.array_equal(a, b)
+    # 합성 결과도 동일
+    out_a = fi.composite(orig, gen, plan, grain=False)
+    out_b = fi.composite(orig, gen, plan, grain=False, feather_bottom=None)
+    assert out_a.tobytes() == out_b.tobytes()
+    # 학습 control 경로(binary_mask)는 feather_bottom 을 아예 보지 않는다
+    assert np.array_equal(np.asarray(fi.binary_mask(plan)),
+                          np.asarray(fi.feather_mask(plan, fi.FEATHER_FRAC).point(lambda v: 255 if v > 127 else 0)))
+
+
+def test_feather_bottom_narrows_only_below_chin():
+    """하단 σ 는 턱선 아래만 좁힌다 — 턱선 위 σ_상단 밖은 손대지 않는다."""
+    _, plan = _synthetic()
+    wide = np.asarray(fi.feather_mask(plan), np.float32)
+    narrow = np.asarray(fi.feather_mask(plan, feather_bottom=0.03), np.float32)
+    fb = plan.face_box_crop
+    chin = int(fb[1] + fb[3])
+    r_top = max(3, int(fi.FEATHER_FRAC * fb[2]))
+    # 보간 시작(턱선 − σ_상단) 위쪽은 완전히 동일
+    assert np.array_equal(wide[: chin - r_top], narrow[: chin - r_top])
+    # 아래쪽 경계는 더 가파르다(같은 열에서 0→255 전이 폭이 좁아진다)
+    col = int(fb[0] + fb[2] / 2)
+    def width(mask):
+        below = mask[chin + r_top :, col]
+        mid = np.nonzero((below > 20) & (below < 235))[0]
+        return int(mid.max() - mid.min()) if mid.size else 0
+    assert width(narrow) < width(wide)
+
+
 # ---------------------------------------------------------------- 게이트
 
 

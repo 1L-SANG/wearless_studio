@@ -524,8 +524,39 @@ def ellipse_mask(plan: FacePlan, ellipse: tuple[float, float, float, float] | No
 
 
 def feather_mask(plan: FacePlan, feather: float = FEATHER_FRAC,
-                 ellipse: tuple[float, float, float, float] | None = None) -> Image.Image:
-    return ellipse_mask(plan, ellipse).filter(ImageFilter.GaussianBlur(max(3, int(feather * plan.face_box_crop[2]))))
+                 ellipse: tuple[float, float, float, float] | None = None,
+                 *, feather_bottom: float | None = None) -> Image.Image:
+    """타원 마스크에 가우시안 페더. feather_bottom 을 주면 **턱 아래 구간만** 다른 σ 를 쓴다.
+
+    왜 하단만 따로인가: 턱 아래~칼라 위의 목 피부 띠가 좁다(ZARA 실측 크롭좌표 91~119px).
+    지금 σ = 0.12×얼굴폭 ≈ 41px 이면 블렌드 폭이 ±2σ ≈ 160px 이라 그 띠에 들어가지 않아,
+    경계를 어디 두든 턱(위) 아니면 칼라(아래)에 걸린다 — 턱에 걸리면 원본 턱과 생성 턱이
+    섞여 **이중 윤곽**이 된다. 위·옆 σ 는 좁히면 안 된다(E2 가 없앤 측면 잔털 경계가 되살아난다).
+
+    단위는 feather 와 같다(크롭 안 얼굴폭에 대한 비율). None 이면 기존과 **바이트 동일**.
+    이음은 얼굴박스 하단(= 턱선)에서 ±σ_상단 만큼 선형 보간해 단차를 없앤다.
+
+    ★ 실측 결과(2026-09-10, ZARA 2컷 × 하단 k{1.15,1.20,1.25} × σ{41,25,15,10} = 24판, 합성만):
+      **좁히면 더 나쁘다.** σ ≤ 15 에서 타원 하단 선을 따라 목에 피부톤 계단(딱딱한 가로 이음선)이
+      두 컷 모두 생겼다. σ=41(기본)은 매끄럽다. 애초 목표였던 "턱 이중 윤곽" 은 σ=41 에서 2배 확대로도
+      보이지 않았고, 남는 것은 **턱 실루엣 불일치**(생성 턱이 원본보다 좁고 위에 있어 원본 턱 옆 음영이
+      타원 밖에 남는다)라 어떤 σ 로도 못 고친다 — 생성 쪽에서 턱을 맞춰야 한다.
+      그래서 프로덕션 기본은 None(단일 σ)이다. 이 인자는 재시도 방지용 기록이자 실험 훅으로만 남긴다.
+    """
+    mask = ellipse_mask(plan, ellipse)
+    fw = plan.face_box_crop[2]
+    r_top = max(3, int(feather * fw))
+    top = mask.filter(ImageFilter.GaussianBlur(r_top))
+    if feather_bottom is None:
+        return top
+    r_bot = max(1, int(feather_bottom * fw))
+    bottom = mask.filter(ImageFilter.GaussianBlur(r_bot))
+    a = np.asarray(top, np.float32)
+    b = np.asarray(bottom, np.float32)
+    chin = plan.face_box_crop[1] + plan.face_box_crop[3]
+    y = np.arange(a.shape[0], dtype=np.float32)[:, None]
+    t = np.clip((y - (chin - r_top)) / (2.0 * r_top), 0.0, 1.0)  # 턱선 위 0(상단 σ) → 아래 1(하단 σ)
+    return Image.fromarray(np.clip(a * (1.0 - t) + b * t + 0.5, 0, 255).astype(np.uint8))
 
 
 @lru_cache(maxsize=32)
@@ -562,12 +593,13 @@ def crossing_sides(plan: FacePlan, ellipse: tuple[float, float, float, float] | 
 
 def composite_alpha(plan: FacePlan, feather: float = FEATHER_FRAC, *,
                     edge_fade_px: int = EDGE_FADE_PX,
-                    ellipse: tuple[float, float, float, float] | None = None) -> np.ndarray:
+                    ellipse: tuple[float, float, float, float] | None = None,
+                    feather_bottom: float | None = None) -> np.ndarray:
     """합성용 1024² 알파 = 페더 마스크 × (타원이 벗어난 변에만 걸리는) 크롭 경계 페이드.
 
     학습 control(binary_mask) 경로와 분리돼 있다 — control 은 정본이라 건드리지 않는다.
     """
-    a = np.asarray(feather_mask(plan, feather, ellipse), np.float32) / 255.0
+    a = np.asarray(feather_mask(plan, feather, ellipse, feather_bottom=feather_bottom), np.float32) / 255.0
     return a * _edge_fade(int(edge_fade_px), crossing_sides(plan, ellipse))
 
 
@@ -631,10 +663,11 @@ def _hf_std(arr: np.ndarray, region: np.ndarray) -> float:
 
 
 def paste_alpha(plan: FacePlan, feather: float = FEATHER_FRAC, *,
-                edge_fade_px: int = EDGE_FADE_PX) -> np.ndarray:
+                edge_fade_px: int = EDGE_FADE_PX,
+                feather_bottom: float | None = None) -> np.ndarray:
     """원본 해상도 (H, W) float32 알파. 0 인 픽셀은 composite 가 원본을 그대로 둔다."""
     x0, y0, side = plan.crop
-    a1024 = composite_alpha(plan, feather, edge_fade_px=edge_fade_px)
+    a1024 = composite_alpha(plan, feather, edge_fade_px=edge_fade_px, feather_bottom=feather_bottom)
     small = np.asarray(Image.fromarray(np.clip(a1024 * 255.0 + 0.5, 0, 255).astype(np.uint8))
                        .resize((side, side), Image.BILINEAR), np.float32) / 255.0
     alpha = np.zeros((plan.height, plan.width), np.float32)
@@ -649,6 +682,7 @@ def composite_with_meta(
     *,
     feather: float = FEATHER_FRAC,
     grain: bool | None = None,
+    feather_bottom: float | None = None,
 ) -> tuple[Image.Image, dict]:
     """생성 1024² 크롭의 타원 영역을 원본에 되붙인다. 마스크 밖 픽셀은 원본과 100% 동일.
 
@@ -667,7 +701,7 @@ def composite_with_meta(
     k = 2 * COLOR_RING_PX + 1
     inner = cv2.erode(ell.astype(np.uint8), np.ones((k, k), np.uint8)).astype(bool)
     ring = ell & ~inner
-    meta: dict = {"feather": feather, "color_shift": [0.0, 0.0, 0.0]}
+    meta: dict = {"feather": feather, "feather_bottom": feather_bottom, "color_shift": [0.0, 0.0, 0.0]}
     if ring.any():
         # 링 8px 평균 RGB 를 원본에 맞추는 **전역** 보정. 국소 차분 필드는 시험했고 되돌렸다 — 22.B 참조:
         #   normalized convolution(σ=0.5×얼굴폭)은 링 잔차를 27.2→2.26 으로 줄였지만 ZARA 컷1 목·턱이
@@ -678,7 +712,7 @@ def composite_with_meta(
         gen_arr = np.clip(gen_arr + shift, 0, 255)
         meta["color_shift"] = [round(float(v), 2) for v in shift]
 
-    alpha = composite_alpha(plan, feather)[..., None]
+    alpha = composite_alpha(plan, feather, feather_bottom=feather_bottom)[..., None]
     comp = gen_arr * alpha + up * (1.0 - alpha)
 
     hf_orig = _hf_std(up, ell)
@@ -695,7 +729,7 @@ def composite_with_meta(
 
     x0, y0, side = plan.crop
     small = np.asarray(comp_img.resize((side, side), Image.LANCZOS), np.float32)
-    a_small = paste_alpha(plan, feather)[y0 : y0 + side, x0 : x0 + side][..., None]
+    a_small = paste_alpha(plan, feather, feather_bottom=feather_bottom)[y0 : y0 + side, x0 : x0 + side][..., None]
     out = np.asarray(orig, np.float32).copy()
     region = out[y0 : y0 + side, x0 : x0 + side]
     out[y0 : y0 + side, x0 : x0 + side] = small * a_small + region * (1.0 - a_small)
@@ -709,8 +743,10 @@ def composite(
     *,
     feather: float = FEATHER_FRAC,
     grain: bool | None = None,
+    feather_bottom: float | None = None,
 ) -> Image.Image:
-    return composite_with_meta(original, generated_1024, plan, feather=feather, grain=grain)[0]
+    return composite_with_meta(original, generated_1024, plan, feather=feather, grain=grain,
+                               feather_bottom=feather_bottom)[0]
 
 
 # ---------------------------------------------------------------- 게이트
