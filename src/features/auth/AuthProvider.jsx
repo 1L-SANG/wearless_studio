@@ -14,6 +14,7 @@
    토큰을 컴포넌트로 흘리지 않는다 — API 호출은 httpAdapter 가 supabase 에서 직접 읽는다.
    ============================================================= */
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { IS_FACEMARKET } from '@/lib/host.js';
 import { supabase } from '@/lib/supabase.js';
 import { LoginGate } from './Login.jsx';
 import { draftSlot } from '@/lib/draftSlot.js';
@@ -21,6 +22,7 @@ import { stampAppOrigin } from '@/lib/appOrigin.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { clearSignupConsent } from '@/lib/signupConsent.js';
 
+const MOCK_FACEMARKET = import.meta.env.DEV && import.meta.env.VITE_API_MODE === 'mock' && IS_FACEMARKET;
 const AuthCtx = createContext(null);
 let oauthExchangeCode = null;
 let oauthExchangePromise = null;
@@ -99,6 +101,14 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     let alive = true; // StrictMode 이중 마운트: cleanup 이후 state 갱신 방지
     let subscription = null;
+    if (MOCK_FACEMARKET) {
+      import('../../mock/facemarket.js').then(({ getMockSession }) => {
+        if (!alive) return;
+        setSession(getMockSession());
+        setLoading(false);
+      });
+      return () => { alive = false; };
+    }
     const code = isPaymentResultPath()
       ? null
       : new URLSearchParams(window.location.search).get('code');
@@ -147,7 +157,7 @@ export function AuthProvider({ children }) {
      실패는 무시한다(가입 흐름이 아니라 라벨 한 칸이다). */
   const userId = session?.user?.id ?? null;
   useEffect(() => {
-    if (userId) stampAppOrigin(userId);
+    if (userId && !MOCK_FACEMARKET) stampAppOrigin(userId);
   }, [userId]);
 
   const signIn = (provider) =>
@@ -158,6 +168,7 @@ export function AuthProvider({ children }) {
 
   // 로그아웃 시 미동기화 draft 도 정리 — 공용 브라우저에서 다음 사용자에게 입력이 복원되지 않게.
   const signOut = async () => {
+    if (MOCK_FACEMARKET) { setSession(null); return; }
     clearSignupConsent();
     forgetPostLogin();
     setSigningOut(true);
@@ -181,6 +192,10 @@ export function AuthProvider({ children }) {
   // 렌더마다 재실행된다 — 실제로 App 의 FacemarketLoginPrompt 가 그래서 "닫으면 즉시
   // 다시 열리는" 모달이 됐다(closeLogin → 리렌더 → 새 openLogin → effect 재실행).
   const openLogin = useCallback((redirect = null) => {
+    if (MOCK_FACEMARKET) {
+      import('../../mock/facemarket.js').then(({ signInMock }) => { setSession(signInMock()); });
+      return;
+    }
     if (redirect) rememberPostLogin(redirect);
     else forgetPostLogin();
     setLoginOpen(true);

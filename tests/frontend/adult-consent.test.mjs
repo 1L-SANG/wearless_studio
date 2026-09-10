@@ -87,5 +87,5 @@ test('login copy follows the owner-approved lines for each product', () => {
 test('model application eligibility and attestation use age 19', () => {
   assert.equal(modelApply.match(/만 19세/g)?.length, 2);
   assert.doesNotMatch(modelApply, /만 18세/);
-  assert.match(modelApply, /만 19세 이상이며, 제공한 모든 정보가 사실이고 정확함을 확인합니다\./);
+  assert.match(modelApply, /만 19세 이상이며, 본인이 직접 적은 내용임을 확인합니다\./);
 });

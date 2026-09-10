@@ -389,8 +389,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
         # exc.errors()의 ctx에 raw 예외 객체(ValueError 등)가 섞여 json.dumps가 깨지므로
         # FastAPI 기본 핸들러처럼 jsonable_encoder로 직렬화 가능한 형태로 강제한다.
+        # 지원서 v3는 필수 입력 누락도 400으로 응답한다. 다른 API의 422 계약은 유지한다.
+        application_submit = request.method == "POST" and request.url.path == "/v1/facemarket/applications"
         return JSONResponse(
-            status_code=422,
+            status_code=400 if application_submit else 422,
             content={
                 "error": {
                     "code": "validation_error",

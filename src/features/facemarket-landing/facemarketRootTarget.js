@@ -25,9 +25,10 @@ const MAX_LENGTH = 512;
 /* facemarket 도메인에 존재하는 화면의 뿌리. '/model' 은 지원서·등록·라이선스·발급이고,
    '/status' 는 등록 상태(옛 허브, 로그인 프롬프트가 여기로 복귀시킨다), '/verify' 는 QR
    공개 검증이다. 그 밖은(=셀러 스튜디오) 이 도메인의 화면이 아니다. */
-const ALLOWED_ROOTS = ['/model', '/status', '/payout', '/verify'];
+const ALLOWED_ROOTS = ['/apply', '/model', '/status', '/payout', '/verify'];
 
 const LANDING_NAV = Object.freeze([
+  Object.freeze({ to: '/apply', label: '모델 지원', protected: false }),
   Object.freeze({ to: '/models', label: '모델 리스트', protected: false }),
   Object.freeze({ to: '/status', label: 'Digital DNA 관리', protected: true }),
   Object.freeze({ to: '/payout', label: '정산', protected: true }),

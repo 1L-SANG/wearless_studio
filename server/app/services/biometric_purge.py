@@ -1041,6 +1041,12 @@ async def _cleanup(
                     """,
                     (scope["user_id"],),
                 )
+            # v3 몸무게는 구버전 DB에도 기존 개인정보 파기가 계속되도록 별도로 확인한다.
+            if _has(schema, "fm_model_applications", "user_id", "weight_kg"):
+                await cur.execute(
+                    "update fm_model_applications set weight_kg = null where user_id = %s",
+                    (scope["user_id"],),
+                )
             if _has(schema, "fm_model_application_photo_staging", "user_id"):
                 await cur.execute(
                     "delete from fm_model_application_photo_staging where user_id=%s",

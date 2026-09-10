@@ -153,6 +153,8 @@
   --r-1: 2px;  --r-2: 4px;  --r-3: 6px;  --r-4: 8px;
   --r-5: 12px; --r-6: 16px; --r-7: 29px; --r-8: 100px;
   --r-pill: 9999px;
+  --fm-faq-radius: 14px;
+  --fm-photo-check: #12775a;
 
   /* ---- Layout ---- */
   --container: 1200px;

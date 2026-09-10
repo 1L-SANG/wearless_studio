@@ -27,11 +27,12 @@ test('facemarket 도메인의 화면이면 그리로 보낸다', () => {
   assert.equal(facemarketRootTarget('/status-evil'), null);
 });
 
-test('상단바는 세 메뉴를 항상 보여 주고 보호 메뉴만 로그인 의도로 바꾼다', () => {
+test('상단바는 네 메뉴를 항상 보여 주고 보호 메뉴만 로그인 의도로 바꾼다', () => {
   assert.equal(typeof landingRouting.landingNavItems, 'function');
   assert.equal(typeof landingRouting.landingNavAction, 'function');
 
   assert.deepEqual(landingRouting.landingNavItems(), [
+    { to: '/apply', label: '모델 지원', protected: false },
     { to: '/models', label: '모델 리스트', protected: false },
     { to: '/status', label: 'Digital DNA 관리', protected: true },
     { to: '/payout', label: '정산', protected: true },

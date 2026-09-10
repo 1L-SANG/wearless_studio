@@ -42,9 +42,14 @@ PHOTO_KINDS = ("profile", "closeup", "waist_up", "full_length")
 # 제출에 필수인 종류 — 프로필 1장만(2026-09-02 사용자 결정). 나머지는 올리면 저장하되 요구하지 않는다.
 REQUIRED_PHOTO_KINDS = ("profile",)
 EXPERIENCE_LEVELS = {"none", "beginner", "intermediate", "professional"}
-# 제출 시 확인 서명 3종(전부 true 여야 함) — 에이전시 미소속·성인/진실·사진 본인·최신·무보정.
-# 에이전시 관련 확인(noAgency)은 뺐다(2026-09-02 사용자 결정) — 옛 지원서 행에 남아 있어도 무시한다.
-ATTESTATION_KEYS = ("adultAndTruthful", "photosAreMine")
+# 제출 시 확인 서명 5종. 모두 true 여야 한다.
+ATTESTATION_KEYS = (
+    "adultAndTruthful",
+    "photosAreMine",
+    "noAgencyContract",
+    "reviewOnlyUse",
+    "privacyPolicy",
+)
 # 개인정보 수집·이용 동의(생체 동의와 별개, E3). 문구 변경 시 버전을 올린다.
 PRIVACY_CONSENT_VERSION = "2026-09-v1"
 ACCEPTED_PRIVACY_VERSIONS = ("2026-09-v1",)
@@ -67,17 +72,18 @@ class ApplicationSubmitBody(CamelModel):
     contact_email: str
     applicant_name: str
     birthdate: date
-    region: str
+    phone: str
+    height_cm: int
+    agency_contracted: bool
+    region: str | None = None
     gender: str | None = None
-    height_cm: int | None = None
-    phone: str | None = None
+    weight_kg: int | None = None
     experience_level: str | None = None
-    agency_contracted: bool = False
     categories: list[str] = []
     portfolio_url: str | None = None
     sns_url: str | None = None
     bio: str | None = None
-    # 확인 서명 3종 — 전부 true 필수(에이전시 미소속·성인/진실·사진 본인).
+    # 확인 서명 5종. 모두 true 여야 한다.
     attestations: dict[str, bool] = {}
     privacy_consent: ApplicationConsent
 
@@ -95,9 +101,10 @@ class ApplicationView(CamelModel):
     contact_email: str
     applicant_name: str
     birthdate: date
-    region: str
+    region: str | None = None
     gender: str | None = None
     height_cm: int | None = None
+    weight_kg: int | None = None
     phone: str | None = None
     experience_level: str | None = None
     agency_contracted: bool = False
@@ -117,9 +124,10 @@ class AdminApplicationCard(CamelModel):
     contact_email: str
     applicant_name: str
     birthdate: date
-    region: str
+    region: str | None = None
     gender: str | None = None
     height_cm: int | None = None
+    weight_kg: int | None = None
     phone: str | None = None
     experience_level: str | None = None
     agency_contracted: bool = False
@@ -293,8 +301,6 @@ def _validate_categories(values: list[str]) -> list[str]:
             raise _err("invalid_category", "지원 가능한 카테고리가 아닙니다.")
         if v not in seen:
             seen.append(v)
-    if not seen:
-        raise _err("categories_required", "활동하고 싶은 카테고리를 하나 이상 선택해 주세요.")
     return seen
 
 
@@ -334,9 +340,10 @@ def _application_view(row: dict) -> ApplicationView:
         contact_email=row["contact_email"],
         applicant_name=row["applicant_name"],
         birthdate=row["birthdate"],
-        region=row["region"],
+        region=row.get("region"),
         gender=row.get("gender"),
         height_cm=row.get("height_cm"),
+        weight_kg=row.get("weight_kg"),
         phone=row.get("phone"),
         experience_level=row.get("experience_level"),
         agency_contracted=row.get("agency_contracted", False),
@@ -356,9 +363,10 @@ def _admin_card(row: dict) -> AdminApplicationCard:
         contact_email=row["contact_email"],
         applicant_name=row["applicant_name"],
         birthdate=row["birthdate"],
-        region=row["region"],
+        region=row.get("region"),
         gender=row.get("gender"),
         height_cm=row.get("height_cm"),
+        weight_kg=row.get("weight_kg"),
         phone=row.get("phone"),
         experience_level=row.get("experience_level"),
         agency_contracted=row.get("agency_contracted", False),
@@ -381,7 +389,7 @@ def _admin_card(row: dict) -> AdminApplicationCard:
 
 _APPLICATION_COLUMNS = """
     id::text as id, user_id::text as user_id, status, contact_email, applicant_name,
-    birthdate, region, gender, height_cm, phone, experience_level, agency_contracted,
+    birthdate, region, gender, height_cm, weight_kg, phone, experience_level, agency_contracted,
     categories, portfolio_url, sns_url, bio, profile_image_r2_key, photo_keys, attestations,
     identity_mismatch_count, reviewed_by::text as reviewed_by, reviewed_at, reject_reason,
     created_at, updated_at
@@ -549,6 +557,7 @@ async def sweep_terminal_application_pii(app, *, retention_days: int = PII_RETEN
                 update fm_model_applications
                    set contact_email = %s, applicant_name = %s,
                        birthdate = %s, region = %s,
+                       weight_kg = null, height_cm = null, gender = null,
                        phone = null, bio = null,
                        portfolio_url = null, sns_url = null,
                        profile_image_r2_key = null, photo_keys = '{}'::jsonb
@@ -581,19 +590,24 @@ async def submit_application(
     if "@" not in contact_email or "." not in contact_email.split("@")[-1]:
         raise _err("invalid_email", "올바른 이메일 주소를 입력해 주세요.")
     applicant_name = _clean_text(body.applicant_name, "이름", required=True, max_len=100)
-    region = _clean_text(body.region, "지역", required=True, max_len=100)
+    region = _clean_text(body.region, "지역", required=False, max_len=100)
     bio = _clean_text(body.bio, "자기소개", required=False)
     portfolio_url = _clean_url(body.portfolio_url, "포트폴리오")
     sns_url = _clean_url(body.sns_url, "SNS")
     categories = _validate_categories(body.categories)
     if body.gender is not None and body.gender not in ("male", "female"):
         raise _err("invalid_gender", "성별 값이 올바르지 않습니다.")
-    if body.height_cm is not None and not (100 <= body.height_cm <= 250):
+    if not (100 <= body.height_cm <= 250):
         raise _err("invalid_height", "키는 100~250cm 범위로 입력해 주세요.")
+    if body.weight_kg is not None and not (30 <= body.weight_kg <= 200):
+        raise _err("invalid_weight", "몸무게는 30~200kg 범위로 입력해 주세요.")
     if body.experience_level is not None and body.experience_level not in EXPERIENCE_LEVELS:
         raise _err("invalid_experience", "경력 수준 값이 올바르지 않습니다.")
-    phone = _clean_text(body.phone, "전화번호", required=False, max_len=40)
-    # 확인 서명 3종(레퍼런스 정합): 에이전시 미소속·성인/진실·사진 본인. 전부 동의해야 제출.
+    phone = _clean_text(body.phone, "전화번호", required=True, max_len=40)
+    digits = phone.replace("-", "")
+    if any(char not in "0123456789-" for char in phone) or not (9 <= len(digits) <= 13):
+        raise _err("invalid_phone", "전화번호는 숫자와 하이픈만 사용해 입력해 주세요.")
+    # 확인 서명 5종. 모두 동의해야 제출할 수 있다.
     for key in ATTESTATION_KEYS:
         if not body.attestations.get(key):
             raise _err("attestation_required", "제출 전 확인 항목에 모두 동의해 주세요.")
@@ -652,15 +666,16 @@ async def submit_application(
                     """
                     insert into fm_model_applications (
                         id, user_id, status, contact_email, applicant_name, birthdate,
-                        region, gender, height_cm, phone, experience_level, agency_contracted,
+                        region, gender, height_cm, weight_kg, phone, experience_level, agency_contracted,
                         categories, portfolio_url, sns_url, bio, profile_image_r2_key, photo_keys,
                         attestations, privacy_consent_version, reviewed_at
-                    ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         new_id, user_id, "approved" if auto_approved else "under_review",
                         contact_email, applicant_name, body.birthdate, region, body.gender,
-                        body.height_cm, phone, body.experience_level, body.agency_contracted,
+                        body.height_cm, body.weight_kg, phone, body.experience_level,
+                        body.agency_contracted,
                         Json(categories), portfolio_url, sns_url, bio, photo_keys["profile"],
                         Json(photo_keys), Json(attestations), consent.document_version,
                         datetime.now(timezone.utc) if auto_approved else None,
@@ -754,7 +769,7 @@ async def admin_list_applications(
     # 최근 결정 메일 상태를 lateral 로 붙인다(대시보드 '미발송' 뱃지·재발송, 2A).
     base = f"""
         select a.id::text as id, a.user_id::text as user_id, a.status, a.contact_email,
-               a.applicant_name, a.birthdate, a.region, a.gender, a.height_cm,
+               a.applicant_name, a.birthdate, a.region, a.gender, a.height_cm, a.weight_kg,
                a.phone, a.experience_level,
                a.agency_contracted, a.categories, a.portfolio_url, a.sns_url, a.bio,
                a.profile_image_r2_key, a.photo_keys, a.attestations, a.identity_mismatch_count,
