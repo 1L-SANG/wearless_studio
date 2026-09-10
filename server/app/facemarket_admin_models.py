@@ -274,7 +274,7 @@ def _profile_view(row: dict) -> dict:
         "body_type": row.get("body_type"),
         "license": {
             "allowed_use": list(row.get("allowed_use") or []),
-            "forbidden_use": list(row.get("forbidden_use") or []),
+            "forbidden_use": [],
             "unit_price": row["unit_price"],
             "valid_until": row["license_valid_until"],
             "valid_days": row["license_valid_days"],

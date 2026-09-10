@@ -87,10 +87,7 @@ router = APIRouter(prefix="/v1")
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25MB
 UPLOAD_URL_TTL = 300  # presigned PUT 만료(초)
 DRAFT_SLOT_STORAGE_KEY = "draft-slot"
-_BRAND_USE_CATEGORIES = frozenset((
-    *facemarket.ALLOWED_BRAND_USE_CATEGORIES,
-    *facemarket.FORBIDDEN_BRAND_USE_CATEGORIES,
-))
+_BRAND_USE_CATEGORIES = frozenset(facemarket.BRAND_USE_CATEGORIES)
 
 COMMON_RESPONSES = {
     401: {"model": ErrorResponse, "description": "인증 실패 (토큰 누락, 만료 또는 위변조)"},

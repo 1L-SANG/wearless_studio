@@ -31,7 +31,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, field_validator
 
 from . import admin_guard, cx_identity, holder_client
 from . import repo
@@ -568,14 +568,10 @@ async def build_my_model_assets(request: Request, user_id: str = Depends(require
 # ── 얼굴 라이선스 (FM: 얼굴 업로드 + 조건) ─────────────────────────
 # 얼굴 이미지 = 생체 PII. 공개 R2 URL 절대 노출 금지 → 비공개 버킷 저장 + 게이트 스트림.
 # face_image_uri = 게이트 라우트 URL(공개 URL 아님). face_image_key = 내부 비공개 키(응답 제외).
-ALLOWED_BRAND_USE_CATEGORIES = (
+BRAND_USE_CATEGORIES = (
     "일반 의류",
     "액티브웨어",
     "홈웨어·잠옷",
-)
-FORBIDDEN_BRAND_USE_CATEGORIES = (
-    "속옷",
-    "수영복",
 )
 _EXT_TO_MIME = {ext: mime for mime, ext in MIME_EXT.items()}  # 상세컷 워커 Content-Type 역매핑
 
@@ -612,6 +608,12 @@ class LicenseCard(CamelModel):
     vc_id: str | None = None
     created_at: datetime
     cover_image_url: str | None = None  # 모델 대표 이미지 — VC 카드 프로필. RETURNING 경로는 null(목록 조회 시 채워짐)
+
+    @field_validator("forbidden_use", mode="before")
+    @classmethod
+    def empty_forbidden_use(cls, _value):
+        # 기존 라이선스도 응답 계약의 빈 배열로 내보낸다. 저장 이력은 유지한다.
+        return []
 
 
 class CreateLicenseRequest(CamelModel):
@@ -903,7 +905,7 @@ async def finalize_issued_face_vc(
                     )
                 async with conn.cursor() as cur:
                     await cur.execute(
-                        f"""update fm_licenses set status = 'active', vc_id = %s
+                        f"""update fm_licenses set status = 'active', vc_id = %s, forbidden_use = '{{}}'
                             where id = %s and status = 'pending' and vc_id is null
                             returning {_LICENSE_CARD_COLS}""",
                         (issued.vc_id, license_id),
@@ -1042,8 +1044,7 @@ async def create_license(
     except (TypeError, ValueError):
         raise _err("invalid_enrollment_id", "등록 ID 형식이 올바르지 않습니다.", status=400)
     valid_until = datetime.now(timezone.utc) + timedelta(days=body.valid_days)
-    allowed = _clean_uses(body.allowed_use, ALLOWED_BRAND_USE_CATEGORIES)
-    forbidden = _clean_uses(body.forbidden_use, FORBIDDEN_BRAND_USE_CATEGORIES)
+    allowed = _clean_uses(body.allowed_use, BRAND_USE_CATEGORIES)
     unit_price = body.unit_price
 
     license_id = str(uuid.uuid4())
@@ -1062,7 +1063,6 @@ async def create_license(
             row = existing
             license_id = existing["id"]
             allowed = list(existing["allowed_use"] or [])
-            forbidden = list(existing["forbidden_use"] or [])
             unit_price = int(existing["unit_price"])
             valid_until = existing["license_valid_until"]
             digest = existing["face_image_digest"]
@@ -1079,7 +1079,7 @@ async def create_license(
                         returning {_LICENSE_CARD_COLS}""",
                     (
                         license_id, model_id, enrollment_id, gate_uri, key, digest,
-                        allowed, forbidden, unit_price, valid_until,
+                        allowed, [], unit_price, valid_until,
                     ),
                 )
                 row = await cur.fetchone()
@@ -1092,13 +1092,11 @@ async def create_license(
                     await conn.commit()
                     return row
                 allowed = list(row["allowed_use"] or [])
-                forbidden = list(row["forbidden_use"] or [])
                 unit_price = int(row["unit_price"])
                 valid_until = row["license_valid_until"]
                 digest = row["face_image_digest"]
 
-        allowed = _clean_uses(allowed, ALLOWED_BRAND_USE_CATEGORIES)
-        forbidden = _clean_uses(forbidden, FORBIDDEN_BRAND_USE_CATEGORIES)
+        allowed = _clean_uses(allowed, BRAND_USE_CATEGORIES)
         async with conn.cursor() as cur:
             await cur.execute(
                 "update fm_biometric_enrollments set status = 'vc_pending' "
@@ -1119,7 +1117,7 @@ async def create_license(
     try:
         issued = await issue_face_vc(
             request.app, license_id=license_id, model_id=str(model_id),
-            allowed=allowed, forbidden=forbidden, unit_price=unit_price,
+            allowed=allowed, forbidden=[], unit_price=unit_price,
             valid_until=valid_until, digest=digest,
         )
     except FaceVcIssueError as error:
@@ -1430,7 +1428,7 @@ async def verify_license_public(request: Request, license_id: str, response: Res
         "valid": status == "active",
         "status": status,
         "allowedUse": row["allowed_use"] or [],
-        "forbiddenUse": row["forbidden_use"] or [],
+        "forbiddenUse": [],
         "unitPrice": row["unit_price"],
         "validUntil": row["license_valid_until"],
         "vcId": row["vc_id"],
@@ -2034,7 +2032,7 @@ def build_face_vc_claims(*, allowed, forbidden, unit_price, valid_until, digest)
     valid_str = _kst_date_str(valid_until)
     return {
         "allowedUse": ", ".join(allowed),
-        "forbiddenUse": ", ".join(forbidden),
+        "forbiddenUse": "",
         "unitPrice": int(unit_price),
         "licenseValidUntil": valid_str,
         "faceImageDigest": digest,
@@ -2086,7 +2084,7 @@ async def issue_face_vc(app, *, license_id, model_id, allowed, forbidden,
                     "plan": "facelicense",
                     "idempotencyKey": f"fm-license:{license_id}",
                     "claims": build_face_vc_claims(
-                        allowed=allowed, forbidden=forbidden, unit_price=unit_price,
+                        allowed=allowed, forbidden=[], unit_price=unit_price,
                         valid_until=valid_until, digest=digest,
                     ),
                 },
@@ -2338,29 +2336,10 @@ def verify_license_local(
         if isinstance(brand_use_category, str)
         else ""
     )
-    fixed_categories = {
-        *ALLOWED_BRAND_USE_CATEGORIES,
-        *FORBIDDEN_BRAND_USE_CATEGORIES,
-    }
-    if not category or category not in fixed_categories:
+    if not category or category not in BRAND_USE_CATEGORIES:
         raise _err(
             "brand_use_category_required",
             "브랜드 사용 카테고리를 확인해 주세요.",
-            status=409,
-        )
-    forbidden = license_row.get("forbidden_use")
-    if (
-        not isinstance(forbidden, list)
-        or any(
-            not isinstance(value, str)
-            or value not in FORBIDDEN_BRAND_USE_CATEGORIES
-            for value in forbidden
-        )
-        or category in forbidden
-    ):
-        raise _err(
-            "license_use_forbidden",
-            "이 라이선스에서 금지된 사용 카테고리입니다.",
             status=409,
         )
     allowed = license_row.get("allowed_use")
@@ -2369,7 +2348,7 @@ def verify_license_local(
         or not allowed
         or any(
             not isinstance(value, str)
-            or value not in ALLOWED_BRAND_USE_CATEGORIES
+            or value not in BRAND_USE_CATEGORIES
             for value in allowed
         )
         or category not in allowed

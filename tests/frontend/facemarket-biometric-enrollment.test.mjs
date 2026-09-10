@@ -58,6 +58,49 @@ test('a revoked license owner can reach fresh enrollment from the license list',
   }
 });
 
+test('license toggles default on, block empty selection, and submit the remaining allowed category', async () => {
+  const requests = [];
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelLicense.jsx',
+    exportName: 'ModelLicense',
+    initialStates: ['ready', 'flow', { id: 'enrollment-1', status: 'license_pending' }, [], null],
+    api: { createLicense: async (body) => { requests.push(body); return { id: 'license-1' }; } },
+  });
+  try {
+    const terms = findTree(harness.render(), (node) => node.type?.name === 'TermsStep');
+    assert.ok(terms);
+    harness.runtime.states = [];
+    const render = () => {
+      harness.runtime.stateCursor = 0;
+      return terms.type({ ...terms.props, onIssued: () => {} });
+    };
+    const toggle = (tree, label) => findTree(tree, (node) => node.type === 'Toggle' && node.props.label === label);
+    const submit = (tree) => findTree(tree, (node) => node.type === 'Button' && node.props.children === '라이선스 발급');
+    let tree = render();
+    assert.equal(submit(tree).props.disabled, false);
+    for (const category of ['일반 의류', '액티브웨어', '홈웨어·잠옷']) {
+      assert.equal(toggle(tree, category).props.on, true);
+      toggle(tree, category).props.onChange(false);
+      tree = render();
+      assert.equal(toggle(tree, category).props.on, false);
+    }
+    assert.equal(submit(tree).props.disabled, true);
+    assert.ok(findTree(tree, (node) => node.props?.children === '최소 한 가지는 허용해야 라이선스를 만들 수 있어요'));
+    await submit(tree).props.onClick();
+    assert.deepEqual(requests, []);
+
+    toggle(tree, '액티브웨어').props.onChange(true);
+    tree = render();
+    assert.equal(submit(tree).props.disabled, false);
+    await submit(tree).props.onClick();
+    assert.deepEqual(requests, [{
+      enrollmentId: 'enrollment-1', allowedUse: ['액티브웨어'], unitPrice: 10000, validDays: 365,
+    }]);
+  } finally {
+    await harness.close();
+  }
+});
+
 test('reissuing from completed registration requires fresh consent before a new identity enrollment', async () => {
   const created = [];
   let restores = 0;
@@ -258,6 +301,7 @@ async function modelComponentHarness({
           export const ErrorState = 'ErrorState';
           export const Icon = 'Icon';
           export const Chips = 'Chips';
+          export const Toggle = 'Toggle';
           export const Field = 'Field';
           export const useToast = () => ({ push: ${access}.push || (() => {}) });
         `;

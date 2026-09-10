@@ -141,6 +141,7 @@ def test_verify_publication_returns_exactly_the_whitelist_body_keys(pub_client):
 
     assert r.status_code == 200, r.text
     body = r.json()
+    assert body["forbiddenUse"] == []
     assert set(body) == _WHITELIST_KEYS
     assert set(body["model"]) == {"nameMasked", "age"}
     assert set(body["chain"]) == {"status", "txHash", "chainId", "block"}

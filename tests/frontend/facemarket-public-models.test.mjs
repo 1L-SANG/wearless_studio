@@ -31,7 +31,6 @@ const ITEM = {
   fullbodyImageUrl: 'https://assets.example/facemarket/catalog/models/x/covers/b.webp',
   license: {
     allowedUse: ['상의', '아우터'],
-    forbiddenUse: ['속옷', '수영복'],
     unitPrice: 10000,
     validUntil: '2027-09-07T00:00:00Z',
     validDays: 365,
@@ -92,7 +91,6 @@ test('실모델 → 화면 모델: 화이트리스트 필드만 담고 상세 �
   assert.equal(model.spec, '키 178cm · 잔잔한 근육');
   assert.deepEqual(model.license, {
     uses: ['상의', '아우터'],
-    excluded: ['속옷', '수영복'],
     unitPrice: 10000,
     validity: '1년',
     validUntilText: '2027년 9월 7일까지',

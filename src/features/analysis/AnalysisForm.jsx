@@ -107,11 +107,6 @@ function ModelDetailModal({ model, onClose, onSelect, selectable }) {
                     <span className="lic-tags">{data.allowedUse.map((u) => <span key={u} className="tag-allow">{u}</span>)}</span>
                   </div>
                 )}
-                {data.forbiddenUse?.length > 0 && (
-                  <div className="lic-row"><span className="lic-k">금지 용도</span>
-                    <span className="lic-tags">{data.forbiddenUse.map((u) => <span key={u} className="tag-forbid"><Icon name="ban" size={9} />{u}</span>)}</span>
-                  </div>
-                )}
                 <div className="lic-foot">
                   <div className="lic-foot-info">
                     <div className="lic-price">{_won(FACEMARKET_PRICING.perCut)}<em> · 호리존 컷 1장당</em></div>

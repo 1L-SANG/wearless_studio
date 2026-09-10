@@ -103,16 +103,6 @@ export function PublicVerifyPublication() {
                 </dd>
               </div>
             )}
-            {(data.forbiddenUse?.length ?? 0) > 0 && (
-              <div className={s.row}>
-                <dt>사용 금지</dt>
-                <dd className={s.tags}>
-                  {data.forbiddenUse.map((u) => (
-                    <span key={u} className={s.tagDeny}><Icon name="ban" size={10} />{u}</span>
-                  ))}
-                </dd>
-              </div>
-            )}
             {data.licenseValidUntil && (
               <div className={s.row}>
                 <dt>유효기간</dt>

@@ -16,30 +16,19 @@ const allowed = [
   '액티브웨어',
   '홈웨어·잠옷',
 ];
-const forbidden = [
-  '속옷',
-  '수영복',
-];
-
 test('frontend brand-use categories exactly match the server contract', async () => {
-  const {
-    ALLOWED_BRAND_USE_CATEGORIES,
-    FORBIDDEN_BRAND_USE_CATEGORIES,
-    BRAND_USE_CATEGORIES,
-  } = await import('../../src/lib/brandUseCategories.js');
+  const categories = await import('../../src/lib/brandUseCategories.js');
 
-  assert.deepEqual(ALLOWED_BRAND_USE_CATEGORIES, allowed);
-  assert.deepEqual(FORBIDDEN_BRAND_USE_CATEGORIES, forbidden);
-  assert.deepEqual(BRAND_USE_CATEGORIES, [...allowed, ...forbidden]);
-  assert.equal(BRAND_USE_CATEGORIES.length, 5);
-  assert.equal(new Set(BRAND_USE_CATEGORIES).size, 5);
+  assert.deepEqual(Object.keys(categories), ['BRAND_USE_CATEGORIES']);
+  assert.deepEqual(categories.BRAND_USE_CATEGORIES, allowed);
+  assert.equal(new Set(categories.BRAND_USE_CATEGORIES).size, 3);
 });
 
-test('ModelLicense reuses the shared category lists', () => {
-  assert.match(modelLicenseSource, /import \{[\s\S]*ALLOWED_BRAND_USE_CATEGORIES,[\s\S]*FORBIDDEN_BRAND_USE_CATEGORIES[\s\S]*\} from "@\/lib\/brandUseCategories\.js";/);
-  assert.doesNotMatch(modelLicenseSource, /const (?:ALLOWED|FORBIDDEN)_PRESETS/);
-  assert.match(modelLicenseSource, /options=\{ALLOWED_BRAND_USE_CATEGORIES\}/);
-  assert.match(modelLicenseSource, /options=\{FORBIDDEN_BRAND_USE_CATEGORIES\}/);
+test('ModelLicense reuses the shared categories for toggles', () => {
+  assert.match(modelLicenseSource, /useState\(\[\.\.\.BRAND_USE_CATEGORIES\]\)/);
+  assert.match(modelLicenseSource, /BRAND_USE_CATEGORIES\.map/);
+  assert.match(modelLicenseSource, /<Toggle/);
+  assert.doesNotMatch(modelLicenseSource, /forbiddenUse|FORBIDDEN_BRAND_USE_CATEGORIES/);
 });
 
 test('analysis shape and form require an explicit category for a real model', () => {

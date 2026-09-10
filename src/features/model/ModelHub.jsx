@@ -147,7 +147,6 @@ function ActiveDashboard({ license, model, settlementSummary }) {
           </div>
           <dl className={s.hubRuleList}>
             <div><dt>허용 품목</dt><dd>{license ? `${license.allowedUse?.length || 0}개` : '—'}</dd></div>
-            <div><dt>제외 품목</dt><dd>{license ? `${license.forbiddenUse?.length || 0}개` : '—'}</dd></div>
             <div><dt>건당 가격</dt><dd>{unitPrice == null ? '—' : formatKrw(unitPrice)}</dd></div>
             <div><dt>월정액</dt><dd>{unitPrice == null ? '—' : formatKrw(FACEMARKET_PRICING.monthly)}</dd></div>
             <div><dt>유효기간</dt><dd>{validity}</dd></div>
