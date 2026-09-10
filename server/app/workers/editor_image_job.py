@@ -26,6 +26,7 @@ from ..agents import (
     mannequin,
     space_set_assets,
 )
+from ..agents import face_identity
 from ..agents.gemini_image import GeminiError, InlineImage
 from ..agents.model_routing import resolve_editor_cut_model
 from ..agents.vision_llm import VisionError
@@ -116,6 +117,7 @@ async def run_editor_image_job(app, job: dict) -> None:
         fm_source: str | None = None      # 에디터 컷 아이덴티티 소스 — REAL 이면 성공 시 정산 대상
         fm_license_row: dict | None = None
         fm_face_injected = False          # REAL 자산 2장이 실제 첨부됐을 때만 정산(미첨부 과금 방지)
+        vary_lora_spec = None             # 변형 컷 얼굴 패스 근거(fm_model_loras) — 없으면 패스 안 걸림
 
         if mode == "vary":
             source = payload.get("source") or {}
@@ -195,6 +197,11 @@ async def run_editor_image_job(app, job: dict) -> None:
                         brand_use_category=payload.get("brandUseCategory"),
                     )
                 fm_face_injected = True
+                # 변형 컷도 같은 등록자 LoRA 로 얼굴을 고정한다 — 안 그러면 한 상세페이지 안에서
+                # 원본 컷과 변형 컷의 인물이 갈린다. 행이 없으면 None 이라 기존 동작 그대로.
+                async with pool.connection() as _conn:
+                    vary_lora_spec = face_identity.face_identity_from_lora_row(
+                        await identity_source.resolve_enabled_lora(_conn, str(snapshot["modelId"])))
             src_img = InlineImage(
                 src_asset["mime_type"],
                 await asyncio.to_thread(app.state.r2.get_bytes, src_asset["r2_key"]))
@@ -208,8 +215,13 @@ async def run_editor_image_job(app, job: dict) -> None:
             cut_type = source.get("cutType")
             changes = payload.get("changes") or []
             try:
+                # face_identity_spec 은 값이 있을 때만 넘긴다 — 기존 목(mock) 중 이 인자를 모르는
+                # strict-signature 스텁을 깨지 않는다(body_profile 과 같은 관례).
+                _vary_kw = {"ref_bg": ref_bg_img}
+                if vary_lora_spec is not None:
+                    _vary_kw["face_identity_spec"] = vary_lora_spec
                 image, mime = await cut_variator.generate(
-                    editor_settings, app.state.gemini, src_img, changes, cut_type, ref_bg=ref_bg_img)
+                    editor_settings, app.state.gemini, src_img, changes, cut_type, **_vary_kw)
             except GeminiError as e:
                 await _fail("컷 변형에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
                 return
@@ -475,6 +487,8 @@ async def run_editor_image_job(app, job: dict) -> None:
                 and n_model_images >= 2
             )
             body_profile = None
+            hair_profile = face_shape_profile = None
+            fm_lora_spec = None
             if fm_face_injected and isinstance(fm_license_row, dict):
                 _bp = {
                     "gender": fm_license_row.get("gender"),
@@ -483,6 +497,13 @@ async def run_editor_image_job(app, job: dict) -> None:
                 }
                 if _bp["heightBucket"] or _bp["bodyType"]:
                     body_profile = _bp
+                # 등록자별 LoRA 장부(fm_model_loras). 켜진 행이 있으면 그 행이 얼굴 패스의 근거이고,
+                # 머리·얼굴형 프롬프트 블록도 같은 행에서 온다(등록자의 현재 모습이 아니라 LoRA 가 학습한 모습).
+                # 행이 없으면 전부 None 이라 프롬프트가 바이트 단위로 기존과 같고 얼굴 패스도 안 걸린다.
+                async with pool.connection() as _conn:
+                    _lora = await identity_source.resolve_enabled_lora(_conn, str(selected_model_id))
+                hair_profile, face_shape_profile = identity_source.profiles_from_lora_row(_lora)
+                fm_lora_spec = face_identity.face_identity_from_lora_row(_lora)
             mannequin_images = (
                 [InlineImage(
                     cut_mannequin_asset["mime_type"],
@@ -641,6 +662,13 @@ async def run_editor_image_job(app, job: dict) -> None:
                     cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
                 )["_referenceDirectionCompatible"])
             generate_kwargs = {"analysis": analysis, "manifest": manifest}
+            # 값이 없으면 키 자체를 넣지 않는다 — 기존 프롬프트·기존 목(mock) 시그니처를 깨지 않는다.
+            if hair_profile is not None:
+                generate_kwargs["hair_profile"] = hair_profile
+            if face_shape_profile is not None:
+                generate_kwargs["face_shape_profile"] = face_shape_profile
+            if fm_lora_spec is not None:
+                generate_kwargs["face_identity_spec"] = fm_lora_spec
             # 실존 모델 그리드가 실제 첨부된 착장 컷에만 체형 블록을 얹는다(product·VIRTUAL·NONE
             # 소스는 body_profile 이 이미 None) — 키 자체를 생략해 기존 generate() 목(mock) 중
             # body_profile 인자를 모르는 strict-signature 스텁을 깨지 않는다(has_face와 동일 관례).
