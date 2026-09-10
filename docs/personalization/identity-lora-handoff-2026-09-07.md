@@ -995,3 +995,57 @@ MODEL FULL BODY 도 없음(28.C 불채택). `bg` 는 EXAMPLE 을 **첫 첨부**�
 
 **다음에 할 것(미검증)**: 배경이 넉넉한 컷으로 bg 판을 다시 만들어(인물이 프레임의 25% 이하) `refScope="bg"`
 를 재측정. 그때 장소가 따라오면 경로 A 로 갈아탈 근거가 선다.
+
+## 29. ZARA 참조 생성 재측정 — cutType styling → horizon (2026-09-10) — **채택**
+
+§28.D 에서 경로 A 가 4/4 실외로 나온 원인은 EXAMPLE 슬롯이 아니라 **cutType** 이었다.
+`styling` 이면 `cut_plan.uses_styling_all_location_recomposition()` 이 참이 되어
+`"use a coherent different location instance in the same visual family"` 가 붙고
+TASK 가 `"lifestyle styling cut"` 으로 렌더된다. ZARA 는 흰 배경 스튜디오라 `horizon` 이 맞다.
+
+**문구 제거 확인**(렌더 전, API 0회):
+```
+styling  all  · 'different location instance' 남아 있음 ✗ · TASK: Create ONE lifestyle styling cut photo ...
+styling  bg   · 'different location instance' 없음 ✓
+horizon  all  · 'different location instance' 없음 ✓ · TASK: Create ONE clean studio horizon cut photo ...
+horizon  bg   · 'different location instance' 없음 ✓
+```
+(그 문구는 `all` 에만 붙는다 — `styling·bg` 에는 원래 없었다.)
+
+cutType 외 나머지(입력 5장·시드·refScope·프로필·bg 판)는 §28.D 와 동일. 4렌더.
+
+| 컷 | SFace | 줄무늬 | 배경 RGB | 배경 채도 |
+|---|---|---|---|---|
+| zara2 원본(남) | 0.178 | 0.411 | [200,200,196] | 5.7 |
+| zara2 경로B 얼굴패스 | 0.765 | 0.405 | [200,200,196] | 5.7 |
+| zara2 A-styling-all(§28) | 0.837 | 0.000 | [162,160,155] | 10.6 |
+| zara2 **A-horizon-all** | **0.843** | **0.000** | **[227,226,226]** | **0.6** |
+| zara2 A-horizon-bg | 0.858 | 0.000 | [123,125,118] | 12.6 |
+| zara1 원본(남) | 0.149 | 0.389 | [210,210,206] | 5.3 |
+| zara1 경로B 얼굴패스 | 0.714 | 0.382 | [210,210,206] | 5.3 |
+| zara1 A-styling-all(§28) | 0.811 | 0.000 | [145,141,133] | 13.6 |
+| zara1 **A-horizon-all** | **0.785** | **0.000** | **[214,214,214]** | **0.8** |
+| zara1 A-horizon-bg | 0.851 | 0.000 | [134,136,131] | 8.2 |
+
+**판정 = 채택** (규칙: 두 장면 중 적어도 한 scope 에서 흰 스튜디오 · 회색 티 · SFace ≥0.70 · 육안 이음선/뜸 없음).
+`horizon-all` 이 **두 장면 모두**에서 네 조건을 전부 만족한다.
+- 장소: 흰 벽 스튜디오. 배경 채도 0.6·0.8 로 원본(5.7·5.3)보다 오히려 더 무채색이고, styling-all(10.6·13.6)과 확연히 갈린다.
+- 옷: 줄무늬 0.000 — 디네뎃 회색 티. PRODUCT 가 EXAMPLE 을 이겼다.
+- 얼굴: 0.843·0.785, 경로 B(0.765·0.714) 대비 +0.078·+0.071.
+- 이음선: 합성이 없어 구조적으로 0.
+
+`horizon-bg` 는 여전히 실외다 — §28.D 에서 진단한 대로 **bg 판이 퇴화**(zara2 는 인물이 프레임 65%라
+지우니 백지, zara1 도 민벽+바닥)해서 앵커가 없다. cutType 과 무관한 별개 원인이 확인된 셈이다.
+
+**경로 B 의 "뜨는" 세 가지 — 경로 A 에서는 셋 다 없다**(`zara_example_h/seam_compare.png`):
+| 증상 | 경로 B(얼굴패스) | 경로 A(horizon-all) |
+|---|---|---|
+| 머리 위 벽 톤 사각 패치 | 두 컷 모두 뚜렷 | 없음 |
+| 벽 그림자가 패치 경계에서 잘림 | 두 컷 모두 | 없음 |
+| 목·어깨 양옆 흰 얼룩 | 두 컷 모두 | 없음 |
+
+**브랜드 룩북은 편집(경로B) 대신 생성(경로A)으로 가도 되는가 — 한 문장**: 장소·옷·얼굴·이음선 네 축에서
+`horizon-all` 이 경로 B 를 전부 이겼고(흰 스튜디오 재현 · 줄무늬 0 · SFace +0.07~+0.08 · 합성 이음선 구조적 0),
+남의 룩북을 픽셀로 편집하지 않고 참조로만 쓰는 쪽이 법적으로도 안전하므로 **가도 된다** —
+단 cutType 을 장면에 맞게 골라야 하고(스튜디오=horizon, 라이프스타일=styling), `bg` scope 는 배경이
+넉넉한 컷(인물이 프레임 25% 이하)에서 판을 다시 만들어 재측정해야 한다.
