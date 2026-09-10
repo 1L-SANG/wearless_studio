@@ -76,3 +76,47 @@ def test_build_prompt_threads_hair_profile():
         _spec(), product,
         hair_profile={"hairLength": "medium", "hairTexture": "wavy", "hairColor": "brown"})
     assert "medium-length, wavy, brown hair" in prompt
+
+
+# ---------------------------------------------------------------- 얼굴형 블록
+
+
+def test_render_includes_face_shape_block_when_profile_present():
+    prompt = cut_generator.render_cut_prompt(
+        cut_generator.load_cut_template(), cut_generator.normalize_spec(_spec(), clothing_type="top"),
+        {"clothing_type": "top"}, {}, "top", "", has_face=True,
+        face_shape_profile={"faceShape": "oval", "jawLine": "defined"},
+    )
+    assert "SUBJECT FACE SHAPE" in prompt
+    assert "an oval face with a defined jawline" in prompt
+    assert "no authority over facial identity" in prompt
+
+
+def test_render_omits_face_shape_block_when_none_byte_identical():
+    args = (cut_generator.load_cut_template(),
+            cut_generator.normalize_spec(_spec(), clothing_type="top"),
+            {"clothing_type": "top"}, {}, "top", "")
+    base = cut_generator.render_cut_prompt(*args, has_face=True)
+    for profile in (None, {}, {"faceShape": "nope"}):
+        assert cut_generator.render_cut_prompt(*args, has_face=True, face_shape_profile=profile) == base
+
+
+def test_render_omits_face_shape_block_on_product_cut():
+    prompt = cut_generator.render_cut_prompt(
+        cut_generator.load_cut_template(),
+        cut_generator.normalize_spec(_product_spec(), clothing_type="top"),
+        {"clothing_type": "top"}, {}, "top", "",
+        face_shape_profile={"faceShape": "oval", "jawLine": "defined"},
+    )
+    assert "SUBJECT FACE SHAPE" not in prompt
+
+
+def test_build_prompt_threads_hair_and_face_shape_together():
+    product = {"clothing_type": "top", "colors": [{"id": "c1", "isBase": True, "images": []}]}
+    prompt = cut_generator.build_prompt(
+        _spec(), product,
+        hair_profile={"hairLength": "short", "hairTexture": "straight", "hairColor": "black"},
+        face_shape_profile={"faceShape": "oval", "jawLine": "defined"})
+    assert "short, straight, black hair" in prompt
+    assert "an oval face with a defined jawline" in prompt
+    assert prompt.index("SUBJECT HAIR") < prompt.index("SUBJECT FACE SHAPE")

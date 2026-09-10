@@ -126,6 +126,31 @@ assert set(_HAIR_COLOR_LABELS) == set(HAIR_COLORS), "_HAIR_COLOR_LABELS keys mus
 assert set(_HAIR_TEXTURE_LABELS) == set(HAIR_TEXTURES), "_HAIR_TEXTURE_LABELS keys must match HAIR_TEXTURES"
 
 
+#: 얼굴형 — enum 2축. hair 와 같은 이유로 **LoRA 가 학습한 얼굴형**이지 등록자의 현재 얼굴이 아니다
+#: (LoRA 는 촬영분의 얼굴을 그대로 배운다). 그래서 값은 fm_models 가 아니라 LoRA 행(fm_model_loras)에 붙는다.
+#: 쓰임: 경로 A(gpt-image)에서 생성기가 **처음부터 비슷한 턱을 그리게** 시켜 얼굴 패스의 턱 실루엣 불일치를 줄인다
+#: (§24 실측: 생성 턱이 원본보다 좁고 위에 있어 원본 턱 옆 음영이 타원 밖에 남는다 — 합성으로는 못 고친다).
+#: v6 LoRA 는 사람이 보고 {oval, defined} 로 잠정 판정했다(측정값 아님).
+FACE_SHAPES: tuple[str, ...] = ("oval", "round", "square", "heart", "long")
+JAW_LINES: tuple[str, ...] = ("soft", "defined", "angular")
+
+_FACE_SHAPE_LABELS: dict[str, tuple[str, str]] = {
+    "oval": ("계란형", "an oval face"),
+    "round": ("둥근형", "a round face"),
+    "square": ("각진형", "a square face"),
+    "heart": ("역삼각형", "a heart-shaped face"),
+    "long": ("긴형", "a long face"),
+}
+_JAW_LINE_LABELS: dict[str, tuple[str, str]] = {
+    "soft": ("부드러운 턱선", "a soft jawline"),
+    "defined": ("또렷한 턱선", "a defined jawline"),
+    "angular": ("각진 턱선", "an angular jawline"),
+}
+
+assert set(_FACE_SHAPE_LABELS) == set(FACE_SHAPES), "_FACE_SHAPE_LABELS keys must match FACE_SHAPES"
+assert set(_JAW_LINE_LABELS) == set(JAW_LINES), "_JAW_LINE_LABELS keys must match JAW_LINES"
+
+
 class PhysiqueError(Exception):
     def __init__(self, code: str, message: str):
         super().__init__(message)
@@ -234,4 +259,36 @@ def build_hair_block(profile: Mapping | None) -> str:
     return (
         "SUBJECT HAIR (generated; owned by the registrant's trained likeness): the model has "
         + ", ".join(parts) + " hair. Keep it consistent across cuts; it has no authority over the face."
+    )
+
+
+def validate_face_shape(*, face_shape: str | None, jaw_line: str | None) -> None:
+    """부분 입력 허용(각 축 독립). 위반 시 PhysiqueError('invalid_face_shape')."""
+    for value, allowed, name in ((face_shape, FACE_SHAPES, "얼굴형"), (jaw_line, JAW_LINES, "턱선")):
+        if value is None:
+            continue
+        if not isinstance(value, str) or value not in allowed:
+            raise PhysiqueError("invalid_face_shape", f"{name} 값이 올바르지 않습니다.")
+
+
+def build_face_shape_block(profile: Mapping | None) -> str:
+    """profile={"faceShape","jawLine"} → 영문 프롬프트 블록. 둘 중 하나라도 있으면 낸다.
+
+    자유문자열 미방출 — enum→고정 문구만. 얼굴 **정체성**에는 권한이 없다(정체성은 참조 이미지가 소유).
+    """
+    if not isinstance(profile, Mapping):
+        return ""
+    shape = profile.get("faceShape")
+    jaw = profile.get("jawLine")
+    shape_en = _FACE_SHAPE_LABELS[shape][1] if isinstance(shape, str) and shape in _FACE_SHAPE_LABELS else ""
+    jaw_en = _JAW_LINE_LABELS[jaw][1] if isinstance(jaw, str) and jaw in _JAW_LINE_LABELS else ""
+    if shape_en and jaw_en:
+        desc = f"{shape_en} with {jaw_en}"
+    else:
+        desc = shape_en or jaw_en
+    if not desc:
+        return ""
+    return (
+        "SUBJECT FACE SHAPE (generated; owned by the registrant's trained likeness): the model has "
+        + desc + ". It has no authority over facial identity."
     )
