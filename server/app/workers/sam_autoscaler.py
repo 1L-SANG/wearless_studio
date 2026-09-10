@@ -137,6 +137,14 @@ class SamAutoscaler:
 
         await self._check_long_run(state, want)
         stalled = self._track_start(state)
+        if stalled and want:
+            # 수요가 있으니 끄지는 않는다(끄면 곧바로 다시 켜야 한다) — 대신 알린다.
+            # 이 알림이 없으면 "켜져 있는데 영원히 안 뜨는" 상태를 아무도 모른다.
+            await self._alert(f"{self._name} autoscale: not healthy while work is waiting",
+                              f"{self._start_grace_minutes()}분이 지나도 헬스가 통과하지 못했는데 "
+                              "대기 중인 작업이 있습니다. 파드는 그대로 둡니다 — 시작 스크립트·토큰·"
+                              "볼륨을 확인하세요.",
+                              debounce_seconds=ALERT_DEBOUNCE_SECONDS)
 
         if want and state.desired < want_n:
             return await self._scale(target, want_n, "up")

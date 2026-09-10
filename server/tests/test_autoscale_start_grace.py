@@ -108,14 +108,16 @@ def test_healthy_pod_resets_the_start_clock():
 
 
 def test_demand_present_keeps_the_pod_even_when_stalled():
-    """수요가 있으면 죽이지 않는다 — 내려도 곧바로 다시 켜야 해서 무의미하다."""
+    """수요가 있으면 죽이지 않는다 — 내려도 곧바로 다시 켜야 해서 무의미하다. 대신 알린다."""
     adapter = _Adapter(ServiceState(desired=1, running=0, pending=1, oldest_started_at=None))
     scaler = _scaler(_app(face_autoscale_start_grace_minutes=8), adapter,
                      demand=DemandSnapshot(3, None, None))
     _run(scaler)
+    assert adapter.alerts == []          # 유예 안에서는 조용하다
     _clock(scaler, 30 * 60)
     assert _run(scaler) == "noop"
-    assert adapter.scaled == []
+    assert adapter.scaled == []          # 파드는 그대로
+    assert any("not healthy while work is waiting" in a for a in adapter.alerts)
 
 
 @pytest.mark.parametrize("grace_attr,minutes", [(None, 8), ("face_autoscale_start_grace_minutes", 0)])

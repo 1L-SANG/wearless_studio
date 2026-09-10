@@ -192,8 +192,13 @@ class RunpodAutoscaleAdapter:
         log.info("face autoscale: pod %s %s", target.pod_id, action)
 
     async def notify(self, subject: str, body: str) -> None:
-        # SNS 토픽을 따로 두지 않는다 — 크리티컬 로그가 이미 Slack 으로 간다.
-        log.error("face autoscale alert: %s — %s", subject, body)
+        """SNS 토픽 대신 **CRITICAL 로그**로 알린다.
+
+        api 의 Slack 필터(main 18b24cf2)는 "http error status=5" · " CRITICAL " · "CRITICAL:" ·
+        "Application startup failed" 만 잡는다. log.error 로 남기면 CloudWatch 에는 있고
+        Slack 에는 안 가서 "never became healthy" 같은 알림이 조용히 사라진다.
+        """
+        log.critical("face autoscale alert: %s — %s", subject, body)
 
 
 def _health_url(backend_url) -> str | None:

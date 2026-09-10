@@ -20,12 +20,18 @@ PORT="${FACE_RENDER_PORT:-8000}"
 mkdir -p "$ROOT"/{hf,loras,logs}
 LOG="$ROOT/logs/service-$(date -u +%Y%m%dT%H%M%SZ).log"
 
-# 토큰: 운영은 파드 env(RunPod Secret 참조)가 정본. 없으면 볼륨의 .token 파일을 쓴다
-# (측정·개발용 — 값이 명령줄이나 API 응답에 실리지 않게 하려는 것).
-if [ -z "${FACE_RENDER_TOKEN:-}" ] && [ -f "$ROOT/.token" ]; then
-  FACE_RENDER_TOKEN="$(cat "$ROOT/.token")"
-  export FACE_RENDER_TOKEN
-fi
+# 토큰은 **파드 env 하나뿐**이다(운영: {{ RUNPOD_SECRET_face_render_token }}).
+# 볼륨 파일 폴백은 두지 않는다 — 볼륨에 토큰을 두면 그 파일이 곧 유출 지점이 된다.
+# 비었거나 자리표시자면 서비스를 띄우지 않는다: 그대로 뜨면 그 고정 문자열이 토큰이 되고,
+# 프록시 URL 은 이미 매니페스트에 커밋돼 있어 누구나 때릴 수 있다.
+case "${FACE_RENDER_TOKEN:-}" in
+  "" )
+    echo "start.sh: FACE_RENDER_TOKEN 이 비어 있다 — 서비스를 띄우지 않는다" | tee -a "$LOG" >&2
+    exit 78 ;;   # EX_CONFIG
+  PLACEHOLDER* )
+    echo "start.sh: FACE_RENDER_TOKEN 이 자리표시자다 — 서비스를 띄우지 않는다" | tee -a "$LOG" >&2
+    exit 78 ;;
+esac
 
 if [ -f "$ROOT/VERSION" ]; then
   export FACE_RENDER_CODE_VERSION="$(cat "$ROOT/VERSION")"

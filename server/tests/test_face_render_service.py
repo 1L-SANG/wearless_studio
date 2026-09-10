@@ -17,7 +17,8 @@ from PIL import Image
 import face_render_service as svc
 from app.agents import face_identity
 
-TOKEN = "s3cret-internal"
+# 32자 이상 — 프록시 URL 이 매니페스트에 있어 이 엔드포인트는 사실상 공개 주소다.
+TOKEN = "s3cret-internal-0123456789abcdefghij"
 LORA_KEY = "facemarket/loras/m/v1.safetensors"
 
 
@@ -89,6 +90,27 @@ def test_render_requires_token(client, monkeypatch):
     assert client.post("/render", json=payload).status_code == 401
     assert client.post("/render", json=payload,
                        headers={"Authorization": "Bearer wrong"}).status_code == 401
+
+
+def test_short_token_is_refused_as_a_config_error(monkeypatch):
+    """약한 토큰으로 열지 않는다 — 있으나 마나 한 토큰은 없는 것과 같다."""
+    monkeypatch.setattr(svc, "TOKEN", "short-token")
+    client = TestClient(svc.app)
+    body = client.get("/healthz").json()
+    assert body["token_configured"] is False          # 헬스에서 설정 오류가 드러난다
+    res = client.post("/render", json={
+        "control_png": base64.b64encode(_png()).decode(), "prompt": "p", "lora": LORA_KEY},
+        headers={"Authorization": "Bearer short-token"})
+    assert res.status_code == 503 and "too short" in res.text
+    assert svc.MIN_TOKEN_LEN >= 32
+
+
+def test_start_script_refuses_placeholder_and_has_no_file_fallback():
+    """볼륨 .token 폴백을 두면 그 파일이 곧 유출 지점이다 — 토큰은 파드 env 하나뿐."""
+    text = pathlib.Path(svc.__file__).parent.joinpath("deploy/face_render/start.sh").read_text()
+    assert "$ROOT/.token" not in text
+    assert "PLACEHOLDER* )" in text
+    assert "exit 78" in text
 
 
 def test_render_is_closed_when_token_unset(monkeypatch):

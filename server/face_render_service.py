@@ -133,10 +133,17 @@ async def _lifespan(_app: FastAPI):
 app = FastAPI(title="face-render", lifespan=_lifespan)
 
 
+#: 토큰 최소 길이. 프록시 URL 이 매니페스트에 있으므로 이 엔드포인트는 사실상 공개 주소다 —
+#: 짧은 토큰은 없는 것과 같다. secrets.token_urlsafe(32) 는 43자를 만든다.
+MIN_TOKEN_LEN = 32
+
+
 def _authorize(authorization: str | None) -> None:
-    """토큰이 설정돼 있지 않으면 **닫는다**(fail-closed) — 열린 GPU 엔드포인트를 만들지 않는다."""
+    """토큰이 없거나 너무 짧으면 **닫는다**(fail-closed) — 약한 토큰으로 열지 않는다."""
     if not TOKEN:
         raise HTTPException(503, "FACE_RENDER_TOKEN not configured")
+    if len(TOKEN) < MIN_TOKEN_LEN:
+        raise HTTPException(503, f"FACE_RENDER_TOKEN too short (min {MIN_TOKEN_LEN})")
     expected = f"Bearer {TOKEN}"
     if not authorization or not hmac.compare_digest(authorization, expected):
         raise HTTPException(401, "unauthorized")
@@ -251,7 +258,7 @@ def healthz() -> dict:
         "loaded": _state["backend"] is not None,
         "lora": _state["lora"],
         "renders": _state["renders"],
-        "token_configured": bool(TOKEN),
+        "token_configured": bool(TOKEN) and len(TOKEN) >= MIN_TOKEN_LEN,
         "model_id": MODEL_ID,
         "cpu_offload": CPU_OFFLOAD,
         "code_version": CODE_VERSION,
