@@ -77,5 +77,5 @@ def test_live_adjust_prompt_preserves_optical_behavior_without_alpha_canvas() ->
     assert "output canvas and background free of alpha" in prompt
     for evidence in ("opaque garment", "sheerness", "mesh", "lace", "crochet", "open knit"):
         assert evidence in prompt
-    assert "current cut and its reference photos" in prompt
+    assert "follows its reference photos" in prompt
     assert "faded or ghosted overlay" in prompt

@@ -73,12 +73,12 @@ FIT_AXES = {
             "women": [
                 {"value": "above_ankle", "label": "발목 위", "promptEn": "hem ends just above the ankle bone, ankle visible"},
                 {"value": "ankle", "label": "발목", "promptEn": "hem ends at the ankle bone, no break"},
-                {"value": "below_ankle", "label": "발목 덮음", "promptEn": "a lengthened version of the same trousers whose hem falls just past the ankle and rests lightly on the top of the foot with one soft break; if the photographed garment stops at or above the ankle bone, visibly re-tailor only its length proportions by extending the leg hems down over the instep until a single soft break forms; if it already satisfies this target, preserve those proportions"},
+                {"value": "below_ankle", "label": "발목 덮음", "promptEn": "a lengthened version of the same trousers whose hem falls past the ankle and reaches the top of the foot; if the photographed garment stops at or above the ankle bone, re-tailor only its length proportions by extending the leg hems down over the instep; preserve the photographed leg width and fabric behavior, letting any folds follow body contact naturally without a prescribed fold count; if it already satisfies this hem position, preserve those proportions"},
             ],
             "men": [
                 {"value": "above_ankle", "label": "발목 위", "promptEn": "hem ends just above the ankle bone, ankle visible"},
                 {"value": "ankle", "label": "발목", "promptEn": "hem ends at the ankle bone, no break"},
-                {"value": "below_ankle", "label": "발목 덮음", "promptEn": "a lengthened version of the same trousers whose hem falls just past the ankle and rests lightly on the top of the foot with one soft break; if the photographed garment stops at or above the ankle bone, visibly re-tailor only its length proportions by extending the leg hems down over the instep until a single soft break forms; if it already satisfies this target, preserve those proportions"},
+                {"value": "below_ankle", "label": "발목 덮음", "promptEn": "a lengthened version of the same trousers whose hem falls past the ankle and reaches the top of the foot; if the photographed garment stops at or above the ankle bone, re-tailor only its length proportions by extending the leg hems down over the instep; preserve the photographed leg width and fabric behavior, letting any folds follow body contact naturally without a prescribed fold count; if it already satisfies this hem position, preserve those proportions"},
             ],
         },
     },
@@ -185,7 +185,7 @@ AXIS_OBSERVABLES = {
     ("pants", "cut", "semi_wide"): "moderate straight column below the knee, wider than straight but narrower than wide, with moderately broad, non-flared hem openings",
     ("pants", "length", "above_ankle"): "both hems just above the ankle bones with a visible ankle gap and unobscured",
     ("pants", "length", "ankle"): "both hems at the ankle bones with no break and unobscured",
-    ("pants", "length", "below_ankle"): "both hems extend past and fully cover the ankle bones, forming one visible soft fold over each instep",
+    ("pants", "length", "below_ankle"): "both hems extend past and fully cover the ankle bones, reaching the tops of the feet; judge the hem endpoint, not a required crease or fold",
     ("skirt", "length", "mini"): "entire hem above mid-thigh and fully visible",
     ("skirt", "length", "midi"): "entire hem between knee and mid-calf and fully visible",
     ("skirt", "length", "long"): "entire hem from lower calf to ankle and fully visible",

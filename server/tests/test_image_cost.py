@@ -15,6 +15,66 @@ from app import image_usage
 PRO = "gemini-3-pro-image"
 FLASH = "gemini-3.1-flash-image"
 GPT_IMAGE_2 = "gpt-image-2"
+GPT_IMAGE_25_MODELS = (
+    "gpt-image-2.5-flare", "gpt-image-2.5-sunburst",
+    "gpt-image-2.5-flare-2026-09-08", "gpt-image-2.5-sunburst-2026-09-08",
+)
+
+
+@pytest.mark.parametrize("model", GPT_IMAGE_25_MODELS)
+def test_image_25_uses_actual_output_tokens_instead_of_image_2_prediction(model):
+    # Real 2K Flare/Sunburst fixture: output was 532 tokens, not Image 2's 2127.
+    cost = estimate_cost(model, "1536x2304", {
+        "input_tokens": 9238,
+        "input_tokens_details": {"image_tokens": 6916, "text_tokens": 2322},
+        "output_tokens": 532,
+        "output_tokens_details": {"image_tokens": 532, "text_tokens": 0},
+        "total_tokens": 9770,
+    })
+    assert cost.source == "usage"
+    assert cost.input_tokens == 9238
+    assert cost.output_image_tokens == 532
+    assert cost.usd == pytest.approx(0.082898, abs=1e-9)
+
+
+@pytest.mark.parametrize("model", GPT_IMAGE_25_MODELS[:2])
+def test_image_25_preserves_modality_specific_cache_discounts(model):
+    cost = estimate_cost(model, "1536x2304", {
+        "input_tokens": 3000,
+        "input_tokens_details": {
+            "text_tokens": 1000, "image_tokens": 2000,
+            "text_tokens_details": {"cached_tokens": 400},
+            "image_tokens_details": {"cached_tokens": 500},
+        },
+        "output_tokens": 100,
+        "output_tokens_details": {"image_tokens": 100},
+    })
+    assert cost.usd == pytest.approx(0.0195, abs=1e-9)
+
+
+@pytest.mark.parametrize("model", GPT_IMAGE_25_MODELS[:2])
+def test_image_25_without_usage_does_not_invent_a_price(model):
+    cost = estimate_cost(model, "1536x2304", None)
+    assert cost.usd is None
+    assert cost.source == "unavailable_usage"
+
+
+@pytest.mark.parametrize("model", GPT_IMAGE_25_MODELS[:2])
+def test_image_25_invalid_token_totals_are_not_billed_as_zero(model):
+    cost = estimate_cost(model, "1536x2304", {
+        "input_tokens": 999,
+        "input_tokens_details": {"text_tokens": 100, "image_tokens": 200},
+        "output_tokens": 100,
+        "output_tokens_details": {"image_tokens": 100},
+    })
+    assert cost.usd is None
+    assert cost.source == "invalid_usage"
+
+
+@pytest.mark.parametrize("model", ["gpt-image-2.5", "gpt-image-2.5-flare-preview", "gpt-image-2.50-flare"])
+def test_unknown_image_25_variant_is_not_silently_assigned_a_rate(model):
+    cost = estimate_cost(model, "1536x2304", None)
+    assert cost.usd is None and cost.source == "unknown_model"
 
 
 def _usage(prompt: int, image: int, text: int = 0) -> dict:

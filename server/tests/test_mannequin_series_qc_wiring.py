@@ -313,11 +313,14 @@ def test_final_reject_feedback_includes_critical_errors(monkeypatch):
         return {"consistency": 99, "inconsistencies": []}
 
     monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    sequence = iter([_p2c(99, critical=["logo altered"]), _p2c(99)])
+
+    async def verdict(*args, **kwargs):
+        return next(sequence)
+
+    monkeypatch.setattr(mannequin_job.image_qc, "verdict", verdict)
     _r, g, _r2, _e = harness._run(
-        monkeypatch, mode="off", guard=True, max_attempts=2, verdicts=[], image_qc="enforce",
-        p2={"verdict": "pass", "mismatches": [], "correctionPrompt": None,
-            "product_fidelity": 99, "physical_naturalness": 99, "image_quality": 99,
-            "series_consistency": None, "critical_errors": ["logo altered"]})
+        monkeypatch, mode="off", guard=True, max_attempts=2, verdicts=[], image_qc="enforce")
     assert len(g.calls) == 2, "치명 오류는 점수와 무관하게 재생성이어야 한다"
     assert "CRITICAL" in g.calls[1]["prompt"] and "logo altered" in g.calls[1]["prompt"]
 
@@ -480,7 +483,8 @@ def test_edit_regressed_only_fires_on_grade_drop_or_new_critical():
     assert edit_regressed(s, _p2(90), _p2(70)) is True, "auto_pass → needs_review"
     assert edit_regressed(s, _p2(90), _p2(30)) is True, "실측된 85→30 손상"
     assert edit_regressed(s, _p2(90), _p2(90, critical=["logo altered"])) is True
-    assert edit_regressed(s, _p2(90, critical=["x"]), _p2(90, critical=["x"])) is False
+    assert edit_regressed(s, _p2(90, critical=["x"]), _p2(90, critical=["x"])) is True, \
+        "비정형 치명 판정만으로 기존 결함이 그대로라고 단정하지 않는다"
     assert edit_regressed(s, _p2(70), _p2(90)) is False, "개선을 되돌리면 안 된다"
     # 신호 부재는 비교 불가 → 기존 동작(편집 유지) 유지
     assert edit_regressed(s, None, _p2(30)) is False
@@ -953,13 +957,8 @@ def test_generation_failure_still_salvages_accumulated_candidate(monkeypatch):
     assert salv and salv[-1]["reason"] == "loop_exhausted"
 
 
-def test_pre_gate_only_candidate_is_processed_then_salvaged(monkeypatch):
-    """사전 게이트 후보만 남고 후속 생성이 전부 죽어도 빈손으로 끝나지 않는다.
-
-    "마지막 거절본이라도 빈손보다 낫다"는 기존 계약(test_mannequin_axis_qc)과 "검증 안 된
-    원본을 그대로 내보내지 않는다"(codex 4차 HIGH)를 **둘 다** 지켜야 한다 — 즉 편집·D축을
-    태운 뒤 구제한다(codex 10차 HIGH).
-    """
+def test_critical_pre_gate_candidate_is_not_shipped_when_final_generation_fails(monkeypatch):
+    """치명 오류 구제본은 최종 한 장도 실패하면 출고하지 않는다."""
     import test_mannequin_axis_qc as harness
     from app.agents.gemini_image import GeminiError
 
@@ -985,18 +984,17 @@ def test_pre_gate_only_candidate_is_processed_then_salvaged(monkeypatch):
 
     monkeypatch.setattr(mannequin_job, "_apply_axis_qc", fake_axis)
     monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
-    result, _g, r2, emits = harness._run(
-        monkeypatch, mode="enforce", guard=True, max_attempts=3, verdicts=[], image_qc="enforce",
-        gemini=_G(),
-        p2=_p2c(20, critical=["logo altered"]))          # 매 attempt 사전 게이트 거절
+    provider, storage = _G(), harness._R2()
+    monkeypatch.setattr(harness, '_R2', lambda: storage)
+    with pytest.raises(mannequin_job.MannequinQualityError):
+        harness._run(
+            monkeypatch, mode="enforce", guard=True, max_attempts=3, verdicts=[], image_qc="enforce",
+            gemini=provider, p2=_p2c(20, critical=["logo altered"]))
 
-    assert result is not None, "사전 게이트 후보를 들고도 빈손으로 끝났다"
-    assert result["qc_scores"]["salvaged"] is True
     assert seen["series"] == 1, "구제본이 D축 판정을 못 받았다"
     assert seen["axis"] == 1, "구제본이 편집 단계를 건너뛰었다(사전 게이트 경로는 축 QC 미실행)"
-    assert result["qc_scores"]["series_consistency"] == 55
-    assert len(r2.puts) == 1 and r2.puts[0][1] == b"only-cut"
-    assert [p for _t, p in emits if p.get("status") == "qc_salvaged"][-1]["reason"] == "loop_exhausted"
+    assert len(provider.calls) == 4
+    assert storage.puts == []
 
 
 def test_real_axis_qc_respects_shared_budget(monkeypatch):
@@ -1345,7 +1343,11 @@ def test_bottom_product_manifest_and_prompt_keep_the_product_visible():
 
     template = load_prompt_template(make_settings())
     assert "MATCHING TOP (if attached" in template
-    assert "waistband, closure and belt loops are visible" in template, \
-        "관측 가능한 목표 — 상품 허리 전부 노출"
+    assert "entire waistband and photographed front construction remain visible" in template, \
+        "상품 허리와 사진에 있는 앞면 구조가 보여야 한다"
+    assert "only if actually present in the product photos" in template, \
+        "사진에 없는 벨트 고리나 외부 잠금 장식은 추가하지 않는다"
+    assert "keep hidden closures hidden" in template
+    assert "waistband, closure and belt loops are visible" not in template
     assert "unless a matching-top length is declared" in template, \
         "셀러가 조정하면(WS2 스텝) 선언이 이긴다"

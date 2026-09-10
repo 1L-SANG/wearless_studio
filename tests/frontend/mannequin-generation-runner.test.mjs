@@ -602,9 +602,10 @@ test('generateMannequins signals the job start only after the 200 cache branch h
     source.indexOf('async generateMannequins'),
     source.indexOf('async adjustMannequin'),
   );
-  assert.match(body, /\{ onProgress, onJobStarted \} = \{\}/);
+  assert.match(body, /\{ onProgress, onJobStarted, idempotencyKey, resumeJobId \} = \{\}/);
+  assert.match(body, /'Idempotency-Key': idempotencyKey/);
   const cacheReturn = body.indexOf('return { data: res.data, credits: res.credits };');
-  const signal = body.indexOf('onJobStarted?.(res.jobId)');
+  const signal = body.indexOf('onJobStarted?.(jobId)');
   assert.ok(cacheReturn > 0 && signal > 0);
   // 200 캐시 early-return 이 신호보다 먼저 와야 한다 — 순서가 뒤집히면 job 없는 응답도
   // "시작했다" 로 보고된다.

@@ -90,7 +90,9 @@ def test_the_qc_only_reaches_the_decision_path_through_the_policy_function():
     assert "base_fidelity = await _observe_generation_qc" in code
     observer = _code_only(_func_source("_observe_generation_qc"))
     assert "_apply_base_fidelity_qc(" in observer
-    assert code.count("base_fidelity_retry_axes(s, base_fidelity)") == 1
+    # 일반 재롤과 최종 1회 구제 모두 이 정책을 사용한다. 실제 모드별 저장·거절은
+    # test_mannequin_quality_repair의 최종 이미지 하니스에서 검증한다.
+    assert "base_fidelity_retry_axes(s, base_fidelity)" in code
     # 점수 계산·구제 판단에는 절대 섞이지 않는다.
     for consumer in ("merge_qc_scores", "_is_better_candidate", "score_outcome"):
         for line in code.splitlines():

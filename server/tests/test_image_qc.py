@@ -4,6 +4,7 @@ from app.agents import image_qc as iq
 from app.config import Settings, load_settings
 from app.agents.gemini_image import InlineImage
 from conftest import make_settings
+from test_mannequin_quality import assessment
 
 
 def run(coro):
@@ -362,6 +363,7 @@ def test_verdict_inserts_match_between_products_and_generated(monkeypatch):
         assert "MATCHING BOTTOM" in prompt
         return ({"verdict": "pass", "product_fidelity": 92, "physical_naturalness": 90,
                  "image_quality": 88, "series_consistency": None, "critical_errors": [],
+                 **assessment(),
                  "matching_fidelity": 84,
                  "matching_critical_errors": ["matching bottom leg width changed"]}, "gemini")
 
@@ -386,7 +388,7 @@ def test_verdict_without_match_is_byte_identical_to_baseline(monkeypatch):
         captured["matching_in_prompt"] = "MATCHING BOTTOM" in prompt
         captured["matching_in_schema"] = "matching_fidelity" in schema["properties"]
         return ({"verdict": "pass", "product_fidelity": 90, "physical_naturalness": 90,
-                 "image_quality": 90, "series_consistency": None, "critical_errors": []}, "gemini")
+                 "image_quality": 90, "series_consistency": None, **assessment()}, "gemini")
 
     monkeypatch.setattr(iq, "analyze_with_fallback", fake_fallback)
     out = run(iq.verdict(make_settings(gemini_api_key="x"), [_img(), _img()],
