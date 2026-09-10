@@ -121,7 +121,46 @@ async def _seller_catalog(conn, user_id, product, analysis):
     return result
 
 
-async def snapshot_request(conn, user_id, project_id, project, product, analysis, storyboard, request):
+async def _length_catalog(conn, user_id, project_id, selections, matching_ids, public_bucket):
+    if set(selections) - {"target", *matching_ids}:
+        raise ValueError("wearshot_v2_unused_length_selection")
+    result = {}
+    for selector, aid in sorted(selections.items()):
+        asset = await repo.get_owned_public_project_image(conn, user_id, project_id, aid)
+        if (not isinstance(asset, dict) or asset.get("id") != aid or asset.get("project_id") != project_id
+                or asset.get("source") not in {"upload", "ai", "derived"}
+                or asset.get("mime_type") not in {"image/png", "image/jpeg", "image/webp"}
+                or not asset.get("r2_key") or not public_bucket or asset.get("r2_bucket") != public_bucket):
+            raise ValueError("wearshot_v2_owned_length_image_required")
+        provenance = await repo.get_asset_facemarket_provenance(conn, user_id, aid)
+        metadata = asset.get("metadata") or {}
+        if (not isinstance(metadata, dict) or not isinstance(provenance, dict)
+                or provenance.get("real_derived") is not False or provenance.get("facemarket") is not None
+                or metadata.get("facemarket_real_derived") is True
+                or (asset["source"] in {"ai", "derived"} and metadata.get("facemarket_real_derived") is not False)):
+            raise ValueError("wearshot_v2_length_private_or_unproven")
+        result[selector] = {"asset": deepcopy(asset), "provenance": deepcopy(provenance)}
+    return result
+
+
+async def _verify_length_catalog(conn, user_id, project_id, storyboard, clothing, snapshot, public_bucket=None):
+    selections = snapshot["request"].get("lengthReferenceAssets", {})
+    expected = snapshot.get("lengthReferences", {})
+    if set(expected) != set(selections):
+        raise ValueError("wearshot_v2_queued_length_changed")
+    if not selections:
+        return
+    if public_bucket is None:
+        public_bucket = next(iter(expected.values()))["asset"]["r2_bucket"]
+    observed = await _length_catalog(conn, user_id, project_id, selections,
+                                      _matching_ids(storyboard, clothing), public_bucket)
+    if any(observed[key] != {field: value for field, value in expected[key].items()
+                             if field not in {"sha256", "byteLength"}} for key in observed):
+        raise ValueError("wearshot_v2_queued_length_changed")
+
+
+async def snapshot_request(conn, user_id, project_id, project, product, analysis, storyboard, request,
+                           *, load_length_asset=None, public_bucket=None):
     from ..models import WearshotGenerateRequest
     request = WearshotGenerateRequest.model_validate(request).model_dump(mode="json")
     clothing = product.get("clothing_type") or product.get("clothingType") or "top"
@@ -129,6 +168,15 @@ async def snapshot_request(conn, user_id, project_id, project, product, analysis
     catalog = catalog_projection(product, analysis, storyboard)
     if set(request["matchingMannequinAssets"]) - ids:
         raise ValueError("wearshot_v2_unused_matching_selection")
+    lengths = await _length_catalog(conn, user_id, project_id, request.get("lengthReferenceAssets", {}), ids, public_bucket)
+    for row in lengths.values():
+        if load_length_asset is None:
+            raise ValueError("wearshot_v2_length_bytes_required")
+        try:
+            image = await load_length_asset(row["asset"])
+            row.update(sha256=image_sha256(image), byteLength=len(image.data))
+        except Exception:
+            raise ValueError("wearshot_v2_length_bytes_unavailable") from None
     selected = project.get("selected_mannequin_id") or project.get("selectedMannequinId")
     cuts = await repo.list_mannequin_cuts(conn, user_id, project_id)
     cut = next((c for c in cuts if f"{c.get('candidate')}-{c.get('version')}" == selected), None)
@@ -156,6 +204,7 @@ async def snapshot_request(conn, user_id, project_id, project, product, analysis
     seller_catalog = await _seller_catalog(conn, user_id, product, analysis)
     return {"request": request, "target": target, "matching": matching, "catalog": catalog, "matchingCatalog": matching_catalog,
             "sellerCatalog": seller_catalog,
+            **({"lengthReferences": lengths} if lengths else {}),
             "selectionFingerprint": selection_fingerprint(project, product, analysis, storyboard)}
 
 
@@ -165,6 +214,7 @@ async def verify_snapshot(conn, user_id, project_id, project, product, analysis,
     if snapshot.get("catalog") != catalog_projection(product, analysis, storyboard):
         raise ValueError("wearshot_v2_queued_catalog_changed")
     clothing = product.get("clothing_type") or product.get("clothingType") or "top"
+    await _verify_length_catalog(conn, user_id, project_id, storyboard, clothing, snapshot)
     if snapshot.get("matchingCatalog") != await _matching_catalog(conn, user_id, project_id, _matching_ids(storyboard, clothing)):
         raise ValueError("wearshot_v2_queued_matching_changed")
     if snapshot.get("sellerCatalog") != await _seller_catalog(conn, user_id, product, analysis):
@@ -256,7 +306,8 @@ def validate_output_size(image, output_size: str) -> str:
 
 def build_contract(*, target_id, target_asset_id, target_image, seller_images, evidence_contract,
                    matching, face_image, body_image, model_id, example_image, directing, scope,
-                   clothing_type, variation_axis="pose", capture_profile="soft"):
+                   clothing_type, variation_axis="pose", capture_profile="soft",
+                   length_references=None, directing_mode=None):
     """Bind exact original seller ordinals and reviewed category/crop scope; no grid flattening."""
     from . import product_evidence_contract
     if (not isinstance(scope, dict) or set(scope) != {"allSha256", "faceVisibility", "garmentScopes"}
@@ -269,7 +320,16 @@ def build_contract(*, target_id, target_asset_id, target_image, seller_images, e
     if not product_evidence_contract.source_binding_matches(evidence,
             [(image.data, image.mime) for slot, image, aid in seller_images], [slot for slot, image, aid in seller_images]):
         raise ValueError("wearshot_v2_seller_binding_changed")
+    length_references = length_references or {}
+    if set(length_references) - {"target", *(row[0] for row in matching)}:
+        raise ValueError("wearshot_v2_unused_length_selection")
     refs = [BoundReference("target-anchor", "approvedMannequin", target_image, target_id, asset_id=target_asset_id)]
+    def length_reference(selector, garment_id, key):
+        if selector not in length_references:
+            return None
+        image, asset_id = length_references[selector]
+        refs.append(BoundReference(key, "approvedLength", image, garment_id, asset_id=asset_id))
+        return key
     seller_keys = []
     slots = {}
     for ordinal, (slot, image, aid) in enumerate(seller_images, 1):
@@ -281,7 +341,8 @@ def build_contract(*, target_id, target_asset_id, target_image, seller_images, e
         tuple(seller_keys[ordinal - 1] for ordinal in fact["evidenceOrdinals"]),
         visible=not all(slots[ordinal] in {"Back", "BackDetail"} for ordinal in fact["evidenceOrdinals"]))
         for fact in evidence["hardFacts"])
-    target = GarmentBinding(target_id, "target-anchor", tuple(seller_keys), essentials, tuple(categories[clothing_type]))
+    target = GarmentBinding(target_id, "target-anchor", tuple(seller_keys), essentials, tuple(categories[clothing_type]),
+                            length_reference("target", target_id, "target-length"))
     matches = []
     for index, (mid, category, anchor, anchor_id, seller, seller_id) in enumerate(matching, 1):
         if category not in categories:
@@ -289,11 +350,14 @@ def build_contract(*, target_id, target_asset_id, target_image, seller_images, e
         anchor_key, seller_key = f"matching-{index}-anchor", f"matching-{index}-seller-1"
         refs.extend((BoundReference(anchor_key, "approvedMannequin", anchor, mid, asset_id=anchor_id),
                      BoundReference(seller_key, "matchingSeller", seller, mid, 1, seller_id)))
-        matches.append(GarmentBinding(mid, anchor_key, (seller_key,), out_of_frame_axes=tuple(categories[category])))
+        matches.append(GarmentBinding(mid, anchor_key, (seller_key,), out_of_frame_axes=tuple(categories[category]),
+            approved_length_key=length_reference(mid, mid, f"matching-{index}-length")))
     refs.append(BoundReference("model-face", "modelFace", face_image, asset_id=model_id))
     if body_image is not None:
         refs.append(BoundReference("model-body", "modelBody", body_image, asset_id=model_id))
     refs.append(BoundReference("example", "example", example_image))
+    if directing_mode == "source_locked_v1":
+        refs.insert(0, refs.pop())
     frame = {"requestedFraming": directing.requested_framing, "faceExposure": directing.face_exposure}
     for key in ("direction_description", "pose_semantics", "fixed_inner", "fixed_footwear"):
         value = getattr(directing, key, None)
@@ -304,7 +368,7 @@ def build_contract(*, target_id, target_asset_id, target_image, seller_images, e
         references=tuple(refs), example_key="example", model_face_key="model-face",
         model_body_key="model-body" if body_image is not None else None,
         frame_lock=FrameLock(directing.shot, scope["faceVisibility"], json.dumps(frame, ensure_ascii=False, sort_keys=True)),
-        variation_axis=variation_axis, capture_profile=capture_profile)
+        variation_axis=variation_axis, capture_profile=capture_profile, directing_mode=directing_mode)
 
 
 async def prepare_block(settings, conn, user_id, project_id, block, product, analysis, snapshot,
@@ -313,6 +377,20 @@ async def prepare_block(settings, conn, user_id, project_id, block, product, ana
     from types import SimpleNamespace
     from . import cut_generator
     clothing = product.get("clothing_type") or product.get("clothingType") or "top"
+    # Recheck ownership/privacy at the last byte-loading boundary, including queued assets
+    # for other blocks. The whole job selection was already validated by verify_snapshot.
+    length_ids = set(snapshot["matching"])
+    selected_lengths = snapshot.get("lengthReferences", {})
+    if selected_lengths:
+        public_bucket = getattr(settings, "r2_bucket", None)
+        observed = await _length_catalog(conn, user_id, project_id,
+            snapshot["request"].get("lengthReferenceAssets", {}), length_ids, public_bucket)
+        if set(observed) != set(selected_lengths) or any(observed[key] != {
+                field: value for field, value in selected_lengths[key].items() if field not in {"sha256", "byteLength"}}
+                for key in observed):
+            raise ValueError("wearshot_v2_queued_length_changed")
+    elif snapshot["request"].get("lengthReferenceAssets"):
+        raise ValueError("wearshot_v2_queued_length_changed")
     spec = cut_generator.normalize_spec(block, clothing_type=clothing)
     entry = snapshot["catalog"].get(str(block.get("id")))
     if entry is None:
@@ -351,11 +429,20 @@ async def prepare_block(settings, conn, user_id, project_id, block, product, ana
     example = await cut_generator.load_example_image(settings, spec["exampleId"], scope="all", clothing_type=clothing)
     if example is None:
         raise ValueError("wearshot_v2_example_missing")
+    lengths = {}
+    for selector, row in selected_lengths.items():
+        if selector not in {"target", *spec["matchIds"]}:
+            continue
+        image = await load_asset(row["asset"])
+        if image_sha256(image) != row["sha256"] or len(image.data) != row["byteLength"]:
+            raise ValueError("wearshot_v2_length_bytes_changed")
+        lengths[selector] = (image, row["asset"]["id"])
     contract = build_contract(target_id=project_id, target_asset_id=target["id"], target_image=target_image,
         seller_images=tuple(sellers), evidence_contract=analysis.get("confirmedGptProductEvidence"), matching=tuple(matches),
         face_image=model_images[0], body_image=model_images[1], model_id=entry["modelId"], example_image=example,
         directing=SimpleNamespace(**entry["directing"]), scope=entry["scope"], clothing_type=clothing,
-        variation_axis=snapshot["request"]["variationAxis"], capture_profile=snapshot["request"]["captureProfile"])
+        variation_axis=snapshot["request"]["variationAxis"], capture_profile=snapshot["request"]["captureProfile"],
+        length_references=lengths, directing_mode=snapshot["request"].get("directingMode"))
     source_output_size(example)
     images = [ref.image for ref in contract.references]
     return (spec, images, "", False, [image for slot, image, aid in sellers], None, False, None, None, False, images, contract)

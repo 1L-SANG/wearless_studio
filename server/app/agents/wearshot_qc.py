@@ -55,6 +55,7 @@ def review_schema(contract: WearshotContract, repair_plan: RepairPlan | None = N
     detail = _object(dict(code=string, evidenceKeys=dict(type="array", items=string),
                           **_check_schema(na=True)["properties"]))
     garment = _object(dict(garmentId=string, mannequinKey=string, sellerKeys=dict(type="array", items=string),
+                           **({"lengthReferenceKey": string} if any(g.approved_length_key is not None for g in contract.garments) else {}),
                            checks=_object({axis: _check_schema(na=True) for axis in GARMENT_AXES}),
                            details=dict(type="array", items=detail)))
     globals_ = {}
@@ -168,10 +169,14 @@ def _validate_observations(raw, contract, result, protected_axes):
             raise ValueError("wrong garment coverage")
         attributes, garments = {}, []
         for observed, binding in zip(raw["garments"], contract.garments, strict=True):
-            _exact(observed, ("garmentId", "mannequinKey", "sellerKeys", "checks", "details"))
+            length_binding = ({"lengthReferenceKey": binding.approved_length_key or binding.mannequin_key}
+                              if any(g.approved_length_key is not None for g in contract.garments) else {})
+            _exact(observed, ("garmentId", "mannequinKey", "sellerKeys", "checks", "details", *length_binding))
             if (observed["garmentId"] != binding.garment_id or observed["mannequinKey"] != binding.mannequin_key
                     or observed["sellerKeys"] != list(binding.seller_keys)):
                 raise ValueError("wrong garment bindings")
+            if any(observed[key] != value for key, value in length_binding.items()):
+                raise ValueError("wrong length binding")
             _exact(observed["checks"], GARMENT_AXES)
             checks = {axis: _check(observed["checks"][axis], axis in binding.out_of_frame_axes) for axis in GARMENT_AXES}
             for axis, check in checks.items():
@@ -187,7 +192,7 @@ def _validate_observations(raw, contract, result, protected_axes):
                 attributes[f"garment:{binding.garment_id}:detail:{essential.code}"] = check
                 details.append(dict(code=essential.code, evidenceKeys=list(essential.evidence_keys), **check))
             garments.append(dict(garmentId=binding.garment_id, mannequinKey=binding.mannequin_key,
-                                 sellerKeys=list(binding.seller_keys), checks=checks, details=details))
+                                 sellerKeys=list(binding.seller_keys), checks=checks, details=details, **length_binding))
         _exact(raw["globalChecks"], GLOBAL_AXES)
         globals_ = {axis: _check(raw["globalChecks"][axis], _not_applicable(contract, axis)) for axis in GLOBAL_AXES}
         attributes.update(globals_)

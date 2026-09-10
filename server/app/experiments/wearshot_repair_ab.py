@@ -39,7 +39,7 @@ def _code_versions():
 def _binding(row):
     return core.GarmentBinding(row["garmentId"], row["mannequinKey"], tuple(row["sellerKeys"]),
         tuple(core.EssentialDetail(d["code"], d["value"], tuple(d["evidenceKeys"]), d["visible"])
-              for d in row["essentials"]), tuple(row["outOfFrameAxes"]))
+              for d in row["essentials"]), tuple(row["outOfFrameAxes"]), row.get("approvedLengthKey"))
 
 
 def _contract(metadata, reference_paths, directory):
@@ -57,7 +57,8 @@ def _contract(metadata, reference_paths, directory):
         example_key=metadata["exampleKey"], model_face_key=metadata["modelFaceKey"],
         frame_lock=core.FrameLock(frame["shot"], frame["faceVisibility"], frame["description"]),
         model_body_key=metadata["modelBodyKey"], capture_key=metadata["captureKey"],
-        variation_axis=metadata["variationAxis"], capture_profile=metadata["captureProfile"])
+        variation_axis=metadata["variationAxis"], capture_profile=metadata["captureProfile"],
+        directing_mode=metadata.get("directingMode"))
     if contract.to_dict() != metadata:
         raise ValueError("Frozen contract metadata or reference bytes mismatch")
     return contract

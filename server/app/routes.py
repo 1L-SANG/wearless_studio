@@ -3111,9 +3111,12 @@ async def generate_detail_page(
         if body is not None:
             try:
                 product_v2 = await repo.get_product(conn, project_id) or {}
+                async def load_length_asset(asset):
+                    return InlineImage(asset["mime_type"], await asyncio.to_thread(_r2(request).get_bytes, asset["r2_key"]))
                 payload["wearshotV2"] = await wearshot_runtime.snapshot_request(
                     conn, user_id, project_id, project, product_v2, analysis, storyboard or [],
                     body.model_dump(mode="json"),
+                    load_length_asset=load_length_asset, public_bucket=s.r2_bucket,
                 )
             except ValueError:
                 raise HTTPException(status_code=409, detail={"code": "wearshot_v2_preflight_hold",

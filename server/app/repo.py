@@ -758,6 +758,29 @@ async def get_asset_for_user(conn: AsyncConnection, user_id: str, asset_id: str)
         return await cur.fetchone()
 
 
+async def get_owned_public_project_image(
+    conn: AsyncConnection, user_id: str, project_id: str, asset_id: str
+) -> dict | None:
+    """Owner/project image candidates; caller must enforce storage and REAL provenance.
+
+    Normal project images have private ACL visibility even on public-serving R2.
+    This query grants no public access and never admits another owner's seed.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select a.id::text as id, a.project_id::text as project_id,
+                   a.r2_bucket, a.r2_key, a.mime_type, a.source, a.visibility, a.metadata
+            from assets a join projects pr on pr.id = a.project_id
+            where a.id = %s and a.user_id = %s and pr.user_id = %s
+              and a.project_id = %s and pr.deleted_at is null and a.deleted_at is null
+              and a.source in ('upload', 'ai', 'derived')
+              and a.mime_type in ('image/png', 'image/jpeg', 'image/webp')
+            """, (asset_id, user_id, user_id, project_id),
+        )
+        return await cur.fetchone()
+
+
 async def get_asset_facemarket_provenance(
     conn: AsyncConnection, user_id: str, asset_id: str
 ) -> dict | None:

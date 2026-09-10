@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, model_serializer
 from pydantic.alias_generators import to_camel
 
 ProjectStatus = Literal["draft", "generating", "done"]
@@ -33,6 +33,17 @@ class WearshotGenerateRequest(BaseModel):
     matchingMannequinAssets: dict[str, UUID] = Field(default_factory=dict, max_length=2)
     variationAxis: Literal["pose", "background"] = "pose"
     captureProfile: Literal["clean", "soft"] = "soft"
+    lengthReferenceAssets: dict[str, UUID] = Field(default_factory=dict, max_length=3)
+    directingMode: Literal["source_locked_v1"] | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_optional_extensions(self, handler):
+        result = handler(self)
+        if not self.lengthReferenceAssets:
+            result.pop("lengthReferenceAssets", None)
+        if self.directingMode is None:
+            result.pop("directingMode", None)
+        return result
 
 
 class Account(CamelModel):

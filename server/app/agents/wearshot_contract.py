@@ -18,7 +18,7 @@ from .gemini_image import InlineImage
 VERSION = "approved_mannequin_v2"
 GARMENT_AXES = ("color", "fit", "length", "structure", "material")
 GLOBAL_AXES = ("camera", "crop", "identity", "expression", "hair", "body", "anatomy", "capture", "light", "pose", "background")
-_ROLES = {"targetSeller", "matchingSeller", "approvedMannequin", "modelFace", "modelBody", "example", "capture"}
+_ROLES = {"targetSeller", "matchingSeller", "approvedMannequin", "approvedLength", "modelFace", "modelBody", "example", "capture"}
 
 
 class ContractError(ValueError):
@@ -72,7 +72,7 @@ class BoundReference:
         _require(self.key != "repairBase" and self.key != "candidate", "reserved_key")
         _require(self.role in _ROLES, "invalid_role")
         image_sha256(self.image)
-        if self.role in {"targetSeller", "matchingSeller", "approvedMannequin"}:
+        if self.role in {"targetSeller", "matchingSeller", "approvedMannequin", "approvedLength"}:
             _identifier(self.garment_id)
         else:
             _require(self.garment_id is None, "unexpected_garment_scope")
@@ -118,10 +118,13 @@ class GarmentBinding:
     seller_keys: tuple[str, ...]
     essentials: tuple[EssentialDetail, ...] = ()
     out_of_frame_axes: tuple[str, ...] = ()
+    approved_length_key: str | None = None
 
     def __post_init__(self):
         _identifier(self.garment_id)
         _identifier(self.mannequin_key)
+        if self.approved_length_key is not None:
+            _identifier(self.approved_length_key)
         _tuple(self.seller_keys, str)
         _tuple(self.essentials, EssentialDetail)
         _tuple(self.out_of_frame_axes, str)
@@ -136,7 +139,8 @@ class GarmentBinding:
     def to_dict(self):
         return dict(garmentId=self.garment_id, mannequinKey=self.mannequin_key,
                     sellerKeys=list(self.seller_keys), essentials=[d.to_dict() for d in self.essentials],
-                    outOfFrameAxes=list(self.out_of_frame_axes))
+                    outOfFrameAxes=list(self.out_of_frame_axes),
+                    **({"approvedLengthKey": self.approved_length_key} if self.approved_length_key is not None else {}))
 
 
 @dataclass(frozen=True)
@@ -164,6 +168,7 @@ class WearshotContract:
     capture_key: str | None = None
     variation_axis: str = "pose"
     capture_profile: str = "soft"
+    directing_mode: str | None = None
     fingerprint: str = field(init=False)
 
     def __post_init__(self):
@@ -173,6 +178,10 @@ class WearshotContract:
         _tuple(self.expected_matching_ids, str)
         _require(self.variation_axis in {"pose", "background"}, "invalid_variation")
         _require(self.capture_profile in {"clean", "soft"}, "invalid_capture")
+        _require(self.directing_mode in {None, "source_locked_v1"}, "invalid_directing_mode")
+        if self.directing_mode == "source_locked_v1":
+            _require(self.capture_key is None, "source_locked_capture_forbidden")
+            _require(bool(self.references) and self.references[0].key == self.example_key, "source_locked_example_first")
         ids = [g.garment_id for g in self.garments]
         _require(len(set(ids)) == len(ids), "duplicate_garment")
         _require(len(set(self.expected_matching_ids)) == len(self.expected_matching_ids)
@@ -189,6 +198,8 @@ class WearshotContract:
 
         for g in self.garments:
             bind(g.mannequin_key, "approvedMannequin", g.garment_id)
+            if g.approved_length_key is not None:
+                bind(g.approved_length_key, "approvedLength", g.garment_id)
             ordinals = []
             for key in g.seller_keys:
                 bind(key, "targetSeller" if g is self.target else "matchingSeller", g.garment_id)
@@ -228,7 +239,8 @@ class WearshotContract:
                     exampleKey=self.example_key, modelFaceKey=self.model_face_key, modelBodyKey=self.model_body_key,
                     captureKey=self.capture_key, frameLock=dict(shot=self.frame_lock.shot, faceVisibility=self.frame_lock.face_visibility,
                                                              description=self.frame_lock.description),
-                    variationAxis=self.variation_axis, captureProfile=self.capture_profile)
+                    variationAxis=self.variation_axis, captureProfile=self.capture_profile,
+                    **({"directingMode": self.directing_mode} if self.directing_mode is not None else {}))
 
     def to_dict(self):
         return {**self._metadata(), "fingerprint": self.fingerprint}
@@ -238,11 +250,12 @@ def bind_contract(*, target: GarmentBinding, matching: tuple[GarmentBinding, ...
                   expected_matching_ids: tuple[str, ...], references: tuple[BoundReference, ...],
                   example_key: str, model_face_key: str, frame_lock: FrameLock,
                   model_body_key: str | None = None, capture_key: str | None = None,
-                  variation_axis: str = "pose", capture_profile: str = "soft") -> WearshotContract:
+                  variation_axis: str = "pose", capture_profile: str = "soft",
+                  directing_mode: str | None = None) -> WearshotContract:
     return WearshotContract(target=target, matching=matching, expected_matching_ids=expected_matching_ids,
                             references=references, example_key=example_key, model_face_key=model_face_key,
                             frame_lock=frame_lock, model_body_key=model_body_key, capture_key=capture_key,
-                            variation_axis=variation_axis, capture_profile=capture_profile)
+                            variation_axis=variation_axis, capture_profile=capture_profile, directing_mode=directing_mode)
 
 
 @dataclass(frozen=True)
