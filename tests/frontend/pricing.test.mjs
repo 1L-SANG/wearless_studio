@@ -62,15 +62,15 @@ function render(plansToShow, currentPlan = 'free', loggedIn = true) {
 // docs/plans/2026-09-09-toss-billing-subscription.md Task 10.
 test('구독 카드가 랜딩의 증정 문구와 기능을 표시하고 구독 버튼이 활성이다', () => {
   const html = render(plans);
-  assert.match(html, /상세페이지 한 개에 13,000원. 사진 10장 기준이에요./);
+  assert.doesNotMatch(html, /상세페이지 한 개에 13,000원/);
   for (const text of ['Starter', 'Seller', 'Pro', '₩29,900', '₩79,900', '₩159,000',
     '2,000 크레딧 추가 증정', '6,000 크레딧 추가 증정', '마네킹컷 1회 무료 수정 가능',
     '모든 AI 모델 50% 할인', '모든 AI 모델 무료 제공']) assert.ok(html.includes(text), text);
   assert.equal((html.match(/MOST POPULAR/g) || []).length, 1);
-  assert.equal((html.match(/구독하기/g) || []).length, 3);
+  assert.equal((html.match(/구매하기/g) || []).length, 3);
   // 계좌이체는 우리 MID 에서 아직 안 열려 숨겨 둔다(SUBSCRIPTION_TRANSFER_ENABLED=false).
   assert.doesNotMatch(html, /계좌이체로 구독하기/);
-  // '준비 중'(기능 미구현)이 아니라 '구독하기'다.
+  // '준비 중'(기능 미구현)이 아니라 '구매하기'다.
   assert.doesNotMatch(html, /준비 중/);
   // 비활성 여부는 VITE_TOSS_BILLING_CLIENT_KEY 유무에 달렸다(로컬에 .env 가 있으면 활성,
   // CI 처럼 없으면 비활성). 환경에 따라 갈리는 값을 고정하면 테스트가 환경을 검사하게 된다 —

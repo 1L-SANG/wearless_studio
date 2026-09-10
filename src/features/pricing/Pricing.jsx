@@ -134,7 +134,6 @@ export function Pricing() {
     <div className="wizard wide">
       <div className={s.head}>
         <h1 className={s.title}>요금제</h1>
-        <p className={s.sub}>상세페이지 한 개에 13,000원. 사진 10장 기준이에요.</p>
       </div>
 
       {/* 충전(추가 구매)은 일반결제라 계약 전까지 라이브에서 동작하지 않는다 —
@@ -153,22 +152,6 @@ export function Pricing() {
           ? '매달 자동으로 크레딧이 충전되는 정기 구독이에요.'
           : '구독 크레딧이 부족할 때, 한 번만 결제해 바로 충전하는 1회 상품이에요.'}
       </p>
-      <div className={s.billingNotice}>
-        <p>
-          {/* 이월 정책(2026-09-09). 이 문장은 계약 고지다 — 코드 동작과 반드시 같아야 한다.
-              구독 유지 중에는 이월, 해지하면 주기 종료일에 이월분까지 전부 소멸. */}
-          {recurring
-            ? '구독은 해지할 때까지 매달 자동 결제돼요. 구독 크레딧은 구독을 유지하는 동안 다음 달로 이월되지만, 해지하면 결제 주기가 끝나는 날 이월분까지 모두 소멸해요.'
-            : '추가 구매 크레딧은 소멸하지 않아요.'}
-          {' '}
-          {/* 전자상거래법 §17②5호(디지털콘텐츠 제공 개시 시 철회 제한)는 같은 조 제6항의
-              '명확한 표시'가 있어야 적용된다. 이 문장이 그 표시다 — 결제 전에 보여야 하고
-              강조를 빼면 안 된다(환불정책 제4조 제2항). */}
-          <strong>크레딧을 한 건이라도 사용하면 청약철회(환불)가 되지 않아요.</strong>
-          {' 결제 후 7일 안에 한 건도 쓰지 않았다면 전액 환불받을 수 있어요. '}
-          <a href={WEARLESS_LEGAL_URLS.refund}>환불 정책</a>
-        </p>
-      </div>
 
       {isLoading && (
         <div className={s.grid}>{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} h={190} r={16} />)}</div>
@@ -245,7 +228,7 @@ export function Pricing() {
                             onClick={() => subscribe(p.code, 'CARD')}
                           >
                             {isCurrent ? '이용 중'
-                              : (buying === p.code ? '등록 창 여는 중…' : '카드로 구독하기')}
+                              : (buying === p.code ? '등록 창 여는 중…' : '구매하기')}
                           </button>
                           {/* 퀵계좌이체는 카드보다 수수료가 낮지만(토스 문서: 카드 대비 1%p 이상)
                               우리 MID 에서는 아직 안 열린다(2026-09-10 실측). 플래그로 숨긴다 —
