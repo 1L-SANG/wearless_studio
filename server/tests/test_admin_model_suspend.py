@@ -213,3 +213,13 @@ def test_restore_chain_survives_suspend_unsuspend_suspend_unsuspend_cycle():
     ]
     assert len(suspend_audits) == 2
     assert suspend_audits[1][4].obj == {"status": "verified"}, "두 번째 정지의 이전 상태가 오염됐다"
+
+
+def test_unsuspend_restores_awaiting_confirmation():
+    conn = FakeConn([
+        {"status": "suspended"}, {"prev": "awaiting_confirm"}, {"ok": 1},
+    ])
+    result = asyncio.run(facemarket_admin.unsuspend_model(conn, model_id="m1", actor="admin-1"))
+    assert result["status"] == "awaiting_confirm"
+    updates = [p for sql, p in conn.executed if sql.startswith("update fm_models")]
+    assert updates[0][0] == "awaiting_confirm"

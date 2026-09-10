@@ -12,7 +12,7 @@ import { useAuth } from './AuthProvider.jsx';
 import { supabase } from '@/lib/supabase.js';
 import { Modal } from '@/components/ui.jsx';
 import { IS_ADMIN, IS_FACEMARKET } from '@/lib/host.js';
-import { markSignupConsent } from '@/lib/signupConsent.js';
+import { clearSignupConsent, markSignupConsent, readSignupConsent } from '@/lib/signupConsent.js';
 import styles from './Login.module.css';
 
 /* 로컬 supabase(127.0.0.1/localhost)일 때만 이메일·비밀번호 로그인을 노출한다.
@@ -72,6 +72,22 @@ export function LoginGate() {
   const [localErr, setLocalErr] = useState('');
   const [mode, setMode] = useState('login'); // 셀러 전용 탭: 'login' | 'signup'
   const [signupConsent, setSignupConsent] = useState(false);
+  const oauthAttempt = useRef(null);
+
+  useEffect(() => {
+    const resume = (event) => {
+      // 뒤로가기로 캐시된 화면이 복원되면 React의 대기 상태도 함께 돌아온다.
+      if (!event.persisted || !oauthAttempt.current) return;
+      clearSignupConsent(oauthAttempt.current.marker);
+      oauthAttempt.current = null;
+      setPending(null);
+    };
+    window.addEventListener('pageshow', resume);
+    return () => {
+      window.removeEventListener('pageshow', resume);
+      oauthAttempt.current = null;
+    };
+  }, []);
 
   /* 사용자 조작으로 모달을 닫는 유일한 경로(Esc·바깥 클릭). 진행 중인 로그인이 있으면
      취소가 아니다 — ui.jsx Modal 의 Escape 리스너는 window 에 붙어 있어서 프로바이더
@@ -121,6 +137,7 @@ export function LoginGate() {
 
   const handleLocal = async (e) => {
     e.preventDefault();
+    clearSignupConsent();
     setPending('local'); setLocalErr('');
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) { setLocalErr(error.message || '로그인 실패'); setPending(null); }
@@ -134,12 +151,22 @@ export function LoginGate() {
   const blocked = isSignup && !signupConsent;
 
   const handle = async (provider) => {
-    if (blocked) return;
+    if (blocked || pending !== null) return;
     // 가입 동의는 OAuth 왕복 뒤에 서버로 기록된다 — 지금은 계정이 없어서 남길 곳이 없다.
     if (isSignup) markSignupConsent();
+    else clearSignupConsent();
+    const marker = readSignupConsent();
+    const attempt = { marker };
+    oauthAttempt.current = attempt;
     setPending(provider);
-    const { error } = await signIn(provider);
-    if (error) setPending(null); // 성공 시엔 리다이렉트되어 언마운트됨
+    try {
+      const { error } = await signIn(provider);
+      if (!error) return; // 성공 시엔 리다이렉트되어 언마운트됨
+    } catch { /* OAuth 시작 실패도 이번 가입 동의를 버린다. */ }
+    if (oauthAttempt.current !== attempt) return;
+    oauthAttempt.current = null;
+    clearSignupConsent(marker);
+    setPending(null);
   };
 
   return (

@@ -2,6 +2,19 @@
    lib/fitAxes.js — 핏 프로필 축 카탈로그.
    프론트·백엔드 미러 정본: documents/fit_profile_spec.md §2.
    ============================================================= */
+import { genderForClothingType } from './productGender.js';
+
+const WOMEN_ONLY_SUBCATEGORIES = new Set(['leggings', 'mini_skirt', 'midi_skirt', 'long_skirt']);
+const SUBCATEGORY_LENGTH = Object.freeze({
+  mini_skirt: 'mini', mini_dress: 'mini',
+  midi_skirt: 'midi', midi_dress: 'midi',
+  long_skirt: 'long', long_dress: 'long',
+});
+
+export function subcategoryLength(subCategory) {
+  const value = SUBCATEGORY_LENGTH[subCategory];
+  return typeof value === 'string' ? value : null;
+}
 
 export const FIT_AXES = Object.freeze({
   top: {
@@ -182,6 +195,18 @@ function normalizedTopLength(value) {
 /** 과거 핏·상의 기장 어휘를 현재 계약으로 올린다. 입력 객체는 변경하지 않는다. */
 export function normalizeAnalysisFit(analysis) {
   if (!analysis || typeof analysis !== 'object') return analysis;
+  const gender = genderForClothingType(analysis.clothingType, analysis.targetGenders);
+  if (WOMEN_ONLY_SUBCATEGORIES.has(analysis.subCategory) && gender === 'men') {
+    analysis = { ...analysis, subCategory: null, fitProfile: null };
+  }
+  const initialLength = subcategoryLength(analysis.subCategory);
+  const category = fitProfileCategory(analysis.clothingType, analysis.subCategory);
+  // 최초 분석에는 아직 핫존 설정이 없다. 이미 설정한 축(명시적 null 포함)은 덮어쓰지 않는다.
+  if (!analysis.fitProfile && initialLength && (category === 'skirt' || category === 'dress')) {
+    analysis = { ...analysis, fitProfile: {
+      category, gender, axes: { length: initialLength }, source: 'auto', version: 2,
+    } };
+  }
   const legacyFit = analysis.fit === 'tight';
   const profile = analysis.fitProfile;
   const legacyProfileFit = profile?.axes?.fit === 'tight';

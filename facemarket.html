@@ -4,8 +4,18 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <!-- 탭 아이콘은 FaceMarket 심볼만 쓴다(정사각 크롭). 로고 원본은 279x58 워드마크라
-       16px 정사각 칸에 넣으면 글자 높이가 3px 로 눌려 회색 얼룩이 된다. -->
-  <link rel="icon" type="image/svg+xml" href="/assets/brand/facemarket-mark.svg" />
+       16px 정사각 칸에 넣으면 글자 높이가 3px 로 눌려 회색 얼룩이 된다.
+
+       SVG 하나로는 부족하다: SVG 파비콘을 지원하지 않는 구형 사파리는 /favicon.ico 로 되돌아가는데,
+       이 호스트는 vercel.json 의 `/(.*)` rewrite 가 모든 경로를 이 문서로 보내므로 그 요청이
+       **HTML(text/html)** 을 받아 아이콘이 비어 버린다(실측: /favicon.ico → 200 text/html 4.7KB).
+       그래서 PNG·ico 를 함께 걸고, vercel.json 에 이 호스트 한정 /favicon.ico rewrite 를 둔다.
+       파일은 전부 facemarket-* 이라 셀러(ai.wearless.kr, /assets/brand/logo.svg)에는 영향이 없다. -->
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/brand/facemarket-icon-32.png" />
+  <link rel="icon" type="image/x-icon" href="/assets/brand/facemarket-favicon.ico" />
+  <!-- 지원 브라우저는 확장 가능한 SVG를 우선 선택해 다크모드 색 반전도 적용한다. -->
+  <link rel="icon" type="image/svg+xml" href="/assets/brand/facemarket-mark.svg" sizes="any" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/brand/facemarket-icon-180.png" />
   <link rel="alternate" type="text/plain" href="/llms.txt" />
   <meta name="theme-color" content="#f8fbfd" />
   <title>FaceMarket — 내 얼굴을 라이선스로</title>

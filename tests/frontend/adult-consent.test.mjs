@@ -42,12 +42,12 @@ test('checkbox sits on the first text line instead of being eyeballed', () => {
 });
 
 test('signup consent survives the OAuth round trip without asking twice', () => {
-  assert.match(login, /import \{ markSignupConsent \} from '@\/lib\/signupConsent\.js';/);
+  assert.match(login, /import \{[^}]*\bmarkSignupConsent\b[^}]*\} from '@\/lib\/signupConsent\.js';/);
   assert.match(login, /if \(isSignup\) markSignupConsent\(\);/);
   assert.match(signupConsent, /sessionStorage/);
   // 가입 탭에서 동의한 사람에게는 완료 화면을 띄우지 않고 조용히 기록만 남긴다
-  assert.match(completion, /if \(res\.needsConsent && !res\.accepted && hasFreshSignupConsent\(\)\)/);
-  assert.match(completion, /clearSignupConsent\(\);/);
+  assert.match(completion, /if \(res\.needsConsent && !res\.accepted && marker === readSignupConsent\(\) && hasFreshSignupConsent\(\)\)/);
+  assert.match(completion, /clearSignupConsent\(marker\);/);
 });
 
 test('signup completion continues the login modal instead of taking over the screen', () => {
@@ -68,7 +68,7 @@ test('signup completion continues the login modal instead of taking over the scr
   assert.match(completionCss, /animation: slideNext/);
   assert.match(completionCss, /@keyframes slideNext \{\s*\n\s*from \{ opacity: 0; transform: translateX\(38px\); \}/);
   assert.match(completionCss, /@media \(prefers-reduced-motion: reduce\)/);
-  assert.match(completion, /if \(!state\?\.needsConsent\) return null;/);
+  assert.match(completion, /if \(state\?\.userId !== userId \|\| !state\?\.needsConsent\) return null;/);
   assert.match(completion, /만 19세 이상이며, 위 이용약관과 개인정보 처리방침에 동의합니다\./);
 });
 

@@ -5,14 +5,16 @@
    ============================================================= */
 import { http } from '@/lib/api/httpAdapter.js';
 
-export function getSellerConsent({ signal } = {}) {
-  return http('/v1/me/consents', { signal });
+export function getSellerConsent({ signal, expectedUserId } = {}) {
+  return http('/v1/me/consents', { signal, expectedUserId });
 }
 
 /* 게이트가 보여준 버전을 그대로 보낸다 — 서버가 현재 버전과 대조(불일치면 409). */
-export function acceptSellerConsent({ termsVersion, privacyVersion }) {
+export function acceptSellerConsent({ termsVersion, privacyVersion, signal, expectedUserId }) {
   return http('/v1/me/consents', {
     method: 'POST',
+    signal,
+    expectedUserId,
     body: { termsVersion, privacyVersion, ageAttested: true },
   });
 }

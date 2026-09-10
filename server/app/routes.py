@@ -689,10 +689,17 @@ async def delete_account(request: Request, user_id: str = Depends(require_user))
     tags=["Credits"],
     summary="요금제 목록 조회",
 )
-async def get_pricing_plans(request: Request, user_id: str = Depends(require_user)):
+async def get_pricing_plans(request: Request):
     """사용 가능한 구독/크레딧 충전 요금제 목록을 조회합니다.
 
-    - **Bearer Token**: 필수
+    - **Bearer Token**: 불필요 (공개 카탈로그)
+
+    이 목록은 상품 카탈로그다 — 사용자별 값이 하나도 없다(repo.list_pricing_plans 는
+    user_id 를 받지 않는다). 인증을 요구하던 것을 **의도적으로 뗐다**: 랜딩(wearless.kr)의
+    요금제 '선택' 이 앱의 /pricing 으로 사람을 보내는데, 그 화면이 로그인 벽 뒤에 있으면
+    가격을 보러 온 사람이 가격을 못 본다. 결제(토스 checkout·구독)는 여전히 require_user 다 —
+    공개된 건 '얼마인가' 뿐이고 '누가 산다' 는 그대로 인증을 지난다.
+    토큰을 들고 와도 그대로 200 이다(무시할 뿐 거부하지 않는다).
     """
     async with get_conn(request) as conn:
         return await repo.list_pricing_plans(conn)

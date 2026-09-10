@@ -15,8 +15,9 @@ import { useParams } from 'react-router-dom';
 import { Icon } from '@/components/ui.jsx';
 import { verifyPublicationPublic } from '@/lib/api/facemarket.js';
 import s from './PublicVerify.module.css';
+import { seoulDate } from '@/lib/datetime.js';
 
-const fmtDate = (iso) => { try { return new Date(iso).toLocaleDateString('ko-KR'); } catch { return iso; } };
+const fmtDate = (iso) => seoulDate(iso, iso);
 
 const STATUS_COPY = {
   active: { title: '정품 이미지예요', desc: '아래 조건으로 사용이 허가된 이미지예요.' },

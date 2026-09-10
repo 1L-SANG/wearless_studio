@@ -48,6 +48,7 @@ import {
     enrollmentReasonMessage,
 } from "./biometricEnrollment.js";
 import s from "./ModelLicense.module.css";
+import { seoulDate, seoulYearMonth } from '@/lib/datetime.js';
 
 // 서버 enum 과 묶인 값이다 — 표시만 바꾸고 value 는 건드리지 않는다.
 const VALIDITY = [
@@ -57,22 +58,9 @@ const VALIDITY = [
 ];
 
 const won = (n) => `₩${Number(n || 0).toLocaleString("ko-KR")}`;
-const fmtDate = (iso) => {
-    try {
-        return new Date(iso).toLocaleDateString("ko-KR");
-    } catch {
-        return iso;
-    }
-};
+const fmtDate = (iso) => seoulDate(iso, iso);
 // PDF 카드 카피 — "유효 ~2027.06"
-const fmtYm = (iso) => {
-    try {
-        const d = new Date(iso);
-        return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}`;
-    } catch {
-        return iso;
-    }
-};
+const fmtYm = (iso) => seoulYearMonth(iso, iso);
 // vc:omn:9f2a1c…c481 — 카드 폭에 맞춘 가운데 생략(전체값은 title 로).
 const shortVc = (vc) => {
     if (!vc) return null;
@@ -813,9 +801,7 @@ export function ModelLicense() {
                                             )}
                                         </span>
                                         <time className={s.usageDate}>
-                                            {new Date(
-                                                u.createdAt,
-                                            ).toLocaleDateString("ko-KR")}
+                                            {seoulDate(u.createdAt)}
                                         </time>
                                         <code className={s.usageHash}>
                                             {u.imageHashPrefix}…

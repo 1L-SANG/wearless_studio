@@ -12,21 +12,13 @@ const editorPanelsSource = read('../../src/features/editor/EditorPanels.jsx');
 const typesSource = read('../../src/lib/types.js');
 
 const allowed = [
-  '상의',
-  '하의',
-  '아우터',
-  '원피스',
-  '니트·스웨터',
-  '데님',
-  '셋업·수트',
-  '스커트',
-  '트레이닝·애슬레저',
-  '잡화·액세서리',
-  '뷰티·화장품',
+  '일반 의류',
+  '액티브웨어',
+  '홈웨어·잠옷',
 ];
 const forbidden = [
-  '속옷·란제리',
-  '수영복·비키니',
+  '속옷',
+  '수영복',
 ];
 
 test('frontend brand-use categories exactly match the server contract', async () => {
@@ -39,8 +31,8 @@ test('frontend brand-use categories exactly match the server contract', async ()
   assert.deepEqual(ALLOWED_BRAND_USE_CATEGORIES, allowed);
   assert.deepEqual(FORBIDDEN_BRAND_USE_CATEGORIES, forbidden);
   assert.deepEqual(BRAND_USE_CATEGORIES, [...allowed, ...forbidden]);
-  assert.equal(BRAND_USE_CATEGORIES.length, 13);
-  assert.equal(new Set(BRAND_USE_CATEGORIES).size, 13);
+  assert.equal(BRAND_USE_CATEGORIES.length, 5);
+  assert.equal(new Set(BRAND_USE_CATEGORIES).size, 5);
 });
 
 test('ModelLicense reuses the shared category lists', () => {

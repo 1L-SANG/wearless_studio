@@ -2429,8 +2429,9 @@ def test_purge_deletes_model_test_cuts_and_cover(uid):
     )
     for i, key in enumerate(cut_keys):
         conn.execute(
-            "insert into fm_model_test_cuts (model_id, r2_key, mime, sort) values (%s, %s, 'image/png', %s)",
-            (model_id, key, i),
+            "insert into fm_model_test_cuts (model_id, r2_key, mime, kind, sort) "
+            "values (%s, %s, 'image/png', %s, %s)",
+            (model_id, key, ("closeup", "fullbody")[i], i),
         )
     conn.close()
     r2 = FakeR2Face()
@@ -2452,4 +2453,3 @@ def test_purge_deletes_model_test_cuts_and_cover(uid):
     conn.close()
     assert remaining == 0, "fm_model_test_cuts 행이 남았다"
     assert cover_after is None or cover_after["cover_image_url"] is None, "cover_image_url 이 널링되지 않았다"
-
