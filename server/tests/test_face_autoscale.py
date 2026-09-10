@@ -15,6 +15,8 @@ from app.services.face_autoscale import (
     USER_AGENT,
     RunpodAutoscaleAdapter,
     RunpodTarget,
+    _health_url,
+    _parse_ts,
     face_demand_snapshot,
 )
 from conftest import make_settings
@@ -92,25 +94,88 @@ def test_http_client_carries_auth_and_user_agent():
         client.close()
 
 
+# ── 시각 파싱 ──
+def test_parse_ts_accepts_runpods_non_iso_format():
+    """REST 는 ISO 가 아니라 `2026-09-10 10:58:38.444 +0000 UTC` 를 준다(2026-09-10 실측).
+    fromisoformat 만 쓰면 항상 None 이라 장시간 가동 알림이 조용히 죽는다."""
+    want = datetime(2026, 9, 10, 10, 58, 38, 444000, tzinfo=timezone.utc)
+    assert _parse_ts("2026-09-10 10:58:38.444 +0000 UTC") == want
+    assert _parse_ts("2026-09-10T10:58:38.444Z") == want
+    assert _parse_ts("2026-09-10 10:58:38 +0000 UTC") == want.replace(microsecond=0)
+    assert _parse_ts(None) is None and _parse_ts("") is None and _parse_ts("어제") is None
+
+
+def test_health_url_is_derived_from_backend_url():
+    assert _health_url("https://p-8000.proxy.runpod.net/render") == "https://p-8000.proxy.runpod.net/healthz"
+    assert _health_url("https://p-8000.proxy.runpod.net/") == "https://p-8000.proxy.runpod.net/healthz"
+    assert _health_url(None) is None and _health_url("  ") is None
+
+
 # ── 상태 매핑 ──
-@pytest.mark.parametrize("status,desired,running,pending", [
-    ("RUNNING", 1, 1, 0),
-    ("STARTING", 1, 0, 1),
-    ("EXITED", 0, 0, 0),
-    ("TERMINATED", 0, 0, 0),
-])
-def test_describe_maps_pod_status(status, desired, running, pending):
-    client = _FakeClient({"desiredStatus": status, "lastStartedAt": "2026-09-10T01:00:00Z"})
-    adapter = RunpodAutoscaleAdapter(
-        _settings(face_autoscale="on", face_runpod_pod_id=POD, face_runpod_api_key="k"),
-        client=client)
+class _FakeHealth:
+    def __init__(self, ok=True, loaded=True, boom=False):
+        self.calls = []
+        self._ok, self._loaded, self._boom = ok, loaded, boom
+
+    def get(self, url):
+        self.calls.append(url)
+        if self._boom:
+            raise RuntimeError("connection refused")
+        payload, ok, loaded = {}, self._ok, self._loaded
+
+        class _R:
+            status_code = 200 if ok else 503
+
+            def json(self):
+                return {"loaded": loaded}
+        return _R()
+
+
+def _adapter(status="RUNNING", *, health=None, backend_url="https://p-8000.proxy.runpod.net/render",
+             started="2026-09-10 01:00:00.000 +0000 UTC"):
+    client = _FakeClient({"desiredStatus": status, "lastStartedAt": started})
+    kw = {"face_autoscale": "on", "face_runpod_pod_id": POD, "face_runpod_api_key": "k"}
+    if backend_url is not None:
+        kw["face_identity_backend_url"] = backend_url
+    return RunpodAutoscaleAdapter(_settings(**kw), client=client, health_client=health), client
+
+
+@pytest.mark.parametrize("status,desired", [("RUNNING", 1), ("STARTING", 1), ("EXITED", 0), ("TERMINATED", 0)])
+def test_describe_desired_comes_from_pod_api(status, desired):
+    health = _FakeHealth()
+    adapter, client = _adapter(status, health=health)
     state = asyncio.run(adapter.describe(RunpodTarget(POD)))
-    assert (state.desired, state.running, state.pending) == (desired, running, pending)
+    assert state.desired == desired
     assert client.gets == [f"/pods/{POD}"]
-    if running:
-        assert state.oldest_started_at == datetime(2026, 9, 10, 1, 0, tzinfo=timezone.utc)
-    else:
-        assert state.oldest_started_at is None
+    if not desired:                      # 꺼져 있으면 헬스를 찌를 이유가 없다
+        assert health.calls == []
+
+
+def test_describe_running_comes_from_render_service_health():
+    """★ 2026-09-10 실측: 컨테이너가 죽어 있어도 desiredStatus 는 RUNNING 이고 runtime 은 null 이다.
+    파드 API 만 믿으면 '떠 있다'고 거짓 보고한다 — running 은 /healthz 가 정본."""
+    up, _ = _adapter(health=_FakeHealth(ok=True, loaded=True))
+    state = asyncio.run(up.describe(RunpodTarget(POD)))
+    assert (state.desired, state.running, state.pending) == (1, 1, 0)
+    assert state.oldest_started_at == datetime(2026, 9, 10, 1, 0, tzinfo=timezone.utc)
+
+    down, _ = _adapter(health=_FakeHealth(boom=True))
+    state = asyncio.run(down.describe(RunpodTarget(POD)))
+    assert (state.desired, state.running, state.pending) == (1, 0, 1)
+    assert state.oldest_started_at is None      # 안 떠 있으면 가동 시각도 없다
+
+    loading, _ = _adapter(health=_FakeHealth(ok=True, loaded=False))
+    state = asyncio.run(loading.describe(RunpodTarget(POD)))
+    assert (state.desired, state.running, state.pending) == (1, 0, 1)   # 파이프라인 적재 중
+
+
+def test_describe_without_backend_url_falls_back_to_pod_api():
+    """URL 이 없으면 확인할 방법이 없다 — desiredStatus 를 그대로 믿되 헬스는 찌르지 않는다."""
+    health = _FakeHealth()
+    adapter, _ = _adapter(health=health, backend_url=None)
+    state = asyncio.run(adapter.describe(RunpodTarget(POD)))
+    assert (state.desired, state.running, state.pending) == (1, 1, 0)
+    assert health.calls == []
 
 
 @pytest.mark.parametrize("count,action", [(1, "start"), (2, "start"), (0, "stop")])

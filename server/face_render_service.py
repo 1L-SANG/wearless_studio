@@ -27,6 +27,14 @@
     QwenLocalBackend 를 고쳐야 한다. 서비스는 프롬프트가 요청마다 달라 TE 가 상주해야 하므로
     3단 분할은 요청마다 TE 를 다시 올리는 비용이 붙는다(그래서 80GB 카드가 유력).
 
+★ 96GB 카드 실측(2026-09-10 · RTX PRO 6000 Blackwell Server Edition, 컨테이너 RAM 234GiB):
+  HF 가중치 내려받기 390초(53.8GiB) · 파이프라인 적재 175초 · 적재 후 VRAM 54.1GiB(nvidia-smi 56GiB)
+  · RAM 피크 94GiB · /healthz 17ms · 렌더 33.5초(1024², 25 step). 웜 3연속 33.5/33.5/33.4초 —
+  요청 간 추가 절감 없음(모델이 이미 상주라 첫 요청부터 웜이다).
+  ※ 적재 중에는 포트가 아예 안 열린다(lifespan 이 끝나야 uvicorn 이 listen) → 헬스 체크는
+    "연결 거부 = 아직 적재 중"으로 읽어야 한다.
+  ※ 로컬 QwenLocalBackend 직접 렌더와 이 서비스 경유 렌더가 **PNG sha256 동일**(픽셀 diff 0).
+
 실행:
     FACE_RENDER_TOKEN=... R2_ENDPOINT=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... \
     R2_FACE_BUCKET=wearless-face uvicorn face_render_service:app --host 0.0.0.0 --port 8000

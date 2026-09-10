@@ -12,6 +12,11 @@ workers/sam_autoscaler.SamAutoscaler). 다른 건 **무엇을 켜고 끄는가**
   조작할 수 있게 되는 순간 유휴 종료가 안전장치가 아니라 사고 경로가 된다.
 ★ REST 호출에는 User-Agent 를 반드시 붙인다. 2026-09-08 야간 워치독의 stop 이 UA 없이
   거부돼 파드가 53분 더 돌았다(그 회차 실측).
+★ 재시작 실측(2026-09-10): stop 반영 2초 · start 후 SSH 40초. **컨테이너 디스크는 초기화된다** —
+  코드·가중치·HF 캐시(54GiB)가 전부 사라지고 서비스도 자동으로 뜨지 않는다.
+  TCP 포트 매핑도 재할당된다(22 번이 17500 → 17667). 반면 HTTP 프록시 주소
+  `https://<podId>-8000.proxy.runpod.net` 은 파드 id 기반이라 재시작 후에도 그대로다
+  → FACE_IDENTITY_BACKEND_URL 은 반드시 프록시 형태로 둔다.
 """
 
 from __future__ import annotations
@@ -33,9 +38,16 @@ RUNPOD_API_BASE = "https://rest.runpod.io/v1"
 USER_AGENT = "wearless-face-autoscale/1"
 REQUEST_TIMEOUT = 15.0
 
-#: 파드가 "켜져 있다"고 볼 상태. RunPod 는 시작 중에도 RUNNING 을 늦게 준다.
+#: 파드가 "켜져 있다"고 볼 상태.
 _RUNNING = ("RUNNING",)
 _PENDING = ("CREATED", "RESTARTING", "STARTING", "PENDING")
+
+#: ★ 2026-09-10 실측(파드 nmtqyoxfpupvaa · RTX PRO 6000): REST GET /v1/pods/{id} 의 `runtime` 은
+#: 컨테이너가 **살아서 서비스까지 하고 있는 동안에도 계속 null** 이었다. desiredStatus 는 요청한
+#: 상태라 컨테이너가 죽어 있어도 RUNNING 이다(파드 2대가 그 상태로 붙잡혀 있었다). 즉 이 API 만으로는
+#: "지금 진짜 떠 있는가"를 알 수 없다 → 렌더 서비스의 /healthz 를 직접 찔러야 한다.
+#: health_url 이 없으면 desiredStatus 로 폴백하고, 그 사실을 running 판정에 그대로 반영한다.
+HEALTH_TIMEOUT = 5.0
 
 
 @dataclass(frozen=True)
@@ -85,12 +97,14 @@ class RunpodAutoscaleAdapter:
     자기 맥락에서 삼킨다(sam 어댑터와 같은 계약).
     """
 
-    def __init__(self, settings, *, enabled_attr="face_autoscale", client=None):
+    def __init__(self, settings, *, enabled_attr="face_autoscale", client=None, health_client=None):
         self._settings = settings
         self.enabled = getattr(settings, enabled_attr, "off") == "on"
         self._pod_id = (getattr(settings, "face_runpod_pod_id", None) or "").strip() or None
         self._api_key = (getattr(settings, "face_runpod_api_key", None) or "").strip() or None
         self._client = client
+        self._health_client = health_client
+        self._health_url = _health_url(getattr(settings, "face_identity_backend_url", None))
         self._target: RunpodTarget | None = None
         self._now = lambda: datetime.now(timezone.utc)
 
@@ -137,15 +151,40 @@ class RunpodAutoscaleAdapter:
 
     # ── 상태 ──
     async def describe(self, target: RunpodTarget) -> ServiceState:
+        """desired 는 파드 API, running 은 렌더 서비스 /healthz 가 정본(위 상수 주석의 실측)."""
         pod = await asyncio.to_thread(self._get_sync, f"/pods/{target.pod_id}")
         status = str(pod.get("desiredStatus") or pod.get("status") or "").upper()
-        running = 1 if status in _RUNNING else 0
-        pending = 1 if status in _PENDING else 0
-        # RunPod 은 "desired" 개념이 없다 — 켜져 있거나(=1) 꺼져 있거나(=0) 다.
-        desired = 1 if (running or pending) else 0
+        # RunPod 은 대수 개념이 없다 — 켜라고 해 뒀거나(=1) 꺼 뒀거나(=0) 다.
+        desired = 1 if status in _RUNNING or status in _PENDING else 0
+        served = await self.health_ok() if desired else False
+        running = 1 if served else 0
+        # health_url 이 없으면 확인할 방법이 없다 → desiredStatus 를 그대로 믿는다(폴백).
+        if self._health_url is None:
+            running = desired
+        pending = 1 if desired and not running else 0
         started = pod.get("lastStartedAt") or pod.get("startedAt")
         return ServiceState(desired=desired, running=running, pending=pending,
                             oldest_started_at=_parse_ts(started) if running else None)
+
+    async def health_ok(self) -> bool:
+        """렌더 서비스가 실제로 응답하는가. URL 이 없거나 실패면 False(예외 없음)."""
+        if self._health_url is None:
+            return False
+        try:
+            return await asyncio.to_thread(self._health_sync)
+        except Exception as exc:  # noqa: BLE001 — 헬스 실패는 "안 떠 있다" 이지 에러가 아니다
+            log.info("face render health probe failed: %r", exc)
+            return False
+
+    def _health_sync(self) -> bool:
+        client = self._health_client
+        if client is None:
+            import httpx
+
+            client = httpx.Client(timeout=HEALTH_TIMEOUT, headers={"User-Agent": USER_AGENT})
+            self._health_client = client
+        res = client.get(self._health_url)
+        return res.status_code == 200 and bool(res.json().get("loaded"))
 
     async def set_desired(self, target: RunpodTarget, count: int) -> None:
         action = "start" if int(count) > 0 else "stop"
@@ -157,13 +196,38 @@ class RunpodAutoscaleAdapter:
         log.error("face autoscale alert: %s — %s", subject, body)
 
 
+def _health_url(backend_url) -> str | None:
+    """렌더 서비스 URL(…/render) → …/healthz. 값이 없으면 None(헬스 확인 불가)."""
+    if not isinstance(backend_url, str) or not backend_url.strip():
+        return None
+    base = backend_url.strip().rstrip("/")
+    for suffix in ("/render", ""):
+        if suffix and base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
+    return f"{base}/healthz"
+
+
 def _parse_ts(value) -> datetime | None:
+    """RunPod 시각 파싱. REST 는 ISO 가 아니라 `2026-09-10 10:58:38.444 +0000 UTC` 를 준다
+    (2026-09-10 실측) — fromisoformat 만 쓰면 항상 None 이라 장시간 가동 알림이 죽는다."""
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
     if not isinstance(value, str) or not value.strip():
         return None
+    text = value.strip()
+    if text.endswith(" UTC"):
+        text = text[: -len(" UTC")]
+    parsed = None
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
+        for fmt in ("%Y-%m-%d %H:%M:%S.%f %z", "%Y-%m-%d %H:%M:%S %z"):
+            try:
+                parsed = datetime.strptime(text, fmt)
+                break
+            except ValueError:
+                continue
+    if parsed is None:
         return None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
