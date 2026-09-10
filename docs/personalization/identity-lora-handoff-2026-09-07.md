@@ -1049,3 +1049,67 @@ cutType 외 나머지(입력 5장·시드·refScope·프로필·bg 판)는 §28.
 남의 룩북을 픽셀로 편집하지 않고 참조로만 쓰는 쪽이 법적으로도 안전하므로 **가도 된다** —
 단 cutType 을 장면에 맞게 골라야 하고(스튜디오=horizon, 라이프스타일=styling), `bg` scope 는 배경이
 넉넉한 컷(인물이 프레임 25% 이하)에서 판을 다시 만들어 재측정해야 한다.
+
+## 30. ZARA 스튜디오 컷 "똑같이" 재현 — 편집 두 안 비교 (2026-09-10) — **안 B 채택**
+
+> ★ 사진 픽셀 편집은 **브랜드가 소유한 사진에만** 적용한다 — ZARA 는 테스트 대역이다.
+
+**§29 의 채택은 취소한다.** 목표가 "비슷한 흰 스튜디오"가 아니라 "원본과 벽 톤·벽 그림자 방향·조명·바닥 띠·
+구도·포즈가 **같고** 사람만 우리 인물 + 상의만 디네뎃 회색 티" 였다. `horizon-all` 은 장면을 새로 그리는
+모드라 설계상 이 목표에 맞지 않는다.
+
+### 30.A 안 A — 깨끗한 빈 판 → bg_edit
+**A-1(판 생성)은 성공했다.** gpt-image-2.5-flare 에 원본 1장 + "Remove the person completely, including their
+cast shadow ... Keep the exact wall color and texture, floor strip, light direction and color temperature" 로
+장면당 1회. 두 판 모두 **사람·그림자 잔상 없이** 벽 질감·바닥 띠·색온도가 원본대로 나왔다
+(`phase1/studio/{zara2,zara1}_plate.png`, 배경 |Δ| vs 원본 20.5 · 7.0).
+
+**A-2 는 실패했다.** 그 깨끗한 판을 `refScope="bg"` 첫 첨부로 넣고 `[[CUT:bg_edit]]` 계약
+("The FIRST attached image is the finished, real location ... base canvas")을 태웠는데도 두 컷 모두
+**실외**(나무·석재 벽)를 그렸다. 배경 |Δ| vs 원본 **131.7 · 113.3**.
+→ §28.D 에서 "bg 판이 퇴화해서 실패했다" 고 진단했던 것은 **틀렸다.** 판을 깨끗하게 줘도 같은 결과다.
+   `bg_edit` 계약 자체가 이 모델에서 안 먹는다.
+
+### 30.B 안 B — ZARA 원본을 캔버스로 두고 사람·상의만 교체 — **채택**
+스크립트 전용 프롬프트(코드에 섹션 추가 없음). 첨부 5장: BASE PHOTO(원본) · MODEL · MODEL SHEET · PRODUCT 앞/뒤.
+```
+Edit the BASE PHOTO in place. Keep its exact framing, camera, pose, body position, wall, floor, lighting
+and cast shadow. Replace ONLY the person's face and hair with the MODEL references, and replace the top
+with the PRODUCT garment. Keep the trousers and shoes as in the base photo. Do not keep the striped shirt
+or the blonde hair.
+```
+hair · face_shape · physique 블록 동일 첨부.
+
+| 컷 | SFace | 줄무늬 | 금발 | 배경 \|Δ\| vs 원본 |
+|---|---|---|---|---|
+| zara2 원본 | 0.178 | 0.411 | 0.357 | 0.0 |
+| zara2 A-1 빈 판 | — | — | — | 20.5 |
+| zara2 A-2 bg_edit | 0.855 | 0.000 | 0.062 | **131.7** |
+| zara2 **B 캔버스 편집** | **0.861** | **0.000** | **0.058** | **10.2** |
+| zara2 horizon-all(§29) | 0.843 | 0.000 | 0.072 | 33.6 |
+| zara1 원본 | 0.149 | 0.389 | 0.342 | 0.0 |
+| zara1 A-1 빈 판 | — | — | — | 7.0 |
+| zara1 A-2 bg_edit | 0.804 | 0.000 | 0.062 | **113.3** |
+| zara1 **B 캔버스 편집** | **0.757** | **0.000** | **0.069** | **7.2** |
+| zara1 horizon-all(§29) | 0.785 | 0.000 | 0.074 | 26.3 |
+
+판정 항목 1~6(사후 이동 없음):
+1. **벽 톤·벽 그림자 방향·바닥 띠** — B 통과. 배경 |Δ| 10.2·7.2 로 A-2(131.7·113.3)·horizon-all(33.6·26.3)과
+   자릿수가 다르다. 확대(`studio/B_zoom.png`)에서 왼쪽 벽 그림자의 방향·강도가 원본과 같다.
+2. **포즈·구도** — B 통과. 서 있는 자세·팔 위치·프레이밍이 원본 그대로. A-2 는 장면 자체가 달라 실패.
+3. **상의** — B 통과. 줄무늬 0.000(원본 0.411·0.389), 디네뎃 회색 티에 프린트도 정확.
+4. **머리** — B 통과. 금발 지표 0.058·0.069 (원본 0.357·0.342). 육안으로 흑발, 금발 잔상 없음.
+5. **얼굴 SFace** — B 통과. 0.861·0.757, 둘 다 ≥0.70.
+6. **새 인물의 벽 그림자** — B 통과. 사람이 원본과 같은 자리에 있어 원본 그림자가 그대로 맞고, 두 겹이 없다.
+
+→ **안 B 채택.** A·B 중 3·4 오염(줄무늬·금발)은 둘 다 같은 수준이지만 1·2 에서 A-2 가 완전히 실패한다.
+
+부수 효과로 하의·신발이 **원본 그대로** 유지된다(녹색 팬츠·구두). 상의만 바꾸는 게 목표였으므로 의도한 동작이다.
+
+### 30.C 새로 확정된 사실
+- `[[CUT:bg_edit]]` 계약은 gpt-image-2.5-flare 에서 **작동하지 않는다.** 판이 깨끗해도 장소를 지어낸다.
+  §28.D 의 "판 퇴화가 원인" 진단은 이번 실험으로 반증됐다.
+- 같은 모델이 **BASE PHOTO 를 직접 편집하라**는 지시(안 B)는 정확히 따른다. 즉 이 모델에서 "장소 고정"은
+  참조 슬롯이 아니라 **캔버스 편집** 으로 가야 한다.
+- 다만 안 B 는 원본 픽셀을 편집하므로 **브랜드가 소유한 사진에만** 쓸 수 있다. 남의 룩북에는 못 쓴다 —
+  그 경우는 §29 의 `horizon-all`(참조로만 사용, 장소는 새로 생성)이 남는 선택지다.
