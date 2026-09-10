@@ -49,6 +49,10 @@ class Settings:
     # AG-06 상세컷 전용 모델. 빈 값이면 image_high로 폴백해 기존 환경을 보존한다.
     # 마네킹·매칭·AG-07까지 공유하는 image_high를 바꾸지 않고 콘티 1·2차만 분리한다.
     model_detail_cut: str = ""
+    # 에디터 컷(editor_image_job) 전용 모델. 빈 값이면 image_high 로 폴백해 기존 환경을 보존한다.
+    # image_high 를 바꾸면 마네킹(mannequin_tier)·매칭 플랫레이(matching_flatlay_tier)·AG-07(cut_variator)
+    # 까지 전부 딸려 간다 — 에디터만 바꾸려면 이 노브를 쓴다(detail_cut 과 같은 관례).
+    model_editor_cut: str = ""
     # AG-01 상품 분석 (text tier, 멀티모달 입력) — ai_agent_modules §1·§3
     openai_api_key: str | None = None  # sk-… (서버 전용, secret). GPT 경로 키
     model_text: str = "gpt-5.4-mini"  # GPT 폴백 provider 의 text/vision 모델 (openai key 있을 때만)
@@ -502,6 +506,7 @@ def load_settings() -> Settings:
         model_image_high=os.getenv("MODEL_ROUTING_IMAGE_HIGH", "gemini-3-pro-image"),
         model_image_signature=os.getenv("MODEL_ROUTING_IMAGE_SIGNATURE", "gpt-image-2"),
         model_detail_cut=os.getenv("MODEL_ROUTING_DETAIL_CUT", ""),
+        model_editor_cut=os.getenv("MODEL_ROUTING_EDITOR_CUT", ""),
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         model_text=os.getenv("MODEL_ROUTING_TEXT", "gpt-5.4-mini"),
         model_text_gemini=os.getenv("MODEL_ROUTING_TEXT_GEMINI", "gemini-3.7-flash"),
