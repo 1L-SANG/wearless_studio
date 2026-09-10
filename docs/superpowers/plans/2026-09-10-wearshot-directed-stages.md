@@ -36,12 +36,12 @@ bind_contract(..., directing_mode: str | None = None)
 # directingMode: Literal['source_locked_v1'] | None defaults None.
 ```
 
-- [ ] RED pure boundary tests: old no-extension metadata/prompt/fingerprint unchanged; wrong/missing/unbound length role or garment rejected; selected length reference does not replace color/model/structure refs; new mode rejects capture image or non-first example. Use literal expected keys and actual tiny PNG bytes.
-- [ ] GREEN core and renderers: explicit per-garment length owner; fit excludes separately approved hem-level differences; source-first primary canvas and same-place constraint for new mode; exact old rendering retained when absent. QC garments require matching lengthReferenceKey metadata only when length extension exists, and final release revalidates it.
-- [ ] RED runtime/API: explicit target/matching length asset selection, invalid/unused/seed/nonowned/deleted/private/REAL-derived asset blocked, queued source drift blocked, no reservation/provider before preflight; old omitted fields preserve previous snapshot/request shape.
-- [ ] GREEN narrow owned public project-image resolver and queued projection; same explicit length bytes/keys to generation/repair/QC. Use existing asset REAL provenance helpers for privacy; do not treat unknown AI lineage as public. UI/upload/migration out of scope.
-- [ ] Test actual route→snapshot→prepare→generator/QC binding, matching garment scope, hidden-length NA without bypass, and old replay decoder round trip. Do not fake old FAIL as PASS: new reference gives new fingerprint and requires new QC.
-- [ ] Report exact field/signature/result changes and RED/GREEN; root reviews and commits only owned files.
+- [x] RED pure boundary tests: old no-extension metadata/prompt/fingerprint unchanged; wrong/missing/unbound length role or garment rejected; selected length reference does not replace color/model/structure refs; new mode rejects capture image or non-first example. Use literal expected keys and actual tiny PNG bytes.
+- [x] GREEN core and renderers: explicit per-garment length owner; fit excludes separately approved hem-level differences; source-first primary canvas and same-place constraint for new mode; exact old rendering retained when absent. QC garments require matching lengthReferenceKey metadata only when length extension exists, and final release revalidates it.
+- [x] RED runtime/API: explicit target/matching length asset selection, invalid/unused/seed/nonowned/deleted/private/REAL-derived asset blocked, queued source drift blocked, no reservation/provider before preflight; old omitted fields preserve previous snapshot/request shape.
+- [x] GREEN narrow owned public project-image resolver and queued projection; same explicit length bytes/keys to generation/repair/QC. Use existing asset REAL provenance helpers for privacy; do not treat unknown AI lineage as public. UI/upload/migration out of scope.
+- [x] Test actual route→snapshot→prepare→generator/QC binding, matching garment scope, hidden-length NA without bypass, and old replay decoder round trip. Do not fake old FAIL as PASS: new reference gives new fingerprint and requires new QC.
+- [x] Report exact field/signature/result changes and RED/GREEN; root reviews and commits only owned files.
 
 Example behavioral assertions:
 
@@ -59,12 +59,12 @@ assert not release_allowed(old_verdict, new_contract, candidate)
 
 **Interfaces:** shared cut_generator.generate/repair unchanged; review_candidate and release_allowed from Task1. Add optional Settings.wearshot_generation_model, default None/WEARSHOT_GENERATION_MODEL. Existing repair setting remains None by default. New benchmark reuses exact contract decoder and durable receipt helpers.
 
-- [ ] RED stage routing: v2-only first model override, unchanged legacy/detail/signature routing; QC PASS skips stage2; valid FAIL yields maxone correction; errors/UNJUDGEABLE without safe plan hold; no failed-stage fallback release.
-- [ ] GREEN measured shared review metadata: monotonic primary/focused/total wall durations, truthful skipped face. No model/identity/authority fallback. Preserve Settings immutability and dedicated180second v2 QC deadline.
-- [ ] RED/GREEN durable local benchmark: frozen exact models/prompt/refs/contract/size/medium/QC deadline; separate generate-first, qc-first, conditional-repair, qc-final phases; default dry-run no calls/writes. One explicit case/arm per live invocation. Same first image underpins QC-off timing and QC-on continuation; prior-stage receipt and candidate hash are checked before each next phase.
-- [ ] First arms: Image2 and Flare snapshot. Second arms: Image2 and Sunburst snapshot respectively. Explicit generations must go through real cut_generator and application adapters, not a one-off SDK. Record actual transport model/bytes/prompt, stage role, parent image/receipt, output-size, usage/provider latency, wall stage duration and code hashes.
-- [ ] Derive no-QC time from stage1 completion; QC-on critical path is sum of measured required stages with optional repair skip. Exclude agent pauses/other-case queuing. Report per-case outcomes and median/range; no false separate-run stopwatch or model-only stage2 comparison.
-- [ ] Test synthetic timings with hand-derived sums, actual production entrypoint argument checks, QC-pass zero second requests, maxone correction, failures/cancellation durable no-resubmit, changed references/code/deadline/receipt/model rejected. No live calls by worker.
+- [x] RED stage routing: v2-only first model override, unchanged legacy/detail/signature routing; QC PASS skips stage2; valid FAIL yields maxone correction; errors/UNJUDGEABLE without safe plan hold; no failed-stage fallback release.
+- [x] GREEN measured shared review metadata: monotonic primary/focused/total wall durations, truthful skipped face. No model/identity/authority fallback. Preserve Settings immutability and dedicated180second v2 QC deadline.
+- [x] RED/GREEN durable local benchmark: frozen exact models/prompt/refs/contract/size/medium/QC deadline; separate generate-first, qc-first, conditional-repair, qc-final phases; default dry-run no calls/writes. One explicit case/arm per live invocation. Same first image underpins QC-off timing and QC-on continuation; prior-stage receipt and candidate hash are checked before each next phase.
+- [x] First arms: Image2 and Flare snapshot. Second arms: Image2 and Sunburst snapshot respectively. Explicit generations must go through real cut_generator and application adapters, not a one-off SDK. Record actual transport model/bytes/prompt, stage role, parent image/receipt, output-size, usage/provider latency, wall stage duration and code hashes.
+- [x] Derive no-QC time from stage1 completion; QC-on critical path is sum of measured required stages with optional repair skip. Exclude agent pauses/other-case queuing. Report per-case outcomes and median/range; no false separate-run stopwatch or model-only stage2 comparison.
+- [x] Test synthetic timings with hand-derived sums, actual production entrypoint argument checks, QC-pass zero second requests, maxone correction, failures/cancellation durable no-resubmit, changed references/code/deadline/receipt/model rejected. No live calls by worker.
 
 Example timing assertion:
 
@@ -78,9 +78,9 @@ assert timing['manualQueueTimeIncluded'] is False
 
 **Files:** root-owned outputs/wearshot_directed_stages_2026-09-10; public documents only for nonprivate implementation notes/results, existing DraftPR247.
 
-- [ ] Persist succinct historical lineage (input source vs previous output), actual provider/unknown builtin model, manual feedback vs machine QC, version number vs edit depth. Include main preferred bases and secondary attribute references.
-- [ ] Freeze four case packets with example first, no capture photo, native2K/medium, navy length explicitly from fr03-v1, correct expected visibility (do not demand hidden black trouser pleats). Do not extend a face preference into garment approval. New manifests must not mutate old trials.
-- [ ] Run one valid Flare first-generation request to establish access; no inference from metadata404. If denied, record blocked arm without fallback. If accessible, run8first outputs and at most8conditional corrections, no extra repeats. Alternate model order across cases and cap concurrent image calls2.
-- [ ] Use each first output for both no-QC preview timing and subsequent QC-enabled branch. Inspect all actual images, record face/color/length/scene preservation and unresolved failures; do not claim global superiority from4cases.
-- [ ] Render review with source/preferred base/stage1/QC/stage2/final clearly labeled, uniform image frames and per-case feedback. Include timing definitions and raw lineage links; static validate local links, do not bypass earlier local-browser restrictions.
+- [x] Persist succinct historical lineage (input source vs previous output), actual provider/unknown builtin model, manual feedback vs machine QC, version number vs edit depth. Include main preferred bases and secondary attribute references.
+- [x] Freeze four case packets with example first, no capture photo, native2K/medium, navy length explicitly from fr03-v1, correct expected visibility (do not demand hidden black trouser pleats). Do not extend a face preference into garment approval. New manifests must not mutate old trials.
+- [x] Run one valid Flare first-generation request to establish access; no inference from metadata404. If denied, record blocked arm without fallback. If accessible, run8first outputs and at most8conditional corrections, no extra repeats. Alternate model order across cases and cap concurrent image calls2.
+- [x] Use each first output for both no-QC preview timing and subsequent QC-enabled branch. Inspect all actual images, record face/color/length/scene preservation and unresolved failures; do not claim global superiority from4cases.
+- [x] Render review with source/preferred base/stage1/QC/stage2/final clearly labeled, uniform image frames and per-case feedback. Include timing definitions and raw lineage links; static validate local links, do not bypass earlier local-browser restrictions.
 - [ ] Focused and broad server regression (only3previouslydocumented localDB/history exclusions), independent final review, existing DraftPR update and CI. No merge/production activation or Goal restart. Report exact completion versus genuine remaining blockers.
