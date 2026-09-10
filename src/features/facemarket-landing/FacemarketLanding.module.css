@@ -158,7 +158,7 @@
    종전 아이콘(1.4rem)+글자(1.05rem) 조합과 같은 시각 무게가 되는 눈금. */
 .brandWordmark { height: 1.9rem; width: auto; display: block; }
 
-.nav { display: none; gap: clamp(1.5rem, 3vw, 3.4rem); justify-self: center; }
+.nav { display: none; gap: clamp(20px, 2.8vw, 36px); justify-self: center; }
 /* 이제 <button> 이 아니라 <NavLink>(=<a>)다. 이 레포의 전역 스타일에는 링크 리셋이
    없고(app.css 는 `a.link` 클래스 한정) UA 기본 밑줄이 그대로 나오므로 여기서 끈다. */
 .navLink {
@@ -984,3 +984,12 @@
   transition: color 140ms ease, background 140ms ease;
 }
 .headerQuiet:hover { background: #fff; color: var(--fm-ink); }
+
+/* 지원 시작 시안은 안내 띠와 푸터 없이 흰 본문을 쓴다. */
+.applyShell { background: var(--bg-1); padding-bottom: 0; }
+.noticeClosed { --fm-notice-h: 0px; }
+
+/* 좁은 데스크톱에서는 네 메뉴와 계정 버튼의 공간을 확보한다. 지원은 본문 CTA로 이어진다. */
+@media (min-width: 48rem) and (max-width: 63.99rem) {
+  .headerCta { display: none; }
+}

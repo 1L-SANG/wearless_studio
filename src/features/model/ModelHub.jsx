@@ -13,12 +13,14 @@ import {
 } from '@/lib/api/facemarket.js';
 import {
   APPROVAL_MODE,
+  APPLICATION_REJECT_PURGE_DAYS,
+  REVIEW_SLA_LABEL,
   formatKrw,
   validityLabel,
 } from '../facemarket-landing/facemarketTerms.js';
 import { hasCurrentEnrollmentLicense, resolveHubJourney } from './modelHubState.js';
 import s from './ModelPersonalization.module.css';
-import { seoulDate } from '@/lib/datetime.js';
+import { seoulDate, seoulDateTime } from '@/lib/datetime.js';
 import { FACEMARKET_PRICING } from '../../lib/facemarketPricing.js';
 
 async function loadOptional(fn) {
@@ -26,48 +28,88 @@ async function loadOptional(fn) {
   catch (error) { if (error?.status === 404) return null; throw error; }
 }
 
-function HubHead({ active = false }) {
+function HubHead({ active = false, application, email, enrollment, journey }) {
+  let title = 'Digital DNA 관리';
+  let lead = '지원부터 활동 시작까지 지금 어디에 있는지 한눈에 확인해요.';
+
+  if (active) {
+    lead = '내 트윈과 사용 규칙, 정산 기록을 한곳에서 관리해요.';
+  } else if (application?.status === 'under_review' && journey?.currentIndex === 1) {
+    const receivedAt = seoulDateTime(application.submittedAt || application.createdAt);
+    title = '지원서를 검토하고 있어요';
+    lead = `${receivedAt ? `${receivedAt}에` : '지원서를'} 받았어요. ${REVIEW_SLA_LABEL}에 ${application.contactEmail || email || '등록한 이메일'}으로 결과를 알려드려요.`;
+  } else if (journey?.currentIndex === 2 && !enrollment) {
+    title = '승인됐어요. 이제 등록을 시작해요';
+    lead = '본인확인, 사진, 조건, 증서 4단계예요. 10분이면 끝나요. 승인 메일의 링크를 눌러도 이 화면으로 와요.';
+  } else if (journey?.currentIndex === 2) {
+    title = '등록을 이어서 완료해요';
+    lead = '본인확인, 사진, 조건, 증서를 모두 마치면 최종 검토가 시작돼요.';
+  } else if (journey?.currentIndex === 3) {
+    title = '등록서를 최종 검토하고 있어요';
+    lead = `${REVIEW_SLA_LABEL}에 ${application?.contactEmail || email || '등록한 이메일'}로 결과를 알려드려요.`;
+  } else if (journey?.currentIndex === 4) {
+    title = '프로필 이미지를 확정해요';
+    lead = '사용할 프로필 이미지를 선택하면 Digital DNA 등록이 끝나요.';
+  } else if (journey?.currentIndex === 0) {
+    title = 'Digital DNA 모델로 지원해보세요';
+    lead = '지원서를 보내면 검토부터 모델 등록까지 이 화면에서 확인할 수 있어요.';
+  }
+
   return (
     <header className={s.hubHead}>
-      <p className={s.hubEyebrow}>FaceMarket 모델</p>
-      <h1 className={s.hubTitle}>Digital DNA 관리</h1>
-      <p className={s.hubLead}>
-        {active
-          ? '내 트윈과 사용 규칙, 정산 기록을 한곳에서 관리해요.'
-          : '지원부터 활동 시작까지 지금 어디에 있는지 한눈에 확인해요.'}
-      </p>
+      <p className={s.hubEyebrow}>Digital DNA 관리</p>
+      <h1 className={s.hubTitle}>{title}</h1>
+      <p className={s.hubLead}>{lead}</p>
     </header>
   );
 }
 
-function Timeline({ journey, onAction }) {
+function Timeline({ application, journey, onAction, onCancel }) {
+  const submittedAt = seoulDateTime(application?.submittedAt || application?.createdAt);
+  const reviewedAt = seoulDateTime(application?.reviewedAt);
+
   return (
-    <section aria-labelledby="hub-timeline-title" className={s.hubTimelineSection}>
-      <div className={s.hubTimelineHead}>
-        <p className={s.hubNextEyebrow}>온보딩 타임라인</p>
-        <h2 className={s.hubNextTitle} id="hub-timeline-title">활동까지 한 단계씩 이어가요</h2>
-      </div>
-      <ol className={s.hubTimeline}>
+    <section aria-label="Digital DNA 등록 여정" className={s.hubJourneySection}>
+      <ol className={s.hubJourneyList}>
         {journey.steps.map((step, index) => {
           const current = step.state === 'current';
           const done = step.state === 'done';
+          const actionCard = current && [2, 4].includes(index) && journey.action?.kind === 'route';
+          const completedAt = index === 0 ? submittedAt : index === 1 ? reviewedAt : null;
+          const stateLabel = done
+            ? index === 1 && application?.status === 'approved' ? '승인 완료' : '완료'
+            : current ? actionCard ? '지금 할 일' : '진행 중' : null;
           return (
             <li
               aria-current={current ? 'step' : undefined}
-              className={`${s.hubTimelineStep} ${s[`hubTimeline_${step.state}`]}`}
+              className={`${s.hubJourneyStep} ${s[`hubJourney_${step.state}`]}`}
               key={step.key}
             >
-              <div className={s.hubTimelineRail} aria-hidden="true">
-                <span className={s.hubTimelineDot}>
-                  {done ? <Icon name="check" size={13} stroke={2.6} /> : String(index + 1).padStart(2, '0')}
+              <div className={s.hubJourneyRail} aria-hidden="true">
+                <span className={s.hubJourneyDot}>
+                  {done ? <Icon name="check" size={13} stroke={2.6} /> : index + 1}
                 </span>
               </div>
-              <div className={s.hubTimelineCopy}>
-                <span className={s.hubTimelineState}>{done ? '완료' : current ? '현재' : '예정'}</span>
-                <h3>{step.label}</h3>
-                <p>{step.description}</p>
-                {current && journey.action ? (
+              <div className={`${s.hubJourneyCopy} ${actionCard ? s.hubJourneyActionCard : ''} ${actionCard && index === 2 ? s.hubJourneyActionCardGradient : ''}`}>
+                <div className={s.hubJourneyText}>
+                  <h3>
+                    {step.label}
+                    {stateLabel ? <span className={s.hubJourneyState}>{stateLabel}</span> : null}
+                  </h3>
+                  {done && completedAt ? <p className={s.hubJourneyWhen}>{completedAt}</p> : null}
+                  {current && step.description ? <p>{step.description}</p> : null}
+                </div>
+                {actionCard ? (
                   <Button variant="primary" iconRight="arrowRight" onClick={onAction}>
+                    {journey.action.label}
+                  </Button>
+                ) : current && journey.action && journey.action.kind !== 'cancel' ? (
+                  <Button
+                    icon={journey.action.kind === 'reload' ? 'refresh' : undefined}
+                    iconRight={journey.action.kind === 'route' ? 'arrowRight' : undefined}
+                    onClick={onAction}
+                    variant={journey.action.kind === 'reload' ? 'ghost' : 'primary'}
+                  >
                     {journey.action.label}
                   </Button>
                 ) : null}
@@ -76,7 +118,46 @@ function Timeline({ journey, onAction }) {
           );
         })}
       </ol>
+      {journey.action?.kind === 'cancel' ? (
+        <div className={s.hubJourneyCancelRow}>
+          <button className={s.hubJourneyCancel} onClick={onCancel} type="button">지원 취소</button>
+        </div>
+      ) : null}
     </section>
+  );
+}
+
+function RejectedApplication({ application, onAction }) {
+  const reviewedAt = seoulDateTime(application?.reviewedAt);
+  return (
+    <div className={s.hubRejected}>
+      <header className={s.hubHead}>
+        <p className={s.hubEyebrow}>Digital DNA 관리</p>
+        <h1 className={s.hubTitle}>이번에는 승인되지 않았어요</h1>
+        <p className={s.hubLead}>
+          {reviewedAt ? `${reviewedAt}에 ` : ''}검토가 끝났어요. 아래 사유를 보고 고쳐서 다시 지원할 수 있어요.
+        </p>
+      </header>
+      {application?.rejectReason ? (
+        <section className={s.hubRejectReason} aria-labelledby="hub-reject-reason-title">
+          <h2 id="hub-reject-reason-title">검토한 사람이 남긴 사유</h2>
+          <p>{application.rejectReason}</p>
+        </section>
+      ) : (
+        <p className={s.hubRejectMissing}>
+          검토자가 사유를 남기지 않았어요. 준비할 것을 다시 보고 지원해 주세요.
+          <Link to="/apply">지원 준비 다시 보기</Link>
+        </p>
+      )}
+      <dl className={s.hubRejectRetention}>
+        <div><dt>적은 내용</dt><dd>{APPLICATION_REJECT_PURGE_DAYS}일 안에 지워요. 그전에 다시 지원하면 불러와서 고칠 수 있어요.</dd></div>
+        <div><dt>사진</dt><dd>같이 지워요. 다시 지원할 때 새로 올려 주세요.</dd></div>
+      </dl>
+      <Link className={s.hubRejectBrowse} to="/models">모델 리스트 둘러보기</Link>
+      <div className={s.hubRejectAction}>
+        <Button variant="primary" iconRight="arrowRight" onClick={onAction}>다시 지원하기</Button>
+      </div>
+    </div>
   );
 }
 
@@ -178,35 +259,7 @@ function ActiveDashboard({ license, model, settlementSummary }) {
   );
 }
 
-function ConfirmationNotice({ model, onConfirm, onRefresh }) {
-  if (model?.status === 'awaiting_confirm') {
-    return (
-      <section className={s.hubGateNotice} aria-labelledby="test-cuts-ready-title">
-        <div>
-          <p className={s.hubNextEyebrow}>공개 전 마지막 확인</p>
-          <h2 className={s.hubNextTitle} id="test-cuts-ready-title">테스트컷이 도착했어요</h2>
-          <p className={s.hubNextBody}>프로필로 쓸 컷을 직접 고르고 공개 품질을 확인해 주세요.</p>
-        </div>
-        <Button variant="primary" iconRight="arrowRight" onClick={onConfirm}>확인하러 가기</Button>
-      </section>
-    );
-  }
-  if (model?.status === 'pending' && model?.redoCount > 0) {
-    return (
-      <section className={s.hubGateNotice} aria-labelledby="test-cuts-redo-title">
-        <div>
-          <p className={s.hubNextEyebrow}>테스트 컷 생성</p>
-          <h2 className={s.hubNextTitle} id="test-cuts-redo-title">다시 만드는 중이에요</h2>
-          <p className={s.hubNextBody}>새 테스트컷이 준비되면 여기와 이메일로 알려드려요.</p>
-        </div>
-        <Button variant="ghost" icon="refresh" onClick={onRefresh}>상태 새로고침</Button>
-      </section>
-    );
-  }
-  return null;
-}
-
-export function ModelHub() {
+export function ModelHub({ email = '' }) {
   const navigate = useNavigate();
   const { push } = useToast();
   const [phase, setPhase] = useState('loading');
@@ -284,19 +337,28 @@ export function ModelHub() {
 
   return (
     <div className={s.hubPage}>
-      <HubHead active={journey.mode === 'active'} />
-      <ConfirmationNotice
-        model={ownedModel}
-        onConfirm={() => navigate('/model/confirm')}
-        onRefresh={load}
-      />
-      {journey.mode === 'active' ? (
-        <ActiveDashboard
-          license={activeLicense}
-          model={ownedModel}
-          settlementSummary={settlementSummary}
-        />
-      ) : <Timeline journey={journey} onAction={onJourneyAction} />}
+      {application?.status === 'rejected' && journey.mode === 'onboarding' && journey.currentIndex === 1 ? (
+        <RejectedApplication application={application} onAction={onJourneyAction} />
+      ) : journey.mode === 'active' ? (
+        <>
+          <HubHead active />
+          <ActiveDashboard
+            license={activeLicense}
+            model={ownedModel}
+            settlementSummary={settlementSummary}
+          />
+        </>
+      ) : (
+        <div className={s.hubOnboarding}>
+          <HubHead application={application} email={email} enrollment={enrollment} journey={journey} />
+          <Timeline
+            application={application}
+            journey={journey}
+            onAction={onJourneyAction}
+            onCancel={onCancelApplication}
+          />
+        </div>
+      )}
     </div>
   );
 }
