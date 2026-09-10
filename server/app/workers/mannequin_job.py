@@ -1,8 +1,8 @@
 """AG-04 마네킹 생성 워커 (요리사). dispatcher가 claim한 job 1건을 실행한다.
 
-흐름: 입력 로드(베이스+상품사진+하의) → 단일 tier(기본 image_high=Gemini 3 Pro,
-Flash·승격 없음) 생성 → QC(기본 shadow: 판정 로그만, 게이팅 시 같은 모델 재시도) → 통과본 R2 저장
-→ finalize(에셋·컷·크레딧·done/error, 원자·lease 펜스). 생성/네트워크는 to_thread·async로 격리.
+베이스, 상품 사진과 매칭 의류를 읽고 마네킹 전용 tier로 생성한다. 기본은 Flare 2K다.
+설정된 검사와 편집을 거쳐 선택한 사진을 R2에 저장하고 에셋·컷·크레딧을 원자적으로 확정한다.
+공유 이미지 모델은 바꾸지 않으며 생성과 네트워크는 to_thread와 async로 격리한다.
 """
 
 import asyncio
@@ -338,12 +338,7 @@ def _effective_axis_qc_mode(s) -> str:
 
 
 def effective_image_size(s, product: dict | None, analysis: dict | None) -> str:
-    """이 잡이 쓸 출력 해상도 (순수). 미세 패턴 상품만 승급한다.
-
-    2K 실측(2026-08-01, 스트라이프 셔츠): 줄 주기 8.9px → 한 주기를 이루는 요소(색 선·흰 간격)당
-    2px 남짓이라 두 색 줄이 한 색으로 뭉개졌다. 해상도가 곧 재현 한계인 축이라 프롬프트로는
-    못 넘는다. 무지 상품은 재현할 고주파가 없어 승급하지 않는다 — 비용만 늘고 결과는 같다.
-    """
+    """잡의 출력 크기. 기본은 패턴 여부와 관계없이 2K이며 명시한 승급만 적용한다."""
     # 적용 가능한 승급들 중 **최댓값** 하나를 고른다(리뷰 2026-08-19): 패턴 분기가 무조건
     # return 하면 운영자가 패턴 크기를 내렸을 때 패턴+로고 상품의 로고 승급이 평가조차 안
     # 된다. 로고 2K 는 해상도 A/B 근거(1K 실컷 0/3 vs 2K 3/4 통과, pro 요금 동일).
@@ -532,7 +527,7 @@ def _is_better_candidate(s, new_p2, old_p2) -> bool:
 _GRADE_RANK = {"regenerate": 0, "needs_review": 1, "auto_pass": 2}
 
 
-def edit_regressed(s, pre_p2, post_p2) -> bool:
+def edit_regressed(s, pre_p2, post_p2, *, score_keys=_COMPARABLE_KEYS) -> bool:
     """편집(축 교정·가슴 2패스)이 컷을 **더 나쁘게** 만들었는가 (순수).
 
     편집은 선언 핏 축·가슴 볼륨을 고치려고 도는데, 그건 A~C 가 재는 축이 아니다. 그래서
@@ -549,6 +544,7 @@ def edit_regressed(s, pre_p2, post_p2) -> bool:
     (prod 실측 80→76 롤백으로 가슴 볼륨이 한 번도 출고되지 않음).
 
     신호가 한쪽이라도 없으면 비교 불가 → 되돌리지 않는다(편집 유지가 기존 동작).
+    마지막 편집의 전후 시리즈 점수가 모두 있으면 호출자가 D축까지 비교할 수 있다.
     """
     if not isinstance(pre_p2, dict) or not isinstance(post_p2, dict):
         return False
@@ -557,7 +553,7 @@ def edit_regressed(s, pre_p2, post_p2) -> bool:
     # (codex 2026-07-31 8차 HIGH). 치명오류는 점수와 무관하게 그 자체로 출고 불가다.
     if post_p2.get("critical_errors") and not pre_p2.get("critical_errors"):
         return True
-    pre_worst = _worst_score(pre_p2, _COMPARABLE_KEYS)
+    pre_worst = _worst_score(pre_p2, score_keys)
     if pre_worst is None:
         return False  # 편집 전 점수가 없으면 등급 하락은 논할 수 없다
     pre_rank = _GRADE_RANK[score_outcome(s, pre_p2)]
@@ -569,7 +565,7 @@ def edit_regressed(s, pre_p2, post_p2) -> bool:
     # 4점 하락)에 auto_pass→needs_review 로 갈려 가슴 볼륨이 통째로 되돌려졌다. 판정기 재현성이
     # 같은 이미지에 ±30 인데 4점 차를 손상으로 읽으면 편집은 영원히 출고되지 않는다.
     # 진짜 손상(실측 85→30)은 마진을 훨씬 넘으므로 그대로 걸러진다.
-    post_worst = _worst_score(post_p2, _COMPARABLE_KEYS)
+    post_worst = _worst_score(post_p2, score_keys)
     margin = getattr(s, "qc_edit_regression_margin", 0) or 0
     if post_worst is not None and (pre_worst - post_worst) <= margin:
         return False
@@ -1091,6 +1087,79 @@ async def _apply_untuck_postpass(
     return out
 
 
+async def _apply_checked_untuck_postpass(
+    *, app, pool, gemini, s, job_id, project_id, candidate, attempt, generation_attempts,
+    res, p2, series, qc_scores, prod_imgs, match_img, fit_profile, eff_image_qc,
+    clothing_type=None, image_size=None, cancel_check=None,
+):
+    """마지막 편집 이미지와 그 이미지의 판정을 한 묶음으로 채택한다.
+
+    편집 결과가 같으면 추가 판정은 없다. 바뀌었을 때만 기존 검사와 허용폭을
+    재사용하고, 악화나 판정 실패 시 편집 전 이미지와 점수를 함께 유지한다.
+    추가 이미지 생성이나 재시도 루프는 만들지 않는다.
+    """
+    before = res
+    before_hash = hashlib.sha256(before.image).hexdigest()
+    edited = await _apply_untuck_postpass(
+        pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
+        generation_attempts=generation_attempts, res=res, match_img=match_img,
+        clothing_type=clothing_type, image_size=image_size, cancel_check=cancel_check)
+    edited_hash = hashlib.sha256(edited.image).hexdigest()
+    if edited_hash == before_hash:
+        return edited, qc_scores
+
+    async def keep_before(reason, error=None):
+        await _emit(pool, job_id, "step", {
+            "candidate": candidate, "attempt": attempt, "status": "untuck_postcheck",
+            "outcome": "reverted", "reason": reason,
+            "from_image_hash": edited_hash, "to_image_hash": before_hash,
+            **({"error": type(error).__name__} if error is not None else {}),
+        })
+        return before, qc_scores
+
+    post_p2 = None
+    if eff_image_qc in ("shadow", "enforce") and prod_imgs:
+        await _cancel_checkpoint(cancel_check)
+        try:
+            post_p2 = await image_qc.verdict(
+                s, prod_imgs, InlineImage(edited.mime, edited.image), scored=True,
+                fit_profile=fit_profile,
+                match_image=_pants_qc_ref(s, match_img, clothing_type))
+        except Exception as error:
+            return await keep_before("main_qc_failed", error)
+        await _emit(pool, job_id, "step", {
+            "candidate": candidate, "attempt": attempt, "status": "image_qc_rescored",
+            "phase": "untuck", "image_hash": edited_hash, "imageQc": post_p2,
+        })
+        if pants_gate(s, post_p2):
+            return await keep_before("matching_identity_regressed")
+        if edit_regressed(s, p2, post_p2):
+            return await keep_before("main_qc_regressed")
+
+    await _cancel_checkpoint(cancel_check)
+    post_series = await _apply_series_qc(
+        app=app, pool=pool, s=s, job_id=job_id, project_id=project_id,
+        candidate=candidate, attempt=attempt, res=edited)
+    if series is not None and post_series is None:
+        return await keep_before("series_qc_unavailable")
+    salvaged = bool((qc_scores or {}).get("salvaged"))
+    post_scores = merge_qc_scores(
+        post_p2, post_series, salvaged=salvaged,
+        thresholds=(s.qc_score_auto_pass, s.qc_score_review))
+    # D축을 새로 관측한 경우와 기존 D축을 재검사한 경우를 섞어 비교하지 않는다.
+    if series is not None and post_series is not None and edit_regressed(
+            s, qc_scores, post_scores, score_keys=image_qc.SCORE_KEYS):
+        return await keep_before("final_scores_regressed")
+    if post_scores is None and salvaged:
+        post_scores = {"salvaged": True}
+    await _emit(pool, job_id, "step", {
+        "candidate": candidate, "attempt": attempt, "status": "untuck_postcheck",
+        "outcome": "applied", "image_hash": edited_hash,
+        "main_qc_checked": post_p2 is not None, "series_qc_checked": post_series is not None,
+    })
+    return edited, post_scores
+
+
 async def _apply_fabric_pass(
     *, pool, gemini, s, job_id, candidate, attempt, res, prod_imgs, calls_spent,
     has_fine_pattern=False, image_size=None, product_refs=None,
@@ -1251,12 +1320,13 @@ async def _apply_edits(
             "candidate": candidate, "attempt": attempt,
             "status": "image_qc_rescored", "imageQc": p2})
     except Exception as e:
-        # fail-open: 재판정 실패 시 편집 전 점수를 쓰되, 그 사실을 남긴다.
+        # 재검사하지 못한 새 사진에 옛 점수를 붙이지 않는다.
+        # 마지막 untuck과 마찬가지로 이전 사진과 그 점수를 함께 유지한다.
         log.warning("image_qc rescore failed for job %s: %r", job_id, e)
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "attempt": attempt,
             "status": "image_qc_rescore_failed", "error": type(e).__name__})
-        return res, pre_p2, calls_spent
+        return pre_res, pre_p2, calls_spent
     # 재판정은 하락을 **기록**할 뿐이라, 망친 편집본이 그대로 출고됐다.
     if edit_regressed(s, pre_p2, p2):
         axis_hash = hashlib.sha256(post_axis_res.image).hexdigest()
@@ -1357,9 +1427,14 @@ async def _run_candidate(
         # 편집 프롬프트의 image 1 계약: 현재 컷이 반드시 첫 장이고, 상품 정체성 앵커가 뒤따른다.
         images = [parent_cut_img, *prod_imgs] + ([match_img] if match_img else [])
         base_prompt = render_adjust_prompt(
-            adjust_directives, build_adjust_manifest(len(prod_imgs), match_img is not None))
+            adjust_directives, build_adjust_manifest(
+                len(prod_imgs), match_img is not None, clothing_type=clothing_type,
+                product_slots=[ref.slot for ref in product_refs] if product_refs is not None else None))
         prompt_version = ADJUST_PROMPT_VERSION
-        model = resolve_model(s, getattr(s, "mannequin_adjust_tier", "") or "image_high")
+        adjust_tier = getattr(s, "mannequin_adjust_tier", "") or (
+            "image_mannequin" if s.mannequin_tier == "image_mannequin" else "image_high"
+        )
+        model = resolve_model(s, adjust_tier)
         ctx_kwargs, prompt_suffix = {}, ""  # 편집 경로는 캐노니컬 재렌더 대상이 아니다
     else:
         generation_path = "fresh"
@@ -1382,7 +1457,7 @@ async def _run_candidate(
         if prompt_suffix:
             base_prompt = f"{base_prompt}\n\n{prompt_suffix}"
         prompt_version = s.mannequin_prompt_version
-        # AG-04는 처음부터 단일 tier(기본 image_high=Pro, 사용자 결정 — Flash·승격 없음).
+        # AG-04 전용 tier를 사용하며 공유 이미지 모델에는 영향을 주지 않는다.
         # QC 게이팅 시 같은 모델로 재시도(re-roll + 교정 피드백). shadow면 첫 결과 채택.
         model = resolve_model(s, tier_for_job(s, job))
     feedback = ""
@@ -1611,14 +1686,17 @@ async def _run_candidate(
             # 그대로 저장하면 검증 안 된 이미지가 출고된다(codex HIGH).
             if final_decision(s, qc_scores) == "retry" and not salvaged:
                 if final_reject and _is_better_candidate(s, final_reject[1], qc_scores):
-                    res, qc_scores, _series, _p2 = final_reject
+                    res, qc_scores, series, p2 = final_reject
                 qc_scores = {**(qc_scores or {}), "salvaged": True}
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "qc_salvaged",
                     "reason": "budget_exhausted", "outcome": score_outcome(s, qc_scores)})
-            res = await _apply_untuck_postpass(
-                pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
-                generation_attempts=generation_calls, res=res, match_img=match_img,
+            res, qc_scores = await _apply_checked_untuck_postpass(
+                app=app, pool=pool, gemini=gemini, s=s, job_id=job_id,
+                project_id=project_id, candidate=candidate, attempt=attempt,
+                generation_attempts=generation_calls, res=res, p2=p2, series=series,
+                qc_scores=qc_scores, prod_imgs=prod_imgs, match_img=match_img,
+                fit_profile=fit_profile, eff_image_qc=eff_image_qc,
                 clothing_type=clothing_type, image_size=image_size,
                 cancel_check=cancel_check)
             return await _save_cut(
@@ -1685,9 +1763,12 @@ async def _run_candidate(
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "status": "qc_salvaged",
             "reason": "loop_exhausted", "outcome": score_outcome(s, qc_scores)})
-        res = await _apply_untuck_postpass(
-            pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
-            generation_attempts=generation_calls, res=res, match_img=match_img,
+        res, qc_scores = await _apply_checked_untuck_postpass(
+            app=app, pool=pool, gemini=gemini, s=s, job_id=job_id,
+            project_id=project_id, candidate=candidate, attempt=s.mannequin_max_attempts,
+            generation_attempts=generation_calls, res=res, p2=p2, series=series,
+            qc_scores=qc_scores, prod_imgs=prod_imgs, match_img=match_img,
+            fit_profile=fit_profile, eff_image_qc=eff_image_qc,
             clothing_type=clothing_type, image_size=image_size, cancel_check=cancel_check)
         return await _save_cut(
             s=s, r2=r2, user_id=user_id, project_id=project_id, job_id=job_id,

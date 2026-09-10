@@ -43,6 +43,8 @@ class Settings:
     # tier→모델 매핑 (ai_agent_modules §1 — 교체는 여기/env 한 곳)
     model_image_light: str = "gemini-3.1-flash-image"
     model_image_high: str = "gemini-3-pro-image"
+    # 마네킹 생성과 사용자 조정 전용. 공유 image_high와 상세페이지 모델은 바꾸지 않는다.
+    model_image_mannequin: str = "gpt-image-2.5-flare"
     # 시그니처 컷(상세페이지 첫 화면) 전용. gpt-image 계열은 gemini_image.py 가 OpenAI
     # images/edits 경로로 분기한다(:127) — 표기는 그 분기가 인식하는 그대로 둔다.
     model_image_signature: str = "gpt-image-2"
@@ -93,11 +95,10 @@ class Settings:
     # 평가)를 쓴다 — 실셀러 트래픽을 태우지 않고 같은 답을 얻는다.
     # 되돌리기: INPUT_CONSISTENCY=off (재배포 없이 env 만으로 즉시 무력화).
     input_consistency: str = "warn"  # off | warn
-    mannequin_tier: str = "image_high"  # AG-04 = Gemini 3 Pro (사용자 결정 — Flash 미사용)
-    # 조정(:regenerate) 전용 tier. 조정과 초기 생성은 같은 워커·같은 프롬프트를 타서 env 하나로는
-    # 분리가 안 된다. 빈 값이면 분기 없이 mannequin_tier 를 그대로 쓴다(기존 동작).
-    # 조정 흐름에서만 다른 모델을 시험할 때 쓴다 — 초기 생성 품질을 건드리지 않고 비교한다.
-    mannequin_adjust_tier: str = ""  # "" | image_light | image_high
+    mannequin_tier: str = "image_mannequin"  # AG-04 전용 Flare, 다른 이미지 기능과 분리
+    # 조정(:regenerate) 전용 tier. 지정하면 초기 생성과 별도로 사용한다.
+    # 빈 값의 편집 경로는 새 기본값이면 image_mannequin, 기존 설정이면 image_high를 쓴다.
+    mannequin_adjust_tier: str = ""  # "" | image_mannequin | image_light | image_high
     mannequin_image_size: str = "2K"  # 1K | 2K | 4K (오너 결정: 모든 마네킹컷 기본 2K)
     # 상세페이지/에디터 컷 전용 해상도. 마네킹 해상도와 분리해야 콘티 4K 배포가
     # 마네킹 생성 비용·지연까지 조용히 바꾸지 않는다.
@@ -148,9 +149,9 @@ class Settings:
     # 80/83/85 → 76/78/77 로 롤백 → 가슴 볼륨이 한 번도 출고되지 않음).
     qc_edit_regression_margin: int = 10
     # 미세 반복 패턴(스트라이프·체크) 상품의 출력 해상도. 'off' 면 승급 없이 mannequin_image_size 를 쓴다.
-    # 2K 실측(2026-08-01): 줄 주기 8.9px → 한 주기를 이루는 요소당 2px 남짓이라 두 색 줄이 한 색으로
-    # 뭉개졌다. 4K 면 주기 ~18px 로 요소당 4~5px 이 확보된다. 무지 상품은 승급하지 않는다(비용).
-    mannequin_pattern_image_size: str = "4K"  # off | 1K | 2K | 4K
+    # 2026-09 검증과 사용자 선택: 복합 줄무늬의 4K 이득이 부족해 기본 승급을 끈다.
+    # 필요 시 운영자가 명시적으로 크기를 지정할 수 있지만 패턴만으로 비용을 늘리지 않는다.
+    mannequin_pattern_image_size: str = "OFF"  # off | 1K | 2K | 4K
     # 로고·레터링·프린트 상품의 출력 해상도 (2026-08-19 해상도 A/B — 오너 승인).
     # 1K 는 작은 글자가 뭉개져 "로고 변형" 재롤·구제의 주 원인(실컷 0/3 통과)이었고,
     # 2K 는 3/4 통과 + **1K 와 요금 동일**(공식 표 출력 1,120tok)이라 승급 비용 0.
@@ -418,14 +419,14 @@ def _detail_cut_image_size() -> str:
 
 
 def _mannequin_tier() -> str:
-    t = os.getenv("MANNEQUIN_TIER", "image_high")
-    return t if t in {"image_light", "image_high"} else "image_high"
+    t = os.getenv("MANNEQUIN_TIER", "image_mannequin")
+    return t if t in {"image_mannequin", "image_light", "image_high"} else "image_mannequin"
 
 
 def _mannequin_adjust_tier() -> str:
-    """조정 전용 tier — 미설정·오타면 "" (분기 없음, mannequin_tier 그대로)."""
+    """조정 전용 tier. 미설정 또는 오타면 워커의 기본 선택을 따른다."""
     t = os.getenv("MANNEQUIN_ADJUST_TIER", "")
-    return t if t in {"image_light", "image_high"} else ""
+    return t if t in {"image_mannequin", "image_light", "image_high"} else ""
 
 
 def _flag(env: str, default: str, allowed: set[str]) -> str:
@@ -500,6 +501,7 @@ def load_settings() -> Settings:
         vertex_location=os.getenv("VERTEX_LOCATION", "global"),
         model_image_light=os.getenv("MODEL_ROUTING_IMAGE_LIGHT", "gemini-3.1-flash-image"),
         model_image_high=os.getenv("MODEL_ROUTING_IMAGE_HIGH", "gemini-3-pro-image"),
+        model_image_mannequin=(os.getenv("MODEL_ROUTING_IMAGE_MANNEQUIN") or "gpt-image-2.5-flare").strip() or "gpt-image-2.5-flare",
         model_image_signature=os.getenv("MODEL_ROUTING_IMAGE_SIGNATURE", "gpt-image-2"),
         model_detail_cut=os.getenv("MODEL_ROUTING_DETAIL_CUT", ""),
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
@@ -579,7 +581,7 @@ def load_settings() -> Settings:
             "QC_EDIT_REGRESSION_MARGIN",
             str(Settings.__dataclass_fields__["qc_edit_regression_margin"].default))),
         mannequin_pattern_image_size=_flag(
-            "MANNEQUIN_PATTERN_IMAGE_SIZE", "4K", {"off", "1k", "2k", "4k"}).upper(),
+            "MANNEQUIN_PATTERN_IMAGE_SIZE", "off", {"off", "1k", "2k", "4k"}).upper(),
         mannequin_logo_image_size=_flag(
             "MANNEQUIN_LOGO_IMAGE_SIZE", "2K", {"off", "1k", "2k", "4k"}).upper(),
         garment_qc_mode=_flag(

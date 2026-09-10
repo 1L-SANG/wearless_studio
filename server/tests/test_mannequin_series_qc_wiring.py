@@ -1345,7 +1345,11 @@ def test_bottom_product_manifest_and_prompt_keep_the_product_visible():
 
     template = load_prompt_template(make_settings())
     assert "MATCHING TOP (if attached" in template
-    assert "waistband, closure and belt loops are visible" in template, \
-        "관측 가능한 목표 — 상품 허리 전부 노출"
+    assert "entire waistband and photographed front construction remain visible" in template, \
+        "상품 허리와 사진에 있는 앞면 구조가 보여야 한다"
+    assert "only if actually present in the product photos" in template, \
+        "사진에 없는 벨트 고리나 외부 잠금 장식은 추가하지 않는다"
+    assert "keep hidden closures hidden" in template
+    assert "waistband, closure and belt loops are visible" not in template
     assert "unless a matching-top length is declared" in template, \
         "셀러가 조정하면(WS2 스텝) 선언이 이긴다"
