@@ -52,9 +52,10 @@ Report completed decision timing separately from accepted-result timing. A fast 
 
 ## Verification and limits
 
-- Root local full regression after the final transport fix: 4,372 passed, 24 skipped, 391 existing warnings. The three previously documented local exclusions remain the unavailable local personalization DB suite and two untracked historical-fixture suites; no production DB was used for local tests.
+- Root local full regression after the final fixture portability fix: 4,374 passed, 24 skipped, 391 existing warnings. The three previously documented local exclusions remain the unavailable local personalization DB suite and two untracked historical-fixture suites; no production DB was used for local tests.
 - Focused final transport/benchmark/legacy paired coverage: 156 passed. Real adapter boundaries are exercised with HTTP stubs; strict model, bytes, quality and canvas arguments are asserted.
 - Independent task reviews and final integration review are clean after fixing accepted-versus-held timing labels, preserving the old planner call shape, and limiting experiment HTTP attempts.
+- Initial Linux CI exposed one test-fixture-only golden mismatch (4,555 passed, one failed): re-encoding equal PNG pixels did not produce the original snapshot bytes. The snapshot now freezes its original six PNG byte strings while retaining both original literal contract/prompt hashes. Default, altered and unavailable encoder regressions pass; 78 covering tests passed. No generation/QC code or live evidence was changed by this fix.
 - Four-case private live results are summarized below; a small sample cannot prove general superiority.
 - No merge, production deployment, environment activation, key change or automatic Goal restart is implied by this implementation.
 

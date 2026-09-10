@@ -2,10 +2,13 @@
 from dataclasses import replace
 from hashlib import sha256
 from copy import deepcopy
+from base64 import b64decode
 
 import pytest
+from PIL import Image
 
 from app.agents import wearshot_contract as c, wearshot_prompt as prompt, wearshot_qc as qc
+from app.agents.gemini_image import InlineImage
 from test_wearshot_contract_v2 import packet, png
 from test_wearshot_qc_v2 import observed, mark
 
@@ -28,8 +31,46 @@ def length_observed(contract):
     return raw
 
 
-def test_absent_extensions_preserve_frozen_contract_and_prompt_bytes():
-    old = packet()
+def frozen_legacy_packet():
+    # Original 4x6 RGB PNG bytes from the approved snapshot. Re-encoding equal
+    # pixels can change their byte hashes across Pillow/zlib versions/platforms.
+    refs = tuple(c.BoundReference(key, role, InlineImage('image/png', b64decode(encoded)), garment, ordinal)
+                 for key, role, garment, ordinal, encoded in (
+        ('t-anchor', 'approvedMannequin', 'top', None,
+         'iVBORw0KGgoAAAANSUhEUgAAAAQAAAAGCAIAAABrW6giAAAAEUlEQVR4nGP8z4AATEhssjgATtUBC+MZq3UAAAAASUVORK5CYII='),
+        ('t-seller', 'targetSeller', 'top', 2,
+         'iVBORw0KGgoAAAANSUhEUgAAAAQAAAAGCAIAAABrW6giAAAAE0lEQVR4nGP8//8/AwwwwVlkcgDlPgMJNPmmKAAAAABJRU5ErkJggg=='),
+        ('m-anchor', 'approvedMannequin', 'trousers', None,
+         'iVBORw0KGgoAAAANSUhEUgAAAAQAAAAGCAIAAABrW6giAAAAE0lEQVR4nGNkYPjPAANMcBaZHABM1wELBoB5tQAAAABJRU5ErkJggg=='),
+        ('m-seller', 'matchingSeller', 'trousers', 1,
+         'iVBORw0KGgoAAAANSUhEUgAAAAQAAAAGCAIAAABrW6giAAAADElEQVR4nGNgoCYAAABOAAHWZzc3AAAAAElFTkSuQmCC'),
+        ('face', 'modelFace', None, None,
+         'iVBORw0KGgoAAAANSUhEUgAAAAQAAAAGCAIAAABrW6giAAAAEklEQVR4nGP8/58BDpgQTPI4AJqJAgoGCOJWAAAAAElFTkSuQmCC'),
+        ('example', 'example', None, None,
+         'iVBORw0KGgoAAAANSUhEUgAAAAQAAAAGCAIAAABrW6giAAAAE0lEQVR4nGNsaGhggAEmOItMDgB0IgGMBrf4BwAAAABJRU5ErkJggg=='),
+    ))
+    return c.bind_contract(
+        target=c.GarmentBinding('top', 't-anchor', ('t-seller',),
+            (c.EssentialDetail('hem', 'curved split hem', ('t-seller',)),)),
+        matching=(c.GarmentBinding('trousers', 'm-anchor', ('m-seller',)),),
+        expected_matching_ids=('trousers',), references=refs,
+        example_key='example', model_face_key='face', model_body_key=None, capture_key=None,
+        frame_lock=c.FrameLock('medium', 'partial', 'Knees crop, same subject scale'),
+        variation_axis='pose', capture_profile='soft')
+
+
+@pytest.mark.parametrize('png_encoder', ['default', 'uncompressed', 'unavailable'])
+def test_absent_extensions_preserve_frozen_contract_and_prompt_bytes(monkeypatch, png_encoder):
+    if png_encoder == 'uncompressed':
+        save = Image.Image.save
+        def uncompressed(image, *args, **kwargs):
+            return save(image, *args, **(kwargs | {'compress_level': 0}))
+        monkeypatch.setattr(Image.Image, 'save', uncompressed)
+    elif png_encoder == 'unavailable':
+        def unavailable(*args, **kwargs):
+            raise AssertionError('Frozen snapshot must not depend on a PNG encoder')
+        monkeypatch.setattr(Image.Image, 'save', unavailable)
+    old = frozen_legacy_packet()
     assert old.fingerprint == 'c7f1732eceb7597cded4d8ae2ecd3cedd8e259eadb639fc21569ec9cd0ae7cc0'
     assert sha256(prompt.render_generation(old).prompt.encode()).hexdigest() == 'c63a90aa7adb9fc2787a5f6a9db30258e45776642cc15f8a813a489d3fd8c418'
     assert set(old.target.to_dict()) == {'garmentId', 'mannequinKey', 'sellerKeys', 'essentials', 'outOfFrameAxes'}
