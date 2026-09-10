@@ -21,8 +21,8 @@ import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { Icon, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
-import { SUBSCRIPTION_TRANSFER_ENABLED, TOSS_BILLING_CLIENT_KEY, TOSS_CLIENT_KEY }
-  from '@/lib/tossKeys.js';
+import { SUBSCRIPTION_TRANSFER_ENABLED, TOPUP_ENABLED, TOSS_BILLING_CLIENT_KEY,
+  TOSS_CLIENT_KEY } from '@/lib/tossKeys.js';
 import s from './Pricing.module.css';
 
 const won = (n) => '₩' + Number(n).toLocaleString('ko-KR');
@@ -124,8 +124,11 @@ export function Pricing() {
     staleTime: 5 * 60 * 1000,
   });
 
-  const shown = plans.filter((p) => p.kind === tab);
-  const recurring = tab === 'subscription';
+  // 충전 탭이 없으면 tab 이 'topup' 이 될 길은 없지만, 상태가 남아 있어도
+  // 빈 화면을 그리지 않게 구독으로 되돌린다.
+  const activeTab = TOPUP_ENABLED ? tab : 'subscription';
+  const shown = plans.filter((p) => p.kind === activeTab);
+  const recurring = activeTab === 'subscription';
 
   return (
     <div className="wizard wide">
@@ -134,10 +137,15 @@ export function Pricing() {
         <p className={s.sub}>상세페이지 한 개에 13,000원. 사진 10장 기준이에요.</p>
       </div>
 
-      <div className={s.tabs} role="group" aria-label="요금제 유형">
-        <button type="button" aria-pressed={recurring} className={`${s.tab}${recurring ? ' ' + s.active : ''}`} onClick={() => setTab('subscription')}>구독</button>
-        <button type="button" aria-pressed={!recurring} className={`${s.tab}${!recurring ? ' ' + s.active : ''}`} onClick={() => setTab('topup')}>추가 구매</button>
-      </div>
+      {/* 충전(추가 구매)은 일반결제라 계약 전까지 라이브에서 동작하지 않는다 —
+          탭 자체를 숨긴다(lib/tossKeys.js TOPUP_ENABLED). 누르면 실패할 버튼을
+          남겨 두면 사용자가 결제 실패를 겪는다. 탭이 하나뿐이면 탭 줄도 안 그린다. */}
+      {TOPUP_ENABLED && (
+        <div className={s.tabs} role="group" aria-label="요금제 유형">
+          <button type="button" aria-pressed={recurring} className={`${s.tab}${recurring ? ' ' + s.active : ''}`} onClick={() => setTab('subscription')}>구독</button>
+          <button type="button" aria-pressed={!recurring} className={`${s.tab}${!recurring ? ' ' + s.active : ''}`} onClick={() => setTab('topup')}>추가 구매</button>
+        </div>
+      )}
 
       {payError && <div className={`surface ${s.payError}`} role="alert">{payError}</div>}
       <p className={s.tabDesc}>

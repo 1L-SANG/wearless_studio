@@ -48,6 +48,23 @@ test('구독 관리는 결제수단 종류를 구분해 표시한다', () => {
   assert.match(SUB, /data\.method === 'TRANSFER'/);
 });
 
+/* 충전은 일반결제라 계약 전까지 라이브에서 실패한다(2026-09-10 토스 확인: 자동결제 MID 로
+   단건 결제 대체도 불가). 누르면 실패할 버튼을 남기면 사용자가 결제 실패를 겪는다.
+   서버 라우트는 살려 두고 화면만 닫는다 — 계약이 생기면 플래그만 켜면 된다. */
+test('충전 탭은 계약 전까지 닫아 둔다', () => {
+  assert.match(KEYS, /TOPUP_ENABLED = false/);
+  assert.match(PRICING, /\{TOPUP_ENABLED && \(/);
+  // 상태가 남아도 빈 화면을 그리지 않게 구독으로 되돌린다
+  assert.match(PRICING, /TOPUP_ENABLED \? tab : 'subscription'/);
+});
+
+test('충전 서버 라우트는 지우지 않는다', () => {
+  // 계약이 생기는 날 다시 만들 이유가 없다. 키가 없으면 이미 503 이라 위험하지도 않다.
+  const payments = readFileSync('server/app/payments.py', 'utf8');
+  assert.match(payments, /\/toss\/checkout/);
+  assert.match(payments, /payment_not_configured/);
+});
+
 test('구독 고지문이 이월 정책과 일치한다', () => {
   assert.doesNotMatch(PRICING, /소멸하고 이월되지 않아요/);
   assert.match(PRICING, /이월/);

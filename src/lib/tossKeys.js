@@ -26,3 +26,13 @@ export const TOSS_BILLING_CLIENT_KEY =
    다루므로, 토스가 열어주는 날 이 값만 true 로 바꾸면 끝난다. 코드를 지우면
    그때 다시 만들어야 한다. */
 export const SUBSCRIPTION_TRANSFER_ENABLED = false;
+
+/* 크레딧 추가 구매(1회 결제) 노출 여부.
+   충전은 **일반결제**라 자동결제 계약만으로는 라이브에서 동작하지 않는다
+   (`requestPayment` + `/v1/payments/confirm`). 2026-09-10 토스 확인:
+   자동결제 MID 로 단건 결제를 대신 처리하는 것도 불가.
+   일반결제 계약(도입비 별도) 전까지 **탭을 숨긴다** — 누르면 실패할 버튼을 두면
+   사용자가 결제 실패를 겪는다. 서버 라우트(app/payments.py)는 그대로 살려 둔다:
+   TOSS_SECRET_KEY 가 없으면 이미 503 이고, 계약이 생기면 이 값만 true 로 바꾸면 된다.
+   크레딧이 부족한 사용자는 요금제 업그레이드(즉시 비례결제)로 간다. */
+export const TOPUP_ENABLED = false;
