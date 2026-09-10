@@ -34,6 +34,30 @@ export function isRealModelSelection(selectedModelId) {
   return !!selectedModelId && !VIRTUAL_MODEL_IDS.has(selectedModelId);
 }
 
+/** 모델의 선택 동의로 열리는 컷(계약 v2 초안 제3조 2항). 동의가 없으면 스튜디오 컷만이다. */
+export const CONSENT_CUT_TYPES = {
+  optLocationCuts: ['styling', 'mirror'],
+  optLookbookPersonReplace: ['base_edit'],
+};
+
+/** 이 모델의 실제 얼굴을 이 컷에 쓸 수 있는가. 서버 게이트(facemarket.real_identity_allowed_cut)와 같은 규칙. */
+export function realFaceAllowedCut(cutType, model) {
+  if (cutType === 'horizon') return true;
+  return Object.entries(CONSENT_CUT_TYPES).some(
+    ([opt, cuts]) => cuts.includes(cutType) && !!model?.[opt],
+  );
+}
+
+/** 실제 모델 얼굴이 들어가는 컷 수 — 과금·가격 표시의 근거(스튜디오 + 동의한 컷). */
+export function realFaceCutCount(blocks, model) {
+  return (blocks || []).filter((block) => realFaceAllowedCut(block?.cutType, model)).length;
+}
+
+/** 스타일링 대역(가상 모델)이 필요한가 — 장소 컷에 동의하지 않은 실제 모델만 필요하다. */
+export function needsStylingStandIn(selectedModelId, model) {
+  return isRealModelSelection(selectedModelId) && !model?.optLocationCuts;
+}
+
 export function resolveStylingModelId({
   selectedModelId,
   stylingModelId,
@@ -65,10 +89,11 @@ export function stylingModelPatchForAnalysis(analysis, aiModels) {
     : null;
 }
 
-export function realModelFeeLabel(selectedModelId, models, horizonCutCount = 1) {
-  if (!isRealModelSelection(selectedModelId) || horizonCutCount < 1) return '';
+export function realModelFeeLabel(selectedModelId, models, realFaceCuts = 1) {
+  // 과금 근거는 "실제 모델 얼굴이 들어간 컷 수" — 동의한 모델은 스타일링 컷도 여기에 든다.
+  if (!isRealModelSelection(selectedModelId) || realFaceCuts < 1) return '';
   const selected = (models || []).find((model) => model.id === selectedModelId);
   return selected
-    ? ` + 실제 모델 ₩${(FACEMARKET_PRICING.perCut * horizonCutCount).toLocaleString('ko-KR')}`
+    ? ` + 실제 모델 ₩${(FACEMARKET_PRICING.perCut * realFaceCuts).toLocaleString('ko-KR')}`
     : ' + 실제 모델 이용료 별도';
 }

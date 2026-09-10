@@ -88,6 +88,9 @@ class ModelCard(CamelModel):
     has_active_license: bool = False
     vc_id: str | None = None
     assets_ready: bool = False  # 실존 모델 그리드 자산 빌드 완료 → 셀러 선택 가능(assetsReady)
+    # 모델의 선택 동의(계약 v2 초안 제3조 2항). false 면 그 사용처는 셀러 화면에서 막힌다.
+    opt_location_cuts: bool = False
+    opt_lookbook_person_replace: bool = False
     # 비생체 고정 placeholder 게이트 URL. 모델별 얼굴/cover 바이트를 뜻하지 않는다.
     face_thumb_uri: str | None = None
 
@@ -403,6 +406,11 @@ _MODEL_CARD_COLS_ENRICHED = (
     "m.cover_image_url, m.created_at, "
     "l.id::text as license_id, l.unit_price, l.vc_id, "
     "true as has_active_license, true as assets_ready, "
+    # 모델이 동의한 사용처 — 셀러 화면이 "이 모델을 스타일링 컷에 쓸 수 있는가"를
+    # 여기서 판단한다. 컬럼이 없는 DB(마이그 미적용)에서도 깨지지 않게 jsonb 로 읽는다.
+    "coalesce((to_jsonb(l) ->> 'opt_location_cuts')::boolean, false) as opt_location_cuts, "
+    "coalesce((to_jsonb(l) ->> 'opt_lookbook_person_replace')::boolean, false) "
+    "  as opt_lookbook_person_replace, "
     "('/v1/facemarket/models/' || m.id::text || '/thumbnail') as face_thumb_uri"
 )
 

@@ -21,6 +21,7 @@ import { Icon, Button, ErrorState, Modal, useToast } from '@/components/ui.jsx';
 import { CreditShortfallModal } from '@/features/credits/CreditShortfallModal.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import {
+  realFaceAllowedCut,
   realModelFeeLabel,
   stylingModelPatchForAnalysis,
 } from '@/features/analysis/modelSelection.js';
@@ -775,8 +776,14 @@ export function Mannequin() {
       setRealModels(Array.isArray(nextRealModels) ? nextRealModels : []);
       // 크레딧 견적은 실제 생성 수 — 동일 설정 복제 컷은 서버가 1장만 생성한다(ADR-0011).
       setAiCutCount(Array.isArray(nextStoryboard) ? uniqueGenerationCutCount(nextStoryboard) : null);
+      // 실제 모델 얼굴이 들어가는 컷 = 스튜디오 + 그 모델이 동의한 컷(장소·스타일링 등).
+      // 동의하지 않은 모델은 예전처럼 horizon 만 세어진다.
+      const selectedRealModel = (Array.isArray(nextRealModels) ? nextRealModels : []).find(
+        (model) => model?.id === nextAnalysis?.selectedModelId,
+      );
       setHorizonCutCount(Array.isArray(nextStoryboard)
-        ? uniqueGenerationCutCount(nextStoryboard.filter((block) => block?.cutType === 'horizon'))
+        ? uniqueGenerationCutCount(nextStoryboard.filter(
+            (block) => realFaceAllowedCut(block?.cutType, selectedRealModel)))
         : null);
       const nextMainMatchingItem = resolveMainMatchingItem(nextAnalysis);
       const draft = createFitProfileDraft(nextProduct, nextAnalysis, nextMainMatchingItem);
