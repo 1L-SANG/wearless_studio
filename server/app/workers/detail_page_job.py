@@ -208,15 +208,20 @@ async def _gen_wearshot_cut(app, job, item, product, settings):
     await _emit(app.state.pool, job["id"], "step", {"blockId": block.get("id"), "status": "cut_start"})
     try:
         output_size = wearshot_runtime.source_output_size(next(ref.image for ref in contract.references if ref.key == contract.example_key))
-        image, mime = await cut_generator.generate(settings, app.state.gemini, block, product, refs,
+        generation_settings = wearshot_runtime.generation_settings(settings)
+        image, mime = await cut_generator.generate(generation_settings, app.state.gemini, block, product, refs,
             wearshot_contract=contract, output_size=output_size)
         candidate = InlineImage(mime, image)
         initial = await wearshot_runtime.review_candidate(settings, contract, candidate)
         final_qc = initial
         allowed = wearshot_runtime.release_allowed(initial, contract, candidate)
         if not allowed:
-            repair_plan = wearshot_runtime.derive_repair_plan(contract, candidate, initial)
-            repaired, repaired_mime = await cut_generator.repair(settings, app.state.gemini, block, product, candidate,
+            if contract.directing_mode == "source_locked_v1":
+                repair_plan = wearshot_runtime.derive_repair_plan(contract, candidate, initial,
+                    known_failures_only=True)
+            else:
+                repair_plan = wearshot_runtime.derive_repair_plan(contract, candidate, initial)
+            repaired, repaired_mime = await cut_generator.repair(generation_settings, app.state.gemini, block, product, candidate,
                 wearshot_contract=contract, repair_plan=repair_plan,
                 repair_model=getattr(settings, "wearshot_repair_model", None), output_size=output_size)
             final = InlineImage(repaired_mime, repaired)

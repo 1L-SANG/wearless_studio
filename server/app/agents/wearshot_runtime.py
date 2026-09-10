@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
+from time import perf_counter
 import hashlib
 import json
 from .. import repo
@@ -229,11 +231,23 @@ async def verify_snapshot(conn, user_id, project_id, project, product, analysis,
     return snapshot
 
 
+def generation_settings(settings):
+    """A v2-only copy; legacy/detail/signature consumers retain their own settings."""
+    model = getattr(settings, "wearshot_generation_model", None)
+    return replace(settings, model_image_high=model) if model else settings
+
+
 async def review_candidate(settings, contract: WearshotContract, candidate, *, repair_plan: RepairPlan | None = None) -> dict:
+    start = perf_counter()
     primary = await wearshot_qc.verdict(settings, contract, candidate, repair_plan=repair_plan)
+    primary_end = perf_counter()
     result = dict(primary)
+    focused_ms = 0
+    focused_status = "skipped_hidden_face" if contract.frame_lock.face_visibility == "hidden" else "skipped_primary_identity_not_pass"
     identity = primary.get("attributes", {}).get("identity", {})
     if contract.frame_lock.face_visibility != "hidden" and identity.get("status") == "PASS":
+        focused_start = perf_counter()
+        focused_status = "completed"
         try:
             refs = [LabeledReference(ref.role, ref.image) for ref in contract.references
                     if ref.key in (contract.model_face_key, contract.example_key)]
@@ -241,9 +255,13 @@ async def review_candidate(settings, contract: WearshotContract, candidate, *, r
             if not isinstance(review, dict) or review.get("candidateSha256") != image_sha256(candidate):
                 raise ValueError("wearshot_v2_identity_candidate_mismatch")
         except Exception:
+            focused_status = "unavailable"
             review = {"status": "UNJUDGEABLE", "candidateSha256": image_sha256(candidate),
                       "evidence": "Independent visible-face evidence unavailable."}
         result["identityReview"] = review
+        focused_ms = round((perf_counter() - focused_start) * 1000, 3)
+    result["timing"] = dict(primaryMs=round((primary_end - start) * 1000, 3), focusedMs=focused_ms,
+                            totalMs=round((perf_counter() - start) * 1000, 3), focusedStatus=focused_status)
     return result
 
 
@@ -257,17 +275,21 @@ def release_allowed(result, contract, candidate, *, repair_plan=None) -> bool:
             and focus.get("candidateSha256") == image_sha256(candidate))
 
 
-def derive_repair_plan(contract, candidate, result) -> RepairPlan:
+def derive_repair_plan(contract, candidate, result, *, known_failures_only=False) -> RepairPlan:
+    """Opt-in directed stages correct factual FAILs; unknown axes stay uncertified."""
     # Revalidate trusted server observations; never trust a caller's PASS summaries.
     checked = wearshot_qc.validate(result.get("observations"), contract, candidate)
     if not checked.get("valid") or result.get("candidateSha256") != image_sha256(candidate):
         raise ValueError("wearshot_v2_unrepairable_receipt")
     failed = set(checked["failedAttributes"])
+    if known_failures_only:
+        failed = {axis for axis in failed if checked["attributes"][axis]["status"] == "FAIL"}
     passed = set(checked["passedAttributes"])
     if contract.frame_lock.face_visibility != "hidden" and "identity" in passed:
         focus = result.get("identityReview", {})
         if focus.get("status") != "PASS" or focus.get("candidateSha256") != image_sha256(candidate):
-            failed.add("identity")
+            if not known_failures_only or (focus.get("status") == "FAIL" and focus.get("candidateSha256") == image_sha256(candidate)):
+                failed.add("identity")
             passed.discard("identity")
     if "variation" in failed:
         failed.add(contract.variation_axis)

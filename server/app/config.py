@@ -173,6 +173,8 @@ class Settings:
     wearshot_qc_model: str = "gpt-6-astra"
     # V2 primary and focused QC share this deadline; legacy analysis stays independent.
     wearshot_qc_timeout_seconds: float = 180.0
+    # Optional v2 first-stage override; legacy/detail/signature routing is unchanged.
+    wearshot_generation_model: str | None = None
     wearshot_repair_model: str | None = None
     cut_color_review_model: str = "gpt-6-astra"
     page_output_qc_mode: str = "off"  # off | shadow
@@ -611,6 +613,7 @@ def load_settings() -> Settings:
         wearshot_qc_model=os.getenv("WEARSHOT_QC_MODEL", "gpt-6-astra").strip() or "gpt-6-astra",
         wearshot_qc_timeout_seconds=_wearshot_qc_timeout_from_env(),
         wearshot_repair_model=os.getenv("WEARSHOT_REPAIR_MODEL", "").strip() or None,
+        wearshot_generation_model=os.getenv("WEARSHOT_GENERATION_MODEL", "").strip() or None,
         cut_color_review_model=os.getenv("CUT_COLOR_REVIEW_MODEL", "gpt-6-astra").strip() or "gpt-6-astra",
         page_output_qc_mode=_flag("PAGE_OUTPUT_QC_MODE", "off", {"off", "shadow"}),
         mannequin_axis_qc=_flag("MANNEQUIN_AXIS_QC", "off", {"off", "shadow", "enforce"}),
