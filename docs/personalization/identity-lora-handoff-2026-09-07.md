@@ -896,3 +896,102 @@ clothing" 인데 gpt-image-2.5-flare 는 그걸 지키지 않았다. 육안(`pha
 **다음에 시도할 것(미검증 제안)**: ① 전신 참조를 인물만 남기고 배경 제거(SAM) 후 첨부 ② 전신 참조를
 실루엣/포즈만 남긴 추상화본으로 대체 ③ 라벨을 더 강하게(부정 열거 대신 "use ONLY the body outline") 쓰기.
 지금 상태로는 **REAL 전신 슬롯을 프로덕션에 켜면 안 된다** — 코드는 준비됐지만 자산을 붙이면 옷·배경이 오염된다.
+
+## 28. 전신 참조 정화 재시도 + ZARA 컷 참조 생성 (2026-09-10)
+
+### 28.A SAM 은 못 썼다 — GrabCut 으로 대체
+`sam_client.py` 에는 `segment_garment`(상품 배경 제거)·`segment_worn_garment`(착장컷 의류 마스크) 둘뿐이고
+**인물 분할 엔드포인트가 없다**. `sam_service_url=None` 이라 이 환경에 서비스도 안 붙어 있다.
+새 모델을 받지 않고 OpenCV **GrabCut**(cv2 내장)으로 인물을 잘라냈다 — 씨앗 사각형은 YuNet 얼굴 박스에서
+사람 몸 비율로 추정(`phase1/make_person_cutout.py`). 산출물 `phase1/body_ref/person_on_grey{,_1536}.png`,
+마스크 `person_mask.png`. 인물 면적 8.7%, 발 아래 그림자 일부만 잔존.
+**배경은 지워졌지만 옷(검은 티·카키 팬츠)은 그대로 남아 있다** — 배경 오염은 크롭이, 옷 오염은 라벨이 막아야 한다.
+
+### 28.B 라벨 강화
+`_MODEL_FULL_BODY_LABEL` 을 부정 열거에서 **긍정 지시 + 명령형 금지**로 바꿨다. 접두어 `"MODEL FULL BODY —"`
+는 유지(`cut_output_qc.py:293` 이 이걸로 역할을 판정).
+
+```
+MODEL FULL BODY — use ONLY the body outline and proportions from this image: height, head-to-body
+ratio, shoulder width and slope, torso length and build, waist, pelvis and hip width, and arm and leg
+proportions. The subject is cut out on a flat grey field; that field is not a location. Do NOT copy its
+background, location, garments, shoes, pose, framing or camera distance; PRODUCT and MATCHING own the
+clothing and SPACE SET PLATE owns the location. ZERO authority over facial identity, facial features or hair
+```
+
+`test_cut_generator.py::test_build_manifest_places_exact_virtual_model_labels_after_mannequin` 의 기대 문자열을
+갱신하고 이유를 주석으로 남겼다. **VIRTUAL 경로도 같은 라벨을 쓴다 — 이번엔 REAL 만 측정했으므로 가상모델
+컷에 대한 영향은 미측정이다.**
+
+### 28.C 전신 A/B 2회차 — **불채택**
+같은 시드·같은 스펙, 전신만 정화본(`person_on_grey_1536.png`)으로. 6렌더.
+
+| 컷 | 팔 | SFace | 배경 승자 | 하의 RGB |
+|---|---|---|---|---|
+| full | 없음 | 0.781 | 참조 | [57, 55, 53] |
+| full | **있음(정화)** | **0.695** | 참조(18.8 vs 18.1) | [106, 100, 96] |
+| full | 있음(원본, 1회차) | 0.476 | 참조 | [161, 155, 147] |
+| three_quarter | 없음 | 0.822 | 장면판 | [181, 173, 173] |
+| three_quarter | **있음(정화)** | **0.845** | 장면판 | [175, 167, 167] |
+| three_quarter | 있음(원본) | 0.743 | 장면판 | [170, 163, 164] |
+| seated | 없음 | 0.855 | 장면판 | [186, 168, 160] |
+| seated | **있음(정화)** | **0.858** | 장면판 | [147, 133, 128] |
+| seated | 있음(원본) | 0.883 | 장면판 | [162, 143, 135] |
+
+`hist_L1` 은 이제 **회색 배경 참조** 대비라 1회차 값(1.476/1.207/0.375)과 비교 불가다 — 전부 1.96~1.99 로
+회색이 지배한다. 지표로서 죽었다.
+
+**진전**: 배경 오염은 사라졌다. 육안(`phase1/body_ab2/body_ab_4col.png`)에서 "있음-정화" 3컷 모두 상점 배경을
+유지한다(1회차 "있음-원본" 은 실외 골목이었다).
+**남은 실패**: 하의가 3컷 모두 카키/브라운으로 바뀐다. 정화본에도 참조의 카키 팬츠가 남아 있고 강화한 라벨로도
+못 막았다.
+
+판정 규칙(사전 고정) 대로:
+- 배경 |Δ| 장면판 < 참조 → `full` 실패(18.8 vs 18.1). ※ 참조 배경이 평평한 회색이라 이 비교는 퇴화했다 —
+  밝은 실내 벽이면 회색과 가까워진다. 육안으로는 `full` 도 상점 배경을 유지했다.
+- 하의 RGB "없음" ±15 → `full` Δ49 · `seated` Δ39 실패(`three_quarter` Δ6 통과)
+- SFace "없음" −0.05 이내 → `full` −0.086 실패
+- 육안 오염 없음 → 하의 오염 있음, 실패
+→ **불채택.**
+
+**체형은 판정 불가다.** 배경은 걷혔지만 하의가 통짜 카키로 바뀌어 실루엣 판단이 오염된다. `full·있음(정화)` 이
+"없음" 보다 다리가 조금 짧고 몸이 살짝 넓어 실물 방향으로 보이지만, 옷이 바뀐 상태라 체형 효과와 분리되지 않는다.
+
+**다음 후보(미검증)**: ① 참조를 실루엣/뎁스맵으로 추상화해 옷 정보를 아예 제거 ② 참조를 상반신·하반신
+비율 수치로만 전달(사진 없이) ③ 옷을 중립 회색 단색으로 리페인트한 참조.
+
+### 28.D ZARA 컷을 EXAMPLE 로 넣고 새로 생성 (경로 A) — **불채택, 다만 실패 지점이 하나뿐**
+입력 5장(MODEL FACE · MODEL SHEET · PRODUCT 앞/뒤 · EXAMPLE). SPACE SET PLATE 없음.
+MODEL FULL BODY 도 없음(28.C 불채택). `bg` 는 EXAMPLE 을 **첫 첨부**로 넣고 매니페스트도 맨 앞 재번호
+(`editor_image_job.py:612` 와 동일). 인물 제거 판은 GrabCut 마스크 + `cv2.inpaint(TELEA)`.
+
+| 컷 | SFace | 파랑비율(ZARA 줄무늬) |
+|---|---|---|
+| zara2 원본(남) | 0.178 | 0.411 |
+| zara2 경로B 얼굴패스 | 0.765 | 0.405 |
+| zara2 **경로A all** | **0.837** | **0.000** |
+| zara2 **경로A bg** | **0.872** | **0.000** |
+| zara1 원본(남) | 0.149 | 0.389 |
+| zara1 경로B 얼굴패스 | 0.714 | 0.382 |
+| zara1 **경로A all** | **0.811** | **0.000** |
+| zara1 **경로A bg** | **0.778** | **0.000** |
+
+- **옷: 통과** — 4/4 에서 디네뎃 회색 티가 나왔고 ZARA 줄무늬는 0.0 이다. PRODUCT 가 EXAMPLE 을 이겼다.
+- **얼굴: 통과** — 0.778~0.872, 전부 ≥0.70 이고 경로 B(0.714·0.765)보다 **+0.06~+0.11** 높다.
+- **이음선: 통과** — 합성이 없으므로 구조적으로 0.
+- **장면: 실패** — ZARA 는 실내 흰 벽 스튜디오인데 4/4 모두 실외(건물 외벽·나무·보도)를 만들었다.
+
+→ 규칙대로 **불채택**. 다만 실패 원인 둘 다 EXAMPLE 슬롯의 결함이 아니다:
+1. `refScope="all"` 은 **설계상 같은 장소를 재현하지 않는다.** 프롬프트 계약이 그렇게 쓰여 있다 —
+   "Styling/all keeps scene type ... **use a coherent different location instance**". 남의 컷을 그대로 복제하지
+   않으려는 제품 의도다. 그러니 all 로 "장면이 ZARA 를 따름" 을 요구한 건 애초에 성립하지 않는 조건이었다.
+2. `refScope="bg"` 계약은 맞다 — "The FIRST attached image is the finished, real location of this photo...
+   This exact plate owns the location". 실패한 건 **내가 만든 판이 퇴화**해서다. zara2 는 인물이 프레임의 65%라
+   지우고 나니 거의 백지가 됐고, zara1 도 민벽+바닥만 남았다. 앵커가 없으니 모델이 장소를 지어냈다.
+
+**경로 A 가 경로 B 를 대체할 수 있는가 — 한 문장**: 옷·얼굴·이음선 세 축에서는 경로 A 가 경로 B 를 이겼고
+(줄무늬 0 · SFace +0.06~+0.11 · 이음선 구조적 0), 남은 것은 장소 재현 하나인데 그건 EXAMPLE 슬롯의 한계가
+아니라 `all` 의 설계 의도와 내가 만든 bg 판의 품질 문제라서, **대체 가능성은 높지만 이번 측정으로 확증되지 않았다.**
+
+**다음에 할 것(미검증)**: 배경이 넉넉한 컷으로 bg 판을 다시 만들어(인물이 프레임의 25% 이하) `refScope="bg"`
+를 재측정. 그때 장소가 따라오면 경로 A 로 갈아탈 근거가 선다.

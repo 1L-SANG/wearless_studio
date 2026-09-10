@@ -1039,11 +1039,20 @@ _MODEL_FACE_LABEL = ("MODEL FACE — facial identity authority for the selected 
                      "preserve facial identity and facial features; ZERO authority over height, "
                      "head-to-body ratio, shoulders, torso, waist, pelvis, limb proportions, "
                      "body shape, pose, framing or clothing")
-_MODEL_FULL_BODY_LABEL = ("MODEL FULL BODY — full-body proportion authority for the selected "
-                          "model ONLY: preserve height, head-to-body ratio, shoulder width and "
-                          "slope, torso length and build, waist, pelvis and hip width, and arm "
-                          "and leg proportions; ZERO authority over facial identity, facial "
-                          "features, hair, pose, framing or clothing")
+#: ★ 2026-09-10 강화. 부정 열거("ZERO authority over ...")만으로는 gpt-image 가 참조 사진을 통째로
+#: 베꼈다(§27 실측: 배경·하의·구두가 참조에서 그대로 왔고 full 컷은 얼굴 0.828→0.476).
+#: MODEL SHEET 라벨에는 명령형 금지("Do NOT copy the grid layout, framing, poses or clothing")가
+#: 한 번 더 있는데 전신 라벨에는 없었다. 그래서 (1) 앞머리를 "use ONLY ..." 긍정 지시로 바꾸고
+#: (2) 같은 톤의 명령형 금지 한 문장을 뒤에 붙이고 (3) 회색 배경이 장소가 아니라는 사실을 알린다.
+#: 접두어 "MODEL FULL BODY —" 는 유지해야 한다 — cut_output_qc.py:293 이 이걸로 역할을 판정한다.
+_MODEL_FULL_BODY_LABEL = ("MODEL FULL BODY — use ONLY the body outline and proportions from this "
+                          "image: height, head-to-body ratio, shoulder width and slope, torso "
+                          "length and build, waist, pelvis and hip width, and arm and leg "
+                          "proportions. The subject is cut out on a flat grey field; that field is "
+                          "not a location. Do NOT copy its background, location, garments, shoes, "
+                          "pose, framing or camera distance; PRODUCT and MATCHING own the clothing "
+                          "and SPACE SET PLATE owns the location. ZERO authority over facial "
+                          "identity, facial features or hair")
 _MATCH_LABEL = "MATCHING — the user-selected coordinating garment worn in the same outfit"
 _CUSTOM_MATCH_LABEL = (
     _MATCH_LABEL
