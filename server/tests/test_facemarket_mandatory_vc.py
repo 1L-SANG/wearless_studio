@@ -80,7 +80,7 @@ def test_issue_uses_one_signed_client_and_body_idempotency_key(monkeypatch, wall
         "idempotencyKey": f"fm-license:{LICENSE_ID}",
         "claims": {
             "allowedUse": "일반 의류",
-            "forbiddenUse": "속옷",
+            "forbiddenUse": "",
             "unitPrice": 4321,
             "licenseValidUntil": "2027-02-03",
             "faceImageDigest": "sha256-approved-front",

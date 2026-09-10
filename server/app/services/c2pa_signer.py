@@ -90,7 +90,7 @@ def build_manifest(
                     "publicationId": str(publication_id),
                     "verifyUrl": verify_url,
                     "allowedUse": list(allowed_use),
-                    "forbiddenUse": list(forbidden_use),
+                    "forbiddenUse": [],
                     "licenseValidUntil": license_valid_until,
                     "sourceAssetIds": [str(a) for a in source_asset_ids],
                 },

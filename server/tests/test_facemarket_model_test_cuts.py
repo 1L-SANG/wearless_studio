@@ -902,7 +902,7 @@ def test_model_confirm_sets_two_selected_cuts_and_public_1024_images(
         "bodyType": "toned",
         "license": {
             "allowedUse": ["상의", "아우터"],
-            "forbiddenUse": ["속옷", "수영복"],
+            "forbiddenUse": [],
             "unitPrice": 10000,
             "validUntil": LICENSE_VALID_UNTIL.isoformat().replace("+00:00", "Z"),
             "validDays": 365,
@@ -1043,7 +1043,7 @@ def test_public_models_returns_only_eligible_profiles_without_pii(test_cut_api):
         "bodyType": "toned",
         "license": {
             "allowedUse": ["상의", "아우터"],
-            "forbiddenUse": ["속옷", "수영복"],
+            "forbiddenUse": [],
             "unitPrice": 10000,
             "validUntil": LICENSE_VALID_UNTIL.isoformat().replace("+00:00", "Z"),
             "validDays": 365,

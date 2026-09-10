@@ -125,11 +125,13 @@ def test_retry_apply_uses_shared_issue_and_finalizer_continues_and_prints_counts
     monkeypatch, capsys
 ):
     rows = [_row(1), _row(2), _row(3)]
+    rows[0]["forbidden_use"] = ["속옷", "수영복"]
     pool = _Pool(rows)
     issued = []
     finalized = []
 
     async def fake_issue(_app, **kwargs):
+        assert kwargs["forbidden"] == []
         issued.append(kwargs["license_id"])
         if kwargs["license_id"] == "license-2":
             raise FaceVcIssueError("vc_issue_delayed", status_code=503)

@@ -98,7 +98,6 @@ function licenseView(license) {
   const hasPrice = Number.isFinite(unitPrice) && unitPrice > 0;
   return {
     uses: clean(license.allowedUse),
-    excluded: clean(license.forbiddenUse),
     // 화면은 지금 플랫폼 고정가(lib/facemarketPricing.js)를 쓴다. 모델별 단가는 데이터로만 보존.
     unitPrice: hasPrice ? unitPrice : null,
     validity: formatValidity(license.validDays),
@@ -111,7 +110,7 @@ function licenseView(license) {
  * 화면 모델 모양(카드·상세 창이 같이 쓴다):
  *   { id, kind: 'real'|'example', name, alt, closeup, fullbody|null,
  *     gender, ageBand, height, weight, sizes, spec,
- *     license: { uses, excluded, unitPrice, validity, validUntilText }, verified }
+ *     license: { uses, unitPrice, validity, validUntilText }, verified }
  */
 export function toBrowseModel(item) {
   if (!item || !item.id || !item.closeupImageUrl) return null;
@@ -154,7 +153,6 @@ export function fromExampleModel(model) {
     spec: `${model.height}cm · ${model.weight}kg`,
     license: {
       uses: model.license.uses,
-      excluded: [],
       unitPrice: model.license.unitPrice,
       validity: formatValidity(model.license.validDays),
       validUntilText: null,

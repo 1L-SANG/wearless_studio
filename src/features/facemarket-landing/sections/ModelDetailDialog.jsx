@@ -150,7 +150,6 @@ export function ModelDetailDialog({ model, onClose }) {
             {license && (
               <Pair cells={[
                 { dt: '허용 품목', dd: license.uses.length ? license.uses.join(' · ') : '미정' },
-                { dt: '제외 품목', dd: license.excluded.length ? license.excluded.join(' · ') : '없음' },
               ]} />
             )}
           </dl>
