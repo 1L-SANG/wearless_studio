@@ -934,8 +934,8 @@ def _png():
 def valid_license_body(enrollment_id=ENROLLMENT_ID):
     return {
         "enrollmentId": enrollment_id,
-        "allowedUse": ["상의"],
-        "forbiddenUse": ["속옷·란제리"],
+        "allowedUse": ["일반 의류"],
+        "forbiddenUse": ["속옷"],
         "unitPrice": 10000,
         "validDays": 365,
     }
@@ -943,21 +943,13 @@ def valid_license_body(enrollment_id=ENROLLMENT_ID):
 
 def test_license_use_categories_are_the_exact_approved_sets():
     assert facemarket.ALLOWED_BRAND_USE_CATEGORIES == (
-        "상의",
-        "하의",
-        "아우터",
-        "원피스",
-        "니트·스웨터",
-        "데님",
-        "셋업·수트",
-        "스커트",
-        "트레이닝·애슬레저",
-        "잡화·액세서리",
-        "뷰티·화장품",
+        "일반 의류",
+        "액티브웨어",
+        "홈웨어·잠옷",
     )
     assert facemarket.FORBIDDEN_BRAND_USE_CATEGORIES == (
-        "속옷·란제리",
-        "수영복·비키니",
+        "속옷",
+        "수영복",
     )
 
 
@@ -966,8 +958,8 @@ def test_license_use_categories_are_the_exact_approved_sets():
     [
         ("allowedUse", "광고"),
         ("forbiddenUse", "성인"),
-        ("allowedUse", "수영복·비키니"),
-        ("forbiddenUse", "상의"),
+        ("allowedUse", "수영복"),
+        ("forbiddenUse", "일반 의류"),
     ],
     ids=[
         "unknown-allowed",
@@ -1201,27 +1193,27 @@ def test_license_terms_are_normalized_once_for_storage_and_holder_claims(
         json={
             **valid_license_body(enrollment_id),
             "allowedUse": [
-                "  상의  ",
+                "  일반 의류  ",
                 "",
-                "하의",
-                "상의",
+                "액티브웨어",
+                "일반 의류",
             ],
             "forbiddenUse": [
-                "  속옷·란제리  ",
+                "  속옷  ",
                 "\t",
-                "수영복·비키니",
-                "속옷·란제리",
+                "수영복",
+                "속옷",
             ],
         },
         headers=_auth(make_token),
     )
 
     assert response.status_code == 201, response.text
-    assert response.json()["allowedUse"] == ["상의", "하의"]
-    assert response.json()["forbiddenUse"] == ["속옷·란제리", "수영복·비키니"]
+    assert response.json()["allowedUse"] == ["일반 의류", "액티브웨어"]
+    assert response.json()["forbiddenUse"] == ["속옷", "수영복"]
     issue_call = next(c for c in holder_stub.calls if c["path"].endswith("/issue-vc"))
-    assert issue_call["payload"]["claims"]["allowedUse"] == "상의, 하의"
-    assert issue_call["payload"]["claims"]["forbiddenUse"] == "속옷·란제리, 수영복·비키니"
+    assert issue_call["payload"]["claims"]["allowedUse"] == "일반 의류, 액티브웨어"
+    assert issue_call["payload"]["claims"]["forbiddenUse"] == "속옷, 수영복"
 
 
 def test_holder_failure_leaves_everything_non_active(
@@ -1275,8 +1267,8 @@ def test_repeated_pending_post_reuses_license_and_holder_idempotency(
 @pytest.mark.parametrize(
     ("allowed_use", "forbidden_use"),
     [
-        (["legacy allowed"], ["속옷·란제리"]),
-        (["상의"], ["legacy forbidden"]),
+        (["legacy allowed"], ["속옷"]),
+        (["일반 의류"], ["legacy forbidden"]),
     ],
     ids=["invalid-stored-allowed", "invalid-stored-forbidden"],
 )
@@ -1716,8 +1708,8 @@ def test_malformed_enrollment_uuid_rejected_before_sql(
 @pytest.mark.parametrize(
     ("allowed_use", "forbidden_use"),
     [
-        (["legacy allowed"], ["속옷·란제리"]),
-        (["상의"], ["legacy forbidden"]),
+        (["legacy allowed"], ["속옷"]),
+        (["일반 의류"], ["legacy forbidden"]),
     ],
     ids=["invalid-stored-allowed", "invalid-stored-forbidden"],
 )
@@ -1754,8 +1746,8 @@ def test_conflict_reload_uses_persisted_terms_for_holder_claims(
     persisted = _seed_pending_license(
         store,
         enrollment_id=enrollment_id,
-        allowed_use=["하의"],
-        forbidden_use=["수영복·비키니"],
+        allowed_use=["액티브웨어"],
+        forbidden_use=["수영복"],
         unit_price=4321,
         valid_until=datetime(2027, 2, 3, tzinfo=timezone.utc),
         digest="sha256-persisted-digest",
@@ -1767,8 +1759,8 @@ def test_conflict_reload_uses_persisted_terms_for_holder_claims(
         "/v1/facemarket/licenses",
         json={
             "enrollmentId": enrollment_id,
-            "allowedUse": ["상의"],
-            "forbiddenUse": ["속옷·란제리"],
+            "allowedUse": ["일반 의류"],
+            "forbiddenUse": ["속옷"],
             "unitPrice": 9999,
             "validDays": 30,
         },
@@ -1779,8 +1771,8 @@ def test_conflict_reload_uses_persisted_terms_for_holder_claims(
     issue_call = next(c for c in holder_stub.calls if c["path"].endswith("/issue-vc"))
     assert issue_call["payload"]["idempotencyKey"] == f"fm-license:{persisted['id']}"
     assert issue_call["payload"]["claims"] == {
-        "allowedUse": "하의",
-        "forbiddenUse": "수영복·비키니",
+        "allowedUse": "액티브웨어",
+        "forbiddenUse": "수영복",
         "unitPrice": 4321,
         "licenseValidUntil": "2027-02-03",
         "faceImageDigest": "sha256-persisted-digest",
@@ -2105,7 +2097,7 @@ def test_verify_license_local_blocks_awaiting_confirm_model():
             SimpleNamespace(),
             {"model_id": MODEL_ID, "model_status": "awaiting_confirm"},
             model_id=MODEL_ID,
-            brand_use_category="상의",
+            brand_use_category="일반 의류",
         )
     assert caught.value.status_code == 409
     assert caught.value.detail["code"] == "model_unavailable"

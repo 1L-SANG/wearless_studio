@@ -73,7 +73,7 @@ function autoAxisValues(axisDefs, analysis) {
 function createFitProfileDraft(product, analysis, mainMatchingItem) {
   const category = fitProfileCategory(product?.clothingType, analysis?.subCategory) || 'top';
   const gender = derivedGender(analysis, product);
-  const axisDefs = axesFor(category, gender);
+  const axisDefs = analysis?.subCategory === 'leggings' ? {} : axesFor(category, gender);
   const existing = analysis?.fitProfile?.category === category && analysis?.fitProfile?.gender === gender
     ? analysis.fitProfile
     : null;
@@ -715,7 +715,10 @@ export function Mannequin() {
 
   const category = fitProfileDraft?.category;
   const gender = fitProfileDraft?.gender;
-  const axisDefs = useMemo(() => axesFor(category, gender), [category, gender]);
+  const axisDefs = useMemo(
+    () => analysis?.subCategory === 'leggings' ? {} : axesFor(category, gender),
+    [category, gender, analysis?.subCategory],
+  );
   const axisEntries = useMemo(() => Object.entries(axisDefs), [axisDefs]);
   const mainMatchingItem = useMemo(() => resolveMainMatchingItem(analysis), [analysis]);
   const matchingDefinition = useMemo(
@@ -779,7 +782,7 @@ export function Mannequin() {
       const draft = createFitProfileDraft(nextProduct, nextAnalysis, nextMainMatchingItem);
       setFitProfileDraft(draft);
       setStepState(initStepState(
-        axesFor(draft.category, draft.gender),
+        nextAnalysis?.subCategory === 'leggings' ? {} : axesFor(draft.category, draft.gender),
         matchingFitDefinition(nextMainMatchingItem, draft.gender) != null,
       ));
 

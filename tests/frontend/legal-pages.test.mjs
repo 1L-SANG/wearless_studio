@@ -200,6 +200,18 @@ test('공용 결제 화면은 셀러·모델 경로 모두 대표 도메인의 �
   } finally { client.clear(); }
 });
 
+/* 2026-09-09 이월 정책 — 이 문구는 계약 고지다(전자상거래법 §17⑥ 표시 의무).
+   코드가 이월인데 화면이 '소멸'이라고 하면 거짓 고지가 된다. 두 사실이 함께 있어야 한다:
+   유지 중에는 이월 / 해지하면 주기 종료일에 이월분까지 소멸.
+   계획서 docs/plans/2026-09-09-toss-billing-subscription.md §0.1 */
+test('구독 고지문이 이월 정책을 정확히 서술한다', () => {
+  const pricing = readFileSync(
+    fileURLToPath(new URL('../../src/features/pricing/Pricing.jsx', import.meta.url)), 'utf8');
+  assert.doesNotMatch(pricing, /소멸하고 이월되지 않아요/);
+  assert.match(pricing, /구독을 유지하는 동안 다음 달로 이월/);
+  assert.match(pricing, /해지하면 결제 주기가 끝나는 날 이월분까지 모두 소멸/);
+});
+
 test('두 진입 문서는 llms.txt를 대체 문서로 알린다', () => {
   for (const pathname of ['seller.html', 'facemarket.html']) {
     assert.match(read(pathname), /<link rel="alternate" type="text\/plain" href="\/llms\.txt"\s*\/>/);

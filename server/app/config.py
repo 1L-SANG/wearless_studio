@@ -331,6 +331,18 @@ class Settings:
     toss_secret_key: str | None = None
     toss_api_base: str = "https://api.tosspayments.com"   # 테스트에서 스텁 서버로 오버라이드
     toss_confirm_timeout: float = 15.0                     # 승인 API 타임아웃(초)
+    # ---- 토스 자동결제(빌링) — 계획서 docs/plans/2026-09-09-toss-billing-subscription.md
+    # 자동결제는 별도 계약 MID 라 일반결제와 시크릿 키가 다를 수 있다. 비어 있으면
+    # toss_secret_key 로 떨어진다(한 MID 로 계약한 상점).
+    toss_billing_secret_key: str | None = None
+    # 토스 문서: 자동결제 승인은 최대 60초 소요, 타임아웃 최소 60초.
+    # toss_confirm_timeout(15초) 을 재사용하면 정상 승인이 타임아웃으로 뒤집힌다.
+    toss_billing_timeout: float = 60.0
+    # 빌링키 컬럼 암호화 KEK(pgcrypto pgp_sym_encrypt). 없으면 구독 라우트가 503.
+    toss_billing_kek: str | None = None
+    # 웹훅 경로 시크릿 — 토스 일반 웹훅은 서명 헤더가 없어 경로 지식이 인증 대용이다.
+    toss_webhook_path_secret: str | None = None
+    subscription_billing_enabled: bool = False
     # ---- 개인화(사용자 본인 얼굴·신체) — 기본 off 로 프로드 보호(PERSONALIZATION_ENABLED) ----
     # off면 라우터 자체가 미등록 → 생체정보 처리 코드 미배포(main.py 조건부 include).
     personalization_enabled: bool = False
@@ -659,6 +671,12 @@ def load_settings() -> Settings:
         toss_secret_key=os.getenv("TOSS_SECRET_KEY") or None,
         toss_api_base=os.getenv("TOSS_API_BASE", "https://api.tosspayments.com").rstrip("/"),
         toss_confirm_timeout=float(os.getenv("TOSS_CONFIRM_TIMEOUT", "15")),
+        toss_billing_secret_key=os.getenv("TOSS_BILLING_SECRET_KEY") or None,
+        toss_billing_timeout=float(os.getenv("TOSS_BILLING_TIMEOUT", "60")),
+        toss_billing_kek=os.getenv("TOSS_BILLING_KEK") or None,
+        toss_webhook_path_secret=os.getenv("TOSS_WEBHOOK_PATH_SECRET") or None,
+        subscription_billing_enabled=(
+            os.getenv("SUBSCRIPTION_BILLING_ENABLED", "false").lower() == "true"),
         cx_trans_base_url=(
             os.getenv("CX_TRANS_BASE_URL") or "https://cx.raonsecure.co.kr:18543"
         ).rstrip("/"),

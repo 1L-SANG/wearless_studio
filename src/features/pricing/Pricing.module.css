@@ -107,3 +107,28 @@
 @media (prefers-reduced-motion: reduce) { .buttonRing { animation: none; } .purchaseButton { transition: none; } }
 @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } .card { padding: var(--sp-28); } }
 @media (max-width: 380px) { .card { padding: var(--sp-20); } .creditLine { gap: var(--sp-6); } }
+
+/* 계좌이체 구독 — 카드 버튼 아래 보조 선택지. 주 버튼(.subscriptionButton)과 경쟁하지
+   않게 테두리만 두고, 수수료가 낮은 쪽이라 숨기지는 않는다. */
+.altMethodButton {
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line, #ddd9d0);
+  background: transparent;
+  color: var(--fg-2, #4a4a45);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.altMethodButton:hover:not(:disabled) {
+  border-color: var(--fg-2, #6b6b63);
+  color: var(--fg-1, #2a2a26);
+}
+
+.altMethodButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
