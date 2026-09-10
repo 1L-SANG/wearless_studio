@@ -618,6 +618,11 @@ class CreateLicenseRequest(CamelModel):
     enrollment_id: str
     allowed_use: list[str] = Field(default_factory=list)
     forbidden_use: list[str] = Field(default_factory=list)
+    # 선택 동의 — 기본 꺼짐. 동의하지 않아도 불이익이 없다(계약 v2 제3조 2항).
+    # FACEMARKET_OPT_USES_ENABLED 가 꺼져 있으면 값이 와도 무시한다(법률 검토 전 노출 금지).
+    opt_location_cuts: bool = False
+    opt_lookbook_person_replace: bool = False
+    opt_consent_version: str | None = None
     unit_price: int = Field(default=10000, ge=0, le=100_000_000)
     valid_days: int = Field(default=365, ge=1, le=3650)
 
@@ -1045,6 +1050,13 @@ async def create_license(
     allowed = _clean_uses(body.allowed_use, ALLOWED_BRAND_USE_CATEGORIES)
     forbidden = _clean_uses(body.forbidden_use, FORBIDDEN_BRAND_USE_CATEGORIES)
     unit_price = body.unit_price
+    # 선택 동의는 플래그 뒤에 숨긴다 — 법률 검토 전에는 모델에게 화면도 보이지 않고,
+    # 요청에 값이 실려 와도 저장하지 않는다(기본 false = 지금 동작: 스튜디오 전용).
+    opt_enabled = bool(getattr(request.app.state.settings, "facemarket_opt_uses_enabled", False))
+    opt_location = bool(body.opt_location_cuts) and opt_enabled
+    opt_lookbook = bool(body.opt_lookbook_person_replace) and opt_enabled
+    opt_version = (body.opt_consent_version or None) if opt_enabled else None
+    opt_at = datetime.now(timezone.utc) if opt_enabled and (opt_location or opt_lookbook) else None
 
     license_id = str(uuid.uuid4())
     row = None
@@ -1068,18 +1080,24 @@ async def create_license(
             digest = existing["face_image_digest"]
         else:
             gate_uri = f"/v1/facemarket/licenses/{license_id}/face"
+            # 선택 동의는 플래그가 켜졌을 때만 컬럼에 쓴다 — 꺼져 있으면 쿼리 모양까지
+            # 기존과 같아서 마이그 미적용 환경에서도 라이선스 발급이 그대로 돈다.
+            opt_cols = (", opt_location_cuts, opt_lookbook_person_replace, "
+                        "opt_consent_version, opt_consented_at") if opt_enabled else ""
+            opt_marks = ", %s, %s, %s, %s" if opt_enabled else ""
+            opt_args = (opt_location, opt_lookbook, opt_version, opt_at) if opt_enabled else ()
             async with conn.cursor() as cur:
                 await cur.execute(
                     f"""insert into fm_licenses
                         (id, model_id, enrollment_id, face_image_uri, face_image_key,
                          face_image_digest, allowed_use, forbidden_use, unit_price,
-                         license_valid_until, status)
-                        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending')
+                         license_valid_until, status{opt_cols})
+                        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending'{opt_marks})
                         on conflict (enrollment_id) where enrollment_id is not null do nothing
                         returning {_LICENSE_CARD_COLS}""",
                     (
                         license_id, model_id, enrollment_id, gate_uri, key, digest,
-                        allowed, forbidden, unit_price, valid_until,
+                        allowed, forbidden, unit_price, valid_until, *opt_args,
                     ),
                 )
                 row = await cur.fetchone()
@@ -2133,10 +2151,61 @@ def is_real_model_id(model_id: str | None) -> bool:
     return True
 
 
+#: 모델이 별도로 동의해야 열리는 사용처 → 그 사용처가 필요한 컷.
+#: 계약 v1 은 스튜디오(horizon) 밖을 전부 막는다. 모델이 아래 항목에 동의하면 그 컷에서도
+#: 이 모델의 얼굴을 쓴다(문서: documents/legal/02 v2 초안 제2조 ⑤ · 제9조 6항 예외).
+OPT_LOCATION_CUTS = "opt_location_cuts"
+OPT_LOOKBOOK_PERSON_REPLACE = "opt_lookbook_person_replace"
+_CUT_OPT_REQUIRED: dict[str, str] = {
+    "styling": OPT_LOCATION_CUTS,
+    "mirror": OPT_LOCATION_CUTS,
+    "base_edit": OPT_LOOKBOOK_PERSON_REPLACE,
+}
+
+
+async def consent_license(conn, model_id, *, license_id: str | None = None) -> dict | None:
+    """동의 판정용 라이선스 행. **실패하면 None** — 조회가 흔들려도 컷 생성이 죽지 않는다.
+
+    None = "동의 안 함" 이라 최악의 경우 지금 동작(스튜디오 전용)으로 돌아갈 뿐이고,
+    없는 동의를 있다고 보는 방향으로는 절대 틀리지 않는다(fail-safe 방향이 한쪽이다).
+    """
+    try:
+        return await resolve_model_license(conn, model_id, license_id=license_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("consent license lookup failed for %s: %r", model_id, exc)
+        return None
+
+
+def cut_needs_opt(cut_type: str | None) -> bool:
+    """이 컷이 **별도 동의가 있어야 열리는** 사용처인가.
+
+    이 판정이 false 면 동의를 볼 필요가 없다 → 라이선스를 읽지 않는다.
+    (스튜디오·상품 컷만 있는 잡에서 DB 왕복을 새로 만들지 않으려는 것 — 기존 경로 무영향.)
+    """
+    return str(cut_type or "") in _CUT_OPT_REQUIRED
+
+
+def model_opt_allows(license_row: Mapping[str, Any] | None, opt: str) -> bool:
+    """이 라이선스가 그 사용처에 동의했는가. 행이 없거나 값이 없으면 **동의 안 함**."""
+    if not isinstance(license_row, Mapping):
+        return False
+    return bool(license_row.get(opt))
+
+
+def real_identity_allowed_cut(cut_type: str | None,
+                              license_row: Mapping[str, Any] | None = None) -> bool:
+    """이 컷에 실제 모델 얼굴을 쓸 수 있는가 — 스튜디오는 항상, 나머지는 동의한 것만."""
+    if cut_type == "horizon":
+        return True
+    opt = _CUT_OPT_REQUIRED.get(str(cut_type or ""))
+    return bool(opt) and model_opt_allows(license_row, opt)
+
+
 def resolve_block_model_id(
     cut_type: str | None,
     model_id: str | None,
     styling_model_id: str | None,
+    license_row: Mapping[str, Any] | None = None,
 ) -> str | None:
     """Return the only model identity permitted for this cut type."""
     if cut_type == "horizon":
@@ -2145,6 +2214,9 @@ def resolve_block_model_id(
         return None
     if not is_real_model_id(model_id):
         return str(model_id) if model_id else None
+    # 장소 컷에 동의한 모델이면 대역(가상 모델) 없이 그 모델 그대로 간다.
+    if real_identity_allowed_cut(cut_type, license_row):
+        return str(model_id)
     if styling_model_id and not is_real_model_id(styling_model_id):
         return str(styling_model_id)
     raise _err(
@@ -2157,17 +2229,35 @@ def resolve_block_model_id(
 def reject_real_model_outside_horizon(
     cut_type: str | None,
     model_id: str | None,
+    license_row: Mapping[str, Any] | None = None,
 ) -> None:
-    if is_real_model_id(model_id) and cut_type != "horizon":
+    """실제 모델은 스튜디오 컷 + **그 모델이 동의한 컷**에서만."""
+    if not is_real_model_id(model_id) or real_identity_allowed_cut(cut_type, license_row):
+        return
+    if _CUT_OPT_REQUIRED.get(str(cut_type or "")) == OPT_LOOKBOOK_PERSON_REPLACE:
+        # 룩북 인물 교체는 셀러가 "동의한 모델"을 골라야 하는 새 경로라 별도 코드로 알린다.
+        # 스타일링·미러는 기존 코드(real_model_horizon_only)를 유지한다 — 셀러 화면 문구와
+        # 기존 계약이 그 코드를 쓰고 있고, 동의 전에는 실제로 "스튜디오 전용"이 맞다.
         raise _err(
-            "real_model_horizon_only",
-            "실제 모델은 스튜디오 컷에만 쓸 수 있어요",
+            "real_model_use_not_consented",
+            "이 모델은 해당 사용처에 동의하지 않았어요",
             status=409,
         )
+    raise _err(
+        "real_model_horizon_only",
+        "실제 모델은 스튜디오 컷에만 쓸 수 있어요",
+        status=409,
+    )
 
 
-def reject_real_model_scene_variation(payload: Mapping[str, Any]) -> None:
-    """Keep REAL-derived editor variations inside the original studio scene."""
+def reject_real_model_scene_variation(payload: Mapping[str, Any],
+                                      license_row: Mapping[str, Any] | None = None) -> None:
+    """Keep REAL-derived editor variations inside the original studio scene.
+
+    장소 컷에 동의한 모델은 배경·장소를 바꾸는 변형까지 허용한다(계약 v2 제2조 ⑤).
+    """
+    if model_opt_allows(license_row, OPT_LOCATION_CUTS):
+        return
     if payload.get("refBgAssetId") or payload.get("ref_bg_asset_id"):
         raise _err(
             "real_model_horizon_only",
@@ -2231,6 +2321,12 @@ async def resolve_model_license(
                        m.display_name as _model_name_raw, l.status,
                        l.license_valid_until, l.unit_price, l.vc_id,
                        l.allowed_use, l.forbidden_use,
+                       -- 마이그 미적용 DB(컬럼 없음)에서도 깨지지 않게 행을 jsonb 로 읽는다.
+                       -- 없으면 null → false = "동의 안 함"(지금 동작 그대로).
+                       coalesce((to_jsonb(l) ->> 'opt_location_cuts')::boolean, false)
+                           as opt_location_cuts,
+                       coalesce((to_jsonb(l) ->> 'opt_lookbook_person_replace')::boolean, false)
+                           as opt_lookbook_person_replace,
                        m.status as model_status, m.assets_status,
                        m.gender, m.height_bucket, m.body_type,
                        m.current_enrollment_id::text as current_enrollment_id,

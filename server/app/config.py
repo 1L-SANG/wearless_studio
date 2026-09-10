@@ -288,6 +288,9 @@ class Settings:
     # ---- FaceMarket (해커톤, 검증 실명 모델 마켓) — 기본 off 로 프로드 보호(FACEMARKET_ENABLED) ----
     # off면 라우터 자체가 미등록 → 기존 셀러 플로우 무영향(main.py 조건부 include).
     facemarket_enabled: bool = False
+    #: 모델 사용 조건 화면의 **선택 동의 항목**(장소 컷·룩북 인물 교체) 노출 여부.
+    #: 법률 검토 전에는 모델에게 보이면 안 된다 — 꺼져 있으면 요청에 값이 와도 저장하지 않는다.
+    facemarket_opt_uses_enabled: bool = False
     # 생체 등록은 FaceMarket 안에서도 별도 dark launch. 임계값은 캘리브 증거 없이는 기본값을 두지 않는다.
     fm_biometric_enrollment_enabled: bool = False
     # 모델 지원서·관리자 검토 게이트(리뉴얼). off = 기존 즉시 등록(구 경로는 지원서 테이블을
@@ -631,6 +634,8 @@ def load_settings() -> Settings:
         matching_cutout=_flag("MATCHING_CUTOUT", "off", {"off", "on"}),
         matching_flatlay=_flag("MATCHING_FLATLAY", "off", {"off", "on", "full"}),
         facemarket_enabled=(os.getenv("FACEMARKET_ENABLED", "false").lower() == "true"),
+        facemarket_opt_uses_enabled=(
+            os.getenv("FACEMARKET_OPT_USES_ENABLED", "false").lower() == "true"),
         fm_biometric_enrollment_enabled=(
             os.getenv("FM_BIOMETRIC_ENROLLMENT_ENABLED", "false").lower() == "true"
         ),

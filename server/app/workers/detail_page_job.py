@@ -913,14 +913,24 @@ async def run_detail_page_job(app, job: dict) -> None:
             ]
             selected_model_id = payload.get("modelId")
             styling_model_id = payload.get("stylingModelId")
+            # 실존 모델이면 라이선스를 **먼저** 읽는다 — 어떤 컷에 그 얼굴을 쓸 수 있는지가
+            # 그 행의 선택 동의(opt_*)에 달려 있다(라우트와 같은 판정).
+            _pre_license = None
+            if (any(facemarket.cut_needs_opt(b.get("cutType")) for b in ai_blocks)
+                    and s.facemarket_enabled
+                    and facemarket.is_real_model_id(selected_model_id)):
+                _pre_license = await facemarket.consent_license(conn, str(selected_model_id))
             block_model_ids = {
                 id(block): facemarket.resolve_block_model_id(
-                    block.get("cutType"), selected_model_id, styling_model_id
+                    block.get("cutType"), selected_model_id, styling_model_id, _pre_license,
                 )
                 for block in ai_blocks
             }
+            # "실제 모델 얼굴이 실제로 쓰이는 컷이 있는가" — 스튜디오 + 동의한 컷.
+            # REAL 자산·LoRA·라이선스 확인·정산이 전부 이 판정에 붙는다.
             uses_horizon_identity = any(
-                block.get("cutType") == "horizon" for block in ai_blocks
+                facemarket.real_identity_allowed_cut(block.get("cutType"), _pre_license)
+                for block in ai_blocks
             )
             example_repeat_indexes = _example_repeat_indexes(
                 ai_blocks, clothing_type

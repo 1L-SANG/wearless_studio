@@ -179,10 +179,18 @@ async def run_editor_image_job(app, job: dict) -> None:
                             conn, user_id, asset_id
                         )
                     trusted_cut_type = (provenance or {}).get("cut_type")
+                # 동의 값(opt_*)이 게이트의 입력이지만, 동의가 필요 없는 컷이면 읽지 않는다.
+                _gate_license = None
+                if facemarket.cut_needs_opt(trusted_cut_type) or payload.get("refBgAssetId"):
+                    async with pool.connection() as conn:
+                        _gate_license = await facemarket.consent_license(
+                            conn, str(snapshot["modelId"]),
+                            license_id=str(snapshot.get("licenseId") or "") or None,
+                        )
                 facemarket.reject_real_model_outside_horizon(
-                    trusted_cut_type, str(snapshot["modelId"])
+                    trusted_cut_type, str(snapshot["modelId"]), _gate_license
                 )
-                facemarket.reject_real_model_scene_variation(payload)
+                facemarket.reject_real_model_scene_variation(payload, _gate_license)
                 source = {**source, "cutType": trusted_cut_type}
                 async with pool.connection() as conn:
                     fm_license_row = await facemarket.resolve_model_license(
@@ -351,8 +359,20 @@ async def run_editor_image_job(app, job: dict) -> None:
 
             requested_model_id = payload.get("modelId")
             if normalized["cutType"] in _WORN_CUT_TYPES:
+                _gate_license = None
+                if (facemarket.cut_needs_opt(normalized["cutType"])
+                        and facemarket.is_real_model_id(requested_model_id)):
+                    # 라우트가 실어 준 라이선스 그대로 읽는다 — 잡 실행 중 다른 라이선스를
+                    # 집어오면 동의 판정이 요청 시점과 달라진다.
+                    _snap = payload.get("_facemarket")
+                    _snap_license = (str(_snap.get("licenseId"))
+                                     if isinstance(_snap, dict) and _snap.get("licenseId") else None)
+                    async with pool.connection() as conn:
+                        _gate_license = await facemarket.consent_license(
+                            conn, str(requested_model_id), license_id=_snap_license
+                        )
                 facemarket.reject_real_model_outside_horizon(
-                    normalized["cutType"], requested_model_id
+                    normalized["cutType"], requested_model_id, _gate_license
                 )
 
             colors = product.get("colors") or []
