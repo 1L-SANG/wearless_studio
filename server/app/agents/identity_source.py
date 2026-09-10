@@ -201,7 +201,28 @@ async def resolve_enabled_lora(conn, model_id: str) -> dict | None:
         return None
     if not row or row.get("bucket") != "face" or not str(row.get("lora_r2_key") or "").strip():
         return None
-    return dict(row)
+    row = dict(row)
+    row["face_backend_url"] = await _active_face_backend_url(conn)
+    return row
+
+
+async def _active_face_backend_url(conn) -> str | None:
+    """DB 에 등록된 현재 렌더 파드에서 URL 을 유도한다. 없으면 None → 설정값 폴백."""
+    from ..services.face_autoscale import pod_backend_url
+
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute("select to_regclass('public.fm_face_render_pod') as t")
+            if not (await cur.fetchone() or {}).get("t"):
+                return None
+            await cur.execute(
+                "select pod_id from fm_face_render_pod where retired_at is null "
+                "order by created_at desc limit 1")
+            row = await cur.fetchone()
+    except Exception as exc:  # noqa: BLE001 — 못 읽으면 설정값으로 간다
+        log.warning("face render pod lookup failed: %r", exc)
+        return None
+    return pod_backend_url((row or {}).get("pod_id"))
 
 
 def profiles_from_lora_row(row: dict | None) -> tuple[dict | None, dict | None]:
