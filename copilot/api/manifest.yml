@@ -204,7 +204,12 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # image_high는 마네킹·매칭·AG-07 공유 경로이므로 Gemini로 유지하고 AG-06만 분리한다.
   # 새 hard-gate가 garment 동일성까지 포함하므로 구 best-of 후보 생성은 중복 비용을 막기 위해 끈다.
   MODEL_ROUTING_IMAGE_HIGH: gemini-3-pro-image
-  MODEL_ROUTING_DETAIL_CUT: gpt-image-2-2026-04-21
+  # 최종 컷(상세페이지·에디터)만 gpt-image 2.5 flare. 운영 키가 이 모델을 쓸 수 있는지
+  # 확인했다(2026-09-10: GET /v1/models/gpt-image-2.5-flare → 200). 마네킹·컬러웨이·매칭·
+  # 개인화는 image_high(Gemini) 그대로다.
+  MODEL_ROUTING_DETAIL_CUT: gpt-image-2.5-flare
+  # 에디터 '새 이미지' 컷은 api 가 처리한다(JOB_KINDS "-detail_page") — 그래서 여기에만 둔다.
+  MODEL_ROUTING_EDITOR_CUT: gpt-image-2.5-flare
   # 상세페이지 컷 출고 해상도 4K → 2K (2026-08-26 오너 결정). GPT Image 2 에서 이 값은
   # 2:3 캔버스 2336×3504 → 1536×2304 로 바뀐다(gemini_image._OPENAI_2K_SIZE).
   # 출력 토큰이 줄어 컷당 실비도 함께 내려가고, 4K 가 원인이던 메모리 압박(아래
@@ -322,6 +327,25 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 실제로 열어서 seller 앱이 뜨는지 확인할 것(런북 §6).
   PUBLIC_WEB_ORIGIN: "https://ai.wearless.kr"
 
+  # ── 얼굴 패스(인물 LoRA) — **전부 꺼진 채로 커밋한다** ──
+  # 켜기 전에 필요한 것: ① fm_model_loras 에 켜진 행(scripts/seed_model_lora.py)
+  # ② RunPod 파드가 살아 있고 그 볼륨에 코드·가중치가 올라가 있음(scripts/face_render_sync.sh)
+  # ③ 아래 두 시크릿의 SSM 값(copilot secret init) — 값 없이 배포하면 ECS 기동이 실패한다.
+  FACE_IDENTITY_ENABLED: "false"
+  FACE_IDENTITY_BACKEND_URL: https://50cx65l1hv4yes-8000.proxy.runpod.net/render
+  # 파드 온디맨드 기동/종료. off 면 RunPod 를 아예 호출하지 않는다(어댑터가 클라이언트도 안 만든다).
+  FACE_AUTOSCALE: "off"
+  # detail-worker 와 같은 근거로 10분: 셀러가 컷을 연속으로 만들면 같은 파드를 다시 쓴다.
+  # 깨어날 때마다 드는 비용 = 콜드스타트 + 10분 × $2.09/h.
+  # 콜드스타트 실측(2026-09-10, RTX PRO 6000 96GB + 네트워크 볼륨): 파이프라인 적재만 472초,
+  # 부팅까지 더하면 8분 이상이다. 볼륨 예열(118초)로도 5분 안에 못 들어온다 —
+  # 첫 컷 지연은 UI 문구로 흡수하고, 이 값은 "그 지연을 두 번 물지 않는" 창이다.
+  FACE_AUTOSCALE_IDLE_MINUTES: "10"
+  # 켜라고 한 뒤 이 시간까지 /healthz 가 안 뜨면 "안 뜬다"로 보고 내린다(요금 방지).
+  # A-5 콜드스타트 중앙값(≈8.5분) × 2, 최소 8 → 17.
+  FACE_AUTOSCALE_START_GRACE_MINUTES: "17"
+  FACE_RUNPOD_POD_ID: 50cx65l1hv4yes
+
 secrets:                         # SSM Parameter Store (SecureString). copilot secret init 로 값 저장.
   DATABASE_URL: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/DATABASE_URL
   SUPABASE_SERVICE_ROLE_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/SUPABASE_SERVICE_ROLE_KEY
@@ -329,6 +353,11 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   R2_SECRET_ACCESS_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/R2_SECRET_ACCESS_KEY
   CLOUDFLARE_CACHE_PURGE_TOKEN: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/CLOUDFLARE_CACHE_PURGE_TOKEN
   GEMINI_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/GEMINI_API_KEY
+  # 얼굴 렌더 서비스 인증 토큰과 RunPod API 키.
+  # ★ SSM 값 없이 이 두 줄이 배포되면 ECS 태스크가 기동에 실패하고 롤백된다(2026-07-17 주석과 같은 함정).
+  #   배포 전 반드시: copilot secret init --name FACE_IDENTITY_BACKEND_TOKEN / --name RUNPOD_API_KEY
+  FACE_IDENTITY_BACKEND_TOKEN: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FACE_IDENTITY_BACKEND_TOKEN
+  RUNPOD_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/RUNPOD_API_KEY
   # 첫 화면 시그니처 컷과 AG-06 상세컷 GPT 경로가 함께 사용한다.
   # 배포 전 SSM SecureString이 실제로 존재하는지 확인한다.
   OPENAI_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENAI_API_KEY

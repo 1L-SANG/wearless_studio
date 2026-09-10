@@ -20,6 +20,13 @@ PORT="${FACE_RENDER_PORT:-8000}"
 mkdir -p "$ROOT"/{hf,loras,logs}
 LOG="$ROOT/logs/service-$(date -u +%Y%m%dT%H%M%SZ).log"
 
+# 토큰: 운영은 파드 env(RunPod Secret 참조)가 정본. 없으면 볼륨의 .token 파일을 쓴다
+# (측정·개발용 — 값이 명령줄이나 API 응답에 실리지 않게 하려는 것).
+if [ -z "${FACE_RENDER_TOKEN:-}" ] && [ -f "$ROOT/.token" ]; then
+  FACE_RENDER_TOKEN="$(cat "$ROOT/.token")"
+  export FACE_RENDER_TOKEN
+fi
+
 if [ -f "$ROOT/VERSION" ]; then
   export FACE_RENDER_CODE_VERSION="$(cat "$ROOT/VERSION")"
 fi

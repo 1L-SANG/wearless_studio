@@ -28,11 +28,13 @@ cp "$HERE/app/agents/face_identity_qwen.py" "$STAGE/code/app/agents/"
 : > "$STAGE/code/app/__init__.py"
 : > "$STAGE/code/app/agents/__init__.py"
 cp "$HERE/deploy/face_render/start.sh" "$STAGE/start.sh"
+cp "$HERE/deploy/face_render/pre_start.sh" "$STAGE/pre_start.sh"
 printf '%s\n' "$VERSION" > "$STAGE/VERSION"
 printf '%s\n' "$VERSION" > "$STAGE/code/VERSION"
 chmod +x "$STAGE/start.sh"
 
-tar czf "$STAGE/sync.tgz" -C "$STAGE" code start.sh VERSION
+# COPYFILE_DISABLE: macOS tar 이 ._AppleDouble 을 같이 넣는 것을 막는다.
+COPYFILE_DISABLE=1 tar czf "$STAGE/sync.tgz" -C "$STAGE" code start.sh pre_start.sh VERSION
 tar tzf "$STAGE/sync.tgz" > /dev/null           # 올리기 전에 아카이브부터 검증
 scp -i "$KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -P "$PORT" \
     "$STAGE/sync.tgz" "root@$HOST:/tmp/face_render_sync.tgz"
@@ -40,9 +42,10 @@ scp -i "$KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -P "$PORT" \
   mkdir -p '$ROOT'
   tar tzf /tmp/face_render_sync.tgz > /dev/null
   rm -rf '$ROOT/code'
-  tar xzf /tmp/face_render_sync.tgz -C '$ROOT'
+  # --no-same-owner: 네트워크 볼륨(MooseFS)은 맥 tar 의 uid/gid 를 못 준다(chown 거부).
+  tar --no-same-owner -xzf /tmp/face_render_sync.tgz -C '$ROOT'
   rm -f /tmp/face_render_sync.tgz
-  chmod +x '$ROOT/start.sh'
+  chmod +x '$ROOT/start.sh' '$ROOT/pre_start.sh'
   ls -la '$ROOT' '$ROOT/code'
   echo VERSION=\$(cat '$ROOT/VERSION')"
 echo "synced $VERSION → $HOST:$ROOT"

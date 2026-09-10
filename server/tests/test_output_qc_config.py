@@ -48,7 +48,11 @@ def test_production_manifest_bounds_4k_gpt_repair_concurrency_without_moving_sha
     variables = manifest["variables"]
 
     assert variables["MODEL_ROUTING_IMAGE_HIGH"] == "gemini-3-pro-image"
-    assert variables["MODEL_ROUTING_DETAIL_CUT"] == "gpt-image-2-2026-04-21"
+    # 최종 컷만 gpt-image 2.5 flare 로 교체(2026-09-10 오너 결정, 운영 키 접근 200 확인).
+    # image_high(마네킹·매칭·개인화)는 위 줄대로 Gemini 그대로다.
+    assert variables["MODEL_ROUTING_DETAIL_CUT"] == "gpt-image-2.5-flare"
+    # 에디터 '새 이미지' 컷은 api 가 처리한다(JOB_KINDS "-detail_page") — 같은 모델로 못 박는다.
+    assert variables["MODEL_ROUTING_EDITOR_CUT"] == "gpt-image-2.5-flare"
     # 상세페이지 컷 출고 해상도 2K (2026-08-26 오너 결정, 4K 에서 내림). 마네킹 핀과 같은
     # 이유로 못 박는다 — manifest 병합 사고 때 소리 없이 4K 로 되돌아가면 컷당 실비가 오른다.
     assert variables["DETAIL_CUT_IMAGE_SIZE"] == "2K"
