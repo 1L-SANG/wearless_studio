@@ -1056,7 +1056,9 @@ def resolve_backend(settings, spec: FaceIdentitySpec) -> FaceBackend | None:
     with _BACKEND_LOCK:
         backend = _BACKENDS.get(key)
         if backend is None:
-            backend = HttpFaceBackend(url, lora=spec.lora_path) if url else QwenLocalBackend(key[1])
+            token = getattr(settings, "face_identity_backend_token", None) if url else None
+            backend = (HttpFaceBackend(url, lora=spec.lora_path, token=token)
+                       if url else QwenLocalBackend(key[1]))
             _BACKENDS[key] = backend
         return backend
 

@@ -380,6 +380,13 @@ class Settings:
     face_identity_enabled: bool = False
     face_identity_backend_url: str | None = None  # 원격 GPU 렌더 서비스 URL. 없으면 로컬 Qwen(파드·개발 전용)
     face_identity_lora_path: str | None = None    # LoRA 디렉터리(레지스트리 loraPath 기준) 또는 단일 .safetensors
+    face_identity_backend_token: str | None = None  # 렌더 서비스 내부 토큰(Bearer). 없으면 헤더를 안 붙인다
+    # 얼굴 패스 GPU 온디맨드(services/face_autoscale.py) — sam2 와 같은 판정, RunPod 파드 대상.
+    # off 면 HTTP 클라이언트를 만들지 않는다. API 키는 서버에만 두고 파드에는 올리지 않는다.
+    face_autoscale: str = "off"
+    face_autoscale_idle_minutes: int = 30
+    face_runpod_pod_id: str | None = None
+    face_runpod_api_key: str | None = None
     # ---- 이미지 실비 계측(내부용) ----
     # false 면 image_usage_events 적재를 끄고 로그만 남긴다.
     # **기본값은 app_env 가 정한다**(load_settings → _image_usage_persist): production 만 on.
@@ -665,6 +672,11 @@ def load_settings() -> Settings:
         face_identity_enabled=(os.getenv("FACE_IDENTITY_ENABLED", "false").lower() == "true"),
         face_identity_backend_url=(os.getenv("FACE_IDENTITY_BACKEND_URL") or "").rstrip("/") or None,
         face_identity_lora_path=os.getenv("FACE_IDENTITY_LORA_PATH") or None,
+        face_identity_backend_token=os.getenv("FACE_IDENTITY_BACKEND_TOKEN") or None,
+        face_autoscale=_flag("FACE_AUTOSCALE", "off", {"off", "on"}),
+        face_autoscale_idle_minutes=_int_env("FACE_AUTOSCALE_IDLE_MINUTES", 30),
+        face_runpod_pod_id=os.getenv("FACE_RUNPOD_POD_ID") or None,
+        face_runpod_api_key=os.getenv("RUNPOD_API_KEY") or None,
         fm_provenance_enabled=(
             os.getenv("FM_PROVENANCE_ENABLED", "false").lower() == "true"
         ),
