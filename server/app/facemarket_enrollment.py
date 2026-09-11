@@ -264,6 +264,22 @@ def match_threshold_for_angle(settings: Settings, angle: str) -> float | None:
     return settings.fm_retouched_live_threshold
 
 
+def review_required(settings: Settings, method: str) -> bool:
+    """완료 시 관리자 심사(`review_pending`)로 멈춰야 하는지.
+
+    "off" 는 아무도 심사 안 함(오늘의 mid-only 기본), "all" 은 인증 수단과 무관하게 전부
+    심사(신중한 롤아웃용 — mid 도 걸린다. mid 의 매칭 자체는 여전히 enforce 라 임계 미달은
+    이 함수까지 오지 못하고 먼저 face_match_failed 로 실패한다), 기본값 "simple_auth_only" 는
+    간편인증만 심사한다(위조 가능한 앵커라 기계가 진위를 못 가리므로).
+    """
+    mode = settings.fm_enrollment_review
+    if mode == "off":
+        return False
+    if mode == "all":
+        return True
+    return method == "simple_auth"
+
+
 def _prewarm_opendid(request: Request) -> None:
     """VC 발급이 사실상 확정된 지점에서 holder(opendid)를 미리 깨운다.
 
@@ -2206,6 +2222,7 @@ async def process_enrollment_completion(
     settings = request.app.state.settings
     liveness = None
     portrait: bytearray | None = None
+    id_document_buffer: bytearray | None = None
     photo_buffers: list[bytearray] = []
     processing_started = False
     try:
@@ -2227,14 +2244,36 @@ async def process_enrollment_completion(
             except BiometricProviderError as exc:
                 raise EnrollmentMappedError(exc.reason) from None
 
+        method = row.get("identity_method") or "mid"
         try:
-            # Task3: CI·이름·생년월일 검증은 앞단 /identity 가 이미 마쳤다(저장 컬럼을 아래에서
-            # 읽는다). 여기서는 SFace 매칭에 쓸 신분증 초상만 파싱한다 — trans 재조회 없음.
-            contract = cx_identity.get_oacx_biometric_contract(settings)
-            # 초상은 D1부터 trans 필드가 아니라 클라가 OACX RESULT-step(`data.dlphotoimage`)
-            # 콜백에서 그대로 릴레이한 HEX 다 — cx_identity.parse_oacx_portrait_hex 의
-            # 모듈 docstring 에 이 릴레이의 보안 경계(client-relayed, bounded)를 기록해 두었다.
-            portrait = cx_identity.parse_oacx_portrait_hex(id_photo_hex, contract=contract)
+            if method == "simple_auth":
+                # 경로 S(간편인증): OACX 는 초상(dlphotoimage)을 안 준다 — 앵커는 사용자가
+                # 업로드한 마스킹 신분증 사진에서 얼굴만 잘라낸 바이트다. 이 앵커는 사용자
+                # 본인이 촬영한 것이라 위조 가능 — 아래 매칭 루프는 advisory 로 돈다(enforce
+                # 아님, WHY 는 매칭 루프 주석 참조).
+                key = row.get("id_document_r2_key")
+                if not key:
+                    raise EnrollmentMappedError("id_portrait_unavailable")
+                r2_document = _r2_face(request)
+                id_document_buffer = bytearray(
+                    await asyncio.to_thread(r2_document.get_bytes, key)
+                )
+                try:
+                    portrait = await asyncio.to_thread(
+                        facemarket_id_document.crop_id_face,
+                        id_document_buffer,
+                        settings=settings,
+                    )
+                except facemarket_id_document.IdDocumentError as exc:
+                    raise EnrollmentMappedError(exc.reason) from None
+            else:
+                # Task3: CI·이름·생년월일 검증은 앞단 /identity 가 이미 마쳤다(저장 컬럼을 아래에서
+                # 읽는다). 여기서는 SFace 매칭에 쓸 신분증 초상만 파싱한다 — trans 재조회 없음.
+                contract = cx_identity.get_oacx_biometric_contract(settings)
+                # 초상은 D1부터 trans 필드가 아니라 클라가 OACX RESULT-step(`data.dlphotoimage`)
+                # 콜백에서 그대로 릴레이한 HEX 다 — cx_identity.parse_oacx_portrait_hex 의
+                # 모듈 docstring 에 이 릴레이의 보안 경계(client-relayed, bounded)를 기록해 두었다.
+                portrait = cx_identity.parse_oacx_portrait_hex(id_photo_hex, contract=contract)
         except EnrollmentMappedError:
             raise
         except cx_identity.OacxBiometricError as exc:
@@ -2272,25 +2311,70 @@ async def process_enrollment_completion(
             # 업로드 사진 ↔ 앵커: 정면 얼굴 인식기(YuNet 검출 + SFace)는 측면·프로필을
             # 신뢰성 있게 다루지 못한다 — 옆모습은 검출(YuNet) 자체가 실패한다. 그래서 정면 얼굴이
             # 잡히는 사진만 매칭해 "모델 사진 = 검증된 본인"을 확인하고, 검출 불가한 각도
-            # (45/측면)는 자산용 앵글 소스로만 취급해 건너뛴다. 검출된 사진은 모두 매칭돼야 하고,
-            # 최소 1장은 매칭돼야 한다(스왑 방지).
+            # (45/측면)는 자산용 앵글 소스로만 취급해 건너뛴다.
+            #
+            # 경로 M(mid): 앵커가 정부 서명 VC 초상이다 — 임계 미달은 "본인이 아니다"라는
+            # 신뢰할 수 있는 신호라 지금처럼 즉시 차단한다(enforce). 검출된 사진은 모두
+            # 매칭돼야 하고 최소 1장은 매칭돼야 한다(스왑 방지). **불변**.
+            # 경로 S(simple_auth): 앵커가 사용자가 손에 들고 촬영한 신분증이다 — 위조 가능해서
+            # 점수가 높아도 진짜라는 보장이 안 되고, 촬영 각도·조명·코팅 반사 때문에 낮아도
+            # 본인이 아니라는 보장이 안 된다. 기계가 어느 방향으로도 신뢰 판정을 못 내리므로
+            # 점수는 기록만 하고(advisory) 사람이 심사한다. 예외: 세 각도 전부 얼굴 미검출이면
+            # 심사할 근거 자체가 없으므로 그때는 막는다(재촬영 유도).
+            advisory = method == "simple_auth"
+            scores: dict[str, float] = {}
+            below: list[str] = []
+            skipped: list[str] = []
             matched_any = False
             for _angle, buffer in photo_items:
                 try:
                     score = qc.one_to_one_similarity(buffer, match_anchor)
                 except QcFailed as exc:
                     if exc.reason == "no_face_detected":
-                        continue  # 정면 검출기가 못 잡는 각도(측면/프로필) — 매칭 대상 아님
+                        skipped.append(_angle)  # 정면 검출기가 못 잡는 각도 — 매칭 대상 아님
+                        continue
                     raise
                 threshold = match_threshold_for_angle(settings, _angle)
                 logger.info(
-                    "fm_match_photo_live angle=%s score=%s threshold=%.4f",
-                    _angle, score, threshold,
+                    "fm_match_photo_anchor angle=%s score=%s threshold=%.4f advisory=%s",
+                    _angle, score, threshold, advisory,
                 )
-                _assert_match(score, threshold)
-                matched_any = True
-            if not matched_any:
+                try:
+                    numeric_score = float(score)
+                except (TypeError, ValueError):
+                    numeric_score = None
+                is_below = (
+                    numeric_score is None
+                    or not math.isfinite(numeric_score)
+                    or numeric_score < threshold
+                )
+                if is_below:
+                    below.append(_angle)
+                    if not advisory:
+                        _assert_match(score, threshold)
+                else:
+                    matched_any = True
+                if numeric_score is not None and math.isfinite(numeric_score):
+                    scores[_angle] = numeric_score
+            if not advisory and not matched_any:
                 raise EnrollmentMappedError("face_match_failed")
+            if advisory and not scores:
+                # 세 각도 전부 얼굴 미검출(혹은 무효 점수) = 심사할 근거가 없다.
+                raise EnrollmentMappedError("face_match_failed")
+            match_snapshot = {
+                # raw 코사인을 그대로 저장한다. 백분율 변환은 표시층에서만 한다 — 임계
+                # 재캘리브·사후 분석이 원본을 요구하고, 표시 형식이 바뀐다고 저장 값이
+                # 흔들리면 안 된다.
+                "policyVersion": settings.fm_match_policy_version,
+                "anchor": "id_document_crop" if advisory else "oacx_portrait",
+                "thresholds": {
+                    angle: match_threshold_for_angle(settings, angle) for angle in ANGLES
+                },
+                "scores": scores,
+                "belowThreshold": below,
+                "skipped": skipped,
+                "computedAt": datetime.now(timezone.utc).isoformat(),
+            }
         except EnrollmentMappedError:
             raise
         except QcFailed as exc:
@@ -2298,6 +2382,7 @@ async def process_enrollment_completion(
             raise EnrollmentMappedError(reason) from None
         except Exception:
             raise EnrollmentMappedError("qc_unavailable") from None
+        match_required_review = review_required(settings, method)
 
         # Task3: 바인딩 증거는 앞단 /identity 가 fm_biometric_enrollments 에 저장한 값을 읽는다.
         # CI 는 재계산할 원본 token 이 없다 — 저장된 HMAC(identity_ci_hash)을 그대로 쓴다.
@@ -2338,6 +2423,20 @@ async def process_enrollment_completion(
                         "현재 등록 단계에서는 인증을 완료할 수 없습니다.",
                         status=409,
                     )
+                if match_required_review:
+                    # 심사 대기: 모델 바인딩·자산빌드를 시작하지 않는다 — 심사 안 된 얼굴이
+                    # 생성 파이프라인에 들어가면 안 된다. 점수는 사람이 볼 정보로만 남긴다.
+                    await cur.execute(
+                        """
+                        update fm_biometric_enrollments
+                        set status = 'review_pending', review_status = 'pending',
+                            match_scores = %s
+                        where id = %s
+                        """,
+                        (Json(match_snapshot), enrollment_id),
+                    )
+                    await conn.commit()
+                    return EnrollmentDecision(False, False, None, "review_pending")
                 await cur.execute(
                     "select id::text as id, user_id::text as user_id from fm_models where ci_hash = %s for update",
                     (ci_hash,),
@@ -2443,6 +2542,15 @@ async def process_enrollment_completion(
                         enrollment_id,
                     ),
                 )
+                if method == "simple_auth":
+                    # 심사가 필요 없는 간편인증 성공 경로(예: fm_enrollment_review=off)도
+                    # advisory 점수를 감사 기록으로 남긴다 — mid 경로는 이 문장을 안 타서
+                    # 기존 회귀 스위트가 고정해 둔 asset_building UPDATE 파라미터 수는
+                    # 그대로다.
+                    await cur.execute(
+                        "update fm_biometric_enrollments set match_scores = %s where id = %s",
+                        (Json(match_snapshot), enrollment_id),
+                    )
                 await cur.execute(
                     """
                     insert into jobs (user_id, project_id, kind, status, payload, credits_reserved, metadata)
@@ -2470,6 +2578,8 @@ async def process_enrollment_completion(
         # Task3: 원시 CI(evidence.ci)는 앞단 /identity 가 이미 폐기했다 — 여기서 다룰 게 없다.
         if portrait is not None:
             cx_identity.wipe_bytearray(portrait)
+        if id_document_buffer is not None:
+            cx_identity.wipe_bytearray(id_document_buffer)
         if liveness is not None:
             cx_identity.wipe_bytearray(liveness.reference_image)
         for buffer in photo_buffers:
