@@ -240,9 +240,12 @@ export async function adminFetchApplicationPhotoUrl(applicationId, kind = 'profi
 // ── 관리자: 생체 등록 육안 심사(간편인증 review_pending) ────────────────────
 // 전부 서버가 admin_guard.require_admin(기기 게이트 포함)을 강제한다.
 
+// review 는 서버(`facemarket_admin_review.py` list_review_queue)에서 `Query(..., ...)` —
+// 기본값 없는 필수 파라미터라 adminListApplications 의 옵션-쿼리 패턴(있으면만 붙임)을
+// 그대로 베끼면 인자 없이 부르는 순간 422 가 난다. 항상 붙인다 — 호출부가 값을 빠뜨리면
+// 여기서 조용히 숨기지 말고 그 즉시 드러나야 한다.
 export function adminListEnrollments(review) {
-  const qs = review ? `?review=${encodeURIComponent(review)}` : '';
-  return http(`/v1/facemarket/admin/enrollments${qs}`);
+  return http(`/v1/facemarket/admin/enrollments?review=${encodeURIComponent(review)}`);
 }
 
 export function adminEnrollmentCard(enrollmentId) {
