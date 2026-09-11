@@ -118,7 +118,7 @@ async def run_editor_image_job(app, job: dict) -> None:
         fm_license_row: dict | None = None
         fm_face_injected = False          # REAL 자산 2장이 실제 첨부됐을 때만 정산(미첨부 과금 방지)
         vary_lora_spec = None             # 변형 컷 얼굴 패스 근거(fm_model_loras) — 없으면 패스 안 걸림
-        face_pass_outcome: dict = {}      # applied / fallback:<reason> — 자산 메타·이벤트용
+        face_pass_outcome: dict = {}      # applied / skipped:<reason> / fallback:<reason> — 자산 메타·이벤트용
 
         if mode == "vary":
             source = payload.get("source") or {}
@@ -661,7 +661,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 )["_referenceDirectionCompatible"])
             generate_kwargs = {"analysis": analysis, "manifest": manifest}
             # 값이 없으면 키 자체를 넣지 않는다 — 기존 프롬프트·기존 목(mock) 시그니처를 깨지 않는다.
-            # 얼굴 패스 결과(applied / fallback:<reason>)를 받아 자산 메타와 이벤트에 남긴다.
+            # 얼굴 패스 결과(applied / skipped:<reason> / fallback:<reason>)를 받아 자산 메타와 이벤트에 남긴다.
             face_pass_outcome: dict = {}
             if fm_lora_spec is not None:
                 generate_kwargs["face_pass_outcome"] = face_pass_outcome

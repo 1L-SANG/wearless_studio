@@ -1380,7 +1380,7 @@ async def generate(
     face_identity_spec: face_identity.FaceIdentitySpec | None = None,
     qc_corrections: tuple[str, ...] = (),
     confirmed_prompt_input: ConfirmedGptPromptInput | None = None,
-    # 얼굴 패스 결과를 적어 보낼 자리(워커가 dict 를 준다): "applied" | "fallback:<reason>".
+    # 얼굴 패스 결과를 적어 보낼 자리(워커가 dict 를 준다): "applied" | "skipped:<reason>" | "fallback:<reason>".
     # 반환값을 늘리지 않는 이유 — generate() 를 목(mock)으로 바꿔 쓰는 테스트가 많다.
     face_pass_outcome: dict | None = None,
     # 대기 중에도 "지금 파드" 를 다시 묻는 자리 — 파드는 재고 때문에 바뀌고 처음엔 없을 수도 있다.

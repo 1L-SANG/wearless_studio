@@ -1259,12 +1259,25 @@ def _note_fallback(reason: str) -> None:
         FALLBACK_ALERT_WINDOW_SECONDS // 60, len(recent))
 
 
+#: 설계상 건너뜀 — prepare_image 가 렌더 전에 내리는 판정(얼굴 없음·너무 작음·측면). 그림의 성질이지
+#: 파드 장애가 아니다. 렌더를 부르지 않았으니 tries 는 비어 있다 — "렌더 자체 실패"와 같은 모양이라
+#: 이 목록으로 구분한다(2026-09-11 잡 6c270b84 옆모습 컷: yaw 를 backend_error 로 적고 재실행까지 했다).
+SKIP_REASONS = ("no_face", "too_small", "yaw")
+
+
+def skipped_reason(result: FacePassResult) -> str | None:
+    """설계상 건너뜀이면 그 사유, 아니면 None."""
+    if result.applied:
+        return None
+    reason = str(result.meta.get("skipped_reason") or result.meta.get("reason") or "")
+    return reason if reason in SKIP_REASONS else None
+
+
 def _outcome_reason(result: FacePassResult) -> str:
     """폴백 사유를 메타에서 읽는다 — 셀러 화면이 아니라 우리가 보는 기록용."""
-    reason = str(result.meta.get("reason") or "")
-    if reason in ("no_face", "yaw"):
-        return "no_face"
-    return "gate_failed"
+    if result.meta.get("tries"):
+        return "gate_failed"
+    return "backend_error"
 
 
 async def apply_face_pass(
@@ -1283,8 +1296,9 @@ async def apply_face_pass(
     가끔 쓰는 셀러에게는 그게 사실상 항상이다. 그래서 렌더 전에 파드를 기다리고(최대
     FACE_PASS_WAIT_SECONDS), 그 사이 파드가 바뀌면 새 주소로 간다(url_provider).
 
-    outcome 이 오면 결과를 적는다: "applied" 또는 "fallback:<reason>"
-    (pod_not_ready · backend_error · gate_failed · no_face).
+    outcome 이 오면 결과를 적는다:
+      "applied" · "skipped:<reason>"(no_face · too_small · yaw — 설계상 건너뜀, 폴백이 아니다)
+      · "fallback:<reason>"(pod_not_ready · backend_error · gate_failed).
     """
     def _record(value: str) -> None:
         if outcome is not None:
@@ -1317,6 +1331,13 @@ async def apply_face_pass(
     result = await task
     log.info("face_identity applied=%s meta=%s", result.applied, _meta_for_log(result.meta))
 
+    skipped = skipped_reason(result)
+    if skipped is not None:
+        # 렌더 전에 그림을 보고 내린 판정이다 — 파드 기억을 지우지도, 다시 돌리지도, 알리지도 않는다.
+        # 같은 그림을 다시 돌려도 같은 답이고, 재대기는 컷마다 파드 확인 한 번을 더 낭비한다.
+        _record(f"skipped:{skipped}")
+        return result.image, result.mime
+
     if not result.applied and not result.meta.get("tries"):
         # 렌더 자체가 안 됐다(연결 오류·파드 재시작). 떠 있다는 기억을 버리고 한 번만 더 기다린다 —
         # 그 기억이 남아 있으면 파드가 죽은 10분 동안 모든 컷이 확인도 없이 폴백한다.
@@ -1332,7 +1353,7 @@ async def apply_face_pass(
     if result.applied:
         _record("applied")
     else:
-        reason = _outcome_reason(result) if result.meta.get("tries") else "backend_error"
+        reason = _outcome_reason(result)
         _record(f"fallback:{reason}")
         _note_fallback(reason)
     return result.image, result.mime

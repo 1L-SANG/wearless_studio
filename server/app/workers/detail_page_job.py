@@ -318,7 +318,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     generate_kwargs["face_shape_profile"] = face_shape_profile
                 if real_identity_attached and face_identity_spec is not None:
                     generate_kwargs["face_identity_spec"] = face_identity_spec
-                    # 얼굴 패스 결과(applied / fallback:<reason>) — 자산 메타·이벤트용.
+                    # 얼굴 패스 결과(applied / skipped:<reason> / fallback:<reason>) — 자산 메타·이벤트용.
                     generate_kwargs["face_pass_outcome"] = face_pass_outcome
                     from ..agents import identity_source as _identity_source
 
