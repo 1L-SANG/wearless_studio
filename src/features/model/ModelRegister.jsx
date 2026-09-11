@@ -287,6 +287,14 @@ export function ModelRegister() {
   // 옛 요청 그대로(identityMethod 키를 아예 안 보낸다) — FM_IDENTITY_METHODS=mid 인 배포에서
   // 서버로 가는 요청이 오늘과 바이트 단위로 같아야 한다는 제약을 이렇게 지킨다.
   const startEnrollment = async (identityMethod) => {
+    // 간편인증 설정이 없으면 **시작 전에** 막는다. IdentityMethodStep 이 버튼을 비활성화해
+    // 주지만, 수단이 하나뿐이면(VITE_FM_IDENTITY_METHODS=simple_auth) 그 화면 자체가 안
+    // 뜨고 여기로 곧장 온다 — 그러면 사용자는 신분증을 다 찍어 올린 **뒤**에야
+    // runCxWidget 에서 하드 에러를 만난다(최종리뷰 I11). 이유는 한 곳에서만 파생한다.
+    if (identityMethod === 'simple_auth' && SIMPLE_AUTH_UNAVAILABLE_REASON) {
+      setError(SIMPLE_AUTH_UNAVAILABLE_REASON);
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -923,6 +931,9 @@ export function ModelRegister() {
   // 레일을 한 번만 계산한다 — 아래에서 "레일이 있는가"로 레이아웃을 가르기 때문에
   // 렌더 중 두 번 부르면 두 판단이 어긋날 수 있다.
   const rail = renderStepRail(step);
+  // 이 등록이 어느 경로인가 — 화면 문구를 실제로 열리는 위젯에 맞추는 데 쓴다(최종리뷰 I9).
+  // 컷 파이프라인·상태머신은 이 값으로 갈리지 않는다(표시층 전용).
+  const isSimpleAuthEnrollment = enrollment?.identityMethod === 'simple_auth';
 
   return (
     <div className={`wizard ${s.flowWizard}`}>
@@ -992,23 +1003,37 @@ export function ModelRegister() {
         <IdDocumentStep
           enrollmentId={enrollment.id}
           onUploaded={finishIdDocument}
+          // 409(이 단계가 아님/경로 꺼짐)면 성공 때와 같은 재조회 경로로 되돌린다 —
+          // 이 스텝은 성공으로만 빠져나가서, 안 그러면 사용자가 갇힌다(최종리뷰 I7).
+          onStale={finishIdDocument}
           onError={(requestError) => setError(requestError?.message || '신분증 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.')}
         />
       )}
 
+      {/* 문구는 실제로 열리는 위젯(ENT_MID / ENT_SIMPLE_AUTH)에 맞춘다 — 간편인증
+          사용자에게 "모바일 신분증으로 인증" 이라고 적어 두면, 버튼을 눌러 열리는 PASS·
+          카카오·네이버 선택창과 화면 설명이 어긋난다(최종리뷰 I9). */}
       {step === 'identity' && (
         <div className="surface">
           <div className={s.stepHead}>
             <div className={s.medallion}><Icon name="lock" size={22} /></div>
             <div>
               <div className={s.stepEyebrow}><span className={s.stepEyebrowLatin}>STEP 2 / 7</span></div>
-              <h2 className={s.stateTitle}>모바일 신분증 확인</h2>
+              <h2 className={s.stateTitle}>
+                {isSimpleAuthEnrollment ? '간편인증 본인 확인' : '모바일 신분증 확인'}
+              </h2>
             </div>
           </div>
-          <p className="hint">본인 명의 모바일 신분증으로 본인 확인을 먼저 해요. 확인한 뒤 얼굴 사진을 올려요.</p>
+          <p className="hint">
+            {isSimpleAuthEnrollment
+              ? 'PASS·카카오·네이버 같은 간편인증으로 본인 확인을 해요. 확인한 뒤 얼굴 사진을 올려요.'
+              : '본인 명의 모바일 신분증으로 본인 확인을 먼저 해요. 확인한 뒤 얼굴 사진을 올려요.'}
+          </p>
           <div className={s.identityAction}>
             <Button variant="primary" block onClick={runIdentity}>
-              {busy ? '인증 창 다시 열기' : '모바일 신분증으로 인증'}
+              {busy
+                ? '인증 창 다시 열기'
+                : isSimpleAuthEnrollment ? '간편인증으로 확인' : '모바일 신분증으로 인증'}
             </Button>
           </div>
           <p className={s.retryNote}>인증 창을 닫았거나 취소했다면 위 버튼으로 다시 열 수 있어요.</p>

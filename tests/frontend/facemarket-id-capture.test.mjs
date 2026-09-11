@@ -571,3 +571,80 @@ test('심사 결과 사유에 실제 문구가 매핑돼 있다(일반 실패 �
     );
   }
 });
+
+// ── 막다른 길 세 곳 (최종리뷰 I7 · I9 · I11) ────────────────────────────────────
+
+test('신분증 업로드 409 는 부모의 재조회 경로로 되돌린다(사용자가 갇히지 않게)', async () => {
+  const conflict = Object.assign(new Error('신분증을 올릴 수 있는 단계가 아니에요.'), {
+    status: 409, code: 'invalid_enrollment_state',
+  });
+  const stale = [];
+  const errors = [];
+  const harness = await stepHarness({
+    entry: '/src/features/model/IdDocumentStep.jsx',
+    initialStates: [
+      'rrc', 'blob:fake-preview-url', true,
+      { xr: 0.1, yr: 0.6, wr: 0.5, hr: 0.15 }, true, false, '',
+    ],
+    initialRefs: [
+      { naturalWidth: 800, naturalHeight: 600, getBoundingClientRect: () => ({ width: 800, height: 600 }) },
+      fakeCanvasElement(),
+      null,
+    ],
+    api: { uploadIdDocument: async () => { throw conflict; } },
+  });
+  try {
+    const tree = harness.render({
+      enrollmentId: 'enrollment-1',
+      onUploaded: () => {},
+      onStale: (e) => stale.push(e),
+      onError: (e) => errors.push(e),
+    });
+    const submitButton = findTree(tree, (node) => node.type === 'Button'
+      && collectText(node).includes('확인 요청'));
+    await submitButton.props.onClick();
+    assert.equal(stale.length, 1, '409 면 부모 재조회 경로(onStale)로 가야 한다');
+    assert.deepEqual(errors, [], '409 를 일반 에러 배너로 처리하면 사용자가 이 스텝에 갇힌다');
+    // 이 스텝은 성공으로만 빠져나간다 — 화면에 로컬 에러만 남기면 탈출구가 없다.
+    assert.equal(harness.runtime.states[6], '', '409 는 로컬 에러 배너로 남기지 않는다');
+  } finally {
+    await harness.close();
+  }
+});
+
+test('ModelRegister 는 IdDocumentStep 의 409 를 finishIdDocument 로 연결한다', () => {
+  assert.match(modelRegisterSource, /onStale=\{finishIdDocument\}/);
+});
+
+test('identity 스텝 문구가 실제로 열리는 위젯(mid/간편인증)에 맞춰 갈린다', () => {
+  // 잡는 회귀: 간편인증 사용자에게 "모바일 신분증으로 인증" 이라고 적힌 버튼을 주면,
+  // 눌렀을 때 열리는 PASS·카카오·네이버 창과 화면 설명이 정면으로 어긋난다.
+  assert.match(
+    modelRegisterSource,
+    /const isSimpleAuthEnrollment = enrollment\?\.identityMethod === 'simple_auth';/,
+  );
+  const start = modelRegisterSource.indexOf("{step === 'identity' && (");
+  assert.ok(start > 0);
+  const block = modelRegisterSource.slice(start, modelRegisterSource.indexOf("{(step === 'identity'", start));
+  assert.match(block, /isSimpleAuthEnrollment \? '간편인증 본인 확인' : '모바일 신분증 확인'/);
+  assert.match(block, /isSimpleAuthEnrollment \? '간편인증으로 확인' : '모바일 신분증으로 인증'/);
+  assert.match(block, /PASS·카카오·네이버/);
+});
+
+test('간편인증 설정이 없으면 등록을 시작하기 전에 막는다(신분증 올린 뒤가 아니라)', () => {
+  // 잡는 회귀: 수단이 하나뿐이면(VITE_FM_IDENTITY_METHODS=simple_auth) IdentityMethodStep
+  // 이 아예 안 뜨고 startEnrollment 가 곧장 불린다 — 그러면 설정 부재를 runCxWidget 에서야
+  // 만나고, 그때는 사용자가 이미 신분증을 찍어 올린 뒤다.
+  const start = modelRegisterSource.indexOf('const startEnrollment = async (identityMethod) => {');
+  assert.ok(start > 0, 'startEnrollment 를 못 찾았다');
+  const body = modelRegisterSource.slice(start, modelRegisterSource.indexOf('const runCxWidget', start));
+  assert.match(
+    body,
+    /if \(identityMethod === 'simple_auth' && SIMPLE_AUTH_UNAVAILABLE_REASON\) \{/,
+    'startEnrollment 가 간편인증 설정 부재를 확인하지 않는다',
+  );
+  assert.ok(
+    body.indexOf('SIMPLE_AUTH_UNAVAILABLE_REASON') < body.indexOf('await createEnrollment('),
+    '등록을 만든 뒤에 확인하면 이미 늦다',
+  );
+});

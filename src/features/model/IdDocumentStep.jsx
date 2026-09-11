@@ -27,7 +27,7 @@ import {
 } from './idDocumentMasking.js';
 import s from './ModelRegister.module.css';
 
-export default function IdDocumentStep({ enrollmentId, onUploaded, onError }) {
+export default function IdDocumentStep({ enrollmentId, onUploaded, onError, onStale }) {
   const [documentType, setDocumentType] = useState(null);
   const [imageUrl, setImageUrl] = useState(null);
   const [imageLoaded, setImageLoaded] = useState(false);
@@ -136,12 +136,21 @@ export default function IdDocumentStep({ enrollmentId, onUploaded, onError }) {
       });
       onUploaded?.();
     } catch (error) {
+      // 409 = 이 등록은 더 이상 신분증을 받을 단계가 아니다(다른 탭에서 이미 올렸거나
+      // 만료됐거나, 서버가 간편인증 경로를 껐다 — invalid_enrollment_state /
+      // identity_method_unavailable). 이 스텝은 **성공으로만** 빠져나가므로 그냥 에러만
+      // 띄우면 사용자는 재촬영만 반복하며 영원히 여기 갇힌다. 부모의 재조회 경로로
+      // 되돌려 서버가 말하는 현재 단계로 보낸다(최종리뷰 I7).
+      if (error?.status === 409) {
+        onStale?.(error);
+        return;
+      }
       setLocalError(error?.message || '신분증 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
       onError?.(error);
     } finally {
       setBusy(false);
     }
-  }, [documentType, enrollmentId, imageUrl, maskRatio, maskedConfirmed, onError, onUploaded]);
+  }, [documentType, enrollmentId, imageUrl, maskRatio, maskedConfirmed, onError, onStale, onUploaded]);
 
   const canSubmit = Boolean(
     documentType && imageUrl && imageLoaded && maskRatio && maskedConfirmed && !busy,
