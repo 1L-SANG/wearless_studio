@@ -52,8 +52,10 @@ export function initialRegistrationStep(completionSummary) {
 
 export function nextEnrollmentStep(enrollment) {
   if (!enrollment) return 'consent';
+  if (enrollment.status === 'id_capture_pending') return 'id_capture';
   if (enrollment.status === 'identity_pending') return 'identity';
   if (enrollment.status === 'photos_pending') return 'photos';
+  if (enrollment.status === 'review_pending') return 'review';
   if (enrollment.status === 'liveness_pending') return 'liveness';
   if (enrollment.status === 'processing' || enrollment.status === 'asset_building') return 'processing';
   if (enrollment.status === 'license_pending' || enrollment.status === 'vc_pending') return 'terms';

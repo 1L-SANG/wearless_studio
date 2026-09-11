@@ -463,6 +463,14 @@ test('nextEnrollmentStep maps identity_pending to identity', () => {
   assert.equal(nextEnrollmentStep({ status: 'identity_pending' }), 'identity');
 });
 
+// 간편인증(simple_auth) 경로 신규 상태 — Task5/7 이 백엔드에 추가한 두 상태를 위저드
+// 스텝으로 매핑한다. id_capture_pending(신분증 촬영 대기)은 mid 경로에는 없는 진입점,
+// review_pending(관리자 육안 심사 대기)은 완료 직전에 사람이 끼어드는 종착 대기 상태다.
+test('nextEnrollmentStep maps id_capture_pending to id_capture, review_pending to review', () => {
+  assert.equal(nextEnrollmentStep({ status: 'id_capture_pending' }), 'id_capture');
+  assert.equal(nextEnrollmentStep({ status: 'review_pending' }), 'review');
+});
+
 test('ENROLLMENT_ANGLES carry pose example images', () => {
   for (const a of ENROLLMENT_ANGLES) assert.ok(a.exampleImage, a.value);
 });

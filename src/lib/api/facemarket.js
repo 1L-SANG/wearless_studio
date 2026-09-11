@@ -92,14 +92,29 @@ export function listMyModels() {
   return http('/v1/facemarket/models/me');
 }
 
-export function createEnrollment({ documentVersion, deviceId }) {
+export function createEnrollment({ documentVersion, deviceId, identityMethod }) {
   return http('/v1/facemarket/enrollments', {
     method: 'POST',
     body: {
       biometricConsent: { accepted: true, documentVersion },
       deviceId,
+      ...(identityMethod ? { identityMethod } : {}),
     },
   });
+}
+
+// POST /v1/facemarket/enrollments/{id}/id-document — 간편인증(simple_auth) 경로 전용.
+// 사용자가 촬영한 신분증 전체본(마스킹 확인 완료) 업로드. 성공 시 identity_pending 전이.
+// documentType: rrc|dl|passport|arc. 얼굴 업로드(uploadEnrollmentPhoto)와 같은 멀티파트 패턴.
+export async function uploadIdDocument(enrollmentId, { file, documentType, maskedConfirmed }) {
+  const form = new FormData();
+  form.append('file', file, file?.name || 'id-document');
+  form.append('documentType', documentType);
+  form.append('maskedConfirmed', maskedConfirmed ? 'true' : 'false');
+  return checkedJson(await _authFetch(
+    `/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/id-document`,
+    { method: 'POST', body: form },
+  ), '신분증 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
 }
 
 // 등록 위저드 런타임 설정(라이브니스 필요 여부 등) — 서버 authoritative.
@@ -220,6 +235,30 @@ export async function adminFetchApplicationPhotoUrl(applicationId, kind = 'profi
   if (!res.ok) throw new Error('사진을 불러오지 못했어요.');
   const blob = await res.blob();
   return URL.createObjectURL(blob);
+}
+
+// ── 관리자: 생체 등록 육안 심사(간편인증 review_pending) ────────────────────
+// 전부 서버가 admin_guard.require_admin(기기 게이트 포함)을 강제한다.
+
+export function adminListEnrollments(review) {
+  const qs = review ? `?review=${encodeURIComponent(review)}` : '';
+  return http(`/v1/facemarket/admin/enrollments${qs}`);
+}
+
+export function adminEnrollmentCard(enrollmentId) {
+  return http(`/v1/facemarket/admin/enrollments/${encodeURIComponent(enrollmentId)}`);
+}
+
+export function adminApproveEnrollment(enrollmentId) {
+  return http(`/v1/facemarket/admin/enrollments/${encodeURIComponent(enrollmentId)}/approve`, {
+    method: 'POST',
+  });
+}
+
+export function adminRejectEnrollment(enrollmentId, reason) {
+  return http(`/v1/facemarket/admin/enrollments/${encodeURIComponent(enrollmentId)}/reject`, {
+    method: 'POST', body: { reason },
+  });
 }
 
 // ── 관리자 콘솔: 집계·모델·권한 ─────────────────────────────────────────────
