@@ -75,11 +75,13 @@ export function warmFaceRender(modelId) {
   }).catch(() => null);
 }
 
-// GET /v1/facemarket/face-render/status — 파드가 떴는지 api 가 대신 확인해 준다.
-// → { ready, enabled, etaMinutes }. 프런트가 파드를 직접 찌르지 않게 하는 창구다.
-export function getFaceRenderStatus({ signal } = {}) {
+// GET /v1/facemarket/face-render/status?modelId=… — 이 모델에 얼굴 패스가 걸리는지 + 파드 상태.
+// → { ready, enabled, etaMinutes }. modelId 가 없으면 서버가 enabled=false 로 답한다
+// (얼굴 패스는 그 모델에 켜진 LoRA 가 있어야 걸린다 — 모델을 모르면 판단할 수 없다).
+export function getFaceRenderStatus(modelId, { signal } = {}) {
   if (MOCK) return Promise.resolve({ ready: false, enabled: false, etaMinutes: null });
-  return http('/v1/facemarket/face-render/status', { signal }).catch(() => null);
+  const query = modelId ? `?modelId=${encodeURIComponent(modelId)}` : '';
+  return http(`/v1/facemarket/face-render/status${query}`, { signal }).catch(() => null);
 }
 
 // GET /v1/facemarket/models/me — 로그인 사용자 본인 소유 모델(마이페이지). 동일 shape.
