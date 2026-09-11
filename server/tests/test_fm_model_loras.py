@@ -23,7 +23,7 @@ from conftest import make_settings
 _MODEL_ID = "44444444-4444-4444-4444-444444444444"
 _MIGRATION = (
     pathlib.Path(__file__).resolve().parents[2]
-    / "supabase" / "migrations" / "20260910100000_fm_model_loras.sql"
+    / "supabase" / "migrations" / "20260911000100_fm_model_loras.sql"
 )
 
 
