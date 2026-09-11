@@ -92,6 +92,22 @@ PROD_DLPHOTO_OACX_BIOMETRIC_CONTRACT = OacxBiometricContract(
     max_portrait_bytes=5 * 1024 * 1024,
 )
 
+# 간편인증(ENT_SIMPLE_AUTH) — 민간 인증사(PASS·카카오·네이버 등)를 통한 본인확인.
+# 신분증 VC 제출이 아니라서 **초상이 없다**(max_portrait_bytes=0). 얼굴 앵커는
+# 사용자가 촬영해 올린 신분증(facemarket_id_document)이 대신한다.
+#
+# ⚠️ 응답 스키마는 2026-09-11 기준 실거래로 미검증이다. config.auth.json 은
+# /oacx/api/v1.5/authen/request + /authen/status 를 쓰고 결과는 authen/result
+# 또는 parse_token 경로일 수 있다. 그래서 이 계약은 settings.
+# fm_oacx_simple_auth_contract 가 'simple-auth-v1' 일 때만 선택되고, 기본값
+# 'disabled' 에서는 아래 get_oacx_biometric_contract 가 호출 자체를 막는다.
+SIMPLE_AUTH_CONTRACT = OacxBiometricContract(
+    version="simple-auth-v1",
+    birth_path=("birth",),
+    portrait_encoding="hex",
+    max_portrait_bytes=0,
+)
+
 _JPEG_MAGIC = b"\xff\xd8\xff"
 
 
@@ -146,6 +162,37 @@ def parse_oacx_biometric_evidence(
         raise
     except Exception:
         raise OacxBiometricError() from None
+
+
+def parse_simple_auth_evidence(
+    trans: dict,
+    *,
+    contract: OacxBiometricContract,
+) -> OacxBiometricEvidence:
+    """간편인증 결과 → CI·이름·생년월일. 초상은 여기 없다(설계상 없음).
+
+    실패는 전부 OacxBiometricError 로 정규화해 CI·생년월일 원문이 예외 메시지나
+    로그로 새지 않게 한다 — parse_oacx_biometric_evidence 와 같은 규율이다.
+    """
+    try:
+        ci = dig(trans, "ci")
+        if not ci:
+            raise OacxBiometricError("identity_ci_unavailable")
+        birth = dig(trans, *contract.birth_path, "birthdate", "birthday")
+        if not birth:
+            raise OacxBiometricError("identity_birth_unavailable")
+        name = dig(trans, "utf8Nm", "nm", "name", "userName") or ""
+        return OacxBiometricEvidence(
+            ci=bytearray(str(ci).encode()),
+            birth=str(birth),
+            name_masked=_mask_name(str(name)),
+            transaction_id=dig(trans, "txId", "txid", "transactionId"),
+            contract_version=contract.version,
+        )
+    except OacxBiometricError:
+        raise
+    except Exception:
+        raise OacxBiometricError("identity_parse_failed") from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,7 +299,11 @@ def parse_oacx_portrait_hex(
         raise OacxBiometricError("id_portrait_unavailable") from None
 
 
-def get_oacx_biometric_contract(settings) -> OacxBiometricContract:
+def get_oacx_biometric_contract(settings, *, method: str = "mid") -> OacxBiometricContract:
+    if method == "simple_auth":
+        if settings.fm_oacx_simple_auth_contract == "simple-auth-v1":
+            return SIMPLE_AUTH_CONTRACT
+        raise OacxBiometricError("oacx_contract_unavailable")
     if settings.fm_oacx_contract_mode == "prod-dlphoto-v1":
         return PROD_DLPHOTO_OACX_BIOMETRIC_CONTRACT
     if settings.app_env == "dev" and settings.fm_oacx_contract_mode == "dev-mock-v1":
