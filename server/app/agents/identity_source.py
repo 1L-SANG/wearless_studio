@@ -141,8 +141,9 @@ async def resolve_real_model_assets(
         )
         return None
     by_view = {r["view"]: r for r in rows if r.get("view")}
-    out = []
-    for view in ("face_front", "grid_sedcard"):
+
+    def pinned(view: str):
+        """같은 등록·같은 정책 버전에 핀된 비공개 자산 행만 통과시킨다. 어긋나면 None."""
         r = by_view.get(view)
         if (
             not r
@@ -154,5 +155,60 @@ async def resolve_real_model_assets(
             or r.get("evidence_version") != policy_version
         ):
             return None
-        out.append({"key": r["r2_key"], "mime": r["mime"], "bucket": r["bucket"]})
+        return {"key": r["r2_key"], "mime": r["mime"], "bucket": r["bucket"]}
+
+    out = []
+    # 얼굴 두 장은 필수 — 하나라도 핀이 어긋나면 자산 전체를 거부한다(fail-closed 유지).
+    for view in ("face_front", "grid_sedcard"):
+        ref = pinned(view)
+        if ref is None:
+            return None
+        out.append(ref)
+    # 전신은 **선택**이다. 있으면 세 번째로 붙이고(매니페스트 MODEL FULL BODY 자리), 없으면 기존 2장 그대로.
+    # 있는데 핀이 어긋나면 그 자산만 빼는 게 아니라 전체를 거부한다 — 반쪽 근거로 컷을 만들지 않는다.
+    if "body_front" in by_view:
+        ref = pinned("body_front")
+        if ref is None:
+            return None
+        out.append(ref)
     return out
+
+
+async def resolve_enabled_lora(conn, model_id: str) -> dict | None:
+    """이 모델의 **켜진** LoRA 행 하나. 없으면 None(얼굴 패스 없이 진행).
+
+    fm_model_loras 는 partial unique(model_id) where enabled 라 최대 한 행이다.
+    hair_*/face_shape/jaw_line 은 등록자의 현재 모습이 아니라 이 LoRA 가 학습한 모습이다
+    (마이그레이션 20260910100000 주석 참조) — 프롬프트 블록도 이 값으로 만든다.
+    테이블이 아직 없는 환경(마이그 미적용)에서도 죽지 않는다 — None 을 돌려주고 기존 동작을 유지한다.
+    """
+    try:
+        uuid.UUID(str(model_id))
+    except (TypeError, ValueError):
+        return None
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select id::text as id, version, lora_r2_key, lora_sha256, bucket, trigger_token, "
+                "hair_length, hair_color, hair_texture, face_shape, jaw_line, trained_steps "
+                "from fm_model_loras "
+                "where model_id = %s and enabled and status = 'ready' "
+                "limit 1",
+                (model_id,))
+            row = await cur.fetchone()
+    except Exception as exc:  # noqa: BLE001 — 테이블 부재·권한 등은 얼굴 패스만 끄고 컷은 계속 만든다
+        log.warning("fm_model_loras lookup failed for %s: %r", model_id, exc)
+        return None
+    if not row or row.get("bucket") != "face" or not str(row.get("lora_r2_key") or "").strip():
+        return None
+    return dict(row)
+
+
+def profiles_from_lora_row(row: dict | None) -> tuple[dict | None, dict | None]:
+    """LoRA 행 → (hair_profile, face_shape_profile). 값이 없으면 None 을 돌려 프롬프트를 그대로 둔다."""
+    if not row:
+        return None, None
+    hair = {k: row.get(c) for k, c in (("hairLength", "hair_length"), ("hairColor", "hair_color"),
+                                       ("hairTexture", "hair_texture")) if row.get(c)}
+    face = {k: row.get(c) for k, c in (("faceShape", "face_shape"), ("jawLine", "jaw_line")) if row.get(c)}
+    return (hair or None), (face or None)

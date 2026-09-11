@@ -581,6 +581,9 @@ def test_only_embeddings_may_touch_torch_in_the_main_backend():
     for p in APP.rglob("*.py"):
         if p.name == "embeddings.py":
             continue        # 기존 lazy-import 예외(선택 의존군), 호출부가 graceful 처리
+        if p.name == "face_identity_qwen.py":
+            continue        # 인물 LoRA 로컬 GPU 백엔드(파드·개발 전용) — torch 는 render 시점 lazy import,
+                            # 프로덕션은 FACE_IDENTITY_BACKEND_URL(원격)만 쓴다. test_canonical_pipeline 과 동일 예외.
         if re.search(r"^\s*(from|import)\s+(torch|transformers)\b",
                      p.read_text(encoding="utf-8", errors="ignore"), re.M):
             offenders.append(str(p.relative_to(APP)))

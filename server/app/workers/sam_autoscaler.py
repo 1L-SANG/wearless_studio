@@ -39,7 +39,7 @@ async def _sam_demand(repo, conn):
 class SamAutoscaler:
     def __init__(self, app, adapter: SamAutoscaleAdapter, *, demand_fn=None,
                  idle_attr="sam_autoscale_idle_minutes", name="sam2", lock_key=None,
-                 capacity_attr=None, max_tasks_attr=None):
+                 capacity_attr=None, max_tasks_attr=None, start_grace_attr=None):
         self.app = app
         self.adapter = adapter
         self._demand_fn = demand_fn or _sam_demand
@@ -52,6 +52,12 @@ class SamAutoscaler:
         self._long_run_alerted_for: datetime | None = None   # 그 가동(startedAt)에 알렸는가
         self._last_alert_at: dict[str, float] = {}           # subject → monotonic (디바운스)
         self._last_prewarm = 0.0
+        # "켜지는 중" 이 영원히 끝나지 않는 경우를 끊는 근거. ECS 는 태스크가 못 뜨면 스스로
+        # 재시도하지만 RunPod 파드는 켜 둔 채 아무것도 안 할 수 있다(컨테이너가 죽어도
+        # desiredStatus 는 RUNNING — 2026-09-10 실측). 그러면 수요가 사라져도
+        # `running==0 이면 건드리지 않는다` 규칙에 걸려 **영원히 안 꺼진다**.
+        self._start_grace_attr = start_grace_attr
+        self._starting_since: float | None = None
         # 대수 산출용. 미지정이면 1/1 — sam2·opendid 는 want_running 과 동일하게 굴러간다.
         # detail-worker 만 태스크당 잡 N개를 처리하므로 이 둘을 설정 키로 받는다.
         self._capacity_attr = capacity_attr
@@ -130,6 +136,15 @@ class SamAutoscaler:
             return "skip"
 
         await self._check_long_run(state, want)
+        stalled = self._track_start(state)
+        if stalled and want:
+            # 수요가 있으니 끄지는 않는다(끄면 곧바로 다시 켜야 한다) — 대신 알린다.
+            # 이 알림이 없으면 "켜져 있는데 영원히 안 뜨는" 상태를 아무도 모른다.
+            await self._alert(f"{self._name} autoscale: not healthy while work is waiting",
+                              f"{self._start_grace_minutes()}분이 지나도 헬스가 통과하지 못했는데 "
+                              "대기 중인 작업이 있습니다. 파드는 그대로 둡니다 — 시작 스크립트·토큰·"
+                              "볼륨을 확인하세요.",
+                              debounce_seconds=ALERT_DEBOUNCE_SECONDS)
 
         if want and state.desired < want_n:
             return await self._scale(target, want_n, "up")
@@ -137,12 +152,50 @@ class SamAutoscaler:
             # 밀린 잡이 줄면 대수도 줄인다. running==0 이면 켜는 중이라 건드리지 않는다.
             return await self._scale(target, want_n, "down")
         if not want and state.desired > 0:
-            if state.running == 0:
+            if state.running == 0 and not stalled:
                 # 켜는 중에 내리면 콜드스타트를 버린다. pending>0 만 보면 안 된다 — 실측
                 # (2026-08-21) desired=1 요청 후 첫 13~19초는 pending=0 running=0 이다.
                 return "skip"
+            if state.running == 0:
+                # 유예를 넘겨도 안 떴다 = 콜드스타트를 지킬 이유가 없다. 수요도 없으니 끈다.
+                await self._alert(f"{self._name} autoscale: never became healthy",
+                                  f"켜 뒀는데 {self._start_grace_minutes()}분 동안 헬스가 통과하지 못했습니다. "
+                                  "수요가 없어 내립니다(요금 방지). 시작 스크립트·토큰·볼륨을 확인하세요.",
+                                  debounce_seconds=ALERT_DEBOUNCE_SECONDS)
+                self._starting_since = None
             return await self._scale(target, 0, "down")
         return "noop"
+
+    # ── 기동 감시 ────────────────────────────────────────────────────────
+    def _start_grace_minutes(self) -> int | None:
+        if not self._start_grace_attr:
+            return None
+        value = getattr(self.app.state.settings, self._start_grace_attr, None)
+        try:
+            minutes = int(value)
+        except (TypeError, ValueError):
+            return None
+        return minutes if minutes > 0 else None
+
+    def _track_start(self, state) -> bool:
+        """지금 '켜지는 중'인가를 추적하고, 유예를 넘겼는지 돌려준다.
+
+        유예가 설정되지 않은 서비스(sam2·opendid·detail-worker)는 항상 False —
+        기존 동작이 한 줄도 바뀌지 않는다.
+        """
+        starting = state.desired > 0 and state.running == 0
+        if not starting:
+            self._starting_since = None
+            return False
+        if self._starting_since is None:
+            self._starting_since = time.monotonic()
+        grace = self._start_grace_minutes()
+        if grace is None:
+            return False
+        stalled = (time.monotonic() - self._starting_since) > grace * 60
+        if stalled:
+            log.warning("%s autoscale: still not healthy after %d min", self._name, grace)
+        return stalled
 
     async def _scale(self, target, count: int, label: str) -> str:
         try:

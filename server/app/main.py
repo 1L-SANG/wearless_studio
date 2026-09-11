@@ -27,6 +27,7 @@ from .workers.draft_asset_reclaimer import DraftAssetReclaimer
 from .workers.fm_vc_revocation_reconciler import FaceVcRevocationReconciler
 from .workers.sam_retry_pusher import SamRetryPusher
 from .services import sam_client
+from .services.face_autoscale import RunpodAutoscaleAdapter, face_demand_snapshot
 from .services.sam_autoscale import SamAutoscaleAdapter
 from .services.sam_endpoint import SamEndpointResolver
 from .workers.sam_autoscaler import SamAutoscaler
@@ -127,6 +128,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         sam_autoscaler = None
         opendid_autoscaler = None
         detail_worker_autoscaler = None
+        face_autoscaler = None
         subscription_biller = None
         subscription_expirer = None
         if pool is not None:
@@ -215,6 +217,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if detail_adapter.enabled:
                     detail_worker_autoscaler = app.state.detail_worker_autoscaler
                     await detail_worker_autoscaler.start()
+                # 얼굴 패스 GPU(RunPod 파드) 온디맨드 — 같은 reconciler 를 RunPod 어댑터로.
+                # 수요 = 켜진 LoRA 를 가진 등록자의 착장 컷 잡. off 면 어댑터가 HTTP 클라이언트를
+                # 만들지 않고 루프도 안 돈다(기본값 off — 파드가 없어도 아무 일도 일어나지 않는다).
+                face_adapter = RunpodAutoscaleAdapter(settings)
+                app.state.face_autoscaler = SamAutoscaler(
+                    app, face_adapter,
+                    demand_fn=lambda repo, conn: face_demand_snapshot(conn),
+                    idle_attr="face_autoscale_idle_minutes",
+                    name="face-render", lock_key="face_autoscaler",
+                    start_grace_attr="face_autoscale_start_grace_minutes")
+                if face_adapter.enabled:
+                    face_autoscaler = app.state.face_autoscaler
+                    await face_autoscaler.start()
             # job dispatcher (§5) — DB·R2 + 최소 1개 AI provider(마네킹=Gemini, 분석=Gemini/OpenAI)
             # 가 있고 활성화일 때만 기동. provider 없는 job 은 워커가 실패 봉투로 종결.
             if (
@@ -240,6 +255,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await opendid_autoscaler.stop()
         if detail_worker_autoscaler is not None:
             await detail_worker_autoscaler.stop()
+        if face_autoscaler is not None:
+            await face_autoscaler.stop()
         if subscription_biller is not None:
             await subscription_biller.stop()
         if subscription_expirer is not None:
@@ -301,6 +318,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     image_usage.configure(pool=pool, persist=settings.image_usage_persist)
     app.state.dispatcher = None
     app.state.detail_worker_autoscaler = None
+    app.state.face_autoscaler = None
     # 캐노니컬 컷아웃 조회기. 마네킹 워커가 이걸 통해 준비된 컷아웃을 읽는다 —
     # 없으면 None 을 돌려주고 베이스라인 경로가 그대로 돈다(보조 인프라).
     from .services.canonical_reference import load as _canonical_load

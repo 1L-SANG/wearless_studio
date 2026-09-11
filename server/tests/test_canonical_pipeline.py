@@ -526,7 +526,9 @@ def test_the_main_app_still_has_no_torch():
     import re
     app_dir = pathlib.Path("app")
     hits = [str(p) for p in app_dir.rglob("*.py")
-            if p.name != "embeddings.py"
+            # face_identity_qwen.py: 인물 LoRA 로컬 GPU 백엔드(파드·개발 전용, torch 는 render 시점 lazy import).
+            # 프로덕션은 FACE_IDENTITY_BACKEND_URL(원격)만 쓴다 — agents/face_identity.py 참조.
+            if p.name not in ("embeddings.py", "face_identity_qwen.py")
             and re.search(r"^\s*(from|import)\s+(torch|transformers)\b",
                           p.read_text(encoding="utf-8", errors="ignore"), re.M)]
     assert not hits, f"app imports torch/transformers: {hits}"

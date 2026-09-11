@@ -89,6 +89,68 @@ assert set(_HEIGHT_LABELS) == {b for buckets in HEIGHT_BUCKETS.values() for b in
     "_HEIGHT_LABELS keys must match HEIGHT_BUCKETS"
 
 
+#: 머리 — enum 3축. 자유문자열 금지(physique 와 같은 관례: 검증된 enum → 고정 문구만).
+#: ★ 이 값은 등록자의 "현재" 머리가 아니라 **LoRA 가 학습한 머리**다. LoRA 는 촬영 시점의
+#:   머리를 그대로 배우므로(v6 = short · straight · black), 등록자가 나중에 머리를 기르거나
+#:   염색해도 그 LoRA 가 내는 얼굴의 머리는 바뀌지 않는다. 그래서 이 값은 fm_models(사람)이 아니라
+#:   **LoRA 행(fm_model_loras)** 에 붙는다 — 사람 하나가 여러 LoRA 버전을 가질 수 있고 버전마다
+#:   머리가 다르다. 재학습하면 이 값도 그 행과 함께 갱신된다.
+HAIR_LENGTHS: tuple[str, ...] = ("buzz", "short", "medium", "long")
+HAIR_COLORS: tuple[str, ...] = ("black", "dark_brown", "brown", "blonde", "gray", "other")
+HAIR_TEXTURES: tuple[str, ...] = ("straight", "wavy", "curly")
+
+# 값 → (한국어 UI 라벨, 영문 프롬프트 문구). 문구가 빈 문자열이면 프롬프트에서 생략한다.
+_HAIR_LENGTH_LABELS: dict[str, tuple[str, str]] = {
+    "buzz": ("삭발·스포츠", "buzzed"),
+    "short": ("짧은 머리", "short"),
+    "medium": ("중간 길이", "medium-length"),
+    "long": ("긴 머리", "long"),
+}
+_HAIR_COLOR_LABELS: dict[str, tuple[str, str]] = {
+    "black": ("검정", "black"),
+    "dark_brown": ("진갈색", "dark brown"),
+    "brown": ("갈색", "brown"),
+    "blonde": ("금발", "blonde"),
+    "gray": ("회색·백발", "gray"),
+    # 색을 특정할 수 없는 경우 — 프롬프트에는 색을 방출하지 않는다("other hair" 같은 문장 방지).
+    "other": ("기타", ""),
+}
+_HAIR_TEXTURE_LABELS: dict[str, tuple[str, str]] = {
+    "straight": ("직모", "straight"),
+    "wavy": ("반곱슬", "wavy"),
+    "curly": ("곱슬", "curly"),
+}
+
+assert set(_HAIR_LENGTH_LABELS) == set(HAIR_LENGTHS), "_HAIR_LENGTH_LABELS keys must match HAIR_LENGTHS"
+assert set(_HAIR_COLOR_LABELS) == set(HAIR_COLORS), "_HAIR_COLOR_LABELS keys must match HAIR_COLORS"
+assert set(_HAIR_TEXTURE_LABELS) == set(HAIR_TEXTURES), "_HAIR_TEXTURE_LABELS keys must match HAIR_TEXTURES"
+
+
+#: 얼굴형 — enum 2축. hair 와 같은 이유로 **LoRA 가 학습한 얼굴형**이지 등록자의 현재 얼굴이 아니다
+#: (LoRA 는 촬영분의 얼굴을 그대로 배운다). 그래서 값은 fm_models 가 아니라 LoRA 행(fm_model_loras)에 붙는다.
+#: 쓰임: 경로 A(gpt-image)에서 생성기가 **처음부터 비슷한 턱을 그리게** 시켜 얼굴 패스의 턱 실루엣 불일치를 줄인다
+#: (§24 실측: 생성 턱이 원본보다 좁고 위에 있어 원본 턱 옆 음영이 타원 밖에 남는다 — 합성으로는 못 고친다).
+#: v6 LoRA 는 사람이 보고 {oval, defined} 로 잠정 판정했다(측정값 아님).
+FACE_SHAPES: tuple[str, ...] = ("oval", "round", "square", "heart", "long")
+JAW_LINES: tuple[str, ...] = ("soft", "defined", "angular")
+
+_FACE_SHAPE_LABELS: dict[str, tuple[str, str]] = {
+    "oval": ("계란형", "an oval face"),
+    "round": ("둥근형", "a round face"),
+    "square": ("각진형", "a square face"),
+    "heart": ("역삼각형", "a heart-shaped face"),
+    "long": ("긴형", "a long face"),
+}
+_JAW_LINE_LABELS: dict[str, tuple[str, str]] = {
+    "soft": ("부드러운 턱선", "a soft jawline"),
+    "defined": ("또렷한 턱선", "a defined jawline"),
+    "angular": ("각진 턱선", "an angular jawline"),
+}
+
+assert set(_FACE_SHAPE_LABELS) == set(FACE_SHAPES), "_FACE_SHAPE_LABELS keys must match FACE_SHAPES"
+assert set(_JAW_LINE_LABELS) == set(JAW_LINES), "_JAW_LINE_LABELS keys must match JAW_LINES"
+
+
 class PhysiqueError(Exception):
     def __init__(self, code: str, message: str):
         super().__init__(message)
@@ -156,4 +218,77 @@ def build_body_profile_block(profile: Mapping | None) -> str:
         "SUBJECT BUILD (generated body identity; the face is owned separately and "
         "left unchanged): the model has " + desc + ". Keep this build consistent across "
         "cuts; it has no authority over the face."
+    )
+
+
+def validate_hair(*, hair_length: str | None, hair_color: str | None,
+                  hair_texture: str | None) -> None:
+    """부분 입력 허용(각 축 독립). 위반 시 PhysiqueError('invalid_hair')."""
+    for value, allowed, name in (
+        (hair_length, HAIR_LENGTHS, "머리 길이"),
+        (hair_color, HAIR_COLORS, "머리 색"),
+        (hair_texture, HAIR_TEXTURES, "머릿결"),
+    ):
+        if value is None:
+            continue
+        if not isinstance(value, str) or value not in allowed:
+            raise PhysiqueError("invalid_hair", f"{name} 값이 올바르지 않습니다.")
+
+
+def build_hair_block(profile: Mapping | None) -> str:
+    """profile={"hairLength","hairColor","hairTexture"} → 영문 프롬프트 블록.
+
+    셋 중 하나라도 문구를 내는 값이 있어야 블록을 낸다(전부 미입력·색이 'other' 뿐이면 생략).
+    어순은 길이 → 머릿결 → 색("short, straight, black hair"). 자유문자열 미방출 — enum→고정 문구만.
+    body 블록과 같은 톤이며, 얼굴에 대한 권한이 없다는 점을 명시한다(머리는 LoRA 가 학습한 것이고
+    얼굴 정체성은 별도 소유다 — 위 HAIR_* 주석 참조).
+    """
+    if not isinstance(profile, Mapping):
+        return ""
+    parts: list[str] = []
+    for key, labels in (
+        ("hairLength", _HAIR_LENGTH_LABELS),
+        ("hairTexture", _HAIR_TEXTURE_LABELS),
+        ("hairColor", _HAIR_COLOR_LABELS),
+    ):
+        value = profile.get(key)
+        if isinstance(value, str) and value in labels and labels[value][1]:
+            parts.append(labels[value][1])
+    if not parts:
+        return ""
+    return (
+        "SUBJECT HAIR (generated; owned by the registrant's trained likeness): the model has "
+        + ", ".join(parts) + " hair. Keep it consistent across cuts; it has no authority over the face."
+    )
+
+
+def validate_face_shape(*, face_shape: str | None, jaw_line: str | None) -> None:
+    """부분 입력 허용(각 축 독립). 위반 시 PhysiqueError('invalid_face_shape')."""
+    for value, allowed, name in ((face_shape, FACE_SHAPES, "얼굴형"), (jaw_line, JAW_LINES, "턱선")):
+        if value is None:
+            continue
+        if not isinstance(value, str) or value not in allowed:
+            raise PhysiqueError("invalid_face_shape", f"{name} 값이 올바르지 않습니다.")
+
+
+def build_face_shape_block(profile: Mapping | None) -> str:
+    """profile={"faceShape","jawLine"} → 영문 프롬프트 블록. 둘 중 하나라도 있으면 낸다.
+
+    자유문자열 미방출 — enum→고정 문구만. 얼굴 **정체성**에는 권한이 없다(정체성은 참조 이미지가 소유).
+    """
+    if not isinstance(profile, Mapping):
+        return ""
+    shape = profile.get("faceShape")
+    jaw = profile.get("jawLine")
+    shape_en = _FACE_SHAPE_LABELS[shape][1] if isinstance(shape, str) and shape in _FACE_SHAPE_LABELS else ""
+    jaw_en = _JAW_LINE_LABELS[jaw][1] if isinstance(jaw, str) and jaw in _JAW_LINE_LABELS else ""
+    if shape_en and jaw_en:
+        desc = f"{shape_en} with {jaw_en}"
+    else:
+        desc = shape_en or jaw_en
+    if not desc:
+        return ""
+    return (
+        "SUBJECT FACE SHAPE (generated; owned by the registrant's trained likeness): the model has "
+        + desc + ". It has no authority over facial identity."
     )

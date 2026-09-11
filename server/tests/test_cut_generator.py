@@ -702,7 +702,11 @@ def test_build_manifest_places_exact_virtual_model_labels_after_mannequin():
     assert manifest.splitlines() == [
         "1. MANNEQUIN — coarse worn-geometry prior only where seller PRODUCT pixels support it; ZERO authority to resolve uncertain color, material, construction, fit or length",
         "2. MODEL FACE — facial identity authority for the selected model ONLY: preserve facial identity and facial features; ZERO authority over height, head-to-body ratio, shoulders, torso, waist, pelvis, limb proportions, body shape, pose, framing or clothing",
-        "3. MODEL FULL BODY — full-body proportion authority for the selected model ONLY: preserve height, head-to-body ratio, shoulder width and slope, torso length and build, waist, pelvis and hip width, and arm and leg proportions; ZERO authority over facial identity, facial features, hair, pose, framing or clothing",
+        # 2026-09-10 라벨 강화(§28): 부정 열거만으로는 gpt-image 가 참조 사진을 통째로 베꼈다
+        # (배경·하의·구두 복사, full 컷 얼굴 0.828→0.476). 긍정 지시 + 명령형 금지 +
+        # "회색 판은 장소가 아니다" 를 넣었다. 접두어 "MODEL FULL BODY —" 는
+        # cut_output_qc.py:293 이 역할 파싱에 쓰므로 유지한다.
+        "3. MODEL FULL BODY — use ONLY the body outline and proportions from this image: height, head-to-body ratio, shoulder width and slope, torso length and build, waist, pelvis and hip width, and arm and leg proportions. The subject is cut out on a flat grey field; that field is not a location. Do NOT copy its background, location, garments, shoes, pose, framing or camera distance; PRODUCT and MATCHING own the clothing and SPACE SET PLATE owns the location. ZERO authority over facial identity, facial features or hair",
         "4. PRODUCT — front view of the garment",
         "5. MATCHING — the user-selected coordinating garment worn in the same outfit",
         "6. MOOD — reference for lighting/color/ambience ONLY (never copy its garment, person or framing)",

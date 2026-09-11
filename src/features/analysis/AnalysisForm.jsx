@@ -30,6 +30,7 @@ import { looksLikeImageFile, toUploadableImages } from '@/lib/imageTranscode.js'
 import { invalidateStoryboardEntryPrefetch } from '@/features/storyboard/storyboardEntryPrefetch.js';
 import {
   isRealModelSelection,
+  needsStylingStandIn,
   resolveSelectedModelId,
   resolveStylingModelId,
 } from './modelSelection.js';
@@ -672,7 +673,10 @@ export function AnalysisForm({
     });
   };
   const confirmAnalysis = async () => {
-    if (isRealModelSelection(a.selectedModelId) && !a.stylingModelId) {
+    // 장소 컷에 동의한 모델은 대역(가상 모델)이 필요 없다 — 그 모델 얼굴이 그대로 들어간다.
+    // 동의하지 않은 모델은 예전 그대로 대역을 고르게 한다.
+    const selectedRealModel = (models || []).find((model) => model?.id === a.selectedModelId);
+    if (needsStylingStandIn(a.selectedModelId, selectedRealModel) && !a.stylingModelId) {
       toast.push('장소·스타일링 컷에 쓸 가상 모델을 골라 주세요.', {
         icon: 'alertCircle',
       });
