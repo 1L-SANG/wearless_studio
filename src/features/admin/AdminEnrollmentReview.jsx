@@ -158,31 +158,27 @@ function EnrollmentImage({ imagePath, kind, label }) {
    사진이다. 지원 시점과 등록 시점 사이 인물이 바뀌었는지(스왑) 심사자가 다른 두
    세트와 눈으로 대조할 수 있게 낸다. 새 이미지 라우트를 만들지 않고 기존 관리자
    지원서 사진 라우트(같은 admin_guard, 같은 private/no-store)를 그대로 재사용한다
-   (fix round 1, SPEC GAP 2). application_id 가 없거나(지원서 없이 등록) 사진이 없는
-   지원서(구버전)면 404 인데, 이건 "파기됨"이 아니라 "원래 없음"이라 다른 문구를 쓴다. */
-function ApplicationProfilePhoto({ applicationId }) {
+   (fix round 1, SPEC GAP 2). hasPhoto 는 AdminApplications.jsx 의 hasProfileImage
+   게이트(ApplicantPhoto)와 같은 관례다 — 없는 걸 알면서도 fetch 를 걸어 404 를
+   "정상적인 없음"으로 삼지 않는다. */
+function ApplicationProfilePhoto({ applicationId, hasPhoto }) {
   const [url, setUrl] = useState(null);
-  const [failed, setFailed] = useState(false);
   useEffect(() => {
-    if (!applicationId) { setUrl(null); setFailed(true); return undefined; }
+    if (!hasPhoto) return undefined;
     let alive = true;
     let objectUrl = null;
-    setUrl(null);
-    setFailed(false);
     adminFetchApplicationPhotoUrl(applicationId, 'profile')
       .then((u) => { if (alive) { objectUrl = u; setUrl(u); } else { URL.revokeObjectURL(u); } })
-      .catch(() => { if (alive) setFailed(true); });
+      .catch(() => {});
     return () => { alive = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
-  }, [applicationId]);
+  }, [applicationId, hasPhoto]);
   return (
     <figure className="flex w-28 shrink-0 flex-col gap-1">
-      {failed && (
-        <div className="flex h-36 items-center justify-center rounded-md bg-muted px-1 text-center text-xs text-muted-foreground">
-          지원서 사진 없음
-        </div>
+      {!hasPhoto && (
+        <div className="flex h-36 items-center justify-center rounded-md bg-muted text-muted-foreground">—</div>
       )}
-      {!failed && !url && <Skeleton className="h-36 w-28" />}
-      {!failed && url && <img className="h-36 w-28 rounded-md object-cover" src={url} alt="지원서 프로필 사진" />}
+      {hasPhoto && !url && <Skeleton className="h-36 w-28" />}
+      {hasPhoto && url && <img className="h-36 w-28 rounded-md object-cover" src={url} alt="지원서 프로필 사진" />}
       <figcaption className="text-center text-xs text-muted-foreground">지원서 프로필</figcaption>
     </figure>
   );
@@ -302,12 +298,12 @@ function EnrollmentDetail({ enrollmentId, onDecided }) {
             {IMAGE_KINDS.map(({ kind, label }) => (
               <EnrollmentImage key={kind} imagePath={card.images?.[kind]} kind={kind} label={label} />
             ))}
-            {/* 지원서가 있고(application_id) 그 지원서에 프로필 사진이 실제로 있을 때만
-                (hasProfileImage) 슬롯을 낸다 — AdminApplications.jsx 의 hasProfileImage
-                게이트와 같은 관례: 무턱대고 fetch 를 걸어 404 를 받는 대신, 서버가 이미
-                아는 사실(그 지원서에 사진이 있는지)을 그대로 쓴다(fix round 1). */}
-            {card.applicationId && app?.hasProfileImage && (
-              <ApplicationProfilePhoto applicationId={card.applicationId} />
+            {/* 지원서가 있으면(application_id) 슬롯을 낸다 — AdminApplications.jsx 의
+                ApplicantPhoto/hasProfileImage 관례와 같다: 슬롯 자체는 항상 그리고,
+                사진이 실제로 있을 때만(hasProfileImage) fetch 를 건다. 무턱대고 걸어
+                404 를 받는 대신, 서버가 이미 아는 사실을 그대로 쓴다(fix round 1). */}
+            {card.applicationId && (
+              <ApplicationProfilePhoto applicationId={card.applicationId} hasPhoto={!!app?.hasProfileImage} />
             )}
           </div>
         </section>

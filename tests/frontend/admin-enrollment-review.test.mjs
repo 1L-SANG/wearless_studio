@@ -210,9 +210,18 @@ test('지원서 프로필 사진은 새 이미지 라우트를 만들지 않고 
     /adminFetchApplicationPhotoUrl\(applicationId,\s*'profile'\)/.test(source),
     "kind='profile' 로 기존 지원서 사진 라우트를 안 부른다",
   );
+  // ApplicantPhoto(AdminApplications.jsx)와 같은 관례: 슬롯 자체는 지원서가 있으면
+  // (applicationId) 늘 그리고, hasPhoto prop 이 fetch 를 걸지 말지만 결정한다 — 사진
+  // 없는 지원서마다 헛된 요청+404 를 걸지 않는다.
   assert.ok(
-    /card\.applicationId\s*&&\s*app\?\.hasProfileImage\s*&&/.test(source),
-    'hasProfileImage 를 안 보고 무턱대고 프로필 사진 슬롯을 그리려 든다 — 사진 없는 지원서마다 헛된 요청+404 가 난다',
+    /<ApplicationProfilePhoto\s+applicationId=\{card\.applicationId\}\s+hasPhoto=\{!!app\?\.hasProfileImage\}/.test(source),
+    'ApplicationProfilePhoto 가 hasPhoto={!!app?.hasProfileImage} 를 안 받는다',
+  );
+  const photoIdx = source.indexOf('function ApplicationProfilePhoto');
+  const photoBlock = source.slice(photoIdx, source.indexOf('\n}', photoIdx));
+  assert.ok(
+    /if\s*\(!hasPhoto\)\s*return/.test(photoBlock),
+    'ApplicationProfilePhoto 가 hasPhoto 를 안 보고 무턱대고 fetch 를 건다 — 사진 없는 지원서마다 헛된 요청+404 가 난다',
   );
 });
 
