@@ -171,9 +171,17 @@ class _StatusCur:
         return False
 
 
-def _status(monkeypatch, *, flag=True, has_lora=False, model_id=REAL, healthy=True):
+def _status(monkeypatch, *, flag=True, has_lora=False, model_id=REAL, healthy=True,
+            has_pod=True, autoscale=True):
+    """ready 는 **등록된 파드의 /healthz** 로만 판정한다 — 자동 켜기 여부와 무관하다.
+
+    자동 켜기를 꺼 두고 수동 파드를 쓰는 운영에서 파드가 떠 있어도 영원히 "준비 중"이
+    뜨던 회귀를 여기서 막는다(2026-09-11).
+    """
     import contextlib
     import types
+
+    from app.agents import face_identity, identity_source
 
     cur = _StatusCur(has_lora=has_lora)
 
@@ -186,14 +194,18 @@ def _status(monkeypatch, *, flag=True, has_lora=False, model_id=REAL, healthy=Tr
         yield _C()
 
     class _Adapter:
-        enabled = True
+        enabled = autoscale
 
-        async def health_ok(self):
-            return healthy
+    async def fake_backend(_pool):
+        return "https://pod-8000.proxy.runpod.net/render" if has_pod else None
 
     monkeypatch.setattr(facemarket, "get_conn", fake_conn)
+    monkeypatch.setattr(identity_source, "active_face_backend_url", fake_backend)
+    monkeypatch.setattr(face_identity, "_probe_ready",
+                        lambda url, timeout=5.0: url.endswith("/healthz") and healthy)
     request = types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace(
         settings=_settings(face_identity_enabled=flag, facemarket_enabled=True),
+        pool=object(),
         face_autoscaler=types.SimpleNamespace(adapter=_Adapter()))))
     return asyncio.run(facemarket.face_render_status(request, model_id=model_id, user_id="u1")), cur
 
@@ -201,13 +213,34 @@ def _status(monkeypatch, *, flag=True, has_lora=False, model_id=REAL, healthy=Tr
 def test_status_false_for_a_real_model_without_a_lora(monkeypatch):
     """★ 이 버그가 핵심이다 — 파드는 켜질 이유가 없는데 '준비 중'이 영원히 뜨던 경우."""
     body, cur = _status(monkeypatch, has_lora=False)
-    assert body == {"ready": False, "enabled": False, "etaMinutes": None}
+    assert body == {"ready": False, "enabled": False, "state": "offline", "etaMinutes": None}
     assert cur.params[-1] == (REAL,)
 
 
 def test_status_true_when_the_model_has_an_enabled_lora(monkeypatch):
     body, _ = _status(monkeypatch, has_lora=True, healthy=True)
     assert body["enabled"] is True and body["ready"] is True and body["etaMinutes"] is None
+    assert body["state"] == "ready"
+
+
+def test_status_is_ready_even_when_autoscale_is_off(monkeypatch):
+    """수동 파드 운영 — 자동 켜기가 꺼져 있어도 떠 있으면 준비됨이다."""
+    body, _ = _status(monkeypatch, has_lora=True, healthy=True, autoscale=False)
+    assert body["ready"] is True and body["state"] == "ready"
+
+
+def test_status_is_offline_without_a_pod_and_without_autoscale(monkeypatch):
+    """아무도 파드를 만들지 않는 상태 — 프런트는 이걸 아예 표시하지 않는다."""
+    body, _ = _status(monkeypatch, has_lora=True, has_pod=False, autoscale=False)
+    assert body["state"] == "offline" and body["etaMinutes"] is None and body["ready"] is False
+
+
+def test_status_is_starting_when_autoscale_will_make_one(monkeypatch):
+    from app.services import face_autoscale
+
+    body, _ = _status(monkeypatch, has_lora=True, has_pod=False, autoscale=True)
+    assert body["state"] == "starting"
+    assert body["etaMinutes"] == face_autoscale.COLD_START_ETA_MINUTES
 
 
 def test_status_reports_eta_while_the_pod_is_still_coming_up(monkeypatch):
@@ -215,6 +248,7 @@ def test_status_reports_eta_while_the_pod_is_still_coming_up(monkeypatch):
 
     body, _ = _status(monkeypatch, has_lora=True, healthy=False)
     assert body["enabled"] is True and body["ready"] is False
+    assert body["state"] == "starting"
     assert body["etaMinutes"] == face_autoscale.COLD_START_ETA_MINUTES
 
 

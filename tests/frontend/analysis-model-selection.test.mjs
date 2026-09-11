@@ -5,8 +5,6 @@ import {
   isRealModelSelection,
   realModelFeeLabel,
   resolveSelectedModelId,
-  resolveStylingModelId,
-  stylingModelPatchForAnalysis,
 } from '../../src/features/analysis/modelSelection.js';
 import { AI_MODELS } from '../../src/features/analysis/aiModels.js';
 
@@ -90,40 +88,6 @@ test('identifies only FaceMarket selections for the mannequin KRW surcharge labe
   assert.equal(isRealModelSelection('mE'), false);
   assert.equal(isRealModelSelection('face-market-model-id'), true);
   assert.equal(isRealModelSelection(null), false);
-});
-
-test('styling model exists only for a real studio model and follows target gender', () => {
-  assert.equal(resolveStylingModelId({
-    selectedModelId: 'face-market-model-id',
-    stylingModelId: null,
-    targetGenders: ['women'],
-    aiModels,
-  }), 'mA');
-  assert.equal(resolveStylingModelId({
-    selectedModelId: 'face-market-model-id',
-    stylingModelId: 'mA',
-    targetGenders: ['men'],
-    aiModels,
-  }), 'mB');
-  assert.equal(resolveStylingModelId({
-    selectedModelId: 'mA',
-    stylingModelId: 'mB',
-    targetGenders: ['women'],
-    aiModels,
-  }), null);
-});
-
-test('legacy resumed analysis receives only the missing styling-model patch', () => {
-  assert.deepEqual(stylingModelPatchForAnalysis({
-    selectedModelId: 'face-market-model-id',
-    stylingModelId: null,
-    targetGenders: ['women'],
-  }, aiModels), { stylingModelId: 'mA' });
-  assert.equal(stylingModelPatchForAnalysis({
-    selectedModelId: 'face-market-model-id',
-    stylingModelId: 'mA',
-    targetGenders: ['women'],
-  }, aiModels), null);
 });
 
 // 카탈로그에 있는 가상모델은 하나도 빠짐없이 무료로 판정돼야 한다. 2026-08-17 에

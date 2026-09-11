@@ -30,9 +30,7 @@ import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.j
 import {
   realFaceAllowedCut,
   realModelFeeLabel,
-  stylingModelPatchForAnalysis,
 } from '@/features/analysis/modelSelection.js';
-import { AI_MODELS } from '@/features/analysis/aiModels.js';
 import {
   clearInitialGenerationRequested,
   cutsExistedBeforeInitialGeneration,
@@ -770,10 +768,7 @@ export function Mannequin() {
         isMockMode ? Promise.resolve([]) : listModels().catch(() => []),
         api.getCreditQuote(pid).catch(() => null),
       ]);
-      const stylingModelPatch = stylingModelPatchForAnalysis(loadedAnalysis, AI_MODELS);
-      const nextAnalysis = stylingModelPatch
-        ? { ...loadedAnalysis, ...(await api.saveAnalysis(pid, stylingModelPatch)), ...stylingModelPatch }
-        : loadedAnalysis;
+      const nextAnalysis = loadedAnalysis;
       if (loadRunRef.current !== runId) return;
       setProgress(generationProgressFor(pid));
       setAnalysis(nextAnalysis);
@@ -782,14 +777,10 @@ export function Mannequin() {
       setCreditQuote(nextCreditQuote);
       // 크레딧 견적은 실제 생성 수 — 동일 설정 복제 컷은 서버가 1장만 생성한다(ADR-0011).
       setAiCutCount(Array.isArray(nextStoryboard) ? uniqueGenerationCutCount(nextStoryboard) : null);
-      // 실제 모델 얼굴이 들어가는 컷 = 스튜디오 + 그 모델이 동의한 컷(장소·스타일링 등).
-      // 동의하지 않은 모델은 예전처럼 horizon 만 세어진다.
-      const selectedRealModel = (Array.isArray(nextRealModels) ? nextRealModels : []).find(
-        (model) => model?.id === nextAnalysis?.selectedModelId,
-      );
+      // 실제 모델 얼굴이 들어가는 컷 = 착용 컷 전부(2026-09-11 사용자 결정).
       setHorizonCutCount(Array.isArray(nextStoryboard)
         ? uniqueGenerationCutCount(nextStoryboard.filter(
-            (block) => realFaceAllowedCut(block?.cutType, selectedRealModel)))
+            (block) => realFaceAllowedCut(block?.cutType)))
         : null);
       const nextMainMatchingItem = resolveMainMatchingItem(nextAnalysis);
       const draft = createFitProfileDraft(nextProduct, nextAnalysis, nextMainMatchingItem);

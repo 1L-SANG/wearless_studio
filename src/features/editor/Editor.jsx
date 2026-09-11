@@ -27,9 +27,7 @@ import { EXPECTED_MS } from '@/lib/smoothProgress.js';
 import { exampleGenderFromAnalysis, hexFor } from '@/features/storyboard/Storyboard.jsx';
 import {
   isRealModelSelection,
-  stylingModelPatchForAnalysis,
 } from '@/features/analysis/modelSelection.js';
-import { AI_MODELS } from '@/features/analysis/aiModels.js';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel, FrameMini } from '@/features/editor/EditorPanels.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isAutoManagedBlock, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
@@ -1030,6 +1028,27 @@ export function Editor() {
     const timer = setInterval(tick, 30000);
     return () => { alive = false; clearInterval(timer); };
   }, [analysis?.selectedModelId]);
+  // 준비됨(ready)은 3초만 보여 주고 감춘다. 준비 중은 계속 띄운다.
+  const [faceReadyShown, setFaceReadyShown] = useState(false);
+  useEffect(() => {
+    if (!faceRender?.enabled || !faceRender?.ready) { setFaceReadyShown(false); return undefined; }
+    setFaceReadyShown(true);
+    const timer = setTimeout(() => setFaceReadyShown(false), 3000);
+    return () => clearTimeout(timer);
+  }, [faceRender?.enabled, faceRender?.ready]);
+  const faceRenderChip = (() => {
+    if (!faceRender?.enabled) return null;
+    // state 를 주지 않는 옛 서버 응답과도 맞물린다(ready 면 ready, 아니면 준비 중).
+    const state = faceRender.state || (faceRender.ready ? 'ready' : 'starting');
+    if (state === 'offline') return null;
+    if (faceRender.ready) {
+      return faceReadyShown ? { ready: true, label: '실제 모델 얼굴 준비됨' } : null;
+    }
+    return {
+      ready: false,
+      label: `실제 모델 얼굴 준비 중${faceRender.etaMinutes ? ` · 약 ${faceRender.etaMinutes}분` : ''}`,
+    };
+  })();
 
   const [waitBoardError, setWaitBoardError] = useState('');
   const [waitBoardAttempt, setWaitBoardAttempt] = useState(0);
@@ -1245,12 +1264,6 @@ export function Editor() {
       api.getMatchClothing(projectId).catch(() => [])])
       .then(([b, w, c, _a, p, fm, an, sb, mc]) => {
         fetched = true;   // 여기부터 터지면 통신이 아니라 조립 문제다
-        const stylingModelPatch = stylingModelPatchForAnalysis(an, AI_MODELS);
-        if (stylingModelPatch) {
-          an = { ...an, ...stylingModelPatch };
-          // 에디터 재시도는 메모리 기본값으로 즉시 안전해지고, 저장은 화면 로드를 막지 않는다.
-          void api.saveAnalysis(projectId, stylingModelPatch).catch(() => {});
-        }
         const hydratedCatalogs = withStoryboardSpaceSetExamples(c);
         let withH = b.map((blk) => normalizeEditorBlockRole(blk));
         // 라벨·원 색은 같은 근거(swatchId)에서 나와야 한다 — 규칙은 lib/colorOpts 한 곳.
@@ -2312,12 +2325,8 @@ export function Editor() {
   };
   // req = NewCutRequest 필드 전체 (계약 §6) — 방향·샷·모델·예시 선택이 생성에 그대로 반영되어야 한다
   const generateImage = async (req) => {
-    if (req.cutType !== 'horizon' && isRealModelSelection(req.modelId)) {
-      toast.push('실제 모델은 스튜디오 컷에만 쓸 수 있어요', { icon: 'alertTri' });
-      return null;
-    }
-    if (req.cutType === 'horizon'
-      && isRealModelSelection(req.modelId)
+    // 실제 모델은 모든 컷에 쓴다(2026-09-11 사용자 결정) — 컷 종류로 막지 않는다.
+    if (isRealModelSelection(req.modelId)
       && (!analysis?.brandUseCategory || brandUseCategorySaving)) {
       toast.push('실제 모델을 사용할 브랜드 유형을 먼저 저장해 주세요.', { icon: 'alertTri' });
       return null;
@@ -3139,12 +3148,14 @@ export function Editor() {
         </div>
       )}
       {/* 얼굴 렌더 준비 상태 — REAL 모델일 때만. 파드가 자는 동안 첫 컷이 몇 분 걸리는 이유를
-          먼저 말해 주는 한 줄이다(사용자가 "멈췄다"고 읽지 않게). */}
-      {faceRender && faceRender.enabled && (
-        <div className="ed-face-render-status" role="status">
-          {faceRender.ready
-            ? '얼굴 렌더 준비됨'
-            : `얼굴 렌더 준비 중${faceRender.etaMinutes ? ` (약 ${faceRender.etaMinutes}분)` : ''}`}
+          먼저 말해 주는 칩이다(사용자가 "멈췄다"고 읽지 않게). 준비되면 3초만 보여 주고
+          사라진다 — 다 된 상태를 계속 붙여 두면 화면만 시끄럽다. 파드가 없고 자동 켜기도
+          꺼져 있으면(state=offline) 아예 안 보인다. */}
+      {faceRenderChip && (
+        <div className={`ed-face-chip${faceRenderChip.ready ? ' ready' : ''}`} role="status">
+          <Icon name={faceRenderChip.ready ? 'check' : 'loader'} size={13}
+            className={faceRenderChip.ready ? undefined : 'spin'} />
+          <span>{faceRenderChip.label}</span>
         </div>
       )}
       {/* toolbar */}

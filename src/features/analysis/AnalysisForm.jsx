@@ -35,9 +35,7 @@ import { looksLikeImageFile, toUploadableImages } from '@/lib/imageTranscode.js'
 import { invalidateStoryboardEntryPrefetch } from '@/features/storyboard/storyboardEntryPrefetch.js';
 import {
   isRealModelSelection,
-  needsStylingStandIn,
   resolveSelectedModelId,
-  resolveStylingModelId,
 } from './modelSelection.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { SELLING_POINTS_MAX, applySellingPointEdit } from './sellingPoints.js';
@@ -704,18 +702,10 @@ export function AnalysisForm({
   }, [a.selectedModelId]);
 
   const confirmAnalysis = async () => {
-    // 장소 컷에 동의한 모델은 대역(가상 모델)이 필요 없다 — 그 모델 얼굴이 그대로 들어간다.
-    // 동의하지 않은 모델은 예전 그대로 대역을 고르게 한다.
-    const selectedRealModel = (models || []).find((model) => model?.id === a.selectedModelId);
+    // 실제 모델은 모든 컷에 그대로 들어간다 — 대역(가상 모델)을 고르게 하지 않는다.
     // 얼굴 렌더 파드를 미리 켠다 — 여기서 확정한 모델의 첫 컷이 콜드스타트를 통째로 기다리지
     // 않게 하려는 것이다. 실패는 무시한다(생성 흐름과 무관한 부가 신호).
     if (isRealModelSelection(a.selectedModelId)) void warmFaceRender(a.selectedModelId);
-    if (needsStylingStandIn(a.selectedModelId, selectedRealModel) && !a.stylingModelId) {
-      toast.push('장소·스타일링 컷에 쓸 가상 모델을 골라 주세요.', {
-        icon: 'alertCircle',
-      });
-      return;
-    }
     if (isRealModelSelection(a.selectedModelId) && !a.brandUseCategory) {
       toast.push('실제 모델을 사용할 브랜드 유형을 선택해 주세요.', {
         icon: 'alertCircle',
@@ -797,21 +787,12 @@ export function AnalysisForm({
       modelsLoading,
       aiModels: AI_MODELS,
     });
-    const nextStylingModelId = resolveStylingModelId({
-      selectedModelId: nextSelectedModelId,
-      stylingModelId: a.stylingModelId,
-      targetGenders: a.targetGenders,
-      aiModels: AI_MODELS,
-    });
     const patch = {};
     if (nextSelectedModelId !== a.selectedModelId) {
       patch.selectedModelId = nextSelectedModelId;
     }
-    if (nextStylingModelId !== (a.stylingModelId || null)) {
-      patch.stylingModelId = nextStylingModelId;
-    }
     if (Object.keys(patch).length) onChange(patch);
-  }, [models, modelsLoading, a.selectedModelId, a.stylingModelId, a.targetGenders, onChange]);
+  }, [models, modelsLoading, a.selectedModelId, a.targetGenders, onChange]);
   const aiSet = new Set(a.aiSuggestedPoints || []);
   const selectableModels = models.filter((model) => model.hasActiveLicense);
   const pendingLicenseModels = models.filter((model) => !model.hasActiveLicense);
@@ -1122,12 +1103,6 @@ export function AnalysisForm({
                   ...(a.subCategory && !nextSubCats.some((item) => item.value === a.subCategory)
                     ? { subCategory: null }
                     : {}),
-                  stylingModelId: resolveStylingModelId({
-                    selectedModelId: a.selectedModelId,
-                    stylingModelId: a.stylingModelId,
-                    targetGenders,
-                    aiModels: AI_MODELS,
-                  }),
                 }));
               }} /></div>
           {fitOpts.length > 0 && (
@@ -1299,7 +1274,7 @@ export function AnalysisForm({
                       const on = a.selectedModelId === m.id;
                       return (
                         <div key={m.id} className={`model-card fm-model ai-model${on ? ' on' : ''}`}
-                          onClick={() => onChange({ selectedModelId: m.id, stylingModelId: null })} title={m.displayName}>
+                          onClick={() => onChange({ selectedModelId: m.id })} title={m.displayName}>
                           <img src={m.thumb} alt={m.displayName} />
                           <span className="ai-name">
                             {m.displayName}{on && <Icon name="check" size={12} />}
@@ -1377,38 +1352,12 @@ export function AnalysisForm({
             selectable={!!detailFor.hasActiveLicense}
             onSelect={(id) => onChange({
               selectedModelId: id,
-              stylingModelId: resolveStylingModelId({
-                selectedModelId: id,
-                stylingModelId: a.stylingModelId,
-                targetGenders: a.targetGenders,
-                aiModels: AI_MODELS,
-              }),
             })}
             onClose={() => setDetailFor(null)}
           />
         )}
         {isRealModelSelection(a.selectedModelId) && (
           <>
-            <div className="fm-styling-model">
-              <div className="sec-title">장소·스타일링 컷 모델</div>
-              <div className="sec-sub">실제 모델은 스튜디오(호리존) 컷에만 나와요. 장소·스타일링 컷은 가상 모델로 만들어요.</div>
-              <div className="model-grid">
-                {AI_MODELS
-                  .filter((model) => !a.targetGenders?.[0] || model.gender === a.targetGenders[0])
-                  .map((model) => {
-                    const on = a.stylingModelId === model.id;
-                    return (
-                      <div key={model.id} className={`model-card fm-model ai-model${on ? ' on' : ''}`}
-                        onClick={() => onChange({ stylingModelId: model.id })} title={model.displayName}>
-                        <img src={model.thumb} alt={model.displayName} />
-                        <span className="ai-name">
-                          {model.displayName}{on && <Icon name="check" size={12} />}
-                        </span>
-                      </div>
-                    );
-                  })}
-              </div>
-            </div>
             <div className="fm-use-category">
               <div className="sec-title">사용 브랜드 유형</div>
               <div className="sec-sub">이 모델을 사용할 브랜드 유형을 하나 선택해 주세요.</div>

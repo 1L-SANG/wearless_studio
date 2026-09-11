@@ -70,8 +70,31 @@ POD_IMAGE = "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404"
 POD_DISK_GB = 100
 POD_PORTS = ("8000/http", "22/tcp")
 #: 파드 부팅 훅 — 이미지의 /start.sh 가 /pre_start.sh 를 부르고, 그게 bootstrap → start 를 잇는다.
-POD_ARGS = ("bash -c 'cp -f /root/face_render/pre_start.sh /pre_start.sh 2>/dev/null || true; "
-            "exec /start.sh'")
+#:
+#: ★ **새로 만든 파드에는 그 pre_start.sh 조차 없다.** 컨테이너 디스크는 매번 비어 있고 코드는
+#:   R2 묶음에만 있다. 예전 args 는 없는 파일을 복사하려다 조용히 실패해서 bootstrap 이 한 번도
+#:   돌지 않았다 — 자동 생성 파드는 켜지기만 하고 서비스는 뜨지 않았다(2026-09-11 실측:
+#:   R2 face_render/ 객체 0개인 것과 별개로, 있어도 못 받는 상태였다).
+#:   그래서 여기서 **묶음을 직접 받아** 부팅 스크립트를 깔고 그다음 이미지의 start.sh 로 넘긴다.
+#:   - 호스트는 우리 R2 만 허용(bootstrap.sh 와 같은 규칙), 내용은 sha256 으로 검증한다.
+#:   - CODE_SHA/VERSION 을 같이 써 두면 뒤이어 도는 bootstrap.sh 가 "최신"으로 보고 건너뛴다.
+#:   - 실패해도 exec /start.sh 는 그대로 — ssh 는 뜨고 사람이 들어가 볼 수 있다.
+POD_ARGS = (
+    "bash -c '"
+    "R=/root/face_render; mkdir -p \"$R\"; "
+    "if [ ! -x \"$R/pre_start.sh\" ] && [ -n \"${CODE_TARBALL_URL:-}\" ] "
+    "&& [ -n \"${CODE_SHA256:-}\" ]; then "
+    "case \"$CODE_TARBALL_URL\" in https://*.r2.cloudflarestorage.com/*) "
+    "curl -fsSL --max-time 120 -o /tmp/face_render.tgz \"$CODE_TARBALL_URL\" "
+    "&& [ \"$(sha256sum /tmp/face_render.tgz | cut -d\" \" -f1)\" = \"$CODE_SHA256\" ] "
+    "&& tar --no-same-owner -xzf /tmp/face_render.tgz -C \"$R\" "
+    "&& cp -f \"$R\"/deploy/*.sh \"$R\"/ && chmod +x \"$R\"/*.sh "
+    "&& echo \"$CODE_SHA256\" > \"$R/CODE_SHA\" && echo \"$CODE_SHA256\" > \"$R/VERSION\"; "
+    "esac; fi; "
+    "rm -f /tmp/face_render.tgz; "
+    "cp -f \"$R/pre_start.sh\" /pre_start.sh 2>/dev/null || true; "
+    "exec /start.sh'"
+)
 #: 토큰은 RunPod Secret 참조로만 넣는다 — 값이 API 요청·응답·로그 어디에도 실리지 않는다.
 POD_TOKEN_REF = "{{ RUNPOD_SECRET_face_render_token }}"
 

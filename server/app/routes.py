@@ -26,6 +26,7 @@ from .agents import (
     cut_generator,
     feature_copy,
     fit_axes,
+    identity_scope,
     mannequin,
     mannequin_base_fidelity_qc,
     product_evidence_contract,
@@ -3017,15 +3018,10 @@ async def generate_editor_image(
                         "model_unavailable", "사용할 수 없는 모델입니다.", status=409
                     )
                 trusted_cut_type = provenance.get("cut_type")
-                # 동의 값이 게이트의 입력이라 라이선스를 먼저 읽는다. 조회가 실패하면 None
-                # → 아래 verify_license 가 409 로 막는다(500 로 새지 않는다).
+                # 조회가 실패하면 None → 아래 verify_license 가 409 로 막는다(500 로 새지 않는다).
                 license_row = await facemarket.consent_license(
                     conn, model_id, license_id=license_id
                 )
-                facemarket.reject_real_model_outside_horizon(
-                    trusted_cut_type, model_id, license_row
-                )
-                facemarket.reject_real_model_scene_variation(payload, license_row)
                 payload["source"] = {**source, "cutType": trusted_cut_type}
                 analysis = await repo.get_analysis(conn, project_id) or {}
                 brand_use_category = analysis.get("brandUseCategory")
@@ -3049,16 +3045,13 @@ async def generate_editor_image(
                 payload.get("cutType"), wants_face=False
             )[0]
             if uses_model_identity:
-                new_cut_license = None
-                if (s.facemarket_enabled
-                        and facemarket.cut_needs_opt(payload.get("cutType"))
-                        and facemarket.is_real_model_id(selected_model_id)):
-                    new_cut_license = await facemarket.consent_license(
-                        conn, selected_model_id
-                    )
-                facemarket.reject_real_model_outside_horizon(
-                    payload.get("cutType"), selected_model_id, new_cut_license
-                )
+                # 콘티보드 범위 밖 조합(예: 실제 모델 + 가상 전용 예시)은 여기서 끝낸다 —
+                # 잡도 만들지 않고 크레딧도 예약하지 않는다(2026-09-11 사용자 결정).
+                if not identity_scope.block_allowed(payload, selected_model_id):
+                    raise HTTPException(status_code=409, detail={
+                        "code": "identity_scope_mismatch",
+                        "message": "이 모델로는 만들 수 없는 컷이에요.",
+                    })
                 payload["modelId"] = selected_model_id
                 brand_use_category = analysis.get("brandUseCategory")
                 payload["brandUseCategory"] = brand_use_category
@@ -3154,9 +3147,6 @@ async def generate_detail_page(
         selected_model_id = analysis.get("selectedModelId") or analysis.get(
             "selected_model_id"
         )
-        styling_model_id = analysis.get("stylingModelId") or analysis.get(
-            "styling_model_id"
-        )
         brand_use_category = analysis.get("brandUseCategory")
         storyboard = (
             await repo.get_storyboard(conn, project_id)
@@ -3171,31 +3161,23 @@ async def generate_detail_page(
                 block.get("cutType"), wants_face=False
             )[0]
         ]
-        # 실존 모델이면 라이선스를 **먼저** 읽는다 — 어떤 컷에 이 얼굴을 쓸 수 있는지가
-        # 그 행의 선택 동의(opt_*)에 달려 있어서다(계약 v2: 스튜디오 밖은 동의한 것만).
         license_row = None
-        if (s.facemarket_enabled
-                and facemarket.is_real_model_id(selected_model_id)
-                and any(facemarket.cut_needs_opt(b.get("cutType")) for b in ai_worn_blocks)):
-            license_row = await facemarket.consent_license(conn, selected_model_id)
         resolved_block_model_ids = [
-            facemarket.resolve_block_model_id(
-                block.get("cutType"), selected_model_id, styling_model_id, license_row
-            )
+            facemarket.resolve_block_model_id(block.get("cutType"), selected_model_id)
             for block in ai_worn_blocks
         ]
         uses_model_identity = any(resolved_block_model_ids)
-        # "이 잡에서 실제 모델 얼굴이 실제로 쓰이는 컷이 있는가" — 스튜디오 + 동의한 컷.
+        # "이 잡에서 실제 모델 얼굴이 실제로 쓰이는 컷이 있는가" — 착용 컷이면 전부 해당한다.
         # 라이선스 확인·정산·REAL 자산·LoRA 가 전부 이 판정에 붙는다.
         uses_real_identity = facemarket.is_real_model_id(selected_model_id) and any(
-            facemarket.real_identity_allowed_cut(block.get("cutType"), license_row)
+            facemarket.real_identity_allowed_cut(block.get("cutType"))
             for block in ai_worn_blocks
         )
         payload = {"mode": "generate"}
         if uses_model_identity:
+            # 실제 모델도 대역 없이 그대로 간다 — 예전의 stylingModelId(가상 대역)는
+            # 더 이상 읽지 않는다(2026-09-11 사용자 결정). 저장된 옛 값은 무시된다.
             payload["modelId"] = selected_model_id
-            if styling_model_id:
-                payload["stylingModelId"] = styling_model_id
         if uses_real_identity:
             payload["brandUseCategory"] = brand_use_category
         # FaceMarket verify-before-use 게이트(FM-30). **캐시 반환보다 먼저** — 해지·만료된
@@ -3233,6 +3215,10 @@ async def generate_detail_page(
         clothing_type = ((product_row or {}).get("clothing_type")
                          or (product_row or {}).get("clothingType") or "top")
         ai_blocks = [b for b in storyboard if isinstance(b, dict) and b.get("source") == "ai"]
+        # 이 모델로 만들 수 없는 컷(콘티보드 범위 밖)은 워커가 건너뛴다 — 예약에서도 뺀다.
+        # 안 빼면 만들지도 않을 컷 때문에 잔액 부족(402)이 나거나 예약이 부풀어 오른다.
+        ai_blocks = [b for b in ai_blocks
+                     if identity_scope.block_allowed(b, selected_model_id)]
         dup_sources = _duplicate_source_indexes(ai_blocks, clothing_type)
         ai_count = sum(1 for source in dup_sources if source is None)
         cost = ai_count * s.credit_cost_storyboard_per_cut

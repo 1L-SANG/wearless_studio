@@ -61,12 +61,15 @@ test('갤러리·게이트 성별은 실존 모델 선택 시에도 비지 않�
   assert.match(editorSource, /exampleGender=\{exampleGenderFromAnalysis\(analysis, catalogs, clothingType\)\}/);
 });
 
-test('실제 모델은 호리존 컷에서만 선택할 수 있다', () => {
+test('실제 모델은 모든 컷에서 고를 수 있다', () => {
+  // 2026-09-11 사용자 결정 — 컷 종류로 모델 카드를 비활성화하거나, 컷을 바꿨다고
+  // 가상 모델로 되돌리지 않는다. 되살아나면 셀러가 고른 얼굴이 조용히 바뀐다.
   const aiPanel = panelSource.slice(panelSource.indexOf('export function AIPanel'));
-  assert.match(aiPanel, /const disabled = effectiveCutType !== 'horizon'/);
-  assert.match(aiPanel, /aria-disabled=\{disabled\}/);
-  assert.match(aiPanel, /실제 모델은 스튜디오 컷에만 쓸 수 있어요/);
-  assert.match(aiPanel, /if \(effectiveCutType === 'horizon' \|\| !isRealModelSelection\(model\)\) return/);
+  assert.doesNotMatch(aiPanel, /const disabled = effectiveCutType !== 'horizon'/);
+  assert.doesNotMatch(aiPanel, /실제 모델은 스튜디오 컷에만 쓸 수 있어요/);
+  assert.doesNotMatch(aiPanel, /if \(effectiveCutType === 'horizon' \|\| !isRealModelSelection\(model\)\) return/);
+  // 브랜드 유형은 컷 종류와 무관하게 실제 모델이면 요구한다.
+  assert.match(aiPanel, /const categoryRequired = failedCutRetry[\s\S]*isRealModelSelection\(model\);/);
 });
 
 test('거울 예시는 파생 유효 레시피로 화면과 생성 페이로드를 함께 전환한다', () => {

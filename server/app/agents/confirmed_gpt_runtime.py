@@ -82,6 +82,11 @@ def resolve_profile_request(
     A structurally exact cut must never become generic merely because the owner chose
     a real/no model, an unresolved virtual model, or an additional color. Those are
     missing exact-profile prerequisites and therefore fail this cut closed.
+
+    실제(REAL) 모델에 이 컷이 오면 안 된다 — 근거(가상 모델 확정 시트)가 존재할 수 없다.
+    그래서 여기서 억지로 일반 패킷을 만들지 않고 그대로 fail-closed 로 둔다. 애초에 그런
+    조합이 만들어지지 않게 막는 자리는 **콘티보드의 컷 범위(identity_scope)** 다
+    (facemarket.identity_scope · 2026-09-11 사용자 결정).
     """
 
     if not profile_requested(spec):

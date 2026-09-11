@@ -181,7 +181,12 @@ def test_get_wardrobe_groups_by_color_id_or_misc(client, make_token, monkeypatch
 # ---------- 워커 ----------
 
 
-def test_run_editor_real_vary_rejects_scene_change_before_generation(monkeypatch):
+def test_run_editor_real_vary_allows_scene_change(monkeypatch):
+    """실제 모델 컷의 배경·장소를 바꾸는 변형이 통과한다(2026-09-11 사용자 결정).
+
+    예전에는 워커가 real_model_horizon_only 로 생성 전에 끊었다. 지금은 끊지 않는다 —
+    대신 라이선스 확인·출처 표시는 그대로 붙는지를 본다.
+    """
     captured = {}
 
     async def fake_get_asset(conn, uid, aid):
@@ -189,24 +194,49 @@ def test_run_editor_real_vary_rejects_scene_change_before_generation(monkeypatch
             "id": aid,
             "r2_key": "k/source-real",
             "mime_type": "image/png",
-            "metadata": {
-                "facemarket_real_derived": True,
-                "cut_type": "horizon",
-            },
+            "metadata": {"facemarket_real_derived": True, "cut_type": "horizon"},
         }
+
+    async def fake_generate(settings, gemini, source, changes, cut_type, **kwargs):
+        captured["changes"] = changes
+        captured["cut_type"] = cut_type
+        return b"VARIED", "image/png"
+
+    async def fake_resolve(conn, model_id, *, license_id=None, **kwargs):
+        return {"id": LICENSE_ID, "model_id": MODEL_ID, "unit_price": None}
+
+    async def fake_verify(app, row, **kwargs):
+        captured["verified"] = kwargs
+
+    def fake_verify_local(app, row, **kwargs):
+        return None
+
+    async def fake_lock(conn):
+        return None
+
+    async def fake_finalize(conn, **kwargs):
+        captured["finalize"] = kwargs
+        return {"id": "w-real-vary"}
 
     async def fake_failure(conn, **kwargs):
         captured["failure"] = kwargs
         return True
 
-    async def forbidden_generate(*args, **kwargs):
-        raise AssertionError("real scene-changing request must not generate")
+    async def fake_emit(*_args, **_kwargs):
+        return None
 
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(eij.cut_variator, "generate", fake_generate)
+    monkeypatch.setattr(eij.facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(eij.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(eij.facemarket, "verify_license_local", fake_verify_local)
+    monkeypatch.setattr(eij.repo, "lock_facemarket_writer_boundary", fake_lock)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
     monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_failure)
-    monkeypatch.setattr(eij.cut_variator, "generate", forbidden_generate)
+    monkeypatch.setattr(eij, "_emit", fake_emit)
 
-    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    app = fake_worker_app(make_settings(
+        gemini_api_key="x", r2_bucket="b", facemarket_enabled=True))
     asyncio.run(eij.run_editor_image_job(app, worker_job({
         "mode": "vary",
         "source": {"src": "/v1/assets/a1/file", "cutType": "horizon"},
@@ -215,8 +245,11 @@ def test_run_editor_real_vary_rejects_scene_change_before_generation(monkeypatch
         "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
     })))
 
-    assert captured["failure"]["code"] == "real_model_horizon_only"
-
+    assert "failure" not in captured
+    assert captured["changes"] == [{"type": "bg", "value": "거리"}]
+    assert captured["verified"] == {
+        "model_id": MODEL_ID, "brand_use_category": CATEGORY}
+    assert captured["finalize"]["image"]["metadata"]["facemarket_real_derived"] is True
 
 
 def test_run_editor_image_job_vary_charges_cost_and_group_misc(monkeypatch):
@@ -390,7 +423,12 @@ def test_run_editor_image_job_vary_propagates_real_privacy_and_rechecks_license(
 
 
 @pytest.mark.parametrize("trusted_cut_type", [None, "styling", "mirror"])
-def test_run_editor_legacy_real_vary_rejects_spoofed_horizon(monkeypatch, trusted_cut_type):
+def test_run_editor_legacy_real_vary_uses_the_trusted_cut_type(monkeypatch, trusted_cut_type):
+    """클라이언트가 'horizon' 이라고 해도 원장(provenance)의 컷 종류로 생성한다.
+
+    컷 종류로 막는 규칙은 없어졌지만(모든 컷 허용), **클라이언트 말을 믿지 않는다**는 규칙은
+    그대로다 — 컷 종류는 프롬프트·메타데이터에 그대로 실린다.
+    """
     captured = {}
 
     async def fake_asset(conn, uid, aid):
@@ -406,19 +444,46 @@ def test_run_editor_legacy_real_vary_rejects_spoofed_horizon(monkeypatch, truste
             "cut_type": trusted_cut_type,
         }
 
+    async def fake_generate(settings, gemini, source, changes, cut_type, **kwargs):
+        captured["cut_type"] = cut_type
+        return b"VARIED", "image/png"
+
+    async def fake_resolve(conn, model_id, *, license_id=None, **kwargs):
+        return {"id": LICENSE_ID, "model_id": MODEL_ID, "unit_price": None}
+
+    async def fake_verify(app, row, **kwargs):
+        return None
+
+    def fake_verify_local(app, row, **kwargs):
+        return None
+
+    async def fake_lock(conn):
+        return None
+
+    async def fake_finalize(conn, **kwargs):
+        captured["finalize"] = kwargs
+        return {"id": "w-legacy-vary"}
+
     async def fake_failure(conn, **kwargs):
         captured["failure"] = kwargs
         return True
 
-    async def forbidden_generate(*args, **kwargs):
-        captured["generated"] = True
-        raise AssertionError("unknown or non-horizon real sources must not generate")
+    async def fake_emit(*_args, **_kwargs):
+        return None
 
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_asset)
     monkeypatch.setattr(eij.repo, "get_asset_facemarket_provenance", fake_provenance)
+    monkeypatch.setattr(eij.cut_variator, "generate", fake_generate)
+    monkeypatch.setattr(eij.facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(eij.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(eij.facemarket, "verify_license_local", fake_verify_local)
+    monkeypatch.setattr(eij.repo, "lock_facemarket_writer_boundary", fake_lock)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
     monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_failure)
-    monkeypatch.setattr(eij.cut_variator, "generate", forbidden_generate)
-    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    monkeypatch.setattr(eij, "_emit", fake_emit)
+
+    app = fake_worker_app(make_settings(
+        gemini_api_key="x", r2_bucket="b", facemarket_enabled=True))
     asyncio.run(eij.run_editor_image_job(app, worker_job({
         "mode": "vary",
         "source": {"src": "/v1/assets/a1/file", "cutType": "horizon"},
@@ -427,8 +492,12 @@ def test_run_editor_legacy_real_vary_rejects_spoofed_horizon(monkeypatch, truste
         "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
     })))
 
-    assert captured["failure"]["code"] == "real_model_horizon_only"
-    assert "generated" not in captured
+    assert "failure" not in captured
+    # 컷 종류는 원장 값 그대로 — 클라이언트가 말한 horizon 이 아니다(없으면 None).
+    assert captured["cut_type"] == trusted_cut_type
+    # 자산 메타는 컷 종류가 비면 계약 §6 기본값(styling)으로 채운다 — 기존 규칙 유지.
+    assert captured["finalize"]["image"]["metadata"]["cut_type"] == (
+        trusted_cut_type or "styling")
 
 
 def test_run_editor_image_job_vary_missing_source_fails(monkeypatch):

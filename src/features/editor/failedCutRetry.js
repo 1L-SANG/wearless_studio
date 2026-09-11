@@ -33,14 +33,8 @@ export function buildFailedCutRetry(storyboard, sourceBlockId, modelSelection = 
     const selectedModelId = modelSelection.selectedModelId
       || modelSelection.selected_model_id
       || null;
-    const stylingModelId = modelSelection.stylingModelId
-      || modelSelection.styling_model_id
-      || null;
-    request.modelId = block.cutType === 'product'
-      ? null
-      : block.cutType === 'horizon' || !isRealModelSelection(selectedModelId)
-        ? selectedModelId
-        : stylingModelId;
+    // 실제 모델도 모든 착용 컷에 그대로 간다 — 예전의 스타일링 대역(가상 모델) 치환 없음.
+    request.modelId = block.cutType === 'product' ? null : selectedModelId;
   }
   request.matchIds = Array.isArray(block.matchIds) ? [...block.matchIds] : [];
 

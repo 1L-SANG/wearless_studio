@@ -39,8 +39,12 @@ def test_pod_address_is_not_pinned_in_the_manifest(manifest, name):
 
 
 def test_only_api_drives_the_pod():
-    """기동/종료 reconciler 는 한 곳만 — 두 서비스가 같은 파드를 밀고 당기면 안 된다."""
-    assert API["variables"]["FACE_AUTOSCALE"] == "on"
+    """기동/종료 reconciler 는 한 곳만 — 두 서비스가 같은 파드를 밀고 당기면 안 된다.
+
+    값(on/off)은 운영 판단이라 여기서 고정하지 않는다. 2026-09-11 현재는 off —
+    수동 파드로 운영 테스트 중이고, 자동 생성 경로를 켜는 건 검증 뒤다.
+    """
+    assert API["variables"]["FACE_AUTOSCALE"] in {"on", "off"}
     assert "FACE_AUTOSCALE" not in WORKER["variables"]
     assert "RUNPOD_API_KEY" not in WORKER.get("secrets", {})
 

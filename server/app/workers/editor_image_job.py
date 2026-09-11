@@ -180,18 +180,6 @@ async def run_editor_image_job(app, job: dict) -> None:
                             conn, user_id, asset_id
                         )
                     trusted_cut_type = (provenance or {}).get("cut_type")
-                # 동의 값(opt_*)이 게이트의 입력이지만, 동의가 필요 없는 컷이면 읽지 않는다.
-                _gate_license = None
-                if facemarket.cut_needs_opt(trusted_cut_type) or payload.get("refBgAssetId"):
-                    async with pool.connection() as conn:
-                        _gate_license = await facemarket.consent_license(
-                            conn, str(snapshot["modelId"]),
-                            license_id=str(snapshot.get("licenseId") or "") or None,
-                        )
-                facemarket.reject_real_model_outside_horizon(
-                    trusted_cut_type, str(snapshot["modelId"]), _gate_license
-                )
-                facemarket.reject_real_model_scene_variation(payload, _gate_license)
                 source = {**source, "cutType": trusted_cut_type}
                 async with pool.connection() as conn:
                     fm_license_row = await facemarket.resolve_model_license(
@@ -362,22 +350,6 @@ async def run_editor_image_job(app, job: dict) -> None:
                 return
 
             requested_model_id = payload.get("modelId")
-            if normalized["cutType"] in _WORN_CUT_TYPES:
-                _gate_license = None
-                if (facemarket.cut_needs_opt(normalized["cutType"])
-                        and facemarket.is_real_model_id(requested_model_id)):
-                    # 라우트가 실어 준 라이선스 그대로 읽는다 — 잡 실행 중 다른 라이선스를
-                    # 집어오면 동의 판정이 요청 시점과 달라진다.
-                    _snap = payload.get("_facemarket")
-                    _snap_license = (str(_snap.get("licenseId"))
-                                     if isinstance(_snap, dict) and _snap.get("licenseId") else None)
-                    async with pool.connection() as conn:
-                        _gate_license = await facemarket.consent_license(
-                            conn, str(requested_model_id), license_id=_snap_license
-                        )
-                facemarket.reject_real_model_outside_horizon(
-                    normalized["cutType"], requested_model_id, _gate_license
-                )
 
             colors = product.get("colors") or []
             base_color = next(
@@ -505,9 +477,11 @@ async def run_editor_image_job(app, job: dict) -> None:
             n_model_images = len(model_images)
             if n_model_images == 3:
                 model_has_full_body = True  # REAL 3장 = 얼굴 2 + 전신 1
+            # 실제 모델 얼굴은 착용 컷이면 전부 들어간다(2026-09-11 사용자 결정).
+            # 예전에는 horizon 만 — 스타일링·미러는 실제 모델을 골라도 얼굴이 안 붙었다.
             fm_face_injected = (
                 fm_source == "REAL"
-                and normalized["cutType"] == "horizon"
+                and facemarket.real_identity_allowed_cut(normalized["cutType"])
                 and n_model_images >= 2
             )
             body_profile = None

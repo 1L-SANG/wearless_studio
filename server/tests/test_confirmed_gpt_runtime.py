@@ -195,6 +195,7 @@ def test_uncurated_eligible_example_requests_fail_closed_profile():
 @pytest.mark.parametrize(
     "overrides,error",
     [
+        # 실제 모델에는 이 컷이 오면 안 된다 — 콘티보드 scope 가 막고, 여기서도 fail-closed.
         ({"identity_source": "REAL"}, "requires_virtual_model"),
         (
             {"selected_model_id": None, "effective_model_id": None},

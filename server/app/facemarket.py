@@ -14,6 +14,7 @@ FM-03 실측(2026-07-09): ENT_MID 응답에 `ci` 존재 확인 → ci HMAC 채�
 
 import asyncio
 import hashlib
+import json
 import hmac
 import logging
 import time
@@ -2164,137 +2165,43 @@ def is_real_model_id(model_id: str | None) -> bool:
     return True
 
 
-#: 모델이 별도로 동의해야 열리는 사용처 → 그 사용처가 필요한 컷.
-#: 계약 v1 은 스튜디오(horizon) 밖을 전부 막는다. 모델이 아래 항목에 동의하면 그 컷에서도
-#: 이 모델의 얼굴을 쓴다(문서: documents/legal/02 v2 초안 제2조 ⑤ · 제9조 6항 예외).
+#: 실제(REAL) 모델 얼굴을 쓸 수 있는 컷 — **모든 착용 컷 + 룩북 인물 교체**.
+#: 2026-09-11 사용자 결정: 실제 모델을 고르면 모든 컷에 그 얼굴이 들어간다. 그전에는 스튜디오
+#: (horizon)만 열려 있고 스타일링·미러·룩북 인물 교체는 모델의 선택 동의(opt_*)에 걸려 있었다.
+#: fm_licenses.opt_location_cuts · opt_lookbook_person_replace 컬럼과 FACEMARKET_OPT_USES_ENABLED
+#: 플래그는 수집 경로와 DB 에 그대로 남지만 **어떤 판정에도 쓰지 않는다**
+#: (사용 안 함, 2026-09-11 사용자 결정).
 OPT_LOCATION_CUTS = "opt_location_cuts"
 OPT_LOOKBOOK_PERSON_REPLACE = "opt_lookbook_person_replace"
-_CUT_OPT_REQUIRED: dict[str, str] = {
-    "styling": OPT_LOCATION_CUTS,
-    "mirror": OPT_LOCATION_CUTS,
-    "base_edit": OPT_LOOKBOOK_PERSON_REPLACE,
-}
+REAL_IDENTITY_CUT_TYPES = frozenset({"horizon", "base_edit"}) | _STYLING_CUT_TYPES
+#: 콘티 블록 중 사람이 들어가는 컷(상품컷 제외). base_edit 은 블록이 아니라 에디터 연산이다.
+_WORN_BLOCK_CUT_TYPES = frozenset({"horizon"}) | _STYLING_CUT_TYPES
 
 
 async def consent_license(conn, model_id, *, license_id: str | None = None) -> dict | None:
-    """동의 판정용 라이선스 행. **실패하면 None** — 조회가 흔들려도 컷 생성이 죽지 않는다.
+    """라이선스 행. **실패하면 None** — 조회가 흔들려도 컷 생성이 500 으로 새지 않는다.
 
-    None = "동의 안 함" 이라 최악의 경우 지금 동작(스튜디오 전용)으로 돌아갈 뿐이고,
-    없는 동의를 있다고 보는 방향으로는 절대 틀리지 않는다(fail-safe 방향이 한쪽이다).
+    None 은 뒤따르는 verify_license 에서 409(model_unavailable)로 막히므로, 조회 실패가
+    "없는 라이선스를 있다고 보는" 방향으로 틀리지는 않는다.
     """
     try:
         return await resolve_model_license(conn, model_id, license_id=license_id)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("consent license lookup failed for %s: %r", model_id, exc)
+        logger.warning("license lookup failed for %s: %r", model_id, exc)
         return None
 
 
-def cut_needs_opt(cut_type: str | None) -> bool:
-    """이 컷이 **별도 동의가 있어야 열리는** 사용처인가.
-
-    이 판정이 false 면 동의를 볼 필요가 없다 → 라이선스를 읽지 않는다.
-    (스튜디오·상품 컷만 있는 잡에서 DB 왕복을 새로 만들지 않으려는 것 — 기존 경로 무영향.)
-    """
-    return str(cut_type or "") in _CUT_OPT_REQUIRED
+def real_identity_allowed_cut(cut_type: str | None) -> bool:
+    """이 컷에 실제 모델 얼굴을 쓸 수 있는가. 착용 컷·룩북 인물 교체면 전부 쓸 수 있다."""
+    return str(cut_type or "") in REAL_IDENTITY_CUT_TYPES
 
 
-def model_opt_allows(license_row: Mapping[str, Any] | None, opt: str) -> bool:
-    """이 라이선스가 그 사용처에 동의했는가. 행이 없거나 값이 없으면 **동의 안 함**."""
-    if not isinstance(license_row, Mapping):
-        return False
-    return bool(license_row.get(opt))
-
-
-def real_identity_allowed_cut(cut_type: str | None,
-                              license_row: Mapping[str, Any] | None = None) -> bool:
-    """이 컷에 실제 모델 얼굴을 쓸 수 있는가 — 스튜디오는 항상, 나머지는 동의한 것만."""
-    if cut_type == "horizon":
-        return True
-    opt = _CUT_OPT_REQUIRED.get(str(cut_type or ""))
-    return bool(opt) and model_opt_allows(license_row, opt)
-
-
-def resolve_block_model_id(
-    cut_type: str | None,
-    model_id: str | None,
-    styling_model_id: str | None,
-    license_row: Mapping[str, Any] | None = None,
-) -> str | None:
-    """Return the only model identity permitted for this cut type."""
-    if cut_type == "horizon":
-        return str(model_id) if model_id else None
-    if cut_type not in _STYLING_CUT_TYPES:
+def resolve_block_model_id(cut_type: str | None, model_id: str | None) -> str | None:
+    """이 컷에 쓸 모델 신원. 실제 모델도 대역(가상 모델) 없이 그대로 모든 착용 컷에 간다."""
+    if str(cut_type or "") not in _WORN_BLOCK_CUT_TYPES:
         return None
-    if not is_real_model_id(model_id):
-        return str(model_id) if model_id else None
-    # 장소 컷에 동의한 모델이면 대역(가상 모델) 없이 그 모델 그대로 간다.
-    if real_identity_allowed_cut(cut_type, license_row):
-        return str(model_id)
-    if styling_model_id and not is_real_model_id(styling_model_id):
-        return str(styling_model_id)
-    raise _err(
-        "styling_model_required",
-        "장소·스타일링 컷에 쓸 가상 모델을 골라 주세요.",
-        status=400,
-    )
+    return str(model_id) if model_id else None
 
-
-def reject_real_model_outside_horizon(
-    cut_type: str | None,
-    model_id: str | None,
-    license_row: Mapping[str, Any] | None = None,
-) -> None:
-    """실제 모델은 스튜디오 컷 + **그 모델이 동의한 컷**에서만."""
-    if not is_real_model_id(model_id) or real_identity_allowed_cut(cut_type, license_row):
-        return
-    if _CUT_OPT_REQUIRED.get(str(cut_type or "")) == OPT_LOOKBOOK_PERSON_REPLACE:
-        # 룩북 인물 교체는 셀러가 "동의한 모델"을 골라야 하는 새 경로라 별도 코드로 알린다.
-        # 스타일링·미러는 기존 코드(real_model_horizon_only)를 유지한다 — 셀러 화면 문구와
-        # 기존 계약이 그 코드를 쓰고 있고, 동의 전에는 실제로 "스튜디오 전용"이 맞다.
-        raise _err(
-            "real_model_use_not_consented",
-            "이 모델은 해당 사용처에 동의하지 않았어요",
-            status=409,
-        )
-    raise _err(
-        "real_model_horizon_only",
-        "실제 모델은 스튜디오 컷에만 쓸 수 있어요",
-        status=409,
-    )
-
-
-def reject_real_model_scene_variation(payload: Mapping[str, Any],
-                                      license_row: Mapping[str, Any] | None = None) -> None:
-    """Keep REAL-derived editor variations inside the original studio scene.
-
-    장소 컷에 동의한 모델은 배경·장소를 바꾸는 변형까지 허용한다(계약 v2 제2조 ⑤).
-    """
-    if model_opt_allows(license_row, OPT_LOCATION_CUTS):
-        return
-    if payload.get("refBgAssetId") or payload.get("ref_bg_asset_id"):
-        raise _err(
-            "real_model_horizon_only",
-            "실제 모델은 스튜디오 컷에만 쓸 수 있어요",
-            status=409,
-        )
-    allowed = {
-        "direction": {"front", "back", "side"},
-        "pose": {"stand", "walk", "lean", "sit", "turn"},
-        "face": {"smile", "laugh", "chic", "gaze"},
-    }
-    for change in payload.get("changes") or []:
-        if (
-            isinstance(change, Mapping)
-            and str(change.get("value") or "").strip()
-            and str(change.get("value")).strip() not in allowed.get(
-                change.get("type"), set()
-            )
-        ):
-            raise _err(
-                "real_model_horizon_only",
-                "실제 모델은 스튜디오 컷에만 쓸 수 있어요",
-                status=409,
-            )
 
 async def resolve_project_license(conn, project: dict, analysis: dict) -> dict | None:
     """Resolve the selected model's current license; historical project locks are inert."""
@@ -2744,9 +2651,21 @@ async def warm_face_render(request: Request, response: Response,
     settings = request.app.state.settings
     if not getattr(settings, "facemarket_enabled", False):
         raise _err("not_found", "사용할 수 없습니다.", status=404)
-    body = await request.json() if request.headers.get("content-type", "").startswith(
-        "application/json") else {}
-    model_id = str((body or {}).get("modelId") or (body or {}).get("model_id") or "").strip()
+    # 프런트가 body 를 JSON **문자열**로 보내는 경우가 있다(2026-09-11 실측: 500
+    # AttributeError: 'str' object has no attribute 'get'). 워밍 핑은 부가 신호라
+    # 본문이 뭐가 오든 500 으로 새면 안 된다 — dict 가 아니면 조용히 무시한다.
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 — 본문 없음·깨진 JSON 모두 "신호 없음"
+        body = None
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except Exception:  # noqa: BLE001
+            body = None
+    if not isinstance(body, dict):
+        return Response(status_code=204)
+    model_id = str(body.get("modelId") or body.get("model_id") or "").strip()
     if not is_real_model_id(model_id):
         return Response(status_code=204)
     async with get_conn(request) as conn:
@@ -2805,12 +2724,32 @@ async def face_render_status(
                     "select 1 from fm_model_loras where model_id = %s and enabled "
                     "and status = 'ready' limit 1", (str(model_id),))
                 enabled = await cur.fetchone() is not None
-    adapter = getattr(request.app.state, "face_autoscaler", None)
+    # ready 는 **지금 등록된 파드의 /healthz(loaded)** 로만 판정한다. 예전에는 자동 켜기
+    # 어댑터가 enabled 일 때만 봤는데, 자동 켜기를 꺼 두면(수동 파드 운영) 파드가 멀쩡히
+    # 떠 있어도 영원히 "준비 중 (약 4분)"이 떴다(2026-09-11 개발 테스트에서 확인).
     ready = False
-    if enabled and adapter is not None and getattr(adapter.adapter, "enabled", False):
-        ready = await adapter.adapter.health_ok()
+    state = "offline"
+    if enabled:
+        from .agents import face_identity, identity_source
+
+        pool = getattr(request.app.state, "pool", None)
+        backend = await identity_source.active_face_backend_url(pool) if pool else None
+        if backend:
+            health = (backend[: -len("/render")] if backend.endswith("/render") else backend) + \
+                ("" if backend.endswith("/healthz") else "/healthz")
+            ready = await asyncio.to_thread(face_identity._probe_ready, health)
+            state = "ready" if ready else "starting"
+        else:
+            adapter = getattr(request.app.state, "face_autoscaler", None)
+            autoscale_on = adapter is not None and getattr(adapter.adapter, "enabled", False)
+            # 파드가 없다 — 자동 켜기가 켜져 있으면 곧 만들어지고(starting), 꺼져 있으면
+            # 아무도 만들지 않는다(offline). 프런트는 offline 을 아예 표시하지 않는다.
+            state = "starting" if autoscale_on else "offline"
     return {
         "ready": ready,
         "enabled": enabled,
-        "etaMinutes": None if (ready or not enabled) else face_autoscale.COLD_START_ETA_MINUTES,
+        "state": state,
+        "etaMinutes": (
+            face_autoscale.COLD_START_ETA_MINUTES if state == "starting" else None
+        ),
     }

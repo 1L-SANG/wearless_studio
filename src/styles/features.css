@@ -1351,6 +1351,20 @@
 
 /* ============ EDITOR (11) ============ */
 .editor { position: fixed; inset: 0; display: flex; flex-direction: column; background: #f0f0f2; z-index: 50; }
+/* 모델 범위 밖 컷 — 자동 교체하지 않고 표시만 한다(생성에서는 서버가 건너뛴다). */
+.sb-out-of-scope { position: absolute; left: 8px; right: 8px; bottom: 8px; display: flex;
+  align-items: center; justify-content: center; gap: 5px; padding: 6px 8px; border-radius: 8px;
+  background: rgba(255,255,255,.94); box-shadow: 0 0 0 1px var(--ring); color: var(--fg-2);
+  font-size: 11px; font-weight: 600; line-height: 1; pointer-events: none; }
+
+/* 얼굴 렌더 준비 칩 — 툴바 아래 왼쪽. 에디터 토큰(--ring/--fg-2/--elev-card)만 쓴다. */
+.ed-face-chip { position: absolute; top: 68px; left: 16px; z-index: 6; display: inline-flex;
+  align-items: center; gap: 6px; padding: 6px 11px; border-radius: 999px; background: #fff;
+  box-shadow: var(--elev-card), 0 0 0 1px var(--ring); color: var(--fg-2); font-size: 12px;
+  font-weight: 500; line-height: 1; pointer-events: none; }
+.ed-face-chip.ready { color: #1f7a4d; box-shadow: var(--elev-card), 0 0 0 1px #bfe3cf; }
+.ed-face-chip svg { flex: 0 0 auto; }
+
 .ed-toolbar { height: 60px; display: flex; align-items: center; gap: 8px; padding: 0 16px; background: #fff; box-shadow: 0 1px 0 0 var(--ring); z-index: 5; position: relative; }
 /* editing doc name centered in the toolbar (#22) */
 .ed-doc-name { position: absolute; left: 50%; transform: translateX(-50%); max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
