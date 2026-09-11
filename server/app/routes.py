@@ -887,7 +887,8 @@ async def get_library(
     - **Bearer Token**: 필수
     """
     async with get_conn(request) as conn:
-        return await repo.list_library(conn, user_id)
+        rows = await repo.list_library(conn, user_id)
+    return [_with_resized_cover(request, row) for row in rows]
 
 
 @router.post(
@@ -3314,6 +3315,32 @@ def _asset_file_location(request: Request, asset_id: str, asset: dict) -> str:
         # no-store를 집행하고, 새 capability version이 기존 /file 캐시를 우회한다.
         return f"/v1/assets/{asset_id}/bytes?e={ASSET_CACHE_VERSION}"
     return _r2(request).public_url(asset["r2_key"])
+
+
+#: 보관함 카드 폭(.lib-grid 는 minmax(220px, 1fr))의 2배 — DPR2 화면 기준.
+LIBRARY_COVER_WIDTH = 440
+
+
+def _with_resized_cover(request: Request, row: dict) -> dict:
+    """보관함 커버를 CDN 리사이즈 URL 로 올린다. 못 올리면 원래 값 그대로.
+
+    카드는 220px 인데 커버 원본은 848×1264 다. 줄여서 주면 그리드 전송량이 크게 줄고,
+    `/assets/{id}/file` 302 를 건너뛰므로 커버마다 붙던 API(us-east-1) 왕복도 없어진다.
+
+    `_asset_is_real_derived` 로 먼저 거른다 — 변환본은 `purge_public_cache` 의 prefix
+    purge 가 닿지 않는 `/cdn-cgi/image/...` 경로에 캐시되므로, 지울 수 있어야 하는
+    자산에는 만들면 안 된다. 서빙 경로와 같은 분류기를 쓰는 게 핵심이다.
+    """
+    key = row.get("cover_r2_key")
+    if not key:
+        return row
+    asset = {"source": row.get("cover_source"), "metadata": row.get("cover_metadata")}
+    if _asset_is_real_derived(asset):
+        return row
+    thumb = _r2(request).public_thumb_url(key, LIBRARY_COVER_WIDTH)
+    if not thumb:
+        return row
+    return {**row, "cover": thumb}
 
 
 def _asset_cors_safe_headers(asset: dict) -> dict:

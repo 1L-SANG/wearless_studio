@@ -229,6 +229,24 @@ class R2Client:
             ExpiresIn=3600,
         )
 
+    def public_thumb_url(self, key: str, width: int, *,
+                         quality: int = 80, fit: str = "cover") -> str | None:
+        """Cloudflare 이미지 변환 URL. 공개 도메인이 없으면 None(= 호출자가 폴백).
+
+        공개 base 가 CF 존이라 같은 호스트의 `/cdn-cgi/image/{옵션}/{경로}` 로 원본을
+        리사이즈해 준다. `format=auto` 는 응답에 `Vary: Accept` 를 붙여 AVIF/WebP/JPEG
+        를 요청자별로 갈라 캐시하므로, 한 URL 로 내보내도 캐시가 섞이지 않는다.
+
+        주의: 변환본은 `{base}/cdn-cgi/image/...` 라는 **다른 경로**에 캐시된다.
+        `purge_public_cache` 의 prefix purge(`{base}/{key}`)가 덮지 못하는 자리라,
+        purge 로 지워야 하는 자산에는 이 URL 을 만들면 안 된다. 호출자가 서빙 경로와
+        같은 분류기로 먼저 걸러야 한다.
+        """
+        if not self._public_base:
+            return None
+        options = f"width={width},quality={quality},format=auto,fit={fit}"
+        return f"{self._public_base}/cdn-cgi/image/{options}/{key.lstrip('/')}"
+
     def purge_public_cache(self, keys: list[str]) -> None:
         """커스텀 도메인의 R2 경로를 Cloudflare cache에서 제거한다.
 
