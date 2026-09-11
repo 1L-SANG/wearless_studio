@@ -53,15 +53,15 @@ export function toggleRegisterCategory(allowed, category) {
 export function restoreRegisterScreen(enrollment) {
   const status = enrollment?.status;
   if (!status) return { step: '1', sub: 1 };
-  if (status === 'identity_pending') return { step: '1b', sub: 1 };
+  if (status === 'identity_pending') return { step: '1', sub: 1 };
   if (status === 'photos_pending' || status === 'liveness_pending') {
     const index = PHOTO_GROUPS.findIndex((group) => !photoProgress(enrollment.photos, group.id).complete);
     return { step: '2', sub: index < 0 ? 4 : index + 1 };
   }
-  if (status === 'license_pending') return { step: '3', sub: 5 };
-  if (status === 'vc_pending') return { step: '4b', sub: 5 };
-  if (['passed', 'review_pending'].includes(status)) return { step: 'done', sub: 5 };
-  if (['processing', 'asset_building'].includes(status)) return { step: 'processing', sub: 5 };
+  if (status === 'license_pending') return { step: '3', sub: 4 };
+  if (status === 'vc_pending') return { step: '4b', sub: 4 };
+  if (['passed', 'review_pending'].includes(status)) return { step: 'done', sub: 4 };
+  if (['processing', 'asset_building'].includes(status)) return { step: 'processing', sub: 4 };
   return { step: 'failed', sub: 1 };
 }
 export function readRegisterDraft(enrollmentId) {

@@ -163,10 +163,16 @@ test('법무 화면과 두 푸터는 공용 사업자 정보를 사용한다', (
   }
 });
 
-test('FaceMarket 모델 레이아웃은 얇은 법무 푸터를 함께 렌더한다', () => {
-  const layout = read('src/features/facemarket-shell/FacemarketModelLayout.jsx');
-  assert.match(layout, /FooterSection/);
-  assert.match(layout, /<FooterSection compact\s*\/>/);
+test('FaceMarket 모델 레이아웃은 랜딩과 같은 전체 푸터를 함께 렌더한다', async () => {
+  const { FacemarketModelLayout } = await load('src/features/facemarket-shell/FacemarketModelLayout.jsx');
+  const { FooterSection } = await load('src/features/facemarket-landing/sections/FooterSection.jsx');
+  const layout = FacemarketModelLayout();
+  const footer = layout.props.children.at(-1).props.children;
+  assert.equal(footer.type, FooterSection);
+  assert.equal(footer.props.compact, undefined);
+  const html = render(footer);
+  assert.ok(hrefs(html).includes('/license-agreement'));
+  assert.ok(hrefs(html).includes('/model-info'));
 });
 
 test('공용 결제 화면은 셀러·모델 경로 모두 대표 도메인의 약관과 환불 정책으로 연결한다', async () => {

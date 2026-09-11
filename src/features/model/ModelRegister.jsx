@@ -5,7 +5,7 @@ import { runIdentityWidget } from '@/lib/api/facemarketIdentityWidget.js';
 import { toUploadableImage } from '../../lib/imageTranscode.js';
 import { enrollmentReasonMessage } from './biometricEnrollment.js';
 import { CONSENT_VERSION, PHOTO_GROUPS, SLOTS, defaultRegisterTerms, photoProgress, photoSlotKey, readRegisterDraft, restoreRegisterScreen, saveRegisterDraft } from './registerSlots.js';
-import { heading, renderCertificate, renderConditions, renderConsent, renderIdentity, renderPhotos } from './RegisterScreens.jsx';
+import { heading, renderConditions, renderConsent, renderPhotos } from './RegisterScreens.jsx';
 import s from './ModelRegister.module.css';
 
 const FaceLivenessStep = lazy(() => import('./FaceLivenessStep.jsx'));
@@ -39,6 +39,9 @@ export function ModelRegister() {
   const [license, setLicense] = useState(null);
   const [session, setSession] = useState(null);
   const [previews, setPreviews] = useState({});
+  const [priceAgreed, setPriceAgreed] = useState(false);
+  const [withdrawalOpen, setWithdrawalOpen] = useState(false);
+  const [editingPhotos, setEditingPhotos] = useState(false);
   const mounted = useRef(true);
   const operation = useRef(null);
   const previewUrls = useRef({});
@@ -145,16 +148,16 @@ export function ModelRegister() {
 
   const runIdentity = async (record = enrollment) => {
     if (!record?.id || inFlight.current) return;
-    inFlight.current = true; setBusy(true); setError(''); setStep('1b');
+    inFlight.current = true; setBusy(true); setError('');
     const controller = new AbortController(); operation.current = controller;
     try {
       const token = await runIdentityWidget({ signal: controller.signal });
       if (!mounted.current || controller.signal.aborted) return;
       const verified = await createIdentity(record.id, { token });
       if (!mounted.current || controller.signal.aborted) return;
-      setEnrollment(verified); setStep('1c');
+      setEnrollment(verified); setSub(1); setStep('2');
     } catch (requestError) {
-      if (mounted.current && !controller.signal.aborted) { setError(requestError.message || '본인 확인에 실패했어요.'); setStep('1d'); }
+      if (mounted.current && !controller.signal.aborted) { setError(requestError.message || '본인 확인에 실패했어요.'); }
     } finally { inFlight.current = false; if (mounted.current) setBusy(false); }
   };
 
@@ -241,17 +244,27 @@ export function ModelRegister() {
 
   const nextPhoto = async () => {
     if (busy) return;
-    if (sub <= 3) { if (photoProgress(enrollment?.photos, PHOTO_GROUPS[sub - 1].id).complete) setSub(sub + 1); return; }
-    if (sub === 5) { await finishPhotos(); return; }
-    if (body || enrollment?.bodyType) {
-      setBusy(true); setError('');
-      try {
+    if (sub <= 3) {
+      if (photoProgress(enrollment?.photos, PHOTO_GROUPS[sub - 1].id).complete) {
+        setSub(editingPhotos ? 4 : sub + 1); setEditingPhotos(false);
+      }
+    } else await finishPhotos();
+  };
+
+  const submitConditions = async () => {
+    if (!priceAgreed || !terms.allowedUse.length || !enrollment?.id || inFlight.current) return;
+    inFlight.current = true; setBusy(true); setError('');
+    try {
+      if (body !== (enrollment.bodyType || null)) {
         const record = await submitPhysique({ enrollmentId: enrollment.id, bodyType: body });
         if (!mounted.current) return;
-        setEnrollment(record); setSub(5);
-      } catch (requestError) { if (mounted.current) setError(requestError.message || '체형 정보를 저장하지 못했어요.'); }
-      finally { if (mounted.current) setBusy(false); }
-    } else setSub(5);
+        setEnrollment(record);
+      }
+    } catch (requestError) {
+      if (mounted.current) setError(requestError.message || '체형 정보를 저장하지 못했어요.');
+      return;
+    } finally { inFlight.current = false; if (mounted.current) setBusy(false); }
+    if (mounted.current) await issueCertificate();
   };
 
   const issueCertificate = async () => {
@@ -292,7 +305,7 @@ export function ModelRegister() {
       if (enrollment?.id && ['rejected', 'failed', 'expired'].includes(enrollment.status)) await cancelEnrollment(enrollment.id);
       if (!mounted.current) return;
       Object.values(previewUrls.current).forEach((url) => URL.revokeObjectURL(url)); previewUrls.current = {}; setPreviews({});
-      setEnrollment(null); setLicense(null); setConsents([false, false, false]); setTerms(defaultRegisterTerms()); setBody(null); setSub(1); setStep('1');
+      setEnrollment(null); setLicense(null); setConsents([false, false, false]); setTerms(defaultRegisterTerms()); setPriceAgreed(false); setEditingPhotos(false); setWithdrawalOpen(false); setBody(null); setSub(1); setStep('1');
     } catch (requestError) { if (mounted.current) setError(requestError.message); }
     finally { if (mounted.current) setBusy(false); }
   };
@@ -305,29 +318,20 @@ export function ModelRegister() {
   const current = step === 'done' ? 4 : ['processing', 'poll_error', 'liveness'].includes(step) ? 2 : Number(step[0]) || 1;
   let content, next, previous;
   if (step === '1') {
-    content = renderConsent(consents, setConsents);
-    next = { label: '동의하고 신분증 인증하기', action: startEnrollment, disabled: !consents.every(Boolean), hint: consents.every(Boolean) ? '세 가지 동의를 모두 확인했어요' : '세 가지를 모두 켜야 다음으로 갈 수 있어요' };
-  } else if (['1b', '1c'].includes(step)) {
-    content = renderIdentity(step, enrollment, busy, () => runIdentity(), () => { setConsents([false, false, false]); setStep('1'); });
-    next = { label: '다음 · 사진 18장', action: () => { setStep('2'); setSub(1); }, disabled: step === '1b', hint: step === '1b' ? '인증이 끝나면 버튼이 켜져요' : '본인확인이 끝났어요' };
-  } else if (step === '1d') {
-    content = <>{heading('신분증을 확인하지 못했어요', '다시 인증하면 이 단계부터 이어서 해요.')}<div className={s.reasonCard}><span>인증 서버가 남긴 사유</span><p>{error}</p></div><h2 className={s.sectionTitle}>자주 생기는 이유예요</h2><ol className={s.numbered}><li><strong>지원서 이름이 신분증과 달라요</strong><p>활동명이나 영문 표기로 적었다면 신분증에 적힌 대로 고쳐 주세요.</p></li><li><strong>인증 창을 중간에 닫았어요</strong><p>신분증 앱이 열린 뒤 끝까지 두면 자동으로 돌아와요.</p></li><li><strong>본인 명의의 신분증이 아니에요</strong><p>가족 명의 신분증으로는 등록할 수 없어요.</p></li></ol></>;
-    next = { label: '다시 인증하기', action: () => enrollment?.status === 'identity_pending' ? runIdentity() : restart() };
-    previous = { label: '지원서 고치기', action: () => navigate('/model/apply') };
+    content = renderConsent(consents, setConsents, withdrawalOpen, setWithdrawalOpen);
+    const identityPending = enrollment?.status === 'identity_pending' && [enrollment.consentDocumentVersion, enrollment.termsConsentVersion, enrollment.overseasConsentVersion].every((version) => version === CONSENT_VERSION);
+    next = { label: busy ? '인증창에서 확인해 주세요' : error ? '다시 인증하기' : identityPending ? '신분증 인증하기' : '동의하고 신분증 인증하기', action: identityPending ? () => runIdentity() : startEnrollment, disabled: !consents.every(Boolean), hint: consents.every(Boolean) ? '세 가지 동의를 모두 확인했어요' : '세 가지를 모두 켜야 다음으로 갈 수 있어요' };
   } else if (step === '2') {
-    content = renderPhotos({ sub, enrollment, previews, busy, onFile: changePhoto, onRemove: removePhoto, body, setBody, setSub });
-    const complete = sub <= 3 ? photoProgress(enrollment?.photos, PHOTO_GROUPS[sub - 1].id).complete : sub === 4 || photoProgress(enrollment?.photos).complete;
-    next = { label: ['다음 · 상반신 5장', '다음 · 전신 5장', '다음 · 몸의 두께', '다음 · 확인', '다음 · 조건'][sub - 1], action: nextPhoto, disabled: !complete, hint: sub === 4 ? '고르지 않아도 다음으로 갈 수 있어요' : complete ? '다 채웠어요' : '사진을 다 채워야 다음으로 갈 수 있어요' };
-    previous = { label: '이전', action: () => { if (sub > 1) setSub(sub - 1); else setStep('1c'); } };
+    content = renderPhotos({ sub, enrollment, previews, busy, onFile: changePhoto, onRemove: removePhoto, editGroup: (groupSub) => { setSub(groupSub); setEditingPhotos(true); } });
+    const complete = sub <= 3 ? photoProgress(enrollment?.photos, PHOTO_GROUPS[sub - 1].id).complete : photoProgress(enrollment?.photos).complete;
+    next = { label: sub === 4 ? '확인 완료' : '이동', action: nextPhoto, disabled: !complete, hint: complete ? '다 채웠어요' : '사진을 다 채워야 다음으로 갈 수 있어요' };
+    previous = { label: '이전', action: () => { if (sub > 1) setSub(sub - 1); else setStep('1'); } };
   } else if (step === '3') {
-    content = renderConditions(terms, setTerms);
-    next = { label: '다음 · 증서', action: () => setStep('4'), disabled: !terms.allowedUse.length };
-  } else if (step === '4') {
-    content = renderCertificate(enrollment);
-    next = { label: '증서 발급하기', action: issueCertificate, hint: '발급하기를 누르면 초상 라이선스 계약에 서명한 것으로 기록돼요.' };
-    previous = { label: '이전', action: () => setStep('3') };
+    content = renderConditions({ terms, setTerms, body, setBody, busy, priceAgreed, setPriceAgreed });
+    next = { label: '라이선스 증서 발급하기', action: submitConditions, disabled: !terms.allowedUse.length || !priceAgreed, hint: '발급하기를 누르면 초상 라이선스 계약에 서명한 것으로 기록돼요.' };
+    previous = { label: '이전', action: () => { setStep('2'); setSub(4); setEditingPhotos(false); } };
   } else if (step === '4b') {
-    content = <>{heading('증서를 발급하고 있어요', '보통 30초에서 1분쯤 걸려요. 첫 요청은 조금 더 걸릴 수 있어요.')}<ol className={s.issueList}><li><span>✓</span>서명할 내용을 준비했어요</li><li><span className={s.spinner} />발급 서버에 기록하고 있어요</li><li><span className={s.dot} />증서 번호 받기</li></ol><p className={s.description}>이 화면을 닫지 말아 주세요. 끝나면 이 화면이 저절로 넘어가요.</p></>;
+    content = <>{heading('라이선스 증서를 발급하고 있어요', '발급에 3분 정도 걸려요. 발급되면 이메일로 알려드려요. 로그인 후 마이페이지에서도 확인할 수 있어요.')}<ol className={s.issueList}><li><span>✓</span>서명할 내용을 준비했어요</li><li><span className={s.spinner} />발급 서버에 기록하고 있어요</li><li><span className={s.dot} />증서 번호 받기</li></ol><p className={s.description}>이 화면을 닫아도 발급은 계속돼요.</p></>;
     next = { label: '발급 중이에요', disabled: true };
   } else if (step === '4c') {
     content = <>{heading('증서를 발급하지 못했어요', '사진과 조건은 그대로 저장돼 있어요. 다시 누르면 이 단계부터 이어서 해요.')}<div className={s.reasonCard}><span>발급 서버가 남긴 사유</span><p>{error || '발급을 마치지 못했어요. 다시 시도해 주세요.'}</p></div><dl className={s.recordTable}><div><dt>사진</dt><dd>사진 {enrollment?.photoCount ?? photoProgress(enrollment?.photos).count}장 저장됨</dd></div><div><dt>조건</dt><dd>{terms.allowedUse.join(', ')} 허용</dd></div><div><dt>남은 일</dt><dd>증서 발급만 남았어요</dd></div></dl><p className={s.certificateNote}>지금 닫아도 괜찮아요. 나중에 등록 화면으로 돌아오면 이 단계부터 다시 시작해요.</p></>;
@@ -335,7 +339,7 @@ export function ModelRegister() {
   } else if (step === 'done') {
     content = <section className={s.doneContent}><svg className={s.doneMark} viewBox="0 0 60 60" aria-hidden="true"><circle cx="30" cy="30" r="28.75" /><path d="m19 30 8 8 15-17" /></svg><h1 tabIndex={-1}>축하해요, 등록이 끝났어요</h1><div className={s.doneDescription}>{license ? <p>{(license.allowedUse || []).join(', ')}에 쓸 수 있고 철회하기 전까지 유효해요.</p> : <p>발급한 조건은 증서에서 확인할 수 있어요.</p>}<p>다음은 우리가 사진을 검수하고 테스트컷을 보내요. 도착하면 메일로 알려요.</p>{license?.vcId && <p className={s.doneCertificate}>증서 번호 {license.vcId}</p>}</div><Link to="/status" className={s.doneButton}>마이페이지로</Link><Link to="/model/license" className={s.textLink}>증서 보기</Link><button type="button" className={s.textLink} onClick={restart} disabled={busy}>새 생체 등록 시작</button></section>;
   } else if (step === 'liveness') {
-    content = <>{heading('라이브 인증을 진행해요', '화면의 안내에 따라 얼굴을 보여 주세요.')}<Suspense fallback={<p role="status">인증 화면을 준비하고 있어요.</p>}><FaceLivenessStep session={session} onAnalysisComplete={() => finishMatch()} onError={(requestError) => { setSession(null); setError(requestError?.message || '라이브 인증이 중단됐어요.'); setStep('2'); setSub(5); }} onCancel={() => { setSession(null); setStep('2'); setSub(5); }} /></Suspense></>;
+    content = <>{heading('라이브 인증을 진행해요', '화면의 안내에 따라 얼굴을 보여 주세요.')}<Suspense fallback={<p role="status">인증 화면을 준비하고 있어요.</p>}><FaceLivenessStep session={session} onAnalysisComplete={() => finishMatch()} onError={(requestError) => { setSession(null); setError(requestError?.message || '라이브 인증이 중단됐어요.'); setStep('2'); setSub(4); }} onCancel={() => { setSession(null); setStep('2'); setSub(4); }} /></Suspense></>;
   } else if (step === 'loading' || step === 'processing') {
     content = <>{heading(step === 'loading' ? '등록 상태를 불러오고 있어요' : '등록을 마무리하고 있어요')}<p className={s.description} role="status"><span className={s.spinner} /> 잠시만 기다려 주세요.</p></>;
   } else {
@@ -345,8 +349,8 @@ export function ModelRegister() {
 
   return <div className={s.page} data-registration data-step={step}>
     <div className={s.main}>
-      {step !== 'done' && <nav className={s.progress} aria-label="등록 진행 상황"><div className={s.progressMeta}><span>{current} / 4</span><span>{busy ? '저장 중이에요' : enrollment?.id ? '진행 상황이 저장돼요' : '모델 등록'}</span></div><ol className={s.steps}>{['본인확인', '사진', '조건', '증서'].map((label, index) => <li key={label} className={index < current ? s.reached : ''} aria-current={index === current - 1 ? 'step' : undefined}><i className={s.stepBar} /><span>{index < current - 1 ? '✓ ' : ''}{label}</span>{index === 1 && step === '2' && <span className={s.subDots} aria-label={`사진 하위 ${sub}단계, 전체 5단계`}>{[1, 2, 3, 4, 5].map((n) => <i key={n} className={n === sub ? s.activeDot : n < sub ? s.pastDot : ''} />)}</span>}</li>)}</ol></nav>}
-      {error && !['1d', '4c'].includes(step) && <p className={s.error} role="alert">{error}</p>}
+      {step !== 'done' && <nav className={s.progress} aria-label="등록 진행 상황"><div className={s.progressMeta}><span>{current} / 4</span><span>{busy ? '저장 중이에요' : enrollment?.id ? '진행 상황이 저장돼요' : '모델 등록'}</span></div><ol className={s.steps}>{['본인확인', '사진', '조건', '증서'].map((label, index) => <li key={label} className={index < current ? s.reached : ''} aria-current={index === current - 1 ? 'step' : undefined}><i className={s.stepBar} /><span>{index < current - 1 ? '✓ ' : ''}{label}</span></li>)}</ol></nav>}
+      {error && step !== '4c' && <p className={s.error} role="alert">{error}</p>}
       {content}
       <div id="oacxDiv" />
     </div>

@@ -31,7 +31,7 @@ export function FacemarketModelLayout() {
         <Outlet />
       </main>
       <div className="fm-theme-inset">
-        <FooterSection compact />
+        <FooterSection />
       </div>
     </div>
   );
