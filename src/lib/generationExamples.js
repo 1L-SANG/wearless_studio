@@ -19,18 +19,8 @@ export function combinationKey({ cutType, shot, clothingType, gender }) {
   return [cutType, shot, clothingType, normalizedGender(cutType, gender) ?? 'any'].join(':');
 }
 
-export function publicGenerationExampleCombinations() {
-  return PUBLIC_COMBINATIONS;
-}
-
 export function isGenerationCombinationPublic(condition) {
   return PUBLIC_KEYS.has(combinationKey(condition));
-}
-
-export function hasPublicGenerationExamplesForCut({ cutType, clothingType, gender, shots }) {
-  return (shots || []).some((shot) => isGenerationCombinationPublic({
-    cutType, shot, clothingType, gender,
-  }));
 }
 
 const compareText = (left, right) => (left < right ? -1 : left > right ? 1 : 0);

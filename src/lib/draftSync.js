@@ -118,10 +118,6 @@ async function runDraftSync(draft, { projectId: existing, onProjectReady, onPhot
 // 최신 revision을 다시 저장한다. 부분 실패 때 확보한 projectId도 보존해 재시도 create를 막는다.
 const draftSyncFlight = createDraftSyncSingleFlight(runDraftSync);
 
-export function syncDraftToBackend(draft, options) {
-  return draftSyncFlight.sync(draft, options);
-}
-
 // 로그인 사용자와 로그인 복귀 게스트가 같은 승격 경로를 공유한다. 기존 이름은 하위호환으로
 // 유지하고 새 호출부는 제품 결정의 용어(확정 시 승격)를 드러내는 이름을 쓴다.
 export function promoteDraftToProject(draft, options) {

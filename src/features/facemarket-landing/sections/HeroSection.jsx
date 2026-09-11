@@ -3,7 +3,7 @@
    (2) 제목 아래 CTA 재도입. 예전에 '문단+버튼을 끼우면 캐러셀이 밀려 메타 바가 잘린다'고
    내렸던 자리지만, 이번엔 문단 없이 버튼 하나이고 kicker 가 빠져 세로 예산이 상쇄된다 —
    부족분은 스테이지 1fr 의 하한+스크롤이 흡수한다(스크린샷 실측으로 확인).
-   리드문은 계속 IntroSection 이다.
+   리드문은 히어로 안에 있다(IntroSection 은 2026-09-03 내렸다).
 
    제목은 한글이라 Noto Serif KR(facemarket.html 로드)로 그린다 — .heroTitle 주석 참고. */
 import { Icon } from '@/components/ui.jsx';

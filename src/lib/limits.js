@@ -87,6 +87,3 @@ export const LIMITS = Object.freeze({
   matchClothingMax: 1, // 매칭 의류 선택 상한 (PRD §6.8)
   mannequinAdjustMax: undefined, // @deprecated P2: 횟수 제한 없음
 });
-
-/** @deprecated P2: 마네킹 조정 횟수 제한 폐기. */
-export const ADJUST_LIMIT = undefined;

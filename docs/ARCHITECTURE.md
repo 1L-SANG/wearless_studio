@@ -217,7 +217,7 @@ graph TB
   end
 
   subgraph Svc["서비스 (app/services, 23 파일)"]
-    SV["sam_client · sam_endpoint · sam_autoscale · sam_retry · sam_fallback<br/>matching · matching_cutout · matching_flatlay · retrieval · embeddings<br/>qc · input_qc · canonical_reference · editor_garment_mask<br/>c2pa_signer · biometric_purge · tone_math"]
+    SV["sam_client · sam_endpoint · sam_autoscale · sam_retry · sam_fallback<br/>matching · matching_cutout · matching_flatlay · retrieval · embeddings<br/>qc · input_qc · canonical_reference · editor_garment_mask<br/>c2pa_signer · biometric_purge"]
   end
 
   HTTP --> Core
