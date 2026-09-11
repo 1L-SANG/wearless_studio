@@ -543,6 +543,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from .facemarket_admin import router as admin_console_router
 
         app.include_router(admin_console_router)
+        # 관리자 기기 게이트의 등록·승인 라우트. 콘솔 라우터와 같은 플래그 아래 산다.
+        from .facemarket_admin_devices import router as admin_devices_router
+
+        app.include_router(admin_devices_router)
         # 테스트컷 업로드·전송은 콘솔의 모델 상세에서 쓰는 하위 리소스다. 콘솔 라우터
         # 뒤에 붙여 /admin/models 목록·상세는 콘솔이, /test-cuts 는 이 모듈이 맡는다.
         app.include_router(admin_models_router)
