@@ -43,7 +43,7 @@ export function photoProgress(photos = [], group) {
   return { count, total: slots.length, complete: count === slots.length };
 }
 export function defaultRegisterTerms() {
-  return { allowedUse: [...BRAND_USE_CATEGORIES], validDays: null };
+  return { allowedUse: [...BRAND_USE_CATEGORIES] };
 }
 export function toggleRegisterCategory(allowed, category) {
   if (!BRAND_USE_CATEGORIES.includes(category)) return allowed;
@@ -69,10 +69,10 @@ export function readRegisterDraft(enrollmentId) {
     const draft = JSON.parse(sessionStorage.getItem(`fm.registration.${enrollmentId}`));
     if (!draft || !Array.isArray(draft.allowedUse)) return defaultRegisterTerms();
     const allowedUse = BRAND_USE_CATEGORIES.filter((value) => draft.allowedUse.includes(value));
-    return { allowedUse: allowedUse.length ? allowedUse : [...BRAND_USE_CATEGORIES], validDays: [365, 730, null].includes(draft.validDays) ? draft.validDays : null };
+    return { allowedUse: allowedUse.length ? allowedUse : [...BRAND_USE_CATEGORIES] };
   } catch { return defaultRegisterTerms(); }
 }
 export function saveRegisterDraft(enrollmentId, terms) {
   if (!enrollmentId) return;
-  try { sessionStorage.setItem(`fm.registration.${enrollmentId}`, JSON.stringify({ allowedUse: terms.allowedUse, validDays: terms.validDays })); } catch { /* 저장소가 막혀도 현재 화면은 유지해요. */ }
+  try { sessionStorage.setItem(`fm.registration.${enrollmentId}`, JSON.stringify({ allowedUse: terms.allowedUse })); } catch { /* 저장소가 막혀도 현재 화면은 유지해요. */ }
 }

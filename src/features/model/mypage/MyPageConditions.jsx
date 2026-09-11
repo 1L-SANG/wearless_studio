@@ -8,16 +8,10 @@ import { MyPageDialog } from './MyPageDialog.jsx';
 import { toggleAllowedCategory } from './conditionState.js';
 import s from './MyPage.module.css';
 
-export function licenseValidity(license) {
-  if (!license) return '확인 중이에요';
-  return license.licenseValidUntil ? `${seoulDate(license.licenseValidUntil)}까지` : '영구(철회하기 전까지)';
-}
-
 export function MyPageConditions({ license, model, revoked = false, compact = false, onLicenseChange }) {
   const [dialog, setDialog] = useState(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
-  const [validDays, setValidDays] = useState(license?.licenseValidUntil ? '365' : 'forever');
   const saving = useRef(false);
   const allowed = license?.allowedUse || [];
   const disabled = revoked || !license || license.status !== 'active' || busy;
@@ -30,7 +24,6 @@ export function MyPageConditions({ license, model, revoked = false, compact = fa
       const updated = await updateLicenseTerms(license.id, patch);
       onLicenseChange(updated);
       setMessage('사용 조건을 저장했어요.');
-      if ('validDays' in patch) setDialog(null);
     } catch (error) { setMessage(error.message || '저장하지 못했어요. 다시 시도해 주세요.'); }
     finally { saving.current = false; setBusy(false); }
   };
@@ -56,7 +49,7 @@ export function MyPageConditions({ license, model, revoked = false, compact = fa
   return <>
     {compact ? links : <section id="conditions" className={s.dashboardSection} aria-labelledby="conditions-title">
       <h2 id="conditions-title">사용 조건</h2>{switches}
-      <p className={s.conditionsExpiry}>유효기간 {licenseValidity(license)} · 증서 {license?.vcId || '발급 준비 중이에요'}</p>
+      <p className={s.conditionsExpiry}>증서 {license?.vcId || '발급 준비 중이에요'} · 철회하기 전까지 유효해요</p>
       {links}
     </section>}
     {message && !dialog && <p className={s.muted} role="status">{message}</p>}
@@ -65,21 +58,13 @@ export function MyPageConditions({ license, model, revoked = false, compact = fa
       {dialog === 'conditions' && <>
         {(!license || license.status !== 'active') && <p>증서 발급을 마치면 여기서 조건을 바꿀 수 있어요.</p>}
         {switches}
-        <form onSubmit={event => { event.preventDefault(); void save({ validDays: validDays === 'forever' ? null : Number(validDays) }); }}>
-          <label className={s.validityField} htmlFor="license-validity">유효기간
-            <select id="license-validity" value={validDays} onChange={event => setValidDays(event.target.value)} disabled={disabled}>
-              <option value="365">오늘부터 1년</option><option value="730">오늘부터 2년</option><option value="forever">영구</option>
-            </select>
-          </label>
-          <p className={s.muted}>이용 가격은 플랫폼 표준가예요. {pricingLine()}이에요. 이 금액의 70%가 내 몫이에요.</p>
-          <p className={s.muted}>조건 변경은 별도 기록으로 남고 증서는 다시 발급하지 않아요.</p>
-          <button className={s.primary} type="submit" disabled={disabled}>유효기간 저장하기</button>
-        </form>
+        <p className={s.muted}>이용 가격은 플랫폼 표준가예요. {pricingLine()}이에요. 이 금액의 70%가 내 몫이에요.</p>
+        <p className={s.muted}>조건 변경은 별도 기록으로 남고 증서는 다시 발급하지 않아요.</p>
       </>}
       {dialog === 'certificate' && <>
         <dl className={s.recordTable}><div><dt>증서 번호</dt><dd>{license?.vcId || '발급 준비 중이에요'}</dd></div>
           {license?.createdAt && <div><dt>발급일</dt><dd>{seoulDate(license.createdAt)}</dd></div>}
-          <div><dt>유효기간</dt><dd>{licenseValidity(license)}</dd></div>
+          <div><dt>유효</dt><dd>철회하기 전까지</dd></div>
         </dl>
         {license?.id && <Link className={s.textLink} to={`/verify/${encodeURIComponent(license.id)}`}>증서 확인 주소 열기</Link>}
       </>}

@@ -22,7 +22,7 @@ export function currentModelLicense(licenses = [], model) {
 
 export function resolveHubJourney({
   authenticated = true, ownedModel = null, enrollment = null, application = null,
-  applicationRequired = true, hasLicense = false, license = null, now = new Date(),
+  applicationRequired = true, hasLicense = false, license = null,
 } = {}) {
   const timestamps = [
     application?.createdAt,
@@ -46,11 +46,8 @@ export function resolveHubJourney({
   const sameModelLicense = !license?.modelId || license.modelId === ownedModel?.id;
   if (sameModelLicense && ['verified', 'suspended'].includes(ownedModel?.status)
     && ['active', 'revoked', 'suspended'].includes(license?.status)) {
-    const expiry = license.licenseValidUntil && Date.parse(license.licenseValidUntil);
-    const expiring = Number.isFinite(expiry) && expiry <= new Date(now).getTime() + 30 * 86400000;
     const flag = license.status === 'revoked' ? 'revoked'
-      : ownedModel.status === 'suspended' || license.status === 'suspended' ? 'paused'
-      : expiring ? 'expiring' : 'none';
+      : ownedModel.status === 'suspended' || license.status === 'suspended' ? 'paused' : 'none';
     return make('active', 5, 'done', { flag });
   }
   if (ownedModel?.status === 'awaiting_confirm' || enrollment?.status === 'confirm_pending') {

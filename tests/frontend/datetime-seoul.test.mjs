@@ -86,7 +86,6 @@ test('날짜를 그리는 화면은 전부 이 모듈을 쓴다', () => {
     'src/features/credits/CreditsHistory.jsx',
     'src/features/model/mypage/MyPageConditions.jsx',
     'src/features/model/mypage/MyPageTimeline.jsx',
-    'src/features/model/ModelRegister.jsx',
     'src/features/model/ModelLicense.jsx',
     'src/lib/draftSlot.js',
   ];

@@ -84,8 +84,6 @@
 .reasons label { display: flex; gap: var(--sp-8); align-items: center; min-height: 44px; font-size: 14px; }
 .reasons input { accent-color: var(--fg-1); }
 .reasons textarea { min-height: 100px; width: 100%; box-sizing: border-box; padding: var(--sp-12); border: 1px solid var(--ring-strong); border-radius: var(--r-4); resize: vertical; color: var(--fg-1); background: var(--bg-1); font: inherit; }
-.validityField { display: grid; gap: var(--sp-8); margin: var(--sp-20) 0; }
-.validityField select { font: inherit; padding: var(--sp-12); border: 1px solid var(--ring-strong); border-radius: var(--r-4); color: var(--fg-1); background: var(--bg-1); }
 .error { color: var(--accent-error); }
 .illus { line-height: 0; }
 .illus svg { display: block; width: 100%; height: auto; }

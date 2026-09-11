@@ -24,7 +24,7 @@ const cases = [
   ['활동', { ownedModel: model, license: active }, 'active', undefined, undefined, 'none'],
   ['철회', { ownedModel: model, license: { ...active, status: 'revoked' } }, 'active', undefined, undefined, 'revoked'],
   ['본인 중단', { ownedModel: { ...model, status: 'suspended', suspensionSource: 'owner' }, license: active }, 'active', undefined, undefined, 'paused'],
-  ['만료 임박', { ownedModel: model, license: { ...active, licenseValidUntil: '2026-10-01T00:00:00Z' } }, 'active', undefined, undefined, 'expiring'],
+  ['옛 만료일이 임박한 활동', { ownedModel: model, license: { ...active, licenseValidUntil: '2026-10-01T00:00:00Z' } }, 'active', undefined, undefined, 'none'],
   ['영구', { ownedModel: model, license: { ...active, licenseValidUntil: null } }, 'active', undefined, undefined, 'none'],
   ['라이선스 누락', { ownedModel: model }, 'onboarding', 2, undefined, 'none'],
   ['발급 대기', { ownedModel: model, license: { ...active, status: 'pending' }, enrollment: { id: 'e1', status: 'vc_pending' } }, 'onboarding', 2, undefined, 'none'],
@@ -69,5 +69,4 @@ test('표준 요금과 모델 몫을 같은 기준으로 계산해요', () => {
   assert.equal(terms.MONTHLY_PASS_PRICE_KRW * terms.MODEL_SHARE, 34930);
   assert.equal(terms.MONTHLY_PASS_CUTS, 10);
   assert.equal(terms.MONTHLY_OVERAGE_KRW * terms.MODEL_SHARE, 5530);
-  assert.deepEqual(terms.VALIDITY_OPTIONS, [365, 730, null]);
 });

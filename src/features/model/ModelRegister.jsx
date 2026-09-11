@@ -3,7 +3,6 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { cancelEnrollment, completeEnrollment, createEnrollment, createIdentity, createLicense, createLivenessSession, deleteEnrollmentPhoto, fetchEnrollmentPhotoUrl, getFacemarketConfig, getCurrentEnrollment, getEnrollment, listLicenses, listMyModels, submitPhysique, uploadEnrollmentPhoto } from '@/lib/api/facemarket.js';
 import { runIdentityWidget } from '@/lib/api/facemarketIdentityWidget.js';
 import { toUploadableImage } from '../../lib/imageTranscode.js';
-import { seoulDate } from '@/lib/datetime.js';
 import { enrollmentReasonMessage } from './biometricEnrollment.js';
 import { CONSENT_VERSION, PHOTO_GROUPS, SLOTS, defaultRegisterTerms, photoProgress, photoSlotKey, readRegisterDraft, restoreRegisterScreen, saveRegisterDraft } from './registerSlots.js';
 import { heading, renderCertificate, renderConditions, renderConsent, renderIdentity, renderPhotos } from './RegisterScreens.jsx';
@@ -52,7 +51,7 @@ export function ModelRegister() {
     const needsConsent = record?.id && !['passed', 'review_pending'].includes(record.status) && !consentCurrent;
     setStep(needsConsent ? '1' : screen.step); setSub(screen.sub);
     setBody(record?.bodyType || null);
-    setTerms(record?.licenseTerms ? { allowedUse: record.licenseTerms.allowedUse, validDays: record.licenseTerms.validDays } : readRegisterDraft(record?.id));
+    setTerms(record?.licenseTerms ? { allowedUse: record.licenseTerms.allowedUse } : readRegisterDraft(record?.id));
     setConsents([consentCurrent, consentCurrent, consentCurrent]);
   }, []);
 
@@ -71,14 +70,14 @@ export function ModelRegister() {
         showRecord(record);
         const currentLicense = licenses.find((item) => item.id === record.licenseId || (item.modelId === record.modelId && item.status === 'active'));
         if (['passed', 'review_pending'].includes(record.status) && currentLicense) {
-          setLicense(currentLicense); setTerms({ allowedUse: currentLicense.allowedUse, validDays: currentLicense.validDays });
+          setLicense(currentLicense); setTerms({ allowedUse: currentLicense.allowedUse });
         }
       } catch (requestError) {
         if (requestError?.status !== 404) throw requestError;
         const currentLicense = licenses.find((item) => item.status === 'active' && models.some((model) => model.id === item.modelId));
         if (currentLicense) {
           setEnrollment({ modelId: currentLicense.modelId }); setLicense(currentLicense);
-          setTerms({ allowedUse: currentLicense.allowedUse, validDays: currentLicense.validDays }); setStep('done');
+          setTerms({ allowedUse: currentLicense.allowedUse }); setStep('done');
         } else { setEnrollment(null); setConsents([false, false, false]); setStep('1'); }
       }
     } catch (requestError) {
@@ -264,7 +263,7 @@ export function ModelRegister() {
     try {
       while (!controller.signal.aborted) {
         try {
-          const issued = await createLicense({ enrollmentId: enrollment.id, ...terms }, { signal: controller.signal });
+          const issued = await createLicense({ enrollmentId: enrollment.id, allowedUse: terms.allowedUse }, { signal: controller.signal });
           if (!mounted.current || controller.signal.aborted) return;
           setLicense(issued); setStep('done'); return;
         } catch (requestError) {
@@ -331,10 +330,10 @@ export function ModelRegister() {
     content = <>{heading('증서를 발급하고 있어요', '보통 30초에서 1분쯤 걸려요. 첫 요청은 조금 더 걸릴 수 있어요.')}<ol className={s.issueList}><li><span>✓</span>서명할 내용을 준비했어요</li><li><span className={s.spinner} />발급 서버에 기록하고 있어요</li><li><span className={s.dot} />증서 번호 받기</li></ol><p className={s.description}>이 화면을 닫지 말아 주세요. 끝나면 이 화면이 저절로 넘어가요.</p></>;
     next = { label: '발급 중이에요', disabled: true };
   } else if (step === '4c') {
-    content = <>{heading('증서를 발급하지 못했어요', '사진과 조건은 그대로 저장돼 있어요. 다시 누르면 이 단계부터 이어서 해요.')}<div className={s.reasonCard}><span>발급 서버가 남긴 사유</span><p>{error || '발급을 마치지 못했어요. 다시 시도해 주세요.'}</p></div><dl className={s.recordTable}><div><dt>사진</dt><dd>사진 {enrollment?.photoCount ?? photoProgress(enrollment?.photos).count}장 저장됨</dd></div><div><dt>조건</dt><dd>{terms.allowedUse.join(', ')} 허용, {terms.validDays == null ? '영구' : terms.validDays === 365 ? '1년' : '2년'}</dd></div><div><dt>남은 일</dt><dd>증서 발급만 남았어요</dd></div></dl><p className={s.certificateNote}>지금 닫아도 괜찮아요. 나중에 등록 화면으로 돌아오면 이 단계부터 다시 시작해요.</p></>;
+    content = <>{heading('증서를 발급하지 못했어요', '사진과 조건은 그대로 저장돼 있어요. 다시 누르면 이 단계부터 이어서 해요.')}<div className={s.reasonCard}><span>발급 서버가 남긴 사유</span><p>{error || '발급을 마치지 못했어요. 다시 시도해 주세요.'}</p></div><dl className={s.recordTable}><div><dt>사진</dt><dd>사진 {enrollment?.photoCount ?? photoProgress(enrollment?.photos).count}장 저장됨</dd></div><div><dt>조건</dt><dd>{terms.allowedUse.join(', ')} 허용</dd></div><div><dt>남은 일</dt><dd>증서 발급만 남았어요</dd></div></dl><p className={s.certificateNote}>지금 닫아도 괜찮아요. 나중에 등록 화면으로 돌아오면 이 단계부터 다시 시작해요.</p></>;
     next = { label: '다시 발급하기', action: issueCertificate }; previous = { label: '나중에 하기', action: () => navigate('/status') };
   } else if (step === 'done') {
-    content = <section className={s.doneContent}><svg className={s.doneMark} viewBox="0 0 60 60" aria-hidden="true"><circle cx="30" cy="30" r="28.75" /><path d="m19 30 8 8 15-17" /></svg><h1 tabIndex={-1}>축하해요, 등록이 끝났어요</h1><div className={s.doneDescription}>{license ? <p>{(license.allowedUse || []).join(', ')}에 쓸 수 있고 {license.licenseValidUntil == null ? '철회하기 전까지 유효해요.' : `${seoulDate(license.licenseValidUntil)}까지 유효해요.`}</p> : <p>발급한 조건은 증서에서 확인할 수 있어요.</p>}<p>다음은 우리가 사진을 검수하고 테스트컷을 보내요. 도착하면 메일로 알려요.</p>{license?.vcId && <p className={s.doneCertificate}>증서 번호 {license.vcId}</p>}</div><Link to="/status" className={s.doneButton}>마이페이지로</Link><Link to="/model/license" className={s.textLink}>증서 보기</Link><button type="button" className={s.textLink} onClick={restart} disabled={busy}>새 생체 등록 시작</button></section>;
+    content = <section className={s.doneContent}><svg className={s.doneMark} viewBox="0 0 60 60" aria-hidden="true"><circle cx="30" cy="30" r="28.75" /><path d="m19 30 8 8 15-17" /></svg><h1 tabIndex={-1}>축하해요, 등록이 끝났어요</h1><div className={s.doneDescription}>{license ? <p>{(license.allowedUse || []).join(', ')}에 쓸 수 있고 철회하기 전까지 유효해요.</p> : <p>발급한 조건은 증서에서 확인할 수 있어요.</p>}<p>다음은 우리가 사진을 검수하고 테스트컷을 보내요. 도착하면 메일로 알려요.</p>{license?.vcId && <p className={s.doneCertificate}>증서 번호 {license.vcId}</p>}</div><Link to="/status" className={s.doneButton}>마이페이지로</Link><Link to="/model/license" className={s.textLink}>증서 보기</Link><button type="button" className={s.textLink} onClick={restart} disabled={busy}>새 생체 등록 시작</button></section>;
   } else if (step === 'liveness') {
     content = <>{heading('라이브 인증을 진행해요', '화면의 안내에 따라 얼굴을 보여 주세요.')}<Suspense fallback={<p role="status">인증 화면을 준비하고 있어요.</p>}><FaceLivenessStep session={session} onAnalysisComplete={() => finishMatch()} onError={(requestError) => { setSession(null); setError(requestError?.message || '라이브 인증이 중단됐어요.'); setStep('2'); setSub(5); }} onCancel={() => { setSession(null); setStep('2'); setSub(5); }} /></Suspense></>;
   } else if (step === 'loading' || step === 'processing') {

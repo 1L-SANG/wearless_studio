@@ -358,11 +358,11 @@ export function cancelEnrollment(enrollmentId) {
 }
 
 export function createLicense({
-  enrollmentId, allowedUse = [], forbiddenUse = [], validDays = null,
+  enrollmentId, allowedUse = [], forbiddenUse = [],
 }, { signal } = {}) {
   return http('/v1/facemarket/licenses', {
     method: 'POST',
-    body: { enrollmentId, allowedUse, forbiddenUse, validDays }, signal,
+    body: { enrollmentId, allowedUse, forbiddenUse }, signal,
   });
 }
 

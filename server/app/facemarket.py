@@ -728,7 +728,8 @@ class CreateLicenseRequest(CamelModel):
     allowed_use: list[str] = Field(default_factory=list)
     forbidden_use: list[str] = Field(default_factory=list)
     unit_price: int = Field(default=10000, ge=0, le=100_000_000)
-    valid_days: int | None = Field(default=365, ge=1, le=3650)
+    # 옛 클라이언트 호환용으로 검증 계약은 유지하지만, 생성 시 값은 무시한다.
+    valid_days: int | None = Field(default=None, ge=1, le=3650)
 
 
 class UpdateLicenseTermsRequest(CamelModel):
@@ -1162,10 +1163,7 @@ async def create_license(
         enrollment_id = str(uuid.UUID(str(body.enrollment_id)))
     except (TypeError, ValueError):
         raise _err("invalid_enrollment_id", "등록 ID 형식이 올바르지 않습니다.", status=400)
-    valid_until = (
-        None if body.valid_days is None
-        else datetime.now(timezone.utc) + timedelta(days=body.valid_days)
-    )
+    valid_until = None
     allowed = _clean_uses(body.allowed_use, BRAND_USE_CATEGORIES)
     unit_price = request.app.state.settings.fm_standard_unit_price
 
@@ -1186,7 +1184,6 @@ async def create_license(
             license_id = existing["id"]
             allowed = list(existing["allowed_use"] or [])
             unit_price = int(existing["unit_price"])
-            valid_until = existing["license_valid_until"]
             digest = existing["face_image_digest"]
         else:
             gate_uri = f"/v1/facemarket/licenses/{license_id}/face"
@@ -1215,19 +1212,20 @@ async def create_license(
                     return row
                 allowed = list(row["allowed_use"] or [])
                 unit_price = int(row["unit_price"])
-                valid_until = row["license_valid_until"]
                 digest = row["face_image_digest"]
 
         allowed = _clean_uses(allowed, BRAND_USE_CATEGORIES)
         async with conn.cursor() as cur:
             await cur.execute(
-                "update fm_licenses set unit_price = %s "
-                "where id = %s and status = 'pending' returning unit_price",
+                "update fm_licenses set unit_price = %s, license_valid_until = null "
+                "where id = %s and status = 'pending' "
+                "returning unit_price, license_valid_until",
                 (request.app.state.settings.fm_standard_unit_price, license_id),
             )
             standardized = await cur.fetchone()
             if standardized is not None:
                 unit_price = int(standardized["unit_price"])
+                valid_until = standardized["license_valid_until"]
             await cur.execute(
                 "update fm_biometric_enrollments set status = 'vc_pending' "
                 "where id = %s and status in ('license_pending', 'vc_pending') returning id",

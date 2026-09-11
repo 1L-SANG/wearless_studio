@@ -5,7 +5,7 @@ import { MyPageDialog } from './MyPageDialog.jsx';
 import { MyPageIllustration } from './MyPageIllustration.jsx';
 import { MyPageTimeline, timelineTime } from './MyPageTimeline.jsx';
 import { MyPageEarnings } from './MyPageEarnings.jsx';
-import { MyPageConditions, licenseValidity } from './MyPageConditions.jsx';
+import { MyPageConditions } from './MyPageConditions.jsx';
 import s from './MyPage.module.css';
 
 export function ActiveDashboard({ journey, model, license, licenses, onModelChange, onLicenseChange, onSignOut }) {
@@ -43,13 +43,12 @@ export function ActiveDashboard({ journey, model, license, licenses, onModelChan
     <div className={s.identity}>
       {model.coverImageUrl ? <img className={s.avatar} src={model.coverImageUrl} alt="내 대표 이미지" /> : <span className={s.avatar} aria-hidden="true" />}
       <h1 className={s.profileName}>{model.displayName || '내 모델'}</h1>
-      <span className={`${s.badge} ${flag === 'none' || flag === 'expiring' ? s.activeBadge : ''}`}>{revoked ? '철회됨' : paused ? '잠시 멈춤' : '활동 중'}</span>
+      <span className={`${s.badge} ${flag === 'none' ? s.activeBadge : ''}`}>{revoked ? '철회됨' : paused ? '잠시 멈춤' : '활동 중'}</span>
     </div>
     {revoked && <div className={s.exception}><p>라이선스를 해지했어요. 새로 사용하는 요청은 받지 않아요. 이전 사용 기록과 증서는 계속 볼 수 있어요.</p></div>}
     {paused && <div className={s.exception}><p>{canResume ? '새 요청이 들어오지 않아요. 언제든 다시 켤 수 있어요.' : '운영팀이 활동을 멈췄어요. 다시 켜려면 운영팀의 확인이 필요해요.'}</p>
       {canResume && <button className={s.textLink} type="button" disabled={busy} onClick={changeActivity}>다시 켜기</button>}
     </div>}
-    {flag === 'expiring' && <div className={s.exception}><p>유효기간은 {licenseValidity(license)}예요. 기간이 끝나면 새 컷을 만들 수 없어요.</p><a href="#conditions" className={s.textLink}>연장하기</a></div>}
     <MyPageEarnings modelId={model.id} licenses={licenses} revoked={revoked} />
     <MyPageConditions license={license} model={model} revoked={revoked} onLicenseChange={onLicenseChange} />
     <section className={s.dashboardSection} aria-label="계정"><div className={s.accountList}>

@@ -18,12 +18,25 @@ test('구형 사진 각도는 해당 슬롯 한 칸으로만 복원해요', () =
   assert.equal(progress.complete, false);
 });
 
-test('마지막 사용 카테고리는 끌 수 없고 기본 유효기간은 영구예요', () => {
+test('마지막 사용 카테고리는 끌 수 없고 등록 조건에는 허용 품목만 있어요', () => {
   assert.equal(typeof module.toggleRegisterCategory, 'function');
   assert.deepEqual(module.toggleRegisterCategory(['액티브웨어'], '액티브웨어'), ['액티브웨어']);
   assert.deepEqual(module.toggleRegisterCategory(['액티브웨어'], '없는 값'), ['액티브웨어']);
-  assert.equal(module.defaultRegisterTerms().validDays, null);
-  assert.equal(module.defaultRegisterTerms().allowedUse.length, 3);
+  assert.deepEqual(module.defaultRegisterTerms(), { allowedUse: ['일반 의류', '액티브웨어', '홈웨어·잠옷'] });
+  const previous = globalThis.sessionStorage;
+  let saved;
+  globalThis.sessionStorage = {
+    getItem: () => JSON.stringify({ allowedUse: ['액티브웨어'], validDays: 365 }),
+    setItem: (_key, value) => { saved = JSON.parse(value); },
+  };
+  try {
+    assert.deepEqual(module.readRegisterDraft('enrollment-1'), { allowedUse: ['액티브웨어'] });
+    module.saveRegisterDraft('enrollment-1', { allowedUse: ['홈웨어·잠옷'], validDays: 730 });
+    assert.deepEqual(saved, { allowedUse: ['홈웨어·잠옷'] });
+  } finally {
+    if (previous === undefined) delete globalThis.sessionStorage;
+    else globalThis.sessionStorage = previous;
+  }
 });
 
 test('복원은 동의와 사진, 발급 대기와 완료 상태를 구분해요', () => {
@@ -92,7 +105,7 @@ test('발급 실패 뒤 조건이 남고 재시도로 완료돼요', async () =>
     assert.equal(harness.runtime.states[0], '4c');
     await button(harness.render(), '다시 발급하기').props.onClick();
     assert.equal(harness.runtime.states[0], 'done');
-    assert.equal(requests.length, 2); assert.equal(requests[0].validDays, null); assert.equal(requests[0].unitPrice, undefined);
+    assert.equal(requests.length, 2); assert.deepEqual(requests[0], { enrollmentId: 'enrollment-1', allowedUse: ['일반 의류', '액티브웨어', '홈웨어·잠옷'] });
   } finally { await harness.close(); }
 });
 
@@ -176,14 +189,15 @@ for (const condition of ['일반 의류', '액티브웨어', '홈웨어·잠옷'
   });
 }
 
-test('기간을 바꿨다가 영구로 되돌리면 null로 저장해요', async () => {
+test('조건 화면에는 유효기간 선택 없이 허용 품목만 남아요', async () => {
   const harness = await modelComponentHarness({ initialStates: ['3', photoRecord(), 5], api: {} });
   try {
-    button(harness.render(), '1년').props.onClick(); assert.equal(harness.runtime.states[6].validDays, 365);
-    button(harness.render(), '영구').props.onClick(); assert.equal(harness.runtime.states[6].validDays, null);
+    assert.equal(button(harness.render(), '1년'), null);
+    assert.equal(button(harness.render(), '2년'), null);
+    assert.equal(button(harness.render(), '영구'), null);
     await button(harness.render(), '다음 · 증서').props.onClick(); assert.equal(harness.runtime.states[0], '4');
     button(harness.render(), '이전').props.onClick(); assert.equal(harness.runtime.states[0], '3');
-    assert.equal(harness.runtime.states[6].validDays, null);
+    assert.deepEqual(harness.runtime.states[6], { allowedUse: ['일반 의류', '액티브웨어', '홈웨어·잠옷'] });
   } finally { await harness.close(); }
 });
 
@@ -246,7 +260,7 @@ test('서버 설정을 못 읽으면 완료 요청을 보내지 않고 다시 �
   } finally { await harness.close(); }
 });
 
-test('라이선스 목록의 조건 폼도 표준가와 영구 기본값으로 발급해요', async () => {
+test('라이선스 목록의 조건 폼도 기간 선택 없이 발급해요', async () => {
   const calls = [];
   const harness = await modelComponentHarness({ entry: '/src/features/model/ModelLicense.jsx', exportName: 'ModelLicense', initialStates: ['ready','flow',{id:'enrollment-1',status:'license_pending'},[],null], api: { createLicense: async (body) => { calls.push(body); return {id:'license-1'}; } } });
   try {
@@ -256,8 +270,9 @@ test('라이선스 목록의 조건 폼도 표준가와 영구 기본값으로 �
     for (const label of ['일반 의류','홈웨어·잠옷']) findTree(render(),n=>n.type==='Toggle'&&n.props.label===label).props.onChange(false);
     const tree=render();
     assert.equal(findTree(tree,n=>n.type==='Field'&&n.props.type==='number'),null);
+    assert.equal(findTree(tree,n=>n.type==='Chips'),null);
     await findTree(tree,n=>n.type==='Button'&&n.props.children==='라이선스 발급').props.onClick();
-    assert.deepEqual(calls,[{enrollmentId:'enrollment-1',allowedUse:['액티브웨어'],validDays:null}]);
+    assert.deepEqual(calls,[{enrollmentId:'enrollment-1',allowedUse:['액티브웨어']}]);
   } finally { await harness.close(); }
 });
 
@@ -314,7 +329,7 @@ test('발급 중 새로고침하면 저장한 조건으로 발급을 이어가�
   try {
     commit(harness);await flush();assert.equal(harness.runtime.states[0],'4b');
     commit(harness);await flush();assert.equal(harness.runtime.states[0],'done');
-    assert.deepEqual(calls,[{enrollmentId:'enrollment-1',allowedUse:['액티브웨어'],validDays:730}]);
+    assert.deepEqual(calls,[{enrollmentId:'enrollment-1',allowedUse:['액티브웨어']}]);
   } finally {await harness.close();}
 });
 

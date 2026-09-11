@@ -625,7 +625,12 @@ class FakeCursor:
             row = next((r for r in licenses if r["id"] == license_id), None)
             if row and row["status"] == "pending":
                 row["unit_price"] = unit_price
-                self._result = {"unit_price": unit_price}
+                if "license_valid_until = null" in s:
+                    row["license_valid_until"] = None
+                self._result = {
+                    "unit_price": unit_price,
+                    "license_valid_until": row["license_valid_until"],
+                }
                 self.rowcount = 1
         elif s.startswith("update fm_licenses set status = 'active'"):
             vc_id, license_id = params[:2]
@@ -1165,13 +1170,25 @@ def test_license_activates_after_vc_but_model_stays_pending_until_cut_confirmati
     assert all(c["secret"] == "shared-secret" for c in holder_stub.calls)
 
 
-def test_create_license_forces_standard_price_and_accepts_permanent_term(
-    biometric_fm, make_token, holder_stub
+@pytest.mark.parametrize(
+    ("term_case", "valid_days"),
+    [
+        ("omitted", None),
+        ("null", None),
+        ("one-year", 365),
+        ("two-years", 730),
+    ],
+)
+def test_create_license_forces_standard_price_and_permanent_term(
+    biometric_fm, make_token, holder_stub, term_case, valid_days
 ):
     client, store, _ = biometric_fm
     enrollment_id = _seed_license_pending_enrollment(store)
     body = valid_license_body(enrollment_id)
-    body.update(unitPrice=7, validDays=None)
+    body.pop("validDays")
+    body["unitPrice"] = 7
+    if term_case != "omitted":
+        body["validDays"] = valid_days
 
     response = client.post(
         "/v1/facemarket/licenses", json=body, headers=_auth(make_token)
@@ -1181,8 +1198,10 @@ def test_create_license_forces_standard_price_and_accepts_permanent_term(
     assert response.json()["unitPrice"] == 14900
     assert response.json()["licenseValidUntil"] is None
     assert store["licenses"][0]["unit_price"] == 14900
+    assert store["licenses"][0]["license_valid_until"] is None
     issue_call = next(c for c in holder_stub.calls if c["path"].endswith("/issue-vc"))
     assert issue_call["payload"]["claims"]["unitPrice"] == 14900
+    assert issue_call["payload"]["claims"]["licenseValidUntil"] is None
 
 
 def test_reverification_vc_returns_model_to_pending_confirmation_gate(
@@ -1292,6 +1311,9 @@ def test_repeated_pending_post_reuses_license_and_holder_idempotency(
         json=valid_license_body(enrollment_id),
         headers=_auth(make_token),
     )
+    store["licenses"][0]["license_valid_until"] = datetime(
+        2027, 2, 3, tzinfo=timezone.utc
+    )
     second = client.post(
         "/v1/facemarket/licenses",
         json=valid_license_body(enrollment_id),
@@ -1305,6 +1327,12 @@ def test_repeated_pending_post_reuses_license_and_holder_idempotency(
         for c in holder_stub.calls
         if c["path"].endswith("/issue-vc")
     ] == [f"fm-license:{license_id}", f"fm-license:{license_id}"]
+    assert [
+        c["payload"]["claims"]["licenseValidUntil"]
+        for c in holder_stub.calls
+        if c["path"].endswith("/issue-vc")
+    ] == [None, None]
+    assert store["licenses"][0]["license_valid_until"] is None
 
 
 @pytest.mark.parametrize(
@@ -1350,6 +1378,8 @@ def test_active_retry_returns_existing_card_without_reissue(
     )
     before = len(holder_stub.calls)
     store["licenses"][0]["forbidden_use"] = ["속옷", "수영복"]
+    legacy_valid_until = datetime(2027, 3, 4, tzinfo=timezone.utc)
+    store["licenses"][0]["license_valid_until"] = legacy_valid_until
     second = client.post(
         "/v1/facemarket/licenses",
         json=valid_license_body(enrollment_id),
@@ -1359,6 +1389,10 @@ def test_active_retry_returns_existing_card_without_reissue(
     assert second.json()["id"] == first.json()["id"]
     assert second.json()["forbiddenUse"] == []
     assert store["licenses"][0]["forbidden_use"] == ["속옷", "수영복"]
+    assert datetime.fromisoformat(
+        second.json()["licenseValidUntil"].replace("Z", "+00:00")
+    ) == legacy_valid_until
+    assert store["licenses"][0]["license_valid_until"] == legacy_valid_until
     assert len(holder_stub.calls) == before
 
 
@@ -1818,9 +1852,10 @@ def test_conflict_reload_uses_persisted_terms_for_holder_claims(
         "allowedUse": "액티브웨어",
         "forbiddenUse": "",
         "unitPrice": 14900,
-        "licenseValidUntil": "2027-02-03",
+        "licenseValidUntil": None,
         "faceImageDigest": "sha256-persisted-digest",
     }
+    assert store["licenses"][0]["license_valid_until"] is None
 
 
 def test_final_stale_transition_does_not_report_active(

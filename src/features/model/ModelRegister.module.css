@@ -108,10 +108,6 @@
 .switch span { display: block; width: 20px; height: 20px; background: var(--bg-1); border-radius: 50%; }
 .switch[aria-checked='true'] { background: var(--fg-1); }
 .switch[aria-checked='true'] span { transform: translateX(18px); }
-.validitySection { margin-top: 32px; }
-.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
-.chip { height: 44px; min-width: 60px; padding: 0 18px; border: 1px solid var(--ring-strong); border-radius: 99px; background: var(--bg-1); }
-.chip.selected { color: var(--bg-1); background: var(--fg-1); border-color: var(--fg-1); }
 .priceCard { border: 1px solid var(--ring-strong); border-radius: 12px; background: var(--bg-2); padding: 20px; margin-top: 30px; }
 .priceCard p { margin-top: 10px; color: var(--fm-muted); font-size: 14px; }
 .priceCard strong { color: var(--fg-1); font-weight: 650; }

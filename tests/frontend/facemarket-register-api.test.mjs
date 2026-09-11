@@ -27,10 +27,10 @@ test('신규 등록 어댑터는 세 개의 동의와 문서 버전을 각각 �
   }finally{await h.close();}
 });
 
-test('라이선스 어댑터는 사용자 단가를 버리고 기본 영구를 전송해요',async()=>{
+test('라이선스 어댑터는 사용자 단가와 유효기간을 전송하지 않아요',async()=>{
   const h=await apiHarness();try{
-    await h.api.createLicense({enrollmentId:'e1',allowedUse:['일반 의류'],unitPrice:1});
-    assert.deepEqual(h.calls[0].options.body,{enrollmentId:'e1',allowedUse:['일반 의류'],forbiddenUse:[],validDays:null});
+    await h.api.createLicense({enrollmentId:'e1',allowedUse:['일반 의류'],unitPrice:1,validDays:365});
+    assert.deepEqual(h.calls[0].options.body,{enrollmentId:'e1',allowedUse:['일반 의류'],forbiddenUse:[]});
   }finally{await h.close();}
 });
 
