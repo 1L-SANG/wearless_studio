@@ -3,8 +3,10 @@ import contextlib
 import copy
 import hashlib
 import hmac
+import inspect
 import io
 import json
+import re
 import threading
 import types
 import uuid
@@ -23,6 +25,37 @@ from app.facemarket import _gender_from_trans
 from app.main import create_app
 from app.personalization_qc import FaceQcResult
 from conftest import make_settings
+
+
+def _select_aliases(sql_text: str) -> tuple[str, ...]:
+    """`select ... from` 사이의 컬럼 목록에서 결과 dict 의 키(별칭)만 뽑는다.
+
+    `dict_row` 커서는 **select 한 컬럼만** 돌려준다. 가짜 커서가 손으로 적은 dict 를 주면
+    그 사실이 사라져, 프로덕션 SELECT 에 없는 컬럼을 코드가 읽어도 테스트가 전부 통과한다
+    — 최종리뷰 C1(간편인증 완료 경로가 프로덕션에서만 죽어 있던 버그)이 정확히 그 틈으로
+    빠져나갔다. 그래서 가짜 커서도 프로덕션 SQL 이 실제로 뽑는 컬럼만 돌려주게 한다.
+    """
+    body = re.search(r"select\s(.*?)\sfrom\s", sql_text, re.S | re.I)
+    assert body, "select ... from 절을 찾지 못했다"
+    # SQL 주석(-- ...) 은 컬럼이 아니다.
+    columns = re.sub(r"--[^\n]*", "", body.group(1))
+    aliases = []
+    for item in columns.split(","):
+        item = " ".join(item.split())
+        if not item:
+            continue
+        lowered = item.lower()
+        if " as " in lowered:
+            aliases.append(item[lowered.rindex(" as ") + 4:].strip())
+        else:
+            aliases.append(item.rsplit(".", 1)[-1].strip())
+    return tuple(aliases)
+
+
+def completion_check_columns() -> tuple[str, ...]:
+    """`_initial_completion_checks` 의 완료-체크 SELECT 가 실제로 투영하는 컬럼들."""
+    source = inspect.getsource(facemarket_enrollment._initial_completion_checks)
+    return _select_aliases(source[source.index("select e.id::text"):])
 
 
 NOW = datetime(2026, 8, 21, 6, 0, tzinfo=timezone.utc)
@@ -230,28 +263,11 @@ class FakeCursor:
                 ),
                 None,
             )
+            # 컬럼 목록을 손으로 적지 않는다 — 프로덕션 SELECT 에서 그대로 읽어 온다.
+            # 손으로 적으면 "코드는 읽는데 SELECT 엔 없는" 컬럼을 이 가짜 커서가 대신
+            # 채워 줘서, 프로덕션에서만 죽는 경로가 초록불로 통과한다(최종리뷰 C1).
             self.result = (
-                {
-                    "id": row["id"],
-                    "user_id": row["user_id"],
-                    "model_id": row["model_id"],
-                    "status": row["status"],
-                    "cooldown_until": row.get("cooldown_until"),
-                    "expires_at": row["expires_at"],
-                    "liveness_session_digest": row.get("liveness_session_digest"),
-                    "device_digest": row["device_digest"],
-                    # Task3: /complete 의 바인딩이 읽는 저장된 신분증 증거 컬럼.
-                    "identity_ci_hash": row.get("identity_ci_hash"),
-                    "identity_name_masked": row.get("identity_name_masked"),
-                    "identity_birth_year": row.get("identity_birth_year"),
-                    "identity_tx_digest": row.get("identity_tx_digest"),
-                    "identity_contract_version": row.get("identity_contract_version"),
-                    # Task4: 바인딩때 승격할 대표이미지 키.
-                    "profile_image_r2_key": row.get("profile_image_r2_key"),
-                    # Task5: 바인딩때 승격할 키·체형 속성.
-                    "height_bucket": row.get("height_bucket"),
-                    "body_type": row.get("body_type"),
-                }
+                {column: row.get(column) for column in completion_check_columns()}
                 if row
                 else None
             )
@@ -4649,3 +4665,31 @@ def test_create_enrollment_rejects_awaiting_confirmation_without_side_effects(
     assert enrollment_store.serialized() == before
     assert enrollment_store.commit_attempts == 0
     assert fake_r2.puts == [] and fake_r2.deletes == []
+
+
+def test_completion_select_projects_every_column_read():
+    """`/complete` 가 row 에서 읽는 컬럼은 전부 완료-체크 SELECT 에 있어야 한다.
+
+    `dict_row` 커서는 select 한 컬럼만 담은 dict 를 준다 — 목록에 없는 컬럼을 읽으면
+    KeyError 가 아니라 조용한 None 이다. 최종리뷰 C1 이 정확히 그 사건이었다:
+    `identity_method`/`id_document_r2_key` 가 SELECT 에 없어 항상 None 이 되었고,
+    `row.get("identity_method") or "mid"` 가 그 None 을 mid 로 접어 **간편인증 완료
+    경로 전체가 프로덕션에서만 죽어 있었다**(테스트는 전부 통과). 컬럼을 지우거나
+    읽는 쪽에 새 컬럼이 생기면 여기서 먼저 터진다.
+    """
+    projected = set(completion_check_columns())
+    read_keys: set[str] = set()
+    for reader in (
+        facemarket_enrollment.process_enrollment_completion,
+        # 완료 경로의 tail — 같은 row 를 그대로 받아 읽는다.
+        facemarket_enrollment.bind_model_and_enqueue_asset_build,
+    ):
+        source = inspect.getsource(reader)
+        read_keys |= set(re.findall(r"""row(?:\.get\(|\[)["']([a-z0-9_]+)["']""", source))
+    assert read_keys, "row 를 읽는 코드를 하나도 못 찾았다 — 정규식이 낡았다"
+    assert "identity_method" in read_keys and "id_document_r2_key" in read_keys
+    missing = sorted(read_keys - projected)
+    assert not missing, (
+        f"_initial_completion_checks 의 SELECT 에 없는 컬럼을 읽는다: {missing}. "
+        "dict_row 라 그 값은 항상 None 이 된다 — SELECT 목록에 추가해야 한다."
+    )

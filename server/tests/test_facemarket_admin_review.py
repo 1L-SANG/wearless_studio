@@ -82,26 +82,12 @@ def _wrap_fake_cursor(monkeypatch, biometric_tests):
             self.many = []
             return
 
+        # 완료-체크 SELECT 의 두 신규 컬럼(identity_method·id_document_r2_key)을 여기서
+        # 손으로 채워 넣던 블록은 삭제했다 — 그 주입이 있는 한 프로덕션 SELECT 가 그
+        # 컬럼들을 실제로 뽑는지 아무도 확인하지 못하고, 실제로 안 뽑고 있었다(최종리뷰 C1:
+        # 간편인증 완료 경로가 프로덕션에서만 죽어 있었다). 이제 FakeCursor 가
+        # `completion_check_columns()`(프로덕션 SQL 파싱)로 투영하므로 여기서 채울 게 없다.
         await original_execute(self, sql, params)
-
-        # _initial_completion_checks 의 완료-체크 select 는 identity_method/
-        # id_document_r2_key 가 생기기 전에 쓰인 코드라 그 두 컬럼을 모른다 — 여기서 채운다.
-        if (
-            query.startswith("select e.id::text as id, e.user_id::text as user_id")
-            and self.result is not None
-        ):
-            enrollment_id, user_id = params
-            row = next(
-                (
-                    item
-                    for item in self.store.enrollments
-                    if item["id"] == enrollment_id and item["user_id"] == user_id
-                ),
-                None,
-            )
-            if row is not None:
-                self.result["identity_method"] = row.get("identity_method") or "mid"
-                self.result["id_document_r2_key"] = row.get("id_document_r2_key")
 
     monkeypatch.setattr(FakeCursor, "execute", patched_execute)
 

@@ -2333,7 +2333,14 @@ async def _initial_completion_checks(
                        e.expires_at, e.liveness_session_digest, e.device_digest,
                        e.identity_ci_hash, e.identity_name_masked, e.identity_birth_year,
                        e.identity_tx_digest, e.identity_contract_version,
-                       e.profile_image_r2_key, e.height_bucket, e.body_type
+                       e.profile_image_r2_key, e.height_bucket, e.body_type,
+                       -- 경로 분기(mid/simple_auth)와 간편인증 앵커의 출처. dict_row 라
+                       -- 여기 없는 컬럼은 row 에 아예 없다 — process_enrollment_completion
+                       -- 이 row.get("identity_method") 로 읽는 값이 항상 None 이 되어
+                       -- 간편인증 완료 경로 전체가 mid 로 오폴백한다(최종리뷰 C1).
+                       -- 컬럼 추가·삭제는 test_completion_select_projects_every_column_read
+                       -- 가 잡는다(읽는 쪽 소스를 스캔해 이 select 목록과 대조).
+                       e.identity_method, e.id_document_r2_key
                 from fm_biometric_enrollments e
                 where e.id = %s and e.user_id = %s
                 for update
