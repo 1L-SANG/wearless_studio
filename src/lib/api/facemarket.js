@@ -4,9 +4,9 @@
    verifyIdentity: CX 표준인증창(ENT_MID) 성공 token만 백엔드로 — 원문 신원은
    서버가 CX trans 에서 직접 받는다(클라→서버 PII 신뢰 금지).
    ============================================================= */
-import { FACEMARKET_PRICING } from '../facemarketPricing.js';
 import { http } from '@/lib/api/httpAdapter.js';
 import { supabase } from '@/lib/supabase.js';
+import { DEVICE_HEADER, readDeviceToken } from '../adminDevice.js';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const MOCK = import.meta.env.DEV && import.meta.env.VITE_API_MODE === 'mock';
@@ -21,9 +21,14 @@ async function _bearer() {
 
 async function _authFetch(path, opts = {}) {
   const token = await _bearer();
+  const deviceToken = readDeviceToken();
   return fetch(`${BASE_URL}${path}`, {
     ...opts,
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(opts.headers || {}) },
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(deviceToken ? { [DEVICE_HEADER]: deviceToken } : {}),
+      ...(opts.headers || {}),
+    },
   });
 }
 
@@ -72,7 +77,7 @@ export function warmFaceRender(modelId) {
   if (MOCK || !modelId) return Promise.resolve(null);
   return http('/v1/facemarket/face-render/warm', {
     method: 'POST',
-    body: JSON.stringify({ modelId }),
+    body: { modelId },
   }).catch(() => null);
 }
 
@@ -97,6 +102,7 @@ export function createEnrollment({ documentVersion, deviceId }) {
     method: 'POST',
     body: {
       biometricConsent: { accepted: true, documentVersion },
+      termsConsent: { accepted: true, documentVersion },
       deviceId,
     },
   });
@@ -117,9 +123,9 @@ export function getEnrollment(id, { signal } = {}) {
   return http(`/v1/facemarket/enrollments/${encodeURIComponent(id)}`, { signal });
 }
 
-export async function uploadEnrollmentPhoto({ enrollmentId, angle, fileBlob, filename }) {
+export async function uploadEnrollmentPhoto({ enrollmentId, slot, angle, fileBlob, filename }) {
   const form = new FormData();
-  form.append('angle', angle);
+  form.append('slot', slot || angle);
   form.append('photo', fileBlob, filename || 'face');
   return checkedJson(await _authFetch(
     `/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/photos`,
@@ -290,6 +296,47 @@ export function adminListAudit({ limit = 20, targetType, targetId } = {}) {
   return http(`/v1/facemarket/admin/audit?${params.toString()}`);
 }
 
+export function adminListUsageReports({ status, limit = 100, cursor } = {}) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (status) params.set('status', status);
+  if (cursor) params.set('cursor', cursor);
+  return http(`/v1/facemarket/admin/usage-reports?${params.toString()}`);
+}
+
+export function adminUpdateUsageReportStatus(reportId, status) {
+  return http(`/v1/facemarket/admin/usage-reports/${encodeURIComponent(reportId)}`, {
+    method: 'PATCH', body: { status },
+  });
+}
+
+export function adminListPayoutStatements({ month }) {
+  return http(`/v1/facemarket/admin/payout-statements?month=${encodeURIComponent(month)}`);
+}
+
+export function adminSetPayoutStatementStatus(modelId, periodMonth, status, note, expectedConfirmationId) {
+  return http(`/v1/facemarket/admin/payout-statements/${encodeURIComponent(modelId)}/${encodeURIComponent(periodMonth)}/status`, {
+    method: 'POST', body: { status, ...(note ? { note } : {}), ...(expectedConfirmationId ? { expectedConfirmationId } : {}) },
+  });
+}
+
+export function adminRevealPayoutAccount(modelId) {
+  return http(`/v1/facemarket/admin/models/${encodeURIComponent(modelId)}/payout-account`);
+}
+
+export function adminConfirmPayoutStatement(modelId, periodMonth, confirmationId) {
+  return http(`/v1/facemarket/admin/payout-statements/${encodeURIComponent(modelId)}/${encodeURIComponent(periodMonth)}/confirm`, {
+    method: 'POST', body: { confirmationId },
+  });
+}
+
+export function adminAdvancePayoutConfirmation(confirmationId, action) {
+  return http(`/v1/facemarket/admin/payout-confirmations/${encodeURIComponent(confirmationId)}/${encodeURIComponent(action)}`, { method: 'POST' });
+}
+
+export function adminRevealPayoutConfirmation(confirmationId) {
+  return http(`/v1/facemarket/admin/payout-confirmations/${encodeURIComponent(confirmationId)}/account`);
+}
+
 // ── 관리자: 기기 게이트(설계 2026-09-11-admin-device-gate-design.md §5.3) ────────────
 // register·me 는 기기 없이 열린다(아직 기기가 없는 관리자가 부른다). 나머지는 승인 기기 필수.
 
@@ -388,32 +435,40 @@ export function createLivenessSession(enrollmentId, nonce) {
   });
 }
 
-// idPhotoHex: OACX RESULT-step 신분증 사진(data.dlphotoimage) — 위젯 콜백에서 받은 HEX
-// 그대로 전달(재인코딩 금지). 서버가 hex-decode+SFace 1:1 매치에 쓰고, 매칭 후 폐기한다.
-// token 은 더 이상 여기서 전달하지 않는다 — CI 게이트는 identity 단계(createIdentity)에서 끝난다.
-export function completeEnrollment(enrollmentId, { sessionId, idPhotoHex }) {
+// 기본 완료 경로에는 신분증 초상이 포함되지 않아요.
+export function completeEnrollment(enrollmentId, { sessionId } = {}, { signal } = {}) {
   return http(`/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/complete`, {
-    method: 'POST', body: { sessionId, idPhotoHex },
+    method: 'POST', body: sessionId ? { sessionId } : {}, signal,
   });
+}
+
+export async function fetchEnrollmentPhotoUrl(enrollmentId, slot, { signal } = {}) {
+  const res = await _authFetch(`/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/photos/${encodeURIComponent(slot)}`, { signal });
+  if (!res.ok) await checkedJson(res, '사진을 불러오지 못했어요.');
+  return URL.createObjectURL(await res.blob());
 }
 
 export function cancelEnrollment(enrollmentId) {
   return http(`/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/cancel`, { method: 'POST' });
 }
 
+export function reopenEnrollmentPhotos(enrollmentId) {
+  return http(`/v1/facemarket/enrollments/${encodeURIComponent(enrollmentId)}/reopen-photos`, { method: 'POST' });
+}
+
 export function createLicense({
-  enrollmentId, allowedUse = [], forbiddenUse = [], unitPrice = FACEMARKET_PRICING.perCut,
-}) {
+  enrollmentId, allowedUse = [], forbiddenUse = [],
+}, { signal } = {}) {
   return http('/v1/facemarket/licenses', {
     method: 'POST',
-    body: { enrollmentId, allowedUse, forbiddenUse, unitPrice },
+    body: { enrollmentId, allowedUse, forbiddenUse }, signal,
   });
 }
 
 // GET /v1/facemarket/licenses — 내 라이선스 목록. [{ id, faceImageUri, allowedUse, ... }].
-export function listLicenses() {
+export function listLicenses({ includeRevoked = false } = {}) {
   if (MOCK) return Promise.resolve([]);
-  return http('/v1/facemarket/licenses');
+  return http(`/v1/facemarket/licenses${includeRevoked ? '?includeRevoked=true' : ''}`);
 }
 
 // POST /v1/facemarket/licenses/{id}/revoke (소유자 스코프) — 라이선스를 해지한다.
@@ -440,6 +495,14 @@ export function listSettlements() {
 export function getSettlementSummary() {
   if (MOCK) return Promise.resolve({ monthCount: 0, monthAmount: 0, totalAmount: 0 });
   return http('/v1/facemarket/settlements/summary');
+}
+
+export function getPayoutStatements() {
+  return http('/v1/facemarket/payout-statements');
+}
+
+export function getPublicationPreviewUrl(publicationId) {
+  return http(`/v1/facemarket/model/publications/${encodeURIComponent(publicationId)}/preview-url`, { suppressErrorLog: true });
 }
 
 // GET /v1/facemarket/models/{id}/usage — 모델 본인의 얼굴 사용 내역.
@@ -518,4 +581,17 @@ export async function fetchLicenseFaceUrl(faceImageUri) {
   const res = await _authFetch(faceImageUri);
   if (!res.ok) throw new Error('얼굴 이미지를 불러오지 못했어요.');
   return URL.createObjectURL(await res.blob());
+}
+
+export function reportUsage(paymentId, reason) {
+  return http(`/v1/facemarket/settlements/${encodeURIComponent(paymentId)}/report`, { method: 'POST', body: { reason } });
+}
+export function updateLicenseTerms(licenseId, terms) {
+  return http(`/v1/facemarket/licenses/${encodeURIComponent(licenseId)}/terms`, { method: 'PATCH', body: terms });
+}
+export function pauseMyModel(modelId) {
+  return http(`/v1/facemarket/models/${encodeURIComponent(modelId)}/pause`, { method: 'POST' });
+}
+export function resumeMyModel(modelId) {
+  return http(`/v1/facemarket/models/${encodeURIComponent(modelId)}/resume`, { method: 'POST' });
 }

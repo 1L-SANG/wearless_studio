@@ -25,6 +25,7 @@ from .routes import router as v1_router, COMMON_RESPONSES
 from .workers.dispatcher import JobDispatcher, configured_job_kinds
 from .workers.draft_asset_reclaimer import DraftAssetReclaimer
 from .workers.fm_vc_revocation_reconciler import FaceVcRevocationReconciler
+from .workers.fm_vc_issue_reconciler import FaceVcIssueReconciler
 from .workers.sam_retry_pusher import SamRetryPusher
 from .services import sam_client
 from .services.face_autoscale import (
@@ -131,6 +132,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dispatcher = None
         draft_asset_reclaimer = None
         vc_revocation_reconciler = None
+        vc_issue_reconciler = None
         publication_anchor = None
         sam_retry_pusher = None
         sam_autoscaler = None
@@ -154,6 +156,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not detail_worker_only and (holder_configured or settings.fm_vc_required):
                 vc_revocation_reconciler = FaceVcRevocationReconciler(app)
                 await vc_revocation_reconciler.start()
+                vc_issue_reconciler = FaceVcIssueReconciler(app)
+                await vc_issue_reconciler.start()
             # sibling(vc_revocation_reconciler·draft_asset_reclaimer)과 같은 게이트: detail-worker
             # 전용 프로세스에서는 안 돈다. 이 자체가 nonce 충돌을 막지는 않는다(advisory lock 이
             # 진짜 방어 — anchor_one 참고) — 다만 오늘 이 워커가 detail-worker 에서 돌 이유가
@@ -291,6 +295,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await dispatcher.stop()
         if vc_revocation_reconciler is not None:
             await vc_revocation_reconciler.stop()
+        if vc_issue_reconciler is not None:
+            await vc_issue_reconciler.stop()
         if publication_anchor is not None:
             await publication_anchor.stop()
         if pool is not None:
@@ -436,6 +442,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
+        # 계좌 입력 오류에는 원문 body가 포함될 수 있어 상세 입력을 반환하지 않아요.
+        if request.url.path.rstrip("/") == "/v1/facemarket/payout-account":
+            return JSONResponse(status_code=400, content={"error": {
+                "code": "invalid_payout_account",
+                "message": "은행, 계좌번호와 예금주를 확인해 주세요.",
+            }}, headers={"Cache-Control": "no-store"})
         # exc.errors()의 ctx에 raw 예외 객체(ValueError 등)가 섞여 json.dumps가 깨지므로
         # FastAPI 기본 핸들러처럼 jsonable_encoder로 직렬화 가능한 형태로 강제한다.
         # 지원서 v3는 필수 입력 누락도 400으로 응답한다. 다른 API의 422 계약은 유지한다.
@@ -538,6 +550,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from .facemarket_chain import FaceMarketChain
 
         app.include_router(facemarket_router)
+        from .facemarket_payout import router as payout_router
+
+        app.include_router(payout_router)
         # 온체인 정산 recorder(선택과제2). 체인 env 미설정이면 None → 정산 훅 no-op.
         app.state.fm_chain = FaceMarketChain.from_settings(settings)
         # 모델 지원서·관리자 검토(리뉴얼). 지원서 제출·검토는 생체등록 스택(face QC·라이브니스)에

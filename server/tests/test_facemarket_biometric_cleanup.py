@@ -75,7 +75,7 @@ def _remaining_angles(store, enrollment_id):
     ]
 
 
-def test_terminal_cleanup_deletes_only_quarantine_and_records_redacted_counts():
+def test_unsigned_terminal_cleanup_deletes_approved_photos_and_records_redacted_counts():
     store = EnrollmentStore()
     r2 = FakeR2()
     enrollment_id = _add_enrollment(
@@ -101,11 +101,11 @@ def test_terminal_cleanup_deletes_only_quarantine_and_records_redacted_counts():
         )
     ) is True
 
-    assert r2.deletes == ["private/front.jpg", "private/angle45.jpg"]
-    assert [row["angle"] for row in store.photos] == ["side"]
+    assert r2.deletes == ["private/front.jpg", "private/angle45.jpg", "private/side.jpg"]
+    assert store.photos == []
     evidence = store.enrollments[0]["raw_deletion_evidence"]
     assert evidence["quarantineDeleted"] is True
-    assert evidence["quarantineDeletedCount"] == 2
+    assert evidence["quarantineDeletedCount"] == 3
     assert "private/" not in json.dumps(evidence)
 
 

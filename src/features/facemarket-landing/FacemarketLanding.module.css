@@ -202,17 +202,21 @@
   cursor: pointer;
   transition: opacity 140ms ease;
 }
-.headerCta { padding: 0.68rem 1.1rem; }
+.headerCta { padding: 0.68rem 1.1rem; word-break: keep-all; }
 .heroCta { padding: 0.95rem 1.6rem; font-size: 1rem; }
 
 /* 320px 폰에서는 워드마크(약 130px) + 긴 얼리버드 CTA + 햄버거가 한 줄의 가로 예산을
    넘긴다. CTA 글자가 단어 안에서 세 줄로 깨지면 버튼 높이가 고정 헤더(56px)보다 커져
    바로 아래 히어로를 덮는다. 전환 버튼은 숨기지 않고, 이 폭에서만 세 요소의 가로 예산을
    줄여 두 단어가 각각 한 줄씩 서게 한다. 22rem 밖의 현재 헤더 눈금은 그대로다. */
-@media (max-width: 22rem) {
+/* 2026-09-11: 390px 폰에서도 로그인 상태(CTA + 로그아웃 + 햄버거)면 같은 문제가 났다(캡처 확인).
+   경계를 26rem 으로 넓히고, 이 폭에서 로그아웃은 아이콘만 남긴다(aria-label 로 이름 유지). */
+@media (max-width: 26rem) {
   .header { gap: 0.5rem; }
   .brandWordmark { height: 1.55rem; }
   .headerActions { gap: 0.35rem; }
+  .headerQuiet { padding: 0.55rem; }
+  .headerQuietLabel { display: none; }
   .headerCta { padding: 0.6rem 0.75rem; font-size: 0.85rem; }
 }
 /* 2026-09-03 오너 지시: 호버를 셀러 앱 분석 페이지의 CTA(app.css .btn-primary + .fx-sheen)와
@@ -462,14 +466,14 @@
 .heroTitle {
   margin: 0;
   color: #07090c;
-  /* 2026-09-03 밤: 제목이 영문 한 줄("create your own digital DNA")로 확정되면서 원본
+  /* 2026-09-03 밤: 제목이 영문 한 줄("create your own online model")로 확정되면서 원본
      spotlight 의 세리프 디스플레이(Cormorant, 굵기 500)로 **복귀**(오너 "예전처럼 메인 폰트").
      낮에 Pretendard 로 바꿨던 건 한글 제목에 명조가 이상하다는 이유였고, 영문에는 해당 없음.
      크기는 원본(두 줄 3.9~5.8rem)보다 한 단계 낮춘 5rem 상한 — 27자 한 줄이 1280px 본문 폭
      안에 들어오는 값. 좁아져 접히면 balance 로 두 줄을 고르게 나눈다. Cormorant 는 라틴
      전용 자체 호스팅 가변 서체라 한글 폴백은 없어도 된다(제목이 영문). */
   /* 같은 날 밤 최종(오너 확정, 16종 비교의 10번): **Playfair Display 600**, 두 줄
-     ("create your own / digital DNA"), 둘째 줄만 이탤릭 500. 그날 거쳐 간 것 — Pretendard
+     ("create your own / online model"), 둘째 줄만 이탤릭 500. 그날 거쳐 간 것 — Pretendard
      (한글 제목 시절) → Cormorant(원본 세리프) → Cal Sans(--font-display) → 실화면 A/B
      (Playfair vs Instrument Serif) → Playfair. facemarket.html 이 Playfair 500/600 + 이탤릭을
      로드한다. 두 줄이라 크기 상한은 4rem — 원본(두 줄 5.8rem·행간 0.9)보다 낮게 잡아
@@ -493,7 +497,7 @@
   text-align: center;
 }
 /* 히어로 안 CTA(2026-09-03 오너 지시로 kicker 자리에 재도입). 제목과의 간격만 여기서 준다 —
-   .heroCta 자체는 IntroSection 과 공유라 거기 마진을 주면 두 자리가 같이 밀린다.
+   .heroCta는 다른 화면에서도 쓰므로 히어로 안쪽 요소에서만 여백을 조절한다.
    오브(.heroOrb, z-index:0 의 positioned 레이어)가 정적 배치 형제 위에 그려지므로,
    버튼이 그 반투명 흰 빛에 덮여 회색으로 바래 보였다 — 버튼을 같은 스택 위로 올린다. */
 .hero .heroCta { margin-top: 0.95rem; position: relative; z-index: 1; }
@@ -587,7 +591,7 @@
   .hero { justify-items: start; padding: 2rem var(--fm-pad) 1rem; text-align: left; }
   .kicker { justify-content: flex-start; margin-bottom: 0.75rem; font-size: 0.66rem; letter-spacing: 0.18em; }
   .kicker span { display: none; }
-  /* 폰: 27자 영문이 두 줄("create your own / digital DNA")로 접히는 크기. 원본 17vw 는
+  /* 폰: 27자 영문이 두 줄("create your own / online model")로 접히는 크기. 원본 17vw 는
      두 단어 제목 기준이라 세 줄로 갈라진다. */
   .heroTitle { font-size: clamp(2.4rem, 10vw, 3.2rem); }
   /* 폰은 히어로가 왼쪽 정렬이라 리드문도 왼쪽. 데스크탑의 center 가 그대로 오면 <br> 뒤
@@ -984,6 +988,7 @@
 .headerQuiet {
   display: inline-flex;
   align-items: center;
+  white-space: nowrap;
   gap: 0.35rem;
   padding: 0.62rem 0.95rem;
   border: 1px solid var(--fm-line);

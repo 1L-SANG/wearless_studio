@@ -140,3 +140,9 @@ test('공개 목록 fetch — items 를 화면 모델로 바꾸고, 실패는 �
   const down = async () => ({ ok: false, status: 503, json: async () => ({}) });
   await assert.rejects(() => fetchPublicModels({ fetchImpl: down }), /503/);
 });
+
+test('영구 조건을 저장한 공개 모델은 만료 미정 대신 철회 시까지로 표시해요', () => {
+  const model = toBrowseModel({...ITEM,license:{...ITEM.license,validDays:null,validUntil:null}});
+  assert.equal(model.license.validity, '철회 시까지');
+  assert.equal(model.license.validUntilText, '철회 시까지');
+});

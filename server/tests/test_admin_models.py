@@ -101,6 +101,12 @@ def test_model_row_exposes_application_contact_email_as_fallback():
     assert result["applicationContactEmail"] == "applicant@example.com"
 
 
+def test_model_row_exposes_suspension_source_for_admin_actions():
+    row = dict(MODEL_ROW, status="suspended", suspension_source="owner")
+    result = facemarket_admin._model_row(row)
+    assert result["suspensionSource"] == "owner"
+
+
 def test_list_caps_limit():
     conn = FakeConn([[MODEL_ROW]])
     asyncio.run(facemarket_admin.list_models(conn, q=None, status=None, limit=9999))

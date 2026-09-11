@@ -44,7 +44,7 @@ export function FacemarketLanding() {
             <HeroSection onPrimary={onPrimary} primaryLabel={ctaLabel} />
             <GallerySection />
           </div>
-          {/* 리드문+CTA 섹션(IntroSection)은 2026-09-03 오너 지시로 내렸고 파일도 지웠다 — 리드와
+          {/* 별도 리드문과 CTA 섹션은 2026-09-03 오너 지시로 내렸고 파일도 지웠다 — 리드와
               CTA 가 히어로로 올라가 같은 내용이 두 번 서던 것. */}
           {/* 서비스 설명과 FAQ 는 홈에만 둔다(사용자 지시 2026-09-02). 두 섹션 모두
               **아직 코드에 없는 지원·검토 절차**를 설명한다 — 각 파일 머리말의 경고 참고. */}

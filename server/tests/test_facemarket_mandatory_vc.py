@@ -45,6 +45,8 @@ def _issue(app):
         unit_price=4321,
         valid_until=VALID_UNTIL,
         digest="sha256-approved-front",
+        issued_at=datetime(2026, 9, 11, tzinfo=timezone.utc),
+        consent_doc_version="v1.1",
     ))
 
 
@@ -76,14 +78,15 @@ def test_issue_uses_one_signed_client_and_body_idempotency_key(monkeypatch, wall
     assert all(call["secret"] == "shared-secret" for _, call in calls)
     assert [call["payload"] for _, call in calls[:2]] == [{}, {}]
     assert calls[2][1]["payload"] == {
-        "plan": "facelicense",
+        "plan": "facelicense-v2",
         "idempotencyKey": f"fm-license:{LICENSE_ID}",
         "claims": {
-            "allowedUse": "일반 의류",
-            "forbiddenUse": "",
-            "unitPrice": 4321,
-            "licenseValidUntil": "2027-02-03",
+            "modelDid": "did:omn:user",
+            "licenseId": LICENSE_ID,
+            "issuedAt": "2026-09-11T00:00:00Z",
             "faceImageDigest": "sha256-approved-front",
+            "agreementVersion": "v1",
+            "consentDocVersion": "v1.1",
         },
     }
 
@@ -126,7 +129,7 @@ def test_issue_http_failures_map_without_exposing_upstream(monkeypatch, status, 
 
 @pytest.mark.parametrize(
     "register",
-    [[], None, "bad", {}, {"flowAComplete": False}, {"userDid": " "}],
+    [[], None, "bad", {}, {"flowAComplete": False}, {"flowAComplete": True}, {"userDid": " "}],
 )
 def test_issue_rejects_malformed_register_as_502(monkeypatch, register):
     responses = iter([_Response(201, {}), _Response(200, register)])

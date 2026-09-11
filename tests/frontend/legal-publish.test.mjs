@@ -60,9 +60,16 @@ test('publisher uses the actual price launch date in both metadata and document 
 
   const manifest = JSON.parse(readFileSync(join(f.root, 'public/legal/manifest.json'), 'utf8'));
   assert.ok(manifest.length > 0);
-  assert.ok(manifest.every(({ version, effectiveDate }) => (
+  // 등록 위저드 동의·안내 문서 2종은 서버 동의 버전(2026-09-v1)을 따르므로 발행 버전 검사에서 뺀다.
+  const consentSlugs = new Set(['biometric-consent', 'overseas-transfer']);
+  assert.ok(manifest.filter(({ slug }) => !consentSlugs.has(slug)).every(({ version, effectiveDate }) => (
     version === 'v1.1' && effectiveDate === '2026-09-11'
   )));
+  for (const slug of consentSlugs) {
+    const entry = manifest.find((item) => item.slug === slug);
+    assert.ok(entry, `${slug} 항목이 manifest 에 있어야 한다`);
+    assert.equal(entry.version, '2026-09-v1');
+  }
 
   const agreement = readFileSync(join(f.root, 'public/legal/license-agreement.md'), 'utf8');
   assert.match(agreement, /2026년 9월 11일부터 적용한다/);
@@ -78,7 +85,7 @@ test('publisher uses the actual price launch date in both metadata and document 
   }
 });
 
-test('checked-in public legal documents match the canonical publisher output', (t) => {
+test('checked-in generated legal documents match the canonical publisher output', (t) => {
   const f = fixture(t);
   const result = f.run();
   assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -87,6 +94,12 @@ test('checked-in public legal documents match the canonical publisher output', (
     readFileSync(join(f.root, 'public/legal/manifest.json'), 'utf8'),
   );
   for (const { slug } of generatedManifest) {
+    // These two wizard documents are manually maintained public inputs, not
+    // outputs of legal_publish.py. The manifest intentionally includes both.
+    if (slug === 'biometric-consent' || slug === 'overseas-transfer') {
+      assert.ok(existsSync(join(source, `public/legal/${slug}.md`)), slug);
+      continue;
+    }
     assert.equal(
       readFileSync(join(source, `public/legal/${slug}.md`), 'utf8'),
       readFileSync(join(f.root, `public/legal/${slug}.md`), 'utf8'),

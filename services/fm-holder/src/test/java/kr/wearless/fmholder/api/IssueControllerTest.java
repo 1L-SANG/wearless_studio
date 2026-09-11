@@ -41,7 +41,7 @@ class IssueControllerTest {
             ResponseStatusException error = assertThrows(ResponseStatusException.class,
                     () -> controller.issueVc(
                             MODEL,
-                            new IssueVcDtos.IssueRequest("facelicense", claims, key)));
+                            new IssueVcDtos.IssueRequest("facelicense-v2", claims, key)));
             assertEquals(HttpStatus.BAD_REQUEST, error.getStatusCode());
             assertEquals("invalid_idempotency_key", error.getReason());
         }
@@ -55,11 +55,11 @@ class IssueControllerTest {
         IssueController controller = new IssueController(service, new IssueIdempotencyStore(dataDir));
         String key = "fm-license:123e4567-e89b-12d3-a456-426614174000";
         IssueVcDtos.IssueRequest first = new IssueVcDtos.IssueRequest(
-                "facelicense", claims(), key);
+                "facelicense-v2", claims(), key);
         IssueVcDtos.IssueRequest changed = new IssueVcDtos.IssueRequest(
-                "facelicense",
-                new IssueVcDtos.Claims("changed", "forbidden", 7, "2099-12-31",
-                        "sha256:opaque", "model"),
+                "facelicense-v2",
+                new IssueVcDtos.Claims("did:omn:changed", "123e4567-e89b-12d3-a456-426614174000",
+                        "2026-09-11T00:00:00Z", "sha256:opaque", "v1", "v1.1"),
                 key);
         when(service.issue(MODEL, first)).thenReturn(result("vc-1"));
 
@@ -98,7 +98,7 @@ class IssueControllerTest {
             Path caseDir = dataDir.resolve("invalid-" + index);
             String key = "fm-license:123e4567-e89b-12d3-a456-42661417400" + index;
             IssueVcDtos.IssueRequest request = new IssueVcDtos.IssueRequest(
-                    "facelicense", claims(), key);
+                    "facelicense-v2", claims(), key);
             IssueVcService firstService = mock(IssueVcService.class);
             when(firstService.issue(MODEL, request)).thenReturn(invalidResults[index]);
             IssueController first = new IssueController(
@@ -120,7 +120,7 @@ class IssueControllerTest {
             throws Exception {
         IssueVcService service = mock(IssueVcService.class);
         IssueVcDtos.IssueRequest request = new IssueVcDtos.IssueRequest(
-                "facelicense",
+                "facelicense-v2",
                 claims(),
                 "fm-license:123e4567-e89b-12d3-a456-426614174000");
         when(service.issue(MODEL, request)).thenReturn(result("vc-1"));
@@ -146,7 +146,7 @@ class IssueControllerTest {
                 String key = "fm-license:123e4567-e89b-12d3-a456-4266141740"
                         + (suffix.equals(".intent") ? "1" : "2") + index;
                 IssueVcDtos.IssueRequest request = new IssueVcDtos.IssueRequest(
-                        "facelicense", claims(), key);
+                        "facelicense-v2", claims(), key);
                 IssueIdempotencyStore setup = new IssueIdempotencyStore(caseDir);
                 if (suffix.equals(".intent")) {
                     // An Error, unlike a caught Exception, is never routed
@@ -185,12 +185,12 @@ class IssueControllerTest {
 
     private static IssueVcDtos.Claims claims() {
         return new IssueVcDtos.Claims(
-                "allowed",
-                "forbidden",
-                7,
-                "2099-12-31",
+                "did:omn:user",
+                "123e4567-e89b-12d3-a456-426614174000",
+                "2026-09-11T00:00:00Z",
                 "sha256:opaque",
-                "model");
+                "v1",
+                "v1.1");
     }
 
     private static IssueVcService.IssueResult result(String vcId) throws Exception {

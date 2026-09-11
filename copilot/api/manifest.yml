@@ -285,6 +285,11 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 프레임 품질에 따라 매칭이 불안정(신분증 초상↔실물 0.46 vs 라이브프레임 0.25 실측)했고
   # 애드온이라 제거. 되돌리려면 "true"(브라우저 role·리전·confidence 임계 SSM/설정 필요).
   FM_LIVENESS_ENABLED: "false"
+  # Phase C에서는 얼굴 대조를 끄고 표준가를 사용해요.
+  FM_FACE_MATCH_ENABLED: "false"
+  FM_STANDARD_UNIT_PRICE: "14900"
+  # 회사 정보와 개인정보 처리방침에 명시된 문의 수신 주소예요.
+  FM_USAGE_REPORT_TO_EMAIL: "contact@wearless.kr"
   FM_LIVENESS_REGION: us-east-1
   # 캘리브 임계 — 출발값(합리적이나 골든셋 경험 캘리브 전 잠정, 발화율·오탈락 관측 후 튜닝).
   #  · liveness confidence: AWS Face Liveness 0~100. 75 = 스푸핑 방어와 실사용자 오탈락(QA 79.8 사례)
@@ -365,6 +370,8 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   FACE_AUTOSCALE_START_GRACE_MINUTES: "17"
 
 secrets:                         # SSM Parameter Store (SecureString). copilot secret init 로 값 저장.
+  # 입금 계좌번호 Fernet 암호화 키. 2026-09-11 SSM(us-east-1)에 저장함. 바꾸면 저장된 계좌를 못 읽으니 회전 금지.
+  FM_PAYOUT_ACCOUNT_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_PAYOUT_ACCOUNT_KEY
   DATABASE_URL: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/DATABASE_URL
   SUPABASE_SERVICE_ROLE_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/SUPABASE_SERVICE_ROLE_KEY
   R2_ACCESS_KEY_ID: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/R2_ACCESS_KEY_ID

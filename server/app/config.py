@@ -307,6 +307,7 @@ class Settings:
     resend_api_key: str | None = None
     fm_application_from_email: str = "FaceMarket <noreply@wearless.kr>"
     fm_application_public_base: str = "https://facemarket.wearless.kr"
+    fm_usage_report_to_email: str | None = None
     # 새 지원서 Slack 알림(서버 → incoming webhook 직접). 없으면 스킵. Lambda 재사용 아님(별도 웹훅).
     fm_slack_webhook_url: str | None = None
     # 관리자 콘솔 기기 게이트(admin_guard). off=검사 안 함 / shadow=검사하고 실패해도 통과·
@@ -318,10 +319,18 @@ class Settings:
     # 탈취된 세션 하나가 목록을 스팸으로 덮고 Slack 을 울릴 수 있다.
     admin_device_max_pending_per_user: int = 5
     fm_oacx_contract_mode: str = "disabled"
+    fm_face_match_enabled: bool = False
+    fm_standard_unit_price: int = 14900
+    fm_photo_slots: tuple[str, ...] = (
+        "face01", "face02", "face03", "face04", "face05", "face06", "face07", "face08",
+        "torso01", "torso02", "torso03", "torso04", "torso05",
+        "full01", "full02", "full03", "full04", "full05",
+    )
+    fm_required_slot_count: int = 18
     # AWS Face Liveness 사용 여부. off 면 라이브니스 세션을 만들지 않고 SFace 매칭 앵커를
     # OACX 신분증 초상으로 쓴다(업로드 사진 ↔ 신분증 초상). 본인확인은 OACX 모바일신분증(실시간
     # 폰 인증)이 담당하므로 라이브니스는 애드온. 기본 true = 기존 동작 보존.
-    fm_liveness_enabled: bool = True
+    fm_liveness_enabled: bool = False
     fm_liveness_region: str = "us-east-1"
     fm_liveness_browser_role_arn: str | None = None
     fm_liveness_confidence_threshold: float | None = None
@@ -333,6 +342,7 @@ class Settings:
     fm_side_live_threshold: float | None = None
     fm_match_policy_version: str | None = None
     fm_ci_pepper: str | None = None  # HMAC-SHA256(CI, pepper) dedup용 secret. 없으면 verify 503
+    fm_payout_account_key: str | None = None  # 계좌번호 Fernet 암호화 키. 없으면 계좌 API 503
     # 상세페이지 착용컷 인물 일관성(AG-06): 실존 모델을 골랐는데 facemarket off 라 해석 불가하면
     # 컷마다 인물 참조가 0장이 되어 사람이 랜덤이 된다 → 결정적 가상모델로 폴백해 전 컷 동일 인물
     # 보장. 빈 문자열이면 폴백 비활성(기존 동작). REAL/LEGACY 경로는 폴백하지 않는다(이중 인물 방지).
@@ -524,6 +534,12 @@ def load_settings() -> Settings:
         for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
         if o.strip()
     ]
+    default_photo_slots = Settings.__dataclass_fields__["fm_photo_slots"].default
+    photo_slots = tuple(
+        slot.strip()
+        for slot in os.getenv("FM_PHOTO_SLOTS", ",".join(default_photo_slots)).split(",")
+        if slot.strip()
+    )
 
     return Settings(
         app_env=app_env,
@@ -677,12 +693,21 @@ def load_settings() -> Settings:
         fm_application_public_base=(
             os.getenv("FM_APPLICATION_PUBLIC_BASE") or "https://facemarket.wearless.kr"
         ).rstrip("/"),
+        fm_usage_report_to_email=os.getenv("FM_USAGE_REPORT_TO_EMAIL") or None,
         fm_slack_webhook_url=os.getenv("FM_SLACK_WEBHOOK_URL") or None,
         admin_device_gate=_flag("ADMIN_DEVICE_GATE", "shadow", {"off", "shadow", "enforce"}),
         admin_device_max_pending_per_user=_int_env("ADMIN_DEVICE_MAX_PENDING_PER_USER", 5),
         fm_oacx_contract_mode=os.getenv("FM_OACX_CONTRACT_MODE", "disabled"),
+        fm_face_match_enabled=(
+            os.getenv("FM_FACE_MATCH_ENABLED", "false").lower() == "true"
+        ),
+        fm_standard_unit_price=int(os.getenv("FM_STANDARD_UNIT_PRICE", "14900")),
+        fm_photo_slots=photo_slots,
+        fm_required_slot_count=int(
+            os.getenv("FM_REQUIRED_SLOT_COUNT", str(len(photo_slots)))
+        ),
         fm_liveness_enabled=(
-            os.getenv("FM_LIVENESS_ENABLED", "true").lower() == "true"
+            os.getenv("FM_LIVENESS_ENABLED", "false").lower() == "true"
         ),
         fm_liveness_region=os.getenv("FM_LIVENESS_REGION", "us-east-1"),
         fm_liveness_browser_role_arn=os.getenv("FM_LIVENESS_BROWSER_ROLE_ARN") or None,
@@ -700,6 +725,7 @@ def load_settings() -> Settings:
             os.getenv("PERSONALIZATION_ENABLED", "false").lower() == "true"
         ),
         fm_ci_pepper=os.getenv("FM_CI_PEPPER") or None,
+        fm_payout_account_key=os.getenv("FM_PAYOUT_ACCOUNT_KEY") or None,
         toss_secret_key=os.getenv("TOSS_SECRET_KEY") or None,
         toss_api_base=os.getenv("TOSS_API_BASE", "https://api.tosspayments.com").rstrip("/"),
         toss_confirm_timeout=float(os.getenv("TOSS_CONFIRM_TIMEOUT", "15")),

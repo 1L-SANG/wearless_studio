@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import types
+from datetime import datetime, timezone
 
 import pytest
 
@@ -72,6 +73,8 @@ def _row(n):
         "unit_price": 1000,
         "license_valid_until": "2027-01-01",
         "face_image_digest": "sha256-x",
+        "created_at": datetime(2026, 9, 1, tzinfo=timezone.utc),
+        "consent_doc_version": "2026-08-v1",
     }
 
 
@@ -136,6 +139,8 @@ def test_retry_apply_uses_shared_issue_and_finalizer_continues_and_prints_counts
     async def fake_issue(_app, **kwargs):
         assert kwargs["forbidden"] == []
         assert kwargs["valid_until"] == valid_until
+        assert kwargs["issued_at"] == datetime(2026, 9, 1, tzinfo=timezone.utc)
+        assert kwargs["consent_doc_version"] == "2026-08-v1"
         issued.append(kwargs["license_id"])
         if kwargs["license_id"] == "license-2":
             raise FaceVcIssueError("vc_issue_delayed", status_code=503)

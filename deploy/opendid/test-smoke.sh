@@ -170,6 +170,10 @@ import json, pathlib, re, sys
 body = json.loads(pathlib.Path(sys.argv[1]).read_bytes())
 if not re.fullmatch(r"fm-license:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", body.get("idempotencyKey", "")):
     raise SystemExit(10)
+assert body['plan'] == 'facelicense-v2'
+assert set(body['claims']) == {'modelDid', 'licenseId', 'issuedAt', 'faceImageDigest', 'agreementVersion', 'consentDocVersion'}
+assert body['claims']['modelDid'] == 'did:fixture:user'
+assert body['claims']['licenseId'] == body['idempotencyKey'].removeprefix('fm-license:')
 PY
         issues=$(cat "${FAKE_ISSUE_COUNT:?}")
         printf '%s\n' "$((issues + 1))" >"$FAKE_ISSUE_COUNT"

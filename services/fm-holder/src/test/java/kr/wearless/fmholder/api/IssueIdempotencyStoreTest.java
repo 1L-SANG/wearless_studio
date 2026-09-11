@@ -268,16 +268,16 @@ class IssueIdempotencyStoreTest {
         }
     }
 
-    private static IssueVcDtos.IssueRequest faceLicense(String key, String allowedUse) {
+    private static IssueVcDtos.IssueRequest faceLicense(String key, String evidence) {
         return new IssueVcDtos.IssueRequest(
-                "facelicense",
+                "facelicense-v2",
                 new IssueVcDtos.Claims(
-                        allowedUse,
-                        "forbidden",
-                        7,
-                        "2099-12-31",
-                        "sha256:opaque",
-                        "model"),
+                        "did:omn:user",
+                        key.substring("fm-license:".length()),
+                        "2026-09-11T00:00:00Z",
+                        evidence,
+                        "v1",
+                        "v1.1"),
                 key);
     }
 

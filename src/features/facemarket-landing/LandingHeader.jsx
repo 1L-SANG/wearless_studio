@@ -12,22 +12,12 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { Icon } from '@/components/ui.jsx';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
+import { listMyModels } from '@/lib/api/facemarket.js';
 import { landingNavAction, landingNavItems } from './facemarketRootTarget.js';
 import s from './FacemarketLanding.module.css';
 
-/* 2026-09-02 사용자 지시로 세 항목을 갈았다: 라이선싱·모델 등록·모델 정보 →
-   모델 둘러보기·라이선스·정산. 같은 날 저녁 다시: 라이선스 페이지를 지우고 그 자리에
-   **등록 상태**(/status — 예전 /model 허브의 내용, 공개 라우트에 로그인 프롬프트 내장).
-   내려간 두 화면(등록 안내 /register, 프라이버시 /model-info)은 지우지 않았다 —
-   내용은 그대로 살아 있고 푸터에서 들어간다. */
-/* 상단바 세 항목(모델 리스트 · Digital DNA 관리 · 정산)은 **누구에게나** 보인다(2026-09-04 오너
-   3차 지시 — 같은 날 낮의 '비로그인 숨김'은 철회). '등록 상태'는 'Digital DNA 관리'로 — 히어로
-   제목("create your own digital DNA")과 같은 말이라 상단바에서 이어진다. 관리·정산은 로그인이
-   필요한 목적지라 비로그인이 누르면 로그인 모달을 열고 로그인 뒤 그 경로로 보낸다(onNav →
-   landingNavAction). 부트스트랩 중(session 미확정)에 누른 클릭은 pendingNav 에 담아 세션 판정 뒤
-   한 번만 소비한다. 항목 목록과 판정 규칙은 facemarketRootTarget.js 가 단일 출처다. */
-/* CSS 의 `@media (min-width: 48rem)` 과 같은 폭이어야 한다 — 그 폭에서 햄버거가
-   사라지므로, 같은 지점에서 메뉴 상태도 접어야 '열린 채 닫을 수 없는' 상태가 안 생긴다. */
+/* 로그인한 확정 모델은 모델 지원 메뉴를 숨겨요.
+   보호 메뉴의 로그인 복귀는 facemarketRootTarget에서 판정해요. */
 const DESKTOP_QUERY = '(min-width: 48rem)';
 
 /* CTA 를 인증 부트스트랩 중에 disabled 로 잠그지 않는 건 의도다 — LandingShell 의
@@ -40,7 +30,17 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
   const { session, loading, openLogin, signOut } = useAuth();
   const navigate = useNavigate();
   const { pathname, search } = useLocation();
-  const nav = landingNavItems();
+  const [modelState, setModelState] = useState(null);
+  const userId = session?.user?.id;
+  const nav = landingNavItems({ verified: Boolean(userId && modelState?.userId === userId && modelState.verified) });
+  useEffect(() => {
+    if (!userId) { setModelState(null); return undefined; }
+    let alive = true;
+    listMyModels().then(models => {
+      if (alive) setModelState({ userId, verified: models.some(model => ['verified', 'suspended'].includes(model.status)) });
+    }).catch(() => { if (alive) setModelState(null); });
+    return () => { alive = false; };
+  }, [userId]);
 
   /* 로그아웃은 이 상단바가 유일한 출구다. facemarket 의 /model/* 은 셀러 크롬
      (shell.jsx 의 ProfileMenu)을 쓰지 않으므로, 여기 없으면 로그인한 모델이 세션을
@@ -135,9 +135,9 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
           </button>
         ) : null}
         {session ? (
-          <button className={s.headerQuiet} onClick={handleSignOut} type="button">
+          <button className={s.headerQuiet} onClick={handleSignOut} type="button" aria-label="로그아웃">
             <Icon name="logOut" size={16} stroke={1.8} />
-            로그아웃
+            <span className={s.headerQuietLabel}>로그아웃</span>
           </button>
         ) : !primaryLabel || !onPrimary ? (
           <button className={s.headerQuiet} disabled={loading} onClick={() => openLogin(`${pathname}${search}`)} type="button">로그인</button>

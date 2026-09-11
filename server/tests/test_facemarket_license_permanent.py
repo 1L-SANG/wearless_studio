@@ -1,4 +1,4 @@
-"""Permanent licenses retain nullable API dates and dated credential claims."""
+"""Permanent licenses use nullable DB dates, immutable v2 VCs and dated C2PA claims."""
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -41,7 +41,9 @@ def test_creation_stores_null_and_issues_permanent_claim(
     assert store["licenses"][0]["license_valid_until"] is None
     assert response.json()["licenseValidUntil"] is None
     issue = next(c for c in holder_stub.calls if c["path"].endswith("/issue-vc"))
-    assert issue["payload"]["claims"]["licenseValidUntil"] == "9999-12-31"
+    assert issue["payload"]["plan"] == "facelicense-v2"
+    assert issue["payload"]["claims"]["licenseId"] == response.json()["id"]
+    assert "licenseValidUntil" not in issue["payload"]["claims"]
     public = client.get(f"/v1/facemarket/verify/{response.json()['id']}")
     assert public.status_code == 200, public.text
     assert public.json()["validUntil"] is None
@@ -55,15 +57,15 @@ def test_old_client_valid_days_is_not_a_request_field():
     assert "validDays" not in request.model_dump(by_alias=True)
 
 
-@pytest.mark.parametrize("value, expected", [
-    (None, "9999-12-31"),
-    (datetime(2027, 9, 7, 23, tzinfo=timezone.utc), "2027-09-08"),
-])
-def test_credential_claim_retains_key_and_kst_date(value, expected):
+def test_credential_v2_keeps_issuance_evidence_instead_of_mutable_expiry():
     claims = build_face_vc_claims(
-        allowed=[], forbidden=[], unit_price=14900, valid_until=value, digest="sha256-x"
+        model_did="did:omn:model", license_id=LICENSE_ID,
+        issued_at=datetime(2026, 9, 11, 23, tzinfo=timezone.utc),
+        consent_doc_version="2026-09-v1", digest="sha256-x",
     )
-    assert claims["licenseValidUntil"] == expected
+    assert claims["issuedAt"] == "2026-09-11T23:00:00Z"
+    assert claims["licenseId"] == LICENSE_ID
+    assert "licenseValidUntil" not in claims
 
 
 def test_all_four_admin_eligibility_sql_gates_allow_null():

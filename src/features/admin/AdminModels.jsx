@@ -301,6 +301,8 @@ function Detail({ modelId, onChanged }) {
 
   const { model, licenses, settlements, enrollment } = data;
   const suspended = model.status === 'suspended';
+  const ownerPaused = suspended && model.suspensionSource === 'owner';
+  const adminSuspended = suspended && !ownerPaused;
 
   const act = async (fn) => {
     setBusy(true);
@@ -350,7 +352,7 @@ function Detail({ modelId, onChanged }) {
         </section>
         <TestCuts modelId={model.id} onChanged={onChanged} />
         <section className="border-t border-border pt-4">
-          {suspended ? (
+          {adminSuspended ? (
             <Button variant="outline" disabled={busy} onClick={() => act(() => adminUnsuspendModel(model.id))}>
               정지 해제 (정지 직전 상태로 되돌아가요)
             </Button>
@@ -367,7 +369,7 @@ function Detail({ modelId, onChanged }) {
                 disabled={busy || !reason.trim()}
                 onClick={() => act(() => adminSuspendModel(model.id, reason.trim()))}
               >
-                정지
+                {ownerPaused ? '운영 정지로 전환' : '정지'}
               </Button>
             </div>
           )}

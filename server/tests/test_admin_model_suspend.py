@@ -68,6 +68,18 @@ def test_suspend_records_previous_status_in_audit():
     assert params[6] == "본인 요청"
 
 
+def test_admin_suspend_records_admin_source_and_timestamp():
+    conn = FakeConn([{"status": "verified"}, {"ok": 1}])
+    result = asyncio.run(facemarket_admin.suspend_model(
+        conn, model_id="m1", actor="admin-1", reason="운영 정지",
+    ))
+
+    update_sql = next(sql for sql, _params in conn.executed if sql.startswith("update fm_models"))
+    assert "suspension_source = 'admin'" in update_sql
+    assert "suspended_at = now()" in update_sql
+    assert result == {"id": "m1", "status": "suspended"}
+
+
 def test_suspend_404_for_unknown_model():
     with pytest.raises(Exception) as exc:
         asyncio.run(facemarket_admin.suspend_model(
@@ -89,6 +101,61 @@ def test_suspend_rejects_an_already_suspended_model():
     # 거절이 읽기 단계에서 끝나야 한다 — 여기까지 왔으면 UPDATE 를 시도조차 안 했어야 한다.
     updates = [p for sql, p in conn.executed if sql.startswith("update fm_models")]
     assert not updates, "이미 정지된 모델인데 UPDATE 를 시도했다"
+
+
+def test_admin_suspend_converts_owner_pause_and_records_its_restore_state():
+    paused_at = "2026-09-11T12:00:00+00:00"
+    conn = FakeConn([
+        {
+            "status": "suspended",
+            "suspension_source": "owner",
+            "suspended_at": paused_at,
+        },
+        {"ok": 1},
+    ])
+
+    result = asyncio.run(facemarket_admin.suspend_model(
+        conn, model_id="m1", actor="admin-1", reason="운영 검토",
+    ))
+
+    assert result == {"id": "m1", "status": "suspended"}
+    state_sql = conn.executed[0][0]
+    assert "select status, suspension_source, suspended_at from fm_models" in state_sql
+    update_sql = next(sql for sql, _params in conn.executed if sql.startswith("update fm_models"))
+    assert "suspension_source = 'admin'" in update_sql
+    assert "suspension_source = 'owner'" in update_sql
+    audit = next(
+        params for sql, params in conn.executed if sql.startswith("insert into admin_audit_log")
+    )
+    assert audit[4].obj == {
+        "status": "suspended",
+        "suspensionSource": "owner",
+        "suspendedAt": paused_at,
+    }
+    assert audit[5].obj == {
+        "status": "suspended",
+        "suspensionSource": "admin",
+    }
+
+
+def test_admin_unsuspend_restores_owner_pause_after_admin_conversion():
+    paused_at = "2026-09-11T12:00:00+00:00"
+    conn = FakeConn([
+        {"status": "suspended", "suspension_source": "admin"},
+        {"prev": "suspended", "prev_source": "owner", "prev_suspended_at": paused_at},
+        {"ok": 1},
+    ])
+
+    result = asyncio.run(facemarket_admin.unsuspend_model(
+        conn, model_id="m1", actor="admin-1",
+    ))
+
+    assert result == {"id": "m1", "status": "suspended"}
+    update_sql, update_params = next(
+        (sql, params) for sql, params in conn.executed if sql.startswith("update fm_models")
+    )
+    assert "suspension_source = 'owner'" in update_sql
+    assert update_params == (paused_at, "m1")
 
 
 def test_suspending_twice_in_a_row_rejects_the_second_call():
@@ -167,6 +234,16 @@ def test_unsuspend_rejects_a_model_that_is_not_suspended():
     with pytest.raises(Exception) as exc:
         asyncio.run(facemarket_admin.unsuspend_model(conn, model_id="m1", actor="admin-1"))
     assert exc.value.detail["code"] == "not_suspended"
+
+
+def test_admin_unsuspend_does_not_consume_an_owner_pause():
+    conn = FakeConn([{"status": "suspended", "suspension_source": "owner"}])
+    with pytest.raises(Exception) as exc:
+        asyncio.run(facemarket_admin.unsuspend_model(conn, model_id="m1", actor="admin-1"))
+
+    assert exc.value.detail["code"] == "not_admin_suspended"
+    updates = [p for sql, p in conn.executed if sql.startswith("update fm_models")]
+    assert updates == []
 
 
 def test_unsuspend_rejects_when_status_changes_between_read_and_write():

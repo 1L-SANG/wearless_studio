@@ -476,7 +476,7 @@ def test_catalog_lists_verified_without_pii(fm, make_token):
     for required in (
         "m.current_enrollment_id",
         "l.enrollment_id = e.id",
-        "p.enrollment_id = e.id and p.angle = 'front'",
+        "p.enrollment_id = e.id",
         "m.status = 'verified'",
         "m.assets_status = 'ready'",
         "e.status = 'passed'",

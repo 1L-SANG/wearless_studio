@@ -14,6 +14,8 @@ import { AdminApplications } from '@/features/admin/AdminApplications.jsx';
 import { AdminDashboard } from '@/features/admin/AdminDashboard.jsx';
 import { AdminModels } from '@/features/admin/AdminModels.jsx';
 import { AdminStaff } from '@/features/admin/AdminStaff.jsx';
+import { AdminUsageReports } from '@/features/admin/AdminUsageReports.jsx';
+import { AdminPayoutStatements } from '@/features/admin/AdminPayoutStatements.jsx';
 import { AdminUsers } from '@/features/admin/AdminUsers.jsx';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
 import { redirectToOwnDocumentHost } from '@/lib/host.js';
@@ -38,6 +40,8 @@ export default function AppAdmin() {
           <Route element={<AdminShell />}>
             <Route index element={<AdminDashboard />} />
             <Route path="applications" element={<AdminApplications />} />
+            <Route path="usage-reports" element={<AdminUsageReports />} />
+            <Route path="payout-statements" element={<AdminPayoutStatements />} />
             <Route path="models" element={<AdminModels />} />
             <Route path="users" element={<AdminUsers />} />
             <Route path="staff" element={<AdminStaff />} />

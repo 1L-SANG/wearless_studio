@@ -24,6 +24,8 @@ import hashlib
 import logging
 import uuid
 
+from ..facemarket_photos import ASSET_SOURCE_SLOTS, resolve_photo_rows
+
 
 log = logging.getLogger("wearless.identity_source")
 
@@ -122,12 +124,10 @@ async def resolve_real_model_assets(
             "where enrollment_id = %s",
             (enrollment_id,))
         photo_rows = await cur.fetchall()
-    by_angle = {row.get("angle"): row for row in photo_rows}
-    if set(by_angle) != set(_ANGLES):
+    sources = resolve_photo_rows(photo_rows, ASSET_SOURCE_SLOTS)
+    if len(sources) != len(ASSET_SOURCE_SLOTS):
         return None
-    current_source_hash = compute_assets_source_hash(
-        [by_angle[angle] for angle in _ANGLES]
-    )
+    current_source_hash = compute_assets_source_hash(sources)
     if current_source_hash != str(state.get("assets_source_hash") or ""):
         # 관측 로그(PII 없음 — 사유 코드·model_id·enrollment_id 만, 해시/다이제스트
         # 값 자체는 남기지 않는다). 다른 REJECTED 사유와 같은 bare None 만 반환하면

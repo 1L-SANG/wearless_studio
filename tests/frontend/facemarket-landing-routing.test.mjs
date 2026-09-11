@@ -27,21 +27,20 @@ test('facemarket 도메인의 화면이면 그리로 보낸다', () => {
   assert.equal(facemarketRootTarget('/status-evil'), null);
 });
 
-test('상단바는 네 메뉴를 항상 보여 주고 보호 메뉴만 로그인 의도로 바꾼다', () => {
+test('상단바는 세 메뉴를 보여 주고 보호 메뉴만 로그인 의도로 바꾼다', () => {
   assert.equal(typeof landingRouting.landingNavItems, 'function');
   assert.equal(typeof landingRouting.landingNavAction, 'function');
 
   assert.deepEqual(landingRouting.landingNavItems(), [
     { to: '/apply', label: '모델 지원', protected: false },
     { to: '/models', label: '모델 리스트', protected: false },
-    { to: '/status', label: 'Digital DNA 관리', protected: true },
-    { to: '/payout', label: '정산', protected: true },
+    { to: '/status', label: '마이페이지', protected: true },
   ]);
   assert.equal(landingRouting.landingNavAction('/models', { session: null, loading: false }), 'navigate');
   assert.equal(landingRouting.landingNavAction('/status', { session: null, loading: false }), 'login');
-  assert.equal(landingRouting.landingNavAction('/payout', { session: null, loading: false }), 'login');
-  assert.equal(landingRouting.landingNavAction('/payout', { session: null, loading: true }), 'wait');
-  assert.equal(landingRouting.landingNavAction('/payout', { session: { user: { id: 'u1' } }, loading: false }), 'navigate');
+  assert.equal(landingRouting.landingNavAction('/status', { session: null, loading: false }), 'login');
+  assert.equal(landingRouting.landingNavAction('/status', { session: null, loading: true }), 'wait');
+  assert.equal(landingRouting.landingNavAction('/status', { session: { user: { id: 'u1' } }, loading: false }), 'navigate');
 });
 
 test('루트 자기 자신이면 랜딩을 그린다 — 리다이렉트 루프 금지', () => {
@@ -111,4 +110,9 @@ test('접두사만 겹치는 경로는 화이트리스트를 통과하지 못한
   // 경계값: 뿌리 자신과 그 하위는 통과한다.
   assert.equal(facemarketRootTarget('/model'), '/model');
   assert.equal(facemarketRootTarget('/model/'), '/model/');
+});
+
+test('확정 모델은 상단바에서 모델 지원을 숨겨요', () => {
+  assert.deepEqual(landingRouting.landingNavItems({ verified: true }).map(item => item.to), ['/models', '/status']);
+  assert.equal(landingRouting.landingNavItems({ verified: false })[0].to, '/apply');
 });

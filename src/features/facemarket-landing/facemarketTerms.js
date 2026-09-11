@@ -1,5 +1,11 @@
 /* FaceMarket 계약과 정산의 공통 조건.
    서비스 이용가격 표시는 lib/facemarketPricing.js를 사용한다. */
+import { FACEMARKET_PRICING } from '../../lib/facemarketPricing.js';
+
+export const STANDARD_UNIT_PRICE_KRW = FACEMARKET_PRICING.perCut;
+export const MONTHLY_PASS_PRICE_KRW = FACEMARKET_PRICING.monthly;
+export const MONTHLY_PASS_CUTS = FACEMARKET_PRICING.monthlyCap;
+export const MONTHLY_OVERAGE_KRW = FACEMARKET_PRICING.overage;
 export const MODEL_SHARE = 0.70;
 export const PLATFORM_SHARE = 0.20;
 export const OPS_SHARE = 0.10;

@@ -237,7 +237,7 @@ export function ModelApply() {
     <section className={s.completePage}>
       <div className={s.completeMark}><Icon name="check" size={32} stroke={1.5} /></div>
       <h1 ref={heading} tabIndex={-1}>지원서가 접수 완료됐어요</h1>
-      <p>{REVIEW_SLA_LABEL} 결과를 이메일로 알려드려요.<br />상단의 'Digital DNA 관리' 탭에서도 실시간 상태를 확인 가능해요</p>
+      <p>{REVIEW_SLA_LABEL} 결과를 이메일로 알려드려요.<br />상단의 '마이페이지' 탭에서도 실시간 상태를 확인 가능해요</p>
       <Link className={s.completeCta} to="/status">지원 상태 보기</Link>
     </section>
   );

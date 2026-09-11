@@ -20,6 +20,7 @@ import logging
 import time
 import uuid
 from collections.abc import Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address
@@ -39,6 +40,8 @@ from . import repo
 from .auth import require_user
 from .db import get_conn
 from .facemarket_enrollment import BIOMETRIC_CONSENT_VERSION
+from .facemarket_notify import send_license_issued_email, send_usage_report_email
+from .facemarket_photos import preferred_photo_predicate
 from .models import CamelModel, ErrorResponse
 from .r2 import MIME_EXT
 
@@ -101,6 +104,11 @@ class OwnedModelCard(ModelCard):
     """본인 허브 카드. 셀러 카탈로그에는 재생성 횟수를 노출하지 않는다."""
 
     redo_count: int = 0
+    suspension_source: str | None = None
+    suspended_at: datetime | None = None
+    enrollment_completed_at: datetime | None = None
+    review_completed_at: datetime | None = None
+    confirmed_at: datetime | None = None
 
 
 def _err(code: str, message: str, status: int = 400) -> HTTPException:
@@ -355,13 +363,13 @@ async def identity_verify(
 _MODEL_CARD_COLS = ("id::text as id, display_name, status, cover_image_url, created_at, "
                     "(assets_status = 'ready') as assets_ready, redo_count")
 
-_CURRENT_CARD_JOINS = """
+_CURRENT_CARD_JOINS = f"""
 join fm_biometric_enrollments e
   on e.id = m.current_enrollment_id and e.model_id = m.id
 join fm_licenses l
   on l.model_id = m.id and l.enrollment_id = e.id
 join fm_biometric_enrollment_photos p
-  on p.enrollment_id = e.id and p.angle = 'front'
+  on {preferred_photo_predicate('p', 'e.id')}
 """
 
 _CURRENT_CARD_ELIGIBILITY = """
@@ -503,7 +511,13 @@ async def my_models(request: Request, user_id: str = Depends(require_user)):
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                f"""select {_MODEL_CARD_COLS} from fm_models
+                f"""select {_MODEL_CARD_COLS}, suspension_source, suspended_at,
+                           (select e.completed_at from fm_biometric_enrollments e
+                             where e.id = fm_models.current_enrollment_id)
+                             as enrollment_completed_at,
+                           confirm_requested_at as review_completed_at,
+                           confirmed_at
+                      from fm_models
                     where user_id = %s
                     order by created_at desc""",
                 (user_id,),
@@ -512,6 +526,99 @@ async def my_models(request: Request, user_id: str = Depends(require_user)):
     for row in rows:
         row["cover_image_url"] = _cover_serving_url(request, row.get("cover_image_url"))
     return rows
+
+
+class ModelActivityState(CamelModel):
+    id: str
+    status: str
+    suspension_source: str | None = None
+    suspended_at: datetime | None = None
+
+
+async def _owned_model_state(conn, model_id: str, user_id: str) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select id::text as id, status, suspension_source, suspended_at
+                 from fm_models
+                where id = %s and user_id = %s
+                for update""",
+            (model_id, user_id),
+        )
+        return await cur.fetchone()
+
+
+def _model_id_or_404(model_id: str) -> str:
+    try:
+        return str(uuid.UUID(str(model_id)))
+    except (TypeError, ValueError):
+        raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
+
+
+@router.post(
+    "/models/{model_id}/pause",
+    response_model=ModelActivityState,
+    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse},
+               409: {"model": ErrorResponse}},
+    summary="내 모델 활동 일시 중단",
+)
+async def pause_model_activity(
+    request: Request, model_id: str, user_id: str = Depends(require_user)
+):
+    model_id = _model_id_or_404(model_id)
+    async with get_conn(request) as conn:
+        state = await _owned_model_state(conn, model_id, user_id)
+        if state is None:
+            raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
+        if state["status"] != "verified":
+            raise _err("model_not_active", "활동 중인 모델만 일시 중단할 수 있어요.", status=409)
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """update fm_models set status = 'suspended', suspension_source = %s,
+                          suspended_at = now(), updated_at = now()
+                    where id = %s and user_id = %s and status = 'verified'
+                    returning id::text as id, status, suspension_source, suspended_at""",
+                ("owner", model_id, user_id),
+            )
+            updated = await cur.fetchone()
+        if updated is None:
+            raise _err("model_state_changed", "모델 상태가 변경되었습니다.", status=409)
+        await conn.commit()
+    return updated
+
+
+@router.post(
+    "/models/{model_id}/resume",
+    response_model=ModelActivityState,
+    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse},
+               409: {"model": ErrorResponse}},
+    summary="내 모델 활동 재개",
+)
+async def resume_model_activity(
+    request: Request, model_id: str, user_id: str = Depends(require_user)
+):
+    model_id = _model_id_or_404(model_id)
+    async with get_conn(request) as conn:
+        state = await _owned_model_state(conn, model_id, user_id)
+        if state is None:
+            raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
+        if state["status"] != "suspended":
+            raise _err("model_not_paused", "일시 중단한 모델만 재개할 수 있어요.", status=409)
+        if state.get("suspension_source") != "owner":
+            raise _err("admin_suspended", "운영 정지 상태는 직접 재개할 수 없어요.", status=409)
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """update fm_models set status = 'verified', suspension_source = null,
+                          suspended_at = null, updated_at = now()
+                    where id = %s and user_id = %s and status = 'suspended'
+                      and suspension_source = 'owner'
+                    returning id::text as id, status, suspension_source, suspended_at""",
+                (model_id, user_id),
+            )
+            updated = await cur.fetchone()
+        if updated is None:
+            raise _err("model_state_changed", "모델 상태가 변경되었습니다.", status=409)
+        await conn.commit()
+    return updated
 
 
 @router.post(
@@ -592,14 +699,15 @@ _EXT_TO_MIME = {ext: mime for mime, ext in MIME_EXT.items()}  # 상세컷 워커
 # LicenseCard.cover_image_url 기본값(None)으로 직렬화되고, 대표 이미지는 목록 조회(_L)에서 실린다.
 _LICENSE_CARD_COLS = (
     "id::text as id, model_id::text as model_id, face_image_uri, face_image_digest, "
-    "allowed_use, forbidden_use, unit_price, license_valid_until, status, vc_id, created_at"
+    "allowed_use, forbidden_use, unit_price, license_valid_until, status, vc_id, "
+    "created_at, updated_at"
 )
 # 목록 조인 쿼리용 — 모든 컬럼 l. 한정(fm_models 와 id/status/created_at 등 이름 충돌 → 모호성 500 방지).
 # cover_image_url 만 m. — 대표 이미지는 fm_models 소유(조인 전제, 아래 3개 사용처 모두 join fm_models).
 _LICENSE_CARD_COLS_L = (
     "l.id::text as id, l.model_id::text as model_id, l.face_image_uri, l.face_image_digest, "
     "l.allowed_use, l.forbidden_use, l.unit_price, l.license_valid_until, l.status, l.vc_id, l.created_at, "
-    "m.cover_image_url"
+    "l.updated_at, m.cover_image_url"
 )
 
 
@@ -617,6 +725,7 @@ class LicenseCard(CamelModel):
     status: str
     vc_id: str | None = None
     created_at: datetime
+    updated_at: datetime | None = None
     cover_image_url: str | None = None  # 모델 대표 이미지 — VC 카드 프로필. RETURNING 경로는 null(목록 조회 시 채워짐)
 
     @field_validator("forbidden_use", mode="before")
@@ -642,6 +751,10 @@ class CreateLicenseRequest(CamelModel):
     def platform_unit_price(cls, _value):
         # 구버전 화면이나 변조 요청이 다른 값을 보내도 라이선스 가격은 플랫폼 표준가다.
         return PLATFORM_UNIT_PRICE_KRW
+
+
+class UpdateLicenseTermsRequest(CamelModel):
+    allowed_use: list[str] | None = None
 
 
 def _r2_face(request: Request):
@@ -704,16 +817,21 @@ async def _find_license_by_enrollment(conn, user_id: str, enrollment_id: str) ->
         return await cur.fetchone()
 
 
-async def _find_license_for_update(conn, user_id: str, license_id: str) -> dict | None:
+async def _find_license_for_update(
+    conn, user_id: str, license_id: str, *, skip_locked: bool = False
+) -> dict | None:
+    lock_clause = "for update of l skip locked" if skip_locked else "for update of l"
     async with conn.cursor() as cur:
         await cur.execute(
             f"""select {_LICENSE_CARD_COLS_L}, l.enrollment_id::text as enrollment_id,
-                      l.face_image_key
+                      l.face_image_key,
+                      (select consent_version from fm_biometric_enrollments
+                        where id = l.enrollment_id) as consent_doc_version
                 from fm_licenses l
                 join fm_models m on m.id = l.model_id
                 where l.id = %s and m.user_id = %s
                 limit 1
-                for update of l""",
+                {lock_clause}""",
             (license_id, user_id),
         )
         return await cur.fetchone()
@@ -722,7 +840,7 @@ async def _find_license_for_update(conn, user_id: str, license_id: str) -> dict 
 async def _load_license_evidence(conn, user_id: str, enrollment_id: str) -> dict | None:
     async with conn.cursor() as cur:
         await cur.execute(
-            """select e.id::text as enrollment_id, e.status as enrollment_status,
+            f"""select e.id::text as enrollment_id, e.status as enrollment_status,
                       e.match_policy_version, m.id::text as model_id, m.status as model_status,
                       m.did as model_did, m.assets_status, m.current_enrollment_id::text,
                       p.r2_key as front_key, p.image_digest as front_digest,
@@ -736,7 +854,7 @@ async def _load_license_evidence(conn, user_id: str, enrollment_id: str) -> dict
                  from fm_biometric_enrollments e
                  join fm_models m on m.id = e.model_id and m.user_id = e.user_id
                  left join fm_biometric_enrollment_photos p
-                   on p.enrollment_id = e.id and p.angle = 'front'
+                   on {preferred_photo_predicate('p', 'e.id')}
                  left join fm_model_assets fa
                    on fa.model_id = m.id and fa.view = 'face_front'
                  left join fm_model_assets ga
@@ -753,8 +871,9 @@ async def _load_activation_evidence_for_update(
 ) -> dict | None:
     async with conn.cursor() as cur:
         await cur.execute(
-            """select e.id::text as enrollment_id, e.status as enrollment_status,
-                      e.match_policy_version, m.id::text as model_id, m.status as model_status,
+            f"""select e.id::text as enrollment_id, e.status as enrollment_status,
+                      e.match_policy_version, e.body_type as enrollment_body_type,
+                      m.id::text as model_id, m.status as model_status,
                       m.did as model_did, m.assets_status, m.current_enrollment_id::text,
                       m.reverification_batch_id::text as model_reverification_batch_id,
                       b.status as batch_status, b.completed_at as batch_completed_at,
@@ -776,7 +895,7 @@ async def _load_activation_evidence_for_update(
                    on m.id = e.model_id and m.user_id = e.user_id
                  left join fm_cutover_batches b on b.id = m.reverification_batch_id
                  join fm_biometric_enrollment_photos p
-                   on p.enrollment_id = e.id and p.angle = 'front'
+                   on {preferred_photo_predicate('p', 'e.id')}
                  join fm_model_assets fa
                    on fa.model_id = m.id and fa.view = 'face_front'
                  join fm_model_assets ga
@@ -933,11 +1052,12 @@ async def finalize_issued_face_vc(
                     active = await cur.fetchone()
                     await cur.execute(
                         """update fm_models
-                              set did = coalesce(nullif(did, ''), %s), status = 'pending'
+                              set did = coalesce(nullif(did, ''), %s), status = 'pending',
+                                  body_type = %s
                             where id = %s and current_enrollment_id = %s
                               and status in ('pending', 'reverification_required')
                             returning id""",
-                        (issued.user_did, model_id, enrollment_id),
+                        (issued.user_did, evidence.get("enrollment_body_type"), model_id, enrollment_id),
                     )
                     model_updated = await cur.fetchone()
                     await cur.execute(
@@ -1010,6 +1130,84 @@ async def finalize_issued_face_vc(
     raise stale_error
 
 
+async def issue_and_activate_pending_face_vc(
+    app, *, user_id: str, license_id: str, model_id: str, connect=None
+) -> dict | None:
+    """한 pending 행을 잠근 채 VC 발급과 활성화를 끝내고 발급 메일을 보낸다."""
+    active = None
+    email = None
+    display_name = None
+    connect = connect or app.state.pool.connection
+    async with connect() as conn:
+        locked = await _find_license_for_update(
+            conn, user_id, license_id, skip_locked=True
+        )
+        if locked is None:
+            return None
+        if locked["status"] == "active":
+            await conn.commit()
+            return _license_card(locked)
+        if locked["status"] != "pending" or locked.get("vc_id") is not None:
+            await conn.rollback()
+            return None
+        enrollment_id = str(locked.get("enrollment_id") or "")
+        issued = await issue_face_vc(
+            app,
+            license_id=license_id,
+            model_id=model_id,
+            allowed=list(locked["allowed_use"] or []),
+            forbidden=[],
+            unit_price=int(locked["unit_price"]),
+            valid_until=locked["license_valid_until"],
+            digest=locked["face_image_digest"],
+            issued_at=locked["created_at"],
+            consent_doc_version=locked["consent_doc_version"],
+        )
+
+        @asynccontextmanager
+        async def current_connection():
+            yield conn
+
+        active = await finalize_issued_face_vc(
+            current_connection,
+            user_id=user_id,
+            license_id=license_id,
+            model_id=model_id,
+            enrollment_id=enrollment_id,
+            issued=issued,
+        )
+        try:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """select a.contact_email, m.display_name
+                         from fm_models m
+                         left join lateral (
+                             select contact_email from fm_model_applications
+                              where user_id = m.user_id
+                              order by created_at desc limit 1
+                         ) a on true
+                        where m.id = %s and m.user_id = %s""",
+                    (model_id, user_id),
+                )
+                recipient = await cur.fetchone()
+            if recipient:
+                email = recipient.get("contact_email")
+                display_name = recipient.get("display_name")
+        except Exception:
+            logger.warning("license issued email recipient lookup failed", exc_info=True)
+    if email:
+        ok, _message_id, error = await send_license_issued_email(
+            app.state.settings,
+            to=email,
+            display_name=display_name or "모델",
+        )
+        if not ok and error != "not_configured":
+            logger.warning("license issued email failed: %s", error)
+    else:
+        logger.info("license issued email skipped: contact_email missing")
+    return active
+
+
 async def _await_post_issue_finalization(awaitable):
     task = asyncio.create_task(awaitable)
     try:
@@ -1065,7 +1263,7 @@ async def create_license(
         raise _err("invalid_enrollment_id", "등록 ID 형식이 올바르지 않습니다.", status=400)
     valid_until = None
     allowed = _clean_uses(body.allowed_use, BRAND_USE_CATEGORIES)
-    unit_price = body.unit_price
+    unit_price = request.app.state.settings.fm_standard_unit_price
     # 선택 동의는 플래그 뒤에 숨긴다 — 법률 검토 전에는 모델에게 화면도 보이지 않고,
     # 요청에 값이 실려 와도 저장하지 않는다(기본 false = 지금 동작: 스튜디오 전용).
     opt_enabled = bool(getattr(request.app.state.settings, "facemarket_opt_uses_enabled", False))
@@ -1078,20 +1276,47 @@ async def create_license(
     row = None
     async with get_conn(request) as conn:
         await _assert_account_open(conn, user_id)
+        await _reject_cutover_closed(conn)
+        # Photo reopening takes this same lock before checking for a license.
+        # Hold it until the pending license and vc_pending state commit together.
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select id from fm_biometric_enrollments "
+                "where id = %s and user_id = %s for update",
+                (enrollment_id, user_id),
+            )
+            if await cur.fetchone() is None:
+                raise _err("not_found", "등록을 찾을 수 없습니다.", status=404)
         existing = await _find_license_by_enrollment(conn, user_id, enrollment_id)
         if existing and existing["status"] == "active":
             return existing
 
+        locked_pending = None
+        if existing:
+            license_id = existing["id"]
+            locked_pending = await _find_license_for_update(
+                conn, user_id, license_id, skip_locked=True
+            )
+            if locked_pending is None:
+                await conn.rollback()
+                raise _err(
+                    "vc_issue_delayed",
+                    "VC 발급이 지연되었습니다. 잠시 후 다시 시도해 주세요.",
+                    status=503,
+                )
+            if locked_pending["status"] == "active":
+                await conn.commit()
+                return _license_card(locked_pending)
+            existing = locked_pending
+
         model_id, key, digest = _checked_license_evidence(
             await _load_license_evidence(conn, user_id, enrollment_id)
         )
-        await _reject_cutover_closed(conn)
         if existing:
             row = existing
             license_id = existing["id"]
             allowed = list(existing["allowed_use"] or [])
             unit_price = int(existing["unit_price"])
-            valid_until = existing["license_valid_until"]
             digest = existing["face_image_digest"]
         else:
             gate_uri = f"/v1/facemarket/licenses/{license_id}/face"
@@ -1126,11 +1351,34 @@ async def create_license(
                     return row
                 allowed = list(row["allowed_use"] or [])
                 unit_price = int(row["unit_price"])
-                valid_until = row["license_valid_until"]
                 digest = row["face_image_digest"]
 
+        if locked_pending is None:
+            locked_pending = await _find_license_for_update(
+                conn, user_id, license_id, skip_locked=True
+            )
+            if locked_pending is None:
+                await conn.rollback()
+                raise _err(
+                    "vc_issue_delayed",
+                    "VC 발급이 지연되었습니다. 잠시 후 다시 시도해 주세요.",
+                    status=503,
+                )
+            if locked_pending["status"] == "active":
+                await conn.commit()
+                return _license_card(locked_pending)
         allowed = _clean_uses(allowed, BRAND_USE_CATEGORIES)
         async with conn.cursor() as cur:
+            await cur.execute(
+                "update fm_licenses set unit_price = %s, license_valid_until = null "
+                "where id = %s and status = 'pending' "
+                "returning unit_price, license_valid_until",
+                (request.app.state.settings.fm_standard_unit_price, license_id),
+            )
+            standardized = await cur.fetchone()
+            if standardized is not None:
+                unit_price = int(standardized["unit_price"])
+                valid_until = standardized["license_valid_until"]
             await cur.execute(
                 "update fm_biometric_enrollments set status = 'vc_pending' "
                 "where id = %s and status in ('license_pending', 'vc_pending') returning id",
@@ -1148,10 +1396,14 @@ async def create_license(
     # 얼굴·클레임은 절대 안 찍는다(§1.4): 소요시간과 결과만.
     issue_started = time.monotonic()
     try:
-        issued = await issue_face_vc(
-            request.app, license_id=license_id, model_id=str(model_id),
-            allowed=allowed, forbidden=[], unit_price=unit_price,
-            valid_until=valid_until, digest=digest,
+        active = await _await_post_issue_finalization(
+            issue_and_activate_pending_face_vc(
+                request.app,
+                user_id=user_id,
+                license_id=license_id,
+                model_id=str(model_id),
+                connect=lambda: get_conn(request),
+            )
         )
     except FaceVcIssueError as error:
         logger.info(
@@ -1164,19 +1416,6 @@ async def create_license(
             "VC 발급이 지연되었습니다. 잠시 후 다시 시도해 주세요.",
             status=error.status_code,
         )
-
-    logger.info("fm_vc_issue outcome=issued elapsed_s=%.1f", time.monotonic() - issue_started)
-    try:
-        return await _await_post_issue_finalization(
-            finalize_issued_face_vc(
-                lambda: get_conn(request),
-                user_id=user_id,
-                license_id=license_id,
-                model_id=model_id,
-                enrollment_id=enrollment_id,
-                issued=issued,
-            )
-        )
     except HTTPException:
         raise
     except Exception:
@@ -1185,6 +1424,90 @@ async def create_license(
             "VC 발급이 지연되었습니다. 잠시 후 다시 시도해 주세요.",
             status=503,
         )
+    if active is None:
+        raise _err(
+            "vc_issue_delayed",
+            "VC 발급이 지연되었습니다. 잠시 후 다시 시도해 주세요.",
+            status=503,
+        )
+    logger.info("fm_vc_issue outcome=issued elapsed_s=%.1f", time.monotonic() - issue_started)
+    return active
+
+
+@router.patch(
+    "/licenses/{license_id}/terms",
+    response_model=LicenseCard,
+    responses={
+        400: {"model": ErrorResponse},
+        401: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+    },
+    summary="내 라이선스 사용 조건 변경",
+)
+async def update_license_terms(
+    request: Request,
+    license_id: str,
+    body: UpdateLicenseTermsRequest,
+    user_id: str = Depends(require_user),
+):
+    try:
+        license_id = str(uuid.UUID(str(license_id)))
+    except (TypeError, ValueError):
+        raise _err("not_found", "라이선스를 찾을 수 없습니다.", status=404)
+    changed = body.model_fields_set & {"allowed_use"}
+    if not changed:
+        raise _err("terms_required", "바꿀 사용 조건을 입력해 주세요.", status=400)
+    if "allowed_use" in changed and body.allowed_use is None:
+        raise _err("invalid_use_category", "허용할 옷 종류를 배열로 보내 주세요.", status=400)
+
+    async with get_conn(request) as conn:
+        row = await _find_license_for_update(conn, user_id, license_id)
+        if row is None:
+            raise _err("not_found", "라이선스를 찾을 수 없습니다.", status=404)
+        if row["status"] != "active":
+            raise _err("license_inactive", "활성 라이선스의 조건만 바꿀 수 있어요.", status=409)
+
+        allowed = list(row.get("allowed_use") or [])
+        if "allowed_use" in changed:
+            allowed = _clean_uses(body.allowed_use or [], BRAND_USE_CATEGORIES)
+            if not allowed:
+                raise _err(
+                    "invalid_use_category", "허용할 옷 종류를 하나 이상 선택해 주세요.", status=400
+                )
+        valid_until = row.get("license_valid_until")
+        before = {
+            "allowedUse": list(row.get("allowed_use") or []),
+            "licenseValidUntil": (
+                row["license_valid_until"].isoformat()
+                if row.get("license_valid_until") is not None
+                else None
+            ),
+        }
+        after = {
+            "allowedUse": allowed,
+            "licenseValidUntil": valid_until.isoformat() if valid_until is not None else None,
+        }
+        async with conn.cursor() as cur:
+            await cur.execute(
+                f"""update fm_licenses set allowed_use = %s, license_valid_until = %s,
+                            updated_at = now()
+                      where id = %s and status = 'active'
+                      returning {_LICENSE_CARD_COLS}""",
+                (allowed, valid_until, license_id),
+            )
+            updated = await cur.fetchone()
+            if updated is None:
+                raise _err("license_state_changed", "라이선스 상태가 변경되었습니다.", status=409)
+            await cur.execute(
+                """insert into fm_license_term_changes
+                       (license_id, before, after, actor)
+                     values (%s, %s, %s, %s)""",
+                (license_id, Json(before), Json(after), user_id),
+            )
+        await conn.commit()
+    updated["cover_image_url"] = _cover_serving_url(request, row.get("cover_image_url"))
+    return updated
 
 
 @router.get(
@@ -1194,16 +1517,20 @@ async def create_license(
     tags=["FaceMarket"],
     summary="내 라이선스 목록",
 )
-async def list_licenses(request: Request, user_id: str = Depends(require_user)):
+async def list_licenses(
+    request: Request,
+    include_revoked: bool = Query(default=False, alias="includeRevoked"),
+    user_id: str = Depends(require_user),
+):
     """본인 소유 모델의 라이선스 목록. RLS 우회(service-role)라 SQL에서 소유 조인으로 스코프한다."""
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
+            revoked_filter = "" if include_revoked else "and l.status <> 'revoked'"
             await cur.execute(
-                # revoked 는 뺀다 — 사용자가 폐기했거나 재등록으로 갈아탄 죽은 카드다.
-                # 남겨두면 등록을 다시 할 때마다 목록에 VC 카드가 쌓인다(행은 이력으로 보존).
+                # 기본값은 기존 계약을 지킨다. 이력 화면만 includeRevoked=true 로 죽은 카드를 요청한다.
                 f"""select {_LICENSE_CARD_COLS_L} from fm_licenses l
                     join fm_models m on m.id = l.model_id
-                    where m.user_id = %s and l.status <> 'revoked'
+                    where m.user_id = %s {revoked_filter}
                     order by l.created_at desc limit 200""",
                 (user_id,),
             )
@@ -1503,11 +1830,17 @@ class SettlementCard(CamelModel):
     chain_id: str | None = None
     recorded_block: int | None = None
     created_at: datetime
+    product_name: str | None = None
+    seller_name: str | None = None
+    reported: bool = False
+    publication_id: str | None = None
+    project_id: str | None = None
 
 
 class SettlementSummary(CamelModel):
     month_count: int
     month_amount: int
+    total_count: int
     total_amount: int
 
 
@@ -1515,6 +1848,19 @@ class SimulateRequest(CamelModel):
     """데모/부하 정산(장면④, KPI '시뮬' 집계). 실 상세페이지 잡 없이 라이선스 1건 정산."""
 
     license_id: str
+
+
+class UsageReportRequest(CamelModel):
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class UsageReportCard(CamelModel):
+    id: str
+    settlement_id: str
+    model_id: str
+    reason: str | None = None
+    status: str
+    created_at: datetime
 
 
 def _request_client_ip(request: Request) -> str:
@@ -1884,14 +2230,58 @@ async def list_settlements(request: Request, user_id: str = Depends(require_user
     async with get_conn(request) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                f"""select {columns} from fm_settlements st
+                f"""select {columns},
+                           publication.id::text as publication_id, j.project_id::text as project_id,
+                           coalesce(nullif(p.name, ''), nullif(pr.title, '')) as product_name,
+                           nullif(seller.display_name, '') as seller_name,
+                           exists (select 1 from fm_usage_reports ur
+                                    where ur.settlement_id = st.id) as reported
+                      from fm_settlements st
                     join fm_licenses l on l.id = st.license_id
                     join fm_models m on m.id = l.model_id
+                    left join jobs j on j.id = st.job_id
+                    left join projects pr on pr.id = j.project_id
+                    left join products p on p.project_id = pr.id
+                    left join profiles seller on seller.user_id = pr.user_id
+                    left join lateral (
+                        select pub.id from fm_publication_records pub
+                         where pub.project_id = j.project_id and pub.model_id = m.id
+                           and pub.kind = 'long_png' and pub.revoked_at is null
+                           and pub.r2_key is not null
+                         order by pub.created_at desc, pub.id desc limit 1
+                    ) publication on true
                     where m.user_id = %s
                     order by st.created_at desc limit 200""",
                 (user_id,),
             )
             return await cur.fetchall()
+
+
+@router.get("/model/publications/{publication_id}/preview-url")
+async def model_publication_preview_url(
+    publication_id: str, request: Request, response: Response,
+    user_id: str = Depends(require_user),
+):
+    try:
+        publication_id = str(uuid.UUID(publication_id))
+    except (ValueError, TypeError, AttributeError):
+        raise _err("not_found", "발행 기록을 찾을 수 없어요.", status=404) from None
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """select p.kind, p.r2_key
+                     from fm_publication_records p join fm_models m on m.id = p.model_id
+                    where p.id = %s and m.user_id = %s""",
+                (publication_id, user_id),
+            )
+            row = await cur.fetchone()
+    if row is None or row["kind"] not in ("long_png", "block_png") or not row["r2_key"]:
+        raise _err("not_found", "발행 기록을 찾을 수 없어요.", status=404)
+    r2 = getattr(request.app.state, "r2", None)
+    if r2 is None:
+        raise _err("storage_unconfigured", "미리보기를 준비 중이에요.", status=503)
+    response.headers["Cache-Control"] = "no-store"
+    return {"url": r2.preview_url(row["r2_key"], 600), "expiresIn": 600}
 
 
 @router.get(
@@ -1913,6 +2303,7 @@ async def get_settlement_summary(request: Request, user_id: str = Depends(requir
                           coalesce(sum(st.model_amount) filter (
                               where st.created_at >= %s and st.created_at < %s
                           ), 0) as month_amount,
+                          count(*) as total_count,
                           coalesce(sum(st.model_amount), 0) as total_amount
                      from fm_settlements st
                      join fm_licenses l on l.id = st.license_id
@@ -1921,6 +2312,74 @@ async def get_settlement_summary(request: Request, user_id: str = Depends(requir
                 (month_start, next_month, month_start, next_month, user_id),
             )
             return await cur.fetchone()
+
+
+@router.post(
+    "/settlements/{payment_id}/report",
+    response_model=UsageReportCard,
+    status_code=201,
+    responses={
+        401: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+    },
+    summary="내 사용 정산 기록 신고",
+)
+async def report_settlement_usage(
+    request: Request,
+    payment_id: str,
+    body: UsageReportRequest,
+    user_id: str = Depends(require_user),
+):
+    reason = (body.reason or "").strip() or None
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """select st.id::text as settlement_id, m.id::text as model_id
+                     from fm_settlements st
+                     join fm_licenses l on l.id = st.license_id
+                     join fm_models m on m.id = l.model_id
+                    where st.payment_id = %s and m.user_id = %s
+                    for update of st""",
+                (payment_id, user_id),
+            )
+            owned = await cur.fetchone()
+            if owned is None:
+                raise _err("not_found", "사용 기록을 찾을 수 없습니다.", status=404)
+            await cur.execute(
+                """insert into fm_usage_reports (settlement_id, model_id, reason)
+                     values (%s, %s, %s)
+                     on conflict (settlement_id) do nothing
+                     returning id::text as id, settlement_id::text as settlement_id,
+                               model_id::text as model_id, reason, status, created_at""",
+                (owned["settlement_id"], owned["model_id"], reason),
+            )
+            report = await cur.fetchone()
+        if report is None:
+            raise _err("usage_already_reported", "이미 신고한 사용 기록이에요.", status=409)
+        await admin_guard.write_audit(
+            conn,
+            actor_user_id=user_id,
+            action="usage.report",
+            target_type="settlement",
+            target_id=owned["settlement_id"],
+            after={"status": "open"},
+            note=reason,
+        )
+        await conn.commit()
+
+    notify_to = getattr(request.app.state.settings, "fm_usage_report_to_email", None)
+    if notify_to:
+        try:
+            await send_usage_report_email(
+                request.app.state.settings,
+                to=notify_to,
+                payment_id=payment_id,
+                reason=reason,
+            )
+        except Exception:
+            logger.warning("usage report email dispatch failed", exc_info=True)
+    return report
 
 
 @router.get(
@@ -2056,25 +2515,34 @@ class FaceVcIssueError(RuntimeError):
         self.status_code = status_code
 
 
-def build_face_vc_claims(*, allowed, forbidden, unit_price, valid_until, digest) -> dict:
-    # valid_until 은 절대시각이라, 어느 시간대로 자르느냐에 따라 날짜가 하루 갈린다. KST 로
-    # 자른다 — 이 값을 읽는 사람도, 라이선스가 걸린 계약도 한국 날짜다. UTC 로 자르면 KST 오전에
-    # 발급한 라이선스가 하루 이른 날짜로 박혔다(발급 후에는 되돌릴 수 없는 크리덴셜 값이라,
-    # 표기만 어긋나도 분쟁의 근거가 된다). 만료 판정 자체는 절대시각 비교라 영향 없다.
-    # 2026-09-11 부터 새 라이선스는 유효기간이 없다(None). 외부 발급 스키마가 날짜 문자열 키를
-    # 기대할 수 있어 키는 유지하고 "9999-12-31" 을 넣는다. 화면은 "철회 시까지" 로 그린다.
-    valid_str = "9999-12-31" if valid_until is None else _kst_date_str(valid_until)
+LICENSE_AGREEMENT_VERSION = "v1"
+
+
+def build_face_vc_claims(
+    *, model_did, license_id, issued_at, digest, consent_doc_version
+) -> dict:
+    """Sign stable enrollment evidence, never the license's editable usage terms."""
+    for value in (model_did, digest, consent_doc_version):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("immutable license evidence is required")
+    if not isinstance(issued_at, datetime):
+        raise ValueError("stored license creation time is required")
+    # created_at comes from the persisted license row. A wall-clock timestamp or
+    # current consent-version fallback would change the Holder idempotency digest.
+    created = issued_at if issued_at.tzinfo else issued_at.replace(tzinfo=timezone.utc)
     return {
-        "allowedUse": ", ".join(allowed),
-        "forbiddenUse": "",
-        "unitPrice": int(unit_price),
-        "licenseValidUntil": valid_str,
+        "modelDid": model_did,
+        "licenseId": str(uuid.UUID(str(license_id))),
+        "issuedAt": created.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
         "faceImageDigest": digest,
+        "agreementVersion": LICENSE_AGREEMENT_VERSION,
+        "consentDocVersion": consent_doc_version,
     }
 
 
 async def issue_face_vc(app, *, license_id, model_id, allowed, forbidden,
-                        unit_price, valid_until, digest) -> FaceVcIssueResult:
+                        unit_price, valid_until, digest, issued_at,
+                        consent_doc_version) -> FaceVcIssueResult:
     base = getattr(app.state.settings, "opendid_holder_url", None)
     secret = getattr(app.state.settings, "opendid_holder_hmac_secret", None)
     if not base or not base.strip() or not secret or not secret.strip():
@@ -2105,21 +2573,18 @@ async def issue_face_vc(app, *, license_id, model_id, allowed, forbidden,
             if not isinstance(register_body, Mapping):
                 raise FaceVcIssueError("vc_issue_delayed", status_code=502)
             user_did = register_body.get("userDid")
-            if user_did is not None and (
-                not isinstance(user_did, str) or not user_did.strip()
-            ):
-                raise FaceVcIssueError("vc_issue_delayed", status_code=502)
-            if register_body.get("flowAComplete") is not True and not user_did:
+            if not isinstance(user_did, str) or not user_did.strip():
                 raise FaceVcIssueError("vc_issue_delayed", status_code=502)
             issue = await checked_post(
                 client,
                 f"/holder/models/{model_id}/issue-vc",
                 {
-                    "plan": "facelicense",
+                    "plan": "facelicense-v2",
                     "idempotencyKey": f"fm-license:{license_id}",
                     "claims": build_face_vc_claims(
-                        allowed=allowed, forbidden=[], unit_price=unit_price,
-                        valid_until=valid_until, digest=digest,
+                        model_did=user_did, license_id=license_id,
+                        issued_at=issued_at, digest=digest,
+                        consent_doc_version=consent_doc_version,
                     ),
                 },
                 {200},

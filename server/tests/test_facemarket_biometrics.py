@@ -82,6 +82,8 @@ def biometric_settings(**overrides):
         app_env="dev",
         facemarket_enabled=True,
         fm_biometric_enrollment_enabled=True,
+        fm_liveness_enabled=True,
+        fm_face_match_enabled=True,
         fm_oacx_contract_mode="dev-mock-v1",
         fm_liveness_region="us-east-1",
         fm_liveness_browser_role_arn="arn:aws:iam::123456789012:role/fm-liveness-browser",
@@ -101,6 +103,16 @@ def test_biometric_settings_defaults_off():
 
     assert settings.fm_biometric_enrollment_enabled is False
     assert settings.fm_liveness_region == "us-east-1"
+
+
+def test_face_match_disabled_does_not_require_match_weights_or_thresholds():
+    settings = biometric_settings(
+        fm_face_match_enabled=False,
+        fm_face_qc_enabled=False,
+        fm_retouched_live_threshold=None,
+        fm_match_policy_version=None,
+    )
+    facemarket_enrollment.validate_biometric_settings(settings)
 
 
 def test_production_rejects_dev_mock_contract():

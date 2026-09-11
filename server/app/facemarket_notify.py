@@ -200,6 +200,71 @@ async def send_application_email(
         public_base=settings.fm_application_public_base,
         reject_reason=reject_reason,
     )
+    return await _send_email(settings, to=to, subject=subject, html=html, text=text)
+
+
+async def send_license_issued_email(
+    settings, *, to: str, display_name: str
+) -> tuple[bool, str | None, str | None]:
+    """활성화된 라이선스를 알린다. 키 미설정과 발송 실패는 발급을 되돌리지 않는다."""
+    if not settings.resend_api_key:
+        return False, None, "not_configured"
+    status_url = f"{settings.fm_application_public_base}/status"
+    safe_name = _escape(display_name)
+    subject = "[FaceMarket] 라이선스 증서가 발급됐어요"
+    html = _shell(
+        public_base=settings.fm_application_public_base,
+        heading="라이선스 증서가 발급됐어요",
+        body_html=(
+            f"{safe_name}님의 라이선스 증서가 발급됐어요. "
+            "로그인 후 마이페이지에서 확인할 수 있어요."
+        ),
+        cta=("마이페이지 열기", status_url),
+        footnote=f"버튼이 열리지 않으면 이 주소를 직접 열어 주세요: {status_url}",
+    )
+    text = (
+        f"{display_name}님의 라이선스 증서가 발급됐어요.\n\n"
+        "로그인 후 마이페이지에서 확인할 수 있어요.\n"
+        f"{status_url}\n"
+    )
+    return await _send_email(settings, to=to, subject=subject, html=html, text=text)
+
+
+async def send_usage_report_email(
+    settings,
+    *,
+    to: str,
+    payment_id: str,
+    reason: str | None,
+) -> tuple[bool, str | None, str | None]:
+    """운영자에게 새 사용 신고를 알린다. 신고 저장은 이미 커밋된 뒤라 발송은 best-effort다."""
+    safe_payment = _escape(payment_id)
+    safe_reason = _escape(reason) or "사유 미입력"
+    subject = "[FaceMarket] 새 사용 기록 신고가 접수됐어요"
+    html = _shell(
+        public_base=settings.fm_application_public_base,
+        heading="새 사용 기록 신고가 접수됐어요",
+        body_html=(
+            f'<div style="margin-top:8px;color:{INK};">정산 기록: {safe_payment}</div>'
+            f'<div style="margin-top:12px;padding:12px 14px;background:{PAGE};'
+            f'border-radius:8px;color:{INK};">사유: {safe_reason}</div>'
+        ),
+        cta=None,
+        footnote="관리자 도구에서 해당 정산 기록과 사용 범위를 확인해 주세요.",
+    )
+    text = (
+        "새 사용 기록 신고가 접수됐어요.\n\n"
+        f"정산 기록: {payment_id}\n"
+        f"사유: {reason or '사유 미입력'}\n"
+    )
+    return await _send_email(settings, to=to, subject=subject, html=html, text=text)
+
+
+async def _send_email(
+    settings, *, to: str, subject: str, html: str, text: str
+) -> tuple[bool, str | None, str | None]:
+    if not settings.resend_api_key:
+        return False, None, "not_configured"
     payload = {
         "from": settings.fm_application_from_email,
         "to": [to],
@@ -225,7 +290,7 @@ async def send_application_email(
             pass
         return True, message_id, None
     except Exception as exc:  # 네트워크·타임아웃 — best-effort
-        logger.warning("resend send failed (%s): %s", email_type, exc)
+        logger.warning("resend send failed (%s): %s", subject, exc)
         return False, None, "send_error"
 
 

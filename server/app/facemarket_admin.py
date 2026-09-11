@@ -11,6 +11,7 @@ import base64
 import time
 import uuid
 from datetime import datetime, time as dtime, timedelta, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -250,7 +251,8 @@ def validate_model_status(status: str | None) -> str | None:
 
 
 LIST_MODELS_SQL = """
-select m.id::text as id, m.display_name, m.status, m.created_at,
+select m.id::text as id, m.display_name, m.status, m.suspension_source,
+       m.suspended_at, m.created_at,
        u.email as email,
        ap.contact_email as application_contact_email,
        (select count(*) from fm_licenses l where l.model_id = m.id) as license_count,
@@ -290,6 +292,8 @@ def _model_row(row: dict) -> dict:
         "id": row["id"],
         "displayName": row["display_name"],
         "status": row["status"],
+        "suspensionSource": row.get("suspension_source"),
+        "suspendedAt": row["suspended_at"].isoformat() if row.get("suspended_at") else None,
         "email": row.get("email"),
         # auth 이메일이 없을 때 화면이 보여줄 폴백(지원서 이메일) — 어디서 왔는지 구분할 수
         # 있게 별도 키로 내려준다. DETAIL_MODEL_SQL 에는 이 컬럼이 없어 .get() 이 None 을
@@ -316,7 +320,8 @@ async def list_models(conn, *, q: str | None, status: str | None, limit: int) ->
 # (select count(*) from fm_licenses l where ...) 안에 있어서, split("where")[0] 은 본문
 # where 가 아니라 서브쿼리 중간에서 잘린다. 전문을 따로 적는다.
 DETAIL_MODEL_SQL = """
-select m.id::text as id, m.display_name, m.status, m.created_at,
+select m.id::text as id, m.display_name, m.status, m.suspension_source,
+       m.suspended_at, m.created_at,
        u.email as email,
        (select count(*) from fm_licenses l where l.model_id = m.id) as license_count,
        (select max(s.created_at) from fm_settlements s
@@ -414,12 +419,14 @@ class SuspendRequest(CamelModel):
     reason: str
 
 
-async def _model_status(cur, model_id: str) -> str:
-    await cur.execute("select status from fm_models where id = %s", (model_id,))
+async def _model_state(cur, model_id: str) -> dict:
+    await cur.execute(
+        "select status, suspension_source, suspended_at from fm_models where id = %s", (model_id,)
+    )
     row = await cur.fetchone()
     if row is None:
         raise _err("not_found", "모델을 찾을 수 없어요.", status=404)
-    return row["status"]
+    return row
 
 
 async def suspend_model(conn, *, model_id: str, actor: str, reason: str) -> dict:
@@ -427,21 +434,40 @@ async def suspend_model(conn, *, model_id: str, actor: str, reason: str) -> dict
     if not note:
         raise _err("reason_required", "정지 사유를 입력해 주세요.")
     async with conn.cursor() as cur:
-        previous = await _model_status(cur, model_id)
-        # 이미 정지된 모델을 또 정지시키면 이번 read 의 previous 가 'suspended' 가 되어,
-        # 감사 원장에 남을 before.status 가 진짜 이전 상태(예: verified)를 덮어써 버린다.
-        # 그러면 해제할 때 복원할 값 자체가 사라진다 — 여기서 미리 막는다.
-        if previous == "suspended":
+        state = await _model_state(cur, model_id)
+        previous = state["status"]
+        # 관리자 정지는 중복 적용하지 않는다. 다만 본인이 활동을 멈춘 상태라면 운영 정지로
+        # 승격하고, 원래 본인 중단 시각과 출처를 감사 원장에 보존해 해제 때 되돌린다.
+        owner_pause = previous == "suspended" and state.get("suspension_source") == "owner"
+        if previous == "suspended" and not owner_pause:
             raise _err("already_suspended", "이미 정지된 모델이에요.", status=409)
         # 가드 UPDATE — where 에 방금 읽은 이전 상태를 그대로 건다(admin_approve_application
         # 과 같은 낙관적 동시성 모양). 그 사이 다른 요청이 상태를 바꿨으면(동시 정지) 0-row 가
         # 되어 충돌로 걸린다. 안 걸면 두 요청 다 "성공"한 것처럼 보이면서 감사 원장의 before
         # 중 하나는 거짓이 되고, 그 거짓 값이 나중에 해제가 복원할 상태가 되어 버린다.
-        await cur.execute(
-            "update fm_models set status = 'suspended', updated_at = now() "
-            "where id = %s and status = %s returning 1",
-            (model_id, previous),
-        )
+        if owner_pause:
+            await cur.execute(
+                "update fm_models set suspension_source = 'admin', suspended_at = now(), "
+                "updated_at = now() where id = %s and status = 'suspended' "
+                "and suspension_source = 'owner' returning 1",
+                (model_id,),
+            )
+            paused_at = state.get("suspended_at")
+            before = {
+                "status": "suspended",
+                "suspensionSource": "owner",
+                "suspendedAt": (
+                    paused_at.isoformat() if hasattr(paused_at, "isoformat") else paused_at
+                ),
+            }
+        else:
+            await cur.execute(
+                "update fm_models set status = 'suspended', suspension_source = 'admin', "
+                "suspended_at = now(), updated_at = now() "
+                "where id = %s and status = %s returning 1",
+                (model_id, previous),
+            )
+            before = {"status": previous}
         if await cur.fetchone() is None:
             raise _err("already_suspended", "이미 정지된 모델이에요.", status=409)
     await admin_guard.write_audit(
@@ -450,8 +476,8 @@ async def suspend_model(conn, *, model_id: str, actor: str, reason: str) -> dict
         action="model.suspend",
         target_type="model",
         target_id=model_id,
-        before={"status": previous},
-        after={"status": "suspended"},
+        before=before,
+        after={"status": "suspended", "suspensionSource": "admin"},
         note=note,
     )
     return {"id": model_id, "status": "suspended"}
@@ -465,31 +491,52 @@ async def unsuspend_model(conn, *, model_id: str, actor: str) -> dict:
     정지 직전 값만 복원한다. 기록이 없으면(콘솔 밖에서 정지된 경우) pending 으로 내린다.
     """
     async with conn.cursor() as cur:
-        current = await _model_status(cur, model_id)
+        state = await _model_state(cur, model_id)
+        current = state["status"]
         if current != "suspended":
             raise _err("not_suspended", "정지 상태인 모델만 해제할 수 있어요.")
+        if state.get("suspension_source") == "owner":
+            raise _err(
+                "not_admin_suspended", "본인이 일시 중단한 모델은 관리자 정지 해제 대상이 아니에요.",
+                status=409,
+            )
         await cur.execute(
-            "select before->>'status' as prev from admin_audit_log "
+            "select before->>'status' as prev, "
+            "before->>'suspensionSource' as prev_source, "
+            "before->>'suspendedAt' as prev_suspended_at from admin_audit_log "
             "where action = 'model.suspend' and target_type = 'model' and target_id = %s "
             "order by created_at desc limit 1",
             (model_id,),
         )
         row = await cur.fetchone()
         restored = (row or {}).get("prev")
+        restore_owner_pause = (
+            restored == "suspended" and (row or {}).get("prev_source") == "owner"
+        )
         # 원장 값이 오염됐거나 기록이 없으면 pending — 스키마 밖 값을 넣으면 check 제약이
         # 터진다. reverification_required 도 정지 직전 값일 수 있다(생체 재검증 대기 중
         # 정지된 모델) — 원장에 있던 값을 그대로 되돌리는 것뿐이라 verified 창조 금지 규칙에
         # 걸리지 않는다.
-        if restored not in RESTORABLE_MODEL_STATUSES:
+        if not restore_owner_pause and restored not in RESTORABLE_MODEL_STATUSES:
             restored = "pending"
         # 가드 UPDATE — suspend 와 같은 이유다. 방금 확인한 'suspended' 를 where 에 다시
         # 건다: 그 사이 다른 요청이 먼저 해제했으면(동시 해제) 0-row 로 걸려 조용한 이중
         # 성공을 막는다.
-        await cur.execute(
-            "update fm_models set status = %s, updated_at = now() "
-            "where id = %s and status = 'suspended' returning 1",
-            (restored, model_id),
-        )
+        if restore_owner_pause:
+            await cur.execute(
+                "update fm_models set status = 'suspended', suspension_source = 'owner', "
+                "suspended_at = %s::timestamptz, updated_at = now() "
+                "where id = %s and status = 'suspended' and suspension_source = 'admin' "
+                "returning 1",
+                ((row or {}).get("prev_suspended_at"), model_id),
+            )
+        else:
+            await cur.execute(
+                "update fm_models set status = %s, suspension_source = null, "
+                "suspended_at = null, updated_at = now() "
+                "where id = %s and status = 'suspended' returning 1",
+                (restored, model_id),
+            )
         if await cur.fetchone() is None:
             raise _err("not_suspended", "정지 상태인 모델만 해제할 수 있어요.")
     await admin_guard.write_audit(
@@ -523,6 +570,159 @@ async def admin_unsuspend_model(
     async with get_conn(request) as conn:
         await admin_guard.require_admin(conn, user_id, request)
         result = await unsuspend_model(conn, model_id=model_id, actor=user_id)
+        await conn.commit()
+    return JSONResponse(result)
+
+
+# ---------- 사용 기록 신고 ----------
+USAGE_REPORT_STATUSES = ("open", "closed")
+DEFAULT_USAGE_REPORT_LIMIT = 100
+
+
+class UsageReportStatusRequest(CamelModel):
+    status: Literal["open", "closed"]
+
+
+def validate_usage_report_status(status: str | None) -> str | None:
+    if status in (None, "", "all"):
+        return None
+    if status not in USAGE_REPORT_STATUSES:
+        raise _err("invalid_usage_report_status", "신고 상태 값이 올바르지 않아요.")
+    return status
+
+
+LIST_USAGE_REPORTS_SQL = """
+select r.id::text as id, r.settlement_id::text as settlement_id,
+       r.model_id::text as model_id, r.reason, r.status, r.created_at,
+       st.payment_id, m.display_name as model_name
+from fm_usage_reports r
+join fm_settlements st on st.id = r.settlement_id
+left join fm_models m on m.id = r.model_id
+where (%(status)s::text is null or r.status = %(status)s)
+  and (%(cursor_created)s::timestamptz is null
+       or (r.created_at, r.id) < (%(cursor_created)s::timestamptz, %(cursor_id)s::uuid))
+order by r.created_at desc, r.id desc
+limit %(limit)s
+"""
+
+
+def decode_usage_report_cursor(cursor: str | None) -> tuple[datetime | None, str | None]:
+    if cursor is None:
+        return None, None
+    try:
+        raw = base64.b64decode(cursor, altchars=b"-_", validate=True).decode()
+        created_raw, report_id = raw.split("|", 1)
+        created = datetime.fromisoformat(created_raw)
+        if created.utcoffset() is None:
+            raise ValueError("timezone required")
+        return created, str(uuid.UUID(report_id))
+    except (ValueError, UnicodeError):
+        raise _err("invalid_cursor", "목록 위치 정보가 올바르지 않아요.") from None
+
+
+def _usage_report_row(row: dict) -> dict:
+    return {
+        "id": row["id"],
+        "settlementId": row["settlement_id"],
+        "paymentId": row["payment_id"],
+        "modelId": row["model_id"],
+        "modelName": row.get("model_name"),
+        "reason": row.get("reason"),
+        "status": row["status"],
+        "createdAt": row["created_at"].isoformat() if row.get("created_at") else None,
+    }
+
+
+async def list_usage_reports(
+    conn, *, status: str | None, limit: int, cursor: str | None
+) -> dict:
+    normalized_status = validate_usage_report_status(status)
+    cursor_created, cursor_id = decode_usage_report_cursor(cursor)
+    async with conn.cursor() as cur:
+        await cur.execute(LIST_USAGE_REPORTS_SQL, {
+            "status": normalized_status,
+            "cursor_created": cursor_created,
+            "cursor_id": cursor_id,
+            "limit": limit + 1,
+        })
+        rows = await cur.fetchall() or []
+    page = rows[:limit]
+    next_cursor = None
+    if len(rows) > limit:
+        last = page[-1]
+        next_cursor = base64.urlsafe_b64encode(
+            f"{last['created_at'].isoformat()}|{last['id']}".encode()
+        ).decode()
+    return {"items": [_usage_report_row(row) for row in page], "nextCursor": next_cursor}
+
+
+async def update_usage_report_status(
+    conn, *, report_id: str, actor: str, status: str
+) -> dict:
+    try:
+        report_id = str(uuid.UUID(report_id))
+    except ValueError:
+        raise _err("invalid_report_id", "신고 번호가 올바르지 않아요.") from None
+    normalized_status = validate_usage_report_status(status)
+    if normalized_status is None:
+        raise _err("invalid_usage_report_status", "신고 상태 값이 올바르지 않아요.")
+
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select status from fm_usage_reports where id = %s for update",
+            (report_id,),
+        )
+        current = await cur.fetchone()
+        if current is None:
+            raise _err("not_found", "신고를 찾을 수 없어요.", status=404)
+        previous = current["status"]
+        if previous == normalized_status:
+            return {"id": report_id, "status": normalized_status}
+        await cur.execute(
+            "update fm_usage_reports set status = %s where id = %s",
+            (normalized_status, report_id),
+        )
+
+    await admin_guard.write_audit(
+        conn,
+        actor_user_id=actor,
+        action="usage_report.status.update",
+        target_type="usage_report",
+        target_id=report_id,
+        before={"status": previous},
+        after={"status": normalized_status},
+    )
+    return {"id": report_id, "status": normalized_status}
+
+
+@router.get("/usage-reports")
+async def admin_list_usage_reports(
+    request: Request,
+    status: str | None = Query(None),
+    limit: int = Query(DEFAULT_USAGE_REPORT_LIMIT, ge=1, le=MAX_LIST_LIMIT),
+    cursor: str | None = Query(None, max_length=256),
+    user_id: str = Depends(require_user),
+):
+    async with get_conn(request) as conn:
+        await admin_guard.require_admin(conn, user_id, request)
+        return JSONResponse(
+            await list_usage_reports(conn, status=status, limit=limit, cursor=cursor),
+            headers={"Cache-Control": "no-store"},
+        )
+
+
+@router.patch("/usage-reports/{report_id}")
+async def admin_update_usage_report_status(
+    request: Request,
+    report_id: str,
+    body: UsageReportStatusRequest,
+    user_id: str = Depends(require_user),
+):
+    async with get_conn(request) as conn:
+        await admin_guard.require_admin(conn, user_id, request)
+        result = await update_usage_report_status(
+            conn, report_id=report_id, actor=user_id, status=body.status,
+        )
         await conn.commit()
     return JSONResponse(result)
 
