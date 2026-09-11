@@ -18,12 +18,17 @@ ADMIN_DEVICES = (APP / "facemarket_admin_devices.py").read_text() if (APP / "fac
 
 def test_no_module_calls_repo_is_admin_directly():
     """admin_guard 하나만 부른다 — 문구·상태코드가 갈라지지 않게."""
-    for name, source in (
+    cases = [
         ("facemarket_applications.py", APPLICATIONS),
         ("routes.py", ROUTES),
         ("facemarket.py", FACEMARKET),
         ("facemarket_cutover.py", CUTOVER),
-    ):
+        ("facemarket_admin.py", ADMIN),
+        ("facemarket_admin_models.py", ADMIN_MODELS),
+    ]
+    if ADMIN_DEVICES:
+        cases.append(("facemarket_admin_devices.py", ADMIN_DEVICES))
+    for name, source in cases:
         assert "repo.is_admin" not in source, f"{name} 가 아직 repo.is_admin 을 직접 부른다"
 
 

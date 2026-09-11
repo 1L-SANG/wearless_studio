@@ -1,7 +1,7 @@
 # 관리자 콘솔 기기 게이트 — 설계
 
 **작성일:** 2026-09-11
-**상태:** 초안 (사용자 리뷰 대기)
+**상태:** 구현 완료 (feat/admin-device-gate, 2026-09-11)
 **브랜치:** `feat/admin-device-gate` (워크트리 `.claude/worktrees/admin-device-gate`, `origin/main` 361832fe 기준)
 **범위:** `admin.wearless.kr` 콘솔과 그 뒤의 관리자 API 를 **관리자 계정 + 승인된 기기**에서만 쓸 수 있게 한다. 덤으로 prod 에 열려 있던 `/openapi.json` 을 닫는다. 인증 스택(Supabase)·일반 사용자 라우트·생성 파이프라인은 건드리지 않는다.
 
@@ -122,7 +122,7 @@ require_admin(conn, user_id, request):
 
 - 조회는 `token_hash` 로 한 번(unique). 토큰 비교는 해시 동등 비교라 타이밍 문제 없음.
 - SQL 은 `repo.find_admin_device_by_hash(conn, token_hash)` · `repo.touch_admin_device(conn, device_id)` 두 함수로 뺀다 — 기존 테스트가 `repo.is_admin` 을 monkeypatch 하는 것과 같은 결로, 라우트 테스트가 `repo` 만 바꿔 enforce 경로를 돌릴 수 있게. `gate == off` 면 조회 자체를 하지 않는다.
-- ok 일 때 `last_seen_at` 이 null 이거나 60초보다 오래됐으면 `update … set last_seen_at = now()`. 커밋은 호출자 트랜잭션에 맡긴다(`write_audit` 와 같은 규칙) — 읽기 전용 라우트는 커밋을 안 하므로 갱신이 유실될 수 있다. 그래서 **가드가 `last_seen_at` 갱신만은 autocommit 별도 커넥션이 아니라 `conn` 위에서 하고, 라우트가 커밋 안 하면 잃어도 된다**(표시용 값, 60초 뒤 다음 쓰기 요청에서 갱신됨). 정확성이 필요한 값이 아니다.
+- ok 일 때 `last_seen_at` 이 null 이거나 60초보다 오래됐으면 `repo.touch_admin_device` 를 실행하고 **가드가 바로 `conn.commit()` 한다**. psycopg_pool 은 반환되는 INTRANS 커넥션을 롤백하므로 커밋 없이는 읽기 라우트의 touch 가 항상 유실돼 '마지막 사용' 이 쓰기 요청 때만 움직인다. 가드는 모든 라우트에서 첫 문장이라 이 커밋이 다른 것을 확정하지 않는다. shadow/off 에서 기기 조회가 예외를 내면(테이블 부재 등) 로그 후 롤백하고 통과한다 — enforce 는 그대로 실패(닫힘).
 - `is_admin_user`(cutover 내부 함수, 라우트 아님) 는 그대로 신원만 본다. 주석에 "기기 게이트 안 탐 — 라우트가 아니라서 request 가 없다" 명시.
 - 가드가 `request` 를 받게 되므로 `check_device` 는 순수 함수로 분리해 단위 테스트한다(`(conn, user_id, token: str | None, now)`).
 
@@ -216,10 +216,11 @@ mount →
 
 ### 백엔드
 
-- `test_admin_device_guard.py` — `check_device` 순수 함수: 헤더 5상태 × 타인 토큰 × last_seen 갱신 조건(60초). `require_admin` 을 gate 3모드로: off 는 조회조차 안 함, shadow 는 warning 로그 후 통과, enforce 는 403 코드 매핑.
-- `test_admin_devices_routes.py` — TestClient + FakeConn(기존 admin 테스트 방식): register(라벨 폴백·pending 상한 429·Slack 호출·비관리자 403·행 미생성), me(4상태·gate 동봉), list(정렬·isCurrent), approve(원장·409), revoke(원장·현재기기 400·409), 강등 시 일괄 revoke + 감사 after.
+- `test_admin_guard.py`(실제 파일명, 확장) — `check_device` 순수 함수: 헤더 5상태 × 타인 토큰 × last_seen 갱신 조건(60초). `require_admin` 을 gate 3모드로: off 는 조회조차 안 함, shadow 는 warning 로그 후 통과, enforce 는 403 코드 매핑. shadow/enforce 의 조회 실패(테이블 부재) 처리, touch 시 커밋 여부.
+- `test_admin_devices.py`(실제 파일명) — TestClient + FakeConn(기존 admin 테스트 방식): register(라벨 폴백·pending 상한 429·Slack 호출·비관리자 403·행 미생성), me(4상태·gate 동봉, off 는 조회 생략), list(정렬·isCurrent), approve(원장·409), revoke(원장·현재기기 400·409), 강등 시 일괄 revoke + 감사 after.
 - `test_admin_guard_adoption.py` 확장 — (a) `require_admin(` 호출은 전부 `(conn, user_id, request)` 형태, (b) `require_admin_identity(` 는 `facemarket_admin_devices.py` 의 register·me 둘뿐, (c) `repo.is_admin` 직접 호출 금지 목록에 새 파일 추가.
 - `test_main_openapi.py` — `app_env=prod` 에서 `/openapi.json` 404·`/docs` 404, `dev` 에서 둘 다 200. CORS preflight 에 `X-Admin-Device` 허용.
+- `test_admin_device_config.py` — 게이트 플래그 기본값(코드 shadow·테스트 off)과 허용값 밖 입력의 shadow 폴백.
 - 기존 admin 라우트 테스트: `conftest.make_settings` 기본에 `admin_device_gate="off"` 를 둔다(`garment_qc_mode="off"` 와 같은 선례·같은 이유 — 관련 없는 테스트가 FakeConn 위에서 기기 조회를 돌리지 않게). 기기 테스트만 `shadow`/`enforce` 를 명시적으로 켠다. 기존 테스트 파일은 **수정 0** 이 제약.
 
 ### 프런트 (`tests/frontend/`)

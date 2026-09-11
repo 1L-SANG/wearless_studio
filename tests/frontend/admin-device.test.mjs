@@ -118,6 +118,11 @@ test('RequireDevice 는 서버의 gate 를 단일 진실로 삼고 4상태를 �
   assert.ok(src.includes('다시 시도'));
   // 폴링·지금확인·재등록이 겹칠 때 늦게 온 옛 응답이 새 상태를 덮어쓰지 않는 순번 가드
   assert.ok(src.includes('checkSeq'), '응답 순서 가드가 없다');
+  // shadow 인데 아직 승인 전이면 막지는 않지만 배너로 알린다
+  assert.ok(src.includes('승인 전이에요'), 'shadow 미승인 배너가 없다');
+  // 발급된 토큰은 언마운트 여부와 무관하게 저장한다 — 서버 행이 이미 만들어졌으니
+  // alive 가드보다 먼저 writeDeviceToken 이 와야 고아 pending 행을 막는다.
+  assert.ok(/writeDeviceToken\(res\.token\);[\s\S]{0,80}if \(!alive\.current\) return;/.test(src), 'writeDeviceToken 이 alive 가드 뒤에 있다');
 });
 
 test('RequireDevice 의 too_many_pending 은 안내 문구가 따로 있다', () => {

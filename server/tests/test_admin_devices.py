@@ -4,6 +4,7 @@
 """
 import asyncio
 import contextlib
+from datetime import datetime, timezone
 
 from app import repo
 
@@ -240,6 +241,14 @@ def enforce_client(keypair):
     return TestClient(app)
 
 
+@pytest.fixture()
+def off_client(keypair):
+    private_key, public_key = keypair
+    app = create_app(make_settings(facemarket_enabled=True, admin_device_gate="off"))
+    app.state.jwt_key_resolver = lambda token: public_key
+    return TestClient(app)
+
+
 def _patch_conn(monkeypatch, conn):
     @contextlib.asynccontextmanager
     async def fake_conn(_request):
@@ -285,6 +294,20 @@ def test_me_route_reports_status_and_gate_without_403(enforce_client, make_token
     assert res.json() == {"status": "pending", "deviceId": "d1", "label": "Mac", "gate": "enforce"}
 
 
+def test_me_route_skips_the_device_lookup_when_gate_is_off(off_client, make_token, monkeypatch):
+    """off 는 조회를 하지 않는다 — admin_devices 테이블이 없어도(마이그레이션 미적용) 살아야
+    프런트가 /me 에 의존할 수 있다."""
+    conn = FakeConn([{"role": "admin"}])
+    _patch_conn(monkeypatch, conn)
+    res = off_client.get(
+        "/v1/facemarket/admin/devices/me",
+        headers=auth_headers(make_token),
+    )
+    assert res.status_code == 200
+    assert res.json() == {"status": "unknown", "gate": "off"}
+    assert len(conn.executed) == 1  # role 조회 하나뿐 — 기기 조회가 없다
+
+
 def test_list_route_requires_an_approved_device(enforce_client, make_token, monkeypatch):
     # 관리자지만 기기 헤더 없음 → enforce 라 403 device_missing
     _patch_conn(monkeypatch, FakeConn([{"role": "admin"}]))
@@ -293,12 +316,14 @@ def test_list_route_requires_an_approved_device(enforce_client, make_token, monk
 
 
 def test_approve_route_commits_after_audit(enforce_client, make_token, monkeypatch):
-    # FakeCursor 는 execute 마다 큐를 하나 소비한다(update 도). 순서 = 라우트의 실제 SQL 순서:
-    # role 조회 → 가드의 기기 조회 → last_seen touch(update) → for update 잠금 → approve update → 감사 insert
+    # FakeCursor 는 execute 마다 큐를 하나 소비한다. 순서 = 라우트의 실제 SQL 순서:
+    # role 조회 → 가드의 기기 조회 → for update 잠금 → approve update → 감사 insert
+    # last_seen_at 을 방금(now)으로 둬서 가드가 touch 를 안 하게 한다 — touch 가 나면 가드가
+    # 자기 커밋을 하나 더 해서 conn.commits == 1 이 "라우트가 한 번 커밋했다"를 안 뜻하게 된다.
     conn = FakeConn([
         {"role": "admin"},
-        {"id": "cur", "user_id": "user-1", "status": "approved", "label": "Mac", "last_seen_at": None},
-        None,                                                                                          # touch
+        {"id": "cur", "user_id": "user-1", "status": "approved", "label": "Mac",
+         "last_seen_at": datetime.now(timezone.utc)},
         {"id": "d2", "user_id": "u2", "label": "Win", "status": "pending", "token_hash": "h2"},         # lock
     ])
     _patch_conn(monkeypatch, conn)

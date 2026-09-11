@@ -17,11 +17,18 @@ localStorage 토큰(`wl.admin.device.v1`). 서버 플래그 `ADMIN_DEVICE_GATE`:
 
 1. 마이그레이션 `20260911150000_admin_devices.sql` 이 **앱 DB**(ftjxwxuactfjopbokbni)에 붙었는지 확인:
    `select count(*) from admin_devices;` 가 0 을 돌려주면 됨. 안 붙었으면 CI 시크릿 `SUPABASE_DB_URL` 이
-   옛 DB 를 가리키는 것 — 2026-08-29 사고 런북대로 앱 DB 에 직접 적용.
+   옛 DB 를 가리키는 것 — 2026-08-29 사고 런북대로 앱 DB 에 직접 적용. 이 확인이 끝나기 전에는
+   머지하지 않는다(shadow 라도 조회 실패는 로그로만 남고 통과한다 — 그래서 조용히 지나갈 수 있다).
 2. 머지 → CI 배포. env 는 손대지 않는다(shadow). 이 시점부터 `/openapi.json` 404.
 3. 관리자 각자 admin.wearless.kr 접속 → "이 기기를 등록해요" 화면 → 이름 확인 → 승인 요청.
    shadow 라 바로 콘솔이 열린다. Slack 에 "관리자 기기 승인 요청" 이 온다.
 4. `/staff` → "관리자 기기" → 서로의 기기를 **승인**. 자기 것도 다른 승인 기기가 있으면 승인 가능.
+enforce 로 올리기 **전에 반드시**: `/staff` → 관리자 기기 목록의 approved 행이 전부 본인·동료가
+아는 기기인지, 최근 기록의 `device.approve` 행위자가 맞는 사람인지 확인한다. shadow 기간에는
+아직 승인 안 된 기기에서도 API 가 통과하므로, 그 창에 탈취된 세션이 기기를 등록하고 스스로
+승인해 둘 수 있다 — Slack 알림과 원장에는 남지만 사람이 봐야 한다. 모르는 기기는 회수하고
+그 계정 비밀번호를 바꾼다.
+
 5. 배포 로그에 `shadow reject` 가 더 안 찍히면 `copilot/api/manifest.yml` 에
    `ADMIN_DEVICE_GATE: enforce` 를 넣어 PR → CI 배포. 이때부터 진짜 잠금.
 

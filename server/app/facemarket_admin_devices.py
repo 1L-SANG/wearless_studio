@@ -255,7 +255,12 @@ async def admin_device_me(request: Request, user_id: str = Depends(require_user)
     settings = request.app.state.settings
     async with get_conn(request) as conn:
         await admin_guard.require_admin_identity(conn, user_id)
-        result = await device_status(conn, user_id=user_id, token=admin_guard.device_token_from(request))
+        # off 는 조회를 하지 않는다(§5.2) — 프런트가 off 에서 /me 성공에 의존하므로
+        # admin_devices 테이블이 아직 없는 첫 배포에서도(마이그레이션 미적용) 살아야 한다.
+        if settings.admin_device_gate == "off":
+            result = {"status": "unknown"}
+        else:
+            result = await device_status(conn, user_id=user_id, token=admin_guard.device_token_from(request))
     return JSONResponse({**result, "gate": settings.admin_device_gate})
 
 

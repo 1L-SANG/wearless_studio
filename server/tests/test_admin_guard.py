@@ -22,6 +22,8 @@ class FakeCursor:
 class FakeConn:
     def __init__(self):
         self.executed = []
+        self.commits = 0
+        self.rollbacks = 0
 
     def cursor(self):
         @contextlib.asynccontextmanager
@@ -29,6 +31,12 @@ class FakeConn:
             yield FakeCursor(self.executed)
 
         return _cm()
+
+    async def commit(self):
+        self.commits += 1
+
+    async def rollback(self):
+        self.rollbacks += 1
 
 
 def test_require_admin_raises_403_for_non_admin(monkeypatch):
@@ -117,6 +125,21 @@ def _device(monkeypatch, row, touched=None):
             touched.append(device_id)
     monkeypatch.setattr(admin_guard.repo, "find_admin_device_by_hash", find)
     monkeypatch.setattr(admin_guard.repo, "touch_admin_device", touch)
+
+
+def _device_raises(monkeypatch, exc):
+    async def find(_conn, _hash):
+        raise exc
+    monkeypatch.setattr(admin_guard.repo, "find_admin_device_by_hash", find)
+
+
+class _FixedDatetime(datetime):
+    """check_device 의 datetime.now(...) 를 고정한다 — last_seen_at 신선도 판정을 결정론으로."""
+    _fixed = datetime(2026, 9, 11, 12, 0, tzinfo=timezone.utc)
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls._fixed
 
 
 def test_hash_is_sha256_hex_of_the_token():
@@ -212,3 +235,50 @@ def test_require_admin_identity_checks_role_only(monkeypatch):
         raise AssertionError("identity 가드가 기기를 조회했다")
     monkeypatch.setattr(admin_guard.repo, "find_admin_device_by_hash", boom)
     asyncio.run(admin_guard.require_admin_identity(FakeConn(), "u1"))
+
+
+def test_require_admin_shadow_survives_a_device_check_failure(monkeypatch, caplog):
+    """테이블 부재 등 인프라 에러 — shadow 는 로그 후 롤백하고 통과한다(2026-08-29 CI 옛-DB
+    사고처럼 마이그레이션이 앱 DB 에 안 붙은 첫 배포를 가정)."""
+    _admin(monkeypatch)
+    _device_raises(monkeypatch, RuntimeError("relation \"admin_devices\" does not exist"))
+    conn = FakeConn()
+    with caplog.at_level("ERROR"):
+        asyncio.run(admin_guard.require_admin(conn, "u1", fake_request(gate="shadow", device="tok")))
+    assert "check failed" in caplog.text
+    assert conn.rollbacks == 1
+    assert conn.commits == 0
+
+
+def test_require_admin_enforce_does_not_survive_a_device_check_failure(monkeypatch):
+    """enforce 는 닫힘 — 조회가 죽으면 그대로 예외가 올라간다(500)."""
+    _admin(monkeypatch)
+    _device_raises(monkeypatch, RuntimeError("relation \"admin_devices\" does not exist"))
+    conn = FakeConn()
+    with pytest.raises(RuntimeError):
+        asyncio.run(admin_guard.require_admin(conn, "u1", fake_request(gate="enforce", device="tok")))
+    assert conn.rollbacks == 0
+
+
+def test_require_admin_commits_after_touching_a_stale_approved_device(monkeypatch):
+    _admin(monkeypatch)
+    monkeypatch.setattr(admin_guard, "datetime", _FixedDatetime)
+    _device(monkeypatch, {
+        "id": "d1", "user_id": "u1", "status": "approved",
+        "last_seen_at": _FixedDatetime._fixed - timedelta(seconds=61),
+    })
+    conn = FakeConn()
+    asyncio.run(admin_guard.require_admin(conn, "u1", fake_request(gate="enforce", device="tok")))
+    assert conn.commits == 1
+
+
+def test_require_admin_does_not_commit_for_a_fresh_approved_device(monkeypatch):
+    _admin(monkeypatch)
+    monkeypatch.setattr(admin_guard, "datetime", _FixedDatetime)
+    _device(monkeypatch, {
+        "id": "d1", "user_id": "u1", "status": "approved",
+        "last_seen_at": _FixedDatetime._fixed - timedelta(seconds=30),
+    })
+    conn = FakeConn()
+    asyncio.run(admin_guard.require_admin(conn, "u1", fake_request(gate="enforce", device="tok")))
+    assert conn.commits == 0

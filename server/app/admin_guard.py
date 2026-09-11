@@ -40,6 +40,7 @@ DEVICE_MESSAGES = {
 class DeviceVerdict:
     code: str | None            # None = 통과
     device: dict | None = None
+    touched: bool = False       # last_seen_at 을 방금 갱신했는지 — require_admin 이 이걸 보고 커밋한다.
 
     @property
     def ok(self) -> bool:
@@ -93,17 +94,42 @@ async def check_device(
         return DeviceVerdict("device_unknown", device)
     now = now or datetime.now(timezone.utc)
     seen = device.get("last_seen_at")
+    touched = False
     if seen is None or now - seen >= DEVICE_TOUCH_INTERVAL:
         await repo.touch_admin_device(conn, device["id"])
-    return DeviceVerdict(None, device)
+        touched = True
+    return DeviceVerdict(None, device, touched=touched)
 
 
 async def require_admin(conn, user_id: str, request: Request) -> None:
     await require_admin_identity(conn, user_id)
-    mode = getattr(request.app.state.settings, "admin_device_gate", "off")
+    # 기본값 shadow — settings 에 속성이 아예 없는(테스트 더블 등) 드문 경우도 "검사하되
+    # 막지 않는다" 쪽으로 떨어져야 한다. off 로 떨어지면 그 경로는 기기 게이트가 있는 줄도
+    # 모르고 조용히 뚫린다.
+    mode = getattr(request.app.state.settings, "admin_device_gate", "shadow")
     if mode == "off":
         return
-    verdict = await check_device(conn, user_id, device_token_from(request))
+    try:
+        verdict = await check_device(conn, user_id, device_token_from(request))
+    except Exception:
+        if mode == "enforce":
+            raise  # enforce 는 닫힘 — 조회가 안 되면 그냥 막는다.
+        # shadow: admin_devices 조회 자체가 죽어도(예: 마이그레이션이 아직 안 붙은 첫
+        # 배포라 테이블이 없음 — 2026-08-29 CI 옛-DB 사고와 같은 결) 막지 않는다. 가드는
+        # 라우트의 첫 문장이라 이 시점엔 트랜잭션에 아직 아무 것도 없다 — 롤백해도 잃을 게
+        # 없고, 안 하면 이 커넥션이 INERROR 로 남아 라우트 자신의 쿼리마저 "current
+        # transaction is aborted" 로 죽는다.
+        logger.exception(
+            "admin_device_gate %s check failed user=%s path=%s", mode, user_id, request.url.path,
+        )
+        await conn.rollback()
+        return
+    if verdict.touched:
+        # last_seen_at 터치는 가드가 바로 커밋한다 — psycopg_pool 은 반환되는 INTRANS
+        # 커넥션을 롤백하므로, 커밋 없이는 읽기 전용 라우트의 touch 가 항상 유실돼 '마지막
+        # 사용' 이 쓰기 요청 때만 움직이게 된다. 가드는 모든 라우트에서 첫 문장이라 이 커밋이
+        # 확정하는 건 touch 하나뿐이다.
+        await conn.commit()
     if verdict.ok:
         return
     if mode == "enforce":

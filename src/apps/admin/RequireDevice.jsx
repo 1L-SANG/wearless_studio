@@ -18,6 +18,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/admin-ui/input.jsx';
 
 const POLL_MS = 10_000;
+// shadow 에서 아직 approved 가 아닌 상태를 사람이 읽을 문구로 — enforce 로 올리기 전에
+// 봐야 할 미승인 기기를 배너로 알린다(§9 부트스트랩 창).
+const SHADOW_STATUS_LABEL = { pending: '승인 대기', revoked: '회수됨', unknown: '미등록' };
 
 export function RequireDevice() {
   // phase: loading | pass | register | pending | revoked | forbidden | error
@@ -99,8 +102,10 @@ export function RequireDevice() {
         label: label.trim() || null,
         userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : null,
       });
-      if (!alive.current) return; // 응답 오기 전에 언마운트됐으면 스토리지도 건드리지 않는다
+      // alive 가드보다 먼저 저장한다 — 서버 행은 이미 만들어졌다. 여기서 버리면 토큰만
+      // 잃고 그 pending 행은 고아가 돼, 다음에 또 등록해야 하는 혼란스러운 재등록을 만든다.
       writeDeviceToken(res.token);
+      if (!alive.current) return; // 언마운트 후에는 화면 상태만 안 바꾼다
       await check();
     } catch (e) {
       if (!alive.current) return;
@@ -124,7 +129,21 @@ export function RequireDevice() {
     setPhase('register');
   };
 
-  if (phase === 'pass') return <Outlet />;
+  if (phase === 'pass') {
+    // shadow 에서는 막지 않지만 사람이 다음 단계(승인)를 잊지 않게 배너로 알린다.
+    if (me?.gate === 'shadow' && me?.status && me.status !== 'approved') {
+      const statusLabel = SHADOW_STATUS_LABEL[me.status] || me.status;
+      return (
+        <>
+          <div className="bg-amber-50 text-amber-900 border-b border-amber-200 px-5 py-2 text-sm">
+            이 기기는 아직 승인 전이에요 ({statusLabel}) — enforce 로 올리기 전에 다른 관리자의 승인이 필요해요.
+          </div>
+          <Outlet />
+        </>
+      );
+    }
+    return <Outlet />;
+  }
   if (phase === 'loading') return <div className="route-loading">기기 확인 중이에요</div>;
 
   return (
