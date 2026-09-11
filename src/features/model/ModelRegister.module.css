@@ -683,3 +683,84 @@
   background: var(--fm-card-bg);
   box-shadow: var(--fm-elev-card);
 }
+
+/* ---- IdentityMethodStep — 본인 확인 방법 선택 카드. 두 방법뿐이라 세로로 쌓는다. ---- */
+.methodChoices {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.methodChoice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 16px 18px;
+  border: 1px solid var(--fm-line, var(--ring));
+  border-radius: var(--r-5);
+  background: var(--fm-card-bg, #fff);
+  text-align: left;
+  cursor: pointer;
+  transition: background .15s, box-shadow .15s;
+}
+.methodChoice:hover:not(:disabled) { background: var(--bg-1); box-shadow: var(--elev-card); }
+.methodChoice:disabled { opacity: .55; cursor: default; }
+
+.methodChoiceLabel { font-size: 14.5px; font-weight: 600; color: var(--fm-ink, var(--fg-1)); }
+.methodChoiceHint { font-size: 12.5px; color: var(--fm-muted, var(--fg-3)); }
+
+/* ---- IdDocumentStep — 신분증 촬영·마스킹 ---- */
+.idNotice { margin: 2px 0 0; font-size: 13px; line-height: 1.55; color: var(--fg-2); }
+.idNotice strong { color: var(--fm-ink, var(--fg-1)); }
+
+/* 사진 미리보기 + 드래그 가능한 마스킹 박스를 겹쳐 그리는 무대. 캔버스가 아니라 <img>
+   위에 절대배치 <div> 를 얹는 방식이라 드래그마다 다시 그릴 필요가 없다 — 실제 픽셀을
+   덮어쓰는 작업은 제출 시점에 한 번, 화면에 안 보이는 캔버스(.idHiddenCanvas)에서만
+   일어난다(submit → buildMaskedBlob). */
+.idImageStage {
+  position: relative;
+  margin: 14px 0 10px;
+  border-radius: var(--r-5);
+  overflow: hidden;
+  background: var(--bg-2);
+  line-height: 0;
+}
+
+.idPreviewImage { display: block; width: 100%; max-height: 60vh; object-fit: contain; }
+
+.idMaskBox {
+  position: absolute;
+  border: 2px dashed #fff;
+  background: rgba(17, 17, 17, 0.72);
+  cursor: move;
+  touch-action: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.idMaskLabel {
+  padding: 0 6px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  text-align: center;
+  pointer-events: none;
+}
+
+.idMaskHandle {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--fm-ink, #111);
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+.idHiddenCanvas { display: none; }

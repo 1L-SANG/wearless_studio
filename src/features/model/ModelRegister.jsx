@@ -18,6 +18,8 @@ import {
   uploadProfileImage,
 } from '@/lib/api/facemarket.js';
 import { ModelFaceUpload } from './ModelFaceUpload.jsx';
+import IdentityMethodStep from './IdentityMethodStep.jsx';
+import IdDocumentStep from './IdDocumentStep.jsx';
 import {
   ENROLLMENT_ANGLES,
   initialRegistrationStep,
@@ -45,6 +47,19 @@ import { FACEMARKET_PRICING } from '../../lib/facemarketPricing.js';
 const CX_ORIGIN = 'https://cx.raonsecure.co.kr:17543';
 const CX_CONFIG_URL = import.meta.env.VITE_CX_CONFIG_URL
   || `${CX_ORIGIN}/ent/esign/config/config.mid.json`;
+// 간편인증(ENT_SIMPLE_AUTH) 전용 설정 URL — mid 설정(config.mid.json, v1.0 경로)과 API 경로
+// 버전이 다르다(v1.5). 이 값이 없는데 mid 설정으로 간편인증 위젯을 열면 v1.0 경로를 타서
+// 조용히 실패하므로, 없으면 아예 간편인증 버튼을 막는다(IdentityMethodStep 에 이유를 넘김).
+const CX_AUTH_CONFIG_URL = import.meta.env.VITE_CX_AUTH_CONFIG_URL || '';
+const SIMPLE_AUTH_UNAVAILABLE_REASON = CX_AUTH_CONFIG_URL
+  ? null
+  : '간편인증은 지금 설정되지 않았어요. 모바일 신분증으로 확인해 주세요.';
+// 발표/롤백 모드(FM_IDENTITY_METHODS=mid)에서 이 배열 길이가 1 이면 IdentityMethodStep 이
+// 화면을 그리지 않고 즉시 그 방법으로 진행한다 — 값을 이 위저드가 소비하는 유일한 지점이다.
+const IDENTITY_METHODS = (import.meta.env.VITE_FM_IDENTITY_METHODS || 'mid')
+  .split(',')
+  .map((method) => method.trim())
+  .filter(Boolean);
 const DEVICE_KEY = 'wearless.fmDeviceId';
 const CONSENT_VERSION = '2026-08-v2';
 const FaceLivenessStep = lazy(() => import('./FaceLivenessStep.jsx'));
@@ -263,13 +278,17 @@ export function ModelRegister() {
     }
   };
 
-  const startEnrollment = async () => {
+  // identityMethod: 인증 수단 선택 화면(step 'method')이 넘겨주는 값. 'mid'(또는 미지정)면
+  // 옛 요청 그대로(identityMethod 키를 아예 안 보낸다) — FM_IDENTITY_METHODS=mid 인 배포에서
+  // 서버로 가는 요청이 오늘과 바이트 단위로 같아야 한다는 제약을 이렇게 지킨다.
+  const startEnrollment = async (identityMethod) => {
     setBusy(true);
     setError('');
     try {
       const created = await createEnrollment({
         documentVersion: CONSENT_VERSION,
         deviceId: getDeviceId(),
+        ...(identityMethod && identityMethod !== 'mid' ? { identityMethod } : {}),
       });
       if (!mounted.current) return;
       setEnrollment(created);
@@ -296,31 +315,42 @@ export function ModelRegister() {
     if (oacxHost) oacxHost.replaceChildren();
     await loadCxWidget();
     await new Promise((resolve) => requestAnimationFrame(resolve));
-    return new Promise((resolve, reject) => {
-      const options = {
+    // ENT_MID(모바일 신분증)와 ENT_SIMPLE_AUTH(간편인증)는 한 위젯 호출을 공유할 수 없다
+    // (실측: ENT_MID 를 얹으면 위젯이 자체 카테고리 목록을 강제한다) — 그래서 설정 URL·옵션을
+    // 인증 수단별로 통째로 가른다. 간편인증은 설정 URL 이 v1.5 API 경로를 쓰므로
+    // CX_AUTH_CONFIG_URL 이 없는데 CX_CONFIG_URL(mid, v1.0)로 열면 조용히 실패한다 —
+    // 그 경우는 IdentityMethodStep 이 버튼 자체를 막아 이 지점에 아예 도달하지 않는다.
+    const isSimpleAuth = enrollment?.identityMethod === 'simple_auth';
+    const options = isSimpleAuth
+      ? { contentInfo: { signType: 'ENT_SIMPLE_AUTH' }, compareCI: false, isBirth: true }
+      : {
         contentInfo: { signType: 'ENT_MID' },
         compareCI: false,
         isBirth: true,
         // useConvertor:true 없이는 위젯이 RESULT 스텝에서 신분증 사진(dlphotoimage)을
-        // 만들지 않는다 — D1: 생체 등록 SFace 매치의 유일한 초상 출처.
+        // 만들지 않는다 — D1: 생체 등록 SFace 매치의 유일한 초상 출처(모바일 신분증 경로).
         useConvertor: true,
       };
-      window.OACX.LOAD_MODULE(CX_CONFIG_URL, options, (response) => {
+    const configUrl = isSimpleAuth ? CX_AUTH_CONFIG_URL : CX_CONFIG_URL;
+    return new Promise((resolve, reject) => {
+      window.OACX.LOAD_MODULE(configUrl, options, (response) => {
         try {
           const parsed = typeof response === 'string' ? JSON.parse(response) : response;
           const authToken = parsed?.token;
           if (!authToken) throw new Error('본인 확인 정보를 받지 못했어요. 다시 시도해 주세요.');
           if (!mounted.current) throw new Error('등록 화면이 닫혔어요.');
-          // 신분증 사진(HEX JPEG) — 위젯 콜백에서 받은 그대로 ref(메모리)에만 담는다.
-          // 저장(local/session storage)·로그 금지 — 라이브니스 후 매치에만 서버로 전달한다.
-          portraitRef.current = parsed?.data?.dlphotoimage;
+          // 신분증 사진(HEX JPEG) — 모바일 신분증 경로에서만 나온다. 간편인증은 이 필드를
+          // 만들지 않는다(매치 앵커가 다르다 — 사용자가 직접 올린 신분증 사진). 그래서
+          // 간편인증에서는 portraitRef 를 아예 건드리지 않는다(finishMatch 도 이 경로에서
+          // idPhotoHex 를 요구하지도, /complete 에 싣지도 않는다).
+          if (!isSimpleAuth) portraitRef.current = parsed?.data?.dlphotoimage;
           resolve(authToken);
         } catch (requestError) {
           reject(requestError);
         }
       });
     });
-  }, []);
+  }, [enrollment?.identityMethod]);
 
   const runIdentity = useCallback(async () => {
     const enrollmentId = enrollment?.id;
@@ -377,6 +407,22 @@ export function ModelRegister() {
       if (mounted.current) setBusy(false);
     }
   }, [enrollment?.id, runCxWidget]);
+
+  // 간편인증(simple_auth) 경로 전용: 신분증 업로드(마스킹 확인 완료)가 끝나면 서버 상태를
+  // 다시 읽어 다음 단계로 넘어간다. 성공 시 identity_pending 전이 → nextEnrollmentStep 이
+  // 'identity' 를 돌려주고, 그 화면은 runCxWidget 이 ENT_SIMPLE_AUTH 로 여는 같은 위젯이다.
+  const finishIdDocument = async () => {
+    if (!enrollment?.id) return;
+    try {
+      const current = await getEnrollment(enrollment.id);
+      if (!mounted.current) return;
+      setEnrollment(current);
+      setStep(nextEnrollmentStep(current));
+    } catch (requestError) {
+      if (!mounted.current) return;
+      setError(requestError?.message || '등록 상태를 확인하지 못했어요.');
+    }
+  };
 
   const finishPhotos = async () => {
     try {
@@ -491,7 +537,12 @@ export function ModelRegister() {
     if (step !== 'liveness' || !enrollment?.id || session) return undefined;
     // 새로고침·복귀로 초상 ref 를 잃었으면(사진은 서버에 저장됨) 라이브니스 세션을 만들기 전에
     // 신분증만 다시 확인해 초상을 되찾는다 — 사진 재촬영 없이 이어서 진행한다.
-    if (!portraitRef.current) { setStep('reidentify'); return undefined; }
+    // 간편인증(simple_auth)은 애초에 portraitRef 를 쓰지 않는다 — 매치 앵커가 업로드한
+    // 신분증 사진(서버 보관)이라, 여기서 없다고 reidentify 로 보내면 정상 경로가 막힌다.
+    if (enrollment?.identityMethod !== 'simple_auth' && !portraitRef.current) {
+      setStep('reidentify');
+      return undefined;
+    }
     // 라이브니스 off — 세션/위젯 없이 신분증 초상 앵커로 바로 완료한다.
     if (!livenessRequired) { finishMatchRef.current?.(); return undefined; }
     let active = true;
@@ -509,7 +560,7 @@ export function ModelRegister() {
         setStep('liveness_failed');
       });
     return () => { active = false; };
-  }, [enrollment?.id, session, step, livenessRequired]);
+  }, [enrollment?.id, enrollment?.identityMethod, session, step, livenessRequired]);
 
   useEffect(() => {
     if (step !== 'processing' || !enrollment?.id) return undefined;
@@ -592,8 +643,11 @@ export function ModelRegister() {
     // 라이브니스 off 면 세션이 없다 — enrollmentId·초상만 있으면 완료(신분증 초상 앵커).
     if (!enrollmentId) return;
     if (livenessRequired && !sessionId) return;
-    const idPhotoHex = portraitRef.current;
-    if (!idPhotoHex) {
+    // 간편인증(simple_auth)은 dlphotoimage 를 만들지 않는다 — 매치 앵커는 업로드한 신분증
+    // 사진(서버 보관)이라, portraitRef 를 요구하지도 /complete 에 idPhotoHex 를 싣지도 않는다.
+    const isSimpleAuth = enrollment?.identityMethod === 'simple_auth';
+    const idPhotoHex = isSimpleAuth ? undefined : portraitRef.current;
+    if (!isSimpleAuth && !idPhotoHex) {
       // 초상 ref 유실(라이브니스 도중 새로고침 등) — 조용한 실패 금지. 등록·사진은 서버에 보존돼
       // 있으니 취소하지 않고, 신분증만 다시 확인(reCaptureIdentity)해 초상을 되찾아 이어서 진행한다.
       if (mounted.current) {
@@ -623,7 +677,7 @@ export function ModelRegister() {
       }
       await abandonLiveness();
     }
-  }, [abandonLiveness, enrollment?.id, session, livenessRequired]);
+  }, [abandonLiveness, enrollment?.id, enrollment?.identityMethod, session, livenessRequired]);
   // 위 이펙트(라이브니스 off 자동완료)가 forward-reference 없이 최신 finishMatch 를 부르게 한다.
   finishMatchRef.current = finishMatch;
 
@@ -847,10 +901,33 @@ export function ModelRegister() {
             <input type="checkbox" checked={consentAccepted} onChange={(event) => setConsentAccepted(event.target.checked)} />
             생체정보 수집·이용과 국외 처리 내용을 확인하고 동의합니다.
           </label>
-          <Button variant="primary" block disabled={!consentAccepted || busy} onClick={startEnrollment}>
+          <Button
+            variant="primary"
+            block
+            disabled={!consentAccepted || busy}
+            onClick={IDENTITY_METHODS.length > 1
+              ? () => setStep('method')
+              : () => startEnrollment(IDENTITY_METHODS[0])}
+          >
             {busy ? '등록 시작 중…' : '동의하고 본인 확인 시작'}
           </Button>
         </div>
+      )}
+
+      {step === 'method' && (
+        <IdentityMethodStep
+          methods={IDENTITY_METHODS}
+          onPick={(method) => startEnrollment(method)}
+          simpleAuthUnavailableReason={SIMPLE_AUTH_UNAVAILABLE_REASON}
+        />
+      )}
+
+      {step === 'id_capture' && enrollment?.id && (
+        <IdDocumentStep
+          enrollmentId={enrollment.id}
+          onUploaded={finishIdDocument}
+          onError={(requestError) => setError(requestError?.message || '신분증 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.')}
+        />
       )}
 
       {step === 'identity' && (
@@ -1135,6 +1212,24 @@ export function ModelRegister() {
         </div>
       )}
 
+      {/* 간편인증(simple_auth) 경로에서 관리자가 신분증 사진을 육안으로 재확인하는 동안
+          머무는 화면(review_pending). 서버 상태가 바뀌면 결과를 메일로 보낸다 — 이 화면
+          자체는 폴링하지 않는다(관리자 심사는 즉시 처리되지 않는다). */}
+      {step === 'review' && (
+        <div className="surface">
+          <div className={s.stepHead}>
+            <div className={s.medallion}><Icon name="clock" size={22} /></div>
+            <div>
+              <h2 className={s.stateTitle}>검수 중이에요</h2>
+            </div>
+          </div>
+          <p className="hint">결과는 메일로 알려 드려요.</p>
+          <Link to="/" className={s.nextCard}>
+            홈으로 가기 <Icon name="chevRight" size={18} />
+          </Link>
+        </div>
+      )}
+
       {step === 'failed' && (
         <div className="surface">
           <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {error || enrollmentReasonMessage(enrollment?.reason)}</p>
@@ -1144,7 +1239,7 @@ export function ModelRegister() {
         </div>
       )}
 
-      {error && !['failed', 'error', 'identity_failed', 'liveness_failed', 'reidentify'].includes(step) && (
+      {error && !['failed', 'error', 'identity_failed', 'liveness_failed', 'reidentify', 'id_capture'].includes(step) && (
         <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {error}</p>
       )}
 
