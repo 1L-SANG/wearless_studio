@@ -111,13 +111,13 @@ def test_list_caps_limit():
 def test_detail_returns_licenses_settlements_and_enrollment():
     conn = FakeConn([
         MODEL_ROW,
-        [{"id": "l1", "status": "active", "unit_price": 10000, "license_valid_until": None, "vc_id": None}],
+        [{"id": "l1", "status": "active", "unit_price": 14900, "license_valid_until": None, "vc_id": None}],
         [{"id": "s1", "total_amount": 10000, "chain_status": "confirmed", "created_at": None, "tx_hash": None}],
         {"id": "e1", "status": "passed", "completed_at": None},
     ])
     payload = asyncio.run(facemarket_admin.model_detail(conn, model_id="m1"))
     assert payload["model"]["displayName"] == "모델 A"
-    assert payload["licenses"][0]["unitPrice"] == 10000
+    assert payload["licenses"][0]["unitPrice"] == 14900
     assert payload["settlements"][0]["chainStatus"] == "confirmed"
     assert payload["enrollment"]["status"] == "passed"
 

@@ -1,3 +1,5 @@
+> 2026-09-11 가격 개정(단발 14,900원, 월 이용권 49,900원, 초과 7,900원) 미반영 이력 문서. 정본은 documents/legal/00_facemarket_legal_notice_map_v1.md.
+
 # FaceMarket Purge and Reverification Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

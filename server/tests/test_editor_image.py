@@ -51,8 +51,9 @@ def test_generate_image_creates_job_and_reserves(client, make_token, monkeypatch
     assert res.status_code == 202, res.text
     assert res.json()["jobId"] == "job-ei-1"
     assert seen["kind"] == "editor_image"
-    assert seen["credits_reserved"] == 1  # credit_cost_editor_image 기본값
-    assert seen["reserved"] == 1
+    assert seen["credits_reserved"] == 19  # credit_cost_editor_image 기본값
+    assert seen["metadata"]["creditCostVersion"] == "v6"
+    assert seen["reserved"] == 19
     assert seen["payload"] == body
 
 
@@ -127,7 +128,7 @@ def test_generate_image_validates_standalone_set_example_before_reserving(
         "women",
         "all",
     )
-    assert seen["reserved"] == 1
+    assert seen["reserved"] == 19
 
 
 def test_generate_image_402_insufficient_credits(client, make_token, monkeypatch):

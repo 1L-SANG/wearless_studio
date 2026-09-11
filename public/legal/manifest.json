@@ -3,64 +3,64 @@
     "slug": "terms-seller",
     "app": "seller",
     "title": "Wearless 이용약관",
-    "version": "v1.0",
-    "effectiveDate": "2026-09-07",
+    "version": "v1.1",
+    "effectiveDate": "2026-09-11",
     "source": "10_wearless_terms_of_service_v1.md"
   },
   {
     "slug": "privacy-seller",
     "app": "seller",
     "title": "Wearless 개인정보 처리방침",
-    "version": "v1.0",
-    "effectiveDate": "2026-09-07",
+    "version": "v1.1",
+    "effectiveDate": "2026-09-11",
     "source": "11_wearless_privacy_policy_v1.md"
   },
   {
     "slug": "refund",
     "app": "seller",
     "title": "Wearless 환불 정책",
-    "version": "v1.0",
-    "effectiveDate": "2026-09-07",
+    "version": "v1.1",
+    "effectiveDate": "2026-09-11",
     "source": "12_wearless_refund_policy_v1.md"
   },
   {
     "slug": "seller-license-terms",
     "app": "both",
     "title": "FaceMarket 셀러 라이선스 이용조건",
-    "version": "v1.0",
-    "effectiveDate": "2026-09-07",
+    "version": "v1.1",
+    "effectiveDate": "2026-09-11",
     "source": "05_facemarket_seller_license_terms_v1.md"
   },
   {
     "slug": "terms-model",
     "app": "facemarket",
     "title": "FaceMarket 모델 이용약관",
-    "version": "v1.0",
-    "effectiveDate": "2026-09-07",
+    "version": "v1.1",
+    "effectiveDate": "2026-09-11",
     "source": "01_facemarket_terms_of_service_model_v1.md"
   },
   {
     "slug": "license-agreement",
     "app": "facemarket",
     "title": "FaceMarket 초상 라이선스 표준계약서",
-    "version": "v1.0",
-    "effectiveDate": "2026-09-07",
+    "version": "v1.1",
+    "effectiveDate": "2026-09-11",
     "source": "02_facemarket_likeness_license_agreement_v1.md"
   },
   {
     "slug": "privacy-model",
     "app": "facemarket",
     "title": "FaceMarket 개인정보 처리방침",
-    "version": "v1.0",
-    "effectiveDate": "2026-09-07",
+    "version": "v1.1",
+    "effectiveDate": "2026-09-11",
     "source": "03_facemarket_privacy_policy_v1.md"
   },
   {
     "slug": "answers",
     "app": "facemarket",
     "title": "FaceMarket 법적 FAQ",
-    "version": "v1.0",
-    "effectiveDate": "2026-09-07",
+    "version": "v1.1",
+    "effectiveDate": "2026-09-11",
     "source": "06_facemarket_legal_faq_v1.md"
   }
 ]

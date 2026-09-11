@@ -15,7 +15,6 @@ export const ID_FACE_RETENTION = '2차 검수 완료 즉시 파기, 최대 확�
 export const APPLICATION_REJECT_PURGE_DAYS = 30;
 export const REVIEW_SLA_DAYS = 3;
 export const REVIEW_SLA_LABEL = '24시간 이내';
-export const UNIT_PRICE_MIN_KRW = 5_000;
 export const MONTHLY_PERIOD_DAYS = 30;
 export const EARLYBIRD_SEATS = 10;
 export const LICENSE_ISSUE_FEE_KRW = 20_000;

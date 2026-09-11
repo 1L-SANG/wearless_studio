@@ -389,7 +389,7 @@ def test_cut_api(keypair, make_token, monkeypatch):
         "license": {
             "allowed_use": ["상의", "아우터"],
             "forbidden_use": ["속옷", "수영복"],
-            "unit_price": 10000,
+            "unit_price": 14900,
             "license_valid_until": LICENSE_VALID_UNTIL,
             "valid_days": 365,
         },
@@ -903,7 +903,7 @@ def test_model_confirm_sets_two_selected_cuts_and_public_1024_images(
         "license": {
             "allowedUse": ["상의", "아우터"],
             "forbiddenUse": [],
-            "unitPrice": 10000,
+            "unitPrice": 14900,
             "validUntil": LICENSE_VALID_UNTIL.isoformat().replace("+00:00", "Z"),
             "validDays": 365,
         },
@@ -1000,7 +1000,7 @@ def test_public_models_returns_only_eligible_profiles_without_pii(test_cut_api):
         "body_type": "toned",
         "allowed_use": ["상의", "아우터"],
         "forbidden_use": ["속옷", "수영복"],
-        "unit_price": 10000,
+        "unit_price": 14900,
         "license_valid_until": LICENSE_VALID_UNTIL,
         "license_valid_days": 365,
         "status": "verified",
@@ -1044,7 +1044,7 @@ def test_public_models_returns_only_eligible_profiles_without_pii(test_cut_api):
         "license": {
             "allowedUse": ["상의", "아우터"],
             "forbiddenUse": [],
-            "unitPrice": 10000,
+            "unitPrice": 14900,
             "validUntil": LICENSE_VALID_UNTIL.isoformat().replace("+00:00", "Z"),
             "validDays": 365,
         },

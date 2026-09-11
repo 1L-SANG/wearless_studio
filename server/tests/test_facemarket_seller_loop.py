@@ -666,8 +666,8 @@ def receipt(route, make_token):
     store["settlements"][payment_id] = {
         "id": "st-1", "license_id": "lic-1", "model_ref": "ref-1",
         "payment_id": payment_id, "job_id": "jid-1", "tx_hash": "0xabc", "chain_id": "1337",
-        "total_amount": 10000, "model_amount": 7000, "platform_amount": 2000,
-        "ops_amount": 1000, "chain_status": "confirmed", "recorded_block": 1,
+        "total_amount": 14900, "model_amount": 10430, "platform_amount": 2980,
+        "ops_amount": 1490, "chain_status": "confirmed", "recorded_block": 1,
         "created_at": store["now"],
     }
     return client, store, tok
@@ -690,7 +690,7 @@ def test_job_settlement_receipt_shape(receipt, make_token, payment_id, age_days)
         "platformAmount", "opsAmount", "vcId", "chainStatus",
     }
     assert b["paymentId"] == payment_id and b["txHash"] == "0xabc"
-    assert (b["modelAmount"], b["platformAmount"], b["opsAmount"]) == (7000, 2000, 1000)
+    assert (b["modelAmount"], b["platformAmount"], b["opsAmount"]) == (10430, 2980, 1490)
     assert b["vcId"] == "vc-1" and b["chainStatus"] == "confirmed"
 
     other = client.get("/v1/facemarket/jobs/jid-1/settlement",
@@ -710,8 +710,8 @@ def test_job_settlement_regeneration_uses_product_window(receipt, make_token, ag
     if status == 200:
         assert r.json() == {
             "paymentId": "product:p1:20260908", "txHash": "0xabc", "chainId": "1337",
-            "totalAmount": 10000, "modelAmount": 7000, "platformAmount": 2000,
-            "opsAmount": 1000, "vcId": "vc-1", "chainStatus": "confirmed",
+            "totalAmount": 14900, "modelAmount": 10430, "platformAmount": 2980,
+            "opsAmount": 1490, "vcId": "vc-1", "chainStatus": "confirmed",
         }
 
     other = client.get("/v1/facemarket/jobs/jid-2/settlement",

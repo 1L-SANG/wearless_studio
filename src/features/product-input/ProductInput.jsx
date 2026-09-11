@@ -1438,7 +1438,7 @@ export function ProductInput() {
           {pendingRelevantWorkKindRef.current === 'running' ? (
             <>
               <h3>바꾸면 지금 만들고 있는 마네킹 컷을 버려요</h3>
-              <p>지금 만들던 마네킹컷 생성이 취소돼요. 취소된 생성의 크레딧(2)도 차감되고, 새로 만들 때 2크레딧이 더 들어요.</p>
+              <p>지금 만들던 마네킹컷 생성이 취소돼요. 취소된 생성의 크레딧({CREDIT_COSTS.mannequinGenerate})도 차감되고, 새로 만들 때 {CREDIT_COSTS.mannequinGenerate}크레딧이 더 들어요.</p>
             </>
           ) : (
             <>

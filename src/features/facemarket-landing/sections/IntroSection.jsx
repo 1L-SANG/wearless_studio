@@ -23,7 +23,7 @@ export function IntroSection({ onPrimary, primaryLabel }) {
               (LicensingSection.jsx '체인 기록' 칸 주석 참고). 리드는 예외를 달 자리가
               없어서, 무조건 참인 것만 올린다. */}
       <p className={s.introLead}>
-        얼굴을 등록하고, 어떤 품목에 건당 얼마로 얼마 동안 쓸 수 있는지 직접 정합니다.
+        얼굴을 등록하고, 플랫폼 표준가를 확인하고 어떤 품목에 얼마 동안 쓸 수 있는지 직접 정합니다.
         조건을 내미는 쪽이 브랜드가 아니라 본인이고, 정한 조건은 누구나 확인할 수 있는
         라이선스로 남습니다.
       </p>

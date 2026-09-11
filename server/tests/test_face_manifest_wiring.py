@@ -17,8 +17,10 @@ SSM_PREFIX = "/copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/s
 
 
 @pytest.mark.parametrize("manifest,name", [(API, "api"), (WORKER, "detail-worker")])
-def test_face_identity_ships_disabled(manifest, name):
-    assert manifest["variables"]["FACE_IDENTITY_ENABLED"] == "false", name
+def test_face_identity_is_on(manifest, name):
+    """2026-09-11 켬. 켜는 것만으로는 동작이 안 바뀐다 — 얼굴 패스는 fm_model_loras 의 켜진 행이
+    있는 모델에서만 걸린다(test_fm_model_loras / test_lora_profile_wiring 이 그걸 고정한다)."""
+    assert manifest["variables"]["FACE_IDENTITY_ENABLED"] == "true", name
 
 
 @pytest.mark.parametrize("manifest,name", [(API, "api"), (WORKER, "detail-worker")])
@@ -38,7 +40,7 @@ def test_pod_address_is_not_pinned_in_the_manifest(manifest, name):
 
 def test_only_api_drives_the_pod():
     """기동/종료 reconciler 는 한 곳만 — 두 서비스가 같은 파드를 밀고 당기면 안 된다."""
-    assert API["variables"]["FACE_AUTOSCALE"] == "off"
+    assert API["variables"]["FACE_AUTOSCALE"] == "on"
     assert "FACE_AUTOSCALE" not in WORKER["variables"]
     assert "RUNPOD_API_KEY" not in WORKER.get("secrets", {})
 

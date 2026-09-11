@@ -27,7 +27,7 @@ from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
@@ -48,6 +48,7 @@ CX_TRANS_TIMEOUT = 10.0
 _SIMULATION_RATE_LIMIT_PER_MINUTE = 5
 _SETTLEMENT_SIGNER_LOCK_ID = 0x57464D5349474E52
 _SETTLEMENT_LOCK_RETRY_SECONDS = 0.05
+PLATFORM_UNIT_PRICE_KRW = 14_900
 
 _FM_RESPONSES = {
     400: {"model": ErrorResponse, "description": "본인확인 실패 (토큰 무효·CI 누락)"},
@@ -633,8 +634,14 @@ class CreateLicenseRequest(CamelModel):
     opt_location_cuts: bool = False
     opt_lookbook_person_replace: bool = False
     opt_consent_version: str | None = None
-    unit_price: int = Field(default=10000, ge=0, le=100_000_000)
+    unit_price: int = Field(default=PLATFORM_UNIT_PRICE_KRW, ge=0, le=100_000_000)
     valid_days: int = Field(default=365, ge=1, le=3650)
+
+    @field_validator("unit_price", mode="before")
+    @classmethod
+    def platform_unit_price(cls, _value):
+        # 구버전 화면이나 변조 요청이 다른 값을 보내도 라이선스 가격은 플랫폼 표준가다.
+        return PLATFORM_UNIT_PRICE_KRW
 
 
 def _r2_face(request: Request):
@@ -2769,8 +2776,18 @@ async def warm_face_render(request: Request, response: Response,
     "/face-render/status",
     summary="얼굴 렌더 준비 상태(에디터 상단 표시용)",
 )
-async def face_render_status(request: Request, user_id: str = Depends(require_user)):
-    """파드가 떴는지 api 가 대신 확인해 준다 — 프런트가 파드를 직접 찌르지 않게.
+async def face_render_status(
+    request: Request,
+    # 프런트는 camelCase 로 보낸다(다른 라우트의 CamelModel 관례와 같은 방향).
+    model_id: str | None = Query(default=None, alias="modelId"),
+    user_id: str = Depends(require_user),
+):
+    """이 모델에 얼굴 패스가 걸리는가 + 파드가 떴는가. 프런트가 파드를 직접 찌르지 않게 api 가 본다.
+
+    ★ enabled 는 전역 플래그**만**으로 정하면 안 된다. 얼굴 패스는 그 모델에 **켜진 LoRA 행**이
+    있어야 걸리고(cut_generator), 워밍 핑도 그런 모델만 기록한다. 플래그만 보면 LoRA 가 없는
+    실존 모델 프로젝트에서 "얼굴 렌더 준비 중"이 영원히 뜬다 — 파드는 켜질 이유가 없기 때문이다.
+    modelId 를 안 주면 모델 단위 판단을 할 수 없으므로 enabled=false 로 답한다.
 
     ready=false 일 때 etaMinutes 는 **실측 콜드스타트**에서 온다(부팅+가중치+적재).
     """
@@ -2779,12 +2796,21 @@ async def face_render_status(request: Request, user_id: str = Depends(require_us
         raise _err("not_found", "사용할 수 없습니다.", status=404)
     from .services import face_autoscale
 
+    enabled = False
+    if getattr(settings, "face_identity_enabled", False) and is_real_model_id(model_id):
+        async with get_conn(request) as conn, conn.cursor() as cur:
+            await cur.execute("select to_regclass('public.fm_model_loras') as t")
+            if (await cur.fetchone() or {}).get("t"):
+                await cur.execute(
+                    "select 1 from fm_model_loras where model_id = %s and enabled "
+                    "and status = 'ready' limit 1", (str(model_id),))
+                enabled = await cur.fetchone() is not None
     adapter = getattr(request.app.state, "face_autoscaler", None)
     ready = False
-    if adapter is not None and getattr(adapter.adapter, "enabled", False):
+    if enabled and adapter is not None and getattr(adapter.adapter, "enabled", False):
         ready = await adapter.adapter.health_ok()
     return {
         "ready": ready,
-        "enabled": bool(getattr(settings, "face_identity_enabled", False)),
-        "etaMinutes": None if ready else face_autoscale.COLD_START_ETA_MINUTES,
+        "enabled": enabled,
+        "etaMinutes": None if (ready or not enabled) else face_autoscale.COLD_START_ETA_MINUTES,
     }
