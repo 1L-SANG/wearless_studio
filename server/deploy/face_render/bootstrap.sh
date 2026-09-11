@@ -18,6 +18,41 @@ LOG="$ROOT/logs/bootstrap-$(date -u +%Y%m%dT%H%M%SZ).log"
 say() { echo "bootstrap: $*" | tee -a "$LOG"; }
 
 t0=$(date +%s)
+
+# ── 코드 받기 ─────────────────────────────────────────────────────────────
+# 자동 생성된 파드에는 코드가 없다. 어댑터가 파드를 켜거나 만들 때 CODE_TARBALL_URL(만료 15분
+# presigned GET)과 CODE_SHA256 을 env 로 넣어 준다 — 파드에 R2 자격증명을 두지 않기 위해서다.
+# 이미 같은 sha 의 코드가 있으면 건너뛴다. 값이 없으면(개발용 수동 동기화) 그대로 진행한다.
+if [ -n "${CODE_TARBALL_URL:-}" ] && [ -n "${CODE_SHA256:-}" ]; then
+  if [ "$(cat "$ROOT/CODE_SHA" 2>/dev/null || true)" = "$CODE_SHA256" ] && [ -d "$ROOT/code" ]; then
+    say "코드 최신($CODE_SHA256) — 건너뜀"
+  else
+    case "$CODE_TARBALL_URL" in
+      https://*.r2.cloudflarestorage.com/*) : ;;
+      *) say "CODE_TARBALL_URL 이 허용 호스트가 아니다 — 코드를 받지 않는다"; exit 78 ;;
+    esac
+    say "코드 내려받기"
+    curl -fsSL --max-time 120 -o "$ROOT/code.tgz.part" "$CODE_TARBALL_URL"
+    got="$(sha256sum "$ROOT/code.tgz.part" | cut -d' ' -f1)"
+    if [ "$got" != "$CODE_SHA256" ]; then
+      rm -f "$ROOT/code.tgz.part"
+      say "코드 sha256 불일치 — 받은 것을 버린다"
+      exit 78
+    fi
+    rm -rf "$ROOT/code" "$ROOT/deploy"
+    tar --no-same-owner -xzf "$ROOT/code.tgz.part" -C "$ROOT"
+    rm -f "$ROOT/code.tgz.part"
+    # 묶음 안의 deploy/*.sh 가 이 스크립트들의 정본이다(다음 부팅부터 그게 돈다).
+    cp -f "$ROOT/deploy/start.sh" "$ROOT/deploy/pre_start.sh" "$ROOT/deploy/bootstrap.sh" "$ROOT/" 2>/dev/null || true
+    chmod +x "$ROOT"/*.sh 2>/dev/null || true
+    printf '%s\n' "$CODE_SHA256" > "$ROOT/CODE_SHA"
+    printf '%s\n' "$CODE_SHA256" > "$ROOT/VERSION"
+    say "코드 설치 완료($CODE_SHA256)"
+  fi
+else
+  say "CODE_TARBALL_URL 없음 — 이미 올라와 있는 코드를 쓴다(개발용 수동 동기화)"
+fi
+
 if [ ! -x "$ROOT/venv/bin/python" ]; then
   say "venv 생성"
   # --system-site-packages: 베이스 이미지의 torch(2.8+cu128)를 그대로 쓴다. 다시 받으면 3GB·수 분.

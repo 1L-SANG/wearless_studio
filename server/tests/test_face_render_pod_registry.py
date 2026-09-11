@@ -11,6 +11,7 @@ import pytest
 
 from app.services.face_autoscale import (
     GPU_PRIORITY,
+    code_tarball_key,
     POD_DISK_GB,
     POD_TOKEN_REF,
     RunpodAutoscaleAdapter,
@@ -43,7 +44,11 @@ class _Client:
         self.start_fails = start_fails
         self.create_fails_for = set(create_fails_for)
         self.pod_status = pod_status
-        self.posts, self.creates, self.deletes = [], [], []
+        self.posts, self.creates, self.deletes, self.patches = [], [], [], []
+
+    def patch(self, path, json=None):
+        self.patches.append((path, json))
+        return _Res({})
 
     def get(self, path):
         return _Res({"desiredStatus": self.pod_status})
@@ -81,11 +86,22 @@ class _Store:
         self.retired.append(pod_id)
 
 
-def _adapter(client, store=None, **over):
+CODE_SHA = "a" * 40
+CODE_URL = "https://acct.r2.cloudflarestorage.com/wearless-face/face_render/x.tgz?sig=zzz"
+
+
+def _adapter(client, store=None, *, code_urls=None, **over):
     kw = {"gemini_api_key": "x", "r2_bucket": "b", "face_autoscale": "on",
-          "face_runpod_api_key": "k", "face_runpod_pod_id": OLD_POD}
+          "face_runpod_api_key": "k", "face_runpod_pod_id": OLD_POD,
+          "face_render_code_version": CODE_SHA}
     kw.update(over)
-    return RunpodAutoscaleAdapter(make_settings(**kw), client=client, pod_store=store)
+    provider = None
+    if code_urls is not None:
+        def provider(key):
+            code_urls.append(key)
+            return CODE_URL
+    return RunpodAutoscaleAdapter(make_settings(**kw), client=client, pod_store=store,
+                                  code_url_provider=provider)
 
 
 # ── URL 유도 ──
@@ -201,3 +217,66 @@ def test_gpu_priority_excludes_cards_that_cannot_hold_the_model():
     names = [g for g, _ in GPU_PRIORITY]
     assert names[0].startswith("NVIDIA RTX PRO 6000")
     assert not any("A40" in n or "L4" in n or "4090" in n for n in names)
+
+
+# ── 코드 묶음 전달(파드에 R2 자격증명 없음) ──
+def test_create_carries_a_fresh_code_url_and_sha():
+    urls = []
+    client = _Client(start_fails=True)
+    a = _adapter(client, _Store(active=OLD_POD), code_urls=urls)
+    a.begin_cycle()
+    asyncio.run(a.set_desired(RunpodTarget(OLD_POD), 1))
+    body_env = client.creates[0]["env"]
+    assert body_env["CODE_TARBALL_URL"] == CODE_URL
+    assert body_env["CODE_SHA256"] == CODE_SHA
+    assert urls == [code_tarball_key(CODE_SHA)] * 2     # start 직전 + create 직전
+
+
+def test_start_refreshes_the_code_url_before_booting():
+    """이전에 넣어 둔 URL 은 이미 만료됐을 수 있다 — 켜기 직전에 새로 넣는다."""
+    urls = []
+    client = _Client()
+    a = _adapter(client, _Store(active=OLD_POD), code_urls=urls)
+    a.begin_cycle()
+    asyncio.run(a.set_desired(RunpodTarget(OLD_POD), 1))
+    assert client.patches and client.patches[0][0] == f"/pods/{OLD_POD}"
+    assert client.patches[0][1]["env"]["CODE_TARBALL_URL"] == CODE_URL
+    assert client.posts == [f"/pods/{OLD_POD}/start"]
+    assert urls == [code_tarball_key(CODE_SHA)]
+
+
+def test_stop_never_mints_a_code_url():
+    urls = []
+    client = _Client()
+    a = _adapter(client, _Store(active=OLD_POD), code_urls=urls)
+    asyncio.run(a.set_desired(RunpodTarget(OLD_POD), 0))
+    assert urls == [] and client.patches == []
+
+
+def test_missing_code_provider_still_creates_but_says_so(caplog):
+    client = _Client(start_fails=True)
+    a = _adapter(client, _Store(active=OLD_POD))          # provider 없음
+    a.begin_cycle()
+    asyncio.run(a.set_desired(RunpodTarget(OLD_POD), 1))
+    env = client.creates[0]["env"]
+    assert "CODE_TARBALL_URL" not in env                   # 없는 값을 지어내지 않는다
+    assert env["FACE_RENDER_TOKEN"] == POD_TOKEN_REF
+
+
+def test_presigned_url_never_reaches_the_log(caplog):
+    import logging
+
+    urls = []
+    client = _Client(start_fails=True)
+    a = _adapter(client, _Store(active=OLD_POD), code_urls=urls)
+    a.begin_cycle()
+    with caplog.at_level(logging.DEBUG):
+        asyncio.run(a.set_desired(RunpodTarget(OLD_POD), 1))
+    joined = " ".join(r.getMessage() for r in caplog.records)
+    assert CODE_URL not in joined and "sig=zzz" not in joined
+
+
+def test_card_priority_puts_h100_before_a100():
+    """2026-09-11 재고 실측: PRO 6000·A100 둘 다 "no instances", H100 만 잡혔다."""
+    names = [g for g, _ in GPU_PRIORITY]
+    assert names.index("NVIDIA H100 80GB HBM3") < names.index("NVIDIA A100 80GB PCIe")

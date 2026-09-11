@@ -188,6 +188,35 @@ jobs:
                   fi
                   supabase db push --db-url "$SUPABASE_DB_URL"
 
+            # 얼굴 렌더 파드용 코드 묶음을 R2 에 올린다(키 = face_render/<git sha>.tgz).
+            #
+            # 자동 생성되는 파드에는 아무 코드도 없다 — 컨테이너 디스크가 매번 초기화되고, 맥에서
+            # 밀어 넣는 건 사람 손이다. 어댑터가 파드를 켜거나 만들 때 이 키의 presigned GET 을
+            # env 로 넣어 주므로(파드에 R2 자격증명 없음), 서버와 파드 코드가 항상 같은 sha 가 된다.
+            #
+            # R2 자격증명은 **SSM 에서 읽는다**(이 워크플로에 R2 GitHub 시크릿이 없다).
+            # 읽지 못하면 배포를 막지 않고 경고만 남긴다 — 그 경우 자동 생성된 파드는 코드를 받지
+            # 못하고, 어댑터가 그 사실을 CRITICAL 로 알린다.
+            - name: 얼굴 렌더 코드 묶음 업로드 (R2)
+              continue-on-error: true
+              env:
+                  SSM_PREFIX: /copilot/${{ env.COPILOT_APP }}/${{ env.COPILOT_ENV }}/secrets
+              run: |
+                  set -euo pipefail
+                  SHA="$(server/scripts/face_render_bundle.sh dist)"
+                  echo "bundle sha256=$SHA"
+                  for key in R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_ENDPOINT R2_FACE_BUCKET; do
+                    value="$(aws ssm get-parameter --with-decryption                       --name "$SSM_PREFIX/$key" --query Parameter.Value --output text 2>/dev/null || true)"
+                    if [ -z "$value" ]; then
+                      echo "::warning::$key 를 SSM 에서 읽지 못해 코드 묶음을 올리지 못했습니다."
+                      echo "::warning::자동 생성된 얼굴 렌더 파드는 코드를 받지 못합니다."
+                      exit 0
+                    fi
+                    export "$key=$value"
+                  done
+                  AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"                   AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"                   AWS_DEFAULT_REGION=auto                   aws s3 cp dist/face_render.tgz                     "s3://$R2_FACE_BUCKET/face_render/$GITHUB_SHA.tgz"                     --endpoint-url "$R2_ENDPOINT" --only-show-errors
+                  echo "uploaded face_render/$GITHUB_SHA.tgz"
+
             # API가 detail_page claim을 끊기 전에 desiredCount=0 서비스를 먼저 만든다.
             # 역순이면 첫 detail 잡이 아무도 claim하지 않는 배포 공백이 생긴다.
             - name: 상세 워커 배포 (Spot 0대)

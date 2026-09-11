@@ -56,10 +56,13 @@ COLD_START_ETA_MINUTES = 4
 
 
 #: 카드 우선순위. 60GB 미만은 쓰지 않는다 — A40(48GB)에서는 모델이 아예 안 올라간다(2026-09-10 실측).
+#: 2026-09-11 재고 실측(SECURE, 생성 시도): PRO 6000 "no instances" · A100 "no instances" ·
+#: H100 만 실제로 잡혔다. A100 은 값이 싸지만 그날 한 번도 못 띄웠다 — 못 뜨는 카드를 2순위에
+#: 두면 재고 없는 순간마다 한 번씩 더 헛돈다. 그래서 H100 을 A100 보다 앞에 둔다.
 GPU_PRIORITY: tuple[tuple[str, float], ...] = (
     ("NVIDIA RTX PRO 6000 Blackwell Server Edition", 2.09),
-    ("NVIDIA A100 80GB PCIe", 1.59),
     ("NVIDIA H100 80GB HBM3", 3.49),
+    ("NVIDIA A100 80GB PCIe", 1.59),
 )
 #: 새 파드 사양. 볼륨은 쓰지 않는다(2026-09-10 실측: 볼륨 적재 472초로 이득 없음).
 POD_IMAGE = "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404"
@@ -70,6 +73,16 @@ POD_ARGS = ("bash -c 'cp -f /root/face_render/pre_start.sh /pre_start.sh 2>/dev/
             "exec /start.sh'")
 #: 토큰은 RunPod Secret 참조로만 넣는다 — 값이 API 요청·응답·로그 어디에도 실리지 않는다.
 POD_TOKEN_REF = "{{ RUNPOD_SECRET_face_render_token }}"
+
+
+#: 코드 묶음 R2 키. CI 가 배포할 때마다 그 커밋 sha 로 올린다(deploy-server.yml).
+CODE_TARBALL_KEY_FMT = "face_render/{sha}.tgz"
+#: 코드 URL 만료. 파드가 켜지면서 한 번 받으면 끝이라 짧게 둔다.
+CODE_URL_EXPIRES_S = 900
+
+
+def code_tarball_key(sha: str) -> str:
+    return CODE_TARBALL_KEY_FMT.format(sha=sha)
 
 
 def pod_backend_url(pod_id: str | None) -> str | None:
@@ -172,7 +185,7 @@ class RunpodAutoscaleAdapter:
     """
 
     def __init__(self, settings, *, enabled_attr="face_autoscale", client=None, health_client=None,
-                 pod_store=None):
+                 pod_store=None, code_url_provider=None):
         self._settings = settings
         self.enabled = getattr(settings, enabled_attr, "off") == "on"
         self._pod_id = (getattr(settings, "face_runpod_pod_id", None) or "").strip() or None
@@ -183,6 +196,9 @@ class RunpodAutoscaleAdapter:
         #: 현재 파드 id 의 정본. 없으면 설정값(FACE_RUNPOD_POD_ID)으로 폴백한다.
         self._pod_store = pod_store
         self._created_this_cycle = False
+        #: 파드에 넣어 줄 코드 묶음(키, sha). 없으면 파드가 코드를 못 받는다 → 알림 대상.
+        self._code_sha = (getattr(settings, "face_render_code_version", None) or "").strip() or None
+        self._code_url_provider = code_url_provider
         self._target: RunpodTarget | None = None
         self._now = lambda: datetime.now(timezone.utc)
 
@@ -213,6 +229,11 @@ class RunpodAutoscaleAdapter:
 
     def _post_json_sync(self, path: str, body: dict) -> dict:
         res = self._http().post(path, json=body)
+        res.raise_for_status()
+        return res.json() if res.content else {}
+
+    def _patch_sync(self, path: str, body: dict) -> dict:
+        res = self._http().patch(path, json=body)
         res.raise_for_status()
         return res.json() if res.content else {}
 
@@ -303,6 +324,12 @@ class RunpodAutoscaleAdapter:
             return
         if target is not None:
             try:
+                code_env = self._code_env()
+                if code_env:
+                    # 켜기 직전에 코드 URL 을 새로 넣는다 — 이전 URL 은 이미 만료됐을 수 있다.
+                    await asyncio.to_thread(
+                        self._patch_sync, f"/pods/{target.pod_id}",
+                        {"env": {"FACE_RENDER_TOKEN": POD_TOKEN_REF, **code_env}})
                 await asyncio.to_thread(self._post_sync, f"/pods/{target.pod_id}/start")
                 log.info("face autoscale: pod %s start", target.pod_id)
                 return
@@ -313,6 +340,23 @@ class RunpodAutoscaleAdapter:
             raise RuntimeError("pod create already attempted this cycle")
         self._created_this_cycle = True
         await self._create_pod(replacing=target)
+
+    def _code_env(self) -> dict[str, str]:
+        """파드에 넣을 코드 전달 env. **호출 직전에** presigned 를 만든다(만료가 짧다).
+
+        URL 값은 로그·DB·이벤트 어디에도 남기지 않는다 — 여기서 만들어 곧장 RunPod 에만 준다.
+        """
+        if not self._code_sha or self._code_url_provider is None:
+            log.error("face autoscale: 코드 묶음 sha/공급자가 없다 — 파드가 코드를 못 받는다")
+            return {}
+        try:
+            url = self._code_url_provider(code_tarball_key(self._code_sha))
+        except Exception as exc:  # noqa: BLE001
+            log.error("face autoscale: 코드 묶음 URL 발급 실패 (%s)", type(exc).__name__)
+            return {}
+        if not url:
+            return {}
+        return {"CODE_TARBALL_URL": url, "CODE_SHA256": self._code_sha}
 
     def begin_cycle(self) -> None:
         """reconciler 한 주기의 시작 — 생성 1회 제한을 리셋한다."""
@@ -331,7 +375,7 @@ class RunpodAutoscaleAdapter:
                 "gpuTypeIds": [gpu_type],
                 "gpuCount": 1,
                 "dockerStartCmd": POD_ARGS,
-                "env": {"FACE_RENDER_TOKEN": POD_TOKEN_REF},
+                "env": {"FACE_RENDER_TOKEN": POD_TOKEN_REF, **self._code_env()},
             }
             try:
                 created = await asyncio.to_thread(self._post_json_sync, "/pods", body)

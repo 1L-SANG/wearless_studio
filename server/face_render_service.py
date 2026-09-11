@@ -81,9 +81,9 @@ DEVICE = os.getenv("FACE_RENDER_DEVICE", "cuda")
 #: A40(48GiB) 처럼 bf16 전체(≈55GiB)가 한 번에 안 올라가는 카드에서 켠다 —
 #: enable_model_cpu_offload() 로 transformer 만 GPU 에 두고 돌린다(느리지만 돈다).
 CPU_OFFLOAD = (os.getenv("FACE_RENDER_CPU_OFFLOAD", "false").lower() == "true")
-#: LoRA 를 GPU 에서 합친다(적재 214.7초 → 13.5초). 기본 off — 채택 기준을 한 컷이 0.022 로 넘었다.
-#: 자세한 실측은 app/agents/face_identity_qwen.py 상단 주석.
-GPU_FUSE = (os.getenv("FACE_RENDER_GPU_FUSE", "false").lower() == "true")
+#: LoRA 를 GPU 에서 합친다 — 적재 214.7초 → 13.5초(실측은 face_identity_qwen.py 상단 주석).
+#: 기본 on. false 가 탈출구다(결과 픽셀을 예전과 똑같이 만들고 싶을 때).
+GPU_FUSE = (os.getenv("FACE_RENDER_GPU_FUSE", "true").lower() == "true")
 #: 프로세스 기동 때 미리 올려 둘 LoRA 키. 비우면 첫 요청이 로드 비용(수 분)을 문다.
 #: **캐시에 있는 키만** 의미가 있다(기동 시점에는 presigned URL 이 없다).
 PRELOAD_LORA = os.getenv("FACE_RENDER_PRELOAD_LORA") or None

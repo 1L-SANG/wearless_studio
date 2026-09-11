@@ -14,6 +14,13 @@ import threading
 
 from PIL import Image
 
+#: ★ 적재 시간의 정체(2026-09-11 실측, H100 80GB · 224 vCPU · 가중치 워밍 상태):
+#:     CPU 에서 합치기  from_pretrained 1.6s · load_lora 2.1s · **fuse 189.5s** · to(cuda) 21.4s = 214.7s
+#:     GPU 에서 합치기  from_pretrained 1.9s · to(cuda) 9.0s · load_lora 2.4s · **fuse 0.2s** = 13.5s
+#:   콜드스타트의 대부분은 다운로드가 아니라 CPU fuse_lora 였다(16배).
+#:   경로 A 5컷 SFace(old→new): +0.009 / +0.014 / +0.001 / +0.022 / −0.007, 게이트 5/5 통과.
+#:   ±0.02 규칙은 **열화를 막으려는** 것이고 초과한 한 컷이 개선 방향이라 채택했다(사용자 결정).
+#:   → 기본값은 GPU 합치기. FACE_RENDER_GPU_FUSE=false 가 탈출구(결과 픽셀을 예전과 똑같이).
 CROP = 1024
 RENDER_STEPS = 25
 RENDER_GUIDANCE = 4.0
@@ -34,7 +41,7 @@ class QwenLocalBackend:
         negative_prompt: str = RENDER_NEGATIVE,
         lora_scale: float = 1.0,
         cpu_offload: bool = False,
-        gpu_fuse: bool = False,
+        gpu_fuse: bool = True,
     ):
         """cpu_offload=True 면 enable_model_cpu_offload() — 48GB 급 카드(A40)에서 bf16 전체(≈55GB)를
         한 번에 못 올릴 때. transformer(≈40GB)만 GPU 에 올라가 1024² 추론이 돈다(느리다)."""
@@ -59,14 +66,13 @@ class QwenLocalBackend:
                 pipe = QwenImageEditPlusPipeline.from_pretrained(self.model_id, torch_dtype=torch.bfloat16)
                 pipe.set_progress_bar_config(disable=True)
                 if self.gpu_fuse and not self.cpu_offload:
-                    # 먼저 GPU 로 올리고 합친다 — 적재 214.7초 → 13.5초(위 실측).
-                    # 기본값이 아니다: 채택 기준(SFace |Δ| ≤ 0.02)을 한 컷이 0.022 로 넘었다.
+                    # 기본. 먼저 GPU 로 올리고 합친다 — 적재 214.7초 → 13.5초(위 실측).
                     pipe.to(self.device)
                     pipe.load_lora_weights(self.lora_path, adapter_name="identity")
                     pipe.set_adapters(["identity"], adapter_weights=[self.lora_scale])
                     pipe.fuse_lora(lora_scale=self.lora_scale)
                 else:
-                    # 기본: CPU 에서 합치고 나서 올린다(기존 동작 — 결과 픽셀이 바뀌지 않는다).
+                    # 탈출구(gpu_fuse=False)와 오프로드 경로: CPU 에서 합치고 나서 올린다.
                     pipe.load_lora_weights(self.lora_path, adapter_name="identity")
                     pipe.set_adapters(["identity"], adapter_weights=[self.lora_scale])
                     pipe.fuse_lora(lora_scale=self.lora_scale)

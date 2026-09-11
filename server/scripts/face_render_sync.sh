@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# 얼굴 렌더 코드를 켜져 있는 파드의 **볼륨**으로 올린다 (맥에서 실행).
+# 얼굴 렌더 코드를 켜져 있는 파드로 올린다 (맥에서 실행). **개발·검증 전용.**
+#
+# 운영 경로는 이게 아니다: CI 가 코드 묶음을 R2 에 올리고(face_render/<sha>.tgz),
+# 어댑터가 파드를 켜거나 만들 때 presigned URL 을 env 로 넣어 bootstrap.sh 가 받는다.
+# 이 스크립트는 그 사이클을 기다리지 않고 지금 켜져 있는 파드에 코드를 밀어 넣을 때만 쓴다.
 #
 # 올리는 것: face_render_service.py · 서비스가 import 하는 app 모듈만 · start.sh · VERSION(git sha).
 # 가중치·venv·HF 캐시는 건드리지 않는다(볼륨에 이미 있다).
