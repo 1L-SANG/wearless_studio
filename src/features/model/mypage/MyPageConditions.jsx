@@ -1,78 +1,73 @@
 import { useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { ChevronRight, SlidersHorizontal } from 'lucide-react';
 import { updateLicenseTerms } from '@/lib/api/facemarket.js';
 import { BRAND_USE_CATEGORIES } from '@/lib/brandUseCategories.js';
-import { seoulDate } from '@/lib/datetime.js';
-import { pricingLine } from '../../../lib/facemarketPricing.js';
+import { seoulDateKey } from '@/lib/datetime.js';
 import { MyPageDialog } from './MyPageDialog.jsx';
+import { MyPageCertificate } from './MyPageCertificate.jsx';
 import { toggleAllowedCategory } from './conditionState.js';
 import s from './MyPage.module.css';
 
-export function MyPageConditions({ license, model, revoked = false, compact = false, onLicenseChange }) {
-  const [dialog, setDialog] = useState(null);
+export function MyPageConditions({ license, model, revoked = false, registering = false, onLicenseChange, onCertificate, onManage }) {
+  const [editing, setEditing] = useState(false);
+  const [allowed, setAllowed] = useState([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const saving = useRef(false);
-  const allowed = license?.allowedUse || [];
-  const disabled = revoked || !license || license.status !== 'active' || busy;
-  const save = async patch => {
-    if (saving.current || disabled) return;
-    saving.current = true;
-    setBusy(true);
-    setMessage('');
-    try {
-      const updated = await updateLicenseTerms(license.id, patch);
-      onLicenseChange(updated);
-      setMessage('사용 조건을 저장했어요.');
-    } catch (error) { setMessage(error.message || '저장하지 못했어요. 다시 시도해 주세요.'); }
-    finally { saving.current = false; setBusy(false); }
-  };
+  const canEdit = !revoked && license?.status === 'active';
+  const openEditor = () => { setAllowed(license?.allowedUse || []); setMessage(''); setEditing(true); };
   const toggle = category => {
     const next = toggleAllowedCategory(allowed, category);
     if (next.length === allowed.length && next.every(value => allowed.includes(value))) {
       setMessage('옷 종류는 최소 1개를 켜 두어야 해요.');
       return;
     }
-    void save({ allowedUse: next });
+    setMessage('');
+    setAllowed(next);
   };
-  const switches = <div className={s.conditionList}>{BRAND_USE_CATEGORIES.map(category => <div className={s.conditionRow} key={category}>
-    <h3>{category}</h3><div className={s.switchState}><span>{allowed.includes(category) ? '켬' : '끔'}</span>
-      <button type="button" role="switch" aria-label={`${category} 허용`} aria-checked={allowed.includes(category)}
-        className={s.switchControl} onClick={() => toggle(category)} disabled={disabled}><span className={s.switch} aria-hidden="true"><span /></span></button>
-    </div>
-  </div>)}</div>;
-  const links = <div className={s.summaryLinks}>
-    {!revoked && <><button type="button" className={s.textLink} onClick={() => setDialog('conditions')}>조건 바꾸기</button><span aria-hidden="true">·</span></>}
-    <button type="button" className={s.textLink} onClick={() => setDialog('certificate')}>증서 보기</button>
-    {!compact && !revoked && <><span aria-hidden="true">·</span><button type="button" className={s.textLink} onClick={() => setDialog('seller')}>셀러 화면에서 보기</button></>}
-  </div>;
+  const save = async event => {
+    event.preventDefault();
+    if (saving.current || !canEdit) return;
+    if (!allowed.length) { setMessage('옷 종류는 최소 1개를 켜 두어야 해요.'); return; }
+    saving.current = true;
+    setBusy(true);
+    setMessage('');
+    try {
+      const updated = await updateLicenseTerms(license.id, { allowedUse: allowed });
+      onLicenseChange({ ...license, ...updated });
+      setEditing(false);
+      setMessage('사용 조건을 저장했어요.');
+    } catch (error) { setMessage(error.message || '저장하지 못했어요. 다시 시도해 주세요.'); }
+    finally { saving.current = false; setBusy(false); }
+  };
   return <>
-    {compact ? links : <section id="conditions" className={s.dashboardSection} aria-labelledby="conditions-title">
-      <h2 id="conditions-title">사용 조건</h2>{switches}
-      <p className={s.conditionsExpiry}>증서 {license?.vcId || '발급 준비 중이에요'} · 철회하기 전까지 유효해요</p>
-      {links}
-    </section>}
-    {message && !dialog && <p className={s.muted} role="status">{message}</p>}
-    {dialog && <MyPageDialog title={dialog === 'conditions' ? '조건 바꾸기' : dialog === 'certificate' ? '증서 보기' : '셀러 화면에서 보기'} busy={busy} onClose={() => setDialog(null)}>
-      {message && <p className={s.muted} role="status">{message}</p>}
-      {dialog === 'conditions' && <>
-        {(!license || license.status !== 'active') && <p>증서 발급을 마치면 여기서 조건을 바꿀 수 있어요.</p>}
-        {switches}
-        <p className={s.muted}>이용 가격은 플랫폼 표준가예요. {pricingLine()}이에요. 이 금액의 70%가 내 몫이에요.</p>
-        <p className={s.muted}>조건 변경은 별도 기록으로 남고 증서는 다시 발급하지 않아요.</p>
-      </>}
-      {dialog === 'certificate' && <>
-        <dl className={s.recordTable}><div><dt>증서 번호</dt><dd>{license?.vcId || '발급 준비 중이에요'}</dd></div>
-          {license?.createdAt && <div><dt>발급일</dt><dd>{seoulDate(license.createdAt)}</dd></div>}
-          <div><dt>유효</dt><dd>철회하기 전까지</dd></div>
-        </dl>
-        {license?.id && <Link className={s.textLink} to={`/verify/${encodeURIComponent(license.id)}`}>증서 확인 주소 열기</Link>}
-      </>}
-      {dialog === 'seller' && <>
-        <div className={s.identity}>{model?.coverImageUrl && <img className={s.avatar} src={model.coverImageUrl} alt="대표 이미지" />}<strong>{model?.displayName || '내 모델'}</strong></div>
-        <p>{model?.status === 'verified' && license?.status === 'active' ? '셀러에게 보이는 모델 정보예요.' : '현재는 비공개 상태예요.'}</p>
-        <p>{allowed.join(' · ')}</p><p>{pricingLine()}</p>
-      </>}
+    <div className={s.panelHeading}><div><h2>내 라이선스</h2><p className={s.panelCaption}>증서와 내가 정한 사용 범위를 한곳에서 확인해요.</p></div></div>
+    <div className={s.licenseLayout}>
+      <div><MyPageCertificate license={license} model={model} revoked={revoked} />
+        <button type="button" className={s.certificateOpen} onClick={onCertificate}>내 증서 보기</button></div>
+      <div className={s.conditionsDetail}><h3>사용 조건</h3><dl>
+        <div className={s.detailPair}><dt>허용한 의류</dt><dd>{license?.allowedUse?.join(' · ') || '아직 선택하지 않았어요'}</dd></div>
+        <div className={s.detailPair}><dt>사용 범위</dt><dd>패션 상품의 상세페이지</dd></div>
+        <div className={s.detailPair}><dt>라이선스 기간</dt><dd>{revoked ? `${seoulDateKey(license?.updatedAt, '').replaceAll('-', '. ')} 철회` : '철회하기 전까지'}</dd></div>
+      </dl>
+        {!revoked && <button type="button" className={s.quietButton} disabled={!canEdit} onClick={openEditor}>사용 조건 편집<ChevronRight className={s.icon} aria-hidden="true" /></button>}
+      </div>
+    </div>
+    {message && !editing && <p className={s.muted} role="status">{message}</p>}
+    <section className={s.licenseManagement}><div><h3>활동 관리</h3>
+      <p>{revoked ? '종료된 라이선스와 데이터를 확인해요.' : registering ? '등록 이후의 활동 설정을 확인해요.' : '잠시 쉬어가기와 라이선스 종료를 관리해요.'}</p></div>
+      <button type="button" className={s.quietButton} onClick={onManage}><SlidersHorizontal className={s.icon} aria-hidden="true" />활동 설정<ChevronRight className={s.icon} aria-hidden="true" /></button>
+    </section>
+    {editing && <MyPageDialog title="사용 조건 편집" busy={busy} onClose={() => setEditing(false)}>
+      <form onSubmit={save}><p>내 이미지를 사용할 수 있는 의류 범위를 정해요.</p>
+        <fieldset className={s.checkOptions} disabled={busy}><legend className={s.visuallyHidden}>허용할 의류</legend>
+          {BRAND_USE_CATEGORIES.map(category => <label className={s.checkOption} key={category}>
+            <input type="checkbox" checked={allowed.includes(category)} onChange={() => toggle(category)} />{category}</label>)}
+        </fieldset>
+        {message && <p role="alert" className={s.error}>{message}</p>}
+        <div className={s.actionRow}><button type="button" className={s.quietButton} onClick={() => setEditing(false)} disabled={busy}>취소</button>
+          <button type="submit" className={s.primaryButton} disabled={busy || !canEdit}>적용하기</button></div>
+      </form>
     </MyPageDialog>}
   </>;
 }

@@ -110,44 +110,57 @@ test('옛 정산 페이지는 마이페이지 수익 위치로 이동해요', as
   } finally { await harness.close(); }
 });
 
-test('수익은 최근 200건보다 큰 서버 전체 합계를 그대로 표시해요', async () => {
-  const harness = await loadEarningsHarness();
+test('수익은 최근 200건보다 큰 서버 전체 합계를 숫자만 강조해요', async () => {
+  const harness = await loadEarningsHarness({getSettlementSummary: async () => ({monthCount:201,monthAmount:1407000,totalCount:300,totalAmount:2100000})});
   try {
-    const tree = harness.module.EarningsFigures({ summary: { monthCount: 201, monthAmount: 1407000, totalCount: 300, totalAmount: 2100000 } });
-    assert.ok(findTree(tree, node => node.props?.children === '1,407,000원'));
-    assert.ok(findTree(tree, node => Array.isArray(node.props?.children) && node.props.children.includes(300)));
+    const data = await harness.load();
+    const tree = harness.module.EarningsFigures({ summary: data.summary });
+    assert.ok(findTree(tree, node => node.type === 'strong' && node.props.children === '1,407,000'));
+    assert.equal(findTree(tree, node => node.type === 'strong' && node.props.children === '1,407,000원'), null);
+    assert.equal(data.summary.totalAmount, 2100000);
+    assert.equal(data.summary.totalCount, 300);
   } finally { await harness.close(); }
 });
 
-test('수익 조회 실패는 수익 영역에서만 재시도하고 실제 합계를 다시 불러와요', async () => {
+test('정산 합계 실패에도 사용 목록을 보존하고 두 정산 API만 다시 불러와요', async () => {
   let calls = 0;
   const harness = await loadEarningsHarness({ getSettlementSummary: async () => {
     calls += 1;
     if (calls === 1) throw new Error('offline');
     return { monthCount: 0, monthAmount: 0, totalCount: 0, totalAmount: 0 };
-  } });
+  }, listSettlements:async()=>[{id:'s1',createdAt:'2026-09-01',modelAmount:10430}] });
   try {
-    let tree = await harness.load();
-    const retry = findTree(tree, node => node.type === 'button' && node.props.children === '다시 시도');
-    assert.ok(retry);
-    assert.equal(findTree(tree, node => node.type?.name === 'EarningsFigures'), null);
-    retry.props.onClick();
-    tree = await harness.load();
+    let data = await harness.load();
+    assert.equal(data.summaryError, true);
+    assert.equal(data.rowsError, false);
+    assert.equal(data.rows.length, 1);
+    assert.equal(data.summary, null);
+    data.retry();
+    data = await harness.load();
     assert.equal(calls, 2);
-    assert.ok(findTree(tree, node => node.type?.name === 'EarningsFigures'));
+    assert.equal(data.summaryError, false);
+    assert.equal(data.summary.monthAmount, 0);
   } finally { await harness.close(); }
 });
 
-test('처음에는 사용 기록 5건을 보이고 전체 보기로 받은 기록을 펼쳐요', async () => {
-  const harness = await loadEarningsHarness({ listSettlements: async () => Array.from({length: 8}, (_, i) => ({
-    id: `s${i}`, paymentId: `p${i}`, createdAt: '2026-09-01T00:00:00Z', productName: `상품${i}`, sellerName: '상점', modelAmount: 10430, reported: i === 0,
-  })) });
+test('사용 목록 실패에도 서버 전체 합계는 남고 실패한 목록을 빈 실적으로 보이지 않아요', async () => {
+  const harness = await loadEarningsHarness({ listSettlements: async () => {throw new Error('offline');} });
   try {
-    let tree = await harness.load();
-    assert.equal(findTree(tree, node => node.type === 'ul').props.children.length, 5);
-    assert.ok(findTree(tree, node => node.props?.children === '신고됨'));
-    findTree(tree, node => node.props?.children === '전체 보기').props.onClick();
-    tree = harness.render();
-    assert.equal(findTree(tree, node => node.type === 'ul').props.children.length, 8);
+    const data = await harness.load();
+    assert.equal(data.rowsError, true);
+    assert.equal(data.summaryError, false);
+    assert.ok(data.summary);
+  } finally { await harness.close(); }
+});
+
+test('선택한 월의 모든 사용 기록을 한 행씩 표시하고 모바일용 날짜도 제공해요', async () => {
+  const harness = await loadEarningsHarness();
+  try {
+    const { MyPageUsage } = await harness.server.ssrLoadModule('/src/features/model/mypage/MyPageUsage.jsx');
+    const rows = Array.from({length:8}, (_,i)=>({id:`s${i}`,paymentId:`p${i}`,createdAt:'2026-09-01T00:00:00Z',productName:`상품${i}`,sellerName:'상점',modelAmount:10430,reported:i===0}));
+    const tree = harness.render(MyPageUsage,{data:{rows,loading:false,rowsError:false},month:'2026-09',onMonthChange:()=>{}});
+    assert.equal(findTree(tree,node=>node.type==='ul').props.children.length,8);
+    assert.ok(findTree(tree,node=>node.type==='time' && node.props.children==='2026.09.01'));
+    assert.ok(findTree(tree,node=>node.props?.children==='신고됨'));
   } finally { await harness.close(); }
 });

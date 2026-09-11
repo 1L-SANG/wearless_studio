@@ -61,7 +61,7 @@ export async function modelComponentHarness({
     logLevel: 'silent',
     root: new URL('../../..', import.meta.url).pathname,
     server: { middlewareMode: true },
-    ssr: { noExternal: true },
+    ssr: { noExternal: true, external: ['lucide-react'] },
     esbuild: { jsx: 'automatic' },
     appType: 'custom',
     plugins: [{
@@ -73,6 +73,7 @@ export async function modelComponentHarness({
         if (id === '@/lib/brandUseCategories.js') return new URL('../../../src/lib/brandUseCategories.js', import.meta.url).pathname;
         // 날짜 표기는 스텁하지 않고 진짜 모듈을 쓴다. 화면의 발급일 등 한국 시간
         // 표기도 이 테스트가 지나는 경로다(src/lib/datetime.js).
+        if (id === '@/lib/companyInfo.json') return new URL('../../../src/lib/companyInfo.json', import.meta.url).pathname;
         if (id === '@/lib/datetime.js') return new URL('../../../src/lib/datetime.js', import.meta.url).pathname;
         if (id === 'react') return '\0fm-test-react';
         if (id === 'react/jsx-dev-runtime' || id === 'react/jsx-runtime') return '\0fm-test-jsx';

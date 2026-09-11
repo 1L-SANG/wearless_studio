@@ -177,7 +177,7 @@ test('ModelHub reaches ready using FaceMarket state when personalization is unav
   }
 });
 
-test('활동 마이페이지는 라이선스가 유효할 때 수익과 조건 영역을 함께 열어요', async () => {
+test('활동 마이페이지는 라이선스가 유효할 때 사용 기록과 정산 및 라이선스 탭을 열어요', async () => {
   const harness = await modelComponentHarness({
     entry: '/src/features/model/ModelHub.jsx', exportName: 'ModelHub',
     initialStates: ['ready', { id: 'm1', status: 'verified', displayName: '모델' }, null, null, true,
@@ -189,9 +189,12 @@ test('활동 마이페이지는 라이선스가 유효할 때 수익과 조건 �
     const active = findTree(page.type(page.props), node => node.type?.name === 'ActiveDashboard');
     assert.ok(active);
     const tree = active.type(active.props);
-    assert.ok(findTree(tree, node => node.type?.name === 'MyPageEarnings'));
-    assert.ok(findTree(tree, node => node.type?.name === 'MyPageConditions'));
-    assert.ok(findTree(tree, node => node.type === 'button' && node.props.children === '그만두기'));
+    assert.ok(findTree(tree, node => node.type?.name === 'MyPageUsage'));
+    for (const label of ['사용된 페이지', '정산', '라이선스']) {
+      assert.ok(findTree(tree, node => node.props?.role === 'tab' && node.props.children === label));
+    }
+    assert.ok(findTree(tree, node => node.type?.name === 'EarningsFigures'));
+    assert.equal(findTree(tree, node => node.type === 'button' && node.props.children === '그만두기'), null);
     assert.equal(findTree(tree, node => node.type === 'Link' && node.props.to === '/model/withdraw'), null);
   } finally { await harness.close(); }
 });
@@ -602,23 +605,25 @@ test('completion handoff also redirects when cuts have arrived since issuance', 
 });
 
 
-test('그만두기는 확인 뒤 현재 FaceMarket 라이선스를 해지하고 화면 상태를 갱신해요', async () => {
+test('라이선스 종료는 활동 관리의 확인 뒤 현재 라이선스를 철회하고 화면 상태를 갱신해요', async () => {
   const requests = [], updates = [];
   const harness = await modelComponentHarness({
-    entry:'/src/features/model/mypage/MyPage.jsx', exportName:'ActiveDashboard', initialStates:[],
+    entry:'/src/features/model/mypage/MyPageActivity.jsx', exportName:'MyPageActivity', initialStates:[],
     api:{ revokeLicense:async id=>{requests.push(id);return {id,modelId:'m1',status:'revoked'};} },
   });
-  const props={journey:{flag:'none'},model:{id:'m1',status:'verified'},license:{id:'l1',status:'active'},licenses:[],onLicenseChange:value=>updates.push(value)};
+  let dialogName = 'manage';
+  const props={journey:{mode:'active',flag:'none'},model:{id:'m1',status:'verified'},license:{id:'l1',status:'active'},onDialogChange:value=>{dialogName=value;},onLicenseChange:value=>updates.push(value)};
   try {
-    let tree=harness.render(props);
-    findTree(tree,node=>node.type==='button'&&node.props.children==='그만두기').props.onClick();
+    let tree=harness.render({...props,dialog:dialogName});
+    findTree(tree,node=>node.type==='button' && findTree(node,child=>child.type==='strong'&&child.props.children==='라이선스 종료')).props.onClick();
     assert.deepEqual(requests,[]);
-    tree=harness.render(props);
+    tree=harness.render({...props,dialog:dialogName});
     const dialog=findTree(tree,node=>node.type?.name==='MyPageDialog');
-    assert.ok(dialog);
-    await findTree(dialog,node=>node.type==='button'&&node.props.children==='라이선스 해지하기').props.onClick();
+    assert.equal(dialog.props.title,'라이선스 종료');
+    await findTree(dialog,node=>node.type==='button'&&node.props.children==='라이선스 종료하기').props.onClick();
     assert.deepEqual(requests,['l1']);
     assert.equal(updates[0].status,'revoked');
+    assert.equal(dialogName,null);
   } finally {await harness.close();}
 });
 
