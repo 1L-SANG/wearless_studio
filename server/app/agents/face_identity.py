@@ -1167,8 +1167,22 @@ def _health_url_from(spec: FaceIdentitySpec, settings) -> str | None:
     return f"{base}/healthz"
 
 
+def healthz_ready(payload: dict) -> bool:
+    """렌더 서비스 /healthz 본문 → 준비됐는가. **베이스 모델이 올라와 있으면** 준비다(base_loaded).
+
+    loaded 는 "이 LoRA 를 붙여 지금 렌더 가능"이라 캐시가 빈 새 파드에서는 첫 렌더가 끝나야 true 다 —
+    그걸 준비 조건으로 쓰면 첫 컷이 영원히 기다린다(2026-09-11 실측). base_loaded 를 아직 안 주는
+    예전 묶음의 파드는 loaded 로 본다.
+    """
+    if not isinstance(payload, dict):
+        return False
+    if "base_loaded" in payload:
+        return bool(payload.get("base_loaded"))
+    return bool(payload.get("loaded"))
+
+
 def _probe_ready(url: str, timeout: float = 5.0) -> bool:
-    """파드가 렌더할 준비가 됐는가. 연결 거부·503·loaded=false 는 전부 '아직'."""
+    """파드가 렌더할 준비가 됐는가. 연결 거부·503·base_loaded=false 는 전부 '아직'(healthz_ready)."""
     import httpx
 
     try:
@@ -1178,7 +1192,7 @@ def _probe_ready(url: str, timeout: float = 5.0) -> bool:
     if res.status_code != 200:
         return False
     try:
-        return bool(res.json().get("loaded"))
+        return healthz_ready(res.json())
     except Exception:  # noqa: BLE001
         return False
 

@@ -27,8 +27,27 @@ RENDER_GUIDANCE = 4.0
 RENDER_NEGATIVE = ""
 
 
+def load_base_pipeline(model_id: str = "Qwen/Qwen-Image-Edit-2509", device: str = "cuda", *,
+                       cpu_offload: bool = False, gpu_fuse: bool = True):
+    """LoRA 없는 베이스 파이프라인. 서비스가 **기동 때** 올려 두는 것이다 — 첫 요청이 수 분을 물지 않게.
+
+    GPU 합치기 경로(기본)면 여기서 GPU 로 올려 둔다. 이후 QwenLocalBackend(base_pipe=...) 가 LoRA 만 붙인다
+    (실측 load_lora 2.4s + fuse 0.2s). 오프로드·CPU 합치기 경로는 CPU 에 둔 채로 넘기고 백엔드가 기존 순서대로 처리한다.
+    """
+    import torch
+    from diffusers import QwenImageEditPlusPipeline
+
+    pipe = QwenImageEditPlusPipeline.from_pretrained(model_id, torch_dtype=torch.bfloat16)
+    pipe.set_progress_bar_config(disable=True)
+    if gpu_fuse and not cpu_offload:
+        pipe.to(device)
+    return pipe
+
+
 class QwenLocalBackend:
-    """render(control, prompt, seed) -> 1024² PIL.Image. 파이프라인은 첫 호출에 1회 로드."""
+    """render(control, prompt, seed) -> 1024² PIL.Image. 파이프라인은 첫 호출에 1회 로드.
+
+    base_pipe 를 받으면(load_base_pipeline 결과) 베이스를 다시 받지 않고 LoRA 만 붙인다."""
 
     def __init__(
         self,
@@ -42,10 +61,12 @@ class QwenLocalBackend:
         lora_scale: float = 1.0,
         cpu_offload: bool = False,
         gpu_fuse: bool = True,
+        base_pipe=None,
     ):
         """cpu_offload=True 면 enable_model_cpu_offload() — 48GB 급 카드(A40)에서 bf16 전체(≈55GB)를
         한 번에 못 올릴 때. transformer(≈40GB)만 GPU 에 올라가 1024² 추론이 돈다(느리다)."""
         self.lora_path = lora_path
+        self.base_pipe = base_pipe
         self.model_id = model_id
         self.device = device
         self.steps = steps
@@ -60,14 +81,14 @@ class QwenLocalBackend:
     def pipeline(self):
         with self._lock:
             if self._pipe is None:
-                import torch
-                from diffusers import QwenImageEditPlusPipeline
-
-                pipe = QwenImageEditPlusPipeline.from_pretrained(self.model_id, torch_dtype=torch.bfloat16)
-                pipe.set_progress_bar_config(disable=True)
+                if self.base_pipe is not None:
+                    pipe, self.base_pipe = self.base_pipe, None      # 미리 올린 베이스 — 한 번만 쓴다
+                else:
+                    pipe = load_base_pipeline(self.model_id, self.device,
+                                              cpu_offload=self.cpu_offload, gpu_fuse=self.gpu_fuse)
                 if self.gpu_fuse and not self.cpu_offload:
                     # 기본. 먼저 GPU 로 올리고 합친다 — 적재 214.7초 → 13.5초(위 실측).
-                    pipe.to(self.device)
+                    # (베이스는 load_base_pipeline 이 이미 GPU 에 올렸다.)
                     pipe.load_lora_weights(self.lora_path, adapter_name="identity")
                     pipe.set_adapters(["identity"], adapter_weights=[self.lora_scale])
                     pipe.fuse_lora(lora_scale=self.lora_scale)
