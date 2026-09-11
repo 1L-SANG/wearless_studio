@@ -46,6 +46,12 @@ BIOMETRIC_CONSENT_VERSION = "2026-08-v2"
 # 생성분 포함)이 깨지지 않게. 현재 버전이 아니므로 카탈로그 적격성엔 영향이 없다.
 ACCEPTED_CONSENT_VERSIONS = ("2026-09-v1", "2026-08-v2", "2026-08-v1")
 ENROLLMENT_TTL = timedelta(hours=24)
+# 관리자 육안 심사 기한. 일반 등록의 24h TTL 로 자동 만료시키면 심사가 밀렸을 때 정상
+# 지원자가 자동 탈락하므로 review_pending 은 그 스윕에서 뺐는데, **신분증 촬영본은 업로드
+# 7일 뒤 배치 스윕이 DB 와 무관하게 지운다** — 그 둘이 합쳐지면 7일 뒤엔 심사가 불가능해진
+# 행이 그 사용자의 단일 활성 등록 슬롯을 영구히 점유한다(최종리뷰 I3). 7일보다 짧은 전용
+# 기한을 둬서 증거가 살아 있는 동안 심사가 끝나게 하고, 넘기면 실패로 닫고 통지한다.
+REVIEW_DEADLINE_DAYS = 5
 _PHOTO_FENCE_NAMESPACE = 0x464D5048
 _MODEL_ASSET_FENCE_NAMESPACE = 0x464D4D41
 ANGLES = ("front", "angle45", "side")
@@ -2106,6 +2112,68 @@ async def cleanup_terminal_enrollment(app, *, enrollment_id: str) -> bool:
         return False
 
 
+class _AppRequest:
+    """`app` 만 들고 `request` 처럼 구는 얇은 대역.
+
+    `_dispatch_decision_email`/`get_conn` 은 `request.app.state` 밖을 보지 않는다. 스윕은
+    요청 컨텍스트가 없으므로 그 한 가지만 채워 같은 메일 경로(발송 원장 포함)를 그대로
+    재사용한다 — 통지 경로를 두 벌 만들면 한쪽만 고쳐지는 날이 온다."""
+
+    __slots__ = ("app",)
+
+    def __init__(self, app):
+        self.app = app
+
+
+async def notify_enrollment_decision(
+    app, *, enrollment_id: str, email_type: str, reject_reason: str | None = None
+) -> bool:
+    """등록 심사 결과를 지원서 연락처로 메일 통지한다(best-effort).
+
+    심사 대기 화면이 "결과는 메일로 알려 드려요" 라고 약속하는데 실제로는 아무것도 보내지
+    않았다 — 그 화면은 폴링도 하지 않으므로 사용자에게 **어떤 통지 경로도 없었다**
+    (최종리뷰 I2). 연락처는 지원서에만 있으므로 지원서가 없으면(fm_application_required
+    off) 보낼 곳이 없다 — 조용히 건너뛰되 그 사실을 로그로 남긴다.
+
+    반환값: 실제로 발송을 시도했으면 True. 결정 자체는 이미 커밋됐으므로 절대 예외를
+    올리지 않는다(지원서 승인·거절 메일과 같은 규율).
+    """
+    try:
+        request = _AppRequest(app)
+        async with get_conn(request) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    select a.id::text as application_id, a.contact_email as contact_email
+                    from fm_biometric_enrollments e
+                    join fm_model_applications a on a.id = e.application_id
+                    where e.id = %s
+                    """,
+                    (enrollment_id,),
+                )
+                row = await cur.fetchone()
+        if not row or not row.get("contact_email"):
+            logger.info(
+                "enrollment_decision_email_skipped enrollment=%s type=%s reason=no_contact",
+                enrollment_id, email_type,
+            )
+            return False
+        await _dispatch_decision_email(
+            request,
+            application_id=row["application_id"],
+            to=row["contact_email"],
+            email_type=email_type,
+            reject_reason=reject_reason,
+        )
+        return True
+    except Exception:
+        logger.warning(
+            "enrollment_decision_email_failed enrollment=%s type=%s",
+            enrollment_id, email_type, exc_info=True,
+        )
+        return False
+
+
 async def sweep_terminal_enrollments(app, *, limit: int = 100) -> int:
     pool = getattr(app.state, "pool", None)
     if pool is None:
@@ -2143,6 +2211,40 @@ async def sweep_terminal_enrollments(app, *, limit: int = 100) -> int:
                 )
                 await cur.fetchall()
             await conn.commit()
+
+        # 심사 기한(REVIEW_DEADLINE_DAYS) 초과분을 닫는다. 위 만료 스윕이 review_pending 을
+        # 일부러 빼 두는 건 "심사가 밀렸다고 정상 지원자를 24시간 만에 탈락시키지 않는다"는
+        # 뜻이지 "영원히 기다린다"는 뜻이 아니다 — 신분증 촬영본은 7일이면 배치 스윕이
+        # 지우므로 그 뒤엔 심사 자체가 불가능하고, 행은 사용자의 단일 활성 슬롯을 계속
+        # 점유한다(최종리뷰 I3). review_status 도 비워 관리자 대기 큐에서 내린다.
+        # 아래 정리 쿼리가 같은 tick 에 이 행들을 집어 사진·신분증을 파기한다.
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"""
+                    with due as (
+                        select id from fm_biometric_enrollments
+                        where status = 'review_pending' and review_status = 'pending'
+                          and created_at <= now() - interval '{REVIEW_DEADLINE_DAYS} days'
+                        order by created_at
+                        for update skip locked
+                        limit %s
+                    )
+                    update fm_biometric_enrollments e
+                    set status='failed', decision='failed', reason='review_timeout',
+                        review_status=null, completed_at=now()
+                    from due where e.id=due.id
+                    returning e.id::text as id
+                    """,
+                    (limit,),
+                )
+                timed_out = await cur.fetchall()
+            await conn.commit()
+        for row in timed_out:
+            logger.warning("enrollment_review_timed_out enrollment=%s", row["id"])
+            await notify_enrollment_decision(
+                app, enrollment_id=row["id"], email_type="enrollment_review_timeout"
+            )
 
         async with pool.connection() as conn:
             async with conn.cursor() as cur:

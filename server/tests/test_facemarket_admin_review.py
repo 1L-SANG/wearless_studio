@@ -619,6 +619,8 @@ class AdminStore:
         self.identity_verifications: list[dict] = []
         self.jobs: list[dict] = []
         self.audit: list[dict] = []
+        # 결과 통지 메일 원장(fm_model_application_emails) — 최종리뷰 I2.
+        self.emails: list[dict] = []
         self.deleted_r2_keys: list[str] = []
         self.admin_user_ids: set[str] = set()
         self.latest_id: str | None = None
@@ -771,6 +773,19 @@ class AdminFakeCursor:
             if row is not None and "review_status is not null" in query and not row.get("review_status"):
                 row = None
             self.result = None if row is None else dict(row)
+            return
+
+        # --- 결과 통지 메일: 연락처 조회 (최종리뷰 I2) ---
+        if "a.contact_email as contact_email" in query:
+            (enrollment_id,) = params
+            row = next((r for r in store.enrollments if r["id"] == enrollment_id), None)
+            application_id = (row or {}).get("application_id")
+            application = store.applications.get(application_id) if application_id else None
+            self.result = (
+                {"application_id": application_id, "contact_email": application.get("contact_email")}
+                if application and application.get("contact_email")
+                else None
+            )
             return
 
         # --- 지원서 요약 ---
@@ -997,6 +1012,23 @@ class AdminFakeCursor:
                 )
             ]
             self._many = [{"id": r["id"]} for r in pending[:limit]]
+            return
+
+        # --- 결과 통지 메일: 발송 원장 insert/update ---
+        if query.startswith("insert into fm_model_application_emails"):
+            application_id, email_type = params
+            email_id = str(uuid.uuid4())
+            store.emails.append(
+                {"id": email_id, "application_id": application_id,
+                 "email_type": email_type, "status": "pending"}
+            )
+            self.result = {"id": email_id}
+            return
+        if query.startswith("update fm_model_application_emails"):
+            status, provider_message_id, error, email_id = params
+            row = next((e for e in store.emails if e["id"] == email_id), None)
+            if row is not None:
+                row.update(status=status, provider_message_id=provider_message_id, error=error)
             return
 
         if query.startswith("insert into jobs"):
@@ -1537,3 +1569,75 @@ def test_review_image_view_writes_an_audit_row(admin_client):
     assert views[0]["target_id"] == enrollment_id
     assert views[0]["note"] == "id_document"
     assert views[0]["actor_user_id"] == "admin-1"
+
+
+# ── 최종리뷰 I2: 결과를 실제로 메일로 알린다 ──────────────────────────────────────────
+
+
+@pytest.fixture()
+def sent_emails(monkeypatch):
+    """facemarket_notify.send_application_email 을 가로채 (to, type, reason) 만 모은다.
+
+    Resend 키가 없으면 실제 발송은 not_configured 로 끝나지만, 여기서 확인하려는 건
+    "결정이 통지 경로를 실제로 탔는가" 다.
+    """
+    from app import facemarket_notify
+
+    calls: list[dict] = []
+
+    async def fake_send(_settings, *, to, email_type, reject_reason=None):
+        calls.append({"to": to, "email_type": email_type, "reject_reason": reject_reason})
+        return True, "msg-1", None
+
+    monkeypatch.setattr(facemarket_notify, "send_application_email", fake_send)
+    return calls
+
+
+def _seed_reviewable_with_contact(store):
+    return store.add_enrollment(
+        status="review_pending", review_status="pending", identity_method="simple_auth",
+        application={"applicant_name": "홍길동", "contact_email": "model@example.com"},
+    )
+
+
+def test_approve_sends_a_result_email(admin_client, sent_emails):
+    """심사 대기 화면이 "결과는 메일로 알려 드려요" 라고 약속한다 — 그 화면은 폴링도 하지
+    않으므로 이 메일이 사용자의 유일한 통지 경로다(최종리뷰 I2)."""
+    client, store = admin_client(is_admin=True)
+    enrollment_id = _seed_reviewable_with_contact(store)
+    assert client.post(f"/v1/facemarket/admin/enrollments/{enrollment_id}/approve").status_code == 200
+    assert sent_emails == [
+        {"to": "model@example.com", "email_type": "enrollment_review_approved",
+         "reject_reason": None}
+    ]
+    assert [e["email_type"] for e in store.emails] == ["enrollment_review_approved"]
+    assert store.emails[0]["status"] == "sent"
+
+
+def test_reject_sends_a_result_email_with_the_reason(admin_client, sent_emails):
+    """거절도 반드시 알린다 — 안 알리면 사용자는 "검수 중" 화면에서 영영 기다린다."""
+    client, store = admin_client(is_admin=True)
+    enrollment_id = _seed_reviewable_with_contact(store)
+    response = client.post(
+        f"/v1/facemarket/admin/enrollments/{enrollment_id}/reject",
+        json={"reason": "마스킹 미이행"},
+    )
+    assert response.status_code == 200, response.text
+    assert sent_emails == [
+        {"to": "model@example.com", "email_type": "enrollment_review_rejected",
+         "reject_reason": "마스킹 미이행"}
+    ]
+
+
+def test_decision_email_failure_never_breaks_the_decision(admin_client, monkeypatch):
+    """메일 실패가 결정을 되돌리면 안 된다 — 결정은 이미 커밋됐다."""
+    from app import facemarket_notify
+
+    async def boom(*_args, **_kwargs):
+        raise RuntimeError("resend down")
+
+    monkeypatch.setattr(facemarket_notify, "send_application_email", boom)
+    client, store = admin_client(is_admin=True)
+    enrollment_id = _seed_reviewable_with_contact(store)
+    assert client.post(f"/v1/facemarket/admin/enrollments/{enrollment_id}/approve").status_code == 200
+    assert store.latest_enrollment["review_status"] == "approved"

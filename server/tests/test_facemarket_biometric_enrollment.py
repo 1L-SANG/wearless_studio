@@ -367,6 +367,35 @@ class FakeCursor:
                 }
                 self.store.enrollments.append(row)
                 self.result = {"id": row["id"]}
+        elif (
+            query.startswith("with due as ( select id from fm_biometric_enrollments")
+            and "review_status = 'pending'" in query
+        ):
+            # 심사 기한(REVIEW_DEADLINE_DAYS) 초과 종료(최종리뷰 I3). 만료 스윕과 같은
+            # `with due as (...)` 로 시작하므로 **이 분기가 먼저**여야 한다.
+            limit = params[0]
+            deadline = self.store.now - timedelta(
+                days=facemarket_enrollment.REVIEW_DEADLINE_DAYS
+            )
+            due = sorted(
+                [
+                    row
+                    for row in self.store.enrollments
+                    if row["status"] == "review_pending"
+                    and row.get("review_status") == "pending"
+                    and row.get("created_at", self.store.now) <= deadline
+                ],
+                key=lambda row: row.get("created_at", self.store.now),
+            )[:limit]
+            self.many = [{"id": row["id"]} for row in due]
+            for row in due:
+                row.update(
+                    status="failed",
+                    decision="failed",
+                    reason="review_timeout",
+                    review_status=None,
+                    completed_at=self.store.now,
+                )
         elif query.startswith("with due as ( select id from fm_biometric_enrollments"):
             limit = params[0]
             due = sorted(
@@ -4741,3 +4770,77 @@ def test_cancel_keeps_a_decided_review_status(enrollment_client, auth, enrollmen
 
     assert response.status_code == 200, response.text
     assert enrollment_store.enrollments[0]["review_status"] == "approved"
+
+
+def test_review_pending_expires_after_the_review_deadline(
+    enrollment_client, auth, enrollment_store, monkeypatch
+):
+    """심사 대기는 5일 뒤 failed('review_timeout') 로 닫히고 통지된다(최종리뷰 I3).
+
+    일반 만료 스윕에서 review_pending 을 뺀 건 "심사가 밀렸다고 24시간 만에 자동 탈락시키지
+    않는다"는 뜻이지 "영원히 기다린다"가 아니다 — 신분증 촬영본은 7일이면 배치 스윕이
+    DB 와 무관하게 지우므로 그 뒤엔 심사 자체가 불가능하고, 행은 사용자의 단일 활성 등록
+    슬롯을 영구 점유한다(= 재등록 불가). 기한은 7일보다 **짧아야** 증거가 살아 있는 동안
+    심사가 끝난다.
+    """
+    notified = []
+
+    async def fake_notify(_app, *, enrollment_id, email_type, reject_reason=None):
+        notified.append((enrollment_id, email_type))
+        return True
+
+    monkeypatch.setattr(facemarket_enrollment, "notify_enrollment_decision", fake_notify)
+
+    enrollment_id = create_enrollment(enrollment_client, auth, verify_identity=False)
+    row = enrollment_store.enrollments[0]
+    row["status"] = "review_pending"
+    row["review_status"] = "pending"
+    row["created_at"] = NOW - timedelta(days=facemarket_enrollment.REVIEW_DEADLINE_DAYS, hours=1)
+
+    asyncio.run(facemarket_enrollment.sweep_terminal_enrollments(enrollment_client.app))
+
+    swept = enrollment_store.enrollments[0]
+    assert swept["id"] == enrollment_id
+    assert swept["status"] == "failed"
+    assert swept["reason"] == "review_timeout"
+    # 관리자 대기 큐에서도 내려간다 — 처리할 수 없는 행이 큐에 남으면 안 된다.
+    assert swept["review_status"] is None
+    assert notified == [(enrollment_id, "enrollment_review_timeout")]
+
+
+def test_review_pending_within_the_deadline_is_left_alone(
+    enrollment_client, auth, enrollment_store, monkeypatch
+):
+    """기한 안이면 건드리지 않는다 — 심사가 하루 밀렸다고 지원자를 떨어뜨리지 않는다."""
+    monkeypatch.setattr(
+        facemarket_enrollment,
+        "notify_enrollment_decision",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("통지하면 안 된다")),
+    )
+    create_enrollment(enrollment_client, auth, verify_identity=False)
+    row = enrollment_store.enrollments[0]
+    row["status"] = "review_pending"
+    row["review_status"] = "pending"
+    row["created_at"] = NOW - timedelta(days=facemarket_enrollment.REVIEW_DEADLINE_DAYS - 1)
+    # 일반 만료 스윕이 review_pending 을 집지 않는다는 사실도 함께 지킨다.
+    row["expires_at"] = NOW - timedelta(hours=1)
+
+    asyncio.run(facemarket_enrollment.sweep_terminal_enrollments(enrollment_client.app))
+
+    assert enrollment_store.enrollments[0]["status"] == "review_pending"
+
+
+def test_review_deadline_is_shorter_than_the_id_document_sweep():
+    """기한은 신분증 촬영본 배치 스윕(7일)보다 반드시 짧아야 한다.
+
+    이게 뒤집히면 "심사하러 갔더니 증거가 이미 파기됨" 상태가 다시 생긴다 — 두 상수가
+    서로 다른 파일에 있어서 한쪽만 바뀌기 쉽다.
+    """
+    import inspect as _inspect
+
+    from app import facemarket_id_document
+
+    sweep_default = _inspect.signature(
+        facemarket_id_document.sweep_stale_id_documents
+    ).parameters["older_than_seconds"].default
+    assert facemarket_enrollment.REVIEW_DEADLINE_DAYS * 86400 < sweep_default

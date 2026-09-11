@@ -20,6 +20,12 @@ export const ENROLLMENT_STEPS = Object.freeze([
 
 const REASON_COPY = Object.freeze({
   id_portrait_unavailable: '신분증 사진을 확인할 수 없어요.',
+  // 간편인증 경로 관리자 육안 심사 결과. 매핑이 없으면 "인증을 완료하지 못했어요" 라는
+  // 일반 실패 문구가 떠서, 사용자는 자기 등록에 무슨 일이 있었는지 끝내 알 수 없다
+  // (메일도 이 브랜치 전까진 안 나갔다 — 최종리뷰 I2).
+  review_rejected: '제출한 신분증과 얼굴 사진으로는 본인 확인을 마치지 못했어요. 다시 시도해 주세요.',
+  // 심사 기한(5일)을 넘겨 자동 종료 — 사용자 잘못이 아니다(최종리뷰 I3).
+  review_timeout: '확인에 시간이 너무 오래 걸려 이번 등록은 자동으로 종료됐어요. 다시 시작할 수 있어요.',
   liveness_retry: '라이브 인증을 새 등록에서 다시 시도해 주세요.',
   liveness_failed: '라이브 인증을 통과하지 못했어요.',
   face_match_failed: '얼굴 일치 확인에 실패했어요.',

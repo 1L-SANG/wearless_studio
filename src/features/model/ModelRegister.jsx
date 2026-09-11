@@ -60,6 +60,9 @@ const SIMPLE_AUTH_UNAVAILABLE_REASON = deriveSimpleAuthUnavailableReason(CX_AUTH
 // 화면을 그리지 않고 즉시 그 방법으로 진행한다 — 값을 이 위저드가 소비하는 유일한 지점이다.
 const IDENTITY_METHODS = parseIdentityMethods(import.meta.env.VITE_FM_IDENTITY_METHODS);
 const DEVICE_KEY = 'wearless.fmDeviceId';
+// 서버 facemarket_enrollment.REVIEW_DEADLINE_DAYS 와 같은 값 — 심사 대기 화면이 사용자에게
+// 언제까지 기다리면 되는지 말해 준다(그 기한이 지나면 서버가 자동으로 닫고 메일을 보낸다).
+const REVIEW_DEADLINE_DAYS = 5;
 // 서버 BIOMETRIC_CONSENT_VERSION 과 같은 값이어야 한다. 올리면 라이브 카탈로그에서
 // 기존 모델이 전부 빠지므로(server/app/facemarket_enrollment.py 상단 주석) 동의 화면
 // 문구가 실제로 바뀌어 함께 나갈 때만 올린다.
@@ -508,6 +511,47 @@ export function ModelRegister() {
       if (mounted.current) setBusy(false);
     }
   };
+
+  // 심사 대기 화면(review_pending)은 폴링하지 않는다 — 사람 심사는 즉시 끝나지 않는다.
+  // 대신 (a) 사용자가 직접 확인할 수 있는 새로고침과 (b) 취소 탈출구를 준다. 취소가 없으면
+  // 심사가 밀렸을 때 사용자는 단일 활성 등록 슬롯이 묶인 채 아무것도 할 수 없다
+  // (서버는 review_pending 취소를 이미 허용한다 — 화면에만 길이 없었다, 최종리뷰 I3).
+  const refreshReview = useCallback(async () => {
+    const enrollmentId = enrollment?.id;
+    if (!enrollmentId) return;
+    setBusy(true);
+    setError('');
+    try {
+      const current = await getEnrollment(enrollmentId);
+      if (!mounted.current) return;
+      setEnrollment(current);
+      setStep(nextEnrollmentStep(current));
+    } catch (requestError) {
+      if (!mounted.current) return;
+      setError(requestError?.message || '등록 상태를 확인하지 못했어요.');
+    } finally {
+      if (mounted.current) setBusy(false);
+    }
+  }, [enrollment?.id]);
+
+  const cancelReview = useCallback(async () => {
+    const enrollmentId = enrollment?.id;
+    if (!enrollmentId) return;
+    setBusy(true);
+    setError('');
+    try {
+      await cancelEnrollment(enrollmentId);
+      if (!mounted.current) return;
+      setEnrollment(null);
+      setConsentAccepted(false);
+      setStep('consent');
+    } catch (requestError) {
+      if (!mounted.current) return;
+      setError(requestError?.message || '등록을 취소하지 못했어요. 잠시 후 다시 시도해 주세요.');
+    } finally {
+      if (mounted.current) setBusy(false);
+    }
+  }, [enrollment?.id]);
 
   const abandonLiveness = useCallback(async () => {
     const enrollmentId = enrollment?.id;
@@ -1235,8 +1279,9 @@ export function ModelRegister() {
       )}
 
       {/* 간편인증(simple_auth) 경로에서 관리자가 신분증 사진을 육안으로 재확인하는 동안
-          머무는 화면(review_pending). 서버 상태가 바뀌면 결과를 메일로 보낸다 — 이 화면
-          자체는 폴링하지 않는다(관리자 심사는 즉시 처리되지 않는다). */}
+          머무는 화면(review_pending). 결과는 메일로 나간다(승인·거절·기한초과 3종) — 이
+          화면 자체는 폴링하지 않으므로(사람 심사는 즉시 끝나지 않는다) 직접 확인할
+          새로고침과, 기다리지 않기로 할 때의 취소 탈출구를 함께 준다(최종리뷰 I2·I3). */}
       {step === 'review' && (
         <div className="surface">
           <div className={s.stepHead}>
@@ -1245,7 +1290,19 @@ export function ModelRegister() {
               <h2 className={s.stateTitle}>검수 중이에요</h2>
             </div>
           </div>
-          <p className="hint">결과는 메일로 알려 드려요.</p>
+          <p className="hint">
+            담당자가 신분증과 얼굴 사진을 직접 확인하고 있어요. 결과는 메일로 알려 드려요 —
+            보통 하루 안에 끝나고, {REVIEW_DEADLINE_DAYS}일이 지나면 자동으로 종료돼요.
+          </p>
+          {error && <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {error}</p>}
+          <div className={s.identityAction}>
+            <Button variant="primary" block disabled={busy} onClick={refreshReview}>
+              {busy ? '확인 중…' : '지금 결과 확인하기'}
+            </Button>
+          </div>
+          <button type="button" className={s.backLink} disabled={busy} onClick={cancelReview}>
+            기다리지 않고 이번 등록 취소하기
+          </button>
           <Link to="/" className={s.nextCard}>
             홈으로 가기 <Icon name="chevRight" size={18} />
           </Link>
@@ -1261,7 +1318,7 @@ export function ModelRegister() {
         </div>
       )}
 
-      {error && !['failed', 'error', 'identity_failed', 'liveness_failed', 'reidentify', 'id_capture'].includes(step) && (
+      {error && !['failed', 'error', 'identity_failed', 'liveness_failed', 'reidentify', 'id_capture', 'review'].includes(step) && (
         <p className={s.error} role="alert"><Icon name="alertCircle" size={15} /> {error}</p>
       )}
 

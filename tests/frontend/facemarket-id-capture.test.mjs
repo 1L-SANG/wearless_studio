@@ -527,3 +527,47 @@ test('신분증 업로드가 성공하면 부모 에러 배너를 지운다(재�
   const setStepIndex = body.indexOf('setStep(nextEnrollmentStep(current));');
   assert.ok(errorIndex < setStepIndex, "setError('') 가 setStep 보다 먼저 일어나야 한다");
 });
+
+// ── 심사 대기 화면의 통지·탈출구 (최종리뷰 I2 · I3) ───────────────────────────────
+
+test('review 스텝은 수동 새로고침과 취소 탈출구를 준다', () => {
+  // 잡는 회귀: 이 화면은 폴링하지 않는다(사람 심사는 즉시 안 끝난다). 새로고침이 없으면
+  // 사용자는 메일이 올 때까지 아무것도 확인할 수 없고, 취소가 없으면 심사가 밀렸을 때
+  // 단일 활성 등록 슬롯이 묶인 채 재등록도 못 한다(서버는 review_pending 취소를 이미
+  // 허용한다 — 화면에만 길이 없었다).
+  assert.match(modelRegisterSource, /const refreshReview = useCallback\(async \(\) => \{/);
+  assert.match(modelRegisterSource, /const cancelReview = useCallback\(async \(\) => \{/);
+  const start = modelRegisterSource.indexOf("{step === 'review' && (");
+  assert.ok(start > 0, 'review 스텝 JSX 를 찾을 수 없다');
+  const block = modelRegisterSource.slice(start, modelRegisterSource.indexOf("{step === 'failed' && (", start));
+  assert.match(block, /onClick=\{refreshReview\}/, '새로고침 버튼이 없다');
+  assert.match(block, /onClick=\{cancelReview\}/, '취소 버튼이 없다');
+  assert.match(block, /결과는 메일로 알려 드려요/, '메일 통지 약속 문구가 사라졌다');
+  assert.match(block, /\{REVIEW_DEADLINE_DAYS\}일이 지나면 자동으로 종료/, '심사 기한 안내가 없다');
+});
+
+test('심사 기한 상수가 서버(REVIEW_DEADLINE_DAYS)와 같다', () => {
+  const server = readFileSync(
+    new URL('../../server/app/facemarket_enrollment.py', import.meta.url), 'utf8',
+  );
+  const serverDays = /REVIEW_DEADLINE_DAYS = (\d+)/.exec(server)?.[1];
+  const clientDays = /const REVIEW_DEADLINE_DAYS = (\d+);/.exec(modelRegisterSource)?.[1];
+  assert.ok(serverDays, '서버 상수를 못 찾았다');
+  assert.equal(clientDays, serverDays, '화면이 약속한 기한과 서버가 닫는 기한이 다르다');
+});
+
+test('심사 결과 사유에 실제 문구가 매핑돼 있다(일반 실패 문구로 새지 않는다)', () => {
+  // biometricEnrollment.js 는 SVG 를 import 해서 plain node 로 못 불러온다 — 이 레포의
+  // 기존 관례(소스텍스트 단언)를 따른다. 잡는 회귀: 매핑이 빠지면 사용자는 거절·기한초과
+  // 모두 "인증을 완료하지 못했어요" 라는 일반 문구만 보고 원인을 끝내 알 수 없다.
+  const source = readFileSync(
+    new URL('../../src/features/model/biometricEnrollment.js', import.meta.url), 'utf8',
+  );
+  for (const reason of ['review_rejected', 'review_timeout']) {
+    assert.match(
+      source,
+      new RegExp(`${reason}: '[^']{5,}'`),
+      `REASON_COPY 에 ${reason} 문구가 없다`,
+    );
+  }
+});

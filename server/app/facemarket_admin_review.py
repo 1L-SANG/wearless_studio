@@ -36,6 +36,7 @@ from .facemarket_enrollment import (
     _reject_cutover_closed,
     _wake_dispatcher,
     bind_model_and_enqueue_asset_build,
+    notify_enrollment_decision,
 )
 from .facemarket_id_document import purge_id_document
 from .models import CamelModel
@@ -517,6 +518,11 @@ async def approve_enrollment(
             after={"reviewStatus": "approved", "status": "processing"},
         )
         await conn.commit()
+    # 심사 대기 화면이 "결과는 메일로 알려 드려요" 라고 약속한다 — 그 화면은 폴링하지
+    # 않으므로 이게 유일한 통지 경로다(최종리뷰 I2). best-effort: 결정은 이미 커밋됐다.
+    await notify_enrollment_decision(
+        request.app, enrollment_id=enrollment_id, email_type="enrollment_review_approved"
+    )
     final_status, resume_error = await _resume_asset_build(
         request, enrollment_id, actor_user_id=user_id
     )
@@ -576,6 +582,13 @@ async def reject_enrollment(
             note=reason,
         )
         await conn.commit()
+    # 거절도 반드시 알린다 — 알리지 않으면 사용자는 "검수 중" 화면에서 영영 기다린다.
+    await notify_enrollment_decision(
+        request.app,
+        enrollment_id=enrollment_id,
+        email_type="enrollment_review_rejected",
+        reject_reason=reason,
+    )
     return JSONResponse(
         content=AdminReviewDecisionResult(
             id=enrollment_id, review_status="rejected", status="failed"
