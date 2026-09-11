@@ -73,10 +73,11 @@ def test_detail_creates_job_and_reserves(client, make_token, monkeypatch):
     assert res.status_code == 202, res.text
     assert res.json()["jobId"] == "job-dp-1"
     assert seen["kind"] == "detail_page"
-    assert seen["credits_reserved"] == 2  # ai 블록 2개 × storyboardPerCut(1)
-    assert seen["reserved"] == 2
+    assert seen["credits_reserved"] == 38  # ai 블록 2개 × storyboardPerCut(19)
+    assert seen["reserved"] == 38
     # 예약 시점 단가 스냅샷 — 워커 정산의 단일 기준(정산 불변식)
-    assert seen["metadata"]["perCutCost"] == 1
+    assert seen["metadata"]["perCutCost"] == 19
+    assert seen["metadata"]["creditCostVersion"] == "v6"
     assert seen["metadata"]["aiCount"] == 2
     assert seen["prewarmed"] == 1
 
@@ -981,9 +982,9 @@ def test_run_detail_page_job_partial_success(monkeypatch):
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=2)))
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=38)))
 
-    assert captured["charge"] == 1              # 성공 컷 1개 × per_cut(1) — 실패 컷 미차감
+    assert captured["charge"] == 19              # 성공 컷 1개 × per_cut(19), 실패 컷 미차감
     assert len(captured["cut_assets"]) == 1
     assert len(captured["cut_results"]) == 1     # b1만
     assert captured["product_name"] == "미니멀 코튼 셔츠"  # copywriting OFF도 무호출 작명
@@ -1044,12 +1045,12 @@ def test_run_detail_page_job_retries_transient_cut_failures(monkeypatch):
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
-    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=2)))
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=38)))
 
     assert attempts["transient"] == 2, "일시 실패는 한 번 더 시도한다"
     assert attempts["deterministic"] == 1, "ValueError 는 재시도하지 않는다"
     assert len(captured["cut_results"]) == 1      # 재시도로 살아난 b1만
-    assert captured["charge"] == 1                # 실패 컷은 여전히 미차감
+    assert captured["charge"] == 19                # 실패 컷은 여전히 미차감
     assert captured["steps"].count("cut_failed") == 1
 
 

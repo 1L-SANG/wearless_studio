@@ -1,3 +1,5 @@
+> 2026-09-11 가격 개정(단발 14,900원, 월 이용권 49,900원, 초과 7,900원) 미반영 이력 문서. 정본은 documents/legal/00_facemarket_legal_notice_map_v1.md.
+
 # FaceMarket 모델 지원 플로우 구현 지시서 (2026-09-10)
 
 구현 담당(Codex)이 읽는 문서다. 화면 정본은 오너가 확정한 시안 `mockups/facemarket_flows_20260909/apply/screens/*.html`(같은 폴더 `*_390.png`, `*_1280.png` 캡처)과 `apply/flow.md`, FAQ 문구와 검사 기준은 저장소에 포함된 `documents/facemarket_apply_faq.md` 다. 이 문서와 시안이 어긋나면 **이 문서가 우선**한다. 브랜치는 `codex/facemarket-apply-flow`(origin/main `c4adc121` 기준), 작업 디렉터리는 이 워크트리 루트다.

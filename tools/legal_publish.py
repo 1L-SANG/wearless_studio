@@ -107,7 +107,7 @@ def publish():
         left = sorted(set(re.findall(r"\[[^\]\n]{1,40}\](?!\()", text)))
         if left: leftovers[slug] = left
         (OUT / f"{slug}.md").write_text(text)
-        manifest.append({"slug": slug, "app": app, "title": title, "version": "v1.0", "effectiveDate": "2026-09-07", "source": fn})
+        manifest.append({"slug": slug, "app": app, "title": title, "version": "v1.1", "effectiveDate": "2026-10-12", "source": fn})
     (OUT / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
     # llms.txt — 06 부록 코드블록
     faq = (SRC / "06_facemarket_legal_faq_v1.md").read_text()

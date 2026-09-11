@@ -26,7 +26,6 @@ import {
     Button,
     Chips,
     ErrorState,
-    Field,
     Icon,
     Toggle,
     useToast,
@@ -47,6 +46,7 @@ import {
     buildRegistrationCompletion,
     enrollmentReasonMessage,
 } from "./biometricEnrollment.js";
+import { FACEMARKET_PRICING } from '@/lib/facemarketPricing.js';
 import s from "./ModelLicense.module.css";
 import { seoulDate, seoulYearMonth } from '@/lib/datetime.js';
 
@@ -83,8 +83,8 @@ const TERM_STEPS = {
     // 단가·유효기간은 라벨 아래 설명을 둬 2열로 놓았을 때 줄을 맞춘다.
     // '지불하는' 이라고 쓰지 마라 — 지급(payout) 기능이 아직 없다. 랜딩이 네 라운드
     // 사실성 감사 끝에 "실제 지급 기능도 아직 준비 중입니다"로 못박은 것과 같은 눈금이어야
-    // 하고, 여기는 모델이 그 숫자를 실제로 정하는 자리라 더 정확해야 한다.
-    price: { no: "02", note: "사용 1건마다 기록되는 내 몫 금액이에요. 실제 지급 기능은 아직 준비 중이에요." },
+    // 하고, 여기는 플랫폼 표준가와 모델 몫을 설명하는 자리다.
+    price: { no: "02", note: "라이선스 총액이에요. 이 중 70%가 내 몫으로 기록돼요. 실제 지급 기능은 아직 준비 중이에요." },
     validity: {
         no: "03",
         note: "기간이 끝나면 이 라이선스로는 컷을 만들 수 없어요.",
@@ -373,7 +373,7 @@ function VcCard({ license, onRevoked, push }) {
 /* ── 4단계: 라이선스 조건 + 발급 ──────────────────────────── */
 function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued, push }) {
     const [allowed, setAllowed] = useState([...BRAND_USE_CATEGORIES]);
-    const [unitPrice, setUnitPrice] = useState(10000);
+    const unitPrice = FACEMARKET_PRICING.perCut;
     const [validDays, setValidDays] = useState(365);
     const [submitting, setSubmitting] = useState(false);
     const [issuePhase, setIssuePhase] = useState(null); // null | 'preparing' | 'issuing'
@@ -431,7 +431,7 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
         <div className="surface">
             <div className={s.formHead}>
                 <span className={s.eyebrow}>발급 조건</span>
-                <h2 className={s.formTitle}>세 가지를 정하면 발급돼요</h2>
+                <h2 className={s.formTitle}>사용 조건을 확인하면 발급돼요</h2>
                 {/* DESIGN.md:309 — '결속'·'자산' 은 화면에 쓰지 않는 개발자 언어라
                     '이번 등록에서 확인한 얼굴 이미지' 로 바꿨다(사실은 같다). */}
                 <p className={s.formLead}>
@@ -484,15 +484,11 @@ function TermsStep({ enrollmentId, enrollmentStatus, enrollmentReason, onIssued,
                 <div className={s.row2}>
                     <section className={s.term}>
                         <span className={s.termNo}>{TERM_STEPS.price.no}</span>
-                        <h3 className={s.termLabel}>건당 단가</h3>
+                        <h3 className={s.termLabel}>플랫폼 표준가</h3>
                         <p className={s.termNote}>{TERM_STEPS.price.note}</p>
-                        <Field
-                            type="number"
-                            min={0}
-                            step={1000}
-                            value={unitPrice}
-                            onChange={(e) => setUnitPrice(e.target.value)}
-                        />
+                        <p className={s.termNote}>
+                            {`1건 ${unitPrice.toLocaleString('ko-KR')}원 · 월 이용권 ${FACEMARKET_PRICING.monthly.toLocaleString('ko-KR')}원(${FACEMARKET_PRICING.monthlyCap}건) · 내 몫 70%(${(unitPrice * 0.7).toLocaleString('ko-KR')}원)`}
+                        </p>
                     </section>
                     <section className={s.term}>
                         <span className={s.termNo}>
@@ -762,7 +758,7 @@ export function ModelLicense() {
                             </h2>
                             <p className={s.emptyBody}>
                                 모델 등록을 마치면 허용 품목·건당
-                                단가·유효기간을 정하고 라이선스를 발급할 수
+                                표준가를 확인하고 유효기간을 정해 라이선스를 발급할 수
                                 있어요.
                             </p>
                         </div>

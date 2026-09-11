@@ -109,7 +109,7 @@ function ModelDetailModal({ model, onClose, onSelect, selectable }) {
                 )}
                 <div className="lic-foot">
                   <div className="lic-foot-info">
-                    <div className="lic-price">{_won(FACEMARKET_PRICING.perCut)}<em> · 호리존 컷 1장당</em></div>
+                    <div className="lic-price">{_won(FACEMARKET_PRICING.perCut)}<em> · 상세페이지 1건당</em></div>
                     {_fmtDate(data.validUntil) && <div className="lic-valid">{_fmtDate(data.validUntil)}까지</div>}
                     {data.vcId && <code className="lic-vcid">{data.vcId}</code>}
                   </div>
@@ -1283,7 +1283,7 @@ export function AnalysisForm({
                   <div className="fm-meta">
                     <div className="fm-name">{m.displayName}{on && <Icon name="check" size={13} className="star" />}</div>
                     <div className="fm-price">
-                      {`₩${FACEMARKET_PRICING.perCut.toLocaleString('ko-KR')} · 호리존 컷 1장당`}
+                      {`₩${FACEMARKET_PRICING.perCut.toLocaleString('ko-KR')} · 상세페이지 1건당`}
                     </div>
                   </div>
                 </div>

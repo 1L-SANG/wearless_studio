@@ -36,13 +36,13 @@ const PLAN_DETAILS = {
     features: ['기본모델 2명 무료 제공', '마네킹컷 1회 무료 수정 가능', '에디터 기능 제공', '무제한 다운로드 가능'],
   },
   seller: {
-    baseCredits: 16000,
-    bonusNote: '2,000 크레딧 추가 증정',
+    baseCredits: 1600,
+    bonusNote: '200 크레딧 추가 증정',
     features: ['Starter의 모든 기능 제공', '모든 AI 모델 50% 할인', '매칭의류 커스텀 업로드 가능', '충전할 때마다 크레딧 5% 보너스'],
   },
   pro: {
-    baseCredits: 32000,
-    bonusNote: '6,000 크레딧 추가 증정',
+    baseCredits: 3200,
+    bonusNote: '600 크레딧 추가 증정',
     features: ['Seller의 모든 기능 제공', '마네킹컷 2회 무료 수정 가능', '모든 AI 모델 무료 제공', '충전할 때마다 크레딧 10% 보너스'],
   },
 };

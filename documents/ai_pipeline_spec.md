@@ -56,7 +56,7 @@ prep(기준 색상 이미지·분석 속성·매칭 하의 이미지·fitProfile
   → Pillow QC + AG-P2(현재 둘 다 shadow/off — 로그만) → MannequinCut[] 저장 → { data, credits }
 ```
 - 진행률: 서버 체크포인트(15 inputs_loaded → 35 generating → 85 finalizing)를 `jobs.progress`에 영속, 클라이언트가 체크포인트 사이를 크리핑으로 연출(마지막 99% 부근 스톨 — PRD §7.2).
-- 크레딧: 성공 시 잡당 `mannequinGenerate`(=2) 차감 — 예약량과 동일(구 "성공 후보 수 × 1" 계산 폐기). 실패: 미차감(예약 release). finalize는 lease-fenced 원자 처리.
+- 크레딧: 성공 시 잡당 `mannequinGenerate`(=45) 차감 — 예약량과 동일(구 "성공 후보 수 × 1" 계산 폐기). 실패: 미차감(예약 release). finalize는 lease-fenced 원자 처리.
 - 멱등: 컷이 이미 존재하면 재실행·재차감 없이 기존 반환 (계약 §6 ②).
 - QC 게이팅 활성 시(현재 비활성): 거부 판정이면 correctionPrompt(실패원인+보완점)를 다음 시도 프롬프트에 주입해 최대 2회 재시도 (ai_agent_modules §5).
 
@@ -67,7 +67,7 @@ prep(기준 색상 이미지·분석 속성·매칭 하의 이미지·fitProfile
   → AG-04 재실행(같은 파이프라인, 프로필만 갱신)
   → 새 버전 MannequinCut 저장 → 자동 선택·스텝 리셋 → { data, credits }
 ```
-- 크레딧: `mannequinGenerate`(=2). **횟수 제한 없음** — 크레딧이 자연 제한.
+- 크레딧: `mannequinGenerate`(=45). **횟수 제한 없음** — 크레딧이 자연 제한.
 - *구 `adjustMannequin`(AG-05, slimmer/looser enum + adjustCount 제한) 흐름은 폐기(2026-07) — fitProfile 재생성으로 통합.*
 
 ### PL-4 상세페이지 생성 — `generateDetailPage(projectId)` ★핵심
@@ -163,7 +163,7 @@ Job {
 | PL-5 / PL-6 | `editorImage` | job 성공 확정 시 | 미차감 |
 
 - **reserve-then-confirm**(backend plan §6): 시작 tx에서 예상 최대 비용을 **예약**(available=balance−reserved 검증, 부족 시 402) → 성공 시 실제 성공분만 **확정**(balance 차감, ledger append) → 실패 시 예약 **해제**(미차감). 응답 `credits`(잔액=balance−reserved)로 프론트 `syncCredits` (계약 §6, frontend_state_model §6). 선검증만으로는 동시 job이 같은 잔액을 통과할 수 있어 예약이 필요.
-- 단가는 임시값 — 정책 확정은 PRD §12.2 (00_README §4 Blocking 항목).
+- 단가는 2026-09-11 v6 확정값이다. 마네킹 45cr, 상세페이지 AI 컷 19cr, 에디터 이미지 19cr을 서버 설정과 프론트 미러에 배선했다(PRD §12.2).
 
 ---
 

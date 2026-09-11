@@ -161,10 +161,10 @@ def test_recovered_broadcast_reuses_product_window(product_settlement, payment_k
     ctx = product_settlement
     ctx.store["jobs"]["old-detail"] = "p1"
     # RPC succeeded before a worker died, but the settlement has not yet been mirrored.
-    ctx.chain.record_settlement(payment_key=payment_key, model_uuid="old-model", total=10000)
+    ctx.chain.record_settlement(payment_key=payment_key, model_uuid="old-model", total=ctx.unit_price)
     ctx.store["intents"].append({
         "payment_id": payment_key, "license_id": "old-license", "job_id": "old-detail",
-        "credit_ledger_id": None, "model_id": "old-model", "total_amount": 10000,
+        "credit_ledger_id": None, "model_id": "old-model", "total_amount": ctx.unit_price,
         "status": "broadcasting", "attempted_at": ctx.store["now"],
     })
 
@@ -181,7 +181,7 @@ def test_legacy_job_settlement_counts_towards_product_window(product_settlement)
     ctx.store["jobs"]["old-detail"] = "p1"
     asyncio.run(facemarket.record_license_settlement(
         ctx.make_app(), payment_key="job:old-detail", license_id="old-license",
-        model_id="old-model", total=10000, job_id="old-detail",
+        model_id="old-model", total=ctx.unit_price, job_id="old-detail",
     ))
     ctx.store["now"] += timedelta(days=1)
     asyncio.run(ctx.run("detail-1"))

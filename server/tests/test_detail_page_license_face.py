@@ -36,7 +36,7 @@ def _license_row(status="active", days_left=30, key=FACE_KEY, name="김하늘"):
         "status": status,
         "display_name": name,
         "license_valid_until": datetime.now(timezone.utc) + timedelta(days=days_left),
-        "unit_price": 10000,
+        "unit_price": 14900,
         "vc_id": "vc-1",
         "vc_status_uri": None,
         "allowed_use": [CATEGORY],

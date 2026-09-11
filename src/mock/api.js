@@ -194,30 +194,30 @@ export const api = {
   async getPricingPlans() {
     await wait(80);
     return [
-      { id: 'm-starter', code: 'starter', kind: 'subscription', name: 'Starter', credits: 6000, price: 29900, billingPeriod: 'monthly', sortOrder: 1 },
-      { id: 'm-seller-v9', code: 'seller', kind: 'subscription', name: 'Seller', credits: 18000, price: 79900, billingPeriod: 'monthly', sortOrder: 2 },
-      { id: 'm-pro', code: 'pro', kind: 'subscription', name: 'Pro', credits: 38000, price: 159000, billingPeriod: 'monthly', sortOrder: 3 },
-      { id: 'm-finish', code: 'topup_finish', kind: 'topup', name: '마무리 충전', credits: 1800, price: 9900, billingPeriod: 'once', sortOrder: 11 },
-      { id: 'm-start', code: 'topup_start', kind: 'topup', name: '시작 팩', credits: 4700, price: 24900, billingPeriod: 'once', sortOrder: 12 },
-      { id: 'm-repeat', code: 'topup_repeat', kind: 'topup', name: '반복 팩', credits: 13800, price: 69900, billingPeriod: 'once', sortOrder: 13 },
-      { id: 'm-season', code: 'topup_season', kind: 'topup', name: '시즌 팩', credits: 30500, price: 149000, billingPeriod: 'once', sortOrder: 14 },
-      { id: 'm-bulk', code: 'topup_bulk', kind: 'topup', name: '대량 팩', credits: 64000, price: 299000, billingPeriod: 'once', sortOrder: 15 },
+      { id: 'm-starter', code: 'starter', kind: 'subscription', name: 'Starter', credits: 600, price: 29900, billingPeriod: 'monthly', sortOrder: 1 },
+      { id: 'm-seller-v9', code: 'seller', kind: 'subscription', name: 'Seller', credits: 1800, price: 79900, billingPeriod: 'monthly', sortOrder: 2 },
+      { id: 'm-pro', code: 'pro', kind: 'subscription', name: 'Pro', credits: 3800, price: 159000, billingPeriod: 'monthly', sortOrder: 3 },
+      { id: 'm-finish', code: 'topup_finish', kind: 'topup', name: '마무리 충전', credits: 180, price: 9900, billingPeriod: 'once', sortOrder: 11 },
+      { id: 'm-start', code: 'topup_start', kind: 'topup', name: '시작 팩', credits: 470, price: 24900, billingPeriod: 'once', sortOrder: 12 },
+      { id: 'm-repeat', code: 'topup_repeat', kind: 'topup', name: '반복 팩', credits: 1380, price: 69900, billingPeriod: 'once', sortOrder: 13 },
+      { id: 'm-season', code: 'topup_season', kind: 'topup', name: '시즌 팩', credits: 3050, price: 149000, billingPeriod: 'once', sortOrder: 14 },
+      { id: 'm-bulk', code: 'topup_bulk', kind: 'topup', name: '대량 팩', credits: 6400, price: 299000, billingPeriod: 'once', sortOrder: 15 },
     ];
   },
   async getCreditHistory() {
     await wait(120);
     const now = Date.now();
-    // 정합 시나리오: 200 충전 → 마네킹 생성 2회(각 -2) = 196 (account.credits 와 일치)
+    // 정합 시나리오: 600 지급 후 마네킹 생성 2회(각 -45), 잔액 510 (account.credits 와 일치)
     return [
-      { id: 'l2', projectId: 'p1', jobId: 'j2', actionKey: 'mannequinGenerate', delta: -CREDIT_COSTS.mannequinGenerate, balanceAfter: 196, availableAfter: 196, createdAt: new Date(now - 32e5).toISOString() },
-      { id: 'l1', projectId: 'p1', jobId: 'j1', actionKey: 'mannequinGenerate', delta: -CREDIT_COSTS.mannequinGenerate, balanceAfter: 198, availableAfter: 198, createdAt: new Date(now - 36e5).toISOString() },
-      { id: 'l0', projectId: null, jobId: null, actionKey: 'grant_subscription', delta: 200, balanceAfter: 200, availableAfter: 200, createdAt: new Date(now - 40e5).toISOString() },
+      { id: 'l2', projectId: 'p1', jobId: 'j2', actionKey: 'mannequinGenerate', delta: -CREDIT_COSTS.mannequinGenerate, balanceAfter: 510, availableAfter: 510, createdAt: new Date(now - 32e5).toISOString() },
+      { id: 'l1', projectId: 'p1', jobId: 'j1', actionKey: 'mannequinGenerate', delta: -CREDIT_COSTS.mannequinGenerate, balanceAfter: 555, availableAfter: 555, createdAt: new Date(now - 36e5).toISOString() },
+      { id: 'l0', projectId: null, jobId: null, actionKey: 'grant_subscription', delta: 600, balanceAfter: 600, availableAfter: 600, createdAt: new Date(now - 40e5).toISOString() },
     ];
   },
   async getCreditSources() {
     await wait(100);
     return [
-      { id: 's1', sourceType: 'subscription', status: 'active', initialCredits: 200, remainingCredits: 196, periodEnd: new Date(Date.now() + 25 * 864e5).toISOString(), planId: 'm-basic', createdAt: new Date(Date.now() - 40e5).toISOString() },
+      { id: 's1', sourceType: 'subscription', status: 'active', initialCredits: 600, remainingCredits: 510, periodEnd: new Date(Date.now() + 25 * 864e5).toISOString(), planId: 'm-starter', createdAt: new Date(Date.now() - 40e5).toISOString() },
     ];
   },
   async createTossCheckout(planCode) {

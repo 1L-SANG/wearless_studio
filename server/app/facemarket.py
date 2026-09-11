@@ -620,7 +620,7 @@ class CreateLicenseRequest(CamelModel):
     enrollment_id: str
     allowed_use: list[str] = Field(default_factory=list)
     forbidden_use: list[str] = Field(default_factory=list)
-    unit_price: int = Field(default=10000, ge=0, le=100_000_000)
+    unit_price: int = Field(default=14900, ge=0, le=100_000_000)
     valid_days: int = Field(default=365, ge=1, le=3650)
 
 

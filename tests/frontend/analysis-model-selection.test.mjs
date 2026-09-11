@@ -156,17 +156,17 @@ test('formats the fixed FaceMarket price regardless of the catalog unit price', 
   const models = [{ id: 'face-market-model-id', unitPrice: 7300 }];
   assert.equal(
     realModelFeeLabel('face-market-model-id', models),
-    ' + 실제 모델 ₩9,900',
+    ' + 실제 모델 ₩14,900',
   );
   assert.equal(
     realModelFeeLabel('face-market-model-id', models, 3),
-    ' + 실제 모델 ₩29,700',
+    ' + 실제 모델 ₩14,900',
   );
   assert.equal(realModelFeeLabel('face-market-model-id', models, 0), '');
   assert.equal(realModelFeeLabel('missing-model-id', models), ' + 실제 모델 이용료 별도');
   assert.equal(
     realModelFeeLabel('price-pending', [{ id: 'price-pending', unitPrice: null }]),
-    ' + 실제 모델 ₩9,900',
+    ' + 실제 모델 ₩14,900',
   );
   assert.equal(realModelFeeLabel('mA', models), '');
 });
