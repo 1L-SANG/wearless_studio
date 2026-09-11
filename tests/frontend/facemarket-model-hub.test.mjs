@@ -59,7 +59,7 @@ test('진행표 시각은 서버 필드를 사용하고 없으면 생략해요',
 });
 
 test('발급 재시도와 테스트컷 확정의 실제 경로를 유지해요', () => {
-  assert.equal(hub.resolveHubJourney({ enrollment: { id: 'retry-vc', status: 'vc_pending' }, now }).action.to, '/model/license?step=terms&enrollment=retry-vc');
+  assert.equal(hub.resolveHubJourney({ enrollment: { id: 'retry-vc', status: 'vc_pending' }, now }).action.to, '/model/register');
   assert.equal(hub.resolveHubJourney({ ownedModel: { status: 'awaiting_confirm' }, now }).action.to, '/model/confirm');
   assert.equal(hub.resolveHubJourney({ ownedModel: { status: 'pending', redoCount: 1 }, hasLicense: true, now }).sub, 'assets');
 });

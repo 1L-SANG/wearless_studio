@@ -16,12 +16,12 @@
 .progressMeta { display: flex; justify-content: space-between; font-size: 12px; color: var(--fm-muted); margin-bottom: 14px; }
 .steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 0; margin: 0; list-style: none; }
 .steps li { min-width: 0; position: relative; font-size: 13px; color: var(--fg-2); }
-.stepBar { display: block; height: 3px; background: var(--bg-3); margin-bottom: 8px; }
+.stepBar { display: block; height: 3px; background: var(--fm-line); margin-bottom: 8px; }
 .steps .reached { color: var(--fg-1); }
 .reached .stepBar { background: var(--fg-1); }
 .steps [aria-current='step'] { font-weight: 600; }
 .subDots { display: flex; gap: 3px; margin-top: 6px; }
-.subDots i, .dot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--bg-3); }
+.subDots i, .dot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--fm-line); }
 .subDots .activeDot { background: var(--fg-1); }
 .subDots .pastDot { background: var(--fg-2); }
 .textLink { border: 0; background: none; padding: 0; color: var(--fg-1); font-size: 13px; text-decoration: underline; text-underline-offset: 3px; }
@@ -53,7 +53,7 @@
 .identityResult { border: 1px solid var(--ring-strong); border-radius: 12px; padding: 18px; margin-top: 20px; background: var(--bg-2); }
 .identityResult span { color: var(--fm-muted); }
 .mobileOnly { display: none; }
-.spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--bg-3); border-top-color: var(--fg-1); border-radius: 50%; animation: spin 1s linear infinite; vertical-align: middle; flex-shrink: 0; }
+.spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--fm-line); border-top-color: var(--fg-1); border-radius: 50%; animation: spin 1s linear infinite; vertical-align: middle; flex-shrink: 0; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .reasonCard, .error { padding: 18px 20px; border: 1px solid var(--ring-strong); border-radius: 12px; margin-bottom: 28px !important; background: var(--bg-2); overflow-wrap: anywhere; }
 .reasonCard > span { font-size: 12px; color: var(--fm-muted); }
@@ -64,14 +64,14 @@
 .photoCounter { margin-bottom: 24px; }
 .photoCounter > div { display: flex; justify-content: space-between; font-size: 14px; }
 .photoCounter progress { display: block; width: 100%; height: 4px; border: 0; appearance: none; margin-top: 10px; accent-color: var(--fg-1); }
-.photoCounter progress::-webkit-progress-bar { background: var(--bg-3); border-radius: 99px; }
+.photoCounter progress::-webkit-progress-bar { background: var(--fm-line); border-radius: 99px; }
 .photoCounter progress::-webkit-progress-value { background: var(--fg-1); border-radius: 99px; }
 .photoCounter progress::-moz-progress-bar { background: var(--fg-1); }
 .groupHeading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
 .groupHeading > strong { margin-left: auto; font-size: 14px; }
 .photoGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .slotCard { position: relative; min-width: 0; }
-.slot { display: block; position: relative; aspect-ratio: 3 / 4; width: 100%; background: var(--bg-3); border: 1px solid var(--ring-strong); border-radius: 12px; overflow: hidden; cursor: pointer; }
+.slot { display: block; position: relative; aspect-ratio: 3 / 4; width: 100%; background: var(--fm-line); border: 1px solid var(--ring-strong); border-radius: 12px; overflow: hidden; cursor: pointer; }
 .slot:hover { border-color: var(--fg-1); }
 .person { width: 100%; height: 100%; fill: var(--fg-3); stroke: var(--fg-3); stroke-linejoin: round; }
 .slot > .person, .slot > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
@@ -89,7 +89,7 @@
 .bodyGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .bodyCard { position: relative; border: 1px solid var(--ring-strong); border-radius: 12px; background: var(--bg-1); padding: 0; overflow: hidden; text-align: left; }
 .bodyCard.selected { border: 2px solid var(--fg-1); }
-.bodyArt { display: block; height: 180px; background: var(--bg-3); }
+.bodyArt { display: block; height: 180px; background: var(--fm-line); }
 .bodyName { display: block; padding: 10px 12px; font-size: 14px; }
 .bodyCheck { position: absolute; top: 8px; left: 8px; width: 23px; height: 23px; border-radius: 50%; background: var(--fg-1); color: var(--bg-1); font-size: 11px; line-height: 23px; text-align: center; }
 .bodyOptional { text-align: center; color: var(--fm-muted); font-size: 13px; margin-top: 16px !important; }
@@ -104,7 +104,7 @@
 .categoryRow + .categoryRow { border-top: 1px solid var(--ring-strong); }
 .categoryRow p { font-size: 14px; color: var(--fm-muted); margin-top: 4px; }
 .categoryNote { grid-column: 1 / -1; padding-top: 7px; }
-.switch { width: 46px; height: 28px; border-radius: 99px; background: var(--bg-3); padding: 4px; border: 0; }
+.switch { width: 46px; height: 28px; border-radius: 99px; background: var(--fm-line); padding: 4px; border: 0; }
 .switch span { display: block; width: 20px; height: 20px; background: var(--bg-1); border-radius: 50%; }
 .switch[aria-checked='true'] { background: var(--fg-1); }
 .switch[aria-checked='true'] span { transform: translateX(18px); }

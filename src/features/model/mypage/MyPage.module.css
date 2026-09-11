@@ -75,7 +75,7 @@
 .conditionsExpiry { margin: var(--sp-12) 0 0; font-size: 14px; color: var(--fg-2); overflow-wrap: anywhere; }
 .accountList { border-top: 1px solid var(--ring-strong); }
 .accountRow { display: block; width: 100%; padding: var(--sp-12) 0; min-height: 44px; border: 0; border-bottom: 1px solid var(--ring-strong); background: none; color: inherit; text-align: left; font: inherit; font-size: 14px; text-decoration: none; cursor: pointer; }
-.dialog { box-sizing: border-box; width: min(560px, calc(100vw - 40px)); max-height: calc(100dvh - 40px); padding: var(--sp-24); border: 1px solid var(--ring-strong); border-radius: var(--r-6); background: var(--bg-1); color: var(--fg-1); font-family: var(--font-body); overflow: auto; overflow-wrap: anywhere; }
+.dialog { box-sizing: border-box; margin: auto; width: min(560px, calc(100vw - 40px)); max-height: calc(100dvh - 40px); padding: var(--sp-24); border: 1px solid var(--ring-strong); border-radius: var(--r-6); background: var(--bg-1); color: var(--fg-1); font-family: var(--font-body); overflow: auto; overflow-wrap: anywhere; }
 .dialog::backdrop { background: var(--ink-overlay); }
 .dialog p { font-size: 14px; }
 .dialog .primary { margin-top: var(--sp-16); }

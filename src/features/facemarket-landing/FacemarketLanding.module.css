@@ -202,17 +202,21 @@
   cursor: pointer;
   transition: opacity 140ms ease;
 }
-.headerCta { padding: 0.68rem 1.1rem; }
+.headerCta { padding: 0.68rem 1.1rem; word-break: keep-all; }
 .heroCta { padding: 0.95rem 1.6rem; font-size: 1rem; }
 
 /* 320px 폰에서는 워드마크(약 130px) + 긴 얼리버드 CTA + 햄버거가 한 줄의 가로 예산을
    넘긴다. CTA 글자가 단어 안에서 세 줄로 깨지면 버튼 높이가 고정 헤더(56px)보다 커져
    바로 아래 히어로를 덮는다. 전환 버튼은 숨기지 않고, 이 폭에서만 세 요소의 가로 예산을
    줄여 두 단어가 각각 한 줄씩 서게 한다. 22rem 밖의 현재 헤더 눈금은 그대로다. */
-@media (max-width: 22rem) {
+/* 2026-09-11: 390px 폰에서도 로그인 상태(CTA + 로그아웃 + 햄버거)면 같은 문제가 났다(캡처 확인).
+   경계를 26rem 으로 넓히고, 이 폭에서 로그아웃은 아이콘만 남긴다(aria-label 로 이름 유지). */
+@media (max-width: 26rem) {
   .header { gap: 0.5rem; }
   .brandWordmark { height: 1.55rem; }
   .headerActions { gap: 0.35rem; }
+  .headerQuiet { padding: 0.55rem; }
+  .headerQuietLabel { display: none; }
   .headerCta { padding: 0.6rem 0.75rem; font-size: 0.85rem; }
 }
 /* 2026-09-03 오너 지시: 호버를 셀러 앱 분석 페이지의 CTA(app.css .btn-primary + .fx-sheen)와
@@ -973,6 +977,7 @@
 .headerQuiet {
   display: inline-flex;
   align-items: center;
+  white-space: nowrap;
   gap: 0.35rem;
   padding: 0.62rem 0.95rem;
   border: 1px solid var(--fm-line);

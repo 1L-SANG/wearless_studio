@@ -64,9 +64,8 @@ export function resolveHubJourney({
     return make('review', 3, 'progress', { sub: 'assets', action: reload('생성 상태 새로고침') });
   }
   if (enrollment && !['cancelled', 'failed'].includes(enrollment.status)) {
-    const issuance = ['license_pending', 'terms_pending', 'vc_pending'].includes(enrollment.status);
-    return make('onboarding', 2, 'todo', { step: 2, action: route('이어서 하기', issuance
-      ? `/model/license?step=terms&enrollment=${encodeURIComponent(enrollment.id || '')}` : '/model/register') });
+    // 조건·증서 단계도 등록 위저드(3·4단계)가 이어받아요. 위저드가 저장된 단계를 복원해요.
+    return make('onboarding', 2, 'todo', { step: 2, action: route('이어서 하기', '/model/register') });
   }
   if (application?.status === 'rejected') {
     return make('onboarding', 1, 'progress', { step: 3, action: route('다시 지원하기', '/model/apply') });

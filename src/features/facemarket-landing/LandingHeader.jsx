@@ -133,9 +133,9 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
           </button>
         ) : null}
         {session ? (
-          <button className={s.headerQuiet} onClick={handleSignOut} type="button">
+          <button className={s.headerQuiet} onClick={handleSignOut} type="button" aria-label="로그아웃">
             <Icon name="logOut" size={16} stroke={1.8} />
-            로그아웃
+            <span className={s.headerQuietLabel}>로그아웃</span>
           </button>
         ) : null}
         <button
