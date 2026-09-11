@@ -676,6 +676,14 @@ async def run_editor_image_job(app, job: dict) -> None:
             # 값이 없으면 키 자체를 넣지 않는다 — 기존 프롬프트·기존 목(mock) 시그니처를 깨지 않는다.
             # 얼굴 패스 결과(applied / skipped:<reason> / fallback:<reason>)를 받아 자산 메타와 이벤트에 남긴다.
             face_pass_outcome: dict = {}
+            # 이미지 → 그 이미지를 만든 호출의 face_pass 결과(상세페이지 워커와 같은 규칙). 후보(best_of)가
+            # 있으면 마지막 호출이 앞선 결과를 덮어써 원장의 face_pass 가 채택본의 것이 아니게 된다.
+            outcome_by_image: dict[str, dict] = {}
+
+            def _remember_outcome(data: bytes) -> None:
+                outcome_by_image[hashlib.sha256(data).hexdigest()] = dict(face_pass_outcome)
+                face_pass_outcome.clear()
+
             if fm_lora_spec is not None:
                 generate_kwargs["face_pass_outcome"] = face_pass_outcome
                 # 대기 중에도 현재 파드를 다시 묻는다 — 잡 시작 때 읽은 주소를 붙들면
@@ -702,6 +710,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 image, mime = await cut_generator.generate(
                     editor_settings, app.state.gemini, cut_spec, product, images,
                     **generate_kwargs)
+                _remember_outcome(image)
             except ValueError as e:
                 if str(e) == "detail_reference_required":
                     await _fail(
@@ -745,6 +754,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                         image, mime = await cut_generator.generate(
                             editor_settings, app.state.gemini, cut_spec, product, images,
                             **generate_kwargs)
+                        _remember_outcome(image)
                     except (GeminiError, ValueError) as e:
                         await _fail("컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
                         return
@@ -754,6 +764,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 candidate_image, candidate_mime = await cut_generator.generate(
                     editor_settings, app.state.gemini, cut_spec, product, images,
                     **generate_kwargs)
+                _remember_outcome(candidate_image)
                 if scene_plate is None:
                     return InlineImage(candidate_mime, candidate_image)
 
@@ -776,6 +787,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                     candidate_image, candidate_mime = await cut_generator.generate(
                         editor_settings, app.state.gemini, cut_spec, product, images,
                         **generate_kwargs)
+                    _remember_outcome(candidate_image)
                 return InlineImage(candidate_mime, candidate_image)
 
             chosen, garment_qc_metadata, garment_warnings = await image_qc.best_of(
@@ -785,6 +797,9 @@ async def run_editor_image_job(app, job: dict) -> None:
                 _generate_candidate,
             )
             image, mime = chosen.data, chosen.mime
+            # 원장·자산 메타의 face_pass = 채택본을 만든 호출의 결과.
+            face_pass_outcome.clear()
+            face_pass_outcome.update(outcome_by_image.get(hashlib.sha256(image).hexdigest(), {}))
             example_warnings.extend(garment_warnings)
             # repair는 PL-4 콘티 블록 전용이다. 같은 전역 설정을 쓰는 에디터 단건 경로는
             # 기존 shadow 관측을 유지하되 자동 2차 생성은 하지 않는다.

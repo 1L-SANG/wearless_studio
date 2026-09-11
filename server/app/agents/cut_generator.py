@@ -1487,8 +1487,15 @@ async def repair(
     *,
     qc_corrections: tuple[str, ...],
     confirmed_prompt_input: ConfirmedGptPromptInput | None = None,
+    face_identity_spec: face_identity.FaceIdentitySpec | None = None,
+    face_pass_outcome: dict | None = None,
+    face_pass_url_provider=None,
 ) -> tuple[bytes, str]:
-    """AG-06 국소 2차 보정. 호출자가 고른 image_high 모델로 1차 결과만 편집한다."""
+    """AG-06 국소 2차 보정. 호출자가 고른 image_high 모델로 1차 결과만 편집한다.
+
+    편집은 얼굴까지 다시 그린다 — 그래서 generate() 와 같은 얼굴 패스 꼬리를 단다. 이게 없으면
+    보정을 채택한 컷의 얼굴이 gpt-image 로 되돌아간다(2026-09-11 점검). 인자 세 개는 generate() 와 같은 뜻이고,
+    호출자는 값이 있을 때만 넘긴다(face_identity_spec 이 없으면 기존과 바이트 단위로 같다)."""
 
     model = _resolve_generation_model(settings, cut_spec)
     prompt = build_qc_repair_prompt(
@@ -1504,4 +1511,13 @@ async def repair(
         _detail_image_size(settings),
         aspect_ratio=settings.mannequin_aspect_ratio,
     )
-    return res.image, res.mime
+    image, mime = res.image, res.mime
+    if face_identity_spec is not None:
+        clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
+        spec = normalize_spec(cut_spec, clothing_type=clothing_type)
+        identity = _face_identity_spec(settings, spec, clothing_type, face_identity_spec)
+        if identity is not None:
+            image, mime = await face_identity.apply_face_pass(
+                settings, image, mime, identity, outcome=face_pass_outcome,
+                url_provider=face_pass_url_provider)
+    return image, mime
