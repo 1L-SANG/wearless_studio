@@ -72,9 +72,9 @@
     "source": "04_facemarket_biometric_consent_forms_v1.md"
   },
   {
-    "slug": "overseas-consent",
+    "slug": "overseas-transfer",
     "app": "facemarket",
-    "title": "얼굴 정보의 국외 이전 동의",
+    "title": "얼굴 정보의 국외 이전 안내",
     "version": "2026-09-v1",
     "effectiveDate": "2026-09-11",
     "source": "04_facemarket_biometric_consent_forms_v1.md"

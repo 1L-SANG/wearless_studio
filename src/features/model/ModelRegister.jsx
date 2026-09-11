@@ -32,7 +32,7 @@ export function ModelRegister() {
   const [sub, setSub] = useState(1);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [consents, setConsents] = useState([false, false, false]);
+  const [consents, setConsents] = useState([false, false]);
   const [terms, setTerms] = useState(defaultRegisterTerms);
   const [body, setBody] = useState(null);
   const [config, setConfig] = useState(null);
@@ -50,12 +50,12 @@ export function ModelRegister() {
   const showRecord = useCallback((record) => {
     setEnrollment(record);
     const screen = restoreRegisterScreen(record);
-    const consentCurrent = [record?.consentDocumentVersion, record?.termsConsentVersion, record?.overseasConsentVersion].every((version) => version === CONSENT_VERSION);
+    const consentCurrent = [record?.consentDocumentVersion, record?.termsConsentVersion].every((version) => version === CONSENT_VERSION);
     const needsConsent = record?.id && !['passed', 'review_pending'].includes(record.status) && !consentCurrent;
     setStep(needsConsent ? '1' : screen.step); setSub(screen.sub);
     setBody(record?.bodyType || null);
     setTerms(record?.licenseTerms ? { allowedUse: record.licenseTerms.allowedUse } : readRegisterDraft(record?.id));
-    setConsents([consentCurrent, consentCurrent, consentCurrent]);
+    setConsents([consentCurrent, consentCurrent]);
   }, []);
 
   const restore = useCallback(async () => {
@@ -81,7 +81,7 @@ export function ModelRegister() {
         if (currentLicense) {
           setEnrollment({ modelId: currentLicense.modelId }); setLicense(currentLicense);
           setTerms({ allowedUse: currentLicense.allowedUse }); setStep('done');
-        } else { setEnrollment(null); setConsents([false, false, false]); setStep('1'); }
+        } else { setEnrollment(null); setConsents([false, false]); setStep('1'); }
       }
     } catch (requestError) {
       if (mounted.current) { setError(requestError.message || '등록 상태를 불러오지 못했어요.'); setStep('error'); }
@@ -305,7 +305,7 @@ export function ModelRegister() {
       if (enrollment?.id && ['rejected', 'failed', 'expired'].includes(enrollment.status)) await cancelEnrollment(enrollment.id);
       if (!mounted.current) return;
       Object.values(previewUrls.current).forEach((url) => URL.revokeObjectURL(url)); previewUrls.current = {}; setPreviews({});
-      setEnrollment(null); setLicense(null); setConsents([false, false, false]); setTerms(defaultRegisterTerms()); setPriceAgreed(false); setEditingPhotos(false); setWithdrawalOpen(false); setBody(null); setSub(1); setStep('1');
+      setEnrollment(null); setLicense(null); setConsents([false, false]); setTerms(defaultRegisterTerms()); setPriceAgreed(false); setEditingPhotos(false); setWithdrawalOpen(false); setBody(null); setSub(1); setStep('1');
     } catch (requestError) { if (mounted.current) setError(requestError.message); }
     finally { if (mounted.current) setBusy(false); }
   };
@@ -319,7 +319,7 @@ export function ModelRegister() {
   let content, next, previous;
   if (step === '1') {
     content = renderConsent(consents, setConsents, withdrawalOpen, setWithdrawalOpen);
-    const identityPending = enrollment?.status === 'identity_pending' && [enrollment.consentDocumentVersion, enrollment.termsConsentVersion, enrollment.overseasConsentVersion].every((version) => version === CONSENT_VERSION);
+    const identityPending = enrollment?.status === 'identity_pending' && [enrollment.consentDocumentVersion, enrollment.termsConsentVersion].every((version) => version === CONSENT_VERSION);
     next = { label: busy ? '인증창에서 확인해 주세요' : error ? '다시 인증하기' : identityPending ? '신분증 인증하기' : '동의하고 신분증 인증하기', action: identityPending ? () => runIdentity() : startEnrollment, disabled: !consents.every(Boolean), hint: consents.every(Boolean) ? '세 가지 동의를 모두 확인했어요' : '세 가지를 모두 켜야 다음으로 갈 수 있어요' };
   } else if (step === '2') {
     content = renderPhotos({ sub, enrollment, previews, busy, onFile: changePhoto, onRemove: removePhoto, editGroup: (groupSub) => { setSub(groupSub); setEditingPhotos(true); } });

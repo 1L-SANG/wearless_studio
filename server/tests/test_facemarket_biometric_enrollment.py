@@ -1674,7 +1674,7 @@ def test_mixed_legacy_rows_normalize_to_distinct_required_slots():
     assert normalized[0]["r2_key"] == "new-front"
 
 
-def test_new_consent_version_requires_all_three_consents(
+def test_new_consent_version_requires_terms_consent_but_not_overseas(
     enrollment_client, auth, enrollment_store
 ):
     response = enrollment_client.post(
@@ -1700,7 +1700,6 @@ def test_existing_enrollment_records_explicit_new_reconsent(
             "deviceId": DEVICE_ID,
             "biometricConsent": consent,
             "termsConsent": consent,
-            "overseasConsent": consent,
         },
         headers=auth(),
     )

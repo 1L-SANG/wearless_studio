@@ -61,7 +61,7 @@ test('동의 안내와 필수 표시를 읽고 마우스, 키보드, 터치로 �
     let tree = h.render();
     const text = textOf(tree);
     for (const sentence of ['실명인증을 먼저 진행하고 본인임을 동의해야 이어나갈 수 있습니다.', '원본 얼굴 이미지는 비공개 저장소에 보관되며 노출되지 않습니다.', '철저한 본인인증을 위해 신분증 검사를 진행합니다. (이외 목적 사용X)', '언제든지 모델 등록을 잠시 중지하거나 철회할 수 있습니다']) assert.ok(text.includes(sentence));
-    assert.equal((text.match(/\(필수\)/g) || []).length, 3);
+    assert.equal((text.match(/\(필수\)/g) || []).length, 2);
     assert.equal(findTree(tree, node => node.type === 'details'), null);
     const info = () => findTree(h.render(), node => node.type === 'button' && node.props['aria-label'] === '그만두면 이렇게 돼요');
     const tooltip = () => findTree(h.render(), node => node.props?.role === 'tooltip');
@@ -87,7 +87,7 @@ test('인증 대기자는 동의가 체크되어 있고 인증창 대기 중에�
     commit(h); await flush();
     const tree = h.render();
     assert.equal(h.runtime.states[0], '1');
-    for (let i = 0; i < 3; i++) assert.equal(findTree(tree, node => node.props?.id === `consent-${i}`).props.checked, true);
+    for (let i = 0; i < 2; i++) assert.equal(findTree(tree, node => node.props?.id === `consent-${i}`).props.checked, true);
     const pending = button(tree, '신분증 인증하기').props.onClick();
     assert.equal(h.runtime.states[0], '1');
     assert.equal(button(h.render(), '인증창에서 확인해 주세요').props.disabled, true);
@@ -170,7 +170,7 @@ test('발급 중에는 예상 시간과 이메일, 화면을 닫아도 계속된
   } finally { await h.close(); }
 });
 
-test('세 개 동의를 모두 받아야 인증을 시작하며 신분증 사진은 요청하지 않아요', async () => {
+test('두 개 동의를 모두 받아야 인증을 시작하며 신분증 사진은 요청하지 않아요', async () => {
   const requests = [];
   const harness = await modelComponentHarness({ initialStates: [], honorHookDependencies: true, api: {
     getCurrentEnrollment: async () => { throw Object.assign(new Error(), { status: 404 }); },
@@ -183,7 +183,7 @@ test('세 개 동의를 모두 받아야 인증을 시작하며 신분증 사진
     commit(harness); await flush(); let tree = commit(harness);
     const start = () => button(tree, '동의하고 신분증 인증하기');
     assert.equal(start()?.props.disabled, true);
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 2; i++) {
       const check = findTree(tree, (node) => node.type === 'input' && node.props.id === `consent-${i}`);
       assert.ok(check); assert.equal(check.props.checked, false);
       check.props.onChange({ target: { checked: true } }); tree = commit(harness);
@@ -349,7 +349,7 @@ test('발급 직후 새 등록을 시작해도 동의를 다시 받아요', asyn
   const harness = await modelComponentHarness({ initialStates: ['done', { modelId: 'model-1' }], api: { listMyModels: async () => [{ id: 'model-1', status: 'verified' }] } });
   try {
     await button(harness.render(), '새 생체 등록 시작').props.onClick();
-    assert.equal(harness.runtime.states[0], '1'); assert.deepEqual(harness.runtime.states[5], [false, false, false]);
+    assert.equal(harness.runtime.states[0], '1'); assert.deepEqual(harness.runtime.states[5], [false, false]);
     assert.equal(button(harness.render(), '동의하고 신분증 인증하기').props.disabled, true);
   } finally { await harness.close(); }
 });
@@ -446,7 +446,7 @@ test('새 등록을 시작하면 이전 등록의 사진 미리보기를 해제�
 test('이전 버전 등록을 이어갈 때 사진보다 새 필수 동의를 먼저 받아요', async () => {
   const oldRecord={...photoRecord(),consentDocumentVersion:'2026-08-v2',termsConsentVersion:null,overseasConsentVersion:null};
   const harness=await modelComponentHarness({initialStates:[],honorHookDependencies:true,api:{getCurrentEnrollment:async()=>oldRecord}});
-  try {commit(harness);await flush();assert.equal(harness.runtime.states[0],'1');assert.deepEqual(harness.runtime.states[5],[false,false,false]);}
+  try {commit(harness);await flush();assert.equal(harness.runtime.states[0],'1');assert.deepEqual(harness.runtime.states[5],[false,false]);}
   finally {await harness.close();}
 });
 
@@ -508,7 +508,7 @@ test('구버전 동의의 인증 대기자는 새 동의를 서버에 기록한 
   } });
   try {
     commit(h); await flush();
-    for (let i = 0; i < 3; i++) findTree(h.render(), node => node.props?.id === `consent-${i}`).props.onChange({ target: { checked: true } });
+    for (let i = 0; i < 2; i++) findTree(h.render(), node => node.props?.id === `consent-${i}`).props.onChange({ target: { checked: true } });
     const tree = h.render();
     await findTree(tree, node => node.type === 'button' && node.props.className === 'primary').props.onClick();
     assert.deepEqual(calls, ['consent', 'identity']);

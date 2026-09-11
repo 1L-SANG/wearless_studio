@@ -20,10 +20,10 @@ test('완료 어댑터는 전달받더라도 초상이나 인증 토큰을 직�
   }finally{await h.close();}
 });
 
-test('신규 등록 어댑터는 세 개의 동의와 문서 버전을 각각 전송해요',async()=>{
+test('신규 등록 어댑터는 두 개의 동의와 문서 버전을 전송하고 국외 이전 동의는 보내지 않아요',async()=>{
   const h=await apiHarness();try{
     await h.api.createEnrollment({documentVersion:'2026-09-v1',deviceId:'device'});
-    assert.deepEqual(h.calls[0].options.body,{deviceId:'device',biometricConsent:{accepted:true,documentVersion:'2026-09-v1'},termsConsent:{accepted:true,documentVersion:'2026-09-v1'},overseasConsent:{accepted:true,documentVersion:'2026-09-v1'}});
+    assert.deepEqual(h.calls[0].options.body,{deviceId:'device',biometricConsent:{accepted:true,documentVersion:'2026-09-v1'},termsConsent:{accepted:true,documentVersion:'2026-09-v1'}});
   }finally{await h.close();}
 });
 

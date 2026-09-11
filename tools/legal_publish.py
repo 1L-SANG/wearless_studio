@@ -25,6 +25,11 @@ DOCS = [
     ("06_facemarket_legal_faq_v1.md", "answers", "facemarket", "FaceMarket 법적 FAQ"),
 ]
 SELLER, FM = "https://wearless.kr", "https://facemarket.wearless.kr"
+# 04 동의서에서 손으로 옮긴 공개본. 버전은 서버 facemarket_enrollment.BIOMETRIC_CONSENT_VERSION 과 같이 올린다.
+CONSENT_DOCUMENTS = [
+    {"slug": "biometric-consent", "app": "facemarket", "title": "얼굴 정보 수집·생성·이용 동의", "version": "2026-09-v1", "effectiveDate": "2026-09-11", "source": "04_facemarket_biometric_consent_forms_v1.md"},
+    {"slug": "overseas-transfer", "app": "facemarket", "title": "얼굴 정보의 국외 이전 안내", "version": "2026-09-v1", "effectiveDate": "2026-09-11", "source": "04_facemarket_biometric_consent_forms_v1.md"},
+]
 LANDING_DOCUMENTS = {
     "terms-seller": ("/terms", "이용약관"),
     "privacy-seller": ("/privacy", "개인정보 처리방침"),
@@ -128,6 +133,9 @@ def publish():
         if bold: leftovers[slug] = leftovers.get(slug, []) + [f"굵게 미인식 {b}" for b in bold]
         (OUT / f"{slug}.md").write_text(text)
         manifest.append({"slug": slug, "app": app, "title": title, "version": "v1.1", "effectiveDate": EFFECTIVE_DATE, "source": fn})
+    # 등록 위저드 동의·안내 문서(04 동의서에서 손으로 뽑아 둔 공개본)는 DOCS 로 생성하지 않으므로
+    # 여기서 항목을 유지한다. 빠뜨리면 /biometric-consent, /overseas-transfer 화면이 manifest 를 못 찾는다.
+    manifest += CONSENT_DOCUMENTS
     (OUT / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
     # llms.txt — 06 부록 코드블록
     faq = (SRC / "06_facemarket_legal_faq_v1.md").read_text()

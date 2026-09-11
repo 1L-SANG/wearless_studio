@@ -103,7 +103,6 @@ export function createEnrollment({ documentVersion, deviceId }) {
     body: {
       biometricConsent: { accepted: true, documentVersion },
       termsConsent: { accepted: true, documentVersion },
-      overseasConsent: { accepted: true, documentVersion },
       deviceId,
     },
   });

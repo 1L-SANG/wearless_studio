@@ -83,7 +83,7 @@ export default function AppFacemarket() {
       <Route path="terms" element={<LegalPage slug="terms-model" />} />
       <Route path="privacy" element={<LegalPage slug="privacy-model" />} />
       <Route path="biometric-consent" element={<LegalPage slug="biometric-consent" />} />
-      <Route path="overseas-consent" element={<LegalPage slug="overseas-consent" />} />
+      <Route path="overseas-transfer" element={<LegalPage slug="overseas-transfer" />} />
       <Route path="license-agreement" element={<LegalPage slug="license-agreement" />} />
       <Route path="seller-terms" element={<LegalPage slug="seller-license-terms" />} />
       <Route path="answers" element={<LegalPage slug="answers" />} />

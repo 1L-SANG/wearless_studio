@@ -100,11 +100,11 @@ test('license toggles keep one allowed category and submit without price or expi
   } finally { await harness.close(); }
 });
 
-test('reissuing from completed registration requires three fresh consents before a new identity enrollment', async () => {
+test('reissuing from completed registration requires two fresh consents before a new identity enrollment', async () => {
   const created = [];
   let restores = 0;
   const harness = await modelComponentHarness({
-    initialStates: ['loading', null, 1, '', false, [true, true, true]],
+    initialStates: ['loading', null, 1, '', false, [true, true]],
     honorHookDependencies: true,
     api: {
       getCurrentEnrollment: async () => {
@@ -141,14 +141,14 @@ test('reissuing from completed registration requires three fresh consents before
     await flush();
     assert.equal(restores, 1, 'restore must not undo the explicit restart');
     assert.equal(harness.runtime.states[0], '1');
-    assert.deepEqual(harness.runtime.states[5], [false, false, false]);
+    assert.deepEqual(harness.runtime.states[5], [false, false]);
     const submit = () => findTree(tree, (node) => node.type === 'button' && node.props.children === '동의하고 신분증 인증하기');
     assert.equal(submit().props.disabled, true);
     assert.equal(created.length, 0);
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 2; i++) {
       findTree(tree, (node) => node.props?.id === `consent-${i}`).props.onChange({ target: { checked: true } });
       tree = commit();
-      assert.equal(submit().props.disabled, i < 2);
+      assert.equal(submit().props.disabled, i < 1);
     }
     await submit().props.onClick();
     assert.equal(created.length, 1);
@@ -561,17 +561,20 @@ test('gendered body types carry an image path, the unknown-gender list does not'
 
 // ── 문구: 사용자 화면에서 "생체 확인" 걷어내기 ───────────────────────────────
 
-test('등록 화면은 본인 확인 안내와 세 가지 필수 동의 링크를 유지한다', async () => {
+test('등록 화면은 본인 확인 안내, 두 가지 필수 동의 링크, 국외 이전 안내 링크를 유지한다', async () => {
   const harness = await modelComponentHarness({ initialStates: ['1'], api: {} });
   try {
     const tree = harness.render();
     const text = collectText(tree);
     assert.ok(text.includes('먼저 본인인지 확인해요'));
-    for (const path of ['/terms', '/privacy', '/biometric-consent', '/overseas-consent']) {
+    for (const path of ['/terms', '/privacy', '/biometric-consent', '/overseas-transfer']) {
       assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props.to === path));
     }
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 2; i++) {
       assert.equal(findTree(tree, (node) => node.props?.id === `consent-${i}`).props.checked, false);
+    }
+    assert.equal(findTree(tree, (node) => node.props?.id === 'consent-2'), null, '국외 이전은 체크박스가 아니라 안내');
+    {
     }
     const hubState = read('../../src/features/model/modelHubState.js');
     assert.match(hubState, /label: '모델 등록'/);

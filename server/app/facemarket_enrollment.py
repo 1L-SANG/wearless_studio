@@ -33,6 +33,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket biometric enrollment"])
 
 BIOMETRIC_CONSENT_VERSION = "2026-09-v1"
+# 국외 이전은 동의가 아니라 고지다(개인정보 보호법 제28조의8 제1항 제3호, 처리위탁·보관은 처리방침 공개로 갈음).
+# 화면에 보여 준 안내 문서 버전만 기록한다. 옛 클라이언트가 overseasConsent 를 보내면 그 버전을 그대로 쓴다.
+OVERSEAS_NOTICE_VERSION = "2026-09-v1"
 # 동의문 텍스트를 바꾸면 버전을 올린다. 프론트(Vercel)·백엔드(CI) 배포 시점이 어긋나는
 # 동안 stale_consent_version 400 으로 등록이 막히지 않게, 직전 버전도 함께 수락한다.
 ACCEPTED_CONSENT_VERSIONS = ("2026-09-v1", "2026-08-v2", "2026-08-v1")
@@ -807,7 +810,7 @@ async def create_enrollment(
     if consent.document_version not in ACCEPTED_CONSENT_VERSIONS:
         raise _err("stale_consent_version", "최신 생체정보 처리 동의를 확인해 주세요.")
     if consent.document_version == BIOMETRIC_CONSENT_VERSION:
-        additional = (body.terms_consent, body.overseas_consent)
+        additional = (body.terms_consent,)
         if any(
             item is None
             or not item.accepted
@@ -815,6 +818,9 @@ async def create_enrollment(
             for item in additional
         ):
             raise _err("consent_required", "필수 동의를 모두 확인해 주세요.")
+    overseas_version = (
+        body.overseas_consent.document_version if body.overseas_consent else OVERSEAS_NOTICE_VERSION
+    )
     device_digest = hashlib.sha256(device_id.encode()).hexdigest()
     now = datetime.now(timezone.utc)
     expires_at = now + ENROLLMENT_TTL
@@ -921,7 +927,7 @@ async def create_enrollment(
                     user_id, model_id, device_digest, consent.document_version, expires_at,
                     application_id,
                     body.terms_consent.document_version if body.terms_consent else None,
-                    body.overseas_consent.document_version if body.overseas_consent else None,
+                    overseas_version,
                 ),
             )
             inserted = await cur.fetchone()
@@ -947,7 +953,7 @@ async def create_enrollment(
                     (
                         BIOMETRIC_CONSENT_VERSION,
                         body.terms_consent.document_version,
-                        body.overseas_consent.document_version,
+                        overseas_version,
                         enrollment_id,
                         user_id,
                     ),
@@ -961,7 +967,7 @@ async def create_enrollment(
                         user_id,
                         BIOMETRIC_CONSENT_VERSION,
                         body.terms_consent.document_version,
-                        body.overseas_consent.document_version,
+                        overseas_version,
                     ),
                 )
         await conn.commit()
