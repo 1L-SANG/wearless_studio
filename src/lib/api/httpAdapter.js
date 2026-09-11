@@ -17,6 +17,7 @@ import { selectPublicAnalysisPhotos } from '@/lib/publicAnalysisPhotos.js';
 import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 import { rebaseAssetUrls, relativizeAssetUrls } from '@/lib/assetUrl.js';
 import { jobFailure } from './jobFailure.js';
+import { DEVICE_HEADER, DEVICE_REJECTED_EVENT, readDeviceToken } from '@/lib/adminDevice.js';
 
 export { toMatchItem } from '@/lib/api/matchingItems.js';
 
@@ -106,6 +107,10 @@ export async function http(path, {
     );
   }
 
+  // 관리자 기기 토큰. 토큰이 있으면 싣는다 — IS_ADMIN 을 보지 않는다. 스토리지가 이미 오리진으로
+  // 갈라져 있어 admin 문서 밖에서는 토큰 자체가 없고, 로컬 ?admin=1 오버라이드 오리진에서도
+  // 그 오리진의 토큰으로 동작해야 한다. 서버는 관리자 라우트에서만 이 헤더를 본다.
+  const deviceToken = readDeviceToken();
   let res;
   try {
     res = await fetch(`${BASE_URL}${path}`, {
@@ -113,6 +118,7 @@ export async function http(path, {
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(deviceToken ? { [DEVICE_HEADER]: deviceToken } : {}),
         ...(requestHeaders || {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -141,6 +147,13 @@ export async function http(path, {
       if (payload?.error?.meta) meta = payload.error.meta;
     } catch { /* 비 JSON 응답 — 기본 메시지 유지 */ }
     console.error(`API ${res.status} ${path}`); // 기술 세부는 콘솔로만
+    // 기기 게이트 거절(승인 대기·회수·미등록). 화면마다 403 을 해석하게 하지 않고 RequireDevice 가
+    // 듣는 이벤트 하나로 모은다 — 열어 둔 탭에서 회수돼도 다음 요청에서 대기/회수 화면으로 간다.
+    if (res.status === 403 && typeof code === 'string' && code.startsWith('device_')) {
+      try {
+        window.dispatchEvent(new CustomEvent(DEVICE_REJECTED_EVENT, { detail: { code } }));
+      } catch { /* 비브라우저 환경 */ }
+    }
     // status·code 를 에러에 실어 호출부가 분기할 수 있게 한다(예: 409 라이선스 차단 → 블로킹 패널,
     // 404 무효 상태 vs 일시 장애 구분). message 는 그대로라 기존 catch(e.message) 는 영향 없음(하위호환).
     const err = new Error(message);

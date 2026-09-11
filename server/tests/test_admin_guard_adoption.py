@@ -12,23 +12,30 @@ ROUTES = (APP / "routes.py").read_text()
 FACEMARKET = (APP / "facemarket.py").read_text()
 CUTOVER = (APP / "facemarket_cutover.py").read_text()
 ADMIN = (APP / "facemarket_admin.py").read_text()
+ADMIN_MODELS = (APP / "facemarket_admin_models.py").read_text()
+ADMIN_DEVICES = (APP / "facemarket_admin_devices.py").read_text() if (APP / "facemarket_admin_devices.py").exists() else ""
 
 
 def test_no_module_calls_repo_is_admin_directly():
     """admin_guard 하나만 부른다 — 문구·상태코드가 갈라지지 않게."""
-    for name, source in (
+    cases = [
         ("facemarket_applications.py", APPLICATIONS),
         ("routes.py", ROUTES),
         ("facemarket.py", FACEMARKET),
         ("facemarket_cutover.py", CUTOVER),
-    ):
+        ("facemarket_admin.py", ADMIN),
+        ("facemarket_admin_models.py", ADMIN_MODELS),
+    ]
+    if ADMIN_DEVICES:
+        cases.append(("facemarket_admin_devices.py", ADMIN_DEVICES))
+    for name, source in cases:
         assert "repo.is_admin" not in source, f"{name} 가 아직 repo.is_admin 을 직접 부른다"
 
 
 def test_refund_routes_are_gated_and_audited():
     for route in ("approve_refund", "reject_refund"):
         body = ROUTES.split(f"async def {route}(")[1].split("@router.")[0]
-        assert "await admin_guard.require_admin(conn, user_id)" in body, route
+        assert "await admin_guard.require_admin(conn, user_id, request)" in body, route
         assert "admin_guard.write_audit(" in body, route
 
 
@@ -94,3 +101,36 @@ def test_audit_write_happens_before_commit():
         call_at = body.index(f"await {helper}(")
         commit_at = body.index("await conn.commit()")
         assert call_at < commit_at, f"{route}: {helper} 호출이 commit 뒤에 있다"
+
+
+import re
+
+
+def test_every_require_admin_call_passes_the_request():
+    """기기 게이트는 request 헤더를 본다. request 없이 부르는 호출이 하나라도 남으면
+    그 라우트만 기기 검사를 건너뛴다 — 조용한 구멍이라 소스에서 센다."""
+    pattern = re.compile(r"(?:admin_guard\.require_admin|_require_admin)\(([^)]*)\)")
+    for name, source in (
+        ("facemarket_applications.py", APPLICATIONS), ("routes.py", ROUTES),
+        ("facemarket.py", FACEMARKET), ("facemarket_admin.py", ADMIN),
+        ("facemarket_admin_models.py", ADMIN_MODELS), ("facemarket_admin_devices.py", ADMIN_DEVICES),
+    ):
+        for m in pattern.finditer(source):
+            args = [a.strip() for a in m.group(1).split(",")]
+            if args[:1] == ["conn"] and len(args) == 2 and args[1].startswith("user_id"):
+                # 래퍼 정의 `async def _require_admin(conn, user_id, request)` 는 `def` 로 시작하므로
+                # 여기 안 걸린다. 걸리는 건 request 를 빼먹은 호출뿐이다.
+                raise AssertionError(f"{name}: request 없이 require_admin 을 부른다 — {m.group(0)}")
+            assert "request" in args, f"{name}: {m.group(0)}"
+
+
+def test_identity_only_guard_is_used_by_exactly_the_two_device_bootstrap_routes():
+    """기기 없이 통과하는 관리자 라우트는 등록·상태조회 둘뿐이어야 한다."""
+    for name, source in (
+        ("facemarket_applications.py", APPLICATIONS), ("routes.py", ROUTES),
+        ("facemarket.py", FACEMARKET), ("facemarket_admin.py", ADMIN),
+        ("facemarket_admin_models.py", ADMIN_MODELS), ("facemarket_cutover.py", CUTOVER),
+    ):
+        assert "require_admin_identity(" not in source, f"{name} 가 기기 면제 가드를 쓴다"
+    if ADMIN_DEVICES:
+        assert ADMIN_DEVICES.count("await admin_guard.require_admin_identity(conn, user_id)") == 2

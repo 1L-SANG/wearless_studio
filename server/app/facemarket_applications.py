@@ -417,9 +417,9 @@ async def _load_current(conn, user_id: str) -> dict | None:
         return await cur.fetchone()
 
 
-async def _require_admin(conn, user_id: str) -> None:
+async def _require_admin(conn, user_id: str, request) -> None:
     """호출부 이름은 그대로 두고 판정만 admin_guard 로 넘긴다(라우트 diff 최소화)."""
-    await admin_guard.require_admin(conn, user_id)
+    await admin_guard.require_admin(conn, user_id, request)
 
 
 # --- 지원자 엔드포인트 -------------------------------------------------------
@@ -789,7 +789,7 @@ async def admin_list_applications(
         ) em on true
     """
     async with get_conn(request) as conn:
-        await _require_admin(conn, user_id)
+        await _require_admin(conn, user_id, request)
         async with conn.cursor() as cur:
             if status:
                 await cur.execute(
@@ -808,7 +808,7 @@ async def admin_approve_application(
 ):
     application_id = _canonical_id(application_id)
     async with get_conn(request) as conn:
-        await _require_admin(conn, user_id)
+        await _require_admin(conn, user_id, request)
         async with conn.cursor() as cur:
             # status 가드 UPDATE — 다른 관리자가 이미 처리했으면 0-row(409).
             await cur.execute(
@@ -856,7 +856,7 @@ async def admin_reject_application(
     application_id = _canonical_id(application_id)
     reason = _clean_text(body.reason, "거절 사유", required=True, max_len=1000)
     async with get_conn(request) as conn:
-        await _require_admin(conn, user_id)
+        await _require_admin(conn, user_id, request)
         async with conn.cursor() as cur:
             await cur.execute(
                 """
@@ -900,7 +900,7 @@ async def admin_resend_email(
     """결정 메일 재발송(2A '메일 미발송' 복구). 현재 상태(approved/rejected)에 맞는 메일을 다시 보낸다."""
     application_id = _canonical_id(application_id)
     async with get_conn(request) as conn:
-        await _require_admin(conn, user_id)
+        await _require_admin(conn, user_id, request)
         async with conn.cursor() as cur:
             await cur.execute(
                 """
@@ -950,7 +950,7 @@ async def admin_application_photo(
     if kind not in PHOTO_KINDS:
         raise _err("invalid_photo_kind", "사진 종류가 올바르지 않습니다.")
     async with get_conn(request) as conn:
-        await _require_admin(conn, user_id)
+        await _require_admin(conn, user_id, request)
         async with conn.cursor() as cur:
             await cur.execute(
                 "select profile_image_r2_key, photo_keys from fm_model_applications where id = %s",

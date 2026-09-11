@@ -1978,7 +1978,7 @@ async def simulate_settlement(
     """
     async with get_conn(request) as conn:
         await _assert_account_open(conn, user_id)
-        await admin_guard.require_admin(conn, user_id)
+        await admin_guard.require_admin(conn, user_id, request)
         chain = getattr(request.app.state, "fm_chain", None)
         if chain is None:
             raise _err("chain_unavailable", "체인이 설정되지 않았습니다.", status=404)

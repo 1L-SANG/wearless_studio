@@ -311,6 +311,14 @@ class Settings:
     fm_application_public_base: str = "https://facemarket.wearless.kr"
     # 새 지원서 Slack 알림(서버 → incoming webhook 직접). 없으면 스킵. Lambda 재사용 아님(별도 웹훅).
     fm_slack_webhook_url: str | None = None
+    # 관리자 콘솔 기기 게이트(admin_guard). off=검사 안 함 / shadow=검사하고 실패해도 통과·
+    # 로그만 / enforce=실패 시 403. 코드 기본 shadow — 배포 직후 아무도 잠기지 않고, 두 관리자가
+    # 콘솔에서 서로 기기를 승인한 뒤 env 로 enforce 를 올린다(런북 docs/runbooks/admin-device-gate.md).
+    # 락아웃 복구도 이 값을 shadow 로 내리는 것이다.
+    admin_device_gate: str = "shadow"  # off | shadow | enforce
+    # 한 관리자가 쌓을 수 있는 승인 대기 기기 수. 등록은 관리자 JWT 만 있으면 되므로 상한이 없으면
+    # 탈취된 세션 하나가 목록을 스팸으로 덮고 Slack 을 울릴 수 있다.
+    admin_device_max_pending_per_user: int = 5
     fm_oacx_contract_mode: str = "disabled"
     # AWS Face Liveness 사용 여부. off 면 라이브니스 세션을 만들지 않고 SFace 매칭 앵커를
     # OACX 신분증 초상으로 쓴다(업로드 사진 ↔ 신분증 초상). 본인확인은 OACX 모바일신분증(실시간
@@ -674,6 +682,8 @@ def load_settings() -> Settings:
             os.getenv("FM_APPLICATION_PUBLIC_BASE") or "https://facemarket.wearless.kr"
         ).rstrip("/"),
         fm_slack_webhook_url=os.getenv("FM_SLACK_WEBHOOK_URL") or None,
+        admin_device_gate=_flag("ADMIN_DEVICE_GATE", "shadow", {"off", "shadow", "enforce"}),
+        admin_device_max_pending_per_user=_int_env("ADMIN_DEVICE_MAX_PENDING_PER_USER", 5),
         fm_oacx_contract_mode=os.getenv("FM_OACX_CONTRACT_MODE", "disabled"),
         fm_liveness_enabled=(
             os.getenv("FM_LIVENESS_ENABLED", "true").lower() == "true"

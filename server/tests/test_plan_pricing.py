@@ -174,7 +174,9 @@ def test_quote_owner_scope_and_auth(client, make_token, monkeypatch):
 
 
 def test_credit_quote_openapi(client):
-    schema = client.get('/openapi.json').json()
+    # /openapi.json 은 prod(테스트 기본 app_env)에서 닫혀 있다(main.py). 스키마 shape 만 보면 되므로
+    # URL 대신 앱에서 직접 생성한다.
+    schema = client.app.openapi()
     operation = schema['paths']['/v1/projects/{project_id}/credit-quote']['get']
     assert operation['tags'] == ['Projects']
     assert operation['responses']['200']['content']['application/json']['schema']['$ref'].endswith('/CreditQuote')
