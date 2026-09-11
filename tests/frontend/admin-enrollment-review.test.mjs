@@ -283,7 +283,9 @@ test('ApplicationProfilePhoto 는 실패를 삼키지 않는다 — 스켈레톤
 test('_authFetch 가 X-Admin-Device 헤더를 싣는다 — 없으면 심사 화면의 모든 이미지가 403', () => {
   const api = read('src/lib/api/facemarket.js');
   assert.ok(
-    /import \{[^}]*DEVICE_HEADER[^}]*\} from '@\/lib\/adminDevice\.js'/.test(api),
+    // 경로는 '@/lib/adminDevice.js' 든 '../adminDevice.js' 든 상관없다 — 가져오는지가 요점이다
+    // (configFile:false 하네스 때문에 실제 코드는 상대 경로를 쓴다).
+    /import \{[^}]*DEVICE_HEADER[^}]*\} from '[^']*adminDevice\.js'/.test(api),
     'adminDevice 에서 DEVICE_HEADER 를 안 가져온다',
   );
   const start = api.indexOf('async function _authFetch(');

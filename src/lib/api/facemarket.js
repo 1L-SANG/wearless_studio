@@ -7,7 +7,10 @@
 import { FACEMARKET_PRICING } from '../facemarketPricing.js';
 import { http } from '@/lib/api/httpAdapter.js';
 import { supabase } from '@/lib/supabase.js';
-import { DEVICE_HEADER, DEVICE_REJECTED_EVENT, readDeviceToken } from '@/lib/adminDevice.js';
+// 상대 경로다(‘@/’ 아님): tests/frontend 의 몇몇 vite 하네스가 configFile:false 로 돌아
+// '@' 별칭이 없다 — 그 하네스들은 httpAdapter·supabase 만 스텁으로 가로채므로, 여기서
+// '@/' 를 쓰면 새 모듈 하나 때문에 통째로 깨진다(같은 파일의 facemarketPricing 선례).
+import { DEVICE_HEADER, DEVICE_REJECTED_EVENT, readDeviceToken } from '../adminDevice.js';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const MOCK = import.meta.env.DEV && import.meta.env.VITE_API_MODE === 'mock';

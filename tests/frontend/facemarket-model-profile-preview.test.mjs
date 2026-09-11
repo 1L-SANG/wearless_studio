@@ -24,6 +24,10 @@ async function apiHarness() {
         if (id === 'virtual:model-profile-api-runtime') return '\0model-profile-api-runtime';
         if (id === '@/lib/api/httpAdapter.js') return '\0model-profile-http';
         if (id === '@/lib/supabase.js') return '\0model-profile-supabase';
+        // configFile:false 라 '@' 별칭이 없다 — 위 스텁 외의 '@/' 임포트는 직접 푼다.
+        // 안 그러면 facemarket.js 가 새 모듈을 하나 가져오는 순간 이 파일이 "모듈 없음"
+        // 으로 실패하고, 실패 뒤 vite 서버가 안 닫혀 스위트 전체가 멈춘다.
+        if (id.startsWith('@/')) return new URL('../../src/' + id.slice(2), import.meta.url).pathname;
         return null;
       },
       load(id) {
