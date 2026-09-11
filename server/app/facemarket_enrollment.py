@@ -168,6 +168,8 @@ class BiometricConsent(CamelModel):
 class CreateEnrollmentBody(CamelModel):
     device_id: str
     biometric_consent: BiometricConsent
+    # 'mid' = OACX 모바일 신분증(기존), 'simple_auth' = 간편인증 + 신분증 촬영.
+    identity_method: str = "mid"
 
 
 class LivenessSessionBody(CamelModel):
@@ -208,6 +210,8 @@ class EnrollmentView(CamelModel):
     height_bucket: str | None = None
     body_type: str | None = None
     gender: str | None = None
+    identity_method: str = "mid"
+    review_status: str | None = None
 
 
 class PhysiqueBody(CamelModel):
@@ -281,6 +285,7 @@ async def _load_owned_enrollment(conn, enrollment_id: str, user_id: str) -> dict
             select e.id::text as id, e.model_id::text as model_id, e.status,
                    e.decision, e.reason, e.cooldown_until, e.expires_at,
                    e.liveness_session_digest, e.height_bucket, e.body_type,
+                   e.identity_method, e.review_status,
                    m.gender as model_gender
             from fm_biometric_enrollments e
             left join fm_models m on m.id = e.model_id
@@ -640,7 +645,8 @@ async def _load_current_enrollment(conn, user_id: str) -> dict | None:
             """
             select e.id::text as id, e.model_id::text as model_id, e.status,
                    e.decision, e.reason, e.cooldown_until, e.expires_at,
-                   e.height_bucket, e.body_type, m.gender as model_gender
+                   e.height_bucket, e.body_type, e.identity_method, e.review_status,
+                   m.gender as model_gender
             from fm_biometric_enrollments e
             left join fm_models m on m.id = e.model_id
             where e.user_id = %s and e.status in (
@@ -683,6 +689,8 @@ async def _enrollment_view(conn, row: dict) -> EnrollmentView:
         height_bucket=row.get("height_bucket"),
         body_type=row.get("body_type"),
         gender=row.get("model_gender"),
+        identity_method=row.get("identity_method") or "mid",
+        review_status=row.get("review_status"),
     )
 
 
@@ -716,6 +724,17 @@ async def create_enrollment(
         raise _err("biometric_consent_required", "생체정보 처리 동의가 필요합니다.")
     if consent.document_version not in ACCEPTED_CONSENT_VERSIONS:
         raise _err("stale_consent_version", "최신 생체정보 처리 동의를 확인해 주세요.")
+    # Task5: 인증 수단 분기. 'mid' = OACX 모바일 신분증(기존), 'simple_auth' = 간편인증 +
+    # 신분증 촬영. 플래그에 없는 수단은 서버가 막는다 — 프론트가 낡아도 서버가 진실이다.
+    # /id-document 라우트와 같은 에러 코드·상태코드를 쓴다(두 진입점이 합의한다).
+    method = (body.identity_method or "mid").strip()
+    if method not in settings.fm_identity_methods:
+        raise _err(
+            "identity_method_unavailable",
+            "지금은 이 방식으로 등록할 수 없어요.",
+            status=409,
+        )
+    initial_status = "id_capture_pending" if method == "simple_auth" else "identity_pending"
     device_digest = hashlib.sha256(device_id.encode()).hexdigest()
     now = datetime.now(timezone.utc)
     expires_at = now + ENROLLMENT_TTL
@@ -806,17 +825,35 @@ async def create_enrollment(
                     """,
                     (model_id,),
                 )
+            # mid 는 identity_method/status 컬럼을 안 건드린다 — DB 기본값('mid'/
+            # 'identity_pending')이 그대로 적용되어 SQL 텍스트가 오늘과 바이트 단위로
+            # 동일하다(기존 mid 경로 불변이 최우선 순위). simple_auth 만 두 컬럼을 리터럴로
+            # 명시한다(값이 화이트리스트를 통과한 코드 상수라 바인드 파라미터일 필요가 없다).
+            if method == "simple_auth":
+                insert_sql = """
+                    insert into fm_biometric_enrollments
+                        (user_id, model_id, device_digest, consent_version, expires_at,
+                         application_id, identity_method, status)
+                    values (%s, %s, %s, %s, %s, %s, 'simple_auth', 'id_capture_pending')
+                    on conflict (user_id) where status in (
+                        'identity_pending', 'photos_pending', 'liveness_pending', 'processing',
+                        'asset_building', 'license_pending', 'vc_pending'
+                    ) do nothing
+                    returning id::text as id
+                    """
+            else:
+                insert_sql = """
+                    insert into fm_biometric_enrollments
+                        (user_id, model_id, device_digest, consent_version, expires_at, application_id)
+                    values (%s, %s, %s, %s, %s, %s)
+                    on conflict (user_id) where status in (
+                        'identity_pending', 'photos_pending', 'liveness_pending', 'processing',
+                        'asset_building', 'license_pending', 'vc_pending'
+                    ) do nothing
+                    returning id::text as id
+                    """
             await cur.execute(
-                """
-                insert into fm_biometric_enrollments
-                    (user_id, model_id, device_digest, consent_version, expires_at, application_id)
-                values (%s, %s, %s, %s, %s, %s)
-                on conflict (user_id) where status in (
-                    'identity_pending', 'photos_pending', 'liveness_pending', 'processing',
-                    'asset_building', 'license_pending', 'vc_pending'
-                ) do nothing
-                returning id::text as id
-                """,
+                insert_sql,
                 (user_id, model_id, device_digest, consent.document_version, expires_at,
                  application_id),
             )
@@ -824,11 +861,15 @@ async def create_enrollment(
             if inserted:
                 enrollment_id = inserted["id"]
             else:
+                # 활성 상태 집합은 fm_biometric_active_per_user 인덱스(Task1 마이그레이션)와
+                # 맞춘다 — id_capture_pending/review_pending 을 빠뜨리면 그 상태로 활성인
+                # simple_auth 등록의 재조회가 여기서 None 을 내 500 으로 죽는다.
                 await cur.execute(
                     """
                     select id::text as id from fm_biometric_enrollments
                     where user_id = %s and status in (
-                        'identity_pending', 'photos_pending', 'liveness_pending', 'processing',
+                        'id_capture_pending', 'identity_pending', 'photos_pending',
+                        'review_pending', 'liveness_pending', 'processing',
                         'asset_building', 'license_pending', 'vc_pending'
                     ) order by created_at desc limit 1
                     """,

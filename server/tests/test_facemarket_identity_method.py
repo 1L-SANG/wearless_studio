@@ -159,3 +159,55 @@ def test_get_oacx_biometric_contract_rejects_unknown_method():
     with pytest.raises(cx_identity.OacxBiometricError) as excinfo:
         cx_identity.get_oacx_biometric_contract(settings, method="simple-auth")
     assert excinfo.value.reason == "oacx_contract_unavailable"
+
+
+# ── Task5: 등록 생성 시 인증 수단 분기 ───────────────────────────────────────────────────
+
+def test_create_rejects_simple_auth_when_flag_off(enrollment_client):
+    """FM_IDENTITY_METHODS=mid 인데 simple_auth 를 요청하면 409."""
+    client, store, settings = enrollment_client(fm_identity_methods=("mid",))
+    response = client.post(
+        "/v1/facemarket/enrollments",
+        json={
+            "deviceId": "d" * 40,
+            "biometricConsent": {"accepted": True, "documentVersion": "2026-08-v2"},
+            "identityMethod": "simple_auth",
+        },
+    )
+    assert response.status_code == 409
+    # main.py 의 http_exception_handler 가 HTTPException.detail 딕셔너리를
+    # {"error": {...}} 로 감싼다(브리프 초안의 "detail" 키는 이 레포 관례와 다르다 —
+    # /id-document 의 같은 에러도 error.code 로 검증한다).
+    assert response.json()["error"]["code"] == "identity_method_unavailable"
+
+
+def test_create_simple_auth_starts_at_id_capture_pending(enrollment_client):
+    client, store, settings = enrollment_client(
+        fm_identity_methods=("mid", "simple_auth")
+    )
+    response = client.post(
+        "/v1/facemarket/enrollments",
+        json={
+            "deviceId": "d" * 40,
+            "biometricConsent": {"accepted": True, "documentVersion": "2026-08-v2"},
+            "identityMethod": "simple_auth",
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["status"] == "id_capture_pending"
+    assert response.json()["identityMethod"] == "simple_auth"
+
+
+def test_create_mid_unchanged(enrollment_client):
+    """기본값 경로는 지금과 똑같이 identity_pending 에서 시작한다."""
+    client, store, settings = enrollment_client(fm_identity_methods=("mid",))
+    response = client.post(
+        "/v1/facemarket/enrollments",
+        json={
+            "deviceId": "d" * 40,
+            "biometricConsent": {"accepted": True, "documentVersion": "2026-08-v2"},
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["status"] == "identity_pending"
+    assert response.json()["identityMethod"] == "mid"
