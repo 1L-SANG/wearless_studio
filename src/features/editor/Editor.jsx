@@ -17,7 +17,7 @@ import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';
 import { alignSkeletonToServer, canSafelyMergeServerBlocks, decorateGenBlocks, fillGenBlocks, mergeServerBlocks } from '@/lib/editorWaitSkeleton.js';
 import { clearEditorWaitDraft, loadEditorWaitDraft, saveEditorWaitDraft } from '@/lib/editorWaitDraft.js';
 import { bindEditorExitBackup, createLatestEditorSaveGuard } from '@/lib/editorSaveLifecycle.js';
-import { listModels } from '@/lib/api/facemarket.js';
+import { getFaceRenderStatus, listModels, warmFaceRender } from '@/lib/api/facemarket.js';
 import { uid } from '@/lib/ids.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
@@ -1017,6 +1017,7 @@ export function Editor() {
   const [loadAttempt, setLoadAttempt] = useState(0);
   // REAL 모델 프로젝트를 열면 얼굴 렌더 파드를 미리 켜고(1회) 준비 상태를 30초마다 확인한다.
   // 실패는 전부 무시한다 — 이 표시가 에디터 동작에 영향을 주면 안 된다.
+  const [faceRender, setFaceRender] = useState(null);
   useEffect(() => {
     const modelId = analysis?.selectedModelId;
     if (!isRealModelSelection(modelId)) { setFaceRender(null); return undefined; }
