@@ -636,6 +636,13 @@ class AdminStore:
         self.deleted_r2_keys: list[str] = []
         self.admin_user_ids: set[str] = set()
         self.latest_id: str | None = None
+        # fix round 1, IMPORTANT B: 재개-select 가 "레이스로 행을 못 찾음" 을 겪는 상황을
+        # 시뮬레이트한다 — 여기 넣은 enrollment_id 는 승인 UPDATE 가 방금 확정한 상태여도
+        # 재개-select 에서 못 찾은 것처럼 굴어(다른 프로세스가 그 사이 가로챈 것과 동치).
+        self.race_lost_enrollment_ids: set[str] = set()
+        # fix round 1, IMPORTANT E: _assert_account_open/_reject_cutover_closed 시뮬레이션용.
+        self.account_closed_user_ids: set[str] = set()
+        self.cutover_closed: bool = False
 
     def add_enrollment(self, **overrides) -> str:
         enrollment_id = overrides.pop("id", None) or str(uuid.uuid4())
@@ -857,6 +864,11 @@ class AdminFakeCursor:
         # --- 재개-select (identity_ci_hash 포함, status='processing' 가드) ---
         if "identity_ci_hash, identity_tx_digest, identity_name_masked" in query:
             (enrollment_id,) = params
+            if enrollment_id in store.race_lost_enrollment_ids:
+                # 승인 UPDATE 가 방금 확정한 상태여도, 레이스로 이 select 가 그 행을
+                # 다시 못 찾은 상황을 시뮬레이트한다(fix round 1, IMPORTANT B 테스트).
+                self.result = None
+                return
             row = next(
                 (
                     r
@@ -868,6 +880,21 @@ class AdminFakeCursor:
                 None,
             )
             self.result = None if row is None else dict(row)
+            return
+
+        # --- _assert_account_open (계정 폐쇄 여부, fix round 1 IMPORTANT E) ---
+        if "kind = 'personalization_purge'" in query:
+            (user_id,) = params
+            self.result = {"closed": user_id in store.account_closed_user_ids}
+            return
+
+        # --- _reject_cutover_closed 의 advisory lock(부수효과 없음) ---
+        if query.startswith("select pg_advisory_xact_lock"):
+            return
+
+        # --- _reject_cutover_closed 의 컷오버 배치 조회 ---
+        if "fm_cutover_batches" in query:
+            self.result = {"closed": store.cutover_closed}
             return
 
         # --- bind_model_and_enqueue_asset_build 의 tail (Task5/6/7 정상경로와 동일 SQL) ---
@@ -992,6 +1019,16 @@ def test_review_queue_requires_admin(admin_client):
     assert client.get("/v1/facemarket/admin/enrollments?review=pending").status_code == 403
 
 
+def test_review_queue_requires_admin_before_validating_filter(admin_client):
+    """fix round 1, minor: 관리자 판정이 요청 모양 검증보다 먼저 답한다 — review 값이
+    화이트리스트 밖이어도 비관리자에겐 403 이어야 한다. 순서가 뒤집히면 비관리자가
+    400/403 응답 차이로 필터 값을 스캔해볼 수 있다(오늘 노출되는 데이터는 없지만, 관리자
+    판정이 언제나 첫 문장이어야 한다는 규율은 지킨다)."""
+    client, store = admin_client(is_admin=False)
+    response = client.get("/v1/facemarket/admin/enrollments?review=not-a-real-status")
+    assert response.status_code == 403
+
+
 def test_review_queue_lists_pending(admin_client):
     client, store = admin_client(is_admin=True)
     store.add_enrollment(status="review_pending", review_status="pending",
@@ -1025,14 +1062,41 @@ def test_image_route_is_no_store(admin_client):
 
 
 def test_image_route_rejects_unknown_kind(admin_client):
-    """kind 화이트리스트 — 클라이언트 문자열을 R2 키에 그대로 끼워 넣지 않는다는 계약."""
+    """kind 화이트리스트 — 클라이언트 문자열을 R2 키에 그대로 끼워 넣지 않는다는 계약.
+
+    fix round 1, IMPORTANT C: 이전 버전은 `.../images/../../etc/passwd` 를 썼는데,
+    httpx 가 `../../` 를 클라이언트 쪽에서 정규화해 실제로 나가는 URL 이 라우트에
+    아예 안 맞아 Starlette 이 우리 핸들러(그리고 그 안의 화이트리스트 검사)에 도달하기도
+    전에 제네릭 404 를 냈다 — 화이트리스트가 있든 없든 항상 통과하는 5번째 무효 테스트였다.
+    같은 세그먼트 안에 있는 값(경로 구분자를 안 씀)을 써야 실제로 라우트·핸들러에
+    도달한다. `400` 하나로 단언해야 "핸들러가 못 봄" 상태(404)와 구분된다.
+    """
     client, store = admin_client(is_admin=True)
     store.add_enrollment(status="review_pending", review_status="pending",
                          identity_method="simple_auth")
     response = client.get(
-        f"/v1/facemarket/admin/enrollments/{store.latest_id}/images/../../etc/passwd"
+        f"/v1/facemarket/admin/enrollments/{store.latest_id}/images/unknown_kind"
     )
-    assert response.status_code in (400, 404)
+    assert response.status_code == 400
+
+
+def test_image_route_streams_angle_photo(admin_client):
+    """fix round 1, IMPORTANT A: id_document 가 아닌 각도 사진 분기(다른 SQL·다른
+    파라미터·다른 mime 출처)는 이전까지 완전 무점검이었다 — add_photo 헬퍼가 있었지만
+    아무 테스트도 부르지 않는 죽은 스캐폴딩이었다."""
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         identity_method="simple_auth")
+    key = "facemarket/enrollments/e1/quarantine/front.jpg"
+    store.add_photo(store.latest_id, "front", key, mime_type="image/jpeg")
+    response = client.get(
+        f"/v1/facemarket/admin/enrollments/{store.latest_id}/images/front"
+    )
+    assert response.status_code == 200
+    # 정확한 키로 fetch 했는지 — AdminFakeR2.get_bytes 는 키를 바이트에 그대로 반영한다.
+    assert response.content == b"\xff\xd8\xff" + key.encode("utf-8")
+    assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["content-type"] == "image/jpeg"
 
 
 def test_approve_transitions_and_purges_document(admin_client):
@@ -1041,6 +1105,7 @@ def test_approve_transitions_and_purges_document(admin_client):
                          identity_method="simple_auth", id_document_r2_key="k")
     response = client.post(f"/v1/facemarket/admin/enrollments/{store.latest_id}/approve")
     assert response.status_code == 200, response.text
+    assert response.json()["assetBuildError"] is None
     row = store.latest_enrollment
     assert row["review_status"] == "approved"
     # 브리프 초안의 리터럴 테스트는 최종 status 를 'processing' 으로 기대했다. 하지만
@@ -1062,6 +1127,108 @@ def test_approve_transitions_and_purges_document(admin_client):
     assert row["id_document_r2_key"] is None
     assert row["id_document_purged_at"] is not None
     assert "k" in store.deleted_r2_keys
+
+
+def test_approve_resume_failure_is_visible_not_silent(admin_client):
+    """fix round 1, IMPORTANT B (핵심): 재개가 identity_recovery_required 로 실패해도
+    (예: 다른 유저가 심사 제출과 승인 사이에 같은 ci_hash 로 이미 모델을 만든 경우)
+    승인 자체는 200 이고 결정(review_status·purge·audit)은 그대로 유효해야 한다 — 다만
+    그 실패가 조용히 사라지면 안 된다: 응답 바디, 감사 로그(별도 행) 양쪽에서 보여야
+    관리자가 "승인은 됐는데 왜 자산이 안 만들어지지"를 알 수 있다."""
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(
+        status="review_pending", review_status="pending", identity_method="simple_auth",
+        id_document_r2_key="k", identity_ci_hash="shared-ci-hash",
+    )
+    # 다른 유저가 이미 같은 ci_hash 로 모델을 갖고 있다 — bind_model_and_enqueue_asset_build
+    # 가 identity_recovery_required 를 던지는 조건.
+    store.models.append({
+        "id": str(uuid.uuid4()), "user_id": "someone-else", "display_name": "다른사람",
+        "status": "pending", "ci_hash": "shared-ci-hash", "assets_status": None,
+        "current_enrollment_id": None, "cover_image_url": None,
+        "height_bucket": None, "body_type": None, "gender": None,
+    })
+    response = client.post(f"/v1/facemarket/admin/enrollments/{store.latest_id}/approve")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["assetBuildError"] == "identity_recovery_required"
+    assert body["status"] == "processing"
+    row = store.latest_enrollment
+    # 결정 자체는 유효 — 승인·파기는 재개 실패와 무관하게 이미 확정됐다.
+    assert row["review_status"] == "approved"
+    assert row["status"] == "processing"
+    assert row["model_id"] is None
+    assert row["id_document_r2_key"] is None
+    assert row["id_document_purged_at"] is not None
+    assert "k" in store.deleted_r2_keys
+    approve_audit = next(a for a in store.audit if a["action"] == "enrollment_review_approve")
+    assert approve_audit is not None
+    failure_audit = next(
+        a for a in store.audit if a["action"] == "enrollment_review_resume_failed"
+    )
+    assert failure_audit["note"] == "identity_recovery_required"
+    assert failure_audit["target_id"] == store.latest_id
+
+
+def test_approve_resume_race_lost_is_visible(admin_client):
+    """fix round 1, IMPORTANT B: 재개-select 가 방금 승인이 확정한 행을 다시 못 찾는
+    (레이스) 경로도 identity_recovery_required 경로와 마찬가지로 조용히 사라지면 안 된다."""
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         identity_method="simple_auth")
+    store.race_lost_enrollment_ids.add(store.latest_id)
+    response = client.post(f"/v1/facemarket/admin/enrollments/{store.latest_id}/approve")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["assetBuildError"] == "race_lost"
+    assert body["status"] == "processing"
+    row = store.latest_enrollment
+    assert row["review_status"] == "approved"
+    assert row["status"] == "processing"
+    assert row["model_id"] is None
+    approve_audit = next(a for a in store.audit if a["action"] == "enrollment_review_approve")
+    assert approve_audit is not None
+    failure_audit = next(
+        a for a in store.audit if a["action"] == "enrollment_review_resume_failed"
+    )
+    assert failure_audit["note"] == "race_lost"
+
+
+def test_approve_resume_blocked_by_closed_account_is_visible(admin_client):
+    """fix round 1, IMPORTANT E: 정상 완료 경로(process_enrollment_completion)가 도는
+    _assert_account_open 관문을 재개 경로도 돌아야 한다 — 승인과 재개 사이(짧은 창)에
+    계정이 닫히면 자산빌드가 시작되면 안 된다."""
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         identity_method="simple_auth", user_id="closing-user")
+    store.account_closed_user_ids.add("closing-user")
+    response = client.post(f"/v1/facemarket/admin/enrollments/{store.latest_id}/approve")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["assetBuildError"] == "account_closed"
+    row = store.latest_enrollment
+    assert row["review_status"] == "approved"
+    assert row["model_id"] is None
+    failure_audit = next(
+        a for a in store.audit if a["action"] == "enrollment_review_resume_failed"
+    )
+    assert failure_audit["note"] == "account_closed"
+
+
+def test_approve_resume_blocked_by_cutover_is_visible(admin_client):
+    """fix round 1, IMPORTANT E: 컷오버(실물 모델 보안 전환)가 진행 중이면 재개도
+    멈춰야 한다 — 정상 완료 경로와 동일한 _reject_cutover_closed 관문."""
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         identity_method="simple_auth")
+    store.cutover_closed = True
+    response = client.post(f"/v1/facemarket/admin/enrollments/{store.latest_id}/approve")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["assetBuildError"] == "facemarket_cutover_in_progress"
+    row = store.latest_enrollment
+    assert row["review_status"] == "approved"
+    assert row["model_id"] is None
 
 
 def test_reject_requires_reason_and_purges(admin_client):

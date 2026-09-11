@@ -30,7 +30,13 @@ from fastapi.responses import JSONResponse, Response
 from . import admin_guard
 from .auth import require_user
 from .db import get_conn
-from .facemarket_enrollment import bind_model_and_enqueue_asset_build
+from .facemarket_enrollment import (
+    EnrollmentMappedError,
+    _assert_account_open,
+    _reject_cutover_closed,
+    _wake_dispatcher,
+    bind_model_and_enqueue_asset_build,
+)
 from .facemarket_id_document import purge_id_document
 from .models import CamelModel
 
@@ -71,12 +77,6 @@ def _r2_face(request: Request):
     if client is None:
         raise _err("storage_unavailable", "얼굴 저장소를 사용할 수 없습니다.", status=503)
     return client
-
-
-def _wake_dispatcher(request: Request) -> None:
-    dispatcher = getattr(request.app.state, "dispatcher", None)
-    if dispatcher is not None:
-        dispatcher.wake()
 
 
 def _image_urls(enrollment_id: str) -> dict[str, str]:
@@ -126,6 +126,10 @@ class AdminReviewDecisionResult(CamelModel):
     id: str
     review_status: str
     status: str
+    # 승인 재개(자산빌드)가 실패했을 때만 채워진다 — None 이면 성공(또는 거절이라 해당 없음).
+    # 관리자가 "승인은 됐는데 왜 안 만들어지지"를 응답 하나로 바로 알 수 있어야 한다
+    # (fix round 1, IMPORTANT B) — ERROR 로그 + admin_audit_log 감사행과 함께 3중 가시성.
+    asset_build_error: str | None = None
 
 
 class AdminRejectBody(CamelModel):
@@ -182,10 +186,12 @@ async def list_review_queue(
     review: str = Query(..., description="pending|approved|rejected"),
     user_id: str = Depends(require_user),
 ):
-    if review not in REVIEW_STATUSES:
-        raise _err("invalid_review_filter", "심사 상태 필터가 올바르지 않습니다.")
     async with get_conn(request) as conn:
+        # 관리자 판정이 먼저 답한다 — 요청 모양 검증(잘못된 review 값)보다 늦게 하면
+        # 비관리자가 400 과 403 을 구분해 필터 값 스캐닝에 쓸 수 있다(fix round 1, minor).
         await _require_admin(conn, user_id, request)
+        if review not in REVIEW_STATUSES:
+            raise _err("invalid_review_filter", "심사 상태 필터가 올바르지 않습니다.")
         async with conn.cursor() as cur:
             # created_at desc — 마이그레이션의 fm_biometric_review_queue 부분 인덱스와 정렬을 맞춘다.
             await cur.execute(
@@ -215,9 +221,9 @@ async def list_review_queue(
 async def get_review_card(
     request: Request, enrollment_id: str, user_id: str = Depends(require_user)
 ):
-    enrollment_id = _canonical_id(enrollment_id)
     async with get_conn(request) as conn:
         await _require_admin(conn, user_id, request)
+        enrollment_id = _canonical_id(enrollment_id)
         async with conn.cursor() as cur:
             await cur.execute(
                 f"select {ENROLLMENT_CARD_COLUMNS} from fm_biometric_enrollments where id = %s",
@@ -237,11 +243,11 @@ async def get_review_image(
     """신분증·등록 사진 스트림. `kind` 는 화이트리스트만 허용 — 클라이언트 문자열을
     R2 키에 절대 그대로 끼워 넣지 않는다. 응답은 항상 private·no-store(생체 이미지가
     프록시·CDN·브라우저 캐시 어디에도 남지 않게)."""
-    enrollment_id = _canonical_id(enrollment_id)
-    if kind not in IMAGE_KINDS:
-        raise _err("invalid_image_kind", "이미지 종류가 올바르지 않습니다.")
     async with get_conn(request) as conn:
         await _require_admin(conn, user_id, request)
+        enrollment_id = _canonical_id(enrollment_id)
+        if kind not in IMAGE_KINDS:
+            raise _err("invalid_image_kind", "이미지 종류가 올바르지 않습니다.")
         async with conn.cursor() as cur:
             if kind == "id_document":
                 await cur.execute(
@@ -293,7 +299,60 @@ async def _purge_id_document_best_effort(request: Request, enrollment_id: str) -
         logger.warning("id_document_purge_failed enrollment=%s", enrollment_id, exc_info=True)
 
 
-async def _resume_asset_build(request: Request, enrollment_id: str) -> str:
+class _ResumeRaceLost(Exception):
+    """승인 UPDATE 가 방금 확정한 (status='processing', review_status='approved') 조합을
+    재개-select 가 다시 못 찾았다 — 극히 드문 레이스(예: 다른 프로세스가 그 사이 행을
+    바꿈)의 신호일 뿐 이 요청 자체의 버그가 아니다. 일반 Exception 과 분리해서 로그
+    문구를 정확히 남긴다."""
+
+
+async def _bind_and_enqueue_locked(request: Request, enrollment_id: str) -> None:
+    """`_resume_asset_build` 의 실제 작업. 성공하면 조용히 리턴하고, 실패하면 예외를
+    던진다(호출자가 로그·가시성·응답 표기를 전담) — 이 함수 자체는 실패를 삼키지 않는다."""
+    settings = request.app.state.settings
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                select id::text as id, user_id::text as user_id, model_id::text as model_id,
+                       identity_method, match_scores, identity_ci_hash, identity_tx_digest,
+                       identity_name_masked, identity_birth_year, identity_contract_version,
+                       profile_image_r2_key, height_bucket, body_type
+                from fm_biometric_enrollments
+                where id = %s and status = 'processing' and review_status = 'approved'
+                for update
+                """,
+                (enrollment_id,),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                raise _ResumeRaceLost()
+            # 정상 완료 경로(process_enrollment_completion)와 동일한 두 관문 — 승인
+            # 시점과 재개 시점 사이(짧지만 0 은 아닌 창) 계정이 닫히거나 컷오버가
+            # 시작됐다면, 재개는 여기서 멈춰야 한다(fix round 1, IMPORTANT E).
+            await _assert_account_open(conn, row["user_id"])
+            await _reject_cutover_closed(conn)
+            method = row.get("identity_method") or "mid"
+            match_snapshot = row.get("match_scores") or {}
+            await bind_model_and_enqueue_asset_build(
+                cur,
+                user_id=row["user_id"],
+                enrollment_id=enrollment_id,
+                row=row,
+                match_snapshot=match_snapshot,
+                method=method,
+                identity_contract_version=row.get("identity_contract_version"),
+                # 재개 시점엔 원래 라이브니스 프레임이 이미 사라졌다 — 리뷰 대상은 항상
+                # fm_liveness_enabled=False 조합이라(Task7) 실질적 정보 손실은 없다.
+                liveness_provider_version="disabled_resume",
+                match_policy_version=settings.fm_match_policy_version,
+            )
+        await conn.commit()
+
+
+async def _resume_asset_build(
+    request: Request, enrollment_id: str, *, actor_user_id: str
+) -> tuple[str, str | None]:
     """승인 뒤 모델 바인딩 + 자산빌드 잡 큐잉을 재개한다.
 
     `process_enrollment_completion`(정상 완료 경로)이 심사가 필요 없을 때 쓰는 것과
@@ -302,62 +361,65 @@ async def _resume_asset_build(request: Request, enrollment_id: str) -> str:
     match_scores 를 그대로 넘긴다.
 
     실패(레이스로 행을 못 잠그거나, identity_replay/identity_recovery_required 같은
-    드문 충돌)해도 승인 결정 자체(review_status='approved')는 이미 커밋·감사된 뒤라
-    이 요청을 실패시키지 않는다 — 다만 그 경우 enrollment 는 status='processing' 에
-    남고, 이 코드베이스엔 아직 그 상태를 다시 집어 재시도하는 소비자가 없다(알려진
-    한계, task-8-report.md 참조). 반환값은 호출자가 응답 바디에 실어 보이는 실제
-    최종 상태다 — 성공하면 'asset_building', 실패하면 'processing'.
+    드문 충돌, 혹은 계정 폐쇄·컷오버)해도 승인 결정 자체(review_status='approved')는
+    이미 커밋·감사된 뒤라 이 요청을 실패시키지 않는다 — 다만 실패를 **조용히 삼키지
+    않는다**(fix round 1, IMPORTANT B): ERROR 로그(enrollment id + 원인) 남기고,
+    별도 감사 행(`enrollment_review_resume_failed`)을 써서 admin_audit_log 에서도
+    찾을 수 있게 하고, 반환값(`error_code`)을 호출자가 응답 바디에 그대로 실어 보내
+    승인 버튼을 누른 바로 그 관리자가 즉시 알게 한다. 이 코드베이스엔 아직
+    status='processing'+review_status='approved' 로 멈춘 행을 스캔해 자동 재시도하는
+    스윕이 없다 — 그래서 "찾을 수 있게" 가 곧 "복구할 수 있게" 는 아니라는 게 남은 한계다.
+
+    반환값: (최종 status, error_code). error_code 는 성공 시 None.
     """
-    settings = request.app.state.settings
+    error_code: str
+    try:
+        await _bind_and_enqueue_locked(request, enrollment_id)
+        _wake_dispatcher(request)
+        return "asset_building", None
+    except _ResumeRaceLost:
+        error_code = "race_lost"
+    except HTTPException as exc:
+        error_code = (
+            exc.detail.get("code") if isinstance(exc.detail, dict) else "resume_blocked"
+        )
+    except EnrollmentMappedError as exc:
+        error_code = exc.reason
+    except Exception as exc:
+        logger.error(
+            "enrollment_resume_failed enrollment=%s error_type=%s",
+            enrollment_id, type(exc).__name__, exc_info=True,
+        )
+        error_code = "unexpected_error"
+
+    logger.error(
+        "enrollment_resume_failed enrollment=%s reason=%s", enrollment_id, error_code
+    )
     try:
         async with get_conn(request) as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    select id::text as id, user_id::text as user_id, model_id::text as model_id,
-                           identity_method, match_scores, identity_ci_hash, identity_tx_digest,
-                           identity_name_masked, identity_birth_year, identity_contract_version,
-                           profile_image_r2_key, height_bucket, body_type
-                    from fm_biometric_enrollments
-                    where id = %s and status = 'processing' and review_status = 'approved'
-                    for update
-                    """,
-                    (enrollment_id,),
-                )
-                row = await cur.fetchone()
-                if row is None:
-                    logger.warning("enrollment_resume_race_lost enrollment=%s", enrollment_id)
-                    return "processing"
-                method = row.get("identity_method") or "mid"
-                match_snapshot = row.get("match_scores") or {}
-                await bind_model_and_enqueue_asset_build(
-                    cur,
-                    user_id=row["user_id"],
-                    enrollment_id=enrollment_id,
-                    row=row,
-                    match_snapshot=match_snapshot,
-                    method=method,
-                    identity_contract_version=row.get("identity_contract_version"),
-                    # 재개 시점엔 원래 라이브니스 프레임이 이미 사라졌다 — 리뷰 대상은 항상
-                    # fm_liveness_enabled=False 조합이라(Task7) 실질적 정보 손실은 없다.
-                    liveness_provider_version="disabled_resume",
-                    match_policy_version=settings.fm_match_policy_version,
-                )
+            await admin_guard.write_audit(
+                conn,
+                actor_user_id=actor_user_id,
+                action="enrollment_review_resume_failed",
+                target_type="enrollment",
+                target_id=enrollment_id,
+                note=error_code,
+            )
             await conn.commit()
-        _wake_dispatcher(request)
-        return "asset_building"
     except Exception:
-        logger.warning("enrollment_resume_failed enrollment=%s", enrollment_id, exc_info=True)
-        return "processing"
+        logger.error(
+            "enrollment_resume_failure_audit_failed enrollment=%s", enrollment_id, exc_info=True
+        )
+    return "processing", error_code
 
 
 @router.post("/enrollments/{enrollment_id}/approve", response_model=AdminReviewDecisionResult)
 async def approve_enrollment(
     request: Request, enrollment_id: str, user_id: str = Depends(require_user)
 ):
-    enrollment_id = _canonical_id(enrollment_id)
     async with get_conn(request) as conn:
         await _require_admin(conn, user_id, request)
+        enrollment_id = _canonical_id(enrollment_id)
         async with conn.cursor() as cur:
             # 상태 가드 UPDATE — 다른 관리자가 이미 처리했으면 0-row(레이스에서 진 쪽은 409,
             # 둘 다 "이겼다"고 믿는 일이 없다).
@@ -389,10 +451,13 @@ async def approve_enrollment(
             after={"reviewStatus": "approved", "status": "processing"},
         )
         await conn.commit()
-    final_status = await _resume_asset_build(request, enrollment_id)
+    final_status, resume_error = await _resume_asset_build(
+        request, enrollment_id, actor_user_id=user_id
+    )
     return JSONResponse(
         content=AdminReviewDecisionResult(
-            id=enrollment_id, review_status="approved", status=final_status
+            id=enrollment_id, review_status="approved", status=final_status,
+            asset_build_error=resume_error,
         ).model_dump(by_alias=True)
     )
 
@@ -404,14 +469,17 @@ async def reject_enrollment(
     body: AdminRejectBody,
     user_id: str = Depends(require_user),
 ):
-    enrollment_id = _canonical_id(enrollment_id)
-    reason = (body.reason or "").strip()
-    if not reason:
-        raise _err("reason_required", "거절 사유를 입력해 주세요.")
-    if len(reason) > 1000:
-        raise _err("reason_too_long", "거절 사유가 너무 깁니다.")
+    # body 자체가 JSON 스키마와 안 맞으면(reason 이 없거나 타입이 다르면) FastAPI 가 여기
+    # 도달하기 전에 422 를 낸다 — 그건 우리 관할이 아니다. 여기서 잡는 건 "모양은 맞는데
+    # 의미가 비어 있다"(빈 문자열/공백)는 400 이다. 두 상태 코드가 다른 건 의도적이다.
     async with get_conn(request) as conn:
         await _require_admin(conn, user_id, request)
+        enrollment_id = _canonical_id(enrollment_id)
+        reason = (body.reason or "").strip()
+        if not reason:
+            raise _err("reason_required", "거절 사유를 입력해 주세요.")
+        if len(reason) > 1000:
+            raise _err("reason_too_long", "거절 사유가 너무 깁니다.")
         async with conn.cursor() as cur:
             await cur.execute(
                 """

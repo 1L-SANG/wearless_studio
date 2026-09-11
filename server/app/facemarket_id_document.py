@@ -17,8 +17,11 @@ import 한다. 반대 방향은 금지).
 """
 
 import asyncio
+import logging
 
 from .agents.face_qc import QcFailed, load_face_qc  # signature: load_face_qc(settings, *, required=False)
+
+logger = logging.getLogger(__name__)
 
 ALLOWED_ID_MIME = {"image/jpeg", "image/png", "image/webp"}
 MAX_ID_BYTES = 12 * 1024 * 1024
@@ -95,8 +98,12 @@ async def purge_id_document(r2client, conn, enrollment_id: str) -> None:
             try:
                 await asyncio.to_thread(r2client.delete, key)
             except Exception:
-                # 객체 삭제 실패는 7일 배치 스윕이 잡는다. 상태는 진실대로 남긴다.
-                pass
+                # 객체 삭제 실패는 7일 배치 스윕이 잡는다. 상태는 진실대로 남긴다 —
+                # 다만 조용히 삼키면(리뷰 finding) 호출부(admin approve/reject)가 파기
+                # 실패를 볼 방법이 없다. 키·바이트는 절대 남기지 않는다(원시 PII 미저장).
+                logger.warning(
+                    "id_document_r2_delete_failed enrollment=%s", enrollment_id, exc_info=True
+                )
         await cur.execute(
             "update fm_biometric_enrollments "
             "set id_document_r2_key = null, id_document_purged_at = now() "

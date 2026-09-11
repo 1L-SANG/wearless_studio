@@ -1,3 +1,6 @@
+import asyncio
+import logging
+
 import numpy as np
 import pytest
 
@@ -137,3 +140,48 @@ def test_crop_jpeg_handles_edge_and_oversized_box():
     assert isinstance(oversized, bytearray)
     assert len(oversized) > 0
     assert bytes(oversized).startswith(b"\xff\xd8\xff")
+
+
+# ── purge_id_document: R2 삭제 실패 가시성 (Task8 fix round 1, 리뷰 finding D) ──────
+
+
+class _PurgeFakeCursor:
+    def __init__(self, key):
+        self._key = key
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def execute(self, sql, params=None):
+        return None
+
+    async def fetchone(self):
+        return {"id_document_r2_key": self._key}
+
+
+class _PurgeFakeConn:
+    def __init__(self, key):
+        self._cursor = _PurgeFakeCursor(key)
+
+    def cursor(self):
+        return self._cursor
+
+
+class _FailingDeleteR2:
+    def delete(self, key):
+        raise RuntimeError("r2 delete boom")
+
+
+def test_purge_id_document_logs_warning_on_delete_failure(caplog):
+    """예전엔 `except Exception: pass` 로 조용히 삼켜서(리뷰 finding), R2 삭제가 실패해도
+    호출부(admin approve/reject)가 볼 방법이 전혀 없었다. 이제 WARNING 으로 남긴다 —
+    단, 키·바이트는 절대 로그에 남기지 않는다(원시 PII 미저장 규율)."""
+    conn = _PurgeFakeConn("facemarket/enrollments/enr-1/iddoc/masked.jpg")
+    with caplog.at_level(logging.WARNING, logger="app.facemarket_id_document"):
+        asyncio.run(iddoc.purge_id_document(_FailingDeleteR2(), conn, "enr-1"))
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("id_document_r2_delete_failed" in message and "enr-1" in message for message in messages)
+    assert not any("masked.jpg" in message for message in messages)
