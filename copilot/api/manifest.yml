@@ -334,7 +334,10 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 켜기 전에 필요한 것: ① fm_model_loras 에 켜진 행(scripts/seed_model_lora.py)
   # ② RunPod 파드가 살아 있고 그 볼륨에 코드·가중치가 올라가 있음(scripts/face_render_sync.sh)
   # ③ 아래 두 시크릿의 SSM 값(copilot secret init) — 값 없이 배포하면 ECS 기동이 실패한다.
-  FACE_IDENTITY_ENABLED: "false"
+  # 2026-09-11 켠다. **LoRA 행(fm_model_loras)이 있는 모델에서만** 얼굴 패스가 걸린다 —
+  # 행이 0개면 프롬프트도 컷도 지금과 바이트 단위로 같고(테스트로 고정), 워밍 핑도 무시돼
+  # 파드가 켜지지 않는다. 즉 이 값을 켜는 것 자체로는 동작이 바뀌지 않는다.
+  FACE_IDENTITY_ENABLED: "true"
   # FACE_IDENTITY_BACKEND_URL·FACE_RUNPOD_POD_ID 는 여기 두지 않는다.
   # **파드 id 와 렌더 URL 의 정본은 DB(fm_face_render_pod)** 다 — 파드는 재고 때문에 바뀌고
   # (2026-09-10·11 실측: start "not enough free GPUs", create "no instances"), 바뀔 때마다
@@ -342,7 +345,9 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # (https://<id>-8000.proxy.runpod.net/render). 첫 파드는 어댑터가 만든다.
   # 두 값을 굳이 여기 두면 파드를 갈아탄 뒤 죽은 주소를 계속 찌른다.
   # 파드 온디맨드 기동/종료. off 면 RunPod 를 아예 호출하지 않는다(어댑터가 클라이언트도 안 만든다).
-  FACE_AUTOSCALE: "off"
+  # 2026-09-11 켠다. 수요(켜진 LoRA 소유자의 착장 컷 잡·워밍 핑)가 있을 때만 파드를 만들고,
+  # 유휴 10분이면 끈다. 수요가 0이면 RunPod 를 호출하지 않는다.
+  FACE_AUTOSCALE: "on"
   # detail-worker 와 같은 근거로 10분: 셀러가 컷을 연속으로 만들면 같은 파드를 다시 쓴다.
   # 깨어날 때마다 드는 비용 = 콜드스타트 + 10분 × $2.09/h.
   # 콜드스타트 실측(2026-09-10, RTX PRO 6000 96GB + 네트워크 볼륨): 파이프라인 적재만 472초,

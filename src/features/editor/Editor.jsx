@@ -1023,7 +1023,7 @@ export function Editor() {
     let alive = true;
     void warmFaceRender(modelId);
     const tick = () => {
-      void getFaceRenderStatus().then((status) => { if (alive) setFaceRender(status); });
+      void getFaceRenderStatus(modelId).then((status) => { if (alive) setFaceRender(status); });
     };
     tick();
     const timer = setInterval(tick, 30000);
