@@ -32,11 +32,18 @@ from .r2 import enrollment_id_document_key, enrollment_quarantine_key, ext_for_m
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket biometric enrollment"])
 
-BIOMETRIC_CONSENT_VERSION = "2026-09-v1"
+# ⚠️ 이 상수를 올리면 **라이브 카탈로그에서 기존 모델이 전부 빠진다.**
+# `facemarket.py` 의 `_CURRENT_CARD_ELIGIBILITY` 가 `e.consent_version = %s` 로 이 값을
+# 그대로 바인딩한다(모델 목록 :485, 라이선스 얼굴 :1317, 썸네일 :1361) — 이미 passed 인
+# 등록은 옛 버전 문자열을 들고 있고 백필 마이그레이션은 없다. `facemarket_cutover.py`
+# 의 legacy 스코프도 같은 값으로 뒤집힌다. 그래서 **동의 화면 문구가 실제로 바뀌어
+# 함께 나가는 배포에서만** 올린다. 2026-09-v1(간편인증 신분증 촬영본 고지)은 그 문구가
+# 아직 화면에 없어 되돌렸다 — 문구가 나갈 때 이 상수도 같이 올린다(최종리뷰 C2/I2b).
+BIOMETRIC_CONSENT_VERSION = "2026-08-v2"
 # 동의문 텍스트를 바꾸면 버전을 올린다. 프론트(Vercel)·백엔드(CI) 배포 시점이 어긋나는
 # 동안 stale_consent_version 400 으로 등록이 막히지 않게, 직전 버전도 함께 수락한다.
-# 2026-09-v1: 간편인증 경로의 신분증 촬영본 수집·파기 고지 추가(§7 개인정보·법무).
-# 이전 버전(2026-08-v2)을 진행 중 등록이 이 배포 중간에 끊기지 않게 남겨 둔다.
+# 2026-09-v1 은 **수락 목록에만** 남긴다 — 이미 그 버전으로 기록된 등록(브랜치 QA 중
+# 생성분 포함)이 깨지지 않게. 현재 버전이 아니므로 카탈로그 적격성엔 영향이 없다.
 ACCEPTED_CONSENT_VERSIONS = ("2026-09-v1", "2026-08-v2", "2026-08-v1")
 ENROLLMENT_TTL = timedelta(hours=24)
 _PHOTO_FENCE_NAMESPACE = 0x464D5048

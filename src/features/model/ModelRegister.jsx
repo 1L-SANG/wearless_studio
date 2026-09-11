@@ -60,7 +60,10 @@ const SIMPLE_AUTH_UNAVAILABLE_REASON = deriveSimpleAuthUnavailableReason(CX_AUTH
 // 화면을 그리지 않고 즉시 그 방법으로 진행한다 — 값을 이 위저드가 소비하는 유일한 지점이다.
 const IDENTITY_METHODS = parseIdentityMethods(import.meta.env.VITE_FM_IDENTITY_METHODS);
 const DEVICE_KEY = 'wearless.fmDeviceId';
-const CONSENT_VERSION = '2026-09-v1';
+// 서버 BIOMETRIC_CONSENT_VERSION 과 같은 값이어야 한다. 올리면 라이브 카탈로그에서
+// 기존 모델이 전부 빠지므로(server/app/facemarket_enrollment.py 상단 주석) 동의 화면
+// 문구가 실제로 바뀌어 함께 나갈 때만 올린다.
+const CONSENT_VERSION = '2026-08-v2';
 const FaceLivenessStep = lazy(() => import('./FaceLivenessStep.jsx'));
 
 let cxLoader;

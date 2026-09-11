@@ -356,8 +356,17 @@ def test_identity_uses_mid_contract_when_identity_method_is_mid(
 
 
 def test_accepts_new_and_previous_consent_versions():
-    from app.facemarket_enrollment import ACCEPTED_CONSENT_VERSIONS
+    from app.facemarket_enrollment import (
+        ACCEPTED_CONSENT_VERSIONS,
+        BIOMETRIC_CONSENT_VERSION,
+    )
 
+    # 2026-09-v1 은 **수락만** 한다 — 그 버전으로 이미 기록된 등록을 깨지 않기 위해서다.
     assert "2026-09-v1" in ACCEPTED_CONSENT_VERSIONS
     # 진행 중인 등록을 깨지 않는다.
     assert "2026-08-v2" in ACCEPTED_CONSENT_VERSIONS
+    # 현재 버전은 2026-08-v2 다. 이걸 올리면 `_CURRENT_CARD_ELIGIBILITY`(facemarket.py)
+    # 가 그 값을 그대로 바인딩하므로 옛 문자열을 들고 있는 기존 모델이 라이브 카탈로그
+    # ·라이선스 얼굴·썸네일에서 전부 빠진다(최종리뷰 C2). 동의 **문구**가 실제로 바뀌어
+    # 함께 나가는 배포에서만 올린다 — 그때 이 단언도 같이 올린다.
+    assert BIOMETRIC_CONSENT_VERSION == "2026-08-v2"

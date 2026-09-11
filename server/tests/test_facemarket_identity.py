@@ -507,6 +507,30 @@ def test_catalog_lists_verified_without_pii(fm, make_token):
     assert "r2_key" not in sql.split(" from fm_models m", 1)[0]
 
 
+def test_catalog_eligibility_survives_for_the_literal_shipped_consent_version(fm, make_token):
+    """이미 저장된 동의 버전 문자열 '2026-08-v2' 로도 카탈로그에 남아 있어야 한다.
+
+    위 테스트는 픽스처와 단언 양쪽에 `BIOMETRIC_CONSENT_VERSION` 을 바인딩한다 — 상수를
+    올리면 둘이 함께 움직이므로 **버전 범프로 라이브 카탈로그가 비는 사고를 구조적으로
+    잡지 못한다**. `_CURRENT_CARD_ELIGIBILITY` 가 `e.consent_version = %s` 로 그 상수를
+    그대로 바인딩하는데, 이미 passed 인 등록은 저장 당시 문자열을 들고 있고 백필은 없다
+    (최종리뷰 C2 — 같은 범프가 2026-08-29 에 한 번 조용히 터졌다). 그래서 여기서는
+    **리터럴**을 심는다: 상수를 올리는 순간 이 테스트가 먼저 터진다.
+    """
+    client, store, _ = fm
+    _seed_eligible_catalog(store)
+    enrollment = next(row for row in store["enrollments"] if row["id"] == ENROLLMENT_ID)
+    enrollment["consent_version"] = "2026-08-v2"
+
+    r = client.get("/v1/facemarket/models", headers=_headers(make_token))
+    assert r.status_code == 200, r.text
+    assert [card["id"] for card in r.json()] == [ELIGIBLE_MODEL_ID], (
+        "'2026-08-v2' 로 기록된 기존 모델이 카탈로그에서 사라졌다 — "
+        "BIOMETRIC_CONSENT_VERSION 을 올리면 배포 즉시 라이브 카탈로그가 빈다. "
+        "동의 문구가 실제로 바뀌어 함께 나가는 배포에서만 올린다."
+    )
+
+
 def test_catalog_cover_absent_degrades_to_placeholder(fm, make_token):
     """대표 이미지를 건너뛴 모델(profile 스텝은 선택)은 coverImageUrl=None.
 

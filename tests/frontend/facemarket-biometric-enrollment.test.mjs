@@ -159,7 +159,7 @@ test('reissuing from completed registration requires fresh consent before a new 
     assert.equal(submit.props.disabled, false);
     await submit.props.onClick();
     assert.equal(created.length, 1);
-    assert.equal(created[0].documentVersion, '2026-09-v1');
+    assert.equal(created[0].documentVersion, '2026-08-v2');
     assert.equal(created[0].enrollmentId, undefined, 'the old enrollment is never reused');
     assert.equal(harness.runtime.states[0], 'identity', 'a new enrollment must still go through identity verification');
     assert.equal(harness.runtime.states[1].id, 'new-enrollment');
