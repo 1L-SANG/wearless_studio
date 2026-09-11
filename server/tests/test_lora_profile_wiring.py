@@ -196,3 +196,27 @@ def test_editor_vary_omits_spec_without_enabled_row(monkeypatch):
     assert captured["lookup"] == MODEL_ID
     assert "face_identity_spec" not in captured["kwargs"]
     assert "ref_bg" in captured["kwargs"]  # 기존 인자는 그대로
+
+
+# ── 얼굴 패스 결과 기록(자산 메타 + job_events) ──
+def test_gen_cuts_passes_the_outcome_sink(monkeypatch):
+    """워커가 dict 를 주고 에이전트가 결과를 적는다 — generate() 반환값을 늘리지 않는 이유는
+    그 함수를 목(mock)으로 바꿔 쓰는 테스트가 많아서다."""
+    kwargs = _run_gen_cuts(
+        monkeypatch, real_attached=True, hair_profile=_HAIR, face_identity_spec=_SPEC)
+    assert isinstance(kwargs["face_pass_outcome"], dict)
+
+
+def test_gen_cuts_has_no_sink_without_a_lora(monkeypatch):
+    kwargs = _run_gen_cuts(monkeypatch, real_attached=True)
+    assert "face_pass_outcome" not in kwargs
+
+
+def test_worker_writes_face_pass_into_metadata_and_events():
+    """셀러 화면은 그대로다 — 원장에만 남는다."""
+    import pathlib
+
+    for path in ("app/workers/editor_image_job.py", "app/workers/detail_page_job.py"):
+        text = pathlib.Path(path).read_text(encoding="utf-8")
+        assert '"face_pass": face_pass_outcome["face_pass"]' in text, path
+        assert '"status": "face_pass"' in text, path

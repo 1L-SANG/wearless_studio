@@ -118,6 +118,7 @@ async def run_editor_image_job(app, job: dict) -> None:
         fm_license_row: dict | None = None
         fm_face_injected = False          # REAL 자산 2장이 실제 첨부됐을 때만 정산(미첨부 과금 방지)
         vary_lora_spec = None             # 변형 컷 얼굴 패스 근거(fm_model_loras) — 없으면 패스 안 걸림
+        face_pass_outcome: dict = {}      # applied / fallback:<reason> — 자산 메타·이벤트용
 
         if mode == "vary":
             source = payload.get("source") or {}
@@ -228,6 +229,9 @@ async def run_editor_image_job(app, job: dict) -> None:
                 _vary_kw = {"ref_bg": ref_bg_img}
                 if vary_lora_spec is not None:
                     _vary_kw["face_identity_spec"] = vary_lora_spec
+                    _vary_kw["face_pass_outcome"] = face_pass_outcome
+                    _vary_kw["face_pass_url_provider"] = (
+                        lambda: identity_source.active_face_backend_url(pool))
                 image, mime = await cut_variator.generate(
                     editor_settings, app.state.gemini, src_img, changes, cut_type, **_vary_kw)
             except GeminiError as e:
@@ -683,6 +687,14 @@ async def run_editor_image_job(app, job: dict) -> None:
                 )["_referenceDirectionCompatible"])
             generate_kwargs = {"analysis": analysis, "manifest": manifest}
             # 값이 없으면 키 자체를 넣지 않는다 — 기존 프롬프트·기존 목(mock) 시그니처를 깨지 않는다.
+            # 얼굴 패스 결과(applied / fallback:<reason>)를 받아 자산 메타와 이벤트에 남긴다.
+            face_pass_outcome: dict = {}
+            if fm_lora_spec is not None:
+                generate_kwargs["face_pass_outcome"] = face_pass_outcome
+                # 대기 중에도 현재 파드를 다시 묻는다 — 잡 시작 때 읽은 주소를 붙들면
+                # 파드가 생기기 전에 폴백하거나 교체된 뒤 죽은 주소를 계속 찌른다.
+                generate_kwargs["face_pass_url_provider"] = (
+                    lambda: identity_source.active_face_backend_url(pool))
             if hair_profile is not None:
                 generate_kwargs["hair_profile"] = hair_profile
             if face_shape_profile is not None:
@@ -842,6 +854,10 @@ async def run_editor_image_job(app, job: dict) -> None:
         )
         written_key = key
         written_cleanup_intent_id = cleanup_intent_id
+        if face_pass_outcome.get("face_pass"):
+            # 셀러 화면은 그대로다. 이 한 줄이 "그 컷 얼굴이 어디서 왔나"를 원장에 남긴다.
+            await _emit(app.state.pool, job_id, "step",
+                        {"status": "face_pass", "result": face_pass_outcome["face_pass"]})
         w, h = _image_dims(image)
         image_row = {
             "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
@@ -857,6 +873,10 @@ async def run_editor_image_job(app, job: dict) -> None:
             "metadata": {
                 "facemarket_real_derived": fm_face_injected,
                 "cut_type": cut_type,
+                # 이 컷의 얼굴이 LoRA 로 바뀐 것인지, 폴백으로 생성 모델 얼굴 그대로인지.
+                # 셀러 화면은 달라지지 않는다 — 사후에 "왜 이 컷만 다른가"를 우리가 찾기 위한 기록.
+                **({"face_pass": face_pass_outcome["face_pass"]}
+                   if face_pass_outcome.get("face_pass") else {}),
             },
         }
 

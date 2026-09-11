@@ -261,8 +261,13 @@ class RunpodAutoscaleAdapter:
             pod_id = await self._pod_store.get_active()
         pod_id = pod_id or self._pod_id
         if not pod_id:
+            # ★ 파드가 없는 건 **정상 상태**다(설계상 수요가 생기면 그때 만든다).
+            # 여기서 None 을 주면 공용 reconciler 가 ECS 의 "서비스 없음" 으로 읽고 자동 켜기를
+            # 영구 비활성한다 — 2026-09-11 운영에서 실제로 그렇게 꺼졌다(파드 행 0개).
+            # 그래서 **빈 타깃**을 준다: describe 는 0/0, set_desired(1) 이 그때 만든다.
             log.info("face autoscale: 등록된 파드가 없다 — 수요가 생기면 새로 만든다")
-            return None
+            self._target = RunpodTarget("")
+            return self._target
         self._target = RunpodTarget(pod_id)
         return self._target
 
@@ -272,6 +277,9 @@ class RunpodAutoscaleAdapter:
     # ── 상태 ──
     async def describe(self, target: RunpodTarget) -> ServiceState:
         """desired 는 파드 API, running 은 렌더 서비스 /healthz 가 정본(위 상수 주석의 실측)."""
+        if not target.pod_id:
+            # 아직 파드가 없다 — 꺼져 있는 것과 같다. 수요가 있으면 set_desired(1) 이 만든다.
+            return ServiceState(desired=0, running=0, pending=0, oldest_started_at=None)
         pod = await asyncio.to_thread(self._get_sync, f"/pods/{target.pod_id}")
         # 헬스 주소는 **지금 보는 그 파드**에서 계산한다. init 때 env 로 굳혀 두면 파드를
         # 갈아탄 뒤에도 죽은 주소를 찔러 "안 떠 있다"가 영원히 이어진다.
@@ -330,12 +338,12 @@ class RunpodAutoscaleAdapter:
         실패했고, 그 상태로는 얼굴 패스가 영영 안 돈다. 생성은 한 주기에 1번만 한다.
         """
         if int(count) <= 0:
-            if target is None:
-                return
+            if target is None or not target.pod_id:
+                return          # 없는 파드는 끌 것도 없다
             await asyncio.to_thread(self._post_sync, f"/pods/{target.pod_id}/stop")
             log.info("face autoscale: pod %s stop", target.pod_id)
             return
-        if target is not None:
+        if target is not None and target.pod_id:
             try:
                 code_env = self._code_env()
                 if code_env:
@@ -352,7 +360,7 @@ class RunpodAutoscaleAdapter:
         if self._created_this_cycle:
             raise RuntimeError("pod create already attempted this cycle")
         self._created_this_cycle = True
-        await self._create_pod(replacing=target)
+        await self._create_pod(replacing=target if (target and target.pod_id) else None)
 
     def _code_env(self) -> dict[str, str]:
         """파드에 넣을 코드 전달 env. **호출 직전에** presigned 를 만든다(만료가 짧다).

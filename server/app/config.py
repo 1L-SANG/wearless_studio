@@ -409,6 +409,9 @@ class Settings:
     face_autoscale_start_grace_minutes: int = 8
     #: 파드 볼륨에 올라가 있어야 할 코드 버전(git sha). 다르면 **경고 로그만** — 컷은 막지 않는다.
     face_render_code_version: str | None = None
+    #: 얼굴 패스 전에 파드가 깨어나길 기다리는 최대 시간(초). 0 이면 기다리지 않는다.
+    #: 실측 콜드스타트 ≈2분 + reconciler 주기 60초 → 기본 300.
+    face_pass_wait_seconds: int = 300
     # ---- 이미지 실비 계측(내부용) ----
     # false 면 image_usage_events 적재를 끄고 로그만 남긴다.
     # **기본값은 app_env 가 정한다**(load_settings → _image_usage_persist): production 만 on.
@@ -710,6 +713,7 @@ def load_settings() -> Settings:
         face_runpod_api_key=os.getenv("RUNPOD_API_KEY") or None,
         face_autoscale_start_grace_minutes=_int_env("FACE_AUTOSCALE_START_GRACE_MINUTES", 8),
         face_render_code_version=os.getenv("FACE_RENDER_CODE_VERSION") or None,
+        face_pass_wait_seconds=_int_env("FACE_PASS_WAIT_SECONDS", 300),
         fm_provenance_enabled=(
             os.getenv("FM_PROVENANCE_ENABLED", "false").lower() == "true"
         ),

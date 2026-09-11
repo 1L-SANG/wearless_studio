@@ -296,6 +296,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             # 큐 대기 중인 컷이 전부 '생성 중'으로 보이지 않는다(editor_wait_dev_spec §2-1).
             await _emit(app.state.pool, job_id, "step",
                         {"blockId": b.get("id"), "status": "cut_start"})
+            face_pass_outcome: dict = {}
             if confirmed_packet is not None:
                 generate_kwargs = {
                     "confirmed_prompt_input": confirmed_packet.prompt_input,
@@ -316,6 +317,12 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     generate_kwargs["face_shape_profile"] = face_shape_profile
                 if real_identity_attached and face_identity_spec is not None:
                     generate_kwargs["face_identity_spec"] = face_identity_spec
+                    # 얼굴 패스 결과(applied / fallback:<reason>) — 자산 메타·이벤트용.
+                    generate_kwargs["face_pass_outcome"] = face_pass_outcome
+                    from ..agents import identity_source as _identity_source
+
+                    generate_kwargs["face_pass_url_provider"] = (
+                        lambda: _identity_source.active_face_backend_url(app.state.pool))
             # 컷 생성 재시도 — 안전필터·응답 누락처럼 "다시 부르면 달라질 수 있는" 실패는
             # 한 번 더 시도한다. 빈 슬롯은 셀러에게 그냥 못 만든 페이지이고, 그 값은 우리가
             # 흡수해야 한다(오너 8/15). ValueError(잘못된 cutType 등)는 결정적이라 제외.
@@ -602,6 +609,11 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
             w, h = _dims(img)
             # 대기 화면 프리뷰 — asset 행은 finalize에서만 생기므로 /file 경로는 아직 404다.
             # REAL FaceMarket 컷은 최종 권한 펜스 전까지 출력 위치를 이벤트 원장에 남기지 않는다.
+            if face_pass_outcome.get("face_pass"):
+                # 셀러 화면은 그대로다 — "그 컷 얼굴이 어디서 왔나"를 원장에 남기는 한 줄.
+                await _emit(app.state.pool, job_id, "step",
+                            {"blockId": b.get("id"), "status": "face_pass",
+                             "result": face_pass_outcome["face_pass"]})
             step = {"blockId": b.get("id"), "status": "cut_done",
                     "width": w, "height": h}
             if not real_identity_attached:
@@ -619,6 +631,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                  "metadata": {
                      "facemarket_real_derived": real_identity_attached,
                      "cut_type": b.get("cutType"),
+                     **({"face_pass": face_pass_outcome["face_pass"]}
+                        if face_pass_outcome.get("face_pass") else {}),
                  }},
                 has_face,
                 garment_qc,

@@ -85,6 +85,8 @@ async def generate(
     *,
     ref_bg: InlineImage | None = None,
     face_identity_spec: face_identity.FaceIdentitySpec | None = None,
+    face_pass_outcome: dict | None = None,
+    face_pass_url_provider=None,
 ) -> tuple[bytes, str]:
     """변형 컷 1장 생성. 실패 시 GeminiError를 그대로 전파(호출자가 job 실패 처리).
     ref_bg 는 배경 레퍼런스(첨부 2번) — 배경·조명·무드만 반영(ADR-0004).
@@ -105,5 +107,7 @@ async def generate(
     if (face_identity_spec is not None
             and getattr(settings, "face_identity_enabled", False)
             and cut_type in _WORN_CUTS):
-        image, mime = await face_identity.apply_face_pass(settings, image, mime, face_identity_spec)
+        image, mime = await face_identity.apply_face_pass(
+            settings, image, mime, face_identity_spec, outcome=face_pass_outcome,
+            url_provider=face_pass_url_provider)
     return image, mime

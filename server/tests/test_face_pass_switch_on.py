@@ -97,12 +97,34 @@ def test_autoscale_on_does_not_touch_runpod_without_demand():
             calls.append(("POST", path))
             raise AssertionError("수요가 없으면 파드를 만들지 않는다")
 
+    import types
+
+    from app.services.sam_autoscale import DemandSnapshot
+    from app.workers.sam_autoscaler import SamAutoscaler
+
+    class _Repo:
+        async def try_advisory_lock(self, conn, key):
+            return True
+
+    async def _no_demand(repo, conn):
+        return DemandSnapshot(0, None, None)
+
     adapter = RunpodAutoscaleAdapter(
         _settings(face_autoscale="on", face_runpod_api_key="k", face_runpod_pod_id=None),
         client=_Client(), pod_store=None)
-    # 등록된 파드가 없다 → discover 는 None, reconciler 는 거기서 멈춘다(아래 want=0 이므로)
-    assert asyncio.run(adapter.discover()) is None
-    assert calls == []
+    # 등록된 파드가 없는 건 **정상 상태**다 — discover 는 빈 타깃을 준다(2026-09-11 보강 6).
+    # None 을 주면 공용 reconciler 가 ECS 의 "서비스 없음" 으로 읽고 자동 켜기를 영구 비활성한다.
+    target = asyncio.run(adapter.discover())
+    assert target.pod_id == ""
+    # 진짜 보장은 이것 — 한 주기를 실제로 돌려도 RunPod 를 한 번도 부르지 않는다.
+    app = types.SimpleNamespace(state=types.SimpleNamespace(
+        settings=_settings(face_autoscale="on")))
+    scaler = SamAutoscaler(app, adapter, demand_fn=_no_demand,
+                           idle_attr="face_autoscale_idle_minutes", name="face-render",
+                           lock_key="face_autoscaler")
+    assert asyncio.run(scaler.reconcile_once(_Repo(), None)) == "noop"
+    assert calls == []                       # 조회·생성 모두 0건
+    assert scaler._disabled_reason is None   # 비활성되지도 않는다
 
 
 def test_warm_ping_ignores_models_without_an_enabled_lora():
