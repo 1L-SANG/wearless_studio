@@ -1007,9 +1007,6 @@ class AdminFakeCursor:
                 r
                 for r in store.enrollments
                 if r["status"] == "processing" and r.get("review_status") == "approved"
-                and not any(
-                    (j.get("payload") or {}).get("enrollmentId") == r["id"] for j in store.jobs
-                )
             ]
             self._many = [{"id": r["id"]} for r in pending[:limit]]
             return

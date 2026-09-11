@@ -627,11 +627,10 @@ async def sweep_stalled_review_approvals(app, *, limit: int = 20) -> int:
                 from fm_biometric_enrollments e
                 where e.status = 'processing' and e.review_status = 'approved'
                   and e.reviewed_at < now() - interval '{REVIEW_RESUME_RETRY_AFTER}'
-                  and not exists (
-                      select 1 from jobs j
-                      where j.kind = 'fm_model_asset_build'
-                        and j.payload->>'enrollmentId' = e.id::text
-                  )
+                -- jobs 테이블을 뒤지는 anti-join 은 일부러 안 건다: 바인딩 UPDATE(status를
+                -- 'asset_building' 으로)와 잡 INSERT 가 **같은 트랜잭션**이라, 잡이 있으면
+                -- status 는 이미 'processing' 이 아니다. 위 술어만으로 중복 큐잉이 막히고,
+                -- 인덱스 없는 jobs 전체 스캔을 60초마다 도는 일도 없다.
                 order by e.reviewed_at
                 limit %s
                 """,
