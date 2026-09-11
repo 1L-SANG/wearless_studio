@@ -26,21 +26,29 @@ export function RequireDevice() {
   const [error, setError] = useState(null);
   const [label, setLabel] = useState(() => defaultDeviceLabel());
   const [busy, setBusy] = useState(false);
+  const [checking, setChecking] = useState(false);
   const alive = useRef(true);
+  // 늦게 도착한 옛 응답이 새 상태를 덮어쓰지 않게(폴링·지금확인·재등록 경합) — 요청마다
+  // 순번을 매기고, 응답이 왔을 때 그 사이 더 최신 요청이 없었는지 확인한다.
+  const checkSeq = useRef(0);
 
   const check = useCallback(async () => {
+    const seq = ++checkSeq.current;
+    setChecking(true);
     setError(null);
     let res;
     try {
       res = await adminDeviceMe();
     } catch (e) {
-      if (!alive.current) return;
+      if (alive.current && seq === checkSeq.current) setChecking(false);
+      if (!alive.current || seq !== checkSeq.current) return;
       if (e?.status === 403 && e?.code === 'forbidden') { setPhase('forbidden'); return; }
       setError(e.message || '기기 상태를 확인하지 못했어요.');
       setPhase('error');
       return;
     }
-    if (!alive.current) return;
+    if (alive.current && seq === checkSeq.current) setChecking(false);
+    if (!alive.current || seq !== checkSeq.current) return;
     setMe(res);
     const token = readDeviceToken();
     if (res.gate === 'off') { setPhase('pass'); return; }
@@ -91,22 +99,28 @@ export function RequireDevice() {
         label: label.trim() || null,
         userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : null,
       });
+      if (!alive.current) return; // 응답 오기 전에 언마운트됐으면 스토리지도 건드리지 않는다
       writeDeviceToken(res.token);
       await check();
     } catch (e) {
+      if (!alive.current) return;
       if (e?.code === 'too_many_pending') {
         setError('승인 대기 중인 요청이 너무 많아요. 다른 관리자에게 기존 요청을 정리해 달라고 하세요.');
       } else {
         setError(e.message || '기기 등록에 실패했어요.');
       }
     } finally {
-      setBusy(false);
+      if (alive.current) setBusy(false);
     }
   };
 
   const reset = () => {
+    // 지금 날아가고 있는 옛 check() 응답이 재등록 화면을 다시 대기/회수로 덮어쓰지 않게 순번을 올린다.
+    checkSeq.current += 1;
+    setChecking(false);
     clearDeviceToken();
     setMe(null);
+    setError(null);
     setPhase('register');
   };
 
@@ -169,9 +183,8 @@ export function RequireDevice() {
           </CardHeader>
           <CardContent className="flex flex-col gap-3 text-sm">
             <div><span className="text-muted-foreground">기기 이름</span> · {me?.label || '-'}</div>
-            {error && <p className="text-destructive">{error}</p>}
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={check}>지금 확인</Button>
+              <Button variant="outline" size="sm" onClick={check} disabled={checking}>지금 확인</Button>
               <Button variant="ghost" size="sm" onClick={reset}>다른 이름으로 다시 등록</Button>
             </div>
           </CardContent>

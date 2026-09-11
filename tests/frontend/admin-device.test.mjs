@@ -116,6 +116,8 @@ test('RequireDevice 는 서버의 gate 를 단일 진실로 삼고 4상태를 �
   assert.ok(src.includes('DEVICE_REJECTED_EVENT'));
   // 실패는 화면에 남는 에러 + 재시도(전체 게이팅 금지)
   assert.ok(src.includes('다시 시도'));
+  // 폴링·지금확인·재등록이 겹칠 때 늦게 온 옛 응답이 새 상태를 덮어쓰지 않는 순번 가드
+  assert.ok(src.includes('checkSeq'), '응답 순서 가드가 없다');
 });
 
 test('RequireDevice 의 too_many_pending 은 안내 문구가 따로 있다', () => {
