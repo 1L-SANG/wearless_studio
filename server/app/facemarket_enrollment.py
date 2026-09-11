@@ -902,11 +902,34 @@ async def verify_enrollment_identity(
         raise _err("token_required", "인증 토큰이 없습니다.")
     settings: Settings = request.app.state.settings
     token_digest = f"cxsha256:{hashlib.sha256(token.encode()).hexdigest()}"
-    contract = cx_identity.get_oacx_biometric_contract(settings)
+    # 계약은 클라가 아니라 이 등록에 저장된 identity_method 로 고른다 — 클라가 토큰에
+    # 태울 파서를 스스로 고르지 못하게 한다. fetch_trans(제공자 네트워크 호출) 앞에서,
+    # 락 없이 가볍게 읽는다: 아래 소유·상태 검사(for update)는 fetch_trans *뒤에* 있어서
+    # 거기 얹으면 네트워크 왕복 동안 행 잠금을 쥐게 된다. 여기서 못 찾아도 에러 내지
+    # 않는다 — 소유권의 단일 진실은 아래 for update 조회이고, 이건 계약 선택용 힌트일
+    # 뿐이다(찾지 못하면 mid 로 진행하다 아래에서 정식으로 404 난다 — 오늘과 동일한
+    # 순서: 존재하지 않는 enrollment 도 지금처럼 fetch_trans 를 먼저 태운다).
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select identity_method from fm_biometric_enrollments "
+                "where id = %s and user_id = %s",
+                (enrollment_id, user_id),
+            )
+            method_row = await cur.fetchone()
+    # NULL(마이그레이션 이전 행) 도 'mid' 로 취급한다.
+    method = (method_row or {}).get("identity_method") or "mid"
+    try:
+        contract = cx_identity.get_oacx_biometric_contract(settings, method=method)
+    except cx_identity.OacxBiometricError as exc:
+        raise _err(exc.reason, "본인확인을 지금 진행할 수 없어요.")
     try:
         # CI·이름·생년월일은 trans/{token}(서버발 조회)에서만 온다 — 서버검증 완료.
         trans = await cx_identity.fetch_trans(settings.cx_trans_base_url, token)
-        evidence = cx_identity.parse_oacx_biometric_evidence(trans, contract=contract)
+        if method == "simple_auth":
+            evidence = cx_identity.parse_simple_auth_evidence(trans, contract=contract)
+        else:
+            evidence = cx_identity.parse_oacx_biometric_evidence(trans, contract=contract)
     except cx_identity.OacxBiometricError as exc:
         raise _err(exc.reason, "본인확인에 실패했어요. 다시 시도해 주세요.")
     except cx_identity.CxIdentityError:

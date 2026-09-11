@@ -211,3 +211,118 @@ def test_create_mid_unchanged(enrollment_client_factory):
     assert response.status_code == 201
     assert response.json()["status"] == "identity_pending"
     assert response.json()["identityMethod"] == "mid"
+
+
+# ── Task6: 본인확인 라우트의 계약 분기 ────────────────────────────────────────────────
+
+def _create_simple_auth_enrollment(client, store):
+    """simple_auth 등록을 만들고 identity_pending 으로 밀어 넣는다.
+
+    실제 서비스에서는 촬영 라우트(Task4)가 id_capture_pending → identity_pending
+    전이를 수행하지만, 이 테스트는 /identity 라우트의 계약 분기만 검증하므로 그
+    단계는 건너뛰고 상태만 직접 바꾼다 — test_facemarket_biometric_enrollment.py 의
+    `_fast_forward_identity` 와 같은 결의 지름길이다.
+    """
+    response = client.post(
+        "/v1/facemarket/enrollments",
+        json={
+            "deviceId": "d" * 40,
+            "biometricConsent": {"accepted": True, "documentVersion": "2026-08-v2"},
+            "identityMethod": "simple_auth",
+        },
+    )
+    assert response.status_code == 201, response.text
+    enrollment_id = response.json()["id"]
+    row = next(item for item in store.enrollments if item["id"] == enrollment_id)
+    row["status"] = "identity_pending"
+    return enrollment_id
+
+
+def test_identity_uses_simple_auth_contract_for_simple_auth_method(
+    enrollment_client_factory, monkeypatch
+):
+    client, store, settings = enrollment_client_factory(
+        fm_identity_methods=("mid", "simple_auth"),
+        fm_oacx_simple_auth_contract="simple-auth-v1",
+    )
+    enrollment_id = _create_simple_auth_enrollment(client, store)
+    captured = {}
+
+    async def fake_fetch(base_url, token):
+        captured["called"] = True
+        return {"ci": "CI-1", "name": "홍길동", "birth": "19900101", "txId": "t1"}
+
+    monkeypatch.setattr(cx_identity, "fetch_trans", fake_fetch)
+    response = client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/identity",
+        json={"token": "tok-1"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "photos_pending"
+    assert captured.get("called")
+    row = next(item for item in store.enrollments if item["id"] == enrollment_id)
+    assert row["identity_contract_version"] == "simple-auth-v1"
+    # 초상 없이도 CI·이름·생년월일만으로 게이트가 통과해야 한다.
+    assert row["identity_ci_hash"]
+    assert row["identity_birth_year"] == "1990"
+
+
+def test_identity_blocked_when_simple_auth_contract_disabled(
+    enrollment_client_factory, monkeypatch
+):
+    client, store, settings = enrollment_client_factory(
+        fm_identity_methods=("mid", "simple_auth"),
+        fm_oacx_simple_auth_contract="disabled",
+    )
+    enrollment_id = _create_simple_auth_enrollment(client, store)
+
+    async def fail_if_called(base_url, token):
+        raise AssertionError("계약이 비활성화됐으면 fetch_trans 를 호출하면 안 된다")
+
+    monkeypatch.setattr(cx_identity, "fetch_trans", fail_if_called)
+    response = client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/identity",
+        json={"token": "tok-1"},
+    )
+    assert response.status_code == 400
+    # main.py 의 http_exception_handler 가 {"error": {...}} 로 감싼다(이 레포 관례).
+    assert response.json()["error"]["code"] == "oacx_contract_unavailable"
+    row = next(item for item in store.enrollments if item["id"] == enrollment_id)
+    assert row["status"] == "identity_pending"
+
+
+def test_identity_uses_mid_contract_when_identity_method_is_mid(
+    enrollment_client_factory, monkeypatch
+):
+    """기존 mid 경로 불변: identity_method='mid' 는 오늘과 같은 계약·파서로 간다."""
+    client, store, settings = enrollment_client_factory(
+        fm_oacx_contract_mode="dev-mock-v1",
+    )
+    response = client.post(
+        "/v1/facemarket/enrollments",
+        json={
+            "deviceId": "d" * 40,
+            "biometricConsent": {"accepted": True, "documentVersion": "2026-08-v2"},
+        },
+    )
+    assert response.status_code == 201, response.text
+    enrollment_id = response.json()["id"]
+    assert store.enrollments[0]["status"] == "identity_pending"
+
+    async def fake_fetch(base_url, token):
+        return {"ci": "CI-2", "nm": "김철수", "birth": "19900101", "txId": "t2"}
+
+    monkeypatch.setattr(cx_identity, "fetch_trans", fake_fetch)
+    response = client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/identity",
+        json={"token": "tok-2"},
+    )
+    assert response.status_code == 200, response.text
+    row = next(item for item in store.enrollments if item["id"] == enrollment_id)
+    assert (
+        row["identity_contract_version"]
+        == cx_identity.DEV_MOCK_OACX_BIOMETRIC_CONTRACT.version
+    )
+    # 이 행은 identity_method 컬럼 자체가 없는 마이그레이션-이전 모양이다(create_enrollment
+    # 의 기본 INSERT 분기는 그 키를 안 채운다) — NULL 도 'mid' 로 취급됨을 같이 증명한다.
+    assert "identity_method" not in row

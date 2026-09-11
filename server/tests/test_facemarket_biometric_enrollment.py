@@ -774,6 +774,22 @@ class FakeCursor:
                     cooldown_until=cooldown_until or row.get("cooldown_until"),
                 )
                 self.result = {"status": "failed"}
+        elif query.startswith(
+            "select identity_method from fm_biometric_enrollments where id"
+        ):
+            # /identity 게이트가 계약 선택을 위해 fetch_trans 앞에서 락 없이 읽는 조회
+            # (Task6). mid 로 만들어진 행은 identity_method 키 자체가 없다 — 그대로
+            # None 을 돌려줘 라우트가 'mid' 로 폴백하게 한다(NULL=mid 와 동일한 모양).
+            enrollment_id, user_id = params
+            row = next(
+                (
+                    item
+                    for item in self.store.enrollments
+                    if item["id"] == enrollment_id and item["user_id"] == user_id
+                ),
+                None,
+            )
+            self.result = {"identity_method": row.get("identity_method")} if row else None
         elif (
             query.startswith("select status, application_id")
             and "fm_biometric_enrollments where id" in query
