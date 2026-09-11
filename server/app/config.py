@@ -326,6 +326,7 @@ class Settings:
     fm_side_live_threshold: float | None = None
     fm_match_policy_version: str | None = None
     fm_ci_pepper: str | None = None  # HMAC-SHA256(CI, pepper) dedup용 secret. 없으면 verify 503
+    fm_payout_account_key: str | None = None  # 계좌번호 Fernet 암호화 키. 없으면 계좌 API 503
     # 상세페이지 착용컷 인물 일관성(AG-06): 실존 모델을 골랐는데 facemarket off 라 해석 불가하면
     # 컷마다 인물 참조가 0장이 되어 사람이 랜덤이 된다 → 결정적 가상모델로 폴백해 전 컷 동일 인물
     # 보장. 빈 문자열이면 폴백 비활성(기존 동작). REAL/LEGACY 경로는 폴백하지 않는다(이중 인물 방지).
@@ -658,6 +659,7 @@ def load_settings() -> Settings:
             os.getenv("PERSONALIZATION_ENABLED", "false").lower() == "true"
         ),
         fm_ci_pepper=os.getenv("FM_CI_PEPPER") or None,
+        fm_payout_account_key=os.getenv("FM_PAYOUT_ACCOUNT_KEY") or None,
         toss_secret_key=os.getenv("TOSS_SECRET_KEY") or None,
         toss_api_base=os.getenv("TOSS_API_BASE", "https://api.tosspayments.com").rstrip("/"),
         toss_confirm_timeout=float(os.getenv("TOSS_CONFIRM_TIMEOUT", "15")),

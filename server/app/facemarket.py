@@ -1687,6 +1687,8 @@ class SettlementCard(CamelModel):
     product_name: str | None = None
     seller_name: str | None = None
     reported: bool = False
+    publication_id: str | None = None
+    project_id: str | None = None
 
 
 class SettlementSummary(CamelModel):
@@ -2083,6 +2085,7 @@ async def list_settlements(request: Request, user_id: str = Depends(require_user
         async with conn.cursor() as cur:
             await cur.execute(
                 f"""select {columns},
+                           publication.id::text as publication_id, j.project_id::text as project_id,
                            coalesce(nullif(p.name, ''), nullif(pr.title, '')) as product_name,
                            nullif(seller.display_name, '') as seller_name,
                            exists (select 1 from fm_usage_reports ur
@@ -2094,11 +2097,45 @@ async def list_settlements(request: Request, user_id: str = Depends(require_user
                     left join projects pr on pr.id = j.project_id
                     left join products p on p.project_id = pr.id
                     left join profiles seller on seller.user_id = pr.user_id
+                    left join lateral (
+                        select pub.id from fm_publication_records pub
+                         where pub.project_id = j.project_id and pub.model_id = m.id
+                           and pub.kind = 'long_png' and pub.revoked_at is null
+                           and pub.r2_key is not null
+                         order by pub.created_at desc, pub.id desc limit 1
+                    ) publication on true
                     where m.user_id = %s
                     order by st.created_at desc limit 200""",
                 (user_id,),
             )
             return await cur.fetchall()
+
+
+@router.get("/model/publications/{publication_id}/preview-url")
+async def model_publication_preview_url(
+    publication_id: str, request: Request, response: Response,
+    user_id: str = Depends(require_user),
+):
+    try:
+        publication_id = str(uuid.UUID(publication_id))
+    except (ValueError, TypeError, AttributeError):
+        raise _err("not_found", "발행 기록을 찾을 수 없어요.", status=404) from None
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """select p.kind, p.r2_key
+                     from fm_publication_records p join fm_models m on m.id = p.model_id
+                    where p.id = %s and m.user_id = %s""",
+                (publication_id, user_id),
+            )
+            row = await cur.fetchone()
+    if row is None or row["kind"] not in ("long_png", "block_png") or not row["r2_key"]:
+        raise _err("not_found", "발행 기록을 찾을 수 없어요.", status=404)
+    r2 = getattr(request.app.state, "r2", None)
+    if r2 is None:
+        raise _err("storage_unconfigured", "미리보기를 준비 중이에요.", status=503)
+    response.headers["Cache-Control"] = "no-store"
+    return {"url": r2.preview_url(row["r2_key"], 600), "expiresIn": 600}
 
 
 @router.get(

@@ -1626,6 +1626,12 @@ def test_config_reports_liveness_not_required(liveness_off_client):
     assert res.status_code == 200, res.text
     # applicationRequired 는 기본 off(기존 즉시 등록). 지원서 게이트는 별도 플래그로 켠다.
     assert res.json() == {
+        "payoutBanks": [
+            {"code": "shinhan", "name": "신한은행"}, {"code": "kb", "name": "국민은행"},
+            {"code": "woori", "name": "우리은행"}, {"code": "hana", "name": "하나은행"},
+            {"code": "nh", "name": "NH농협은행"}, {"code": "ibk", "name": "IBK기업은행"},
+            {"code": "kakao", "name": "카카오뱅크"}, {"code": "toss", "name": "토스뱅크"},
+        ],
         "photoSlots": [
             *[f"face{i:02d}" for i in range(1, 9)],
             *[f"torso{i:02d}" for i in range(1, 6)],

@@ -368,6 +368,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
+        # 계좌 입력 오류에는 원문 body가 포함될 수 있어 상세 입력을 반환하지 않아요.
+        if request.url.path.rstrip("/") == "/v1/facemarket/payout-account":
+            return JSONResponse(status_code=400, content={"error": {
+                "code": "invalid_payout_account",
+                "message": "은행, 계좌번호와 예금주를 확인해 주세요.",
+            }}, headers={"Cache-Control": "no-store"})
         # exc.errors()의 ctx에 raw 예외 객체(ValueError 등)가 섞여 json.dumps가 깨지므로
         # FastAPI 기본 핸들러처럼 jsonable_encoder로 직렬화 가능한 형태로 강제한다.
         return JSONResponse(
@@ -459,6 +465,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from .facemarket_chain import FaceMarketChain
 
         app.include_router(facemarket_router)
+        from .facemarket_payout import router as payout_router
+
+        app.include_router(payout_router)
         # 온체인 정산 recorder(선택과제2). 체인 env 미설정이면 None → 정산 훅 no-op.
         app.state.fm_chain = FaceMarketChain.from_settings(settings)
         # 모델 지원서·관리자 검토(리뉴얼). 지원서 제출·검토는 생체등록 스택(face QC·라이브니스)에

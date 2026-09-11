@@ -777,9 +777,11 @@ async def facemarket_config(request: Request):
     라이브니스 세션/위젯을 건너뛰고 사진 → 완료로 직행한다.
     """
     settings: Settings = request.app.state.settings
+    from .facemarket_payout import PAYOUT_BANKS
     required_slots = _required_photo_slots(settings)
     return {
         "photoSlots": list(settings.fm_photo_slots),
+        "payoutBanks": [{"code": code, "name": name} for code, name in PAYOUT_BANKS.items()],
         "requiredSlotCount": len(required_slots),
         "faceMatchEnabled": settings.fm_face_match_enabled,
         "livenessRequired": settings.fm_liveness_enabled,

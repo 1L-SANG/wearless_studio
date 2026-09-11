@@ -321,6 +321,7 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   PUBLIC_WEB_ORIGIN: "https://ai.wearless.kr"
 
 secrets:                         # SSM Parameter Store (SecureString). copilot secret init 로 값 저장.
+  # FM_PAYOUT_ACCOUNT_KEY:       # 값은 SSM에 등록한 뒤 연결해요. 미설정 시 계좌 API는 503.
   DATABASE_URL: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/DATABASE_URL
   SUPABASE_SERVICE_ROLE_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/SUPABASE_SERVICE_ROLE_KEY
   R2_ACCESS_KEY_ID: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/R2_ACCESS_KEY_ID

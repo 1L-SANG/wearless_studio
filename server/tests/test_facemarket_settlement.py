@@ -765,6 +765,7 @@ def test_simulate_rate_limit_returns_429_without_chain_call(fmset, make_token):
 def summary_db(fmset, monkeypatch):
     """Run the aggregate SQL on SQLite, preserving joins, filters and grouping semantics."""
     import sqlite3
+    import re
 
     db = sqlite3.connect(':memory:', check_same_thread=False)
     db.row_factory = sqlite3.Row
@@ -776,6 +777,9 @@ def summary_db(fmset, monkeypatch):
         create table products (project_id text, name text);
         create table profiles (user_id text, display_name text);
         create table fm_usage_reports (settlement_id text);
+        create table fm_publication_records (
+            id text, project_id text, model_id text, kind text, revoked_at text, r2_key text, created_at text
+        );
         create table fm_settlements (
             id text, payment_id text, license_id text, job_id text, model_ref text default '',
             total_amount integer default 0, model_amount integer, platform_amount integer default 0,
@@ -794,6 +798,10 @@ def summary_db(fmset, monkeypatch):
             pass
 
         async def execute(self, sql, params):
+            # SQLite에는 LATERAL이 없어 같은 SELECT를 상관 스칼라 서브쿼리로 실행해요.
+            lateral = re.search(r"left join lateral \((.*?)\) publication on true", sql, re.S)
+            if lateral:
+                sql = sql.replace(lateral.group(0), "").replace("publication.id::text", f"({lateral.group(1)})")
             params = tuple(
                 value.astimezone(timezone.utc).isoformat() if isinstance(value, datetime) else value
                 for value in params
@@ -901,6 +909,18 @@ def test_settlement_labels_and_report_flag_follow_safe_relations(summary_db):
                    '2026-09-11T00:00:00+00:00')"""
     )
     db.execute("insert into fm_usage_reports (settlement_id) values ('settlement-1')")
+    db.executemany(
+        "insert into fm_publication_records values (?, ?, ?, ?, ?, ?, ?)",
+        [
+            ('old', 'project-1', 'mine', 'long_png', None, 'signed-old', '2026-09-01'),
+            ('latest', 'project-1', 'mine', 'long_png', None, 'signed-new', '2026-09-02'),
+            ('foreign', 'project-1', 'other', 'long_png', None, 'signed-foreign', '2026-09-03'),
+            ('revoked', 'project-1', 'mine', 'long_png', '2026-09-04', 'signed-revoked', '2026-09-04'),
+            ('zip', 'project-1', 'mine', 'zip', None, 'signed-zip', '2026-09-05'),
+            ('unsigned', 'project-1', 'mine', 'long_png', None, None, '2026-09-06'),
+            ('different', 'another-project', 'mine', 'long_png', None, 'signed-other', '2026-09-07'),
+        ],
+    )
 
     response = client.get('/v1/facemarket/settlements')
 
@@ -909,3 +929,5 @@ def test_settlement_labels_and_report_flag_follow_safe_relations(summary_db):
     assert response.json()[0]['productName'] == '골지 니트'
     assert response.json()[0]['sellerName'] == '라임 스토어'
     assert response.json()[0]['reported'] is True
+    assert response.json()[0]['publicationId'] == 'latest'
+    assert response.json()[0]['projectId'] == 'project-1'
