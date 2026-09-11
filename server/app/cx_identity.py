@@ -176,15 +176,25 @@ def parse_simple_auth_evidence(
     """
     try:
         ci = dig(trans, "ci")
-        if not ci:
+        if not isinstance(ci, str) or not ci:
             raise OacxBiometricError("identity_ci_unavailable")
         birth = dig(trans, *contract.birth_path, "birthdate", "birthday")
-        if not birth:
+        if not isinstance(birth, str) or not birth:
             raise OacxBiometricError("identity_birth_unavailable")
+
+        # mid 경로(parse_oacx_biometric_evidence)와 동일한 성년 게이트 — 인증 수단이
+        # 달라도 같은 라이선싱 계약이라 나이 기준이 갈라지면 안 된다.
+        try:
+            adult = is_adult_from_birth(birth)
+        except CxIdentityError:
+            raise OacxBiometricError("identity_birth_unavailable") from None
+        if not adult:
+            raise OacxBiometricError("minor_blocked")
+
         name = dig(trans, "utf8Nm", "nm", "name", "userName") or ""
         return OacxBiometricEvidence(
-            ci=bytearray(str(ci).encode()),
-            birth=str(birth),
+            ci=bytearray(ci.encode()),
+            birth=birth,
             name_masked=_mask_name(str(name)),
             transaction_id=dig(trans, "txId", "txid", "transactionId"),
             contract_version=contract.version,
@@ -300,6 +310,10 @@ def parse_oacx_portrait_hex(
 
 
 def get_oacx_biometric_contract(settings, *, method: str = "mid") -> OacxBiometricContract:
+    # 알 수 없는 method 는 mid 로 fallback 하지 않는다 — 오타(예: "simple-auth")가 조용히
+    # 다른 계약으로 풀리면 그 계약의 초상 가정이 틀렸을 때 프로덕션에 그대로 닿는다.
+    if method not in ("mid", "simple_auth"):
+        raise OacxBiometricError("oacx_contract_unavailable")
     if method == "simple_auth":
         if settings.fm_oacx_simple_auth_contract == "simple-auth-v1":
             return SIMPLE_AUTH_CONTRACT

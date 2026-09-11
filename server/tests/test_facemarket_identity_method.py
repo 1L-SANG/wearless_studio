@@ -1,8 +1,22 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import pytest
 
 from app import cx_identity
 from app.config import load_settings
 from conftest import make_settings
+
+
+def _birth_yyyymmdd(years_ago: int) -> str:
+    """오늘로부터 정확히 `years_ago` 년 전 생일 — 만 나이 경계를 결정적으로 만든다."""
+    today = datetime.now(ZoneInfo("Asia/Seoul")).date()
+    try:
+        birth_date = today.replace(year=today.year - years_ago)
+    except ValueError:
+        # 오늘이 2/29(윤년)인 드문 경우의 안전한 폴백.
+        birth_date = today.replace(year=today.year - years_ago, day=28)
+    return birth_date.strftime("%Y%m%d")
 
 
 def _settings(monkeypatch, **env):
@@ -95,3 +109,53 @@ def test_simple_auth_evidence_requires_ci():
             {"name": "홍길동", "birth": "19900101"},
             contract=cx_identity.SIMPLE_AUTH_CONTRACT,
         )
+
+
+def test_simple_auth_evidence_requires_birth():
+    with pytest.raises(cx_identity.OacxBiometricError):
+        cx_identity.parse_simple_auth_evidence(
+            {"ci": "CI-VALUE", "name": "홍길동"},
+            contract=cx_identity.SIMPLE_AUTH_CONTRACT,
+        )
+
+
+def test_simple_auth_evidence_ci_is_bytearray_not_bytes():
+    # wipe_bytearray 의 사용 후 0으로 지우는 계약은 bytearray 를 전제한다 — 구현이
+    # plain bytes 를 반환해도 `bytes(evidence.ci) == b"..."` 비교는 통과해 버려서
+    # 이 타입 자체를 명시적으로 잠근다.
+    evidence = cx_identity.parse_simple_auth_evidence(
+        {"ci": "CI-VALUE", "name": "홍길동", "birth": "19900101", "txId": "tx-1"},
+        contract=cx_identity.SIMPLE_AUTH_CONTRACT,
+    )
+    assert isinstance(evidence.ci, bytearray)
+
+
+def test_simple_auth_evidence_blocks_minor():
+    # mid 경로(parse_oacx_biometric_evidence)와 동일한 성년 게이트가 있어야 한다 —
+    # 인증 수단이 다르다고 미성년이 통과해서는 안 된다(라이선싱 계약은 공통).
+    minor_birth = _birth_yyyymmdd(cx_identity.ADULT_MIN_AGE - 1)
+    with pytest.raises(cx_identity.OacxBiometricError) as excinfo:
+        cx_identity.parse_simple_auth_evidence(
+            {"ci": "CI-VALUE", "name": "홍길동", "birth": minor_birth, "txId": "tx-1"},
+            contract=cx_identity.SIMPLE_AUTH_CONTRACT,
+        )
+    assert excinfo.value.reason == "minor_blocked"
+
+
+def test_simple_auth_evidence_allows_exact_min_age():
+    adult_birth = _birth_yyyymmdd(cx_identity.ADULT_MIN_AGE)
+    evidence = cx_identity.parse_simple_auth_evidence(
+        {"ci": "CI-VALUE", "name": "홍길동", "birth": adult_birth, "txId": "tx-1"},
+        contract=cx_identity.SIMPLE_AUTH_CONTRACT,
+    )
+    assert evidence.birth == adult_birth
+
+
+def test_get_oacx_biometric_contract_rejects_unknown_method():
+    settings = make_settings(
+        fm_oacx_contract_mode="prod-dlphoto-v1",
+        fm_oacx_simple_auth_contract="simple-auth-v1",
+    )
+    with pytest.raises(cx_identity.OacxBiometricError) as excinfo:
+        cx_identity.get_oacx_biometric_contract(settings, method="simple-auth")
+    assert excinfo.value.reason == "oacx_contract_unavailable"
