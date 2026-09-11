@@ -17,6 +17,7 @@ from io import BytesIO
 from PIL import Image
 
 from .. import facemarket, repo
+from ..agents import identity_scope
 from ..agents import (
     content_roles,
     copy_qc,
@@ -1319,6 +1320,18 @@ async def run_detail_page_job(app, job: dict) -> None:
                 normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
             except ValueError:
                 normalized = None  # generate()가 블록 단위 실패로 처리하는 기존 경로 유지
+            # 이 모델로 만들 수 없는 컷(콘티보드 범위 밖)은 **생성 전에** 건너뛴다.
+            # 실제 모델에 가상 전용 컷을 억지로 일반 패킷으로 만들지 않는다(2026-09-11 결정).
+            # 건너뛴 컷은 자산이 없으니 정산(성공 컷 수 기준)에도 안 잡힌다 = 크레딧 0.
+            if not identity_scope.block_allowed(b, selected_model_id):
+                log.info("AG-06 identity_scope_mismatch job %s block %s scope=%s model=%s",
+                         job_id, b.get("id"), identity_scope.scope_for_block(b),
+                         identity_scope.identity_kind(selected_model_id))
+                await _emit(app.state.pool, job_id, "step",
+                            {"blockId": b.get("id"), "status": "cut_skipped",
+                             "reason": "identity_scope_mismatch"})
+                prepared.append((cut_spec, [], "", False, [], None, False))
+                continue
             try:
                 confirmed_requested = bool(
                     normalized is not None

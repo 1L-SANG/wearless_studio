@@ -5,6 +5,8 @@
    시그니처·반환 형태는 mock/api.js(계약 §6)와 동일해야 한다.
    ============================================================= */
 import { supabase } from '@/lib/supabase.js';
+import { identityKindOf } from '../identityScope.js';
+import { isRealModelSelection } from '../../features/analysis/modelSelection.js';
 import { LIMITS } from '@/lib/limits.js';
 import { applySeededHookStyle, defaultAnalysisShape, defaultStoryboard, isDefaultStoryboardForMode } from '@/lib/api/shapes.js';
 import { normalizeMatchClothingSelection, toMatchItem } from '@/lib/api/matchingItems.js';
@@ -517,6 +519,9 @@ export const httpAdapter = {
       clothingType: product?.clothingType || 'top',
       targetGenders: analysis?.targetGenders || [],
       matchClothing: analysis?.matchClothing || [],
+      // 실제 모델이면 가상 전용 컷을 자동 구성에서 뺀다(lib/identityScope.js — 판정은 서버).
+      identityKind: identityKindOf(isRealModelSelection(
+        analysis?.selectedModelId || analysis?.selected_model_id)),
     };
     if (Array.isArray(saved) && saved.length) {
       const previousMode = mode === 'extended' ? 'basic' : 'extended';

@@ -1,3 +1,4 @@
+import { filterSpaceSetsForModel } from './identityScope.js';
 import {
   spaceSetIdFromGroupId,
   storyboardSpaceSetById,
@@ -200,11 +201,14 @@ export function pickEntrySets({
   clothingType,
   projectId,
   stylingCount,
+  identityKind = null,
 }) {
   const seedProjectId = projectId || 'default';
   const count = Math.max(0, Number.isFinite(stylingCount) ? Math.floor(stylingCount) : 0);
-  const stylingPool = storyboardSpaceSetsFor({ gender, clothingType })
-    .filter((set) => set.setType === 'styling');
+  // 이 모델로 만들 수 없는 세트는 자동 구성 후보에서 뺀다(스튜디오 공간세트 = 가상 전용).
+  const stylingPool = filterSpaceSetsForModel(
+    storyboardSpaceSetsFor({ gender, clothingType }), identityKind,
+  ).filter((set) => set.setType === 'styling');
   const stylingSets = [];
   const selectedIds = new Set();
   const selectedPlaces = new Set();
@@ -226,7 +230,8 @@ export function pickEntrySets({
 
   // 세트 배치 범위(setApplicableClothingTypes)로 필터한다. 회전 세트의 완성 이미지가
   // 낱장 갤러리에서 다른 의류로 번지는 일 없이, 세트 자체만 전 의류에 배치될 수 있다.
-  const horizonPool = storyboardSpaceSetsFor({ gender, clothingType });
+  const horizonPool = filterSpaceSetsForModel(
+    storyboardSpaceSetsFor({ gender, clothingType }), identityKind);
   return {
     stylingSets,
     rotationSet: seededPick(

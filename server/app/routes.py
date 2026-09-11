@@ -26,6 +26,7 @@ from .agents import (
     cut_generator,
     feature_copy,
     fit_axes,
+    identity_scope,
     mannequin,
     mannequin_base_fidelity_qc,
     product_evidence_contract,
@@ -3044,6 +3045,13 @@ async def generate_editor_image(
                 payload.get("cutType"), wants_face=False
             )[0]
             if uses_model_identity:
+                # 콘티보드 범위 밖 조합(예: 실제 모델 + 가상 전용 예시)은 여기서 끝낸다 —
+                # 잡도 만들지 않고 크레딧도 예약하지 않는다(2026-09-11 사용자 결정).
+                if not identity_scope.block_allowed(payload, selected_model_id):
+                    raise HTTPException(status_code=409, detail={
+                        "code": "identity_scope_mismatch",
+                        "message": "이 모델로는 만들 수 없는 컷이에요.",
+                    })
                 payload["modelId"] = selected_model_id
                 brand_use_category = analysis.get("brandUseCategory")
                 payload["brandUseCategory"] = brand_use_category
@@ -3207,6 +3215,10 @@ async def generate_detail_page(
         clothing_type = ((product_row or {}).get("clothing_type")
                          or (product_row or {}).get("clothingType") or "top")
         ai_blocks = [b for b in storyboard if isinstance(b, dict) and b.get("source") == "ai"]
+        # 이 모델로 만들 수 없는 컷(콘티보드 범위 밖)은 워커가 건너뛴다 — 예약에서도 뺀다.
+        # 안 빼면 만들지도 않을 컷 때문에 잔액 부족(402)이 나거나 예약이 부풀어 오른다.
+        ai_blocks = [b for b in ai_blocks
+                     if identity_scope.block_allowed(b, selected_model_id)]
         dup_sources = _duplicate_source_indexes(ai_blocks, clothing_type)
         ai_count = sum(1 for source in dup_sources if source is None)
         cost = ai_count * s.credit_cost_storyboard_per_cut
