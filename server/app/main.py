@@ -291,11 +291,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     docs_url = "/docs" if settings.app_env == "dev" else None
     redoc_url = "/redoc" if settings.app_env == "dev" else None
+    # 스키마 JSON 도 같이 닫는다. docs/redoc 만 끄면 /openapi.json 이 그대로 남아 전체 라우트·
+    # 모델(관리자 라우트 포함)을 아무에게나 준다 — 2026-09-11 prod 에서 209KB 로 열려 있었다.
+    openapi_url = "/openapi.json" if settings.app_env == "dev" else None
 
     app = FastAPI(
         title="Wearless Studio API",
         docs_url=docs_url,
         redoc_url=redoc_url,
+        openapi_url=openapi_url,
         lifespan=lifespan,
     )
     app.state.settings = settings
@@ -403,7 +407,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-        allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Draft-Token"],
+        allow_headers=[
+            "Authorization", "Content-Type", "Idempotency-Key", "X-Draft-Token",
+            # 관리자 콘솔 기기 토큰(admin_guard). 빠지면 admin.wearless.kr 의 모든 요청이
+            # preflight 에서 죽는다 — 로그인은 되니 화면엔 "서버에 연결하지 못했어요" 만 남는다.
+            "X-Admin-Device",
+        ],
     )
 
     @app.exception_handler(HTTPException)
