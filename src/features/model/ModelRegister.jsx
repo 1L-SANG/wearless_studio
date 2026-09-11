@@ -60,7 +60,7 @@ const SIMPLE_AUTH_UNAVAILABLE_REASON = deriveSimpleAuthUnavailableReason(CX_AUTH
 // 화면을 그리지 않고 즉시 그 방법으로 진행한다 — 값을 이 위저드가 소비하는 유일한 지점이다.
 const IDENTITY_METHODS = parseIdentityMethods(import.meta.env.VITE_FM_IDENTITY_METHODS);
 const DEVICE_KEY = 'wearless.fmDeviceId';
-const CONSENT_VERSION = '2026-08-v2';
+const CONSENT_VERSION = '2026-09-v1';
 const FaceLivenessStep = lazy(() => import('./FaceLivenessStep.jsx'));
 
 let cxLoader;

@@ -32,10 +32,12 @@ from .r2 import enrollment_id_document_key, enrollment_quarantine_key, ext_for_m
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket biometric enrollment"])
 
-BIOMETRIC_CONSENT_VERSION = "2026-08-v2"
+BIOMETRIC_CONSENT_VERSION = "2026-09-v1"
 # 동의문 텍스트를 바꾸면 버전을 올린다. 프론트(Vercel)·백엔드(CI) 배포 시점이 어긋나는
 # 동안 stale_consent_version 400 으로 등록이 막히지 않게, 직전 버전도 함께 수락한다.
-ACCEPTED_CONSENT_VERSIONS = ("2026-08-v2", "2026-08-v1")
+# 2026-09-v1: 간편인증 경로의 신분증 촬영본 수집·파기 고지 추가(§7 개인정보·법무).
+# 이전 버전(2026-08-v2)을 진행 중 등록이 이 배포 중간에 끊기지 않게 남겨 둔다.
+ACCEPTED_CONSENT_VERSIONS = ("2026-09-v1", "2026-08-v2", "2026-08-v1")
 ENROLLMENT_TTL = timedelta(hours=24)
 _PHOTO_FENCE_NAMESPACE = 0x464D5048
 _MODEL_ASSET_FENCE_NAMESPACE = 0x464D4D41

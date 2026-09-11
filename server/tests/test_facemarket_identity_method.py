@@ -353,3 +353,11 @@ def test_identity_uses_mid_contract_when_identity_method_is_mid(
     # 픽스처가 우연히 simple_auth 파서로도 파싱 가능해도(dig() 다중 키 폴백 때문에
     # utf8Nm/nm/name/userName 이 겹친다) 실제로 불린 파서가 mid 전용인지를 직접 못박는다.
     assert calls == ["parse_oacx_biometric_evidence"]
+
+
+def test_accepts_new_and_previous_consent_versions():
+    from app.facemarket_enrollment import ACCEPTED_CONSENT_VERSIONS
+
+    assert "2026-09-v1" in ACCEPTED_CONSENT_VERSIONS
+    # 진행 중인 등록을 깨지 않는다.
+    assert "2026-08-v2" in ACCEPTED_CONSENT_VERSIONS
