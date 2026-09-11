@@ -267,6 +267,20 @@ export function adminUpdateUsageReportStatus(reportId, status) {
   });
 }
 
+export function adminListPayoutStatements({ month }) {
+  return http(`/v1/facemarket/admin/payout-statements?month=${encodeURIComponent(month)}`);
+}
+
+export function adminSetPayoutStatementStatus(modelId, periodMonth, status, note) {
+  return http(`/v1/facemarket/admin/payout-statements/${encodeURIComponent(modelId)}/${encodeURIComponent(periodMonth)}/status`, {
+    method: 'POST', body: note ? { status, note } : { status },
+  });
+}
+
+export function adminRevealPayoutAccount(modelId) {
+  return http(`/v1/facemarket/admin/models/${encodeURIComponent(modelId)}/payout-account`);
+}
+
 // ── 관리자: 모델 테스트컷(콘솔 모델 상세의 하위 리소스) ────────────────────
 
 export function adminModelTestCuts(modelId) {
@@ -393,6 +407,14 @@ export function listSettlements() {
 // 전체 기록의 모델 몫 합계 — 최근 200건 목록과 별도로 집계한다.
 export function getSettlementSummary() {
   return http('/v1/facemarket/settlements/summary');
+}
+
+export function getPayoutStatements() {
+  return http('/v1/facemarket/payout-statements');
+}
+
+export function getPublicationPreviewUrl(publicationId) {
+  return http(`/v1/facemarket/model/publications/${encodeURIComponent(publicationId)}/preview-url`, { suppressErrorLog: true });
 }
 
 // GET /v1/facemarket/models/{id}/usage — 모델 본인의 얼굴 사용 내역.

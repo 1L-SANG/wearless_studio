@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, Image as ImageIcon } from 'lucide-react';
-import { reportUsage } from '@/lib/api/facemarket.js';
+import { getPublicationPreviewUrl, reportUsage } from '@/lib/api/facemarket.js';
 import { formatKrw } from '../../facemarket-landing/facemarketTerms.js';
 import { MyPageDialog } from './MyPageDialog.jsx';
 import { EmptyPanel, MonthSelect } from './MyPageParts.jsx';
@@ -11,11 +11,54 @@ import s from './MyPage.module.css';
 export function MyPageUsage({ data, month, onMonthChange }) {
   const [selectedId, setSelectedId] = useState(null);
   const [report, setReport] = useState(() => usageReportReducer(undefined, {}));
+  const [previews, setPreviews] = useState({});
   const sending = useRef(false);
+  const alive = useRef(false);
+  const previewVersion = useRef({});
   const detailOpener = useRef(null);
   const dispatch = action => setReport(previous => usageReportReducer(previous, action));
   const rows = rowsForMonth(data.rows, month);
   const selected = data.rows.find(row => row.id === selectedId);
+  const loadPreview = useCallback(async publicationId => {
+    if (!publicationId) return;
+    const version = (previewVersion.current[publicationId] || 0) + 1;
+    previewVersion.current[publicationId] = version;
+    try {
+      const payload = await getPublicationPreviewUrl(publicationId);
+      if (!payload?.url) throw new Error('preview unavailable');
+      if (alive.current && previewVersion.current[publicationId] === version) {
+        setPreviews(previous => ({ ...previous, [publicationId]: payload.url }));
+      }
+    } catch {
+      if (alive.current && previewVersion.current[publicationId] === version) {
+        setPreviews(previous => {
+          if (!previous[publicationId]) return previous;
+          const next = { ...previous };
+          delete next[publicationId];
+          return next;
+        });
+      }
+    }
+  }, []);
+  useEffect(() => {
+    alive.current = true;
+    for (const row of data.rows) if (row.publicationId) loadPreview(row.publicationId);
+    return () => {
+      alive.current = false;
+      for (const publicationId of Object.keys(previewVersion.current)) previewVersion.current[publicationId] += 1;
+    };
+  }, [data.rows, loadPreview]);
+  const hidePreview = publicationId => setPreviews(previous => {
+    if (!previous[publicationId]) return previous;
+    const next = { ...previous };
+    delete next[publicationId];
+    return next;
+  });
+  const openDetail = async (row, opener) => {
+    detailOpener.current = opener;
+    setSelectedId(row.id);
+    await loadPreview(row.publicationId);
+  };
   const submitReport = async event => {
     event.preventDefault();
     if (sending.current || !reportCanSubmit(report)) return;
@@ -40,18 +83,19 @@ export function MyPageUsage({ data, month, onMonthChange }) {
       : rows.length ? <>
         <div className={s.usageColumnLabels} aria-hidden="true"><span>상세페이지</span><span>링크</span><span>사용일</span></div>
         <ul className={s.usageList}>{rows.map(row => <li className={s.usageRow} key={row.id}>
-          {row.thumbnailUrl ? <img className={s.usageThumb} src={row.thumbnailUrl} alt="" loading="lazy" /> : <span className={s.usageThumb} aria-hidden="true"><ImageIcon className={s.icon} /></span>}
+          {previews[row.publicationId] ? <img className={s.usageThumb} src={previews[row.publicationId]} alt="" loading="lazy" onError={() => hidePreview(row.publicationId)} /> : <span className={s.usageThumb} aria-hidden="true"><ImageIcon className={s.icon} /></span>}
           <div className={s.usageCopy}><span className={s.usageTitle}>{row.productName || '상품명 미제공'}</span>
             <span className={s.usageMeta}>{row.sellerName || '셀러명 미제공'}{row.billingType === 'monthly' && ' · 월정액'}</span>
             {row.reported && <span className={s.usageMeta}>신고됨</span>}
           </div>
-          <button type="button" className={s.usageLink} aria-haspopup="dialog" aria-label={`${row.productName || '상품명 미제공'} 상세페이지 열기`} onClick={event => { detailOpener.current = event.currentTarget; setSelectedId(row.id); }}>상세페이지 열기<ArrowUpRight className={s.icon} aria-hidden="true" /></button>
+          <button type="button" className={s.usageLink} aria-haspopup="dialog" aria-label={`${row.productName || '상품명 미제공'} 상세페이지 열기`} onClick={event => openDetail(row, event.currentTarget)}>상세페이지 열기<ArrowUpRight className={s.icon} aria-hidden="true" /></button>
           <time className={s.usageDate} dateTime={row.createdAt}>{usageDate(row.createdAt)}</time>
         </li>)}</ul>
       </> : <EmptyPanel image title="아직 사용된 상세페이지가 없어요." description="첫 사용이 생기면 여기에서 확인할 수 있어요." />}
     {selected && report.phase === 'closed' && <MyPageDialog title="사용된 상세페이지" returnFocusRef={detailOpener} onClose={() => setSelectedId(null)}>
       <div className={s.usagePreview}>
-        {selected.previewUrl && <img className={s.previewImage} src={selected.previewUrl} alt={`${selected.productName || '사용된 상세페이지'} 미리보기`} />}
+        {previews[selected.publicationId] ? <img className={s.previewImage} src={previews[selected.publicationId]} alt={`${selected.productName || '사용된 상세페이지'} 미리보기`} onError={() => hidePreview(selected.publicationId)} />
+          : <span className={`${s.previewImage} ${s.previewPlaceholder}`} aria-hidden="true"><ImageIcon className={s.icon} /></span>}
         <h3 className={s.previewTitle}>{selected.productName || '상품명 미제공'}</h3>
         <dl><div className={s.detailPair}><dt>셀러</dt><dd>{selected.sellerName || '셀러명 미제공'}</dd></div>
           <div className={s.detailPair}><dt>사용일</dt><dd>{usageDate(selected.createdAt)}</dd></div>

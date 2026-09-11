@@ -193,6 +193,12 @@ export async function modelComponentHarness({
             api.getSettlementSummary ? api.getSettlementSummary(...args)
               : Promise.resolve({ monthCount: 0, monthAmount: 0, totalAmount: 0 })
           );
+          export const getPayoutStatements = (...args) => (
+            api.getPayoutStatements ? api.getPayoutStatements(...args) : Promise.resolve({ items: [], nextPayout: null })
+          );
+          export const getPublicationPreviewUrl = (...args) => (
+            api.getPublicationPreviewUrl ? api.getPublicationPreviewUrl(...args) : Promise.reject(new Error('no preview'))
+          );
           export const stageApplicationPhoto = (...args) => api.stageApplicationPhoto(...args);
           export const submitApplication = (...args) => api.submitApplication(...args);
           export const fetchLicenseFaceUrl = (...args) => (
@@ -240,4 +246,3 @@ export async function modelComponentHarness({
     },
   };
 }
-

@@ -6,6 +6,8 @@ const row = { id: 's1', paymentId: 'p1', createdAt: '2026-09-01T00:00:00Z', prod
 const props = { journey: { mode: 'active', flag: 'none' }, model: { id: 'm1', displayName: '모델', status: 'verified' }, license: { id: 'l1', status: 'active', vcId: 'proof-id', allowedUse: ['일반 의류'] } };
 const button = (tree, label) => findTree(tree, node => node.type === 'button' && node.props.children === label);
 const component = (tree, name) => findTree(tree, node => node.type?.name === name);
+const textContent = node => node == null || typeof node === 'boolean' ? '' : Array.isArray(node) ? node.map(textContent).join(' ') : typeof node === 'object' ? textContent(node.props?.children) : String(node);
+const settle = async (render, ready) => { let value; for (let i = 0; i < 20; i += 1) { await new Promise(resolve => setImmediate(resolve)); value = render(); if (ready(value)) return value; } return value; };
 
 test('대화상자 내용이 바뀌면 제목으로 초점을 옮기고 마지막에는 지정된 열기 버튼으로 돌아가요', async () => {
   const harness = await loadEarningsHarness();
@@ -179,18 +181,70 @@ test('등록 진행은 정산 API를 호출하지 않고 정산 줄을 숨겨요
   }finally{await harness.close();}
 });
 
-test('입금 계좌 API 준비 전에는 모든 등록 진입 버튼을 비활성화해요',async()=>{
-  const harness=await loadEarningsHarness();
+test('입금 계좌 404는 미등록으로 열고 서버 마스킹 응답을 그대로 표시해요',async()=>{
+  const calls=[];
+  const fullAccount=['110','123','456','789'].join('');
+  const harness=await loadEarningsHarness({getFacemarketConfig:async()=>({payoutBanks:[{code:'shinhan',name:'신한은행'}]}),http:async(path)=>{
+    calls.push(path);
+    if(calls.length===1)throw Object.assign(new Error('not found'),{status:404,code:'payout_account_not_found'});
+    return {bankCode:'shinhan',bankName:'신한은행',holderName:'김서연',accountMasked:'***-****-6789'};
+  }});
   try{
     const {BankSection,AccountShortcut,usePayoutAccount}=await harness.server.ssrLoadModule('/src/features/model/mypage/MyPagePayoutAccount.jsx');
-    const bank=harness.render(()=>usePayoutAccount('m1',true));
+    const accountApi=await harness.server.ssrLoadModule('/src/features/model/mypage/payoutAccount.js');
+    const render=()=>harness.render(()=>usePayoutAccount('m1',true));
+    render();
     for(const effect of harness.runtime.effects)effect();
-    let tree=BankSection({bank,onOpen:()=>assert.fail('must stay disabled')});
-    assert.equal(button(tree,'계좌 등록').props.disabled,true);
-    assert.ok(findTree(tree,node=>node.type==='p'&&node.props.children==='입금 계좌 등록은 준비 중이에요. 열리면 여기에서 등록할 수 있어요.'));
-    tree=AccountShortcut({bank,onOpen:()=>{}});
-    assert.equal(tree.props.disabled,true);
-    assert.ok(findTree(tree,node=>node.props?.children==='준비 중'));
+    let bank=await settle(render,value=>value.phase!=='loading'); let tree=BankSection({bank,onOpen:()=>{}});
+    assert.equal(calls[0],'/v1/facemarket/payout-account');
+    assert.equal(button(tree,'계좌 등록').props.disabled,false);
+    assert.match(String(findTree(tree,node=>node.type==='p').props.children),/본인 명의 계좌/);
+    assert.deepEqual(bank.banks,[{code:'shinhan',name:'신한은행'}]);
+    await accountApi.savePayoutAccount({bankCode:'shinhan',accountNumber:fullAccount,holderName:' 김서연 '});
+    assert.deepEqual(calls.slice(0,2),['/v1/facemarket/payout-account','/v1/facemarket/payout-account']);
+    bank.retry(); bank=render(); for(const effect of harness.runtime.effects)effect(); bank=await settle(render,value=>value.phase!=='loading');
+    tree=BankSection({bank,onOpen:()=>{}});
+    assert.match(String(findTree(tree,node=>node.type==='p').props.children),/신한은행 · \*\*\*-\*\*\*\*-6789 · 김서연/);
+    assert.equal(AccountShortcut({bank,onOpen:()=>{}}).props.disabled,false);
+  }finally{await harness.close();}
+});
+
+test('입금 계좌 503은 준비 중 문구를 유지하고 등록을 막아요',async()=>{
+  const harness=await loadEarningsHarness({getFacemarketConfig:async()=>({}),http:async()=>{throw Object.assign(new Error('missing key'),{status:503,code:'payout_account_unconfigured'});}});
+  try{
+    const {BankSection,AccountShortcut,usePayoutAccount}=await harness.server.ssrLoadModule('/src/features/model/mypage/MyPagePayoutAccount.jsx');
+    const render=()=>harness.render(()=>usePayoutAccount('m1',true)); render(); for(const effect of harness.runtime.effects)effect();
+    const bank=await settle(render,value=>value.phase!=='loading'); const tree=BankSection({bank,onOpen:()=>assert.fail('must stay disabled')});
+    assert.match(String(findTree(tree,node=>node.type==='p').props.children),/입금 계좌 등록은 준비 중이에요/);
+    assert.equal(AccountShortcut({bank,onOpen:()=>{}}).props.disabled,true);
+  }finally{await harness.close();}
+});
+
+test('다음 지급 문구와 월별 지급 상태를 정산 화면에 보여줘요',async()=>{
+  const harness=await loadEarningsHarness({getSettlementSummary:async()=>({monthAmount:10430,monthCount:1,totalAmount:10430,totalCount:1}),listSettlements:async()=>[row],
+    getPayoutStatements:async()=>({items:[{periodMonth:'2026-09',amount:10430,count:1,status:'scheduled',scheduledFor:'2026-10-10',paidAt:null,open:true}],nextPayout:{scheduledFor:'2026-10-10',amount:10430,periodMonth:'2026-09'}})});
+  try{
+    const {module,data}=await (async()=>{const data=await harness.load();return{module:harness.module,data};})();
+    const earnings=module.MyPageEarnings({data,month:'2026-09',onMonthChange:()=>{}});
+    assert.match(textContent(earnings),/2026년 9월/); assert.match(textContent(earnings),/예정/);
+    const {NextPayout}=module; assert.match(textContent(NextPayout({nextPayout:data.statements.nextPayout})),/다음 지급 10월 10일 · 2026년 9월분 10,430원/);
+  }finally{await harness.close();}
+});
+
+test('미리보기 실패와 이미지 오류는 자리표시로 돌아가고 상세 창을 열 때 URL을 새로 받아요',async()=>{
+  let calls=0;
+  const harness=await loadEarningsHarness({reportUsage:async()=>{},getPublicationPreviewUrl:async()=>{calls++;if(calls!==2)throw new Error('expired');return{url:'https://preview.test/fresh.png',expiresIn:600};}});
+  try{
+    const {MyPageUsage}=await harness.server.ssrLoadModule('/src/features/model/mypage/MyPageUsage.jsx');
+    const data={rows:[{...row,publicationId:'pub-1'}],loading:false,rowsError:false,markReported:()=>{}};
+    const render=()=>harness.render(MyPageUsage,{data,month:'2026-09',onMonthChange:()=>{}});
+    let tree=render(); for(const effect of harness.runtime.effects)effect(); await new Promise(resolve=>setImmediate(resolve)); tree=render();
+    assert.equal(findTree(tree,node=>node.type==='img'),null);
+    await findTree(tree,node=>node.props?.['aria-haspopup']==='dialog').props.onClick({currentTarget:{}}); await new Promise(resolve=>setImmediate(resolve)); tree=render();
+    const image=findTree(tree,node=>node.type==='img'); assert.equal(image.props.src,'https://preview.test/fresh.png'); assert.equal(calls,2);
+    image.props.onError(); tree=render(); assert.equal(findTree(tree,node=>node.type==='img'),null);
+    await findTree(tree,node=>node.props?.['aria-haspopup']==='dialog').props.onClick({currentTarget:{}}); await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(findTree(render(),node=>node.type==='img'),null); assert.equal(calls,3);
   }finally{await harness.close();}
 });
 

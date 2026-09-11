@@ -12,11 +12,9 @@ import {
 import {
   PAYOUT_ACCOUNT_API_READY,
   PAYOUT_BANKS,
-  getPayoutAccount,
   maskAccountNumber,
   normalizePayoutAccount,
   payoutAccountLabel,
-  savePayoutAccount,
   validatePayoutAccount,
 } from '../../src/features/model/mypage/payoutAccount.js';
 import {
@@ -25,6 +23,7 @@ import {
   registrationCard,
   tabFromHash,
 } from '../../src/features/model/mypage/mypageState.js';
+import { nextPayoutLabel, payoutStatementStatusLabel } from '../../src/features/model/mypage/payoutStatements.js';
 
 const seoulSeptember = new Date('2026-08-31T15:01:00Z');
 
@@ -73,47 +72,62 @@ test('이번 달 정산 문구는 숫자만 강조하고 없는 합계에 0을 �
 });
 
 test('입금 계좌 입력은 공백과 하이픈을 정리한 뒤 은행, 숫자 길이, 예금주를 검증해요', () => {
-  const input = { bankCode: '088 ', accountNumber: ' 110-123-456789 ', holderName: ' 김서연 ' };
+  const fullAccount = ['110', '123', '456', '789'].join('');
+  const input = { bankCode: 'shinhan ', accountNumber: ` ${fullAccount} `, holderName: ' 김서연 ' };
   assert.deepEqual(normalizePayoutAccount(input), {
-    bankCode: '088', accountNumber: '110123456789', holderName: '김서연',
+    bankCode: 'shinhan', accountNumber: fullAccount, holderName: '김서연',
   });
   assert.equal(validatePayoutAccount(input), true);
   assert.equal(validatePayoutAccount({ ...input, bankCode: '999' }), false);
   assert.equal(validatePayoutAccount({ ...input, accountNumber: '123-45ab-678' }), false);
   assert.equal(validatePayoutAccount({ ...input, accountNumber: '1234567' }), false);
   assert.equal(validatePayoutAccount({ ...input, holderName: '   ' }), false);
+  assert.equal(validatePayoutAccount({ ...input, holderName: '가'.repeat(41) }), false);
 });
 
 test('계좌번호는 앞 세 자리와 뒤 네 자리만 남기고 잘못된 번호는 표시하지 않아요', () => {
-  assert.equal(maskAccountNumber(' 110-123-456789 '), '110-***-6789');
-  assert.equal(maskAccountNumber('12345678'), '123-***-5678');
+  const fullAccount = ['110', '123', '456', '789'].join('');
+  const eightDigits = ['1234', '5678'].join('');
+  assert.equal(maskAccountNumber(fullAccount), '***-****-6789');
+  assert.equal(maskAccountNumber(eightDigits), '***-****-5678');
   assert.equal(maskAccountNumber('1234'), '');
   assert.equal(maskAccountNumber('110-12A-456789'), '');
 });
 
 test('입금 계좌 라벨은 서버 마스킹 값을 우선하고 지정된 은행 이름을 사용해요', () => {
   assert.deepEqual(PAYOUT_BANKS, [
-    { code: '088', name: '신한' },
-    { code: '004', name: '국민' },
-    { code: '020', name: '우리' },
-    { code: '081', name: '하나' },
-    { code: '011', name: 'NH농협' },
-    { code: '003', name: 'IBK기업' },
-    { code: '090', name: '카카오뱅크' },
-    { code: '092', name: '토스뱅크' },
+    { code: 'shinhan', name: '신한은행' },
+    { code: 'kb', name: '국민은행' },
+    { code: 'woori', name: '우리은행' },
+    { code: 'hana', name: '하나은행' },
+    { code: 'nh', name: 'NH농협은행' },
+    { code: 'ibk', name: 'IBK기업은행' },
+    { code: 'kakao', name: '카카오뱅크' },
+    { code: 'toss', name: '토스뱅크' },
   ]);
   assert.equal(payoutAccountLabel({
-    bankCode: '088',
+    bankCode: 'shinhan',
+    bankName: '신한은행',
     accountNumber: '110-000-000000',
-    accountNumberMasked: '110-***-9999',
+    accountMasked: '***-****-9999',
     holderName: '김서연',
-  }), '신한 · 110-***-9999 · 김서연');
+  }), '신한은행 · ***-****-9999 · 김서연');
 });
 
-test('입금 계좌 API가 준비되기 전에는 조회와 저장을 명확히 거부해요', async () => {
-  assert.equal(PAYOUT_ACCOUNT_API_READY, false);
-  await assert.rejects(getPayoutAccount(), /입금 계좌 API가 아직 준비되지 않았어요/);
-  await assert.rejects(savePayoutAccount({ bankCode: '088', accountNumber: '110123456789', holderName: '김서연' }), /입금 계좌 API가 아직 준비되지 않았어요/);
+test('입금 계좌 API를 활성화하고 서버 계약의 은행 코드를 보내요', () => {
+  const fullAccount = ['110', '123', '456', '789'].join('');
+  assert.equal(PAYOUT_ACCOUNT_API_READY, true);
+  assert.equal(validatePayoutAccount({ bankCode: 'shinhan', accountNumber: fullAccount, holderName: '김서연' }), true);
+  assert.equal(validatePayoutAccount({ bankCode: '088', accountNumber: fullAccount, holderName: '김서연' }), false);
+});
+
+test('다음 지급과 월별 상태를 사람이 읽는 문구로 표시해요', () => {
+  assert.equal(nextPayoutLabel({ scheduledFor: '2026-10-10', periodMonth: '2026-09', amount: 1407000 }),
+    '다음 지급 10월 10일 · 2026년 9월분 1,407,000원');
+  assert.equal(nextPayoutLabel(null), '');
+  assert.equal(payoutStatementStatusLabel('scheduled'), '예정');
+  assert.equal(payoutStatementStatusLabel('paid'), '지급 완료');
+  assert.equal(payoutStatementStatusLabel('held'), '보류');
 });
 
 test('등록 진행 화면은 등록 2단계와 검토 모드에만 적용해요', () => {

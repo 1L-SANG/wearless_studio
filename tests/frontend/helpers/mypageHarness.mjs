@@ -23,6 +23,7 @@ export async function loadEarningsHarness(api = {}) {
         if (id === 'react') return '\0mp-react';
         if (id === 'react-router-dom') return '\0mp-router';
         if (id.endsWith('/lib/api/facemarket.js')) return '\0mp-api';
+        if (id.endsWith('/lib/api/httpAdapter.js')) return '\0mp-http';
         if (id.endsWith('.module.css')) return '\0mp-css';
       },
       load(id) {
@@ -39,11 +40,15 @@ export async function loadEarningsHarness(api = {}) {
         if (id === '\0mp-api') return `const api=${access}.api;
           export const getSettlementSummary=()=>api.getSettlementSummary?.() ?? Promise.resolve({monthCount:0,monthAmount:0,totalAmount:0,totalCount:0});
           export const listSettlements=()=>api.listSettlements?.() ?? Promise.resolve([]);
+          export const getPayoutStatements=()=>api.getPayoutStatements?.() ?? Promise.resolve({items:[],nextPayout:null});
+          export const getPublicationPreviewUrl=(...args)=>api.getPublicationPreviewUrl?.(...args) ?? Promise.reject(new Error('no preview'));
+          export const getFacemarketConfig=()=>api.getFacemarketConfig?.() ?? Promise.resolve({});
           export const reportUsage=(...args)=>api.reportUsage(...args);
           export const pauseMyModel=(...args)=>api.pauseMyModel(...args);
           export const resumeMyModel=(...args)=>api.resumeMyModel(...args);
           export const revokeLicense=(...args)=>api.revokeLicense(...args);
           export const updateLicenseTerms=(...args)=>api.updateLicenseTerms(...args);`;
+        if (id === '\0mp-http') return `export const http=(path,options)=>${access}.api.http?.(path,options) ?? Promise.reject(new Error('not stubbed'));`;
         if (id === '\0mp-css') return 'export default new Proxy({}, {get:(_,key)=>key});';
       },
     }],

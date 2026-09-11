@@ -5,7 +5,7 @@ import { MyPageActivity } from './MyPageActivity.jsx';
 import { MyPageCertificate, ProfileHero } from './MyPageCertificate.jsx';
 import { MyPageConditions } from './MyPageConditions.jsx';
 import { MyPageDialog } from './MyPageDialog.jsx';
-import { EarningsFigures, MyPageEarnings, useMyPageSettlements } from './MyPageEarnings.jsx';
+import { EarningsFigures, MyPageEarnings, NextPayout, useMyPageSettlements } from './MyPageEarnings.jsx';
 import { MyPageUsage } from './MyPageUsage.jsx';
 import { AccountShortcut, BankSection, PayoutAccountDialog, usePayoutAccount } from './MyPagePayoutAccount.jsx';
 import { PAYOUT_ACCOUNT_API_READY } from './payoutAccount.js';
@@ -55,10 +55,10 @@ export function ActiveDashboard({ journey, enrollment, model, license, onModelCh
     <ProfileHero model={model} license={license} onCertificate={() => setCertificate(true)} />
     <MyPageActivity journey={journey} model={model} license={license} dialog={activityDialog} onDialogChange={setActivityDialog}
       onModelChange={onModelChange} onLicenseChange={onLicenseChange} />
-    {!registering && !data.loading && (data.summaryError || data.rowsError) && <div className={s.stateMessage}><Info className={s.icon} aria-hidden="true" />
+    {!registering && !data.loading && (data.summaryError || data.rowsError || data.statementsError) && <div className={s.stateMessage}><Info className={s.icon} aria-hidden="true" />
       <p>정산 정보만 잠시 확인할 수 없어요.</p><button type="button" className={s.quietButton} onClick={data.retry}>다시 불러오기</button></div>}
     {!registering && <div className={s.settlementStrip}>
-      <EarningsFigures summary={data.summary} /><p className={s.transferNote}>매달 10일 자동이체</p><AccountShortcut bank={bank} onOpen={openAccount} />
+      <EarningsFigures summary={data.summary} /><div className={s.transferNote}><p>매달 10일 자동이체</p><NextPayout nextPayout={data.statements?.nextPayout} /></div><AccountShortcut bank={bank} onOpen={openAccount} />
     </div>}
     <div className={s.cardTabs} role="tablist" aria-label="마이페이지 항목">{tabs.map(item => <button key={item.id} type="button" className={s.tab}
       id={`tab-${item.id}`} role="tab" aria-controls={`panel-${item.id}`} aria-selected={item.id === tab} tabIndex={item.id === tab ? 0 : -1}
@@ -71,7 +71,7 @@ export function ActiveDashboard({ journey, enrollment, model, license, onModelCh
         : <MyPageEarnings data={data} month={month} onMonthChange={setMonth}><BankSection bank={bank} onOpen={openAccount} /></MyPageEarnings>}
     </section>
     {certificate && <MyPageDialog title="내 라이선스 증서" certificate onClose={() => setCertificate(false)}><MyPageCertificate model={model} license={license} revoked={journey.flag === 'revoked'} /></MyPageDialog>}
-    {accountDialog && PAYOUT_ACCOUNT_API_READY && <PayoutAccountDialog model={model} account={bank.account} onClose={() => setAccountDialog(false)} onSaved={value => {
+    {accountDialog && PAYOUT_ACCOUNT_API_READY && <PayoutAccountDialog model={model} account={bank.account} banks={bank.banks} onClose={() => setAccountDialog(false)} onSaved={value => {
       bank.setAccount(value); setAccountDialog(false); chooseTab('payout');
     }} />}
   </>;
