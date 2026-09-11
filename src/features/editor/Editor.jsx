@@ -1028,6 +1028,27 @@ export function Editor() {
     const timer = setInterval(tick, 30000);
     return () => { alive = false; clearInterval(timer); };
   }, [analysis?.selectedModelId]);
+  // 준비됨(ready)은 3초만 보여 주고 감춘다. 준비 중은 계속 띄운다.
+  const [faceReadyShown, setFaceReadyShown] = useState(false);
+  useEffect(() => {
+    if (!faceRender?.enabled || !faceRender?.ready) { setFaceReadyShown(false); return undefined; }
+    setFaceReadyShown(true);
+    const timer = setTimeout(() => setFaceReadyShown(false), 3000);
+    return () => clearTimeout(timer);
+  }, [faceRender?.enabled, faceRender?.ready]);
+  const faceRenderChip = (() => {
+    if (!faceRender?.enabled) return null;
+    // state 를 주지 않는 옛 서버 응답과도 맞물린다(ready 면 ready, 아니면 준비 중).
+    const state = faceRender.state || (faceRender.ready ? 'ready' : 'starting');
+    if (state === 'offline') return null;
+    if (faceRender.ready) {
+      return faceReadyShown ? { ready: true, label: '실제 모델 얼굴 준비됨' } : null;
+    }
+    return {
+      ready: false,
+      label: `실제 모델 얼굴 준비 중${faceRender.etaMinutes ? ` · 약 ${faceRender.etaMinutes}분` : ''}`,
+    };
+  })();
 
   const [waitBoardError, setWaitBoardError] = useState('');
   const [waitBoardAttempt, setWaitBoardAttempt] = useState(0);
@@ -3127,12 +3148,14 @@ export function Editor() {
         </div>
       )}
       {/* 얼굴 렌더 준비 상태 — REAL 모델일 때만. 파드가 자는 동안 첫 컷이 몇 분 걸리는 이유를
-          먼저 말해 주는 한 줄이다(사용자가 "멈췄다"고 읽지 않게). */}
-      {faceRender && faceRender.enabled && (
-        <div className="ed-face-render-status" role="status">
-          {faceRender.ready
-            ? '얼굴 렌더 준비됨'
-            : `얼굴 렌더 준비 중${faceRender.etaMinutes ? ` (약 ${faceRender.etaMinutes}분)` : ''}`}
+          먼저 말해 주는 칩이다(사용자가 "멈췄다"고 읽지 않게). 준비되면 3초만 보여 주고
+          사라진다 — 다 된 상태를 계속 붙여 두면 화면만 시끄럽다. 파드가 없고 자동 켜기도
+          꺼져 있으면(state=offline) 아예 안 보인다. */}
+      {faceRenderChip && (
+        <div className={`ed-face-chip${faceRenderChip.ready ? ' ready' : ''}`} role="status">
+          <Icon name={faceRenderChip.ready ? 'check' : 'loader'} size={13}
+            className={faceRenderChip.ready ? undefined : 'spin'} />
+          <span>{faceRenderChip.label}</span>
         </div>
       )}
       {/* toolbar */}

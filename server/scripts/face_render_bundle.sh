@@ -28,8 +28,13 @@ cp "$HERE/deploy/face_render/start.sh" "$HERE/deploy/face_render/pre_start.sh" \
 chmod +x "$STAGE/deploy/"*.sh
 
 # 재현 가능한 tar — 같은 코드면 같은 sha 가 나와야 파드가 "이미 최신"을 판단할 수 있다.
+# mtime 까지 고정해야 실제로 같아진다(cp 는 복사 시각을 새로 찍는다 — 이걸 빼 두면 같은 코드로
+# 돌려도 초가 넘어가는 순간 sha 가 달라져, 파드가 멀쩡한 코드를 매번 다시 받는다).
+find "$STAGE" -exec touch -t 200001010000 {} +
+# gzip -n: 헤더에 원본 이름·압축 시각을 쓰지 않는다. tar -czf 의 내장 gzip 은 그 시각을
+# 넣어서, 같은 코드라도 초가 바뀌면 sha 가 달라졌다(테스트가 8번에 1번 깨지던 원인).
 COPYFILE_DISABLE=1 tar --format=ustar --numeric-owner --owner=0 --group=0 \
-    -czf "$OUT/face_render.tgz" -C "$STAGE" code deploy
+    -cf - -C "$STAGE" code deploy | gzip -n > "$OUT/face_render.tgz"
 tar tzf "$OUT/face_render.tgz" > /dev/null            # 올리기 전에 아카이브부터 검증
 
 if command -v sha256sum > /dev/null; then

@@ -14,6 +14,7 @@ FM-03 실측(2026-07-09): ENT_MID 응답에 `ci` 존재 확인 → ci HMAC 채�
 
 import asyncio
 import hashlib
+import json
 import hmac
 import logging
 import time
@@ -2650,9 +2651,21 @@ async def warm_face_render(request: Request, response: Response,
     settings = request.app.state.settings
     if not getattr(settings, "facemarket_enabled", False):
         raise _err("not_found", "사용할 수 없습니다.", status=404)
-    body = await request.json() if request.headers.get("content-type", "").startswith(
-        "application/json") else {}
-    model_id = str((body or {}).get("modelId") or (body or {}).get("model_id") or "").strip()
+    # 프런트가 body 를 JSON **문자열**로 보내는 경우가 있다(2026-09-11 실측: 500
+    # AttributeError: 'str' object has no attribute 'get'). 워밍 핑은 부가 신호라
+    # 본문이 뭐가 오든 500 으로 새면 안 된다 — dict 가 아니면 조용히 무시한다.
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 — 본문 없음·깨진 JSON 모두 "신호 없음"
+        body = None
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except Exception:  # noqa: BLE001
+            body = None
+    if not isinstance(body, dict):
+        return Response(status_code=204)
+    model_id = str(body.get("modelId") or body.get("model_id") or "").strip()
     if not is_real_model_id(model_id):
         return Response(status_code=204)
     async with get_conn(request) as conn:
@@ -2711,12 +2724,32 @@ async def face_render_status(
                     "select 1 from fm_model_loras where model_id = %s and enabled "
                     "and status = 'ready' limit 1", (str(model_id),))
                 enabled = await cur.fetchone() is not None
-    adapter = getattr(request.app.state, "face_autoscaler", None)
+    # ready 는 **지금 등록된 파드의 /healthz(loaded)** 로만 판정한다. 예전에는 자동 켜기
+    # 어댑터가 enabled 일 때만 봤는데, 자동 켜기를 꺼 두면(수동 파드 운영) 파드가 멀쩡히
+    # 떠 있어도 영원히 "준비 중 (약 4분)"이 떴다(2026-09-11 개발 테스트에서 확인).
     ready = False
-    if enabled and adapter is not None and getattr(adapter.adapter, "enabled", False):
-        ready = await adapter.adapter.health_ok()
+    state = "offline"
+    if enabled:
+        from .agents import face_identity, identity_source
+
+        pool = getattr(request.app.state, "pool", None)
+        backend = await identity_source.active_face_backend_url(pool) if pool else None
+        if backend:
+            health = (backend[: -len("/render")] if backend.endswith("/render") else backend) + \
+                ("" if backend.endswith("/healthz") else "/healthz")
+            ready = await asyncio.to_thread(face_identity._probe_ready, health)
+            state = "ready" if ready else "starting"
+        else:
+            adapter = getattr(request.app.state, "face_autoscaler", None)
+            autoscale_on = adapter is not None and getattr(adapter.adapter, "enabled", False)
+            # 파드가 없다 — 자동 켜기가 켜져 있으면 곧 만들어지고(starting), 꺼져 있으면
+            # 아무도 만들지 않는다(offline). 프런트는 offline 을 아예 표시하지 않는다.
+            state = "starting" if autoscale_on else "offline"
     return {
         "ready": ready,
         "enabled": enabled,
-        "etaMinutes": None if (ready or not enabled) else face_autoscale.COLD_START_ETA_MINUTES,
+        "state": state,
+        "etaMinutes": (
+            face_autoscale.COLD_START_ETA_MINUTES if state == "starting" else None
+        ),
     }

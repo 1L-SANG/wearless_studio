@@ -195,7 +195,6 @@ def test_uncurated_eligible_example_requests_fail_closed_profile():
 @pytest.mark.parametrize(
     "overrides,error",
     [
-        ({"identity_source": "REAL"}, "requires_virtual_model"),
         (
             {"selected_model_id": None, "effective_model_id": None},
             "forbids_model_substitution",
@@ -289,3 +288,20 @@ def test_invalid_eligibility_catalog_fails_the_exact_route_closed(monkeypatch):
         match="catalog drift",
     ):
         confirmed_gpt_runtime.profile_requested(_spec())
+
+
+def test_real_model_does_not_require_the_confirmed_profile(monkeypatch):
+    """실제 등록자를 고르면 확정 프로필의 근거(가상 모델 확정 시트)가 존재할 수 없다.
+
+    전제 미충족으로 읽어 컷을 버리면 셀러는 실제 모델을 고른 대가로 컷을 잃는다
+    (2026-09-11 실측: 정면 스타일링 컷이 통째로 빠짐). 그래서 REAL 은 일반 패킷으로 간다.
+    """
+    assert confirmed_gpt_runtime.resolve_profile_request(
+        _spec(), identity_source="REAL", selected_model_id="real-uuid",
+        effective_model_id="real-uuid", uses_base_color=True) is False
+    # 가상 모델은 예전 그대로 — 전제가 어긋나면 컷을 버린다.
+    with pytest.raises(confirmed_gpt_runtime.ConfirmedGptRuntimeError,
+                       match="requires_virtual_model"):
+        confirmed_gpt_runtime.resolve_profile_request(
+            _spec(), identity_source="NONE", selected_model_id="mB",
+            effective_model_id="mB", uses_base_color=True)

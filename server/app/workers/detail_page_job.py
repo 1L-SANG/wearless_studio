@@ -1409,7 +1409,12 @@ async def run_detail_page_job(app, job: dict) -> None:
                 attach_grid, _badge = cut_generator.real_identity_plan(
                     normalized.get("cutType") if normalized else None, wants_face=wants)
                 model_images = real_model_images if attach_grid else []
-                has_identity = _badge and len(model_images) == 2
+                # 전신(body_front)이 등록돼 있으면 3장이다(얼굴 2 + 전신 1). == 2 로 보면
+                # 전신 자산을 가진 등록자는 상세페이지에서 얼굴 패스가 통째로 빠진다
+                # (에디터 워커는 >= 2 라 같은 모델이 컷 경로마다 다르게 동작했다 — 2026-09-11).
+                if len(model_images) == 3:
+                    model_has_full_body = True
+                has_identity = _badge and len(model_images) >= 2
             elif cut_source == "VIRTUAL":
                 try:
                     model_images = list(
@@ -1630,8 +1635,8 @@ async def run_detail_page_job(app, job: dict) -> None:
                     has_match=bool(matching_images), matching_count=len(matching_images),
                     matching_custom=[matching_id.startswith("custom_") for matching_id in mids],
                     mood_count=attached_mood_count,
-                    has_model_face=len(model_images) == 2,
-                    has_model_sheet=len(model_images) == 2 and not model_has_full_body,
+                    has_model_face=len(model_images) >= 2,
+                    has_model_sheet=len(model_images) >= 2 and not model_has_full_body,
                     has_model_full_body=model_has_full_body,
                     has_face=False,
                     example_scope=example_scope,
@@ -1642,7 +1647,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     )["_referenceDirectionCompatible"])
             # 4번째 = has_identity: 검증 얼굴(REAL 그리드)이 실제 담긴 컷 → face_cuts 계수·
             # generate has_face·검증 배지 근거. VIRTUAL 그리드는 검증 얼굴이 아니므로 False.
-            real_identity_attached = cut_source == "REAL" and len(model_images) == 2
+            real_identity_attached = cut_source == "REAL" and len(model_images) >= 2
             prepared.append(
                 (
                     cut_spec,

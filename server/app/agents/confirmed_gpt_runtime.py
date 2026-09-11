@@ -80,11 +80,19 @@ def resolve_profile_request(
     """Resolve the structural route before checking its execution prerequisites.
 
     A structurally exact cut must never become generic merely because the owner chose
-    a real/no model, an unresolved virtual model, or an additional color. Those are
-    missing exact-profile prerequisites and therefore fail this cut closed.
+    an unresolved virtual model or an additional color. Those are missing exact-profile
+    prerequisites and therefore fail this cut closed.
+
+    실제(REAL) 모델은 예외다 — 확정 프로필의 근거는 **가상 모델의 확정 시트**라서 실제
+    등록자를 고른 순간 그 근거가 존재할 수가 없다. 요구가 성립하지 않는 것을 "전제 미충족"
+    으로 읽어 컷을 버리면(2026-09-11 실측: 정면 스타일링 컷이 통째로 빠짐) 셀러는 실제
+    모델을 고른 대가로 컷을 잃는다. 그래서 REAL 은 **요구하지 않음**으로 떨어뜨려 일반
+    패킷으로 생성한다. 콘티보드에서 실제/가상 경로를 갈라 놓기 전까지의 계약이다.
     """
 
     if not profile_requested(spec):
+        return False
+    if identity_source == "REAL":
         return False
     if identity_source != "VIRTUAL":
         raise ConfirmedGptRuntimeError("confirmed_gpt_requires_virtual_model")
