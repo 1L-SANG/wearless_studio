@@ -355,6 +355,76 @@ def enrollment_client_factory(keypair, monkeypatch, make_token):
     return _make
 
 
+# ── Task8: 관리자 육안 심사(admin review) 픽스처 ─────────────────────────────────────
+# 컨트롤러 룰링: admin_client 는 T8 소관, 여기(conftest.py)에 둔다. enrollment_client_factory
+# 와 별개의 lean 한 페이크 DB(AdminStore)를 쓴다 — 정의는
+# test_facemarket_admin_review.py 에 있고 여기선 지연 임포트만 한다(순환 임포트 회피,
+# enrollment_client_factory 와 같은 패턴).
+
+
+@pytest.fixture()
+def admin_client(keypair, monkeypatch, make_token):
+    """관리자 심사 API(Task8) 통합 테스트용 팩토리 픽스처.
+
+    ``admin_client(*, is_admin: bool, **settings_overrides) -> (TestClient, AdminStore)``.
+    반환된 client 는 기본 Authorization 헤더를 이미 갖고 있다(sub="admin-1" — 심사 대상
+    등록의 소유자는 별개 유저 "enrollee-1" 이 기본값이라 관리자/등록자 신원이 우연히
+    섞이지 않는다).
+    """
+
+    def _make(*, is_admin: bool, **settings_overrides):
+        import test_facemarket_admin_review as admin_tests
+
+        AdminStore = admin_tests.AdminStore
+        AdminFakePool = admin_tests.AdminFakePool
+        AdminFakeR2 = admin_tests.AdminFakeR2
+
+        from app import facemarket_admin_review as admin_review_module
+
+        private_key, public_key = keypair
+        overrides = dict(
+            app_env="dev",
+            facemarket_enabled=True,
+            fm_biometric_enrollment_enabled=True,
+            fm_match_policy_version="dev-gold-v1",
+            fm_ci_pepper="pep",
+            opendid_holder_url="http://holder.test",
+            # 리뷰 대상은 항상 fm_liveness_enabled=False 조합이다(Task7) — validate_
+            # biometric_settings 가 켜져 있으면 브라우저 role ARN 등 라이브니스 전용
+            # 설정을 추가로 요구하므로, 이 API 와 무관한 그 요구를 여기서 끈다.
+            fm_liveness_enabled=False,
+            fm_face_qc_enabled=True,
+            fm_retouched_live_threshold=0.15,
+            fm_oacx_contract_mode="dev-mock-v1",
+        )
+        overrides.update(settings_overrides)
+        settings = make_settings(**overrides)
+
+        store = AdminStore()
+        admin_user_id = "admin-1"
+        if is_admin:
+            store.admin_user_ids.add(admin_user_id)
+        pool = AdminFakePool(store)
+
+        @contextlib.asynccontextmanager
+        async def fake_get_conn(_request):
+            async with pool.connection() as conn:
+                yield conn
+
+        monkeypatch.setattr(admin_review_module, "get_conn", fake_get_conn, raising=False)
+
+        app = create_app(settings)
+        app.state.jwt_key_resolver = lambda _token: public_key
+        app.state.r2_face = AdminFakeR2(store)
+        app.state.pool = pool
+
+        token = make_token(sub=admin_user_id)
+        client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
+        return client, store
+
+    return _make
+
+
 def assert_query_binds(sql, params):
     """가짜 커서가 실제 드라이버처럼 쿼리를 검사하게 한다.
 

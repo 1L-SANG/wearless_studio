@@ -280,6 +280,160 @@ def review_required(settings: Settings, method: str) -> bool:
     return method == "simple_auth"
 
 
+async def bind_model_and_enqueue_asset_build(
+    cur,
+    *,
+    user_id: str,
+    enrollment_id: str,
+    row: dict,
+    match_snapshot: dict,
+    method: str,
+    identity_contract_version: str | None,
+    liveness_provider_version: str,
+    match_policy_version: str,
+) -> str:
+    """모델 바인딩(생성/재사용) + 신원증거 기록 + 자산빌드 잡 큐잉.
+
+    Task8: 관리자 승인 후 재개(`facemarket_admin_review.approve_enrollment`)가
+    `process_enrollment_completion` 의 이 tail 을 그대로 재사용한다 — 심사가 필요 없던
+    성공 경로와 심사 승인 후 재개 경로가 SQL 문 하나까지 동일해야 두 경로가 갈라져
+    드리프트하는 일이 없다. 호출자가 이미 `where id = %s and status = 'processing' for
+    update` 로 행을 잠근 뒤 불러야 한다(둘 다 이 전제를 지킨다).
+
+    `liveness_provider_version` 은 정상 경로에선 `liveness.provider_version`(또는
+    "disabled"), 재개 경로에선 원래 라이브니스 프레임이 이미 사라졌으므로 항상
+    "disabled_resume" 을 넘긴다(리뷰 대상은 늘 `fm_liveness_enabled=False` 조합이라
+    실질적 정보 손실은 없다 — Task7 참조).
+    """
+    ci_hash = row["identity_ci_hash"]
+    identity_tx_digest = row["identity_tx_digest"]
+    identity_name_masked = row["identity_name_masked"]
+    identity_birth_year = row["identity_birth_year"]
+
+    await cur.execute(
+        "select id::text as id, user_id::text as user_id from fm_models where ci_hash = %s for update",
+        (ci_hash,),
+    )
+    model = await cur.fetchone()
+    if model and model["user_id"] != user_id:
+        raise EnrollmentMappedError("identity_recovery_required")
+    if model:
+        model_id = model["id"]
+    elif row.get("model_id"):
+        model_id = row["model_id"]
+        await cur.execute(
+            """
+            update fm_models
+            set ci_hash = %s, display_name = %s, user_id = %s
+            where id = %s
+            """,
+            (ci_hash, identity_name_masked, user_id, model_id),
+        )
+    else:
+        await cur.execute(
+            """
+            insert into fm_models (user_id, display_name, status, ci_hash)
+            values (%s, %s, 'pending', %s)
+            returning id::text as id
+            """,
+            (user_id, identity_name_masked, ci_hash),
+        )
+        model_id = (await cur.fetchone())["id"]
+    try:
+        await cur.execute(
+            """
+            insert into fm_identity_verifications
+                (model_id, cx_tx_id, cx_tx_id_format, fields)
+            values (%s, %s, 'sha256-v1', %s)
+            """,
+            (
+                model_id,
+                identity_tx_digest,
+                Json({
+                    "nameMasked": identity_name_masked,
+                    "birthYear": identity_birth_year,
+                    "biometric": True,
+                }),
+            ),
+        )
+    except UniqueViolation:
+        raise EnrollmentMappedError("identity_replay")
+    await cur.execute(
+        """
+        update fm_models
+        set assets_status = 'building', current_enrollment_id = %s
+        where id = %s
+        """,
+        (enrollment_id, model_id),
+    )
+    # Task4: 등록 중 올린 대표이미지가 있으면 바인딩 시 모델 커버로 승격한다.
+    # cover_image_url 은 기존 관례상 별도 URL 변환 없이 그대로 읽히므로(facemarket.py
+    # _MODEL_CARD_COLS 참조) R2 키를 그대로 저장한다 — 노출 URL화는 범위 밖.
+    if row.get("profile_image_r2_key"):
+        await cur.execute(
+            "update fm_models set cover_image_url = %s where id = %s",
+            (row["profile_image_r2_key"], model_id),
+        )
+    # Task5: 등록 중 입력받은 키·체형(height_bucket·body_type)이 있으면 바인딩 시
+    # 모델로 승격한다. gender는 identity(OACX)에서 설정되지만, CX가 성별을 안 주면
+    # NULL로 남으므로 — 모델이 고른 키 구간 접두사(m_/f_)에서 유도해 채운다(coalesce).
+    if row.get("height_bucket") or row.get("body_type"):
+        from .facemarket_physique import bucket_gender
+
+        await cur.execute(
+            "update fm_models set height_bucket = coalesce(%s, height_bucket), "
+            "body_type = coalesce(%s, body_type), "
+            "gender = coalesce(gender, %s) where id = %s",
+            (
+                row.get("height_bucket"),
+                row.get("body_type"),
+                bucket_gender(row.get("height_bucket")),
+                model_id,
+            ),
+        )
+    await cur.execute(
+        """
+        update fm_biometric_enrollments
+        set model_id = %s, status = 'asset_building', decision = 'passed',
+            reason = null, completed_at = now(), oacx_tx_digest = %s,
+            match_policy_version = %s,
+            provider_versions = provider_versions || %s::jsonb
+        where id = %s
+        """,
+        (
+            model_id,
+            identity_tx_digest,
+            match_policy_version,
+            Json({
+                "faceLiveness": liveness_provider_version,
+                "oacx": identity_contract_version,
+                "faceMatch": "sface-one-to-one",
+            }),
+            enrollment_id,
+        ),
+    )
+    if method == "simple_auth":
+        # 심사가 필요 없는 간편인증 성공 경로(예: fm_enrollment_review=off)도
+        # advisory 점수를 감사 기록으로 남긴다 — mid 경로는 이 문장을 안 타서
+        # 기존 회귀 스위트가 고정해 둔 asset_building UPDATE 파라미터 수는
+        # 그대로다.
+        await cur.execute(
+            "update fm_biometric_enrollments set match_scores = %s where id = %s",
+            (Json(match_snapshot), enrollment_id),
+        )
+    await cur.execute(
+        """
+        insert into jobs (user_id, project_id, kind, status, payload, credits_reserved, metadata)
+        values (%s, null, 'fm_model_asset_build', 'pending', %s, 0, '{}'::jsonb)
+        """,
+        (
+            user_id,
+            Json({"modelId": model_id, "enrollmentId": enrollment_id}),
+        ),
+    )
+    return model_id
+
+
 def _prewarm_opendid(request: Request) -> None:
     """VC 발급이 사실상 확정된 지점에서 holder(opendid)를 미리 깨운다.
 
@@ -2401,12 +2555,8 @@ async def process_enrollment_completion(
             raise EnrollmentMappedError("qc_unavailable") from None
         match_required_review = review_required(settings, method)
 
-        # Task3: 바인딩 증거는 앞단 /identity 가 fm_biometric_enrollments 에 저장한 값을 읽는다.
-        # CI 는 재계산할 원본 token 이 없다 — 저장된 HMAC(identity_ci_hash)을 그대로 쓴다.
-        ci_hash = row["identity_ci_hash"]
-        identity_tx_digest = row["identity_tx_digest"]
-        identity_name_masked = row["identity_name_masked"]
-        identity_birth_year = row["identity_birth_year"]
+        # Task3: 바인딩 증거(ci_hash 등)는 앞단 /identity 가 fm_biometric_enrollments 에 저장한
+        # 값을 읽는다 — bind_model_and_enqueue_asset_build 가 row 에서 직접 꺼내 쓴다.
         identity_contract_version = row["identity_contract_version"]
         async with get_conn(request) as conn:
             await _assert_account_open(conn, user_id)
@@ -2454,129 +2604,18 @@ async def process_enrollment_completion(
                     )
                     await conn.commit()
                     return EnrollmentDecision(False, False, None, "review_pending")
-                await cur.execute(
-                    "select id::text as id, user_id::text as user_id from fm_models where ci_hash = %s for update",
-                    (ci_hash,),
-                )
-                model = await cur.fetchone()
-                if model and model["user_id"] != user_id:
-                    raise EnrollmentMappedError("identity_recovery_required")
-                if model:
-                    model_id = model["id"]
-                elif row.get("model_id"):
-                    model_id = row["model_id"]
-                    await cur.execute(
-                        """
-                        update fm_models
-                        set ci_hash = %s, display_name = %s, user_id = %s
-                        where id = %s
-                        """,
-                        (ci_hash, identity_name_masked, user_id, model_id),
-                    )
-                else:
-                    await cur.execute(
-                        """
-                        insert into fm_models (user_id, display_name, status, ci_hash)
-                        values (%s, %s, 'pending', %s)
-                        returning id::text as id
-                        """,
-                        (user_id, identity_name_masked, ci_hash),
-                    )
-                    model_id = (await cur.fetchone())["id"]
-                try:
-                    await cur.execute(
-                        """
-                        insert into fm_identity_verifications
-                            (model_id, cx_tx_id, cx_tx_id_format, fields)
-                        values (%s, %s, 'sha256-v1', %s)
-                        """,
-                        (
-                            model_id,
-                            identity_tx_digest,
-                            Json({
-                                "nameMasked": identity_name_masked,
-                                "birthYear": identity_birth_year,
-                                "biometric": True,
-                            }),
-                        ),
-                    )
-                except UniqueViolation:
-                    raise EnrollmentMappedError("identity_replay")
-                await cur.execute(
-                    """
-                    update fm_models
-                    set assets_status = 'building', current_enrollment_id = %s
-                    where id = %s
-                    """,
-                    (enrollment_id, model_id),
-                )
-                # Task4: 등록 중 올린 대표이미지가 있으면 바인딩 시 모델 커버로 승격한다.
-                # cover_image_url 은 기존 관례상 별도 URL 변환 없이 그대로 읽히므로(facemarket.py
-                # _MODEL_CARD_COLS 참조) R2 키를 그대로 저장한다 — 노출 URL화는 범위 밖.
-                if row.get("profile_image_r2_key"):
-                    await cur.execute(
-                        "update fm_models set cover_image_url = %s where id = %s",
-                        (row["profile_image_r2_key"], model_id),
-                    )
-                # Task5: 등록 중 입력받은 키·체형(height_bucket·body_type)이 있으면 바인딩 시
-                # 모델로 승격한다. gender는 identity(OACX)에서 설정되지만, CX가 성별을 안 주면
-                # NULL로 남으므로 — 모델이 고른 키 구간 접두사(m_/f_)에서 유도해 채운다(coalesce).
-                if row.get("height_bucket") or row.get("body_type"):
-                    from .facemarket_physique import bucket_gender
-
-                    await cur.execute(
-                        "update fm_models set height_bucket = coalesce(%s, height_bucket), "
-                        "body_type = coalesce(%s, body_type), "
-                        "gender = coalesce(gender, %s) where id = %s",
-                        (
-                            row.get("height_bucket"),
-                            row.get("body_type"),
-                            bucket_gender(row.get("height_bucket")),
-                            model_id,
-                        ),
-                    )
-                await cur.execute(
-                    """
-                    update fm_biometric_enrollments
-                    set model_id = %s, status = 'asset_building', decision = 'passed',
-                        reason = null, completed_at = now(), oacx_tx_digest = %s,
-                        match_policy_version = %s,
-                        provider_versions = provider_versions || %s::jsonb
-                    where id = %s
-                    """,
-                    (
-                        model_id,
-                        identity_tx_digest,
-                        settings.fm_match_policy_version,
-                        Json({
-                            "faceLiveness": (
-                                liveness.provider_version
-                                if liveness is not None else "disabled"
-                            ),
-                            "oacx": identity_contract_version,
-                            "faceMatch": "sface-one-to-one",
-                        }),
-                        enrollment_id,
+                model_id = await bind_model_and_enqueue_asset_build(
+                    cur,
+                    user_id=user_id,
+                    enrollment_id=enrollment_id,
+                    row=row,
+                    match_snapshot=match_snapshot,
+                    method=method,
+                    identity_contract_version=identity_contract_version,
+                    liveness_provider_version=(
+                        liveness.provider_version if liveness is not None else "disabled"
                     ),
-                )
-                if method == "simple_auth":
-                    # 심사가 필요 없는 간편인증 성공 경로(예: fm_enrollment_review=off)도
-                    # advisory 점수를 감사 기록으로 남긴다 — mid 경로는 이 문장을 안 타서
-                    # 기존 회귀 스위트가 고정해 둔 asset_building UPDATE 파라미터 수는
-                    # 그대로다.
-                    await cur.execute(
-                        "update fm_biometric_enrollments set match_scores = %s where id = %s",
-                        (Json(match_snapshot), enrollment_id),
-                    )
-                await cur.execute(
-                    """
-                    insert into jobs (user_id, project_id, kind, status, payload, credits_reserved, metadata)
-                    values (%s, null, 'fm_model_asset_build', 'pending', %s, 0, '{}'::jsonb)
-                    """,
-                    (
-                        user_id,
-                        Json({"modelId": model_id, "enrollmentId": enrollment_id}),
-                    ),
+                    match_policy_version=settings.fm_match_policy_version,
                 )
             await conn.commit()
         return EnrollmentDecision(True, False, None, "asset_building", model_id)

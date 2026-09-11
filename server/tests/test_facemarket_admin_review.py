@@ -604,3 +604,575 @@ def test_review_required_simple_auth_only_targets_simple_auth_only():
     settings = make_settings(fm_enrollment_review="simple_auth_only")
     assert facemarket_enrollment.review_required(settings, "simple_auth") is True
     assert facemarket_enrollment.review_required(settings, "mid") is False
+
+
+# ── Task8: 관리자 육안 심사 API ──────────────────────────────────────────────────────
+#
+# `admin_client` 픽스처는 conftest.py 에 산다(컨트롤러 룰링). 여기 정의된 AdminStore/
+# AdminFakePool/AdminFakeR2 는 그 픽스처가 지연 임포트해서 쓴다(enrollment_client_factory
+# 가 이 파일의 EnrollmentStore/FakeCursor 를 지연 임포트하는 것과 같은 결).
+#
+# 이 페이크 DB 는 test_facemarket_biometric_enrollment.py 의 거대한 EnrollmentStore 와는
+# 별개의, admin review 라우트 + 그 tail(모델 바인딩·잡 큐잉, Task7 정상완료 경로와 공유하는
+# bind_model_and_enqueue_asset_build)에 필요한 SQL만 아는 lean 한 대역이다.
+
+import contextlib
+from datetime import timezone
+
+
+def _json_value(value):
+    return getattr(value, "obj", value)
+
+
+class AdminStore:
+    def __init__(self):
+        self.enrollments: list[dict] = []
+        self.applications: dict[str, dict] = {}
+        self.photos: list[dict] = []
+        self.models: list[dict] = []
+        self.identity_verifications: list[dict] = []
+        self.jobs: list[dict] = []
+        self.audit: list[dict] = []
+        self.deleted_r2_keys: list[str] = []
+        self.admin_user_ids: set[str] = set()
+        self.latest_id: str | None = None
+
+    def add_enrollment(self, **overrides) -> str:
+        enrollment_id = overrides.pop("id", None) or str(uuid.uuid4())
+        application = overrides.pop("application", None)
+        row = {
+            "id": enrollment_id,
+            "user_id": "enrollee-1",
+            "model_id": None,
+            "identity_method": "mid",
+            "review_status": None,
+            "status": "review_pending",
+            "match_scores": None,
+            "application_id": None,
+            "reviewed_by": None,
+            "reviewed_at": None,
+            "review_reason": None,
+            "reason": None,
+            "decision": None,
+            "created_at": datetime.now(timezone.utc),
+            "completed_at": None,
+            "oacx_tx_digest": None,
+            "id_document_r2_key": None,
+            "id_document_purged_at": None,
+            "identity_ci_hash": f"ci-{enrollment_id}",
+            "identity_tx_digest": f"tx-{enrollment_id}",
+            "identity_name_masked": "홍*동",
+            "identity_birth_year": "1990",
+            "identity_contract_version": "simple-auth-v1",
+            "profile_image_r2_key": None,
+            "height_bucket": None,
+            "body_type": None,
+            "provider_versions": {},
+            "match_policy_version": None,
+        }
+        row.update(overrides)
+        if application is not None:
+            app_id = str(uuid.uuid4())
+            row["application_id"] = app_id
+            self.applications[app_id] = application
+        self.enrollments.append(row)
+        self.latest_id = enrollment_id
+        return enrollment_id
+
+    def add_photo(self, enrollment_id: str, angle: str, r2_key: str, mime_type: str = "image/jpeg"):
+        self.photos.append(
+            {"enrollment_id": enrollment_id, "angle": angle, "r2_key": r2_key, "mime_type": mime_type}
+        )
+
+    @property
+    def latest_enrollment(self) -> dict:
+        return next(row for row in self.enrollments if row["id"] == self.latest_id)
+
+
+class AdminFakeR2:
+    """get_bytes 는 키를 그대로 되돌리는(고정) 바이트를 준다 — 내용 검증은 이 태스크의
+    관심사가 아니다(스트리밍 여부·헤더가 관심사). delete 는 store 에 남아 파기를 검증한다."""
+
+    def __init__(self, store: AdminStore):
+        self.store = store
+
+    def get_bytes(self, key: str) -> bytes:
+        return b"\xff\xd8\xff" + key.encode("utf-8")
+
+    def delete(self, key: str) -> None:
+        self.store.deleted_r2_keys.append(key)
+
+    def put_bytes(self, key, data, mime, cache=None):
+        return None
+
+    def public_url(self, key: str) -> str:
+        return f"https://r2.test/{key}"
+
+    def preview_url(self, key: str, expires: int = 3600) -> str:
+        return f"https://r2.test/{key}"
+
+
+class AdminFakeCursor:
+    def __init__(self, conn):
+        self.conn = conn
+        self.store: AdminStore = conn.store
+        self.result = None
+        self._many: list[dict] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def fetchone(self):
+        return self.result
+
+    async def fetchall(self):
+        return self._many
+
+    async def execute(self, sql, params=None):
+        query = " ".join(sql.split()).lower()
+        params = params or ()
+        self.result = None
+        self._many = []
+        store = self.store
+
+        # --- admin_guard.require_admin_identity → repo.is_admin ---
+        if query.startswith("select role from profiles where user_id"):
+            (user_id,) = params
+            self.result = {"role": "admin"} if user_id in store.admin_user_ids else None
+            return
+
+        # --- 심사 큐 목록 ---
+        if query.startswith(
+            "select id::text as id, identity_method, review_status, status, created_at"
+        ):
+            (review_status,) = params
+            rows = [r for r in store.enrollments if r.get("review_status") == review_status]
+            rows.sort(key=lambda r: r["created_at"], reverse=True)
+            self._many = [
+                {
+                    "id": r["id"],
+                    "identity_method": r.get("identity_method"),
+                    "review_status": r.get("review_status"),
+                    "status": r["status"],
+                    "created_at": r["created_at"],
+                }
+                for r in rows
+            ]
+            return
+
+        # --- 심사 카드 단건 (application_id 컬럼이 있는 쪽으로 재개-select 와 구분) ---
+        if "application_id::text as application_id" in query:
+            (enrollment_id,) = params
+            row = next((r for r in store.enrollments if r["id"] == enrollment_id), None)
+            self.result = None if row is None else dict(row)
+            return
+
+        # --- 지원서 요약 ---
+        if "fm_model_applications" in query:
+            (application_id,) = params
+            self.result = store.applications.get(application_id)
+            return
+
+        # --- 이미지: 신분증 키 조회 (purge_id_document 의 첫 SELECT 와 동일 SQL) ---
+        if query.startswith("select id_document_r2_key from fm_biometric_enrollments"):
+            (enrollment_id,) = params
+            row = next((r for r in store.enrollments if r["id"] == enrollment_id), None)
+            self.result = {"id_document_r2_key": row.get("id_document_r2_key")} if row else None
+            return
+
+        # --- 이미지: 각도 사진 키 조회 ---
+        if "fm_biometric_enrollment_photos" in query and query.startswith(
+            "select r2_key, mime_type"
+        ):
+            enrollment_id, angle = params
+            photo = next(
+                (
+                    p
+                    for p in store.photos
+                    if p["enrollment_id"] == enrollment_id and p["angle"] == angle
+                ),
+                None,
+            )
+            self.result = photo
+            return
+
+        # --- 승인 UPDATE (상태 가드) ---
+        if "set review_status = 'approved'" in query:
+            reviewed_by, enrollment_id = params
+            row = next((r for r in store.enrollments if r["id"] == enrollment_id), None)
+            if row and row["status"] == "review_pending" and row.get("review_status") == "pending":
+                row.update(
+                    review_status="approved", reviewed_by=reviewed_by,
+                    reviewed_at=datetime.now(timezone.utc), status="processing",
+                )
+                self.result = {"id": enrollment_id}
+            else:
+                self.result = None
+            return
+
+        # --- 거절 UPDATE (상태 가드) ---
+        if "set review_status = 'rejected'" in query:
+            reviewed_by, review_reason, enrollment_id = params
+            row = next((r for r in store.enrollments if r["id"] == enrollment_id), None)
+            if row and row["status"] == "review_pending" and row.get("review_status") == "pending":
+                row.update(
+                    review_status="rejected", reviewed_by=reviewed_by,
+                    reviewed_at=datetime.now(timezone.utc), review_reason=review_reason,
+                    status="failed", reason="review_rejected",
+                    completed_at=datetime.now(timezone.utc),
+                )
+                self.result = {"id": enrollment_id}
+            else:
+                self.result = None
+            return
+
+        # --- purge_id_document 의 UPDATE ---
+        if "id_document_purged_at = now()" in query:
+            (enrollment_id,) = params
+            row = next((r for r in store.enrollments if r["id"] == enrollment_id), None)
+            if row is not None:
+                row["id_document_r2_key"] = None
+                row["id_document_purged_at"] = datetime.now(timezone.utc)
+            return
+
+        # --- write_audit ---
+        if "admin_audit_log" in query:
+            actor_user_id, action, target_type, target_id, before, after, note = params
+            store.audit.append(
+                {
+                    "actor_user_id": actor_user_id,
+                    "action": action,
+                    "target_type": target_type,
+                    "target_id": target_id,
+                    "before": _json_value(before),
+                    "after": _json_value(after),
+                    "note": note,
+                }
+            )
+            return
+
+        # --- 재개-select (identity_ci_hash 포함, status='processing' 가드) ---
+        if "identity_ci_hash, identity_tx_digest, identity_name_masked" in query:
+            (enrollment_id,) = params
+            row = next(
+                (
+                    r
+                    for r in store.enrollments
+                    if r["id"] == enrollment_id
+                    and r["status"] == "processing"
+                    and r.get("review_status") == "approved"
+                ),
+                None,
+            )
+            self.result = None if row is None else dict(row)
+            return
+
+        # --- bind_model_and_enqueue_asset_build 의 tail (Task5/6/7 정상경로와 동일 SQL) ---
+        if "from fm_models where ci_hash" in query:
+            (ci_hash,) = params
+            model = next((m for m in store.models if m.get("ci_hash") == ci_hash), None)
+            self.result = None if model is None else {"id": model["id"], "user_id": model["user_id"]}
+            return
+
+        if "set ci_hash = %s, display_name = %s, user_id = %s" in query:
+            ci_hash, display_name, user_id, model_id = params
+            model = next((m for m in store.models if m["id"] == model_id), None)
+            if model is not None:
+                model.update(ci_hash=ci_hash, display_name=display_name, user_id=user_id)
+            return
+
+        if query.startswith("insert into fm_models"):
+            user_id, display_name, ci_hash = params
+            model_id = str(uuid.uuid4())
+            store.models.append(
+                {
+                    "id": model_id, "user_id": user_id, "display_name": display_name,
+                    "status": "pending", "ci_hash": ci_hash, "assets_status": None,
+                    "current_enrollment_id": None, "cover_image_url": None,
+                    "height_bucket": None, "body_type": None, "gender": None,
+                }
+            )
+            self.result = {"id": model_id}
+            return
+
+        if "fm_identity_verifications" in query:
+            model_id, cx_tx_id, fields = params
+            store.identity_verifications.append(
+                {"model_id": model_id, "cx_tx_id": cx_tx_id, "fields": _json_value(fields)}
+            )
+            return
+
+        if "assets_status = 'building'" in query:
+            enrollment_id, model_id = params
+            model = next((m for m in store.models if m["id"] == model_id), None)
+            if model is not None:
+                model.update(assets_status="building", current_enrollment_id=enrollment_id)
+            return
+
+        if "cover_image_url" in query:
+            cover_image_r2_key, model_id = params
+            model = next((m for m in store.models if m["id"] == model_id), None)
+            if model is not None:
+                model["cover_image_url"] = cover_image_r2_key
+            return
+
+        if "height_bucket = coalesce" in query:
+            height_bucket, body_type, gender, model_id = params
+            model = next((m for m in store.models if m["id"] == model_id), None)
+            if model is not None:
+                model["height_bucket"] = height_bucket or model.get("height_bucket")
+                model["body_type"] = body_type or model.get("body_type")
+                model["gender"] = model.get("gender") or gender
+            return
+
+        if "status = 'asset_building', decision = 'passed'" in query:
+            model_id, oacx_tx_digest, match_policy_version, provider_versions, enrollment_id = params
+            row = next((r for r in store.enrollments if r["id"] == enrollment_id), None)
+            if row is not None:
+                merged = dict(row.get("provider_versions") or {})
+                merged.update(_json_value(provider_versions))
+                row.update(
+                    model_id=model_id, status="asset_building", decision="passed", reason=None,
+                    completed_at=datetime.now(timezone.utc), oacx_tx_digest=oacx_tx_digest,
+                    match_policy_version=match_policy_version, provider_versions=merged,
+                )
+            return
+
+        if "set match_scores = %s where id = %s" in query:
+            match_scores, enrollment_id = params
+            row = next((r for r in store.enrollments if r["id"] == enrollment_id), None)
+            if row is not None:
+                row["match_scores"] = _json_value(match_scores)
+            return
+
+        if query.startswith("insert into jobs"):
+            user_id, payload = params
+            store.jobs.append(
+                {"user_id": user_id, "kind": "fm_model_asset_build", "payload": _json_value(payload)}
+            )
+            return
+
+        raise AssertionError(f"AdminFakeCursor 가 모르는 쿼리: {query}")
+
+
+class AdminFakeConn:
+    def __init__(self, store: AdminStore):
+        self.store = store
+
+    def cursor(self):
+        return AdminFakeCursor(self)
+
+    async def commit(self):
+        return None
+
+    async def rollback(self):
+        return None
+
+
+class AdminFakePool:
+    def __init__(self, store: AdminStore):
+        self.store = store
+
+    def connection(self):
+        @contextlib.asynccontextmanager
+        async def _cm():
+            yield AdminFakeConn(self.store)
+
+        return _cm()
+
+
+# ── 테스트 ────────────────────────────────────────────────────────────────────────────
+
+
+def test_review_queue_requires_admin(admin_client):
+    client, store = admin_client(is_admin=False)
+    assert client.get("/v1/facemarket/admin/enrollments?review=pending").status_code == 403
+
+
+def test_review_queue_lists_pending(admin_client):
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         identity_method="simple_auth")
+    rows = client.get("/v1/facemarket/admin/enrollments?review=pending").json()
+    assert len(rows) == 1
+    assert rows[0]["identityMethod"] == "simple_auth"
+
+
+def test_review_card_includes_scores_and_application(admin_client):
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(
+        status="review_pending", review_status="pending", identity_method="simple_auth",
+        match_scores={"scores": {"front": 0.31}, "belowThreshold": []},
+        application={"applicant_name": "홍길동", "birthdate": "1990-01-01"},
+    )
+    card = client.get(f"/v1/facemarket/admin/enrollments/{store.latest_id}").json()
+    assert card["matchScores"]["scores"]["front"] == 0.31
+    assert card["application"]["applicantName"] == "홍길동"
+    assert set(card["images"]) == {"id_document", "front", "angle45", "side"}
+
+
+def test_image_route_is_no_store(admin_client):
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         id_document_r2_key="k", identity_method="simple_auth")
+    response = client.get(
+        f"/v1/facemarket/admin/enrollments/{store.latest_id}/images/id_document"
+    )
+    assert response.headers["cache-control"] == "private, no-store"
+
+
+def test_image_route_rejects_unknown_kind(admin_client):
+    """kind 화이트리스트 — 클라이언트 문자열을 R2 키에 그대로 끼워 넣지 않는다는 계약."""
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         identity_method="simple_auth")
+    response = client.get(
+        f"/v1/facemarket/admin/enrollments/{store.latest_id}/images/../../etc/passwd"
+    )
+    assert response.status_code in (400, 404)
+
+
+def test_approve_transitions_and_purges_document(admin_client):
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         identity_method="simple_auth", id_document_r2_key="k")
+    response = client.post(f"/v1/facemarket/admin/enrollments/{store.latest_id}/approve")
+    assert response.status_code == 200, response.text
+    row = store.latest_enrollment
+    assert row["review_status"] == "approved"
+    # 브리프 초안의 리터럴 테스트는 최종 status 를 'processing' 으로 기대했다. 하지만
+    # 'processing'+review_status='approved' 조합을 다시 집어 asset_building 으로 밀어줄
+    # 소비자가 이 코드베이스 어디에도 없다(디스패처는 jobs 테이블만 폴링하고,
+    # fm_model_asset_build 워커는 e.status='asset_building' 을 전제로 SELECT 한다 —
+    # server/app/workers/fm_model_asset_job.py:173,398,469,549). 그 상태로 두면 "승인은
+    # 됐는데 영원히 안 만들어지는" 반쪽짜리 배선이 된다 — 브리프 자체가 이걸 "한 것보다
+    # 못한 결과"로 명시적으로 금지한다. 그래서 승인 응답이 같은 요청 안에서
+    # bind_model_and_enqueue_asset_build(Task7 정상완료 경로의 tail 을 그대로 재사용)를
+    # 동기 호출해 재개까지 마친다 — 최종 status 는 'asset_building' 이다. 상세 근거는
+    # task-8-report.md 참조.
+    assert row["status"] == "asset_building"
+    assert row["model_id"] is not None
+    assert len(store.jobs) == 1
+    assert store.jobs[0]["kind"] == "fm_model_asset_build"
+    assert store.jobs[0]["payload"]["modelId"] == row["model_id"]
+    # 심사가 끝나면 신분증은 더 쓸 데가 없다 — 즉시 파기.
+    assert row["id_document_r2_key"] is None
+    assert row["id_document_purged_at"] is not None
+    assert "k" in store.deleted_r2_keys
+
+
+def test_reject_requires_reason_and_purges(admin_client):
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         identity_method="simple_auth", id_document_r2_key="k")
+    assert client.post(
+        f"/v1/facemarket/admin/enrollments/{store.latest_id}/reject", json={"reason": ""}
+    ).status_code == 400
+    response = client.post(
+        f"/v1/facemarket/admin/enrollments/{store.latest_id}/reject",
+        json={"reason": "신분증 얼굴과 등록 사진이 다른 사람"},
+    )
+    assert response.status_code == 200
+    row = store.latest_enrollment
+    assert row["review_status"] == "rejected"
+    assert row["status"] == "failed"
+    assert row["reason"] == "review_rejected"
+    assert row["id_document_r2_key"] is None
+    assert row["id_document_purged_at"] is not None
+    assert "k" in store.deleted_r2_keys
+
+
+def test_approve_writes_audit(admin_client):
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         identity_method="simple_auth")
+    client.post(f"/v1/facemarket/admin/enrollments/{store.latest_id}/approve")
+    assert store.audit[-1]["action"] == "enrollment_review_approve"
+    assert store.audit[-1]["target_type"] == "enrollment"
+
+
+def test_reject_writes_audit(admin_client):
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         identity_method="simple_auth")
+    client.post(
+        f"/v1/facemarket/admin/enrollments/{store.latest_id}/reject",
+        json={"reason": "위조 의심"},
+    )
+    assert store.audit[-1]["action"] == "enrollment_review_reject"
+    assert store.audit[-1]["target_type"] == "enrollment"
+    assert store.audit[-1]["note"] == "위조 의심"
+
+
+def test_approve_rejects_non_review_state(admin_client):
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(status="photos_pending", identity_method="simple_auth")
+    response = client.post(f"/v1/facemarket/admin/enrollments/{store.latest_id}/approve")
+    assert response.status_code == 409
+
+
+def test_reject_rejects_non_review_state(admin_client):
+    """승인/거절 둘 다 같은 상태가드 규율을 지키는지 — approve 쪽만 검사하면 reject 의
+    WHERE 절이 빠져도 아무도 못 잡는다."""
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(status="asset_building", identity_method="simple_auth")
+    response = client.post(
+        f"/v1/facemarket/admin/enrollments/{store.latest_id}/reject",
+        json={"reason": "위조 의심"},
+    )
+    assert response.status_code == 409
+
+
+def test_double_approve_second_call_loses_race(admin_client):
+    """두 관리자가 동시에 승인 버튼을 눌러도 둘 다 '이겼다'고 믿으면 안 된다 —
+    상태가드 UPDATE 가 두 번째 호출에서 0-row 여야 하고, 그게 409 여야지 500 이면 안 된다."""
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         identity_method="simple_auth")
+    first = client.post(f"/v1/facemarket/admin/enrollments/{store.latest_id}/approve")
+    assert first.status_code == 200
+    second = client.post(f"/v1/facemarket/admin/enrollments/{store.latest_id}/approve")
+    assert second.status_code == 409
+
+
+def test_approve_requires_admin(admin_client):
+    client, store = admin_client(is_admin=False)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         identity_method="simple_auth")
+    response = client.post(f"/v1/facemarket/admin/enrollments/{store.latest_id}/approve")
+    assert response.status_code == 403
+    # 403 이면 상태도 바뀌면 안 된다 — 가드가 라우트 진입 전에 막았다는 증거.
+    assert store.latest_enrollment["review_status"] == "pending"
+
+
+def test_reject_requires_admin(admin_client):
+    client, store = admin_client(is_admin=False)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         identity_method="simple_auth")
+    response = client.post(
+        f"/v1/facemarket/admin/enrollments/{store.latest_id}/reject",
+        json={"reason": "위조 의심"},
+    )
+    assert response.status_code == 403
+    assert store.latest_enrollment["review_status"] == "pending"
+
+
+def test_card_requires_admin(admin_client):
+    client, store = admin_client(is_admin=False)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         identity_method="simple_auth")
+    response = client.get(f"/v1/facemarket/admin/enrollments/{store.latest_id}")
+    assert response.status_code == 403
+
+
+def test_image_requires_admin(admin_client):
+    client, store = admin_client(is_admin=False)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         id_document_r2_key="k", identity_method="simple_auth")
+    response = client.get(
+        f"/v1/facemarket/admin/enrollments/{store.latest_id}/images/id_document"
+    )
+    assert response.status_code == 403
