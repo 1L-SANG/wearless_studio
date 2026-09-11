@@ -134,7 +134,7 @@ async def reveal_payout_account(
 ):
     response.headers["Cache-Control"] = "no-store"
     async with get_conn(request) as conn:
-        await admin_guard.require_admin(conn, user_id)
+        await admin_guard.require_admin(conn, user_id, request)
         cipher = _cipher(request)
         model_id = _model_id(model_id)
         async with conn.cursor() as cur:
@@ -274,7 +274,7 @@ async def list_admin_payout_statements(
 ):
     response.headers["Cache-Control"] = "no-store"
     async with get_conn(request) as conn:
-        await admin_guard.require_admin(conn, user_id)
+        await admin_guard.require_admin(conn, user_id, request)
         month = _parse_month(month)
         start, end = month_bounds(month)
         async with conn.cursor() as cur:
@@ -296,7 +296,7 @@ async def set_payout_statement_status(
 ):
     response.headers["Cache-Control"] = "no-store"
     async with get_conn(request) as conn:
-        await admin_guard.require_admin(conn, user_id)
+        await admin_guard.require_admin(conn, user_id, request)
         model_id = _model_id(model_id)
         month = _parse_month(period_month)
         if body.status not in ("paid", "held", "scheduled"):

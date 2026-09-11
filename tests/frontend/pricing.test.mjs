@@ -57,15 +57,28 @@ function render(plansToShow, currentPlan = 'free', loggedIn = true) {
   }
 }
 
-test('구독 카드가 랜딩의 증정 문구와 기능을 표시하고 준비 중 상태를 유지한다', () => {
+// 2026-09-09: 정기결제(빌링)를 붙이면서 '준비 중' 이 사라졌다. 이 테스트는 옛 상태를
+// 고정하고 있었으므로 새 정책(구독 버튼 활성)으로 고쳐 쓴다 — 계획서
+// docs/plans/2026-09-09-toss-billing-subscription.md Task 10.
+test('구독 카드가 랜딩의 증정 문구와 기능을 표시하고 구독 버튼이 활성이다', () => {
   const html = render(plans);
-  assert.match(html, /상세페이지 한 개에 13,000원. 사진 10장 기준이에요./);
+  assert.doesNotMatch(html, /상세페이지 한 개에 13,000원/);
   for (const text of ['Starter', 'Seller', 'Pro', '₩29,900', '₩79,900', '₩159,000',
-    '2,000 크레딧 추가 증정', '6,000 크레딧 추가 증정', '마네킹컷 1회 무료 수정 가능',
+    '200 크레딧 추가 증정', '600 크레딧 추가 증정', '마네킹컷 1회 무료 수정 가능',
     '모든 AI 모델 50% 할인', '모든 AI 모델 무료 제공']) assert.ok(html.includes(text), text);
   assert.equal((html.match(/MOST POPULAR/g) || []).length, 1);
-  assert.equal((html.match(/disabled=""/g) || []).length, 3);
-  assert.equal((html.match(/구독하기.*?준비 중/g) || []).length, 3);
+  assert.equal((html.match(/구매하기/g) || []).length, 3);
+  // 계좌이체는 우리 MID 에서 아직 안 열려 숨겨 둔다(SUBSCRIPTION_TRANSFER_ENABLED=false).
+  assert.doesNotMatch(html, /계좌이체로 구독하기/);
+  // '준비 중'(기능 미구현)이 아니라 '구매하기'다.
+  assert.doesNotMatch(html, /준비 중/);
+  // 비활성 여부는 VITE_TOSS_BILLING_CLIENT_KEY 유무에 달렸다(로컬에 .env 가 있으면 활성,
+  // CI 처럼 없으면 비활성). 환경에 따라 갈리는 값을 고정하면 테스트가 환경을 검사하게 된다 —
+  // 여기서 지킬 계약은 '비활성이라면 그 사유가 결제 키 부재'라는 것뿐이다.
+  const disabled = (html.match(/disabled=""/g) || []).length;
+  const keyNotice = (html.match(/결제 키가 설정되지 않았어요/g) || []).length;
+  assert.equal(disabled, keyNotice, '비활성 사유가 결제 키 부재로 설명돼야 한다');
+  assert.ok(disabled === 0 || disabled === 3, `구독 버튼 비활성 수가 이상하다: ${disabled}`);
   assert.equal((html.match(/<li\b/g) || []).length, 12);
 });
 
@@ -95,9 +108,9 @@ test('빈 요금제 목록은 준비 중 안내를 표시한다', () => {
 
 test('목 결제 주문은 새 충전 상품 다섯 개의 가격과 지급량을 사용한다', async () => {
   for (const [code, amount, credits] of [
-    ['topup_finish', 9900, 1800], ['topup_start', 24900, 4700],
-    ['topup_repeat', 69900, 13800], ['topup_season', 149000, 30500],
-    ['topup_bulk', 299000, 64000],
+    ['topup_finish', 9900, 180], ['topup_start', 24900, 470],
+    ['topup_repeat', 69900, 1380], ['topup_season', 149000, 3050],
+    ['topup_bulk', 299000, 6400],
   ]) {
     const order = await api.createTossCheckout(code);
     assert.equal(order.amount, amount);
@@ -105,4 +118,15 @@ test('목 결제 주문은 새 충전 상품 다섯 개의 가격과 지급량�
   }
   await assert.rejects(api.createTossCheckout('starter'), /존재하지 않는 충전 상품/);
   await assert.rejects(api.createTossCheckout('unknown'), /존재하지 않는 충전 상품/);
+});
+
+// 상품 코드별 수량과 Seller 카드의 취소선/보너스를 함께 검증한다.
+test('개정 환율 카탈로그와 Seller 카드 지급량이 일치한다', () => {
+  for (const [code, credits] of [
+    ['starter', 600], ['seller', 1800], ['pro', 3800],
+    ['topup_finish', 180], ['topup_start', 470], ['topup_repeat', 1380],
+    ['topup_season', 3050], ['topup_bulk', 6400],
+  ]) assert.equal(plans.find((plan) => plan.code === code)?.credits, credits, code);
+  const html = render(plans.filter((plan) => plan.code === 'seller'));
+  for (const text of ['1,600', '1,800', '200 크레딧 추가 증정']) assert.ok(html.includes(text), text);
 });

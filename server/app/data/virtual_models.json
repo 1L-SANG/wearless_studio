@@ -1,7 +1,8 @@
 {
   "_meta": {
     "description": "Virtual model identity assets. Default worn-cut contract: face_front (facial identity only) + body_front (full-body proportions only). Confirmed GPT contract: grid_face_direction (lossless original-pixel face directions) + grid_fullbody (full-body directions) as one atomic pair.",
-    "source": "spike facepack v2 + public/models 원본 앵커"
+    "source": "spike facepack v2 + public/models 원본 앵커",
+    "faceIdentity": "Optional per-model field `faceIdentity: {loraPath, token}` (agents/face_identity.py). When FACE_IDENTITY_ENABLED=true and the field is present, worn cuts of that model get the person-LoRA face pass (Gemini keeps garment/scene; only the face ellipse is replaced). Absent field = no face pass. loraPath is resolved against FACE_IDENTITY_LORA_PATH unless absolute; token defaults to 'ohwx man'."
   },
   "models": {
     "mA": {

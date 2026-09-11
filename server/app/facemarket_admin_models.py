@@ -288,7 +288,7 @@ async def _load_admin_model(conn, model_id: str, *, for_update: bool = False) ->
         await cur.execute(
             """select m.id::text as id, m.status, m.redo_count, m.fullbody_image_url,
                       e.status as enrollment_status,
-                      coalesce(u.email, a.contact_email) as contact_email,
+                      coalesce(a.contact_email, u.email) as contact_email,
                       exists (
                         select 1 from fm_licenses l
                          where l.model_id = m.id
@@ -376,7 +376,7 @@ async def admin_model_test_cuts(
     컷 이미지 메타를 전부 조인하면 목록 응답이 무거워지기 때문이다."""
     mid = _canonical_id(model_id)
     async with get_conn(request) as conn:
-        await _require_admin(conn, user_id)
+        await _require_admin(conn, user_id, request)
         async with conn.cursor() as cur:
             await cur.execute(
                 """select m.id::text as id, m.display_name, m.status,
@@ -450,7 +450,7 @@ async def admin_upload_test_cuts(
     # multipart 파싱은 프레임워크가 맡지만 실제 파일 바이트는 관리자 확인 뒤에만 읽는다.
     # 비관리자가 큰 업로드를 반복해 애플리케이션 메모리를 쓰는 경로를 닫는다.
     async with get_conn(request) as conn:
-        await _require_admin(conn, user_id)
+        await _require_admin(conn, user_id, request)
         if await _load_admin_model(conn, model_id) is None:
             raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
         existing_slots = await _load_cut_slots(conn, model_id)
@@ -483,7 +483,7 @@ async def admin_upload_test_cuts(
             stored_keys.append(item["key"])
 
         async with get_conn(request) as conn:
-            await _require_admin(conn, user_id)
+            await _require_admin(conn, user_id, request)
             if await _load_admin_model(conn, model_id, for_update=True) is None:
                 raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
             slots = await _load_cut_slots(conn, model_id)
@@ -545,7 +545,7 @@ async def admin_delete_test_cut(
     deleted = False
     try:
         async with get_conn(request) as conn:
-            await _require_admin(conn, user_id)
+            await _require_admin(conn, user_id, request)
             if await _load_admin_model(conn, model_id, for_update=True) is None:
                 raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
             cut = await _load_cut_for_admin(conn, model_id, cut_id, for_update=True)
@@ -611,7 +611,7 @@ async def admin_send_test_cuts(
 ):
     model_id = _canonical_id(model_id)
     async with get_conn(request) as conn:
-        await _require_admin(conn, user_id)
+        await _require_admin(conn, user_id, request)
         model = await _load_admin_model(conn, model_id, for_update=True)
         if model is None:
             raise _err("not_found", "모델을 찾을 수 없습니다.", status=404)
@@ -676,7 +676,7 @@ async def admin_test_cut_image(
     model_id = _canonical_id(model_id)
     cut_id = _canonical_id(cut_id, noun="테스트컷")
     async with get_conn(request) as conn:
-        await _require_admin(conn, user_id)
+        await _require_admin(conn, user_id, request)
         cut = await _load_cut_for_admin(conn, model_id, cut_id)
     if cut is None:
         raise _err("not_found", "테스트컷을 찾을 수 없습니다.", status=404)

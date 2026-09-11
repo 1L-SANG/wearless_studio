@@ -150,8 +150,9 @@ async def resolve_real_model_assets(
         )
         return None
     by_view = {r["view"]: r for r in rows if r.get("view")}
-    out = []
-    for view in ("face_front", "grid_sedcard"):
+
+    def pinned(view: str):
+        """같은 등록·같은 정책 버전에 핀된 비공개 자산 행만 통과시킨다. 어긋나면 None."""
         r = by_view.get(view)
         if (
             not r
@@ -163,5 +164,96 @@ async def resolve_real_model_assets(
             or r.get("evidence_version") != policy_version
         ):
             return None
-        out.append({"key": r["r2_key"], "mime": r["mime"], "bucket": r["bucket"]})
+        return {"key": r["r2_key"], "mime": r["mime"], "bucket": r["bucket"]}
+
+    out = []
+    # 얼굴 두 장은 필수 — 하나라도 핀이 어긋나면 자산 전체를 거부한다(fail-closed 유지).
+    for view in ("face_front", "grid_sedcard"):
+        ref = pinned(view)
+        if ref is None:
+            return None
+        out.append(ref)
+    # 전신은 **선택**이다. 있으면 세 번째로 붙이고(매니페스트 MODEL FULL BODY 자리), 없으면 기존 2장 그대로.
+    # 있는데 핀이 어긋나면 그 자산만 빼는 게 아니라 전체를 거부한다 — 반쪽 근거로 컷을 만들지 않는다.
+    if "body_front" in by_view:
+        ref = pinned("body_front")
+        if ref is None:
+            return None
+        out.append(ref)
     return out
+
+
+async def resolve_enabled_lora(conn, model_id: str) -> dict | None:
+    """이 모델의 **켜진** LoRA 행 하나. 없으면 None(얼굴 패스 없이 진행).
+
+    fm_model_loras 는 partial unique(model_id) where enabled 라 최대 한 행이다.
+    hair_*/face_shape/jaw_line 은 등록자의 현재 모습이 아니라 이 LoRA 가 학습한 모습이다
+    (마이그레이션 20260910100000 주석 참조) — 프롬프트 블록도 이 값으로 만든다.
+    테이블이 아직 없는 환경(마이그 미적용)에서도 죽지 않는다 — None 을 돌려주고 기존 동작을 유지한다.
+    """
+    try:
+        uuid.UUID(str(model_id))
+    except (TypeError, ValueError):
+        return None
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select id::text as id, version, lora_r2_key, lora_sha256, bucket, trigger_token, "
+                "hair_length, hair_color, hair_texture, face_shape, jaw_line, trained_steps "
+                "from fm_model_loras "
+                "where model_id = %s and enabled and status = 'ready' "
+                "limit 1",
+                (model_id,))
+            row = await cur.fetchone()
+    except Exception as exc:  # noqa: BLE001 — 테이블 부재·권한 등은 얼굴 패스만 끄고 컷은 계속 만든다
+        log.warning("fm_model_loras lookup failed for %s: %r", model_id, exc)
+        return None
+    if not row or row.get("bucket") != "face" or not str(row.get("lora_r2_key") or "").strip():
+        return None
+    row = dict(row)
+    row["face_backend_url"] = await _active_face_backend_url(conn)
+    return row
+
+
+async def active_face_backend_url(pool) -> str | None:
+    """지금 등록된 렌더 파드의 URL. 워커가 **대기 중에도 계속** 다시 묻는 자리다.
+
+    파드는 재고 때문에 바뀌고(id 가 바뀌면 URL 도 바뀐다), 처음에는 아예 없을 수도 있다
+    (자동 켜기로 그 컷을 위해 만들어지는 중). 잡 시작 때 한 번 읽은 값을 붙들면 그 컷은
+    영영 죽은 주소를 보거나, 파드가 생기기도 전에 폴백한다.
+    """
+    try:
+        async with pool.connection() as conn:
+            return await _active_face_backend_url(conn)
+    except Exception as exc:  # noqa: BLE001 — 못 읽으면 "아직 없음"으로 본다
+        log.warning("face render pod lookup failed: %r", exc)
+        return None
+
+
+async def _active_face_backend_url(conn) -> str | None:
+    """DB 에 등록된 현재 렌더 파드에서 URL 을 유도한다. 없으면 None → 설정값 폴백."""
+    from ..services.face_autoscale import pod_backend_url
+
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute("select to_regclass('public.fm_face_render_pod') as t")
+            if not (await cur.fetchone() or {}).get("t"):
+                return None
+            await cur.execute(
+                "select pod_id from fm_face_render_pod where retired_at is null "
+                "order by created_at desc limit 1")
+            row = await cur.fetchone()
+    except Exception as exc:  # noqa: BLE001 — 못 읽으면 설정값으로 간다
+        log.warning("face render pod lookup failed: %r", exc)
+        return None
+    return pod_backend_url((row or {}).get("pod_id"))
+
+
+def profiles_from_lora_row(row: dict | None) -> tuple[dict | None, dict | None]:
+    """LoRA 행 → (hair_profile, face_shape_profile). 값이 없으면 None 을 돌려 프롬프트를 그대로 둔다."""
+    if not row:
+        return None, None
+    hair = {k: row.get(c) for k, c in (("hairLength", "hair_length"), ("hairColor", "hair_color"),
+                                       ("hairTexture", "hair_texture")) if row.get(c)}
+    face = {k: row.get(c) for k, c in (("faceShape", "face_shape"), ("jawLine", "jaw_line")) if row.get(c)}
+    return (hair or None), (face or None)

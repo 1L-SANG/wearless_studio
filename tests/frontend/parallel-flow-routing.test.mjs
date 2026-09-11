@@ -34,7 +34,10 @@ test('the mannequin wires edit refreshes through the guarded behavior runner', (
   );
   assert.match(mannequinSource, /markGenerationRelevantEditsAttempt\([\s\S]*?regenerateBaselineRef\.current/);
   assert.match(mannequinSource, /const retryGeneration = \(\) => regenerate\(/);
-  assert.match(mannequinSource, /if \(needsRegen\) \{ regenerate\(\); return; \}/);
+  assert.match(
+    mannequinSource,
+    /if \(needsRegen\) \{[\s\S]*?mannequinGenerationCreditShortfall\([\s\S]*?regenerationQuote\.nextCost[\s\S]*?regenerate\(\);[\s\S]*?return;/,
+  );
   assert.match(storeSource, /clearGenerationRelevantEdits\(projectId = get\(\)\.projectId, expectedRevision\)/);
   assert.match(storeSource, /if \(cleared && get\(\)\.projectId === projectId\) set\(\{ generationRelevantEditsDirty: false \}\)/);
 });

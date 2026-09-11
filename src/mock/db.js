@@ -55,7 +55,7 @@ const defaultFitProfile = (product, analysis) => {
 };
 
 /* ---- Account (stable) ---- */
-const account = { name: 'Jisoo Han', avatar: P.portrait('han'), credits: 196, plan: 'free' };
+const account = { name: 'Jisoo Han', avatar: P.portrait('han'), credits: 510, plan: 'free' };
 
 // 추가 색상 모두가 같은 풀샷/중간샷 촬영 예시 템플릿을 공유한다. 색상마다 별도 예시를
 // 만들지 않고, 실제 생성에서 현재 colorId의 셀러 사진과 자연스러운 미세 포즈 변주를 쓴다.
@@ -654,7 +654,17 @@ function buildDraft() {
   };
 
   // storyboardDirty: 사용자가 콘티를 저장(수정)했는지 — false면 사진 양 변경 시 기본 콘티를 재구성한다
-  return { project, product, analysis, mannequins, storyboard, storyboardDirty: false, editorBlocks, wardrobe };
+  return {
+    project,
+    product,
+    analysis,
+    mannequins,
+    mannequinExtensionFeePaid: false,
+    storyboard,
+    storyboardDirty: false,
+    editorBlocks,
+    wardrobe,
+  };
 }
 
 export const DB = {

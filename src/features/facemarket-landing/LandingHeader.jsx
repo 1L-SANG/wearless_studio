@@ -9,7 +9,7 @@
    만든 이유 자체가 없어진다. 인증 라우트로는 각 페이지 끝 CTA 가 보낸다.
    ============================================================= */
 import { useEffect, useRef, useState } from 'react';
-import { Link, NavLink, useNavigate } from 'react-router-dom';
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { Icon } from '@/components/ui.jsx';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { listMyModels } from '@/lib/api/facemarket.js';
@@ -29,6 +29,7 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
   const headerRef = useRef(null);
   const { session, loading, openLogin, signOut } = useAuth();
   const navigate = useNavigate();
+  const { pathname, search } = useLocation();
   const [modelState, setModelState] = useState(null);
   const userId = session?.user?.id;
   const nav = landingNavItems({ verified: Boolean(userId && modelState?.userId === userId && modelState.verified) });
@@ -91,7 +92,8 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
   // 라우트가 바뀌면 모바일 메뉴는 닫힌다 — 링크를 눌러 페이지가 넘어갔는데 드롭다운이
   // 새 페이지 위에 그대로 떠 있으면 안 된다.
   const closeMenu = () => setMenuOpen(false);
-  const linkClass = ({ isActive }) => (isActive ? `${s.navLink} ${s.navLinkActive}` : s.navLink);
+  const applicationActive = (item) => item.to === '/apply' && /^\/model\/apply\/?$/.test(pathname);
+  const linkClass = (item) => ({ isActive }) => (isActive || applicationActive(item) ? `${s.navLink} ${s.navLinkActive}` : s.navLink);
   const onNav = (event, item) => {
     closeMenu();
     const action = landingNavAction(item.to, { session, loading });
@@ -116,7 +118,7 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
 
       <nav aria-label="랜딩 내비게이션" className={s.nav}>
         {nav.map((item) => (
-          <NavLink className={linkClass} key={item.to} onClick={(event) => onNav(event, item)} to={item.to}>
+          <NavLink aria-current={applicationActive(item) ? 'page' : undefined} className={linkClass(item)} key={item.to} onClick={(event) => onNav(event, item)} to={item.to}>
             {item.label}
           </NavLink>
         ))}
@@ -137,6 +139,8 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
             <Icon name="logOut" size={16} stroke={1.8} />
             <span className={s.headerQuietLabel}>로그아웃</span>
           </button>
+        ) : !primaryLabel || !onPrimary ? (
+          <button className={s.headerQuiet} disabled={loading} onClick={() => openLogin(`${pathname}${search}`)} type="button">로그인</button>
         ) : null}
         <button
           aria-expanded={menuOpen}
@@ -152,7 +156,7 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
       {menuOpen && (
         <nav aria-label="모바일 메뉴" className={s.mobileNav}>
           {nav.map((item) => (
-            <NavLink className={linkClass} key={item.to} onClick={(event) => onNav(event, item)} to={item.to}>
+            <NavLink aria-current={applicationActive(item) ? 'page' : undefined} className={linkClass(item)} key={item.to} onClick={(event) => onNav(event, item)} to={item.to}>
               {item.label}
             </NavLink>
           ))}

@@ -78,12 +78,14 @@ export async function modelComponentHarness({
         if (id === 'react') return '\0fm-test-react';
         if (id === 'react/jsx-dev-runtime' || id === 'react/jsx-runtime') return '\0fm-test-jsx';
         if (id === 'react-router-dom') return '\0fm-test-router';
+        if (id === '@/features/auth/AuthProvider.jsx') return '\0fm-test-auth';
         if (id === '@/components/ui.jsx') return '\0fm-test-ui';
         if (id === '@/lib/api/facemarket.js') return '\0fm-test-api';
         if (id === '@/lib/api/personalization.js') return '\0fm-test-personalization';
         if (stubUpload && id.endsWith('ModelFaceUpload.jsx')) return '\0fm-test-upload';
         if (id.endsWith('imageTranscode.js')) return '\0fm-test-transcode';
         if (id.endsWith('.module.css')) return '\0fm-test-css';
+        if (id.startsWith('@/')) return new URL('../../../src/' + id.slice(2), import.meta.url).pathname;
         return null;
       },
       load(id) {
@@ -139,6 +141,7 @@ export async function modelComponentHarness({
           export const useParams = () => ({ licenseId: 'l1' });
           export const useSearchParams = () => [new URLSearchParams(), () => {}];
         `;
+        if (id === '\0fm-test-auth') return `export const useAuth = () => ({ session: ${access}.session === undefined ? { user: { email: 'model@example.com' } } : ${access}.session, loading: false, openLogin: ${access}.openLogin || (() => {}) });`;
         if (id === '\0fm-test-ui') return `
           export const Button = 'Button';
           export const ErrorState = 'ErrorState';

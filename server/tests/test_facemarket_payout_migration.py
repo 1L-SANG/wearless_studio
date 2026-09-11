@@ -11,8 +11,9 @@ def test_existing_migrations_remain_unchanged():
     for path in files:
         digest.update(path.name.encode())
         digest.update(path.read_bytes())
-    assert len(files) == 73
-    assert digest.hexdigest() == "884e230e2f968e2ae3c0d8986ca1807326d7b96c47d501e06627df3a6fb3e88f"
+    # main의 전진 마이그레이션 13개를 포함한 병합 시점 스냅샷이에요.
+    assert len(files) == 86
+    assert digest.hexdigest() == "7f1c8d70582ceca797d825cc8a431b0736bb4d55b2a4bf9b4db34458ec3e10e4"
 
 
 def test_accounts_are_encrypted_and_service_role_only():

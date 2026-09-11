@@ -1,13 +1,16 @@
 /* =============================================================
    lib/api/facemarket — FaceMarket 전용 API (셀러 스튜디오 api 경계와 분리).
-   http-only(실서버 필수). http() 헬퍼를 재사용해 Supabase 세션 Bearer 를 주입한다.
+   프로덕션은 실서버 전용이고 명시적인 개발 mock 모드만 로컬 자료를 쓴다. http() 헬퍼를 재사용해 Supabase 세션 Bearer 를 주입한다.
    verifyIdentity: CX 표준인증창(ENT_MID) 성공 token만 백엔드로 — 원문 신원은
    서버가 CX trans 에서 직접 받는다(클라→서버 PII 신뢰 금지).
    ============================================================= */
 import { http } from '@/lib/api/httpAdapter.js';
 import { supabase } from '@/lib/supabase.js';
+import { DEVICE_HEADER, readDeviceToken } from '../adminDevice.js';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+const MOCK = import.meta.env.DEV && import.meta.env.VITE_API_MODE === 'mock';
+const mockApi = async () => (await import('../../mock/facemarket.js')).getFacemarketMock();
 
 // http() 는 JSON 전용이라 멀티파트(얼굴 업로드)·바이너리(게이트 얼굴)는 직접 fetch 한다.
 // Supabase Bearer 를 동일하게 주입하고, 에러봉투의 한국어 message 를 throw.
@@ -18,9 +21,14 @@ async function _bearer() {
 
 async function _authFetch(path, opts = {}) {
   const token = await _bearer();
+  const deviceToken = readDeviceToken();
   return fetch(`${BASE_URL}${path}`, {
     ...opts,
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(opts.headers || {}) },
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(deviceToken ? { [DEVICE_HEADER]: deviceToken } : {}),
+      ...(opts.headers || {}),
+    },
   });
 }
 
@@ -62,9 +70,30 @@ export function listModels() {
   return http('/v1/facemarket/models');
 }
 
+// POST /v1/facemarket/face-render/warm — 얼굴 렌더 파드를 미리 켠다(워밍 핑).
+// 셀러가 FaceMarket 모델을 고른 순간 부르면 첫 컷 앞에서 콜드스타트를 뺄 수 있다.
+// **실패는 조용히 무시한다** — 생성 흐름에 영향이 0이어야 하는 부가 신호다.
+export function warmFaceRender(modelId) {
+  if (MOCK || !modelId) return Promise.resolve(null);
+  return http('/v1/facemarket/face-render/warm', {
+    method: 'POST',
+    body: { modelId },
+  }).catch(() => null);
+}
+
+// GET /v1/facemarket/face-render/status?modelId=… — 이 모델에 얼굴 패스가 걸리는지 + 파드 상태.
+// → { ready, enabled, etaMinutes }. modelId 가 없으면 서버가 enabled=false 로 답한다
+// (얼굴 패스는 그 모델에 켜진 LoRA 가 있어야 걸린다 — 모델을 모르면 판단할 수 없다).
+export function getFaceRenderStatus(modelId, { signal } = {}) {
+  if (MOCK) return Promise.resolve({ ready: false, enabled: false, etaMinutes: null });
+  const query = modelId ? `?modelId=${encodeURIComponent(modelId)}` : '';
+  return http(`/v1/facemarket/face-render/status${query}`, { signal }).catch(() => null);
+}
+
 // GET /v1/facemarket/models/me — 로그인 사용자 본인 소유 모델(마이페이지). 동일 shape.
 // 카드에 assetsReady(그리드 자산 빌드 완료 → 셀러 선택 가능) 포함.
 export function listMyModels() {
+  if (MOCK) return Promise.resolve([]);
   return http('/v1/facemarket/models/me');
 }
 
@@ -82,10 +111,12 @@ export function createEnrollment({ documentVersion, deviceId }) {
 
 // 등록 위저드 런타임 설정(라이브니스 필요 여부 등) — 서버 authoritative.
 export function getFacemarketConfig() {
+  if (MOCK) return Promise.resolve({ livenessRequired: false });
   return http('/v1/facemarket/config');
 }
 
 export function getCurrentEnrollment() {
+  if (MOCK) return Promise.resolve(null);
   return http('/v1/facemarket/enrollments/current');
 }
 
@@ -125,6 +156,7 @@ export async function uploadProfileImage({ enrollmentId, fileBlob, filename }) {
 
 // 제출 전 지원 사진 임시 저장 — kind: profile|closeup|waist_up|full_length (슬롯당 1장, 재업로드 시 교체).
 export async function stageApplicationPhoto({ kind = 'profile', fileBlob, filename }) {
+  if (MOCK) return (await mockApi()).stageApplicationPhoto({ kind, fileBlob, filename });
   const form = new FormData();
   form.append('kind', kind);
   form.append('image', fileBlob, filename || kind);
@@ -136,20 +168,24 @@ export async function stageApplicationPhoto({ kind = 'profile', fileBlob, filena
 
 // 지원서 제출. 성공 시 검토 중(auto-approve 면 승인) ApplicationView 반환. 중복이면 409.
 export function submitApplication(body) {
+  if (MOCK) return mockApi().then((api) => api.submitApplication(body));
   return http('/v1/facemarket/applications', { method: 'POST', body });
 }
 
 // 지원서 게이트 활성 여부(신규 진입을 /model/apply 로 보낼지) — 생체 /config 와 독립.
 export function getApplicationConfig() {
+  if (MOCK) return Promise.resolve({ applicationRequired: true });
   return http('/v1/facemarket/applications/config');
 }
 
 // 현재(활성 또는 최근 터미널) 지원서 — 상태 허브·재지원 프리필용. 없으면 404.
 export function getCurrentApplication() {
+  if (MOCK) return mockApi().then((api) => api.getCurrentApplication());
   return http('/v1/facemarket/applications/current');
 }
 
 export function cancelApplication(applicationId) {
+  if (MOCK) return mockApi().then((api) => api.cancelApplication(applicationId));
   return http(`/v1/facemarket/applications/${encodeURIComponent(applicationId)}/cancel`, {
     method: 'POST',
   });
@@ -281,6 +317,31 @@ export function adminRevealPayoutAccount(modelId) {
   return http(`/v1/facemarket/admin/models/${encodeURIComponent(modelId)}/payout-account`);
 }
 
+// ── 관리자: 기기 게이트(설계 2026-09-11-admin-device-gate-design.md §5.3) ────────────
+// register·me 는 기기 없이 열린다(아직 기기가 없는 관리자가 부른다). 나머지는 승인 기기 필수.
+
+export function adminRegisterDevice({ label, userAgent } = {}) {
+  return http('/v1/facemarket/admin/devices/register', {
+    method: 'POST', body: { label: label || null, userAgent: userAgent || null },
+  });
+}
+
+export function adminDeviceMe() {
+  return http('/v1/facemarket/admin/devices/me');
+}
+
+export function adminListDevices() {
+  return http('/v1/facemarket/admin/devices');
+}
+
+export function adminApproveDevice(deviceId) {
+  return http(`/v1/facemarket/admin/devices/${encodeURIComponent(deviceId)}/approve`, { method: 'POST' });
+}
+
+export function adminRevokeDevice(deviceId) {
+  return http(`/v1/facemarket/admin/devices/${encodeURIComponent(deviceId)}/revoke`, { method: 'POST' });
+}
+
 // ── 관리자: 모델 테스트컷(콘솔 모델 상세의 하위 리소스) ────────────────────
 
 export function adminModelTestCuts(modelId) {
@@ -382,6 +443,7 @@ export function createLicense({
 
 // GET /v1/facemarket/licenses — 내 라이선스 목록. [{ id, faceImageUri, allowedUse, ... }].
 export function listLicenses({ includeRevoked = false } = {}) {
+  if (MOCK) return Promise.resolve([]);
   return http(`/v1/facemarket/licenses${includeRevoked ? '?includeRevoked=true' : ''}`);
 }
 
@@ -401,11 +463,13 @@ export function getJobSettlement(jobId) {
 
 // GET /v1/facemarket/settlements → 로그인 모델 본인의 정산 기록(최신순, 최대 200건).
 export function listSettlements() {
+  if (MOCK) return Promise.resolve([]);
   return http('/v1/facemarket/settlements');
 }
 
 // 전체 기록의 모델 몫 합계 — 최근 200건 목록과 별도로 집계한다.
 export function getSettlementSummary() {
+  if (MOCK) return Promise.resolve({ monthCount: 0, monthAmount: 0, totalAmount: 0 });
   return http('/v1/facemarket/settlements/summary');
 }
 

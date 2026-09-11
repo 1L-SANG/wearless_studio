@@ -51,6 +51,8 @@ promptEn은 검증 생성에 쓴 구절 그대로 (예: pants.cut.wide = "a full
 
 `top.sleeve`는 상의 전용이다. 축을 고르지 않으면 사진 그대로(긴팔이면 긴팔)이며, 카탈로그에 '긴팔' 값은 없다 — 한 번 저장한 뒤의 복귀는 이전 버전 선택으로만 가능하다.
 
+2026-09-08 기장 의미 보완: `pants.length.below_ankle`은 발목뼈를 덮고 발등에 도달하는 밑단 위치를 뜻한다. 특정 주름 개수는 목표가 아니다. 생성 문구와 핏 검수의 관측 기준 모두 같은 위치를 사용하며, 원단의 자연스러운 접힘은 보존한다. 선택 값과 한국어 라벨은 바꾸지 않는다.
+
 ## 3. 프롬프트 (백엔드)
 
 - `render_mannequin_prompt`에 **FIT PROFILE 블록** 추가: 선언된(=non-null) 축만 영어로 나열. 전부 null이면 블록 생략.
@@ -64,8 +66,8 @@ FIT PROFILE (seller-declared; overrides any impression from the photos):
 
 ## 4. 생성 플로우 (단일컷 + 재생성 루프)
 
-- 최초 진입: 자동 생성 **1장** (프로필=분석 자동 추정). 크레딧: 장당 **2** (`CREDIT_COSTS.mannequinGenerate=2`, 백엔드 `credit_cost_mannequin_generate` 미러 — 구 placeholder 1에서 갱신).
-- 순차 확인 스텝에서 프로필 수정 = **무료**. `수정사항 반영하여 재생성 · 2 크레딧` 버튼으로 재생성 → 새 버전이 히스토리에 추가·자동 선택. **횟수 제한 없음**(크레딧이 자연 제한, `ADJUST_LIMIT` 폐기).
+- 최초 진입: 자동 생성 **1장** (프로필=분석 자동 추정). 크레딧: 장당 **45** (`CREDIT_COSTS.mannequinGenerate=45`, 백엔드 `credit_cost_mannequin_generate` 미러, 2026-09-11 v6 확정 단가).
+- 순차 확인 스텝에서 프로필 수정 = **무료**. `수정사항 반영하여 재생성 · 45 크레딧` 버튼으로 재생성 → 새 버전이 히스토리에 추가·자동 선택. **횟수 제한 없음**(크레딧이 자연 제한, `ADJUST_LIMIT` 폐기).
 - 히스토리 스트립 유지(버전별). 재생성 확인 모달 간소화(전부 교체 아님 — 버전 추가).
 - 진행률·SSE·멱등 등 기존 generate 파이프라인 재사용. 백엔드 regenerate = 새 job(같은 파이프라인, 프로필만 갱신) — Phase 4.
 
@@ -86,7 +88,7 @@ FIT PROFILE (seller-declared; overrides any impression from the photos):
 미검증 게이트(구현과 별개): 아우터·원피스 실물 이미지 확보 후 생성 검증 → 그때까지 해당 카테고리 축은 카탈로그에 있되 노출 여부 결정.
 
 
-## 스냅샷·렌더 계약 (2026-07-13 fidelity P0 — 정본 documents/mannequin_fit_fidelity_plan.md)
+## 스냅샷·렌더 계약 (2026-07-13 fidelity P0 — 원 계획서 mannequin_fit_fidelity_plan.md 는 2026-09-11 정리, git 이력 참조)
 
 - **잡 payload 스냅샷**: 마네킹 generate/regenerate 라우트가 잡 생성 시점에 `fitProfileSnapshot = {version:1, profile, adjustedAxes}` 를 payload에 고정한다. `profile`은 `fit_axes.normalize_fit_profile`(카탈로그 allowlist) 정규화 결과이며, 저장 프로필이 없으면 **명시적 null**(auto 발명 금지). 실제 매칭 이미지가 없으면 `matchCut` 제거.
 - **adjustedAxes는 서버 산출 전용(job-local)** — 직전 정규화 프로필 vs 요청 정규화 프로필의 diff. 클라이언트 전달값은 무시한다. `source=seller`만으로는 "이번에 조정된 축"을 복원할 수 없다(스냅샷이 유일 기록).

@@ -20,6 +20,7 @@ import { Library } from '@/features/library/Library.jsx';
 import { Pricing } from '@/features/pricing/Pricing.jsx';
 import { CreditsHistory } from '@/features/credits/CreditsHistory.jsx';
 import { PaymentSuccess, PaymentFail } from '@/features/payments/PaymentResult.jsx';
+import { SubscriptionManage, SubscriptionSuccess, SubscriptionFail } from '@/features/subscription/Subscription.jsx';
 import { PublicVerify } from '@/features/verify/PublicVerify.jsx';
 import { LegalRedirect } from '@/features/legal/LegalRedirect.jsx';
 import { WEARLESS_LEGAL_URLS } from '@/lib/legalLinks.js';
@@ -636,6 +637,10 @@ export default function App() {
             {/* 토스 결제 리다이렉트 착지점(WS3) — 승인은 success 화면이 서버에 위임한다 */}
             <Route path="payments/success" element={<PaymentSuccess />} />
             <Route path="payments/fail" element={<PaymentFail />} />
+            {/* 정기결제 — 로그인 뒤에만 의미가 있다(빌링키가 계정에 묶인다) */}
+            <Route path="subscription" element={<SubscriptionManage />} />
+            <Route path="subscription/success" element={<SubscriptionSuccess />} />
+            <Route path="subscription/fail" element={<SubscriptionFail />} />
           </Route>
           <Route path="create">
             <Route index element={<Navigate to="/create/input" replace />} />

@@ -123,7 +123,9 @@ test('Vercel은 ai 호스트의 네 이전 법무 주소만 영구 이동하고 
 test('셀러 푸터의 네 법무 링크는 대표 도메인이고 FaceMarket 푸터는 자체 경로를 유지한다', async () => {
   const { SiteFooter } = await load('src/features/shell/SiteFooter.jsx');
   const { FooterSection } = await load('src/features/facemarket-landing/sections/FooterSection.jsx');
-  assert.deepEqual(hrefs(render(React.createElement(SiteFooter))), [
+  const sellerFooter = render(React.createElement(SiteFooter));
+  const sellerLegalNav = sellerFooter.match(/<nav\b[^>]*aria-label="법적 고지"[^>]*>([\s\S]*?)<\/nav>/)[1];
+  assert.deepEqual(hrefs(sellerLegalNav), [
     'https://wearless.kr/terms', 'https://wearless.kr/privacy',
     'https://wearless.kr/refund', 'https://wearless.kr/model-license-terms',
   ]);
@@ -149,8 +151,8 @@ test('FaceMarket 앱은 자체 법무 문서를 공개 라우트로 유지한다
 });
 
 test('공용 사업자 정보는 올바른 등록번호 형식을 제공한다', async () => {
-  const { COMPANY_INFO_LINES } = await load('src/lib/companyInfo.js');
-  assert.match(COMPANY_INFO_LINES.join(' '), /\b\d{3}-\d{2}-\d{5}\b/);
+  const { COMPANY_INFO_ROWS } = await load('src/lib/companyInfo.js');
+  assert.match(COMPANY_INFO_ROWS.find((row) => row.key === 'brn').text, /^\d{3}-\d{2}-\d{5}$/);
 });
 
 test('법무 화면과 두 푸터는 공용 사업자 정보를 사용한다', () => {
@@ -159,20 +161,27 @@ test('법무 화면과 두 푸터는 공용 사업자 정보를 사용한다', (
     'src/features/shell/SiteFooter.jsx',
     'src/features/facemarket-landing/sections/FooterSection.jsx',
   ]) {
-    assert.match(read(pathname), /@\/lib\/companyInfo\.js/);
+    assert.match(read(pathname), /@\/components\/CompanyInfoRows\.jsx/);
   }
+  assert.match(read('src/components/CompanyInfoRows.jsx'), /@\/lib\/companyInfo\.js/);
 });
 
-test('FaceMarket 모델 레이아웃은 랜딩과 같은 전체 푸터를 함께 렌더한다', async () => {
+test('FaceMarket 모델 레이아웃은 지원서 외 화면에 법적 링크와 회사 정보가 있는 푸터를 렌더한다', async () => {
   const { FacemarketModelLayout } = await load('src/features/facemarket-shell/FacemarketModelLayout.jsx');
   const { FooterSection } = await load('src/features/facemarket-landing/sections/FooterSection.jsx');
-  const layout = FacemarketModelLayout();
-  const footer = layout.props.children.at(-1).props.children;
+  let footer;
+  function CaptureFooter() {
+    const layout = FacemarketModelLayout();
+    footer = layout.props.children.at(-1)?.props?.children;
+    return footer || null;
+  }
+  const html = render(React.createElement(CaptureFooter), '/model/register');
   assert.equal(footer.type, FooterSection);
-  assert.equal(footer.props.compact, undefined);
-  const html = render(footer);
+  assert.equal(footer.props.compact, true);
   assert.ok(hrefs(html).includes('/license-agreement'));
   assert.ok(hrefs(html).includes('/model-info'));
+  assert.match(html, /사업자등록번호/);
+  assert.equal(render(React.createElement(CaptureFooter), '/model/apply'), '');
 });
 
 test('공용 결제 화면은 셀러·모델 경로 모두 대표 도메인의 약관과 환불 정책으로 연결한다', async () => {
@@ -197,10 +206,10 @@ test('공용 결제 화면은 셀러·모델 경로 모두 대표 도메인의 �
           React.createElement(AuthProvider, null, element)),
         '/pricing',
       );
-      assert.match(html, /구독은 해지할 때까지 매달 자동 결제돼요/);
+      assert.doesNotMatch(html, /구독은 해지할 때까지|청약철회|전액 환불/);
       assert.match(html, /결제하면/);
       assert.deepEqual(hrefs(html), [
-        'https://wearless.kr/refund', 'https://wearless.kr/terms', 'https://wearless.kr/refund',
+        'https://wearless.kr/terms', 'https://wearless.kr/refund',
       ]);
     }
   } finally { client.clear(); }

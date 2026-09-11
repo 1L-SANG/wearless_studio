@@ -1,6 +1,6 @@
 # ADR — Armhole Locality: MVP Freeze
 
-Machine-readable companion: [`armhole_locality_mvp_freeze.json`](armhole_locality_mvp_freeze.json).
+Machine-readable companion(`armhole_locality_mvp_freeze.json`)은 2026-09-11 정리했다 — git 이력 참조.
 Every number in this document is also present in that file.
 
 ## 1. Decision

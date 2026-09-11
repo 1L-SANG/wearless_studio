@@ -26,7 +26,14 @@ import {
   recommendLegacyMatchClothing,
   removeCustomMatchFromAnalysis,
 } from '@/mock/matchingRecommendation.js';
-import { CREDIT_COSTS, LIMITS } from '@/lib/limits.js';
+import {
+  CREDIT_COSTS,
+  LIMITS,
+  extensionModelFee,
+  mannequinGenerationTotal,
+  mannequinRegenerationQuote,
+  normalizePlanTier,
+} from '@/lib/limits.js';
 import { normalizeMatchClothingSelection } from '@/lib/api/matchingItems.js';
 import { uid } from '@/lib/ids.js';
 import { shouldMarkStoryboardDirty } from '@/lib/generationExamples.js';
@@ -51,7 +58,7 @@ const jobCancelledError = () => {
 const settleMockMannequinCharge = (job) => {
   if (!job.creditsSettled) {
     job.creditsSettled = true;
-    job.credits = spend(CREDIT_COSTS.mannequinGenerate);
+    job.credits = spend(job.creditCost ?? CREDIT_COSTS.mannequinGenerate);
   }
   return job.credits;
 };
@@ -191,33 +198,52 @@ export const api = {
   async getCatalogs() { await wait(80); return clone(DB.catalogs); },
 
   /* ---- credits (표시 전용; 실서버는 httpAdapter. 계약 §6) ---- */
+  async getCreditQuote(_projectId, { selectedModelId } = {}) {
+    await wait(60);
+    const plan = normalizePlanTier(DB.account.plan);
+    const modelId = selectedModelId ?? DB.analysis.selectedModelId ?? null;
+    const extensionFee = extensionModelFee(plan, modelId);
+    return {
+      plan,
+      mannequinGenerate: {
+        base: CREDIT_COSTS.mannequinGenerate,
+        extensionModelFee: extensionFee,
+        total: mannequinGenerationTotal(plan, modelId),
+        selectedModelId: modelId,
+        extensionFeeAlreadyPaid: DB.mannequinExtensionFeePaid === true,
+      },
+      mannequinRegenerate: mannequinRegenerationQuote(plan, DB.mannequins.length),
+      storyboardPerCut: CREDIT_COSTS.storyboardPerCut,
+      editorImage: CREDIT_COSTS.editorImage,
+    };
+  },
   async getPricingPlans() {
     await wait(80);
     return [
-      { id: 'm-starter', code: 'starter', kind: 'subscription', name: 'Starter', credits: 6000, price: 29900, billingPeriod: 'monthly', sortOrder: 1 },
-      { id: 'm-seller-v9', code: 'seller', kind: 'subscription', name: 'Seller', credits: 18000, price: 79900, billingPeriod: 'monthly', sortOrder: 2 },
-      { id: 'm-pro', code: 'pro', kind: 'subscription', name: 'Pro', credits: 38000, price: 159000, billingPeriod: 'monthly', sortOrder: 3 },
-      { id: 'm-finish', code: 'topup_finish', kind: 'topup', name: '마무리 충전', credits: 1800, price: 9900, billingPeriod: 'once', sortOrder: 11 },
-      { id: 'm-start', code: 'topup_start', kind: 'topup', name: '시작 팩', credits: 4700, price: 24900, billingPeriod: 'once', sortOrder: 12 },
-      { id: 'm-repeat', code: 'topup_repeat', kind: 'topup', name: '반복 팩', credits: 13800, price: 69900, billingPeriod: 'once', sortOrder: 13 },
-      { id: 'm-season', code: 'topup_season', kind: 'topup', name: '시즌 팩', credits: 30500, price: 149000, billingPeriod: 'once', sortOrder: 14 },
-      { id: 'm-bulk', code: 'topup_bulk', kind: 'topup', name: '대량 팩', credits: 64000, price: 299000, billingPeriod: 'once', sortOrder: 15 },
+      { id: 'm-starter', code: 'starter', kind: 'subscription', name: 'Starter', credits: 600, price: 29900, billingPeriod: 'monthly', sortOrder: 1 },
+      { id: 'm-seller-v9', code: 'seller', kind: 'subscription', name: 'Seller', credits: 1800, price: 79900, billingPeriod: 'monthly', sortOrder: 2 },
+      { id: 'm-pro', code: 'pro', kind: 'subscription', name: 'Pro', credits: 3800, price: 159000, billingPeriod: 'monthly', sortOrder: 3 },
+      { id: 'm-finish', code: 'topup_finish', kind: 'topup', name: '마무리 충전', credits: 180, price: 9900, billingPeriod: 'once', sortOrder: 11 },
+      { id: 'm-start', code: 'topup_start', kind: 'topup', name: '시작 팩', credits: 470, price: 24900, billingPeriod: 'once', sortOrder: 12 },
+      { id: 'm-repeat', code: 'topup_repeat', kind: 'topup', name: '반복 팩', credits: 1380, price: 69900, billingPeriod: 'once', sortOrder: 13 },
+      { id: 'm-season', code: 'topup_season', kind: 'topup', name: '시즌 팩', credits: 3050, price: 149000, billingPeriod: 'once', sortOrder: 14 },
+      { id: 'm-bulk', code: 'topup_bulk', kind: 'topup', name: '대량 팩', credits: 6400, price: 299000, billingPeriod: 'once', sortOrder: 15 },
     ];
   },
   async getCreditHistory() {
     await wait(120);
     const now = Date.now();
-    // 정합 시나리오: 200 충전 → 마네킹 생성 2회(각 -2) = 196 (account.credits 와 일치)
+    // 정합 시나리오: 600 지급 후 마네킹 생성 2회(각 -45), 잔액 510 (account.credits 와 일치)
     return [
-      { id: 'l2', projectId: 'p1', jobId: 'j2', actionKey: 'mannequinGenerate', delta: -CREDIT_COSTS.mannequinGenerate, balanceAfter: 196, availableAfter: 196, createdAt: new Date(now - 32e5).toISOString() },
-      { id: 'l1', projectId: 'p1', jobId: 'j1', actionKey: 'mannequinGenerate', delta: -CREDIT_COSTS.mannequinGenerate, balanceAfter: 198, availableAfter: 198, createdAt: new Date(now - 36e5).toISOString() },
-      { id: 'l0', projectId: null, jobId: null, actionKey: 'grant_subscription', delta: 200, balanceAfter: 200, availableAfter: 200, createdAt: new Date(now - 40e5).toISOString() },
+      { id: 'l2', projectId: 'p1', jobId: 'j2', actionKey: 'mannequinGenerate', delta: -CREDIT_COSTS.mannequinGenerate, balanceAfter: 510, availableAfter: 510, createdAt: new Date(now - 32e5).toISOString() },
+      { id: 'l1', projectId: 'p1', jobId: 'j1', actionKey: 'mannequinGenerate', delta: -CREDIT_COSTS.mannequinGenerate, balanceAfter: 555, availableAfter: 555, createdAt: new Date(now - 36e5).toISOString() },
+      { id: 'l0', projectId: null, jobId: null, actionKey: 'grant_subscription', delta: 600, balanceAfter: 600, availableAfter: 600, createdAt: new Date(now - 40e5).toISOString() },
     ];
   },
   async getCreditSources() {
     await wait(100);
     return [
-      { id: 's1', sourceType: 'subscription', status: 'active', initialCredits: 200, remainingCredits: 196, periodEnd: new Date(Date.now() + 25 * 864e5).toISOString(), planId: 'm-basic', createdAt: new Date(Date.now() - 40e5).toISOString() },
+      { id: 's1', sourceType: 'subscription', status: 'active', initialCredits: 600, remainingCredits: 510, periodEnd: new Date(Date.now() + 25 * 864e5).toISOString(), planId: 'm-starter', createdAt: new Date(Date.now() - 40e5).toISOString() },
     ];
   },
   async createTossCheckout(planCode) {
@@ -519,6 +545,10 @@ export const api = {
     }
     const job = joinable('mannequins', (listeners, activeJob) => (async () => {
       const ownerId = DB.project.id;   // job 도중 새 프로젝트로 리시드되면 결과를 버린다
+      // 시작 순간 견적을 job에 고정한다. 생성 중 모델이나 플랜을 바꿔도 취소와 성공이
+      // 서로 다른 금액을 정산하지 않게 하는 실서버 credits_reserved 스냅샷의 mock 대응이다.
+      activeJob.extensionModelFee = extensionModelFee(DB.account.plan, DB.analysis.selectedModelId);
+      activeJob.creditCost = mannequinGenerationTotal(DB.account.plan, DB.analysis.selectedModelId);
       // 실서버 체감(25~60s)에 근접시켜 로딩 시퀀스(인트로 3.5s+루프)가 보이게 한다
       await runJob({
         duration: 9000,
@@ -533,7 +563,9 @@ export const api = {
         syncSelectedCut(DB.mannequins[0].id);
       }
       touch();
-      return { data: cutsEnvelope(), credits: settleMockMannequinCharge(activeJob) };
+      const credits = settleMockMannequinCharge(activeJob);
+      if (activeJob.extensionModelFee > 0) DB.mannequinExtensionFeePaid = true;
+      return { data: cutsEnvelope(), credits };
     })());
     if (onProgress) job.listeners.push(onProgress);
     return job.promise;
@@ -549,6 +581,9 @@ export const api = {
     return { cancelled: true, credits };
   },
   async regenerateMannequin(_projectId, { fitProfile, onProgress } = {}) {
+    // 완료 컷 1개가 첫 생성 done job 1개다. 이후 컷은 성공한 재생성마다 하나씩 늘어나므로
+    // 현재 mock에서는 cuts.length가 서버 done_count와 같은 근거다.
+    const creditCost = mannequinRegenerationQuote(DB.account.plan, DB.mannequins.length).nextCost;
     await runJob({ duration: 2200, onProgress });
     if (fitProfile) {
       DB.project.fitProfile = clone(fitProfile);
@@ -560,7 +595,7 @@ export const api = {
     DB.mannequins.push(next);
     syncSelectedCut(next.id);
     touch();
-    return { data: cutsEnvelope(), credits: spend(CREDIT_COSTS.mannequinGenerate) };
+    return { data: cutsEnvelope(), credits: spend(creditCost) };
   },
 
   /* ---- storyboard (PRD §8) ---- */

@@ -55,6 +55,13 @@ network:
 
 variables:                       # 평문 (민감하지 않음). 시크릿은 아래 secrets 블록.
   APP_ENV: production
+  # 정기결제(빌링). ⚠️ 이 값이 true 인 채로 배포하려면 아래 secrets 3종이 **먼저** SSM 에
+  # 있어야 한다(TOSS_BILLING_SECRET_KEY·TOSS_BILLING_KEK·TOSS_WEBHOOK_PATH_SECRET).
+  # 없으면 ECS 태스크가 기동조차 못 한다. 런북: docs/runbooks/subscription-billing.md
+  SUBSCRIPTION_BILLING_ENABLED: "true"
+  # 토스 문서: 자동결제 승인은 최대 60초. 일반결제 값(15초)을 재사용하면 정상 승인이
+  # 타임아웃으로 뒤집혀 '결과 미상' 재시도만 쌓인다.
+  TOSS_BILLING_TIMEOUT: "60"
   # 상세페이지는 0대 Spot 전용 워커가 소유한다. API는 나머지 잡만 claim하고,
   # pending detail_page가 생기면 아래 autoscaler가 detail-worker를 1대로 깨운다.
   JOB_KINDS: "-detail_page"
@@ -121,9 +128,12 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 마네킹컷 기본 해상도 1K → 2K (2026-08-19 오너 결정). 근거 = 해상도 A/B: 1K 는 작은
   # 글자가 깨지고(실컷 0/3 통과) 2K 는 3/4 통과, pro 모델 요금은 1K 와 동일(출력 1,120tok)
   # = 추가 비용 0. 편집 패스(축·가슴·언턱·패턴)도 effective_image_size 를 따라 2K 로 돈다.
-  # 미세 패턴 상품은 아래 config 기본(MANNEQUIN_PATTERN_IMAGE_SIZE=4K)이 계속 우선한다.
+  # 2026-09 선택한 마네킹 전용 Flare 2K. 패턴만으로 4K 자동 승급하지 않는다.
   # 되돌리기: 이 줄을 "1K" 로 — 재배포만으로 즉시 원복.
   MANNEQUIN_IMAGE_SIZE: "2K"
+  MANNEQUIN_TIER: "image_mannequin"
+  MODEL_ROUTING_IMAGE_MANNEQUIN: "gpt-image-2.5-flare"
+  MANNEQUIN_PATTERN_IMAGE_SIZE: "off"
   # 로고·레터링 상품 2K 승급(해상도 A/B 근거). 기본이 2K 가 된 지금은 바닥값 역할이다 —
   # 기본을 1K 로 되돌려도 로고 상품만은 2K 를 유지한다. 끄려면 "off".
   MANNEQUIN_LOGO_IMAGE_SIZE: "2K"
@@ -197,7 +207,12 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # image_high는 마네킹·매칭·AG-07 공유 경로이므로 Gemini로 유지하고 AG-06만 분리한다.
   # 새 hard-gate가 garment 동일성까지 포함하므로 구 best-of 후보 생성은 중복 비용을 막기 위해 끈다.
   MODEL_ROUTING_IMAGE_HIGH: gemini-3-pro-image
-  MODEL_ROUTING_DETAIL_CUT: gpt-image-2-2026-04-21
+  # 최종 컷(상세페이지·에디터)만 gpt-image 2.5 flare. 운영 키가 이 모델을 쓸 수 있는지
+  # 확인했다(2026-09-10: GET /v1/models/gpt-image-2.5-flare → 200). 마네킹·컬러웨이·매칭·
+  # 개인화는 image_high(Gemini) 그대로다.
+  MODEL_ROUTING_DETAIL_CUT: gpt-image-2.5-flare
+  # 에디터 '새 이미지' 컷은 api 가 처리한다(JOB_KINDS "-detail_page") — 그래서 여기에만 둔다.
+  MODEL_ROUTING_EDITOR_CUT: gpt-image-2.5-flare
   # 상세페이지 컷 출고 해상도 4K → 2K (2026-08-26 오너 결정). GPT Image 2 에서 이 값은
   # 2:3 캔버스 2336×3504 → 1536×2304 로 바뀐다(gemini_image._OPENAI_2K_SIZE).
   # 출력 토큰이 줄어 컷당 실비도 함께 내려가고, 4K 가 원인이던 메모리 압박(아래
@@ -212,6 +227,9 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 오너가 확정한 1차 baseline은 best-of/provider 재호출이 없는 first-result 계약이다.
   DETAIL_CUT_MAX_ATTEMPTS: "1"
   GARMENT_QC_MODE: "off"
+  # 관리자 콘솔 기기 게이트. 코드 기본 shadow. 2026-09-11 관리자 2명이 콘솔에서 서로 기기를
+  # 승인한 뒤 enforce 로 올렸다. 락아웃 복구 = shadow 로 내렸다 다시 enforce. 런북 docs/runbooks/admin-device-gate.md
+  ADMIN_DEVICE_GATE: enforce
   CUT_OUTPUT_QC_MODE: repair
   # text tier 모델. AI Studio 유효 id 여야 한다 — 구값 'gemini-3-pro' 는 미존재라 Gemini 404 로
   # 분석이 통째로 죽었다(2026-07-07). OpenAI 키 미설정이라 gemini 가 유일 provider = 폴백 없음.
@@ -320,6 +338,37 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 실제로 열어서 seller 앱이 뜨는지 확인할 것(런북 §6).
   PUBLIC_WEB_ORIGIN: "https://ai.wearless.kr"
 
+  # ── 얼굴 패스(인물 LoRA) — **전부 꺼진 채로 커밋한다** ──
+  # 켜기 전에 필요한 것: ① fm_model_loras 에 켜진 행(scripts/seed_model_lora.py)
+  # ② RunPod 파드가 살아 있고 그 볼륨에 코드·가중치가 올라가 있음(scripts/face_render_sync.sh)
+  # ③ 아래 두 시크릿의 SSM 값(copilot secret init) — 값 없이 배포하면 ECS 기동이 실패한다.
+  # 2026-09-11 켠다. **LoRA 행(fm_model_loras)이 있는 모델에서만** 얼굴 패스가 걸린다 —
+  # 행이 0개면 프롬프트도 컷도 지금과 바이트 단위로 같고(테스트로 고정), 워밍 핑도 무시돼
+  # 파드가 켜지지 않는다. 즉 이 값을 켜는 것 자체로는 동작이 바뀌지 않는다.
+  FACE_IDENTITY_ENABLED: "true"
+  # FACE_IDENTITY_BACKEND_URL·FACE_RUNPOD_POD_ID 는 여기 두지 않는다.
+  # **파드 id 와 렌더 URL 의 정본은 DB(fm_face_render_pod)** 다 — 파드는 재고 때문에 바뀌고
+  # (2026-09-10·11 실측: start "not enough free GPUs", create "no instances"), 바뀔 때마다
+  # 매니페스트를 고쳐 재배포할 수는 없다. 백엔드 URL 은 그 id 에서 유도한다
+  # (https://<id>-8000.proxy.runpod.net/render). 첫 파드는 어댑터가 만든다.
+  # 두 값을 굳이 여기 두면 파드를 갈아탄 뒤 죽은 주소를 계속 찌른다.
+  # 파드 온디맨드 기동/종료. off 면 RunPod 를 아예 호출하지 않는다(어댑터가 클라이언트도 안 만든다).
+  # 2026-09-11 켠다. 수요(켜진 LoRA 소유자의 착장 컷 잡·워밍 핑)가 있을 때만 파드를 만들고,
+  # 유휴 10분이면 끈다. 수요가 0이면 RunPod 를 호출하지 않는다.
+# 2026-09-11 운영 테스트 동안 off — 자동 생성 파드가 아직 스스로 부팅하지 못한다
+  # (POD_ARGS 가 새 컨테이너에 없는 /root/face_render/pre_start.sh 를 복사 → bootstrap 미실행).
+  # 그동안은 수동으로 켠 파드를 fm_face_render_pod 에 등록해 쓴다. 고치면 "on" 으로 되돌린다.
+  FACE_AUTOSCALE: "off"
+  # detail-worker 와 같은 근거로 10분: 셀러가 컷을 연속으로 만들면 같은 파드를 다시 쓴다.
+  # 깨어날 때마다 드는 비용 = 콜드스타트 + 10분 × $2.09/h.
+  # 콜드스타트 실측(2026-09-10, RTX PRO 6000 96GB + 네트워크 볼륨): 파이프라인 적재만 472초,
+  # 부팅까지 더하면 8분 이상이다. 볼륨 예열(118초)로도 5분 안에 못 들어온다 —
+  # 첫 컷 지연은 UI 문구로 흡수하고, 이 값은 "그 지연을 두 번 물지 않는" 창이다.
+  FACE_AUTOSCALE_IDLE_MINUTES: "10"
+  # 켜라고 한 뒤 이 시간까지 /healthz 가 안 뜨면 "안 뜬다"로 보고 내린다(요금 방지).
+  # A-5 콜드스타트 중앙값(≈8.5분) × 2, 최소 8 → 17.
+  FACE_AUTOSCALE_START_GRACE_MINUTES: "17"
+
 secrets:                         # SSM Parameter Store (SecureString). copilot secret init 로 값 저장.
   # 입금 계좌번호 Fernet 암호화 키. 2026-09-11 SSM(us-east-1)에 저장함. 바꾸면 저장된 계좌를 못 읽으니 회전 금지.
   FM_PAYOUT_ACCOUNT_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_PAYOUT_ACCOUNT_KEY
@@ -329,6 +378,11 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   R2_SECRET_ACCESS_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/R2_SECRET_ACCESS_KEY
   CLOUDFLARE_CACHE_PURGE_TOKEN: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/CLOUDFLARE_CACHE_PURGE_TOKEN
   GEMINI_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/GEMINI_API_KEY
+  # 얼굴 렌더 서비스 인증 토큰과 RunPod API 키.
+  # ★ SSM 값 없이 이 두 줄이 배포되면 ECS 태스크가 기동에 실패하고 롤백된다(2026-07-17 주석과 같은 함정).
+  #   배포 전 반드시: copilot secret init --name FACE_IDENTITY_BACKEND_TOKEN / --name RUNPOD_API_KEY
+  FACE_IDENTITY_BACKEND_TOKEN: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FACE_IDENTITY_BACKEND_TOKEN
+  RUNPOD_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/RUNPOD_API_KEY
   # 첫 화면 시그니처 컷과 AG-06 상세컷 GPT 경로가 함께 사용한다.
   # 배포 전 SSM SecureString이 실제로 존재하는지 확인한다.
   OPENAI_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENAI_API_KEY
@@ -349,6 +403,18 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   #     copilot-aws secret init --name TOSS_SECRET_KEY
   #   raw `aws ssm put-parameter` 로 만들면 copilot 태그가 없어 태스크가 못 읽는다(2026-07-17 실경험).
   TOSS_SECRET_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/TOSS_SECRET_KEY
+  # 정기결제(빌링) — 계획서 docs/plans/2026-09-09-toss-billing-subscription.md.
+  # ⚠️ 자동결제는 별도 계약 MID 라 일반결제와 시크릿 키가 다를 수 있다. 개발자센터 API 키
+  #    메뉴에서 '자동결제로 계약된 MID' 를 고른 뒤의 키를 넣는다. 비우면 TOSS_SECRET_KEY 로
+  #    떨어지므로 MID 가 하나인 상점이면 등록하지 않아도 된다.
+  #     copilot-aws secret init --name TOSS_BILLING_SECRET_KEY
+  TOSS_BILLING_SECRET_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/TOSS_BILLING_SECRET_KEY
+  # 빌링키 컬럼 암호화 키(pgcrypto pgp_sym_encrypt). ⚠️ 이 값을 잃으면 저장된 빌링키를
+  #    전부 복호화할 수 없고, 빌링키는 재조회가 불가능하므로 **전 구독자가 카드를 다시
+  #    등록**해야 한다. 로테이션은 반드시 재암호화 마이그레이션과 함께 한다.
+  TOSS_BILLING_KEK: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/TOSS_BILLING_KEK
+  # 웹훅 경로 시크릿 — 토스 일반 웹훅에는 서명 헤더가 없어 경로 지식이 인증 대용이다.
+  TOSS_WEBHOOK_PATH_SECRET: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/TOSS_WEBHOOK_PATH_SECRET
   FM_CHAIN_PRIVATE_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_CHAIN_PRIVATE_KEY
   # 출처증명 C2PA 자체서명 인증서(리프 cert/key). 둘 다 있어야 서명기가 활성화된다 —
   # 하나만 있으면 c2pa_status='skipped'. 발급·업로드 절차: 런북 §1(gen_c2pa_cert.py).

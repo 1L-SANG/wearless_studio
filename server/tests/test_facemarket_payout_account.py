@@ -144,6 +144,23 @@ def test_non_admin_and_anonymous_cannot_reveal(keypair, make_token, monkeypatch)
     assert conn.executed == []
 
 
+def test_admin_reveal_requires_registered_device_in_enforce_mode(
+    keypair, make_token, monkeypatch,
+):
+    key, _, _ = account_fixture()
+    client = client_for(
+        keypair, fm_payout_account_key=key, admin_device_gate="enforce",
+    )
+    conn = Conn()
+    patch_db(monkeypatch, module(), conn)
+
+    response = client.get(ADMIN, headers=auth(make_token))
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "device_missing"
+    assert conn.executed == []
+
+
 def test_config_exposes_only_public_bank_names(keypair):
     from app.facemarket_enrollment import router
     client = client_for(keypair)

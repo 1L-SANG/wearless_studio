@@ -133,9 +133,9 @@ class RecoveringChain(FakeChain):
         if payment_key == "job:crashed":
             time.sleep(min(timeout or 0.05, 0.05))
             self._store[payment_key] = {
-                "model_ref": "0x" + "ef" * 32, "total": 10000,
-                "model_amount": 7000, "platform_amount": 2000,
-                "ops_amount": 1000, "block": 99, "exists": True,
+                "model_ref": "0x" + "ef" * 32, "total": 14900,
+                "model_amount": 10430, "platform_amount": 2980,
+                "ops_amount": 1490, "block": 99, "exists": True,
             }
             self.reconciled.set()
         return self.get_settlement(payment_key)
@@ -341,7 +341,7 @@ def fmset(keypair, monkeypatch):
 
     monkeypatch.setattr(facemarket, "get_conn", lambda _r: _conn_ctx(store))
 
-    def add_license(license_id, user_id, unit_price=10000, status="active"):
+    def add_license(license_id, user_id, unit_price=14900, status="active"):
         store["licenses"].append({
             "id": license_id, "model_id": f"model-of-{license_id}",
             "user_id": user_id, "unit_price": unit_price, "status": status})
@@ -419,12 +419,12 @@ def test_simulate_records_split_70_20_10(fmset, make_token):
     chain = FakeChain()
     app.state.fm_chain = chain
     tok, uid = _uid(make_token)
-    add("lic-1", uid, unit_price=10000)
+    add("lic-1", uid, unit_price=14900)
     r = _simulate(client, store, tok, uid, "lic-1")
     assert r.status_code == 201, r.text
     b = r.json()
-    assert b["totalAmount"] == 10000
-    assert (b["modelAmount"], b["platformAmount"], b["opsAmount"]) == (7000, 2000, 1000)
+    assert b["totalAmount"] == 14900
+    assert (b["modelAmount"], b["platformAmount"], b["opsAmount"]) == (10430, 2980, 1490)
     assert b["modelAmount"] + b["platformAmount"] + b["opsAmount"] == b["totalAmount"]
     assert b["chainStatus"] == "confirmed" and b["txHash"]
     assert len(store["settlements"]) == 1
@@ -441,7 +441,7 @@ def test_confirm_reads_onchain(fmset, make_token):
     r = client.get(f"/v1/facemarket/settlements/{pk}/confirm",
                    headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 200
-    assert r.json()["exists"] is True and r.json()["modelAmount"] == 7000
+    assert r.json()["exists"] is True and r.json()["modelAmount"] == 10430
 
 
 def test_simulate_nonowner_license_404(fmset, make_token):
@@ -584,7 +584,7 @@ def test_new_submit_reconciles_crashed_broadcast_before_using_signer():
         "rate_hits": {}, "signer_lock": asyncio.Lock(), "signer_locked": False,
         "intents": [{
             "payment_id": "job:crashed", "license_id": "lic-crashed", "job_id": None,
-            "credit_ledger_id": None, "model_id": "m", "total_amount": 10000,
+            "credit_ledger_id": None, "model_id": "m", "total_amount": 14900,
             "status": "broadcasting", "attempted_at": datetime.now(timezone.utc),
         }],
     }
@@ -592,7 +592,7 @@ def test_new_submit_reconciles_crashed_broadcast_before_using_signer():
     app = SimpleNamespace(state=SimpleNamespace(pool=_FakePool(store), fm_chain=chain))
 
     row = asyncio.run(facemarket.record_license_settlement(
-        app, payment_key="job:new", license_id="lic-new", model_id="m", total=10000,
+        app, payment_key="job:new", license_id="lic-new", model_id="m", total=14900,
     ))
 
     assert row is not None and row["payment_id"] == "job:new"
@@ -835,7 +835,7 @@ def summary_db(fmset, monkeypatch):
 def test_summary_includes_more_than_200_and_all_owned_licenses(summary_db):
     client, db = summary_db
     db.executemany('insert into fm_settlements (license_id, model_amount, created_at) values (?, ?, ?)', [
-        ('active', 7000, '2026-08-31T15:00:00+00:00') for _ in range(201)
+        ('active', 10430, '2026-08-31T15:00:00+00:00') for _ in range(201)
     ] + [
         ('revoked', 3000, '2026-08-31T14:59:59+00:00'),
         ('foreign', 999999, '2026-08-31T15:00:00+00:00'),
@@ -843,8 +843,8 @@ def test_summary_includes_more_than_200_and_all_owned_licenses(summary_db):
     response = client.get('/v1/facemarket/settlements/summary')
     assert response.status_code == 200, response.text
     assert response.json() == {
-        'monthCount': 201, 'monthAmount': 1407000,
-        'totalCount': 202, 'totalAmount': 1410000,
+        'monthCount': 201, 'monthAmount': 2096430,
+        'totalCount': 202, 'totalAmount': 2099430,
     }
 
 
@@ -882,7 +882,7 @@ def test_recent_settlements_query_handles_joined_columns_and_keeps_owner_limit(s
     client, db = summary_db
     db.executemany(
         'insert into fm_settlements (id, payment_id, license_id, model_amount, created_at) values (?, ?, ?, ?, ?)',
-        [(f's{i}', f'job:{i}', 'active', 7000, '2026-09-01T00:00:00+00:00') for i in range(201)]
+        [(f's{i}', f'job:{i}', 'active', 10430, '2026-09-01T00:00:00+00:00') for i in range(201)]
         + [('foreign-row', 'foreign-job', 'foreign', 999999, '2026-09-02T00:00:00+00:00'),
            ('old-row', 'old-job', 'revoked', 3000, '2026-08-01T00:00:00+00:00')],
     )
@@ -891,7 +891,7 @@ def test_recent_settlements_query_handles_joined_columns_and_keeps_owner_limit(s
     rows = response.json()
     assert len(rows) == 200
     assert {row['licenseId'] for row in rows} == {'active'}
-    assert all(row['modelAmount'] == 7000 for row in rows)
+    assert all(row['modelAmount'] == 10430 for row in rows)
 
 
 def test_settlement_labels_and_report_flag_follow_safe_relations(summary_db):

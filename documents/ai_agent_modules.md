@@ -100,7 +100,7 @@ OPENAI_API_KEY=   # detail_cut GPT Image 2 + OpenAI text 폴백
 | 출력 | `{ imageUrl }` → 서버가 `MannequinCut { id, candidate:'A'(legacy), version, src }`로 포장 — 재생성 시 새 버전으로 스트립에 추가·자동 선택 |
 | QC | Pillow 휴리스틱 QC + AG-P2 비전 QC 2중 — **현재 둘 다 shadow/off**(로그만, 게이팅 안 함 — `MANNEQUIN_QC_ENABLED=false`, `image_qc='off'`). 게이팅 활성 시 최대 2회 교정 재시도(`mannequin_max_attempts=2`) |
 | 프롬프트 핵심 제약 | **베이스 마네킹의 인물·포즈·구도·배경 동결, 의류만 교체** · 의류 구조·디테일·컬러 보존 최우선 · 모델 얼굴 없음 |
-| 실패 | 성공 시 잡당 `mannequinGenerate`(=2) 차감(예약량과 동일 — 구 "성공 후보 수 × 1" 폐기), 실패 시 미차감(예약 release). finalize는 lease-fenced 원자 처리 |
+| 실패 | 성공 시 잡당 `mannequinGenerate`(=45) 차감(예약량과 동일 — 구 "성공 후보 수 × 1" 폐기), 실패 시 미차감(예약 release). finalize는 lease-fenced 원자 처리 |
 
 ### AG-05 mannequin-adjuster — 마네킹 조정 ~~(폐기)~~
 

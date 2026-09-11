@@ -8,6 +8,7 @@
    ============================================================= */
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { RequireAuth } from '../guards.jsx';
+import { RequireDevice } from './RequireDevice.jsx';
 import { AdminShell } from '@/features/admin/AdminShell.jsx';
 import { AdminApplications } from '@/features/admin/AdminApplications.jsx';
 import { AdminDashboard } from '@/features/admin/AdminDashboard.jsx';
@@ -34,14 +35,17 @@ export default function AppAdmin() {
   return (
     <Routes>
       <Route element={<RequireAuth />}>
-        <Route element={<AdminShell />}>
-          <Route index element={<AdminDashboard />} />
-          <Route path="applications" element={<AdminApplications />} />
-          <Route path="usage-reports" element={<AdminUsageReports />} />
-          <Route path="payout-statements" element={<AdminPayoutStatements />} />
-          <Route path="models" element={<AdminModels />} />
-          <Route path="users" element={<AdminUsers />} />
-          <Route path="staff" element={<AdminStaff />} />
+        {/* 기기 게이트 — 로그인 뒤·콘솔 셸 앞. 서버 가드가 진짜 판정이고 이건 그 판정의 화면이다. */}
+        <Route element={<RequireDevice />}>
+          <Route element={<AdminShell />}>
+            <Route index element={<AdminDashboard />} />
+            <Route path="applications" element={<AdminApplications />} />
+            <Route path="usage-reports" element={<AdminUsageReports />} />
+            <Route path="payout-statements" element={<AdminPayoutStatements />} />
+            <Route path="models" element={<AdminModels />} />
+            <Route path="users" element={<AdminUsers />} />
+            <Route path="staff" element={<AdminStaff />} />
+          </Route>
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

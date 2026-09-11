@@ -27,12 +27,12 @@ test('facemarket 도메인의 화면이면 그리로 보낸다', () => {
   assert.equal(facemarketRootTarget('/status-evil'), null);
 });
 
-test('상단바는 세 메뉴를 항상 보여 주고 보호 메뉴만 로그인 의도로 바꾼다', () => {
+test('상단바는 세 메뉴를 보여 주고 보호 메뉴만 로그인 의도로 바꾼다', () => {
   assert.equal(typeof landingRouting.landingNavItems, 'function');
   assert.equal(typeof landingRouting.landingNavAction, 'function');
 
   assert.deepEqual(landingRouting.landingNavItems(), [
-    { to: '/model/apply', label: '모델 지원', protected: false },
+    { to: '/apply', label: '모델 지원', protected: false },
     { to: '/models', label: '모델 리스트', protected: false },
     { to: '/status', label: '마이페이지', protected: true },
   ]);
@@ -114,5 +114,5 @@ test('접두사만 겹치는 경로는 화이트리스트를 통과하지 못한
 
 test('확정 모델은 상단바에서 모델 지원을 숨겨요', () => {
   assert.deepEqual(landingRouting.landingNavItems({ verified: true }).map(item => item.to), ['/models', '/status']);
-  assert.equal(landingRouting.landingNavItems({ verified: false })[0].to, '/model/apply');
+  assert.equal(landingRouting.landingNavItems({ verified: false })[0].to, '/apply');
 });

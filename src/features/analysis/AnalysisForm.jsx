@@ -7,7 +7,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api/index.js';
 import { FACEMARKET_PRICING } from '@/lib/facemarketPricing.js';
-import { listModels, fetchLicenseFaceUrl, verifyLicensePublic } from '@/lib/api/facemarket.js';
+import {
+  listModels,
+  fetchLicenseFaceUrl,
+  verifyLicensePublic,
+  warmFaceRender,
+} from '@/lib/api/facemarket.js';
 import QRCode from 'qrcode';
 import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppStore.js';
 import { Icon, Chips, Button, Skeleton, ErrorState, Modal, useToast } from '@/components/ui.jsx';
@@ -31,7 +36,6 @@ import { invalidateStoryboardEntryPrefetch } from '@/features/storyboard/storybo
 import {
   isRealModelSelection,
   resolveSelectedModelId,
-  resolveStylingModelId,
 } from './modelSelection.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { SELLING_POINTS_MAX, applySellingPointEdit } from './sellingPoints.js';
@@ -109,7 +113,7 @@ function ModelDetailModal({ model, onClose, onSelect, selectable }) {
                 )}
                 <div className="lic-foot">
                   <div className="lic-foot-info">
-                    <div className="lic-price">{_won(FACEMARKET_PRICING.perCut)}<em> · 호리존 컷 1장당</em></div>
+                    <div className="lic-price">{_won(FACEMARKET_PRICING.perCut)}<em> · 상세페이지 1건당</em></div>
                     {_fmtDate(data.validUntil) && <div className="lic-valid">{_fmtDate(data.validUntil)}까지</div>}
                     {data.vcId && <code className="lic-vcid">{data.vcId}</code>}
                   </div>
@@ -136,7 +140,11 @@ function ModelDetailModal({ model, onClose, onSelect, selectable }) {
 // 글자 폭 추정(em) — 한글 ≈1em, 그 외 ≈0.55em. '직접 입력' pill이 다른 칩과 같은 크기로
 // 시작해 내용 길이만큼만 유동 확장되게 하는 계산 (2026-07-13 사용자 피드백).
 const chWidth = (s) => [...s].reduce((n, ch) => n + (/[가-힣]/.test(ch) ? 1 : 0.55), 0).toFixed(1);
-import { CREDIT_COSTS } from '@/lib/limits.js';
+import {
+  extensionModelGroupLabel,
+  mannequinGenerationCtaLabel,
+  mannequinGenerationTotal,
+} from '@/lib/limits.js';
 import { seoulDate } from '@/lib/datetime.js';
 import {
   createMeasurementFields,
@@ -579,6 +587,7 @@ export function AnalysisForm({
   const toast = useToast();
   const { session, loading: authLoading } = useAuth();
   const composeMode = useAppStore((s) => s.composeMode);
+  const account = useAppStore((s) => s.account);
   const setComposeMode = useAppStore((s) => s.setComposeMode);
   const restoreComposeMode = useAppStore((s) => s.restoreComposeMode);
   const composeModeSaveRef = useRef(Promise.resolve());
@@ -586,6 +595,7 @@ export function AnalysisForm({
   const [composeModeSaving, setComposeModeSaving] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [composeModeOpen, setComposeModeOpen] = useState(false);
+  const [creditQuote, setCreditQuote] = useState(null);
   const composeModeMenuRef = useRef(null);
   const composeModeTriggerRef = useRef(null);
   useEffect(() => {
@@ -627,6 +637,14 @@ export function AnalysisForm({
   useEffect(() => {
     if (composeModeSaving || confirming) setComposeModeOpen(false);
   }, [composeModeSaving, confirming]);
+  useEffect(() => {
+    if (!projectId) return undefined;
+    let alive = true;
+    api.getCreditQuote(projectId, { selectedModelId: a.selectedModelId })
+      .then((quote) => { if (alive) setCreditQuote(quote); })
+      .catch(() => { /* 즉시 계산값을 유지하고 최종 잔액 판정은 서버 생성 요청에 맡긴다. */ });
+    return () => { alive = false; };
+  }, [a.selectedModelId, projectId]);
   const [washing, setWashing] = useState(false);
   const [spDraft, setSpDraft] = useState('');
   const [ccDraft, setCcDraft] = useState(a.customCategory || '');   // 직접 입력 pill (blur 커밋)
@@ -671,13 +689,23 @@ export function AnalysisForm({
       if (composeModeSaveRef.current === pending) setComposeModeSaving(false);
     });
   };
+  // 모델을 **고르는 순간** 파드를 미리 켠다. 확인 버튼까지 기다리면 그만큼 콜드스타트가
+  // 첫 컷 앞에 그대로 남는다. 같은 id 로 다시 렌더링될 때는 보내지 않는다(서버도 60초 중복을
+  // 무시하지만, 안 보내는 게 낫다). 실패는 조용히 무시 — 생성 흐름과 무관한 부가 신호다.
+  const warmedModelRef = useRef(null);
+  useEffect(() => {
+    const modelId = a.selectedModelId;
+    if (!isRealModelSelection(modelId)) { warmedModelRef.current = null; return; }
+    if (warmedModelRef.current === modelId) return;
+    warmedModelRef.current = modelId;
+    void warmFaceRender(modelId);
+  }, [a.selectedModelId]);
+
   const confirmAnalysis = async () => {
-    if (isRealModelSelection(a.selectedModelId) && !a.stylingModelId) {
-      toast.push('장소·스타일링 컷에 쓸 가상 모델을 골라 주세요.', {
-        icon: 'alertCircle',
-      });
-      return;
-    }
+    // 실제 모델은 모든 컷에 그대로 들어간다 — 대역(가상 모델)을 고르게 하지 않는다.
+    // 얼굴 렌더 파드를 미리 켠다 — 여기서 확정한 모델의 첫 컷이 콜드스타트를 통째로 기다리지
+    // 않게 하려는 것이다. 실패는 무시한다(생성 흐름과 무관한 부가 신호).
+    if (isRealModelSelection(a.selectedModelId)) void warmFaceRender(a.selectedModelId);
     if (isRealModelSelection(a.selectedModelId) && !a.brandUseCategory) {
       toast.push('실제 모델을 사용할 브랜드 유형을 선택해 주세요.', {
         icon: 'alertCircle',
@@ -759,24 +787,24 @@ export function AnalysisForm({
       modelsLoading,
       aiModels: AI_MODELS,
     });
-    const nextStylingModelId = resolveStylingModelId({
-      selectedModelId: nextSelectedModelId,
-      stylingModelId: a.stylingModelId,
-      targetGenders: a.targetGenders,
-      aiModels: AI_MODELS,
-    });
     const patch = {};
     if (nextSelectedModelId !== a.selectedModelId) {
       patch.selectedModelId = nextSelectedModelId;
     }
-    if (nextStylingModelId !== (a.stylingModelId || null)) {
-      patch.stylingModelId = nextStylingModelId;
-    }
     if (Object.keys(patch).length) onChange(patch);
-  }, [models, modelsLoading, a.selectedModelId, a.stylingModelId, a.targetGenders, onChange]);
+  }, [models, modelsLoading, a.selectedModelId, a.targetGenders, onChange]);
   const aiSet = new Set(a.aiSuggestedPoints || []);
   const selectableModels = models.filter((model) => model.hasActiveLicense);
   const pendingLicenseModels = models.filter((model) => !model.hasActiveLicense);
+  const currentQuote = creditQuote?.mannequinGenerate?.selectedModelId === a.selectedModelId
+    ? creditQuote
+    : null;
+  const quotePlan = currentQuote?.plan || account?.plan;
+  const mannequinGenerationCost = currentQuote?.mannequinGenerate?.total
+    ?? mannequinGenerationTotal(account?.plan, a.selectedModelId);
+  const visibleAiModels = AI_MODELS.filter(
+    (model) => !a.targetGenders?.[0] || model.gender === a.targetGenders[0],
+  );
   const applyAnalysisReplacement = useCallback((nextAnalysis) => {
     if (!nextAnalysis) return;
     if (onAnalysisReplace) onAnalysisReplace(nextAnalysis);
@@ -1075,12 +1103,6 @@ export function AnalysisForm({
                   ...(a.subCategory && !nextSubCats.some((item) => item.value === a.subCategory)
                     ? { subCategory: null }
                     : {}),
-                  stylingModelId: resolveStylingModelId({
-                    selectedModelId: a.selectedModelId,
-                    stylingModelId: a.stylingModelId,
-                    targetGenders,
-                    aiModels: AI_MODELS,
-                  }),
                 }));
               }} /></div>
           {fitOpts.length > 0 && (
@@ -1238,21 +1260,32 @@ export function AnalysisForm({
         {modelTab === 'ai' ? (
           /* 성별 칩과 같은 성별만 노출(2026-08-01 사용자 결정) — 칩 미선택이면 전체.
              이름은 사진 위 우측 하단에 흰 글씨로 얹는다(별도 메타 줄 없음). */
-          <div className="model-grid">
-            {AI_MODELS
-              .filter((m) => !a.targetGenders?.[0] || m.gender === a.targetGenders[0])
-              .map((m) => {
-                const on = a.selectedModelId === m.id;
-                return (
-                  <div key={m.id} className={`model-card fm-model ai-model${on ? ' on' : ''}`}
-                    onClick={() => onChange({ selectedModelId: m.id, stylingModelId: null })} title={m.displayName}>
-                    <img src={m.thumb} alt={m.displayName} />
-                    <span className="ai-name">
-                      {m.displayName}{on && <Icon name="check" size={12} />}
-                    </span>
+          <div className="ai-model-groups">
+            {['basic', 'extension'].map((tier) => {
+              const group = visibleAiModels.filter((model) => model.tier === tier);
+              if (!group.length) return null;
+              return (
+                <div className="ai-model-group" key={tier}>
+                  <div className="ai-model-group-title">
+                    {tier === 'basic' ? '기본 · 무료' : extensionModelGroupLabel(quotePlan)}
                   </div>
-                );
-              })}
+                  <div className="model-grid">
+                    {group.map((m) => {
+                      const on = a.selectedModelId === m.id;
+                      return (
+                        <div key={m.id} className={`model-card fm-model ai-model${on ? ' on' : ''}`}
+                          onClick={() => onChange({ selectedModelId: m.id })} title={m.displayName}>
+                          <img src={m.thumb} alt={m.displayName} />
+                          <span className="ai-name">
+                            {m.displayName}{on && <Icon name="check" size={12} />}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         ) : authLoading || modelsLoading ? (
           <div className="hint">검증 모델을 불러오는 중이에요…</div>
@@ -1283,7 +1316,7 @@ export function AnalysisForm({
                   <div className="fm-meta">
                     <div className="fm-name">{m.displayName}{on && <Icon name="check" size={13} className="star" />}</div>
                     <div className="fm-price">
-                      {`₩${FACEMARKET_PRICING.perCut.toLocaleString('ko-KR')} · 호리존 컷 1장당`}
+                      {`₩${FACEMARKET_PRICING.perCut.toLocaleString('ko-KR')} · 상세페이지 1건당`}
                     </div>
                   </div>
                 </div>
@@ -1319,38 +1352,12 @@ export function AnalysisForm({
             selectable={!!detailFor.hasActiveLicense}
             onSelect={(id) => onChange({
               selectedModelId: id,
-              stylingModelId: resolveStylingModelId({
-                selectedModelId: id,
-                stylingModelId: a.stylingModelId,
-                targetGenders: a.targetGenders,
-                aiModels: AI_MODELS,
-              }),
             })}
             onClose={() => setDetailFor(null)}
           />
         )}
         {isRealModelSelection(a.selectedModelId) && (
           <>
-            <div className="fm-styling-model">
-              <div className="sec-title">장소·스타일링 컷 모델</div>
-              <div className="sec-sub">실제 모델은 스튜디오(호리존) 컷에만 나와요. 장소·스타일링 컷은 가상 모델로 만들어요.</div>
-              <div className="model-grid">
-                {AI_MODELS
-                  .filter((model) => !a.targetGenders?.[0] || model.gender === a.targetGenders[0])
-                  .map((model) => {
-                    const on = a.stylingModelId === model.id;
-                    return (
-                      <div key={model.id} className={`model-card fm-model ai-model${on ? ' on' : ''}`}
-                        onClick={() => onChange({ stylingModelId: model.id })} title={model.displayName}>
-                        <img src={model.thumb} alt={model.displayName} />
-                        <span className="ai-name">
-                          {model.displayName}{on && <Icon name="check" size={12} />}
-                        </span>
-                      </div>
-                    );
-                  })}
-              </div>
-            </div>
             <div className="fm-use-category">
               <div className="sec-title">사용 브랜드 유형</div>
               <div className="sec-sub">이 모델을 사용할 브랜드 유형을 하나 선택해 주세요.</div>
@@ -1472,7 +1479,7 @@ export function AnalysisForm({
       <Button variant="primary" size="lg" iconRight="arrowRight"
         className="af-cta-confirm"
         disabled={composeModeSaving || confirming}
-        onClick={confirmAnalysis}>의류정보 확정 완료 · {CREDIT_COSTS.mannequinGenerate} 크레딧</Button>
+        onClick={confirmAnalysis}>{mannequinGenerationCtaLabel(mannequinGenerationCost)}</Button>
     </div>
   );
 

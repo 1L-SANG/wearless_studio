@@ -19,13 +19,14 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPExcep
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from psycopg import errors
 
-from . import admin_guard, app_origin, facemarket, legal_versions, personalization, repo
+from . import admin_guard, app_origin, facemarket, legal_versions, personalization, plan_pricing, repo
 from .agents import (
     color_harmony,
     content_roles,
     cut_generator,
     feature_copy,
     fit_axes,
+    identity_scope,
     mannequin,
     mannequin_base_fidelity_qc,
     product_evidence_contract,
@@ -47,6 +48,7 @@ from .models import (
     Asset,
     AssetCompleteRequest,
     CreditHistoryEntry,
+    CreditQuote,
     CreditSource,
     CustomMatchItemRequest,
     DraftSlotPutRequest,
@@ -816,7 +818,7 @@ async def approve_refund(
       - `400 Bad Request`: 이미 처리되었거나 유효하지 않은 환불 요청인 경우
     """
     async with get_conn(request) as conn:
-        await admin_guard.require_admin(conn, user_id)
+        await admin_guard.require_admin(conn, user_id, request)
         try:
             result = await repo.approve_refund(conn, request_id=request_id, resolved_by=user_id)
         except repo.CreditError as e:
@@ -851,7 +853,7 @@ async def reject_refund(
       - `400 Bad Request`: 이미 처리된 환불 요청인 경우
     """
     async with get_conn(request) as conn:
-        await admin_guard.require_admin(conn, user_id)
+        await admin_guard.require_admin(conn, user_id, request)
         try:
             result = await repo.reject_refund(conn, request_id=request_id, resolved_by=user_id)
         except repo.CreditError as e:
@@ -886,7 +888,8 @@ async def get_library(
     - **Bearer Token**: 필수
     """
     async with get_conn(request) as conn:
-        return await repo.list_library(conn, user_id)
+        rows = await repo.list_library(conn, user_id)
+    return [_with_resized_cover(request, row) for row in rows]
 
 
 @router.post(
@@ -2111,6 +2114,44 @@ def _cut_to_api(c: dict) -> dict:
     }
 
 
+@router.get(
+    "/projects/{project_id}/credit-quote",
+    response_model=CreditQuote,
+    responses={**COMMON_RESPONSES},
+    tags=["Projects"],
+    summary="프로젝트의 플랜별 크레딧 견적 조회",
+)
+async def get_credit_quote(
+    request: Request, project_id: str, user_id: str = Depends(require_user),
+    selected_model_id: str | None = Query(None, alias="selectedModelId"),
+):
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        state = await repo.get_mannequin_pricing_state(conn, user_id, project_id)
+    plan = plan_pricing.plan_of(state["plan"])
+    model_id = selected_model_id if selected_model_id is not None else state["selected_model_id"]
+    fee = plan_pricing.extension_model_fee(plan, model_id)
+    settings = request.app.state.settings
+    base = settings.credit_cost_mannequin_generate
+    done_count = state["done_count"]
+    return {
+        "plan": plan,
+        "mannequinGenerate": {
+            "base": base, "extensionModelFee": fee, "total": base + fee,
+            "selectedModelId": model_id,
+            "extensionFeeAlreadyPaid": state["extension_fee_already_paid"],
+        },
+        "mannequinRegenerate": {
+            "freeAdjusts": plan_pricing.free_mannequin_adjusts(plan),
+            "usedAdjusts": max(done_count - 1, 0),
+            "nextCost": plan_pricing.mannequin_regenerate_cost(plan, done_count, base),
+        },
+        "storyboardPerCut": settings.credit_cost_storyboard_per_cut,
+        "editorImage": settings.credit_cost_editor_image,
+    }
+
+
 @router.post(
     "/projects/{project_id}/mannequins:generate",
     responses={
@@ -2136,10 +2177,9 @@ async def generate_mannequins(
     - **에지 케이스 & 멱등성**:
       1. **완료된 결과가 이미 존재**: `200 OK`와 함께 기존 생성 결과를 그대로 반환하여 추가 크레딧 차감이 발생하지 않습니다.
       2. **이미 동일 작업이 진행 중**: 새로 작업을 띄우지 않고 `202 Accepted`와 함께 기존 실행 중인 `jobId`를 그대로 반환(작업 합류)합니다.
-      3. **크레딧 차감 (402)**: 마네킹 생성에 필요한 크레딧(설정값, 기본 2)이 없으면 `402 Payment Required` 예외가 발생합니다.
+      3. **크레딧 차감 (402)**: 마네킹 기본 단가와 선택한 확장 모델 요금을 합친 크레딧이 없으면 `402 Payment Required` 예외가 발생합니다.
       4. **입력 조건 (400)**: 기준 색상의 정면(Front) 사진 에셋이 아직 등록되지 않은 경우 `missing_front_photo` 에러가 발생합니다.
     """
-    cost = request.app.state.settings.credit_cost_mannequin_generate
     # Idempotency-Key는 project:kind로 스코프 — 다른 프로젝트/종류에서 키 재사용 시 오인 방지
     scoped_key = f"{project_id}:mannequin:{idempotency_key}" if idempotency_key else None
     async with get_conn(request) as conn:
@@ -2158,12 +2198,18 @@ async def generate_mannequins(
         # 합류(created=False)는 게이트·예약 없이 기존 job 반환 → 동시 재시도/입력검증으로 막지 않음.
         # 합류 시 기존 job payload 가 정본 — 아래 스냅샷은 신규 job 에만 실린다.
         snapshot = await _fit_profile_snapshot(conn, user_id, project_id, None)
+        pricing = await repo.get_mannequin_pricing_state(conn, user_id, project_id)
+        plan = plan_pricing.plan_of(pricing["plan"])
+        model_id = pricing["selected_model_id"]
+        fee = plan_pricing.extension_model_fee(plan, model_id)
+        cost = request.app.state.settings.credit_cost_mannequin_generate + fee
         job_payload = {"mode": "generate", "fitProfileSnapshot": snapshot}
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
             payload=job_payload, idempotency_key=scoped_key,
             credits_reserved=cost,
-            metadata={"creditCostVersion": request.app.state.settings.credit_cost_version})
+            metadata={"creditCostVersion": request.app.state.settings.credit_cost_version,
+                      "extensionModelFee": fee, "plan": plan, "selectedModelId": model_id})
         if not created and not _mannequin_payload_matches(job, job_payload):
             raise _generation_in_progress()
         if created:  # 신규 job만 입력 게이트 + 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
@@ -2673,10 +2719,9 @@ async def regenerate_mannequins(
     - **Body**: `{ fitProfile? }` — 조정된 fit-profile(axes·matchingFit, legacy matchCut 호환).
       없으면 저장된 analysis 기준.
     - generate 와 동일한 워커·크레딧 경로지만 **완료 캐시 게이트를 건너뛴다** — 매 호출이 새 버전을
-      만든다(finalize 가 candidate 별 `max(version)+1` 로 append). 크레딧은 generate 와 동일.
+      만든다(finalize 가 candidate 별 `max(version)+1` 로 append). 플랜별 무료 수정 이후 기본 단가를 받는다.
     - **에지 케이스**: `400 missing_front_photo`(정면 사진 없음), `402 insufficient_credits`(크레딧 부족).
     """
-    cost = request.app.state.settings.credit_cost_mannequin_generate
     scoped_key = f"{project_id}:mannequin_regenerate:{idempotency_key}" if idempotency_key else None
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
@@ -2698,11 +2743,27 @@ async def regenerate_mannequins(
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
             payload=job_payload,
-            idempotency_key=scoped_key, credits_reserved=cost,
-            metadata={"creditCostVersion": request.app.state.settings.credit_cost_version})
+            idempotency_key=scoped_key, credits_reserved=0, metadata={})
         if not created and not _mannequin_payload_matches(job, job_payload):
             raise _generation_in_progress()
         if created:  # 신규 job만 입력 게이트 + 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
+            # 활성 unique를 확보한 뒤 최신 완료 횟수를 읽는다. INSERT 전에 읽으면 그 사이
+            # 이전 무료 작업이 완료되어도 무료 가격을 재사용한다. 아직 미커밋인 pending job은
+            # 워커가 볼 수 없으며, 가격 저장과 잔액 예약까지 같은 트랜잭션으로 확정한다.
+            pricing = await repo.get_mannequin_pricing_state(conn, user_id, project_id)
+            plan = plan_pricing.plan_of(pricing["plan"])
+            done_count = pricing["done_count"]
+            cost = plan_pricing.mannequin_regenerate_cost(
+                plan, done_count, request.app.state.settings.credit_cost_mannequin_generate,
+            )
+            pricing_metadata = {
+                "creditCostVersion": request.app.state.settings.credit_cost_version,
+                "freeAdjust": cost == 0, "adjustIndex": done_count, "plan": plan,
+            }
+            await repo.set_pending_job_pricing(
+                conn, user_id=user_id, job_id=job["id"],
+                credits_reserved=cost, metadata=pricing_metadata,
+            )
             product = await repo.get_product(conn, project_id)
             if not mannequin.has_base_front(product or {}):  # 정면 사진 필수(generate 동일)
                 raise _bad_request("missing_front_photo", "기준 색상 정면 사진을 먼저 올려주세요.")
@@ -2710,6 +2771,11 @@ async def regenerate_mannequins(
                 raise HTTPException(
                     status_code=402,
                     detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
+            if cost == 0:
+                await repo.record_free_mannequin_adjust(
+                    conn, user_id=user_id, project_id=project_id, job_id=job["id"],
+                    metadata=pricing_metadata,
+                )
             # fit-profile 반영: 클라가 조정한 fitProfile 을 analysis 에 영속 → 워커의
             # generation_spec(analysis) 이 이를 읽어 재생성 컷에 반영한다(mannequin_job.py:205,
             # agents/mannequin.generation_spec = analysis["fitProfile"]). save_analysis 는 REPLACE 라
@@ -2952,16 +3018,13 @@ async def generate_editor_image(
                         "model_unavailable", "사용할 수 없는 모델입니다.", status=409
                     )
                 trusted_cut_type = provenance.get("cut_type")
-                facemarket.reject_real_model_outside_horizon(
-                    trusted_cut_type, model_id
+                # 조회가 실패하면 None → 아래 verify_license 가 409 로 막는다(500 로 새지 않는다).
+                license_row = await facemarket.consent_license(
+                    conn, model_id, license_id=license_id
                 )
-                facemarket.reject_real_model_scene_variation(payload)
                 payload["source"] = {**source, "cutType": trusted_cut_type}
                 analysis = await repo.get_analysis(conn, project_id) or {}
                 brand_use_category = analysis.get("brandUseCategory")
-                license_row = await facemarket.resolve_model_license(
-                    conn, model_id, license_id=license_id
-                )
                 await facemarket.verify_license(
                     request.app,
                     license_row,
@@ -2982,9 +3045,13 @@ async def generate_editor_image(
                 payload.get("cutType"), wants_face=False
             )[0]
             if uses_model_identity:
-                facemarket.reject_real_model_outside_horizon(
-                    payload.get("cutType"), selected_model_id
-                )
+                # 콘티보드 범위 밖 조합(예: 실제 모델 + 가상 전용 예시)은 여기서 끝낸다 —
+                # 잡도 만들지 않고 크레딧도 예약하지 않는다(2026-09-11 사용자 결정).
+                if not identity_scope.block_allowed(payload, selected_model_id):
+                    raise HTTPException(status_code=409, detail={
+                        "code": "identity_scope_mismatch",
+                        "message": "이 모델로는 만들 수 없는 컷이에요.",
+                    })
                 payload["modelId"] = selected_model_id
                 brand_use_category = analysis.get("brandUseCategory")
                 payload["brandUseCategory"] = brand_use_category
@@ -3080,9 +3147,6 @@ async def generate_detail_page(
         selected_model_id = analysis.get("selectedModelId") or analysis.get(
             "selected_model_id"
         )
-        styling_model_id = analysis.get("stylingModelId") or analysis.get(
-            "styling_model_id"
-        )
         brand_use_category = analysis.get("brandUseCategory")
         storyboard = (
             await repo.get_storyboard(conn, project_id)
@@ -3097,30 +3161,31 @@ async def generate_detail_page(
                 block.get("cutType"), wants_face=False
             )[0]
         ]
+        license_row = None
         resolved_block_model_ids = [
-            facemarket.resolve_block_model_id(
-                block.get("cutType"), selected_model_id, styling_model_id
-            )
+            facemarket.resolve_block_model_id(block.get("cutType"), selected_model_id)
             for block in ai_worn_blocks
         ]
         uses_model_identity = any(resolved_block_model_ids)
-        uses_real_horizon_identity = (
-            facemarket.is_real_model_id(selected_model_id)
-            and any(block.get("cutType") == "horizon" for block in ai_worn_blocks)
+        # "이 잡에서 실제 모델 얼굴이 실제로 쓰이는 컷이 있는가" — 착용 컷이면 전부 해당한다.
+        # 라이선스 확인·정산·REAL 자산·LoRA 가 전부 이 판정에 붙는다.
+        uses_real_identity = facemarket.is_real_model_id(selected_model_id) and any(
+            facemarket.real_identity_allowed_cut(block.get("cutType"))
+            for block in ai_worn_blocks
         )
         payload = {"mode": "generate"}
         if uses_model_identity:
+            # 실제 모델도 대역 없이 그대로 간다 — 예전의 stylingModelId(가상 대역)는
+            # 더 이상 읽지 않는다(2026-09-11 사용자 결정). 저장된 옛 값은 무시된다.
             payload["modelId"] = selected_model_id
-            if styling_model_id:
-                payload["stylingModelId"] = styling_model_id
-        if uses_real_horizon_identity:
+        if uses_real_identity:
             payload["brandUseCategory"] = brand_use_category
-        license_row = None
         # FaceMarket verify-before-use 게이트(FM-30). **캐시 반환보다 먼저** — 해지·만료된
         # 라이선스가 이미 생성된 페이지의 재생성까지 막아야 하므로(장면⑤). facemarket off면
         # 미진입 → 기존 셀러 플로우 무영향. 선택 모델에 라이선스 없으면 no-op(비-FaceMarket 셀러).
-        if s.facemarket_enabled and uses_real_horizon_identity:
-            license_row = await facemarket.resolve_project_license(conn, project, analysis)
+        if s.facemarket_enabled and uses_real_identity:
+            if license_row is None:      # 동의 판정에서 이미 읽었으면 그 행을 그대로 쓴다
+                license_row = await facemarket.resolve_project_license(conn, project, analysis)
             await facemarket.verify_license(
                 request.app,
                 license_row,
@@ -3150,6 +3215,10 @@ async def generate_detail_page(
         clothing_type = ((product_row or {}).get("clothing_type")
                          or (product_row or {}).get("clothingType") or "top")
         ai_blocks = [b for b in storyboard if isinstance(b, dict) and b.get("source") == "ai"]
+        # 이 모델로 만들 수 없는 컷(콘티보드 범위 밖)은 워커가 건너뛴다 — 예약에서도 뺀다.
+        # 안 빼면 만들지도 않을 컷 때문에 잔액 부족(402)이 나거나 예약이 부풀어 오른다.
+        ai_blocks = [b for b in ai_blocks
+                     if identity_scope.block_allowed(b, selected_model_id)]
         dup_sources = _duplicate_source_indexes(ai_blocks, clothing_type)
         ai_count = sum(1 for source in dup_sources if source is None)
         cost = ai_count * s.credit_cost_storyboard_per_cut
@@ -3232,6 +3301,32 @@ def _asset_file_location(request: Request, asset_id: str, asset: dict) -> str:
         # no-store를 집행하고, 새 capability version이 기존 /file 캐시를 우회한다.
         return f"/v1/assets/{asset_id}/bytes?e={ASSET_CACHE_VERSION}"
     return _r2(request).public_url(asset["r2_key"])
+
+
+#: 보관함 카드 폭(.lib-grid 는 minmax(220px, 1fr))의 2배 — DPR2 화면 기준.
+LIBRARY_COVER_WIDTH = 440
+
+
+def _with_resized_cover(request: Request, row: dict) -> dict:
+    """보관함 커버를 CDN 리사이즈 URL 로 올린다. 못 올리면 원래 값 그대로.
+
+    카드는 220px 인데 커버 원본은 848×1264 다. 줄여서 주면 그리드 전송량이 크게 줄고,
+    `/assets/{id}/file` 302 를 건너뛰므로 커버마다 붙던 API(us-east-1) 왕복도 없어진다.
+
+    `_asset_is_real_derived` 로 먼저 거른다 — 변환본은 `purge_public_cache` 의 prefix
+    purge 가 닿지 않는 `/cdn-cgi/image/...` 경로에 캐시되므로, 지울 수 있어야 하는
+    자산에는 만들면 안 된다. 서빙 경로와 같은 분류기를 쓰는 게 핵심이다.
+    """
+    key = row.get("cover_r2_key")
+    if not key:
+        return row
+    asset = {"source": row.get("cover_source"), "metadata": row.get("cover_metadata")}
+    if _asset_is_real_derived(asset):
+        return row
+    thumb = _r2(request).public_thumb_url(key, LIBRARY_COVER_WIDTH)
+    if not thumb:
+        return row
+    return {**row, "cover": thumb}
 
 
 def _asset_cors_safe_headers(asset: dict) -> dict:

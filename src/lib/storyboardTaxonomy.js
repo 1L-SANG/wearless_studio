@@ -169,11 +169,6 @@ export function contentTemplatesForSection(sectionRole) {
   return CONTENT_TEMPLATES.filter((template) => template.sectionRole === sectionRole);
 }
 
-export function allAiContentTemplates({ includeHero = true } = {}) {
-  return CONTENT_TEMPLATES.filter((template) => template.cutType
-    && (includeHero || template.value !== CONTENT_ROLES.HERO));
-}
-
 export function inferSectionRole(block) {
   if (isSectionRole(block?.sectionRole)) return block.sectionRole;
   // taxonomy v2 저장본은 읽는 즉시 공식 네 섹션으로 승격한다.

@@ -9,6 +9,7 @@ import hashlib
 import logging
 import re
 import uuid
+from dataclasses import replace
 from io import BytesIO
 
 from PIL import Image
@@ -25,7 +26,9 @@ from ..agents import (
     mannequin,
     space_set_assets,
 )
+from ..agents import face_identity
 from ..agents.gemini_image import GeminiError, InlineImage
+from ..agents.model_routing import resolve_editor_cut_model
 from ..agents.vision_llm import VisionError
 from ..r2 import IMMUTABLE_CACHE, PRIVATE_NO_STORE, ai_key, ext_for_mime
 from ._common import emit_job_event as _emit
@@ -56,6 +59,11 @@ def _parse_source_asset_id(src: str | None) -> str | None:
 
 async def run_editor_image_job(app, job: dict) -> None:
     s = app.state.settings
+    # 에디터 컷만 별도 모델로 보낼 수 있게, 이 워커 안에서만 불변 Settings 복사본의 image_high 를
+    # 에디터 노브로 치환한다(detail_page_job 선례). 공용 image_high 를 바꾸면 마네킹·매칭 플랫레이·
+    # AG-07 까지 함께 전환되므로 그렇게 하지 않는다. 이미지 생성 호출만 editor_settings 를 쓰고,
+    # SAM·QC·업로드 등 나머지는 s 그대로다.
+    editor_settings = replace(s, model_image_high=resolve_editor_cut_model(s))
     pool = app.state.pool
     job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
     lease_token = job["lease_token"]
@@ -109,6 +117,8 @@ async def run_editor_image_job(app, job: dict) -> None:
         fm_source: str | None = None      # 에디터 컷 아이덴티티 소스 — REAL 이면 성공 시 정산 대상
         fm_license_row: dict | None = None
         fm_face_injected = False          # REAL 자산 2장이 실제 첨부됐을 때만 정산(미첨부 과금 방지)
+        vary_lora_spec = None             # 변형 컷 얼굴 패스 근거(fm_model_loras) — 없으면 패스 안 걸림
+        face_pass_outcome: dict = {}      # applied / fallback:<reason> — 자산 메타·이벤트용
 
         if mode == "vary":
             source = payload.get("source") or {}
@@ -170,10 +180,6 @@ async def run_editor_image_job(app, job: dict) -> None:
                             conn, user_id, asset_id
                         )
                     trusted_cut_type = (provenance or {}).get("cut_type")
-                facemarket.reject_real_model_outside_horizon(
-                    trusted_cut_type, str(snapshot["modelId"])
-                )
-                facemarket.reject_real_model_scene_variation(payload)
                 source = {**source, "cutType": trusted_cut_type}
                 async with pool.connection() as conn:
                     fm_license_row = await facemarket.resolve_model_license(
@@ -188,6 +194,11 @@ async def run_editor_image_job(app, job: dict) -> None:
                         brand_use_category=payload.get("brandUseCategory"),
                     )
                 fm_face_injected = True
+                # 변형 컷도 같은 등록자 LoRA 로 얼굴을 고정한다 — 안 그러면 한 상세페이지 안에서
+                # 원본 컷과 변형 컷의 인물이 갈린다. 행이 없으면 None 이라 기존 동작 그대로.
+                async with pool.connection() as _conn:
+                    vary_lora_spec = face_identity.face_identity_from_lora_row(
+                        await identity_source.resolve_enabled_lora(_conn, str(snapshot["modelId"])))
             src_img = InlineImage(
                 src_asset["mime_type"],
                 await asyncio.to_thread(app.state.r2.get_bytes, src_asset["r2_key"]))
@@ -201,8 +212,16 @@ async def run_editor_image_job(app, job: dict) -> None:
             cut_type = source.get("cutType")
             changes = payload.get("changes") or []
             try:
+                # face_identity_spec 은 값이 있을 때만 넘긴다 — 기존 목(mock) 중 이 인자를 모르는
+                # strict-signature 스텁을 깨지 않는다(body_profile 과 같은 관례).
+                _vary_kw = {"ref_bg": ref_bg_img}
+                if vary_lora_spec is not None:
+                    _vary_kw["face_identity_spec"] = vary_lora_spec
+                    _vary_kw["face_pass_outcome"] = face_pass_outcome
+                    _vary_kw["face_pass_url_provider"] = (
+                        lambda: identity_source.active_face_backend_url(pool))
                 image, mime = await cut_variator.generate(
-                    s, app.state.gemini, src_img, changes, cut_type, ref_bg=ref_bg_img)
+                    editor_settings, app.state.gemini, src_img, changes, cut_type, **_vary_kw)
             except GeminiError as e:
                 await _fail("컷 변형에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
                 return
@@ -331,10 +350,6 @@ async def run_editor_image_job(app, job: dict) -> None:
                 return
 
             requested_model_id = payload.get("modelId")
-            if normalized["cutType"] in _WORN_CUT_TYPES:
-                facemarket.reject_real_model_outside_horizon(
-                    normalized["cutType"], requested_model_id
-                )
 
             colors = product.get("colors") or []
             base_color = next(
@@ -457,12 +472,21 @@ async def run_editor_image_job(app, job: dict) -> None:
                     job_id, normalized.get("modelId"), e)
                 model_images = []
                 model_has_full_body = False
+            # 모델 참조 장수로 분기한다. REAL 은 얼굴 2장(face_front + grid_sedcard) 이 기본이고,
+            # 전신 자산(body_front)이 등록돼 있으면 3장이 된다. VIRTUAL 은 항상 2장(face + body).
+            n_model_images = len(model_images)
+            if n_model_images == 3:
+                model_has_full_body = True  # REAL 3장 = 얼굴 2 + 전신 1
+            # 실제 모델 얼굴은 착용 컷이면 전부 들어간다(2026-09-11 사용자 결정).
+            # 예전에는 horizon 만 — 스타일링·미러는 실제 모델을 골라도 얼굴이 안 붙었다.
             fm_face_injected = (
                 fm_source == "REAL"
-                and normalized["cutType"] == "horizon"
-                and len(model_images) == 2
+                and facemarket.real_identity_allowed_cut(normalized["cutType"])
+                and n_model_images >= 2
             )
             body_profile = None
+            hair_profile = face_shape_profile = None
+            fm_lora_spec = None
             if fm_face_injected and isinstance(fm_license_row, dict):
                 _bp = {
                     "gender": fm_license_row.get("gender"),
@@ -471,6 +495,13 @@ async def run_editor_image_job(app, job: dict) -> None:
                 }
                 if _bp["heightBucket"] or _bp["bodyType"]:
                     body_profile = _bp
+                # 등록자별 LoRA 장부(fm_model_loras). 켜진 행이 있으면 그 행이 얼굴 패스의 근거이고,
+                # 머리·얼굴형 프롬프트 블록도 같은 행에서 온다(등록자의 현재 모습이 아니라 LoRA 가 학습한 모습).
+                # 행이 없으면 전부 None 이라 프롬프트가 바이트 단위로 기존과 같고 얼굴 패스도 안 걸린다.
+                async with pool.connection() as _conn:
+                    _lora = await identity_source.resolve_enabled_lora(_conn, str(selected_model_id))
+                hair_profile, face_shape_profile = identity_source.profiles_from_lora_row(_lora)
+                fm_lora_spec = face_identity.face_identity_from_lora_row(_lora)
             mannequin_images = (
                 [InlineImage(
                     cut_mannequin_asset["mime_type"],
@@ -619,17 +650,31 @@ async def run_editor_image_job(app, job: dict) -> None:
                 matching_count=len(matching_images),
                 matching_custom=[matching_id.startswith("custom_") for matching_id in matching_ids],
                 mood_count=attached_mood_count,
-                has_model_face=len(model_images) == 2,
-                has_model_sheet=len(model_images) == 2 and not model_has_full_body,
-                has_model_full_body=(
-                    len(model_images) == 2 and model_has_full_body
-                ),
+                # REAL 2장 = FACE + SHEET · REAL 3장 = FACE + SHEET + FULL BODY · VIRTUAL 2장 = FACE + FULL BODY
+                has_model_face=n_model_images >= 2,
+                has_model_sheet=n_model_images == 3 or (n_model_images == 2 and not model_has_full_body),
+                has_model_full_body=model_has_full_body and n_model_images >= 2,
                 example_scope=example_scope,
                 example_is_product=normalized["cutType"] == "product",
                 reference_direction_compatible=cut_generator.apply_reference_compatibility(
                     cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
                 )["_referenceDirectionCompatible"])
             generate_kwargs = {"analysis": analysis, "manifest": manifest}
+            # 값이 없으면 키 자체를 넣지 않는다 — 기존 프롬프트·기존 목(mock) 시그니처를 깨지 않는다.
+            # 얼굴 패스 결과(applied / fallback:<reason>)를 받아 자산 메타와 이벤트에 남긴다.
+            face_pass_outcome: dict = {}
+            if fm_lora_spec is not None:
+                generate_kwargs["face_pass_outcome"] = face_pass_outcome
+                # 대기 중에도 현재 파드를 다시 묻는다 — 잡 시작 때 읽은 주소를 붙들면
+                # 파드가 생기기 전에 폴백하거나 교체된 뒤 죽은 주소를 계속 찌른다.
+                generate_kwargs["face_pass_url_provider"] = (
+                    lambda: identity_source.active_face_backend_url(pool))
+            if hair_profile is not None:
+                generate_kwargs["hair_profile"] = hair_profile
+            if face_shape_profile is not None:
+                generate_kwargs["face_shape_profile"] = face_shape_profile
+            if fm_lora_spec is not None:
+                generate_kwargs["face_identity_spec"] = fm_lora_spec
             # 실존 모델 그리드가 실제 첨부된 착장 컷에만 체형 블록을 얹는다(product·VIRTUAL·NONE
             # 소스는 body_profile 이 이미 None) — 키 자체를 생략해 기존 generate() 목(mock) 중
             # body_profile 인자를 모르는 strict-signature 스텁을 깨지 않는다(has_face와 동일 관례).
@@ -642,7 +687,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 generate_kwargs["has_face"] = True
             try:
                 image, mime = await cut_generator.generate(
-                    s, app.state.gemini, cut_spec, product, images,
+                    editor_settings, app.state.gemini, cut_spec, product, images,
                     **generate_kwargs)
             except ValueError as e:
                 if str(e) == "detail_reference_required":
@@ -685,7 +730,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                     attempt += 1
                     try:
                         image, mime = await cut_generator.generate(
-                            s, app.state.gemini, cut_spec, product, images,
+                            editor_settings, app.state.gemini, cut_spec, product, images,
                             **generate_kwargs)
                     except (GeminiError, ValueError) as e:
                         await _fail("컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
@@ -694,7 +739,7 @@ async def run_editor_image_job(app, job: dict) -> None:
 
             async def _generate_candidate():
                 candidate_image, candidate_mime = await cut_generator.generate(
-                    s, app.state.gemini, cut_spec, product, images,
+                    editor_settings, app.state.gemini, cut_spec, product, images,
                     **generate_kwargs)
                 if scene_plate is None:
                     return InlineImage(candidate_mime, candidate_image)
@@ -716,7 +761,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                         raise RuntimeError("bg candidate scene mismatch")
                     candidate_attempt += 1
                     candidate_image, candidate_mime = await cut_generator.generate(
-                        s, app.state.gemini, cut_spec, product, images,
+                        editor_settings, app.state.gemini, cut_spec, product, images,
                         **generate_kwargs)
                 return InlineImage(candidate_mime, candidate_image)
 
@@ -783,6 +828,10 @@ async def run_editor_image_job(app, job: dict) -> None:
         )
         written_key = key
         written_cleanup_intent_id = cleanup_intent_id
+        if face_pass_outcome.get("face_pass"):
+            # 셀러 화면은 그대로다. 이 한 줄이 "그 컷 얼굴이 어디서 왔나"를 원장에 남긴다.
+            await _emit(app.state.pool, job_id, "step",
+                        {"status": "face_pass", "result": face_pass_outcome["face_pass"]})
         w, h = _image_dims(image)
         image_row = {
             "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
@@ -798,6 +847,10 @@ async def run_editor_image_job(app, job: dict) -> None:
             "metadata": {
                 "facemarket_real_derived": fm_face_injected,
                 "cut_type": cut_type,
+                # 이 컷의 얼굴이 LoRA 로 바뀐 것인지, 폴백으로 생성 모델 얼굴 그대로인지.
+                # 셀러 화면은 달라지지 않는다 — 사후에 "왜 이 컷만 다른가"를 우리가 찾기 위한 기록.
+                **({"face_pass": face_pass_outcome["face_pass"]}
+                   if face_pass_outcome.get("face_pass") else {}),
             },
         }
 

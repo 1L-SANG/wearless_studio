@@ -30,10 +30,6 @@ export const CAMERA_Z = 11;
    계수가 된다. */
 export const VISIBLE_WORLD_HEIGHT = 2 * 8.6 * Math.tan((12 * Math.PI) / 180);
 
-/* 지금 카메라의 세로 fov — 위 두 값에서 역산한다(≈ 18.9°). 참고용. */
-export const CAMERA_FOV_DEG =
-  (2 * Math.atan(VISIBLE_WORLD_HEIGHT / 2 / CAMERA_Z) * 180) / Math.PI;
-
 export function worldToPixelScale(stageHeightPx) {
   // 첫 렌더에는 ResizeObserver 가 아직 크기를 안 줘서 0/NaN 이 들어온다.
   // 여기서 막지 않으면 transform 문자열에 NaN 이 박혀 카드가 통째로 사라진다.

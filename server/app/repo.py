@@ -121,6 +121,29 @@ async def get_account(conn: AsyncConnection, user_id: str) -> dict | None:
         return await cur.fetchone()
 
 
+async def get_mannequin_pricing_state(
+    conn: AsyncConnection, user_id: str, project_id: str,
+) -> dict:
+    """소유 확인 뒤 호출. 플랜, 저장된 선택, 성공 횟수를 같은 DB 스냅샷에서 읽는다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select
+                (select plan from profiles where user_id = %s) as plan,
+                (select payload->>'selectedModelId' from analyses
+                 where project_id = %s) as selected_model_id,
+                count(*) filter (where status = 'done') as done_count,
+                coalesce(bool_or(status = 'done'
+                    and coalesce(cast(metadata->>'extensionModelFee' as integer), 0) > 0), false)
+                    as extension_fee_already_paid
+            from jobs
+            where user_id = %s and project_id = %s and kind = 'mannequin'
+            """,
+            (user_id, project_id, user_id, project_id),
+        )
+        return await cur.fetchone()
+
+
 # 첫 값 보존 + 다른 앱이 오면 'both' 로 승격. 한 문장으로 쓰는 이유는 경합이다 —
 # select 로 읽고 파이썬에서 합쳐 update 하면, 두 탭(셀러·FaceMarket)이 같은 순간에
 # 스탬프를 보낼 때 늦은 쪽이 이른 쪽을 덮어 'both' 가 한쪽 값으로 되돌아간다.
@@ -455,6 +478,11 @@ async def list_library(conn: AsyncConnection, user_id: str) -> list[dict]:
                     when prodimg.aid is not null then '/v1/assets/' || prodimg.aid || '/file'
                     else ''
                 end as cover,
+                -- 라우트가 커버를 CDN 리사이즈 URL 로 올릴지 판단할 재료. 판단 자체는
+                -- 서빙 경로(`_asset_is_real_derived`)와 같은 분류기가 한 곳에서 한다.
+                cova.r2_key as cover_r2_key,
+                cova.source as cover_source,
+                cova.metadata as cover_metadata,
                 prod.clothing_type,
                 case when jsonb_typeof(pr.editor_blocks) = 'array'
                      then jsonb_array_length(pr.editor_blocks) else 0 end as block_count,
@@ -463,7 +491,7 @@ async def list_library(conn: AsyncConnection, user_id: str) -> list[dict]:
             from projects pr
             left join products prod on prod.project_id = pr.id
             left join lateral (
-                select mc.asset_id::text as aid
+                select mc.asset_id as aid_uuid, mc.asset_id::text as aid
                 from mannequin_cuts mc
                 where mc.project_id = pr.id
                 order by mc.version desc, mc.candidate
@@ -482,6 +510,14 @@ async def list_library(conn: AsyncConnection, user_id: str) -> list[dict]:
                          ((im->>'slot') = 'Front') desc
                 limit 1
             ) prodimg on true
+            -- 마네킹컷 커버만 조인한다. 상품사진 커버의 id 는 jsonb 텍스트라 uuid 캐스팅이
+            -- 안전하지 않고(잘못된 값 하나가 목록 전체를 500 으로 만든다), 그쪽은 업로드본
+            -- 이라 이미 R2 공개 경로를 탄다 — 느렸던 건 마네킹컷 쪽이다.
+            left join lateral (
+                select a.r2_key, a.source, a.metadata
+                from assets a
+                where a.id = cutc.aid_uuid and a.deleted_at is null
+            ) cova on true
             where pr.user_id = %s and pr.deleted_at is null and pr.status = 'done'
             order by pr.updated_at desc
             """,
@@ -1618,13 +1654,36 @@ async def create_job(
 
     멱등(계약 §6): ① 같은 Idempotency-Key = 같은 job(상태 무관) — 선조회로 합류 ② 진행 중 중복 =
     활성 job 합류(ON CONFLICT) ③ 실패 후 재호출(키 없음·새 키) = 새 job. **완료 job 재호출(기존
-    결과 반환·무차감)은 라우트가 create 전에 list_mannequin_cuts로 확인**(여기 아님)."""
+    결과 반환·무차감)은 라우트가 create 전에 list_mannequin_cuts로 확인**(여기 아님).
+    마네킹은 활성 합류 키도 저장한다. 202 응답이 유실돼도 종료된 원래 작업에 합류한다.
+    """
+    remember_request = kind == "mannequin" and bool(idempotency_key)
+
     async def _by_key(cur):
         await cur.execute(
             f"select {_JOB_COLS} from jobs where idempotency_key = %s and user_id = %s",
             (idempotency_key, user_id),
         )
-        return await cur.fetchone()
+        existing = await cur.fetchone()
+        if existing is None and remember_request:
+            await cur.execute(
+                f"select {_JOB_COLS} from jobs where user_id = %s and project_id = %s "
+                "and kind = 'mannequin' and id in ("
+                "select job_id from mannequin_job_requests "
+                "where user_id = %s and project_id = %s and idempotency_key = %s)",
+                (user_id, project_id, user_id, project_id, idempotency_key),
+            )
+            existing = await cur.fetchone()
+        return existing
+
+    async def _remember(cur, row):
+        if remember_request:
+            await cur.execute(
+                "insert into mannequin_job_requests (user_id, project_id, idempotency_key, job_id) "
+                "values (%s, %s, %s, %s) on conflict do nothing",
+                (user_id, project_id, idempotency_key, row["id"]),
+            )
+        return row
 
     async def _active(cur):
         await cur.execute(
@@ -1635,10 +1694,17 @@ async def create_job(
         return await cur.fetchone()
 
     async with conn.cursor() as cur:
+        if remember_request:
+            # 같은 프로젝트의 조회·생성·합류 키 저장을 한 트랜잭션으로 직렬화한다.
+            # 원래 키를 합류 키로 덮어쓰지 않으며 키 없는 호출과 다른 job kind는 불변이다.
+            await cur.execute(
+                "select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"mannequin-request:{user_id}:{project_id}",),
+            )
         if idempotency_key:  # ① 같은 Idempotency-Key 재시도(순차) → 같은 job
             existing = await _by_key(cur)
             if existing is not None:
-                return existing, False
+                return await _remember(cur, existing), False
         # 직접 SAVEPOINT — conn.transaction()은 열린 tx가 없으면 스스로 COMMIT해 라우트의
         # 커밋 제어(예약+생성 원자)를 빼앗을 수 있다. SAVEPOINT/RELEASE는 절대 커밋 안 함.
         # INSERT-or-join을 bounded 재시도(3회): 충돌(활성중복/동시같은키)로 합류해야 하는데
@@ -1669,17 +1735,32 @@ async def create_job(
             else:
                 await cur.execute("release savepoint create_job_insert")
             if row is not None:
-                return row, True
+                return await _remember(cur, row), True
             # 충돌 → 기존 job 합류: 키 우선, 없으면 활성
             if idempotency_key:
                 existing = await _by_key(cur)
                 if existing is not None:
-                    return existing, False
+                    return await _remember(cur, existing), False
             active = await _active(cur)
             if active is not None:
-                return active, False
+                return await _remember(cur, active), False
             # 합류 대상이 사라짐(충돌 job 완료) → 루프 재시도(이제 INSERT 성공)
         raise RuntimeError("create_job: 활성 합류 대상이 반복적으로 사라짐 (드문 레이스)")
+
+
+async def set_pending_job_pricing(
+    conn: AsyncConnection, *, user_id: str, job_id: str,
+    credits_reserved: int, metadata: dict,
+) -> None:
+    """새로 INSERT한 미커밋 job 전용. 호출자는 같은 트랜잭션에서 크레딧도 예약한다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update jobs set credits_reserved = %s, metadata = %s "
+            "where id = %s and user_id = %s and status = 'pending' returning id",
+            (credits_reserved, Json(metadata), job_id, user_id),
+        )
+        if await cur.fetchone() is None:
+            raise RuntimeError("set_pending_job_pricing: pending job missing")
 
 
 async def claim_next_job(conn: AsyncConnection, kinds: tuple[str, ...], worker_id: str) -> dict | None:
@@ -2139,6 +2220,17 @@ async def _settle_credits(
     return new_available
 
 
+async def record_free_mannequin_adjust(
+    conn: AsyncConnection, *, user_id: str, project_id: str, job_id: str, metadata: dict,
+) -> int:
+    """무료 수정도 예약 트랜잭션에서 delta=0 원장을 남긴다. 정산 키와 분리한다."""
+    return await _settle_credits(
+        conn, user_id=user_id, project_id=project_id, job_id=job_id,
+        reserved=0, charge=0, action_key="mannequinGenerate.reserve",
+        settle_key=f"credit:job:{job_id}:free-adjust", metadata=metadata,
+    )
+
+
 async def release_credits(
     conn: AsyncConnection,
     *,
@@ -2334,6 +2426,23 @@ async def _finalize_job_failure(
     return True
 
 
+def _mannequin_asset_metadata(generation_metadata: dict | None) -> dict:
+    """마네킹컷 asset metadata — 생성 계보 + 실인물 파생 아님 마커.
+
+    마커를 안 박으면 `_asset_is_real_derived` 의 보수적 폴백(marker 없는 source='ai')이
+    걸려 `/assets/{id}/file` 이 R2 공개 URL 대신 `private, no-store` 인 `/bytes` 로 302 한다.
+    그러면 이미지가 Cloudflare 엣지 대신 API(us-east-1)를 거치고 브라우저 캐시도 못 탄다 —
+    보관함 커버(= 최신 마네킹컷)가 진입할 때마다 한 장당 수백 KB를 다시 받던 회귀의 원인이다.
+
+    마네킹 파이프라인은 FaceMarket 신원을 아예 쓰지 않는다(mannequin_job·mannequin_adjust_job
+    어디에도 얼굴 합성 경로가 없다). 산출물은 얼굴 없는 마네킹 착장컷이라 생체 파생일 수가
+    없고, 그래서 여기서는 폴백에 맡기지 말고 False 를 명시한다.
+    """
+    metadata = dict(generation_metadata or {})
+    metadata["facemarket_real_derived"] = False
+    return metadata
+
+
 # ---------- 종결 (원자) ----------
 # 에셋·컷 insert + 크레딧 정산 + job done/error를 **한 함수 = 한 tx = 한 락**으로 처리.
 # 시작에서 jobs 행을 FOR UPDATE로 잠그고(lease 토큰 확인) 커밋까지 유지 → lease 복구의
@@ -2368,7 +2477,7 @@ async def finalize_mannequin_success(
                 "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s, %s)",
                 (c["asset_id"], user_id, project_id, c["bucket"], c["key"], c["mime"],
                  c.get("size"), c.get("width"), c.get("height"),
-                 Json(c.get("generation_metadata") or {})),
+                 Json(_mannequin_asset_metadata(c.get("generation_metadata")))),
             )
             await cur.execute(
                 "select coalesce(max(version), 0) + 1 as v from mannequin_cuts "
@@ -2428,7 +2537,7 @@ async def finalize_mannequin_failure(
     code: str = "generation_failed",
 ) -> bool:
     """실패 종결(원자·lease 펜스): 예약 해제 + job error + error 이벤트. False = lease 상실."""
-    return await _finalize_job_failure(
+    finalized = await _finalize_job_failure(
         conn, job_id=job_id, lease_token=lease_token, message=message,
         metadata=metadata, code=code,
         release={
@@ -2439,6 +2548,15 @@ async def finalize_mannequin_failure(
             "action_key": "mannequinGenerate.release",
         },
     )
+    if finalized and code == "mannequin_quality_failed":
+        # 같은 트랜잭션과 행 잠금 안에서 폴링 응답에도 종료 이유를 전달한다.
+        # 화면이 일반 일시 오류로 오인해 새로운 유료 잡을 자동 생성하지 않게 한다.
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "update jobs set result = %s where id = %s",
+                (Json({"errorCode": code}), job_id),
+            )
+    return finalized
 
 
 # ---------- AG-05 마네킹 조정 종결 (원자·lease 펜스) — 마네킹 finalize 미러 ----------
@@ -2468,10 +2586,11 @@ async def finalize_mannequin_adjust_success(
             return None  # lease 빼앗김 — 부수효과 0 (워커는 폐기)
         await cur.execute(
             "insert into assets (id, user_id, project_id, source, visibility, r2_bucket, "
-            "r2_key, mime_type, byte_size, width, height) "
-            "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s)",
+            "r2_key, mime_type, byte_size, width, height, metadata) "
+            "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s, %s)",
             (cut["asset_id"], user_id, project_id, cut["bucket"], cut["key"], cut["mime"],
-             cut.get("size"), cut.get("width"), cut.get("height")),
+             cut.get("size"), cut.get("width"), cut.get("height"),
+             Json(_mannequin_asset_metadata(cut.get("generation_metadata")))),
         )
         await cur.execute(
             "select coalesce(max(version), 0) + 1 as v from mannequin_cuts "
@@ -2966,11 +3085,49 @@ async def is_admin(conn: AsyncConnection, user_id: str) -> bool:
     return bool(row and row.get("role") == "admin")
 
 
+# ---------- 관리자 기기 게이트 (admin_guard 전용) ----------
+# 라우트가 쓰는 등록·목록·승인·회수 SQL 은 facemarket_admin_devices.py 에 산다. 여기 둘은
+# 모든 관리자 요청이 지나는 가드가 부르는 것이라 is_admin 옆에 둔다 — 테스트가 repo.is_admin
+# 을 monkeypatch 하듯 이 둘도 바꿔 끼울 수 있게.
+
+
+async def find_admin_device_by_hash(conn: AsyncConnection, token_hash: str) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id::text as id, user_id::text as user_id, status, label, last_seen_at "
+            "from admin_devices where token_hash = %s",
+            (token_hash,),
+        )
+        return await cur.fetchone()
+
+
+async def touch_admin_device(conn: AsyncConnection, device_id: str) -> None:
+    """last_seen_at 갱신. 호출자 트랜잭션 안에서 돈다 — 읽기 라우트가 커밋을 안 하면
+    잃는데, 표시용 값이라 60초 뒤 다음 쓰기 요청에서 다시 찍히면 된다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update admin_devices set last_seen_at = now() where id = %s", (device_id,)
+        )
+
+
 async def grant_subscription(
-    conn: AsyncConnection, *, user_id: str, plan_code: str, metadata: dict | None = None
+    conn: AsyncConnection, *, user_id: str, plan_code: str, metadata: dict | None = None,
+    credits: int | None = None,
+    period_end_sql: str = "now() + interval '1 month'",
+    period_end_params: tuple = (),
 ) -> dict:
-    """구독 월 충전(§3.1): 기존 active 구독 버킷 소멸 → 새 버킷(plan.credits, 1달 만료).
-    full plan 지급이라 balance가 reserved를 항상 상회(불변식 5 backstop은 credit_accounts CHECK)."""
+    """구독 크레딧 지급 — **이월**(계획서 docs/plans/2026-09-09-toss-billing-subscription.md §0.1).
+
+    2026-09-09 정책 변경: 예전에는 갱신 때 기존 구독 버킷을 만료시키고 새로 줬다(소멸).
+    이제 소멸은 해지·유예만료라는 사건에서만 일어난다(expire_subscription_buckets).
+    갱신은 버킷을 하나 더 얹을 뿐이다. FIFO 정렬이 (source_type, created_at) 이라
+    이월분이 자연히 먼저 소진된다 — 오래된 크레딧부터 쓰는 게 사용자에게 유리하다.
+
+    credits: 지급량 override(업그레이드 비례분). None 이면 요금제 정가.
+    period_end_sql: 버킷 만료 시각 SQL. 업그레이드 비례 버킷은 현재 주기 끝에 맞춘다.
+      **호출자가 주는 SQL 조각이다 — 사용자 입력을 절대 넘기지 않는다**(리터럴 상수만).
+      값이 필요하면 조각에 %s 를 쓰고 period_end_params 로 넘긴다(문자열 삽입 금지).
+    """
     metadata = metadata or {}
     async with conn.cursor() as cur:
         await cur.execute(
@@ -2981,6 +3138,44 @@ async def grant_subscription(
         plan = await cur.fetchone()
         if plan is None:
             raise CreditError("unknown_plan", f"요금제를 찾을 수 없어요: {plan_code}", 404)
+        grant = plan["credits"] if credits is None else int(credits)
+        if grant < 0:
+            raise CreditError("invalid_grant", "지급 크레딧이 음수예요.", 400)
+        await cur.execute(
+            "select balance, reserved from credit_accounts where user_id = %s for update", (user_id,)
+        )
+        acct = await cur.fetchone()
+        if acct is None:
+            raise CreditError("account_missing", "크레딧 계정이 없어요.", 404)
+        running = acct["balance"] + grant
+        await cur.execute(
+            "insert into credit_sources (user_id, source_type, plan_id, initial_credits, "
+            "remaining_credits, status, period_end) "
+            f"values (%s, 'subscription', %s, %s, %s, 'active', {period_end_sql}) "
+            "returning id::text as id",
+            (user_id, plan["id"], grant, grant, *period_end_params),
+        )
+        src_id = (await cur.fetchone())["id"]
+        await cur.execute(
+            "insert into credit_ledger (user_id, credit_source_id, action_key, delta, "
+            "balance_after, available_after, metadata) values (%s,%s,'grant_subscription',%s,%s,%s,%s)",
+            (user_id, src_id, grant, running, running - acct["reserved"], Json(metadata)),
+        )
+        await cur.execute(
+            "update credit_accounts set balance = %s where user_id = %s", (running, user_id)
+        )
+    return {"creditSourceId": src_id, "credits": grant, "available": running - acct["reserved"]}
+
+
+async def expire_subscription_buckets(
+    conn: AsyncConnection, *, user_id: str, reason: str
+) -> dict:
+    """구독 버킷 전량 소멸 — 해지 주기 종료·유예 만료에서만 부른다(계획서 §0.1).
+
+    이월분까지 전부 지운다. 사용자에게는 큰 금액이 한 번에 사라지는 사건이므로,
+    호출 전에 화면이 소멸 예정 수량·날짜를 이미 보여줬어야 한다.
+    """
+    async with conn.cursor() as cur:
         await cur.execute(
             "select balance, reserved from credit_accounts where user_id = %s for update", (user_id,)
         )
@@ -2993,36 +3188,40 @@ async def grant_subscription(
             "where user_id = %s and source_type = 'subscription' and status = 'active' for update",
             (user_id,),
         )
-        for old in await cur.fetchall():
+        buckets = await cur.fetchall()
+        expired = 0
+        for bucket in buckets:
             await cur.execute(
                 "update credit_sources set status = 'expired', remaining_credits = 0 where id = %s",
-                (old["id"],),
+                (bucket["id"],),
             )
-            running -= old["remaining_credits"]
+            running -= bucket["remaining_credits"]
+            expired += bucket["remaining_credits"]
             await cur.execute(
                 "insert into credit_ledger (user_id, credit_source_id, action_key, delta, "
-                "balance_after, available_after, metadata) values (%s,%s,'expire_subscription',%s,%s,%s,%s)",
-                (user_id, old["id"], -old["remaining_credits"], running,
-                 running - acct["reserved"], Json(metadata)),
+                "balance_after, available_after, metadata) "
+                "values (%s,%s,'expire_subscription',%s,%s,%s,%s)",
+                (user_id, bucket["id"], -bucket["remaining_credits"], running,
+                 running - acct["reserved"], Json({"reason": reason})),
             )
+        if buckets:
+            await cur.execute(
+                "update credit_accounts set balance = %s where user_id = %s", (running, user_id)
+            )
+    return {"expired": expired, "available": running - acct["reserved"]}
+
+
+async def subscription_bucket_summary(conn: AsyncConnection, user_id: str) -> dict:
+    """해지 화면이 '무엇이 언제 사라지는지' 를 숫자로 보여주기 위한 조회."""
+    async with conn.cursor() as cur:
         await cur.execute(
-            "insert into credit_sources (user_id, source_type, plan_id, initial_credits, "
-            "remaining_credits, status, period_end) "
-            "values (%s, 'subscription', %s, %s, %s, 'active', now() + interval '1 month') "
-            "returning id::text as id",
-            (user_id, plan["id"], plan["credits"], plan["credits"]),
+            "select coalesce(sum(remaining_credits), 0) as credits, max(period_end) as expires_at "
+            "from credit_sources "
+            "where user_id = %s and source_type = 'subscription' and status = 'active'",
+            (user_id,),
         )
-        src_id = (await cur.fetchone())["id"]
-        running += plan["credits"]
-        await cur.execute(
-            "insert into credit_ledger (user_id, credit_source_id, action_key, delta, "
-            "balance_after, available_after, metadata) values (%s,%s,'grant_subscription',%s,%s,%s,%s)",
-            (user_id, src_id, plan["credits"], running, running - acct["reserved"], Json(metadata)),
-        )
-        await cur.execute(
-            "update credit_accounts set balance = %s where user_id = %s", (running, user_id)
-        )
-    return {"creditSourceId": src_id, "credits": plan["credits"], "available": running - acct["reserved"]}
+        row = await cur.fetchone() or {}
+    return {"credits": int(row.get("credits") or 0), "expiresAt": row.get("expires_at")}
 
 
 async def purchase_topup(

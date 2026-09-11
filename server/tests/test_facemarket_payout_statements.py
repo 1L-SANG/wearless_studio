@@ -154,3 +154,24 @@ def test_status_requires_admin_existing_model_and_valid_status(keypair, make_tok
     patch_db(monkeypatch, payout, conn)
     assert client.post(path, json={"status": "paid"}, headers=auth(make_token)).status_code == 404
     assert client.post(path, json={"status": "unknown"}, headers=auth(make_token)).status_code == 400
+
+
+@pytest.mark.parametrize(("method", "path", "kwargs"), [
+    ("get", ADMIN, {"params": {"month": "2026-08"}}),
+    (
+        "post", f"{ADMIN}/{MODEL_ID}/2026-08/status",
+        {"json": {"status": "paid"}},
+    ),
+])
+def test_admin_statement_routes_require_registered_device_in_enforce_mode(
+    method, path, kwargs, keypair, make_token, monkeypatch,
+):
+    conn = Conn()
+    patch_db(monkeypatch, payout, conn)
+    client = client_for(keypair, admin_device_gate="enforce")
+
+    response = getattr(client, method)(path, headers=auth(make_token), **kwargs)
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "device_missing"
+    assert conn.executed == []

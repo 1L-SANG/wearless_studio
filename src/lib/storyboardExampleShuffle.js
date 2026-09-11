@@ -8,6 +8,7 @@
    ============================================================= */
 
 import { assignGenerationExamples } from './generationExamples.js';
+import { filterSpaceSetsForModel } from './identityScope.js';
 import { entryStylingMembers } from './storyboardEntryPlacement.js';
 import { clearExampleSelection } from './storyboardExampleStaleness.js';
 import { groupConsecutiveSpaceRuns, replaceSpaceSetRun } from './storyboardSpaceSets.js';
@@ -60,7 +61,7 @@ const isRerollableOne = (block, sectionId) => (
    세트 교체는 건너뛴다). */
 export function shuffleSectionExamples(blocks, {
   sectionId, catalog, product, gender, rotation = 0, uid = null,
-  onlySpaceGroupId = null, onlyBlockId = null,
+  onlySpaceGroupId = null, onlyBlockId = null, identityKind = null,
 }) {
   const list = Array.isArray(blocks) ? blocks : [];
   if (!sectionId) return list;
@@ -82,6 +83,7 @@ export function shuffleSectionExamples(blocks, {
     // onlyBlockIds 를 안 넘기면 배정기가 보드 전체를 다시 훑는다 — 컷 하나만 눌렀는데
     // 컬러웨이 짝이나 섹션을 옮겨 예시가 비워진 다른 컷까지 조용히 바뀐다(2026-08-17 리뷰).
     const rerolled = assignGenerationExamples(cleared, {
+      identityKind,
       catalog, product, gender, avoidByBlockId, onlyBlockIds: [onlyBlockId],
     }).blocks;
     // 무변경이면 원본 참조를 그대로 돌려준다 — 호출부가 안내 토스트를 띄우고 되돌리기
@@ -107,8 +109,9 @@ export function shuffleSectionExamples(blocks, {
     if (onlySpaceGroupId && run.spaceGroupId !== onlySpaceGroupId) continue;
     const current = inferStoryboardSpaceSet(run.spaceGroupId);
     if (!current) continue;
-    const candidates = storyboardSpaceSetsFor({ gender, clothingType: product?.clothingType })
-      .filter((set) => set.setType === current.setType && set.id !== current.id);
+    const candidates = filterSpaceSetsForModel(
+      storyboardSpaceSetsFor({ gender, clothingType: product?.clothingType }), identityKind,
+    ).filter((set) => set.setType === current.setType && set.id !== current.id);
     if (!candidates.length) continue;
     const currentIndex = candidates.findIndex((set) => set.id > current.id);
     const pickAt = ((currentIndex < 0 ? 0 : currentIndex) + rotation) % candidates.length;
@@ -134,6 +137,7 @@ export function shuffleSectionExamples(blocks, {
         : { ...clearExampleSelection(block), exampleSelectionOrigin: null }
     ));
     next = assignGenerationExamples(next, {
+    identityKind,
       catalog, product, gender, avoidByBlockId,
     }).blocks;
   }

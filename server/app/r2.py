@@ -59,12 +59,6 @@ def derived_key(user_id: str, project_id: str, asset_id: str, ext: str) -> str:
     return f"users/{user_id}/projects/{project_id}/derived/{asset_id}.{ext}"
 
 
-def face_key(model_id: str, license_id: str, ext: str) -> str:
-    """FaceMarket 얼굴 라이선스 이미지의 비공개 R2 키. 서버에서만 유도(클라 신뢰 금지).
-    게이트 라우트만 스트림 → 공개 URL 미노출. license_id(uuid) = 추측 불가."""
-    return f"facemarket/models/{model_id}/licenses/{license_id}/face.{ext}"
-
-
 def enrollment_quarantine_key(
     enrollment_id: str,
     angle: str,
@@ -162,7 +156,10 @@ class R2Client:
             if status == 404 or code in {"404", "NoSuchKey", "NotFound"}:
                 return None
             raise
-        return {"size": r["ContentLength"], "mime": r.get("ContentType")}
+        # metadata: 업로드 때 붙인 사용자 메타(x-amz-meta-*). 얼굴 렌더 코드 묶음은 여기에
+        # 내용 sha256 을 달아 두고, 파드에 넘길 검증값으로 읽는다(키는 커밋 sha 라 내용과 다르다).
+        return {"size": r["ContentLength"], "mime": r.get("ContentType"),
+                "metadata": r.get("Metadata") or {}}
 
     def put_bytes(self, key: str, data: bytes, mime: str, cache: str | None = None) -> None:
         """AI 생성 이미지 등 서버사이드 저장 (Gemini/OpenAI 응답 → R2).
@@ -228,6 +225,24 @@ class R2Client:
             Params={"Bucket": self._bucket, "Key": key},
             ExpiresIn=3600,
         )
+
+    def public_thumb_url(self, key: str, width: int, *,
+                         quality: int = 80, fit: str = "cover") -> str | None:
+        """Cloudflare 이미지 변환 URL. 공개 도메인이 없으면 None(= 호출자가 폴백).
+
+        공개 base 가 CF 존이라 같은 호스트의 `/cdn-cgi/image/{옵션}/{경로}` 로 원본을
+        리사이즈해 준다. `format=auto` 는 응답에 `Vary: Accept` 를 붙여 AVIF/WebP/JPEG
+        를 요청자별로 갈라 캐시하므로, 한 URL 로 내보내도 캐시가 섞이지 않는다.
+
+        주의: 변환본은 `{base}/cdn-cgi/image/...` 라는 **다른 경로**에 캐시된다.
+        `purge_public_cache` 의 prefix purge(`{base}/{key}`)가 덮지 못하는 자리라,
+        purge 로 지워야 하는 자산에는 이 URL 을 만들면 안 된다. 호출자가 서빙 경로와
+        같은 분류기로 먼저 걸러야 한다.
+        """
+        if not self._public_base:
+            return None
+        options = f"width={width},quality={quality},format=auto,fit={fit}"
+        return f"{self._public_base}/cdn-cgi/image/{options}/{key.lstrip('/')}"
 
     def purge_public_cache(self, keys: list[str]) -> None:
         """커스텀 도메인의 R2 경로를 Cloudflare cache에서 제거한다.

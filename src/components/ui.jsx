@@ -157,22 +157,6 @@ export function Chips({
   );
 }
 
-export function TagInput({ tags, onChange, max = 5, placeholder = '내용을 입력하고 Enter' }) {
-  const [v, setV] = useState('');
-  const add = () => { const t = v.trim(); if (t && tags.length < max && !tags.includes(t)) { onChange([...tags, t]); setV(''); } };
-  return (
-    <div className="taginput">
-      {tags.map((t, i) => (
-        <span className="tag" key={i}>{t}<span className="x" onClick={() => onChange(tags.filter((_, j) => j !== i))}><Icon name="x" size={13} /></span></span>
-      ))}
-      {tags.length < max && (
-        <input value={v} onChange={(e) => setV(e.target.value)} placeholder={placeholder}
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }} />
-      )}
-    </div>
-  );
-}
-
 export function Toggle({ on, onChange, label = '토글' }) {
   return (
     <button
@@ -198,21 +182,6 @@ export function ProgressBar({ value, label, sub }) {
       )}
       <div className="progress"><i style={{ width: `${Math.max(0, Math.min(100, Number(value) || 0))}%` }}></i></div>
       {sub && <p className="hint" style={{ marginTop: 9 }}>{sub}</p>}
-    </div>
-  );
-}
-
-export function Checklist({ items }) {
-  return (
-    <div className="checklist">
-      {items.map((it) => (
-        <div key={it.key} className={`check-item ${it.status === 'done' ? 'done' : it.status === 'running' ? 'running' : ''}`}>
-          <span className="ci">
-            {it.status === 'done' ? <Icon name="check" size={13} /> : it.status === 'running' ? <Icon name="loader" size={13} className="spin" /> : <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'currentColor' }} />}
-          </span>
-          {it.label}
-        </div>
-      ))}
     </div>
   );
 }
@@ -297,28 +266,6 @@ export function UploadPendingTile({ className = '' }) {
 
 export function Skeleton({ w, h, r, style }) {
   return <div className="skeleton" style={{ width: w, height: h, borderRadius: r, ...style }} />;
-}
-
-/* thumbnail grid for poses / backgrounds / examples */
-export function ThumbGrid({ items, value, onChange, cols = 4, labels }) {
-  return (
-    <div className={`thumb-grid${cols === 3 ? ' cols3' : ''}`}>
-      {items.map((it) => {
-        const on = value === it.id;
-        if (it.auto) return (
-          <button key={it.id} className={`tg-cell auto${on ? ' on' : ''}`} onClick={() => onChange(it.id)}>
-            <Icon name="sparkles" size={16} />{it.label}
-          </button>
-        );
-        return (
-          <button key={it.id} className={`tg-cell${on ? ' on' : ''}`} onClick={() => onChange(it.id)}>
-            <img src={it.thumb} alt="" />
-            {labels && <span className="lab">{it.label}</span>}
-          </button>
-        );
-      })}
-    </div>
-  );
 }
 
 /* ---- Toast system ---- */

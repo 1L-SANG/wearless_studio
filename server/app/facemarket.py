@@ -14,6 +14,7 @@ FM-03 실측(2026-07-09): ENT_MID 응답에 `ci` 존재 확인 → ci HMAC 채�
 
 import asyncio
 import hashlib
+import json
 import hmac
 import logging
 import time
@@ -50,6 +51,7 @@ CX_TRANS_TIMEOUT = 10.0
 _SIMULATION_RATE_LIMIT_PER_MINUTE = 5
 _SETTLEMENT_SIGNER_LOCK_ID = 0x57464D5349474E52
 _SETTLEMENT_LOCK_RETRY_SECONDS = 0.05
+PLATFORM_UNIT_PRICE_KRW = 14_900
 
 _FM_RESPONSES = {
     400: {"model": ErrorResponse, "description": "본인확인 실패 (토큰 무효·CI 누락)"},
@@ -90,6 +92,9 @@ class ModelCard(CamelModel):
     has_active_license: bool = False
     vc_id: str | None = None
     assets_ready: bool = False  # 실존 모델 그리드 자산 빌드 완료 → 셀러 선택 가능(assetsReady)
+    # 모델의 선택 동의(계약 v2 초안 제3조 2항). false 면 그 사용처는 셀러 화면에서 막힌다.
+    opt_location_cuts: bool = False
+    opt_lookbook_person_replace: bool = False
     # 비생체 고정 placeholder 게이트 URL. 모델별 얼굴/cover 바이트를 뜻하지 않는다.
     face_thumb_uri: str | None = None
 
@@ -410,6 +415,11 @@ _MODEL_CARD_COLS_ENRICHED = (
     "m.cover_image_url, m.created_at, "
     "l.id::text as license_id, l.unit_price, l.vc_id, "
     "true as has_active_license, true as assets_ready, "
+    # 모델이 동의한 사용처 — 셀러 화면이 "이 모델을 스타일링 컷에 쓸 수 있는가"를
+    # 여기서 판단한다. 컬럼이 없는 DB(마이그 미적용)에서도 깨지지 않게 jsonb 로 읽는다.
+    "coalesce((to_jsonb(l) ->> 'opt_location_cuts')::boolean, false) as opt_location_cuts, "
+    "coalesce((to_jsonb(l) ->> 'opt_lookbook_person_replace')::boolean, false) "
+    "  as opt_lookbook_person_replace, "
     "('/v1/facemarket/models/' || m.id::text || '/thumbnail') as face_thumb_uri"
 )
 
@@ -728,9 +738,20 @@ class CreateLicenseRequest(CamelModel):
     enrollment_id: str
     allowed_use: list[str] = Field(default_factory=list)
     forbidden_use: list[str] = Field(default_factory=list)
-    unit_price: int = Field(default=10000, ge=0, le=100_000_000)
+    # 선택 동의 — 기본 꺼짐. 동의하지 않아도 불이익이 없다(계약 v2 제3조 2항).
+    # FACEMARKET_OPT_USES_ENABLED 가 꺼져 있으면 값이 와도 무시한다(법률 검토 전 노출 금지).
+    opt_location_cuts: bool = False
+    opt_lookbook_person_replace: bool = False
+    opt_consent_version: str | None = None
+    unit_price: int = Field(default=PLATFORM_UNIT_PRICE_KRW, ge=0, le=100_000_000)
     # 옛 클라이언트 호환용으로 검증 계약은 유지하지만, 생성 시 값은 무시한다.
     valid_days: int | None = Field(default=None, ge=1, le=3650)
+
+    @field_validator("unit_price", mode="before")
+    @classmethod
+    def platform_unit_price(cls, _value):
+        # 구버전 화면이나 변조 요청이 다른 값을 보내도 라이선스 가격은 플랫폼 표준가다.
+        return PLATFORM_UNIT_PRICE_KRW
 
 
 class UpdateLicenseTermsRequest(CamelModel):
@@ -1248,6 +1269,13 @@ async def create_license(
     valid_until = None
     allowed = _clean_uses(body.allowed_use, BRAND_USE_CATEGORIES)
     unit_price = request.app.state.settings.fm_standard_unit_price
+    # 선택 동의는 플래그 뒤에 숨긴다 — 법률 검토 전에는 모델에게 화면도 보이지 않고,
+    # 요청에 값이 실려 와도 저장하지 않는다(기본 false = 지금 동작: 스튜디오 전용).
+    opt_enabled = bool(getattr(request.app.state.settings, "facemarket_opt_uses_enabled", False))
+    opt_location = bool(body.opt_location_cuts) and opt_enabled
+    opt_lookbook = bool(body.opt_lookbook_person_replace) and opt_enabled
+    opt_version = (body.opt_consent_version or None) if opt_enabled else None
+    opt_at = datetime.now(timezone.utc) if opt_enabled and (opt_location or opt_lookbook) else None
 
     license_id = str(uuid.uuid4())
     row = None
@@ -1287,18 +1315,24 @@ async def create_license(
             digest = existing["face_image_digest"]
         else:
             gate_uri = f"/v1/facemarket/licenses/{license_id}/face"
+            # 선택 동의는 플래그가 켜졌을 때만 컬럼에 쓴다 — 꺼져 있으면 쿼리 모양까지
+            # 기존과 같아서 마이그 미적용 환경에서도 라이선스 발급이 그대로 돈다.
+            opt_cols = (", opt_location_cuts, opt_lookbook_person_replace, "
+                        "opt_consent_version, opt_consented_at") if opt_enabled else ""
+            opt_marks = ", %s, %s, %s, %s" if opt_enabled else ""
+            opt_args = (opt_location, opt_lookbook, opt_version, opt_at) if opt_enabled else ()
             async with conn.cursor() as cur:
                 await cur.execute(
                     f"""insert into fm_licenses
                         (id, model_id, enrollment_id, face_image_uri, face_image_key,
                          face_image_digest, allowed_use, forbidden_use, unit_price,
-                         license_valid_until, status)
-                        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending')
+                         license_valid_until, status{opt_cols})
+                        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending'{opt_marks})
                         on conflict (enrollment_id) where enrollment_id is not null do nothing
                         returning {_LICENSE_CARD_COLS}""",
                     (
                         license_id, model_id, enrollment_id, gate_uri, key, digest,
-                        allowed, [], unit_price, valid_until,
+                        allowed, [], unit_price, valid_until, *opt_args,
                     ),
                 )
                 row = await cur.fetchone()
@@ -2403,7 +2437,7 @@ async def simulate_settlement(
     """
     async with get_conn(request) as conn:
         await _assert_account_open(conn, user_id)
-        await admin_guard.require_admin(conn, user_id)
+        await admin_guard.require_admin(conn, user_id, request)
         chain = getattr(request.app.state, "fm_chain", None)
         if chain is None:
             raise _err("chain_unavailable", "체인이 설정되지 않았습니다.", status=404)
@@ -2590,65 +2624,43 @@ def is_real_model_id(model_id: str | None) -> bool:
     return True
 
 
-def resolve_block_model_id(
-    cut_type: str | None,
-    model_id: str | None,
-    styling_model_id: str | None,
-) -> str | None:
-    """Return the only model identity permitted for this cut type."""
-    if cut_type == "horizon":
-        return str(model_id) if model_id else None
-    if cut_type not in _STYLING_CUT_TYPES:
+#: 실제(REAL) 모델 얼굴을 쓸 수 있는 컷 — **모든 착용 컷 + 룩북 인물 교체**.
+#: 2026-09-11 사용자 결정: 실제 모델을 고르면 모든 컷에 그 얼굴이 들어간다. 그전에는 스튜디오
+#: (horizon)만 열려 있고 스타일링·미러·룩북 인물 교체는 모델의 선택 동의(opt_*)에 걸려 있었다.
+#: fm_licenses.opt_location_cuts · opt_lookbook_person_replace 컬럼과 FACEMARKET_OPT_USES_ENABLED
+#: 플래그는 수집 경로와 DB 에 그대로 남지만 **어떤 판정에도 쓰지 않는다**
+#: (사용 안 함, 2026-09-11 사용자 결정).
+OPT_LOCATION_CUTS = "opt_location_cuts"
+OPT_LOOKBOOK_PERSON_REPLACE = "opt_lookbook_person_replace"
+REAL_IDENTITY_CUT_TYPES = frozenset({"horizon", "base_edit"}) | _STYLING_CUT_TYPES
+#: 콘티 블록 중 사람이 들어가는 컷(상품컷 제외). base_edit 은 블록이 아니라 에디터 연산이다.
+_WORN_BLOCK_CUT_TYPES = frozenset({"horizon"}) | _STYLING_CUT_TYPES
+
+
+async def consent_license(conn, model_id, *, license_id: str | None = None) -> dict | None:
+    """라이선스 행. **실패하면 None** — 조회가 흔들려도 컷 생성이 500 으로 새지 않는다.
+
+    None 은 뒤따르는 verify_license 에서 409(model_unavailable)로 막히므로, 조회 실패가
+    "없는 라이선스를 있다고 보는" 방향으로 틀리지는 않는다.
+    """
+    try:
+        return await resolve_model_license(conn, model_id, license_id=license_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("license lookup failed for %s: %r", model_id, exc)
         return None
-    if not is_real_model_id(model_id):
-        return str(model_id) if model_id else None
-    if styling_model_id and not is_real_model_id(styling_model_id):
-        return str(styling_model_id)
-    raise _err(
-        "styling_model_required",
-        "장소·스타일링 컷에 쓸 가상 모델을 골라 주세요.",
-        status=400,
-    )
 
 
-def reject_real_model_outside_horizon(
-    cut_type: str | None,
-    model_id: str | None,
-) -> None:
-    if is_real_model_id(model_id) and cut_type != "horizon":
-        raise _err(
-            "real_model_horizon_only",
-            "실제 모델은 스튜디오 컷에만 쓸 수 있어요",
-            status=409,
-        )
+def real_identity_allowed_cut(cut_type: str | None) -> bool:
+    """이 컷에 실제 모델 얼굴을 쓸 수 있는가. 착용 컷·룩북 인물 교체면 전부 쓸 수 있다."""
+    return str(cut_type or "") in REAL_IDENTITY_CUT_TYPES
 
 
-def reject_real_model_scene_variation(payload: Mapping[str, Any]) -> None:
-    """Keep REAL-derived editor variations inside the original studio scene."""
-    if payload.get("refBgAssetId") or payload.get("ref_bg_asset_id"):
-        raise _err(
-            "real_model_horizon_only",
-            "실제 모델은 스튜디오 컷에만 쓸 수 있어요",
-            status=409,
-        )
-    allowed = {
-        "direction": {"front", "back", "side"},
-        "pose": {"stand", "walk", "lean", "sit", "turn"},
-        "face": {"smile", "laugh", "chic", "gaze"},
-    }
-    for change in payload.get("changes") or []:
-        if (
-            isinstance(change, Mapping)
-            and str(change.get("value") or "").strip()
-            and str(change.get("value")).strip() not in allowed.get(
-                change.get("type"), set()
-            )
-        ):
-            raise _err(
-                "real_model_horizon_only",
-                "실제 모델은 스튜디오 컷에만 쓸 수 있어요",
-                status=409,
-            )
+def resolve_block_model_id(cut_type: str | None, model_id: str | None) -> str | None:
+    """이 컷에 쓸 모델 신원. 실제 모델도 대역(가상 모델) 없이 그대로 모든 착용 컷에 간다."""
+    if str(cut_type or "") not in _WORN_BLOCK_CUT_TYPES:
+        return None
+    return str(model_id) if model_id else None
+
 
 async def resolve_project_license(conn, project: dict, analysis: dict) -> dict | None:
     """Resolve the selected model's current license; historical project locks are inert."""
@@ -2688,6 +2700,12 @@ async def resolve_model_license(
                        m.display_name as _model_name_raw, l.status,
                        l.license_valid_until, l.unit_price, l.vc_id,
                        l.allowed_use, l.forbidden_use,
+                       -- 마이그 미적용 DB(컬럼 없음)에서도 깨지지 않게 행을 jsonb 로 읽는다.
+                       -- 없으면 null → false = "동의 안 함"(지금 동작 그대로).
+                       coalesce((to_jsonb(l) ->> 'opt_location_cuts')::boolean, false)
+                           as opt_location_cuts,
+                       coalesce((to_jsonb(l) ->> 'opt_lookbook_person_replace')::boolean, false)
+                           as opt_lookbook_person_replace,
                        m.status as model_status, m.assets_status,
                        m.gender, m.height_bucket, m.body_type,
                        m.current_enrollment_id::text as current_enrollment_id,
@@ -3067,4 +3085,130 @@ async def get_job_settlement(
         "opsAmount": row["ops_amount"],
         "vcId": row["vc_id"],
         "chainStatus": row["chain_status"],
+    }
+
+
+# ── 얼굴 렌더 파드 미리 켜기 ─────────────────────────────────────────────
+#: 셀러당 이 시간 안의 중복 핑은 무시한다. 모델 선택 화면에서 여러 번 눌러도 DB 가 늘지 않는다.
+FACE_WARM_PING_WINDOW_SECONDS = 60
+
+
+@router.post(
+    "/face-render/warm",
+    status_code=204,
+    responses={404: {"model": ErrorResponse, "description": "얼굴 패스 비활성"}},
+    summary="얼굴 렌더 파드 미리 켜기(워밍 핑)",
+)
+async def warm_face_render(request: Request, response: Response,
+                           user_id: str = Depends(require_user)):
+    """셀러가 FaceMarket 모델을 고른 순간 = 곧 얼굴 렌더가 필요하다는 신호.
+
+    reconciler 가 이 핑을 수요로 읽어 파드를 미리 켠다(콜드스타트를 첫 컷 앞에서 빼기 위한 것).
+    **켜진 LoRA 가 있는 실존 모델**일 때만 기록한다 — 그렇지 않으면 얼굴 패스가 걸리지 않아
+    파드를 켤 이유가 없다. 조건 밖이면 204 로 조용히 무시한다(프런트 흐름에 영향 0).
+    """
+    settings = request.app.state.settings
+    if not getattr(settings, "facemarket_enabled", False):
+        raise _err("not_found", "사용할 수 없습니다.", status=404)
+    # 프런트가 body 를 JSON **문자열**로 보내는 경우가 있다(2026-09-11 실측: 500
+    # AttributeError: 'str' object has no attribute 'get'). 워밍 핑은 부가 신호라
+    # 본문이 뭐가 오든 500 으로 새면 안 된다 — dict 가 아니면 조용히 무시한다.
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 — 본문 없음·깨진 JSON 모두 "신호 없음"
+        body = None
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except Exception:  # noqa: BLE001
+            body = None
+    if not isinstance(body, dict):
+        return Response(status_code=204)
+    model_id = str(body.get("modelId") or body.get("model_id") or "").strip()
+    if not is_real_model_id(model_id):
+        return Response(status_code=204)
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("select to_regclass('public.fm_face_warm_pings') as t")
+            if not (await cur.fetchone() or {}).get("t"):
+                return Response(status_code=204)       # 마이그 미적용 — 조용히 무시
+            await cur.execute(
+                "select 1 from fm_model_loras where model_id = %s and enabled and status = 'ready' "
+                "limit 1", (model_id,))
+            if await cur.fetchone() is None:
+                return Response(status_code=204)       # 얼굴 패스가 걸릴 모델이 아니다
+            await cur.execute(
+                "select 1 from fm_face_warm_pings where seller_id = %s "
+                "and pinged_at > now() - make_interval(secs => %s) limit 1",
+                (user_id, FACE_WARM_PING_WINDOW_SECONDS))
+            if await cur.fetchone() is not None:
+                return Response(status_code=204)       # 60초 안 중복
+            await cur.execute(
+                "insert into fm_face_warm_pings (seller_id, model_id) values (%s, %s)",
+                (user_id, model_id))
+        await conn.commit()
+    return Response(status_code=204)
+
+
+@router.get(
+    "/face-render/status",
+    summary="얼굴 렌더 준비 상태(에디터 상단 표시용)",
+)
+async def face_render_status(
+    request: Request,
+    # 프런트는 camelCase 로 보낸다(다른 라우트의 CamelModel 관례와 같은 방향).
+    model_id: str | None = Query(default=None, alias="modelId"),
+    user_id: str = Depends(require_user),
+):
+    """이 모델에 얼굴 패스가 걸리는가 + 파드가 떴는가. 프런트가 파드를 직접 찌르지 않게 api 가 본다.
+
+    ★ enabled 는 전역 플래그**만**으로 정하면 안 된다. 얼굴 패스는 그 모델에 **켜진 LoRA 행**이
+    있어야 걸리고(cut_generator), 워밍 핑도 그런 모델만 기록한다. 플래그만 보면 LoRA 가 없는
+    실존 모델 프로젝트에서 "얼굴 렌더 준비 중"이 영원히 뜬다 — 파드는 켜질 이유가 없기 때문이다.
+    modelId 를 안 주면 모델 단위 판단을 할 수 없으므로 enabled=false 로 답한다.
+
+    ready=false 일 때 etaMinutes 는 **실측 콜드스타트**에서 온다(부팅+가중치+적재).
+    """
+    settings = request.app.state.settings
+    if not getattr(settings, "facemarket_enabled", False):
+        raise _err("not_found", "사용할 수 없습니다.", status=404)
+    from .services import face_autoscale
+
+    enabled = False
+    if getattr(settings, "face_identity_enabled", False) and is_real_model_id(model_id):
+        async with get_conn(request) as conn, conn.cursor() as cur:
+            await cur.execute("select to_regclass('public.fm_model_loras') as t")
+            if (await cur.fetchone() or {}).get("t"):
+                await cur.execute(
+                    "select 1 from fm_model_loras where model_id = %s and enabled "
+                    "and status = 'ready' limit 1", (str(model_id),))
+                enabled = await cur.fetchone() is not None
+    # ready 는 **지금 등록된 파드의 /healthz(loaded)** 로만 판정한다. 예전에는 자동 켜기
+    # 어댑터가 enabled 일 때만 봤는데, 자동 켜기를 꺼 두면(수동 파드 운영) 파드가 멀쩡히
+    # 떠 있어도 영원히 "준비 중 (약 4분)"이 떴다(2026-09-11 개발 테스트에서 확인).
+    ready = False
+    state = "offline"
+    if enabled:
+        from .agents import face_identity, identity_source
+
+        pool = getattr(request.app.state, "pool", None)
+        backend = await identity_source.active_face_backend_url(pool) if pool else None
+        if backend:
+            health = (backend[: -len("/render")] if backend.endswith("/render") else backend) + \
+                ("" if backend.endswith("/healthz") else "/healthz")
+            ready = await asyncio.to_thread(face_identity._probe_ready, health)
+            state = "ready" if ready else "starting"
+        else:
+            adapter = getattr(request.app.state, "face_autoscaler", None)
+            autoscale_on = adapter is not None and getattr(adapter.adapter, "enabled", False)
+            # 파드가 없다 — 자동 켜기가 켜져 있으면 곧 만들어지고(starting), 꺼져 있으면
+            # 아무도 만들지 않는다(offline). 프런트는 offline 을 아예 표시하지 않는다.
+            state = "starting" if autoscale_on else "offline"
+    return {
+        "ready": ready,
+        "enabled": enabled,
+        "state": state,
+        "etaMinutes": (
+            face_autoscale.COLD_START_ETA_MINUTES if state == "starting" else None
+        ),
     }

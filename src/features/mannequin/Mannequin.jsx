@@ -5,8 +5,15 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { api, isMockMode } from '@/lib/api/index.js';
 import { listModels } from '@/lib/api/facemarket.js';
 import { useAppStore } from '@/store/useAppStore.js';
-import { detailPageGenerationCreditShortfall } from '@/lib/creditPreflight.js';
-import { CREDIT_COSTS } from '@/lib/limits.js';
+import {
+  detailPageGenerationCreditShortfall,
+  mannequinGenerationCreditShortfall,
+} from '@/lib/creditPreflight.js';
+import {
+  CREDIT_COSTS,
+  mannequinRegenerationCtaLabel,
+  mannequinRegenerationQuote,
+} from '@/lib/limits.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import { fitExampleImage } from '@/lib/fitExampleImages.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
@@ -21,16 +28,18 @@ import { Icon, Button, ErrorState, Modal, useToast } from '@/components/ui.jsx';
 import { CreditShortfallModal } from '@/features/credits/CreditShortfallModal.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import {
+  realFaceAllowedCut,
   realModelFeeLabel,
-  stylingModelPatchForAnalysis,
 } from '@/features/analysis/modelSelection.js';
-import { AI_MODELS } from '@/features/analysis/aiModels.js';
 import {
   clearInitialGenerationRequested,
   cutsExistedBeforeInitialGeneration,
+  retryInitialGeneration,
 } from './initialGenerationSession.js';
 import {
   clearGenerationRelevantEditsAttempt,
+  isGenerationRelevantEditsTerminalFailure,
+  markGenerationRelevantEditsTerminalFailure,
   landedGenerationRelevantEditsAttemptRevision,
   markGenerationRelevantEditsAttempt,
   readGenerationRelevantEditsRevision,
@@ -43,6 +52,7 @@ import {
 import { fitHotspotsFor } from './fitHotspots.js';
 import { ToneEditor } from './ToneEditor.jsx';
 import {
+  isNonRetryableRegenerateError,
   resolveInitialGenerationCuts,
   runGenerationRelevantEditsRefresh,
 } from './generationRunnerCore.js';
@@ -177,14 +187,6 @@ function newestCutSince(list, baseline) {
     || landed.reduce((latest, cut) => (
       !latest || (Number(cut.version) || 0) >= (Number(latest.version) || 0) ? cut : latest
     ), null);
-}
-
-function isNonRetryableRegenerateError(error) {
-  const status = Number(error?.status) || 0;
-  const message = String(error?.message || '');
-  return status === 402
-    || message.includes('크레딧')
-    || (status >= 400 && status < 500);
 }
 
 function decodeCutImage(src) {
@@ -666,6 +668,7 @@ export function Mannequin() {
   const [aiCutCount, setAiCutCount] = useState(null);   // null = 아직 모름(로딩 중·조회 실패) — 0 과 구분
   const [horizonCutCount, setHorizonCutCount] = useState(null);
   const [creditShortfall, setCreditShortfall] = useState(null);
+  const [creditQuote, setCreditQuote] = useState(null);
   const [creditResume, setCreditResume] = useState(() => (
     location.state?.creditResume?.action === 'detail-page' ? location.state.creditResume : null
   ));
@@ -757,26 +760,27 @@ export function Mannequin() {
       // getStoryboard 실패는 이 화면 자체를 막지 않는다(비치명) — 대신 null 로 남겨
       // "콘티가 AI 컷 0장" 과 "조회 자체를 못 함" 을 구분한다. 구분 안 하면 CTA 가
       // 크레딧 소비 직전에 '0 크레딧'(=무료로 읽힘)을 보여줄 수 있다.
-      const [nextProduct, loadedAnalysis, nextCatalogs, nextStoryboard, nextRealModels] = await Promise.all([
+      const [nextProduct, loadedAnalysis, nextCatalogs, nextStoryboard, nextRealModels, nextCreditQuote] = await Promise.all([
         api.getProduct(pid),
         api.getAnalysis(pid),
         api.getCatalogs(),
         api.getStoryboard(pid).catch(() => null),
         isMockMode ? Promise.resolve([]) : listModels().catch(() => []),
+        api.getCreditQuote(pid).catch(() => null),
       ]);
-      const stylingModelPatch = stylingModelPatchForAnalysis(loadedAnalysis, AI_MODELS);
-      const nextAnalysis = stylingModelPatch
-        ? { ...loadedAnalysis, ...(await api.saveAnalysis(pid, stylingModelPatch)), ...stylingModelPatch }
-        : loadedAnalysis;
+      const nextAnalysis = loadedAnalysis;
       if (loadRunRef.current !== runId) return;
       setProgress(generationProgressFor(pid));
       setAnalysis(nextAnalysis);
       setCatalogs(nextCatalogs);
       setRealModels(Array.isArray(nextRealModels) ? nextRealModels : []);
+      setCreditQuote(nextCreditQuote);
       // 크레딧 견적은 실제 생성 수 — 동일 설정 복제 컷은 서버가 1장만 생성한다(ADR-0011).
       setAiCutCount(Array.isArray(nextStoryboard) ? uniqueGenerationCutCount(nextStoryboard) : null);
+      // 실제 모델 얼굴이 들어가는 컷 = 착용 컷 전부(2026-09-11 사용자 결정).
       setHorizonCutCount(Array.isArray(nextStoryboard)
-        ? uniqueGenerationCutCount(nextStoryboard.filter((block) => block?.cutType === 'horizon'))
+        ? uniqueGenerationCutCount(nextStoryboard.filter(
+            (block) => realFaceAllowedCut(block?.cutType)))
         : null);
       const nextMainMatchingItem = resolveMainMatchingItem(nextAnalysis);
       const draft = createFitProfileDraft(nextProduct, nextAnalysis, nextMainMatchingItem);
@@ -913,8 +917,10 @@ export function Mannequin() {
     realModels,
     horizonCutCount || 0,
   );
+  const regenerationQuote = creditQuote?.mannequinRegenerate
+    || mannequinRegenerationQuote(useAppStore.getState().account?.plan, cuts.length);
   const continueLabel = needsRegen
-    ? `수정 반영 · ${CREDIT_COSTS.mannequinGenerate} 크레딧`
+    ? mannequinRegenerationCtaLabel(regenerationQuote)
     : `이대로 진행 · ${aiCutCount == null ? '—' : aiCutCount * CREDIT_COSTS.storyboardPerCut} 크레딧${realModelFee}`;
 
   const setStep = (key, patch) => setStepState((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
@@ -1075,6 +1081,10 @@ export function Mannequin() {
     selectMannequin(newCut.id);
     setFitProfileDraft(profile);
     setAnalysis((prev) => ({ ...(prev || {}), fitProfile: profile }));
+    setCreditQuote(null);
+    void api.getCreditQuote(projectId)
+      .then((quote) => { if (runIsCurrent(runId)) setCreditQuote(quote); })
+      .catch(() => { /* 목록 길이 기반 로컬 견적을 계속 쓴다. */ });
     setRegenerateState('arriving');
 
     if (!reducedMotion) {
@@ -1187,6 +1197,10 @@ export function Mannequin() {
         }
         if (!runIsCurrent(runId)) return false;
         if (isNonRetryableRegenerateError(error)) {
+          if (error?.code === 'mannequin_quality_failed' && generationAttempt.dirtyRevision) {
+            // F5·화면 재진입도 같은 종료 상태를 본다. 새 키는 명시적인 재시도에서만 만든다.
+            markGenerationRelevantEditsTerminalFailure(generationAttempt.projectId, generationAttempt.dirtyRevision);
+          }
           finishNonRetryable(runId, error);
           return false;
         }
@@ -1241,11 +1255,12 @@ export function Mannequin() {
     return false;
   };
 
-  const regenerate = async (profileOverride = null, onGenerationSucceeded = () => {}) => {
+  const regenerate = async (profileOverride = null, onGenerationSucceeded = () => {}, { manual = true } = {}) => {
     if (submittingRef.current) return false;   // 연타 + 모든 자동 재시도 구간의 이중 재생성·이중 차감 방지
-    submittingRef.current = true;
     const generationProjectId = projectId;
     const dirtyRevision = readGenerationRelevantEditsRevision(generationProjectId);
+    if (!manual && isGenerationRelevantEditsTerminalFailure(generationProjectId, dirtyRevision)) return false;
+    submittingRef.current = true;
     const generationAttempt = {
       projectId: generationProjectId,
       dirtyRevision,
@@ -1261,6 +1276,7 @@ export function Mannequin() {
         generationProjectId,
         dirtyRevision,
         regenerateBaselineRef.current,
+        { manual },
       );
     }
     knownLandedListRef.current = null;
@@ -1296,7 +1312,8 @@ export function Mannequin() {
       handledRef: refreshForEditsHandledRef,
       readDirtyRevision: () => readGenerationRelevantEditsRevision(refreshProjectId),
       cutsExisted: initialCutsExistedRef.current,
-      regenerate: (onSucceeded) => regenerate(null, onSucceeded),
+      regenerate: (onSucceeded) => regenerate(null, onSucceeded, { manual: false }),
+      isTerminalFailure: (revision) => isGenerationRelevantEditsTerminalFailure(refreshProjectId, revision),
       clearDirty: (revision) => (
         useAppStore.getState().clearGenerationRelevantEdits(refreshProjectId, revision)
       ),
@@ -1327,7 +1344,18 @@ export function Mannequin() {
   const onCta = async () => {
     if (busy || submittingRef.current) return;
     if (regenerateState === 'load-exhausted') { retryLoad(); return; }
-    if (needsRegen) { regenerate(); return; }
+    if (needsRegen) {
+      const shortfall = mannequinGenerationCreditShortfall(
+        useAppStore.getState().account,
+        regenerationQuote.nextCost,
+      );
+      if (shortfall) {
+        setCreditShortfall(shortfall);
+        return;
+      }
+      regenerate();
+      return;
+    }
     const shortfall = detailPageGenerationCreditShortfall(
       useAppStore.getState().account,
       aiCutCount,
@@ -1396,7 +1424,10 @@ export function Mannequin() {
         : runningWaitStep >= 0 ? `${waitLabels[runningWaitStep]} 중` : '';
 
   if (phase === 'loading') return <>{doneBlocked && <DoneGuardModal />}<MannequinLoading progress={loadingProgress} category={fitProfileDraft?.category} /></>;
-  if (phase === 'error') return <>{doneBlocked && <DoneGuardModal />}<MannequinError message={errorMsg} onRetry={loadMannequins} /></>;
+  if (phase === 'error') return <>{doneBlocked && <DoneGuardModal />}<MannequinError message={errorMsg} onRetry={() => {
+    retryInitialGeneration(projectId);
+    void loadMannequins();
+  }} /></>;
 
   return (
     <div className="wizard wide fit-page">

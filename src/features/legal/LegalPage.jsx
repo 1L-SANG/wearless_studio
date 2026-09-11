@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { marked } from 'marked';
 import { ErrorState, Skeleton } from '@/components/ui.jsx';
-import { COMPANY_INFO_LINES } from '@/lib/companyInfo.js';
+import { CompanyInfoRows } from '@/components/CompanyInfoRows.jsx';
 import { IS_FACEMARKET } from '@/lib/host.js';
 import './legal.css';
 
@@ -116,7 +116,7 @@ export function LegalPage({ slug }) {
 
         <section className="legal-business" aria-labelledby="legal-business-title">
           <h2 id="legal-business-title">사업자 정보</h2>
-          {COMPANY_INFO_LINES.map((line) => <p key={line}>{line}</p>)}
+          <CompanyInfoRows />
         </section>
       </article>
     </main>

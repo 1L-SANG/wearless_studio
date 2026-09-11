@@ -1,6 +1,7 @@
 """환경 변수 → Settings. backend_integration_plan §9 (인증·CORS) 기준."""
 
 import os
+import pathlib
 from dataclasses import dataclass
 
 
@@ -43,12 +44,18 @@ class Settings:
     # tier→모델 매핑 (ai_agent_modules §1 — 교체는 여기/env 한 곳)
     model_image_light: str = "gemini-3.1-flash-image"
     model_image_high: str = "gemini-3-pro-image"
+    # 마네킹 생성과 사용자 조정 전용. 공유 image_high와 상세페이지 모델은 바꾸지 않는다.
+    model_image_mannequin: str = "gpt-image-2.5-flare"
     # 시그니처 컷(상세페이지 첫 화면) 전용. gpt-image 계열은 gemini_image.py 가 OpenAI
     # images/edits 경로로 분기한다(:127) — 표기는 그 분기가 인식하는 그대로 둔다.
     model_image_signature: str = "gpt-image-2"
     # AG-06 상세컷 전용 모델. 빈 값이면 image_high로 폴백해 기존 환경을 보존한다.
     # 마네킹·매칭·AG-07까지 공유하는 image_high를 바꾸지 않고 콘티 1·2차만 분리한다.
     model_detail_cut: str = ""
+    # 에디터 컷(editor_image_job) 전용 모델. 빈 값이면 image_high 로 폴백해 기존 환경을 보존한다.
+    # image_high 를 바꾸면 마네킹(mannequin_tier)·매칭 플랫레이(matching_flatlay_tier)·AG-07(cut_variator)
+    # 까지 전부 딸려 간다 — 에디터만 바꾸려면 이 노브를 쓴다(detail_cut 과 같은 관례).
+    model_editor_cut: str = ""
     # AG-01 상품 분석 (text tier, 멀티모달 입력) — ai_agent_modules §1·§3
     openai_api_key: str | None = None  # sk-… (서버 전용, secret). GPT 경로 키
     model_text: str = "gpt-5.4-mini"  # GPT 폴백 provider 의 text/vision 모델 (openai key 있을 때만)
@@ -93,11 +100,10 @@ class Settings:
     # 평가)를 쓴다 — 실셀러 트래픽을 태우지 않고 같은 답을 얻는다.
     # 되돌리기: INPUT_CONSISTENCY=off (재배포 없이 env 만으로 즉시 무력화).
     input_consistency: str = "warn"  # off | warn
-    mannequin_tier: str = "image_high"  # AG-04 = Gemini 3 Pro (사용자 결정 — Flash 미사용)
-    # 조정(:regenerate) 전용 tier. 조정과 초기 생성은 같은 워커·같은 프롬프트를 타서 env 하나로는
-    # 분리가 안 된다. 빈 값이면 분기 없이 mannequin_tier 를 그대로 쓴다(기존 동작).
-    # 조정 흐름에서만 다른 모델을 시험할 때 쓴다 — 초기 생성 품질을 건드리지 않고 비교한다.
-    mannequin_adjust_tier: str = ""  # "" | image_light | image_high
+    mannequin_tier: str = "image_mannequin"  # AG-04 전용 Flare, 다른 이미지 기능과 분리
+    # 조정(:regenerate) 전용 tier. 지정하면 초기 생성과 별도로 사용한다.
+    # 빈 값의 편집 경로는 새 기본값이면 image_mannequin, 기존 설정이면 image_high를 쓴다.
+    mannequin_adjust_tier: str = ""  # "" | image_mannequin | image_light | image_high
     mannequin_image_size: str = "2K"  # 1K | 2K | 4K (오너 결정: 모든 마네킹컷 기본 2K)
     # 상세페이지/에디터 컷 전용 해상도. 마네킹 해상도와 분리해야 콘티 4K 배포가
     # 마네킹 생성 비용·지연까지 조용히 바꾸지 않는다.
@@ -148,9 +154,9 @@ class Settings:
     # 80/83/85 → 76/78/77 로 롤백 → 가슴 볼륨이 한 번도 출고되지 않음).
     qc_edit_regression_margin: int = 10
     # 미세 반복 패턴(스트라이프·체크) 상품의 출력 해상도. 'off' 면 승급 없이 mannequin_image_size 를 쓴다.
-    # 2K 실측(2026-08-01): 줄 주기 8.9px → 한 주기를 이루는 요소당 2px 남짓이라 두 색 줄이 한 색으로
-    # 뭉개졌다. 4K 면 주기 ~18px 로 요소당 4~5px 이 확보된다. 무지 상품은 승급하지 않는다(비용).
-    mannequin_pattern_image_size: str = "4K"  # off | 1K | 2K | 4K
+    # 2026-09 검증과 사용자 선택: 복합 줄무늬의 4K 이득이 부족해 기본 승급을 끈다.
+    # 필요 시 운영자가 명시적으로 크기를 지정할 수 있지만 패턴만으로 비용을 늘리지 않는다.
+    mannequin_pattern_image_size: str = "OFF"  # off | 1K | 2K | 4K
     # 로고·레터링·프린트 상품의 출력 해상도 (2026-08-19 해상도 A/B — 오너 승인).
     # 1K 는 작은 글자가 뭉개져 "로고 변형" 재롤·구제의 주 원인(실컷 0/3 통과)이었고,
     # 2K 는 3/4 통과 + **1K 와 요금 동일**(공식 표 출력 1,120tok)이라 승급 비용 0.
@@ -256,11 +262,12 @@ class Settings:
     job_concurrency: int = 1
     job_lease_timeout_seconds: int = 900
     job_worker_id: str = "web"
-    credit_cost_version: str = "v1"  # §6 임시 단가
-    credit_cost_mannequin_generate: int = 2
+    # 2026-09-11 v6: 1cr=50원 기준 행동별 단가, 정본 documents/research/2026-09-07-credit-pricing-plans.md §5·§5-1
+    credit_cost_version: str = "v6"
+    credit_cost_mannequin_generate: int = 45
     credit_cost_mannequin_adjust: int = 0  # @deprecated AG-05 폐기 — fitProfile 재생성으로 통합 (프론트 CREDIT_COSTS.mannequinAdjust=0 미러)
-    credit_cost_storyboard_per_cut: int = 1  # PL-4 상세페이지: AI 컷 1개당 (프론트 CREDIT_COSTS 미러)
-    credit_cost_editor_image: int = 1  # PL-5 에디터 이미지 1장
+    credit_cost_storyboard_per_cut: int = 19  # PL-4 상세페이지: AI 컷 1개당 (프론트 CREDIT_COSTS 미러)
+    credit_cost_editor_image: int = 19  # PL-5 에디터 이미지 1장
     # ---- 검색 증강 (retrieval_upgrade_prd) — 결정적 스택 ----
     # 벡터/임베딩(vector·refimages)은 보류(ADR D2) — 재진입 시 flag·enum·모델설정 함께 복원.
     retrieval_matching: str = "tags"  # off | tags (styleTags 친화도 v1)
@@ -277,13 +284,14 @@ class Settings:
     # pyproject optional group [embeddings] — prod 기본 이미지 미포함(R3 완화).
     embed_image_model: str = "google/siglip-base-patch16-224"  # 이미지 임베딩(SigLIP, 768-d)
     embed_image_dim: int = 768
-    embed_text_model: str = "BAAI/bge-m3"  # 텍스트 임베딩(2b 챌린저 스트레치, 1024-d)
-    embed_text_dim: int = 1024
     seller_text_canonicalize: str = "off"  # off | shadow | enforce (FR-D1 안전 게이트)
     input_qc: str = "off"  # off | shadow | enforce — 업로드 입력 QC (FR-D4, decode·해상도)
     # ---- FaceMarket (해커톤, 검증 실명 모델 마켓) — 기본 off 로 프로드 보호(FACEMARKET_ENABLED) ----
     # off면 라우터 자체가 미등록 → 기존 셀러 플로우 무영향(main.py 조건부 include).
     facemarket_enabled: bool = False
+    #: 모델 사용 조건 화면의 **선택 동의 항목**(장소 컷·룩북 인물 교체) 노출 여부.
+    #: 법률 검토 전에는 모델에게 보이면 안 된다 — 꺼져 있으면 요청에 값이 와도 저장하지 않는다.
+    facemarket_opt_uses_enabled: bool = False
     # 생체 등록은 FaceMarket 안에서도 별도 dark launch. 임계값은 캘리브 증거 없이는 기본값을 두지 않는다.
     fm_biometric_enrollment_enabled: bool = False
     # 모델 지원서·관리자 검토 게이트(리뉴얼). off = 기존 즉시 등록(구 경로는 지원서 테이블을
@@ -302,6 +310,14 @@ class Settings:
     fm_usage_report_to_email: str | None = None
     # 새 지원서 Slack 알림(서버 → incoming webhook 직접). 없으면 스킵. Lambda 재사용 아님(별도 웹훅).
     fm_slack_webhook_url: str | None = None
+    # 관리자 콘솔 기기 게이트(admin_guard). off=검사 안 함 / shadow=검사하고 실패해도 통과·
+    # 로그만 / enforce=실패 시 403. 코드 기본 shadow — 배포 직후 아무도 잠기지 않고, 두 관리자가
+    # 콘솔에서 서로 기기를 승인한 뒤 env 로 enforce 를 올린다(런북 docs/runbooks/admin-device-gate.md).
+    # 락아웃 복구도 이 값을 shadow 로 내리는 것이다.
+    admin_device_gate: str = "shadow"  # off | shadow | enforce
+    # 한 관리자가 쌓을 수 있는 승인 대기 기기 수. 등록은 관리자 JWT 만 있으면 되므로 상한이 없으면
+    # 탈취된 세션 하나가 목록을 스팸으로 덮고 Slack 을 울릴 수 있다.
+    admin_device_max_pending_per_user: int = 5
     fm_oacx_contract_mode: str = "disabled"
     fm_face_match_enabled: bool = False
     fm_standard_unit_price: int = 14900
@@ -337,6 +353,18 @@ class Settings:
     toss_secret_key: str | None = None
     toss_api_base: str = "https://api.tosspayments.com"   # 테스트에서 스텁 서버로 오버라이드
     toss_confirm_timeout: float = 15.0                     # 승인 API 타임아웃(초)
+    # ---- 토스 자동결제(빌링) — 계획서 docs/plans/2026-09-09-toss-billing-subscription.md
+    # 자동결제는 별도 계약 MID 라 일반결제와 시크릿 키가 다를 수 있다. 비어 있으면
+    # toss_secret_key 로 떨어진다(한 MID 로 계약한 상점).
+    toss_billing_secret_key: str | None = None
+    # 토스 문서: 자동결제 승인은 최대 60초 소요, 타임아웃 최소 60초.
+    # toss_confirm_timeout(15초) 을 재사용하면 정상 승인이 타임아웃으로 뒤집힌다.
+    toss_billing_timeout: float = 60.0
+    # 빌링키 컬럼 암호화 KEK(pgcrypto pgp_sym_encrypt). 없으면 구독 라우트가 503.
+    toss_billing_kek: str | None = None
+    # 웹훅 경로 시크릿 — 토스 일반 웹훅은 서명 헤더가 없어 경로 지식이 인증 대용이다.
+    toss_webhook_path_secret: str | None = None
+    subscription_billing_enabled: bool = False
     # ---- 개인화(사용자 본인 얼굴·신체) — 기본 off 로 프로드 보호(PERSONALIZATION_ENABLED) ----
     # off면 라우터 자체가 미등록 → 생체정보 처리 코드 미배포(main.py 조건부 include).
     personalization_enabled: bool = False
@@ -381,6 +409,26 @@ class Settings:
     fm_face_qc_enabled: bool = False
     fm_face_qc_threshold: float = 0.363  # OpenCV SFace 권장 코사인 동일인 기준선(캘리브 전 잠정)
     fm_face_qc_dir: str | None = None    # SFace/YuNet onnx 디렉터리. None이면 app/data/face_models
+    # ---- 인물 LoRA 얼굴 패스(agents/face_identity.py) — 기본 off. 켜도 virtual_models.json 항목에
+    # faceIdentity{loraPath,token} 가 있는 모델의 착용컷만 후처리한다. 기본값에서는 기존 동작이 한 줄도 안 바뀐다.
+    face_identity_enabled: bool = False
+    face_identity_backend_url: str | None = None  # 원격 GPU 렌더 서비스 URL. 없으면 로컬 Qwen(파드·개발 전용)
+    face_identity_lora_path: str | None = None    # LoRA 디렉터리(레지스트리 loraPath 기준) 또는 단일 .safetensors
+    face_identity_backend_token: str | None = None  # 렌더 서비스 내부 토큰(Bearer). 없으면 헤더를 안 붙인다
+    # 얼굴 패스 GPU 온디맨드(services/face_autoscale.py) — sam2 와 같은 판정, RunPod 파드 대상.
+    # off 면 HTTP 클라이언트를 만들지 않는다. API 키는 서버에만 두고 파드에는 올리지 않는다.
+    face_autoscale: str = "off"
+    face_autoscale_idle_minutes: int = 30
+    face_runpod_pod_id: str | None = None
+    face_runpod_api_key: str | None = None
+    #: 켜라고 한 뒤 이 시간이 지나도 /healthz 가 안 뜨면 "안 뜬다"로 보고 내린다(요금 방지).
+    #: 근거는 콜드스타트 실측 × 2 (services/face_autoscale.py 주석).
+    face_autoscale_start_grace_minutes: int = 8
+    #: 파드 볼륨에 올라가 있어야 할 코드 버전(git sha). 다르면 **경고 로그만** — 컷은 막지 않는다.
+    face_render_code_version: str | None = None
+    #: 얼굴 패스 전에 파드가 깨어나길 기다리는 최대 시간(초). 0 이면 기다리지 않는다.
+    #: 실측 콜드스타트 ≈2분 + reconciler 주기 60초 → 기본 300.
+    face_pass_wait_seconds: int = 300
     # ---- 이미지 실비 계측(내부용) ----
     # false 면 image_usage_events 적재를 끄고 로그만 남긴다.
     # **기본값은 app_env 가 정한다**(load_settings → _image_usage_persist): production 만 on.
@@ -428,20 +476,34 @@ def _detail_cut_image_size() -> str:
 
 
 def _mannequin_tier() -> str:
-    t = os.getenv("MANNEQUIN_TIER", "image_high")
-    return t if t in {"image_light", "image_high"} else "image_high"
+    t = os.getenv("MANNEQUIN_TIER", "image_mannequin")
+    return t if t in {"image_mannequin", "image_light", "image_high"} else "image_mannequin"
 
 
 def _mannequin_adjust_tier() -> str:
-    """조정 전용 tier — 미설정·오타면 "" (분기 없음, mannequin_tier 그대로)."""
+    """조정 전용 tier. 미설정 또는 오타면 워커의 기본 선택을 따른다."""
     t = os.getenv("MANNEQUIN_ADJUST_TIER", "")
-    return t if t in {"image_light", "image_high"} else ""
+    return t if t in {"image_mannequin", "image_light", "image_high"} else ""
 
 
 def _flag(env: str, default: str, allowed: set[str]) -> str:
     """검색 증강 flag — 허용값 밖이면 안전하게 default(대개 'off')로 폴백."""
     v = (os.getenv(env, default) or default).strip().lower()
     return v if v in allowed else default
+
+
+def _build_sha() -> str | None:
+    """이 이미지가 어느 커밋으로 빌드됐는가 — CI 가 배포 직전에 server/BUILD_SHA 에 쓴다.
+
+    얼굴 렌더 파드에 **서버와 같은 sha 의 코드 묶음**을 주기 위한 값이다(R2 키가 그 sha).
+    env(FACE_RENDER_CODE_VERSION)가 있으면 그게 우선 — 로컬·수동 실행에서 덮어쓰는 자리다.
+    파일이 없으면 None: 어댑터가 "코드 묶음 sha 가 없다"고 알린다(지어내지 않는다).
+    """
+    try:
+        text = (pathlib.Path(__file__).resolve().parents[1] / "BUILD_SHA").read_text()
+    except OSError:
+        return None
+    return text.strip() or None
 
 
 def _int_env(env: str, default: int) -> int:
@@ -516,8 +578,10 @@ def load_settings() -> Settings:
         vertex_location=os.getenv("VERTEX_LOCATION", "global"),
         model_image_light=os.getenv("MODEL_ROUTING_IMAGE_LIGHT", "gemini-3.1-flash-image"),
         model_image_high=os.getenv("MODEL_ROUTING_IMAGE_HIGH", "gemini-3-pro-image"),
+        model_image_mannequin=(os.getenv("MODEL_ROUTING_IMAGE_MANNEQUIN") or "gpt-image-2.5-flare").strip() or "gpt-image-2.5-flare",
         model_image_signature=os.getenv("MODEL_ROUTING_IMAGE_SIGNATURE", "gpt-image-2"),
         model_detail_cut=os.getenv("MODEL_ROUTING_DETAIL_CUT", ""),
+        model_editor_cut=os.getenv("MODEL_ROUTING_EDITOR_CUT", ""),
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         model_text=os.getenv("MODEL_ROUTING_TEXT", "gpt-5.4-mini"),
         model_text_gemini=os.getenv("MODEL_ROUTING_TEXT_GEMINI", "gemini-3.7-flash"),
@@ -562,11 +626,11 @@ def load_settings() -> Settings:
         job_concurrency=_int_env("JOB_CONCURRENCY", 1),
         job_lease_timeout_seconds=int(os.getenv("JOB_LEASE_TIMEOUT_SECONDS", "900")),
         job_worker_id=os.getenv("JOB_WORKER_ID", f"web-{os.getpid()}"),
-        credit_cost_version=os.getenv("CREDIT_COST_VERSION", "v1"),
-        credit_cost_mannequin_generate=int(os.getenv("CREDIT_COST_MANNEQUIN_GENERATE", "2")),
+        credit_cost_version=os.getenv("CREDIT_COST_VERSION", "v6"),
+        credit_cost_mannequin_generate=int(os.getenv("CREDIT_COST_MANNEQUIN_GENERATE", "45")),
         credit_cost_mannequin_adjust=int(os.getenv("CREDIT_COST_MANNEQUIN_ADJUST", "0")),
-        credit_cost_storyboard_per_cut=int(os.getenv("CREDIT_COST_STORYBOARD_PER_CUT", "1")),
-        credit_cost_editor_image=int(os.getenv("CREDIT_COST_EDITOR_IMAGE", "1")),
+        credit_cost_storyboard_per_cut=int(os.getenv("CREDIT_COST_STORYBOARD_PER_CUT", "19")),
+        credit_cost_editor_image=int(os.getenv("CREDIT_COST_EDITOR_IMAGE", "19")),
         retrieval_matching=_flag("RETRIEVAL_MATCHING", "tags", {"off", "tags"}),
         matching_color_weight=float(os.getenv("MATCHING_COLOR_WEIGHT", "0.3")),
         retrieval_knowledge=_flag("RETRIEVAL_KNOWLEDGE", "off", {"off", "static"}),
@@ -576,8 +640,6 @@ def load_settings() -> Settings:
         image_usage_persist=_image_usage_persist(app_env),
         image_usage_krw_per_usd=float(os.getenv("IMAGE_USAGE_KRW_PER_USD", "1400")),
         embed_image_dim=int(os.getenv("EMBED_IMAGE_DIM", "768")),
-        embed_text_model=os.getenv("EMBED_TEXT_MODEL", "BAAI/bge-m3"),
-        embed_text_dim=int(os.getenv("EMBED_TEXT_DIM", "1024")),
         seller_text_canonicalize=_flag(
             "SELLER_TEXT_CANONICALIZE", "off", {"off", "shadow", "enforce"}
         ),
@@ -595,7 +657,7 @@ def load_settings() -> Settings:
             "QC_EDIT_REGRESSION_MARGIN",
             str(Settings.__dataclass_fields__["qc_edit_regression_margin"].default))),
         mannequin_pattern_image_size=_flag(
-            "MANNEQUIN_PATTERN_IMAGE_SIZE", "4K", {"off", "1k", "2k", "4k"}).upper(),
+            "MANNEQUIN_PATTERN_IMAGE_SIZE", "off", {"off", "1k", "2k", "4k"}).upper(),
         mannequin_logo_image_size=_flag(
             "MANNEQUIN_LOGO_IMAGE_SIZE", "2K", {"off", "1k", "2k", "4k"}).upper(),
         garment_qc_mode=_flag(
@@ -613,6 +675,8 @@ def load_settings() -> Settings:
         matching_cutout=_flag("MATCHING_CUTOUT", "off", {"off", "on"}),
         matching_flatlay=_flag("MATCHING_FLATLAY", "off", {"off", "on", "full"}),
         facemarket_enabled=(os.getenv("FACEMARKET_ENABLED", "false").lower() == "true"),
+        facemarket_opt_uses_enabled=(
+            os.getenv("FACEMARKET_OPT_USES_ENABLED", "false").lower() == "true"),
         fm_biometric_enrollment_enabled=(
             os.getenv("FM_BIOMETRIC_ENROLLMENT_ENABLED", "false").lower() == "true"
         ),
@@ -631,6 +695,8 @@ def load_settings() -> Settings:
         ).rstrip("/"),
         fm_usage_report_to_email=os.getenv("FM_USAGE_REPORT_TO_EMAIL") or None,
         fm_slack_webhook_url=os.getenv("FM_SLACK_WEBHOOK_URL") or None,
+        admin_device_gate=_flag("ADMIN_DEVICE_GATE", "shadow", {"off", "shadow", "enforce"}),
+        admin_device_max_pending_per_user=_int_env("ADMIN_DEVICE_MAX_PENDING_PER_USER", 5),
         fm_oacx_contract_mode=os.getenv("FM_OACX_CONTRACT_MODE", "disabled"),
         fm_face_match_enabled=(
             os.getenv("FM_FACE_MATCH_ENABLED", "false").lower() == "true"
@@ -663,6 +729,12 @@ def load_settings() -> Settings:
         toss_secret_key=os.getenv("TOSS_SECRET_KEY") or None,
         toss_api_base=os.getenv("TOSS_API_BASE", "https://api.tosspayments.com").rstrip("/"),
         toss_confirm_timeout=float(os.getenv("TOSS_CONFIRM_TIMEOUT", "15")),
+        toss_billing_secret_key=os.getenv("TOSS_BILLING_SECRET_KEY") or None,
+        toss_billing_timeout=float(os.getenv("TOSS_BILLING_TIMEOUT", "60")),
+        toss_billing_kek=os.getenv("TOSS_BILLING_KEK") or None,
+        toss_webhook_path_secret=os.getenv("TOSS_WEBHOOK_PATH_SECRET") or None,
+        subscription_billing_enabled=(
+            os.getenv("SUBSCRIPTION_BILLING_ENABLED", "false").lower() == "true"),
         cx_trans_base_url=(
             os.getenv("CX_TRANS_BASE_URL") or "https://cx.raonsecure.co.kr:18543"
         ).rstrip("/"),
@@ -678,6 +750,17 @@ def load_settings() -> Settings:
         fm_face_qc_enabled=(os.getenv("FM_FACE_QC_ENABLED", "false").lower() == "true"),
         fm_face_qc_threshold=float(os.getenv("FM_FACE_QC_THRESHOLD") or "0.363"),
         fm_face_qc_dir=os.getenv("FM_FACE_QC_DIR") or None,
+        face_identity_enabled=(os.getenv("FACE_IDENTITY_ENABLED", "false").lower() == "true"),
+        face_identity_backend_url=(os.getenv("FACE_IDENTITY_BACKEND_URL") or "").rstrip("/") or None,
+        face_identity_lora_path=os.getenv("FACE_IDENTITY_LORA_PATH") or None,
+        face_identity_backend_token=os.getenv("FACE_IDENTITY_BACKEND_TOKEN") or None,
+        face_autoscale=_flag("FACE_AUTOSCALE", "off", {"off", "on"}),
+        face_autoscale_idle_minutes=_int_env("FACE_AUTOSCALE_IDLE_MINUTES", 30),
+        face_runpod_pod_id=os.getenv("FACE_RUNPOD_POD_ID") or None,
+        face_runpod_api_key=os.getenv("RUNPOD_API_KEY") or None,
+        face_autoscale_start_grace_minutes=_int_env("FACE_AUTOSCALE_START_GRACE_MINUTES", 8),
+        face_render_code_version=(os.getenv("FACE_RENDER_CODE_VERSION") or _build_sha()),
+        face_pass_wait_seconds=_int_env("FACE_PASS_WAIT_SECONDS", 300),
         fm_provenance_enabled=(
             os.getenv("FM_PROVENANCE_ENABLED", "false").lower() == "true"
         ),

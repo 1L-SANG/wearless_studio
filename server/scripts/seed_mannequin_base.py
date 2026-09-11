@@ -3,8 +3,8 @@
 왜 필요한가(2026-08-01 실측): DB 를 새로 만들면 스키마 마이그레이션과 매칭의류 시드는
 돌지만 **마네킹 베이스 asset 행**이 빠진다. 그러면 `mannequin_job` 이
 `base_mannequin_missing` 으로 죽고 셀러에게 "마네킹 베이스가 설정되지 않았어요" 가 뜬다.
-(원래 이 행은 일회용 `seed_phase4.py` 가 넣었는데, 그 스크립트는 spike/base 로컬 원본과
-`.env` 쓰기를 전제해서 DB 교체 시 재실행하기 어렵다.)
+(원래 이 행은 일회용 `seed_phase4.py`(2026-09-11 삭제) 가 넣었는데, 그 스크립트는 spike/base
+로컬 원본과 `.env` 쓰기를 전제해서 DB 교체 시 재실행하기 어려웠다.)
 
 이 스크립트는 **R2 객체를 진실의 원천**으로 삼는다 — 업로드는 하지 않고, 이미 올라간
 `seed/mannequin/base-{gender}-2K.png` 를 읽어 `assets` 행만 맞춘다.
@@ -35,7 +35,7 @@ from app.config import load_settings  # noqa: E402
 from app.r2 import R2Client  # noqa: E402
 
 # 현재 서빙 중인 베이스 키. 여성 다리 단축본(v2)은 2026-07-31 만들어 올렸다가 실제 착장컷
-# 비교에서 밀려 되돌리고 R2·assets 에서 지웠다(scripts/shorten_base_legs.py 에 경위·측정값).
+# 비교에서 밀려 되돌리고 R2·assets 에서 지웠다(단축본 스크립트 shorten_base_legs.py 는 2026-09-11 정리).
 _KEY = {
     "women": "seed/mannequin/base-women-2K.png",
     "men": "seed/mannequin/base-men-2K.png",

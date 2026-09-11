@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 from . import admin_guard
 from .auth import require_user
 from .db import get_conn
+from .facemarket_admin_devices import revoke_devices_for_user
 from .models import CamelModel
 
 router = APIRouter(prefix="/v1/facemarket/admin", tags=["FaceMarket admin console"])
@@ -222,7 +223,7 @@ async def admin_overview(
     """콘솔 첫 화면 한 벌 — 운영 큐 + 기간 KPI + 추이 + 분포. 호출 1회."""
     validate_days(days)
     async with get_conn(request) as conn:
-        await admin_guard.require_admin(conn, user_id)
+        await admin_guard.require_admin(conn, user_id, request)
         payload = await overview_payload(conn, days=days)
     return JSONResponse(payload)
 
@@ -399,7 +400,7 @@ async def admin_list_models(
 ):
     validate_model_status(status)
     async with get_conn(request) as conn:
-        await admin_guard.require_admin(conn, user_id)
+        await admin_guard.require_admin(conn, user_id, request)
         return JSONResponse(await list_models(conn, q=q, status=status, limit=limit))
 
 
@@ -408,7 +409,7 @@ async def admin_model_detail(
     request: Request, model_id: str, user_id: str = Depends(require_user)
 ):
     async with get_conn(request) as conn:
-        await admin_guard.require_admin(conn, user_id)
+        await admin_guard.require_admin(conn, user_id, request)
         return JSONResponse(await model_detail(conn, model_id=model_id))
 
 
@@ -554,7 +555,7 @@ async def admin_suspend_model(
     user_id: str = Depends(require_user),
 ):
     async with get_conn(request) as conn:
-        await admin_guard.require_admin(conn, user_id)
+        await admin_guard.require_admin(conn, user_id, request)
         result = await suspend_model(conn, model_id=model_id, actor=user_id, reason=body.reason)
         await conn.commit()
     return JSONResponse(result)
@@ -565,7 +566,7 @@ async def admin_unsuspend_model(
     request: Request, model_id: str, user_id: str = Depends(require_user)
 ):
     async with get_conn(request) as conn:
-        await admin_guard.require_admin(conn, user_id)
+        await admin_guard.require_admin(conn, user_id, request)
         result = await unsuspend_model(conn, model_id=model_id, actor=user_id)
         await conn.commit()
     return JSONResponse(result)
@@ -701,7 +702,7 @@ async def admin_list_usage_reports(
     user_id: str = Depends(require_user),
 ):
     async with get_conn(request) as conn:
-        await admin_guard.require_admin(conn, user_id)
+        await admin_guard.require_admin(conn, user_id, request)
         return JSONResponse(
             await list_usage_reports(conn, status=status, limit=limit, cursor=cursor),
             headers={"Cache-Control": "no-store"},
@@ -716,7 +717,7 @@ async def admin_update_usage_report_status(
     user_id: str = Depends(require_user),
 ):
     async with get_conn(request) as conn:
-        await admin_guard.require_admin(conn, user_id)
+        await admin_guard.require_admin(conn, user_id, request)
         result = await update_usage_report_status(
             conn, report_id=report_id, actor=user_id, status=body.status,
         )
@@ -817,6 +818,14 @@ async def set_role(conn, *, target_user_id: str, actor: str, role: str) -> dict:
             (role, target_user_id),
         )
 
+    after = {"role": role}
+    if role == "user":
+        # 권한과 함께 기기도 거둔다. 안 그러면 나중에 다시 올렸을 때 옛 승인 기기가 그대로
+        # 살아나 — 그 사이 그 기기가 누구 손에 있었는지 아무도 모른다.
+        after["revokedDevices"] = await revoke_devices_for_user(
+            conn, user_id=target_user_id, actor=actor,
+        )
+
     await admin_guard.write_audit(
         conn,
         actor_user_id=actor,
@@ -824,7 +833,7 @@ async def set_role(conn, *, target_user_id: str, actor: str, role: str) -> dict:
         target_type="user",
         target_id=target_user_id,
         before={"role": previous},
-        after={"role": role},
+        after=after,
     )
     return {"userId": target_user_id, "role": role}
 
@@ -980,7 +989,7 @@ async def admin_list_staff(
     request: Request, q: str | None = Query(None), user_id: str = Depends(require_user)
 ):
     async with get_conn(request) as conn:
-        await admin_guard.require_admin(conn, user_id)
+        await admin_guard.require_admin(conn, user_id, request)
         return JSONResponse(await list_staff(conn, q=q))
 
 
@@ -990,7 +999,7 @@ async def admin_set_role(
     user_id: str = Depends(require_user),
 ):
     async with get_conn(request) as conn:
-        await admin_guard.require_admin(conn, user_id)
+        await admin_guard.require_admin(conn, user_id, request)
         result = await set_role(conn, target_user_id=target_user_id, actor=user_id, role=body.role)
         await conn.commit()
     return JSONResponse(result)
@@ -1012,7 +1021,7 @@ async def admin_list_users(
     (관리자에게는 필요한 화면이다) 언제 누가 무엇으로 훑었는지는 남아야 한다.
     """
     async with get_conn(request) as conn:
-        await admin_guard.require_admin(conn, user_id)
+        await admin_guard.require_admin(conn, user_id, request)
         result = await list_users(conn, q=q, origin=origin, limit=limit, cursor=cursor)
         await admin_guard.write_audit(
             conn,
@@ -1034,7 +1043,7 @@ async def admin_list_audit(
     user_id: str = Depends(require_user),
 ):
     async with get_conn(request) as conn:
-        await admin_guard.require_admin(conn, user_id)
+        await admin_guard.require_admin(conn, user_id, request)
         return JSONResponse(await list_audit(
             conn, limit=limit, target_type=target_type, target_id=target_id,
         ))

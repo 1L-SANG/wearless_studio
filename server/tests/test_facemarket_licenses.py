@@ -21,7 +21,7 @@ from app import facemarket, holder_client
 from app import facemarket_enrollment
 from types import SimpleNamespace
 
-from app.facemarket import LicenseCard, _cover_serving_url, _license_card
+from app.facemarket import CreateLicenseRequest, LicenseCard, _cover_serving_url, _license_card
 
 
 def _req_with_r2(r2, public_r2=None):
@@ -78,6 +78,18 @@ _LICENSE_KEYS = (
     "id", "model_id", "face_image_uri", "face_image_digest", "allowed_use",
     "forbidden_use", "unit_price", "license_valid_until", "status", "vc_id", "created_at",
 )
+
+
+def test_create_license_request_uses_platform_unit_price_by_default():
+    request = CreateLicenseRequest(enrollmentId=ENROLLMENT_ID)
+
+    assert request.unit_price == 14900
+
+
+def test_create_license_request_ignores_client_price_override():
+    request = CreateLicenseRequest(enrollmentId=ENROLLMENT_ID, unitPrice=1)
+
+    assert request.unit_price == 14900
 
 
 def test_license_card_allows_missing_face_digest_during_reverification_cutover():
@@ -984,7 +996,7 @@ def valid_license_body(enrollment_id=ENROLLMENT_ID):
         "enrollmentId": enrollment_id,
         "allowedUse": ["일반 의류"],
         "forbiddenUse": ["속옷"],
-        "unitPrice": 10000,
+        "unitPrice": 14900,
         "validDays": 365,
     }
 

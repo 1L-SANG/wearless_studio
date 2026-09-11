@@ -26,8 +26,8 @@
 | ID_FACE_RETENTION | 2차 검수 완료 즉시 파기, 최대 확정 후 30일 |
 | APPLICATION_REJECT_PURGE_DAYS | 30 |
 | REVIEW_SLA_DAYS | 3 (표시는 "보통 1시간 안") |
-| UNIT_PRICE_DEFAULT_KRW / MIN | 10000 / 5000 |
-| MONTHLY_MULTIPLIER | 2.5 (월정액 = 건당 × 2.5, 100원 단위 반올림) |
+| 플랫폼 단발 표준가 | 14,900원, 모델 몫 70%(10,430원) |
+| 월 이용권 표준가 | 49,900원(모델 1인·30일·10건), 초과 건당 7,900원 |
 | MONTHLY_PERIOD_DAYS | 30 |
 | EARLYBIRD_SEATS | 10 |
 | LICENSE_ISSUE_FEE_KRW | 20000 (얼리버드 면제) — 실체는 오너 확정 전까지 화면 문구만 유지 |
@@ -44,7 +44,7 @@
 ### A-2 Digital DNA 관리 (`/status`, `ModelHub.jsx`)
 - 제목 "Digital DNA 관리". 온보딩 중이면 타임라인(지원 접수 → 등록 링크 → 본인확인·사진·조건·증서 → 우리 검수 → 테스트 컷 생성 → 확정 → 활동 중), 현재 칸은 파란 점, 완료는 초록. 각 칸의 라벨은 서버 상태값과 1:1(§3-1 표).
 - **활동 중** 표시는 모델 상태가 `verified`(확정 승인)일 때. 거래 유무와 무관.
-- 활동 중 화면: 상태 배지 · 내 트윈(대표 컷·테스트 컷, 서명 URL) · 내 규칙 카드(허용 n·제외 n·건당 가격·월정액(자동)·유효기간) + [규칙 바꾸기] · 이번 달 요약(건수·금액) + [정산 →] · [계약서·증서 보기] · 하단 [그만두기(철회)] 상시 노출.
+- 활동 중 화면: 상태 배지 · 내 트윈(대표 컷·테스트 컷, 서명 URL) · 내 규칙 카드(허용 n·제외 n·건당 가격·월 이용권 49,900원(30일 10건)·유효기간) + [규칙 바꾸기] · 이번 달 요약(건수·금액) + [정산 →] · [계약서·증서 보기] · 하단 [그만두기(철회)] 상시 노출.
 - 허브 안의 "등록 이어가기"·"상태 보기" 류 버튼은 타임라인의 현재 칸에 붙는 하나의 행동 버튼으로 통합(예: 현재 칸이 등록이면 "등록 이어가기", 확정 대기면 "테스트 컷 확인하기"). 그 외 중복 버튼 제거.
 
 ### A-3 정산 (`/payout`, `PayoutPage.jsx`)
@@ -73,8 +73,8 @@
 - 마이그레이션은 `server/migrations/`의 기존 방식을 따르고, 기존 행은 현재 상태를 보존한다.
 
 ### B-2 조건(사용 조건) 모델
-- `fm_licenses`에 `validity_days INT NULL`(NULL=영구), `approval_mode TEXT DEFAULT 'auto'`, `monthly_price INT`(= round100(unit_price × 2.5), 저장 시 계산) 추가. `license_valid_until`은 validity_days로부터 계산, 영구면 NULL 허용(게이트·검증 페이지의 만료 판정에서 NULL=무기한).
-- `PATCH /licenses/{id}/terms` 신설: allowed_use, forbidden_use, unit_price(≥5000), validity_days. 저장 시 `fm_license_term_changes`(license_id, changed_at, before JSON, after JSON, actor)에 이력. **VC 재발급 없음.** 사용 게이트는 항상 현재 DB 행을 읽는다.
+- `fm_licenses`에 `validity_days INT NULL`(NULL=영구), `approval_mode TEXT DEFAULT 'auto'`, `monthly_price INT`(플랫폼 표준가 49,900원) 추가. `license_valid_until`은 validity_days로부터 계산, 영구면 NULL 허용(게이트·검증 페이지의 만료 판정에서 NULL=무기한).
+- `PATCH /licenses/{id}/terms` 신설: allowed_use, forbidden_use, validity_days. 가격은 플랫폼 공통 표준가로 관리. 저장 시 `fm_license_term_changes`(license_id, changed_at, before JSON, after JSON, actor)에 이력. **VC 재발급 없음.** 사용 게이트는 항상 현재 DB 행을 읽는다.
 - 유효기간 선택지 90/365/730 → 365/730/영구.
 
 ### B-3 VC 내용 축소
@@ -82,8 +82,8 @@
 - 사용 게이트(`_check_license_use` 계열)와 verify 페이지는 VC의 유효성(발급·미폐기)만 보고, 품목·기간은 DB로 판정하도록 정리. 관련 테스트(`test_facemarket_mandatory_vc*.py`, `test_facemarket_licenses.py`, `test_facemarket_vc_config.py`) 갱신.
 
 ### B-4 가격 모델(건당 + 월정액)
-- 정산 행(`fm_settlements`)에 `billing_type TEXT('per_use'|'monthly')`, `period_start`, `period_end` 추가. 월정액 구매는 셀러가 한 모델에 대해 30일간 무제한 발행. 모델 몫은 두 경우 모두 0.70.
-- 서버 API: `POST /licenses/{id}/monthly-passes`(셀러 인증, 결제 확인 후) → 기간 행 생성 + 정산 행 1건. 사용 게이트는 유효한 월정액 패스가 있으면 건당 청구 없이 발행. 셀러 앱 UI는 이 Phase 범위 밖(엔드포인트·테스트만).
+- 정산 행(`fm_settlements`)에 `billing_type TEXT('per_use'|'monthly')`, `period_start`, `period_end` 추가. 월 이용권 구매는 셀러가 한 모델에 대해 49,900원으로 30일간 상세페이지 10건 발행. 초과분은 건당 7,900원. 모델 몫은 모든 방식에서 0.70.
+- 서버 API: `POST /licenses/{id}/monthly-passes`(셀러 인증, 결제 확인 후) → 기간 행 생성 + 정산 행 1건. 사용 게이트는 유효한 월 이용권 패스의 잔여 건수가 있으면 추가 청구 없이 발행하고 초과분은 건당 청구. 셀러 앱 UI는 이 Phase 범위 밖(엔드포인트·테스트만).
 
 ### B-5 관리자 큐 API
 - `GET /admin/enrollments?status=review_pending|confirm_pending|...` 카드 목록: 신분증 얼굴(서명 URL, 1시간) · 등록 사진 · 지원서 사진 · 자동 매칭 점수 · 성인 여부 · VC 발급 여부 · 조건 요약.
@@ -96,7 +96,7 @@
 
 ## 4. Phase C — 위저드 4단계·확정 화면·콘솔 탭 `codex/facemarket-mvp-c` (Phase B 이후)
 
-- 위저드(`ModelRegister.jsx`)를 B 시안 4단계로: ① 동의와 본인확인(B-0·B-1·B-2·B-3·B-4·B-5·B-6 문안, 끝까지 스크롤 활성화, 개별 체크, 사전 체크 없음, 동의 유형 6종 서버 기록) ② 사진(장수 설정값 `FM_ENROLL_PHOTO_COUNT`, 기본 3) ③ 프로필(체형은 전신 사진 없으면 필수) ④ 사용 조건(허용/제외 품목 ×, 건당 가격 → 월정액 자동 표시, 유효기간 365/730/영구, 상단 고정 문장) → [라이선스 발급] → 완료(A-4). 체형·대표 사진 별도 스텝 제거.
+- 위저드(`ModelRegister.jsx`)를 B 시안 4단계로: ① 동의와 본인확인(B-0·B-1·B-2·B-3·B-4·B-5·B-6 문안, 끝까지 스크롤 활성화, 개별 체크, 사전 체크 없음, 동의 유형 6종 서버 기록) ② 사진(장수 설정값 `FM_ENROLL_PHOTO_COUNT`, 기본 3) ③ 프로필(체형은 전신 사진 없으면 필수) ④ 사용 조건(허용/제외 품목 ×, 표준가 읽기 전용 표시(단발 14,900원, 월 이용권 49,900원, 초과 7,900원), 유효기간 365/730/영구, 상단 고정 문장) → [라이선스 발급] → 완료(A-4). 체형·대표 사진 별도 스텝 제거.
 - 확정 화면 `/model/confirm`: 테스트 컷 6장 · 셀러에게 보이는 프로필 미리보기 · [이 모습으로 공개하기] · [다시 만들어 주세요(사유)] · "확정 전 미공개" 문장.
 - 관리자 콘솔(`AdminApplications.jsx`)에 "2차 검수" 탭: B-5 카드 + [같은 사람 · 트윈 만들기] [이 각도만 다시 요청] [신원 불일치 · 종료]. 상태별 묶음(대기가 위).
 - 규칙 바꾸기: `/model/license`를 편집 모드로(B-2 PATCH), 상단 고정 "변경은 새 사용 건부터", 변경 이력 표시.

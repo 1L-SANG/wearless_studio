@@ -28,6 +28,11 @@ from .workers.fm_vc_revocation_reconciler import FaceVcRevocationReconciler
 from .workers.fm_vc_issue_reconciler import FaceVcIssueReconciler
 from .workers.sam_retry_pusher import SamRetryPusher
 from .services import sam_client
+from .services.face_autoscale import (
+    FaceRenderPodStore,
+    RunpodAutoscaleAdapter,
+    face_demand_snapshot,
+)
 from .services.sam_autoscale import SamAutoscaleAdapter
 from .services.sam_endpoint import SamEndpointResolver
 from .workers.sam_autoscaler import SamAutoscaler
@@ -108,6 +113,10 @@ def _validate_facemarket_vc_settings(settings: Settings) -> None:
 def create_app(settings: Settings | None = None) -> FastAPI:
     _configure_logging()
     settings = settings or load_settings()
+    # 지금 도는 코드가 어느 커밋인가 — 얼굴 렌더 파드에 **같은 sha 의 코드 묶음**을 주는 근거다.
+    # 없으면 그 사실이 로그에 남아야 한다(조용히 빈 값으로 도는 것을 막는다).
+    logging.getLogger("wearless.api").info(
+        "code version=%s", settings.face_render_code_version or "unknown")
     job_kinds = configured_job_kinds()
     detail_worker_only = job_kinds == ("detail_page",)
 
@@ -129,6 +138,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         sam_autoscaler = None
         opendid_autoscaler = None
         detail_worker_autoscaler = None
+        face_autoscaler = None
+        subscription_biller = None
+        subscription_expirer = None
         if pool is not None:
             await pool.open()
             # revoke_license/cutover 는 fm_vc_required 와 무관하게 vc_id 가 있으면
@@ -158,6 +170,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not detail_worker_only and app.state.r2 is not None:
                 draft_asset_reclaimer = DraftAssetReclaimer(app)
                 await draft_asset_reclaimer.start()
+            # 정기결제 청구·만료 — 계획서 docs/plans/2026-09-09-toss-billing-subscription.md.
+            # detail-worker 태스크에서는 돌리지 않는다(청구는 API 태스크의 일이고, 두 곳에서
+            # 돌면 advisory lock 경합만 는다). 중복 실행은 락이 막지만 애초에 안 거는 게 낫다.
+            if not detail_worker_only and settings.subscription_billing_enabled:
+                from .workers.subscription_biller import (
+                    SubscriptionBiller,
+                    SubscriptionExpirer,
+                )
+
+                subscription_biller = SubscriptionBiller(app)
+                await subscription_biller.start()
+                subscription_expirer = SubscriptionExpirer(app)
+                await subscription_expirer.start()
             # sam2 온디맨드 기동/종료(2026-08-21). 디스패처 조건(R2·AI provider)과 **독립** —
             # DB 만 있으면 돈다. 디스패처 블록 안에 두면 provider 키가 빠진 환경에서 sam2 가
             # 영영 안 켜진다. off 면 어댑터가 클라이언트를 안 만들고 prewarm 은 즉시 return.
@@ -204,6 +229,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if detail_adapter.enabled:
                     detail_worker_autoscaler = app.state.detail_worker_autoscaler
                     await detail_worker_autoscaler.start()
+                # 얼굴 패스 GPU(RunPod 파드) 온디맨드 — 같은 reconciler 를 RunPod 어댑터로.
+                # 수요 = 켜진 LoRA 를 가진 등록자의 착장 컷 잡. off 면 어댑터가 HTTP 클라이언트를
+                # 만들지 않고 루프도 안 돈다(기본값 off — 파드가 없어도 아무 일도 일어나지 않는다).
+                # 파드 id 는 DB 가 정본 — 재고가 없어 새 파드를 만들면 그 자리에서 바뀐다.
+                # 코드 묶음 presigned 공급자 — 파드에 R2 자격증명을 넣지 않기 위한 것이다.
+                # r2_face 가 없으면 None → 어댑터가 그 사실을 로그로 알린다.
+                _face_r2 = getattr(app.state, "r2_face", None)
+                face_adapter = RunpodAutoscaleAdapter(
+                    settings,
+                    pod_store=FaceRenderPodStore(pool) if pool is not None else None,
+                    code_url_provider=(
+                        (lambda key: _face_r2.preview_url(key, expires=900))
+                        if _face_r2 is not None else None),
+                    # 내용 해시는 업로드 때 붙인 R2 메타에서 읽는다(키는 커밋 sha 라 내용과 다르다).
+                    code_head_provider=(
+                        (lambda key: (_face_r2.head(key) or {}).get("metadata"))
+                        if _face_r2 is not None else None),
+                )
+                app.state.face_autoscaler = SamAutoscaler(
+                    app, face_adapter,
+                    demand_fn=lambda repo, conn: face_demand_snapshot(conn),
+                    idle_attr="face_autoscale_idle_minutes",
+                    name="face-render", lock_key="face_autoscaler",
+                    start_grace_attr="face_autoscale_start_grace_minutes")
+                if face_adapter.enabled:
+                    face_autoscaler = app.state.face_autoscaler
+                    await face_autoscaler.start()
             # job dispatcher (§5) — DB·R2 + 최소 1개 AI provider(마네킹=Gemini, 분석=Gemini/OpenAI)
             # 가 있고 활성화일 때만 기동. provider 없는 job 은 워커가 실패 봉투로 종결.
             if (
@@ -229,6 +281,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await opendid_autoscaler.stop()
         if detail_worker_autoscaler is not None:
             await detail_worker_autoscaler.stop()
+        if face_autoscaler is not None:
+            await face_autoscaler.stop()
+        if subscription_biller is not None:
+            await subscription_biller.stop()
+        if subscription_expirer is not None:
+            await subscription_expirer.stop()
         if draft_asset_reclaimer is not None:
             await draft_asset_reclaimer.stop()
         if sam_retry_pusher is not None:
@@ -247,11 +305,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     docs_url = "/docs" if settings.app_env == "dev" else None
     redoc_url = "/redoc" if settings.app_env == "dev" else None
+    # 스키마 JSON 도 같이 닫는다. docs/redoc 만 끄면 /openapi.json 이 그대로 남아 전체 라우트·
+    # 모델(관리자 라우트 포함)을 아무에게나 준다 — 2026-09-11 prod 에서 209KB 로 열려 있었다.
+    openapi_url = "/openapi.json" if settings.app_env == "dev" else None
 
     app = FastAPI(
         title="Wearless Studio API",
         docs_url=docs_url,
         redoc_url=redoc_url,
+        openapi_url=openapi_url,
         lifespan=lifespan,
     )
     app.state.settings = settings
@@ -288,6 +350,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     image_usage.configure(pool=pool, persist=settings.image_usage_persist)
     app.state.dispatcher = None
     app.state.detail_worker_autoscaler = None
+    app.state.face_autoscaler = None
     # 캐노니컬 컷아웃 조회기. 마네킹 워커가 이걸 통해 준비된 컷아웃을 읽는다 —
     # 없으면 None 을 돌려주고 베이스라인 경로가 그대로 돈다(보조 인프라).
     from .services.canonical_reference import load as _canonical_load
@@ -358,7 +421,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-        allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Draft-Token"],
+        allow_headers=[
+            "Authorization", "Content-Type", "Idempotency-Key", "X-Draft-Token",
+            # 관리자 콘솔 기기 토큰(admin_guard). 빠지면 admin.wearless.kr 의 모든 요청이
+            # preflight 에서 죽는다 — 로그인은 되니 화면엔 "서버에 연결하지 못했어요" 만 남는다.
+            "X-Admin-Device",
+        ],
     )
 
     @app.exception_handler(HTTPException)
@@ -382,8 +450,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             }}, headers={"Cache-Control": "no-store"})
         # exc.errors()의 ctx에 raw 예외 객체(ValueError 등)가 섞여 json.dumps가 깨지므로
         # FastAPI 기본 핸들러처럼 jsonable_encoder로 직렬화 가능한 형태로 강제한다.
+        # 지원서 v3는 필수 입력 누락도 400으로 응답한다. 다른 API의 422 계약은 유지한다.
+        application_submit = request.method == "POST" and request.url.path == "/v1/facemarket/applications"
         return JSONResponse(
-            status_code=422,
+            status_code=400 if application_submit else 422,
             content={
                 "error": {
                     "code": "validation_error",
@@ -464,6 +534,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(payments_router)
 
+    # 정기결제(빌링) — 플래그 on일 때만 등록. off면 라우트 미존재 → 기존 결제 흐름 무영향.
+    # 계획서 docs/plans/2026-09-09-toss-billing-subscription.md
+    if settings.subscription_billing_enabled:
+        from .subscriptions import router as subscriptions_router
+        from .subscriptions import webhook_router as toss_webhook_router
+
+        app.include_router(subscriptions_router)
+        app.include_router(toss_webhook_router)
+
     # FaceMarket(해커톤) — 플래그 on일 때만 등록. off(프로드 기본)면 라우트 미존재 →
     # 기존 셀러 플로우/배포 무영향. verify·settle 훅이 OpenDID env 없는 프로드를 파손하지 않게.
     if settings.facemarket_enabled:
@@ -487,6 +566,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from .facemarket_admin import router as admin_console_router
 
         app.include_router(admin_console_router)
+        # 관리자 기기 게이트의 등록·승인 라우트. 콘솔 라우터와 같은 플래그 아래 산다.
+        from .facemarket_admin_devices import router as admin_devices_router
+
+        app.include_router(admin_devices_router)
         # 테스트컷 업로드·전송은 콘솔의 모델 상세에서 쓰는 하위 리소스다. 콘솔 라우터
         # 뒤에 붙여 /admin/models 목록·상세는 콘솔이, /test-cuts 는 이 모듈이 맡는다.
         app.include_router(admin_models_router)

@@ -1,4 +1,5 @@
 import publicCombinationTable from '../../data/genexamples_public_combinations.json' with { type: 'json' };
+import { filterExamplesForModel } from './identityScope.js';
 import { poseExampleDirectionCompatible } from './storyboardTaxonomy.js';
 import { detailDirectionFromExample } from './storyboardExampleSelection.js';
 import {
@@ -18,18 +19,8 @@ export function combinationKey({ cutType, shot, clothingType, gender }) {
   return [cutType, shot, clothingType, normalizedGender(cutType, gender) ?? 'any'].join(':');
 }
 
-export function publicGenerationExampleCombinations() {
-  return PUBLIC_COMBINATIONS;
-}
-
 export function isGenerationCombinationPublic(condition) {
   return PUBLIC_KEYS.has(combinationKey(condition));
-}
-
-export function hasPublicGenerationExamplesForCut({ cutType, clothingType, gender, shots }) {
-  return (shots || []).some((shot) => isGenerationCombinationPublic({
-    cutType, shot, clothingType, gender,
-  }));
 }
 
 const compareText = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
@@ -220,8 +211,9 @@ export function canRerollGenerationExample(block, { catalog, product, gender }) 
   return candidatesForBlock(block, catalog || [], product, gender).length > 1;
 }
 
-function candidatesForBlock(block, catalog, product, gender) {
-  return selectGenerationExamples(catalog, {
+function candidatesForBlock(block, catalog, product, gender, identityKind = null) {
+  // 이 모델로 만들 수 없는 예시는 후보에서 아예 뺀다(판정은 서버 규칙 표 — lib/identityScope.js).
+  return filterExamplesForModel(selectGenerationExamples(catalog, {
     cutType: block.cutType,
     shot: block.shot,
     clothingType: product?.clothingType,
@@ -229,7 +221,7 @@ function candidatesForBlock(block, catalog, product, gender) {
     spaceGroupId: block.spaceGroupId,
     direction: block.direction,
     mixMoodBuckets: block.cutType === 'styling',
-  });
+  }), identityKind, block);
 }
 
 function usageKey(block, product, gender) {
@@ -284,7 +276,7 @@ export function repeatedAllExampleVariationIds(blocks, catalog = []) {
 // avoidByBlockId: { [blockId]: exampleId } — 예시 셔플이 "직전과 같은 예시"를 피하도록
 // 블록별 회피 대상을 넘긴다. 후보가 그것뿐이면 회피를 포기하고 그대로 쓴다(빈 배정 방지).
 export function assignGenerationExamples(blocks, {
-  catalog, product, gender, onlyBlockIds = null, avoidByBlockId = null,
+  catalog, product, gender, onlyBlockIds = null, avoidByBlockId = null, identityKind = null,
 }) {
   if (!Array.isArray(blocks)) return { blocks, changed: false, assignedIds: [], protectedIds: [], missingIds: [] };
   const only = onlyBlockIds == null ? null : new Set(onlyBlockIds);
@@ -295,7 +287,7 @@ export function assignGenerationExamples(blocks, {
   // 하나의 촬영 예시를 공유하고 실제 생성만 각 colorId의 상품 사진으로 수행한다.
   for (const block of blocks) {
     if (block?.source !== 'ai' || !block.colorwayGroupId || !block.exampleId) continue;
-    const pool = candidatesForBlock(block, catalog, product, gender).slice(0, 3);
+    const pool = candidatesForBlock(block, catalog, product, gender, identityKind).slice(0, 3);
     const selected = pool.find((example) => example.id === block.exampleId);
     if (!selected) continue;
     const key = usageKey(block, product, gender);
@@ -307,7 +299,7 @@ export function assignGenerationExamples(blocks, {
   const countedColorwayTemplates = new Set();
   for (const block of blocks) {
     if (block?.source !== 'ai' || block.exampleSelectionOrigin !== 'auto' || !block.exampleId) continue;
-    const pool = candidatesForBlock(block, catalog, product, gender).slice(0, 3);
+    const pool = candidatesForBlock(block, catalog, product, gender, identityKind).slice(0, 3);
     const slot = pool.findIndex((example) => example.id === block.exampleId);
     if (slot < 0) continue;
     const key = usageKey(block, product, gender);
@@ -353,7 +345,7 @@ export function assignGenerationExamples(blocks, {
     }
     if (block.exampleSelectionOrigin != null) return block;
 
-    const pool = candidatesForBlock(block, catalog, product, gender).slice(0, 3);
+    const pool = candidatesForBlock(block, catalog, product, gender, identityKind).slice(0, 3);
     if (!pool.length) {
       missingIds.push(block.id);
       return block;

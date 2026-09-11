@@ -22,7 +22,7 @@ test('랜딩 CTA는 지원서·등록·모델이 모두 없을 때만 얼리버�
 
   assert.deepEqual(landing(null, null, null), {
     label: '얼리버드 지원하기',
-    to: '/model/apply',
+    to: '/apply',
   });
   assert.equal(landing(null, null, { id: 'a1', status: 'under_review' }), null);
   assert.equal(landing(null, null, { id: 'a2', status: 'rejected' }), null);

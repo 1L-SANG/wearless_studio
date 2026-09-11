@@ -53,7 +53,7 @@ test('adjustment hotspots are immediately available without the old question car
   assert.match(source, /const adjustmentHotspots = steps\.flatMap/);
   assert.match(source, /onAdjustmentSelect=\{openAdjustmentExamples\}/);
   assert.match(source, /continueLabel=\{continueLabel\}/);
-  assert.match(source, /`수정 반영 · \$\{CREDIT_COSTS\.mannequinGenerate\} 크레딧`/);
+  assert.match(source, /mannequinRegenerationCtaLabel\(regenerationQuote\)/);
   assert.match(source, /listModels\(\)\.catch\(\(\) => \[\]\)/);
   assert.match(source, /realModelFeeLabel\([\s\S]*analysis\?\.selectedModelId,[\s\S]*realModels,[\s\S]*horizonCutCount \|\| 0,[\s\S]*\)/);
   assert.match(

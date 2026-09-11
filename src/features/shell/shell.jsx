@@ -16,6 +16,7 @@ import { WIZARD_STEPS, STEP_INDEX } from '@/lib/wizardSteps.js';
 import { flushProductDraftSave } from '@/lib/draftStore.js';
 import { recordCreditReturn } from '@/lib/creditReturn.js';
 import { draftSlot } from '@/lib/draftSlot.js';
+import { ProfileMenuIcon } from './ProfileMenuIcon.jsx';
 
 draftSlot.configure(api);
 
@@ -117,7 +118,7 @@ export function TopNav() {
             <ProfileMenu />
           </>
         ) : (
-          <button className="nav-login" onClick={openTopNavLogin}>로그인</button>
+          <button className="nav-login" onClick={openTopNavLogin}>로그인/회원가입</button>
         )}
       </div>
     </nav>
@@ -208,16 +209,25 @@ function ProfileMenu() {
           {IS_FACEMARKET && (
             <button className="profile-item" role="menuitem"
               onClick={() => { setOpen(false); navigate('/model/register'); }}>
-              <Icon name="user" size={16} stroke={1.8} />모델 등록
+              <ProfileMenuIcon name="model" />모델 등록
             </button>
           )}
           <button className="profile-item" role="menuitem"
             onClick={() => { setOpen(false); navigate('/pricing'); }}>
-            <Icon name="star" size={16} stroke={1.8} />요금제 관리
+            <ProfileMenuIcon name="pricing" />요금제 관리
           </button>
+          {/* 구독 관리는 해지·카드 변경이 사는 자리다. 요금제(/pricing)는 '무엇을 살까'
+              라서 이미 구독 중인 사람이 해지하러 갈 곳이 없었다 — facemarket 은 구독을
+              팔지 않으므로 ai 도메인에서만 보인다. */}
+          {!IS_FACEMARKET && (
+            <button className="profile-item" role="menuitem"
+              onClick={() => { setOpen(false); navigate('/subscription'); }}>
+              <ProfileMenuIcon name="subscription" />구독 관리
+            </button>
+          )}
           <button className="profile-item" role="menuitem"
             onClick={() => { setOpen(false); navigate('/credits/history'); }}>
-            <Icon name="coins" size={16} stroke={1.8} />크레딧 사용 내역
+            <ProfileMenuIcon name="credits" />크레딧 사용 내역
           </button>
           {/* facemarket 은 로그아웃 착지점을 먼저 랜딩으로 옮기고 세션을 끊는다. 순서를
               바꾸면 안 된다 — /model/* 에 선 채로 세션이 사라지면 RequireAuth 가
@@ -226,7 +236,7 @@ function ProfileMenu() {
               옮겨도 안전하다. ai 도메인은 종전대로 라우트를 그대로 둔다. */}
           <button className="profile-item" role="menuitem"
             onClick={() => { setOpen(false); if (IS_FACEMARKET) navigate('/'); signOut(); }}>
-            <Icon name="logOut" size={16} stroke={1.8} />로그아웃
+            <ProfileMenuIcon name="logout" />로그아웃
           </button>
         </div>
       )}

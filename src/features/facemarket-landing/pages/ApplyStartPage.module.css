@@ -1,0 +1,56 @@
+.wrap { width: 100%; max-width: 1184px; margin: 0 auto; word-break: keep-all; }
+.wrap p { margin: 0; }
+.wrap b { font-weight: 600; }
+.dashboard { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); margin: 12px 0 28px; border-bottom: 1px solid var(--fm-line); }
+.intro { display: flex; flex-direction: column; align-items: flex-start; padding: 28px 36px 24px 0; border-right: 1px solid var(--fm-line); }
+.intro .eyebrow { margin-bottom: 20px; color: var(--fm-muted); font-size: 13px; font-weight: 500; }
+.intro h1 { margin: 0 0 18px; font: 600 62px/1.08 var(--font-body); letter-spacing: -.055em; }
+.lead { color: var(--fm-muted); font-size: 17px; line-height: 1.65; }
+.primary { display: inline-flex; align-items: center; justify-content: center; min-height: 52px; min-width: 200px; margin-top: 26px; padding: 0 24px; border-radius: var(--r-pill); background: var(--fm-ink); color: var(--bg-1); text-decoration: none; font-size: 16px; font-weight: 600; }
+.faces { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; width: 100%; margin-top: 34px; }
+.faces img { display: block; width: 100%; aspect-ratio: 3/4; object-fit: cover; object-position: center 22%; border-radius: var(--r-4); }
+.intro .caption { margin-top: 10px; color: var(--fm-muted); font-size: 12px; }
+.footnote { display: flex; justify-content: space-between; gap: 16px; width: 100%; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--fm-line); color: var(--fm-muted); font-size: 13px; }
+.side { min-width: 0; padding-left: 28px; }
+.side h2 { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.35; }
+.side ul, .side ol { padding: 0; margin: 12px 0 0; list-style: none; }
+.benefits { padding: 6px 0 18px; }
+.benefits li { display: flex; align-items: baseline; gap: 12px; padding: 5px 0; font-size: 14px; }
+.benefits li > span { color: var(--fm-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.emphasis { color: var(--fm-accent); }
+.earnings { padding: 20px 0; border-top: 1px solid var(--fm-line); }
+.earnings ul { border-top: 1px solid var(--fm-line); }
+.earnings li { padding: 10px 0; border-bottom: 1px solid var(--fm-line); font-size: 14px; line-height: 1.6; }
+.earnings .fine { margin-top: 8px; color: var(--fm-muted); font-size: 12px; line-height: 1.65; }
+.info { position: relative; display: inline-flex; vertical-align: middle; color: var(--fm-muted); cursor: help; }
+.tooltip { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 40; width: max-content; max-width: 260px; padding: 8px 10px; border: 1px solid var(--fm-line); border-radius: var(--r-3); background: var(--bg-1); color: var(--fm-muted); font-size: 12px; box-shadow: var(--elev-soft); visibility: hidden; opacity: 0; pointer-events: none; }
+.info:hover .tooltip, .info:focus .tooltip { visibility: visible; opacity: 1; }
+.qualifications { padding: 18px 0 22px; border-top: 1px solid var(--fm-line); }
+.qualifications ul { display: grid; gap: 9px; }
+.qualifications li { display: flex; align-items: center; gap: 9px; font-size: 14px; line-height: 1.55; }
+.qualifications svg { flex: none; color: var(--fm-muted); }
+.faq { max-width: 960px; margin: 12px auto 64px; padding-top: 32px; }
+.faq h2 { margin: 0 0 24px; text-align: center; font: 600 clamp(22px, 2.4vw, 28px)/1.3 var(--font-body); }
+.faqCards { display: flex; flex-direction: column; gap: 12px; }
+.faqCard { padding: 4px 22px; border: 1px solid var(--ring); border-radius: var(--fm-faq-radius); background: var(--bg-1); box-shadow: var(--elev-card-alt); }
+.faqCard summary { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 60px; padding: 16px 0; cursor: pointer; list-style: none; font-size: 17px; font-weight: 500; line-height: 1.4; }
+.faqCard summary::-webkit-details-marker { display: none; }
+.faqCard summary::after { content: ''; flex: none; width: 8px; height: 8px; margin-right: 6px; border-right: 1.5px solid var(--fm-muted); border-bottom: 1.5px solid var(--fm-muted); transform: rotate(45deg); }
+.faqCard[open] summary::after { transform: rotate(-135deg); }
+.faqCard p { padding: 0 0 18px; color: var(--fm-muted); font-size: 15.5px; line-height: 1.65; }
+.wrap :is(a, summary, .info):focus-visible { outline: 2px solid var(--fm-accent); outline-offset: 4px; }
+@media (max-width: 767px) {
+  .dashboard { grid-template-columns: 1fr; margin: 22px 0 24px; }
+  .intro { padding: 24px 0; border-right: 0; }
+  .intro h1 { font-size: 48px; }
+  .intro .eyebrow { margin-bottom: 16px; }
+  .lead { font-size: 16px; }
+  .faces { gap: 4px; margin-top: 26px; }
+  .footnote { margin-top: 20px; font-size: 12px; }
+  .side { padding: 0; border-top: 1px solid var(--fm-line); }
+  .benefits { padding-top: 22px; }
+  .earnings .fine { font-size: 13px; }
+  .faq { margin: 4px 0 40px; padding-top: 24px; }
+  .faqCard { padding: 2px 16px; }
+  .faqCard summary { min-height: 56px; font-size: 16px; }
+}

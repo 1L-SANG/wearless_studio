@@ -5,7 +5,6 @@
    상단바 세 항목은 각자 자기 라우트를 갖는다(SPA, 새 페이지처럼):
    /models · /license · /payout. 전부 무인증 공개라 설명을 다 읽고 나서 전환하게 되고,
    각 페이지 CTA 가 실제 인증 라우트(/model/*)로 보낸다.
-   /models 와 /payout 은 아직 화면이 없어 자리만 잡아 뒀다(PlaceholderPage).
    상단바에서 내려온 /register(등록 7단계 안내)와 /model-info(프라이버시)는 살아 있고
    푸터에서 들어간다.
    ============================================================= */
@@ -45,8 +44,8 @@ export function FacemarketLanding() {
             <HeroSection onPrimary={onPrimary} primaryLabel={ctaLabel} />
             <GallerySection />
           </div>
-          {/* IntroSection(리드문+CTA)은 2026-09-03 오너 지시로 내렸다 — 리드와 CTA 가 히어로로
-              올라가 같은 내용이 두 번 서던 것. 파일은 남겨 둔다(등록 안내 등 다른 자리 후보). */}
+          {/* 별도 리드문과 CTA 섹션은 2026-09-03 오너 지시로 내렸고 파일도 지웠다 — 리드와
+              CTA 가 히어로로 올라가 같은 내용이 두 번 서던 것. */}
           {/* 서비스 설명과 FAQ 는 홈에만 둔다(사용자 지시 2026-09-02). 두 섹션 모두
               **아직 코드에 없는 지원·검토 절차**를 설명한다 — 각 파일 머리말의 경고 참고. */}
           <HowItWorksSection />

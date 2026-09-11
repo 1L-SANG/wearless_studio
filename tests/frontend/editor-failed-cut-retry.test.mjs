@@ -31,22 +31,23 @@ test('AI가 아닌 슬롯이나 원본 콘티가 없는 슬롯은 재생성하�
   assert.equal(buildFailedCutRetry([{ id: 'mine', source: 'mine', cutType: null }], 'mine'), null);
 });
 
-test('저장 콘티를 바꾸지 않고 분석의 2슬롯 모델을 컷별 재시도에 복원한다', () => {
+test('컷별 재시도는 선택 모델 하나를 모든 착용 컷에 복원한다', () => {
   const storyboard = [
     { id: 'h', source: 'ai', cutType: 'horizon', shot: 'full' },
     { id: 's', source: 'ai', cutType: 'styling', shot: 'full' },
     { id: 'm', source: 'ai', cutType: 'mirror', shot: 'full' },
     { id: 'p', source: 'ai', cutType: 'product', shot: 'ghost' },
   ];
+  // 저장된 옛 stylingModelId 가 남아 있어도 무시한다(2026-09-11 사용자 결정).
   const realSelection = {
     selectedModelId: '11111111-1111-1111-1111-111111111111',
     stylingModelId: 'mA',
   };
 
-  assert.equal(buildFailedCutRetry(storyboard, 'h', realSelection).request.modelId,
-    realSelection.selectedModelId);
-  assert.equal(buildFailedCutRetry(storyboard, 's', realSelection).request.modelId, 'mA');
-  assert.equal(buildFailedCutRetry(storyboard, 'm', realSelection).request.modelId, 'mA');
+  for (const blockId of ['h', 's', 'm']) {
+    assert.equal(buildFailedCutRetry(storyboard, blockId, realSelection).request.modelId,
+      realSelection.selectedModelId, blockId);
+  }
   assert.equal(buildFailedCutRetry(storyboard, 'p', realSelection).request.modelId, null);
   assert.equal(buildFailedCutRetry(storyboard, 's', {
     selectedModelId: 'mB', stylingModelId: null,
@@ -57,7 +58,6 @@ test('에디터는 실패 슬롯에서 일반 새 이미지 폼 대신 전용 �
   const editor = readFileSync(new URL('../../src/features/editor/Editor.jsx', import.meta.url), 'utf8');
   const panels = readFileSync(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url), 'utf8');
   assert.match(editor, /buildFailedCutRetry\([\s\S]*wardrobeContext\.current\.storyboard,[\s\S]*pendingSlot\.sourceBlockId,[\s\S]*analysis,[\s\S]*\)/);
-  assert.match(editor, /stylingModelPatchForAnalysis\(an, AI_MODELS\)/);
   assert.match(editor, /onRetryFailedCut=\{retryFailedCut\}/);
   assert.match(panels, /if \(failedCutRetry\)/);
   assert.match(panels, /시그니처 컷 다시 만들기/);

@@ -17,6 +17,7 @@ from io import BytesIO
 from PIL import Image
 
 from .. import facemarket, repo
+from ..agents import identity_scope
 from ..agents import (
     content_roles,
     copy_qc,
@@ -193,7 +194,8 @@ async def _normalize_detail_openai_refs(prepared, model: str):
     return result
 
 
-async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None):
+async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
+                    hair_profile=None, face_shape_profile=None, face_identity_spec=None):
     """준비된 블록별
     (block, images, manifest, has_face, product_images,
     space_set_plate, strict_space_scene_qc, passthrough, confirmed_packet,
@@ -295,6 +297,7 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None):
             # 큐 대기 중인 컷이 전부 '생성 중'으로 보이지 않는다(editor_wait_dev_spec §2-1).
             await _emit(app.state.pool, job_id, "step",
                         {"blockId": b.get("id"), "status": "cut_start"})
+            face_pass_outcome: dict = {}
             if confirmed_packet is not None:
                 generate_kwargs = {
                     "confirmed_prompt_input": confirmed_packet.prompt_input,
@@ -307,6 +310,20 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None):
                 # 컷·VIRTUAL·NONE 소스는 제외) — 얼굴 노출 여부와는 무관하다(A4와 동일 원칙).
                 if real_identity_attached and body_profile is not None:
                     generate_kwargs["body_profile"] = body_profile
+                # 머리·얼굴형은 등록자 LoRA 가 학습한 모습이고(fm_model_loras), 얼굴 패스 근거도 같은 행이다.
+                # 값이 없으면 키를 생략해 프롬프트가 바이트 단위로 기존과 같다.
+                if real_identity_attached and hair_profile is not None:
+                    generate_kwargs["hair_profile"] = hair_profile
+                if real_identity_attached and face_shape_profile is not None:
+                    generate_kwargs["face_shape_profile"] = face_shape_profile
+                if real_identity_attached and face_identity_spec is not None:
+                    generate_kwargs["face_identity_spec"] = face_identity_spec
+                    # 얼굴 패스 결과(applied / fallback:<reason>) — 자산 메타·이벤트용.
+                    generate_kwargs["face_pass_outcome"] = face_pass_outcome
+                    from ..agents import identity_source as _identity_source
+
+                    generate_kwargs["face_pass_url_provider"] = (
+                        lambda: _identity_source.active_face_backend_url(app.state.pool))
             # 컷 생성 재시도 — 안전필터·응답 누락처럼 "다시 부르면 달라질 수 있는" 실패는
             # 한 번 더 시도한다. 빈 슬롯은 셀러에게 그냥 못 만든 페이지이고, 그 값은 우리가
             # 흡수해야 한다(오너 8/15). ValueError(잘못된 cutType 등)는 결정적이라 제외.
@@ -593,6 +610,11 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None):
             w, h = _dims(img)
             # 대기 화면 프리뷰 — asset 행은 finalize에서만 생기므로 /file 경로는 아직 404다.
             # REAL FaceMarket 컷은 최종 권한 펜스 전까지 출력 위치를 이벤트 원장에 남기지 않는다.
+            if face_pass_outcome.get("face_pass"):
+                # 셀러 화면은 그대로다 — "그 컷 얼굴이 어디서 왔나"를 원장에 남기는 한 줄.
+                await _emit(app.state.pool, job_id, "step",
+                            {"blockId": b.get("id"), "status": "face_pass",
+                             "result": face_pass_outcome["face_pass"]})
             step = {"blockId": b.get("id"), "status": "cut_done",
                     "width": w, "height": h}
             if not real_identity_attached:
@@ -610,6 +632,8 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None):
                  "metadata": {
                      "facemarket_real_derived": real_identity_attached,
                      "cut_type": b.get("cutType"),
+                     **({"face_pass": face_pass_outcome["face_pass"]}
+                        if face_pass_outcome.get("face_pass") else {}),
                  }},
                 has_face,
                 garment_qc,
@@ -903,15 +927,17 @@ async def run_detail_page_job(app, job: dict) -> None:
                 if isinstance(b, dict) and b.get("source") == "ai"
             ]
             selected_model_id = payload.get("modelId")
-            styling_model_id = payload.get("stylingModelId")
             block_model_ids = {
                 id(block): facemarket.resolve_block_model_id(
-                    block.get("cutType"), selected_model_id, styling_model_id
+                    block.get("cutType"), selected_model_id,
                 )
                 for block in ai_blocks
             }
-            uses_horizon_identity = any(
-                block.get("cutType") == "horizon" for block in ai_blocks
+            # "실제 모델 얼굴이 실제로 쓰이는 컷이 있는가" — 착용 컷이면 전부 해당한다.
+            # REAL 자산·LoRA·라이선스 확인·정산이 전부 이 판정에 붙는다.
+            uses_real_identity = any(
+                facemarket.real_identity_allowed_cut(block.get("cutType"))
+                for block in ai_blocks
             )
             example_repeat_indexes = _example_repeat_indexes(
                 ai_blocks, clothing_type
@@ -920,7 +946,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             from ..agents import identity_source
             license_row = None
             real_refs = None
-            if selected_is_real and uses_horizon_identity:
+            if selected_is_real and uses_real_identity:
                 snapshot = payload.get("_facemarket")
                 if (
                     not isinstance(snapshot, dict)
@@ -955,7 +981,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     )
             elif (
                 not selected_model_id
-                and uses_horizon_identity
+                and uses_real_identity
                 and s.facemarket_enabled
                 and (
                     project.get("facemarket_license_id")
@@ -965,10 +991,12 @@ async def run_detail_page_job(app, job: dict) -> None:
                 raise facemarket._err(
                     "model_unavailable", "사용할 수 없는 모델입니다.", status=409
                 )
+            # 실제 모델을 골랐어도 이 잡에 얼굴이 들어가는 컷이 하나도 없으면(상품컷만)
+            # 신원 소스를 REAL 로 주장하지 않는다 — 자산·라이선스를 요구하지 않는 경로다.
             source_model_id = (
                 selected_model_id
-                if not selected_is_real or uses_horizon_identity
-                else styling_model_id
+                if (not selected_is_real or uses_real_identity)
+                else None
             )
             source = identity_source.select_source(
                 selected_model_id=(source_model_id if block_model_ids else None),
@@ -1202,6 +1230,19 @@ async def run_detail_page_job(app, job: dict) -> None:
             }
             if _bp["heightBucket"] or _bp["bodyType"]:
                 body_profile = _bp
+        # 등록자별 LoRA 장부 — 머리·얼굴형 블록과 얼굴 패스 근거가 모두 이 행에서 온다.
+        # 행이 없으면 전부 None 이라 기존 동작 그대로다(테이블 부재 환경도 안전).
+        hair_profile = face_shape_profile = None
+        fm_lora_spec = None
+        if isinstance(license_row, dict) and license_row.get("model_id"):
+            from ..agents import face_identity as _face_identity
+
+            async with app.state.pool.connection() as _conn:
+                _lora = await identity_source.resolve_enabled_lora(
+                    _conn, str(license_row["model_id"])
+                )
+            hair_profile, face_shape_profile = identity_source.profiles_from_lora_row(_lora)
+            fm_lora_spec = _face_identity.face_identity_from_lora_row(_lora)
 
         # (runtime block, images, manifest, has_face, product_images,
         #  space_set_plate, strict_space_scene_qc, passthrough, confirmed_packet,
@@ -1247,9 +1288,12 @@ async def run_detail_page_job(app, job: dict) -> None:
             cut_spec.pop("modelId", None)
             cut_spec.pop("model_id", None)
             block_model_id = block_model_ids[id(b)]
+            # 실제 모델을 골랐으면 착용 컷은 전부 REAL 이다(2026-09-11 사용자 결정).
+            # 예전에는 여기서 horizon 만 REAL 로 봤다 — 스타일링·미러는 같은 모델을 골라도
+            # 가상 얼굴이 들어갔다는 뜻이다.
             cut_source = (
                 "REAL"
-                if source == "REAL" and b.get("cutType") == "horizon"
+                if source == "REAL" and facemarket.real_identity_allowed_cut(b.get("cutType"))
                 else "VIRTUAL"
                 if block_model_id
                 else "NONE"
@@ -1276,6 +1320,18 @@ async def run_detail_page_job(app, job: dict) -> None:
                 normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
             except ValueError:
                 normalized = None  # generate()가 블록 단위 실패로 처리하는 기존 경로 유지
+            # 이 모델로 만들 수 없는 컷(콘티보드 범위 밖)은 **생성 전에** 건너뛴다.
+            # 실제 모델에 가상 전용 컷을 억지로 일반 패킷으로 만들지 않는다(2026-09-11 결정).
+            # 건너뛴 컷은 자산이 없으니 정산(성공 컷 수 기준)에도 안 잡힌다 = 크레딧 0.
+            if not identity_scope.block_allowed(b, selected_model_id):
+                log.info("AG-06 identity_scope_mismatch job %s block %s scope=%s model=%s",
+                         job_id, b.get("id"), identity_scope.scope_for_block(b),
+                         identity_scope.identity_kind(selected_model_id))
+                await _emit(app.state.pool, job_id, "step",
+                            {"blockId": b.get("id"), "status": "cut_skipped",
+                             "reason": "identity_scope_mismatch"})
+                prepared.append((cut_spec, [], "", False, [], None, False))
+                continue
             try:
                 confirmed_requested = bool(
                     normalized is not None
@@ -1366,7 +1422,12 @@ async def run_detail_page_job(app, job: dict) -> None:
                 attach_grid, _badge = cut_generator.real_identity_plan(
                     normalized.get("cutType") if normalized else None, wants_face=wants)
                 model_images = real_model_images if attach_grid else []
-                has_identity = _badge and len(model_images) == 2
+                # 전신(body_front)이 등록돼 있으면 3장이다(얼굴 2 + 전신 1). == 2 로 보면
+                # 전신 자산을 가진 등록자는 상세페이지에서 얼굴 패스가 통째로 빠진다
+                # (에디터 워커는 >= 2 라 같은 모델이 컷 경로마다 다르게 동작했다 — 2026-09-11).
+                if len(model_images) == 3:
+                    model_has_full_body = True
+                has_identity = _badge and len(model_images) >= 2
             elif cut_source == "VIRTUAL":
                 try:
                     model_images = list(
@@ -1587,8 +1648,8 @@ async def run_detail_page_job(app, job: dict) -> None:
                     has_match=bool(matching_images), matching_count=len(matching_images),
                     matching_custom=[matching_id.startswith("custom_") for matching_id in mids],
                     mood_count=attached_mood_count,
-                    has_model_face=len(model_images) == 2,
-                    has_model_sheet=len(model_images) == 2 and not model_has_full_body,
+                    has_model_face=len(model_images) >= 2,
+                    has_model_sheet=len(model_images) >= 2 and not model_has_full_body,
                     has_model_full_body=model_has_full_body,
                     has_face=False,
                     example_scope=example_scope,
@@ -1599,7 +1660,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     )["_referenceDirectionCompatible"])
             # 4번째 = has_identity: 검증 얼굴(REAL 그리드)이 실제 담긴 컷 → face_cuts 계수·
             # generate has_face·검증 배지 근거. VIRTUAL 그리드는 검증 얼굴이 아니므로 False.
-            real_identity_attached = cut_source == "REAL" and len(model_images) == 2
+            real_identity_attached = cut_source == "REAL" and len(model_images) >= 2
             prepared.append(
                 (
                     cut_spec,
@@ -1664,6 +1725,12 @@ async def run_detail_page_job(app, job: dict) -> None:
         _gen_cuts_kwargs = {}
         if body_profile is not None:
             _gen_cuts_kwargs["body_profile"] = body_profile
+        if hair_profile is not None:
+            _gen_cuts_kwargs["hair_profile"] = hair_profile
+        if face_shape_profile is not None:
+            _gen_cuts_kwargs["face_shape_profile"] = face_shape_profile
+        if fm_lora_spec is not None:
+            _gen_cuts_kwargs["face_identity_spec"] = fm_lora_spec
         (
             cut_results,
             cut_assets,

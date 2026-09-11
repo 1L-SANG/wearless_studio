@@ -7,7 +7,9 @@ import argparse, json, re, pathlib, sys
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SRC, OUT = ROOT / "documents/legal", ROOT / "public/legal"
 OUT.mkdir(parents=True, exist_ok=True)
-EFFECTIVE = "2026년 9월 7일"
+EFFECTIVE_DATE = "2026-09-11"
+year, month, day = (int(part) for part in EFFECTIVE_DATE.split("-"))
+EFFECTIVE = f"{year}년 {month}월 {day}일"
 COMPANY = json.loads((ROOT / "src/lib/companyInfo.json").read_text())
 CO = dict(name=COMPANY["name"], ceo=COMPANY["representative"], brn=COMPANY["businessRegistrationNumber"],
           addr=COMPANY["address"], tel=COMPANY["phone"], email=COMPANY["email"])
@@ -92,6 +94,22 @@ def rewrite_links(text, app):
         return f"]({target})" if target else "]"
     text = re.sub(r"\]\((0\d_|1\d_)[a-z_]+_v1\.md(?:#[^)]*)?\)", repl, text)
     return re.sub(r"\[([^\]]+)\]\]", r"\1", text)  # 대상 없는 링크 → 텍스트
+def broken_bold(text):
+    """마크다운 표준(CommonMark)에서 강조로 인식되지 않는 ** 를 찾는다.
+    닫는 ** 앞이 문장부호(따옴표·괄호·링크 닫힘)이고 바로 뒤에 조사 같은 글자가 붙으면
+    렌더러(marked)가 ** 를 글자 그대로 내보낸다. 예: **"서비스"**란 → "**서비스**"란 으로 쓴다.
+    2026-09-11 실서버 이용약관에서 12곳이 그대로 노출돼 추가했다."""
+    import unicodedata
+    punct = lambda c: unicodedata.category(c).startswith("P")
+    found = []
+    for m in re.finditer(r"\*\*([^*\n]+?)\*\*", text):
+        inner, after = m.group(1), text[m.end():m.end() + 1]
+        before = text[m.start() - 1] if m.start() else ""
+        close_fail = punct(inner[-1]) and after and not after.isspace() and not punct(after)
+        open_fail = punct(inner[0]) and before and not before.isspace() and not punct(before)
+        if close_fail or open_fail: found.append(m.group(0) + after)
+    return found
+
 def publish():
     manifest, leftovers = [], {}
     for fn, slug, app, title in DOCS:
@@ -106,8 +124,10 @@ def publish():
         text = re.sub(r"\n---\s*$", "\n", text).rstrip() + "\n"  # 문서 끝 구분선·빈 줄 제거
         left = sorted(set(re.findall(r"\[[^\]\n]{1,40}\](?!\()", text)))
         if left: leftovers[slug] = left
+        bold = broken_bold(text)
+        if bold: leftovers[slug] = leftovers.get(slug, []) + [f"굵게 미인식 {b}" for b in bold]
         (OUT / f"{slug}.md").write_text(text)
-        manifest.append({"slug": slug, "app": app, "title": title, "version": "v1.0", "effectiveDate": "2026-09-07", "source": fn})
+        manifest.append({"slug": slug, "app": app, "title": title, "version": "v1.1", "effectiveDate": EFFECTIVE_DATE, "source": fn})
     (OUT / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
     # llms.txt — 06 부록 코드블록
     faq = (SRC / "06_facemarket_legal_faq_v1.md").read_text()
@@ -143,7 +163,7 @@ if __name__ == "__main__":
     print(f"published {len(manifest)} docs → public/legal/ (+ public/llms.txt)")
     for d in manifest: print(f"  {d['slug']:22s} {d['app']:10s} {d['title']}")
     if leftovers:
-        print("\n남은 자리표시자 (공개 전 해결):")
+        print("\n남은 자리표시자·미인식 강조 (공개 전 해결):")
         for k, v in leftovers.items(): print(f"  {k}: {', '.join(v)}")
         sys.exit(1)
     if args.landing_root:

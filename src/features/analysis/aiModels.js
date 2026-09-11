@@ -14,20 +14,20 @@
    ============================================================= */
 
 export const AI_MODELS = [
-  { id: 'mA', displayName: 'Mia', gender: 'women', thumb: '/models/women/w1.webp' },
-  { id: 'mB', displayName: 'Leo', gender: 'men', thumb: '/models/men/m1.webp' },
-  { id: 'mC', displayName: '도윤', gender: 'men', thumb: '/models/men/m2.webp' },
-  { id: 'mD', displayName: '수혁', gender: 'men', thumb: '/models/men/m3.webp' },
-  { id: 'mE', displayName: '지안', gender: 'women', thumb: '/models/women/w2.webp' },
-  { id: 'mF', displayName: '하린', gender: 'women', thumb: '/models/women/w3.webp' },
-  { id: 'mG', displayName: '세아', gender: 'women', thumb: '/models/women/w4.webp' },
-  { id: 'mH', displayName: '예린', gender: 'women', thumb: '/models/women/w5.webp' },
-  { id: 'mI', displayName: '다인', gender: 'women', thumb: '/models/women/w6.webp' },
-  { id: 'mJ', displayName: '소윤', gender: 'women', thumb: '/models/women/w7.webp' },
-  { id: 'mK', displayName: '유나', gender: 'women', thumb: '/models/women/w8.webp' },
-  { id: 'mL', displayName: '채원', gender: 'women', thumb: '/models/women/w9.webp' },
-  { id: 'mM', displayName: '나윤', gender: 'women', thumb: '/models/women/w10.webp' },
-  { id: 'mN', displayName: 'Nora', gender: 'women', thumb: '/models/women/w11.webp' },
+  { id: 'mA', displayName: 'Mia', gender: 'women', thumb: '/models/women/w1.webp', tier: 'basic' },
+  { id: 'mB', displayName: 'Leo', gender: 'men', thumb: '/models/men/m1.webp', tier: 'basic' },
+  { id: 'mC', displayName: '도윤', gender: 'men', thumb: '/models/men/m2.webp', tier: 'extension' },
+  { id: 'mD', displayName: '수혁', gender: 'men', thumb: '/models/men/m3.webp', tier: 'extension' },
+  { id: 'mE', displayName: '지안', gender: 'women', thumb: '/models/women/w2.webp', tier: 'extension' },
+  { id: 'mF', displayName: '하린', gender: 'women', thumb: '/models/women/w3.webp', tier: 'extension' },
+  { id: 'mG', displayName: '세아', gender: 'women', thumb: '/models/women/w4.webp', tier: 'extension' },
+  { id: 'mH', displayName: '예린', gender: 'women', thumb: '/models/women/w5.webp', tier: 'extension' },
+  { id: 'mI', displayName: '다인', gender: 'women', thumb: '/models/women/w6.webp', tier: 'extension' },
+  { id: 'mJ', displayName: '소윤', gender: 'women', thumb: '/models/women/w7.webp', tier: 'extension' },
+  { id: 'mK', displayName: '유나', gender: 'women', thumb: '/models/women/w8.webp', tier: 'extension' },
+  { id: 'mL', displayName: '채원', gender: 'women', thumb: '/models/women/w9.webp', tier: 'extension' },
+  { id: 'mM', displayName: '나윤', gender: 'women', thumb: '/models/women/w10.webp', tier: 'extension' },
+  { id: 'mN', displayName: 'Nora', gender: 'women', thumb: '/models/women/w11.webp', tier: 'extension' },
 ];
 
 /** 가상모델 id 집합 — 라이선스 과금 판정이 이걸로 '실제 모델'을 가른다. */

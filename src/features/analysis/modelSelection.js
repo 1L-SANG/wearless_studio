@@ -34,41 +34,28 @@ export function isRealModelSelection(selectedModelId) {
   return !!selectedModelId && !VIRTUAL_MODEL_IDS.has(selectedModelId);
 }
 
-export function resolveStylingModelId({
-  selectedModelId,
-  stylingModelId,
-  targetGenders,
-  aiModels,
-}) {
-  if (!isRealModelSelection(selectedModelId)) return null;
+/**
+ * 실제 모델 얼굴이 들어가는 컷. 실제 모델을 고르면 **모든 착용 컷**이다(2026-09-11 사용자 결정).
+ * 서버 게이트(facemarket.REAL_IDENTITY_CUT_TYPES)와 같은 규칙이고, 모델의 선택 동의(opt_*)는
+ * 여기서도 판정에 쓰지 않는다.
+ */
+export const REAL_FACE_CUT_TYPES = ['horizon', 'styling', 'mirror', 'base_edit'];
 
-  const targetGender = targetGenders?.[0];
-  const pool = targetGender
-    ? aiModels.filter((model) => model.gender === targetGender)
-    : aiModels;
-  if (pool.some((model) => model.id === stylingModelId)) return stylingModelId;
-  return (pool[0] || aiModels[0])?.id || null;
+/** 이 컷에 실제 모델 얼굴이 들어가는가. */
+export function realFaceAllowedCut(cutType) {
+  return REAL_FACE_CUT_TYPES.includes(cutType);
 }
 
-export function stylingModelPatchForAnalysis(analysis, aiModels) {
-  if (!analysis) return null;
-  const stylingModelId = resolveStylingModelId({
-    selectedModelId: analysis.selectedModelId || analysis.selected_model_id,
-    stylingModelId: analysis.stylingModelId || analysis.styling_model_id,
-    targetGenders: analysis.targetGenders || analysis.target_genders,
-    aiModels,
-  });
-  return stylingModelId !== (
-    analysis.stylingModelId || analysis.styling_model_id || null
-  )
-    ? { stylingModelId }
-    : null;
+/** 실제 모델 얼굴이 들어가는 컷 수 — 과금·가격 표시의 근거. */
+export function realFaceCutCount(blocks) {
+  return (blocks || []).filter((block) => realFaceAllowedCut(block?.cutType)).length;
 }
 
-export function realModelFeeLabel(selectedModelId, models, horizonCutCount = 1) {
-  if (!isRealModelSelection(selectedModelId) || horizonCutCount < 1) return '';
+export function realModelFeeLabel(selectedModelId, models, realFaceCuts = 1) {
+  // 과금 근거는 "실제 모델 얼굴이 들어간 컷 수" — 착용 컷이면 전부 여기에 든다.
+  if (!isRealModelSelection(selectedModelId) || realFaceCuts < 1) return '';
   const selected = (models || []).find((model) => model.id === selectedModelId);
   return selected
-    ? ` + 실제 모델 ₩${(FACEMARKET_PRICING.perCut * horizonCutCount).toLocaleString('ko-KR')}`
+    ? ` + 실제 모델 ₩${FACEMARKET_PRICING.perCut.toLocaleString('ko-KR')}`
     : ' + 실제 모델 이용료 별도';
 }

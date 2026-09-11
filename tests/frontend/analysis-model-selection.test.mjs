@@ -5,8 +5,6 @@ import {
   isRealModelSelection,
   realModelFeeLabel,
   resolveSelectedModelId,
-  resolveStylingModelId,
-  stylingModelPatchForAnalysis,
 } from '../../src/features/analysis/modelSelection.js';
 import { AI_MODELS } from '../../src/features/analysis/aiModels.js';
 
@@ -92,40 +90,6 @@ test('identifies only FaceMarket selections for the mannequin KRW surcharge labe
   assert.equal(isRealModelSelection(null), false);
 });
 
-test('styling model exists only for a real studio model and follows target gender', () => {
-  assert.equal(resolveStylingModelId({
-    selectedModelId: 'face-market-model-id',
-    stylingModelId: null,
-    targetGenders: ['women'],
-    aiModels,
-  }), 'mA');
-  assert.equal(resolveStylingModelId({
-    selectedModelId: 'face-market-model-id',
-    stylingModelId: 'mA',
-    targetGenders: ['men'],
-    aiModels,
-  }), 'mB');
-  assert.equal(resolveStylingModelId({
-    selectedModelId: 'mA',
-    stylingModelId: 'mB',
-    targetGenders: ['women'],
-    aiModels,
-  }), null);
-});
-
-test('legacy resumed analysis receives only the missing styling-model patch', () => {
-  assert.deepEqual(stylingModelPatchForAnalysis({
-    selectedModelId: 'face-market-model-id',
-    stylingModelId: null,
-    targetGenders: ['women'],
-  }, aiModels), { stylingModelId: 'mA' });
-  assert.equal(stylingModelPatchForAnalysis({
-    selectedModelId: 'face-market-model-id',
-    stylingModelId: 'mA',
-    targetGenders: ['women'],
-  }, aiModels), null);
-});
-
 // 카탈로그에 있는 가상모델은 하나도 빠짐없이 무료로 판정돼야 한다. 2026-08-17 에
 // mF~mN 9인을 그리드에만 넣고 무료 집합에 안 넣어, 선택하면 '+ 실제 모델 이용료 별도'
 // 라는 없는 요금이 CTA 에 붙었다. 목록 전체를 훑어 그 사고가 다시 나면 여기서 깨진다.
@@ -160,7 +124,7 @@ test('formats the fixed FaceMarket price regardless of the catalog unit price', 
   );
   assert.equal(
     realModelFeeLabel('face-market-model-id', models, 3),
-    ' + 실제 모델 ₩44,700',
+    ' + 실제 모델 ₩14,900',
   );
   assert.equal(realModelFeeLabel('face-market-model-id', models, 0), '');
   assert.equal(realModelFeeLabel('missing-model-id', models), ' + 실제 모델 이용료 별도');

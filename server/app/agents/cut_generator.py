@@ -32,8 +32,8 @@ from .gemini_image import GeminiImageClient, InlineImage
 from .model_routing import resolve_model
 from .fit_axes import build_fit_profile_block
 from .prompts import _product_block, _sanitize
-from . import pose_crop
-from ..facemarket_physique import build_body_profile_block
+from . import face_identity, pose_crop
+from ..facemarket_physique import build_body_profile_block, build_face_shape_block, build_hair_block
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
 _DEFAULT_PROMPT = os.path.join(_SERVER_DIR, "prompts", "cut_generate_v1.txt")
@@ -617,6 +617,8 @@ def render_cut_prompt(
     authority_plan_line: str | None = None,
     directing_profile: dict | None = None,
     body_profile: dict | None = None,
+    hair_profile: dict | None = None,
+    face_shape_profile: dict | None = None,
 ) -> str:
     """섹션 선택 + ${토큰} 치환 + PRODUCT CONTEXT(ground truth) 자동 주입.
 
@@ -901,9 +903,15 @@ def render_cut_prompt(
         }
     fit_block = build_fit_profile_block(fit_profile)
     body_block = build_body_profile_block(body_profile)
+    # 머리는 착장 컷에서만 의미가 있다(product 컷은 사람이 없다). 값이 없으면 블록을 내지 않으므로
+    # 기존 프롬프트는 바이트 단위로 동일하다.
+    hair_block = build_hair_block(hair_profile) if spec["cutType"] in _WORN_CUTS else ""
+    # 얼굴형도 착장 컷에서만. 생성 단계에서 턱 실루엣을 맞춰 얼굴 패스의 턱 유령을 줄이는 목적이다(§24).
+    face_shape_block = build_face_shape_block(face_shape_profile) if spec["cutType"] in _WORN_CUTS else ""
     block = _product_block(product, analysis or {}, include_legacy_fit=fit_profile is None)
     return "\n\n".join(
-        part for part in (text, directing_block, fit_block, body_block, block) if part
+        part for part in (text, directing_block, fit_block, body_block, hair_block, face_shape_block, block)
+        if part
     )
 
 
@@ -1031,11 +1039,20 @@ _MODEL_FACE_LABEL = ("MODEL FACE — facial identity authority for the selected 
                      "preserve facial identity and facial features; ZERO authority over height, "
                      "head-to-body ratio, shoulders, torso, waist, pelvis, limb proportions, "
                      "body shape, pose, framing or clothing")
-_MODEL_FULL_BODY_LABEL = ("MODEL FULL BODY — full-body proportion authority for the selected "
-                          "model ONLY: preserve height, head-to-body ratio, shoulder width and "
-                          "slope, torso length and build, waist, pelvis and hip width, and arm "
-                          "and leg proportions; ZERO authority over facial identity, facial "
-                          "features, hair, pose, framing or clothing")
+#: ★ 2026-09-10 강화. 부정 열거("ZERO authority over ...")만으로는 gpt-image 가 참조 사진을 통째로
+#: 베꼈다(§27 실측: 배경·하의·구두가 참조에서 그대로 왔고 full 컷은 얼굴 0.828→0.476).
+#: MODEL SHEET 라벨에는 명령형 금지("Do NOT copy the grid layout, framing, poses or clothing")가
+#: 한 번 더 있는데 전신 라벨에는 없었다. 그래서 (1) 앞머리를 "use ONLY ..." 긍정 지시로 바꾸고
+#: (2) 같은 톤의 명령형 금지 한 문장을 뒤에 붙이고 (3) 회색 배경이 장소가 아니라는 사실을 알린다.
+#: 접두어 "MODEL FULL BODY —" 는 유지해야 한다 — cut_output_qc.py:293 이 이걸로 역할을 판정한다.
+_MODEL_FULL_BODY_LABEL = ("MODEL FULL BODY — use ONLY the body outline and proportions from this "
+                          "image: height, head-to-body ratio, shoulder width and slope, torso "
+                          "length and build, waist, pelvis and hip width, and arm and leg "
+                          "proportions. The subject is cut out on a flat grey field; that field is "
+                          "not a location. Do NOT copy its background, location, garments, shoes, "
+                          "pose, framing or camera distance; PRODUCT and MATCHING own the clothing "
+                          "and SPACE SET PLATE owns the location. ZERO authority over facial "
+                          "identity, facial features or hair")
 _MATCH_LABEL = "MATCHING — the user-selected coordinating garment worn in the same outfit"
 _CUSTOM_MATCH_LABEL = (
     _MATCH_LABEL
@@ -1086,7 +1103,16 @@ def build_manifest(
     ``matching_count`` 미지정 시 기존 ``has_match`` 불리언을 그대로 0/1장으로 해석한다.
     실제 첨부 수를 아는 호출자는 count를 넘겨 여러 MATCHING 위치를 선언할 수 있다.
     """
-    if has_model_sheet and has_model_full_body:
+    # 상호배타는 **같은 자리**를 두 권한이 다툴 때만이다.
+    # 세 슬롯은 서로 다른 위치에 온다: MODEL FACE → MODEL SHEET → MODEL FULL BODY.
+    #   · VIRTUAL 2장 = FACE + FULL BODY (sheet 없음)
+    #   · REAL 2장   = MODEL(legacy face) + SHEET (전신 없음)
+    #   · REAL 3장   = FACE + SHEET + FULL BODY  ← 셋 다 켠다. 시트는 얼굴 연속성, 전신은 체형 근거로
+    #     자리와 라벨이 갈라져 있어 권한이 겹치지 않는다(시트 라벨은 "ZERO authority over body shape",
+    #     전신 라벨은 "ZERO authority over facial identity").
+    # 옛 규칙은 얼굴 자산 한 장을 체형 근거로 위장하는 것을 막으려던 것이고, 그 위험은
+    # has_model_face 없이 sheet·full_body 만 선언하는 경우로 좁혀진다.
+    if has_model_sheet and has_model_full_body and not has_model_face:
         raise ValueError("conflicting_model_body_authority")
 
     lines: list[str] = []
@@ -1095,16 +1121,19 @@ def build_manifest(
         lines.append(f"{i}. {_MANNEQUIN_LABEL}")
         i += 1
     if has_model_face:
-        # FaceMarket의 구 face+sheet 계약은 기존 라벨을 유지한다. 새 가상모델
-        # face+full-body 계약(또는 불완전한 후보 검증 입력)은 명시적인 FACE 역할을 쓴다.
-        model_face_label = _MODEL_LABEL if has_model_sheet else _MODEL_FACE_LABEL
+        # FaceMarket의 구 face+sheet 계약(전신 없음)은 기존 라벨을 그대로 유지한다 — 그 경로의
+        # 프롬프트는 바이트 단위로 안 바뀐다. 전신 근거가 실제로 붙는 조합(가상모델 face+full-body,
+        # 실존 등록자 face+sheet+full-body)은 명시적인 FACE 역할을 쓴다.
+        model_face_label = _MODEL_LABEL if (has_model_sheet and not has_model_full_body) else _MODEL_FACE_LABEL
         lines.append(f"{i}. {model_face_label}")
+        i += 1
+    # 순서 = 자산 해석 순서(identity_source: face_front → grid_sedcard → body_front).
+    # 첨부 바이트와 라벨이 어긋나면 권한이 통째로 밀린다.
+    if has_model_sheet:
+        lines.append(f"{i}. {_MODEL_SHEET_LABEL}")
         i += 1
     if has_model_full_body:
         lines.append(f"{i}. {_MODEL_FULL_BODY_LABEL}")
-        i += 1
-    if has_model_sheet:
-        lines.append(f"{i}. {_MODEL_SHEET_LABEL}")
         i += 1
     for a in prod_assets:
         lines.append(f"{i}. {_SLOT_LABEL.get(a.get('slot'), 'PRODUCT — view of the garment')}")
@@ -1223,6 +1252,8 @@ def build_prompt(
     analysis: dict | None = None, manifest: str | None = None, has_face: bool = False,
     directing_profile: dict | None = None,
     body_profile: dict | None = None,
+    hair_profile: dict | None = None,
+    face_shape_profile: dict | None = None,
     qc_corrections: tuple[str, ...] = (),
 ) -> str:
     """스펙 정규화(ValueError=unknown_cut_type) + 템플릿 렌더. manifest 미지정 시
@@ -1262,7 +1293,9 @@ def build_prompt(
         load_cut_template(), spec, product, analysis or {}, clothing_type, manifest, has_face,
         authority_plan_line=authority_plan_line,
         directing_profile=directing_profile,
-        body_profile=body_profile)
+        body_profile=body_profile,
+        hair_profile=hair_profile,
+        face_shape_profile=face_shape_profile)
     if qc_corrections:
         prompt += (
             "\n\nINDEPENDENT QC CORRECTION — regenerate from the original authority "
@@ -1342,8 +1375,16 @@ async def generate(
     has_face: bool = False,
     directing_profile: dict | None = None,
     body_profile: dict | None = None,
+    hair_profile: dict | None = None,
+    face_shape_profile: dict | None = None,
+    face_identity_spec: face_identity.FaceIdentitySpec | None = None,
     qc_corrections: tuple[str, ...] = (),
     confirmed_prompt_input: ConfirmedGptPromptInput | None = None,
+    # 얼굴 패스 결과를 적어 보낼 자리(워커가 dict 를 준다): "applied" | "fallback:<reason>".
+    # 반환값을 늘리지 않는 이유 — generate() 를 목(mock)으로 바꿔 쓰는 테스트가 많다.
+    face_pass_outcome: dict | None = None,
+    # 대기 중에도 "지금 파드" 를 다시 묻는 자리 — 파드는 재고 때문에 바뀌고 처음엔 없을 수도 있다.
+    face_pass_url_provider=None,
 ) -> tuple[bytes, str]:
     """컷 1개 생성. 실패 시 GeminiError 전파(호출자가 빈 슬롯 등으로 처리).
     스펙 위반(unknown cutType)은 ValueError — 조용한 styling 폴백을 하지 않는다
@@ -1369,6 +1410,7 @@ async def generate(
         if (
             analysis is not None or manifest is not None or has_face
             or directing_profile is not None or body_profile is not None
+            or hair_profile is not None or face_shape_profile is not None
         ):
             raise ValueError("confirmed_gpt_forbids_generic_prompt_inputs")
         prompt = compile_confirmed_gpt_prompt(
@@ -1383,6 +1425,8 @@ async def generate(
             has_face=has_face,
             directing_profile=directing_profile,
             body_profile=body_profile,
+            hair_profile=hair_profile,
+            face_shape_profile=face_shape_profile,
             qc_corrections=qc_corrections,
         )
     provider_kwargs = {"aspect_ratio": settings.mannequin_aspect_ratio}
@@ -1397,11 +1441,41 @@ async def generate(
         _detail_image_size(settings),
         **provider_kwargs,
     )
+    image, mime = res.image, res.mime
+    # 인물 LoRA 얼굴 패스 — provider 는 그대로(Gemini 가 옷·장면), 얼굴 타원만 뒤에서 교체.
+    # 플래그 기본 off + 레지스트리 faceIdentity 항목이 있는 모델만. 실패는 원본 폴백(예외 없음).
+    identity = _face_identity_spec(settings, spec, clothing_type, face_identity_spec)
+    if identity is not None:
+        image, mime = await face_identity.apply_face_pass(
+            settings, image, mime, identity, outcome=face_pass_outcome,
+            url_provider=face_pass_url_provider)
     if crop_pose_medium:
         return await pose_crop.crop_pose_medium(
-            settings, res.image, res.mime, clothing_type
+            settings, image, mime, clothing_type
         )
-    return res.image, res.mime
+    return image, mime
+
+
+def _face_identity_spec(settings, spec: dict, clothing_type,
+                        provided: face_identity.FaceIdentitySpec | None = None,
+                        ) -> face_identity.FaceIdentitySpec | None:
+    """이 컷이 얼굴 패스 대상인가 — 플래그 on · 착용컷 · 얼굴이 실제로 담기는 컷(_face_fits) ·
+    LoRA 근거가 있음. 하나라도 아니면 None(기존 동작).
+
+    근거는 **fm_model_loras 하나**다. 워커가 그 행을 읽어 provided 로 넘긴다(이 함수는 sync 라
+    DB 를 직접 부르지 않는다 — 워커가 이미 conn 을 갖고 있다).
+    가상모델 JSON(faceIdentity{loraPath,token}) 경로는 삭제했다: 항목이 0개였고, 근거가 두 곳이면
+    "왜 이 컷만 얼굴이 바뀌었나"를 두 군데서 찾게 된다.
+    """
+    if provided is None:
+        return None
+    if not getattr(settings, "face_identity_enabled", False):
+        return None
+    if spec.get("cutType") not in _WORN_CUTS or not spec.get("modelId"):
+        return None
+    if not _face_fits(spec, _is_bottom(clothing_type)):
+        return None
+    return provided
 
 
 async def repair(

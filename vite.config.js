@@ -71,9 +71,8 @@ export default defineConfig({
   },
   // 의존성 사전번들 스캔 대상 = 진입 문서 둘(seller.html·facemarket.html).
   // vite 기본값은 루트의 모든 *.html 을 진입점으로 훑는데, 이 저장소에는 리포트·목업 HTML 이
-  // 수십 개 있어 애초에 스캔 대상이 아니다. 게다가 그중 qa-review-gate.html →
-  // qa/reviewGateHarness.jsx 가 이미 삭제된 모듈(VaryReviewModal.jsx·reviewGate.js)을 물고
-  // 있어 스캔이 통째로 실패했고, 사전번들이 안 만들어져 브라우저가 504
+  // 있을 수 있어 애초에 스캔 대상이 아니다. 예전엔 그중 하나(qa-review-gate.html, 2026-09-11 삭제)가
+  // 이미 삭제된 모듈을 import 해서 스캔이 통째로 실패했고, 사전번들이 안 만들어져 브라우저가 504
   // (Outdated Optimize Dep) → 흰 화면이 됐다(2026-08-16 재현·수정).
   // ※ 앱 진입점을 새로 추가하면 이 목록에도 반드시 넣어야 한다(안 넣으면 같은 504 가 난다).
   // dev 전용이라 프로덕션 빌드(rollup 진입점 = 위 두 문서)에는 영향이 없다.

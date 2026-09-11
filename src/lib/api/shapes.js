@@ -109,6 +109,8 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
     clothingType,
     projectId: context.projectId,
     stylingCount: mode === 'extended' ? 3 : 2,
+    // 실제 모델이면 가상 전용 세트(스튜디오 공간세트)를 자동 구성에서 뺀다.
+    identityKind: context.identityKind || null,
   });
   // 후킹 첫 화면 스타일(2026-08-14 확정, 디폴트 = 시그니처 컷): 후킹 섹션은 스타일이
   // 필요로 하는 컷만 둔다 — 시그니처 = 확대 미디움샷 1컷(구 2컷 배치 폐기, 오너 확정).

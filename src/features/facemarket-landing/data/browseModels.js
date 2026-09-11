@@ -19,6 +19,8 @@
    위저드의 체형 안내용이라 w2·m3 기준으로만 찍혀 있다. 없는 모델에게 남의 전신 사진을
    돌려 쓰면, 카드에 적힌 이름 밑에 다른 얼굴이 서는 셈이라 데모라도 데이터 오류로 읽힌다.
    그래서 나머지 모델은 이 칸 자체를 안 그린다(상세 창이 빈 배열을 보고 접는다). */
+import { FACEMARKET_PRICING } from '../../../lib/facemarketPricing.js';
+
 const OWN_EXAMPLES = {
   w2: ['slim', 'delicate', 'average', 'glamorous', 'plump']
     .slice(0, 3)
@@ -83,7 +85,7 @@ export const BROWSE_MODELS = Object.freeze(
       examples: Object.freeze(OWN_EXAMPLES[id] || []),
       license: Object.freeze({
         uses: USE_SETS[index % USE_SETS.length],
-        unitPrice: 2000 + (index % 5) * 500,
+        unitPrice: FACEMARKET_PRICING.perCut,
         validDays: VALID_DAYS[index % VALID_DAYS.length],
       }),
     });

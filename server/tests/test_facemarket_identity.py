@@ -452,7 +452,12 @@ def test_catalog_lists_verified_without_pii(fm, make_token):
     assert set(card) == {
         "id", "displayName", "status", "coverImageUrl", "createdAt",
         "licenseId", "unitPrice", "hasActiveLicense", "vcId", "assetsReady", "faceThumbUri",
+        # 모델의 선택 동의 — 셀러 화면이 "이 모델을 장소 컷에 쓸 수 있는가"를 이 값으로 판단한다.
+        # PII 가 아니라 그 모델이 스스로 정한 사용 조건이다(허용 품목·가격과 같은 성격).
+        "optLocationCuts", "optLookbookPersonReplace",
     }
+    assert card["optLocationCuts"] is False          # 기본값 = 스튜디오 전용
+    assert card["optLookbookPersonReplace"] is False
     assert card["status"] == "verified"
     # 셀러가 얼굴을 봐야 모델을 고를 수 있다 — 모델이 등록 profile 스텝에서 "셀러 카탈로그
     # 카드에 노출할 대표 이미지"로 직접 올린 cover 를 presigned GET 으로 싣는다.

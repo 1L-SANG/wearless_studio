@@ -107,7 +107,7 @@ alter table public.fm_models add column if not exists fullbody_image_url text;
   "license": {
     "allowedUse": ["상의", "아우터"],
     "forbiddenUse": ["속옷", "수영복"],
-    "unitPrice": 10000,
+    "unitPrice": 14900,
     "validUntil": "2027-09-07T00:00:00Z",
     "validDays": 365
   }
@@ -147,7 +147,7 @@ alter table public.fm_models add column if not exists fullbody_image_url text;
     `src/lib/facemarketPhysique.js`의 `HEIGHT_BUCKETS`·`BODY_TYPES`에서 찾는다. `heightCm`이 있으면 cm,
     없으면 구간 라벨, 둘 다 없으면 체형만.
   - 상세 미리보기: 확대샷 | 전신샷 두 장 나란히, 아래 활동명, 아래 두 칸 "신체 사이즈 | 라이선스 조건"
-    (키·체형 | 허용 품목·건당 단가·유효기간). §6의 공개 상세 창과 같은 구성이어야 한다.
+    (키·체형 | 허용 품목·플랫폼 표준가(1건 14,900원, 월 이용권 49,900원·30일 10건, 초과 7,900원)·유효기간). §6의 공개 상세 창과 같은 구성이어야 한다.
   - 유효기간 표기: 3650일 이상 "영구", 365의 배수 "n년", 그 외 "n일".
 - 동의 체크 문구(정확히): "고른 컷 2장과 아래 프로필(활동명·키·체형·라이선스 조건)이 FaceMarket 모델
   리스트에 공개되는 것에 동의합니다."
@@ -165,7 +165,7 @@ alter table public.fm_models add column if not exists fullbody_image_url text;
 - 상세 창(오른쪽 서랍 유지)은 오너 스케치대로:
   - 위: 확대샷 | 전신샷 두 장 나란히(3:4, 같은 높이).
   - 아래 왼쪽 정렬로 활동명(크게).
-  - 그 아래 두 칸, 가운데 세로선: "신체 사이즈"(키·체형) | "라이선스 조건"(허용 품목·건당 단가·유효기간).
+  - 그 아래 두 칸, 가운데 세로선: "신체 사이즈"(키·체형) | "라이선스 조건"(허용 품목·플랫폼 표준가(1건 14,900원, 월 이용권 49,900원·30일 10건, 초과 7,900원)·유효기간).
   - 우상단 X. 기존 '모델 예시 이미지' 그리드는 제거.
   - 예시 모델은 확대샷 = `portrait`, 전신샷 = 본인 전신 예시가 있으면 그 첫 장, 없으면 "전신샷 준비 중"
     빈 칸(점선). 예시 배지는 이름 옆에 그대로.

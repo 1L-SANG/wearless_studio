@@ -3,7 +3,10 @@
    버튼 비활성은 안내일 뿐이고 판정은 서버가 한다(자기 강등·최후 관리자·미가입). UI 가
    막는 것에 기대면, 두 관리자가 동시에 서로를 내리는 경합을 프런트는 볼 수 없다. */
 import { useCallback, useEffect, useState } from 'react';
-import { adminListAudit, adminListStaff, adminSetRole } from '@/lib/api/facemarket.js';
+import {
+  adminApproveDevice, adminListAudit, adminListDevices, adminListStaff, adminRevokeDevice, adminSetRole,
+} from '@/lib/api/facemarket.js';
+import { seoulDateTime } from '@/lib/datetime.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { Badge } from '@/components/admin-ui/badge.jsx';
 import { Button } from '@/components/admin-ui/button.jsx';
@@ -28,6 +31,14 @@ const ACTION_LABEL = {
   // 읽기인데도 남는 유일한 기록 — 사용자 목록은 콘솔에서 가입자 이메일을 전수로 보여주는
   // 곳이라, 누가 언제 훑었는지가 사후에 필요하다.
   'users.list.view': '사용자 목록 열람',
+  'device.approve': '기기 승인',
+  'device.revoke': '기기 회수',
+};
+
+const DEVICE_STATUS = {
+  pending: { label: '승인 대기', variant: 'default' },
+  approved: { label: '승인됨', variant: 'secondary' },
+  revoked: { label: '회수됨', variant: 'outline' },
 };
 
 export function AdminStaff() {
@@ -55,6 +66,9 @@ export function AdminStaff() {
   // AdminModels.jsx 목록과 같은 문제, 같은 처방.
   const [auditError, setAuditError] = useState(null);
   const [busy, setBusy] = useState(false);
+  // 기기 목록도 admins·audit 과 같은 3상태(null 스켈레톤 / 에러 / 로드됨). 이유는 위 주석과 같다.
+  const [devices, setDevices] = useState(null);
+  const [devicesError, setDevicesError] = useState(null);
 
   const load = useCallback((term) => {
     setDataError(null);
@@ -65,6 +79,10 @@ export function AdminStaff() {
     adminListAudit({ limit: 20 })
       .then((d) => setAudit(d.items))
       .catch((e) => setAuditError(e.message || '최근 기록을 불러오지 못했어요.'));
+    setDevicesError(null);
+    adminListDevices()
+      .then((d) => setDevices(d.items))
+      .catch((e) => setDevicesError(e.message || '기기 목록을 불러오지 못했어요.'));
   }, []);
 
   useEffect(() => { load(undefined); }, [load]);
@@ -73,6 +91,19 @@ export function AdminStaff() {
     setBusy(true);
     try {
       await adminSetRole(userId, role);
+      load(q.trim() || undefined);
+    } catch (e) {
+      push?.(e.message, { icon: 'alertCircle' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deviceAction = async (deviceId, action) => {
+    setBusy(true);
+    try {
+      if (action === 'approve') await adminApproveDevice(deviceId);
+      else await adminRevokeDevice(deviceId);
       load(q.trim() || undefined);
     } catch (e) {
       push?.(e.message, { icon: 'alertCircle' });
@@ -130,6 +161,74 @@ export function AdminStaff() {
                     </TableRow>
                   );
                 })}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>관리자 기기</CardTitle>
+          <CardDescription>
+            콘솔은 승인된 기기에서만 쓸 수 있어요. 새 기기는 여기서 다른 관리자가 승인해요.
+            지금 쓰는 기기는 여기서 회수할 수 없어요.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
+          {devicesError && (
+            <div className="flex flex-col items-center gap-3 px-5 py-10 text-center text-sm text-muted-foreground">
+              <p>{devicesError}</p>
+              <Button variant="outline" size="sm" onClick={() => load(q.trim() || undefined)}>다시 시도</Button>
+            </div>
+          )}
+          {!devices && !devicesError && <Skeleton className="m-5 h-24" />}
+          {devices && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>기기</TableHead><TableHead>관리자</TableHead><TableHead>상태</TableHead>
+                  <TableHead>마지막 사용</TableHead><TableHead>등록</TableHead><TableHead />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {devices.map((d) => {
+                  const st = DEVICE_STATUS[d.status] || { label: d.status, variant: 'outline' };
+                  return (
+                    <TableRow key={d.id} className={d.status === 'pending' ? 'bg-muted/40' : undefined}>
+                      <TableCell>
+                        {d.label}
+                        {d.isCurrent && <span className="ml-2 text-xs text-muted-foreground">이 기기</span>}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{d.userEmail || d.userId}</TableCell>
+                      <TableCell><Badge variant={st.variant}>{st.label}</Badge></TableCell>
+                      <TableCell className="text-muted-foreground">{d.lastSeenAt ? seoulDateTime(d.lastSeenAt) : '-'}</TableCell>
+                      <TableCell className="text-muted-foreground">{seoulDateTime(d.createdAt)}</TableCell>
+                      <TableCell className="text-right">
+                        {d.status === 'pending' && (
+                          <div className="flex justify-end gap-2">
+                            <Button size="sm" disabled={busy} onClick={() => deviceAction(d.id, 'approve')}>승인</Button>
+                            <Button size="sm" variant="outline" disabled={busy} onClick={() => deviceAction(d.id, 'revoke')}>거절</Button>
+                          </div>
+                        )}
+                        {d.status === 'approved' && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={busy || d.isCurrent}
+                            title={d.isCurrent ? '지금 쓰는 기기는 회수할 수 없어요' : undefined}
+                            onClick={() => deviceAction(d.id, 'revoke')}
+                          >
+                            회수
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+                {devices.length === 0 && (
+                  <TableRow><TableCell colSpan={6} className="py-8 text-center text-muted-foreground">등록된 기기 없음</TableCell></TableRow>
+                )}
               </TableBody>
             </Table>
           )}

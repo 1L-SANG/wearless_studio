@@ -67,3 +67,44 @@ test('인증 스크립트가 응답하지 않으면 제한 시간 뒤 정리하�
     globalThis.window.OACX={};await h.widget.loadCxWidget();
   }finally{Object.assign(globalThis,{window:saved.window,document:saved.document,setTimeout:saved.setTimeout,clearTimeout:saved.clearTimeout});await h.close();}
 });
+
+test('인증 준비 시간 초과는 기존 스크립트를 보존하고 새 스크립트만 다시 불러와요', async t => {
+  const h = await apiHarness();
+  const saved = { window: globalThis.window, document: globalThis.document };
+  const existingVendor = { id: 'oacx-vendor', tagName: 'script' };
+  const elements = new Map([[existingVendor.id, existingVendor]]);
+  const appended = [];
+  let readyOnLoad = false;
+  globalThis.window = {};
+  globalThis.document = {
+    getElementById: id => elements.get(id) || null,
+    createElement: tagName => ({ tagName, remove() { elements.delete(this.id); } }),
+    head: {
+      appendChild(element) {
+        elements.set(element.id, element);
+        if (element.tagName === 'script') {
+          appended.push(element.id);
+          queueMicrotask(() => {
+            if (readyOnLoad) globalThis.window.OACX = {};
+            element.onload?.();
+          });
+        }
+      },
+    },
+  };
+  const realTimeout = globalThis.setTimeout;
+  t.mock.method(globalThis, 'setTimeout', (callback, delay, ...args) => {
+    if (delay === 100) { queueMicrotask(callback); return undefined; }
+    return realTimeout(callback, delay, ...args);
+  });
+  try {
+    await assert.rejects(h.widget.loadCxWidget(), /아직 준비되지 않았어요/);
+    assert.equal(elements.get('oacx-vendor'), existingVendor);
+    assert.equal(elements.has('oacx-ux'), false);
+    readyOnLoad = true;
+    await h.widget.loadCxWidget();
+    assert.deepEqual(appended, ['oacx-ux', 'oacx-ux']);
+    assert.equal(elements.get('oacx-vendor'), existingVendor);
+    assert.ok(elements.has('oacx-ux'));
+  } finally { Object.assign(globalThis, saved); await h.close(); }
+});

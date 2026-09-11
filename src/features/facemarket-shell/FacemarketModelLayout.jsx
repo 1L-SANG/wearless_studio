@@ -13,13 +13,16 @@
 
    상단바 CTA 는 넘기지 않는다 — 이 화면들이 곧 그 CTA 의 목적지다(LandingHeader 주석).
    ============================================================= */
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import { LandingHeader } from '@/features/facemarket-landing/LandingHeader.jsx';
+import s from './FacemarketModelLayout.module.css';
 import { FooterSection } from '@/features/facemarket-landing/sections/FooterSection.jsx';
 
 export function FacemarketModelLayout() {
+  const { pathname } = useLocation();
+  const application = pathname === '/model/apply';
   return (
-    <div className="fm-theme fm-theme-page">
+    <div className={`fm-theme fm-theme-page ${application ? s.application : ''}`}>
       {/* 상단바는 좌우 여백을 바깥에서 받는다(랜딩에서는 .shell 이 준다). */}
       <div className="fm-theme-inset">
         <LandingHeader />
@@ -30,9 +33,9 @@ export function FacemarketModelLayout() {
       <main>
         <Outlet />
       </main>
-      <div className="fm-theme-inset">
-        <FooterSection />
-      </div>
+      {!application && <div className="fm-theme-inset">
+        <FooterSection compact />
+      </div>}
     </div>
   );
 }

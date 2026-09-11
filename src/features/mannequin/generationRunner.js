@@ -4,6 +4,7 @@ import { api } from '../../lib/api/index.js';
 import { useAppStore } from '../../store/useAppStore.js';
 import { markInitialGenerationRequested } from './initialGenerationSession.js';
 import { createMannequinGenerationRunner } from './generationRunnerCore.js';
+import { initialGenerationAttempts, runInitialGenerationAttempt } from './initialGenerationAttempts.js';
 
 export function updateMannequinJob(pid, patch) {
   const { projectId, setMannequinJob } = useAppStore.getState();
@@ -30,7 +31,7 @@ export function generationProgressFor(pid) {
 }
 
 const runner = createMannequinGenerationRunner({
-  generate: (pid, options) => api.generateMannequins(pid, options),
+  generate: (pid, options) => runInitialGenerationAttempt(initialGenerationAttempts, api.generateMannequins, pid, options),
   readProgress: generationProgressFor,
   onJobChange: updateMannequinJob,
   // "최초 생성은 우리가 요청했다" 는 주장은 **실제로 job 이 생겼을 때만** 해야 한다.
@@ -43,4 +44,3 @@ export const requestMannequinGeneration = (pid) => runner.request(pid);
 export const acknowledgeMannequinGenerationCancellation = (pid) => (
   runner.acknowledgeCancellation(pid)
 );
-export const isMannequinGenerationRunning = (pid) => runner.isRunning(pid);

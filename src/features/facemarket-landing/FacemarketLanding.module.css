@@ -158,7 +158,7 @@
    종전 아이콘(1.4rem)+글자(1.05rem) 조합과 같은 시각 무게가 되는 눈금. */
 .brandWordmark { height: 1.9rem; width: auto; display: block; }
 
-.nav { display: none; gap: clamp(1.5rem, 3vw, 3.4rem); justify-self: center; }
+.nav { display: none; gap: clamp(20px, 2.8vw, 36px); justify-self: center; }
 /* 이제 <button> 이 아니라 <NavLink>(=<a>)다. 이 레포의 전역 스타일에는 링크 리셋이
    없고(app.css 는 `a.link` 클래스 한정) UA 기본 밑줄이 그대로 나오므로 여기서 끈다. */
 .navLink {
@@ -497,7 +497,7 @@
   text-align: center;
 }
 /* 히어로 안 CTA(2026-09-03 오너 지시로 kicker 자리에 재도입). 제목과의 간격만 여기서 준다 —
-   .heroCta 자체는 IntroSection 과 공유라 거기 마진을 주면 두 자리가 같이 밀린다.
+   .heroCta는 다른 화면에서도 쓰므로 히어로 안쪽 요소에서만 여백을 조절한다.
    오브(.heroOrb, z-index:0 의 positioned 레이어)가 정적 배치 형제 위에 그려지므로,
    버튼이 그 반투명 흰 빛에 덮여 회색으로 바래 보였다 — 버튼을 같은 스택 위로 올린다. */
 .hero .heroCta { margin-top: 0.95rem; position: relative; z-index: 1; }
@@ -962,14 +962,25 @@
   padding: clamp(2.5rem, 6vw, 4rem) 0 0;
   box-shadow: inset 0 1px 0 var(--fm-line);
 }
-.footerBrand { margin: 0 0 0.4rem; font: 600 0.95rem/1.4 var(--font-body); }
+.footerTop { display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; margin-bottom: 1rem; font: 400 0.85rem/1.6 var(--font-body); }
+.footerBrand { margin: 0; font: 600 0.95rem/1.4 var(--font-body); }
 .footerNote { margin: 0; color: var(--fm-muted); font: 400 0.85rem/1.6 var(--font-body); }
-.footerLink { color: var(--fm-accent); }
-.footerLegal { display: flex; flex-wrap: wrap; gap: 0.2rem 0.45rem; color: var(--fm-muted); font: 400 0.85rem/1.6 var(--font-body); }
+.footerLink { color: var(--fm-muted); text-decoration: none; }
+.footerLink:hover { color: var(--fm-ink); text-decoration: underline; text-underline-offset: 4px; }
+.footerLegal { display: flex; flex-wrap: wrap; gap: 0.4rem 1.5rem; color: var(--fm-muted); font: 400 0.85rem/1.6 var(--font-body); }
 .footerLinkStrong { color: var(--fm-ink); font-weight: 600; }
-.footerCompany { display: grid; gap: 0.12rem; margin-top: 0.55rem; color: var(--fm-muted); font: 400 0.75rem/1.55 var(--font-body); letter-spacing: 0.01em; }
+.footerDivider { height: 1px; margin: 1.1rem 0; border: 0; background: var(--fm-line); }
+.footerCompany { display: grid; gap: 0.12rem; color: var(--fm-muted); font: 400 0.75rem/1.55 var(--font-body); letter-spacing: 0.01em; }
 .footerCompany p { margin: 0; }
+.footerCompany a { color: var(--fm-muted); text-decoration: underline; text-underline-offset: 2px; }
+.footerCompany a:hover { color: var(--fm-ink); }
 .footerCompact { margin-top: 2.5rem; padding: 1.5rem 0 1.75rem; }
+
+@media (max-width: 767px) {
+  .footer { text-align: center; }
+  .footerTop { flex-direction: column; }
+  .footerLegal { justify-content: center; }
+}
 
 /* 상단바의 조용한 보조 액션(로그아웃). 주 CTA(.headerCta)와 나란히 서지만 잉크 pill 이
    아니라 테두리만 있는 형태다 — 로그아웃이 이 화면에서 권장 행동이 아니기 때문이다.
@@ -989,3 +1000,12 @@
   transition: color 140ms ease, background 140ms ease;
 }
 .headerQuiet:hover { background: #fff; color: var(--fm-ink); }
+
+/* 지원 시작 시안은 안내 띠와 푸터 없이 흰 본문을 쓴다. */
+.applyShell { background: var(--bg-1); padding-bottom: 0; }
+.noticeClosed { --fm-notice-h: 0px; }
+
+/* 좁은 데스크톱에서는 네 메뉴와 계정 버튼의 공간을 확보한다. 지원은 본문 CTA로 이어진다. */
+@media (min-width: 48rem) and (max-width: 63.99rem) {
+  .headerCta { display: none; }
+}

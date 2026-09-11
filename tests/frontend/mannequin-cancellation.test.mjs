@@ -94,7 +94,7 @@ test('acknowledged cancellation detaches the old poller so a new payload starts 
 
 test('the running-work warning uses the owner wording and confirms cancel → credits → patch', () => {
   const source = read('../../src/features/product-input/ProductInput.jsx');
-  const exactWarning = '지금 만들던 마네킹컷 생성이 취소돼요. 취소된 생성의 크레딧(2)도 차감되고, 새로 만들 때 2크레딧이 더 들어요.';
+  const exactWarning = '지금 만들던 마네킹컷 생성이 취소돼요. 취소된 생성의 크레딧({CREDIT_COSTS.mannequinGenerate})도 차감되고, 새로 만들 때 {CREDIT_COSTS.mannequinGenerate}크레딧이 더 들어요.';
   assert.ok(source.includes(`<p>${exactWarning}</p>`));
 
   const handler = source.slice(
@@ -118,7 +118,7 @@ test('the completed-cuts warning and immediate apply branch stay unchanged', () 
   assert.match(source, /<h3>바꾸면 마네킹 컷을 다시 만들어야 해요<\/h3>/);
   assert.match(
     source,
-    /<p>마네킹 컷이 다시 만들어져요 · \{CREDIT_COSTS\.mannequinGenerate\} 크레딧\. 콘티에서 고른 촬영 세트도 다시 골라야 해요\.<\/p>/,
+    /<p>마네킹 컷이 다시 만들어져요 · \{mannequinRegenerationCreditText\(creditQuote\?\.mannequinRegenerate\)\}\. 콘티에서 고른 촬영 세트도 다시 골라야 해요\.<\/p>/,
   );
   assert.match(
     source,

@@ -66,6 +66,13 @@ import {
 } from '@/lib/storyboardHookFrame.js';
 import { pickSignatureCut, signatureCutById, signatureCutsFor } from '@/lib/signatureCutPool.js';
 import { shuffleSectionExamples } from '@/lib/storyboardExampleShuffle.js';
+import {
+  blockAllowedForModel,
+  filterExamplesForModel,
+  filterSpaceSetsForModel,
+  identityKindOf,
+} from '@/lib/identityScope.js';
+import { isRealModelSelection } from '@/features/analysis/modelSelection.js';
 import { uniqueGenerationCutCount } from '@/lib/generationCutCount.js';
 import { genderForClothingType } from '@/lib/productGender.js';
 import {
@@ -568,7 +575,7 @@ function StoryboardCard({
   item, total, catalogs, colorOpts, matchClothing, clothingType,
   selected, locked, cardDrag, onSelect, onDuplicate, onDelete, addControl,
   move = null, microVariationIds, onShuffle = null, alignCaptionWithMoodGrid = false,
-  swapProps = null, canDelete = true,
+  swapProps = null, canDelete = true, outOfScope = false,
 }) {
   const { block, index } = item;
   const missing = block.source !== 'mine' && !block.exampleId;
@@ -615,6 +622,14 @@ function StoryboardCard({
             canDelete={canDelete}
           />
           {selected && <SelectionRing />}
+          {/* 모델을 바꿔서 이 컷의 범위 밖이 된 경우 — 자동 교체는 하지 않고 표시만 하고
+              생성에서 뺀다(2026-09-11 사용자 결정). 서버도 같은 판정으로 건너뛴다. */}
+          {outOfScope && (
+            <div className="sb-out-of-scope" title="이 모델로는 만들 수 없는 컷이에요">
+              <Icon name="alertTri" size={12} />
+              <span>이 모델로는 만들 수 없는 컷</span>
+            </div>
+          )}
         </CardDragSurface>
         {addControl}
       </div>
@@ -1037,11 +1052,14 @@ function SpaceSetInspectorHeader({ set, siblings, block, onChangeSet }) {
   );
 }
 
-function SpaceSetGallery({ mode, error, onChoose, onClose, gender, clothingType, sectionRole = null }) {
+function SpaceSetGallery({ mode, error, onChoose, onClose, gender, clothingType, sectionRole = null,
+  identityKind = null }) {
   const replacing = mode === 'replace';
   // 섹션이 정해진 추가는 그 섹션이 실제로 소화하는 세트만 보여준다 — 스타일링 칸에 호리존
   // 세트를 넣으면 그 섹션에서는 발행되지 않은 조합이라 컷이 통째로 빈다(2026-08-16 실측).
-  const spaceSets = storyboardSpaceSetsFor({ gender, clothingType })
+  const spaceSets = filterSpaceSetsForModel(
+    storyboardSpaceSetsFor({ gender, clothingType }), identityKind,
+  )
     .filter((set) => (
       sectionRole === SECTION_ROLES.STYLING ? set.setType === 'styling'
         : sectionRole === SECTION_ROLES.STUDIO ? String(set.setType || '').startsWith('horizon')
@@ -1152,20 +1170,25 @@ export function shouldRenderGenerationExampleGuide(block) {
    · 내 사진(refImages) = 샷 종류의 '내 이미지' 탭에서 업로드·선택
    · 카드가 사이드/뒷면이어도 선택한 예시의 전체 연출을 참고하되, 카드의 촬영 방향은 유지
    refs/exampleId 는 제어형 — 콘티는 블록이, 에디터 AI 패널은 패널 상태가 소유 (계약 §3.4/§6). */
-export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onExampleDrag = null, refs = [], onRefsChange, onPickRef, refScope = 'all', onUseMine = null, includeMirrorExamples = false }) {
+export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onExampleDrag = null, refs = [], onRefsChange, onPickRef, refScope = 'all', onUseMine = null, includeMirrorExamples = false, identityKind = null }) {
   const galleryCut = cut === 'mirror' ? 'styling' : cut;
   const shotOpts = shotOptions || (cut === 'product' ? catalogs.productShotTypes
     : catalogs.shotTypes);
   const shotVal = shotOpts.some((s) => s.value === shot) ? shot : shotOpts[0].value;
-  const examples = React.useMemo(() => selectGenerationExamples(catalogs.genExamples, {
-    cutType: galleryCut,
-    shot: shotVal,
-    clothingType,
-    gender,
-    direction,
-    appendSetOnly: cut !== 'product',
-    appendMirror: includeMirrorExamples && galleryCut === 'styling',
-  }), [catalogs.genExamples, cut, galleryCut, shotVal, clothingType, gender, direction, includeMirrorExamples]);
+  // 이 모델로 만들 수 없는 예시는 갤러리에 아예 안 띄운다(판정은 서버 규칙 표).
+  const examples = React.useMemo(() => filterExamplesForModel(
+    selectGenerationExamples(catalogs.genExamples, {
+      cutType: galleryCut,
+      shot: shotVal,
+      clothingType,
+      gender,
+      direction,
+      appendSetOnly: cut !== 'product',
+      appendMirror: includeMirrorExamples && galleryCut === 'styling',
+    }), identityKind,
+    { cutType: galleryCut, direction, shot: shotVal, refScope, pose: 'auto' },
+  ), [catalogs.genExamples, cut, galleryCut, shotVal, clothingType, gender, direction,
+    includeMirrorExamples, identityKind, refScope]);
   const selectedExample = (catalogs.genExamples || []).find((example) => example.id === exampleId) || null;
   const moodOnly = (cut === 'styling' || cut === 'horizon') && !!direction && direction !== 'front';
   const conditionStatus = !exampleId ? null : storedExampleConditionStatus(selectedExample, {
@@ -1352,7 +1375,7 @@ export function MoodGuide({ catalogs, cut, blockCutType = cut, direction, shot, 
   );
 }
 
-function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, hasDetailImage, projectId, onChange, onAtomicChange, onRetryAtomicSave, requestedRecipe, onCancelRequestedRecipe, matchClothing, customMatchPromotionPending = false, spaceContext, onChangeSpaceSet, onAddMine, onExampleDrag }) {
+function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, identityKind = null, hasDetailImage, projectId, onChange, onAtomicChange, onRetryAtomicSave, requestedRecipe, onCancelRequestedRecipe, matchClothing, customMatchPromotionPending = false, spaceContext, onChangeSpaceSet, onAddMine, onExampleDrag }) {
   const [matchOpen, setMatchOpen] = useState(false);
   const [pendingRecipe, setPendingRecipe] = useState(null);
   const [pendingChoice, setPendingChoice] = useState(null);
@@ -1620,7 +1643,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
             onCancelRequestedRecipe?.();
           }}>섹션 이동 취소</button>}
           {shouldRenderGenerationExamples && (
-            <MoodGuide catalogs={catalogs} cut={pendingRecipe.cutType} blockCutType={block.cutType}
+            <MoodGuide identityKind={identityKind} catalogs={catalogs} cut={pendingRecipe.cutType} blockCutType={block.cutType}
               direction={pendingRecipe.cutType === 'mirror' ? null : block.direction} shot={pendingRecipe.shot}
               shotOptions={pendingRecipe.cutType === 'product' ? productShotOptions : null}
               onShotChange={(shot) => setPendingRecipe((current) => ({ ...current, shot }))}
@@ -1648,7 +1671,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
             />
           )}
           {shouldRenderGenerationExamples && !isSignatureSlot && (
-            <MoodGuide onUseMine={(ref) => onChange({
+            <MoodGuide identityKind={identityKind} onUseMine={(ref) => onChange({
               source: 'mine', title: '내 이미지', cutType: null, contentRole: CONTENT_ROLES.CUSTOM,
               ownImages: [ref?.url || ref], thumb: ref?.url || ref,
               exampleId: null, exampleSelectionOrigin: null, refScope: null,
@@ -1846,12 +1869,16 @@ function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, ana
   const repairedIds = exampleRepairedBlocks
     .filter((block, index) => block !== adoptedBlocks[index])
     .map((block) => block.id);
+  // 이 모델로 만들 수 없는 예시는 배정 후보에서 빠진다(판정은 서버 규칙 표).
+  const entryIdentityKind = identityKindOf(isRealModelSelection(
+    a?.selectedModelId || a?.selected_model_id));
   const repairedAssignment = repairedIds.length
     ? assignGenerationExamples(normalizedBlocks, {
       catalog: hydratedCatalogs.genExamples,
       product: p,
       gender: boundGender,
       onlyBlockIds: repairedIds,
+      identityKind: entryIdentityKind,
     })
     : { blocks: normalizedBlocks };
   // 나머지(원래부터 비어 있던 카드 등)는 기존 그대로 exampleGender 로 채운다 — 방금 boundGender
@@ -1860,6 +1887,7 @@ function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, ana
     catalog: hydratedCatalogs.genExamples,
     product: p,
     gender: exampleGender,
+    identityKind: entryIdentityKind,
   });
   // 시그니처 컷은 전용 풀에서 배정한다(생성예시 카탈로그 대상이 아니다). 자동 배정이
   // 카탈로그 예시를 붙여 놨더라도 여기서 풀 이미지로 바꾼다 — 사용자가 직접 고른
@@ -1891,6 +1919,7 @@ function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, ana
     matchClothing,
     clothingType,
     exampleGender,
+    identityKind: entryIdentityKind,
     hasDetailImage,
     productName: p.name || '',
     colorOpts: colorOpts.length ? colorOpts : fallbackColor,
@@ -2083,6 +2112,8 @@ export function Storyboard({ toastOverride = null } = {}) {
   const [detailColorOpts, setDetailColorOpts] = useState(() => initialEntry?.detailColorOpts || []);
   const [clothingType, setClothingType] = useState(() => initialEntry?.clothingType || 'top'); // 샷 필터 아이콘·예시 크롭용 (상의=위/하의=아래)
   const [exampleGender, setExampleGender] = useState(() => initialEntry?.exampleGender || null);
+  // 선택한 모델 종류(real|virtual) — 이 콘티에서 고를 수 있는 컷의 범위를 정한다.
+  const [identityKind, setIdentityKind] = useState(() => initialEntry?.identityKind || null);
   const [hasDetailImage, setHasDetailImage] = useState(() => initialEntry?.hasDetailImage || false);
   const [autosaveFailed, setAutosaveFailed] = useState(false);
   const [hookStyleSaving, setHookStyleSaving] = useState(false);
@@ -2371,6 +2402,7 @@ export function Storyboard({ toastOverride = null } = {}) {
           setMatchClothing(promotedMatchClothing || prepared.matchClothing);
           setClothingType(prepared.clothingType);
           setExampleGender(prepared.exampleGender);
+          setIdentityKind(prepared.identityKind || null);
           setHasDetailImage(prepared.hasDetailImage);
           setDetailColorOpts(prepared.detailColorOpts);
           setColorOpts(prepared.colorOpts);
@@ -2464,8 +2496,9 @@ export function Storyboard({ toastOverride = null } = {}) {
       catalogs,
       clothingType,
       targetGenders: composeModeSeed.targetGenders,
+      identityKind,
     };
-  }, [catalogs, clothingType, composeModeSeed]);
+  }, [catalogs, clothingType, composeModeSeed, identityKind]);
   useEffect(() => {
     sbSetSaveRepair((pid, snapshot, error) => {
       const ctx = saveRepairContext.current;
@@ -2484,6 +2517,7 @@ export function Storyboard({ toastOverride = null } = {}) {
         catalog: ctx.catalogs.genExamples,
         product: { clothingType: ctx.clothingType },
         gender,
+        identityKind: ctx.identityKind || null,
       }).blocks;
       // 화면도 복구본으로 교체 — 이후 편집·자동 저장이 오염본을 다시 보내지 않게.
       if (latestBlocks.current === snapshot) {
@@ -2899,6 +2933,7 @@ export function Storyboard({ toastOverride = null } = {}) {
         product: { clothingType },
         gender: exampleGender,
         onlyBlockIds: [nb.id],
+        identityKind,
       }).blocks;
     const serverValidNext = ensureContiguousSpaceRuns(next);
     directSaveSnapshots.current.add(serverValidNext);
@@ -3265,6 +3300,7 @@ export function Storyboard({ toastOverride = null } = {}) {
             product: { clothingType },
             gender: exampleGender,
             onlyBlockIds: newIds,
+            identityKind,
           }).blocks;
         }, { nextSelectedId: newIds[0] });
       } else {
@@ -3298,6 +3334,7 @@ export function Storyboard({ toastOverride = null } = {}) {
             product: { clothingType },
             gender: exampleGender,
             onlyBlockIds: memberIds,
+            identityKind,
           }).blocks;
         }, { nextSelectedId: memberIds[0] });
       }
@@ -3422,6 +3459,7 @@ export function Storyboard({ toastOverride = null } = {}) {
         catalog: catalogs.genExamples,
         product: { clothingType, colors },
         gender: boundGenderNow,
+        identityKind,
       }).blocks;
       directSaveSnapshots.current.add(next);
       setBlocks(next);
@@ -3456,6 +3494,7 @@ export function Storyboard({ toastOverride = null } = {}) {
       gender: boundGenderNow,
       rotation: shuffleTickRef.current,
       uid,
+      identityKind,
       ...options,
     });
     if (next === previous) {
@@ -3640,6 +3679,7 @@ export function Storyboard({ toastOverride = null } = {}) {
           canDelete={canDeleteBlock(block)}
           swapProps={swapTargetProps(block.id)}
           alignCaptionWithMoodGrid={section.role === SECTION_ROLES.HOOKING}
+          outOfScope={block.source === 'ai' && !blockAllowedForModel(block, identityKind)}
           microVariationIds={microVariationIds}
           onShuffle={canShuffleBlock(block) ? (() => shuffleBlock(group, block.id)) : null}
         />
@@ -3884,8 +3924,9 @@ export function Storyboard({ toastOverride = null } = {}) {
   const inspector = setPicker ? (
     <SpaceSetGallery mode={setPicker.mode} error={setPickerError} onChoose={chooseSpaceSet}
       gender={exampleGender} clothingType={clothingType} sectionRole={setPicker.targetRole || null}
+      identityKind={identityKind}
       onClose={() => { setSetPicker(null); setSetPickerError(null); }} />
-  ) : <Inspector key={selectedId} block={selected} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} exampleGender={exampleGender} hasDetailImage={hasDetailImage} projectId={projectId}
+  ) : <Inspector key={selectedId} block={selected} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} exampleGender={exampleGender} identityKind={identityKind} hasDetailImage={hasDetailImage} projectId={projectId}
     onChange={(p, options) => patch(selectedId, p, options)} onAtomicChange={(p, options) => atomicPatch(selectedId, p, options)} onRetryAtomicSave={retryAtomicSave} requestedRecipe={pendingSectionMove}
     onCancelRequestedRecipe={() => setPendingSectionMove(null)} matchClothing={matchClothing}
     customMatchPromotionPending={customMatchPromotionPending}

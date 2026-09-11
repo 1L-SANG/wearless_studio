@@ -88,13 +88,6 @@ def test_shirt_without_canonical_routes_to_raw():
     assert "no usable canonical" in out.reason
 
 
-def test_strategy_is_recorded_for_the_job_event():
-    event = gis.resolve(truth(), {"name": "블라우스"}).as_event()
-    assert event["strategy"] == gis.STRATEGY_RAW
-    assert event["category"] == gis.CATEGORY_BLOUSE
-    assert event["version"] == gis.VERSION
-
-
 def test_canonical_manifest_line_names_no_defect():
     """추가 증거지 교정 지시가 아니다 — 결함을 지목하면 다른 실험이 된다."""
     line = gis.CANONICAL_MANIFEST_LINE.lower()

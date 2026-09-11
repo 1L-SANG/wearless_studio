@@ -423,10 +423,6 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
   const effectiveCutType = effectiveRecipe.cutType;
   const isProduct = effectiveCutType === 'product';
   const isMirror = effectiveCutType === 'mirror'; // mirror 레시피(ADR-0004): 방향 없음, 샷 full/medium만
-  useEffect(() => {
-    if (effectiveCutType === 'horizon' || !isRealModelSelection(model)) return;
-    setModel(virtualModels.find((item) => item.recommended)?.id || virtualModels[0]?.id || 'mA');
-  }, [effectiveCutType, model, virtualModels]);
   const effectiveDirectionOptions = isProduct ? catalogs.productDirections : catalogs.directions;
   const effectiveShotOptions = isProduct ? catalogs.productShotTypes : catalogs.shotTypes;
   const effectiveDirectionVal = effectiveDirectionOptions.some((option) => option.value === effectiveRecipe.direction)
@@ -502,10 +498,10 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
       setDir(detailDirectionFromExample(example));
     }
   };
+  // 브랜드 유형은 실제 모델을 쓰는 모든 컷에서 필요하다(컷 종류 무관, 2026-09-11 사용자 결정).
   const categoryRequired = failedCutRetry
-    ? failedCutRetry.request?.cutType === 'horizon'
-      && isRealModelSelection(failedCutRetry.request?.modelId)
-    : effectiveCutType === 'horizon' && isRealModelSelection(model);
+    ? isRealModelSelection(failedCutRetry.request?.modelId)
+    : isRealModelSelection(model);
   const brandUseCategoryBlocked = categoryRequired
     && (!brandUseCategory || brandUseCategorySaving);
   const brandUseCategoryControl = categoryRequired && (
@@ -615,20 +611,17 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
           {!isProduct && <details ref={modelRef} className="insp-extra ai-model" open={modelOpen}>
             <summary onClick={toggleModel}><Icon name="chevRight" size={15} />모델</summary>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 12 }}>
-              {fmList.map((m) => {
-                const disabled = effectiveCutType !== 'horizon';
-                return (
-                <div key={m.id} className={`model-card fm-model img-only${model === m.id ? ' on' : ''}${disabled ? ' disabled' : ''}`} style={{ width: 'auto' }}
-                  onClick={() => { if (!disabled) { setModel(m.id); setExampleId(null); setRefScope('all'); } }}
-                  aria-disabled={disabled}
-                  title={disabled ? '실제 모델은 스튜디오 컷에만 쓸 수 있어요' : `${m.displayName}${m.unitPrice != null ? ` · ₩${Number(m.unitPrice).toLocaleString('ko-KR')}/건` : ''}`}>
+              {fmList.map((m) => (
+                /* 실제 모델은 모든 컷에 쓴다(2026-09-11 사용자 결정) — 컷 종류로 비활성화하지 않는다. */
+                <div key={m.id} className={`model-card fm-model img-only${model === m.id ? ' on' : ''}`} style={{ width: 'auto' }}
+                  onClick={() => { setModel(m.id); setExampleId(null); setRefScope('all'); }}
+                  title={`${m.displayName}${m.unitPrice != null ? ` · ₩${Number(m.unitPrice).toLocaleString('ko-KR')}/건` : ''}`}>
                   {m.coverImageUrl
                     ? <img src={m.coverImageUrl} alt={m.displayName} style={{ height: 104 }} />
                     : <ModelThumb uri={m.faceThumbUri} alt={m.displayName} />}
                   {m.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
                 </div>
-                );
-              })}
+              ))}
               {virtualModels.map((m) => (
                 /* 이름을 사진 위에 얹는다(분석 화면과 동일) — 2026-08-17 가상모델이 5→14명이
                    되면서 라벨 없는 썸네일만으로는 특정 모델을 고를 수 없게 됐다. */

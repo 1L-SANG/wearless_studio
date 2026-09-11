@@ -9,9 +9,13 @@
 import os
 
 from ..config import Settings
+from . import face_identity
 from .gemini_image import GeminiImageClient, InlineImage
 from .model_routing import resolve_model
 from .prompts import _sanitize
+
+#: cut_generator._WORN_CUTS 와 같은 집합 — 사람이 담기는 컷에만 얼굴 패스를 건다.
+_WORN_CUTS = ("styling", "horizon", "mirror")
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
 _TEMPLATE_FILE = os.path.join(_SERVER_DIR, "prompts", "cut_vary_v1.txt")
@@ -80,9 +84,17 @@ async def generate(
     cut_type: str | None,
     *,
     ref_bg: InlineImage | None = None,
+    face_identity_spec: face_identity.FaceIdentitySpec | None = None,
+    face_pass_outcome: dict | None = None,
+    face_pass_url_provider=None,
 ) -> tuple[bytes, str]:
     """변형 컷 1장 생성. 실패 시 GeminiError를 그대로 전파(호출자가 job 실패 처리).
-    ref_bg 는 배경 레퍼런스(첨부 2번) — 배경·조명·무드만 반영(ADR-0004)."""
+    ref_bg 는 배경 레퍼런스(첨부 2번) — 배경·조명·무드만 반영(ADR-0004).
+
+    face_identity_spec 이 오면 AG-06 과 같은 얼굴 패스를 결과에 건다. 변형은 원본 컷을 다시
+    그리는 것이라 얼굴이 흔들릴 수 있고, 그러면 한 상세페이지 안에서 같은 사람이 컷마다 달라진다.
+    패스는 **착장 컷일 때만** — product/ghost 류에는 사람이 없다. 실패는 원본 폴백(예외 없음).
+    """
     model = resolve_model(settings, "image_high")
     prompt = build_prompt({"changes": changes, "cutType": cut_type, "hasRefBg": ref_bg is not None})
     images = [source_image] if ref_bg is None else [source_image, ref_bg]
@@ -91,4 +103,11 @@ async def generate(
         getattr(settings, "detail_cut_image_size", None) or settings.mannequin_image_size,
         aspect_ratio=settings.mannequin_aspect_ratio,
     )
-    return res.image, res.mime
+    image, mime = res.image, res.mime
+    if (face_identity_spec is not None
+            and getattr(settings, "face_identity_enabled", False)
+            and cut_type in _WORN_CUTS):
+        image, mime = await face_identity.apply_face_pass(
+            settings, image, mime, face_identity_spec, outcome=face_pass_outcome,
+            url_provider=face_pass_url_provider)
+    return image, mime

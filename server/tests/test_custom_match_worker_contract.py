@@ -38,7 +38,6 @@ def test_all_production_consumers_pass_owner_scope_without_bucket_branch():
         ROOT / "app/workers/mannequin_job.py",
         ROOT / "app/workers/detail_page_job.py",
         ROOT / "app/workers/editor_image_job.py",
-        ROOT / "scripts/spike_volume_secondpass.py",
     ]
     for path in consumers:
         source = path.read_text(encoding="utf-8")

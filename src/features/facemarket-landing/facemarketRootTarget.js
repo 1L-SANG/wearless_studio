@@ -25,17 +25,17 @@ const MAX_LENGTH = 512;
 /* facemarket 도메인에 존재하는 화면의 뿌리. '/model' 은 지원서·등록·라이선스·발급이고,
    '/status' 는 등록 상태(옛 허브, 로그인 프롬프트가 여기로 복귀시킨다), '/verify' 는 QR
    공개 검증이다. 그 밖은(=셀러 스튜디오) 이 도메인의 화면이 아니다. */
-const ALLOWED_ROOTS = ['/model', '/status', '/payout', '/verify'];
+const ALLOWED_ROOTS = ['/apply', '/model', '/status', '/payout', '/verify'];
 
 const LANDING_NAV = Object.freeze([
-  Object.freeze({ to: '/model/apply', label: '모델 지원', protected: false }),
+  Object.freeze({ to: '/apply', label: '모델 지원', protected: false }),
   Object.freeze({ to: '/models', label: '모델 리스트', protected: false }),
   Object.freeze({ to: '/status', label: '마이페이지', protected: true }),
 ]);
 
 // 새 배열을 돌려 호출부가 정렬·추가해도 다음 렌더의 전역 메뉴 계약을 바꾸지 못하게 한다.
 export function landingNavItems({ verified = false } = {}) {
-  return LANDING_NAV.filter(item => !verified || item.to !== '/model/apply').map((item) => ({ ...item }));
+  return LANDING_NAV.filter(item => !verified || item.to !== '/apply').map((item) => ({ ...item }));
 }
 
 // 보호 메뉴는 인증 부트스트랩 중에는 판정을 미루고, 세션이 없다고 확정된 뒤에만 로그인

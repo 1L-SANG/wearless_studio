@@ -35,6 +35,8 @@ const {
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 
+const collectText = (node) => Array.isArray(node) ? node.map(collectText).join('') : node && typeof node === 'object' ? collectText(node.props?.children) : String(node ?? '');
+
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 test('a revoked license owner can reach fresh enrollment from the license list', async () => {
@@ -59,6 +61,104 @@ test('a revoked license owner can reach fresh enrollment from the license list',
 });
 
 import { eventually, findTree, modelComponentHarness } from './helpers/facemarketHarness.mjs';
+test('license toggles keep one allowed category and submit without price or expiry inputs', async () => {
+  const requests = [];
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelLicense.jsx', exportName: 'ModelLicense',
+    initialStates: ['ready', 'flow', { id: 'enrollment-1', status: 'license_pending' }, [], null],
+    api: { createLicense: async (body) => { requests.push(body); return { id: 'license-1' }; } },
+  });
+  try {
+    const terms = findTree(harness.render(), (node) => node.type?.name === 'TermsStep');
+    assert.ok(terms);
+    harness.runtime.states = [];
+    const render = () => {
+      harness.runtime.stateCursor = 0;
+      return terms.type({ ...terms.props, onIssued: () => {} });
+    };
+    const toggle = (tree, label) => findTree(tree, (node) => node.type === 'Toggle' && node.props.label === label);
+    const submit = (tree) => findTree(tree, (node) => node.type === 'Button' && node.props.children === '라이선스 발급');
+    let tree = render();
+    assert.equal(findTree(tree, (node) => node.type === 'Field' && node.props.type === 'number'), null);
+    assert.equal(findTree(tree, (node) => node.type === 'Chips'), null);
+    const priceText = collectText(tree);
+    for (const text of ['한 건 14,900원', '월 이용권 49,900원(10건)', '70%가 내 몫']) {
+      assert.ok(priceText.includes(text), text);
+    }
+    for (const category of ['일반 의류', '홈웨어·잠옷']) {
+      assert.equal(toggle(tree, category).props.on, true);
+      toggle(tree, category).props.onChange(false);
+      tree = render();
+      assert.equal(toggle(tree, category).props.on, false);
+    }
+    toggle(tree, '액티브웨어').props.onChange(false);
+    tree = render();
+    assert.equal(toggle(tree, '액티브웨어').props.on, true, '마지막 허용 품목은 끌 수 없어요');
+    assert.equal(submit(tree).props.disabled, false);
+    await submit(tree).props.onClick();
+    assert.deepEqual(requests, [{ enrollmentId: 'enrollment-1', allowedUse: ['액티브웨어'] }]);
+  } finally { await harness.close(); }
+});
+
+test('reissuing from completed registration requires three fresh consents before a new identity enrollment', async () => {
+  const created = [];
+  let restores = 0;
+  const harness = await modelComponentHarness({
+    initialStates: ['loading', null, 1, '', false, [true, true, true]],
+    honorHookDependencies: true,
+    api: {
+      getCurrentEnrollment: async () => {
+        restores += 1;
+        throw Object.assign(new Error('no current enrollment'), { status: 404 });
+      },
+      listMyModels: async () => [{ id: 'model-1', status: 'verified' }],
+      listLicenses: async () => [{ id: 'l1', modelId: 'model-1', status: 'active', allowedUse: ['일반 의류'] }],
+      createEnrollment: async (body) => {
+        created.push(body);
+        return { id: 'new-enrollment', modelId: 'model-1', status: 'identity_pending', photos: [] };
+      },
+      runIdentityWidget: async () => 'identity-token',
+      createIdentity: async (id, body) => {
+        assert.equal(id, 'new-enrollment');
+        assert.deepEqual(body, { token: 'identity-token' });
+        return { id, modelId: 'model-1', status: 'photos_pending', photos: [] };
+      },
+    },
+  });
+  const commit = () => {
+    const tree = harness.render();
+    harness.runtime.effects.forEach((effect) => effect());
+    return tree;
+  };
+  try {
+    commit();
+    await eventually(() => harness.runtime.states[0] === 'done', 'active license restores completed registration');
+    let tree = commit();
+    assert.equal(created.length, 0, 'visiting registration must never create a new enrollment');
+    const restart = findTree(tree, (node) => node.type === 'button' && node.props.children === '새 생체 등록 시작');
+    await restart.props.onClick();
+    tree = commit();
+    await flush();
+    assert.equal(restores, 1, 'restore must not undo the explicit restart');
+    assert.equal(harness.runtime.states[0], '1');
+    assert.deepEqual(harness.runtime.states[5], [false, false, false]);
+    const submit = () => findTree(tree, (node) => node.type === 'button' && node.props.children === '동의하고 신분증 인증하기');
+    assert.equal(submit().props.disabled, true);
+    assert.equal(created.length, 0);
+    for (let i = 0; i < 3; i++) {
+      findTree(tree, (node) => node.props?.id === `consent-${i}`).props.onChange({ target: { checked: true } });
+      tree = commit();
+      assert.equal(submit().props.disabled, i < 2);
+    }
+    await submit().props.onClick();
+    assert.equal(created.length, 1);
+    assert.equal(created[0].documentVersion, '2026-09-v1');
+    assert.equal(created[0].enrollmentId, undefined);
+    assert.equal(harness.runtime.states[0], '2');
+    assert.equal(harness.runtime.states[1].id, 'new-enrollment');
+  } finally { await harness.close(); }
+});
+
 
 test('retouched photos are presented front, 45 degrees, then side', () => {
   assert.deepEqual(ENROLLMENT_ANGLES.map(({ value }) => value), [
@@ -461,6 +561,25 @@ test('gendered body types carry an image path, the unknown-gender list does not'
 
 // ── 문구: 사용자 화면에서 "생체 확인" 걷어내기 ───────────────────────────────
 
+test('등록 화면은 본인 확인 안내와 세 가지 필수 동의 링크를 유지한다', async () => {
+  const harness = await modelComponentHarness({ initialStates: ['1'], api: {} });
+  try {
+    const tree = harness.render();
+    const text = collectText(tree);
+    assert.ok(text.includes('먼저 본인인지 확인해요'));
+    for (const path of ['/terms', '/privacy', '/biometric-consent', '/overseas-consent']) {
+      assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props.to === path));
+    }
+    for (let i = 0; i < 3; i++) {
+      assert.equal(findTree(tree, (node) => node.props?.id === `consent-${i}`).props.checked, false);
+    }
+    const hubState = read('../../src/features/model/modelHubState.js');
+    assert.match(hubState, /label: '모델 등록'/);
+    assert.match(hubState, /label: '프로필 이미지 확정'/);
+  } finally { await harness.close(); }
+});
+
+
 // ── 체형 매트릭스(볼륨 × 실루엣) ────────────────────────────────────────────
 
 test('the female body matrix pairs every volume with its silhouettes', () => {
@@ -496,6 +615,44 @@ test('every matrix photo referenced by the UI actually exists', () => {
   }
 });
 
+test('조건 화면은 사용료 동의 뒤 같은 위저드에서 증서를 발급한다', async () => {
+  const calls = [];
+  const harness = await modelComponentHarness({
+    initialStates: ['3', { id: 'e1', status: 'license_pending' }],
+    api: { createLicense: async (body) => { calls.push(body); return { id: 'l1', vcId: 'vc-1', allowedUse: body.allowedUse }; } },
+  });
+  try {
+    let tree = harness.render();
+    const issue = () => findTree(tree, (node) => node.type === 'button' && node.props.children === '라이선스 증서 발급하기');
+    assert.equal(issue().props.disabled, true);
+    findTree(tree, (node) => node.props?.id === 'price-agreed').props.onChange({ target: { checked: true } });
+    tree = harness.render();
+    assert.equal(issue().props.disabled, false);
+    await issue().props.onClick();
+    assert.deepEqual(calls, [{ enrollmentId: 'e1', allowedUse: ['일반 의류', '액티브웨어', '홈웨어·잠옷'] }]);
+    assert.equal(harness.runtime.states[0], 'done');
+    assert.equal(harness.runtime.states[9].vcId, 'vc-1');
+  } finally { await harness.close(); }
+});
+
+test('등록 완료 화면은 발급된 조건과 영구 유효 안내 및 마이페이지 경로를 보여 준다', async () => {
+  const license = { id: 'l1', vcId: 'vc-1', allowedUse: ['일반 의류', '액티브웨어'], licenseValidUntil: null };
+  const harness = await modelComponentHarness({
+    initialStates: ['done', { id: 'e1', modelId: 'm1', status: 'passed' }, 1, '', false, [true, true, true], { allowedUse: license.allowedUse }, null, null, license],
+    api: {},
+  });
+  try {
+    const tree = harness.render();
+    const text = collectText(tree);
+    assert.ok(findTree(tree, (node) => node.type === 'h1' && node.props.children === '축하해요, 등록이 끝났어요'));
+    assert.ok(text.includes('일반 의류, 액티브웨어에 쓸 수 있고 철회하기 전까지 유효해요.'));
+    assert.ok(text.includes('증서 번호 vc-1'));
+    assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/status' && node.props.children === '마이페이지로'));
+    assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/model/license'));
+    assert.equal(findTree(tree, (node) => node.type === 'Chips'), null);
+  } finally { await harness.close(); }
+});
+
 test('라이선스 발급은 등록 완료 화면으로 체형과 발급 조건을 전달한다', () => {
   const source = read('../../src/features/model/ModelLicense.jsx');
   assert.match(
@@ -504,56 +661,106 @@ test('라이선스 발급은 등록 완료 화면으로 체형과 발급 조건�
   );
 });
 
-test('지원서 제출 성공 뒤 완료 화면에 머물고 모델 리스트로 이어진다', async () => {
+test('등록 완료 화면은 발급 경로의 최소 체형 정보로 완료 상태를 복원한다', async () => {
+  const harness = await modelComponentHarness({ initialStates: [], api: {} });
+  const handoff = { modelId: 'm1', gender: 'female', heightBucket: 'f_160_165', bodyType: 'slim_upper' };
+  harness.runtime.location = { state: { completionSummary: handoff } };
+  try {
+    const tree = harness.render();
+    assert.equal(harness.runtime.states[0], 'done');
+    assert.deepEqual(harness.runtime.states[1], handoff);
+    assert.ok(findTree(tree, (node) => node.type === 'h1' && node.props.children === '축하해요, 등록이 끝났어요'));
+    assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/model/license'));
+  } finally { await harness.close(); }
+});
+
+test('등록 완료 조건이 없으면 증서 확인을 안내하고 기본 조건을 발급된 값처럼 표시하지 않는다', async () => {
+  const harness = await modelComponentHarness({ initialStates: ['done', { modelId: 'm1' }], api: {} });
+  try {
+    const tree = harness.render();
+    const text = collectText(tree);
+    assert.ok(text.includes('발급한 조건은 증서에서 확인할 수 있어요.'));
+    for (const value of ['14,900원', '49,900원', '철회하기 전까지 유효해요.', '증서 번호']) assert.ok(!text.includes(value), value);
+    assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/model/license'));
+  } finally { await harness.close(); }
+});
+
+const completeApplicationForm = {
+  contactEmail: 'model@example.com', applicantName: '김하나', phone: '010-1234-5678',
+  birthdate: '2000-01-01', gender: 'female', heightCm: '170', weightKg: '55',
+  experienceLevel: 'beginner', agencyContracted: false, portfolioUrl: '', snsUrl: '',
+};
+const applicationAttestations = {
+  adultAndTruthful: true, photosAreMine: true, noAgencyContract: true,
+  reviewOnlyUse: true, privacyPolicy: true,
+};
+
+test('지원 완료는 새 payload를 보내고 접수 완료 화면에서 상태 보기로 이어진다', async () => {
   const navigations = [];
   const submissions = [];
   const harness = await modelComponentHarness({
-    entry: '/src/features/model/ModelApply.jsx',
-    exportName: 'ModelApply',
-    initialStates: [
-      'ready',
-      {
-        contactEmail: 'model@example.com', lastName: '김', firstName: '하나', phone: '',
-        birthdate: '2000-01-01', region: '서울, 대한민국', gender: 'female',
-        experienceLevel: 'beginner', categories: ['fashion'], portfolioUrl: '', snsUrl: '', bio: '',
-      },
-      { profile: { staged: true, name: 'profile.jpg' } },
-      { adultAndTruthful: true, photosAreMine: true },
-      true,
-      true,
-      null,
-    ],
-    api: {
-      getCurrentApplication: () => new Promise(() => {}),
-      stageApplicationPhoto: async () => ({}),
-      submitApplication: async (body) => { submissions.push(body); return { id: 'a1', status: 'under_review' }; },
-    },
+    entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
+    initialStates: ['ready', { ...completeApplicationForm, portfolioUrl: 'www.portfolio.com', snsUrl: 'www.instagram.com/example' }, { staged: true, previewUrl: 'blob:profile' }, applicationAttestations, 3, null, false, ''],
+    api: { submitApplication: async (body) => { submissions.push(body); return { id: 'a1', status: 'under_review' }; } },
   });
   harness.runtime.navigate = (...args) => navigations.push(args);
   try {
     const form = harness.render();
-    const submit = findTree(
-      form,
-      (node) => node.type === 'button' && node.props?.children === '지원서 제출하기',
-    );
-    assert.ok(submit, '완성된 지원서는 제출할 수 있어야 한다');
+    const submit = findTree(form, (node) => node.type === 'button' && node.props?.children === '지원 완료');
+    assert.ok(submit);
+    assert.equal(submit.props.disabled, false);
     await submit.props.onClick();
-    await flush();
-
     assert.equal(submissions.length, 1);
+    assert.deepEqual(submissions[0], {
+      contactEmail: 'model@example.com', applicantName: '김하나', phone: '010-1234-5678',
+      birthdate: '2000-01-01', gender: 'female', heightCm: 170, weightKg: 55,
+      experienceLevel: 'beginner', agencyContracted: false, portfolioUrl: 'https://www.portfolio.com', snsUrl: 'https://www.instagram.com/example',
+      attestations: applicationAttestations,
+      privacyConsent: { accepted: true, documentVersion: '2026-09-v1' },
+    });
     assert.equal(harness.runtime.states[0], 'complete');
-    assert.deepEqual(navigations, [], '제출 직후 상태 허브로 자동 이동하지 않는다');
-
+    assert.deepEqual(navigations, []);
     const complete = harness.render();
-    assert.ok(findTree(complete, (node) => node.props?.children === '지원서 접수가 끝났어요'));
-    assert.ok(findTree(complete, (node) => node.props?.children === '승인되면 메일로 등록 링크가 가요 · 보통 1시간 안'));
-    assert.ok(findTree(complete, (node) => node.props?.children === '정부 모바일 신분증 앱'));
-    assert.ok(findTree(complete, (node) => node.props?.children === '본인 사진'));
-    assert.ok(findTree(complete, (node) => node.type === 'Link' && node.props?.to === '/models'));
-  } finally {
-    await harness.close();
-  }
+    assert.ok(findTree(complete, (node) => node.props?.children === '지원서가 접수 완료됐어요'));
+    assert.ok(findTree(complete, (node) => node.type === 'Link' && node.props?.to === '/status' && node.props.children === '지원 상태 보기'));
+    assert.equal(findTree(complete, (node) => node.props?.children === '정부 모바일 신분증 앱'), null);
+  } finally { await harness.close(); }
 });
+
+test('확인에서 고치기로 돌아가도 입력값을 유지하고 다음은 다시 확인을 연다', async () => {
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
+    initialStates: ['ready', completeApplicationForm, { staged: true }, applicationAttestations, 3, null, false, ''], api: {},
+  });
+  try {
+    let tree = harness.render();
+    findTree(tree, (node) => node.type === 'button' && node.props['aria-label'] === '기본 정보 고치기').props.onClick();
+    tree = harness.render();
+    assert.ok(findTree(tree, (node) => node.type === 'input' && node.props.value === '김하나'));
+    const email = findTree(tree, (node) => node.type === 'input' && node.props.type === 'email');
+    assert.ok(!email.props.readOnly);
+    email.props.onChange({ target: { value: 'contact@example.com' } });
+    tree = harness.render();
+    findTree(tree, (node) => node.type === 'button' && node.props.children === '다음').props.onClick();
+    assert.equal(harness.runtime.states[4], 3);
+    assert.deepEqual(harness.runtime.states[1], { ...completeApplicationForm, contactEmail: 'contact@example.com' });
+    assert.ok(findTree(harness.render(), (node) => node.type === 'dd' && node.props.children === 'contact@example.com'));
+  } finally { await harness.close(); }
+});
+
+test('체크사항 하나가 비어 있으면 지원 완료가 잠기고 미동의 개수를 안내한다', async () => {
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
+    initialStates: ['ready', completeApplicationForm, { staged: true }, { ...applicationAttestations, privacyPolicy: false }, 3, null, false, ''], api: {},
+  });
+  try {
+    const tree = harness.render();
+    assert.equal(findTree(tree, (node) => node.type === 'button' && node.props.children === '지원 완료').props.disabled, true);
+    assert.ok(findTree(tree, (node) => node.props.children === '아직 표시하지 않은 체크사항이 1개 있어요.'));
+    assert.ok(findTree(tree, (node) => node.type === 'a' && node.props.href === '/privacy' && node.props.target === '_blank'));
+  } finally { await harness.close(); }
+});
+
 
 
 // ── 대표 이미지: 올리기 전에 확인, 그리고 되돌아가기 ──────────────────────────
@@ -632,3 +839,204 @@ test('영구로 바꾼 라이선스는 공개 증서에서도 영구라고 표�
   try { assert.ok(findTree(harness.render(), node=>node.type==='dd'&&node.props.children==='영구')); }
   finally {await harness.close();}
 });
+
+test('지원 기본 정보는 유효한 생일과 전화번호를 요구하고 전화번호를 자동 정리한다', async () => {
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
+    initialStates: ['ready', { ...completeApplicationForm, birthdate: '2099-01-01', phone: '' }, null, {}, 1, null, false, ''], api: {},
+  });
+  try {
+    let tree = harness.render();
+    assert.equal(findTree(tree, (node) => node.type === 'button' && node.props.children === '다음').props.disabled, true);
+    findTree(tree, (node) => node.type === 'input' && node.props.type === 'tel').props.onChange({ target: { value: '010abc12345678' } });
+    assert.equal(harness.runtime.states[1].phone, '010-1234-5678');
+    findTree(tree, (node) => node.type?.name === 'BirthdateInput').props.onChange('2000-01-01');
+    tree = harness.render();
+    const next = findTree(tree, (node) => node.type === 'button' && node.props.children === '다음');
+    assert.equal(next.props.disabled, false);
+    next.props.onClick();
+    assert.equal(harness.runtime.states[4], 2);
+  } finally { await harness.close(); }
+});
+
+test('지원 프로필은 사진 업로드와 에이전시 답을 요구하며 선택 값은 비워둘 수 있다', async () => {
+  const uploaded = [];
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
+    initialStates: ['ready', { ...completeApplicationForm, weightKg: '', experienceLevel: '', agencyContracted: null }, null, {}, 2, null, false, ''],
+    api: { stageApplicationPhoto: async (body) => { uploaded.push(body); } },
+  });
+  let preview;
+  try {
+    let tree = harness.render();
+    assert.equal(findTree(tree, (node) => node.type === 'button' && node.props.children === '다음').props.disabled, true);
+    const file = Object.assign(new Blob(['profile'], { type: 'image/jpeg' }), { name: 'profile.jpg' });
+    await findTree(tree, (node) => node.type === 'input' && node.props.type === 'file').props.onChange({ target: { files: [file], value: 'profile.jpg' } });
+    assert.equal(uploaded[0].kind, 'profile');
+    assert.equal(uploaded[0].fileBlob, file);
+    preview = harness.runtime.states[2].previewUrl;
+    tree = harness.render();
+    assert.ok(findTree(tree, (node) => node.type === 'img' && node.props.src === preview));
+    assert.equal(findTree(tree, (node) => node.type === 'button' && node.props.children === '다음').props.disabled, true);
+    findTree(tree, (node) => node.type === 'button' && node.props.children === '아니오').props.onClick();
+    tree = harness.render();
+    const next = findTree(tree, (node) => node.type === 'button' && node.props.children === '다음');
+    assert.equal(next.props.disabled, false);
+    next.props.onClick();
+    assert.equal(harness.runtime.states[4], 3);
+  } finally { if (preview) URL.revokeObjectURL(preview); await harness.close(); }
+});
+
+test('재지원은 이전 입력만 복원하고 사진과 다섯 체크는 다시 받는다', async () => {
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply', initialStates: [],
+    api: { getCurrentApplication: async () => ({ ...completeApplicationForm, contactEmail: 'previous@example.com', status: 'rejected', hasProfileImage: true, photoKinds: ['profile'], attestations: applicationAttestations }) },
+  });
+  try {
+    harness.render();
+    harness.runtime.effects.forEach((effect) => effect());
+    await eventually(() => harness.runtime.states[0] === 'ready', 'the rejected form loads');
+    assert.equal(harness.runtime.states[1].applicantName, '김하나');
+    assert.equal(harness.runtime.states[1].contactEmail, 'previous@example.com');
+    assert.equal(harness.runtime.states[2], null);
+    assert.deepEqual(Object.values(harness.runtime.states[3]), [false, false, false, false, false]);
+  } finally { await harness.close(); }
+});
+
+test('공개 지원 시작 화면은 지원서 링크와 가격, 키보드 안내 말풍선을 렌더한다', async () => {
+  const harness = await modelComponentHarness({
+    entry: '/src/features/facemarket-landing/pages/ApplyStartPage.jsx', exportName: 'ApplyStartPage', initialStates: [], api: {},
+  });
+  try {
+    const shell = harness.render();
+    const tree = shell.props.children();
+    assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/model/apply' && node.props.children === '지원서 쓰기'));
+    assert.ok(findTree(tree, (node) => node.type === 'b' && node.props.children === '14,900원'));
+    assert.ok(findTree(tree, (node) => node.type === 'b' && node.props.children === '49,900원'));
+    assert.ok(findTree(tree, (node) => node.props.tabIndex === 0 && node.props['aria-describedby'] === 'apply-settlement-tooltip'));
+    assert.ok(findTree(tree, (node) => node.type === 'summary' && node.props.children === 'FaceMarket에서 모델은 무슨 일을 하나요?'));
+    assert.equal(findTree(tree, (node) => node.type === 'summary' && node.props.children === '제 얼굴이 확실히 지켜지는 건가요?'), null);
+  } finally { await harness.close(); }
+});
+
+test('지원 시작 상단바는 중복 지원 CTA 대신 로그인 버튼을 제공한다', async () => {
+  const harness = await modelComponentHarness({
+    entry: '/src/features/facemarket-landing/pages/ApplyStartPage.jsx', exportName: 'ApplyStartPage',
+    initialStates: [{ label: '얼리버드 지원하기', to: '/apply' }, 'anonymous', true, false], api: {},
+  });
+  const logins = [];
+  harness.runtime.session = null;
+  harness.runtime.location = { pathname: '/apply', search: '' };
+  harness.runtime.openLogin = (path) => logins.push(path);
+  try {
+    const start = harness.render();
+    const shell = start.type(start.props);
+    const header = findTree(shell, (node) => node.type?.name === 'LandingHeader');
+    assert.equal(header.props.primaryLabel, null);
+    const tree = header.type(header.props);
+    const login = findTree(tree, (node) => node.type === 'button' && node.props.children === '로그인');
+    assert.ok(login);
+    login.props.onClick();
+    assert.deepEqual(logins, ['/apply']);
+  } finally { await harness.close(); }
+});
+
+for (const accountEmail of [null, 'google@example.com']) {
+  test(`지원서 연락 이메일은 계정 이메일(${accountEmail})과 달라도 제출된다`, async () => {
+    const submissions = [];
+    const harness = await modelComponentHarness({
+      entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
+      initialStates: ['ready', { ...completeApplicationForm, contactEmail: accountEmail || '' }, { staged: true, previewUrl: 'blob:profile' }, applicationAttestations, 1, null, false, ''],
+      api: { submitApplication: async (body) => { submissions.push(body); return { status: 'under_review' }; } },
+    });
+    harness.runtime.session = { user: { email: accountEmail } };
+    try {
+      let tree = harness.render();
+      const email = findTree(tree, (node) => node.type === 'input' && node.props.type === 'email');
+      assert.equal(email.props.value, accountEmail || '');
+      assert.ok(!email.props.readOnly);
+      for (const invalid of ['', 'wrong-address', 'a'.repeat(255) + '@example.com']) {
+        email.props.onChange({ target: { value: invalid } });
+        tree = harness.render();
+        assert.equal(findTree(tree, (node) => node.type === 'button' && node.props.children === '다음').props.disabled, true);
+      }
+      email.props.onChange({ target: { value: ' contact@example.com ' } });
+      tree = harness.render();
+      const next = findTree(tree, (node) => node.type === 'button' && node.props.children === '다음');
+      assert.equal(next.props.disabled, false);
+      next.props.onClick();
+      findTree(harness.render(), (node) => node.type === 'button' && node.props.children === '다음').props.onClick();
+      tree = harness.render();
+      assert.ok(findTree(tree, (node) => node.type === 'dd' && node.props.children === 'contact@example.com'));
+      const submit = findTree(tree, (node) => node.type === 'button' && node.props.children === '지원 완료');
+      assert.equal(submit.props.disabled, false);
+      await submit.props.onClick();
+      assert.equal(submissions[0].contactEmail, 'contact@example.com');
+      assert.equal(harness.runtime.states[0], 'complete');
+    } finally { await harness.close(); }
+  });
+}
+
+test('지원서의 긴 링크와 잘못된 주소는 프로필 단계에서 알리고 수정 후 진행한다', async () => {
+  const harness = await modelComponentHarness({
+    entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
+    initialStates: ['ready', completeApplicationForm, { staged: true }, applicationAttestations, 2, null, false, ''], api: {},
+  });
+  try {
+    for (const placeholder of ['www.portfolio.com', 'www.instagram.com/example']) {
+      const input = findTree(harness.render(), (node) => node.type === 'input' && node.props.placeholder === placeholder);
+      // https:// is added before submission; it must count towards the server's limit.
+      for (const invalid of ['example.com/' + 'a'.repeat(490), 'ftp://example.com/file']) {
+        input.props.onChange({ target: { value: invalid } });
+        const tree = harness.render();
+        assert.equal(findTree(tree, (node) => node.type === 'button' && node.props.children === '다음').props.disabled, true);
+        assert.ok(findTree(tree, (node) => node.props.role === 'alert'));
+        assert.equal(findTree(tree, (node) => node.type === 'input' && node.props.placeholder === placeholder).props.value, invalid, 'pasting must not silently truncate the URL');
+      }
+      input.props.onChange({ target: { value: 'https://example.com/' + 'a'.repeat(480) } });
+      assert.equal(findTree(harness.render(), (node) => node.type === 'button' && node.props.children === '다음').props.disabled, false);
+      input.props.onChange({ target: { value: '' } });
+    }
+  } finally { await harness.close(); }
+});
+
+for (const failure of [
+  { status: 400, code: 'invalid_url', message: '포트폴리오 링크가 너무 깁니다.', expected: /포트폴리오 링크가 너무 깁니다/, step: 2 },
+  { status: 400, code: 'invalid_email', message: '이메일 형식이 올바르지 않습니다.', expected: /이메일 형식/, step: 1 },
+  { status: 409, code: 'application_exists', message: '이미 검토 중인 지원서가 있습니다.', expected: /이미/, step: 3 },
+  { status: 503, message: 'internal server detail', expected: /잠시 후/, step: 3 },
+  { message: 'Failed to fetch', expected: /인터넷 연결/, step: 3 },
+]) {
+  test(`지원서 제출 실패(${failure.code || failure.status || 'network'})는 원인을 구분하고 작성 내용을 보존한다`, async () => {
+    let attempts = 0;
+    const form = { ...completeApplicationForm, portfolioUrl: 'https://example.com/portfolio' };
+    const photo = { staged: true, previewUrl: 'blob:profile' };
+    const harness = await modelComponentHarness({
+      entry: '/src/features/model/ModelApply.jsx', exportName: 'ModelApply',
+      initialStates: ['ready', form, photo, applicationAttestations, 3, null, false, ''],
+      api: { submitApplication: async () => { attempts += 1; if (attempts === 1) throw Object.assign(new Error(failure.message), failure); return { status: 'under_review' }; } },
+    });
+    try {
+      await findTree(harness.render(), (node) => node.type === 'button' && node.props.children === '지원 완료').props.onClick();
+      let tree = harness.render();
+      assert.ok(findTree(tree, (node) => node.props.role === 'alert'));
+      assert.match(harness.runtime.states[7], failure.expected);
+      assert.equal(harness.runtime.states[4], failure.step);
+      assert.deepEqual(harness.runtime.states[1], form);
+      assert.deepEqual(harness.runtime.states[2], photo);
+      assert.deepEqual(harness.runtime.states[3], applicationAttestations);
+      if (failure.status === 409) {
+        assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/status'));
+      } else {
+        if (failure.step !== 3) {
+          findTree(tree, (node) => node.type === 'button' && node.props.children === '다음').props.onClick();
+          tree = harness.render();
+        }
+        const retry = findTree(tree, (node) => node.type === 'button' && node.props.children === '지원 완료');
+        assert.equal(retry.props.disabled, false);
+        await retry.props.onClick();
+        assert.equal(harness.runtime.states[0], 'complete');
+      }
+    } finally { await harness.close(); }
+  });
+}

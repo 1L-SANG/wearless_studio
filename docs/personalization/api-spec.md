@@ -94,7 +94,7 @@ stateDiagram-v2
 
 ### 3.0 본인확인 / 연령 게이트 (T2-1 — 구현 완료)
 
-개인화는 **성인 본인 동의** 전제(정책 게이트, [phase0-license-check.md](phase0-license-check.md))라 미성년은 차단한다(법정대리인 동의 플로우 없음 — PRD N2). 연령 소스는 **CX 표준인증창 본인확인** 하나뿐이다.
+개인화는 **성인 본인 동의** 전제(정책 게이트, phase0-license-check.md — 2026-09-11 정리, git 이력 참조)라 미성년은 차단한다(법정대리인 동의 플로우 없음 — PRD N2). 연령 소스는 **CX 표준인증창 본인확인** 하나뿐이다.
 
 #### 진입점 = `/model/register` (FaceMarket 과 통합, Level 1)
 

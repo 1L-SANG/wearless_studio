@@ -301,6 +301,18 @@ def _slack_escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+async def _post_slack(settings, text: str) -> None:
+    """incoming webhook 으로 한 줄. 상태를 안 보면 웹훅 폐기(404/410)·레이트리밋(429)이 성공과
+    구분되지 않는다 — 이 알림들은 원장이 없어 로그가 유일한 관측점이다."""
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            res = await client.post(settings.fm_slack_webhook_url, json={"text": text})
+        if res.status_code >= 400:
+            logger.error("slack notify rejected status=%s", res.status_code)
+    except Exception as exc:
+        logger.warning("slack notify failed: %s", exc)
+
+
 async def notify_slack_new_application(
     settings, *, categories: list[str], region: str | None
 ) -> None:
@@ -313,15 +325,7 @@ async def notify_slack_new_application(
         "facemarket.", "admin."
     )
     text += f"\n<{admin_link}|관리자 검토 콘솔 열기>"
-    try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            res = await client.post(settings.fm_slack_webhook_url, json={"text": text})
-        # 상태를 안 보면 웹훅 폐기(404/410)·레이트리밋(429)이 성공과 구분되지 않는다. 이 알림은
-        # 원장이 없어 로그가 유일한 관측점이다 — 조용히 끊기면 관리자는 지원서가 없다고 믿는다.
-        if res.status_code >= 400:
-            logger.error("slack notify rejected status=%s", res.status_code)
-    except Exception as exc:
-        logger.warning("slack notify failed: %s", exc)
+    await _post_slack(settings, text)
 
 
 async def notify_slack_model_confirmed(
@@ -335,12 +339,18 @@ async def notify_slack_model_confirmed(
         f"{_slack_escape(display_name)}\n"
         f"<{admin_link}|관리자 모델 콘솔 열기>"
     )
-    try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            res = await client.post(settings.fm_slack_webhook_url, json={"text": text})
-        if res.status_code >= 400:
-            logger.error(
-                "model confirmation slack notify rejected status=%s", res.status_code
-            )
-    except Exception as exc:
-        logger.warning("model confirmation slack notify failed: %s", exc)
+    await _post_slack(settings, text)
+
+
+async def notify_slack_admin_device_requested(settings, *, email: str | None, label: str) -> None:
+    """관리자 콘솔에 새 기기가 승인을 요청했다. 승인은 다른 관리자가 콘솔에서 한다 — 이 알림이
+    없으면 상대는 요청이 있는지도 모른다. 탈취된 계정의 요청도 이 알림으로 드러난다(요청한 적
+    없는 기기가 뜬다). 실패는 무해 — 등록 자체는 이미 커밋됐다."""
+    if not settings.fm_slack_webhook_url:
+        return
+    admin_link = f"{settings.fm_application_public_base}".replace("facemarket.", "admin.") + "/staff"
+    text = (
+        f":closed_lock_with_key: 관리자 기기 승인 요청 · {_slack_escape(email or '-')} · "
+        f"{_slack_escape(label)}\n<{admin_link}|관리자 관리 열기>"
+    )
+    await _post_slack(settings, text)

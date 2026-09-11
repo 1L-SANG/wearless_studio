@@ -8,6 +8,7 @@ import pytest
 from app.agents.gemini_image import InlineImage
 from app.agents.mannequin_adjust import build_adjust_directives
 from app.agents.prompts import _product_block, load_prompt_template
+from app.agents.product_reference import ProductReference
 from app.workers import mannequin_job
 from conftest import make_settings
 
@@ -38,7 +39,8 @@ class _ProviderCaptured(Exception):
 
 
 def capture_candidate(monkeypatch, *, clothing_type="top", name="제품", slots=("Front", "Back"),
-                      generation_path="fresh", parent=None, profile=None, match_image=None):
+                      generation_path="fresh", parent=None, profile=None, match_image=None,
+                      with_product_roles=False):
     """Run real orchestration until its first provider request, with no DB/R2 writes."""
     captured = {}
 
@@ -54,6 +56,8 @@ def capture_candidate(monkeypatch, *, clothing_type="top", name="제품", slots=
     settings = make_settings()
     app = types.SimpleNamespace(state=types.SimpleNamespace(settings=settings, pool=None, r2=None, gemini=Capture()))
     images = [InlineImage("image/png", slot.encode()) for slot in slots]
+    refs = [ProductReference(slot, f"asset-{slot}", image)
+            for slot, image in zip(slots, images, strict=True)] if with_product_roles else None
     manifest = mannequin_job._build_manifest([{"slot": slot} for slot in slots], match_image is not None, clothing_type)
     directive_profile = profile or PROFILE
     directives = build_adjust_directives(directive_profile, tuple(directive_profile["axes"]))
@@ -68,8 +72,37 @@ def capture_candidate(monkeypatch, *, clothing_type="top", name="제품", slots=
             clothing_type=clothing_type, image_manifest=manifest,
             fit_profile=profile, adjusted_axes=("fit", "length") if profile else (),
             generation_path=generation_path, parent_cut_img=parent, adjust_directives=directives,
+            product_refs=refs,
         ))
     return captured
+
+
+@pytest.mark.parametrize("generation_path,parent", [("fresh", None), ("edit", InlineImage("image/png", b"current"))])
+def test_pants_matching_top_is_named_as_top_at_provider_boundary(monkeypatch, generation_path, parent):
+    call = capture_candidate(monkeypatch, clothing_type="bottom", generation_path=generation_path,
+                             parent=parent, match_image=InlineImage("image/png", b"white-top"),
+                             profile={"category": "pants", "gender": "women", "axes": {"length": "ankle"}, "version": 1})
+    assert call["images"][-1].data == b"white-top"
+    assert "matching top" in call["prompt"].lower()
+    manifest_line = next(line for line in call["prompt"].splitlines() if line.startswith("4."))
+    assert "matching top" in manifest_line.lower()
+
+
+def test_matching_top_adjustment_does_not_use_bottom_scope():
+    profile = {"category": "pants", "gender": "women", "axes": {"length": "ankle"},
+               "matchingFit": {"fitCategory": "top", "axes": {"length": "crop"}}}
+    directives = build_adjust_directives(profile, ("length",))
+    assert "MATCHING TOP" in directives
+    assert "MATCHING BOTTOM" not in directives
+
+
+def test_only_matching_top_change_does_not_retailor_main_pants():
+    profile = {"category": "pants", "gender": "women", "axes": {"cut": "wide", "length": "below_ankle"},
+               "version": 2, "matchingFit": {"clothingId": "white-top", "fitCategory": "top", "axes": {"length": "crop"}}}
+    directives = build_adjust_directives(profile, ())
+    assert "MATCHING TOP" in directives
+    assert "MAIN PRODUCT" not in directives
+    assert "cropped hem" in directives
 
 
 @pytest.mark.parametrize("clothing_type,name", [("bottom", "퍼플 바지"), ("outer", "크로셰 가디건"), ("top", "검정 셔츠")])
@@ -80,7 +113,7 @@ def test_live_fresh_requests_use_photos_without_composition_guidance(monkeypatch
     assert "Material rendering guidance" not in call["prompt"]
     assert "두 개의 주머니" in call["prompt"]
     assert [image.data for image in call["images"]] == [b"base", *(slot.encode() for slot in slots)]
-    assert call["model"] == "gemini-3-pro-image"
+    assert call["model"] == "gpt-image-2.5-flare"
 
 
 def test_fresh_adjustment_fallback_keeps_declared_fit_and_photo_policy(monkeypatch):

@@ -27,6 +27,14 @@ def client(keypair):
     return TestClient(app)
 
 
+@pytest.fixture()
+def enforce_client(keypair):
+    _, public_key = keypair
+    app = create_app(make_settings(facemarket_enabled=True, admin_device_gate="enforce"))
+    app.state.jwt_key_resolver = lambda token: public_key
+    return TestClient(app)
+
+
 class FakeCursor:
     def __init__(self, conn):
         self.conn, self.row = conn, None
@@ -82,6 +90,25 @@ def report_row(report_id=REPORT_ID, **overrides):
         "model_id": "model-1", "model_name": "모델 이름", "reason": "허용 품목 확인",
         "status": "open", "created_at": CREATED_AT, **overrides,
     }
+
+
+@pytest.mark.parametrize(("method", "path", "kwargs"), [
+    ("get", BASE, {}),
+    ("patch", f"{BASE}/{REPORT_ID}", {"json": {"status": "closed"}}),
+])
+def test_usage_report_routes_require_registered_device_in_enforce_mode(
+    method, path, kwargs, enforce_client, make_token, monkeypatch,
+):
+    conn = FakeConn()
+    patch_db(monkeypatch, conn)
+
+    response = getattr(enforce_client, method)(
+        path, headers={"Authorization": f"Bearer {make_token()}"}, **kwargs,
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "device_missing"
+    assert conn.executed == []
 
 
 def test_list_serializes_report_fields_and_advances_a_stable_cursor(client, make_token, monkeypatch):

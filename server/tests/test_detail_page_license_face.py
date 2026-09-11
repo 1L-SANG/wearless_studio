@@ -36,7 +36,7 @@ def _license_row(status="active", days_left=30, key=FACE_KEY, name="김하늘"):
         "status": status,
         "display_name": name,
         "license_valid_until": datetime.now(timezone.utc) + timedelta(days=days_left),
-        "unit_price": 10000,
+        "unit_price": 14900,
         "vc_id": "vc-1",
         "vc_status_uri": None,
         "allowed_use": [CATEGORY],
@@ -378,8 +378,11 @@ def test_snapshot_real_job_notice_states_masked_model(monkeypatch):
     }
 
 
-def test_snapshot_real_identity_is_attached_only_to_horizon_cuts(monkeypatch):
-    # product 컷에는 인물 증거를 붙이지 않고, 거울샷은 별도 가상모델만 쓴다.
+def test_snapshot_real_identity_is_attached_to_every_worn_cut(monkeypatch):
+    """상품컷에는 인물 증거를 안 붙이고, 착용 컷(거울샷 포함)에는 전부 붙인다.
+
+    2026-09-11 사용자 결정 전에는 거울샷이 가상모델로 갈려 같은 페이지에 인물이 둘이었다.
+    """
     captured = {}
     _patch_inputs(monkeypatch, captured,
                   project={"copywriting": False, "facemarket_license_id": "later-lock"},
@@ -397,15 +400,15 @@ def test_snapshot_real_identity_is_attached_only_to_horizon_cuts(monkeypatch):
     by_block = {c["block"]: c for c in captured["calls"]}
     assert by_block["b1"]["has_face"] is True and len(by_block["b1"]["images"]) == 3
     assert by_block["b2"]["has_face"] is False and len(by_block["b2"]["images"]) == 1
+    # 거울샷도 같은 등록자 증거로 만든다(얼굴 노출은 없어 has_face 는 False 그대로).
     assert by_block["b3"]["has_face"] is False and len(by_block["b3"]["images"]) == 3
-    # 얼굴이 담긴 컷이 하나라도 성공했으므로 고지는 실제 모델 문구
     assert captured["license_notice"] is not None
-    # 실존 모델 파생물은 horizon 한 장뿐이고 mirror는 가상모델이라 공개 캐시 경로다.
-    assert main_r2.caches.count("private, no-store") == 1
-    assert main_r2.caches.count("public, max-age=31536000, immutable") == 2
+    # 실존 모델 파생물은 착용 컷 두 장 — 둘 다 비공개 캐시로 나간다. 상품컷만 공개다.
+    assert main_r2.caches.count("private, no-store") == 2
+    assert main_r2.caches.count("public, max-age=31536000, immutable") == 1
     markers = [asset["metadata"]["facemarket_real_derived"] for asset in captured["cut_assets"]]
-    assert markers.count(True) == 1
-    assert markers.count(False) == 2
+    assert markers.count(True) == 2
+    assert markers.count(False) == 1
 
 
 # ── verify-before-use 시점 갭 (해지된 얼굴이 생성돼 나가면 회수 불가) ────────
