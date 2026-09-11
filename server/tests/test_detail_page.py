@@ -237,10 +237,18 @@ def test_detail_product_only_storyboard_strips_real_model_before_facemarket_gate
     assert events == ["cache", "job", "reserve", "commit"]
 
 
-def test_detail_real_styling_requires_virtual_styling_model_before_job(
+def test_detail_real_styling_needs_no_virtual_stand_in(
     client, make_token, monkeypatch
 ):
-    calls = {"job": 0, "reserve": 0}
+    """스타일링 컷만 있는 콘티도 실제 모델 그대로 큐에 들어간다(2026-09-11 사용자 결정).
+
+    예전에는 400 styling_model_required 로 막고 가상 대역을 고르게 했다.
+    """
+    seen = {}
+    client.app.state.settings = replace(
+        client.app.state.settings,
+        facemarket_enabled=True,
+    )
 
     async def fake_project(conn, user_id, project_id):
         return {"id": project_id}
@@ -251,33 +259,55 @@ def test_detail_real_styling_requires_virtual_styling_model_before_job(
     async def fake_storyboard(conn, project_id):
         return [{"id": "s1", "source": "ai", "cutType": "styling"}]
 
-    async def forbidden_job(*args, **kwargs):
-        calls["job"] += 1
+    async def fake_resolve(conn, project, analysis):
+        return {"id": LICENSE_ID, "model_id": MODEL_ID}
 
-    async def forbidden_reserve(*args, **kwargs):
-        calls["reserve"] += 1
+    async def fake_verify(*args, **kwargs):
+        return None
+
+    async def fake_lock(conn, project_id, license_id):
+        return None
+
+    async def fake_editor(conn, project_id):
+        return []
+
+    async def fake_product(conn, project_id):
+        return {"clothing_type": "top"}
+
+    async def fake_create(conn, **kwargs):
+        seen.update(kwargs)
+        return {"id": "job-styling-only"}, True
+
+    async def fake_reserve(conn, user_id, amount):
+        return 10
 
     monkeypatch.setattr(routes.repo, "get_project", fake_project)
     monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(routes.repo, "get_storyboard", fake_storyboard)
-    monkeypatch.setattr(routes.repo, "create_job", forbidden_job)
-    monkeypatch.setattr(routes.repo, "reserve_credits", forbidden_reserve)
-    patch_route_db(monkeypatch, routes)
+    monkeypatch.setattr(routes.facemarket, "resolve_project_license", fake_resolve)
+    monkeypatch.setattr(routes.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(routes.facemarket, "set_project_license", fake_lock)
+    monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_editor)
+    monkeypatch.setattr(routes.repo, "get_product", fake_product)
+    monkeypatch.setattr(routes.repo, "create_job", fake_create)
+    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
+    _patch_counted_route_conn(monkeypatch, [])
 
     response = client.post(
         "/v1/projects/p1/detail-page:generate",
         headers=auth_headers(make_token),
     )
 
-    assert response.status_code == 400
-    assert response.json()["error"] == {
-        "code": "styling_model_required",
-        "message": "장소·스타일링 컷에 쓸 가상 모델을 골라 주세요.",
+    assert response.status_code == 202, response.text
+    assert seen["payload"] == {
+        "mode": "generate",
+        "modelId": MODEL_ID,
+        "brandUseCategory": CATEGORY,
+        "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
     }
-    assert calls == {"job": 0, "reserve": 0}
 
 
-def test_detail_mixed_real_selection_queues_styling_model_at_payload_top_level(
+def test_detail_mixed_real_selection_queues_one_model_for_every_cut(
     client, make_token, monkeypatch
 ):
     seen = {}
@@ -342,10 +372,10 @@ def test_detail_mixed_real_selection_queues_styling_model_at_payload_top_level(
     )
 
     assert response.status_code == 202, response.text
+    # 저장된 옛 stylingModelId 는 더 이상 읽지 않는다 — 모든 컷이 선택 모델 하나로 간다.
     assert seen["payload"] == {
         "mode": "generate",
         "modelId": MODEL_ID,
-        "stylingModelId": "mA",
         "brandUseCategory": CATEGORY,
         "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
     }
@@ -1903,9 +1933,14 @@ def test_run_detail_page_job_uses_queued_model_without_mutating_storyboard(monke
 
 
 @pytest.mark.parametrize("real_cuts_fail", [False, True])
-def test_run_detail_page_job_splits_real_horizon_from_virtual_styling_and_settles_horizons(
+def test_run_detail_page_job_puts_the_real_face_in_every_worn_cut_and_settles(
     monkeypatch, real_cuts_fail,
 ):
+    """실제 모델을 고르면 스튜디오·스타일링·미러 전부 그 얼굴로 간다(2026-09-11 사용자 결정).
+
+    예전에는 horizon 만 REAL 이고 나머지는 가상 대역(mA)으로 갈렸다 — 같은 상세페이지 안에서
+    인물이 둘로 나뉘었다는 뜻이다. 이제 가상 참조는 한 번도 쓰이지 않는다.
+    """
     captured = {"cuts": {}, "settlements": [], "events": []}
     storyboard = [
         {"id": "h-front", "source": "ai", "cutType": "horizon", "shot": "full", "direction": "front"},
@@ -1972,11 +2007,7 @@ def test_run_detail_page_job_splits_real_horizon_from_virtual_styling_and_settle
         ]
 
     def fake_virtual_refs(spec, *, require_full_body=False):
-        assert spec["modelId"] == "mA"
-        return (
-            {"key": "virtual/face", "mime": "image/png"},
-            {"key": "virtual/body", "mime": "image/png"},
-        )
+        raise AssertionError("실제 모델을 고른 잡은 가상 참조를 쓰지 않는다")
 
     async def fake_generate(settings, gemini, cut_spec, product, images, **kwargs):
         captured["cuts"][cut_spec["id"]] = {
@@ -2029,18 +2060,13 @@ def test_run_detail_page_job_splits_real_horizon_from_virtual_styling_and_settle
     asyncio.run(dpj.run_detail_page_job(app, worker_job({
         "mode": "generate",
         "modelId": MODEL_ID,
-        "stylingModelId": "mA",
         "brandUseCategory": CATEGORY,
         "_facemarket": {"modelId": MODEL_ID, "licenseId": LICENSE_ID},
     }, credits_reserved=4)))
 
-    assert captured["cuts"]["h-front"]["modelId"] == MODEL_ID
-    assert captured["cuts"]["h-side"]["modelId"] == MODEL_ID
-    assert captured["cuts"]["styling"]["modelId"] == "mA"
-    assert "real/face" in captured["cuts"]["h-front"]["images"]
-    assert "real/face" in captured["cuts"]["h-side"]["images"]
-    assert "real/face" not in captured["cuts"]["styling"]["images"]
-    assert "virtual/face" in captured["cuts"]["styling"]["images"]
+    for block_id in ("h-front", "h-side", "styling", "mirror"):
+        assert captured["cuts"][block_id]["modelId"] == MODEL_ID, block_id
+        assert "real/face" in captured["cuts"][block_id]["images"], block_id
     done_events = {
         payload["blockId"]: payload
         for event_type, payload in captured["events"]
@@ -2051,21 +2077,17 @@ def test_run_detail_page_job_splits_real_horizon_from_virtual_styling_and_settle
     else:
         assert "previewUrl" not in done_events["h-front"]
         assert "previewUrl" not in done_events["h-side"]
-    assert done_events["styling"]["previewUrl"].startswith("https://r2.test/")
-    assert captured["cuts"]["mirror"]["modelId"] == "mA"
-    assert "real/face" not in captured["cuts"]["mirror"]["images"]
+    # 실제 얼굴이 담긴 컷은 미리보기 URL 을 내보내지 않는다(비공개 버킷) — 이제 전 컷이 그렇다.
+    assert "previewUrl" not in done_events["styling"]
+    assert "previewUrl" not in done_events["mirror"]
     assets = captured["finalize"]["cut_assets"]
     assert len(assets) == (2 if real_cuts_fail else 4)
     for asset in assets:
-        if asset["metadata"]["cut_type"] == "horizon":
-            assert asset["provenance"] == {
-                "license_id": LICENSE_ID, "model_id": MODEL_ID,
-            }
-        else:
-            assert asset["metadata"]["facemarket_real_derived"] is False
-            assert "provenance" not in asset
+        assert asset["metadata"]["facemarket_real_derived"] is True
+        assert asset["provenance"] == {"license_id": LICENSE_ID, "model_id": MODEL_ID}
+    # 정산은 실제 얼굴 컷이 하나라도 나왔을 때 1회(단가는 라이선스 unit_price).
     if real_cuts_fail:
-        assert captured["settlements"] == []
+        assert len(captured["settlements"]) == 1
     else:
         assert len(captured["settlements"]) == 1
         assert captured["settlements"][0]["total"] == 5000

@@ -118,7 +118,7 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {string[]} sellingPoints    자유 텍스트 (max 5)
    @property {string[]} aiSuggestedPoints (max 2)
    @property {string} selectedModelId
-   @property {string|null} stylingModelId  실모델 선택 시 styling/mirror 컷에 쓰는 가상모델
+   @property {string|null} stylingModelId  (사용 안 함, 2026-09-11 사용자 결정) 옛 스타일링 대역
    @property {string|null} brandUseCategory
    @property {MatchClothing[]} matchClothing  후보 목록 (선택 상태 포함 — 계약은 matchSelections 분리, §7 갭)
    @property {string} washCare

@@ -27,9 +27,7 @@ import { EXPECTED_MS } from '@/lib/smoothProgress.js';
 import { exampleGenderFromAnalysis, hexFor } from '@/features/storyboard/Storyboard.jsx';
 import {
   isRealModelSelection,
-  stylingModelPatchForAnalysis,
 } from '@/features/analysis/modelSelection.js';
-import { AI_MODELS } from '@/features/analysis/aiModels.js';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel, FrameMini } from '@/features/editor/EditorPanels.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, ensureShippingReturnsBlock, fillFeatureCopy, isAutoManagedBlock, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
@@ -1245,12 +1243,6 @@ export function Editor() {
       api.getMatchClothing(projectId).catch(() => [])])
       .then(([b, w, c, _a, p, fm, an, sb, mc]) => {
         fetched = true;   // 여기부터 터지면 통신이 아니라 조립 문제다
-        const stylingModelPatch = stylingModelPatchForAnalysis(an, AI_MODELS);
-        if (stylingModelPatch) {
-          an = { ...an, ...stylingModelPatch };
-          // 에디터 재시도는 메모리 기본값으로 즉시 안전해지고, 저장은 화면 로드를 막지 않는다.
-          void api.saveAnalysis(projectId, stylingModelPatch).catch(() => {});
-        }
         const hydratedCatalogs = withStoryboardSpaceSetExamples(c);
         let withH = b.map((blk) => normalizeEditorBlockRole(blk));
         // 라벨·원 색은 같은 근거(swatchId)에서 나와야 한다 — 규칙은 lib/colorOpts 한 곳.
@@ -2312,12 +2304,8 @@ export function Editor() {
   };
   // req = NewCutRequest 필드 전체 (계약 §6) — 방향·샷·모델·예시 선택이 생성에 그대로 반영되어야 한다
   const generateImage = async (req) => {
-    if (req.cutType !== 'horizon' && isRealModelSelection(req.modelId)) {
-      toast.push('실제 모델은 스튜디오 컷에만 쓸 수 있어요', { icon: 'alertTri' });
-      return null;
-    }
-    if (req.cutType === 'horizon'
-      && isRealModelSelection(req.modelId)
+    // 실제 모델은 모든 컷에 쓴다(2026-09-11 사용자 결정) — 컷 종류로 막지 않는다.
+    if (isRealModelSelection(req.modelId)
       && (!analysis?.brandUseCategory || brandUseCategorySaving)) {
       toast.push('실제 모델을 사용할 브랜드 유형을 먼저 저장해 주세요.', { icon: 'alertTri' });
       return null;

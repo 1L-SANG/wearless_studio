@@ -732,16 +732,31 @@ def test_editor_vary_inherits_trusted_source_license_snapshot(
         ("horizon", {"changes": [{"type": "other", "value": "거리 배경으로 이동"}]}),
         ("horizon", {"changes": [{"type": "pose", "value": "파리 거리에서 걷기"}]}),
         ("horizon", {"refBgAssetId": "44444444-4444-4444-4444-444444444444"}),
+        ("styling", {}),
+        ("mirror", {}),
     ],
 )
-def test_editor_real_vary_rejects_untrusted_or_scene_changing_requests(
+def test_editor_real_vary_accepts_scene_changes_and_every_cut_type(
     client, make_token, monkeypatch, trusted_cut_type, body_patch
 ):
-    calls = {"job": 0, "reserve": 0}
+    """실제 모델은 모든 컷·모든 변형에서 쓴다(2026-09-11 사용자 결정).
+
+    예전에는 배경을 바꾸는 변형과 스튜디오 밖 컷을 409(real_model_horizon_only)로 막았다.
+    막는 것이 사라졌어도 **출처 스냅샷·라이선스 확인·컷 종류 신뢰**는 그대로여야 한다 —
+    이 테스트가 고정하는 건 이제 그 세 가지다.
+    """
+    seen = {}
     source_asset_id = "33333333-3333-3333-3333-333333333333"
+    client.app.state.settings = replace(
+        client.app.state.settings,
+        facemarket_enabled=True,
+    )
 
     async def fake_project(conn, user_id, project_id):
         return {"id": project_id}
+
+    async def fake_analysis(conn, project_id):
+        return {"brandUseCategory": CATEGORY}
 
     async def fake_provenance(conn, user_id, asset_id):
         return {
@@ -750,16 +765,35 @@ def test_editor_real_vary_rejects_untrusted_or_scene_changing_requests(
             "cut_type": trusted_cut_type,
         }
 
-    async def forbidden_job(*args, **kwargs):
-        calls["job"] += 1
+    async def fake_resolve(conn, model_id, **kwargs):
+        assert model_id == MODEL_ID and kwargs == {"license_id": LICENSE_ID}
+        return {"id": LICENSE_ID, "model_id": MODEL_ID}
 
-    async def forbidden_reserve(*args, **kwargs):
-        calls["reserve"] += 1
+    async def fake_verify(app, row, **kwargs):
+        seen["verified"] = kwargs
+
+    async def fake_create(conn, **kwargs):
+        seen.update(kwargs)
+        return {"id": "job-vary-real"}, True
+
+    async def fake_reserve(conn, user_id, amount):
+        return 9
+
+    async def fake_lock(conn):
+        return None
+
+    async def fake_closed(conn):
+        return False
 
     monkeypatch.setattr(routes.repo, "get_project", fake_project)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(routes.repo, "get_asset_facemarket_provenance", fake_provenance)
-    monkeypatch.setattr(routes.repo, "create_job", forbidden_job)
-    monkeypatch.setattr(routes.repo, "reserve_credits", forbidden_reserve)
+    monkeypatch.setattr(routes.facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(routes.facemarket, "verify_license", fake_verify)
+    monkeypatch.setattr(routes.repo, "create_job", fake_create)
+    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
+    monkeypatch.setattr(routes.repo, "lock_facemarket_writer_boundary", fake_lock)
+    monkeypatch.setattr(routes.repo, "facemarket_writer_boundary_closed", fake_closed)
     patch_route_db(monkeypatch, routes)
 
     response = client.post(
@@ -775,9 +809,14 @@ def test_editor_real_vary_rejects_untrusted_or_scene_changing_requests(
         },
     )
 
-    assert response.status_code == 409
-    assert response.json()["error"]["code"] == "real_model_horizon_only"
-    assert calls == {"job": 0, "reserve": 0}
+    assert response.status_code == 202, response.text
+    assert seen["payload"]["_facemarket"] == {
+        "modelId": MODEL_ID,
+        "licenseId": LICENSE_ID,
+    }
+    # 컷 종류는 클라이언트가 말한 "horizon" 이 아니라 원장이 말한 값이다.
+    assert seen["payload"]["source"]["cutType"] == trusted_cut_type
+    assert seen["verified"] == {"model_id": MODEL_ID, "brand_use_category": CATEGORY}
 
 
 def test_editor_vary_real_marker_without_trusted_lineage_fails_before_charge(
@@ -823,14 +862,15 @@ def test_editor_vary_real_marker_without_trusted_lineage_fails_before_charge(
     assert calls == {"create": 0, "reserve": 0}
 
 
-def test_editor_rejects_real_model_for_styling_before_job_and_credit(
+def test_editor_new_real_cut_outside_horizon_is_accepted(
     client, make_token, monkeypatch
 ):
+    """실제 모델로 스타일링 컷을 새로 만들 수 있다 — 예전 409(real_model_horizon_only) 폐기."""
     client.app.state.settings = replace(
         client.app.state.settings,
         facemarket_enabled=True,
     )
-    calls = {"create": 0, "reserve": 0}
+    seen = {}
 
     async def fake_project(conn, user_id, project_id):
         return {"id": project_id}
@@ -838,20 +878,34 @@ def test_editor_rejects_real_model_for_styling_before_job_and_credit(
     async def fake_analysis(conn, project_id):
         return {"brandUseCategory": CATEGORY}
 
-    async def forbidden_resolve(*args, **kwargs):
-        raise AssertionError("non-horizon real model must fail before license lookup")
+    async def fake_resolve(conn, model_id, **kwargs):
+        assert model_id == MODEL_ID
+        return {"id": LICENSE_ID, "model_id": MODEL_ID}
 
-    async def fake_create(*args, **kwargs):
-        calls["create"] += 1
+    async def fake_verify(app, row, **kwargs):
+        seen["verified"] = kwargs
 
-    async def fake_reserve(*args, **kwargs):
-        calls["reserve"] += 1
+    async def fake_create(conn, **kwargs):
+        seen.update(kwargs)
+        return {"id": "job-new-styling"}, True
+
+    async def fake_reserve(conn, user_id, amount):
+        return 9
+
+    async def fake_lock(conn):
+        return None
+
+    async def fake_closed(conn):
+        return False
 
     monkeypatch.setattr(routes.repo, "get_project", fake_project)
     monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
-    monkeypatch.setattr(routes.facemarket, "resolve_model_license", forbidden_resolve)
+    monkeypatch.setattr(routes.facemarket, "resolve_model_license", fake_resolve)
+    monkeypatch.setattr(routes.facemarket, "verify_license", fake_verify)
     monkeypatch.setattr(routes.repo, "create_job", fake_create)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
+    monkeypatch.setattr(routes.repo, "lock_facemarket_writer_boundary", fake_lock)
+    monkeypatch.setattr(routes.repo, "facemarket_writer_boundary_closed", fake_closed)
     patch_route_db(monkeypatch, routes)
 
     response = client.post(
@@ -860,9 +914,13 @@ def test_editor_rejects_real_model_for_styling_before_job_and_credit(
         json={"mode": "new", "cutType": "styling", "modelId": MODEL_ID},
     )
 
-    assert response.status_code == 409
-    assert response.json()["error"]["code"] == "real_model_horizon_only"
-    assert calls == {"create": 0, "reserve": 0}
+    assert response.status_code == 202, response.text
+    assert seen["payload"]["modelId"] == MODEL_ID
+    assert seen["payload"]["cutType"] == "styling"
+    assert seen["payload"]["brandUseCategory"] == CATEGORY
+    # 라이선스 확인은 컷 종류와 무관하게 그대로 붙는다.
+    assert seen["verified"] == {"model_id": MODEL_ID, "brand_use_category": CATEGORY}
+    assert seen["payload"]["_facemarket"] == {"modelId": MODEL_ID, "licenseId": LICENSE_ID}
 
 
 def test_editor_product_cut_strips_real_model_before_facemarket_gate(

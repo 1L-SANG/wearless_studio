@@ -926,24 +926,16 @@ async def run_detail_page_job(app, job: dict) -> None:
                 if isinstance(b, dict) and b.get("source") == "ai"
             ]
             selected_model_id = payload.get("modelId")
-            styling_model_id = payload.get("stylingModelId")
-            # 실존 모델이면 라이선스를 **먼저** 읽는다 — 어떤 컷에 그 얼굴을 쓸 수 있는지가
-            # 그 행의 선택 동의(opt_*)에 달려 있다(라우트와 같은 판정).
-            _pre_license = None
-            if (any(facemarket.cut_needs_opt(b.get("cutType")) for b in ai_blocks)
-                    and s.facemarket_enabled
-                    and facemarket.is_real_model_id(selected_model_id)):
-                _pre_license = await facemarket.consent_license(conn, str(selected_model_id))
             block_model_ids = {
                 id(block): facemarket.resolve_block_model_id(
-                    block.get("cutType"), selected_model_id, styling_model_id, _pre_license,
+                    block.get("cutType"), selected_model_id,
                 )
                 for block in ai_blocks
             }
-            # "실제 모델 얼굴이 실제로 쓰이는 컷이 있는가" — 스튜디오 + 동의한 컷.
+            # "실제 모델 얼굴이 실제로 쓰이는 컷이 있는가" — 착용 컷이면 전부 해당한다.
             # REAL 자산·LoRA·라이선스 확인·정산이 전부 이 판정에 붙는다.
-            uses_horizon_identity = any(
-                facemarket.real_identity_allowed_cut(block.get("cutType"), _pre_license)
+            uses_real_identity = any(
+                facemarket.real_identity_allowed_cut(block.get("cutType"))
                 for block in ai_blocks
             )
             example_repeat_indexes = _example_repeat_indexes(
@@ -953,7 +945,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             from ..agents import identity_source
             license_row = None
             real_refs = None
-            if selected_is_real and uses_horizon_identity:
+            if selected_is_real and uses_real_identity:
                 snapshot = payload.get("_facemarket")
                 if (
                     not isinstance(snapshot, dict)
@@ -988,7 +980,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     )
             elif (
                 not selected_model_id
-                and uses_horizon_identity
+                and uses_real_identity
                 and s.facemarket_enabled
                 and (
                     project.get("facemarket_license_id")
@@ -998,10 +990,12 @@ async def run_detail_page_job(app, job: dict) -> None:
                 raise facemarket._err(
                     "model_unavailable", "사용할 수 없는 모델입니다.", status=409
                 )
+            # 실제 모델을 골랐어도 이 잡에 얼굴이 들어가는 컷이 하나도 없으면(상품컷만)
+            # 신원 소스를 REAL 로 주장하지 않는다 — 자산·라이선스를 요구하지 않는 경로다.
             source_model_id = (
                 selected_model_id
-                if not selected_is_real or uses_horizon_identity
-                else styling_model_id
+                if (not selected_is_real or uses_real_identity)
+                else None
             )
             source = identity_source.select_source(
                 selected_model_id=(source_model_id if block_model_ids else None),
@@ -1293,9 +1287,12 @@ async def run_detail_page_job(app, job: dict) -> None:
             cut_spec.pop("modelId", None)
             cut_spec.pop("model_id", None)
             block_model_id = block_model_ids[id(b)]
+            # 실제 모델을 골랐으면 착용 컷은 전부 REAL 이다(2026-09-11 사용자 결정).
+            # 예전에는 여기서 horizon 만 REAL 로 봤다 — 스타일링·미러는 같은 모델을 골라도
+            # 가상 얼굴이 들어갔다는 뜻이다.
             cut_source = (
                 "REAL"
-                if source == "REAL" and b.get("cutType") == "horizon"
+                if source == "REAL" and facemarket.real_identity_allowed_cut(b.get("cutType"))
                 else "VIRTUAL"
                 if block_model_id
                 else "NONE"

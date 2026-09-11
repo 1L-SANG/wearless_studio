@@ -48,7 +48,9 @@ test('repeated mannequin warm-ups share one project request', async () => {
   assert.doesNotMatch(mannequinSource, /warmStoryboardEntry/);
 });
 
-test('legacy real-model storyboard resume persists the default styling model', async () => {
+test('실제 모델 콘티 진입은 분석을 건드리지 않는다', async () => {
+  // 예전에는 여기서 스타일링 대역(가상 모델)을 기본값으로 저장했다 — 대역이 사라져
+  // 저장 호출 자체가 없어야 한다(2026-09-11 사용자 결정).
   const calls = [];
   const client = {
     getStoryboard: async () => [],
@@ -67,8 +69,8 @@ test('legacy real-model storyboard resume persists the default styling model', a
   };
 
   const entry = await loadStoryboardEntry('project-real', client);
-  assert.deepEqual(calls, [['project-real', { stylingModelId: 'mA' }]]);
-  assert.equal(entry[4].stylingModelId, 'mA');
+  assert.deepEqual(calls, []);
+  assert.equal(entry[4].selectedModelId, '11111111-1111-1111-1111-111111111111');
 });
 
 test('edits that touch the storyboard seed invalidate the warmed prefetch', () => {
