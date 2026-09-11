@@ -2733,16 +2733,6 @@ async def regenerate_mannequins(
             body.get("fitProfile"),
             validate_matching_fit=True,
         )
-        pricing = await repo.get_mannequin_pricing_state(conn, user_id, project_id)
-        plan = plan_pricing.plan_of(pricing["plan"])
-        done_count = pricing["done_count"]
-        cost = plan_pricing.mannequin_regenerate_cost(
-            plan, done_count, request.app.state.settings.credit_cost_mannequin_generate,
-        )
-        pricing_metadata = {
-            "creditCostVersion": request.app.state.settings.credit_cost_version,
-            "freeAdjust": cost == 0, "adjustIndex": done_count, "plan": plan,
-        }
         job_payload = {
             "mode": "regenerate",
             "fitProfile": body.get("fitProfile"),
@@ -2751,11 +2741,27 @@ async def regenerate_mannequins(
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
             payload=job_payload,
-            idempotency_key=scoped_key, credits_reserved=cost,
-            metadata=pricing_metadata)
+            idempotency_key=scoped_key, credits_reserved=0, metadata={})
         if not created and not _mannequin_payload_matches(job, job_payload):
             raise _generation_in_progress()
         if created:  # 신규 job만 입력 게이트 + 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
+            # 활성 unique를 확보한 뒤 최신 완료 횟수를 읽는다. INSERT 전에 읽으면 그 사이
+            # 이전 무료 작업이 완료되어도 무료 가격을 재사용한다. 아직 미커밋인 pending job은
+            # 워커가 볼 수 없으며, 가격 저장과 잔액 예약까지 같은 트랜잭션으로 확정한다.
+            pricing = await repo.get_mannequin_pricing_state(conn, user_id, project_id)
+            plan = plan_pricing.plan_of(pricing["plan"])
+            done_count = pricing["done_count"]
+            cost = plan_pricing.mannequin_regenerate_cost(
+                plan, done_count, request.app.state.settings.credit_cost_mannequin_generate,
+            )
+            pricing_metadata = {
+                "creditCostVersion": request.app.state.settings.credit_cost_version,
+                "freeAdjust": cost == 0, "adjustIndex": done_count, "plan": plan,
+            }
+            await repo.set_pending_job_pricing(
+                conn, user_id=user_id, job_id=job["id"],
+                credits_reserved=cost, metadata=pricing_metadata,
+            )
             product = await repo.get_product(conn, project_id)
             if not mannequin.has_base_front(product or {}):  # 정면 사진 필수(generate 동일)
                 raise _bad_request("missing_front_photo", "기준 색상 정면 사진을 먼저 올려주세요.")

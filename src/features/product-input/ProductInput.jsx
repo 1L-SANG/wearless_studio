@@ -16,6 +16,7 @@ import {
   CREDIT_COSTS,
   mannequinGenerationTotal,
   mannequinRegenerationCreditText,
+  normalizePlanTier,
 } from '@/lib/limits.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { CreditShortfallModal } from '@/features/credits/CreditShortfallModal.jsx';
@@ -619,10 +620,19 @@ export function ProductInput() {
   }
 
   const guardMannequinCredits = () => {
-    // 클릭 순간의 loadAccount 캐시만 읽는다. 비로그인·아직 계정을 못 불러온 상태는 과차단하지
+    // 클릭 순간의 계정으로 잔액과 요금을 함께 계산한다. 늦게 불러온 요금제를 이전 렌더의
+    // 요금과 섞지 않는다. 비로그인·아직 계정을 못 불러온 상태는 과차단하지
     // 않고 통과시키며, 실제 잔액 정합성은 기존 서버 402 방어선이 계속 책임진다.
     const cachedAccount = session ? useAppStore.getState().account : null;
-    const shortfall = mannequinGenerationCreditShortfall(cachedAccount, mannequinRequiredCredits);
+    const plan = normalizePlanTier(cachedAccount?.plan);
+    const currentQuote = creditQuote?.plan === plan
+      && creditQuote?.mannequinGenerate?.selectedModelId === analysis?.selectedModelId
+      ? creditQuote : null;
+    const requiredCredits = generationWorkKind === 'cuts'
+      ? (currentQuote?.mannequinRegenerate?.nextCost ?? CREDIT_COSTS.mannequinGenerate)
+      : (currentQuote?.mannequinGenerate?.total
+        ?? mannequinGenerationTotal(plan, analysis?.selectedModelId));
+    const shortfall = mannequinGenerationCreditShortfall(cachedAccount, requiredCredits);
     if (!shortfall) return true;
     setCreditShortfall(shortfall);
     return false;
@@ -876,17 +886,6 @@ export function ProductInput() {
     jobProjectId: mannequinJobProjectId,
     projectId: analysisProjectId,
   });
-  const currentQuote = creditQuote?.mannequinGenerate?.selectedModelId === analysis?.selectedModelId
-    ? creditQuote
-    : null;
-  const mannequinGenerationCost = currentQuote?.mannequinGenerate?.total
-    ?? mannequinGenerationTotal(useAppStore.getState().account?.plan, analysis?.selectedModelId);
-  const mannequinRegenerationCost = currentQuote?.mannequinRegenerate?.nextCost
-    ?? CREDIT_COSTS.mannequinGenerate;
-  const mannequinRequiredCredits = generationWorkKind === 'cuts'
-    ? mannequinRegenerationCost
-    : mannequinGenerationCost;
-
   useEffect(() => {
     if (!analysisProjectId || phase !== 'done') return undefined;
     let alive = true;

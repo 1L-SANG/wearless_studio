@@ -6,6 +6,7 @@ adjustedAxes 는 서버 diff 로만 산출(클라이언트 값 불신). legacy �
 import asyncio
 import contextlib
 import types
+from unittest.mock import AsyncMock
 
 import app.routes as routes
 from app.workers import mannequin_job
@@ -62,6 +63,7 @@ def _wire_route_fakes(monkeypatch, *, stored_profile, captured):
     monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
     monkeypatch.setattr(routes.repo, "get_analysis", fake_get_analysis)
     monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
+    monkeypatch.setattr(routes.repo, "set_pending_job_pricing", AsyncMock())
     monkeypatch.setattr(routes.repo, "get_product", fake_get_product)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
     monkeypatch.setattr(routes.repo, "save_analysis", fake_save_analysis)

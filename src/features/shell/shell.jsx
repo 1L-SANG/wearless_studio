@@ -118,7 +118,7 @@ export function TopNav() {
             <ProfileMenu />
           </>
         ) : (
-          <button className="nav-login" onClick={openTopNavLogin}>로그인</button>
+          <button className="nav-login" onClick={openTopNavLogin}>로그인/회원가입</button>
         )}
       </div>
     </nav>

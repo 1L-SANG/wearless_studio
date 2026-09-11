@@ -1,6 +1,7 @@
 """2026-09-11 플랜별 과금표, 예약, 견적 계약."""
 import asyncio
 import contextlib
+import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -56,6 +57,7 @@ def _wire(monkeypatch, *, plan='starter', model='mE', done_count=0, balance=100,
     reserve = AsyncMock(side_effect=lambda _c, _u, cost: balance - cost if balance >= cost else None)
     record = AsyncMock()
     monkeypatch.setattr(repo, 'create_job', create)
+    monkeypatch.setattr(repo, 'set_pending_job_pricing', AsyncMock())
     monkeypatch.setattr(repo, 'reserve_credits', reserve)
     monkeypatch.setattr(repo, 'record_free_mannequin_adjust', record, raising=False)
     monkeypatch.setattr(routes, '_enqueue_base_fidelity_observation', AsyncMock())
@@ -109,9 +111,10 @@ def test_regenerate_free_ladder(client, make_token, monkeypatch, plan, done_coun
     create, reserve, record = _wire(monkeypatch, plan=plan, done_count=done_count, balance=cost)
     response = client.post('/v1/projects/p1/mannequins:regenerate', headers=_headers(make_token), json={})
     assert response.status_code == 202, response.text
-    assert create.call_args.kwargs['credits_reserved'] == cost
+    assert create.call_args.kwargs['credits_reserved'] == 0
+    assert repo.set_pending_job_pricing.call_args.kwargs['credits_reserved'] == cost
     assert reserve.call_args.args[-1] == cost
-    assert create.call_args.kwargs['metadata'] == {
+    assert repo.set_pending_job_pricing.call_args.kwargs['metadata'] == {
         'creditCostVersion': 'v6', 'freeAdjust': cost == 0, 'adjustIndex': done_count, 'plan': plan,
     }
     if cost == 0:
@@ -181,8 +184,10 @@ class _SqlConn:
     """실제 쿼리를 SQLite에서 실행. 드라이버 표기와 행 잠금만 치환한다."""
     def __init__(self):
         import sqlite3
-        self.db = sqlite3.connect(':memory:')
+        self.db = sqlite3.connect(':memory:', check_same_thread=False)
         self.db.row_factory = sqlite3.Row
+        self.before_insert = None
+        self.commits = []
         class BoolOr:
             def __init__(self):
                 self.value = False
@@ -192,6 +197,17 @@ class _SqlConn:
                 return self.value
         self.db.create_aggregate('bool_or', 1, BoolOr)
 
+    async def commit(self):
+        self.db.commit()
+        self.commits.append({
+            'jobs': [dict(row) for row in self.db.execute('select * from jobs')],
+            'reserved': self.db.execute('select reserved from credit_accounts').fetchone()[0],
+            'ledger': [dict(row) for row in self.db.execute('select * from credit_ledger')],
+        })
+
+    async def rollback(self):
+        self.db.rollback()
+
     def cursor(self):
         conn = self
         class Cursor:
@@ -199,15 +215,162 @@ class _SqlConn:
                 return self
             async def __aexit__(self, *_args):
                 pass
-            async def execute(self, sql, params):
-                import json
-                sql = sql.replace('%s', '?').replace(' for update', '')
+            async def execute(self, sql, params=()):
+                if 'pg_advisory_xact_lock' in sql:
+                    self.cur = conn.db.execute('select 1')
+                    return
+                if sql == 'savepoint create_job_insert' and not conn.db.in_transaction:
+                    # Schedule the old worker's committed completion immediately before
+                    # the INSERT boundary, after any earlier route pricing read.
+                    if conn.before_insert:
+                        conn.before_insert()
+                        conn.before_insert = None
+                    conn.db.execute('begin')
+                sql = sql.replace('%s', '?').replace(' for update', '').replace('::text', '')
                 params = tuple(json.dumps(p.obj) if hasattr(p, 'obj') else p for p in params)
                 self.cur = conn.db.execute(sql, params)
             async def fetchone(self):
                 row = self.cur.fetchone()
-                return dict(row) if row else None
+                if row is None:
+                    return None
+                result = dict(row)
+                for key in ('payload', 'metadata', 'steps', 'result'):
+                    if isinstance(result.get(key), str):
+                        result[key] = json.loads(result[key])
+                return result
         return Cursor()
+
+
+def _wire_sql_regenerate(monkeypatch, *, plan, done_count, balance, running=False):
+    conn = _SqlConn()
+    conn.db.executescript('''
+        create table profiles(user_id text, plan text);
+        create table analyses(project_id text, payload text);
+        create table jobs(id text primary key default (lower(hex(randomblob(16)))),
+            user_id text, project_id text, kind text, status text, payload text,
+            idempotency_key text unique, credits_reserved integer, metadata text,
+            progress integer, steps text, result text, error_message text,
+            credits_charged integer, created_at text, updated_at text, finished_at text);
+        create unique index jobs_active_unique_idx on jobs(project_id, kind)
+            where status in ('pending', 'running');
+        create table mannequin_job_requests(user_id text, project_id text,
+            idempotency_key text unique, job_id text);
+        create table credit_accounts(user_id text, balance integer, reserved integer);
+        create table credit_sources(user_id text, remaining_credits integer, status text);
+        create table credit_ledger(id integer primary key, user_id text, project_id text,
+            job_id text, action_key text, delta integer, balance_after integer,
+            available_after integer, idempotency_key text unique, metadata text);
+    ''')
+    conn.db.execute('insert into profiles values (?, ?)', ('user-1', plan))
+    conn.db.execute('insert into credit_accounts values (?, ?, 0)', ('user-1', balance))
+    conn.db.execute("insert into credit_sources values (?, ?, 'active')", ('user-1', balance))
+    for i in range(done_count):
+        conn.db.execute("insert into jobs(id,user_id,project_id,kind,status,metadata) "
+                        "values (?, 'user-1', 'p1', 'mannequin', 'done', '{}')", (f'done-{i}',))
+    if running:
+        conn.db.execute("insert into jobs(id,user_id,project_id,kind,status,payload,metadata,credits_reserved) "
+                        "values ('old', 'user-1', 'p1', 'mannequin', 'running', ?, ?, 0)",
+                        (json.dumps({'mode': 'regenerate', 'fitProfile': None,
+                                     'fitProfileSnapshot': {'version': 1, 'profile': None, 'adjustedAxes': []}}),
+                         json.dumps({'creditCostVersion': 'v6', 'freeAdjust': True,
+                                     'adjustIndex': done_count, 'plan': plan})))
+    conn.db.commit()
+
+    @contextlib.asynccontextmanager
+    async def connection(_request):
+        try:
+            yield conn
+        except Exception:
+            await conn.rollback()
+            raise
+    monkeypatch.setattr(routes, 'get_conn', connection)
+    monkeypatch.setattr(repo, 'get_project', AsyncMock(return_value={'id': 'p1'}))
+    monkeypatch.setattr(repo, 'get_analysis', AsyncMock(return_value={}))
+    monkeypatch.setattr(repo, 'get_product', AsyncMock(return_value={
+        'colors': [{'isBase': True, 'images': [{'slot': 'Front', 'id': 'a1'}]}],
+    }))
+    monkeypatch.setattr(routes, '_enqueue_base_fidelity_observation', AsyncMock())
+    return conn
+
+
+@pytest.mark.parametrize('plan,last_free_index', [('starter', 1), ('pro', 2)])
+@pytest.mark.parametrize('balance,status', [(45, 202), (44, 402)])
+@pytest.mark.parametrize('request_key', [None, 'new-adjust'])
+def test_regenerate_prices_after_previous_free_job_completes(
+        client, make_token, monkeypatch, plan, last_free_index, balance, status, request_key):
+    conn = _wire_sql_regenerate(monkeypatch, plan=plan, done_count=last_free_index,
+                                balance=balance, running=True)
+    def complete_previous_job():
+        conn.db.execute("update jobs set status = 'done' where id = 'old'")
+        conn.db.commit()
+    conn.before_insert = complete_previous_job
+    headers = _headers(make_token)
+    if request_key:
+        headers['Idempotency-Key'] = request_key
+    response = client.post('/v1/projects/p1/mannequins:regenerate',
+                           headers=headers, json={})
+    assert response.status_code == status, response.text
+    jobs = conn.db.execute("select * from jobs where status = 'pending'").fetchall()
+    if status == 402:
+        assert jobs == []
+        assert conn.commits == []
+        assert conn.db.execute('select reserved from credit_accounts').fetchone()[0] == 0
+        assert conn.db.execute('select count(*) from mannequin_job_requests').fetchone()[0] == 0
+    else:
+        assert len(jobs) == 1
+        job = jobs[0]
+        assert job['id'] == response.json()['jobId']
+        assert job['credits_reserved'] == 45
+        assert json.loads(job['metadata']) == {
+            'creditCostVersion': 'v6', 'freeAdjust': False,
+            'adjustIndex': last_free_index + 1, 'plan': plan,
+        }
+        assert len(conn.commits) == 1
+        assert conn.commits[0]['reserved'] == 45
+        committed_job = next(j for j in conn.commits[0]['jobs'] if j['id'] == job['id'])
+        assert committed_job == dict(job)
+    assert conn.db.execute('select count(*) from credit_ledger').fetchone()[0] == 0
+
+
+@pytest.mark.parametrize('plan,done_count', [('starter', 1), ('pro', 2)])
+def test_regenerate_last_free_job_and_ledger_commit_together(
+        client, make_token, monkeypatch, plan, done_count):
+    conn = _wire_sql_regenerate(monkeypatch, plan=plan, done_count=done_count, balance=0)
+    response = client.post('/v1/projects/p1/mannequins:regenerate',
+                           headers=_headers(make_token), json={})
+    assert response.status_code == 202, response.text
+    assert len(conn.commits) == 1
+    committed = conn.commits[0]
+    job = next(j for j in committed['jobs'] if j['id'] == response.json()['jobId'])
+    assert job['credits_reserved'] == committed['reserved'] == 0
+    assert len(committed['ledger']) == 1
+    ledger = committed['ledger'][0]
+    assert ledger['job_id'] == job['id']
+    assert ledger['delta'] == 0
+    assert json.loads(job['metadata']) == json.loads(ledger['metadata']) == {
+        'creditCostVersion': 'v6', 'freeAdjust': True, 'adjustIndex': done_count, 'plan': plan,
+    }
+
+
+@pytest.mark.parametrize('retry_completed', [False, True])
+def test_regenerate_join_keeps_original_pricing_without_reading_latest_state(
+        client, make_token, monkeypatch, retry_completed):
+    conn = _wire_sql_regenerate(monkeypatch, plan='starter', done_count=2, balance=0, running=True)
+    if retry_completed:
+        conn.db.execute("update jobs set status='done', "
+                        "idempotency_key='p1:mannequin_regenerate:retry' where id='old'")
+        conn.db.commit()
+    original = dict(conn.db.execute("select * from jobs where id='old'").fetchone())
+    pricing = AsyncMock(wraps=repo.get_mannequin_pricing_state)
+    monkeypatch.setattr(repo, 'get_mannequin_pricing_state', pricing)
+    response = client.post('/v1/projects/p1/mannequins:regenerate',
+                           headers={**_headers(make_token), 'Idempotency-Key': 'retry'}, json={})
+    assert response.status_code == 202, response.text
+    assert response.json()['jobId'] == 'old'
+    assert dict(conn.db.execute("select * from jobs where id='old'").fetchone()) == original
+    assert conn.db.execute('select reserved from credit_accounts').fetchone()[0] == 0
+    assert conn.db.execute('select count(*) from credit_ledger').fetchone()[0] == 0
+    pricing.assert_not_awaited()
 
 
 def test_pricing_counts_only_successful_mannequin_jobs():

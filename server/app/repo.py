@@ -1735,6 +1735,21 @@ async def create_job(
         raise RuntimeError("create_job: 활성 합류 대상이 반복적으로 사라짐 (드문 레이스)")
 
 
+async def set_pending_job_pricing(
+    conn: AsyncConnection, *, user_id: str, job_id: str,
+    credits_reserved: int, metadata: dict,
+) -> None:
+    """새로 INSERT한 미커밋 job 전용. 호출자는 같은 트랜잭션에서 크레딧도 예약한다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update jobs set credits_reserved = %s, metadata = %s "
+            "where id = %s and user_id = %s and status = 'pending' returning id",
+            (credits_reserved, Json(metadata), job_id, user_id),
+        )
+        if await cur.fetchone() is None:
+            raise RuntimeError("set_pending_job_pricing: pending job missing")
+
+
 async def claim_next_job(conn: AsyncConnection, kinds: tuple[str, ...], worker_id: str) -> dict | None:
     """pending job 1건을 FOR UPDATE SKIP LOCKED로 점유 → running + lease (§5).
 
