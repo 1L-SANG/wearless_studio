@@ -318,6 +318,54 @@ test('제출하면 원본 File 이 아니라 캔버스에서 뽑은 마스킹된
   }
 });
 
+// 최종리뷰 C3: 화면이 레터박스된 상태에서도 실제로 칠린 사각형이 원본의 의도한
+// 자리를 덮어야 한다. .idPreviewImage 는 `object-fit: contain` + `max-height: 60vh` 라
+// 세로로 긴 사진은 엘리먼트 박스보다 작게 그려진다 — 그때 엘리먼트 박스 비율을 자연
+// 픽셀에 그대로 곱하면(옛 코드) 마스크가 밀려 찍히고 주민등록번호가 그대로 올라간다.
+// 여기서는 fillRect 인자(=실제로 칠한 자연 좌표)를 직접 못박는다.
+test('레터박스된 미리보기에서도 fillRect 가 원본의 의도한 영역을 덮는다(3:2 사진 · 1:1 박스)', async () => {
+  const uploads = [];
+  // 원본 900x600(3:2)이 600x600(1:1) 박스에 contain 으로 들어가면 600x400 이 되고
+  // 위아래로 100px 씩 여백이 생긴다. 사용자가 화면에서 맞춘 박스(엘리먼트 박스 비율
+  // 0.1/0.6/0.5/0.1)는 원본 좌표 { x:90, y:390, w:450, h:90 } 를 덮어야 한다.
+  const fakeImage = {
+    naturalWidth: 900,
+    naturalHeight: 600,
+    getBoundingClientRect: () => ({ width: 600, height: 600 }),
+  };
+  const fakeCanvas = fakeCanvasElement();
+  const harness = await stepHarness({
+    entry: '/src/features/model/IdDocumentStep.jsx',
+    initialStates: [
+      'rrc', 'blob:fake-preview-url', true,
+      { xr: 0.1, yr: 0.6, wr: 0.5, hr: 0.1 },
+      true, false, '',
+    ],
+    initialRefs: [fakeImage, fakeCanvas, null],
+    api: {
+      uploadIdDocument: async (enrollmentId, body) => { uploads.push(body); return {}; },
+    },
+  });
+  try {
+    const tree = harness.render({ enrollmentId: 'enrollment-1', onUploaded: () => {}, onError: () => {} });
+    const submitButton = findTree(tree, (node) => node.type === 'Button'
+      && collectText(node).includes('확인 요청'));
+    await submitButton.props.onClick();
+
+    assert.equal(uploads.length, 1, '업로드가 일어나야 한다');
+    const fillRectCalls = fakeCanvas.sequence.filter((c) => c.op === 'fillRect');
+    assert.equal(fillRectCalls.length, 1);
+    assert.deepEqual(
+      fillRectCalls[0].args,
+      [90, 390, 450, 90],
+      'contain 레터박스를 반영하지 않으면 [90, 360, 450, 60] 이 찍힌다 — 세로로 30px 밀리고 '
+      + '30px 짧아 주민등록번호 아랫부분이 그대로 남는다',
+    );
+  } finally {
+    await harness.close();
+  }
+});
+
 test('마스킹 확인 체크가 안 됐으면 제출 버튼이 비활성화된다', async () => {
   const fakeImage = { naturalWidth: 800, naturalHeight: 600 };
   const fakeCanvas = fakeCanvasElement();

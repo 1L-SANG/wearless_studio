@@ -37,12 +37,67 @@ export function defaultMaskRatio(documentType) {
 
 // 비율(0~1) 박스를 실제 캔버스 픽셀 좌표로 바꾼다. 드래그 중엔 비율로 들고 있다가
 // (원본 이미지 크기와 화면 표시 크기가 달라도 안전) 전송 직전에만 픽셀로 바꾼다.
+// ⚠️ 이 함수는 **비율의 기준이 자연 픽셀 격자일 때만** 맞다. 화면 오버레이는
+// `<img>` 엘리먼트 박스 기준 비율이고, 그 엘리먼트가 `object-fit: contain` 으로
+// 레터박스되면 두 공간이 어긋난다 — 그 경우엔 elementRatioToImagePixels 를 써야 한다.
 export function maskRatioToPixels(ratio, width, height) {
   return {
     x: Math.round(ratio.xr * width),
     y: Math.round(ratio.yr * height),
     w: Math.round(ratio.wr * width),
     h: Math.round(ratio.hr * height),
+  };
+}
+
+/* `object-fit: contain` 으로 그려진 이미지가 엘리먼트 박스 안에서 실제로 차지하는
+   사각형(레터박스 여백을 뺀 내용 영역). 가로세로비가 같으면 박스 전체와 같다. */
+export function containContentRect(elementBox, natural) {
+  const ew = Number(elementBox?.width) || 0;
+  const eh = Number(elementBox?.height) || 0;
+  const nw = Number(natural?.width) || 0;
+  const nh = Number(natural?.height) || 0;
+  if (ew <= 0 || eh <= 0 || nw <= 0 || nh <= 0) return null;
+  const scale = Math.min(ew / nw, eh / nh);
+  const w = nw * scale;
+  const h = nh * scale;
+  return { x: (ew - w) / 2, y: (eh - h) / 2, w, h };
+}
+
+/* 화면에서 사용자가 놓은 마스킹 박스(=`<img>` **엘리먼트 박스** 기준 비율)를 원본
+   이미지의 **자연 픽셀** 좌표로 옮긴다.
+
+   왜 필요한가: 드래그는 `getBoundingClientRect()`(엘리먼트 박스)로 정규화되고 오버레이도
+   그 박스의 %로 배치되는데, 캔버스 burn 은 naturalWidth/Height 격자에 그린다. CSS 가
+   `object-fit: contain`(+ `max-height`)이라 이미지가 레터박스되는 순간 두 좌표계가
+   어긋나고, **주민등록번호가 아닌 엉뚱한 곳이 칠해진 채 업로드된다**(최종리뷰 C3).
+   사용자는 화면에서 가려진 걸 봤으니 "가렸어요" 체크를 정직하게 누르고, 서버는 픽셀을
+   검증할 수 없다 — 이 변환이 유일한 방어선이다.
+
+   레터박스 여백 위로 끌린 부분은 이미지 밖이라 자연 격자에서 잘라 낸다(clamp). 박스가
+   통째로 여백에 있으면(가려진 게 없다) 0 크기를 돌려주지 않고 null 로 알린다 —
+   호출부가 조용히 "칠했다"고 믿으면 안 된다. */
+export function elementRatioToImagePixels(ratio, elementBox, natural) {
+  const content = containContentRect(elementBox, natural);
+  const nw = Number(natural?.width) || 0;
+  const nh = Number(natural?.height) || 0;
+  // 측정할 수 없으면(테스트 스텁·레이아웃 전) 자연 격자 기준으로 되돌린다 —
+  // 가로세로비가 같은 흔한 경우엔 두 결과가 같다.
+  if (!content) return maskRatioToPixels(ratio, nw, nh);
+  const scale = nw / content.w;
+  const left = (ratio.xr * elementBox.width - content.x) * scale;
+  const top = (ratio.yr * elementBox.height - content.y) * scale;
+  const right = left + ratio.wr * elementBox.width * scale;
+  const bottom = top + ratio.hr * elementBox.height * scale;
+  const x0 = Math.max(0, Math.min(nw, left));
+  const y0 = Math.max(0, Math.min(nh, top));
+  const x1 = Math.max(0, Math.min(nw, right));
+  const y1 = Math.max(0, Math.min(nh, bottom));
+  if (x1 - x0 <= 0 || y1 - y0 <= 0) return null;
+  return {
+    x: Math.round(x0),
+    y: Math.round(y0),
+    w: Math.round(x1 - x0),
+    h: Math.round(y1 - y0),
   };
 }
 

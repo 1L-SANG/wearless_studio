@@ -5,7 +5,9 @@ import {
   ID_DOCUMENT_TYPES,
   buildMaskedBlob,
   clampMaskRatio,
+  containContentRect,
   defaultMaskRatio,
+  elementRatioToImagePixels,
   maskRatioToPixels,
 } from '../../src/features/model/idDocumentMasking.js';
 
@@ -128,4 +130,90 @@ test('원본을 캔버스에 그린 뒤 마스킹 사각형으로 덮어쓰고, 
   const blobDrawIndex = blob.sequence.findIndex((c) => c.op === 'drawImage');
   const blobFillIndex = blob.sequence.findIndex((c) => c.op === 'fillRect');
   assert.ok(blobDrawIndex < blobFillIndex, 'blob 에 실린 기록도 그린 뒤 채운 순서여야 한다');
+});
+
+// ── 좌표계: 화면 엘리먼트 박스 ↔ 원본 자연 픽셀 ────────────────────────────
+// 최종리뷰 C3. 드래그·오버레이는 <img> **엘리먼트 박스** 기준 비율인데 burn 은
+// naturalWidth/Height 격자에 그린다. CSS 가 `object-fit: contain`(+ max-height: 60vh)라
+// 가로세로비가 다르면 이미지가 레터박스되고, 그만큼 두 좌표계가 어긋난다 — 사용자가
+// 화면에서 주민등록번호를 덮었는데 실제로는 엉뚱한 곳이 칠해져 번호가 그대로 올라간다.
+// 서버는 픽셀을 못 본다. 이 변환이 유일한 방어선이라 아래 값들을 직접 못박는다.
+
+test('contain 내용 영역: 3:2 이미지를 1:1 박스에 넣으면 위아래로 레터박스된다', () => {
+  // 900x600(3:2)을 600x600 박스에: 축소율 2/3 → 600x400 이 세로 가운데(위 여백 100).
+  assert.deepEqual(
+    containContentRect({ width: 600, height: 600 }, { width: 900, height: 600 }),
+    { x: 0, y: 100, w: 600, h: 400 },
+  );
+  // 600x900(2:3)을 600x600 박스에: 좌우로 레터박스(왼 여백 100).
+  assert.deepEqual(
+    containContentRect({ width: 600, height: 600 }, { width: 600, height: 900 }),
+    { x: 100, y: 0, w: 400, h: 600 },
+  );
+  // 비율이 같으면 박스 전체가 곧 내용 영역이다(오늘 대부분의 경우).
+  assert.deepEqual(
+    containContentRect({ width: 450, height: 300 }, { width: 900, height: 600 }),
+    { x: 0, y: 0, w: 450, h: 300 },
+  );
+});
+
+test('레터박스된 사진에서도 마스킹 박스가 원본의 의도한 영역을 덮는다(3:2 이미지 · 1:1 박스)', () => {
+  // 원본 900x600 에서 가리려는 자리(주민등록번호 뒷자리) = { x:90, y:390, w:450, h:90 }.
+  // 화면(600x600 박스)에서 그 자리는 축소율 2/3 + 위 여백 100 만큼 옮겨 보이므로,
+  // 사용자가 그 위에 박스를 맞추면 엘리먼트 박스 기준 비율은 아래 값이 된다.
+  const ratio = { xr: 0.1, yr: 0.6, wr: 0.5, hr: 0.1 };
+  const burned = elementRatioToImagePixels(
+    ratio, { width: 600, height: 600 }, { width: 900, height: 600 },
+  );
+  assert.deepEqual(burned, { x: 90, y: 390, w: 450, h: 90 });
+
+  // 고장난 변환(비율을 자연 픽셀에 그대로 곱하던 옛 코드)은 같은 입력에서 다른 사각형을
+  // 낸다 — 세로로 30px 밀리고 30px 짧아 번호 아랫부분이 그대로 남는다.
+  const naive = maskRatioToPixels(ratio, 900, 600);
+  assert.notDeepEqual(naive, burned);
+  assert.equal(naive.y, 360);
+  assert.equal(naive.h, 60);
+});
+
+test('세로로 긴 사진이 좌우 레터박스돼도 같은 규칙으로 맞는다(2:3 이미지 · 1:1 박스)', () => {
+  // 원본 600x900 에서 가리려는 자리 = { x:150, y:180, w:300, h:90 }.
+  // 화면에서는 축소율 2/3 + 왼쪽 여백 100 → 엘리먼트 박스 비율 { 1/3, 0.2, 1/3, 0.1 }.
+  const burned = elementRatioToImagePixels(
+    { xr: 1 / 3, yr: 0.2, wr: 1 / 3, hr: 0.1 },
+    { width: 600, height: 600 },
+    { width: 600, height: 900 },
+  );
+  assert.deepEqual(burned, { x: 150, y: 180, w: 300, h: 90 });
+});
+
+test('레터박스 여백 위로 끌린 부분은 잘라 내고, 통째로 여백이면 null 로 알린다', () => {
+  // 위쪽 여백(0~100)에 걸친 박스 — 이미지 안쪽(y>=100)만 남는다.
+  const clipped = elementRatioToImagePixels(
+    { xr: 0, yr: 0, wr: 0.5, hr: 0.5 },
+    { width: 600, height: 600 },
+    { width: 900, height: 600 },
+  );
+  assert.deepEqual(clipped, { x: 0, y: 0, w: 450, h: 300 });
+  // 완전히 여백 안(0~100)인 박스는 가린 게 없다 — 조용히 0 크기를 주면 호출부가
+  // "칠했다"고 믿어 버린다.
+  assert.equal(
+    elementRatioToImagePixels(
+      { xr: 0, yr: 0, wr: 0.5, hr: 0.1 },
+      { width: 600, height: 600 },
+      { width: 900, height: 600 },
+    ),
+    null,
+  );
+});
+
+test('엘리먼트 박스를 잴 수 없으면 자연 격자 기준으로 되돌린다', () => {
+  const ratio = { xr: 0.1, yr: 0.6, wr: 0.5, hr: 0.1 };
+  assert.deepEqual(
+    elementRatioToImagePixels(ratio, null, { width: 900, height: 600 }),
+    maskRatioToPixels(ratio, 900, 600),
+  );
+  assert.deepEqual(
+    elementRatioToImagePixels(ratio, { width: 0, height: 0 }, { width: 900, height: 600 }),
+    maskRatioToPixels(ratio, 900, 600),
+  );
 });

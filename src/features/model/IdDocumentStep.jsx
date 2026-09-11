@@ -23,7 +23,7 @@ import {
   buildMaskedBlob,
   clampMaskRatio,
   defaultMaskRatio,
-  maskRatioToPixels,
+  elementRatioToImagePixels,
 } from './idDocumentMasking.js';
 import s from './ModelRegister.module.css';
 
@@ -109,7 +109,23 @@ export default function IdDocumentStep({ enrollmentId, onUploaded, onError }) {
     try {
       canvas.width = image.naturalWidth || image.width;
       canvas.height = image.naturalHeight || image.height;
-      const pixelMask = maskRatioToPixels(maskRatio, canvas.width, canvas.height);
+      // maskRatio 는 화면 <img> **엘리먼트 박스** 기준 비율이다(드래그가
+      // getBoundingClientRect 로 정규화하고 오버레이도 그 박스의 %로 앉는다). 그런데
+      // .idPreviewImage 는 `object-fit: contain` + `max-height: 60vh` 라 세로로 긴 사진은
+      // 레터박스된다 — 그때 엘리먼트 박스 비율을 그대로 자연 픽셀에 곱하면 마스크가 엉뚱한
+      // 곳에 찍히고 주민등록번호가 그대로 올라간다(최종리뷰 C3). 실제로 그려진 내용
+      // 영역(contain 사각형)을 거쳐 자연 좌표로 옮긴다.
+      const rect = image.getBoundingClientRect?.() || null;
+      const pixelMask = elementRatioToImagePixels(
+        maskRatio,
+        rect ? { width: rect.width, height: rect.height } : null,
+        { width: canvas.width, height: canvas.height },
+      );
+      if (!pixelMask) {
+        // 변환 결과가 이미지 밖이면 칠할 게 없다 — 원본 그대로 올리면 안 된다.
+        setLocalError('마스킹 영역이 사진 밖에 있어요. 박스를 사진 위로 옮겨 주세요.');
+        return;
+      }
       // 전송 전 캔버스에 실제로 채운다 — 이 blob 만 서버로 간다. 원본 File 은 pickFile 에서
       // 이미 버려졌으므로 여기 등장조차 하지 않는다.
       const maskedBlob = await buildMaskedBlob({ canvas, image, mask: pixelMask });
