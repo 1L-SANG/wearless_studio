@@ -178,14 +178,15 @@ def test_provided_spec_wins_and_registry_is_not_read(monkeypatch):
     assert cut_generator._face_identity_spec(_settings(), _spec(), "top", provided) is provided
 
 
-def test_virtual_registry_path_is_unchanged(monkeypatch):
-    entry = {"faceIdentity": {"loraPath": "local/mA.safetensors", "token": "ohwx woman"}}
-    monkeypatch.setattr(cut_generator, "load_virtual_model_registry", lambda: {"mA": entry})
+def test_virtual_models_have_no_face_pass_path(monkeypatch):
+    """가상모델 JSON(faceIdentity) 경로는 2026-09-11 삭제 — 항목이 0개였고, 근거가 두 곳이면
+    "왜 이 컷만 얼굴이 바뀌었나"를 두 군데서 찾게 된다. 근거는 fm_model_loras 하나다."""
+    monkeypatch.setattr(cut_generator, "load_virtual_model_registry",
+                        lambda: {"mA": {"faceIdentity": {"loraPath": "local/mA.safetensors"}}})
     spec = dict(_spec(), modelId="mA")
-    got = cut_generator._face_identity_spec(_settings(), spec, "top")
-    assert got == face_identity.face_identity_from_registry_entry(entry)
-    # provided=None 을 명시해도 같은 결과 — 인자 추가가 기존 호출을 바꾸지 않는다
-    assert cut_generator._face_identity_spec(_settings(), spec, "top", None) == got
+    assert cut_generator._face_identity_spec(_settings(), spec, "top") is None
+    assert cut_generator._face_identity_spec(_settings(), spec, "top", None) is None
+    assert not hasattr(face_identity, "face_identity_from_registry_entry")
 
 
 @pytest.mark.parametrize("spec_over,flag", [

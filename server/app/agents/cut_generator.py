@@ -1380,6 +1380,9 @@ async def generate(
     face_identity_spec: face_identity.FaceIdentitySpec | None = None,
     qc_corrections: tuple[str, ...] = (),
     confirmed_prompt_input: ConfirmedGptPromptInput | None = None,
+    # 얼굴 패스 결과를 적어 보낼 자리(워커가 dict 를 준다): "applied" | "fallback:<reason>".
+    # 반환값을 늘리지 않는 이유 — generate() 를 목(mock)으로 바꿔 쓰는 테스트가 많다.
+    face_pass_outcome: dict | None = None,
 ) -> tuple[bytes, str]:
     """컷 1개 생성. 실패 시 GeminiError 전파(호출자가 빈 슬롯 등으로 처리).
     스펙 위반(unknown cutType)은 ValueError — 조용한 styling 폴백을 하지 않는다
@@ -1441,7 +1444,8 @@ async def generate(
     # 플래그 기본 off + 레지스트리 faceIdentity 항목이 있는 모델만. 실패는 원본 폴백(예외 없음).
     identity = _face_identity_spec(settings, spec, clothing_type, face_identity_spec)
     if identity is not None:
-        image, mime = await face_identity.apply_face_pass(settings, image, mime, identity)
+        image, mime = await face_identity.apply_face_pass(
+            settings, image, mime, identity, outcome=face_pass_outcome)
     if crop_pose_medium:
         return await pose_crop.crop_pose_medium(
             settings, image, mime, clothing_type
@@ -1455,27 +1459,20 @@ def _face_identity_spec(settings, spec: dict, clothing_type,
     """이 컷이 얼굴 패스 대상인가 — 플래그 on · 착용컷 · 얼굴이 실제로 담기는 컷(_face_fits) ·
     LoRA 근거가 있음. 하나라도 아니면 None(기존 동작).
 
-    근거는 둘 중 하나다:
-      · provided — 호출자가 DB(fm_model_loras)에서 골라 넘긴 것. **실존 등록자 경로**.
-        이 함수는 sync 라 DB 를 직접 부르지 않는다(워커가 이미 conn 을 갖고 있다).
-      · 가상모델 JSON 레지스트리의 faceIdentity{loraPath,token} — 기존 경로, 회귀 금지.
-    provided 가 있으면 그것이 우선이고 레지스트리는 보지 않는다.
+    근거는 **fm_model_loras 하나**다. 워커가 그 행을 읽어 provided 로 넘긴다(이 함수는 sync 라
+    DB 를 직접 부르지 않는다 — 워커가 이미 conn 을 갖고 있다).
+    가상모델 JSON(faceIdentity{loraPath,token}) 경로는 삭제했다: 항목이 0개였고, 근거가 두 곳이면
+    "왜 이 컷만 얼굴이 바뀌었나"를 두 군데서 찾게 된다.
     """
+    if provided is None:
+        return None
     if not getattr(settings, "face_identity_enabled", False):
         return None
     if spec.get("cutType") not in _WORN_CUTS or not spec.get("modelId"):
         return None
     if not _face_fits(spec, _is_bottom(clothing_type)):
         return None
-    if provided is not None:
-        return provided
-    try:
-        entry = load_virtual_model_registry().get(str(spec["modelId"]))
-    except (OSError, json.JSONDecodeError) as e:
-        log.warning("face_identity: virtual model manifest unavailable for %s; skipping face pass: %r",
-                    spec["modelId"], e)
-        return None
-    return face_identity.face_identity_from_registry_entry(entry)
+    return provided
 
 
 async def repair(

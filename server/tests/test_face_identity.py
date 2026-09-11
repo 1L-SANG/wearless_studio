@@ -521,21 +521,6 @@ def test_run_face_pass_null_backend_returns_bytes():
 # ---------------------------------------------------------------- 레지스트리·설정
 
 
-def test_registry_entry_parsing():
-    assert fi.face_identity_from_registry_entry(None) is None
-    assert fi.face_identity_from_registry_entry({"gender": "men"}) is None
-    assert fi.face_identity_from_registry_entry({"faceIdentity": {}}) is None
-    assert fi.face_identity_from_registry_entry({"faceIdentity": {"loraPath": "  "}}) is None
-    spec = fi.face_identity_from_registry_entry({"faceIdentity": {"loraPath": "ohwx_man_v5.safetensors"}})
-    assert spec == fi.FaceIdentitySpec("ohwx_man_v5.safetensors", "ohwx man")
-    spec = fi.face_identity_from_registry_entry({"faceIdentity": {"loraPath": "/abs/x.safetensors", "token": "sks man"}})
-    assert spec.token == "sks man"
-    assert fi.resolve_lora_file(spec, "/lora") == "/abs/x.safetensors"
-    rel = fi.FaceIdentitySpec("v5.safetensors")
-    assert fi.resolve_lora_file(rel, "/lora") == "/lora/v5.safetensors"
-    assert fi.resolve_lora_file(rel, "/lora/single.safetensors") == "/lora/single.safetensors"
-
-
 def test_settings_default_off_and_env_switch(monkeypatch):
     from app.config import load_settings
 
@@ -575,8 +560,9 @@ class _FakeGemini:
 _SPEC = {"cutType": "styling", "direction": "front", "shot": "medium", "refScope": "all",
          "modelId": "mX", "faceExposure": "show"}
 _PRODUCT = {"name": "티셔츠", "clothingType": "top", "colors": []}
-_REGISTRY = {"mX": {"gender": "men", "faceIdentity": {"loraPath": "ohwx_man_v5.safetensors"}},
-             "mY": {"gender": "men"}}
+#: 얼굴 패스 근거는 fm_model_loras 한 곳이다 — 워커가 읽어 face_identity_spec 으로 넘긴다.
+#: (가상모델 JSON faceIdentity 경로는 2026-09-11 삭제: 항목 0개, 근거가 둘이면 추적이 두 배)
+_LORA_SPEC = fi.FaceIdentitySpec("facemarket/loras/m/v1.safetensors", "ohwx man")
 
 
 def _forbid_face_pass(monkeypatch):
@@ -587,43 +573,45 @@ def _forbid_face_pass(monkeypatch):
 
 
 def test_generate_unchanged_when_face_identity_disabled(monkeypatch):
-    monkeypatch.setattr(cg, "load_virtual_model_registry", lambda: _REGISTRY)
     _forbid_face_pass(monkeypatch)
     settings = make_settings(gemini_api_key="x")
     assert settings.face_identity_enabled is False
-    assert asyncio.run(cg.generate(settings, _FakeGemini(), _SPEC, _PRODUCT, [])) == (b"FULL", "image/png")
+    assert asyncio.run(cg.generate(settings, _FakeGemini(), _SPEC, _PRODUCT, [],
+                                   face_identity_spec=_LORA_SPEC)) == (b"FULL", "image/png")
 
 
-def test_generate_runs_face_pass_only_with_flag_and_registry_lora(monkeypatch):
-    monkeypatch.setattr(cg, "load_virtual_model_registry", lambda: _REGISTRY)
+def test_generate_runs_face_pass_only_with_a_lora_spec(monkeypatch):
     seen = []
 
-    async def fake_pass(settings, image, mime, spec, *, expression=None):
+    async def fake_pass(settings, image, mime, spec, *, expression=None, outcome=None):
         seen.append((image, mime, spec, expression))
         return b"FACE", "image/png"
 
     monkeypatch.setattr(cg.face_identity, "apply_face_pass", fake_pass)
     settings = make_settings(gemini_api_key="x", face_identity_enabled=True)
-    assert asyncio.run(cg.generate(settings, _FakeGemini(), _SPEC, _PRODUCT, [])) == (b"FACE", "image/png")
-    assert seen == [(b"FULL", "image/png", fi.FaceIdentitySpec("ohwx_man_v5.safetensors", "ohwx man"), None)]
+    run = lambda spec, **kw: asyncio.run(  # noqa: E731
+        cg.generate(settings, _FakeGemini(), spec, _PRODUCT, [], **kw))
+
+    assert run(_SPEC, face_identity_spec=_LORA_SPEC) == (b"FACE", "image/png")
+    assert seen == [(b"FULL", "image/png", _LORA_SPEC, None)]
 
     seen.clear()
-    # 레지스트리에 faceIdentity 가 없는 모델 → 그대로
-    assert asyncio.run(cg.generate(settings, _FakeGemini(), {**_SPEC, "modelId": "mY"}, _PRODUCT, [])) == (b"FULL", "image/png")
+    # 근거(LoRA 행)가 없으면 그대로 — 가상모델도 여기에 해당한다
+    assert run(_SPEC) == (b"FULL", "image/png")
     # 얼굴을 가리는 컷 → 그대로
-    assert asyncio.run(cg.generate(settings, _FakeGemini(), {**_SPEC, "faceExposure": "hide"}, _PRODUCT, [])) == (b"FULL", "image/png")
+    assert run({**_SPEC, "faceExposure": "hide"}, face_identity_spec=_LORA_SPEC) == (b"FULL", "image/png")
     # 뒷모습 → 그대로
-    assert asyncio.run(cg.generate(settings, _FakeGemini(), {**_SPEC, "direction": "back"}, _PRODUCT, [])) == (b"FULL", "image/png")
+    assert run({**_SPEC, "direction": "back"}, face_identity_spec=_LORA_SPEC) == (b"FULL", "image/png")
     # 상품컷 → 그대로
-    assert asyncio.run(cg.generate(settings, _FakeGemini(), {"cutType": "product", "modelId": "mX"}, _PRODUCT, [])) == (b"FULL", "image/png")
+    assert run({"cutType": "product", "modelId": "mX"}, face_identity_spec=_LORA_SPEC) == (b"FULL", "image/png")
     # modelId 없음 → 그대로
-    assert asyncio.run(cg.generate(settings, _FakeGemini(), {k: v for k, v in _SPEC.items() if k != "modelId"}, _PRODUCT, [])) == (b"FULL", "image/png")
+    assert run({k: v for k, v in _SPEC.items() if k != "modelId"},
+               face_identity_spec=_LORA_SPEC) == (b"FULL", "image/png")
     assert seen == []
 
 
 def test_generate_bottom_medium_skips_face_pass_but_still_crops(monkeypatch):
     # 하의 medium 프레이밍은 머리가 프레임에 없다(_face_fits) → 얼굴 패스 생략, 포즈 크롭은 그대로.
-    monkeypatch.setattr(cg, "load_virtual_model_registry", lambda: _REGISTRY)
     _forbid_face_pass(monkeypatch)
     crops = []
 
@@ -637,20 +625,20 @@ def test_generate_bottom_medium_skips_face_pass_but_still_crops(monkeypatch):
     res = asyncio.run(cg.generate(
         settings, _FakeGemini(),
         {**_SPEC, "refScope": "pose"}, {**_PRODUCT, "clothingType": "bottom"}, [], manifest=manifest,
+        face_identity_spec=_LORA_SPEC,
     ))
     assert res == (b"CROPPED", "image/png") and crops == [b"FULL"]
 
 
 def test_generate_bottom_full_shot_gets_face_pass(monkeypatch):
-    monkeypatch.setattr(cg, "load_virtual_model_registry", lambda: _REGISTRY)
-
-    async def fake_pass(settings, image, mime, spec, *, expression=None):
+    async def fake_pass(settings, image, mime, spec, *, expression=None, outcome=None):
         return b"FACE", "image/png"
 
     monkeypatch.setattr(cg.face_identity, "apply_face_pass", fake_pass)
     settings = make_settings(gemini_api_key="x", face_identity_enabled=True)
     res = asyncio.run(cg.generate(
         settings, _FakeGemini(), {**_SPEC, "shot": "full"}, {**_PRODUCT, "clothingType": "bottom"}, [],
+        face_identity_spec=_LORA_SPEC,
     ))
     assert res == (b"FACE", "image/png")
 

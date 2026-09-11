@@ -1046,24 +1046,11 @@ class FaceIdentitySpec:
     backend_url: str | None = None
 
 
-def face_identity_from_registry_entry(entry: dict | None) -> FaceIdentitySpec | None:
-    if not isinstance(entry, dict):
-        return None
-    info = entry.get("faceIdentity")
-    if not isinstance(info, dict):
-        return None
-    lora = info.get("loraPath")
-    if not isinstance(lora, str) or not lora.strip():
-        return None
-    token = info.get("token")
-    return FaceIdentitySpec(lora.strip(), str(token).strip() if isinstance(token, str) and token.strip() else DEFAULT_TOKEN)
-
-
 def face_identity_from_lora_row(row) -> FaceIdentitySpec | None:
     """fm_model_loras 한 행 → FaceIdentitySpec. 실존 등록자 경로.
 
     호출자(워커)가 `enabled` 행을 이미 골라서 넘긴다 — 여기서는 필드만 검증한다.
-    가상모델의 레지스트리 경로(face_identity_from_registry_entry)와 나란한 자리다.
+    얼굴 패스 근거는 이 경로 하나다(가상모델 JSON 경로는 2026-09-11 삭제 — 항목 0개였다).
     """
     if not row:
         return None
@@ -1142,6 +1129,107 @@ def _meta_for_log(meta: dict) -> dict:
     return {k: v for k, v in meta.items() if k not in ("prompt",)}
 
 
+#: 파드가 깨어날 때까지 기다리는 최대 시간(초). 실측 콜드스타트 ≈2분 + reconciler 주기 60초.
+#: 잡 lease 는 heartbeat 로 연장되므로(dispatcher lease/3) 몇 분 대기는 안전하다.
+FACE_PASS_WAIT_SECONDS_DEFAULT = 300
+#: 헬스 폴링 간격. 파드가 뜨는 데 분 단위가 걸리므로 촘촘히 찌를 이유가 없다.
+FACE_PASS_POLL_SECONDS = 10
+#: 한 번 떠 있는 걸 본 URL 은 이 시간 동안 다시 기다리지 않는다 — 같은 잡의 두 번째 컷부터는
+#: 대기 0이어야 한다(프로세스 로컬 메모, 틀려도 최악이 "한 번 더 확인"이다).
+_READY_MEMO_SECONDS = 600
+_ready_seen: dict[str, float] = {}
+
+#: 폴백 알림 규칙 — 30분 창에 pod_not_ready·backend_error 가 3건 이상이면 CRITICAL 1회.
+#: 게이트 실패·얼굴 없음은 그림 문제라 알리지 않는다(운영이 손댈 게 없다).
+FALLBACK_ALERT_WINDOW_SECONDS = 1800
+FALLBACK_ALERT_THRESHOLD = 3
+FALLBACK_ALERT_DEBOUNCE_SECONDS = 1800
+_ALERTED_REASONS = ("pod_not_ready", "backend_error")
+_fallback_events: list[float] = []
+_last_fallback_alert = 0.0
+
+
+def _health_url_from(spec: FaceIdentitySpec, settings) -> str | None:
+    base = spec.backend_url or getattr(settings, "face_identity_backend_url", None)
+    if not isinstance(base, str) or not base.strip():
+        return None
+    base = base.strip().rstrip("/")
+    if base.endswith("/render"):
+        base = base[: -len("/render")]
+    return f"{base}/healthz"
+
+
+def _probe_ready(url: str, timeout: float = 5.0) -> bool:
+    """파드가 렌더할 준비가 됐는가. 연결 거부·503·loaded=false 는 전부 '아직'."""
+    import httpx
+
+    try:
+        res = httpx.get(url, timeout=timeout)
+    except Exception:  # noqa: BLE001 — 적재 중에는 포트가 아예 안 열린다(실측)
+        return False
+    if res.status_code != 200:
+        return False
+    try:
+        return bool(res.json().get("loaded"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def wait_for_backend(settings, spec: FaceIdentitySpec) -> bool:
+    """렌더 전에 파드가 깨어날 때까지 기다린다. 뜨면 True, 시간 초과면 False.
+
+    **여기서 파드를 켜지는 않는다.** 이 잡 자체가 수요라 reconciler 가 60초 안에 켠다
+    (services/face_autoscale.face_demand_snapshot). 대기는 asyncio 로 — 스레드 풀을 붙들면
+    같은 워커의 다른 컷 생성이 막힌다.
+    """
+    url = _health_url_from(spec, settings)
+    if url is None:
+        return True          # 확인할 주소가 없으면 그냥 시도한다(로컬 백엔드 경로)
+    now = time.monotonic()
+    seen = _ready_seen.get(url)
+    if seen is not None and now - seen < _READY_MEMO_SECONDS:
+        return True          # 같은 잡의 두 번째 컷부터는 대기 없음
+    budget = int(getattr(settings, "face_pass_wait_seconds", FACE_PASS_WAIT_SECONDS_DEFAULT) or 0)
+    deadline = now + max(0, budget)
+    while True:
+        if await asyncio.to_thread(_probe_ready, url):
+            _ready_seen[url] = time.monotonic()
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(min(FACE_PASS_POLL_SECONDS, max(1, deadline - time.monotonic())))
+
+
+def _note_fallback(reason: str) -> None:
+    """폴백을 세고, 창 안에서 임계를 넘으면 CRITICAL 1회(디바운스)."""
+    global _last_fallback_alert
+
+    if reason not in _ALERTED_REASONS:
+        return
+    now = time.monotonic()
+    _fallback_events.append(now)
+    del _fallback_events[: max(0, len(_fallback_events) - 100)]
+    recent = [t for t in _fallback_events if now - t <= FALLBACK_ALERT_WINDOW_SECONDS]
+    _fallback_events[:] = recent
+    if len(recent) < FALLBACK_ALERT_THRESHOLD:
+        return
+    if now - _last_fallback_alert < FALLBACK_ALERT_DEBOUNCE_SECONDS:
+        return
+    _last_fallback_alert = now
+    log.critical(
+        "face_identity fallback: 최근 %d분 안에 파드 문제로 %d컷이 gpt-image 얼굴로 나갔습니다. "
+        "파드·토큰·시작 스크립트를 확인하세요.",
+        FALLBACK_ALERT_WINDOW_SECONDS // 60, len(recent))
+
+
+def _outcome_reason(result: FacePassResult) -> str:
+    """폴백 사유를 메타에서 읽는다 — 셀러 화면이 아니라 우리가 보는 기록용."""
+    reason = str(result.meta.get("reason") or "")
+    if reason in ("no_face", "yaw"):
+        return "no_face"
+    return "gate_failed"
+
+
 async def apply_face_pass(
     settings,
     image: bytes,
@@ -1149,11 +1237,31 @@ async def apply_face_pass(
     spec: FaceIdentitySpec,
     *,
     expression: str | None = AUTO,
+    outcome: dict | None = None,
 ) -> tuple[bytes, str]:
-    """generate() 후처리 진입점. 백엔드가 없거나 실패하면 (image, mime) 그대로."""
+    """generate() 후처리 진입점. 실패하면 원본 (image, mime) 그대로 — **폴백이 계약이다.**
+
+    파드는 필요할 때만 켠다. 꺼져 있으면 첫 렌더가 즉시 실패하고 그 컷은 gpt-image 얼굴로
+    나가는데, 가끔 쓰는 셀러에게는 그게 사실상 항상이다. 그래서 렌더 전에 파드가 깨어날 때까지
+    기다린다(최대 FACE_PASS_WAIT_SECONDS).
+
+    outcome 이 오면 결과를 적는다: "applied" 또는 "fallback:<reason>"
+    (pod_not_ready · backend_error · gate_failed · no_face).
+    """
+    def _record(value: str) -> None:
+        if outcome is not None:
+            outcome["face_pass"] = value
+
     backend = resolve_backend(settings, spec)
     if backend is None:
         log.warning("face_identity enabled but no backend (url/lora) — skipping face pass")
+        _record("fallback:backend_error")
+        _note_fallback("backend_error")
+        return image, mime
+    if not await wait_for_backend(settings, spec):
+        log.warning("face_identity: 파드가 대기 시간 안에 뜨지 않았다 — 이 컷은 원본으로 간다")
+        _record("fallback:pod_not_ready")
+        _note_fallback("pod_not_ready")
         return image, mime
     # 렌더는 대부분 GPU/네트워크 대기라 이미지 CPU 풀(1 worker)을 붙들지 않게 별도 스레드로.
     result = await asyncio.to_thread(
@@ -1166,6 +1274,13 @@ async def apply_face_pass(
         mime=mime,
     )
     log.info("face_identity applied=%s meta=%s", result.applied, _meta_for_log(result.meta))
+    if result.applied:
+        _record("applied")
+    else:
+        # 렌더 자체가 안 된 경우(백엔드 예외)는 meta 에 reason 이 안 남는다 → backend_error.
+        reason = _outcome_reason(result) if result.meta.get("tries") else "backend_error"
+        _record(f"fallback:{reason}")
+        _note_fallback(reason)
     return result.image, result.mime
 
 
@@ -1194,6 +1309,7 @@ __all__ = [
     "NullBackend",
     "QwenLocalBackend",
     "apply_face_pass",
+    "wait_for_backend",
     "composite_alpha",
     "cosine",
     "face_embedding",
@@ -1212,7 +1328,6 @@ __all__ = [
     "estimate_expression",
     "evaluate_gate",
     "face_identity_from_lora_row",
-    "face_identity_from_registry_entry",
     "feather_mask",
     "paste_alpha",
     "plan_face_pass",
