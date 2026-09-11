@@ -206,6 +206,21 @@ async def resolve_enabled_lora(conn, model_id: str) -> dict | None:
     return row
 
 
+async def active_face_backend_url(pool) -> str | None:
+    """지금 등록된 렌더 파드의 URL. 워커가 **대기 중에도 계속** 다시 묻는 자리다.
+
+    파드는 재고 때문에 바뀌고(id 가 바뀌면 URL 도 바뀐다), 처음에는 아예 없을 수도 있다
+    (자동 켜기로 그 컷을 위해 만들어지는 중). 잡 시작 때 한 번 읽은 값을 붙들면 그 컷은
+    영영 죽은 주소를 보거나, 파드가 생기기도 전에 폴백한다.
+    """
+    try:
+        async with pool.connection() as conn:
+            return await _active_face_backend_url(conn)
+    except Exception as exc:  # noqa: BLE001 — 못 읽으면 "아직 없음"으로 본다
+        log.warning("face render pod lookup failed: %r", exc)
+        return None
+
+
 async def _active_face_backend_url(conn) -> str | None:
     """DB 에 등록된 현재 렌더 파드에서 URL 을 유도한다. 없으면 None → 설정값 폴백."""
     from ..services.face_autoscale import pod_backend_url

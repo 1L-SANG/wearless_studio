@@ -583,7 +583,8 @@ def test_generate_unchanged_when_face_identity_disabled(monkeypatch):
 def test_generate_runs_face_pass_only_with_a_lora_spec(monkeypatch):
     seen = []
 
-    async def fake_pass(settings, image, mime, spec, *, expression=None, outcome=None):
+    async def fake_pass(settings, image, mime, spec, *, expression=None, outcome=None,
+                        url_provider=None):
         seen.append((image, mime, spec, expression))
         return b"FACE", "image/png"
 
@@ -631,7 +632,8 @@ def test_generate_bottom_medium_skips_face_pass_but_still_crops(monkeypatch):
 
 
 def test_generate_bottom_full_shot_gets_face_pass(monkeypatch):
-    async def fake_pass(settings, image, mime, spec, *, expression=None, outcome=None):
+    async def fake_pass(settings, image, mime, spec, *, expression=None, outcome=None,
+                        url_provider=None):
         return b"FACE", "image/png"
 
     monkeypatch.setattr(cg.face_identity, "apply_face_pass", fake_pass)

@@ -677,6 +677,18 @@ export function AnalysisForm({
       if (composeModeSaveRef.current === pending) setComposeModeSaving(false);
     });
   };
+  // 모델을 **고르는 순간** 파드를 미리 켠다. 확인 버튼까지 기다리면 그만큼 콜드스타트가
+  // 첫 컷 앞에 그대로 남는다. 같은 id 로 다시 렌더링될 때는 보내지 않는다(서버도 60초 중복을
+  // 무시하지만, 안 보내는 게 낫다). 실패는 조용히 무시 — 생성 흐름과 무관한 부가 신호다.
+  const warmedModelRef = useRef(null);
+  useEffect(() => {
+    const modelId = a.selectedModelId;
+    if (!isRealModelSelection(modelId)) { warmedModelRef.current = null; return; }
+    if (warmedModelRef.current === modelId) return;
+    warmedModelRef.current = modelId;
+    void warmFaceRender(modelId);
+  }, [a.selectedModelId]);
+
   const confirmAnalysis = async () => {
     // 장소 컷에 동의한 모델은 대역(가상 모델)이 필요 없다 — 그 모델 얼굴이 그대로 들어간다.
     // 동의하지 않은 모델은 예전 그대로 대역을 고르게 한다.

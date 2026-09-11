@@ -319,6 +319,10 @@ async def _gen_cuts(app, job, prepared, product, analysis, body_profile=None,
                     generate_kwargs["face_identity_spec"] = face_identity_spec
                     # 얼굴 패스 결과(applied / fallback:<reason>) — 자산 메타·이벤트용.
                     generate_kwargs["face_pass_outcome"] = face_pass_outcome
+                    from ..agents import identity_source as _identity_source
+
+                    generate_kwargs["face_pass_url_provider"] = (
+                        lambda: _identity_source.active_face_backend_url(app.state.pool))
             # 컷 생성 재시도 — 안전필터·응답 누락처럼 "다시 부르면 달라질 수 있는" 실패는
             # 한 번 더 시도한다. 빈 슬롯은 셀러에게 그냥 못 만든 페이지이고, 그 값은 우리가
             # 흡수해야 한다(오너 8/15). ValueError(잘못된 cutType 등)는 결정적이라 제외.

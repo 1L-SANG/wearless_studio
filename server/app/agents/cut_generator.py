@@ -1383,6 +1383,8 @@ async def generate(
     # 얼굴 패스 결과를 적어 보낼 자리(워커가 dict 를 준다): "applied" | "fallback:<reason>".
     # 반환값을 늘리지 않는 이유 — generate() 를 목(mock)으로 바꿔 쓰는 테스트가 많다.
     face_pass_outcome: dict | None = None,
+    # 대기 중에도 "지금 파드" 를 다시 묻는 자리 — 파드는 재고 때문에 바뀌고 처음엔 없을 수도 있다.
+    face_pass_url_provider=None,
 ) -> tuple[bytes, str]:
     """컷 1개 생성. 실패 시 GeminiError 전파(호출자가 빈 슬롯 등으로 처리).
     스펙 위반(unknown cutType)은 ValueError — 조용한 styling 폴백을 하지 않는다
@@ -1445,7 +1447,8 @@ async def generate(
     identity = _face_identity_spec(settings, spec, clothing_type, face_identity_spec)
     if identity is not None:
         image, mime = await face_identity.apply_face_pass(
-            settings, image, mime, identity, outcome=face_pass_outcome)
+            settings, image, mime, identity, outcome=face_pass_outcome,
+            url_provider=face_pass_url_provider)
     if crop_pose_medium:
         return await pose_crop.crop_pose_medium(
             settings, image, mime, clothing_type

@@ -6,8 +6,9 @@
 멱등 규칙:
   · R2 키는 (model_id, version, 파일명)으로 결정된다. 같은 내용이 이미 있으면 다시 안 올린다.
   · 행은 unique(model_id, version) 기준 upsert.
-  · --enable 을 주면 이 버전만 enabled=true 로 두고 같은 모델의 다른 버전을 끈다
-    (partial unique index fm_model_loras_one_enabled_uidx 가 두 개를 허용하지 않는다).
+  · 기본이 **켬**이다 — 등록한 버전만 enabled=true 가 되고 같은 모델의 이전 버전은 자동으로
+    꺼진다(partial unique index fm_model_loras_one_enabled_uidx 가 두 개를 허용하지 않는다).
+    스테이징처럼 붙이기만 할 때는 --no-enable.
 
 머리·얼굴형 값은 **등록자의 현재 모습이 아니라 이 LoRA 가 학습한 모습**을 넣는다
 (마이그레이션 20260910100000 주석). enum 은 app/facemarket_physique.py 와 같아야 한다.
@@ -17,8 +18,9 @@
         --model-id <uuid> --ckpt ~/Downloads/lora_runs/v6_ckpt/ohwx_man_v6_000001500.safetensors \
         --version 1 --trigger "ohwx man" --hair-length short --hair-color black \
         --hair-texture straight --face-shape oval --jaw-line defined --trained-steps 1500 \
-        --metrics '{"frontal_median":0.717,"refset_ceiling":0.885}' --enable     # 확인만
-    ... --apply                                                                   # 실제 쓰기
+        --metrics '{"frontal_median":0.717,"refset_ceiling":0.885}'            # 확인만
+    ... --apply                                                                # 실제 쓰기(=켬)
+    ... --apply --no-enable                                                    # 등록만, 끈 채로
 
 DB 는 server/.env 의 DATABASE_URL 을 따른다. 대상 DB 에 마이그레이션
 20260911000100_fm_model_loras.sql 이 먼저 적용돼 있어야 한다.
@@ -70,7 +72,13 @@ def main() -> int:
     ap.add_argument("--trained-steps", type=int)
     ap.add_argument("--source-enrollment-id")
     ap.add_argument("--metrics", help="jsonb 로 넣을 JSON 문자열")
-    ap.add_argument("--enable", action="store_true", help="이 버전을 켠다(다른 버전은 끈다)")
+    # **등록 = 사용**이 기본이다. 꺼진 채로 등록하면 그 사실을 아무 데서도 못 보고
+    # "얼굴이 안 바뀐다" 로만 나타난다(원인을 찾는 데 사람 시간이 든다).
+    ap.add_argument("--no-enable", dest="enable", action="store_false",
+                    help="스테이징용 — 등록만 하고 켜지 않는다")
+    ap.add_argument("--enable", dest="enable", action="store_true",
+                    help="(호환용) 기본이 이미 켬이라 효과 없음")
+    ap.set_defaults(enable=True)
     ap.add_argument("--apply", action="store_true", help="없으면 확인만 하고 아무것도 안 쓴다")
     a = ap.parse_args()
 
