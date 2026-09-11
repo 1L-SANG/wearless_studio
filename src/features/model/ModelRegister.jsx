@@ -340,7 +340,7 @@ export function ModelRegister() {
   } else if (step === 'loading' || step === 'processing') {
     content = <>{heading(step === 'loading' ? '등록 상태를 불러오고 있어요' : '등록을 마무리하고 있어요')}<p className={s.description} role="status"><span className={s.spinner} /> 잠시만 기다려 주세요.</p></>;
   } else {
-    content = heading(step === 'failed' ? '등록을 이어갈 수 없어요' : '등록 상태를 확인하지 못했어요', step === 'failed' ? `${enrollmentReasonMessage(enrollment?.reason)} 다시 시작하면 사진과 조건을 새로 받아요.` : error);
+    content = heading(step === 'failed' ? '등록을 이어갈 수 없어요' : '등록 상태를 확인하지 못했어요', step === 'failed' ? `${enrollmentReasonMessage(enrollment?.reason)} 다시 시작하면 사진과 조건을 새로 받아요.` : undefined);
     next = { label: step === 'failed' ? '다시 시작하기' : '다시 확인하기', action: step === 'failed' ? restart : restore };
   }
 

@@ -36,7 +36,7 @@ export function LandingHeader({ onPrimary, primaryLabel }) {
     if (!userId) { setModelState(null); return undefined; }
     let alive = true;
     listMyModels().then(models => {
-      if (alive) setModelState({ userId, verified: models.some(model => model.status === 'verified') });
+      if (alive) setModelState({ userId, verified: models.some(model => ['verified', 'suspended'].includes(model.status)) });
     }).catch(() => { if (alive) setModelState(null); });
     return () => { alive = false; };
   }, [userId]);
