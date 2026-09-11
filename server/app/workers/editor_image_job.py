@@ -199,6 +199,14 @@ async def run_editor_image_job(app, job: dict) -> None:
                 async with pool.connection() as _conn:
                     vary_lora_spec = face_identity.face_identity_from_lora_row(
                         await identity_source.resolve_enabled_lora(_conn, str(snapshot["modelId"])))
+                    # 동일인 검사 기준(승인된 face_front). 변형 경로는 실존 자산을 따로 안 읽으므로 여기서 읽는다.
+                    if vary_lora_spec is not None:
+                        _ref_faces = await identity_source.reference_face_bytes(
+                            app, _conn, str(snapshot["modelId"]), fm_license_row)
+                        if _ref_faces:
+                            vary_lora_spec = await asyncio.to_thread(
+                                face_identity.with_references, vary_lora_spec, _ref_faces,
+                                getattr(s, "fm_face_qc_dir", None))
             src_img = InlineImage(
                 src_asset["mime_type"],
                 await asyncio.to_thread(app.state.r2.get_bytes, src_asset["r2_key"]))
@@ -502,6 +510,11 @@ async def run_editor_image_job(app, job: dict) -> None:
                     _lora = await identity_source.resolve_enabled_lora(_conn, str(selected_model_id))
                 hair_profile, face_shape_profile = identity_source.profiles_from_lora_row(_lora)
                 fm_lora_spec = face_identity.face_identity_from_lora_row(_lora)
+                # 동일인 검사 기준 = 승인된 face_front(model_images[0], 위에서 이미 읽은 바이트). 그리드는 기준이 아니다.
+                if fm_lora_spec is not None and fm_source == "REAL" and model_images:
+                    fm_lora_spec = await asyncio.to_thread(
+                        face_identity.with_references, fm_lora_spec, [model_images[0].data],
+                        getattr(s, "fm_face_qc_dir", None))
             mannequin_images = (
                 [InlineImage(
                     cut_mannequin_asset["mime_type"],

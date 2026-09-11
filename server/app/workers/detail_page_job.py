@@ -1243,6 +1243,14 @@ async def run_detail_page_job(app, job: dict) -> None:
                 )
             hair_profile, face_shape_profile = identity_source.profiles_from_lora_row(_lora)
             fm_lora_spec = _face_identity.face_identity_from_lora_row(_lora)
+            # 동일인 검사 기준 = 승인된 face_front(real_model_images[0], 위에서 이미 읽은 바이트).
+            # 그리드(sedcard)는 여러 각도가 한 장이라 기준으로 쓰지 않는다. 이걸 안 붙이면 게이트가
+            # 신원을 보지 않는다(identity=None) — 2026-09-11 잡 6c270b84 에서 실제로 그랬다.
+            if fm_lora_spec is not None and real_model_images:
+                fm_lora_spec = await asyncio.to_thread(
+                    _face_identity.with_references, fm_lora_spec,
+                    [real_model_images[0].data], getattr(s, "fm_face_qc_dir", None),
+                )
 
         # (runtime block, images, manifest, has_face, product_images,
         #  space_set_plate, strict_space_scene_qc, passthrough, confirmed_packet,

@@ -19,6 +19,7 @@ angle45/side)의 지문을 fm_models.assets_source_hash 에 새긴다. resolve_r
 쓰므로 정상 상태에서는 false-reject 가 나올 수 없다.
 """
 
+import asyncio
 import hashlib
 import logging
 import uuid
@@ -172,6 +173,29 @@ async def resolve_real_model_assets(
             return None
         out.append(ref)
     return out
+
+
+async def reference_face_bytes(app, conn, model_id: str, license_row) -> list[bytes]:
+    """동일인 검사 기준 = 승인된 face_front 한 장(비공개 face 버킷). 핀이 안 맞거나 저장소가 없으면 [].
+
+    변형 컷처럼 실존 자산을 따로 안 읽는 경로가 쓴다. 새 컷·상세페이지는 이미 읽은 model_images[0] 를 그대로 쓴다.
+    """
+    if not isinstance(license_row, dict):
+        return []
+    enrollment_id = license_row.get("current_enrollment_id")
+    evidence_version = license_row.get("match_policy_version")
+    r2_face = getattr(app.state, "r2_face", None)
+    if not enrollment_id or not evidence_version or r2_face is None:
+        return []
+    refs = await resolve_real_model_assets(
+        conn, str(model_id), enrollment_id=str(enrollment_id), evidence_version=str(evidence_version))
+    if not refs:
+        return []
+    try:
+        return [await asyncio.to_thread(r2_face.get_bytes, refs[0]["key"])]
+    except Exception as exc:  # noqa: BLE001 — 기준을 못 읽으면 신원 검사 없이 간다(얼굴 패스 자체는 막지 않는다)
+        log.warning("reference face unavailable for %s: %r", model_id, exc)
+        return []
 
 
 async def resolve_enabled_lora(conn, model_id: str) -> dict | None:
