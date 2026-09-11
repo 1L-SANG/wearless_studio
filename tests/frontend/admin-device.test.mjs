@@ -86,3 +86,39 @@ test('헤더 이름과 이벤트 이름은 서버·가드와 약속된 값이다
   // 서버 CORS 허용 목록과 맞물린다(Task 1).
   assert.ok(read('server/app/main.py').includes('"X-Admin-Device"'));
 });
+
+test('RequireDevice 는 RequireAuth 안·AdminShell 밖에 선다', () => {
+  const app = read('src/apps/admin/App.jsx');
+  assert.ok(app.includes("import { RequireDevice } from './RequireDevice.jsx'"));
+  const auth = app.indexOf('<Route element={<RequireAuth />}>');
+  const device = app.indexOf('<Route element={<RequireDevice />}>');
+  const shell = app.indexOf('<Route element={<AdminShell />}>');
+  assert.ok(auth !== -1 && device !== -1 && shell !== -1);
+  assert.ok(auth < device && device < shell, '순서: RequireAuth → RequireDevice → AdminShell');
+});
+
+test('RequireDevice 는 서버의 gate 를 단일 진실로 삼고 4상태를 다 그린다', () => {
+  const src = read('src/apps/admin/RequireDevice.jsx');
+  // gate 가 enforce 가 아니면 화면을 막지 않는다(shadow/off 는 서버가 안 막는다).
+  assert.ok(src.includes("gate !== 'enforce'"), 'enforce 분기가 없다');
+  for (const state of ['pending', 'approved', 'revoked', 'unknown']) {
+    assert.ok(src.includes(`'${state}'`), `상태 누락: ${state}`);
+  }
+  // 등록 화면·대기 화면·회수 화면·비관리자 화면 문구
+  assert.ok(src.includes('승인 요청'));
+  assert.ok(src.includes('다른 관리자가 승인해야 해요'));
+  assert.ok(src.includes('회수됐어요'));
+  assert.ok(src.includes('관리자만 가능해요'));
+  // 폴링은 보일 때만, 언마운트에 정리
+  assert.ok(src.includes('setInterval') && src.includes('clearInterval'));
+  assert.ok(src.includes('visibilityState'));
+  // 회수 이벤트를 듣는다
+  assert.ok(src.includes('DEVICE_REJECTED_EVENT'));
+  // 실패는 화면에 남는 에러 + 재시도(전체 게이팅 금지)
+  assert.ok(src.includes('다시 시도'));
+});
+
+test('RequireDevice 의 too_many_pending 은 안내 문구가 따로 있다', () => {
+  const src = read('src/apps/admin/RequireDevice.jsx');
+  assert.ok(src.includes("'too_many_pending'"));
+});
