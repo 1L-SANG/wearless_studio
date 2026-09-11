@@ -458,4 +458,9 @@ def test_finalize_persists_generation_metadata_in_asset_jsonb(monkeypatch):
     assert result is not None
     asset_insert = next((query, params) for query, params in executed if "insert into assets" in query)
     assert "metadata" in asset_insert[0]
-    assert asset_insert[1][-1].obj == metadata
+    written = asset_insert[1][-1].obj
+    # 계보는 한 키도 빠지거나 바뀌지 않아야 한다.
+    assert {k: written[k] for k in metadata} == metadata
+    # 서버가 덧붙이는 건 실인물 파생 아님 마커뿐이다(보관함 커버를 R2 공개 경로로 돌려보낸다).
+    assert set(written) - set(metadata) == {"facemarket_real_derived"}
+    assert written["facemarket_real_derived"] is False

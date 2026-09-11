@@ -2413,6 +2413,23 @@ async def _finalize_job_failure(
     return True
 
 
+def _mannequin_asset_metadata(generation_metadata: dict | None) -> dict:
+    """마네킹컷 asset metadata — 생성 계보 + 실인물 파생 아님 마커.
+
+    마커를 안 박으면 `_asset_is_real_derived` 의 보수적 폴백(marker 없는 source='ai')이
+    걸려 `/assets/{id}/file` 이 R2 공개 URL 대신 `private, no-store` 인 `/bytes` 로 302 한다.
+    그러면 이미지가 Cloudflare 엣지 대신 API(us-east-1)를 거치고 브라우저 캐시도 못 탄다 —
+    보관함 커버(= 최신 마네킹컷)가 진입할 때마다 한 장당 수백 KB를 다시 받던 회귀의 원인이다.
+
+    마네킹 파이프라인은 FaceMarket 신원을 아예 쓰지 않는다(mannequin_job·mannequin_adjust_job
+    어디에도 얼굴 합성 경로가 없다). 산출물은 얼굴 없는 마네킹 착장컷이라 생체 파생일 수가
+    없고, 그래서 여기서는 폴백에 맡기지 말고 False 를 명시한다.
+    """
+    metadata = dict(generation_metadata or {})
+    metadata["facemarket_real_derived"] = False
+    return metadata
+
+
 # ---------- 종결 (원자) ----------
 # 에셋·컷 insert + 크레딧 정산 + job done/error를 **한 함수 = 한 tx = 한 락**으로 처리.
 # 시작에서 jobs 행을 FOR UPDATE로 잠그고(lease 토큰 확인) 커밋까지 유지 → lease 복구의
@@ -2447,7 +2464,7 @@ async def finalize_mannequin_success(
                 "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s, %s)",
                 (c["asset_id"], user_id, project_id, c["bucket"], c["key"], c["mime"],
                  c.get("size"), c.get("width"), c.get("height"),
-                 Json(c.get("generation_metadata") or {})),
+                 Json(_mannequin_asset_metadata(c.get("generation_metadata")))),
             )
             await cur.execute(
                 "select coalesce(max(version), 0) + 1 as v from mannequin_cuts "
@@ -2556,10 +2573,11 @@ async def finalize_mannequin_adjust_success(
             return None  # lease 빼앗김 — 부수효과 0 (워커는 폐기)
         await cur.execute(
             "insert into assets (id, user_id, project_id, source, visibility, r2_bucket, "
-            "r2_key, mime_type, byte_size, width, height) "
-            "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s)",
+            "r2_key, mime_type, byte_size, width, height, metadata) "
+            "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s, %s)",
             (cut["asset_id"], user_id, project_id, cut["bucket"], cut["key"], cut["mime"],
-             cut.get("size"), cut.get("width"), cut.get("height")),
+             cut.get("size"), cut.get("width"), cut.get("height"),
+             Json(_mannequin_asset_metadata(cut.get("generation_metadata")))),
         )
         await cur.execute(
             "select coalesce(max(version), 0) + 1 as v from mannequin_cuts "
