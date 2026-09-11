@@ -1295,6 +1295,9 @@ Expected: FAIL — `review_pending` 전이 없음, `id_portrait_unavailable` 로
 
 ```python
             match_snapshot = {
+                # raw 코사인을 그대로 저장한다. 백분율 변환은 표시층에서만 한다 —
+                # 임계 재캘리브·사후 분석이 원본을 요구하고, 표시 형식이 바뀐다고
+                # 저장 값이 흔들리면 안 된다.
                 "policyVersion": settings.fm_match_policy_version,
                 "anchor": "id_document_crop" if advisory else "oacx_portrait",
                 "thresholds": {
@@ -1857,7 +1860,7 @@ EOF
 
 **Interfaces:**
 - Consumes: Task 10 의 관리자 API 4종, Task 8 의 카드 스키마
-- Produces: `/admin/review` 라우트
+- Produces: `/admin/review` 라우트, `scoreRow(angle, score, threshold)` 표시 헬퍼(백분율·기준선·배수·배지)
 
 - [ ] **Step 1: 심사 화면 구현**
 
@@ -1866,7 +1869,34 @@ EOF
 1. **신분증 마스킹 전체본** — `images/id_document`
 2. **등록 사진 3장** — `images/front`, `images/angle45`, `images/side`
 3. **지원서** — 이름·생년월일·프로필 사진
-4. **자동 대조 점수** — `matchScores.scores` 를 각도별로. `belowThreshold` 에 든 각도는 빨간 배지
+4. **자동 대조 점수** — 스펙 §6.2.1 규격. **백분율 + 기준선 + 배수 + 배지**를 한 줄에 함께 띄운다:
+
+```jsx
+// 0.31 을 "31%" 로만 띄우면 관리자가 "69% 다르다는 뜻인가" 로 읽어 멀쩡한 본인을
+// 거절한다. SFace 코사인은 동일인도 0.2~0.4 대라서 기준선을 나란히 박아야 한다.
+function scoreRow(angle, score, threshold) {
+  if (score == null) return { label: '– 대조 안 됨', tone: 'muted' };
+  const ratio = score / threshold;
+  const tone = score < threshold ? 'danger' : ratio >= 2 ? 'ok' : 'warn';
+  const badge = score < threshold ? '✗ 미달' : ratio >= 2 ? '✓ 통과' : '△ 아슬';
+  return {
+    percent: `${Math.round(score * 100)}%`,
+    baseline: `기준 ${Math.round(threshold * 100)}%`,
+    multiple: `기준의 ${ratio.toFixed(1)}배`,
+    badge, tone,
+  };
+}
+```
+
+화면 출력 예:
+
+```
+정면   31%   기준 15%   ✓ 통과 (기준의 2.1배)
+45도   27%   기준 15%   ✓ 통과 (기준의 1.8배)
+측면   11%   기준 10%   △ 아슬 (기준의 1.1배)
+```
+
+배지는 정보일 뿐 승인 버튼을 막지 않는다 — 빨강이어도 승인할 수 있고 초록이어도 거절할 수 있다. 위조 신분증은 진짜 얼굴이 찍혀 있어 점수가 높게 나오는 게 정상이다.
 5. **CI 대조** — `identityMismatchCount`
 6. **마스킹 확인 체크박스** — 체크해야 승인 버튼이 활성화된다
 
