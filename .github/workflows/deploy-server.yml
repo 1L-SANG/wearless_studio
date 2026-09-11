@@ -188,6 +188,58 @@ jobs:
                   fi
                   supabase db push --db-url "$SUPABASE_DB_URL"
 
+            # 얼굴 렌더 파드용 코드 묶음을 R2 에 올린다(키 = face_render/<git sha>.tgz).
+            #
+            # 자동 생성되는 파드에는 아무 코드도 없다 — 컨테이너 디스크가 매번 초기화되고, 맥에서
+            # 밀어 넣는 건 사람 손이다. 어댑터가 파드를 켜거나 만들 때 이 키의 presigned GET 을
+            # env 로 넣어 주므로(파드에 R2 자격증명 없음), 서버와 파드 코드가 항상 같은 sha 가 된다.
+            #
+            # R2 자격증명은 **SSM 에서 읽는다**(이 워크플로에 R2 GitHub 시크릿이 없다).
+            # 읽지 못하면 배포를 막지 않고 경고만 남긴다 — 그 경우 자동 생성된 파드는 코드를 받지
+            # 못하고, 어댑터가 그 사실을 CRITICAL 로 알린다.
+            - name: 얼굴 렌더 코드 묶음 업로드 (R2)
+              continue-on-error: true      # 배포는 계속하되, 실패하면 이 단계가 빨갛게 보인다
+              env:
+                  # R2_ENDPOINT·R2_FACE_BUCKET 은 **SSM 이 아니라 매니페스트 평문**이다
+                  # (copilot/api/manifest.yml). 이전 판은 이 둘까지 SSM 에서 읽어 항상 빈 값이
+                  # 나왔고, 빈 값이면 exit 0 이라 초록불인데 업로드는 0건이었다.
+                  R2_ENDPOINT: https://2b7c948b56f129faaa10e5076b9e9a66.r2.cloudflarestorage.com
+                  R2_FACE_BUCKET: wearless-face
+                  # 시크릿은 env 계정의 us-east-1 에 있다. 워크플로 기본 리전(ap-northeast-2)으로
+                  # 읽으면 파라미터를 못 찾는다.
+                  SSM_REGION: us-east-1
+                  SSM_PREFIX: /copilot/${{ env.COPILOT_APP }}/${{ env.COPILOT_ENV }}/secrets
+              run: |
+                  set -euo pipefail
+                  SHA="$(server/scripts/face_render_bundle.sh dist)"
+                  echo "bundle sha256=$SHA"
+                  for key in R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY; do
+                    value="$(aws ssm get-parameter --with-decryption --region "$SSM_REGION" \
+                      --name "$SSM_PREFIX/$key" --query Parameter.Value --output text 2>/dev/null || true)"
+                    if [ -z "$value" ]; then
+                      echo "::error::$SSM_PREFIX/$key 를 $SSM_REGION 에서 읽지 못했습니다."
+                      echo "::error::코드 묶음을 올리지 못해 자동 생성된 얼굴 렌더 파드는 코드를 받지 못합니다."
+                      exit 1
+                    fi
+                    export "$key=$value"
+                  done
+                  KEY="face_render/$GITHUB_SHA.tgz"
+                  export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
+                  export AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
+                  export AWS_DEFAULT_REGION=auto
+                  if ! aws s3 cp dist/face_render.tgz "s3://$R2_FACE_BUCKET/$KEY" \
+                       --endpoint-url "$R2_ENDPOINT" --only-show-errors; then
+                    echo "::error::R2 업로드 실패: $KEY"
+                    exit 1
+                  fi
+                  # 올렸다는 응답만 믿지 않는다 — 실제로 그 키가 있는지 확인한다.
+                  if ! aws s3api head-object --bucket "$R2_FACE_BUCKET" --key "$KEY" \
+                       --endpoint-url "$R2_ENDPOINT" > /dev/null; then
+                    echo "::error::업로드 후 객체를 찾지 못했습니다: $KEY"
+                    exit 1
+                  fi
+                  echo "uploaded and verified $KEY"
+
             # API가 detail_page claim을 끊기 전에 desiredCount=0 서비스를 먼저 만든다.
             # 역순이면 첫 detail 잡이 아무도 claim하지 않는 배포 공백이 생긴다.
             - name: 상세 워커 배포 (Spot 0대)

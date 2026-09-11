@@ -52,3 +52,28 @@ test('publisher does not export unresolved internal placeholders into landing co
   assert.ok(!existsSync(join(f.landing, 'content/legal/manifest.json')));
   assert.match(result.stdout, /담당자 미확정/);
 });
+
+test('publisher uses the actual price launch date in both metadata and document bodies', (t) => {
+  const f = fixture(t);
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const manifest = JSON.parse(readFileSync(join(f.root, 'public/legal/manifest.json'), 'utf8'));
+  assert.ok(manifest.length > 0);
+  assert.ok(manifest.every(({ version, effectiveDate }) => (
+    version === 'v1.1' && effectiveDate === '2026-09-11'
+  )));
+
+  const agreement = readFileSync(join(f.root, 'public/legal/license-agreement.md'), 'utf8');
+  assert.match(agreement, /2026년 9월 11일부터 적용한다/);
+  assert.doesNotMatch(agreement, /2026년 9월 7일부터 적용한다/);
+
+  const datedSellerDocuments = [
+    ['terms-seller.md', /2026년 9월 11일\*\*부터 시행합니다/],
+    ['privacy-seller.md', /2026년 9월 11일\*\*부터 적용됩니다/],
+    ['refund.md', /2026년 9월 11일\*\*부터 시행합니다/],
+  ];
+  for (const [file, effectiveCopy] of datedSellerDocuments) {
+    assert.match(readFileSync(join(f.root, `public/legal/${file}`), 'utf8'), effectiveCopy, file);
+  }
+});

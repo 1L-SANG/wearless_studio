@@ -86,6 +86,12 @@ def test_create_license_request_uses_platform_unit_price_by_default():
     assert request.unit_price == 14900
 
 
+def test_create_license_request_ignores_client_price_override():
+    request = CreateLicenseRequest(enrollmentId=ENROLLMENT_ID, unitPrice=1)
+
+    assert request.unit_price == 14900
+
+
 def test_license_card_allows_missing_face_digest_during_reverification_cutover():
     card = LicenseCard.model_validate(
         {

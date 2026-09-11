@@ -22,4 +22,4 @@
 ## 문서
 - /terms 모델 이용약관 · /license-agreement 초상 라이선스 표준계약 · /privacy 개인정보 처리방침 · /seller-terms 셀러 라이선스 이용조건 · /answers 법적 FAQ · /verify 라이선스 검증
 
-마지막 검토: 2026년 9월 7일
+마지막 검토: 2026년 9월 11일

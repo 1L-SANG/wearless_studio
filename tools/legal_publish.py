@@ -7,7 +7,9 @@ import argparse, json, re, pathlib, sys
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SRC, OUT = ROOT / "documents/legal", ROOT / "public/legal"
 OUT.mkdir(parents=True, exist_ok=True)
-EFFECTIVE = "2026년 9월 7일"
+EFFECTIVE_DATE = "2026-09-11"
+year, month, day = (int(part) for part in EFFECTIVE_DATE.split("-"))
+EFFECTIVE = f"{year}년 {month}월 {day}일"
 COMPANY = json.loads((ROOT / "src/lib/companyInfo.json").read_text())
 CO = dict(name=COMPANY["name"], ceo=COMPANY["representative"], brn=COMPANY["businessRegistrationNumber"],
           addr=COMPANY["address"], tel=COMPANY["phone"], email=COMPANY["email"])
@@ -107,7 +109,7 @@ def publish():
         left = sorted(set(re.findall(r"\[[^\]\n]{1,40}\](?!\()", text)))
         if left: leftovers[slug] = left
         (OUT / f"{slug}.md").write_text(text)
-        manifest.append({"slug": slug, "app": app, "title": title, "version": "v1.1", "effectiveDate": "2026-10-12", "source": fn})
+        manifest.append({"slug": slug, "app": app, "title": title, "version": "v1.1", "effectiveDate": EFFECTIVE_DATE, "source": fn})
     (OUT / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
     # llms.txt — 06 부록 코드블록
     faq = (SRC / "06_facemarket_legal_faq_v1.md").read_text()

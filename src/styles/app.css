@@ -115,6 +115,8 @@ input, textarea, select { font-family: inherit; }
 .profile { position: relative; display: inline-flex; }
 .profile-btn { padding: 0; border: 0; background: none; line-height: 0; border-radius: var(--r-pill); cursor: pointer; }
 .profile-menu { position: absolute; right: 0; top: calc(100% + 10px); z-index: 50; min-width: 248px;
+  --profile-icon-blue: #82b6f1;
+  --profile-icon-amber: #edb55d; --profile-icon-slate: #a4b2c7;
   background: var(--bg-1); border-radius: var(--r-6); box-shadow: var(--elev-card), 0 0 0 1px var(--ring);
   padding: 6px; }
 .profile-head { display: flex; align-items: center; gap: 11px; padding: 10px 10px 12px; }
@@ -122,10 +124,22 @@ input, textarea, select { font-family: inherit; }
 .profile-name { font-size: 14px; font-weight: 600; color: var(--fg-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .profile-email { font-size: 12px; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 .profile-sep { height: 1px; background: var(--ring); margin: 0 6px 6px; }
-.profile-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: 0;
+.profile-item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 10px; border: 0;
   background: transparent; text-align: left; font-family: var(--font-body); font-size: 13.5px; color: var(--fg-1);
   border-radius: var(--r-4); cursor: pointer; transition: background .14s; }
 .profile-item:hover { background: var(--bg-2); }
+.profile-menu-icon { display: block; width: 22px; height: 22px; flex: 0 0 22px; fill: currentColor; }
+.profile-menu-icon--model { color: var(--profile-icon-blue); }
+.profile-menu-icon--pricing { color: var(--bg-1); }
+.profile-menu-icon-card-back { fill: var(--bg-2); stroke: var(--fg-2); stroke-width: 1.2; }
+.profile-menu-icon-card-front { fill: var(--bg-1); stroke: var(--fg-2); stroke-width: 1.4; }
+.profile-menu-icon-card-mark { fill: none; stroke: color-mix(in srgb, var(--fg-1) 72%, var(--bg-1)); stroke-width: 1.7; stroke-linecap: round; }
+.profile-menu-icon--subscription { color: var(--profile-icon-blue); }
+.profile-menu-icon--credits { color: var(--profile-icon-amber); }
+.profile-menu-icon--logout { color: var(--profile-icon-slate); }
+.profile-menu-icon-detail { fill: color-mix(in srgb, currentColor 38%, var(--fg-1)); }
+.profile-menu-icon-line { fill: none; stroke: color-mix(in srgb, currentColor 38%, var(--fg-1));
+  stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
 /* ---- route-persistent generation status ---- */
 /* 리본이 여러 개면 위아래로 쌓이고, 3개를 넘으면 스택 안에서 스크롤(2026-08-03 오너 지시).

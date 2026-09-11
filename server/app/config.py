@@ -51,6 +51,10 @@ class Settings:
     # AG-06 상세컷 전용 모델. 빈 값이면 image_high로 폴백해 기존 환경을 보존한다.
     # 마네킹·매칭·AG-07까지 공유하는 image_high를 바꾸지 않고 콘티 1·2차만 분리한다.
     model_detail_cut: str = ""
+    # 에디터 컷(editor_image_job) 전용 모델. 빈 값이면 image_high 로 폴백해 기존 환경을 보존한다.
+    # image_high 를 바꾸면 마네킹(mannequin_tier)·매칭 플랫레이(matching_flatlay_tier)·AG-07(cut_variator)
+    # 까지 전부 딸려 간다 — 에디터만 바꾸려면 이 노브를 쓴다(detail_cut 과 같은 관례).
+    model_editor_cut: str = ""
     # AG-01 상품 분석 (text tier, 멀티모달 입력) — ai_agent_modules §1·§3
     openai_api_key: str | None = None  # sk-… (서버 전용, secret). GPT 경로 키
     model_text: str = "gpt-5.4-mini"  # GPT 폴백 provider 의 text/vision 모델 (openai key 있을 때만)
@@ -286,6 +290,9 @@ class Settings:
     # ---- FaceMarket (해커톤, 검증 실명 모델 마켓) — 기본 off 로 프로드 보호(FACEMARKET_ENABLED) ----
     # off면 라우터 자체가 미등록 → 기존 셀러 플로우 무영향(main.py 조건부 include).
     facemarket_enabled: bool = False
+    #: 모델 사용 조건 화면의 **선택 동의 항목**(장소 컷·룩북 인물 교체) 노출 여부.
+    #: 법률 검토 전에는 모델에게 보이면 안 된다 — 꺼져 있으면 요청에 값이 와도 저장하지 않는다.
+    facemarket_opt_uses_enabled: bool = False
     # 생체 등록은 FaceMarket 안에서도 별도 dark launch. 임계값은 캘리브 증거 없이는 기본값을 두지 않는다.
     fm_biometric_enrollment_enabled: bool = False
     # 모델 지원서·관리자 검토 게이트(리뉴얼). off = 기존 즉시 등록(구 경로는 지원서 테이블을
@@ -385,6 +392,23 @@ class Settings:
     fm_face_qc_enabled: bool = False
     fm_face_qc_threshold: float = 0.363  # OpenCV SFace 권장 코사인 동일인 기준선(캘리브 전 잠정)
     fm_face_qc_dir: str | None = None    # SFace/YuNet onnx 디렉터리. None이면 app/data/face_models
+    # ---- 인물 LoRA 얼굴 패스(agents/face_identity.py) — 기본 off. 켜도 virtual_models.json 항목에
+    # faceIdentity{loraPath,token} 가 있는 모델의 착용컷만 후처리한다. 기본값에서는 기존 동작이 한 줄도 안 바뀐다.
+    face_identity_enabled: bool = False
+    face_identity_backend_url: str | None = None  # 원격 GPU 렌더 서비스 URL. 없으면 로컬 Qwen(파드·개발 전용)
+    face_identity_lora_path: str | None = None    # LoRA 디렉터리(레지스트리 loraPath 기준) 또는 단일 .safetensors
+    face_identity_backend_token: str | None = None  # 렌더 서비스 내부 토큰(Bearer). 없으면 헤더를 안 붙인다
+    # 얼굴 패스 GPU 온디맨드(services/face_autoscale.py) — sam2 와 같은 판정, RunPod 파드 대상.
+    # off 면 HTTP 클라이언트를 만들지 않는다. API 키는 서버에만 두고 파드에는 올리지 않는다.
+    face_autoscale: str = "off"
+    face_autoscale_idle_minutes: int = 30
+    face_runpod_pod_id: str | None = None
+    face_runpod_api_key: str | None = None
+    #: 켜라고 한 뒤 이 시간이 지나도 /healthz 가 안 뜨면 "안 뜬다"로 보고 내린다(요금 방지).
+    #: 근거는 콜드스타트 실측 × 2 (services/face_autoscale.py 주석).
+    face_autoscale_start_grace_minutes: int = 8
+    #: 파드 볼륨에 올라가 있어야 할 코드 버전(git sha). 다르면 **경고 로그만** — 컷은 막지 않는다.
+    face_render_code_version: str | None = None
     # ---- 이미지 실비 계측(내부용) ----
     # false 면 image_usage_events 적재를 끄고 로그만 남긴다.
     # **기본값은 app_env 가 정한다**(load_settings → _image_usage_persist): production 만 on.
@@ -517,6 +541,7 @@ def load_settings() -> Settings:
         model_image_mannequin=(os.getenv("MODEL_ROUTING_IMAGE_MANNEQUIN") or "gpt-image-2.5-flare").strip() or "gpt-image-2.5-flare",
         model_image_signature=os.getenv("MODEL_ROUTING_IMAGE_SIGNATURE", "gpt-image-2"),
         model_detail_cut=os.getenv("MODEL_ROUTING_DETAIL_CUT", ""),
+        model_editor_cut=os.getenv("MODEL_ROUTING_EDITOR_CUT", ""),
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         model_text=os.getenv("MODEL_ROUTING_TEXT", "gpt-5.4-mini"),
         model_text_gemini=os.getenv("MODEL_ROUTING_TEXT_GEMINI", "gemini-3.7-flash"),
@@ -612,6 +637,8 @@ def load_settings() -> Settings:
         matching_cutout=_flag("MATCHING_CUTOUT", "off", {"off", "on"}),
         matching_flatlay=_flag("MATCHING_FLATLAY", "off", {"off", "on", "full"}),
         facemarket_enabled=(os.getenv("FACEMARKET_ENABLED", "false").lower() == "true"),
+        facemarket_opt_uses_enabled=(
+            os.getenv("FACEMARKET_OPT_USES_ENABLED", "false").lower() == "true"),
         fm_biometric_enrollment_enabled=(
             os.getenv("FM_BIOMETRIC_ENROLLMENT_ENABLED", "false").lower() == "true"
         ),
@@ -673,6 +700,16 @@ def load_settings() -> Settings:
         fm_face_qc_enabled=(os.getenv("FM_FACE_QC_ENABLED", "false").lower() == "true"),
         fm_face_qc_threshold=float(os.getenv("FM_FACE_QC_THRESHOLD") or "0.363"),
         fm_face_qc_dir=os.getenv("FM_FACE_QC_DIR") or None,
+        face_identity_enabled=(os.getenv("FACE_IDENTITY_ENABLED", "false").lower() == "true"),
+        face_identity_backend_url=(os.getenv("FACE_IDENTITY_BACKEND_URL") or "").rstrip("/") or None,
+        face_identity_lora_path=os.getenv("FACE_IDENTITY_LORA_PATH") or None,
+        face_identity_backend_token=os.getenv("FACE_IDENTITY_BACKEND_TOKEN") or None,
+        face_autoscale=_flag("FACE_AUTOSCALE", "off", {"off", "on"}),
+        face_autoscale_idle_minutes=_int_env("FACE_AUTOSCALE_IDLE_MINUTES", 30),
+        face_runpod_pod_id=os.getenv("FACE_RUNPOD_POD_ID") or None,
+        face_runpod_api_key=os.getenv("RUNPOD_API_KEY") or None,
+        face_autoscale_start_grace_minutes=_int_env("FACE_AUTOSCALE_START_GRACE_MINUTES", 8),
+        face_render_code_version=os.getenv("FACE_RENDER_CODE_VERSION") or None,
         fm_provenance_enabled=(
             os.getenv("FM_PROVENANCE_ENABLED", "false").lower() == "true"
         ),

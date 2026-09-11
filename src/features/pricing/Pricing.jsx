@@ -189,7 +189,7 @@ export function Pricing() {
                           <span className={s.creditArrow} aria-hidden="true">→</span>
                         </>}
                         <span className={s.creditAmount}>
-                          <span className={details?.bonusNote ? s.bonusCredits : undefined}>{credits}</span>
+                          {credits}
                           {details?.bonusNote && <em className={s.bonusNote}>{details.bonusNote}</em>}
                         </span>
                         <span className={s.creditUnit}>크레딧</span>
@@ -213,7 +213,7 @@ export function Pricing() {
                 )}
                 <div className={s.cta}>
                   {recurring ? (
-                    // 구독과 로그인 버튼을 같은 무지개 링 안에 표시한다.
+                    // 구독과 로그인 버튼을 같은 그라데이션 링 안에 표시한다.
                     <div className={s.buttonRing}>
                       {!session ? (
                         <button type="button" className={`${s.purchaseButton} ${s.subscriptionButton}`} onClick={requireLogin}>

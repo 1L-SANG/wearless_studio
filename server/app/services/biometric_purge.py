@@ -541,6 +541,14 @@ async def _known_targets(conn, schema, scope, enrollment_ids, derived_jobs):
                 (list(scope["model_ids"]),),
             )
             face_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
+        # 등록자별 LoRA 가중치도 같은 model_id 의 생체 파생 자산이다. 이 줄이 없으면 DB 행만
+        # cascade 로 지워지고 r2_face 의 가중치 파일이 남는다(파기 영수증에도 안 잡힌다).
+        if scope["model_ids"] and _has(schema, "fm_model_loras", "lora_r2_key"):
+            await cur.execute(
+                "select lora_r2_key as k from fm_model_loras where model_id = any(%s)",
+                (list(scope["model_ids"]),),
+            )
+            face_keys |= {r["k"] for r in await cur.fetchall() if r.get("k")}
         if scope["model_ids"] and _has(schema, "fm_model_asset_cleanup", "r2_key"):
             await cur.execute(
                 "select r2_key as k from fm_model_asset_cleanup where model_id = any(%s)",
@@ -904,6 +912,14 @@ async def _cleanup(
             if _has(schema, "fm_model_test_cuts", "model_id"):
                 await cur.execute(
                     "delete from fm_model_test_cuts where model_id = any(%s)",
+                    (list(model_ids),),
+                )
+            if _has(schema, "fm_model_loras", "model_id"):
+                # fm_models 행은 지우지 않고 스크럽만 한다 → fk on delete cascade 가 안 돈다.
+                # 등록자 LoRA 는 생체 파생물이라 행도 여기서 명시적으로 지워야 한다
+                # (가중치 파일은 위에서 face_keys 로 이미 수집됐다).
+                await cur.execute(
+                    "delete from fm_model_loras where model_id = any(%s)",
                     (list(model_ids),),
                 )
             model_sets = ["assets_status='none'", "qc_score=null", "assets_source_hash=null"]

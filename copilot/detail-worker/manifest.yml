@@ -56,7 +56,8 @@ variables:
   R2_PUBLIC_BASE: https://images.wearless.kr
   R2_FACE_BUCKET: wearless-face
   MODEL_ROUTING_IMAGE_HIGH: gemini-3-pro-image
-  MODEL_ROUTING_DETAIL_CUT: gpt-image-2-2026-04-21
+  # 운영 키가 이 모델을 쓸 수 있는지 확인했다(2026-09-10: GET /v1/models/gpt-image-2.5-flare → 200).
+  MODEL_ROUTING_DETAIL_CUT: gpt-image-2.5-flare
   MODEL_ROUTING_TEXT_GEMINI: gemini-3.1-pro-preview
   DETAIL_CUT_IMAGE_SIZE: "2K"
   DETAIL_CUT_CONCURRENCY: "5"
@@ -64,6 +65,11 @@ variables:
   DETAIL_CUT_MAX_ATTEMPTS: "1"
   GARMENT_QC_MODE: "off"
   CUT_OUTPUT_QC_MODE: repair
+  # ── 얼굴 패스(인물 LoRA) — 꺼진 채로 커밋. 상세페이지 워커도 같은 렌더 서비스를 쓴다.
+  # 파드 기동/종료는 api 쪽 reconciler 한 곳이 맡는다(여기엔 FACE_AUTOSCALE 를 두지 않는다).
+  FACE_IDENTITY_ENABLED: "false"
+  # 렌더 URL 은 DB(fm_face_render_pod)의 현재 파드에서 유도한다 — 워커는 잡마다 그 값을 받는다
+  # (FaceIdentitySpec.backend_url). 여기 박아 두면 파드를 갈아탄 뒤 죽은 주소로 렌더를 보낸다.
   GENEXAMPLE_BG_ENABLED: "true"
   FACEMARKET_ENABLED: "true"
   FACEMARKET_VC_REQUIRED: "true"
@@ -92,6 +98,8 @@ secrets:
   R2_SECRET_ACCESS_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/R2_SECRET_ACCESS_KEY
   GEMINI_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/GEMINI_API_KEY
   OPENAI_API_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENAI_API_KEY
+  # ★ SSM 값 없이 배포되면 ECS 기동 실패 → 롤백. 배포 전 copilot secret init 필수.
+  FACE_IDENTITY_BACKEND_TOKEN: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FACE_IDENTITY_BACKEND_TOKEN
   OPENDID_HOLDER_HMAC_SECRET: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENDID_HOLDER_HMAC_SECRET
   FM_CHAIN_RPC_URL: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_CHAIN_RPC_URL
   FM_CHAIN_PRIVATE_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/FM_CHAIN_PRIVATE_KEY
