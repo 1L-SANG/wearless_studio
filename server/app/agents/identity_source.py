@@ -27,6 +27,11 @@ import uuid
 log = logging.getLogger("wearless.identity_source")
 
 _ANGLES = ("front", "angle45", "side")
+_PHOTO_SOURCE_CHOICES = (
+    ("face01", "front"),
+    ("face03", "angle45"),
+    ("face05", "side"),
+)
 
 
 def compute_assets_source_hash(faces: list[dict]) -> str:
@@ -122,10 +127,14 @@ async def resolve_real_model_assets(
             (enrollment_id,))
         photo_rows = await cur.fetchall()
     by_angle = {row.get("angle"): row for row in photo_rows}
-    if set(by_angle) != set(_ANGLES):
+    source_slots = [
+        canonical if canonical in by_angle else legacy
+        for canonical, legacy in _PHOTO_SOURCE_CHOICES
+    ]
+    if not all(slot in by_angle for slot in source_slots):
         return None
     current_source_hash = compute_assets_source_hash(
-        [by_angle[angle] for angle in _ANGLES]
+        [by_angle[angle] for angle in source_slots]
     )
     if current_source_hash != str(state.get("assets_source_hash") or ""):
         # 관측 로그(PII 없음 — 사유 코드·model_id·enrollment_id 만, 해시/다이제스트

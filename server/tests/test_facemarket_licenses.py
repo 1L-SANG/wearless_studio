@@ -620,6 +620,13 @@ class FakeCursor:
             else:
                 self._result = None
                 self.rowcount = 0
+        elif s.startswith("update fm_licenses set unit_price"):
+            unit_price, license_id = params
+            row = next((r for r in licenses if r["id"] == license_id), None)
+            if row and row["status"] == "pending":
+                row["unit_price"] = unit_price
+                self._result = {"unit_price": unit_price}
+                self.rowcount = 1
         elif s.startswith("update fm_licenses set status = 'active'"):
             vc_id, license_id = params[:2]
             if self.store.get("final_license_update_misses"):
@@ -1156,6 +1163,26 @@ def test_license_activates_after_vc_but_model_stays_pending_until_cut_confirmati
     issue_call = next(c for c in holder_stub.calls if c["path"].endswith("/issue-vc"))
     assert issue_call["payload"]["idempotencyKey"] == f"fm-license:{card['id']}"
     assert all(c["secret"] == "shared-secret" for c in holder_stub.calls)
+
+
+def test_create_license_forces_standard_price_and_accepts_permanent_term(
+    biometric_fm, make_token, holder_stub
+):
+    client, store, _ = biometric_fm
+    enrollment_id = _seed_license_pending_enrollment(store)
+    body = valid_license_body(enrollment_id)
+    body.update(unitPrice=7, validDays=None)
+
+    response = client.post(
+        "/v1/facemarket/licenses", json=body, headers=_auth(make_token)
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["unitPrice"] == 14900
+    assert response.json()["licenseValidUntil"] is None
+    assert store["licenses"][0]["unit_price"] == 14900
+    issue_call = next(c for c in holder_stub.calls if c["path"].endswith("/issue-vc"))
+    assert issue_call["payload"]["claims"]["unitPrice"] == 14900
 
 
 def test_reverification_vc_returns_model_to_pending_confirmation_gate(
@@ -1790,7 +1817,7 @@ def test_conflict_reload_uses_persisted_terms_for_holder_claims(
     assert issue_call["payload"]["claims"] == {
         "allowedUse": "액티브웨어",
         "forbiddenUse": "",
-        "unitPrice": 4321,
+        "unitPrice": 14900,
         "licenseValidUntil": "2027-02-03",
         "faceImageDigest": "sha256-persisted-digest",
     }

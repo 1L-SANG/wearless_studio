@@ -303,10 +303,18 @@ class Settings:
     # 새 지원서 Slack 알림(서버 → incoming webhook 직접). 없으면 스킵. Lambda 재사용 아님(별도 웹훅).
     fm_slack_webhook_url: str | None = None
     fm_oacx_contract_mode: str = "disabled"
+    fm_face_match_enabled: bool = False
+    fm_standard_unit_price: int = 14900
+    fm_photo_slots: tuple[str, ...] = (
+        "face01", "face02", "face03", "face04", "face05", "face06", "face07", "face08",
+        "torso01", "torso02", "torso03", "torso04", "torso05",
+        "full01", "full02", "full03", "full04", "full05",
+    )
+    fm_required_slot_count: int = 18
     # AWS Face Liveness 사용 여부. off 면 라이브니스 세션을 만들지 않고 SFace 매칭 앵커를
     # OACX 신분증 초상으로 쓴다(업로드 사진 ↔ 신분증 초상). 본인확인은 OACX 모바일신분증(실시간
     # 폰 인증)이 담당하므로 라이브니스는 애드온. 기본 true = 기존 동작 보존.
-    fm_liveness_enabled: bool = True
+    fm_liveness_enabled: bool = False
     fm_liveness_region: str = "us-east-1"
     fm_liveness_browser_role_arn: str | None = None
     fm_liveness_confidence_threshold: float | None = None
@@ -463,6 +471,12 @@ def load_settings() -> Settings:
         for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
         if o.strip()
     ]
+    default_photo_slots = Settings.__dataclass_fields__["fm_photo_slots"].default
+    photo_slots = tuple(
+        slot.strip()
+        for slot in os.getenv("FM_PHOTO_SLOTS", ",".join(default_photo_slots)).split(",")
+        if slot.strip()
+    )
 
     return Settings(
         app_env=app_env,
@@ -617,8 +631,16 @@ def load_settings() -> Settings:
         fm_usage_report_to_email=os.getenv("FM_USAGE_REPORT_TO_EMAIL") or None,
         fm_slack_webhook_url=os.getenv("FM_SLACK_WEBHOOK_URL") or None,
         fm_oacx_contract_mode=os.getenv("FM_OACX_CONTRACT_MODE", "disabled"),
+        fm_face_match_enabled=(
+            os.getenv("FM_FACE_MATCH_ENABLED", "false").lower() == "true"
+        ),
+        fm_standard_unit_price=int(os.getenv("FM_STANDARD_UNIT_PRICE", "14900")),
+        fm_photo_slots=photo_slots,
+        fm_required_slot_count=int(
+            os.getenv("FM_REQUIRED_SLOT_COUNT", str(len(photo_slots)))
+        ),
         fm_liveness_enabled=(
-            os.getenv("FM_LIVENESS_ENABLED", "true").lower() == "true"
+            os.getenv("FM_LIVENESS_ENABLED", "false").lower() == "true"
         ),
         fm_liveness_region=os.getenv("FM_LIVENESS_REGION", "us-east-1"),
         fm_liveness_browser_role_arn=os.getenv("FM_LIVENESS_BROWSER_ROLE_ARN") or None,

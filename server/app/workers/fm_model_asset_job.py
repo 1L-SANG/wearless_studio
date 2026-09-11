@@ -23,6 +23,11 @@ from ._common import emit_job_event as _emit
 log = logging.getLogger("wearless.fm_model_asset_job")
 
 _ANGLES = ("front", "angle45", "side")
+_PHOTO_SOURCE_CHOICES = (
+    ("face01", "front"),
+    ("face03", "angle45"),
+    ("face05", "side"),
+)
 _OLD_ASSET_ANGLE = {"face_front": "front", "grid_sedcard": "side"}
 _CUTOVER_CODE = "facemarket_cutover_in_progress"
 _CUTOVER_MESSAGE = "실물 모델 보안 전환 중이라 잠시 후 다시 시도해 주세요."
@@ -43,9 +48,13 @@ async def _assert_account_open(conn, user_id: str) -> None:
 
 def _ordered_faces(rows: list[dict]) -> list[dict] | None:
     by_angle = {row.get("angle"): row for row in rows}
-    if set(by_angle) != set(_ANGLES):
+    source_slots = [
+        canonical if canonical in by_angle else legacy
+        for canonical, legacy in _PHOTO_SOURCE_CHOICES
+    ]
+    if not all(slot in by_angle for slot in source_slots):
         return None
-    faces = [by_angle[angle] for angle in _ANGLES]
+    faces = [by_angle[angle] for angle in source_slots]
     if any(face.get("storage_state") != "quarantine" for face in faces):
         return None
     if any(face.get("status") != "asset_building" for face in faces):

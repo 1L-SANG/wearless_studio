@@ -728,7 +728,7 @@ class CreateLicenseRequest(CamelModel):
     allowed_use: list[str] = Field(default_factory=list)
     forbidden_use: list[str] = Field(default_factory=list)
     unit_price: int = Field(default=10000, ge=0, le=100_000_000)
-    valid_days: int = Field(default=365, ge=1, le=3650)
+    valid_days: int | None = Field(default=365, ge=1, le=3650)
 
 
 class UpdateLicenseTermsRequest(CamelModel):
@@ -1162,9 +1162,12 @@ async def create_license(
         enrollment_id = str(uuid.UUID(str(body.enrollment_id)))
     except (TypeError, ValueError):
         raise _err("invalid_enrollment_id", "등록 ID 형식이 올바르지 않습니다.", status=400)
-    valid_until = datetime.now(timezone.utc) + timedelta(days=body.valid_days)
+    valid_until = (
+        None if body.valid_days is None
+        else datetime.now(timezone.utc) + timedelta(days=body.valid_days)
+    )
     allowed = _clean_uses(body.allowed_use, BRAND_USE_CATEGORIES)
-    unit_price = body.unit_price
+    unit_price = request.app.state.settings.fm_standard_unit_price
 
     license_id = str(uuid.uuid4())
     row = None
@@ -1217,6 +1220,14 @@ async def create_license(
 
         allowed = _clean_uses(allowed, BRAND_USE_CATEGORIES)
         async with conn.cursor() as cur:
+            await cur.execute(
+                "update fm_licenses set unit_price = %s "
+                "where id = %s and status = 'pending' returning unit_price",
+                (request.app.state.settings.fm_standard_unit_price, license_id),
+            )
+            standardized = await cur.fetchone()
+            if standardized is not None:
+                unit_price = int(standardized["unit_price"])
             await cur.execute(
                 "update fm_biometric_enrollments set status = 'vc_pending' "
                 "where id = %s and status in ('license_pending', 'vc_pending') returning id",
@@ -2329,7 +2340,7 @@ def build_face_vc_claims(*, allowed, forbidden, unit_price, valid_until, digest)
     # UTC 로 자르면 KST 오전에 발급한 라이선스가 하루 이른 날짜로 박혔다(발급 후에는
     # 되돌릴 수 없는 크리덴셜 값이라, 표기만 어긋나도 분쟁의 근거가 된다).
     # 만료 판정은 절대시각 비교이고, null 은 영구 조건이라 만료시키지 않는다.
-    valid_str = _kst_date_str(valid_until)
+    valid_str = _kst_date_str(valid_until) if valid_until is not None else None
     return {
         "allowedUse": ", ".join(allowed),
         "forbiddenUse": "",
