@@ -10,7 +10,7 @@ import asyncio
 from types import SimpleNamespace
 
 from app.agents import cut_generator
-from app.agents.model_routing import model_routing_snapshot, resolve_model
+from app.agents.model_routing import resolve_model
 
 
 def _settings(**overrides):
@@ -50,11 +50,6 @@ def test_partial_settings_fall_back_to_image_high():
         model_image_light="a", model_image_high="b", model_text="c", mannequin_image_size="2K",
     )
     assert resolve_model(partial, "image_signature") == "b"
-    assert model_routing_snapshot(partial)["image_signature"] == "b"
-
-
-def test_snapshot_exposes_the_signature_tier():
-    assert model_routing_snapshot(_settings())["image_signature"] == "gpt-image-2"
 
 
 def test_signature_direction_covers_composition_and_background():

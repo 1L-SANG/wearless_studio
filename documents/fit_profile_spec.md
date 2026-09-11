@@ -88,7 +88,7 @@ FIT PROFILE (seller-declared; overrides any impression from the photos):
 미검증 게이트(구현과 별개): 아우터·원피스 실물 이미지 확보 후 생성 검증 → 그때까지 해당 카테고리 축은 카탈로그에 있되 노출 여부 결정.
 
 
-## 스냅샷·렌더 계약 (2026-07-13 fidelity P0 — 정본 documents/mannequin_fit_fidelity_plan.md)
+## 스냅샷·렌더 계약 (2026-07-13 fidelity P0 — 원 계획서 mannequin_fit_fidelity_plan.md 는 2026-09-11 정리, git 이력 참조)
 
 - **잡 payload 스냅샷**: 마네킹 generate/regenerate 라우트가 잡 생성 시점에 `fitProfileSnapshot = {version:1, profile, adjustedAxes}` 를 payload에 고정한다. `profile`은 `fit_axes.normalize_fit_profile`(카탈로그 allowlist) 정규화 결과이며, 저장 프로필이 없으면 **명시적 null**(auto 발명 금지). 실제 매칭 이미지가 없으면 `matchCut` 제거.
 - **adjustedAxes는 서버 산출 전용(job-local)** — 직전 정규화 프로필 vs 요청 정규화 프로필의 diff. 클라이언트 전달값은 무시한다. `source=seller`만으로는 "이번에 조정된 축"을 복원할 수 없다(스냅샷이 유일 기록).

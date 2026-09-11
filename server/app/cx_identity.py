@@ -17,7 +17,7 @@ facemarket.py 의 동명 헬퍼와 소폭 중복되나 의도적이다 — 해�
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from typing import Literal
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -93,15 +93,6 @@ PROD_DLPHOTO_OACX_BIOMETRIC_CONTRACT = OacxBiometricContract(
 )
 
 _JPEG_MAGIC = b"\xff\xd8\xff"
-
-
-def _nested_value(data: dict, path: tuple[str, ...]):
-    value = data
-    for key in path:
-        if not isinstance(value, dict):
-            raise KeyError
-        value = value[key]
-    return value
 
 
 def _mask_name(name: str) -> str:

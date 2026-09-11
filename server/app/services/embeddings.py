@@ -116,24 +116,6 @@ def embed_images(
     return feats
 
 
-def embed_text(text: str, *, model_id: str, expected_dim: int | None = None) -> list[float]:
-    """텍스트 → L2 정규화 임베딩(bge-m3 등, sentence-transformers). 2b 챌린저용."""
-    if model_id not in _TEXT_CACHE:
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ImportError as e:  # pragma: no cover
-            raise EmbeddingUnavailable("sentence-transformers 미설치") from e
-        _TEXT_CACHE[model_id] = SentenceTransformer(model_id, device=_device())
-        logger.info("embedding_model_loaded", extra={"kind": "text", "model": model_id})
-    model = _TEXT_CACHE[model_id]
-    vec = model.encode(text, normalize_embeddings=True).tolist()
-    if expected_dim is not None and len(vec) != expected_dim:
-        raise ValueError(
-            f"텍스트 임베딩 차원 불일치: {model_id} → {len(vec)}, 기대 {expected_dim}."
-        )
-    return vec
-
-
 def to_pgvector(vec: list[float]) -> str:
     """list[float] → pgvector 리터럴 문자열 '[a,b,c]'. `%s::vector` 로 바인딩."""
     return "[" + ",".join(repr(float(x)) for x in vec) + "]"
