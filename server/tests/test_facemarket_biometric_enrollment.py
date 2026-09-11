@@ -2609,6 +2609,9 @@ def test_current_and_status_return_only_the_owned_enrollment_view(
         "heightBucket",
         "bodyType",
         "gender",
+        # Task5: 인증 수단 분기 + 심사 상태.
+        "identityMethod",
+        "reviewStatus",
     }
     assert "digest" not in status.text.lower()
     assert "r2" not in status.text.lower()
