@@ -47,12 +47,15 @@ if [ -z "${FACE_RENDER_PRELOAD_LORA:-}" ]; then
   fi
 fi
 
-if [ -x "$ROOT/venv/bin/python" ]; then
-  PY="$ROOT/venv/bin/python"
-else
-  echo "볼륨 venv 가 없다: $ROOT/venv — 먼저 만들어야 한다" >&2
-  PY="$(command -v python3)"
+# ★ 시스템 python 으로 떨어지지 않는다. bootstrap 이 안 돌았으면 uvicorn·diffusers 가 없어서
+#   "No module named uvicorn" 으로 죽는데, 그 오류는 원인(bootstrap 미실행)을 가린다.
+#   이유를 부팅 로그에 남기고 종료한다(2026-09-11 실측).
+if [ ! -x "$ROOT/venv/bin/python" ]; then
+  echo "start.sh: venv 가 없다($ROOT/venv) — bootstrap 이 돌지 않았다. 서비스를 띄우지 않는다" \
+    | tee -a "$LOG" >&2
+  exit 78   # EX_CONFIG
 fi
+PY="$ROOT/venv/bin/python"
 
 cd "$ROOT/code"
 echo "start.sh: version=${FACE_RENDER_CODE_VERSION:-unknown} preload=${FACE_RENDER_PRELOAD_LORA:-none}" | tee -a "$LOG"

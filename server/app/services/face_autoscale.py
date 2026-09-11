@@ -79,8 +79,11 @@ POD_PORTS = ("8000/http", "22/tcp")
 #:   - 호스트는 우리 R2 만 허용(bootstrap.sh 와 같은 규칙), 내용은 sha256 으로 검증한다.
 #:   - CODE_SHA/VERSION 을 같이 써 두면 뒤이어 도는 bootstrap.sh 가 "최신"으로 보고 건너뛴다.
 #:   - 실패해도 exec /start.sh 는 그대로 — ssh 는 뜨고 사람이 들어가 볼 수 있다.
-POD_ARGS = (
-    "bash -c '"
+#:
+#: ★ **argv 배열**이어야 한다. RunPod REST 의 dockerStartCmd 는 배열만 받는다 — 한 문자열로
+#:   보내면 카드 종류와 무관하게 400 "got string, want array" 로 파드 생성 자체가 실패한다
+#:   (2026-09-11 실측, GPU 3종 전부). 셸 한 줄은 ["bash", "-c", <본문>] 로 싣는다.
+POD_BOOT_SCRIPT = (
     "R=/root/face_render; mkdir -p \"$R\"; "
     "if [ ! -x \"$R/pre_start.sh\" ] && [ -n \"${CODE_TARBALL_URL:-}\" ] "
     "&& [ -n \"${CODE_SHA256:-}\" ]; then "
@@ -93,8 +96,9 @@ POD_ARGS = (
     "esac; fi; "
     "rm -f /tmp/face_render.tgz; "
     "cp -f \"$R/pre_start.sh\" /pre_start.sh 2>/dev/null || true; "
-    "exec /start.sh'"
+    "exec /start.sh"
 )
+POD_ARGS: tuple[str, ...] = ("bash", "-c", POD_BOOT_SCRIPT)
 #: 토큰은 RunPod Secret 참조로만 넣는다 — 값이 API 요청·응답·로그 어디에도 실리지 않는다.
 POD_TOKEN_REF = "{{ RUNPOD_SECRET_face_render_token }}"
 
@@ -458,7 +462,7 @@ class RunpodAutoscaleAdapter:
                 "ports": list(POD_PORTS),
                 "gpuTypeIds": [gpu_type],
                 "gpuCount": 1,
-                "dockerStartCmd": POD_ARGS,
+                "dockerStartCmd": list(POD_ARGS),
                 "env": {"FACE_RENDER_TOKEN": POD_TOKEN_REF, **self._code_env()},
             }
             try:

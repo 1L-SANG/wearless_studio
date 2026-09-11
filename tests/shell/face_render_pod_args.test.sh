@@ -13,17 +13,19 @@ ok() { PASS=$((PASS+1)); echo "ok - $1"; }
 ng() { FAIL=$((FAIL+1)); echo "not ok - $1"; }
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
-ARGS_RAW="$("$HERE/server/.venv/bin/python" -c \
-  'from app.services.face_autoscale import POD_ARGS; print(POD_ARGS)' 2>/dev/null \
-  || (cd "$HERE/server" && python3 -c 'import sys; sys.path.insert(0,"."); from app.services.face_autoscale import POD_ARGS; print(POD_ARGS)'))"
-[ -n "$ARGS_RAW" ] || { echo "not ok - POD_ARGS 를 읽지 못했다"; exit 1; }
+# POD_ARGS 는 argv 배열(["bash","-c",<본문>]) — 실행할 셸 본문은 [2] 다.
+PY_READ='from app.services.face_autoscale import POD_ARGS
+assert isinstance(POD_ARGS, (list, tuple)) and POD_ARGS[0] == "bash" and POD_ARGS[1] == "-c"
+print(POD_ARGS[2])'
+ARGS_RAW="$("$HERE/server/.venv/bin/python" -c "$PY_READ" 2>/dev/null \
+  || (cd "$HERE/server" && python3 -c "import sys; sys.path.insert(0,'.'); $PY_READ"))"
+[ -n "$ARGS_RAW" ] || { echo "not ok - POD_ARGS 를 읽지 못했다(배열이 아닐 수 있다)"; exit 1; }
 
 # 실제 경로(/root, /start.sh)는 테스트에서 쓸 수 없으므로 작업 디렉터리로 옮겨 실행한다.
 mk_script() {                      # $1 = 실행 루트
   local root="$1"
   printf '%s' "$ARGS_RAW" \
-    | sed -e "s#bash -c '##" -e "s#'\$##" \
-          -e "s#/root/face_render#$root#g" \
+    | sed -e "s#/root/face_render#$root#g" \
           -e "s#/tmp/face_render.tgz#$WORK/dl.tgz#g" \
           -e "s# /pre_start.sh # $root/installed_pre_start.sh #g" \
           -e "s#exec /start.sh#echo STARTED#"
