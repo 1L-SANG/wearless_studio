@@ -185,3 +185,115 @@ def test_purge_id_document_logs_warning_on_delete_failure(caplog):
     messages = [record.getMessage() for record in caplog.records]
     assert any("id_document_r2_delete_failed" in message and "enr-1" in message for message in messages)
     assert not any("masked.jpg" in message for message in messages)
+
+
+# ── sweep_stale_id_documents: 7일 배치 스윕 — DB 를 안 보고 R2 prefix 를 직접 훑는다 ──────
+
+
+class _FakeR2:
+    def __init__(self, keys):
+        self.keys = list(keys)
+        self.deleted = []
+
+    def list_prefix_aged(self, prefix, *, older_than_seconds):
+        assert prefix == "facemarket/enrollments/"
+        return list(self.keys)
+
+    def delete(self, key):
+        self.deleted.append(key)
+
+
+def test_sweep_deletes_only_iddoc_objects():
+    """quarantine/(사진)는 절대 지우면 안 된다 — 이 스윕이 낼 수 있는 최악의 회귀다.
+    prefix 만으로는 iddoc/ 과 quarantine/ 을 못 가른다(둘 다 facemarket/enrollments/
+    아래에 있다), 그래서 키 안에 '/iddoc/' 이 있는지 명시적으로 걸러야 한다."""
+    r2client = _FakeR2([
+        "facemarket/enrollments/e1/iddoc/masked.jpg",
+        "facemarket/enrollments/e1/quarantine/front.jpg",
+        "facemarket/enrollments/e2/iddoc/masked.png",
+    ])
+    removed = iddoc.sweep_stale_id_documents(r2client)
+    assert removed == 2
+    assert r2client.deleted == [
+        "facemarket/enrollments/e1/iddoc/masked.jpg",
+        "facemarket/enrollments/e2/iddoc/masked.png",
+    ]
+
+
+def test_sweep_default_window_is_seven_days():
+    captured = {}
+
+    class _R2:
+        def list_prefix_aged(self, prefix, *, older_than_seconds):
+            captured["window"] = older_than_seconds
+            return []
+
+        def delete(self, key):
+            pass
+
+    iddoc.sweep_stale_id_documents(_R2())
+    assert captured["window"] == 7 * 86400
+
+
+def test_sweep_custom_window_is_forwarded_not_hardcoded():
+    """호출자가 window 를 넘기면 그게 list_prefix_aged 로 그대로 전달돼야 한다 — 기본값
+    7일을 상수로 박아 두고 인자를 무시하면 이 테스트가 잡는다."""
+    captured = {}
+
+    class _R2:
+        def list_prefix_aged(self, prefix, *, older_than_seconds):
+            captured["window"] = older_than_seconds
+            return []
+
+        def delete(self, key):
+            pass
+
+    iddoc.sweep_stale_id_documents(_R2(), older_than_seconds=3600)
+    assert captured["window"] == 3600
+
+
+def test_sweep_delete_failure_does_not_abort_and_reports_survivor_count():
+    """한 객체 삭제가 실패해도(권한 만료 등) 나머지는 계속 지우고, removed 카운트는
+    실제로 지운 개수만 반영해야 한다 — 실패를 삼키되 카운트를 부풀리면 안 된다."""
+
+    class _FlakyR2:
+        def __init__(self, keys):
+            self.keys = list(keys)
+            self.deleted = []
+
+        def list_prefix_aged(self, prefix, *, older_than_seconds):
+            return list(self.keys)
+
+        def delete(self, key):
+            if key.endswith("fails.jpg"):
+                raise RuntimeError("r2 delete boom")
+            self.deleted.append(key)
+
+    r2client = _FlakyR2([
+        "facemarket/enrollments/e1/iddoc/fails.jpg",
+        "facemarket/enrollments/e2/iddoc/masked.jpg",
+    ])
+    removed = iddoc.sweep_stale_id_documents(r2client)
+    assert removed == 1
+    assert r2client.deleted == ["facemarket/enrollments/e2/iddoc/masked.jpg"]
+
+
+def test_sweep_delete_failure_logs_key_only_no_bytes_or_content(caplog):
+    """원시 PII 미저장 — 실패 로그에는 키만 남고 바이트·내용은 남지 않는다."""
+
+    class _FailingR2:
+        def list_prefix_aged(self, prefix, *, older_than_seconds):
+            return ["facemarket/enrollments/e1/iddoc/masked.jpg"]
+
+        def delete(self, key):
+            raise RuntimeError("r2 delete boom")
+
+    with caplog.at_level(logging.WARNING, logger="app.facemarket_id_document"):
+        removed = iddoc.sweep_stale_id_documents(_FailingR2())
+    assert removed == 0
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "id_document_sweep_delete_failed" in message
+        and "facemarket/enrollments/e1/iddoc/masked.jpg" in message
+        for message in messages
+    )

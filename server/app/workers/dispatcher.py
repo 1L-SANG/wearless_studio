@@ -273,3 +273,17 @@ class JobDispatcher:
                 await sweep_terminal_application_pii(self.app, limit=100)
             except Exception:
                 log.exception("terminal application pii sweep failed")
+            # 신분증 촬영본 파기 안전망 3번째 겹(Task9) — 승인/거절 즉시 파기, 취소/실패/
+            # 만료 정리(cleanup_terminal_enrollment)가 전부 실패해도 7일 지난 iddoc/ 객체는
+            # R2 prefix 를 직접 훑어(DB 비의존) 지운다. list_prefix_aged/delete 는 동기
+            # boto3 호출이라 to_thread 로 감싼다(§5, 이벤트 루프 차단 방지).
+            try:
+                from ..facemarket_id_document import sweep_stale_id_documents
+
+                r2_face = getattr(self.app.state, "r2_face", None)
+                if r2_face is not None:
+                    removed = await asyncio.to_thread(sweep_stale_id_documents, r2_face)
+                    if removed:
+                        log.info("id_document_sweep_removed count=%d", removed)
+            except Exception:
+                log.exception("id document sweep failed")

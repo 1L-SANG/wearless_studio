@@ -919,6 +919,25 @@ class FakeCursor:
                     ]
                     or [{"status": enrollment["status"], "angle": None, "r2_key": None}]
                 )
+        # --- Task9: cleanup_terminal_enrollment 이 부르는 purge_id_document 의 SELECT/UPDATE.
+        # mid 경로는 id_document_r2_key 가 애초에 None 이라 이 UPDATE 가 타도 관측 가능한
+        # 사진 정리/만료 동작은 그대로다(id_document_purged_at 은 API 로 노출되지 않는다). ---
+        elif query.startswith("select id_document_r2_key from fm_biometric_enrollments"):
+            (enrollment_id,) = params
+            row = next(
+                (item for item in self.store.enrollments if item["id"] == enrollment_id),
+                None,
+            )
+            self.result = {"id_document_r2_key": row.get("id_document_r2_key")} if row else None
+        elif "id_document_purged_at = now()" in query:
+            (enrollment_id,) = params
+            row = next(
+                (item for item in self.store.enrollments if item["id"] == enrollment_id),
+                None,
+            )
+            if row is not None:
+                row["id_document_r2_key"] = None
+                row["id_document_purged_at"] = NOW
         elif "as remaining" in query and query.startswith("select"):
             enrollment_id = params[0]
             self.result = {
@@ -4055,7 +4074,10 @@ def test_cancel_cleanup_finalize_commit_failure_is_retryable(
         headers=auth(),
     )
     key = enrollment_store.photos[0]["r2_key"]
-    enrollment_store.fail_commit_attempts.add(enrollment_store.commit_attempts + 3)
+    # Task9: cleanup_terminal_enrollment 이 이제 사진 드레인 전에 purge_id_document
+    # 커밋을 하나 더 낸다(카운트 +1) — 노리는 대상은 여전히 드레인 커밋(R2 는 이미
+    # 지웠는데 그 사실을 기록하는 커밋만 실패)이라 오프셋을 그만큼 밀어야 한다.
+    enrollment_store.fail_commit_attempts.add(enrollment_store.commit_attempts + 4)
 
     first = enrollment_client.post(
         f"/v1/facemarket/enrollments/{enrollment_id}/cancel", headers=auth()
@@ -4115,7 +4137,10 @@ def test_terminal_cleanup_finalize_commit_failure_retries_after_object_is_gone(
     )
     key = enrollment_store.photos[0]["r2_key"]
     enrollment_store.enrollments[0]["status"] = "expired"
-    enrollment_store.fail_commit_attempts.add(enrollment_store.commit_attempts + 2)
+    # Task9: cleanup_terminal_enrollment 이 이제 사진 드레인 전에 purge_id_document
+    # 커밋을 하나 더 낸다(카운트 +1) — 노리는 대상은 여전히 드레인 커밋이라 오프셋을
+    # 그만큼 밀어야 한다.
+    enrollment_store.fail_commit_attempts.add(enrollment_store.commit_attempts + 3)
 
     first = asyncio.run(
         facemarket_enrollment.cleanup_terminal_enrollment(

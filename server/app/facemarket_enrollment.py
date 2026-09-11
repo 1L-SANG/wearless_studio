@@ -2012,6 +2012,29 @@ async def cleanup_terminal_enrollment(app, *, enrollment_id: str) -> bool:
                     )
                     return False
 
+                # Task9: 신분증 촬영본 파기 안전망 3겹 중 2번째 겹 — 취소(cancel_enrollment)·
+                # 실패(_fail_enrollment)·만료(EnrollmentExpiredError 즉시 호출 + 이 함수를
+                # 재방문하는 sweep_terminal_enrollments 의 candidates 재조회)가 전부 이
+                # 함수를 거치므로 여기 한 곳에 걸면 세 경로를 동시에 커버한다(1번째 겹은
+                # admin approve/reject 의 즉시 파기, 3번째 겹은 dispatcher.py 의 7일 스윕).
+                # mid 경로는
+                # id_document_r2_key 가 애초에 null 이라 delete 를 안 타는 무해한 no-op —
+                # id_document_purged_at 은 API 응답(EnrollmentView)에 노출되지 않는 내부
+                # 감사 컬럼이라 mid 의 관측 가능한 photo cleanup·expiry 동작은 그대로다.
+                # 실패해도 사진 정리(remaining 카운트)는 계속 진행한다 — 7일 배치 스윕이 상한.
+                try:
+                    await facemarket_id_document.purge_id_document(r2, conn, enrollment_id)
+                    await conn.commit()
+                except Exception as exc:
+                    await conn.rollback()
+                    logger.warning(
+                        "facemarket_enrollment_id_document_purge_failed",
+                        extra={
+                            "enrollment_id": enrollment_id,
+                            "error_type": type(exc).__name__,
+                        },
+                    )
+
                 deleted_count, failed_count = await _drain_photo_cleanup_locked(
                     conn,
                     r2,

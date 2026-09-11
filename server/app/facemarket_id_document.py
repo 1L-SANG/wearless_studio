@@ -110,3 +110,32 @@ async def purge_id_document(r2client, conn, enrollment_id: str) -> None:
             "where id = %s",
             (enrollment_id,),
         )
+
+
+def sweep_stale_id_documents(r2client, *, older_than_seconds: int = 7 * 86400) -> int:
+    """승인·거절·취소·만료 경로가 전부 실패해도 7일이 상한이 되게 하는 마지막 방어선.
+
+    DB 를 보지 않고 **R2 prefix 를 직접 훑는다** — Task4 의 버전화(uuid4 접미사)로 실패한
+    시도마다 자기 객체를 남기고, DB 행이 지워졌거나(purge_id_document 가 delete 실패를
+    삼키고도 컬럼은 null 로 남기는 경우, Task8 리뷰에서 받아들인 트레이드오프) 애초에 커밋되지
+    않은 고아 객체는 DB 조인으로는 찾을 수 없다. 그래서 이 스윕만이 그 객체들의 유일한 회수
+    경로다 — DB 구동 스윕으로 바꾸면 이 함수의 존재 이유가 없어진다.
+
+    사진(quarantine/)은 건드리지 않는다 — 자산 빌드 전 단계에서 정상적으로
+    오래 남아 있을 수 있고, 그건 _drain_photo_cleanup 의 책임이다. prefix 만으로는
+    quarantine/ 과 iddoc/ 을 가르지 못하므로("facemarket/enrollments/" 아래 둘 다 있다)
+    반드시 키 안에 "/iddoc/" 이 있는지 명시적으로 걸러야 한다 — 이 필터가 빠지면 사진까지
+    지워지는, 이 스윕에서 가능한 최악의 회귀다.
+    """
+    removed = 0
+    for key in r2client.list_prefix_aged(
+        "facemarket/enrollments/", older_than_seconds=older_than_seconds
+    ):
+        if "/iddoc/" not in key:
+            continue
+        try:
+            r2client.delete(key)
+            removed += 1
+        except Exception:
+            logger.warning("id_document_sweep_delete_failed key=%s", key)
+    return removed
