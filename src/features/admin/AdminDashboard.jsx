@@ -14,6 +14,8 @@ import { Sparkline } from './Sparkline.jsx';
 const PERIODS = [7, 30, 90];
 
 const won = (n) => `${Number(n || 0).toLocaleString('ko-KR')}원`;
+// 추이 차트 툴팁용 — 건수는 단위를 붙여야 정산액 옆에서 헷갈리지 않는다.
+const count = (n) => `${Number(n || 0).toLocaleString('ko-KR')}건`;
 
 function QueueCard({ label, count, to, tone = 'default' }) {
   const idle = !count;
@@ -126,19 +128,19 @@ export function AdminDashboard() {
         <Card>
           <CardHeader><CardDescription>일별 지원서</CardDescription></CardHeader>
           <CardContent>
-            <Sparkline label="일별 지원서" points={series.map((s) => ({ value: s.applications }))} />
+            <Sparkline label="일별 지원서" points={series.map((s) => ({ date: s.date, value: s.applications }))} format={count} />
           </CardContent>
         </Card>
         <Card>
           <CardHeader><CardDescription>일별 라이선스 발급</CardDescription></CardHeader>
           <CardContent>
-            <Sparkline label="일별 라이선스 발급" points={series.map((s) => ({ value: s.licenses }))} />
+            <Sparkline label="일별 라이선스 발급" points={series.map((s) => ({ date: s.date, value: s.licenses }))} format={count} />
           </CardContent>
         </Card>
         <Card>
           <CardHeader><CardDescription>일별 정산액</CardDescription></CardHeader>
           <CardContent>
-            <Sparkline label="일별 정산액" points={series.map((s) => ({ value: s.settlementAmountKrw }))} />
+            <Sparkline label="일별 정산액" points={series.map((s) => ({ date: s.date, value: s.settlementAmountKrw }))} format={won} />
           </CardContent>
         </Card>
       </section>

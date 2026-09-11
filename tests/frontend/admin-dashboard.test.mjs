@@ -75,3 +75,58 @@ test('다시 시도는 자기 자신을 돌려주는 no-op 함수형 업데이�
     `재시도가 바꾸는 상태(${stateName})가 effect 의존성(${deps.join(', ')})에 없다 — 상태는 바뀌어도 재조회는 안 된다`,
   );
 });
+
+// ── 추이 차트 호버 ────────────────────────────────────────────────────────────
+// 커서를 올리면 그 날짜의 값이 보여야 한다. 계산은 순수 모듈(sparklineMath.js)에서 단위로,
+// 배선은 소스 계약으로 본다(이 레포의 프런트 테스트 관례).
+import { nearestIndex, shortDate } from '../../src/features/admin/sparklineMath.js';
+
+test('nearestIndex — 커서 x 비율을 가장 가까운 점으로 보낸다', () => {
+  assert.equal(nearestIndex(0, 30), 0);
+  assert.equal(nearestIndex(1, 30), 29);
+  assert.equal(nearestIndex(0.5, 30), 15);      // 14.5 → 반올림 15
+  assert.equal(nearestIndex(0.49, 3), 1);
+  assert.equal(nearestIndex(0.26, 3), 1);       // 0.52 → 1
+  assert.equal(nearestIndex(0.24, 3), 0);       // 0.48 → 0
+});
+
+test('nearestIndex — 범위 밖·NaN·점 하나는 안전하게 접는다', () => {
+  assert.equal(nearestIndex(-3, 10), 0);
+  assert.equal(nearestIndex(7, 10), 9);
+  assert.equal(nearestIndex(NaN, 10), 0);
+  assert.equal(nearestIndex(0.9, 1), 0);
+  assert.equal(nearestIndex(0.9, 0), 0);
+});
+
+test('shortDate — 서버의 KST 일자 문자열을 M/D 로 줄인다', () => {
+  assert.equal(shortDate('2026-09-11'), '9/11');
+  assert.equal(shortDate('2026-12-01'), '12/1');
+  assert.equal(shortDate(''), '-');
+  assert.equal(shortDate(undefined), '-');
+  assert.equal(shortDate('garbage'), 'garbage'); // 모르는 모양은 그대로 — 숨기지 않는다
+});
+
+test('Sparkline 은 호버한 날짜의 값을 보여 주고 커서가 나가면 지운다', () => {
+  const src = read('src/features/admin/Sparkline.jsx');
+  assert.ok(src.includes("from './sparklineMath.js'"), '순수 계산 모듈을 쓰지 않는다');
+  for (const handler of ['onMouseMove', 'onMouseLeave', 'onTouchStart', 'onTouchMove', 'onTouchEnd']) {
+    assert.ok(src.includes(handler), `핸들러 누락: ${handler}`);
+  }
+  assert.ok(src.includes('format('), '값 포맷터를 쓰지 않는다');
+  assert.ok(src.includes('shortDate('), '날짜를 보여 주지 않는다');
+  // 강조는 SVG 안이 아니라 HTML 오버레이 — preserveAspectRatio="none" 이라 SVG 원은 찌그러진다.
+  assert.ok(src.includes('pointer-events-none'), '오버레이가 커서 이벤트를 가로챈다');
+  assert.ok(src.includes('bg-primary'), '강조 색이 없다');
+});
+
+test('대시보드 세 차트는 날짜와 포맷터를 넘긴다 — 정산액은 원 단위', () => {
+  const src = read('src/features/admin/AdminDashboard.jsx');
+  const charts = [...src.matchAll(/<Sparkline[\s\S]*?\/>/g)].map((m) => m[0]);
+  assert.equal(charts.length, 3, '차트가 3개가 아니다');
+  for (const c of charts) {
+    assert.ok(c.includes('date: s.date'), `날짜를 안 넘긴다: ${c.slice(0, 60)}`);
+    assert.ok(c.includes('format='), `포맷터를 안 넘긴다: ${c.slice(0, 60)}`);
+  }
+  const settlement = charts.find((c) => c.includes('settlementAmountKrw'));
+  assert.ok(settlement && settlement.includes('format={won}'), '정산액 차트가 원 포맷터를 안 쓴다');
+});
