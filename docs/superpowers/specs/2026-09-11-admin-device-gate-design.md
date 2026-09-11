@@ -95,7 +95,7 @@ admin_device_gate: str = "shadow"   # off | shadow | enforce
 admin_device_max_pending_per_user: int = 5
 ```
 
-`load_settings` 에서 `ADMIN_DEVICE_GATE` 값이 셋 밖이면 기동 실패(다른 mode 플래그와 같은 검증).
+`load_settings` 는 레포 관례(`_flag`)대로 허용값 밖이면 **shadow 로 폴백**한다 — 오타로 게이트가 꺼지거나(off) 잠기면(enforce) 안 되니 중간값이 안전하다.
 
 ### 5.2 가드 (`admin_guard.py`)
 
