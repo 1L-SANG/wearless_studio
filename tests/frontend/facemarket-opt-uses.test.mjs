@@ -48,10 +48,10 @@ test('컷 수 = 실제 얼굴이 들어가는 컷', () => {
   assert.equal(realFaceCutCount(blocks, undefined), 1);
 });
 
-test('가격 표시가 그 컷 수를 따라간다', () => {
+test('실제 얼굴 컷이 하나라도 있으면 상세페이지 1건 표준가를 표시한다', () => {
   const models = [{ id: 'real-2' }];
-  assert.equal(realModelFeeLabel('real-2', models, 1), ' + 실제 모델 ₩9,900');
-  assert.equal(realModelFeeLabel('real-2', models, 3), ' + 실제 모델 ₩29,700');
+  assert.equal(realModelFeeLabel('real-2', models, 1), ' + 실제 모델 ₩14,900');
+  assert.equal(realModelFeeLabel('real-2', models, 3), ' + 실제 모델 ₩14,900');
   assert.equal(realModelFeeLabel('real-2', models, 0), '');
   assert.equal(realModelFeeLabel('mA', models, 3), '');     // 가상 모델은 무료
 });

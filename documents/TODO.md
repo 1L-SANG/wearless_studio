@@ -95,7 +95,7 @@
 - 🆕 **`patchProject` 서버 화이트리스트** — 실서버 구현 시 `patchProject`는 `composeMode`·`copywriting`·`selectedMannequinId`만 수용. `adjustCount`·`status`는 서버 전용(요청 페이로드에 오면 무시/거부). mock의 무검증 `Object.assign`(`src/mock/api.js:65`)을 서버는 베끼지 않는다. **→ Phase 1** (projects CRUD)
 - 🆕 **필수 칩 해제 불가 + `*` 표시** — 분석 기본 정보에서 `의류 종류`·`핏`은 해제 불가(데이터상 null 불가). 라벨에 포인트 색(`--ring`/Sky) `*` 표기. 해제 가능 칩(세부 카테고리·성별)과 구분. (`AnalysisForm.jsx`) **→ 독립 (순수 UI)**
 - 🆕 **마네킹 성별 베이스 + 의류 스왑 구현** — 스파이크 결과 반영. 성별(`targetGenders`)이 베이스 마네킹(남/여 고정 1장)을 결정, A/B 후보 둘 다 같은 성별 베이스 위 스왑(독립 생성 아님). 베이스 자산은 운영자 시드. (`spike/base/*` 참고, AG-04) **→ Phase 4** ✅ **AG-04 백엔드 LIVE** (`server/app/workers/mannequin_job.py` — 동일 성별 베이스·대비 핏 A/B 구현 완료, 2026-06-29 → **이후 단일컷 + fitProfile 재생성으로 전환**, `fit_profile_spec.md`). 프론트 실서버 연동은 별도.
-- 🆕 **마네킹 최초 생성 크레딧 예고** — 마네킹 페이지 진입 시 자동 생성·차감되므로, 분석 CTA 버튼 `의류정보 확정 완료`에 예상 크레딧을 부착(`의류정보 확정 완료 · 2 크레딧`). (`AnalysisForm.jsx:273`) **→ Phase 4**
+- 🆕 **마네킹 최초 생성 크레딧 예고** — 마네킹 페이지 진입 시 자동 생성·차감되므로, 분석 CTA 버튼 `의류정보 확정 완료`에 예상 크레딧을 부착(`의류정보 확정 완료 · 45 크레딧`). (`AnalysisForm.jsx:273`) **→ Phase 4**
 - ✅ **스키마: `jobs.status` `cancelled` 제거 + `profiles.plan` basic+CHECK + `jobs.kind` CHECK** — init 마이그레이션(`supabase/migrations/20260612090000_init.sql`)에 in-place 반영(계약 일치). 코드 경로 중 `status='cancelled'` 설정 없음(검증됨). ✅ **2026-06-29 기준 9개 마이그레이션 적용 완료 — 해당 전제 해소됨.**
 
 ### 신규 (2026-06-16 — 소셜 로그인 게이트 · 입력/분석 공개)

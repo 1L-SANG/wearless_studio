@@ -1,9 +1,9 @@
 # 크레딧 시스템 설계 (구독제 + 추가구매)
 
-> 역할: `backend_integration_plan.md §6`(reserve-then-confirm + append-only ledger)을 **구독 월충전·추가구매·환불 정책**으로 확장한다. 단가(op별 cost)·PG 연동은 **상용 출시 직전 단계**(§같은 문서 §10 과금 순서 원칙)로 분리 — 본 문서는 *장치와 회계 규칙*만 확정한다.
+> 역할: `backend_integration_plan.md §6`의 예약·확정과 append-only 원장을 구독 월충전·추가구매·환불 정책으로 확장한다. 행동별 단가는 2026-09-11 v6로 배선했으며 가격 정본은 `documents/research/2026-09-07-credit-pricing-plans.md` §5·§5-1이다. PG 운영은 `docs/runbooks/subscription-billing.md`를 따른다.
 >
 > 결정 출처: 2026-06-20 사용자 확정 + Codex 독립 검증(불변식 4개). 메모리 `credit-system-design`.
-> 최종 갱신: 2026-06-29
+> 최종 갱신: 2026-09-11, v6 단가와 구현 상태 반영
 
 ---
 
@@ -13,7 +13,7 @@
 
 | 출처 | 충전 | 미사용분 | 환불 | 추적 단위 |
 |---|---|---|---|---|
-| **구독**(Basic/Plus/Seller) | 매 결제주기 200/600/1400 | **리셋(소멸)** | ✗ (구독 해지로 처리, 본 문서 밖) | 주기당 1 버킷 |
+| **구독**(Starter, Seller, Pro) | 매 결제주기 600, 1,800, 3,800cr | **리셋(소멸)** | ✗ (구독 해지로 처리, 본 문서 밖) | 주기당 1 버킷 |
 | **추가구매(top-up)** | 다 쓰면 구매 | 소멸 안 함 | **미사용 건만 7일 내** | 구매 1건 = 1 버킷 |
 
 - **소진 순서**: **구독 버킷 먼저(소멸성이라)** → 그다음 **추가구매 FIFO(오래된 구매부터)**.
@@ -31,7 +31,7 @@
 | 컬럼 | 타입 | 비고 |
 |---|---|---|
 | id | uuid pk | |
-| code | text uq | 'basic'/'plus'/'seller'/topup SKU |
+| code | text uq | 'starter', 'seller', 'pro', topup SKU |
 | kind | text check (subscription\|topup) | |
 | name | text | 표시명 |
 | credits | int | 지급 크레딧 |
@@ -40,7 +40,7 @@
 | is_active | bool default true | 판매중 |
 | sort_order | int | |
 
-시드: Basic(200/₩19,900)·Plus(600/₩49,900)·Seller(1400/₩99,900) = subscription/monthly. **topup SKU·가격은 TBD**(단가 확정 후).
+현행 구독은 Starter 600cr(29,900원), Seller 1,800cr(79,900원), Pro 3,800cr(159,000원)이다. 충전은 마무리 180cr(9,900원), 시작 470cr(24,900원), 반복 1,380cr(69,900원), 시즌 3,050cr(149,000원), 대량 6,400cr(299,000원)이다. 기존 비활성 legacy 상품과 잔액은 보존한다.
 
 ### 2.2 `credit_sources` (버킷 = 잔액의 정본)
 | 컬럼 | 타입 | 비고 |
@@ -186,13 +186,15 @@ reject_refund(admin, req):
 
 ---
 
-## 5. TBD / 미해결 (구현 전 또는 출시 전)
+## 5. 단가 구현 상태와 미해결 항목
 
-- **op별 단가**: AI 엔진·화질 확정 → 원가 산출 후(현 마네킹=2 placeholder). `creditCosts` config + `credit_cost_version`.
-- **topup SKU·가격**: 미정.
+**구현 상태(2026-09-11):** 1cr=50원, `credit_cost_version="v6"`. 마네킹 생성·재생성 45cr, 폐기된 조정 0cr, 상세페이지 AI 컷 19cr, 에디터 이미지 19cr을 기존 예약·확정·해제 경로에 배선했다. 서버 `config.credit_cost_*`와 프론트 `CREDIT_COSTS`가 같은 값을 사용한다. 플랜 지급량 8종과 실모델 원화 표준가 14,900원·49,900원도 코드에 반영했다. 프로덕션 배포와 DB 적용은 이 문단의 완료 주장에 포함하지 않는다.
+
+컷아웃 10cr은 설계값이며 현재 무과금 경로에는 예약·확정 원장 처리가 없어 별도 트랙이다. 확장 가상모델 상품당 19cr(플랜 사다리 19/10/0), 마네킹 무료 수정 사다리 1/1/2, Pro 모든 AI 모델 무료, Seller 50% 할인, 실모델 라이선스 크레딧 차감 298/998/158, 월권 10건 캡도 별도 트랙이다. 개인화 생성은 기존 3cr을 유지하며 오너 결정이 필요하다.
+
 - **월 리셋 자동화**: lazy(account 접근 시 period_end<now면 reset) vs 스케줄러 vs **PG 결제 웹훅**. 셋 다 §3.1을 account lock 하에서 호출. PG가 마지막 단계라 베타는 수동 `grant_subscription`. 설계는 모두 수용.
 - **cross-cycle 청구 허용**: 지난 주기에 시작된 job이 리셋 후 confirm되면 새 주기 버킷서 정산됨(회계상 무해, full-plan 지급이라 항상 커버). 불변식 5의 assert가 이상 시 노출.
-- **per-bucket 예약 모델(Path A, 후속)**: 현재 `reserved`는 aggregate라 reset/refund가 "어느 버킷이 진행중 job을 떠받치나"를 모름(Codex#3). 실 매그니튜드(월 ≥200 vs job ~수 크레딧)에선 race가 무해해 **MVP는 aggregate + assert(불변식 5)로 가드**. 단가가 커지거나 동시성/예약이 복잡해지면 `credit_holds(job_id, source_id, amount)` 테이블로 버킷별 hold를 도입(reserve가 버킷서 즉시 차감·기록, confirm이 정산, release가 복원) — 이때 reset/refund 적격이 정확해짐.
+- **per-bucket 예약 모델(Path A, 후속)**: 현재 `reserved`는 aggregate라 reset/refund가 "어느 버킷이 진행중 job을 떠받치나"를 모름(Codex#3). v6에서는 마네킹 잡 45cr, 상세페이지 잡은 AI 컷 수 × 19cr이므로 과거의 작은 예약량을 근거로 race가 무해하다고 가정하지 않는다. **현재 aggregate + assert(불변식 5) 가드를 유지**하며, 버킷별 예약 개선은 별도 설계로 다룬다. 후속 `credit_holds(job_id, source_id, amount)` 테이블에서는 reserve가 버킷에서 즉시 차감·기록하고 confirm이 정산하며 release가 복원하도록 설계한다. 이를 통해 reset/refund 적격을 버킷별로 판정한다.
 - **환불 적격 정밀화**(불변식 2): MVP `reserved==0`(진행중 job 있으면 환불 거부, 과보수적) → Path A 도입 시 "이 버킷이 어떤 hold도 안 가짐"으로 완화.
 - **stuck 예약 복구**(NEW-2): confirm의 `assert remain==0`이 (극단 edge로) 반복 rollback되면 job이 `running`에 머물러 `reserved`가 묶임. **영구 stuck 없음** — lease 만료 시 dispatcher의 `recover_stale_leases`가 그 job을 `error`로 종결하고 예약을 release(기존 AG-04 stale 복구 경로 = `list_unsettled_errored_jobs` 재시도). 운영 런북: stale 복구가 못 푸는 케이스는 해당 job/account 수동 점검.
 - **구독 해지/구독료 환불**: 본 문서 밖(PG 단계).

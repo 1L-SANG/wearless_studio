@@ -14,8 +14,8 @@ import app.workers.subscription_biller as biller
 from app.workers.subscription_biller import GRACE_DAYS, MAX_ATTEMPTS, SubscriptionBiller
 from conftest import make_settings
 
-PLAN = {"id": "p2", "code": "seller", "name": "Seller", "credits": 18000, "price": 79900}
-STARTER = {"id": "p1", "code": "starter", "name": "Starter", "credits": 6000, "price": 29900}
+PLAN = {"id": "p2", "code": "seller", "name": "Seller", "credits": 1800, "price": 79900}
+STARTER = {"id": "p1", "code": "starter", "name": "Starter", "credits": 600, "price": 29900}
 
 
 class _Cur:
@@ -92,7 +92,7 @@ def _app(state, monkeypatch, *, charge_error=None):
     async def fake_grant(conn, *, user_id, plan_code, metadata=None, credits=None,
                          period_end_sql=None, period_end_params=()):
         state["grants"].append({"user_id": user_id, "plan_code": plan_code})
-        return {"creditSourceId": "s", "credits": 18000, "available": 18000}
+        return {"creditSourceId": "s", "credits": 1800, "available": 1800}
 
     monkeypatch.setattr(biller.toss_billing, "charge", fake_charge)
     monkeypatch.setattr(biller.repo, "grant_subscription", fake_grant)

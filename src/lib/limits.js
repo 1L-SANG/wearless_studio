@@ -3,16 +3,15 @@
    Credit unit costs + all the "상한"(caps) live HERE so they're
    trivial to change later. mock/db.js pulls CREDIT_COSTS from this
    file and exposes it as catalogs.creditCosts (contract shape kept).
-   These are PROTOTYPE values — final policy lands with the backend
-   (handoff/00_README §4, PRD §12).
+   2026-09-11 v6 확정 단가(1cr=50원). 백엔드 config.credit_cost_* 미러.
    ============================================================= */
 
 /** 단계별 크레딧 단가 — 이 값만 바꾸면 전 화면 예고가 함께 갱신됨 */
 export const CREDIT_COSTS = Object.freeze({
-  mannequinGenerate: 2, // 마네킹 단일컷 생성·재생성 — 백엔드 credit_cost_mannequin_generate 미러
+  mannequinGenerate: 45, // 마네킹 단일컷 생성·재생성, 백엔드 credit_cost_mannequin_generate 미러
   mannequinAdjust: 0, // @deprecated P2: 핏 프로필 재생성으로 대체
-  storyboardPerCut: 1, // 콘티 → 상세페이지 생성: 컷 1개당
-  editorImage: 1, // 에디터에서 이미지 1장 생성/변형
+  storyboardPerCut: 19, // 콘티에서 상세페이지 생성: 컷 1개당
+  editorImage: 19, // 에디터에서 이미지 1장 생성/변형
 });
 
 /** 화면 전반에서 쓰는 상한값 (PRD §5.3 / §6.6 / §6.8 / §7.4) */

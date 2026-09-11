@@ -35,6 +35,8 @@ const {
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 
+const collectText = (node) => Array.isArray(node) ? node.map(collectText).join('') : node && typeof node === 'object' ? collectText(node.props?.children) : String(node ?? '');
+
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 test('a revoked license owner can reach fresh enrollment from the license list', async () => {
@@ -77,6 +79,11 @@ test('license toggles default on, block empty selection, and submit the remainin
     const toggle = (tree, label) => findTree(tree, (node) => node.type === 'Toggle' && node.props.label === label);
     const submit = (tree) => findTree(tree, (node) => node.type === 'Button' && node.props.children === '라이선스 발급');
     let tree = render();
+    assert.equal(findTree(tree, (node) => node.type === 'Field' && node.props.type === 'number'), null);
+    const priceText = collectText(tree);
+    for (const text of ['1건 14,900원', '월 이용권 49,900원(10건)', '내 몫 70%(10,430원)']) {
+      assert.ok(priceText.includes(text), text);
+    }
     assert.equal(submit(tree).props.disabled, false);
     for (const category of ['일반 의류', '액티브웨어', '홈웨어·잠옷']) {
       assert.equal(toggle(tree, category).props.on, true);
@@ -94,7 +101,7 @@ test('license toggles default on, block empty selection, and submit the remainin
     assert.equal(submit(tree).props.disabled, false);
     await submit(tree).props.onClick();
     assert.deepEqual(requests, [{
-      enrollmentId: 'enrollment-1', allowedUse: ['액티브웨어'], unitPrice: 10000, validDays: 365,
+      enrollmentId: 'enrollment-1', allowedUse: ['액티브웨어'], unitPrice: 14900, validDays: 365,
     }]);
   } finally {
     await harness.close();
@@ -1228,8 +1235,8 @@ test('verified ModelHub shows the active dashboard even with zero settlements', 
     // 이 경량 JSX 하네스는 중첩 함수 컴포넌트를 React처럼 자동 실행하지 않으므로 실제 함수를
     // 한 번 펼쳐 내부의 사용자 행동까지 검사한다. UI 스텁 자체를 검사하는 것은 아니다.
     const dashboard = active.type(active.props);
-    assert.ok(findTree(dashboard, (node) => node.props?.children === '9,900원'));
-    assert.ok(findTree(dashboard, (node) => node.props?.children === '29,900원'));
+    assert.ok(findTree(dashboard, (node) => node.props?.children === '14,900원'));
+    assert.ok(findTree(dashboard, (node) => node.props?.children === '49,900원'));
     assert.equal(findTree(dashboard, (node) => node.props?.children === '10,000원'), null);
     assert.equal(findTree(dashboard, (node) => node.props?.children === '25,000원'), null);
     assert.ok(findTree(dashboard, (node) => node.type === 'h2' && node.props?.children === '활동 중'));
@@ -1301,8 +1308,8 @@ test('verified ModelHub without a license does not invent default rules', async 
     const tree = harness.render();
     const active = findTree(tree, (node) => node.type?.name === 'ActiveDashboard');
     const dashboard = active.type(active.props);
-    assert.equal(findTree(dashboard, (node) => node.props?.children === '10,000원'), null);
-    assert.equal(findTree(dashboard, (node) => node.props?.children === '25,000원'), null);
+    assert.equal(findTree(dashboard, (node) => node.props?.children === '14,900원'), null);
+    assert.equal(findTree(dashboard, (node) => node.props?.children === '49,900원'), null);
     assert.ok(findTree(dashboard, (node) => node.type === 'dd' && node.props?.children === '—'));
   } finally {
     await harness.close();
@@ -1630,8 +1637,8 @@ test('등록 완료 화면은 조건 요약과 Digital DNA 관리 경로를 보�
   try {
     const tree = harness.render();
     assert.ok(findTree(tree, (node) => node.type === 'h1' && node.props?.children === '축하해요, 등록이 끝났어요'));
-    assert.ok(findTree(tree, (node) => node.props?.children === '9,900원'));
-    assert.ok(findTree(tree, (node) => node.props?.children === '29,900원'));
+    assert.ok(findTree(tree, (node) => node.props?.children === '14,900원'));
+    assert.ok(findTree(tree, (node) => node.props?.children === '49,900원'));
     for (const label of ['활동명', '체형 밴드', '허용 품목', '건당 가격', '월정액', '유효기간', '승인 방식']) {
       assert.ok(findTree(tree, (node) => node.type === 'dt' && node.props?.children === label), label);
     }
@@ -1698,7 +1705,7 @@ test('등록 완료 조건 조회 실패는 기본 가격과 영구 조건을 �
   try {
     const tree = harness.render();
     assert.ok(findTree(tree, (node) => node.props?.children === '조건 요약을 불러오지 못했어요.'));
-    assert.equal(findTree(tree, (node) => node.props?.children === '10,000원'), null);
+    assert.equal(findTree(tree, (node) => node.props?.children === '14,900원'), null);
     assert.equal(findTree(tree, (node) => node.props?.children === '영구'), null);
   } finally {
     await harness.close();
@@ -2052,8 +2059,8 @@ test('공개 지원 시작 화면은 지원서 링크와 가격, 키보드 안�
     const shell = harness.render();
     const tree = shell.props.children();
     assert.ok(findTree(tree, (node) => node.type === 'Link' && node.props.to === '/model/apply' && node.props.children === '지원서 쓰기'));
-    assert.ok(findTree(tree, (node) => node.type === 'b' && node.props.children === '9,900원'));
-    assert.ok(findTree(tree, (node) => node.type === 'b' && node.props.children === '29,900원'));
+    assert.ok(findTree(tree, (node) => node.type === 'b' && node.props.children === '14,900원'));
+    assert.ok(findTree(tree, (node) => node.type === 'b' && node.props.children === '49,900원'));
     assert.ok(findTree(tree, (node) => node.props.tabIndex === 0 && node.props['aria-describedby'] === 'apply-settlement-tooltip'));
     assert.ok(findTree(tree, (node) => node.type === 'summary' && node.props.children === 'FaceMarket에서 모델은 무슨 일을 하나요?'));
     assert.equal(findTree(tree, (node) => node.type === 'summary' && node.props.children === '제 얼굴이 확실히 지켜지는 건가요?'), null);

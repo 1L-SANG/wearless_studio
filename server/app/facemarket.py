@@ -48,6 +48,7 @@ CX_TRANS_TIMEOUT = 10.0
 _SIMULATION_RATE_LIMIT_PER_MINUTE = 5
 _SETTLEMENT_SIGNER_LOCK_ID = 0x57464D5349474E52
 _SETTLEMENT_LOCK_RETRY_SECONDS = 0.05
+PLATFORM_UNIT_PRICE_KRW = 14_900
 
 _FM_RESPONSES = {
     400: {"model": ErrorResponse, "description": "본인확인 실패 (토큰 무효·CI 누락)"},
@@ -633,8 +634,14 @@ class CreateLicenseRequest(CamelModel):
     opt_location_cuts: bool = False
     opt_lookbook_person_replace: bool = False
     opt_consent_version: str | None = None
-    unit_price: int = Field(default=10000, ge=0, le=100_000_000)
+    unit_price: int = Field(default=PLATFORM_UNIT_PRICE_KRW, ge=0, le=100_000_000)
     valid_days: int = Field(default=365, ge=1, le=3650)
+
+    @field_validator("unit_price", mode="before")
+    @classmethod
+    def platform_unit_price(cls, _value):
+        # 구버전 화면이나 변조 요청이 다른 값을 보내도 라이선스 가격은 플랫폼 표준가다.
+        return PLATFORM_UNIT_PRICE_KRW
 
 
 def _r2_face(request: Request):

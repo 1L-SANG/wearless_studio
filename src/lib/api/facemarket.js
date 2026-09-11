@@ -4,6 +4,7 @@
    verifyIdentity: CX 표준인증창(ENT_MID) 성공 token만 백엔드로 — 원문 신원은
    서버가 CX trans 에서 직접 받는다(클라→서버 PII 신뢰 금지).
    ============================================================= */
+import { FACEMARKET_PRICING } from '../facemarketPricing.js';
 import { http } from '@/lib/api/httpAdapter.js';
 import { supabase } from '@/lib/supabase.js';
 
@@ -369,7 +370,7 @@ export function cancelEnrollment(enrollmentId) {
 }
 
 export function createLicense({
-  enrollmentId, allowedUse = [], forbiddenUse = [], unitPrice = 10000, validDays = 365,
+  enrollmentId, allowedUse = [], forbiddenUse = [], unitPrice = FACEMARKET_PRICING.perCut, validDays = 365,
 }) {
   return http('/v1/facemarket/licenses', {
     method: 'POST',

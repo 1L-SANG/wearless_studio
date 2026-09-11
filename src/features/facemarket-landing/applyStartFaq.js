@@ -33,7 +33,7 @@ export const APPLY_START_FAQ = [
   },
   {
     q: '얼마를 받나요? 언제 받나요?',
-    a: `셀러가 낸 금액의 ${sharePercent}%가 내 몫이에요. 컷 한 장 기준으로 ${formatKrw(perCutShare)}이고, 10명의 셀러가 한 달에 한 번씩만 써도 약 ${formatKrw(approximateTenUses)}이 자동으로 쌓여요. 쌓인 몫이 ${formatKrw(MIN_PAYOUT_KRW)}을 넘으면 매월 ${SETTLEMENT_DAY}일에 등록한 계좌로 보내드려요. 첫 지급 전에 계좌를 안내하고, 지급할 때 세금을 원천징수한 뒤 명세에 표시해요.`,
+    a: `셀러가 낸 금액의 ${sharePercent}%가 내 몫이에요. 상세페이지 1건당 ${formatKrw(perCutShare)}이고, 10명의 셀러가 한 달에 한 번씩만 써도 약 ${formatKrw(approximateTenUses)}이 자동으로 쌓여요. 쌓인 몫이 ${formatKrw(MIN_PAYOUT_KRW)}을 넘으면 매월 ${SETTLEMENT_DAY}일에 등록한 계좌로 보내드려요. 첫 지급 전에 계좌를 안내하고, 지급할 때 세금을 원천징수한 뒤 명세에 표시해요.`,
   },
   {
     q: '내 얼굴은 어디에 쓰이고, 어디에는 안 쓰이나요?',

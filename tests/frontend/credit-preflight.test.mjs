@@ -12,24 +12,24 @@ import { createGenerationRelevantEditsSession } from '../../src/features/mannequ
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 
 test('analysis confirmation blocks a cached account below the mannequin generation cost', () => {
-  assert.deepEqual(mannequinGenerationCreditShortfall({ credits: 1 }), {
-    availableCredits: 1,
+  assert.deepEqual(mannequinGenerationCreditShortfall({ credits: 44 }), {
+    availableCredits: 44,
     requiredCredits: CREDIT_COSTS.mannequinGenerate,
-    message: '크레딧이 부족해요 — 보유 1 · 필요 2. 충전 후 다시 시도해 주세요.',
+    message: '크레딧이 부족해요 — 보유 44 · 필요 45. 충전 후 다시 시도해 주세요.',
   });
 });
 
 test('gender-change confirmation reserves only the new mannequin generation cost', () => {
-  assert.equal(mannequinGenerationCreditShortfall({ credits: 2 }), null);
+  assert.equal(mannequinGenerationCreditShortfall({ credits: 45 }), null);
   assert.equal(
-    mannequinGenerationCreditShortfall({ credits: 1 }).requiredCredits,
+    mannequinGenerationCreditShortfall({ credits: 44 }).requiredCredits,
     CREDIT_COSTS.mannequinGenerate,
   );
 });
 
 test('detail-page confirmation multiplies AI cuts by the canonical per-cut cost', () => {
-  const shortfall = detailPageGenerationCreditShortfall({ credits: 2 }, 3);
-  assert.equal(shortfall.availableCredits, 2);
+  const shortfall = detailPageGenerationCreditShortfall({ credits: 56 }, 3);
+  assert.equal(shortfall.availableCredits, 56);
   assert.equal(shortfall.requiredCredits, 3 * CREDIT_COSTS.storyboardPerCut);
 });
 
@@ -127,7 +127,7 @@ test('an insufficient preflight leaves an existing mannequin dirty revision unto
   dirty.mark(projectId);
   const revision = dirty.readRevision(projectId);
 
-  assert.ok(mannequinGenerationCreditShortfall({ credits: 1 }));
+  assert.ok(mannequinGenerationCreditShortfall({ credits: 44 }));
   assert.equal(dirty.readRevision(projectId), revision);
 
   const productInput = read('../../src/features/product-input/ProductInput.jsx');

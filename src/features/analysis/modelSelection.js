@@ -94,6 +94,6 @@ export function realModelFeeLabel(selectedModelId, models, realFaceCuts = 1) {
   if (!isRealModelSelection(selectedModelId) || realFaceCuts < 1) return '';
   const selected = (models || []).find((model) => model.id === selectedModelId);
   return selected
-    ? ` + 실제 모델 ₩${(FACEMARKET_PRICING.perCut * realFaceCuts).toLocaleString('ko-KR')}`
+    ? ` + 실제 모델 ₩${FACEMARKET_PRICING.perCut.toLocaleString('ko-KR')}`
     : ' + 실제 모델 이용료 별도';
 }

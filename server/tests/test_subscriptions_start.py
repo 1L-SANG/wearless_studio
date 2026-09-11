@@ -15,7 +15,7 @@ from app.main import create_app
 from conftest import make_settings
 
 PLAN = {"id": "plan-seller", "code": "seller", "name": "Seller",
-        "credits": 18000, "price": 79900}
+        "credits": 1800, "price": 79900}
 
 
 class _Cur:

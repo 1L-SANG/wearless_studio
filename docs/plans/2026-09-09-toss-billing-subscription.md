@@ -846,7 +846,7 @@ from app.main import create_app
 from conftest import make_settings
 
 PLAN = {"id": "plan-seller", "code": "seller", "name": "Seller",
-        "credits": 18000, "price": 79900}
+        "credits": 1800, "price": 79900}
 
 
 class _Cur:
@@ -1517,32 +1517,32 @@ from app.main import create_app
 from conftest import make_settings
 
 PLANS = {
-    "starter": {"id": "p1", "code": "starter", "name": "Starter", "credits": 6000, "price": 29900},
-    "seller": {"id": "p2", "code": "seller", "name": "Seller", "credits": 18000, "price": 79900},
-    "pro": {"id": "p3", "code": "pro", "name": "Pro", "credits": 38000, "price": 159000},
+    "starter": {"id": "p1", "code": "starter", "name": "Starter", "credits": 600, "price": 29900},
+    "seller": {"id": "p2", "code": "seller", "name": "Seller", "credits": 1800, "price": 79900},
+    "pro": {"id": "p3", "code": "pro", "name": "Pro", "credits": 3800, "price": 159000},
 }
 
 
 def test_proration_is_floored_on_both_money_and_credits():
     out = subs._proration(old_price=29900, new_price=79900,
-                          old_credits=6000, new_credits=18000,
+                          old_credits=600, new_credits=1800,
                           remaining_days=15, period_days=30)
     assert out["amount"] == 25000        # floor(50000 * 15/30)
-    assert out["credits"] == 6000        # floor(12000 * 15/30)
+    assert out["credits"] == 600        # floor(1200 * 15/30)
 
 
 def test_proration_on_last_day_is_tiny_but_not_negative():
     out = subs._proration(old_price=29900, new_price=79900,
-                          old_credits=6000, new_credits=18000,
+                          old_credits=600, new_credits=1800,
                           remaining_days=1, period_days=30)
     assert out["amount"] == 1666         # floor(50000/30)
-    assert out["credits"] == 400
+    assert out["credits"] == 40
     assert out["amount"] > 0
 
 
 def test_proration_for_cheaper_plan_is_not_an_upgrade():
     out = subs._proration(old_price=79900, new_price=29900,
-                          old_credits=18000, new_credits=6000,
+                          old_credits=1800, new_credits=600,
                           remaining_days=15, period_days=30)
     assert out["amount"] <= 0            # 라우트가 이걸 보고 다운그레이드로 라우팅한다
 
@@ -1642,7 +1642,7 @@ def test_upgrade_charges_difference_and_grants_now(sub, make_token):
     assert res.status_code == 200, res.text
     assert res.json()["applied"] == "immediate"
     assert state["charged"][0]["amount"] == 25000
-    assert state["grants"][0]["credits"] == 6000
+    assert state["grants"][0]["credits"] == 600
     assert state["sub"]["plan_code"] == "seller"
 
 
@@ -2159,7 +2159,7 @@ class _Cur:
             self._rows = list(self.s["due"])
         elif "from pricing_plans" in q:
             self._rows = [{"id": "p2", "code": "seller", "name": "Seller",
-                           "credits": 18000, "price": 79900}]
+                           "credits": 1800, "price": 79900}]
         elif "insert into subscription_invoices" in q:
             self.s["invoices"].append(params)
             self._rows = [{"id": "inv-1"}]
@@ -2213,7 +2213,7 @@ def _app(state, monkeypatch, *, charge_error=None):
     async def fake_grant(conn, *, user_id, plan_code, metadata=None, credits=None,
                          period_end_sql=None):
         state["grants"].append({"user_id": user_id, "plan_code": plan_code})
-        return {"creditSourceId": "s", "credits": 18000, "available": 18000}
+        return {"creditSourceId": "s", "credits": 1800, "available": 1800}
 
     monkeypatch.setattr(biller.toss_billing, "charge", fake_charge)
     monkeypatch.setattr(biller.repo, "grant_subscription", fake_grant)
