@@ -2,7 +2,7 @@
   position: relative;
   z-index: 1;
   margin-top: auto;
-  padding: 28px 24px 32px;
+  padding: var(--sp-section-mobile) var(--sp-24);
   background: var(--bg-1);
   box-shadow: inset 0 1px 0 var(--ring);
   color: var(--fg-2);
@@ -14,45 +14,118 @@
   margin: 0 auto;
 }
 
+.site-footer__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-24);
+}
+
+.site-footer__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  margin-bottom: var(--sp-8);
+}
+
+.site-footer__logo {
+  width: var(--sp-20);
+  height: var(--sp-20);
+  object-fit: contain;
+}
+
+.site-footer__wordmark {
+  width: 71px;
+  height: auto;
+  object-fit: contain;
+}
+
+.site-footer__tagline {
+  margin: 0;
+  color: var(--fg-3);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.site-footer__contact {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.site-footer__divider {
+  height: 1px;
+  margin: calc(var(--sp-16) * 2) 0 var(--sp-24);
+  border: 0;
+  background: var(--ring);
+}
+
 .site-footer__links {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  gap: var(--sp-24);
+  font-size: 14px;
   line-height: 1.5;
   letter-spacing: 0.01em;
 }
 
-.site-footer__links a {
+.site-footer__links a,
+.site-footer__contact {
   color: var(--fg-2);
   text-decoration: none;
 }
 
-.site-footer__links a:hover {
+.site-footer__links a:hover,
+.site-footer__contact:hover {
   color: var(--fg-1);
+  text-decoration: underline;
+  text-underline-offset: 4px;
 }
 
-.site-footer__links a:focus-visible {
+.site-footer a:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
   border-radius: var(--r-1);
 }
 
 .site-footer__links strong {
-  color: var(--fg-1);
   font-weight: 600;
 }
 
 .site-footer__company {
   display: grid;
-  gap: 2px;
-  margin-top: 14px;
+  gap: var(--sp-4);
+  margin-top: var(--sp-20);
 }
 
 .site-footer__company p {
   margin: 0;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.55;
   letter-spacing: 0.01em;
+}
+
+.site-footer__company a {
+  color: var(--fg-2);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.site-footer__company a:hover {
+  color: var(--fg-1);
+}
+
+@media (max-width: 767px) {
+  .site-footer__inner {
+    text-align: center;
+  }
+
+  .site-footer__top {
+    flex-direction: column;
+  }
+
+  .site-footer__brand,
+  .site-footer__links {
+    justify-content: center;
+  }
 }

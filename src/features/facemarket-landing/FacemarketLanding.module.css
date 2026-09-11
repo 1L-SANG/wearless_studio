@@ -958,14 +958,25 @@
   padding: clamp(2.5rem, 6vw, 4rem) 0 0;
   box-shadow: inset 0 1px 0 var(--fm-line);
 }
-.footerBrand { margin: 0 0 0.4rem; font: 600 0.95rem/1.4 var(--font-body); }
+.footerTop { display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; margin-bottom: 1rem; font: 400 0.85rem/1.6 var(--font-body); }
+.footerBrand { margin: 0; font: 600 0.95rem/1.4 var(--font-body); }
 .footerNote { margin: 0; color: var(--fm-muted); font: 400 0.85rem/1.6 var(--font-body); }
-.footerLink { color: var(--fm-accent); }
-.footerLegal { display: flex; flex-wrap: wrap; gap: 0.2rem 0.45rem; color: var(--fm-muted); font: 400 0.85rem/1.6 var(--font-body); }
+.footerLink { color: var(--fm-muted); text-decoration: none; }
+.footerLink:hover { color: var(--fm-ink); text-decoration: underline; text-underline-offset: 4px; }
+.footerLegal { display: flex; flex-wrap: wrap; gap: 0.4rem 1.5rem; color: var(--fm-muted); font: 400 0.85rem/1.6 var(--font-body); }
 .footerLinkStrong { color: var(--fm-ink); font-weight: 600; }
-.footerCompany { display: grid; gap: 0.12rem; margin-top: 0.55rem; color: var(--fm-muted); font: 400 0.75rem/1.55 var(--font-body); letter-spacing: 0.01em; }
+.footerDivider { height: 1px; margin: 1.1rem 0; border: 0; background: var(--fm-line); }
+.footerCompany { display: grid; gap: 0.12rem; color: var(--fm-muted); font: 400 0.75rem/1.55 var(--font-body); letter-spacing: 0.01em; }
 .footerCompany p { margin: 0; }
+.footerCompany a { color: var(--fm-muted); text-decoration: underline; text-underline-offset: 2px; }
+.footerCompany a:hover { color: var(--fm-ink); }
 .footerCompact { margin-top: 2.5rem; padding: 1.5rem 0 1.75rem; }
+
+@media (max-width: 767px) {
+  .footer { text-align: center; }
+  .footerTop { flex-direction: column; }
+  .footerLegal { justify-content: center; }
+}
 
 /* 상단바의 조용한 보조 액션(로그아웃). 주 CTA(.headerCta)와 나란히 서지만 잉크 pill 이
    아니라 테두리만 있는 형태다 — 로그아웃이 이 화면에서 권장 행동이 아니기 때문이다.

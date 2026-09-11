@@ -1,11 +1,14 @@
 import { Link } from 'react-router-dom';
-import { COMPANY_INFO_LINES } from '@/lib/companyInfo.js';
+import { CompanyInfoRows } from '@/components/CompanyInfoRows.jsx';
 import s from '../FacemarketLanding.module.css';
 
 export function FooterSection({ compact = false }) {
   return (
     <footer className={`${s.footer}${compact ? ` ${s.footerCompact}` : ''}`}>
-      <p className={s.footerBrand}>FaceMarket · Wearless</p>
+      <div className={s.footerTop}>
+        <p className={s.footerBrand}>FaceMarket · Wearless</p>
+        <a className={s.footerLink} href="https://wearless.kr/#contact">문의하기</a>
+      </div>
       {/* 여기 있던 "캐러셀 이미지는 모두 예시" 고지는 지웠다. 지운 이유는 사실이 아니라서가
           아니라 **셋째 사본**이라서다 — 같은 고지가 (1) 캐러셀 메타 바(GallerySection 의
           .galleryNotice, 조작 힌트 바로 밑)와 (2) 카드 안 배지(CarouselStage 의 .badgeNotice
@@ -15,13 +18,9 @@ export function FooterSection({ compact = false }) {
           PRD §13-5("예시 사진과 내 사진의 구분 장치가 사라지면 안 된다")는 (1)+(2)로 지켜진다. */}
       <nav className={s.footerLegal} aria-label="법적 고지">
         <Link className={s.footerLink} to="/terms">모델 이용약관</Link>
-        <span aria-hidden="true">·</span>
         <Link className={s.footerLink} to="/license-agreement">초상 라이선스 계약</Link>
-        <span aria-hidden="true">·</span>
         <Link className={`${s.footerLink} ${s.footerLinkStrong}`} to="/privacy">개인정보 처리방침</Link>
-        <span aria-hidden="true">·</span>
         <Link className={s.footerLink} to="/seller-terms">셀러 라이선스 이용조건</Link>
-        <span aria-hidden="true">·</span>
         <Link className={s.footerLink} to="/answers">자주 묻는 법적 질문</Link>
       </nav>
       <p className={s.footerNote}>
@@ -35,8 +34,9 @@ export function FooterSection({ compact = false }) {
         {' · '}
         <Link className={s.footerLink} to="/model-info">내 얼굴이 어떻게 다뤄지나요</Link>
       </p>
+      <hr className={s.footerDivider} />
       <div className={s.footerCompany}>
-        {COMPANY_INFO_LINES.map((line) => <p key={line}>{line}</p>)}
+        <CompanyInfoRows />
       </div>
     </footer>
   );
