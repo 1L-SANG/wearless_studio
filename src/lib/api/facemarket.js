@@ -141,7 +141,7 @@ export function createEnrollment({ documentVersion, deviceId, identityMethod }) 
 
 // POST /v1/facemarket/enrollments/{id}/id-document — 간편인증(simple_auth) 경로 전용.
 // 사용자가 촬영한 신분증 전체본(마스킹 확인 완료) 업로드. 성공 시 identity_pending 전이.
-// documentType: rrc|dl|passport|arc. 얼굴 업로드(uploadEnrollmentPhoto)와 같은 멀티파트 패턴.
+// documentType: v1 은 rrc(주민등록증)만. 얼굴 업로드(uploadEnrollmentPhoto)와 같은 멀티파트 패턴.
 export async function uploadIdDocument(enrollmentId, { file, documentType, maskedConfirmed }) {
   const form = new FormData();
   form.append('file', file, file?.name || 'id-document');

@@ -12,18 +12,19 @@
    같은 패턴: document.createElement 를 흉내 낸 캔버스 스텁만으로 검증한다).
    ============================================================= */
 
-// 서버 계약(uploadIdDocument, server/app/facemarket_enrollment.py)이 받는 네 종류.
+// 서버 계약(facemarket_id_document.ID_DOCUMENT_TYPES)과 같은 집합이어야 한다.
+// v1 은 주민등록증만 받는다 — 마스크가 사각형 하나뿐이라 면허번호·여권번호·외국인등록번호는
+// 가려지지 않은 채 저장되는데, 셋 다 고유식별정보다(최종리뷰 I12).
 export const ID_DOCUMENT_TYPES = Object.freeze([
   { value: 'rrc', label: '주민등록증' },
-  { value: 'dl', label: '운전면허증' },
-  { value: 'passport', label: '여권' },
-  { value: 'arc', label: '외국인등록증' },
 ]);
 
 // 카드 종류별 기본 마스킹 박스(이미지 비율 0~1) — 주민등록번호 뒷자리가 대체로 놓이는
 // 자리의 대략적인 출발점일 뿐이다. 최종 위치·크기는 사용자가 캔버스 위에서 드래그로
 // 맞춘다 — 이 기본값이 틀려도 사용자가 조정하면 되므로 정밀도보다 "안전한 쪽으로 넉넉히"
 // 잡는다(가로 폭을 넓게 잡아 실제 번호를 놓치지 않게 한다).
+// v1 에 열려 있는 건 rrc 하나지만, 다른 키도 남겨 둔다 — 종류를 다시 넓힐 때
+// **마스크가 하나뿐이라는 사실**을 먼저 해결해야 한다는 걸 여기서 잊지 않기 위해서다.
 const DEFAULT_MASK_RATIOS = Object.freeze({
   rrc: { xr: 0.04, yr: 0.60, wr: 0.60, hr: 0.16 },
   dl: { xr: 0.04, yr: 0.56, wr: 0.60, hr: 0.16 },

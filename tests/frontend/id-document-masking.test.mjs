@@ -15,8 +15,11 @@ import {
 // 없으므로 클라이언트가 전송 전에 실제로 픽셀을 덮어써야 한다(buildMaskedBlob). 원본
 // File/Image 는 이 함수의 인자로만 쓰이고 반환값(blob)에는 등장하지 않는다.
 
-test('신분증 네 종류가 서버 계약(rrc|dl|passport|arc)과 정확히 같다', () => {
-  assert.deepEqual(ID_DOCUMENT_TYPES.map((d) => d.value), ['rrc', 'dl', 'passport', 'arc']);
+// 최종리뷰 I12: v1 은 주민등록증만 받는다. 마스크가 사각형 하나뿐이라 면허번호·여권번호·
+// 외국인등록번호는 가려지지 않은 채 최대 7일 저장되는데, 셋 다 고유식별정보(개인정보보호법
+// §24)이고 처리방침 §5 는 "수집하지 않는다"고 적혀 있다. 넓히려면 다중 마스크 영역이 먼저다.
+test('v1 은 신분증 종류가 주민등록증 하나뿐이다(서버 ID_DOCUMENT_TYPES 와 같은 집합)', () => {
+  assert.deepEqual(ID_DOCUMENT_TYPES.map((d) => d.value), ['rrc']);
   for (const doc of ID_DOCUMENT_TYPES) {
     assert.equal(typeof doc.label, 'string');
     assert.ok(doc.label.length > 0, `${doc.value} 라벨이 비어 있다`);
