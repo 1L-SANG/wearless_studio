@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse, Response
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
 
-from . import cx_identity, repo
+from . import cx_identity, facemarket_id_document, repo
 from .agents.face_qc import QcFailed, load_face_qc, weight_paths
 from .auth import require_user
 from .facemarket_applications import MAX_IDENTITY_MISMATCH, _dispatch_decision_email
@@ -27,7 +27,7 @@ from .config import Settings
 from .db import get_conn
 from .models import CamelModel
 from .personalization_qc import FaceQcUnavailable, evaluate_face_qc, qc_reason_message
-from .r2 import enrollment_quarantine_key, ext_for_mime, sha256_sri
+from .r2 import enrollment_id_document_key, enrollment_quarantine_key, ext_for_mime, sha256_sri
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/facemarket", tags=["FaceMarket biometric enrollment"])
@@ -1265,6 +1265,91 @@ async def upload_enrollment_photo(
         # 발급 시점엔 이미 따뜻하다. 라이브니스 훅은 발급까지 1분도 안 남아 부팅을 못 가렸다.
         _prewarm_opendid(request)
         return EnrollmentPhotoView(angle=angle, qc_status="passed", uploaded_at=uploaded_at)
+    finally:
+        data = b""
+
+
+@router.post(
+    "/enrollments/{enrollment_id}/id-document",
+    response_model=EnrollmentView,
+    status_code=201,
+)
+async def upload_id_document(
+    request: Request,
+    enrollment_id: str,
+    file: UploadFile = File(...),
+    document_type: str = Form(..., alias="documentType"),
+    masked_confirmed: bool = Form(..., alias="maskedConfirmed"),
+    user_id: str = Depends(require_user),
+):
+    """간편인증(simple_auth) 경로 전용 — 사용자가 촬영한 신분증 업로드.
+
+    OACX 초상(dlphotoimage)이 없는 이 경로에서는 신분증 사진 속 얼굴이 SFace 앵커를
+    대신한다. 저장 대상은 마스킹 전체본(관리자 육안 심사용)이고, crop_id_face 는 얼굴이
+    검출 가능한지 확인하는 게이트로만 쓴다 — 크롭 자체는 여기서 저장하지 않는다.
+    """
+    enrollment_id = _canonical_enrollment_id(enrollment_id)
+    settings: Settings = request.app.state.settings
+    if "simple_auth" not in settings.fm_identity_methods:
+        raise _err(
+            "identity_method_unavailable", "지금은 이 방식으로 등록할 수 없어요.", status=409
+        )
+    if document_type not in facemarket_id_document.ID_DOCUMENT_TYPES:
+        raise _err("invalid_document_type", "신분증 종류를 확인해 주세요.")
+    if not masked_confirmed:
+        raise _err("masking_required", "주민등록번호 뒷자리를 가린 뒤 올려 주세요.")
+    mime = (file.content_type or "").lower()
+    if mime not in facemarket_id_document.ALLOWED_ID_MIME:
+        raise _err("unsupported_type", "PNG, JPEG, WebP 이미지만 사용할 수 있습니다.")
+    async with get_conn(request) as conn:
+        await _assert_account_open(conn, user_id)
+    data = await file.read()
+    try:
+        if not data:
+            raise _err("empty_upload", "빈 파일은 사용할 수 없습니다.")
+        if len(data) > facemarket_id_document.MAX_ID_BYTES:
+            raise _err("file_too_large", "이미지는 12MB 이하만 가능합니다.", status=413)
+        # 얼굴이 안 잡히면 심사할 대상이 없다 — 저장하지 말고 재촬영을 요구한다.
+        # crop_id_face 는 settings 가 keyword-only 라 to_thread 에도 키워드로 넘긴다.
+        try:
+            await asyncio.to_thread(
+                facemarket_id_document.crop_id_face, data, settings=settings
+            )
+        except facemarket_id_document.IdDocumentError as exc:
+            raise _err(exc.reason, "신분증 얼굴이 보이게 다시 찍어 주세요.")
+        except QcFailed:
+            raise _err(
+                "qc_unavailable",
+                "얼굴 검사를 지금 수행할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+                status=503,
+            )
+        key = enrollment_id_document_key(enrollment_id, "jpg")
+        r2 = _r2_face(request)
+        async with get_conn(request) as conn:
+            await _assert_account_open(conn, user_id)
+            await asyncio.to_thread(r2.put_bytes, key, data, mime)
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    update fm_biometric_enrollments
+                    set status = 'identity_pending',
+                        id_document_r2_key = %s, id_document_type = %s,
+                        id_document_uploaded_at = now(), id_document_purged_at = null
+                    where id = %s and user_id = %s and status = 'id_capture_pending'
+                    """,
+                    (key, document_type, enrollment_id, user_id),
+                )
+                if cur.rowcount == 0:
+                    # 이미 지나간 단계이거나 남의 등록 — 방금 올린 객체를 되돌린다.
+                    await asyncio.to_thread(r2.delete, key)
+                    raise _err(
+                        "invalid_enrollment_state",
+                        "신분증을 올릴 수 있는 단계가 아니에요.",
+                        status=409,
+                    )
+            await conn.commit()
+            row = await _load_owned_enrollment(conn, enrollment_id, user_id)
+            return await _enrollment_view(conn, row)
     finally:
         data = b""
 

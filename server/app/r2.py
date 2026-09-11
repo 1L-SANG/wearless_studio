@@ -71,6 +71,12 @@ def enrollment_quarantine_key(
     return f"facemarket/enrollments/{enrollment_id}/quarantine/{angle}/{version}.{ext}"
 
 
+def enrollment_id_document_key(enrollment_id: str, ext: str) -> str:
+    """사용자가 촬영해 올린 마스킹 신분증. 사진 quarantine 과 prefix 를 분리한다 —
+    _drain_photo_cleanup 이 quarantine/ 를 쓸어 갈 때 심사 전 신분증까지 지우면 안 된다."""
+    return f"facemarket/enrollments/{enrollment_id}/iddoc/masked.{ext}"
+
+
 def enrollment_original_key(
     model_id: str, enrollment_id: str, angle: str, ext: str
 ) -> str:
