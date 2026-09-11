@@ -124,3 +124,17 @@ test('RequireDevice 의 too_many_pending 은 안내 문구가 따로 있다', ()
   const src = read('src/apps/admin/RequireDevice.jsx');
   assert.ok(src.includes("'too_many_pending'"));
 });
+
+test('Staff 화면에 관리자 기기 섹션이 있고 현재 기기는 회수할 수 없다', () => {
+  const src = read('src/features/admin/AdminStaff.jsx');
+  assert.ok(src.includes('adminListDevices') && src.includes('adminApproveDevice') && src.includes('adminRevokeDevice'));
+  assert.ok(src.includes('관리자 기기'));
+  assert.ok(src.includes('isCurrent'), '현재 기기 판정이 없다');
+  assert.ok(/disabled=\{[^}]*isCurrent/.test(src), '현재 기기의 회수 버튼이 비활성이 아니다');
+  // 기기 목록 실패도 카드 안 에러 + 재시도(전체 게이팅 금지)
+  assert.ok(src.includes('devicesError'));
+  // 감사 원장 라벨
+  assert.ok(src.includes("'device.approve'") && src.includes("'device.revoke'"));
+  // 시간은 서울 기준 표시(KST 정책)
+  assert.ok(src.includes('seoulDateTime'));
+});
