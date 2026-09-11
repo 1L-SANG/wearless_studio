@@ -283,6 +283,31 @@ export function adminListAudit({ limit = 20, targetType, targetId } = {}) {
   return http(`/v1/facemarket/admin/audit?${params.toString()}`);
 }
 
+// ── 관리자: 기기 게이트(설계 2026-09-11-admin-device-gate-design.md §5.3) ────────────
+// register·me 는 기기 없이 열린다(아직 기기가 없는 관리자가 부른다). 나머지는 승인 기기 필수.
+
+export function adminRegisterDevice({ label, userAgent } = {}) {
+  return http('/v1/facemarket/admin/devices/register', {
+    method: 'POST', body: { label: label || null, userAgent: userAgent || null },
+  });
+}
+
+export function adminDeviceMe() {
+  return http('/v1/facemarket/admin/devices/me');
+}
+
+export function adminListDevices() {
+  return http('/v1/facemarket/admin/devices');
+}
+
+export function adminApproveDevice(deviceId) {
+  return http(`/v1/facemarket/admin/devices/${encodeURIComponent(deviceId)}/approve`, { method: 'POST' });
+}
+
+export function adminRevokeDevice(deviceId) {
+  return http(`/v1/facemarket/admin/devices/${encodeURIComponent(deviceId)}/revoke`, { method: 'POST' });
+}
+
 // ── 관리자: 모델 테스트컷(콘솔 모델 상세의 하위 리소스) ────────────────────
 
 export function adminModelTestCuts(modelId) {
