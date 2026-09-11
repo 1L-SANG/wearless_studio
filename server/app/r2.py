@@ -71,10 +71,22 @@ def enrollment_quarantine_key(
     return f"facemarket/enrollments/{enrollment_id}/quarantine/{angle}/{version}.{ext}"
 
 
-def enrollment_id_document_key(enrollment_id: str, ext: str) -> str:
+def enrollment_id_document_key(
+    enrollment_id: str,
+    ext: str,
+    *,
+    version: str | None = None,
+) -> str:
     """사용자가 촬영해 올린 마스킹 신분증. 사진 quarantine 과 prefix 를 분리한다 —
-    _drain_photo_cleanup 이 quarantine/ 를 쓸어 갈 때 심사 전 신분증까지 지우면 안 된다."""
-    return f"facemarket/enrollments/{enrollment_id}/iddoc/masked.{ext}"
+    _drain_photo_cleanup 이 quarantine/ 를 쓸어 갈 때 심사 전 신분증까지 지우면 안 된다.
+
+    version(업로드 시도별 uuid4 hex)이 없으면 고정 키다 — 동시/재시도 업로드가 같은 키를
+    공유하면, 늦게 도착한 요청의 실패 처리(rowcount==0 → delete)가 먼저 커밋된 요청의
+    객체를 지워 버린다(리뷰 finding). enrollment_quarantine_key 와 동일한 모양으로
+    버전을 넣어 각 시도가 자기 객체만 건드리게 한다."""
+    if version is None:
+        return f"facemarket/enrollments/{enrollment_id}/iddoc/masked.{ext}"
+    return f"facemarket/enrollments/{enrollment_id}/iddoc/masked/{version}.{ext}"
 
 
 def enrollment_original_key(

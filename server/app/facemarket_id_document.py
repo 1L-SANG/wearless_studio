@@ -18,7 +18,7 @@ import 한다. 반대 방향은 금지).
 
 import asyncio
 
-from .agents.face_qc import load_face_qc  # signature: load_face_qc(settings, *, required=False)
+from .agents.face_qc import QcFailed, load_face_qc  # signature: load_face_qc(settings, *, required=False)
 
 ALLOWED_ID_MIME = {"image/jpeg", "image/png", "image/webp"}
 MAX_ID_BYTES = 12 * 1024 * 1024
@@ -34,7 +34,14 @@ class IdDocumentError(RuntimeError):
 
 
 def _crop_jpeg(data: bytes, box: tuple[int, int, int, int]) -> bytearray:
-    """box 주변을 FACE_CROP_MARGIN 만큼 넓혀 잘라 JPEG 로 재인코딩."""
+    """box 주변을 FACE_CROP_MARGIN 만큼 넓혀 잘라 JPEG 로 재인코딩.
+
+    검출 박스가 프레임 가장자리 밖이면(클램프 후 폭·높이가 0 이하) 잘라낼 영역이 없다.
+    numpy 슬라이스 자체는 조용히 빈 배열을 주지만 cv2.imencode 는 빈 이미지에 ok=False 가
+    아니라 cv2.error 를 던진다(리뷰 finding) — 그 예외가 IdDocumentError/QcFailed 어느 쪽도
+    아니라서 라우트의 재촬영 처리를 건너뛰고 그대로 500 으로 샌다. 클램프 직후 명시적으로
+    막고, cv2.error 자체도 한 번 더 감싼다.
+    """
     import cv2
     import numpy as np
 
@@ -46,7 +53,12 @@ def _crop_jpeg(data: bytes, box: tuple[int, int, int, int]) -> bytearray:
     mx, my = int(w * FACE_CROP_MARGIN), int(h * FACE_CROP_MARGIN)
     x0, y0 = max(0, x - mx), max(0, y - my)
     x1, y1 = min(width, x + w + mx), min(height, y + h + my)
-    ok, buf = cv2.imencode(".jpg", image[y0:y1, x0:x1])
+    if x1 <= x0 or y1 <= y0:
+        raise IdDocumentError("id_document_unreadable")
+    try:
+        ok, buf = cv2.imencode(".jpg", image[y0:y1, x0:x1])
+    except cv2.error:
+        raise IdDocumentError("id_document_unreadable")
     if not ok:
         raise IdDocumentError("id_document_unreadable")
     return bytearray(buf.tobytes())
@@ -55,7 +67,16 @@ def _crop_jpeg(data: bytes, box: tuple[int, int, int, int]) -> bytearray:
 def crop_id_face(image_bytes: bytes, *, settings) -> bytearray:
     """마스킹 신분증에서 얼굴 영역만 잘라 SFace 앵커로 쓸 바이트를 만든다."""
     qc = load_face_qc(settings, required=True)
-    box = qc.detect_largest_face(image_bytes)
+    try:
+        box = qc.detect_largest_face(image_bytes)
+    except QcFailed as exc:
+        # decode_failed 는 (스푸핑된 content-type 등으로) 이미지 자체가 깨진 것 —
+        # QC 인프라 장애(qc_unavailable)와 달리 사용자 재촬영으로 해결되는 4xx 다.
+        # 여기서 IdDocumentError 로 바꿔 두면 라우트는 항상 재촬영 안내로 응답하고,
+        # 진짜 qc_unavailable(설정·가중치 문제)만 503 으로 남는다(리뷰 finding).
+        if exc.reason == "decode_failed":
+            raise IdDocumentError("id_document_unreadable") from exc
+        raise
     if box is None:
         raise IdDocumentError("id_face_not_detected")
     return _crop_jpeg(image_bytes, box)

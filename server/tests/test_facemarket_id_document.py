@@ -3,13 +3,23 @@ import pytest
 
 from app import r2
 from app import facemarket_id_document as iddoc
-from app.agents.face_qc import FaceQc
+from app.agents.face_qc import FaceQc, QcFailed
 
 
 def _one_pixel_jpeg() -> bytes:
     import cv2
 
     ok, buf = cv2.imencode(".jpg", np.zeros((8, 8, 3), dtype=np.uint8))
+    assert ok
+    return buf.tobytes()
+
+
+def _real_jpeg(size: int = 20) -> bytes:
+    """1픽셀보다 큰 실제 JPEG. _crop_jpeg 의 클램프 경계 케이스를 검증하려면
+    크롭 여지가 있는 프레임이 필요하다(1x1 은 항상 퇴화한다)."""
+    import cv2
+
+    ok, buf = cv2.imencode(".jpg", np.zeros((size, size, 3), dtype=np.uint8))
     assert ok
     return buf.tobytes()
 
@@ -26,6 +36,18 @@ def test_id_document_key_does_not_collide_with_photo_quarantine():
     doc = r2.enrollment_id_document_key("enr-1", "jpg")
     assert "/quarantine/" in photo
     assert "/quarantine/" not in doc
+
+
+def test_id_document_key_versions_differ_across_calls():
+    """동시/재시도 업로드가 같은 키를 공유하면, 늦게 실패한 요청의 rowcount==0
+    정리(delete)가 먼저 커밋된 요청의 객체를 지워 버린다(리뷰 finding 1). 시도마다
+    다른 version 을 쓰면 각자 자기 객체만 건드린다."""
+    key1 = r2.enrollment_id_document_key("enr-1", "jpg", version="aaa")
+    key2 = r2.enrollment_id_document_key("enr-1", "jpg", version="bbb")
+    assert key1 != key2
+    for key in (key1, key2):
+        assert key.startswith("facemarket/enrollments/enr-1/iddoc/")
+        assert "/quarantine/" not in key
 
 
 class _FakeDetector:
@@ -78,3 +100,40 @@ def test_crop_id_face_returns_bytearray(monkeypatch):
     out = iddoc.crop_id_face(b"\xff\xd8\xffwhole-card", settings=object())
     assert isinstance(out, bytearray)
     assert bytes(out).startswith(b"\xff\xd8\xff")
+
+
+class _FakeQcDecodeFailed:
+    def detect_largest_face(self, data):
+        raise QcFailed("decode_failed")
+
+
+def test_crop_id_face_maps_decode_failed_to_id_document_unreadable(monkeypatch):
+    """QcFailed('decode_failed') (스푸핑된 content-type 등으로 깨진 이미지)는
+    qc_unavailable(503) 이 아니라 재촬영 유도 4xx 여야 한다(리뷰 finding 3)."""
+    monkeypatch.setattr(iddoc, "load_face_qc", lambda settings, required: _FakeQcDecodeFailed())
+    with pytest.raises(iddoc.IdDocumentError) as exc:
+        iddoc.crop_id_face(b"\xff\xd8\xffnot-really-an-image", settings=object())
+    assert exc.value.reason == "id_document_unreadable"
+
+
+def test_crop_jpeg_raises_on_degenerate_box_after_clamping():
+    """검출 박스가 프레임 밖이면 클램프 후 폭·높이가 0 이하가 된다. numpy 슬라이스는
+    조용히 빈 배열을 주지만 cv2.imencode 는 빈 이미지에 cv2.error 를 던진다 — ok=False
+    분기로 잡히지 않는다(리뷰 finding 2). IdDocumentError 로 막혀야 한다."""
+    data = _real_jpeg(20)
+    with pytest.raises(iddoc.IdDocumentError) as exc:
+        iddoc._crop_jpeg(data, (50, 50, 5, 5))
+    assert exc.value.reason == "id_document_unreadable"
+
+
+def test_crop_jpeg_handles_edge_and_oversized_box():
+    data = _real_jpeg(20)
+    edge = iddoc._crop_jpeg(data, (0, 0, 5, 5))  # 프레임 모서리
+    assert isinstance(edge, bytearray)
+    assert len(edge) > 0
+    assert bytes(edge).startswith(b"\xff\xd8\xff")
+
+    oversized = iddoc._crop_jpeg(data, (0, 0, 30, 30))  # 이미지보다 큰 박스
+    assert isinstance(oversized, bytearray)
+    assert len(oversized) > 0
+    assert bytes(oversized).startswith(b"\xff\xd8\xff")

@@ -1323,11 +1323,28 @@ async def upload_id_document(
                 "얼굴 검사를 지금 수행할 수 없습니다. 잠시 후 다시 시도해 주세요.",
                 status=503,
             )
-        key = enrollment_id_document_key(enrollment_id, "jpg")
+        # 업로드 시도마다 새 키를 쓴다. 고정 키를 쓰면 동시/재시도 제출이 같은 객체를
+        # 공유해, 늦게 실패한 요청의 rowcount==0 정리(delete)가 먼저 커밋된 요청의
+        # 객체를 지워 버린다(리뷰 finding) — enrollment_quarantine_key 와 같은 이유다.
+        key = enrollment_id_document_key(enrollment_id, "jpg", version=uuid.uuid4().hex)
         r2 = _r2_face(request)
         async with get_conn(request) as conn:
             await _assert_account_open(conn, user_id)
-            await asyncio.to_thread(r2.put_bytes, key, data, mime)
+            try:
+                await asyncio.to_thread(r2.put_bytes, key, data, mime)
+            except Exception as exc:
+                logger.warning(
+                    "facemarket_enrollment_id_document_store_failed",
+                    extra={
+                        "enrollment_id": enrollment_id,
+                        "error_type": type(exc).__name__,
+                    },
+                )
+                raise _err(
+                    "storage_unavailable",
+                    "얼굴 저장소를 사용할 수 없습니다.",
+                    status=503,
+                )
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
