@@ -203,6 +203,33 @@ async def send_application_email(
     return await _send_email(settings, to=to, subject=subject, html=html, text=text)
 
 
+async def send_license_issued_email(
+    settings, *, to: str, display_name: str
+) -> tuple[bool, str | None, str | None]:
+    """활성화된 라이선스를 알린다. 키 미설정과 발송 실패는 발급을 되돌리지 않는다."""
+    if not settings.resend_api_key:
+        return False, None, "not_configured"
+    status_url = f"{settings.fm_application_public_base}/status"
+    safe_name = _escape(display_name)
+    subject = "[FaceMarket] 라이선스 증서가 발급됐어요"
+    html = _shell(
+        public_base=settings.fm_application_public_base,
+        heading="라이선스 증서가 발급됐어요",
+        body_html=(
+            f"{safe_name}님의 라이선스 증서가 발급됐어요. "
+            "로그인 후 마이페이지에서 확인할 수 있어요."
+        ),
+        cta=("마이페이지 열기", status_url),
+        footnote=f"버튼이 열리지 않으면 이 주소를 직접 열어 주세요: {status_url}",
+    )
+    text = (
+        f"{display_name}님의 라이선스 증서가 발급됐어요.\n\n"
+        "로그인 후 마이페이지에서 확인할 수 있어요.\n"
+        f"{status_url}\n"
+    )
+    return await _send_email(settings, to=to, subject=subject, html=html, text=text)
+
+
 async def send_usage_report_email(
     settings,
     *,

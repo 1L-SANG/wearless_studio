@@ -19,6 +19,7 @@ import logging
 import time
 import uuid
 from collections.abc import Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address
@@ -38,7 +39,7 @@ from . import repo
 from .auth import require_user
 from .db import get_conn
 from .facemarket_enrollment import BIOMETRIC_CONSENT_VERSION
-from .facemarket_notify import send_usage_report_email
+from .facemarket_notify import send_license_issued_email, send_usage_report_email
 from .models import CamelModel, ErrorResponse
 from .r2 import MIME_EXT
 
@@ -804,7 +805,10 @@ async def _find_license_by_enrollment(conn, user_id: str, enrollment_id: str) ->
         return await cur.fetchone()
 
 
-async def _find_license_for_update(conn, user_id: str, license_id: str) -> dict | None:
+async def _find_license_for_update(
+    conn, user_id: str, license_id: str, *, skip_locked: bool = False
+) -> dict | None:
+    lock_clause = "for update of l skip locked" if skip_locked else "for update of l"
     async with conn.cursor() as cur:
         await cur.execute(
             f"""select {_LICENSE_CARD_COLS_L}, l.enrollment_id::text as enrollment_id,
@@ -813,7 +817,7 @@ async def _find_license_for_update(conn, user_id: str, license_id: str) -> dict 
                 join fm_models m on m.id = l.model_id
                 where l.id = %s and m.user_id = %s
                 limit 1
-                for update of l""",
+                {lock_clause}""",
             (license_id, user_id),
         )
         return await cur.fetchone()
@@ -854,7 +858,8 @@ async def _load_activation_evidence_for_update(
     async with conn.cursor() as cur:
         await cur.execute(
             """select e.id::text as enrollment_id, e.status as enrollment_status,
-                      e.match_policy_version, m.id::text as model_id, m.status as model_status,
+                      e.match_policy_version, e.body_type as enrollment_body_type,
+                      m.id::text as model_id, m.status as model_status,
                       m.did as model_did, m.assets_status, m.current_enrollment_id::text,
                       m.reverification_batch_id::text as model_reverification_batch_id,
                       b.status as batch_status, b.completed_at as batch_completed_at,
@@ -1033,11 +1038,12 @@ async def finalize_issued_face_vc(
                     active = await cur.fetchone()
                     await cur.execute(
                         """update fm_models
-                              set did = coalesce(nullif(did, ''), %s), status = 'pending'
+                              set did = coalesce(nullif(did, ''), %s), status = 'pending',
+                                  body_type = %s
                             where id = %s and current_enrollment_id = %s
                               and status in ('pending', 'reverification_required')
                             returning id""",
-                        (issued.user_did, model_id, enrollment_id),
+                        (issued.user_did, evidence.get("enrollment_body_type"), model_id, enrollment_id),
                     )
                     model_updated = await cur.fetchone()
                     await cur.execute(
@@ -1110,6 +1116,82 @@ async def finalize_issued_face_vc(
     raise stale_error
 
 
+async def issue_and_activate_pending_face_vc(
+    app, *, user_id: str, license_id: str, model_id: str, connect=None
+) -> dict | None:
+    """한 pending 행을 잠근 채 VC 발급과 활성화를 끝내고 발급 메일을 보낸다."""
+    active = None
+    email = None
+    display_name = None
+    connect = connect or app.state.pool.connection
+    async with connect() as conn:
+        locked = await _find_license_for_update(
+            conn, user_id, license_id, skip_locked=True
+        )
+        if locked is None:
+            return None
+        if locked["status"] == "active":
+            await conn.commit()
+            return _license_card(locked)
+        if locked["status"] != "pending" or locked.get("vc_id") is not None:
+            await conn.rollback()
+            return None
+        enrollment_id = str(locked.get("enrollment_id") or "")
+        issued = await issue_face_vc(
+            app,
+            license_id=license_id,
+            model_id=model_id,
+            allowed=list(locked["allowed_use"] or []),
+            forbidden=[],
+            unit_price=int(locked["unit_price"]),
+            valid_until=locked["license_valid_until"],
+            digest=locked["face_image_digest"],
+        )
+
+        @asynccontextmanager
+        async def current_connection():
+            yield conn
+
+        active = await finalize_issued_face_vc(
+            current_connection,
+            user_id=user_id,
+            license_id=license_id,
+            model_id=model_id,
+            enrollment_id=enrollment_id,
+            issued=issued,
+        )
+        try:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """select a.contact_email, m.display_name
+                         from fm_models m
+                         left join lateral (
+                             select contact_email from fm_model_applications
+                              where user_id = m.user_id
+                              order by created_at desc limit 1
+                         ) a on true
+                        where m.id = %s and m.user_id = %s""",
+                    (model_id, user_id),
+                )
+                recipient = await cur.fetchone()
+            if recipient:
+                email = recipient.get("contact_email")
+                display_name = recipient.get("display_name")
+        except Exception:
+            logger.warning("license issued email recipient lookup failed", exc_info=True)
+    if email:
+        ok, _message_id, error = await send_license_issued_email(
+            app.state.settings,
+            to=email,
+            display_name=display_name or "모델",
+        )
+        if not ok and error != "not_configured":
+            logger.warning("license issued email failed: %s", error)
+    else:
+        logger.info("license issued email skipped: contact_email missing")
+    return active
+
+
 async def _await_post_issue_finalization(awaitable):
     task = asyncio.create_task(awaitable)
     try:
@@ -1175,6 +1257,24 @@ async def create_license(
         if existing and existing["status"] == "active":
             return existing
 
+        locked_pending = None
+        if existing:
+            license_id = existing["id"]
+            locked_pending = await _find_license_for_update(
+                conn, user_id, license_id, skip_locked=True
+            )
+            if locked_pending is None:
+                await conn.rollback()
+                raise _err(
+                    "vc_issue_delayed",
+                    "VC 발급이 지연되었습니다. 잠시 후 다시 시도해 주세요.",
+                    status=503,
+                )
+            if locked_pending["status"] == "active":
+                await conn.commit()
+                return _license_card(locked_pending)
+            existing = locked_pending
+
         model_id, key, digest = _checked_license_evidence(
             await _load_license_evidence(conn, user_id, enrollment_id)
         )
@@ -1214,6 +1314,20 @@ async def create_license(
                 unit_price = int(row["unit_price"])
                 digest = row["face_image_digest"]
 
+        if locked_pending is None:
+            locked_pending = await _find_license_for_update(
+                conn, user_id, license_id, skip_locked=True
+            )
+            if locked_pending is None:
+                await conn.rollback()
+                raise _err(
+                    "vc_issue_delayed",
+                    "VC 발급이 지연되었습니다. 잠시 후 다시 시도해 주세요.",
+                    status=503,
+                )
+            if locked_pending["status"] == "active":
+                await conn.commit()
+                return _license_card(locked_pending)
         allowed = _clean_uses(allowed, BRAND_USE_CATEGORIES)
         async with conn.cursor() as cur:
             await cur.execute(
@@ -1243,10 +1357,14 @@ async def create_license(
     # 얼굴·클레임은 절대 안 찍는다(§1.4): 소요시간과 결과만.
     issue_started = time.monotonic()
     try:
-        issued = await issue_face_vc(
-            request.app, license_id=license_id, model_id=str(model_id),
-            allowed=allowed, forbidden=[], unit_price=unit_price,
-            valid_until=valid_until, digest=digest,
+        active = await _await_post_issue_finalization(
+            issue_and_activate_pending_face_vc(
+                request.app,
+                user_id=user_id,
+                license_id=license_id,
+                model_id=str(model_id),
+                connect=lambda: get_conn(request),
+            )
         )
     except FaceVcIssueError as error:
         logger.info(
@@ -1259,19 +1377,6 @@ async def create_license(
             "VC 발급이 지연되었습니다. 잠시 후 다시 시도해 주세요.",
             status=error.status_code,
         )
-
-    logger.info("fm_vc_issue outcome=issued elapsed_s=%.1f", time.monotonic() - issue_started)
-    try:
-        return await _await_post_issue_finalization(
-            finalize_issued_face_vc(
-                lambda: get_conn(request),
-                user_id=user_id,
-                license_id=license_id,
-                model_id=model_id,
-                enrollment_id=enrollment_id,
-                issued=issued,
-            )
-        )
     except HTTPException:
         raise
     except Exception:
@@ -1280,6 +1385,14 @@ async def create_license(
             "VC 발급이 지연되었습니다. 잠시 후 다시 시도해 주세요.",
             status=503,
         )
+    if active is None:
+        raise _err(
+            "vc_issue_delayed",
+            "VC 발급이 지연되었습니다. 잠시 후 다시 시도해 주세요.",
+            status=503,
+        )
+    logger.info("fm_vc_issue outcome=issued elapsed_s=%.1f", time.monotonic() - issue_started)
+    return active
 
 
 @router.patch(

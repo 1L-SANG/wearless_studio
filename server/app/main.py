@@ -25,6 +25,7 @@ from .routes import router as v1_router, COMMON_RESPONSES
 from .workers.dispatcher import JobDispatcher, configured_job_kinds
 from .workers.draft_asset_reclaimer import DraftAssetReclaimer
 from .workers.fm_vc_revocation_reconciler import FaceVcRevocationReconciler
+from .workers.fm_vc_issue_reconciler import FaceVcIssueReconciler
 from .workers.sam_retry_pusher import SamRetryPusher
 from .services import sam_client
 from .services.sam_autoscale import SamAutoscaleAdapter
@@ -122,6 +123,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dispatcher = None
         draft_asset_reclaimer = None
         vc_revocation_reconciler = None
+        vc_issue_reconciler = None
         publication_anchor = None
         sam_retry_pusher = None
         sam_autoscaler = None
@@ -142,6 +144,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not detail_worker_only and (holder_configured or settings.fm_vc_required):
                 vc_revocation_reconciler = FaceVcRevocationReconciler(app)
                 await vc_revocation_reconciler.start()
+                vc_issue_reconciler = FaceVcIssueReconciler(app)
+                await vc_issue_reconciler.start()
             # sibling(vc_revocation_reconciler·draft_asset_reclaimer)과 같은 게이트: detail-worker
             # 전용 프로세스에서는 안 돈다. 이 자체가 nonce 충돌을 막지는 않는다(advisory lock 이
             # 진짜 방어 — anchor_one 참고) — 다만 오늘 이 워커가 detail-worker 에서 돌 이유가
@@ -233,6 +237,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await dispatcher.stop()
         if vc_revocation_reconciler is not None:
             await vc_revocation_reconciler.stop()
+        if vc_issue_reconciler is not None:
+            await vc_issue_reconciler.stop()
         if publication_anchor is not None:
             await publication_anchor.stop()
         if pool is not None:

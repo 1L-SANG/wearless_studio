@@ -121,6 +121,28 @@ def _compile_psycopg_query(sql, params):
     return query.query.decode()
 
 
+def test_license_row_lock_only_skips_locked_when_issue_path_requests_it():
+    store = {
+        "models": [{"id": MODEL_ID, "user_id": "user-1"}],
+        "licenses": [],
+        "enrollments": [],
+    }
+    conn = FakeConn(store)
+
+    asyncio.run(facemarket._find_license_for_update(conn, "user-1", "lic-1"))
+    blocking_sql = store["sql"][-1]
+    asyncio.run(
+        facemarket._find_license_for_update(
+            conn, "user-1", "lic-1", skip_locked=True
+        )
+    )
+    issue_sql = store["sql"][-1]
+
+    assert "for update of l skip locked" not in blocking_sql
+    assert "for update of l" in blocking_sql
+    assert "for update of l skip locked" in issue_sql
+
+
 class FakeR2Face:
     """app.state.r2_face 대역 — 바이트를 dict에 보관(put/get/delete)."""
 
@@ -523,6 +545,7 @@ class FakeCursor:
             self._result = {
                 "enrollment_id": e["id"],
                 "enrollment_status": e["status"],
+                "enrollment_body_type": e.get("body_type"),
                 "model_id": (m or {}).get("id"),
                 "model_status": (m or {}).get("status"),
                 "model_did": (m or {}).get("did"),
@@ -557,6 +580,9 @@ class FakeCursor:
             and "from fm_licenses l" in s
             and "where l.id = %s" in s
         ):
+            if self.store.pop("skip_locked_license_once", False):
+                self._result = None
+                return
             license_id, user_id = params[:2]
             owned = {m["id"] for m in models if m["user_id"] == user_id}
             row = next((r for r in licenses if r["id"] == license_id and r["model_id"] in owned), None)
@@ -577,6 +603,14 @@ class FakeCursor:
                 None,
             )
             self._result = {k: row[k] for k in _LICENSE_KEYS} if row else None
+            if row and self.store.pop("activate_after_pending_snapshot", False):
+                row["status"] = "active"
+                row["vc_id"] = "vc:winner"
+                enrollment = next(
+                    item for item in self.store["enrollments"]
+                    if item["id"] == row.get("enrollment_id")
+                )
+                enrollment.update(status="passed", decision="passed", vc_id="vc:winner")
         elif s.startswith("insert into fm_licenses") and "enrollment_id" in s:
             (lid, model_id, enrollment_id, gate_uri, key, digest,
              allowed, forbidden, unit_price, valid_until) = params
@@ -662,7 +696,7 @@ class FakeCursor:
             self._many = [{"id": r["id"], "vc_id": r.get("vc_id")} for r in rows]
             self.rowcount = len(rows)
         elif s.startswith("update fm_models set did ="):
-            user_did, model_id, enrollment_id = params[:3]
+            user_did, body_type, model_id, enrollment_id = params[:4]
             if self.store.get("final_model_update_misses"):
                 self._result = None
                 self.rowcount = 0
@@ -678,6 +712,7 @@ class FakeCursor:
                 m["status"] = "pending"
                 if user_did and not m.get("did"):
                     m["did"] = user_did
+                m["body_type"] = body_type
                 self._result = {"id": m["id"]}
                 self.rowcount = 1
             else:
@@ -1170,6 +1205,26 @@ def test_license_activates_after_vc_but_model_stays_pending_until_cut_confirmati
     assert all(c["secret"] == "shared-secret" for c in holder_stub.calls)
 
 
+@pytest.mark.parametrize("body_type", ["toned", None])
+def test_license_activation_copies_current_body_type_and_preserves_height(
+    biometric_fm, make_token, holder_stub, body_type
+):
+    client, store, _ = biometric_fm
+    enrollment_id = _seed_license_pending_enrollment(store)
+    store["enrollments"][0]["body_type"] = body_type
+    store["models"][0].update(body_type="slim", height_bucket="f_160_165")
+
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body(enrollment_id),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 201, response.text
+    assert store["models"][0]["body_type"] == body_type
+    assert store["models"][0]["height_bucket"] == "f_160_165"
+
+
 @pytest.mark.parametrize(
     ("term_case", "valid_days"),
     [
@@ -1568,7 +1623,7 @@ def test_final_activation_different_concurrent_winner_queues_loser_vc(
     assert set(store["revocations"]) == {"vc:dev:1"}
 
 
-def test_final_activation_queues_vc_after_license_and_model_are_deleted(
+def test_locked_activation_rolls_back_simulated_concurrent_delete_and_queues_vc(
     biometric_fm, make_token, holder_stub
 ):
     client, store, _ = biometric_fm
@@ -1589,8 +1644,10 @@ def test_final_activation_queues_vc_after_license_and_model_are_deleted(
     )
 
     assert response.status_code == 409
-    assert store["licenses"] == []
-    assert store["models"] == []
+    # 실제 DB에서는 발급 동안 라이선스 행 잠금이 삭제를 막는다. FakeConn은 잠금을 흉내내지
+    # 않으므로 after_issue 삭제를 실행하지만, 같은 트랜잭션의 rollback이 원래 행을 복구한다.
+    assert store["licenses"][0]["status"] == "pending"
+    assert store["models"][0]["id"] == deleted["model_id"]
     assert store["revocations"]["vc:dev:1"] == {
         "license_id": deleted["license_id"],
         "model_id": deleted["model_id"],
@@ -1856,6 +1913,62 @@ def test_conflict_reload_uses_persisted_terms_for_holder_claims(
         "faceImageDigest": "sha256-persisted-digest",
     }
     assert store["licenses"][0]["license_valid_until"] is None
+
+
+def test_create_license_skips_locked_pending_before_standardization(
+    biometric_fm, make_token, holder_stub
+):
+    client, store, _ = biometric_fm
+    enrollment_id = _seed_license_pending_enrollment(store)
+    pending = _seed_pending_license(
+        store, enrollment_id=enrollment_id, unit_price=4321,
+        allowed_use=["일반 의류"], forbidden_use=[],
+    )
+    store["skip_locked_license_once"] = True
+
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body(enrollment_id),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "vc_issue_delayed"
+    assert pending["unit_price"] == 4321
+    assert store["enrollments"][0]["status"] == "license_pending"
+    assert holder_stub.calls == []
+
+
+def test_create_license_locks_pending_snapshot_before_winner_marks_enrollment_passed(
+    biometric_fm, make_token, holder_stub
+):
+    client, store, _ = biometric_fm
+    enrollment_id = _seed_license_pending_enrollment(store)
+    pending = _seed_pending_license(
+        store, enrollment_id=enrollment_id,
+        allowed_use=["일반 의류"], forbidden_use=[],
+    )
+    store["activate_after_pending_snapshot"] = True
+
+    response = client.post(
+        "/v1/facemarket/licenses",
+        json=valid_license_body(enrollment_id),
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["id"] == pending["id"]
+    assert response.json()["vcId"] == "vc:winner"
+    assert store["enrollments"][0]["status"] == "passed"
+    assert holder_stub.calls == []
+    assert any(
+        "where l.id = %s" in sql and "for update of l skip locked" in sql
+        for sql in store["sql"]
+    )
+    assert not any(
+        "from fm_licenses l join fm_biometric_enrollments e" in sql
+        for sql in store["sql"]
+    )
 
 
 def test_final_stale_transition_does_not_report_active(
