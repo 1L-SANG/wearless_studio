@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 MIGRATION = Path(__file__).resolve().parents[2] / (
@@ -6,13 +7,19 @@ MIGRATION = Path(__file__).resolve().parents[2] / (
 
 
 def _sql():
-    return " ".join(MIGRATION.read_text().split()).lower()
+    text = MIGRATION.read_text()
+    # `--` 주석을 먼저 걷어낸다. 안 걷으면 이 파일의 단언이 전부 주석까지 훑는
+    # 통짜 substring 검색이 되어, CHECK 절에서 값이 빠져도 주석에 이름만 있으면
+    # 통과한다 — 안전망 흉내만 내는 테스트가 된다.
+    text = re.sub(r"--[^\n]*", " ", text)
+    return " ".join(text.split()).lower()
 
 
 def test_status_check_includes_new_states():
     sql = _sql()
-    assert "id_capture_pending" in sql
-    assert "review_pending" in sql
+    clause = sql[sql.index("fm_biometric_enrollments_status_check"):sql.index("fm_biometric_active_per_user")]
+    assert "id_capture_pending" in clause
+    assert "review_pending" in clause
     assert "drop constraint if exists" in sql
 
 
