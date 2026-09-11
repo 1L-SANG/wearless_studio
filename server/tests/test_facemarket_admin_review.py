@@ -648,6 +648,9 @@ class AdminStore:
             "reason": None,
             "decision": None,
             "created_at": datetime.now(timezone.utc),
+            # 생성 + 24h. 사람 심사는 그보다 늦게 끝나는 게 정상이라 승인 시점엔 이미
+            # 지나 있는 게 기본값이다(최종리뷰 I4 가 실제로 문제 삼은 상황).
+            "expires_at": datetime.now(timezone.utc) - timedelta(hours=2),
             "completed_at": None,
             "oacx_tx_digest": None,
             "id_document_r2_key": None,
@@ -743,6 +746,10 @@ class AdminFakeCursor:
         ):
             (review_status,) = params
             rows = [r for r in store.enrollments if r.get("review_status") == review_status]
+            # 대기 큐는 status='review_pending' 인 행만 센다 — 취소/만료된 행이 큐에 남으면
+            # 승인 버튼이 409 를 내는 유령 항목이 된다(최종리뷰 I5).
+            if "and status = 'review_pending'" in query:
+                rows = [r for r in rows if r["status"] == "review_pending"]
             rows.sort(key=lambda r: r["created_at"], reverse=True)
             self._many = [
                 {
@@ -760,6 +767,9 @@ class AdminFakeCursor:
         if "application_id::text as application_id" in query:
             (enrollment_id,) = params
             row = next((r for r in store.enrollments if r["id"] == enrollment_id), None)
+            # 심사에 들어온 등록만 본다(최종리뷰 I6) — 프로덕션 SQL 의 술어를 그대로 흉내낸다.
+            if row is not None and "review_status is not null" in query and not row.get("review_status"):
+                row = None
             self.result = None if row is None else dict(row)
             return
 
@@ -773,14 +783,20 @@ class AdminFakeCursor:
         if query.startswith("select id_document_r2_key from fm_biometric_enrollments"):
             (enrollment_id,) = params
             row = next((r for r in store.enrollments if r["id"] == enrollment_id), None)
+            # 이미지 라우트 쪽 SQL 에만 붙는 범위 술어(파기 경로의 같은 SELECT 엔 없다).
+            if row is not None and "review_status is not null" in query and not row.get("review_status"):
+                row = None
             self.result = {"id_document_r2_key": row.get("id_document_r2_key")} if row else None
             return
 
         # --- 이미지: 각도 사진 키 조회 ---
         if "fm_biometric_enrollment_photos" in query and query.startswith(
-            "select r2_key, mime_type"
+            "select p.r2_key, p.mime_type"
         ):
             enrollment_id, angle = params
+            enrollment = next(
+                (r for r in store.enrollments if r["id"] == enrollment_id), None
+            )
             photo = next(
                 (
                     p
@@ -789,6 +805,9 @@ class AdminFakeCursor:
                 ),
                 None,
             )
+            # join fm_biometric_enrollments … and e.review_status is not null (최종리뷰 I6)
+            if enrollment is None or not enrollment.get("review_status"):
+                photo = None
             self.result = photo
             return
 
@@ -797,9 +816,12 @@ class AdminFakeCursor:
             reviewed_by, enrollment_id = params
             row = next((r for r in store.enrollments if r["id"] == enrollment_id), None)
             if row and row["status"] == "review_pending" and row.get("review_status") == "pending":
+                now = datetime.now(timezone.utc)
                 row.update(
                     review_status="approved", reviewed_by=reviewed_by,
-                    reviewed_at=datetime.now(timezone.utc), status="processing",
+                    reviewed_at=now, status="processing",
+                    # expires_at = greatest(expires_at, now() + interval '1 hour')
+                    expires_at=max(row["expires_at"], now + timedelta(hours=1)),
                 )
                 self.result = {"id": enrollment_id}
             else:
@@ -959,6 +981,22 @@ class AdminFakeCursor:
             row = next((r for r in store.enrollments if r["id"] == enrollment_id), None)
             if row is not None:
                 row["match_scores"] = _json_value(match_scores)
+            return
+
+        # --- 재조정 스윕 select(최종리뷰 I4) ---
+        # reviewed_at 간격 조건은 흉내내지 않는다(가짜 시계가 없다) — 여기서 검증하려는
+        # 건 "승인됐는데 잡이 안 걸린 행을 다시 집는가" 이지 지연 시간이 아니다.
+        if "e.status = 'processing' and e.review_status = 'approved'" in query:
+            (limit,) = params
+            pending = [
+                r
+                for r in store.enrollments
+                if r["status"] == "processing" and r.get("review_status") == "approved"
+                and not any(
+                    (j.get("payload") or {}).get("enrollmentId") == r["id"] for j in store.jobs
+                )
+            ]
+            self._many = [{"id": r["id"]} for r in pending[:limit]]
             return
 
         if query.startswith("insert into jobs"):
@@ -1382,3 +1420,120 @@ def test_image_requires_admin(admin_client):
         f"/v1/facemarket/admin/enrollments/{store.latest_id}/images/id_document"
     )
     assert response.status_code == 403
+
+
+# ── 최종리뷰 I4 · I5 · I6 ─────────────────────────────────────────────────────────────
+
+
+def test_approve_pushes_expires_at_out_of_the_sweep(admin_client):
+    """승인은 expires_at 을 미래로 민다.
+
+    expires_at 은 '생성 + 24h' 인데 사람 심사는 그보다 늦게 끝나는 게 정상이다. 그리고
+    'processing' 은 만료 스윕의 대상 상태다 — 안 밀면 승인된 등록이 ≤60초 안에 expired 로
+    뒤집히고 격리 사진까지 지워진다(최종리뷰 I4).
+    """
+    client, store = admin_client(is_admin=True)
+    enrollment_id = store.add_enrollment(
+        status="review_pending", review_status="pending", identity_method="simple_auth",
+    )
+    before = store.latest_enrollment["expires_at"]
+    assert before < datetime.now(timezone.utc), "픽스처 전제: 승인 시점엔 이미 만료 시각이 지났다"
+    assert client.post(f"/v1/facemarket/admin/enrollments/{enrollment_id}/approve").status_code == 200
+    assert store.latest_enrollment["expires_at"] > datetime.now(timezone.utc), (
+        "승인이 expires_at 을 안 밀면 방금 승인한 등록이 곧바로 만료 스윕 대상이다"
+    )
+
+
+async def _run_resume_sweep(client):
+    from app.facemarket_admin_review import sweep_stalled_review_approvals
+
+    return await sweep_stalled_review_approvals(client.app, limit=20)
+
+
+def test_stalled_approval_is_reconciled_by_the_sweep(admin_client):
+    """재개가 실패해 processing+approved 로 멈춘 행을 스윕이 다시 집는다(최종리뷰 I4).
+
+    이 스윕이 없으면 아무도 다시 시도하지 않는다 — 사람이 ERROR 로그를 읽을 때쯤이면
+    신분증은 이미 파기됐고 사진도 만료 스윕이 지운 뒤라 복구가 불가능하다.
+    """
+    import asyncio
+
+    client, store = admin_client(is_admin=True)
+    enrollment_id = store.add_enrollment(
+        status="review_pending", review_status="pending", identity_method="simple_auth",
+    )
+    # 승인 시점의 재개는 레이스로 실패시킨다 → status='processing', 잡 0건.
+    store.race_lost_enrollment_ids.add(enrollment_id)
+    body = client.post(f"/v1/facemarket/admin/enrollments/{enrollment_id}/approve").json()
+    assert body["assetBuildError"] == "race_lost"
+    assert store.jobs == [], "재개가 실패했으므로 아직 잡이 없어야 한다"
+
+    # 원인이 사라진 뒤 스윕이 돈다.
+    store.race_lost_enrollment_ids.discard(enrollment_id)
+    assert asyncio.run(_run_resume_sweep(client)) == 1
+    assert len(store.jobs) == 1 and store.jobs[0]["kind"] == "fm_model_asset_build"
+    assert store.latest_enrollment["status"] == "asset_building"
+
+    # 두 번 돌아도 중복 큐잉하지 않는다(상태가 이미 asset_building 이라 대상이 아니다).
+    assert asyncio.run(_run_resume_sweep(client)) == 0
+    assert len(store.jobs) == 1
+
+
+def test_review_queue_pending_excludes_rows_that_left_review(admin_client):
+    """review_status 만 보면 취소·만료된 행이 대기 큐에 영원히 남는다(최종리뷰 I5).
+
+    그 행에 승인을 누르면 상태 가드 UPDATE 가 0-row → 409 다. 심사자는 지울 수도, 처리할
+    수도 없는 유령 항목을 계속 본다.
+    """
+    client, store = admin_client(is_admin=True)
+    store.add_enrollment(status="review_pending", review_status="pending",
+                         identity_method="simple_auth")
+    live_id = store.latest_id
+    # 사용자가 취소했지만(또는 만료됐지만) review_status 가 남아 있는 행.
+    store.add_enrollment(status="cancelled", review_status="pending",
+                         identity_method="simple_auth")
+    rows = client.get("/v1/facemarket/admin/enrollments?review=pending").json()
+    assert [row["id"] for row in rows] == [live_id]
+
+
+def test_review_card_and_images_are_scoped_to_enrollments_under_review(admin_client):
+    """심사에 들어오지 않은 등록(mid 포함)은 카드도 이미지도 볼 수 없다(최종리뷰 I6).
+
+    이 라우터는 `fm_biometric_enrollment_enabled` 로 마운트돼 간편인증이 꺼진 프로덕션에서도
+    살아 있다 — 범위 술어가 없으면 등록 id 하나만 알면 **모든 등록의 생체 사진 3장**을
+    스트리밍할 수 있고, 이 브랜치 이전엔 그런 라우트가 아예 없었다.
+    """
+    client, store = admin_client(is_admin=True)
+    enrollment_id = store.add_enrollment(
+        status="liveness_pending", review_status=None, identity_method="mid",
+        id_document_r2_key="facemarket/enrollments/x/iddoc/a.jpg",
+    )
+    store.add_photo(enrollment_id, "front", "private/x/front.jpg")
+
+    assert client.get(f"/v1/facemarket/admin/enrollments/{enrollment_id}").status_code == 404
+    assert client.get(
+        f"/v1/facemarket/admin/enrollments/{enrollment_id}/images/front"
+    ).status_code == 404
+    assert client.get(
+        f"/v1/facemarket/admin/enrollments/{enrollment_id}/images/id_document"
+    ).status_code == 404
+
+
+def test_review_image_view_writes_an_audit_row(admin_client):
+    """이미지 열람도 감사 기록을 남긴다(최종리뷰 I6, 처리방침 §접속기록).
+
+    승인·거절은 남기는데 열람만 안 남기면 "누가 무엇을 봤는가"가 아무 데도 없다.
+    """
+    client, store = admin_client(is_admin=True)
+    enrollment_id = store.add_enrollment(
+        status="review_pending", review_status="pending", identity_method="simple_auth",
+        id_document_r2_key="facemarket/enrollments/x/iddoc/a.jpg",
+    )
+    assert client.get(
+        f"/v1/facemarket/admin/enrollments/{enrollment_id}/images/id_document"
+    ).status_code == 200
+    views = [row for row in store.audit if row["action"] == "enrollment_review_image_view"]
+    assert len(views) == 1
+    assert views[0]["target_id"] == enrollment_id
+    assert views[0]["note"] == "id_document"
+    assert views[0]["actor_user_id"] == "admin-1"

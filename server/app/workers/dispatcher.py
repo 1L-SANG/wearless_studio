@@ -280,6 +280,17 @@ class JobDispatcher:
                 await sweep_terminal_application_pii(self.app, limit=100)
             except Exception:
                 log.exception("terminal application pii sweep failed")
+            # 승인됐는데 자산빌드가 안 걸린 등록 재조정(최종리뷰 I4). 승인 응답·ERROR 로그·
+            # 감사 행으로 "보이게" 는 했지만 아무도 다시 시도하지 않아, 사람이 알아챌 때쯤엔
+            # 신분증도 사진도 이미 파기된 뒤였다 — 이 스윕이 실제로 다시 집는다.
+            try:
+                from ..facemarket_admin_review import sweep_stalled_review_approvals
+
+                resumed = await sweep_stalled_review_approvals(self.app, limit=20)
+                if resumed:
+                    log.info("enrollment_review_resume_reconciled count=%d", resumed)
+            except Exception:
+                log.exception("stalled review approval sweep failed")
             # 신분증 촬영본 파기 안전망 3번째 겹(Task9) — 승인/거절 즉시 파기, 취소/실패/
             # 만료 정리(cleanup_terminal_enrollment)가 전부 실패해도 7일 지난 iddoc/ 객체는
             # R2 prefix 를 직접 훑어(DB 비의존) 지운다. list_prefix_aged/delete 는 동기

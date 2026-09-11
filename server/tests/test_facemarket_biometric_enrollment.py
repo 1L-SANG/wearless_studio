@@ -896,13 +896,23 @@ class FakeCursor:
                     for item in self.store.enrollments
                     if item["id"] == enrollment_id
                     and item["user_id"] == user_id
-                    and (item["status"] in ACTIVE_STATUSES or item["status"] == "cancelled")
+                    # 프로덕션 cancel SQL 의 상태 목록을 따른다 — ACTIVE_STATUSES 는 mid
+                    # 시절의 7개라 간편인증 신규 두 상태(id_capture_pending·review_pending)가
+                    # 빠져 있다. 그대로 쓰면 취소 경로가 이 페이크에서만 404 가 된다.
+                    and (
+                        item["status"] in ACTIVE_STATUSES
+                        or item["status"] in {"cancelled", "id_capture_pending", "review_pending"}
+                    )
                 ),
                 None,
             )
             if row:
                 row["status"] = "cancelled"
                 row["completed_at"] = row.get("completed_at") or NOW
+                # 취소한 등록이 관리자 대기 큐에 남지 않게 review_status='pending' 만 비운다
+                # (이미 내려진 승인·거절 기록은 그대로 둔다).
+                if row.get("review_status") == "pending":
+                    row["review_status"] = None
                 self.result = {"id": row["id"]}
         elif query.startswith("select e.status, p.angle, p.r2_key"):
             self.conn.store.terminal_cleanup_loads += 1
@@ -4693,3 +4703,41 @@ def test_completion_select_projects_every_column_read():
         f"_initial_completion_checks 의 SELECT 에 없는 컬럼을 읽는다: {missing}. "
         "dict_row 라 그 값은 항상 None 이 된다 — SELECT 목록에 추가해야 한다."
     )
+
+
+def test_cancel_clears_pending_review_status(enrollment_client, auth, enrollment_store):
+    """취소한 등록은 관리자 대기 큐에서도 사라져야 한다(최종리뷰 I5).
+
+    `cancel_enrollment` 는 review_pending 을 받아 주면서 review_status 를 안 지웠다 —
+    큐는 review_status 로만 필터하므로 그 행이 영원히 대기 목록에 남고, 심사자가 승인을
+    누르면 상태 가드 UPDATE 가 0-row → 409 다. 지울 수도 처리할 수도 없는 유령 항목이다.
+    """
+    enrollment_id = create_enrollment(enrollment_client, auth, verify_identity=False)
+    row = enrollment_store.enrollments[0]
+    row["status"] = "review_pending"
+    row["review_status"] = "pending"
+
+    response = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/cancel", headers=auth()
+    )
+
+    assert response.status_code == 200, response.text
+    # 커밋이 store 를 새 dict 로 갈아끼우므로 요청 뒤에 다시 읽는다.
+    cancelled = enrollment_store.enrollments[0]
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["review_status"] is None
+
+
+def test_cancel_keeps_a_decided_review_status(enrollment_client, auth, enrollment_store):
+    """이미 내려진 승인·거절 기록까지 지우지는 않는다 — 'pending' 일 때만 비운다."""
+    enrollment_id = create_enrollment(enrollment_client, auth, verify_identity=False)
+    row = enrollment_store.enrollments[0]
+    row["status"] = "processing"
+    row["review_status"] = "approved"
+
+    response = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/cancel", headers=auth()
+    )
+
+    assert response.status_code == 200, response.text
+    assert enrollment_store.enrollments[0]["review_status"] == "approved"

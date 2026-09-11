@@ -48,6 +48,14 @@ REVIEW_STATUSES = ("pending", "approved", "rejected")
 PHOTO_ANGLES = ("front", "angle45", "side")
 IMAGE_KINDS = ("id_document",) + PHOTO_ANGLES
 
+# 이 라우터가 볼 수 있는 등록의 범위. `review_status` 가 채워진 행 = 실제로 사람 심사에
+# 들어온 등록뿐이다. 이 술어가 없으면 관리자 카드·이미지 라우트가 **등록 id 하나만 알면
+# 모든 등록의 생체 사진 3장**(mid 경로 포함)을 스트리밍한다 — 이 브랜치 이전엔 관리자에게
+# 등록 사진을 주는 라우트가 아예 없었고, 라우터는 FM_IDENTITY_METHODS 가 아니라
+# fm_biometric_enrollment_enabled 로 마운트돼 간편인증이 꺼진 프로덕션에서도 살아 있다
+# (최종리뷰 I6). 열람 자체도 감사 기록을 남긴다(처리방침 §접속기록).
+REVIEW_SCOPE = " and review_status is not null"
+
 ENROLLMENT_CARD_COLUMNS = """
     id::text as id, user_id::text as user_id, model_id::text as model_id,
     identity_method, review_status, status, match_scores,
@@ -211,13 +219,20 @@ async def list_review_queue(
         await _require_admin(conn, user_id, request)
         if review not in REVIEW_STATUSES:
             raise _err("invalid_review_filter", "심사 상태 필터가 올바르지 않습니다.")
+        # `review_status` 만 보면 **취소·만료된 행이 대기 큐에 영원히 남는다**:
+        # cancel_enrollment 는 review_pending 을 받아 주면서 review_status 를 안 지웠고
+        # (이제는 지운다), 그 행에 승인을 누르면 상태 가드 UPDATE 가 0-row → 409 다.
+        # 지금은 두 겹으로 막는다 — 취소 시 review_status 를 null 로 만들고, 대기 큐는
+        # status='review_pending' 인 행만 센다(최종리뷰 I5). 승인·거절 필터는 결정 이후의
+        # 상태(processing/asset_building/… , failed)가 다양하므로 상태를 걸지 않는다.
+        pending_only = " and status = 'review_pending'" if review == "pending" else ""
         async with conn.cursor() as cur:
             # created_at desc — 마이그레이션의 fm_biometric_review_queue 부분 인덱스와 정렬을 맞춘다.
             await cur.execute(
-                """
+                f"""
                 select id::text as id, identity_method, review_status, status, created_at
                 from fm_biometric_enrollments
-                where review_status = %s
+                where review_status = %s{pending_only}
                 order by created_at desc
                 limit 200
                 """,
@@ -240,12 +255,15 @@ async def list_review_queue(
 async def get_review_card(
     request: Request, enrollment_id: str, user_id: str = Depends(require_user)
 ):
+    """심사 대상 등록의 카드. **심사에 들어온 등록만** 조회할 수 있다 —
+    `REVIEW_SCOPE` 주석 참조(최종리뷰 I6)."""
     async with get_conn(request) as conn:
         await _require_admin(conn, user_id, request)
         enrollment_id = _canonical_id(enrollment_id)
         async with conn.cursor() as cur:
             await cur.execute(
-                f"select {ENROLLMENT_CARD_COLUMNS} from fm_biometric_enrollments where id = %s",
+                f"select {ENROLLMENT_CARD_COLUMNS} from fm_biometric_enrollments "
+                f"where id = %s{REVIEW_SCOPE}",
                 (enrollment_id,),
             )
             row = await cur.fetchone()
@@ -261,7 +279,12 @@ async def get_review_image(
 ):
     """신분증·등록 사진 스트림. `kind` 는 화이트리스트만 허용 — 클라이언트 문자열을
     R2 키에 절대 그대로 끼워 넣지 않는다. 응답은 항상 private·no-store(생체 이미지가
-    프록시·CDN·브라우저 캐시 어디에도 남지 않게)."""
+    프록시·CDN·브라우저 캐시 어디에도 남지 않게).
+
+    범위는 `REVIEW_SCOPE`(심사에 들어온 등록)로 제한하고, **열람할 때마다 감사 행을
+    남긴다** — 이 라우트는 등록자의 신분증·얼굴 사진을 사람이 볼 수 있는 유일한 자리다.
+    승인·거절은 감사 기록을 남기는데 열람만 안 남기면, 누가 무엇을 봤는지 아무 데도 없다
+    (최종리뷰 I6, 처리방침 §접속기록 2년)."""
     async with get_conn(request) as conn:
         await _require_admin(conn, user_id, request)
         enrollment_id = _canonical_id(enrollment_id)
@@ -270,7 +293,8 @@ async def get_review_image(
         async with conn.cursor() as cur:
             if kind == "id_document":
                 await cur.execute(
-                    "select id_document_r2_key from fm_biometric_enrollments where id = %s",
+                    "select id_document_r2_key from fm_biometric_enrollments "
+                    f"where id = %s{REVIEW_SCOPE}",
                     (enrollment_id,),
                 )
                 found = await cur.fetchone()
@@ -278,13 +302,25 @@ async def get_review_image(
                 mime_hint = None
             else:
                 await cur.execute(
-                    "select r2_key, mime_type from fm_biometric_enrollment_photos "
-                    "where enrollment_id = %s and angle = %s",
+                    "select p.r2_key, p.mime_type from fm_biometric_enrollment_photos p "
+                    "join fm_biometric_enrollments e on e.id = p.enrollment_id "
+                    "where p.enrollment_id = %s and p.angle = %s "
+                    "and e.review_status is not null",
                     (enrollment_id, kind),
                 )
                 found = await cur.fetchone()
                 key = found.get("r2_key") if found else None
                 mime_hint = found.get("mime_type") if found else None
+        # 키를 못 찾아도(파기됨·범위 밖) 시도 자체를 남긴다 — "무엇을 보려 했는가" 도 기록이다.
+        await admin_guard.write_audit(
+            conn,
+            actor_user_id=user_id,
+            action="enrollment_review_image_view",
+            target_type="enrollment",
+            target_id=enrollment_id,
+            note=kind,
+        )
+        await conn.commit()
     if not key:
         raise _err("not_found", "이미지를 찾을 수 없습니다.", status=404)
     r2 = _r2_face(request)
@@ -330,43 +366,48 @@ async def _bind_and_enqueue_locked(request: Request, enrollment_id: str) -> None
     던진다(호출자가 로그·가시성·응답 표기를 전담) — 이 함수 자체는 실패를 삼키지 않는다."""
     settings = request.app.state.settings
     async with get_conn(request) as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                """
-                select id::text as id, user_id::text as user_id, model_id::text as model_id,
-                       identity_method, match_scores, identity_ci_hash, identity_tx_digest,
-                       identity_name_masked, identity_birth_year, identity_contract_version,
-                       profile_image_r2_key, height_bucket, body_type
-                from fm_biometric_enrollments
-                where id = %s and status = 'processing' and review_status = 'approved'
-                for update
-                """,
-                (enrollment_id,),
-            )
-            row = await cur.fetchone()
-            if row is None:
-                raise _ResumeRaceLost()
-            # 정상 완료 경로(process_enrollment_completion)와 동일한 두 관문 — 승인
-            # 시점과 재개 시점 사이(짧지만 0 은 아닌 창) 계정이 닫히거나 컷오버가
-            # 시작됐다면, 재개는 여기서 멈춰야 한다(fix round 1, IMPORTANT E).
-            await _assert_account_open(conn, row["user_id"])
-            await _reject_cutover_closed(conn)
-            method = row.get("identity_method") or "mid"
-            match_snapshot = row.get("match_scores") or {}
-            await bind_model_and_enqueue_asset_build(
-                cur,
-                user_id=row["user_id"],
-                enrollment_id=enrollment_id,
-                row=row,
-                match_snapshot=match_snapshot,
-                method=method,
-                identity_contract_version=row.get("identity_contract_version"),
-                # 재개 시점엔 원래 라이브니스 프레임이 이미 사라졌다 — 리뷰 대상은 항상
-                # fm_liveness_enabled=False 조합이라(Task7) 실질적 정보 손실은 없다.
-                liveness_provider_version="disabled_resume",
-                match_policy_version=settings.fm_match_policy_version,
-            )
-        await conn.commit()
+        await _bind_and_enqueue_on_conn(conn, settings, enrollment_id)
+
+
+async def _bind_and_enqueue_on_conn(conn, settings, enrollment_id: str) -> None:
+    """요청 컨텍스트 없이도 쓸 수 있는 본체(재조정 스윕이 같은 코드를 재사용한다)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select id::text as id, user_id::text as user_id, model_id::text as model_id,
+                   identity_method, match_scores, identity_ci_hash, identity_tx_digest,
+                   identity_name_masked, identity_birth_year, identity_contract_version,
+                   profile_image_r2_key, height_bucket, body_type
+            from fm_biometric_enrollments
+            where id = %s and status = 'processing' and review_status = 'approved'
+            for update
+            """,
+            (enrollment_id,),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            raise _ResumeRaceLost()
+        # 정상 완료 경로(process_enrollment_completion)와 동일한 두 관문 — 승인
+        # 시점과 재개 시점 사이(짧지만 0 은 아닌 창) 계정이 닫히거나 컷오버가
+        # 시작됐다면, 재개는 여기서 멈춰야 한다(fix round 1, IMPORTANT E).
+        await _assert_account_open(conn, row["user_id"])
+        await _reject_cutover_closed(conn)
+        method = row.get("identity_method") or "mid"
+        match_snapshot = row.get("match_scores") or {}
+        await bind_model_and_enqueue_asset_build(
+            cur,
+            user_id=row["user_id"],
+            enrollment_id=enrollment_id,
+            row=row,
+            match_snapshot=match_snapshot,
+            method=method,
+            identity_contract_version=row.get("identity_contract_version"),
+            # 재개 시점엔 원래 라이브니스 프레임이 이미 사라졌다 — 리뷰 대상은 항상
+            # fm_liveness_enabled=False 조합이라(Task7) 실질적 정보 손실은 없다.
+            liveness_provider_version="disabled_resume",
+            match_policy_version=settings.fm_match_policy_version,
+        )
+    await conn.commit()
 
 
 async def _resume_asset_build(
@@ -446,7 +487,13 @@ async def approve_enrollment(
                 """
                 update fm_biometric_enrollments
                 set review_status = 'approved', reviewed_by = %s, reviewed_at = now(),
-                    status = 'processing'
+                    status = 'processing',
+                    -- expires_at 은 생성 + 24h 다. 사람 심사는 그보다 늦게 끝나는 게 정상이라
+                    -- 승인하는 순간 이미 만료 시각을 지났고, 'processing' 은 만료 스윕의
+                    -- 대상 상태다 — 손대지 않으면 승인된 등록이 ≤60초 안에 expired 로
+                    -- 뒤집히고 격리 사진까지 지워진다(최종리뷰 I4). 자산 빌드가 붙잡을
+                    -- 시간을 준다.
+                    expires_at = greatest(expires_at, now() + interval '1 hour')
                 where id = %s and status = 'review_pending' and review_status = 'pending'
                 returning id::text as id
                 """,
@@ -534,3 +581,63 @@ async def reject_enrollment(
             id=enrollment_id, review_status="rejected", status="failed"
         ).model_dump(by_alias=True)
     )
+
+
+# --- 재조정 스윕 ---------------------------------------------------------------------
+
+
+# 승인 직후 자산빌드 재개가 실패하면(레이스·identity_replay·일시 장애) 행은
+# status='processing' + review_status='approved' 로 멈춘다. 응답·ERROR 로그·감사 행으로
+# 보이게는 해 뒀지만 **아무도 다시 시도하지 않았다** — 사람이 로그를 읽을 때쯤이면
+# 신분증은 이미 파기됐고 사진도 만료 스윕이 지운 뒤다(최종리뷰 I4). 이 스윕이 그 행을
+# 주기적으로 다시 집는다. 승인 UPDATE 가 expires_at 을 1시간 뒤로 밀어 두므로 그 안에
+# 몇 번은 재시도된다.
+REVIEW_RESUME_RETRY_AFTER = "2 minutes"
+
+
+async def sweep_stalled_review_approvals(app, *, limit: int = 20) -> int:
+    """승인됐는데 자산빌드가 안 걸린 등록을 다시 집어 bind/enqueue 를 시도한다.
+
+    반환값은 이번 tick 에 성공적으로 재개한 건수. 실패는 다음 tick 이 다시 본다 —
+    영구 실패(identity_replay 등)는 매번 WARNING 을 남기므로 알람이 걸린다.
+    """
+    pool = getattr(app.state, "pool", None)
+    if pool is None:
+        return 0
+    settings = app.state.settings
+    limit = max(1, min(int(limit), 100))
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                f"""
+                select e.id::text as id
+                from fm_biometric_enrollments e
+                where e.status = 'processing' and e.review_status = 'approved'
+                  and e.reviewed_at < now() - interval '{REVIEW_RESUME_RETRY_AFTER}'
+                  and not exists (
+                      select 1 from jobs j
+                      where j.kind = 'fm_model_asset_build'
+                        and j.payload->>'enrollmentId' = e.id::text
+                  )
+                order by e.reviewed_at
+                limit %s
+                """,
+                (limit,),
+            )
+            rows = await cur.fetchall()
+        await conn.commit()
+
+    resumed = 0
+    for row in rows:
+        enrollment_id = row["id"]
+        try:
+            async with pool.connection() as conn:
+                await _bind_and_enqueue_on_conn(conn, settings, enrollment_id)
+            resumed += 1
+            logger.info("enrollment_review_resume_reconciled enrollment=%s", enrollment_id)
+        except Exception as exc:
+            logger.warning(
+                "enrollment_review_resume_retry_failed enrollment=%s error_type=%s",
+                enrollment_id, type(exc).__name__,
+            )
+    return resumed

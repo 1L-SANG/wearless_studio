@@ -2751,7 +2751,11 @@ async def cancel_enrollment(
                 await cur.execute(
                     """
                     update fm_biometric_enrollments e
-                    set status = 'cancelled', completed_at = coalesce(completed_at, now())
+                    set status = 'cancelled', completed_at = coalesce(completed_at, now()),
+                        -- 취소한 등록이 관리자 대기 큐에 영원히 남지 않게 한다(최종리뷰 I5).
+                        -- 이미 승인/거절된 행의 결정 기록은 지우지 않는다 — 'pending' 일 때만 비운다.
+                        review_status = case when e.review_status = 'pending'
+                                             then null else e.review_status end
                     where e.id = %s and e.user_id = %s and e.status in (
                         'id_capture_pending', 'identity_pending', 'photos_pending',
                         'review_pending', 'liveness_pending', 'processing',
