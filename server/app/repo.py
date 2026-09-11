@@ -478,6 +478,11 @@ async def list_library(conn: AsyncConnection, user_id: str) -> list[dict]:
                     when prodimg.aid is not null then '/v1/assets/' || prodimg.aid || '/file'
                     else ''
                 end as cover,
+                -- 라우트가 커버를 CDN 리사이즈 URL 로 올릴지 판단할 재료. 판단 자체는
+                -- 서빙 경로(`_asset_is_real_derived`)와 같은 분류기가 한 곳에서 한다.
+                cova.r2_key as cover_r2_key,
+                cova.source as cover_source,
+                cova.metadata as cover_metadata,
                 prod.clothing_type,
                 case when jsonb_typeof(pr.editor_blocks) = 'array'
                      then jsonb_array_length(pr.editor_blocks) else 0 end as block_count,
@@ -486,7 +491,7 @@ async def list_library(conn: AsyncConnection, user_id: str) -> list[dict]:
             from projects pr
             left join products prod on prod.project_id = pr.id
             left join lateral (
-                select mc.asset_id::text as aid
+                select mc.asset_id as aid_uuid, mc.asset_id::text as aid
                 from mannequin_cuts mc
                 where mc.project_id = pr.id
                 order by mc.version desc, mc.candidate
@@ -505,6 +510,14 @@ async def list_library(conn: AsyncConnection, user_id: str) -> list[dict]:
                          ((im->>'slot') = 'Front') desc
                 limit 1
             ) prodimg on true
+            -- 마네킹컷 커버만 조인한다. 상품사진 커버의 id 는 jsonb 텍스트라 uuid 캐스팅이
+            -- 안전하지 않고(잘못된 값 하나가 목록 전체를 500 으로 만든다), 그쪽은 업로드본
+            -- 이라 이미 R2 공개 경로를 탄다 — 느렸던 건 마네킹컷 쪽이다.
+            left join lateral (
+                select a.r2_key, a.source, a.metadata
+                from assets a
+                where a.id = cutc.aid_uuid and a.deleted_at is null
+            ) cova on true
             where pr.user_id = %s and pr.deleted_at is null and pr.status = 'done'
             order by pr.updated_at desc
             """,
