@@ -274,6 +274,20 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   FM_APPLICATION_FROM_EMAIL: "FaceMarket <noreply@wearless.kr>"
   # 실 OACX 모바일신분증 계약(D1 dlphotoimage). dev-mock 은 dev 전용이라 prod 는 이 값이어야 한다.
   FM_OACX_CONTRACT_MODE: prod-dlphoto-v1
+  # ---- 신분증 촬영 + 간편인증 분기 + 관리자 육안 심사(2026-09-11) — 전부 off 로 시작 ----
+  # 등록 위저드에 노출할 본인인증 수단. mid = 모바일 신분증만(현행 UX 그대로, 이 branch 이전과 동일).
+  # 간편인증을 켜려면 "mid,simple_auth" + VITE_FM_IDENTITY_METHODS(프론트, 같은 값) +
+  # VITE_CX_AUTH_CONFIG_URL(프론트) + FM_OACX_SIMPLE_AUTH_CONTRACT=simple-auth-v1 이 함께 필요하다.
+  # 데모/해커톤 발표 모드 = 이 값 하나를 mid 로 되돌리는 것 — 인증수단 선택 버튼·신분증 촬영·
+  # 관리자 심사 대기가 전부 사라지고 배포 없이(env 값만 바꿔서) 현행 UX 로 돌아간다.
+  FM_IDENTITY_METHODS: "mid"
+  # 관리자 육안 심사 범위. simple_auth_only = 촬영 신분증 경로만 사람이 본다(mid 경로는 무관).
+  # 심사가 병목이 되면 off 로 즉시 해제할 수 있다(off | simple_auth_only | all).
+  FM_ENROLLMENT_REVIEW: "simple_auth_only"
+  # 간편인증 응답 스키마가 실거래로 확정되기 전까지 disabled — 호출 자체가 막힌다(disabled | simple-auth-v1).
+  # 확정 항목: (1) ci 포함 여부 (2) trans/{token} vs authen/result
+  # (3) v1.5_enc userInfo 복호화 (4) 라온 auth config 발급·과금
+  FM_OACX_SIMPLE_AUTH_CONTRACT: "disabled"
   # CX trans 서버조회(cx.raonsecure.co.kr:18543)는 RaonSecure 방화벽이 **한국 IP만** 허용한다.
   # api 가 us-east-1(env use1)로 옮겨진 뒤 미국 egress 는 ConnectTimeout → /identity 500.
   # 해결: ap-northeast-2(서울)의 얇은 프록시(API GW→Lambda, fm-cx-proxy)로 우회해 한국 IP 로 나간다.
