@@ -15,6 +15,7 @@ import { seoulDateTime } from '@/lib/datetime.js';
 
 const ACTION_LABEL = {
   mannequinGenerate: '마네킹 생성',
+  'mannequinGenerate.reserve': '마네킹 무료 수정',
   'mannequinGenerate.release': '예약 해제',
   grant_subscription: '구독 크레딧 충전',
   grant_topup: '추가 구매',

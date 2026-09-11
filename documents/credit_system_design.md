@@ -188,9 +188,9 @@ reject_refund(admin, req):
 
 ## 5. 단가 구현 상태와 미해결 항목
 
-**구현 상태(2026-09-11):** 1cr=50원, `credit_cost_version="v6"`. 마네킹 생성·재생성 45cr, 폐기된 조정 0cr, 상세페이지 AI 컷 19cr, 에디터 이미지 19cr을 기존 예약·확정·해제 경로에 배선했다. 서버 `config.credit_cost_*`와 프론트 `CREDIT_COSTS`가 같은 값을 사용한다. 플랜 지급량 8종과 실모델 원화 표준가 14,900원·49,900원도 코드에 반영했다. 프로덕션 배포와 DB 적용은 이 문단의 완료 주장에 포함하지 않는다.
+**구현 상태(2026-09-11):** 1cr=50원, `credit_cost_version="v6"`. 마네킹 기본 생성과 무료 횟수 초과 재생성 45cr, 폐기된 조정 0cr, 상세페이지 AI 컷 19cr, 에디터 이미지 19cr을 기존 예약·확정·해제 경로에 배선했다. 서버 `config.credit_cost_*`와 프론트 `CREDIT_COSTS`가 같은 값을 사용한다. 플랜 지급량 8종과 실모델 원화 표준가 14,900원·49,900원도 코드에 반영했다. 프로덕션 배포와 DB 적용은 이 문단의 완료 주장에 포함하지 않는다.
 
-컷아웃 10cr은 설계값이며 현재 무과금 경로에는 예약·확정 원장 처리가 없어 별도 트랙이다. 확장 가상모델 상품당 19cr(플랜 사다리 19/10/0), 마네킹 무료 수정 사다리 1/1/2, Pro 모든 AI 모델 무료, Seller 50% 할인, 실모델 라이선스 크레딧 차감 298/998/158, 월권 10건 캡도 별도 트랙이다. 개인화 생성은 기존 3cr을 유지하며 오너 결정이 필요하다.
+컷아웃 10cr은 설계값이며 현재 무과금 경로에는 예약·확정 원장 처리가 없어 별도 트랙이다. 실모델 라이선스 크레딧 차감 298/998/158, 월권 10건 캡도 별도 트랙이다. 개인화 생성은 기존 3cr을 유지하며 오너 결정이 필요하다.
 
 - **월 리셋 자동화**: lazy(account 접근 시 period_end<now면 reset) vs 스케줄러 vs **PG 결제 웹훅**. 셋 다 §3.1을 account lock 하에서 호출. PG가 마지막 단계라 베타는 수동 `grant_subscription`. 설계는 모두 수용.
 - **cross-cycle 청구 허용**: 지난 주기에 시작된 job이 리셋 후 confirm되면 새 주기 버킷서 정산됨(회계상 무해, full-plan 지급이라 항상 커버). 불변식 5의 assert가 이상 시 노출.
@@ -198,6 +198,16 @@ reject_refund(admin, req):
 - **환불 적격 정밀화**(불변식 2): MVP `reserved==0`(진행중 job 있으면 환불 거부, 과보수적) → Path A 도입 시 "이 버킷이 어떤 hold도 안 가짐"으로 완화.
 - **stuck 예약 복구**(NEW-2): confirm의 `assert remain==0`이 (극단 edge로) 반복 rollback되면 job이 `running`에 머물러 `reserved`가 묶임. **영구 stuck 없음** — lease 만료 시 dispatcher의 `recover_stale_leases`가 그 job을 `error`로 종결하고 예약을 release(기존 AG-04 stale 복구 경로 = `list_unsettled_errored_jobs` 재시도). 운영 런북: stale 복구가 못 푸는 케이스는 해당 job/account 수동 점검.
 - **구독 해지/구독료 환불**: 본 문서 밖(PG 단계).
+
+### 5.1 플랜별 규칙
+
+배선됨(2026-09-11, PR #260). 서버 `app/plan_pricing.py`의 `EXTENSION_MODEL_FEE`와 `FREE_MANNEQUIN_ADJUSTS`가 정책 정본이며 프론트 `src/lib/limits.js`가 같은 값을 미러한다. 알 수 없는 플랜은 `free`로 보정한다. 단가 버전은 `v6`를 유지한다.
+
+- 확장 가상모델 mC부터 mN까지는 상품당 첫 마네킹 생성 예약에 Free와 Starter 19cr, Seller 10cr, Pro 0cr을 더한다. Mia(mA)와 Leo(mB), 실모델 UUID, 미선택은 추가 요금이 없다. `jobs.metadata`와 성공 정산 원장에 `extensionModelFee`, `plan`, `selectedModelId`를 남긴다. 완료 컷 캐시 반환과 활성 잡 합류에는 새 예약이 없다.
+- 무료 수정은 상품당 Free와 Starter와 Seller 1회, Pro 2회다. `kind='mannequin'`, `status='done'`인 잡 수 N을 읽고 `mannequin_regenerate_cost(plan, N, base_cost)`에서 N이 무료 횟수 이하면 0cr, 초과하면 45cr로 계산한다. 첫 생성이 N=1이며 실패와 취소, 진행 중 잡은 집계하지 않는다. 재생성에는 확장 모델 요금이 없다.
+- `reserve_credits`는 0 예약을 허용한다. 무료 수정은 같은 예약 트랜잭션에서 `record_free_mannequin_adjust`가 기존 `_settle_credits`를 이용해 `delta=0` 행을 남긴다. `freeAdjust=true`, `adjustIndex=N`, `plan`을 기록하고, 멱등키는 `credit:job:{id}:free-adjust`로 성공과 실패의 정산키와 분리한다. 버킷과 잔액은 바뀌지 않는다.
+- `GET /v1/projects/{id}/credit-quote`는 인증과 소유 확인을 거쳐 `plan`, `mannequinGenerate`, `mannequinRegenerate`, `storyboardPerCut`, `editorImage`를 반환한다. `selectedModelId` 쿼리가 있으면 저장된 선택보다 우선한다. 조회는 비소모 API이므로 읽기 응답 객체를 직접 반환한다. `usedAdjusts=max(N-1,0)`이며 재생성 라우트와 같은 계산 함수를 호출한다.
+- `extensionFeeAlreadyPaid`는 성공한 잡의 확장 요금 기록 유무를 알리는 값이다. 분석 확정 후 같은 프로젝트의 모델을 바꿔 첫 생성을 다시 시작하는 UI 경로는 차단되어 있어 추가 면제 분기를 구현하지 않는다. 생성 견적은 기본 단가와 현재 선택의 확장 요금 합계이고, 완료 캐시 반환은 기존처럼 실제 차감이 없다.
 
 ---
 

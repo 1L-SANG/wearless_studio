@@ -104,9 +104,10 @@ def test_virtual_model_catalogs_and_public_assets_stay_in_sync():
         # 행 단위로 id·표시명·성별·썸네일이 **한 줄 안에서** 짝지어져 있는지 본다.
         # 셋을 따로 substring 검사하면 이름이 서로 바뀌거나 썸네일이 남의 것이어도
         # 통과한다(2026-08-17 리뷰 지적) — 선택 화면과 생성 아이덴티티가 어긋나는 사고다.
+        tier = "basic" if model_id in {"mA", "mB"} else "extension"
         assert re.search(
             rf"\{{\s*id:\s*'{model_id}',\s*displayName:\s*'{re.escape(name)}',"
-            rf"\s*gender:\s*'{gender}',\s*thumb:\s*'{re.escape(thumb)}'\s*\}}",
+            rf"\s*gender:\s*'{gender}',\s*thumb:\s*'{re.escape(thumb)}',\s*tier:\s*'{tier}'\s*\}}",
             catalog_source,
         ), f"{model_id} row mismatched in aiModels.js"
         assert re.search(

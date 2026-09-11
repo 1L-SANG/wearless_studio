@@ -83,6 +83,12 @@ def test_cancel_route_is_idempotent_when_no_active_job(
 
 
 def _wire_join_route(monkeypatch, *, job, requested_snapshot):
+    async def fake_pricing(conn, user_id, project_id):
+        return {"plan": "free", "selected_model_id": "mA", "done_count": 2,
+                "extension_fee_already_paid": False}
+
+    monkeypatch.setattr(routes.repo, "get_mannequin_pricing_state", fake_pricing)
+
     async def fake_get_project(conn, user_id, project_id):
         return {"id": project_id}
 

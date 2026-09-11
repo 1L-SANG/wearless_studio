@@ -27,6 +27,16 @@ test('gender-change confirmation reserves only the new mannequin generation cost
   );
 });
 
+test('mannequin preflight accepts a quoted plan-aware total while preserving its default', () => {
+  assert.deepEqual(mannequinGenerationCreditShortfall({ credits: 63 }, 64), {
+    availableCredits: 63,
+    requiredCredits: 64,
+    message: '크레딧이 부족해요 — 보유 63 · 필요 64. 충전 후 다시 시도해 주세요.',
+  });
+  assert.equal(mannequinGenerationCreditShortfall({ credits: 64 }, 64), null);
+  assert.equal(mannequinGenerationCreditShortfall({ credits: 45 }), null);
+});
+
 test('detail-page confirmation multiplies AI cuts by the canonical per-cut cost', () => {
   const shortfall = detailPageGenerationCreditShortfall({ credits: 56 }, 3);
   assert.equal(shortfall.availableCredits, 56);

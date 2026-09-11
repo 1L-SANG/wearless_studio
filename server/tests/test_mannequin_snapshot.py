@@ -30,6 +30,12 @@ def _auth(make_token):
 
 
 def _wire_route_fakes(monkeypatch, *, stored_profile, captured):
+    async def fake_pricing(conn, user_id, project_id):
+        return {"plan": "free", "selected_model_id": "mA", "done_count": 2,
+                "extension_fee_already_paid": False}
+
+    monkeypatch.setattr(routes.repo, "get_mannequin_pricing_state", fake_pricing)
+
     async def fake_get_project(conn, uid, pid):
         return {"id": pid}
 
@@ -266,3 +272,18 @@ def test_run_candidate_emits_prompt_rendered_hashes(monkeypatch):
     assert ev["prompt_version"] == settings.mannequin_prompt_version
     # 원문 미포함(다이제스트만) — 이벤트 payload 에 프로필/프롬프트 문자열이 없어야 함
     assert "slim" not in str(ev) and "FIT PROFILE" not in str(ev)
+
+
+def test_worker_confirms_reserved_extension_total_with_pricing_metadata(monkeypatch):
+    calls = {"success": [], "failure": [], "emits": [], "run": []}
+    app, job = _wire_worker(
+        monkeypatch, analysis={"targetGenders": ["women"]},
+        payload={"mode": "generate"}, calls=calls,
+    )
+    job["credits_reserved"] = 64
+    job["metadata"] = {"extensionModelFee": 19, "plan": "starter", "selectedModelId": "mE"}
+    asyncio.run(mannequin_job.run_mannequin_job(app, job))
+    assert calls["failure"] == []
+    confirmed = calls["success"][0]
+    assert confirmed["charge"] == confirmed["reserved"] == 64
+    assert {key: confirmed["metadata"][key] for key in job["metadata"]} == job["metadata"]

@@ -27,6 +27,12 @@ def _auth(make_token):
 
 
 def _wire_mannequin_fakes(monkeypatch, created=True):
+    async def fake_pricing(conn, user_id, project_id):
+        return {"plan": "free", "selected_model_id": "mA", "done_count": 2,
+                "extension_fee_already_paid": False}
+
+    monkeypatch.setattr(routes.repo, "get_mannequin_pricing_state", fake_pricing)
+
     async def fake_get_project(conn, uid, pid):
         return {"id": pid}
 

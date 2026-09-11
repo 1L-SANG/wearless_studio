@@ -26,7 +26,14 @@ import {
   recommendLegacyMatchClothing,
   removeCustomMatchFromAnalysis,
 } from '@/mock/matchingRecommendation.js';
-import { CREDIT_COSTS, LIMITS } from '@/lib/limits.js';
+import {
+  CREDIT_COSTS,
+  LIMITS,
+  extensionModelFee,
+  mannequinGenerationTotal,
+  mannequinRegenerationQuote,
+  normalizePlanTier,
+} from '@/lib/limits.js';
 import { normalizeMatchClothingSelection } from '@/lib/api/matchingItems.js';
 import { uid } from '@/lib/ids.js';
 import { shouldMarkStoryboardDirty } from '@/lib/generationExamples.js';
@@ -51,7 +58,7 @@ const jobCancelledError = () => {
 const settleMockMannequinCharge = (job) => {
   if (!job.creditsSettled) {
     job.creditsSettled = true;
-    job.credits = spend(CREDIT_COSTS.mannequinGenerate);
+    job.credits = spend(job.creditCost ?? CREDIT_COSTS.mannequinGenerate);
   }
   return job.credits;
 };
@@ -191,6 +198,25 @@ export const api = {
   async getCatalogs() { await wait(80); return clone(DB.catalogs); },
 
   /* ---- credits (표시 전용; 실서버는 httpAdapter. 계약 §6) ---- */
+  async getCreditQuote(_projectId, { selectedModelId } = {}) {
+    await wait(60);
+    const plan = normalizePlanTier(DB.account.plan);
+    const modelId = selectedModelId ?? DB.analysis.selectedModelId ?? null;
+    const extensionFee = extensionModelFee(plan, modelId);
+    return {
+      plan,
+      mannequinGenerate: {
+        base: CREDIT_COSTS.mannequinGenerate,
+        extensionModelFee: extensionFee,
+        total: mannequinGenerationTotal(plan, modelId),
+        selectedModelId: modelId,
+        extensionFeeAlreadyPaid: DB.mannequinExtensionFeePaid === true,
+      },
+      mannequinRegenerate: mannequinRegenerationQuote(plan, DB.mannequins.length),
+      storyboardPerCut: CREDIT_COSTS.storyboardPerCut,
+      editorImage: CREDIT_COSTS.editorImage,
+    };
+  },
   async getPricingPlans() {
     await wait(80);
     return [
@@ -519,6 +545,10 @@ export const api = {
     }
     const job = joinable('mannequins', (listeners, activeJob) => (async () => {
       const ownerId = DB.project.id;   // job 도중 새 프로젝트로 리시드되면 결과를 버린다
+      // 시작 순간 견적을 job에 고정한다. 생성 중 모델이나 플랜을 바꿔도 취소와 성공이
+      // 서로 다른 금액을 정산하지 않게 하는 실서버 credits_reserved 스냅샷의 mock 대응이다.
+      activeJob.extensionModelFee = extensionModelFee(DB.account.plan, DB.analysis.selectedModelId);
+      activeJob.creditCost = mannequinGenerationTotal(DB.account.plan, DB.analysis.selectedModelId);
       // 실서버 체감(25~60s)에 근접시켜 로딩 시퀀스(인트로 3.5s+루프)가 보이게 한다
       await runJob({
         duration: 9000,
@@ -533,7 +563,9 @@ export const api = {
         syncSelectedCut(DB.mannequins[0].id);
       }
       touch();
-      return { data: cutsEnvelope(), credits: settleMockMannequinCharge(activeJob) };
+      const credits = settleMockMannequinCharge(activeJob);
+      if (activeJob.extensionModelFee > 0) DB.mannequinExtensionFeePaid = true;
+      return { data: cutsEnvelope(), credits };
     })());
     if (onProgress) job.listeners.push(onProgress);
     return job.promise;
@@ -549,6 +581,9 @@ export const api = {
     return { cancelled: true, credits };
   },
   async regenerateMannequin(_projectId, { fitProfile, onProgress } = {}) {
+    // 완료 컷 1개가 첫 생성 done job 1개다. 이후 컷은 성공한 재생성마다 하나씩 늘어나므로
+    // 현재 mock에서는 cuts.length가 서버 done_count와 같은 근거다.
+    const creditCost = mannequinRegenerationQuote(DB.account.plan, DB.mannequins.length).nextCost;
     await runJob({ duration: 2200, onProgress });
     if (fitProfile) {
       DB.project.fitProfile = clone(fitProfile);
@@ -560,7 +595,7 @@ export const api = {
     DB.mannequins.push(next);
     syncSelectedCut(next.id);
     touch();
-    return { data: cutsEnvelope(), credits: spend(CREDIT_COSTS.mannequinGenerate) };
+    return { data: cutsEnvelope(), credits: spend(creditCost) };
   },
 
   /* ---- storyboard (PRD §8) ---- */

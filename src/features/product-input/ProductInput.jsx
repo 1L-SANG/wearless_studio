@@ -12,7 +12,11 @@ import { uid } from '@/lib/ids.js';
 import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppStore.js';
 import { generationWorkWarningKind } from '@/lib/generationWorkWarning.js';
 import { mannequinGenerationCreditShortfall } from '@/lib/creditPreflight.js';
-import { CREDIT_COSTS } from '@/lib/limits.js';
+import {
+  CREDIT_COSTS,
+  mannequinGenerationTotal,
+  mannequinRegenerationCreditText,
+} from '@/lib/limits.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { CreditShortfallModal } from '@/features/credits/CreditShortfallModal.jsx';
 import {
@@ -460,6 +464,7 @@ export function ProductInput() {
   const [pendingRelevantPatch, setPendingRelevantPatch] = useState(null);
   const [cancellingRelevantPatch, setCancellingRelevantPatch] = useState(false);
   const [creditShortfall, setCreditShortfall] = useState(null);
+  const [creditQuote, setCreditQuote] = useState(null);
   const [creditResume, setCreditResume] = useState(() => (
     location.state?.creditResume?.action === 'storyboard' ? location.state.creditResume : null
   ));
@@ -616,8 +621,8 @@ export function ProductInput() {
   const guardMannequinCredits = () => {
     // 클릭 순간의 loadAccount 캐시만 읽는다. 비로그인·아직 계정을 못 불러온 상태는 과차단하지
     // 않고 통과시키며, 실제 잔액 정합성은 기존 서버 402 방어선이 계속 책임진다.
-    const account = session ? useAppStore.getState().account : null;
-    const shortfall = mannequinGenerationCreditShortfall(account);
+    const cachedAccount = session ? useAppStore.getState().account : null;
+    const shortfall = mannequinGenerationCreditShortfall(cachedAccount, mannequinRequiredCredits);
     if (!shortfall) return true;
     setCreditShortfall(shortfall);
     return false;
@@ -871,6 +876,25 @@ export function ProductInput() {
     jobProjectId: mannequinJobProjectId,
     projectId: analysisProjectId,
   });
+  const currentQuote = creditQuote?.mannequinGenerate?.selectedModelId === analysis?.selectedModelId
+    ? creditQuote
+    : null;
+  const mannequinGenerationCost = currentQuote?.mannequinGenerate?.total
+    ?? mannequinGenerationTotal(useAppStore.getState().account?.plan, analysis?.selectedModelId);
+  const mannequinRegenerationCost = currentQuote?.mannequinRegenerate?.nextCost
+    ?? CREDIT_COSTS.mannequinGenerate;
+  const mannequinRequiredCredits = generationWorkKind === 'cuts'
+    ? mannequinRegenerationCost
+    : mannequinGenerationCost;
+
+  useEffect(() => {
+    if (!analysisProjectId || phase !== 'done') return undefined;
+    let alive = true;
+    api.getCreditQuote(analysisProjectId, { selectedModelId: analysis?.selectedModelId })
+      .then((quote) => { if (alive) setCreditQuote(quote); })
+      .catch(() => { /* 즉시 계산값과 서버 생성 요청의 402 판정을 유지한다. */ });
+    return () => { alive = false; };
+  }, [analysis?.selectedModelId, analysisProjectId, phase]);
 
   // 생성 관련 필드 편집 요청 — 기존 작업(마네킹 컷이 있거나, 지금 생성이 도는 중)이 있으면
   // 바로 적용하지 않고 대가를 먼저 보여준다. 없으면(새 프로젝트의 첫 분석 검토) 잃을 게
@@ -1443,7 +1467,7 @@ export function ProductInput() {
           ) : (
             <>
               <h3>바꾸면 마네킹 컷을 다시 만들어야 해요</h3>
-              <p>마네킹 컷이 다시 만들어져요 · {CREDIT_COSTS.mannequinGenerate} 크레딧. 콘티에서 고른 촬영 세트도 다시 골라야 해요.</p>
+              <p>마네킹 컷이 다시 만들어져요 · {mannequinRegenerationCreditText(creditQuote?.mannequinRegenerate)}. 콘티에서 고른 촬영 세트도 다시 골라야 해요.</p>
             </>
           )}
           <div className="modal-actions">
