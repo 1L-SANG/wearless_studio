@@ -227,9 +227,9 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 오너가 확정한 1차 baseline은 best-of/provider 재호출이 없는 first-result 계약이다.
   DETAIL_CUT_MAX_ATTEMPTS: "1"
   GARMENT_QC_MODE: "off"
-  # 관리자 콘솔 기기 게이트. 코드 기본 shadow. 두 관리자가 콘솔에서 서로 기기를 승인한 뒤
-  # enforce 로 올린다. 락아웃 복구 = shadow 로 내렸다 다시 enforce. 런북 docs/runbooks/admin-device-gate.md
-  # ADMIN_DEVICE_GATE: enforce
+  # 관리자 콘솔 기기 게이트. 코드 기본 shadow. 2026-09-11 관리자 2명이 콘솔에서 서로 기기를
+  # 승인한 뒤 enforce 로 올렸다. 락아웃 복구 = shadow 로 내렸다 다시 enforce. 런북 docs/runbooks/admin-device-gate.md
+  ADMIN_DEVICE_GATE: enforce
   CUT_OUTPUT_QC_MODE: repair
   # text tier 모델. AI Studio 유효 id 여야 한다 — 구값 'gemini-3-pro' 는 미존재라 Gemini 404 로
   # 분석이 통째로 죽었다(2026-07-07). OpenAI 키 미설정이라 gemini 가 유일 provider = 폴백 없음.
