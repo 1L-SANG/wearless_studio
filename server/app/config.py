@@ -318,6 +318,15 @@ class Settings:
     # 탈취된 세션 하나가 목록을 스팸으로 덮고 Slack 을 울릴 수 있다.
     admin_device_max_pending_per_user: int = 5
     fm_oacx_contract_mode: str = "disabled"
+    # 등록 위저드에 노출할 본인인증 수단. mid=모바일 신분증(OACX ENT_MID),
+    # simple_auth=간편인증(ENT_SIMPLE_AUTH)+신분증 촬영. 기본은 mid 하나 —
+    # 해커톤 발표 때 이 한 줄로 신규 경로 전체가 사라진다.
+    fm_identity_methods: tuple[str, ...] = ("mid",)
+    # 관리자 육안 심사 적용 범위. simple_auth_only = 촬영 신분증 경로만 사람이 본다
+    # (mid 는 OACX VC 서명검증이 있어 기계 대조로 충분).
+    fm_enrollment_review: str = "simple_auth_only"  # off | simple_auth_only | all
+    # 간편인증 응답 스키마가 실거래로 확정되기 전에는 disabled — 호출 자체가 막힌다.
+    fm_oacx_simple_auth_contract: str = "disabled"  # disabled | simple-auth-v1
     # AWS Face Liveness 사용 여부. off 면 라이브니스 세션을 만들지 않고 SFace 매칭 앵커를
     # OACX 신분증 초상으로 쓴다(업로드 사진 ↔ 신분증 초상). 본인확인은 OACX 모바일신분증(실시간
     # 폰 인증)이 담당하므로 라이브니스는 애드온. 기본 true = 기존 동작 보존.
@@ -480,6 +489,23 @@ def _flag(env: str, default: str, allowed: set[str]) -> str:
     """검색 증강 flag — 허용값 밖이면 안전하게 default(대개 'off')로 폴백."""
     v = (os.getenv(env, default) or default).strip().lower()
     return v if v in allowed else default
+
+
+_IDENTITY_METHODS = ("mid", "simple_auth")
+
+
+def _identity_methods_env() -> tuple[str, ...]:
+    """FM_IDENTITY_METHODS 를 순서 있는 튜플로. 알 수 없는 값은 버린다.
+
+    오타 하나가 인증 수단을 통째로 지워 등록이 아예 불가능해지는 걸 막는다 —
+    남는 게 없으면 ("mid",) 로 되돌린다.
+    """
+    raw = os.getenv("FM_IDENTITY_METHODS", "mid")
+    picked = tuple(
+        m for m in _IDENTITY_METHODS
+        if m in {part.strip() for part in raw.split(",") if part.strip()}
+    )
+    return picked or ("mid",)
 
 
 def _build_sha() -> str | None:
@@ -681,6 +707,15 @@ def load_settings() -> Settings:
         admin_device_gate=_flag("ADMIN_DEVICE_GATE", "shadow", {"off", "shadow", "enforce"}),
         admin_device_max_pending_per_user=_int_env("ADMIN_DEVICE_MAX_PENDING_PER_USER", 5),
         fm_oacx_contract_mode=os.getenv("FM_OACX_CONTRACT_MODE", "disabled"),
+        fm_identity_methods=_identity_methods_env(),
+        fm_enrollment_review=_flag(
+            "FM_ENROLLMENT_REVIEW", "simple_auth_only",
+            {"off", "simple_auth_only", "all"},
+        ),
+        fm_oacx_simple_auth_contract=_flag(
+            "FM_OACX_SIMPLE_AUTH_CONTRACT", "disabled",
+            {"disabled", "simple-auth-v1"},
+        ),
         fm_liveness_enabled=(
             os.getenv("FM_LIVENESS_ENABLED", "true").lower() == "true"
         ),
