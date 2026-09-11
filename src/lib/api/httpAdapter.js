@@ -711,6 +711,9 @@ export const httpAdapter = {
   async getAccount() {
     return http('/v1/me/account');
   },
+  async getCreditQuote(projectId, { selectedModelId } = {}) {
+    return http(`/v1/projects/${projectId}/credit-quote${selectedModelId ? `?selectedModelId=${encodeURIComponent(selectedModelId)}` : ''}`);
+  },
   async getLibrary() {
     // mock 의 { forceEmpty, forceError } 옵션은 실서버에선 무의미 — 무시.
     return http('/v1/projects?view=library');

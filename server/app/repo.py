@@ -121,6 +121,29 @@ async def get_account(conn: AsyncConnection, user_id: str) -> dict | None:
         return await cur.fetchone()
 
 
+async def get_mannequin_pricing_state(
+    conn: AsyncConnection, user_id: str, project_id: str,
+) -> dict:
+    """소유 확인 뒤 호출. 플랜, 저장된 선택, 성공 횟수를 같은 DB 스냅샷에서 읽는다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select
+                (select plan from profiles where user_id = %s) as plan,
+                (select payload->>'selectedModelId' from analyses
+                 where project_id = %s) as selected_model_id,
+                count(*) filter (where status = 'done') as done_count,
+                coalesce(bool_or(status = 'done'
+                    and coalesce(cast(metadata->>'extensionModelFee' as integer), 0) > 0), false)
+                    as extension_fee_already_paid
+            from jobs
+            where user_id = %s and project_id = %s and kind = 'mannequin'
+            """,
+            (user_id, project_id, user_id, project_id),
+        )
+        return await cur.fetchone()
+
+
 # 첫 값 보존 + 다른 앱이 오면 'both' 로 승격. 한 문장으로 쓰는 이유는 경합이다 —
 # select 로 읽고 파이썬에서 합쳐 update 하면, 두 탭(셀러·FaceMarket)이 같은 순간에
 # 스탬프를 보낼 때 늦은 쪽이 이른 쪽을 덮어 'both' 가 한쪽 값으로 되돌아간다.
@@ -1712,6 +1735,21 @@ async def create_job(
         raise RuntimeError("create_job: 활성 합류 대상이 반복적으로 사라짐 (드문 레이스)")
 
 
+async def set_pending_job_pricing(
+    conn: AsyncConnection, *, user_id: str, job_id: str,
+    credits_reserved: int, metadata: dict,
+) -> None:
+    """새로 INSERT한 미커밋 job 전용. 호출자는 같은 트랜잭션에서 크레딧도 예약한다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update jobs set credits_reserved = %s, metadata = %s "
+            "where id = %s and user_id = %s and status = 'pending' returning id",
+            (credits_reserved, Json(metadata), job_id, user_id),
+        )
+        if await cur.fetchone() is None:
+            raise RuntimeError("set_pending_job_pricing: pending job missing")
+
+
 async def claim_next_job(conn: AsyncConnection, kinds: tuple[str, ...], worker_id: str) -> dict | None:
     """pending job 1건을 FOR UPDATE SKIP LOCKED로 점유 → running + lease (§5).
 
@@ -2167,6 +2205,17 @@ async def _settle_credits(
             (new_balance, new_reserved, user_id),
         )
     return new_available
+
+
+async def record_free_mannequin_adjust(
+    conn: AsyncConnection, *, user_id: str, project_id: str, job_id: str, metadata: dict,
+) -> int:
+    """무료 수정도 예약 트랜잭션에서 delta=0 원장을 남긴다. 정산 키와 분리한다."""
+    return await _settle_credits(
+        conn, user_id=user_id, project_id=project_id, job_id=job_id,
+        reserved=0, charge=0, action_key="mannequinGenerate.reserve",
+        settle_key=f"credit:job:{job_id}:free-adjust", metadata=metadata,
+    )
 
 
 async def release_credits(

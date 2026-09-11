@@ -142,7 +142,11 @@ function ModelDetailModal({ model, onClose, onSelect, selectable }) {
 // 글자 폭 추정(em) — 한글 ≈1em, 그 외 ≈0.55em. '직접 입력' pill이 다른 칩과 같은 크기로
 // 시작해 내용 길이만큼만 유동 확장되게 하는 계산 (2026-07-13 사용자 피드백).
 const chWidth = (s) => [...s].reduce((n, ch) => n + (/[가-힣]/.test(ch) ? 1 : 0.55), 0).toFixed(1);
-import { CREDIT_COSTS } from '@/lib/limits.js';
+import {
+  extensionModelGroupLabel,
+  mannequinGenerationCtaLabel,
+  mannequinGenerationTotal,
+} from '@/lib/limits.js';
 import { seoulDate } from '@/lib/datetime.js';
 import {
   createMeasurementFields,
@@ -585,6 +589,7 @@ export function AnalysisForm({
   const toast = useToast();
   const { session, loading: authLoading } = useAuth();
   const composeMode = useAppStore((s) => s.composeMode);
+  const account = useAppStore((s) => s.account);
   const setComposeMode = useAppStore((s) => s.setComposeMode);
   const restoreComposeMode = useAppStore((s) => s.restoreComposeMode);
   const composeModeSaveRef = useRef(Promise.resolve());
@@ -592,6 +597,7 @@ export function AnalysisForm({
   const [composeModeSaving, setComposeModeSaving] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [composeModeOpen, setComposeModeOpen] = useState(false);
+  const [creditQuote, setCreditQuote] = useState(null);
   const composeModeMenuRef = useRef(null);
   const composeModeTriggerRef = useRef(null);
   useEffect(() => {
@@ -633,6 +639,14 @@ export function AnalysisForm({
   useEffect(() => {
     if (composeModeSaving || confirming) setComposeModeOpen(false);
   }, [composeModeSaving, confirming]);
+  useEffect(() => {
+    if (!projectId) return undefined;
+    let alive = true;
+    api.getCreditQuote(projectId, { selectedModelId: a.selectedModelId })
+      .then((quote) => { if (alive) setCreditQuote(quote); })
+      .catch(() => { /* 즉시 계산값을 유지하고 최종 잔액 판정은 서버 생성 요청에 맡긴다. */ });
+    return () => { alive = false; };
+  }, [a.selectedModelId, projectId]);
   const [washing, setWashing] = useState(false);
   const [spDraft, setSpDraft] = useState('');
   const [ccDraft, setCcDraft] = useState(a.customCategory || '');   // 직접 입력 pill (blur 커밋)
@@ -801,6 +815,15 @@ export function AnalysisForm({
   const aiSet = new Set(a.aiSuggestedPoints || []);
   const selectableModels = models.filter((model) => model.hasActiveLicense);
   const pendingLicenseModels = models.filter((model) => !model.hasActiveLicense);
+  const currentQuote = creditQuote?.mannequinGenerate?.selectedModelId === a.selectedModelId
+    ? creditQuote
+    : null;
+  const quotePlan = currentQuote?.plan || account?.plan;
+  const mannequinGenerationCost = currentQuote?.mannequinGenerate?.total
+    ?? mannequinGenerationTotal(account?.plan, a.selectedModelId);
+  const visibleAiModels = AI_MODELS.filter(
+    (model) => !a.targetGenders?.[0] || model.gender === a.targetGenders[0],
+  );
   const applyAnalysisReplacement = useCallback((nextAnalysis) => {
     if (!nextAnalysis) return;
     if (onAnalysisReplace) onAnalysisReplace(nextAnalysis);
@@ -1262,21 +1285,32 @@ export function AnalysisForm({
         {modelTab === 'ai' ? (
           /* 성별 칩과 같은 성별만 노출(2026-08-01 사용자 결정) — 칩 미선택이면 전체.
              이름은 사진 위 우측 하단에 흰 글씨로 얹는다(별도 메타 줄 없음). */
-          <div className="model-grid">
-            {AI_MODELS
-              .filter((m) => !a.targetGenders?.[0] || m.gender === a.targetGenders[0])
-              .map((m) => {
-                const on = a.selectedModelId === m.id;
-                return (
-                  <div key={m.id} className={`model-card fm-model ai-model${on ? ' on' : ''}`}
-                    onClick={() => onChange({ selectedModelId: m.id, stylingModelId: null })} title={m.displayName}>
-                    <img src={m.thumb} alt={m.displayName} />
-                    <span className="ai-name">
-                      {m.displayName}{on && <Icon name="check" size={12} />}
-                    </span>
+          <div className="ai-model-groups">
+            {['basic', 'extension'].map((tier) => {
+              const group = visibleAiModels.filter((model) => model.tier === tier);
+              if (!group.length) return null;
+              return (
+                <div className="ai-model-group" key={tier}>
+                  <div className="ai-model-group-title">
+                    {tier === 'basic' ? '기본 · 무료' : extensionModelGroupLabel(quotePlan)}
                   </div>
-                );
-              })}
+                  <div className="model-grid">
+                    {group.map((m) => {
+                      const on = a.selectedModelId === m.id;
+                      return (
+                        <div key={m.id} className={`model-card fm-model ai-model${on ? ' on' : ''}`}
+                          onClick={() => onChange({ selectedModelId: m.id, stylingModelId: null })} title={m.displayName}>
+                          <img src={m.thumb} alt={m.displayName} />
+                          <span className="ai-name">
+                            {m.displayName}{on && <Icon name="check" size={12} />}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         ) : authLoading || modelsLoading ? (
           <div className="hint">검증 모델을 불러오는 중이에요…</div>
@@ -1496,7 +1530,7 @@ export function AnalysisForm({
       <Button variant="primary" size="lg" iconRight="arrowRight"
         className="af-cta-confirm"
         disabled={composeModeSaving || confirming}
-        onClick={confirmAnalysis}>의류정보 확정 완료 · {CREDIT_COSTS.mannequinGenerate} 크레딧</Button>
+        onClick={confirmAnalysis}>{mannequinGenerationCtaLabel(mannequinGenerationCost)}</Button>
     </div>
   );
 

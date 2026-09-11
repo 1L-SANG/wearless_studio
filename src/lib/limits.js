@@ -14,6 +14,69 @@ export const CREDIT_COSTS = Object.freeze({
   editorImage: 19, // 에디터에서 이미지 1장 생성/변형
 });
 
+/** 플랜별 가상모델·무료 수정 정책. 서버 plan_pricing.py 와 같은 값으로 유지한다. */
+export const EXTENSION_MODEL_FEE = Object.freeze({
+  free: 19,
+  starter: 19,
+  seller: 10,
+  pro: 0,
+});
+export const FREE_MANNEQUIN_ADJUSTS = Object.freeze({
+  free: 1,
+  starter: 1,
+  seller: 1,
+  pro: 2,
+});
+export const BASIC_VIRTUAL_MODEL_IDS = new Set(['mA', 'mB']);
+
+const PLAN_TIERS = new Set(Object.keys(EXTENSION_MODEL_FEE));
+const VIRTUAL_MODEL_ID = /^m[A-N]$/;
+
+export function normalizePlanTier(plan) {
+  return PLAN_TIERS.has(plan) ? plan : 'free';
+}
+
+export function extensionModelFee(plan, selectedModelId) {
+  if (!VIRTUAL_MODEL_ID.test(selectedModelId || '')
+      || BASIC_VIRTUAL_MODEL_IDS.has(selectedModelId)) return 0;
+  return EXTENSION_MODEL_FEE[normalizePlanTier(plan)];
+}
+
+export function mannequinGenerationTotal(plan, selectedModelId) {
+  return CREDIT_COSTS.mannequinGenerate + extensionModelFee(plan, selectedModelId);
+}
+
+export function mannequinGenerationCtaLabel(total) {
+  return `의류정보 확정 완료 · ${total} 크레딧`;
+}
+
+export function extensionModelGroupLabel(plan) {
+  return `확장 · 상품당 ${EXTENSION_MODEL_FEE[normalizePlanTier(plan)]} 크레딧`;
+}
+
+export function mannequinRegenerationQuote(plan, doneCount = 0) {
+  const normalizedPlan = normalizePlanTier(plan);
+  const freeAdjusts = FREE_MANNEQUIN_ADJUSTS[normalizedPlan];
+  const usedAdjusts = Math.max(Number(doneCount) - 1, 0);
+  return {
+    freeAdjusts,
+    usedAdjusts,
+    nextCost: Number(doneCount) <= freeAdjusts ? 0 : CREDIT_COSTS.mannequinGenerate,
+  };
+}
+
+export function mannequinRegenerationCreditText(quote) {
+  if (!quote || quote.nextCost !== 0) {
+    return `${quote?.nextCost ?? CREDIT_COSTS.mannequinGenerate} 크레딧`;
+  }
+  const remaining = Math.max(Number(quote.freeAdjusts) - Number(quote.usedAdjusts), 0);
+  return `무료 (남은 무료 수정 ${remaining}회)`;
+}
+
+export function mannequinRegenerationCtaLabel(quote) {
+  return `수정 반영 · ${mannequinRegenerationCreditText(quote)}`;
+}
+
 /** 화면 전반에서 쓰는 상한값 (PRD §5.3 / §6.6 / §6.8 / §7.4) */
 export const LIMITS = Object.freeze({
   baseColorMaxImages: 6, // 기준 색상: 전체 각도 합산 최대 (PRD §5.3)

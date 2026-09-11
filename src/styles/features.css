@@ -509,6 +509,8 @@
 .sp-chip.draft .sp-draft-input { border: 0; outline: 0; background: transparent; font-size: 14px; font-weight: 500; color: var(--fg-1); }
 .sp-chip.draft .sp-draft-input::placeholder { color: var(--fg-3); font-weight: 400; }
 .model-grid { display: flex; gap: 12px; flex-wrap: wrap; }
+.ai-model-groups { display: grid; gap: 18px; }
+.ai-model-group-title { margin-bottom: 9px; color: var(--fg-2); font-size: 12.5px; font-weight: 650; }
 .fm-model-state { display: flex; align-items: center; gap: 10px; }
 .fm-license-pending { margin-top: 16px; }
 .fm-license-pending summary { display: flex; align-items: center; gap: 6px; width: fit-content; cursor: pointer; color: var(--fg-2); font-size: 13px; font-weight: 600; list-style: none; }

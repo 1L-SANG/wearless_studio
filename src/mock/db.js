@@ -654,7 +654,17 @@ function buildDraft() {
   };
 
   // storyboardDirty: 사용자가 콘티를 저장(수정)했는지 — false면 사진 양 변경 시 기본 콘티를 재구성한다
-  return { project, product, analysis, mannequins, storyboard, storyboardDirty: false, editorBlocks, wardrobe };
+  return {
+    project,
+    product,
+    analysis,
+    mannequins,
+    mannequinExtensionFeePaid: false,
+    storyboard,
+    storyboardDirty: false,
+    editorBlocks,
+    wardrobe,
+  };
 }
 
 export const DB = {

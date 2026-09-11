@@ -18,8 +18,11 @@ function creditShortfall(account, requiredCredits) {
   };
 }
 
-export function mannequinGenerationCreditShortfall(account) {
-  return creditShortfall(account, CREDIT_COSTS.mannequinGenerate);
+export function mannequinGenerationCreditShortfall(
+  account,
+  requiredCredits = CREDIT_COSTS.mannequinGenerate,
+) {
+  return creditShortfall(account, requiredCredits);
 }
 
 export function detailPageGenerationCreditShortfall(account, aiCutCount) {

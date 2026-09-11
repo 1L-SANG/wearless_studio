@@ -34,6 +34,28 @@ class Account(CamelModel):
     plan: PlanTier
 
 
+class MannequinGenerateQuote(CamelModel):
+    base: int
+    extension_model_fee: int
+    total: int
+    selected_model_id: str | None
+    extension_fee_already_paid: bool
+
+
+class MannequinRegenerateQuote(CamelModel):
+    free_adjusts: int
+    used_adjusts: int
+    next_cost: int
+
+
+class CreditQuote(CamelModel):
+    plan: PlanTier
+    mannequin_generate: MannequinGenerateQuote
+    mannequin_regenerate: MannequinRegenerateQuote
+    storyboard_per_cut: int
+    editor_image: int
+
+
 class AppOriginRequest(CamelModel):
     """POST /v1/me/app-origin 의 본문.
 

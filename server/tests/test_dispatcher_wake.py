@@ -6,6 +6,7 @@ wake 가 없으면 202 후 최대 poll_interval(3s) 동안 잡이 pending 으로
 (dispatcher 미기동 환경에선 no-op — 라우트가 죽지 않는다.)
 """
 import contextlib
+from unittest.mock import AsyncMock
 
 import app.routes as routes
 
@@ -27,6 +28,12 @@ def _auth(make_token):
 
 
 def _wire_mannequin_fakes(monkeypatch, created=True):
+    async def fake_pricing(conn, user_id, project_id):
+        return {"plan": "free", "selected_model_id": "mA", "done_count": 2,
+                "extension_fee_already_paid": False}
+
+    monkeypatch.setattr(routes.repo, "get_mannequin_pricing_state", fake_pricing)
+
     async def fake_get_project(conn, uid, pid):
         return {"id": pid}
 
@@ -51,6 +58,7 @@ def _wire_mannequin_fakes(monkeypatch, created=True):
     monkeypatch.setattr(routes.repo, "list_mannequin_cuts", fake_list_cuts)
     monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
     monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
+    monkeypatch.setattr(routes.repo, "set_pending_job_pricing", AsyncMock())
     monkeypatch.setattr(routes.repo, "get_product", fake_get_product)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
     monkeypatch.setattr(routes.repo, "get_analysis", fake_get_analysis)

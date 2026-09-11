@@ -2231,7 +2231,8 @@ async def run_mannequin_job(app, job: dict) -> None:
             out = await repo.finalize_mannequin_success(
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
                 project_id=project_id, candidates=passed, reserved=reserved, charge=charge,
-                metadata={"creditCostVersion": s.credit_cost_version,
+                metadata={**(job.get("metadata") or {}),
+                          "creditCostVersion": s.credit_cost_version,
                           "promptVersion": cut_generation_metadata["promptVersion"],
                           "gender": gender})
             await conn.commit()

@@ -6,6 +6,7 @@ adjustedAxes 는 서버 diff 로만 산출(클라이언트 값 불신). legacy �
 import asyncio
 import contextlib
 import types
+from unittest.mock import AsyncMock
 
 import app.routes as routes
 from app.workers import mannequin_job
@@ -30,6 +31,12 @@ def _auth(make_token):
 
 
 def _wire_route_fakes(monkeypatch, *, stored_profile, captured):
+    async def fake_pricing(conn, user_id, project_id):
+        return {"plan": "free", "selected_model_id": "mA", "done_count": 2,
+                "extension_fee_already_paid": False}
+
+    monkeypatch.setattr(routes.repo, "get_mannequin_pricing_state", fake_pricing)
+
     async def fake_get_project(conn, uid, pid):
         return {"id": pid}
 
@@ -56,6 +63,7 @@ def _wire_route_fakes(monkeypatch, *, stored_profile, captured):
     monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
     monkeypatch.setattr(routes.repo, "get_analysis", fake_get_analysis)
     monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
+    monkeypatch.setattr(routes.repo, "set_pending_job_pricing", AsyncMock())
     monkeypatch.setattr(routes.repo, "get_product", fake_get_product)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
     monkeypatch.setattr(routes.repo, "save_analysis", fake_save_analysis)
@@ -266,3 +274,18 @@ def test_run_candidate_emits_prompt_rendered_hashes(monkeypatch):
     assert ev["prompt_version"] == settings.mannequin_prompt_version
     # 원문 미포함(다이제스트만) — 이벤트 payload 에 프로필/프롬프트 문자열이 없어야 함
     assert "slim" not in str(ev) and "FIT PROFILE" not in str(ev)
+
+
+def test_worker_confirms_reserved_extension_total_with_pricing_metadata(monkeypatch):
+    calls = {"success": [], "failure": [], "emits": [], "run": []}
+    app, job = _wire_worker(
+        monkeypatch, analysis={"targetGenders": ["women"]},
+        payload={"mode": "generate"}, calls=calls,
+    )
+    job["credits_reserved"] = 64
+    job["metadata"] = {"extensionModelFee": 19, "plan": "starter", "selectedModelId": "mE"}
+    asyncio.run(mannequin_job.run_mannequin_job(app, job))
+    assert calls["failure"] == []
+    confirmed = calls["success"][0]
+    assert confirmed["charge"] == confirmed["reserved"] == 64
+    assert {key: confirmed["metadata"][key] for key in job["metadata"]} == job["metadata"]

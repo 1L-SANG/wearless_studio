@@ -118,7 +118,7 @@ test('the completed-cuts warning and immediate apply branch stay unchanged', () 
   assert.match(source, /<h3>바꾸면 마네킹 컷을 다시 만들어야 해요<\/h3>/);
   assert.match(
     source,
-    /<p>마네킹 컷이 다시 만들어져요 · \{CREDIT_COSTS\.mannequinGenerate\} 크레딧\. 콘티에서 고른 촬영 세트도 다시 골라야 해요\.<\/p>/,
+    /<p>마네킹 컷이 다시 만들어져요 · \{mannequinRegenerationCreditText\(creditQuote\?\.mannequinRegenerate\)\}\. 콘티에서 고른 촬영 세트도 다시 골라야 해요\.<\/p>/,
   );
   assert.match(
     source,
