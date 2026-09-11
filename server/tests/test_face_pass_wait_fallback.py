@@ -22,7 +22,7 @@ HEALTH = "https://pod-8000.proxy.runpod.net/healthz"
 def _reset():
     for memo in (fi._ready_seen, fi._recent_failure, fi._fallback_events):
         memo.clear()
-    fi._last_fallback_alert = 0.0
+    fi._last_fallback_alert = None
     yield
     for memo in (fi._ready_seen, fi._recent_failure, fi._fallback_events):
         memo.clear()
@@ -162,6 +162,16 @@ def test_three_pod_failures_in_the_window_alert_once(caplog):
         for _ in range(5):
             fi._note_fallback("backend_error")
     assert [r for r in caplog.records if r.levelno == logging.CRITICAL] == []   # 디바운스
+
+
+def test_first_alert_is_not_eaten_on_a_freshly_booted_machine(caplog):
+    """time.monotonic() 은 부팅 이후 시간이다 — 초깃값을 0.0 으로 두면 갓 뜬 머신에서
+    now - 0.0 이 디바운스 창보다 작아 첫 알림이 통째로 먹힌다(2026-09-11 CI 에서 잡혔다)."""
+    assert fi._last_fallback_alert is None
+    with caplog.at_level(logging.CRITICAL):
+        for _ in range(fi.FALLBACK_ALERT_THRESHOLD):
+            fi._note_fallback("pod_not_ready")
+    assert [r for r in caplog.records if r.levelno == logging.CRITICAL]
 
 
 def test_two_failures_do_not_alert(caplog):

@@ -1151,7 +1151,10 @@ FALLBACK_ALERT_THRESHOLD = 3
 FALLBACK_ALERT_DEBOUNCE_SECONDS = 1800
 _ALERTED_REASONS = ("pod_not_ready", "backend_error")
 _fallback_events: list[float] = []
-_last_fallback_alert = 0.0
+#: None = "아직 한 번도 안 알렸다". 0.0 으로 두면 안 된다 — time.monotonic() 은 **부팅 이후**
+#: 시간이라 갓 뜬 머신에서는 now - 0.0 이 디바운스 창보다 작아서 첫 알림이 통째로 먹힌다
+#: (2026-09-11 CI 러너에서 실제로 잡혔다: 알림 0건).
+_last_fallback_alert: float | None = None
 
 
 def _health_url_from(spec: FaceIdentitySpec, settings) -> str | None:
@@ -1247,7 +1250,7 @@ def _note_fallback(reason: str) -> None:
     _fallback_events[:] = recent
     if len(recent) < FALLBACK_ALERT_THRESHOLD:
         return
-    if now - _last_fallback_alert < FALLBACK_ALERT_DEBOUNCE_SECONDS:
+    if _last_fallback_alert is not None and now - _last_fallback_alert < FALLBACK_ALERT_DEBOUNCE_SECONDS:
         return
     _last_fallback_alert = now
     log.critical(

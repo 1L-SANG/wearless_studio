@@ -45,12 +45,14 @@ class _Client:
         self.create_fails_for = set(create_fails_for)
         self.pod_status = pod_status
         self.posts, self.creates, self.deletes, self.patches = [], [], [], []
+        self.gets = []
 
     def patch(self, path, json=None):
         self.patches.append((path, json))
         return _Res({})
 
     def get(self, path):
+        self.gets.append(path)
         return _Res({"desiredStatus": self.pod_status})
 
     def post(self, path, json=None):
@@ -116,9 +118,11 @@ def test_discover_prefers_the_database_over_the_env_fallback():
     # DB 가 비면 설정값(초기값·폴백)
     b = _adapter(_Client(), _Store(active=None))
     assert asyncio.run(b.discover()) == RunpodTarget(OLD_POD)
-    # 둘 다 없으면 None — set_desired(1) 이 그때 새로 만든다
+    # 둘 다 없으면 **빈 타깃** — 파드가 없는 건 정상 상태다(수요가 생기면 그때 만든다).
+    # None 을 주면 공용 reconciler 가 ECS 의 "서비스 없음" 으로 읽고 자동 켜기를 영구 비활성한다
+    # (2026-09-11 운영에서 실제로 그렇게 꺼졌다).
     c = _adapter(_Client(), _Store(active=None), face_runpod_pod_id=None)
-    assert asyncio.run(c.discover()) is None
+    assert asyncio.run(c.discover()) == RunpodTarget("")
 
 
 def test_health_address_comes_from_the_pod_not_the_env():
@@ -160,13 +164,17 @@ def test_describe_uses_the_current_pod_address_each_time():
 
 
 def test_no_pod_anywhere_goes_to_create():
-    """DB 행도 env 파드 id 도 없으면 discover 는 None — set_desired(1) 이 새로 만든다."""
+    """DB 행도 env 파드 id 도 없으면 빈 타깃 — describe 는 0/0 이고 set_desired(1) 이 만든다."""
     client = _Client()
     store = _Store(active=None)
     a = _adapter(client, store, face_runpod_pod_id=None, code_urls=[])
-    assert asyncio.run(a.discover()) is None
+    target = asyncio.run(a.discover())
+    assert target == RunpodTarget("")
+    state = asyncio.run(a.describe(target))
+    assert (state.desired, state.running, state.pending) == (0, 0, 0)
+    assert client.gets == []          # 없는 파드를 조회하지 않는다
     a.begin_cycle()
-    asyncio.run(a.set_desired(None, 1))
+    asyncio.run(a.set_desired(target, 1))
     assert store.set_calls == [(NEW_POD, GPU_PRIORITY[0][0])]
     assert client.posts == []
 
@@ -324,3 +332,74 @@ def test_card_priority_puts_h100_before_a100():
     """2026-09-11 재고 실측: PRO 6000·A100 둘 다 "no instances", H100 만 잡혔다."""
     names = [g for g, _ in GPU_PRIORITY]
     assert names.index("NVIDIA H100 80GB HBM3") < names.index("NVIDIA A100 80GB PCIe")
+
+
+# ── "파드 아직 없음" 은 장애가 아니다 ──
+def test_missing_pod_does_not_disable_the_reconciler():
+    """★ 2026-09-11 운영: discover 가 None 을 주자 공용 reconciler 가 ECS 의 "서비스 없음" 으로
+    읽고 자동 켜기를 영구 비활성했다(파드 행 0개 상태) → 얼굴 패스가 통째로 죽었다."""
+    import types
+
+    from app.services.sam_autoscale import DemandSnapshot
+    from app.workers.sam_autoscaler import SamAutoscaler
+    from conftest import make_settings as _ms
+
+    class _Repo:
+        async def try_advisory_lock(self, conn, key):
+            return True
+
+    async def _snap(repo, conn):
+        return DemandSnapshot(0, None, None)          # 수요 없음
+
+    client = _Client()
+    adapter = _adapter(client, _Store(active=None), face_runpod_pod_id=None, code_urls=[])
+    app = types.SimpleNamespace(state=types.SimpleNamespace(
+        settings=_ms(gemini_api_key="x", r2_bucket="b", face_autoscale="on",
+                     face_autoscale_start_grace_minutes=8)))
+    scaler = SamAutoscaler(app, adapter, demand_fn=_snap,
+                           idle_attr="face_autoscale_idle_minutes", name="face-render",
+                           lock_key="face_autoscaler",
+                           start_grace_attr="face_autoscale_start_grace_minutes")
+    alerts = []
+    adapter.notify = lambda subject, body: alerts.append(subject) or _done()
+
+    async def _done():
+        return None
+
+    assert asyncio.run(scaler.reconcile_once(_Repo(), None)) == "noop"
+    assert scaler._disabled_reason is None        # 비활성되지 않는다
+    assert alerts == []                            # 알림도 없다
+    assert client.creates == []                    # 수요가 없으니 만들지도 않는다
+
+
+def test_missing_pod_with_demand_creates_one():
+    import types
+
+    from app.services.sam_autoscale import DemandSnapshot
+    from app.workers.sam_autoscaler import SamAutoscaler
+    from conftest import make_settings as _ms
+
+    class _Repo:
+        async def try_advisory_lock(self, conn, key):
+            return True
+
+    async def _snap(repo, conn):
+        return DemandSnapshot(2, None, None)          # 대기 중인 얼굴 컷 2개
+
+    client = _Client()
+    store = _Store(active=None)
+    adapter = _adapter(client, store, face_runpod_pod_id=None, code_urls=[])
+    app = types.SimpleNamespace(state=types.SimpleNamespace(
+        settings=_ms(gemini_api_key="x", r2_bucket="b", face_autoscale="on")))
+    scaler = SamAutoscaler(app, adapter, demand_fn=_snap,
+                           idle_attr="face_autoscale_idle_minutes", name="face-render",
+                           lock_key="face_autoscaler")
+    assert asyncio.run(scaler.reconcile_once(_Repo(), None)) == "up"
+    assert store.set_calls == [(NEW_POD, GPU_PRIORITY[0][0])]
+
+
+def test_a_real_config_error_still_disables():
+    """RUNPOD_API_KEY 가 없는 건 진짜 설정 오류다 — 그건 여전히 None 이고 비활성 대상."""
+    a = _adapter(_Client(), _Store(active=None), face_runpod_api_key=None,
+                 face_runpod_pod_id=None)
+    assert asyncio.run(a.discover()) is None
