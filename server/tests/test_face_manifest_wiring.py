@@ -18,18 +18,27 @@ SSM_PREFIX = "/copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/s
 
 @pytest.mark.parametrize("manifest,name", [(API, "api"), (WORKER, "detail-worker")])
 def test_face_identity_ships_disabled(manifest, name):
+    assert manifest["variables"]["FACE_IDENTITY_ENABLED"] == "false", name
+
+
+@pytest.mark.parametrize("manifest,name", [(API, "api"), (WORKER, "detail-worker")])
+def test_pod_address_is_not_pinned_in_the_manifest(manifest, name):
+    """★ 파드 id·렌더 URL 의 정본은 DB(fm_face_render_pod)다.
+
+    파드는 재고 때문에 바뀐다(2026-09-10·11 실측: start "not enough free GPUs",
+    create "no instances"). 매니페스트에 박아 두면 갈아탄 뒤 죽은 주소를 계속 찌르고,
+    그걸 고치려면 매번 재배포해야 한다.
+    """
     variables = manifest["variables"]
-    assert variables["FACE_IDENTITY_ENABLED"] == "false", name
-    url = variables["FACE_IDENTITY_BACKEND_URL"]
-    # 파드 id 기반 프록시 주소여야 한다 — TCP 포트는 재시작마다 바뀌지만 이 주소는 그대로다
-    # (2026-09-10 실측: 22 번 매핑이 17500 → 17667 로 바뀌었다).
-    assert url.startswith("https://") and ".proxy.runpod.net/render" in url, name
+    assert "FACE_IDENTITY_BACKEND_URL" not in variables, name
+    assert "FACE_RUNPOD_POD_ID" not in variables, name
+    text = (ROOT / f"copilot/{name}/manifest.yml").read_text(encoding="utf-8")
+    assert "fm_face_render_pod" in text, name      # 어디가 정본인지 주석으로 남아 있어야 한다
 
 
 def test_only_api_drives_the_pod():
     """기동/종료 reconciler 는 한 곳만 — 두 서비스가 같은 파드를 밀고 당기면 안 된다."""
     assert API["variables"]["FACE_AUTOSCALE"] == "off"
-    assert API["variables"]["FACE_RUNPOD_POD_ID"]
     assert "FACE_AUTOSCALE" not in WORKER["variables"]
     assert "RUNPOD_API_KEY" not in WORKER.get("secrets", {})
 

@@ -49,10 +49,88 @@ _PENDING = ("CREATED", "RESTARTING", "STARTING", "PENDING")
 #: health_url 이 없으면 desiredStatus 로 폴백하고, 그 사실을 running 판정에 그대로 반영한다.
 HEALTH_TIMEOUT = 5.0
 
+#: 셀러에게 보여 줄 콜드스타트 예상(분). 실측에서 온다 — 부팅 ~1분 + 가중치 + 적재.
+#: 2026-09-10 실측 9.6분(pip 13s + HF 390s + 적재 175s)이 기준선이고, hf_transfer·GPU fuse 로
+#: 줄어들면 이 값을 실측으로 다시 내린다.
+COLD_START_ETA_MINUTES = 4
+
+
+#: 카드 우선순위. 60GB 미만은 쓰지 않는다 — A40(48GB)에서는 모델이 아예 안 올라간다(2026-09-10 실측).
+#: 2026-09-11 재고 실측(SECURE, 생성 시도): PRO 6000 "no instances" · A100 "no instances" ·
+#: H100 만 실제로 잡혔다. A100 은 값이 싸지만 그날 한 번도 못 띄웠다 — 못 뜨는 카드를 2순위에
+#: 두면 재고 없는 순간마다 한 번씩 더 헛돈다. 그래서 H100 을 A100 보다 앞에 둔다.
+GPU_PRIORITY: tuple[tuple[str, float], ...] = (
+    ("NVIDIA RTX PRO 6000 Blackwell Server Edition", 2.09),
+    ("NVIDIA H100 80GB HBM3", 3.49),
+    ("NVIDIA A100 80GB PCIe", 1.59),
+)
+#: 새 파드 사양. 볼륨은 쓰지 않는다(2026-09-10 실측: 볼륨 적재 472초로 이득 없음).
+POD_IMAGE = "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404"
+POD_DISK_GB = 100
+POD_PORTS = ("8000/http", "22/tcp")
+#: 파드 부팅 훅 — 이미지의 /start.sh 가 /pre_start.sh 를 부르고, 그게 bootstrap → start 를 잇는다.
+POD_ARGS = ("bash -c 'cp -f /root/face_render/pre_start.sh /pre_start.sh 2>/dev/null || true; "
+            "exec /start.sh'")
+#: 토큰은 RunPod Secret 참조로만 넣는다 — 값이 API 요청·응답·로그 어디에도 실리지 않는다.
+POD_TOKEN_REF = "{{ RUNPOD_SECRET_face_render_token }}"
+
+
+#: 코드 묶음 R2 키. CI 가 배포할 때마다 그 커밋 sha 로 올린다(deploy-server.yml).
+CODE_TARBALL_KEY_FMT = "face_render/{sha}.tgz"
+#: 코드 URL 만료. 파드가 켜지면서 한 번 받으면 끝이라 짧게 둔다.
+CODE_URL_EXPIRES_S = 900
+
+
+def code_tarball_key(sha: str) -> str:
+    return CODE_TARBALL_KEY_FMT.format(sha=sha)
+
+
+def pod_backend_url(pod_id: str | None) -> str | None:
+    """파드 id → 렌더 URL. 프록시 주소는 id 기반이라 재시작해도 그대로다."""
+    pod_id = (pod_id or "").strip()
+    return f"https://{pod_id}-8000.proxy.runpod.net/render" if pod_id else None
+
 
 @dataclass(frozen=True)
 class RunpodTarget:
     pod_id: str
+
+
+class FaceRenderPodStore:
+    """현재 파드 id 의 DB 정본(fm_face_render_pod). 실패는 삼키지 않고 올린다 —
+    어댑터가 그걸 보고 설정값으로 폴백할지 정한다."""
+
+    def __init__(self, pool):
+        self._pool = pool
+
+    async def get_active(self) -> str | None:
+        async with self._pool.connection() as conn, conn.cursor() as cur:
+            await cur.execute("select to_regclass('public.fm_face_render_pod') as t")
+            if not (await cur.fetchone() or {}).get("t"):
+                return None            # 마이그 미적용 환경 — 설정값으로 간다
+            await cur.execute(
+                "select pod_id from fm_face_render_pod where retired_at is null "
+                "order by created_at desc limit 1")
+            row = await cur.fetchone()
+        return (row or {}).get("pod_id")
+
+    async def set_active(self, pod_id: str, gpu_type: str) -> None:
+        async with self._pool.connection() as conn, conn.cursor() as cur:
+            await cur.execute(
+                "update fm_face_render_pod set retired_at = now() "
+                "where retired_at is null and pod_id <> %s", (pod_id,))
+            await cur.execute(
+                "insert into fm_face_render_pod (pod_id, gpu_type) values (%s, %s) "
+                "on conflict (pod_id) do update set retired_at = null, gpu_type = excluded.gpu_type",
+                (pod_id, gpu_type))
+            await conn.commit()
+
+    async def retire(self, pod_id: str) -> None:
+        async with self._pool.connection() as conn, conn.cursor() as cur:
+            await cur.execute(
+                "update fm_face_render_pod set retired_at = now() "
+                "where pod_id = %s and retired_at is null", (pod_id,))
+            await conn.commit()
 
 
 async def face_demand_snapshot(conn) -> DemandSnapshot:
@@ -83,10 +161,19 @@ async def face_demand_snapshot(conn) -> DemandSnapshot:
             (list(FACE_KINDS), list(FACE_KINDS)),
         )
         row = await cur.fetchone() or {}
+    # 세 번째 신호 = **워밍 핑**(셀러가 FaceMarket 모델을 고른 순간). SAM 의 last_upload_at 자리를
+    # 그대로 쓴다 — "곧 필요해진다"를 미리 알리는 같은 성격의 신호다. 이게 없으면 셀러는 첫 컷에서
+    # 콜드스타트를 그대로 기다린다.
+    ping = None
+    async with conn.cursor() as cur:
+        await cur.execute("select to_regclass('public.fm_face_warm_pings') as t")
+        if (await cur.fetchone() or {}).get("t"):
+            await cur.execute("select max(pinged_at) as at from fm_face_warm_pings")
+            ping = (await cur.fetchone() or {}).get("at")
     return DemandSnapshot(
         active_sam_jobs=int(row.get("active_face_jobs") or 0),
         last_sam_finished_at=row.get("last_face_finished_at"),
-        last_upload_at=None,
+        last_upload_at=ping,
     )
 
 
@@ -97,14 +184,20 @@ class RunpodAutoscaleAdapter:
     자기 맥락에서 삼킨다(sam 어댑터와 같은 계약).
     """
 
-    def __init__(self, settings, *, enabled_attr="face_autoscale", client=None, health_client=None):
+    def __init__(self, settings, *, enabled_attr="face_autoscale", client=None, health_client=None,
+                 pod_store=None, code_url_provider=None):
         self._settings = settings
         self.enabled = getattr(settings, enabled_attr, "off") == "on"
         self._pod_id = (getattr(settings, "face_runpod_pod_id", None) or "").strip() or None
         self._api_key = (getattr(settings, "face_runpod_api_key", None) or "").strip() or None
         self._client = client
         self._health_client = health_client
-        self._health_url = _health_url(getattr(settings, "face_identity_backend_url", None))
+        #: 현재 파드 id 의 정본. 없으면 설정값(FACE_RUNPOD_POD_ID)으로 폴백한다.
+        self._pod_store = pod_store
+        self._created_this_cycle = False
+        #: 파드에 넣어 줄 코드 묶음(키, sha). 없으면 파드가 코드를 못 받는다 → 알림 대상.
+        self._code_sha = (getattr(settings, "face_render_code_version", None) or "").strip() or None
+        self._code_url_provider = code_url_provider
         self._target: RunpodTarget | None = None
         self._now = lambda: datetime.now(timezone.utc)
 
@@ -133,17 +226,44 @@ class RunpodAutoscaleAdapter:
         res.raise_for_status()
         return res.json() if res.content else {}
 
+    def _post_json_sync(self, path: str, body: dict) -> dict:
+        res = self._http().post(path, json=body)
+        res.raise_for_status()
+        return res.json() if res.content else {}
+
+    def _patch_sync(self, path: str, body: dict) -> dict:
+        res = self._http().patch(path, json=body)
+        res.raise_for_status()
+        return res.json() if res.content else {}
+
+    def _delete_sync(self, path: str) -> None:
+        res = self._http().delete(path)
+        if res.status_code not in (200, 204, 404):
+            res.raise_for_status()
+
     # ── 탐색 ──
     async def discover(self) -> RunpodTarget | None:
-        """파드 id 는 설정으로 받는다 — 이름으로 고르면 계정의 다른 파드를 끌 수 있다."""
+        """지금 쓰는 파드. **DB 가 정본**이고 설정값은 초기값·폴백이다.
+
+        이름으로 고르지 않는다 — 계정의 다른 파드를 끌 수 있다.
+        파드가 아예 없으면(첫 기동·전부 폐기) None 을 돌려주되, set_desired(1) 이
+        그때 새로 만든다(아래 _create_pod).
+        """
         if not self.enabled:
             return None
         if self._target is not None:
             return self._target
-        if not self._pod_id or not self._api_key:
-            log.error("face autoscale: FACE_RUNPOD_POD_ID / RUNPOD_API_KEY not configured")
+        if not self._api_key:
+            log.error("face autoscale: RUNPOD_API_KEY not configured")
             return None
-        self._target = RunpodTarget(self._pod_id)
+        pod_id = None
+        if self._pod_store is not None:
+            pod_id = await self._pod_store.get_active()
+        pod_id = pod_id or self._pod_id
+        if not pod_id:
+            log.info("face autoscale: 등록된 파드가 없다 — 수요가 생기면 새로 만든다")
+            return None
+        self._target = RunpodTarget(pod_id)
         return self._target
 
     def forget_target(self) -> None:
@@ -153,43 +273,149 @@ class RunpodAutoscaleAdapter:
     async def describe(self, target: RunpodTarget) -> ServiceState:
         """desired 는 파드 API, running 은 렌더 서비스 /healthz 가 정본(위 상수 주석의 실측)."""
         pod = await asyncio.to_thread(self._get_sync, f"/pods/{target.pod_id}")
+        # 헬스 주소는 **지금 보는 그 파드**에서 계산한다. init 때 env 로 굳혀 두면 파드를
+        # 갈아탄 뒤에도 죽은 주소를 찔러 "안 떠 있다"가 영원히 이어진다.
+        health_url = self._health_url_for(target.pod_id)
         status = str(pod.get("desiredStatus") or pod.get("status") or "").upper()
         # RunPod 은 대수 개념이 없다 — 켜라고 해 뒀거나(=1) 꺼 뒀거나(=0) 다.
         desired = 1 if status in _RUNNING or status in _PENDING else 0
-        served = await self.health_ok() if desired else False
+        served = await self.health_ok(health_url) if desired else False
         running = 1 if served else 0
-        # health_url 이 없으면 확인할 방법이 없다 → desiredStatus 를 그대로 믿는다(폴백).
-        if self._health_url is None:
+        # 확인할 주소가 없으면 desiredStatus 를 그대로 믿는다(폴백).
+        if health_url is None:
             running = desired
         pending = 1 if desired and not running else 0
         started = pod.get("lastStartedAt") or pod.get("startedAt")
         return ServiceState(desired=desired, running=running, pending=pending,
                             oldest_started_at=_parse_ts(started) if running else None)
 
-    async def health_ok(self) -> bool:
-        """렌더 서비스가 실제로 응답하는가. URL 이 없거나 실패면 False(예외 없음)."""
-        if self._health_url is None:
+    def _health_url_for(self, pod_id: str | None) -> str | None:
+        """파드 id 가 있으면 **그 파드 주소**가 정본이다. env 는 파드가 없을 때만 쓴다.
+
+        워커도 같은 순서다(face_identity.resolve_backend: spec.backend_url → 설정값).
+        어댑터만 env 를 앞에 두면 파드를 갈아탄 뒤 헬스와 렌더가 서로 다른 파드를 보게 된다.
+        """
+        derived = pod_backend_url(pod_id)
+        return _health_url(derived or getattr(self._settings, "face_identity_backend_url", None))
+
+    async def health_ok(self, health_url: str | None = None) -> bool:
+        """렌더 서비스가 실제로 응답하는가. URL 이 없거나 실패면 False(예외 없음).
+
+        주소를 안 주면 **지금 등록된 파드**에서 계산한다(라우트가 이렇게 부른다).
+        """
+        url = health_url or self._health_url_for(self._target.pod_id if self._target else None)
+        if url is None:
             return False
         try:
-            return await asyncio.to_thread(self._health_sync)
+            return await asyncio.to_thread(self._health_sync, url)
         except Exception as exc:  # noqa: BLE001 — 헬스 실패는 "안 떠 있다" 이지 에러가 아니다
             log.info("face render health probe failed: %r", exc)
             return False
 
-    def _health_sync(self) -> bool:
+    def _health_sync(self, url: str) -> bool:
         client = self._health_client
         if client is None:
             import httpx
 
             client = httpx.Client(timeout=HEALTH_TIMEOUT, headers={"User-Agent": USER_AGENT})
             self._health_client = client
-        res = client.get(self._health_url)
+        res = client.get(url)
         return res.status_code == 200 and bool(res.json().get("loaded"))
 
-    async def set_desired(self, target: RunpodTarget, count: int) -> None:
-        action = "start" if int(count) > 0 else "stop"
-        await asyncio.to_thread(self._post_sync, f"/pods/{target.pod_id}/{action}")
-        log.info("face autoscale: pod %s %s", target.pod_id, action)
+    async def set_desired(self, target: RunpodTarget | None, count: int) -> None:
+        """0 이면 stop(terminate 아님 — 같은 호스트에 자리가 남아 있으면 stop→start 가 제일 빠르다).
+
+        1 인데 start 가 실패하면(호스트에 GPU 없음·파드 없음) **새 파드를 만든다**.
+        2026-09-10 실측: 멈춘 파드 start 가 "not enough free GPUs on the host machine" 로 3회
+        실패했고, 그 상태로는 얼굴 패스가 영영 안 돈다. 생성은 한 주기에 1번만 한다.
+        """
+        if int(count) <= 0:
+            if target is None:
+                return
+            await asyncio.to_thread(self._post_sync, f"/pods/{target.pod_id}/stop")
+            log.info("face autoscale: pod %s stop", target.pod_id)
+            return
+        if target is not None:
+            try:
+                code_env = self._code_env()
+                if code_env:
+                    # 켜기 직전에 코드 URL 을 새로 넣는다 — 이전 URL 은 이미 만료됐을 수 있다.
+                    await asyncio.to_thread(
+                        self._patch_sync, f"/pods/{target.pod_id}",
+                        {"env": {"FACE_RENDER_TOKEN": POD_TOKEN_REF, **code_env}})
+                await asyncio.to_thread(self._post_sync, f"/pods/{target.pod_id}/start")
+                log.info("face autoscale: pod %s start", target.pod_id)
+                return
+            except Exception as exc:  # noqa: BLE001 — 재고 문제면 아래에서 새로 만든다
+                log.warning("face autoscale: start failed for %s (%r) — 새 파드로 간다",
+                            target.pod_id, exc)
+        if self._created_this_cycle:
+            raise RuntimeError("pod create already attempted this cycle")
+        self._created_this_cycle = True
+        await self._create_pod(replacing=target)
+
+    def _code_env(self) -> dict[str, str]:
+        """파드에 넣을 코드 전달 env. **호출 직전에** presigned 를 만든다(만료가 짧다).
+
+        URL 값은 로그·DB·이벤트 어디에도 남기지 않는다 — 여기서 만들어 곧장 RunPod 에만 준다.
+        """
+        if not self._code_sha or self._code_url_provider is None:
+            log.error("face autoscale: 코드 묶음 sha/공급자가 없다 — 파드가 코드를 못 받는다")
+            return {}
+        try:
+            url = self._code_url_provider(code_tarball_key(self._code_sha))
+        except Exception as exc:  # noqa: BLE001
+            log.error("face autoscale: 코드 묶음 URL 발급 실패 (%s)", type(exc).__name__)
+            return {}
+        if not url:
+            return {}
+        return {"CODE_TARBALL_URL": url, "CODE_SHA256": self._code_sha}
+
+    def begin_cycle(self) -> None:
+        """reconciler 한 주기의 시작 — 생성 1회 제한을 리셋한다."""
+        self._created_this_cycle = False
+
+    async def _create_pod(self, *, replacing: RunpodTarget | None) -> None:
+        """카드 우선순위대로 새 파드를 만든다. 전부 실패하면 예외(호출자가 알림을 낸다)."""
+        errors: list[str] = []
+        for gpu_type, price in GPU_PRIORITY:
+            body = {
+                "name": "face-render",
+                "imageName": POD_IMAGE,
+                "cloudType": "SECURE",
+                "containerDiskInGb": POD_DISK_GB,
+                "ports": list(POD_PORTS),
+                "gpuTypeIds": [gpu_type],
+                "gpuCount": 1,
+                "dockerStartCmd": POD_ARGS,
+                "env": {"FACE_RENDER_TOKEN": POD_TOKEN_REF, **self._code_env()},
+            }
+            try:
+                created = await asyncio.to_thread(self._post_json_sync, "/pods", body)
+            except Exception as exc:  # noqa: BLE001 — 재고 없음도 여기로 온다
+                errors.append(f"{gpu_type}: {type(exc).__name__}")
+                continue
+            pod_id = str((created or {}).get("id") or "").strip()
+            if not pod_id:
+                errors.append(f"{gpu_type}: id 없음")
+                continue
+            log.info("face autoscale: 새 파드 %s (%s, $%.2f/h)", pod_id, gpu_type, price)
+            if self._pod_store is not None:
+                await self._pod_store.set_active(pod_id, gpu_type)
+            self._target = RunpodTarget(pod_id)
+            if replacing is not None and replacing.pod_id != pod_id:
+                await self._retire(replacing.pod_id)
+            return
+        raise RuntimeError("모든 카드에서 파드 생성 실패: " + ", ".join(errors))
+
+    async def _retire(self, pod_id: str) -> None:
+        """이전 파드는 지운다 — 멈춰만 두면 컨테이너 디스크 요금이 계속 나간다."""
+        try:
+            await asyncio.to_thread(self._delete_sync, f"/pods/{pod_id}")
+        except Exception:  # noqa: BLE001
+            log.warning("face autoscale: 이전 파드 %s terminate 실패", pod_id, exc_info=False)
+        if self._pod_store is not None:
+            await self._pod_store.retire(pod_id)
 
     async def notify(self, subject: str, body: str) -> None:
         """SNS 토픽 대신 **CRITICAL 로그**로 알린다.

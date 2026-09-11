@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# 얼굴 렌더 코드를 켜져 있는 파드의 **볼륨**으로 올린다 (맥에서 실행).
+# 얼굴 렌더 코드를 켜져 있는 파드로 올린다 (맥에서 실행). **개발·검증 전용.**
+#
+# 운영 경로는 이게 아니다: CI 가 코드 묶음을 R2 에 올리고(face_render/<sha>.tgz),
+# 어댑터가 파드를 켜거나 만들 때 presigned URL 을 env 로 넣어 bootstrap.sh 가 받는다.
+# 이 스크립트는 그 사이클을 기다리지 않고 지금 켜져 있는 파드에 코드를 밀어 넣을 때만 쓴다.
 #
 # 올리는 것: face_render_service.py · 서비스가 import 하는 app 모듈만 · start.sh · VERSION(git sha).
 # 가중치·venv·HF 캐시는 건드리지 않는다(볼륨에 이미 있다).
@@ -15,7 +19,7 @@ set -euo pipefail
 HOST="${POD_HOST:?POD_HOST 가 필요하다 (파드 publicIp)}"
 PORT="${POD_PORT:?POD_PORT 가 필요하다 (파드의 22 매핑 포트 — 재시작마다 바뀐다)}"
 KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
-ROOT="${FACE_RENDER_ROOT:-/workspace/face_render}"
+ROOT="${FACE_RENDER_ROOT:-/root/face_render}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"      # server/
 SSH=(ssh -i "$KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -p "$PORT" "root@$HOST")
 
@@ -29,12 +33,13 @@ cp "$HERE/app/agents/face_identity_qwen.py" "$STAGE/code/app/agents/"
 : > "$STAGE/code/app/agents/__init__.py"
 cp "$HERE/deploy/face_render/start.sh" "$STAGE/start.sh"
 cp "$HERE/deploy/face_render/pre_start.sh" "$STAGE/pre_start.sh"
+cp "$HERE/deploy/face_render/bootstrap.sh" "$STAGE/bootstrap.sh"
 printf '%s\n' "$VERSION" > "$STAGE/VERSION"
 printf '%s\n' "$VERSION" > "$STAGE/code/VERSION"
 chmod +x "$STAGE/start.sh"
 
 # COPYFILE_DISABLE: macOS tar 이 ._AppleDouble 을 같이 넣는 것을 막는다.
-COPYFILE_DISABLE=1 tar czf "$STAGE/sync.tgz" -C "$STAGE" code start.sh pre_start.sh VERSION
+COPYFILE_DISABLE=1 tar czf "$STAGE/sync.tgz" -C "$STAGE" code start.sh pre_start.sh bootstrap.sh VERSION
 tar tzf "$STAGE/sync.tgz" > /dev/null           # 올리기 전에 아카이브부터 검증
 scp -i "$KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -P "$PORT" \
     "$STAGE/sync.tgz" "root@$HOST:/tmp/face_render_sync.tgz"
@@ -45,7 +50,7 @@ scp -i "$KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -P "$PORT" \
   # --no-same-owner: 네트워크 볼륨(MooseFS)은 맥 tar 의 uid/gid 를 못 준다(chown 거부).
   tar --no-same-owner -xzf /tmp/face_render_sync.tgz -C '$ROOT'
   rm -f /tmp/face_render_sync.tgz
-  chmod +x '$ROOT/start.sh' '$ROOT/pre_start.sh'
+  chmod +x '$ROOT/start.sh' '$ROOT/pre_start.sh' '$ROOT/bootstrap.sh'
   ls -la '$ROOT' '$ROOT/code'
   echo VERSION=\$(cat '$ROOT/VERSION')"
 echo "synced $VERSION → $HOST:$ROOT"

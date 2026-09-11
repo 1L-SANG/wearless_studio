@@ -1041,6 +1041,9 @@ class FaceIdentitySpec:
     lora_path: str
     token: str = DEFAULT_TOKEN
     sha256: str | None = None
+    #: 이 잡이 쓸 렌더 서비스 URL. DB 의 현재 파드에서 유도된 값이고, 없으면 설정값을 쓴다
+    #: (파드는 재고 때문에 바뀔 수 있어 매니페스트 값만으로는 못 따라간다).
+    backend_url: str | None = None
 
 
 def face_identity_from_registry_entry(entry: dict | None) -> FaceIdentitySpec | None:
@@ -1069,11 +1072,13 @@ def face_identity_from_lora_row(row) -> FaceIdentitySpec | None:
     if not isinstance(lora, str) or not lora.strip():
         return None
     sha = get("lora_sha256")
+    backend = get("face_backend_url")
     token = get("trigger_token")
     return FaceIdentitySpec(
         lora.strip(),
         str(token).strip() if isinstance(token, str) and token.strip() else DEFAULT_TOKEN,
-        sha256=str(sha).strip().lower() if isinstance(sha, str) and sha.strip() else None)
+        sha256=str(sha).strip().lower() if isinstance(sha, str) and sha.strip() else None,
+        backend_url=str(backend).strip() if isinstance(backend, str) and backend.strip() else None)
 
 
 def resolve_lora_file(spec: FaceIdentitySpec, base: str | None) -> str:
@@ -1110,7 +1115,8 @@ def _presigned_lora_url(settings):
 
 def resolve_backend(settings, spec: FaceIdentitySpec) -> FaceBackend | None:
     """설정에 따라 백엔드 1개(프로세스당 캐시). url → Http, 아니면 lora 파일 → QwenLocal, 둘 다 없으면 None."""
-    url = getattr(settings, "face_identity_backend_url", None)
+    # spec 의 URL(= DB 의 현재 파드에서 유도) 이 정본. 설정값은 그게 없을 때의 폴백이다.
+    url = spec.backend_url or getattr(settings, "face_identity_backend_url", None)
     base = getattr(settings, "face_identity_lora_path", None)
     if url:
         key = ("http", url, spec.lora_path)

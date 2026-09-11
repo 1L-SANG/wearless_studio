@@ -116,6 +116,8 @@ class SamAutoscaler:
         if not await repo.try_advisory_lock(conn, self._lock_key):
             return "skip"
 
+        if hasattr(self.adapter, "begin_cycle"):
+            self.adapter.begin_cycle()      # 한 주기에 파드 생성 1회 제한 리셋
         idle = int(getattr(self.app.state.settings, self._idle_attr, 30))
         snap = await self._demand_fn(repo, conn)
         settings = self.app.state.settings

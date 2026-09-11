@@ -1015,6 +1015,21 @@ export function Editor() {
   // 첫 로딩 실패 상태 — 훅은 로딩 early-return 위에만 둔다(훅 개수 불변).
   const [loadError, setLoadError] = useState(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
+  // REAL 모델 프로젝트를 열면 얼굴 렌더 파드를 미리 켜고(1회) 준비 상태를 30초마다 확인한다.
+  // 실패는 전부 무시한다 — 이 표시가 에디터 동작에 영향을 주면 안 된다.
+  useEffect(() => {
+    const modelId = analysis?.selectedModelId;
+    if (!isRealModelSelection(modelId)) { setFaceRender(null); return undefined; }
+    let alive = true;
+    void warmFaceRender(modelId);
+    const tick = () => {
+      void getFaceRenderStatus().then((status) => { if (alive) setFaceRender(status); });
+    };
+    tick();
+    const timer = setInterval(tick, 30000);
+    return () => { alive = false; clearInterval(timer); };
+  }, [analysis?.selectedModelId]);
+
   const [waitBoardError, setWaitBoardError] = useState('');
   const [waitBoardAttempt, setWaitBoardAttempt] = useState(0);
   // 콘티를 못 받아 대기 화면을 못 만든 경우, 뒤에서 계속 다시 받아 스스로 복구한다.
@@ -3120,6 +3135,15 @@ export function Editor() {
           ) : (
             <Button size="sm" variant="ghost" onClick={retrySaveNow}>다시 저장</Button>
           )}
+        </div>
+      )}
+      {/* 얼굴 렌더 준비 상태 — REAL 모델일 때만. 파드가 자는 동안 첫 컷이 몇 분 걸리는 이유를
+          먼저 말해 주는 한 줄이다(사용자가 "멈췄다"고 읽지 않게). */}
+      {faceRender && faceRender.enabled && (
+        <div className="ed-face-render-status" role="status">
+          {faceRender.ready
+            ? '얼굴 렌더 준비됨'
+            : `얼굴 렌더 준비 중${faceRender.etaMinutes ? ` (약 ${faceRender.etaMinutes}분)` : ''}`}
         </div>
       )}
       {/* toolbar */}

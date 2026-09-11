@@ -7,7 +7,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api/index.js';
 import { FACEMARKET_PRICING } from '@/lib/facemarketPricing.js';
-import { listModels, fetchLicenseFaceUrl, verifyLicensePublic } from '@/lib/api/facemarket.js';
+import {
+  listModels,
+  fetchLicenseFaceUrl,
+  verifyLicensePublic,
+  warmFaceRender,
+} from '@/lib/api/facemarket.js';
 import QRCode from 'qrcode';
 import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppStore.js';
 import { Icon, Chips, Button, Skeleton, ErrorState, Modal, useToast } from '@/components/ui.jsx';
@@ -676,6 +681,9 @@ export function AnalysisForm({
     // 장소 컷에 동의한 모델은 대역(가상 모델)이 필요 없다 — 그 모델 얼굴이 그대로 들어간다.
     // 동의하지 않은 모델은 예전 그대로 대역을 고르게 한다.
     const selectedRealModel = (models || []).find((model) => model?.id === a.selectedModelId);
+    // 얼굴 렌더 파드를 미리 켠다 — 여기서 확정한 모델의 첫 컷이 콜드스타트를 통째로 기다리지
+    // 않게 하려는 것이다. 실패는 무시한다(생성 흐름과 무관한 부가 신호).
+    if (isRealModelSelection(a.selectedModelId)) void warmFaceRender(a.selectedModelId);
     if (needsStylingStandIn(a.selectedModelId, selectedRealModel) && !a.stylingModelId) {
       toast.push('장소·스타일링 컷에 쓸 가상 모델을 골라 주세요.', {
         icon: 'alertCircle',

@@ -27,7 +27,11 @@ from .workers.draft_asset_reclaimer import DraftAssetReclaimer
 from .workers.fm_vc_revocation_reconciler import FaceVcRevocationReconciler
 from .workers.sam_retry_pusher import SamRetryPusher
 from .services import sam_client
-from .services.face_autoscale import RunpodAutoscaleAdapter, face_demand_snapshot
+from .services.face_autoscale import (
+    FaceRenderPodStore,
+    RunpodAutoscaleAdapter,
+    face_demand_snapshot,
+)
 from .services.sam_autoscale import SamAutoscaleAdapter
 from .services.sam_endpoint import SamEndpointResolver
 from .workers.sam_autoscaler import SamAutoscaler
@@ -220,7 +224,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # 얼굴 패스 GPU(RunPod 파드) 온디맨드 — 같은 reconciler 를 RunPod 어댑터로.
                 # 수요 = 켜진 LoRA 를 가진 등록자의 착장 컷 잡. off 면 어댑터가 HTTP 클라이언트를
                 # 만들지 않고 루프도 안 돈다(기본값 off — 파드가 없어도 아무 일도 일어나지 않는다).
-                face_adapter = RunpodAutoscaleAdapter(settings)
+                # 파드 id 는 DB 가 정본 — 재고가 없어 새 파드를 만들면 그 자리에서 바뀐다.
+                # 코드 묶음 presigned 공급자 — 파드에 R2 자격증명을 넣지 않기 위한 것이다.
+                # r2_face 가 없으면 None → 어댑터가 그 사실을 로그로 알린다.
+                _face_r2 = getattr(app.state, "r2_face", None)
+                face_adapter = RunpodAutoscaleAdapter(
+                    settings,
+                    pod_store=FaceRenderPodStore(pool) if pool is not None else None,
+                    code_url_provider=(
+                        (lambda key: _face_r2.preview_url(key, expires=900))
+                        if _face_r2 is not None else None),
+                )
                 app.state.face_autoscaler = SamAutoscaler(
                     app, face_adapter,
                     demand_fn=lambda repo, conn: face_demand_snapshot(conn),

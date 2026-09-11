@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 얼굴 렌더 파드 시작 스크립트 — 네트워크 볼륨에 있는 venv·가중치·코드로 서비스를 띄운다.
 #
-# 볼륨 구조(모두 /workspace/face_render 아래):
+# 구조(모두 /root/face_render 아래 — bootstrap.sh 가 만든다):
 #   venv/   파이썬 가상환경(torch·diffusers 포함, 재시작해도 유지)
 #   hf/     HF_HOME — Qwen 가중치 53.8GiB
 #   code/   face_render_service.py + app/agents/*  (scripts/face_render_sync.sh 가 올린다)
@@ -13,7 +13,8 @@
 #   토큰이 없으면 서비스가 fail-closed 로 뜬다(요청마다 503).
 set -euo pipefail
 
-ROOT="${FACE_RENDER_ROOT:-/workspace/face_render}"
+# 볼륨 없음(2026-09-10 실측) — 컨테이너 디스크. bootstrap.sh 가 같은 경로를 만든다.
+ROOT="${FACE_RENDER_ROOT:-/root/face_render}"
 export HF_HOME="${HF_HOME:-$ROOT/hf}"
 export FACE_RENDER_CACHE_DIR="${FACE_RENDER_CACHE_DIR:-$ROOT/loras}"
 PORT="${FACE_RENDER_PORT:-8000}"

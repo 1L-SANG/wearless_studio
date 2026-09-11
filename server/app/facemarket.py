@@ -2713,3 +2713,78 @@ async def get_job_settlement(
         "vcId": row["vc_id"],
         "chainStatus": row["chain_status"],
     }
+
+
+# ── 얼굴 렌더 파드 미리 켜기 ─────────────────────────────────────────────
+#: 셀러당 이 시간 안의 중복 핑은 무시한다. 모델 선택 화면에서 여러 번 눌러도 DB 가 늘지 않는다.
+FACE_WARM_PING_WINDOW_SECONDS = 60
+
+
+@router.post(
+    "/face-render/warm",
+    status_code=204,
+    responses={404: {"model": ErrorResponse, "description": "얼굴 패스 비활성"}},
+    summary="얼굴 렌더 파드 미리 켜기(워밍 핑)",
+)
+async def warm_face_render(request: Request, response: Response,
+                           user_id: str = Depends(require_user)):
+    """셀러가 FaceMarket 모델을 고른 순간 = 곧 얼굴 렌더가 필요하다는 신호.
+
+    reconciler 가 이 핑을 수요로 읽어 파드를 미리 켠다(콜드스타트를 첫 컷 앞에서 빼기 위한 것).
+    **켜진 LoRA 가 있는 실존 모델**일 때만 기록한다 — 그렇지 않으면 얼굴 패스가 걸리지 않아
+    파드를 켤 이유가 없다. 조건 밖이면 204 로 조용히 무시한다(프런트 흐름에 영향 0).
+    """
+    settings = request.app.state.settings
+    if not getattr(settings, "facemarket_enabled", False):
+        raise _err("not_found", "사용할 수 없습니다.", status=404)
+    body = await request.json() if request.headers.get("content-type", "").startswith(
+        "application/json") else {}
+    model_id = str((body or {}).get("modelId") or (body or {}).get("model_id") or "").strip()
+    if not is_real_model_id(model_id):
+        return Response(status_code=204)
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("select to_regclass('public.fm_face_warm_pings') as t")
+            if not (await cur.fetchone() or {}).get("t"):
+                return Response(status_code=204)       # 마이그 미적용 — 조용히 무시
+            await cur.execute(
+                "select 1 from fm_model_loras where model_id = %s and enabled and status = 'ready' "
+                "limit 1", (model_id,))
+            if await cur.fetchone() is None:
+                return Response(status_code=204)       # 얼굴 패스가 걸릴 모델이 아니다
+            await cur.execute(
+                "select 1 from fm_face_warm_pings where seller_id = %s "
+                "and pinged_at > now() - make_interval(secs => %s) limit 1",
+                (user_id, FACE_WARM_PING_WINDOW_SECONDS))
+            if await cur.fetchone() is not None:
+                return Response(status_code=204)       # 60초 안 중복
+            await cur.execute(
+                "insert into fm_face_warm_pings (seller_id, model_id) values (%s, %s)",
+                (user_id, model_id))
+        await conn.commit()
+    return Response(status_code=204)
+
+
+@router.get(
+    "/face-render/status",
+    summary="얼굴 렌더 준비 상태(에디터 상단 표시용)",
+)
+async def face_render_status(request: Request, user_id: str = Depends(require_user)):
+    """파드가 떴는지 api 가 대신 확인해 준다 — 프런트가 파드를 직접 찌르지 않게.
+
+    ready=false 일 때 etaMinutes 는 **실측 콜드스타트**에서 온다(부팅+가중치+적재).
+    """
+    settings = request.app.state.settings
+    if not getattr(settings, "facemarket_enabled", False):
+        raise _err("not_found", "사용할 수 없습니다.", status=404)
+    from .services import face_autoscale
+
+    adapter = getattr(request.app.state, "face_autoscaler", None)
+    ready = False
+    if adapter is not None and getattr(adapter.adapter, "enabled", False):
+        ready = await adapter.adapter.health_ok()
+    return {
+        "ready": ready,
+        "enabled": bool(getattr(settings, "face_identity_enabled", False)),
+        "etaMinutes": None if ready else face_autoscale.COLD_START_ETA_MINUTES,
+    }

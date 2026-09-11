@@ -64,6 +64,24 @@ export function listModels() {
   return http('/v1/facemarket/models');
 }
 
+// POST /v1/facemarket/face-render/warm — 얼굴 렌더 파드를 미리 켠다(워밍 핑).
+// 셀러가 FaceMarket 모델을 고른 순간 부르면 첫 컷 앞에서 콜드스타트를 뺄 수 있다.
+// **실패는 조용히 무시한다** — 생성 흐름에 영향이 0이어야 하는 부가 신호다.
+export function warmFaceRender(modelId) {
+  if (MOCK || !modelId) return Promise.resolve(null);
+  return http('/v1/facemarket/face-render/warm', {
+    method: 'POST',
+    body: JSON.stringify({ modelId }),
+  }).catch(() => null);
+}
+
+// GET /v1/facemarket/face-render/status — 파드가 떴는지 api 가 대신 확인해 준다.
+// → { ready, enabled, etaMinutes }. 프런트가 파드를 직접 찌르지 않게 하는 창구다.
+export function getFaceRenderStatus({ signal } = {}) {
+  if (MOCK) return Promise.resolve({ ready: false, enabled: false, etaMinutes: null });
+  return http('/v1/facemarket/face-render/status', { signal }).catch(() => null);
+}
+
 // GET /v1/facemarket/models/me — 로그인 사용자 본인 소유 모델(마이페이지). 동일 shape.
 // 카드에 assetsReady(그리드 자산 빌드 완료 → 셀러 선택 가능) 포함.
 export function listMyModels() {
