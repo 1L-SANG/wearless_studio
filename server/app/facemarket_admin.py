@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from . import admin_guard
 from .auth import require_user
 from .db import get_conn
+from .facemarket_admin_devices import revoke_devices_for_user
 from .models import CamelModel
 
 router = APIRouter(prefix="/v1/facemarket/admin", tags=["FaceMarket admin console"])
@@ -617,6 +618,14 @@ async def set_role(conn, *, target_user_id: str, actor: str, role: str) -> dict:
             (role, target_user_id),
         )
 
+    after = {"role": role}
+    if role == "user":
+        # 권한과 함께 기기도 거둔다. 안 그러면 나중에 다시 올렸을 때 옛 승인 기기가 그대로
+        # 살아나 — 그 사이 그 기기가 누구 손에 있었는지 아무도 모른다.
+        after["revokedDevices"] = await revoke_devices_for_user(
+            conn, user_id=target_user_id, actor=actor,
+        )
+
     await admin_guard.write_audit(
         conn,
         actor_user_id=actor,
@@ -624,7 +633,7 @@ async def set_role(conn, *, target_user_id: str, actor: str, role: str) -> dict:
         target_type="user",
         target_id=target_user_id,
         before={"role": previous},
-        after={"role": role},
+        after=after,
     )
     return {"userId": target_user_id, "role": role}
 

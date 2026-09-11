@@ -163,3 +163,30 @@ def test_audit_listing_is_newest_first_and_capped():
     sql, params = conn.executed[0]
     assert "order by l.created_at desc" in sql
     assert params["limit"] <= facemarket_admin.MAX_LIST_LIMIT
+
+
+def test_demotion_revokes_all_of_the_users_devices_and_records_the_count():
+    """되돌아가면: 내렸다가 다시 올린 관리자의 옛 기기가 승인 상태 그대로 살아난다."""
+    conn = FakeConn([
+        [
+            {"user_id": "admin-1", "role": "admin"},
+            {"user_id": "admin-2", "role": "admin"},
+        ],
+        None,                                  # update profiles
+        [{"id": "d1"}, {"id": "d2"}],          # update admin_devices … returning id
+    ])
+    asyncio.run(facemarket_admin.set_role(
+        conn, target_user_id="admin-2", actor="admin-1", role="user",
+    ))
+    revoke = [(sql, p) for sql, p in conn.executed if sql.startswith("update admin_devices")]
+    assert revoke and revoke[0][1] == ("admin-1", "admin-2")
+    audit = [p for sql, p in conn.executed if sql.startswith("insert into admin_audit_log")]
+    assert audit[0][5].obj == {"role": "user", "revokedDevices": 2}
+
+
+def test_promotion_does_not_touch_devices():
+    conn = FakeConn([[{"user_id": "admin-1", "role": "admin"}, {"user_id": "u9", "role": "user"}]])
+    asyncio.run(facemarket_admin.set_role(
+        conn, target_user_id="u9", actor="admin-1", role="admin",
+    ))
+    assert not any(sql.startswith("update admin_devices") for sql, _ in conn.executed)
