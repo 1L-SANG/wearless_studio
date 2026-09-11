@@ -12,14 +12,16 @@ import time
 import uuid
 from datetime import datetime, time as dtime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, field_validator
 
-from . import admin_guard
+from . import admin_guard, repo
 from .auth import require_user
 from .db import get_conn
 from .facemarket_admin_devices import revoke_devices_for_user
 from .models import CamelModel
+from .routes import _credit_error
 
 router = APIRouter(prefix="/v1/facemarket/admin", tags=["FaceMarket admin console"])
 
@@ -832,6 +834,81 @@ async def admin_list_users(
         )
         await conn.commit()
     return JSONResponse(result)
+
+
+class CreditGrantRequest(BaseModel):
+    plan_code: str = Field(min_length=1)
+    payer_name: str = Field(min_length=1)
+    amount_krw: int = Field(ge=0, strict=True)
+    paid_at: str
+    note: str | None = None
+
+    @field_validator("payer_name")
+    @classmethod
+    def validate_payer_name(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("입금자명을 입력해 주세요.")
+        return value
+
+    @field_validator("paid_at")
+    @classmethod
+    def validate_paid_at(cls, value: str) -> str:
+        try:
+            datetime.fromisoformat(value)
+        except ValueError:
+            raise ValueError("입금일은 ISO 날짜 또는 일시로 입력해 주세요.")
+        return value
+
+
+class CreditGrantResponse(CamelModel):
+    credit_source_id: str
+    payment_id: str | None = None
+    credits: int
+    available: int
+    idempotent: bool | None = None
+
+
+@router.post(
+    "/users/{user_id}/credits/grants",
+    response_model=CreditGrantResponse,
+    response_model_exclude_unset=True,
+)
+async def admin_grant_credits(
+    request: Request,
+    user_id: uuid.UUID,
+    body: CreditGrantRequest,
+    actor_user_id: str = Depends(require_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    async with get_conn(request) as conn:
+        await admin_guard.require_admin(conn, actor_user_id, request)
+        target_user_id = str(user_id)
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select p.user_id::text as user_id "
+                "from profiles p join auth.users u on u.id = p.user_id "
+                "where p.user_id = %s",
+                (target_user_id,),
+            )
+            if await cur.fetchone() is None:
+                raise _err("user_not_found", "사용자를 찾을 수 없어요.", 404)
+        try:
+            # repo가 대상 사용자 스코프를 붙인다. 다른 지급 경로와 키를 분리한다.
+            scoped_key = f"admin-grant:{idempotency_key}" if idempotency_key else None
+            result = await repo.purchase_topup(
+                conn, user_id=target_user_id, plan_code=body.plan_code,
+                idempotency_key=scoped_key, provider="bank_transfer",
+                provider_ref=f"{body.payer_name}/{body.paid_at}",
+                metadata={"granted_by": actor_user_id, "payer_name": body.payer_name,
+                          "amount_krw": body.amount_krw, "paid_at": body.paid_at,
+                          "note": body.note},
+            )
+        except repo.CreditError as e:
+            if e.code == "unknown_plan":
+                raise _credit_error(repo.CreditError(e.code, e.message, 400))
+            raise _credit_error(e)
+        await conn.commit()
+    return result
 
 
 @router.get("/audit")
