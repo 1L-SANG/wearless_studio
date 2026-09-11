@@ -284,8 +284,6 @@ class Settings:
     # pyproject optional group [embeddings] — prod 기본 이미지 미포함(R3 완화).
     embed_image_model: str = "google/siglip-base-patch16-224"  # 이미지 임베딩(SigLIP, 768-d)
     embed_image_dim: int = 768
-    embed_text_model: str = "BAAI/bge-m3"  # 텍스트 임베딩(2b 챌린저 스트레치, 1024-d)
-    embed_text_dim: int = 1024
     seller_text_canonicalize: str = "off"  # off | shadow | enforce (FR-D1 안전 게이트)
     input_qc: str = "off"  # off | shadow | enforce — 업로드 입력 QC (FR-D4, decode·해상도)
     # ---- FaceMarket (해커톤, 검증 실명 모델 마켓) — 기본 off 로 프로드 보호(FACEMARKET_ENABLED) ----
@@ -626,8 +624,6 @@ def load_settings() -> Settings:
         image_usage_persist=_image_usage_persist(app_env),
         image_usage_krw_per_usd=float(os.getenv("IMAGE_USAGE_KRW_PER_USD", "1400")),
         embed_image_dim=int(os.getenv("EMBED_IMAGE_DIM", "768")),
-        embed_text_model=os.getenv("EMBED_TEXT_MODEL", "BAAI/bge-m3"),
-        embed_text_dim=int(os.getenv("EMBED_TEXT_DIM", "1024")),
         seller_text_canonicalize=_flag(
             "SELLER_TEXT_CANONICALIZE", "off", {"off", "shadow", "enforce"}
         ),

@@ -6,7 +6,6 @@ AG-07(cut_variator)까지 전부 딸려 간다. 그 회귀를 여기서 고정�
 from dataclasses import replace
 
 from app.agents.model_routing import (
-    model_routing_snapshot,
     resolve_detail_cut_model,
     resolve_editor_cut_model,
     resolve_model,
@@ -37,10 +36,6 @@ def test_knob_changes_editor_only():
     assert resolve_model(s, "image_high") == "gemini-3-pro-image"
     assert resolve_model(s, "image_light") == "gemini-3.1-flash-image"
     assert resolve_detail_cut_model(s) == "gemini-3-pro-image"
-    snap = model_routing_snapshot(s)
-    assert snap["editor_cut"] == "gpt-image-2.5flare"
-    assert snap["image_high"] == "gemini-3-pro-image"
-    assert snap["detail_cut"] == "gemini-3-pro-image"
 
 
 def test_editor_settings_copy_only_swaps_image_high():

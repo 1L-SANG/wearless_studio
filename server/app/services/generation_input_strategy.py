@@ -75,11 +75,6 @@ class InputStrategy:
     def use_canonical(self) -> bool:
         return self.strategy == STRATEGY_AUGMENTED
 
-    def as_event(self) -> dict:
-        return {"strategy": self.strategy, "category": self.category, "reason": self.reason,
-                "canonicalAvailable": self.canonical_available, "version": self.version}
-
-
 def _text(*values) -> str:
     parts: list[str] = []
 

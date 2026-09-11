@@ -109,20 +109,6 @@ export function nextSpaceSetMemberReservation(set, blocks) {
   };
 }
 
-export function dissolveSingletonSpaceRuns(blocks) {
-  const next = [...blocks];
-  let changed = false;
-  for (const run of groupConsecutiveSpaceRuns(blocks)) {
-    const block = run.items[0];
-    if (run.items.length !== 1 || !block?.spaceGroupId) continue;
-    const index = next.findIndex((candidate) => candidate.id === block.id);
-    if (index < 0) continue;
-    next[index] = detachSpaceMembership(next[index]);
-    changed = true;
-  }
-  return changed ? next : blocks;
-}
-
 export function dissolveSpaceSet(blocks, spaceGroupId) {
   let changed = false;
   const next = blocks.map((block) => {

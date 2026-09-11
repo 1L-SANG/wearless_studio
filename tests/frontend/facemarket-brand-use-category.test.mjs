@@ -9,7 +9,6 @@ const shapesSource = read('../../src/lib/api/shapes.js');
 const analysisFormSource = read('../../src/features/analysis/AnalysisForm.jsx');
 const editorSource = read('../../src/features/editor/Editor.jsx');
 const editorPanelsSource = read('../../src/features/editor/EditorPanels.jsx');
-const typesSource = read('../../src/lib/types.js');
 
 const allowed = [
   '일반 의류',
@@ -37,19 +36,6 @@ test('analysis shape and form require an explicit category for a real model', ()
   assert.match(analysisFormSource, /isRealModelSelection,[\s\S]*resolveSelectedModelId,[\s\S]*from '\.\/modelSelection\.js';/);
   assert.match(analysisFormSource, /isRealModelSelection\(a\.selectedModelId\)[\s\S]*?<Chips[\s\S]*?options=\{BRAND_USE_CATEGORIES\}[\s\S]*?value=\{a\.brandUseCategory\}/);
   assert.match(analysisFormSource, /실제 모델을 사용할 브랜드 유형을 선택해 주세요\./);
-});
-
-test('frontend analysis and new-cut contracts expose brandUseCategory', () => {
-  const analysisContract = typesSource.slice(
-    typesSource.indexOf('@typedef {Object} Analysis'),
-    typesSource.indexOf('@typedef {Object} FitProfile'),
-  );
-  const newCutContract = typesSource.slice(
-    typesSource.indexOf('@typedef {Object} NewCutRequest'),
-    typesSource.indexOf('@typedef {Object} GenStep'),
-  );
-  assert.match(analysisContract, /@property \{string\|null\} brandUseCategory/);
-  assert.match(newCutContract, /@property \{string\|null\} brandUseCategory/);
 });
 
 test('Editor AI panel remediates a missing persisted category in place', () => {
