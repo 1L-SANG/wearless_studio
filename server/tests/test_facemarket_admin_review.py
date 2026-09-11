@@ -268,6 +268,10 @@ def test_simple_auth_records_advisory_scores_without_blocking(
     assert scores["skipped"] == []
     # raw 코사인 그대로 — 백분율(4.0 등)로 저장되면 안 된다.
     assert all(0.0 <= value <= 1.0 for value in scores["scores"].values())
+    # 임계 스냅샷도 저장돼야 한다 — 나중에 임계가 재캘리브돼도 이 리뷰 카드는 "그때
+    # 기준"을 보여줘야 한다. _setup() 의 fm_retouched_live_threshold=0.15 /
+    # fm_side_live_threshold=0.10 을 그대로 반영해야 한다.
+    assert scores["thresholds"] == {"front": 0.15, "angle45": 0.15, "side": 0.10}
 
 
 def test_simple_auth_all_angles_undetected_blocks_instead_of_review(
@@ -288,6 +292,171 @@ def test_simple_auth_all_angles_undetected_blocks_instead_of_review(
     )
     response = client.post(f"/v1/facemarket/enrollments/{enrollment_id}/complete", json={})
     assert response.json()["reason"] == "face_match_failed"
+    row = _latest_row(store, enrollment_id)
+    assert row["status"] == "failed"
+
+
+def test_simple_auth_partial_detection_still_reviews(enrollment_client_factory, monkeypatch):
+    """한 각도만 얼굴 미검출이어도(다른 각도는 점수가 났으면) 심사로 넘어간다.
+
+    가드가 `if advisory and not scores`(전부 미검출일 때만 차단) 대신 `if advisory and
+    skipped`(하나라도 스킵되면 차단)로 퇴행하면, side 만 스킵되고 front/angle45 는 점수가
+    났는데도 review_pending 이 아니라 실패로 끝나야 하므로 이 테스트가 잡는다. 관리자가
+    "이 각도는 안 보였다"(skipped)와 "이 각도는 점수가 나빴다"(belowThreshold)를 구분해서
+    볼 수 있어야 하므로 그 두 목록의 배타성도 함께 못박는다.
+    """
+    client, store, settings = _setup(
+        enrollment_client_factory,
+        monkeypatch,
+        fm_identity_methods=("mid", "simple_auth"),
+        fm_enrollment_review="simple_auth_only",
+        scores={"front": 0.9, "angle45": 0.05},
+        skip=("side",),
+    )
+    enrollment_id = _seed_ready_enrollment(
+        store,
+        identity_method="simple_auth",
+        id_document_r2_key="facemarket/enrollments/e1/iddoc/masked.jpg",
+    )
+    response = client.post(f"/v1/facemarket/enrollments/{enrollment_id}/complete", json={})
+    assert response.status_code == 200, response.text
+    row = _latest_row(store, enrollment_id)
+    assert row["status"] == "review_pending"
+    assert row["review_status"] == "pending"
+    assert store.jobs == []
+    scores = row["match_scores"]
+    assert scores["skipped"] == ["side"]
+    assert "side" not in scores["scores"]
+    assert scores["scores"]["front"] == pytest.approx(0.9)
+    assert scores["scores"]["angle45"] == pytest.approx(0.05)
+    # "안 보였다"(skipped) 와 "점수가 나빴다"(belowThreshold) 는 서로 배타적이어야 한다 —
+    # 관리자 심사 카드가 이 둘을 구분해서 보여줄 수 있는 근거.
+    assert "angle45" in scores["belowThreshold"]
+    assert "front" not in scores["belowThreshold"]
+    assert "side" not in scores["belowThreshold"]
+
+
+def test_simple_auth_id_document_buffer_wiped_on_success(
+    enrollment_client_factory, monkeypatch
+):
+    """ID 크롭 앵커 원본(신분증 촬영본 전체)이 성공 경로에서 확실히 지워진다.
+
+    `finally` 의 wipe 줄을 지우거나 엉뚱한 변수를 지우면(예: portrait 만 지우고
+    id_document_buffer 는 빠뜨리면) 이 테스트가 실패한다 — id_document_buffer 로
+    crop_id_face 에 넘어간 바로 그 객체(id() 동일성)가 wipe_bytearray 호출 인자에
+    나타나야 통과한다.
+    """
+    client, store, settings = _setup(
+        enrollment_client_factory,
+        monkeypatch,
+        fm_identity_methods=("mid", "simple_auth"),
+        fm_enrollment_review="simple_auth_only",
+        scores={"front": 0.9, "angle45": 0.85, "side": 0.8},
+    )
+    captured = {}
+
+    def fake_crop(data, *, settings):
+        captured["id_document_buffer_id"] = id(data)
+        return bytearray(b"id-crop-bytes")
+
+    monkeypatch.setattr(
+        facemarket_enrollment.facemarket_id_document, "crop_id_face", fake_crop
+    )
+    wiped_ids = []
+    original_wipe = facemarket_enrollment.cx_identity.wipe_bytearray
+
+    def spy_wipe(value):
+        if value is not None:
+            wiped_ids.append(id(value))
+        original_wipe(value)
+
+    monkeypatch.setattr(facemarket_enrollment.cx_identity, "wipe_bytearray", spy_wipe)
+
+    enrollment_id = _seed_ready_enrollment(
+        store,
+        identity_method="simple_auth",
+        id_document_r2_key="facemarket/enrollments/e1/iddoc/masked.jpg",
+    )
+    response = client.post(f"/v1/facemarket/enrollments/{enrollment_id}/complete", json={})
+    assert response.status_code == 200, response.text
+    assert "id_document_buffer_id" in captured
+    assert captured["id_document_buffer_id"] in wiped_ids
+
+
+def test_simple_auth_id_document_buffer_wiped_on_face_not_detected(
+    enrollment_client_factory, monkeypatch
+):
+    """crop_id_face 가 실패해도(id_face_not_detected) 이미 읽어들인 신분증 원본은 지운다.
+
+    성공 경로만 지우는 `finally` 는 이 테스트가 실제로 잡아야 할 버그다 — 완료 요청이
+    실패로 끝나도 원시 생체 바이트가 메모리에 남아 있으면 안 된다.
+    """
+    client, store, settings = _setup(
+        enrollment_client_factory,
+        monkeypatch,
+        fm_identity_methods=("mid", "simple_auth"),
+        fm_enrollment_review="simple_auth_only",
+    )
+    captured = {}
+
+    def failing_crop(data, *, settings):
+        captured["id_document_buffer_id"] = id(data)
+        raise facemarket_id_document.IdDocumentError("id_face_not_detected")
+
+    monkeypatch.setattr(
+        facemarket_enrollment.facemarket_id_document, "crop_id_face", failing_crop
+    )
+    wiped_ids = []
+    original_wipe = facemarket_enrollment.cx_identity.wipe_bytearray
+
+    def spy_wipe(value):
+        if value is not None:
+            wiped_ids.append(id(value))
+        original_wipe(value)
+
+    monkeypatch.setattr(facemarket_enrollment.cx_identity, "wipe_bytearray", spy_wipe)
+
+    enrollment_id = _seed_ready_enrollment(
+        store,
+        identity_method="simple_auth",
+        id_document_r2_key="facemarket/enrollments/e1/iddoc/masked.jpg",
+    )
+    response = client.post(f"/v1/facemarket/enrollments/{enrollment_id}/complete", json={})
+    assert response.json()["reason"] == "id_face_not_detected"
+    row = _latest_row(store, enrollment_id)
+    assert row["status"] == "failed"
+    assert "id_document_buffer_id" in captured
+    assert captured["id_document_buffer_id"] in wiped_ids
+
+
+def test_simple_auth_crop_infra_failure_maps_to_qc_unavailable(
+    enrollment_client_factory, monkeypatch
+):
+    """crop_id_face 가 IdDocumentError 가 아니라 맨 QcFailed 를 던지면(가중치 부재 등
+    인프라 문제) 사유가 qc_unavailable 이어야 한다 — 재촬영으로 못 고치는 원인을
+    id_portrait_unavailable(재촬영 문제로 오인되는 사유)로 뭉개면 on-call 이 헛다리를
+    짚는다.
+    """
+    client, store, settings = _setup(
+        enrollment_client_factory,
+        monkeypatch,
+        fm_identity_methods=("mid", "simple_auth"),
+        fm_enrollment_review="simple_auth_only",
+    )
+
+    def infra_down_crop(_data, *, settings):
+        raise QcFailed("qc_unavailable")
+
+    monkeypatch.setattr(
+        facemarket_enrollment.facemarket_id_document, "crop_id_face", infra_down_crop
+    )
+    enrollment_id = _seed_ready_enrollment(
+        store,
+        identity_method="simple_auth",
+        id_document_r2_key="facemarket/enrollments/e1/iddoc/masked.jpg",
+    )
+    response = client.post(f"/v1/facemarket/enrollments/{enrollment_id}/complete", json={})
+    assert response.json()["reason"] == "qc_unavailable"
     row = _latest_row(store, enrollment_id)
     assert row["status"] == "failed"
 

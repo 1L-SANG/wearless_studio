@@ -2031,12 +2031,25 @@ def _decision_body(decision: EnrollmentDecision) -> dict:
     return body
 
 
-def _assert_match(score: float, threshold: float) -> None:
+def _coerce_match_score(score) -> float | None:
+    """score 를 유한한 float 로 정규화한다. 변환 불가·비유한이면 None(사실상 최저점)."""
     try:
         value = float(score)
     except (TypeError, ValueError):
-        raise EnrollmentMappedError("face_match_failed") from None
-    if not math.isfinite(value) or value < threshold:
+        return None
+    return value if math.isfinite(value) else None
+
+
+def _is_below_threshold(score, threshold: float) -> bool:
+    """미달 판정의 단일 정의 — `_assert_match`(경로 M, enforce)와 매칭 루프의 advisory
+    기록(경로 S)이 같은 기준으로 "미달"을 판정하게 한다. 여기가 갈라지면 mid 의 enforce
+    임계와 simple_auth 의 belowThreshold 기록이 조용히 어긋난다."""
+    value = _coerce_match_score(score)
+    return value is None or value < threshold
+
+
+def _assert_match(score: float, threshold: float) -> None:
+    if _is_below_threshold(score, threshold):
         raise EnrollmentMappedError("face_match_failed")
 
 
@@ -2266,6 +2279,13 @@ async def process_enrollment_completion(
                     )
                 except facemarket_id_document.IdDocumentError as exc:
                     raise EnrollmentMappedError(exc.reason) from None
+                except QcFailed:
+                    # (MINOR7) crop_id_face 내부 load_face_qc/detect_largest_face 가 인프라
+                    # 문제로 실패하면(가중치 부재 등) IdDocumentError 가 아니라 맨 QcFailed 를
+                    # 던진다 — 아래 일반 except Exception 이 삼키면 on-call 이
+                    # id_portrait_unavailable(재촬영 문제)로 오인한다. 사용자 재시도
+                    # 가능성(RETRYABLE_REASONS)은 둘 다 같지만 사유는 정확해야 한다.
+                    raise EnrollmentMappedError("qc_unavailable") from None
             else:
                 # Task3: CI·이름·생년월일 검증은 앞단 /identity 가 이미 마쳤다(저장 컬럼을 아래에서
                 # 읽는다). 여기서는 SFace 매칭에 쓸 신분증 초상만 파싱한다 — trans 재조회 없음.
@@ -2333,28 +2353,25 @@ async def process_enrollment_completion(
                     if exc.reason == "no_face_detected":
                         skipped.append(_angle)  # 정면 검출기가 못 잡는 각도 — 매칭 대상 아님
                         continue
+                    # (MINOR4) reason 이 "no_face_detected" 가 아닌 QcFailed(예:
+                    # embedding_invalid)는 advisory 라도 완료 전체를 중단시킨다 — 브리프의
+                    # 차단 예외("세 각도 전부 미검출")보다 넓지만, mid 의 기존 동작과 같은
+                    # 선이라 의도적으로 바꾸지 않는다. 다음 사람이 놓친 게 아니라 알고
+                    # 있다는 것만 남긴다.
                     raise
                 threshold = match_threshold_for_angle(settings, _angle)
                 logger.info(
                     "fm_match_photo_anchor angle=%s score=%s threshold=%.4f advisory=%s",
                     _angle, score, threshold, advisory,
                 )
-                try:
-                    numeric_score = float(score)
-                except (TypeError, ValueError):
-                    numeric_score = None
-                is_below = (
-                    numeric_score is None
-                    or not math.isfinite(numeric_score)
-                    or numeric_score < threshold
-                )
-                if is_below:
+                if _is_below_threshold(score, threshold):
                     below.append(_angle)
                     if not advisory:
                         _assert_match(score, threshold)
                 else:
                     matched_any = True
-                if numeric_score is not None and math.isfinite(numeric_score):
+                numeric_score = _coerce_match_score(score)
+                if numeric_score is not None:
                     scores[_angle] = numeric_score
             if not advisory and not matched_any:
                 raise EnrollmentMappedError("face_match_failed")
@@ -2431,7 +2448,7 @@ async def process_enrollment_completion(
                         update fm_biometric_enrollments
                         set status = 'review_pending', review_status = 'pending',
                             match_scores = %s
-                        where id = %s
+                        where id = %s and status = 'processing'
                         """,
                         (Json(match_snapshot), enrollment_id),
                     )
