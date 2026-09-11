@@ -118,7 +118,7 @@ async def run_editor_image_job(app, job: dict) -> None:
         fm_license_row: dict | None = None
         fm_face_injected = False          # REAL 자산 2장이 실제 첨부됐을 때만 정산(미첨부 과금 방지)
         vary_lora_spec = None             # 변형 컷 얼굴 패스 근거(fm_model_loras) — 없으면 패스 안 걸림
-        face_pass_outcome: dict = {}      # applied / fallback:<reason> — 자산 메타·이벤트용
+        face_pass_outcome: dict = {}      # applied / skipped:<reason> / fallback:<reason> — 자산 메타·이벤트용
 
         if mode == "vary":
             source = payload.get("source") or {}
@@ -199,6 +199,14 @@ async def run_editor_image_job(app, job: dict) -> None:
                 async with pool.connection() as _conn:
                     vary_lora_spec = face_identity.face_identity_from_lora_row(
                         await identity_source.resolve_enabled_lora(_conn, str(snapshot["modelId"])))
+                    # 동일인 검사 기준(승인된 face_front). 변형 경로는 실존 자산을 따로 안 읽으므로 여기서 읽는다.
+                    if vary_lora_spec is not None:
+                        _ref_faces = await identity_source.reference_face_bytes(
+                            app, _conn, str(snapshot["modelId"]), fm_license_row)
+                        if _ref_faces:
+                            vary_lora_spec = await asyncio.to_thread(
+                                face_identity.with_references, vary_lora_spec, _ref_faces,
+                                getattr(s, "fm_face_qc_dir", None))
             src_img = InlineImage(
                 src_asset["mime_type"],
                 await asyncio.to_thread(app.state.r2.get_bytes, src_asset["r2_key"]))
@@ -502,6 +510,11 @@ async def run_editor_image_job(app, job: dict) -> None:
                     _lora = await identity_source.resolve_enabled_lora(_conn, str(selected_model_id))
                 hair_profile, face_shape_profile = identity_source.profiles_from_lora_row(_lora)
                 fm_lora_spec = face_identity.face_identity_from_lora_row(_lora)
+                # 동일인 검사 기준 = 승인된 face_front(model_images[0], 위에서 이미 읽은 바이트). 그리드는 기준이 아니다.
+                if fm_lora_spec is not None and fm_source == "REAL" and model_images:
+                    fm_lora_spec = await asyncio.to_thread(
+                        face_identity.with_references, fm_lora_spec, [model_images[0].data],
+                        getattr(s, "fm_face_qc_dir", None))
             mannequin_images = (
                 [InlineImage(
                     cut_mannequin_asset["mime_type"],
@@ -661,8 +674,16 @@ async def run_editor_image_job(app, job: dict) -> None:
                 )["_referenceDirectionCompatible"])
             generate_kwargs = {"analysis": analysis, "manifest": manifest}
             # 값이 없으면 키 자체를 넣지 않는다 — 기존 프롬프트·기존 목(mock) 시그니처를 깨지 않는다.
-            # 얼굴 패스 결과(applied / fallback:<reason>)를 받아 자산 메타와 이벤트에 남긴다.
+            # 얼굴 패스 결과(applied / skipped:<reason> / fallback:<reason>)를 받아 자산 메타와 이벤트에 남긴다.
             face_pass_outcome: dict = {}
+            # 이미지 → 그 이미지를 만든 호출의 face_pass 결과(상세페이지 워커와 같은 규칙). 후보(best_of)가
+            # 있으면 마지막 호출이 앞선 결과를 덮어써 원장의 face_pass 가 채택본의 것이 아니게 된다.
+            outcome_by_image: dict[str, dict] = {}
+
+            def _remember_outcome(data: bytes) -> None:
+                outcome_by_image[hashlib.sha256(data).hexdigest()] = dict(face_pass_outcome)
+                face_pass_outcome.clear()
+
             if fm_lora_spec is not None:
                 generate_kwargs["face_pass_outcome"] = face_pass_outcome
                 # 대기 중에도 현재 파드를 다시 묻는다 — 잡 시작 때 읽은 주소를 붙들면
@@ -689,6 +710,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 image, mime = await cut_generator.generate(
                     editor_settings, app.state.gemini, cut_spec, product, images,
                     **generate_kwargs)
+                _remember_outcome(image)
             except ValueError as e:
                 if str(e) == "detail_reference_required":
                     await _fail(
@@ -732,6 +754,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                         image, mime = await cut_generator.generate(
                             editor_settings, app.state.gemini, cut_spec, product, images,
                             **generate_kwargs)
+                        _remember_outcome(image)
                     except (GeminiError, ValueError) as e:
                         await _fail("컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
                         return
@@ -741,6 +764,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 candidate_image, candidate_mime = await cut_generator.generate(
                     editor_settings, app.state.gemini, cut_spec, product, images,
                     **generate_kwargs)
+                _remember_outcome(candidate_image)
                 if scene_plate is None:
                     return InlineImage(candidate_mime, candidate_image)
 
@@ -763,6 +787,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                     candidate_image, candidate_mime = await cut_generator.generate(
                         editor_settings, app.state.gemini, cut_spec, product, images,
                         **generate_kwargs)
+                    _remember_outcome(candidate_image)
                 return InlineImage(candidate_mime, candidate_image)
 
             chosen, garment_qc_metadata, garment_warnings = await image_qc.best_of(
@@ -772,6 +797,9 @@ async def run_editor_image_job(app, job: dict) -> None:
                 _generate_candidate,
             )
             image, mime = chosen.data, chosen.mime
+            # 원장·자산 메타의 face_pass = 채택본을 만든 호출의 결과.
+            face_pass_outcome.clear()
+            face_pass_outcome.update(outcome_by_image.get(hashlib.sha256(image).hexdigest(), {}))
             example_warnings.extend(garment_warnings)
             # repair는 PL-4 콘티 블록 전용이다. 같은 전역 설정을 쓰는 에디터 단건 경로는
             # 기존 shadow 관측을 유지하되 자동 2차 생성은 하지 않는다.

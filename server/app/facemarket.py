@@ -2724,7 +2724,8 @@ async def face_render_status(
                     "select 1 from fm_model_loras where model_id = %s and enabled "
                     "and status = 'ready' limit 1", (str(model_id),))
                 enabled = await cur.fetchone() is not None
-    # ready 는 **지금 등록된 파드의 /healthz(loaded)** 로만 판정한다. 예전에는 자동 켜기
+    # ready 는 **지금 등록된 파드의 /healthz(base_loaded)** 로만 판정한다(face_identity.healthz_ready —
+    # 베이스가 올라왔으면 준비. loaded 는 첫 렌더 뒤에야 true 라 준비 조건으로 못 쓴다). 예전에는 자동 켜기
     # 어댑터가 enabled 일 때만 봤는데, 자동 켜기를 꺼 두면(수동 파드 운영) 파드가 멀쩡히
     # 떠 있어도 영원히 "준비 중 (약 4분)"이 떴다(2026-09-11 개발 테스트에서 확인).
     ready = False
