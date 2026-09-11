@@ -112,7 +112,9 @@ def _apply(monkeypatch, *, ready=True, backend=object(), result=None):
 def test_applied_outcome(monkeypatch):
     ok = fi.FacePassResult(b"FACE", "image/png", True, {"tries": [{"gate": "ok"}]})
     image, _, outcome = _apply(monkeypatch, result=ok)
-    assert image == b"FACE" and outcome == {"face_pass": "applied"}
+    assert image == b"FACE" and outcome["face_pass"] == "applied"
+    # 채택된 컷에는 레시피 해시가 따라붙는다 — "이 컷이 어떤 상수로 나왔나"(agents/face_recipe.py)
+    assert len(outcome["face_recipe"]) == 12
 
 
 def test_pod_not_ready_falls_back_to_the_generated_face(monkeypatch):
@@ -280,7 +282,7 @@ def test_render_connection_error_clears_the_memo_and_retries(monkeypatch):
     outcome: dict = {}
     image, _ = asyncio.run(fi.apply_face_pass(
         _settings(), b"ORIG", "image/png", SPEC, outcome=outcome))
-    assert image == b"FACE" and outcome == {"face_pass": "applied"}
+    assert image == b"FACE" and outcome["face_pass"] == "applied"
     assert probes == [HEALTH]              # 기억을 버렸으니 다시 확인했다
     assert results == []                   # 렌더를 정확히 두 번 했다
 

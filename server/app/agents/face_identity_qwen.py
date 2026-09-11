@@ -22,12 +22,14 @@ from PIL import Image
 #:   ±0.02 규칙은 **열화를 막으려는** 것이고 초과한 한 컷이 개선 방향이라 채택했다(사용자 결정).
 #:   → 기본값은 GPU 합치기. FACE_RENDER_GPU_FUSE=false 가 탈출구(결과 픽셀을 예전과 똑같이).
 CROP = 1024
+#: 베이스 모델 — 레시피 해시(agents/face_recipe.py)에 들어가는 값이라 이름 있는 상수로 둔다.
+RENDER_MODEL_ID = "Qwen/Qwen-Image-Edit-2509"
 RENDER_STEPS = 25
 RENDER_GUIDANCE = 4.0
 RENDER_NEGATIVE = ""
 
 
-def load_base_pipeline(model_id: str = "Qwen/Qwen-Image-Edit-2509", device: str = "cuda", *,
+def load_base_pipeline(model_id: str = RENDER_MODEL_ID, device: str = "cuda", *,
                        cpu_offload: bool = False, gpu_fuse: bool = True):
     """LoRA 없는 베이스 파이프라인. 서비스가 **기동 때** 올려 두는 것이다 — 첫 요청이 수 분을 물지 않게.
 
@@ -53,7 +55,7 @@ class QwenLocalBackend:
         self,
         lora_path: str,
         *,
-        model_id: str = "Qwen/Qwen-Image-Edit-2509",
+        model_id: str = RENDER_MODEL_ID,
         device: str = "cuda",
         steps: int = RENDER_STEPS,
         guidance_scale: float = RENDER_GUIDANCE,
