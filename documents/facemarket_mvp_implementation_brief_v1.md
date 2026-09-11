@@ -144,6 +144,6 @@
 | `FM_STANDARD_UNIT_PRICE` | `14900` | 서버가 라이선스에 채우는 건당 표준가예요. |
 | `FM_USAGE_REPORT_TO_EMAIL` | `contact@wearless.kr` | 회사 정보와 개인정보 처리방침에 명시된 문의 주소를 사용해요. |
 
-세 설정은 `copilot/api/manifest.yml`과 `server/.env.example`에 함께 선언해요. 수신 주소의 근거는 `src/lib/companyInfo.json`과 `documents/legal/11_wearless_privacy_policy_v1.md`의 확정 연락처예요. 신고 상태 제약은 새 전진 마이그레이션 `20260911130000_facemarket_usage_report_status.sql`로 확장해요. 기존 마이그레이션과 소유자 조회 정책은 유지해요. 운영 DB 적용과 배포, 메일 실발송 확인은 별도로 진행해요.
+세 설정은 `copilot/api/manifest.yml`과 `server/.env.example`에 함께 선언해요. 수신 주소의 근거는 `src/lib/companyInfo.json`과 `documents/legal/11_wearless_privacy_policy_v1.md`의 확정 연락처예요. 신고 상태 제약은 새 전진 마이그레이션 `20260911131500_facemarket_usage_report_status.sql`로 확장해요. 기존 마이그레이션과 소유자 조회 정책은 유지해요. 운영 DB 적용과 배포, 메일 실발송 확인은 별도로 진행해요.
 
 브라우저 스모크: 미실행.
