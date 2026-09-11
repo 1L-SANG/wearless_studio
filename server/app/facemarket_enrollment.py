@@ -650,7 +650,8 @@ async def _load_current_enrollment(conn, user_id: str) -> dict | None:
             from fm_biometric_enrollments e
             left join fm_models m on m.id = e.model_id
             where e.user_id = %s and e.status in (
-                'identity_pending', 'photos_pending', 'liveness_pending', 'processing',
+                'id_capture_pending', 'identity_pending', 'photos_pending',
+                'review_pending', 'liveness_pending', 'processing',
                 'asset_building', 'license_pending', 'vc_pending'
             )
             order by e.created_at desc limit 1
@@ -829,14 +830,20 @@ async def create_enrollment(
             # 'identity_pending')이 그대로 적용되어 SQL 텍스트가 오늘과 바이트 단위로
             # 동일하다(기존 mid 경로 불변이 최우선 순위). simple_auth 만 두 컬럼을 리터럴로
             # 명시한다(값이 화이트리스트를 통과한 코드 상수라 바인드 파라미터일 필요가 없다).
+            # on conflict 의 where 절은 fm_biometric_active_per_user 부분 유니크 인덱스
+            # (Task1 마이그레이션)의 arbiter 추론 대상이다 — 인덱스 predicate 와 정확히
+            # 맞춘다(순서까지). 짧은 7-state 부분집합도 PG 추론상 동작은 하지만("암시"
+            # 관계로 arbiter 는 잡힌다 — 로컬 Postgres 로 실측 확인함), 사람이 눈으로 diff
+            # 하기 쉽게, 그리고 이후 드리프트를 막기 위해 인덱스와 텍스트를 일치시킨다.
             if method == "simple_auth":
-                insert_sql = """
+                insert_sql = f"""
                     insert into fm_biometric_enrollments
                         (user_id, model_id, device_digest, consent_version, expires_at,
                          application_id, identity_method, status)
-                    values (%s, %s, %s, %s, %s, %s, 'simple_auth', 'id_capture_pending')
+                    values (%s, %s, %s, %s, %s, %s, '{method}', '{initial_status}')
                     on conflict (user_id) where status in (
-                        'identity_pending', 'photos_pending', 'liveness_pending', 'processing',
+                        'id_capture_pending', 'identity_pending', 'photos_pending',
+                        'review_pending', 'liveness_pending', 'processing',
                         'asset_building', 'license_pending', 'vc_pending'
                     ) do nothing
                     returning id::text as id
@@ -847,7 +854,8 @@ async def create_enrollment(
                         (user_id, model_id, device_digest, consent_version, expires_at, application_id)
                     values (%s, %s, %s, %s, %s, %s)
                     on conflict (user_id) where status in (
-                        'identity_pending', 'photos_pending', 'liveness_pending', 'processing',
+                        'id_capture_pending', 'identity_pending', 'photos_pending',
+                        'review_pending', 'liveness_pending', 'processing',
                         'asset_building', 'license_pending', 'vc_pending'
                     ) do nothing
                     returning id::text as id
@@ -1882,7 +1890,16 @@ async def sweep_terminal_enrollments(app, *, limit: int = 100) -> int:
                     with due as (
                         select id from fm_biometric_enrollments
                         where expires_at <= now()
-                          and status in ('identity_pending', 'photos_pending', 'liveness_pending', 'processing')
+                          -- Task5: id_capture_pending(신분증 촬영 대기)은 나머지와 같은 본인인증
+                          -- 진행 단계라 같은 24h TTL 로 만료시킨다. review_pending 은 일부러
+                          -- 뺀다 — 그건 사람 심사원을 기다리는 단계라, 같은 24h 로 자동만료시키면
+                          -- 심사가 밀린 정상 지원자가 자동 탈락한다. 대신 심사 액션(승인/반려,
+                          -- Task7/8 소관)이 명시적으로 빠져나가게 한다 — review_pending 이 무기한
+                          -- 방치될 위험은 심사팀 SLA/전용 타임아웃으로 다뤄야 할 별개 과제다.
+                          and status in (
+                            'id_capture_pending', 'identity_pending', 'photos_pending',
+                            'liveness_pending', 'processing'
+                          )
                         order by expires_at
                         for update skip locked
                         limit %s
@@ -2504,7 +2521,8 @@ async def cancel_enrollment(
                     update fm_biometric_enrollments e
                     set status = 'cancelled', completed_at = coalesce(completed_at, now())
                     where e.id = %s and e.user_id = %s and e.status in (
-                        'identity_pending', 'photos_pending', 'liveness_pending', 'processing',
+                        'id_capture_pending', 'identity_pending', 'photos_pending',
+                        'review_pending', 'liveness_pending', 'processing',
                         'asset_building', 'license_pending', 'vc_pending', 'cancelled'
                     )
                     returning e.id::text as id

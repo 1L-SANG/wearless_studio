@@ -163,9 +163,9 @@ def test_get_oacx_biometric_contract_rejects_unknown_method():
 
 # ── Task5: 등록 생성 시 인증 수단 분기 ───────────────────────────────────────────────────
 
-def test_create_rejects_simple_auth_when_flag_off(enrollment_client):
+def test_create_rejects_simple_auth_when_flag_off(enrollment_client_factory):
     """FM_IDENTITY_METHODS=mid 인데 simple_auth 를 요청하면 409."""
-    client, store, settings = enrollment_client(fm_identity_methods=("mid",))
+    client, store, settings = enrollment_client_factory(fm_identity_methods=("mid",))
     response = client.post(
         "/v1/facemarket/enrollments",
         json={
@@ -181,8 +181,8 @@ def test_create_rejects_simple_auth_when_flag_off(enrollment_client):
     assert response.json()["error"]["code"] == "identity_method_unavailable"
 
 
-def test_create_simple_auth_starts_at_id_capture_pending(enrollment_client):
-    client, store, settings = enrollment_client(
+def test_create_simple_auth_starts_at_id_capture_pending(enrollment_client_factory):
+    client, store, settings = enrollment_client_factory(
         fm_identity_methods=("mid", "simple_auth")
     )
     response = client.post(
@@ -198,9 +198,9 @@ def test_create_simple_auth_starts_at_id_capture_pending(enrollment_client):
     assert response.json()["identityMethod"] == "simple_auth"
 
 
-def test_create_mid_unchanged(enrollment_client):
+def test_create_mid_unchanged(enrollment_client_factory):
     """기본값 경로는 지금과 똑같이 identity_pending 에서 시작한다."""
-    client, store, settings = enrollment_client(fm_identity_methods=("mid",))
+    client, store, settings = enrollment_client_factory(fm_identity_methods=("mid",))
     response = client.post(
         "/v1/facemarket/enrollments",
         json={

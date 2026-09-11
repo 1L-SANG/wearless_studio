@@ -190,6 +190,13 @@ def make_token(keypair):
 # 촬영 경로가 id_capture_pending 에서 시작하는 것을 그 파일의 FakeCursor 가 표현하지
 # 못하는 문제)은 이 픽스처 안에서 monkeypatch 로 감싸 처리하고, 그 외 SQL 은 전부
 # 원래 구현에 위임한다.
+#
+# 이름을 `enrollment_client_factory`로 둔다(fix round 2) — `enrollment_client`는
+# test_facemarket_biometric_enrollment.py 가 이미 모듈 스코프 픽스처로 오래 쓰고 있다
+# (거기선 바로 TestClient 를 반환, 팩토리가 아니다). 모듈 스코프 픽스처가 conftest 것을
+# 가려서 오늘은 안 깨지지만, 나중에 그 로컬 픽스처를 "이제 공유 걸로 대체됐겠지" 하고
+# 지우면 수십 곳의 `enrollment_client.post(...)` 호출이 조용히 함수 객체로 재바인딩된다.
+# 이름을 아예 다르게 둬서 그 함정 자체를 없앤다.
 _ID_CAPTURE_ACTIVE_STATUSES = {
     "id_capture_pending", "identity_pending", "photos_pending", "review_pending",
     "liveness_pending", "processing", "asset_building", "license_pending", "vc_pending",
@@ -197,10 +204,10 @@ _ID_CAPTURE_ACTIVE_STATUSES = {
 
 
 @pytest.fixture()
-def enrollment_client(keypair, monkeypatch, make_token):
+def enrollment_client_factory(keypair, monkeypatch, make_token):
     """생체등록 라우트 통합 테스트용 팩토리 픽스처.
 
-    ``enrollment_client(**settings_overrides) -> (TestClient, EnrollmentStore, Settings)``.
+    ``enrollment_client_factory(**settings_overrides) -> (TestClient, EnrollmentStore, Settings)``.
     반환된 client 는 기본 Authorization 헤더(sub="user-1")를 이미 갖고 있어 개별 테스트가
     매번 auth 헤더를 넘길 필요가 없다.
     """
