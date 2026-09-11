@@ -3968,6 +3968,31 @@ def test_cancel_is_idempotent_and_cleans_quarantine_photos(
     assert "facemarket/" not in json.dumps(evidence)
 
 
+def test_cancel_purges_id_document_from_r2_and_clears_column(
+    enrollment_client, auth, fake_r2, enrollment_store, monkeypatch
+):
+    """review fix round1: 기존 cancel/expire 회귀 테스트는 전부 id_document_r2_key 가
+    None 인 fixture 라 purge_id_document 의 'key 없음' no-op 분기만 타고 있었다 —
+    실제로 문서가 있을 때 취소가 R2 delete 를 부르고 컬럼을 지우는지는 아무 테스트도
+    확인하지 않았다. simple_auth 가 심었을 법한 실제 신분증 키를 fixture 에 직접 심고
+    취소 경로(cancel_enrollment → cleanup_terminal_enrollment)로 몰아 이 갭을 메운다."""
+    stub_qc(monkeypatch)
+    enrollment_id = create_enrollment(enrollment_client, auth)
+    key = r2.enrollment_id_document_key(enrollment_id, "jpg", version="test-version")
+    enrollment_store.enrollments[0]["id_document_r2_key"] = key
+    fake_r2.objects[key] = (b"masked-id-bytes", "image/jpeg")
+
+    response = enrollment_client.post(
+        f"/v1/facemarket/enrollments/{enrollment_id}/cancel", headers=auth()
+    )
+
+    assert response.status_code == 200, response.text
+    assert key in fake_r2.deletes
+    row = enrollment_store.enrollments[0]
+    assert row["id_document_r2_key"] is None
+    assert row["id_document_purged_at"] is not None
+
+
 def test_cancel_allows_identity_pending_enrollment(
     enrollment_client, auth, enrollment_store
 ):

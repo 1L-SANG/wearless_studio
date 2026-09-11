@@ -137,5 +137,8 @@ def sweep_stale_id_documents(r2client, *, older_than_seconds: int = 7 * 86400) -
             r2client.delete(key)
             removed += 1
         except Exception:
-            logger.warning("id_document_sweep_delete_failed key=%s", key)
+            # 키만 남기고 트레이스백은 남긴다(원시 PII 미저장 규율은 바이트·내용에 대한
+            # 것이지 예외 스택에 대한 것이 아니다) — 권한 만료·네트워크 장애 등 프로덕션
+            # 삭제 실패를 진단하려면 exc_info 가 필요하다(review fix round1).
+            logger.warning("id_document_sweep_delete_failed key=%s", key, exc_info=True)
     return removed

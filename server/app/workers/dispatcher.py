@@ -258,7 +258,14 @@ class JobDispatcher:
         if getattr(self.app.state.settings, "facemarket_enabled", False):
             from ..facemarket_enrollment import sweep_terminal_enrollments
 
-            await sweep_terminal_enrollments(self.app, limit=100)
+            # review fix round1: 다른 세 스윕과 달리 여기 try/except 가 없으면, 이 호출이
+            # 예외를 던질 때 아래 신분증 스윕까지 포함한 이번 tick 전체가 조용히 안 돈다
+            # ("실제로 스케줄된다"는 이 태스크의 근거 속성을 침식한다). 다음 60초 tick 에
+            # 자연 복구되긴 하지만 원인 없이 침묵하면 안 된다 — 로그만 남기고 계속한다.
+            try:
+                await sweep_terminal_enrollments(self.app, limit=100)
+            except Exception:
+                log.exception("terminal enrollment sweep failed")
             # 미제출 지원서 스테이징 사진 회수(리뉴얼, 스펙 9). 실패는 무해 — 다음 주기에 재시도.
             try:
                 from ..facemarket_applications import sweep_application_photo_staging
