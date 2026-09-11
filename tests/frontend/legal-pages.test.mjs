@@ -123,7 +123,9 @@ test('Vercel은 ai 호스트의 네 이전 법무 주소만 영구 이동하고 
 test('셀러 푸터의 네 법무 링크는 대표 도메인이고 FaceMarket 푸터는 자체 경로를 유지한다', async () => {
   const { SiteFooter } = await load('src/features/shell/SiteFooter.jsx');
   const { FooterSection } = await load('src/features/facemarket-landing/sections/FooterSection.jsx');
-  assert.deepEqual(hrefs(render(React.createElement(SiteFooter))), [
+  const sellerFooter = render(React.createElement(SiteFooter));
+  const sellerLegalNav = sellerFooter.match(/<nav\b[^>]*aria-label="법적 고지"[^>]*>([\s\S]*?)<\/nav>/)[1];
+  assert.deepEqual(hrefs(sellerLegalNav), [
     'https://wearless.kr/terms', 'https://wearless.kr/privacy',
     'https://wearless.kr/refund', 'https://wearless.kr/model-license-terms',
   ]);
@@ -149,8 +151,8 @@ test('FaceMarket 앱은 자체 법무 문서를 공개 라우트로 유지한다
 });
 
 test('공용 사업자 정보는 올바른 등록번호 형식을 제공한다', async () => {
-  const { COMPANY_INFO_LINES } = await load('src/lib/companyInfo.js');
-  assert.match(COMPANY_INFO_LINES.join(' '), /\b\d{3}-\d{2}-\d{5}\b/);
+  const { COMPANY_INFO_ROWS } = await load('src/lib/companyInfo.js');
+  assert.match(COMPANY_INFO_ROWS.find((row) => row.key === 'brn').text, /^\d{3}-\d{2}-\d{5}$/);
 });
 
 test('법무 화면과 두 푸터는 공용 사업자 정보를 사용한다', () => {
@@ -159,8 +161,9 @@ test('법무 화면과 두 푸터는 공용 사업자 정보를 사용한다', (
     'src/features/shell/SiteFooter.jsx',
     'src/features/facemarket-landing/sections/FooterSection.jsx',
   ]) {
-    assert.match(read(pathname), /@\/lib\/companyInfo\.js/);
+    assert.match(read(pathname), /@\/components\/CompanyInfoRows\.jsx/);
   }
+  assert.match(read('src/components/CompanyInfoRows.jsx'), /@\/lib\/companyInfo\.js/);
 });
 
 test('FaceMarket 모델 레이아웃은 얇은 법무 푸터를 함께 렌더한다', () => {
